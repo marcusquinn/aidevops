@@ -182,6 +182,47 @@ test_provider_sessions_keep_pulse_unscoped() {
 	return 0
 }
 
+# GH#38982: a release that ends the delivery clears the repo-scoped persisted
+# session before projection, so the next continuation has no --session or
+# --continue; an interruption-class release keeps resume.
+test_terminal_delivery_release_clears_persisted_session() {
+	local failures=""
+	if ! failures=$(
+		export WORKER_REPO_SLUG="owner/one" DISPATCH_REPO_SLUG="owner/one"
+		_hrff_release_dispatch_claim_attempt() {
+			printf 'at_release=%s\n' "$(get_session_id anthropic "$1")" >>"${TEST_ROOT}/gh38982-release.log"
+			return 0
+		}
+		_hrrr_clear() { return 0; }
+		_hrrr_record() { return 0; }
+		local reason="" session="" run_cmd_text=""
+		for reason in worker_complete worker_merged_partial worker_merged_partial_no_progress signal_killed_continue; do
+			: >"${TEST_ROOT}/gh38982-release.log"
+			store_session_id anthropic "issue-77" "ses_done" "anthropic/claude-sonnet-5-5"
+			store_session_id openai "issue-77" "ses_other" "openai/gpt-5.5"
+			_release_dispatch_claim "issue-77" "$reason" >/dev/null 2>&1 || printf 'release_rc reason=%s\n' "$reason"
+			session=$(get_session_id anthropic "issue-77")
+			run_cmd_text=$(_build_run_cmd "anthropic/claude-sonnet-5-5" "$TEST_ROOT" "prompt" "title" "" "" "$session" | tr '\0' ' ')
+			if [[ "$reason" == signal_killed_continue ]]; then
+				[[ "$session" == ses_done && "$run_cmd_text" == *"--session ses_done --continue"* ]] ||
+					printf 'resume_lost reason=%s session=%s\n' "$reason" "${session:-<empty>}"
+				continue
+			fi
+			[[ -z "$session" && -z "$(get_session_id openai "issue-77")" && "$run_cmd_text" != *--session* && "$run_cmd_text" != *--continue* ]] ||
+				printf 'session_kept reason=%s session=%s\n' "$reason" "${session:-<empty>}"
+			# Cleared before the release projects recovery state.
+			[[ "$(<"${TEST_ROOT}/gh38982-release.log")" == "at_release=" ]] ||
+				printf 'cleared_late reason=%s\n' "$reason"
+		done
+		clear_session_id_all_providers "issue-77"
+	) || [[ -n "$failures" ]]; then
+		print_result "terminal delivery release clears the persisted session; interruption keeps resume" 1 "$failures"
+		return 0
+	fi
+	print_result "terminal delivery release clears the persisted session; interruption keeps resume" 0
+	return 0
+}
+
 test_blocked_completion_records_blocked_label() {
 	local output_file="${TEST_ROOT}/blocked-output.jsonl"
 	printf '%s\n' '{"type":"text","sessionID":"ses_blocked","text":"BLOCKED: missing dependency credentials"}' >"$output_file"

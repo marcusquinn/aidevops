@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import os
+import platform
 import re
+import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -17,6 +19,7 @@ from command_policy_config import _decision
 
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 TARGET_PATTERN = re.compile(r"^[1-9][0-9]*$")
+SAFE_LAUNCHER_PATTERN = re.compile(r"/[A-Za-z0-9._/+-]+")
 KNOWN_VERIFY_STATES = {
     "API_ERROR",
     "LEGACY_APPROVAL",
@@ -193,15 +196,37 @@ def _verify_target(
     return state
 
 
+def approval_cli_prefix() -> str:
+    """Mirror shared-approval-cli.sh approval_cli_prefix (GH#39027).
+
+    Linux sudo secure_path omits user-local launchers, so name the launcher
+    unless sudo can find it. Output: "sudo aidevops", "sudo ~/<dirs>/aidevops"
+    or "sudo /<dirs>/aidevops".
+    """
+    default = "sudo aidevops"
+    if platform.system() == "Darwin":
+        return default
+    launcher = shutil.which("aidevops") or ""
+    if launcher in {"", "/usr/bin/aidevops", "/bin/aidevops", "/usr/sbin/aidevops", "/sbin/aidevops"}:
+        return default
+    if "/./" in launcher or "/../" in launcher or not SAFE_LAUNCHER_PATTERN.fullmatch(launcher):
+        return default
+    home = os.path.expanduser("~")
+    if home not in {"", "/", "~"} and launcher.startswith(home.rstrip("/") + "/"):
+        launcher = "~/" + launcher[len(home.rstrip("/")) + 1 :]
+    return f"sudo {launcher}"
+
+
 def _approval_command(
     request: ApprovalRequest, targets: list[tuple[str, str]]
 ) -> str:
+    prefix = approval_cli_prefix()
     if not request.batch and len({target[0] for target in targets}) == 1:
         target_type = targets[0][0]
         numbers = " ".join(target[1] for target in targets)
-        return f"sudo aidevops approve {target_type} {numbers} {request.repository}"
+        return f"{prefix} approve {target_type} {numbers} {request.repository}"
     encoded = " ".join(_format_target(target) for target in targets)
-    return f"sudo aidevops approve batch {encoded} {request.repository}"
+    return f"{prefix} approve batch {encoded} {request.repository}"
 
 
 def _format_target(target: tuple[str, str]) -> str:

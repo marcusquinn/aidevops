@@ -329,7 +329,6 @@ TODOEOF
 	local repo_ids=""
 	repo_ids=$(_collect_routine_ids "$REPO_ROOT/TODO.md")
 	if [[ $'\n'"$repo_ids"$'\n' == *$'\nr-gh-audit-scan\n'* ]] &&
-		[[ $'\n'"$repo_ids"$'\n' == *$'\nr-pulse-check\n'* ]] &&
 		[[ $'\n'"$repo_ids"$'\n' != *$'\nr004\n'* ]]; then
 		pass "Case 7b (GH#28808): repository TODO ignores fenced r004 and keeps descriptive IDs"
 	else

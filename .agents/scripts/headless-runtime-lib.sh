@@ -534,8 +534,19 @@ except (AttributeError, OSError):
     record["load_1min"] = None
     record["cpu_count"] = os.cpu_count() or 0
     record["load_per_cpu"] = None
-with open(os.environ["METRICS_PATH"], "a") as f:
-    f.write(json.dumps(record, separators=(",", ":")) + "\n")
+# GH#39185: one O_APPEND write per record under an advisory lock, so
+# concurrent producers cannot interleave records (O_APPEND alone is only
+# atomic below PIPE_BUF; records can reach 2 KB+).
+import fcntl
+line = (json.dumps(record, separators=(",", ":")) + "\n").encode("utf-8")
+fd = os.open(os.environ["METRICS_PATH"], os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    view = memoryview(line)
+    while view:
+        view = view[os.write(fd, view):]
+finally:
+    os.close(fd)
 PY
 	# A later EXIT trap must not duplicate an already persisted invocation metric.
 	_HEADLESS_RUNTIME_LAST_METRIC_KEY="${AIDEVOPS_RUN_ID:-${_WORKER_START_EPOCH_MS:-0}}:${session_key}"
@@ -1400,7 +1411,20 @@ CANARY_SATURATION_PERCENT="${CANARY_SATURATION_PERCENT:-98}"
 CANARY_OVERLOAD_LOAD_MULTIPLIER="${CANARY_OVERLOAD_LOAD_MULTIPLIER:-4}"
 
 _headless_opencode_profile_is_v2() {
-	[[ "${AIDEVOPS_OPENCODE_PROFILE:-v1}" == "v2" ]]
+	# Explicit env wins; otherwise resolve through the profile document (same
+	# resolver as setup/Pulse). Cached per shell process, never exported.
+	if [[ -n "${AIDEVOPS_OPENCODE_PROFILE:-}" ]]; then
+		[[ "$AIDEVOPS_OPENCODE_PROFILE" == "v2" ]] && return 0
+		return 1
+	fi
+	if [[ -z "${_HEADLESS_OPENCODE_DEFAULT_PROFILE:-}" ]]; then
+		if declare -F aidevops_opencode_profile_id >/dev/null 2>&1; then
+			_HEADLESS_OPENCODE_DEFAULT_PROFILE=$(aidevops_opencode_profile_id 2>/dev/null) || _HEADLESS_OPENCODE_DEFAULT_PROFILE="v1"
+		fi
+		_HEADLESS_OPENCODE_DEFAULT_PROFILE="${_HEADLESS_OPENCODE_DEFAULT_PROFILE:-v1}"
+	fi
+	[[ "$_HEADLESS_OPENCODE_DEFAULT_PROFILE" == "v2" ]] && return 0
+	return 1
 }
 
 _headless_opencode_binary_name() {

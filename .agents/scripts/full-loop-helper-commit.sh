@@ -28,6 +28,8 @@ _FULL_LOOP_CHECK_INDETERMINATE="indeterminate"
 _FULL_LOOP_CHECK_DEFERRED="api-deferred"
 _FULL_LOOP_ERROR_COOLDOWN="github-api-cooldown"
 _FULL_LOOP_ERROR_READ_DEFERRED="github-api-read-deferred"
+_FULL_LOOP_CHECK_TERMINAL_FAILURE="terminal-failure"
+_FULL_LOOP_RETRY_DETAIL="retry-when-capacity-returns"
 _FULL_LOOP_TRUE="true"
 
 # Defensive SCRIPT_DIR fallback
@@ -51,6 +53,12 @@ source "${_FULL_LOOP_COMMIT_DIR}/pulse-merge-required-checks.sh"
 # shellcheck source=./full-loop-helper-commit-validators.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via the helper directory
 source "${_FULL_LOOP_COMMIT_DIR}/full-loop-helper-commit-validators.sh"
+
+# Shared PR base resolution (GH#39167): configured pr_base_branch, then the
+# remote default; never a hard-coded `main`.
+# shellcheck source=./shared-pr-base.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via the helper directory
+source "${_FULL_LOOP_COMMIT_DIR}/shared-pr-base.sh"
 
 # Remote readiness and pre-merge gates retain the original public source contract.
 # Resolve the sibling independently of caller-owned SCRIPT_DIR fixture paths.
@@ -77,6 +85,7 @@ source "${_FULL_LOOP_COMMIT_DIR}/full-loop-helper-commit-bookkeeping.sh"
 # pre-push hook remains authoritative for the actual ref being pushed.
 _commit_and_pr_privacy_scan() {
 	local remote_url="" base_branch="" entities_file="" hits="" scan_rc=0
+	local target_repo="" fetch_url="" public_head=""
 	remote_url=$(git remote get-url --push origin 2>/dev/null) || return 1
 	# shellcheck source=./privacy-guard-helper.sh
 	# shellcheck disable=SC1091
@@ -91,8 +100,19 @@ _commit_and_pr_privacy_scan() {
 		privacy_log ERROR "could not enumerate private entity inventory — failing closed"
 		return 1
 	fi
+	# GH#39261: pass the same public head and target slug as the authoritative
+	# pre-push hook (privacy-guard-pre-push.sh). Without them this preview was
+	# stricter than the hook and blocked content the target already publishes.
+	# A tracking ref is a public head only when the fetch remote is the target.
+	if [[ "$remote_url" =~ github\.com[:/]([^/]+/[^/]+) ]]; then
+		target_repo="${BASH_REMATCH[1]%.git}"
+	fi
+	fetch_url=$(git remote get-url origin 2>/dev/null) || fetch_url=""
+	if [[ -n "$target_repo" && "$fetch_url" =~ github\.com[:/]([^/]+/[^/]+) ]] && [[ "${BASH_REMATCH[1]%.git}" == "$target_repo" ]]; then
+		public_head=$(git rev-parse --verify --quiet "refs/remotes/origin/${base_branch}^{commit}" 2>/dev/null) || public_head=""
+	fi
 	print_info "[privacy-guard] Scanning public diff before validators..."
-	hits=$(privacy_scan_public_diff "refs/remotes/origin/${base_branch}" HEAD "$entities_file") || scan_rc=$?
+	hits=$(privacy_scan_public_diff "refs/remotes/origin/${base_branch}" HEAD "$entities_file" "$public_head" "$target_repo") || scan_rc=$?
 	rm -f "$entities_file"
 	if [[ "$scan_rc" -eq 1 && -n "$hits" ]]; then
 		printf '\n[privacy-guard][BLOCK] Push to origin contains private references in public-repo content:\n\n%s\n\n' "$hits" >&2
@@ -110,8 +130,8 @@ _commit_and_pr_privacy_scan() {
 
 # Parse commit-and-pr arguments into caller-scoped variables.
 # Expects the caller to have declared: issue_number, commit_message, pr_title,
-# summary_what, summary_testing, summary_decisions, runtime_risk, testing_level,
-# completion_bookkeeping, bookkeeping_proof_pr, bookkeeping_task_id,
+# summary_what, summary_testing, summary_decisions, summary_regression,
+# runtime_risk, testing_level, completion_bookkeeping, bookkeeping_proof_pr, bookkeeping_task_id,
 # skip_rebase, extra_labels (array).
 # Returns 1 on unknown argument.
 _parse_commit_and_pr_args() {
@@ -123,7 +143,7 @@ _parse_commit_and_pr_args() {
 		arg="${args[$index]}"
 		pr_metadata_overrides="${pr_metadata_overrides:-} ${arg#--}"
 		case "$arg" in
-		--issue | --message | --title | --summary | --testing | --risk-level | --testing-level | --decisions | --label | --proof-pr | --task-id | --replace-pr | --replacement-reason | --base)
+		--issue | --message | --title | --summary | --testing | --risk-level | --testing-level | --decisions | --regression-evidence | --label | --proof-pr | --task-id | --replace-pr | --replacement-reason | --base)
 			if [[ $((index + 1)) -ge ${#args[@]} ]]; then
 				print_error "${arg} requires a value"
 				return 1
@@ -165,6 +185,7 @@ _parse_commit_and_pr_args() {
 			summary_decisions="$value"
 			index=$((index + 2))
 			;;
+		--regression-evidence) summary_regression="$value"; index=$((index + 2)) ;; # GH#39136
 		--label)
 			extra_labels+=("$value")
 			index=$((index + 2))
@@ -189,6 +210,7 @@ _parse_commit_and_pr_args() {
 			index=$((index + 1))
 			;;
 		--keep-issue-open) keep_issue_open=1; index=$((index + 1)) ;; # GH#36598
+		--ready) create_ready=1; index=$((index + 1)) ;;
 		--skip-hooks)
 			# Pass --no-verify to git push. Use for doc-only PRs when hooks
 			# have been manually verified clean. See GH#20138.
@@ -245,30 +267,74 @@ _resolve_remote_default_branch() {
 	return 1
 }
 
-# Stacked-PR base override set by `--base <branch>` (empty = remote default).
+# Stacked-PR base override set by `--base <branch>` (empty = repository PR base).
 FULL_LOOP_STACK_BASE=""
+# Repository PR base resolved once per commit-and-pr (GH#39167).
+FULL_LOOP_PR_BASE=""
+FULL_LOOP_PR_BASE_SOURCE=""
 
-# Resolve the branch a PR targets: the validated --base override when set,
-# otherwise the remote default branch.
+# Resolve the branch a PR targets: the validated --base override, then the
+# resolved repository PR base, then the remote default branch.
 _resolve_pr_base_branch() {
 	local remote_name="${1:-origin}"
 	if [[ -n "${FULL_LOOP_STACK_BASE:-}" ]]; then
 		printf '%s\n' "$FULL_LOOP_STACK_BASE"
 		return 0
 	fi
+	if [[ -n "${FULL_LOOP_PR_BASE:-}" ]]; then
+		printf '%s\n' "$FULL_LOOP_PR_BASE"
+		return 0
+	fi
 	_resolve_remote_default_branch "$remote_name"
 	return $?
 }
 
-# Validate a --base override: must exist on origin and differ from the
-# current branch. Sets FULL_LOOP_STACK_BASE on success; an empty value
-# resets it so the remote default branch is used.
-# Args: $1=base branch (may be empty) $2=current branch
+# Fetch origin/<branch> so rebase and diff checks can use it.
+_fetch_origin_branch() {
+	local branch="$1"
+	git fetch origin "+refs/heads/${branch}:refs/remotes/origin/${branch}" --quiet 2>/dev/null &&
+		git rev-parse --verify --quiet "refs/remotes/origin/${branch}" >/dev/null && return 0
+	return 1
+}
+
+# Resolve the repository PR base (pr_base_branch config, then the remote
+# default) via shared-pr-base.sh. Sets FULL_LOOP_PR_BASE{,_SOURCE}; empty when
+# the shared resolver is unavailable, so origin/HEAD stays the fallback.
+# Args: $1=repo slug
+_resolve_repo_pr_base() {
+	local repo_slug="$1"
+	FULL_LOOP_PR_BASE=""
+	FULL_LOOP_PR_BASE_SOURCE=""
+	declare -F aidevops_pr_base_resolve >/dev/null 2>&1 || return 0
+	local resolved="" top=""
+	top=$(git rev-parse --show-toplevel 2>/dev/null) || top=""
+	resolved=$(aidevops_pr_base_resolve "$repo_slug" "$top") || return 0
+	local branch="${resolved%% *}"
+	if ! _fetch_origin_branch "$branch"; then
+		print_error "PR base '${branch}' (source: ${resolved#* }) does not exist on origin; fix pr_base_branch or the remote default"
+		return 1
+	fi
+	FULL_LOOP_PR_BASE="$branch"
+	FULL_LOOP_PR_BASE_SOURCE="${resolved#* }"
+	return 0
+}
+
+# Resolve the PR base and validate a --base override: it must differ from the
+# current branch, exist on origin, and be either the repository PR base or the
+# head of an open PR (a real stacked parent). Workers fail closed; interactive
+# sessions may target another branch with a warning (explicit human intent).
+# Sets FULL_LOOP_STACK_BASE for a stacked parent, empty otherwise.
+# Args: $1=base branch (may be empty) $2=current branch $3=repo slug
 _validate_stack_base() {
 	local stack_base="$1"
 	local current_branch="$2"
+	local repo_slug="${3:-}"
 	FULL_LOOP_STACK_BASE=""
-	[[ -n "$stack_base" ]] || return 0
+	_resolve_repo_pr_base "$repo_slug" || return 1
+	if [[ -z "$stack_base" || "$stack_base" == "${FULL_LOOP_PR_BASE:-}" ]]; then
+		[[ -n "$FULL_LOOP_PR_BASE" ]] && print_info "PR base: ${FULL_LOOP_PR_BASE} (source: ${FULL_LOOP_PR_BASE_SOURCE})"
+		return 0
+	fi
 	if [[ "$stack_base" == "$current_branch" ]]; then
 		print_error "--base must name a branch other than the current branch (${current_branch})"
 		return 1
@@ -277,13 +343,26 @@ _validate_stack_base() {
 		print_error "--base '${stack_base}' is not a valid branch name"
 		return 1
 	fi
-	if ! git fetch origin "+refs/heads/${stack_base}:refs/remotes/origin/${stack_base}" --quiet 2>/dev/null ||
-		! git rev-parse --verify --quiet "refs/remotes/origin/${stack_base}" >/dev/null; then
+	if ! _fetch_origin_branch "$stack_base"; then
 		print_error "--base branch '${stack_base}' does not exist on origin; push the parent branch first"
 		return 1
 	fi
+	local parent_rc=0 headless=0
+	[[ "${HEADLESS:-false}" == "true" || "${FULL_LOOP_HEADLESS:-}" == "true" ]] && headless=1
+	if declare -F aidevops_pr_base_is_stacked_parent >/dev/null 2>&1 && [[ -n "$repo_slug" ]]; then
+		aidevops_pr_base_is_stacked_parent "$repo_slug" "$stack_base" || parent_rc=$?
+	fi
+	if [[ "$parent_rc" -ne 0 ]]; then
+		local why="is not the head of an open PR in ${repo_slug} (not a stacked parent)"
+		[[ "$parent_rc" -eq 2 ]] && why="could not be verified as an open parent PR head (lookup failed)"
+		if [[ "$headless" -eq 1 ]]; then
+			print_error "--base '${stack_base}' ${why} and is not the PR base '${FULL_LOOP_PR_BASE:-unknown}'; refusing worker PR (GH#39167)"
+			return 1
+		fi
+		print_warning "--base '${stack_base}' ${why}; PR base is '${FULL_LOOP_PR_BASE:-unknown}'. Proceeding on explicit interactive intent."
+	fi
 	FULL_LOOP_STACK_BASE="$stack_base"
-	print_info "Stacked PR: base is origin/${stack_base} (--base)"
+	print_info "Stacked PR: base is origin/${stack_base} (--base; PR base ${FULL_LOOP_PR_BASE:-unresolved})"
 	return 0
 }
 
@@ -1042,7 +1121,8 @@ _summary_declares_partial_self() {
 # Build the PR body string and print it to stdout.
 # Arguments: issue_number, summary_what, summary_testing, files_changed,
 #            sig_footer, closing_keyword (default: Resolves), requested_risk,
-#            requested_testing_level, base_ref (resolved merge base)
+#            requested_testing_level, base_ref (resolved merge base),
+#            replacement_note, decisions, regression_evidence
 _build_pr_body() {
 	local issue_number="$1" summary_what="$2" summary_testing="$3"
 	local files_changed="$4" sig_footer="$5"
@@ -1052,6 +1132,7 @@ _build_pr_body() {
 	local base_ref="${9:-}"
 	local replacement_note="${10:-}"
 	local decisions="${11:-}"
+	local regression_evidence="${12:-}"
 	local runtime_risk=""
 	local testing_level=""
 	local related="" related_numbers=" "
@@ -1061,7 +1142,7 @@ _build_pr_body() {
 	# GH#36864: prose must not introduce a second explicit work identity.
 	# Keep the dispatched declaration below authoritative, even when summaries
 	# contain same-line, multiline or prose-prefixed child/umbrella references.
-	for field in summary_what summary_testing replacement_note decisions; do
+	for field in summary_what summary_testing replacement_note decisions regression_evidence; do
 		text="${!field}"
 		while [[ "$text" =~ $reference_pattern ]]; do
 			reference="${BASH_REMATCH[0]}"
@@ -1104,13 +1185,49 @@ ${decisions}
 - **Risk level:** ${runtime_risk}
 - **Verification:** ${testing_level} — ${summary_testing:-no additional evidence supplied}
 
-${closing_keyword} #${issue_number}
+${regression_evidence:+## Regression Evidence
+
+${regression_evidence}
+
+}${closing_keyword} #${issue_number}
 
 ${related:+## Related
 
 ${related}
 }
 ${sig_footer}"
+	return 0
+}
+
+# GH#39136: run the repository's own Platform Fix Regression Evidence gate on
+# the final title, body and diff before any push, so a platform-fix PR is not
+# published only to fail CI (a rerun replays the old body; only an edit passes).
+# Applies only where the repository's CI enforces it; uses its checked-in script.
+# Arguments: pr_title, pr_body, comparison_base
+_commit_and_pr_platform_evidence_gate() {
+	local pr_title="$1" pr_body="$2" comparison_base="$3"
+	local repo_root="" gate="" temp_root="" body_file="" files_file="" rc=0
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+	gate="${repo_root}/.agents/scripts/platform-fix-regression-evidence.sh"
+	[[ -f "${repo_root}/.github/workflows/platform-fix-regression-evidence.yml" && -f "$gate" ]] || return 0
+	temp_root="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}"
+	mkdir -p "$temp_root" || return 1
+	body_file=$(mktemp "${temp_root}/aidevops-platform-evidence-body.XXXXXX") || return 1
+	files_file=$(mktemp "${temp_root}/aidevops-platform-evidence-files.XXXXXX") || {
+		rm -f "$body_file"
+		return 1
+	}
+	printf '%s\n' "$pr_body" >"$body_file"
+	if git diff --name-only "$comparison_base" HEAD >"$files_file"; then
+		bash "$gate" --title "$pr_title" --body-file "$body_file" --files-file "$files_file" >&2 || rc=$?
+	else
+		rc=1
+	fi
+	rm -f "$body_file" "$files_file"
+	if [[ "$rc" -ne 0 ]]; then
+		print_error "Platform Fix Regression Evidence would fail in CI; add a repository test or pass --regression-evidence \"<why automated regression is not possible, plus the manual evidence>\". Nothing was pushed."
+		return 1
+	fi
 	return 0
 }
 
@@ -1425,6 +1542,34 @@ _reconcile_pr_origin_label() {
 # GH#26045: After extracting the PR number, verify/re-apply the current session
 # origin label via set_origin_label so recovered partial-success PRs cannot remain
 # unlabeled and unroutable by pulse CI/review repair workers.
+# Align a continued PR with the intended base: an explicit --base always wins;
+# otherwise a PR on a branch that is neither the PR base nor an open parent
+# PR head moves to the resolved PR base (GH#39167). A stacked continuation
+# without --base keeps its parent base.
+# Args: $1=pr_number $2=repo slug
+_retarget_continuation_pr_base() {
+	local pr_number="$1"
+	local repo="$2"
+	local target="${FULL_LOOP_STACK_BASE:-${FULL_LOOP_PR_BASE:-}}"
+	[[ -n "$target" ]] || return 0
+	local current_base="" pr_endpoint="repos/${repo}/pulls/${pr_number}"
+	current_base=$(_gh_with_timeout read gh api "$pr_endpoint" --jq '.base.ref') || return 1
+	[[ "$current_base" == "$target" ]] && return 0
+	if [[ -z "${FULL_LOOP_STACK_BASE:-}" ]]; then
+		local parent_rc=2
+		declare -F aidevops_pr_base_is_stacked_parent >/dev/null 2>&1 && parent_rc=0 &&
+			{ aidevops_pr_base_is_stacked_parent "$repo" "$current_base" || parent_rc=$?; }
+		[[ "$parent_rc" -eq 1 ]] || return 0
+	fi
+	print_info "Retargeting PR #${pr_number} base: ${current_base} -> ${target}"
+	gh api "$pr_endpoint" --method PATCH \
+		--raw-field "base=${target}" >/dev/null || {
+		print_error "Failed to retarget PR #${pr_number} to base ${target}"
+		return 1
+	}
+	return 0
+}
+
 _create_or_continue_pr() {
 	local continuation_pr="$1"
 	local repo="$2"
@@ -1436,23 +1581,58 @@ _create_or_continue_pr() {
 		print_info "Continuing existing issue-linked PR #${continuation_pr} at the final creation boundary"
 		_reconcile_pr_origin_label "$continuation_pr" "$repo" "${origin_label#origin:}" || return 1
 		_reconcile_recovered_pr_metadata "$continuation_pr" "$repo" "$pr_title" "$pr_body" || return 1
-		if [[ -n "${FULL_LOOP_STACK_BASE:-}" ]]; then
-			local current_base=""
-			current_base=$(_gh_with_timeout read gh api "repos/${repo}/pulls/${continuation_pr}" --jq '.base.ref') || return 1
-			if [[ "$current_base" != "$FULL_LOOP_STACK_BASE" ]]; then
-				print_info "Retargeting PR #${continuation_pr} base: ${current_base} -> ${FULL_LOOP_STACK_BASE}"
-				gh api "repos/${repo}/pulls/${continuation_pr}" --method PATCH \
-					--raw-field "base=${FULL_LOOP_STACK_BASE}" >/dev/null || {
-					print_error "Failed to retarget PR #${continuation_pr} to base ${FULL_LOOP_STACK_BASE}"
-					return 1
-				}
-			fi
-		fi
+		_retarget_continuation_pr_base "$continuation_pr" "$repo" || return 1
 		printf '%s\n' "$continuation_pr"
 		return 0
 	fi
 	_create_pr "$repo" "$pr_title" "$pr_body" "$origin_label" "$@"
 	return $?
+}
+
+# GH#39167: print the explicit base for PR creation and log its source; gh's
+# implicit default ignored pr_base_branch and silently targeted the default.
+# Returns 1 (no --base) only when no base resolves at all.
+_explicit_pr_create_base() {
+	local pr_base=""
+	pr_base=$(_resolve_pr_base_branch origin) || return 1
+	[[ -n "$pr_base" ]] || return 1
+	local pr_base_source="${FULL_LOOP_PR_BASE_SOURCE:-origin-head}"
+	[[ -n "${FULL_LOOP_STACK_BASE:-}" ]] && pr_base_source="--base stacked parent"
+	print_info "PR base: ${pr_base} (source: ${pr_base_source})"
+	printf '%s\n' "$pr_base"
+	return 0
+}
+
+# GH#39210: run the PR create command; --ready scopes AIDEVOPS_PR_CREATE_READY=1
+# to this single call (never exported).
+_run_pr_create_cmd() {
+	local ready="$1"
+	shift
+	if [[ "$ready" -eq 1 ]]; then
+		AIDEVOPS_PR_CREATE_READY=1 "$@"
+		return $?
+	fi
+	"$@"
+	return $?
+}
+
+# Verify the final pushed head (post commit/rebase/push) before opening
+# non-draft; on mismatch or lookup failure keep the draft default.
+# Args: $1=requested ready (0|1) $2=head branch. Prints effective ready (0|1).
+_effective_pr_ready() {
+	local ready="$1"
+	local head_branch="$2"
+	if [[ "$ready" -eq 1 && -n "$head_branch" ]]; then
+		local local_head="" remote_head=""
+		local_head=$(git rev-parse HEAD 2>/dev/null || true)
+		remote_head=$(git ls-remote --heads origin "refs/heads/${head_branch}" 2>/dev/null | cut -f1 | sed -n 1p || true)
+		if [[ -z "$local_head" || "$local_head" != "$remote_head" ]]; then
+			print_warning "Pushed head does not match local HEAD; creating PR as draft" >&2
+			ready=0
+		fi
+	fi
+	printf '%s\n' "$ready"
+	return 0
 }
 
 _create_pr() {
@@ -1463,15 +1643,9 @@ _create_pr() {
 
 	print_info "Creating PR..."
 	local pr_url="" pr_error="" rc=0
-	# t2115/t3088: gh_create_pr auto-appends origin label and signature footer.
-	# Previously we passed --label "$origin_label" here too, with the comment
-	# "GitHub deduplicates". That claim is FALSE for non-identical labels: when
-	# this caller's $origin_label disagreed with gh_create_pr's session-detected
-	# label (env-var divergence — see full-loop-helper.sh t3088 fix), GitHub
-	# applied BOTH labels, producing the t2200 mutual-exclusion violation.
-	# Canonical failure: PR #21825. Origin label is now injected at creation by
-	# gh_create_pr, via session_origin_label(), then reconciled below after the
-	# PR number is known to cover partial-success recovery gaps (GH#26045).
+	# t2115/t3088: gh_create_pr injects the origin label and signature footer;
+	# passing --label "$origin_label" too applied both labels (t2200, PR #21825).
+	# The label is reconciled below once the PR number is known (GH#26045).
 	# GH#33381: pass the exact pushed head instead of letting gh infer it from
 	# ambient checkout state (wrong after a replacement branch, or in linked
 	# worktrees backed by a bare common directory).
@@ -1492,7 +1666,8 @@ _create_pr() {
 	fi
 	local -a pr_cmd=(gh_create_pr --repo "$repo" --title "$pr_title" --body-file "$body_file")
 	[[ -n "$head_branch" ]] && pr_cmd+=(--head "$(_pr_head_ref_for_repo "$repo" "$head_branch")")
-	[[ -n "${FULL_LOOP_STACK_BASE:-}" ]] && pr_cmd+=(--base "$FULL_LOOP_STACK_BASE")
+	local pr_base=""
+	pr_base=$(_explicit_pr_create_base) && pr_cmd+=(--base "$pr_base")
 	for lbl in "${extra_labels[@]+"${extra_labels[@]}"}"; do
 		pr_cmd+=(--label "$lbl")
 	done
@@ -1501,7 +1676,7 @@ _create_pr() {
 		rm -f "$body_file"
 		return 1
 	}
-	pr_url=$("${pr_cmd[@]}" 2>"$pr_error") || rc=$?
+	pr_url=$(_run_pr_create_cmd "$(_effective_pr_ready "${create_ready:-0}" "$head_branch")" "${pr_cmd[@]}" 2>"$pr_error") || rc=$?
 	rm -f "$body_file"
 
 	if [[ $rc -ne 0 ]]; then
@@ -1607,7 +1782,8 @@ def insert_section(body, text):
     position = footer.start() if footer else len(body)
     return body[:position].rstrip('\n') + '\n\n' + text.rstrip('\n') + '\n\n' + body[position:]
 
-for name, flag in [('Files Changed', None), ('Summary', 'summary'), ('Decisions', 'decisions')]:
+for name, flag in [('Files Changed', None), ('Summary', 'summary'), ('Decisions', 'decisions'),
+                   ('Regression Evidence', 'regression-evidence')]:
     old, new = section(current, name), section(generated, name)
     if old and not new and flag in overrides:
         current = current[:old.start()] + current[old.end():]

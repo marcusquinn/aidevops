@@ -20,21 +20,31 @@ def is_contention(error):
         "database is locked", "database table is locked", "database schema is locked")
 
 
-def owner_state(database, source_path):
+def owner_states(database, source_paths):
+    """Return one state per path, in order, from one read-only connection.
+
+    Any connection or query failure applies to every path: partial evidence
+    never reports a path clear.
+    """
     path = Path(database)
     try:
         if not path.is_file() or path.is_symlink():
-            return "unavailable"
+            return ["unavailable"] * len(source_paths)
         with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro",
                                      uri=True, timeout=3)) as db:
-            row = db.execute("SELECT COUNT(*) FROM worktree_owners WHERE worktree_path = ?",
-                             (source_path,)).fetchone()
-        return "active" if row[0] else "clear"
+            rows = [db.execute("SELECT COUNT(*) FROM worktree_owners WHERE worktree_path = ?",
+                               (source_path,)).fetchone() for source_path in source_paths]
+        return ["active" if row[0] else "clear" for row in rows]
     except sqlite3.Error as error:
-        return "busy" if is_contention(error) else "unavailable"
+        return ["busy" if is_contention(error) else "unavailable"] * len(source_paths)
     except (OSError, ValueError):
-        return "unavailable"
+        return ["unavailable"] * len(source_paths)
+
+
+def owner_state(database, source_path):
+    return owner_states(database, [source_path])[0]
 
 
 if __name__ == "__main__":
-    print(owner_state(sys.argv[1], sys.argv[2]) if len(sys.argv) == 3 else "unavailable")
+    # One spawn answers every guard path (#38918); output is one line per path.
+    print("\n".join(owner_states(sys.argv[1], sys.argv[2:])) if len(sys.argv) >= 3 else "unavailable")

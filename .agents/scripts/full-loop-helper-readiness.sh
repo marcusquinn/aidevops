@@ -31,6 +31,13 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	SCRIPT_DIR="$_FULL_LOOP_COMMIT_DIR"
 fi
 
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/shared-approval-cli.sh"
+fi
+
 # shellcheck source=./review-thread-gate-lib.sh
 source "${_FULL_LOOP_COMMIT_DIR}/review-thread-gate-lib.sh"
 
@@ -458,6 +465,62 @@ _full_loop_accept_rbg_override() {
 	return 0
 }
 
+#######################################
+# Pulse parity (GH#27137, GH#39227): after required checks pass, a terminal
+# non-required failure that the pulse classifiers do not treat as advisory
+# (infrastructure, Qlty companions, provider quota, configured advisories)
+# blocks the merge. Pending non-required checks never block. Snapshot read
+# failures defer the merge; they are neither a pass nor a CI failure.
+# Args: $1=pr_number, $2=repo, $3=verified head, $4=required checks JSON
+# Returns: 0=acceptable, 1=blocked or deferred
+#######################################
+_full_loop_enforce_nonrequired_check_gate() {
+	local pr_number="$1" repo="$2" verified_head="$3" required_checks="$4"
+	local required_contexts="" checks_json="" snapshot_rc=0 kind="" failure_names=""
+
+	# Trusted local verification has no Actions checks; an accepted review-bot-gate
+	# override is itself a failing required context the classifiers would reject.
+	case "${FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE:-}" in
+	trusted-local-verification | review-bot-gate-maintainer-override) return 0 ;;
+	esac
+	declare -F _pmrc_snapshot_checks_acceptable >/dev/null 2>&1 || return 0
+	# The pulse classifiers append diagnostics to LOGFILE; blocking names are
+	# reported below, so discard them unless the caller configured a log.
+	: "${LOGFILE:=/dev/null}"
+	required_contexts=$(printf '%s' "$required_checks" | jq -r '.[]?.name // empty' 2>/dev/null) || required_contexts=""
+
+	checks_json=$(_pmrc_snapshot_checks_with_retry "$repo" "$verified_head" 2>/dev/null) || snapshot_rc=$?
+	if [[ "$snapshot_rc" -ne 0 ]]; then
+		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="$_FULL_LOOP_ERROR_READ_DEFERRED"
+		FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="$_FULL_LOOP_RETRY_DETAIL"
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="$_FULL_LOOP_ERROR_READ_DEFERRED"
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="non-required check snapshot read exit ${snapshot_rc}; preserve the PR and retry"
+		_full_loop_record_check_read_failure "$pr_number" "$verified_head"
+		return 1
+	fi
+	if _pmrc_snapshot_checks_acceptable "$repo" "$pr_number" "$checks_json" "$required_contexts" "" "$verified_head" >&2; then
+		return 0
+	fi
+	kind="${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:-}"
+	case "$kind" in
+	"$PMRC_BLOCKER_CHECKS_ACTIVE") return 0 ;; # only pending non-required checks
+	"$PMRC_BLOCKER_CHECKS_FAILED") ;;
+	*)
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="nonrequired-snapshot-unavailable"
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="non-required check classification unavailable (${kind:-unknown})"
+		_full_loop_record_check_read_failure "$pr_number" "$verified_head"
+		return 1
+		;;
+	esac
+	FULL_LOOP_PR_CHECK_STATUS="$_FULL_LOOP_CHECK_TERMINAL_FAILURE"
+	FULL_LOOP_PR_FAILURE_EVIDENCE="${_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON:-[]}"
+	export FULL_LOOP_PR_CHECK_STATUS FULL_LOOP_PR_FAILURE_EVIDENCE
+	failure_names=$(printf '%s' "$FULL_LOOP_PR_FAILURE_EVIDENCE" | jq -r 'map(.name) | join(",")' 2>/dev/null) || failure_names=""
+	_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$verified_head" "${failure_names:-nonrequired-check-failure}" || true
+	print_error "PR #${pr_number} has terminal non-required check failures at the current head: ${failure_names:-unclassified} (GH#27137 parity)"
+	return 1
+}
+
 _full_loop_verify_pr_readiness() {
 	local pr_number="$1"
 	local repo="$2"
@@ -528,6 +591,7 @@ _full_loop_verify_pr_readiness() {
 		fi
 		return 1
 	fi
+	_full_loop_enforce_nonrequired_check_gate "$pr_number" "$repo" "$verified_head" "$required_checks" || return 1
 	FULL_LOOP_PR_CHECK_STATUS="terminal-success"
 	export FULL_LOOP_PR_CHECK_STATUS
 	local local_branch=""
@@ -560,15 +624,17 @@ _full_loop_verify_pr_readiness() {
 _full_loop_enforce_review_thread_gate() {
 	local pr_number="$1"
 	local repo="$2"
-	local thread_count="" thread_msg=""
+	local thread_count="" thread_msg="" thread_hint=""
 	if ! thread_count=$(review_thread_gate_unresolved_bot_count "$repo" "$pr_number"); then
 		thread_msg="Merge blocked: unable to verify review-bot threads for PR #${pr_number} (GH#27137)"
 	elif [[ "$thread_count" -gt 0 ]]; then
 		thread_msg="Merge blocked: ${thread_count} unresolved review-bot thread(s) (GH#27137) on PR #${pr_number}; resolve or classify them first"
+		thread_hint="pr-review-thread-response-scanner.sh scan-pr ${repo} ${pr_number} (thread_id:url pairs in column 3); after reading and verifying each finding: pr-review-thread-response-scanner.sh reply ${repo} <thread_id> <body_file>, then pr-review-thread-response-scanner.sh resolve ${repo} <thread_id>"
 	fi
 	if [[ -n "$thread_msg" ]]; then
 		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="$_FULL_LOOP_BLOCKER_REVIEW_BOT"
 		print_error "$thread_msg"
+		[[ -z "$thread_hint" ]] || print_info "Review threads: ${thread_hint}" >&2
 		return 1
 	fi
 	return 0
@@ -694,7 +760,7 @@ _full_loop_report_external_authority_preflight() {
 		FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="${approval_targets}"
 		print_error "External/fork PR #${pr_number} has missing cryptographic development authority"
 		print_info "After finalizing all approval-bound PR metadata, run this one command:"
-		printf 'sudo aidevops approve batch %s %s\n' "$approval_targets" "$repo"
+		printf '%s approve batch %s %s\n' "$(approval_cli_prefix)" "$approval_targets" "$repo"
 		return 1
 	fi
 

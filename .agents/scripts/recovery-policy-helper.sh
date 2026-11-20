@@ -95,7 +95,7 @@ try:
 except ValueError as exc:
     sys.exit(f"policy: invalid JSON: {exc}")
 actions = policy.get("actions") if isinstance(policy, dict) else None
-allowed = {"outlier_hold", "session_cap_split", "brief_authority"}
+allowed = {"outlier_hold", "session_cap_split", "brief_authority", "scope_acceptance"}
 if not isinstance(actions, dict) or not actions.keys() <= allowed:
     sys.exit("policy: unknown action or invalid actions object")
 def text(value):
@@ -123,6 +123,12 @@ for name, action in actions.items():
             type(action.get("session_budget")) is int and action["session_budget"] > 0 and
             text(action.get("split_pattern"))):
         sys.exit("policy: session_cap_split requires positive session_budget and split_pattern")
+    # t19120: closing a phase needs the repo to name its own never-accept
+    # boundary; framework exclusions apply on top of it.
+    excluded = action.get("excluded_asks")
+    if name == "scope_acceptance" and not (
+            isinstance(excluded, list) and excluded and all(text(e) for e in excluded)):
+        sys.exit("policy: scope_acceptance requires non-empty excluded_asks")
 print(json.dumps(dict(repo=repo, revision=revision, path=path, heading=heading, actions=actions)))
 ' "$repo" "$revision" "$path" "$heading" || return 1
 	return 0

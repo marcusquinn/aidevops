@@ -64,6 +64,10 @@ exit 0
 STUB
 chmod +x "${TEST_ROOT}/bin/gh"
 export PATH="${TEST_ROOT}/bin:${PATH}"
+# Keep the PR approval guard offline: a non-verified result lets the comment proceed.
+printf '#!/usr/bin/env bash\nexit 1\n' >"${TEST_ROOT}/bin/approval-helper-stub"
+chmod +x "${TEST_ROOT}/bin/approval-helper-stub"
+export AIDEVOPS_APPROVAL_HELPER="${TEST_ROOT}/bin/approval-helper-stub"
 
 check_help() {
 	: >"$GH_CALLS_FILE"

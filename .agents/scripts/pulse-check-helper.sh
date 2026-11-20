@@ -31,7 +31,14 @@ COMMAND="report"
 WINDOW="15m"
 SINCE="24h"
 RECENT_SINCE="1h"
-REPORT_BUDGET_SECONDS="${PULSE_CHECK_REPORT_BUDGET_SECONDS:-45}"
+# GH#39206: empty means "resolve from mode" after argument parsing. Interactive
+# report/json stay fast; the daily apply routine (r915, ~5m) needs room for the
+# 24h worker history and a full repos.json queue scan on a loaded host.
+REPORT_BUDGET_SECONDS="${PULSE_CHECK_REPORT_BUDGET_SECONDS:-}"
+COMPONENT_BUDGET_SECONDS="${PULSE_CHECK_COMPONENT_BUDGET_SECONDS:-}"
+QUEUE_BUDGET_SECONDS="${PULSE_CHECK_QUEUE_BUDGET_SECONDS:-}"
+INTERACTIVE_BUDGETS="45 10 20"
+APPLY_BUDGETS="300 60 210"
 VERIFY_DELIVERY=0
 APPLY_REPO="${PULSE_CHECK_APPLY_REPO:-}"
 JSON_OUTPUT=0
@@ -54,7 +61,7 @@ Options:
   --window <15m|30m|1h>       Current-state window (default: ${WINDOW})
   --since <1h|6h|24h|48h|7d> Historical worker summary window (default: ${SINCE})
   --recent <1h|6h|24h>       Recent worker outcome window (default: ${RECENT_SINCE})
-  --budget <seconds>         Collection deadline; missing evidence stays unknown (default: ${REPORT_BUDGET_SECONDS})
+  --budget <seconds>         Collection deadline; missing evidence stays unknown (default: 45; apply: 300)
   --verify-delivery          Also verify GitHub delivery counts within the collection deadline
   --repo <owner/repo>        Repo for --apply self-improvement issues
   --max-issues <N>           Per-repo auto-dispatch issue scan limit (default: ${MAX_ISSUES_PER_REPO})
@@ -109,7 +116,15 @@ _validate_numeric_options() {
 	[[ "$NMR_INACTIVE_MINUTES" =~ ^[0-9]+$ ]] || NMR_INACTIVE_MINUTES=10080
 	[[ "$FAILURE_FAMILY_THRESHOLD" =~ ^[0-9]+$ ]] || FAILURE_FAMILY_THRESHOLD=3
 	[[ "$FAILURE_FAMILY_RECOVERY_SECONDS" =~ ^[0-9]+$ ]] || FAILURE_FAMILY_RECOVERY_SECONDS=86400
-	[[ "$REPORT_BUDGET_SECONDS" =~ ^[1-9][0-9]*$ ]] || REPORT_BUDGET_SECONDS=45
+	local budget_defaults="$INTERACTIVE_BUDGETS"
+	if [[ "$APPLY_MODE" -eq 1 ]]; then
+		budget_defaults="$APPLY_BUDGETS"
+	fi
+	local default_total="" default_component="" default_queue=""
+	read -r default_total default_component default_queue <<<"$budget_defaults"
+	[[ "$REPORT_BUDGET_SECONDS" =~ ^[1-9][0-9]*$ ]] || REPORT_BUDGET_SECONDS="$default_total"
+	[[ "$COMPONENT_BUDGET_SECONDS" =~ ^[1-9][0-9]*$ ]] || COMPONENT_BUDGET_SECONDS="$default_component"
+	[[ "$QUEUE_BUDGET_SECONDS" =~ ^[1-9][0-9]*$ ]] || QUEUE_BUDGET_SECONDS="$default_queue"
 	return 0
 }
 
@@ -120,7 +135,7 @@ _run_json_helper() {
 	local output=""
 	local rc=0 started="$SECONDS" state="ok"
 	local remaining=$((_PULSE_CHECK_REPORT_DEADLINE - SECONDS))
-	local component_budget="${_PULSE_CHECK_COMPONENT_BUDGET:-10}"
+	local component_budget="${_PULSE_CHECK_COMPONENT_BUDGET:-${COMPONENT_BUDGET_SECONDS:-10}}"
 	if [[ "$remaining" -le 0 ]]; then
 		state="deadline_exhausted"
 	else
@@ -149,7 +164,7 @@ _scan_auto_dispatch_queue() {
 	fi
 
 	local remaining=$((_PULSE_CHECK_REPORT_DEADLINE - SECONDS))
-	local queue_budget="${PULSE_CHECK_QUEUE_BUDGET_SECONDS:-20}"
+	local queue_budget="${QUEUE_BUDGET_SECONDS:-20}"
 	[[ "$queue_budget" =~ ^[1-9][0-9]*$ ]] || queue_budget=20
 	if [[ "$remaining" -le 2 ]]; then
 		queue_budget=1
@@ -238,9 +253,14 @@ _collect_report_json() {
 		--argjson api "$api_budget" \
 		--argjson queue "$queue" \
 		--argjson delivery "$delivery" \
+		--arg approve_cli "$(approval_cli_prefix)" \
 		-f "$REPORT_FILTER" |
-		jq --argjson underfill "$underfill" --argjson detector "$detector_status" '
-			.current_state.underfill_attribution = $underfill
+		jq --argjson underfill "$underfill" --argjson detector "$detector_status" \
+			--argjson budget_total "$REPORT_BUDGET_SECONDS" \
+			--argjson budget_component "$COMPONENT_BUDGET_SECONDS" \
+			--argjson budget_queue "$QUEUE_BUDGET_SECONDS" '
+			.inputs.collection_budget_seconds = {total: $budget_total, component: $budget_component, queue: $budget_queue}
+			| .current_state.underfill_attribution = $underfill
 			| .current_state.fix_the_fixer_detector = $detector
 			| if ($detector.processed // 0) > 0 and $detector.classified == 0 and ($detector.skipped_auth // 0) > 0 then
 				.findings += [{id:"fix-the-fixer-detector-auth-degraded", severity:"high", autofile:false,

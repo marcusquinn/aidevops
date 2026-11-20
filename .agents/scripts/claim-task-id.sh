@@ -1410,6 +1410,29 @@ _main_create_issues() {
 	return 0
 }
 
+# t19157: an interactive OpenCode session watches the issues it files, so a
+# worker on any runner picking them up, blocking or finishing reaches it over
+# the session bus (reference/session-bus.md "Issue watches"). Best effort: 5 s
+# per watch, silent; the bus CLI refuses headless and presence-less sessions.
+_main_watch_created_issues() {
+	local platform="$1"
+	local issue_nums_csv="$2"
+	local slug="" helper="${AIDEVOPS_SESSION_BUS_HELPER:-${SCRIPT_DIR}/session-bus-helper.sh}" num
+	case "$platform" in
+	github) ;;
+	*) return 0 ;;
+	esac
+	[[ -n "${AIDEVOPS_OPENCODE_SESSION_ID:-${OPENCODE_SESSION_ID:-}}" && -x "$helper" ]] || return 0
+	slug="${CLAIM_VERIFIED_TARGET:-$(_extract_github_slug "$REPO_PATH" "$REMOTE_NAME" 2>/dev/null || true)}"
+	[[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 0
+	local IFS=','
+	for num in $issue_nums_csv; do
+		[[ "$num" =~ ^[0-9]+$ ]] || continue
+		timeout_sec 5 "$helper" watch-issue "${slug}#${num}" --new >/dev/null 2>&1 || true
+	done
+	return 0
+}
+
 # Emit machine-readable output lines to stdout.
 _main_output_results() {
 	local first_id="$1"
@@ -2124,6 +2147,7 @@ main() {
 			_issue_nums_csv) _issue_nums_csv="$issue_value" ;;
 			esac
 		done <<<"$issue_output"
+		_main_watch_created_issues "$platform" "$_issue_nums_csv"
 	fi
 
 	# --- Output machine-readable results ---

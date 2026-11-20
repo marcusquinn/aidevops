@@ -67,6 +67,13 @@ if [[ -z "${_SHARED_PHASE_FILING_LOADED:-}" ]]; then
 	source "$(dirname "${BASH_SOURCE[0]}")/shared-phase-filing.sh" 2>/dev/null || true
 fi
 
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/shared-approval-cli.sh"
+fi
+
 # t2776: module-level label constant shared by reconcile functions and the
 # single-pass to keep the string literal count below the ratchet threshold.
 [[ -n "${_PIR_PT_LABEL+x}" ]] || _PIR_PT_LABEL="parent-task"
@@ -1057,6 +1064,9 @@ normalize_active_issue_assignments() {
 	# label, no assignee).
 	# Pass 2 (unassign_stale): reset stale assignments (active label, assignee
 	# present, no running worker).
+	# Pass 2c (unassign_available_stale, GH#39327): release stale assignees from
+	# open status:available + auto-dispatch issues (prior-lifecycle assignees
+	# after a reopen, or is-assigned stale recovery); capped per cycle.
 	# Pass 2b (unassign_stampless_interactive, t2148): recover aged stampless origin:interactive claims.
 	# Closes the leak where `claim-task-id.sh` auto-assigns on creation
 	# (per t1970) but the interactive session never runs the formal
@@ -1104,6 +1114,9 @@ normalize_active_issue_assignments() {
 			_normalize_stale_close_pending_checkpoint_leases
 			_normalize_deferred_claim_releases
 			_normalize_unassign_stale "$runner_user" "$repos_json" "$now_epoch" "$cross_runner_max_runtime"
+			;;
+		unassign_available_stale)
+			_normalize_unassign_available_stale "$runner_user" "$repos_json" "$now_epoch" "$dedup_helper"
 			;;
 		unassign_stampless_interactive)
 			_normalize_unassign_stampless_interactive "$runner_user" "$repos_json" "$now_epoch" "$stampless_age_threshold"
@@ -1240,7 +1253,7 @@ Thanks for filing this issue. Because it was created by a contributor outside th
 
 **What happens next:** a maintainer will triage this issue and either
 
-- approve it cryptographically with \`sudo aidevops approve issue <N> <owner/repo>\` (which clears \`needs-maintainer-review\`), after which the pulse may dispatch a worker, OR
+- approve it cryptographically with \`$(approval_cli_prefix) approve issue <N> <owner/repo>\` (which clears \`needs-maintainer-review\`), after which the pulse may dispatch a worker, OR
 - claim a fresh internal task ID via \`claim-task-id.sh\` and file a maintainer-authored follow-up that credits you as reporter.
 
 **Why this gate exists:** the aidevops pulse auto-dispatches workers on issues that carry maintainer-trust labels. For issues from contributors outside the maintainer team, a human in the loop catches injection attempts, scope/trust mismatches, and speculative work the pulse shouldn't burn a worker on. This is a soft gate, not a rejection — the content of the issue has not been judged.
@@ -1393,7 +1406,7 @@ Thanks for filing this issue. Because it was created by a contributor outside th
 
 **What happens next:** a maintainer will triage this issue and either
 
-- approve it cryptographically with \`sudo aidevops approve issue ${issue_num} ${slug}\` (which clears \`needs-maintainer-review\`), after which the pulse may dispatch a worker, OR
+- approve it cryptographically with \`$(approval_cli_prefix) approve issue ${issue_num} ${slug}\` (which clears \`needs-maintainer-review\`), after which the pulse may dispatch a worker, OR
 - claim a fresh internal task ID via \`claim-task-id.sh\` and file a maintainer-authored follow-up that credits you as reporter.
 
 **Why this gate exists:** the aidevops pulse auto-dispatches workers on issues that carry maintainer-trust labels. For issues from contributors outside the maintainer team, a human in the loop catches injection attempts, scope/trust mismatches, and speculative work the pulse shouldn't burn a worker on. This is a soft gate, not a rejection — the content of the issue has not been judged.

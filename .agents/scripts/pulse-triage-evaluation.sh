@@ -1227,7 +1227,7 @@ _consolidation_filter_substantive_comments() {
 			+ "|<!-- MERGE_SUMMARY -->"
 			+ "|^Closing:"
 			+ "|^Worker failed: orphan worktree"
-			+ "|sudo aidevops approve"
+			+ "|sudo (?:~/|/)?(?:[A-Za-z0-9._+-]+/)*aidevops approve"
 			+ "|^_Automated by"
 			+ "|^<!-- aidevops:brief-(hold|scope-normalized)"
 			+ "|^Brief (repaired|scope normalized):"

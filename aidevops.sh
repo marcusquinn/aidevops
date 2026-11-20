@@ -5,7 +5,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 3.39.232
+# Version: 3.39.246
 
 set -euo pipefail
 
@@ -1451,11 +1451,9 @@ _cmd_security() {
 		_dispatch_helper "security-fix-helper.sh" "security-fix-helper.sh" || return $?
 		;;
 	dismiss)
-		if [[ "${2:-}" == "tanstack-minishaihulud-2026-05" ]]; then
-			_dispatch_helper "supply-chain-advisory-helper.sh" "supply-chain-advisory-helper.sh" dismiss
-		else
-			_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "$@"
-		fi
+		# Every advisory, including supply-chain ones, is dismissed by its exact
+		# ID through the generic path; never hardcode an ID-to-helper mapping (GH#39350).
+		_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "$@"
 		;;
 	hygiene)
 		shift
@@ -1687,12 +1685,13 @@ _main_dispatch_sync() {
 	return $?
 }
 
-# OpenCode database, desktop, sandbox and session-bus commands.
+# OpenCode database, desktop, sandbox, runtime-switch and session-bus commands.
 _main_dispatch_opencode_tools() {
 	local command="$1"
 	shift
 	case "$command" in
 	opencode-db | oc-db) _dispatch_helper "opencode-db-maintenance-helper.sh" "opencode-db-maintenance-helper.sh" "$@" ;;
+	opencode-runtime | oc-runtime) _dispatch_helper "opencode-runtime-switch-helper.sh" "opencode-runtime-switch-helper.sh" "$@" ;;
 	opencode-desktop | oc-desktop) _dispatch_helper "opencode-launcher-helper.sh" "opencode-launcher-helper.sh" desktop "$@" ;;
 	opencode-sandbox | oc-sandbox) _dispatch_helper "opencode-sandbox-helper.sh" "opencode-sandbox-helper.sh" "$@" ;;
 	sessions | session-bus) _dispatch_helper "session-bus-helper.sh" "session-bus-helper.sh" "$@" ;;
@@ -1745,7 +1744,7 @@ _main_dispatch() {
 	cleanup) _main_dispatch_cleanup "$@" ;;
 	client-format) _cmd_client_format "$@" ;;
 	github-app-auth | github-app | gh-auth) _dispatch_helper "github-app-auth-helper.sh" "github-app-auth-helper.sh" "$@" ;;
-	opencode-db | oc-db | opencode-desktop | oc-desktop | opencode-sandbox | oc-sandbox | sessions | session-bus) _main_dispatch_opencode_tools "$command" "$@" ;;
+	opencode-db | oc-db | opencode-runtime | oc-runtime | opencode-desktop | oc-desktop | opencode-sandbox | oc-sandbox | sessions | session-bus) _main_dispatch_opencode_tools "$command" "$@" ;;
 	opencode | oc | codex | claude | claude-code | cursor | cursor-agent | droid | gemini | gemini-cli | continue | cn | kilo | kiro | kiro-cli | aider | amp | kimi | qwen | windsurf)
 		_dispatch_helper "runtime-launcher-helper.sh" "runtime-launcher-helper.sh" "$command" "$@" ;;
 	review-gate | review_gate) _dispatch_helper "review-gate-config-helper.sh" "review-gate-config-helper.sh" "$@" ;;

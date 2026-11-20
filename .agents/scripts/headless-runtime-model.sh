@@ -250,6 +250,16 @@ clear_session_id() {
 	return 0
 }
 
+# GH#38982: a release that ends the delivery does not know which provider ran
+# the attempt, so drop the issue's persisted session for every provider.
+clear_session_id_all_providers() {
+	local session_key="$1"
+	local scoped_key=""
+	scoped_key=$(scoped_provider_session_key "$session_key")
+	db_query "DELETE FROM provider_sessions WHERE session_key IN ('$(sql_escape "$scoped_key")', '$(sql_escape "$session_key")');" >/dev/null
+	return 0
+}
+
 store_session_id() {
 	local provider="$1"
 	local session_key="$2"
@@ -618,6 +628,12 @@ _build_run_cmd() {
 	local persisted_session="$7"
 	shift 7
 	local opencode_profile="${AIDEVOPS_OPENCODE_PROFILE:-v1}"
+	if declare -F _headless_opencode_profile_is_v2 >/dev/null 2>&1; then
+		opencode_profile="v1"
+		if _headless_opencode_profile_is_v2; then
+			opencode_profile="v2"
+		fi
+	fi
 	local command_model="$selected_model"
 	if [[ "$opencode_profile" == "v2" && -n "$variant_override" ]]; then
 		command_model="${selected_model}#${variant_override}"

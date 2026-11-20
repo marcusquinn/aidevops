@@ -350,6 +350,86 @@ test_proc_snapshot_recovers_protected_same_uid_cwd() {
 	return 0
 }
 
+# GH#38918: a batched inspector response is used only when it is complete,
+# ordered and bounded by the versioned header and count trailer.
+test_privileged_batch_parser_requires_complete_ordered_response() {
+	local tab=$'\t'
+	local header="aidevops-cwd-inspect${tab}cwds${tab}1${tab}2"
+	local good="${header}"$'\n'"R${tab}5${tab}/wt/a"$'\n'"F${tab}9"$'\n'"end${tab}2"
+	local output=""
+	local bad=""
+	local rc=0
+
+	output=$(_worktree_parse_privileged_cwds "$good" 5 9) || rc=1
+	[[ "$output" == "R${tab}5${tab}/wt/a"$'\n'"F${tab}9" ]] || rc=1
+	for bad in \
+		"" \
+		"${header}"$'\n'"R${tab}5${tab}/wt/a"$'\n'"F${tab}9" \
+		"${header}"$'\n'"R${tab}5${tab}/wt/a"$'\n'"end${tab}2" \
+		"${header}"$'\n'"F${tab}9"$'\n'"R${tab}5${tab}/wt/a"$'\n'"end${tab}2" \
+		"${header}"$'\n'"R${tab}5${tab}/wt/a"$'\n'"F${tab}9"$'\n'"end${tab}2"$'\n'"R${tab}7${tab}/extra" \
+		"aidevops-cwd-inspect${tab}cwds${tab}1${tab}3"$'\n'"R${tab}5${tab}/wt/a"$'\n'"F${tab}9"$'\n'"end${tab}2" \
+		"${header}"$'\n'"R${tab}5${tab}relative"$'\n'"F${tab}9"$'\n'"end${tab}2" \
+		"${header}"$'\n'"R${tab}5"$'\n'"F${tab}9"$'\n'"end${tab}2" \
+		"${header}"$'\n'"X${tab}5"$'\n'"F${tab}9"$'\n'"end${tab}2"; do
+		if _worktree_parse_privileged_cwds "$bad" 5 9 >/dev/null; then
+			rc=1
+		fi
+	done
+	print_result "privileged_batch_parser_requires_complete_ordered_response" "$rc" \
+		"Expected truncated, reordered, extra or malformed batch output to be rejected"
+	return 0
+}
+
+# GH#38918: a supported batch answers every pending PID with no per-PID call;
+# an unresolved but present PID still degrades visibility.
+test_proc_snapshot_uses_one_batched_inspector_call() {
+	local proc_root="${TEST_DIR}/fake-proc-batched"
+	local calls_file="${TEST_DIR}/batched-calls.log"
+	local current_uid=""
+	local pid=""
+	local output=""
+	local capture_status=0
+	local rc=0
+	current_uid=$(id -u)
+	mkdir -p "${proc_root}/1" "${proc_root}/2" "${proc_root}/3"
+	ln -s /visible-cwd "${proc_root}/1/cwd"
+	ln -s /protected-cwd "${proc_root}/2/cwd"
+	ln -s /hidden-cwd "${proc_root}/3/cwd"
+	for pid in 2 3; do
+		printf 'Uid:\t%s\t%s\t%s\t%s\n' \
+			"$current_uid" "$current_uid" "$current_uid" "$current_uid" >"${proc_root}/${pid}/status"
+	done
+	: >"$calls_file"
+
+	if output=$(
+		readlink() {
+			[[ "$1" == */1/cwd ]] || return 1
+			printf '/visible-cwd\n'
+		}
+		_worktree_privileged_read_cwds() {
+			printf 'batch %s\n' "${*:2}" >>"$calls_file"
+			[[ "$1" == "$proc_root" && "$2" == 2 && "$3" == 3 && "$#" -eq 3 ]] || return 1
+			printf 'R\t2\t/protected-cwd\nF\t3\n'
+		}
+		_worktree_privileged_read_cwd() {
+			printf 'single %s\n' "$2" >>"$calls_file"
+			return 1
+		}
+		_capture_worktree_proc_cwds "$proc_root"
+	); then
+		capture_status=0
+	else
+		capture_status=$?
+	fi
+	[[ "$capture_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]] || rc=1
+	[[ "$output" == $'/visible-cwd\n/protected-cwd' ]] || rc=1
+	[[ "$(<"$calls_file")" == "batch 2 3" ]] || rc=1
+	print_result "proc_snapshot_uses_one_batched_inspector_call" "$rc" \
+		"Expected one batched call, no per-PID calls, and degraded visibility for an unresolved PID"
+	return 0
+}
+
 test_privileged_inspector_rejects_untrusted_proc_root() {
 	local output=""
 	local rc=0

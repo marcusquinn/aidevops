@@ -229,6 +229,8 @@ Output a brief summary of total actions taken across all cycles (past tense).
 10. Oldest issues
 11. FOSS contributions — only when all managed-repo work is dispatched
 
+Merge-pass ordering (GH#39281): up to `PULSE_MERGE_CI_REPAIR_LANE_LIMIT` (default 2; 0 disables) failing-CI PRs without a CI-repair lease for their head run ahead of merge-ready PRs, once per head per cursor walk. A resumed walk always evaluates its cursor PR before any promoted lane item, so the cursor advances every pass.
+
 ## PRs — Merge, Fix, or Flag
 
 ### Pre-merge checks (MANDATORY for every PR in write-authorized managed repos)

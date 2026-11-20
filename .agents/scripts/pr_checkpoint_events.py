@@ -111,7 +111,7 @@ CHECKPOINT_RELEASE_REASONS = {"blocked", "clean", "worker_complete", "worker_dra
 STALL_RELEASE_REASONS = frozenset({
     "no_activity", "wall_clock_stale", "stale_assignment_reset", "worker_ownership_lost",
     "worker_noop_zero_output", "worker_incomplete_exit", "worker_failed",
-    "worker_claim_ready_transition_failed"})
+    "worker_claim_ready_transition_failed", "temp_dir_recovery"})
 STALL_RELEASE_PATTERN = re.compile(
     r"(?!(?:push|network)_policy_timeout$)"
     r"(?:watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)")

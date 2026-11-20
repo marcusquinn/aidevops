@@ -32,6 +32,8 @@
 # t19068: record stamps human_decision with the repo recovery policy's actions
 # fingerprint; a later added, restored, edited or withdrawn policy ends that
 # suppression too, so newly delegated authority is applied on the next pass.
+# GH#39232: a standing human_decision also suspends the permission_required
+# backoff-window re-arm (both passes); a trusted retry or revision still wakes it.
 #
 # Queue records are evidence, never authority. Its only issue write is the
 # re-armed status:blocked → status:available release (GH#33138); it never
@@ -476,6 +478,33 @@ _tbr_discovery_candidates() {
 	return 0
 }
 
+# t19170: list the queued holds this search saw change since their last rearm
+# check (a trusted retry, a reply, a brief revision) in changed_entries, which
+# _tbr_pending_scan_changed checks before the rotation. Local reads only; the
+# hold intakes the rearm pass never reads are skipped. Merged sorted and unique.
+_tbr_note_changed_entries() {
+	local candidates="$1"
+	local list="${TBR_ROOT}/changed_entries" names=""
+	local repo issue updated file
+	while IFS=$'\t' read -r repo issue updated; do
+		_tbr_valid_ref "$repo" "$issue" || continue
+		file="${TBR_ROOT}/queue/${repo//\//--}--${issue}.json"
+		[[ -f "$file" ]] || continue
+		jq -e --arg u "$updated" '(.intake | tostring | test("^(unclassified|answered|unexplained)_hold$") | not)
+			and ((.rearm_checked_updated_at // "") as $s | $s == "" or $u > $s)' "$file" >/dev/null 2>&1 || continue
+		names+="${file##*/}"$'\n'
+	done <<<"$candidates"
+	[[ -n "$names" ]] || return 0
+	if [[ -f "$list" ]]; then
+		while IFS= read -r file; do
+			names+="${file}"$'\n'
+		done <"$list"
+	fi
+	printf '%s' "$names" | sort -u >"${list}.tmp.$$" || return 1
+	mv -f "${list}.tmp.$$" "$list" || return 1
+	return 0
+}
+
 #######################################
 # GH#36114: incremental owner-scoped intake for the mechanical rearm cadence.
 # The per-repo seed needs two searches per pulse repo and rarely completes in
@@ -525,6 +554,8 @@ tbr_discover() {
 		refs+="${result}"$'\n'
 	done < <(printf '%s\n' "$owners" | paste -d' ' - - - - -)
 	candidates=$(_tbr_discovery_candidates "$refs" "$repos") || return 2
+	# Before the reads below, so a pass cut short by its cap still lists them.
+	_tbr_note_changed_entries "$candidates" || return 2
 	[[ ! -f "${TBR_ROOT}/discovery_cursor" ]] || read -r cursor <"${TBR_ROOT}/discovery_cursor" || true
 	candidates=$(_tbr_rotate "$candidates" "$cursor") || return 2
 	# shellcheck source=terminal-blocker-circuit.sh
@@ -551,6 +582,8 @@ tbr_discover() {
 			incomplete=1
 			continue
 		}
+		# t19170: a hold queued here changed in this window too; check it first.
+		[[ ! -f "${TBR_ROOT}/queue/${key}.json" ]] || printf '%s.json\n' "$key" >>"${TBR_ROOT}/changed_entries" || return 2
 		# An unreadable policy may have hidden eligibility; evaluate it again.
 		[[ "$policy_rc" -ge 2 ]] || _tbr_save_cursor "discovered/${key}" "$updated" || return 2
 	done <<<"$candidates"
@@ -915,6 +948,20 @@ _tbr_decision_active() {
 	return 0
 }
 
+# GH#39232 #aidevops:trust-boundary: true while this runner's brief owner has a
+# recorded human_decision for the issue that no reply or policy change has
+# ended. It suspends only the time-window re-arm of a permission hold; a
+# trusted retry or a relevant revision still releases it. Args: repo issue comments
+_tbr_human_decision_standing() {
+	local repo="$1" issue="$2" comments="$3"
+	local key=""
+	key=$(_tbr_key "$repo" "$issue")
+	# A missing or unreadable record prints nothing, so it is not standing.
+	[[ "$(jq -r '.wake // ""' "${TBR_ROOT}/decisions/${key}.json" 2>/dev/null)" == human_decision ]] || return 1
+	_tbr_decision_active "$key" "$comments" || return 1
+	return 0
+}
+
 #######################################
 # GH#33138: a circuit this runner opened projects status:blocked; GH#34846:
 # so does a runtime-owned first observation. When the hold re-arms (trusted
@@ -923,7 +970,9 @@ _tbr_decision_active() {
 # dependency blocks, permission-helper holds or maintainer holds: only a plain
 # status:blocked issue with no other hold label is touched.
 # Args: repo issue issue_json comments_json. Returns 2 on incomplete evidence
-# or writes, so the queue entry survives for a later verified pass.
+# or writes, so the queue entry survives for a later verified pass; 3 while a
+# dependency is open; 4 when a standing human_decision keeps a permission hold
+# whose window expired (GH#39232).
 #######################################
 _tbr_post_rearm_receipt() {
 	local repo="$1"
@@ -1208,6 +1257,11 @@ _tbr_release_circuit_hold() {
 		# GH#36232 #aidevops:trust-boundary: no published request to approve.
 		# Schedules one new attempt per window; it grants no permission.
 		decision=unevidenced_permission_window
+		# GH#39232: the brief owner already named the human input; only a
+		# reply, revision, retry or policy change may wake this hold.
+		if _tbr_human_decision_standing "$repo" "$issue" "$comments"; then
+			decision=decided_permission_hold
+		fi
 	elif [[ "$reason" == "$_TBC_PERMISSION_REQUIRED" ]] &&
 		terminal_blocker_permission_window_spent "$comments" "$issue_json" "$evidence"; then
 		# GH#36342 #aidevops:trust-boundary: the window re-arm already repeated
@@ -1224,6 +1278,7 @@ _tbr_release_circuit_hold() {
 	[[ "$active_rc" -lt 2 ]] || decision=indeterminate_circuit
 	printf 'rearm_decision issue=%s observed_rev=%s current_rev=%s reason=%s\n' \
 		"$issue" "$observed_rev" "$current_rev" "$decision" >&2
+	[[ "$decision" != decided_permission_hold ]] || return 4
 	[[ "$decision" == revision_changed || "$decision" == trusted_retry ||
 		"$decision" == unevidenced_permission_window || "$decision" == lifecycle_recovered ]] || return 2
 	# GH#36126: hold without a receipt while a dependency is open.
@@ -1324,11 +1379,15 @@ _tbr_rearm_window_due() {
 }
 
 # Record the checked snapshot and, for an unevidenced permission hold, its
-# next window boundary (removed when no longer applicable).
+# next window boundary (removed when no longer applicable). Optional $5
+# "decided" (GH#39232): a standing human_decision has no time-based wake, so
+# only an issue update (reply, revision, retry) re-reads the entry.
 _tbr_stamp_rearm_check() {
-	local file="$1" updated_at="$2" comments="$3" brief="$4"
+	local file="$1" updated_at="$2" comments="$3" brief="$4" decided="${5:-}"
 	local next_window=""
-	next_window=$(terminal_blocker_permission_rearm_after "$comments" "$brief" 2>/dev/null) || next_window=""
+	if [[ "$decided" != decided ]]; then
+		next_window=$(terminal_blocker_permission_rearm_after "$comments" "$brief" 2>/dev/null) || next_window=""
+	fi
 	jq --arg at "$updated_at" --arg after "$next_window" '.rearm_checked_updated_at = $at
 		| if $after == "" then del(.rearm_after) else .rearm_after = ($after | tonumber) end' "$file" >"${file}.tmp.$$" &&
 		mv -f "${file}.tmp.$$" "$file" || return 1
@@ -1495,6 +1554,12 @@ _tbr_check_entry() {
 		# not stamp rearm_checked_updated_at: a blocker closing need not touch
 		# this issue's updated_at, so every pass must recheck it.
 		[[ "$release_rc" -ne 3 ]] || return 1
+		if [[ "$release_rc" -eq 4 ]]; then
+			# GH#39232: decided permission hold. Keep the entry and its
+			# decision; the supervisor already owns it, so print nothing.
+			_tbr_stamp_rearm_check "$file" "$updated_at" "$comments" "$brief" decided || return 2
+			return 1
+		fi
 		[[ "$release_rc" -lt 2 ]] || return 2
 		rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
 		return 1
@@ -1751,6 +1816,53 @@ _tbr_pending_park() {
 	return 0
 }
 
+# t19170: changed-first rearm. Check the holds discovery listed as changed
+# (_tbr_note_changed_entries) before the rotation, so a trusted retry or reply
+# applies on the next pass, not hours later when a long queue's rotation
+# reaches it. Ordering only: _tbr_check_entry still decides every release. At
+# most half the remaining window, so backoff expiry and closed dependencies,
+# which leave updated_at unchanged, still advance in the rotation. Moves no
+# cursor. Unreached entries and quick read failures stay listed; an entry this
+# share cut short returns to the rotation. Runs inside tbr_pending's scope
+# (entry_mode, count, incomplete, observed, self_resolved); returns 1 when the
+# list cannot be rewritten.
+_tbr_pending_scan_changed() {
+	local list="${TBR_ROOT}/changed_entries" name="" rc=0 keep="" deadline=0
+	[[ "$entry_mode" == rearm && -s "$list" ]] || return 0
+	deadline=$((SECONDS + (TBR_QUEUE_DEADLINE - SECONDS) / 2))
+	local TBR_QUEUE_DEADLINE="$deadline"
+	# Same identity rule as the tier scan; unresolved leaves the list intact.
+	if [[ "$self_resolved" -eq 0 && -z "${TERMINAL_BLOCKER_SELF_LOGIN:-}" ]]; then
+		TERMINAL_BLOCKER_SELF_LOGIN=$(_tbr_run_stage identity _tbr_self_login) || return 0
+		export TERMINAL_BLOCKER_SELF_LOGIN
+	fi
+	self_resolved=1
+	while IFS= read -r name; do
+		[[ "$name" =~ ^[A-Za-z0-9_.-]+--[1-9][0-9]*\.json$ && -f "${TBR_ROOT}/queue/${name}" ]] || continue
+		# Appends can repeat a name; check each once.
+		case "$observed" in *";$name;"*) continue ;; esac
+		if [[ "$SECONDS" -ge "$deadline" ]]; then
+			keep+="${name}"$'\n'
+			continue
+		fi
+		printf 'blocker-recovery: queue changed-first entry=%s\n' "$name" >&2
+		observed+="${name};"
+		rc=0
+		_tbr_run_stage entry _tbr_check_entry "${TBR_ROOT}/queue/${name}" "$entry_mode" || rc=$?
+		[[ "$rc" -ne 0 ]] || count=$((count + 1))
+		[[ "$rc" -ge 2 ]] || continue
+		incomplete=1
+		[[ "$SECONDS" -ge "$deadline" ]] || keep+="${name}"$'\n'
+	done <"$list"
+	if [[ -z "$keep" ]]; then
+		rm -f "$list" || return 1
+		return 0
+	fi
+	printf '%s' "$keep" >"${list}.tmp.$$" || return 1
+	mv -f "${list}.tmp.$$" "$list" || return 1
+	return 0
+}
+
 # GH#38692: tier 0 = entries without a standing human_decision, tier 1 =
 # decided ones; each tier rotates with its own cursor. GH#39010: when tier 0
 # stops at its share and tier 1 finishes early, tier 0 resumes in the time
@@ -1761,6 +1873,7 @@ _tbr_pending_park() {
 # cursor or marker could not be written.
 _tbr_pending_scan_queue() {
 	local tier=0 scan_rc=0 tier0_rc=0 count_before="$count" tier0_counted=0 decided_set=";" tier0_deadline="" parked=0
+	_tbr_pending_scan_changed || return 1
 	_tbr_pending_classify || return 1
 	for tier in 0 1; do
 		scan_rc=0

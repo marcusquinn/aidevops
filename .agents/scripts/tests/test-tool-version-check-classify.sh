@@ -27,6 +27,7 @@ extract_function() {
 		/^_tool_latest_version\(\)/, /^}$/ { print; next }
 		/^_playwriter_approved_version\(\)/, /^}$/ { print; next }
 		/^_tool_is_nix_managed\(\)/, /^}$/ { print; next }
+		/^_opencode_hold_major\(\)/, /^}$/ { print; next }
 		/^check_tool\(\)/, /^}$/ { print; next }
 		/^_run_outdated_tool_updates\(\)/, /^}$/ { print; next }
 		/^_output_summary_and_updates\(\)/, /^}$/ { print; next }
@@ -48,6 +49,7 @@ source_extracted() {
 	AIDEVOPS_GH_MIN_SLURP_VERSION="2.67.0"
 	INSTALLED_COUNT=0
 	EXTERNALLY_MANAGED_COUNT=0
+	HELD_MAJOR_COUNT=0
 	OUTDATED_COUNT=0
 	NOT_INSTALLED_COUNT=0
 	TIMEOUT_COUNT=0

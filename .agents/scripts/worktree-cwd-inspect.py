@@ -3,6 +3,7 @@
 
 Install a root-owned copy with a single-executable sudoers rule. Never run
 this from a writable worktree through sudo. Legacy output is a CWD path;
+--cwds applies that same per-PID read to several PIDs in one call;
 --references (one PID) and --census (all invoker tasks, counts only) emit
 bound census evidence, never deletion authority.
 
@@ -204,14 +205,66 @@ def census_report(candidate_text: str, sudo_uid: int) -> dict:
 
 
 def bounded_report(deadline: int, build) -> int:
-    """Bound the privileged child itself, not only its sudo parent's wait."""
+    """Bound the privileged child itself, not only its sudo parent's wait.
+
+    Only a completed response is printed, so a deadline never leaves partial output.
+    """
     signal.signal(signal.SIGALRM, signal.SIG_DFL)
     signal.alarm(deadline)
     try:
-        print(json.dumps(build(), sort_keys=True))
+        text = build()
     finally:
         signal.alarm(0)
+    print(text)
     return 0
+
+
+def json_text(report: dict) -> str:
+    """Stable JSON for the --references and --census reports."""
+    return json.dumps(report, sort_keys=True)
+
+
+CWDS_MAX_PIDS = 4096
+PID_TEXT = re.compile(r"[1-9][0-9]*")
+
+
+def legacy_cwd(pid: str, invoker_uid: int) -> str:
+    """One same-user process CWD: stable identity, safe absolute path, else ValueError/OSError."""
+    if not PID_TEXT.fullmatch(pid):
+        raise ValueError("invalid inspector arguments")
+    proc_dir = f"/proc/{pid}"
+    before = os.stat(proc_dir, follow_symlinks=False)
+    if not owned_by_invoker(pid, invoker_uid):
+        raise ValueError("process owner does not match the invoking user")
+    cwd = os.readlink(f"{proc_dir}/cwd")
+    after = os.stat(proc_dir, follow_symlinks=False)
+    if (before.st_ino != after.st_ino or not owned_by_invoker(pid, invoker_uid)
+            or not cwd.startswith("/") or not safe_text(cwd)):
+        raise ValueError("process changed or its CWD is not a safe absolute path")
+    return cwd
+
+
+def cwd_record(pid: str, invoker_uid: int) -> str:
+    """`R` with exactly what `<pid>` mode would print, else an opaque `F`."""
+    try:
+        cwd = legacy_cwd(pid, invoker_uid)
+        cwd.encode("utf-8")  # An unprintable CWD fails only its own PID, not the batch.
+    except (OSError, ValueError, IndexError):
+        return f"F\t{pid}"
+    return f"R\t{pid}\t{cwd}"
+
+
+def cwds_report(pids: list, invoker_uid: int) -> str:
+    """Apply the legacy single-PID read to each PID in one invocation (GH#38918).
+
+    Discloses nothing beyond legacy mode. Every PID must be distinct and well
+    formed before any read; the header and trailer let the caller reject an
+    incomplete response.
+    """
+    if not 0 < len(set(filter(PID_TEXT.fullmatch, pids))) == len(pids) <= CWDS_MAX_PIDS:
+        raise ValueError("invalid batch request")
+    return "\n".join([f"aidevops-cwd-inspect\tcwds\t1\t{len(pids)}",
+                      *(cwd_record(pid, invoker_uid) for pid in pids), f"end\t{len(pids)}"])
 
 
 def main() -> int:
@@ -219,23 +272,17 @@ def main() -> int:
         sudo_uid = os.environ.get("SUDO_UID", "")
         if os.geteuid() != 0 or not re.fullmatch(r"[1-9][0-9]*", sudo_uid):
             raise ValueError("privileged invocation by a valid invoking identity is required")
-        if len(sys.argv) == 4 and sys.argv[1] == "--references":
-            return bounded_report(2, lambda: reference_report(sys.argv[2], sys.argv[3], int(sudo_uid)))
-        if len(sys.argv) == 3 and sys.argv[1] == "--census":
-            return bounded_report(5, lambda: census_report(sys.argv[2], int(sudo_uid)))
-        if len(sys.argv) != 2 or not re.fullmatch(r"[1-9][0-9]*", sys.argv[1]):
-            raise ValueError("invalid inspector arguments")
-        pid = sys.argv[1]
-        proc_dir = f"/proc/{pid}"
-        invoker_uid = int(sudo_uid)
-        before = os.stat(proc_dir, follow_symlinks=False)
-        if not owned_by_invoker(pid, invoker_uid):
-            raise ValueError("process owner does not match the invoking user")
-        cwd = os.readlink(f"{proc_dir}/cwd")
-        after = os.stat(proc_dir, follow_symlinks=False)
-        if (before.st_ino != after.st_ino or not owned_by_invoker(pid, invoker_uid)
-                or not cwd.startswith("/") or not safe_text(cwd)):
-            raise ValueError("process changed or its CWD is not a safe absolute path")
+        # Each mode unpacks its exact arguments: a wrong count raises ValueError.
+        if sys.argv[1:2] == ["--references"]:
+            pid, candidate = sys.argv[2:]
+            return bounded_report(2, lambda: json_text(reference_report(pid, candidate, int(sudo_uid))))
+        if sys.argv[1:2] == ["--census"]:
+            (candidate,) = sys.argv[2:]
+            return bounded_report(5, lambda: json_text(census_report(candidate, int(sudo_uid))))
+        if sys.argv[1:2] == ["--cwds"]:  # An empty PID list is refused by cwds_report.
+            return bounded_report(5, functools.partial(cwds_report, sys.argv[2:], int(sudo_uid)))
+        (pid,) = sys.argv[1:]  # Legacy mode takes exactly one PID; anything else raises ValueError.
+        cwd = legacy_cwd(pid, int(sudo_uid))
     except (OSError, ValueError, IndexError):
         return 1
     print(cwd)

@@ -442,7 +442,7 @@ _merge_ready_prs_for_repo() {
 		return "$preparation_rc"
 	fi
 
-	local i=0 _PMP_RESUME_LANE_END=0 _PMP_RESUME_LANE_LAST_PR=""
+	local i=0 _PMP_RESUME_LANE_START=0 _PMP_RESUME_LANE_END=0 _PMP_RESUME_LANE_LAST_PR="" _PMP_RESUME_LANE_ITEM_PR=""
 	_pmp_resume_cursor_with_priority_lane "$repo_slug" i || i=0 # GH#38248
 	local _evaluated_from_start=$((i == 0 && _PMP_RESUME_LANE_END == 0))
 	while [[ "$i" -lt "$pr_count" ]]; do
@@ -1327,17 +1327,21 @@ _route_pr_to_fix_worker() {
 
 #######################################
 # Retarget direct child PRs before deleting the merged parent branch.
+# Children move to the branch the parent merges into (its baseRefName), so a
+# stack on `dev` stays on `dev`; never a hard-coded `main` (GH#39167).
 #
 # Args:
 #   $1 - parent PR number
 #   $2 - repo slug
 #   $3 - parent head ref from per-cycle PR context (optional)
+#   $4 - parent base ref from per-cycle PR context (optional)
 # Returns: 0 always (errors are non-fatal)
 #######################################
 _retarget_stacked_children() {
 	local parent_pr_number="$1"
 	local repo_slug="$2"
 	local parent_head_ref="${3:-}"
+	local parent_base_ref="${4:-}"
 	if [[ -z "$parent_head_ref" ]]; then
 		parent_head_ref=$(gh_pr_view "$parent_pr_number" --repo "$repo_slug" --json headRefName -q '.headRefName' 2>/dev/null) || parent_head_ref=""
 	fi
@@ -1351,15 +1355,24 @@ _retarget_stacked_children() {
 		return 0
 	fi
 
-	local default_branch
-	default_branch=$(gh repo view "$repo_slug" --json defaultBranchRef -q '.defaultBranchRef.name' 2>/dev/null || true)
-	default_branch="${default_branch:-main}"
+	local target_base="$parent_base_ref" target_source="parent-base"
+	if [[ -z "$target_base" ]]; then
+		target_base=$(gh_pr_view "$parent_pr_number" --repo "$repo_slug" --json baseRefName -q '.baseRefName' 2>/dev/null) || target_base=""
+	fi
+	if [[ -z "$target_base" ]] && declare -F aidevops_pr_base_branch >/dev/null 2>&1; then
+		target_base=$(aidevops_pr_base_branch "$repo_slug" "") || target_base=""
+		target_source="repo-pr-base"
+	fi
+	if [[ -z "$target_base" ]]; then
+		echo "[pulse-merge] cannot resolve parent PR #${parent_pr_number} base in ${repo_slug}; stacked children of '${parent_head_ref}' not retargeted (GH#39167)" >>"$LOGFILE"
+		return 0
+	fi
 
 	local child
 	while IFS= read -r child; do
 		[[ -z "$child" ]] && continue
-		echo "[pulse-merge] retargeting stacked PR #${child} from '${parent_head_ref}' to '${default_branch}' before deleting parent PR #${parent_pr_number} branch (t2412)" >>"$LOGFILE"
-		gh pr edit "$child" --repo "$repo_slug" --base "$default_branch" 2>&1 | tee -a "$LOGFILE" || true
+		echo "[pulse-merge] retargeting stacked PR #${child} from '${parent_head_ref}' to '${target_base}' (${target_source}) before deleting parent PR #${parent_pr_number} branch (t2412)" >>"$LOGFILE"
+		gh pr edit "$child" --repo "$repo_slug" --base "$target_base" 2>&1 | tee -a "$LOGFILE" || true
 	done <<<"$children"
 	return 0
 }
@@ -1546,8 +1559,13 @@ _repo_allows_auto_merge() {
 # sits indefinitely. Observed 2026-04-30 on PRs that sat 8-9h despite
 # 100% required-check SUCCESS and `mergeable=MERGEABLE`.
 #
+# GH#39084: a request armed while BLOCKED may also never fire after the
+# blocker clears without a check/push event (e.g. a ruleset edit), leaving the
+# PR CLEAN and unmerged for days. A CLEAN PR with an aged request is the same
+# wedge: GitHub would have merged it within seconds if it were going to.
+#
 # Stuck means ALL of:
-#   * mergeStateStatus == BLOCKED
+#   * mergeStateStatus == BLOCKED or CLEAN
 #   * mergeable == MERGEABLE
 #   * reviewDecision is known-safe for this already-gated cycle
 #   * autoMergeRequest.enabledAt > $threshold seconds ago
@@ -1573,7 +1591,7 @@ _auto_merge_stuck_seconds() {
 
 	# Glob form (unquoted RHS inside [[ ]]) avoids adding new repeated string
 	# literals — the validator counts only quoted 4+-char literals.
-	[[ "$merge_state" == BLOCKED ]] || return 1
+	[[ "$merge_state" == BLOCKED || "$merge_state" == CLEAN ]] || return 1
 	[[ "$mergeable" == MERGEABLE ]] || return 1
 	[[ -n "$enabled_at" ]] || return 1
 
@@ -1803,7 +1821,9 @@ _handle_existing_native_auto_merge() {
 	local stuck_seconds=""
 	if stuck_seconds=$(_auto_merge_stuck_seconds "$pr_number" "$repo_slug" "$pr_state"); then
 		local threshold="${AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS:-300}"
-		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge stuck ${stuck_seconds}s (>${threshold}s) in BLOCKED+MERGEABLE with no failing/pending required checks — attempting synchronous recovery (t3192)" >>"$LOGFILE"
+		local stuck_state=""
+		stuck_state=$(printf '%s' "$pr_state" | jq -r '.mergeStateStatus // "unknown"' 2>/dev/null) || stuck_state="unknown"
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge stuck ${stuck_seconds}s (>${threshold}s) in ${stuck_state}+MERGEABLE with no failing/pending required checks — attempting synchronous recovery (t3192)" >>"$LOGFILE"
 		stop_rc=0
 		_stop_external_native_auto_merge "$pr_number" "$repo_slug" \
 			"stale wedge recovery requires a fresh synchronous merge (GH#26897)" || stop_rc=$?
@@ -1854,8 +1874,8 @@ _handle_existing_native_auto_merge() {
 # next pulse cycle to detect green.
 #
 # Decision tree:
-#   * PR already has auto_merge set + STUCK green → return 1 (caller --admin path,
-#                                                             t3192 stuck fallback)
+#   * PR already has auto_merge set + STUCK green (BLOCKED or CLEAN, aged
+#     request) → return 1 (caller --admin path, t3192/GH#39084 stuck fallback)
 #   * PR already has auto_merge set + stale pending → return 0 (non-terminal;
 #                                                               keep deferring)
 #   * PR already has auto_merge set + healthy → return 0 (no-op, GitHub

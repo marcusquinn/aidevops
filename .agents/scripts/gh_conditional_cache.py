@@ -10,6 +10,10 @@ request replays the stored stdout, so a hit is equivalent to a live read and
 costs no primary quota. Storing post-`--jq` stdout keeps gh's own filter
 semantics. Bodies, endpoints and credentials are never logged. Eligibility
 rules live in gh_conditional_request.
+
+An explicit pagination page (GH#39233) stores its whole included frame, so a
+replay hands the page loop the original `Link` header; it is stored only when
+gh_conditional_request.page_frame_replayable proves that replay stays exact.
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from gh_conditional_request import ETAG, eligible, response_etag
+from gh_conditional_request import ETAG, eligible, page_frame, page_frame_replayable, response_etag
 from gh_native_response import _copy_response
 from gh_transport_budget import private_directory
 
@@ -54,12 +58,15 @@ class Unconditional:
 class ConditionalEntry(Unconditional):
     """One credential-and-argv keyed entry in a private state directory."""
 
-    def __init__(self, directory: Path, credential: str, args: list[str]):
+    def __init__(self, directory: Path, credential: str, args: list[str], frame: bool = False):
         digest = hashlib.sha256(
             credential.encode() + b"\x1f" + json.dumps(args, separators=(",", ":")).encode()
         ).hexdigest()
         self.directory = directory
         self.path = directory / digest
+        self.args = args
+        # A page frame keeps its headers; argv (with --include) keys it apart.
+        self.frame = frame
         self._body = b""
         self._load()
 
@@ -133,12 +140,20 @@ class ConditionalEntry(Unconditional):
         with contextlib.suppress(OSError):
             self.path.unlink()
 
+    def _frame_replayable(self, stream, body_offset: int) -> bool:
+        stream.seek(0)
+        header_frame = stream.read(body_offset)
+        body = stream.read(MAX_BODY_BYTES + 1)
+        return len(body) <= MAX_BODY_BYTES and page_frame_replayable(self.args, header_frame, body)
+
     def observe(self, status: int, rc: int, stream, body_offset: int) -> None:
         """Record a fresh 200, forget a gone resource, keep everything else."""
         if status == 200 and rc == 0:
             etag = response_etag(stream, body_offset)
+            if etag and self.frame and not self._frame_replayable(stream, body_offset):
+                etag = None
             if etag:
-                self.store(etag, stream, body_offset)
+                self.store(etag, stream, 0 if self.frame else body_offset)
             else:
                 self.drop()
         elif status in {404, 410}:
@@ -153,7 +168,7 @@ def open_entry(state_directory: Path, credential: str, args: list[str], shape) -
     try:
         cache_dir = state_directory / "conditional"
         private_directory(cache_dir)
-        return ConditionalEntry(cache_dir, credential, args)
+        return ConditionalEntry(cache_dir, credential, args, frame=page_frame(include))
     except (OSError, ValueError):
         # Unusable cache state keeps the ordinary unconditional request.
         return Unconditional()

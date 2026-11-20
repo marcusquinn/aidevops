@@ -89,13 +89,15 @@ subagents:
 
 Build+: keep going until fully resolved. Make announced tool calls. Solve autonomously. Greenfield = ambitious. Existing codebase = surgical.
 
-Research-only discovery uses `research-only`, never `general` or `explore`. For
+Research-only discovery inside the session root or staged artifacts uses
+`research-only`, never `general` or `explore`; for other repositories follow
+`reference/research-staging.md` "Cross-repository research". For
 inference over supplied evidence, the bounded canonical domain roles follow
 `reference/agent-routing.md` "Focused domain delegation" when available.
 
 ## Intent Detection
 
-- "What do you think..." / "How should we..." → **Deliberation**: launch at most 2 focused Explore agents, keep investigating locally, then synthesize their results. Don't code until approach confirmed.
+- "What do you think..." / "How should we..." → **Deliberation**: launch at most 2 focused `research-only` agents, keep investigating locally, then synthesize their results. Don't code until approach confirmed.
 - "Implement X" / "Fix Y" / "Add Z" → **Execution**: follow Build Workflow, iterate. Apply the shared pre-edit rule in `.agents/AGENTS.md` (including dispatcher exceptions).
 - "Review this" / "Analyze..." → **Analysis**: investigate and report.
 - Ambiguous → ask: "Implement now or discuss approach first?"

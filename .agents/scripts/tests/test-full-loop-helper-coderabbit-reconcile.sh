@@ -248,6 +248,11 @@ test_full_loop_readiness_integration() {
 		printf '%s\n' '[{"name":"required-ci","state":"SUCCESS","bucket":"pass"}]'
 		return 0
 	}
+	# GH#39227: exact-head snapshot for the non-required check gate.
+	_pmrc_snapshot_checks_with_retry() {
+		printf '%s\n' '[{"name":"required-ci","status":"completed","conclusion":"success"}]'
+		return 0
+	}
 	local rc=0
 	_full_loop_verify_pr_readiness 42 owner/repo >/dev/null 2>&1 || rc=$?
 	if [[ "$rc" -eq 0 ]] && grep -q "dismissals" "$GH_LOG" \

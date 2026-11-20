@@ -46,7 +46,9 @@ print_result() {
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export HOME="${TEST_ROOT}/home"
-mkdir -p "${HOME}/.aidevops/logs"
+mkdir -p "${HOME}/.aidevops/logs" "${HOME}/.config/aidevops"
+# The privacy guard fails closed without a (possibly empty) private-entity inventory.
+printf '{"initialized_repos":[]}\n' >"${HOME}/.config/aidevops/repos.json"
 
 # Isolated breaker state directory so we don't fight a real breaker file.
 SUPERVISOR_DIR="${TEST_ROOT}/supervisor"
@@ -101,6 +103,11 @@ if [[ "\$1" == "issue" && ( "\$2" == "comment" || "\$2" == "edit" || "\$2" == "c
 fi
 
 if [[ "\$1" == "api" ]]; then
+	# The privacy guard probes repo visibility; model a public repository.
+	if [[ "\$*" == *'.private | tostring'* ]]; then
+		echo 'false'
+		exit 0
+	fi
 	# Used by gh_create_issue wrapper for rate-limit checks etc.
 	echo '{}'
 	exit 0
@@ -190,7 +197,7 @@ if [[ "$CREATE_COUNT" == "2" ]]; then
 	print_result "trip: created exactly 2 issues (notification + investigation)" 0
 else
 	print_result "trip: created exactly 2 issues (notification + investigation)" 1 \
-		"got count=$CREATE_COUNT; stub log: $(cat "$STUB_LOG")"
+		"got count=$CREATE_COUNT; helper output: $OUT; stub log: $(cat "$STUB_LOG")"
 fi
 
 # =============================================================================

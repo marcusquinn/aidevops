@@ -55,12 +55,17 @@ fi
 _write_todo_md() {
 	local repo_path="$1"
 	local existing_tail=""
+	local existing_states=""
 	if [[ -f "${repo_path}/TODO.md" ]]; then
 		# Preserve any existing "## User Routines" (and "## Tasks") content
 		# verbatim across re-scaffolds. Every scaffold run (setup.sh /
 		# aidevops update) used to always emit the hardcoded placeholder here,
 		# silently discarding user-added routines on every update.
 		existing_tail=$(awk "/^## User Routines$/{found=1} found{print}" "${repo_path}/TODO.md")
+		# Remember the user's enabled/disabled choice for core routines
+		# ("rid state" per line, Bash 3.2 safe). Only the core section (before
+		# "## User Routines") is read; no other field is carried over.
+		existing_states=$(awk '/^## User Routines$/{exit} /^- \[( |x)\] r[0-9]+ /{rest = substr($0, 7); split(rest, f, " "); print f[1] "|" substr($0, 4, 1)}' "${repo_path}/TODO.md")
 	fi
 
 	# Header
@@ -94,6 +99,17 @@ TODOEOF
 		while IFS='|' read -r rid enabled title schedule estimate script rtype timezone; do
 			[[ -z "$rid" ]] && continue
 			timezone_field="${timezone:+ timezone:${timezone}}"
+			local prior_state=""
+			if [[ -n "$existing_states" ]]; then
+				prior_state=$(printf '%s\n' "$existing_states" | awk -F'|' -v id="$rid" '$1 == id {print $2; exit}')
+			fi
+			if [[ "$prior_state" == "x" ]]; then
+				enabled="x"
+			elif [[ -z "$prior_state" ]]; then
+				:
+			else
+				enabled=" "
+			fi
 			printf '%s\n' "- [${enabled}] ${rid} ${title} ${schedule}${timezone_field} ${estimate} run:${script}" >>"${repo_path}/TODO.md"
 		done < <(get_core_routine_entries)
 	fi

@@ -95,7 +95,6 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 - [x] r046 Canonical-recovery sweep — re-attempt failed git pull/stash for repos with active advisory files (t3027) repeat:cron(*/10 * * * *) ~1m run:scripts/canonical-recovery-routine.sh tick
 - [ ] r047 Knowledge collector freshness — execute due read-only sources and emit content-free health repeat:cron(*/10 * * * *) ~2m run:scripts/knowledge-collector-routine.sh run
 - [ ] r-runtime-audit Runtime health audit — surface operational regressions invisible to the supervisor LLM (counter trends, process leaks, deploy mtime drift, log novelty, stuck pulse state) (t3072) repeat:cron(*/30 * * * *) ~2m run:scripts/runtime-health-audit-helper.sh --apply
-- [x] r-pulse-check Daily pulse/worker utilisation check — aggregate repos.json auto-dispatch queue, active capacity, provider/API budget, and file deduplicated self-improvement issues for high-confidence productivity gaps repeat:daily(@06:20) ~5m run:scripts/pulse-check-helper.sh apply
 - [ ] r-php-cve-watch PHP CVE-2026-109618/109619 patch watch — read-only 2-hourly check of owner hosting PHP builds and app packages; private status in the agent workspace; disabled 2026-10-29: all hosts patched repeat:cron(0 */2 * * *) timezone:UTC ~3m run:custom/scripts/r-php-cve-watch.sh
 
 ## Ready
@@ -585,7 +584,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [x] t2450 fix(pulse): gate labelless-backfill on `authorAssociation` to prevent external-contributor dispatch — `reconcile_labelless_aidevops_issues` in `pulse-issue-reconcile.sh` (t2112) blesses any labelless `tNNN:`/`GH#NNN:` open issue with `origin:worker + tier:standard` based on title shape alone, without checking `authorAssociation`. External contributors who follow the documented public title convention (AGENTS.md) trip the backfill and their issues become dispatchable. The `origin-worker-protection` handler in `maintainer-gate.yml:720-793` strips `origin:worker` when the label event actor is not the owner or `github-actions[bot]`, but does NOT strip `tier:*` or apply `needs-maintainer-review` — the combination remains dispatchable on the next pulse cycle from the owner runner. Reference: #20180 (external CONTRIBUTOR `johnwaldo` issue, backfilled by alex-solovyev's runner, dispatched by marcusquinn's runner; worker PR #20184 closed CONFLICTING). Fix: (1) extend `reconcile_labelless_aidevops_issues` to fetch `authorAssociation` in the `gh issue list` jq filter and branch — `OWNER|MEMBER|COLLABORATOR` keep current behaviour; `CONTRIBUTOR|NONE|FIRST_TIME_CONTRIBUTOR|FIRST_TIMER|MANNEQUIN` get `needs-maintainer-review` + body tags ONLY (no `origin:*`, no `tier:*`) + a different mentorship comment with sentinel `<!-- aidevops:labelless-backfill-external -->`. (2) extend `origin-worker-protection` in `maintainer-gate.yml` to also apply NMR and strip `tier:*` when the non-allowlisted actor labels an issue whose author is external. (3) extend `test-pulse-labelless-reconcile.sh` with fixtures for all three author-association classes (OWNER, CONTRIBUTOR, NONE) asserting correct label application and sentinel differentiation. #bug #security #framework #interactive ~2h tier:standard ref:GH#20192 assignee:marcusquinn started:2026-04-20T22:45:04Z logged:2026-04-20 -> [todo/tasks/t2450-brief.md] pr:#20200 completed:2026-04-21
 
-- [x] t2449 feat(pulse-merge): symmetric auto-merge for maintainer-briefed origin:worker PRs — extends `pulse-merge.sh` auto-merge (currently `origin:interactive` only, t2411) to cover `origin:worker` PRs when all of: linked issue authored by OWNER/MEMBER, issue never carried `needs-maintainer-review` OR NMR cleared via **cryptographic** approval (NOT `auto_approve_maintainer_issues`), all required checks PASS, no human `CHANGES_REQUESTED`, not draft, no `hold-for-review`, passes review-bot-gate, not `origin:worker-takeover`. Trust-chain equivalence: maintainer-briefed + worker-implemented + green CI + no objection = same cumulative scrutiny as maintainer-typed. The critical security gate is crypto-vs-auto NMR distinction (`auto_approve_maintainer_issues` uses same token as pulse — using it would close the loop with no human). Motivated by t2443/#20158 requiring manual click despite 29/29 CI green. NEW: `_attempt_worker_briefed_auto_merge` in pulse-merge.sh, `tests/test-pulse-merge-worker-briefed.sh` (10-case matrix), feature flag `AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE`. EDIT: `.agents/AGENTS.md` auto-merge section, `reference/review-bot-gate.md` composition. **Deferred/conditional — do NOT dispatch.** Brief is the deliverable; implementation awaits maintainer review of the trust-chain argument and test-matrix completeness. #enhancement #pulse #framework #deferred #interactive ~4h tier:thinking ref:GH#20164 logged:2026-04-20 -> [todo/tasks/t2449-brief.md] pr:#20283 completed:2026-04-21
+- [x] t2449 feat(pulse-merge): symmetric auto-merge for maintainer-briefed origin:worker PRs — extends `pulse-merge.sh` auto-merge (currently `origin:interactive` only, t2411) to cover `origin:worker` PRs when all of: linked issue authored by OWNER/MEMBER, issue never carried `needs-maintainer-review` OR NMR cleared via **cryptographic** approval (NOT `auto_approve_maintainer_issues`), all required checks PASS, no human `CHANGES_REQUESTED`, not draft, no `hold-for-review`, passes review-bot-gate, not `origin:worker-takeover`. Trust-chain equivalence: maintainer-briefed + worker-implemented + green CI + no objection = same cumulative scrutiny as maintainer-typed. The critical security gate is crypto-vs-auto NMR distinction (`auto_approve_maintainer_issues` uses same token as pulse — using it would close the loop with no human). Motivated by t2443/#20158 requiring manual click despite 29/29 CI green. NEW: `_attempt_worker_briefed_auto_merge` in pulse-merge.sh, `tests/test-pulse-merge-worker-briefed.sh` (10-case matrix), feature flag `AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE`. EDIT: `.agents/AGENTS.md` auto-merge section, `reference/review-bot-gate.md` composition. **Deferred/conditional — do NOT dispatch.** Brief is the deliverable; implementation awaits maintainer review of the trust-chain argument and test-matrix completeness. #enhancement #pulse #framework #deferred #interactive ~4h tier:thinking ref:GH#38909 logged:2026-04-20 -> [todo/tasks/t2449-brief.md] pr:#20283 completed:2026-04-21
 
 - [x] t2432 feat(pulse-dispatch): add recent-commit sweep to pre-dispatch eligibility gate — deferred follow-up to t2424 (merged in PR #20064). Adds a 4th check to `is_issue_eligible_for_dispatch()` in `.agents/scripts/pre-dispatch-eligibility-helper.sh` that scans the default branch for commits within the last ~10min containing closing keywords referencing the candidate issue, new exit code `5`. Regex must match `pulse-merge.sh::_extract_linked_issue` exactly (`Ref`/`For` planning references must NOT trigger). **Deferred/conditional — do NOT dispatch.** Trigger: observed ≥1 `no_work skip-escalation` events in `~/.aidevops/logs/pulse-wrapper.log` since the 3-check gate (PR #20064) deployed. Measured whenever convenient — no deadline, no auto-close. Issue stays open in backlog indefinitely until either the trigger fires (→ add `#auto-dispatch`) or the maintainer explicitly decides the need is gone. No `#auto-dispatch` until the maintainer confirms the trigger. #enhancement #pulse #framework #deferred #interactive ~45m tier:standard ref:GH#20072 pr:#20080 logged:2026-04-20 -> [todo/tasks/t2432-brief.md] completed:2026-07-06
 - [x] t2394 fix(pulse-dedup): post CLAIM_VOID comment on worker fast-fail to unblock cross-runner dispatch — `pulse-cleanup.sh` unassigns self + sets status:available when workers fast-fail, but never invalidates the DISPATCH_CLAIM comment, so its 30-min TTL poisons cross-runner dispatch. Confirmed live 2026-04-19 on issue #19924: alex-solovyev's pulse dispatches, worker dies in ~1 min (pre-t2392 model-availability), cleanup resets local state but stale claim blocks marcusquinn's healthy runner for the full 1800s. Fix: emit CLAIM_VOID nonce=<same> comment on cleanup; extend `dispatch-claim-helper.sh` to treat same-runner same-nonce voids as overriding claims. #bug #pulse #framework #multi-runner #auto-dispatch ~2h tier:thinking ref:GH#19955 pr:#19960 logged:2026-04-19 -> [todo/tasks/t2394-brief.md] completed:2026-07-01
@@ -2227,17 +2226,111 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19104 fix(pulse): re-probe blocker recovery soon after a partial zero-count scan instead of waiting the full 3h interval #auto-dispatch #bug #priority:high ref:GH#39008 pr:#39009 completed:2026-11-18
 
-- [ ] t19105 fix(recovery): reserve queue budget for decided holds so replies, policy changes and retries can wake them #auto-dispatch #bug #priority:high ref:GH#39010 -> [todo/tasks/t19105-brief.md]
+- [x] t19105 fix(recovery): reserve queue budget for decided holds so replies, policy changes and retries can wake them #auto-dispatch #bug #priority:high ref:GH#39010 -> [todo/tasks/t19105-brief.md] pr:#39011 completed:2026-11-18
 
-- [ ] t19110 fix(pulse): reopened issues keep prior-lifecycle assignees and starve behind fresh work #bug #priority:high #interactive tier:standard ref:GH#39030 -> [todo/tasks/t19110-brief.md]
+- [x] t19110 fix(pulse): reopened issues keep prior-lifecycle assignees and starve behind fresh work #bug #priority:high #interactive tier:standard ref:GH#39030 -> [todo/tasks/t19110-brief.md] pr:#39035 completed:2026-11-18
 
-- [ ] t19111 fix(worktree-deps): skip Spotlight marker and tool-cache entries at node_modules root instead of rejecting the restore #auto-dispatch #bug ref:GH#39037 -> [todo/tasks/t19111-brief.md]
+- [x] t19111 fix(worktree-deps): skip Spotlight marker and tool-cache entries at node_modules root instead of rejecting the restore #auto-dispatch #bug ref:GH#39037 -> [todo/tasks/t19111-brief.md] pr:#39040 completed:2026-11-18
 
-- [ ] t19113 fix(permission-broker): allow designed bounded-operation status polls through OpenCode doom_loop instead of killing headless workers #auto-dispatch #bug ref:GH#39048 -> [todo/tasks/t19113-brief.md]
+- [x] t19113 fix(permission-broker): allow designed bounded-operation status polls through OpenCode doom_loop instead of killing headless workers #auto-dispatch #bug ref:GH#39048 -> [todo/tasks/t19113-brief.md] pr:#39061 completed:2026-11-18
 
-- [ ] t19114 fix(checkpoints): resume a continuation review worktree that is only ahead of the PR head with unpushed commits #bug #priority:high #interactive tier:standard -> [todo/tasks/t19114-brief.md] ref:GH#39069
+- [x] t19114 fix(checkpoints): resume a continuation review worktree that is only ahead of the PR head with unpushed commits #bug #priority:high #interactive tier:standard -> [todo/tasks/t19114-brief.md] ref:GH#39069 pr:#39074 completed:2026-11-18
 
-- [ ] t19115 fix(checkpoints): a trusted terminal-blocker re-arm never releases a blocked worker draft, even for a maintainer retry #auto-dispatch #bug #priority:high ref:GH#39077 -> [todo/tasks/t19115-brief.md]
+- [x] t19115 fix(checkpoints): a trusted terminal-blocker re-arm never releases a blocked worker draft, even for a maintainer retry #auto-dispatch #bug #priority:high ref:GH#39077 -> [todo/tasks/t19115-brief.md] pr:#39082 completed:2026-11-18
+
+- [x] t19119 pulse: Bash 3.2-safe tracked-PID capacity waits in the parallel dispatch loop #auto-dispatch #bug ref:GH#39103 pr:#39111 completed:2026-11-19
+
+- [x] t19118 feat(cloudron): cloudron-helper.sh nginx-http2 off|on|status for HTTP/2 CVE windows #auto-dispatch #feat ref:GH#39098 -> [todo/tasks/t19118-brief.md] pr:#39102 completed:2026-11-19
+
+- [x] t19120 feat(recovery-policy): delegable scope_acceptance action for source-exhausted phase holds #auto-dispatch #feat ref:GH#39113 pr:#39116 completed:2026-11-19
+
+- [x] t19121 fix(planning): protected-branch planning PR fallback overwrites newer default-branch TODO rows from a stale caller snapshot #auto-dispatch #bug #priority:high ref:GH#39120 pr:#39124 completed:2026-11-19
+
+- [x] t19123 linux-procfs-runtime-check.sh: add a sudo/user-session-bus fixture so approval and pulse kicks can be runtime-verified from macOS #auto-dispatch #feat ref:GH#39130 pr:#39134 completed:2026-11-19
+
+- [x] t19122 perf(pulse): let a running dispatch round absorb worker slots freed mid-round #performance #priority:high ref:GH#39128 pr:#39141 completed:2026-11-19
+
+- [x] t19125 Reset-aware OAuth pool rotation: prefer the account whose quota resets soonest #auto-dispatch #feat ref:GH#39137 pr:#39143 completed:2026-11-19
+
+- [x] t19126 fix(sync-workflows): create resync PRs ready with allow-auto-merge so green workflow syncs merge without the maintainer #bug #interactive tier:standard -> [todo/tasks/t19126-brief.md] ref:GH#39153 pr:#39155 completed:2026-11-19
+
+- [x] t19133 fix(pulse-watchdog): starved deferrable stages borrow the capped dispatch-reserve fuse so dirty_pr_sweep stops starving #bug #priority:high #interactive tier:standard -> [todo/tasks/t19133-brief.md] ref:GH#39179 pr:#39180 completed:2026-11-19
+
+- [x] t19130 fix(pulse-merge): stale non-required pending checks are ignored when required contexts are skipped, so path-filtered PRs stop starving the merge pass #bug #priority:high #interactive tier:standard -> [todo/tasks/t19130-brief.md] ref:GH#39166 pr:#39168 completed:2026-11-19
+
+- [x] t19132 perf(pulse-dispatch): PR-evidence negative-cache hints outlive one pulse cycle so blocked candidates skip the dedup ceremony #performance #priority:high #interactive tier:standard -> [todo/tasks/t19132-brief.md] ref:GH#39174 pr:#39176 completed:2026-11-19
+
+- [x] t19134 perf(gh-shim): remove per-call bash forks from instrumentation, path resolution and cooldown preflight #performance #interactive tier:standard -> [todo/tasks/t19134-brief.md] ref:GH#39187 pr:#39192 completed:2026-11-19
+
+- [x] t19135 test(zsh-compat): stub _gh_timeout_cooldown_preflight so the _gh_with_timeout zsh guard passes again #auto-dispatch #bug tier:simple -> [todo/tasks/t19135-brief.md] ref:GH#39189 pr:#39191 completed:2026-11-19
+
+- [x] t19136 fix(pulse-dispatch): parse macOS kern.boottime sec, not usec, so the post-boot dispatch ramp engages #auto-dispatch #bug tier:simple -> [todo/tasks/t19136-brief.md] ref:GH#39190 pr:#39193 completed:2026-11-19
+
+- [x] t19137 fix(pulse-dispatch): log the settled worker PGID after setsid instead of the launcher's #auto-dispatch #bug tier:simple ref:GH#39194 pr:#39196 completed:2026-11-19
+
+- [x] t19142 fix(pulse-check): size the daily apply routine's collection budgets so worker history and the queue scan complete; drop duplicate r-pulse-check #bug #interactive tier:standard -> [todo/tasks/t19142-brief.md] ref:GH#39206 pr:#39208 completed:2026-11-19
+
+- [x] t19138 fix(worker-watchdog): defer no-output kills while the worker's isolated DB shows live tool output #bug #interactive tier:standard -> [todo/tasks/t19138-brief.md] ref:GH#39197 pr:#39199 completed:2026-11-19
+
+- [x] t19139 fix(model-routing): add gpt-6.1-terra to the ChatGPT OAuth unsupported list #bug #interactive tier:simple -> [todo/tasks/t19139-brief.md] ref:GH#39200 pr:#39201 completed:2026-11-19
+
+- [x] t19141 fix(worker-lifecycle): accept pulse merge closeout marker as MERGE_SUMMARY evidence for merged worker PRs #bug #interactive tier:standard -> [todo/tasks/t19141-brief.md] ref:GH#39205 pr:#39207 completed:2026-11-19
+
+- [x] t19143 fix(tests): restore the fixture workspace mode leaked by the group-writable workspace test #bug #interactive tier:simple -> [todo/tasks/t19143-brief.md] ref:GH#39209 pr:#39214 completed:2026-11-19
+
+- [x] t19144 feat(full-loop): add --ready to commit-and-pr so verified interactive PRs open non-draft #auto-dispatch #feat tier:simple -> [todo/tasks/t19144-brief.md] ref:GH#39210 pr:#39211 completed:2026-11-19
+
+- [x] t19145 fix(ci): affected-test selection runs vacuous sourced modules instead of their parent suites #auto-dispatch #bug tier:standard -> [todo/tasks/t19145-brief.md] ref:GH#39212 pr:#39215 completed:2026-11-19
+
+- [x] t19146 fix(pulse-merge): close PRs whose non-closing issue is completed and whose diff is empty or a stale planning row #auto-dispatch #bug tier:standard -> [todo/tasks/t19146-brief.md] ref:GH#39213 pr:#39216 completed:2026-11-19
+
+- [x] t19131 fix(tests): test-browser-qa-helper runtime-check configured-executable case drifted from GH#36325 chromium selector precedence #auto-dispatch #bug tier:simple -> [todo/tasks/t19131-brief.md] ref:GH#39173 pr:#39175 completed:2026-11-19
+
+- [x] t19154 perf(gh-transport): revalidate explicit-pagination pages with ETags so unchanged comment lists cost no REST quota #feat #interactive tier:standard -> [todo/tasks/t19154-brief.md] ref:GH#39233 pr:#39238 completed:2026-11-19
+
+- [x] t19155 ci: run test-browser-qa-helper.sh in required Framework Validation (core) shard #auto-dispatch #feat tier:simple -> [todo/tasks/t19155-brief.md] ref:GH#39234 pr:#39237 logged:2026-11-19 completed:2026-11-19
+
+- [x] t19156 fix(ci): affected-tests-helper ignores .mjs/.cjs/.js/.ts script changes, so JS runtime regressions never select their shell suites #auto-dispatch #bug tier:simple -> [todo/tasks/t19156-brief.md] ref:GH#39235 logged:2026-11-19 pr:#39241 completed:2026-11-19
+
+- [x] t19158 perf(gh-transport): replay counted-list page frames (total_count) so unchanged check-run and status reads cost no REST quota #feat #interactive tier:standard -> [todo/tasks/t19158-brief.md] ref:GH#39244 pr:#39245 completed:2026-11-19
+
+- [x] t19157 feat(session-bus): issue watches relay worker/runner progress to interactive sessions; cross-runner who hint; worker dependency pointers #feat #interactive tier:standard -> [todo/tasks/t19157-brief.md] ref:GH#39240 assignee:marcusquinn logged:2026-11-19 started:2026-11-19 pr:#39246 completed:2026-11-19
+
+- [x] t19159 fix(bounded-operation): completion-mode drain test reports failed under host load (GH#33747 test) #auto-dispatch #bug tier:standard ref:GH#39251 logged:2026-11-19 pr:#39252 completed:2026-11-19
+
+- [x] t19160 fix(pulse): partial-continuation revisit walks past merged PRs that target a different issue #bug #interactive tier:standard -> [todo/tasks/t19160-brief.md] ref:GH#39254 logged:2026-11-19 pr:#39260 completed:2026-11-19
+
+- [x] t19161 docs(full-loop): point the GH#27137 review-thread merge block at pr-review-thread-response-scanner reply/resolve #auto-dispatch #feat tier:simple ref:GH#39257 logged:2026-11-19 pr:#39259 completed:2026-11-19
+
+- [x] t19162 fix(full-loop): privacy pre-scan is stricter than the pre-push hook and blocks already-public content #bug #interactive ref:GH#39261 logged:2026-11-19 -> [todo/tasks/t19162-brief.md] pr:#39263 completed:2026-11-19
+
+- [x] t19163 fix(decisions): the --max cap fills up on the first repo alphabetically and hides every other repo's holds #bug #interactive ref:GH#39266 logged:2026-11-19 -> [todo/tasks/t19163-brief.md] pr:#39267 completed:2026-11-19
+
+- [x] t19164 fix(headless): resolve the OpenCode runtime profile through the profile document, not only AIDEVOPS_OPENCODE_PROFILE #auto-dispatch #bug ref:GH#39276 logged:2026-11-19 pr:#39279 completed:2026-11-19
+
+- [x] t19165 fix(gh-write): refuse an interactive PR comment that would stale a verified PR approval #auto-dispatch #bug ref:GH#39269 logged:2026-11-19 pr:#39274 completed:2026-11-19
+
+- [x] t19166 fix(tool-version-check): never let a Homebrew upgrade move an OpenCode 1.x install to OpenCode 2 #auto-dispatch #bug ref:GH#39271 logged:2026-11-19 pr:#39278 completed:2026-11-19
+
+- [x] t19167 fix(decisions): holds the recovery supervisor marked as needing a human never reach /decisions #bug ref:GH#39275 pr:#39277 completed:2026-11-19
+
+- [x] t19168 feat(opencode): one-command switch from an unintended global OpenCode 2 back to stable OpenCode 1 #auto-dispatch #feat #interactive tier:standard ref:GH#39282 assignee:marcusquinn logged:2026-11-19 started:2026-11-19 -> [todo/tasks/t19168-brief.md] pr:#39286 completed:2026-11-19
+
+- [ ] t19170 fix(recovery): a trusted retry on a queued hold waits hours for the rearm rotation #bug #interactive ref:GH#39284 logged:2026-11-19 -> [todo/tasks/t19170-brief.md]
+
+- [x] t19171 fix(dispatch): zero-output hold ignores later trusted worker progress and keeps a released issue held for up to 12h #bug #interactive ref:GH#39293 logged:2026-11-19 -> [todo/tasks/t19171-brief.md] pr:#39297 completed:2026-11-19
+
+- [x] t19172 updown guide: make domain-expiration reminders optional (auto-renewed domains) #documentation ref:GH#39304 pr:#39305 completed:2026-11-19
+
+- [ ] t19173 fix(pulse-merge): external check findings outside the PR diff no longer discard a green worker PR #bug #framework #interactive ref:GH#39310 logged:2026-11-19 -> [todo/tasks/t19173-brief.md]
+
+- [ ] t19178 feat(pulse): persistent dispatch exclusions reach the AI brief owner instead of a user session #auto-dispatch #feat #framework ref:GH#39332 logged:2026-11-19 -> [todo/tasks/t19178-brief.md]
+
+- [ ] t19179 fix(pulse): release orphaned active-status labels with no assignee and resurface aged no-auto-dispatch holds daily #auto-dispatch #feat ref:GH#39334
+
+- [ ] t19181 docs(worker-egress-srt): record macOS arm64 real-check evidence, Homebrew closure requirement, and resolved zod advisory #auto-dispatch #documentation ref:GH#39340
+
+- [ ] t19182 fix(pulse-merge): duplicate PR consolidation stops scoring singleton PRs that cannot form a group #bug #framework #interactive tier:standard ref:GH#39351 logged:2026-11-19 -> [todo/tasks/t19182-brief.md]
 
 ## In Progress
 
@@ -5864,3 +5957,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18967 secret-helper: systemd-creds backend for unattended worker secrets (encrypted at rest, no passphrase) #auto-dispatch #enhancement ref:GH#37725 pr:#37734 completed:2026-11-14
 
 - [x] t18998 feat(mcp): add on-demand NetBird MCP server (self-hosted URL + PAT from aidevops secrets) #enhancement ref:GH#38313 pr:#38315 completed:2026-11-15
+- [x] t18980 Reclaim phase 2: observe worktree owners through the lifecycle registry and ProcessAdapter, not a /proc scan #bug #type:enhancement ref:GH#38107 pr:#38127 completed:2026-11-19
+
+- [ ] t19150 feat(ci): scheduled main shell-suite health run files deduped red-main issues #auto-dispatch #enhancement #framework ref:GH#39222

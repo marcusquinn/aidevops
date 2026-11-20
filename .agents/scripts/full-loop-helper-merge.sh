@@ -48,6 +48,13 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/shared-approval-cli.sh"
+fi
+
 # Sequential phase auto-filing parity with pulse-merge.sh (t2740/GH#22629).
 # shellcheck source=./shared-phase-filing.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
@@ -1195,15 +1202,19 @@ _retarget_stacked_children_interactive() {
 		return 0
 	fi
 
-	local default_branch
-	default_branch=$(_flm_gh_read gh repo view "$repo" --json defaultBranchRef -q '.defaultBranchRef.name' || true)
-	default_branch="${default_branch:-main}"
+	# GH#39167: children follow the parent into its own base, never `main`.
+	local target_base=""
+	target_base=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json baseRefName -q '.baseRefName') || target_base=""
+	if [[ -z "$target_base" ]]; then
+		print_warning "Cannot resolve PR #${pr_number} base; stacked children of '${parent_head_ref}' not retargeted (GH#39167)"
+		return 0
+	fi
 
 	local child
 	while IFS= read -r child; do
 		[[ -z "$child" ]] && continue
-		print_info "Retargeting stacked PR #${child} from '${parent_head_ref}' to '${default_branch}' before merging PR #${pr_number} (t2412)"
-		gh pr edit "$child" --repo "$repo" --base "$default_branch" 2>&1 || true
+		print_info "Retargeting stacked PR #${child} from '${parent_head_ref}' to '${target_base}' before merging PR #${pr_number} (t2412)"
+		gh pr edit "$child" --repo "$repo" --base "$target_base" 2>&1 || true
 	done <<<"$children"
 	return 0
 }
@@ -1669,7 +1680,7 @@ _merge_verify_rbg_override_approval() {
 	[[ -n "${_FULL_LOOP_RBG_OVERRIDE_REASON:-}" ]] || return 0
 	verdict=$("${SCRIPT_DIR}/approval-helper.sh" verify pr "$pr_number" "$repo" 2>/dev/null | tail -1) || verdict=""
 	if [[ "$verdict" != "VERIFIED" ]]; then
-		print_error "Review-bot-gate override refused: PR #${pr_number} approval is ${verdict:-unverifiable}; run: sudo aidevops approve pr ${pr_number} ${repo}"
+		print_error "Review-bot-gate override refused: PR #${pr_number} approval is ${verdict:-unverifiable}; run: $(approval_cli_prefix) approve pr ${pr_number} ${repo}"
 		return 1
 	fi
 	print_info "Review-bot-gate override: PR #${pr_number} maintainer approval VERIFIED"

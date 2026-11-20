@@ -324,6 +324,9 @@ _PULSE_MERGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./gh-closing-reference-lib.sh
 source "${_PULSE_MERGE_DIR}/gh-closing-reference-lib.sh"
 source "${_PULSE_MERGE_DIR}/shared-claim-lifecycle.sh"
+# GH#39167: shared PR base resolver + wrong-base worker PR merge guard.
+# shellcheck source=./shared-pr-base.sh
+source "${_PULSE_MERGE_DIR}/shared-pr-base.sh"
 
 # Final duplicate-implementation fence for live interactive issue owners.
 # shellcheck source=interactive-claim-fence.sh
@@ -608,9 +611,53 @@ _pm_gate_author_trust() {
 	return 0
 }
 
+# Append a merge-pass log line at most once per PR head, so stable skips of
+# bot PRs stay visible without repeating every cycle (GH#39280).
+_pm_log_once_per_head() {
+	local pr_number="$1" repo_slug="$2" head_sha="$3" kind="$4" message="$5"
+	local state_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/pulse-merge-log-once"
+	local repo_key="${repo_slug//[^a-zA-Z0-9_.-]/-}" state_file="" previous=""
+	state_file="${state_dir}/${kind}-${repo_key}-${pr_number}"
+	[[ -f "$state_file" ]] && previous=$(<"$state_file")
+	[[ -n "$head_sha" && "$previous" == "$head_sha" ]] && return 0
+	echo "$message" >>"$LOGFILE"
+	mkdir -p "$state_dir" 2>/dev/null && printf '%s\n' "$head_sha" >"$state_file" 2>/dev/null
+	return 0
+}
+
+# Route a configured non-Dependabot dependency bot (GH#39280). Returns 1 when
+# the author is not a configured bot so the caller keeps its Dependabot path.
+# #aidevops:trust-boundary — configuration plus exact-head authenticity only
+# selects a repair route; merge still requires current-head maintainer
+# crypto-approval (GH#17671 defence-in-depth unchanged).
+_pm_gate_route_configured_dependency_bot() {
+	local pr_number="$1" repo_slug="$2" pr_author="$3" expected_head_sha="$4"
+	local bot_slug="" terminal_rc=0 intake_rc=0
+	declare -F _trusted_dependency_bot_for_author >/dev/null 2>&1 || return 1
+	bot_slug=$(_trusted_dependency_bot_for_author "$pr_author" "$repo_slug") || return 1
+	_check_required_checks_has_terminal_failure "$repo_slug" "$pr_number" "$expected_head_sha" || terminal_rc=$?
+	if [[ "$terminal_rc" -ne 0 ]]; then
+		_pm_log_once_per_head "$pr_number" "$repo_slug" "$expected_head_sha" dependency-bot-wait \
+			"[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — configured dependency bot ${bot_slug} remains external; no terminal required-check failure on head ${expected_head_sha:0:12} (rc=${terminal_rc}) and no current-head maintainer crypto-approval (GH#39280)"
+		return 0
+	fi
+	_pulse_route_dependabot_pr_to_worker_issue "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha" "terminal-ci-failure" || intake_rc=$?
+	if [[ "$intake_rc" -eq 0 ]]; then
+		echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — authentic configured dependency bot ${bot_slug} PR has terminal CI failures; routed to worker intake (GH#39280)" >>"$LOGFILE"
+		return 0
+	fi
+	_pm_log_once_per_head "$pr_number" "$repo_slug" "$expected_head_sha" dependency-bot-intake \
+		"[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — configured dependency bot ${bot_slug} terminal CI failure not routed (intake rc=${intake_rc}) (GH#39280)"
+	return 0
+}
+
 _pm_gate_route_ineligible_author() {
 	local pr_number="$1" repo_slug="$2" pr_author="$3" expected_head_sha="$4" intake_rc=0
 	local reason="${5:-policy-ineligible}"
+	if [[ "$reason" == "policy-ineligible" ]] &&
+		_pm_gate_route_configured_dependency_bot "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha"; then
+		return 0
+	fi
 	_pulse_route_dependabot_pr_to_worker_issue "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha" "$reason" || intake_rc=$?
 	case "$intake_rc" in
 	0) echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — authentic Dependabot PR requires ${reason}; routed to worker intake (GH#30351)" >>"$LOGFILE" ;;
@@ -624,7 +671,15 @@ _pm_gate_route_ineligible_author() {
 		;;
 	5) echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — exact-head Dependabot source contains non-Dependabot commit authorship; actionable maintainer hold applied" >>"$LOGFILE" ;;
 	6) echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — completed Dependabot intake lacks verified replacement evidence; preserving source without duplicate intake" >>"$LOGFILE" ;;
-	*) echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — author ${pr_author} is not a collaborator" >>"$LOGFILE" ;;
+	*)
+		case "$pr_author" in
+		app/* | *\[bot\])
+			_pm_log_once_per_head "$pr_number" "$repo_slug" "$expected_head_sha" untrusted-bot \
+				"[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — author ${pr_author} is not a collaborator; bot is not listed in repos.json trusted_dependency_bots (GH#39280)"
+			;;
+		*) echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — author ${pr_author} is not a collaborator" >>"$LOGFILE" ;;
+		esac
+		;;
 	esac
 	return 0
 }
@@ -688,6 +743,11 @@ _pm_gate_origin_authority() {
 			if [[ "$stop_rc" -ne 0 && "$stop_rc" -ne 2 ]]; then
 				echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — native auto-merge hold failed; manual intervention required" >>"$LOGFILE"
 			fi
+		fi
+		# GH#39158: stale origin:interactive drafts are handed to workers.
+		if [[ "${DRY_RUN:-0}" != "1" && "$is_draft" == "true" && ",${labels_str}," == *",origin:interactive,"* ]] \
+			&& declare -F _interactive_draft_pr_try_handover >/dev/null 2>&1; then
+			_interactive_draft_pr_try_handover "$pr_number" "$repo_slug" "$labels_str" || true
 		fi
 		_PMP_HUMAN_GATED=1 # GH#38248: live draft/hold read
 		return 1
@@ -1121,6 +1181,10 @@ _pmp_stage_parse_and_validate() {
 	if [[ "$pr_is_draft" == "$PULSE_MERGE_BOOL_TRUE" ]]; then
 		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — draft PR not eligible for auto-merge (GH#23525)" >>"$LOGFILE"
 		_pmp_record_negative_verdict "$repo_slug" "$pr_obj" draft
+		# GH#39158: stale origin:interactive drafts are handed to workers.
+		if [[ "${DRY_RUN:-0}" != "1" && ",${pr_labels}," == *",origin:interactive,"* ]]; then
+			_interactive_draft_pr_try_handover "$pr_number" "$repo_slug" "$pr_labels" || true
+		fi
 		_PMP_HUMAN_GATED=1 # GH#38248
 		return 1
 	fi
@@ -1143,9 +1207,16 @@ _pmp_stage_parse_and_validate() {
 	# release; the raw merge below must never publish it without authority.
 	# Not skipped for snapshot hold-for-review: the live-state gate re-reads
 	# labels, so a hold removed mid-cycle must not bypass this check.
+	local labels_csv=",${pr_labels},"
 	if [[ "$repo_slug" != "${AIDEVOPS_RELEASE_LANE_COORDINATED_REPO:-marcusquinn/aidevops}" ]] \
-		&& ! cloudron_release_merge_guard "$repo_slug" "$pr_number" "$pr_head_ref_oid" ",${pr_labels}," 2>>"$LOGFILE"; then
+		&& ! cloudron_release_merge_guard "$repo_slug" "$pr_number" "$pr_head_ref_oid" "$labels_csv" 2>>"$LOGFILE"; then
 		echo "[pulse-wrapper] Merge pass: deferring PR #${pr_number} in ${repo_slug} — Cloudron release requires exact-head release authority (GH#37955)" >>"$LOGFILE"
+		return 1
+	fi
+	# GH#39167: a worker PR on the wrong base is retargeted or held before any
+	# conflict, CI-repair or merge routing can act on base-divergence failures.
+	if [[ "${DRY_RUN:-0}" != "1" ]] && declare -F aidevops_pr_base_merge_guard >/dev/null 2>&1 \
+		&& ! aidevops_pr_base_merge_guard "$pr_number" "$repo_slug" "$pr_base_ref_name" "$pr_head_ref_oid" "$labels_csv"; then
 		return 1
 	fi
 	# GH#24634: refresh REST-first UNKNOWN state before conflict handling.
@@ -1380,7 +1451,7 @@ _pmp_stage_pre_merge() {
 	fi
 	[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}ruleset_s" "$_ruleset_start"
 	merge_summary=$(_extract_merge_summary "$pr_number" "$repo_slug")
-	_retarget_stacked_children "$pr_number" "$repo_slug" "$pr_head_ref_name"
+	_retarget_stacked_children "$pr_number" "$repo_slug" "$pr_head_ref_name" "$pr_base_ref_name"
 	# GH#37795: the full final gate (admin safety, review refresh, worker-briefed
 	# verdict, REST snapshot) runs once, immediately before each mutation
 	# (_pmp_stage_admin_merge, native auto-merge, ruleset fallbacks). Here only the

@@ -69,8 +69,12 @@ ORPHAN_WORKTREE_GRACE_SECS="${ORPHAN_WORKTREE_GRACE_SECS:-1800}"                
 # 1536 MB per worker: measured headless worker process trees (opencode plus
 # git/node/test children) used 0.7-1.6 GB on 2026-10-23; the former 512 MB
 # estimate admitted about 3x more workers than RAM could hold.
-RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-1536}"
-RAM_RESERVE_MB="${RAM_RESERVE_MB:-6144}"                                                     # 6 GB reserved for OS + user apps
+# Per-host tuning (GH#39157): env wins, then config.jsonc, then the default.
+# Validate here, before the automatic cap below uses them in arithmetic.
+RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-$(config_get "orchestration.ram_per_worker_mb" "1536")}"
+RAM_RESERVE_MB="${RAM_RESERVE_MB:-$(config_get "orchestration.ram_reserve_mb" "6144")}" # 6 GB reserved for OS + user apps
+RAM_PER_WORKER_MB=$(_validate_int RAM_PER_WORKER_MB "$RAM_PER_WORKER_MB" 1536 1)
+RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 6144)
 # Automatic cap from total RAM (not free RAM — that's volatile):
 # (total_ram_mb - reserve) / ram_per_worker, clamped to [2, 64]. Live free RAM
 # bounds each pass further in calculate_max_workers / the refill cap.
@@ -329,8 +333,6 @@ PULSE_EVENT_REFILL_WAKE_PASSES=$(_validate_int PULSE_EVENT_REFILL_WAKE_PASSES "$
 ORPHAN_MAX_AGE=$(_validate_int ORPHAN_MAX_AGE "$ORPHAN_MAX_AGE" 7200)
 ORPHAN_INACTIVITY_AGE=$(_validate_int ORPHAN_INACTIVITY_AGE "$ORPHAN_INACTIVITY_AGE" 259200 86400)
 ORPHAN_WORKTREE_GRACE_SECS=$(_validate_int ORPHAN_WORKTREE_GRACE_SECS "$ORPHAN_WORKTREE_GRACE_SECS" 1800 60)
-RAM_PER_WORKER_MB=$(_validate_int RAM_PER_WORKER_MB "$RAM_PER_WORKER_MB" 1536 1)
-RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 6144)
 MAX_WORKERS_CAP=$(_validate_int MAX_WORKERS_CAP "$MAX_WORKERS_CAP" "${_default_cap:-8}" 1)
 DAILY_PR_CAP=$(_validate_int DAILY_PR_CAP "$DAILY_PR_CAP" 5 1)
 PRODUCT_RESERVATION_PCT=$(_validate_int PRODUCT_RESERVATION_PCT "$PRODUCT_RESERVATION_PCT" 60 0)

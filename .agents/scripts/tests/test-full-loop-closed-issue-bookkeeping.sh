@@ -67,6 +67,7 @@ eval "$(extract_function "$COMMIT_HELPER" _create_or_continue_pr)"
 eval "$(extract_function "$MAIN_HELPER" cmd_commit_and_pr)"
 eval "$(extract_function "$MAIN_HELPER" _diff_is_planning_only)"
 eval "$(extract_function "$MAIN_HELPER" _commit_and_pr_prepare_metadata)"
+eval "$(extract_function "$COMMIT_HELPER" _commit_and_pr_platform_evidence_gate)"
 eval "$(extract_function "$MAIN_HELPER" _commit_and_pr_check_readiness)"
 eval "$(extract_function "$MAIN_HELPER" _commit_and_pr_publish)"
 

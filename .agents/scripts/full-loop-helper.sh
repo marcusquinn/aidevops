@@ -80,9 +80,11 @@ source "${SCRIPT_DIR}/macos-local-checks.sh"
 # Collapses full-loop steps 4.1-4.2.1 into a single deterministic call.
 # Workers and interactive sessions both use this — no parallel logic.
 #
-# Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--risk-level <level>] [--testing-level <level>] [--decisions <notes>] [--label <label>...] [--completion-bookkeeping --proof-pr <N> --task-id <tNNN>] [--allow-parent-close] [--keep-issue-open] [--skip-hooks] [--no-rebase] [--base <branch>]
+# Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--risk-level <level>] [--testing-level <level>] [--decisions <notes>] [--regression-evidence <why>] [--label <label>...] [--completion-bookkeeping --proof-pr <N> --task-id <tNNN>] [--allow-parent-close] [--keep-issue-open] [--ready] [--skip-hooks] [--no-rebase] [--base <branch>]
+# --ready: create the PR non-draft (verified implementation intent); default interactive PRs are draft.
 # --base <branch>: stacked PR. Rebase onto origin/<branch> and open the PR against it
-#   (branch must exist on origin and differ from the current branch). Default: remote default branch.
+#   (branch must exist on origin, differ from the current branch, and be an open PR head;
+#   workers fail closed otherwise). Default: pr_base_branch config, else the remote default (GH#39167).
 # Exit codes: 0 = PR created (prints PR number to stdout), 1 = failure
 # --allow-parent-close: skip the parent-task keyword guard (final-phase PR only)
 # --keep-issue-open: interactive only; link with `For #N` (no closing keyword) and skip the
@@ -100,11 +102,11 @@ source "${SCRIPT_DIR}/macos-local-checks.sh"
 # can create the PR manually.
 cmd_commit_and_pr() {
 	local issue_number="" commit_message="" pr_title="" summary_what="" summary_testing="" summary_decisions=""
-	local runtime_risk="" testing_level="" pr_metadata_overrides=""
+	local runtime_risk="" testing_level="" pr_metadata_overrides="" summary_regression=""
 	local completion_bookkeeping=0 bookkeeping_proof_pr="" bookkeeping_task_id=""
 	local replacement_pr="" replacement_reason=""
 	local -a extra_labels=()
-	local allow_parent_close=0 keep_issue_open=0 skip_hooks=0 skip_rebase=0 stack_base_arg=""
+	local allow_parent_close=0 keep_issue_open=0 create_ready=0 skip_hooks=0 skip_rebase=0 stack_base_arg=""
 
 	_parse_commit_and_pr_args "$@" || return 1
 	_validate_keep_issue_open_request || return 1
@@ -129,7 +131,7 @@ cmd_commit_and_pr() {
 		fi
 	fi
 	_validate_explicit_pr_metadata "$runtime_risk" "$testing_level" || return 1
-	_validate_stack_base "$stack_base_arg" "$branch" || return 1
+	_validate_stack_base "$stack_base_arg" "$branch" "$repo" || return 1
 	_validate_completion_bookkeeping_request "$completion_bookkeeping" "$bookkeeping_proof_pr" \
 		"$bookkeeping_task_id" "$allow_parent_close" "$repo" \
 		"${extra_labels[@]+"${extra_labels[@]}"}" || return 1
@@ -332,7 +334,8 @@ _commit_and_pr_prepare_metadata() {
 		replacement_note="This explicitly justified replacement preserves open PR #${replacement_pr}. Rationale: ${replacement_reason}"
 		[[ -n "$replacement_pr_head_sha" ]] && replacement_note="${replacement_note} Verified ancestor before WIP finalization: ${replacement_pr_head_sha}."
 	fi
-	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer" "$closing_keyword" "$runtime_risk" "$testing_level" "$comparison_base" "$replacement_note" "$summary_decisions") || return 1
+	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer" "$closing_keyword" "$runtime_risk" "$testing_level" "$comparison_base" "$replacement_note" "$summary_decisions" "${summary_regression:-}") || return 1
+	_commit_and_pr_platform_evidence_gate "$pr_title" "$pr_body" "$comparison_base" || return 1
 
 	# Parent-task closing keywords are forbidden except for an explicit final phase.
 	local keyword_guard="${SCRIPT_DIR}/parent-task-keyword-guard.sh"
@@ -516,6 +519,9 @@ Commands:
                 [--testing-level runtime-verified|self-assessed]
                                           Set the runtime testing evidence level
                 [--decisions TEXT]        Record notable decisions in the PR body
+                [--regression-evidence TEXT]
+                                          Add a ## Regression Evidence rationale (platform
+                                          fixes without a test change; checked before push)
                 [--label NAME]            Add a PR label (repeatable)
                 [--replace-pr N --replacement-reason TEXT]
                                           Audited replacement of an open PR (reason: 20+ characters)

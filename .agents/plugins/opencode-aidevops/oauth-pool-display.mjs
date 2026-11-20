@@ -11,6 +11,7 @@
 import {
   getAccounts, getPendingToken, getPoolFilePath, poolAccountKey, poolAccountLabel,
 } from "./oauth-pool-storage.mjs";
+import { describeUsage } from "./oauth-pool-ordering.mjs";
 import { getEndpointCooldownValue } from "./oauth-pool-token-endpoint.mjs";
 export {
   formatDuration, formatAgo, poolActionCheck,
@@ -50,7 +51,8 @@ export function poolActionList(provider, accounts, hint, now) {
     const aid = a.accountId ? ` | id: ${a.accountId.slice(0, 8)}...` : "";
     const org = a.orgId ? ` | org: ${String(a.orgId).slice(0, 8)}` : "";
     const pri = a.priority ? ` | priority: ${a.priority}` : "";
-    return `${i + 1}. ${poolAccountLabel(a)} [${a.status}]${cd}${lu}${aid}${org}${pri}`;
+    const usage = provider === "anthropic" ? ` | usage: ${describeUsage(a, now)}` : "";
+    return `${i + 1}. ${poolAccountLabel(a)} [${a.status}]${cd}${lu}${aid}${org}${pri}${usage}`;
   });
   const pending = getPendingToken(provider);
   const pl = pending

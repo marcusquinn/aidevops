@@ -251,6 +251,11 @@ gh_pr_checks_exact_json() {
 			;;
 	esac
 }
+# GH#39227: exact-head snapshot for the non-required check gate.
+_pmrc_snapshot_checks_with_retry() {
+	printf '%s\n' '[{"name":"required-ci","status":"completed","conclusion":"success"}]'
+	return 0
+}
 gate_rc=0
 cmd_pre_merge_gate 42 testorg/testrepo || gate_rc=\$?
 printf 'CHECK_STATUS=%s\n' "\${FULL_LOOP_PR_CHECK_STATUS:-unset}"

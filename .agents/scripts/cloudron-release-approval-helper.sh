@@ -140,6 +140,23 @@ release_request_body() {
 	return 0
 }
 
+# Print the last "Maintainer command" in a body when it signs exactly this
+# issue with a prefix approval_cli_prefix can render on some host (GH#39027).
+# Hosts render different prefixes, so finalized bodies from another host stay
+# valid instead of being treated as unfinished signed content.
+release_body_command() {
+	local body="$1" issue="$2" repo="$3" line="" command="" suffix=""
+	suffix=" approve issue ${issue} ${repo}"
+	# shellcheck disable=SC2016 # Markdown backticks are literal regex text.
+	line=$(printf '%s\n' "$body" | grep -E '^Maintainer command: `[^`]+`$' | tail -n 1) || line=""
+	command="${line#Maintainer command: \`}"
+	command="${command%\`}"
+	[[ -n "$line" && "$command" == *"$suffix" ]] || return 1
+	approval_cli_prefix_is_valid "${command%"$suffix"}" || return 1
+	printf '%s\n' "$command"
+	return 0
+}
+
 release_request_interrupted() {
 	local repo="$1" pr="$2"
 	printf 'ERROR: Release approval request interrupted; leave BOTH release-approval-required and hold-for-review on PR #%s. Retry after API recovery: gh pr edit %s --repo %s --add-label release-approval-required --add-label hold-for-review; cloudron-release-approval-helper.sh request %s %s\n' "$pr" "$pr" "$repo" "$repo" "$pr" >&2
@@ -150,7 +167,7 @@ release_request() {
 	local repo="$1" pr="$2"
 	local snapshot="" sha="" manifest="" version="" upstream="" notes="" checks="" issues="" existing="" url="" older="" rc=0
 	local issue="" metadata="" command="" existing_body="" maintainer_prefix='Maintainer command:'
-	local verdict="" publication_body=""
+	local verdict="" publication_body="" existing_command=""
 	[[ "$pr" =~ ^[1-9][0-9]*$ ]] || release_error 'PR number must be a positive integer.' || return 1
 	release_authority "$repo" || return 1
 	snapshot=$(release_pr "$repo" "$pr") || return 1
@@ -194,12 +211,13 @@ release_request() {
 		url=$(jq -r '.html_url' <<<"$existing") || return 1
 		issue="${url##*/}"
 		[[ "$url" == https://* && "$issue" =~ ^[1-9][0-9]*$ ]] || return 1
-		command="sudo aidevops approve issue ${issue} ${repo}"
+		command="$(approval_cli_prefix) approve issue ${issue} ${repo}"
 		existing_body=$(jq -r '.body' <<<"$existing") || return 1
 		publication_body="${existing_body##*$'\n### Publication boundary\n'}"
 		publication_body="${publication_body%%$'\n### Files Scope\n'*}"
-		if [[ "$existing_body" != *'Request finalization pending.'* &&
-			"$publication_body" == *$'\n\n'"${maintainer_prefix} \`${command}\`"$'\n' ]]; then
+		existing_command=$(release_body_command "$publication_body" "$issue" "$repo") || existing_command=""
+		if [[ "$existing_body" != *'Request finalization pending.'* && -n "$existing_command" &&
+			"$publication_body" == *$'\n\n'"${maintainer_prefix} \`${existing_command}\`"$'\n' ]]; then
 			printf '%s\nAPPROVAL_COMMAND=%s\n' "$url" "$command"
 			return 0
 		fi
@@ -224,7 +242,7 @@ release_request() {
 		gh_create_issue --repo "$repo" --title "Release ${repo##*/} v${version}" --body-file - --label release-approval-required --label no-auto-dispatch) || return 1
 	issue="${url##*/}"
 	[[ "$url" == https://* && "$issue" =~ ^[1-9][0-9]*$ ]] || release_error 'Created issue URL has no valid issue number.' || return 1
-	command="sudo aidevops approve issue ${issue} ${repo}"
+	command="$(approval_cli_prefix) approve issue ${issue} ${repo}"
 	# Finalize the digest-bound body before exposing a signable command.
 	release_request_body "$repo" "$pr" "$sha" "$version" "$upstream" "$notes" "$checks" "$metadata" "${maintainer_prefix} \`${command}\`" |
 		gh_issue_edit_safe "$issue" --repo "$repo" --body-file - >/dev/null || return 1
@@ -265,13 +283,19 @@ release_policy_body() {
 		'{schema:1,kind:$kind,repository:$repo,changelog_files:["CHANGELOG","CHANGELOG.md"],pinned_files:["Dockerfile"],check_files:["test/package-test.sh"],check_insertion_pattern:$insertion}') || return 1
 	case "$mode" in
 	semver) [[ -z "$upstream" ]] || return 1 ;;
-	commits)
+	commits | commits-license-url)
 		[[ "$upstream" =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] || return 1
 		policy=$(jq -c --arg upstream "$upstream" '. + {upstream_mode:"commits",upstream_repository:$upstream}' <<<"$policy") || return 1
 		# This additional signed text replaces the semver boundary only for an
 		# explicit commit policy. Legacy semver bodies remain byte-for-byte stable.
 		# shellcheck disable=SC2016 # Markdown backticks are literal.
 		printf 'Commit policy: upstream `%s`; SHA prefixes of 7–40 hex characters must resolve to the exact open trusted finding commit in this upstream. GitHub compare must prove strict forward ancestry (ahead); commits have no major boundary. All other routine-bump rules below still apply; the same-major version clause is replaced by this ancestry rule. A new signature is required for this mode.\n\n' "$upstream"
+		if [[ "$mode" == commits-license-url ]]; then
+			policy=$(jq -c '. + {license_commit_url:true}' <<<"$policy") || return 1
+			# Conditional text keeps every pre-existing signed commit policy body stable.
+			# shellcheck disable=SC2016 # Markdown backticks are literal.
+			printf 'License commit URL: `upstreamLicense.url` may differ only by the proven full-SHA substitution (old upstream commit to new upstream commit); every other `upstreamLicense` field stays unchanged. A new signature is required for this mode.\n\n'
+		fi
 		;;
 	release-identity)
 		# upstream is "owner/repo:COMMIT_ARG:images-asset"; the signature covers all three.
@@ -302,6 +326,8 @@ release_policy_body() {
 		;;
 	*) return 1 ;;
 	esac
+	# The `<request>` placeholder keeps `sudo aidevops`: signed policy text must
+	# render identically on every host. Only the final command line varies (GH#39027).
 	# shellcheck disable=SC2016 # Markdown backticks are literal, not expansions.
 	printf '%s\n## Standing release policy\n\n```json\n%s\n```\n\nSigning this issue authorizes routine `r924` to merge and publish **routine upstream bumps** of %s without a per-release signature. A routine bump, checked at its exact PR head:\n\n- links exactly one open, trusted upstream monitor finding, and `upstreamVersion` equals that finding within the same major version;\n- increments only the package patch version; no other `CloudronManifest.json` field changes;\n- modifies in place only the manifest, the changelog files above (additions only), the pinned files (whole-token old to new version substitution only) and the check files (version substitution of existing lines, plus inserted lines that fully match `check_insertion_pattern`);\n- comes from a same-repository OWNER/MEMBER PR against `main` with terminal-green checks, including preflight, no auto-merge and no `needs-maintainer-review`.\n\nEvery other release still needs `sudo aidevops approve issue <request> %s` on its release request. Close this issue to revoke the policy; any edit or comment makes the signature stale. Add `needs-maintainer-review` to a release PR to stop the policy for that PR.\n\n### Publication boundary\nThis is an approval-only issue, not a worker task. Do not auto-dispatch. The policy never deploys an app, changes credentials or branch protection, or authorizes unrelated publication.\n\n%s\n' \
 		"$RELEASE_POLICY_MARKER" "$policy" "$repo" "$repo" "$command"
@@ -686,7 +712,7 @@ release_ensure_policy_labels() {
 # unverifiable policy is never rewritten.
 release_policy_request() {
 	local repo="$1" existing='' rc=0 url='' issue='' command='' body='' verdict='' verify_rc=0 expected=''
-	local mode="${2:-semver}" upstream="${3:-}"
+	local mode="${2:-semver}" upstream="${3:-}" existing_command='' existing_expected=''
 	local maintainer_prefix='Maintainer command:'
 	release_authority "$repo" || return 1
 	# Validate the requested signed schema before creating any issue.
@@ -704,11 +730,18 @@ release_policy_request() {
 	fi
 	issue="${url##*/}"
 	[[ "$url" == https://* && "$issue" =~ ^[1-9][0-9]*$ ]] || release_error 'Created issue URL has no valid issue number.' || return 1
-	printf -v command 'sudo aidevops approve issue %s %s' "$issue" "$repo"
+	printf -v command '%s approve issue %s %s' "$(approval_cli_prefix)" "$issue" "$repo"
 	expected=$(release_policy_body "$repo" "${maintainer_prefix} \`${command}\`" "$mode" "$upstream") || return 1
 	if [[ "$rc" -eq 0 ]]; then
-		# Only the exact canonical body is ready to sign.
-		if [[ "${body//$'\r'/}" == "$expected" ]]; then
+		# Only the exact canonical body is ready to sign. Its command prefix may
+		# come from another host's approval_cli_prefix (GH#39027).
+		existing_command=$(release_body_command "${body//$'\r'/}" "$issue" "$repo") || existing_command=""
+		if [[ -n "$existing_command" && "$existing_command" != "$command" ]]; then
+			existing_expected=$(release_policy_body "$repo" "${maintainer_prefix} \`${existing_command}\`" "$mode" "$upstream") || return 1
+		else
+			existing_expected="$expected"
+		fi
+		if [[ "${body//$'\r'/}" == "$existing_expected" ]]; then
 			printf '%s\nAPPROVAL_COMMAND=%s\n' "$url" "$command"
 			return 0
 		fi
@@ -865,7 +898,7 @@ release_process_issue() {
 			comments=$(gh api "repos/${repo}/issues/${issue}/comments?per_page=100" --paginate) || return 1
 			if ! jq -se --arg marker "$marker" 'add | any(.[]; .body | contains($marker))' <<<"$comments" >/dev/null; then
 				release_comment "$repo" "$issue" "${marker}
-PR head changed after approval. No merge occurred. Update this issue's exact head and verification evidence, then run sudo aidevops approve issue ${issue} ${repo} again." || return 1
+PR head changed after approval. No merge occurred. Update this issue's exact head and verification evidence, then run $(approval_cli_prefix) approve issue ${issue} ${repo} again." || return 1
 			fi
 		fi
 		return 0
@@ -1321,7 +1354,13 @@ release_process() {
 	if [[ -n "$repo_filter" ]]; then
 		repos="$repo_filter"
 	else
-		repos=$(jq -er '[.initialized_repos[] | select(.app_type == "cloudron-package" and .maintenance != false) | .slug] | unique | .[]' "$REPOS_FILE") || return 1
+		# GH#39145: no registered package is a no-op, not a failure; a missing or
+		# malformed registry still fails because jq errors on it.
+		repos=$(jq -r '[.initialized_repos[] | select(.app_type == "cloudron-package" and .maintenance != false) | .slug] | unique | .[]' "$REPOS_FILE") || return 1
+		if [[ -z "$repos" ]]; then
+			printf 'INFO: No registered cloudron-package repositories; nothing to process.\n' >&2
+			return 0
+		fi
 	fi
 	while IFS= read -r repo; do
 		release_authority "$repo" || {
@@ -1368,7 +1407,7 @@ main() {
 		release_request "$arg2" "$arg3" || return $?
 		;;
 	policy-request)
-		[[ $# -eq 2 || ( $# -eq 4 && ( "$arg3" == commits || "$arg3" == release-identity || "$arg3" == pins ) ) ]] || return 1
+		[[ $# -eq 2 || ( $# -eq 4 && ( "$arg3" == commits || "$arg3" == commits-license-url || "$arg3" == release-identity || "$arg3" == pins ) ) ]] || return 1
 		release_policy_request "$arg2" "${arg3:-semver}" "$arg4" || return 1
 		;;
 	process)
@@ -1399,7 +1438,7 @@ main() {
 		release_process "$apply" "$repo_filter" "$issue_filter" || return 1
 		;;
 	help | --help | -h)
-		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | policy-request <repo> [commits <upstream-owner/repo> | release-identity <upstream-owner/repo:COMMIT_ARG:images-asset> | pins <json: upstream_repository, registry_images, release_checksum, license_version_url, release_identity>] | merge-guard <repo> <pr> <head> | process [--repo owner/repo] [--issue N] [--apply]\n'
+		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | policy-request <repo> [commits <upstream-owner/repo> | commits-license-url <upstream-owner/repo> | release-identity <upstream-owner/repo:COMMIT_ARG:images-asset> | pins <json: upstream_repository, registry_images, release_checksum, license_version_url, release_identity>] | merge-guard <repo> <pr> <head> | process [--repo owner/repo] [--issue N] [--apply]\n'
 		;;
 	*) return 1 ;;
 	esac

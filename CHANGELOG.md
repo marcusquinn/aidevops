@@ -10,6 +10,234 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.246] - 2026-11-19
+
+### Added
+
+- scheduled main shell-suite health run files deduped red-main issues (t19150) (#39307)
+
+### Changed
+
+- Maintenance: mark t19172 complete (pr:#39305 completed:2026-11-19) (#39306)
+
+### Fixed
+
+- external check findings outside the PR diff no longer discard a green worker PR
+- repair five pre-existing drifted test suites (GH#39309)
+- circuit comment repeats the latest worker's input request
+
+## [3.39.245] - 2026-11-19
+
+### Added
+
+- route configured dependency-bot (Renovate) PRs to worker intake instead of skipping
+
+### Changed
+
+- Tests: enrol recovery lifecycle fixtures in the worker registry (GH#39295) (#39303)
+- Tests: make archive patch-capacity case independent of host free space (#39302)
+- Maintenance: batch retirement guard evidence into one claim, registry, listing and process snapshot
+- Maintenance: mark t19168 complete (pr:#39286 completed:2026-11-19) (#39288)
+
+### Fixed
+
+- trusted worker progress supersedes earlier zero-output hold evidence
+- guarantee cursor progress and run a bounded CI-repair lane first
+
+## [3.39.244] - 2026-11-19
+
+### Changed
+
+- Documentation: Hostinger + Ultimate Multisite subdomain SSL without a Cloudflare wildcard
+- one-command switch from a global OpenCode 2 back to stable OpenCode 1
+- Maintenance: mark t19167 complete (pr:#39277 completed:2026-11-19) (#39273)
+- Maintenance: sync ref:GH#39266 to TODO.md (#39264)
+
+### Fixed
+
+- check queued holds with a fresh retry or reply before the rearm rotation
+- refuse PR comment that would stale a verified approval
+- pin brew metadata between major guard and upgrade (#39278)
+- resolve OpenCode profile via profile document (GH#39276)
+- show holds the recovery supervisor recorded as needing a human
+- reject malformed refs before ranking and capping
+
+## [3.39.243] - 2026-11-19
+
+### Added
+
+- issue watches relay worker/runner progress to interactive sessions; cross-runner who hint; worker pointers
+
+### Changed
+
+- Maintenance: mark t19161 complete (pr:#39259 completed:2026-11-19) (#39262)
+- Maintenance: mark t19159 complete (pr:#39252 completed:2026-11-19) (#39256)
+- Maintenance: recover dirty worker worktree checkpoint (#39252)
+- Maintenance: add t19159 and t19161 backup entries (GH#39251, GH#39257)
+
+### Fixed
+
+- privacy pre-scan passes the hook's public head and target
+- partial-continuation revisit walks past merged PRs that target a different issue
+
+## [3.39.242] - 2026-11-19
+
+### Changed
+
+- Maintenance: clear the persisted worker session when a release ends the delivery
+- Maintenance: sync GitHub issue refs to TODO.md (#39250)
+- Maintenance: standing human_decision suspends the permission_required window re-arm
+- Maintenance: triage keeps transient third-party rate limits out of permission_required
+- Maintenance: mark t19158 complete (pr:#39245 completed:2026-11-19) (#39243)
+
+### Fixed
+
+- select shell suites for changed JS/TS scripts in affected-tests-helper
+
+## [3.39.241] - 2026-11-19
+
+### Added
+
+- add --ready to commit-and-pr so verified interactive PRs open non-draft (#39211)
+
+### Changed
+
+- Maintenance: mark t19154 complete (pr:#39238 completed:2026-11-19) (#39239)
+- CI: run browser QA helper regression in Framework Validation core (t19155). Resolves #39234 (#39237)
+- Maintenance: sync GitHub issue refs to TODO.md (#39231)
+
+### Fixed
+
+- merge gate blocks unclassified terminal non-required check failures (GH#39227) (#39230)
+- mine failed post-merge and repo-level workflow runs (GH#39228)
+- enforce diff-scoped Pulse unbound-var scan in required Complexity Analysis
+- declare primary For identity on TODO publication PR
+- affected-test selection follows transitive production sourcers (GH#39221)
+- initialise multi-var locals in stale non-closing PR retirement
+- close non-closing PRs for completed issues with empty or stale planning diff (GH#39213)
+- resolve sourced test modules to root suites in affected-tests-helper (GH#39212)
+- restore leaked fixture workspace mode and tolerate fail-closed orphan PR base
+- size the daily apply routine's collection budgets; drop duplicate r-pulse-check
+- accept the merge closeout marker as MERGE_SUMMARY evidence
+- flush queued writes on process exit instead of discarding them (#39203)
+
+## [3.39.240] - 2026-11-19
+
+### Added
+
+- support anchored brief sections
+
+### Changed
+
+- Tests: stub _gh_with_timeout collaborators
+
+### Fixed
+
+- add gpt-6.1-terra to the ChatGPT OAuth unsupported list
+- defer no-output kills while the worker's isolated DB shows live tool output
+- tolerate corrupt metrics lines and write records atomically (GH#39185) (#39195)
+- log settled worker PGID after setsid (GH#39194)
+- parse macOS kern.boottime sec, not usec
+- clarify consolidation worker completion contract (#39182)
+- starved deferrable stages borrow the capped dispatch-reserve fuse so dirty_pr_sweep stops starving
+
+## [3.39.239] - 2026-11-19
+
+### Changed
+
+- Maintenance: guard worker PR base branch (explicit base, stacked-parent validation, retarget fallbacks)
+- Maintenance: sync GitHub issue refs to TODO.md (#39090)
+
+### Fixed
+
+- steer to sectioned writes after finish=length responses (#39154)
+- isolate configured browser executable cases (#39175)
+
+## [3.39.238] - 2026-11-19
+
+### Added
+
+- expose RAM_RESERVE_MB and RAM_PER_WORKER_MB as orchestration config keys
+
+### Fixed
+
+- treat temp_dir_recovery releases as stall-class (t19129) (#39165)
+- discover system and unversioned Homebrew Node without returning shared bin dirs
+- hand stale origin:interactive draft PRs to workers (GH#39158) (#39163)
+- ignore stale non-required pending runs when required contexts are skipped (t19130)
+
+## [3.39.237] - 2026-11-19
+
+### Added
+
+- capture anthropic usage headers on built-in provider path
+- add --sudo-session fixture to linux-procfs-runtime-check.sh (#39134)
+
+### Fixed
+
+- r924 no-op when no cloudron-package repos are registered
+- routine-log-helper persists multi-line issue_number
+- create resync PRs ready with allow-auto-merge
+- preserve core routine enabled state across TODO.md regeneration
+
+## [3.39.236] - 2026-11-19
+
+### Added
+
+- check platform-fix regression evidence before push and accept --regression-evidence
+- reset-aware oauth pool ordering (#39143)
+
+### Fixed
+
+- graduate plugin validator concurrency under load (#39135)
+- signed license_commit_url opt-in for commits-mode standing policy (GH#39115)
+
+## [3.39.235] - 2026-11-19
+
+### Added
+
+- delegable scope_acceptance action for source-exhausted phase holds
+
+### Changed
+
+- plan: add t19120 recovery-policy scope_acceptance action (#39114)
+
+### Fixed
+
+- Codex config must not abort setup without a TOML-capable Python
+- gh_create_pr defers unprovisionable origin label like gh_create_issue
+- add Claude Fable 5.2 rates; document delegated-run token cost
+- kick the managed pulse with the user session bus after sudo approvals
+- SHA-pin every fresh managed caller install to the latest release
+- recover CLEAN PRs wedged behind an aged native auto-merge request
+- merge planning PR fallback onto origin default and guard task regression
+- skip worker dispatch for the cycle when systemd backend probe fails (#39119)
+- Bash 3.2-safe tracked-PID capacity waits (#39111)
+- record exact changed lines, keep cron until revert succeeds, serialize revert (GH#39098)
+- framework-managed block in generated AGENTS.md keeps user content
+- repair test-failure-family-remediation fixtures (GH#39105) (#39109)
+- stub cmd_merge closing guards so trust-parity test runs to the end
+
+## [3.39.234] - 2026-11-19
+
+### Added
+
+- DataForSEO SERP resolve_poisoned_results and resolve_goto_urls
+
+### Fixed
+
+- print sudo-resolvable approval commands on Linux user-local installs
+
+## [3.39.233] - 2026-11-19
+
+### Added
+
+- add test-load-repro-helper for flaky tests
+
+### Fixed
+
+- route source_access_blocked to needs-source-access, not needs-credentials (GH#39091)
+
 ## [3.39.232] - 2026-11-18
 
 ### Added

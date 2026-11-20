@@ -17,7 +17,7 @@ fi
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.39.232
+# Version: 3.39.246
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -1720,7 +1720,7 @@ _setup_run_non_interactive() {
 	_time_step "deploy_agents_to_runtimes" _deploy_agents_to_runtimes_bounded || true
 	_time_step "update_opencode_config" _setup_run_noncritical_stage_bounded "OpenCode config update" "${AIDEVOPS_UPDATE_OPENCODE_CONFIG_TIMEOUT:-60}" update_opencode_config
 	_time_step "update_claude_config" update_claude_config
-	_time_step "update_codex_config" update_codex_config
+	_time_step "update_codex_config" update_codex_config_noncritical
 	_time_step "update_cursor_config" update_cursor_config
 	_time_step "disable_ondemand_mcps" disable_ondemand_mcps
 	_setup_run_noninteractive_optional_tools
@@ -1897,7 +1897,7 @@ _setup_run_interactive() {
 	# Run AFTER OpenCode config so Claude Code gets equivalent setup
 	confirm_step "Update Claude Code configuration (slash commands, MCPs, settings)" && update_claude_config
 	# Run AFTER Claude Code config so Codex/Cursor get equivalent setup
-	confirm_step "Update Codex configuration (MCPs, instructions)" && update_codex_config
+	confirm_step "Update Codex configuration (MCPs, instructions)" && update_codex_config_noncritical
 	confirm_step "Update Cursor configuration (MCPs)" && update_cursor_config
 	# Deploy slash commands to the other installed runtimes (Codex, Cursor,
 	# Droid, Gemini CLI, Continue, Kiro, Kimi, Qwen) via the unified generator.

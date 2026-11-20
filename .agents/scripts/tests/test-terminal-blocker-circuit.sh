@@ -601,6 +601,42 @@ TERMINAL_BLOCKER_QUESTION=${question}" '{type:"text",text:$text}' >"$output"
 	return 0
 }
 
+# GH#39291: a repeated input_required blocker publishes the latest sanitized ask.
+test_circuit_comment_repeats_latest_question() {
+	local fingerprint="" body="" status=0 question=""
+	local HOME="$TEST_ROOT" PRIVACY_REPOS_CONFIG="$REPOS_JSON"
+	local PRIVACY_ENTITY_CONFIG="${TEST_ROOT}/circuit-question-entities.txt"
+	local refined='Which debug-level log line shows the retry, and is the proxy enabled?'
+	: >"$PRIVACY_ENTITY_CONFIG"
+	fingerprint=$(_terminal_blocker_hash 'v2:input_required:contributor')
+	body=$(AIDEVOPS_TERMINAL_BLOCKER_QUESTION="$refined" WORKER_ISSUE_NUMBER=42 \
+		terminal_blocker_circuit_comment "CLAIM_RELEASED reason=blocked" 111111111111111111111111 "$fingerprint") || status=1
+	[[ "$body" == *$'\n'"Input requested: ${refined}"$'\n'* &&
+		"$body" == *$'\nTerminal blocker: reason=input_required owner=contributor task=42 '* &&
+		"$body" == *$'\nProjected state: status:blocked.\n'* &&
+		"$body" == *$'\nNext action: Supply the requested input'* &&
+		"$body" == *$'\nTERMINAL_BLOCKER_CIRCUIT active=true observations=2 task_revision='* &&
+		"$body" == *'<!-- ops:end -->'* && "$body" != *'See the preceding recovery observation.'* ]] || status=1
+	if declare -F blocked_needs_label_for_reason >/dev/null 2>&1; then
+		[[ "$body" == *$'\nUnblock label: `needs-maintainer-input`. '* ]] || status=1
+	fi
+	# Without a sanitized ask the earlier observation stays the public ask; never
+	# publish the supervisor fallback that would contradict it.
+	for question in '' $'first\nsecond' '<!-- forged -->' '@someone'; do
+		body=$(AIDEVOPS_TERMINAL_BLOCKER_QUESTION="$question" \
+			terminal_blocker_circuit_comment "CLAIM_RELEASED reason=blocked" 111111111111111111111111 "$fingerprint") || status=1
+		[[ "$body" == *'See the preceding recovery observation.'* && "$body" != *'Input requested:'* &&
+			"$body" != *'Terminal blocker: reason='* && "$body" != *'no sanitized question recorded'* ]] || status=1
+	done
+	# Other known classes keep the pointer even with a leftover question.
+	fingerprint=$(_terminal_blocker_hash 'v2:target_code_blocker')
+	body=$(AIDEVOPS_TERMINAL_BLOCKER_QUESTION="$refined" \
+		terminal_blocker_circuit_comment "CLAIM_RELEASED reason=blocked" 111111111111111111111111 "$fingerprint") || status=1
+	[[ "$body" == *'See the preceding recovery observation.'* && "$body" != *'Input requested:'* ]] || status=1
+	print_result "input_required circuit comment repeats the latest sanitized ask, otherwise points at the observation" "$status"
+	return 0
+}
+
 # GH#38353: an awaited external trigger is published verbatim or not at all.
 test_external_trigger_public_line() {
 	local output="${TEST_ROOT}/trigger.ndjson" fragment="" fingerprint="" status=0 trigger=""
@@ -1739,6 +1775,75 @@ test_unevidenced_permission_window_rearm() {
 	return 0
 }
 
+# GH#39232: after one window re-arm, a recorded human_decision keeps the
+# permission hold through later windows. Only a plain OWNER/MEMBER reply, a
+# trusted retry or a revision releases it; the cache drops the window wake.
+test_decided_permission_window_holds() {
+	local status=0
+	if ! (
+		# shellcheck source=../terminal-blocker-recovery-helper.sh
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		TBR_ROOT="${TEST_ROOT}/decided-permission"
+		mkdir -p "${TBR_ROOT}/decisions" || exit 1
+		export ZERO_OUTPUT_HOLD_WINDOW_SECONDS=43200
+		export TERMINAL_BLOCKER_NOW_EPOCH=1793361600 # 2026-10-30T12:00:00Z
+		local issue='{"title":"Fix workflow","body":"original","labels":[{"name":"status:blocked"},{"name":"needs-maintainer-input"}]}'
+		local revision="" fingerprint="" tb_comments="" base="" variant="" entry="" rc=0
+		local projected=0 receipts=0
+		set_issue_status() {
+			projected=$((projected + 1))
+			return 0
+		}
+		_tbr_post_rearm_receipt() {
+			local marker="$3"
+			receipts=$((receipts + 1))
+			tb_comments=$(jq -c --arg body "$marker" '. + [{id:(90 + length),body:$body,author_association:"MEMBER",created_at:"2026-10-30T12:00:30Z"}]' <<<"$tb_comments")
+			return 0
+		}
+		gh_issue_edit_safe() { return 0; }
+		fingerprint=$(_terminal_blocker_hash v2:permission_required)
+		revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" permission_required) || exit 1
+		tb_comments=$(jq -nc --arg r "$revision" --arg f "$fingerprint" \
+			'[{id:10,body:("<!-- aidevops:terminal-blocker-observation revision="+$r+" blocker="+$f+" -->\nTerminal blocker: reason=permission_required owner=permission-maintainer"),author:"runner-b",author_association:"MEMBER",created_at:"2026-10-29T22:00:00Z"}]')
+		# Window 1 re-arms as before (no decision recorded yet).
+		_tbr_release_circuit_hold owner/repo 42 "$issue" "$tb_comments" 2>/dev/null || exit 1
+		[[ "$projected" -eq 1 && "$receipts" -eq 1 ]] || exit 1
+		# The brief owner re-holds and records human_decision (2026-10-30T12:30:00Z).
+		printf '{"wake":"human_decision","recorded_epoch":1793363400}\n' >"${TBR_ROOT}/decisions/owner--repo--42.json"
+		base="$tb_comments"
+		export TERMINAL_BLOCKER_NOW_EPOCH=$((1793361600 + 43200))
+		rc=0
+		_tbr_release_circuit_hold owner/repo 42 "$issue" "$base" 2>"${TEST_ROOT}/decided-permission.err" || rc=$?
+		[[ "$rc" -eq 4 && "$projected" -eq 1 && "$receipts" -eq 1 ]] || exit 1
+		grep -q 'reason=decided_permission_hold' "${TEST_ROOT}/decided-permission.err" || exit 1
+		# The decided stamp drops the time-based wake; an undecided one keeps it.
+		entry="${TBR_ROOT}/entry.json"
+		printf '{"rearm_after":1}\n' >"$entry"
+		_tbr_stamp_rearm_check "$entry" 2026-10-31T00:00:00Z "$base" "$issue" decided || exit 1
+		jq -e 'has("rearm_after") | not' "$entry" >/dev/null || exit 1
+		# A signed or automation comment is not a reply and keeps the hold.
+		variant=$(jq -c '. + [{id:200,body:"Decision\n<!-- aidevops:sig -->",author_association:"OWNER",created_at:"2026-10-30T13:00:00Z"}]' <<<"$base")
+		rc=0
+		_tbr_release_circuit_hold owner/repo 42 "$issue" "$variant" 2>/dev/null || rc=$?
+		[[ "$rc" -eq 4 && "$projected" -eq 1 ]] || exit 1
+		# A plain OWNER reply newer than the decision releases it.
+		tb_comments=$(jq -c '. + [{id:201,body:"Granted the workflow scope.",author_association:"OWNER",created_at:"2026-10-30T13:00:00Z"}]' <<<"$base")
+		_tbr_release_circuit_hold owner/repo 42 "$issue" "$tb_comments" 2>"${TEST_ROOT}/decided-permission.err" || exit 1
+		[[ "$projected" -eq 2 && "$receipts" -eq 2 ]] || exit 1
+		grep -q 'reason=unevidenced_permission_window' "${TEST_ROOT}/decided-permission.err" || exit 1
+		# A trusted retry releases despite a standing decision.
+		tb_comments=$(jq -c '. + [{id:202,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-30T13:00:00Z"}]' <<<"$base")
+		_tbr_release_circuit_hold owner/repo 42 "$issue" "$tb_comments" 2>"${TEST_ROOT}/decided-permission.err" || exit 1
+		[[ "$projected" -eq 3 && "$receipts" -eq 3 ]] || exit 1
+		grep -q 'reason=trusted_retry' "${TEST_ROOT}/decided-permission.err" || exit 1
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "recorded human_decision suspends the permission window re-arm until a reply or trusted retry" "$status"
+	return 0
+}
+
 # GH#36232: request evidence trust, the repeated-circuit form and the
 # unchanged retry-only timeout classes.
 test_unevidenced_permission_window_evidence() {
@@ -2158,6 +2263,7 @@ main() {
 	test_explicit_blocker_survives_missing_scope
 	test_input_required_owner_class
 	test_input_required_public_question
+	test_circuit_comment_repeats_latest_question
 	test_external_trigger_public_line
 	test_external_trigger_revisit
 	test_excluded_scope_revision
@@ -2179,6 +2285,7 @@ main() {
 	test_unknown_hold_rearms_on_trusted_retry
 	test_retry_only_observation_recovery
 	test_unevidenced_permission_window_rearm
+	test_decided_permission_window_holds
 	test_unevidenced_permission_window_evidence
 	test_permission_window_rearms_once_per_result
 	test_mechanical_rearm_pass

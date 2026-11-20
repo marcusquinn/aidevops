@@ -25,7 +25,7 @@ token efficiency, and quality control built in.**
 [![Maintainability](https://qlty.sh/gh/marcusquinn/projects/aidevops/maintainability.svg)](https://qlty.sh/gh/marcusquinn/projects/aidevops)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/2b1adbd66c454dae92234341e801b984)](https://app.codacy.com/gh/marcusquinn/aidevops/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/Version-3.39.232-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-3.39.246-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
 [![npm version](https://img.shields.io/npm/v/aidevops)](https://www.npmjs.com/package/aidevops)
 [![Homebrew](https://img.shields.io/badge/homebrew-marcusquinn%2Ftap-orange)](https://github.com/marcusquinn/homebrew-tap)
 
@@ -75,6 +75,14 @@ OpenCode, and offers optional tools. Accept **Tabby** when offered. Other
 methods: [Installation](#installation). Check the result with
 `aidevops status`; `aidevops doctor --fix` resolves duplicate installs and PATH
 conflicts.
+
+**OpenCode version:** aidevops supports OpenCode 1 as the stable default.
+OpenCode 2 is a preview. Setup installs it as a separate `opencode2` command,
+so you can try it without replacing `opencode`. Don't install OpenCode with
+`brew install opencode`, because Homebrew's formula now installs OpenCode 2.
+`aidevops opencode-runtime status` shows which version `opencode` runs.
+`aidevops opencode-runtime use-stable` switches an OpenCode 2 install back to
+OpenCode 1 and keeps a backup of your OpenCode data.
 
 ### 2. Open Tabby and start OpenCode
 

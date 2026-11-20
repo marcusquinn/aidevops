@@ -269,7 +269,9 @@ _invoke_opencode_prepare_child_command() {
 		local arg=""
 		# OpenCode V1 accepts only uppercase levels; V2 accepts only lowercase.
 		local log_level="WARN"
-		[[ "${AIDEVOPS_OPENCODE_PROFILE:-v1}" != "v2" ]] || log_level="warn"
+		if _headless_opencode_profile_is_v2; then
+			log_level="warn"
+		fi
 		for arg in "${_oc_cmd[@]}"; do
 			new_cmd+=("$arg")
 			if [[ "$arg" == "run" && "$inserted" -eq 0 ]]; then
@@ -369,7 +371,7 @@ _invoke_opencode_run_bare() {
 
 # Start the runtime subprocess and publish its PID to the caller scope.
 _invoke_opencode_set_working_directory() {
-	[[ "${AIDEVOPS_OPENCODE_PROFILE:-v1}" == "v2" ]] || return 0
+	_headless_opencode_profile_is_v2 || return 0
 	if [[ -z "${_invoke_work_dir:-}" || ! -d "$_invoke_work_dir" ]]; then
 		print_error "OpenCode V2 launch directory is unavailable: ${_invoke_work_dir:-<unset>}"
 		printf '%s' "86" >"$exit_code_file"
@@ -427,6 +429,7 @@ _invoke_opencode_start_monitors() {
 			--exit-code-file "$exit_code_file" --session-key "${_invoke_session_key:-}" \
 			--repo-slug "${DISPATCH_REPO_SLUG:-}" --worktree-path "${_WORKER_WORKTREE_PATH:-}" \
 			--stall-timeout "$stall_timeout" --phase1-timeout "$phase1_timeout" \
+			--worker-db "${_WORKER_ISOLATED_DB_PATH:-}" \
 			</dev/null >/dev/null 2>&1 &
 		watchdog_pid=$!
 		print_info "[lifecycle] activity_watchdog_started pid=$watchdog_pid worker=$worker_pid stall_timeout=${stall_timeout}s phase1=${phase1_timeout}s hard_kill=${hard_kill_seconds}s events=${exit_code_file}.watchdog_events lifecycle_log=${lifecycle_log}"

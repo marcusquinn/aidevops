@@ -237,6 +237,9 @@ define_helper_under_test() {
 	fi
 	# shellcheck disable=SC1090
 	source "$checks_lib"
+	# GH#39027: extracted notifications render their prefix via approval_cli_prefix.
+	# shellcheck source=../shared-approval-cli.sh
+	source "${SCRIPT_DIR}/../shared-approval-cli.sh"
 
 	local gh_read_src finder_src notify_src ever_notify_src
 	gh_read_src=$(awk '

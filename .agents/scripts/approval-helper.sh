@@ -34,6 +34,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=shared-constants.sh
 [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+# GH#39027: printed approval commands need approval_cli_prefix even when
+# shared-constants.sh is missing on a partial install.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "${SCRIPT_DIR}/shared-approval-cli.sh"
+fi
 
 # Resolve the real user's home directory, handling sudo env_reset.
 # Under sudo, HOME may point at root's home while SUDO_USER holds the invoking
@@ -433,7 +439,7 @@ _require_gh_auth() {
 		fi
 	fi
 	_print_error "gh authentication failed under sudo; automatic recovery from the invoking user's gh auth failed"
-	_print_info "Check 'gh auth status' as your user, then retry sudo aidevops approve. If sudo strips auth, pass GH_TOKEN via sudo --preserve-env=GH_TOKEN."
+	_print_info "Check 'gh auth status' as your user, then retry $(approval_cli_prefix) approve. If sudo strips auth, pass GH_TOKEN via sudo --preserve-env=GH_TOKEN."
 	return 1
 }
 
@@ -493,7 +499,7 @@ _require_approval_key() {
 	local actual_key="$1"
 
 	if [[ ! -f "$actual_key" ]]; then
-		_print_error "No approval key found. Run: sudo aidevops approve setup"
+		_print_error "No approval key found. Run: $(approval_cli_prefix) approve setup"
 		return 1
 	fi
 
@@ -552,9 +558,9 @@ _validate_approval_target_kind() {
 	issue_json=$(_approval_fetch_issue_json "$target_number" "$slug") || {
 		_print_error "Could not resolve ${target_type} #${target_number} in ${slug}. Check the number, repo, and whether this is an issue or PR."
 		if [[ "$target_type" == "pr" ]]; then
-			_print_info "If this is an issue, use: sudo aidevops approve issue ${target_number} ${slug}"
+			_print_info "If this is an issue, use: $(approval_cli_prefix) approve issue ${target_number} ${slug}"
 		else
-			_print_info "If this is a PR, use: sudo aidevops approve pr ${target_number} ${slug}"
+			_print_info "If this is a PR, use: $(approval_cli_prefix) approve pr ${target_number} ${slug}"
 		fi
 		return 1
 	}
@@ -562,7 +568,7 @@ _validate_approval_target_kind() {
 	if [[ "$target_type" == "pr" ]]; then
 		if ! printf '%s' "$issue_json" | jq -e 'has("pull_request")' >/dev/null 2>&1; then
 			_print_error "#${target_number} in ${slug} is an issue, not a PR."
-			_print_info "Use: sudo aidevops approve issue ${target_number} ${slug}"
+			_print_info "Use: $(approval_cli_prefix) approve issue ${target_number} ${slug}"
 			return 1
 		fi
 		return 0
@@ -570,7 +576,7 @@ _validate_approval_target_kind() {
 
 	if printf '%s' "$issue_json" | jq -e 'has("pull_request")' >/dev/null 2>&1; then
 		_print_error "#${target_number} in ${slug} is a PR, not an issue."
-		_print_info "Use: sudo aidevops approve pr ${target_number} ${slug}"
+		_print_info "Use: $(approval_cli_prefix) approve pr ${target_number} ${slug}"
 		return 1
 	fi
 
@@ -1096,26 +1102,82 @@ _kick_pulse_after_approval() {
 	local kick_log="${_APPROVAL_HOME}/.aidevops/logs/pulse-approve-kick.log"
 	mkdir -p "$(dirname "$kick_log")" 2>/dev/null || true
 
-	# Detach completely so this exits even if the child blocks. The double
-	# fork via subshell + disown matches the pattern in
-	# pulse-lifecycle-helper.sh::_start. Drop sudo (run as the real user)
-	# so the spawned pulse uses the same env/locks as the launchd-managed
-	# pulse — root-owned locks would corrupt the lockdir tree.
+	_approval_spawn_user_pulse "$pulse_wrapper" "$kick_log" --merge-only
+	return 0
+}
+
+#######################################
+# Emit the real user's session-bus env assignments (one per line) when running
+# under sudo on a host with a per-user runtime dir. `sudo -u` resets the env,
+# so without these a kicked pulse has no XDG_RUNTIME_DIR/DBUS_SESSION_BUS_ADDRESS
+# and every systemd worker launch fails with manager_probe_failed (GH#39028).
+#######################################
+_approval_user_session_env() {
+	local real_uid=""
+	[[ -n "${SUDO_USER:-}" ]] || return 0
+	real_uid=$(id -u "$SUDO_USER" 2>/dev/null || true)
+	[[ "$real_uid" =~ ^[0-9]+$ && -d "/run/user/${real_uid}" ]] || return 0
+	printf 'XDG_RUNTIME_DIR=/run/user/%s\n' "$real_uid"
+	if [[ -S "/run/user/${real_uid}/bus" ]]; then
+		printf 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus\n' "$real_uid"
+	fi
+	return 0
+}
+
+#######################################
+# Spawn a detached pulse-wrapper run as the real user. The double fork via
+# subshell + disown matches pulse-lifecycle-helper.sh::_start. Under sudo, drop
+# to the real user (root-owned locks would corrupt the lockdir tree) and carry
+# the user session bus so the spawned pulse can reach the systemd worker backend.
+# Args: $1=pulse wrapper, $2=kick log, remaining args=pulse-wrapper args
+#######################################
+_approval_spawn_user_pulse() {
+	local pulse_wrapper="$1"
+	local kick_log="$2"
+	shift 2
 	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]] && command -v sudo >/dev/null 2>&1; then
+		local -a user_env=()
+		local env_line=""
+		while IFS= read -r env_line; do
+			[[ -n "$env_line" ]] && user_env+=("$env_line")
+		done < <(_approval_user_session_env)
 		(
-			nohup sudo -u "$SUDO_USER" -H -- "$pulse_wrapper" --merge-only \
-				>>"$kick_log" 2>&1 </dev/null &
+			nohup sudo -u "$SUDO_USER" -H -- env ${user_env[@]+"${user_env[@]}"} \
+				"$pulse_wrapper" "$@" >>"$kick_log" 2>&1 </dev/null &
 			disown 2>/dev/null || true
 		) 2>/dev/null
 	else
 		(
-			nohup "$pulse_wrapper" --merge-only \
-				>>"$kick_log" 2>&1 </dev/null &
+			nohup "$pulse_wrapper" "$@" >>"$kick_log" 2>&1 </dev/null &
 			disown 2>/dev/null || true
 		) 2>/dev/null
 	fi
-
 	return 0
+}
+
+#######################################
+# Ask a loaded systemd user supervisor to run the managed pulse now instead of
+# spawning an unmanaged one (GH#39028). Linux only; macOS/launchd unchanged.
+# Returns: 0 when the managed start was accepted, 1 to use the spawn fallback.
+#######################################
+_approval_start_managed_pulse() {
+	[[ "$(uname -s 2>/dev/null || true)" == "Linux" ]] || return 1
+	command -v systemctl >/dev/null 2>&1 || return 1
+	local unit="aidevops-supervisor-pulse.service"
+	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
+		command -v sudo >/dev/null 2>&1 || return 1
+		local -a user_env=()
+		local env_line=""
+		while IFS= read -r env_line; do
+			[[ -n "$env_line" ]] && user_env+=("$env_line")
+		done < <(_approval_user_session_env)
+		[[ ${#user_env[@]} -gt 0 ]] || return 1
+		sudo -u "$SUDO_USER" -H -- env "${user_env[@]}" \
+			systemctl --user start --no-block "$unit" >/dev/null 2>&1
+		return $?
+	fi
+	systemctl --user start --no-block "$unit" >/dev/null 2>&1
+	return $?
 }
 
 _approve_target_after_confirmation() {
@@ -1290,9 +1352,11 @@ _execute_approval_batch() {
 _approve_targets() {
 	local approval_mode="$1"
 	shift
-	local usage="Usage: sudo aidevops approve ${approval_mode} <number> [number...] [owner/repo]"
+	local approve_cli
+	approve_cli=$(approval_cli_prefix)
+	local usage="Usage: ${approve_cli} approve ${approval_mode} <number> [number...] [owner/repo]"
 	if [[ "$approval_mode" == "$_APPROVAL_BATCH_MODE" ]]; then
-		usage="Usage: sudo aidevops approve batch issue:<number>|pr:<number> [...] [owner/repo]"
+		usage="Usage: ${approve_cli} approve batch issue:<number>|pr:<number> [...] [owner/repo]"
 	fi
 	local slug=""
 	local arg=""
@@ -1554,7 +1618,7 @@ cmd_setup() {
 	# Must be run as root (via sudo)
 	if [[ "$(id -u)" -ne 0 ]]; then
 		_print_error "This command must be run with sudo"
-		echo "Usage: sudo aidevops approve setup"
+		echo "Usage: $(approval_cli_prefix) approve setup"
 		return 1
 	fi
 
@@ -1611,11 +1675,13 @@ cmd_setup() {
 	echo "The private key is owned by root and only accessible via sudo."
 	echo "Workers cannot read it, even though they run as your user account."
 	echo ""
+	local approve_cli
+	approve_cli=$(approval_cli_prefix)
 	echo "You can now approve issues/PRs with:"
-	echo "  sudo aidevops approve issue <number> <owner/repo>"
-	echo "  sudo aidevops approve pr <number> <owner/repo>"
-	echo "  sudo aidevops approve issue <number> [number...] <owner/repo>"
-	echo "  sudo aidevops approve batch issue:<number> pr:<number> [...] <owner/repo>"
+	echo "  ${approve_cli} approve issue <number> <owner/repo>"
+	echo "  ${approve_cli} approve pr <number> <owner/repo>"
+	echo "  ${approve_cli} approve issue <number> [number...] <owner/repo>"
+	echo "  ${approve_cli} approve batch issue:<number> pr:<number> [...] <owner/repo>"
 	return 0
 }
 

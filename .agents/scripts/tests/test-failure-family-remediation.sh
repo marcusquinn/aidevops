@@ -48,9 +48,9 @@ test_stable_failure_fingerprint() {
 	local now=""
 	now=$(date +%s)
 	printf '%s\n' \
-		"{\"ts\":$((now - 30)),\"repo_slug\":\"private/example\",\"session_key\":\"one\",\"result\":\"watchdog_stall_killed\",\"exit_code\":79}" \
-		"{\"ts\":$((now - 20)),\"repo_slug\":\"private/example\",\"session_key\":\"two\",\"result\":\"watchdog_stall_killed\",\"exit_code\":79}" \
-		"{\"ts\":$((now - 10)),\"repo_slug\":\"private/example\",\"session_key\":\"three\",\"result\":\"watchdog_stall_killed\",\"exit_code\":79}" >"$metrics"
+		"{\"ts\":$((now - 30)),\"role\":\"worker\",\"repo_slug\":\"private/example\",\"session_key\":\"one\",\"result\":\"watchdog_stall_killed\",\"exit_code\":79}" \
+		"{\"ts\":$((now - 20)),\"role\":\"worker\",\"repo_slug\":\"private/example\",\"session_key\":\"two\",\"result\":\"watchdog_stall_killed\",\"exit_code\":79}" \
+		"{\"ts\":$((now - 10)),\"role\":\"worker\",\"repo_slug\":\"private/example\",\"session_key\":\"three\",\"result\":\"watchdog_stall_killed\",\"exit_code\":79}" >"$metrics"
 	local output=""
 	output=$(WAH_METRICS_FILE="$metrics" WAH_PULSE_STATS_FILE="${TEST_ROOT}/missing-stats" \
 		"${SCRIPT_DIR}/worker-activity-helper.sh" summary --since 1h --json --no-pr-check)
@@ -70,7 +70,7 @@ test_threshold_and_privacy() {
 		--argjson summary "{\"metrics\":{\"failure_families\":[$family]}}" \
 		--argjson recent_summary "{\"metrics\":{\"failure_families\":[$family]}}" \
 		--argjson providers '{}' --argjson runner '{}' --argjson api '{}' \
-		--argjson queue '{"aggregate":{}}' -f "${SCRIPT_DIR}/pulse-check-report.jq")
+		--argjson queue '{"aggregate":{}}' --argjson delivery '{}' -f "${SCRIPT_DIR}/pulse-check-report.jq")
 	assert_eq "high-confidence recurrence crosses autofile threshold" "true" \
 		"$(printf '%s' "$report" | jq -r '.findings[] | select(.id == "worker-failure-family-watchdog-stall") | .autofile')"
 	assert_absent "aggregate report omits repository slug" "private/example" "$report"
@@ -83,7 +83,7 @@ test_threshold_and_privacy() {
 		--argjson summary "{\"metrics\":{\"failure_families\":[$family]}}" \
 		--argjson recent_summary '{"metrics":{"failure_families":[]}}' \
 		--argjson providers '{}' --argjson runner '{}' --argjson api '{}' \
-		--argjson queue '{"aggregate":{}}' -f "${SCRIPT_DIR}/pulse-check-report.jq")
+		--argjson queue '{"aggregate":{}}' --argjson delivery '{}' -f "${SCRIPT_DIR}/pulse-check-report.jq")
 	assert_eq "historical-only family is not filed as recurrent" "0" \
 		"$(printf '%s' "$stale_report" | jq '[.findings[] | select(.id == "worker-failure-family-watchdog-stall")] | length')"
 	return 0
@@ -144,6 +144,13 @@ WRAPPERS
 		fi
 		if [[ "$1 $2" == "issue list" ]]; then
 			[[ -s "$TEST_CREATED" ]] && printf '[{"number":42,"url":"fixture-url"}]\n' || printf '[]\n'
+			return 0
+		fi
+		if [[ "$1" == "api" && "$*" == *"/labels?"* ]]; then
+			printf '[]\n'
+			return 0
+		fi
+		if [[ "$1 $2" == "label create" ]]; then
 			return 0
 		fi
 		if [[ "$1" == "api" && "$2" == *"/issues/42" ]]; then

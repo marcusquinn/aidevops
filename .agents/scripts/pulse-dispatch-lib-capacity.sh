@@ -1547,7 +1547,14 @@ _dispatch_ramp_system_boot_ts() {
 		fi
 	fi
 	if command -v sysctl >/dev/null 2>&1; then
-		boot_ts=$(sysctl -n kern.boottime 2>/dev/null | sed -nE 's/.*sec = ([0-9]+).*/\1/p' | sed -n '1p')
+		# Output: "{ sec = 1794166500, usec = 274703 } <date>". Anchor on the
+		# leading "{ sec =" so the greedy match cannot land on "usec =".
+		local boottime_raw=""
+		boottime_raw=$(sysctl -n kern.boottime 2>/dev/null || true)
+		boot_ts=""
+		if [[ "$boottime_raw" =~ ^\{[[:space:]]*sec[[:space:]]*=[[:space:]]*([0-9]+) ]]; then
+			boot_ts="${BASH_REMATCH[1]}"
+		fi
 		if [[ "$boot_ts" =~ ^[0-9]+$ ]]; then
 			printf '%s' "$boot_ts"
 			return 0
@@ -1656,6 +1663,242 @@ _dispatch_apply_startup_capacity_ramp() {
 		return 0
 	fi
 	printf '%s\n' "$max_workers"
+	return 0
+}
+
+#######################################
+# t19116: launch-slot semaphore for one parallel dispatch loop.
+#
+# An evaluating ceremony (read-only dedup layers, eligibility, validators)
+# holds no worker slot. A candidate takes a slot only at its first persistent
+# write, immediately before the cross-runner claim (_dlw_claim_slot_and_lock),
+# so rejections evaluate concurrently while launches never exceed the round's
+# slot budget. _dispatch_max_loop owns the directory through a dynamically
+# scoped _DISPATCH_LAUNCH_SLOT_DIR; without one (serial loop, direct callers)
+# every acquire succeeds and behaviour is unchanged. mkdir is the atomic
+# test-and-set shared by the loop's background subshells.
+# Opt-out: DISPATCH_LAUNCH_SLOT_GATE=0 restores ceremony-start reservations.
+# A forced floor (_DISPATCH_FORCE_FLOOR) keeps its serial single launch.
+#######################################
+_dispatch_launch_slot_gate_enabled() {
+	[[ "${DISPATCH_LAUNCH_SLOT_GATE:-1}" != "0" ]] || return 1
+	[[ -z "${_DISPATCH_FORCE_FLOOR:-}" ]] || return 1
+	return 0
+}
+
+# Evaluation concurrency cap for a slot budget: slots x DISPATCH_EVAL_OVERSUBSCRIBE
+# (default 3) with the gate, else the legacy slot clamp. Callers still apply
+# DISPATCH_MAX_PARALLEL, the throttle file and REST-core serial mode.
+# Args: slot budget. Stdout: integer cap.
+_dispatch_eval_parallel_cap() {
+	local slots="$1" factor="${DISPATCH_EVAL_OVERSUBSCRIBE:-3}"
+	[[ "$slots" =~ ^[0-9]+$ ]] || slots=1
+	[[ "$factor" =~ ^[1-9][0-9]*$ ]] || factor=3
+	_dispatch_launch_slot_gate_enabled || factor=1
+	printf '%d\n' "$((slots * factor))"
+	return 0
+}
+
+# Args: issue number, repo slug. Stdout: filesystem-safe candidate key.
+_dispatch_launch_slot_key() {
+	local issue="$1" repo="$2" key=""
+	key="${repo//\//--}--${issue}"
+	printf '%s\n' "${key//[^A-Za-z0-9._-]/_}"
+	return 0
+}
+
+# Create a loop-owned slot directory. Args: slot budget. Stdout: directory.
+_dispatch_launch_slots_init() {
+	local budget="$1" dir=""
+	[[ "$budget" =~ ^[0-9]+$ ]] || return 1
+	dir=$(mktemp -d 2>/dev/null) || return 1
+	if ! printf '%s\n' "$budget" >"${dir}/budget"; then
+		rm -rf "$dir"
+		return 1
+	fi
+	printf '%s\n' "$dir"
+	return 0
+}
+
+# Args: issue number, repo slug
+# Returns: 0 when the candidate holds a slot (or no gate is active), 1 when all
+# slots are held. Lost or unreadable loop state fails closed (defer, no claim).
+_dispatch_launch_slot_acquire() {
+	local issue="$1" repo="$2" dir="${_DISPATCH_LAUNCH_SLOT_DIR:-}" budget="" key="" n=0
+	[[ -n "$dir" ]] || return 0
+	key=$(_dispatch_launch_slot_key "$issue" "$repo")
+	[[ ! -f "${dir}/held.${key}" ]] || return 0
+	read -r budget <"${dir}/budget" 2>/dev/null || budget=""
+	if [[ "$budget" =~ ^[0-9]+$ ]]; then
+		for ((n = 1; n <= budget; n++)); do
+			mkdir "${dir}/slot.${n}" 2>/dev/null || continue
+			# An overflow launch (settle) shrinks the budget; back off rather
+			# than launch past it. Concurrent acquirers may both back off.
+			if (($(_dispatch_launch_slots_taken) > budget)); then
+				rmdir "${dir}/slot.${n}" 2>/dev/null || true
+				break
+			fi
+			printf '%s\n' "$n" >"${dir}/held.${key}"
+			return 0
+		done
+	fi
+	: >"${dir}/deferred.${key}" 2>/dev/null || true
+	return 1
+}
+
+# Keep the slot for a launch (rc 0) or an unknown launch state (rc 124: the
+# per-candidate timeout kill, or failed launch validation after a submitted
+# spawn, reported via _DISPATCH_SETTLE_RC); release it otherwise. A success that never
+# acquired (a launch path outside _dlw_claim_slot_and_lock) still takes an
+# overflow slot, so the loop stops instead of launching past the budget.
+# Args: issue number, repo slug, candidate return code
+_dispatch_launch_slot_settle() {
+	local issue="$1" repo="$2" rc="$3" dir="${_DISPATCH_LAUNCH_SLOT_DIR:-}" key="" n=""
+	[[ -n "$dir" && -d "$dir" ]] || return 0
+	key=$(_dispatch_launch_slot_key "$issue" "$repo")
+	if [[ -f "${dir}/held.${key}" ]]; then
+		[[ "$rc" == "0" || "$rc" == "124" ]] && return 0
+		read -r n <"${dir}/held.${key}" 2>/dev/null || n=""
+		if [[ "$n" =~ ^[0-9]+$ ]]; then
+			rmdir "${dir}/slot.${n}" 2>/dev/null || true
+		fi
+		rm -f "${dir}/held.${key}"
+		return 0
+	fi
+	if [[ "$rc" == "0" ]]; then
+		mkdir "${dir}/slot.overflow.${key}" 2>/dev/null || true
+		echo "[pulse-wrapper] Dispatch_max: #${issue} (${repo}) launched without a launch slot; counted as overflow (t19116)" >>"${LOGFILE:-/dev/null}"
+	fi
+	return 0
+}
+
+# Args: issue number, repo slug. Returns 0 when acquire found every slot held.
+_dispatch_launch_slot_deferred() {
+	local issue="$1" repo="$2" dir="${_DISPATCH_LAUNCH_SLOT_DIR:-}"
+	[[ -n "$dir" ]] || return 1
+	[[ -f "${dir}/deferred.$(_dispatch_launch_slot_key "$issue" "$repo")" ]] && return 0
+	return 1
+}
+
+# Stdout: slots held in this loop (launched, launching or unknown state).
+_dispatch_launch_slots_taken() {
+	local dir="${_DISPATCH_LAUNCH_SLOT_DIR:-}" entry="" taken=0
+	if [[ -n "$dir" ]]; then
+		for entry in "$dir"/slot.*; do
+			[[ -d "$entry" ]] && taken=$((taken + 1))
+		done
+	fi
+	printf '%d\n' "$taken"
+	return 0
+}
+
+# Returns 0 while an unheld slot remains (always without an active gate).
+_dispatch_launch_slot_available() {
+	local dir="${_DISPATCH_LAUNCH_SLOT_DIR:-}" budget="" taken=0
+	[[ -n "$dir" ]] || return 0
+	read -r budget <"${dir}/budget" 2>/dev/null || return 1
+	[[ "$budget" =~ ^[0-9]+$ ]] || return 1
+	taken=$(_dispatch_launch_slots_taken)
+	((taken < budget)) && return 0
+	return 1
+}
+
+# t19122: raise the loop-owned slot budget (atomic replace; never lowered).
+# Args: new budget
+_dispatch_launch_slots_set_budget() {
+	local budget="$1" dir="${_DISPATCH_LAUNCH_SLOT_DIR:-}" temporary=""
+	[[ -n "$dir" && -d "$dir" && "$budget" =~ ^[0-9]+$ ]] || return 1
+	temporary="${dir}/budget.tmp.$$"
+	printf '%s\n' "$budget" >"$temporary" 2>/dev/null || return 1
+	mv -f "$temporary" "${dir}/budget" 2>/dev/null && return 0
+	rm -f "$temporary" 2>/dev/null || true
+	return 1
+}
+
+#######################################
+# t19122: in-round slot top-up.
+#
+# A round sizes its slot budget once, before a census that takes minutes, then
+# runs 20-60 minutes. A worker exit during the round records the refill
+# trigger, but its event refill cannot take the instance lock the round holds
+# (lock_busy), so the freed slot idles until the next round. A sole running
+# loop may instead absorb it: when the worker-exit trigger is newer than the
+# round's last capacity read, re-read _dispatch_compute_capacity and raise the
+# budget to launched + free - hold. Pending ceremonies are not in the worker
+# count, so the existing slot checks still subtract them; hold keeps slots a
+# caller reserves for other work (the remainder phase's product hold).
+#
+# Callers opt in by scoping _DISPATCH_ROUND_TOPUP_ALLOWED=1; concurrent pools
+# and serial/floor rounds never do. dispatch_max scopes the read timestamp and
+# round start. DISPATCH_ROUND_TOPUP=0 disables the top-up;
+# DISPATCH_ROUND_TOPUP_MAX_ROUND_S (default 1800) bounds how long a round may
+# keep absorbing exits before it ends normally and a fresh census runs.
+#######################################
+# Read the round's capacity into the named variable and stamp the read time in
+# the caller's scoped _DISPATCH_ROUND_TOPUP_STARTED_AT/_CHECKED_AT.
+# Args: output variable name. Returns: _dispatch_compute_capacity's status
+_dispatch_round_capacity_read() {
+	local output_name="$1" line="" rc=0
+	[[ "$output_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	_DISPATCH_ROUND_TOPUP_STARTED_AT=$(date +%s)
+	_DISPATCH_ROUND_TOPUP_CHECKED_AT="$_DISPATCH_ROUND_TOPUP_STARTED_AT"
+	line=$(_dispatch_compute_capacity) || rc=$?
+	printf -v "$output_name" '%s' "$line"
+	return "$rc"
+}
+
+_dispatch_round_topup_trigger_file() {
+	printf '%s\n' "${PULSE_EVENT_REFILL_TRIGGER_FILE:-${AIDEVOPS_PULSE_EVENT_REFILL_TRIGGER_FILE:-${HOME}/.aidevops/cache/pulse-event-refill.trigger}}"
+	return 0
+}
+
+# Returns 0 when this loop may top up and a worker exit was recorded at or
+# after the last capacity read. No process scan or API call happens here.
+_dispatch_round_topup_due() {
+	local trigger="" mtime="" now="" checked="${_DISPATCH_ROUND_TOPUP_CHECKED_AT:-0}"
+	local started="${_DISPATCH_ROUND_TOPUP_STARTED_AT:-}" max_age="${DISPATCH_ROUND_TOPUP_MAX_ROUND_S:-1800}"
+	[[ "${DISPATCH_ROUND_TOPUP:-1}" != "0" && "${_DISPATCH_ROUND_TOPUP_ALLOWED:-0}" == "1" ]] || return 1
+	trigger=$(_dispatch_round_topup_trigger_file)
+	[[ -f "$trigger" && ! -L "$trigger" ]] || return 1
+	mtime=$(_file_mtime_epoch "$trigger" 2>/dev/null) || return 1
+	[[ "$mtime" =~ ^[0-9]+$ && "$checked" =~ ^[0-9]+$ ]] || return 1
+	((mtime >= checked)) || return 1
+	[[ "$max_age" =~ ^[0-9]+$ ]] || max_age=1800
+	now=$(date +%s)
+	if [[ "$started" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ ]] && ((now - started > max_age)); then
+		return 1
+	fi
+	return 0
+}
+
+# Re-read capacity and compute a raised budget. Call directly (no subshell) so
+# the read timestamp persists. Sets _DISPATCH_ROUND_TOPUP_GRANT on a grant.
+# Args: launched by this budget, current budget, slots to hold, log context
+# Returns: 0 when the budget may grow, 1 otherwise
+_dispatch_round_topup_budget() {
+	local launched="$1" budget="$2" hold="${3:-0}" context="${4:-round}"
+	local capacity_line="" max_workers="" active_workers="" free="" plan="" target=0
+	_DISPATCH_ROUND_TOPUP_GRANT=""
+	[[ "$launched" =~ ^[0-9]+$ && "$budget" =~ ^[0-9]+$ ]] || return 1
+	[[ "$hold" =~ ^[0-9]+$ ]] || hold=0
+	_dispatch_round_topup_due || return 1
+	plan=$(_dispatch_round_budget_plan after)
+	if _dispatch_round_plan_skips "$plan"; then
+		_DISPATCH_ROUND_TOPUP_CHECKED_AT=$(date +%s)
+		return 1
+	fi
+	capacity_line=$(_dispatch_compute_capacity) || capacity_line=""
+	_DISPATCH_ROUND_TOPUP_CHECKED_AT=$(date +%s)
+	read -r max_workers active_workers free <<<"$capacity_line"
+	[[ "$free" =~ ^[0-9]+$ ]] || return 1
+	target=$((launched + free - hold))
+	if ((target <= budget)); then
+		echo "[pulse-wrapper] Dispatch_max: in-round top-up check (${context}) — no new headroom (launched=${launched} budget=${budget} free=${free} hold=${hold} active=${active_workers}/${max_workers}) (t19122)" >>"$LOGFILE"
+		return 1
+	fi
+	_DISPATCH_ROUND_TOPUP_GRANT="$target"
+	echo "[pulse-wrapper] Dispatch_max: in-round top-up (${context}) — budget ${budget} -> ${target} (launched=${launched} free=${free} hold=${hold} active=${active_workers}/${max_workers}) after a worker exit (t19122)" >>"$LOGFILE"
+	_dispatch_stats_increment "dispatch_round_topup_grants"
 	return 0
 }
 

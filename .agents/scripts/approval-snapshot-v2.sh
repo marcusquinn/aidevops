@@ -161,6 +161,25 @@ JQ
 	return 0
 }
 
+# Print the jq def for the canonical ever-NMR remediation notification.
+# Requires jq vars $number and $repo and the conversation_source def.
+_approval_snapshot_v2_ever_nmr_filters() {
+	cat <<'JQ'
+		# #aidevops:trust-boundary — the pasted prefix is the closed set from
+		# shared-approval-cli.sh (GH#39027): `sudo aidevops`, or sudo plus a
+		# `~/` or absolute launcher path of [A-Za-z0-9._+-] segments (never
+		# `.` or `..`) ending in /aidevops. Normalise only that token; the rest
+		# stays byte-exact.
+		def canonical_ever_nmr_remediation:
+			("<!-- ever-nmr-remediation -->\n> Label `needs-maintainer-review` was removed, but the `ever-NMR` history flag is still set. Pulse will continue to skip dispatch until cryptographic approval lands:\n>\n> ```\n> sudo aidevops approve issue " + $number + " " + $repo + "\n> ```\n>\n> This gate cannot be bypassed by label manipulation (security design — see `reference/auto-merge.md` NMR section).") as $body
+			| (conversation_source and $number != "" and $repo != "")
+			and (sub("\n> sudo (?:~/|/)(?:(?!\\.\\.?/)[A-Za-z0-9._+-]+/)*aidevops approve issue "; "\n> sudo aidevops approve issue ") as $normalized
+				| ($normalized | startswith($body))
+				and ($normalized[$body | length:] | test("^(?:\\n<!-- aidevops:origin:worker -->)?\\n<!-- aidevops:sig -->\\n---\\n\\[aidevops\\.sh\\]\\(https://aidevops\\.sh\\) v[0-9]+\\.[0-9]+\\.[0-9]+ automated scan\\.\\n?$")));
+JQ
+	return 0
+}
+
 _approval_snapshot_v2_comments_json() {
 	local pages_json="$1"
 	local excluded_comment_id="${2:-}"
@@ -178,11 +197,7 @@ _approval_snapshot_v2_comments_json() {
 	# later drift by copying the marker into an unsigned comment.
 	jq -cS --arg excluded "$excluded_comment_id" --arg source "$source_name" --arg cutoff "$issued_at_cutoff" --arg empty "$empty_string" --arg number "$target_number" --arg repo "$target_repo" --arg selection "$selection" --arg head "$pr_head" "$(_approval_snapshot_v2_comment_identity)"'
 		'"$(_approval_snapshot_v2_comment_filters)"'
-		def canonical_ever_nmr_remediation:
-			("<!-- ever-nmr-remediation -->\n> Label `needs-maintainer-review` was removed, but the `ever-NMR` history flag is still set. Pulse will continue to skip dispatch until cryptographic approval lands:\n>\n> ```\n> sudo aidevops approve issue " + $number + " " + $repo + "\n> ```\n>\n> This gate cannot be bypassed by label manipulation (security design — see `reference/auto-merge.md` NMR section).") as $body
-			| (conversation_source and $number != "" and $repo != "")
-			and startswith($body)
-			and (.[$body | length:] | test("^(?:\\n<!-- aidevops:origin:worker -->)?\\n<!-- aidevops:sig -->\\n---\\n\\[aidevops\\.sh\\]\\(https://aidevops\\.sh\\) v[0-9]+\\.[0-9]+\\.[0-9]+ automated scan\\.\\n?$"));
+		'"$(_approval_snapshot_v2_ever_nmr_filters)"'
 		# aidevops:trust-boundary — accept the renamed deterministic audit text
 		# while preserving already-published round-robin audit compatibility.
 		def canonical_dispatch_audit:

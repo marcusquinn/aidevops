@@ -13,6 +13,8 @@ source "${SCRIPT_DIR}/../approval-snapshot-v2.sh"
 TEST_ROOT="$(mktemp -d -t approval-content-binding.XXXXXX)"
 FIXTURES="${TEST_ROOT}/fixtures"
 TEST_HOME="${TEST_ROOT}/home"
+# Per-lane scratch directory; lanes run in parallel with isolated fixtures.
+LANE_DIR="$TEST_ROOT"
 TESTS_RUN=0
 TESTS_FAILED=0
 PR_HEAD="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -146,7 +148,7 @@ append_signed_comment() {
 	if [[ "${STRIP_LINKED_DIGESTS:-0}" == "1" ]]; then
 		payload=$(jq -cS 'del(.issue.content_digests.linked_frame, .issue.content_digests.linked_bodies)' <<<"$payload") || return 1
 	fi
-	signature_file="${TEST_ROOT}/signature-${number}.txt"
+	signature_file="${LANE_DIR}/signature-${number}.txt"
 	sign_payload "$payload" "$signature_file" || return 1
 	signature=$(<"$signature_file")
 	body="<!-- aidevops-signed-approval -->
@@ -164,14 +166,14 @@ ${signature}
 		.[0] += [{id:$id,node_id:("APPROVAL_" + ($id|tostring)),event:"commented",created_at:$created_at,actor:{id:1,node_id:"U_1",login:"maintainer",type:"User"}}]
 	' "$timeline_file") || return 1
 	printf '%s\n' "$updated" >"$timeline_file"
-	printf '%s\n' "$payload" >"${TEST_ROOT}/payload-${number}.json"
+	printf '%s\n' "$payload" >"${LANE_DIR}/payload-${number}.json"
 	return 0
 }
 
 replace_with_legacy_comment() {
 	local number="$1"
 	local payload="APPROVE:issue:owner/repo:${number}:2026-01-01T00:05:00Z"
-	local signature_file="${TEST_ROOT}/legacy-signature.txt" signature="" body=""
+	local signature_file="${LANE_DIR}/legacy-signature.txt" signature="" body=""
 	sign_payload "$payload" "$signature_file" || return 1
 	signature=$(<"$signature_file")
 	body="<!-- aidevops-signed-approval -->
@@ -312,7 +314,7 @@ file_mode() {
 }
 
 test_snapshot_temp_permissions() {
-	local AIDEVOPS_TEMP_DIR="${TEST_ROOT}/managed-temp-permissions"
+	local AIDEVOPS_TEMP_DIR="${LANE_DIR}/managed-temp-permissions"
 	local temp_dir="" json_file=""
 	temp_dir=$(_approval_snapshot_v2_create_temp_dir) || {
 		print_result "snapshot staging uses a private managed temp directory" 1
@@ -347,7 +349,7 @@ PY
 }
 
 test_large_snapshots_avoid_argv_limits() {
-	local AIDEVOPS_TEMP_DIR="${TEST_ROOT}/managed-temp-large"
+	local AIDEVOPS_TEMP_DIR="${LANE_DIR}/managed-temp-large"
 	local payload="" issue_digest="" pr_head=""
 	write_baseline_fixtures
 	write_large_fixture_body "$FIXTURES/comments-41.json" i
@@ -389,7 +391,7 @@ render_current_claim_writer() (
 	gh_issue_comment() {
 		while [[ $# -gt 0 ]]; do
 			if [[ "$1" == "--body" ]]; then
-				printf '%s' "$2" >"${TEST_ROOT}/current-claim.txt"
+				printf '%s' "$2" >"${LANE_DIR}/current-claim.txt"
 				return 0
 			fi
 			shift
@@ -397,7 +399,7 @@ render_current_claim_writer() (
 		return 1
 	}
 	_isc_post_claim_comment 41 owner/repo maintainer /fixture/linked-worktree
-	cat "${TEST_ROOT}/current-claim.txt"
+	cat "${LANE_DIR}/current-claim.txt"
 )
 
 test_trusted_lifecycle_comments() {
@@ -875,7 +877,7 @@ render_self_hosting_writer() (
 	gh_issue_comment() {
 		while [[ $# -gt 0 ]]; do
 			if [[ "$1" == --body ]]; then
-				printf '%s' "$2" >"${TEST_ROOT}/self-hosting-body.txt"
+				printf '%s' "$2" >"${LANE_DIR}/self-hosting-body.txt"
 				return 0
 			fi
 			shift
@@ -883,7 +885,7 @@ render_self_hosting_writer() (
 		return 1
 	}
 	_sht_apply_label_and_comment 41 owner/repo pulse-dispatch- '<!-- self-hosting-tier-override -->' tier:standard
-	cat "${TEST_ROOT}/self-hosting-body.txt"
+	cat "${LANE_DIR}/self-hosting-body.txt"
 	printf '\n<!-- aidevops:origin:worker -->\n<!-- aidevops:sig -->\n---\n[aidevops.sh](https://aidevops.sh) v3.32.337 automated scan.'
 )
 
@@ -1101,20 +1103,6 @@ test_locked_issue_label_replay() {
 	else
 		print_result "snapshot timeline race verifies after fresh read" 1 "expected=VERIFIED/0, actual=${output}/${rc}"
 	fi
-	return 0
-}
-
-run_locked_issue_continuity_tests() {
-	test_locked_issue_continuity
-	test_unanchored_lock_signature
-	test_locked_issue_trusted_comment_continuity
-	test_locked_issue_trusted_content_edits
-	test_locked_issue_linked_source_edits
-	test_locked_issue_tier_backfill_continuity
-	test_locked_issue_permission_hold_continuity
-	test_locked_issue_provenance_label_continuity
-	test_locked_issue_label_replay
-	test_signed_tier_self_hosting_continuity
 	return 0
 }
 
@@ -1541,7 +1529,7 @@ test_unanchored_lock_signature() {
 	append_issue_timeline_event '{"id":4180,"node_id":"EV_4180","event":"locked","created_at":"2026-01-01T00:03:00Z","actor":{"id":1,"node_id":"U_1","login":"maintainer","type":"User"}}'
 	append_issue_timeline_event '{"id":4181,"node_id":"EV_4181","event":"unlocked","created_at":"2026-01-01T00:03:30Z","actor":{"id":1,"node_id":"U_1","login":"maintainer","type":"User"}}'
 	append_signed_comment issue 41 "2026-01-01T00:05:00Z" 4199
-	if jq -e '.issue.lifecycle.locked == true and .issue.lifecycle.lock_anchor == null' "${TEST_ROOT}/payload-41.json" >/dev/null 2>&1; then
+	if jq -e '.issue.lifecycle.locked == true and .issue.lifecycle.lock_anchor == null' "${LANE_DIR}/payload-41.json" >/dev/null 2>&1; then
 		print_result "saturated timeline fixture produces an unanchored locked payload" 0
 	else
 		print_result "saturated timeline fixture produces an unanchored locked payload" 1
@@ -1661,15 +1649,14 @@ test_trusted_linked_source_profiles() {
 	return $?
 }
 
-main() {
-	install_gh_stub
-	write_baseline_fixtures
+lane_snapshot_and_authority() {
 	test_snapshot_temp_permissions
 	test_large_snapshots_avoid_argv_limits
-	ssh-keygen -t ed25519 -N '' -f "${TEST_ROOT}/approval.key" -q
-	cp "${TEST_ROOT}/approval.key.pub" "${TEST_ROOT}/approval.pub"
 	test_authority_bound_verification
+	return 0
+}
 
+lane_core_verification() {
 	reset_and_sign issue 41
 	assert_verify "unchanged issue V2 snapshot verifies" issue 41 VERIFIED 0
 	jq '.[0][-1].body = ("audit\tcontext\n" + .[0][-1].body)' "${FIXTURES}/comments-41.json" >"${FIXTURES}/comments.tmp" && mv "${FIXTURES}/comments.tmp" "${FIXTURES}/comments-41.json"
@@ -1683,7 +1670,7 @@ main() {
 	test_linked_source_timestamp_profiles
 	test_trusted_linked_source_profiles
 	local original_digest="" repeated_payload="" repeated_digest=""
-	original_digest=$(jq -r '.snapshot_sha256' "${TEST_ROOT}/payload-42.json")
+	original_digest=$(jq -r '.snapshot_sha256' "${LANE_DIR}/payload-42.json")
 	repeated_payload=$(PATH="${TEST_ROOT}/bin:$PATH" FIXTURES="$FIXTURES" approval_snapshot_v2_payload pr 42 owner/repo "2026-01-01T00:06:00Z")
 	repeated_digest=$(jq -r '.snapshot_sha256' <<<"$repeated_payload")
 	if [[ "$original_digest" != "$repeated_digest" ]]; then
@@ -1693,15 +1680,47 @@ main() {
 	fi
 	append_signed_comment pr 42 "2026-01-01T00:06:00Z" 4300
 	assert_verify "repeat approval verifies against the newest exact snapshot" pr 42 VERIFIED 0 "$PR_HEAD"
+	return 0
+}
+
+lane_lifecycle_comments() {
 	test_trusted_lifecycle_comments
 	test_exact_remediation_continuity
 	test_canonical_review_bot_retry
+	return 0
+}
+
+lane_dispatch_audit() {
 	test_trusted_dispatch_audit_comments
 	test_dispatch_audit_comments_fail_closed
 	test_trigger_and_companion_release_comments
 	test_post_approval_linked_references
-	run_locked_issue_continuity_tests
+	return 0
+}
 
+lane_locked_continuity() {
+	test_locked_issue_continuity
+	test_unanchored_lock_signature
+	test_locked_issue_trusted_comment_continuity
+	return 0
+}
+
+lane_locked_edits() {
+	test_locked_issue_trusted_content_edits
+	test_locked_issue_linked_source_edits
+	test_locked_issue_tier_backfill_continuity
+	return 0
+}
+
+lane_locked_holds() {
+	test_locked_issue_permission_hold_continuity
+	test_locked_issue_provenance_label_continuity
+	test_locked_issue_label_replay
+	test_signed_tier_self_hosting_continuity
+	return 0
+}
+
+lane_drift_and_failures() {
 	reset_and_sign pr 42
 	local marker_drift="<!-- aidevops-signed-approval --> unsigned external drift"
 	local marker_comments=""
@@ -1753,9 +1772,65 @@ main() {
 	else
 		print_result "snapshot API uncertainty fails closed" 1 "output=${output}, rc=${rc}"
 	fi
+	return 0
+}
 
-	printf '\nTests run: %d\nTests failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
-	[[ "$TESTS_FAILED" -eq 0 ]]
+# Run one lane in a background subshell with isolated fixtures and scratch
+# files so lanes never share mutable state. Output and counters land in the
+# lane directory and are merged in lane order by main().
+start_lane() {
+	local lane="$1"
+	local lane_root="${TEST_ROOT}/lane-${lane}"
+	mkdir -p "${lane_root}/fixtures"
+	(
+		LANE_DIR="$lane_root"
+		FIXTURES="${lane_root}/fixtures"
+		write_baseline_fixtures
+		"$lane"
+		printf '%s %s\n' "$TESTS_RUN" "$TESTS_FAILED" >"${lane_root}/counts"
+	) >"${lane_root}/output" 2>&1 &
+	LANE_PIDS+=("$!")
+	return 0
+}
+
+main() {
+	local lanes=(
+		lane_snapshot_and_authority
+		lane_core_verification
+		lane_lifecycle_comments
+		lane_dispatch_audit
+		lane_locked_continuity
+		lane_locked_edits
+		lane_locked_holds
+		lane_drift_and_failures
+	)
+	local lane="" pid="" run=0 failed=0
+	LANE_PIDS=()
+	install_gh_stub
+	ssh-keygen -t ed25519 -N '' -f "${TEST_ROOT}/approval.key" -q
+	cp "${TEST_ROOT}/approval.key.pub" "${TEST_ROOT}/approval.pub"
+	for lane in "${lanes[@]}"; do
+		start_lane "$lane"
+	done
+	for pid in "${LANE_PIDS[@]}"; do
+		wait "$pid" || true
+	done
+	for lane in "${lanes[@]}"; do
+		local lane_root="${TEST_ROOT}/lane-${lane}"
+		cat "${lane_root}/output"
+		if [[ -f "${lane_root}/counts" ]]; then
+			local lane_run="" lane_failed=""
+			read -r lane_run lane_failed <"${lane_root}/counts"
+			run=$((run + lane_run))
+			failed=$((failed + lane_failed))
+		else
+			printf 'FAIL %s did not complete\n' "$lane"
+			run=$((run + 1))
+			failed=$((failed + 1))
+		fi
+	done
+	printf '\nTests run: %d\nTests failed: %d\n' "$run" "$failed"
+	[[ "$failed" -eq 0 ]]
 	return $?
 }
 

@@ -172,7 +172,9 @@ case "${1:-}" in
 		;;
 	api)
 		if [[ "$*" == *"/comments"* ]]; then
-			if [[ "${STUB_SUMMARY_COUNT:-0}" -gt 0 ]]; then
+			if [[ -n "${STUB_COMMENTS_JSON:-}" ]]; then
+				printf '%s\n' "$STUB_COMMENTS_JSON"
+			elif [[ "${STUB_SUMMARY_COUNT:-0}" -gt 0 ]]; then
 				printf '%s\n' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]'
 			else
 				printf '%s\n' '[[]]'
@@ -423,6 +425,26 @@ test_case_merged_requires_exact_head_and_merge_summary() {
 	else
 		print_result "merged handoff requires canonical MERGE_SUMMARY" 1 "got: '$got'"
 	fi
+
+	# GH#39205: the merge closeout rewrites the summary under its own marker.
+	export STUB_COMMENTS_JSON='[[{"body":"<!-- PULSE_MERGE_CLOSEOUT:PR#332 -->\n## Completion Summary"}]]'
+	got=$(_pr_handoff_state_for_branch_or_issue "feature/merged" "27501" "owner/repo" \
+		"head-only" "merged-head" 1)
+	if [[ "$got" == "merged|332" ]]; then
+		print_result "merged handoff accepts the merge closeout as its MERGE_SUMMARY" 0
+	else
+		print_result "merged handoff accepts the merge closeout as its MERGE_SUMMARY" 1 "got: '$got'"
+	fi
+
+	export STUB_COMMENTS_JSON='[[{"body":"<!-- PULSE_MERGE_CLOSEOUT:PR#3320 -->\n## Completion Summary"}]]'
+	got=$(_pr_handoff_state_for_branch_or_issue "feature/merged" "27501" "owner/repo" \
+		"head-only" "merged-head" 1)
+	if [[ "$got" == "merged_missing_summary|332" ]]; then
+		print_result "merged handoff ignores a closeout marker for another PR" 0
+	else
+		print_result "merged handoff ignores a closeout marker for another PR" 1 "got: '$got'"
+	fi
+	unset STUB_COMMENTS_JSON
 	unset STUB_SUMMARY_COUNT
 	unset STUB_LINKED_BODY
 	return 0

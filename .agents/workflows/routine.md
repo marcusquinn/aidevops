@@ -104,6 +104,8 @@ aidevops schedule once --after 13h --name "Continue evidence review" \
 
 `TODO.md` is the source of truth for recurring definitions even when the scheduler expands a routine into launchd, systemd, or cron. One-shot state is private and separately inspectable with `aidevops schedule status`.
 
+For follow-ups that may need to wait and retry ("check back tomorrow, then again until it lands"), add `--recheck-every`, `--max-checks`, and `--until`; the worker snoozes until criteria are met and exhaustion raises a session-start advisory. Procedure: `reference/routines.md` "Follow-ups and later checks".
+
 ## Example: GH Failure Miner routine
 
 Clusters CI failure signatures from GitHub notifications and surfaces systemic fixes.

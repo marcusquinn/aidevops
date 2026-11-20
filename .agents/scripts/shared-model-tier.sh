@@ -667,6 +667,10 @@ get_model_pricing() {
 	*gpt-5.6-sol*) echo "4.0|20.0|0.40|5.0" ;;
 	*gpt-5.6-terra*) echo "2.0|12.0|0.20|2.50" ;;
 	*gpt-5.6-luna*) echo "0.20|1.20|0.02|0.25" ;;
+	*fable-5-2-fast*) echo "16.0|80.0|0.40|20.0" ;;
+	*fable-5-2*) echo "8.0|40.0|0.20|10.0" ;;
+	*fable-5-1*) echo "10.0|50.0|0.25|12.50" ;;
+	*fable-5*) echo "10.0|50.0|1.0|12.50" ;;
 	*opus-4* | *claude-opus*) echo "15.0|75.0|1.50|18.75" ;;
 	*sonnet-4* | *claude-sonnet*) echo "$fallback_default_pricing" ;;
 	*haiku-5-5*) echo "0.10|0.50|0.01|0.125" ;;

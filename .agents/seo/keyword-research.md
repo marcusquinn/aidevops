@@ -159,7 +159,7 @@ Config (`~/.config/aidevops/keyword-research.json`): `default_locale`, `default_
 
 | Provider | Role | Credentials | Endpoints |
 |----------|------|-------------|-----------|
-| **DataForSEO** | Primary | `DATAFORSEO_USERNAME` + `DATAFORSEO_PASSWORD` | `keyword_suggestions/live`, `ranked_keywords/live`, `domain_intersection/live`, `backlinks/summary/live`, `serp/google/organic/live`, `onpage/instant_pages` |
+| **DataForSEO** | Primary | `DATAFORSEO_USERNAME` + `DATAFORSEO_PASSWORD` | `keyword_suggestions/live`, `ranked_keywords/live`, `domain_intersection/live`, `backlinks/summary/live`, `serp/google/organic/live` (sends `resolve_goto_urls` and `resolve_poisoned_results`; the latter adds one billed SERP page, opt out with `DATAFORSEO_RESOLVE_POISONED=false`; see `seo/dataforseo.md`), `onpage/instant_pages` |
 | **Serper** | Alternative (faster) | `SERPER_API_KEY` | `search`, `autocomplete` |
 | **SerpApi** | Alternative (cross-check) | `SERPAPI_API_KEY` | `engine=google`, `engine=google_autocomplete` (`seo/serpapi.md`) |
 | **Ahrefs** | Optional DR/UR | `AHREFS_API_KEY` | `domain-rating`, `url-rating` |

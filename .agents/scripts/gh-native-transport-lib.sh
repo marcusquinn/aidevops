@@ -81,18 +81,60 @@ _shim_is_aidevops_gh() {
 	return 1
 }
 
+# POSIX dirname/basename via parameter expansion: _find_real_gh resolves every
+# PATH candidate on each shim call, and two execs per hop were measurable
+# overhead (GH#39187). Trailing slashes are ignored as dirname(1) does.
+_shim_path_strip_trailing_slashes_into() {
+	local _sps_var="$1"
+	local _sps_path="$2"
+	while [[ "$_sps_path" == */ && "$_sps_path" != / ]]; do
+		_sps_path="${_sps_path%/}"
+	done
+	printf -v "$_sps_var" '%s' "$_sps_path"
+	return 0
+}
+
+_shim_path_dirname_into() {
+	local _spd_var="$1"
+	local _spd_input="$2"
+	local _spd_path=""
+	_shim_path_strip_trailing_slashes_into _spd_path "$_spd_input"
+	if [[ "$_spd_path" != */* ]]; then
+		_spd_path="."
+	elif [[ "$_spd_path" != / ]]; then
+		_spd_path="${_spd_path%/*}"
+		_shim_path_strip_trailing_slashes_into _spd_path "$_spd_path"
+		[[ -n "$_spd_path" ]] || _spd_path="/"
+	fi
+	printf -v "$_spd_var" '%s' "$_spd_path"
+	return 0
+}
+
+_shim_path_basename_into() {
+	local _spb_var="$1"
+	local _spb_input="$2"
+	local _spb_path=""
+	_shim_path_strip_trailing_slashes_into _spb_path "$_spb_input"
+	[[ "$_spb_path" == / ]] || _spb_path="${_spb_path##*/}"
+	printf -v "$_spb_var" '%s' "$_spb_path"
+	return 0
+}
+
 _shim_canonical_path() {
 	local candidate="$1"
 	local candidate_dir=""
 	local candidate_name=""
 	local link_dir=""
+	local parent_dir=""
 	while [[ -L "$candidate" ]]; do
-		link_dir=$(cd "$(dirname "$candidate")" 2>/dev/null && pwd -P) || return 1
+		_shim_path_dirname_into parent_dir "$candidate"
+		link_dir=$(cd "$parent_dir" 2>/dev/null && pwd -P) || return 1
 		candidate=$(readlink "$candidate") || return 1
 		[[ "$candidate" == /* ]] || candidate="${link_dir}/${candidate}"
 	done
-	candidate_dir=$(cd "$(dirname "$candidate")" 2>/dev/null && pwd -P) || return 1
-	candidate_name=$(basename "$candidate")
+	_shim_path_dirname_into parent_dir "$candidate"
+	candidate_dir=$(cd "$parent_dir" 2>/dev/null && pwd -P) || return 1
+	_shim_path_basename_into candidate_name "$candidate"
 	printf '%s/%s\n' "$candidate_dir" "$candidate_name"
 	return 0
 }
@@ -178,13 +220,24 @@ _shim_caller_label() {
 	return 0
 }
 
+# Assign a validated framework script label without a capture fork (GH#39187).
+# The target variable is untouched when the candidate is not a framework script.
+_shim_framework_caller_label_into() {
+	local _sfc_var="$1"
+	local _sfc_candidate="${2:-}"
+	_sfc_candidate="${_sfc_candidate##*/}"
+	[[ -n "${_SHIM_DIR:-}" ]] || return 1
+	[[ "$_sfc_candidate" =~ ^[A-Za-z0-9_.+-]+$ ]] || return 1
+	[[ -f "${_SHIM_DIR}/${_sfc_candidate}" ]] || return 1
+	printf -v "$_sfc_var" '%s' "$_sfc_candidate"
+	return 0
+}
+
 _shim_framework_caller_label() {
 	local candidate="${1:-}"
-	candidate="${candidate##*/}"
-	[[ -n "${_SHIM_DIR:-}" ]] || return 1
-	[[ "$candidate" =~ ^[A-Za-z0-9_.+-]+$ ]] || return 1
-	[[ -f "${_SHIM_DIR}/${candidate}" ]] || return 1
-	printf '%s' "$candidate"
+	local label=""
+	_shim_framework_caller_label_into label "$candidate" || return 1
+	printf '%s' "$label"
 	return 0
 }
 
@@ -195,7 +248,7 @@ _shim_command_framework_caller() {
 	local caller=""
 	local -a words=("$@")
 	[[ ${#words[@]} -gt 0 ]] || return 1
-	if caller=$(_shim_framework_caller_label "${words[0]}"); then
+	if _shim_framework_caller_label_into caller "${words[0]}"; then
 		printf '%s' "$caller"
 		return 0
 	fi
@@ -210,7 +263,7 @@ _shim_command_framework_caller() {
 		case "${word##*/}" in
 		env | bash | dash | ksh | sh | zsh) continue ;;
 		esac
-		if caller=$(_shim_framework_caller_label "$word"); then
+		if _shim_framework_caller_label_into caller "$word"; then
 			printf '%s' "$caller"
 			return 0
 		fi
@@ -320,7 +373,7 @@ _shim_transport_caller_label() {
 	local sub1="${1:-}"
 	local sub2="${2:-}"
 	local caller=""
-	if caller=$(_shim_framework_caller_label "${AIDEVOPS_GH_CALLER:-}"); then
+	if _shim_framework_caller_label_into caller "${AIDEVOPS_GH_CALLER:-}"; then
 		printf '%s' "$caller"
 		return 0
 	fi

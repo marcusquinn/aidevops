@@ -50,6 +50,16 @@ setup_suite() {
 	cat >"$HEADLESS_STUB" <<'STUB'
 #!/usr/bin/env bash
 printf 'headless %s\n' "$*" >>"$AIDEVOPS_TEST_DISPATCH_LOG"
+if [[ -n "${AIDEVOPS_TEST_PROMPT_COPY:-}" ]]; then
+	prev=""
+	for arg in "$@"; do
+		[[ "$prev" == "--prompt-file" ]] && cp "$arg" "$AIDEVOPS_TEST_PROMPT_COPY"
+		prev="$arg"
+	done
+fi
+if [[ "${AIDEVOPS_TEST_SNOOZE:-0}" == "1" ]]; then
+	"$AIDEVOPS_TEST_HELPER" snooze "$AIDEVOPS_DEFERRED_JOB_ID" --reason 'CI still pending' >/dev/null
+fi
 sleep "${AIDEVOPS_TEST_DISPATCH_SLEEP:-0}"
 exit "${AIDEVOPS_TEST_DISPATCH_EXIT:-0}"
 STUB
@@ -81,8 +91,104 @@ run_helper_at() {
 		AIDEVOPS_HEADLESS_RUNTIME_HELPER="$HEADLESS_STUB" \
 		AIDEVOPS_MANUAL_DISPATCH_HELPER="$MANUAL_STUB" \
 		AIDEVOPS_TEST_DISPATCH_LOG="$DISPATCH_LOG" \
+		AIDEVOPS_TEST_HELPER="$HELPER" \
 		"$HELPER" "$@"
 	return $?
+}
+
+queue_recheck_job() {
+	local name="$1"
+	shift
+	local prompt_file="${TEST_ROOT}/${name}.prompt"
+	printf 'Check fixture %s and report.\n' "$name" >"$prompt_file"
+	run_helper_at "$NOW_EPOCH" once --after 1s --name "$name" --dir "${TEST_ROOT}/work" \
+		--prompt-file "$prompt_file" --recheck-every 1h "$@" | awk '{print $2}'
+	return 0
+}
+
+test_recheck_snooze_requeues_then_closes() {
+	reset_fixture snooze
+	local job_id=""
+	local job_file=""
+	local copy="${TEST_ROOT}/snooze-run.prompt"
+	local after_first=""
+	local due_first=""
+	job_id=$(queue_recheck_job snooze --max-checks 3)
+	job_file="${STATE_DIR}/jobs/${job_id}.json"
+	AIDEVOPS_TEST_SNOOZE=1 AIDEVOPS_TEST_PROMPT_COPY="$copy" run_helper_at "$((NOW_EPOCH + 10))" run-due >/dev/null
+	after_first=$(jq -c '{status,outcome,checks:.recheck.checks_done,reason:.recheck.last_reason,pending:.recheck.snooze_requested}' "$job_file")
+	due_first=$(jq -r '.due_epoch' "$job_file")
+	run_helper_at "$((NOW_EPOCH + 20))" run-due >/dev/null
+	run_helper_at "$((NOW_EPOCH + 3700))" run-due >/dev/null
+	if [[ "$after_first" == '{"status":"queued","outcome":"snoozed","checks":1,"reason":"CI still pending","pending":null}' &&
+		"$due_first" -eq "$((NOW_EPOCH + 10 + 3600))" && "$(dispatch_count)" -eq 2 &&
+		"$(jq -r '.status + "/" + .outcome' "$job_file")" == "success/completed" &&
+		"$(jq -r '.recheck.checks_done' "$job_file")" -eq 2 &&
+		"$(<"$copy")" == *"Check fixture snooze"* && "$(<"$copy")" == *"aidevops schedule snooze ${job_id}"* &&
+		"$(<"$copy")" == *"check 1 of 3"* && ! -e "${STATE_DIR}/prompts/${job_id}.run.prompt" ]]; then
+		result "recheck snooze queues the next check and a clean run closes the job" 0
+	else
+		result "recheck snooze queues the next check and a clean run closes the job" 1 \
+			"first=$after_first due=$due_first count=$(dispatch_count) final=$(jq -c '{status,outcome}' "$job_file")"
+	fi
+	return 0
+}
+
+test_recheck_exhaustion_and_failure_raise_advisories() {
+	reset_fixture exhaust
+	local job_id=""
+	local job_file=""
+	local advisory=""
+	local retry_id=""
+	local retry_file=""
+	local preflight_rc=0
+	rm -rf "${TEST_HOME}/.aidevops/advisories"
+	job_id=$(queue_recheck_job exhaust --max-checks 2)
+	job_file="${STATE_DIR}/jobs/${job_id}.json"
+	AIDEVOPS_TEST_SNOOZE=1 run_helper_at "$((NOW_EPOCH + 10))" run-due >/dev/null
+	AIDEVOPS_TEST_SNOOZE=1 run_helper_at "$((NOW_EPOCH + 3700))" run-due >/dev/null 2>&1 || preflight_rc=$?
+	advisory="${TEST_HOME}/.aidevops/advisories/deferred-job-${job_id}.advisory"
+	retry_id=$(queue_recheck_job retry --until 2026-07-23T00:00:00Z)
+	retry_file="${STATE_DIR}/jobs/${retry_id}.json"
+	AIDEVOPS_TEST_DISPATCH_EXIT=3 run_helper_at "$((NOW_EPOCH + 10))" run-due >/dev/null 2>&1 || true
+	if [[ "$preflight_rc" -ne 0 && "$(jq -r '.status + "/" + .outcome + "/" + .error' "$job_file")" == "failure/recheck_exhausted/criteria_unmet" &&
+		-f "$advisory" && "$(<"$advisory")" == *"recheck_exhausted after 2/2 checks: CI still pending"* &&
+		"$(<"$advisory")" != *"${TEST_ROOT}"* &&
+		"$(jq -r '.status + "/" + .outcome + "/" + .recheck.last_reason' "$retry_file")" == "queued/retry_after_failure/run exited 3" &&
+		"$(jq -r '.recheck.max_checks' "$retry_file")" -eq 100 ]]; then
+		result "exhausted rechecks raise an advisory and failed runs retry on schedule" 0
+	else
+		result "exhausted rechecks raise an advisory and failed runs retry on schedule" 1 \
+			"rc=$preflight_rc job=$(jq -c '{status,outcome,error}' "$job_file") retry=$(jq -c '{status,outcome,recheck}' "$retry_file")"
+	fi
+	return 0
+}
+
+test_recheck_validation_and_snooze_guards() {
+	reset_fixture recheck-validation
+	local prompt_file="${TEST_ROOT}/recheck-validation.prompt"
+	local manual_rc=0
+	local orphan_rc=0
+	local short_rc=0
+	local plain_rc=0
+	local plain_id=""
+	printf 'safe fixture\n' >"$prompt_file"
+	run_helper_at "$NOW_EPOCH" once --after 1h --name manual --dir "${TEST_ROOT}/work" \
+		--issue 42 --repo owner/repo --recheck-every 1h >/dev/null 2>&1 || manual_rc=$?
+	run_helper_at "$NOW_EPOCH" once --after 1h --name orphan --dir "${TEST_ROOT}/work" \
+		--prompt-file "$prompt_file" --max-checks 3 >/dev/null 2>&1 || orphan_rc=$?
+	run_helper_at "$NOW_EPOCH" once --after 1h --name short --dir "${TEST_ROOT}/work" \
+		--prompt-file "$prompt_file" --recheck-every 1m >/dev/null 2>&1 || short_rc=$?
+	plain_id=$(queue_prompt_job plain 1h)
+	run_helper_at "$NOW_EPOCH" snooze "$plain_id" --reason 'not yet' >/dev/null 2>&1 || plain_rc=$?
+	if [[ "$manual_rc" -eq 2 && "$orphan_rc" -eq 2 && "$short_rc" -eq 2 && "$plain_rc" -eq 1 &&
+		"$(jq -r '.recheck' "${STATE_DIR}/jobs/${plain_id}.json")" == "null" ]]; then
+		result "recheck options validate and snooze refuses jobs without a policy" 0
+	else
+		result "recheck options validate and snooze refuses jobs without a policy" 1 \
+			"manual=$manual_rc orphan=$orphan_rc short=$short_rc plain=$plain_rc"
+	fi
+	return 0
 }
 
 queue_prompt_job() {
@@ -449,6 +555,9 @@ main() {
 	test_prompt_jobs_reject_issue_shaped_titles_before_queueing
 	test_deferred_scheduler_preserves_child_survival_exception
 	test_purge_removes_only_owned_state
+	test_recheck_snooze_requeues_then_closes
+	test_recheck_exhaustion_and_failure_raise_advisories
+	test_recheck_validation_and_snooze_guards
 	printf '\n%s/%s tests passed.\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
 	[[ "$TESTS_FAILED" -eq 0 ]]
 	return $?

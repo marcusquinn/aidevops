@@ -1125,7 +1125,8 @@ test_starter_sync_scoped_trust() {
 _define_starter_gate_chain() {
 	local src="" fn="" part=""
 	for fn in _check_pr_merge_gates _pm_gate_review_mode _pm_gate_author_trust \
-		_pm_gate_route_ineligible_author _pm_gate_repository_and_issue \
+		_pm_gate_route_ineligible_author _pm_gate_route_configured_dependency_bot \
+		_pm_log_once_per_head _pm_gate_repository_and_issue \
 		_pm_gate_origin_authority _pm_gate_review_bot _pulse_merge_final_trust_gate; do
 		part=$(awk -v f="$fn" '$0 ~ "^" f "\\(\\) \\{" , /^}$/ { print }' "$MERGE_SCRIPT")
 		if [[ -z "$part" ]]; then
