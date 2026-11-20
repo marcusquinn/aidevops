@@ -62,9 +62,12 @@ _worktree_proc_cwd_link_unresolved() {
 	return 2
 }
 
-# Resolve every link the unprivileged phase left for the inspector. One batched
-# inspector call answers all of them when the installed copy supports it
-# (GH#38918); otherwise each link takes the unchanged per-PID path. Prints
+# Resolve every link the unprivileged phase left for the inspector. Batched
+# inspector calls of at most _WT_CWDS_MAX_PIDS PIDs answer them when the
+# installed copy supports it (GH#38918, GH#39335). A chunk the inspector
+# refused or answered malformed takes the unchanged per-PID path. A timed-out
+# chunk makes no per-PID or further batch calls: it and every later chunk keep
+# only the vanished-is-harmless check, so present links stay degraded. Prints
 # captured targets and returns 0 when every link resolved or was skippable,
 # 2 when any remained degraded. Sets _WT_PRIV_CAPTURED to the captured count.
 _worktree_resolve_privileged_cwd_links() {
@@ -78,48 +81,70 @@ _worktree_resolve_privileged_cwd_links() {
 	local target=""
 	local index=0
 	local rc=0
+	local batch_rc=0
 	local degraded=0
+	local timed_out=0
+	local start=0
+	local chunk_size="${_WT_CWDS_MAX_PIDS:-4096}"
 	local -a links=("$@")
+	local -a chunk_links=()
 	local -a pids=()
 	local -a kinds=()
 	local -a targets=()
 
 	_WT_PRIV_CAPTURED=0
-	for cwd_link in "$@"; do
-		proc_dir="${cwd_link%/cwd}"
-		pids+=("${proc_dir##*/}")
-	done
-	# The helper validated header, order, PIDs and trailer before printing.
-	if batch=$(_worktree_privileged_read_cwds "$proc_root" "${pids[@]}"); then
-		while IFS= read -r line; do
-			[[ -n "$line" ]] || continue
-			kind="${line%%$'\t'*}"
-			target=""
-			if [[ "$kind" == R ]]; then
-				target="${line#*$'\t'}"
-				target="${target#*$'\t'}"
+	while [[ "$start" -lt "${#links[@]}" ]]; do
+		chunk_links=("${links[@]:$start:$chunk_size}")
+		start=$((start + chunk_size))
+		pids=()
+		kinds=()
+		targets=()
+		for cwd_link in "${chunk_links[@]}"; do
+			proc_dir="${cwd_link%/cwd}"
+			pids+=("${proc_dir##*/}")
+		done
+		if [[ "$timed_out" -eq 0 ]]; then
+			batch_rc=0
+			batch=$(_worktree_privileged_read_cwds "$proc_root" "${pids[@]}") || batch_rc=$?
+			if [[ "$batch_rc" -eq 0 ]]; then
+				# The helper validated header, order, PIDs and trailer before printing.
+				while IFS= read -r line; do
+					[[ -n "$line" ]] || continue
+					kind="${line%%$'\t'*}"
+					target=""
+					if [[ "$kind" == R ]]; then
+						target="${line#*$'\t'}"
+						target="${target#*$'\t'}"
+					fi
+					kinds+=("$kind")
+					targets+=("$target")
+				done <<<"$batch"
+			elif [[ "$batch_rc" -eq "${_WT_CWDS_TIMEOUT_RC:-124}" ]]; then
+				timed_out=1
 			fi
-			kinds+=("$kind")
-			targets+=("$target")
-		done <<<"$batch"
-	fi
-	for cwd_link in "${links[@]}"; do
-		rc=0
-		if [[ "${#kinds[@]}" -eq "${#links[@]}" ]]; then
-			if [[ "${kinds[$index]}" == R && "${targets[$index]}" == /* ]]; then
-				printf '%s\n' "${targets[$index]}"
-			else
-				_worktree_proc_cwd_link_unresolved "$cwd_link" || rc=$?
-			fi
-		else
-			# Older inspector or refused batch: keep the per-PID behaviour.
-			_worktree_read_proc_cwd_link_privileged "$proc_root" "$cwd_link" || rc=$?
 		fi
-		case "$rc" in
-		0) _WT_PRIV_CAPTURED=$((_WT_PRIV_CAPTURED + 1)) ;;
-		2) degraded=1 ;;
-		esac
-		index=$((index + 1))
+		index=0
+		for cwd_link in "${chunk_links[@]}"; do
+			rc=0
+			if [[ "$timed_out" -eq 1 ]]; then
+				# Slow sudo/PAM or inspection: per-PID calls would wait as well.
+				_worktree_proc_cwd_link_unresolved "$cwd_link" || rc=$?
+			elif [[ "${#kinds[@]}" -eq "${#chunk_links[@]}" ]]; then
+				if [[ "${kinds[$index]}" == R && "${targets[$index]}" == /* ]]; then
+					printf '%s\n' "${targets[$index]}"
+				else
+					_worktree_proc_cwd_link_unresolved "$cwd_link" || rc=$?
+				fi
+			else
+				# Older inspector or refused batch: keep the per-PID behaviour.
+				_worktree_read_proc_cwd_link_privileged "$proc_root" "$cwd_link" || rc=$?
+			fi
+			case "$rc" in
+			0) _WT_PRIV_CAPTURED=$((_WT_PRIV_CAPTURED + 1)) ;;
+			2) degraded=1 ;;
+			esac
+			index=$((index + 1))
+		done
 	done
 	[[ "$degraded" -eq 0 ]] || return 2
 	return 0
