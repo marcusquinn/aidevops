@@ -236,15 +236,19 @@ _task_identity_strip_valid_paths() {
 	local path_ere="${2:-}"
 	local matched=""
 	local candidate=""
+	local boundary_before=""
+	local boundary_after=""
 
 	while [[ "$remaining" =~ $path_ere ]]; do
 		matched="${BASH_REMATCH[0]}"
+		boundary_before="${BASH_REMATCH[1]}"
 		candidate="${BASH_REMATCH[2]}"
+		boundary_after="${BASH_REMATCH[5]}"
 		if ! task_identity_validate "$candidate"; then
 			printf '%s\n' "$candidate"
 			return 1
 		fi
-		remaining="${remaining/"$matched"/ }"
+		remaining="${remaining/"$matched"/"${boundary_before} ${boundary_after}"}"
 	done
 	printf '%s\n' "$remaining"
 	return 0
@@ -259,11 +263,12 @@ task_identity_first_malformed_candidate() {
 	# Spell out the uppercase set: locale collation can make A-Z match lowercase
 	# letters, falsely classifying ordinary words such as "throughput" as IDs.
 	local candidate_ere='(^|[^[:alnum:].])([tT][0123456789][[:alnum:].-]*|t[ABCDEFGHIJKLMNOPQRSTUVWXYZ][[:alnum:].-]*|[tT][oO][[:alnum:]]{26}-[[:alnum:].-]+)($|[^[:alnum:].])'
-	local brief_path_ere="(^|[^[:alnum:]./])todo/tasks/(${TASK_IDENTITY_TOKEN_ERE})-brief\\.md($|[^[:alnum:].])"
-	local research_path_ere="(^|[^[:alnum:]./])todo/research/(${TASK_IDENTITY_TOKEN_ERE})-[[:alnum:]._-]+($|[^[:alnum:].])"
+	local brief_path_ere="(^|[^[:alnum:]./])todo/tasks/${TASK_IDENTITY_TOKEN_ERE}-brief\\.md($|[^[:alnum:].])"
+	local research_path_ere="(^|[^[:alnum:]./])todo/research/${TASK_IDENTITY_TOKEN_ERE}-[[:alnum:]._-]+($|[^[:alnum:].])"
 	local candidate=""
 	local remaining="$text"
 	local stripped=""
+	local matched=""
 
 	# Canonical task-brief paths contain a valid ID followed by a filename suffix,
 	# not a malformed task identity. Remove only this repository path grammar;

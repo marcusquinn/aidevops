@@ -348,7 +348,8 @@ test_research_path_identity_grammar() {
 	fi
 	pass "malformed detector accepts canonical task research paths"
 	if ! task_identity_has_malformed_candidate "See todo/research/tNNN-x.md" ||
-		! task_identity_has_malformed_candidate "t19048-foo"; then
+		! task_identity_has_malformed_candidate "t19048-foo" ||
+		! task_identity_has_malformed_candidate "t19048-todo/research/t19049-note.md"; then
 		fail "malformed detector accepted an invalid research ID or arbitrary task suffix"
 		return 1
 	fi
