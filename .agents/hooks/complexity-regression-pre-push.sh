@@ -269,6 +269,8 @@ for _i in "${!METRICS[@]}"; do
 		printf '\n' >&2
 		if [[ "$_metric" == "file-size" ]]; then
 			printf '  First make the whole document more concise without losing detail; split or bypass only if that is not enough.\n' >&2
+			printf '  Synced records (email archives, transcripts, data snapshots): exempt their paths in .aidevops.json:\n' >&2
+			printf '    {"complexity":{"file_size_exclude":["clients/*"]}}  (root-relative globs; a tracked config applies after it merges)\n' >&2
 		else
 			printf '  Remediation: extract logic into smaller functions or separate files.\n' >&2
 		fi

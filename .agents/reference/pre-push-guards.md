@@ -34,10 +34,11 @@ always apply, even to text already present in the public tree.
 Blocks pushes that introduce new violations of three complexity metrics:
 - Function body > 100 lines
 - Nesting depth > 8
-- File > 1500 lines
+- Non-README Markdown > 1000 lines at the repository root, > 500 elsewhere
 
 Wraps `complexity-regression-helper.sh check` for each metric. Uses `git merge-base HEAD <origin-default>` as base, where `<origin-default>` is resolved via `origin/HEAD` → `origin/main` → `origin/master` → `@{u}`. This avoids spurious false-positives after a rebase (GH#20045).
 
+- Synced-record repos (email archives, transcripts, data snapshots): exempt those paths from the Markdown size check only with `.aidevops.json` `{"complexity":{"file_size_exclude":["clients/*"]}}`. Patterns are root-relative shell-case globs (`*` crosses `/`). An untracked (default) config applies immediately; a tracked config is read from the base commit, so it applies after it merges (GH#39490).
 - Bypass: `COMPLEXITY_GUARD_DISABLE=1 git push ...`
 - Fail-open when helper is missing or upstream is unreachable
 
