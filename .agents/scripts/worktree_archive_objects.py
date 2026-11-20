@@ -118,18 +118,19 @@ def verify_object_graph(archive, scratch, manifest):
     if manifest.get('self_contained') is not True:
         seed_base(scratch, manifest)
     if bundle.is_file():
+        # The one bundle check for this bare scratch; the imports below rely on it.
         git(scratch, 'bundle', 'verify', str(bundle))
     if manifest.get('merge_policy') == 'structured-v1':
         from worktree_archive_state import load_merge, verify_merge_objects
         state = load_merge(archive, manifest)
-        fetch_preservation(scratch, archive)
+        fetch_preservation(scratch, archive, verified_scratch=True)
         verify_merge_objects(scratch, state)
     elif manifest.get('git_admin_policy') is not None:
         verify_administration(archive, scratch, manifest)
     elif manifest.get('capture_policy') == 'git-only':
         if bundle.is_file():
             if manifest.get('source_fingerprint', {}).get('auto_merge') is not None:
-                fetch_preservation(scratch, archive)
+                fetch_preservation(scratch, archive, verified_scratch=True)
             else:
                 git(scratch, 'fetch', '--quiet', '--no-write-fetch-head', str(bundle), 'HEAD:refs/archive/head')
         git(scratch, 'cat-file', '-e', manifest['head_sha'] + '^{commit}')

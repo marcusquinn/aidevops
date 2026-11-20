@@ -191,18 +191,27 @@ def capture_bundle(root, archive, roots, base):
         git(scratch, "bundle", "create", str(archive / "commits.bundle"), "--all", *exclusions)
 
 
-def fetch_preservation(root, archive):
+def fetch_preservation(root, archive, *, verified_scratch=False):
     """Import preservation objects without changing shared-repository refs.
 
     Shared-repository callers must supply their owned linked worktree, never
     the canonical checkout. Independent repositories retain their legacy GC roots.
 
+    verified_scratch=True means root is the bare scratch repository the caller
+    created in this verification pass and has already run `bundle verify` on.
+    A bare repository is its own common dir, so both repeat spawns are skipped.
+
     Returns the administrative directory it already resolved (None without a
-    bundle) so a caller in the same invocation can skip a repeat rev-parse.
+    bundle or for verified scratch) so a caller in the same invocation can skip
+    a repeat rev-parse.
     """
     bundle = archive / 'commits.bundle'
     admin_path = None
     if bundle.is_file():
+        if verified_scratch:
+            git(root, 'fetch', '--quiet', '--no-write-fetch-head', str(bundle),
+                '+refs/archive/*:refs/archive/*')
+            return None
         git(root, 'bundle', 'verify', str(bundle))
         admin_path, common = git_dirs(root)
         if admin_path.resolve() != common.resolve():

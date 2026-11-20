@@ -167,11 +167,14 @@ def restore_administration(root, archive):
 
 
 def verify_administration(archive, scratch, manifest):
-    """Prove every admin/index object is available without the source database."""
+    """Prove every admin/index object is available without the source database.
+
+    Only verify_object_graph calls this, after it bundle-verified the bare scratch.
+    """
     state = load_administration(archive)
     if administration_digest(state) != manifest.get('source_fingerprint', {}).get('git_admin'):
         raise ValueError('git_admin:fingerprint_mismatch')
-    fetch_preservation(scratch, archive)
+    fetch_preservation(scratch, archive, verified_scratch=True)
     git(scratch, 'update-ref', 'HEAD', manifest['head_sha'])
     (scratch / 'index').write_bytes(bytes.fromhex(state['files']['index']))
     roots = administration_roots(scratch, state)
