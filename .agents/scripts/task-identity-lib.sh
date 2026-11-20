@@ -13,6 +13,7 @@ readonly TASK_IDENTITY_LEGACY_ERE='^t[1-9][0-9]{0,17}(\.[1-9][0-9]{0,17}){0,8}$'
 readonly TASK_IDENTITY_NAMESPACED_ERE='^to[0-7][0-9a-hjkmnp-tv-z]{25}-[1-9][0-9]{0,17}(\.[1-9][0-9]{0,17}){0,8}$'
 readonly TASK_IDENTITY_ANY_ERE='^(t[1-9][0-9]{0,17}(\.[1-9][0-9]{0,17}){0,8}|to[0-7][0-9a-hjkmnp-tv-z]{25}-[1-9][0-9]{0,17}(\.[1-9][0-9]{0,17}){0,8})$'
 readonly TASK_IDENTITY_TOKEN_ERE='(to[0-7][0-9a-hjkmnp-tv-z]{25}-[1-9][0-9]{0,17}(\.[1-9][0-9]{0,17}){0,8}|t[1-9][0-9]{0,17}(\.[1-9][0-9]{0,17}){0,8})'
+readonly TASK_IDENTITY_RESEARCH_PATH_ERE="(^|[^[:alnum:]./])todo/research/${TASK_IDENTITY_TOKEN_ERE}-[[:alnum:]._-]+($|[^[:alnum:].])"
 
 TASK_IDENTITY_KIND=""
 TASK_IDENTITY_CANONICAL_ID=""
@@ -165,6 +166,18 @@ task_identity_ere() {
 	return 0
 }
 
+# Keep task-like text inside research paths out of task-reference extraction.
+_task_identity_strip_research_paths() {
+	local text="${1:-}"
+	local stripped=""
+	if stripped=$(_task_identity_strip_valid_paths "$text" "$TASK_IDENTITY_RESEARCH_PATH_ERE"); then
+		printf '%s\n' "$stripped"
+	else
+		printf '%s\n' "$text"
+	fi
+	return 0
+}
+
 # Extract the first complete canonical task ID from free text. A dot or an
 # alphanumeric character is not a token boundary because accepting one would
 # turn malformed or truncated IDs into valid shorter IDs. The exception is one
@@ -176,6 +189,7 @@ task_identity_extract_first() {
 	local boundary_ere="(^|[^[:alnum:].])(${TASK_IDENTITY_TOKEN_ERE})($|[^[:alnum:].]|\\.($|[^[:alnum:].]))"
 	local candidate=""
 
+	text=$(_task_identity_strip_research_paths "$text")
 	[[ "$text" =~ $boundary_ere ]] || return 1
 	candidate="${BASH_REMATCH[2]}"
 	task_identity_validate "$candidate" || return 1
@@ -190,6 +204,7 @@ task_identity_extract_all() {
 	local matched=""
 	local candidate=""
 
+	remaining=$(_task_identity_strip_research_paths "$remaining")
 	while [[ "$remaining" =~ $boundary_ere ]]; do
 		matched="${BASH_REMATCH[0]}"
 		candidate="${BASH_REMATCH[2]}"
@@ -264,7 +279,6 @@ task_identity_first_malformed_candidate() {
 	# letters, falsely classifying ordinary words such as "throughput" as IDs.
 	local candidate_ere='(^|[^[:alnum:].])([tT][0123456789][[:alnum:].-]*|t[ABCDEFGHIJKLMNOPQRSTUVWXYZ][[:alnum:].-]*|[tT][oO][[:alnum:]]{26}-[[:alnum:].-]+)($|[^[:alnum:].])'
 	local brief_path_ere="(^|[^[:alnum:]./])todo/tasks/${TASK_IDENTITY_TOKEN_ERE}-brief\\.md($|[^[:alnum:].])"
-	local research_path_ere="(^|[^[:alnum:]./])todo/research/${TASK_IDENTITY_TOKEN_ERE}-[[:alnum:]._-]+($|[^[:alnum:].])"
 	local candidate=""
 	local remaining="$text"
 	local stripped=""
@@ -278,7 +292,7 @@ task_identity_first_malformed_candidate() {
 		return 0
 	fi
 	remaining="$stripped"
-	if ! stripped=$(_task_identity_strip_valid_paths "$remaining" "$research_path_ere"); then
+	if ! stripped=$(_task_identity_strip_valid_paths "$remaining" "$TASK_IDENTITY_RESEARCH_PATH_ERE"); then
 		printf '%s\n' "$stripped"
 		return 0
 	fi

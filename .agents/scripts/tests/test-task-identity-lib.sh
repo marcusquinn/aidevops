@@ -342,6 +342,8 @@ test_structured_helpers() {
 }
 
 test_research_path_identity_grammar() {
+	local extracted=""
+
 	if task_identity_has_malformed_candidate "See todo/research/t19048-remote-3d-render-backends.md"; then
 		fail "malformed detector rejected a canonical task research path"
 		return 1
@@ -354,6 +356,14 @@ test_research_path_identity_grammar() {
 		return 1
 	fi
 	pass "malformed detector rejects invalid research IDs and arbitrary task suffixes"
+	if task_identity_extract_first "See todo/research/t19048-t19049-note.md" >/dev/null; then
+		fail "task extractor accepted IDs embedded in a research path"
+		return 1
+	fi
+	extracted=$(task_identity_extract_all "See todo/research/t19048-t19049-note.md") || return 1
+	assert_equal "" "$extracted" "research path IDs are not task references" || return 1
+	extracted=$(task_identity_extract_first "See t19048 outside the path") || return 1
+	assert_equal "t19048" "$extracted" "standalone ID remains extractable beside research path support" || return 1
 	return 0
 }
 
