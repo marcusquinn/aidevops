@@ -27,27 +27,51 @@ python3 .agents/scripts/marketing-action-helper.py plan \
   --dry-run
 ```
 
-## Trusted Approval Adapter
+## Operator Approval
 
-Apply and rollback are disabled unless the host runtime supplies both
-`AIDEVOPS_MARKETING_APPROVAL_FD` and `AIDEVOPS_MARKETING_APPROVAL_KEY_FD` as
-inherited pipes. There is deliberately no CLI option that mints or accepts an
-approval file. The runtime/operator adapter owns the HMAC key and writes a v1
-approval containing the operation (`apply` or `rollback`), exact plan digest,
-resolved project and worktree identity, ordered action set, current OS owner,
-issued/expiry timestamps (maximum 15 minutes), nonce, and a private cancellation
-state path. Rollback approval additionally binds the exact private receipt digest.
-Unknown versions, ordinary files, missing adapters, generated JSON
-flags, forged signatures, stale/future approvals, owner/scope/action mismatch,
-or changed cancellation state fail closed.
+Apply and rollback run only with a fresh operator approval record. The operator
+creates it in their own terminal; agents and workers must never run this
+(it needs sudo and an interactive TTY):
 
-The cancellation file must be an absolute, non-symlink, operator-owned mode-0600
-file containing `active:<nonce>`. The executor checks it immediately before each
-write. Runtime implementations must keep approval secrets and private receipts
-outside prompts, repositories, and generated artifacts.
+```bash
+sudo aidevops approve marketing-plan /path/to/reviewed-plan.json
+sudo aidevops approve marketing-plan --rollback /path/to/receipt.json
+```
 
-After an operator reviews the persisted output of `plan`, the trusted adapter may
-run:
+The ceremony (`marketing_action_approval.mint`) refuses unless it runs as root
+with `SUDO_USER` set and an interactive stdin. It reads the plan or receipt
+without following symlinks and only when the operator owns the file. It
+recomputes the plan digest, then prints the authorised action set and every
+ready action. Each action shows its before hash and the exact `old`/`new` text
+that apply will execute, not the stored diff. It also lists the handoff-only
+items. Control characters are escaped. A review over 400 lines is refused rather
+than truncated. Then it requires a typed `APPROVE` and writes a v2
+record (`aidevops.marketing-action-approval/v2`) to
+`~/.aidevops/approval-keys/marketing-actions/{apply|rollback}-<digest>.json`.
+That directory is root-owned and not group/other writable. The record binds:
+
+- the operation
+- the plan schema and digest
+- the plan's schema-specific binding (for local plans: project root and worktree identity)
+- the ordered action set and the OS owner
+- issue and expiry times (at most 15 minutes apart)
+- a nonce and the cancellation path
+- for rollback, the exact receipt digest
+
+`apply` and `rollback` accept only a regular, root-owned record in that
+directory that matches exactly. A missing, user-owned, symlinked, stale,
+wrong-operation, wrong-digest, wrong-binding or cancelled record fails closed
+before any file changes. The v1 inherited-pipe variables
+(`AIDEVOPS_MARKETING_APPROVAL_FD`) no longer grant anything. Same-user processes
+cannot create root-owned files, which is what separates the operator from agents.
+
+The ceremony also creates an operator-owned mode-0600 cancellation file
+(`~/.aidevops/.agent-workspace/marketing-action-cancellations/<nonce>`, created
+with dropped privileges) containing `active:<nonce>`. The executor checks it
+immediately before each write. Overwrite it to cancel an in-flight approval.
+Re-approving the same digest replaces the record with a new nonce.
+
+Within the approval window, the operator or an agent may run:
 
 ```bash
 python3 .agents/scripts/marketing-action-helper.py apply \
@@ -57,10 +81,10 @@ python3 .agents/scripts/marketing-action-helper.py rollback \
   --receipt "$HOME/.aidevops/.agent-workspace/marketing-action-receipts/PLAN_DIGEST.json"
 ```
 
-The paths above are placeholders, not authorization. A scheduled invocation must
-be explicitly enabled by an operator, use the same trusted adapter, preserve the
-fresh approval and cancellation checks, and attach current validation evidence.
-No runtime adapter is inferred merely because the CLI exists.
+The paths above are placeholders, not authorization. Scheduled runs need a fresh
+operator record per plan; nothing infers approval merely because the CLI exists.
+Other plan schemas (for example, remote ad-account adapters) register their bound
+fields in `PLAN_BINDINGS` in `.agents/scripts/marketing_action_approval.py`.
 
 ## Recovery and Rollback
 
@@ -79,6 +103,7 @@ never runs reset, clean, commit, push, publication, or remote/account commands.
 
 ## Verification Boundary
 
-Focused tests use synthetic linked worktrees and inherited pipes. They prove the
+Focused tests use synthetic linked worktrees, and they patch the trusted approver
+UID and operator home so they can run without root. They prove the
 local guard and recovery contract only; they do not establish ROI, authorize a
 real proposal, or activate scheduled/live-site execution.

@@ -89,6 +89,8 @@ cmd_help() {
 	echo "                             --withdraw signs a decline: grants nothing, releases the hold"
 	echo "  permissions batch --withdraw [--all-blocked] [kind:number:perm-<id>...] [slug]"
 	echo "                             Withdraw many requests with one confirmation (never grants)"
+	echo "  marketing-plan <plan.json> | --rollback <receipt.json>"
+	echo "                             Approve one reviewed marketing action plan for 15 minutes"
 	_approval_commands_blank_line
 	echo "Commands (no sudo needed):"
 	echo "  verify [issue|pr] <number> [slug] [--expect-head SHA] [--require-authority]"
@@ -105,6 +107,7 @@ cmd_help() {
 	echo "  ${approve_cli} approve batch issue:17438 pr:17439 pr:17441 <owner/repo>"
 	echo "  ${approve_cli} approve permissions issue 17438 <owner/repo> --request perm-0123456789abcdef"
 	echo "  ${approve_cli} approve permissions batch --withdraw --all-blocked <owner/repo>"
+	echo "  ${approve_cli} approve marketing-plan /path/to/reviewed-plan.json"
 	echo "  aidevops approve verify 17438"
 	echo "  aidevops approve verify pr 17439 <owner/repo> --expect-head <sha>"
 	_approval_commands_blank_line
