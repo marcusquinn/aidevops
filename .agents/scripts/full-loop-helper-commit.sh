@@ -761,13 +761,13 @@ _push_branch() {
 
 	print_info "Pushing to origin/${branch}..."
 
-	# GH#20138: 60s push timeout to detect pre-push hook hangs. Pre-push hooks
-	# (privacy-guard, complexity-regression) can stall on network I/O or when
-	# scanning large repos. If push exceeds 60s, print an actionable advisory
-	# and return 1 so the caller can retry with --skip-hooks.
-	# Fast-path: both hooks now exit early on doc-only diffs (<1s), so the
-	# 60s timeout is a safety net for edge cases, not a normal code path.
-	local push_timeout=60
+	# GH#20138/GH#39356: push timeout to detect pre-push hook hangs. On code
+	# diffs the managed pre-push hooks (privacy-guard, complexity-guard,
+	# repo-verify typecheck, secretlint + SonarCloud validation) legitimately
+	# take ~75s or more, so the default is 300s. Doc-only diffs exit early
+	# (<1s). Override with AIDEVOPS_PUSH_TIMEOUT_S (positive integer seconds).
+	local push_timeout="${AIDEVOPS_PUSH_TIMEOUT_S:-300}"
+	[[ "$push_timeout" =~ ^[1-9][0-9]*$ ]] || push_timeout=300
 	local _push_args=(-u origin "$branch")
 	[[ -n "$lease_arg" ]] && _push_args+=("$lease_arg")
 	[[ "$skip_hooks" == "1" ]] && _push_args+=(--no-verify)
@@ -784,8 +784,8 @@ _push_branch() {
 		# timeout(1) exits 124 on SIGTERM
 		print_error "Push timed out after ${push_timeout}s — likely a pre-push hook stalling."
 		print_error "Diagnose: PRIVACY_GUARD_DEBUG=1 COMPLEXITY_GUARD_DEBUG=1 git push ${_push_args[*]}"
-		print_error "Bypass (doc-only diff, no secrets): git push ${_push_args[*]} --no-verify"
-		print_error "  or rerun: full-loop-helper.sh commit-and-pr ... --skip-hooks"
+		print_error "Hooks on code diffs can legitimately run long; raise the budget: AIDEVOPS_PUSH_TIMEOUT_S=<seconds>."
+		print_error "Do not bypass hooks for code diffs; --skip-hooks is only for doc-only diffs."
 		print_error "See reference/pre-push-guards.md for diagnosis steps."
 		return 1
 	elif [[ "$push_rc" -ne 0 ]]; then
