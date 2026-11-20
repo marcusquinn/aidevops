@@ -287,7 +287,7 @@ _pmp_sort_prs_by_backlog_priority() {
 	local cursor_line="" walk_active=0
 	[[ "$ci_limit" =~ ^[0-9]+$ ]] || ci_limit=2
 	[[ -n "$repo_slug" ]] || ci_limit=0
-	if [[ "$ci_limit" -gt 0 ]]; then
+	if [[ -n "$repo_slug" ]]; then
 		cursor_line=$(_pmp_cursor_line_for_repo "$repo_slug")
 		if [[ -n "$cursor_line" ]]; then
 			walk_active=1
@@ -311,7 +311,10 @@ _pmp_sort_prs_by_backlog_priority() {
 			and (any((.labels // [])[]; (.name? // .) == "hold-for-review") | not)' >/dev/null 2>&1 && retry_priority=0
 		# GH#39019: a cached unchanged no-op verdict sorts after every PR without
 		# one, so a blocked PR cannot exhaust the pass budget before clean work.
-		if declare -F _pmu_pr_has_negative_verdict >/dev/null 2>&1 && _pmu_pr_has_negative_verdict "$repo_slug" "$pr_obj"; then
+		# Fresh walks only: during a resumed walk the cached check rollup may be
+		# stale, and demotion would reorder PRs around the cursor so a demoted PR
+		# is never refreshed before the cursor (GH#39455).
+		if [[ "$walk_active" -eq 0 ]] && declare -F _pmu_pr_has_negative_verdict >/dev/null 2>&1 && _pmu_pr_has_negative_verdict "$repo_slug" "$pr_obj"; then
 			negative_priority=1
 		fi
 		if [[ -n "$dirty_keys" || -n "$counted_keys" || "$category" == "$_PMP_BACKLOG_SMALL_FIX_NEEDED" ]]; then
