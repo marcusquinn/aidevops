@@ -115,6 +115,8 @@ load_functions() {
 	extract_function _merge_verify_rbg_override_approval
 	extract_function _merge_execute
 	extract_function cmd_commit_and_pr
+	extract_function _require_commit_and_pr_inputs
+	extract_function _commit_and_pr_validate_title
 	extract_function _parse_commit_and_pr_args
 	extract_function _validate_keep_issue_open_request
 	extract_function _compose_pr_title

@@ -111,17 +111,10 @@ cmd_commit_and_pr() {
 	_parse_commit_and_pr_args "$@" || return 1
 	_validate_keep_issue_open_request || return 1
 
-	# Reject the final title before staging, rebasing or publishing anything.
-	if [[ -z "$pr_title" ]]; then
-		pr_title="$(_compose_pr_title "$issue_number" "$commit_message")" || return 1
-	fi
-	if ! _full_loop_valid_squash_subject "$pr_title"; then
-		print_error "PR title is not a valid squash subject; refusing commit-and-pr"
-		print_error "Use GH#N: ..., tNNN: ..., or conventional type(scope): ...; extra issues belong in the body as Resolves #N."
-		return 1
-	fi
-
-	# Validate inputs and detect repo/branch (sets $repo and $branch in this scope)
+	# Missing inputs report usage (GH#39377); the title is then rejected before any
+	# repo read, staging, rebase or publication (GH#33949).
+	_require_commit_and_pr_inputs "$issue_number" "$commit_message" || return 1
+	_commit_and_pr_validate_title || return 1
 	local repo="" branch="" base_branch="" base_ref=""
 	_validate_commit_and_pr_inputs "$issue_number" "$commit_message" || return 1
 	if [[ -n "$replacement_pr" || -n "$replacement_reason" ]]; then
@@ -198,6 +191,21 @@ cmd_commit_and_pr() {
 
 	# Output PR number for caller to pass to `merge`
 	printf '%s\n' "$pr_number"
+	return 0
+}
+
+# Compose (when absent) and reject an invalid final title before staging,
+# rebasing or publishing anything (GH#33949). Uses caller-scoped $pr_title,
+# $issue_number and $commit_message from cmd_commit_and_pr.
+_commit_and_pr_validate_title() {
+	if [[ -z "$pr_title" ]]; then
+		pr_title="$(_compose_pr_title "$issue_number" "$commit_message")" || return 1
+	fi
+	if ! _full_loop_valid_squash_subject "$pr_title"; then
+		print_error "PR title is not a valid squash subject; refusing commit-and-pr"
+		print_error "Use GH#N: ..., tNNN: ..., or conventional type(scope): ...; extra issues belong in the body as Resolves #N."
+		return 1
+	fi
 	return 0
 }
 
@@ -527,6 +535,13 @@ Commands:
                                           Audited replacement of an open PR (reason: 20+ characters)
                 [--completion-bookkeeping --proof-pr N --task-id tNNN]
                                           Allow audited metadata-only PR for a terminal issue
+                [--ready]                 Open the PR non-draft once verification passed
+                                          (interactive default is draft; readying later
+                                          re-runs every required check, GH#39210)
+                [--keep-issue-open]       Link with For #N so merge leaves a long-running
+                                          issue open (interactive only, GH#36598)
+                [--allow-parent-close]    Permit a closing keyword on a parent-task issue
+                                          (verified final phase only, GH#37690)
                 [--skip-hooks]             Pass --no-verify to git push (doc-only PRs, GH#20138)
                 [--no-rebase]              Explicit recovery mode after a failed/aborted rebase
   pre-merge-gate <PR> [REPO]    Check review bot gate before merge (GH#17541)
