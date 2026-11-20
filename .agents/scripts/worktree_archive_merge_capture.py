@@ -42,12 +42,19 @@ def supported_merge_administration(root, admin=None, common=None):
 
 
 def supported_merge_index(root):
-    flags = git(root, 'ls-files', '-v', '-z').split(b'\0')
-    if any(entry and entry[:1] not in (b'H', b'M') for entry in flags):
+    """Check index flags and intent-to-add; return this pass's `--stage` bytes.
+
+    One `ls-files -v --stage` read yields the flags and the exact stage listing.
+    The intent-to-add view pair runs whenever an empty-blob entry exists.
+    """
+    # Imported here: worktree_archive_state imports this module.
+    from worktree_archive_state import intent_to_add_differs, tagged_index
+    tags, index = tagged_index(root)
+    if any(tag not in (b'H', b'M') for tag in tags):
         raise ValueError('merge:unsupported_index_flags')
-    options = ('--cached', '--raw', '-z', '--no-ext-diff')
-    if git(root, 'diff', *options, '--ita-visible-in-index') != git(root, 'diff', *options, '--ita-invisible-in-index'):
+    if intent_to_add_differs(root, index):
         raise ValueError('merge:intent_to_add')
+    return index
 
 
 def merge_working_paths(root, head, entries):
@@ -92,8 +99,7 @@ def merge_working_file(root, path):
 def merge_state(root, admin=None, common=None):
     """Capture a supported merge structurally; never copy a raw index or reflog."""
     state = supported_merge_administration(root, admin, common)
-    supported_merge_index(root)
-    entries = merge_entries(root, '--stage')
+    entries = merge_entries(root, '--stage', listing=supported_merge_index(root))
     undo = merge_entries(root, '--resolve-undo')
     head = git(root, 'rev-parse', 'HEAD').strip().decode('ascii')
     paths = merge_working_paths(root, head, entries + undo)

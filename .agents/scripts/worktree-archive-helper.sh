@@ -470,9 +470,10 @@ capture_archive_payload() {
 		if [[ "$commit_count" -gt 0 && "$remote_state" != "$REMOTE_STATE_PUBLISHED" ]]; then
 			git -C "$worktree" bundle create "$archive_dir/commits.bundle" HEAD "^${base_sha}" || return 1
 		fi
-		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-capture "$worktree" "$archive_dir" "$base_sha" || return 1
+		# Both reuse the admin dir resolved above instead of another rev-parse.
+		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-capture "$worktree" "$archive_dir" "$base_sha" "$admin_dir" || return 1
 		# GH#36883: runtime-local config.worktree bytes are kept, never restored.
-		python3 "${SCRIPT_DIR}/worktree_archive_runtime_config.py" capture "$worktree" "$archive_dir" || return 1
+		python3 "${SCRIPT_DIR}/worktree_archive_runtime_config.py" capture "$worktree" "$archive_dir" "$admin_dir" || return 1
 	fi
 	capture_untracked "$worktree" "$archive_dir" || return 1
 	if [[ -n "$failure_log" ]]; then

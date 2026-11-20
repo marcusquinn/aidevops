@@ -17,9 +17,12 @@ def merge_path(value):
     return raw
 
 
-def merge_entries(root, option):
+def merge_entries(root, option, listing=None):
+    """Parse `ls-files <option> -z`; a caller may pass this pass's listing bytes."""
+    if listing is None:
+        listing = git(root, 'ls-files', option, '-z')
     result = []
-    for entry in git(root, 'ls-files', option, '-z').split(b'\0'):
+    for entry in listing.split(b'\0'):
         if entry:
             metadata, path = entry.split(b'\t', 1)
             mode, oid, stage = metadata.decode('ascii').split()
