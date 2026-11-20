@@ -154,6 +154,7 @@ class GoogleAdsActionTests(unittest.TestCase):
         summary = records._plan_subject(plan)[2]
         self.assertIn("- APPLY neg [campaign_negative_keyword] add PHRASE negative \"free shoes\" to campaign 111",
                       summary)
+        self.assertIn(f"    operation: {json.dumps(negative['forward'], sort_keys=True)}", summary)
 
     def test_plan_refuses_unlisted_customer_caps_and_existing_negative(self) -> None:
         for change in ({"customer_id": "999"},):
