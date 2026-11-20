@@ -154,13 +154,18 @@ How each step works:
   with an equal value (for example, a swapped budget). It writes an `applying`
   receipt and re-checks the approval and plan expiry. It records `mutate_sent_at`
   in the receipt, then sends one mutate with `partialFailure: false`, so every
-  operation applies or none do. Finally it records the resource names and
-  appends to `audit.jsonl`.
+  operation applies or none do. If Google answers with an HTTP error, nothing
+  was committed and the marker is cleared. Finally it records the resource
+  names and appends to `audit.jsonl`.
 - Replaying an applied plan is a verified no-op that repairs a missing audit
-  entry. After a crash, a plan whose live state equals the after-state is marked
-  applied without a second write, but only when its receipt has `mutate_sent_at`.
-  Without that marker the plan never sent its mutate, so a matching state was
-  made by someone else and is refused as drift.
+  entry. Without `mutate_sent_at` the plan never sent its mutate, so a matching
+  live state was made by someone else and is refused as drift. With the marker
+  (outcome unknown, such as a lost response), a plan of updates whose live state
+  equals the after-state is marked applied without a second write. A plan with
+  negative keywords is never completed this way: a matching negative may belong
+  to another operator, and claiming it would let rollback delete it. Apply
+  reports the outcome as unconfirmed and leaves the receipt `applying`;
+  reconcile the negatives in Google Ads, then build a new plan.
 - `rollback` needs a fresh rollback approval bound to the receipt digest. It
   rebuilds every inverse, after-state and summary from the receipt's kind,
   parameters, before-state and resource name, and refuses any stored inverse

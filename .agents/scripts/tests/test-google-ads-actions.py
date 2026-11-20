@@ -233,9 +233,22 @@ class GoogleAdsActionTests(unittest.TestCase):
                                        "rn": f"customers/{CUSTOMER}/campaignCriteria/111~77"})  # another operator
         self.assert_no_write(plan)
         self.assertEqual(len(self.account.negatives), 1)
-        self.account.negatives.clear()
-        receipt, _ = ads.apply_plan(plan, self.receipts, self.account)
+        external = self.account.negatives.pop()
         path = ads.action_io.receipt_path(self.receipts, plan["plan_digest"])
+        rejected = ads.RequestRejected("Google Ads API returned HTTP 400")
+        with patch.object(self.account, "mutate", side_effect=rejected), self.assertRaises(ads.RequestRejected):
+            ads.apply_plan(plan, self.receipts, self.account)
+        self.assertNotIn("mutate_sent_at", ads._load_receipt(path))  # answered rejection: nothing was committed
+        lost = ads.GoogleAdsActionError("Google Ads request failed")
+        with patch.object(self.account, "mutate", side_effect=lost), self.assertRaises(ads.GoogleAdsActionError):
+            ads.apply_plan(plan, self.receipts, self.account)
+        self.account.negatives.append(external)  # outcome unknown; an identical negative appears
+        with self.assertRaisesRegex(ads.GoogleAdsActionError, "unconfirmed"):
+            ads.apply_plan(plan, self.receipts, self.account)
+        self.assertEqual((ads._load_receipt(path)["status"], self.account.writes()), ("applying", []))
+        self.account.negatives.clear()
+        path.unlink()
+        receipt, _ = ads.apply_plan(plan, self.receipts, self.account)
         receipt["actions"][0]["inverse"]["campaignCriterionOperation"]["remove"] = (
             f"customers/{CUSTOMER}/campaignCriteria/111~77")  # tampered: would delete a criterion never created
         ads._write_receipt(path, receipt)

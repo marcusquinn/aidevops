@@ -56,6 +56,10 @@ def _stamp(value: datetime) -> str:
 # ── Transport ────────────────────────────────────────────────────────────────
 
 
+class RequestRejected(GoogleAdsActionError):
+    """Google returned an HTTP error: the request was answered and nothing was committed."""
+
+
 class AdsClient:
     """Minimal REST transport: fixed endpoints, bounded responses, no credential echo."""
 
@@ -74,8 +78,8 @@ class AdsClient:
         request = Request(url, data=json.dumps(body).encode("utf-8"), headers=self._headers, method="POST")
         try:
             raw = self._open(request).read(MAX_RESPONSE_BYTES + 1)
-        except HTTPError as error:
-            raise GoogleAdsActionError(_http_error(error)) from None
+        except HTTPError as error:  # Google answered: an atomic (partialFailure=false) mutate committed nothing
+            raise RequestRejected(_http_error(error)) from None
         except OSError as error:
             raise GoogleAdsActionError("Google Ads request failed") from error
         _require(len(raw) <= MAX_RESPONSE_BYTES, "Google Ads response exceeded byte budget")
@@ -364,17 +368,34 @@ def apply_plan(plan: dict[str, Any], receipt_directory: str | Path, client: Any)
             _require(live == after, "applied-plan replay found drifted state")
             _audit(directory, path, "apply", receipt)  # repairs a missing audit entry; no account write
             return receipt, True
-        if receipt.get("mutate_sent_at") and live == after:  # lost response after our send: recover live names
-            return _finish(directory, path, receipt, plan, [name for _, name in states]), False
+        if receipt.get("mutate_sent_at") and live == after:  # outcome unknown after a possible send
+            return _recover(directory, path, receipt, plan, [name for _, name in states]), False
         # Without the send marker a matching after-state was made by someone else: never adopt it.
         _require(live == before, "live account state drifted since planning")
         receipt["approval_nonce"] = approval["nonce"]
         _write_receipt(path, receipt)
         _still_approved(approval, plan["expires_at"])
-        receipt["mutate_sent_at"] = _stamp(_now())  # provenance: only this plan's send can explain after-state
+        receipt["mutate_sent_at"] = _stamp(_now())  # a send may follow; recovery treats the outcome as unknown
         _write_receipt(path, receipt)
-        responses = client.mutate(plan["customer_id"], plan["operations"], validate_only=False)
+        try:
+            responses = client.mutate(plan["customer_id"], plan["operations"], validate_only=False)
+        except RequestRejected:
+            receipt.pop("mutate_sent_at")  # Google answered with an error: nothing was committed
+            _write_receipt(path, receipt)
+            raise
         return _finish(directory, path, receipt, plan, _result_names(responses, len(plan["actions"]))), False
+
+
+def _recover(directory: Path, path: Path, receipt: dict[str, Any], plan: dict[str, Any], names: list[str]) -> dict:
+    """Complete an unknown-outcome send from live state, but never claim a negative it cannot prove it created.
+
+    Updates are bound to the exact planned resource, so their inverse restores the planned before-value.
+    A matching negative may be another operator's: claiming it would let rollback delete their criterion.
+    """
+    _require(not any(item["kind"] in NEGATIVE_LEVELS for item in plan["actions"]),
+             "apply outcome is unconfirmed: matching negative keywords exist but this plan cannot prove it "
+             "created them; reconcile them in Google Ads, then build a new plan")
+    return _finish(directory, path, receipt, plan, names)
 
 
 def rollback_receipt(receipt_path: str | Path, client: Any) -> tuple[dict[str, Any], bool]:
