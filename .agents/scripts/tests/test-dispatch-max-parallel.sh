@@ -725,7 +725,12 @@ test_parallel_loop_round_topup() {
 		rm -f "$candidate_file" "$outcomes_file" "$trigger" "$calls"
 		if [[ "$mode" == topup ]]; then
 			[[ "$successes" == 5 && "${result%% *}" == 5 ]] || exit 1
-			grep -q 'in-round top-up (parallel) — budget 2 -> 5' "$LOGFILE" || exit 1
+			# The stub counts outcomes at its own read time, so a worker that
+			# finishes between the loop's count and the stub's read yields an
+			# intermediate grant (2 -> 4) before the final 5. Assert the budget
+			# starts at 2 and reaches 5 rather than one exact grant step.
+			grep -q 'in-round top-up (parallel) — budget 2 -> [0-9]' "$LOGFILE" || exit 1
+			grep -Eq 'in-round top-up \(parallel\) — budget [0-9]+ -> 5 ' "$LOGFILE" || exit 1
 		else
 			[[ "$successes" == 2 && "${result%% *}" == 2 && "$reads" == 0 ]] || exit 1
 		fi
