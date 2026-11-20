@@ -6,6 +6,11 @@
 // (t2127 file-complexity decomposition)
 
 
+import { spawnSync } from 'node:child_process';
+import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, join } from 'node:path';
+
 import {
   debugScreenshot,
   dismissAllModals,
@@ -44,7 +49,7 @@ export { downloadVideoFromHistory };
 export const VIDEO_MODEL_NAME_MAP = {
   'kling-3.0':    'Kling 3.0',
   'kling-2.6':    'Kling 2.6',
-  'kling-2.5':    'Kling 2.5',
+  'kling-2.5':    'Kling 2.5 Turbo',
   'kling-2.1':    'Kling 2.1',
   'kling-motion': 'Kling Motion Control',
   'seedance':     'Seedance',
@@ -55,6 +60,40 @@ export const VIDEO_MODEL_NAME_MAP = {
   'veo':          'Veo',
   'veo-3':        'Veo 3',
 };
+
+// The generator moved from /create/video (now redirects to the /ai-video
+// marketing page) to /ai/video?model=<slug>. Unmapped models are chosen in the
+// Model dialog instead.
+export const VIDEO_GENERATOR_PATH = '/ai/video';
+export const VIDEO_MODEL_SLUG_MAP = {
+  'kling-2.5': 'kling-v2-5-turbo',
+};
+
+export function buildVideoGeneratorUrl(model, baseUrl = BASE_URL) {
+  const slug = VIDEO_MODEL_SLUG_MAP[model];
+  return `${baseUrl}${VIDEO_GENERATOR_PATH}${slug ? `?model=${slug}` : ''}`;
+}
+
+/** Unlimited is requested explicitly, or implied by an unlimited model unless opted out. */
+export function isUnlimitedRequested(options, model) {
+  if (options.preferUnlimited === false) return false;
+  return options.preferUnlimited === true || isUnlimitedModel(model, 'video');
+}
+
+/** The only Generate label that is safe to click when unlimited was requested. */
+export function isUnlimitedGenerateLabel(label) {
+  return /^\s*Generate\s+Unlimited\s*$/i.test(label || '');
+}
+
+async function readGenerateLabel(page) {
+  return page.evaluate(() => {
+    const labels = [...document.querySelectorAll('button')]
+      .filter(b => b.offsetParent !== null)
+      .map(b => (b.textContent || '').replace(/\s+/g, ' ').trim())
+      .filter(t => /^Generate\b/i.test(t));
+    return labels[labels.length - 1] || '';
+  });
+}
 
 function selectVideoModel(options) {
   let model = options.model || 'kling-2.6';
@@ -163,9 +202,9 @@ export async function uploadStartFrame(page, imageFile) {
   console.log(`Uploading start frame: ${imageFile}`);
   await removeExistingStartFrame(page);
   return (
+    await tryUploadViaFileInput(page, imageFile) ||
     await tryUploadViaButton(page, imageFile) ||
     await tryUploadViaStartFrameArea(page, imageFile) ||
-    await tryUploadViaFileInput(page, imageFile) ||
     await tryUploadViaCoordinates(page, imageFile)
   );
 }
@@ -242,6 +281,13 @@ async function selectVideoModelFromDropdown(page, model) {
 }
 
 async function enableVideoUnlimitedMode(page) {
+  // Unlimited needs Quality = std (720p); at pro the page offers this button.
+  const toStd = page.getByRole('button', { name: /Change to std for Unlimited/i });
+  if (await toStd.count() > 0) {
+    await toStd.first().click({ force: true });
+    await page.waitForTimeout(800);
+    console.log('Switched quality to std (720p) for Unlimited');
+  }
   const unlimitedSwitch = page.getByRole('switch', { name: 'Unlimited mode' });
   if (await unlimitedSwitch.count() === 0) {
     console.log('No Unlimited mode switch found on this page');
@@ -382,18 +428,135 @@ export async function waitForVideoGeneration(page, historyState, prompt, options
 }
 
 // ---------------------------------------------------------------------------
+// Opt-in session mode: drive the user's paired everyday browser (OpenCode browse)
+// ---------------------------------------------------------------------------
+
+/** Self-contained Playwright body for `opencode-browse run -- execute --file`. Returns no media URLs. */
+export function buildBrowseVideoScript(params) {
+  return `const P = ${JSON.stringify(params)};
+await page.goto(P.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+await page.waitForTimeout(4000);
+if (P.imageFile) {
+  await page.locator('input[type="file"]').first().setInputFiles(P.imageFile);
+  await page.waitForTimeout(3000);
+}
+const modelBtn = page.getByRole('button', { name: 'Model' });
+if (!P.modelSlugInUrl && P.uiModelName && !((await modelBtn.textContent().catch(() => '')) || '').includes(P.uiModelName)) {
+  await modelBtn.click();
+  const search = page.locator('input[placeholder*="Search"]');
+  if (await search.count() > 0) await search.fill(P.uiModelName);
+  await page.waitForTimeout(1000);
+  await page.getByRole('dialog').getByRole('button', { name: new RegExp(P.uiModelName, 'i') }).first().click();
+  await page.waitForTimeout(1500);
+}
+if (P.unlimited) {
+  const toStd = page.getByRole('button', { name: /Change to std for Unlimited/i });
+  if (await toStd.count() > 0) { await toStd.first().click(); await page.waitForTimeout(800); }
+  const sw = page.getByRole('switch', { name: 'Unlimited mode' });
+  if (await sw.count() > 0 && !(await sw.isChecked())) { await sw.click(); await page.waitForTimeout(500); }
+}
+await page.getByRole('textbox', { name: 'Prompt' }).fill(P.prompt);
+const label = await page.evaluate(() => {
+  const l = [...document.querySelectorAll('button')].filter(b => b.offsetParent !== null)
+    .map(b => (b.textContent || '').replace(/\\s+/g, ' ').trim()).filter(t => /^Generate\\b/i.test(t));
+  return l[l.length - 1] || '';
+});
+if (P.dryRun) return { dryRun: true, generateLabel: label };
+if (P.unlimited && !/^Generate\\s+Unlimited$/i.test(label)) return { refused: true, generateLabel: label };
+await page.getByRole('button', { name: label, exact: true }).last().click();
+return { submitted: true, generateLabel: label };
+`;
+}
+
+function runVideoViaOpencodeBrowse(options, model, prompt) {
+  const uiModelName = VIDEO_MODEL_NAME_MAP[model] || model;
+  const tempRoot = process.env.AIDEVOPS_TEMP_DIR || join(homedir(), '.aidevops', '.agent-workspace', 'tmp');
+  const workDir = mkdtempSync(join(tempRoot, 'higgsfield-browse-'));
+  try {
+    let imageFile = null;
+    if (options.imageFile) {
+      // browse uploads only from temp roots: stage a copy there.
+      imageFile = join(workDir, basename(options.imageFile));
+      copyFileSync(options.imageFile, imageFile);
+    }
+    const scriptPath = join(workDir, 'video.browse.js');
+    writeFileSync(scriptPath, buildBrowseVideoScript({
+      url: buildVideoGeneratorUrl(model),
+      modelSlugInUrl: Boolean(VIDEO_MODEL_SLUG_MAP[model]),
+      uiModelName, imageFile, prompt,
+      unlimited: isUnlimitedRequested(options, model),
+      dryRun: Boolean(options.dryRun),
+    }));
+    const run = spawnSync('aidevops', ['opencode-browse', 'run', '--', 'execute', '--file', scriptPath], { encoding: 'utf8' });
+    if (run.status !== 0) {
+      return { success: false, error: `opencode-browse failed: ${(run.stderr || run.stdout || '').trim().slice(0, 300)}` };
+    }
+    console.log(`[opencode-browse] ${(run.stdout || '').trim().slice(0, 500)}`);
+    return { success: true, sessionMode: 'opencode-browse', dryRun: Boolean(options.dryRun) };
+  } finally {
+    rmSync(workDir, { recursive: true, force: true });
+  }
+}
+
+function isBrowseSessionMode(options) {
+  return (options.sessionMode || process.env.HIGGSFIELD_SESSION_MODE) === 'opencode-browse';
+}
+
+async function downloadGeneratedVideo(page, { model, prompt, generationComplete }, options) {
+  const baseOutput = options.output || getDefaultOutputDir(options);
+  const outputDir = resolveOutputDir(baseOutput, options, 'videos');
+  const videoMeta = { model, promptSnippet: prompt.substring(0, 80) };
+  const downloads = await downloadVideoFromHistory(page, outputDir, videoMeta, options);
+  if (downloads.length > 0) {
+    console.log(`Video downloaded successfully: ${downloads.join(', ')}`);
+  } else if (generationComplete) {
+    console.log('Video appeared in History but download failed. Try manually or re-run download command.');
+  } else {
+    console.log('Video generation timed out and no completed video found. Try: download --model video');
+  }
+}
+
+/** Dry-run and unlimited guard: returns a final result when Generate must not be clicked, else null. */
+async function checkGenerateGate(page, context, browser, options, wantUnlimited) {
+  const generateLabel = await readGenerateLabel(page);
+  console.log(`Generate button reads: "${generateLabel}"`);
+
+  if (options.dryRun) {
+    console.log('[DRY-RUN] Configuration complete. Skipping Generate click.');
+    await debugScreenshot(page, 'dry-run-configured');
+    await context.storageState({ path: STATE_FILE });
+    await browser.close();
+    return { success: true, dryRun: true, generateLabel };
+  }
+
+  if (wantUnlimited && !isUnlimitedGenerateLabel(generateLabel)) {
+    const error = `Unlimited requested but Generate button reads "${generateLabel}"; refusing to spend credits`;
+    console.error(error);
+    await debugScreenshot(page, 'video-unlimited-refused');
+    await browser.close();
+    return { success: false, error, generateLabel };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Main entry point: generateVideo
 // ---------------------------------------------------------------------------
 
 export async function generateVideo(options = {}) {
+  if (isBrowseSessionMode(options)) {
+    return runVideoViaOpencodeBrowse(options, selectVideoModel(options),
+      options.prompt || 'Camera slowly pans across a beautiful landscape as clouds drift overhead');
+  }
   const { browser, context, page } = await launchBrowser(options);
 
   try {
     const prompt = options.prompt || 'Camera slowly pans across a beautiful landscape as clouds drift overhead';
     const model = selectVideoModel(options);
+    const wantUnlimited = isUnlimitedRequested(options, model);
 
-    console.log('Navigating to video creation page...');
-    await page.goto(`${BASE_URL}/create/video`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    console.log('Navigating to video generator page...');
+    await page.goto(buildVideoGeneratorUrl(model), { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(4000);
     await dismissAllModals(page);
     await debugScreenshot(page, 'video-page');
@@ -410,18 +573,12 @@ export async function generateVideo(options = {}) {
     await debugScreenshot(page, 'video-after-upload');
 
     await selectVideoModelFromDropdown(page, model);
-    await enableVideoUnlimitedMode(page);
+    if (options.preferUnlimited !== false) await enableVideoUnlimitedMode(page);
     await fillVideoPrompt(page, prompt);
 
     const historyState = await captureVideoHistoryState(page);
-
-    if (options.dryRun) {
-      console.log('[DRY-RUN] Configuration complete. Skipping Generate click.');
-      await debugScreenshot(page, 'dry-run-configured');
-      await context.storageState({ path: STATE_FILE });
-      await browser.close();
-      return { success: true, dryRun: true };
-    }
+    const early = await checkGenerateGate(page, context, browser, options, wantUnlimited);
+    if (early) return early;
 
     const generateBtn = page.locator('button:has-text("Generate")');
     if (await generateBtn.count() > 0) {
@@ -442,17 +599,7 @@ export async function generateVideo(options = {}) {
     await debugScreenshot(page, 'video-result');
 
     if (options.wait !== false) {
-      const baseOutput = options.output || getDefaultOutputDir(options);
-      const outputDir = resolveOutputDir(baseOutput, options, 'videos');
-      const videoMeta = { model, promptSnippet: prompt.substring(0, 80) };
-      const downloads = await downloadVideoFromHistory(page, outputDir, videoMeta, options);
-      if (downloads.length > 0) {
-        console.log(`Video downloaded successfully: ${downloads.join(', ')}`);
-      } else if (generationComplete) {
-        console.log('Video appeared in History but download failed. Try manually or re-run download command.');
-      } else {
-        console.log('Video generation timed out and no completed video found. Try: download --model video');
-      }
+      await downloadGeneratedVideo(page, { model, prompt, generationComplete }, options);
     }
 
     console.log('Video generation complete');

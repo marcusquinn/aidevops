@@ -11,7 +11,7 @@
     "nano_banana_inpaint": "/image/nano_banana?image-inpaint=true"
   },
   "video": {
-    "create": "/create/video",
+    "create": "/ai/video",
     "storyboard": "/storyboard-generator",
     "edit": "/create/edit",
     "motion_control": "/create/motion-control",
