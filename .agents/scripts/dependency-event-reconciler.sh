@@ -520,6 +520,20 @@ _der_comments_after_dependency_conversion() {
 	return $?
 }
 
+# GH#39500: hold a dependant whose blocker was abandoned (closed not planned or
+# duplicate, no trusted successor, no "Dependants: proceed" release). Adds the
+# AI-recovery companion once; the dependant keeps status:blocked.
+# Args: $1 repo, $2 issue number, $3 current comma-separated labels
+_der_route_abandoned_blocker_to_recovery() {
+	local repo="$1"
+	local issue_number="$2"
+	local labels="$3"
+	local companion="${BLOCKED_NEEDS_AI_RECOVERY:-needs-ai-recovery}"
+	_der_labels_has "$labels" "$companion" && return 0
+	gh issue edit "$issue_number" --repo "$repo" --add-label "$companion" >/dev/null 2>&1 || return 1
+	return 0
+}
+
 _der_try_unblock() {
 	local repo="$1"
 	local issue_number="$2"
@@ -546,19 +560,31 @@ _der_try_unblock() {
 		return 0
 	fi
 	upstream_release_gate_declared "$body" && upstream_gated=true
-	_der_native_blockers_closed "$repo" "$issue_number" readiness || return $?
-	if [[ "$upstream_gated" == true ]]; then
-		# GH#37696: a gated issue also honours every declared blocker, with or
-		# without native edges; a text read failure returns 1, never "none".
-		_der_all_declared_blockers_closed "$repo" "$candidate_json" "${repo}#${issue_number}" || return $?
-		_der_upstream_gates_ready "$repo" "$issue_number" "$body" || return $?
-	elif [[ "$_DER_NATIVE_BLOCKERS_PRESENT" != true ]]; then
-		# No native edge and no declared blocker: status:blocked came from another
-		# mechanism (cost breaker, infrastructure failure, sync retry hold) that
-		# owns its own release.
-		_der_declares_blockers "$candidate_json" || return 0
-		_der_all_declared_blockers_closed "$repo" "$candidate_json" "${repo}#${issue_number}" || return $?
+	DEP_SUPERSESSION_ABANDONED=0
+	local gate_status=0
+	_der_native_blockers_closed "$repo" "$issue_number" readiness || gate_status=$?
+	if [[ "$gate_status" -eq 0 ]]; then
+		if [[ "$upstream_gated" == true ]]; then
+			# GH#37696: a gated issue also honours every declared blocker, with or
+			# without native edges; a text read failure returns 1, never "none".
+			_der_all_declared_blockers_closed "$repo" "$candidate_json" "${repo}#${issue_number}" || gate_status=$?
+			[[ "$gate_status" -ne 0 ]] || _der_upstream_gates_ready "$repo" "$issue_number" "$body" || gate_status=$?
+		elif [[ "$_DER_NATIVE_BLOCKERS_PRESENT" != true ]]; then
+			# No native edge and no declared blocker: status:blocked came from another
+			# mechanism (cost breaker, infrastructure failure, sync retry hold) that
+			# owns its own release.
+			_der_declares_blockers "$candidate_json" || return 0
+			_der_all_declared_blockers_closed "$repo" "$candidate_json" "${repo}#${issue_number}" || gate_status=$?
+		fi
 	fi
+	if [[ "$gate_status" -eq "$DER_NOT_READY" && "$DEP_SUPERSESSION_ABANDONED" -eq 1 ]]; then
+		# GH#39500: blocker closed not planned/duplicate with no successor; the
+		# recovery supervisor decides whether the dependant is moot or released.
+		_der_route_abandoned_blocker_to_recovery "$repo" "$issue_number" "$labels" || return 1
+		_DER_RESULT=held
+		return 0
+	fi
+	[[ "$gate_status" -eq 0 ]] || return "$gate_status"
 	labels=$(gh issue view "$issue_number" --repo "$repo" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
 	_der_labels_has "$labels" status:blocked || return 0
 	_der_has_active_status "$labels" && return 0

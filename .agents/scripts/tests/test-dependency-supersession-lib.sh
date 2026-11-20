@@ -109,15 +109,27 @@ FIXTURES="10|Issue|CLOSED|NOT_PLANNED|${owner_superseded_11}
 check 1 "merged pull-request successor resolves" NOT_PLANNED
 
 FIXTURES="10|Issue|CLOSED|NOT_PLANNED|[$(comment OWNER 'Closing: no longer planned.')]"
-check 1 "not-planned closure without a successor resolves" NOT_PLANNED
+check 0 "not-planned closure without a successor stays held (GH#39500)" NOT_PLANNED "" "without a successor"
+[[ "$DEP_SUPERSESSION_ABANDONED" == "1" ]] && pass "abandoned flag set" || fail "abandoned flag set"
+check 0 "duplicate closure without a successor stays held" DUPLICATE "" "without a successor"
+
+FIXTURES="10|Issue|CLOSED|NOT_PLANNED|[$(comment OWNER $'Dependants: proceed\nNot needed here.')]"
+check 1 "trusted 'Dependants: proceed' releases the dependant" NOT_PLANNED
+[[ "$DEP_SUPERSESSION_ABANDONED" == "0" ]] && pass "abandoned flag clear on release" || fail "abandoned flag clear on release"
+
+FIXTURES="10|Issue|CLOSED|NOT_PLANNED|[$(comment CONTRIBUTOR 'Dependants: proceed')]"
+check 0 "untrusted 'Dependants: proceed' is ignored" NOT_PLANNED "" "without a successor"
+
+FIXTURES="10|Issue|CLOSED|NOT_PLANNED|[$(comment OWNER $'Thanks.\nDependants: proceed')]"
+check 0 "'Dependants: proceed' after the first line is ignored" NOT_PLANNED "" "without a successor"
 
 FIXTURES="10|Issue|CLOSED|NOT_PLANNED|[$(comment CONTRIBUTOR 'Superseded by #11.'),$(comment NONE 'Superseded by #11.')]
 11|Issue|OPEN||[]"
-check 1 "untrusted commenters cannot redirect a dependency" NOT_PLANNED
+check 0 "untrusted commenters cannot redirect a dependency" NOT_PLANNED "" "without a successor"
 
 FIXTURES="10|Issue|CLOSED|NOT_PLANNED|[$(comment OWNER $'Thanks.\nSuperseded by #11.')]
 11|Issue|OPEN||[]"
-check 1 "supersession after the first line is ignored" NOT_PLANNED
+check 0 "supersession after the first line is ignored" NOT_PLANNED "" "without a successor"
 
 FIXTURES="10|Issue|CLOSED|NOT_PLANNED|[$(comment MEMBER $'\r\n\nSuperseded by #11.')]
 11|Issue|OPEN||[]"
