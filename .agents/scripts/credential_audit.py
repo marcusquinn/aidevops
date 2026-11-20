@@ -11,7 +11,7 @@ from subprocess import SubprocessError  # nosec B404
 
 from credential_chmod import fix_owned_permissions
 from credential_findings import audit
-from credential_mcp import mcp_findings, migrate_outscraper
+from credential_mcp import TOML_PARSER_REMEDY, mcp_findings, migrate_outscraper
 from credential_process import run, trash_backend
 from credential_env import AUDITS as ENV_AUDITS, confirmed_permissions, findings as env_findings, fix_missing_links
 
@@ -112,6 +112,13 @@ def fix(scripts):
     if any(r['category'] in ('mcp-unreadable', 'unreadable-source') for r in records):
         print('Incomplete audit; unreadable sources retained and no fixes applied.', file=sys.stderr)
         return 1
+    # GH#39412: a readable MCP config this interpreter cannot parse yields no
+    # records, so fix_mcp cannot touch it. The other fixes act only on sources
+    # that were fully audited, so skip just that config and name the cause.
+    for record in records:
+        if record['category'] == 'mcp-toml-parser-missing':
+            print('Unaudited MCP config ' + json.dumps(record['file'], ensure_ascii=True) + ': '
+                  + TOML_PARSER_REMEDY + '; its MCP fixes are skipped.', file=sys.stderr)
     fix_permissions(confirmed_permissions(records, confirm), scripts)
     fix_missing_links(records, confirm, lambda: log_fix(scripts, 'mcp-env-link', []))
     active = import_active(records, scripts, helper)

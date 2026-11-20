@@ -351,6 +351,40 @@ audit_mcp_configs
         self.assertNotEqual(rc, 0, output)
         self.assertTrue(other.is_symlink())
 
+    def test_toml_parser_missing_is_named_and_other_fixes_run(self):
+        # GH#39412: stock macOS python3 (3.9) has neither tomllib nor tomli.
+        shadow = self.home / 'no-toml'
+        for module in ('tomllib', 'tomli'):
+            self.write(shadow / (module + '.py'), "raise ImportError('fixture: no TOML parser')\n")
+        self.env.pop('CODEX_HOME', None)
+        self.env['PYTHONPATH'] = str(shadow)
+        codex = self.home / '.codex/config.toml'
+        self.write(codex, '[mcp_servers.fixture]\ncommand = "fixture"\n')
+        result = self.cmd('secret-hygiene-helper.sh', 'audit-mcp')
+        self.assertEqual([json.loads(line)['category'] for line in result.stdout.splitlines()],
+                         ['mcp-toml-parser-missing'])
+        scan = self.cmd('secret-hygiene-helper.sh', 'scan')
+        self.assertIn('Needs Python 3.11+ or tomli', scan.stdout)
+        backup = self.fix_fixture()
+        rc, output = self.interactive('y\ny\n')
+        self.assertEqual(rc, 0, output)
+        self.assertIn('Unaudited MCP config', output)
+        self.assertNotIn('EQUAL_KEY', self.creds.read_text())
+        self.assertFalse(backup.exists())
+        # With a parser available, malformed TOML still blocks every fix. Probe
+        # the PATH python3 the helpers use; stock 3.9 without tomli has none.
+        del self.env['PYTHONPATH']
+        # B603/B607: fixed argv probe of the helpers' PATH interpreter.
+        probe = subprocess.run(['python3', '-c', 'import sys, credential_mcp; '  # nosec B603 B607
+                                'sys.exit(credential_mcp.toml_loads() is None)'],
+                               cwd=str(SCRIPTS), env=self.env, timeout=30)
+        if probe.returncode:
+            return
+        self.write(codex, '[mcp_servers.fixture\n')
+        rc, output = self.interactive('y\ny\n')
+        self.assertNotEqual(rc, 0, output)
+        self.assertIn('Incomplete audit', output)
+
     def test_headless_tty_still_refused(self):
         self.fix_fixture()
         before = self.creds.read_bytes()
