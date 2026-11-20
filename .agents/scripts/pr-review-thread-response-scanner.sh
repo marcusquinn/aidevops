@@ -1055,7 +1055,7 @@ _prrts_upstream_title() {
 	local finding_text="$4"
 	local file="" defect="" suffix=""
 	file="$(printf '%s\n' "$finding_text" | sed -e 's/^[[:space:]]*Files:[[:space:]]*//' -e 't found' -e d -e ':found' -e q |
-		sed -E 's/[,;[:space:]].*$//' | tr -d '`<>\r')"
+		sed -E -e 's/^`([^`]*)`.*$/\1/' -e 't quoted' -e 's/[,;[:space:]].*$//' -e ':quoted' | tr -d '`<>\r')"
 	defect="$(printf '%s\n' "$finding_text" | sed -e 's/^[[:space:]]*Defect:[[:space:]]*//' -e 't found' -e d -e ':found' -e q |
 		tr -d '`<>\r' | sed -E 's/[;:]([[:space:]].*)?$//; s/\.([[:space:]].*)?$//; s/[;][[:space:]].*$//')"
 	if [[ "${#defect}" -gt 60 ]]; then
