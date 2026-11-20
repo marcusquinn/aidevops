@@ -1110,32 +1110,82 @@ _health_hold_recommendation() {
 }
 
 #######################################
+# t19179: age in whole days of the latest `labeled` event for any hold label
+# on one issue. Prints nothing when the timeline is unavailable (callers fall
+# back to the issue creation age).
+# Args: $1=repo slug, $2=issue number, $3=space-separated hold labels
+#######################################
+_health_hold_label_age_days() {
+	local repo_slug="$1" issue_number="$2" labels="$3" label="" names="" at=""
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ ]] || return 0
+	for label in $labels; do
+		[[ "$label" =~ ^[A-Za-z0-9:_-]+$ ]] || continue
+		names="${names:+${names}, }\"${label}\""
+	done
+	[[ -n "$names" ]] || return 0
+	at=$(gh api --paginate "repos/${repo_slug}/issues/${issue_number}/events?per_page=100" \
+		--jq "[.[] | select(.event == \"labeled\" and (.label.name | IN(${names}))) | .created_at] | max // empty" 2>/dev/null) || return 0
+	[[ "$at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$ ]] || return 0
+	jq -nr --arg at "$at" '((now - ($at | fromdateiso8601)) / 86400) | floor' 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# t19179: cheap reconsideration hint for an aged hold. Read-only: one native
+# sub-issue read per displayed row. Prints one plain-words line, or nothing.
+# Args: $1=repo slug, $2=issue number, $3=days since last update
+#######################################
+_health_hold_reconsider_hint() {
+	local repo_slug="$1" issue_number="$2" idle_days="$3" counts="" total="" open=""
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ ]] || return 0
+	counts=$(gh api "repos/${repo_slug}/issues/${issue_number}/sub_issues?per_page=100" \
+		--jq '[length, ([.[] | select(.state != "closed")] | length)] | @tsv' 2>/dev/null) || counts=""
+	IFS=$'\t' read -r total open <<<"$counts"
+	if [[ "$total" =~ ^[1-9][0-9]*$ && "$open" == "0" ]]; then
+		printf 'All native sub-issues closed'
+	elif [[ "$idle_days" =~ ^[0-9]+$ && "$idle_days" -ge "${HEALTH_HOLD_AGE_DAYS:-3}" ]]; then
+		printf 'No activity for %sd' "$idle_days"
+	fi
+	return 0
+}
+
+#######################################
 # Aged maintainer-decision holds for the supervisor health issue: every open
-# `hold-for-review` issue older than HEALTH_HOLD_AGE_DAYS (default 3), oldest
-# first, bounded to 10 rows. Read-only: never removes a hold, approves or
-# dispatches. Empty output (no section) when nothing is aged.
+# issue held by a label in HEALTH_HOLD_LABELS (default hold-for-review,
+# no-auto-dispatch, needs-maintainer-input) older than HEALTH_HOLD_AGE_DAYS
+# (default 3), oldest first, deduped by issue, bounded to 10 rows. Displayed
+# age counts from the latest hold-label event when the timeline is readable.
+# Read-only: never edits labels, approves or dispatches. Empty output (no
+# section) when nothing is aged.
 # Args: $1=repo slug
 # Output: markdown table (or nothing)
 #######################################
 _health_aged_hold_section() {
 	local repo_slug="$1"
 	local age_days="${HEALTH_HOLD_AGE_DAYS:-3}"
-	local max_rows=10 issues_json="" rows="" total=0 number age url title rec
+	local hold_labels="${HEALTH_HOLD_LABELS:-hold-for-review no-auto-dispatch needs-maintainer-input}"
+	local max_rows=10 issues_json="[]" page="" label="" rows="" total=0 number age url title idle rec hint label_age
 	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 0
 	[[ "$age_days" =~ ^[0-9]+$ ]] || age_days=3
-	issues_json=$(gh api "repos/${repo_slug}/issues?labels=hold-for-review&state=open&per_page=100" \
-		--paginate --slurp 2>/dev/null) || {
-		printf 'Maintainer decision holds are unavailable: the issue fetch failed this cycle. The next pulse will retry.\n'
-		return 0
-	}
+	for label in $hold_labels; do
+		[[ "$label" =~ ^[A-Za-z0-9:_-]+$ ]] || continue
+		page=$(gh api "repos/${repo_slug}/issues?labels=${label}&state=open&per_page=100" \
+			--paginate --slurp 2>/dev/null) &&
+			issues_json=$(jq -c --argjson p "${page:-[]}" '. + $p' <<<"$issues_json" 2>/dev/null) || {
+			printf 'Maintainer decision holds are unavailable: the issue fetch failed this cycle. The next pulse will retry.\n'
+			return 0
+		}
+	done
 	rows=$(jq -r --argjson days "$age_days" '
 		[.[][] | select(has("pull_request") | not)
-			| {number, title, url: .html_url, createdAt: .created_at}
+			| {number, title, url: .html_url, createdAt: .created_at, updatedAt: (.updated_at // .created_at)}
 			| select(.url | test("^https://github\\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/issues/[0-9]+$"))
 			| .created_epoch = (.createdAt | fromdateiso8601)
 			| select((now - .created_epoch) > ($days * 86400))
 			| {number, url, title: ((.title // "") | gsub("[^A-Za-z0-9 .,:()/_#-]"; "") | .[0:70] | if . == "" then "untitled" else . end),
-				created_epoch, age: (((now - .created_epoch) / 86400) | floor)}]
+				created_epoch, age: (((now - .created_epoch) / 86400) | floor),
+				idle: (((now - (.updatedAt | fromdateiso8601)) / 86400) | floor)}]
+		| unique_by(.number)
 		| sort_by(.created_epoch)
 		| ., length' <<<"${issues_json:-[]}" 2>/dev/null) || return 0
 	total=$(jq -s '.[1] // 0' <<<"$rows" 2>/dev/null) || return 0
@@ -1144,12 +1194,15 @@ _health_aged_hold_section() {
 	# GH#38311: terminal-blocker-recovery-holds.sh queues a plain reply for the
 	# replying maintainer's own runner, so no interactive session is needed.
 	printf 'To decide, reply on the issue in plain words (no session needed): your runner'\''s recovery supervisor carries out the reply and posts a receipt.\n\n'
-	printf '| Age | Issue | Ask | URL |\n| --- | --- | --- | --- |\n'
-	while IFS=$'\t' read -r number age title url; do
+	printf '| Age | Issue | Ask | Why reconsider | URL |\n| --- | --- | --- | --- | --- |\n'
+	while IFS=$'\t' read -r number age title idle url; do
 		[[ "$number" =~ ^[1-9][0-9]*$ ]] || continue
 		rec=$(_health_hold_recommendation "$repo_slug" "$number")
-		printf '| %sd | #%s %s | %s | %s |\n' "$age" "$number" "$title" "${rec:-No ask stated in a maintainer comment yet}" "$url"
-	done < <(jq -rs '.[0][0:10][] | [.number, .age, .title, .url] | @tsv' <<<"$rows" 2>/dev/null)
+		label_age=$(_health_hold_label_age_days "$repo_slug" "$number" "$hold_labels")
+		[[ "$label_age" =~ ^[0-9]+$ ]] && age="$label_age"
+		hint=$(_health_hold_reconsider_hint "$repo_slug" "$number" "$idle")
+		printf '| %sd | #%s %s | %s | %s | %s |\n' "$age" "$number" "$title" "${rec:-No ask stated in a maintainer comment yet}" "${hint:--}" "$url"
+	done < <(jq -rs '.[0][0:10][] | [.number, .age, .title, .idle, .url] | @tsv' <<<"$rows" 2>/dev/null)
 	[[ "$total" -le "$max_rows" ]] || printf '\n_%s more not shown._\n' "$((total - max_rows))"
 	return 0
 }
