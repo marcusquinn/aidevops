@@ -263,7 +263,10 @@ class GoogleAdsClient:
             "Authorization": f"Bearer {self.credentials.access_token}",
             "Content-Type": "application/json",
         }
-        optional = {"developer-token": self.credentials.developer_token, "login-customer-id": self.credentials.login_customer_id}
+        optional = {
+            "developer-token": self.credentials.developer_token,
+            "login-customer-id": self.credentials.login_customer_id,
+        }
         headers.update({name: value for name, value in optional.items() if value})
         request = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
         for attempt in range(3):
