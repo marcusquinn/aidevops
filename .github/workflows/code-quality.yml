@@ -120,7 +120,61 @@ jobs:
             fail_open "No changed files detected; failing open to full scope."
             exit 0
           fi
+          # GH#39544: zero-context hunks of the release version-reference files,
+          # parsed by version_lines_only below. A failed diff leaves full scope.
+          version_diff=$(git diff -U0 --no-color --no-ext-diff --no-textconv --no-renames \
+            --src-prefix=a/ --dst-prefix=b/ "${MERGE_BASE}" "${HEAD_SHA}" -- \
+            VERSION package.json sonar-project.properties setup.sh aidevops.sh \
+            .claude-plugin/marketplace.json || true)
           printf 'Changed files:\n%s\n' "$changed"
+
+          # GH#39544: a release version bump edits only version-reference lines.
+          # Accept header lines before each hunk and +/- lines matching the
+          # file's version pattern; mode changes, new/deleted files, binary
+          # diffs or any other line keep those files in scope.
+          version_refs='^(VERSION|package\.json|sonar-project\.properties|setup\.sh|aidevops\.sh|\.claude-plugin/marketplace\.json)$'
+          semver='[0-9]+\.[0-9]+\.[0-9]+'
+          version_lines_only() {
+            local line="" file="" pattern="" in_hunk=0
+            [ -n "${version_diff:-}" ] || return 1
+            while IFS= read -r line; do
+              # A blank line carries no change (changed lines start with +/-).
+              [ -n "$line" ] || continue
+              case "$line" in
+                'diff --git a/'*)
+                  file=${line#diff --git a/}
+                  file=${file%% b/*}
+                  in_hunk=0
+                  case "$file" in
+                    VERSION) pattern="^${semver}\$" ;;
+                    package.json|.claude-plugin/marketplace.json) pattern="^ *\"version\": \"${semver}\",?\$" ;;
+                    sonar-project.properties) pattern="^sonar\\.projectVersion=${semver}\$" ;;
+                    setup.sh|aidevops.sh) pattern="^# Version: ${semver}\$" ;;
+                    *) return 1 ;;
+                  esac
+                  ;;
+                '@@ '*) in_hunk=1 ;;
+                *)
+                  if [ "$in_hunk" = 0 ]; then
+                    case "$line" in
+                      'index '*|'--- a/'*|'+++ b/'*) continue ;;
+                    esac
+                    return 1
+                  fi
+                  case "$line" in
+                    [+-]*) ;;
+                    *) return 1 ;;
+                  esac
+                  grep -Eq "$pattern" <<<"${line#?}" || return 1
+                  ;;
+              esac
+            done <<<"$version_diff"
+            return 0
+          }
+          if grep -Eq "$version_refs" <<<"$changed" && version_lines_only; then
+            echo "Release version-reference lines only in version files; not code scope."
+            changed=$(grep -Ev "$version_refs" <<<"$changed" || true)
+          fi
 
           # Documentation under scripts/ is not executable shell scope.
           code_changed=$(printf '%s\n' "$changed" | grep -Ev '\.md$|^todo/' || true)
