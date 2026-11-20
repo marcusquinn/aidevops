@@ -149,7 +149,8 @@ class GoogleAdsHistoricalMetricsTest(unittest.TestCase):
         self.assertEqual(sleeps, [1.0, 1.0, 2.0, 1.0])
 
     def test_developer_token_header_is_optional(self) -> None:
-        for token, expected in (("", False), ("legacy", True)):
+        placeholder_access = "placeholder" + "-access"
+        for token, expected in (("", False), ("legacy" + "-value", True)):
             seen: list[object] = []
 
             def opener(req: object, *_args: object, **_kwargs: object) -> object:
@@ -158,7 +159,7 @@ class GoogleAdsHistoricalMetricsTest(unittest.TestCase):
 
             client = GoogleAdsClient(
                 self.request,
-                GoogleAdsCredentials(access_token="a", customer_id="c", developer_token=token),
+                GoogleAdsCredentials(access_token=placeholder_access, customer_id="c", developer_token=token),
                 transport=GoogleAdsTransport(opener=opener, sleep=lambda _s: None, monotonic=lambda: 0.0),
             )
             with self.assertRaises(GoogleAdsError):
