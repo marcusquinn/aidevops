@@ -483,6 +483,52 @@ test_interactive_review_threads_unconfirmed_handover_defers() {
 	return 0
 }
 
+# GH#39382: an orphan PR is not stale until recovery links a tracking issue.
+test_orphan_interactive_review_threads_recover_issue_then_hand_over() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	local handover_log="${TEST_ROOT}/handover.log" recovered_flag="${TEST_ROOT}/recovered"
+	_interactive_pr_is_stale() { [[ -f "$recovered_flag" ]]; return $?; }
+	_recover_interactive_pr_work_issue() { : >"$recovered_flag"; printf '501'; return 0; }
+	_interactive_pr_trigger_handover() { printf 'handover %s\n' "$*" >>"$handover_log"; return 0; }
+
+	_run_interactive_review_dispatch "origin:interactive,allow-auto-merge"
+
+	if grep -q 'include_human=true args=dispatch-pr owner/repo' "$SCANNER_LOG" \
+		&& [[ "$_PULSE_MERGE_REMEDIATION_OUTCOME" == "queued" ]] \
+		&& grep -q '^handover 77 owner/repo' "$handover_log"; then
+		print_result "orphan interactive PR gets a tracking issue, then hands over (GH#39382)" 0
+	else
+		print_result "orphan interactive PR gets a tracking issue, then hands over (GH#39382)" 1 \
+			"outcome=${_PULSE_MERGE_REMEDIATION_OUTCOME}, scanner=$(tr '\n' ';' <"$SCANNER_LOG"), handover=$(tr '\n' ';' <"$handover_log" 2>/dev/null), log=$(tr '\n' ';' <"$LOGFILE")"
+	fi
+	unset -f _interactive_pr_is_stale _recover_interactive_pr_work_issue _interactive_pr_trigger_handover
+	teardown_test_env
+	return 0
+}
+
+test_orphan_interactive_review_threads_failed_recovery_defers() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	local handover_log="${TEST_ROOT}/handover.log"
+	_interactive_pr_is_stale() { return 1; }
+	_recover_interactive_pr_work_issue() { return 1; }
+	_interactive_pr_trigger_handover() { printf 'handover %s\n' "$*" >>"$handover_log"; return 0; }
+
+	_run_interactive_review_dispatch "origin:interactive,allow-auto-merge"
+
+	if [[ ! -s "$SCANNER_LOG" && "$_PULSE_MERGE_REMEDIATION_OUTCOME" == "deferred" && ! -s "$handover_log" ]] \
+		&& grep -q 'still owned by an active or unverified session' "$LOGFILE"; then
+		print_result "orphan interactive PR without a recovered issue still defers (GH#39382)" 0
+	else
+		print_result "orphan interactive PR without a recovered issue still defers (GH#39382)" 1 \
+			"outcome=${_PULSE_MERGE_REMEDIATION_OUTCOME}, scanner=$(tr '\n' ';' <"$SCANNER_LOG"), handover=$(tr '\n' ';' <"$handover_log" 2>/dev/null), log=$(tr '\n' ';' <"$LOGFILE")"
+	fi
+	unset -f _interactive_pr_is_stale _recover_interactive_pr_work_issue _interactive_pr_trigger_handover
+	teardown_test_env
+	return 0
+}
+
 test_other_merge_failures_do_not_dispatch_review_thread_remediation() {
 	setup_test_env
 	define_helpers_under_test || { teardown_test_env; return 0; }
@@ -946,6 +992,8 @@ main() {
 	test_interactive_review_threads_defer_while_session_active
 	test_interactive_review_threads_hand_over_idle_session_then_dispatch
 	test_interactive_review_threads_unconfirmed_handover_defers
+	test_orphan_interactive_review_threads_recover_issue_then_hand_over
+	test_orphan_interactive_review_threads_failed_recovery_defers
 	test_other_merge_failures_do_not_dispatch_review_thread_remediation
 	test_changes_requested_routes_by_default
 	test_changes_requested_translates_maintainer_route_outcome
