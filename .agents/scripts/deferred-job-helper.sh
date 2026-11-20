@@ -176,7 +176,7 @@ _dj_validate_once_common() {
 		return 2
 	fi
 	if [[ ! "$_DJ_ARG_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._[:space:]-]{0,79}$ || "$_DJ_ARG_NAME" == *$'\n'* ]]; then
-		printf 'ERROR: --name must be 1-80 safe printable characters\n' >&2
+		printf 'ERROR: --name must be 1-80 characters: letters, digits, spaces, ".", "_" or "-", starting with a letter or digit\n' >&2
 		return 2
 	fi
 	canonical_dir=$(_dj_canonical_dir "$_DJ_ARG_DIR" 2>/dev/null || true)

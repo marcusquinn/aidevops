@@ -37,10 +37,13 @@ later" in prose, a sleeping process, or a user reminder.
 3. Schedule it with a bounded recheck policy:
 
    ```bash
-   aidevops schedule once --after 24h --name "Recheck <owner/repo>#<N>" \
+   aidevops schedule once --after 24h --name "recheck-<repo>-<N>" \
      --dir <repo-checkout> --prompt-file <private-prompt-file> \
      --recheck-every 12h --max-checks 4 --until <YYYY-MM-DDTHH:MM:SSZ>
    ```
+
+   Names allow letters, digits, spaces, `.`, `_` and `-` only (no `#` or `/`);
+   put the issue reference in the prompt and the tracking comment.
 
 4. Report the job ID on the tracking issue so the next session can find it
    with `aidevops schedule status <JOB_ID>`.
