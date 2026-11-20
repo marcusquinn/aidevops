@@ -56,6 +56,8 @@ setup() {
 	export AIDEVOPS_ADVISORIES_DIR="${TEST_DIR}/advisories"
 	# Fixture-owned lifecycle registry: removal is authorised only for trees it enrolled.
 	export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_DIR}/lifecycle-state"
+	# GH#39344: a host worker's lifecycle identity must not own fixture trees.
+	unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
 	export AIDEVOPS_REAL_GIT_BIN="$GIT_BIN"
 	# Retention fixtures must not depend on the host's login daemons. Actual
 	# CWD guards and degraded visibility are covered by the removal audit suite.
