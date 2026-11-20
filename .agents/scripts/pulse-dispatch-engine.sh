@@ -794,6 +794,13 @@ _dispatch_min_worker_floor_refill() {
 	local refill_attempt=0
 	local max_refill_attempts="$min_worker_floor"
 	local active_workers="$capped_active_workers" active_workers_known=1 fill_dispatched dispatch_rc=0
+	# GH#39510: refill rounds are normal refills, even under the early first
+	# wave. Inherited first-wave scope ran each round as a fresh serial census
+	# pinned at its deadline (no cross-round reuse, GH#38876; no parallel
+	# scans, GH#38730; no last-good carry, GH#38727), launching ~1 per round.
+	# Budget planning still selects a bounded census when a full one does not
+	# fit, and every candidate keeps its live dispatch gates.
+	local _PULSE_FIRST_DISPATCH_WAVE=0
 	while ((refill_attempt < max_refill_attempts)); do
 		if [[ -f "$STOP_FLAG" ]]; then
 			echo "[pulse-wrapper] Minimum worker floor refill stopped: stop flag present" >>"$LOGFILE"
