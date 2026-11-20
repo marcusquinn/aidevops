@@ -58,7 +58,7 @@ def _stamp(value: datetime) -> str:
 class AdsClient:
     """Minimal REST transport: fixed endpoints, bounded responses, no credential echo."""
 
-    def __init__(self, access_token: str, developer_token: str = "", login_customer_id: str = "",
+    def __init__(self, access_token: str, developer_token: str | None = None, login_customer_id: str = "",
                  opener: Callable[[Request], Any] | None = None) -> None:
         _require(bool(access_token), "GOOGLE_ADS_ACCESS_TOKEN is required for live Google Ads calls")
         self._headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
