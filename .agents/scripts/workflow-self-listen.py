@@ -42,9 +42,107 @@ def indent(line):
 
 def unq(s):
     s = s.strip()
-    if len(s) >= 2 and s[0] == s[-1] and s[0] in '\"\'':
-        return s[1:-1]
+    if len(s) >= 2 and s[0] == s[-1] == "'":
+        return s[1:-1].replace("''", "'")
+    if len(s) >= 2 and s[0] == s[-1] == '"':
+        return decode_double(s[1:-1])
     return s
+
+
+def decode_double(s):
+    """Decode common YAML double-quoted escapes."""
+    bs = chr(92)
+    simple = {'n': '\n', 't': '\t', 'r': '\r', '0': '\0', '/': '/', ' ': ' ',
+              '"': '"', bs: bs}
+    out = []
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if c == bs and i + 1 < len(s):
+            n = s[i + 1]
+            width = {'x': 2, 'u': 4, 'U': 8}.get(n)
+            digits = s[i + 2:i + 2 + width] if width else ''
+            if width and re.fullmatch(r'[0-9a-fA-F]{%d}' % width, digits):
+                out.append(chr(int(digits, 16)))
+                i += 2 + width
+                continue
+            out.append(simple.get(n, c + n))
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return ''.join(out)
+
+
+def parse_scalar(s, i, stops):
+    while i < len(s) and s[i].isspace():
+        i += 1
+    start = i
+    if i < len(s) and s[i] in '"\'':
+        q = s[i]
+        i += 1
+        while i < len(s):
+            if q == '"' and s[i] == chr(92):
+                i += 2
+                continue
+            if s[i] == q:
+                if q == "'" and i + 1 < len(s) and s[i + 1] == q:
+                    i += 2
+                    continue
+                i += 1
+                break
+            i += 1
+        return unq(s[start:i]), i
+    while i < len(s) and s[i] not in stops:
+        i += 1
+    return s[start:i].strip(), i
+
+
+def parse_flow(s, i=0):
+    """Parse a YAML flow node at s[i]; return (value, next_index)."""
+    while i < len(s) and s[i].isspace():
+        i += 1
+    if i >= len(s):
+        return '', i
+    if s[i] == '{':
+        out = {}
+        i += 1
+        while i < len(s):
+            while i < len(s) and (s[i].isspace() or s[i] == ','):
+                i += 1
+            if i >= len(s) or s[i] == '}':
+                return out, i + 1
+            key, i = parse_scalar(s, i, ':,}')
+            while i < len(s) and s[i].isspace():
+                i += 1
+            val = ''
+            if i < len(s) and s[i] == ':':
+                val, i = parse_flow(s, i + 1)
+            out[key] = val
+        return out, i
+    if s[i] == '[':
+        out = []
+        i += 1
+        while i < len(s):
+            while i < len(s) and (s[i].isspace() or s[i] == ','):
+                i += 1
+            if i >= len(s) or s[i] == ']':
+                return out, i + 1
+            val, i = parse_flow(s, i)
+            out.append(val)
+        return out, i
+    return parse_scalar(s, i, ',]}')
+
+
+def flow_listens(text, name):
+    """True if flow text (mapping with workflow_run, or workflow_run body) lists name."""
+    tree, _ = parse_flow(text)
+    if isinstance(tree, dict) and isinstance(tree.get('workflow_run'), dict):
+        tree = tree['workflow_run']
+    if not isinstance(tree, dict):
+        return False
+    wf = tree.get('workflows')
+    return name in (wf if isinstance(wf, list) else [wf])
 
 
 def block(lines, start):
@@ -104,19 +202,31 @@ def main(path):
     if not name:
         return 0
     for i, line in enumerate(lines):
-        if not re.match(r'^[\'\"]?on[\'\"]?:\s*$', line):
+        on_match = re.match(r'^[\'\"]?on[\'\"]?:\s*(.*)$', line)
+        if not on_match:
             continue
-        on_block = block(lines, i)
-        for j, event_line in enumerate(on_block):
-            if not re.match(r'^\s+workflow_run:\s*$', event_line):
-                continue
-            if name in workflow_names(block(on_block, j)):
-                print(
-                    path + ': workflow_run.workflows names its own name ' + repr(name)
-                    + ' (GitHub: cannot listen to itself). Move the listener into a separate workflow.',
-                    file=sys.stderr,
-                )
-                return 1
+        on_val = on_match.group(1).strip()
+        found = False
+        if on_val.startswith('{'):
+            found = flow_listens('\n'.join([on_val] + lines[i + 1:]), name)
+        elif not on_val:
+            on_block = block(lines, i)
+            for j, event_line in enumerate(on_block):
+                ev = re.match(r'^\s+workflow_run:\s*(.*)$', event_line)
+                if not ev:
+                    continue
+                ev_val = ev.group(1).strip()
+                if ev_val.startswith('{'):
+                    found = found or flow_listens('\n'.join([ev_val] + on_block[j + 1:]), name)
+                elif not ev_val:
+                    found = found or name in workflow_names(block(on_block, j))
+        if found:
+            print(
+                path + ': workflow_run.workflows names its own name ' + repr(name)
+                + ' (GitHub: cannot listen to itself). Move the listener into a separate workflow.',
+                file=sys.stderr,
+            )
+            return 1
     return 0
 
 
