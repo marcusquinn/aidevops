@@ -525,6 +525,18 @@ _consolidation_dispatch_preflight_skips() {
 #######################################
 _pte_reevaluate_consolidation_issue() {
 	local num="$1" slug="$2"
+	local meta="" labels="" issue_body=""
+	# GH#39503: held file-size-debt issues never reach dispatch_with_dedup, so
+	# close them here once the remote file is measured below threshold.
+	meta=$(gh issue view "$num" --repo "$slug" --json labels,body 2>/dev/null) || meta=""
+	if [[ -n "$meta" ]]; then
+		labels=$(printf '%s' "$meta" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || labels=""
+		issue_body=$(printf '%s' "$meta" | jq -r '.body // ""' 2>/dev/null) || issue_body=""
+		if declare -F _consolidation_skip_for_resolved_file_size_debt >/dev/null 2>&1 &&
+			_consolidation_skip_for_resolved_file_size_debt "$num" "$slug" "$labels" "$issue_body"; then
+			return 0
+		fi
+	fi
 	# _issue_needs_consolidation returns 1 (no consolidation needed)
 	# AND auto-clears the label when was_already_labeled=true
 	_issue_needs_consolidation "$num" "$slug" && return 1
