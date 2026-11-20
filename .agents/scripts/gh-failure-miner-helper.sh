@@ -767,6 +767,30 @@ select_current_workflow_failures_json() {
 	return 0
 }
 
+# Fetch only the repo-level runs that select_current_workflow_failures_json can
+# keep, filtered server-side by event (and by default branch for push), merged
+# and de-duplicated. One unfiltered page of 100 runs covered only ~25 minutes on
+# a busy repo (2,500 runs in 11 h), so an hourly miner never saw default-branch
+# push failures such as a workflow file that GitHub rejects (GH#39466).
+fetch_repo_level_runs_json() {
+	local repo_slug="$1" since_iso="$2" default_branch="$3"
+	local event="" query="" pages="" branch_uri=""
+
+	branch_uri=$(printf '%s' "$default_branch" | jq -sRr '@uri')
+	for event in push schedule workflow_dispatch issues pull_request_target; do
+		query="created=%3E%3D${since_iso}&event=${event}&per_page=100"
+		case "$event" in
+		push) query="${query}&branch=${branch_uri}" ;;
+		*) ;;
+		esac
+		# NOSONAR - $since_iso is output of date(1); $repo_slug is a validated owner/repo slug
+		pages+="$(gh api "repos/${repo_slug}/actions/runs?${query}" 2>/dev/null || printf '{}')"$'\n'
+	done
+	printf '%s' "$pages" | jq -cs '{workflow_runs: ([.[] | (.workflow_runs? // [])[]] | unique_by(.id))}' 2>/dev/null ||
+		printf '%s\n' '{}'
+	return 0
+}
+
 # Emit workflow-run events for one repo. Prints the updated run_logs_checked count.
 emit_workflow_run_events() {
 	local repo_slug="$1" since_iso="$2" include_logs="$3"
@@ -778,8 +802,7 @@ emit_workflow_run_events() {
 		printf '%s' "$run_logs_checked"
 		return 0
 	fi
-	# NOSONAR - $since_iso is output of date(1); $repo_slug is a validated owner/repo slug
-	runs_json=$(gh api "repos/${repo_slug}/actions/runs?created=%3E%3D${since_iso}&per_page=100" 2>/dev/null || printf '{}')
+	runs_json=$(fetch_repo_level_runs_json "$repo_slug" "$since_iso" "$default_branch")
 	failed_json=$(select_current_workflow_failures_json "$runs_json" "$default_branch" 2>/dev/null || printf '[]')
 
 	local count index=0
@@ -1049,6 +1072,7 @@ build_repo_clusters_json() {
 		check_name: .[0].check_name,
 		signature: .[0].signature,
 		count: length,
+		scheduled: (any(.[]; .source_kind == "workflow" and ((.source_ref // "") | startswith("schedule:")))),
 		is_infra: (any(.[]; .is_infra == true)),
 		infra_reasons: (map(.infra_reason // empty) | unique),
 		sources: (map(.source_kind + ":" + .source_ref) | unique),
@@ -1441,8 +1465,10 @@ create_systemic_issues() {
 	#   error signature. Treating it as systemic creates false-positive issues (GH#18978).
 	local candidate_file
 	candidate_file=$(mktemp)
+	# GH#39472: a daily schedule yields one event per 24h window, so a scheduled
+	# workflow whose newest run failed is systemic at threshold 1.
 	printf '%s\n' "$clusters_json" | jq --argjson min_count "$systemic_threshold" '[.[] | select(
-		.count >= $min_count
+		(.count >= $min_count or (.scheduled // false) == true)
 		and (.is_infra // false) == false
 		and ((.signature // "") as $signature | ["billing_outage","job_not_started","signature_not_fetched"] | index($signature) | not)
 	)]' >"$candidate_file"

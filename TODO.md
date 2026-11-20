@@ -2352,6 +2352,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19197 fix(higgsfield): repair stale higgsfield-video.mjs imports that break every helper command #bug #interactive ref:GH#39395 logged:2026-11-20 -> [todo/tasks/t19197-brief.md] pr:#39401 completed:2026-11-20
 
+- [x] t19203 fix(ci): review-bot-gate.yml invalid since #39427 (workflow cannot listen to itself), blocking all merges #bug ref:GH#39458 pr:#39460 completed:2026-11-20
+
+- [x] t19205 fix(setup): reinstall the systemic CI failure miner on pulse hosts during non-interactive setup #bug #interactive ref:GH#39466 logged:2026-11-20 -> [todo/tasks/t19205-brief.md] pr:#39478 completed:2026-11-20
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
@@ -5980,3 +5984,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18980 Reclaim phase 2: observe worktree owners through the lifecycle registry and ProcessAdapter, not a /proc scan #bug #type:enhancement ref:GH#38107 pr:#38127 completed:2026-11-19
 
 - [x] t19150 feat(ci): scheduled main shell-suite health run files deduped red-main issues #auto-dispatch #enhancement #framework ref:GH#39222 pr:#39307 completed:2026-11-19
+
+- [x] t19202 fix(headless): worker DB init fails exit 86 when shared OpenCode DB is briefly locked #bug ref:GH#39417 pr:#39462 completed:2026-11-20
