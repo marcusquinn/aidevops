@@ -237,6 +237,52 @@ test_separate_listener_passes() {
 	return 0
 }
 
+# Exercise YAML scalar/sequence forms through the existing staged CLI path.
+_expect_listen_form() {
+	local name="$1"
+	local workflow_name="$2"
+	local workflows="$3"
+	local expect_fail="$4"
+	local content="name: $workflow_name
+on:
+# A column-zero comment does not close on.
+  workflow_run:
+# Nor does it close workflow_run.
+    workflows: $workflows
+    types: [completed]
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo gate
+"
+	_expect_staged_result "$name" ".github/workflows/gate.yml" "$content" "$expect_fail"
+	return 0
+}
+
+test_self_listen_yaml_forms() {
+	_expect_listen_form "hash_distinct" '"Build #1"' '["Build #2"] # trailing comment' 0
+	_expect_listen_form "hash_identical" '"Build #1"' '["Build #1"] # trailing comment' 1
+	_expect_listen_form "single_quote_hash" "'Build #1'" "['Build #1']" 1
+	_expect_listen_form "quoted_comma" '"Build, Test"' '["Other", "Build, Test"]' 1
+	_expect_listen_form "multiline_flow" '"Build, Test"' '[
+      "Other", # trailing comment
+# Comment inside the flow sequence.
+      "Build, Test"
+    ]' 1
+	_expect_listen_form "multiline_distinct" '"Build, Test"' '[
+      "Other",
+      "Build, Deploy"
+    ]' 0
+	_expect_listen_form "indentationless" 'Gate' '
+# A comment does not close workflows either.
+    - Other
+    - Gate' 1
+	_expect_listen_form "sequence_boundary" 'completed' '
+    - Other' 0
+	return 0
+}
+
 test_valid_workflow_passes() {
 	local name="test_valid_workflow_passes"
 	_init_repo "$name" || { _fail "$name" "repo init failed"; return 0; }
@@ -423,6 +469,7 @@ main() {
 	test_self_listen_block_list_fails
 	test_self_listen_template_fails
 	test_separate_listener_passes
+	test_self_listen_yaml_forms
 
 	echo ""
 

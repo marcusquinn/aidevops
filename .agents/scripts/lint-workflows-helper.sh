@@ -127,8 +127,33 @@ _check_self_listen() {
 	python3 -c "
 import re, sys
 path = sys.argv[1]
+def unquoted(s):
+    # Yield punctuation outside YAML quotes, respecting escapes/doubled quotes.
+    quote = None
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if quote:
+            if quote == '\"' and c == chr(92):
+                i += 2
+                continue
+            if c == quote:
+                if quote == '\'' and i + 1 < len(s) and s[i + 1] == quote:
+                    i += 2
+                    continue
+                quote = None
+        elif c in '\"\'' and (i == 0 or s[i - 1].isspace() or s[i - 1] in '[,'):
+            quote = c
+        else:
+            yield i, c
+        i += 1
+def uncomment(s):
+    for i, c in unquoted(s):
+        if c == '#' and (i == 0 or s[i - 1].isspace()):
+            return s[:i]
+    return s
 with open(path) as f:
-    lines = [re.sub(r'\s+#.*\$', '', l.rstrip('\n')) for l in f]
+    lines = [uncomment(l.rstrip('\n')) for l in f]
 def indent(l):
     return len(l) - len(l.lstrip(' '))
 def unq(s):
@@ -153,6 +178,16 @@ def block(start):
             break
         out.append(l)
     return out
+def flow_items(s):
+    start = 1
+    for i, c in unquoted(s):
+        if c in ',]':
+            item = s[start:i].strip()
+            if item:
+                yield unq(item)
+            start = i + 1
+            if c == ']':
+                return
 listed = []
 for i, l in enumerate(lines):
     if not re.match(r'^[\'\"]?on[\'\"]?:\s*\$', l):
@@ -173,15 +208,15 @@ for i, l in enumerate(lines):
                 continue
             val = m.group(1).strip()
             if val.startswith('['):
-                listed += [unq(x) for x in val.strip('[]').split(',') if x.strip()]
+                listed += list(flow_items('\n'.join([val] + run_block[k + 1:])))
             elif val:
                 listed.append(unq(val))
             else:
                 wbase = indent(rl)
                 for il in run_block[k + 1:]:
-                    if il.strip() and indent(il) <= wbase:
-                        break
                     im = re.match(r'^\s*-\s*(.+)\$', il)
+                    if il.strip() and (indent(il) < wbase or (indent(il) == wbase and not im)):
+                        break
                     if im:
                         listed.append(unq(im.group(1)))
 if name in listed:
