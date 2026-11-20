@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# GH#39344: 31 fixture scenarios; about 470s observed on a loaded macOS host.
+# aidevops:suite-timeout=900
 
 set -euo pipefail
 

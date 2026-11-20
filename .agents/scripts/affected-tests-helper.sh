@@ -224,10 +224,28 @@ def kill_group(proc):
     except ProcessLookupError:
         pass
 
+# GH#39344: a suite whose normal runtime exceeds --timeout declares its own budget
+# with a `# aidevops:suite-timeout=<seconds>` line in its first 20 lines. The
+# declaration can only raise --timeout, and is capped so a typo cannot hang a run.
+SUITE_TIMEOUT_CAP = 1800
+suite_timeout_line = re.compile(r"^#\s*aidevops:suite-timeout=(\d+)\s*$")
+
+def suite_timeout(path):
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as handle:
+            for _, line in zip(range(20), handle):
+                match = suite_timeout_line.match(line.strip())
+                if match:
+                    return max(args.timeout, min(int(match.group(1)), SUITE_TIMEOUT_CAP))
+    except OSError:
+        pass
+    return args.timeout
+
 def execute(item):
     directory, suite = item
     if stop.is_set() or not (directory / suite).is_file():
         return None
+    timeout = suite_timeout(directory / suite)
     with running_lock:
         if stop.is_set():
             return None
@@ -235,7 +253,7 @@ def execute(item):
                                 stderr=subprocess.DEVNULL, start_new_session=True)
         running.add(proc)
     try:
-        return proc.wait(timeout=args.timeout)
+        return proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         kill_group(proc)
         proc.wait()

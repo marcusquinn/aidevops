@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# GH#39344: 139 assertions; about 320s observed on a loaded macOS host.
+# aidevops:suite-timeout=600
 
 set -euo pipefail
 

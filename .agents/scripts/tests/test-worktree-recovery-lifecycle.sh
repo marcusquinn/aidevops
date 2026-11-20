@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Regression tests for exact worktree recovery planning and explicit apply.
+# GH#39344: 73 fixture repositories; 1500s observed on a loaded macOS host.
+# aidevops:suite-timeout=1800
 
 set -euo pipefail
 
