@@ -261,17 +261,24 @@ or empty privileged reads retain `cwd-visibility-degraded`. No global `/proc`
 permission or ptrace setting changes are needed. Revoke the sudoers rule and
 remove the installed copy when privileged inspection is no longer needed.
 
-Each capture pass first sends every remaining PID in one `--cwds` call
-(GH#38918). Each PID gets the legacy checks and the legacy output, and a
+Each capture pass first sends the remaining PIDs in `--cwds` calls of at most
+4096 PIDs each (GH#38918), so N pending PIDs take `ceil(N/4096)` calls, each
+validated on its own. Each PID gets the legacy checks and the legacy output, and a
 refused or failed read is an opaque `F` line with no reason. The child arms a
 five-second deadline and prints only a completed response, bounded by a
 versioned header and a count trailer; the caller bounds the sudo wait to six
 seconds and accepts the response only when every PID appears once, in order.
-An installed copy older than this mode refuses `--cwds`. Any refused,
-timed-out or malformed batch falls back to one legacy call per PID, so results
-are unchanged until the operator reviews and reinstalls the inspector. On a
-Linux fixture with 106 protected same-user processes, one pass dropped from
-106 sudo calls (about 3.9 s) to one (about 0.4 s).
+
+A timed-out batch, whether the caller's six-second wait (exit 124, for example
+slow sudo or PAM) or the child's own deadline (SIGALRM, exit 142), makes no
+per-PID calls and sends no further batches (GH#39335). Every link of it and of
+later batches that still exists stays degraded (status 2), and vanished links
+are skipped as before; one legacy call per PID would hit the same delay up to
+5 s each. An installed copy older than this mode refuses `--cwds`. A refused or
+malformed batch falls back to one legacy call per PID, so results are unchanged
+until the operator reviews and reinstalls the inspector. On a Linux fixture with
+106 protected same-user processes, one pass dropped from 106 sudo calls (about
+3.9 s) to one (about 0.4 s).
 
 ### Registry full-reference inspection (separate opt-in)
 
