@@ -320,10 +320,31 @@ _dispatch_census_last_good_candidates() {
 				and (.stored_at | numbers | . <= $now and ($now - .) <= $max))
 			| "\($now - .stored_at) \(.candidates | length)"' "$file" 2>/dev/null) && [[ -n "$summary" ]]; then
 		read -r age count <<<"$summary"
-		echo "[pulse-wrapper] Candidate census reused last-good candidates: repo=${repo_slug} count=${count} age=${age}s (GH#38483)" >>"$LOGFILE"
-		jq -c '.candidates' "$file" 2>/dev/null && return 0
+		_dispatch_census_reuse_filtered "$repo_slug" "$file" "$age" "$count" && return 0
 	fi
 	printf '[]\n'
+	return 0
+}
+
+# GH#39517: the timeout-reuse path applies the same launched-since-stored
+# filter as the GH#38727 carry path (the snapshot predates those claims).
+# An unreadable ledger yields an empty index: unfiltered, live gates still bind.
+# Args: slug, last-good file, list age, stored count.
+# Stdout: filtered candidate JSON array. Returns 1 if the list is unreadable.
+_dispatch_census_reuse_filtered() {
+	local repo_slug="$1" file="$2" age="$3" count="$4" index="" candidates="" kept=""
+	index=$(_dispatch_census_dispatched_index) || index=""
+	if [[ -n "$index" && -f "$index" ]]; then
+		candidates=$(jq -c --arg slug "$repo_slug" --slurpfile dispatched "$index" '
+			.stored_at as $stored | ($dispatched[0] // {}) as $launched
+			| [.candidates[] | select(($launched["\($slug)#\(.number)"] // 0) < $stored)]' "$file" 2>/dev/null) || candidates=""
+		rm -f "$index"
+	fi
+	[[ -n "$candidates" ]] || candidates=$(jq -c '.candidates' "$file" 2>/dev/null) || return 1
+	kept=$(jq -r 'length' <<<"$candidates" 2>/dev/null) || return 1
+	[[ "$kept" =~ ^[0-9]+$ ]] || return 1
+	echo "[pulse-wrapper] Candidate census reused last-good candidates: repo=${repo_slug} count=${kept} filtered=$((count - kept)) age=${age}s (GH#38483)" >>"$LOGFILE"
+	printf '%s\n' "$candidates"
 	return 0
 }
 
