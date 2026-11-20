@@ -359,6 +359,8 @@ assert_hold 1 "" "Terminal blocker: reason=target_code_blocker owner=target-main
 assert_hold 1 "$TB_PROTOCOL" "TERMINAL_BLOCKER_CIRCUIT active=true observations=2" "status:blocked" "direct classifier preserves terminal-blocker circuit comments beside body protocol text"
 assert_hold 1 "HUMAN_UNBLOCK_REQUIRED" "" "status:blocked" "direct classifier preserves human-unblock markers in the body"
 assert_hold 1 "ACTION REQUIRED: rotate the deploy key" "" "status:blocked" "direct classifier preserves action-required markers in the body"
+assert_hold 0 $'## Complexity Impact\n- **Action required:** None.' "" "status:blocked" "brief-template Action required: None is not a hold (GH#39397)"
+assert_hold 1 "" "ACTION REQUIRED: refresh token" "status:blocked" "direct classifier preserves action-required supervisor comments"
 
 EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20=$'Blocked by #10\n\n| Outcome | Action |\n|---|---|\n| unknown_review | Hold for bounded review; no implementation issue |'
 assert_eq 1 "$(run_reconcile)" "classification table prose does not suppress close-event reconciliation"
