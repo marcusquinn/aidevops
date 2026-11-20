@@ -750,9 +750,16 @@ test_post_pr_handoff_after_merge_completes_closed_issue() {
 			done
 			fixture_issue_state="closed"
 			fixture_summary_count=0
-			if _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
-				printf 'unexpected-accepted-missing-summary\n'
+			# t19196: after merge a missing summary gates nothing (closed issue,
+			# exact head and closing linkage already verified by the probe).
+			if ! _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
+				printf 'unexpected-rejected-missing-summary\n'
 			fi
+			fixture_issue_state="open"
+			if _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
+				printf 'unexpected-accepted-open-missing-summary\n'
+			fi
+			fixture_issue_state="closed"
 			fixture_summary_count=1
 			fixture_pr_body="For #99999"
 			if _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then

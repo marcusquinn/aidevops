@@ -160,6 +160,11 @@ _hrw_merged_pr_output_class() {
 	case "${issue_state}:${pr_state}" in
 	open:*) printf 'merged_checkpoint' ;;
 	closed:merged) printf 'pr_exists' ;;
+	# t19196: the probe verified exact head, merge and closing linkage before the
+	# summary check; after merge the summary gates nothing. A closed issue makes
+	# it completion; an unreadable issue keeps the failed classification.
+	closed:merged_missing_summary) printf 'pr_exists' ;;
+	*:merged_missing_summary) printf 'merged_missing_summary' ;;
 	*) printf 'merged_missing_linkage' ;;
 	esac
 	return 0
@@ -169,10 +174,10 @@ _hrw_pr_output_class() {
 	local pr_state="$1" repo_slug="$2" issue_number="$3" has_pushed_branch="$4"
 	case "$pr_state" in
 	ready) printf 'pr_exists' ;;
-	merged | merged_missing_linkage)
+	merged | merged_missing_linkage | merged_missing_summary)
 		_hrw_merged_pr_output_class "$pr_state" "$repo_slug" "$issue_number"
 		;;
-	draft_checkpoint | protected_draft | closed_unmerged | unverified_open_pr | head_mismatch | ready_missing_linkage | ready_missing_summary | merged_missing_summary)
+	draft_checkpoint | protected_draft | closed_unmerged | unverified_open_pr | head_mismatch | ready_missing_linkage | ready_missing_summary)
 		printf '%s' "$pr_state"
 		;;
 	absent)

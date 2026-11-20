@@ -81,6 +81,41 @@ run_worker_no_output_classification_tests() {
 	test_review_triage_completion_evidence
 	test_already_satisfied_completion_evidence
 	test_signal_less_exit_after_own_pr_handoff
+	test_merged_missing_summary_output_class
+	return 0
+}
+
+# t19196: after merge the MERGE_SUMMARY gates nothing. The probe has verified
+# exact head, merge and closing linkage, so a closed issue is completion; an
+# open issue is a merged checkpoint; an unreadable issue keeps the failure.
+test_merged_missing_summary_output_class() {
+	local fixture_issue expected got
+	for fixture_issue in closed open unreadable; do
+		case "$fixture_issue" in
+		closed) expected=pr_exists ;;
+		open) expected=merged_checkpoint ;;
+		*) expected=merged_missing_summary ;;
+		esac
+		got=$(
+			gh() {
+				[[ "$fixture_issue" != unreadable ]] || return 1
+				printf '%s\n' "$fixture_issue"
+				return 0
+			}
+			_hrw_pr_output_class merged_missing_summary owner/repo 42 1
+		)
+		if [[ "$got" == "$expected" ]]; then
+			print_result "merged_missing_summary with ${fixture_issue} issue classifies as ${expected}" 0
+		else
+			print_result "merged_missing_summary with ${fixture_issue} issue classifies as ${expected}" 1 "got: '${got}'"
+		fi
+	done
+	got=$(_hrw_pr_output_class ready_missing_summary owner/repo 42 1)
+	if [[ "$got" == "ready_missing_summary" ]]; then
+		print_result "ready_missing_summary classification is unchanged" 0
+	else
+		print_result "ready_missing_summary classification is unchanged" 1 "got: '${got}'"
+	fi
 	return 0
 }
 
