@@ -194,6 +194,9 @@ _pulse_merge_review_thread_parked_at_head() {
 # otherwise defer (the scanner's dispatch-pr guard would defer it anyway).
 # Reads caller-scope pr_labels/pr_updated_at/pr_head_ref_oid when present
 # (_process_single_ready_pr); unknown labels fall through to that guard.
+# GH#39382: an orphan PR (no linked issue) is never stale, so it first gets a
+# tracking issue (trust, opt-out and age gated) and is re-checked, mirroring
+# the stale draft path (GH#39158). Owned or fresh PRs still defer.
 # Returns: 0 to continue to dispatch-pr, 1 when the caller must defer.
 #######################################
 _pulse_merge_review_thread_interactive_handover() {
@@ -201,10 +204,19 @@ _pulse_merge_review_thread_interactive_handover() {
 	local repo_slug="$2"
 	local reason="$3"
 	local labels_csv=",${pr_labels:-},"
+	local stale=0
 
 	[[ "$labels_csv" == *",origin:interactive,"* && "$labels_csv" != *",origin:worker-takeover,"* ]] || return 0
-	if declare -F _interactive_pr_is_stale >/dev/null 2>&1 \
-		&& _interactive_pr_is_stale "$pr_number" "$repo_slug" "${pr_updated_at:-}" "${pr_head_ref_oid:-}"; then
+	if declare -F _interactive_pr_is_stale >/dev/null 2>&1; then
+		if _interactive_pr_is_stale "$pr_number" "$repo_slug" "${pr_updated_at:-}" "${pr_head_ref_oid:-}"; then
+			stale=1
+		elif declare -F _recover_interactive_pr_work_issue >/dev/null 2>&1 \
+			&& _recover_interactive_pr_work_issue "$pr_number" "$repo_slug" >/dev/null \
+			&& _interactive_pr_is_stale "$pr_number" "$repo_slug"; then
+			stale=1
+		fi
+	fi
+	if [[ "$stale" -eq 1 ]]; then
 		if _interactive_pr_trigger_handover "$pr_number" "$repo_slug" "unresolved review threads ${reason}"; then
 			return 0
 		fi
