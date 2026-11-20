@@ -231,6 +231,15 @@ e2e_events=$(extract_failed_events_json "48" "100" "marcusquinn/aidevops" "true"
 assert_equals "GH#39228 end-to-end report is empty once newest run succeeded" "0" "$(printf '%s\n' "$e2e_events" | jq 'length')"
 unset GH_RUNS_JSON GH_LOG_SCENARIO
 
+sched_runs='{"workflow_runs":[{"id":11,"workflow_id":21,"name":"Shell Suite Main Health","event":"schedule","status":"completed","conclusion":"failure","created_at":"2026-11-20T03:00:00Z","head_branch":"main"}]}'
+sched_selected=$(select_current_workflow_failures_json "$sched_runs" "main")
+assert_equals "GH#39472 single failed scheduled run is selected" "1" "$(printf '%s\n' "$sched_selected" | jq 'length')"
+sched_events='[{"repo":"marcusquinn/aidevops","source_kind":"workflow","source_ref":"schedule:11","source_url":"u","check_name":"Shell Suite Main Health","conclusion":"failure","signature":"sig","is_infra":false}]'
+sched_clusters=$(build_repo_clusters_json "$sched_events")
+assert_equals "GH#39472 scheduled cluster is flagged" "true" "$(printf '%s\n' "$sched_clusters" | jq -r '.[0].scheduled')"
+nonsched_clusters=$(build_repo_clusters_json "$(printf '%s\n' "$sched_events" | jq -c '.[0].source_ref="push:11"')")
+assert_equals "GH#39472 non-scheduled single event is not flagged" "false" "$(printf '%s\n' "$nonsched_clusters" | jq -r '.[0].scheduled')"
+
 printf '\nTests run: %s, failures: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -ne 0 ]]; then
 	exit 1
