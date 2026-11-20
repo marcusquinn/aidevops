@@ -95,6 +95,7 @@ readonly SYNC_AUTO_MERGE_LABEL="allow-auto-merge"
 readonly _SYNC_KNOWN_WORKFLOWS=(
 	"issue-sync.yml:issue-sync-caller.yml"
 	"review-bot-gate.yml:review-bot-gate-caller.yml"
+	"review-bot-gate-fork-review.yml:review-bot-gate-fork-review-caller.yml"
 	"maintainer-gate.yml:maintainer-gate-caller.yml"
 	"loc-badge.yml:loc-badge-caller.yml"
 	"linked-issue-check.yml:linked-issue-check-caller.yml"
@@ -558,7 +559,7 @@ _extract_ref_pin() {
 _workflow_fetches_framework_helpers() {
 	local _workflow_name="$1"
 	case "$_workflow_name" in
-	issue-sync | review-bot-gate | loc-badge | issue-triage-gate) return 0 ;;
+	issue-sync | review-bot-gate | review-bot-gate-fork-review | loc-badge | issue-triage-gate) return 0 ;;
 	*) return 1 ;;
 	esac
 }

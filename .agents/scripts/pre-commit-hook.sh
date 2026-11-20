@@ -1245,7 +1245,7 @@ check_workflow_files() {
 	# avoids an extra process when no workflow files are staged.
 	local staged_workflows
 	staged_workflows=$(staged_diff --name-only --diff-filter=ACM \
-		| grep -E '^\.github/workflows/[^/]+\.ya?ml$' || true)
+		| grep -E '^(\.github/workflows|\.agents/templates/workflows)/[^/]+\.ya?ml$' || true)
 
 	if [[ -z "$staged_workflows" ]]; then
 		return 0
