@@ -206,6 +206,51 @@ class GoogleAdsActionTests(unittest.TestCase):
         self.assert_no_write(plan)
         self.assertFalse(ads.action_io.receipt_path(self.receipts, plan["plan_digest"]).exists())
 
+    def test_apply_refuses_resigned_payload_mismatch_and_swapped_resource(self) -> None:
+        plan = self.plan()
+        resigned = copy.deepcopy(plan)  # consistent forward/operations copies over the cap, digest recomputed
+        for operation in (resigned["actions"][3]["forward"], resigned["operations"][3]):
+            operation["campaignBudgetOperation"]["update"]["amountMicros"] = "80000000"
+        del resigned["plan_digest"]
+        resigned["plan_digest"] = ads.action_io.digest(resigned)
+        self.approve(resigned)
+        self.assert_no_write(resigned)
+        self.approve(plan)
+        self.account.budgets["888"] = {"amount": "5000000", "shared": False}
+        self.account.campaigns["111"]["budget"] = "888"  # same amount, different budget resource
+        self.assert_no_write(plan)
+
+    def test_interrupted_rollback_reconciles_and_missing_audit_is_repaired(self) -> None:
+        plan = self.plan()
+        self.approve(plan)
+        receipt, _ = ads.apply_plan(plan, self.receipts, self.account)
+        path = ads.action_io.receipt_path(self.receipts, plan["plan_digest"])
+        receipt.pop("audited")  # simulate an audit append lost after the applied receipt was persisted
+        ads._write_receipt(path, receipt)
+        (self.receipts / "audit.jsonl").unlink()
+        self.assertTrue(ads.apply_plan(plan, self.receipts, self.account)[1])
+        self.assertEqual(json.loads((self.receipts / "audit.jsonl").read_text(encoding="utf-8"))["event"], "apply")
+        receipt = ads._load_receipt(path)
+        subject = {"plan_digest": receipt["plan_digest"], "owner": receipt["owner"], "customer_id": CUSTOMER,
+                   "action_set": receipt["action_set"]}
+        self.approve(subject, "rollback", receipt)
+        real_mutate = self.account.mutate
+
+        def lost_response(customer, operations, validate_only):
+            real_mutate(customer, operations, validate_only)
+            if not validate_only:
+                raise ads.GoogleAdsActionError("Google Ads request failed")
+            return []
+
+        with patch.object(self.account, "mutate", side_effect=lost_response), self.assertRaises(ads.GoogleAdsActionError):
+            ads.rollback_receipt(path, self.account)
+        interrupted = ads._load_receipt(path)
+        self.assertEqual(interrupted["status"], "rolling_back")
+        self.approve(subject, "rollback", interrupted)
+        rolled_back, replayed = ads.rollback_receipt(path, self.account)
+        self.assertEqual((rolled_back["status"], replayed, len(self.account.writes())), ("rolled_back", False, 2))
+        self.assertEqual(self.account.negatives, [])
+
     def test_rollback_requires_after_state_then_restores_and_repeats_as_noop(self) -> None:
         plan = self.plan()
         self.approve(plan)

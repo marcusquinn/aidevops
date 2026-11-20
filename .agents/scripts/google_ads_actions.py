@@ -202,7 +202,8 @@ def _negative_probe(client: Any, customer: str, params: dict[str, Any], kind: st
 def _keyword_probe(client: Any, customer: str, params: dict[str, Any], kind: str) -> tuple[dict[str, Any], str]:
     name = f"customers/{customer}/adGroupCriteria/{params['ad_group_id']}~{params['criterion_id']}"
     query = ("SELECT ad_group_criterion.resource_name, ad_group_criterion.status, ad_group_criterion.negative "
-             f"FROM ad_group_criterion WHERE ad_group_criterion.resource_name = '{name}'")  # nosec B608 -- numeric
+             f"FROM ad_group_criterion WHERE ad_group_criterion.resource_name = '{name}' "
+             "AND ad_group_criterion.type = KEYWORD")  # nosec B608 -- numeric IDs only
     rows = client.search(customer, query)
     _require(len(rows) == 1, f"keyword {name} was not found")
     _require(not _dig(rows[0], "adGroupCriterion", "negative"), "status changes apply only to positive keywords")
@@ -400,9 +401,27 @@ def validate_plan(plan: Any, now: datetime | None = None) -> dict[str, Any]:
     for item in actions:
         _require(isinstance(item, dict) and validate_params(item.get("kind"), item.get("params", {}), limits)
                  == item.get("params"), "plan action parameters are invalid or exceed caps")
+        _rebuild_check(plan["customer_id"], item)
     _require(plan.get("action_set") == [item.get("id") for item in actions], "plan action set is inconsistent")
+    targets = [item["target"] for item in actions if item["target"]]
+    _require(len(targets) == len(set(targets)), "one plan cannot change the same resource twice")
     _require(plan.get("operations") == [item.get("forward") for item in actions], "plan operations are inconsistent")
     return plan
+
+
+def _rebuild_check(customer: str, item: dict[str, Any]) -> None:
+    """Re-derive every executable field from validated params + recorded before-state; stored copies never count."""
+    target = item.get("target")
+    _require(isinstance(item.get("before"), dict) and isinstance(target, str), "plan action state is invalid")
+    if item["kind"] not in NEGATIVE_LEVELS:
+        _require(target.startswith(f"customers/{customer}/"), "plan action targets a foreign resource")
+    try:
+        rebuilt = KINDS[item["kind"]][2](customer, item["params"], item["before"], target, item["kind"])
+    except (KeyError, TypeError) as error:
+        raise GoogleAdsActionError(f"action {item.get('id')}: recorded before-state is malformed") from error
+    stored = (item.get("after"), item.get("forward"), item.get("inverse"), item.get("summary"))
+    _require(rebuilt == stored, f"action {item.get('id')}: operations do not match its validated parameters")
+    _require(item["before"] != item["after"], f"action {item.get('id')} would not change the account")
 
 
 def write_plan(path: str | Path, plan: dict[str, Any]) -> Path:
@@ -426,11 +445,16 @@ def _approval(subject: dict[str, Any], operation: str, receipt_digest: str | Non
         raise GoogleAdsActionError(str(error)) from error
 
 
-def _still_approved(approval: dict[str, Any]) -> None:
+def _still_approved(approval: dict[str, Any], deadline: str | None = None) -> None:
+    """Run immediately before every non-validate mutate: cancellation, approval expiry, plan deadline."""
     try:
         approval_records.verify_cancellation(approval)
+        expires = approval_records._parse_time(approval["expires_at"], "approval.expires_at")
+        plan_expires = approval_records._parse_time(deadline, "plan.expires_at") if deadline else None
     except approval_records.ApprovalError as error:
         raise GoogleAdsActionError(str(error)) from error
+    _require(_now() < expires, "approval is stale; approve again")
+    _require(plan_expires is None or _now() < plan_expires, "plan has expired; re-run plan against the live account")
 
 
 @contextmanager
@@ -447,8 +471,16 @@ def _write_receipt(path: Path, receipt: dict[str, Any]) -> None:
     action_io.atomic_write(path, action_io.canonical_json(receipt) + b"\n")
 
 
-def _audit(directory: Path, event: str, receipt: dict[str, Any]) -> None:
-    line = {"at": _stamp(_now()), "event": event, "status": receipt["status"], "plan_digest": receipt["plan_digest"],
+def _audit(directory: Path, path: Path, event: str, receipt: dict[str, Any]) -> None:
+    """Append one audit event (at-least-once, keyed by event_id) and record it in the receipt.
+
+    Callers persist the terminal receipt first; a replay finding the event missing from
+    `audited` appends it then, so an audit failure never requires a second account write.
+    """
+    if event in receipt.get("audited", []):
+        return
+    line = {"at": _stamp(_now()), "event": event, "event_id": f"{event}:{receipt['plan_digest']}",
+            "status": receipt["status"], "plan_digest": receipt["plan_digest"],
             "customer_id": receipt["customer_id"], "action_set": receipt["action_set"],
             "approval_nonce": receipt["approval_nonce"]}
     handle = os.open(str(directory / "audit.jsonl"), os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
@@ -456,6 +488,8 @@ def _audit(directory: Path, event: str, receipt: dict[str, Any]) -> None:
         os.write(handle, action_io.canonical_json(line) + b"\n")
     finally:
         os.close(handle)
+    receipt["audited"] = receipt.get("audited", []) + [event]
+    _write_receipt(path, receipt)
 
 
 def _load_receipt(path: Path, plan_digest: str | None = None) -> dict[str, Any]:
@@ -503,8 +537,15 @@ def _finish(directory: Path, path: Path, receipt: dict[str, Any], plan: dict[str
     receipt["status"] = "applied"
     receipt["completed_at"] = _stamp(_now())
     _write_receipt(path, receipt)
-    _audit(directory, "apply", receipt)
+    _audit(directory, path, "apply", receipt)
     return receipt
+
+
+def _require_targets(actions: list[dict[str, Any]], names: list[str], field: str) -> None:
+    """Existing resources must be the exact resource the plan/receipt named, not merely equal in value."""
+    for item, name in zip(actions, names):
+        if item["kind"] not in NEGATIVE_LEVELS:
+            _require(name == item[field], f"action {item['id']}: live resource {name} is not the planned {item[field]}")
 
 
 def _new_receipt(plan: dict[str, Any], approval: dict[str, Any]) -> dict[str, Any]:
@@ -525,45 +566,65 @@ def apply_plan(plan: dict[str, Any], receipt_directory: str | Path, client: Any)
     with _receipt_lock(directory):
         states = _live_states(client, plan["customer_id"], plan["actions"])
         live = [state for state, _ in states]
+        _require_targets(plan["actions"], [name for _, name in states], "target")
         receipt = _load_receipt(path, plan["plan_digest"]) if path.exists() else _new_receipt(plan, approval)
-        _require(receipt["status"] != "rolled_back", "plan was rolled back; build a new plan to re-apply")
+        _require(receipt["status"] not in {"rolling_back", "rolled_back"},
+                 "plan was rolled back; build a new plan to re-apply")
         if receipt["status"] == "applied":
             _require(live == after, "applied-plan replay found drifted state")
+            _audit(directory, path, "apply", receipt)  # repairs a missing audit entry; no account write
             return receipt, True
         if path.exists() and live == after:  # crash after a committed mutate: recover names from live state
             return _finish(directory, path, receipt, plan, [name for _, name in states]), False
         _require(live == before, "live account state drifted since planning")
         receipt["approval_nonce"] = approval["nonce"]
         _write_receipt(path, receipt)
-        _still_approved(approval)
+        _still_approved(approval, plan["expires_at"])
         responses = client.mutate(plan["customer_id"], plan["operations"], validate_only=False)
         return _finish(directory, path, receipt, plan, _result_names(responses, len(plan["actions"]))), False
 
 
 def rollback_receipt(receipt_path: str | Path, client: Any) -> tuple[dict[str, Any], bool]:
-    """Revert an applied receipt when every live state still equals its recorded after-state."""
+    """Revert an applied receipt when every live state still equals its recorded after-state.
+
+    Rollback intent (`rolling_back`) is persisted before the remote write. A retry of a
+    `rolling_back` receipt whose live state already equals every before-state (created
+    negatives absent) is completed without another write; the inverse is sent only when
+    every action is still exactly at its after-state.
+    """
     lexical = Path(receipt_path).expanduser().absolute()
     _require(not lexical.is_symlink(), "receipt path cannot be a symlink")
     directory = action_io.private_directory(lexical.parent)
     path = lexical.resolve()
     receipt = _load_receipt(path)
-    _require(receipt["status"] in {"applied", "rolled_back"}, "receipt is not rollback-ready")
+    _require(receipt["status"] in {"applied", "rolling_back", "rolled_back"}, "receipt is not rollback-ready")
     subject = {"plan_digest": receipt["plan_digest"], "owner": receipt["owner"],
                "customer_id": receipt["customer_id"], "action_set": receipt["action_set"]}
     approval = _approval(subject, "rollback", action_io.digest(receipt))
-    if receipt["status"] == "rolled_back":
-        return receipt, True
     customer, actions = receipt["customer_id"], receipt["actions"]
     with _receipt_lock(directory):
-        for item, (state, name) in zip(actions, _live_states(client, customer, actions)):
-            _require(state == item["after"] and name == item["resource_name"],
-                     f"rollback refused: {item['id']} no longer matches its applied state")
-        inverse = [item["inverse"] for item in reversed(actions)]
-        client.mutate(customer, inverse, validate_only=True)
-        _still_approved(approval)
-        client.mutate(customer, inverse, validate_only=False)
+        if receipt["status"] == "rolled_back":
+            _audit(directory, path, "rollback", receipt)  # repairs a missing audit entry; no account write
+            return receipt, True
+        states = _live_states(client, customer, actions)
+        live = [state for state, _ in states]
+        names = [name for _, name in states]
+        reverted = live == [item["before"] for item in actions]
+        if not (receipt["status"] == "rolling_back" and reverted):
+            for item, state, name in zip(actions, live, names):
+                _require(state == item["after"] and name == item["resource_name"],
+                         f"rollback refused: {item['id']} no longer matches its applied state")
+            inverse = [item["inverse"] for item in reversed(actions)]
+            client.mutate(customer, inverse, validate_only=True)
+            receipt["status"] = "rolling_back"
+            receipt["approval_nonce"] = approval["nonce"]
+            _write_receipt(path, receipt)
+            _still_approved(approval)
+            client.mutate(customer, inverse, validate_only=False)
+        else:
+            _require_targets(actions, names, "resource_name")
         receipt["status"] = "rolled_back"
         receipt["rolled_back_at"] = _stamp(_now())
         _write_receipt(path, receipt)
-        _audit(directory, "rollback", receipt)
+        _audit(directory, path, "rollback", receipt)
     return receipt, False

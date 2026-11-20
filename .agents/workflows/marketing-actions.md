@@ -145,16 +145,24 @@ How each step works:
   operations as one `googleAds:mutate` with `validateOnly: true`, then
   exclusive-creates a mode-0600 plan. The plan records the operations, before
   and after states, inverses, caps, and a 24-hour expiry, all under `plan_digest`.
-- `apply` re-checks the digest, expiry, allowlist and caps. It requires the root
-  approval record (bound to `customer_id`), takes a receipt-directory lock, and
-  refuses any drift. It writes an `applying` receipt, then sends one mutate with
-  `partialFailure: false`, so every operation applies or none do. It then
-  records the resource names and appends to `audit.jsonl`.
-- Replaying an applied plan is a verified no-op. After a crash, a plan whose
-  live state equals the after-state is marked applied without a second write.
+- `apply` re-checks the digest, expiry, allowlist and caps. It rebuilds every
+  operation, inverse and after-state from the validated parameters and the
+  recorded before-state, and refuses any stored payload that differs. It
+  requires the root approval record (bound to `customer_id`) and takes a
+  receipt-directory lock. It refuses drift, including a different live resource
+  with an equal value (for example, a swapped budget). It writes an `applying`
+  receipt and re-checks the approval and plan expiry. Then it sends one mutate
+  with `partialFailure: false`, so every operation applies or none do. Finally
+  it records the resource names and appends to `audit.jsonl`.
+- Replaying an applied plan is a verified no-op that repairs a missing audit
+  entry. After a crash, a plan whose live state equals the after-state is marked
+  applied without a second write.
 - `rollback` needs a fresh rollback approval bound to the receipt digest. Every
   live state must still equal its after-state, including the created criterion
-  resource names. It validates the inverses (validate-only) and then sends them.
+  resource names. It validates the inverses (validate-only) and persists a
+  `rolling_back` receipt. It then sends the inverses. If the response is lost,
+  approve the `rolling_back` receipt and retry: when every live state already
+  equals its before-state, the receipt is completed without another write.
   Repeating a rollback is a no-op.
 
 Credentials come only from the environment. `GOOGLE_ADS_ACCESS_TOKEN` (an OAuth

@@ -396,7 +396,8 @@ def _receipt_subject(receipt: Any) -> Tuple[Dict[str, Any], str, List[str], str]
     _require(isinstance(receipt, dict), "receipt must be an object")
     plan_schema = RECEIPT_PLAN_SCHEMAS.get(receipt.get("schema", ""))
     _require(plan_schema is not None, "receipt schema is not approvable")
-    _require(receipt.get("status") in {"applied", "rolled_back"}, "receipt is not rollback-ready")
+    # rolling_back: a remote adapter persisted rollback intent and is reconciling an interrupted rollback.
+    _require(receipt.get("status") in {"applied", "rolling_back", "rolled_back"}, "receipt is not rollback-ready")
     subject = {field: receipt.get(field) for field in ("plan_digest", "owner") + PLAN_BINDINGS[plan_schema]}
     lines = [f"Rollback of plan: {receipt.get('plan_digest')}", f"Owner: {receipt.get('owner')}"]
     lines += [f"{field}: {receipt.get(field)}" for field in PLAN_BINDINGS[plan_schema]]
