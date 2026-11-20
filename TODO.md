@@ -2340,7 +2340,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19187 Qualify SRT proxy resolved-address, redirect and protocol bypass handling #auto-dispatch #feat ref:GH#39361 pr:#39389 completed:2026-11-20
 
-- [ ] t19188 Attribute the inherited Mach send rights in the macOS SRT sandbox #auto-dispatch #feat ref:GH#39362
+- [x] t19188 Attribute the inherited Mach send rights in the macOS SRT sandbox #auto-dispatch #feat ref:GH#39362 pr:#39415 completed:2026-11-20
 
 - [ ] t19189 Run SRT synthetic qualification on NixOS arm64 and Intel macOS hosts #feat #no-auto-dispatch ref:GH#39363
 
@@ -2350,7 +2350,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19177 feat(large-file-gate): require split headroom in file-size-debt briefs #auto-dispatch #feat ref:GH#39329
 
-- [ ] t19197 fix(higgsfield): repair stale higgsfield-video.mjs imports that break every helper command #bug #interactive ref:GH#39395 logged:2026-11-20 -> [todo/tasks/t19197-brief.md]
+- [x] t19197 fix(higgsfield): repair stale higgsfield-video.mjs imports that break every helper command #bug #interactive ref:GH#39395 logged:2026-11-20 -> [todo/tasks/t19197-brief.md] pr:#39401 completed:2026-11-20
 
 ## In Progress
 
