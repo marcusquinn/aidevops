@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.249] - 2026-11-20
+
+### Added
+
+- attribute inherited macOS Mach send rights and fail closed on unknown ones
+- target /ai/video with Unlimited guard, pick played output video, add paired-browser session mode (#39408)
+
+### Changed
+
+- Maintenance: mark t19188 complete (pr:#39415 completed:2026-11-20) (#39413)
+
+### Fixed
+
+- narrow terminal-blocker ACTION REQUIRED match (GH#39452) (#39454)
+- move review-bot-gate fork-review listener out of the workflow it listens to
+- re-evaluate gate when linked issue is reopened (#39426)
+- clear strict status on fork PR review events
+- traverse sourcers of deleted scripts in affected-test selection
+- apply closed-issue completion rule to merged_missing_summary on failure recovery (t19201) (#39422)
+- pin issue-triage-gate callers to one SHA
+- match ACTION REQUIRED hold case-sensitively (#39409)
+
 ## [3.39.248] - 2026-11-20
 
 ### Added

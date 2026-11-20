@@ -34,6 +34,11 @@ readonly _HEADLESS_RUNTIME_PROVIDER_LOADED=1
 # GH#38713: entitlement-rejection reason; its expired rows persist as history.
 _HRP_REASON_MODEL_UNAVAILABLE="model_unavailable"
 
+# GH#39475: shared OAuth pool resolver and usability rule (also used by
+# model-availability-helper.sh). SCRIPT_DIR is set by every sourcing caller.
+# shellcheck source=oauth-pool-usable-lib.sh
+source "${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/oauth-pool-usable-lib.sh"
+
 # --- Provider Auth ---
 
 extract_provider() {
@@ -255,48 +260,13 @@ PY
 opencode2_oauth_pool_auth_available() {
 	local provider="$1"
 	local auth_file="${OPENCODE_AUTH_FILE:-${HOME}/.local/share/opencode/auth.json}"
-	local pool_file="${AIDEVOPS_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}"
-	if [[ "${AIDEVOPS_OPENCODE_PROFILE:-v1}" == "v2" ]]; then
-		# The V2 worker runtime (~/.local/bin/opencode2) authenticates only
-		# from its private pool; the interactive pool is never shared with it
-		# (tools/opencode/opencode.md). Judge worker auth by that pool.
-		pool_file="${AIDEVOPS_OPENCODE_V2_OAUTH_POOL_FILE:-${HOME}/.aidevops/runtimes/opencode-v2/auth/oauth-pool.json}"
-	fi
 
 	[[ -f "$auth_file" ]] && return 1
-	[[ -f "$pool_file" ]] || return 1
 
-	POOL_FILE="$pool_file" PROVIDER="$provider" python3 <<'PY' >/dev/null 2>&1
-import json
-import os
-import sys
-import time
-
-try:
-    with open(os.environ["POOL_FILE"], encoding="utf-8") as fh:
-        pool = json.load(fh)
-except Exception:
-    sys.exit(1)
-
-accounts = pool.get(os.environ["PROVIDER"], [])
-if not isinstance(accounts, list):
-    sys.exit(1)
-
-now_ms = int(time.time() * 1000)
-for account in accounts:
-    if not isinstance(account, dict):
-        continue
-    # A missing status means usable; an expired rate-limit cooldown is usable.
-    status = account.get('status') or 'active'
-    try:
-        cooldown_until = int(account.get('cooldownUntil') or 0)
-    except (TypeError, ValueError):
-        cooldown_until = 0
-    if status in {'active', 'idle', 'rate-limited'} and cooldown_until <= now_ms:
-        sys.exit(0)
-
-sys.exit(1)
-PY
+	# Shared with model-availability-helper.sh Source 5 (oauth-pool-usable-lib.sh).
+	local pool_file
+	pool_file=$(oauth_pool_runtime_file)
+	oauth_pool_has_usable_account "$provider" "$pool_file"
 	return $?
 }
 
