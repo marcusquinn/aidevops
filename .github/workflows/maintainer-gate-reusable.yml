@@ -63,7 +63,14 @@ jobs:
   # =========================================================================
   check-pr:
     name: Maintainer Review & Assignee Gate
+    # Ordering: when needs-maintainer-review is unlabeled, protect-pr-labels
+    # restores it. Label restoration via GITHUB_TOKEN triggers no new workflow
+    # run, so check-pr must evaluate AFTER the restore or it can post success
+    # against the unlabeled state. always() keeps check-pr running when
+    # protect-pr-labels is skipped (every other event/action).
+    needs: [protect-pr-labels]
     if: >-
+      always() &&
       github.event_name == 'pull_request_target'
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 3
@@ -112,6 +119,29 @@ jobs:
       statuses: write
 
     steps:
+      # Fail closed: if label protection failed or was cancelled, the NMR label
+      # may be absent, so a normal evaluation could wrongly pass. Later steps
+      # are skipped after this failure.
+      - name: Fail gate when label protection did not complete
+        if: needs.protect-pr-labels.result == 'failure' || needs.protect-pr-labels.result == 'cancelled'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
+          PROTECT_RESULT: ${{ needs.protect-pr-labels.result }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "::error::protect-pr-labels ${PROTECT_RESULT}; failing gate closed"
+          # Overwrite any earlier success status on this HEAD for both contexts.
+          for context in "maintainer-gate" "Maintainer Review & Assignee Gate"; do
+            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state="failure" \
+              -f context="$context" \
+              -f description="Label protection did not complete; gate failed closed" \
+              || echo "::warning::Failed to post failure status for ${context}"
+          done
+          exit 1
+
       # Security: This job uses pull_request_target for fork PR write access.
       # It ONLY reads event metadata (PR title, body, number) — never checks
       # out or executes code from the PR head branch.

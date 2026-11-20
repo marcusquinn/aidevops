@@ -143,17 +143,35 @@ _read_state() {
 	if [[ -n "$raw_issue" ]] && ! _is_valid_issue_number "$raw_issue"; then
 		if healed_issue=$(_heal_issue_number "$raw_issue") &&
 			healed_state=$(printf '%s' "$state" | jq --arg in "$healed_issue" '.issue_number = $in'); then
+			# Read-path repair stays in memory only: writing here would race
+			# with unlocked state writers and could clobber their newer data.
+			# The next full-state write persists the healed value.
 			state="$healed_state"
-			if _write_state "$routine_id" "$state"; then
-				_log_warn "Healed malformed issue_number for ${routine_id} to #${healed_issue} (GH#39144)"
-			else
-				_log_warn "Healed issue_number for ${routine_id} to #${healed_issue} in memory only; could not write ${state_file}"
-			fi
+			_log_warn "Healed malformed issue_number for ${routine_id} to #${healed_issue} in memory (GH#39144); persisted on next state write"
 		else
 			_log_warn "Malformed issue_number for ${routine_id} could not be healed; fix ${state_file} manually"
 		fi
 	fi
 	printf '%s\n' "$state"
+	return 0
+}
+
+# Write via temp file + rename so readers never see a truncated snapshot.
+_write_state_atomic() {
+	local routine_id="$1"
+	local state_json="$2"
+	local state_file tmp_file
+	state_file="$(_state_file "$routine_id")"
+	_ensure_state_dir "$routine_id" || return 1
+	tmp_file="${state_file}.tmp.$$"
+	if ! printf '%s\n' "$state_json" >"$tmp_file"; then
+		rm -f "$tmp_file"
+		return 1
+	fi
+	mv -f "$tmp_file" "$state_file" || {
+		rm -f "$tmp_file"
+		return 1
+	}
 	return 0
 }
 

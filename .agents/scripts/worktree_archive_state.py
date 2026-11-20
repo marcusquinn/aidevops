@@ -31,23 +31,20 @@ def tagged_index(root):
     return [entry[:1] for entry in entries], b"".join(entry[2:] + b"\0" for entry in entries)
 
 
-def intent_to_add_differs(root, index, *, strict):
+def intent_to_add_differs(root, index):
     """Compare both intent-to-add views of this pass's index read.
 
     ls-files --stage cannot distinguish intent-to-add from a staged empty blob.
     Without any empty-blob entry there is no intent-to-add entry, so both views
-    are equal and neither is read. Otherwise each caller keeps its verdict:
-    strict (Git-only capture) always compares, because an intent-to-add entry for
-    a file HEAD holds as an empty blob is visible-empty but invisible-deleted;
-    non-strict (supported_state) treats an empty visible view as equality.
+    are equal and neither is read. Otherwise both views are always compared: an
+    empty visible view is not proof, because an intent-to-add entry for a file
+    HEAD holds as an empty blob is visible-empty but invisible-deleted.
     """
     if not any(entry.split(b"\t", 1)[0].split()[1] in EMPTY_BLOBS for entry in index.split(b"\0") if entry):
         return False
-    options = ("--cached", "--raw", "-z", "--no-ext-diff") + (("--no-color",) if strict else ())
-    visible = git(root, "diff", *options, "--ita-visible-in-index")
-    if not visible and not strict:
-        return False
-    return visible != git(root, "diff", *options, "--ita-invisible-in-index")
+    options = ("--cached", "--raw", "-z", "--no-ext-diff", "--no-color")
+    return (git(root, "diff", *options, "--ita-visible-in-index")
+            != git(root, "diff", *options, "--ita-invisible-in-index"))
 
 
 def inventories(root, include_ignored=False, *, index=None, untracked=True):
@@ -96,7 +93,7 @@ def supported_state(root, preserve_git_admin=False, include_ignored=False):
     if any(tag != b"H" for tag in tags):
         raise ValueError("special index flags or unmerged entries are unsupported")
     # Preserved administration keeps the index itself, intent-to-add flags included.
-    if not preserve_git_admin and intent_to_add_differs(root, index, strict=False):
+    if not preserve_git_admin and intent_to_add_differs(root, index):
         raise ValueError("intent-to-add index entries require separate preservation")
     if not preserve_git_admin:
         supported_history(root, admin)

@@ -2316,7 +2316,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19168 feat(opencode): one-command switch from an unintended global OpenCode 2 back to stable OpenCode 1 #auto-dispatch #feat #interactive tier:standard ref:GH#39282 assignee:marcusquinn logged:2026-11-19 started:2026-11-19 -> [todo/tasks/t19168-brief.md] pr:#39286 completed:2026-11-19
 
-- [ ] t19170 fix(recovery): a trusted retry on a queued hold waits hours for the rearm rotation #bug #interactive ref:GH#39284 logged:2026-11-19 -> [todo/tasks/t19170-brief.md]
+- [x] t19170 fix(recovery): a trusted retry on a queued hold waits hours for the rearm rotation #bug #interactive ref:GH#39284 pr:#39285 logged:2026-11-19 -> [todo/tasks/t19170-brief.md] completed:2026-11-20
 
 - [x] t19171 fix(dispatch): zero-output hold ignores later trusted worker progress and keeps a released issue held for up to 12h #bug #interactive ref:GH#39293 logged:2026-11-19 -> [todo/tasks/t19171-brief.md] pr:#39297 completed:2026-11-19
 
@@ -2344,17 +2344,21 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19189 Run SRT synthetic qualification on NixOS arm64 and Intel macOS hosts #feat #no-auto-dispatch ref:GH#39363
 
-- [ ] t19190 Design the provider credential boundary and extraction-role envelope for SRT inference #auto-dispatch #feat ref:GH#39364
+- [x] t19190 Design the provider credential boundary and extraction-role envelope for SRT inference #auto-dispatch #feat ref:GH#39364 verified:2026-11-20 completed:2026-11-20
 
-- [ ] t19176 fix(pulse): release stale assignees from status:available auto-dispatch issues #auto-dispatch #bug ref:GH#39327
+- [x] t19176 fix(pulse): release stale assignees from status:available auto-dispatch issues #auto-dispatch #bug ref:GH#39327 pr:#39336 completed:2026-11-20
 
-- [ ] t19177 feat(large-file-gate): require split headroom in file-size-debt briefs #auto-dispatch #feat ref:GH#39329
+- [x] t19177 feat(large-file-gate): require split headroom in file-size-debt briefs #auto-dispatch #feat ref:GH#39329 pr:#39368 completed:2026-11-20
 
 - [x] t19197 fix(higgsfield): repair stale higgsfield-video.mjs imports that break every helper command #bug #interactive ref:GH#39395 logged:2026-11-20 -> [todo/tasks/t19197-brief.md] pr:#39401 completed:2026-11-20
 
 - [x] t19203 fix(ci): review-bot-gate.yml invalid since #39427 (workflow cannot listen to itself), blocking all merges #bug ref:GH#39458 pr:#39460 completed:2026-11-20
 
 - [x] t19205 fix(setup): reinstall the systemic CI failure miner on pulse hosts during non-interactive setup #bug #interactive ref:GH#39466 logged:2026-11-20 -> [todo/tasks/t19205-brief.md] pr:#39478 completed:2026-11-20
+
+- [ ] t19209 fix(terminal-blocker): trigger revisit starves holds beyond the first ~20 search hits #bug #interactive ref:GH#39481 logged:2026-11-20 -> [todo/tasks/t19209-brief.md]
+
+- [ ] t19210 fix(terminal-blocker): external_trigger_pending holds publish dependency guidance that names a nonexistent linked blocker #auto-dispatch #bug ref:GH#39482 logged:2026-11-20 -> [todo/tasks/t19210-brief.md]
 
 ## In Progress
 

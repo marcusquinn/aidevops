@@ -671,6 +671,14 @@ TERMINAL_BLOCKER_TRIGGER=Vendor release 4.2 ships on 2026-12-01" '{type:"text",t
 		[[ "$fragment" == *'Wait for the specified external trigger.'* && "$fragment" != *'Trigger awaited:'* ]] || status=1
 	done
 	unset AIDEVOPS_TERMINAL_BLOCKER_TRIGGER
+	# t19210: a trigger hold carries trigger guidance, never the linked-issue text.
+	fragment=$(
+		# shellcheck source=../shared-gh-wrappers-status.sh
+		source "${SCRIPT_DIR}/shared-gh-wrappers-status.sh"
+		AIDEVOPS_TERMINAL_BLOCKER_TRIGGER='Vendor release 4.2' terminal_blocker_observation_fragment 111111111111111111111111 "$fingerprint" normal status:blocked
+	)
+	[[ "$fragment" == *$'\nUnblock label: `needs-dependency`. Needed: the awaited trigger named above.'* &&
+		"$fragment" == *'trigger-revisit pass'* && "$fragment" != *'linked blocking issue must close'* ]] || status=1
 	print_result "external_trigger_pending publishes only an unaltered one-line trigger" "$status"
 	return 0
 }
@@ -681,7 +689,7 @@ _trigger_revisit_cases() (
 	# Stub-visible fixtures use tb_* names: _tbtr_issue's locals shadow
 	# issue/comments under dynamic scoping.
 	local log="${TEST_ROOT}/trigger-revisit.log" tb_issue_json="" tb_comments="" revision="" fingerprint="" body="" record=""
-	local now="" next="" decision_reply="" rc=0 reason=""
+	local now="" next="" decision_reply="" rc=0 reason="" fetch_log="${TEST_ROOT}/trigger-revisit-fetch.log"
 	local HOME="$TEST_ROOT" PRIVACY_REPOS_CONFIG="$REPOS_JSON" AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp"
 	# shellcheck source=../terminal-blocker-trigger-revisit.sh
 	source "${SCRIPT_DIR}/terminal-blocker-trigger-revisit.sh"
@@ -751,15 +759,32 @@ ${trigger_line}"
 	_tbtr_issue owner/repo 42 u4 runner-a true true true >/dev/null || return 1
 	_tbtr_record_read owner/repo 42 | jq -e '.decision == "not_external"' >/dev/null || return 1
 	[[ "$(_count '^enqueue local')" == 1 && "$(_count '^decide')" == 4 ]] || return 1
-	# Permission and source-access holds are never revisited or recorded.
-	rm -rf "$_TBTR_RECORD_DIR"
+	# Permission and source-access holds are never revisited. GH#39481: they
+	# get an ineligible read-cache memo that adds no wakeup, and an unchanged
+	# hit is not read again; a changed one is.
 	for reason in permission_required source_access_blocked; do
+		rm -rf "$_TBTR_RECORD_DIR"
 		_observation 40 "$reason" $'Trigger awaited: Vendor release 4.2 ships\n' || return 1
 		rc=0; _tbtr_issue owner/repo 42 u5 runner-a true true true >/dev/null || rc=$?
 		[[ "$rc" == 3 ]] || return 1
-		_tbtr_record_read owner/repo 42 >/dev/null && return 1
+		_tbtr_record_read owner/repo 42 | jq -e '.decision == "ineligible" and .updated_at == "u5" and (.checked_at | type) == "number"' \
+			>/dev/null || return 1
+		[[ -z "$(tbtr_next_due owner/repo 42)" ]] || return 1
+		: >"$fetch_log"
+		terminal_blocker_fetch_issue() { printf 'fetch\n' >>"$fetch_log"; printf '%s\n' "$tb_issue_json"; return 0; }
+		rc=0; _tbtr_issue owner/repo 42 u5 runner-a true true true >/dev/null || rc=$?
+		[[ "$rc" == 3 && ! -s "$fetch_log" ]] || return 1
+		rc=0; _tbtr_issue owner/repo 42 u6 runner-a true true true >/dev/null || rc=$?
+		[[ "$rc" == 3 && "$(rg -c '^fetch' "$fetch_log")" == 1 ]] || return 1
+		terminal_blocker_fetch_issue() { printf '%s\n' "$tb_issue_json"; return 0; }
 	done
 	[[ "$(_count '^decide')" == 4 ]] || return 1
+	# A transient read failure is never memoized.
+	rm -rf "$_TBTR_RECORD_DIR"
+	terminal_blocker_fetch_trusted_comments() { return 1; }
+	rc=0; _tbtr_issue owner/repo 42 u7 runner-a true true true >/dev/null || rc=$?
+	[[ "$rc" == 3 ]] || return 1
+	_tbtr_record_read owner/repo 42 >/dev/null && return 1
 	return 0
 )
 
@@ -788,6 +813,12 @@ _trigger_revisit_pass_cases() (
 	rg -q '^search user:alpha$' "$log" && rg -q '^search user:beta$' "$log" || return 1
 	out=$(rg '^repo ' "$log" | tr '\n' ';')
 	[[ "$out" == 'repo alpha/one 11,;repo alpha/three 13,;repo beta/two 21,;' ]] || return 1
+	# GH#39481: action lines reach stdout and the AI cap carries across repos.
+	: >"$log"
+	_tbtr_repo() { printf 'budget %s\n' "$2" >>"$log"; printf 'TRIGGER_REVISIT repo=%s issue=1 decision=still_pending next_at=1\n2\n' "$1"; return 0; }
+	out=$(tbtr_run alpha/one alpha/three) || return 1
+	[[ "$out" == *'TRIGGER_REVISIT repo=alpha/one issue=1 '* && "$out" == *'TRIGGER_REVISIT repo=alpha/three issue=1 '* ]] || return 1
+	[[ "$(rg '^budget ' "$log" | tr '\n' ';')" == 'budget 5;budget 3;' ]] || return 1
 	# Near the deadline every issue is still scheduled, but without AI.
 	unset -f _tbtr_repo
 	# shellcheck source=../terminal-blocker-trigger-revisit.sh
@@ -799,6 +830,15 @@ _trigger_revisit_pass_cases() (
 	_TBTR_DEADLINE=$((SECONDS + _TBTR_MIN_AI_S - 1))
 	_tbtr_repo alpha/one 5 runner-a $'alpha/one\t12\tu' >/dev/null || return 1
 	rg -q '^issue 11 ai=true$' "$log" && rg -q '^issue 12 ai=false$' "$log" || return 1
+	# GH#39481: a pass walks hits least-recently-checked first (never-checked
+	# lead, ties keep search order), so the tail of a long list is reached.
+	_tbtr_record_write alpha/one 31 '{"checked_at":200}' || return 1
+	_tbtr_record_write alpha/one 33 '{"revisited_at":100}' || return 1
+	: >"$log"
+	_TBTR_DEADLINE=$((SECONDS + 60))
+	_tbtr_repo alpha/one 5 runner-a $'alpha/one\t31\tu\nalpha/one\t32\tu\nalpha/one\t33\tu\nalpha/one\t34\tu' >/dev/null || return 1
+	out=$(rg -o '^issue [0-9]+' "$log" | cut -d' ' -f2 | tr '\n' ',')
+	[[ "$out" == '32,34,33,31,' ]] || return 1
 	return 0
 )
 
@@ -806,7 +846,7 @@ test_external_trigger_revisit() {
 	local status=0
 	_trigger_revisit_cases || status=1
 	_trigger_revisit_pass_cases || status=1
-	print_result "external_trigger_pending holds get one revisit outcome per interval; other classes are never revisited; passes search once per owner and withhold late AI" "$status"
+	print_result "external_trigger_pending holds get one revisit outcome per interval; other classes are never revisited and are memoized; passes search once per owner, walk least-recently-checked first and withhold late AI" "$status"
 	return 0
 }
 

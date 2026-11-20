@@ -74,7 +74,7 @@ def git_index_state(path, head=None, dirs=None):
     if any(tag == b"S" or tag.islower() for tag in tags):
         raise ValueError("index has skip-worktree/assume-unchanged entries")
     # Index-only metadata reads, not a working-tree scan or restore verification.
-    if intent_to_add_differs(root, index, strict=True):
+    if intent_to_add_differs(root, index):
         raise ValueError("intent-to-add index entries cannot be represented by two patches")
     # Git-only preserves current HEAD, not abandoned reflog/previous-HEAD history.
     # Unknown administration, unique drafts and interrupted operations still need
