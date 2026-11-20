@@ -29,6 +29,8 @@ readonly _HEADLESS_RUNTIME_DATABASE_LOADED=1
 # Shared SQL keyword avoids the repeated-string-literal ratchet treating each
 # independently parameterised query as a duplicate literal.
 readonly _HEADLESS_SQL_SELECT="SELECT"
+# Discard target for worker DB init steps with no SQLite stderr to keep.
+readonly _HEADLESS_DB_NO_ERR_FILE="/dev/null"
 
 # Resolve SCRIPT_DIR if not set by caller for defensive standalone sourcing.
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -54,6 +56,9 @@ _copy_worker_db_migration_ledger_table() {
 	local worker_db="$1"
 	local shared_db="$2"
 	local ledger_table="$3"
+	# Optional: file that receives (appends) SQLite stderr from failed writes so
+	# the init retry log can name the error; successful copies stay silent.
+	local err_file="${4:-$_HEADLESS_DB_NO_ERR_FILE}"
 	local has_shared has_worker schema shared_db_sql
 
 	has_shared=$(sqlite3_with_timeout "$shared_db" "${_HEADLESS_SQL_SELECT} 1 FROM sqlite_master WHERE type = 'table' AND name = '${ledger_table}' LIMIT 1;" 2>/dev/null || true)
@@ -61,17 +66,20 @@ _copy_worker_db_migration_ledger_table() {
 
 	has_worker=$(sqlite3_with_timeout "$worker_db" "${_HEADLESS_SQL_SELECT} 1 FROM sqlite_master WHERE type = 'table' AND name = '${ledger_table}' LIMIT 1;" 2>/dev/null || true)
 	if [[ -z "$has_worker" ]]; then
-		if ! schema=$(sqlite3_with_timeout "$shared_db" ".schema ${ledger_table}" 2>/dev/null) || [[ -z "$schema" ]] || ! printf '%s\n' "$schema" | sqlite3_with_timeout "$worker_db" >/dev/null 2>&1; then
+		if ! schema=$(sqlite3_with_timeout "$shared_db" ".schema ${ledger_table}" 2>>"$err_file") || [[ -z "$schema" ]] || ! printf '%s\n' "$schema" | sqlite3_with_timeout "$worker_db" >/dev/null 2>>"$err_file"; then
 			print_warning "OpenCode worker DB could not create ${ledger_table} migration ledger from shared DB"
 			return 1
 		fi
 	fi
 
 	shared_db_sql=$(sql_escape "$shared_db")
-	if ! sqlite3_with_timeout "$worker_db" <<-SQL >/dev/null 2>&1; then
+	# Deferred BEGIN: the first statement writes main, so only the worker DB is
+	# write-locked. BEGIN IMMEDIATE would also take the attached shared DB's
+	# write lock and fail while any session or worker merge writes it (GH#39417).
+	if ! sqlite3_with_timeout "$worker_db" <<-SQL >/dev/null 2>>"$err_file"; then
 		.bail on
 		ATTACH DATABASE '${shared_db_sql}' AS shared;
-		BEGIN IMMEDIATE;
+		BEGIN;
 		DELETE FROM main."${ledger_table}";
 		INSERT OR IGNORE INTO main."${ledger_table}" SELECT * FROM shared."${ledger_table}";
 		COMMIT;
@@ -85,17 +93,19 @@ _copy_worker_db_migration_ledger_table() {
 
 #######################################
 # Synchronise all known OpenCode migration ledger tables into worker DB.
-# Args: $1 = worker DB path, $2 = shared DB path.
+# Args: $1 = worker DB path, $2 = shared DB path,
+#       $3 = optional SQLite error file (appended; default discards).
 #######################################
 _sync_worker_db_migration_ledgers() {
 	local worker_db="$1"
 	local shared_db="$2"
+	local err_file="${3:-$_HEADLESS_DB_NO_ERR_FILE}"
 	local ledger_table
 	local sync_failed=0
 
 	[[ -f "$worker_db" && -f "$shared_db" ]] || return 0
 	for ledger_table in __drizzle_migrations data_migration migration; do
-		_copy_worker_db_migration_ledger_table "$worker_db" "$shared_db" "$ledger_table" || sync_failed=1
+		_copy_worker_db_migration_ledger_table "$worker_db" "$shared_db" "$ledger_table" "$err_file" || sync_failed=1
 	done
 	[[ "$sync_failed" -eq 0 ]] || return 1
 	return 0
@@ -270,26 +280,107 @@ _opencode_db_quote_identifier() {
 }
 
 #######################################
+# Record why one worker DB initialisation attempt failed.
+# Args: $1 = failed step, $2 = SQLite stderr file (may be /dev/null).
+# Sets _WORKER_DB_INIT_STEP and _WORKER_DB_INIT_DETAIL for the retry log.
+#######################################
+_worker_db_init_attempt_failed() {
+	local step="$1"
+	local err_file="$2"
+	local detail=""
+
+	if [[ "$err_file" != "$_HEADLESS_DB_NO_ERR_FILE" && -s "$err_file" ]]; then
+		detail=$(<"$err_file")
+		detail="${detail//$'\n'/ }"
+	fi
+	_WORKER_DB_INIT_STEP="$step"
+	_WORKER_DB_INIT_DETAIL="${detail:0:200}"
+	return 0
+}
+
+#######################################
+# Run one initialisation of a data-empty worker DB from the shared schema.
+# Args: $1 = worker DB path, $2 = shared DB path.
+#######################################
+_initialize_worker_db_from_shared_schema_once() {
+	local worker_db="$1"
+	local shared_db="$2"
+	local err_file="${worker_db}.init-err"
+	local schema_sql user_version
+
+	_WORKER_DB_INIT_STEP=""
+	_WORKER_DB_INIT_DETAIL=""
+	[[ -d "${worker_db%/*}" ]] || err_file="$_HEADLESS_DB_NO_ERR_FILE"
+	if ! schema_sql=$(sqlite3_with_timeout "$shared_db" ".schema --nosys" 2>"$err_file") || [[ -z "$schema_sql" ]]; then
+		_worker_db_init_attempt_failed "read_shared_schema" "$err_file"
+		return 1
+	fi
+	if ! rm -f "$worker_db" "${worker_db}-wal" "${worker_db}-shm" 2>/dev/null; then
+		_worker_db_init_attempt_failed "reset_worker_db" "$_HEADLESS_DB_NO_ERR_FILE"
+		return 1
+	fi
+	if ! printf '%s\n' "$schema_sql" | sqlite3_with_timeout "$worker_db" >/dev/null 2>"$err_file"; then
+		_worker_db_init_attempt_failed "apply_schema" "$err_file"
+		rm -f "$worker_db" "${worker_db}-wal" "${worker_db}-shm" 2>/dev/null || true
+		return 1
+	fi
+	if ! user_version=$(sqlite3_with_timeout "$shared_db" "PRAGMA user_version;" 2>"$err_file") ||
+		[[ ! "$user_version" =~ ^[0-9]+$ ]]; then
+		_worker_db_init_attempt_failed "read_user_version" "$err_file"
+		return 1
+	fi
+	if ! sqlite3_with_timeout "$worker_db" "PRAGMA user_version = ${user_version};" >/dev/null 2>"$err_file"; then
+		_worker_db_init_attempt_failed "set_user_version" "$err_file"
+		return 1
+	fi
+	# The successful set_user_version step left err_file empty; ledger copies
+	# append only SQLite errors, so the retry log names the failing statement.
+	if ! _sync_worker_db_migration_ledgers "$worker_db" "$shared_db" "$err_file"; then
+		_worker_db_init_attempt_failed "sync_migration_ledgers" "$err_file"
+		return 1
+	fi
+	[[ "$err_file" == "$_HEADLESS_DB_NO_ERR_FILE" ]] || rm -f "$err_file" 2>/dev/null || true
+	return 0
+}
+
+#######################################
 # Initialise a data-empty worker DB from the current shared schema.
 # Args: $1 = worker DB path, $2 = shared DB path.
+# The shared DB can be unreadable for tens of seconds while other sessions and
+# worker merges write it; a lock there must not cost the whole launch (exit 86)
+# or count as a worker terminal failure (GH#39417). Retries are bounded:
+# AIDEVOPS_WORKER_DB_INIT_ATTEMPTS (default 5) with a doubling delay starting at
+# AIDEVOPS_WORKER_DB_INIT_RETRY_DELAY seconds (default 2, about 30s total).
 #######################################
 _initialize_worker_db_from_shared_schema() {
 	local worker_db="$1"
 	local shared_db="$2"
-	local schema_sql user_version
+	local max_attempts="${AIDEVOPS_WORKER_DB_INIT_ATTEMPTS:-5}"
+	local delay="${AIDEVOPS_WORKER_DB_INIT_RETRY_DELAY:-2}"
+	local attempt=1
 
-	schema_sql=$(sqlite3_with_timeout "$shared_db" ".schema --nosys" 2>/dev/null) || return 1
-	[[ -n "$schema_sql" ]] || return 1
-	rm -f "$worker_db" "${worker_db}-wal" "${worker_db}-shm" 2>/dev/null || return 1
-	if ! printf '%s\n' "$schema_sql" | sqlite3_with_timeout "$worker_db" >/dev/null 2>&1; then
-		rm -f "$worker_db" "${worker_db}-wal" "${worker_db}-shm" 2>/dev/null || true
-		return 1
-	fi
-	user_version=$(sqlite3_with_timeout "$shared_db" "PRAGMA user_version;" 2>/dev/null) || return 1
-	[[ "$user_version" =~ ^[0-9]+$ ]] || return 1
-	sqlite3_with_timeout "$worker_db" "PRAGMA user_version = ${user_version};" >/dev/null 2>&1 || return 1
-	_sync_worker_db_migration_ledgers "$worker_db" "$shared_db" || return 1
-	return 0
+	[[ "$max_attempts" =~ ^[1-9][0-9]*$ ]] || max_attempts=5
+	[[ "$delay" =~ ^[0-9]+$ ]] || delay=2
+	# Base 10: a leading zero (e.g. 08) would otherwise be parsed as octal by
+	# the doubling arithmetic below and abort the retry loop.
+	delay=$((10#$delay))
+	while true; do
+		if _initialize_worker_db_from_shared_schema_once "$worker_db" "$shared_db"; then
+			if [[ "$attempt" -gt 1 ]]; then
+				print_info "[lifecycle] db_schema_init_recovered attempts=${attempt} pid=$$"
+			fi
+			return 0
+		fi
+		print_warning "[lifecycle] db_schema_init_retry attempt=${attempt}/${max_attempts} step=${_WORKER_DB_INIT_STEP:-unknown} detail=${_WORKER_DB_INIT_DETAIL:-none} pid=$$"
+		if [[ "$attempt" -ge "$max_attempts" ]]; then
+			rm -f "${worker_db}.init-err" 2>/dev/null || true
+			return 1
+		fi
+		sleep "$delay"
+		attempt=$((attempt + 1))
+		delay=$((delay * 2))
+	done
+	return 1
 }
 
 #######################################
@@ -775,11 +866,13 @@ _seed_worker_db_session_context() {
 	local project_columns session_columns
 	project_columns=$(_opencode_db_named_column_list "$shared_db" "$worker_db" project) || return 1
 	session_columns=$(_opencode_db_named_column_list "$shared_db" "$worker_db" session) || return 1
+	# Deferred BEGIN: the leading DELETEs write-lock only the worker DB; the
+	# shared DB is read, so do not take its write lock (GH#39417).
 	if ! sqlite3 "$worker_db" <<-SQL >/dev/null 2>&1; then
 		.bail on
 		.timeout 5000
 		ATTACH DATABASE '${shared_db_sql}' AS shared;
-		BEGIN IMMEDIATE;
+		BEGIN;
 		${clear_session_sql}
 		${clear_event_sql}
 		${clear_event_sequence_sql}
