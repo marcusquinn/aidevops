@@ -113,11 +113,13 @@ SQL
 # continuation refuse to resume a session whose delivered head already merged.
 # Probe first so steady-state startup takes no write lock; a concurrent
 # migration losing the race to a duplicate-column error is harmless.
+# Args: [db_path] (defaults to STATE_DB)
 _migrate_provider_sessions_head_columns() {
+	local db_path="${1:-$STATE_DB}"
 	local column=""
 	for column in head_sha head_branch; do
-		if ! sqlite3_with_timeout "$STATE_DB" "SELECT ${column} FROM provider_sessions LIMIT 0;" >/dev/null 2>&1; then
-			sqlite3_with_timeout "$STATE_DB" \
+		if ! sqlite3_with_timeout "$db_path" "SELECT ${column} FROM provider_sessions LIMIT 0;" >/dev/null 2>&1; then
+			sqlite3_with_timeout "$db_path" \
 				"ALTER TABLE provider_sessions ADD COLUMN ${column} TEXT NOT NULL DEFAULT '';" >/dev/null 2>&1 || true
 		fi
 	done

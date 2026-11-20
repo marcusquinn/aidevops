@@ -282,7 +282,8 @@ test_prepare_attempt_skips_resume_for_merged_recorded_head() {
 		# Older state DBs gain the head columns without losing rows.
 		local legacy_db="${TEST_ROOT}/gh38982-legacy.db"
 		sqlite3 "$legacy_db" "CREATE TABLE provider_sessions (provider TEXT NOT NULL, session_key TEXT NOT NULL, session_id TEXT NOT NULL, model TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT '', PRIMARY KEY (provider, session_key)); INSERT INTO provider_sessions (provider, session_key, session_id, model) VALUES ('openai', 'owner/one#issue-9', 'ses_legacy', 'openai/gpt-5.5');"
-		STATE_DB="$legacy_db" init_state_db
+		_migrate_provider_sessions_head_columns "$legacy_db"
+		_migrate_provider_sessions_head_columns "$legacy_db"
 		[[ "$(sqlite3 "$legacy_db" "SELECT session_id || '|' || head_sha || '|' || head_branch FROM provider_sessions;")" == "ses_legacy||" ]] ||
 			printf 'legacy_migration_failed\n'
 	) || [[ -n "$failures" ]]; then
