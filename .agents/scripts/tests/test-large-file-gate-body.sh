@@ -468,7 +468,8 @@ Issue #37939 is blocked by the large-file gate. Workers dispatched against this 
 ## How
 - Extract cohesive function groups into separate files
 - Keep a thin orchestrator in the original file that sources the extracted modules
-- Verify: `wc -l .agents/scripts/pulse-issue-reconcile.sh` should be below 2000
+- Verify: `wc -l .agents/scripts/pulse-issue-reconcile.sh` is 1200 lines or fewer, and so is every new module (headroom target: 60% of the 2000-line threshold)
+- Why headroom: hot files regrow, so a split that only just clears 2000 lines is back over it within days. Put frequently changed function groups in their own modules; find them with `git log --since=30.days --format= --name-only -- .agents/scripts/pulse-issue-reconcile.sh` and recent commit subjects (`git log --since=30.days --format=%s -- .agents/scripts/pulse-issue-reconcile.sh`)
 - Verify: `python3 ~/.aidevops/agents/scripts/file-split-verify.py --base origin/main --head HEAD` exits 0 (pure move: `removed-only=0 review=0 gated=0`); paste its summary line into the PR body (playbook section 7.5)
 
 **Reference pattern:** `.agents/reference/large-file-split.md` (playbook for file splits — covers identity-key preservation, CI false-positives, and PR body template).

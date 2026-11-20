@@ -85,6 +85,13 @@ Two in-repo precedents demonstrate the pattern end-to-end:
 | Simple | `issue-sync-helper.sh` | `issue-sync-lib.sh` |
 | Complex | `headless-runtime-lib.sh` | `headless-runtime-provider.sh`, `headless-runtime-failure.sh`, `headless-runtime-model.sh` |
 
+### Headroom target
+
+Split to 60% of `LARGE_FILE_LINE_THRESHOLD` or less (1200 of 2000 lines; tune with `LARGE_FILE_SPLIT_TARGET_PERCENT`). The original file and every new module must meet it.
+Hot files regrow: `pulse-dispatch-engine.sh` was split to 1766 and then just under 2000 lines, and both times passed 2000 again within days (#36027).
+Split by change axis: put function groups that recent commits touch most (`git log --since=30.days -- <file>`) in their own modules, so later fixes land there.
+The target is the brief's acceptance criterion; the gate still closes the debt issue once the file is below the threshold.
+
 ### 2.1 Orchestrator file
 
 The orchestrator retains the original filename. It keeps:
