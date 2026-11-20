@@ -25,8 +25,9 @@ class RuntimeEvidenceTest(unittest.TestCase):
             [], 2, stdout="99\tignored\n12\tdenied\n13\t12\n", stderr=""
         )
         with patch.object(fixture.subprocess, "run", return_value=result) as run:
-            lines = fixture.observe("/scripts", 1000, ["denied"], {12: "sshd", 13: "sshd-priv"})
+            lines, failed = fixture.observe("/scripts", 1000, ["denied"], {12: "sshd", 13: "sshd-priv"})
         self.assertEqual(lines, ["exit=2", "sshd\tdenied", "sshd-priv\tsshd"])
+        self.assertTrue(failed)
         self.assertEqual(run.call_args.args[0], ["python3", "/scripts/worktree_process_proc.py", "denied"])
         self.assertEqual(run.call_args.kwargs["user"], 1000)
         self.assertEqual(run.call_args.kwargs["extra_groups"], [])

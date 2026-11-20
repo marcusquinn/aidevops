@@ -125,7 +125,7 @@ def forged(uid: int, names: dict) -> None:
     names[ready.read()] = "forged"
 
 
-def observe(scripts: str, uid: int, mode: list, names: dict) -> list:
+def observe(scripts: str, uid: int, mode: list, names: dict) -> tuple:
     command = ["python3", os.path.join(scripts, "worktree_process_proc.py")] + mode
     result = subprocess.run(  # nosec B603 - fixed argv, no shell
         command,
@@ -143,7 +143,13 @@ def observe(scripts: str, uid: int, mode: list, names: dict) -> list:
         if pids and pids[0] not in names:
             continue  # container-internal process, not a fixture
         lines.append("\t".join(names.get(int(f), f) if f.isdigit() else f for f in fields))
-    return [f"exit={result.returncode}"] + sorted(lines)
+    report = [f"exit={result.returncode}"] + sorted(lines)
+    # denied/cwdmap exit nonzero only on observer failure (OSError or uncaught
+    # exception); paths exit 0/1/2 are all valid outcomes and cannot be told apart.
+    failed = mode[0] != "paths" and result.returncode != 0
+    if failed:
+        report += [f"stderr: {line}" for line in result.stderr.splitlines()]
+    return report, failed
 
 
 def main(arguments: list) -> int:
@@ -154,14 +160,18 @@ def main(arguments: list) -> int:
     unattested(uid, names)
     if "--forged" in arguments:
         forged(uid, names)
+    status = 0
     for mode in (["denied"], ["paths"], ["cwdmap", "/proc"]):
         print(f"## {' '.join(mode)} (uid {uid})")
-        for line in observe(scripts, uid, mode, names):
+        report, failed = observe(scripts, uid, mode, names)
+        for line in report:
             print(line)
+        if failed:
+            status = 1
     for pid in list(names):
         with contextlib.suppress(OSError):
             os.kill(pid, 9)
-    return 0
+    return status
 
 
 if __name__ == "__main__":
