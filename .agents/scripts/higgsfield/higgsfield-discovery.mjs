@@ -169,9 +169,10 @@ async function waitForLoginRedirect(page, options) {
     if (errorText) console.log('Error message:', errorText);
 
     if (options.headed) {
-      console.log('Waiting 60s for manual login completion...');
+      // Higgsfield can require an emailed verification code; allow time to fetch and enter it.
+      console.log('Waiting up to 5 min for manual completion (enter any emailed verification code in the browser window)...');
       try {
-        await page.waitForURL(isNonAuthUrl, { timeout: 60000 });
+        await page.waitForURL(isNonAuthUrl, { timeout: 300000 });
         console.log('Login completed manually! URL:', page.url());
       } catch {
         console.log('Timeout. Saving current state anyway...');
