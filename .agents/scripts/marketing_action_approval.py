@@ -25,6 +25,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from marketing_action_ceremony import plan_operation_lines, receipt_inverse_lines
+
 APPROVAL_SCHEMA = "aidevops.marketing-action-approval/v2"
 MAX_APPROVAL_TTL_SECONDS = 900
 MAX_RECORD_BYTES = 16_384
@@ -375,12 +377,7 @@ def _plan_subject(plan: Any) -> Tuple[Dict[str, Any], str, List[str]]:
         operations = plan.get("operations")
         _require(isinstance(operations, list) and len(operations) == len(actions),
                  "plan operations do not match its actions")
-        for item, operation in zip(actions, operations):
-            lines.append(f"- APPLY {item.get('id')} [{item.get('kind')}] {item.get('summary')}")
-            lines.append(f"    before:    {json.dumps(item.get('before'), sort_keys=True)}")
-            lines.append(f"    after:     {json.dumps(item.get('after'), sort_keys=True)}")
-            lines.append(f"    operation: {json.dumps(operation, sort_keys=True)}")
-        return plan, schema, lines
+        return plan, schema, lines + plan_operation_lines(actions, operations)
     for item in actions:
         if item.get("status") == "ready":
             # apply replaces exactly `old` with `new` once in `path` after verifying before_sha256.
@@ -407,10 +404,7 @@ def _receipt_subject(receipt: Any) -> Tuple[Dict[str, Any], str, List[str], str]
                  "receipt actions are invalid")
         subject["action_set"] = receipt.get("action_set")
         lines.append(f"Authorised action set: {json.dumps(subject['action_set'])}")
-        for item in reversed(actions):  # the order rollback sends them in
-            lines.append(f"- REVERT {item.get('id')} [{item.get('kind')}] {item.get('summary')}")
-            lines.append(f"    restore:   {json.dumps(item.get('before'), sort_keys=True)}")
-            lines.append(f"    operation: {json.dumps(item.get('inverse'), sort_keys=True)}")
+        lines += receipt_inverse_lines(actions)
     else:
         files = receipt.get("files")
         _require(isinstance(files, list) and all(isinstance(item, dict) for item in files),
