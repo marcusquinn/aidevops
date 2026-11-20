@@ -1,6 +1,6 @@
 <?php
 /**
- * Fluent Boards cards over WP-CLI, through the plugin's own models (GH#38593, GH#38699).
+ * Fluent Boards cards over WP-CLI, through the plugin's own models (GH#38593, GH#38699, GH#39380).
  *
  * SPDX-License-Identifier: MIT
  * SPDX-FileCopyrightText: 2026 Marcus Quinn
@@ -13,6 +13,8 @@
  *   wp eval-file wp-fluent-boards.php move card=ID stage=ID|TITLE --user=<id>
  *   wp eval-file wp-fluent-boards.php comment card=ID body_file=PATH --user=<id>
  *   wp eval-file wp-fluent-boards.php check card=ID item=ID --user=<id>
+ *   wp eval-file wp-fluent-boards.php assign cards=ID[,ID...] member=USER_ID --user=<id>
+ *   wp eval-file wp-fluent-boards.php unassign cards=ID[,ID...] member=USER_ID --user=<id>
  *
  * Prints JSON. Exit codes: 0 done, 1 not found or write not confirmed by
  * read-back, 2 usage error or Fluent Boards unavailable on this site/blog.
@@ -40,6 +42,7 @@ require_once __DIR__ . '/wp-fluent-boards-store.php';
 require_once __DIR__ . '/wp-fluent-boards-reader.php';
 require_once __DIR__ . '/wp-fluent-boards-writer.php';
 require_once __DIR__ . '/wp-fluent-boards-creator.php';
+require_once __DIR__ . '/wp-fluent-boards-assigner.php';
 
 if ( ! class_exists( 'WPFB_Cards' ) ) {
 
@@ -50,16 +53,18 @@ if ( ! class_exists( 'WPFB_Cards' ) ) {
 
 		// Action => array( handler class, required keys ).
 		const ACTIONS = array(
-			'boards'  => array( 'WPFB_Reader', array() ),
-			'cards'   => array( 'WPFB_Reader', array( 'board' ) ),
-			'show'    => array( 'WPFB_Reader', array( 'card' ) ),
-			'add'     => array( 'WPFB_Creator', array( 'board', 'title' ) ),
-			'move'    => array( 'WPFB_Writer', array( 'card', 'stage' ) ),
-			'comment' => array( 'WPFB_Writer', array( 'card', 'body_file' ) ),
-			'check'   => array( 'WPFB_Writer', array( 'card', 'item' ) ),
+			'boards'   => array( 'WPFB_Reader', array() ),
+			'cards'    => array( 'WPFB_Reader', array( 'board' ) ),
+			'show'     => array( 'WPFB_Reader', array( 'card' ) ),
+			'add'      => array( 'WPFB_Creator', array( 'board', 'title' ) ),
+			'move'     => array( 'WPFB_Writer', array( 'card', 'stage' ) ),
+			'comment'  => array( 'WPFB_Writer', array( 'card', 'body_file' ) ),
+			'check'    => array( 'WPFB_Writer', array( 'card', 'item' ) ),
+			'assign'   => array( 'WPFB_Assigner', array( 'cards', 'member' ) ),
+			'unassign' => array( 'WPFB_Assigner', array( 'cards', 'member' ) ),
 		);
 
-		const NUMERIC = array( 'board', 'card', 'item' );
+		const NUMERIC = array( 'board', 'card', 'item', 'member' );
 
 		/**
 		 * Entry point for `wp eval-file`.
@@ -119,7 +124,7 @@ if ( ! class_exists( 'WPFB_Cards' ) ) {
 		private static function parse_options( $action, array $args ) {
 			if ( ! isset( self::ACTIONS[ $action ] ) ) {
 				$shown = '' === $action ? '<none>' : $action;
-				throw new WPFB_Error( 'Unknown action: ' . $shown . ' (boards|cards|show|add|move|comment|check)', 2 );
+				throw new WPFB_Error( 'Unknown action: ' . $shown . ' (boards|cards|show|add|move|comment|check|assign|unassign)', 2 );
 			}
 			$options = self::split_pairs( $args );
 			$missing = array_diff( self::ACTIONS[ $action ][1], array_keys( $options ) );

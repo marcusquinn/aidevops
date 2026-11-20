@@ -680,7 +680,9 @@ Commands:
                                       boards | cards --board ID [--stage S] | show --card ID
                                       add --board ID --title T [--stage S] [--body-file F]
                                       move --card ID --stage S | comment --card ID --body-file F
-                                      check --card ID --item ID  (writes need --user)
+                                      check --card ID --item ID
+                                      assign|unassign --card ID[,ID...] --member USER_ID
+                                      (writes need --user)
                                                                              (tools/wordpress/fluent-mcp.md "Work a setup board")
   --fluentsmtp <site> <action> [--url URL]
                                        FluentSMTP Amazon SES connections (JSON output):
