@@ -4,6 +4,7 @@
 """Exercise the scan configuration boundary without real scanners or network."""
 
 import concurrent.futures
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -25,7 +26,7 @@ def main():
             stub = binaries / name
             stub.write_text(
                 '#!/bin/sh\nprintf "%s\\n" "$0 $*" >> "$SCAN_CALL_LOG"\n'
-                'case "$0" in */secretlint) exit "${SCAN_EXIT:-0}";; esac\n'
+                'case "$0" in */secretlint) [ -n "$SCAN_JSON" ] && cat "$SCAN_JSON"; exit "${SCAN_EXIT:-0}";; esac\n'
                 'exit 0\n', encoding="utf-8"
             )
             stub.chmod(0o700)
@@ -69,7 +70,55 @@ def main():
         after = {path.name: path.read_bytes() for path in project.iterdir() if path.is_file()}
         assert before == after, "configured scans changed project files"
         assert "secretlint **/* --format json" in calls.read_text(encoding="utf-8")
-    print("PASS scan/lint missing config, concurrency, explicit init, configured exit codes")
+
+        # Summary mode: content-free output, excluded = candidates - scanned.
+        marker = "SYNTHETIC_FILE_BODY_MARKER"
+        (project / "kept.txt").write_text(marker, encoding="utf-8")
+        (project / "found.txt").write_text(marker, encoding="utf-8")
+        (project / "skipped.txt").write_text(marker, encoding="utf-8")
+        ignore.write_text(marker + "\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+        subprocess.run(["git", "add", "-A"], cwd=project, check=True)
+        scanned = json.dumps([
+            {"filePath": str(project / "kept.txt"), "sourceContent": marker, "messages": []},
+            {"filePath": str(project / "found.txt"), "sourceContent": marker, "messages": [
+                {"ruleId": "synthetic-rule", "message": marker, "data": {"v": marker}, "range": [0, 1]},
+                {"ruleId": "synthetic-rule", "message": marker, "range": [2, 3]},
+            ]},
+        ])
+        results_file = root / "results.json"
+        results_file.write_text(scanned, encoding="utf-8")
+        summary_env = {**environment, "SCAN_JSON": str(results_file)}
+
+        def summary(exit_code):
+            return subprocess.run(
+                ["bash", str(HELPER), "summary"], cwd=project,
+                env={**summary_env, "SCAN_EXIT": str(exit_code)},
+                stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                timeout=30, check=False,
+            )
+
+        result = summary(1)
+        output = result.stdout + result.stderr
+        assert result.returncode == 1, result
+        assert marker not in output and "sourceContent" not in output, result
+        assert "excluded-path: skipped.txt" in output, result
+        assert "excluded-path: .secretlintignore" in output, result
+        assert "finding: found.txt\tsynthetic-rule\t2" in output, result
+        assert "scanned: 2" in output and "flagged: 1" in output, result
+        result = summary(0)
+        assert result.returncode == 1, "findings must not look clean"
+        result = subprocess.run(
+            ["bash", str(HELPER), "summary"], cwd=project,
+            env={**environment, "SCAN_EXIT": "2"}, stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        assert result.returncode == 2, result
+        assert "scanned:" not in result.stdout, "fatal scan printed a summary"
+        results_file.write_text("[]", encoding="utf-8")
+        result = summary(0)
+        assert result.returncode == 0 and "scanned: 0" in result.stdout, result
+    print("PASS scan/lint missing config, concurrency, explicit init, configured exit codes, content-free summary")
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ set -euo pipefail
 #   mask        - Mask secrets in a file
 #   status      - Check installation and configuration
 #   fix         - Mask secrets and fix files in place
+#   summary     - Content-free scan summary (safe for AI sessions)
 #   quick       - Quick scan without installation (npx)
 #   docker      - Run scan via Docker
 #   help        - Show this help message
@@ -597,6 +598,113 @@ run_secretlint_scan() {
 	return "${exit_code}"
 }
 
+# List candidate files (tracked; plus untracked when requested) one per line.
+list_summary_candidates() {
+	local include_untracked="${1:-}"
+	local file
+	if git rev-parse --is-inside-work-tree &>/dev/null; then
+		while IFS= read -r file; do
+			if [[ -e "${file}" ]]; then
+				printf '%s\n' "${file}"
+			fi
+		done < <(git ls-files)
+	fi
+	if [[ "${include_untracked}" == "untracked" ]]; then
+		if command -v rg &>/dev/null; then
+			rg --files --hidden -g '!.git' 2>/dev/null | sed 's#^\./##' || true
+		else
+			git ls-files --others --exclude-standard 2>/dev/null || true
+		fi
+	fi
+	return 0
+}
+
+# Content-free scan summary for AI sessions: file paths, per-file rule IDs and
+# counts, and excluded paths. Never emits sourceContent, messages, data or ranges.
+run_secretlint_summary() {
+	local target="${1:-${DEFAULT_GLOB_PATTERN}}"
+	local include_untracked="${2:-}"
+
+	if [[ "${target}" == *";"* ]] || [[ "${target}" == *"|"* ]] || [[ "${target}" == *"&"* ]] || [[ "${target}" == *"\`"* ]]; then
+		print_error "Invalid target pattern: contains forbidden characters"
+		return 1
+	fi
+	if [[ ! -f "${SECRETLINT_CONFIG_FILE}" ]]; then
+		print_error "No configuration found. Run: $0 init"
+		return 2
+	fi
+	if ! command -v jq &>/dev/null; then
+		print_error "jq is required for summary mode"
+		return 2
+	fi
+
+	local rules_check=0
+	check_rules_installed "${SECRETLINT_CONFIG_FILE}" >/dev/null 2>&1 || rules_check=$?
+	if [[ "${rules_check}" -eq 1 ]]; then
+		print_error "Secretlint rules not properly installed. Run: $0 install"
+		return 2
+	fi
+
+	local cmd cmd_array
+	cmd=$(get_secretlint_cmd)
+	cmd_array=()
+	read -ra cmd_array <<<"${cmd}"
+	cmd_array+=("${target}" "--secretlintrc" "${SECRETLINT_CONFIG_FILE}")
+	if [[ -f "${SECRETLINT_IGNORE_FILE}" ]]; then
+		cmd_array+=("--secretlintignore" "${SECRETLINT_IGNORE_FILE}")
+	fi
+	cmd_array+=("--format" "json")
+
+	local work candidates summary
+	work=$(mktemp -d)
+	candidates="${work}/candidates"
+	summary="${work}/summary"
+	list_summary_candidates "${include_untracked}" | sort -u >"${candidates}"
+
+	# Raw scanner output contains file contents: it only ever flows into jq.
+	local scan_status=0 jq_status=0
+	set +e
+	"${cmd_array[@]}" 2>/dev/null | jq -r --rawfile candidates "${candidates}" --arg root "${PWD}/" '
+		def rel: if startswith($root) then .[($root | length):] else . end;
+		[.[] | {path: (.filePath | rel), count: (.messages | length), rules: ([.messages[].ruleId] | unique)}] as $files
+		| ($files | map(.path)) as $scanned
+		| ($candidates | split("\n") | map(select(. != ""))) as $cand
+		| ($cand - $scanned) as $excluded
+		| ($files | map(select(.count > 0))) as $flagged
+		| "scanned: \($files | length)",
+		  "flagged: \($flagged | length)",
+		  "excluded: \($excluded | length)",
+		  ($flagged[] | "finding: \(.path)\t\(.rules | join(","))\t\(.count)"),
+		  ($excluded[] | "excluded-path: \(.)")
+	' >"${summary}"
+	local statuses=("${PIPESTATUS[@]}")
+	scan_status=${statuses[0]}
+	jq_status=${statuses[1]}
+	set -e
+	rm -f "${candidates}"
+
+	local flagged_count=0
+	if [[ "${scan_status}" -ne 0 ]] && [[ "${scan_status}" -ne 1 ]]; then
+		rm -rf "${work}"
+		print_error "Scan failed (exit ${scan_status}) - no summary produced"
+		return 2
+	fi
+	if [[ "${jq_status}" -ne 0 ]] || [[ ! -s "${summary}" ]]; then
+		rm -rf "${work}"
+		print_error "Scan output could not be summarised - no summary produced"
+		return 2
+	fi
+
+	flagged_count=$(sed -n 's/^flagged: //p' "${summary}")
+	echo "target: ${target}"
+	cat "${summary}"
+	rm -rf "${work}"
+	if [[ "${flagged_count}" -gt 0 ]] || [[ "${scan_status}" -eq 1 ]]; then
+		return 1
+	fi
+	return 0
+}
+
 # Run quick scan via npx (no installation)
 run_quick_scan() {
 	local target="${1:-${DEFAULT_GLOB_PATTERN}}"
@@ -951,6 +1059,7 @@ show_help() {
 	echo "  init                     - Initialize project configuration"
 	echo "  scan [target] [format]   - Scan files for secrets"
 	echo "  lint [target] [format]   - Alias for scan"
+	echo "  summary [target] [untracked] - Content-free scan summary (paths, rule IDs, counts, excluded)"
 	echo "  quick [target]           - Quick scan via npx (no install)"
 	echo "  docker [target]          - Scan via Docker"
 	echo "  mask <file> [output]     - Mask secrets in a file"
@@ -960,14 +1069,15 @@ show_help() {
 	echo "  status                   - Show installation and configuration status"
 	echo "  help                     - Show this help message"
 	echo ""
-	echo "Formats: stylish (default), json, compact, table, sarif, mask-result"
+	echo "Formats: stylish (default), compact, table, sarif, mask-result, json"
+	echo "WARNING: json output embeds full file contents (sourceContent). AI sessions must use 'summary'."
 	echo ""
 	echo "Examples:"
 	echo "  $0 install               # Install locally"
 	echo "  $0 init                  # Initialize configuration"
 	echo "  $0 scan                  # Scan all files"
 	echo "  $0 scan \"src/**/*\"       # Scan specific directory"
-	echo "  $0 scan . json           # Output as JSON"
+	echo "  $0 summary               # Safe summary for AI sessions (no file contents)"
 	echo "  $0 quick                 # Quick scan (no install)"
 	echo "  $0 docker                # Scan via Docker"
 	echo "  $0 mask .env.example     # Mask secrets in file"
@@ -1011,6 +1121,9 @@ main() {
 		;;
 	"scan" | "lint")
 		run_secretlint_scan "${arg2}" "${arg3}" "${arg4}"
+		;;
+	"summary" | "scan-summary")
+		run_secretlint_summary "${arg2}" "${arg3}"
 		;;
 	"quick")
 		run_quick_scan "${arg2}"
