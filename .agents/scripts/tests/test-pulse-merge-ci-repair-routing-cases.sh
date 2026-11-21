@@ -453,6 +453,7 @@ define_ci_dispatch_helpers() {
 		_ci_merge_check_sets
 		_ci_repair_required_checks_json
 		_ci_repair_checks_for_dispatch
+		_ci_repair_launch_labels_refuse
 		_dispatch_ci_fix_worker
 	)
 	local fn fn_src=""
@@ -1626,6 +1627,30 @@ test_ci_feedback_defers_without_initial_head_snapshot() {
 		print_result "missing PR head snapshot records repair deferral" 1 "Log: $(cat "$LOGFILE")"
 	else
 		print_result "CI repair fails closed without an initial head snapshot" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_feedback_refuses_ownership_label_added_before_launch() {
+	setup_test_env
+	TEST_CHECK_SCENARIO="terminal_failure"
+	define_feedback_helpers || { print_result "defines feedback helpers for launch-time labels" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	local label="" prompt_file=""
+	for label in no-takeover needs-maintainer-review external-contributor; do
+		export TEST_DISPATCH_PR_LABELS="origin:worker,${label}"
+		_dispatch_ci_fix_worker "100" "owner/repo" "42"
+	done
+	unset TEST_DISPATCH_PR_LABELS
+	# The state dir stays absent when nothing launched; find then exits non-zero.
+	prompt_file=$(find "$AIDEVOPS_CI_REPAIR_STATE_DIR" -name prompt.md -type f -print -quit 2>/dev/null) || prompt_file=""
+	if [[ -n "$prompt_file" ]] || grep -qF 'run --role worker' "$GH_LOG"; then
+		print_result "launch-time ownership label stops CI repair" 1 "Dispatch log: $(cat "$GH_LOG")"
+	elif [[ "$(grep -cF 'gained an ownership label' "$LOGFILE")" != "3" ]]; then
+		print_result "launch-time ownership label records each refusal" 1 "Log: $(cat "$LOGFILE")"
+	else
+		print_result "CI repair re-reads ownership labels at the launch boundary" 0
 	fi
 	teardown_test_env
 	return 0

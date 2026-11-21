@@ -15,7 +15,7 @@ printf '%s\n' "gh $*" >>"${GH_LOG:-/dev/null}"
 
 if [[ "${1:-} ${2:-}" == "pr view" ]]; then
 	if [[ "$*" == *"headRefOid,headRefName,isCrossRepository,maintainerCanModify"* ]]; then
-		printf '%s\tfeature/repair\tfalse\ttrue\n' "${TEST_PR_HEAD_SHA}"
+		printf '%s\tfeature/repair\tfalse\ttrue\t%s\n' "${TEST_PR_HEAD_SHA}" "${TEST_DISPATCH_PR_LABELS:-}"
 		exit 0
 	fi
 	if [[ "$*" == *"--json labels"* ]]; then

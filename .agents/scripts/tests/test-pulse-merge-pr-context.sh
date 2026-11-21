@@ -266,6 +266,20 @@ test_route_uses_provided_labels() {
 	return 0
 }
 
+# t19244: the runtime-pending module routes a held worker PR here with
+# hold-for-review in its labels; CI repair must still reach dispatch.
+test_held_worker_pr_reaches_ci_dispatch() {
+	: >"$GH_CALL_LOG"
+	_route_pr_to_fix_worker "124" "owner/repo" "456" "ci" "origin:worker,hold-for-review,status:in-review" || true
+
+	if ! grep -q "dispatch-ci 124 owner/repo 456" "$GH_CALL_LOG"; then
+		fail "held worker PR reaches CI repair dispatch" "Expected CI dispatch: $(cat "$GH_CALL_LOG")"
+		return 0
+	fi
+	pass "held worker PR reaches CI repair dispatch"
+	return 0
+}
+
 test_route_falls_back_to_linked_worker_issue_for_ci() {
 	: >"$GH_CALL_LOG"
 	export ISSUE_LABELS="origin:worker,status:in-review"
@@ -771,6 +785,7 @@ main() {
 	test_review_repair_rebase_revalidates_live_pr_authority
 	test_review_repair_rebase_updates_when_strictly_eligible
 	test_route_uses_provided_labels
+	test_held_worker_pr_reaches_ci_dispatch
 	test_route_falls_back_to_linked_worker_issue_for_ci
 	test_route_falls_back_to_linked_worker_issue_for_conflict
 	test_issue_origin_fallback_requires_collaborator_pr_author

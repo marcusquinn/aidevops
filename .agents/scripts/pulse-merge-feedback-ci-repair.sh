@@ -373,6 +373,23 @@ _ci_repair_required_checks_json() {
 	return "$evidence_exit"
 }
 
+# #aidevops:trust-boundary — callers gate on a label snapshot; an ownership
+# label added since then must still stop the launch (t19244 review).
+# Args: $1=pr_number, $2=repo_slug, $3=labels read at the launch boundary
+# Returns: 0 when an ownership label refuses the launch, 1 otherwise.
+_ci_repair_launch_labels_refuse() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local live_labels="$3"
+	case ",${live_labels}," in
+	*,no-takeover,* | *,needs-maintainer-review,* | *,external-contributor,*)
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} in ${repo_slug} gained an ownership label (${live_labels}) before launch — refusing CI repair" >>"$LOGFILE"
+		return 0
+		;;
+	esac
+	return 1
+}
+
 #######################################
 # Route CI failure feedback from a worker/trusted PR to a bounded repair worker
 # on the existing PR branch. Fall back to issue redispatch only when the branch
@@ -431,24 +448,24 @@ _dispatch_ci_fix_worker() {
 		return 0
 	fi
 
-	# t3225: Also collect raw failing check NAMES (one per line) for
-	# pattern classification. Failure to collect names is non-fatal — we
-	# fall back to the pre-t3225 behaviour (no pattern guidance block).
+	# t3225: raw failing check names (one per line) drive pattern classification;
+	# missing names are non-fatal and only omit the pattern guidance block.
 	if [[ -n "$failing_names" ]]; then
 		classification_output=$(_classify_ci_failures_by_pattern "$failing_names" 2>/dev/null) || classification_output=""
 	fi
 
 	# Bind repair evidence to the current branch head. This refresh also proves
 	# the branch is same-repository and writable before any worker is launched.
-	local pr_info="" pr_head_sha="" pr_head_ref="" is_cross_repo="" maintainer_can_modify=""
+	local pr_info="" pr_head_sha="" pr_head_ref="" is_cross_repo="" maintainer_can_modify="" live_labels=""
 	pr_info=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json headRefOid,headRefName,isCrossRepository,maintainerCanModify \
-		--jq '[(.headRefOid // ""),(.headRefName // ""),(.isCrossRepository // false),(.maintainerCanModify // false)] | @tsv' 2>/dev/null) || pr_info=""
-	IFS=$'\t' read -r pr_head_sha pr_head_ref is_cross_repo maintainer_can_modify <<<"$pr_info"
+		--json headRefOid,headRefName,isCrossRepository,maintainerCanModify,labels \
+		--jq '[(.headRefOid // ""),(.headRefName // ""),(.isCrossRepository // false),(.maintainerCanModify // false),([.labels[]?.name] | join(","))] | @tsv' 2>/dev/null) || pr_info=""
+	IFS=$'\t' read -r pr_head_sha pr_head_ref is_cross_repo maintainer_can_modify live_labels <<<"$pr_info"
 	if [[ -n "$initial_head_sha" && "$pr_head_sha" != "$initial_head_sha" ]]; then
 		echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} head changed while collecting CI evidence (${initial_head_sha} -> ${pr_head_sha:-unknown}) — deferring repair routing" >>"$LOGFILE"
 		return 0
 	fi
+	_ci_repair_launch_labels_refuse "$pr_number" "$repo_slug" "$live_labels" && return 0
 
 	local failure_fingerprint=""
 	failure_fingerprint=$(_ci_repair_hash_text "$(printf '%s\n' "$failing_checks_json" | jq -cS '.' 2>/dev/null)") || failure_fingerprint=""

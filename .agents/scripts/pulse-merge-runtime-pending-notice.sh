@@ -17,7 +17,11 @@
 #      sessions on that repository;
 #   3. with no such session (including after a notified session exits
 #      without verifying), logs an ATTENTION line (PR, age, reason), the
-#      format the merge pass already uses for work that needs a human.
+#      format the merge pass already uses for work that needs a human;
+#   4. when the head's required checks are terminal-red on a worker PR, routes
+#      it to the existing in-place CI repair (t19244). The hold makes the merge
+#      pass skip the PR before its own CI repair stage, so without this a red
+#      runtime-pending PR waits for a human. The hold is never removed here.
 # Headless verifiers and removing the hold are out of scope.
 
 [[ -n "${_PULSE_MERGE_RUNTIME_PENDING_NOTICE_LOADED:-}" ]] && return 0
@@ -85,33 +89,95 @@ _pmrp_attention_line() {
 	return 0
 }
 
-# Return 0 when the head's required checks are terminal-green. Runtime evidence
-# binds to the exact head, so a verifier is never asked to exercise a head that
-# is still running CI or is red: the CI repair would move the head and void the
-# evidence. Pending or unreadable state defers silently to the next recheck; a
-# terminal failure logs which contexts block verification. Outside the merge
-# pass (required-check helpers not sourced) the gate is skipped.
+# Return 0 when the head's required checks are terminal-green, 2 when at least
+# one required check failed terminally, 1 when checks are pending or unreadable.
+# Runtime evidence binds to the exact head, so a verifier is never asked to
+# exercise a head that is still running CI or is red: the CI repair would move
+# the head and void the evidence. Pending or unreadable state defers silently
+# to the next recheck; a terminal failure logs which contexts block
+# verification. Outside the merge pass (required-check helpers not sourced) the
+# gate is skipped.
+# Pending and failed states come from one exact-head rollup read, so a sibling
+# re-run between two reads cannot pair an old failure with a stale "nothing
+# pending" and route repair while a required check is active (t19244 review).
+# The states match _check_required_checks_have_pending_or_in_progress and
+# _required_checks_terminal_failure_names in pulse-merge-required-checks.sh.
 # Arguments: $1 repo slug, $2 PR number, $3 head SHA
 _pmrp_head_ci_ready() {
 	local repo_slug="$1"
 	local pr_number="$2"
 	local head="$3"
-	local pending_rc=0 failed=""
-	declare -F _check_required_checks_have_pending_or_in_progress >/dev/null 2>&1 || return 0
-	declare -F _required_checks_terminal_failure_names >/dev/null 2>&1 || return 0
-	_check_required_checks_have_pending_or_in_progress "$repo_slug" "$pr_number" "$head" || pending_rc=$?
-	[[ "$pending_rc" -eq 1 ]] || return 1
-	failed=$(_required_checks_terminal_failure_names "$repo_slug" "$pr_number" "$head") || return 1
-	[[ -n "$failed" ]] || return 0
-	echo "[pulse-merge] runtime-pending notice for ${repo_slug}#${pr_number}@${head:0:12} deferred: required checks failing (${failed//$'\n'/, }); CI must be green before runtime verification (GH#39645)" >>"$LOGFILE"
-	return 1
+	local contexts="" rollup="" state="" failed=""
+	declare -F _required_contexts_for_default_branch >/dev/null 2>&1 || return 0
+	declare -F gh_pr_check_runs_rest >/dev/null 2>&1 || return 0
+	contexts=$(_required_contexts_for_default_branch "$repo_slug") || return 1
+	[[ -n "$contexts" ]] || return 0
+	rollup=$(gh_pr_check_runs_rest "$repo_slug" "$head" 2>/dev/null) || return 1
+	# The rollup goes through stdin: a large one overflows argv (GH#39650).
+	state=$(printf '%s' "$rollup" | jq -r --arg req "$contexts" '
+		if type != "array" then error("invalid rollup") else
+		. as $checks
+		| [$req | split("\n")[] | select(length > 0)
+			| . as $ctx | {ctx: $ctx, c: ($checks | map(select((.name // "") == $ctx)) | last)}] as $rows
+		| if any($rows[]; .c == null or ((.c.conclusion // "") | length) == 0
+			or ((.c.status // "" | ascii_downcase) | test("^(queued|pending|in_progress|waiting|requested)$")))
+		then "pending"
+		else ([$rows[] | select((.c.conclusion // "" | ascii_downcase) | test("^(failure|cancelled|timed_out)$")) | .ctx]
+			| unique | sort | join(", ")) as $failed
+			| if $failed == "" then "green" else "red:" + $failed end
+		end end' 2>/dev/null) || return 1
+	case "$state" in
+	green) return 0 ;;
+	red:?*) failed="${state#red:}" ;;
+	*) return 1 ;;
+	esac
+	echo "[pulse-merge] runtime-pending notice for ${repo_slug}#${pr_number}@${head:0:12} deferred: required checks failing (${failed}); CI must be green before runtime verification (GH#39645)" >>"$LOGFILE"
+	return 2
 }
 
-# Route one held PR. Never fails the merge pass.
-# Arguments: $1 PR number, $2 repo slug
+# Route a terminal-red head of a held runtime-pending PR to the existing CI
+# repair (t19244). The repair runs on the PR branch, so the hold and the
+# runtime-pending declaration stay, and the verifier notice follows once the
+# repaired head is green. Nothing here removes the hold or merges. If in-place
+# repair is impossible or exhausted, the close-and-redispatch fallback reaches
+# the feedback finalizer, which defers any PR whose hold lacks automation
+# provenance, so a runtime-pending PR is never closed this way. A deferred or
+# maintainer-preserved route logs ATTENTION, so the stall states its reason.
+# Arguments: $1 PR number, $2 repo slug, $3 linked issue (may be empty),
+#            $4 live PR labels (comma-separated), $5 head SHA
+_pmrp_route_held_ci_repair() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local labels="$4"
+	local head="$5"
+	local route_rc=0
+	# #aidevops:trust-boundary — worker or takeover origin only. External,
+	# no-takeover, needs-maintainer-review and live interactive PRs stay with
+	# their owners. The hold may be ignored in this label check only because
+	# runtime-pending-notice already scoped it to runtime-pending alone; a
+	# missing gate fails closed.
+	declare -F _feedback_route_labels_allow_worker_route >/dev/null 2>&1 || return 0
+	declare -F _route_pr_to_fix_worker >/dev/null 2>&1 || return 0
+	_feedback_route_labels_allow_worker_route "$labels" 1 || return 0
+	_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" ci "$labels" "" "" "$head" || route_rc=$?
+	echo "[pulse-merge] held runtime-pending PR ${repo_slug}#${pr_number}@${head:0:12} has failing required checks; CI repair route rc=${route_rc}; hold-for-review kept (t19244)" >>"$LOGFILE"
+	if [[ "$route_rc" -eq "${PULSE_FEEDBACK_ROUTE_DEFERRED_RC:-75}" || "$route_rc" -eq "${PULSE_FEEDBACK_ROUTE_MAINTAINER_RC:-76}" ]]; then
+		echo "[pulse-merge] ATTENTION: PR #${pr_number} in ${repo_slug} is held as runtime-pending with failing required checks and CI repair could not proceed (route rc=${route_rc}; in-place repair exhausted, deferred or maintainer-preserved — see preceding _dispatch_ci_fix_worker / feedback finalizer lines) (t19244)" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+# Route one held PR. Never fails the merge pass. The caller only passes
+# non-draft PRs carrying hold-for-review.
+# Arguments: $1 PR number, $2 repo slug, $3 linked issue (optional),
+#            $4 live PR labels (optional; without them no CI repair routes)
 _pmrp_route_held_pr() {
 	local pr_number="$1"
 	local repo_slug="$2"
+	local linked_issue="${3:-}"
+	local labels="${4:-}"
+	local ci_rc=0
 	[[ "${DRY_RUN:-0}" != "1" ]] || return 0
 	[[ "$pr_number" =~ ^[1-9][0-9]*$ && "$repo_slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 0
 	[[ -x "$_PMRP_FULL_LOOP_HELPER" || -f "$_PMRP_FULL_LOOP_HELPER" ]] || return 0
@@ -136,10 +202,14 @@ _pmrp_route_held_pr() {
 	head=$(printf '%s' "$notice" | jq -r '.head // ""' 2>/dev/null) || return 0
 	[[ "$head" =~ ^[0-9a-f]{40}$ ]] || return 0
 	[[ -f "$sent_file" ]] && sent_head=$(<"$sent_file")
-	# A notified head already passed the CI gate; only a new head needs it.
-	if [[ "$sent_head" != "$head" ]]; then
-		_pmrp_head_ci_ready "$repo_slug" "$pr_number" "$head" || return 0
+	# Gate every pass, notified head or not: a sent notice records delivery, not
+	# lasting CI success, and a same-head re-run can turn red (t19244 review).
+	# The longer recheck interval after a notice bounds these reads.
+	_pmrp_head_ci_ready "$repo_slug" "$pr_number" "$head" || ci_rc=$?
+	if [[ "$ci_rc" -eq 2 ]]; then
+		_pmrp_route_held_ci_repair "$pr_number" "$repo_slug" "$linked_issue" "$labels" "$head"
 	fi
+	[[ "$ci_rc" -eq 0 ]] || return 0
 
 	sessions=$(_pmrp_interactive_sessions "$repo_slug")
 	if [[ -z "$sessions" ]]; then
