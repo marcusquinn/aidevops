@@ -8,6 +8,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=cloudron-package-release-lib.sh
 source "${SCRIPT_DIR}/cloudron-package-release-lib.sh"
+# shellcheck source=review-thread-gate-lib.sh
+source "${SCRIPT_DIR}/review-thread-gate-lib.sh"
 REPOS_FILE="${AIDEVOPS_REPOS_FILE:-${HOME}/.config/aidevops/repos.json}"
 RELEASE_SHA_PATTERN='^[a-f0-9]{40}$'
 RELEASE_APPROVAL_LABEL='release-approval-required'
@@ -53,6 +55,54 @@ release_checks() {
 	jq -e 'all(.[]; .bucket == "pass" or .bucket == "skipping") and any(.[]; .bucket == "pass" and (.name | test("(^| / )preflight$")))' <<<"$checks" >/dev/null || return 1
 	printf '%s\n' "$checks"
 	return 0
+}
+
+# GH#39648: every merge transport refuses unresolved review-bot threads
+# (GH#27137). Returns 0 only for a verified zero count; an unreadable count
+# fails closed so neither a request nor a hold release proceeds on it.
+release_review_threads_clear() {
+	local repo="$1" pr="$2" count=''
+	count=$(review_thread_gate_unresolved_bot_count "$repo" "$pr" 2>/dev/null) || count=''
+	[[ "$count" == 0 ]] && return 0
+	printf '%s PR #%s: %s unresolved review-bot thread(s)\n' "$repo" "$pr" "${count:-unknown}" >&2
+	return 1
+}
+
+# GH#39648: the repo-wide thread scanner skips held PRs, so a held release PR
+# with open review-bot threads would wait for a human session forever. Queue the
+# targeted response worker (dispatch-pr ignores the hold; its state dedupes and
+# bounds attempts). Best effort: the caller keeps its hold and waits either way.
+release_dispatch_thread_remediation() {
+	local repo="$1" pr="$2" scanner="${SCRIPT_DIR}/pr-review-thread-response-scanner.sh" path='' rc=0
+	if [[ ! -x "$scanner" ]]; then
+		printf 'WARN: %s PR #%s: review-thread scanner unavailable; threads need a response before release\n' "$repo" "$pr" >&2
+		return 0
+	fi
+	path=$(jq -r --arg slug "$repo" '[.initialized_repos[]? | select(((.slug // "") | ascii_downcase) == ($slug | ascii_downcase)) | .path // empty] | first // empty' "$REPOS_FILE" 2>/dev/null) || path=''
+	path="${path/#\~/$HOME}"
+	if [[ -z "$path" || ! -d "$path" ]]; then
+		printf 'WARN: %s PR #%s: no local checkout registered; review-thread response not queued\n' "$repo" "$pr" >&2
+		return 0
+	fi
+	# Scanner contract: 0 queued, 10 deferred, 11 converged, 12 maintainer attention.
+	"$scanner" dispatch-pr "$repo" "$path" "$pr" >/dev/null 2>&1 || rc=$?
+	case "$rc" in
+	0) printf '%s PR #%s: review-thread response queued\n' "$repo" "$pr" ;;
+	10) printf '%s PR #%s: review-thread response already active or deduplicated\n' "$repo" "$pr" ;;
+	11) printf '%s PR #%s: no matching review thread remains; recheck next routine\n' "$repo" "$pr" ;;
+	12) printf 'WARN: %s PR #%s: review-thread response attempts exhausted; maintainer attention needed\n' "$repo" "$pr" >&2 ;;
+	*) printf 'WARN: %s PR #%s: review-thread response dispatch returned %s; retry next routine\n' "$repo" "$pr" "$rc" >&2 ;;
+	esac
+	return 0
+}
+
+# GH#39648: a signature on a head that review-bot threads block can never
+# merge; asking for one wastes the maintainer's approval. The request waits (3).
+release_request_threads_clear() {
+	local repo="$1" pr="$2"
+	release_review_threads_clear "$repo" "$pr" && return 0
+	release_error "PR #${pr} has unresolved review-bot threads; respond to them (pr-review-thread-response-scanner.sh scan-pr ${repo} ${pr}) before requesting approval. The release routine queues a response and requests approval once they are resolved." || true
+	return 1
 }
 
 # Raw REST PR snapshot; callers apply their own trust checks.
@@ -190,6 +240,7 @@ release_request() {
 	[[ -n "${notes//[[:space:]]/}" ]] || release_error 'Release changelog entry is empty.' || return 1
 	#aidevops:trust-boundary — a bare hold belongs to another review workflow.
 	jq -e --arg label "$RELEASE_APPROVAL_LABEL" '(all(.labels[]; .name != "hold-for-review") or any(.labels[]; .name == $label)) and .auto_merge == null' <<<"$snapshot" >/dev/null || release_error 'Resolve existing PR hold/auto-merge before requesting a release.' || return 1
+	release_request_threads_clear "$repo" "$pr" || return 3
 	issues=$(release_issues "$repo") || { release_request_interrupted "$repo" "$pr"; return 4; }
 	existing=$(jq -c --arg marker "<!-- aidevops:cloudron-release-approval ${version} -->" '.[] | select(.body | contains($marker))' <<<"$issues") || return 1
 	if [[ -n "$existing" ]]; then
@@ -422,8 +473,9 @@ release_commit_proof() {
 	head=$(gh api "repos/${upstream}/commits/${new}" --jq '.sha') || return 1
 	[[ "$base" =~ $RELEASE_SHA_PATTERN && "$head" == "$finding" ]] || return 1
 	comparison=$(gh api "repos/${upstream}/compare/${base}...${head}") || return 1
-	jq -cn --arg repo "$upstream" --arg base "$base" --arg head "$head" --argjson comparison "$comparison" \
-		'{repository:$repo,base:$base,head:$head,status:$comparison.status,merge_base:$comparison.merge_base_commit.sha}' || return 1
+	# GH#39648: a large upstream compare exceeds argv limits; read it on stdin.
+	jq -c --arg repo "$upstream" --arg base "$base" --arg head "$head" \
+		'{repository:$repo,base:$base,head:$head,status:.status,merge_base:.merge_base_commit.sha}' <<<"$comparison" || return 1
 	return 0
 }
 
@@ -452,8 +504,9 @@ release_identity_proof() {
 		[[ "$asset_id" =~ ^[1-9][0-9]*$ ]] || return 1
 		digests=$(gh api -H 'Accept: application/octet-stream' "repos/${upstream}/releases/assets/${asset_id}" | grep -Eo 'sha256:[a-f0-9]{64}' | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))') || return 1
 	fi
-	jq -cn --arg repo "$upstream" --arg asset "$asset" --arg base "$base" --arg head "$head" --argjson digests "$digests" --argjson comparison "$comparison" \
-		'{repository:$repo,asset:(if $asset == "" then null else $asset end),old_commit:$base,new_commit:$head,status:$comparison.status,merge_base:$comparison.merge_base_commit.sha,digests:$digests}' || return 1
+	# GH#39648: the compare response is read on stdin, never argv.
+	jq -c --arg repo "$upstream" --arg asset "$asset" --arg base "$base" --arg head "$head" --argjson digests "$digests" \
+		'{repository:$repo,asset:(if $asset == "" then null else $asset end),old_commit:$base,new_commit:$head,status:.status,merge_base:.merge_base_commit.sha,digests:$digests}' <<<"$comparison" || return 1
 	return 0
 }
 
@@ -546,8 +599,10 @@ release_pin_proof() {
 # provenance from signed sources in the sibling Python module.
 release_companion_proof() {
 	local policy="$1" contents="$2" release="$3" document='' request='' image='' tag='' digest=''
-	document=$(jq -cn --argjson policy "$policy" --argjson contents "$contents" --argjson release "$release" \
-		'{policy:$policy,contents:$contents,release_proof:$release}') || return 1
+	# GH#39648: base64 file contents can exceed argv limits; stream them instead.
+	# Exactly three JSON values keep the fail-closed shape --argjson enforced.
+	document=$(printf '%s\n' "$policy" "$contents" "$release" |
+		jq -cs 'if length == 3 then {policy:.[0],contents:.[1],release_proof:.[2]} else error("companion proof input") end') || return 1
 	request=$(python3 "${SCRIPT_DIR}/cloudron_companion_image.py" <<<"$document") || return 1
 	IFS=$'\t' read -r image tag <<<"$request"
 	digest=$(release_registry_digest "$image" "$tag") || return 1
@@ -561,7 +616,8 @@ release_catalog_baseline_proof() {
 	local manifest_path='CloudronManifest.json'
 	version=$(jq -er --arg path "$manifest_path" '.[$path].base | @base64d | fromjson | .version | strings' <<<"$contents") || return 1
 	catalog=$(release_raw_contents "$repo" CloudronVersions.json "$merge_base") || return 1
-	catalog=$(jq -en --arg catalog "$catalog" '$catalog | @base64d | fromjson') || return 1
+	# GH#39648: the catalog grows every release; decode it from stdin, not argv.
+	catalog=$(printf '%s\n' "$catalog" | jq -enR 'input | @base64d | fromjson') || return 1
 	jq -e --arg version "$version" '.versions[$version] | .publishState == "published" and (.manifest | type == "object")' <<<"$catalog" >/dev/null || return 1
 	#aidevops:trust-boundary — jq supplies the canonical manifest's terminating LF.
 	digest=$(jq -cS --arg version "$version" '.versions[$version].manifest' <<<"$catalog" | shasum -a 256) || return 1
@@ -615,8 +671,9 @@ release_policy_authorizes() {
 		[[ -n "$path" ]] || continue
 		base_content=$(release_raw_contents "$repo" "$path" "$merge_base") || return 1
 		head_content=$(release_raw_contents "$repo" "$path" "$head") || return 1
-		contents=$(jq -c --arg path "$path" --arg base "$base_content" --arg head "$head_content" \
-			'. + {($path): {base: $base, head: $head}}' <<<"$contents") || return 1
+		# GH#39648: one line each (base64 has no whitespace), read on stdin.
+		contents=$(printf '%s\n' "$contents" "$base_content" "$head_content" |
+			jq -cnR --arg path "$path" '(input | fromjson) as $c | input as $b | input as $h | $c + {($path): {base: $b, head: $h}}') || return 1
 	done < <(jq -r --argjson policy "$policy" '[.[].filename | select(. == "CloudronManifest.json" or . == $policy.catalog_baseline.file or (. as $name | (($policy.pinned_files // []) + ($policy.check_files // [])) | index($name) != null))]
 		+ (if $policy.companion_image != null then ["Dockerfile", $policy.companion_image.verify_file] else [] end) | unique[]' <<<"$files")
 	if [[ "$mode" == commits ]]; then
@@ -634,8 +691,11 @@ release_policy_authorizes() {
 	if jq -e --argjson policy "$policy" 'any(.[]; .filename == $policy.catalog_baseline.file)' <<<"$files" >/dev/null; then
 		catalog_baseline_proof=$(release_catalog_baseline_proof "$repo" "$merge_base" "$contents") || return 1
 	fi
-	document=$(jq -cn --argjson policy "$policy" --arg finding "$finding_version" --argjson files "$files" --argjson contents "$contents" --argjson proof "$upstream_proof" --argjson release "$release_proof" --argjson pin "$pin_proof" --argjson companion "$companion_proof" --argjson baseline "$catalog_baseline_proof" \
-		'{policy: $policy, finding_upstream: $finding, upstream_proof: $proof, release_proof: $release, pin_proof: $pin, companion_proof:$companion, catalog_baseline_proof:$baseline, files: $files, contents: $contents}') || return 1
+	# GH#39648: stream the proof inputs; exactly eight JSON values fail closed.
+	document=$(printf '%s\n' "$policy" "$files" "$contents" "$upstream_proof" "$release_proof" "$pin_proof" "$companion_proof" "$catalog_baseline_proof" |
+		jq -cs --arg finding "$finding_version" 'if length == 8 then
+			{policy: .[0], finding_upstream: $finding, upstream_proof: .[3], release_proof: .[4], pin_proof: .[5], companion_proof: .[6], catalog_baseline_proof: .[7], files: .[1], contents: .[2]}
+			else error("policy document input") end') || return 1
 	verdict=$(printf '%s\n' "$document" | python3 "${SCRIPT_DIR}/cloudron_routine_bump.py" --repository "$repo") || rc=$?
 	if [[ "$rc" -ne 0 || "$verdict" != ROUTINE_BUMP ]]; then
 		printf '%s PR #%s: standing policy #%s does not apply (%s)\n' "$repo" "$pr" "$number" "${verdict:-predicate error}" >&2
@@ -857,11 +917,41 @@ release_pending_cache_write() {
 	return 0
 }
 
+# Merge an approved open release PR at its exact approved head.
+# Returns 0 when merged, 3 while waiting with the hold retained, 1 on failure.
+release_merge_approved_pr() {
+	local repo="$1" issue="$2" pr="$3" head="$4" authority="$5" checks='' verdict=''
+	checks=$(release_checks "$repo" "$pr") || return 1
+	: "$checks"
+	# GH#39648: the merge would fail on open review-bot threads (GH#27137).
+	# Keep the hold instead of toggling it every run, and queue a response.
+	# A remediation push moves the head, which the head-change path handles.
+	if ! release_review_threads_clear "$repo" "$pr"; then
+		printf '%s issue %s: approved; merge waits for resolved review-bot threads on PR #%s (hold retained)\n' "$repo" "$issue" "$pr"
+		release_dispatch_thread_remediation "$repo" "$pr"
+		return 3
+	fi
+	if [[ "$authority" == "$RELEASE_SIGNED_AUTHORITY" ]]; then
+		verdict=$(release_verify "$repo" "$issue") || return 1
+		[[ "$verdict" == VERIFIED ]] || return 1
+	else
+		# Re-prove the policy at the exact head immediately before merge.
+		release_policy_authorizes "$repo" "$pr" "$head" >/dev/null || return 1
+	fi
+	gh_pr_edit_safe "$pr" --repo "$repo" --remove-label hold-for-review >/dev/null || return 1
+	#aidevops:trust-boundary — retain the signed SHA through readiness gates.
+	if ! FULL_LOOP_EXPECTED_PR_HEAD_SHA="$head" "${SCRIPT_DIR}/full-loop-helper.sh" merge "$pr" "$repo" --squash; then
+		gh_pr_edit_safe "$pr" --repo "$repo" --add-label hold-for-review >/dev/null || return 1
+		return 1
+	fi
+	return 0
+}
+
 release_process_issue() {
 	local repo="$1" issue="$2" apply="$3"
-	local before="" after="" body="" pr="" head="" version="" snapshot="" checks="" release_url="" runs="" run_id="" rc=0
+	local before="" after="" body="" pr="" head="" version="" snapshot="" release_url="" runs="" run_id="" rc=0
 	local metadata="" fingerprint="" recheck="${AIDEVOPS_CLOUDRON_APPROVAL_RECHECK_SECONDS:-21600}"
-	local verdict="" run_status="" run_conclusion=""
+	local run_status="" run_conclusion=""
 	before=$(gh api "repos/${repo}/issues/${issue}") || return 1
 	jq -e --arg label "$RELEASE_APPROVAL_LABEL" '.state == "open" and any(.labels[]; .name == $label)' <<<"$before" >/dev/null || return 1
 	body=$(jq -r '.body' <<<"$before") || return 1
@@ -908,24 +998,17 @@ PR head changed after approval. No merge occurred. Update this issue's exact hea
 	fi
 	[[ "$apply" == true ]] || {
 		printf 'Approved release %s v%s (dry run)\n' "$repo" "$version"
+		# GH#39648: report the thread wait an apply run would take (read-only).
+		if [[ "$(jq -r '.state' <<<"$snapshot")" == open ]] && ! release_review_threads_clear "$repo" "$pr"; then
+			printf '%s issue %s: merge would wait for resolved review-bot threads on PR #%s (dry run)\n' "$repo" "$issue" "$pr"
+		fi
 		return 0
 	}
 	if [[ "$(jq -r '.state' <<<"$snapshot")" == open ]]; then
-		checks=$(release_checks "$repo" "$pr") || return 1
-		: "$checks"
-		if [[ "$authority" == "$RELEASE_SIGNED_AUTHORITY" ]]; then
-			verdict=$(release_verify "$repo" "$issue") || return 1
-			[[ "$verdict" == VERIFIED ]] || return 1
-		else
-			# Re-prove the policy at the exact head immediately before merge.
-			release_policy_authorizes "$repo" "$pr" "$head" >/dev/null || return 1
-		fi
-		gh_pr_edit_safe "$pr" --repo "$repo" --remove-label hold-for-review >/dev/null || return 1
-		#aidevops:trust-boundary — retain the signed SHA through readiness gates.
-		if ! FULL_LOOP_EXPECTED_PR_HEAD_SHA="$head" "${SCRIPT_DIR}/full-loop-helper.sh" merge "$pr" "$repo" --squash; then
-			gh_pr_edit_safe "$pr" --repo "$repo" --add-label hold-for-review >/dev/null || return 1
-			return 1
-		fi
+		rc=0
+		release_merge_approved_pr "$repo" "$issue" "$pr" "$head" "$authority" || rc=$?
+		[[ "$rc" -ne 3 ]] || return 0
+		[[ "$rc" -eq 0 ]] || return 1
 		snapshot=$(release_pr "$repo" "$pr") || return 1
 		release_record_merge_authority "$repo" "$issue" "$head" "$authority"
 	fi
@@ -1206,7 +1289,15 @@ release_request_held() {
 		printf '%s PR #%s: would request release approval (dry run)\n' "$repo" "$pr"
 		return 0
 	fi
-	release_request "$repo" "$pr" || return 1
+	local rc=0
+	release_request "$repo" "$pr" || rc=$?
+	if [[ "$rc" -eq 3 ]]; then
+		# GH#39648: no approval exists yet, so a remediation push costs nothing.
+		printf '%s PR #%s: release approval request waits for resolved review-bot threads\n' "$repo" "$pr"
+		release_dispatch_thread_remediation "$repo" "$pr"
+		return 3
+	fi
+	[[ "$rc" -eq 0 ]] || return 1
 	return 0
 }
 
