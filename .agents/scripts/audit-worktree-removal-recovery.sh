@@ -286,6 +286,7 @@ _worktree_recovery_archive_is_valid() {
 	local actual_admin=""
 	local actual_head=""
 	local real_git=""
+	local probe=""
 
 	if _worktree_recovery_is_compact "$archive_path"; then
 		_worktree_recovery_producer_command "$deadline_epoch" verify "$archive_path" || return $?
@@ -308,12 +309,15 @@ _worktree_recovery_archive_is_valid() {
 	fi
 	real_git=$(_worktree_cleanup_real_git) || return 1
 	recovery_admin_real=$(cd "$recovery_admin" 2>/dev/null && pwd -P) || return 1
-	actual_admin=$(_worktree_recovery_run_before_epoch "$deadline_epoch" \
-		"$real_git" -C "$archive_path" rev-parse --absolute-git-dir 2>/dev/null) || return $?
+	# One spawn answers admin dir and HEAD (GH#39560); output order follows the
+	# arguments. A newline inside the admin path changes the line count and refuses.
+	probe=$(_worktree_recovery_run_before_epoch "$deadline_epoch" \
+		"$real_git" -C "$archive_path" rev-parse --absolute-git-dir --verify HEAD 2>/dev/null) || return $?
+	[[ "$probe" == *$'\n'* && "$probe" != *$'\n'*$'\n'* ]] || return 1
+	actual_admin=${probe%%$'\n'*}
+	actual_head=${probe#*$'\n'}
 	actual_admin=$(cd "$actual_admin" 2>/dev/null && pwd -P) || return 1
 	[[ "$actual_admin" == "$recovery_admin_real" ]] || return 1
-	actual_head=$(_worktree_recovery_run_before_epoch "$deadline_epoch" \
-		"$real_git" -C "$archive_path" rev-parse --verify HEAD 2>/dev/null) || return $?
 	[[ "$actual_head" == "$expected_head" ]] || return 1
 	_worktree_recovery_run_before_epoch "$deadline_epoch" \
 		"$real_git" -C "$archive_path" status --porcelain=v1 -z --untracked-files=all \
