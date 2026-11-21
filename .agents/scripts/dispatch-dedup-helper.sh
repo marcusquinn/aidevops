@@ -1265,6 +1265,10 @@ _classify_runtime_dispatch_blocker_reason() {
 			printf 'runner_capability_unmet\n'
 			return 0
 			;;
+		*dispatch_block_reason*approval_signer_unverifiable*)
+			printf 'approval_signer_unverifiable\n'
+			return 0
+			;;
 		*dispatch_block_reason*ever_nmr_without_approval* | *blocked*ever*nmr*lacks*approval* | *requires*cryptographic*approval*)
 			printf 'ever_nmr_without_approval\n'
 			return 0
