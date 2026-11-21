@@ -176,7 +176,9 @@ data yields `routable_share: null`. `rest_core_cost_per_hour` is logged
 REST-core known cost scaled to one hour; `rest_core_saturation` divides it by
 `rest_core_limit`, read from the Pulse probe cache
 (`AIDEVOPS_PULSE_REST_CORE_CACHE`, default
-`~/.aidevops/cache/pulse-rest-core.json`). Without that cache both are `null`.
+`~/.aidevops/cache/pulse-rest-core.json`). Without that cache
+`rest_core_limit` and `rest_core_saturation` are `null`, while
+`rest_core_cost_per_hour` still reports the logged cost.
 
 ```bash
 aidevops github auth advise [--since 24h] [--write-advisory]
@@ -191,8 +193,12 @@ saturation test exists because the transport governor paces requests before
 quota reaches zero. Otherwise it removes that file. The session-start advisory
 display shows its first line once, and `aidevops security dismiss
 github-app-read-routing` suppresses it. Pulse refreshes it in the background at
-most every 6 hours (`AIDEVOPS_GITHUB_APP_ADVISE_INTERVAL`), at cycle start and
-when REST quota defers a progress stage; failures never affect the pulse.
+most every 6 hours (`AIDEVOPS_GITHUB_APP_ADVISE_INTERVAL`), at the start of each
+full cycle and when REST quota defers a progress stage. Early-return ticks
+(entry modes, short-circuits, lock-busy) skip it; a lock-busy tick means a full
+cycle is running and refreshes it. A failed refresh frees the 6h stamp and
+retries after 30 minutes (`AIDEVOPS_GITHUB_APP_ADVISE_RETRY_INTERVAL`);
+failures never affect the pulse.
 
 ## Upgrade and migration
 

@@ -123,11 +123,14 @@ def rest_core_saturation(report, limit):
 
 def advisory_due(opportunity, floor):
     share, low = opportunity["routable_share"], opportunity["rest_core_min_remaining"]
-    if share is None or low is None or not opportunity["owners_without_app_read"]:
+    if share is None or not opportunity["owners_without_app_read"]:
         return False
+    # The aggregator records REST-core cost even when no budget header was
+    # seen, so saturation stands on its own; min_remaining gates only exhaustion.
+    exhausted = low is not None and (low == 0 or low < floor)
     saturation = opportunity.get("rest_core_saturation")
     saturated = isinstance(saturation, float) and saturation >= REST_CORE_SATURATION_SHARE
-    return share >= 0.5 and (low == 0 or low < floor or saturated)
+    return share >= 0.5 and (exhausted or saturated)
 
 
 def advisory_text(opportunity):
