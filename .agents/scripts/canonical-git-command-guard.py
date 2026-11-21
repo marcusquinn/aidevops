@@ -119,7 +119,9 @@ def main() -> int:
         f"BLOCKED by canonical Git guard: {reason}. Use a linked worktree for edits. "
         "For an explicitly authorized clean canonical fast-forward, use "
         f"{recovery_helper} fast-forward-current; use sync-mirror when "
-        "verified preservation is required. Direct canonical Git mutation remains prohibited.",
+        "verified preservation is required. After a canonical checkout moved, mend "
+        f"linked-worktree pointers with {recovery_helper} repair-worktrees. "
+        "Direct canonical Git mutation remains prohibited.",
         file=sys.stderr,
     )
     return BLOCK_EXIT
