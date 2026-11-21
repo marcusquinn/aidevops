@@ -354,6 +354,8 @@ release_metadata() {
 release_policy_body() {
 	local repo="$1" command="$2" policy=""
 	local mode="${3:-semver}" upstream="${4:-}"
+	local zero_minor="${5:-false}"
+	[[ "$zero_minor" == false || ( "$zero_minor" == true && "$mode" != commits && "$mode" != commits-license-url ) ]] || return 1
 	# Inserted check lines: single-quoted or expansion-free double-quoted
 	# changelog assertions only (\x22 ", \x24 $, \x27 ', \x60 backtick).
 	local insertion='\t*assert_contains CHANGELOG(\.md)? (\x27[^\x27\x24\x60\\]*\x27|\x22([^\x22\x24\x60\\]|\\\x60)*\x22) \|\| return 1'
@@ -404,6 +406,12 @@ release_policy_body() {
 		;;
 	*) return 1 ;;
 	esac
+	if [[ "$zero_minor" == true ]]; then
+		policy=$(jq -c '. + {zero_minor:"routine"}' <<<"$policy") || return 1
+		# Conditional text preserves existing signed policy bodies byte-for-byte.
+		# shellcheck disable=SC2016 # Markdown backticks are literal.
+		printf '0.x minor upstream releases are routine: the signed `zero_minor: "routine"` opt-in allows strictly increasing releases within major 0. Major changes, including 0.x to 1.x, still require a per-release signature. 0.x minors may contain breaking changes or destructive migrations; add `needs-maintainer-review` to stop an individual PR. All other rules still apply. Adding this opt-in requires a new policy signature.\n\n'
+	fi
 	# The `<request>` placeholder keeps `sudo aidevops`: signed policy text must
 	# render identically on every host. Only the final command line varies (GH#39027).
 	# shellcheck disable=SC2016 # Markdown backticks are literal, not expansions.
@@ -800,10 +808,11 @@ release_ensure_policy_labels() {
 release_policy_request() {
 	local repo="$1" existing='' rc=0 url='' issue='' command='' body='' verdict='' verify_rc=0 expected=''
 	local mode="${2:-semver}" upstream="${3:-}" existing_command='' existing_expected=''
+	local zero_minor="${4:-false}"
 	local maintainer_prefix='Maintainer command:'
 	release_authority "$repo" || return 1
 	# Validate the requested signed schema before creating any issue.
-	release_policy_body "$repo" validation "$mode" "$upstream" >/dev/null || return 1
+	release_policy_body "$repo" validation "$mode" "$upstream" "$zero_minor" >/dev/null || return 1
 	existing=$(release_policy_issue "$repo") || rc=$?
 	[[ "$rc" -eq 0 || "$rc" -eq 2 ]] || return 1
 	if [[ "$rc" -eq 0 ]]; then
@@ -811,20 +820,20 @@ release_policy_request() {
 		body=$(jq -r '.body // ""' <<<"$existing") || return 1
 	else
 		release_ensure_policy_labels "$repo" || return 1
-		url=$(release_policy_body "$repo" 'Policy finalization pending. Do not sign until the maintainer command appears.' "$mode" "$upstream" |
+		url=$(release_policy_body "$repo" 'Policy finalization pending. Do not sign until the maintainer command appears.' "$mode" "$upstream" "$zero_minor" |
 			gh_create_issue --repo "$repo" --title "Standing release policy: ${repo##*/} routine upstream bumps" --body-file - \
 				--label "$RELEASE_POLICY_LABEL" --label persistent --label no-auto-dispatch) || return 1
 	fi
 	issue="${url##*/}"
 	[[ "$url" == https://* && "$issue" =~ ^[1-9][0-9]*$ ]] || release_error 'Created issue URL has no valid issue number.' || return 1
 	printf -v command '%s approve issue %s %s' "$(approval_cli_prefix)" "$issue" "$repo"
-	expected=$(release_policy_body "$repo" "${maintainer_prefix} \`${command}\`" "$mode" "$upstream") || return 1
+	expected=$(release_policy_body "$repo" "${maintainer_prefix} \`${command}\`" "$mode" "$upstream" "$zero_minor") || return 1
 	if [[ "$rc" -eq 0 ]]; then
 		# Only the exact canonical body is ready to sign. Its command prefix may
 		# come from another host's approval_cli_prefix (GH#39027).
 		existing_command=$(release_body_command "${body//$'\r'/}" "$issue" "$repo") || existing_command=""
 		if [[ -n "$existing_command" && "$existing_command" != "$command" ]]; then
-			existing_expected=$(release_policy_body "$repo" "${maintainer_prefix} \`${existing_command}\`" "$mode" "$upstream") || return 1
+			existing_expected=$(release_policy_body "$repo" "${maintainer_prefix} \`${existing_command}\`" "$mode" "$upstream" "$zero_minor") || return 1
 		else
 			existing_expected="$expected"
 		fi
@@ -1525,8 +1534,25 @@ main() {
 		release_request "$arg2" "$arg3" || return $?
 		;;
 	policy-request)
-		[[ $# -eq 2 || ( $# -eq 4 && ( "$arg3" == commits || "$arg3" == commits-license-url || "$arg3" == release-identity || "$arg3" == pins ) ) ]] || return 1
-		release_policy_request "$arg2" "${arg3:-semver}" "$arg4" || return 1
+		[[ $# -ge 2 && "$arg2" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+		local policy_mode=semver policy_upstream='' zero_minor=false dry_run=false
+		shift 2
+		while [[ $# -gt 0 ]]; do
+			local policy_option="$1" policy_value="${2:-}"
+			case "$policy_option" in
+			--zero-minor-routine) [[ "$zero_minor" == false ]] || return 1; zero_minor=true; shift ;;
+			--dry-run) [[ "$dry_run" == false ]] || return 1; dry_run=true; shift ;;
+			commits | commits-license-url | release-identity | pins)
+				[[ $# -ge 2 && "$policy_mode" == semver ]] || return 1
+				policy_mode="$policy_option"; policy_upstream="$policy_value"; shift 2 ;;
+			*) return 1 ;;
+			esac
+		done
+		if [[ "$dry_run" == true ]]; then
+			release_policy_body "$arg2" 'Dry run only. Create or finalize the policy before signing.' "$policy_mode" "$policy_upstream" "$zero_minor" || return 1
+		else
+			release_policy_request "$arg2" "$policy_mode" "$policy_upstream" "$zero_minor" || return 1
+		fi
 		;;
 	process)
 		local apply=false repo_filter="" issue_filter=""
@@ -1556,7 +1582,7 @@ main() {
 		release_process "$apply" "$repo_filter" "$issue_filter" || return 1
 		;;
 	help | --help | -h)
-		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | policy-request <repo> [commits <upstream-owner/repo> | commits-license-url <upstream-owner/repo> | release-identity <upstream-owner/repo:COMMIT_ARG:images-asset> | pins <json: upstream_repository, registry_images, release_checksum, license_version_url, release_identity>] | merge-guard <repo> <pr> <head> | process [--repo owner/repo] [--issue N] [--apply]\n'
+		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | policy-request <repo> [--zero-minor-routine] [--dry-run] [commits <upstream-owner/repo> | commits-license-url <upstream-owner/repo> | release-identity <upstream-owner/repo:COMMIT_ARG:images-asset> | pins <json: upstream_repository, registry_images, release_checksum, license_version_url, release_identity>] | merge-guard <repo> <pr> <head> | process [--repo owner/repo] [--issue N] [--apply]\n'
 		;;
 	*) return 1 ;;
 	esac

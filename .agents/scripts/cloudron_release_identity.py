@@ -23,7 +23,7 @@ PIN_KEYS = {"upstream_repository", "release_identity", "registry_images", "relea
 POLICY_KEYS = {
     "schema", "kind", "repository", "changelog_files", "pinned_files", "check_files", "check_insertion_pattern",
     "upstream_mode", "upstream_repository", "release_identity", "registry_images", "release_checksum",
-    "license_version_url", "companion_image", "catalog_baseline", "license_commit_url",
+    "license_version_url", "companion_image", "catalog_baseline", "license_commit_url", "zero_minor",
 }
 
 
