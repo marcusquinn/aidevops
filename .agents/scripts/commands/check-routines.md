@@ -45,6 +45,7 @@ Delegate interpretation to `@routines-health` when the report shows stale units,
 - Platform scheduler state: launchd pulse on macOS, user systemd pulse on Linux.
 - Routines source of truth: routines TODO enabled/disabled entries.
 - Deployment drift: deployed agents version versus source checkout version.
+- Routine run outcomes: for each routine in `~/.aidevops/.agent-workspace/routines/state.json` (`ROUTINE_STATE_FILE`), report `last_outcome` (`delivered`, `noop`, `unknown`), `last_outcome_reason` and `consecutive_noops` next to `consecutive_failures`. Flag any routine at or above its `noop_alert:N` threshold (default 6): it exits 0 but delivers nothing. One alert issue is filed per streak; a `delivered` run resets it.
 - Known stale scheduler hazards: dashboard `r912` disabled/unmanaged while legacy scheduler files still exist.
 
 ## Repair policy
