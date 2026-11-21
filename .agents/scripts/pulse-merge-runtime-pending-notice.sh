@@ -180,14 +180,14 @@ _pmrp_route_held_pr() {
 	head=$(printf '%s' "$notice" | jq -r '.head // ""' 2>/dev/null) || return 0
 	[[ "$head" =~ ^[0-9a-f]{40}$ ]] || return 0
 	[[ -f "$sent_file" ]] && sent_head=$(<"$sent_file")
-	# A notified head already passed the CI gate; only a new head needs it.
-	if [[ "$sent_head" != "$head" ]]; then
-		_pmrp_head_ci_ready "$repo_slug" "$pr_number" "$head" || ci_rc=$?
-		if [[ "$ci_rc" -eq 2 ]]; then
-			_pmrp_route_held_ci_repair "$pr_number" "$repo_slug" "$linked_issue" "$labels" "$head"
-		fi
-		[[ "$ci_rc" -eq 0 ]] || return 0
+	# Gate every pass, notified head or not: a sent notice records delivery, not
+	# lasting CI success, and a same-head re-run can turn red (t19244 review).
+	# The longer recheck interval after a notice bounds these reads.
+	_pmrp_head_ci_ready "$repo_slug" "$pr_number" "$head" || ci_rc=$?
+	if [[ "$ci_rc" -eq 2 ]]; then
+		_pmrp_route_held_ci_repair "$pr_number" "$repo_slug" "$linked_issue" "$labels" "$head"
 	fi
+	[[ "$ci_rc" -eq 0 ]] || return 0
 
 	sessions=$(_pmrp_interactive_sessions "$repo_slug")
 	if [[ -z "$sessions" ]]; then

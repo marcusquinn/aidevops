@@ -155,19 +155,23 @@ printf 'green\n' >"${STUB_DIR}/ci"
 _pmrp_route_held_pr 10 o/r 77 "$WORKER_LABELS"
 check "green required checks send the notice" "4" "$(sent_count)"
 check "green required checks route no CI repair" "1" "$(route_count)"
-
+# A notified head whose same-SHA CI re-run turns red still routes repair.
 printf 'red\n' >"${STUB_DIR}/ci"
+_pmrp_route_held_pr 10 o/r 77 "$WORKER_LABELS"
+check "a notified head that turns red sends nothing more" "4" "$(sent_count)"
+check "a notified head that turns red routes CI repair" "2" "$(route_count)"
+
 _pmrp_route_held_pr 11 o/r 77 "origin:interactive,origin:worker-takeover,hold-for-review"
-check "red worker-takeover PR routes CI repair" "2" "$(route_count)"
+check "red worker-takeover PR routes CI repair" "3" "$(route_count)"
 for refused in "origin:interactive,hold-for-review" "origin:worker,hold-for-review,external-contributor" \
 	"origin:worker,hold-for-review,no-takeover" "origin:worker,hold-for-review,needs-maintainer-review" \
 	"hold-for-review" ""; do
 	_pmrp_route_held_pr 12 o/r 77 "$refused"
-	check "red PR labelled [${refused}] routes no CI repair" "2" "$(route_count)"
+	check "red PR labelled [${refused}] routes no CI repair" "3" "$(route_count)"
 done
 printf 'keep\n' >"${STUB_DIR}/decision"
 _pmrp_route_held_pr 13 o/r 77 "$WORKER_LABELS"
-check "red PR whose hold is not runtime-pending-only routes no CI repair" "2" "$(route_count)"
+check "red PR whose hold is not runtime-pending-only routes no CI repair" "3" "$(route_count)"
 printf 'lift\n' >"${STUB_DIR}/decision"
 check "a dispatched CI repair logs no ATTENTION" "0" "$(grep -cF -e 'CI repair could not proceed' "$LOGFILE")"
 printf '75\n' >"${STUB_DIR}/route_rc"
