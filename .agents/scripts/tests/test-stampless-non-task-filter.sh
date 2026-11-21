@@ -288,6 +288,13 @@ repo_allows_pulse_write_actions() {
 # shellcheck source=/dev/null
 source "${TEST_SCRIPTS_DIR}/pulse-issue-reconcile.sh" 2>/dev/null || true
 
+# GH#39584: the unassign branch uses the audited wrapper; privacy/audit guards
+# have their own suites, so forward to the gh stub here.
+gh_issue_edit_safe() {
+	gh issue edit "$@" || return 1
+	return 0
+}
+
 # Run with stubbed PATH: now_epoch far in the future so all issues are "old enough"
 PATH="${STUB_BIN}:${PATH}" _normalize_unassign_stampless_interactive \
 	testuser "$REPOS_JSON" 9999999999 86400 2>/dev/null || true
