@@ -632,7 +632,9 @@ _pr_body_declares_runtime_pending() {
 _pr_body_inputs_reserve_runtime_section() {
 	local field=""
 	for field in "$@"; do
-		if printf '%s\n' "$field" | grep -Eq '^##[[:space:]]+Runtime Testing[[:space:]]*$'; then
+		# Here-string, not a pipe: grep -q exits on first match, and under
+		# pipefail the writer's SIGPIPE would turn a match into a false miss.
+		if grep -Eq '^##[[:space:]]+Runtime Testing[[:space:]]*$' <<<"$field"; then
 			print_error "PR body inputs must not contain a '## Runtime Testing' heading: commit-and-pr generates that section from --risk-level/--testing-level/--testing. Remove the heading from --summary/--testing/--decisions."
 			return 1
 		fi
