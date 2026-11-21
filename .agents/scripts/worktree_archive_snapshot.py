@@ -45,8 +45,26 @@ from worktree_archive_git import (
     base_import_timeout,
     MISSING_PROMISOR_BASE, authorized_base_source, base_import_failure, base_upload_pack,
     capture_bundle as capture_bundle, fetch_preservation as fetch_preservation,
-    preserved_option, report_preservation_import,
 )
+
+
+# Index by bool(imported): nothing is written unless the bundle was imported.
+PRESERVATION_REPORT = ('', 'aidevops-archive-preservation-imported\n')
+
+
+def report_preservation_import(imported):
+    """Tell the restore shell that preparation imported this archive's bundle.
+
+    The shell passes `--preserved` only to later steps of the same restore into
+    the same new target, so they skip a repeat `bundle verify` + import of
+    identical objects (GH#39560). Their own object-closure checks still run.
+    """
+    sys.stdout.write(PRESERVATION_REPORT[bool(imported)])
+
+
+def preserved_option(extra):
+    """Only the exact `--preserved` tail skips the repeat import; anything else keeps it."""
+    return extra == ['--preserved']
 
 
 def administration_digest(state):

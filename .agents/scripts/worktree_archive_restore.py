@@ -18,7 +18,7 @@ from worktree_archive_registration import (
 )
 from worktree_archive_objects import dependency_commit
 from worktree_archive_dependencies import import_published_head, object_present, object_store_files
-from worktree_archive_snapshot import fetch_preservation
+from worktree_archive_snapshot import fetch_preservation, report_preservation_import
 from worktree_archive_unsealed import UnsealedRecovery
 from worktree_recovery_timing import timed
 
@@ -365,7 +365,6 @@ class RestorationProof(UnsealedRecovery):
 
 if __name__ == "__main__":
     try:
-        from worktree_archive_git import report_preservation_import
         report_preservation_import(prepare(Path(sys.argv[1]).resolve(strict=True), Path(sys.argv[2]).absolute(),
                                            verification=sys.argv[3:] == ["--verification-copy"]))
     except subprocess.CalledProcessError as error:

@@ -191,27 +191,6 @@ def capture_bundle(root, archive, roots, base):
         git(scratch, "bundle", "create", str(archive / "commits.bundle"), "--all", *exclusions)
 
 
-PRESERVATION_IMPORTED = 'aidevops-archive-preservation-imported'
-
-
-def report_preservation_import(imported):
-    """Tell the restore shell that preparation imported this archive's bundle.
-
-    The shell passes `--preserved` only to later steps of the same restore into
-    the same new target, so they skip a repeat `bundle verify` + import of
-    identical objects. Their own object-closure checks still run.
-    """
-    if imported:
-        print(PRESERVATION_IMPORTED)
-
-
-def preserved_option(extra):
-    """Parse the optional `--preserved` restore-step argument (GH#39560)."""
-    if extra not in ([], ['--preserved']):
-        raise ValueError('restore:invalid_option')
-    return bool(extra)
-
-
 def fetch_preservation(root, archive, *, verified_scratch=False):
     """Import preservation objects without changing shared-repository refs.
 
