@@ -124,7 +124,8 @@ _cgh_process_targets_repo() {
 	if [[ -e "/proc/${pid}/cwd" ]]; then
 		cwd=$(readlink "/proc/${pid}/cwd" 2>/dev/null) || cwd=""
 	elif command -v lsof >/dev/null 2>&1; then
-		cwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1) || cwd=""
+		# awk reads all input, so lsof never sees SIGPIPE under pipefail.
+		cwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | awk '/^n/ && !seen { print substr($0, 2); seen = 1 }') || cwd=""
 	fi
 	[[ -n "$cwd" && -d "$cwd" ]] || return 0
 	process_common=$("$REAL_GIT" -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1

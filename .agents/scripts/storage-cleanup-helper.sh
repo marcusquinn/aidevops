@@ -316,7 +316,7 @@ _sc_gitlocks() {
 			"${removed:+ removed=${removed}}"
 		grep -E '^(CANDIDATE|REMOVED|KEPT) ' <<<"$out" | sed 's/^/    /' || true
 		if [[ "$repo_rc" -ne 0 ]]; then
-			printf '    exit %s: %s\n' "$repo_rc" "$(grep -E '^(BLOCKED|FAILED)' <<<"$out" | head -n 1)"
+			printf '    exit %s: %s\n' "$repo_rc" "$(awk '/^(BLOCKED|FAILED)/ && !seen { print; seen = 1 }' <<<"$out")"
 			rc=1
 		fi
 	done < <(_sc_canonical_repos)
