@@ -469,7 +469,8 @@ _dlw_exec_systemd_user_service() {
 		generation_suffix=$(python3 -c 'import uuid; print(uuid.uuid4().hex)') || return 1
 		unit_name="${unit_name}-${generation_suffix}"
 		# Retain exited units until the cleanup reader durably records quiescence.
-		# A wrapper exit alone is not a descendant-lifetime receipt. The reserve
+		# A wrapper exit alone is not a descendant-lifetime receipt. Drained units
+		# are released later by worktree_lifetime_release.py (GH#39702). The reserve
 		# rechecks the selected generation and appends this attempt's provenance.
 		local lifetime_helper=""
 		lifetime_helper=$(_dlw_lifetime_helper)

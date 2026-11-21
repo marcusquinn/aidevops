@@ -21,6 +21,7 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import worktree_lifetime_owner as owner
 import worktree_lifetime_proof as proof
+import worktree_lifetime_release_receipt as release_receipt
 
 SPEC = importlib.util.spec_from_file_location("lifetime", SCRIPTS / "worktree-managed-lifetime.py")
 lifetime = importlib.util.module_from_spec(SPEC)
@@ -413,6 +414,50 @@ class OwnerEvidenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             owner.drain_unit(launch, lambda: next(boots), self.unreachable)
         self.assertNotIn("quiescence", launch)
+
+    def released_launch(self):
+        return {"boot_id": self.OLD_BOOT, "unit": "aidevops-worker-fixture",
+                "invocation": "a" * 32, "cgroup": "/released.service"}
+
+    def release_receipt(self, launch, **changes):
+        sample = {"InvocationID": launch["invocation"], "MainPID": "0", "Job": "",
+                  "ActiveState": "active", "SubState": "exited", "ExitType": "cgroup",
+                  "RemainAfterExit": "yes", "Restart": "no"}
+        receipt = {"schema": release_receipt.RELEASE_SCHEMA, "unit": "aidevops-worker-fixture.service",
+                   "InvocationID": launch["invocation"], "boot_id": launch["boot_id"],
+                   "requested_at": time.time(), "quiescence": sample}
+        receipt.update(changes)
+        return receipt
+
+    @staticmethod
+    def collected(_unit):
+        raise ValueError("unit evidence unavailable")
+
+    def test_released_unit_drains_from_its_receipt(self):
+        launch = self.released_launch()
+        receipt = self.release_receipt(launch)
+        owner.drain_unit(launch, lambda: self.OLD_BOOT, self.collected,
+                         lambda _: {"LoadState": "not-found"}, lambda unit, inv: receipt)
+        self.assertEqual(launch["quiescence"], receipt["quiescence"])
+        proof.proof(self.sealed(launch), "1:2", fresh=False)
+
+    def test_release_receipt_refuses_loaded_forged_or_missing(self):
+        launch = self.released_launch()
+        valid = self.release_receipt(launch)
+        cases = ((lambda _: {"LoadState": "loaded", "InvocationID": "a" * 32}, valid),
+                 (lambda _: {"LoadState": "not-found"}, None),
+                 (lambda _: {"LoadState": "not-found"}, dict(valid, InvocationID="b" * 32)),
+                 (lambda _: {"LoadState": "not-found"}, dict(valid, boot_id=self.NEW_BOOT)),
+                 (lambda _: {"LoadState": "not-found"}, dict(valid, schema="other")),
+                 (lambda _: {"LoadState": "not-found"}, dict(valid, requested_at=time.time() + 3600)),
+                 (lambda _: {"LoadState": "not-found"},
+                  dict(valid, quiescence=dict(valid["quiescence"], SubState="running"))))
+        for presence, receipt in cases:
+            candidate = dict(launch)
+            with self.subTest(receipt=receipt), self.assertRaises(ValueError):
+                owner.drain_unit(candidate, lambda: self.OLD_BOOT, self.collected, presence,
+                                 lambda unit, inv, receipt=receipt: receipt)
+            self.assertNotIn("quiescence", candidate)
 
     def test_live_descendants_refuse_even_after_parent_exit(self):
         launch = {"boot_id": "boot", "unit": "aidevops-worker-fixture", "invocation": "first"}
