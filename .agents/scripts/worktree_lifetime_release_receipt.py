@@ -52,7 +52,7 @@ def initialize(connection):
 def unit_presence(unit):
     """LoadState and InvocationID only: a released unit is no longer loaded."""
     owner.require(UNIT_NAME.fullmatch(unit) is not None, "invalid worker unit")
-    output = subprocess.check_output(  # nosec B603 - fixed argv, validated unit name
+    output = subprocess.check_output(  # nosec B603 B607 - fixed systemctl argv, validated unit name
         ["systemctl", "--user", "show", unit, "--property=LoadState", "--property=InvocationID"],
         text=True, stderr=subprocess.DEVNULL, timeout=10).strip()
     return dict(line.split("=", 1) for line in output.splitlines() if "=" in line)

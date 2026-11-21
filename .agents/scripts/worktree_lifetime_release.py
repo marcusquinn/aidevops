@@ -45,7 +45,7 @@ SAMPLE_ERRORS = (OSError, ValueError, KeyError, TypeError, subprocess.Subprocess
 
 def systemctl(*args, check=True):
     # Fixed argv; unit names are validated against UNIT_PATTERN. No shell.
-    return subprocess.run(["systemctl", "--user", *args], text=True, capture_output=True,  # nosec B603
+    return subprocess.run(["systemctl", "--user", *args], text=True, capture_output=True,  # nosec B603 B607
                           timeout=30, check=check)
 
 
