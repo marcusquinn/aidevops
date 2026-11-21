@@ -2396,7 +2396,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19247 fix(pulse): deploy reconciliation kills supervising wrappers that hold a fresh LLM lock #bug ref:GH#39682 pr:#39684 completed:2026-11-21
 
-- [ ] t19248 fix(pulse): stale LLM-lock reclaim kills healthy supervisors by wrapper process age #auto-dispatch #bug ref:GH#39683
+- [x] t19248 fix(pulse): stale LLM-lock reclaim kills healthy supervisors by wrapper process age #auto-dispatch #bug ref:GH#39683 pr:#39685 completed:2026-11-21
 
 - [x] t19250 fix(worker-lifecycle): 10s retirement-retry bound fails every normal retirement and leaks release and routine trees #bug ref:GH#39691 pr:#39693 completed:2026-11-21
 
