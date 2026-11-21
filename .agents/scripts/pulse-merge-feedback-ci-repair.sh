@@ -440,15 +440,23 @@ _dispatch_ci_fix_worker() {
 
 	# Bind repair evidence to the current branch head. This refresh also proves
 	# the branch is same-repository and writable before any worker is launched.
-	local pr_info="" pr_head_sha="" pr_head_ref="" is_cross_repo="" maintainer_can_modify=""
+	local pr_info="" pr_head_sha="" pr_head_ref="" is_cross_repo="" maintainer_can_modify="" live_labels=""
 	pr_info=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json headRefOid,headRefName,isCrossRepository,maintainerCanModify \
-		--jq '[(.headRefOid // ""),(.headRefName // ""),(.isCrossRepository // false),(.maintainerCanModify // false)] | @tsv' 2>/dev/null) || pr_info=""
-	IFS=$'\t' read -r pr_head_sha pr_head_ref is_cross_repo maintainer_can_modify <<<"$pr_info"
+		--json headRefOid,headRefName,isCrossRepository,maintainerCanModify,labels \
+		--jq '[(.headRefOid // ""),(.headRefName // ""),(.isCrossRepository // false),(.maintainerCanModify // false),([.labels[]?.name] | join(","))] | @tsv' 2>/dev/null) || pr_info=""
+	IFS=$'\t' read -r pr_head_sha pr_head_ref is_cross_repo maintainer_can_modify live_labels <<<"$pr_info"
 	if [[ -n "$initial_head_sha" && "$pr_head_sha" != "$initial_head_sha" ]]; then
 		echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} head changed while collecting CI evidence (${initial_head_sha} -> ${pr_head_sha:-unknown}) — deferring repair routing" >>"$LOGFILE"
 		return 0
 	fi
+	# #aidevops:trust-boundary — callers gate on a label snapshot; an ownership
+	# label added since then must still stop the launch (t19244 review).
+	case ",${live_labels}," in
+	*,no-takeover,* | *,needs-maintainer-review,* | *,external-contributor,*)
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} in ${repo_slug} gained an ownership label (${live_labels}) before launch — refusing CI repair" >>"$LOGFILE"
+		return 0
+		;;
+	esac
 
 	local failure_fingerprint=""
 	failure_fingerprint=$(_ci_repair_hash_text "$(printf '%s\n' "$failing_checks_json" | jq -cS '.' 2>/dev/null)") || failure_fingerprint=""
