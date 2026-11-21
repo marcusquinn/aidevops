@@ -1325,6 +1325,33 @@ _pmrc_pending_is_ignored() {
 	return 1
 }
 
+# GH#39664: the forge-event recorder is ordering bookkeeping in a concurrency
+# group where a newer request supersedes the older one. Reruns are cancelled
+# the same way, so a non-required cancellation can never clear; it must not block.
+# Supersession is proven from run data: a newer run of the same workflow must
+# exist; a manual cancellation with no replacement keeps the rerun/block path.
+# Args: $1=name $2=conclusion $3=required $4=repo_slug $5=pr_number $6=check_url
+# Returns: 0=benign superseded cancellation (logged), 1=otherwise
+_pmrc_is_superseded_forge_recorder() {
+	local name="$1" conclusion="$2" required="$3" repo_slug="$4" pr_number="$5" check_url="${6:-}"
+	local run_id="" fr_json="" workflow_id="" created_at="" newer="" url_prefix="https://github.com/${repo_slug}/actions/runs/"
+	[[ "$conclusion" == cancelled && "$required" != "$PMRC_BOOL_TRUE" ]] || return 1
+	[[ "$name" == "sync / Record ordered forge event" ]] || return 1
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
+	[[ "$check_url" == "${url_prefix}"* ]] || return 1
+	run_id="${check_url#*/actions/runs/}"
+	run_id="${run_id%%[/?#]*}"
+	[[ "$run_id" =~ ^[0-9]+$ ]] || return 1
+	fr_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/actions/runs/${run_id}" 2>/dev/null) || return 1
+	workflow_id=$(jq -er '.workflow_id | select(. != null)' <<<"$fr_json") || return 1
+	created_at=$(jq -er '.created_at | select(. != null)' <<<"$fr_json") || return 1
+	newer=$(_pmrc_gh_read gh api "repos/${repo_slug}/actions/workflows/${workflow_id}/runs?per_page=20" \
+		--jq "[.workflow_runs[] | select(.created_at > \"${created_at}\")] | length" 2>/dev/null) || return 1
+	[[ "$newer" =~ ^[1-9][0-9]*$ ]] || return 1
+	echo "[pulse-merge] pre-merge snapshot: IGNORED non-required concurrency-superseded forge-event recorder '${name}' for PR #${pr_number} in ${repo_slug} (GH#39664)" >>"$LOGFILE"
+	return 0
+}
+
 _pmrc_snapshot_checks_acceptable() {
 	local repo_slug="$1"
 	local pr_number="$2"
@@ -1367,6 +1394,10 @@ _pmrc_snapshot_checks_acceptable() {
 		case "$conclusion" in
 		success | neutral | skipped) continue ;;
 		esac
+		if _pmrc_is_superseded_forge_recorder "$name" "$conclusion" "$required" "$repo_slug" "$pr_number" "$link"; then
+			advisory=$((advisory + 1))
+			continue
+		fi
 		if [[ "$conclusion" == cancelled ]]; then
 			_pmrc_rerun_cancelled_check "$repo_slug" "$pr_number" "$head_sha" "$link" || true
 			# Never classify cancellation as advisory or dispatch code repair.
