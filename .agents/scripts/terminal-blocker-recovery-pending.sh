@@ -66,7 +66,7 @@ _tbr_pending_classify() {
 		done
 	fi
 	if [[ "${#decisions[@]}" -gt 0 ]]; then
-		if wakes=$(jq -r 'select(.wake == "human_decision") | input_filename' "${decisions[@]}" 2>/dev/null); then
+		if wakes=$(jq -r 'select(.wake == "human_decision" or .wake == "external_trigger") | input_filename' "${decisions[@]}" 2>/dev/null); then
 			while IFS= read -r file; do
 				[[ -z "$file" ]] || decided_paths+="${file};"
 			done <<<"$wakes"

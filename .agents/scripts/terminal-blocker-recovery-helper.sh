@@ -1029,7 +1029,9 @@ _tbr_check_entry() {
 
 #######################################
 # Record an owner decision. stdin: {"wake":..., "next_action":..., "evidence":...}
-# wake ∈ brief_revision | environment_fix | owner_change | dependency_change | human_decision
+# wake ∈ brief_revision | environment_fix | owner_change | dependency_change | human_decision | external_trigger
+# external_trigger = decided hold waiting on a named external event; it stands
+# like human_decision (no TTL) and is shown as parked by /decisions.
 #######################################
 tbr_record() {
 	local repo="${1:-}"
@@ -1038,7 +1040,7 @@ tbr_record() {
 	_tbr_init_dirs || return 1
 	local input="" actor="" key=""
 	input=$(jq -ec 'select((keys == ["evidence","next_action","wake"]) and
-		(.wake | IN("brief_revision","environment_fix","owner_change","dependency_change","human_decision")))') || {
+		(.wake | IN("brief_revision","environment_fix","owner_change","dependency_change","human_decision","external_trigger")))') || {
 		printf 'record: stdin must be {"wake","next_action","evidence"} with a known wake value\n' >&2
 		return 1
 	}
@@ -1049,7 +1051,7 @@ tbr_record() {
 	# t19068: stamp the policy a human_decision was made under; an unreadable
 	# policy leaves no stamp, which later compares as "none".
 	local stamp='{}'
-	if [[ "$(jq -r '.wake' <<<"$input")" == human_decision ]] && _tbr_policy_load "$repo"; then
+	if [[ "$(jq -r '.wake' <<<"$input")" =~ ^(human_decision|external_trigger)$ ]] && _tbr_policy_load "$repo"; then
 		stamp=$(jq -nc --arg fingerprint "${_TBR_POLICY_STATE%:*}" '{policy_fingerprint:$fingerprint}') || stamp='{}'
 	fi
 	printf '%s' "$input" | jq -c --arg actor "$actor" --arg repo "$repo" --argjson issue "$issue" \

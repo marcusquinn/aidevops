@@ -29,7 +29,9 @@
 #   answered     an explicit maintainer answer follows the newest request; the
 #                recovery pass owns the next step
 #   parked       a repo recovery-policy decision is newer than the newest
-#                request; it waits on the decision's reopen conditions
+#                request, or the newest request is an external_trigger
+#                recovery record; it waits on a recorded reopen condition
+#                (the record's next_action)
 #
 # An explicit answer is an OWNER/MEMBER comment carrying the
 # <!-- aidevops:maintainer-decision --> marker that /decisions writes, or a
@@ -118,7 +120,7 @@ def days($t): if $t == null or $t == "" then null
 | ([$c[] | select(authoritative) | select(((text | test("aidevops:sig")) | not) and (automation | not))
 	| {t: .createdAt, by: .author.login, excerpt: (text | clean | .[0:200])}] | max_by(.t)) as $reply
 | (if $local == null then [] else [{t: $local.t, by: $local.by, src: "recovery_record", reason: "",
-	q: ($local.q | clean), recommendation: null}] end) as $recorded
+	q: ($local.q | clean), recommendation: null, wake: ($local.wake // "")}] end) as $recorded
 | (($holds + $asks + $recorded) | sort_by(.t)) as $requests
 | ($requests | last) as $anchor
 | ([$requests[] | select(.q != "" and ($answer == null or .t > $answer.t))] | last) as $question
@@ -128,7 +130,8 @@ def days($t): if $t == null or $t == "" then null
 	else null end) as $label_kind
 | (if $anchor == null then ($label_kind // "manual")
 	elif $answer != null and $answer.t > $anchor.t then "answered"
-	elif $park != null and $park.t > $anchor.t then "parked"
+	elif ($park != null and $park.t > $anchor.t)
+		or ($fresh_reply == null and $anchor.src == "recovery_record" and ($anchor.wake // "") == "external_trigger") then "parked"
 	elif $fresh_reply != null then "replied"
 	elif $question != null then ($label_kind // "decide")
 	else ($label_kind // "no-question") end) as $kind
@@ -159,7 +162,7 @@ def kinds: [
 	["manual", "Maintainer-owned holds (no AI request recorded)"],
 	["no-question", "AI-side gaps: held with no question recorded"],
 	["answered", "Answered: waiting on the recovery pass"],
-	["parked", "Parked by repo recovery policy"],
+	["parked", "Parked: waits on a recorded reopen condition"],
 	["error", "Unreadable"]];
 def rank_of($k): ([kinds[][0]] | index($k)) // (kinds | length);
 def heading_of($k): ([kinds[] | select(.[0] == $k) | .[1]] | first) // $k;
@@ -279,8 +282,8 @@ _md_recorded_decision() {
 	local number="$2"
 	local file="${MD_RECOVERY_DIR}/decisions/${repo//\//--}--${number}.json"
 	local out=""
-	if [[ -f "$file" ]] && out=$(jq -c 'if .wake == "human_decision" and (.recorded_epoch | type) == "number"
-		then {t: (.recorded_epoch | floor | todateiso8601), by: (.actor // "recovery-supervisor"), q: (.next_action // "")}
+	if [[ -f "$file" ]] && out=$(jq -c 'if (.wake == "human_decision" or .wake == "external_trigger") and (.recorded_epoch | type) == "number"
+		then {t: (.recorded_epoch | floor | todateiso8601), by: (.actor // "recovery-supervisor"), q: (.next_action // ""), wake: .wake}
 		else null end' "$file" 2>/dev/null) && [[ -n "$out" ]]; then
 		printf '%s\n' "$out"
 		return 0
