@@ -4,6 +4,8 @@ The marker identifies a protocol generation, not all writers or a deletion right
 Copied metadata and inode reuse outside this protocol are not excluded by it.
 """
 
+from __future__ import annotations
+
 import json
 import os
 from functools import lru_cache
