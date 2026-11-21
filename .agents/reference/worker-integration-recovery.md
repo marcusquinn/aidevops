@@ -233,7 +233,11 @@ AI brief owner:
 6. Record exactly one decision per entry: `terminal-blocker-recovery-helper.sh
    record <repo> <issue>` with stdin `{"wake","next_action","evidence"}`
    (`wake`: `brief_revision`, `environment_fix`, `owner_change`,
-   `dependency_change` or `human_decision`). `integration-recovery-helper.sh
+   `dependency_change`, `human_decision` or `external_trigger`). Use
+   `human_decision` only while an owner decision is unanswered; use
+   `external_trigger` for decided holds waiting on a named external event
+   (standing like `human_decision`, no TTL, listed as parked in `/decisions`).
+   `integration-recovery-helper.sh
    decision` answers integration-recovery requests only and is not read here.
    A decision suppresses
    re-assessment for 24h; unchanged blockers are not retried blindly. A plain
@@ -315,7 +319,8 @@ section; only those are delegated authority. Exit 3 (none declared) or 1
 [Repo recovery policy](recovery-policy.md) for exhausted-outlier chain holds
 with independent dependant repoints, session-budget splits after a merged
 partial PR, and specifically pre-authorized brief repairs. Record holds with
-`wake=human_decision`, splits/repoints with `wake=dependency_change`, brief
+`wake=human_decision` (owner decision unanswered) or `wake=external_trigger`
+(decided, waiting on a named external event), splits/repoints with `wake=dependency_change`, brief
 repairs with `wake=brief_revision`. Entries with `intake: policy_remote` are
 OWNER/MEMBER circuits opened by another runner, and entries with
 `intake: remote_observation` are holds only another runner observed (GH#36114);
