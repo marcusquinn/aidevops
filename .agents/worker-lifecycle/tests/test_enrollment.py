@@ -1030,17 +1030,17 @@ class EnrollmentContract(unittest.TestCase):
                 original_connection = self.store.connection
 
                 @contextmanager
-                def failing_commit(write=False, **kwargs):
-                    with original_connection(write=write, **kwargs) as connection:
+                def failing_commit(write=False, _original=original_connection, **kwargs):
+                    with _original(write=write, **kwargs) as connection:
                         yield connection
                         if write:
                             raise sqlite3.OperationalError("commit interrupted")
 
                 calls = []
 
-                def failing_replace(directory, value):
-                    calls.append(value)
-                    if stage == "publication" or len(calls) == 2:
+                def failing_replace(directory, value, _calls=calls, _stage=stage):
+                    _calls.append(value)
+                    if _stage == "publication" or len(_calls) == 2:
                         raise OSError("publication interrupted")
                     _replace_marker(directory, value)
 
