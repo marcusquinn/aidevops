@@ -15,10 +15,9 @@ import json
 import os
 import stat
 import subprocess  # nosec B404 -- fixed native Git argv only
-import unicodedata
 from pathlib import Path
 
-from canonical_write_policy_paths import Classification
+from canonical_write_policy_paths import Classification, fold_path_component
 from native_git import real_git
 
 
@@ -68,13 +67,7 @@ def _untracked_and_ignored(repo_root: str, relative: str) -> bool:
 
 
 def _is_reserved_component(part: str) -> bool:
-    # Filesystems may alias `.GIT`, HFS+ ignorable code points (format
-    # characters) and trailing dots/spaces to `.git`; compare the folded form.
-    folded = "".join(
-        char for char in unicodedata.normalize("NFC", part)
-        if unicodedata.category(char) != "Cf"
-    ).rstrip(". ").casefold()
-    return folded in _RESERVED_COMPONENTS
+    return fold_path_component(part) in _RESERVED_COMPONENTS
 
 
 def _owned_regular_config(info: os.stat_result) -> bool:

@@ -686,6 +686,53 @@ test_canonical_runtime_allowlist() {
 	return 0
 }
 
+# GH#39582: run the hook from a linked worktree and expect a Git-metadata
+# deny, or a clean silent allow.
+git_metadata_expect() {
+	local cwd="$1"
+	local expected="$2"
+	local target="$3"
+	local label="$4"
+	local json="" output="" hook_rc=0 matched=1
+	json=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Write","tool_input":{"filePath":sys.argv[1]}}))' "$target")
+	output=$(run_hook "$cwd" "$json") || hook_rc=$?
+	if [[ "$expected" == allow ]]; then
+		[[ "$hook_rc" -ne 0 || -n "$output" ]] || matched=0
+	elif hook_is_deny "$output" "Git metadata"; then
+		matched=0
+	fi
+	print_result "GH#39582 ${label} → ${expected}" "$matched" "rc=${hook_rc} output=${output}"
+	return 0
+}
+
+test_git_metadata_writes_denied() {
+	local hub="${TEST_ROOT}/metadata-hub"
+	local linked="${TEST_ROOT}/metadata-linked"
+	# TEST_ROOT is itself a repository, so the non-Git target lives apart.
+	local plain=""
+	plain=$(mktemp -d) && plain=$(cd "$plain" && pwd -P) || plain=""
+	# CI runners have no global identity; give the seed commit its own.
+	if [[ -z "$plain" ]] || ! git init -q -b main "$hub" ||
+		! git -C "$hub" -c user.name="Aidevops Test" -c user.email="test@example.com" \
+			-c commit.gpgsign=false commit -q --allow-empty -m init ||
+		! git -C "$hub" worktree add -q "$linked" -b feature; then
+		print_result "GH#39582 metadata fixture" 1 "fixture setup failed"
+		return 0
+	fi
+	git_metadata_expect "$linked" deny "${hub}/.git/hooks/pre-commit" "canonical hook"
+	git_metadata_expect "$linked" deny "${hub}/.git/config" "canonical config"
+	git_metadata_expect "$linked" deny "${hub}/.git/worktrees/metadata-linked/HEAD" "linked worktree private git dir"
+	git_metadata_expect "$linked" deny "${linked}/.git" "linked worktree gitfile"
+	git_metadata_expect "$linked" deny "${linked}/sub/.git/config" "nested Git directory in a linked worktree"
+	if [[ -e "${hub}/.GIT" ]]; then
+		git_metadata_expect "$linked" deny "${hub}/.GIT/hooks/x" "case-folded Git directory"
+	fi
+	git_metadata_expect "$linked" allow "${linked}/src/x.py" "linked worktree source"
+	git_metadata_expect "$linked" allow "${plain}/x.md" "path outside any repository"
+	rm -rf "$plain"
+	return 0
+}
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -706,6 +753,7 @@ main() {
 	test_worker_network_policy
 	test_controlled_worktree_creation
 	test_canonical_runtime_allowlist
+	test_git_metadata_writes_denied
 
 	teardown_test_repo
 

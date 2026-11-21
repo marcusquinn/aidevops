@@ -17,11 +17,12 @@ import json
 import os
 import re
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from canonical_branch_policy import resolve_branch
 from canonical_write_policy_paths import (
+    GIT_METADATA,
     Classification,
     canonical_git_workspace_root as _canonical_git_workspace_root,
     classify_location,
@@ -29,6 +30,7 @@ from canonical_write_policy_paths import (
     git_symlink_origin as _git_symlink_origin,
     git_workspace_root_from_environment,
     is_within_workspace as _is_within_workspace,
+    names_git_metadata as _names_git_metadata,
     repository_within_workspace as _repository_within_workspace,
     target_probe as _target_probe,
 )
@@ -43,6 +45,13 @@ POLICY_VERSION = "canonical-write-policy-v3"
 CANONICAL_RUNTIME_ALLOW_REASON = (
     "canonical gitignored runtime path is allowlisted by the ignored "
     ".aidevops.json canonical_write_allow setting"
+)
+
+
+GIT_METADATA_ACTION = "use_git_commands_for_git_metadata"
+GIT_METADATA_REASON = (
+    "Git metadata (hooks, config, refs, gitfiles) is not writable through "
+    "file tools; use Git commands or the aidevops hook installers"
 )
 
 
@@ -98,81 +107,132 @@ def _canonical_write_decision(
     )
 
 
-def check_write(cwd: str, file_path: str) -> dict[str, Any]:
-    """Return one fail-closed direct-file-write decision."""
-    context = classify_location(cwd)
+@dataclass
+class _WriteFacts:
+    """Structural facts about one direct-file-write request."""
+
+    context: Classification
+    target: Classification
+    target_probe: str
+    workspace_root: str
+    cross_repository_target: bool
+    symlink_workspace_escape: bool
+    context_within_workspace: bool
+    git_metadata_target: bool
+
+
+def _write_target(cwd: str, file_path: str) -> tuple[Classification, str, Any]:
     if not file_path:
-        target = Classification("unknown", False, reason="write target is empty")
-        target_probe = cwd
-        symlink_origin = None
-    else:
-        target_probe = _target_probe(cwd, file_path)
-        target = classify_location(target_probe)
-        symlink_origin = _git_symlink_origin(cwd, file_path)
+        empty = Classification("unknown", False, reason="write target is empty")
+        return empty, cwd, None
+    target_probe = _target_probe(cwd, file_path)
+    return (
+        classify_location(target_probe),
+        target_probe,
+        _git_symlink_origin(cwd, file_path),
+    )
+
+
+def _write_facts(cwd: str, file_path: str) -> _WriteFacts:
+    context = classify_location(cwd)
+    target, target_probe, symlink_origin = _write_target(cwd, file_path)
     workspace_root = _canonical_git_workspace_root(
         git_workspace_root_from_environment()
     )
-    cross_repository_target = target.classification == "linked" and (
-        not context.inside_git or target.common_dir != context.common_dir
-    )
-    symlink_workspace_escape = (
-        symlink_origin is not None
-        and target.classification == "outside"
-        and not _is_within_workspace(target_probe, workspace_root)
+    return _WriteFacts(
+        context=context,
+        target=target,
+        target_probe=target_probe,
+        workspace_root=workspace_root,
+        cross_repository_target=target.classification == "linked" and (
+            not context.inside_git or target.common_dir != context.common_dir
+        ),
+        symlink_workspace_escape=(
+            symlink_origin is not None
+            and target.classification == "outside"
+            and not _is_within_workspace(target_probe, workspace_root)
+        ),
+        context_within_workspace=(
+            _repository_within_workspace(context, workspace_root)
+            if context.inside_git
+            else _is_within_workspace(cwd, workspace_root)
+        ),
+        git_metadata_target=target.classification == GIT_METADATA or (
+            target.inside_git
+            and _names_git_metadata(target.repo_root, target_probe)
+        ),
     )
 
-    context_within_workspace = (
-        _repository_within_workspace(context, workspace_root)
-        if context.inside_git
-        else _is_within_workspace(cwd, workspace_root)
-    )
 
+def _allow_reason(facts: _WriteFacts) -> str:
+    if facts.cross_repository_target:
+        return (
+            "cross-repository write target resolves inside a linked worktree "
+            "within the trusted Git workspace"
+        )
+    if facts.target.classification == "linked":
+        return "write target resolves inside an allowed linked worktree"
+    return "write target is outside canonical worktrees"
+
+
+def _non_canonical_decision(facts: _WriteFacts) -> tuple[str, str]:
+    # First matching deny wins. GH#39582: hooks, config and refs change only
+    # through Git commands or the sanctioned hook installers.
+    denies = (
+        (facts.git_metadata_target, GIT_METADATA_REASON),
+        (
+            facts.symlink_workspace_escape,
+            "symlinked write target escapes from a Git worktree outside the "
+            "trusted Git workspace",
+        ),
+        (
+            facts.cross_repository_target and not (
+                facts.context_within_workspace
+                and _repository_within_workspace(
+                    facts.target, facts.workspace_root
+                )
+            ),
+            SESSION_OUTSIDE_WORKSPACE_REASON,
+        ),
+    )
+    deny_reason = next((reason for matched, reason in denies if matched), None)
+    if deny_reason is None:
+        return "allow", _allow_reason(facts)
+    return "deny", deny_reason
+
+
+def check_write(cwd: str, file_path: str) -> dict[str, Any]:
+    """Return one fail-closed direct-file-write decision."""
+    facts = _write_facts(cwd, file_path)
+    target = facts.target
     runtime_allow = "not-applicable"
     if target.classification == "unknown":
         decision = "deny"
         reason = f"write target classification failed closed: {target.reason}"
     elif target.classification == "canonical":
         decision, reason, runtime_allow = _canonical_write_decision(
-            target, target_probe, cwd, file_path
+            target, facts.target_probe, cwd, file_path
         )
-    elif symlink_workspace_escape:
-        decision = "deny"
-        reason = (
-            "symlinked write target escapes from a Git worktree outside the "
-            "trusted Git workspace"
-        )
-    elif cross_repository_target and not (
-        context_within_workspace
-        and _repository_within_workspace(target, workspace_root)
-    ):
-        decision = "deny"
-        reason = SESSION_OUTSIDE_WORKSPACE_REASON
     else:
-        decision = "allow"
-        reason = (
-            "cross-repository write target resolves inside a linked worktree "
-            "within the trusted Git workspace"
-            if cross_repository_target
-            else (
-                "write target resolves inside an allowed linked worktree"
-                if target.classification == "linked"
-                else "write target is outside canonical worktrees"
-            )
-        )
+        decision, reason = _non_canonical_decision(facts)
 
     return {
         "policy": POLICY_VERSION,
-        "git_workspace_root": workspace_root,
+        "git_workspace_root": facts.workspace_root,
         "decision": decision,
         "reason": reason,
-        "action": _write_action(
-            decision,
-            cross_repository_target,
-            symlink_workspace_escape,
-            not context_within_workspace,
+        "action": (
+            GIT_METADATA_ACTION
+            if decision == "deny" and facts.git_metadata_target
+            else _write_action(
+                decision,
+                facts.cross_repository_target,
+                facts.symlink_workspace_escape,
+                not facts.context_within_workspace,
+            )
         ),
         "canonical_runtime_allow": runtime_allow,
-        "context": asdict(context),
+        "context": asdict(facts.context),
         "target": asdict(target),
     }
 

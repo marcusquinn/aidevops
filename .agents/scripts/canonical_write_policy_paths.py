@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from native_git import real_git
 
 
 GIT_WORKSPACE_ROOT_ENV = "AIDEVOPS_GIT_WORKSPACE_ROOT"
+GIT_METADATA = "git-metadata"
 
 
 @dataclass
@@ -65,18 +67,63 @@ def _absolute_probe_value(probe_path: Path, raw_value: str) -> str:
     return os.path.realpath(path)
 
 
-def classify_location(raw_path: str) -> Classification:
-    """Classify a path as canonical, linked, outside Git, or unknown."""
-    probe_path = _existing_probe_path(raw_path)
+def fold_path_component(part: str) -> str:
+    """Fold a component the way filesystems may alias it.
+
+    `.GIT`, HFS+ ignorable code points (format characters) and trailing
+    dots/spaces can all name `.git`, so compare the folded form.
+    """
+    return "".join(
+        char for char in unicodedata.normalize("NFC", part)
+        if unicodedata.category(char) != "Cf"
+    ).rstrip(". ").casefold()
+
+
+def names_git_metadata(repo_root: str, target_path: str) -> bool:
+    """True when a repository-relative component is a `.git` alias.
+
+    Covers a linked worktree's `.git` gitfile and nested Git directories that
+    the Git-directory probe cannot see before they exist.
+    """
+    try:
+        parts = Path(target_path).relative_to(repo_root).parts
+    except ValueError:
+        return False
+    return any(fold_path_component(part) == ".git" for part in parts)
+
+
+def _non_worktree_classification(probe_path: Path) -> Classification | None:
+    """Classify a probe outside any work tree; None when it is inside one."""
     try:
         inside = git_output(probe_path, "rev-parse", "--is-inside-work-tree")
+        in_git_dir = (
+            inside != "true"
+            and git_output(probe_path, "rev-parse", "--is-inside-git-dir") == "true"
+        )
     except RuntimeError as exc:
         return Classification("unknown", False, reason=str(exc))
-    if inside != "true":
-        return Classification(
-            "outside", False, reason="path is outside a Git worktree"
-        )
+    if inside == "true":
+        return None
+    # GH#39582: Git reports its own directory as outside the work tree;
+    # hooks, config and refs there are not ordinary outside paths.
+    return (
+        Classification(GIT_METADATA, False, reason="path is inside a Git directory")
+        if in_git_dir
+        else Classification("outside", False, reason="path is outside a Git worktree")
+    )
 
+
+def classify_location(raw_path: str) -> Classification:
+    """Classify a path as canonical, linked, Git metadata, outside Git, or unknown."""
+    probe_path = _existing_probe_path(raw_path)
+    outside = _non_worktree_classification(probe_path)
+    if outside is not None:
+        return outside
+    return _worktree_classification(probe_path)
+
+
+def _worktree_classification(probe_path: Path) -> Classification:
+    """Classify a probe inside a work tree as canonical, linked, or unknown."""
     try:
         values = _repository_probes(probe_path)
     except RuntimeError as exc:
