@@ -81,6 +81,10 @@ if [[ -r "${SCRIPT_DIR}/shared-repo-state-guard.sh" ]]; then
 	# shellcheck source=shared-repo-state-guard.sh
 	source "${SCRIPT_DIR}/shared-repo-state-guard.sh"
 fi
+if [[ -r "${SCRIPT_DIR}/shared-pr-base.sh" ]]; then
+	# shellcheck source=shared-pr-base.sh
+	source "${SCRIPT_DIR}/shared-pr-base.sh"
+fi
 
 #######################################
 # Configuration (from args, with defaults)
@@ -513,6 +517,37 @@ _output_has_ci_wait() {
 }
 
 #######################################
+# Print the remote-tracking ref a worker branch is measured against.
+#
+# t19266: uses the shared PR base resolver (GH#39167) so repositories whose
+# integration branch is develop/dev are not measured against a stale or
+# missing origin/main. A stale release-only main made every branch look
+# thousands of commits ahead; a missing main hid real WIP commits.
+# Falls back to origin/HEAD, then origin/main, then origin/master, using the
+# first ref that exists locally.
+#
+# Args: $1 = work_dir
+# Outputs: ref (e.g. origin/develop)
+# Returns: 0 resolved, 1 no usable ref
+#######################################
+_wip_push_base_ref() {
+	local work_dir="$1"
+	local repo_slug="${REPO_SLUG:-${DISPATCH_REPO_SLUG:-}}"
+	local base_branch="" origin_head="" candidate=""
+	if declare -F aidevops_pr_base_branch >/dev/null 2>&1; then
+		base_branch=$(aidevops_pr_base_branch "$repo_slug" "$work_dir" 2>/dev/null) || base_branch=""
+	fi
+	origin_head=$(git -C "$work_dir" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || origin_head=""
+	for candidate in ${base_branch:+"origin/${base_branch}"} ${origin_head:+"$origin_head"} origin/main origin/master; do
+		if git -C "$work_dir" rev-parse --verify --quiet "${candidate}^{commit}" >/dev/null 2>&1; then
+			printf '%s' "$candidate"
+			return 0
+		fi
+	done
+	return 1
+}
+
+#######################################
 # Push any local-only WIP commits to origin before killing the worker.
 # Best-effort, fail-open — never blocks the kill sequence.
 #
@@ -522,6 +557,7 @@ _output_has_ci_wait() {
 #
 # Globals consumed:
 #   WORKTREE_PATH        — set via --worktree-path arg
+#   REPO_SLUG            — set via --repo-slug arg (or DISPATCH_REPO_SLUG)
 #   WORKER_NO_EXIT_PUSH  — escape hatch: set to "1" to disable push
 #######################################
 _push_wip_before_kill() {
@@ -542,25 +578,25 @@ _push_wip_before_kill() {
 		;;
 	esac
 
-	# Count commits ahead of origin/main (or origin/master)
+	# Count only the worker's own commits: those not on the PR base branch.
+	local base_ref=""
+	base_ref=$(_wip_push_base_ref "$work_dir") || return 0
+	# Never push the integration branch itself (e.g. a worker left on develop).
+	[[ "$branch_name" == "${base_ref#origin/}" ]] && return 0
 	local ahead_count=0
-	ahead_count=$(git -C "$work_dir" rev-list --count "origin/main..HEAD" 2>/dev/null || true)
+	ahead_count=$(git -C "$work_dir" rev-list --count "${base_ref}..HEAD" 2>/dev/null || true)
 	[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
-	if [[ "$ahead_count" -eq 0 ]]; then
-		ahead_count=$(git -C "$work_dir" rev-list --count "origin/master..HEAD" 2>/dev/null || true)
-		[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
-	fi
 	if [[ "$ahead_count" -eq 0 ]]; then
 		return 0
 	fi
 
 	# Push best-effort — never block the kill sequence on push failure
-	printf '[WATCHDOG_WIP_PUSH] timestamp=%s branch=%s ahead=%s\n' \
-		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$branch_name" "$ahead_count" \
+	printf '[WATCHDOG_WIP_PUSH] timestamp=%s branch=%s ahead=%s base=%s\n' \
+		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$branch_name" "$ahead_count" "$base_ref" \
 		>>"$OUTPUT_FILE" 2>/dev/null || true
 	git -C "$work_dir" push -u origin "$branch_name" 2>/dev/null || true
-	printf '[WATCHDOG_WIP_PUSHED] branch=%s ahead=%s\n' \
-		"$branch_name" "$ahead_count" \
+	printf '[WATCHDOG_WIP_PUSHED] branch=%s ahead=%s base=%s\n' \
+		"$branch_name" "$ahead_count" "$base_ref" \
 		>>"$OUTPUT_FILE" 2>/dev/null || true
 	return 0
 }
