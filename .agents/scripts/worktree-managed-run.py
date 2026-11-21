@@ -182,7 +182,8 @@ def run(command, callback, timeout, producer=True):
             close_client(client)
     finalize(unit, snapshot, callback, deadline)
     # Retain the unit and its completion evidence. Never stop by name after a
-    # snapshot: systemd has no invocation-conditional StopUnit operation.
+    # snapshot: systemd has no invocation-conditional StopUnit operation. The
+    # receipt-first release sweep (worktree_lifetime_release.py) frees it later.
     if snapshot.get("Result") == "success":
         return 0
     status = int(snapshot.get("ExecMainStatus") or "1")
