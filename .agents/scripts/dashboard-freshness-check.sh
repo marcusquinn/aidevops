@@ -722,7 +722,15 @@ _stats_timeout_diagnosis() {
 	count="$(printf '%s\n' "$lines" | wc -l | tr -d ' ')"
 	stages="$(printf '%s\n' "$lines" | sed -n 's/.* stage=\([A-Za-z0-9_-]*\) .*/\1/p' | sort | uniq -c | sort -rn | awk '{printf "%s%s x%s", sep, $2, $1; sep=", "}')"
 	last="$(printf '%s\n' "$lines" | tail -n 1 | sed -n 's/.* timeout=\([0-9]*\)s).*/\1/p')"
+	# GH#39772: elapsed < timeout means the shared aggregate deadline stopped the
+	# repo, so raising the per-repo timeout cannot help.
+	local aggregate_stops
+	aggregate_stops="$(printf '%s\n' "$lines" | sed -n 's/.* elapsed=\([0-9]*\)s timeout=\([0-9]*\)s).*/\1 \2/p' | awk '$1 + 1 < $2 { n++ } END { print n + 0 }')"
 	local bt='`'
+	if [[ "$aggregate_stops" -gt 0 && "$aggregate_stops" -ge "$count" ]]; then
+		printf '\n\n**Likely cause:** all %s retained %src=124%s stops in %sstats.log%s (stages: %s) ended before the per-repository budget (elapsed < timeout), so the shared aggregate health deadline stopped them. Raising %sSTATS_HEALTH_REPO_TIMEOUT%s will not help; check that the priority repository refresh is not consuming the window (%sSTATS_HEALTH_NONPRIORITY_RESERVE_SECONDS%s) and that the stats scheduler is loaded.' "$count" "$bt" "$bt" "$bt" "$bt" "${stages:-unknown}" "$bt" "$bt" "$bt" "$bt"
+		return 0
+	fi
 	printf '\n\n**Likely cause:** %sstats.log%s (last 20000 lines) retains %s historical budget-stop records (%src=124%s) for this repo (stages: %s; last logged timeout: %ss). These records are not time-bounded, so they do not confirm current scheduler health, and %src=124%s can come from either the per-repository budget or the shared aggregate deadline. Verify the scheduler is running; if recent stops are repository-budget stops, raise %sSTATS_HEALTH_REPO_TIMEOUT%s / %sSTATS_HEALTH_RECOVERY_REPO_TIMEOUT%s or investigate the slow stage.' "$bt" "$bt" "$count" "$bt" "$bt" "${stages:-unknown}" "${last:-unknown}" "$bt" "$bt" "$bt" "$bt" "$bt" "$bt"
 	return 0
 }

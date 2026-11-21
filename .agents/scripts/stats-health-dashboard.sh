@@ -736,6 +736,17 @@ _refresh_priority_health_issue() {
 		return 75
 	fi
 	local _HEALTH_PRIORITY_SLUG="$priority_slug"
+	# GH#39772: cap the priority refresh so a slow framework dashboard cannot
+	# consume the whole shared window and starve every other dashboard. Keep a
+	# minimum non-priority reserve; skip the cap when the window is too small to
+	# give the priority repo at least 60s after reserving it.
+	local nonpriority_reserve priority_floor_seconds=60 now_epoch
+	nonpriority_reserve=$(_stats_seconds "${STATS_HEALTH_NONPRIORITY_RESERVE_SECONDS:-90}" 90)
+	now_epoch=$(date +%s)
+	if [[ "${_HEALTH_WORK_DEADLINE:-}" =~ ^[0-9]+$ ]] &&
+		[[ "$((_HEALTH_WORK_DEADLINE - nonpriority_reserve - now_epoch))" -ge "$priority_floor_seconds" ]]; then
+		local _HEALTH_WORK_DEADLINE=$((_HEALTH_WORK_DEADLINE - nonpriority_reserve))
+	fi
 	_refresh_health_repo_bounded "$priority_slug" "$priority_path" "" "" "" || update_ec=$?
 	if [[ "$update_ec" -ne 0 ]]; then
 		mkdir -p "${cache%/*}" || return 1
