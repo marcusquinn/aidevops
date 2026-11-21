@@ -700,16 +700,23 @@ _trigger_revisit_ref_wake_cases() {
 	rc=0; _tbtr_issue owner/repo 42 w1 runner-a true true true >/dev/null || rc=$?
 	[[ "$rc" == 3 && "$(_count '^decide')" == 4 ]] || return 1
 	_tbtr_record_read owner/repo 42 | jq -e '.decision == "scheduled" and .trigger_refs == [7] and .refs_met != true' >/dev/null || return 1
-	# Unchanged with the ref still open: only the ref read, no issue reads.
+	# Unchanged with the ref still open: only the ref read, no issue reads, and
+	# the read refreshes checked_at so the hold rotates behind unread holds.
 	: >"$fetch_log"
+	_tbtr_record_write owner/repo 42 "$(_tbtr_record_read owner/repo 42 | jq -c '.checked_at = 1')" || return 1
 	rc=0; _tbtr_issue owner/repo 42 w1 runner-a true true true >/dev/null || rc=$?
 	[[ "$rc" == 3 && ! -s "$fetch_log" && "$(_count '^decide')" == 4 ]] || return 1
-	# The ref merges: the next pass revisits before the interval, exactly once.
+	_tbtr_record_read owner/repo 42 | jq -e '.checked_at > 1 and .ref_wake != true' >/dev/null || return 1
+	# The ref merges: a pass without AI budget marks the wake so the next pass
+	# leads with it; the next pass with AI revisits before the interval, once.
 	tb_ref_item='{"state":"closed","state_reason":null,"pull_request":{"merged_at":"2026-02-03T04:05:05Z"}}'
+	rc=0; _tbtr_issue owner/repo 42 w1 runner-a true true false >/dev/null || rc=$?
+	[[ "$rc" == 3 && "$(_count '^decide')" == 4 ]] || return 1
+	_tbtr_record_read owner/repo 42 | jq -e '.ref_wake == true' >/dev/null || return 1
 	decision_reply=$'still_pending\t'
 	_tbtr_issue owner/repo 42 w1 runner-a true true true >/dev/null || return 1
 	[[ "$(_count '^decide')" == 5 ]] || return 1
-	_tbtr_record_read owner/repo 42 | jq -e '.decision == "still_pending" and .refs_met == true' >/dev/null || return 1
+	_tbtr_record_read owner/repo 42 | jq -e '.decision == "still_pending" and .refs_met == true and .ref_wake != true' >/dev/null || return 1
 	rc=0; _tbtr_issue owner/repo 42 w1 runner-a true true true >/dev/null || rc=$?
 	[[ "$rc" == 3 && "$(_count '^decide')" == 5 ]] || return 1
 	# A fresh hold on an already-resolved ref is due at once and posts the retry.
@@ -882,10 +889,11 @@ _trigger_revisit_pass_cases() (
 	# lead, ties keep search order), so the tail of a long list is reached.
 	_tbtr_record_write alpha/one 31 '{"checked_at":200}' || return 1
 	_tbtr_record_write alpha/one 33 '{"revisited_at":100}' || return 1
-	# t19245: a waiting hold with unresolved trigger refs leads; one whose
-	# decision already saw them resolved does not.
-	_tbtr_record_write alpha/one 35 '{"decision":"scheduled","trigger_refs":[7],"checked_at":300}' || return 1
-	_tbtr_record_write alpha/one 36 '{"decision":"still_pending","trigger_refs":[7],"refs_met":true,"checked_at":50}' || return 1
+	# t19245: a ref wake still awaiting its AI decision leads; a hold waiting
+	# on unresolved refs keeps its least-recently-checked place, so many such
+	# holds cannot starve the tail.
+	_tbtr_record_write alpha/one 35 '{"decision":"scheduled","trigger_refs":[7],"ref_wake":true,"checked_at":300}' || return 1
+	_tbtr_record_write alpha/one 36 '{"decision":"scheduled","trigger_refs":[7],"checked_at":50}' || return 1
 	: >"$log"
 	_TBTR_DEADLINE=$((SECONDS + 60))
 	_tbtr_repo alpha/one 5 runner-a $'alpha/one\t31\tu\nalpha/one\t32\tu\nalpha/one\t33\tu\nalpha/one\t34\tu\nalpha/one\t35\tu\nalpha/one\t36\tu' >/dev/null || return 1
