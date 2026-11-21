@@ -219,6 +219,22 @@ function isEmptyInput(input) {
   return !input || (typeof input === "object" && Object.keys(input).length === 0);
 }
 
+function isUsefulPart(part) {
+  if (part.type === "text") return Boolean(String(part.text || "").trim());
+  return part.type === "tool" && part.state?.status === "completed";
+}
+
+function emptyToolNote(state) {
+  if (!state || !EMPTY_INPUT_TOOL_STATUSES.has(state.status) || !isEmptyInput(state.input)) return "";
+  return isAbortedTool(state) ? EMPTY_TOOL_NOTE : EMPTY_TOOL_ERROR_NOTE;
+}
+
+function finishNote(info, hasContent) {
+  if (info.role !== "assistant" || !info.finish) return "";
+  if (info.finish === "length") return OUTPUT_LIMIT_NOTE;
+  return info.finish === "tool-calls" || hasContent ? "" : EMPTY_TURN_NOTE;
+}
+
 /**
  * One-shot per-session notice. observe() flags a session when an assistant
  * message finishes with "length", ends with no usable content (GH#39556), or
@@ -236,38 +252,26 @@ export function createOutputLimitNotice() {
     if (!pending.has(sessionID) || note === OUTPUT_LIMIT_NOTE) pending.set(sessionID, note);
   };
   const observePart = (part) => {
-    const sessionID = String(part.sessionID || "");
     const messageID = String(part.messageID || "");
-    if (part.type === "text" && String(part.text || "").trim()) content.add(messageID);
-    if (part.type !== "tool") {
-      capSet(content, MAX_TRACKED_IDS * 4);
-      return;
-    }
-    const state = part.state || {};
-    if (state.status === "completed") content.add(messageID);
-    else if (EMPTY_INPUT_TOOL_STATUSES.has(state.status) && isEmptyInput(state.input)) {
-      flag(sessionID, `${sessionID}:tool:${part.id || messageID}`, isAbortedTool(state) ? EMPTY_TOOL_NOTE : EMPTY_TOOL_ERROR_NOTE);
+    if (isUsefulPart(part)) content.add(messageID);
+    const note = part.type === "tool" ? emptyToolNote(part.state) : "";
+    if (note) {
+      const sessionID = String(part.sessionID || "");
+      flag(sessionID, `${sessionID}:tool:${part.id || messageID}`, note);
     }
     capSet(content, MAX_TRACKED_IDS * 4);
   };
+  const observeMessage = (info) => {
+    const sessionID = String(info.sessionID || "");
+    const note = finishNote(info, content.has(String(info.id || "")));
+    if (note) flag(sessionID, `${sessionID}:${info.id || ""}`, note);
+  };
   return {
     observe(event) {
-      if (event?.type === "session.deleted") {
-        this.forget(event.properties?.info?.id || event.properties?.sessionID);
-        return;
-      }
-      if (event?.type === "message.part.updated") {
-        observePart(event.properties?.part || {});
-        return;
-      }
-      if (event?.type !== "message.updated") return;
-      const info = event.properties?.info || {};
-      if (info.role !== "assistant" || !info.finish) return;
-      const sessionID = String(info.sessionID || "");
-      const key = `${sessionID}:${info.id || ""}`;
-      if (info.finish === "length") return flag(sessionID, key, OUTPUT_LIMIT_NOTE);
-      if (info.finish === "tool-calls" || content.has(String(info.id || ""))) return;
-      flag(sessionID, key, EMPTY_TURN_NOTE);
+      const type = event?.type;
+      if (type === "session.deleted") this.forget(event.properties?.info?.id || event.properties?.sessionID);
+      else if (type === "message.part.updated") observePart(event.properties?.part || {});
+      else if (type === "message.updated") observeMessage(event.properties?.info || {});
     },
     forget(sessionID) {
       const id = String(sessionID || "");
