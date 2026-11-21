@@ -34,16 +34,21 @@ jobs:
     # but GitHub requires manual approval for workflow runs triggered by bot
     # accounts, causing permanent action_required status on PRs.
     # GH#39594: approximate the script rule /(^|\s)\/(oc|opencode)\b/m with
-    # line-start or whitespace anchors. A bare contains('/opencode') matched the
-    # `//opencode.ai` link in every aidevops signature footer. fromJSON decodes
-    # the newline; CRLF bodies still contain "\n/oc". The script stays authoritative.
+    # line-start, space, tab or newline anchors. A bare contains('/opencode')
+    # matched the `//opencode.ai` link in every aidevops signature footer.
+    # fromJSON decodes the escapes; CRLF bodies still contain "\n/oc". The script
+    # stays authoritative. Bot accounts never issue commands; the user.type check
+    # covers `coderabbitai[bot]`, whose review text quotes ` /oc` snippets.
     if: >
       (startsWith(github.event.comment.body, '/oc') ||
         startsWith(github.event.comment.body, '/opencode') ||
         contains(github.event.comment.body, ' /oc') ||
         contains(github.event.comment.body, ' /opencode') ||
         contains(github.event.comment.body, fromJSON('"\n/oc"')) ||
-        contains(github.event.comment.body, fromJSON('"\n/opencode"'))) &&
+        contains(github.event.comment.body, fromJSON('"\n/opencode"')) ||
+        contains(github.event.comment.body, fromJSON('"\t/oc"')) ||
+        contains(github.event.comment.body, fromJSON('"\t/opencode"'))) &&
+      github.event.comment.user.type != 'Bot' &&
       github.actor != 'coderabbitai' &&
       github.actor != 'gemini-code-assist[bot]' &&
       github.actor != 'augment-code[bot]' &&
