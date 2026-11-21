@@ -134,8 +134,11 @@ _cb_meta_repo_is_private_or_unknown() {
 	local repo_slug="$1"
 	local is_private=""
 
-	is_private=$(gh api "repos/${repo_slug}" --jq '.private // true' 2>/dev/null) || return 0
-	if [[ "$is_private" == "true" ]]; then
+	# GH#39642: `tostring`, not `.private // true`. jq's `//` treats false as
+	# absent, so that form read every public repository as private.
+	is_private=$(gh api "repos/${repo_slug}" --jq '.private | tostring' 2>/dev/null) || return 0
+	# Only an explicit false is public; null, empty or anything else fails closed.
+	if [[ "$is_private" != "false" ]]; then
 		return 0
 	fi
 	return 1
