@@ -453,6 +453,19 @@ _tbr_project_rearm() {
 			release_args+=(--remove-label needs-credentials)
 		printf '%s' "$issue_json" | jq -e 'any(.labels[]; .name == "needs-source-access")' >/dev/null &&
 			release_args+=(--remove-label needs-source-access)
+		# A consolidated spec without auto-dispatch is never dispatched again
+		# (_has_consolidated_label); restore it on release. Same label gate as
+		# dispatch-dedup-helper.sh release-stale-recovery.
+		# shellcheck disable=SC2016 # jq program, not shell
+		printf '%s' "$issue_json" | jq -e '
+			([.labels[]?.name] as $l
+			| ($l | index("consolidated")) != null
+			and ($l | index("auto-dispatch")) == null
+			and ($l | index("no-auto-dispatch")) == null
+			and ($l | index("hold-for-review")) == null
+			and ($l | index("parent-task")) == null
+			and ((.body // "") | test("(^|\\n)_Supersedes #[0-9]+ (—|-) this issue is the consolidated spec\\._(\\n|$)")))
+		' >/dev/null 2>&1 && release_args+=(--add-label auto-dispatch)
 		set_issue_status "$issue" "$repo" available ${release_args[@]+"${release_args[@]}"} >/dev/null 2>&1 || return 2
 	fi
 	_tbr_post_rearm_receipt "$repo" "$issue" "$receipt" "$extra" || return 2

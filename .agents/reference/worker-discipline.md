@@ -208,7 +208,7 @@ the brief stay binding. Maintainers can restore the pre-claim hold with
 
 ### Integration scope recovery
 
-Full rules (initial-map vs binding restrictions, recovery procedure, `#### Coordinator intake`, `#### Terminal-blocker recovery`, `#### Recoverable policy denials (GH#33969)`) live in `reference/worker-integration-recovery.md` "Integration scope recovery". Load it before any undeclared edit, adjacent-integration recovery, `INTEGRATION_RECOVERY_REQUEST`, terminal-blocker handling, coordinator intake or a `[NET-TIER]` loopback denial. Key invariant: Files Scope is an initial map unless trusted instructions explicitly restrict it; explicit hard boundaries, permissions, credentials, spending, destructive/external actions and security guarantees are never widened.
+Full rules (initial-map vs binding restrictions, recovery procedure, `#### Coordinator intake`, `#### Terminal-blocker recovery`, `#### Recoverable policy denials (GH#33969)`) live in `reference/worker-integration-recovery.md` "Integration scope recovery". Load it before any undeclared edit, adjacent-integration recovery, `INTEGRATION_RECOVERY_REQUEST`, terminal-blocker handling, coordinator intake or a `[NET-TIER]` loopback denial. A retry directive on a consolidated issue without `auto-dispatch` must also restore that label (the rearm release does this for canonical-marker specs without hold labels), or the retry never runs. Key invariant: Files Scope is an initial map unless trusted instructions explicitly restrict it; explicit hard boundaries, permissions, credentials, spending, destructive/external actions and security guarantees are never widened.
 
 ## PR auto-approval defense-in-depth (GH#17671, t2933)
 
