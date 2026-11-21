@@ -2404,7 +2404,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19254 fix(ci): capture failing-suite output in Shell Suite Main Health artifact #auto-dispatch #bug ref:GH#39714 pr:#39719 completed:2026-11-21
 
-- [ ] t19255 fix(tests): test-scratch-worktree-helper.sh exits 128 on Linux #auto-dispatch #bug ref:GH#39715
+- [x] t19255 fix(tests): test-scratch-worktree-helper.sh exits 128 on Linux #auto-dispatch #bug ref:GH#39715 pr:#39721 completed:2026-11-21
 
 ## In Progress
 
