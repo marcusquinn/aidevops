@@ -180,6 +180,15 @@ gh() {
 		fi
 		;;
 	'label create') return 0 ;;
+	# GH#39648: review-bot thread gate; open threads only where a scenario plants them.
+	'api graphql')
+		[[ "$SCENARIO" != threads_error ]] || return 1
+		local nodes='[]'
+		if [[ "$SCENARIO" == threads_open || "$SCENARIO" == request_threads ]]; then
+			nodes='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+		fi
+		jq -cn --argjson nodes "$nodes" '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},nodes:$nodes}}}}}'
+		;;
 	# No held worker PRs: approval processing alone (GH#36268 cases run below).
 	'pr list')
 		if [[ "$SCENARIO" == request_retry ]]; then
@@ -323,6 +332,30 @@ run_case run_in_progress 0 true false false
 run_case run_failed 1 true false false
 run_case close_error 1 true false true
 printf 'PASS close failure posts no approval-invalidating comment\n'
+
+# GH#39648: open (or uncountable) review-bot threads keep the hold without a
+# toggle or merge attempt, and queue one targeted response for the held PR.
+cat >"${TEST_ROOT}/pr-review-thread-response-scanner.sh" <<'STUB'
+#!/usr/bin/env bash
+printf 'scanner %s\n' "$*" >>"${TEST_ROOT}/calls"
+exit 0
+STUB
+chmod +x "${TEST_ROOT}/pr-review-thread-response-scanner.sh"
+jq -cn --arg path "$TEST_ROOT" '{initialized_repos:[{slug:"owner/app",app_type:"cloudron-package",path:$path}]}' >"$REPOS_FILE"
+for scenario in threads_open threads_error; do
+	run_case "$scenario" 0 false false false
+	if grep -q '^pr-edit ' "${TEST_ROOT}/calls"; then exit 1; fi
+	grep -qx "scanner dispatch-pr owner/app ${TEST_ROOT} 7" "${TEST_ROOT}/calls"
+done
+printf 'PASS approved release with open review-bot threads keeps its hold and queues a response\n'
+export SCENARIO=request_threads
+: >"${TEST_ROOT}/calls"
+rc=0
+release_request owner/app 7 >/dev/null 2>&1 || rc=$?
+[[ "$rc" -eq 3 ]]
+if grep -Eq '^(pr-edit |create |label create )' "${TEST_ROOT}/calls"; then exit 1; fi
+rm -f "${TEST_ROOT}/pr-review-thread-response-scanner.sh"
+printf 'PASS request waits for resolved review-bot threads before any hold or issue write\n'
 
 export SCENARIO=approved
 : >"${TEST_ROOT}/calls"
@@ -663,7 +696,12 @@ printf 'PASS half-hour approval routine registered\n'
 		local repo="$1" pr="$2"
 		printf 'request %s %s\n' "$repo" "$pr" >>"${TEST_ROOT}/calls"
 		[[ "$HELD_SCENARIO" != request_error ]] || return 1
+		[[ "$HELD_SCENARIO" != threads ]] || return 3
 		touch "${TEST_ROOT}/requested"
+		return 0
+	}
+	release_dispatch_thread_remediation() {
+		printf 'remediate %s %s\n' "$1" "$2" >>"${TEST_ROOT}/calls"
 		return 0
 	}
 	release_issues() {
@@ -766,6 +804,15 @@ printf 'PASS half-hour approval routine registered\n'
 	no_call 'pr-close 21'
 	no_call 'gh issue close 31 --repo owner/app --reason not planned'
 	printf 'PASS held: a failed request is counted; bumps main bundles are still superseded\n'
+
+	# GH#39648: open review-bot threads are a wait, not a failure, and queue a response.
+	run_held threads true 0
+	has_call 'request owner/app 22'
+	has_call 'remediate owner/app 22'
+	has_call 'pr-close 20'
+	no_call 'pr-close 21'
+	grep -q 'waits for resolved review-bot threads' "${TEST_ROOT}/held-out"
+	printf 'PASS held: open review-bot threads wait and queue a response before any request\n'
 
 	run_held signed true 0
 	no_call 'request owner/app 22'
