@@ -1373,7 +1373,7 @@ _id_used_as_title_prefix() {
 	for kind in pr issue; do
 		titles=$(gh "$kind" list --repo "$slug" --state all --limit 30 \
 			--search "t${id_num}: in:title" --json title --jq '.[].title' 2>/dev/null) || continue
-		if printf '%s\n' "$titles" | grep -qE "^t0*${id_num}([^0-9.]|$)"; then
+		if grep -qE "^t0*${id_num}([^0-9.]|$)" <<<"$titles"; then
 			return 0
 		fi
 	done
