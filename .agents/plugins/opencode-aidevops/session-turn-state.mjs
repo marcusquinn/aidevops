@@ -251,8 +251,18 @@ export function createOutputLimitNotice() {
     // An explicit output-limit finish outranks a pending fallback notice.
     if (!pending.has(sessionID) || note === OUTPUT_LIMIT_NOTE) pending.set(sessionID, note);
   };
+  const textParts = new Map();
+  const observeDelta = (props) => {
+    const messageID = textParts.get(String(props.partID || ""));
+    if (messageID !== undefined && typeof props.delta === "string" && props.delta.trim()) content.add(messageID);
+    capSet(content, MAX_TRACKED_IDS * 4);
+  };
   const observePart = (part) => {
     const messageID = String(part.messageID || "");
+    if (part.type === "text" && part.id) {
+      textParts.set(String(part.id), messageID);
+      if (textParts.size > MAX_TRACKED_IDS * 4) textParts.delete(textParts.keys().next().value);
+    }
     if (isUsefulPart(part)) content.add(messageID);
     const note = part.type === "tool" ? emptyToolNote(part.state) : "";
     if (note) {
@@ -271,6 +281,7 @@ export function createOutputLimitNotice() {
       const type = event?.type;
       if (type === "session.deleted") this.forget(event.properties?.info?.id || event.properties?.sessionID);
       else if (type === "message.part.updated") observePart(event.properties?.part || {});
+      else if (type === "message.part.delta") observeDelta(event.properties || {});
       else if (type === "message.updated") observeMessage(event.properties?.info || {});
     },
     forget(sessionID) {
