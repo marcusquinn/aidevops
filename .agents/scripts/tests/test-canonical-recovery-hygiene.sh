@@ -32,6 +32,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Inherited Git location overrides (for example from a hook) would redirect
+# fixture writes into the developer's repository; HOME does not isolate them.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+	GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_CEILING_DIRECTORIES
 export HOME="${ROOT}/home"
 mkdir -p "$HOME"
 AUDIT_FILE="${HOME}/.aidevops/logs/canonical-recovery-audit.jsonl"

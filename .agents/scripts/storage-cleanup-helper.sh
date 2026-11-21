@@ -282,12 +282,21 @@ _sc_preview_trash() {
 }
 
 # Registered canonical checkouts (a .git directory, not a linked-worktree file).
+# An absent registry is a no-op; an unreadable one is an error (returns 1).
 _sc_canonical_repos() {
-	local registry="${AIDEVOPS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}" path=""
-	[[ -f "$registry" ]] && command -v jq >/dev/null 2>&1 || return 0
+	local registry="${AIDEVOPS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}" path="" paths=""
+	[[ -f "$registry" ]] || return 0
+	command -v jq >/dev/null 2>&1 || {
+		printf 'gitlocks: jq is required to read %s\n' "${registry##*/}" >&2
+		return 1
+	}
+	paths=$(jq -r '.initialized_repos[]?.path // empty' "$registry" 2>/dev/null) || {
+		printf 'gitlocks: cannot parse repository registry %s\n' "${registry##*/}" >&2
+		return 1
+	}
 	while IFS= read -r path; do
 		[[ "$path" == /* && -d "${path}/.git" ]] && printf '%s\n' "$path"
-	done < <(jq -r '.initialized_repos[]?.path // empty' "$registry" 2>/dev/null || true)
+	done <<<"$paths"
 	return 0
 }
 
@@ -296,9 +305,12 @@ _sc_canonical_repos() {
 # The helper enforces every age/holder gate.
 _sc_gitlocks() {
 	local mode="$1" repo="" out="" rc=0 repo_rc=0 repos=0 locks="" packs="" removed="" found=0
+	local repo_list=""
 	local -a apply_args=()
 	[[ "$mode" == "$SC_APPLY" ]] && apply_args=(--apply)
+	repo_list=$(_sc_canonical_repos) || return 1
 	while IFS= read -r repo; do
+		[[ -n "$repo" ]] || continue
 		repos=$((repos + 1))
 		repo_rc=0
 		out=$(timeout_sec "$SC_GITLOCKS_REPO_MAX_SECONDS" bash "${SCRIPT_DIR}/canonical-recovery-helper.sh" \
@@ -319,7 +331,7 @@ _sc_gitlocks() {
 			printf '    exit %s: %s\n' "$repo_rc" "$(awk '/^(BLOCKED|FAILED)/ && !seen { print; seen = 1 }' <<<"$out")"
 			rc=1
 		fi
-	done < <(_sc_canonical_repos)
+	done <<<"$repo_list"
 	printf 'Scanned %s canonical repositories; %s with stale Git debris or errors.\n' "$repos" "$found"
 	[[ "$mode" == "$SC_APPLY" ]] || printf 'Apply removes only the candidates listed above, re-checking each gate.\n'
 	return "$rc"

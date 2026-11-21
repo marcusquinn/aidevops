@@ -21,8 +21,9 @@
 # the common Git directory, older than its threshold, with no holder reported by
 # lsof/fuser, and no live Git process of this user that started before the file
 # was last written and targets this repository. Apply re-checks every gate under
-# the canonical recovery lock and writes one tamper-evident audit entry per
-# removed file (relative path, size, mtime; never a repository path or name).
+# the canonical recovery lock, verifies the tamper-evident audit chain first,
+# and records each removal's intent and outcome (relative path, size, mtime;
+# never a repository path or name).
 
 CGH_REPAIR_CMD="repair-stale-locks"
 CGH_GC_CMD="maintenance-gc"
@@ -40,6 +41,9 @@ CGH_LOCK_DIR=""
 CGH_EVAL_REASON=""
 CGH_EVAL_IDENTITY=""
 CGH_LOCK_HELD=0
+# Resolved in cgh_main once SCRIPT_DIR is known.
+CGH_AUDIT_TOOL=""
+CGH_AUDIT_FILE=""
 
 _cgh_usage() {
 	printf '%s\n' \
@@ -95,7 +99,7 @@ _cgh_load_git_processes() {
 	listing=$(LC_ALL=C ps -U "$(id -u)" -o pid= -o etime= -o comm= 2>/dev/null) || return 0
 	# The listing must at least contain this shell, or it is not trustworthy.
 	[[ "$listing" =~ (^|[[:space:]])$$[[:space:]] ]] || return 0
-	while read -r pid etime command_name; do
+	while IFS=$' \t' read -r pid etime command_name; do
 		[[ "$pid" =~ ^[0-9]+$ ]] || continue
 		command_name="${command_name##*/}"
 		[[ "$command_name" == "git" || "$command_name" == git-* ]] || continue
@@ -114,11 +118,13 @@ _cgh_process_targets_repo() {
 	local top="$3"
 	local args="" cwd="" process_common="" arg0="" arg1=""
 
-	args=$(ps -o args= -p "$pid" 2>/dev/null) || return 1
-	[[ -n "$args" ]] || return 1
+	# A failed probe cannot tell an exited process from a transient error, so
+	# it means "may own"; an exited process stops blocking on the next run.
+	args=$(ps -o args= -p "$pid" 2>/dev/null) || return 0
+	[[ -n "$args" ]] || return 0
 	# The filesystem monitor daemon never takes ref or pack locks; match only
 	# the subcommand token so arbitrary argument text cannot exempt a process.
-	read -r arg0 arg1 _ <<<"$args"
+	IFS=$' \t' read -r arg0 arg1 _ <<<"$args"
 	[[ "$arg1" == "fsmonitor--daemon" || "${arg0##*/}" == "git-fsmonitor--daemon" ]] && return 1
 	[[ "$args" == *"$top"* || "$args" == *"$common"* ]] && return 0
 	if [[ -e "/proc/${pid}/cwd" ]]; then
@@ -142,7 +148,7 @@ _cgh_live_git_owner() {
 	local top="$3"
 	local start="" pid="" verdict=""
 
-	while read -r start pid; do
+	while IFS=' ' read -r start pid; do
 		[[ "$start" =~ ^[0-9]+$ && "$pid" =~ ^[0-9]+$ ]] || continue
 		[[ "$start" -le $((mtime + 2)) ]] || continue
 		if [[ "$CGH_PID_VERDICTS" == *" ${pid}=1 "* ]]; then
@@ -162,23 +168,27 @@ _cgh_holder_state() {
 	local path="$1"
 	local out="" err="" rc=0 err_file=""
 
-	# lsof/fuser exit 1 both for "no holder" and for some errors, so a free
-	# verdict also requires empty output and (for lsof) an empty stderr.
-	if command -v lsof >/dev/null 2>&1; then
-		err_file=$(mktemp "${TMPDIR:-/tmp}/cgh-lsof.XXXXXX") || {
-			printf 'unknown\n'
-			return 0
-		}
-		out=$(lsof -w -t -- "$path" 2>"$err_file") || rc=$?
-		err=$(cat "$err_file" 2>/dev/null) || err="unreadable"
-		rm -f "$err_file"
-	elif command -v fuser >/dev/null 2>&1; then
-		# fuser always echoes "path:" on stderr; only its exit status matters.
-		out=$(fuser "$path" 2>/dev/null) || rc=$?
-	else
+	# lsof/fuser exit 1 both for "no holder" and for errors, so a free verdict
+	# also requires empty output and no diagnostics on stderr.
+	if ! command -v lsof >/dev/null 2>&1 && ! command -v fuser >/dev/null 2>&1; then
 		printf 'unknown\n'
 		return 0
 	fi
+	err_file=$(mktemp "${TMPDIR:-/tmp}/cgh-holder.XXXXXX") || {
+		printf 'unknown\n'
+		return 0
+	}
+	if command -v lsof >/dev/null 2>&1; then
+		out=$(lsof -w -t -- "$path" 2>"$err_file") || rc=$?
+		err=$(cat "$err_file" 2>/dev/null) || err="unreadable"
+	else
+		out=$(fuser "$path" 2>"$err_file") || rc=$?
+		err=$(cat "$err_file" 2>/dev/null) || err="unreadable"
+		# fuser echoes "path:" on stderr even when nothing holds the file.
+		err="${err//"${path}:"/}"
+		err="${err//[[:space:]]/}"
+	fi
+	rm -f "$err_file"
 	if [[ "$out" =~ [0-9] ]]; then
 		printf 'held\n'
 	elif [[ ( "$rc" -eq 0 || "$rc" -eq 1 ) && -z "$err" ]]; then
@@ -195,7 +205,7 @@ _cgh_gc_pid_is_dead() {
 	local recorded_pid="" recorded_host="" this_host=""
 
 	# Git writes "PID HOST" without a trailing newline, so read may return 1.
-	read -r recorded_pid recorded_host <"$path" 2>/dev/null || [[ -n "$recorded_pid" ]] || return 1
+	IFS=$' \t' read -r recorded_pid recorded_host <"$path" 2>/dev/null || [[ -n "$recorded_pid" ]] || return 1
 	[[ "$recorded_pid" =~ ^[0-9]+$ ]] || return 1
 	this_host=$(hostname 2>/dev/null) || this_host=""
 	[[ -n "$recorded_host" && "$recorded_host" == "$this_host" ]] || return 1
@@ -228,7 +238,7 @@ _cgh_evaluate() {
 		return 1
 	fi
 	identity=$(_cgh_file_identity "$path") || identity=""
-	read -r inode size mtime owner <<<"$identity"
+	IFS=' ' read -r inode size mtime owner <<<"$identity"
 	if [[ ! "$inode" =~ ^[0-9]+$ || ! "$size" =~ ^[0-9]+$ || ! "$mtime" =~ ^[0-9]+$ ]]; then
 		CGH_EVAL_REASON="stat-failed"
 		return 1
@@ -302,22 +312,74 @@ _cgh_scope_paths() {
 	return 0
 }
 
-_cgh_audit_removal() {
-	local audit_tool="$1"
-	local audit_file="$2"
+# Apply mode requires the tamper-evident audit helper and an intact chain
+# before any removal or gc, whether or not candidates exist.
+_cgh_audit_ready() {
+	[[ -x "$CGH_AUDIT_TOOL" ]] || {
+		_cgh_block "tamper-evident audit helper is unavailable"
+		return 1
+	}
+	if [[ -s "$CGH_AUDIT_FILE" ]] && ! AUDIT_LOG_FILE="$CGH_AUDIT_FILE" "$CGH_AUDIT_TOOL" verify --quiet; then
+		_cgh_block "audit chain verification failed"
+		return 1
+	fi
+	return 0
+}
+
+# Writes one audit entry: MESSAGE then "key=value" details (never a repo path).
+_cgh_audit_log() {
+	local message="$1"
+	shift
+	local detail=""
+	local -a detail_args=()
+
+	for detail in "$@"; do
+		detail_args+=(--detail "$detail")
+	done
+	AUDIT_LOG_FILE="$CGH_AUDIT_FILE" AUDIT_QUIET=true "$CGH_AUDIT_TOOL" log operation.verify \
+		"$message" "${detail_args[@]}" >/dev/null || return 1
+	return 0
+}
+
+# Records removal intent before rm, then the observed outcome after it.
+_cgh_remove_audited() {
+	local path="$1"
+	local expected="$2"
 	local operation="$3"
 	local repo_id="$4"
 	local kind="$5"
 	local relative="$6"
-	local size="$7"
-	local mtime="$8"
+	local size=0 mtime=0 current="" message="" result="" status=0
+	local -a details=()
 
-	AUDIT_LOG_FILE="$audit_file" AUDIT_QUIET=true "$audit_tool" log operation.verify \
-		"Canonical stale Git debris removed" \
-		--detail "operation=${operation}" --detail "repo_id=${repo_id}" \
-		--detail "kind=${kind}" --detail "path=${relative}" \
-		--detail "size=${size}" --detail "mtime=${mtime}" >/dev/null || return 1
-	return 0
+	IFS=' ' read -r _ size mtime _ <<<"$expected"
+	details=("operation=${operation}" "repo_id=${repo_id}" "kind=${kind}" "path=${relative}"
+		"size=${size}" "mtime=${mtime}")
+	_cgh_audit_log "Canonical stale Git debris removal approved" "${details[@]}" || {
+		_cgh_block "recovery audit record could not be written"
+		return 2
+	}
+	# Narrow the audit-to-removal window: the file must still be identical.
+	current=$(_cgh_file_identity "$path") || current=""
+	if [[ "$current" != "$expected" ]]; then
+		printf 'KEPT reason=changed-before-removal path=%s\n' "$relative"
+		message="Canonical stale Git debris removal abandoned"
+		result="changed"
+	elif rm -f -- "$path" && [[ ! -e "$path" ]]; then
+		printf 'REMOVED kind=%s path=%s\n' "$kind" "$relative"
+		message="Canonical stale Git debris removed"
+		result="removed"
+	else
+		printf 'FAILED path=%s\n' "$relative" >&2
+		message="Canonical stale Git debris removal failed"
+		result="failed"
+		status=1
+	fi
+	_cgh_audit_log "$message" "${details[@]}" "result=${result}" || {
+		_cgh_block "recovery audit outcome could not be written"
+		return 2
+	}
+	return "$status"
 }
 
 # Reports (and with apply=1 removes) stale debris. Prints a summary.
@@ -328,9 +390,7 @@ _cgh_repair() {
 	local tmp_age="$4"
 	local apply="$5"
 	local operation="$6"
-	local audit_tool="${SCRIPT_DIR}/audit-log-helper.sh"
-	local audit_file="${AIDEVOPS_CANONICAL_RECOVERY_AUDIT_FILE:-${HOME}/.aidevops/logs/canonical-recovery-audit.jsonl}"
-	local now="" kind="" path="" relative="" min_age=0 size="" mtime="" current=""
+	local now="" kind="" path="" relative="" min_age=0 size="" mtime="" step_rc=0
 	local lock_candidates=0 tmp_candidates=0 skipped=0 removed=0 failed=0 repo_id=""
 	local -a plan_kinds=() plan_paths=() plan_identities=()
 	local i=0
@@ -343,7 +403,7 @@ _cgh_repair() {
 		min_age="$lock_age"
 		[[ "$kind" == "$CGH_KIND_TMP_PACK" ]] && min_age="$tmp_age"
 		if _cgh_evaluate "$path" "$min_age" "$common" "$repo" "$now"; then
-			read -r _ size mtime _ <<<"$CGH_EVAL_IDENTITY"
+			IFS=' ' read -r _ size mtime _ <<<"$CGH_EVAL_IDENTITY"
 			printf 'CANDIDATE kind=%s path=%s size=%s mtime=%s age_minutes=%s\n' \
 				"$kind" "$relative" "$size" "$mtime" "$(((now - mtime) / 60))"
 			plan_kinds+=("$kind")
@@ -370,14 +430,6 @@ _cgh_repair() {
 		printf 'REMOVED=0\n'
 		return 0
 	}
-	[[ -x "$audit_tool" ]] || {
-		_cgh_block "tamper-evident audit helper is unavailable"
-		return 1
-	}
-	if [[ -s "$audit_file" ]] && ! AUDIT_LOG_FILE="$audit_file" "$audit_tool" verify --quiet; then
-		_cgh_block "audit chain verification failed"
-		return 1
-	fi
 	repo_id=$(printf '%s' "$common" | "$REAL_GIT" hash-object --stdin) || repo_id="unknown"
 	repo_id="${repo_id:0:12}"
 	now=$(date +%s)
@@ -395,25 +447,14 @@ _cgh_repair() {
 			printf 'KEPT reason=%s path=%s\n' "${CGH_EVAL_REASON:-changed}" "$relative"
 			continue
 		fi
-		read -r _ size mtime _ <<<"$CGH_EVAL_IDENTITY"
-		_cgh_audit_removal "$audit_tool" "$audit_file" "$operation" "$repo_id" \
-			"$kind" "$relative" "$size" "$mtime" || {
-			_cgh_block "recovery audit record could not be written"
-			return 1
-		}
-		# Narrow the audit-to-removal window: the file must still be identical.
-		current=$(_cgh_file_identity "$path") || current=""
-		if [[ "$current" != "${plan_identities[$i]}" ]]; then
-			printf 'KEPT reason=changed-before-removal path=%s\n' "$relative"
-			continue
-		fi
-		if rm -f -- "$path" && [[ ! -e "$path" ]]; then
-			printf 'REMOVED kind=%s path=%s\n' "$kind" "$relative"
-			removed=$((removed + 1))
-		else
-			printf 'FAILED path=%s\n' "$relative" >&2
-			failed=$((failed + 1))
-		fi
+		step_rc=0
+		_cgh_remove_audited "$path" "${plan_identities[$i]}" "$operation" "$repo_id" \
+			"$kind" "$relative" || step_rc=$?
+		case "$step_rc" in
+		0) [[ -e "$path" ]] || removed=$((removed + 1)) ;;
+		1) failed=$((failed + 1)) ;;
+		*) return 1 ;;
+		esac
 	done
 	printf 'REMOVED=%s\n' "$removed"
 	[[ "$failed" -eq 0 ]] || return 1
@@ -431,8 +472,6 @@ _cgh_release_lock() {
 _cgh_run_gc() {
 	local repo="$1"
 	local common="$2"
-	local audit_tool="${SCRIPT_DIR}/audit-log-helper.sh"
-	local audit_file="${AIDEVOPS_CANONICAL_RECOVERY_AUDIT_FILE:-${HOME}/.aidevops/logs/canonical-recovery-audit.jsonl}"
 	local output="" rc=0 result="ok" repo_id=""
 
 	output=$("$REAL_GIT" -C "$repo" -c gc.autoDetach=false -c maintenance.autoDetach=false \
@@ -442,12 +481,11 @@ _cgh_run_gc() {
 		result="failed"
 	fi
 	repo_id=$(printf '%s' "$common" | "$REAL_GIT" hash-object --stdin) || repo_id="unknown"
-	if [[ -x "$audit_tool" ]]; then
-		AUDIT_LOG_FILE="$audit_file" AUDIT_QUIET=true "$audit_tool" log operation.verify \
-			"Canonical sanctioned git gc --auto" \
-			--detail "operation=${CGH_GC_CMD}" --detail "repo_id=${repo_id:0:12}" \
-			--detail "result=${result}" --detail "exit=${rc}" >/dev/null || true
-	fi
+	_cgh_audit_log "Canonical sanctioned git gc --auto" "operation=${CGH_GC_CMD}" \
+		"repo_id=${repo_id:0:12}" "result=${result}" "exit=${rc}" || {
+		_cgh_block "gc audit outcome could not be written"
+		result="audit-failed"
+	}
 	printf 'GC_RESULT=%s\n' "$result"
 	[[ "$result" == "ok" ]] || return 1
 	return 0
@@ -497,6 +535,8 @@ cgh_main() {
 	# shellcheck disable=SC1091  # resolved at runtime via $SCRIPT_DIR
 	source "${SCRIPT_DIR}/runtime-env.sh"
 	REAL_GIT="${AIDEVOPS_REAL_GIT_BIN:-aidevops-native-git-not-found}"
+	CGH_AUDIT_TOOL="${SCRIPT_DIR}/audit-log-helper.sh"
+	CGH_AUDIT_FILE="${AIDEVOPS_CANONICAL_RECOVERY_AUDIT_FILE:-${HOME}/.aidevops/logs/canonical-recovery-audit.jsonl}"
 	# Repository identity comes only from --repo, never an inherited Git env.
 	unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY
 	git_dir=$("$REAL_GIT" -C "$repo" rev-parse --path-format=absolute --git-dir 2>/dev/null) || git_dir=""
@@ -516,6 +556,12 @@ cgh_main() {
 		CGH_LOCK_HELD=1
 		# Read the path from a global at exit so no path text is re-parsed.
 		trap '_cgh_release_lock "$CGH_LOCK_DIR"' EXIT
+		# Every apply path (repair and gc, with or without candidates) needs a
+		# working, intact audit chain before it changes anything.
+		_cgh_audit_ready || {
+			_cgh_release_lock "$lock_dir"
+			return 1
+		}
 	fi
 	_cgh_repair "$repo" "$common" "$((lock_minutes * 60))" "$((tmp_days * 86400))" "$apply" "$cmd" || rc=$?
 	if [[ "$cmd" == "$CGH_GC_CMD" && "$rc" -eq 0 ]]; then
