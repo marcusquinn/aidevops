@@ -646,6 +646,103 @@ else
 		"(got rc=$rc — expected 1; denylist only applies to openai provider)"
 fi
 
+# =============================================================================
+# Custom routing table restrictions (dispatch/worker parity)
+# =============================================================================
+# Dispatch-side resolution must follow the same field-aware precedence as
+# headless-runtime-model.sh: first table with a valid restriction array wins;
+# a missing or malformed field inherits the shipped framework list.
+
+_oauth_reset_caches() {
+	_CHATGPT_OAUTH_UNSUPPORTED_MODELS_CACHE=""
+	_OPENAI_OAUTH_AUTH_FILE_CACHE=""
+	_OPENAI_OAUTH_AUTH_TYPE_CACHE=""
+	return 0
+}
+
+# Prints "<model>=<denied|allowed>" for dispatch and worker side per table.
+_oauth_dispatch_verdict() {
+	local table="$1" model="$2"
+	_oauth_reset_caches
+	if AIDEVOPS_MODEL_ROUTING_TABLE="$table" _chatgpt_oauth_denylist_check openai "$model"; then
+		printf 'denied'
+	else
+		printf 'allowed'
+	fi
+	return 0
+}
+
+_oauth_worker_verdict() {
+	local table="$1" model="$2" verdict
+	verdict=$(
+		export AIDEVOPS_MODEL_ROUTING_TABLE="$table" OPENCODE_AUTH_FILE="$AUTH_FILE"
+		# shellcheck source=/dev/null
+		source "${TEST_SCRIPTS_DIR}/headless-runtime-model.sh" >/dev/null 2>&1
+		ids=$(_headless_chatgpt_oauth_unsupported_ids 2>/dev/null)
+		if _headless_model_id_denied "$model" "$ids"; then
+			printf 'denied'
+		else
+			printf 'allowed'
+		fi
+	)
+	printf '%s' "$verdict"
+	return 0
+}
+
+cat >"$AUTH_FILE" <<JSON
+{"openai": {"type": "oauth", "access": "fake", "refresh": "fake"}}
+JSON
+
+custom_dir="${TEST_ROOT}/custom-routing"
+mkdir -p "$custom_dir"
+printf '{"chatgpt_oauth_restrictions":{"openai_unsupported":["gpt-6.1-terra"]}}' >"${custom_dir}/narrow.json"
+printf '{"tiers":{"standard":["openai/gpt-6.1-sol"]}}' >"${custom_dir}/tiers-only.json"
+printf '{"chatgpt_oauth_restrictions":{"openai_unsupported":[]}}' >"${custom_dir}/empty.json"
+printf '{"chatgpt_oauth_restrictions":{"openai_unsupported":"gpt-6.1-sol"}}' >"${custom_dir}/malformed.json"
+printf '{"providers":{"openai":{"oauth_auth_file":"%s"}}}' "${custom_dir}/alt-auth.json" >"${custom_dir}/auth-file.json"
+
+# Narrow custom list: Sol permitted, Terra denied; dispatch == worker.
+for pair in "narrow.json gpt-6.1-sol allowed" "narrow.json gpt-6.1-terra denied" \
+	"narrow.json gpt-6.1-terra-2026-01-15 denied" "narrow.json gpt-6.1-terra-pro allowed" \
+	"empty.json gpt-6.1-terra allowed" "tiers-only.json gpt-6.1-sol denied" \
+	"tiers-only.json gpt-5.5-pro denied" "malformed.json gpt-6.1-sol denied"; do
+	read -r tbl mdl expected <<<"$pair"
+	dispatch=$(_oauth_dispatch_verdict "${custom_dir}/${tbl}" "$mdl")
+	worker=$(_oauth_worker_verdict "${custom_dir}/${tbl}" "$mdl")
+	if [[ "$dispatch" == "$expected" && "$worker" == "$expected" ]]; then
+		print_result "custom-restrictions: ${tbl} ${mdl} ${expected} (dispatch+worker agree)" 0
+	else
+		print_result "custom-restrictions: ${tbl} ${mdl} ${expected} (dispatch+worker agree)" 1 \
+			"(dispatch=$dispatch worker=$worker)"
+	fi
+done
+
+# Provider auth-file setting: custom value wins; omission inherits framework default.
+_oauth_reset_caches
+resolved=$(AIDEVOPS_MODEL_ROUTING_TABLE="${custom_dir}/auth-file.json" _openai_oauth_auth_file)
+if [[ "$resolved" == "${custom_dir}/alt-auth.json" ]]; then
+	print_result "custom-restrictions: custom provider auth file honoured" 0
+else
+	print_result "custom-restrictions: custom provider auth file honoured" 1 "(got '$resolved')"
+fi
+_oauth_reset_caches
+resolved=$(AIDEVOPS_MODEL_ROUTING_TABLE="${custom_dir}/tiers-only.json" _openai_oauth_auth_file)
+if [[ "$resolved" == "${HOME}/.local/share/opencode/auth.json" ]]; then
+	print_result "custom-restrictions: omitted auth file inherits framework default" 0
+else
+	print_result "custom-restrictions: omitted auth file inherits framework default" 1 "(got '$resolved')"
+fi
+
+# API-key auth stays unrestricted regardless of custom table.
+printf '{"openai": {"type": "api", "key": "fake"}}' >"$AUTH_FILE"
+_oauth_reset_caches
+if AIDEVOPS_MODEL_ROUTING_TABLE="${custom_dir}/tiers-only.json" _chatgpt_oauth_denylist_check openai gpt-6.1-sol; then
+	print_result "custom-restrictions: API-key auth not restricted" 1
+else
+	print_result "custom-restrictions: API-key auth not restricted" 0
+fi
+_oauth_reset_caches
+
 rm -f "$AUTH_FILE"
 
 # =============================================================================

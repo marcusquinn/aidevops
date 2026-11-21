@@ -205,6 +205,7 @@ claim and defines the evidence required before reconsideration.
 Auto-update overwrites `~/.aidevops/agents/configs/*.json` and `~/.aidevops/agents/scripts/*`, so user-specific routing must live outside those paths.
 
 - Put persistent model-order overrides in `~/.aidevops/agents/custom/configs/model-routing-table.json`
+- ChatGPT OAuth restrictions (`chatgpt_oauth_restrictions.openai_unsupported`) and `providers.openai.oauth_auth_file` resolve per field, identically for dispatch availability and worker selection: the first table defining a valid value wins (custom, then framework). A tiers-only custom table inherits all shipped denials; an explicit array (even `[]`) replaces them for that account, and a malformed value falls back to the framework list, never allow-all.
 - Put the provider pin in `~/.config/aidevops/credentials.sh`
 - Do not rely on `.bashrc`, `.zshrc`, or `.profile` for pulse/worker provider pins; scheduled daemons intentionally do not source interactive shell startup files.
 
