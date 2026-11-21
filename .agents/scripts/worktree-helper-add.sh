@@ -725,6 +725,26 @@ _apply_worktree_exclusions() {
 	return 0
 }
 
+# GH#39739: warn when sessions in other repositories will be unable to write
+# the new worktree, so the cause is named before the first denied edit.
+# Best-effort and silent when the policy helper is unavailable.
+_cmd_add_warn_untrusted_workspace_path() {
+	local wt_path="$1"
+	local policy_helper="${SCRIPT_DIR}/canonical-write-policy-helper.py"
+	[[ -n "$wt_path" && -f "$policy_helper" ]] || return 0
+	command -v python3 >/dev/null 2>&1 || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+	local payload="" verdict=""
+	payload=$(python3 "$policy_helper" check-worktree --path "$wt_path" 2>/dev/null) || return 0
+	verdict=$(printf '%s' "$payload" | jq -r '[.decision, .target.classification, (.git_workspace_root // "")] | join("|")' 2>/dev/null) || return 0
+	local decision="" classification="" workspace_root=""
+	IFS='|' read -r decision classification workspace_root <<<"$verdict"
+	[[ "$decision" == "untrusted" && "$classification" == "linked" ]] || return 0
+	print_warning "Worktree is outside the trusted Git workspace (${workspace_root:-unavailable}): sessions started in other repositories cannot edit it."
+	print_warning "Set AIDEVOPS_GIT_WORKSPACE_ROOT to a directory containing the worktree and its repository, or keep both under the workspace root and the worktree under the configured worktree base."
+	return 0
+}
+
 # Print the success banner and editor hints after a worktree is created.
 _print_worktree_add_success() {
 	local wt_path="$1"
@@ -1796,6 +1816,7 @@ cmd_add() {
 	_interactive_session_auto_claim "$branch" "$path" "$explicit_issue" || true
 
 	_print_worktree_add_success "$path" "$branch"
+	_cmd_add_warn_untrusted_workspace_path "$path"
 	_ADD_COLLISION_PATH="$path"
 	_cmd_add_print_collision_provenance
 

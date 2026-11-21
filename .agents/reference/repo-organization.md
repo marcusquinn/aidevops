@@ -142,10 +142,23 @@ still apply.
 Direct file-mutation tools may write across repositories when both identities
 resolve beneath `${AIDEVOPS_GIT_WORKSPACE_ROOT:-~/Git}` and the target is a linked
 worktree. Canonical checkouts remain read-only regardless of their location.
-Resolved worktree, Git directory, and common-directory paths must all remain
-inside the workspace, so sibling-prefix paths and symlink escapes are denied.
+Resolved Git directory and common-directory paths must remain inside the
+workspace. The worktree path must also be inside it, or inside the configured
+worktree base (`AIDEVOPS_WORKTREE_BASE_DIR`, then `repos.json`
+`worktree_base_dir`), which may be on another volume. A base containing the
+home directory is not trusted. The same rule classifies the session: a session
+in such a worktree is inside the workspace. Sibling-prefix paths and symlink
+escapes are denied.
 Sanctioned outside-Git paths remain separate: a symlink traversed from inside a
 Git worktree cannot use that allowance to escape the trusted workspace.
+
+A denial names the failing side. `ACTION_REQUIRED=run_session_inside_git_workspace`
+means the session directory is outside; `include_worktree_in_git_workspace`
+means the target worktree or its repository is outside. For the latter, set
+`AIDEVOPS_GIT_WORKSPACE_ROOT` to include it, or recreate the worktree under the
+configured base. `worktree-helper.sh add` warns at creation time, and
+`canonical-write-policy-helper.py check-worktree --path <worktree>` reports the
+same decision.
 
 ## Related
 

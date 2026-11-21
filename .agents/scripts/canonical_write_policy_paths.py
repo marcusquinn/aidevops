@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import unicodedata
 from dataclasses import dataclass
@@ -15,6 +16,8 @@ from native_git import real_git
 
 
 GIT_WORKSPACE_ROOT_ENV = "AIDEVOPS_GIT_WORKSPACE_ROOT"
+WORKTREE_BASE_DIR_ENVS = ("AIDEVOPS_WORKTREE_BASE_DIR", "AIDEVOPS_WORKTREES_DIR")
+REPOS_JSON_ENV = "AIDEVOPS_REPOS_JSON"
 GIT_METADATA = "git-metadata"
 
 
@@ -198,6 +201,30 @@ def git_workspace_root_from_environment() -> str:
     return str(Path.home() / "Git")
 
 
+def worktree_base_dir_from_environment() -> str:
+    """Return the configured linked-worktree base, as worktree-paths.sh does.
+
+    GH#39739: worktree-helper.sh places worktrees here, so a linked worktree
+    beneath it is trusted even when the base is outside the Git workspace.
+    """
+    for name in WORKTREE_BASE_DIR_ENVS:
+        if os.environ.get(name):
+            return os.environ[name]
+    repos_json = os.environ.get(REPOS_JSON_ENV) or str(
+        Path.home() / ".config" / "aidevops" / "repos.json"
+    )
+    try:
+        config = json.loads(Path(repos_json).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        config = {}
+    if isinstance(config, dict):
+        for key in ("worktree_base_dir", "worktrees_dir"):
+            value = config.get(key)
+            if isinstance(value, str) and value and value != "null":
+                return value
+    return str(Path.home() / "Git" / "_worktrees")
+
+
 def canonical_git_workspace_root(workspace_root: str) -> str:
     if not workspace_root:
         return ""
@@ -221,10 +248,19 @@ def is_within_workspace(path: str, workspace_root: str) -> bool:
 
 
 def repository_within_workspace(
-    location: Classification, workspace_root: str
+    location: Classification, workspace_root: str, worktree_root: str = ""
 ) -> bool:
-    """Require the worktree and its shared Git metadata beneath one root."""
-    return location.inside_git and all(
+    """Require shared Git metadata beneath the workspace root.
+
+    The worktree itself must also be beneath the workspace root, or be a
+    linked worktree beneath the trusted worktree base (GH#39739).
+    """
+    if not location.inside_git or not all(
         is_within_workspace(path, workspace_root)
-        for path in (location.repo_root, location.git_dir, location.common_dir)
+        for path in (location.git_dir, location.common_dir)
+    ):
+        return False
+    return is_within_workspace(location.repo_root, workspace_root) or (
+        location.classification == "linked"
+        and is_within_workspace(location.repo_root, worktree_root)
     )

@@ -23,6 +23,7 @@ from typing import Any
 from canonical_branch_policy import resolve_branch
 from canonical_write_policy_paths import (
     GIT_METADATA,
+    GIT_WORKSPACE_ROOT_ENV,
     Classification,
     canonical_git_workspace_root as _canonical_git_workspace_root,
     classify_location,
@@ -33,6 +34,7 @@ from canonical_write_policy_paths import (
     names_git_metadata as _names_git_metadata,
     repository_within_workspace as _repository_within_workspace,
     target_probe as _target_probe,
+    worktree_base_dir_from_environment,
 )
 from canonical_write_runtime_allow import (
     canonical_runtime_write as _canonical_runtime_write,
@@ -56,10 +58,32 @@ GIT_METADATA_REASON = (
 
 
 SESSION_OUTSIDE_WORKSPACE_ACTION = "run_session_inside_git_workspace"
-SESSION_OUTSIDE_WORKSPACE_REASON = (
+WORKSPACE_BOUNDARY_REASON = (
     "cross-repository linked worktree access is limited to the "
     "trusted Git workspace"
 )
+# GH#39739: the target worktree, not the session, is outside the boundary.
+TARGET_OUTSIDE_WORKSPACE_ACTION = "include_worktree_in_git_workspace"
+
+
+def _session_outside_reason(workspace_root: str) -> str:
+    return (
+        f"{WORKSPACE_BOUNDARY_REASON}: this session's project directory is "
+        f"outside the trusted Git workspace ({workspace_root or 'unavailable'}); "
+        "restart the session inside it, or set "
+        f"{GIT_WORKSPACE_ROOT_ENV} to a directory that contains it"
+    )
+
+
+def _target_outside_reason(workspace_root: str, worktree_root: str) -> str:
+    return (
+        f"{WORKSPACE_BOUNDARY_REASON}: target worktree or its repository is "
+        f"outside the trusted Git workspace ({workspace_root or 'unavailable'}) "
+        f"and the trusted worktree base ({worktree_root or 'unavailable'}); "
+        f"set {GIT_WORKSPACE_ROOT_ENV} to a directory that contains the "
+        "worktree and its repository, or create the worktree with "
+        "worktree-helper.sh under the configured worktree base"
+    )
 
 
 def _write_action(
@@ -78,7 +102,7 @@ def _write_action(
             cross_repository_target and session_outside_workspace,
             SESSION_OUTSIDE_WORKSPACE_ACTION,
         ),
-        (cross_repository_target, "use_linked_worktree_under_git_workspace"),
+        (cross_repository_target, TARGET_OUTSIDE_WORKSPACE_ACTION),
     )
     return next(
         (action for matched, action in candidates if matched),
@@ -115,10 +139,37 @@ class _WriteFacts:
     target: Classification
     target_probe: str
     workspace_root: str
+    worktree_root: str
     cross_repository_target: bool
     symlink_workspace_escape: bool
     context_within_workspace: bool
+    target_within_workspace: bool
     git_metadata_target: bool
+
+
+def _trusted_worktree_root() -> str:
+    """Return the configured worktree base unless it contains the home directory."""
+    root = _canonical_git_workspace_root(worktree_base_dir_from_environment())
+    home = os.path.realpath(os.path.expanduser("~"))
+    if root and _is_within_workspace(home, root):
+        return ""
+    return root
+
+
+def _trusted_roots() -> tuple[str, str]:
+    """Return the canonical Git workspace root and trusted worktree base."""
+    return (
+        _canonical_git_workspace_root(git_workspace_root_from_environment()),
+        _trusted_worktree_root(),
+    )
+
+
+def _context_within_workspace(
+    context: Classification, cwd: str, workspace_root: str, worktree_root: str
+) -> bool:
+    if context.inside_git:
+        return _repository_within_workspace(context, workspace_root, worktree_root)
+    return _is_within_workspace(cwd, workspace_root)
 
 
 def _write_target(cwd: str, file_path: str) -> tuple[Classification, str, Any]:
@@ -136,14 +187,13 @@ def _write_target(cwd: str, file_path: str) -> tuple[Classification, str, Any]:
 def _write_facts(cwd: str, file_path: str) -> _WriteFacts:
     context = classify_location(cwd)
     target, target_probe, symlink_origin = _write_target(cwd, file_path)
-    workspace_root = _canonical_git_workspace_root(
-        git_workspace_root_from_environment()
-    )
+    workspace_root, worktree_root = _trusted_roots()
     return _WriteFacts(
         context=context,
         target=target,
         target_probe=target_probe,
         workspace_root=workspace_root,
+        worktree_root=worktree_root,
         cross_repository_target=target.classification == "linked" and (
             not context.inside_git or target.common_dir != context.common_dir
         ),
@@ -152,10 +202,11 @@ def _write_facts(cwd: str, file_path: str) -> _WriteFacts:
             and target.classification == "outside"
             and not _is_within_workspace(target_probe, workspace_root)
         ),
-        context_within_workspace=(
-            _repository_within_workspace(context, workspace_root)
-            if context.inside_git
-            else _is_within_workspace(cwd, workspace_root)
+        context_within_workspace=_context_within_workspace(
+            context, cwd, workspace_root, worktree_root
+        ),
+        target_within_workspace=_repository_within_workspace(
+            target, workspace_root, worktree_root
         ),
         git_metadata_target=target.classification == GIT_METADATA or (
             target.inside_git
@@ -186,13 +237,12 @@ def _non_canonical_decision(facts: _WriteFacts) -> tuple[str, str]:
             "trusted Git workspace",
         ),
         (
-            facts.cross_repository_target and not (
-                facts.context_within_workspace
-                and _repository_within_workspace(
-                    facts.target, facts.workspace_root
-                )
-            ),
-            SESSION_OUTSIDE_WORKSPACE_REASON,
+            facts.cross_repository_target and not facts.context_within_workspace,
+            _session_outside_reason(facts.workspace_root),
+        ),
+        (
+            facts.cross_repository_target and not facts.target_within_workspace,
+            _target_outside_reason(facts.workspace_root, facts.worktree_root),
         ),
     )
     deny_reason = next((reason for matched, reason in denies if matched), None)
@@ -219,6 +269,7 @@ def check_write(cwd: str, file_path: str) -> dict[str, Any]:
     return {
         "policy": POLICY_VERSION,
         "git_workspace_root": facts.workspace_root,
+        "trusted_worktree_root": facts.worktree_root,
         "decision": decision,
         "reason": reason,
         "action": (
@@ -245,29 +296,55 @@ def check_session(cwd: str, target_path: str) -> dict[str, Any]:
     """
     context = classify_location(cwd)
     target = classify_location(target_path)
-    workspace_root = _canonical_git_workspace_root(
-        git_workspace_root_from_environment()
-    )
+    workspace_root, worktree_root = _trusted_roots()
     cross_repository_target = target.inside_git and (
         not context.inside_git or target.common_dir != context.common_dir
     )
-    context_within_workspace = (
-        _repository_within_workspace(context, workspace_root)
-        if context.inside_git
-        else _is_within_workspace(cwd, workspace_root)
+    denied = cross_repository_target and not _context_within_workspace(
+        context, cwd, workspace_root, worktree_root
     )
-    denied = cross_repository_target and not context_within_workspace
     return {
         "policy": POLICY_VERSION,
         "git_workspace_root": workspace_root,
+        "trusted_worktree_root": worktree_root,
         "decision": "deny" if denied else "allow",
         "reason": (
-            SESSION_OUTSIDE_WORKSPACE_REASON
+            _session_outside_reason(workspace_root)
             if denied
             else "session location permits the target"
         ),
         "action": SESSION_OUTSIDE_WORKSPACE_ACTION if denied else "none",
         "context": asdict(context),
+        "target": asdict(target),
+    }
+
+
+def check_worktree(worktree_path: str) -> dict[str, Any]:
+    """Report whether other repositories' sessions may write a linked worktree.
+
+    GH#39739: worktree-helper.sh warns at creation instead of the first edit.
+    """
+    target = classify_location(worktree_path)
+    workspace_root, worktree_root = _trusted_roots()
+    linked = target.classification == "linked"
+    trusted = linked and _repository_within_workspace(
+        target, workspace_root, worktree_root
+    )
+    if trusted:
+        reason = (
+            "linked worktree is writable from sessions in other trusted "
+            "repositories"
+        )
+    elif linked:
+        reason = _target_outside_reason(workspace_root, worktree_root)
+    else:
+        reason = f"path is not a linked worktree ({target.classification})"
+    return {
+        "policy": POLICY_VERSION,
+        "git_workspace_root": workspace_root,
+        "trusted_worktree_root": worktree_root,
+        "decision": "trusted" if trusted else "untrusted",
+        "reason": reason,
         "target": asdict(target),
     }
 
@@ -343,6 +420,10 @@ def main() -> int:
     session_parser.add_argument("--target", required=True)
     session_parser.add_argument("--field", default="")
 
+    worktree_parser = subparsers.add_parser("check-worktree")
+    worktree_parser.add_argument("--path", required=True)
+    worktree_parser.add_argument("--field", default="")
+
     patch_parser = subparsers.add_parser("check-patch")
     patch_parser.add_argument("--cwd", default=os.getcwd())
     patch_parser.add_argument("--field", default="")
@@ -360,6 +441,7 @@ def main() -> int:
     decisions = {
         "check-write": lambda: check_write(args.cwd, args.path),
         "check-session": lambda: check_session(args.cwd, args.target),
+        "check-worktree": lambda: check_worktree(args.path),
         "check-patch": lambda: check_patch(args.cwd, sys.stdin.read()),
     }
     if args.command in decisions:
