@@ -91,6 +91,33 @@ _instance_lock_publication_age() {
 }
 
 #######################################
+# Age of an LLM lock hold, from its pid file mtime (written at acquisition).
+#
+# Returns 1 (caller falls back) when the mtime is unreadable, future-dated,
+# or later than the owner's process start + 2s (PID reuse / rewritten file).
+#
+# Arguments:
+#   $1 — pid file path
+#   $2 — owner process age in seconds
+# Output: hold age in seconds on stdout (only on success)
+#######################################
+_llm_lock_hold_age() {
+	local pid_file="$1"
+	local proc_age="$2"
+	local mtime="" now_epoch=""
+	declare -F _file_mtime_epoch >/dev/null 2>&1 || return 1
+	[[ "$proc_age" =~ ^[0-9]+$ ]] || return 1
+	mtime=$(_file_mtime_epoch "$pid_file" 2>/dev/null) || return 1
+	[[ "$mtime" =~ ^[1-9][0-9]*$ ]] || return 1
+	now_epoch=$(date +%s)
+	[[ "$mtime" -le "$now_epoch" ]] || return 1
+	# Process must have started no later than the pid write (+2s slack).
+	[[ $((now_epoch - proc_age)) -le $((mtime + 2)) ]] || return 1
+	printf '%s\n' "$((now_epoch - mtime))"
+	return 0
+}
+
+#######################################
 # Handle an already-existing lock directory (mkdir failed)
 #
 # Called by acquire_instance_lock() when the initial mkdir returns non-zero.
@@ -257,9 +284,16 @@ _handle_stale_llm_lock() {
 		return 1
 	fi
 
-	# A wrapper dispatching while it owns both lanes can outlive the old
-	# process-age ceiling. Only its matching instance lease grants extension.
-	lock_age=$(_instance_lock_publication_age "$lock_pid" "$lock_age")
+	# The supervisor releases the instance lock before its LLM phase (t2774),
+	# so wrapper process age includes the long deterministic phase. Judge the
+	# owner by how long it has held the LLM lock (pid file mtime) instead;
+	# fall back to the instance lease / process age when that is unusable.
+	local llm_lock_age=""
+	if llm_lock_age=$(_llm_lock_hold_age "${lockdir}/pid" "$lock_age"); then
+		lock_age="$llm_lock_age"
+	else
+		lock_age=$(_instance_lock_publication_age "$lock_pid" "$lock_age")
+	fi
 	local max_age="${PULSE_LOCK_MAX_AGE_S:-1800}"
 	if [[ "$lock_age" -gt "$max_age" ]]; then
 		echo "[pulse-wrapper] FORCE-RECLAIMED stale LLM lockdir (owner PID ${lock_pid}, age ${lock_age}s > ceiling ${max_age}s, owner_cmd='${owner_cmd%%' '*}') — killing hung owner (GH#20613)" >>"$WRAPPER_LOGFILE"
