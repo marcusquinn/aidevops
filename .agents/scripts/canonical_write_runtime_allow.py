@@ -54,10 +54,12 @@ def _git_probe(repo_root: str, *args: str) -> tuple[int, str]:
 
 def _untracked_and_ignored(repo_root: str, relative: str) -> bool:
     """Tracked content stays protected even when an ignore rule matches it."""
-    # Literal pathspecs stop glob characters in a filename from matching
-    # nothing; check-ignore rejects that flag and takes plain pathnames.
+    # `literal` keeps glob characters in a filename literal; `icase` makes a
+    # case alias of a tracked file (`logs/report.md` for a tracked
+    # `logs/Report.md` on case-insensitive storage) count as tracked.
+    # check-ignore takes plain pathnames, not pathspec magic.
     code, tracked = _git_probe(
-        repo_root, "--literal-pathspecs", "ls-files", "-z", "--", relative
+        repo_root, "ls-files", "-z", "--", f":(literal,icase){relative}"
     )
     if code != 0 or tracked:
         return False
@@ -83,21 +85,30 @@ def _owned_regular_config(info: os.stat_result) -> bool:
     )
 
 
+def _read_owned_config(config_path: Path) -> bytes | None:
+    """Validate and read the same descriptor, so a swap cannot bypass checks.
+
+    Non-blocking open keeps a FIFO from hanging the guard; the read is
+    bounded by the size cap.
+    """
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(config_path, flags)
+    except OSError:
+        return None
+    with os.fdopen(descriptor, "rb") as handle:
+        if not _owned_regular_config(os.fstat(handle.fileno())):
+            return None
+        return handle.read(_CONFIG_MAX_BYTES + 1)
+
+
 def _trusted_project_config(repo_root: str) -> dict | None:
     """Return the canonical config only when it is owned, ignored and untracked."""
-    config_path = Path(repo_root) / PROJECT_CONFIG_NAME
-    try:
-        trusted = _owned_regular_config(config_path.lstat())
-    except OSError:
-        trusted = False
-    if not trusted or not _untracked_and_ignored(repo_root, PROJECT_CONFIG_NAME):
+    if not _untracked_and_ignored(repo_root, PROJECT_CONFIG_NAME):
         return None
     try:
-        descriptor = os.open(
-            config_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        )
-        with os.fdopen(descriptor, encoding="utf-8") as handle:
-            data = json.load(handle)
+        raw = _read_owned_config(Path(repo_root) / PROJECT_CONFIG_NAME)
+        data = json.loads(raw) if raw and len(raw) <= _CONFIG_MAX_BYTES else None
     except (OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None
@@ -145,6 +156,23 @@ def _replaceable_target(target: Path) -> bool:
     except OSError:
         return False
     return stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+
+
+def path_traverses_symlink(cwd: str, file_path: str) -> bool:
+    """True when any component of the unresolved path is a symlink.
+
+    Covers aliases above the repository root too, which the Git-origin
+    symlink probe skips. `..` is kept so the kernel resolves it as written.
+    """
+    lexical = Path(file_path).expanduser()
+    if not lexical.is_absolute():
+        lexical = Path(cwd).expanduser().absolute() / lexical
+    current = Path(lexical.anchor)
+    for part in lexical.parts[1:]:
+        current = current / part
+        if part not in (".", "..") and current.is_symlink():
+            return True
+    return False
 
 
 def _repository_parts(repo_root: str, target_path: str) -> tuple[str, ...] | None:

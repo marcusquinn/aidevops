@@ -57,7 +57,7 @@ function classifyExplicitTarget(helper, targetPath, workdir) {
   const lexicallyRepositoryLocal = typeof repoRoot === "string"
     && repoRoot !== ""
     && pathIsWithin(lexicalTarget, repoRoot);
-  return { policy, targetPath, lexicallyRepositoryLocal };
+  return { policy, targetPath, lexicalTarget, lexicallyRepositoryLocal };
 }
 
 function classifyExplicitTargets(targetPaths, scriptsDir, workdir) {
@@ -103,12 +103,14 @@ function resolveRepositoryTargetScope(classifications) {
     throw new Error("explicit repository targets span multiple worktrees");
   }
   // GH#39573: pre-edit-check.sh exempts an allowlisted canonical runtime
-  // target, so pass a target without that exemption when one exists.
+  // target, so pass a target without that exemption when one exists. The
+  // script runs from the repository root, so hand it the absolute lexical
+  // path resolved against the caller's workdir (symlinks left unresolved).
   const representative = repositoryTargets.find(
     ({ policy }) => policy.canonical_runtime_allow !== CANONICAL_RUNTIME_ALLOWED,
   ) ?? repositoryTargets[0];
   return {
-    repositoryTarget: representative.targetPath,
+    repositoryTarget: representative.lexicalTarget,
     targetWorkdir,
     terminalResponse: "",
   };

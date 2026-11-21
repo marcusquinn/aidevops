@@ -34,6 +34,7 @@ from canonical_write_policy_paths import (
 )
 from canonical_write_runtime_allow import (
     canonical_runtime_write as _canonical_runtime_write,
+    path_traverses_symlink as _path_traverses_symlink,
 )
 
 
@@ -77,14 +78,16 @@ def _write_action(
 
 
 def _canonical_write_decision(
-    target: Classification, target_probe: str, traversed_symlink: bool
+    target: Classification, target_probe: str, cwd: str, file_path: str
 ) -> tuple[str, str, str]:
     """GH#39573: only opted-in, ignored, untracked runtime output is writable.
 
-    Every other canonical target keeps the read-only deny.
+    Every other canonical target keeps the read-only deny. Any symlink in the
+    unresolved path, including an alias above the checkout, voids the
+    exemption.
     """
     allowed, runtime_allow = _canonical_runtime_write(
-        target, target_probe, traversed_symlink
+        target, target_probe, _path_traverses_symlink(cwd, file_path)
     )
     if allowed:
         return "allow", CANONICAL_RUNTIME_ALLOW_REASON, runtime_allow
@@ -130,7 +133,7 @@ def check_write(cwd: str, file_path: str) -> dict[str, Any]:
         reason = f"write target classification failed closed: {target.reason}"
     elif target.classification == "canonical":
         decision, reason, runtime_allow = _canonical_write_decision(
-            target, target_probe, symlink_origin is not None
+            target, target_probe, cwd, file_path
         )
     elif symlink_workspace_escape:
         decision = "deny"

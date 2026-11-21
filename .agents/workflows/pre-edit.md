@@ -54,20 +54,23 @@ user adds a prefix list to the canonical `.aidevops.json`:
 `canonical-write-policy-helper.py check-write` allows a canonical target only when
 all of these conditions hold:
 
-- `.aidevops.json` is untracked, gitignored, a regular file and owned by the user.
-  A tracked file is shared content, not a local opt-in.
+- `.aidevops.json` is untracked, gitignored, a regular single-link file owned by
+  the user and at most 1 MiB. A tracked file is shared content, not a local
+  opt-in.
 - The target falls under a listed prefix. Each prefix must be a relative
   directory ending in `/`. Entries that are empty, `./`, absolute, contain `..`,
   start with `:` or contain glob characters are dropped. Matching compares whole
   path components, so `logs/` never matches `logs-secret/`.
-- The path traverses no symlink. The file is either missing or a regular file
-  with a single link.
+- No component of the path as written is a symlink, including directories above
+  the checkout, so spell the path through the checkout's real location. The file
+  is either missing or a regular file with a single link.
 - No path component is `.git`, `.aidevops.json`, `.gitignore` or
   `.gitattributes`. The comparison case-folds, removes format characters and
   ignores trailing dots or spaces, so filesystem aliases of these names also
   match.
 - Git reports the path as untracked and ignored. A tracked file stays read-only
-  even when an ignore rule matches it.
+  even when an ignore rule matches it. The tracked check ignores case, so a case
+  alias of a tracked file is also read-only.
 
 Every other canonical write keeps the read-only deny. Agents never add or widen
 this list themselves. Only the user edits it, and `aidevops project-config set`

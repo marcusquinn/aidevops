@@ -613,14 +613,15 @@ runtime_hub_expect() {
 	local label="$4"
 	local json="" output=""
 	json=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Write","tool_input":{"filePath":sys.argv[1]}}))' "${hub}/${relative}")
-	output=$(run_hook "$hub" "$json") || true
+	local hook_rc=0
+	output=$(run_hook "$hub" "$json") || hook_rc=$?
 	local matched=1 exemption=""
 	if [[ "$expected" == allow ]]; then
-		# Empty hook output alone could mean the hook never ran; require the
-		# shared policy to report the exemption as well.
+		# Empty output from a failed hook is not an allow; require a clean
+		# exit and the shared policy's exemption as well.
 		exemption=$(python3 "$POLICY_HELPER" check-write --cwd "$hub" \
 			--path "${hub}/${relative}" --field canonical_runtime_allow) || exemption=""
-		[[ -n "$output" || "$exemption" != "allowlisted-ignored-runtime-path" ]] || matched=0
+		[[ "$hook_rc" -ne 0 || -n "$output" || "$exemption" != "allowlisted-ignored-runtime-path" ]] || matched=0
 	elif hook_is_deny "$output" "read-only session mirrors"; then
 		matched=0
 	fi
@@ -650,6 +651,12 @@ test_canonical_runtime_allowlist() {
 	runtime_hub_expect "$hub" deny "logs/.GIT/config" "case-folded Git metadata"
 	runtime_hub_expect "$hub" deny $'logs/.g\xe2\x80\x8cit/config' "HFS+ ignorable Git metadata alias"
 	runtime_hub_expect "$hub" deny "logs/.git./config" "trailing-dot Git metadata alias"
+	# Case alias of a tracked file: on case-insensitive storage it is the
+	# tracked file; elsewhere the case-insensitive index match still denies.
+	runtime_hub_expect "$hub" deny "logs/TRACKED.md" "case alias of a tracked file"
+	# A symlink above the checkout still counts as a traversed symlink.
+	ln -s "$hub" "${TEST_ROOT}/runtime-hub-alias"
+	runtime_hub_expect "${TEST_ROOT}/runtime-hub-alias" deny "logs/new.md" "symlinked alias above the checkout"
 
 	local pre_edit_rc=0
 	(cd "$hub" && bash "$PRE_EDIT_CHECK" --file logs/new.md </dev/null >/dev/null 2>&1) || pre_edit_rc=$?
@@ -664,8 +671,9 @@ test_canonical_runtime_allowlist() {
 
 	local patch_json="" output=""
 	patch_json=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"apply_patch","tool_input":{"patchText":"*** Begin Patch\n*** Add File: "+sys.argv[1]+"\n+x\n*** End Patch\n"}}))' "${hub}/logs/patched.md")
-	output=$(run_hook "$hub" "$patch_json") || true
-	if [[ -z "$output" ]]; then
+	local patch_rc=0
+	output=$(run_hook "$hub" "$patch_json") || patch_rc=$?
+	if [[ "$patch_rc" -eq 0 && -z "$output" ]]; then
 		print_result "GH#39573 apply_patch to allowlisted ignored path → allow" 0
 	else
 		print_result "GH#39573 apply_patch to allowlisted ignored path → allow" 1 "output=${output}"
