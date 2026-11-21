@@ -59,7 +59,7 @@ def _in_progress(path: Path) -> bool:
     if git is None:
         raise ValueError("archive-git-unavailable")
     output = subprocess.run(  # nosec B603 # native git, fixed read-only argv
-        [git, "--no-optional-locks", "-C", str(path), "rev-parse", "--absolute-git-dir"],
+        [git, "--no-optional-locks", "-C", str(path), "rev-parse", "--absolute-git-dir"],  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
         env=environment, capture_output=True, check=True, timeout=120, shell=False,
     ).stdout
     admin = Path(output.decode().strip())
