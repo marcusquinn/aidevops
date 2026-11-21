@@ -654,6 +654,58 @@ test_min_worker_floor_refill_stops_after_triage_only_round() {
 	return 0
 }
 
+# GH#39682: a supervisor drain written during a refill round stops the next
+# round; without a drain the same stubs keep refilling.
+test_min_worker_floor_refill_stops_on_supervisor_drain() {
+	(
+		AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+		AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS=1
+		STOP_FLAG="${HOME}/.aidevops/logs/stop"
+		drain_flag="${TEST_ROOT}/refill-llm-drain.flag"
+		calls_file="${TEST_ROOT}/refill-llm-drain-calls.txt"
+		: >"$LOGFILE"
+		pulse_apply_provider_load_capacity_cap() { printf '6 1\n'; return 0; }
+		count_active_workers() { printf '2\n'; return 0; }
+		_adaptive_launch_settle_wait() { return 0; }
+		_pulse_llm_drain_requested() {
+			[[ -f "$drain_flag" ]] || return 1
+			printf 'bundle-next\n'
+			return 0
+		}
+		dispatch_max() {
+			printf 'dispatch\n' >>"$calls_file"
+			[[ -z "${TEST_SET_DRAIN:-}" ]] || : >"$drain_flag"
+			printf '1\n'
+			return 0
+		}
+
+		rm -f "$drain_flag"
+		: >"$calls_file"
+		TEST_SET_DRAIN=1 _dispatch_min_worker_floor_refill 6 2
+		local drained_rounds no_drain_rounds
+		drained_rounds=$(wc -l <"$calls_file" | tr -d ' ')
+		rm -f "$drain_flag"
+		: >"$calls_file"
+		_dispatch_min_worker_floor_refill 6 2
+		no_drain_rounds=$(wc -l <"$calls_file" | tr -d ' ')
+		if [[ "$drained_rounds" -eq 1 && "$no_drain_rounds" -eq 6 ]] \
+			&& grep -q 'Minimum worker floor refill stopped: supervisor drain requested for activated bundle bundle-next' "$LOGFILE"; then
+			return 0
+		fi
+		printf 'drained_rounds=%s no_drain_rounds=%s\n' "$drained_rounds" "$no_drain_rounds" \
+			>"${TEST_ROOT}/refill-llm-drain-failure.txt"
+		return 1
+	)
+	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "refill: supervisor drain stops the next refill round" 0
+	else
+		print_result "refill: supervisor drain stops the next refill round" 1 \
+			"$(<"${TEST_ROOT}/refill-llm-drain-failure.txt")"
+	fi
+	return 0
+}
+
 # GH#39510: refill rounds under the early first wave run as normal refills;
 # the caller's first-wave scope is restored after the refill returns.
 test_min_worker_floor_refill_runs_normal_refill_scope() {
@@ -849,6 +901,16 @@ test_early_exit_recycle_stops_on_supervisor_drain() {
 		}
 		grep -q "Early-exit recycle stopped: supervisor drain requested; activated bundle bundle-next" "$LOGFILE" || {
 			printf 'drain stop not logged\n' >"${TEST_ROOT}/recycle-llm-drain-failure.txt"
+			return 1
+		}
+		# Drain arrives during prefetch: the supervisor is not relaunched.
+		rm -f "$drain_flag"
+		: >"$calls_file"
+		dispatch_max() { printf 'dispatch\n' >>"$calls_file"; printf '1\n'; return 0; }
+		prefetch_state() { : >"$drain_flag"; return 0; }
+		_run_early_exit_recycle_loop 1
+		[[ "$(tr '\n' ' ' <"$calls_file")" == "dispatch " ]] || {
+			printf 'mid-prefetch calls=%s\n' "$(tr '\n' ' ' <"$calls_file")" >"${TEST_ROOT}/recycle-llm-drain-failure.txt"
 			return 1
 		}
 		return 0
@@ -1224,6 +1286,7 @@ for test_name in \
 	test_apply_dispatch_skips_refill_when_capacity_cap_disables_floor \
 	test_min_worker_floor_refill_uses_precomputed_counts \
 	test_min_worker_floor_refill_stops_after_triage_only_round \
+	test_min_worker_floor_refill_stops_on_supervisor_drain \
 	test_min_worker_floor_refill_runs_normal_refill_scope \
 	test_apply_dispatch_refill_reuses_initial_worker_counts \
 	test_early_exit_refill_reuses_precomputed_active_count \

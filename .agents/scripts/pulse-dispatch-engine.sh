@@ -812,6 +812,14 @@ _dispatch_min_worker_floor_refill() {
 			echo "[pulse-wrapper] Minimum worker floor refill stopped: cooperative drain requested for activated bundle ${drain_bundle} (GH#37907)" >>"$LOGFILE"
 			return 0
 		fi
+		# GH#39682: a supervisor drain marks the owned LLM lock instead. It
+		# names this wrapper only while it holds that lock, so deterministic
+		# phase callers are unaffected; an admitted round still finishes.
+		if declare -F _pulse_llm_drain_requested >/dev/null 2>&1 &&
+			drain_bundle=$(_pulse_llm_drain_requested); then
+			echo "[pulse-wrapper] Minimum worker floor refill stopped: supervisor drain requested for activated bundle ${drain_bundle} (GH#39682)" >>"$LOGFILE"
+			return 0
+		fi
 		if ((active_workers_known <= 0)); then
 			active_workers=$(count_active_workers)
 			[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
@@ -1665,6 +1673,9 @@ _run_early_exit_recycle_loop() {
 			recycle_underfilled_mode=1
 			recycle_underfill_pct=$(((post_max - post_active) * 100 / post_max))
 		fi
+
+		# A drain can land during the recycler or prefetch above.
+		_early_exit_recycle_drained && break
 
 		local recycle_start_epoch
 		recycle_start_epoch=$(date +%s)
