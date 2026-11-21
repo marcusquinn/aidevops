@@ -813,7 +813,8 @@ _ddpr_classify_sibling_drafts() {
 # Redispatch should not create another worker when an existing sibling PR for
 # the same issue is already approved or mergeable. This catches PRs that are
 # ready for the merge path but do not use a closing keyword in the body (for
-# example parent/phase work using `For #NNN`). Drafts are durable checkpoints:
+# example parent/phase work using `For #NNN`), and ready orphan-recovery PRs
+# whose checks are still pending (_ddpr_match_ready_sibling). Drafts are durable checkpoints:
 # worker drafts must be continued/escalated, while interactive/held/NMR drafts
 # must remain untouched. Both kinds block competing ordinary dispatch; a worker
 # draft the continuation predicate rejects does not (_ddpr_classify_sibling_drafts).
@@ -872,7 +873,47 @@ _has_open_pr_check_healthy_sibling() {
 		return 0
 	fi
 
-	match_pr=$(printf '%s' "$pr_json" | jq -r \
+	match_pr=$(_ddpr_match_ready_sibling "$issue_number" "$pr_json" "$title_ref_pattern" \
+		"$body_ref_pattern" "$healthy_state_pattern" "$blocked_state_pattern") || match_pr=""
+
+	case "$match_pr" in
+	*\|recovery)
+		printf 'open recovery PR #%s holds unmerged worker progress for issue #%s; redispatch waits for it to land\n' \
+			"${match_pr%%|*}" "$issue_number"
+		return 0
+		;;
+	?*)
+		printf 'open PR #%s is approved or mergeable for issue #%s\n' "${match_pr%%|*}" "$issue_number"
+		return 0
+		;;
+	esac
+	return 1
+}
+
+#######################################
+# Select the ready (non-draft) sibling PR that owns this issue for Check 0.
+#
+# A healthy sibling is approved or mergeable. An orphan-recovery PR
+# (_attempt_orphan_recovery_pr: label origin:worker-takeover, recovery marker,
+# standalone non-closing `For #N`) also owns the issue while checks or review
+# are pending (mergeStateStatus BLOCKED): it carries the worker's unmerged
+# progress, and a redispatched worker would restart from the base without it
+# (GH#39760). Check 1's title match misses it once more than ten newer PRs are
+# open. A conflicted recovery PR cannot land, so it releases the issue.
+#
+# Args: $1 issue number, $2 sibling JSON, $3 title pattern, $4 body pattern,
+#       $5 healthy merge-state pattern, $6 blocked merge-state pattern
+# Stdout: "<number>|healthy", "<number>|recovery", or empty
+#######################################
+_ddpr_match_ready_sibling() {
+	local issue_number="$1"
+	local pr_json="$2"
+	local title_ref_pattern="$3"
+	local body_ref_pattern="$4"
+	local healthy_state_pattern="$5"
+	local blocked_state_pattern="$6"
+	printf '%s' "$pr_json" | jq -r \
+		--arg issue "$issue_number" \
 		--arg title_pattern "$title_ref_pattern" \
 		--arg body_pattern "$body_ref_pattern" \
 		--arg healthy_pattern "$healthy_state_pattern" \
@@ -883,26 +924,31 @@ _has_open_pr_check_healthy_sibling() {
 			((.filesTruncated // false) | not) and
 			($changed > 0) and ($returned == $changed) and
 			([.files[]?.path] | all(.[]; test("^(TODO\\.md$|todo/)")));
+		def healthy_sibling:
+			(((.mergeStateStatus // "") | test($blocked_pattern) | not)) and
+			(
+				((.reviewDecision // "") == "APPROVED") or
+				((.mergeStateStatus // "") | test($healthy_pattern)) or
+				((.mergeable // "") == "MERGEABLE")
+			);
+		def recovery_checkpoint:
+			((.isCrossRepository // false) | not) and
+			([(.labels // [])[] | (.name? // .)] | index("origin:worker-takeover")) != null and
+			((.body // "") | contains("<!-- aidevops:orphan-recovery ")) and
+			((.body // "") | test("(^|\\n)For #" + $issue + "[ \\t]*(\\r?\\n|$)")) and
+			((((.mergeStateStatus // "") == "DIRTY") or ((.mergeable // "") == "CONFLICTING")) | not);
 		[
 			.[] | select(
 				(.isDraft // false | not) and
 				((.reviewDecision // "") != "CHANGES_REQUESTED") and
-				(((.mergeStateStatus // "") | test($blocked_pattern) | not)) and
-				(
-					((.reviewDecision // "") == "APPROVED") or
-					((.mergeStateStatus // "") | test($healthy_pattern)) or
-					((.mergeable // "") == "MERGEABLE")
-				) and
 				(((.title // "") | test($title_pattern; "i")) or ((.body // "") | test($body_pattern; "i"))) and
 				(complete_planning_only_scope | not)
 			)
-		] | .[0].number // empty' 2>/dev/null) || match_pr=""
-
-	if [[ -n "$match_pr" ]]; then
-		printf 'open PR #%s is approved or mergeable for issue #%s\n' "$match_pr" "$issue_number"
-		return 0
-	fi
-	return 1
+			| if healthy_sibling then "\(.number)|healthy"
+			elif recovery_checkpoint then "\(.number)|recovery"
+			else empty end
+		] | (map(select(endswith("|healthy"))) + map(select(endswith("|recovery")))) | .[0] // empty' 2>/dev/null
+	return $?
 }
 
 #######################################

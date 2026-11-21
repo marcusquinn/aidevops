@@ -1061,6 +1061,36 @@ test_has_open_pr_allows_when_no_healthy_sibling() {
 	return 0
 }
 
+# GH#39760: a ready orphan-recovery PR holds the worker's unmerged progress
+# while checks run (BLOCKED); a conflicted one, or a For #N PR without the
+# recovery marker, must not hold the issue.
+test_has_open_pr_blocks_pending_recovery_sibling() {
+	local marker='\n\n<!-- aidevops:orphan-recovery worker_branch_orphan session=issue-39760 -->'
+	local state body expected label rc output
+	for state in BLOCKED DIRTY UNMARKED; do
+		body="Orphan recovery PR.\n\nFor #39760${marker}"
+		expected=0
+		label="pending recovery PR blocks redispatch"
+		if [[ "$state" == DIRTY ]]; then
+			expected=1
+			label="conflicted recovery PR releases the issue"
+		elif [[ "$state" == UNMARKED ]]; then
+			body="Phase work.\n\nFor #39760"
+			expected=1
+			label="pending For #N PR without recovery marker does not block"
+		fi
+		set_gh_fixtures "marcusquinn/aidevops|open|#39760|[{\"number\":39761,\"title\":\"GH#39760: chore: auto-recover orphaned worker branch\",\"body\":\"${body}\",\"isDraft\":false,\"reviewDecision\":\"REVIEW_REQUIRED\",\"mergeStateStatus\":\"${state/UNMARKED/BLOCKED}\",\"labels\":[{\"name\":\"origin:worker-takeover\"}]}]"
+		rc=0
+		output=$("$HELPER_SCRIPT" has-open-pr 39760 marcusquinn/aidevops 'recovery sibling regression' 2>&1) || rc=$?
+		if [[ "$rc" -eq "$expected" ]] && { [[ "$expected" -ne 0 ]] || [[ "$output" == *"open recovery PR #39761 holds unmerged worker progress"* ]]; }; then
+			print_result "has-open-pr ${label}" 0
+		else
+			print_result "has-open-pr ${label}" 1 "Expected rc=${expected}, got rc=${rc}: ${output}"
+		fi
+	done
+	return 0
+}
+
 test_has_open_pr_ignores_embedded_bare_sibling_reference() {
 	# Check 0 must require a leading boundary for every issue-reference
 	# alternative, including bare GH#N/#N forms. Without that boundary, an
@@ -1501,6 +1531,7 @@ main() {
 	test_has_open_pr_blocks_refs_colon_healthy_sibling
 	test_has_open_pr_blocks_behind_healthy_sibling
 	test_has_open_pr_allows_when_no_healthy_sibling
+	test_has_open_pr_blocks_pending_recovery_sibling
 	test_has_open_pr_ignores_embedded_bare_sibling_reference
 	test_has_open_pr_ignores_adjacent_issue_number_sibling_reference
 	test_has_open_pr_blocks_superseded_consolidated_issue
