@@ -125,8 +125,15 @@ def _process_identity(pid: int) -> str:
 
 _DEFAULT_WRITE_ACTION = "create_or_use_linked_worktree"
 # Only known policy actions are echoed; GH#39582 adds the Git-metadata remedy.
+# GH#39739: workspace-boundary denials keep their specific remedy, because an
+# existing linked worktree makes the default action misleading.
 _KNOWN_WRITE_ACTIONS = frozenset(
-    {_DEFAULT_WRITE_ACTION, "use_git_commands_for_git_metadata"}
+    {
+        _DEFAULT_WRITE_ACTION,
+        "use_git_commands_for_git_metadata",
+        "run_session_inside_git_workspace",
+        "include_worktree_in_git_workspace",
+    }
 )
 
 

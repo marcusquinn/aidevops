@@ -368,6 +368,7 @@ _verify_deployed_core_plugin_freshness() {
 		"scripts/canonical_branch_policy.py"
 		"scripts/canonical-write-policy-helper.py"
 		"scripts/canonical_write_runtime_allow.py"
+		"scripts/canonical_write_worktree_base.py"
 	)
 
 	for rel_path in "${core_plugin_files[@]}"; do

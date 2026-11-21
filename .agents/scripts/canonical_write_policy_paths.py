@@ -221,10 +221,19 @@ def is_within_workspace(path: str, workspace_root: str) -> bool:
 
 
 def repository_within_workspace(
-    location: Classification, workspace_root: str
+    location: Classification, workspace_root: str, worktree_root: str = ""
 ) -> bool:
-    """Require the worktree and its shared Git metadata beneath one root."""
-    return location.inside_git and all(
+    """Require shared Git metadata beneath the workspace root.
+
+    The worktree itself must also be beneath the workspace root, or be a
+    linked worktree beneath the trusted worktree base (GH#39739).
+    """
+    if not location.inside_git or not all(
         is_within_workspace(path, workspace_root)
-        for path in (location.repo_root, location.git_dir, location.common_dir)
+        for path in (location.git_dir, location.common_dir)
+    ):
+        return False
+    return is_within_workspace(location.repo_root, workspace_root) or (
+        location.classification == "linked"
+        and is_within_workspace(location.repo_root, worktree_root)
     )
