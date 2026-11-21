@@ -354,8 +354,14 @@ rc=0
 release_request owner/app 7 >/dev/null 2>&1 || rc=$?
 [[ "$rc" -eq 3 ]]
 if grep -Eq '^(pr-edit |create |label create )' "${TEST_ROOT}/calls"; then exit 1; fi
-rm -f "${TEST_ROOT}/pr-review-thread-response-scanner.sh"
 printf 'PASS request waits for resolved review-bot threads before any hold or issue write\n'
+export SCENARIO=threads_open
+: >"${TEST_ROOT}/calls"
+output=$(release_process false 2>/dev/null)
+[[ "$output" == *'merge would wait for resolved review-bot threads on PR #7 (dry run)'* ]]
+if grep -Eq 'merge$|pr-edit|comment |issue close|^scanner ' "${TEST_ROOT}/calls"; then exit 1; fi
+rm -f "${TEST_ROOT}/pr-review-thread-response-scanner.sh"
+printf 'PASS dry run reports the review-bot thread wait and never writes or dispatches\n'
 
 export SCENARIO=approved
 : >"${TEST_ROOT}/calls"

@@ -964,6 +964,10 @@ PR head changed after approval. No merge occurred. Update this issue's exact hea
 	fi
 	[[ "$apply" == true ]] || {
 		printf 'Approved release %s v%s (dry run)\n' "$repo" "$version"
+		# GH#39648: report the thread wait an apply run would take (read-only).
+		if [[ "$(jq -r '.state' <<<"$snapshot")" == open ]] && ! release_review_threads_clear "$repo" "$pr"; then
+			printf '%s issue %s: merge would wait for resolved review-bot threads on PR #%s (dry run)\n' "$repo" "$issue" "$pr"
+		fi
 		return 0
 	}
 	if [[ "$(jq -r '.state' <<<"$snapshot")" == open ]]; then
