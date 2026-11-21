@@ -34,12 +34,12 @@ from canonical_write_policy_paths import (
     names_git_metadata as _names_git_metadata,
     repository_within_workspace as _repository_within_workspace,
     target_probe as _target_probe,
-    worktree_base_dir_from_environment,
 )
 from canonical_write_runtime_allow import (
     canonical_runtime_write as _canonical_runtime_write,
     path_traverses_symlink as _path_traverses_symlink,
 )
+from canonical_write_worktree_base import worktree_base_dir_from_environment
 
 
 POLICY_VERSION = "canonical-write-policy-v3"

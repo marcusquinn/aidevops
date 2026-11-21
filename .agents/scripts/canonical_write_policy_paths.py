@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import unicodedata
 from dataclasses import dataclass
@@ -16,8 +15,6 @@ from native_git import real_git
 
 
 GIT_WORKSPACE_ROOT_ENV = "AIDEVOPS_GIT_WORKSPACE_ROOT"
-WORKTREE_BASE_DIR_ENVS = ("AIDEVOPS_WORKTREE_BASE_DIR", "AIDEVOPS_WORKTREES_DIR")
-REPOS_JSON_ENV = "AIDEVOPS_REPOS_JSON"
 GIT_METADATA = "git-metadata"
 
 
@@ -199,30 +196,6 @@ def git_workspace_root_from_environment() -> str:
     if GIT_WORKSPACE_ROOT_ENV in os.environ:
         return os.environ[GIT_WORKSPACE_ROOT_ENV]
     return str(Path.home() / "Git")
-
-
-def worktree_base_dir_from_environment() -> str:
-    """Return the configured linked-worktree base, as worktree-paths.sh does.
-
-    GH#39739: worktree-helper.sh places worktrees here, so a linked worktree
-    beneath it is trusted even when the base is outside the Git workspace.
-    """
-    for name in WORKTREE_BASE_DIR_ENVS:
-        if os.environ.get(name):
-            return os.environ[name]
-    repos_json = os.environ.get(REPOS_JSON_ENV) or str(
-        Path.home() / ".config" / "aidevops" / "repos.json"
-    )
-    try:
-        config = json.loads(Path(repos_json).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        config = {}
-    if isinstance(config, dict):
-        for key in ("worktree_base_dir", "worktrees_dir"):
-            value = config.get(key)
-            if isinstance(value, str) and value and value != "null":
-                return value
-    return str(Path.home() / "Git" / "_worktrees")
 
 
 def canonical_git_workspace_root(workspace_root: str) -> str:
