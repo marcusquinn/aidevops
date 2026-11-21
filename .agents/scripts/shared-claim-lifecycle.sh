@@ -469,8 +469,45 @@ _create_orphan_recovery_pr() {
 	if [[ "$recovery_mode" == "draft" ]]; then
 		create_args+=(--draft)
 	fi
-	gh pr create "${create_args[@]}" >/dev/null 2>&1 # aidevops-allow: raw-gh-wrapper
-	return $?
+	local create_output=""
+	create_output=$(gh pr create "${create_args[@]}" 2>/dev/null) || return 1 # aidevops-allow: raw-gh-wrapper
+	local recovery_pr=""
+	recovery_pr=$(printf '%s\n' "$create_output" | grep -oE '/pull/[0-9]+' | tail -n 1 | grep -oE '[0-9]+' || true)
+	_reconcile_duplicate_recovery_pr "$repo_slug" "$branch_name" "$base_branch" "$recovery_pr"
+	return 0
+}
+
+#######################################
+# _reconcile_duplicate_recovery_pr — close a recovery PR that lost a create race
+#
+# The pre-create handoff probe is check-then-act: when the worker's own
+# `gh pr create` is in flight, the probe reports `absent` and both creates
+# succeed, doubling CI. After creating the recovery PR, list open PRs for the
+# same head/base; if another exists, close the recovery PR as a duplicate and
+# keep the branch. Best-effort: probe failures leave the recovery PR open.
+#
+# Args: $1=repo_slug $2=branch_name $3=base_branch $4=recovery PR number
+# Returns: 0 always
+#######################################
+_reconcile_duplicate_recovery_pr() {
+	local repo_slug="$1"
+	local branch_name="$2"
+	local base_branch="$3"
+	local recovery_pr="$4"
+	local other_pr=""
+
+	[[ "$recovery_pr" =~ ^[1-9][0-9]*$ ]] || return 0
+	other_pr=$(gh pr list --repo "$repo_slug" --head "$branch_name" --base "$base_branch" \
+		--state open --json number \
+		--jq "[.[].number | select(. != ${recovery_pr})] | first // empty" 2>/dev/null || true) # aidevops-allow: raw-gh-wrapper
+	[[ "$other_pr" =~ ^[1-9][0-9]*$ ]] || return 0
+
+	# No --delete-branch: the branch backs the surviving PR.
+	if gh pr close "$recovery_pr" --repo "$repo_slug" \
+		--comment "Duplicate of #${other_pr} (same head branch). Closing the orphan-recovery PR; the branch is kept." >/dev/null 2>&1; then # aidevops-allow: raw-gh-wrapper
+		echo "[orphan-recovery] closed duplicate recovery PR #${recovery_pr} in favour of #${other_pr} for ${branch_name}" >>"${LOGFILE:-/dev/null}"
+	fi
+	return 0
 }
 
 #######################################
