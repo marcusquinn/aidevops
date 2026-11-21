@@ -2078,7 +2078,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19001 fix(headless-runtime): signal-less merged own-PR handoff ignores the post-merge cleanup-deferred marker #bug ref:GH#38329 pr:#38331 completed:2026-11-15
 
-- [ ] t19002 plan(pulse): simplify dispatch to an interactive-equivalent lane — workers run 0.6/20 slots while 121 ready issues wait #feat #parent-task ref:GH#38332
+- [x] t19002 plan(pulse): simplify dispatch to an interactive-equivalent lane — workers run 0.6/20 slots while 121 ready issues wait #feat #parent-task ref:GH#38332 verified:2026-11-20 completed:2026-11-21
 
 - [x] t19003 perf(pulse): fresh-first dispatch lane — attempt unclaimed candidates before claimed ones (For #38332 phase 1) #feat ref:GH#38333 pr:#38334 completed:2026-11-15
 
@@ -2334,7 +2334,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19180 refactor: split headless-runtime-worker.sh to 1200 lines for regrowth headroom #auto-dispatch #feat #file-size-debt ref:GH#39337 pr:#39375 completed:2026-11-20
 
-- [ ] t19183 fix(oauth-pool): share one runtime pool resolver and usability rule between model availability and headless auth #bug #auto-dispatch tier:standard ~1h20m blocked-by:GH#39095 ref:GH#39352 logged:2026-11-19 -> [todo/tasks/t19183-brief.md]
+- [-] t19183 fix(oauth-pool): share one runtime pool resolver and usability rule between model availability and headless auth #bug #auto-dispatch tier:standard ~1h20m blocked-by:GH#39095 ref:GH#39352 logged:2026-11-19 -> [todo/tasks/t19183-brief.md] declined:2026-11-20
 
 - [x] t19186 Strip supervisor-exported framework constants from the SRT workload environment #auto-dispatch #feat ref:GH#39360 pr:#39398 completed:2026-11-20
 
