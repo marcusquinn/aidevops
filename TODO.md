@@ -2366,7 +2366,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19214 Operator approval records for marketing action plans #feat #interactive tier:thinking ref:GH#39508 logged:2026-11-20 -> [todo/tasks/t19214-brief.md] pr:#39518 completed:2026-11-20
 
-- [ ] t19229 fix(opencode-agent): signed comments match the /opencode trigger gate and run-level concurrency cancels genuine /oc runs #bug #interactive ref:GH#39594 logged:2026-11-21 -> [todo/tasks/t19229-brief.md]
+- [x] t19229 fix(opencode-agent): signed comments match the /opencode trigger gate and run-level concurrency cancels genuine /oc runs #bug #interactive ref:GH#39594 logged:2026-11-21 -> [todo/tasks/t19229-brief.md] pr:#39596 completed:2026-11-21
 
 - [x] t19215 Approval-bound Google Ads account actions (validate-only plan, guarded apply, rollback) #feat #interactive tier:thinking blocked-by:t19214 ref:GH#39509 logged:2026-11-20 -> [todo/tasks/t19215-brief.md] pr:#39546 completed:2026-11-20
 
@@ -2374,7 +2374,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19228 fix(full-loop): non-required check snapshot keeps the generic 15s read budget and defers merges under transport pacing #bug #interactive ref:GH#39590 logged:2026-11-21 -> [todo/tasks/t19228-brief.md] pr:#39591 completed:2026-11-21
 
-- [ ] t19232 Add paired base/head subprocess spawn profiler for suite fan-out work #auto-dispatch #feat ref:GH#39605
+- [x] t19232 Add paired base/head subprocess spawn profiler for suite fan-out work #auto-dispatch #feat ref:GH#39605 pr:#39610 completed:2026-11-21
 
 - [ ] t19231 fix(worker-blocker-log): lock wait budget of ~100 ms drops blocker events under load (flaky parallel-appenders test) #auto-dispatch #bug ref:GH#39603
 
