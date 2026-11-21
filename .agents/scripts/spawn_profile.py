@@ -119,7 +119,8 @@ def cmd_compare(args):
     return 0
 
 
-def run_suite(tree, rel_cwd, command, tools, log, wrap_dir):
+def run_suite(tree, rel_cwd, command, tools, paths):
+    log, wrap_dir = paths
     wrap_dir.mkdir(parents=True)
     # Absolute interpreter, resolved before PATH changes: a `bash` wrapper must not re-enter itself.
     script = WRAPPER.replace("@BASH@", shutil.which("bash") or "/bin/bash")
@@ -158,8 +159,8 @@ def cmd_run(args):
         subprocess.run(["git", "worktree", "add", "--detach", str(base_tree), args.base],  # nosec B603 B607
                        check=True, stdout=subprocess.DEVNULL)
         t0 = time.monotonic()
-        base_rc = run_suite(base_tree, rel, command, tools, out / "base.tsv", wrap_dirs[0])
-        head_rc = run_suite(top, rel, command, tools, out / "head.tsv", wrap_dirs[1])
+        base_rc = run_suite(base_tree, rel, command, tools, (out / "base.tsv", wrap_dirs[0]))
+        head_rc = run_suite(top, rel, command, tools, (out / "head.tsv", wrap_dirs[1]))
         print("suite exit status: base=%d head=%d (%.1fs)" % (base_rc, head_rc, time.monotonic() - t0))
     finally:
         for wrap in wrap_dirs:
