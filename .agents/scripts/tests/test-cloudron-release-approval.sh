@@ -98,6 +98,17 @@ request_comments_json() {
 	return 0
 }
 
+# GH#39648: review-bot thread gate; open threads only where a scenario plants them.
+review_threads_response() {
+	local nodes='[]'
+	[[ "$SCENARIO" != threads_error ]] || return 1
+	if [[ "$SCENARIO" == threads_open || "$SCENARIO" == request_threads ]]; then
+		nodes='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+	fi
+	jq -cn --argjson nodes "$nodes" '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},nodes:$nodes}}}}}'
+	return 0
+}
+
 gh() {
 	local command="$1" target="${2:-}"
 	printf '%s\n' "$*" >>"${TEST_ROOT}/calls"
@@ -180,15 +191,7 @@ gh() {
 		fi
 		;;
 	'label create') return 0 ;;
-	# GH#39648: review-bot thread gate; open threads only where a scenario plants them.
-	'api graphql')
-		[[ "$SCENARIO" != threads_error ]] || return 1
-		local nodes='[]'
-		if [[ "$SCENARIO" == threads_open || "$SCENARIO" == request_threads ]]; then
-			nodes='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
-		fi
-		jq -cn --argjson nodes "$nodes" '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},nodes:$nodes}}}}}'
-		;;
+	'api graphql') review_threads_response || return 1 ;;
 	# No held worker PRs: approval processing alone (GH#36268 cases run below).
 	'pr list')
 		if [[ "$SCENARIO" == request_retry ]]; then

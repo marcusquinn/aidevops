@@ -96,6 +96,15 @@ release_dispatch_thread_remediation() {
 	return 0
 }
 
+# GH#39648: a signature on a head that review-bot threads block can never
+# merge; asking for one wastes the maintainer's approval. The request waits (3).
+release_request_threads_clear() {
+	local repo="$1" pr="$2"
+	release_review_threads_clear "$repo" "$pr" && return 0
+	release_error "PR #${pr} has unresolved review-bot threads; respond to them (pr-review-thread-response-scanner.sh scan-pr ${repo} ${pr}) before requesting approval. The release routine queues a response and requests approval once they are resolved." || true
+	return 1
+}
+
 # Raw REST PR snapshot; callers apply their own trust checks.
 release_pr_raw() {
 	local repo="$1" pr="$2"
@@ -231,12 +240,7 @@ release_request() {
 	[[ -n "${notes//[[:space:]]/}" ]] || release_error 'Release changelog entry is empty.' || return 1
 	#aidevops:trust-boundary — a bare hold belongs to another review workflow.
 	jq -e --arg label "$RELEASE_APPROVAL_LABEL" '(all(.labels[]; .name != "hold-for-review") or any(.labels[]; .name == $label)) and .auto_merge == null' <<<"$snapshot" >/dev/null || release_error 'Resolve existing PR hold/auto-merge before requesting a release.' || return 1
-	# GH#39648: a signature on a head that review-bot threads block can never
-	# merge; asking for one wastes the maintainer's approval. 3 = wait.
-	if ! release_review_threads_clear "$repo" "$pr"; then
-		release_error "PR #${pr} has unresolved review-bot threads; respond to them (pr-review-thread-response-scanner.sh scan-pr ${repo} ${pr}) before requesting approval. The release routine queues a response and requests approval once they are resolved." || true
-		return 3
-	fi
+	release_request_threads_clear "$repo" "$pr" || return 3
 	issues=$(release_issues "$repo") || { release_request_interrupted "$repo" "$pr"; return 4; }
 	existing=$(jq -c --arg marker "<!-- aidevops:cloudron-release-approval ${version} -->" '.[] | select(.body | contains($marker))' <<<"$issues") || return 1
 	if [[ -n "$existing" ]]; then
@@ -913,11 +917,41 @@ release_pending_cache_write() {
 	return 0
 }
 
+# Merge an approved open release PR at its exact approved head.
+# Returns 0 when merged, 3 while waiting with the hold retained, 1 on failure.
+release_merge_approved_pr() {
+	local repo="$1" issue="$2" pr="$3" head="$4" authority="$5" checks='' verdict=''
+	checks=$(release_checks "$repo" "$pr") || return 1
+	: "$checks"
+	# GH#39648: the merge would fail on open review-bot threads (GH#27137).
+	# Keep the hold instead of toggling it every run, and queue a response.
+	# A remediation push moves the head, which the head-change path handles.
+	if ! release_review_threads_clear "$repo" "$pr"; then
+		printf '%s issue %s: approved; merge waits for resolved review-bot threads on PR #%s (hold retained)\n' "$repo" "$issue" "$pr"
+		release_dispatch_thread_remediation "$repo" "$pr"
+		return 3
+	fi
+	if [[ "$authority" == "$RELEASE_SIGNED_AUTHORITY" ]]; then
+		verdict=$(release_verify "$repo" "$issue") || return 1
+		[[ "$verdict" == VERIFIED ]] || return 1
+	else
+		# Re-prove the policy at the exact head immediately before merge.
+		release_policy_authorizes "$repo" "$pr" "$head" >/dev/null || return 1
+	fi
+	gh_pr_edit_safe "$pr" --repo "$repo" --remove-label hold-for-review >/dev/null || return 1
+	#aidevops:trust-boundary — retain the signed SHA through readiness gates.
+	if ! FULL_LOOP_EXPECTED_PR_HEAD_SHA="$head" "${SCRIPT_DIR}/full-loop-helper.sh" merge "$pr" "$repo" --squash; then
+		gh_pr_edit_safe "$pr" --repo "$repo" --add-label hold-for-review >/dev/null || return 1
+		return 1
+	fi
+	return 0
+}
+
 release_process_issue() {
 	local repo="$1" issue="$2" apply="$3"
-	local before="" after="" body="" pr="" head="" version="" snapshot="" checks="" release_url="" runs="" run_id="" rc=0
+	local before="" after="" body="" pr="" head="" version="" snapshot="" release_url="" runs="" run_id="" rc=0
 	local metadata="" fingerprint="" recheck="${AIDEVOPS_CLOUDRON_APPROVAL_RECHECK_SECONDS:-21600}"
-	local verdict="" run_status="" run_conclusion=""
+	local run_status="" run_conclusion=""
 	before=$(gh api "repos/${repo}/issues/${issue}") || return 1
 	jq -e --arg label "$RELEASE_APPROVAL_LABEL" '.state == "open" and any(.labels[]; .name == $label)' <<<"$before" >/dev/null || return 1
 	body=$(jq -r '.body' <<<"$before") || return 1
@@ -971,29 +1005,10 @@ PR head changed after approval. No merge occurred. Update this issue's exact hea
 		return 0
 	}
 	if [[ "$(jq -r '.state' <<<"$snapshot")" == open ]]; then
-		checks=$(release_checks "$repo" "$pr") || return 1
-		: "$checks"
-		# GH#39648: the merge would fail on open review-bot threads (GH#27137).
-		# Keep the hold instead of toggling it every run, and queue a response.
-		# A remediation push moves the head, which the head-change path handles.
-		if ! release_review_threads_clear "$repo" "$pr"; then
-			printf '%s issue %s: approved; merge waits for resolved review-bot threads on PR #%s (hold retained)\n' "$repo" "$issue" "$pr"
-			release_dispatch_thread_remediation "$repo" "$pr"
-			return 0
-		fi
-		if [[ "$authority" == "$RELEASE_SIGNED_AUTHORITY" ]]; then
-			verdict=$(release_verify "$repo" "$issue") || return 1
-			[[ "$verdict" == VERIFIED ]] || return 1
-		else
-			# Re-prove the policy at the exact head immediately before merge.
-			release_policy_authorizes "$repo" "$pr" "$head" >/dev/null || return 1
-		fi
-		gh_pr_edit_safe "$pr" --repo "$repo" --remove-label hold-for-review >/dev/null || return 1
-		#aidevops:trust-boundary — retain the signed SHA through readiness gates.
-		if ! FULL_LOOP_EXPECTED_PR_HEAD_SHA="$head" "${SCRIPT_DIR}/full-loop-helper.sh" merge "$pr" "$repo" --squash; then
-			gh_pr_edit_safe "$pr" --repo "$repo" --add-label hold-for-review >/dev/null || return 1
-			return 1
-		fi
+		rc=0
+		release_merge_approved_pr "$repo" "$issue" "$pr" "$head" "$authority" || rc=$?
+		[[ "$rc" -ne 3 ]] || return 0
+		[[ "$rc" -eq 0 ]] || return 1
 		snapshot=$(release_pr "$repo" "$pr") || return 1
 		release_record_merge_authority "$repo" "$issue" "$head" "$authority"
 	fi
