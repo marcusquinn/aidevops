@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.258] - 2026-11-21
+
+### Added
+
+- external_trigger wake parks decided holds (t19249)
+
+### Changed
+
+- Maintenance: mark t19250 complete (pr:#39693 completed:2026-11-21) (#39695)
+- Maintenance: mark t19247 complete (pr:#39684 completed:2026-11-21) (#39686)
+
+### Fixed
+
+- per-repo routine anchors for headless badge and workflow sync PRs (GH#39696)
+- install ripgrep and git identity for shell suite main health (GH#39677)
+- kill nested-process-group fixtures on interrupt (GH#39698)
+- honour custom routing OAuth restrictions in dispatch availability (GH#39694)
+- size retirement-retry bound above normal retirement time (GH#39691)
+
 ## [3.39.257] - 2026-11-21
 
 ### Changed
