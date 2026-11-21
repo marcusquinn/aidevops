@@ -24,6 +24,7 @@ from canonical_branch_policy import resolve_branch
 from canonical_write_policy_paths import (
     Classification,
     canonical_git_workspace_root as _canonical_git_workspace_root,
+    canonical_runtime_write as _canonical_runtime_write,
     classify_location,
     git_output as _git_output,
     git_symlink_origin as _git_symlink_origin,
@@ -34,7 +35,12 @@ from canonical_write_policy_paths import (
 )
 
 
-POLICY_VERSION = "canonical-write-policy-v2"
+POLICY_VERSION = "canonical-write-policy-v3"
+
+CANONICAL_RUNTIME_ALLOW_REASON = (
+    "canonical gitignored runtime path is allowlisted by the ignored "
+    ".aidevops.json canonical_write_allow setting"
+)
 
 
 SESSION_OUTSIDE_WORKSPACE_ACTION = "run_session_inside_git_workspace"
@@ -97,12 +103,22 @@ def check_write(cwd: str, file_path: str) -> dict[str, Any]:
         else _is_within_workspace(cwd, workspace_root)
     )
 
+    runtime_allow = "not-applicable"
     if target.classification == "unknown":
         decision = "deny"
         reason = f"write target classification failed closed: {target.reason}"
     elif target.classification == "canonical":
-        decision = "deny"
-        reason = "canonical checkouts are read-only session mirrors"
+        # GH#39573: only opted-in, ignored, untracked runtime output is
+        # writable; every other canonical target keeps the read-only deny.
+        allowed, runtime_allow = _canonical_runtime_write(
+            target, target_probe, symlink_origin is not None
+        )
+        decision = "allow" if allowed else "deny"
+        reason = (
+            CANONICAL_RUNTIME_ALLOW_REASON
+            if allowed
+            else "canonical checkouts are read-only session mirrors"
+        )
     elif symlink_workspace_escape:
         decision = "deny"
         reason = (
@@ -139,6 +155,7 @@ def check_write(cwd: str, file_path: str) -> dict[str, Any]:
             symlink_workspace_escape,
             not context_within_workspace,
         ),
+        "canonical_runtime_allow": runtime_allow,
         "context": asdict(context),
         "target": asdict(target),
     }

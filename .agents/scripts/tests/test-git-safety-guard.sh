@@ -582,6 +582,84 @@ test_controlled_worktree_creation() {
 }
 
 # =============================================================================
+# Test 13: GH#39573 opt-in canonical writes for gitignored runtime output
+# =============================================================================
+setup_runtime_hub() {
+	local hub="$1"
+	mkdir -p "${hub}/logs" "${hub}/logs-secret" "${hub}/src"
+	git -C "$hub" init -b main >/dev/null 2>&1 || return 1
+	git -C "$hub" config user.name "Aidevops Test"
+	git -C "$hub" config user.email "test@example.com"
+	git -C "$hub" config commit.gpgsign false
+	printf 'logs/\nlogs-secret/\n.aidevops.json\n' >"${hub}/.gitignore"
+	printf 'code\n' >"${hub}/src/x.py"
+	printf 'tracked\n' >"${hub}/logs/tracked.md"
+	git -C "$hub" add .gitignore src/x.py
+	git -C "$hub" add -f logs/tracked.md
+	git -C "$hub" commit -m "test: seed hub" >/dev/null 2>&1 || return 1
+	# Invalid entries ("./", "", "/", "..", globs) must never widen the list.
+	printf '{"canonical_write_allow":["logs/","./","","/","../","lo*/",".git/"]}\n' >"${hub}/.aidevops.json"
+	ln -s ../src "${hub}/logs/link"
+	ln "${hub}/src/x.py" "${hub}/logs/hardlink.md"
+	return 0
+}
+
+runtime_hub_expect() {
+	local hub="$1"
+	local expected="$2"
+	local relative="$3"
+	local label="$4"
+	local json="" output=""
+	json=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Write","tool_input":{"filePath":sys.argv[1]}}))' "${hub}/${relative}")
+	output=$(run_hook "$hub" "$json") || true
+	local matched=1
+	if [[ "$expected" == allow ]]; then
+		[[ -n "$output" ]] || matched=0
+	elif hook_is_deny "$output" "read-only session mirrors"; then
+		matched=0
+	fi
+	if [[ "$matched" -eq 0 ]]; then
+		print_result "GH#39573 ${label}: ${relative} → ${expected}" 0
+	else
+		print_result "GH#39573 ${label}: ${relative} → ${expected}" 1 "output=${output}"
+	fi
+	return 0
+}
+
+test_canonical_runtime_allowlist() {
+	local hub="${TEST_ROOT}/runtime-hub"
+	if ! setup_runtime_hub "$hub"; then
+		print_result "GH#39573 runtime hub fixture" 1 "fixture setup failed"
+		return 0
+	fi
+	runtime_hub_expect "$hub" allow "logs/new.md" "allowlisted ignored path"
+	runtime_hub_expect "$hub" allow "logs/2026-11-21/run.facts" "allowlisted nested ignored path"
+	runtime_hub_expect "$hub" deny "logs/tracked.md" "tracked file under allowlisted prefix"
+	runtime_hub_expect "$hub" deny "src/x.py" "not allowlisted"
+	runtime_hub_expect "$hub" deny "logs-secret/x.md" "prefix boundary"
+	runtime_hub_expect "$hub" deny "logs/link/x.py" "symlink escape"
+	runtime_hub_expect "$hub" deny "logs/hardlink.md" "hard-linked tracked content"
+	runtime_hub_expect "$hub" deny "logs/.gitignore" "reserved ignore rules"
+	runtime_hub_expect "$hub" deny ".aidevops.json" "self-modifying allowlist"
+	runtime_hub_expect "$hub" deny "logs/.GIT/config" "case-folded Git metadata"
+
+	local patch_json="" output=""
+	patch_json=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"apply_patch","tool_input":{"patchText":"*** Begin Patch\n*** Add File: "+sys.argv[1]+"\n+x\n*** End Patch\n"}}))' "${hub}/logs/patched.md")
+	output=$(run_hook "$hub" "$patch_json") || true
+	if [[ -z "$output" ]]; then
+		print_result "GH#39573 apply_patch to allowlisted ignored path → allow" 0
+	else
+		print_result "GH#39573 apply_patch to allowlisted ignored path → allow" 1 "output=${output}"
+	fi
+
+	# A tracked config is shared content, not a user-authored local opt-in.
+	git -C "$hub" add -f .aidevops.json
+	git -C "$hub" commit -m "test: track config" >/dev/null 2>&1
+	runtime_hub_expect "$hub" deny "logs/new.md" "tracked config is ignored"
+	return 0
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 main() {
@@ -600,6 +678,7 @@ main() {
 	test_canonical_guard_skip_env_var
 	test_worker_network_policy
 	test_controlled_worktree_creation
+	test_canonical_runtime_allowlist
 
 	teardown_test_repo
 

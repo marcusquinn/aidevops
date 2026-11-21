@@ -39,6 +39,40 @@ Interactive sessions have no `main`/`master` exception: every edit uses a linked
 
 All other paths and all interactive edits require a linked worktree. `pre-edit-check.sh` is authoritative for the mode and path decision; write-time hooks provide additional enforcement where available.
 
+## Gitignored Runtime Output Exception (GH#39573)
+
+Some canonical checkouts double as operations workspaces. Scheduled tasks there
+write gitignored runtime output, such as logs or report facts, that launchd jobs
+and later runs read from the canonical path. A linked worktree would hide that
+output from those readers. To allow direct file-tool writes to such paths, the
+user adds a prefix list to the canonical `.aidevops.json`:
+
+```json
+{ "canonical_write_allow": ["automation/logs/", "finance/ar/runs/"] }
+```
+
+`canonical-write-policy-helper.py check-write` allows a canonical target only when
+all of these conditions hold:
+
+- `.aidevops.json` is untracked, gitignored, a regular file and owned by the user.
+  A tracked file is shared content, not a local opt-in.
+- The target falls under a listed prefix. Each prefix must be a relative
+  directory ending in `/`. Entries that are empty, `./`, absolute, contain `..`,
+  start with `:` or contain glob characters are dropped. Matching compares whole
+  path components, so `logs/` never matches `logs-secret/`.
+- The path traverses no symlink. The file is either missing or a regular file
+  with a single link.
+- No path component is `.git`, `.aidevops.json`, `.gitignore` or
+  `.gitattributes` (case-folded).
+- Git reports the path as untracked and ignored. A tracked file stays read-only
+  even when an ignore rule matches it.
+
+Every other canonical write keeps the read-only deny. Agents never add or widen
+this list themselves. Only the user edits it, and `aidevops project-config set`
+does not accept the key. Bash redirection policy is unchanged, so write runtime
+output with file tools. The `canonical_runtime_allow` field of the decision
+reports why a write was or was not exempted.
+
 ## Git Hook Status Without External-Directory Access
 
 Linked worktrees share Git hooks with their canonical repository through
