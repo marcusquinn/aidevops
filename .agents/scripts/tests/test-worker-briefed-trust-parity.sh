@@ -324,7 +324,7 @@ ANCHOR_TEST
 
 # GH#39785: exercise the actual shared scope predicate through both merge paths.
 PR_BODY='<!-- aidevops:routine-pr:badges-sync -->'
-ISSUE_PERMISSION=write
+ISSUE_PERMISSION="write"
 PR_FILES='[{"filename":"docs/metrics/repo-metrics.json","status":"modified"}]'
 ROUTINE_META=$(jq -n --arg body "$PR_BODY" '{state:"open",draft:false,body:$body,
  labels:[{name:"origin:worker"}],user:{login:"runner"},changed_files:1,
@@ -340,9 +340,9 @@ for mutation in '.head.repo.full_name="outsider/fork"' '.head.ref="feature/forge
 	expect_parity 1 "routine metadata denied: $mutation" ''
 done
 ROUTINE_META="$valid_meta"
-ISSUE_PERMISSION=read
+ISSUE_PERMISSION="read"
 expect_parity 1 'read-only routine author denied' ''
-ISSUE_PERMISSION=write
+ISSUE_PERMISSION="write"
 PR_FILES_API_FAIL=1
 expect_parity 1 'routine file API failure denied' ''
 PR_FILES_API_FAIL=0
