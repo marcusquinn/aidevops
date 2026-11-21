@@ -1457,6 +1457,25 @@ _full_loop_retire_finalized_cleanup_marker() {
 	return 0
 }
 
+# finalize-receipt retires the marker inside the PR's worktree, so it cannot run
+# from a directory outside any Git worktree. Name that cause and the fix.
+_full_loop_hint_finalize_outside_worktree() {
+	local repo="$1"
+	local pr_number="$2"
+	local receipt_path=""
+	local receipt_worktree=""
+	receipt_path=$(_full_loop_cleanup_receipt_path "$repo" "$pr_number" 2>/dev/null) || receipt_path=""
+	if [[ -f "$receipt_path" ]]; then
+		receipt_worktree=$(jq -r '.worktree // empty' "$receipt_path" 2>/dev/null || true)
+	fi
+	if [[ -n "$receipt_worktree" ]]; then
+		print_error "Finalization blocked: current directory is not inside a Git worktree. Run from the PR's worktree: cd '${receipt_worktree}' && full-loop-helper.sh finalize-receipt ${pr_number} ${repo}"
+	else
+		print_error "Finalization blocked: current directory is not inside a Git worktree. Run from the PR's worktree (path recorded as .worktree in the cleanup receipt): full-loop-helper.sh finalize-receipt ${pr_number} ${repo}"
+	fi
+	return 0
+}
+
 cmd_finalize_receipt() {
 	local pr_number="${1:-}"
 	local repo=""
@@ -1478,6 +1497,10 @@ cmd_finalize_receipt() {
 		print_error "Finalization blocked: cleanup receipt is missing or conflicts with terminal evidence"
 		return 1
 	}
+	if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
+		_full_loop_hint_finalize_outside_worktree "$repo" "$pr_number"
+		return 1
+	fi
 	_full_loop_retire_finalized_cleanup_marker "$repo" "$pr_number" "$release_status" || {
 		print_error "Finalization blocked: legacy cleanup marker does not match the exact finalized owner contract"
 		return 1
