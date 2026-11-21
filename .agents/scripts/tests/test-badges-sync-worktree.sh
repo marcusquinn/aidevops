@@ -352,6 +352,23 @@ if grep -q 'anchor ensure-' "$CALLS"; then exit 1; fi
 [[ "$(snapshot)" == "$before" ]]
 printf 'PASS worker PR carries marker without Ref; failed retirement never creates an anchor\n'
 
+# No-drift runs must still retry retirement after the old PR resolves.
+cat >"$SCRIPTS/badges-check-helper.sh" <<'STUB'
+#!/usr/bin/env bash
+jq -cn --arg path "$CANONICAL" '{slug:"marcusquinn/test",path:$path,classification:"CURRENT"}'
+STUB
+export CANONICAL
+retire_before="$(grep -c '^anchor retire-anchor badges-sync$' "$CALLS")"
+creates_before="$(grep -c '^create$' "$CALLS")"
+bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result"
+[[ "$(jq -r .outcome "$ROOT/result")" == SKIPPED ]]
+[[ "$(grep -c '^anchor retire-anchor badges-sync$' "$CALLS")" == "$((retire_before + 1))" ]]
+[[ "$(grep -c '^create$' "$CALLS")" == "$creates_before" ]]
+bash "$SCRIPTS/badges-sync-helper.sh" --json >"$ROOT/result"
+[[ "$(grep -c '^anchor retire-anchor badges-sync$' "$CALLS")" == "$((retire_before + 1))" ]]
+[[ "$(snapshot)" == "$before" ]]
+printf 'PASS current repos retry retirement without publishing; dry runs never retire\n'
+
 # Routine wiring uses the same no-filter selector exercised above.
 # shellcheck source=../routines/core-routines.sh
 source "$SCRIPT_DIR/../routines/core-routines.sh"

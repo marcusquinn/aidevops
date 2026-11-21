@@ -720,6 +720,15 @@ _list_actionable_repos() {
 	return 0
 }
 
+# Best effort, including current repos whose legacy PR has just resolved.
+_retire_repo_anchor() {
+	local _slug="$1" _routine_helper=""
+	_routine_helper=$(_resolve_helper routine-log-helper.sh) || return 0
+	bash "$_routine_helper" retire-anchor badges-sync --repo "$_slug" >&2 ||
+		_warn "$_slug: anchor retirement deferred"
+	return 0
+}
+
 # _process_rows <apply> <branch_name> <no_workflow> <json> <workflow_only>
 # Reads TSV rows from stdin (slug\tpath\tstatus), processes each.
 _process_rows() {
@@ -753,12 +762,7 @@ _process_rows() {
 		fi
 		# Best effort and apply-only, even when generated outputs are current.
 		if [[ "$_apply" -eq 1 ]]; then
-			local _routine_helper=""
-			_routine_helper=$(_resolve_helper routine-log-helper.sh) || _routine_helper=""
-			if [[ -n "$_routine_helper" ]]; then
-				bash "$_routine_helper" retire-anchor badges-sync --repo "$_slug" >&2 ||
-					_warn "$_slug: anchor retirement deferred"
-			fi
+			_retire_repo_anchor "$_slug"
 		fi
 		if [[ "$_status" == "CURRENT" && "$_workflow_only_arg" -eq 0 ]]; then
 			_print_result_row "$_json_out" "${_slug}	${_STATUS_SKIPPED}	badge block and metrics current"
