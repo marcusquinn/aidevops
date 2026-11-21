@@ -3,7 +3,8 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Stub case for pulse-merge-runtime-pending-notice.sh (GH#39645): a liftable
 # hold notifies once per head, a repeat at the same head and a non-liftable hold
-# notify nobody, a new head notifies again, and no live session logs ATTENTION.
+# notify nobody, a new head notifies again, no live session logs ATTENTION, and
+# a head with pending or red required checks waits until they are green.
 set -u
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -90,6 +91,27 @@ check "no live session logs one ATTENTION line with age" "1" "$(grep -cE -e 'ATT
 printf '%s\n' '[{"session_id":"ses_tui1","kind":"tui","messageable":true,"repo":"o/r"}]' >"${STUB_DIR}/sessions"
 _pmrp_route_held_pr 9 o/r
 check "a session appearing later receives the notice" "3" "$(sent_count)"
+
+# With the merge pass's required-check helpers sourced, a head whose required
+# checks are pending or red is never offered to a verifier; a green head is.
+_check_required_checks_have_pending_or_in_progress() {
+	[[ "$(<"${STUB_DIR}/ci")" == "pending" ]] && return 0
+	return 1
+}
+_required_checks_terminal_failure_names() {
+	[[ "$(<"${STUB_DIR}/ci")" == "red" ]] && printf 'Framework Validation\n'
+	return 0
+}
+printf 'pending\n' >"${STUB_DIR}/ci"
+_pmrp_route_held_pr 10 o/r
+check "pending required checks send nothing" "3" "$(sent_count)"
+printf 'red\n' >"${STUB_DIR}/ci"
+_pmrp_route_held_pr 10 o/r
+check "red required checks send nothing" "3" "$(sent_count)"
+check "red required checks log the failing context" "1" "$(grep -cE -e 'notice for o/r#10@b{12} deferred: required checks failing \(Framework Validation\)' "$LOGFILE")"
+printf 'green\n' >"${STUB_DIR}/ci"
+_pmrp_route_held_pr 10 o/r
+check "green required checks send the notice" "4" "$(sent_count)"
 
 if [[ "$FAILURES" -gt 0 ]]; then
 	printf '%s failure(s)\n' "$FAILURES"

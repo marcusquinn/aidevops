@@ -12,8 +12,9 @@
 #   1. asks `full-loop-helper.sh runtime-pending-notice` whether the hold is
 #      liftable (trusted runtime-pending-only scope, no PR-only contract). The
 #      trust logic stays in that helper and is never copied here;
-#   2. sends one session-bus notice per `<repo>#<PR>@<head>` to the live
-#      interactive sessions on that repository;
+#   2. once the head's required checks are terminal-green, sends one
+#      session-bus notice per `<repo>#<PR>@<head>` to the live interactive
+#      sessions on that repository;
 #   3. with no such session, logs an ATTENTION line (PR, age, reason), the
 #      format the merge pass already uses for work that needs a human.
 # Headless verifiers and removing the hold are out of scope.
@@ -81,6 +82,28 @@ _pmrp_attention_line() {
 	return 0
 }
 
+# Return 0 when the head's required checks are terminal-green. Runtime evidence
+# binds to the exact head, so a verifier is never asked to exercise a head that
+# is still running CI or is red: the CI repair would move the head and void the
+# evidence. Pending or unreadable state defers silently to the next recheck; a
+# terminal failure logs which contexts block verification. Outside the merge
+# pass (required-check helpers not sourced) the gate is skipped.
+# Arguments: $1 repo slug, $2 PR number, $3 head SHA
+_pmrp_head_ci_ready() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local head="$3"
+	local pending_rc=0 failed=""
+	declare -F _check_required_checks_have_pending_or_in_progress >/dev/null 2>&1 || return 0
+	declare -F _required_checks_terminal_failure_names >/dev/null 2>&1 || return 0
+	_check_required_checks_have_pending_or_in_progress "$repo_slug" "$pr_number" "$head" || pending_rc=$?
+	[[ "$pending_rc" -eq 1 ]] || return 1
+	failed=$(_required_checks_terminal_failure_names "$repo_slug" "$pr_number" "$head") || return 1
+	[[ -n "$failed" ]] || return 0
+	echo "[pulse-merge] runtime-pending notice for ${repo_slug}#${pr_number}@${head:0:12} deferred: required checks failing (${failed//$'\n'/, }); CI must be green before runtime verification (GH#39645)" >>"$LOGFILE"
+	return 1
+}
+
 # Route one held PR. Never fails the merge pass.
 # Arguments: $1 PR number, $2 repo slug
 _pmrp_route_held_pr() {
@@ -111,6 +134,7 @@ _pmrp_route_held_pr() {
 	[[ "$head" =~ ^[0-9a-f]{40}$ ]] || return 0
 	[[ -f "$sent_file" ]] && sent_head=$(<"$sent_file")
 	[[ "$sent_head" != "$head" ]] || return 0
+	_pmrp_head_ci_ready "$repo_slug" "$pr_number" "$head" || return 0
 
 	sessions=$(_pmrp_interactive_sessions "$repo_slug")
 	if [[ -z "$sessions" ]]; then
