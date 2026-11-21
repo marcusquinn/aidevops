@@ -17,7 +17,10 @@ def blob(value):
     if value.get("type") != "file" or value.get("encoding") != "base64":
         raise ValueError("not a complete regular file")
     data = base64.b64decode("".join(value["content"].split()), validate=True)
-    digest = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
+    # Git object identity, not a password/signature or trust primitive. Live
+    # GitHub permission, pinned tree evidence and byte equality provide admission.
+    digest = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data,
+                          usedforsecurity=False).hexdigest()
     if len(data) != value["size"] or digest != value["sha"]:
         raise ValueError("blob evidence mismatch")
     return data

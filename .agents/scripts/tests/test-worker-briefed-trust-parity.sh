@@ -81,7 +81,9 @@ gh() {
 		payload=$(jq -n --arg status "$ROUTINE_REF_STATUS" '{status:$status}')
 		;;
 	repos/owner/repo/git/trees/*)
-		payload=$(jq -n --arg sha "$(jq -r .sha <<<"$ROUTINE_HEAD_CONTENT")" \
+		payload="$ROUTINE_HEAD_CONTENT"
+		[[ "$endpoint" != *2222222222222222222222222222222222222222* ]] || payload="$ROUTINE_BASE_CONTENT"
+		payload=$(jq -n --arg sha "$(jq -r .sha <<<"$payload")" \
 			--arg mode "$ROUTINE_TREE_MODE" --argjson truncated "$ROUTINE_TREE_TRUNCATED" \
 			'{truncated:$truncated,tree:[{path:"README.md",type:"blob",mode:$mode,sha:$sha},
 			 {path:".github/workflows/loc-badge.yml",type:"blob",mode:$mode,sha:$sha}]}')
@@ -332,7 +334,8 @@ valid_meta="$ROUTINE_META"
 expect_parity 0 'badges marker with verified scope and no anchor admitted' ''
 for mutation in '.head.repo.full_name="outsider/fork"' '.head.ref="feature/forged"' \
 	'.changed_files=100' '.changed_files=2' '.head.sha="missing"' \
-	'.labels += [{name:"hold-for-review"}]' '.draft=true'; do
+	'.labels += [{name:"hold-for-review"}]' '.draft=true' \
+	'.body += "\n<!-- aidevops:routine-pr:unknown\n -->"'; do
 	ROUTINE_META=$(jq "$mutation" <<<"$valid_meta")
 	expect_parity 1 "routine metadata denied: $mutation" ''
 done
@@ -398,7 +401,8 @@ expect_parity 1 'modified workflow template denied' ''
 _GH_PR_IDENTITY_ORIGIN=origin:worker
 _gh_validate_pr_worker_identity '<!-- aidevops:routine-pr:badges-sync -->' --repo owner/repo
 for body in '<!-- aidevops:routine-pr:unknown -->' '<!-- aidevops:routine-pr:sync-workflows -->' \
-	$'<!-- aidevops:routine-pr:badges-sync -->\n<!-- aidevops:routine-pr:unknown -->'; do
+	$'<!-- aidevops:routine-pr:badges-sync -->\n<!-- aidevops:routine-pr:unknown -->' \
+	'<!-- aidevops:routine-pr:badges-sync --><!-- aidevops:routine-pr:unknown -->'; do
 	if _gh_validate_pr_worker_identity "$body" --repo owner/repo; then exit 1; fi
 done
 unset _GH_PR_IDENTITY_ORIGIN

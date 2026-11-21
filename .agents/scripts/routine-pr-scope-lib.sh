@@ -10,24 +10,35 @@ _is_declared_output() {
 	return 1
 }
 
+_routine_tree_has_file() {
+	local tree="$1" path="$2" content="$3" sha=""
+	sha=$(jq -er '.sha | strings | select(test("^[0-9a-f]{40}$"))' <<<"$content") || return 1
+	jq -e --arg path "$path" --arg sha "$sha" '
+		.truncated == false and
+		([.tree[] | select(.path == $path and .type == "blob" and
+		 (.mode == "100644" or .mode == "100755") and .sha == $sha)] | length == 1)
+	' <<<"$tree" >/dev/null || return 1
+	return 0
+}
+
 # The marker selects a policy, never authority. Deliberately refuse a full API
 # page (even exactly 100 files) rather than guessing whether evidence is complete.
 #aidevops:trust-boundary — GH#17671 remains binding for all other worker PRs.
 _routine_pr_scope_check() {
 	local pr_number="$1" repo="$2"
 	local dir="${BASH_SOURCE[0]%/*}" meta="" files="" author="" permission=""
-	local head="" base="" path="" content="" previous="" ref="" fresh="" tree=""
+	local head="" base="" path="" content="" previous="" ref="" fresh="" tree="" base_tree="" status=""
 	meta=$(gh api "repos/$repo/pulls/$pr_number") || return 1
 	jq -e --arg repo "$repo" '
+		def git_sha: type == "string" and test("^[0-9a-f]{40}$");
 		.state == "open" and .draft == false and
 		([.labels[].name] | index("origin:worker") != null) and
 		([.labels[].name] | index("hold-for-review") == null) and
 		.head.repo.full_name == $repo and .base.repo.full_name == $repo and
 		(.head.ref | startswith("chore/badges-sync-")) and
-		([.body | scan("<!-- aidevops:routine-pr:[^\\n]*? -->")] ==
-		 ["<!-- aidevops:routine-pr:badges-sync -->"]) and
-		(.head.sha | test("^[0-9a-f]{40}$")) and
-		(.base.sha | test("^[0-9a-f]{40}$")) and
+		(.body | contains("<!-- aidevops:routine-pr:badges-sync -->")) and
+		(.body | split("aidevops:routine-pr:") | length == 2) and
+		(.head.sha | git_sha) and (.base.sha | git_sha) and
 		(.changed_files > 0 and .changed_files < 100)
 	' <<<"$meta" >/dev/null || return 1
 	author=$(jq -er '.user.login | strings | select(length > 0)' <<<"$meta") || return 1
@@ -53,21 +64,21 @@ _routine_pr_scope_check() {
 			if [[ -z "$tree" ]]; then
 				tree=$(gh api "repos/$repo/git/trees/$head?recursive=1") || return 1
 			fi
-			jq -e --arg path "$path" --arg sha "$(jq -er .sha <<<"$content")" '
-				.truncated == false and
-				([.tree[] | select(.path == $path and .type == "blob" and
-				 (.mode == "100644" or .mode == "100755") and .sha == $sha)] | length == 1)
-			' <<<"$tree" >/dev/null || return 1
+			_routine_tree_has_file "$tree" "$path" "$content" || return 1
 			previous='null'
 			if jq -e --arg path "$path" '.[] | select(.filename == $path and .status == "modified")' <<<"$files" >/dev/null; then
 				previous=$(gh api "repos/$repo/contents/$path?ref=$base") || return 1
+				if [[ -z "$base_tree" ]]; then
+					base_tree=$(gh api "repos/$repo/git/trees/$base?recursive=1") || return 1
+				fi
+				_routine_tree_has_file "$base_tree" "$path" "$previous" || return 1
 			fi
 			ref=$(jq -n --argjson head "$content" --argjson base "$previous" '{head:$head,base:$base}' |
 				python3 "$dir/routine-pr-content.py" "$path" "$dir/../templates/workflows/loc-badge-caller.yml") || return 1
 			if [[ -n "$ref" ]]; then
 				# A workflow may execute only a pinned commit reachable from main.
-				gh api "repos/marcusquinn/aidevops/compare/$ref...main" --jq .status |
-					grep -Ex 'ahead|identical' >/dev/null || return 1
+				status=$(gh api "repos/marcusquinn/aidevops/compare/$ref...main" --jq .status) || return 1
+				case "$status" in ahead | identical) ;; *) return 1 ;; esac
 			fi
 			;;
 		esac

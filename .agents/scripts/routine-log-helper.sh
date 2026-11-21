@@ -11,6 +11,7 @@
 #   routine-log-helper.sh create-issue <routine-id> --repo SLUG --title "rNNN: Title" [--schedule EXPR] [--type TYPE]
 #   routine-log-helper.sh ensure-anchor <key> --repo SLUG --title TITLE
 #   routine-log-helper.sh ensure-pr-anchor <key> --repo SLUG --pr N --title TITLE
+#   routine-log-helper.sh retire-anchor badges-sync --repo SLUG
 #   routine-log-helper.sh status
 #   routine-log-helper.sh help
 #
@@ -1473,6 +1474,10 @@ Usage:
   routine-log-helper.sh ensure-pr-anchor <key> --repo SLUG --pr N --title TITLE
     Prepend the anchor's Ref #N line to an open origin:worker routine PR whose
     body has no issue identity (pre-guard PRs). Other PRs are left unchanged.
+
+  routine-log-helper.sh retire-anchor badges-sync --repo SLUG
+    Close legacy badge anchors as not planned after removing persistent, only
+    when a complete open-PR list proves no Ref #N remains. Other keys refused.
 
   routine-log-helper.sh refresh-description <routine-id>
     Rebuild and push the GitHub issue body using current state and stored

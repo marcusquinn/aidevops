@@ -282,7 +282,7 @@ _gh_validate_pr_worker_identity() {
 	# Unknown or multiple markers cannot replace an issue identity. Workflow sync
 	# retains its anchor until a safe exact-render policy is available.
 	if [[ -z "$issues" && "$body_text" == *'<!-- aidevops:routine-pr:badges-sync -->'* ]] &&
-		[[ "$(printf '%s' "$body_text" | grep -c 'aidevops:routine-pr:')" == 1 ]]; then
+		[[ "$(printf '%s' "$body_text" | grep -o 'aidevops:routine-pr:' | grep -c .)" == 1 ]]; then
 		return 0
 	fi
 	if [[ -z "$issues" || "$issues" == *$'\n'* || "$issues" == "ambiguous" ]]; then
