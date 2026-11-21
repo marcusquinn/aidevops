@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess  # nosec B404 -- exception types only; Git runs through worktree_archive_git.git
 
 from worktree_archive_administration import validate_admin_entry
 from worktree_archive_git import (
@@ -62,13 +63,20 @@ def verify_auto_merge(root, archive, manifest):
     auto_merge_oid(oid.encode('ascii'))
     if json.loads(path.read_text(encoding='ascii')) != {'schema': 1, 'tree': oid}:
         raise ValueError('git_admin:AUTO_MERGE_metadata_mismatch')
-    validate_auto_merge(root, oid)
     # rev-list traverses trees; batch-check additionally proves every blob exists.
-    closure = git(root, 'rev-list', '--objects', '--no-object-names', oid)
+    try:
+        closure = git(root, 'rev-list', '--objects', '--no-object-names', oid)
+    except subprocess.SubprocessError:
+        # Keep the exact missing/not-tree diagnostics for an unreadable root.
+        validate_auto_merge(root, oid)
+        raise
     checked = git(root, 'cat-file', '--batch-check', data=closure)
-    if len(checked.splitlines()) != len(closure.splitlines()) or any(
-            line.endswith(b' missing') for line in checked.splitlines()):
+    lines = checked.splitlines()
+    if len(lines) != len(closure.splitlines()) or any(line.endswith(b' missing') for line in lines):
         raise ValueError('git_admin:missing_AUTO_MERGE_object')
+    # The batch already reports the root's type: no separate `cat-file -t` (GH#39560).
+    if not any(line.split(b' ')[:2] == [oid.encode('ascii'), b'tree'] for line in lines):
+        raise ValueError('git_admin:AUTO_MERGE_not_tree')
     return oid
 
 

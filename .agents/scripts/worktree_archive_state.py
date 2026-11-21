@@ -3,6 +3,9 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Check whether a worktree's Git state is supported by archival."""
 
+import os
+from pathlib import Path
+
 from worktree_archive_administration import administration, git, git_dirs
 from worktree_archive_auto_merge import auto_merge as auto_merge
 from worktree_archive_history import supported_history as supported_history
@@ -76,7 +79,14 @@ def inventories(root, include_ignored=False, *, index=None, untracked=True):
 
 
 def supported_state(root, preserve_git_admin=False, include_ignored=False):
-    admin, common = git_dirs(root)
+    # One spawn resolves the admin and common dirs and the shallow flag for this
+    # pass (GH#39560); output order follows the arguments.
+    lines = git(root, "rev-parse", "--absolute-git-dir", "--path-format=absolute", "--git-common-dir",
+                "--is-shallow-repository").rstrip(b"\n").split(b"\n")
+    if len(lines) != 3:
+        raise ValueError("unexpected Git directory resolution")
+    admin, common = (Path(os.fsdecode(line)) for line in lines[:2])
+    shallow = lines[2]
     if preserve_git_admin:
         administration(root, dirs=(admin, common))
     pending = ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD",
@@ -85,7 +95,7 @@ def supported_state(root, preserve_git_admin=False, include_ignored=False):
         raise ValueError("unfinished Git operation is not supported for automatic archival")
     if not preserve_git_admin:
         supported_administration(root, admin, common)
-    if git(root, "rev-parse", "--is-shallow-repository").strip() != b"false":
+    if shallow != b"false":
         raise ValueError("shallow history is not self-contained")
     if not include_ignored and git(root, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"):
         raise ValueError("ignored content requires a separate preservation decision")

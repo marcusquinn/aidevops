@@ -96,12 +96,16 @@ def merge_working_file(root, path):
         os.close(parent)
 
 
-def merge_state(root, admin=None, common=None):
-    """Capture a supported merge structurally; never copy a raw index or reflog."""
+def merge_state(root, admin=None, common=None, head=None):
+    """Capture a supported merge structurally; never copy a raw index or reflog.
+
+    A caller may pass the HEAD its directory spawn resolved in this same pass.
+    """
     state = supported_merge_administration(root, admin, common)
     entries = merge_entries(root, '--stage', listing=supported_merge_index(root))
     undo = merge_entries(root, '--resolve-undo')
-    head = git(root, 'rev-parse', 'HEAD').strip().decode('ascii')
+    if head is None:
+        head = git(root, 'rev-parse', 'HEAD').strip().decode('ascii')
     paths = merge_working_paths(root, head, entries + undo)
     working = {path: merge_working_file(root, path) for path in paths}
     result = validate_merge({'schema': 1, 'head': head, 'metadata': {name: value for name, value in state['files'].items() if name in MERGE_FILES},

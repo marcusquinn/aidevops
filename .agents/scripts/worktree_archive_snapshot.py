@@ -176,7 +176,8 @@ def restore_administration(root, archive, preserved=False):
         branch = os.fsdecode(head[5:].strip())
         if not branch.startswith("refs/heads/"):
             raise ValueError("git_admin:unsupported_head")
-        git(root, "update-ref", branch, git(root, "rev-parse", "HEAD").strip().decode("ascii"))
+        # update-ref resolves HEAD itself: no separate rev-parse spawn (GH#39560).
+        git(root, "update-ref", branch, "HEAD")
     for name, oid in state["refs"].items():
         git(root, "update-ref", name, oid)
     for name in ADMIN_FILES - state['files'].keys():
