@@ -909,23 +909,9 @@ jobs:
         # The real /proc census fails closed on unreadable same-UID tasks.
         # Keep runner-owned non-dumpable services outside the fixture UID;
         # do not weaken the production guard or run the contracts as root.
-        # --no-log-init: without it useradd writes lastlog/faillog entries at the
-        # new UID offset; measured at ~33 s on hosted runners (GH#39549).
-        start=$SECONDS
-        sudo useradd --no-log-init --no-create-home --no-user-group --shell /bin/bash probe-a
-        echo "PROBE no-create-home no-user-group took $((SECONDS - start))s"
-        start=$SECONDS
-        sudo useradd --no-log-init --no-create-home --shell /bin/bash probe-b
-        echo "PROBE no-create-home took $((SECONDS - start))s"
-        if command -v strace >/dev/null; then
-          sudo strace -f -tt -T -o "$RUNNER_TEMP/useradd.strace" useradd -l -M probe-c || true
-          awk -F'<' '{t=$NF; sub(/>.*/,"",t); if (t+0 > 0.5) print}' "$RUNNER_TEMP/useradd.strace" | tail -n 15
-        else
-          echo "PROBE strace unavailable"
-        fi
-        start=$SECONDS
-        sudo useradd --no-log-init --create-home --shell /bin/bash lifecycle-contract
-        echo "lifecycle-contract useradd took $((SECONDS - start))s"
+        # No --create-home: creating the home dir took 77 s on hosted runners vs 0 s
+        # without it (GH#39549); the fixtures set HOME to their own temp dir.
+        sudo useradd --no-log-init --no-create-home --shell /bin/bash lifecycle-contract
         # Runner home directories are not traversable by other users.
         dir="$GITHUB_WORKSPACE"
         while [ "$dir" != "/" ]; do sudo chmod o+x "$dir"; dir="$(dirname "$dir")"; done
