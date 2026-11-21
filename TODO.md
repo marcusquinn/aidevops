@@ -2402,6 +2402,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19251 fix(routines): badge and workflow sync PRs need a per-repo routine anchor so headless runs pass the worker identity guard and t2449 #bug ref:GH#39696
 
+- [ ] t19254 fix(ci): capture failing-suite output in Shell Suite Main Health artifact #auto-dispatch #bug ref:GH#39714
+
+- [ ] t19255 fix(tests): test-scratch-worktree-helper.sh exits 128 on Linux #auto-dispatch #bug ref:GH#39715
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
