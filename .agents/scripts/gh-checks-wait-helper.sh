@@ -855,6 +855,15 @@ classify_conflict_stall() {
 	return 10
 }
 
+# Draft then conflict stall checks; same return codes (0 continue, 3 restart).
+classify_missing_stalls() {
+	local stall_rc=0
+	classify_draft_stall || stall_rc=$?
+	[[ "$stall_rc" -eq 0 ]] || return "$stall_rc"
+	classify_conflict_stall || stall_rc=$?
+	return "$stall_rc"
+}
+
 emit_wait_transition() {
 	if [[ -z "$previous" ]]; then
 		emit_initial_state "$current" "$missing_contexts"
@@ -893,8 +902,7 @@ wait_for_checks() {
 	start_epoch=$(current_epoch)
 	local next_heartbeat=$((start_epoch + heartbeat_interval))
 	local interval="$initial_interval" previous="" initial_head="" qlty_credit_policy=""
-	local conflict_checked_at=""
-	local draft_since="" draft_snapshot="" draft_window="$heartbeat_interval"
+	local draft_since="" draft_snapshot="" draft_window="$heartbeat_interval" conflict_checked_at=""
 	[[ "$draft_window" -gt 0 && "$draft_window" -le 120 ]] || draft_window=120
 	_GCW_CANCEL_FIRST_EPOCH=""
 	_GCW_CANCEL_SET=""
@@ -948,13 +956,9 @@ wait_for_checks() {
 		emit_recovered_state "$state_summary"
 		valid_state_seen=1
 		local draft_rc=0
-		classify_draft_stall || draft_rc=$?
+		classify_missing_stalls || draft_rc=$?
 		[[ "$draft_rc" -ne 3 ]] || continue
 		[[ "$draft_rc" -eq 0 ]] || return "$draft_rc"
-		local conflict_rc=0
-		classify_conflict_stall || conflict_rc=$?
-		[[ "$conflict_rc" -ne 3 ]] || continue
-		[[ "$conflict_rc" -eq 0 ]] || return "$conflict_rc"
 		emit_wait_transition
 
 		case "$classification" in
