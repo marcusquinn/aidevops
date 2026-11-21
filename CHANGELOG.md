@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.255] - 2026-11-21
+
+### Added
+
+- route held runtime-pending PRs to a live interactive verifier (t19241)
+
+### Changed
+
+- Performance: batch restore ref updates, fold legacy verify probes, native git for recovery plan reads
+- Performance: read shallow marker from common dir in merge capture (#39649)
+- Performance: native git for archive lifecycle test-side fixture calls
+
+### Fixed
+
+- classify held runtime-pending CI from one exact-head rollup read
+- claim-task-id skips IDs used as PR/issue title prefixes (#39660)
+- shim GNU base64 -w0 for cloudron package monitor on macOS (t19243)
+- stop r924 release deadlock on review-bot threads and ARG_MAX proofs
+
 ## [3.39.254] - 2026-11-21
 
 ### Added
