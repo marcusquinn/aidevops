@@ -2378,10 +2378,6 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19231 fix(worker-blocker-log): lock wait budget of ~100 ms drops blocker events under load (flaky parallel-appenders test) #auto-dispatch #bug ref:GH#39603
 
-- [x] t19230 perf(gh-transport): refund primary pacing slot for free 304 revalidations #auto-dispatch #perf ref:GH#39597 logged:2026-11-21 -> [todo/tasks/t19230-brief.md] pr:#39601 completed:2026-11-21
-
-- [ ] t19233 fix(github-auth): App-read routing advisory fires on REST saturation, refreshed each pulse cycle #bug #interactive ref:GH#39611 logged:2026-11-21 -> [todo/tasks/t19233-brief.md]
-
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
