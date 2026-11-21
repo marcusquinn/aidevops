@@ -34,6 +34,7 @@ def error_details(error: Exception, operation: str) -> dict:
     if operation in {
         "retire-worktree", "cleanup", "cleanup-worktree", "upgrade", "retire-enrolled-only",
         "reclaim-unowned", "relinquish-session", "retire-foreign-worktree",
+        "rebind-moved-worktree",
     } and isinstance(error, StoreConflict):
         reason = str(error)
     retirement = ("retire-worktree", "cleanup", "cleanup-worktree", "retire-enrolled-only",
@@ -58,4 +59,9 @@ def error_details(error: Exception, operation: str) -> dict:
     code = refusal_code(error, operation)
     if code:
         detail.setdefault("detail", code)
+    if isinstance(error, StoreConflict) and str(error) == "generation-directory-mismatch":
+        detail["recovery"] = (
+            "After a same-installation canonical move, use worker-registry.py --state-dir STATE_DIR "
+            "rebind-moved-worktree --path PATH; copied or restored trees remain refused."
+        )
     return detail
