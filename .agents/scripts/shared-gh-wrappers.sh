@@ -47,11 +47,21 @@ gh_issue_brief_section_render() {
 		($body | split("\n")) as $lines |
 		[range(0; $lines | length) | select($lines[.] == $anchor)] as $anchors |
 		[range(0; $lines | length) | select($lines[.] == $start)] as $starts |
-		[range(0; $lines | length) | select($lines[.] == $end)] as $ends |
+		# Pair each start with its following end; reject malformed/nested sections.
+		(reduce range(0; $lines | length) as $i ({open: null, pairs: []};
+			if ($lines[$i] | test("^<!-- aidevops:brief-owner-section id=[A-Za-z0-9._-]+ -->$")) then
+				if .open != null then fail else .open = $i end
+			elif $lines[$i] == $end then
+				if .open == null then fail
+				else .pairs += [{start: .open, end: $i}] | .open = null end
+			else . end
+		) | if .open != null then fail else .pairs end) as $pairs |
+		[$pairs[] | select(.start == $starts[0])] as $matching |
 		if ($anchors | length) != 1 then fail
-		elif ($starts | length) == 0 and ($ends | length) == 0 then
+		elif ($starts | length) == 0 and
+			([$pairs[] | select(.start <= $anchors[0] and $anchors[0] <= .end)] | length) == 0 then
 			($lines[:$anchors[0]] + ($section | split("\n") | .[:-1]) + $lines[$anchors[0]:] | join("\n"))
-		elif ($starts | length) == 1 and ($ends | length) == 1 and $ends[0] == ($anchors[0] - 1) and $starts[0] < $ends[0] then
+		elif ($starts | length) == 1 and ($matching | length) == 1 and $matching[0].end == ($anchors[0] - 1) then
 			($lines[:$starts[0]] + ($section | split("\n") | .[:-1]) + $lines[$anchors[0]:] | join("\n"))
 		else fail end
 	' >"$output" || return 1
