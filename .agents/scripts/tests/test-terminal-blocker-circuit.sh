@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Regression coverage for GH#30926 unchanged terminal-blocker suppression.
+# GH#39538: real-timeout bounded-intake cases dominate: 215s idle, 527s on a
+# loaded macOS host, beyond the affected-tests helper's 240s default.
+# aidevops:suite-timeout=900
 
 set -euo pipefail
 
@@ -747,7 +750,9 @@ ${trigger_line}"
 	[[ "$((next - now))" -ge 86000 && "$((next - now))" -le 86400 ]] || return 1
 	_tbtr_record_write owner/repo 42 "$(_tbtr_record_read owner/repo 42 | jq -c '.next_at = 1')" || return 1
 	_tbtr_issue owner/repo 42 u3 runner-a true true true >/dev/null || return 1
-	next=$(_tbtr_record_read owner/repo 42 | jq -r '.next_at')
+	# GH#39538: sample the clock after the revisit, as above; a sample taken
+	# before it fails whenever a second boundary falls in between.
+	next=$(_tbtr_record_read owner/repo 42 | jq -r '.next_at') now=$(date +%s)
 	[[ "$((next - now))" -ge 172000 && "$((next - now))" -le 172800 ]] || return 1
 	_tbtr_record_write owner/repo 42 "$(_tbtr_record_read owner/repo 42 | jq -c '.next_at = 1')" || return 1
 	decision_reply=""
