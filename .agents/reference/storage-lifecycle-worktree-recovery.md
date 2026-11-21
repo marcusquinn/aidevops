@@ -148,6 +148,8 @@ No performance improvement is implied: measure base hashing and source scans sep
 
 For subprocess fan-out work, compare per-test Git spawn counts, not wall time (host load makes timings unusable): `git-spawn-profile-helper.sh run <worktree> <out-dir> [test-filter...]` runs `test-worktree-archive-lifecycle.py` with a PATH shim that logs `<test>\t<argv>` and execs the Git resolved before PATH changed (an earlier `.agents/scripts/git` guard wrapper stays in force); `summary <log>` lists top shapes and most-spawn tests; `compare <base-log> <head-log> [--completed <times.json>]` prints per-test deltas for tests completed on both trees. Tests that reset `PATH` bypass the shim. Keep `<out-dir>` under `${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}`.
 
+For any suite command, `spawn-profile-helper.sh run --base <ref> [--tool git,bash,python3,jq] -- <suite command>` runs it on a detached base worktree and on head with temporary exec-through logging wrappers, then prints per-tree summaries (normalised argv signatures, parents, same-process exact repeats, fixture versus code-under-test split) and a per-signature delta table; `summary <log>` and `compare <base-log> <head-log>` re-report saved logs.
+
 | Interrupted/historical state | Conservative transition |
 | --- | --- |
 | Planning or restoring, owned empty slot | Revalidate source/identities and retry; no duplicate archive |
