@@ -4,7 +4,7 @@ Add `safety.actions_event_policy_auto_apply` to `.agents/configs/aidevops-config
 
 ## Why
 
-#37860 (`30a6a92905`, opt-in event policy routine) added `"actions_event_policy_auto_apply": false` to the `safety` block of `.agents/configs/aidevops.defaults.jsonc:261`. It is read by `.agents/scripts/actions-event-policy-routine.sh:16` (`config_get safety.actions_event_policy_auto_apply false`). The schema's `safety` object (`aidevops-config.schema.json:325-353`) has `additionalProperties: false` and no entry for this key.
+PR #37860 (`30a6a92905`, opt-in event policy routine) added `"actions_event_policy_auto_apply": false` to the `safety` block of `.agents/configs/aidevops.defaults.jsonc:261`. It is read by `.agents/scripts/actions-event-policy-routine.sh:16` (`config_get safety.actions_event_policy_auto_apply false`). The schema's `safety` object (`aidevops-config.schema.json:325-353`) has `additionalProperties: false` and no entry for this key.
 
 Effects:
 
