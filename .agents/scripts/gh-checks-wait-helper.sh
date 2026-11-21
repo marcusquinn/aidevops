@@ -58,6 +58,8 @@ The initial state is printed once. Later polls emit only state transitions,
 sparse heartbeats, and the terminal result. Pending timeouts return exit 8,
 terminal failures return exit 1, and indeterminate API failures return exit 2.
 Draft PRs with unchanged missing or skipped required checks return exit 9.
+Required checks missing past the settle window on a PR that conflicts with its
+base (GitHub starts no pull_request workflows) return exit 10 with a rebase step.
 EOF
 	return 0
 }
@@ -813,6 +815,46 @@ classify_draft_stall() {
 	return 0
 }
 
+# Prints "MERGEABLE<TAB>baseRefName"; empty on read failure.
+read_mergeable_state() {
+	local pr_number="$1"
+	local repo="$2"
+	if [[ -n "${AIDEVOPS_GH_CHECKS_TEST_MERGEABLE+x}" ]]; then
+		printf '%s\t%s\n' "$AIDEVOPS_GH_CHECKS_TEST_MERGEABLE" "${AIDEVOPS_GH_CHECKS_TEST_BASE:-main}"
+		return 0
+	fi
+	gh pr view "$pr_number" --repo "$repo" --json mergeable,baseRefName --jq '[.mergeable // "", .baseRefName // ""] | @tsv' 2>/dev/null
+	return $?
+}
+
+# GitHub starts no pull_request workflows for a PR whose merge ref cannot be
+# built, so required contexts stay missing forever. Uses the waiter's
+# dynamically scoped state; reads PR mergeability at most once per heartbeat.
+# Returns 0 (keep waiting), 3 (head changed, restart), 10 (conflict).
+classify_conflict_stall() {
+	[[ "$required_only" -eq 1 && -n "$missing_contexts" && "$classification" == pending ]] || return 0
+	[[ "$elapsed" -ge "$_GCW_EMPTY_REQUIRED_SETTLE_SECONDS" ]] || return 0
+	local gap="$heartbeat_interval"
+	[[ "$gap" -gt 0 ]] || gap=120
+	if [[ -n "$conflict_checked_at" && $((now_epoch - conflict_checked_at)) -lt "$gap" ]]; then
+		return 0
+	fi
+	conflict_checked_at="$now_epoch"
+	local merge_state="" mergeable="" base_ref=""
+	merge_state=$(read_mergeable_state "$pr_number" "$repo" 2>/dev/null || true)
+	IFS=$'\t' read -r mergeable base_ref <<<"$merge_state"
+	[[ "$mergeable" == "CONFLICTING" ]] || return 0
+	final_head=$(verified_head_sha "$pr_number" "$repo" 'before conflict check result') || return 2
+	if [[ "$final_head" != "$initial_head" ]]; then
+		initial_head="$final_head"
+		previous="" conflict_checked_at=""
+		return 3
+	fi
+	printf 'WAIT_CHECKS=conflict-required-missing: PR %s conflicts with %s; rebase onto origin/%s, push, then wait again\n' \
+		"$pr_number" "${base_ref:-its base}" "${base_ref:-<base>}"
+	return 10
+}
+
 emit_wait_transition() {
 	if [[ -z "$previous" ]]; then
 		emit_initial_state "$current" "$missing_contexts"
@@ -851,6 +893,7 @@ wait_for_checks() {
 	start_epoch=$(current_epoch)
 	local next_heartbeat=$((start_epoch + heartbeat_interval))
 	local interval="$initial_interval" previous="" initial_head="" qlty_credit_policy=""
+	local conflict_checked_at=""
 	local draft_since="" draft_snapshot="" draft_window="$heartbeat_interval"
 	[[ "$draft_window" -gt 0 && "$draft_window" -le 120 ]] || draft_window=120
 	_GCW_CANCEL_FIRST_EPOCH=""
@@ -908,6 +951,10 @@ wait_for_checks() {
 		classify_draft_stall || draft_rc=$?
 		[[ "$draft_rc" -ne 3 ]] || continue
 		[[ "$draft_rc" -eq 0 ]] || return "$draft_rc"
+		local conflict_rc=0
+		classify_conflict_stall || conflict_rc=$?
+		[[ "$conflict_rc" -ne 3 ]] || continue
+		[[ "$conflict_rc" -eq 0 ]] || return "$conflict_rc"
 		emit_wait_transition
 
 		case "$classification" in
