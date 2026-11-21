@@ -103,6 +103,12 @@ gh() {
 	command "${STUB_DIR}/gh" "$@"
 	return $?
 }
+# GH#39584: the bare-unassign branch uses the audited wrapper. Audit snapshots
+# and privacy guards are covered by their own suites; forward to the gh stub.
+gh_issue_edit_safe() {
+	gh issue edit "$@"
+	return $?
+}
 gh_issue_list() {
 	gh issue list "$@"
 	return $?
@@ -236,6 +242,30 @@ if [[ -f "$GH_EDIT_ARGS_FILE" ]] && grep -q -- "--add-label status:available" "$
 	print_result "stampless release resets in-progress issue to status:available" 0
 else
 	print_result "stampless release resets in-progress issue to status:available" 1 \
+		"(edit args: $(cat "$GH_EDIT_ARGS_FILE" 2>/dev/null || echo 'file missing'))"
+fi
+
+# Stampless aged release of a claimed issue resets it to available (GH#39584).
+cat >"${STUB_DIR}/gh" <<STUB
+#!/usr/bin/env bash
+if [[ "\$1" == "issue" && "\$2" == "list" ]]; then
+    echo '[{"number":44,"updatedAt":"2020-01-01T00:00:00Z","labels":[{"name":"origin:interactive"},{"name":"status:claimed"}]}]'
+    exit 0
+fi
+if [[ "\$1" == "issue" && "\$2" == "edit" ]]; then
+    echo "\$*" >> "${GH_EDIT_ARGS_FILE}"
+    exit 0
+fi
+exit 1
+STUB
+rm -f "$GH_EDIT_ARGS_FILE"
+_normalize_unassign_stampless_interactive "testrunner" "$REPOS_JSON" "$(date +%s)" "86400"
+if [[ -f "$GH_EDIT_ARGS_FILE" ]] && grep -q -- "--add-label status:available" "$GH_EDIT_ARGS_FILE" &&
+	grep -q -- "--remove-label status:claimed" "$GH_EDIT_ARGS_FILE" &&
+	grep -q -- "--remove-assignee testrunner" "$GH_EDIT_ARGS_FILE"; then
+	print_result "stampless release resets claimed issue to status:available (GH#39584)" 0
+else
+	print_result "stampless release resets claimed issue to status:available (GH#39584)" 1 \
 		"(edit args: $(cat "$GH_EDIT_ARGS_FILE" 2>/dev/null || echo 'file missing'))"
 fi
 

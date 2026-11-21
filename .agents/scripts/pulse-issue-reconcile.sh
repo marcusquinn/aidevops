@@ -973,7 +973,9 @@ _normalize_unassign_stampless_interactive() {
 
 			local labels_csv=""
 			labels_csv=$(printf '%s' "$json" | jq -r --argjson n "$issue_num" '[.[] | select(.number == $n) | .labels[].name] | join(",")' 2>/dev/null) || labels_csv=""
-			if [[ ",${labels_csv}," == *",status:in-review,"* ]]; then
+			local label_tokens=",${labels_csv},"
+			local active_status_re=",(${_PIR_STATUS_IN_PROGRESS}|${_PIR_STATUS_QUEUED}|${_PIR_STATUS_CLAIMED}),"
+			if [[ "$label_tokens" == *",status:in-review,"* ]]; then
 				local open_pr_count=0 open_pr_rc=0
 				open_pr_count=$(gh_pr_list --repo "$slug" --state open --search "$issue_num" --json number --jq 'length' 2>/dev/null) || open_pr_rc=$?
 				if [[ "$open_pr_rc" -ne 0 ]]; then
@@ -988,13 +990,14 @@ _normalize_unassign_stampless_interactive() {
 					echo "[pulse-wrapper] Stampless interactive auto-release: reset status:in-review #${issue_num} in ${slug} to available (>${age_threshold_seconds}s old, no stamp, no open PR)" >>"$LOGFILE"
 					total_released=$((total_released + 1))
 				fi
-			elif [[ "$labels_csv" == *"$_PIR_STATUS_IN_PROGRESS"* || "$labels_csv" == *"$_PIR_STATUS_QUEUED"* ]]; then
-				# Reset lifecycle state too, otherwise the reassign pass re-claims it.
+			elif [[ "$label_tokens" =~ $active_status_re ]]; then
+				# Reset lifecycle state too, otherwise the reassign pass re-claims it
+				# (or an unassigned status:claimed is left behind).
 				if set_issue_status "$issue_num" "$slug" "available" --remove-assignee "$runner_user" >/dev/null 2>&1; then
 					echo "[pulse-wrapper] Stampless interactive auto-release: reset active status #${issue_num} in ${slug} to available (>${age_threshold_seconds}s old, no stamp)" >>"$LOGFILE"
 					total_released=$((total_released + 1))
 				fi
-			elif gh issue edit "$issue_num" --repo "$slug" --remove-assignee "$runner_user" >/dev/null 2>&1; then
+			elif gh_issue_edit_safe "$issue_num" --repo "$slug" --remove-assignee "$runner_user" >/dev/null 2>&1; then
 				echo "[pulse-wrapper] Stampless interactive auto-release: unassigned ${runner_user} from #${issue_num} in ${slug} (>${age_threshold_seconds}s old, no stamp)" >>"$LOGFILE"
 				total_released=$((total_released + 1))
 			fi
