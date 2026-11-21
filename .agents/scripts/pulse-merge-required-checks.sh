@@ -1325,6 +1325,19 @@ _pmrc_pending_is_ignored() {
 	return 1
 }
 
+# GH#39664: the forge-event recorder is ordering bookkeeping in a concurrency
+# group where a newer request supersedes the older one. Reruns are cancelled
+# the same way, so a non-required cancellation can never clear; it must not block.
+# Args: $1=name $2=conclusion $3=required $4=repo_slug $5=pr_number
+# Returns: 0=benign superseded cancellation (logged), 1=otherwise
+_pmrc_is_superseded_forge_recorder() {
+	local name="$1" conclusion="$2" required="$3" repo_slug="$4" pr_number="$5"
+	[[ "$conclusion" == cancelled && "$required" != "$PMRC_BOOL_TRUE" ]] || return 1
+	[[ "$name" == *"Record ordered forge event" ]] || return 1
+	echo "[pulse-merge] pre-merge snapshot: IGNORED non-required concurrency-superseded forge-event recorder '${name}' for PR #${pr_number} in ${repo_slug} (GH#39664)" >>"$LOGFILE"
+	return 0
+}
+
 _pmrc_snapshot_checks_acceptable() {
 	local repo_slug="$1"
 	local pr_number="$2"
@@ -1367,12 +1380,7 @@ _pmrc_snapshot_checks_acceptable() {
 		case "$conclusion" in
 		success | neutral | skipped) continue ;;
 		esac
-		if [[ "$conclusion" == cancelled && "$required" != "$PMRC_BOOL_TRUE" && "$name" == *"Record ordered forge event" ]]; then
-			# GH#39664: the forge-event recorder is ordering bookkeeping in a
-			# concurrency group where a newer request supersedes the older one
-			# (cancel-in-progress). Reruns are cancelled the same way, so a
-			# non-required cancellation can never clear and must not block.
-			echo "[pulse-merge] pre-merge snapshot: IGNORED non-required concurrency-superseded forge-event recorder '${name}' for PR #${pr_number} in ${repo_slug} (GH#39664)" >>"$LOGFILE"
+		if _pmrc_is_superseded_forge_recorder "$name" "$conclusion" "$required" "$repo_slug" "$pr_number"; then
 			advisory=$((advisory + 1))
 			continue
 		fi

@@ -273,12 +273,10 @@ gh() {
 		[[ "$SNAPSHOT_MODE" == "recent" ]] && broad_completed_at="2026-01-01T00:09:50Z"
 		if [[ "$SNAPSHOT_MODE" == "unclassified_fail" ]]; then
 			extra_check=',{"name":"CodeFactor","status":"completed","conclusion":"failure","details_url":"https://github.com/owner/repo/runs/99","completed_at":"2026-01-01T00:01:00Z"}'
-		elif [[ "$SNAPSHOT_MODE" == "infra_fail" ]]; then
-			extra_check=',{"name":"sync / Record ordered forge event","status":"completed","conclusion":"failure","details_url":"https://github.com/owner/repo/actions/runs/101/job/202","completed_at":"2026-01-01T00:01:00Z"}'
+		elif [[ "$SNAPSHOT_MODE" == "infra_fail" || "$SNAPSHOT_MODE" == "forge_cancelled" ]]; then
+			extra_check=',{"name":"sync / Record ordered forge event","status":"completed","conclusion":"'"$([[ "$SNAPSHOT_MODE" == infra_fail ]] && printf failure || printf cancelled)"'","details_url":"https://github.com/owner/repo/actions/runs/101/job/202","completed_at":"2026-01-01T00:01:00Z"}'
 		elif [[ "$SNAPSHOT_MODE" == "cancelled_workflow" ]]; then
 			extra_check=',{"name":"Cancelled scan","status":"completed","conclusion":"cancelled","details_url":"https://github.com/owner/repo/actions/runs/707/job/808","completed_at":"2026-01-01T00:01:00Z"},{"name":"Cancelled lint","status":"completed","conclusion":"cancelled","details_url":"https://github.com/owner/repo/actions/runs/707/job/809","completed_at":"2026-01-01T00:01:00Z"}'
-		elif [[ "$SNAPSHOT_MODE" == "forge_event_cancelled" ]]; then
-			extra_check=',{"name":"sync / Record ordered forge event","status":"completed","conclusion":"cancelled","details_url":"https://github.com/owner/repo/actions/runs/101/job/202","completed_at":"2026-01-01T00:01:00Z"}'
 		elif [[ "$SNAPSHOT_MODE" == "configured_fail" ]]; then
 			extra_check=',{"name":"CodeFactor","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:00Z"}'
 		elif [[ "$SNAPSHOT_MODE" == "review_alias_cancelled" ]]; then
@@ -891,7 +889,7 @@ main() {
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 	fi
 	TESTS_RUN=$((TESTS_RUN + 1))
-	assert_gate "concurrency-cancelled forge-event recorder does not block merge (GH#39664)" forge_event_cancelled 0
+	assert_gate "concurrency-cancelled forge-event recorder does not block merge (GH#39664)" forge_cancelled 0
 	assert_gate "later accepted snapshot resets prior blocker evidence" happy_advisory 0
 	if [[ "$_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON" == "[]" ]]; then
 		printf 'PASS accepted snapshot clears prior blocker evidence\n'
