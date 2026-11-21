@@ -13,7 +13,7 @@ from pathlib import Path
 import subprocess  # nosec B404 # fixed read-only Git queries, explicit argv
 
 from .cleanup_plan import marker_digest
-from .enrollment import MARKER, _directory_inode, _git_directory
+from .enrollment import MARKER, _directory_inode, _git_directory, native_git
 from .foreign_git import file_sha, read_git, stream_git_sha
 from .storage import StoreConflict
 
@@ -54,7 +54,15 @@ def source_hashes(path: Path) -> dict[str, str]:
 
 
 def _in_progress(path: Path) -> bool:
-    admin = Path(read_git(path, "rev-parse", "--absolute-git-dir").decode().strip())
+    environment = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    git = native_git(environment)  # read-only probe: skip the canonical shim
+    if git is None:
+        raise ValueError("archive-git-unavailable")
+    output = subprocess.run(  # nosec B603 # native git, fixed read-only argv
+        [git, "--no-optional-locks", "-C", str(path), "rev-parse", "--absolute-git-dir"],
+        env=environment, capture_output=True, check=True, timeout=120, shell=False,
+    ).stdout
+    admin = Path(output.decode().strip())
     return any(os.path.lexists(admin / name) for name in STATE_MARKERS)
 
 
