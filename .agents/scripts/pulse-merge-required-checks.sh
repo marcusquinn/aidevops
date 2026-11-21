@@ -1367,6 +1367,15 @@ _pmrc_snapshot_checks_acceptable() {
 		case "$conclusion" in
 		success | neutral | skipped) continue ;;
 		esac
+		if [[ "$conclusion" == cancelled && "$required" != "$PMRC_BOOL_TRUE" && "$name" == *"Record ordered forge event" ]]; then
+			# GH#39664: the forge-event recorder is ordering bookkeeping in a
+			# concurrency group where a newer request supersedes the older one
+			# (cancel-in-progress). Reruns are cancelled the same way, so a
+			# non-required cancellation can never clear and must not block.
+			echo "[pulse-merge] pre-merge snapshot: IGNORED non-required concurrency-superseded forge-event recorder '${name}' for PR #${pr_number} in ${repo_slug} (GH#39664)" >>"$LOGFILE"
+			advisory=$((advisory + 1))
+			continue
+		fi
 		if [[ "$conclusion" == cancelled ]]; then
 			_pmrc_rerun_cancelled_check "$repo_slug" "$pr_number" "$head_sha" "$link" || true
 			# Never classify cancellation as advisory or dispatch code repair.
