@@ -115,12 +115,20 @@ printf '%s\n' '[{"session_id":"ses_tui1","kind":"tui","messageable":true,"repo":
 
 # With the merge pass's required-check helpers sourced, a head whose required
 # checks are pending or red is never offered to a verifier; a green head is.
-_check_required_checks_have_pending_or_in_progress() {
-	[[ "$(<"${STUB_DIR}/ci")" == "pending" ]] && return 0
-	return 1
+# One exact-head rollup per read: the state file picks which one.
+_required_contexts_for_default_branch() {
+	printf 'Framework Validation\nLint\n'
+	return 0
 }
-_required_checks_terminal_failure_names() {
-	[[ "$(<"${STUB_DIR}/ci")" == "red" ]] && printf 'Framework Validation\n'
+gh_pr_check_runs_rest() {
+	local fv="success" lint='"completed","conclusion":"success"'
+	case "$(<"${STUB_DIR}/ci")" in
+	pending) fv="" ;;
+	red) fv="failure" ;;
+	mixed) fv="failure" lint='"in_progress","conclusion":null' ;;
+	esac
+	printf '[{"name":"Framework Validation","status":"completed","conclusion":%s},{"name":"Lint","status":%s}]\n' \
+		"$([[ -n "$fv" ]] && printf '"%s"' "$fv" || printf 'null')" "$lint"
 	return 0
 }
 # t19244: a red head routes to CI repair through the real finalizer label gate;
@@ -144,6 +152,10 @@ printf 'pending\n' >"${STUB_DIR}/ci"
 _pmrp_route_held_pr 10 o/r 77 "$WORKER_LABELS"
 check "pending required checks send nothing" "3" "$(sent_count)"
 check "pending required checks route no CI repair" "0" "$(route_count)"
+printf 'mixed\n' >"${STUB_DIR}/ci"
+_pmrp_route_held_pr 10 o/r 77 "$WORKER_LABELS"
+check "a failure beside an active required check sends nothing" "3" "$(sent_count)"
+check "a failure beside an active required check routes no CI repair" "0" "$(route_count)"
 printf 'red\n' >"${STUB_DIR}/ci"
 _pmrp_route_held_pr 10 o/r 77 "$WORKER_LABELS"
 check "red required checks send nothing" "3" "$(sent_count)"

@@ -97,19 +97,41 @@ _pmrp_attention_line() {
 # to the next recheck; a terminal failure logs which contexts block
 # verification. Outside the merge pass (required-check helpers not sourced) the
 # gate is skipped.
+# Pending and failed states come from one exact-head rollup read, so a sibling
+# re-run between two reads cannot pair an old failure with a stale "nothing
+# pending" and route repair while a required check is active (t19244 review).
+# The states match _check_required_checks_have_pending_or_in_progress and
+# _required_checks_terminal_failure_names in pulse-merge-required-checks.sh.
 # Arguments: $1 repo slug, $2 PR number, $3 head SHA
 _pmrp_head_ci_ready() {
 	local repo_slug="$1"
 	local pr_number="$2"
 	local head="$3"
-	local pending_rc=0 failed=""
-	declare -F _check_required_checks_have_pending_or_in_progress >/dev/null 2>&1 || return 0
-	declare -F _required_checks_terminal_failure_names >/dev/null 2>&1 || return 0
-	_check_required_checks_have_pending_or_in_progress "$repo_slug" "$pr_number" "$head" || pending_rc=$?
-	[[ "$pending_rc" -eq 1 ]] || return 1
-	failed=$(_required_checks_terminal_failure_names "$repo_slug" "$pr_number" "$head") || return 1
-	[[ -n "$failed" ]] || return 0
-	echo "[pulse-merge] runtime-pending notice for ${repo_slug}#${pr_number}@${head:0:12} deferred: required checks failing (${failed//$'\n'/, }); CI must be green before runtime verification (GH#39645)" >>"$LOGFILE"
+	local contexts="" rollup="" state="" failed=""
+	declare -F _required_contexts_for_default_branch >/dev/null 2>&1 || return 0
+	declare -F gh_pr_check_runs_rest >/dev/null 2>&1 || return 0
+	contexts=$(_required_contexts_for_default_branch "$repo_slug") || return 1
+	[[ -n "$contexts" ]] || return 0
+	rollup=$(gh_pr_check_runs_rest "$repo_slug" "$head" 2>/dev/null) || return 1
+	# The rollup goes through stdin: a large one overflows argv (GH#39650).
+	state=$(printf '%s' "$rollup" | jq -r --arg req "$contexts" '
+		if type != "array" then error("invalid rollup") else
+		. as $checks
+		| [$req | split("\n")[] | select(length > 0)
+			| . as $ctx | {ctx: $ctx, c: ($checks | map(select((.name // "") == $ctx)) | last)}] as $rows
+		| if any($rows[]; .c == null or ((.c.conclusion // "") | length) == 0
+			or ((.c.status // "" | ascii_downcase) | test("^(queued|pending|in_progress|waiting|requested)$")))
+		then "pending"
+		else ([$rows[] | select((.c.conclusion // "" | ascii_downcase) | test("^(failure|cancelled|timed_out)$")) | .ctx]
+			| unique | sort | join(", ")) as $failed
+			| if $failed == "" then "green" else "red:" + $failed end
+		end end' 2>/dev/null) || return 1
+	case "$state" in
+	green) return 0 ;;
+	red:?*) failed="${state#red:}" ;;
+	*) return 1 ;;
+	esac
+	echo "[pulse-merge] runtime-pending notice for ${repo_slug}#${pr_number}@${head:0:12} deferred: required checks failing (${failed}); CI must be green before runtime verification (GH#39645)" >>"$LOGFILE"
 	return 2
 }
 
