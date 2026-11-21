@@ -47,12 +47,39 @@ release_contents() {
 	return 0
 }
 
+# GH#39742: every check run and status on the PR head. `gh pr checks` keeps only
+# the newest run per name/workflow/event, so it can hide a pass behind a later
+# cancellation, or a failure behind a cancelled re-run.
+# shellcheck disable=SC2016 # GraphQL variables, not shell expansion.
+RELEASE_CHECKS_QUERY='query($owner:String!,$name:String!,$pr:Int!,$endCursor:String){repository(owner:$owner,name:$name){pullRequest(number:$pr){commits(last:1){nodes{commit{oid statusCheckRollup{contexts(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{__typename ... on CheckRun{name status conclusion startedAt detailsUrl checkSuite{workflowRun{event workflow{name}}}} ... on StatusContext{context state targetUrl createdAt}}}}}}}}}}'
+# Each name/workflow/event key takes its newest non-cancelled verdict (a run not
+# yet started counts as newest). A key with only cancellations, such as a
+# review-event re-run, is dropped only when a same-named key passed; otherwise
+# it refuses. Output keeps the {name,bucket,link} shape of `gh pr checks`.
+# shellcheck disable=SC2016 # jq program, not shell expansion.
+RELEASE_CHECKS_JQ='[.[] | .data.repository.pullRequest.commits.nodes[0].commit // empty] as $pages
+	| if ($pages | map(.oid) | unique | length) != 1 or ($head != "" and $pages[0].oid != $head)
+		then error("PR head moved or has no commit") else . end
+	| [$pages[] | .statusCheckRollup.contexts.nodes[]?
+		| (if .__typename == "StatusContext" then .state elif .status == "COMPLETED" then .conclusion else .status end) as $state
+		| {name: (.name // .context), link: (.detailsUrl // .targetUrl // ""),
+			key: [.__typename, (.name // .context), (.checkSuite.workflowRun.workflow.name // ""), (.checkSuite.workflowRun.event // "")],
+			started: (.startedAt // .createdAt // "9999"),
+			bucket: (if $state == "SUCCESS" then $pass
+				elif $state == "SKIPPED" or $state == "NEUTRAL" then "skipping"
+				elif $state == "ERROR" or $state == "FAILURE" or $state == "TIMED_OUT" or $state == "ACTION_REQUIRED" then "fail"
+				elif $state == "CANCELLED" then "cancel" else "pending" end)}]
+	| [group_by(.key)[] | (map(select(.bucket != "cancel")) | sort_by(.started) | last) // (.[0] + {cancel_only: true})]
+	| ([.[] | select(.bucket == $pass) | .name] | unique) as $passed
+	| [.[] | select((.cancel_only // false) == false or (.name as $n | any($passed[]; . == $n) | not)) | {name, bucket, link}]'
+
 release_checks() {
-	local repo="$1" pr="$2" checks=""
-	checks=$(gh pr checks "$pr" --repo "$repo" --json name,bucket,link) || return 1
+	local repo="$1" pr="$2" head="${3:-}" pages="" checks=""
+	pages=$(gh api graphql --paginate --slurp -f owner="${repo%%/*}" -f name="${repo#*/}" -F pr="$pr" -f query="$RELEASE_CHECKS_QUERY") || return 1
+	checks=$(jq -c --arg pass pass --arg head "$head" "$RELEASE_CHECKS_JQ" <<<"$pages") || return 1
 	# Main-only publication jobs are intentionally skipped on PRs. Preflight
 	# itself must run successfully; an empty or all-skipped suite is not evidence.
-	jq -e 'all(.[]; .bucket == "pass" or .bucket == "skipping") and any(.[]; .bucket == "pass" and (.name | test("(^| / )preflight$")))' <<<"$checks" >/dev/null || return 1
+	jq -e --arg pass pass 'all(.[]; .bucket == $pass or .bucket == "skipping") and any(.[]; .bucket == $pass and (.name | test("(^| / )preflight$")))' <<<"$checks" >/dev/null || return 1
 	printf '%s\n' "$checks"
 	return 0
 }
@@ -224,7 +251,7 @@ release_request() {
 	[[ "$(jq -r '.state' <<<"$snapshot")" == open ]] || release_error "PR #${pr} must be open before requesting approval." || return 1
 	sha=$(jq -r '.head.sha' <<<"$snapshot")
 	release_publication_preflight "$repo" "$sha" || return 1
-	checks=$(release_checks "$repo" "$pr") || release_error 'PR checks must all pass before requesting approval.' || return 1
+	checks=$(release_checks "$repo" "$pr" "$sha") || release_error 'PR checks must all pass before requesting approval.' || return 1
 	manifest=$(release_contents "$repo" CloudronManifest.json "$sha") || return 1
 	version=$(jq -er '.version | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' <<<"$manifest") || return 1
 	upstream=$(jq -er '.upstreamVersion | select(type == "string" and length > 0)' <<<"$manifest") || return 1
@@ -643,7 +670,7 @@ release_policy_authorizes() {
 		'.closed_at == null and .merged == false and .head.sha == $head and .auto_merge == null
 		and ((.author_association // "") | test($trusted))
 		and any(.labels[]; .name == $hold) and all(.labels[]; .name != "needs-maintainer-review")' <<<"$snapshot" >/dev/null || return 1
-	release_checks "$repo" "$pr" >/dev/null || return 1
+	release_checks "$repo" "$pr" "$head" >/dev/null || return 1
 	view=$(gh pr view "$pr" --repo "$repo" --json closingIssuesReferences,headRefOid) || return 1
 	jq -e --arg head "$head" '.headRefOid == $head' <<<"$view" >/dev/null || return 1
 	finding=$(release_upstream_finding "$repo" "$(jq -c '{issues: [.closingIssuesReferences[].number]}' <<<"$view")") || return 1
@@ -921,7 +948,7 @@ release_pending_cache_write() {
 # Returns 0 when merged, 3 while waiting with the hold retained, 1 on failure.
 release_merge_approved_pr() {
 	local repo="$1" issue="$2" pr="$3" head="$4" authority="$5" checks='' verdict=''
-	checks=$(release_checks "$repo" "$pr") || return 1
+	checks=$(release_checks "$repo" "$pr" "$head") || return 1
 	: "$checks"
 	# GH#39648: the merge would fail on open review-bot threads (GH#27137).
 	# Keep the hold instead of toggling it every run, and queue a response.
