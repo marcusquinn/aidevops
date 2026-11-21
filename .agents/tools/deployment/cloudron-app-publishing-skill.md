@@ -87,6 +87,19 @@ per-release signature, keeps the per-release path. Under an active policy, an
 unsigned request whose head moved is closed so a fresh exact-head request
 follows. Any edit or comment makes its signature stale.
 
+**0.x minor opt-in.** Run `cloudron-release-approval-helper.sh policy-request
+<repo> --zero-minor-routine --dry-run` to preview locally without GitHub writes;
+omit `--dry-run` to request the policy. This adds signed `"zero_minor":"routine"`
+and states that 0.x minor upstream releases are routine. Adding it requires a
+new policy signature; an existing signed policy is never silently rewritten.
+Absent the field, the same-minor restriction under 0.x is unchanged. With it,
+0.3.0 → 0.4.1 may qualify, but strictly increasing versions, the same-major
+boundary (including rejection of 0.x → 1.x), and all other rules remain binding.
+Unknown values fail closed. This semver-only flag also works with the
+`release-identity` and `pins` modes, not commit tracking. **Risk:** 0.x minors
+may contain breaking changes or destructive migrations. Use
+`needs-maintainer-review` as the per-PR brake before merge/publication.
+
 The policy issue is a long-lived non-task record (GH#37993): `policy-request`
 creates it with `persistent` + `no-auto-dispatch`, and issue creation adds no
 `status:*` label or assignee to `persistent`, dashboard, `release-approval-required`

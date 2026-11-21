@@ -20,10 +20,10 @@ REGISTRY_IMAGE = re.compile(r"(ghcr\.io|docker\.io)(/[a-z0-9][a-z0-9._-]*){2,4}"
 CHECKSUM_FILE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.{}-]*")
 SHA256_HEX = re.compile(r"[a-f0-9]{64}")
 PIN_KEYS = {"upstream_repository", "release_identity", "registry_images", "release_checksum", "license_version_url", "companion_image", "catalog_baseline"}
-POLICY_KEYS = {
+# Full signed policies contain every pin opt-in plus identity and upstream rules.
+POLICY_KEYS = PIN_KEYS | {
     "schema", "kind", "repository", "changelog_files", "pinned_files", "check_files", "check_insertion_pattern",
-    "upstream_mode", "upstream_repository", "release_identity", "registry_images", "release_checksum",
-    "license_version_url", "companion_image", "catalog_baseline", "license_commit_url",
+    "upstream_mode", "license_commit_url", "zero_minor",
 }
 
 

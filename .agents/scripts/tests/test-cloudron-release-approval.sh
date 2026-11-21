@@ -986,6 +986,25 @@ assert_routine not 'pinned content missing' 'del(.contents.Dockerfile)' 'missing
 # A pinned token equal to the package version may be an unrelated dependency.
 assert_routine not 'pinned package-version token' ".contents.Dockerfile.base = \"$(b64 "${BASE_DOCKERFILE}"$'ARG DEP=0.1.43\n')\" | $(dockerfile_head "${HEAD_DOCKERFILE}"$'ARG DEP=0.1.44\n')" 'pinned file changes beyond version substitution'
 assert_routine not '0.x minor upstream bump' "$(manifest_base '{"id":"io.example.app","version":"0.1.43","upstreamVersion":"0.5.3","changelog":"file://CHANGELOG"}') | $(manifest_head '{"id":"io.example.app","version":"0.1.44","upstreamVersion":"0.6.0","changelog":"file://CHANGELOG"}') | .finding_upstream = \"0.6.0\"" '0.x minor upstream bump'
+# GH#39783: exercise the complete predicate with consistent manifest, pin and
+# check substitutions, not only the upstream guard in isolation.
+(
+	BASE_MANIFEST="${BASE_MANIFEST//3.39.87/0.3.0}"
+	HEAD_MANIFEST="${HEAD_MANIFEST//3.39.114/0.4.1}"
+	BASE_DOCKERFILE="${BASE_DOCKERFILE//3.39.87/0.3.0}"
+	HEAD_DOCKERFILE="${HEAD_DOCKERFILE//3.39.114/0.4.1}"
+	BASE_CHECK="${BASE_CHECK//3.39.87/0.3.0}"
+	HEAD_CHECK="${HEAD_CHECK//3.39.114/0.4.1}"
+	assert_routine not '0.3.0 to 0.4.1 default' '.finding_upstream = "0.4.1"' '0.x minor upstream bump'
+	assert_routine routine '0.3.0 to 0.4.1 signed opt-in' '.finding_upstream = "0.4.1" | .policy.zero_minor = "routine"'
+	for invalid in '"allow"' 'null' 'false' '1' '[]' '{}'; do
+		assert_routine not 'unknown zero_minor value' ".policy.zero_minor = $invalid" 'unsupported zero_minor'
+	done
+	assert_routine not 'zero minor opt-in keeps major boundary' ".policy.zero_minor = \"routine\" | $(manifest_base "${BASE_MANIFEST/0.3.0/0.9.0}") | $(manifest_head "${HEAD_MANIFEST/0.4.1/1.0.0}") | .finding_upstream = \"1.0.0\"" 'major upstream bump'
+	assert_routine not 'zero minor opt-in keeps increasing rule' ".policy.zero_minor = \"routine\" | $(manifest_head "${HEAD_MANIFEST/0.4.1/0.2.0}") | .finding_upstream = \"0.2.0\"" 'must increase'
+	assert_routine not 'zero minor opt-in keeps finding rule' '.policy.zero_minor = "routine" | .finding_upstream = "0.4.2"' 'equal the monitor finding'
+	assert_routine not 'zero minor opt-in keeps file boundary' '.policy.zero_minor = "routine" | .files += [{filename:"start.sh",status:"modified"}]' 'outside the standing policy'
+)
 check_with_first_line() {
 	local line="$1" first='main() {'
 	printf '%s\n%s%s' "$first" "$line" "${HEAD_CHECK#"$first"}"
@@ -1406,6 +1425,26 @@ PY
 	# shellcheck source=../cloudron-release-approval-helper.sh
 	source "${SOURCE_DIR}/cloudron-release-approval-helper.sh"
 	SCRIPT_DIR="$SOURCE_DIR"
+	# Exercise the real CLI preview without network access or policy mutation.
+	preview=$(main policy-request owner/app --zero-minor-routine --dry-run) || exit 1
+	preview_policy=$(release_policy_metadata "$preview" owner/app) || exit 1
+	jq -e '.zero_minor == "routine"' <<<"$preview_policy" >/dev/null || exit 1
+	[[ "$preview" == *'0.x minor upstream releases are routine'* && "$preview" == *'new policy signature'* ]] || exit 1
+	default_preview=$(main policy-request owner/app --dry-run) || exit 1
+	default_policy=$(release_policy_metadata "$default_preview" owner/app) || exit 1
+	jq -e 'has("zero_minor") | not' <<<"$default_policy" >/dev/null || exit 1
+	for mode in commits commits-license-url; do
+		! main policy-request owner/app "$mode" up/proj --zero-minor-routine --dry-run >/dev/null || exit 1
+	done
+	(
+		release_policy_request() {
+			local repo="$1" mode="$2" upstream="$3" zero_minor="$4"
+			[[ "$repo" == owner/app && "$mode" == semver && -z "$upstream" && "$zero_minor" == true ]] || return 1
+			return 0
+		}
+		main policy-request owner/app --zero-minor-routine
+	) || exit 1
+	printf 'PASS zero-minor policy CLI preview and request forwarding\n'
 	# GH#38739: the pins policy mode signs validated JSON and rejects anything else.
 	PINS_JSON='{"upstream_repository":"up/proj","registry_images":["ghcr.io/up/svc"],"release_identity":{"commit_arg":"APP_COMMIT"},"release_checksum":{"arg":"APP_SHA256","asset":"checksums.txt","file":"app_{version}_linux_amd64"},"license_version_url":true}'
 	pins_body=$(release_policy_body owner/app cmd pins "$PINS_JSON") || { printf 'FAIL pins policy body\n'; exit 1; }
