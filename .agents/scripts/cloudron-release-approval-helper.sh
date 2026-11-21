@@ -50,9 +50,17 @@ release_contents() {
 release_checks() {
 	local repo="$1" pr="$2" checks=""
 	checks=$(gh pr checks "$pr" --repo "$repo" --json name,bucket,link) || return 1
+	# GH#39742: `gh pr checks` lists every run on the head. A later run of a
+	# check that already passed on this head can be cancelled without a verdict
+	# (for example a review-event re-run), which left the PR waiting forever.
+	# Drop such a cancellation only when the same-named check passed; a fail
+	# entry, or a cancellation with no same-named pass, still refuses.
+	checks=$(jq -c --arg pass pass '[group_by(.name)[]
+		| if any(.[]; .bucket == $pass) then map(select(.bucket != "cancel")) else . end
+		| .[]]' <<<"$checks") || return 1
 	# Main-only publication jobs are intentionally skipped on PRs. Preflight
 	# itself must run successfully; an empty or all-skipped suite is not evidence.
-	jq -e 'all(.[]; .bucket == "pass" or .bucket == "skipping") and any(.[]; .bucket == "pass" and (.name | test("(^| / )preflight$")))' <<<"$checks" >/dev/null || return 1
+	jq -e --arg pass pass 'all(.[]; .bucket == $pass or .bucket == "skipping") and any(.[]; .bucket == $pass and (.name | test("(^| / )preflight$")))' <<<"$checks" >/dev/null || return 1
 	printf '%s\n' "$checks"
 	return 0
 }
