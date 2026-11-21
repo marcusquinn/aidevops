@@ -57,33 +57,10 @@ READ_ONLY = frozenset(
 )
 
 
-def _archive_is_read_only(args: list[str]) -> bool:
-    """Allow `git archive` that streams to stdout; any output file is a write."""
-    for arg in args:
-        if arg == "--":
-            break
-        if arg == "--output" or arg.startswith("--output="):
-            return False
-        if arg.startswith("-") and not arg.startswith("--") and "o" in arg[1:]:
-            return False
-    return True
-
-
-def _stash_is_read_only(args: list[str]) -> bool:
-    """Allow only `git stash list` and `git stash show`."""
-    return bool(args) and args[0] in {"list", "show"}
-
-
-POLICY_CHECKS = {
-    "archive": _archive_is_read_only,
-    "stash": _stash_is_read_only,
-}
-
-
 def _is_allowed_canonical(subcommand: str, args: list[str]) -> bool:
     if subcommand in READ_ONLY:
         return True
-    checker = POLICY_CHECKS.get(subcommand) or CANONICAL_CHECKS.get(subcommand)
+    checker = CANONICAL_CHECKS.get(subcommand)
     return bool(checker and checker(args))
 
 

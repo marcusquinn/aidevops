@@ -106,7 +106,26 @@ def _hash_object_is_read_only(args: list[str]) -> bool:
     return not expect_value
 
 
+def _archive_is_read_only(args: list[str]) -> bool:
+    """Allow `git archive` that streams to stdout; any output file is a write."""
+    for arg in args:
+        if arg == "--":
+            break
+        if arg == "--output" or arg.startswith("--output="):
+            return False
+        if arg.startswith("-") and not arg.startswith("--") and "o" in arg[1:]:
+            return False
+    return True
+
+
+def _stash_is_read_only(args: list[str]) -> bool:
+    """Allow only `git stash list` and `git stash show`."""
+    return bool(args) and args[0] in {"list", "show"}
+
+
 CANONICAL_CHECKS: dict[str, Callable[[list[str]], bool]] = {
+    "archive": _archive_is_read_only,
+    "stash": _stash_is_read_only,
     "branch": _branch_is_read_only,
     "bundle": _bundle_is_read_only,
     "config": config_is_read_only,
