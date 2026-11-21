@@ -190,7 +190,6 @@ readonly _STATUS_APPLIED="APPLIED"
 readonly _STATUS_FAILED="FAILED"
 readonly _STATUS_BLOCKED_SIGNING="BLOCKED-SIGNING"
 readonly _STATUS_BLOCKED_RETAINED="BLOCKED-RETAINED"
-readonly _BADGES_ANCHOR_TITLE="aidevops badge sync (routine anchor)"
 
 readonly _BRANCH_DEFAULT_NAME="main"
 
@@ -431,48 +430,7 @@ _install_workflow() {
 
 # ─── PR creation ────────────────────────────────────────────────────────────
 
-# _routine_anchor <slug> — print the repo's open badge-sync routine anchor
-# issue number (GH#39696). Headless runs stamp origin:worker, whose PR body
-# needs exactly one explicit issue identity: without it creation is rejected
-# and the t2449 merge gate never admits the PR. Prints nothing for other
-# origins, which need no anchor. Prints a FAILED row instead when a required
-# anchor is unavailable, so nothing is pushed without a PR.
-_routine_anchor() {
-	local _slug="$1"
-	local _helper="" _number=""
-	declare -F session_origin_label >/dev/null 2>&1 || return 0
-	[[ "$(session_origin_label)" == "origin:worker" ]] || return 0
-	if ! _helper=$(_resolve_helper routine-log-helper.sh); then
-		printf '%s\t%s\troutine anchor unavailable: routine-log-helper.sh not found\n' \
-			"$_slug" "$_STATUS_FAILED"
-		return 1
-	fi
-	if ! _number=$(bash "$_helper" ensure-anchor badges-sync --repo "$_slug" \
-		--title "$_BADGES_ANCHOR_TITLE") ||
-		[[ ! "$_number" =~ ^[1-9][0-9]*$ ]]; then
-		printf '%s\t%s\troutine anchor unavailable: ensure-anchor failed for badges-sync\n' \
-			"$_slug" "$_STATUS_FAILED"
-		return 1
-	fi
-	printf '%s\n' "$_number"
-	return 0
-}
-
-# _link_open_pr_anchor <slug> <pr_url> — give an open origin:worker sync PR
-# without an issue identity its anchor Ref line, so the merge gate can admit
-# the PR that blocks every later run. Best effort: the skip row still prints.
-_link_open_pr_anchor() {
-	local _slug="$1" _url="$2"
-	local _helper="" _number="${2##*/}"
-	[[ "$_number" =~ ^[1-9][0-9]*$ ]] || return 0
-	_helper=$(_resolve_helper routine-log-helper.sh) || return 0
-	bash "$_helper" ensure-pr-anchor badges-sync --repo "$_slug" --pr "$_number" \
-		--title "$_BADGES_ANCHOR_TITLE" >&2 ||
-		_warn "$_slug: could not link open sync PR $_url to its routine anchor"
-	return 0
-}
-
-# _open_pr <slug> <path> <branch> <default_branch> <description> [anchor]
+# _open_pr <slug> <path> <branch> <default_branch> <description>
 _open_pr() {
 	local _slug="$1"
 	local _path="$2"
@@ -591,12 +549,6 @@ _apply_repo() (
 		return 0
 	fi
 	trap 'rmdir "$_lock"' EXIT
-	# Best effort; referenced legacy anchors remain open until their PR resolves.
-	_helper=$(_resolve_helper routine-log-helper.sh) || _helper=""
-	if [[ -n "$_helper" ]]; then
-		bash "$_helper" retire-anchor badges-sync --repo "$_slug" >&2 ||
-			_warn "$_slug: anchor retirement deferred"
-	fi
 	# Query failures must not be interpreted as absence of an existing PR.
 	# Use the authoritative, paginated list rather than the delayed search index.
 	_prs=$(gh api "repos/$_slug/pulls?state=open&per_page=100" --paginate \
@@ -749,7 +701,7 @@ _publish_worktree() {
 }
 
 # _list_actionable_repos <filter_slug>
-# Emits TSV: slug\tpath\tstatus for repos needing sync.
+# Emits TSV: slug\tpath\tstatus, including current repos for anchor retirement.
 _list_actionable_repos() {
 	local _filter_slug="$1"
 	local _check_args=(--json)
@@ -761,9 +713,9 @@ _list_actionable_repos() {
 	[[ "$_check_rc" -le 1 ]] || return 1
 	[[ -n "$_json" ]] || return "$_check_rc"
 
-	# Filter to DRIFTED, METRICS-MISSING, and NO-BLOCK (actionable); carry slug, path, status
+	# Current repos must retry retirement after a referenced legacy PR merges.
 	printf '%s\n' "$_json" | jq -r \
-		'select((.classification == "DRIFTED") or (.classification == "METRICS-MISSING") or (.classification == "NO-BLOCK"))
+		'select((.classification == "DRIFTED") or (.classification == "METRICS-MISSING") or (.classification == "NO-BLOCK") or (.classification == "CURRENT"))
 		| [.slug, .path, .classification] | @tsv' || return 1
 	return 0
 }
@@ -796,6 +748,20 @@ _process_rows() {
 		if ! _is_owned_repo "$_slug" "$_maintainer"; then
 			local _result="${_slug}	${_STATUS_SKIPPED}	external org — sync restricted to owned orgs"
 			_print_result_row "$_json_out" "$_result"
+			_COUNT_SKIPPED=$((_COUNT_SKIPPED + 1))
+			continue
+		fi
+		# Best effort and apply-only, even when generated outputs are current.
+		if [[ "$_apply" -eq 1 ]]; then
+			local _routine_helper=""
+			_routine_helper=$(_resolve_helper routine-log-helper.sh) || _routine_helper=""
+			if [[ -n "$_routine_helper" ]]; then
+				bash "$_routine_helper" retire-anchor badges-sync --repo "$_slug" >&2 ||
+					_warn "$_slug: anchor retirement deferred"
+			fi
+		fi
+		if [[ "$_status" == "CURRENT" && "$_workflow_only_arg" -eq 0 ]]; then
+			_print_result_row "$_json_out" "${_slug}	${_STATUS_SKIPPED}	badge block and metrics current"
 			_COUNT_SKIPPED=$((_COUNT_SKIPPED + 1))
 			continue
 		fi

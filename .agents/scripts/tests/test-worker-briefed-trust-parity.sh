@@ -37,6 +37,12 @@ WRITER_LOGIN=runner
 SYNC_HEAD=""
 PR_FILES='[{"filename":".agents/scripts/example.sh","status":"modified"}]'
 PR_FILES_API_FAIL=0
+ROUTINE_META=""
+ROUTINE_HEAD_CONTENT=""
+ROUTINE_BASE_CONTENT=""
+ROUTINE_TREE_MODE=100644
+ROUTINE_TREE_TRUNCATED=false
+ROUTINE_REF_STATUS=ahead
 
 # No network calls: any unexpected gh request fails rather than reaching GitHub.
 gh() {
@@ -61,7 +67,24 @@ gh() {
 		payload="$PR_FILES"
 		;;
 	repos/owner/repo/pulls/100)
-		payload='{"head":{"sha":"0123456789abcdef0123456789abcdef01234567"}}'
+		payload="$ROUTINE_META"
+		[[ -n "$payload" ]] || payload='{"head":{"sha":"0123456789abcdef0123456789abcdef01234567"}}'
+		;;
+	repos/owner/repo/contents/*)
+		if [[ "$endpoint" == *'ref=1111111111111111111111111111111111111111' ]]; then
+			payload="$ROUTINE_HEAD_CONTENT"
+		else
+			payload="$ROUTINE_BASE_CONTENT"
+		fi
+		;;
+	repos/marcusquinn/aidevops/compare/*)
+		payload=$(jq -n --arg status "$ROUTINE_REF_STATUS" '{status:$status}')
+		;;
+	repos/owner/repo/git/trees/*)
+		payload=$(jq -n --arg sha "$(jq -r .sha <<<"$ROUTINE_HEAD_CONTENT")" \
+			--arg mode "$ROUTINE_TREE_MODE" --argjson truncated "$ROUTINE_TREE_TRUNCATED" \
+			'{truncated:$truncated,tree:[{path:"README.md",type:"blob",mode:$mode,sha:$sha},
+			 {path:".github/workflows/loc-badge.yml",type:"blob",mode:$mode,sha:$sha}]}')
 		;;
 	repos/owner/repo/issues/42)
 		payload=$(jq -n --arg assoc "$ISSUE_ASSOC" --arg login "$ISSUE_LOGIN" --arg state "$ISSUE_STATE" \
@@ -296,3 +319,129 @@ if _create_github_issue owner/repo 'r004: Content update' body >/dev/null 2>&1; 
 fi
 printf 'PASS label provisioning failure prevents anchor creation\n'
 ANCHOR_TEST
+
+# GH#39785: exercise the actual shared scope predicate through both merge paths.
+PR_BODY='<!-- aidevops:routine-pr:badges-sync -->'
+ISSUE_PERMISSION=write
+PR_FILES='[{"filename":"docs/metrics/repo-metrics.json","status":"modified"}]'
+ROUTINE_META=$(jq -n --arg body "$PR_BODY" '{state:"open",draft:false,body:$body,
+ labels:[{name:"origin:worker"}],user:{login:"runner"},changed_files:1,
+ head:{ref:"chore/badges-sync-123",sha:"1111111111111111111111111111111111111111",repo:{full_name:"owner/repo"}},
+ base:{sha:"2222222222222222222222222222222222222222",repo:{full_name:"owner/repo"}}}')
+valid_meta="$ROUTINE_META"
+expect_parity 0 'badges marker with verified scope and no anchor admitted' ''
+for mutation in '.head.repo.full_name="outsider/fork"' '.head.ref="feature/forged"' \
+	'.changed_files=100' '.changed_files=2' '.head.sha="missing"' \
+	'.labels += [{name:"hold-for-review"}]' '.draft=true'; do
+	ROUTINE_META=$(jq "$mutation" <<<"$valid_meta")
+	expect_parity 1 "routine metadata denied: $mutation" ''
+done
+ROUTINE_META="$valid_meta"
+ISSUE_PERMISSION=read
+expect_parity 1 'read-only routine author denied' ''
+ISSUE_PERMISSION=write
+PR_FILES_API_FAIL=1
+expect_parity 1 'routine file API failure denied' ''
+PR_FILES_API_FAIL=0
+for path in .github/workflows/evil.yml src/evil.sh; do
+	PR_FILES=$(jq -n --arg path "$path" '[{filename:$path,status:"modified"}]')
+	expect_parity 1 "out-of-scope routine path denied: $path" ''
+done
+PR_FILES='[{"filename":"docs/metrics/x","status":"renamed","previous_filename":"src/x"}]'
+expect_parity 1 'routine rename denied' ''
+PR_FILES='[{"filename":"README.md\nREADME.md","status":"added"}]'
+expect_parity 1 'newline filename denied before line conversion' ''
+PR_FILES='[{"filename":"docs/metrics/x","status":"modified"}]'
+PR_BODY='<!-- aidevops:routine-pr:unknown -->'
+ROUTINE_META=$(jq --arg body "$PR_BODY" '.body=$body' <<<"$valid_meta")
+expect_parity 1 'unknown routine marker denied' ''
+PR_BODY='<!-- aidevops:routine-pr:badges-sync -->'
+ROUTINE_META="$valid_meta"
+
+content_fixture() {
+	local text="$1" data="" sha=""
+	data=$(printf '%s' "$text" | base64 | tr -d '\n')
+	sha=$(printf '%s' "$text" | git hash-object --stdin)
+	jq -n --arg data "$data" --arg sha "$sha" --argjson size "$(printf '%s' "$text" | wc -c)" \
+		'{type:"file",encoding:"base64",content:$data,sha:$sha,size:$size}'
+	return 0
+}
+PR_FILES='[{"filename":"README.md","status":"modified"}]'
+ROUTINE_BASE_CONTENT=$(content_fixture $'intro\n<!-- aidevops:badges:start -->old<!-- aidevops:badges:end -->\nend\n')
+ROUTINE_HEAD_CONTENT=$(content_fixture $'intro\n<!-- aidevops:badges:start -->new<!-- aidevops:badges:end -->\nend\n')
+expect_parity 0 'README badge-only edit admitted' ''
+ROUTINE_TREE_MODE=120000
+expect_parity 1 'README symlink denied despite dereferenced regular Contents response' ''
+ROUTINE_TREE_MODE=100644
+ROUTINE_TREE_TRUNCATED=true
+expect_parity 1 'truncated tree evidence denied' ''
+ROUTINE_TREE_TRUNCATED=false
+ROUTINE_HEAD_CONTENT=$(content_fixture $'evil\n<!-- aidevops:badges:start -->new<!-- aidevops:badges:end -->\nend\n')
+expect_parity 1 'README edit outside badge block denied' ''
+ROUTINE_HEAD_CONTENT=$(content_fixture $'intro\n<!-- aidevops:badges:start -->new\nend\n')
+expect_parity 1 'README missing end marker denied' ''
+ROUTINE_HEAD_CONTENT=$(jq '.size=9999' <<<"$ROUTINE_BASE_CONTENT")
+expect_parity 1 'truncated content denied' ''
+ROUTINE_BASE_CONTENT=$(content_fixture $'# Project\n\nOriginal prose\n')
+ROUTINE_HEAD_CONTENT=$(content_fixture $'# Project\n\n<!-- aidevops:badges:start -->new<!-- aidevops:badges:end -->\n\nOriginal prose\n')
+expect_parity 0 'deterministic first badge block insertion admitted' ''
+PR_FILES='[{"filename":".github/workflows/loc-badge.yml","status":"added"}]'
+workflow=$(sed -E 's/@main$/@1111111111111111111111111111111111111111/; s/^(      aidevops_ref:).*$/\1 1111111111111111111111111111111111111111/' "$SCRIPT_DIR/../templates/workflows/loc-badge-caller.yml")
+ROUTINE_HEAD_CONTENT=$(content_fixture "$workflow"$'\n')
+expect_parity 0 'exact pinned workflow template admitted' ''
+ROUTINE_REF_STATUS=diverged
+expect_parity 1 'workflow ref not reachable from framework main denied' ''
+ROUTINE_REF_STATUS=ahead
+ROUTINE_HEAD_CONTENT=$(content_fixture "$workflow"$'\n# unexpected workflow content\n')
+expect_parity 1 'modified workflow template denied' ''
+
+_GH_PR_IDENTITY_ORIGIN=origin:worker
+_gh_validate_pr_worker_identity '<!-- aidevops:routine-pr:badges-sync -->' --repo owner/repo
+for body in '<!-- aidevops:routine-pr:unknown -->' '<!-- aidevops:routine-pr:sync-workflows -->' \
+	$'<!-- aidevops:routine-pr:badges-sync -->\n<!-- aidevops:routine-pr:unknown -->'; do
+	if _gh_validate_pr_worker_identity "$body" --repo owner/repo; then exit 1; fi
+done
+unset _GH_PR_IDENTITY_ORIGIN
+printf 'PASS worker identity accepts badge marker only, not unknown or multiple policies\n'
+
+# Retirement uses the existing helper, with no GitHub writes or new harness.
+bash -s -- "$SCRIPT_DIR" "$TEST_ROOT" <<'RETIRE_TEST'
+	set -euo pipefail
+	source "$1/routine-log-helper.sh"
+	TEST_ROOT="$2"
+	RETIRE_PRS='[{"body":"Ref #77"}]'
+	RETIRE_CALLS="$TEST_ROOT/retirement-calls"
+	: >"$RETIRE_CALLS"
+	gh() {
+		local command="$1" action="${2:-}"
+		case "$command:$action" in
+		issue:list) printf '[{"number":77,"body":"<!-- aidevops:routine-anchor:badges-sync -->"},{"number":78,"body":"<!-- aidevops:routine-anchor:sync-workflows -->"}]\n' ;;
+		pr:list) printf '%s\n' "$RETIRE_PRS" ;;
+		issue:edit | issue:close) printf '%s\n' "$*" >>"$RETIRE_CALLS" ;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	gh_issue_comment() {
+		local body=""
+		body=$(cat)
+		[[ "$*" == '77 --repo owner/repo --body-file -' && "$body" == *'verified diff scope'* ]] || return 1
+		printf 'comment 77\n' >>"$RETIRE_CALLS"
+		return 0
+	}
+	cmd_retire_anchor badges-sync --repo owner/repo
+	[[ ! -s "$RETIRE_CALLS" ]]
+	RETIRE_PRS='null'
+	if cmd_retire_anchor badges-sync --repo owner/repo; then exit 1; fi
+	[[ ! -s "$RETIRE_CALLS" ]]
+	RETIRE_PRS=$(jq -n '[range(1000) | {body:""}]')
+	if cmd_retire_anchor badges-sync --repo owner/repo; then exit 1; fi
+	[[ ! -s "$RETIRE_CALLS" ]]
+	RETIRE_PRS='[{"body":"Ref #777"}]'
+	cmd_retire_anchor badges-sync --repo owner/repo
+	grep -q 'issue edit 77 .*--remove-label persistent' "$RETIRE_CALLS"
+	grep -q 'issue close 77 .*--reason not planned' "$RETIRE_CALLS"
+	if grep -q 'issue close 78' "$RETIRE_CALLS"; then exit 1; fi
+	if cmd_retire_anchor sync-workflows --repo owner/repo; then exit 1; fi
+	printf 'PASS retirement keeps referenced anchor, retires unreferenced badge anchor only\n'
+RETIRE_TEST

@@ -16,7 +16,7 @@ _is_declared_output() {
 _routine_pr_scope_check() {
 	local pr_number="$1" repo="$2"
 	local dir="${BASH_SOURCE[0]%/*}" meta="" files="" author="" permission=""
-	local head="" base="" path="" content="" previous="" ref="" fresh=""
+	local head="" base="" path="" content="" previous="" ref="" fresh="" tree=""
 	meta=$(gh api "repos/$repo/pulls/$pr_number") || return 1
 	jq -e --arg repo "$repo" '
 		.state == "open" and .draft == false and
@@ -39,7 +39,8 @@ _routine_pr_scope_check() {
 	jq -e --argjson count "$(jq .changed_files <<<"$meta")" '
 		type == "array" and length == $count and length < 100 and
 		all(.[]; (.status == "added" or .status == "modified") and
-		 (.filename | type == "string") and (.previous_filename == null)) and
+		 (.filename | type == "string" and (test("[[:cntrl:]]") | not)) and
+		 (.previous_filename == null)) and
 		([.[].filename] | length == (unique | length))
 	' <<<"$files" >/dev/null || return 1
 	while IFS= read -r path; do
@@ -47,6 +48,16 @@ _routine_pr_scope_check() {
 		case "$path" in
 		README.md | .github/workflows/loc-badge.yml)
 			content=$(gh api "repos/$repo/contents/$path?ref=$head") || return 1
+			# Contents API dereferences some symlinks: independently require a
+			# regular tree entry and bind its object ID to the verified content.
+			if [[ -z "$tree" ]]; then
+				tree=$(gh api "repos/$repo/git/trees/$head?recursive=1") || return 1
+			fi
+			jq -e --arg path "$path" --arg sha "$(jq -er .sha <<<"$content")" '
+				.truncated == false and
+				([.tree[] | select(.path == $path and .type == "blob" and
+				 (.mode == "100644" or .mode == "100755") and .sha == $sha)] | length == 1)
+			' <<<"$tree" >/dev/null || return 1
 			previous='null'
 			if jq -e --arg path "$path" '.[] | select(.filename == $path and .status == "modified")' <<<"$files" >/dev/null; then
 				previous=$(gh api "repos/$repo/contents/$path?ref=$base") || return 1

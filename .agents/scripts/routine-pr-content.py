@@ -38,7 +38,21 @@ def validate(path, template, evidence):
                 raise ValueError("reversed badge block")
             return data[:a] + data[b + len(end):]
 
-        if outside(head, True) != outside(base, False):
+        head_outside = outside(head, True)
+        base_outside = outside(base, False)
+        if start not in base and end not in base:
+            # Match inject_block's first-install whitespace exactly, without
+            # stripping/normalising any existing README content.
+            block = head[head.index(start):head.index(end) + len(end)]
+            heading = re.search(rb"^# .*\n", base, re.M)
+            if heading:
+                offset = heading.end()
+                expected = base[:offset] + b"\n" + block + b"\n" + base[offset:]
+            else:
+                expected = block + b"\n\n" + base
+            if head != expected:
+                raise ValueError("README differs from deterministic block insertion")
+        elif head_outside != base_outside:
             raise ValueError("README changed outside badge block")
         return ""
     # Reproduce the installer's two substitutions, including optional tag comment.

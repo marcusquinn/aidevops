@@ -1312,9 +1312,14 @@ cmd_retire_anchor() {
 		if jq -e --arg n "$number" 'any(.[]; .body | test("(?i)\\bref[ :]+#" + $n + "([^0-9]|$)"))' <<<"$prs" >/dev/null; then
 			continue
 		fi
+		if ! declare -F gh_issue_comment >/dev/null; then
+			# shellcheck source=shared-gh-wrappers.sh
+			source "$SCRIPT_DIR/shared-gh-wrappers.sh" || return 1
+		fi
+		printf '%s\n' 'Routine PRs are now admitted by verified diff scope; this anchor is no longer needed' |
+			gh_issue_comment "$number" --repo "$repo" --body-file - || return 1
 		gh issue edit "$number" --repo "$repo" --remove-label persistent || return 1
-		gh issue close "$number" --repo "$repo" --reason 'not planned' \
-			--comment 'Routine PRs are now admitted by verified diff scope; this anchor is no longer needed' || return 1
+		gh issue close "$number" --repo "$repo" --reason 'not planned' || return 1
 	done < <(jq -r --arg marker "$marker" '.[] | select(.body | contains($marker)) | .number' <<<"$issues")
 	return 0
 }

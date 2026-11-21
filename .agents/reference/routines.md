@@ -225,15 +225,24 @@ owner/repo` before attempting the normal guarded merge. Existing routines can
 adopt this convention by creating/reusing a maintainer-authored anchor and
 updating their persisted SOP/prompt once; no new issue is required each run.
 
-The built-in multi-repo sync routines (badge sync r921 and workflow sync)
-provision their own per-target-repo anchors (GH#39696). For a headless
-`origin:worker` run, `routine-log-helper.sh ensure-anchor <key> --repo SLUG
---title TITLE` finds the open `routine-tracking` issue that carries
-`<!-- aidevops:routine-anchor:<key> -->`, or creates it once. The helper then
-writes `Ref #N` before pushing. A failed lookup fails closed: nothing is pushed
-and no duplicate anchor is created. Reused sync PRs opened before the identity
-guard get the line through `ensure-pr-anchor`. The anchor-author trust checks
-above still apply unchanged.
+Badge sync r921 uses `<!-- aidevops:routine-pr:badges-sync -->` instead of an
+anchor (GH#39785), retaining `origin:worker`. The marker selects a live diff-scope
+policy, not trust: the author needs write/maintain/admin permission, the head
+must be in the base repository on `chore/badges-sync-*`, and the complete diff
+must touch only declared outputs. README edits are confined byte-for-byte to
+the badge block; the metrics workflow must equal the canonical rendered caller
+and pin a framework commit reachable from main. Missing evidence, API errors
+and full/truncated file pages fail closed. CI, review and hold gates still apply.
+
+Each badge sync run calls `routine-log-helper.sh retire-anchor badges-sync
+--repo SLUG`. It removes `persistent` and closes an unreferenced legacy anchor
+as not planned; an open PR's `Ref #N` keeps it open until a later run. Legacy PRs
+still use the existing linked-issue trust route unchanged.
+
+Workflow sync retains `ensure-anchor` / `ensure-pr-anchor` until an exact,
+trusted-ref re-render policy is implemented. Maintainer-defined agent routines
+also retain their `create-issue` tracking anchors; badge retirement cannot close
+anchors for other keys.
 
 ## Scheduler ownership
 
