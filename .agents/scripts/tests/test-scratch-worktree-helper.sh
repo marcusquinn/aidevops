@@ -112,18 +112,17 @@ else
 fi
 
 # 5. Reaper: only dead-owner, idle, clean scratch worktrees are reclaimed.
-# Bash 3.2 runs an inherited EXIT trap in a killed background child; clear it.
-(
-	trap - EXIT
-	exec sleep 300
-) &
+# A background child killed before it execs still runs the inherited EXIT trap
+# (rm -rf "$ROOT"), a race seen on Linux. Wait until it is really `sleep`.
+sleep 300 &
 dead_pid=$!
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+	[[ "$(ps -o comm= -p "$dead_pid" 2>/dev/null)" == "sleep" ]] && break
+	sleep 0.1
+done
 kill "$dead_pid" 2>/dev/null || true
 wait "$dead_pid" 2>/dev/null || true
-(
-	trap - EXIT
-	exec sleep 300
-) &
+sleep 300 &
 live_pid=$!
 make_stale() {
 	local owner_pid="$1"
