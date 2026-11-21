@@ -88,25 +88,30 @@ def primary_wait(budget, resource, row, reserved, now):
         return PRIMARY_PACING, (slot * available - ahead * row[1]) / (available - ahead)
     budget.db.execute("INSERT OR REPLACE INTO pacing VALUES(?,?,?,?,?)",
                       (budget.scope, resource, row[1], slot + interval, row[0]))
+    # Remember exactly what this admission charged so a free response refunds
+    # that amount only (delivery reads below the floor charge a slot too).
+    budget.last_pacing_charge = (row[1], interval)
     return "", now
 
 
-def refund_pacing(budget, resource, reset_at, available, now):
-    """Return one pacing slot after a free (304) response; never creates a row.
+def refund_pacing(budget, resource, charge, response_reset, now):
+    """Return the interval charged at admission after a free (304) response.
 
-    Moves pacing.retry_at back by one current interval for the same window,
-    clamped to now. Secondary-ceiling history and reservations are untouched.
-    Delivery-class reads skip the schedule at admission, so they own no slot.
+    charge is (reset, interval) recorded when the read was admitted, or None if
+    it charged no slot (never creates a row). The refund applies only when the
+    response and the stored schedule still describe the charged window; it moves
+    pacing.retry_at back by that interval, clamped to now. Secondary-ceiling
+    history and reservations are untouched.
     """
-    if os.environ.get("AIDEVOPS_GH_ADMISSION_CLASS", "") == DELIVERY_CLASS:
+    if not charge:
         return
+    charged_reset, interval = charge
     saved = budget.db.execute(
         "SELECT reset,retry_at FROM pacing WHERE scope=? AND resource=?",
         (budget.scope, resource),
     ).fetchone()
-    if not saved or saved[0] != reset_at or reset_at <= now:
+    if not saved or saved[0] != charged_reset or response_reset != charged_reset or charged_reset <= now:
         return
-    interval = (reset_at - now) / max(available, 1)
     refunded = max(now, saved[1] - interval)
     if refunded < saved[1]:
         budget.db.execute(
