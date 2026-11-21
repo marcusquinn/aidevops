@@ -192,124 +192,14 @@ const EVENT_REDUCERS = new Map([
   ["permission.replied", replyPermission],
 ]);
 
-// GH#39151: OpenCode ends a response with finish "length" when it hits the
-// request output cap; the in-flight tool call is aborted and nothing is saved.
-export const OUTPUT_LIMIT_NOTE =
-  "Your previous response hit the configured output-token limit and its tool call was discarded; " +
-  "nothing was written. Write large files in sections of under ~120 lines (Write, then Edit appends).";
-
-export const EMPTY_TURN_NOTE =
-  "Your previous response ended with no visible text and no completed tool call (the output budget may have gone on reasoning). " +
-  "Plan in smaller steps, state what you will do, then act; write files in sections of under ~120 lines.";
-export const EMPTY_TOOL_NOTE =
-  "Your previous tool call had empty arguments and was aborted; nothing was executed. " +
-  "Plan in smaller steps, then retry with complete arguments; write files in sections of under ~120 lines.";
-
-export const EMPTY_TOOL_ERROR_NOTE =
-  "Your previous tool call failed with empty arguments; it may have partly run, so check state before retrying. " +
-  "Plan in smaller steps, then retry with complete arguments; write files in sections of under ~120 lines.";
-
-function isAbortedTool(state) {
-  return state.status === "aborted" || state.error === "Tool execution aborted" || state.metadata?.interrupted === true;
-}
-
-const EMPTY_INPUT_TOOL_STATUSES = new Set(["error", "aborted"]);
-
-function isEmptyInput(input) {
-  return !input || (typeof input === "object" && Object.keys(input).length === 0);
-}
-
-function isUsefulPart(part) {
-  if (part.type === "text") return Boolean(String(part.text || "").trim());
-  return part.type === "tool" && part.state?.status === "completed";
-}
-
-function emptyToolNote(state) {
-  if (!state || !EMPTY_INPUT_TOOL_STATUSES.has(state.status) || !isEmptyInput(state.input)) return "";
-  return isAbortedTool(state) ? EMPTY_TOOL_NOTE : EMPTY_TOOL_ERROR_NOTE;
-}
-
-function finishNote(info, hasContent) {
-  if (info.role !== "assistant" || !info.finish) return "";
-  if (info.finish === "length") return OUTPUT_LIMIT_NOTE;
-  return info.finish === "tool-calls" || hasContent ? "" : EMPTY_TURN_NOTE;
-}
-
-/**
- * One-shot per-session notice. observe() flags a session when an assistant
- * message finishes with "length", ends with no usable content (GH#39556), or
- * a tool part is aborted with empty input; take() returns the note once.
- */
-export function createOutputLimitNotice() {
-  const pending = new Map();
-  const seen = new Set();
-  const content = new Set();
-  const flag = (sessionID, key, note) => {
-    if (!sessionID || seen.has(key)) return;
-    seen.add(key);
-    capSet(seen, MAX_TRACKED_IDS * 4);
-    // An explicit output-limit finish outranks a pending fallback notice.
-    if (!pending.has(sessionID) || note === OUTPUT_LIMIT_NOTE) pending.set(sessionID, note);
-  };
-  const textParts = new Map();
-  const observeDelta = (props) => {
-    const messageID = textParts.get(String(props.partID || ""));
-    if (messageID !== undefined && typeof props.delta === "string" && props.delta.trim()) content.add(messageID);
-    capSet(content, MAX_TRACKED_IDS * 4);
-  };
-  const observePart = (part) => {
-    const messageID = String(part.messageID || "");
-    if (part.type === "text" && part.id) {
-      textParts.set(String(part.id), messageID);
-      if (textParts.size > MAX_TRACKED_IDS * 4) textParts.delete(textParts.keys().next().value);
-    }
-    if (isUsefulPart(part)) content.add(messageID);
-    const note = part.type === "tool" ? emptyToolNote(part.state) : "";
-    if (note) {
-      const sessionID = String(part.sessionID || "");
-      flag(sessionID, `${sessionID}:tool:${part.id || messageID}`, note);
-    }
-    capSet(content, MAX_TRACKED_IDS * 4);
-  };
-  const observeMessage = (info) => {
-    const sessionID = String(info.sessionID || "");
-    const note = finishNote(info, content.has(String(info.id || "")));
-    if (note) flag(sessionID, `${sessionID}:${info.id || ""}`, note);
-  };
-  return {
-    observe(event) {
-      const type = event?.type;
-      if (type === "session.deleted") this.forget(event.properties?.info?.id || event.properties?.sessionID);
-      else if (type === "message.part.updated") observePart(event.properties?.part || {});
-      else if (type === "message.part.delta") observeDelta(event.properties || {});
-      else if (type === "message.updated") observeMessage(event.properties?.info || {});
-    },
-    forget(sessionID) {
-      const id = String(sessionID || "");
-      pending.delete(id);
-      for (const key of seen) if (key.startsWith(`${id}:`)) seen.delete(key);
-    },
-    take(sessionID) {
-      const id = String(sessionID || "");
-      const note = pending.get(id) || "";
-      pending.delete(id);
-      return note;
-    },
-    /** Append the one-shot note to a system prompt array, if pending. */
-    inject(sessionID, system) {
-      const note = Array.isArray(system) ? this.take(sessionID) : "";
-      if (note) system.push(note);
-    },
-    /** observe() that reports errors via onError instead of throwing. */
-    observeSafe(event, onError) {
-      try {
-        this.observe(event);
-      } catch (err) {
-        onError(err);
-      }
-    },
-  };
-}
+// GH#39151 / GH#39556: truncated/empty-turn notices live in their own module.
+export {
+  EMPTY_TOOL_ERROR_NOTE,
+  EMPTY_TOOL_NOTE,
+  EMPTY_TURN_NOTE,
+  OUTPUT_LIMIT_NOTE,
+  createOutputLimitNotice,
+} from "./output-limit-notice.mjs";
 
 // Session metadata changes are not model or tool activity.
 const NON_ACTIVITY_EVENTS = new Set(["session.created", "session.updated", "session.idle"]);
