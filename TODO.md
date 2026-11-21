@@ -2394,7 +2394,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19246 docs(observability): pulse cycle-index merged counts only the pulse merge pass, not worker self-merges #documentation ref:GH#39676 pr:#39678 completed:2026-11-21
 
-- [ ] t19247 fix(pulse): deploy reconciliation kills supervising wrappers that hold a fresh LLM lock #bug ref:GH#39682
+- [x] t19247 fix(pulse): deploy reconciliation kills supervising wrappers that hold a fresh LLM lock #bug ref:GH#39682 pr:#39684 completed:2026-11-21
 
 - [ ] t19248 fix(pulse): stale LLM-lock reclaim kills healthy supervisors by wrapper process age #auto-dispatch #bug ref:GH#39683
 
