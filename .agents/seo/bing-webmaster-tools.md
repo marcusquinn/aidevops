@@ -23,10 +23,12 @@ tools:
 ## Setup
 
 1. [Bing Webmaster Tools](https://www.bing.com/webmasters/) → **Settings** → **API Access** → **Generate API Key**
-2. Store it: `aidevops secret set BING_WEBMASTER_API_KEY`. For an account-specific key use `BING_WEBMASTER_API_KEY_<ACCOUNT>` instead and inject that name in step 3 (`seo-export-bing.sh` uses a suffixed key only when exactly one exists)
+2. Store it: `aidevops secret set BING_WEBMASTER_API_KEY`. For an account-specific key use `BING_WEBMASTER_API_KEY_<ACCOUNT>` instead and inject that name in step 3 (`seo-export-bing.sh` uses a suffixed key only when gopass is installed and exactly one exists; without gopass, `aidevops secret set` writes to the plaintext `credentials.sh` fallback, where a suffixed key is not found, so store the unsuffixed name). Keyword research (`keyword-research-helper-webmaster.sh`) reads only the unsuffixed `BING_WEBMASTER_API_KEY`, so store that name if you use it
 3. Run curl inside the wrapper so the key is injected, never printed: `aidevops secret BING_WEBMASTER_API_KEY -- sh -c 'BASE=https://ssl.bing.com/webmaster/api.svc/json; KEY=$BING_WEBMASTER_API_KEY; curl -s -G "$BASE/GetUserSites" --data-urlencode "apikey=$KEY"'`
 
 ## API Operations (`BASE="https://ssl.bing.com/webmaster/api.svc/json"`)
+
+Run each example below inside the Setup step 3 wrapper (`aidevops secret BING_WEBMASTER_API_KEY -- sh -c '...'`), setting `BASE=https://ssl.bing.com/webmaster/api.svc/json` inside the same `sh -c` command. The wrapper injects the key only into that child process, so `BASE` and `$BING_WEBMASTER_API_KEY` are empty in the calling shell.
 
 ### Submit URL
 
@@ -116,7 +118,7 @@ curl -s -X POST "$BASE/VerifySite?apikey=$KEY" \
 
 ### 6. Submit sitemap
 
-Use [Sitemap Submit](#sitemap-submit) with `siteUrl` `https://example.com/`. Expect HTTP 200 `{"d":null}`.
+Same call as [Sitemap Submit](#sitemap-submit), but with `siteUrl` `https://example.com/` and the apikey value taken from `$KEY` (as in steps 1, 2 and 5), so account-specific keys work. Expect HTTP 200 `{"d":null}`.
 
 ## IndexNow
 
