@@ -6,9 +6,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createOutputLimitNotice, OUTPUT_LIMIT_NOTE } from "../session-turn-state.mjs";
+import { createOutputLimitNotice, OUTPUT_LIMIT_NOTE, EMPTY_TURN_NOTE, EMPTY_TOOL_NOTE, EMPTY_TOOL_ERROR_NOTE } from "../session-turn-state.mjs";
 
 const updated = (info) => ({ type: "message.updated", properties: { info } });
+
+test("delta-only text is content; reasoning deltas are not", () => {
+  const notice = createOutputLimitNotice();
+  const mkPart = (id, type) => ({ type: "message.part.updated", properties: { part: { id, messageID: "m1", sessionID: "s1", type, text: "" } } });
+  const delta = (partID, d) => ({ type: "message.part.delta", properties: { partID, delta: d } });
+  notice.observe(mkPart("t1", "text"));
+  notice.observe(delta("t1", "hello"));
+  notice.observe(updated({ id: "m1", sessionID: "s1", role: "assistant", finish: "stop" }));
+  assert.equal(notice.take("s1"), "");
+  notice.observe({ type: "message.part.updated", properties: { part: { id: "r1", messageID: "m2", sessionID: "s1", type: "reasoning", text: "" } } });
+  notice.observe(delta("r1", "thinking"));
+  notice.observe(updated({ id: "m2", sessionID: "s1", role: "assistant", finish: "stop" }));
+  assert.equal(notice.take("s1"), EMPTY_TURN_NOTE);
+});
 
 test("finish=length yields one note on the next transform only", () => {
   const notice = createOutputLimitNotice();
@@ -26,8 +40,43 @@ test("repeated updates of the same message do not re-arm the note", () => {
   assert.equal(notice.take("s1"), "");
 });
 
+const part = (p) => ({ type: "message.part.updated", properties: { part: p } });
+
+test("empty assistant message yields the empty-turn note once", () => {
+  const notice = createOutputLimitNotice();
+  notice.observe(updated({ id: "m1", sessionID: "s1", role: "assistant", finish: "stop" }));
+  assert.equal(notice.take("s1"), EMPTY_TURN_NOTE);
+  assert.equal(notice.take("s1"), "");
+});
+
+test("message with text or completed tool is not a dead turn", () => {
+  const notice = createOutputLimitNotice();
+  notice.observe(part({ id: "p1", messageID: "m1", sessionID: "s1", type: "text", text: "hi" }));
+  notice.observe(updated({ id: "m1", sessionID: "s1", role: "assistant", finish: "stop" }));
+  notice.observe(part({ id: "p2", messageID: "m2", sessionID: "s1", type: "tool", state: { status: "completed", input: { a: 1 } } }));
+  notice.observe(updated({ id: "m2", sessionID: "s1", role: "assistant", finish: "stop" }));
+  notice.observe(updated({ id: "m3", sessionID: "s1", role: "assistant", finish: "tool-calls" }));
+  assert.equal(notice.take("s1"), "");
+});
+
+test("aborted tool part with empty input yields the empty-tool note", () => {
+  const notice = createOutputLimitNotice();
+  notice.observe(part({ id: "p1", messageID: "m1", sessionID: "s1", type: "tool", state: { status: "error", error: "Tool execution aborted", input: {} } }));
+  assert.equal(notice.take("s1"), EMPTY_TOOL_NOTE);
+  notice.observe(part({ id: "p2", messageID: "m2", sessionID: "s1", type: "tool", state: { status: "error", input: {} } }));
+  assert.equal(notice.take("s1"), EMPTY_TOOL_ERROR_NOTE);
+});
+
+test("length finish replaces a pending tool notice", () => {
+  const notice = createOutputLimitNotice();
+  notice.observe(part({ id: "p1", messageID: "m1", sessionID: "s1", type: "tool", state: { status: "aborted", input: {} } }));
+  notice.observe(updated({ id: "m1", sessionID: "s1", role: "assistant", finish: "length" }));
+  assert.equal(notice.take("s1"), OUTPUT_LIMIT_NOTE);
+});
+
 test("other finishes, roles and sessions are ignored", () => {
   const notice = createOutputLimitNotice();
+  notice.observe(part({ id: "p0", messageID: "m1", sessionID: "s1", type: "text", text: "ok" }));
   notice.observe(updated({ id: "m1", sessionID: "s1", role: "assistant", finish: "stop" }));
   notice.observe(updated({ id: "m2", sessionID: "s1", role: "user", finish: "length" }));
   notice.observe({ type: "session.idle", properties: { sessionID: "s1" } });

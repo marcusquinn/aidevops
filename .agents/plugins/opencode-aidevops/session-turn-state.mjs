@@ -192,60 +192,14 @@ const EVENT_REDUCERS = new Map([
   ["permission.replied", replyPermission],
 ]);
 
-// GH#39151: OpenCode ends a response with finish "length" when it hits the
-// request output cap; the in-flight tool call is aborted and nothing is saved.
-export const OUTPUT_LIMIT_NOTE =
-  "Your previous response hit the configured output-token limit and its tool call was discarded; " +
-  "nothing was written. Write large files in sections of under ~120 lines (Write, then Edit appends).";
-
-/**
- * One-shot per-session notice. observe() flags a session when an assistant
- * message finishes with "length"; take() returns the note once and clears it.
- */
-export function createOutputLimitNotice() {
-  const pending = new Set();
-  const seen = new Set();
-  return {
-    observe(event) {
-      if (event?.type === "session.deleted") {
-        this.forget(event.properties?.info?.id || event.properties?.sessionID);
-        return;
-      }
-      if (event?.type !== "message.updated") return;
-      const info = event.properties?.info || {};
-      if (info.role !== "assistant" || info.finish !== "length") return;
-      const sessionID = String(info.sessionID || "");
-      const key = `${sessionID}:${info.id || ""}`;
-      if (!sessionID || seen.has(key)) return;
-      seen.add(key);
-      capSet(seen, MAX_TRACKED_IDS * 4);
-      pending.add(sessionID);
-    },
-    forget(sessionID) {
-      const id = String(sessionID || "");
-      pending.delete(id);
-      for (const key of seen) if (key.startsWith(`${id}:`)) seen.delete(key);
-    },
-    take(sessionID) {
-      const id = String(sessionID || "");
-      if (!id || !pending.delete(id)) return "";
-      return OUTPUT_LIMIT_NOTE;
-    },
-    /** Append the one-shot note to a system prompt array, if pending. */
-    inject(sessionID, system) {
-      const note = Array.isArray(system) ? this.take(sessionID) : "";
-      if (note) system.push(note);
-    },
-    /** observe() that reports errors via onError instead of throwing. */
-    observeSafe(event, onError) {
-      try {
-        this.observe(event);
-      } catch (err) {
-        onError(err);
-      }
-    },
-  };
-}
+// GH#39151 / GH#39556: truncated/empty-turn notices live in their own module.
+export {
+  EMPTY_TOOL_ERROR_NOTE,
+  EMPTY_TOOL_NOTE,
+  EMPTY_TURN_NOTE,
+  OUTPUT_LIMIT_NOTE,
+  createOutputLimitNotice,
+} from "./output-limit-notice.mjs";
 
 // Session metadata changes are not model or tool activity.
 const NON_ACTIVITY_EVENTS = new Set(["session.created", "session.updated", "session.idle"]);
