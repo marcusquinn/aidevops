@@ -496,6 +496,45 @@ _fetch_label_invariant_rows() {
 	return 0
 }
 
+# Blocked-companion repairs for one listing row; increments
+# _LI_BLOCKED_COMPANION_FIXED per repair. Every write path re-reads live labels.
+# Args: $1 issue, $2 slug, $3 core status count, $4 sole core status (or empty),
+#   $5 status list, $6 has needs-*, $7 hold re-queued as AI recovery,
+#   $8 owned companions, $9 all status:* count, $10 has auto-dispatch,
+#   $11 non-task, $12 updated epoch
+_normalize_blocked_companion_row() {
+	local issue_num="$1" slug="$2" core_count="$3" sole_status="$4" status_list="$5"
+	local has_needs="$6" hold_recovery="$7" owned_companions="$8" all_status_count="$9"
+	local has_auto="${10}" is_non_task="${11}" row_epoch="${12}"
+	# GH#38360: single-status rows only; a multi-status row was just
+	# repaired by set_issue_status, which owns its companions.
+	local companion_mode=""
+	local only_blocked="$_LI_BOOL_FALSE"
+	[[ "$core_count" -eq 1 && "$sole_status" == "$_LI_BLOCKED_STATUS" ]] && only_blocked="$_LI_BOOL_TRUE"
+	if [[ "$only_blocked" == "$_LI_BOOL_TRUE" && "$has_needs" == "$_LI_BOOL_FALSE" ]]; then
+		companion_mode="bare"
+	elif [[ "$only_blocked" == "$_LI_BOOL_TRUE" && "$hold_recovery" == "$_LI_BOOL_TRUE" ]]; then
+		# GH#38821: heal maintainer holds the normalizer re-queued as AI recovery.
+		companion_mode="hold_heal"
+	elif [[ "$core_count" -eq 1 && " ${status_list} " != *" blocked "* && -n "$owned_companions" ]]; then
+		# Only an issue with another live lifecycle status left blocked; a
+		# status-less issue may carry the label as a deliberate human hold.
+		companion_mode="orphan"
+	fi
+	if [[ -n "$companion_mode" ]] &&
+		_enforce_blocked_companion_one_issue "$issue_num" "$slug" "$companion_mode"; then
+		_LI_BLOCKED_COMPANION_FIXED=$((_LI_BLOCKED_COMPANION_FIXED + 1))
+	fi
+	# GH#39710: an interrupted release left an auto-dispatch issue with no
+	# status at all but an AI-owned companion; restore the hold.
+	if [[ "$all_status_count" == "0" && "$has_auto" == "$_LI_BOOL_TRUE" &&
+		"$is_non_task" == "$_LI_BOOL_FALSE" && -n "$owned_companions" ]] &&
+		_statusless_ai_hold_row_restore "$issue_num" "$slug" "$owned_companions" "$row_epoch"; then
+		_LI_BLOCKED_COMPANION_FIXED=$((_LI_BLOCKED_COMPANION_FIXED + 1))
+	fi
+	return 0
+}
+
 # Helper: process all issues for one repo. Updates the global
 # _LI_* counters (caller accumulates into totals).
 #
@@ -533,32 +572,9 @@ _normalize_label_invariants_for_repo() {
 			_LI_STATUS_FIXED=$((_LI_STATUS_FIXED + 1))
 		fi
 
-		# GH#38360: single-status rows only; a multi-status row was just
-		# repaired by set_issue_status, which owns its companions.
-		local companion_mode=""
-		local only_blocked="$_LI_BOOL_FALSE"
-		[[ "$core_count" -eq 1 && "${_LI_FILTERED_STATUS[0]}" == "$_LI_BLOCKED_STATUS" ]] && only_blocked="$_LI_BOOL_TRUE"
-		if [[ "$only_blocked" == "$_LI_BOOL_TRUE" && "$has_needs" == "$_LI_BOOL_FALSE" ]]; then
-			companion_mode="bare"
-		elif [[ "$only_blocked" == "$_LI_BOOL_TRUE" && "$hold_recovery" == "$_LI_BOOL_TRUE" ]]; then
-			# GH#38821: heal maintainer holds the normalizer re-queued as AI recovery.
-			companion_mode="hold_heal"
-		elif [[ "$core_count" -eq 1 && " ${status_list} " != *" blocked "* && -n "$owned_companions" ]]; then
-			# Only an issue with another live lifecycle status left blocked; a
-			# status-less issue may carry the label as a deliberate human hold.
-			companion_mode="orphan"
-		fi
-		if [[ -n "$companion_mode" ]] &&
-			_enforce_blocked_companion_one_issue "$issue_num" "$slug" "$companion_mode"; then
-			_LI_BLOCKED_COMPANION_FIXED=$((_LI_BLOCKED_COMPANION_FIXED + 1))
-		fi
-		# GH#39710: an interrupted release left an auto-dispatch issue with no
-		# status at all but an AI-owned companion; restore the hold.
-		if [[ "$all_status_count" == "0" && "$has_auto" == "$_LI_BOOL_TRUE" &&
-			"$is_non_task" == "$_LI_BOOL_FALSE" && -n "$owned_companions" ]] &&
-			_statusless_ai_hold_row_restore "$issue_num" "$slug" "$owned_companions" "$updated_epoch"; then
-			_LI_BLOCKED_COMPANION_FIXED=$((_LI_BLOCKED_COMPANION_FIXED + 1))
-		fi
+		_normalize_blocked_companion_row "$issue_num" "$slug" "$core_count" "${_LI_FILTERED_STATUS[0]:-}" \
+			"$status_list" "$has_needs" "$hold_recovery" "$owned_companions" \
+			"$all_status_count" "$has_auto" "$is_non_task" "$updated_epoch"
 
 		# t19179: unassigned active status idle past the threshold. The listing
 		# row is a hint; the helper re-reads the live issue before any write.
