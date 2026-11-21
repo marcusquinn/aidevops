@@ -957,11 +957,15 @@ class EnrollmentContract(unittest.TestCase):
         marker.write_text(json.dumps(value))
         with self.assertRaisesRegex(StoreConflict, "^generation-directory-mismatch$"):
             rebind_moved_admin(self.store, self.tree)
+        # Restore the valid marker so only copy detection can refuse the copy.
+        value["directory"] -= 1
+        marker.write_text(json.dumps(value))
         # A copy at a new path keeps its old admin backlink and is never re-bound.
         copy = self.root / "copy"
         shutil.copytree(self.tree, copy, symlinks=True)
-        with self.assertRaises((ValueError, StoreConflict)):
+        with self.assertRaises((ValueError, StoreConflict)) as refused:
             rebind_moved_admin(self.store, copy)
+        self.assertNotEqual(str(refused.exception), "generation-directory-mismatch")
 
     def test_repair_followup_uses_configured_registry_and_quotes_entrypoint(self):
         self.enrollment.resolve(self.tree, create=True)
@@ -1038,11 +1042,15 @@ class EnrollmentContract(unittest.TestCase):
 
                 calls = []
 
-                def failing_replace(directory, value, _calls=calls, _stage=stage):
-                    _calls.append(value)
-                    if _stage == "publication" or len(_calls) == 2:
-                        raise OSError("publication interrupted")
-                    _replace_marker(directory, value)
+                def make_failing_replace(recorded, current_stage):
+                    def failing_replace(directory, value):
+                        recorded.append(value)
+                        if current_stage == "publication" or len(recorded) == 2:
+                            raise OSError("publication interrupted")
+                        _replace_marker(directory, value)
+                    return failing_replace
+
+                failing_replace = make_failing_replace(calls, stage)
 
                 if stage in ("publication", "finalization"):
                     failure = patch("worker_lifecycle.rebind._replace_marker", side_effect=failing_replace)
