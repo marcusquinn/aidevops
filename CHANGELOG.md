@@ -10,6 +10,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.254] - 2026-11-21
+
+### Added
+
+- verify-runtime verifier route for runtime-pending PRs
+
+### Changed
+
+- Performance: fold archive HEAD, shallow and identity probes into single rev-parse spawns (GH#39560)
+- Maintenance: t19230 t19231 t19233 t19235 t19237 → done
+- Maintenance: mark t19234 complete (pr:#39621 completed:2026-11-21) (#39631)
+- Maintenance: mark t19229 complete (pr:#39596 completed:2026-11-21) (#39618)
+- Maintenance: single rev-parse probe for unregistered archive admin dir (#39612)
+- Maintenance: sync GitHub issue refs to TODO.md (#39616)
+
+### Fixed
+
+- public original repos read as private via jq // on false
+- repo-layout prune dry-run waits out the apply second before retention-0 checks
+- scope migrate-layout SQLite integrity checks to migration tables
+- canonical guard allows read-only archive/stash list; add repair-worktrees recovery (#39634)
+- name not-in-worktree cause in finalize-receipt (#39635)
+- App-read routing advisory fires on REST saturation, refreshed each pulse cycle
+- end early with rebase instruction on base conflict
+- count HTTP 304 not-modified attempts as successful in usage aggregator
+- anchor the /oc trigger gate and serialize only the agent job (GH#39594)
+
 ## [3.39.253] - 2026-11-21
 
 ### Added
