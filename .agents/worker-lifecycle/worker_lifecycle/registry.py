@@ -184,6 +184,11 @@ def argument_parser() -> argparse.ArgumentParser:
     proof.add_argument("--repo", required=True)
     proof.add_argument("--branch", required=True)
     proof.add_argument("--receipt-created-at", required=True)
+    rebind = commands.add_parser(
+        "rebind-moved-worktree",
+        help="re-bind a same-installation tree after its canonical checkout moved; never deletes",
+    )
+    rebind.add_argument("--path", required=True, type=Path)
     for name in ("enroll", "resolve-generation"):
         enrollment = commands.add_parser(name, help="enroll or resolve a linked worktree; schema 2 required")
         enrollment.add_argument("--path", required=True, type=Path)
@@ -251,9 +256,10 @@ def _retirement_operation(store: LifecycleRegistry, args: argparse.Namespace) ->
 
 
 def _cleanup_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
-    from . import cleanup, never_owned, path_release
+    from . import cleanup, never_owned, path_release, rebind
 
     operations = {
+        "rebind-moved-worktree": lambda: rebind.rebind_moved_admin(store, args.path),
         "cleanup-worktree": lambda: cleanup.cleanup_worktree(
             store, args.repos_config, args.output_root, args.path,
         ),
@@ -298,7 +304,8 @@ def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Map
     if args.operation in {"reconcile", "enroll", "create-worktree", "admit-session"}:
         upgrade_registry(store)
     if args.operation in {"cleanup", "cleanup-worktree", "retire-enrolled-only",
-                          "reclaim-unowned", "release-vacant-path", "release-replaced-path"}:
+                          "reclaim-unowned", "release-vacant-path", "release-replaced-path",
+                          "rebind-moved-worktree"}:
         return _cleanup_operation(store, args)
     if args.operation in {
         "create-worktree", "admit-session", "relinquish-session", "preserve-wip",

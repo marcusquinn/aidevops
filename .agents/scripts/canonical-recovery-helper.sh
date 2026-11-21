@@ -42,6 +42,9 @@ source "${SCRIPT_DIR}/canonical-recovery-lock.sh"
 # shellcheck source=./canonical-recovery-hygiene.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/canonical-recovery-hygiene.sh"
+# shellcheck source=./worker-lifecycle-state.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/worker-lifecycle-state.sh"
 
 
 usage() {
@@ -61,6 +64,23 @@ usage() {
 		"  canonical-recovery-helper.sh ${VERIFY_BOOTSTRAP_CMD} --repo PATH --slug OWNER/REPO --confirm REGISTER_CANONICAL_REPOSITORY" \
 		"  canonical-recovery-helper.sh ${CGH_REPAIR_CMD} --repo PATH [--min-age-minutes N] [--tmp-min-age-days N] [--apply]" \
 		"  canonical-recovery-helper.sh ${CGH_GC_CMD} --repo PATH [--min-age-minutes N] [--tmp-min-age-days N] [--apply]"
+	return 0
+}
+
+# Enrolled trees keep the old admin path in their generation marker; re-bind is
+# a separate, journaled step that proves inodes before accepting the move.
+_emit_rebind_followups() {
+	local registry_entry="${SCRIPT_DIR}/../worker-lifecycle/worker-registry.py"
+	local state_dir="" wt_path=""
+	state_dir=$(worker_lifecycle_state_dir) || state_dir=""
+	if [[ -z "$state_dir" || ! -d "$state_dir" ]]; then
+		printf 'REBIND_UNAVAILABLE: existing lifecycle registry unavailable; no registry created\n'
+		return 0
+	fi
+	for wt_path in "$@"; do
+		printf 'REBIND_FOLLOWUP: python3 %q --state-dir %q rebind-moved-worktree --path %q\n' \
+			"$registry_entry" "$state_dir" "$wt_path"
+	done
 	return 0
 }
 
@@ -113,6 +133,7 @@ repair_worktree_pointers() {
 		fi
 	done
 	printf 'REPAIRED_WORKTREE_POINTERS=%s\n' "$changed"
+	_emit_rebind_followups "${wt_paths[@]+"${wt_paths[@]}"}"
 	return 0
 }
 
