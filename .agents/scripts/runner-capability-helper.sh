@@ -112,6 +112,12 @@ def unmet(reason=''):
     print('runner_capability_unmet' + (f' reason={reason}' if reason else ''))
     raise SystemExit(1)
 
+def unmet_exception(error):
+    # GH#39779: runner environment failures are re-checked next cycle
+    # (signal=check_error), never cooled down as invalid requirements.
+    # Parse errors in issue-declared requirements stay invalid_requirements.
+    unmet('check_error' if isinstance(error, (OSError, RuntimeError)) else '')
+
 def resolve_root(path):
     # GH#38825: name a missing repo root instead of a generic invalid map.
     if not Path(path).is_dir():
@@ -496,12 +502,8 @@ try:
         reason = run_check([executable], f'path={probe}', cwd=root)
         if reason:
             unmet(reason)
-except (OSError, RuntimeError):
-    # GH#39779: runner environment failures are re-checked next cycle
-    # (signal=check_error), never cooled down as invalid requirements.
-    unmet('check_error')
-except (ValueError, TypeError, AttributeError):
-    unmet()
+except (OSError, ValueError, TypeError, AttributeError, RuntimeError) as error:
+    unmet_exception(error)
 PY
 	return 0
 }
