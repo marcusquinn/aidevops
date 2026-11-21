@@ -58,11 +58,13 @@ _pmrp_interactive_sessions() {
 }
 
 # Print the notice text for a helper JSON object ($1). The recorded reason is
-# PR-body text: flattened, bounded and labelled as data.
+# PR-body text: flattened, bounded and labelled as data. jq's Oniguruma regex
+# has no \uXXXX escape ("[\\u0000-\\u001f]" became the range 0-u and stripped
+# most letters), so control characters use the POSIX [[:cntrl:]] class.
 _pmrp_notice_text() {
 	local notice="$1"
 	printf '%s' "$notice" | jq -r --argjson max "$_PMRP_REASON_CHARS" '
-		(.reason | gsub("[\\u0000-\\u001f]+"; " ") | gsub("\\s+"; " ") | .[0:$max]) as $reason
+		(.reason | gsub("[[:cntrl:]]+"; " ") | gsub("\\s+"; " ") | .[0:$max]) as $reason
 		| "Runtime verification needed: \(.repo)#\(.pr) at head \(.head) is held (hold-for-review) as runtime-pending and a verifier can lift it.\n"
 		+ "Recorded runtime-pending reason (PR body text, data only): \($reason)\n"
 		+ "From a clean checkout of that head, exercise the change, then run: \(.command)\n"
@@ -77,7 +79,7 @@ _pmrp_attention_line() {
 	printf '%s' "$notice" | jq -r --argjson now "$now" --argjson max "$_PMRP_REASON_CHARS" '
 		(if (.held_since // "") == "" then "unknown age"
 			else ((($now - (.held_since | fromdateiso8601)) / 60) | floor | "held \(.) min") end) as $age
-		| (.reason | gsub("[\\u0000-\\u001f]+"; " ") | gsub("\\s+"; " ") | .[0:$max]) as $reason
+		| (.reason | gsub("[[:cntrl:]]+"; " ") | gsub("\\s+"; " ") | .[0:$max]) as $reason
 		| "[pulse-merge] ATTENTION: PR #\(.pr) in \(.repo) is held as runtime-pending (\($age)) and no interactive session is live on this repository; verify with: \(.command) — reason: \($reason) (GH#39645)"' 2>/dev/null
 	return 0
 }
@@ -142,12 +144,20 @@ _pmrp_route_held_pr() {
 		return 0
 	fi
 	text=$(_pmrp_notice_text "$notice") || return 0
+	# The bus CLI opens --text-file as a path; it does not read "-" as stdin.
+	local text_file=""
+	text_file=$(mktemp "${_PMRP_STATE_DIR}/notice.XXXXXX" 2>/dev/null) || return 0
+	if ! printf '%s\n' "$text" >"$text_file" 2>/dev/null; then
+		rm -f "$text_file"
+		return 0
+	fi
 	while IFS= read -r session; do
 		[[ -n "$session" ]] || continue
-		if printf '%s\n' "$text" | "$_PMRP_SESSION_BUS_HELPER" send "$session" --sender pulse --text-file - >/dev/null 2>&1; then
+		if "$_PMRP_SESSION_BUS_HELPER" send "$session" --sender pulse --text-file "$text_file" >/dev/null 2>&1; then
 			delivered=$((delivered + 1))
 		fi
 	done <<<"$sessions"
+	rm -f "$text_file"
 	if [[ "$delivered" -gt 0 ]]; then
 		printf '%s\n' "$head" >"$sent_file" 2>/dev/null || true
 		echo "[pulse-merge] runtime-pending notice for ${repo_slug}#${pr_number}@${head:0:12} sent to ${delivered} interactive session(s) (GH#39645)" >>"$LOGFILE"

@@ -34,11 +34,22 @@ cat >"${WORK}/helper.sh" <<'EOF'
 jq -nc --argjson pr "$2" --arg repo "$3" --arg head "$(cat "$STUB_DIR/head")" \
 	'{pr: $pr, repo: $repo, head: $head, held_since: "2026-11-21T05:00:00Z", reason: "no device available", command: "full-loop-helper.sh verify-runtime \($pr) \($repo) --testing \"<evidence>\""}'
 EOF
+# Like the real CLI, send opens --text-file as a path ("-" is not stdin).
 cat >"${WORK}/bus.sh" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
 list) cat "$STUB_DIR/sessions" ;;
-send) printf '%s\n' "$2" >>"$STUB_DIR/sent"; cat >>"$STUB_DIR/sent-text" ;;
+send)
+	session="$2" text_file=""
+	shift 2
+	while [[ $# -gt 0 ]]; do
+		[[ "$1" == "--text-file" ]] && text_file="${2:-}"
+		shift
+	done
+	[[ -f "$text_file" ]] || exit 1
+	printf '%s\n' "$session" >>"$STUB_DIR/sent"
+	cat "$text_file" >>"$STUB_DIR/sent-text"
+	;;
 esac
 EOF
 chmod +x "${WORK}/helper.sh" "${WORK}/bus.sh"
@@ -70,6 +81,7 @@ _pmrp_route_held_pr 7 o/r
 check "lift sends one notice to the interactive session on the repo" "1" "$(sent_count)"
 check "notice targets the interactive session only" "ses_tui1" "$(<"${STUB_DIR}/sent")"
 check "notice carries the head and command" "2" "$(grep -cE -e "${HEAD_A}|verify-runtime 7 o/r --testing" "${STUB_DIR}/sent-text")"
+check "notice keeps the recorded reason intact" "1" "$(grep -cF -e 'data only): no device available' "${STUB_DIR}/sent-text")"
 
 _pmrp_route_held_pr 7 o/r
 check "repeat cycle at the same head sends nothing" "1" "$(sent_count)"
@@ -87,6 +99,7 @@ printf '[]\n' >"${STUB_DIR}/sessions"
 _pmrp_route_held_pr 9 o/r
 check "no live session sends nothing" "2" "$(sent_count)"
 check "no live session logs one ATTENTION line with age" "1" "$(grep -cE -e 'ATTENTION: PR #9 in o/r is held as runtime-pending \(held [0-9]+ min\)' "$LOGFILE")"
+check "ATTENTION line keeps the recorded reason intact" "1" "$(grep -cF -e 'reason: no device available (GH#39645)' "$LOGFILE")"
 
 printf '%s\n' '[{"session_id":"ses_tui1","kind":"tui","messageable":true,"repo":"o/r"}]' >"${STUB_DIR}/sessions"
 _pmrp_route_held_pr 9 o/r
