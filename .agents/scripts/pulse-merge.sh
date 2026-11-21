@@ -429,6 +429,11 @@ source "${_PULSE_MERGE_DIR}/pulse-draft-checkpoint-unblock.sh"
 # shellcheck disable=SC1091
 source "${_PULSE_MERGE_DIR}/pulse-merge-todo-handoff.sh"
 
+# GH#39645: route held runtime-pending PRs to a live interactive verifier.
+# shellcheck source=./pulse-merge-runtime-pending-notice.sh
+# shellcheck disable=SC1091
+source "${_PULSE_MERGE_DIR}/pulse-merge-runtime-pending-notice.sh"
+
 # _release_interactive_claim_on_merge is now provided by shared-claim-lifecycle.sh
 # (sourced at the top of this module, t2429/GH#20067). The backward-compatible
 # underscore-prefixed alias is defined there so all existing call sites
@@ -743,6 +748,10 @@ _pm_gate_origin_authority() {
 	if [[ "$is_draft" == false ]] && _feedback_route_labels_include "$labels_str" hold-for-review; then
 		# Recheck on the next merge pass after any verified recovery.
 		_feedback_route_release_projection_hold "$pr_number" "$repo_slug" || true
+		# GH#39645: route a liftable runtime-pending hold to a live verifier.
+		if declare -F _pmrp_route_held_pr >/dev/null 2>&1; then
+			_pmrp_route_held_pr "$pr_number" "$repo_slug" || true
+		fi
 	fi
 	if [[ "$is_draft" == "true" || ",${labels_str}," == *",hold-for-review,"* ]]; then
 		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — PR is draft or has hold-for-review" >>"$LOGFILE"

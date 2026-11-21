@@ -573,6 +573,9 @@ Commands:
                                  Fail closed if merging the PR head into the live base
                                  tip duplicates TODO task IDs or issue refs (GH#38703).
   wait-checks <PR> [options]     Wait with transition-only required-check output
+  runtime-pending-notice <PR> [REPO]
+                                 Read-only: print JSON for a held runtime-pending PR a verifier
+                                 may lift (Pulse routing, GH#39645); exit 1 otherwise.
   verify-runtime <PR> [REPO] --testing "<evidence>" [--dry-run]
                                  Verifier route for a runtime-pending PR (GH#39639), any
                                  author: from a clean checkout of the exact PR head, record
@@ -660,6 +663,7 @@ main() {
 	prospective-todo-guard) cmd_prospective_todo_guard "$@" ;;
 	wait-checks) cmd_wait_checks "$@" ;;
 	verify-runtime) cmd_verify_runtime "$@" ;;
+	runtime-pending-notice) cmd_runtime_pending_notice "$@" ;;
 	merge) cmd_merge "$@" ;;
 	record-no-release) cmd_record_no_release "$@" ;;
 	record-deployment) cmd_record_deployment "$@" ;;
