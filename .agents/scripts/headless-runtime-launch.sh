@@ -229,7 +229,9 @@ _prepare_runtime_prompt_transport() {
 		# The attached path is framework-generated and bounded to this attempt;
 		# expose only its directory to the OpenCode config hook so workers can read
 		# the attachment without a generic external_directory approval.
-		_HEADLESS_RUN_PROMPT_ARG="Read and execute the complete seed prompt attached as seed-prompt.md. Treat the attached file as the user prompt for this headless run."
+		# The instruction also states the attachment is already supplied so a
+		# continuation never greps sensitive temp storage to rediscover it (GH#39729).
+		_HEADLESS_RUN_PROMPT_ARG="Read and execute the complete seed prompt attached as seed-prompt.md. Treat the attached file as the user prompt for this headless run. The attachment is already supplied in this message: never search, list or grep temp directories (for example ~/.aidevops-private/tmp) to locate it or any other prompt; everything needed is in the attachment, the issue/PR, or your worktree."
 		_HEADLESS_RUN_PROMPT_FILE="$prompt_path"
 		export AIDEVOPS_HEADLESS_PROMPT_DIR="$prompt_dir"
 		;;
