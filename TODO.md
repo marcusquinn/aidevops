@@ -2392,7 +2392,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19244 fix(pulse-merge): route terminal-red CI on runtime-pending-held worker PRs to CI repair #auto-dispatch #bug #fix-the-fixer ref:GH#39653 logged:2026-11-21 -> [todo/tasks/t19244-brief.md] pr:#39662 completed:2026-11-21
 
-- [ ] t19246 docs(observability): pulse cycle-index merged counts only the pulse merge pass, not worker self-merges #documentation ref:GH#39676
+- [x] t19246 docs(observability): pulse cycle-index merged counts only the pulse merge pass, not worker self-merges #documentation ref:GH#39676 pr:#39678 completed:2026-11-21
 
 ## In Progress
 
