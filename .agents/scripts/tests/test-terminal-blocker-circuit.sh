@@ -686,6 +686,55 @@ TERMINAL_BLOCKER_TRIGGER=Vendor release 4.2 ships on 2026-12-01" '{type:"text",t
 	return 0
 }
 
+# t19245: a not-yet-due hold wakes once the same-repo refs its trigger names
+# resolve, asks the AI once per resolution, and never wakes on closed-not-planned
+# refs. Runs inside _trigger_revisit_cases (its stubs and _observation); the
+# interval is long enough that only a ref wake makes a hold due.
+_trigger_revisit_ref_wake_cases() {
+	local AIDEVOPS_TRIGGER_REVISIT_INTERVAL_S=999999999 rc=0
+	local tb_ref_item='{"state":"open","state_reason":null,"pull_request":{"merged_at":null}}'
+	rm -rf "$_TBTR_RECORD_DIR"
+	gh() { [[ "$1" == api && "$3" == --jq ]] || return 1; jq -c "$4" <<<"$tb_ref_item"; return 0; }
+	terminal_blocker_fetch_issue() { printf 'fetch\n' >>"$fetch_log"; printf '%s\n' "$tb_issue_json"; return 0; }
+	_observation 50 external_trigger_pending $'Trigger awaited: PR #7 merged\n' || return 1
+	rc=0; _tbtr_issue owner/repo 42 w1 runner-a true true true >/dev/null || rc=$?
+	[[ "$rc" == 3 && "$(_count '^decide')" == 4 ]] || return 1
+	_tbtr_record_read owner/repo 42 | jq -e '.decision == "scheduled" and .trigger_refs == [7] and .refs_met != true' >/dev/null || return 1
+	# Unchanged with the ref still open: only the ref read, no issue reads, and
+	# the read refreshes checked_at so the hold rotates behind unread holds.
+	: >"$fetch_log"
+	_tbtr_record_write owner/repo 42 "$(_tbtr_record_read owner/repo 42 | jq -c '.checked_at = 1')" || return 1
+	rc=0; _tbtr_issue owner/repo 42 w1 runner-a true true true >/dev/null || rc=$?
+	[[ "$rc" == 3 && ! -s "$fetch_log" && "$(_count '^decide')" == 4 ]] || return 1
+	_tbtr_record_read owner/repo 42 | jq -e '.checked_at > 1 and .ref_wake != true' >/dev/null || return 1
+	# The ref merges: a pass without AI budget marks the wake so the next pass
+	# leads with it; the next pass with AI revisits before the interval, once.
+	tb_ref_item='{"state":"closed","state_reason":null,"pull_request":{"merged_at":"2026-02-03T04:05:05Z"}}'
+	rc=0; _tbtr_issue owner/repo 42 w1 runner-a true true false >/dev/null || rc=$?
+	[[ "$rc" == 3 && "$(_count '^decide')" == 4 ]] || return 1
+	_tbtr_record_read owner/repo 42 | jq -e '.ref_wake == true' >/dev/null || return 1
+	decision_reply=$'still_pending\t'
+	_tbtr_issue owner/repo 42 w1 runner-a true true true >/dev/null || return 1
+	[[ "$(_count '^decide')" == 5 ]] || return 1
+	_tbtr_record_read owner/repo 42 | jq -e '.decision == "still_pending" and .refs_met == true and .ref_wake != true' >/dev/null || return 1
+	rc=0; _tbtr_issue owner/repo 42 w1 runner-a true true true >/dev/null || rc=$?
+	[[ "$rc" == 3 && "$(_count '^decide')" == 5 ]] || return 1
+	# A fresh hold on an already-resolved ref is due at once and posts the retry.
+	decision_reply=$'trigger_met\t2026-02-03T04:05:05Z'
+	_observation 60 external_trigger_pending $'Trigger awaited: #7 merged\n' || return 1
+	_tbtr_issue owner/repo 42 w2 runner-a true true true >/dev/null || return 1
+	[[ "$(_count '^comment .*aidevops:trigger-revisit observation=60 ')" == 1 ]] || return 1
+	# Closed-not-planned refs never wake.
+	tb_ref_item='{"state":"closed","state_reason":"not_planned"}'
+	_observation 70 external_trigger_pending $'Trigger awaited: Issue #7 closes\n' || return 1
+	rc=0; _tbtr_issue owner/repo 42 w3 runner-a true true true >/dev/null || rc=$?
+	[[ "$rc" == 3 && "$(_count '^decide')" == 6 ]] || return 1
+	unset -f gh
+	terminal_blocker_fetch_issue() { printf '%s\n' "$tb_issue_json"; return 0; }
+	decision_reply=""
+	return 0
+}
+
 # GH#38353: a due hold gets one recorded outcome per interval; only
 # external_trigger_pending holds are read. GitHub and AI are stubbed.
 _trigger_revisit_cases() (
@@ -784,6 +833,7 @@ ${trigger_line}"
 		terminal_blocker_fetch_issue() { printf '%s\n' "$tb_issue_json"; return 0; }
 	done
 	[[ "$(_count '^decide')" == 4 ]] || return 1
+	_trigger_revisit_ref_wake_cases || return 1
 	# A transient read failure is never memoized.
 	rm -rf "$_TBTR_RECORD_DIR"
 	terminal_blocker_fetch_trusted_comments() { return 1; }
@@ -839,11 +889,16 @@ _trigger_revisit_pass_cases() (
 	# lead, ties keep search order), so the tail of a long list is reached.
 	_tbtr_record_write alpha/one 31 '{"checked_at":200}' || return 1
 	_tbtr_record_write alpha/one 33 '{"revisited_at":100}' || return 1
+	# t19245: a ref wake still awaiting its AI decision leads; a hold waiting
+	# on unresolved refs keeps its least-recently-checked place, so many such
+	# holds cannot starve the tail.
+	_tbtr_record_write alpha/one 35 '{"decision":"scheduled","trigger_refs":[7],"ref_wake":true,"checked_at":300}' || return 1
+	_tbtr_record_write alpha/one 36 '{"decision":"scheduled","trigger_refs":[7],"checked_at":50}' || return 1
 	: >"$log"
 	_TBTR_DEADLINE=$((SECONDS + 60))
-	_tbtr_repo alpha/one 5 runner-a $'alpha/one\t31\tu\nalpha/one\t32\tu\nalpha/one\t33\tu\nalpha/one\t34\tu' >/dev/null || return 1
+	_tbtr_repo alpha/one 5 runner-a $'alpha/one\t31\tu\nalpha/one\t32\tu\nalpha/one\t33\tu\nalpha/one\t34\tu\nalpha/one\t35\tu\nalpha/one\t36\tu' >/dev/null || return 1
 	out=$(rg -o '^issue [0-9]+' "$log" | cut -d' ' -f2 | tr '\n' ',')
-	[[ "$out" == '32,34,33,31,' ]] || return 1
+	[[ "$out" == '35,32,34,36,33,31,' ]] || return 1
 	return 0
 )
 
@@ -890,7 +945,7 @@ test_external_trigger_revisit() {
 	_trigger_revisit_decide_cases || status=1
 	_trigger_revisit_cases || status=1
 	_trigger_revisit_pass_cases || status=1
-	print_result "external_trigger_pending holds get one revisit outcome per interval; other classes are never revisited and are memoized; passes search once per owner, walk least-recently-checked first and withhold late AI" "$status"
+	print_result "external_trigger_pending holds get one revisit outcome per interval or per resolution of their named refs; other classes are never revisited and are memoized; passes search once per owner, walk ref-woken then least-recently-checked first and withhold late AI" "$status"
 	return 0
 }
 

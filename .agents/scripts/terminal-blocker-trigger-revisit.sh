@@ -20,6 +20,10 @@
 #                   `Trigger awaited:` line); queue it for the AI brief owner
 #                   in terminal-blocker-recovery-helper.sh.
 # It also restores status:blocked on an active hold that shows status:available.
+# t19245: when every same-repository #ref the trigger names is a merged PR or
+# an issue closed as completed, the hold is due on the next pass instead of
+# after the interval; the AI decision above still judges the trigger, once per
+# resolution.
 # Only external_trigger_pending holds are read: permission_required and
 # source_access_blocked keep their human-owned flows.
 #
@@ -47,6 +51,11 @@ _TBTR_DIR="${BASH_SOURCE[0]%/*}"
 
 _TBTR_REASON='external_trigger_pending'
 _TBTR_PENDING='still_pending'
+_TBTR_SCHEDULED='scheduled'
+# t19245: jq predicate for a record still waiting on its trigger; bind $sched
+# and $pend with --arg to _TBTR_SCHEDULED and _TBTR_PENDING.
+# shellcheck disable=SC2016 # jq variables are supplied via --arg
+_TBTR_WAITING_JQ='((.decision // $sched) | IN($sched, $pend))'
 _TBTR_MAX_INTERVAL=604800
 _TBTR_FAILURE_BACKOFF=3600
 # GH#38489: no AI decision starts with less than this many seconds left.
@@ -130,12 +139,70 @@ _tbtr_authority() {
 	return 0
 }
 
+# Same-repository issue/PR numbers a trigger line names (at most 3), one per line.
+_tbtr_trigger_refs() {
+	local trigger="$1"
+	jq -r --arg t "$trigger" -n '[$t | scan("(?:^|[^A-Za-z0-9/])#([0-9]{1,7})") | .[0]] | unique | .[:3][]' 2>/dev/null || true
+	return 0
+}
+
+# t19245: true only when refs are named and every one is a merged pull request
+# or an issue closed as completed. Closed-not-planned, open or unreadable refs
+# are false, so a failed read never wakes a hold early.
+# Args: slug, refs (newline-separated numbers)
+_tbtr_refs_resolved() {
+	local slug="$1" refs="$2" ref="" resolved="" named=false
+	while IFS= read -r ref; do
+		[[ "$ref" =~ ^[0-9]+$ ]] || continue
+		resolved=$(gh api "repos/${slug}/issues/${ref}" --jq 'if .pull_request then (.pull_request.merged_at != null) else (.state == "closed" and .state_reason == "completed") end' 2>/dev/null) || return 1
+		[[ "$resolved" == true ]] || return 1
+		named=true
+	done <<<"$refs"
+	[[ "$named" == true ]] || return 1
+	return 0
+}
+
+# t19245: a waiting hold (scheduled or still_pending) wakes before its interval
+# once every ref its trigger names has resolved since the last decision; the AI
+# decision still judges the trigger. Records from before t19245 carry no
+# trigger_refs and are read once to backfill them. Ineligible memos and routed
+# outcomes never wake. A read that does not wake still records checked_at, so
+# the hold rotates behind unread holds instead of re-reading first every pass.
+# Args: slug, issue, record. Returns 0 to wake.
+_tbtr_ref_wake_due() {
+	local slug="$1" issue="$2" record="$3" refs=""
+	jq -e --arg sched "$_TBTR_SCHEDULED" --arg pend "$_TBTR_PENDING" "$_TBTR_WAITING_JQ" <<<"$record" >/dev/null 2>&1 || return 1
+	jq -e 'has("trigger_refs")' <<<"$record" >/dev/null 2>&1 || return 0
+	jq -e '.refs_met != true' <<<"$record" >/dev/null 2>&1 || return 1
+	refs=$(jq -r '.trigger_refs[]? | tostring' <<<"$record" 2>/dev/null) || return 1
+	[[ -n "$refs" ]] || return 1
+	_tbtr_refs_resolved "$slug" "$refs" && return 0
+	_tbtr_record_write "$slug" "$issue" "$(jq -c --argjson c "$(date +%s)" '.checked_at = $c | del(.ref_wake)' <<<"$record")" || true
+	return 1
+}
+
+# t19245: prints "<refs_json> <refs_met> <wake>" for a trigger. refs_met is
+# whether every named ref has resolved now; wake is true when they resolved
+# since the record's last decision (a fresh observation has none).
+# Args: slug, trigger line, record
+_tbtr_refs_state() {
+	local slug="$1" trigger="$2" record="$3" refs="" refs_json='[]' met=false wake=false
+	refs=$(_tbtr_trigger_refs "$trigger")
+	if [[ -n "$refs" ]]; then
+		refs_json=$(jq -nc --arg r "$refs" '$r | split("\n") | map(select(test("^[0-9]+$")) | tonumber)' 2>/dev/null) || refs_json='[]'
+		! _tbtr_refs_resolved "$slug" "$refs" || met=true
+		[[ "$met" != true ]] || jq -e '.refs_met == true' <<<"$record" >/dev/null 2>&1 || wake=true
+	fi
+	printf '%s %s %s\n' "$refs_json" "$met" "$wake"
+	return 0
+}
+
 # Public evidence only: trusted brief text, OWNER/MEMBER prose after the hold,
 # and same-repository issues the trigger names. Never worker telemetry.
 _tbtr_evidence() {
 	local slug="$1" issue_json="$2" comments="$3" trigger="$4" observed_at="$5"
 	local refs="" ref="" linked='[]' item=""
-	refs=$(jq -r --arg t "$trigger" -n '[$t | scan("(?:^|[^A-Za-z0-9/])#([0-9]{1,7})") | .[0]] | unique | .[:3][]') || refs=""
+	refs=$(_tbtr_trigger_refs "$trigger")
 	while IFS= read -r ref; do
 		[[ "$ref" =~ ^[0-9]+$ ]] || continue
 		item=$(gh api "repos/${slug}/issues/${ref}" --jq '{number, title, state, state_reason, closed_at, is_pull_request: (.pull_request != null), merged_at: (.pull_request.merged_at // null)}' 2>/dev/null) || continue
@@ -234,13 +301,17 @@ _tbtr_reconcile_label() {
 }
 
 # Record a not-yet-revisited observation without consuming an attempt.
-# checked_at orders the next pass (GH#39481).
-# Args: slug issue record key updated_at next_at attempts
+# checked_at orders the next pass (GH#39481); trigger_refs lets a later pass
+# wake the hold when those refs resolve, and ref_wake marks a wake that still
+# awaits its AI decision so the next pass leads with it (t19245).
+# Args: slug issue record key updated_at next_at attempts trigger_refs_json wake
 _tbtr_record_scheduled() {
-	local slug="$1" issue="$2" record="$3" key="$4" updated_at="$5" next_at="$6" attempts="$7"
+	local slug="$1" issue="$2" record="$3" key="$4" updated_at="$5" next_at="$6" attempts="$7" refs_json="${8:-[]}" wake="${9:-false}"
+	[[ "$wake" == true ]] || wake=false
 	_tbtr_record_write "$slug" "$issue" "$(jq -c --arg k "$key" --arg u "$updated_at" --argjson n "$next_at" --argjson a "$attempts" \
-		--argjson c "$(date +%s)" \
-		'. + {observation: $k, updated_at: $u, next_at: $n, attempts: $a, checked_at: $c} | .decision //= "scheduled"' <<<"$record")" || true
+		--argjson c "$(date +%s)" --argjson r "$refs_json" --argjson w "$wake" --arg sched "$_TBTR_SCHEDULED" \
+		'. + {observation: $k, updated_at: $u, next_at: $n, attempts: $a, checked_at: $c, trigger_refs: $r}
+		| .decision //= $sched | if $w then .ref_wake = true else del(.ref_wake) end' <<<"$record")" || true
 	return 0
 }
 
@@ -260,20 +331,53 @@ _tbtr_record_ineligible() {
 	return 3
 }
 
+# Prints "<decision><TAB><quote>" for a due hold; empty when inference failed.
+# Legacy holds name no trigger: nothing to verify, so route to the brief owner.
+# Returns 2 on a deadline deferral (still due; the caller reschedules).
+# Args: slug issue_json comments trigger observed_at
+_tbtr_decision_line() {
+	local slug="$1" issue_json="$2" comments="$3" trigger="$4" observed_at="$5" evidence="" line="" rc=0
+	[[ -n "$trigger" ]] || { printf 'not_external\t\n'; return 0; }
+	evidence=$(_tbtr_evidence "$slug" "$issue_json" "$comments" "$trigger" "$observed_at") || evidence=""
+	line=$(_tbtr_decide "$evidence") || rc=$?
+	[[ "$rc" != 2 ]] || return 2
+	[[ "$rc" == 0 ]] || line=""
+	printf '%s\n' "$line"
+	return 0
+}
+
+# trigger_met: post one retry per observation when this runner may retry and no
+# OWNER/MEMBER retry for it exists; otherwise hand the hold to recovery. Runs in
+# the caller's shell so its log lines reach stdout. Returns 1 only when the
+# retry comment failed to post.
+# Args: slug issue observation_id quote comments can_retry intake
+_tbtr_trigger_met() {
+	local slug="$1" issue="$2" observation_id="$3" quote="$4" comments="$5" can_retry="$6" intake="$7"
+	if [[ "$can_retry" == true ]] && ! jq -e --arg m "$_TBTR_MARKER observation=${observation_id} " \
+		'any(.[]; ((.author_association // "") | IN("OWNER", "MEMBER")) and ((.body // "") | contains($m)))' <<<"$comments" >/dev/null 2>&1; then
+		_tbtr_post_retry "$slug" "$issue" "$observation_id" "$quote" || return 1
+		return 0
+	fi
+	_tbtr_enqueue_recovery "$slug" "$issue" "$intake" || true
+	return 0
+}
+
 # Args: slug issue updated_at self can_write can_retry ai_allowed(true|false)
 # Returns 0 after a recorded AI revisit, 3 when nothing consumed the AI budget.
 _tbtr_issue() {
 	local slug="$1" issue="$2" updated_at="$3" self="$4" can_write="$5" can_retry="$6" ai_allowed="$7"
 	local record="" issue_json="" comments="" observation="" fingerprint="" observation_id="" observed_at=""
-	local observed_epoch=0 key="" next_at=0 attempts=0 now="" interval="" trigger="" evidence="" decision=""
+	local observed_epoch=0 key="" next_at=0 attempts=0 now="" interval="" trigger="" decision=""
 	local decision_line="" quote="" hold_rc=0 decide_rc=0 intake="remote_observation"
+	local refs_json='[]' refs_met=false wake=false
 	now=$(date +%s)
 	interval=$(_tbtr_number "${AIDEVOPS_TRIGGER_REVISIT_INTERVAL_S:-}" 86400)
 	record=$(_tbtr_record_read "$slug" "$issue") || record=""
-	# An unchanged issue that is not yet due needs no reads at all.
+	# An unchanged issue that is not yet due needs no reads at all, unless the
+	# refs its trigger names have just resolved (t19245).
 	if [[ -n "$record" ]] && jq -e --arg u "$updated_at" --argjson now "$now" \
 		'.updated_at == $u and (.next_at | type) == "number" and .next_at > $now' <<<"$record" >/dev/null 2>&1; then
-		return 3
+		_tbtr_ref_wake_due "$slug" "$issue" "$record" || return 3
 	fi
 	issue_json=$(terminal_blocker_fetch_issue "$slug" "$issue") || return 3
 	jq -e '.state == "open" and ([.labels[]? | .name? // .] | index("needs-maintainer-review") == null)' \
@@ -306,23 +410,20 @@ _tbtr_issue() {
 		attempts=0
 	fi
 	[[ "$next_at" =~ ^[0-9]+$ && "$attempts" =~ ^[0-9]+$ ]] || { next_at=$((observed_epoch + interval)); attempts=0; }
-	if [[ "$now" -lt "$next_at" || "$ai_allowed" != true ]]; then
-		_tbtr_record_scheduled "$slug" "$issue" "$record" "$key" "$updated_at" "$next_at" "$attempts"
+	trigger=$(jq -r '.body | capture("\nTrigger awaited: (?<t>[^\n]*)\n").t // empty' <<<"$observation" 2>/dev/null) || trigger=""
+	IFS=' ' read -r refs_json refs_met wake <<<"$(_tbtr_refs_state "$slug" "$trigger" "$record")"
+	[[ "$refs_json" == '['*']' ]] || refs_json='[]'
+	[[ "$refs_met" == true ]] || refs_met=false
+	[[ "$wake" == true ]] || wake=false
+	if [[ ("$now" -lt "$next_at" && "$wake" != true) || "$ai_allowed" != true ]]; then
+		_tbtr_record_scheduled "$slug" "$issue" "$record" "$key" "$updated_at" "$next_at" "$attempts" "$refs_json" "$wake"
 		return 3
 	fi
-	trigger=$(jq -r '.body | capture("\nTrigger awaited: (?<t>[^\n]*)\n").t // empty' <<<"$observation" 2>/dev/null) || trigger=""
-	if [[ -z "$trigger" ]]; then
-		# Legacy holds name no trigger: nothing to verify, so route to the brief owner.
-		decision_line=$'not_external\t'
-	else
-		evidence=$(_tbtr_evidence "$slug" "$issue_json" "$comments" "$trigger" "$observed_at") || evidence=""
-		decision_line=$(_tbtr_decide "$evidence") || decide_rc=$?
-		if [[ "$decide_rc" == 2 ]]; then
-			# Deadline deferral: still due, so the next pass revisits it.
-			_tbtr_record_scheduled "$slug" "$issue" "$record" "$key" "$updated_at" "$next_at" "$attempts"
-			return 3
-		fi
-		[[ "$decide_rc" == 0 ]] || decision_line=""
+	decision_line=$(_tbtr_decision_line "$slug" "$issue_json" "$comments" "$trigger" "$observed_at") || decide_rc=$?
+	if [[ "$decide_rc" == 2 ]]; then
+		# Deadline deferral: still due, so the next pass revisits it.
+		_tbtr_record_scheduled "$slug" "$issue" "$record" "$key" "$updated_at" "$next_at" "$attempts" "$refs_json" "$wake"
+		return 3
 	fi
 	decision="${decision_line%%$'\t'*}"
 	quote="${decision_line#*$'\t'}"
@@ -330,13 +431,8 @@ _tbtr_issue() {
 	case "$decision" in
 	trigger_met)
 		next_at=$((now + interval))
-		if [[ "$can_retry" == true ]] && ! jq -e --arg m "$_TBTR_MARKER observation=${observation_id} " \
-			'any(.[]; ((.author_association // "") | IN("OWNER", "MEMBER")) and ((.body // "") | contains($m)))' <<<"$comments" >/dev/null 2>&1; then
-			_tbtr_post_retry "$slug" "$issue" "$observation_id" "$quote" ||
-				{ decision="$_TBTR_PENDING"; attempts=$((attempts - 1)); next_at=$((now + _TBTR_FAILURE_BACKOFF)); }
-		else
-			_tbtr_enqueue_recovery "$slug" "$issue" "$intake" || true
-		fi
+		_tbtr_trigger_met "$slug" "$issue" "$observation_id" "$quote" "$comments" "$can_retry" "$intake" ||
+			{ decision="$_TBTR_PENDING"; attempts=$((attempts - 1)); next_at=$((now + _TBTR_FAILURE_BACKOFF)); }
 		;;
 	still_pending)
 		next_at=$((interval << (attempts < 3 ? attempts : 3)))
@@ -348,7 +444,9 @@ _tbtr_issue() {
 		next_at=$((now + interval))
 		;;
 	*)
-		# Failed or invalid inference posts nothing and backs off briefly.
+		# Failed or invalid inference posts nothing and backs off briefly. The
+		# ref state it saw is kept, so resolved refs cannot re-wake the hold
+		# inside the backoff; it is due again when the backoff ends (t19245).
 		decision="$_TBTR_PENDING"
 		attempts=$((attempts - 1))
 		next_at=$((now + _TBTR_FAILURE_BACKOFF))
@@ -356,9 +454,13 @@ _tbtr_issue() {
 	esac
 	attempts=$((attempts + 1))
 	[[ "$attempts" -ge 0 ]] || attempts=0
+	# t19245: refs_met binds this decision to the ref state it saw, so a
+	# still_pending verdict on a compound trigger is not re-asked every pass.
 	_tbtr_record_write "$slug" "$issue" "$(jq -nc --arg k "$key" --arg u "$updated_at" --argjson n "$next_at" \
 		--argjson a "$attempts" --arg d "$decision" --arg e "$quote" --argjson at "$now" \
-		'{observation: $k, updated_at: $u, next_at: $n, attempts: $a, decision: $d, evidence: $e, revisited_at: $at}')" || true
+		--argjson r "$refs_json" --argjson m "$refs_met" \
+		'{observation: $k, updated_at: $u, next_at: $n, attempts: $a, decision: $d, evidence: $e, revisited_at: $at,
+		  trigger_refs: $r, refs_met: $m}')" || true
 	printf 'TRIGGER_REVISIT repo=%s issue=%s decision=%s next_at=%s\n' "$slug" "$issue" "$decision" "$next_at"
 	return 0
 }
@@ -385,18 +487,27 @@ _tbtr_refs_for_slug() {
 # GH#39481: least-recently-checked first (never-checked hits lead), stable on
 # search order. Search "best match" order is the same every pass, so a pass
 # that ran out of budget restarted on the same leading hits and the tail was
-# never revisited. Args: slug, refs. Stdout: the refs, reordered.
+# never revisited. t19245: a hold whose resolved refs woke it but which got no
+# AI decision yet (ref_wake) leads, so it wins the next pass's AI budget. Holds
+# still waiting on unresolved refs keep their least-recently-checked place;
+# leading them let their ref reads consume every pass and starve the tail.
+# Args: slug, refs. Stdout: the refs, reordered.
 _tbtr_order_refs() {
-	local slug="$1" refs="$2" ref_slug="" issue="" updated="" record="" checked=0 position=0
+	local slug="$1" refs="$2" ref_slug="" issue="" updated="" record="" checked=0 position=0 lead=1
 	while IFS=$'\t' read -r ref_slug issue updated; do
 		[[ -n "$ref_slug" && "$issue" =~ ^[0-9]+$ ]] || continue
 		position=$((position + 1))
 		checked=0
+		lead=1
 		record=$(_tbtr_record_read "$slug" "$issue") || record=""
-		[[ -z "$record" ]] || checked=$(jq -r '(.checked_at // .revisited_at // 0) | floor' <<<"$record" 2>/dev/null) || checked=0
+		if [[ -n "$record" ]]; then
+			IFS=' ' read -r lead checked <<<"$(jq -r '[(if .ref_wake == true then 0 else 1 end),
+				((.checked_at // .revisited_at // 0) | floor)] | map(tostring) | join(" ")' <<<"$record" 2>/dev/null)" || true
+		fi
+		[[ "$lead" == 0 ]] || lead=1
 		[[ "$checked" =~ ^[0-9]+$ ]] || checked=0
-		printf '%s\t%s\t%s\t%s\t%s\n' "$checked" "$position" "$ref_slug" "$issue" "$updated"
-	done <<<"$refs" | sort -t $'\t' -k1,1n -k2,2n | cut -f3-
+		printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$lead" "$checked" "$position" "$ref_slug" "$issue" "$updated"
+	done <<<"$refs" | sort -t $'\t' -k1,1n -k2,2n -k3,3n | cut -f4-
 	return 0
 }
 
@@ -409,7 +520,7 @@ _tbtr_repo() {
 	local scan_max=$((remaining * 4 + 4))
 	[[ "$(_tbtr_time_left)" -ge "$_TBTR_MIN_READ_S" ]] || { printf '0\n'; return 0; }
 	authority=$(_tbtr_authority "$slug" "$self") || { printf '0\n'; return 1; }
-	read -r can_write can_retry <<<"$authority"
+	IFS=' ' read -r can_write can_retry <<<"$authority"
 	refs=$(_tbtr_order_refs "$slug" "$refs")
 	while IFS=$'\t' read -r ref_slug issue updated; do
 		[[ -n "$ref_slug" && "$issue" =~ ^[0-9]+$ ]] || continue
