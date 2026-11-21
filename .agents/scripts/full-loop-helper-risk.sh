@@ -512,6 +512,19 @@ _runtime_evidence_is_substantive() {
 	return 1
 }
 
+# A runtime-pending reason naturally states what it is not ("not
+# runtime-verified: no sandbox here; unit tests pass"). Drop that negated
+# claim, then require the same substantive detail as verified evidence.
+_runtime_pending_reason_is_substantive() {
+	local summary_testing="${1:-}"
+	local normalized=""
+	normalized=$(printf '%s' "$summary_testing" | tr '[:upper:]' '[:lower:]')
+	normalized="${normalized//not ${_full_loop_runtime_verified_marker}/}"
+	normalized="${normalized//not runtime verified/}"
+	_runtime_evidence_is_substantive "$normalized" && return 0
+	return 1
+}
+
 # Resolve testing evidence and enforce the runtime gate. The literal evidence
 # marker is machine-readable, while a non-empty detail prevents a bare marker
 # from claiming runtime verification without any supporting evidence.
@@ -534,7 +547,7 @@ _resolve_runtime_testing_level() {
 		print_error "${_full_loop_runtime_verified_marker} requires non-empty testing evidence; PR body generation blocked."
 		return 1
 	fi
-	if [[ "$testing_level" == "$_full_loop_runtime_pending_marker" ]] && ! _runtime_evidence_is_substantive "$summary_testing"; then
+	if [[ "$testing_level" == "$_full_loop_runtime_pending_marker" ]] && ! _runtime_pending_reason_is_substantive "$summary_testing"; then
 		print_error "${_full_loop_runtime_pending_marker} requires --testing \"<why this runner cannot exercise the change, and what was verified>\"; PR body generation blocked."
 		return 1
 	fi
@@ -563,8 +576,10 @@ sections = len(re.findall(r"^## Runtime Testing[ \t]*$", body, re.M))
 section = re.search(r"^## Runtime Testing\s*\n(.*?)(?=^## |\Z)", body, re.M | re.S)
 text = section[1] if section else ""
 text = re.split(r"^(?:Resolves|Fixes|Closes|For|Ref) #\d+\b|^<!-- aidevops:", text, maxsplit=1, flags=re.M)[0]
-risk = re.search(r"^- \*\*Risk level:\*\* (.+)$", text, re.M)
-verification = re.search(r"^- \*\*Verification:\*\*[ \t]+([\w-]+) —[ \t]*(.*?)(?=^- \*\*|\Z)", text, re.M | re.S)
+risk = re.search(r"^- \*\*Risk level:\*\*[ \t]+(.+)$", text, re.M)
+# Any "- **" bullet ends the evidence: a hand-added "- **Notes:**" must not
+# pass as evidence. _build_pr_body renders bold bullets inside evidence plainly.
+verification = re.search(r"^- \*\*Verification:\*\*[ \t]+([\w-]+)[ \t]+—[ \t]*(.*?)(?=^- \*\*|\Z)", text, re.M | re.S)
 print(json.dumps({"present": bool(section), "sections": sections,
                   "risk": risk[1].strip() if risk else "",
                   "level": verification[1] if verification else "",
@@ -596,6 +611,24 @@ _runtime_testing_merge_refusal() {
 	fi
 	risk=$(printf '%s' "$risk" | tr '[:upper:]' '[:lower:]')
 	level=$(printf '%s' "$level" | tr '[:upper:]' '[:lower:]')
+	# A present section must still parse: a malformed Risk or Verification
+	# line would otherwise read as empty and skip the High/Critical refusal.
+	if [[ "$(printf '%s' "$metadata" | jq -r '.present // false')" == "true" ]]; then
+		case "${risk%%[^a-z]*}" in
+		low | medium | high | critical) ;;
+		*)
+			printf 'the Runtime Testing section has no recognized risk level; restore "- **Risk level:** <Low|Medium|High|Critical>"\n'
+			return 1
+			;;
+		esac
+		case "$level" in
+		"$_full_loop_runtime_verified_marker" | "$_full_loop_runtime_pending_marker" | self-assessed) ;;
+		*)
+			printf 'the Runtime Testing section has no recognized verification level; restore "- **Verification:** <level> — <evidence>"\n'
+			return 1
+			;;
+		esac
+	fi
 	if [[ "$level" == "$_full_loop_runtime_pending_marker" ]]; then
 		printf 'runtime verification is pending (%s); %s\n' "$_full_loop_runtime_pending_marker" "$remedy"
 		return 1

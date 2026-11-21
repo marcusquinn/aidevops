@@ -920,6 +920,10 @@ _build_pr_body() {
 		"$replacement_note" "$decisions" "$regression_evidence" || return 1
 	runtime_risk=$(_derive_runtime_risk "$requested_risk" "$files_changed" "$summary_what" "$base_ref") || return 1
 	testing_level=$(_resolve_runtime_testing_level "$runtime_risk" "$requested_testing_level" "$summary_testing") || return 1
+	# GH#39558: the Runtime Testing parser ends evidence at a "- **" bullet, so
+	# render bold-label bullets inside accepted evidence as plain bullets; the
+	# merge recheck and continued PRs then read the evidence that was accepted.
+	summary_testing=$(printf '%s' "$summary_testing" | sed -E 's/^-[[:space:]]+\*\*([^*]*)\*\*/- \1/') || return 1
 	# GH#38509: risk derivation above needs every path; the body shows a
 	# bounded list so large diffs stay under GitHub's body limit.
 	files_changed=$(_format_files_changed_for_body "$files_changed") || return 1

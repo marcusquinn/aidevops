@@ -766,6 +766,36 @@ assert_rejected "merge refuses ambiguous multi-section metadata" merge_refusal_f
 assert_accepted "ambiguous metadata takes the runtime hold" \
 	_pr_body_declares_runtime_pending "$example_section_body"
 
+# Review findings on PR #39569: negated pending reasons, multiline evidence
+# with bold bullets, and malformed metadata lines.
+negated_pending_body=$(_build_pr_body "2" "Credential rotation" \
+	"not runtime-verified: this runner has no Stripe sandbox; unit tests pass" \
+	"src/auth.sh" "" "Resolves" "Critical" "runtime-pending")
+assert_contains "runtime-pending accepts a negated-claim reason" "$negated_pending_body" \
+	"**Verification:** runtime-pending — not runtime-verified"
+assert_rejected "runtime-pending with only a negated claim is rejected" \
+	_build_pr_body "2" "Credential rotation" "Not runtime-verified." "src/auth.sh" "" \
+	"Resolves" "Critical" "runtime-pending"
+assert_rejected "runtime-verified still rejects a negated claim" \
+	_build_pr_body "2" "Credential rotation" "not runtime-verified: unit tests pass" "src/auth.sh" "" \
+	"Resolves" "Critical" "runtime-verified"
+multiline_body=$(_build_pr_body "2" "Credential rotation" \
+	$'\n- **Check:** polling fixture passed' "src/auth.sh" "" "Resolves" "Critical" "runtime-verified")
+multiline_evidence=$(printf '%s' "$multiline_body" | _runtime_testing_metadata_from_body | jq -r '.evidence')
+assert_contains "multiline evidence with bold bullets is parsed whole" "$multiline_evidence" \
+	"- Check: polling fixture passed"
+assert_accepted "merge accepts Critical with multiline runtime-verified evidence" \
+	merge_refusal_for_body "$multiline_body"
+tabbed_risk_body="${high_body/\*\*Risk level:\*\* High/**Risk level:**	High}"
+assert_rejected "merge refuses a tab-separated High risk without verified evidence" \
+	merge_refusal_for_body "${tabbed_risk_body/\*\*Verification:\*\* runtime-verified/**Verification:** self-assessed}"
+unknown_risk_body="${low_body/\*\*Risk level:\*\* Low/**Risk level:**}"
+assert_rejected "merge refuses a present section with no recognized risk" \
+	merge_refusal_for_body "$unknown_risk_body"
+undelimited_body=$'## Runtime Testing\n\n- **Risk level:** Low\n- **Verification:** runtime-pending\n'
+assert_rejected "merge refuses a Verification line without its evidence delimiter" \
+	merge_refusal_for_body "$undelimited_body"
+
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_merge_check_runtime_evidence() {/,/^}/p' "${SCRIPT_DIR_TEST}/full-loop-helper-merge.sh")"
 _flm_gh_read() { return 1; }
