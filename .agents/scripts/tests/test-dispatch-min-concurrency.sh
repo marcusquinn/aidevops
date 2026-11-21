@@ -802,6 +802,66 @@ test_early_exit_refill_reuses_precomputed_active_count() {
 	return 0
 }
 
+# GH#39682: a supervisor drain on the owned LLM lock stops the recycle loop
+# before its next fill or supervisor rerun.
+test_early_exit_recycle_stops_on_supervisor_drain() {
+	(
+		AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS=1
+		PULSE_BACKFILL_MAX_ATTEMPTS=2
+		PULSE_LAUNCH_GRACE_SECONDS=0
+		PRE_RUN_STAGE_TIMEOUT=1
+		drain_flag="${TEST_ROOT}/recycle-llm-drain.flag"
+		calls_file="${TEST_ROOT}/recycle-llm-drain-calls.txt"
+		rm -f "$drain_flag"
+		: >"$calls_file"
+		get_max_workers_target() { printf '6\n'; return 0; }
+		count_active_workers() { printf '1\n'; return 0; }
+		count_runnable_candidates() { printf '8\n'; return 0; }
+		count_queued_without_worker() { printf '0\n'; return 0; }
+		_dispatch_min_worker_floor_refill() { return 0; }
+		run_underfill_worker_recycler() { return 0; }
+		prefetch_state() { return 0; }
+		_pulse_llm_drain_requested() {
+			[[ -f "$drain_flag" ]] || return 1
+			printf 'bundle-next\n'
+			return 0
+		}
+		dispatch_max() {
+			printf 'dispatch\n' >>"$calls_file"
+			: >"$drain_flag"
+			printf '1\n'
+			return 0
+		}
+		run_pulse() { printf 'run_pulse\n' >>"$calls_file"; return 0; }
+
+		# Drain arrives during the first fill: no supervisor rerun, no 2nd fill.
+		_run_early_exit_recycle_loop 1
+		[[ "$(tr '\n' ' ' <"$calls_file")" == "dispatch " ]] || {
+			printf 'mid-fill calls=%s\n' "$(tr '\n' ' ' <"$calls_file")" >"${TEST_ROOT}/recycle-llm-drain-failure.txt"
+			return 1
+		}
+		# Drain already present: no fill at all.
+		: >"$calls_file"
+		_run_early_exit_recycle_loop 1
+		[[ ! -s "$calls_file" ]] || {
+			printf 'pre-fill calls=%s\n' "$(tr '\n' ' ' <"$calls_file")" >"${TEST_ROOT}/recycle-llm-drain-failure.txt"
+			return 1
+		}
+		grep -q "Early-exit recycle stopped: supervisor drain requested; activated bundle bundle-next" "$LOGFILE" || {
+			printf 'drain stop not logged\n' >"${TEST_ROOT}/recycle-llm-drain-failure.txt"
+			return 1
+		}
+		return 0
+	)
+	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "early recycle: supervisor drain stops fill and supervisor rerun" 0
+	else
+		print_result "early recycle: supervisor drain stops fill and supervisor rerun" 1 "$(<"${TEST_ROOT}/recycle-llm-drain-failure.txt")"
+	fi
+	return 0
+}
+
 test_active_pulse_refill_uses_min_floor_above_raw_max() {
 	AIDEVOPS_MIN_WORKER_CONCURRENCY=6
 	TEST_MAX_WORKERS=1
@@ -1167,6 +1227,7 @@ for test_name in \
 	test_min_worker_floor_refill_runs_normal_refill_scope \
 	test_apply_dispatch_refill_reuses_initial_worker_counts \
 	test_early_exit_refill_reuses_precomputed_active_count \
+	test_early_exit_recycle_stops_on_supervisor_drain \
 	test_active_pulse_refill_uses_min_floor_above_raw_max \
 	test_soft_canary_failure_bypasses_with_recent_worker_evidence \
 	test_hard_canary_failure_blocks_despite_recent_worker_evidence \

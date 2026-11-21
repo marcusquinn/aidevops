@@ -1543,7 +1543,24 @@ _early_exit_recycle_fill_allowed() {
 		echo "[pulse-wrapper] Early-exit recycle: stop flag appeared before deterministic fill" >>"$LOGFILE"
 		return 1
 	fi
+	_early_exit_recycle_drained && return 1
 	pulse_dispatch_breakers_allow "early_exit_recycle" || return 1
+	return 0
+}
+
+#######################################
+# GH#39682: the recycle loop runs after instance-lock release, so the
+# instance-lock drain marker never names this wrapper. Deploy reconciliation
+# marks the owned LLM lock instead (pulse-wrapper-cycle.sh
+# _pulse_llm_drain_requested); stop before the next fill or supervisor rerun.
+# A dispatch round already admitted finishes, like the t19064 drain grace.
+# Returns: 0 when a supervisor drain names this wrapper, 1 otherwise
+#######################################
+_early_exit_recycle_drained() {
+	local drain_bundle=""
+	declare -F _pulse_llm_drain_requested >/dev/null 2>&1 || return 1
+	drain_bundle=$(_pulse_llm_drain_requested) || return 1
+	echo "[pulse-wrapper] Early-exit recycle stopped: supervisor drain requested; activated bundle ${drain_bundle} dispatches next cycle (GH#39682)" >>"$LOGFILE"
 	return 0
 }
 
@@ -1625,6 +1642,8 @@ _run_early_exit_recycle_loop() {
 		if [[ "$post_runnable" -eq 0 && "$post_queued" -eq 0 ]]; then
 			break
 		fi
+
+		_early_exit_recycle_drained && break
 
 		local post_deficit_pct=$(((post_target - post_active) * 100 / post_target))
 		recycle_attempt=$((recycle_attempt + 1))
