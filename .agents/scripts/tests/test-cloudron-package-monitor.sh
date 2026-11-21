@@ -1356,6 +1356,25 @@ else:
                                                     'payload': head + '\n\n' + body['message']}}))
 PY
 	chmod 0755 "$stub_dir/gh"
+	# macOS /usr/bin/base64 rejects GNU `-w0`; shim it only when the host lacks it.
+	if ! base64 -w0 "$0" >/dev/null 2>&1; then
+		local real_base64
+		real_base64="$(command -v base64)" || return 1
+		cat >"$stub_dir/base64" <<SH
+#!/bin/sh
+if [ "\$1" = "-w0" ]; then
+	shift
+	if [ \$# -gt 0 ]; then
+		$real_base64 -i "\$1" | tr -d '\\n'
+	else
+		$real_base64 | tr -d '\\n'
+	fi
+else
+	exec $real_base64 "\$@"
+fi
+SH
+		chmod 0755 "$stub_dir/base64"
+	fi
 	return 0
 }
 
