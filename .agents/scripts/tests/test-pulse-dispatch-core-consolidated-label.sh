@@ -199,6 +199,12 @@ test_projection_and_prerank_filter_match_gate() {
 		: >"$LOGFILE"
 		: >"$GH_CALLS"
 		_dispatch_stats_increment() { return 0; }
+		# Stub the exclusion-age helper to record note reasons per issue.
+		NOTE_CALLS="${test_root}/note-calls.log"
+		: >"$NOTE_CALLS"
+		mkdir -p "${test_root}/lib"
+		printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s"\n' "$NOTE_CALLS" >"${test_root}/lib/dispatch-exclusion-age-helper.sh"
+		_PULSE_DISPATCH_LIB_DIR="${test_root}/lib"
 		gh() {
 			printf '%s\n' "$*" >>"$GH_CALLS"
 			case "$*" in
@@ -240,6 +246,10 @@ test_projection_and_prerank_filter_match_gate() {
 		grep -q 'issues/101/comments --method POST' "$GH_CALLS" || exit 11
 		# Attention never relabels (auto-dispatch is not re-added) or edits state.
 		grep -qE '^(issue|pr) (edit|close)|/labels|--method (PATCH|PUT|DELETE)' "$GH_CALLS" && exit 12
+		# Stranded (no auto-dispatch) ages as consolidated_stranded; auto-dispatch keeps consolidated.
+		[[ "$(grep -c 'note owner/repo 101 consolidated_stranded' "$NOTE_CALLS")" == 1 ]] || exit 16
+		grep -q 'note owner/repo 103 consolidated$' "$NOTE_CALLS" || exit 17
+		grep -q 'note owner/repo 101 consolidated$' "$NOTE_CALLS" && exit 18
 		# A fresh attention stamp suppresses repeat PR/comment lookups.
 		: >"$GH_CALLS"
 		second=$(_dispatch_filter_consolidated_candidates owner/repo "$projected")
