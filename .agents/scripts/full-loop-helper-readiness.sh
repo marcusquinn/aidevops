@@ -477,6 +477,7 @@ _full_loop_accept_rbg_override() {
 _full_loop_enforce_nonrequired_check_gate() {
 	local pr_number="$1" repo="$2" verified_head="$3" required_checks="$4"
 	local required_contexts="" checks_json="" snapshot_rc=0 kind="" failure_names=""
+	local snapshot_read_timeout=""
 
 	# Trusted local verification has no Actions checks; an accepted review-bot-gate
 	# override is itself a failing required context the classifiers would reject.
@@ -489,7 +490,18 @@ _full_loop_enforce_nonrequired_check_gate() {
 	: "${LOGFILE:=/dev/null}"
 	required_contexts=$(printf '%s' "$required_checks" | jq -r '.[]?.name // empty' 2>/dev/null) || required_contexts=""
 
-	checks_json=$(_pmrc_snapshot_checks_with_retry "$repo" "$verified_head" 2>/dev/null) || snapshot_rc=$?
+	# GH#39590: the snapshot reads through _pmrc_gh_read, not _flm_gh_read, so it
+	# missed the GH#38535 merge read timeout and kept the generic 15s budget (10s
+	# retry). Paced paginated check-run reads exceed that under sustained local
+	# demand and deferred every merge. Scope the merge budget to this call only;
+	# pulse merge passes keep their own deadline-bounded defaults.
+	if declare -F _flm_merge_read_timeout >/dev/null 2>&1; then
+		snapshot_read_timeout=$(_flm_merge_read_timeout) || snapshot_read_timeout=""
+	fi
+	[[ "$snapshot_read_timeout" =~ ^[1-9][0-9]{0,3}$ ]] || snapshot_read_timeout=60
+	checks_json=$(AIDEVOPS_GH_READ_TIMEOUT="$snapshot_read_timeout" \
+		AIDEVOPS_PULSE_MERGE_SNAPSHOT_RETRY_TIMEOUT_SECONDS=30 \
+		_pmrc_snapshot_checks_with_retry "$repo" "$verified_head" 2>/dev/null) || snapshot_rc=$?
 	if [[ "$snapshot_rc" -ne 0 ]]; then
 		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="$_FULL_LOOP_ERROR_READ_DEFERRED"
 		FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="$_FULL_LOOP_RETRY_DETAIL"
