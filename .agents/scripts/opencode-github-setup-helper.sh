@@ -431,9 +431,14 @@ on:
 
 jobs:
   opencode:
+    # Anchor the command so `//opencode.ai` links do not trigger runs (GH#39594).
     if: |
-      contains(github.event.comment.body, '/oc') ||
-      contains(github.event.comment.body, '/opencode')
+      startsWith(github.event.comment.body, '/oc') ||
+      startsWith(github.event.comment.body, '/opencode') ||
+      contains(github.event.comment.body, ' /oc') ||
+      contains(github.event.comment.body, ' /opencode') ||
+      contains(github.event.comment.body, fromJSON('"\n/oc"')) ||
+      contains(github.event.comment.body, fromJSON('"\n/opencode"'))
     runs-on: ubuntu-latest
     permissions:
       id-token: write

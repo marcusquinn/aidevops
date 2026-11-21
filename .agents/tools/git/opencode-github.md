@@ -66,9 +66,14 @@ on:
 
 jobs:
   opencode:
+    # Anchor the command so `//opencode.ai` links do not trigger runs.
     if: |
-      contains(github.event.comment.body, '/oc') ||
-      contains(github.event.comment.body, '/opencode')
+      startsWith(github.event.comment.body, '/oc') ||
+      startsWith(github.event.comment.body, '/opencode') ||
+      contains(github.event.comment.body, ' /oc') ||
+      contains(github.event.comment.body, ' /opencode') ||
+      contains(github.event.comment.body, fromJSON('"\n/oc"')) ||
+      contains(github.event.comment.body, fromJSON('"\n/opencode"'))
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -148,8 +153,12 @@ The basic workflow allows ANY user to trigger AI commands. Restrict to trusted u
 ```yaml
 # Replace the 'if' condition in the workflow job
 if: |
-  (contains(github.event.comment.body, '/oc') ||
-   contains(github.event.comment.body, '/opencode')) &&
+  (startsWith(github.event.comment.body, '/oc') ||
+   startsWith(github.event.comment.body, '/opencode') ||
+   contains(github.event.comment.body, ' /oc') ||
+   contains(github.event.comment.body, ' /opencode') ||
+   contains(github.event.comment.body, fromJSON('"\n/oc"')) ||
+   contains(github.event.comment.body, fromJSON('"\n/opencode"'))) &&
   (github.event.comment.author_association == 'OWNER' ||
    github.event.comment.author_association == 'MEMBER' ||
    github.event.comment.author_association == 'COLLABORATOR')

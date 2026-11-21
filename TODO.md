@@ -2366,6 +2366,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19214 Operator approval records for marketing action plans #feat #interactive tier:thinking ref:GH#39508 logged:2026-11-20 -> [todo/tasks/t19214-brief.md] pr:#39518 completed:2026-11-20
 
+- [ ] t19229 fix(opencode-agent): signed comments match the /opencode trigger gate and run-level concurrency cancels genuine /oc runs #bug #interactive ref:GH#39594 logged:2026-11-21 -> [todo/tasks/t19229-brief.md]
+
 - [x] t19215 Approval-bound Google Ads account actions (validate-only plan, guarded apply, rollback) #feat #interactive tier:thinking blocked-by:t19214 ref:GH#39509 logged:2026-11-20 -> [todo/tasks/t19215-brief.md] pr:#39546 completed:2026-11-20
 
 - [x] t19217 Google Ads readers: make the developer token optional (tokens sunset 2026-09-09) #auto-dispatch #bug tier:simple ref:GH#39511 logged:2026-11-20 -> [todo/tasks/t19217-brief.md] pr:#39515 completed:2026-11-20
