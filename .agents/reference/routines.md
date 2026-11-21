@@ -200,6 +200,8 @@ The helper provisions missing labels and creates an anchor labelled `routines`,
 `routine-tracking`, `persistent`, and `no-auto-dispatch`; its stdout is the issue
 number. The latter two labels record the durable tracking-only purpose: keep it
 open and never dispatch it as an implementation task. Do not add `parent-task`.
+Standing labels (`persistent`, `routines`, `routine-tracking`) share the yellow
+`FBCA04` from `label-sync-helper.sh`, so anchors are recognisable at a glance.
 Existing local tracking state is reused, so verify that its repository and open
 issue number are correct before installing the SOP. Existing anchors need these
 labels applied during migration; closed anchors must be reopened or replaced by

@@ -912,9 +912,9 @@ _create_core_routine_issues() {
 	fi
 
 	# Ensure labels exist on the repo
-	gh label create "routines" --repo "$slug" --description "Routine tracking" --color "0E8A16" 2>/dev/null || true
+	gh label create "routines" --repo "$slug" --description "Routine tracking anchor — not a task" --color "FBCA04" 2>/dev/null || true
 	gh label create "core" --repo "$slug" --description "Framework-managed routine" --color "1D76DB" 2>/dev/null || true
-	gh label create "routine-tracking" --repo "$slug" --description "Execution tracking issue — not a task (pulse skips these)" --color "BFDADC" 2>/dev/null || true
+	gh label create "routine-tracking" --repo "$slug" --description "Execution tracking issue — not a task (pulse skips these)" --color "FBCA04" 2>/dev/null || true
 
 	# shellcheck disable=SC1091  # sourced file path is dynamic but verified above
 	source "${SCRIPT_DIR}/routines/core-routines.sh"

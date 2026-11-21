@@ -1068,8 +1068,8 @@ _ensure_tracking_labels() {
 	local label=""
 	for label in routines routine-tracking persistent no-auto-dispatch; do
 		if ! gh api "repos/${repo_slug}/labels/${label}" --silent 2>/dev/null; then
-			if ! gh label create "$label" --repo "$repo_slug" --color BFD4F2 \
-				--description "Routine tracking lifecycle: ${label}" >/dev/null 2>&1; then
+			# Canonical colour/description come from the label catalog.
+			if ! "${SCRIPT_DIR}/label-sync-helper.sh" ensure "$repo_slug" "$label" >/dev/null 2>&1; then
 				# Another setup may have created it concurrently.
 				gh api "repos/${repo_slug}/labels/${label}" --silent 2>/dev/null || return 1
 			fi
