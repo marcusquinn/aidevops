@@ -2412,9 +2412,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19262 fix(config): add safety.actions_event_policy_auto_apply to the config schema (defaults fail schema validation) #bug #interactive tier:simple ref:GH#39748 assignee:marcusquinn logged:2026-11-21 started:2026-11-21 -> [todo/tasks/t19262-brief.md] pr:#39749 completed:2026-11-21
 
-- [ ] t19265 fix(dispatch): count ready orphan-recovery PRs as in-flight work in has-open-pr #bug #interactive tier:standard ref:GH#39760 assignee:marcusquinn logged:2026-11-21 started:2026-11-21 -> [todo/tasks/t19265-brief.md]
+- [x] t19265 fix(dispatch): count ready orphan-recovery PRs as in-flight work in has-open-pr #bug #interactive tier:standard ref:GH#39760 assignee:marcusquinn logged:2026-11-21 started:2026-11-21 -> [todo/tasks/t19265-brief.md] pr:#39761 completed:2026-11-21
 
-- [ ] t19263 fix(tests): declare suite-timeout budgets for three suites that exceed the 240s affected-tests default #auto-dispatch #bug ref:GH#39751
+- [x] t19263 fix(tests): declare suite-timeout budgets for three suites that exceed the 240s affected-tests default #auto-dispatch #bug ref:GH#39751 pr:#39756 completed:2026-11-21
 
 ## In Progress
 
