@@ -373,7 +373,7 @@ pull_source_checkout() {
 	if git -C "${path}" merge-base --is-ancestor "${upstream}" HEAD 2>/dev/null; then
 		return 0
 	fi
-	warn "  Git pull failed, using current state: $(printf '%s' "${err}" | head -n 1)"
+	warn "  Git pull failed, using current state: ${err%%$'\n'*}"
 	return 0
 }
 
