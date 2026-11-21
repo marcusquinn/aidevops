@@ -29,7 +29,7 @@ import json
 import os
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404 -- ffmpeg conversion only, fixed argv; see write_audio
 import sys
 import tempfile
 import threading
@@ -56,6 +56,8 @@ class VoiceStudioError(RuntimeError):
 
 def base_url() -> str:
     url = os.environ.get("VOICESTUDIO_URL") or os.environ.get("OMNIVOICE_URL") or DEFAULT_URL
+    if not url.startswith(("http://", "https://")):
+        raise VoiceStudioError(f"VOICESTUDIO_URL must be an http(s) URL, got {url!r}")
     return url.rstrip("/")
 
 
@@ -77,7 +79,7 @@ def request(method: str, path: str, body: bytes | None = None,
         all_headers["Authorization"] = f"Bearer {key}"
     req = urllib.request.Request(base_url() + path, data=body, headers=all_headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=timeout()) as resp:
+        with urllib.request.urlopen(req, timeout=timeout()) as resp:  # nosec B310 -- base_url() allows http(s) only
             return resp.status, {k.lower(): v for k, v in resp.headers.items()}, resp.read()
     except urllib.error.HTTPError as exc:
         return exc.code, {k.lower(): v for k, v in exc.headers.items()}, exc.read()
@@ -217,8 +219,9 @@ def write_audio(wav: bytes, out: Path) -> None:
     with tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
         tmp.write(wav)
         tmp.flush()
-        subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", tmp.name, str(out)],
-                       check=True)
+        # Absolute output path, so a name starting with "-" is never read as an option.
+        argv = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", tmp.name, str(out.resolve())]
+        subprocess.run(argv, check=True)  # nosec B603 -- resolved ffmpeg, fixed argv, no shell
 
 
 # ---------- commands ----------
