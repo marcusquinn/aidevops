@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import sqlite3
 from uuid import UUID, uuid4, uuid5
 
 from .admission import AdmissionRegistry
@@ -37,7 +38,7 @@ def _replace_marker(directory: Path, value: dict) -> None:
         raise
 
 
-def _require_registered(connection, generation: str, path: Path) -> None:
+def _require_registered(connection: sqlite3.Connection, generation: str, path: Path) -> None:
     row = connection.execute(
         "SELECT path,state FROM generation_admissions WHERE generation_id=?", (generation,),
     ).fetchone()
