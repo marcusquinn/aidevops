@@ -64,6 +64,7 @@ _sqlite_spec.loader.exec_module(_sqlite_module)
 sqlite_schema = _sqlite_module.sqlite_schema
 validated_sql_target = _sqlite_module.validated_sql_target
 sqlite_consumer = _sqlite_module.sqlite_consumer
+scoped_integrity_ok = _sqlite_module.scoped_integrity_ok
 sqlite_consumer_rows = _sqlite_module.sqlite_consumer_rows
 
 
@@ -1083,8 +1084,7 @@ def update_database(details: dict[str, Any]) -> None:
             )
             if cursor.rowcount != 1:
                 raise MigrationError(f"OpenCode row drift detected: {path}")
-        integrity = connection.execute("PRAGMA integrity_check").fetchone()
-        if not integrity or integrity[0] != "ok":
+        if not scoped_integrity_ok(connection, sorted({c["table"] for c in details["changes"]})):
             raise MigrationError(f"SQLite integrity check failed: {path}")
         connection.commit()
     except (sqlite3.Error, OSError) as exc:
@@ -1368,8 +1368,7 @@ def rollback_database(details: dict[str, Any]) -> None:
             cursor = connection.execute(query, (change["value"], change["id"], change["after"]))
             if cursor.rowcount != 1:
                 raise MigrationError(f"Post-plan database drift blocks rollback: {path}")
-        integrity = connection.execute("PRAGMA integrity_check").fetchone()
-        if not integrity or integrity[0] != "ok":
+        if not scoped_integrity_ok(connection, sorted({c["table"] for c in details["changes"]})):
             raise MigrationError(f"SQLite integrity check failed: {path}")
         connection.commit()
     except sqlite3.Error as exc:
