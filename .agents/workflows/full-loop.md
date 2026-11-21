@@ -125,7 +125,7 @@ Exit 0 means structural linked-worktree checks passed. A worker environment vari
 
 **Operation Verification (t1364.3):** `verify-operation-helper.sh check/verify`. Critical/high → block or verify.
 
-Start: `~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS"`. Add `--background` only after explicit user background intent; it means local asynchronous execution, never remote worker dispatch. Issue-started interactive sessions preserve their local-only marker through that child and reject headless/remote-worker routing. `--headless` / `FULL_LOOP_HEADLESS=true`: no prompts, no TODO.md edits.
+Start: `~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS"`. Add `--background` only after explicit user background intent; it means local asynchronous execution, never remote worker dispatch. Issue-started interactive sessions preserve their local-only marker through that child and reject headless/remote-worker routing. `--headless` / `FULL_LOOP_HEADLESS=true`: no prompts, no TODO.md edits. Interactive code PRs also keep `TODO.md` out; publish rows via `planning-commit-helper.sh` (`reference/task-lifecycle.md`, "Code changes need worktree + PR").
 
 ---
 
