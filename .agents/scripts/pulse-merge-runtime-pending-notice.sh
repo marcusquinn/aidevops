@@ -15,7 +15,8 @@
 #   2. once the head's required checks are terminal-green, sends one
 #      session-bus notice per `<repo>#<PR>@<head>` to the live interactive
 #      sessions on that repository;
-#   3. with no such session, logs an ATTENTION line (PR, age, reason), the
+#   3. with no such session (including after a notified session exits
+#      without verifying), logs an ATTENTION line (PR, age, reason), the
 #      format the merge pass already uses for work that needs a human.
 # Headless verifiers and removing the hold are out of scope.
 
@@ -135,14 +136,19 @@ _pmrp_route_held_pr() {
 	head=$(printf '%s' "$notice" | jq -r '.head // ""' 2>/dev/null) || return 0
 	[[ "$head" =~ ^[0-9a-f]{40}$ ]] || return 0
 	[[ -f "$sent_file" ]] && sent_head=$(<"$sent_file")
-	[[ "$sent_head" != "$head" ]] || return 0
-	_pmrp_head_ci_ready "$repo_slug" "$pr_number" "$head" || return 0
+	# A notified head already passed the CI gate; only a new head needs it.
+	if [[ "$sent_head" != "$head" ]]; then
+		_pmrp_head_ci_ready "$repo_slug" "$pr_number" "$head" || return 0
+	fi
 
 	sessions=$(_pmrp_interactive_sessions "$repo_slug")
 	if [[ -z "$sessions" ]]; then
 		_pmrp_attention_line "$notice" "$now" >>"$LOGFILE" || true
 		return 0
 	fi
+	# Dedupe after the no-session branch: if the notified session exits without
+	# verifying, the still-held PR must surface ATTENTION instead of going silent.
+	[[ "$sent_head" != "$head" ]] || return 0
 	text=$(_pmrp_notice_text "$notice") || return 0
 	# The bus CLI opens --text-file as a path; it does not read "-" as stdin.
 	local text_file=""

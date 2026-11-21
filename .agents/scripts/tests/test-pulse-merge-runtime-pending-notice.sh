@@ -3,8 +3,9 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Stub case for pulse-merge-runtime-pending-notice.sh (GH#39645): a liftable
 # hold notifies once per head, a repeat at the same head and a non-liftable hold
-# notify nobody, a new head notifies again, no live session logs ATTENTION, and
-# a head with pending or red required checks waits until they are green.
+# notify nobody, a new head notifies again, no live session (including after a
+# notified session exits) logs ATTENTION, and a head with pending or red
+# required checks waits until they are green.
 set -u
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -104,6 +105,12 @@ check "ATTENTION line keeps the recorded reason intact" "1" "$(grep -cF -e 'reas
 printf '%s\n' '[{"session_id":"ses_tui1","kind":"tui","messageable":true,"repo":"o/r"}]' >"${STUB_DIR}/sessions"
 _pmrp_route_held_pr 9 o/r
 check "a session appearing later receives the notice" "3" "$(sent_count)"
+
+printf '[]\n' >"${STUB_DIR}/sessions"
+_pmrp_route_held_pr 9 o/r
+check "a notified session leaving sends nothing more" "3" "$(sent_count)"
+check "a notified session leaving logs ATTENTION again" "2" "$(grep -cE -e 'ATTENTION: PR #9 in o/r' "$LOGFILE")"
+printf '%s\n' '[{"session_id":"ses_tui1","kind":"tui","messageable":true,"repo":"o/r"}]' >"${STUB_DIR}/sessions"
 
 # With the merge pass's required-check helpers sourced, a head whose required
 # checks are pending or red is never offered to a verifier; a green head is.
