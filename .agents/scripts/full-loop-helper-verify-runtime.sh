@@ -582,6 +582,38 @@ EOF
 	return "$rc"
 }
 
+# runtime-pending-notice <PR> [REPO]
+# Read-only (t19241/GH#39645). Pulse routes a held runtime-pending PR to a live
+# interactive verifier. Prints one JSON object {pr, repo, head, held_since,
+# reason, command} and exits 0 only when the PR is open, carries a hold whose
+# recorded scope is runtime-pending alone with no PR-only contract (decision
+# "lift"), and its body declares runtime-pending verification. Exits 1 with no
+# output otherwise, so a caller never notifies for a hold a verifier cannot lift.
+cmd_runtime_pending_notice() {
+	local pr="${1:-}" repo_arg="${2:-}"
+	local repo="" pr_json="" metadata="" level="" reason="" head="" held_since="" command=""
+	local hold_decision
+	[[ "$pr" =~ ^[1-9][0-9]*$ ]] || return 1
+	repo=$(_merge_resolve_repo "$repo_arg") || return 1
+	pr_json=$(_flm_gh_read gh pr view "$pr" --repo "$repo" \
+		--json state,headRefOid,body,labels,closingIssuesReferences) || return 1
+	printf '%s' "$pr_json" | jq -e '.state == "OPEN"' >/dev/null 2>&1 || return 1
+	hold_decision=$(_verify_runtime_hold_decision "$pr" "$repo" "$pr_json") || return 1
+	[[ "$hold_decision" == "lift" ]] || return 1
+	metadata=$(printf '%s' "$pr_json" | jq -r '.body // ""' | _runtime_testing_metadata_from_body) || return 1
+	level=$(printf '%s' "$metadata" | jq -r '.level // ""') || return 1
+	[[ "$level" == "$_FULL_LOOP_RUNTIME_PENDING_SCOPE" ]] || return 1
+	reason=$(printf '%s' "$metadata" | jq -r '.evidence // ""') || return 1
+	head=$(printf '%s' "$pr_json" | jq -r '.headRefOid // ""') || return 1
+	[[ "$head" =~ ^[0-9a-f]{40}$ ]] || return 1
+	held_since=$(_hold_label_applied_at "$pr" "$repo") || held_since=""
+	command="full-loop-helper.sh verify-runtime ${pr} ${repo} --testing \"<evidence>\""
+	jq -nc --argjson pr "$pr" --arg repo "$repo" --arg head "$head" --arg since "$held_since" \
+		--arg reason "$reason" --arg command "$command" \
+		'{pr: $pr, repo: $repo, head: $head, held_since: $since, reason: $reason, command: $command}'
+	return 0
+}
+
 # verify-runtime <PR> [REPO] --testing "<evidence>" [--repo R] [--dry-run]
 # Exit 0 on recorded evidence (VERIFY_RUNTIME_HOLD=lifted|keep|absent on
 # stdout); 1 on refusal or failed write. Every refusal precedes every write.
