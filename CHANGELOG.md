@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.256] - 2026-11-21
+
+### Added
+
+- wake external_trigger_pending holds when their named same-repo refs resolve
+
+### Changed
+
+- Maintenance: mark t19244 complete (pr:#39662 completed:2026-11-21) (#39665)
+- Performance: drop redundant bundle verify before unbundle in local verify (GH#39560) (#39669)
+
+### Fixed
+
+- ignore concurrency-cancelled non-required forge-event recorder in merge gate (GH#39664) (#39668)
+- retry git 'cannot lock ref ... but expected' ref-update race (GH#39663)
+
 ## [3.39.255] - 2026-11-21
 
 ### Added
