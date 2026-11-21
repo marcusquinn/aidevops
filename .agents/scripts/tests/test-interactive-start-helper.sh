@@ -222,11 +222,25 @@ printf 'proposal args=%s\n' "$*" >>"$CALL_LOG"
 printf '%064d\n' 0
 STUB
 chmod +x "${stub_dir}/source-access-helper.sh"
+# The copied helper sources the worktree registry for its owner check. This
+# stub reports the live helper shell as owner; STUB_OWNER_SESSION sets the
+# owning session so the foreign-owner refusal can be exercised.
+cat >"${stub_dir}/shared-worktree-registry.sh" <<'STUB'
+check_worktree_owner_snapshot() {
+	printf '%s|%s|batch|task|2026-01-01T00:00:00Z|1\n' "$$" "${STUB_OWNER_SESSION:-ses_fixture_123456}"
+	return 0
+}
+_resolve_worktree_owner_pid() {
+	printf '%s\n' "$$"
+	return 0
+}
+STUB
 : >"$call_log"
 proposal_output=$(
 	cd "$canonical_root" || exit 1
 	PRE_EDIT_MODE=valid PATH="${stub_dir}:$PATH" \
-		AIDEVOPS_OPENCODE_SESSION_ID=ses_fixture_123456 AIDEVOPS_SOURCE_CONTEXT_SOCKET=/fixture/socket \
+		AIDEVOPS_OPENCODE_SESSION_ID=ses_fixture_123456 OPENCODE_SESSION_ID=ses_fixture_123456 \
+		AIDEVOPS_SOURCE_CONTEXT_SOCKET=/fixture/socket \
 		"${stub_dir}/interactive-start-helper.sh" --issue 45 --repo owner/repo --task "prepare source" \
 		--source-path src/example.sh --source-path tests/test-example.sh </dev/null
 ) || fail "source preflight failed"
@@ -235,6 +249,21 @@ proposal_output=$(
 assert_log_line "proposal args=propose --session ses_fixture_123456 --repo owner/repo --issue 45 --reason secret-bearing basename --context-socket /fixture/socket --path ${linked_worktree}/src/example.sh --path ${linked_worktree}/tests/test-example.sh"
 if grep -q '^claim \|^full-loop ' "$call_log"; then
 	fail "powerless source preflight claimed or started implementation"
+fi
+: >"$call_log"
+foreign_rc=0
+foreign_output=$(
+	cd "$canonical_root" || exit 1
+	PRE_EDIT_MODE=valid PATH="${stub_dir}:$PATH" STUB_OWNER_SESSION=ses_other_654321 \
+		AIDEVOPS_OPENCODE_SESSION_ID=ses_fixture_123456 OPENCODE_SESSION_ID=ses_fixture_123456 \
+		AIDEVOPS_SOURCE_CONTEXT_SOCKET=/fixture/socket \
+		"${stub_dir}/interactive-start-helper.sh" --issue 45 --repo owner/repo --task "foreign owner" \
+		--source-path src/example.sh </dev/null 2>&1
+) || foreign_rc=$?
+[[ "$foreign_rc" -ne 0 && "$foreign_output" == *"source worktree belongs to another session"* ]] ||
+	fail "source preflight accepted a worktree owned by another session"
+if grep -q '^proposal ' "$call_log"; then
+	fail "foreign-owner source preflight issued a proposal"
 fi
 : >"$call_log"
 if AIDEVOPS_OPENCODE_SESSION_ID="" OPENCODE_SESSION_ID="" AIDEVOPS_SOURCE_CONTEXT_SOCKET="" PATH="${stub_dir}:$PATH" \
