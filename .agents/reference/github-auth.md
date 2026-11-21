@@ -172,7 +172,11 @@ with auth reason `not-configured` (reads an App binding would route), the
 total known quota cost, their `routable_share`, the window's REST-core
 `rest_core_min_remaining`, and `owners_without_app_read` (owners with a
 pulse-enabled repository lacking an App read route). Missing per-reason cost
-data yields `routable_share: null`.
+data yields `routable_share: null`. `rest_core_cost_per_hour` is logged
+REST-core known cost scaled to one hour; `rest_core_saturation` divides it by
+`rest_core_limit`, read from the Pulse probe cache
+(`AIDEVOPS_PULSE_REST_CORE_CACHE`, default
+`~/.aidevops/cache/pulse-rest-core.json`). Without that cache both are `null`.
 
 ```bash
 aidevops github auth advise [--since 24h] [--write-advisory]
@@ -180,13 +184,15 @@ aidevops github auth advise [--since 24h] [--write-advisory]
 
 `advise` computes the same object offline. With `--write-advisory` it writes
 `~/.aidevops/advisories/github-app-read-routing.advisory` only when the
-routable share is at least 0.5, REST-core `min_remaining` reached 0 or fell
-below the pulse hard floor, and at least one pulse owner lacks an App read
-binding; otherwise it removes that file. The session-start advisory display
-shows its first line once, and `aidevops security dismiss
+routable share is at least 0.5, at least one pulse owner lacks an App read
+binding, and REST-core is constrained: `min_remaining` reached 0, fell below
+the pulse hard floor, or `rest_core_saturation` is at least 0.75. The
+saturation test exists because the transport governor paces requests before
+quota reaches zero. Otherwise it removes that file. The session-start advisory
+display shows its first line once, and `aidevops security dismiss
 github-app-read-routing` suppresses it. Pulse refreshes it in the background at
-most every 6 hours (`AIDEVOPS_GITHUB_APP_ADVISE_INTERVAL`) when REST quota
-defers a progress stage; failures never affect the pulse.
+most every 6 hours (`AIDEVOPS_GITHUB_APP_ADVISE_INTERVAL`), at cycle start and
+when REST quota defers a progress stage; failures never affect the pulse.
 
 ## Upgrade and migration
 

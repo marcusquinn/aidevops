@@ -160,6 +160,9 @@ _pulse_set_rest_core_budget_priority() {
 	export AIDEVOPS_PULSE_REST_CORE_BUDGET_IN_FLIGHT_ALLOWANCE="$in_flight_allowance"
 	export AIDEVOPS_PULSE_REST_CORE_BUDGET_PROGRESS_START_FLOOR="$progress_start_floor"
 	[[ "$log_mode" == "quiet" ]] && return 0
+	# t19233: the transport governor paces before quota reaches a deferral, so
+	# refresh the App-read advisory from cycle start too (6h stamp, background).
+	_pulse_github_app_advise_maybe || true
 	case "$budget_class" in
 	reserve | emergency)
 		echo "[pulse-wrapper] REST-core budget ${budget_class} mode: remaining=${remaining}/${limit} adaptive=${adaptive} soft_cap=${soft_cap} hard_floor=${hard_floor} in_flight_allowance=${in_flight_allowance} progress_start_floor=${progress_start_floor} reset=${reset_epoch} (GH#29742)" >>"$LOGFILE"
@@ -290,9 +293,9 @@ _pulse_should_defer_budget_priority_stage() {
 }
 
 #######################################
-# GH#38273: when REST quota blocks progress, refresh the offline App-read
-# routing advisory at most once per 6h. Background, fail-open: it never
-# blocks the stage or changes its return code.
+# GH#38273: refresh the offline App-read routing advisory at most once per
+# 6h, at cycle start (t19233) and when REST quota defers a progress stage.
+# Background, fail-open: it never blocks the stage or changes its return code.
 #######################################
 _pulse_github_app_advise_maybe() {
 	local state_dir="${AIDEVOPS_STATE_DIR:-$HOME/.aidevops/state}"

@@ -19,6 +19,9 @@ from github_auth_policy import policy
 
 INSTRUMENT = Path(__file__).resolve().with_name("gh-api-instrument.sh")
 UNITS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
+# t19233: logged REST-core cost per hour at or above this share of the
+# authoritative primary limit means the governor, not demand, sets the pace.
+REST_CORE_SATURATION_SHARE = 0.75
 
 
 def parse_window(value):
@@ -77,6 +80,7 @@ def routing_opportunity(report, data):
             "known_quota_cost": known_total if usable else None,
             "routable_share": round(routable_cost / known_total, 3) if usable else None,
             "rest_core_min_remaining": min_remaining if isinstance(min_remaining, int) else None,
+            **rest_core_saturation(report, _rest_core_limit()),
             "owners_without_app_read": unbound}
 
 
@@ -88,11 +92,42 @@ def _hard_floor():
     return 0
 
 
+def _rest_core_limit():
+    """Authoritative REST-core limit from the Pulse probe cache, or None."""
+    path = Path(os.environ.get("AIDEVOPS_PULSE_REST_CORE_CACHE")
+                or Path.home() / ".aidevops" / "cache" / "pulse-rest-core.json")
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(value, dict) or value.get("resource") != "core":
+        return None
+    limit = value.get("limit")
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+        return None
+    return limit
+
+
+def rest_core_saturation(report, limit):
+    """t19233: the governor paces before quota hits zero, so measure the hourly
+    share of the primary limit that logged REST-core calls consume."""
+    meta = report.get("_meta", {})
+    window = meta.get("effective_window_seconds") or meta.get("window_seconds")
+    cost = report.get("by_api_pool", {}).get("rest-core", {}).get("known_quota_cost")
+    if not isinstance(window, int) or window <= 0 or not isinstance(cost, int):
+        return {"rest_core_limit": limit, "rest_core_cost_per_hour": None, "rest_core_saturation": None}
+    per_hour = round(cost * 3600 / window)
+    return {"rest_core_limit": limit, "rest_core_cost_per_hour": per_hour,
+            "rest_core_saturation": round(per_hour / limit, 3) if limit else None}
+
+
 def advisory_due(opportunity, floor):
     share, low = opportunity["routable_share"], opportunity["rest_core_min_remaining"]
     if share is None or low is None or not opportunity["owners_without_app_read"]:
         return False
-    return share >= 0.5 and (low == 0 or low < floor)
+    saturation = opportunity.get("rest_core_saturation")
+    saturated = isinstance(saturation, float) and saturation >= REST_CORE_SATURATION_SHARE
+    return share >= 0.5 and (low == 0 or low < floor or saturated)
 
 
 def advisory_text(opportunity):
