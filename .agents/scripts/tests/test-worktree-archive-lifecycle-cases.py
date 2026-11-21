@@ -24,6 +24,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import native_git
 import worktree_lifetime_archive as lifecycle
 import worktree_lifecycle_status as lifecycle_status
 from worktree_recovery_producer_cases import ProducerCases
@@ -48,6 +49,15 @@ FIXTURE_GIT_ENV = dict(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GI
                        GIT_COMMITTER_EMAIL="fixture@example.invalid", LC_ALL="C")
 
 
+# Native Git for fixture setup and test-side assertions only (GH#39560).
+# Helpers under test still resolve `git` from PATH, including an installed
+# policy shim, so product verdicts keep their shim coverage. Fixture-owned
+# temporary repositories gain nothing from the shim's per-call guard, which
+# costs several extra process launches for every test-side Git call. Without
+# native Git the shim cannot run either, so resolution failure stops the suite.
+FIXTURE_GIT = native_git.real_git()
+
+
 class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, MergeCases,
                      ProducerCases, PartialCases, MetadataCases, PruneCases):
     @classmethod
@@ -65,12 +75,12 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
         env = dict(os.environ, HOME=str(template.parent), **FIXTURE_GIT_ENV)
         previous = os.umask(0o022)
         try:
-            subprocess.run(["git", "init", "-q", "--initial-branch=develop", str(template)],  # nosec B603 B607 -- fixture-owned Git argv
+            subprocess.run([FIXTURE_GIT, "init", "-q", "--initial-branch=develop", str(template)],  # nosec B603 B607 -- fixture-owned Git argv
                            env=env, capture_output=True, timeout=60, check=True)
             for name, data in FIXTURE_FILES.items():
                 (template / name).write_bytes(data)
             for args in (("add", "."), ("commit", "-qm", "base")):
-                subprocess.run(["git", "-C", str(template), *args],  # nosec B603 B607 -- fixture-owned Git argv
+                subprocess.run([FIXTURE_GIT, "-C", str(template), *args],  # nosec B603 B607 -- fixture-owned Git argv
                                env=env, capture_output=True, timeout=60, check=True)
         finally:
             os.umask(previous)
@@ -110,7 +120,8 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
         return result
 
     def git(self, repo, *args):
-        return self.run_command("git", "-C", repo, *args).stdout
+        # Test-side Git only; helpers under test keep PATH resolution.
+        return self.run_command(FIXTURE_GIT, "-C", repo, *args).stdout
 
     def helper(self, *args, check=True):
         return self.run_command("bash", HELPER, *args, check=check)
@@ -131,7 +142,7 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
         self.git(self.repo, 'commit', '-qam', 'theirs')
         (self.work / 'mixed.txt').write_bytes(b'ours\n')
         self.git(self.work, 'commit', '-qam', 'ours')
-        self.assertNotEqual(self.run_command('git', '-C', self.work, 'merge', 'other', check=False).returncode, 0)
+        self.assertNotEqual(self.run_command(FIXTURE_GIT, '-C', self.work, 'merge', 'other', check=False).returncode, 0)
 
     def test_managed_merge_requires_restore_and_rejects_drift(self):
         self.start_conflicted_merge()
@@ -176,7 +187,7 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
         self.git(self.repo, "commit", "-qam", "other")
         (self.work / "mixed.txt").write_bytes(b"our side\n")
         self.git(self.work, "commit", "-qam", "ours")
-        result = self.run_command("git", "-C", self.work, "merge", "other", check=False)
+        result = self.run_command(FIXTURE_GIT, "-C", self.work, "merge", "other", check=False)
         self.assertNotEqual(result.returncode, 0)
         oid = self.auto_merge_path().read_bytes()
         # A supported active merge now uses a structured, self-contained archive.
@@ -210,7 +221,7 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
         # Keep only the recorded durable base; remove original repository and
         # worktree, including every disposable object and reflog.
         base = self.root / "retained-base.git"
-        self.run_command("git", "init", "--bare", "-q", base)
+        self.run_command(FIXTURE_GIT, "init", "--bare", "-q", base)
         manifest = json.loads((archive / "manifest.json").read_text())
         self.git(base, "fetch", "-q", self.repo, manifest["base_sha"] + ":refs/heads/base")
         before = sum(p.stat().st_size for p in base.rglob("*") if p.is_file())
@@ -234,12 +245,12 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
 
     def test_auto_merge_binary_closure_shared_base_and_corruption(self):
         content = b''.join(hashlib.sha256(str(i).encode()).digest() for i in range(32768))
-        blob = self.run_command('git', '-C', self.work, 'hash-object', '-w', '--stdin',
+        blob = self.run_command(FIXTURE_GIT, '-C', self.work, 'hash-object', '-w', '--stdin',
                                 input_data=content).stdout.strip()
-        nested = self.run_command('git', '-C', self.work, 'mktree',
+        nested = self.run_command(FIXTURE_GIT, '-C', self.work, 'mktree',
                                   input_data=b'100644 blob ' + blob + b'\tpayload.bin\n').stdout.strip()
         base_tree = self.git(self.work, 'rev-parse', 'HEAD^{tree}').strip()
-        tree = self.run_command('git', '-C', self.work, 'mktree', input_data=(
+        tree = self.run_command(FIXTURE_GIT, '-C', self.work, 'mktree', input_data=(
             b'040000 tree ' + nested + b'\tnested\n040000 tree ' + base_tree + b'\tshared-base\n')).stdout
         path = self.auto_merge_path()
         path.write_bytes(tree)
@@ -265,7 +276,7 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
         self.assertNotEqual(self.helper('source-matches', archive, self.work, check=False).returncode, 0)
         self.git(self.repo, 'worktree', 'remove', '--force', self.work)
         self.git(self.repo, 'gc', '--prune=now')
-        missing = self.run_command('git', '-C', self.repo, 'cat-file', '-e', tree.strip(), check=False)
+        missing = self.run_command(FIXTURE_GIT, '-C', self.repo, 'cat-file', '-e', tree.strip(), check=False)
         self.assertNotEqual(missing.returncode, 0)
         target = self.root / 'binary-restore'
         self.helper('restore', archive, '--target', target)
@@ -305,7 +316,7 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
         self.assertEqual(self.git(target, 'rev-parse', 'AUTO_MERGE'), tree)
 
     def test_auto_merge_missing_closure_retains_source(self):
-        tree = self.run_command('git', '-C', self.work, 'mktree', '--missing',
+        tree = self.run_command(FIXTURE_GIT, '-C', self.work, 'mktree', '--missing',
                                 input_data=b'100644 blob ' + b'1' * 40 + b'\tmissing\n').stdout
         self.auto_merge_path().write_bytes(tree)
         result = self.helper('archive', self.work, '--repo', 'fixture/repo', '--issue', '99',
@@ -335,7 +346,7 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
 
     def test_auto_merge_capture_rejects_late_tracked_and_tree_writes(self):
         tree = self.git(self.work, 'rev-parse', 'HEAD^{tree}')
-        empty = self.run_command('git', '-C', self.work, 'mktree', input_data=b'').stdout
+        empty = self.run_command(FIXTURE_GIT, '-C', self.work, 'mktree', input_data=b'').stdout
         for mutate in ('printf late > "$worktree/mixed.txt"',
                        'printf "%s\\n" "$late_tree" > "$late_path"'):
             self.auto_merge_path().write_bytes(tree)
@@ -354,7 +365,7 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
             self.assertTrue(self.work.exists())
 
     def test_auto_merge_verified_legacy_retirement(self):
-        tree = self.run_command('git', '-C', self.work, 'mktree', input_data=b'').stdout
+        tree = self.run_command(FIXTURE_GIT, '-C', self.work, 'mktree', input_data=b'').stdout
         self.auto_merge_path().write_bytes(tree)
         bucket = self.legacy_pulse_bucket()
         migration = json.loads(self.migrate_bucket(bucket).stdout)
@@ -802,9 +813,9 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
 
     def test_registered_restore_preserves_existing_archive_reference_locks(self):
         self.env.pop("AIDEVOPS_WORKTREE_RECOVERY_POLICY")
-        blob = self.run_command("git", "-C", self.work, "hash-object", "-w", "--stdin",
+        blob = self.run_command(FIXTURE_GIT, "-C", self.work, "hash-object", "-w", "--stdin",
                                 input_data=b"diagnostic-only tree\n").stdout.strip()
-        tree = self.run_command("git", "-C", self.work, "mktree",
+        tree = self.run_command(FIXTURE_GIT, "-C", self.work, "mktree",
                                 input_data=b"100644 blob " + blob + b"\tconflict.txt\n").stdout
         self.auto_merge_path().write_bytes(tree)
         archive = self.archive()
@@ -1462,7 +1473,7 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
 
     def test_roundtrip_many_commits_merge_and_dirty_state_from_base_only(self):
         restore_repo = self.root / "base-only"
-        self.run_command("git", "clone", "--no-local", self.repo, restore_repo)
+        self.run_command(FIXTURE_GIT, "clone", "--no-local", self.repo, restore_repo)
         for number in range(30):
             (self.work / "history").write_text(f"commit {number}\n")
             self.git(self.work, "add", "history")
@@ -1497,7 +1508,7 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
         self.assertEqual(len(before["history"].splitlines()), 34)
         archive = self.archive()
         self.assertEqual(self.git(restore_repo, "rev-list", "--count", "--all").strip(), b"1")
-        self.assertNotEqual(self.run_command("git", "-C", restore_repo, "cat-file", "-e",
+        self.assertNotEqual(self.run_command(FIXTURE_GIT, "-C", restore_repo, "cat-file", "-e",
                                             before["head"].decode().strip(), check=False).returncode, 0)
         self.update_manifest(archive, source_git_common_dir=str(restore_repo / ".git"))
         self.helper("verify", archive)
