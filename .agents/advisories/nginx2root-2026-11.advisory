@@ -14,10 +14,23 @@
   Check each nginx host (including app platforms such as Cloudron):
 
     dpkg-query -W nginx; nginx -v
-    zgrep -c CVE-2026-123007 /usr/share/doc/nginx*/changelog.Debian.gz  # 0 = unpatched
     nginx -T 2>/dev/null | grep -cE 'http2 on|listen .*http2'          # >0 = HTTP/2 on
     nginx -T 2>/dev/null | grep -E '^\s*mail\s*\{|quic|http3|resolver '
     lsmod | grep '^sctp '                                              # loaded?
+
+  nginx is patched when EITHER check passes:
+
+    a. Distro packages (Ubuntu, Debian) backport the fix without changing
+       the upstream version, so the changelog must name the CVE:
+         zgrep -c CVE-2026-123007 /usr/share/doc/nginx*/changelog.Debian.gz  # >0 = patched
+    b. Vendor and nginx.org builds ship the fixed upstream release, but
+       their changelogs may never name the CVE (e.g. Cloudways
+       1:1.31.9-34~bookworm). Fixed upstream: 1.30.7+ on 1.30, or 1.31.9+
+       (1.31.0 to 1.31.8 are vulnerable):
+         v=$(nginx -v 2>&1 | sed -n 's|.*nginx/\([0-9.]*\).*|\1|p')
+         { dpkg --compare-versions "$v" ge 1.30.7 &&
+           dpkg --compare-versions "$v" lt 1.31.0; } ||
+           dpkg --compare-versions "$v" ge 1.31.9 && echo "patched: $v"
 
   Until patched (interim; reduces exposure, not a fix):
 
@@ -39,7 +52,7 @@
        which files used the listen form so you can restore them exactly.
        Back up the real directory: Cloudron's /etc/nginx is a symlink.
 
-  When the patched package arrives: confirm the changelog lists the CVE,
+  When the patched package arrives: confirm check a or b passes,
   restart nginx (a reload keeps the old binary; check that
   `readlink /proc/$(cat /run/nginx.pid)/exe` does not end in "(deleted)"),
   then turn HTTP/2 back on, remove the SCTP block, and restart services

@@ -278,7 +278,7 @@ Observed while mitigating the 2026-11-18 nginx HTTP/2 CVEs (advisory `nginx2root
 - **SCTP is in use:** Cloudron's `turn` service (coturn) holds kernel SCTP sockets, so `modprobe -r sctp` fails while it runs. Add `/etc/modprobe.d/disable-sctp.conf` (`install sctp /bin/false`, `install sctp_diag /bin/false`) and reboot. Afterwards `turn` started with its UDP/TCP listeners and no SCTP errors (`docker logs --since 10m turn`). Recheck WebRTC/TURN apps.
 - **Rolling reboots:** reboot one host at a time, smallest first. Record `docker ps -q | wc -l` and the non-running list first, then wait for the count to return (see "Startup Architecture"). Containers started by hand without a restart policy (`docker inspect -f '{{.HostConfig.RestartPolicy.Name}}'` = `no`) stay stopped; start them again.
 - **Revert after the fix** (automated by `nginx-http2 on <server> --patched-marker CVE-2026-123007`; manual steps):
-  1. Confirm `zgrep CVE-2026-123007 /usr/share/doc/nginx-common/changelog.Debian.gz`.
+  1. Confirm `zgrep CVE-2026-123007 /usr/share/doc/nginx-common/changelog.Debian.gz`. This changelog marker (also used by `--patched-marker`) suits Cloudron's Ubuntu-built `nginx`, where fixes are backported without an upstream version bump. Vendor or nginx.org builds may never name the CVE; on such non-Cloudron hosts use the advisory's upstream-version check instead.
   2. Check that nginx runs the new binary: `/proc/<master-pid>/exe` must not end in `(deleted)`.
   3. Remove the cron job.
   4. Turn HTTP/2 back on: change `http2 off;` back to `http2 on;`, and change the recorded legacy files' `listen ... 443 ssl;` lines back to `listen ... 443 ssl http2;`.
