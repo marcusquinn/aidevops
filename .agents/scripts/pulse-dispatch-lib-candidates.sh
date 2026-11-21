@@ -14,11 +14,16 @@ source "${BASH_SOURCE[0]%/*}/terminal-blocker-circuit.sh"
 _dispatch_secret_missing_names() {
 	local issue_json="$1"
 	local declared="" listing="" name="" missing="" line=""
+	# Union of labels, body marker and requires-secrets: lines, matching
+	# runner-capability-helper.sh. Empty names become "!" so validation fails closed.
 	declared=$(printf '%s' "$issue_json" | jq -r '
-		. as $issue | [.labels[]? | if type == "object" then .name else . end |
-		 select(type == "string" and startswith("needs-secret:")) |
-		 sub("^needs-secret:"; "")] | if length > 0 then .[]
-		 else ($issue.body // "" | capture("<!-- aidevops:needs-secrets (?<names>[A-Za-z_0-9 ]+) -->")? | .names // "" | split(" ")[]) end
+		. as $issue |
+		([.labels[]? | if type == "object" then .name else . end |
+		  select(type == "string" and startswith("needs-secret:")) | sub("^needs-secret:"; "")] +
+		 [($issue.body // "" | capture("<!-- aidevops:needs-secrets (?<names>[A-Za-z_0-9 ]+) -->")? | .names // "" | split(" ")[] | select(length > 0))] +
+		 [($issue.body // "" | split("\n")[] | select(startswith("requires-secrets:")) | sub("^requires-secrets:"; "") | gsub("^\\s+|\\s+$"; "") |
+		   (if . == "" then "!" else split("[,\\s]+"; null)[] | if . == "" then "!" else . end end))]
+		) | unique | .[]
 	' 2>/dev/null) || return 1
 	[[ -n "$declared" ]] || return 0
 	# Fail closed on malformed declarations or an unavailable local name store.
