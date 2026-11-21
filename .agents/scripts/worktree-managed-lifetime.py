@@ -117,10 +117,6 @@ def unit_snapshot(unit: str) -> dict:
     return owner_lifetime.unit_snapshot(unit)
 
 
-def unit_presence(unit: str) -> dict:
-    return owner_lifetime.unit_presence(unit)
-
-
 def boot_id() -> str:
     return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
 
@@ -170,7 +166,7 @@ def drain(launch: dict) -> None:
     if launch.get("kind") == owner_lifetime.KIND:
         owner_lifetime.drain(launch)
         return
-    owner_lifetime.drain_unit(launch, boot_id, unit_snapshot, unit_presence)
+    owner_lifetime.drain_unit(launch, boot_id, unit_snapshot)
 
 
 def seal(record: dict) -> None:

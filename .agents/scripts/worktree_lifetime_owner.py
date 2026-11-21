@@ -9,13 +9,11 @@ parent's completion permits removal only after its recorded boot has ended.
 An empty, missing or replaced arbitrary cgroup is not descendant evidence.
 """
 
-from contextlib import closing
 import json
 import math
 import os
 from pathlib import Path
 import re
-import sqlite3
 import subprocess
 import sys
 import time
@@ -58,16 +56,6 @@ def unit_snapshot(unit):
     require(snapshot.get("ExitType") == "cgroup" and snapshot.get("RemainAfterExit") == "yes"
             and snapshot.get("Restart") == "no", "unit lifetime contract mismatch")
     return snapshot
-
-
-def unit_presence(unit):
-    """LoadState and InvocationID only: a released unit is no longer loaded."""
-    require(re.fullmatch(r"aidevops-worker-[A-Za-z0-9_-]+(?:\.service)?", unit) is not None,
-            "invalid worker unit")
-    output = subprocess.check_output(
-        ["systemctl", "--user", "show", unit, "--property=LoadState", "--property=InvocationID"],
-        text=True, stderr=subprocess.DEVNULL, timeout=10).strip()
-    return dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
 
 
 BOOT_PATTERN = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
@@ -128,18 +116,6 @@ def drain_previous_boot(launch, current_boot, boot_reader):
 
 
 DRAINED_STATES = (("active", "exited"), ("failed", "failed"))
-RELEASE_TABLE = "worktree_unit_releases"
-RELEASE_SCHEMA = "unit-release/v1"
-
-
-def unit_id(unit):
-    """Canonical unit name: Pulse records omit the .service suffix."""
-    return unit if unit.endswith(".service") else unit + ".service"
-
-
-def registry_db():
-    directory = Path(os.environ.get("WORKTREE_REGISTRY_DIR") or Path.home() / ".aidevops/.agent-workspace")
-    return Path(os.environ.get("WORKTREE_REGISTRY_DB") or directory / "worktree-registry.db")
 
 
 def drained_snapshot_valid(snapshot, invocation):
@@ -163,61 +139,8 @@ def require_cgroup_drained(cgroup):
         require(not directory.exists(), "cgroup evidence unavailable")
 
 
-def release_receipt(unit, invocation):
-    """Read a persisted unit release receipt (GH#39702); None when absent."""
-    db = registry_db()
-    if not db.is_file() or db.is_symlink():
-        return None
-    with closing(sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=10)) as connection:
-        if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-                              (RELEASE_TABLE,)).fetchone() is None:
-            return None
-        row = connection.execute("SELECT record FROM worktree_unit_releases WHERE unit=? AND invocation=?",
-                                 (unit_id(unit), invocation)).fetchone()
-    return json.loads(row[0]) if row else None
-
-
-def release_receipt_valid(launch, receipt):
-    """
-    Validate a same-boot unit release receipt for one bound launch.
-
-    The release sweep commits it after a drained sample of this invocation and
-    before it stops the unit. Stopping destroys the invocation's cgroup, so it
-    cannot be repopulated: the recorded sample then stands in for the retained
-    unit, like an ended-boot receipt stands in for a previous boot.
-    """
-    if not isinstance(receipt, dict):
-        return False
-    requested_at = receipt.get("requested_at")
-    return all((receipt.get("schema") == RELEASE_SCHEMA,
-                valid_invocation(launch.get("invocation")),
-                receipt.get("InvocationID") == launch.get("invocation"),
-                isinstance(launch.get("unit"), str),
-                receipt.get("unit") == unit_id(launch.get("unit") or ""),
-                valid_boot_id(launch.get("boot_id")),
-                receipt.get("boot_id") == launch.get("boot_id"),
-                drained_snapshot_valid(receipt.get("quiescence"), launch.get("invocation")),
-                type(requested_at) in (int, float)
-                and math.isfinite(requested_at)
-                and 0 < requested_at <= time.time()))
-
-
-def drain_released(launch, current_boot, boot_reader, presence_reader, release_reader):
-    """Record quiescence from a release receipt once its unit is gone; fail closed."""
-    try:
-        if presence_reader(launch["unit"]).get("LoadState") != "not-found":
-            return False
-        receipt = release_reader(launch["unit"], launch["invocation"])
-        if not release_receipt_valid(launch, receipt) or boot_reader() != current_boot:
-            return False
-    except (OSError, ValueError, KeyError, TypeError, sqlite3.Error, subprocess.SubprocessError):
-        return False
-    launch["quiescence"] = dict(receipt["quiescence"])
-    return True
-
-
-def drain_unit(launch, boot_reader=boot_id, snapshot_reader=unit_snapshot, presence_reader=unit_presence,
-               release_reader=release_receipt):
+def drain_unit(launch, boot_reader=boot_id, snapshot_reader=unit_snapshot, presence_reader=None,
+               release_reader=None):
     current_boot = boot_reader()
     if launch["boot_id"] != current_boot:
         drain_previous_boot(launch, current_boot, boot_reader)
@@ -225,7 +148,8 @@ def drain_unit(launch, boot_reader=boot_id, snapshot_reader=unit_snapshot, prese
     try:
         snapshot = snapshot_reader(launch["unit"])
     except (ValueError, subprocess.SubprocessError):
-        # A unit released by worktree_lifetime_release.py is no longer loaded.
+        # GH#39702: a unit released after a durable receipt is no longer loaded.
+        from worktree_lifetime_release_receipt import drain_released
         if drain_released(launch, current_boot, boot_reader, presence_reader, release_reader):
             return
         raise

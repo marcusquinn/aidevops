@@ -21,6 +21,7 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import worktree_lifetime_owner as owner
 import worktree_lifetime_proof as proof
+import worktree_lifetime_release_receipt as release_receipt
 
 SPEC = importlib.util.spec_from_file_location("lifetime", SCRIPTS / "worktree-managed-lifetime.py")
 lifetime = importlib.util.module_from_spec(SPEC)
@@ -422,7 +423,7 @@ class OwnerEvidenceTests(unittest.TestCase):
         sample = {"InvocationID": launch["invocation"], "MainPID": "0", "Job": "",
                   "ActiveState": "active", "SubState": "exited", "ExitType": "cgroup",
                   "RemainAfterExit": "yes", "Restart": "no"}
-        receipt = {"schema": owner.RELEASE_SCHEMA, "unit": "aidevops-worker-fixture.service",
+        receipt = {"schema": release_receipt.RELEASE_SCHEMA, "unit": "aidevops-worker-fixture.service",
                    "InvocationID": launch["invocation"], "boot_id": launch["boot_id"],
                    "requested_at": time.time(), "quiescence": sample}
         receipt.update(changes)
