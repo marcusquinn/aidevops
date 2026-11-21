@@ -625,9 +625,9 @@ _cross_review_dispatch_one() {
 _cross_review_extract_text() {
 	local json_file="$1"
 	local text
-	text=$(jq -r --arg t text 'objects | select(.type? == $t) | .part.text? // empty' "$json_file" 2>/dev/null) || text=""
+	text=$(jq -R -r --arg t text 'fromjson? | objects | select(.type? == $t) | .part.text? // empty' "$json_file" 2>/dev/null) || text=""
 	if [[ -z "$text" ]]; then
-		text=$(jq -r --arg t text 'objects | .parts[]? | select(.type == $t) | .text' "$json_file" 2>/dev/null) || text=""
+		text=$(jq -R -r --arg t text 'fromjson? | objects | .parts[]? | select(.type? == $t) | .text // empty' "$json_file" 2>/dev/null) || text=""
 	fi
 	[[ -n "$text" ]] && printf '%s\n' "$text"
 	return 0
@@ -638,19 +638,22 @@ _cross_review_extract_text() {
 _cross_review_failure_reason() {
 	local json_file="$1"
 	local err_log="$2"
-	if [[ ! -s "$json_file" ]]; then
-		if [[ -s "$err_log" ]] && grep -Eqi 'timed out|timeout' "$err_log" 2>/dev/null; then
-			echo "timeout (no output before deadline)"
-		elif [[ -s "$err_log" ]] && grep -Eqi 'api key|api_key|not configured|unauthorized|401' "$err_log" 2>/dev/null; then
-			echo "missing or rejected provider key"
-		else
-			echo "runner error (no output produced)"
-		fi
-		return 0
+	local cred_re='api key|api_key|not configured|unauthorized|401'
+	local json_errors=""
+	if [[ -s "$json_file" ]]; then
+		json_errors=$(jq -R -r 'fromjson? | objects | select(.type? == "error" or has("error")) | tojson' "$json_file" 2>/dev/null) || json_errors=""
 	fi
-	if jq -e 'select(.type? == "error" or has("error"))' "$json_file" >/dev/null 2>&1; then
+	# Known causes first, even when JSON output exists
+	if [[ -s "$err_log" ]] && grep -Eqi 'timed out|timeout' "$err_log" 2>/dev/null; then
+		echo "timeout (no output before deadline)"
+	elif { [[ -s "$err_log" ]] && grep -Eqi "$cred_re" "$err_log" 2>/dev/null; } ||
+		{ [[ -n "$json_errors" ]] && printf '%s\n' "$json_errors" | grep -Eqi "$cred_re"; }; then
+		echo "missing or rejected provider key"
+	elif [[ ! -s "$json_file" ]]; then
+		echo "runner error (no output produced)"
+	elif [[ -n "$json_errors" ]]; then
 		echo "runner error (error event in output)"
-	elif jq -e --arg t text 'objects | select(.type? == $t)' "$json_file" >/dev/null 2>&1; then
+	elif jq -R -e --arg t text 'fromjson? | objects | (select(.type? == $t), (.parts[]? | select(.type? == $t)))' "$json_file" >/dev/null 2>&1; then
 		echo "empty answer (text event had no content)"
 	else
 		echo "no text event (timeout or incomplete run)"
