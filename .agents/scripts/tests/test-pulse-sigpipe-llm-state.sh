@@ -162,4 +162,26 @@ _pulse_maybe_run_llm_supervisor || fail "failed supervisor run returned non-zero
 grep -q "LLM supervisor failed" "$LOGFILE" || fail "failed run was not recorded as a failure"
 grep -q '^IDLE:' "$PIDFILE" || fail "failed run did not preserve IDLE sentinel"
 
+# GH#39682: deploy reconciliation drains a supervising earlier-bundle wrapper
+# through its owned LLM lock; only the named owner skips the recycle fill.
+recycle_ran=0
+_run_early_exit_recycle_loop() {
+	recycle_ran=1
+	return 0
+}
+run_pulse() {
+	printf 'owner=%s\nbundle=bundle-next\n' "$$" >"${LOCKDIR}.llm/drain_requested"
+	return 0
+}
+_pulse_maybe_run_llm_supervisor || fail "drained supervisor run returned non-zero"
+[[ "$recycle_ran" == 0 ]] || fail "drained supervisor ran the early-exit recycle fill"
+grep -q "supervisor drain requested; activated bundle bundle-next" "$LOGFILE" || fail "supervisor drain skip was not logged"
+[[ ! -d "${LOCKDIR}.llm" ]] || fail "drained supervisor left its LLM lock behind"
+run_pulse() {
+	printf 'owner=1\nbundle=bundle-next\n' >"${LOCKDIR}.llm/drain_requested"
+	return 0
+}
+_pulse_maybe_run_llm_supervisor || fail "supervisor run with a foreign drain marker returned non-zero"
+[[ "$recycle_ran" == 1 ]] || fail "foreign supervisor drain marker suppressed the recycle fill"
+
 printf 'PASS pulse SIGPIPE and LLM state regressions\n'

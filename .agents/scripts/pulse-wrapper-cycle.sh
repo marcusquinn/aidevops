@@ -714,6 +714,27 @@ _pulse_record_llm_failure() {
 	return 0
 }
 
+# GH#39682: deploy reconciliation lets a supervising earlier-bundle wrapper
+# finish its LLM run and marks the owned LLM lock with drain_requested
+# (pulse-lifecycle-helper.sh _pulse_reconcile_defers_to_cycle_boundary). Only
+# the named owner honours it; releasing the LLM lock removes it.
+# Stdout: the activated bundle id. Returns: 0 when this supervisor is drained.
+_pulse_llm_drain_requested() {
+	local llm_lockdir="${_PULSE_LLM_LOCKDIR_OWNED:-}"
+	local line="" owner="" bundle=""
+	[[ -n "$llm_lockdir" && -f "${llm_lockdir}/drain_requested" ]] || return 1
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		case "$line" in
+		owner=*) owner="${line#owner=}" ;;
+		bundle=*) bundle="${line#bundle=}" ;;
+		esac
+	done 2>/dev/null <"${llm_lockdir}/drain_requested"
+	[[ "$owner" =~ ^[0-9]+$ && "$owner" == "$$" ]] || return 1
+	[[ "$bundle" =~ ^[A-Za-z0-9._-]+$ ]] || bundle="unrecorded"
+	printf '%s\n' "$bundle"
+	return 0
+}
+
 _pulse_maybe_run_llm_supervisor() {
 	local skip_llm=false
 	local llm_trigger_mode="stall"
@@ -786,10 +807,13 @@ _pulse_maybe_run_llm_supervisor() {
 
 		if [[ "$pulse_rc" -eq 0 ]]; then
 			_pulse_record_llm_success "$llm_trigger_mode" || true
+			local llm_drain_bundle=""
 			if [[ "${_PULSE_DRAIN_ESCAPE:-0}" == "1" ]]; then
 				# GH#38162: the drain marker is gone after lock release, so the
 				# recycle loop's dispatch_max would break the drain contract.
 				echo "[pulse-wrapper] Skipping early-exit recycle loop: cooperative drain escape (no new dispatch from this bundle)" >>"$LOGFILE"
+			elif llm_drain_bundle=$(_pulse_llm_drain_requested); then
+				echo "[pulse-wrapper] Skipping early-exit recycle loop: supervisor drain requested; activated bundle ${llm_drain_bundle} dispatches next cycle (GH#39682)" >>"$LOGFILE"
 			else
 				_run_early_exit_recycle_loop "$pulse_duration"
 			fi
