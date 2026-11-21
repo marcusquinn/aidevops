@@ -72,12 +72,14 @@ def verify_auto_merge(root, archive, manifest):
     return oid
 
 
-def restore_auto_merge(root, archive):
+def restore_auto_merge(root, archive, preserved=False):
     manifest = json.loads((archive / 'manifest.json').read_text(encoding='utf-8'))
     if manifest.get('source_fingerprint', {}).get('auto_merge') is None:
         return
-    # Reuse the admin dir fetch_preservation resolved (None only without a bundle).
-    admin = fetch_preservation(root, archive)
+    # preserved: this restore's preparation already imported the same bundle
+    # into this new target; verify_auto_merge still proves the whole closure.
+    # Otherwise reuse the admin dir fetch_preservation resolved (None only without a bundle).
+    admin = None if preserved else fetch_preservation(root, archive)
     oid = verify_auto_merge(root, archive, manifest)
     if admin is None:
         admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))

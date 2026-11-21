@@ -755,11 +755,16 @@ PY
 	return $?
 }
 
+# Set by prepare_restore_repository: "--preserved" only when preparation imported
+# this archive's complete bundle into the new target (GH#39560).
+RESTORE_PRESERVED_OPTION=""
+
 prepare_restore_repository() {
 	local archive_dir="$1"
 	local target="$2"
 	local verification_copy="${3:-0}"
-	local common_dir head_sha self_contained git_only restore_branch
+	local common_dir head_sha self_contained git_only restore_branch prepared=""
+	RESTORE_PRESERVED_OPTION=""
 	IFS=$'\t' read -r common_dir head_sha self_contained git_only < <(python3 - "$archive_dir/manifest.json" <<'PY'
 import json, sys
 m = json.load(open(sys.argv[1], encoding='utf-8'))
@@ -770,17 +775,17 @@ PY
 	if [[ "$git_only" -eq 1 && "$verification_copy" -eq 2 ]]; then
 		# Same registered creation primitive as ordinary recovery, with an explicit
 		# purpose and detached HEAD; no issue claim or dependency bootstrap.
-		python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target" --verification-copy || return 1
+		prepared=$(python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target" --verification-copy) || return 1
 	elif [[ "$git_only" -eq 1 && ( "$self_contained" -eq 1 || "$verification_copy" -eq 1 ) ]]; then
-		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target" || return 1
+		prepared=$(python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target") || return 1
 	elif [[ "$git_only" -eq 1 ]]; then
-		python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target" || return 1
+		prepared=$(python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target") || return 1
 	elif [[ "$self_contained" -eq 1 ]]; then
 		git -c gc.auto=0 -c maintenance.auto=false -c core.hooksPath=/dev/null \
 			clone --quiet --no-checkout -- "$archive_dir/commits.bundle" "$target" || return 1
 		git -C "$target" -c core.hooksPath=/dev/null checkout --quiet --detach "$head_sha" || return 1
 	elif [[ -f "$archive_dir/git-admin.json" ]]; then
-		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target" || return 1
+		prepared=$(python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target") || return 1
 	else
 		[[ -d "$common_dir" ]] || { die "source Git repository is unavailable: $common_dir"; return 1; }
 		if [[ -f "$archive_dir/commits.bundle" ]]; then
@@ -792,6 +797,11 @@ PY
 			source "${SCRIPT_DIR}/shared-worktree-create.sh" || exit 1
 			worktree_create_registered "$common_dir" "$target" "$head_sha" -b "$restore_branch"
 		) >/dev/null || return 1
+	fi
+	# Later steps skip only the repeat import into this same new target; their
+	# object-closure checks still run. Anything else keeps the full import.
+	if [[ "$prepared" == "aidevops-archive-preservation-imported" ]]; then
+		RESTORE_PRESERVED_OPTION="--preserved"
 	fi
 	return 0
 }
@@ -898,7 +908,8 @@ restore_archive() {
 	verify_archive "$archive_dir" >/dev/null || return 1
 	prepare_restore_repository "$archive_dir" "$target" "$verification_copy" || return 1
 	if [[ -f "$archive_dir/merge-state-v1.json" ]]; then
-		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" merge-restore "$target" "$archive_dir" || return 1
+		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" merge-restore "$target" "$archive_dir" \
+			${RESTORE_PRESERVED_OPTION:+"$RESTORE_PRESERVED_OPTION"} || return 1
 	fi
 	python3 "${SCRIPT_DIR}/worktree_archive_deletions.py" restore "$target" "$archive_dir" staged || return 1
 	if [[ -s "$archive_dir/staged.patch" ]]; then git -C "$target" apply --index "$archive_dir/staged.patch" || return 1; fi
@@ -906,9 +917,11 @@ restore_archive() {
 	if [[ -s "$archive_dir/diff.patch" ]]; then git -C "$target" apply "$archive_dir/diff.patch" || return 1; fi
 	restore_untracked_payload "$archive_dir" "$target" || return 1
 	if [[ -f "$archive_dir/git-admin.json" ]]; then
-		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-restore "$target" "$archive_dir" || return 1
+		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-restore "$target" "$archive_dir" \
+			${RESTORE_PRESERVED_OPTION:+"$RESTORE_PRESERVED_OPTION"} || return 1
 	fi
-	python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-restore "$target" "$archive_dir" || return 1
+	python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-restore "$target" "$archive_dir" \
+		${RESTORE_PRESERVED_OPTION:+"$RESTORE_PRESERVED_OPTION"} || return 1
 	python3 "${SCRIPT_DIR}/worktree_archive_runtime_config.py" restore-note "$archive_dir" || return 1
 	printf '%s\n' "$target"
 	return 0

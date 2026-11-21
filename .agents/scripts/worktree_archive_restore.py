@@ -116,12 +116,15 @@ def prepare(archive, target, verification=False):
                        env=environment, stdout=sys.stderr, check=True, timeout=180)
     if published_import:
         import_published_head(target, common, manifest["head_sha"])
+    imported = False
     if bundle.is_file() or published_import:
-        fetch_preservation(target, archive)
+        # Non-None only after the complete bundle was verified and imported.
+        imported = fetch_preservation(target, archive) is not None
         if verification:
             git(target, "checkout", "--quiet", "--detach", manifest["head_sha"])
         else:
             git(target, "reset", "--hard", manifest["head_sha"])
+    return imported
 
 
 class RestorationProof(UnsealedRecovery):
@@ -362,8 +365,9 @@ class RestorationProof(UnsealedRecovery):
 
 if __name__ == "__main__":
     try:
-        prepare(Path(sys.argv[1]).resolve(strict=True), Path(sys.argv[2]).absolute(),
-                verification=sys.argv[3:] == ["--verification-copy"])
+        from worktree_archive_git import report_preservation_import
+        report_preservation_import(prepare(Path(sys.argv[1]).resolve(strict=True), Path(sys.argv[2]).absolute(),
+                                           verification=sys.argv[3:] == ["--verification-copy"]))
     except subprocess.CalledProcessError as error:
         # Python's default traceback omits the captured Git stderr. Carry only
         # fixed diagnostic categories across Bash; never expose Git argv/data.
