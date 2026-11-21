@@ -10,6 +10,8 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 source "${SCRIPT_DIR}/cloudron-package-release-lib.sh"
 # shellcheck source=review-thread-gate-lib.sh
 source "${SCRIPT_DIR}/review-thread-gate-lib.sh"
+# shellcheck source=full-loop-helper-risk.sh
+source "${SCRIPT_DIR}/full-loop-helper-risk.sh"
 REPOS_FILE="${AIDEVOPS_REPOS_FILE:-${HOME}/.config/aidevops/repos.json}"
 RELEASE_SHA_PATTERN='^[a-f0-9]{40}$'
 RELEASE_APPROVAL_LABEL='release-approval-required'
@@ -240,6 +242,17 @@ release_request_interrupted() {
 	return 4
 }
 
+# Run the merge-time Runtime Testing validation (full-loop-helper-risk.sh) before
+# asking for a signature, so a fixable PR-body defect cannot block a signed approval.
+release_runtime_testing_precheck() {
+	local pr="$1" snapshot="$2" metadata="" reason=""
+	metadata=$(jq -r '.body // "" | strings' <<<"$snapshot" | _runtime_testing_metadata_from_body) ||
+		release_error "Request blocked for PR #${pr}: runtime testing metadata unreadable" || return 1
+	reason=$(_runtime_testing_merge_refusal "$metadata") ||
+		release_error "Merge blocked for PR #${pr}: ${reason}; no approval request created." || return 1
+	return 0
+}
+
 release_request() {
 	local repo="$1" pr="$2"
 	local snapshot="" sha="" manifest="" version="" upstream="" notes="" checks="" issues="" existing="" url="" older="" rc=0
@@ -249,6 +262,7 @@ release_request() {
 	release_authority "$repo" || return 1
 	snapshot=$(release_pr "$repo" "$pr") || return 1
 	[[ "$(jq -r '.state' <<<"$snapshot")" == open ]] || release_error "PR #${pr} must be open before requesting approval." || return 1
+	release_runtime_testing_precheck "$pr" "$snapshot" || return 1
 	sha=$(jq -r '.head.sha' <<<"$snapshot")
 	release_publication_preflight "$repo" "$sha" || return 1
 	checks=$(release_checks "$repo" "$pr" "$sha") || release_error 'PR checks must all pass before requesting approval.' || return 1
