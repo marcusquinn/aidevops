@@ -487,6 +487,27 @@ _reconcile_lifecycle_receipts() {
 	return 0
 }
 
+# GH#39702: release retained aidevops-worker-* user units whose invocation has
+# drained, after committing a release receipt. Linux/systemd only; the helper
+# reports unsupported-platform elsewhere. Never stops units with processes.
+_release_retained_worker_units() {
+	local helper="${SCRIPT_DIR}/worktree_lifetime_release.py"
+	local limit="${AIDEVOPS_WORKER_UNIT_RELEASE_LIMIT:-200}"
+	local grace="${AIDEVOPS_WORKER_UNIT_RELEASE_GRACE_SECONDS:-3600}"
+	local rc=0
+	[[ "$(uname -s)" == "Linux" ]] || return 0
+	if [[ ! -f "$helper" ]] || ! declare -F timeout_sec >/dev/null 2>&1; then
+		echo "[cleanup-worktrees-async] worker unit release unavailable; retaining units" >>"$LOGFILE"
+		return 0
+	fi
+	[[ "$limit" =~ ^[1-9][0-9]{0,4}$ ]] || limit=200
+	[[ "$grace" =~ ^[0-9]{1,7}$ ]] || grace=3600
+	timeout_sec 90 python3 "$helper" sweep --limit "$limit" --budget-seconds 75 \
+		--grace-seconds "$grace" >>"$LOGFILE" 2>&1 || rc=$?
+	printf '[cleanup-worktrees-async] worker-unit-release rc=%s\n' "$rc" >>"$LOGFILE"
+	return 0
+}
+
 # Print "<cap> <cleanup-threshold>"; the shared lib owns the defaults.
 _worktree_cap_and_threshold() {
 	local cap="${AIDEVOPS_MAX_WORKTREES:-1000}"
@@ -666,6 +687,7 @@ _run_cleanup_pass() {
 	echo "[cleanup-worktrees-async] Starting cleanup_worktrees (cadence OK)" >>"$LOGFILE"
 	_reconcile_worktree_registry
 	_reconcile_lifecycle_receipts
+	_release_retained_worker_units
 	_prune_missing_worktree_metadata_all_repos
 	_reclaim_branch_cleanup_transports_all_repos
 

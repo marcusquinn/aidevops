@@ -117,6 +117,10 @@ def unit_snapshot(unit: str) -> dict:
     return owner_lifetime.unit_snapshot(unit)
 
 
+def unit_presence(unit: str) -> dict:
+    return owner_lifetime.unit_presence(unit)
+
+
 def boot_id() -> str:
     return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
 
@@ -166,7 +170,7 @@ def drain(launch: dict) -> None:
     if launch.get("kind") == owner_lifetime.KIND:
         owner_lifetime.drain(launch)
         return
-    owner_lifetime.drain_unit(launch, boot_id, unit_snapshot)
+    owner_lifetime.drain_unit(launch, boot_id, unit_snapshot, unit_presence)
 
 
 def seal(record: dict) -> None:
@@ -297,8 +301,9 @@ def main() -> int:
                     mutate_record(record, path, args.operation, args.extra, connection)
                     save(connection, record)
             connection.execute("COMMIT")
-        # Do not stop units by name after sampling: systemd has no atomic
-        # invocation-conditional StopUnit, so a replacement could be targeted.
+        # Do not stop units by name here: systemd has no atomic
+        # invocation-conditional StopUnit. Drained units are released only by
+        # worktree_lifetime_release.py after a durable unit_release receipt.
         if args.operation == "bind-exec":
             os.environ["AIDEVOPS_MANAGED_WORKTREE"] = "pulse-cgroup-v1"
             # Intentional dispatcher-command execution, only after committed admission.
