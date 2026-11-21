@@ -147,9 +147,12 @@ override it. A refusal prints the registry `detail`/`status` and the next step
   listed path and retry retirement.
 - `generation-directory-mismatch` after the canonical checkout moved on disk
   (same installation, same worktree path and inodes; only the marker's admin
-  path is stale): run `worker-registry.py rebind-moved-worktree --path PATH`
+  path is stale): run `worker-registry.py --state-dir STATE_DIR rebind-moved-worktree --path PATH`
   (`canonical-recovery-helper.sh repair-worktrees` prints it per tree), then
-  retry retirement. It journals the move, rewrites only that marker field, and
+  retry retirement. `STATE_DIR` must be this installation's existing lifecycle
+  registry (configured by `~/.config/aidevops/lifecycle-state-dir` or
+  `AIDEVOPS_LIFECYCLE_STATE_DIR`), not a new registry; rebind checks its identity
+  against the marker. It journals the move, rewrites only that marker field, and
   refuses a tree whose inodes, path, registry generation or Git backlink differ.
 - `generation-directory-mismatch` for a copy: the tree was copied from another host or
   restored from backup. Rescue its work first, then retire it with

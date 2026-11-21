@@ -1,13 +1,14 @@
 """Disposable Git integration; intentionally outside the portable OS validator."""
 
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 import errno
 import importlib.util
 import io
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import sqlite3
 import struct
@@ -961,6 +962,109 @@ class EnrollmentContract(unittest.TestCase):
         shutil.copytree(self.tree, copy, symlinks=True)
         with self.assertRaises((ValueError, StoreConflict)):
             rebind_moved_admin(self.store, copy)
+
+    def test_repair_followup_uses_configured_registry_and_quotes_entrypoint(self):
+        self.enrollment.resolve(self.tree, create=True)
+        scripts = Path(__file__).resolve().parents[2] / "scripts"
+        alias = self.root / "scripts ; literal"
+        alias.symlink_to(scripts, target_is_directory=True)
+        (self.root / "worker-lifecycle").symlink_to(scripts.parent / "worker-lifecycle",
+                                                   target_is_directory=True)
+        config = self.root / ".config" / "aidevops"
+        config.mkdir(parents=True)
+        configured_state = self.root / "state ; literal"
+        self.store.directory.rename(configured_state)
+        (config / "lifecycle-state-dir").write_text(str(configured_state) + "\n")
+        moved = self.root / "moved"
+        self.repo.rename(moved)
+        env = {name: value for name, value in os.environ.items()
+               if not name.startswith(("GIT_", "AIDEVOPS_"))}
+        native_git = subprocess.run(  # nosec B603 B607 # fixed system PATH lookup
+            ["bash", "-c", "command -p -v git"], capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        env.update(HOME=str(self.root), AIDEVOPS_REAL_GIT_BIN=native_git)
+        result = subprocess.run(  # nosec B603 B607 # fixed recovery command in disposable fixtures
+            ["bash", str(alias / "canonical-recovery-helper.sh"), "repair-worktrees",
+             "--repo", str(moved), "--confirm", "REPAIR_WORKTREE_POINTERS"],
+            env=env, capture_output=True, text=True, timeout=30, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commands = [line.removeprefix("REBIND_FOLLOWUP: ") for line in result.stdout.splitlines()
+                    if line.startswith("REBIND_FOLLOWUP: ")]
+        self.assertEqual(len(commands), 1)
+        argv = shlex.split(commands[0])
+        self.assertEqual(argv, ["python3", str(alias / ".." / "worker-lifecycle" / "worker-registry.py"),
+                                "--state-dir", str(configured_state),
+                                "rebind-moved-worktree", "--path", str(self.tree)])
+        rebound = subprocess.run(  # nosec B603 # parsed owned helper output, no shell execution
+            argv, env=env, capture_output=True, text=True, timeout=30, check=True,
+        )
+        self.assertTrue(json.loads(rebound.stdout)["rebound"])
+
+    def test_rebind_revisits_destinations_and_replays_transitions(self):
+        generation = self.enrollment.resolve(self.tree, create=True)
+        current = self.repo
+        for name in ("second", "third", "second", "repo", "second"):
+            destination = self.root / name
+            current.rename(destination)
+            self.git("-C", str(destination), "worktree", "repair", str(self.tree))
+            self.assertTrue(rebind_moved_admin(self.store, self.tree)["rebound"])
+            self.assertEqual(self.enrollment.inspect(self.tree), generation)
+            current = destination
+        with self.store.connection() as connection:
+            events = [json.loads(row[0]) for row in connection.execute("SELECT payload FROM events")]
+        self.assertEqual(sum(event["type"] == "rebind-admin-directory" for event in events), 4)
+
+    def test_rebind_recovers_publication_event_commit_and_finalization_failures(self):
+        from worker_lifecycle.rebind import _replace_marker
+
+        generation = self.enrollment.resolve(self.tree, create=True)
+        current = self.repo
+        for stage in ("publication", "event", "commit", "finalization"):
+            with self.subTest(stage=stage):
+                destination = self.root / stage
+                current.rename(destination)
+                self.git("-C", str(destination), "worktree", "repair", str(self.tree))
+                marker = _git_directory(self.tree) / MARKER
+                before = self.store.summary()
+                original_connection = self.store.connection
+
+                @contextmanager
+                def failing_commit(write=False, **kwargs):
+                    with original_connection(write=write, **kwargs) as connection:
+                        yield connection
+                        if write:
+                            raise sqlite3.OperationalError("commit interrupted")
+
+                calls = []
+
+                def failing_replace(directory, value):
+                    calls.append(value)
+                    if stage == "publication" or len(calls) == 2:
+                        raise OSError("publication interrupted")
+                    _replace_marker(directory, value)
+
+                if stage in ("publication", "finalization"):
+                    failure = patch("worker_lifecycle.rebind._replace_marker", side_effect=failing_replace)
+                elif stage == "event":
+                    failure = patch.object(self.store, "_event", side_effect=OSError("event interrupted"))
+                else:
+                    failure = patch.object(self.store, "connection", side_effect=failing_commit)
+                with failure, self.assertRaises((OSError, sqlite3.OperationalError)):
+                    rebind_moved_admin(self.store, self.tree)
+                if stage != "finalization":
+                    self.assertEqual(self.store.summary(), before)
+                if stage != "publication":
+                    self.assertIn("rebind_from", json.loads(marker.read_bytes()))
+                    with self.assertRaises(StoreConflict):
+                        self.enrollment.inspect(self.tree)
+                self.assertTrue(rebind_moved_admin(self.store, self.tree)["rebound"])
+                self.assertEqual(self.enrollment.inspect(self.tree), generation)
+                self.assertNotIn("rebind_from", json.loads(marker.read_bytes()))
+                completed = self.store.summary()
+                self.assertFalse(rebind_moved_admin(self.store, self.tree)["rebound"])
+                self.assertEqual(self.store.summary(), completed)
+                current = destination
 
 
 if __name__ == "__main__":

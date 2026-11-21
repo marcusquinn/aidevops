@@ -33,6 +33,11 @@ def _replace_marker(directory: Path, value: dict) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, directory / MARKER)
+        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
@@ -48,15 +53,25 @@ def _require_registered(connection: sqlite3.Connection, generation: str, path: P
 
 def _commit_rebind(store: LifecycleRegistry, path: Path, directory: Path, value: dict) -> dict:
     generation = value["generation_id"]
-    previous, current = value["git_directory"], str(directory)
+    previous, current = value.get("rebind_from", value["git_directory"]), str(directory)
+    clean = {name: item for name, item in value.items() if name != "rebind_from"}
     with store.connection(write=True) as connection:
         _require_registered(connection, generation, path)
-        store._event(connection, str(uuid5(UUID(generation), "rebind:" + current)), {
+        if _read_marker(directory / MARKER) != value:
+            raise StoreConflict(MISMATCH)
+        # Publish a durable recovery record with the new path before committing
+        # its event. Normal enrollment rejects the extra field until finalized.
+        # A crash/commit failure leaves the source path available for replay,
+        # even when git_directory already names the destination.
+        _replace_marker(directory, dict(clean, git_directory=current, rebind_from=previous))
+        transition = encode([previous, current])
+        store._event(connection, str(uuid5(UUID(generation), "rebind:" + transition)), {
             "type": "rebind-admin-directory", "generation_id": generation,
             "path": str(path), "from": previous, "to": current,
         })
-        # Replace under the write transaction; replay repairs a crash before this.
-        _replace_marker(directory, dict(value, git_directory=current))
+    # Only a committed event permits removing the recovery field. A crash here
+    # replays the identical event before finalizing the marker.
+    _replace_marker(directory, dict(clean, git_directory=current))
     return {"generation_id": generation, "rebound": True, "from": previous,
             "to": current, "cleanup_authorized": False}
 
@@ -74,12 +89,16 @@ def rebind_moved_admin(store: LifecycleRegistry, path: Path) -> dict:
                 "git_directory": value.get("git_directory"),
                 "git_identity": _directory_inode(directory),
             }
-            comparable = {name: item for name, item in value.items() if name != "generation_id"}
+            comparable = {name: item for name, item in value.items()
+                          if name not in ("generation_id", "rebind_from")}
             valid = (encode(comparable) == encode(expected) and isinstance(value["git_directory"], str)
-                     and root.matches_path() and admin.matches_path())
+                      and root.matches_path() and admin.matches_path())
+            if "rebind_from" in value:
+                valid = (valid and isinstance(value["rebind_from"], str)
+                         and value["git_directory"] == str(directory))
             if not valid:
                 raise StoreConflict(MISMATCH)
-            if value["git_directory"] == str(directory):
+            if value["git_directory"] == str(directory) and "rebind_from" not in value:
                 return {"generation_id": value["generation_id"], "rebound": False,
                         "cleanup_authorized": False}
             return _commit_rebind(store, path, directory, value)
