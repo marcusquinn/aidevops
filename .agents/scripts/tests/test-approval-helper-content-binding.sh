@@ -193,12 +193,12 @@ run_verify() {
 	local expected_head="${3:-}"
 	if [[ -n "$expected_head" ]]; then
 		HOME="$TEST_HOME" PATH="${TEST_ROOT}/bin:$PATH" FIXTURES="$FIXTURES" \
-			AIDEVOPS_APPROVAL_PUB="${TEST_ROOT}/approval.pub" \
+			AIDEVOPS_APPROVAL_PUB="${TEST_APPROVAL_PUB:-${TEST_ROOT}/approval.pub}" \
 			"$APPROVAL_HELPER" verify "$kind" "$number" owner/repo --expect-head "$expected_head" 2>/dev/null
 		return $?
 	fi
 	HOME="$TEST_HOME" PATH="${TEST_ROOT}/bin:$PATH" FIXTURES="$FIXTURES" \
-		AIDEVOPS_APPROVAL_PUB="${TEST_ROOT}/approval.pub" \
+		AIDEVOPS_APPROVAL_PUB="${TEST_APPROVAL_PUB:-${TEST_ROOT}/approval.pub}" \
 		"$APPROVAL_HELPER" verify "$kind" "$number" owner/repo 2>/dev/null
 	return $?
 }
@@ -1760,6 +1760,19 @@ lane_drift_and_failures() {
 	write_baseline_fixtures
 	replace_with_legacy_comment 41
 	assert_verify "V1 signature is legacy and cannot become V2 authority" issue 41 LEGACY_APPROVAL 3
+
+	# Real signatures from a different signer remain fail-closed, but intact
+	# signatures are not confused with malformed or tampered signed content.
+	ssh-keygen -t ed25519 -N '' -f "${LANE_DIR}/other.key" -q
+	local kind=""
+	for kind in issue pr; do
+		local number=41
+		[[ "$kind" != pr ]] || number=42
+		reset_and_sign "$kind" "$number"
+		TEST_APPROVAL_PUB="${LANE_DIR}/other.key.pub" assert_verify "intact $kind approval with another local key is unverifiable" "$kind" "$number" UNVERIFIABLE_SIGNER 8
+		jq '.[0][-1].body |= sub("2026-01-01T00:05:00Z"; "2026-01-01T00:05:01Z")' "${FIXTURES}/comments-${number}.json" >"${FIXTURES}/comments.tmp" && mv "${FIXTURES}/comments.tmp" "${FIXTURES}/comments-${number}.json"
+		TEST_APPROVAL_PUB="${LANE_DIR}/other.key.pub" assert_verify "tampered $kind approval with another local key is malformed" "$kind" "$number" MALFORMED_APPROVAL 5
+	done
 
 	reset_and_sign issue 41
 	jq '.[0][-1].body |= sub("aidevops-approval/v2"; "aidevops-approval/v3")' "${FIXTURES}/comments-41.json" >"${FIXTURES}/comments.tmp" && mv "${FIXTURES}/comments.tmp" "${FIXTURES}/comments-41.json"

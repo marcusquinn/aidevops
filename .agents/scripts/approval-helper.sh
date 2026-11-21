@@ -1513,6 +1513,37 @@ _verify_comment_signature() {
 	return 1
 }
 
+_approval_classify_legacy_comment() {
+	local target_type="$1" target_number="$2" slug="$3" body="$4" pub_key="$5" payload="$6"
+	local legacy_payload_prefix=""
+	if ! _verify_comment_signature "$body" "$pub_key"; then
+		printf 'MALFORMED_APPROVAL\n'
+		return 0
+	fi
+	legacy_payload_prefix=$(printf 'APPROVE:%s:%s:%s:' "$target_type" "$slug" "$target_number" | tr '[:upper:]' '[:lower:]')
+	if [[ "$(printf '%s' "$payload" | tr '[:upper:]' '[:lower:]')" == "${legacy_payload_prefix}"* ]]; then
+		printf 'LEGACY_APPROVAL\n'
+	else
+		printf 'MALFORMED_APPROVAL\n'
+	fi
+	return 0
+}
+
+_approval_v2_payload_matches_target() {
+	local payload="$1" target_type="$2" normalized_slug="$3" target_number="$4"
+	jq -e --arg type "$target_type" --arg repo "$normalized_slug" --arg number "$target_number" \
+		--arg sha_pattern "$PERMISSION_SHA256_PATTERN" --arg string_type "$PERMISSION_JSON_STRING_TYPE" --arg object "$APPROVAL_JSON_OBJECT" '
+		.schema == "aidevops-approval/v2"
+		and .target.kind == $type
+		and .target.repository == $repo
+		and (.target.number | tostring) == $number
+		and (.snapshot_sha256 | type == $string_type and test($sha_pattern))
+		and (.issued_at | type == $string_type and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+		and (if $type == "pr" then (.authority == "merge" and (.pr | type == $object)) else (.authority == "development" and .pr == null and ((.issue // null) == null or (.issue.lifecycle | type == $object))) end)
+	' <<<"$payload" >/dev/null 2>&1 || return 1
+	return 0
+}
+
 _approval_classify_signed_comment() {
 	local target_type="$1"
 	local target_number="$2"
@@ -1531,30 +1562,11 @@ _approval_classify_signed_comment() {
 	fi
 
 	if [[ "$payload" == APPROVE:* ]]; then
-		if ! _verify_comment_signature "$body" "$pub_key"; then
-			printf 'MALFORMED_APPROVAL\n'
-			return 0
-		fi
-		local legacy_payload_prefix=""
-		legacy_payload_prefix=$(printf 'APPROVE:%s:%s:%s:' "$target_type" "$slug" "$target_number" | tr '[:upper:]' '[:lower:]')
-		if [[ "$(printf '%s' "$payload" | tr '[:upper:]' '[:lower:]')" == "${legacy_payload_prefix}"* ]]; then
-			printf 'LEGACY_APPROVAL\n'
-		else
-			printf 'MALFORMED_APPROVAL\n'
-		fi
+		_approval_classify_legacy_comment "$target_type" "$target_number" "$slug" "$body" "$pub_key" "$payload"
 		return 0
 	fi
 
-	if ! jq -e --arg type "$target_type" --arg repo "$normalized_slug" --arg number "$target_number" \
-		--arg sha_pattern "$PERMISSION_SHA256_PATTERN" --arg string_type "$PERMISSION_JSON_STRING_TYPE" --arg object "$APPROVAL_JSON_OBJECT" '
-		.schema == "aidevops-approval/v2"
-		and .target.kind == $type
-		and .target.repository == $repo
-		and (.target.number | tostring) == $number
-		and (.snapshot_sha256 | type == $string_type and test($sha_pattern))
-		and (.issued_at | type == $string_type and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
-		and (if $type == "pr" then (.authority == "merge" and (.pr | type == $object)) else (.authority == "development" and .pr == null and ((.issue // null) == null or (.issue.lifecycle | type == $object))) end)
-	' <<<"$payload" >/dev/null 2>&1; then
+	if ! _approval_v2_payload_matches_target "$payload" "$target_type" "$normalized_slug" "$target_number"; then
 		printf 'MALFORMED_APPROVAL\n'
 		return 0
 	fi
