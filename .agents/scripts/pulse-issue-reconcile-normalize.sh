@@ -389,6 +389,13 @@ _enforce_statusless_ai_hold_one_issue() {
 	[[ "$live_labels" == *",${_LI_AI_RECOVERY},"* || "$live_labels" == *",needs-dependency,"* ]] || return 1
 	[[ "$live_labels" != *",parent-task,"* && "$live_labels" != *",needs-maintainer-review,"* ]] || return 1
 	[[ "$live_labels" != *",hold-for-review,"* && "$live_labels" != *",no-auto-dispatch,"* ]] || return 1
+	# The listing row's non-task exclusion (_fetch_label_invariant_rows) is a
+	# hint too: a tracker label added after the listing must still block.
+	local non_task=""
+	for non_task in supervisor contributor quality-review routine-tracking "on hold" \
+		release-approval-required release-standing-policy "$_LI_PERSISTENT_LABEL"; do
+		[[ "$live_labels" != *",${non_task},"* ]] || return 1
+	done
 	if declare -F issue_labels_csv_have_human_hold >/dev/null 2>&1 &&
 		issue_labels_csv_have_human_hold "$live_labels"; then
 		return 1
