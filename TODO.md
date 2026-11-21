@@ -2378,9 +2378,17 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19232 Add paired base/head subprocess spawn profiler for suite fan-out work #auto-dispatch #feat ref:GH#39605 pr:#39610 completed:2026-11-21
 
-- [ ] t19231 fix(worker-blocker-log): lock wait budget of ~100 ms drops blocker events under load (flaky parallel-appenders test) #auto-dispatch #bug ref:GH#39603
+- [x] t19231 fix(worker-blocker-log): lock wait budget of ~100 ms drops blocker events under load (flaky parallel-appenders test) #auto-dispatch #bug ref:GH#39603 pr:#39604 completed:2026-11-21
 
 - [x] t19234 perf(relay): steering relay and issue-watch reads use stable per-issue URLs so unchanged issues revalidate as free 304s #auto-dispatch #feat ref:GH#39619 logged:2026-11-21 -> [todo/tasks/t19234-brief.md] pr:#39621 completed:2026-11-21
+
+- [x] t19230 perf(gh-transport): refund primary pacing slot for free 304 revalidations #auto-dispatch #perf ref:GH#39597 logged:2026-11-21 -> [todo/tasks/t19230-brief.md] pr:#39601 completed:2026-11-21
+
+- [x] t19233 fix(github-auth): App-read routing advisory fires on REST saturation, refreshed each pulse cycle #bug #interactive ref:GH#39611 logged:2026-11-21 -> [todo/tasks/t19233-brief.md] pr:#39617 completed:2026-11-21
+
+- [x] t19235 fix(gh-api-report): count HTTP 304 not-modified attempts as successful, not failed, in the usage aggregator #auto-dispatch #bug ref:GH#39623 logged:2026-11-21 -> [todo/tasks/t19235-brief.md] pr:#39625 completed:2026-11-21
+
+- [x] t19237 docs(task-lifecycle): interactive implementation PRs keep TODO.md out and publish rows via planning-commit-helper #auto-dispatch #documentation ref:GH#39629 logged:2026-11-21 -> [todo/tasks/t19237-brief.md] pr:#39632 completed:2026-11-21
 
 ## In Progress
 
