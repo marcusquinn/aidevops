@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.259] - 2026-11-21
+
+### Changed
+
+- Maintenance: mark t19254 complete (pr:#39719 completed:2026-11-21) (#39708)
+- Maintenance: add t19254 suite-health failure logs, t19255 scratch-worktree Linux exit 128
+- Maintenance: sync GitHub issue refs to TODO.md (#39705)
+
+### Fixed
+
+- ignore registry update stamps in the runner capability fingerprint
+- align dispatch block-reason precedence (GH#39717) (#39720)
+- finish interrupted blocker releases and restore statusless AI-owned holds (GH#39710)
+- capture failing-suite output in Shell Suite Main Health artifact
+- keep the interactive claim while another open PR still closes the issue (GH#39704)
+
 ## [3.39.258] - 2026-11-21
 
 ### Added

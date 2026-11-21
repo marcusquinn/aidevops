@@ -108,6 +108,13 @@ _TBR_OTHER_HOLDS_JQ='def other_holds($blocked): [.[] | select(. == "needs-mainta
 # hold classified; only bare or needs-ai-recovery holds enter unclassified intake.
 _TBR_CLASSIFIED_COMPANION_JQ='def classified_companion: any(.[]; . == "needs-maintainer-input" or
 	. == "needs-credentials" or . == "needs-source-access" or . == "needs-dependency");'
+# GH#39710: set_issue_status removes status:blocked before it adds the target
+# (remove-first), so a stage timeout between those writes leaves no status:*
+# label and a blocked-owned companion behind. That is this supervisor's own
+# release cut short, not a resolved hold, so projection must finish it.
+_TBR_INTERRUPTED_RELEASE_JQ='def interrupted_release: (any(.[]; startswith("status:")) | not) and
+	any(.[]; . == "needs-ai-recovery" or . == "needs-dependency" or . == "needs-maintainer-input" or
+	. == "needs-source-access");'
 # Shape predicates for listing/comment validation.
 _TBR_SHAPE_JQ='def arr: type == ([] | type); def bool: type == (true | type);'
 # Evaluated-issue memory older than this is pruned after a complete pass.
@@ -835,8 +842,8 @@ _tbr_release_circuit_hold() {
 	local labels=""
 	local blocked_status="status:blocked"
 	labels=$(printf '%s' "$issue_json" | jq -ce '.labels | select(type == "array") | map(.name)' 2>/dev/null) || return 2
-	printf '%s' "$labels" | jq -e --arg blocked "$blocked_status" "${_TBR_OTHER_HOLDS_JQ}"'
-		((index($blocked) != null) or (index("status:available") != null)) and
+	printf '%s' "$labels" | jq -e --arg blocked "$blocked_status" "${_TBR_OTHER_HOLDS_JQ}${_TBR_INTERRUPTED_RELEASE_JQ}"'
+		((index($blocked) != null) or (index("status:available") != null) or interrupted_release) and
 		(other_holds($blocked) | length == 0)
 	' >/dev/null 2>&1 || return 0
 	# GH#35540: absence of an applicable hold is NOT positive re-arm evidence.

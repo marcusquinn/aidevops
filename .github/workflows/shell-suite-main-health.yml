@@ -66,6 +66,7 @@ jobs:
           rc=0
           timeout --signal=TERM 3600 \
             .agents/scripts/affected-tests-helper.sh all --jobs 4 --timeout 180 --retries 1 \
+            --log-dir "${out}/suite-logs" \
             > "$results" 2> "${out}/suite-stderr.log" || rc=$?
           echo "out=${out}" >> "$GITHUB_OUTPUT"
           if [[ "$rc" -eq 124 ]]; then

@@ -1304,6 +1304,25 @@ _dispatch_capability_cooldown_path() {
 	return 0
 }
 
+# GH#39723: `aidevops update` re-registers every repo, stamping `updated` and
+# `version` on each registry entry. Those stamps are bookkeeping, not runner
+# capability, so they must not wake capability holds: hashing the raw file
+# re-probed every held issue with a fresh worker after each framework update.
+# Any other registry change stays a wake signal (GH#35788).
+_DISPATCH_CAPABILITY_REGISTRY_JQ='if (.initialized_repos | type) == "array" then .initialized_repos |= map(if type == "object" then del(.updated, .version) else . end) else . end'
+
+# Prints "<crc> <size>" for the registry without update stamps; falls back to
+# the raw-file checksum when the registry cannot be projected.
+_dispatch_capability_registry_checksum() {
+	local registry="$1" projected=""
+	if projected=$(jq -cS "$_DISPATCH_CAPABILITY_REGISTRY_JQ" "$registry" 2>/dev/null) && [[ -n "$projected" ]]; then
+		printf '%s\n' "$projected" | cksum
+		return 0
+	fi
+	cksum <"$registry" 2>/dev/null
+	return $?
+}
+
 # Checksum of the runner-local requirement map; "none" when absent.
 _dispatch_capability_config_fingerprint() {
 	local repo_path="$1" config="" crc="" size=""
@@ -1312,7 +1331,7 @@ _dispatch_capability_config_fingerprint() {
 	# GH#35788: policy approval and installed tools are wake signals, not a
 	# reason to wait out the old runner-local TTL. Only hashes/states leave here.
 	if [[ -f "$registry" && ! -L "$registry" ]]; then
-		read -r policy_crc policy_size < <(cksum <"$registry" 2>/dev/null) || policy_crc=""
+		read -r policy_crc policy_size < <(_dispatch_capability_registry_checksum "$registry") || policy_crc=""
 	fi
 	if [[ -n "$repo_path" && -d "$repo_path" ]]; then
 		readiness=$(bash "${BASH_SOURCE[0]%/*}/worktree-js-readiness-helper.sh" probe "$repo_path" --json 2>/dev/null |
