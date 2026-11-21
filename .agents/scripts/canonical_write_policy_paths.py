@@ -5,11 +5,7 @@
 
 from __future__ import annotations
 
-import json
 import os
-import stat
-import subprocess  # nosec B404 -- fixed native Git argv only
-import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,15 +14,6 @@ from native_git import real_git
 
 
 GIT_WORKSPACE_ROOT_ENV = "AIDEVOPS_GIT_WORKSPACE_ROOT"
-
-# GH#39573: opt-in canonical writes for gitignored runtime output.
-PROJECT_CONFIG_NAME = ".aidevops.json"
-RUNTIME_ALLOW_KEY = "canonical_write_allow"
-_RESERVED_COMPONENTS = frozenset(
-    {".git", PROJECT_CONFIG_NAME, ".gitignore", ".gitattributes"}
-)
-_PREFIX_FORBIDDEN_CHARACTERS = frozenset("*?[]\\\0")
-_CONFIG_MAX_BYTES = 1 << 20
 
 
 @dataclass
@@ -194,143 +181,3 @@ def repository_within_workspace(
         is_within_workspace(path, workspace_root)
         for path in (location.repo_root, location.git_dir, location.common_dir)
     )
-
-
-def _git_probe(repo_root: str, *args: str) -> tuple[int, str]:
-    """Run one fixed Git probe; any failure is a non-zero code."""
-    environment = {
-        key: value for key, value in os.environ.items()
-        if not key.startswith("GIT_")
-    }
-    try:
-        result = subprocess.run(  # nosec B603 -- native Git, fixed argv; paths are data
-            [_real_git(), "-C", repo_root, *args],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-            env=environment,
-        )
-    except (OSError, subprocess.SubprocessError, RuntimeError):
-        return -1, ""
-    return result.returncode, result.stdout
-
-
-def _untracked_and_ignored(repo_root: str, relative: str) -> bool:
-    """Tracked content stays protected even when an ignore rule matches it."""
-    # Literal pathspecs stop glob characters in a filename from matching
-    # nothing; check-ignore rejects that flag and takes plain pathnames.
-    code, tracked = _git_probe(
-        repo_root, "--literal-pathspecs", "ls-files", "-z", "--", relative
-    )
-    if code != 0 or tracked:
-        return False
-    code, _ = _git_probe(repo_root, "check-ignore", "-q", "--", relative)
-    return code == 0
-
-
-def _is_reserved_component(part: str) -> bool:
-    # Filesystems may alias `.GIT`, HFS+ ignorable code points (format
-    # characters) and trailing dots/spaces to `.git`; compare the folded form.
-    folded = "".join(
-        char for char in unicodedata.normalize("NFC", part)
-        if unicodedata.category(char) != "Cf"
-    ).rstrip(". ").casefold()
-    return folded in _RESERVED_COMPONENTS
-
-
-def _trusted_project_config(repo_root: str) -> dict | None:
-    """Return the canonical config only when it is owned, ignored and untracked."""
-    config_path = Path(repo_root) / PROJECT_CONFIG_NAME
-    try:
-        info = config_path.lstat()
-    except OSError:
-        return None
-    if (
-        not stat.S_ISREG(info.st_mode)
-        or info.st_uid != os.getuid()
-        or info.st_nlink != 1
-        or info.st_size > _CONFIG_MAX_BYTES
-        or not _untracked_and_ignored(repo_root, PROJECT_CONFIG_NAME)
-    ):
-        return None
-    try:
-        descriptor = os.open(
-            config_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        )
-        with os.fdopen(descriptor, encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def _runtime_allow_prefix(entry: object) -> tuple[str, ...]:
-    """Parse one `dir/` prefix; anything ambiguous yields no prefix."""
-    if (
-        not isinstance(entry, str)
-        or not entry.endswith("/")
-        # A leading ":" would be read as pathspec magic by check-ignore.
-        or entry.startswith(("/", ":"))
-        or any(char in _PREFIX_FORBIDDEN_CHARACTERS for char in entry)
-    ):
-        return ()
-    parts = tuple(entry[:-1].split("/"))
-    if any(
-        part in ("", ".", "..") or _is_reserved_component(part)
-        for part in parts
-    ):
-        return ()
-    return parts
-
-
-def _runtime_allow_prefixes(config: dict) -> list[tuple[str, ...]]:
-    entries = config.get(RUNTIME_ALLOW_KEY)
-    if not isinstance(entries, list):
-        return []
-    return [prefix for prefix in map(_runtime_allow_prefix, entries) if prefix]
-
-
-def _replaceable_target(target: Path) -> bool:
-    """A missing file, or a regular single-link file (no hard-link aliasing)."""
-    try:
-        info = target.lstat()
-    except FileNotFoundError:
-        return True
-    except OSError:
-        return False
-    return stat.S_ISREG(info.st_mode) and info.st_nlink == 1
-
-
-def canonical_runtime_write(
-    target: Classification, target_path: str, traversed_symlink: bool
-) -> tuple[bool, str]:
-    """Decide the opt-in canonical exception for gitignored runtime output.
-
-    #aidevops:trust-boundary — the allowlist is user-authored in the ignored,
-    untracked canonical `.aidevops.json`; that file, Git metadata and ignore
-    rules are never writable through it, and tracked files stay protected.
-    """
-    if target.classification != "canonical" or not target.repo_root:
-        return False, "not-canonical"
-    if traversed_symlink:
-        return False, "symlink-in-path"
-    try:
-        parts = Path(target_path).relative_to(target.repo_root).parts
-    except ValueError:
-        return False, "outside-repository"
-    if not parts or any(_is_reserved_component(part) for part in parts):
-        return False, "reserved-path"
-    config = _trusted_project_config(target.repo_root)
-    if config is None:
-        return False, "no-trusted-config"
-    if not any(
-        len(parts) > len(prefix) and parts[: len(prefix)] == prefix
-        for prefix in _runtime_allow_prefixes(config)
-    ):
-        return False, "not-allowlisted"
-    if not _replaceable_target(Path(target_path)):
-        return False, "unsafe-target-file"
-    if not _untracked_and_ignored(target.repo_root, "/".join(parts)):
-        return False, "tracked-or-not-ignored"
-    return True, "allowlisted-ignored-runtime-path"

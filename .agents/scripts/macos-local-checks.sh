@@ -12,7 +12,8 @@ macos_checks_sensitive() {
 			.agents/scripts/macos-local-checks.sh | .agents/scripts/tests/test-model-replay-* | \
 			.agents/scripts/runtime-env.sh | .agents/scripts/trusted* | .agents/scripts/git | \
 			.agents/scripts/native_git.py | .agents/scripts/canonical*git*.py | \
-			.agents/scripts/canonical_write_policy_paths.py | .agents/scripts/command_policy_git_query.py | \
+			.agents/scripts/canonical_write_policy_paths.py | .agents/scripts/canonical_write_runtime_allow.py | \
+			.agents/scripts/command_policy_git_query.py | \
 			.agents/hooks/git_safety_guard.py | .agents/scripts/tests/test-*git*.sh | .agents/scripts/setup/* | \
 			.agents/plugins/opencode-aidevops/runtime-path.mjs | .agents/plugins/opencode-aidevops/source-access-* | \
 			.github/workflows/path-portability.yml)

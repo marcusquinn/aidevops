@@ -24,7 +24,6 @@ from canonical_branch_policy import resolve_branch
 from canonical_write_policy_paths import (
     Classification,
     canonical_git_workspace_root as _canonical_git_workspace_root,
-    canonical_runtime_write as _canonical_runtime_write,
     classify_location,
     git_output as _git_output,
     git_symlink_origin as _git_symlink_origin,
@@ -32,6 +31,9 @@ from canonical_write_policy_paths import (
     is_within_workspace as _is_within_workspace,
     repository_within_workspace as _repository_within_workspace,
     target_probe as _target_probe,
+)
+from canonical_write_runtime_allow import (
+    canonical_runtime_write as _canonical_runtime_write,
 )
 
 
@@ -74,6 +76,25 @@ def _write_action(
     )
 
 
+def _canonical_write_decision(
+    target: Classification, target_probe: str, traversed_symlink: bool
+) -> tuple[str, str, str]:
+    """GH#39573: only opted-in, ignored, untracked runtime output is writable.
+
+    Every other canonical target keeps the read-only deny.
+    """
+    allowed, runtime_allow = _canonical_runtime_write(
+        target, target_probe, traversed_symlink
+    )
+    if allowed:
+        return "allow", CANONICAL_RUNTIME_ALLOW_REASON, runtime_allow
+    return (
+        "deny",
+        "canonical checkouts are read-only session mirrors",
+        runtime_allow,
+    )
+
+
 def check_write(cwd: str, file_path: str) -> dict[str, Any]:
     """Return one fail-closed direct-file-write decision."""
     context = classify_location(cwd)
@@ -108,16 +129,8 @@ def check_write(cwd: str, file_path: str) -> dict[str, Any]:
         decision = "deny"
         reason = f"write target classification failed closed: {target.reason}"
     elif target.classification == "canonical":
-        # GH#39573: only opted-in, ignored, untracked runtime output is
-        # writable; every other canonical target keeps the read-only deny.
-        allowed, runtime_allow = _canonical_runtime_write(
+        decision, reason, runtime_allow = _canonical_write_decision(
             target, target_probe, symlink_origin is not None
-        )
-        decision = "allow" if allowed else "deny"
-        reason = (
-            CANONICAL_RUNTIME_ALLOW_REASON
-            if allowed
-            else "canonical checkouts are read-only session mirrors"
         )
     elif symlink_workspace_escape:
         decision = "deny"
