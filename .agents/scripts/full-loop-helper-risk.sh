@@ -7,6 +7,10 @@
 [[ -n "${_FULL_LOOP_RISK_LIB_LOADED:-}" ]] && return 0
 _FULL_LOOP_RISK_LIB_LOADED=1
 _full_loop_runtime_verified_marker="runtime-verified"
+# GH#39558: declared when this runner cannot exercise a Critical/High change.
+# The PR is published under hold-for-review and stays unmergeable until a
+# verifier records runtime-verified evidence.
+_full_loop_runtime_pending_marker="runtime-pending"
 _full_loop_pending_diff_target="WORKTREE"
 # Runtime-owned paths never enter product staging or prospective PR metadata.
 _full_loop_runtime_paths=(".agents/loop-state" ".agents/.full-loop-cleanup-deferred")
@@ -35,9 +39,11 @@ _normalize_runtime_testing_level() {
 	local normalized=""
 	normalized=$(printf '%s' "$requested_testing_level" | tr '[:upper:]' '[:lower:]')
 	case "$normalized" in
-	"$_full_loop_runtime_verified_marker" | self-assessed) printf '%s\n' "$normalized" ;;
+	"$_full_loop_runtime_verified_marker" | "$_full_loop_runtime_pending_marker" | self-assessed)
+		printf '%s\n' "$normalized"
+		;;
 	*)
-		print_error "Invalid --testing-level '${requested_testing_level}'. Expected ${_full_loop_runtime_verified_marker} or self-assessed."
+		print_error "Invalid --testing-level '${requested_testing_level}'. Expected ${_full_loop_runtime_verified_marker}, ${_full_loop_runtime_pending_marker} or self-assessed."
 		return 1
 		;;
 	esac
@@ -498,8 +504,10 @@ _runtime_evidence_is_substantive() {
 		[[ "$normalized" == *"not runtime verified"* ]]; then
 		return 1
 	fi
-	detail="${normalized//$_full_loop_runtime_verified_marker/}"
-	detail=$(printf '%s' "$detail" | tr -d '[:space:][:punct:]')
+	# Neither status marker is evidence on its own, in any spelling.
+	detail=$(printf '%s' "$normalized" | tr -d '[:space:][:punct:]')
+	detail="${detail//runtimeverified/}"
+	detail="${detail//runtimepending/}"
 	[[ -n "$detail" ]] && return 0
 	return 1
 }
@@ -526,14 +534,109 @@ _resolve_runtime_testing_level() {
 		print_error "${_full_loop_runtime_verified_marker} requires non-empty testing evidence; PR body generation blocked."
 		return 1
 	fi
+	if [[ "$testing_level" == "$_full_loop_runtime_pending_marker" ]] && ! _runtime_evidence_is_substantive "$summary_testing"; then
+		print_error "${_full_loop_runtime_pending_marker} requires --testing \"<why this runner cannot exercise the change, and what was verified>\"; PR body generation blocked."
+		return 1
+	fi
 
 	if [[ "$runtime_risk" == "Critical" || "$runtime_risk" == "High" ]] &&
-		[[ "$testing_level" != "$_full_loop_runtime_verified_marker" ]]; then
+		[[ "$testing_level" != "$_full_loop_runtime_verified_marker" && "$testing_level" != "$_full_loop_runtime_pending_marker" ]]; then
 		print_error "${runtime_risk} runtime risk requires ${_full_loop_runtime_verified_marker} evidence; PR body generation blocked."
+		print_error "If this runner cannot exercise the change, rerun with --testing-level ${_full_loop_runtime_pending_marker} --testing \"<why, and what was verified>\": the PR opens under hold-for-review for a verifier. Never bypass commit-and-pr."
 		return 1
 	fi
 
 	printf '%s\n' "$testing_level"
+	return 0
+}
+
+# Parse the generated `## Runtime Testing` section of a PR body (stdin) into
+# JSON {present, sections, risk, level, evidence}. One parser serves
+# continued-PR inheritance and the merge-time recheck, so both read the format
+# that _build_pr_body emits. `sections` > 1 means the metadata is ambiguous and
+# consumers must fail closed. The body travels on stdin: it can exceed argv limits.
+_runtime_testing_metadata_from_body() {
+	python3 -c '
+import json, re, sys
+body = sys.stdin.read()
+sections = len(re.findall(r"^## Runtime Testing[ \t]*$", body, re.M))
+section = re.search(r"^## Runtime Testing\s*\n(.*?)(?=^## |\Z)", body, re.M | re.S)
+text = section[1] if section else ""
+text = re.split(r"^(?:Resolves|Fixes|Closes|For|Ref) #\d+\b|^<!-- aidevops:", text, maxsplit=1, flags=re.M)[0]
+risk = re.search(r"^- \*\*Risk level:\*\* (.+)$", text, re.M)
+verification = re.search(r"^- \*\*Verification:\*\*[ \t]+([\w-]+) —[ \t]*(.*?)(?=^- \*\*|\Z)", text, re.M | re.S)
+print(json.dumps({"present": bool(section), "sections": sections,
+                  "risk": risk[1].strip() if risk else "",
+                  "level": verification[1] if verification else "",
+                  "evidence": verification[2].strip() if verification else ""}))
+'
+	return $?
+}
+
+# GH#39558: merge-time recheck of the creation-time runtime gate, for bodies
+# edited or written outside commit-and-pr. Prints the refusal reason and
+# returns 1 when declared metadata is not merge-ready. A body without the
+# generated section stays mergeable: other helpers create most such PRs, so a
+# missing section is not evidence of risk.
+# Arguments: metadata JSON from _runtime_testing_metadata_from_body
+_runtime_testing_merge_refusal() {
+	local metadata="$1"
+	local risk="" level="" evidence="" sections=""
+	local remedy="a verifier that can exercise the change reruns commit-and-pr on this branch with --testing-level ${_full_loop_runtime_verified_marker} --testing \"<evidence>\", then removes hold-for-review"
+	if ! risk=$(printf '%s' "$metadata" | jq -er '.risk | strings') ||
+		! level=$(printf '%s' "$metadata" | jq -er '.level | strings') ||
+		! evidence=$(printf '%s' "$metadata" | jq -er '.evidence | strings'); then
+		printf 'runtime testing metadata is unreadable\n'
+		return 1
+	fi
+	sections=$(printf '%s' "$metadata" | jq -r '.sections // 0')
+	if [[ ! "$sections" =~ ^[0-9]+$ ]] || ((sections > 1)); then
+		printf 'the body has %s Runtime Testing sections, so its metadata is ambiguous; keep only the generated section\n' "$sections"
+		return 1
+	fi
+	risk=$(printf '%s' "$risk" | tr '[:upper:]' '[:lower:]')
+	level=$(printf '%s' "$level" | tr '[:upper:]' '[:lower:]')
+	if [[ "$level" == "$_full_loop_runtime_pending_marker" ]]; then
+		printf 'runtime verification is pending (%s); %s\n' "$_full_loop_runtime_pending_marker" "$remedy"
+		return 1
+	fi
+	case "$risk" in
+	critical* | high*)
+		if [[ "$level" != "$_full_loop_runtime_verified_marker" ]] || ! _runtime_evidence_is_substantive "$evidence"; then
+			printf 'the body declares %s runtime risk without %s evidence; %s\n' \
+				"${risk%% *}" "$_full_loop_runtime_verified_marker" "$remedy"
+			return 1
+		fi
+		;;
+	esac
+	return 0
+}
+
+# GH#39558: true when a generated PR body declares runtime-pending evidence,
+# so commit-and-pr applies the verified hold-for-review label. Ambiguous
+# (multi-section) metadata also takes the hold: fail closed.
+_pr_body_declares_runtime_pending() {
+	local pr_body="$1"
+	local metadata="" level="" sections=""
+	metadata=$(printf '%s' "$pr_body" | _runtime_testing_metadata_from_body) || return 1
+	level=$(printf '%s' "$metadata" | jq -r '.level // ""') || return 1
+	sections=$(printf '%s' "$metadata" | jq -r '.sections // 0') || return 1
+	[[ "$level" == "$_full_loop_runtime_pending_marker" ]] && return 0
+	[[ "$sections" =~ ^[0-9]+$ ]] && ((sections > 1)) && return 0
+	return 1
+}
+
+# GH#39558: free-text PR body inputs must not carry their own Runtime Testing
+# heading, or the body would hold two sections and an example could stand in
+# for the generated metadata. Arguments: any number of free-text fields.
+_pr_body_inputs_reserve_runtime_section() {
+	local field=""
+	for field in "$@"; do
+		if printf '%s\n' "$field" | grep -Eq '^##[[:space:]]+Runtime Testing[[:space:]]*$'; then
+			print_error "PR body inputs must not contain a '## Runtime Testing' heading: commit-and-pr generates that section from --risk-level/--testing-level/--testing. Remove the heading from --summary/--testing/--decisions."
+			return 1
+		fi
+	done
 	return 0
 }
 

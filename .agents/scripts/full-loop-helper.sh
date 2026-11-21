@@ -423,18 +423,19 @@ Worker aborted PR creation: issue #${issue_number} was already closed by the tim
 _apply_pr_only_hold() {
 	local pr_number="$1"
 	local repo="$2"
+	local hold_scope="${3:-trusted PR-only scope}"
 	local labels=""
 	if ! gh_pr_edit_safe "$pr_number" --repo "$repo" --add-label "hold-for-review" >/dev/null; then
-		print_error "Could not apply hold-for-review to PR-only PR #${pr_number}; rerun commit-and-pr before any merge"
+		print_error "Could not apply hold-for-review to PR #${pr_number} (${hold_scope}); rerun commit-and-pr before any merge"
 		return 1
 	fi
 	labels=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" \
 		--json labels --jq '[.labels[].name] | join(",")') || labels=""
 	if [[ ",${labels}," != *",hold-for-review,"* ]]; then
-		print_error "PR-only PR #${pr_number} did not reach the hold-for-review postcondition; rerun commit-and-pr before any merge"
+		print_error "PR #${pr_number} (${hold_scope}) did not reach the hold-for-review postcondition; rerun commit-and-pr before any merge"
 		return 1
 	fi
-	print_info "PR #${pr_number} held for maintainer review (trusted PR-only scope); emit POST_PR_HANDOFF instead of merging"
+	print_info "PR #${pr_number} held for maintainer review (${hold_scope}); emit POST_PR_HANDOFF instead of merging"
 	return 0
 }
 
@@ -464,6 +465,12 @@ _commit_and_pr_publish() {
 			;;
 		esac
 	fi
+	# GH#39558: a runtime-pending PR takes the same verified hold as PR-only
+	# scope, applied after creation because continued PRs ignore create labels.
+	local hold_scope=""
+	[[ "$pr_only_scope" -eq 1 ]] && hold_scope="trusted PR-only scope"
+	_pr_body_declares_runtime_pending "$pr_body" &&
+		hold_scope="${hold_scope:+${hold_scope}; }runtime verification pending"
 	pr_number=$(_create_or_continue_pr "$continuation_pr" "$repo" "$pr_title" "$pr_body" \
 		"$origin_label" "${extra_labels[@]+"${extra_labels[@]}"}") || {
 		# GH#33381: the push already succeeded; the pushed branch is the durable
@@ -474,8 +481,8 @@ _commit_and_pr_publish() {
 			"$branch" "$issue_number" "$commit_message" >&2
 		return 1
 	}
-	if [[ "$pr_only_scope" -eq 1 ]]; then
-		_apply_pr_only_hold "$pr_number" "$repo" || return 1
+	if [[ -n "$hold_scope" ]]; then
+		_apply_pr_only_hold "$pr_number" "$repo" "$hold_scope" || return 1
 	fi
 	local macos_base=""
 	macos_base=$(_pending_runtime_comparison_base "$base_ref") || return 1
@@ -524,8 +531,10 @@ Commands:
                 [--testing TEXT]          Fill the PR Runtime Testing evidence section
                 [--risk-level critical|high|medium|low]
                                           Set the runtime risk classification
-                [--testing-level runtime-verified|self-assessed]
-                                          Set the runtime testing evidence level
+                [--testing-level runtime-verified|runtime-pending|self-assessed]
+                                          Set the runtime testing evidence level;
+                                          runtime-pending (--testing gives the reason)
+                                          opens the PR under hold-for-review for a verifier
                 [--decisions TEXT]        Record notable decisions in the PR body
                 [--regression-evidence TEXT]
                                           Add a ## Regression Evidence rationale (platform

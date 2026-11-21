@@ -374,6 +374,8 @@ STUB
 		source "$SCRIPT_DIR/full-loop-helper-merge.sh"
 		_merge_handle_already_merged_provenance() { return 2; }
 		_merge_check_closure_metadata() { return 0; }
+		# GH#39558 runtime evidence recheck: test-full-loop-runtime-risk.sh.
+		_merge_check_runtime_evidence() { return 0; }
 		source() { _merge_worker_briefed_gate_pinned() { return 0; }; return 0; }
 		_merge_pre_merge_gate_with_admission_retry() { return 0; }
 		_merge_release_lane_check() { return 0; }

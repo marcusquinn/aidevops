@@ -916,6 +916,8 @@ _build_pr_body() {
 		printf -v "$field" '%s' "$text"
 	done
 
+	_pr_body_inputs_reserve_runtime_section "$summary_what" "$summary_testing" \
+		"$replacement_note" "$decisions" "$regression_evidence" || return 1
 	runtime_risk=$(_derive_runtime_risk "$requested_risk" "$files_changed" "$summary_what" "$base_ref") || return 1
 	testing_level=$(_resolve_runtime_testing_level "$runtime_risk" "$requested_testing_level" "$summary_testing") || return 1
 	# GH#38509: risk derivation above needs every path; the body shows a
@@ -1495,24 +1497,20 @@ _create_pr() {
 _inherit_pr_runtime_metadata() {
 	local pr_number="$1"
 	local repo="$2"
-	local body="" metadata=""
+	local body="" metadata="" sections=""
 	local override_flags=" ${pr_metadata_overrides:-} "
 	local endpoint="repos/${repo}/pulls"
 	endpoint+="/${pr_number}"
 	body=$(_gh_with_timeout read gh api "$endpoint" --jq '.body // empty') || return 1
-	metadata=$(python3 - "$body" <<'PY'
-import json, re, sys
-body = sys.argv[1]
-section = re.search(r'^## Runtime Testing\s*\n(.*?)(?=^## |\Z)', body, re.M | re.S)
-text = section[1] if section else ''
-text = re.split(r'^(?:Resolves|Fixes|Closes|For|Ref) #\d+\b|^<!-- aidevops:', text, maxsplit=1, flags=re.M)[0]
-risk = re.search(r'^- \*\*Risk level:\*\* (.+)$', text, re.M)
-verification = re.search(r'^- \*\*Verification:\*\*[ \t]+([\w-]+) —[ \t]*(.*?)(?=^- \*\*|\Z)', text, re.M | re.S)
-print(json.dumps({'risk': risk[1] if risk else '',
-                  'level': verification[1] if verification else '',
-                  'evidence': verification[2].strip() if verification else ''}))
-PY
-	) || return 1
+	metadata=$(printf '%s' "$body" | _runtime_testing_metadata_from_body) || return 1
+	sections=$(printf '%s' "$metadata" | jq -r '.sections // 0')
+	# GH#39558: never inherit from ambiguous (multi-section) metadata.
+	if [[ ! "$sections" =~ ^[0-9]+$ ]] || ((sections > 1)); then
+		if [[ "$override_flags" != *" risk-level "* || "$override_flags" != *" testing-level "* || "$override_flags" != *" testing "* ]]; then
+			print_error "PR #${pr_number} has ${sections} Runtime Testing sections; pass --risk-level, --testing-level and --testing explicitly instead of inheriting them."
+			return 1
+		fi
+	fi
 	[[ "$override_flags" == *" risk-level "* ]] || runtime_risk=$(printf '%s' "$metadata" | jq -r '.risk')
 	[[ "$override_flags" == *" testing-level "* ]] || testing_level=$(printf '%s' "$metadata" | jq -r '.level')
 	[[ "$override_flags" == *" testing "* ]] || summary_testing=$(printf '%s' "$metadata" | jq -r '.evidence')
