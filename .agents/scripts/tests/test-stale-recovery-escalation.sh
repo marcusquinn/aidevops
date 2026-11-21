@@ -155,6 +155,8 @@ if [[ "\$1" == "pr" && "\$2" == "list" ]]; then
 	case "${open_pr_kind}" in
 	ready) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[{"number":99999,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' ;;
 	ready_failed) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[{"number":99999,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE"}]}]' ;;
+	ready_overlap_failed) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[{"number":99999,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"__typename":"CheckRun","name":"ci","workflowName":"w","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-01-01T10:00:00Z","completedAt":"2026-01-01T10:20:00Z"},{"__typename":"CheckRun","name":"ci","workflowName":"w","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-01T10:05:00Z","completedAt":"2026-01-01T10:10:00Z"}]}]' ;;
+	ready_pending_newest) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[{"number":99999,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"__typename":"CheckRun","name":"ci","workflowName":"w","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-01-01T10:00:00Z","completedAt":"2026-01-01T10:20:00Z"},{"__typename":"CheckRun","name":"ci","workflowName":"w","status":"QUEUED","conclusion":null,"startedAt":null,"completedAt":null}]}]' ;;
 	ready_review_infra) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[{"number":99999,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"__typename":"CheckRun","name":"gate / review-bot-gate","status":"COMPLETED","conclusion":"FAILURE"},{"__typename":"StatusContext","context":"review-bot-gate","state":"SUCCESS"}]}]' ;;
 	nested_truncated)
 		python3 - <<'PY'
@@ -532,6 +534,20 @@ if echo "$output" | grep -q "STALE_READY_FAILED_ESCALATED" && \
 	print_result "Terminal ready PR escalates after verified structural-block read-back" 0
 else
 	print_result "Terminal ready PR escalates after verified structural-block read-back" 1 "(got: '$output')"
+fi
+
+run_recover 0 "86|ready_overlap_failed" 1
+if grep -q "STALE_READY_FAILED_ESCALATED" <<<"$output"; then
+	print_result "Overlapping runs use latest completedAt (CANCELLED wins)" 0
+else
+	print_result "Overlapping runs use latest completedAt (CANCELLED wins)" 1 "(got: '$output')"
+fi
+
+run_recover 0 "88|ready_pending_newest" 1
+if grep -q "STALE_PROGRESS_PRESERVED" <<<"$output" && ! grep -q "STALE_READY_FAILED_ESCALATED" <<<"$output"; then
+	print_result "Newest pending run without timestamps masks older failure" 0
+else
+	print_result "Newest pending run without timestamps masks older failure" 1 "(got: '$output')"
 fi
 
 run_recover 0 "81|ready_failed" 0
