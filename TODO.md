@@ -2398,7 +2398,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19248 fix(pulse): stale LLM-lock reclaim kills healthy supervisors by wrapper process age #auto-dispatch #bug ref:GH#39683
 
-- [ ] t19250 fix(worker-lifecycle): 10s retirement-retry bound fails every normal retirement and leaks release and routine trees #bug ref:GH#39691
+- [x] t19250 fix(worker-lifecycle): 10s retirement-retry bound fails every normal retirement and leaks release and routine trees #bug ref:GH#39691 pr:#39693 completed:2026-11-21
 
 ## In Progress
 
