@@ -37,6 +37,8 @@ parser.add_argument("--max-hops", type=int, default=3,
 parser.add_argument("--ubiquity", type=float, default=0.1,
                     help="scripts sourced by more than this share of scripts are not expanded")
 parser.add_argument("--compare-base", action="store_true")
+parser.add_argument("--log-dir", default=None,
+                    help="write the last 80 output lines of each non-pass suite here")
 parser.add_argument("--retries", type=int, default=2,
                     help="reruns for a would-be regression before it counts; 0 disables")
 args = parser.parse_args()
@@ -241,16 +243,32 @@ def suite_timeout(path):
         pass
     return args.timeout
 
+LOG_TAIL_LINES = 80
+log_scratch = tempfile.mkdtemp(prefix="affected-tests-logs-") if args.log_dir else None
+
+def log_name(suite):
+    # Leading dot stripped: upload-artifact skips hidden files by default.
+    return suite.replace("/", "__").lstrip(".") + ".log"
+
+def scratch_path(suite):
+    return os.path.join(log_scratch, log_name(suite))
+
 def execute(item):
-    directory, suite = item
+    directory, suite, capture = item
     if stop.is_set() or not (directory / suite).is_file():
         return None
     timeout = suite_timeout(directory / suite)
     with running_lock:
         if stop.is_set():
             return None
-        proc = subprocess.Popen(["bash", suite], cwd=directory, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL, start_new_session=True)
+        sink = open(scratch_path(suite), "wb") if capture else subprocess.DEVNULL
+        try:
+            proc = subprocess.Popen(["bash", suite], cwd=directory, stdout=sink,
+                                    stderr=subprocess.STDOUT if capture else subprocess.DEVNULL,
+                                    start_new_session=True)
+        finally:
+            if capture:
+                sink.close()
         running.add(proc)
     try:
         return proc.wait(timeout=timeout)
@@ -271,10 +289,10 @@ def cancel_all():
     for proc in active:
         proc.wait()
 
-def run_all(directory, suites, jobs=None):
+def run_all(directory, suites, jobs=None, capture=True):
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=jobs or args.jobs)
     try:
-        return dict(zip(suites, pool.map(execute, ((directory, s) for s in suites))))
+        return dict(zip(suites, pool.map(execute, ((directory, s, capture and bool(log_scratch)) for s in suites))))
     except BaseException:
         cancel_all()
         raise
@@ -291,7 +309,7 @@ if failed and args.compare_base:
     worktree = temporary / "base"
     try:
         subprocess.run(["git", "worktree", "add", "--detach", str(worktree), args.base], check=True, stdout=subprocess.DEVNULL)
-        base = run_all(worktree, failed)
+        base = run_all(worktree, failed, capture=False)
     finally:
         if worktree.exists():
             subprocess.run(["git", "worktree", "remove", "--force", str(worktree)], check=True)
@@ -336,5 +354,17 @@ for suite in ordered:
     print("%s\t%s\t%s\t%s" % (suite, rc_text, baseline if baseline is not None else "-", classification))
     if classification == "pre-existing":
         report_inherited_red(suite)
+
+if log_scratch:
+    os.makedirs(args.log_dir, exist_ok=True)
+    for suite in ordered:
+        source = scratch_path(suite)
+        if head[suite] == 0 or not os.path.isfile(source):
+            continue
+        with open(source, "rb") as handle:
+            tail = handle.read().splitlines(keepends=True)[-LOG_TAIL_LINES:]
+        with open(os.path.join(args.log_dir, log_name(suite)), "wb") as handle:
+            handle.writelines(tail)
+    shutil.rmtree(log_scratch, ignore_errors=True)
 sys.exit(1 if regression else 0)
 PY
