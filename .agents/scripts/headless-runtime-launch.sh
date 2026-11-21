@@ -67,6 +67,17 @@ _headless_run_is_ephemeral() {
 	return 1
 }
 
+# GH#39726: a scheduled routine run (session key routine-<id>, from
+# pulse-routines.sh and routine-helper.sh) is a new execution of its SOP every
+# time. Resuming the previous run's session carried stale conclusions forward
+# indefinitely ("search is blocked", "other runs did the work"), so each run
+# exited 0 without doing anything. Routine keys never resume or persist.
+_headless_session_key_is_fresh_per_run() {
+	local session_key="$1"
+	[[ "$session_key" == routine-* ]] && return 0
+	return 1
+}
+
 _create_headless_runtime_temp_file() {
 	local temp_root=""
 	local temp_status=0

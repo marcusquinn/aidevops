@@ -248,6 +248,9 @@ _prepare_run_attempt_command() {
 		fi
 	elif [[ "$role" == "pulse" ]]; then
 		clear_session_id "$provider" "$session_key"
+	elif _headless_session_key_is_fresh_per_run "$session_key"; then
+		# GH#39726: every routine run starts fresh; drop any legacy row.
+		clear_session_id "$provider" "$session_key"
 	else
 		persisted_session=$(get_session_id "$provider" "$session_key")
 		if [[ -n "$persisted_session" ]] && _persisted_session_head_merged "$provider" "$session_key"; then
