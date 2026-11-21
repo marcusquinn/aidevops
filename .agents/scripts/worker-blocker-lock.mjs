@@ -18,8 +18,11 @@ import {
   recoveryMarkersActive,
 } from "./worker-blocker-lock-recovery.mjs";
 
-const LOCK_RETRIES = 25;
+// Wall-clock budget so scheduler delay under host load cannot exhaust a fixed
+// attempt count and silently drop blocker events.
+const LOCK_WAIT_BUDGET_MS = 4000;
 const LOCK_RETRY_MS = 4;
+const LOCK_JITTER_MAX_MS = 12;
 
 const LOCK_ACQUIRED = "acquired";
 const LOCK_FAILED = "failed";
@@ -142,13 +145,15 @@ export function acquireWorkerBlockerLock(lockPath) {
   const token = randomUUID();
   const reclaimPath = `${lockPath}.reclaim`;
   let acquiredToken = "";
-  for (let attempt = 0; attempt < LOCK_RETRIES; attempt++) {
+  const deadline = Date.now() + LOCK_WAIT_BUDGET_MS;
+  do {
     const result = tryAcquireLock(lockPath, reclaimPath, token);
     if (result === LOCK_ACQUIRED) {
       acquiredToken = token;
       break;
     }
     if (result === LOCK_FAILED) break;
-  }
+    sleepSync(Math.floor(Math.random() * (LOCK_JITTER_MAX_MS + 1)));
+  } while (Date.now() < deadline);
   return acquiredToken;
 }
