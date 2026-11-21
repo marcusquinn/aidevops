@@ -2370,6 +2370,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19217 Google Ads readers: make the developer token optional (tokens sunset 2026-09-09) #auto-dispatch #bug tier:simple ref:GH#39511 logged:2026-11-20 -> [todo/tasks/t19217-brief.md] pr:#39515 completed:2026-11-20
 
+- [ ] t19228 fix(full-loop): non-required check snapshot keeps the generic 15s read budget and defers merges under transport pacing #bug #interactive ref:GH#39590 logged:2026-11-21 -> [todo/tasks/t19228-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
