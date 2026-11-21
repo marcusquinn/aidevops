@@ -10,7 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 HELPER="${SCRIPT_DIR}/../worktree-helper.sh"
-REAL_GIT=$(command -v git)
+REAL_GIT=$(command -p -v git)
 ROOT=$(mktemp -d)
 trap 'rm -rf "$ROOT"' EXIT
 

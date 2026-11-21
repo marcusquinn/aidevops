@@ -282,10 +282,15 @@ resolved=$(HOME="${tmp_root}" XDG_CONFIG_HOME="${config_home}" TABBY_CONFIG="${e
 resolved=$(HOME="${tmp_root}" TABBY_CONFIG='' TABBY_CONFIG_DIRECTORY='' bash "${TABBY_HELPER}" config-path Darwin)
 [[ "$resolved" == "${tmp_root}/Library/Application Support/tabby/config.yaml" ]] && _pass "macOS default preserved" || _fail "macOS default mismatch: ${resolved}"
 
+have_yaml=1
+python3 -c 'import yaml' >/dev/null 2>&1 || have_yaml=0
+
 _info "Test 12: sync converts inline empty profiles and keeps valid YAML"
 inline_config="${tmp_root}/inline-empty.yaml"
 printf 'version: 8\nprofiles: []\ngroups: []\n' >"${inline_config}"
-if PYTHONPATH="${REPO_ROOT}/.agents/scripts" python3 "${HELPER}" --repos-json "${repos_json}" --tabby-config "${inline_config}" >/dev/null &&
+if ((have_yaml == 0)); then
+	_info "SKIP: host python3 has no PyYAML module; YAML validation skipped"
+elif PYTHONPATH="${REPO_ROOT}/.agents/scripts" python3 "${HELPER}" --repos-json "${repos_json}" --tabby-config "${inline_config}" >/dev/null &&
 	python3 -c 'import sys, yaml; value = yaml.safe_load(open(sys.argv[1])); assert isinstance(value["profiles"], list) and value["profiles"]' "${inline_config}" &&
 	! grep -qF 'profiles: []' "${inline_config}"; then
 	_pass "inline empty profiles converted to valid block list"
@@ -296,6 +301,10 @@ fi
 _info "Test 13: missing and block-empty profiles shapes remain valid"
 for shape in missing block_empty; do
 	shape_config="${tmp_root}/${shape}.yaml"
+	if ((have_yaml == 0)); then
+		_info "SKIP: ${shape} shape check needs host PyYAML (not installed)"
+		continue
+	fi
 	if [[ "${shape}" == "missing" ]]; then
 		printf 'version: 8\ngroups: []\n' >"${shape_config}"
 	else
