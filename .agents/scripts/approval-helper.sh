@@ -1477,6 +1477,8 @@ _create_allowed_signers_file() {
 _verify_comment_signature() {
 	local body="$1"
 	local pub_key="$2"
+	local mode="${3:-verify}"
+	local verify_args=(-Y verify)
 	local payload signature payload_file sig_file allowed_signers_file
 
 	payload=$(_extract_fenced_block "$body" 1)
@@ -1496,9 +1498,11 @@ _verify_comment_signature() {
 	printf '%s\n' "$signature" >"$sig_file"
 	_create_allowed_signers_file "$pub_key" "$allowed_signers_file"
 
-	if ssh-keygen -Y verify \
-		-f "$allowed_signers_file" \
-		-I "approval@aidevops.sh" \
+	verify_args+=(-f "$allowed_signers_file" -I "approval@aidevops.sh")
+	if [[ "$mode" == integrity ]]; then
+		verify_args=(-Y check-novalidate)
+	fi
+	if ssh-keygen "${verify_args[@]}" \
 		-n "$APPROVAL_NAMESPACE" \
 		-s "$sig_file" <"$payload_file" >/dev/null 2>&1; then
 		rm -f "$payload_file" "$sig_file" "$allowed_signers_file"
@@ -1521,12 +1525,16 @@ _approval_classify_signed_comment() {
 	normalized_slug=$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')
 
 	payload=$(_extract_fenced_block "$body" 1)
-	if [[ -z "$payload" ]] || ! _verify_comment_signature "$body" "$pub_key"; then
+	if [[ -z "$payload" ]]; then
 		printf 'MALFORMED_APPROVAL\n'
 		return 0
 	fi
 
 	if [[ "$payload" == APPROVE:* ]]; then
+		if ! _verify_comment_signature "$body" "$pub_key"; then
+			printf 'MALFORMED_APPROVAL\n'
+			return 0
+		fi
 		local legacy_payload_prefix=""
 		legacy_payload_prefix=$(printf 'APPROVE:%s:%s:%s:' "$target_type" "$slug" "$target_number" | tr '[:upper:]' '[:lower:]')
 		if [[ "$(printf '%s' "$payload" | tr '[:upper:]' '[:lower:]')" == "${legacy_payload_prefix}"* ]]; then
@@ -1548,6 +1556,17 @@ _approval_classify_signed_comment() {
 		and (if $type == "pr" then (.authority == "merge" and (.pr | type == $object)) else (.authority == "development" and .pr == null and ((.issue // null) == null or (.issue.lifecycle | type == $object))) end)
 	' <<<"$payload" >/dev/null 2>&1; then
 		printf 'MALFORMED_APPROVAL\n'
+		return 0
+	fi
+
+	if ! _verify_comment_signature "$body" "$pub_key"; then
+		# #aidevops:trust-boundary — embedded-key integrity is diagnostic only.
+		# It never grants signer trust or permits snapshot verification/dispatch.
+		if _verify_comment_signature "$body" "$pub_key" integrity; then
+			printf 'UNVERIFIABLE_SIGNER\n'
+		else
+			printf 'MALFORMED_APPROVAL\n'
+		fi
 		return 0
 	fi
 
@@ -1769,7 +1788,7 @@ _approval_classify_marked_comments() {
 	local expected_head_sha="${6:-}"
 	local comment_count="$7"
 	local required_actor="${8:-}"
-	local saw_api_error=0 saw_stale=0 saw_legacy=0 saw_untrusted=0 saw_malformed=0
+	local saw_api_error=0 saw_stale=0 saw_legacy=0 saw_untrusted=0 saw_malformed=0 saw_unverifiable=0
 	local comment_rows=""
 	local base64_decode_flag="-d"
 	[[ "$(uname -s)" == "Darwin" ]] && base64_decode_flag="-D"
@@ -1824,6 +1843,7 @@ _approval_classify_marked_comments() {
 		API_ERROR) saw_api_error=1 ;;
 		STALE_APPROVAL) saw_stale=1 ;;
 		LEGACY_APPROVAL) saw_legacy=1 ;;
+		UNVERIFIABLE_SIGNER) saw_unverifiable=1 ;;
 		*) saw_malformed=1 ;;
 		esac
 	done <<<"$comment_rows"
@@ -1843,6 +1863,10 @@ _approval_classify_marked_comments() {
 	[[ "$saw_untrusted" -eq 0 ]] || {
 		printf 'UNTRUSTED_APPROVAL\n'
 		return 7
+	}
+	[[ "$saw_unverifiable" -eq 0 ]] || {
+		printf 'UNVERIFIABLE_SIGNER\n'
+		return 8
 	}
 	[[ "$saw_malformed" -eq 1 ]] || saw_malformed=1
 	printf 'MALFORMED_APPROVAL\n'

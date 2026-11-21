@@ -286,6 +286,7 @@ _dispatch_live_owner_refusal_fields() {
 _dispatch_maintainer_gate_reason() {
 	local reason="$1"
 	case "$reason" in
+	approval_signer_unverifiable) return 0 ;;
 	permission_grant_unverified | needs_maintainer_permissions | cost_budget_exceeded | consolidated) return 0 ;;
 	esac
 	return 1
@@ -297,6 +298,10 @@ _dispatch_maintainer_gate_reason() {
 # Stdout: reason token. Returns 0 when found, 1 otherwise.
 _dispatch_maintainer_gate_from_lines() {
 	local lines="$1"
+	if [[ "$lines" == *"DISPATCH_BLOCK_REASON reason=approval_signer_unverifiable "* ]]; then
+		printf 'approval_signer_unverifiable\n'
+		return 0
+	fi
 	if [[ "$lines" =~ DISPATCH_BLOCK_REASON\ reason=permission_grant_unverified\ signal=(STALE_APPROVAL|NO_APPROVAL|UNTRUSTED_APPROVAL|LEGACY_APPROVAL|MALFORMED_APPROVAL)([[:space:]]|$) ]]; then
 		printf 'permission_grant_unverified\n'
 		return 0
@@ -691,6 +696,9 @@ _dispatch_negative_cache_reason() {
 	# Non-whitespace separators preserve empty optional fields in old/new records.
 	IFS=$'\034' read -r stamp cached reason pr fingerprint owner_path checkpoint_boundary material revision_anchor <<<"${record//$'\t'/$'\034'}" || return 1
 	[[ -z "$expected_reason" || "$reason" == "$expected_reason" ]] || return 1
+	# A signer diagnostic must be recomputed after any issue/comment revision,
+	# including operational comments that the material-only refresh can ignore.
+	[[ "$reason" != approval_signer_unverifiable || "$cached" == "$updated" ]] || return 1
 	[[ "$stamp" =~ ^[0-9]+$ ]] || return 1
 	ttl=$(_dispatch_negative_cache_reason_ttl "$reason")
 	# GH#38261: only the cheap gate here. The material and comment reads run in
@@ -756,7 +764,7 @@ _dispatch_negative_cache_reason() {
 		_dispatch_live_owner_hold_valid "$pr" "$fingerprint" "$owner_path" || return 1
 		;;
 	# GH#33538: material issue revisions invalidate maintainer-gate hints.
-	permission_grant_unverified | needs_maintainer_permissions | cost_budget_exceeded | consolidated) ;;
+	approval_signer_unverifiable | permission_grant_unverified | needs_maintainer_permissions | cost_budget_exceeded | consolidated) ;;
 	*) return 1 ;;
 	esac
 	now=$(date +%s)
