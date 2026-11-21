@@ -772,20 +772,22 @@ print(m.get('source_git_common_dir', ""), m["head_sha"],
       int(m.get('self_contained') is True), int(m.get('capture_policy') == 'git-only'), sep=chr(9))
 PY
 	)
+	# `exec` keeps each preparation step a direct child of this shell, so the
+	# creation receipt's owner (its getppid) stays this live helper process.
 	if [[ "$git_only" -eq 1 && "$verification_copy" -eq 2 ]]; then
 		# Same registered creation primitive as ordinary recovery, with an explicit
 		# purpose and detached HEAD; no issue claim or dependency bootstrap.
-		prepared=$(python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target" --verification-copy) || return 1
+		prepared=$(exec python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target" --verification-copy) || return 1
 	elif [[ "$git_only" -eq 1 && ( "$self_contained" -eq 1 || "$verification_copy" -eq 1 ) ]]; then
-		prepared=$(python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target") || return 1
+		prepared=$(exec python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target") || return 1
 	elif [[ "$git_only" -eq 1 ]]; then
-		prepared=$(python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target") || return 1
+		prepared=$(exec python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target") || return 1
 	elif [[ "$self_contained" -eq 1 ]]; then
 		git -c gc.auto=0 -c maintenance.auto=false -c core.hooksPath=/dev/null \
 			clone --quiet --no-checkout -- "$archive_dir/commits.bundle" "$target" || return 1
 		git -C "$target" -c core.hooksPath=/dev/null checkout --quiet --detach "$head_sha" || return 1
 	elif [[ -f "$archive_dir/git-admin.json" ]]; then
-		prepared=$(python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target") || return 1
+		prepared=$(exec python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target") || return 1
 	else
 		[[ -d "$common_dir" ]] || { die "source Git repository is unavailable: $common_dir"; return 1; }
 		if [[ -f "$archive_dir/commits.bundle" ]]; then
