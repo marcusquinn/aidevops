@@ -12,8 +12,8 @@
 # the session that filed it. The pass never writes to GitHub and never copies
 # titles or comment bodies.
 #
-# GitHub cost per interval: one issue-list call (`since=`) per repo with due
-# watches, one issue read for a watch first seen outside that listing, and up to
+# GitHub cost per interval: one issue read (stable URL, so an unchanged item
+# revalidates as a free 304; t19234) per due watch, and up to
 # RELAY_WATCH_COMMENT_PAGES comment pages only when an item's comment count
 # rose. Every read goes
 # through _relay_get (stop flag, breaker, REST-core deferrable gate).
@@ -213,35 +213,33 @@ _relay_watch_fetch_comments() {
 # Check one due watch; append its result to the subscriber's batch.
 _relay_watch_one() {
 	local entry="$1"
-	local list_file="$2"
-	local work="$3"
-	local now="$4"
-	local subscriber key repo issue_number created need_fetch issue_file rc=0
+	local work="$2"
+	local now="$3"
+	local subscriber key repo issue_number created issue_file
 	subscriber=$(jq -r '.state.subscriber' <<<"$entry")
 	key=$(jq -r '.state.key' <<<"$entry")
 	repo=$(jq -r '.state.repo' <<<"$entry")
 	issue_number=$(jq -r '.state.number' <<<"$entry")
 	created=$(jq -r '.state.created' <<<"$entry")
-	need_fetch=$(jq -r 'if .state.baseline == null then "1" else "0" end' <<<"$entry")
 	issue_file="${work}/watch-issue-${subscriber}-${key}.json"
 
-	_relay_issue_from_listing "$list_file" "$repo" "$issue_number" "$need_fetch" "$issue_file" || rc=$?
-	if [[ "$rc" -eq 2 ]]; then
-		# Unchanged since the listing's `since`: only the check time moves.
-		_relay_watch_write_state "$(jq -c --argjson now "$now" '.state | .checked = $now' <<<"$entry")" || true
-		return 0
-	fi
-	if [[ "$rc" -ne 0 ]]; then
+	if ! _relay_get "repos/${repo}/issues/${issue_number}" "$issue_file" "watch-issue"; then
 		# A missing item (typo, deleted, or no access) is told once and not read again.
-		# The repo listing just succeeded, so a 404 here is the item, not the repo
-		# or transport ("gh: Not Found (HTTP 404)" survives the excerpt as "not found").
+		# "gh: Not Found (HTTP 404)" survives the excerpt as "not found"; transport
+		# and deferral failures never match it.
 		if [[ "$RELAY_FAILURE" == "gh-rc="*" not found"* ]]; then
+			# A private repo that lost access also reads as 404: mark gone only when
+			# the repository itself is readable, otherwise keep the watch state.
+			if ! _relay_get "repos/${repo}" "${work}/watch-repo-${subscriber}-${key}.json" "watch-repo"; then
+				_relay_log "watch ${repo}#${issue_number} not found but repository unreadable (${RELAY_FAILURE:-read}); watch keeps its state"
+				return 0
+			fi
 			jq -nc --argjson e "$entry" --argjson now "$now" '{
 				line: "- \($e.state.repo)#\($e.state.number): not found on GitHub (wrong number, deleted, or no access); this watch is no longer checked.",
 				state: ($e.state + {checked: $now, gone: true})}' >>"${work}/watch-batch-${subscriber}.jsonl" || true
 			return 0
 		fi
-		_relay_log "watch ${repo}#${issue_number} deferred or failed (${RELAY_FAILURE:-listing-parse}); watch keeps its state"
+		_relay_log "watch ${repo}#${issue_number} deferred or failed (${RELAY_FAILURE:-read}); watch keeps its state"
 		return 0
 	fi
 
@@ -270,8 +268,7 @@ _relay_watch_one() {
 	result=$(_relay_watch_diff "$entry" "$issue_file" "$comments" "$count" "$new_last" "$now") || return 0
 	[[ -n "$result" ]] || return 0
 	if [[ "$retry_comments" -eq 1 ]]; then
-		# Keep the previous check time, so the next listing (since = checked - 60)
-		# still includes this item and the comments read is retried.
+		# Keep the previous check time, so the comments read is retried.
 		result=$(jq -c --argjson e "$entry" '.state.checked = $e.state.checked' <<<"$result") || return 0
 	fi
 	line=$(jq -r '.line' <<<"$result")
@@ -285,7 +282,7 @@ _relay_watch_one() {
 
 # One message per subscriber, holding only complete pointers that fit the bus
 # text limit. Only the items it lists advance their state; on a failed send
-# nothing is written, so the next run reads from the old `since`.
+# nothing is written, so the next run reads them again.
 _relay_watch_send() {
 	local batch="$1"
 	local work="$2"
@@ -332,24 +329,22 @@ _relay_watches() {
 	_relay_watch_prune_state "$watches_file"
 	_relay_watch_due "$watches_file" "$now" "$due_file"
 	[[ -s "$due_file" ]] || return 0
+	# Stop reading before the relay watchdog so completed batches are still sent;
+	# unreached watches keep their state and stay due for the next run.
+	local budget="${RELAY_WATCH_PASS_BUDGET:-60}" started=$SECONDS out_of_time=0
+	[[ "$budget" =~ ^[0-9]+$ ]] || budget=60
 	while IFS= read -r repo; do
+		[[ "$out_of_time" -eq 0 ]] || break
 		[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || continue
-		local since since_iso slug list_file entry
-		since=$(jq -s --arg repo "$repo" '[.[] | select(.state.repo == $repo)
-			| (if .state.checked > 0 then .state.checked else .state.created end) - 60] | min' "$due_file")
-		[[ "$since" =~ ^-?[0-9]+$ ]] || continue
-		[[ "$since" -gt 0 ]] || since=0
-		since_iso=$(jq -rn --argjson s "$since" '$s | todateiso8601')
-		slug=$(printf '%s' "$repo" | tr '/' '_')
-		list_file="${work}/watch-list-${slug}.json"
-		if ! _relay_get "repos/${repo}/issues?state=all&since=${since_iso}&per_page=${RELAY_PAGE}&sort=updated&direction=desc" \
-			"$list_file" "watch-list"; then
-			_relay_log "watch listing ${repo} deferred or failed (${RELAY_FAILURE}); watches keep their state"
-			continue
-		fi
+		local entry
 		while IFS= read -r entry; do
 			[[ -n "$entry" ]] || continue
-			_relay_watch_one "$entry" "$list_file" "$work" "$now" || true
+			if [[ $((SECONDS - started)) -ge "$budget" ]]; then
+				out_of_time=1
+				_relay_log "watch pass reached its ${budget}s budget; remaining watches stay due"
+				break
+			fi
+			_relay_watch_one "$entry" "$work" "$now" || true
 		done < <(jq -c --arg repo "$repo" 'select(.state.repo == $repo)' "$due_file")
 	done < <(jq -rs '[.[].state.repo] | unique | .[]' "$due_file" 2>/dev/null)
 	local batch

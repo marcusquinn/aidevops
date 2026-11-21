@@ -209,8 +209,12 @@ Messages are pointers: comment IDs, authors, times and the `gh` command that
 reads them. Comment bodies are never copied. The relay never writes to GitHub.
 
 Cost: per interval (`WORKER_BUS_RELAY_MIN_INTERVAL`, default 120 s), one
-issue-list call (`since=`) per repo with due workers, one baseline issue read
-per new worker, and one comments read only when a comment count rose. Every call
+`repos/{repo}/issues/{n}` read per due worker, and one comments read only when a
+comment count rose. The issue URL is stable, so the transport governor's
+conditional cache (GH#38566) revalidates it and an unchanged issue returns a
+free `304` (t19234). The earlier per-repo `issues?since=` listing changed URL on
+every run and always paid 1 point. Trade-off: requests per run scale with due
+workers (tens at current scale, far below secondary limits) instead of repos. Every call
 passes the pulse stop flag, the GraphQL breaker and the REST-core `deferrable`
 budget gate. A deferred or failed read keeps the state, so it is retried later.
 A failed send keeps the detection state, so the change is sent again on the
@@ -258,9 +262,9 @@ They are advisory: GitHub stays the record and decides ownership.
   Items that do not fit, a failed send or a deferred read keep their state and
   go in a later pass. An item GitHub reports as not found is reported once and
   then no longer read.
-- **Cost:** shares the relay interval and budget gate. One issue listing
-  (`since=`) per repo with due watches, one baseline issue read per new watch,
-  and, only when a comment count rose, up to 3 comment pages (100 each) since
+- **Cost:** shares the relay interval and budget gate. One stable-URL
+  issue read (`repos/{repo}/issues/{n}`, a free `304` when unchanged) per due
+  watch and, only when a comment count rose, up to 3 comment pages (100 each) since
   the previous check.
 - **State:** `issue-watch/<session>/<owner>@<repo>@<n>.json` on the bus; the
   relay keeps detection state in `worker-bus-relay/watch/<session>/`. Both end
