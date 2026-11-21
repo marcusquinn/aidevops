@@ -10,6 +10,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.253] - 2026-11-21
+
+### Added
+
+- add paired base/head subprocess spawn profiler (#39610)
+- add installed-runtime worktree lifecycle canary (GH#39530) (#39568)
+- approval-bound account actions with validate-only plan, guarded apply and rollback (GH#39509)
+- add per-test git-spawn attribution helper (GH#39545) (#39554)
+
+### Changed
+
+- Maintenance: mark t19228 complete (pr:#39591 completed:2026-11-21) (#39570)
+- Maintenance: reuse restore-pass bundle import and share lifecycle fixture template
+- Refactor: split terminal-blocker-recovery-helper.sh (GH#39539)
+- Maintenance: fix test-interactive-start-helper.sh source-preflight fixture (GH#39581)
+- Tests: resolve temp root in fixture (GH#39524) (#39562)
+- Maintenance: mark t19217 complete (pr:#39515 completed:2026-11-20) (#39548)
+- Refactor: split rearm cases out of test-terminal-blocker-circuit.sh (GH#36233) (#39542)
+
+### Fixed
+
+- persist agent-sources.json outside deployed tree; surface pull errors (GH#39608) (#39609)
+- classify PR checks by newest run per check (#39600)
+- wall-clock lock wait budget and stderr reason on drop (GH#39603) (#39604)
+- non-required check snapshot uses the merge read timeout (GH#39590)
+- suppress refiling of closed signals and cross-runner duplicates
+- runtime-pending held-PR route and merge-time runtime evidence recheck
+- note dead turns on next turn (#39559)
+- blob-less isolated counter fetches
+- reset stampless status:claimed and audit bare unassign (GH#39584) (#39585)
+- parse OpenCode event stream in cross-review and name failure reasons (#39574)
+- trigger revisit accepts exact-quote verdicts and sees PR merge state (GH#39572) (#39576)
+- close duplicate orphan-recovery PR when worker PR create races it
+- correct Bing credential name; add new-site setup and IndexNow (#39567)
+- terminal-blocker circuit suite flakes on whole-second clock boundaries
+- bound worker-lifecycle retirement retry so release status cannot hang (GH#39561) (#39563)
+- guard empty archive path in recovery maintenance size fixture (GH#39550) (#39555)
+- make Google Ads developer token optional (#39515)
+- exclude PR references from child set (GH#39512) (#39520)
+- spaceship-helper uses documented API host, X-API-Key/Secret auth and secret-store credentials (#39499)
+- make round_topup gate=0 assertion tolerate intermediate grant
+- fall back to update-branch when zero-job rerun failed or was already requested (GH#39533) (#39537)
+
 ## [3.39.252] - 2026-11-20
 
 ### Added
