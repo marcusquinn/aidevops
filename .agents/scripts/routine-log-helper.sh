@@ -1293,6 +1293,32 @@ cmd_ensure_anchor() {
 	return 0
 }
 
+# Retire only the built-in routine covered by verified diff scope. A bounded
+# complete list of open PRs protects legacy Ref identities from early closure.
+cmd_retire_anchor() {
+	local key="${1:-}"
+	[[ "$key" == "badges-sync" ]] || return 1
+	_parse_anchor_args "$@" --title retirement || return 1
+	local repo="$_ANCHOR_REPO" issues="" prs="" number=""
+	local marker="<!-- aidevops:routine-anchor:${key} -->"
+	issues=$(gh issue list --repo "$repo" --state open --label routine-tracking \
+		--limit 1000 --json number,body) || return 1
+	jq -e 'type == "array" and length < 1000 and all(.[]; (.number | type == "number") and (.body | type == "string"))' <<<"$issues" >/dev/null || return 1
+	prs=$(gh pr list --repo "$repo" --state open --limit 1000 --json body) || return 1
+	jq -e 'type == "array" and length < 1000 and all(.[]; .body | type == "string")' <<<"$prs" >/dev/null || return 1
+	while IFS= read -r number; do
+		_is_valid_issue_number "$number" || return 1
+		# Conservatively keep any prose reference too; never misread #12 as #123.
+		if jq -e --arg n "$number" 'any(.[]; .body | test("(?i)\\bref[ :]+#" + $n + "([^0-9]|$)"))' <<<"$prs" >/dev/null; then
+			continue
+		fi
+		gh issue edit "$number" --repo "$repo" --remove-label persistent || return 1
+		gh issue close "$number" --repo "$repo" --reason 'not planned' \
+			--comment 'Routine PRs are now admitted by verified diff scope; this anchor is no longer needed' || return 1
+	done < <(jq -r --arg marker "$marker" '.[] | select(.body | contains($marker)) | .number' <<<"$issues")
+	return 0
+}
+
 # Read an open origin:worker PR that lacks any issue identity and output its
 # current body. Returns 0 when a backfill is needed, 3 when the PR is closed,
 # not worker-origin or already identified, and 1 when it cannot be read.
@@ -1524,6 +1550,9 @@ main() {
 		;;
 	ensure-pr-anchor)
 		cmd_ensure_pr_anchor "$@"
+		;;
+	retire-anchor)
+		cmd_retire_anchor "$@"
 		;;
 	status)
 		cmd_status "$@"

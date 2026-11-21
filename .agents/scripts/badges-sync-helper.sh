@@ -61,6 +61,8 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=./workflow-release-ref.sh
 source "$SELF_DIR/workflow-release-ref.sh"
+# shellcheck source=routine-pr-scope-lib.sh
+source "$SELF_DIR/routine-pr-scope-lib.sh" || exit 1
 
 # shellcheck source=/dev/null
 if [[ -f "$SELF_DIR/shared-constants.sh" ]]; then
@@ -477,7 +479,6 @@ _open_pr() {
 	local _branch_name="$3"
 	local _default_branch="$4"
 	local _description="$5"
-	local _anchor="${6:-}"
 
 	if ! command -v gh_create_pr >/dev/null 2>&1; then
 		printf '%s\t%s\tgh_create_pr unavailable — source shared-gh-wrappers.sh\n' \
@@ -486,9 +487,7 @@ _open_pr() {
 	fi
 
 	local _pr_title="chore: aidevops badge sync — ${_description}"
-	# One standalone non-closing identity line: a run must not close the anchor.
-	local _pr_body=""
-	[[ -z "$_anchor" ]] || _pr_body="Ref #${_anchor}"$'\n\n'
+	local _pr_body=$'<!-- aidevops:routine-pr:badges-sync -->\n\n'
 	_pr_body+=$(printf '%s\n' \
 		"## Summary" \
 		"" \
@@ -592,6 +591,12 @@ _apply_repo() (
 		return 0
 	fi
 	trap 'rmdir "$_lock"' EXIT
+	# Best effort; referenced legacy anchors remain open until their PR resolves.
+	_helper=$(_resolve_helper routine-log-helper.sh) || _helper=""
+	if [[ -n "$_helper" ]]; then
+		bash "$_helper" retire-anchor badges-sync --repo "$_slug" >&2 ||
+			_warn "$_slug: anchor retirement deferred"
+	fi
 	# Query failures must not be interpreted as absence of an existing PR.
 	# Use the authoritative, paginated list rather than the delayed search index.
 	_prs=$(gh api "repos/$_slug/pulls?state=open&per_page=100" --paginate \
@@ -601,7 +606,6 @@ _apply_repo() (
 		'[.[] | select((.headRefName | startswith($prefix)) or
 		 (.title | startswith("chore: aidevops badge sync")))][0].url // empty') || return 1
 	if [[ -n "$_existing" ]]; then
-		_link_open_pr_anchor "$_slug" "$_existing"
 		printf '%s\t%s\topen sync PR: %s\n' "$_slug" "$_STATUS_SKIPPED" "$_existing"
 		return 0
 	fi
@@ -671,16 +675,6 @@ _find_retained_worktree() {
 	return 0
 }
 
-# _is_declared_output <path> — 0 when <path> is regenerable sync output.
-_is_declared_output() {
-	local _candidate="$1"
-	case "$_candidate" in
-	README.md | .github/workflows/loc-badge.yml) return 0 ;;
-	docs/metrics/* | .github/badges/*) return 0 ;;
-	esac
-	return 1
-}
-
 # _recover_retained_worktree <slug> <path> <branch> <default>
 # Refresh a retained worktree onto the current remote default when every
 # uncommitted change and unpublished commit touches only declared outputs.
@@ -731,12 +725,6 @@ _publish_worktree() {
 		return 0
 	fi
 	git -C "$_path" commit -q -m "chore: refresh aidevops badges, metrics and workflow" || return 1
-	# Resolve the PR identity before pushing: a branch without a PR is clutter.
-	local _anchor=""
-	_anchor=$(_routine_anchor "$_slug") || {
-		printf '%s\n' "$_anchor"
-		return 1
-	}
 	# A recovered branch already published without a PR is helper-owned output;
 	# replace it only if the remote still holds the commit we observed.
 	[[ -z "$_lease" ]] || _push_args+=("--force-with-lease=refs/heads/${_branch}:${_lease}")
@@ -756,7 +744,7 @@ _publish_worktree() {
 		return 1
 	fi
 	printf '%s\n' "$_push_output" >&2
-	_open_pr "$_slug" "$_path" "$_branch" "$_default" "README, metrics and refresh workflow" "$_anchor"
+	_open_pr "$_slug" "$_path" "$_branch" "$_default" "README, metrics and refresh workflow"
 	return $?
 }
 

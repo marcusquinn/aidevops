@@ -278,6 +278,13 @@ _gh_validate_pr_worker_identity() {
 	if [[ -z "$issues" ]]; then
 		issues=$(_gh_pr_body_explicit_issues "$body_text") || return 1
 	fi
+	# Syntax only: the live merge boundary verifies author, branch and exact diff.
+	# Unknown or multiple markers cannot replace an issue identity. Workflow sync
+	# retains its anchor until a safe exact-render policy is available.
+	if [[ -z "$issues" && "$body_text" == *'<!-- aidevops:routine-pr:badges-sync -->'* ]] &&
+		[[ "$(printf '%s' "$body_text" | grep -c 'aidevops:routine-pr:')" == 1 ]]; then
+		return 0
+	fi
 	if [[ -z "$issues" || "$issues" == *$'\n'* || "$issues" == "ambiguous" ]]; then
 		_GH_EDIT_REJECTION_REASON="worker PR body has ambiguous or missing explicit issue identity"
 		# shellcheck disable=SC2016 # Literal Markdown code spans, not commands.

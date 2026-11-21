@@ -494,6 +494,14 @@ _worker_briefed_trust_check() {
 	WORKER_BRIEFED_TRUST_REASON="linked issue metadata unavailable (t2449)"
 
 	_worker_briefed_pr_eligible "$pr_number" "$repo_slug" "$labels_str" "$is_draft" "$linked_issue" || return 1
+	# Both Pulse and full-loop enter this shared verdict; no merge gate bypass.
+	if [[ -z "$linked_issue" ]]; then
+		WORKER_BRIEFED_TRUST_REASON="routine diff scope unverifiable (GH#39785)"
+		# shellcheck source=routine-pr-scope-lib.sh
+		source "${BASH_SOURCE[0]%/*}/routine-pr-scope-lib.sh" || return 1
+		_routine_pr_scope_check "$pr_number" "$repo_slug" || return 1
+		return 0
+	fi
 
 	# Reuse the issue API base path for author-association and NMR checks.
 	local _issue_api
@@ -582,11 +590,14 @@ _worker_briefed_pr_eligible() {
 		return 1
 	fi
 
-	# Gate: must have a linked issue (the "brief" in "maintainer-briefed")
+	# An issue-less PR is considered only by the live routine scope boundary.
 	if [[ -z "$linked_issue" ]]; then
-		WORKER_BRIEFED_TRUST_REASON="no linked issue (t2449)"
-		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — no linked issue (t2449)" >>"$LOGFILE"
-		return 1
+		local body=""
+		body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq .body) || return 1
+		if [[ "$body" != *'<!-- aidevops:routine-pr:badges-sync -->'* ]]; then
+			WORKER_BRIEFED_TRUST_REASON="no linked issue (t2449)"
+			return 1
+		fi
 	fi
 
 	return 0
