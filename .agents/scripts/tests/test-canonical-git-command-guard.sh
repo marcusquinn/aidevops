@@ -485,6 +485,9 @@ assert_blocked "blocks linked-worktree metadata from mutating the canonical work
 assert_allowed "allows canonical git archive to stdout" "$REPO" "git archive --format=tar HEAD -- README.md"
 assert_blocked "blocks canonical git archive --output" "git archive --output='$REPO/out.tar' HEAD"
 assert_blocked "blocks canonical git archive -o" "git archive -o '$REPO/out.tar' HEAD"
+assert_blocked "blocks canonical git archive --exec option-value bypass" "git archive --exec -- --output=README.md HEAD"
+assert_blocked "blocks canonical git archive abbreviated --out" "git archive --out=README.md HEAD"
+assert_blocked "blocks canonical git stash show --output" "git stash show --output=README.md"
 assert_allowed "allows canonical git stash list" "$REPO" "git stash list"
 assert_allowed "allows canonical git stash show" "$REPO" "git stash show"
 assert_blocked "blocks canonical git stash push" "git stash push -m x"
@@ -492,7 +495,7 @@ assert_blocked "blocks canonical bare git stash" "git stash"
 assert_blocked "blocks canonical git stash drop" "git stash drop"
 assert_blocked "blocks canonical git worktree repair" "git worktree repair"
 REPAIR_OUTPUT=$(python3 "$GUARD" --cwd "$REPO" --command "git worktree repair" 2>&1 || true)
-if [[ "$REPAIR_OUTPUT" == *"canonical-recovery-helper.sh repair-worktrees"* ]]; then
+if [[ "$REPAIR_OUTPUT" == *"canonical-recovery-helper.sh"*" repair-worktrees"* ]]; then
 	pass "worktree repair block message names the recovery helper"
 else
 	fail "worktree repair block message names the recovery helper (output=$REPAIR_OUTPUT)"

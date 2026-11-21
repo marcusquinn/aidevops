@@ -106,21 +106,39 @@ def _hash_object_is_read_only(args: list[str]) -> bool:
     return not expect_value
 
 
+_ARCHIVE_FLAGS = frozenset({"--worktree-attributes", "--verbose", "-v", "--list", "-l"})
+_ARCHIVE_VALUE_OPTIONS = frozenset({"--format", "--prefix"})
+_STASH_QUERY_FLAGS = frozenset(
+    {"-p", "--patch", "--stat", "--numstat", "--shortstat", "--name-only",
+     "--name-status", "--oneline", "--no-color", "-u", "--include-untracked",
+     "--only-untracked"}
+)
+
+
 def _archive_is_read_only(args: list[str]) -> bool:
-    """Allow `git archive` that streams to stdout; any output file is a write."""
+    """Fail-closed allowlist: stdout archives only; unknown options may write."""
+    skip_value = False
     for arg in args:
-        if arg == "--":
+        if skip_value:
+            skip_value = False
+        elif arg == "--":
             break
-        if arg == "--output" or arg.startswith("--output="):
+        elif arg in _ARCHIVE_VALUE_OPTIONS:
+            skip_value = True
+        elif arg.startswith("-") and not (
+            arg in _ARCHIVE_FLAGS
+            or arg.partition("=")[0] in _ARCHIVE_VALUE_OPTIONS
+            or (len(arg) == 2 and arg[1].isdigit())
+        ):
             return False
-        if arg.startswith("-") and not arg.startswith("--") and "o" in arg[1:]:
-            return False
-    return True
+    return not skip_value
 
 
 def _stash_is_read_only(args: list[str]) -> bool:
-    """Allow only `git stash list` and `git stash show`."""
-    return bool(args) and args[0] in {"list", "show"}
+    """Allow `git stash list|show` with allowlisted display flags only."""
+    return bool(args) and args[0] in {"list", "show"} and all(
+        not arg.startswith("-") or arg in _STASH_QUERY_FLAGS for arg in args[1:]
+    )
 
 
 CANONICAL_CHECKS: dict[str, Callable[[list[str]], bool]] = {
