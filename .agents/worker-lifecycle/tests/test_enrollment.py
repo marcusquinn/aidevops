@@ -23,7 +23,7 @@ from worker_lifecycle.admission import AdmissionClosed, AdmissionRegistry
 from worker_lifecycle.cleanup_plan import prepare_cleanup
 from worker_lifecycle.creation import WorktreeSpec, create_worktree
 from worker_lifecycle.enrollment import GenerationEnrollment, MARKER, _git_directory
-from worker_lifecycle.rebind import rebind_moved_admin
+from worker_lifecycle.rebind import _replace_marker, rebind_moved_admin
 from worker_lifecycle.registry import main
 from worker_lifecycle.runtime import adapter_for
 from worker_lifecycle.session import admit_session, relinquish_session
@@ -1003,7 +1003,8 @@ class EnrollmentContract(unittest.TestCase):
         rebound = subprocess.run(  # nosec B603 # nosemgrep # asserted-equal fixed argv, no shell
             ["python3", str(alias / ".." / "worker-lifecycle" / "worker-registry.py"),
              "--state-dir", str(configured_state),
-             "rebind-moved-worktree", "--path", str(self.tree)], env=env, capture_output=True, text=True, timeout=30, check=True,
+             "rebind-moved-worktree", "--path", str(self.tree)],
+            env=env, capture_output=True, text=True, timeout=30, check=True,
         )
         self.assertTrue(json.loads(rebound.stdout)["rebound"])
 
@@ -1022,8 +1023,6 @@ class EnrollmentContract(unittest.TestCase):
         self.assertEqual(sum(event["type"] == "rebind-admin-directory" for event in events), 4)
 
     def test_rebind_recovers_publication_event_commit_and_finalization_failures(self):
-        from worker_lifecycle.rebind import _replace_marker
-
         generation = self.enrollment.resolve(self.tree, create=True)
         current = self.repo
         for stage in ("publication", "event", "commit", "finalization"):
