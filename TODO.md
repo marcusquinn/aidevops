@@ -2402,13 +2402,13 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19251 fix(routines): badge and workflow sync PRs need a per-repo routine anchor so headless runs pass the worker identity guard and t2449 #bug ref:GH#39696 pr:#39699 completed:2026-11-21
 
-- [ ] t19261 fix(cloudron-release): a cancelled re-run of a passed check blocks release approval requests indefinitely #bug #interactive tier:standard ref:GH#39742 assignee:marcusquinn logged:2026-11-21 started:2026-11-21 -> [todo/tasks/t19261-brief.md]
+- [x] t19261 fix(cloudron-release): a cancelled re-run of a passed check blocks release approval requests indefinitely #bug #interactive tier:standard ref:GH#39742 assignee:marcusquinn logged:2026-11-21 started:2026-11-21 -> [todo/tasks/t19261-brief.md] pr:#39743 completed:2026-11-21
 
 - [x] t19254 fix(ci): capture failing-suite output in Shell Suite Main Health artifact #auto-dispatch #bug ref:GH#39714 pr:#39719 completed:2026-11-21
 
 - [x] t19255 fix(tests): test-scratch-worktree-helper.sh exits 128 on Linux #auto-dispatch #bug ref:GH#39715 pr:#39721 completed:2026-11-21
 
-- [ ] t19260 fix(decisions): list held-for-review PRs (runtime-pending verify and legacy holds) in the /decisions queue #bug #interactive tier:standard ref:GH#39741 assignee:marcusquinn logged:2026-11-21 started:2026-11-21 -> [todo/tasks/t19260-brief.md]
+- [x] t19260 fix(decisions): list held-for-review PRs (runtime-pending verify and legacy holds) in the /decisions queue #bug #interactive tier:standard ref:GH#39741 assignee:marcusquinn logged:2026-11-21 started:2026-11-21 -> [todo/tasks/t19260-brief.md] pr:#39744 completed:2026-11-21
 
 ## In Progress
 
