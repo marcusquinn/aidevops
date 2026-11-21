@@ -76,6 +76,22 @@ def _commit_rebind(store: LifecycleRegistry, path: Path, directory: Path, value:
             "to": current, "cleanup_authorized": False}
 
 
+def _marker_is_valid(store: LifecycleRegistry, path: Path, directory: Path, value: dict) -> bool:
+    expected = {
+        "format": 2, "installation_id": store.installation_id(),
+        "path": str(path), "directory": _directory_inode(path),
+        "git_directory": value.get("git_directory"),
+        "git_identity": _directory_inode(directory),
+    }
+    comparable = {name: item for name, item in value.items()
+                  if name not in ("generation_id", "rebind_from")}
+    if encode(comparable) != encode(expected) or not isinstance(value["git_directory"], str):
+        return False
+    if "rebind_from" not in value:
+        return True
+    return isinstance(value["rebind_from"], str) and value["git_directory"] == str(directory)
+
+
 def rebind_moved_admin(store: LifecycleRegistry, path: Path) -> dict:
     with store.connection() as connection:
         AdmissionRegistry._require_schema(connection)
@@ -83,19 +99,8 @@ def rebind_moved_admin(store: LifecycleRegistry, path: Path) -> dict:
         directory = _git_directory(path)  # also proves the gitdir backlink
         with DirectoryHandle(directory) as admin:
             value = _read_marker(directory / MARKER)
-            expected = {
-                "format": 2, "installation_id": store.installation_id(),
-                "path": str(path), "directory": _directory_inode(path),
-                "git_directory": value.get("git_directory"),
-                "git_identity": _directory_inode(directory),
-            }
-            comparable = {name: item for name, item in value.items()
-                          if name not in ("generation_id", "rebind_from")}
-            valid = (encode(comparable) == encode(expected) and isinstance(value["git_directory"], str)
-                      and root.matches_path() and admin.matches_path())
-            if "rebind_from" in value:
-                valid = (valid and isinstance(value["rebind_from"], str)
-                         and value["git_directory"] == str(directory))
+            valid = (_marker_is_valid(store, path, directory, value)
+                     and root.matches_path() and admin.matches_path())
             if not valid:
                 raise StoreConflict(MISMATCH)
             if value["git_directory"] == str(directory) and "rebind_from" not in value:

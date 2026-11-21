@@ -62,6 +62,23 @@ usage() {
 	return 0
 }
 
+# Enrolled trees keep the old admin path in their generation marker; re-bind is
+# a separate, journaled step that proves inodes before accepting the move.
+_emit_rebind_followups() {
+	local registry_entry="${SCRIPT_DIR}/../worker-lifecycle/worker-registry.py"
+	local state_dir="" wt_path=""
+	state_dir=$(worker_lifecycle_state_dir) || state_dir=""
+	if [[ -z "$state_dir" || ! -d "$state_dir" ]]; then
+		printf 'REBIND_UNAVAILABLE: existing lifecycle registry unavailable; no registry created\n'
+		return 0
+	fi
+	for wt_path in "$@"; do
+		printf 'REBIND_FOLLOWUP: python3 %q --state-dir %q rebind-moved-worktree --path %q\n' \
+			"$registry_entry" "$state_dir" "$wt_path"
+	done
+	return 0
+}
+
 # Mend linked-worktree pointers after a canonical checkout was moved or renamed.
 # Runs `git worktree repair` with each worktree path recorded in the admin dir,
 # audits the operation and prints every worktree `.git` pointer it rewrote.
@@ -71,8 +88,6 @@ repair_worktree_pointers() {
 	local issue="$3"
 	local audit_file="${HOME}/.aidevops/logs/canonical-recovery-audit.jsonl"
 	local audit_tool="${SCRIPT_DIR}/audit-log-helper.sh"
-	local registry_entry="${SCRIPT_DIR}/../worker-lifecycle/worker-registry.py"
-	local state_dir=""
 	local gitdir_file="" wt_git="" wt_path="" before="" after="" changed=0 i=0
 	local -a wt_paths=() wt_befores=()
 
@@ -113,17 +128,7 @@ repair_worktree_pointers() {
 		fi
 	done
 	printf 'REPAIRED_WORKTREE_POINTERS=%s\n' "$changed"
-	# Enrolled trees keep the old admin path in their generation marker; re-bind
-	# is a separate, journaled step that proves inodes before accepting the move.
-	state_dir=$(worker_lifecycle_state_dir) || state_dir=""
-	if [[ -z "$state_dir" || ! -d "$state_dir" ]]; then
-		printf 'REBIND_UNAVAILABLE: existing lifecycle registry unavailable; no registry created\n'
-		return 0
-	fi
-	for ((i = 0; i < ${#wt_paths[@]}; i++)); do
-		printf 'REBIND_FOLLOWUP: python3 %q --state-dir %q rebind-moved-worktree --path %q\n' \
-			"$registry_entry" "$state_dir" "${wt_paths[$i]}"
-	done
+	_emit_rebind_followups "${wt_paths[@]+"${wt_paths[@]}"}"
 	return 0
 }
 
