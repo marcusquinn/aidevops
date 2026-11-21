@@ -537,14 +537,14 @@ else
 fi
 
 run_recover 0 "86|ready_overlap_failed" 1
-if echo "$output" | grep -q "STALE_READY_FAILED_ESCALATED"; then
+if grep -q "STALE_READY_FAILED_ESCALATED" <<<"$output"; then
 	print_result "Overlapping runs use latest completedAt (CANCELLED wins)" 0
 else
 	print_result "Overlapping runs use latest completedAt (CANCELLED wins)" 1 "(got: '$output')"
 fi
 
 run_recover 0 "88|ready_pending_newest" 1
-if echo "$output" | grep -q "STALE_PROGRESS_PRESERVED" && ! echo "$output" | grep -q "STALE_READY_FAILED_ESCALATED"; then
+if grep -q "STALE_PROGRESS_PRESERVED" <<<"$output" && ! grep -q "STALE_READY_FAILED_ESCALATED" <<<"$output"; then
 	print_result "Newest pending run without timestamps masks older failure" 0
 else
 	print_result "Newest pending run without timestamps masks older failure" 1 "(got: '$output')"
