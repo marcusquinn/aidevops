@@ -388,8 +388,12 @@ _stale_recovery_find_open_pr() {
 					select((
 						$review_pass and (.__typename // "") == "CheckRun" and
 						((.name // "") | ascii_downcase | contains("review-bot-gate"))
-					) | not) |
-					(.conclusion // .status // .state // empty) | ascii_upcase] |
+					) | not)] |
+				# Keep only the newest run per check identity so superseded
+				# CANCELLED/FAILURE runs do not mask a later SUCCESS (GH#39598).
+				group_by([(.__typename // ""), (.workflowName // ""), (.name // .context // "")]) |
+				map(max_by(.startedAt // .createdAt // .completedAt // "")) |
+				[.[] | (.conclusion // .status // .state // empty) | ascii_upcase] |
 				any(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or
 					. == "TIMED_OUT" or . == "ACTION_REQUIRED" or . == "STALE");
 			def kind:
