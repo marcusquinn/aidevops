@@ -2374,6 +2374,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19228 fix(full-loop): non-required check snapshot keeps the generic 15s read budget and defers merges under transport pacing #bug #interactive ref:GH#39590 logged:2026-11-21 -> [todo/tasks/t19228-brief.md] pr:#39591 completed:2026-11-21
 
+- [ ] t19236 fix(wait-checks): end early with a rebase instruction when required checks are missing because the PR conflicts with its base #auto-dispatch #bug ref:GH#39626 logged:2026-11-21 -> [todo/tasks/t19236-brief.md]
+
 - [x] t19232 Add paired base/head subprocess spawn profiler for suite fan-out work #auto-dispatch #feat ref:GH#39605 pr:#39610 completed:2026-11-21
 
 - [ ] t19231 fix(worker-blocker-log): lock wait budget of ~100 ms drops blocker events under load (flaky parallel-appenders test) #auto-dispatch #bug ref:GH#39603
