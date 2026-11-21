@@ -482,6 +482,21 @@ assert_allowed "allows rev-list query in linked worktree" "$LINKED" "git rev-lis
 LINKED_GIT_DIR=$(git -C "$LINKED" rev-parse --path-format=absolute --git-dir)
 assert_blocked "blocks linked-worktree metadata from mutating the canonical worktree" \
 	"git --git-dir='$LINKED_GIT_DIR' --work-tree='$REPO' reset --hard"
+assert_allowed "allows canonical git archive to stdout" "$REPO" "git archive --format=tar HEAD -- README.md"
+assert_blocked "blocks canonical git archive --output" "git archive --output='$REPO/out.tar' HEAD"
+assert_blocked "blocks canonical git archive -o" "git archive -o '$REPO/out.tar' HEAD"
+assert_allowed "allows canonical git stash list" "$REPO" "git stash list"
+assert_allowed "allows canonical git stash show" "$REPO" "git stash show"
+assert_blocked "blocks canonical git stash push" "git stash push -m x"
+assert_blocked "blocks canonical bare git stash" "git stash"
+assert_blocked "blocks canonical git stash drop" "git stash drop"
+assert_blocked "blocks canonical git worktree repair" "git worktree repair"
+REPAIR_OUTPUT=$(python3 "$GUARD" --cwd "$REPO" --command "git worktree repair" 2>&1 || true)
+if [[ "$REPAIR_OUTPUT" == *"canonical-recovery-helper.sh repair-worktrees"* ]]; then
+	pass "worktree repair block message names the recovery helper"
+else
+	fail "worktree repair block message names the recovery helper (output=$REPAIR_OUTPUT)"
+fi
 
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
 DEFAULT_BRANCH=$(

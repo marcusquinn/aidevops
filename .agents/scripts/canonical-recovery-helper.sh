@@ -10,6 +10,7 @@ SYNC_MIRROR_CMD="sync-mirror"
 LOCAL_FAST_FORWARD_CMD="fast-forward-local"
 VERIFY_BOOTSTRAP_CMD="verify-bootstrap-registration"
 REPAIR_UPSTREAM_CMD="repair-upstream"
+REPAIR_WORKTREES_CMD="repair-worktrees"
 FOLLOW_TRANSFER_CMD="follow-transfer"
 CLEAR_STALE_REBASE_CMD="clear-stale-rebase"
 CLEAR_ABANDONED_REBASE_CMD="clear-abandoned-rebase"
@@ -52,8 +53,61 @@ usage() {
 		"  canonical-recovery-helper.sh ${SYNC_MIRROR_CMD} --repo PATH --issue N --confirm SYNCHRONIZE_CANONICAL_MIRROR" \
 		"  canonical-recovery-helper.sh ${SYNC_MIRROR_CMD} --repo PATH --reason ${AIDEVOPS_UPDATE_REASON} --confirm SYNCHRONIZE_CANONICAL_MIRROR" \
 		"  canonical-recovery-helper.sh ${REPAIR_UPSTREAM_CMD} --repo PATH --issue N --confirm REPAIR_CANONICAL_UPSTREAM" \
+		"  canonical-recovery-helper.sh ${REPAIR_WORKTREES_CMD} --repo PATH [--issue N] --confirm REPAIR_WORKTREE_POINTERS" \
 		"  canonical-recovery-helper.sh ${FOLLOW_TRANSFER_CMD} --repo PATH --slug OWNER/REPO --confirm FOLLOW_REPOSITORY_TRANSFER" \
 		"  canonical-recovery-helper.sh ${VERIFY_BOOTSTRAP_CMD} --repo PATH --slug OWNER/REPO --confirm REGISTER_CANONICAL_REPOSITORY"
+	return 0
+}
+
+# Mend linked-worktree pointers after a canonical checkout was moved or renamed.
+# Runs `git worktree repair` with each worktree path recorded in the admin dir,
+# audits the operation and prints every worktree `.git` pointer it rewrote.
+repair_worktree_pointers() {
+	local repo="$1"
+	local common="$2"
+	local issue="$3"
+	local audit_file="${HOME}/.aidevops/logs/canonical-recovery-audit.jsonl"
+	local audit_tool="${SCRIPT_DIR}/audit-log-helper.sh"
+	local gitdir_file="" wt_git="" wt_path="" before="" after="" changed=0 i=0
+	local -a wt_paths=() wt_befores=()
+
+	[[ -x "$audit_tool" ]] || {
+		printf 'BLOCKED: tamper-evident audit helper is unavailable\n' >&2
+		return 1
+	}
+	AUDIT_LOG_FILE="$audit_file" "$audit_tool" verify --quiet || {
+		printf 'BLOCKED: audit chain verification failed\n' >&2
+		return 1
+	}
+	for gitdir_file in "${common}"/worktrees/*/gitdir; do
+		[[ -f "$gitdir_file" ]] || continue
+		wt_git=$(<"$gitdir_file")
+		wt_path="${wt_git%/.git}"
+		[[ -d "$wt_path" && -f "${wt_path}/.git" ]] || continue
+		wt_paths+=("$wt_path")
+		wt_befores+=("$(<"${wt_path}/.git")")
+	done
+	AUDIT_LOG_FILE="$audit_file" AUDIT_QUIET=true "$audit_tool" log \
+		operation.verify "Canonical worktree pointer repair authorized" \
+		--detail "issue=${issue}" --detail "repo=${repo}" \
+		--detail "operation=${REPAIR_WORKTREES_CMD}" \
+		--detail "worktrees=${#wt_paths[@]}" >/dev/null || {
+		printf 'BLOCKED: recovery audit record could not be written\n' >&2
+		return 1
+	}
+	"$REAL_GIT" -C "$repo" worktree repair "${wt_paths[@]+"${wt_paths[@]}"}" || {
+		printf 'BLOCKED: git worktree repair failed\n' >&2
+		return 1
+	}
+	for ((i = 0; i < ${#wt_paths[@]}; i++)); do
+		before="${wt_befores[$i]}"
+		after=$(<"${wt_paths[$i]}/.git")
+		if [[ "$before" != "$after" ]]; then
+			printf 'REWROTE: %s: %s -> %s\n' "${wt_paths[$i]}" "$before" "$after"
+			changed=$((changed + 1))
+		fi
+	done
+	printf 'REPAIRED_WORKTREE_POINTERS=%s\n' "$changed"
 	return 0
 }
 
@@ -158,6 +212,13 @@ restore-default)
 		exit 2
 	}
 	;;
+"$REPAIR_WORKTREES_CMD")
+	expected_confirmation="REPAIR_WORKTREE_POINTERS"
+	[[ -z "$expected_branch" && -z "$maintenance_reason" ]] || {
+		usage
+		exit 2
+	}
+	;;
 "$FOLLOW_TRANSFER_CMD")
 	expected_confirmation="FOLLOW_REPOSITORY_TRANSFER"
 	[[ -z "$expected_branch" && "$bootstrap_slug" =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$ ]] || {
@@ -199,6 +260,8 @@ elif [[ "$cmd" == "$VERIFY_BOOTSTRAP_CMD" && -z "$issue_number" && -z "$maintena
 	audit_reference="bootstrap registration"
 elif [[ "$cmd" == "$FOLLOW_TRANSFER_CMD" && -z "$issue_number" && -z "$maintenance_reason" ]]; then
 	audit_reference="repository transfer"
+elif [[ "$cmd" == "$REPAIR_WORKTREES_CMD" && -z "$issue_number" ]]; then
+	audit_reference="worktree pointer repair"
 elif [[ "$issue_number" =~ ^[0-9]+$ && -z "$maintenance_reason" ]]; then
 	audit_reference="issue ${issue_number}"
 elif [[ -z "$issue_number" && ("$cmd" == "$FAST_FORWARD_CMD" || "$cmd" == "$SYNC_MIRROR_CMD") &&
@@ -223,6 +286,10 @@ common_dir=$("$REAL_GIT" -C "$repo_path" rev-parse --path-format=absolute --git-
 	printf 'BLOCKED: recovery target is not the canonical worktree\n' >&2
 	exit 1
 }
+if [[ "$cmd" == "$REPAIR_WORKTREES_CMD" ]]; then
+	repair_worktree_pointers "$repo_path" "$common_dir" "${issue_number:-none}"
+	exit $?
+fi
 if [[ "$cmd" == "$LOCAL_FAST_FORWARD_CMD" ]]; then
 	fast_forward_local "$repo_path" "$from_branch" "$task_id"
 	exit $?
