@@ -51,15 +51,16 @@ def _require_registered(connection: sqlite3.Connection, generation: str, path: P
         raise StoreConflict(MISMATCH)
 
 
-def _require_unchanged(path: Path, directory: Path, root: DirectoryHandle, admin: DirectoryHandle) -> None:
-    if not root.matches_path() or not admin.matches_path() or _git_directory(path) != directory:
+def _require_unchanged(root: DirectoryHandle, admin: DirectoryHandle) -> None:
+    if not root.matches_path() or not admin.matches_path() or _git_directory(root.path) != admin.path:
         raise StoreConflict(MISMATCH)
 
 
 def _commit_rebind(
-    store: LifecycleRegistry, path: Path, directory: Path, value: dict,
+    store: LifecycleRegistry, value: dict,
     root: DirectoryHandle, admin: DirectoryHandle,
 ) -> dict:
+    path, directory = root.path, admin.path
     generation = value["generation_id"]
     previous = value.get("rebind_from", value["git_directory"])
     current = value["git_directory"] if "rebind_from" in value else str(directory)
@@ -73,7 +74,7 @@ def _commit_rebind(
              if name not in ("rebind_from", "rebind_event_id")}
     pending = dict(clean, git_directory=current, rebind_from=previous, rebind_event_id=event_id)
     with store.connection(write=True) as connection:
-        _require_unchanged(path, directory, root, admin)
+        _require_unchanged(root, admin)
         _require_registered(connection, generation, path)
         if _read_marker(directory / MARKER) != value:
             raise StoreConflict(MISMATCH)
@@ -86,11 +87,11 @@ def _commit_rebind(
             "type": "rebind-admin-directory", "generation_id": generation,
             "path": str(path), "from": previous, "to": current,
         })
-        _require_unchanged(path, directory, root, admin)
+        _require_unchanged(root, admin)
     # Only a committed event permits removing the recovery field. A crash here
     # replays the identical event before finalizing the marker.
     with store.connection(write=True) as connection:
-        _require_unchanged(path, directory, root, admin)
+        _require_unchanged(root, admin)
         _require_registered(connection, generation, path)
         if _read_marker(directory / MARKER) != pending:
             raise StoreConflict(MISMATCH)
@@ -131,11 +132,11 @@ def rebind_moved_admin(store: LifecycleRegistry, path: Path) -> dict:
             if "rebind_from" in value:
                 # Finish the recorded transition even after another move. Only
                 # then start a separate transition to today's proven admin path.
-                result = _commit_rebind(store, path, directory, value, root, admin)
+                result = _commit_rebind(store, value, root, admin)
                 if value["git_directory"] == str(directory):
                     return result
                 value = _read_marker(directory / MARKER)
             if value["git_directory"] == str(directory) and "rebind_from" not in value:
                 return {"generation_id": value["generation_id"], "rebound": False,
                         "cleanup_authorized": False}
-            return _commit_rebind(store, path, directory, value, root, admin)
+            return _commit_rebind(store, value, root, admin)
