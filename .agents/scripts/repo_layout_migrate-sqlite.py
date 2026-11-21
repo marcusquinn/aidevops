@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -32,22 +33,39 @@ def validated_sql_target(table: str, column: str) -> tuple[str, str]:
     return table, column
 
 
+def scoped_integrity_ok(connection: sqlite3.Connection, tables: list[str]) -> bool:
+    """Check only the migration tables; full check before SQLite 3.33 (no scoping)."""
+    if not tables:
+        return True
+    if sqlite3.sqlite_version_info < (3, 33, 0):
+        statements = ["PRAGMA integrity_check"]
+    else:
+        statements = [f"PRAGMA integrity_check({table})" for table in tables]
+    for statement in statements:
+        for row in connection.execute(statement).fetchall():
+            if not row or row[0] != "ok":
+                return False
+    return True
+
+
 def sqlite_consumer(path: Path, mappings: dict[str, str]) -> dict[str, Any]:
     """Capture relevant exact-path SQLite rows and schema."""
     if any((path.is_symlink(), not path.is_file(), path.stat().st_uid != os.getuid())):
         raise MigrationError(f"Unsafe OpenCode database: {path}")
+    print(f"AIDEVOPS_PROGRESS: inspecting OpenCode database {path.name}", file=sys.stderr, flush=True)
     uri = f"file:{path}?mode=ro"
     try:
         connection = sqlite3.connect(uri, uri=True, timeout=2)
         schema = sqlite_schema(connection)
         rows = sqlite_consumer_rows(connection, schema, mappings)
-        integrity = connection.execute("PRAGMA integrity_check").fetchone()
+        # Nothing is written when no rows match, so skip the page-reading check.
+        integrity_ok = not rows or scoped_integrity_ok(connection, sorted(schema))
     except sqlite3.Error as exc:
         raise MigrationError(f"Could not inspect OpenCode database: {path}") from exc
     finally:
         if "connection" in locals():
             connection.close()
-    if not integrity or integrity[0] != "ok":
+    if not integrity_ok:
         raise MigrationError(f"SQLite integrity check failed: {path}")
     return {"path": str(path), "schema": schema, "rows": rows}
 
