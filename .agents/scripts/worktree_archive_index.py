@@ -13,6 +13,7 @@ from worktree_archive_filesystem import supported_git_metadata
 from worktree_archive_state import intent_to_add_differs, inventories, supported_history, tagged_index
 
 SHARED_INDEX = re.compile(rb'/.*/sharedindex\.(?:[0-9a-f]{40}|[0-9a-f]{64})')
+OBJECT_ID = re.compile(rb'(?:[0-9a-f]{40}|[0-9a-f]{64})')
 
 
 def archive_policies(manifest):
@@ -40,28 +41,32 @@ def archive_policies(manifest):
 
 
 def index_dirs(root):
-    """Resolve (admin, common, index.lock, split-index probe) in one spawn for one capture pass."""
+    """Resolve (admin, common, index.lock, split-index probe, HEAD) in one spawn for one capture pass."""
     # --absolute-git-dir is absolute before the --path-format switch.
-    # --shared-index-path prints nothing outside split-index mode, so it stays last.
+    # --shared-index-path prints nothing outside split-index mode; --verify
+    # prints its single revision after every option (GH#39560), so HEAD is last.
     lines = git(root, 'rev-parse', '--absolute-git-dir', '--path-format=absolute', '--git-common-dir',
-                '--git-path', 'index.lock', '--shared-index-path').rstrip(b'\n').split(b'\n')
+                '--git-path', 'index.lock', '--shared-index-path',
+                '--verify', 'HEAD').rstrip(b'\n').split(b'\n')
+    head = lines.pop() if lines and OBJECT_ID.fullmatch(lines[-1]) else None
     # A newline inside a path must not shift fields: an optional fourth line is
     # accepted only as a shared index file, never as a displaced index.lock path.
-    if len(lines) not in (3, 4) or (len(lines) == 4 and not SHARED_INDEX.fullmatch(lines[3])):
+    if head is None or len(lines) not in (3, 4) or (len(lines) == 4 and not SHARED_INDEX.fullmatch(lines[3])):
         raise ValueError('unexpected Git directory resolution')
     admin_raw, common_raw, lock = (os.fsdecode(line) for line in lines[:3])
-    return Path(admin_raw), Path(common_raw), lock, b''.join(lines[3:])
+    return Path(admin_raw), Path(common_raw), lock, b''.join(lines[3:]), head.decode('ascii')
 
 
 def git_index_state(path, head=None, dirs=None):
     root = Path(path).resolve(strict=True)
-    # A caller may pass directories it resolved moments earlier in the same pass.
-    admin, common, lock, shared_index = dirs if dirs is not None else index_dirs(root)
+    # A caller may pass directories it resolved moments earlier in the same pass;
+    # the same spawn resolved this pass's HEAD.
+    admin, common, lock, shared_index, pass_head = dirs if dirs is not None else index_dirs(root)
     if os.path.lexists(lock):
         raise ValueError('git_admin:index_locked:index.lock')
     from worktree_archive_state import merge_pending, merge_state
     if merge_pending(root, admin=admin):
-        state = merge_state(root, admin, common)
+        state = merge_state(root, admin, common, head=pass_head)
         return {'head': state['head'], 'merge': state}
     # One read yields both the --stage bytes (digest below) and the -v flags.
     tags, index = tagged_index(root)
@@ -91,7 +96,7 @@ def git_index_state(path, head=None, dirs=None):
     supported_history(root, admin, require_reachable_history=False, private_refs=list(state['refs']))
     # Retain the Git-filter/LFS preservation guard; git_snapshot lists untracked files itself.
     inventories(root, index=index, untracked=False)
-    result = {"head": head or git(root, "rev-parse", "--verify", "HEAD").strip().decode("ascii"),
+    result = {"head": head or pass_head,
               "index": hashlib.sha256(index).hexdigest(), "files": len(entries)}
     if "AUTO_MERGE" in state["files"]:
         # administration() proved this exact OID is a tree in this pass.
