@@ -167,6 +167,15 @@ if race_fetch_case 1 'unrelated transport failure' || [[ "$RACE_FETCH_ATTEMPTS" 
 	printf 'FAIL unrelated fetch failure was retried as a ref-update race: attempts=%s\n' "$RACE_FETCH_ATTEMPTS"
 	exit 1
 fi
+# GH#39663: Git 2.43 reports the same race as "is at X but expected Y".
+if ! race_fetch_case 1 "cannot lock ref 'refs/remotes/origin/develop': is at a but expected b" || [[ "$RACE_FETCH_ATTEMPTS" != 2 ]]; then
+	printf 'FAIL git 2.43 cannot-lock-ref race was not recovered by one repeat fetch: attempts=%s\n' "$RACE_FETCH_ATTEMPTS"
+	exit 1
+fi
+if race_fetch_case 1 "cannot lock ref 'refs/remotes/origin/develop': Unable to create '/x/develop.lock': File exists." || [[ "$RACE_FETCH_ATTEMPTS" != 1 ]]; then
+	printf 'FAIL stale-lock cannot-lock-ref failure was retried: attempts=%s\n' "$RACE_FETCH_ATTEMPTS"
+	exit 1
+fi
 printf 'PASS lost ref-update race repeats the fetch at most twice; other failures are not retried\n'
 
 # A registered sibling can exist while its index is unreadable. The fetch
