@@ -160,6 +160,9 @@ _pulse_set_rest_core_budget_priority() {
 	export AIDEVOPS_PULSE_REST_CORE_BUDGET_IN_FLIGHT_ALLOWANCE="$in_flight_allowance"
 	export AIDEVOPS_PULSE_REST_CORE_BUDGET_PROGRESS_START_FLOOR="$progress_start_floor"
 	[[ "$log_mode" == "quiet" ]] && return 0
+	# t19233: the transport governor paces before quota reaches a deferral, so
+	# refresh the App-read advisory from cycle start too (6h stamp, background).
+	_pulse_github_app_advise_maybe || true
 	case "$budget_class" in
 	reserve | emergency)
 		echo "[pulse-wrapper] REST-core budget ${budget_class} mode: remaining=${remaining}/${limit} adaptive=${adaptive} soft_cap=${soft_cap} hard_floor=${hard_floor} in_flight_allowance=${in_flight_allowance} progress_start_floor=${progress_start_floor} reset=${reset_epoch} (GH#29742)" >>"$LOGFILE"
@@ -290,17 +293,23 @@ _pulse_should_defer_budget_priority_stage() {
 }
 
 #######################################
-# GH#38273: when REST quota blocks progress, refresh the offline App-read
-# routing advisory at most once per 6h. Background, fail-open: it never
-# blocks the stage or changes its return code.
+# GH#38273: refresh the offline App-read routing advisory at most once per
+# 6h, at cycle start (t19233) and when REST quota defers a progress stage.
+# Background, fail-open: it never blocks the stage or changes its return code.
+# A failed run frees the 6h stamp and leaves a .failed stamp, so the next
+# attempt waits only the retry interval (default 30 min) instead of 6h.
 #######################################
 _pulse_github_app_advise_maybe() {
 	local state_dir="${AIDEVOPS_STATE_DIR:-$HOME/.aidevops/state}"
 	local stamp="${state_dir}/github-app-advise.stamp"
+	local failed_stamp="${stamp}.failed"
 	local interval="${AIDEVOPS_GITHUB_APP_ADVISE_INTERVAL:-21600}"
+	local retry_interval="${AIDEVOPS_GITHUB_APP_ADVISE_RETRY_INTERVAL:-1800}"
 	local helper="${BASH_SOURCE[0]%/*}/github_auth_cli.py"
+	local repos_config="${AIDEVOPS_REPOS_CONFIG:-${REPOS_JSON:-$HOME/.config/aidevops/repos.json}}"
 	local now=0 last=0
 	[[ "$interval" =~ ^[0-9]+$ ]] || interval=21600
+	[[ "$retry_interval" =~ ^[0-9]+$ ]] || retry_interval=1800
 	[[ -f "$helper" ]] || return 0
 	command -v python3 >/dev/null 2>&1 || return 0
 	if ! declare -F _file_mtime_epoch >/dev/null 2>&1; then
@@ -313,10 +322,21 @@ _pulse_github_app_advise_maybe() {
 		[[ "$last" =~ ^[0-9]+$ ]] || last=0
 		[[ $((now - last)) -ge "$interval" ]] || return 0
 	fi
+	if [[ -f "$failed_stamp" ]]; then
+		last=$(_file_mtime_epoch "$failed_stamp" 2>/dev/null) || last=0
+		[[ "$last" =~ ^[0-9]+$ ]] || last=0
+		[[ $((now - last)) -ge "$retry_interval" ]] || return 0
+	fi
 	mkdir -p "$state_dir" 2>/dev/null || return 0
 	touch "$stamp" 2>/dev/null || return 0
-	AIDEVOPS_REPOS_CONFIG="${AIDEVOPS_REPOS_CONFIG:-${REPOS_JSON:-$HOME/.config/aidevops/repos.json}}" \
-		python3 "$helper" advise --write-advisory >/dev/null 2>&1 </dev/null &
+	# Mark the failure before freeing the 6h stamp, so no window has neither.
+	(
+		if AIDEVOPS_REPOS_CONFIG="$repos_config" python3 "$helper" advise --write-advisory >/dev/null 2>&1 </dev/null; then
+			rm -f "$failed_stamp"
+		else
+			touch "$failed_stamp" && rm -f "$stamp"
+		fi
+	) >/dev/null 2>&1 </dev/null &
 	return 0
 }
 
