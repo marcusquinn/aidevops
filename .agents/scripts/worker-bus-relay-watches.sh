@@ -228,6 +228,12 @@ _relay_watch_one() {
 		# "gh: Not Found (HTTP 404)" survives the excerpt as "not found"; transport
 		# and deferral failures never match it.
 		if [[ "$RELAY_FAILURE" == "gh-rc="*" not found"* ]]; then
+			# A private repo that lost access also reads as 404: mark gone only when
+			# the repository itself is readable, otherwise keep the watch state.
+			if ! _relay_get "repos/${repo}" "${work}/watch-repo-${subscriber}-${key}.json" "watch-repo"; then
+				_relay_log "watch ${repo}#${issue_number} not found but repository unreadable (${RELAY_FAILURE:-read}); watch keeps its state"
+				return 0
+			fi
 			jq -nc --argjson e "$entry" --argjson now "$now" '{
 				line: "- \($e.state.repo)#\($e.state.number): not found on GitHub (wrong number, deleted, or no access); this watch is no longer checked.",
 				state: ($e.state + {checked: $now, gone: true})}' >>"${work}/watch-batch-${subscriber}.jsonl" || true
@@ -323,11 +329,21 @@ _relay_watches() {
 	_relay_watch_prune_state "$watches_file"
 	_relay_watch_due "$watches_file" "$now" "$due_file"
 	[[ -s "$due_file" ]] || return 0
+	# Stop reading before the relay watchdog so completed batches are still sent;
+	# unreached watches keep their state and stay due for the next run.
+	local budget="${RELAY_WATCH_PASS_BUDGET:-60}" started=$SECONDS out_of_time=0
+	[[ "$budget" =~ ^[0-9]+$ ]] || budget=60
 	while IFS= read -r repo; do
+		[[ "$out_of_time" -eq 0 ]] || break
 		[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || continue
 		local entry
 		while IFS= read -r entry; do
 			[[ -n "$entry" ]] || continue
+			if [[ $((SECONDS - started)) -ge "$budget" ]]; then
+				out_of_time=1
+				_relay_log "watch pass reached its ${budget}s budget; remaining watches stay due"
+				break
+			fi
 			_relay_watch_one "$entry" "$work" "$now" || true
 		done < <(jq -c --arg repo "$repo" 'select(.state.repo == $repo)' "$due_file")
 	done < <(jq -rs '[.[].state.repo] | unique | .[]' "$due_file" 2>/dev/null)
