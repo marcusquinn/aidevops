@@ -123,9 +123,16 @@ GH_LABELS_RESPONSE=""
 # The body variable is set per-test to control what PR body is returned.
 # Used by the permissive Ref/For fallback path in Guard 1 (t2811/GH#20757).
 GH_BODY_RESPONSE=""
+# GraphQL closedByPullRequestsReferences response for the open-closer guard
+# (GH#39704). Empty means no linked closing PRs.
+GH_GRAPHQL_RESPONSE=""
 
 gh() {
 	printf '%s\n' "$*" >>"${GH_CALLS}"
+	if [[ "$1" == "api" && "$2" == "graphql" ]]; then
+		[[ -n "$GH_GRAPHQL_RESPONSE" ]] && printf '%s\n' "$GH_GRAPHQL_RESPONSE"
+		return 0
+	fi
 	if [[ "$1" == "pr" && "$2" == "view" ]]; then
 		# Differentiate body vs labels query so tests can control both.
 		# The permissive fallback in Guard 1 calls --json body; the label
@@ -507,6 +514,43 @@ if [[ -f "$STAMP" ]] && ! grep -q "release" "$RELEASE_CALLS" 2>/dev/null; then
 else
 	fail "mismatched stamp repository → release fails closed" \
 		"mismatched repository stamp was released"
+fi
+
+# =============================================================================
+# Test 14 — GH#39704: a merged planning PR (For #N) keeps the claim while
+#            another open PR still closes the issue
+# =============================================================================
+: >"$GH_CALLS"
+: >"$RELEASE_CALLS"
+: >"$LOGFILE"
+STAMP="${CLAIM_STAMP_DIR}/marcusquinn-aidevops-8814.json"
+write_stamp "$STAMP" "8814" "marcusquinn/aidevops"
+GH_BODY_RESPONSE="## Task and issue manifest
+- For #8814"
+GH_GRAPHQL_RESPONSE='{"data":{"repository":{"issue":{"closedByPullRequestsReferences":{"nodes":[{"number":60,"state":"MERGED"},{"number":68,"state":"OPEN"},{"number":71,"state":"OPEN"}]}}}}}'
+
+release_interactive_claim_on_merge "68" "marcusquinn/aidevops" ""
+
+if ! grep -q "release" "$RELEASE_CALLS" 2>/dev/null &&
+	grep -q "Open PR #71 still closes marcusquinn/aidevops#8814" "$LOGFILE"; then
+	pass "open implementation PR → planning-PR merge keeps the claim"
+else
+	fail "open implementation PR → planning-PR merge keeps the claim" \
+		"release calls: $(cat "$RELEASE_CALLS" 2>/dev/null); log: $(cat "$LOGFILE" 2>/dev/null)"
+fi
+
+# Only a merged (not open) closing PR remains → the release still fires.
+: >"$RELEASE_CALLS"
+: >"$LOGFILE"
+GH_GRAPHQL_RESPONSE='{"data":{"repository":{"issue":{"closedByPullRequestsReferences":{"nodes":[{"number":60,"state":"MERGED"}]}}}}}'
+release_interactive_claim_on_merge "68" "marcusquinn/aidevops" ""
+GH_GRAPHQL_RESPONSE=""
+
+if grep -q "release 8814 marcusquinn/aidevops --unassign" "$RELEASE_CALLS" 2>/dev/null; then
+	pass "merged-only closing PR → claim still released"
+else
+	fail "merged-only closing PR → claim still released" \
+		"release calls: $(cat "$RELEASE_CALLS" 2>/dev/null); log: $(cat "$LOGFILE" 2>/dev/null)"
 fi
 
 # =============================================================================

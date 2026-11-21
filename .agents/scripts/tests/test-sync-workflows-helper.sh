@@ -158,6 +158,10 @@ elif [[ "${1:-}" == api && "${2:-}" == repos/*/pulls/*/files\?* ]]; then
 	fi
 elif [[ "${1:-} ${2:-}" == "pr list" ]]; then
 	printf '%s\n' "${GH_EXACT_PRS_JSON:-[]}"
+elif [[ "${1:-} ${2:-}" == "issue list" ]]; then
+	# GH#39696: routine anchor lookup for headless (origin:worker) syncs.
+	[[ "${GH_ANCHOR_LIST_FAIL:-0}" == 0 ]] || exit 1
+	printf '%s\n' "${GH_ANCHOR_ISSUES_JSON:-[]}"
 elif [[ "${1:-} ${2:-}" == "pr close" ]]; then
 	[[ "${GH_SYNC_CLOSE_FAIL:-0}" == 0 ]] || exit 1
 elif [[ "${1:-} ${2:-}" == "pr comment" ]]; then
@@ -175,6 +179,7 @@ elif [[ "${1:-} ${2:-}" == "pr create" ]]; then
 		--repo) repo="$2"; shift ;;
 		--head) branch="$2"; shift ;;
 		--base) base="$2"; shift ;;
+		--body-file) cp "$2" "$GH_CALL_LOG.body"; shift ;;
 		origin:*) printf '%s\n' "$1" >"$GH_CALL_LOG.origin" ;;
 		esac
 		shift
@@ -464,6 +469,33 @@ OUT_10_FORK=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR
 _assert_exit "review: exact-branch fork does not prevent publication" 0 "$?"
 _assert_contains "review: exact-branch fork is not the applied replacement" "$OUT_10_FORK" "PR: https://github.com/owner/repo-develop/pull/5"
 _assert_exit "review: exact-branch fork triggers same-repository PR creation" 1 "$(grep -c '^pr create ' "$TMPDIR_10/gh-calls.log")"
+_assert_exit "GH#39696 interactive sync PR has no anchor line" 0 "$(grep -c '^Ref #' "$TMPDIR_10/gh-calls.log.body")"
+
+# GH#39696: a headless (origin:worker) sync PR needs exactly one explicit issue
+# identity. A failed anchor lookup publishes nothing; a found anchor is the
+# body's only Ref line.
+: >"$TMPDIR_10/gh-calls.log"
+OUT_10_ANCHOR_FAIL=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	AIDEVOPS_SESSION_ORIGIN=worker GH_ANCHOR_LIST_FAIL=1 \
+	GH_SYNC_PRS_JSON="$SYNC_PRS_10" GH_SYNC_FILES_JSON="$STALE_FILES_10" GH_NEW_PR_NUMBER=6 \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990110 2>&1)
+_assert_exit "GH#39696 unavailable anchor fails closed" 1 "$?"
+_assert_contains "GH#39696 unavailable anchor is actionable" "$OUT_10_ANCHOR_FAIL" "routine anchor unavailable"
+_assert_exit "GH#39696 unavailable anchor creates no PR" 0 "$(grep -c '^pr create ' "$TMPDIR_10/gh-calls.log")"
+_assert_exit "GH#39696 unavailable anchor creates no anchor" 0 "$(grep -c '^issue create ' "$TMPDIR_10/gh-calls.log")"
+_assert_exit "GH#39696 unavailable anchor pushes no branch" 0 \
+	"$(git -C "$BARE_10" for-each-ref --format='%(refname)' refs/heads/chore/workflow-sync-20990110 | wc -l | tr -d ' ')"
+ANCHOR_ISSUES_10='[{"number":42,"body":"<!-- aidevops:routine-anchor:sync-workflows -->"},{"number":7,"body":"other routine"}]'
+OUT_10_ANCHOR=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	AIDEVOPS_SESSION_ORIGIN=worker GH_ANCHOR_ISSUES_JSON="$ANCHOR_ISSUES_10" \
+	GH_SYNC_PRS_JSON="$SYNC_PRS_10" GH_SYNC_FILES_JSON="$STALE_FILES_10" GH_NEW_PR_NUMBER=6 \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990110 2>&1)
+_assert_exit "GH#39696 worker sync publishes with its anchor" 0 "$?"
+_assert_contains "GH#39696 worker sync reports new PR" "$OUT_10_ANCHOR" "PR: https://github.com/owner/repo-develop/pull/6"
+FIRST_BODY_LINE_10=$(head -n 1 "$TMPDIR_10/gh-calls.log.body")
+_assert_exit "GH#39696 worker PR body leads with the anchor Ref" 'Ref #42' "$FIRST_BODY_LINE_10"
+_assert_exit "GH#39696 worker PR body has one issue identity" 1 "$(grep -cE '^(Ref|For|Resolves) #' "$TMPDIR_10/gh-calls.log.body")"
+_assert_exit "GH#39696 existing anchor is reused, not recreated" 0 "$(grep -c '^issue create ' "$TMPDIR_10/gh-calls.log")"
 
 # Different date suffixes share the installation-scoped lock; a held lock must
 # prevent inspection/publication, and all preceding failure paths released it.

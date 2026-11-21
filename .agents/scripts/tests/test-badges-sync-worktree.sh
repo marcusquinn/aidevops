@@ -9,7 +9,7 @@ ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT"' EXIT
 export HOME="$ROOT/home"
 export AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees"
-export PR_STATE="$ROOT/prs.json" CALLS="$ROOT/calls"
+export PR_STATE="$ROOT/prs.json" CALLS="$ROOT/calls" PR_BODY="$ROOT/pr-body"
 SCRIPTS="$HOME/.aidevops/agents/scripts"
 mkdir -p "$SCRIPTS" "$HOME/.config/aidevops" "$ROOT/bin" "$AIDEVOPS_WORKTREE_BASE_DIR"
 export PATH="$ROOT/bin:$PATH"
@@ -28,15 +28,24 @@ gh_create_pr() {
 		opt="$1"; shift
 		case "$opt" in
 		--head) head="$1"; shift ;;
-		--body-file) [[ "$1" == '-' ]]; shift; cat >/dev/null ;;
+		--body-file) [[ "$1" == '-' ]]; shift; cat >"$PR_BODY" ;;
 		*) shift ;;
 		esac
 	done
-	jq -n --arg head "$head" '[{headRefName:$head,title:"chore: aidevops badge sync",url:"test-pr"}]' >"$PR_STATE"
+	jq -n --arg head "$head" '[{headRefName:$head,title:"chore: aidevops badge sync",url:"https://example.invalid/o/r/pull/5"}]' >"$PR_STATE"
 	printf 'create\n' >>"$CALLS"
-	printf 'test-pr\n'
+	printf 'https://example.invalid/o/r/pull/5\n'
 	return 0
 }
+session_origin_label() { printf 'origin:%s\n' "${TEST_ORIGIN:-interactive}"; return 0; }
+STUB
+# GH#39696: anchor lookups are served locally; FAIL_ANCHOR simulates a failed list.
+cat >"$SCRIPTS/routine-log-helper.sh" <<'STUB'
+#!/usr/bin/env bash
+set -eu
+printf 'anchor %s %s\n' "$1" "$2" >>"$CALLS"
+[[ "${FAIL_ANCHOR:-0}" != 1 ]]
+[[ "$1" != ensure-anchor ]] || printf '77\n'
 STUB
 cat >"$ROOT/bin/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -152,7 +161,9 @@ printf 'PASS dirty/off-default canonical preserved; README, metrics and workflow
 bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result"
 [[ "$(jq -r .outcome "$ROOT/result")" == SKIPPED ]]
 [[ "$(grep -c '^create$' "$CALLS")" == 1 ]]
-printf 'PASS rerun deduplicates existing sync PR\n'
+grep -qx 'anchor ensure-pr-anchor badges-sync' "$CALLS"
+grep -q '^anchor ensure-anchor' "$CALLS" && exit 1
+printf 'PASS rerun deduplicates existing sync PR and offers it the routine anchor\n'
 
 for extra in '{"local_only":true}' '{"contributed":true}' '{"role":"contributor"}' '{"maintenance":false}'; do
 	register_repo marcusquinn/test "$extra"
@@ -328,6 +339,23 @@ git -C "$ROOT/remote.git" -c gpg.ssh.allowedSignersFile="$ROOT/allowed-signers" 
 [[ "$(grep -c '^add$' "$CALLS")" == "$adds_before" ]]
 printf 'PASS retained worktree published with a commit signed by the dedicated headless key\n'
 unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+
+# GH#39696: a headless (origin:worker) PR needs exactly one explicit issue
+# identity. An unavailable anchor publishes nothing; an available one is the
+# only Ref line in the body.
+[[ "$(head -n 1 "$PR_BODY")" == '## Summary' ]]
+printf '[]\n' >"$PR_STATE"
+creates_before="$(grep -c '^create$' "$CALLS")"
+TEST_ORIGIN=worker FAIL_ANCHOR=1 bash "$SCRIPTS/badges-sync-helper.sh" --apply --workflow-only --json >"$ROOT/result" && exit 1
+[[ "$(jq -r .outcome "$ROOT/result")" == FAILED ]]
+[[ "$(jq -r .detail "$ROOT/result")" == *'routine anchor unavailable'* ]]
+[[ "$(grep -c '^create$' "$CALLS")" == "$creates_before" ]]
+TEST_ORIGIN=worker bash "$SCRIPTS/badges-sync-helper.sh" --apply --workflow-only --json >"$ROOT/result"
+[[ "$(jq -r .outcome "$ROOT/result")" == APPLIED ]]
+[[ "$(head -n 1 "$PR_BODY")" == 'Ref #77' ]]
+[[ "$(grep -c '#[0-9]' "$PR_BODY")" == 1 ]]
+[[ "$(snapshot)" == "$before" ]]
+printf 'PASS worker PR carries one anchor Ref line; unavailable anchor fails closed without a PR\n'
 
 # Routine wiring uses the same no-filter selector exercised above.
 # shellcheck source=../routines/core-routines.sh
