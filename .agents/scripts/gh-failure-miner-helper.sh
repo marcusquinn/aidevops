@@ -1072,6 +1072,7 @@ build_repo_clusters_json() {
 		check_name: .[0].check_name,
 		signature: .[0].signature,
 		count: length,
+		newest_event_at: (map(.completed_at // empty) | max // null),
 		scheduled: (any(.[]; .source_kind == "workflow" and ((.source_ref // "") | startswith("schedule:")))),
 		is_infra: (any(.[]; .is_infra == true)),
 		infra_reasons: (map(.infra_reason // empty) | unique),
@@ -1300,6 +1301,41 @@ issue_already_exists() {
 	[[ "$existing_count" -gt 0 ]]
 }
 
+# GH#39595: a closed issue with the same signal tag whose closure is newer than
+# every failed event in the cluster adds no new evidence; refiling it only costs
+# a worker dispatch. Newer failures (or unknown event time) still file.
+closed_issue_covers_signal() {
+	local repo_slug="$1"
+	local signal_tag="$2"
+	local newest_event_at="${3:-}"
+	[[ -n "$newest_event_at" ]] || return 1
+	local newest_closed
+	newest_closed=$(gh issue list --repo "$repo_slug" --state closed --search "\"${signal_tag}\" in:body" --json closedAt --limit 10 2>/dev/null | jq -r '[.[].closedAt // empty] | max // empty') || newest_closed=""
+	[[ -n "$newest_closed" ]] || return 1
+	# ISO-8601 UTC timestamps compare lexically.
+	[[ "$newest_closed" > "$newest_event_at" ]]
+	return $?
+}
+
+# GH#39595: two runners can both pass issue_already_exists() before the search
+# index shows either issue. After creating, keep only the oldest open issue.
+close_if_duplicate_signal() {
+	local repo_slug="$1"
+	local pattern="$2"
+	local signal_tag="gh-failure-miner:${pattern}"
+	local created_url="$3"
+	local my_number="${created_url##*/}"
+	[[ "$my_number" =~ ^[0-9]+$ ]] || return 0
+	local oldest
+	oldest=$(gh issue list --repo "$repo_slug" --state open --search "\"${signal_tag}\" in:body" --json number --limit 20 2>/dev/null | jq -r '[.[].number] | min // empty') || oldest=""
+	if [[ "$oldest" =~ ^[0-9]+$ ]] && [[ "$oldest" -lt "$my_number" ]]; then
+		gh issue close "$my_number" --repo "$repo_slug" --reason "not planned" \
+			--comment "Duplicate of #${oldest} (same ${signal_tag}, filed concurrently by another runner)." >/dev/null 2>&1 || true
+		echo "suppressed: duplicate_of_#${oldest} (closed #${my_number})"
+	fi
+	return 0
+}
+
 is_qlty_empty_sarif_signature() {
 	local check_name="$1"
 	local signature="$2"
@@ -1395,8 +1431,10 @@ create_or_preview_issue() {
 			done
 		done
 	fi
-	"${create_cmd[@]}" >/dev/null
+	local created_url
+	created_url=$("${create_cmd[@]}" 2>/dev/null | tail -n 1) || created_url=""
 	echo "Created issue: ${title}"
+	close_if_duplicate_signal "$repo_slug" "$pattern_id" "$created_url"
 	return 0
 }
 
@@ -1405,12 +1443,17 @@ should_skip_code_defect_cluster() {
 	local check_name="$2"
 	local signature="$3"
 	local signal_tag="$4"
+	local newest_event_at="${5:-}"
 	if is_obsolete_qlty_empty_sarif_cluster "$check_name" "$signature"; then
 		echo "Skipping cluster for ${check_name} - empty SARIF failure signature is already handled by qlty-smell-threshold-helper.sh"
 		return 0
 	fi
 	if issue_already_exists "$repo_slug" "$signal_tag"; then
 		echo "Skipping cluster for ${check_name} - existing open issue with ${signal_tag}"
+		return 0
+	fi
+	if closed_issue_covers_signal "$repo_slug" "$signal_tag" "$newest_event_at"; then
+		echo "Skipping cluster for ${check_name} - suppressed: closed_after_newest_event (${signal_tag})"
 		return 0
 	fi
 	return 1
@@ -1492,12 +1535,14 @@ create_systemic_issues() {
 		repo_slug=$(printf '%s\n' "$cluster_json" | jq -r '.repo')
 		check_name=$(printf '%s\n' "$cluster_json" | jq -r '.check_name')
 		signature=$(printf '%s\n' "$cluster_json" | jq -r '.signature')
+		local newest_event_at
+		newest_event_at=$(printf '%s\n' "$cluster_json" | jq -r '.newest_event_at // empty')
 
 		local pattern_id
 		pattern_id=$(compute_pattern_id "${repo_slug}|${check_name}|${signature}")
 		local signal_tag="gh-failure-miner:${pattern_id}"
 
-		if should_skip_code_defect_cluster "$repo_slug" "$check_name" "$signature" "$signal_tag"; then
+		if should_skip_code_defect_cluster "$repo_slug" "$check_name" "$signature" "$signal_tag" "$newest_event_at"; then
 			idx=$((idx + 1))
 			continue
 		fi

@@ -240,6 +240,23 @@ assert_equals "GH#39472 scheduled cluster is flagged" "true" "$(printf '%s\n' "$
 nonsched_clusters=$(build_repo_clusters_json "$(printf '%s\n' "$sched_events" | jq -c '.[0].source_ref="push:11"')")
 assert_equals "GH#39472 non-scheduled single event is not flagged" "false" "$(printf '%s\n' "$nonsched_clusters" | jq -r '.[0].scheduled')"
 
+# GH#39595: closed issue newer than every failed event suppresses refiling.
+gh() {
+	if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
+		printf '%s\n' '[{"closedAt":"2026-11-20T16:45:00Z"}]'
+		return 0
+	fi
+	return 1
+}
+if closed_issue_covers_signal "marcusquinn/aidevops" "gh-failure-miner:x" "2026-11-20T12:33:00Z"; then rc=0; else rc=1; fi
+assert_equals "GH#39595 closure after newest event suppresses filing" "0" "$rc"
+if closed_issue_covers_signal "marcusquinn/aidevops" "gh-failure-miner:x" "2026-11-20T18:00:00Z"; then rc=0; else rc=1; fi
+assert_equals "GH#39595 failure newer than closure still files" "1" "$rc"
+if closed_issue_covers_signal "marcusquinn/aidevops" "gh-failure-miner:x" ""; then rc=0; else rc=1; fi
+assert_equals "GH#39595 unknown event time still files" "1" "$rc"
+newest_clusters=$(build_repo_clusters_json "$(printf '%s\n' "$sched_events" | jq -c '.[0].completed_at="2026-11-20T12:33:00Z"')")
+assert_equals "GH#39595 cluster records newest event time" "2026-11-20T12:33:00Z" "$(printf '%s\n' "$newest_clusters" | jq -r '.[0].newest_event_at')"
+
 printf '\nTests run: %s, failures: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -ne 0 ]]; then
 	exit 1
