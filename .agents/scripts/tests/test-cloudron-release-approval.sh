@@ -70,6 +70,7 @@ pull_request_json() {
 		  elif $scenario == "wrong_base" then .base.ref = "develop"
 		  elif $scenario == "invalid_head" then .head.sha = "invalid"
 		  elif $scenario == "closed" then .state = "closed"
+		  elif $scenario == "request_no_verification" then .body = "## Runtime Testing\n\n- **Risk level:** Low\n"
 		  else . end'
 	return 0
 }
@@ -388,6 +389,16 @@ printf 'PASS dry run never writes\n'
 main process --repo owner/app --issue 12
 if grep -Eq 'merge$|pr-edit|comment |issue close' "${TEST_ROOT}/calls"; then exit 1; fi
 printf 'PASS scoped dry run retains approval checks and never writes\n'
+# A PR body with a Risk level but no Verification line fails before any write.
+export SCENARIO=request_no_verification
+: >"${TEST_ROOT}/calls"
+rm -f "${TEST_ROOT}/request"
+rc=0
+release_request owner/app 7 >/dev/null 2>"${TEST_ROOT}/err" || rc=$?
+[[ "$rc" -ne 0 ]]
+grep -q 'no recognized verification level' "${TEST_ROOT}/err"
+if grep -Eq '^(pr-edit |create |label create |issue-edit )' "${TEST_ROOT}/calls" || [[ -f "${TEST_ROOT}/request" ]]; then exit 1; fi
+printf 'PASS request refuses a PR body without Runtime Testing verification before any write\n'
 export SCENARIO=request
 rm -f "${TEST_ROOT}/merged"
 request_output=$(release_request owner/app 7)
