@@ -53,6 +53,8 @@ _merge_parse_command_args() {
 _merge_resolve_repo() { printf '%s' 'test/repo'; return 0; }
 # GH#37690 parent-task guard is covered by test-full-loop-merge.sh merge cases.
 _merge_check_parent_task_keywords() { return 0; }
+# GH#39558 runtime evidence recheck is covered by test-full-loop-runtime-risk.sh.
+_merge_check_runtime_evidence() { return 0; }
 _merge_handle_already_merged_provenance() { return 2; }
 _flm_gh_read() { gh_pr_view "$@"; return $?; }
 # Trust behavior is covered by test-worker-briefed-trust-parity.sh, not closure cases.

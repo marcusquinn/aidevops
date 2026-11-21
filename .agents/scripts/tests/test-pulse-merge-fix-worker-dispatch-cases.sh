@@ -596,6 +596,12 @@ test_dispatch_preserves_nonclosing_replacement_linkage() {
 				emit { print }
 			' "${SCRIPT_DIR}/../full-loop-helper-commit.sh")
 			eval "$helper_src"
+			# GH#39558: _build_pr_body rejects inputs carrying their own Runtime
+			# Testing heading; load the real guard from the risk library.
+			helper_src=$(sed -n '/^_pr_body_inputs_reserve_runtime_section() {/,/^}/p' \
+				"${SCRIPT_DIR}/../full-loop-helper-risk.sh")
+			[[ -n "$helper_src" ]] || exit 1
+			eval "$helper_src"
 			_gh_with_timeout() {
 				if [[ "$*" == *"issue view"* ]]; then
 					cat "${TEST_ROOT}/issue-body.txt"

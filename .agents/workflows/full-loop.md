@@ -156,7 +156,7 @@ Before investigating a non-task blocker, run `prework-discovery-helper.sh --bloc
 | **Medium** | UI components, CSS, routes, config, env vars, DB queries | `runtime-verified` if dev env available; `self-assessed` otherwise |
 | **Low** | Docs, comments, types-only, test files, linter/CI config, agent prompts | `self-assessed` |
 
-ANY critical pattern → entire PR requires `runtime-verified`. Critical/high + no runtime → **BLOCK**. Use `.aidevops/testing.json` if present. Record `## Runtime Testing` in PR body.
+ANY critical pattern → entire PR requires `runtime-verified`. Critical/high + no runtime → **BLOCK**. Use `.aidevops/testing.json` if present. Record `## Runtime Testing` in PR body. If this runner cannot exercise the change (GH#39558), never bypass `commit-and-pr`: pass `--testing-level runtime-pending --testing "<why, and what was verified>"`; the PR opens under a verified `hold-for-review` and the session hands off (`POST_PR_HANDOFF`). `merge` refuses `runtime-pending` and Critical/High bodies without `runtime-verified` evidence until a verifier reruns `commit-and-pr` with `--testing-level runtime-verified --testing "<evidence>"` and removes the hold.
 
 **Sudo/systemd/session-bus changes (GH#39130):** from macOS, runtime-verify critical/high `sudo`, approval-kick, systemd user unit or session-bus changes with `linux-procfs-runtime-check.sh --sudo-session --head <tree> --base <tree>` (Docker; reports the user and session env each kick receives).
 

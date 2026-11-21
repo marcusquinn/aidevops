@@ -138,6 +138,9 @@ eval "$(sed -n '/^_merge_existing_pr_body() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-
 
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_inherit_pr_runtime_metadata() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+# The runtime section parser is shared with the merge-time recheck (GH#39558).
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_runtime_testing_metadata_from_body() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-risk.sh")"
 
 # Extract origin reconciliation helpers used by _create_pr
 # shellcheck disable=SC2312

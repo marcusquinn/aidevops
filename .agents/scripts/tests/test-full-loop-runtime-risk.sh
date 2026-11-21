@@ -712,6 +712,100 @@ assert_rejected "GH#38823 Ref #<dispatched issue> in testing is refused" \
 assert_accepted "GH#38823 reference to another issue is allowed" \
 	_summary_declares_partial_self 42 "Follow-up for #43" "ok"
 
+# GH#39558: runtime-pending is the legitimate route when a runner cannot
+# exercise a Critical/High change; the PR opens held and cannot merge.
+pending_reason="runner has no review copy with Stripe test mode; unit tests pass"
+pending_body=$(_build_pr_body "2" "Credential rotation" "$pending_reason" "src/auth.sh" "" \
+	"Resolves" "" "RUNTIME-PENDING")
+assert_contains "runtime-pending accepted for Critical with a reason" "$pending_body" "**Risk level:** Critical"
+assert_contains "body records runtime-pending and its reason" "$pending_body" \
+	"**Verification:** runtime-pending — ${pending_reason}"
+assert_rejected "runtime-pending without a reason is rejected" \
+	_build_pr_body "2" "Credential rotation" "" "src/auth.sh" "" "Resolves" "Critical" "runtime-pending"
+assert_rejected "runtime-pending with a placeholder reason is rejected" \
+	_build_pr_body "2" "Credential rotation" "none" "src/auth.sh" "" "Resolves" "Critical" "runtime-pending"
+assert_rejected "runtime-pending with only its own marker is rejected" \
+	_build_pr_body "2" "Credential rotation" "Runtime pending." "src/auth.sh" "" "Resolves" "Critical" "runtime-pending"
+assert_rejected "a summary carrying a Runtime Testing heading is rejected" \
+	_build_pr_body "2" $'Example:\n## Runtime Testing\n- **Risk level:** Low' "$pending_reason" \
+	"src/auth.sh" "" "Resolves" "Critical" "runtime-pending"
+assert_accepted "explicit runtime-pending passes pre-mutation validation" \
+	_validate_explicit_pr_metadata "" "runtime-pending"
+refusal_guidance=$(_build_pr_body "2" "Credential rotation" "self-assessed" "src/auth.sh" "" \
+	"Resolves" "Critical" "self-assessed" 2>&1 >/dev/null)
+assert_contains "Critical refusal names the runtime-pending route" "$refusal_guidance" \
+	"--testing-level runtime-pending"
+
+assert_accepted "commit-and-pr detects a runtime-pending body for the hold" \
+	_pr_body_declares_runtime_pending "$pending_body"
+assert_rejected "runtime-verified body takes no runtime hold" \
+	_pr_body_declares_runtime_pending "$high_body"
+
+merge_refusal_for_body() {
+	local body="$1"
+	local metadata=""
+	metadata=$(printf '%s' "$body" | _runtime_testing_metadata_from_body) || return 1
+	_runtime_testing_merge_refusal "$metadata"
+	return $?
+}
+pending_refusal=$(merge_refusal_for_body "$pending_body")
+assert_contains "merge refusal explains pending verification" "$pending_refusal" \
+	"runtime verification is pending"
+assert_rejected "merge refuses a runtime-pending body" merge_refusal_for_body "$pending_body"
+assert_accepted "merge accepts High with runtime-verified evidence" merge_refusal_for_body "$high_body"
+downgraded_body="${high_body/\*\*Verification:\*\* runtime-verified/**Verification:** self-assessed}"
+assert_rejected "merge refuses a hand-edited High downgrade" merge_refusal_for_body "$downgraded_body"
+bare_marker_body="${high_body/runtime-verified with a polling fixture/runtime-verified}"
+assert_rejected "merge refuses High with a bare runtime marker" merge_refusal_for_body "$bare_marker_body"
+assert_accepted "merge accepts Low self-assessed" merge_refusal_for_body "$low_body"
+assert_accepted "merge accepts a body without a Runtime Testing section" \
+	merge_refusal_for_body $'## Summary\n\nHand-written body.\n\nResolves #12'
+assert_rejected "merge refuses unreadable runtime metadata" _runtime_testing_merge_refusal '{}'
+example_section_body=$'## Runtime Testing\n\n- **Risk level:** Low\n- **Verification:** self-assessed — example\n\n'"$pending_body"
+assert_rejected "merge refuses ambiguous multi-section metadata" merge_refusal_for_body "$example_section_body"
+assert_accepted "ambiguous metadata takes the runtime hold" \
+	_pr_body_declares_runtime_pending "$example_section_body"
+
+# Review findings on PR #39569: negated pending reasons, multiline evidence
+# with bold bullets, and malformed metadata lines.
+negated_pending_body=$(_build_pr_body "2" "Credential rotation" \
+	"not runtime-verified: this runner has no Stripe sandbox; unit tests pass" \
+	"src/auth.sh" "" "Resolves" "Critical" "runtime-pending")
+assert_contains "runtime-pending accepts a negated-claim reason" "$negated_pending_body" \
+	"**Verification:** runtime-pending — not runtime-verified"
+assert_rejected "runtime-pending with only a negated claim is rejected" \
+	_build_pr_body "2" "Credential rotation" "Not runtime-verified." "src/auth.sh" "" \
+	"Resolves" "Critical" "runtime-pending"
+assert_rejected "runtime-verified still rejects a negated claim" \
+	_build_pr_body "2" "Credential rotation" "not runtime-verified: unit tests pass" "src/auth.sh" "" \
+	"Resolves" "Critical" "runtime-verified"
+multiline_body=$(_build_pr_body "2" "Credential rotation" \
+	$'\n- **Check:** polling fixture passed' "src/auth.sh" "" "Resolves" "Critical" "runtime-verified")
+multiline_evidence=$(printf '%s' "$multiline_body" | _runtime_testing_metadata_from_body | jq -r '.evidence')
+assert_contains "multiline evidence with bold bullets is parsed whole" "$multiline_evidence" \
+	"- Check: polling fixture passed"
+assert_accepted "merge accepts Critical with multiline runtime-verified evidence" \
+	merge_refusal_for_body "$multiline_body"
+tabbed_risk_body="${high_body/\*\*Risk level:\*\* High/**Risk level:**	High}"
+assert_rejected "merge refuses a tab-separated High risk without verified evidence" \
+	merge_refusal_for_body "${tabbed_risk_body/\*\*Verification:\*\* runtime-verified/**Verification:** self-assessed}"
+unknown_risk_body="${low_body/\*\*Risk level:\*\* Low/**Risk level:**}"
+assert_rejected "merge refuses a present section with no recognized risk" \
+	merge_refusal_for_body "$unknown_risk_body"
+undelimited_body=$'## Runtime Testing\n\n- **Risk level:** Low\n- **Verification:** runtime-pending\n'
+assert_rejected "merge refuses a Verification line without its evidence delimiter" \
+	merge_refusal_for_body "$undelimited_body"
+
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_merge_check_runtime_evidence() {/,/^}/p' "${SCRIPT_DIR_TEST}/full-loop-helper-merge.sh")"
+_flm_gh_read() { return 1; }
+assert_rejected "merge helper refuses a runtime-pending PR body" \
+	_merge_check_runtime_evidence 7 owner/repo "$(jq -cn --arg body "$pending_body" '{body:$body}')"
+assert_accepted "merge helper accepts runtime-verified PR body" \
+	_merge_check_runtime_evidence 7 owner/repo "$(jq -cn --arg body "$high_body" '{body:$body}')"
+assert_rejected "merge helper fails closed when the body read fails" \
+	_merge_check_runtime_evidence 7 owner/repo ""
+
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1
 exit 0

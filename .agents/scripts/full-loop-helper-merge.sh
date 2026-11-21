@@ -92,6 +92,11 @@ source "${SCRIPT_DIR}/full-loop-helper-evidence.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/full-loop-helper-subject.sh"
 
+# Runtime Testing parser and merge-readiness rules (GH#39558); load-guarded.
+# shellcheck source=./full-loop-helper-risk.sh
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/full-loop-helper-risk.sh"
+
 # Canonical TODO task/issue mapping parser shared with issue-sync and pre-push.
 # shellcheck source=./issue-sync-pr-task-resolver.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
@@ -1806,14 +1811,40 @@ _merge_check_parent_task_keywords() {
 	return 0
 }
 
-# Closure invariant (GH#36174) then parent-task keyword guard (GH#37690),
-# sharing one closing-reference metadata read.
+# GH#39558: re-run the creation-time runtime gate at merge time. A body edited
+# after commit-and-pr must not merge a declared Critical/High change without
+# runtime-verified evidence, and runtime-pending stays unmergeable until a
+# verifier records evidence. The hold-for-review label is checked separately.
+_merge_check_runtime_evidence() {
+	local pr_number="$1" repo="$2" metadata="${3:-}"
+	local runtime_metadata="" reason=""
+	if [[ -z "$metadata" ]]; then
+		metadata=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json body) || {
+			print_error "Merge blocked for PR #${pr_number}: runtime testing metadata unavailable"
+			return 1
+		}
+	fi
+	if ! runtime_metadata=$(printf '%s' "$metadata" | jq -er '.body // "" | strings' |
+		_runtime_testing_metadata_from_body); then
+		print_error "Merge blocked for PR #${pr_number}: runtime testing metadata unreadable"
+		return 1
+	fi
+	if ! reason=$(_runtime_testing_merge_refusal "$runtime_metadata"); then
+		print_error "Merge blocked for PR #${pr_number}: ${reason}"
+		return 1
+	fi
+	return 0
+}
+
+# Closure invariant (GH#36174), parent-task keyword guard (GH#37690) and
+# runtime evidence recheck (GH#39558), sharing one PR metadata read.
 _merge_check_closing_guards() {
 	local pr_number="$1" repo="$2"
 	FULL_LOOP_MERGE_CLOSURE_JSON=""
 	_merge_check_closure_metadata "$pr_number" "$repo" || return 1
 	_merge_check_parent_task_keywords "$pr_number" "$repo" \
 		"${FULL_LOOP_MERGE_PARSED_ALLOW_PARENT_CLOSE:-0}" "$FULL_LOOP_MERGE_CLOSURE_JSON" || return 1
+	_merge_check_runtime_evidence "$pr_number" "$repo" "$FULL_LOOP_MERGE_CLOSURE_JSON" || return 1
 	return 0
 }
 
