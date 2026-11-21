@@ -855,6 +855,7 @@ _trigger_revisit_decide_cases() (
 	printf '#!/usr/bin/env bash\ncat >/dev/null\ncat "%s/reply.json"\n' "$stub_dir" >"${stub_dir}/ai-research-helper.sh"
 	chmod +x "${stub_dir}/ai-research-helper.sh" || return 1
 	_TBTR_DIR="$stub_dir"
+	timeout() { shift; "$@"; }
 	bundle='{"trigger":"Merge of #7","linked_issues":[{"number":7,"state":"closed","state_reason":"completed","closed_at":"2026-02-03T04:05:06Z"}]}'
 	printf '%s\n' '{"decision":"trigger_met","quote":"2026-02-03T04:05:06Z","evidence":"Issue 7 was closed as completed after the hold."}' >"${stub_dir}/reply.json"
 	out=$(_tbtr_decide "$bundle") || return 1
@@ -873,10 +874,9 @@ _trigger_revisit_decide_cases() (
 	[[ "$out" == $'not_external\t' ]] || return 1
 	# A merged PR ref carries merged_at and is_pull_request in the bundle.
 	gh_item='{"number":9,"title":"t","state":"closed","state_reason":null,"closed_at":"2026-02-03T04:05:06Z","pull_request":{"merged_at":"2026-02-03T04:05:05Z"}}'
-	gh() { shift; shift; shift; jq -c '{number, title, state, state_reason, closed_at, is_pull_request: (.pull_request != null), merged_at: (.pull_request.merged_at // null)}' <<<"$gh_item"; return 0; }
+	gh() { [[ "$3" == --jq ]] || return 1; jq -c "$4" <<<"$gh_item"; return 0; }
 	out=$(_tbtr_evidence owner/repo '{"title":"x","state":"open"}' '[]' 'PR #9 merged' 2026-01-01T00:00:00Z) || return 1
 	jq -e '.linked_issues[0] | .is_pull_request == true and .merged_at == "2026-02-03T04:05:05Z"' <<<"$out" >/dev/null || return 1
-	rg -q 'is_pull_request: \(\.pull_request != null\), merged_at: \(\.pull_request\.merged_at // null\)' "${SCRIPT_DIR}/terminal-blocker-trigger-revisit.sh" || return 1
 	return 0
 )
 
