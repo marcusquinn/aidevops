@@ -1131,6 +1131,7 @@ _worktree_is_ssh_auth_failure() {
 # Detect a rejected update of a remote-tracking ref that another process
 # changed while this fetch was running (GH#38060). Concurrent fetches of one
 # ref lose this way in all but one process; a repeat fetch then succeeds.
+# Both Git message forms are matched (GH#39663: "is at X but expected Y").
 # Arguments:
 #   $1 - captured git stderr
 # Returns: 0 for a concurrent ref-update rejection, 1 otherwise
@@ -1139,6 +1140,12 @@ _worktree_is_ref_update_race() {
 	local stderr_text="$1"
 	case "$stderr_text" in
 	*"incorrect old value provided"*) return 0 ;;
+	# GH#39663: Git 2.43 form. Requires the remote-tracking prefix and
+	# "but expected"; a bare "cannot lock ref" may be a stale .lock file.
+	# The reason must follow the quoted ref immediately, so "but expected"
+	# inside a stale-lock path is not misclassified.
+	*"cannot lock ref 'refs/remotes/origin/"*"': is at "*" but expected "*) return 0 ;;
+	*"cannot lock ref 'refs/remotes/origin/"*"': reference is missing but expected "*) return 0 ;;
 	*) return 1 ;;
 	esac
 }
