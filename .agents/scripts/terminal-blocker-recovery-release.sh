@@ -443,8 +443,11 @@ _tbr_project_rearm() {
 		[[ "$held_rc" -ne 1 ]] && return 0
 	fi
 	# Reconcile a failed receipt write after a successful projection without
-	# projecting availability twice on the next pass.
-	if printf '%s' "$issue_json" | jq -e --arg blocked status:blocked 'any(.labels[]; .name == $blocked)' >/dev/null; then
+	# projecting availability twice on the next pass. GH#39710: a projection
+	# cut off after removing status:blocked is finished, not skipped.
+	local interrupted_jq="${_TBR_INTERRUPTED_RELEASE_JQ:-def interrupted_release: false;}"
+	if printf '%s' "$issue_json" | jq -e --arg blocked status:blocked "${interrupted_jq}"'
+		[.labels[]?.name] | (index($blocked) != null) or interrupted_release' >/dev/null; then
 		# GH#38360: the re-arm is the trusted retry or revision that the
 		# needs-credentials companion asked for, so it leaves with the hold.
 		# set_issue_status removes the blocked-owned companions itself.

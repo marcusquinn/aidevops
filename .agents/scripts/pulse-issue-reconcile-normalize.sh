@@ -78,6 +78,9 @@ fi
 #      GH#38821: a bare hold carrying a human hold label (hold-for-review,
 #      no-auto-dispatch) gets `needs-maintainer-input` instead, and a hold
 #      re-queued as `needs-ai-recovery` after the hold is healed to it.
+#      GH#39710: an idle auto-dispatch issue with no status at all but a
+#      `needs-ai-recovery`/`needs-dependency` companion (an interrupted
+#      release) gets `status:blocked` back so the companion's owner re-decides.
 #
 # Also counts (but does not auto-fix) triage-missing issues — those with
 # `origin:interactive` label AND no `tier:*` AND no `auto-dispatch` AND no
@@ -318,6 +321,20 @@ CLAIM_RELEASED reason=orphaned_status_no_assignee status=${status_name} idle_hou
 	return 0
 }
 
+# Live re-read shared by the t19179 orphan-status release and the GH#39710
+# statusless-hold restore; listing rows are only hints for both.
+# Args: $1 issue, $2 slug
+# Prints: labels-csv|assignee-count|updated-epoch for an open issue
+# Returns: 0 on success, 1 on a closed issue or any read error
+_li_live_issue_snapshot() {
+	local issue_num="$1" slug="$2" snapshot=""
+	snapshot=$(gh api "repos/${slug}/issues/${issue_num}" \
+		--jq 'select(.state == "open") | [([.labels[]?.name] | join(",")), ((.assignees // []) | length | tostring), (.updated_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 | tostring)] | join("|")' 2>/dev/null) || return 1
+	[[ -n "$snapshot" ]] || return 1
+	printf '%s\n' "$snapshot"
+	return 0
+}
+
 # t19179: release an active status label that has no assignee, no recent
 # activity and no open linked PR. Re-reads the live issue first; the listing
 # row is only a hint. Fails closed on any indeterminate evidence and never
@@ -328,9 +345,7 @@ CLAIM_RELEASED reason=orphaned_status_no_assignee status=${status_name} idle_hou
 _enforce_orphan_active_status_one_issue() {
 	local issue_num="$1" slug="$2" now_epoch="$3" hours="$4"
 	local live="" labels="" assignees="" updated_epoch="" status_name="" idle_hours=0
-	live=$(gh api "repos/${slug}/issues/${issue_num}" \
-		--jq 'select(.state == "open") | [([.labels[]?.name] | join(",")), ((.assignees // []) | length | tostring), (.updated_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 | tostring)] | join("|")' 2>/dev/null) || return 1
-	[[ -n "$live" ]] || return 1
+	live=$(_li_live_issue_snapshot "$issue_num" "$slug") || return 1
 	IFS='|' read -r labels assignees updated_epoch <<<"$live"
 	[[ "$assignees" == "0" && "$updated_epoch" =~ ^[0-9]+$ ]] || return 1
 	labels=",${labels},"
@@ -351,6 +366,54 @@ _enforce_orphan_active_status_one_issue() {
 	fi
 	set_issue_status "$issue_num" "$slug" "$_LI_AVAILABLE_STATUS" >/dev/null 2>&1 || return 1
 	echo "[pulse-wrapper] label_invariants: #${issue_num} in ${slug} released orphaned status:${status_name} (no assignee, idle ${idle_hours}h)" >>"$LOGFILE"
+	return 0
+}
+
+# GH#39710: set_issue_status removes the old status before it adds the new one,
+# so a release cut off between those writes leaves an auto-dispatch issue with
+# no status and an AI-owned companion. Dispatch skips it and its owner (the
+# recovery supervisor or the dependency reconciler) no longer sees a hold, so
+# restore status:blocked and let that owner re-decide. Re-reads the live issue
+# first; a recent update may be that transition still in flight, and a human
+# hold keeps a statusless issue exactly as it is.
+# Args: $1 issue, $2 slug, $3 now epoch, $4 minimum idle seconds
+# Returns: 0 when restored, 1 otherwise
+_enforce_statusless_ai_hold_one_issue() {
+	local issue_num="$1" slug="$2" now_epoch="$3" min_age="$4"
+	local live_row="" live_labels="" live_epoch=0
+	live_row=$(_li_live_issue_snapshot "$issue_num" "$slug") || return 1
+	IFS='|' read -r live_labels _ live_epoch <<<"$live_row"
+	[[ "$live_epoch" =~ ^[0-9]+$ && "$live_epoch" -le $((now_epoch - min_age)) ]] || return 1
+	live_labels=",${live_labels},"
+	[[ "$live_labels" != *",status:"* && "$live_labels" == *",auto-dispatch,"* ]] || return 1
+	[[ "$live_labels" == *",${_LI_AI_RECOVERY},"* || "$live_labels" == *",needs-dependency,"* ]] || return 1
+	[[ "$live_labels" != *",parent-task,"* && "$live_labels" != *",needs-maintainer-review,"* ]] || return 1
+	[[ "$live_labels" != *",hold-for-review,"* && "$live_labels" != *",no-auto-dispatch,"* ]] || return 1
+	if declare -F issue_labels_csv_have_human_hold >/dev/null 2>&1 &&
+		issue_labels_csv_have_human_hold "$live_labels"; then
+		return 1
+	fi
+	gh issue edit "$issue_num" --repo "$slug" --add-label "status:${_LI_BLOCKED_STATUS}" >/dev/null 2>&1 || return 1
+	echo "[pulse-wrapper] label_invariants: #${issue_num} in ${slug} restored status:blocked on a statusless AI-owned hold (interrupted release)" >>"$LOGFILE"
+	return 0
+}
+
+# GH#39710: listing-row gate for the statusless-hold restore. Cheap hint checks
+# only (AI-owned companion, idle past the minimum age); the live re-read in
+# _enforce_statusless_ai_hold_one_issue applies every gate again.
+# Args: $1 issue, $2 slug, $3 owned companions (space-separated), $4 updated epoch
+_statusless_ai_hold_row_restore() {
+	local issue_num="$1" slug="$2" owned="$3" row_epoch="$4"
+	local min_age="${PULSE_STATUSLESS_HOLD_MIN_AGE_S:-1800}" now_epoch=0
+	case " ${owned} " in
+	*" ${_LI_AI_RECOVERY} "* | *" needs-dependency "*) ;;
+	*) return 1 ;;
+	esac
+	[[ "$min_age" =~ ^[0-9]+$ ]] || min_age=1800
+	[[ "$row_epoch" =~ ^[0-9]+$ ]] || return 1
+	now_epoch=$(date +%s)
+	[[ "$row_epoch" -le $((now_epoch - min_age)) ]] || return 1
+	_enforce_statusless_ai_hold_one_issue "$issue_num" "$slug" "$now_epoch" "$min_age" || return 1
 	return 0
 }
 
@@ -487,6 +550,13 @@ _normalize_label_invariants_for_repo() {
 		fi
 		if [[ -n "$companion_mode" ]] &&
 			_enforce_blocked_companion_one_issue "$issue_num" "$slug" "$companion_mode"; then
+			_LI_BLOCKED_COMPANION_FIXED=$((_LI_BLOCKED_COMPANION_FIXED + 1))
+		fi
+		# GH#39710: an interrupted release left an auto-dispatch issue with no
+		# status at all but an AI-owned companion; restore the hold.
+		if [[ "$all_status_count" == "0" && "$has_auto" == "$_LI_BOOL_TRUE" &&
+			"$is_non_task" == "$_LI_BOOL_FALSE" && -n "$owned_companions" ]] &&
+			_statusless_ai_hold_row_restore "$issue_num" "$slug" "$owned_companions" "$updated_epoch"; then
 			_LI_BLOCKED_COMPANION_FIXED=$((_LI_BLOCKED_COMPANION_FIXED + 1))
 		fi
 
