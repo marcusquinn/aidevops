@@ -51,11 +51,29 @@ def _require_registered(connection: sqlite3.Connection, generation: str, path: P
         raise StoreConflict(MISMATCH)
 
 
-def _commit_rebind(store: LifecycleRegistry, path: Path, directory: Path, value: dict) -> dict:
+def _require_unchanged(path: Path, directory: Path, root: DirectoryHandle, admin: DirectoryHandle) -> None:
+    if not root.matches_path() or not admin.matches_path() or _git_directory(path) != directory:
+        raise StoreConflict(MISMATCH)
+
+
+def _commit_rebind(
+    store: LifecycleRegistry, path: Path, directory: Path, value: dict,
+    root: DirectoryHandle, admin: DirectoryHandle,
+) -> dict:
     generation = value["generation_id"]
-    previous, current = value.get("rebind_from", value["git_directory"]), str(directory)
-    clean = {name: item for name, item in value.items() if name != "rebind_from"}
+    previous = value.get("rebind_from", value["git_directory"])
+    current = value["git_directory"] if "rebind_from" in value else str(directory)
+    transition = encode([previous, current])
+    # Persist a fresh identity per move, including repeat visits. Legacy pending
+    # markers retain their original deterministic ID so their event can replay.
+    event_id = value.get("rebind_event_id") or (
+        str(uuid5(UUID(generation), "rebind:" + transition)) if "rebind_from" in value else str(uuid4())
+    )
+    clean = {name: item for name, item in value.items()
+             if name not in ("rebind_from", "rebind_event_id")}
+    pending = dict(clean, git_directory=current, rebind_from=previous, rebind_event_id=event_id)
     with store.connection(write=True) as connection:
+        _require_unchanged(path, directory, root, admin)
         _require_registered(connection, generation, path)
         if _read_marker(directory / MARKER) != value:
             raise StoreConflict(MISMATCH)
@@ -63,15 +81,20 @@ def _commit_rebind(store: LifecycleRegistry, path: Path, directory: Path, value:
         # its event. Normal enrollment rejects the extra field until finalized.
         # A crash/commit failure leaves the source path available for replay,
         # even when git_directory already names the destination.
-        _replace_marker(directory, dict(clean, git_directory=current, rebind_from=previous))
-        transition = encode([previous, current])
-        store._event(connection, str(uuid5(UUID(generation), "rebind:" + transition)), {
+        _replace_marker(directory, pending)
+        store._event(connection, event_id, {
             "type": "rebind-admin-directory", "generation_id": generation,
             "path": str(path), "from": previous, "to": current,
         })
+        _require_unchanged(path, directory, root, admin)
     # Only a committed event permits removing the recovery field. A crash here
     # replays the identical event before finalizing the marker.
-    _replace_marker(directory, dict(clean, git_directory=current))
+    with store.connection(write=True) as connection:
+        _require_unchanged(path, directory, root, admin)
+        _require_registered(connection, generation, path)
+        if _read_marker(directory / MARKER) != pending:
+            raise StoreConflict(MISMATCH)
+        _replace_marker(directory, dict(clean, git_directory=current))
     return {"generation_id": generation, "rebound": True, "from": previous,
             "to": current, "cleanup_authorized": False}
 
@@ -84,12 +107,12 @@ def _marker_is_valid(store: LifecycleRegistry, path: Path, directory: Path, valu
         "git_identity": _directory_inode(directory),
     }
     comparable = {name: item for name, item in value.items()
-                  if name not in ("generation_id", "rebind_from")}
+                  if name not in ("generation_id", "rebind_from", "rebind_event_id")}
     if encode(comparable) != encode(expected) or not isinstance(value["git_directory"], str):
         return False
     if "rebind_from" not in value:
-        return True
-    return isinstance(value["rebind_from"], str) and value["git_directory"] == str(directory)
+        return "rebind_event_id" not in value
+    return isinstance(value["rebind_from"], str)
 
 
 def rebind_moved_admin(store: LifecycleRegistry, path: Path) -> dict:
@@ -103,7 +126,16 @@ def rebind_moved_admin(store: LifecycleRegistry, path: Path) -> dict:
                      and root.matches_path() and admin.matches_path())
             if not valid:
                 raise StoreConflict(MISMATCH)
+            with store.connection() as connection:
+                _require_registered(connection, value["generation_id"], path)
+            if "rebind_from" in value:
+                # Finish the recorded transition even after another move. Only
+                # then start a separate transition to today's proven admin path.
+                result = _commit_rebind(store, path, directory, value, root, admin)
+                if value["git_directory"] == str(directory):
+                    return result
+                value = _read_marker(directory / MARKER)
             if value["git_directory"] == str(directory) and "rebind_from" not in value:
                 return {"generation_id": value["generation_id"], "rebound": False,
                         "cleanup_authorized": False}
-            return _commit_rebind(store, path, directory, value)
+            return _commit_rebind(store, path, directory, value, root, admin)

@@ -59,4 +59,9 @@ def error_details(error: Exception, operation: str) -> dict:
     code = refusal_code(error, operation)
     if code:
         detail.setdefault("detail", code)
+    if isinstance(error, StoreConflict) and str(error) == "generation-directory-mismatch":
+        detail["recovery"] = (
+            "After a same-installation canonical move, use worker-registry.py --state-dir STATE_DIR "
+            "rebind-moved-worktree --path PATH; copied or restored trees remain refused."
+        )
     return detail

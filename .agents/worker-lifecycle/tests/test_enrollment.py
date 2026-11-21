@@ -21,10 +21,12 @@ from uuid import uuid4
 
 from worker_lifecycle.admission import AdmissionClosed, AdmissionRegistry
 from worker_lifecycle.cleanup_plan import prepare_cleanup
+from worker_lifecycle.cli_errors import error_details
 from worker_lifecycle.creation import WorktreeSpec, create_worktree
 from worker_lifecycle.enrollment import GenerationEnrollment, MARKER, _git_directory
 from worker_lifecycle.rebind import _replace_marker, rebind_moved_admin
 from worker_lifecycle.registry import main
+from worker_lifecycle.retirement import ArchiveTarget, retire_worktree
 from worker_lifecycle.runtime import adapter_for
 from worker_lifecycle.session import admit_session, relinquish_session
 from worker_lifecycle.storage import LifecycleRegistry, StoreConflict
@@ -945,6 +947,46 @@ class EnrollmentContract(unittest.TestCase):
         self.assertIn("rebind-admin-directory", types)
         self.assertFalse(rebind_moved_admin(self.store, self.tree)["rebound"])
 
+    def test_rebound_worktree_can_use_normal_retirement(self):
+        self.git("-C", str(self.repo), "branch", "-M", "main")
+        generation = self.enrollment.resolve(self.tree, create=True)
+        launched = self.launch(self.tree)
+        self.assertEqual(launched.returncode, 0, launched.stderr)
+        moved = self.root / "moved"
+        self.repo.rename(moved)
+        self.git("-C", str(moved), "worktree", "repair", str(self.tree))
+        rebind_moved_admin(self.store, self.tree)
+        archives = self.root / "archives"
+        archives.mkdir(mode=0o700)
+        result = retire_worktree(
+            self.store, self.tree, generation,
+            ArchiveTarget("fixture/repository", "main", archives, recover=True),
+        )
+        self.assertEqual(result["status"], "retired")
+        self.assertFalse(self.tree.exists())
+
+    def test_rebind_preserves_closed_admission(self):
+        generation = self.enrollment.resolve(self.tree, create=True)
+        AdmissionRegistry(self.store).close_generation(str(uuid4()), generation)
+        moved = self.root / "moved"
+        self.repo.rename(moved)
+        self.git("-C", str(moved), "worktree", "repair", str(self.tree))
+        rebind_moved_admin(self.store, self.tree)
+        self.assertEqual(self.enrollment.inspect(self.tree), generation)
+        with self.assertRaises(AdmissionClosed):
+            self.enrollment.resolve(self.tree)
+
+    def test_rebind_requires_registry_proof_even_without_a_move(self):
+        generation = self.enrollment.resolve(self.tree, create=True)
+        with self.store.connection(write=True) as connection:
+            connection.execute("DELETE FROM generation_admissions WHERE generation_id=?", (generation,))
+        with self.assertRaisesRegex(StoreConflict, "^generation-directory-mismatch$") as refused:
+            rebind_moved_admin(self.store, self.tree)
+        detail = error_details(refused.exception, "rebind-moved-worktree")
+        self.assertEqual(detail["reason"], "generation-directory-mismatch")
+        self.assertIn("rebind-moved-worktree", detail["recovery"])
+        self.assertFalse(detail["cleanup_authorized"])
+
     def test_copied_tree_still_refuses_and_rebind_rejects_changed_inode(self):
         self.enrollment.resolve(self.tree, create=True)
         moved = self.root / "moved"
@@ -966,6 +1008,15 @@ class EnrollmentContract(unittest.TestCase):
         with self.assertRaises((ValueError, StoreConflict)) as refused:
             rebind_moved_admin(self.store, copy)
         self.assertNotEqual(str(refused.exception), "generation-directory-mismatch")
+        # A replacement at the registered path has a valid backlink but a new
+        # directory inode; neither ordinary enrollment nor rebind accepts it.
+        original = self.root / "original"
+        self.tree.rename(original)
+        shutil.copytree(original, self.tree, symlinks=True)
+        with self.assertRaisesRegex(StoreConflict, "^generation-directory-mismatch$"):
+            self.enrollment.inspect(self.tree)
+        with self.assertRaisesRegex(StoreConflict, "^generation-directory-mismatch$"):
+            rebind_moved_admin(self.store, self.tree)
 
     def test_repair_followup_uses_configured_registry_and_quotes_entrypoint(self):
         self.enrollment.resolve(self.tree, create=True)
@@ -1020,7 +1071,33 @@ class EnrollmentContract(unittest.TestCase):
             current = destination
         with self.store.connection() as connection:
             events = [json.loads(row[0]) for row in connection.execute("SELECT payload FROM events")]
-        self.assertEqual(sum(event["type"] == "rebind-admin-directory" for event in events), 4)
+        self.assertEqual(sum(event["type"] == "rebind-admin-directory" for event in events), 5)
+
+    def test_pending_rebind_survives_another_canonical_move(self):
+        generation = self.enrollment.resolve(self.tree, create=True)
+        second = self.root / "second"
+        third = self.root / "third"
+        self.repo.rename(second)
+        self.git("-C", str(second), "worktree", "repair", str(self.tree))
+        with patch.object(self.store, "_event", side_effect=OSError("event interrupted")):
+            with self.assertRaises(OSError):
+                rebind_moved_admin(self.store, self.tree)
+        pending = json.loads((_git_directory(self.tree) / MARKER).read_text())
+        second.rename(third)
+        self.git("-C", str(third), "worktree", "repair", str(self.tree))
+        self.assertTrue(rebind_moved_admin(self.store, self.tree)["rebound"])
+        self.assertEqual(self.enrollment.inspect(self.tree), generation)
+        with self.store.connection() as connection:
+            rows = connection.execute("SELECT event_id,payload FROM events").fetchall()
+        events = [(row["event_id"], json.loads(row["payload"])) for row in rows]
+        transitions = [(key, event) for key, event in events
+                       if event["type"] == "rebind-admin-directory"]
+        self.assertEqual(len(transitions), 2)
+        self.assertEqual(transitions[0][0], pending["rebind_event_id"])
+        self.assertEqual(transitions[0][1]["from"], pending["rebind_from"])
+        self.assertEqual(transitions[0][1]["to"], pending["git_directory"])
+        self.assertEqual(transitions[1][1]["from"], pending["git_directory"])
+        self.assertEqual(transitions[1][1]["to"], str(_git_directory(self.tree)))
 
     def test_rebind_recovers_publication_event_commit_and_finalization_failures(self):
         generation = self.enrollment.resolve(self.tree, create=True)
