@@ -66,10 +66,16 @@ worker_lifecycle_state_dir() {
 }
 
 # Seconds allowed for the relinquish call and the single retirement retry
-# (issue #39561). Non-numeric or zero values fall back to 10.
+# (issue #39561). This is a hang guard, not a lock-wait budget: it covers a
+# whole retirement (WIP preservation, process-idle scans, verification and
+# removal), which takes about 9-25s for a small clean tree on macOS, so a 10s
+# bound timed out every retry and leaked the tree (issue #39691). SQLite
+# lock waits are bounded separately by the registry connection timeout.
+# Non-numeric or zero values fall back to the default.
 _worker_lifecycle_retry_timeout() {
-	local seconds="${WORKER_LIFECYCLE_RETRY_TIMEOUT:-10}"
-	[[ "$seconds" =~ ^[1-9][0-9]*$ ]] || seconds=10
+	local default_seconds=120
+	local seconds="${WORKER_LIFECYCLE_RETRY_TIMEOUT:-$default_seconds}"
+	[[ "$seconds" =~ ^[1-9][0-9]*$ ]] || seconds="$default_seconds"
 	printf '%s\n' "$seconds"
 	return 0
 }
