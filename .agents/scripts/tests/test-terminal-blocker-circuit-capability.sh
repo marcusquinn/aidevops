@@ -458,6 +458,11 @@ _bounded_seed_resume_checks() {
 	return 0
 }
 
+# GH#39538: deadlines use whole-second SECONDS. A one-second budget leaves no
+# queue window (reserve 0) and is spent whenever a second boundary passes
+# before the first entry, so the stalled read is never reached. The initial
+# pass uses three seconds (reserve one, queue window at least one) and must
+# finish within four: budget plus startup and rounding, under the 5s stall.
 test_bounded_recovery_intake() {
 	local status=0
 	if ! (
@@ -469,7 +474,7 @@ test_bounded_recovery_intake() {
 		TBR_REPOS_JSON="${TEST_ROOT}/bounded-repos.json"
 		export TB_INTAKE_FIXTURE="$TBR_ROOT" WORKER_GITHUB_LOGIN=runner-one TERMINAL_BLOCKER_SELF_LOGIN=runner-one
 		export AIDEVOPS_BLOCKER_RECOVERY_DIR="$TBR_ROOT" REPOS_JSON="$TBR_REPOS_JSON"
-		export BLOCKER_RECOVERY_STAGE_SECONDS=1 BLOCKER_RECOVERY_BUDGET_SECONDS=1
+		export BLOCKER_RECOVERY_STAGE_SECONDS=1 BLOCKER_RECOVERY_BUDGET_SECONDS=3
 		_tbr_init_dirs || exit 1
 		printf '{"initialized_repos":[{"slug":"owner/repo"}]}\n' >"$TBR_REPOS_JSON"
 		date +%s >"${TBR_ROOT}/last_seed_epoch"
@@ -517,7 +522,7 @@ test_bounded_recovery_intake() {
 		check_stage="initial_stalled_entry"
 		decision=$(jq -c . "${TBR_ROOT}/decisions/owner--repo--42.json")
 		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
-		[[ "$rc" -eq 2 && $((SECONDS - started)) -le 3 && ! -s "${TBR_ROOT}/out" ]] || {
+		[[ "$rc" -eq 2 && $((SECONDS - started)) -le 4 && ! -s "${TBR_ROOT}/out" ]] || {
 			printf 'FAIL bounded initial result rc=%s elapsed_seconds=%s output_bytes=%s\n' \
 				"$rc" "$((SECONDS - started))" "$(wc -c <"${TBR_ROOT}/out")" >&2
 			exit 1
