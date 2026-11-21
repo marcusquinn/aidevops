@@ -1371,7 +1371,8 @@ _id_used_as_title_prefix() {
 	slug=$(_cas_extract_github_slug "$repo_path" 2>/dev/null) || return 1
 
 	for kind in pr issue; do
-		titles=$(gh "$kind" list --repo "$slug" --state all --limit 30 \
+		# Bounded by timeout_sec (fail-open) and a wide limit so matches are not truncated.
+		titles=$(timeout_sec "${CAS_HTTPS_TIMEOUT_S:-30}" gh "$kind" list --repo "$slug" --state all --limit "${CAS_TITLE_SEARCH_LIMIT:-300}" \
 			--search "t${id_num}: in:title" --json title --jq '.[].title' 2>/dev/null) || continue
 		if grep -qE "^t0*${id_num}([^0-9.]|$)" <<<"$titles"; then
 			return 0
