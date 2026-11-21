@@ -154,8 +154,9 @@ def _exit_status(rc: int) -> int:
     return rc if rc >= 0 else 128 - rc
 
 
-def _finish_budget(budget, reservation: str, resource: str, headers: dict[str, str], started: float,
+def _finish_budget(budget, claim: tuple[str, str], headers: dict[str, str], started: float,
                    free: bool = False) -> None:
+    reservation, resource = claim
     if budget is None:
         return
     if reservation:
@@ -259,7 +260,7 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
     except (OSError, ValueError, sqlite3.Error) as exc:
         return _report_state_failure(metadata, exc, rc)
     finally:
-        _finish_budget(budget, reservation, resource, headers, started, free=status == 304)
+        _finish_budget(budget, (reservation, resource), headers, started, free=status == 304)
         phase("sqlite_finish")
 
 
