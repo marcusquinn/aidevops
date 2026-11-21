@@ -133,6 +133,48 @@ _commit_and_pr_privacy_scan() {
 	return 0
 }
 
+# GH#39770: scan one PR text input with the public-write guard, naming the flag
+# (never the matched material) on a block. $1=flag name, $2=text, $3=repo slug.
+_commit_and_pr_scan_text_input() {
+	local flag="$1" text="$2" repo="$3" err="" labels=""
+	[[ -n "$text" ]] || return 0
+	if err=$(privacy_guard_public_write "$repo" "$text" 2>&1 >/dev/null); then
+		return 0
+	fi
+	# Keep only bracketed category labels such as [local-path]; drop any matched text.
+	labels=$(printf '%s' "$err" | rg -o '\[(local-path|secret[^]]*|[a-z-]+)\]' | rg -v '^\[privacy-guard\]$|^\[BLOCK\]$' | sort -u | paste -sd, - 2>/dev/null) || labels=""
+	if [[ "$err" == *"contains private material"* ]]; then
+		printf '[privacy-guard][BLOCK] %s contains private material%s\n' "$flag" "${labels:+: ${labels}}" >&2
+	else
+		printf '[privacy-guard][BLOCK] %s could not be verified by the privacy guard\n' "$flag" >&2
+	fi
+	printf '  Remove the private material from %s and rerun; nothing was validated or pushed.\n' "$flag" >&2
+	return 1
+}
+
+# GH#39770: scan PR text inputs before validators, rebase or push so a private
+# value fails in seconds instead of after the full validator run. The later gh
+# write wrapper scan stays in place as defense in depth.
+_commit_and_pr_scan_text_inputs() {
+	local remote_url="" repo=""
+	[[ -n "${pr_title:-}${summary_what:-}${summary_testing:-}${summary_decisions:-}${summary_regression:-}" ]] || return 0
+	remote_url=$(git remote get-url --push origin 2>/dev/null) || return 0
+	if [[ "$remote_url" =~ github\.com[:/]([^/]+/[^/]+) ]]; then
+		repo="${BASH_REMATCH[1]%.git}"
+	else
+		return 0
+	fi
+	# shellcheck source=./privacy-guard-helper.sh
+	# shellcheck disable=SC1091
+	source "${_FULL_LOOP_COMMIT_DIR}/privacy-guard-helper.sh"
+	_commit_and_pr_scan_text_input "--title" "${pr_title:-}" "$repo" || return 1
+	_commit_and_pr_scan_text_input "--summary" "${summary_what:-}" "$repo" || return 1
+	_commit_and_pr_scan_text_input "--testing" "${summary_testing:-}" "$repo" || return 1
+	_commit_and_pr_scan_text_input "--decisions" "${summary_decisions:-}" "$repo" || return 1
+	_commit_and_pr_scan_text_input "--regression-evidence" "${summary_regression:-}" "$repo" || return 1
+	return 0
+}
+
 # --- Argument Parsing ---
 
 # Parse commit-and-pr arguments into caller-scoped variables.
@@ -236,6 +278,10 @@ _parse_commit_and_pr_args() {
 			;;
 		esac
 	done
+	# Callers that source only this parser (partial extraction) lack the scanner.
+	if declare -F _commit_and_pr_scan_text_inputs >/dev/null; then
+		_commit_and_pr_scan_text_inputs || return 1
+	fi
 	return 0
 }
 
