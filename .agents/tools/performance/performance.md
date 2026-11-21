@@ -169,7 +169,7 @@ Request chain optimization: replace sequential `<script>` tags with `<link rel="
 Delivery design: `tools/runtime/node-server-admin.md` "Proxied object storage". Measure it in two passes with a headless browser, a scoped ordinary account, and no traces, HAR or screenshots:
 
 - Per request, record `cf-cache-status` (or the CDN's equivalent), TTFB, bytes and `cache-control`. Add a user-visible metric: time until in-viewport images are `complete` with `naturalWidth > 0`.
-- Pass 1: cleared browser cache, cold edge. Pass 2: warm edge. Report p50/p90/max per pass. The measurement warms the edge, so cold-edge evidence can be captured only once per location.
+- Pass 1: cleared browser cache, expected cold edge; label an image cold only when its first request returns `cf-cache-status: MISS`, otherwise report it as inconclusive (an operator with Cache Purge permission can purge the URL first and confirm the next request is `MISS`). Pass 2: cleared browser cache again (edge cache intact), warm edge. Report p50/p90/max per pass. The measurement warms the edge, so cold-edge evidence is available once per location unless the URL is purged first.
 - Harness traps: give each wait its own deadline (a deadline consumed by a preceding scroll loop reported a false `0/N loaded`); a late first-login modal can intercept clicks, so use the app's existing E2E selectors and check `document.elementFromPoint` before blaming the UI.
 
 ## Integration

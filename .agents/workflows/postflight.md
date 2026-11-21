@@ -48,11 +48,11 @@ Check both `main` and tag refs: `gh run list --branch=main --limit=5` and `gh ru
 
 | Check | Command | Expected |
 |-------|---------|----------|
-| GitHub Actions | `gh run list --limit=5` | All passing |
+| GitHub Actions | `gh run list --limit=5` | All passing (except a superseded cancelled deploy run, see below) |
 | Tag workflows | `gh run list --workflow=code-quality.yml` | Success |
 | Version validation | `gh run list --workflow=version-validation.yml` | Success |
 
-Superseded deploy runs: if newer pushes cancel the deploy run for your merge commit, do not wait on that run; read the serving commit from the health endpoint and confirm `gh api repos/{owner}/{repo}/compare/<merge>...<serving>` reports `ahead` or `identical`. Use one-shot reads with backoff, not `gh run watch`.
+Superseded deploy runs: if newer pushes cancel the deploy run for your merge commit, do not wait on that run; read the serving commit from the deployment's own commit source (a version/build-info endpoint or response field if the app exposes one, otherwise the deploy platform's current-release record; generic health routes do not report a SHA) and confirm `gh api repos/{owner}/{repo}/compare/<merge>...<serving>` reports `ahead` or `identical`; that check passing counts the cancelled deploy run as complete. Use one-shot reads with backoff, not `gh run watch`.
 
 ### 2. Code Quality Tools
 
@@ -72,7 +72,7 @@ Superseded deploy runs: if newer pushes cancel the deploy run for your merge com
 
 ## Running Postflight
 
-Wait for `postflight.yml` GH Actions workflow to complete before running locally. Only declare success if ALL workflows passed.
+Wait for `postflight.yml` GH Actions workflow to complete before running locally. Only declare success if ALL workflows passed (a superseded cancelled deploy run counts when its serving-commit containment check passes).
 
 **Local**: `.agents/scripts/postflight-check.sh` — verifies CI/CD and external
 quality-gate state. It does not rescan source: targeted/affected checks belong to
