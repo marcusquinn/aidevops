@@ -22,6 +22,8 @@ UNITS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
 # t19233: logged REST-core cost per hour at or above this share of the
 # authoritative primary limit means the governor, not demand, sets the pace.
 REST_CORE_SATURATION_SHARE = 0.75
+# Less log coverage than this is too short to scale to an hourly rate.
+MIN_SATURATION_WINDOW_SECONDS = 900
 
 
 def parse_window(value):
@@ -108,13 +110,26 @@ def _rest_core_limit():
     return limit
 
 
+def _observed_seconds(meta):
+    """Seconds of log evidence behind the report, idle time included: from the
+    later of the window start and the oldest retained record (log rotation) to
+    report time. The span between attempts would scale a short burst to an
+    hourly rate and never decay while idle."""
+    now, since = meta.get("generated_at_ts"), meta.get("since_ts")
+    first = meta.get("first_retained_record_ts")
+    if not all(isinstance(value, int) and not isinstance(value, bool) for value in (now, since)):
+        return None
+    start = max(since, first) if isinstance(first, int) and not isinstance(first, bool) and first > 0 else since
+    seconds = now - start
+    return seconds if seconds >= MIN_SATURATION_WINDOW_SECONDS else None
+
+
 def rest_core_saturation(report, limit):
     """t19233: the governor paces before quota hits zero, so measure the hourly
     share of the primary limit that logged REST-core calls consume."""
-    meta = report.get("_meta", {})
-    window = meta.get("effective_window_seconds") or meta.get("window_seconds")
+    window = _observed_seconds(report.get("_meta", {}))
     cost = report.get("by_api_pool", {}).get("rest-core", {}).get("known_quota_cost")
-    if not isinstance(window, int) or window <= 0 or not isinstance(cost, int):
+    if window is None or not isinstance(cost, int):
         return {"rest_core_limit": limit, "rest_core_cost_per_hour": None, "rest_core_saturation": None}
     per_hour = round(cost * 3600 / window)
     return {"rest_core_limit": limit, "rest_core_cost_per_hour": per_hour,

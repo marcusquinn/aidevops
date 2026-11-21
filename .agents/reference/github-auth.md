@@ -173,7 +173,10 @@ total known quota cost, their `routable_share`, the window's REST-core
 `rest_core_min_remaining`, and `owners_without_app_read` (owners with a
 pulse-enabled repository lacking an App read route). Missing per-reason cost
 data yields `routable_share: null`. `rest_core_cost_per_hour` is logged
-REST-core known cost scaled to one hour; `rest_core_saturation` divides it by
+REST-core known cost scaled to one hour over the observed period, idle time
+included: from the later of the window start and the oldest retained log
+record, to report time. Under 15 minutes of coverage yields `null`.
+`rest_core_saturation` divides it by
 `rest_core_limit`, read from the Pulse probe cache
 (`AIDEVOPS_PULSE_REST_CORE_CACHE`, default
 `~/.aidevops/cache/pulse-rest-core.json`). Without that cache
