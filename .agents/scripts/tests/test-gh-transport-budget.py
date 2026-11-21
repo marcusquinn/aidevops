@@ -914,6 +914,30 @@ class AdmissionTests(unittest.TestCase):
         self.budget.db.execute("UPDATE quota SET reset=1013")
         self.budget.acquire("core", now=1004)
 
+    def test_free_response_refunds_pacing_slot_but_paid_does_not(self):
+        self.seed(100, reset=2000)
+        pacing = "SELECT retry_at FROM pacing"
+        request = self.budget.acquire("core", now=1002)
+        charged = self.budget.db.execute(pacing).fetchone()[0]
+        self.assertGreater(charged, 1002)
+        history = self.budget.db.execute("SELECT COUNT(*) FROM admission_history").fetchone()[0]
+        self.budget.finish(request, "core", headers(99), started=1002, now=1002)
+        self.assertEqual(self.budget.db.execute(pacing).fetchone()[0], charged)
+        request = self.budget.acquire("core", now=1013)
+        charged = self.budget.db.execute(pacing).fetchone()[0]
+        # Free: the slot is returned, clamped to now; secondary history stays.
+        self.budget.finish(request, "core", headers(99), started=1013, now=1013, free=True)
+        refunded = self.budget.db.execute(pacing).fetchone()[0]
+        self.assertAlmostEqual(refunded, max(1013, charged - 987 / 99), delta=0.2)
+        self.assertGreaterEqual(refunded, 1013)
+        self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM admission_history").fetchone()[0],
+                         history + 1)
+        # Invalid headers never refund and never create a pacing row.
+        request = self.budget.acquire("core", now=1030)
+        charged = self.budget.db.execute(pacing).fetchone()[0]
+        self.budget.finish(request, "core", {}, started=1030, now=1030, free=True)
+        self.assertEqual(self.budget.db.execute(pacing).fetchone()[0], charged)
+
     def test_delivery_class_skips_pacing_only_above_floor(self):
         # GH#37570: worker-bus relay reads must not starve behind bulk demand.
         self.seed(5000, reset=4600)

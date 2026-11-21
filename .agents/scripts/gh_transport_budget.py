@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from gh_process_birth import process_birth
-from gh_transport_capacity import capacity_wait
+from gh_transport_capacity import capacity_wait, refund_pacing
 from gh_transport_identity import credentials_share_proven_owner, quota_owner
 from gh_transport_observation import (
     QuotaResponse,
@@ -264,7 +264,7 @@ class Budget:
             return reservation
 
     def finish(self, reservation: str, resource: str, headers: dict[str, str],
-               *, started: float, now: float | None = None) -> None:
+               *, started: float, now: float | None = None, free: bool = False) -> None:
         now = time.time() if now is None else now
         observed = _valid_observation(headers, resource, now)
         with self.transaction():
@@ -309,6 +309,8 @@ class Budget:
                         (self.scope, resource, credential, started),
                     )
             self.db.execute("DELETE FROM reservation WHERE id=?", (reservation,))
+            if free:
+                refund_pacing(self, resource, reset_at, available, now)
         record_budget_transition(
             self,
             {"remaining": row[0], "reset": row[1]} if row else None,

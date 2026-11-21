@@ -89,3 +89,27 @@ def primary_wait(budget, resource, row, reserved, now):
     budget.db.execute("INSERT OR REPLACE INTO pacing VALUES(?,?,?,?,?)",
                       (budget.scope, resource, row[1], slot + interval, row[0]))
     return "", now
+
+
+def refund_pacing(budget, resource, reset_at, available, now):
+    """Return one pacing slot after a free (304) response; never creates a row.
+
+    Moves pacing.retry_at back by one current interval for the same window,
+    clamped to now. Secondary-ceiling history and reservations are untouched.
+    Delivery-class reads skip the schedule at admission, so they own no slot.
+    """
+    if os.environ.get("AIDEVOPS_GH_ADMISSION_CLASS", "") == DELIVERY_CLASS:
+        return
+    saved = budget.db.execute(
+        "SELECT reset,retry_at FROM pacing WHERE scope=? AND resource=?",
+        (budget.scope, resource),
+    ).fetchone()
+    if not saved or saved[0] != reset_at or reset_at <= now:
+        return
+    interval = (reset_at - now) / max(available, 1)
+    refunded = max(now, saved[1] - interval)
+    if refunded < saved[1]:
+        budget.db.execute(
+            "UPDATE pacing SET retry_at=? WHERE scope=? AND resource=?",
+            (refunded, budget.scope, resource),
+        )

@@ -154,12 +154,13 @@ def _exit_status(rc: int) -> int:
     return rc if rc >= 0 else 128 - rc
 
 
-def _finish_budget(budget, reservation: str, resource: str, headers: dict[str, str], started: float) -> None:
+def _finish_budget(budget, reservation: str, resource: str, headers: dict[str, str], started: float,
+                   free: bool = False) -> None:
     if budget is None:
         return
     if reservation:
         try:
-            budget.finish(reservation, resource, headers, started=started)
+            budget.finish(reservation, resource, headers, started=started, free=free)
         except (OSError, ValueError, sqlite3.Error):
             print("[gh-transport] quota observation remains uncertain", file=sys.stderr)
     budget.close()
@@ -214,6 +215,7 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
     started = time.time()
     headers: dict[str, str] = {}
     rc = None
+    status = 0
     try:
         metadata.write_text('{"attempted":false}', encoding="utf-8")
         private_directory(temp_dir)
@@ -257,7 +259,7 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
     except (OSError, ValueError, sqlite3.Error) as exc:
         return _report_state_failure(metadata, exc, rc)
     finally:
-        _finish_budget(budget, reservation, resource, headers, started)
+        _finish_budget(budget, reservation, resource, headers, started, free=status == 304)
         phase("sqlite_finish")
 
 
