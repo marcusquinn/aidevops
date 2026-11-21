@@ -2390,7 +2390,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19237 docs(task-lifecycle): interactive implementation PRs keep TODO.md out and publish rows via planning-commit-helper #auto-dispatch #documentation ref:GH#39629 logged:2026-11-21 -> [todo/tasks/t19237-brief.md] pr:#39632 completed:2026-11-21
 
-- [ ] t19244 fix(pulse-merge): route terminal-red CI on runtime-pending-held worker PRs to CI repair #auto-dispatch #bug #fix-the-fixer ref:GH#39653 logged:2026-11-21 -> [todo/tasks/t19244-brief.md]
+- [x] t19244 fix(pulse-merge): route terminal-red CI on runtime-pending-held worker PRs to CI repair #auto-dispatch #bug #fix-the-fixer ref:GH#39653 logged:2026-11-21 -> [todo/tasks/t19244-brief.md] pr:#39662 completed:2026-11-21
 
 ## In Progress
 
