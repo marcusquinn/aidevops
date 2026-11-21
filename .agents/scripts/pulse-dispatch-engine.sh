@@ -1573,6 +1573,25 @@ _early_exit_recycle_drained() {
 }
 
 #######################################
+# GH#6453: Wait for newly-dispatched workers to appear in the process list
+# before re-counting. Workers dispatched by the LLM pulse take up to
+# PULSE_LAUNCH_GRACE_SECONDS to start (sandbox-exec + opencode startup).
+# Counting immediately after the LLM exits produces a false-negative
+# (workers running but not yet visible) that triggers duplicate dispatch.
+# t1887: LLM dispatch count is unknown here — use full grace to preserve
+# the GH#6453 safety guarantee.
+#######################################
+_early_exit_recycle_launch_grace_wait() {
+	local grace_wait="$PULSE_LAUNCH_GRACE_SECONDS"
+	[[ "$grace_wait" =~ ^[0-9]+$ ]] || grace_wait=35
+	if [[ "$grace_wait" -gt 0 ]]; then
+		echo "[pulse-wrapper] Early-exit recycle: waiting ${grace_wait}s for dispatched workers to appear (GH#6453)" >>"$LOGFILE"
+		sleep "$grace_wait"
+	fi
+	return 0
+}
+
+#######################################
 # Early-exit recycle loop (GH#5627, extracted from main)
 #
 # If the LLM exited quickly (<5 min) and the pool is still underfilled
@@ -1601,19 +1620,7 @@ _run_early_exit_recycle_loop() {
 			echo "[pulse-wrapper] Stop flag set — skipping early-exit recycle" >>"$LOGFILE"
 			break
 		fi
-		# GH#6453: Wait for newly-dispatched workers to appear in the process list
-		# before re-counting. Workers dispatched by the LLM pulse take up to
-		# PULSE_LAUNCH_GRACE_SECONDS to start (sandbox-exec + opencode startup).
-		# Counting immediately after the LLM exits produces a false-negative
-		# (workers running but not yet visible) that triggers duplicate dispatch.
-		# t1887: LLM dispatch count is unknown here — use full grace to preserve
-		# the GH#6453 safety guarantee.
-		local grace_wait="$PULSE_LAUNCH_GRACE_SECONDS"
-		[[ "$grace_wait" =~ ^[0-9]+$ ]] || grace_wait=35
-		if [[ "$grace_wait" -gt 0 ]]; then
-			echo "[pulse-wrapper] Early-exit recycle: waiting ${grace_wait}s for dispatched workers to appear (GH#6453)" >>"$LOGFILE"
-			sleep "$grace_wait"
-		fi
+		_early_exit_recycle_launch_grace_wait
 
 		# Re-check worker state
 		local post_max post_active post_target post_runnable post_queued
