@@ -39,6 +39,9 @@ source "${SCRIPT_DIR}/canonical-recovery-ffl.sh"
 # shellcheck source=./canonical-recovery-lock.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/canonical-recovery-lock.sh"
+# shellcheck source=./canonical-recovery-hygiene.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/canonical-recovery-hygiene.sh"
 
 
 usage() {
@@ -55,7 +58,9 @@ usage() {
 		"  canonical-recovery-helper.sh ${REPAIR_UPSTREAM_CMD} --repo PATH --issue N --confirm REPAIR_CANONICAL_UPSTREAM" \
 		"  canonical-recovery-helper.sh ${REPAIR_WORKTREES_CMD} --repo PATH [--issue N] --confirm REPAIR_WORKTREE_POINTERS" \
 		"  canonical-recovery-helper.sh ${FOLLOW_TRANSFER_CMD} --repo PATH --slug OWNER/REPO --confirm FOLLOW_REPOSITORY_TRANSFER" \
-		"  canonical-recovery-helper.sh ${VERIFY_BOOTSTRAP_CMD} --repo PATH --slug OWNER/REPO --confirm REGISTER_CANONICAL_REPOSITORY"
+		"  canonical-recovery-helper.sh ${VERIFY_BOOTSTRAP_CMD} --repo PATH --slug OWNER/REPO --confirm REGISTER_CANONICAL_REPOSITORY" \
+		"  canonical-recovery-helper.sh ${CGH_REPAIR_CMD} --repo PATH [--min-age-minutes N] [--tmp-min-age-days N] [--apply]" \
+		"  canonical-recovery-helper.sh ${CGH_GC_CMD} --repo PATH [--min-age-minutes N] [--tmp-min-age-days N] [--apply]"
 	return 0
 }
 
@@ -113,6 +118,13 @@ repair_worktree_pointers() {
 
 cmd="${1:-}"
 shift || true
+# GH#39722: stale Git lock/pack debris repair and sanctioned canonical gc use
+# their own dry-run-first argument contract.
+if [[ "$cmd" == "$CGH_REPAIR_CMD" || "$cmd" == "$CGH_GC_CMD" ]]; then
+	hygiene_rc=0
+	cgh_main "$cmd" "$@" || hygiene_rc=$?
+	exit "$hygiene_rc"
+fi
 repo_path=""
 issue_number=""
 maintenance_reason=""

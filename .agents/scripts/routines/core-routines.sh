@@ -1215,6 +1215,7 @@ having to remember a manual cleanup:
 | artefacts | \`worktree-artefact-reclaim.sh --force\` (ignored build output in idle worktrees, to Trash) |
 | opencode | \`opencode-db-maintenance-helper.sh auto\` (idle DBs, layout backups) |
 | observability | \`observability-helper.sh retention-maintenance --apply\` |
+| gitlocks | \`canonical-recovery-helper.sh repair-stale-locks --apply\` (unheld Git locks 60+ min old and pack temporaries 2+ days old in canonical repos; audited) |
 
 Run \`aidevops cleanup\` any time for a read-only size report, or
 \`aidevops cleanup <store>\` to preview one store.

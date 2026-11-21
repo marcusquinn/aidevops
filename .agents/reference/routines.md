@@ -262,7 +262,8 @@ their own service logs rather than duplicate Pulse retries.
 
 r922 Storage hygiene is the scheduled form of `aidevops cleanup all --apply`
 (`scripts/storage-cleanup-helper.sh`); run `aidevops cleanup` for current store
-sizes and whether its scheduler is installed.
+sizes and whether its scheduler is installed. Its `gitlocks` store removes stale,
+unheld Git locks and pack temporaries in canonical repos (GH#39722).
 
 Platform wrappers retain per-routine tracking state under
 `~/.aidevops/.agent-workspace/cron/<id>/routine-state.json`. Successful updates

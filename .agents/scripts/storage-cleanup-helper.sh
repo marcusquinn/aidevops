@@ -17,6 +17,9 @@
 #                  archive partitions)
 #   trash          todo-sync-trash-retention.sh (trashed TODO-sync clones in
 #                  ~/.Trash past the age cutoff or newest-N cap; GH#37214)
+#   gitlocks       canonical-recovery-helper.sh repair-stale-locks (stale,
+#                  unheld Git lock files and interrupted-fetch pack temporaries
+#                  in registered canonical repositories; audited; GH#39722)
 #
 # Usage:
 #   storage-cleanup-helper.sh [report]            Sizes and owning cleaners (read-only)
@@ -30,6 +33,8 @@
 #   STORAGE_CLEANUP_ARTEFACT_MAX_SECONDS  artefacts apply work budget (default 300)
 #   AIDEVOPS_WORKTREE_IDLE_DAYS      artefacts idle threshold in days (default 14)
 #   AIDEVOPS_WORKTREE_BASE_DIR       Linked-worktree base (default: worktree-paths.sh)
+#   STORAGE_CLEANUP_GITLOCKS_REPO_MAX_SECONDS  gitlocks budget per repository (default 120)
+#   AIDEVOPS_REPOS_JSON              Repository registry (default ~/.config/aidevops/repos.json)
 
 set -uo pipefail
 
@@ -39,7 +44,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=./worktree-paths.sh
 source "${SCRIPT_DIR}/worktree-paths.sh"
 
-readonly SC_STORES="tmp worktrees artefacts opencode observability trash"
+readonly SC_STORES="tmp worktrees artefacts opencode observability trash gitlocks"
 readonly SC_SCHEDULE_NAME="storage-hygiene"
 readonly SC_APPLY="apply" SC_DRY_RUN="dry-run"
 SC_SIZE_TIMEOUT="${STORAGE_CLEANUP_SIZE_TIMEOUT:-30}"
@@ -48,6 +53,10 @@ SC_TMP_MAX_SECONDS="${STORAGE_CLEANUP_TMP_MAX_SECONDS:-300}"
 [[ "$SC_TMP_MAX_SECONDS" =~ ^[0-9]+$ ]] || SC_TMP_MAX_SECONDS=300
 SC_ARTEFACT_MAX_SECONDS="${STORAGE_CLEANUP_ARTEFACT_MAX_SECONDS:-300}"
 [[ "$SC_ARTEFACT_MAX_SECONDS" =~ ^[1-9][0-9]*$ ]] || SC_ARTEFACT_MAX_SECONDS=300
+SC_GITLOCKS_REPO_MAX_SECONDS="${STORAGE_CLEANUP_GITLOCKS_REPO_MAX_SECONDS:-120}"
+[[ "$SC_GITLOCKS_REPO_MAX_SECONDS" =~ ^[1-9][0-9]*$ ]] || SC_GITLOCKS_REPO_MAX_SECONDS=120
+# canonical-recovery-helper.sh exit status for a held recovery lock (skip).
+readonly SC_GITLOCKS_BUSY=75
 # Symlink lock: the link target is the holder PID, so the lock and its owner
 # are published in one atomic syscall (no empty-lock window).
 SC_LOCK="${AIDEVOPS_LOG_DIR:-${HOME:?}/.aidevops/logs}/storage-cleanup.lock"
@@ -81,6 +90,7 @@ _sc_store_paths() {
 		;;
 	observability) printf '%s\n' "${workspace}/observability" ;;
 	trash) ;; # Only owned buckets inside ~/.Trash; sized by _sc_trash_kb.
+	gitlocks) ;; # Lock files are tiny; the preview reports candidate counts.
 	*) return 1 ;;
 	esac
 	return 0
@@ -95,6 +105,7 @@ _sc_store_cleaner() {
 	opencode) printf '%s\n' "opencode-db-maintenance-helper.sh auto: VACUUM, isolated DBs, layout backups" ;;
 	observability) printf '%s\n' "observability-helper.sh retention-maintenance: verified archives" ;;
 	trash) printf '%s\n' "todo-sync-trash-retention.sh: TODO-sync buckets older than ${TODO_SYNC_TRASH_RETENTION_DAYS:-3}d or beyond newest ${TODO_SYNC_TRASH_MAX_COUNT:-5}" ;;
+	gitlocks) printf '%s\n' "canonical-recovery-helper.sh repair-stale-locks: unheld Git locks 60+ min old, pack temporaries 2+ days old; audited" ;;
 	*) return 1 ;;
 	esac
 	return 0
@@ -191,6 +202,9 @@ cmd_report() {
 		if [[ "$store" == "artefacts" ]]; then
 			# Counted inside worktrees; eligibility needs the bounded preview.
 			size="(in wt)"
+		elif [[ "$store" == "gitlocks" ]]; then
+			# Counted by the bounded preview; the files themselves are tiny.
+			size="(count)"
 		elif [[ "$store" == "trash" ]]; then
 			if kb=$(_sc_trash_kb); then
 				size=$(_sc_human_kb "$kb")
@@ -267,6 +281,62 @@ _sc_preview_trash() {
 	return "$rc"
 }
 
+# Registered canonical checkouts (a .git directory, not a linked-worktree file).
+# An absent registry is a no-op; an unreadable one is an error (returns 1).
+_sc_canonical_repos() {
+	local registry="${AIDEVOPS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}" path="" paths=""
+	[[ -f "$registry" ]] || return 0
+	command -v jq >/dev/null 2>&1 || {
+		printf 'gitlocks: jq is required to read %s\n' "${registry##*/}" >&2
+		return 1
+	}
+	paths=$(jq -r '.initialized_repos[]?.path // empty' "$registry" 2>/dev/null) || {
+		printf 'gitlocks: cannot parse repository registry %s\n' "${registry##*/}" >&2
+		return 1
+	}
+	while IFS= read -r path; do
+		[[ "$path" == /* && -d "${path}/.git" ]] && printf '%s\n' "$path"
+	done <<<"$paths"
+	return 0
+}
+
+# Runs repair-stale-locks (preview or --apply) per canonical repository and
+# prints a line for each repository with findings or errors, then a total.
+# The helper enforces every age/holder gate.
+_sc_gitlocks() {
+	local mode="$1" repo="" out="" rc=0 repo_rc=0 repos=0 locks="" packs="" removed="" found=0
+	local repo_list=""
+	local -a apply_args=()
+	[[ "$mode" == "$SC_APPLY" ]] && apply_args=(--apply)
+	repo_list=$(_sc_canonical_repos) || return 1
+	while IFS= read -r repo; do
+		[[ -n "$repo" ]] || continue
+		repos=$((repos + 1))
+		repo_rc=0
+		out=$(timeout_sec "$SC_GITLOCKS_REPO_MAX_SECONDS" bash "${SCRIPT_DIR}/canonical-recovery-helper.sh" \
+			repair-stale-locks --repo "$repo" "${apply_args[@]+"${apply_args[@]}"}" 2>&1) || repo_rc=$?
+		locks=$(sed -n 's/^STALE_LOCK_CANDIDATES=//p' <<<"$out")
+		packs=$(sed -n 's/^TMP_PACK_CANDIDATES=//p' <<<"$out")
+		removed=$(sed -n 's/^REMOVED=//p' <<<"$out")
+		if [[ "$repo_rc" -eq "$SC_GITLOCKS_BUSY" ]]; then
+			printf '  %s: skipped (canonical recovery lock held)\n' "${repo##*/}"
+			continue
+		fi
+		[[ "$repo_rc" -eq 0 && "$locks" == "0" && "$packs" == "0" ]] && continue
+		found=$((found + 1))
+		printf '  %s: stale_locks=%s tmp_packs=%s%s\n' "${repo##*/}" "${locks:-?}" "${packs:-?}" \
+			"${removed:+ removed=${removed}}"
+		grep -E '^(CANDIDATE|REMOVED|KEPT) ' <<<"$out" | sed 's/^/    /' || true
+		if [[ "$repo_rc" -ne 0 ]]; then
+			printf '    exit %s: %s\n' "$repo_rc" "$(awk '/^(BLOCKED|FAILED)/ && !seen { print; seen = 1 }' <<<"$out")"
+			rc=1
+		fi
+	done <<<"$repo_list"
+	printf 'Scanned %s canonical repositories; %s with stale Git debris or errors.\n' "$repos" "$found"
+	[[ "$mode" == "$SC_APPLY" ]] || printf 'Apply removes only the candidates listed above, re-checking each gate.\n'
+	return "$rc"
+}
+
 _sc_dry_run_store() {
 	local store="$1" rc=0
 	case "$store" in
@@ -290,6 +360,7 @@ _sc_dry_run_store() {
 			--max-partitions 20 --max-duration-seconds 120 || rc=$?
 		;;
 	trash) _sc_preview_trash || rc=$? ;;
+	gitlocks) _sc_gitlocks "$SC_DRY_RUN" || rc=$? ;;
 	*) return 1 ;;
 	esac
 	return "$rc"
@@ -337,6 +408,7 @@ _sc_apply_store() {
 			--max-partitions 20 --max-duration-seconds 120 || rc=$?
 		;;
 	trash) bash "${SCRIPT_DIR}/todo-sync-trash-retention.sh" prune --apply || rc=$? ;;
+	gitlocks) _sc_gitlocks "$SC_APPLY" || rc=$? ;;
 	*) return 1 ;;
 	esac
 	return "$rc"
