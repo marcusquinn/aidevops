@@ -294,6 +294,55 @@ test_prepare_attempt_skips_resume_for_merged_recorded_head() {
 	return 0
 }
 
+# GH#39726: scheduled routine runs (routine-<id>) never resume a legacy row and
+# never persist a new one; issue workers keep resume.
+test_routine_session_keys_start_fresh_every_run() {
+	local failures=""
+	if ! failures=$(
+		_recover_deleted_cwd_before_launch() { return 0; }
+		_prepare_runtime_prompt_transport() {
+			_HEADLESS_RUN_PROMPT_ARG="prompt"
+			_HEADLESS_RUN_PROMPT_FILE=""
+			_HEADLESS_CLAUDE_STDIN_FILE=""
+			return 0
+		}
+		print_info() { return 0; }
+		_prepare_cmd_text() {
+			local work_dir="$TEST_ROOT" role="worker" headless_runtime="opencode" prompt="prompt"
+			local force_file_transport=0 selected_model="anthropic/claude-sonnet-5-5"
+			local session_key="$1" title="title" agent_name="" variant_override=""
+			local persisted_session="" runtime="" provider="" metric_work_dir=""
+			local prompt_arg="" prompt_file_arg="" claude_stdin_file=""
+			local -a cmd=() extra_args=()
+			_prepare_run_attempt_command >/dev/null 2>&1 || printf 'prepare_rc '
+			printf '%s' "${cmd[*]}"
+			return 0
+		}
+		local text=""
+		store_session_id anthropic "routine-r-news" "ses_stale" "anthropic/claude-sonnet-5-5"
+		text=$(_prepare_cmd_text "routine-r-news")
+		[[ "$text" != *--session* && "$text" != *--continue* ]] ||
+			printf 'routine_resumed cmd=%s\n' "$text"
+		[[ -z "$(get_session_id anthropic routine-r-news)" ]] ||
+			printf 'legacy_routine_row_kept\n'
+		_store_headless_session_if_allowed anthropic "routine-r-news" "ses_new" \
+			"anthropic/claude-sonnet-5-5" worker || printf 'store_rc\n'
+		[[ -z "$(get_session_id anthropic routine-r-news)" ]] ||
+			printf 'routine_row_persisted\n'
+		store_session_id anthropic "issue-78" "ses_issue" "anthropic/claude-sonnet-5-5"
+		text=$(_prepare_cmd_text "issue-78")
+		[[ "$text" == *"--session ses_issue --continue"* ]] ||
+			printf 'issue_resume_lost cmd=%s\n' "$text"
+		clear_session_id_all_providers "issue-78"
+		clear_session_id_all_providers "routine-r-news"
+	) || [[ -n "$failures" ]]; then
+		print_result "routine session keys start fresh every run; issue workers keep resume" 1 "$failures"
+		return 0
+	fi
+	print_result "routine session keys start fresh every run; issue workers keep resume" 0
+	return 0
+}
+
 test_blocked_completion_records_blocked_label() {
 	local output_file="${TEST_ROOT}/blocked-output.jsonl"
 	printf '%s\n' '{"type":"text","sessionID":"ses_blocked","text":"BLOCKED: missing dependency credentials"}' >"$output_file"

@@ -563,6 +563,7 @@ main() {
 	test_provider_sessions_keep_pulse_unscoped
 	test_terminal_delivery_release_clears_persisted_session
 	test_prepare_attempt_skips_resume_for_merged_recorded_head
+	test_routine_session_keys_start_fresh_every_run
 	run_blocked_completion_tests
 	test_capability_escalation_ladder_is_bounded_and_exact
 	run_post_pr_handoff_signal_tests
