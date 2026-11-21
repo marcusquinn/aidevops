@@ -62,6 +62,35 @@ fi
 unset _scl_script_dir
 
 #######################################
+# Print the lowest-numbered OPEN PR, other than the merged one, that GitHub
+# links as closing the issue. closedByPullRequestsReferences also lists merged
+# PRs, so state is read explicitly. Prints nothing when there is none or the
+# lookup fails.
+# Args: $1=issue_number, $2=repo_slug, $3=merged_pr_number
+#######################################
+_claim_lifecycle_other_open_closer() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local merged_pr="$3"
+	local owner="${repo_slug%%/*}" name="${repo_slug#*/}" result=""
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ && -n "$owner" && -n "$name" && "$name" != */* ]] || return 0
+	# shellcheck disable=SC2016  # $owner/$name/$number are GraphQL variables
+	result=$(gh api graphql -f query='
+query($owner:String!,$name:String!,$number:Int!) {
+  repository(owner:$owner,name:$name) {
+    issue(number:$number) {
+      closedByPullRequestsReferences(first:50) { nodes { number state } }
+    }
+  }
+}' -F owner="$owner" -F name="$name" -F number="$issue_number" 2>/dev/null) || return 0
+	printf '%s' "$result" | jq -r --arg merged "$merged_pr" '
+		[.data.repository.issue.closedByPullRequestsReferences.nodes[]?
+			| select(.state == "OPEN" and (.number | tostring) != $merged) | .number]
+		| min // empty' 2>/dev/null
+	return 0
+}
+
+#######################################
 # Release the interactive claim for a linked issue after a PR merge.
 #
 # Called from pulse-merge.sh::_handle_post_merge_actions (deterministic merge)
@@ -121,6 +150,17 @@ release_interactive_claim_on_merge() {
 	if ! jq -e --arg repo "$repo_slug" --argjson issue "$linked_issue" \
 		'.slug == $repo and .issue == $issue' "$_stamp_file" >/dev/null 2>&1; then
 		echo "[claim-lifecycle] Claim stamp mismatch for ${repo_slug}#${linked_issue}; skipping release (GH#28690)" >>"$_log"
+		return 0
+	fi
+
+	# Guard 4 (GH#39704): a merged planning/Ref PR is not the issue's work while
+	# another open PR still closes it; releasing would unassign the owner and
+	# mark the issue available mid-review. Only positive evidence skips: a
+	# failed lookup keeps the release so claims are never stranded.
+	local _open_closer=""
+	_open_closer=$(_claim_lifecycle_other_open_closer "$linked_issue" "$repo_slug" "$pr_number")
+	if [[ -n "$_open_closer" ]]; then
+		echo "[claim-lifecycle] Open PR #${_open_closer} still closes ${repo_slug}#${linked_issue}; keeping interactive claim after PR #${pr_number} merged (GH#39704)" >>"$_log"
 		return 0
 	fi
 
