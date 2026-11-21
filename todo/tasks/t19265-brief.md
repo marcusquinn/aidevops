@@ -21,7 +21,7 @@ Observed in a managed repository with 66 open PRs and about one new worker PR pe
 
 ## How
 
-- In `_has_open_pr_check_healthy_sibling`'s non-draft `match_pr` jq selection, also accept a recovery checkpoint: same-repository PR, label `origin:worker-takeover`, body containing `<!-- aidevops:orphan-recovery ` and a standalone `For #N` line for this issue. Keep `CHANGES_REQUESTED` excluded. Exclude `DIRTY`/`CONFLICTING`, because a conflicted PR cannot land and must not hold the issue. Allow `BLOCKED`, which only means checks or review are pending in the pulse merge pipeline.
+- In `_has_open_pr_check_healthy_sibling`'s non-draft `match_pr` jq selection, also accept a recovery checkpoint: same-repository PR, label `origin:worker-takeover`, body containing the `<!-- aidevops:orphan-recovery` marker (followed by a space) and a standalone `For #N` line for this issue. Keep `CHANGES_REQUESTED` excluded. Exclude `DIRTY`/`CONFLICTING`, because a conflicted PR cannot land and must not hold the issue. Allow `BLOCKED`, which only means checks or review are pending in the pulse merge pipeline.
 - Emit a distinct reason for the recovery match. Keep the existing `is approved or mergeable` text unchanged for healthy siblings.
 - Leave planning-only `For #N` PRs, drafts (handled by `_ddpr_classify_sibling_drafts`) and Check 1's window unchanged.
 
