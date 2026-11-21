@@ -1260,10 +1260,16 @@ cmd_ensure_anchor() {
 	_check_prerequisites || return 1
 
 	local marker="<!-- aidevops:routine-anchor:${key} -->"
-	local issues="" existing=""
+	local issues="" existing="" issue_count="" list_limit=1000
 	if ! issues=$(gh issue list --repo "$repo_slug" --state open --label routine-tracking \
-		--limit 100 --json number,body 2>/dev/null); then
+		--limit "$list_limit" --json number,body 2>/dev/null); then
 		_log_error "Cannot list routine anchors in ${repo_slug}; refusing to create a duplicate"
+		return 1
+	fi
+	# A full page may be truncated, so the anchor could sit beyond it: fail closed.
+	issue_count=$(printf '%s' "$issues" | jq -r 'length') || return 1
+	if [[ ! "$issue_count" =~ ^[0-9]+$ || "$issue_count" -ge "$list_limit" ]]; then
+		_log_error "Routine anchor list for ${repo_slug} is incomplete; refusing to create a duplicate"
 		return 1
 	fi
 	existing=$(printf '%s' "$issues" | jq -r --arg m "$marker" \
@@ -1287,10 +1293,28 @@ cmd_ensure_anchor() {
 	return 0
 }
 
+# Read an open origin:worker PR that lacks any issue identity and output its
+# current body. Returns 0 when a backfill is needed, 3 when the PR is closed,
+# not worker-origin or already identified, and 1 when it cannot be read.
+_pr_anchor_backfill_body() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local meta="" body=""
+	meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,labels,body 2>/dev/null) || return 1
+	printf '%s' "$meta" | jq -e '.state == "OPEN"' >/dev/null || return 3
+	printf '%s' "$meta" | jq -e '[.labels[].name] | index("origin:worker") != null' >/dev/null || return 3
+	body=$(printf '%s' "$meta" | jq -r '.body // ""') || return 1
+	[[ -z "$(_gh_pr_body_closing_issues "$body")" && -z "$(_gh_pr_body_explicit_issues "$body")" ]] || return 3
+	printf '%s' "$body"
+	return 0
+}
+
 # A routine PR opened before the worker identity guard (GH#36877) carries
 # origin:worker but no issue identity, so the t2449 gate never admits it and
 # the routine skips the repo while it stays open. Prepend the anchor's
 # `Ref #N` line through the guarded edit wrapper. Other PRs are left alone.
+# The body is re-read after anchor resolution so an edit made meanwhile is
+# kept; the full-body replacement itself is still not conditional.
 # Args: key, --repo SLUG, --pr N, --title TITLE. Returns 1 on any failure.
 cmd_ensure_pr_anchor() {
 	if ! _parse_anchor_args "$@" || ! _is_valid_issue_number "$_ANCHOR_PR"; then
@@ -1305,12 +1329,14 @@ cmd_ensure_pr_anchor() {
 		_log_error "ensure-pr-anchor: ${fn} unavailable (shared-gh-wrappers.sh not loaded)"
 		return 1
 	done
-	local meta="" body="" anchor=""
-	meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json labels,body 2>/dev/null) || return 1
-	printf '%s' "$meta" | jq -e '[.labels[].name] | index("origin:worker") != null' >/dev/null || return 0
-	body=$(printf '%s' "$meta" | jq -r '.body // ""') || return 1
-	[[ -z "$(_gh_pr_body_closing_issues "$body")" && -z "$(_gh_pr_body_explicit_issues "$body")" ]] || return 0
+	local body="" anchor="" read_rc=0
+	body=$(_pr_anchor_backfill_body "$pr_number" "$repo_slug") || read_rc=$?
+	[[ "$read_rc" -eq 3 ]] && return 0
+	[[ "$read_rc" -eq 0 ]] || return 1
 	anchor=$(cmd_ensure_anchor "$key" --repo "$repo_slug" --title "$title") || return 1
+	body=$(_pr_anchor_backfill_body "$pr_number" "$repo_slug") || read_rc=$?
+	[[ "$read_rc" -eq 3 ]] && return 0
+	[[ "$read_rc" -eq 0 ]] || return 1
 	local temp_root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}" body_file="" rc=0
 	mkdir -p "$temp_root" || return 1
 	body_file=$(mktemp "${temp_root%/}/routine-pr-anchor.XXXXXX") || return 1
