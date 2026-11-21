@@ -211,6 +211,15 @@ stub_pull_head() {
 	return 0
 }
 
+stub_forge_run() {
+	if [[ "$1" == repos/owner/repo/actions/runs/101 ]]; then
+		printf '{"workflow_id":9,"created_at":"2026-01-01T00:00:00Z"}\n'
+	else
+		printf '%s\n' "${FORGE_SUPERSEDED:-1}"
+	fi
+	return 0
+}
+
 stub_qlty_credit_metadata() {
 	case "$SNAPSHOT_MODE" in
 	qlty_credits_public) printf '%s\n' '{"private":false,"owner":{"type":"User"}}' ;;
@@ -240,12 +249,7 @@ gh() {
 	repos/owner/repo/actions/runs/707)
 		printf '{"head_sha":"%s","status":"completed","conclusion":"%s","run_attempt":%s}\n' "$CANCELLED_RUN_SHA" "${CANCELLED_RUN_CONCLUSION:-cancelled}" "$CANCELLED_RUN_ATTEMPT"
 		;;
-	repos/owner/repo/actions/runs/101)
-		printf '{"workflow_id":9,"created_at":"2026-01-01T00:00:00Z"}\n'
-		;;
-	repos/owner/repo/actions/workflows/9/runs*)
-		if [[ "${FORGE_SUPERSEDED:-1}" == 1 ]]; then printf '1\n'; else printf '0\n'; fi
-		;;
+	repos/owner/repo/actions/runs/101 | repos/owner/repo/actions/workflows/9/runs*) stub_forge_run "$endpoint"; return $? ;;
 	repos/owner/repo/pulls/7)
 		stub_pull_head
 		return $?
@@ -352,6 +356,7 @@ assert_gate() {
 assert_cancelled_workflow_recovery() {
 	local before="$RERUN_CALLS" rc=0
 	local url="https://github.com/owner/repo/actions/runs/707/job/808"
+	FORGE_SUPERSEDED=0 assert_gate "unsuperseded cancelled forge-event recorder still blocks merge" forge_cancelled 1
 	assert_gate "cancelled jobs keep merge blocked and rerun their shared workflow once" cancelled_workflow 1
 	assert_gate "unchanged cancelled snapshot cannot rerun again" cancelled_workflow 1
 	TESTS_RUN=$((TESTS_RUN + 1))
@@ -896,7 +901,6 @@ main() {
 	fi
 	TESTS_RUN=$((TESTS_RUN + 1))
 	assert_gate "concurrency-cancelled forge-event recorder does not block merge (GH#39664)" forge_cancelled 0
-	FORGE_SUPERSEDED=0 assert_gate "unsuperseded cancelled forge-event recorder still blocks merge" forge_cancelled 1
 	assert_gate "later accepted snapshot resets prior blocker evidence" happy_advisory 0
 	if [[ "$_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON" == "[]" ]]; then
 		printf 'PASS accepted snapshot clears prior blocker evidence\n'
