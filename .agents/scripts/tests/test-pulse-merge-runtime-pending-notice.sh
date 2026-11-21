@@ -68,7 +68,7 @@ printf '%s\n' '[{"session_id":"ses_tui1","kind":"tui","messageable":true,"repo":
 _pmrp_route_held_pr 7 o/r
 check "lift sends one notice to the interactive session on the repo" "1" "$(sent_count)"
 check "notice targets the interactive session only" "ses_tui1" "$(<"${STUB_DIR}/sent")"
-check "notice carries the head and command" "2" "$(rg -c "${HEAD_A}|verify-runtime 7 o/r --testing" "${STUB_DIR}/sent-text")"
+check "notice carries the head and command" "2" "$(grep -cE -e "${HEAD_A}|verify-runtime 7 o/r --testing" "${STUB_DIR}/sent-text")"
 
 _pmrp_route_held_pr 7 o/r
 check "repeat cycle at the same head sends nothing" "1" "$(sent_count)"
@@ -85,7 +85,7 @@ printf 'lift\n' >"${STUB_DIR}/decision"
 printf '[]\n' >"${STUB_DIR}/sessions"
 _pmrp_route_held_pr 9 o/r
 check "no live session sends nothing" "2" "$(sent_count)"
-check "no live session logs one ATTENTION line with age" "1" "$(rg -c 'ATTENTION: PR #9 in o/r is held as runtime-pending \(held [0-9]+ min\)' "$LOGFILE")"
+check "no live session logs one ATTENTION line with age" "1" "$(grep -cE -e 'ATTENTION: PR #9 in o/r is held as runtime-pending \(held [0-9]+ min\)' "$LOGFILE")"
 
 printf '%s\n' '[{"session_id":"ses_tui1","kind":"tui","messageable":true,"repo":"o/r"}]' >"${STUB_DIR}/sessions"
 _pmrp_route_held_pr 9 o/r
