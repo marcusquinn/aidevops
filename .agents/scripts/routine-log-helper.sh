@@ -9,6 +9,8 @@
 #   routine-log-helper.sh update <routine-id> --status queued|claimed|running|success|failure|deferred|cancelled [--duration SECONDS] [--tokens N] [--cost AMOUNT] [--job-id ID] [--session-key KEY]
 #   routine-log-helper.sh notable <routine-id> --event "description"
 #   routine-log-helper.sh create-issue <routine-id> --repo SLUG --title "rNNN: Title" [--schedule EXPR] [--type TYPE]
+#   routine-log-helper.sh ensure-anchor <key> --repo SLUG --title TITLE
+#   routine-log-helper.sh ensure-pr-anchor <key> --repo SLUG --pr N --title TITLE
 #   routine-log-helper.sh status
 #   routine-log-helper.sh help
 #
@@ -1213,6 +1215,114 @@ cmd_create_issue() {
 }
 
 # =============================================================================
+# Subcommand: ensure-anchor (GH#39696)
+# =============================================================================
+
+# Parse the anchor subcommands' <key> --repo SLUG --title TITLE [--pr N]
+# arguments into _ANCHOR_KEY/_ANCHOR_REPO/_ANCHOR_TITLE/_ANCHOR_PR.
+# Returns 1 for an unknown option, a missing value or an invalid key/repo/title.
+_parse_anchor_args() {
+	_ANCHOR_KEY="${1:-}"
+	_ANCHOR_REPO=""
+	_ANCHOR_TITLE=""
+	_ANCHOR_PR=""
+	[[ $# -gt 0 ]] && shift
+	while [[ $# -gt 0 ]]; do
+		local opt="$1" val="${2:-}"
+		[[ $# -ge 2 ]] || return 1
+		case "$opt" in
+		--repo) _ANCHOR_REPO="$val" ;;
+		--title) _ANCHOR_TITLE="$val" ;;
+		--pr) _ANCHOR_PR="$val" ;;
+		*)
+			_log_error "Unknown anchor option: ${opt}"
+			return 1
+			;;
+		esac
+		shift 2
+	done
+	[[ "$_ANCHOR_KEY" =~ ^[a-z0-9][a-z0-9-]*$ ]] || return 1
+	[[ "$_ANCHOR_REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && -n "$_ANCHOR_TITLE" ]] || return 1
+	return 0
+}
+
+# Multi-repo framework routines (badge sync, workflow sync) publish PRs into
+# many repos, so their anchors are per target repo and located by a body
+# marker rather than local per-routine state. A failed lookup fails closed:
+# never create a second anchor when the first could not be read.
+# Args: key, --repo SLUG, --title TITLE. Outputs the open anchor issue number.
+cmd_ensure_anchor() {
+	if ! _parse_anchor_args "$@"; then
+		_log_error "Usage: routine-log-helper.sh ensure-anchor <key> --repo SLUG --title TITLE"
+		return 1
+	fi
+	local key="$_ANCHOR_KEY" repo_slug="$_ANCHOR_REPO" title="$_ANCHOR_TITLE"
+	_check_prerequisites || return 1
+
+	local marker="<!-- aidevops:routine-anchor:${key} -->"
+	local issues="" existing=""
+	if ! issues=$(gh issue list --repo "$repo_slug" --state open --label routine-tracking \
+		--limit 100 --json number,body 2>/dev/null); then
+		_log_error "Cannot list routine anchors in ${repo_slug}; refusing to create a duplicate"
+		return 1
+	fi
+	existing=$(printf '%s' "$issues" | jq -r --arg m "$marker" \
+		'[.[] | select((.body // "") | contains($m)) | .number] | min // empty') || return 1
+	if [[ -n "$existing" ]]; then
+		_is_valid_issue_number "$existing" || return 1
+		echo "$existing"
+		return 0
+	fi
+
+	local body issue_number
+	body=$(printf '%s\n' "$marker" \
+		"## ${title}" "" \
+		"Persistent tracking anchor for the aidevops \`${key}\` routine in this repository." \
+		"Keep it open. Routine PRs reference it with a standalone \`Ref #N\` line, never a" \
+		"closing keyword, so headless runs carry a verifiable issue identity (see" \
+		"\`.agents/reference/routines.md\` \"Routine PR trust and tracking anchors\").")
+	issue_number=$(_create_github_issue "$repo_slug" "$title" "$body") || return 1
+	_log_success "Created routine anchor #${issue_number} for ${key} in ${repo_slug}"
+	echo "$issue_number"
+	return 0
+}
+
+# A routine PR opened before the worker identity guard (GH#36877) carries
+# origin:worker but no issue identity, so the t2449 gate never admits it and
+# the routine skips the repo while it stays open. Prepend the anchor's
+# `Ref #N` line through the guarded edit wrapper. Other PRs are left alone.
+# Args: key, --repo SLUG, --pr N, --title TITLE. Returns 1 on any failure.
+cmd_ensure_pr_anchor() {
+	if ! _parse_anchor_args "$@" || ! _is_valid_issue_number "$_ANCHOR_PR"; then
+		_log_error "Usage: routine-log-helper.sh ensure-pr-anchor <key> --repo SLUG --pr N --title TITLE"
+		return 1
+	fi
+	local key="$_ANCHOR_KEY" repo_slug="$_ANCHOR_REPO" title="$_ANCHOR_TITLE" pr_number="$_ANCHOR_PR"
+	_check_prerequisites || return 1
+	local fn
+	for fn in gh_pr_edit_safe _gh_pr_body_closing_issues _gh_pr_body_explicit_issues; do
+		declare -F "$fn" >/dev/null 2>&1 && continue
+		_log_error "ensure-pr-anchor: ${fn} unavailable (shared-gh-wrappers.sh not loaded)"
+		return 1
+	done
+	local meta="" body="" anchor=""
+	meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json labels,body 2>/dev/null) || return 1
+	printf '%s' "$meta" | jq -e '[.labels[].name] | index("origin:worker") != null' >/dev/null || return 0
+	body=$(printf '%s' "$meta" | jq -r '.body // ""') || return 1
+	[[ -z "$(_gh_pr_body_closing_issues "$body")" && -z "$(_gh_pr_body_explicit_issues "$body")" ]] || return 0
+	anchor=$(cmd_ensure_anchor "$key" --repo "$repo_slug" --title "$title") || return 1
+	local temp_root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}" body_file="" rc=0
+	mkdir -p "$temp_root" || return 1
+	body_file=$(mktemp "${temp_root%/}/routine-pr-anchor.XXXXXX") || return 1
+	printf 'Ref #%s\n\n%s\n' "$anchor" "$body" >"$body_file"
+	gh_pr_edit_safe "$pr_number" --repo "$repo_slug" --body-file "$body_file" >/dev/null || rc=$?
+	rm -f "$body_file"
+	[[ "$rc" -eq 0 ]] || return 1
+	_log_success "Linked PR #${pr_number} in ${repo_slug} to routine anchor #${anchor}"
+	return 0
+}
+
+# =============================================================================
 # Subcommand: status
 # =============================================================================
 
@@ -1299,6 +1409,14 @@ Usage:
     Create the initial tracking issue with template description.
     Returns the issue number. Stores mapping in routine-state.json.
 
+  routine-log-helper.sh ensure-anchor <key> --repo SLUG --title TITLE
+    Print the open per-repo anchor for a multi-repo routine (found by body
+    marker), creating it once when absent. A failed lookup never creates one.
+
+  routine-log-helper.sh ensure-pr-anchor <key> --repo SLUG --pr N --title TITLE
+    Prepend the anchor's Ref #N line to an open origin:worker routine PR whose
+    body has no issue identity (pre-guard PRs). Other PRs are left unchanged.
+
   routine-log-helper.sh refresh-description <routine-id>
     Rebuild and push the GitHub issue body using current state and stored
     description data. Does NOT record a new run entry or modify metrics.
@@ -1374,6 +1492,12 @@ main() {
 		;;
 	create-issue)
 		cmd_create_issue "$@"
+		;;
+	ensure-anchor)
+		cmd_ensure_anchor "$@"
+		;;
+	ensure-pr-anchor)
+		cmd_ensure_pr_anchor "$@"
 		;;
 	status)
 		cmd_status "$@"
