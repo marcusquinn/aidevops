@@ -2410,7 +2410,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19260 fix(decisions): list held-for-review PRs (runtime-pending verify and legacy holds) in the /decisions queue #bug #interactive tier:standard ref:GH#39741 assignee:marcusquinn logged:2026-11-21 started:2026-11-21 -> [todo/tasks/t19260-brief.md] pr:#39744 completed:2026-11-21
 
-- [ ] t19262 fix(config): add safety.actions_event_policy_auto_apply to the config schema (defaults fail schema validation) #bug #interactive tier:simple ref:GH#39748 assignee:marcusquinn logged:2026-11-21 started:2026-11-21 -> [todo/tasks/t19262-brief.md]
+- [x] t19262 fix(config): add safety.actions_event_policy_auto_apply to the config schema (defaults fail schema validation) #bug #interactive tier:simple ref:GH#39748 assignee:marcusquinn pr:#39749 logged:2026-11-21 started:2026-11-21 -> [todo/tasks/t19262-brief.md] completed:2026-11-21
 
 ## In Progress
 
