@@ -545,12 +545,15 @@ _worktree_recovery_plan_git_state() {
 _worktree_recovery_plan_worktree_reference_state() {
 	local identity_json="$1"
 	local archive_path="" source_path="" listing=""
-	local branch=""
+	local branch="" git_bin=""
 
 	archive_path=$(printf '%s\n' "$identity_json" | jq -r '.archive_path') || return 1
 	source_path=$(printf '%s\n' "$identity_json" | jq -r '.source_path') || return 1
 	branch=$(printf '%s\n' "$identity_json" | jq -r '.branch') || return 1
-	if ! listing=$(GIT_OPTIONAL_LOCKS=0 git -C "$archive_path" worktree list --porcelain 2>/dev/null); then
+	# Read-only listing: native Git, as git-state above, skips the per-call
+	# shim launch (GH#39560). No native Git is unavailable evidence, not clear.
+	if ! git_bin=$(_worktree_cleanup_real_git) ||
+		! listing=$(GIT_OPTIONAL_LOCKS=0 "$git_bin" -C "$archive_path" worktree list --porcelain 2>/dev/null); then
 		printf '%s\n' "$WORKTREE_RECOVERY_UNAVAILABLE"
 		return 0
 	fi
@@ -689,9 +692,11 @@ _worktree_recovery_plan_process_state() {
 
 _worktree_recovery_plan_repo_slug() {
 	local archive_path="$1"
-	local remote_url="" repo_slug=""
+	local remote_url="" repo_slug="" git_bin=""
 
-	remote_url=$(GIT_OPTIONAL_LOCKS=0 git -C "$archive_path" remote get-url origin 2>/dev/null) || return 1
+	# Read-only config query through native Git (GH#39560); none fails closed.
+	git_bin=$(_worktree_cleanup_real_git) || return 1
+	remote_url=$(GIT_OPTIONAL_LOCKS=0 "$git_bin" -C "$archive_path" remote get-url origin 2>/dev/null) || return 1
 	case "$remote_url" in
 	https://github.com/*) repo_slug="${remote_url#https://github.com/}" ;;
 	git@github.com:*) repo_slug="${remote_url#git@github.com:}" ;;

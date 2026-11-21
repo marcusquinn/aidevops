@@ -172,14 +172,20 @@ def restore_administration(root, archive, preserved=False):
     if admin is None:
         admin = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
     head = bytes.fromhex(state["files"]["HEAD"])
+    updates = []
     if head.startswith(b"ref: "):
         branch = os.fsdecode(head[5:].strip())
         if not branch.startswith("refs/heads/"):
             raise ValueError("git_admin:unsupported_head")
         # update-ref resolves HEAD itself: no separate rev-parse spawn (GH#39560).
-        git(root, "update-ref", branch, "HEAD")
-    for name, oid in state["refs"].items():
-        git(root, "update-ref", name, oid)
+        updates.append((branch, "HEAD"))
+    # load_administration admits only private-prefix refs, so none repeats the
+    # refs/heads/ branch. One NUL-delimited transaction writes them all (GH#39560).
+    updates.extend(state["refs"].items())
+    if updates:
+        git(root, "update-ref", "--stdin", "-z",
+            data=b"".join(b"update " + os.fsencode(name) + b"\0" + value.encode("ascii") + b"\0\0"
+                          for name, value in updates))
     for name in ADMIN_FILES - state['files'].keys():
         (admin / name).unlink(missing_ok=True)
     for name, value in state["files"].items():
