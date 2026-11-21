@@ -63,15 +63,21 @@ all of these conditions hold:
 - The path traverses no symlink. The file is either missing or a regular file
   with a single link.
 - No path component is `.git`, `.aidevops.json`, `.gitignore` or
-  `.gitattributes` (case-folded).
+  `.gitattributes`. The comparison case-folds, removes format characters and
+  ignores trailing dots or spaces, so filesystem aliases of these names also
+  match.
 - Git reports the path as untracked and ignored. A tracked file stays read-only
   even when an ignore rule matches it.
 
 Every other canonical write keeps the read-only deny. Agents never add or widen
 this list themselves. Only the user edits it, and `aidevops project-config set`
-does not accept the key. Bash redirection policy is unchanged, so write runtime
-output with file tools. The `canonical_runtime_allow` field of the decision
-reports why a write was or was not exempted.
+does not accept the key. Allowlisted folders hold untrusted runtime data, so
+never execute files from them or use them as a Git working directory.
+
+`pre-edit-check.sh --file <target>` exits 0 for an allowlisted target, and so
+does `aidevops_pre_edit_check` with `targetPaths`. Bash redirection policy is
+unchanged, so write runtime output with file tools. The `canonical_runtime_allow`
+field of the decision reports why a write was or was not exempted.
 
 ## Git Hook Status Without External-Directory Access
 

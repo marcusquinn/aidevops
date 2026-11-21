@@ -9,6 +9,7 @@ import json
 import os
 import stat
 import subprocess  # nosec B404 -- fixed native Git argv only
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -229,8 +230,13 @@ def _untracked_and_ignored(repo_root: str, relative: str) -> bool:
 
 
 def _is_reserved_component(part: str) -> bool:
-    # Case-folded: case-insensitive filesystems alias `.GIT` to `.git`.
-    return part.casefold() in _RESERVED_COMPONENTS
+    # Filesystems may alias `.GIT`, HFS+ ignorable code points (format
+    # characters) and trailing dots/spaces to `.git`; compare the folded form.
+    folded = "".join(
+        char for char in unicodedata.normalize("NFC", part)
+        if unicodedata.category(char) != "Cf"
+    ).rstrip(". ").casefold()
+    return folded in _RESERVED_COMPONENTS
 
 
 def _trusted_project_config(repo_root: str) -> dict | None:

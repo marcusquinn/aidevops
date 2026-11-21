@@ -15,6 +15,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 HOOK="${SCRIPT_DIR}/../../hooks/git_safety_guard.py"
+POLICY_HELPER="${SCRIPT_DIR}/../canonical-write-policy-helper.py"
+PRE_EDIT_CHECK="${SCRIPT_DIR}/../pre-edit-check.sh"
 REAL_GIT=$(python3 -E -s -B -c 'import sys; sys.path.insert(0, sys.argv[1]); from native_git import real_git; print(real_git())' "${SCRIPT_DIR}/..")
 
 if [[ ! -f "$HOOK" ]]; then
@@ -612,9 +614,13 @@ runtime_hub_expect() {
 	local json="" output=""
 	json=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Write","tool_input":{"filePath":sys.argv[1]}}))' "${hub}/${relative}")
 	output=$(run_hook "$hub" "$json") || true
-	local matched=1
+	local matched=1 exemption=""
 	if [[ "$expected" == allow ]]; then
-		[[ -n "$output" ]] || matched=0
+		# Empty hook output alone could mean the hook never ran; require the
+		# shared policy to report the exemption as well.
+		exemption=$(python3 "$POLICY_HELPER" check-write --cwd "$hub" \
+			--path "${hub}/${relative}" --field canonical_runtime_allow) || exemption=""
+		[[ -n "$output" || "$exemption" != "allowlisted-ignored-runtime-path" ]] || matched=0
 	elif hook_is_deny "$output" "read-only session mirrors"; then
 		matched=0
 	fi
@@ -642,6 +648,19 @@ test_canonical_runtime_allowlist() {
 	runtime_hub_expect "$hub" deny "logs/.gitignore" "reserved ignore rules"
 	runtime_hub_expect "$hub" deny ".aidevops.json" "self-modifying allowlist"
 	runtime_hub_expect "$hub" deny "logs/.GIT/config" "case-folded Git metadata"
+	runtime_hub_expect "$hub" deny $'logs/.g\xe2\x80\x8cit/config' "HFS+ ignorable Git metadata alias"
+	runtime_hub_expect "$hub" deny "logs/.git./config" "trailing-dot Git metadata alias"
+
+	local pre_edit_rc=0
+	(cd "$hub" && bash "$PRE_EDIT_CHECK" --file logs/new.md </dev/null >/dev/null 2>&1) || pre_edit_rc=$?
+	print_result "GH#39573 pre-edit-check --file allowlisted runtime path exits 0" "$pre_edit_rc" "rc=${pre_edit_rc}"
+	pre_edit_rc=0
+	(cd "$hub" && bash "$PRE_EDIT_CHECK" --file src/x.py </dev/null >/dev/null 2>&1) || pre_edit_rc=$?
+	if [[ "$pre_edit_rc" -ne 0 ]]; then
+		print_result "GH#39573 pre-edit-check --file tracked canonical path stays blocked" 0
+	else
+		print_result "GH#39573 pre-edit-check --file tracked canonical path stays blocked" 1 "rc=0"
+	fi
 
 	local patch_json="" output=""
 	patch_json=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"apply_patch","tool_input":{"patchText":"*** Begin Patch\n*** Add File: "+sys.argv[1]+"\n+x\n*** End Patch\n"}}))' "${hub}/logs/patched.md")

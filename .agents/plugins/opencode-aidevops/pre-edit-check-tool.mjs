@@ -9,6 +9,7 @@ import { admitToolOwner } from "./lifecycle-admission.mjs";
 import { formatPreEditCheckResult } from "./pre-edit-check-result.mjs";
 
 const MAX_TARGET_PATHS = 32;
+const CANONICAL_RUNTIME_ALLOWED = "allowlisted-ignored-runtime-path";
 const EXTERNAL_TARGET_RESPONSE =
   "Git isolation not applicable: all explicit targetPaths resolve outside Git worktrees.\n"
   + "This result does not authorize file writes; runtime path, secret, destructive-operation, and managed-directory policies still apply.";
@@ -101,8 +102,13 @@ function resolveRepositoryTargetScope(classifications) {
   if (repositoryTargets.some(({ policy }) => policy.target?.repo_root !== targetWorkdir)) {
     throw new Error("explicit repository targets span multiple worktrees");
   }
+  // GH#39573: pre-edit-check.sh exempts an allowlisted canonical runtime
+  // target, so pass a target without that exemption when one exists.
+  const representative = repositoryTargets.find(
+    ({ policy }) => policy.canonical_runtime_allow !== CANONICAL_RUNTIME_ALLOWED,
+  ) ?? repositoryTargets[0];
   return {
-    repositoryTarget: repositoryTargets[0].targetPath,
+    repositoryTarget: representative.targetPath,
     targetWorkdir,
     terminalResponse: "",
   };
