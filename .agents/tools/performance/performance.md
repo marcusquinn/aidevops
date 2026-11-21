@@ -164,6 +164,14 @@ gzip -c dist/main.js | wc -c           # Compressed size
 
 Request chain optimization: replace sequential `<script>` tags with `<link rel="preload" as="script">` for parallel loading.
 
+### Image delivery behind a CDN
+
+Delivery design: `tools/runtime/node-server-admin.md` "Proxied object storage". Measure it in two passes with a headless browser, a scoped ordinary account, and no traces, HAR or screenshots:
+
+- Per request, record `cf-cache-status` (or the CDN's equivalent), TTFB, bytes and `cache-control`. Add a user-visible metric: time until in-viewport images are `complete` with `naturalWidth > 0`.
+- Pass 1: cleared browser cache, cold edge. Pass 2: warm edge. Report p50/p90/max per pass. The measurement warms the edge, so cold-edge evidence can be captured only once per location.
+- Harness traps: give each wait its own deadline (a deadline consumed by a preceding scroll loop reported a false `0/N loaded`); a late first-login modal can intercept clicks, so use the app's existing E2E selectors and check `document.elementFromPoint` before blaming the UI.
+
 ## Integration
 
 ```bash

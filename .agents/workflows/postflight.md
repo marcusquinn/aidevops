@@ -52,6 +52,8 @@ Check both `main` and tag refs: `gh run list --branch=main --limit=5` and `gh ru
 | Tag workflows | `gh run list --workflow=code-quality.yml` | Success |
 | Version validation | `gh run list --workflow=version-validation.yml` | Success |
 
+Superseded deploy runs: if newer pushes cancel the deploy run for your merge commit, do not wait on that run; read the serving commit from the health endpoint and confirm `gh api repos/{owner}/{repo}/compare/<merge>...<serving>` reports `ahead` or `identical`. Use one-shot reads with backoff, not `gh run watch`.
+
 ### 2. Code Quality Tools
 
 | Tool | Threshold |
