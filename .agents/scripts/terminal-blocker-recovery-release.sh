@@ -123,7 +123,7 @@ _tbr_decision_active() {
 	# GH#38692: a human_decision ends only on a positive wake signal (reply or
 	# policy change below), never on the flat TTL, so decided holds stop
 	# resurfacing daily and crowding out undecided entries.
-	if [[ "$wake" != human_decision ]]; then
+	if [[ "$wake" != human_decision && "$wake" != external_trigger ]]; then
 		[[ $((now - ts)) -lt "$TBR_DECISION_TTL" ]] || return 1
 		return 0
 	fi
@@ -145,7 +145,7 @@ _tbr_human_decision_standing() {
 	local key=""
 	key=$(_tbr_key "$repo" "$issue")
 	# A missing or unreadable record prints nothing, so it is not standing.
-	[[ "$(jq -r '.wake // ""' "${TBR_ROOT}/decisions/${key}.json" 2>/dev/null)" == human_decision ]] || return 1
+	[[ "$(jq -r '.wake // ""' "${TBR_ROOT}/decisions/${key}.json" 2>/dev/null)" =~ ^(human_decision|external_trigger)$ ]] || return 1
 	_tbr_decision_active "$key" "$comments" || return 1
 	return 0
 }
@@ -596,6 +596,6 @@ _tbr_entry_decided() {
 	[[ -n "$repo" && -n "$issue" ]] || return 1
 	key=$(_tbr_key "$repo" "$issue")
 	[[ -f "${TBR_ROOT}/decisions/${key}.json" ]] || return 1
-	[[ "$(jq -r '.wake // ""' "${TBR_ROOT}/decisions/${key}.json" 2>/dev/null)" == human_decision ]] || return 1
+	[[ "$(jq -r '.wake // ""' "${TBR_ROOT}/decisions/${key}.json" 2>/dev/null)" =~ ^(human_decision|external_trigger)$ ]] || return 1
 	return 0
 }

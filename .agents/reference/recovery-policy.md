@@ -139,11 +139,14 @@ denials, trust or approval gates. Labels never authorize an action themselves.
    missing side effects of a partial application, never duplicate the decision.
 5. Record each applied outcome with `terminal-blocker-recovery-helper.sh record
    <repo> <issue>` and stdin `{"wake","next_action","evidence"}`. Use
-   `human_decision` for holds, `dependency_change` for splits, repoints and
+   `human_decision` for holds whose owner decision is still unanswered,
+   `external_trigger` for decided holds that wait on a named external event
+   (for example an `outlier_hold` reopen condition; `next_action` states the
+   condition, and `/decisions` lists it as parked), `dependency_change` for splits, repoints and
    scope acceptances, and `brief_revision` for brief repairs. Record each affected issue separately when
    the action differs; evidence links the public decision and policy revision.
    Record the corresponding integration-recovery decision too, when applicable.
-   `record` stamps a `human_decision` with the policy's actions fingerprint
+   `record` stamps a `human_decision` or `external_trigger` with the policy's actions fingerprint
    (`none` without a policy). When the repo later adds, restores, edits or
    withdraws its policy, that decision stops suppressing re-assessment before
    the TTL, so newly delegated authority is applied on the next pass (t19068).
