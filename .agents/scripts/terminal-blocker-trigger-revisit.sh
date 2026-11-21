@@ -405,7 +405,7 @@ _tbtr_issue() {
 	fi
 	[[ "$next_at" =~ ^[0-9]+$ && "$attempts" =~ ^[0-9]+$ ]] || { next_at=$((observed_epoch + interval)); attempts=0; }
 	trigger=$(jq -r '.body | capture("\nTrigger awaited: (?<t>[^\n]*)\n").t // empty' <<<"$observation" 2>/dev/null) || trigger=""
-	read -r refs_json refs_met wake <<<"$(_tbtr_refs_state "$slug" "$trigger" "$record")"
+	IFS=' ' read -r refs_json refs_met wake <<<"$(_tbtr_refs_state "$slug" "$trigger" "$record")"
 	[[ "$refs_json" == '['*']' ]] || refs_json='[]'
 	[[ "$refs_met" == true ]] || refs_met=false
 	[[ "$wake" == true ]] || wake=false
@@ -493,7 +493,7 @@ _tbtr_order_refs() {
 		lead=1
 		record=$(_tbtr_record_read "$slug" "$issue") || record=""
 		if [[ -n "$record" ]]; then
-			read -r lead checked <<<"$(jq -r --arg sched "$_TBTR_SCHEDULED" --arg pend "$_TBTR_PENDING" '[
+			IFS=' ' read -r lead checked <<<"$(jq -r --arg sched "$_TBTR_SCHEDULED" --arg pend "$_TBTR_PENDING" '[
 				(if '"$_TBTR_WAITING_JQ"' and ((.trigger_refs // []) | length) > 0
 					and .refs_met != true then 0 else 1 end),
 				((.checked_at // .revisited_at // 0) | floor)] | map(tostring) | join(" ")' <<<"$record" 2>/dev/null)" || true
@@ -514,7 +514,7 @@ _tbtr_repo() {
 	local scan_max=$((remaining * 4 + 4))
 	[[ "$(_tbtr_time_left)" -ge "$_TBTR_MIN_READ_S" ]] || { printf '0\n'; return 0; }
 	authority=$(_tbtr_authority "$slug" "$self") || { printf '0\n'; return 1; }
-	read -r can_write can_retry <<<"$authority"
+	IFS=' ' read -r can_write can_retry <<<"$authority"
 	refs=$(_tbtr_order_refs "$slug" "$refs")
 	while IFS=$'\t' read -r ref_slug issue updated; do
 		[[ -n "$ref_slug" && "$issue" =~ ^[0-9]+$ ]] || continue
