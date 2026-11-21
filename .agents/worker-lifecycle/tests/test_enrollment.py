@@ -1043,17 +1043,17 @@ class EnrollmentContract(unittest.TestCase):
                 calls = []
 
                 def make_failing_replace(recorded, current_stage):
-                    def failing_replace(directory, value):
+                    def replace_or_fail(directory, value):
                         recorded.append(value)
                         if current_stage == "publication" or len(recorded) == 2:
                             raise OSError("publication interrupted")
                         _replace_marker(directory, value)
-                    return failing_replace
+                    return replace_or_fail
 
-                failing_replace = make_failing_replace(calls, stage)
+                replace_side_effect = make_failing_replace(calls, stage)
 
                 if stage in ("publication", "finalization"):
-                    failure = patch("worker_lifecycle.rebind._replace_marker", side_effect=failing_replace)
+                    failure = patch("worker_lifecycle.rebind._replace_marker", side_effect=replace_side_effect)
                 elif stage == "event":
                     failure = patch.object(self.store, "_event", side_effect=OSError("event interrupted"))
                 else:
