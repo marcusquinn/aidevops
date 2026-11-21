@@ -82,7 +82,7 @@ HELPER="${SCRIPTS_DIR}/issue-sync-helper.sh"
 VERSION_MGMT_RELEASE="${SCRIPTS_DIR}/version-manager-release.sh"
 CLAIM_HELPER="${SCRIPTS_DIR}/claim-task-id.sh"
 HEADLESS_INVOKE="${SCRIPTS_DIR}/headless-runtime-invoke.sh"
-HEADLESS_WORKER="${SCRIPTS_DIR}/headless-runtime-worker.sh"
+HEADLESS_WORKER="${SCRIPTS_DIR}/headless-runtime-worker-invocation.sh"
 WORKTREE_HELPER="${SCRIPTS_DIR}/worktree-helper.sh"
 
 for f in "$HELPER" "$CLAIM_HELPER"; do
