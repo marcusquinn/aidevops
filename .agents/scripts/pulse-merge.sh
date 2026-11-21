@@ -748,9 +748,10 @@ _pm_gate_origin_authority() {
 	if [[ "$is_draft" == false ]] && _feedback_route_labels_include "$labels_str" hold-for-review; then
 		# Recheck on the next merge pass after any verified recovery.
 		_feedback_route_release_projection_hold "$pr_number" "$repo_slug" || true
-		# GH#39645: route a liftable runtime-pending hold to a live verifier.
+		# GH#39645: route a liftable runtime-pending hold to a live verifier;
+		# t19244: a red head of one goes to in-place CI repair instead.
 		if declare -F _pmrp_route_held_pr >/dev/null 2>&1; then
-			_pmrp_route_held_pr "$pr_number" "$repo_slug" || true
+			_pmrp_route_held_pr "$pr_number" "$repo_slug" "$linked_issue" "$labels_str" || true
 		fi
 	fi
 	if [[ "$is_draft" == "true" || ",${labels_str}," == *",hold-for-review,"* ]]; then
