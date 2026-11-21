@@ -367,6 +367,7 @@ _verify_deployed_core_plugin_freshness() {
 		"plugins/opencode-aidevops/v1-tui/tui.tsx"
 		"scripts/canonical_branch_policy.py"
 		"scripts/canonical-write-policy-helper.py"
+		"scripts/canonical_write_runtime_allow.py"
 	)
 
 	for rel_path in "${core_plugin_files[@]}"; do

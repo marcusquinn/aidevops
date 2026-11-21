@@ -29,7 +29,7 @@ jobs:
             });
             // Keep aligned with macos_checks_sensitive in macos-local-checks.sh.
             const sensitive = path =>
-              /^\.agents\/scripts\/(?:model-replay-.*|.*sandbox.*|platform-detect\.sh|macos-local-checks\.sh|runtime-env\.sh|trusted.*|git|native_git\.py|canonical.*git.*\.py|canonical_write_policy_paths\.py|command_policy_git_query\.py|tests\/(?:test-model-replay-.*|test-.*git.*\.sh)|setup\/.*)$/.test(path) ||
+              /^\.agents\/scripts\/(?:model-replay-.*|.*sandbox.*|platform-detect\.sh|macos-local-checks\.sh|runtime-env\.sh|trusted.*|git|native_git\.py|canonical.*git.*\.py|canonical_write_policy_paths\.py|canonical_write_runtime_allow\.py|command_policy_git_query\.py|tests\/(?:test-model-replay-.*|test-.*git.*\.sh)|setup\/.*)$/.test(path) ||
               path === '.agents/hooks/git_safety_guard.py' ||
               /^\.agents\/plugins\/opencode-aidevops\/(?:runtime-path\.mjs|source-access-.*)$/.test(path) ||
               path === '.github/workflows/path-portability.yml';

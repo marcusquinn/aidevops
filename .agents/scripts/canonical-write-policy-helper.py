@@ -32,9 +32,18 @@ from canonical_write_policy_paths import (
     repository_within_workspace as _repository_within_workspace,
     target_probe as _target_probe,
 )
+from canonical_write_runtime_allow import (
+    canonical_runtime_write as _canonical_runtime_write,
+    path_traverses_symlink as _path_traverses_symlink,
+)
 
 
-POLICY_VERSION = "canonical-write-policy-v2"
+POLICY_VERSION = "canonical-write-policy-v3"
+
+CANONICAL_RUNTIME_ALLOW_REASON = (
+    "canonical gitignored runtime path is allowlisted by the ignored "
+    ".aidevops.json canonical_write_allow setting"
+)
 
 
 SESSION_OUTSIDE_WORKSPACE_ACTION = "run_session_inside_git_workspace"
@@ -68,6 +77,27 @@ def _write_action(
     )
 
 
+def _canonical_write_decision(
+    target: Classification, target_probe: str, cwd: str, file_path: str
+) -> tuple[str, str, str]:
+    """GH#39573: only opted-in, ignored, untracked runtime output is writable.
+
+    Every other canonical target keeps the read-only deny. Any symlink in the
+    unresolved path, including an alias above the checkout, voids the
+    exemption.
+    """
+    allowed, runtime_allow = _canonical_runtime_write(
+        target, target_probe, _path_traverses_symlink(cwd, file_path)
+    )
+    if allowed:
+        return "allow", CANONICAL_RUNTIME_ALLOW_REASON, runtime_allow
+    return (
+        "deny",
+        "canonical checkouts are read-only session mirrors",
+        runtime_allow,
+    )
+
+
 def check_write(cwd: str, file_path: str) -> dict[str, Any]:
     """Return one fail-closed direct-file-write decision."""
     context = classify_location(cwd)
@@ -97,12 +127,14 @@ def check_write(cwd: str, file_path: str) -> dict[str, Any]:
         else _is_within_workspace(cwd, workspace_root)
     )
 
+    runtime_allow = "not-applicable"
     if target.classification == "unknown":
         decision = "deny"
         reason = f"write target classification failed closed: {target.reason}"
     elif target.classification == "canonical":
-        decision = "deny"
-        reason = "canonical checkouts are read-only session mirrors"
+        decision, reason, runtime_allow = _canonical_write_decision(
+            target, target_probe, cwd, file_path
+        )
     elif symlink_workspace_escape:
         decision = "deny"
         reason = (
@@ -139,6 +171,7 @@ def check_write(cwd: str, file_path: str) -> dict[str, Any]:
             symlink_workspace_escape,
             not context_within_workspace,
         ),
+        "canonical_runtime_allow": runtime_allow,
         "context": asdict(context),
         "target": asdict(target),
     }
