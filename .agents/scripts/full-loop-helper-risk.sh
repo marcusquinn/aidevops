@@ -597,7 +597,7 @@ print(json.dumps({"present": bool(section), "sections": sections,
 _runtime_testing_merge_refusal() {
 	local metadata="$1"
 	local risk="" level="" evidence="" sections=""
-	local remedy="a verifier that can exercise the change reruns commit-and-pr on this branch with --testing-level ${_full_loop_runtime_verified_marker} --testing \"<evidence>\", then removes hold-for-review"
+	local remedy="a verifier with write access exercises the exact PR head, then runs full-loop-helper.sh verify-runtime <PR> --testing \"<evidence>\" from that checkout (GH#39639; it records ${_full_loop_runtime_verified_marker} evidence and lifts a runtime-only hold-for-review)"
 	if ! risk=$(printf '%s' "$metadata" | jq -er '.risk | strings') ||
 		! level=$(printf '%s' "$metadata" | jq -er '.level | strings') ||
 		! evidence=$(printf '%s' "$metadata" | jq -er '.evidence | strings'); then
