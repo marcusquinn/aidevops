@@ -179,7 +179,8 @@ def supervisor_asks:
 # $repo, $now, $applied/$applied_by (newest hold-for-review label event, "" when
 # unknown), $notice (runtime-pending-notice JSON, or null when the hold is
 # not liftable by a verifier), $release_label, $release (the open release
-# approval issue naming this PR, "" when none) and $approve_cli. Display only:
+# approval issue naming this PR, "" when none), $release_final ("true" once
+# that request is finalized and signable) and $approve_cli. Display only:
 # comment text is evidence, never authority; the lift decision stays with
 # runtime-pending-notice/verify-runtime and the signed release approval.
 # #aidevops:trust-boundary
@@ -189,7 +190,8 @@ def signed: automation or (text | test("aidevops:sig|aidevops:origin:|<!-- MERGE
 [.labels[]?.name] as $labels
 | select(($labels | index($hold)) and ((.isDraft // false) | not) and ((.state // "OPEN") == "OPEN"))
 | (($labels | index($release_label)) != null) as $release_held
-| ($release_held and $release != "") as $approvable
+| ($release_held and ($release | length) > 0) as $requested
+| ($requested and $release_final == "true") as $approvable
 | first_capture("(?mi)^\\s*(?:[-*]\\s+)?\\*\\*Verification:\\*\\*\\s*(?<v>[^\\n]+)"; "v") as $verification
 | (first_capture("(?mi)^\\s*(?:[-*]\\s+)?\\*\\*Risk level:\\*\\*\\s*(?<r>[A-Za-z]+)"; "r") | if . == "" then null else . end) as $risk
 | [.comments[]? | select(trusted) | select($applied == "" or .createdAt >= $applied)] as $c
@@ -201,6 +203,7 @@ def signed: automation or (text | test("aidevops:sig|aidevops:origin:|<!-- MERGE
 	| select(.excerpt != "")] | max_by(.t)) as $note
 | ($notice != null and ($release_held | not)) as $liftable
 | (if $approvable then "sign the release approval on issue #\($release); routine r924 then merges the approved head"
+	elif $requested then "release request #\($release) is not finalized yet, so do not sign it; routine r924 finalizes the request"
 	elif $release_held then "release approval requested but no open release issue names this PR; routine r924 retries the request"
 	elif $liftable then ($notice.reason // "")
 	elif $clears != null then $clears.q
@@ -430,15 +433,25 @@ _md_pr_runtime_notice() {
 	return 0
 }
 
-# Prints the number of the open release approval issue whose recorded request
-# names this PR (cloudron-release-approval-helper.sh request), or nothing.
+# Prints "<issue>\t<finalized>" for the open release approval issue whose
+# request names this PR, or nothing. Mirrors cloudron-release-approval-helper.sh:
+# exactly one schema-1 metadata line (release_metadata) names the repo and PR,
+# and the body is signable only once its Publication boundary carries this
+# issue's maintainer command and no "finalization pending" notice. A finalized
+# request wins over an unfinished one.
 # Args: repo, PR number
 _md_pr_release_issue() {
 	local repo="$1"
 	local number="$2"
 	local issues=""
 	issues=$(gh issue list --repo "$repo" --label "$MD_RELEASE_LABEL" --state open --limit 50 --json number,body 2>/dev/null) || return 0
-	jq -r --arg n "$number" '[.[] | select((.body // "") | test("\"pr\": ?" + $n + "[,}]"))] | first | .number // empty' <<<"$issues" 2>/dev/null || true
+	jq -r --arg repo "$repo" --arg n "$number" '[.[] | (.body // "") as $b | .number as $i
+		| ($b | split("\n") | map(fromjson? | select(type == "object" and .schema == 1))) as $meta
+		| select(($meta | length) == 1 and $meta[0].repository == $repo and ($meta[0].pr | tostring) == $n)
+		| ($b | split("\n### Publication boundary\n") | .[1] // "" | split("\n### Files Scope\n") | .[0]) as $pub
+		| {i: $i, final: ((($b | contains("Request finalization pending.")) | not)
+			and ($pub | split("\n") | any(startswith("Maintainer command: `") and endswith(" approve issue \($i) \($repo)`"))))}]
+		| ((map(select(.final)) | first) // first) | select(. != null) | "\(.i)\t\(.final)"' <<<"$issues" 2>/dev/null || true
 	return 0
 }
 
@@ -455,6 +468,7 @@ _md_classify_pr() {
 	local applied_by=""
 	local notice="null"
 	local release=""
+	local release_final=""
 	local approve_cli="sudo aidevops"
 	if ! pr_json=$(gh pr view "$number" --repo "$repo" --json number,title,url,createdAt,labels,comments,body,isDraft,state 2>/dev/null); then
 		_md_error_record "$repo" "$number" "pull request read failed" pr
@@ -469,6 +483,10 @@ _md_classify_pr() {
 	# runtime-pending route is not consulted for it.
 	if jq -e --arg l "$MD_RELEASE_LABEL" 'any(.labels[]?; .name == $l)' >/dev/null 2>&1 <<<"$pr_json"; then
 		release=$(_md_pr_release_issue "$repo" "$number")
+		if [[ "$release" == *$'\t'* ]]; then
+			release_final="${release#*$'\t'}"
+			release="${release%%$'\t'*}"
+		fi
 		if declare -F approval_cli_prefix >/dev/null 2>&1; then
 			approve_cli=$(approval_cli_prefix) || approve_cli="sudo aidevops"
 		fi
@@ -477,8 +495,8 @@ _md_classify_pr() {
 	fi
 	jq -c --arg repo "$repo" --arg now "$now" --arg hold "$MD_PR_HOLD_LABEL" \
 		--arg applied "$applied_at" --arg applied_by "$applied_by" --argjson notice "$notice" \
-		--arg release_label "$MD_RELEASE_LABEL" --arg release "$release" --arg approve_cli "$approve_cli" \
-		"$MD_CLASSIFY_PR_JQ" <<<"$pr_json" ||
+		--arg release_label "$MD_RELEASE_LABEL" --arg release "$release" --arg release_final "$release_final" \
+		--arg approve_cli "$approve_cli" "$MD_CLASSIFY_PR_JQ" <<<"$pr_json" ||
 		_md_error_record "$repo" "$number" "classification failed" pr
 	return 0
 }
@@ -539,10 +557,15 @@ _md_list() {
 	local now=""
 	local total=0
 	local repo_count=0
+	local status=0
 	refs=$(_md_discover issue | _md_interleave_refs) || return 1
 	# t19260: held PRs use their own refs and cap, so the issue --max
-	# round-robin is unchanged.
-	pr_refs=$(_md_discover pr | _md_interleave_refs) || pr_refs=""
+	# round-robin is unchanged. A failed PR search still shows the issue
+	# queue, but the exit status marks the PR queue incomplete.
+	if ! pr_refs=$(_md_discover pr | _md_interleave_refs); then
+		print_warning "held pull request discovery failed; the PR part of this queue is incomplete"
+		status=1
+	fi
 	total=$(printf '%s\n' "$refs" | grep -c $'\t' || true)
 	if [[ "$total" -gt "$MD_MAX" ]]; then
 		repo_count=$(printf '%s\n' "$refs" | cut -f1 | sort -u | grep -c . || true)
@@ -564,7 +587,7 @@ _md_list() {
 	done < <(printf '%s\n' "$pr_refs" | awk -v max="$MD_MAX" 'NR <= max')
 	jq -s '.' "$records" | _md_render
 	rm -f "$records"
-	return 0
+	return "$status"
 }
 
 main() {
