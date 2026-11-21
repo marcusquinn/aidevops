@@ -37,9 +37,10 @@ def supported_merge_administration(root, admin=None, common=None):
     if state['refs'] or 'SQUASH_MSG' in state['files'] or 'config.worktree' in state['files']:
         raise ValueError('merge:unsupported_private_state')
     if common is not None:
-        # Git reads `$GIT_COMMON_DIR/shallow` (non-empty means shallow): same verdict, no spawn.
+        # Git marks the repository shallow once `$GIT_COMMON_DIR/shallow` opens, even if empty.
         try:
-            shallow = os.stat(Path(os.fsdecode(common)) / 'shallow').st_size > 0
+            os.stat(Path(os.fsdecode(common)) / 'shallow')
+            shallow = True
         except FileNotFoundError:
             shallow = False
     else:
