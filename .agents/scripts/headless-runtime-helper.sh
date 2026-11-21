@@ -301,7 +301,8 @@ _store_headless_session_if_allowed() {
 	local session_id="$3"
 	local selected_model="$4"
 	local role="$5"
-	if _headless_run_is_ephemeral "$role"; then
+	if _headless_run_is_ephemeral "$role" ||
+		_headless_session_key_is_fresh_per_run "$session_key"; then
 		return 0
 	fi
 	# GH#38982: bind the session to the head this attempt ended at (the

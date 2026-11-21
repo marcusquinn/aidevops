@@ -18,6 +18,35 @@ _fixture_gh_is_default_branch_lookup() {
 	return $?
 }
 
+# `gh pr create` runs inside a command substitution (_create_orphan_recovery_pr),
+# so a stub cannot report it through parent-shell variables. Stubs record the
+# NUL-delimited argv to a log file instead; tests read it back with
+# _fixture_pr_create_flag.
+_fixture_record_gh_pr_create() {
+	local log="$1"
+	shift
+	if [[ "${*}" == *"pr create"* ]]; then
+		printf '%s\0' "$@" >>"$log"
+	fi
+	return 0
+}
+
+# Print every value following the given flag in the recorded argv, comma-joined.
+_fixture_pr_create_flag() {
+	local log="$1"
+	local flag="$2"
+	local arg="" prev="" joined=""
+	[[ -f "$log" ]] || return 0
+	while IFS= read -r -d '' arg; do
+		if [[ "$prev" == "$flag" ]]; then
+			joined="${joined:+${joined},}${arg}"
+		fi
+		prev="$arg"
+	done <"$log"
+	printf '%s' "$joined"
+	return 0
+}
+
 test_begin_worker_runtime_run_refreshes_run_id() {
 	local first_run_id="" second_run_id=""
 	AIDEVOPS_RUN_ID="run:stale"
@@ -187,30 +216,17 @@ test_attempt_orphan_recovery_pr_calls_gh_create() {
 	git -C "$work_dir" push -q origin "feature/auto-test-issue-99999"
 	printf '{"pr_base_branch":"develop"}\n' >"${work_dir}/.aidevops.json"
 
-	local gh_head="" gh_base="" gh_repo="" gh_labels=""
-	local gh_called=0
+	local gh_log="${work_dir}.gh-pr-create.log"
 	gh() {
-		# Capture pr create args
-		local arg
-		for arg in "$@"; do
-			case "$_last_flag" in
-			"--head") gh_head="$arg" ;;
-			"--base") gh_base="$arg" ;;
-			"--repo") gh_repo="$arg" ;;
-			"--label")
-				if [[ -z "$gh_labels" ]]; then
-					gh_labels="$arg"
-				else
-					gh_labels="${gh_labels},${arg}"
-				fi
-				;;
-			esac
-			_last_flag="$arg"
-		done
-		gh_called=1
+		if [[ "${*}" == *"pr list"* ]]; then
+			printf '[]'
+		elif [[ "${*}" == *"issue view"* ]]; then
+			printf 'OPEN'
+		else
+			_fixture_record_gh_pr_create "$gh_log" "$@"
+		fi
 		return 0
 	}
-	_last_flag=""
 
 	# Capture the status: under `set -e` a bare non-zero return aborts the whole
 	# suite before its Tests run/Failures summary (GH#39209).
@@ -219,6 +235,12 @@ test_attempt_orphan_recovery_pr_calls_gh_create() {
 		"issue-99999" "$work_dir" "feature/auto-test-issue-99999" "test-owner/test-repo" || recovery_rc=$?
 
 	unset -f gh 2>/dev/null || true
+
+	local gh_head="" gh_base="" gh_labels="" gh_called=0
+	gh_head=$(_fixture_pr_create_flag "$gh_log" "--head")
+	gh_base=$(_fixture_pr_create_flag "$gh_log" "--base")
+	gh_labels=$(_fixture_pr_create_flag "$gh_log" "--label")
+	[[ -s "$gh_log" ]] && gh_called=1
 
 	if [[ "$gh_called" -eq 1 ]]; then
 		print_result "_attempt_orphan_recovery_pr calls gh pr create" 0
@@ -263,25 +285,17 @@ test_attempt_orphan_recovery_pr_uses_authoritative_worker_issue() {
 	_setup_test_git_repo "$work_dir" 1
 	git -C "$work_dir" push -q origin "feature/auto-test-issue-99999"
 	local WORKER_ISSUE_NUMBER="28313"
-	local gh_title="" gh_body="" gh_called=0 _last_flag=""
+	local gh_log="${work_dir}.gh-pr-create.log"
 
 	gh() {
-		local arg=""
-		for arg in "$@"; do
-			case "$_last_flag" in
-			"--title") gh_title="$arg" ;;
-			"--body") gh_body="$arg" ;;
-			esac
-			_last_flag="$arg"
-		done
 		if [[ "${*}" == *"pr list"* ]]; then
-			printf '0'
+			printf '[]'
 		elif [[ "${*}" == *"issue view"* ]]; then
 			printf 'OPEN'
 		elif _fixture_gh_is_default_branch_lookup "$@"; then
 			printf 'main'
-		elif [[ "${*}" == *"pr create"* ]]; then
-			gh_called=1
+		else
+			_fixture_record_gh_pr_create "$gh_log" "$@"
 		fi
 		return 0
 	}
@@ -291,6 +305,11 @@ test_attempt_orphan_recovery_pr_uses_authoritative_worker_issue() {
 		"manual-cli-28313-1784593858" "$work_dir" \
 		"feature/auto-test-issue-99999" "test-owner/test-repo" "draft" || recovery_rc=$?
 	unset -f gh 2>/dev/null || true
+
+	local gh_title="" gh_body="" gh_called=0
+	gh_title=$(_fixture_pr_create_flag "$gh_log" "--title")
+	gh_body=$(_fixture_pr_create_flag "$gh_log" "--body")
+	[[ -s "$gh_log" ]] && gh_called=1
 
 	# GH#32933: recovery PRs use the non-closing `For #N` reference.
 	if [[ "$gh_called" -eq 1 && "$gh_title" == *"#28313"* && \
@@ -383,24 +402,15 @@ test_cmd_run_finish_local_unpushed_pushes_and_recovers_pr() {
 	_setup_test_git_repo "$work_dir" 1
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
 
-	local gh_head="" gh_base="" gh_called=0
+	local gh_log="${work_dir}.gh-pr-create.log"
 	gh() {
-		local arg=""
-		for arg in "$@"; do
-			case "$_last_flag" in
-			"--head") gh_head="$arg" ;;
-			"--base") gh_base="$arg" ;;
-			esac
-			_last_flag="$arg"
-		done
-		if [[ "${*}" == *"pr list"* ]]; then printf '0'
+		if [[ "${*}" == *"pr list"* ]]; then printf '[]'
 		elif [[ "${*}" == *"issue view"* ]]; then printf 'OPEN'
 		elif _fixture_gh_is_default_branch_lookup "$@"; then printf 'main'
-		elif [[ "${*}" == *"pr create"* ]]; then gh_called=1
+		else _fixture_record_gh_pr_create "$gh_log" "$@"
 		fi
 		return 0
 	}
-	_last_flag=""
 
 	local released_reason="" fast_fail_called=0
 	_release_dispatch_claim() { released_reason="$2"; return 0; }
@@ -415,6 +425,11 @@ test_cmd_run_finish_local_unpushed_pushes_and_recovers_pr() {
 	remote_ref=$(git -C "$work_dir" ls-remote origin "refs/heads/feature/auto-test-issue-99999" 2>/dev/null || true)
 	unset DISPATCH_REPO_SLUG 2>/dev/null || true
 	unset -f gh 2>/dev/null || true
+
+	local gh_head="" gh_base="" gh_called=0
+	gh_head=$(_fixture_pr_create_flag "$gh_log" "--head")
+	gh_base=$(_fixture_pr_create_flag "$gh_log" "--base")
+	[[ -s "$gh_log" ]] && gh_called=1
 
 	if [[ "$released_reason" == "worker_complete" && "$gh_called" -eq 1 && -n "$remote_ref" ]]; then
 		print_result "_cmd_run_finish pushes local branch and recovers PR" 0

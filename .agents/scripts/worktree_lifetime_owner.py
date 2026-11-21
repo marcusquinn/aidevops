@@ -115,24 +115,49 @@ def drain_previous_boot(launch, current_boot, boot_reader):
     launch["quiescence"] = receipt
 
 
-def drain_unit(launch, boot_reader=boot_id, snapshot_reader=unit_snapshot):
-    current_boot = boot_reader()
-    if launch["boot_id"] != current_boot:
-        drain_previous_boot(launch, current_boot, boot_reader)
-        return
-    snapshot = snapshot_reader(launch["unit"])
-    require(snapshot.get("InvocationID") == launch["invocation"], "invocation changed")
-    require(snapshot.get("MainPID") == "0" and not snapshot.get("Job"), "unit still has work")
-    require((snapshot.get("ActiveState"), snapshot.get("SubState")) in
-            (("active", "exited"), ("failed", "failed")), "descendants have not drained")
-    cgroup = launch["cgroup"]
-    require(cgroup.startswith("/") and ".." not in Path(cgroup).parts, "unsafe cgroup")
+DRAINED_STATES = (("active", "exited"), ("failed", "failed"))
+
+
+def drained_snapshot_valid(snapshot, invocation):
+    """The same drained-unit fields that sealed receipts and proofs require."""
+    return isinstance(snapshot, dict) and all((
+        snapshot.get("InvocationID") == invocation,
+        snapshot.get("MainPID") == "0" and not snapshot.get("Job"),
+        snapshot.get("ExitType") == "cgroup" and snapshot.get("RemainAfterExit") == "yes"
+        and snapshot.get("Restart") == "no",
+        (snapshot.get("ActiveState"), snapshot.get("SubState")) in DRAINED_STATES))
+
+
+def require_cgroup_drained(cgroup):
+    require(isinstance(cgroup, str) and cgroup.startswith("/") and ".." not in Path(cgroup).parts,
+            "unsafe cgroup")
     directory = ROOT / cgroup.lstrip("/")
     try:
         events = dict(line.split() for line in (directory / "cgroup.events").read_text().splitlines())
         require(events.get("populated") == "0", "cgroup remains populated")
     except FileNotFoundError:
         require(not directory.exists(), "cgroup evidence unavailable")
+
+
+def drain_unit(launch, boot_reader=boot_id, snapshot_reader=unit_snapshot, presence_reader=None,
+               release_reader=None):
+    current_boot = boot_reader()
+    if launch["boot_id"] != current_boot:
+        drain_previous_boot(launch, current_boot, boot_reader)
+        return
+    try:
+        snapshot = snapshot_reader(launch["unit"])
+    except (ValueError, subprocess.SubprocessError):
+        # GH#39702: a unit released after a durable receipt is no longer loaded.
+        from worktree_lifetime_release_receipt import drain_released
+        if drain_released(launch, current_boot, boot_reader, presence_reader, release_reader):
+            return
+        raise
+    require(snapshot.get("InvocationID") == launch["invocation"], "invocation changed")
+    require(snapshot.get("MainPID") == "0" and not snapshot.get("Job"), "unit still has work")
+    require((snapshot.get("ActiveState"), snapshot.get("SubState")) in DRAINED_STATES,
+            "descendants have not drained")
+    require_cgroup_drained(launch["cgroup"])
     require(snapshot_reader(launch["unit"]) == snapshot, "unit changed while sampling")
     launch["quiescence"] = snapshot
 
