@@ -647,7 +647,7 @@ _cross_review_failure_reason() {
 	if [[ -s "$err_log" ]] && grep -Eqi 'timed out|timeout' "$err_log" 2>/dev/null; then
 		echo "timeout (no output before deadline)"
 	elif { [[ -s "$err_log" ]] && grep -Eqi "$cred_re" "$err_log" 2>/dev/null; } ||
-		{ [[ -n "$json_errors" ]] && printf '%s\n' "$json_errors" | grep -Eqi "$cred_re"; }; then
+		{ [[ -n "$json_errors" ]] && grep -Eqi "$cred_re" <<<"$json_errors"; }; then
 		echo "missing or rejected provider key"
 	elif [[ ! -s "$json_file" ]]; then
 		echo "runner error (no output produced)"
