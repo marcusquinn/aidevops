@@ -188,6 +188,7 @@ readonly _STATUS_APPLIED="APPLIED"
 readonly _STATUS_FAILED="FAILED"
 readonly _STATUS_BLOCKED_SIGNING="BLOCKED-SIGNING"
 readonly _STATUS_BLOCKED_RETAINED="BLOCKED-RETAINED"
+readonly _BADGES_ANCHOR_TITLE="aidevops badge sync (routine anchor)"
 
 readonly _BRANCH_DEFAULT_NAME="main"
 
@@ -428,13 +429,55 @@ _install_workflow() {
 
 # ─── PR creation ────────────────────────────────────────────────────────────
 
-# _open_pr <slug> <path> <branch> <default_branch> <description>
+# _routine_anchor <slug> — print the repo's open badge-sync routine anchor
+# issue number (GH#39696). Headless runs stamp origin:worker, whose PR body
+# needs exactly one explicit issue identity: without it creation is rejected
+# and the t2449 merge gate never admits the PR. Prints nothing for other
+# origins, which need no anchor. Prints a FAILED row instead when a required
+# anchor is unavailable, so nothing is pushed without a PR.
+_routine_anchor() {
+	local _slug="$1"
+	local _helper="" _number=""
+	declare -F session_origin_label >/dev/null 2>&1 || return 0
+	[[ "$(session_origin_label)" == "origin:worker" ]] || return 0
+	if ! _helper=$(_resolve_helper routine-log-helper.sh); then
+		printf '%s\t%s\troutine anchor unavailable: routine-log-helper.sh not found\n' \
+			"$_slug" "$_STATUS_FAILED"
+		return 1
+	fi
+	if ! _number=$(bash "$_helper" ensure-anchor badges-sync --repo "$_slug" \
+		--title "$_BADGES_ANCHOR_TITLE") ||
+		[[ ! "$_number" =~ ^[1-9][0-9]*$ ]]; then
+		printf '%s\t%s\troutine anchor unavailable: ensure-anchor failed for badges-sync\n' \
+			"$_slug" "$_STATUS_FAILED"
+		return 1
+	fi
+	printf '%s\n' "$_number"
+	return 0
+}
+
+# _link_open_pr_anchor <slug> <pr_url> — give an open origin:worker sync PR
+# without an issue identity its anchor Ref line, so the merge gate can admit
+# the PR that blocks every later run. Best effort: the skip row still prints.
+_link_open_pr_anchor() {
+	local _slug="$1" _url="$2"
+	local _helper="" _number="${2##*/}"
+	[[ "$_number" =~ ^[1-9][0-9]*$ ]] || return 0
+	_helper=$(_resolve_helper routine-log-helper.sh) || return 0
+	bash "$_helper" ensure-pr-anchor badges-sync --repo "$_slug" --pr "$_number" \
+		--title "$_BADGES_ANCHOR_TITLE" >&2 ||
+		_warn "$_slug: could not link open sync PR $_url to its routine anchor"
+	return 0
+}
+
+# _open_pr <slug> <path> <branch> <default_branch> <description> [anchor]
 _open_pr() {
 	local _slug="$1"
 	local _path="$2"
 	local _branch_name="$3"
 	local _default_branch="$4"
 	local _description="$5"
+	local _anchor="${6:-}"
 
 	if ! command -v gh_create_pr >/dev/null 2>&1; then
 		printf '%s\t%s\tgh_create_pr unavailable — source shared-gh-wrappers.sh\n' \
@@ -443,8 +486,10 @@ _open_pr() {
 	fi
 
 	local _pr_title="chore: aidevops badge sync — ${_description}"
-	local _pr_body
-	_pr_body=$(printf '%s\n' \
+	# One standalone non-closing identity line: a run must not close the anchor.
+	local _pr_body=""
+	[[ -z "$_anchor" ]] || _pr_body="Ref #${_anchor}"$'\n\n'
+	_pr_body+=$(printf '%s\n' \
 		"## Summary" \
 		"" \
 		"Sync README badge block, local repo metrics, and/or install the refresh workflow." \
@@ -556,6 +601,7 @@ _apply_repo() (
 		'[.[] | select((.headRefName | startswith($prefix)) or
 		 (.title | startswith("chore: aidevops badge sync")))][0].url // empty') || return 1
 	if [[ -n "$_existing" ]]; then
+		_link_open_pr_anchor "$_slug" "$_existing"
 		printf '%s\t%s\topen sync PR: %s\n' "$_slug" "$_STATUS_SKIPPED" "$_existing"
 		return 0
 	fi
@@ -685,6 +731,12 @@ _publish_worktree() {
 		return 0
 	fi
 	git -C "$_path" commit -q -m "chore: refresh aidevops badges, metrics and workflow" || return 1
+	# Resolve the PR identity before pushing: a branch without a PR is clutter.
+	local _anchor=""
+	_anchor=$(_routine_anchor "$_slug") || {
+		printf '%s\n' "$_anchor"
+		return 1
+	}
 	# A recovered branch already published without a PR is helper-owned output;
 	# replace it only if the remote still holds the commit we observed.
 	[[ -z "$_lease" ]] || _push_args+=("--force-with-lease=refs/heads/${_branch}:${_lease}")
@@ -704,7 +756,7 @@ _publish_worktree() {
 		return 1
 	fi
 	printf '%s\n' "$_push_output" >&2
-	_open_pr "$_slug" "$_path" "$_branch" "$_default" "README, metrics and refresh workflow"
+	_open_pr "$_slug" "$_path" "$_branch" "$_default" "README, metrics and refresh workflow" "$_anchor"
 	return $?
 }
 

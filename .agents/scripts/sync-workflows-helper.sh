@@ -109,6 +109,10 @@ readonly _STATUS_PLANNED="PLANNED"
 readonly _STATUS_APPLIED="APPLIED"
 readonly _STATUS_FAILED="FAILED"
 
+# GH#39696: per-repo routine anchor giving headless sync PRs an issue identity.
+readonly _SYNC_ANCHOR_KEY="sync-workflows"
+readonly _SYNC_ANCHOR_TITLE="aidevops workflow sync (routine anchor)"
+
 # Classification labels (must match check-workflows-helper.sh).
 readonly _CLASS_DRIFTED='DRIFTED/CALLER'
 readonly _CLASS_NEEDS_MIGRATION='NEEDS-MIGRATION'
@@ -1187,16 +1191,45 @@ _create_pr_body_file() {
 	local _ref="$2"
 	local _workflow_path="$3"
 	local _sync_contributing="$4"
+	local _anchor="${5:-}"
 	local _temp_root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 	mkdir -p "$_temp_root" || return 1
 	local _body_file
 	_body_file=$(mktemp "${_temp_root%/}/sync-workflows-pr.XXXXXX") || return 1
+	# One standalone non-closing identity line: a run must not close the anchor.
+	if [[ -n "$_anchor" ]] && ! printf 'Ref #%s\n\n' "$_anchor" >"$_body_file"; then
+		rm -f "$_body_file"
+		return 1
+	fi
 	if ! _format_pr_body "$_status" "$_ref" "$_workflow_path" \
-		"$_sync_contributing" >"$_body_file"; then
+		"$_sync_contributing" >>"$_body_file"; then
 		rm -f "$_body_file"
 		return 1
 	fi
 	printf '%s\n' "$_body_file"
+	return 0
+}
+
+# _sync_routine_anchor <slug> <status> — print the repo's open workflow-sync
+# routine anchor number (GH#39696). Headless runs stamp origin:worker, whose
+# PR body needs exactly one explicit issue identity; an explicit --issue
+# already provides one, and other origins need none (empty output). Prints a
+# FAILED row and returns 1 when a required anchor is unavailable.
+_sync_routine_anchor() {
+	local _slug="$1" _status="$2"
+	local _helper="${SELF_DIR}/routine-log-helper.sh" _number=""
+	[[ -z "${_OPT_ISSUE:-}" ]] || return 0
+	declare -F session_origin_label >/dev/null 2>&1 || return 0
+	[[ "$(session_origin_label)" == "origin:worker" ]] || return 0
+	if [[ ! -f "$_helper" ]] ||
+		! _number=$(bash "$_helper" ensure-anchor "$_SYNC_ANCHOR_KEY" --repo "$_slug" \
+			--title "$_SYNC_ANCHOR_TITLE") ||
+		[[ ! "$_number" =~ ^[1-9][0-9]*$ ]]; then
+		printf '%s\t%s\t%s\troutine anchor unavailable: ensure-anchor failed for %s\n' \
+			"$_slug" "$_status" "$_STATUS_FAILED" "$_SYNC_ANCHOR_KEY"
+		return 1
+	fi
+	printf '%s\n' "$_number"
 	return 0
 }
 
@@ -1568,11 +1601,20 @@ _sync_promote_pr() {
 		return 0
 	fi
 	IFS=$'\t' read -r _readiness _labels <<<"$_state"
-	[[ ",${_labels}," != *",hold-for-review,"* ]] || return 0
+	local _label_set=",${_labels},"
+	# GH#39696: an origin:worker PR from before the identity guard has no issue
+	# identity, so the merge gate never admits it; link it to the routine anchor.
+	local _anchor_helper="${SELF_DIR}/routine-log-helper.sh" _pr_number="${_pr_ref##*/}"
+	if [[ "$_label_set" == *",origin:worker,"* && -f "$_anchor_helper" && "$_pr_number" =~ ^[1-9][0-9]*$ ]] &&
+		! bash "$_anchor_helper" ensure-pr-anchor "$_SYNC_ANCHOR_KEY" --repo "$_slug" \
+			--pr "$_pr_number" --title "$_SYNC_ANCHOR_TITLE" >&2; then
+		printf '[%s] WARN: unable to link %s to its routine anchor\n' "$SCRIPT_NAME" "$_pr_ref" >&2
+	fi
+	[[ "$_label_set" != *",hold-for-review,"* ]] || return 0
 	if [[ "$_readiness" == draft ]] && ! gh pr ready "$_pr_ref" --repo "$_slug" >/dev/null 2>&1; then
 		printf '[%s] WARN: unable to mark %s ready for review\n' "$SCRIPT_NAME" "$_pr_ref" >&2
 	fi
-	[[ ",${_labels}," != *",${SYNC_AUTO_MERGE_LABEL},"* ]] || return 0
+	[[ "$_label_set" != *",${SYNC_AUTO_MERGE_LABEL},"* ]] || return 0
 	if ! _sync_ensure_auto_merge_label "$_slug" ||
 		! gh pr edit "$_pr_ref" --repo "$_slug" --add-label "$SYNC_AUTO_MERGE_LABEL" >/dev/null 2>&1; then
 		printf '[%s] WARN: unable to add %s to %s\n' "$SCRIPT_NAME" "$SYNC_AUTO_MERGE_LABEL" "$_pr_ref" >&2
@@ -1592,7 +1634,7 @@ _sync_find_exact_pr() {
 }
 
 # _sync_open_pr <slug> <path> <status> <branch> <default_branch>
-#   <effective_ref> <workflow-relpath> <sync-contributing>
+#   <effective_ref> <workflow-relpath> <sync-contributing> [anchor]
 # Workflow-only updates reuse identical PRs before publication; differing content
 # creates a replacement, then comments on/closes older same-path sync PRs.
 # Combined CONTRIBUTING.md updates retain their existing exact-branch behavior.
@@ -1605,6 +1647,7 @@ _sync_open_pr() {
 	local _effective_ref="$6"
 	local _workflow_relpath="${7:-.github/workflows/issue-sync.yml}"
 	local _sync_contributing="${8:-0}"
+	local _anchor="${9:-}"
 
 	if ! command -v gh_create_pr >/dev/null 2>&1; then
 		printf '%s\t%s\t%s\tgh_create_pr unavailable — source shared-gh-wrappers.sh\n' \
@@ -1632,7 +1675,7 @@ _sync_open_pr() {
 	_pr_title=$(_format_pr_title "$_sync_contributing")
 	local _body_file
 	_body_file=$(_create_pr_body_file \
-		"$_status" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing") || {
+		"$_status" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_anchor") || {
 		printf '%s\t%s\t%s\tPR body-file creation failed\n' \
 			"$_slug" "$_status" "$_STATUS_FAILED"
 		return 1
@@ -1901,6 +1944,13 @@ _sync_publish_rendered() {
 	local _default_branch="$6" _effective_ref="$7" _target_content="$8"
 	local _workflow_relpath="$9" _sync_contributing="${10}"
 	local _write_output _write_rc
+	# GH#39696: resolve the PR identity before pushing; a pushed branch without
+	# a PR would read as already current on the next run.
+	local _anchor=""
+	_anchor=$(_sync_routine_anchor "$_slug" "$_status") || {
+		printf '%s\n' "$_anchor"
+		return 1
+	}
 	_write_output=$(_sync_write_commit_push \
 		"$_slug" "$_path" "$_status" "$_branch_name" \
 		"$_remote" "$_default_branch" "$_effective_ref" "$_target_content" \
@@ -1917,12 +1967,14 @@ _sync_publish_rendered() {
 
 	_sync_open_pr_and_warn \
 		"$_slug" "$_path" "$_status" "$_branch_name" \
-		"$_default_branch" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_target_content"
+		"$_default_branch" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_target_content" \
+		"$_anchor"
 	return $?
 }
 
 # Open the PR, then warn (never mutate) when the installed caller needs an
-# Actions event policy. Args match _sync_open_pr plus the rendered content.
+# Actions event policy. Args match _sync_open_pr plus the rendered content,
+# then the optional routine anchor.
 _sync_open_pr_and_warn() {
 	local _slug="$1"
 	local _path="$2"
@@ -1933,9 +1985,10 @@ _sync_open_pr_and_warn() {
 	local _workflow_relpath="$7"
 	local _sync_contributing="$8"
 	local _content="$9"
+	local _anchor="${10:-}"
 	local _open_rc=0
 	_sync_open_pr "$_slug" "$_path" "$_status" "$_branch_name" "$_default_branch" \
-		"$_effective_ref" "$_workflow_relpath" "$_sync_contributing" || _open_rc=$?
+		"$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_anchor" || _open_rc=$?
 	if [[ "$_open_rc" -eq 0 ]]; then
 		_warn_event_policy_uncovered "$_slug" "$_content"
 	fi
