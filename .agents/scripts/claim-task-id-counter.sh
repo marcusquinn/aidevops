@@ -1356,6 +1356,32 @@ _id_exists_in_todo() {
 	return 1
 }
 
+# Check whether "t<id>:" is already used as a PR or issue title prefix on
+# GitHub (GH#39657). Worker PRs use t<issue-number>, which can collide with
+# counter-allocated IDs once issue numbers pass the counter. Fail-open: no gh,
+# no GitHub slug, API failure, or CLAIM_TASK_ID_SKIP_TITLE_CHECK=1 -> not found.
+# Args: $1 numeric id, $2 repo path. Returns 0 if a title prefix match exists.
+_id_used_as_title_prefix() {
+	local id_num="$1"
+	local repo_path="${2:-$PWD}"
+	local slug="" kind="" titles=""
+
+	[[ "${CLAIM_TASK_ID_SKIP_TITLE_CHECK:-0}" == "1" ]] && return 1
+	command -v gh >/dev/null 2>&1 || return 1
+	slug=$(_cas_extract_github_slug "$repo_path" 2>/dev/null) || return 1
+
+	for kind in pr issue; do
+		# Bounded by timeout_sec (fail-open) and a wide limit so matches are not truncated.
+		titles=$(timeout_sec "${CAS_HTTPS_TIMEOUT_S:-30}" gh "$kind" list --repo "$slug" --state all --limit "${CAS_TITLE_SEARCH_LIMIT:-300}" \
+			--search "t${id_num}: in:title" --json title --jq '.[].title' 2>/dev/null) || continue
+		if grep -qE "^t0*${id_num}([^0-9.]|$)" <<<"$titles"; then
+			return 0
+		fi
+	done
+
+	return 1
+}
+
 # Compute seed value for .task-counter bootstrap from TODO.md (or default 1).
 # Reads TODO.md from the repo root; falls back to 1 if not found or empty.
 # Returns the seed value (highest task ID + 1, minimum 1).
@@ -2012,13 +2038,26 @@ _allocate_online_with_collision_check() {
 			fi
 		done
 
+		# Also check GitHub PR/issue title prefixes (GH#39657): headless workers
+		# title PRs "t<issue-number>: ..." so a counter value can already be
+		# in use as a prefix even though TODO.md has no entry for it.
+		if [[ -z "$collision_id" ]]; then
+			for ((i = 0; i < count; i++)); do
+				local check_id=$((first_id + i))
+				if _id_used_as_title_prefix "$check_id" "$repo_path"; then
+					collision_id="$check_id"
+					break
+				fi
+			done
+		fi
+
 		if [[ -z "$collision_id" ]]; then
 			echo "$first_id"
 			return 0
 		fi
 
 		total_skips=$((total_skips + 1))
-		log_info "TODO.md collision: $(_format_legacy_task_id "$collision_id") already exists — skipping (${total_skips}/${max_skips})"
+		log_info "Task ID collision: $(_format_legacy_task_id "$collision_id") already in use (TODO.md or PR/issue title prefix) — skipping (${total_skips}/${max_skips})"
 
 		if [[ $total_skips -ge $max_skips ]]; then
 			log_error "TODO.md collision guard: exhausted ${max_skips} skip attempts"
