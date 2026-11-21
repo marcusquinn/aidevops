@@ -189,6 +189,13 @@ _launchd_load_agent() {
 		_launchd_recover_xpcproxy_if_stuck "$label" "$plist_path" || return 1
 		return 0
 	fi
+	# GH#39772: one settle-and-retry; a plist rewrite can leave the service
+	# unregistered momentarily, and nothing re-checks until the next setup.
+	sleep "${AIDEVOPS_LAUNCHD_LOAD_RETRY_SECONDS:-2}"
+	if _launchd_bootout_bootstrap "$label" "$plist_path" && _launchd_has_agent "$label"; then
+		_launchd_recover_xpcproxy_if_stuck "$label" "$plist_path" || return 1
+		return 0
+	fi
 	return 1
 }
 
