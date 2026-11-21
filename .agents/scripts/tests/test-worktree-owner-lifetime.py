@@ -32,15 +32,23 @@ REG_SPEC.loader.exec_module(registry)
 
 
 class CreationProducerTests(unittest.TestCase):
+    def environment(self, root, home):
+        # Never admit fixture worktrees to the calling runner's lifecycle state.
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith("AIDEVOPS_LIFECYCLE_")}
+        env.update(HOME=str(home), AIDEVOPS_LIFECYCLE_STATE_DIR=str(root / "state"),
+                   AIDEVOPS_PRIVATE_WORKLOAD="0", WORKTREE_REGISTRY_DIR=str(root / "registry"),
+                   WORKTREE_REGISTRY_DB=str(root / "registry/owners.db"))
+        return env
+
     def test_persistent_producers_register_new_branches_and_reuse_worktrees(self):
         base = Path(os.environ.get("AIDEVOPS_TEMP_DIR") or Path.home() / ".aidevops/.agent-workspace/tmp")
         with tempfile.TemporaryDirectory(prefix="skill-creation-", dir=base) as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             repo, home = root / "repo", root / "home"
             home.mkdir()
             git = os.environ.get("AIDEVOPS_TEST_GIT_BIN", shutil.which("git"))
-            env = dict(os.environ, HOME=str(home), WORKTREE_REGISTRY_DIR=str(root / "registry"),
-                       WORKTREE_REGISTRY_DB=str(root / "registry/owners.db"))
+            env = self.environment(root, home)
             env["PATH"] = str(Path(git).parent) + os.pathsep + env["PATH"]
 
             def command(*args):
@@ -86,9 +94,9 @@ class CreationProducerTests(unittest.TestCase):
                                       'source "$1/shared-todo-commit.sh"; _todo_remove_temp_worktree "$2" "$3"',
                                       "fixture", str(SCRIPTS), str(repo), path], env=env,
                                      text=True, capture_output=True, timeout=15)
-            legacy = sys.platform == "darwin" or env.get("AIDEVOPS_WORKTREE_MANAGER") == "legacy-guards"
-            self.assertEqual(cleanup.returncode == 0, legacy, cleanup.stderr)
-            self.assertEqual(Path(path).exists(), not legacy)
+            # Planning publication explicitly owns a synchronous legacy tree.
+            self.assertEqual(cleanup.returncode, 0, cleanup.stderr)
+            self.assertFalse(Path(path).exists())
             # Source release functions from a fixture linked checkout, so their
             # bootstrap cannot create a control worktree in the real repository.
             source = root / "repo-new"
@@ -123,11 +131,10 @@ class CreationProducerTests(unittest.TestCase):
     def test_reserved_paths_and_registration_failure_preserve_sources(self):
         base = Path(os.environ.get("AIDEVOPS_TEMP_DIR") or Path.home() / ".aidevops/.agent-workspace/tmp")
         with tempfile.TemporaryDirectory(prefix="reserved-creation-", dir=base) as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             repo = root / "repo"
             git = os.environ.get("AIDEVOPS_TEST_GIT_BIN") or shutil.which("git")
-            env = dict(os.environ, HOME=str(root), WORKTREE_REGISTRY_DIR=str(root / "registry"),
-                       WORKTREE_REGISTRY_DB=str(root / "registry/owners.db"))
+            env = self.environment(root, root)
             env["PATH"] = str(Path(git).parent) + os.pathsep + env["PATH"]
             subprocess.run([git, "init", "-q", "-b", "main", str(repo)], env=env, check=True, timeout=10)
             subprocess.run([git, "-C", str(repo), "-c", "user.name=Fixture", "-c",
@@ -551,6 +558,7 @@ class ProcessReconciliationTests(unittest.TestCase):
             options = {"side_effect": value} if isinstance(value, Exception) else {"return_value": value}
             with self.subTest(expected=expected), patch.object(owner, "boot_id", return_value=launch["boot_id"]), \
                     patch.object(owner, "process_identity", **options), \
+                    patch.object(Path, "is_file", return_value=True), \
                     patch.object(os.path, "lexists", return_value=False):
                 self.assertEqual(owner.recorded_process_status(launch)["status"], expected)
 
