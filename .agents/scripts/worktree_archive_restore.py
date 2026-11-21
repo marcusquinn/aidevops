@@ -18,7 +18,7 @@ from worktree_archive_registration import (
 )
 from worktree_archive_objects import dependency_commit
 from worktree_archive_dependencies import import_published_head, object_present, object_store_files
-from worktree_archive_snapshot import fetch_preservation
+from worktree_archive_snapshot import fetch_preservation, report_preservation_import
 from worktree_archive_unsealed import UnsealedRecovery
 from worktree_recovery_timing import timed
 
@@ -116,12 +116,15 @@ def prepare(archive, target, verification=False):
                        env=environment, stdout=sys.stderr, check=True, timeout=180)
     if published_import:
         import_published_head(target, common, manifest["head_sha"])
+    imported = False
     if bundle.is_file() or published_import:
-        fetch_preservation(target, archive)
+        # Non-None only after the complete bundle was verified and imported.
+        imported = fetch_preservation(target, archive) is not None
         if verification:
             git(target, "checkout", "--quiet", "--detach", manifest["head_sha"])
         else:
             git(target, "reset", "--hard", manifest["head_sha"])
+    return imported
 
 
 class RestorationProof(UnsealedRecovery):
@@ -362,8 +365,8 @@ class RestorationProof(UnsealedRecovery):
 
 if __name__ == "__main__":
     try:
-        prepare(Path(sys.argv[1]).resolve(strict=True), Path(sys.argv[2]).absolute(),
-                verification=sys.argv[3:] == ["--verification-copy"])
+        report_preservation_import(prepare(Path(sys.argv[1]).resolve(strict=True), Path(sys.argv[2]).absolute(),
+                                           verification=sys.argv[3:] == ["--verification-copy"]))
     except subprocess.CalledProcessError as error:
         # Python's default traceback omits the captured Git stderr. Carry only
         # fixed diagnostic categories across Bash; never expose Git argv/data.

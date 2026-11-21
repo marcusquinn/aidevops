@@ -36,10 +36,46 @@ from worktree_archive_prune_cases import PruneCases
 from worktree_archive_unregistered_cases import UnregisteredCases
 
 HELPER = Path(__file__).resolve().parents[1] / "worktree-archive-helper.sh"
+FIXTURE_FILES = {
+    "mixed.txt": b"base\n", "binary.bin": bytes(range(256)),
+    "staged-delete": b"delete\n", "unstaged-delete": b"delete\n",
+    "old-name": b"rename\n", "run.sh": b"#!/bin/sh\nexit 0\n",
+    ".gitignore": b"*.ignored\n",
+}
+FIXTURE_GIT_ENV = dict(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0",
+                       GIT_AUTHOR_NAME="Fixture", GIT_COMMITTER_NAME="Fixture",
+                       GIT_AUTHOR_EMAIL="fixture@example.invalid",
+                       GIT_COMMITTER_EMAIL="fixture@example.invalid", LC_ALL="C")
 
 
 class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, MergeCases,
                      ProducerCases, PartialCases, MetadataCases, PruneCases):
+    @classmethod
+    def setUpClass(cls):
+        """Commit the canonical fixture repository once per test class (GH#39560).
+
+        Each test copies this independent repository (it has no linked worktrees
+        and no absolute paths) and still creates its own linked worktree with
+        `git worktree add`, so cases share no mutable Git state.
+        """
+        super().setUpClass()
+        temp = tempfile.TemporaryDirectory(prefix="archive-lifecycle-template-")
+        cls.addClassCleanup(temp.cleanup)
+        template = Path(temp.name).resolve() / "repo"
+        env = dict(os.environ, HOME=str(template.parent), **FIXTURE_GIT_ENV)
+        previous = os.umask(0o022)
+        try:
+            subprocess.run(["git", "init", "-q", "--initial-branch=develop", str(template)],  # nosec B603 B607 -- fixture-owned Git argv
+                           env=env, capture_output=True, timeout=60, check=True)
+            for name, data in FIXTURE_FILES.items():
+                (template / name).write_bytes(data)
+            for args in (("add", "."), ("commit", "-qm", "base")):
+                subprocess.run(["git", "-C", str(template), *args],  # nosec B603 B607 -- fixture-owned Git argv
+                               env=env, capture_output=True, timeout=60, check=True)
+        finally:
+            os.umask(previous)
+        cls.fixture_template = template
+
     def setUp(self):
         self.addCleanup(os.umask, os.umask(0o022))
         self.temp = tempfile.TemporaryDirectory(prefix="archive-lifecycle-")
@@ -47,8 +83,7 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
         # macOS temp dirs live under the /var -> /private/var symlink; the lifecycle
         # state-parent guard requires a canonical path (GH#39524).
         self.root = Path(self.temp.name).resolve()
-        self.env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull,
-                        GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0",
+        self.env = dict(os.environ, **FIXTURE_GIT_ENV,
                         AIDEVOPS_RECOVERY_TIMING_LOG=str(self.root / "timing.jsonl"),
                         AIDEVOPS_WORKTREE_RECOVERY_POLICY="git-only",
                         AIDEVOPS_WORKTREE_BASE_DIR=str(self.root),
@@ -57,23 +92,12 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
                         AIDEVOPS_LIFECYCLE_STATE_DIR=str(self.root / "lifecycle"),
                         HOME=str(self.root),
                         WORKTREE_REGISTRY_DIR=str(self.root / "registry"),
-                        WORKTREE_REGISTRY_DB=str(self.root / "registry/worktree-registry.db"),
-                        GIT_AUTHOR_NAME="Fixture", GIT_COMMITTER_NAME="Fixture",
-                        GIT_AUTHOR_EMAIL="fixture@example.invalid",
-                        GIT_COMMITTER_EMAIL="fixture@example.invalid", LC_ALL="C")
+                        WORKTREE_REGISTRY_DB=str(self.root / "registry/worktree-registry.db"))
         self.repo = self.root / "repo"
         self.work = self.root / "work"
         self.archives = self.root / "archives"
-        self.run_command("git", "init", "-q", "--initial-branch=develop", self.repo)
-        for name, data in {
-            "mixed.txt": b"base\n", "binary.bin": bytes(range(256)),
-            "staged-delete": b"delete\n", "unstaged-delete": b"delete\n",
-            "old-name": b"rename\n", "run.sh": b"#!/bin/sh\nexit 0\n",
-            ".gitignore": b"*.ignored\n",
-        }.items():
-            (self.repo / name).write_bytes(data)
-        self.git(self.repo, "add", ".")
-        self.git(self.repo, "commit", "-qm", "base")
+        # A private copy of the class template replaces init/add/commit per test.
+        shutil.copytree(self.fixture_template, self.repo, symlinks=True)
         self.git(self.repo, "worktree", "add", "-qb", "feature/fixture", self.work)
         self.issue = 0
 
