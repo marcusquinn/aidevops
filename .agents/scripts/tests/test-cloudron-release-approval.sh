@@ -109,6 +109,20 @@ review_threads_response() {
 	return 0
 }
 
+# GH#39742: release_checks reads the paginated, slurped GraphQL check rollup
+# of the PR head (its oid follows pull_request_json's head).
+checks_rollup_response() {
+	local head="$HEAD_SHA" conclusion=SUCCESS
+	[[ "$SCENARIO" != checks_error ]] || return 1
+	[[ "$SCENARIO" != preflight_skipped ]] || conclusion=SKIPPED
+	[[ "$SCENARIO" != changed && "$SCENARIO" != policy_changed ]] || head="$OTHER_SHA"
+	jq -cn --arg head "$head" --arg conclusion "$conclusion" '
+		def run($name; $state): {__typename:"CheckRun",name:$name,status:"COMPLETED",conclusion:$state,startedAt:"2026-01-01T00:00:00Z",detailsUrl:"",checkSuite:{workflowRun:{event:"pull_request",workflow:{name:"Cloudron Catalog Publication"}}}};
+		[{data:{repository:{pullRequest:{commits:{nodes:[{commit:{oid:$head,statusCheckRollup:{contexts:{pageInfo:{hasNextPage:false},
+			nodes:[run("preflight"; $conclusion), run("publish"; "SKIPPED")]}}}}]}}}}}]'
+	return 0
+}
+
 gh() {
 	local command="$1" target="${2:-}"
 	printf '%s\n' "$*" >>"${TEST_ROOT}/calls"
@@ -144,12 +158,6 @@ gh() {
 	'api repos/owner/app/issues/12/comments?'*) request_comments_json ;;
 	'api repos/owner/app/issues/12') request_issue_json ;;
 	'api repos/owner/app/pulls/7') pull_request_json || return 1 ;;
-	'pr checks')
-		[[ "$SCENARIO" != checks_error ]] || return 1
-		local bucket=pass
-		[[ "$SCENARIO" != preflight_skipped ]] || bucket=skipping
-		jq -cn --arg bucket "$bucket" '[{bucket:$bucket,name:"preflight",link:""},{bucket:"skipping",name:"publish",link:""}]'
-		;;
 	'api repos/owner/app/contents/CloudronManifest.json?'*) printf '{"version":"1.2.3","upstreamVersion":"4.5.6","changelog":"file://CHANGELOG"}\n' ;;
 	'api repos/owner/app/contents/.github/workflows/cloudron-catalog-publish.yml?'*)
 		printf 'jobs:\n  catalog:\n    uses: marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml@%s\n    with:\n      aidevops_ref: %s\n' "$HEAD_SHA" "$HEAD_SHA"
@@ -191,7 +199,13 @@ gh() {
 		fi
 		;;
 	'label create') return 0 ;;
-	'api graphql') review_threads_response || return 1 ;;
+	'api graphql')
+		if [[ "$*" == *statusCheckRollup* ]]; then
+			checks_rollup_response || return 1
+		else
+			review_threads_response || return 1
+		fi
+		;;
 	# No held worker PRs: approval processing alone (GH#36268 cases run below).
 	'pr list')
 		if [[ "$SCENARIO" == request_retry ]]; then
@@ -282,7 +296,7 @@ run_request_error() {
 		return 1
 	}
 	calls=$(<"${TEST_ROOT}/calls")
-	[[ "$calls" != *'pr checks'* && "$calls" != *'label create'* && "$calls" != *'pr-edit '* && "$calls" != *'create '* ]] || return 1
+	[[ "$calls" != *statusCheckRollup* && "$calls" != *'label create'* && "$calls" != *'pr-edit '* && "$calls" != *'create '* ]] || return 1
 	printf 'PASS request %s: %s\n' "$scenario" "$output"
 	return 0
 }
