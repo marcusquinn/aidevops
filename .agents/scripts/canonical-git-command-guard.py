@@ -121,10 +121,24 @@ def main() -> int:
         f"{recovery_helper} fast-forward-current; use sync-mirror when "
         "verified preservation is required. After a canonical checkout moved, mend "
         f"linked-worktree pointers with {recovery_helper} repair-worktrees. "
+        f"{_maintenance_guidance(reason, recovery_helper)}"
         "Direct canonical Git mutation remains prohibited.",
         file=sys.stderr,
     )
     return BLOCK_EXIT
+
+
+# GH#39722: repository maintenance has one sanctioned, audited canonical path.
+MAINTENANCE_SUBCOMMANDS = ("gc", "maintenance", "reflog", "prune", "repack", "pack-refs")
+
+
+def _maintenance_guidance(reason: str, recovery_helper: str) -> str:
+    if not any(f"'git {name}'" in reason for name in MAINTENANCE_SUBCOMMANDS):
+        return ""
+    return (
+        "For stale lock files and canonical gc, run "
+        f"{recovery_helper} maintenance-gc --repo PATH (dry run), then add --apply. "
+    )
 
 
 if __name__ == "__main__":

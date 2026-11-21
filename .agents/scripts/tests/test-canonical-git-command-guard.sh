@@ -500,6 +500,22 @@ if [[ "$REPAIR_OUTPUT" == *"canonical-recovery-helper.sh"*" repair-worktrees"* ]
 else
 	fail "worktree repair block message names the recovery helper (output=$REPAIR_OUTPUT)"
 fi
+# GH#39722: direct canonical gc stays blocked and points to the audited helper.
+assert_blocked "blocks canonical git gc" "git gc --auto"
+assert_blocked "blocks canonical git maintenance run" "git maintenance run --task=gc"
+GC_OUTPUT=$(python3 "$GUARD" --cwd "$REPO" --command "git gc --auto" 2>&1 || true)
+if [[ "$GC_OUTPUT" == *"canonical-recovery-helper.sh"*" maintenance-gc"* ]]; then
+	pass "canonical gc block message names the maintenance-gc helper"
+else
+	fail "canonical gc block message names the maintenance-gc helper (output=$GC_OUTPUT)"
+fi
+if [[ "$REPAIR_OUTPUT" != *"maintenance-gc"* ]]; then
+	pass "non-maintenance block message omits maintenance-gc guidance"
+else
+	fail "non-maintenance block message omits maintenance-gc guidance"
+fi
+assert_allowed "allows the maintenance-gc recovery helper path" "$REPO" \
+	"'${RECOVERY_HELPER}' maintenance-gc --repo '$REPO' --apply"
 
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
 DEFAULT_BRANCH=$(
