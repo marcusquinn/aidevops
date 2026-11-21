@@ -711,8 +711,10 @@ test_git_metadata_writes_denied() {
 	# TEST_ROOT is itself a repository, so the non-Git target lives apart.
 	local plain=""
 	plain=$(mktemp -d) && plain=$(cd "$plain" && pwd -P) || plain=""
+	# CI runners have no global identity; give the seed commit its own.
 	if [[ -z "$plain" ]] || ! git init -q -b main "$hub" ||
-		! git -C "$hub" commit -q --allow-empty -m init ||
+		! git -C "$hub" -c user.name="Aidevops Test" -c user.email="test@example.com" \
+			-c commit.gpgsign=false commit -q --allow-empty -m init ||
 		! git -C "$hub" worktree add -q "$linked" -b feature; then
 		print_result "GH#39582 metadata fixture" 1 "fixture setup failed"
 		return 0
