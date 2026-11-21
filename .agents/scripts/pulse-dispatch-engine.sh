@@ -812,6 +812,14 @@ _dispatch_min_worker_floor_refill() {
 			echo "[pulse-wrapper] Minimum worker floor refill stopped: cooperative drain requested for activated bundle ${drain_bundle} (GH#37907)" >>"$LOGFILE"
 			return 0
 		fi
+		# GH#39682: a supervisor drain marks the owned LLM lock instead. It
+		# names this wrapper only while it holds that lock, so deterministic
+		# phase callers are unaffected; an admitted round still finishes.
+		if declare -F _pulse_llm_drain_requested >/dev/null 2>&1 &&
+			drain_bundle=$(_pulse_llm_drain_requested); then
+			echo "[pulse-wrapper] Minimum worker floor refill stopped: supervisor drain requested for activated bundle ${drain_bundle} (GH#39682)" >>"$LOGFILE"
+			return 0
+		fi
 		if ((active_workers_known <= 0)); then
 			active_workers=$(count_active_workers)
 			[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
@@ -1543,7 +1551,43 @@ _early_exit_recycle_fill_allowed() {
 		echo "[pulse-wrapper] Early-exit recycle: stop flag appeared before deterministic fill" >>"$LOGFILE"
 		return 1
 	fi
+	_early_exit_recycle_drained && return 1
 	pulse_dispatch_breakers_allow "early_exit_recycle" || return 1
+	return 0
+}
+
+#######################################
+# GH#39682: the recycle loop runs after instance-lock release, so the
+# instance-lock drain marker never names this wrapper. Deploy reconciliation
+# marks the owned LLM lock instead (pulse-wrapper-cycle.sh
+# _pulse_llm_drain_requested); stop before the next fill or supervisor rerun.
+# A dispatch round already admitted finishes, like the t19064 drain grace.
+# Returns: 0 when a supervisor drain names this wrapper, 1 otherwise
+#######################################
+_early_exit_recycle_drained() {
+	local drain_bundle=""
+	declare -F _pulse_llm_drain_requested >/dev/null 2>&1 || return 1
+	drain_bundle=$(_pulse_llm_drain_requested) || return 1
+	echo "[pulse-wrapper] Early-exit recycle stopped: supervisor drain requested; activated bundle ${drain_bundle} dispatches next cycle (GH#39682)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# GH#6453: Wait for newly-dispatched workers to appear in the process list
+# before re-counting. Workers dispatched by the LLM pulse take up to
+# PULSE_LAUNCH_GRACE_SECONDS to start (sandbox-exec + opencode startup).
+# Counting immediately after the LLM exits produces a false-negative
+# (workers running but not yet visible) that triggers duplicate dispatch.
+# t1887: LLM dispatch count is unknown here — use full grace to preserve
+# the GH#6453 safety guarantee.
+#######################################
+_early_exit_recycle_launch_grace_wait() {
+	local grace_wait="$PULSE_LAUNCH_GRACE_SECONDS"
+	[[ "$grace_wait" =~ ^[0-9]+$ ]] || grace_wait=35
+	if [[ "$grace_wait" -gt 0 ]]; then
+		echo "[pulse-wrapper] Early-exit recycle: waiting ${grace_wait}s for dispatched workers to appear (GH#6453)" >>"$LOGFILE"
+		sleep "$grace_wait"
+	fi
 	return 0
 }
 
@@ -1576,19 +1620,7 @@ _run_early_exit_recycle_loop() {
 			echo "[pulse-wrapper] Stop flag set — skipping early-exit recycle" >>"$LOGFILE"
 			break
 		fi
-		# GH#6453: Wait for newly-dispatched workers to appear in the process list
-		# before re-counting. Workers dispatched by the LLM pulse take up to
-		# PULSE_LAUNCH_GRACE_SECONDS to start (sandbox-exec + opencode startup).
-		# Counting immediately after the LLM exits produces a false-negative
-		# (workers running but not yet visible) that triggers duplicate dispatch.
-		# t1887: LLM dispatch count is unknown here — use full grace to preserve
-		# the GH#6453 safety guarantee.
-		local grace_wait="$PULSE_LAUNCH_GRACE_SECONDS"
-		[[ "$grace_wait" =~ ^[0-9]+$ ]] || grace_wait=35
-		if [[ "$grace_wait" -gt 0 ]]; then
-			echo "[pulse-wrapper] Early-exit recycle: waiting ${grace_wait}s for dispatched workers to appear (GH#6453)" >>"$LOGFILE"
-			sleep "$grace_wait"
-		fi
+		_early_exit_recycle_launch_grace_wait
 
 		# Re-check worker state
 		local post_max post_active post_target post_runnable post_queued
@@ -1626,6 +1658,8 @@ _run_early_exit_recycle_loop() {
 			break
 		fi
 
+		_early_exit_recycle_drained && break
+
 		local post_deficit_pct=$(((post_target - post_active) * 100 / post_target))
 		recycle_attempt=$((recycle_attempt + 1))
 		echo "[pulse-wrapper] Early-exit recycle attempt ${recycle_attempt}/${PULSE_BACKFILL_MAX_ATTEMPTS}: pulse ran ${pulse_duration}s (<300s), pool underfilled (active ${post_active}/${post_target}, raw_max=${post_max}, deficit ${post_deficit_pct}%, runnable=${post_runnable}, queued=${post_queued})" >>"$LOGFILE"
@@ -1646,6 +1680,9 @@ _run_early_exit_recycle_loop() {
 			recycle_underfilled_mode=1
 			recycle_underfill_pct=$(((post_max - post_active) * 100 / post_max))
 		fi
+
+		# A drain can land during the recycler or prefetch above.
+		_early_exit_recycle_drained && break
 
 		local recycle_start_epoch
 		recycle_start_epoch=$(date +%s)
