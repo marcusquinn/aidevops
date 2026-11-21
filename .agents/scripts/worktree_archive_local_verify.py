@@ -21,7 +21,8 @@ def imported_objects(scratch, archive):
     bundle = archive / 'commits.bundle'
     if not bundle.is_file():
         return set()
-    git(scratch, 'bundle', 'verify', str(bundle))
+    # unbundle runs the same prerequisite check as `bundle verify` and fails
+    # closed before importing, so a separate verify spawn is redundant (GH#39560).
     git(scratch, 'bundle', 'unbundle', str(bundle))
     result = set()
     for index in (scratch / 'objects/pack').glob('*.idx'):
