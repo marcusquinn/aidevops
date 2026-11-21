@@ -69,6 +69,10 @@ source "${SCRIPT_DIR}/issue-open-pr-guard.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
 
+# shellcheck source=./full-loop-helper-verify-runtime.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/full-loop-helper-verify-runtime.sh"
+
 # shellcheck source=./macos-local-checks.sh
 source "${SCRIPT_DIR}/macos-local-checks.sh"
 
@@ -424,6 +428,7 @@ _apply_pr_only_hold() {
 	local pr_number="$1"
 	local repo="$2"
 	local hold_scope="${3:-trusted PR-only scope}"
+	local hold_tokens="${4:-}"
 	local labels=""
 	if ! gh_pr_edit_safe "$pr_number" --repo "$repo" --add-label "hold-for-review" >/dev/null; then
 		print_error "Could not apply hold-for-review to PR #${pr_number} (${hold_scope}); rerun commit-and-pr before any merge"
@@ -434,6 +439,11 @@ _apply_pr_only_hold() {
 	if [[ ",${labels}," != *",hold-for-review,"* ]]; then
 		print_error "PR #${pr_number} (${hold_scope}) did not reach the hold-for-review postcondition; rerun commit-and-pr before any merge"
 		return 1
+	fi
+	# GH#39639: record the scope so verify-runtime lifts only runtime-only holds.
+	# The label stays the gate: a missing marker keeps the hold, never lifts it.
+	if [[ -n "$hold_tokens" ]] && ! _record_hold_scope_marker "$pr_number" "$repo" "$hold_tokens"; then
+		print_warning "PR #${pr_number} hold scope (${hold_tokens}) was not recorded; verify-runtime will keep the hold for a maintainer"
 	fi
 	print_info "PR #${pr_number} held for maintainer review (${hold_scope}); emit POST_PR_HANDOFF instead of merging"
 	return 0
@@ -467,10 +477,15 @@ _commit_and_pr_publish() {
 	fi
 	# GH#39558: a runtime-pending PR takes the same verified hold as PR-only
 	# scope, applied after creation because continued PRs ignore create labels.
-	local hold_scope=""
-	[[ "$pr_only_scope" -eq 1 ]] && hold_scope="trusted PR-only scope"
-	_pr_body_declares_runtime_pending "$pr_body" &&
+	local hold_scope="" hold_tokens=""
+	if [[ "$pr_only_scope" -eq 1 ]]; then
+		hold_scope="trusted PR-only scope"
+		hold_tokens="pr-only"
+	fi
+	if _pr_body_declares_runtime_pending "$pr_body"; then
 		hold_scope="${hold_scope:+${hold_scope}; }runtime verification pending"
+		hold_tokens="${hold_tokens:+${hold_tokens},}runtime-pending"
+	fi
 	pr_number=$(_create_or_continue_pr "$continuation_pr" "$repo" "$pr_title" "$pr_body" \
 		"$origin_label" "${extra_labels[@]+"${extra_labels[@]}"}") || {
 		# GH#33381: the push already succeeded; the pushed branch is the durable
@@ -482,7 +497,7 @@ _commit_and_pr_publish() {
 		return 1
 	}
 	if [[ -n "$hold_scope" ]]; then
-		_apply_pr_only_hold "$pr_number" "$repo" "$hold_scope" || return 1
+		_apply_pr_only_hold "$pr_number" "$repo" "$hold_scope" "$hold_tokens" || return 1
 	fi
 	local macos_base=""
 	macos_base=$(_pending_runtime_comparison_base "$base_ref") || return 1
@@ -558,6 +573,12 @@ Commands:
                                  Fail closed if merging the PR head into the live base
                                  tip duplicates TODO task IDs or issue refs (GH#38703).
   wait-checks <PR> [options]     Wait with transition-only required-check output
+  verify-runtime <PR> [REPO] --testing "<evidence>" [--dry-run]
+                                 Verifier route for a runtime-pending PR (GH#39639), any
+                                 author: from a clean checkout of the exact PR head, record
+                                 runtime-verified evidence and lift hold-for-review when the
+                                 scope recorded for the current hold is runtime-pending only.
+                                 A kept hold still records the evidence. Interactive, write+.
   merge <PR> [REPO] [--squash|--merge|--rebase] [--admin] [--auto] [--body-file PATH]
                                  Gate-enforced merge (runs pre-merge-gate first).
                                  --admin / --auto pass through to gh pr merge
@@ -638,6 +659,7 @@ main() {
 	pre-merge-gate) cmd_pre_merge_gate "$@" ;;
 	prospective-todo-guard) cmd_prospective_todo_guard "$@" ;;
 	wait-checks) cmd_wait_checks "$@" ;;
+	verify-runtime) cmd_verify_runtime "$@" ;;
 	merge) cmd_merge "$@" ;;
 	record-no-release) cmd_record_no_release "$@" ;;
 	record-deployment) cmd_record_deployment "$@" ;;

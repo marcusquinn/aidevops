@@ -618,6 +618,10 @@ Each row was checked under jq 1.7.1 and 1.8.2. The portable form gives the same 
 | `--indent 0` | compact | multi-line | `-c` |
 | `trim`, `ltrim`, `rtrim`, `trimstr`, `toboolean`, `skip`, `add/1`, `@urid` | not defined | defined | avoid them while any host runs jq 1.7 |
 
+### `//` treats false as absent (all versions)
+
+`A // B` returns `B` when `A` is `null` **or `false`**. Never use it to default a boolean field: `.private // true` returns `true` for a public repository, and `.isCrossRepository // "unknown"` returns `"unknown"` for every same-repo PR. Read booleans with `.field | tostring`, then branch on the exact string. Treat `"null"` (field missing) as unknown, and fail closed where the boolean guards trust or privacy. Incidents: GH#39642 (`circuit-breaker-meta-filer.sh` withheld context for public repos), PR #39641 (`verify-runtime` would have refused every same-repo PR). A stub that returns post-`--jq` text hides this class, so let the stub run the real filter over raw JSON.
+
 ### Enforcement
 
 - `.agents/scripts/jq-binding-precedence-check.py` rejects a binding after an operator in `.sh`, `.bash`, `.jq`, `.py`, `.yml` and `.yaml` files and in extensionless shell or Python scripts. It is a text scan, not a jq parser.
