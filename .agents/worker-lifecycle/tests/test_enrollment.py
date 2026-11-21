@@ -22,6 +22,7 @@ from worker_lifecycle.admission import AdmissionClosed, AdmissionRegistry
 from worker_lifecycle.cleanup_plan import prepare_cleanup
 from worker_lifecycle.creation import WorktreeSpec, create_worktree
 from worker_lifecycle.enrollment import GenerationEnrollment, MARKER, _git_directory
+from worker_lifecycle.rebind import rebind_moved_admin
 from worker_lifecycle.registry import main
 from worker_lifecycle.runtime import adapter_for
 from worker_lifecycle.session import admit_session, relinquish_session
@@ -934,14 +935,14 @@ class EnrollmentContract(unittest.TestCase):
         self.git("-C", str(moved), "worktree", "repair", str(self.tree))
         with self.assertRaisesRegex(StoreConflict, "^generation-directory-mismatch$"):
             self.enrollment.inspect(self.tree)
-        result = self.enrollment.rebind_moved_admin(self.tree)
+        result = rebind_moved_admin(self.store, self.tree)
         self.assertTrue(result["rebound"])
         self.assertFalse(result["cleanup_authorized"])
         self.assertEqual(self.enrollment.inspect(self.tree), generation)
         with self.store.connection() as connection:
             types = [json.loads(row["payload"])["type"] for row in connection.execute("SELECT payload FROM events")]
         self.assertIn("rebind-admin-directory", types)
-        self.assertFalse(self.enrollment.rebind_moved_admin(self.tree)["rebound"])
+        self.assertFalse(rebind_moved_admin(self.store, self.tree)["rebound"])
 
     def test_copied_tree_still_refuses_and_rebind_rejects_changed_inode(self):
         self.enrollment.resolve(self.tree, create=True)
@@ -954,12 +955,12 @@ class EnrollmentContract(unittest.TestCase):
         value["directory"] += 1
         marker.write_text(json.dumps(value))
         with self.assertRaisesRegex(StoreConflict, "^generation-directory-mismatch$"):
-            self.enrollment.rebind_moved_admin(self.tree)
+            rebind_moved_admin(self.store, self.tree)
         # A copy at a new path keeps its old admin backlink and is never re-bound.
         copy = self.root / "copy"
         shutil.copytree(self.tree, copy, symlinks=True)
         with self.assertRaises((ValueError, StoreConflict)):
-            self.enrollment.rebind_moved_admin(copy)
+            rebind_moved_admin(self.store, copy)
 
 
 if __name__ == "__main__":
