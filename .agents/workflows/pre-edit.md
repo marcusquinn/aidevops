@@ -88,6 +88,12 @@ Linked worktrees share Git hooks with their canonical repository through
 `git rev-parse --git-common-dir`. Never inspect that external `.git/hooks`
 directory with generic Read, Glob, Edit, or Write tools.
 
+The write policy denies file-tool writes to Git metadata with
+`ACTION_REQUIRED=use_git_commands_for_git_metadata` (GH#39582). This covers any
+Git directory (including case aliases such as `.GIT/`), a linked worktree's
+`.git` gitfile and nested `.git` paths. Change it with Git commands or the
+aidevops hook installers.
+
 Use `aidevops_hook_status` to inspect known pre-commit and pre-push marker
 status for the current worktree. The tool is repository-bound for headless
 workers and returns statuses only, never hook content or filesystem paths.

@@ -22,6 +22,7 @@ from typing import Any
 
 from canonical_branch_policy import resolve_branch
 from canonical_write_policy_paths import (
+    GIT_METADATA,
     Classification,
     canonical_git_workspace_root as _canonical_git_workspace_root,
     classify_location,
@@ -29,6 +30,7 @@ from canonical_write_policy_paths import (
     git_symlink_origin as _git_symlink_origin,
     git_workspace_root_from_environment,
     is_within_workspace as _is_within_workspace,
+    names_git_metadata as _names_git_metadata,
     repository_within_workspace as _repository_within_workspace,
     target_probe as _target_probe,
 )
@@ -43,6 +45,13 @@ POLICY_VERSION = "canonical-write-policy-v3"
 CANONICAL_RUNTIME_ALLOW_REASON = (
     "canonical gitignored runtime path is allowlisted by the ignored "
     ".aidevops.json canonical_write_allow setting"
+)
+
+
+GIT_METADATA_ACTION = "use_git_commands_for_git_metadata"
+GIT_METADATA_REASON = (
+    "Git metadata (hooks, config, refs, gitfiles) is not writable through "
+    "file tools; use Git commands or the aidevops hook installers"
 )
 
 
@@ -127,6 +136,10 @@ def check_write(cwd: str, file_path: str) -> dict[str, Any]:
         else _is_within_workspace(cwd, workspace_root)
     )
 
+    git_metadata_target = target.classification == GIT_METADATA or (
+        target.inside_git and _names_git_metadata(target.repo_root, target_probe)
+    )
+
     runtime_allow = "not-applicable"
     if target.classification == "unknown":
         decision = "deny"
@@ -135,6 +148,11 @@ def check_write(cwd: str, file_path: str) -> dict[str, Any]:
         decision, reason, runtime_allow = _canonical_write_decision(
             target, target_probe, cwd, file_path
         )
+    elif git_metadata_target:
+        # GH#39582: hooks, config and refs change only through Git commands
+        # or the sanctioned hook installers, never through file tools.
+        decision = "deny"
+        reason = GIT_METADATA_REASON
     elif symlink_workspace_escape:
         decision = "deny"
         reason = (
@@ -165,11 +183,15 @@ def check_write(cwd: str, file_path: str) -> dict[str, Any]:
         "git_workspace_root": workspace_root,
         "decision": decision,
         "reason": reason,
-        "action": _write_action(
-            decision,
-            cross_repository_target,
-            symlink_workspace_escape,
-            not context_within_workspace,
+        "action": (
+            GIT_METADATA_ACTION
+            if decision == "deny" and git_metadata_target
+            else _write_action(
+                decision,
+                cross_repository_target,
+                symlink_workspace_escape,
+                not context_within_workspace,
+            )
         ),
         "canonical_runtime_allow": runtime_allow,
         "context": asdict(context),

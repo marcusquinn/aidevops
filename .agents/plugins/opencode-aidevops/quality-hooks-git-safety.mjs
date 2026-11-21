@@ -24,6 +24,15 @@ import {
 export { bindActiveScriptsDir } from "./quality-hooks-full-loop-trust.mjs";
 export { checkArgvSafetyGate } from "./quality-hooks-command-policy.mjs";
 
+// Known canonical-write deny actions; anything else falls back to the
+// linked-worktree remedy so a policy payload cannot inject guidance text.
+const DENY_ACTION_GUIDANCE = Object.freeze({
+  run_session_inside_git_workspace:
+    "run_session_inside_git_workspace (the linked worktree already exists; restart the session from inside the Git workspace, the repository or its worktree)",
+  // GH#39582: Git metadata changes go through Git or the hook installers.
+  use_git_commands_for_git_metadata: "use_git_commands_for_git_metadata",
+});
+
 function normaliseToolName(tool) {
   if (typeof tool !== "string") return "";
   return tool
@@ -135,9 +144,7 @@ export function checkCanonicalWriteSafetyGate(
     throw new Error("BLOCKED: canonical-write policy returned malformed output");
   }
   if (result.decision !== "allow") {
-    const action = result.action === "run_session_inside_git_workspace"
-      ? "run_session_inside_git_workspace (the linked worktree already exists; restart the session from inside the Git workspace, the repository or its worktree)"
-      : "create_or_use_linked_worktree";
+    const action = DENY_ACTION_GUIDANCE[result.action] ?? "create_or_use_linked_worktree";
     throw new Error(
       `BLOCKED by canonical write policy: ${result.reason || "invalid policy response"}. ACTION_REQUIRED=${action}`,
     );

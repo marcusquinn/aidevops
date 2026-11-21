@@ -123,8 +123,17 @@ def _process_identity(pid: int) -> str:
     return " ".join(result.stdout.split())
 
 
-def _direct_write_deny(reason: str) -> dict:
+_DEFAULT_WRITE_ACTION = "create_or_use_linked_worktree"
+# Only known policy actions are echoed; GH#39582 adds the Git-metadata remedy.
+_KNOWN_WRITE_ACTIONS = frozenset(
+    {_DEFAULT_WRITE_ACTION, "use_git_commands_for_git_metadata"}
+)
+
+
+def _direct_write_deny(reason: str, action: str = _DEFAULT_WRITE_ACTION) -> dict:
     """Build the Claude Code deny payload for a direct file mutation."""
+    if action not in _KNOWN_WRITE_ACTIONS:
+        action = _DEFAULT_WRITE_ACTION
     return {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -132,7 +141,7 @@ def _direct_write_deny(reason: str) -> dict:
             "permissionDecisionReason": (
                 "BLOCKED by canonical write policy\n\n"
                 f"Reason: {reason}\n\n"
-                "ACTION_REQUIRED=create_or_use_linked_worktree"
+                f"ACTION_REQUIRED={action}"
             ),
         }
     }
@@ -172,7 +181,8 @@ def _check_canonical_write(
         )
         return _check_session_owner(paths, session_id)
     return _direct_write_deny(
-        payload.get("reason", "canonical-write policy returned an invalid response")
+        payload.get("reason", "canonical-write policy returned an invalid response"),
+        str(payload.get("action", _DEFAULT_WRITE_ACTION)),
     )
 
 
