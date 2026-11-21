@@ -29,7 +29,7 @@ Evidence (2026-11-21, `marcusquinn/aidevops`):
 
 ## Acceptance
 
-- A comment whose body starts with `/oc …` or contains ` /opencode …` mid-line still runs Security Validation.
+- A comment whose body starts with `/oc …`, or contains `/opencode …` after a space or tab mid-line, still runs Security Validation.
 - A signed comment with no command (only the `[OpenCode](https://opencode.ai)` footer) creates a run whose jobs are all skipped.
 - No `OpenCode AI Agent` run is cancelled by concurrency before its jobs are evaluated; only the `opencode-agent` job serializes.
 - `bash .agents/scripts/tests/test-opencode-agent-workflow-security.sh`, `actionlint` (if installed) and `shellcheck .agents/scripts/opencode-github-setup-helper.sh` pass.
