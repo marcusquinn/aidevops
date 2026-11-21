@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Regression coverage for GH#30926 unchanged terminal-blocker suppression.
+# GH#39538: real-timeout bounded-intake cases dominate: 215s idle, 527s on a
+# loaded macOS host, beyond the affected-tests helper's 240s default.
+# aidevops:suite-timeout=900
 
 set -euo pipefail
 
@@ -747,7 +750,9 @@ ${trigger_line}"
 	[[ "$((next - now))" -ge 86000 && "$((next - now))" -le 86400 ]] || return 1
 	_tbtr_record_write owner/repo 42 "$(_tbtr_record_read owner/repo 42 | jq -c '.next_at = 1')" || return 1
 	_tbtr_issue owner/repo 42 u3 runner-a true true true >/dev/null || return 1
-	next=$(_tbtr_record_read owner/repo 42 | jq -r '.next_at')
+	# GH#39538: sample the clock after the revisit, as above; a sample taken
+	# before it fails whenever a second boundary falls in between.
+	next=$(_tbtr_record_read owner/repo 42 | jq -r '.next_at') now=$(date +%s)
 	[[ "$((next - now))" -ge 172000 && "$((next - now))" -le 172800 ]] || return 1
 	_tbtr_record_write owner/repo 42 "$(_tbtr_record_read owner/repo 42 | jq -c '.next_at = 1')" || return 1
 	decision_reply=""
@@ -842,8 +847,47 @@ _trigger_revisit_pass_cases() (
 	return 0
 )
 
+# GH#39572: the real _tbtr_decide accepts a paraphrased evidence sentence when
+# `quote` is an exact bundle string; a fabricated quote is rejected. The
+# linked-ref projection carries PR merge state.
+_trigger_revisit_decide_cases() (
+	local stub_dir="${TEST_ROOT}/tbtr-decide" bundle="" out="" rc=0 gh_item=""
+	local HOME="$TEST_ROOT" AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp"
+	# shellcheck source=../terminal-blocker-trigger-revisit.sh
+	source "${SCRIPT_DIR}/terminal-blocker-trigger-revisit.sh"
+	_TBTR_LOADED=1
+	mkdir -p "$stub_dir" || return 1
+	printf '#!/usr/bin/env bash\ncat >/dev/null\ncat "%s/reply.json"\n' "$stub_dir" >"${stub_dir}/ai-research-helper.sh"
+	chmod +x "${stub_dir}/ai-research-helper.sh" || return 1
+	_TBTR_DIR="$stub_dir"
+	timeout() { shift; "$@"; }
+	bundle='{"trigger":"Merge of #7","linked_issues":[{"number":7,"state":"closed","state_reason":"completed","closed_at":"2026-02-03T04:05:06Z"}]}'
+	printf '%s\n' '{"decision":"trigger_met","quote":"2026-02-03T04:05:06Z","evidence":"Issue 7 was closed as completed after the hold."}' >"${stub_dir}/reply.json"
+	out=$(_tbtr_decide "$bundle") || return 1
+	[[ "$out" == $'trigger_met\t2026-02-03T04:05:06Z' ]] || return 1
+	printf '%s\n' '{"decision":"trigger_met","quote":"2030-01-01T00:00:00Z","evidence":"made up"}' >"${stub_dir}/reply.json"
+	rc=0; _tbtr_decide "$bundle" >/dev/null || rc=$?
+	[[ "$rc" == 1 ]] || return 1
+	printf '%s\n' '{"decision":"trigger_met","evidence":"2026-02-03T04:05:06Z"}' >"${stub_dir}/reply.json"
+	rc=0; _tbtr_decide "$bundle" >/dev/null || rc=$?
+	[[ "$rc" == 1 ]] || return 1
+	printf '%s\n' '{"decision":"still_pending","quote":"","evidence":""}' >"${stub_dir}/reply.json"
+	out=$(_tbtr_decide "$bundle") || return 1
+	[[ "$out" == $'still_pending\t' ]] || return 1
+	printf '%s\n' '{"decision":"not_external","evidence":""}' >"${stub_dir}/reply.json"
+	out=$(_tbtr_decide "$bundle") || return 1
+	[[ "$out" == $'not_external\t' ]] || return 1
+	# A merged PR ref carries merged_at and is_pull_request in the bundle.
+	gh_item='{"number":9,"title":"t","state":"closed","state_reason":null,"closed_at":"2026-02-03T04:05:06Z","pull_request":{"merged_at":"2026-02-03T04:05:05Z"}}'
+	gh() { [[ "$3" == --jq ]] || return 1; jq -c "$4" <<<"$gh_item"; return 0; }
+	out=$(_tbtr_evidence owner/repo '{"title":"x","state":"open"}' '[]' 'PR #9 merged' 2026-01-01T00:00:00Z) || return 1
+	jq -e '.linked_issues[0] | .is_pull_request == true and .merged_at == "2026-02-03T04:05:05Z"' <<<"$out" >/dev/null || return 1
+	return 0
+)
+
 test_external_trigger_revisit() {
 	local status=0
+	_trigger_revisit_decide_cases || status=1
 	_trigger_revisit_cases || status=1
 	_trigger_revisit_pass_cases || status=1
 	print_result "external_trigger_pending holds get one revisit outcome per interval; other classes are never revisited and are memoized; passes search once per owner, walk least-recently-checked first and withhold late AI" "$status"

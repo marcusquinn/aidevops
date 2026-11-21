@@ -25,6 +25,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from marketing_action_ceremony import plan_operation_lines, receipt_inverse_lines
+
 APPROVAL_SCHEMA = "aidevops.marketing-action-approval/v2"
 MAX_APPROVAL_TTL_SECONDS = 900
 MAX_RECORD_BYTES = 16_384
@@ -36,10 +38,17 @@ CONFIRMATION = "APPROVE"
 # Plan schema -> plan fields that every approval must bind exactly.
 PLAN_BINDINGS: Dict[str, Tuple[str, ...]] = {
     "aidevops.marketing-action-plan/v1": ("project_root", "worktree_identity"),
+    "aidevops.google-ads-action-plan/v1": ("customer_id",),
 }
 # Receipt schema -> plan schema it was produced from (rollback approvals).
 RECEIPT_PLAN_SCHEMAS: Dict[str, str] = {
     "aidevops.marketing-action-receipt/v1": "aidevops.marketing-action-plan/v1",
+    "aidevops.google-ads-action-receipt/v1": "aidevops.google-ads-action-plan/v1",
+}
+# Extra plan fields shown to the operator before the typed confirmation.
+PLAN_SUMMARY_FIELDS: Dict[str, Tuple[str, ...]] = {
+    "aidevops.marketing-action-plan/v1": ("branch",),
+    "aidevops.google-ads-action-plan/v1": ("login_customer_id", "expires_at", "limits"),
 }
 RECORD_FIELDS = {
     "schema", "operation", "plan_schema", "plan_digest", "binding", "action_set", "owner",
@@ -304,7 +313,7 @@ def verify(
     _require(record["operation"] == operation, "approval operation does not match")
     _require(record["plan_schema"] == plan_schema, "approval plan schema does not match")
     _require(record["plan_digest"] == plan["plan_digest"], "approval plan digest does not match")
-    _require(record["binding"] == _binding(plan, plan_schema), "approval project or worktree does not match")
+    _require(record["binding"] == _binding(plan, plan_schema), "approval binding (project/worktree or account) does not match")
     _require(record["action_set"] == plan["action_set"], "approval action set does not match")
     _require(record["receipt_digest"] == receipt_digest, "approval receipt digest does not match")
     _require(record["owner"] == owner, "approval owner does not match")
@@ -361,8 +370,14 @@ def _plan_subject(plan: Any) -> Tuple[Dict[str, Any], str, List[str]]:
     actions = plan.get("actions")
     _require(isinstance(actions, list) and all(isinstance(item, dict) for item in actions), "plan actions are invalid")
     lines = [f"Plan schema: {schema}", f"Plan digest: {plan['plan_digest']}", f"Owner: {plan.get('owner')}"]
-    lines += [f"{field}: {plan.get(field)}" for field in PLAN_BINDINGS[schema] + ("branch",) if field in plan]
+    shown = PLAN_BINDINGS[schema] + PLAN_SUMMARY_FIELDS.get(schema, ())
+    lines += [f"{field}: {json.dumps(plan.get(field), sort_keys=True)}" for field in shown if field in plan]
     lines.append(f"Authorised action set: {json.dumps(plan.get('action_set'))}")
+    if "operations" in plan:  # remote adapters: show the exact payload apply sends, not prose
+        operations = plan.get("operations")
+        _require(isinstance(operations, list) and len(operations) == len(actions),
+                 "plan operations do not match its actions")
+        return plan, schema, lines + plan_operation_lines(actions, operations)
     for item in actions:
         if item.get("status") == "ready":
             # apply replaces exactly `old` with `new` once in `path` after verifying before_sha256.
@@ -378,16 +393,26 @@ def _receipt_subject(receipt: Any) -> Tuple[Dict[str, Any], str, List[str], str]
     _require(isinstance(receipt, dict), "receipt must be an object")
     plan_schema = RECEIPT_PLAN_SCHEMAS.get(receipt.get("schema", ""))
     _require(plan_schema is not None, "receipt schema is not approvable")
-    _require(receipt.get("status") in {"applied", "rolled_back"}, "receipt is not rollback-ready")
-    files = receipt.get("files")
-    _require(isinstance(files, list) and all(isinstance(item, dict) for item in files), "receipt files are invalid")
+    # rolling_back: a remote adapter persisted rollback intent and is reconciling an interrupted rollback.
+    _require(receipt.get("status") in {"applied", "rolling_back", "rolled_back"}, "receipt is not rollback-ready")
     subject = {field: receipt.get(field) for field in ("plan_digest", "owner") + PLAN_BINDINGS[plan_schema]}
-    subject["action_set"] = [item.get("action_id") for item in files]
     lines = [f"Rollback of plan: {receipt.get('plan_digest')}", f"Owner: {receipt.get('owner')}"]
     lines += [f"{field}: {receipt.get(field)}" for field in PLAN_BINDINGS[plan_schema]]
-    lines.append(f"Authorised action set: {json.dumps(subject['action_set'])}")
-    lines += [f"- RESTORE {item.get('action_id')} {item.get('path')} (to {item.get('before_sha256')})"
-              for item in files]
+    if "actions" in receipt:  # remote adapters record their own ordered action set
+        actions = receipt.get("actions")
+        _require(isinstance(actions, list) and all(isinstance(item, dict) for item in actions),
+                 "receipt actions are invalid")
+        subject["action_set"] = receipt.get("action_set")
+        lines.append(f"Authorised action set: {json.dumps(subject['action_set'])}")
+        lines += receipt_inverse_lines(actions)
+    else:
+        files = receipt.get("files")
+        _require(isinstance(files, list) and all(isinstance(item, dict) for item in files),
+                 "receipt files are invalid")
+        subject["action_set"] = [item.get("action_id") for item in files]
+        lines.append(f"Authorised action set: {json.dumps(subject['action_set'])}")
+        lines += [f"- RESTORE {item.get('action_id')} {item.get('path')} (to {item.get('before_sha256')})"
+                  for item in files]
     return subject, plan_schema, lines, digest(receipt)
 
 

@@ -85,6 +85,19 @@ fi
 
 if [[ "${1:-}" == "pr" && "${2:-}" == "create" ]]; then
 	printf '%s\n' "$*" >"${TEST_ROOT}/calls/pr-create.argv"
+	printf 'https://github.com/owner/repo/pull/900\n'
+	exit 0
+fi
+
+# Post-create duplicate reconcile (GH#39579): TEST_RACE_PR simulates the
+# worker's own PR landing in the same window.
+if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+	printf '%s\n' "${TEST_RACE_PR:-}"
+	exit 0
+fi
+
+if [[ "${1:-}" == "pr" && "${2:-}" == "close" ]]; then
+	printf '%s\n' "$*" >"${TEST_ROOT}/calls/pr-close.argv"
 	exit 0
 fi
 
@@ -280,6 +293,34 @@ test_unconfigured_repo_falls_back_to_github_default_branch() {
 	return 0
 }
 
+test_duplicate_recovery_pr_is_closed_and_branch_kept() {
+	rm -f "${TEST_ROOT}/calls/pr-close.argv"
+	TEST_RACE_PR="777"
+	export TEST_RACE_PR
+	local rc=0
+	_attempt_orphan_recovery_pr "issue-39579" "$TEST_ROOT" "feature/auto-gh39579" "owner/repo" || rc=$?
+	unset TEST_RACE_PR
+	local argv=""
+	[[ -f "${TEST_ROOT}/calls/pr-close.argv" ]] && argv=$(<"${TEST_ROOT}/calls/pr-close.argv")
+	if [[ "$rc" -eq 0 && "$argv" == *"pr close 900"* && "$argv" == *"Duplicate of #777"* && "$argv" != *"--delete-branch"* ]]; then
+		print_result "duplicate recovery PR is closed, branch kept" 0
+		return 0
+	fi
+	print_result "duplicate recovery PR is closed, branch kept" 1 "rc=${rc} argv=${argv}"
+	return 0
+}
+
+test_no_duplicate_leaves_recovery_pr_open() {
+	rm -f "${TEST_ROOT}/calls/pr-close.argv"
+	if _attempt_orphan_recovery_pr "issue-39580" "$TEST_ROOT" "feature/auto-gh39580" "owner/repo" &&
+		[[ ! -f "${TEST_ROOT}/calls/pr-close.argv" ]]; then
+		print_result "no duplicate leaves recovery PR open" 0
+		return 0
+	fi
+	print_result "no duplicate leaves recovery PR open" 1 "recovery PR closed or create failed"
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_orphan_recovery_uses_configured_pr_base
@@ -290,6 +331,8 @@ main() {
 	test_configured_pr_base_overrides_default_branch
 	test_explicit_dispatch_pr_base_overrides_repo_config
 	test_unconfigured_repo_falls_back_to_github_default_branch
+	test_duplicate_recovery_pr_is_closed_and_branch_kept
+	test_no_duplicate_leaves_recovery_pr_open
 	teardown_test_env
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"
