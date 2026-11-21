@@ -1000,8 +1000,10 @@ class EnrollmentContract(unittest.TestCase):
         self.assertEqual(argv, ["python3", str(alias / ".." / "worker-lifecycle" / "worker-registry.py"),
                                 "--state-dir", str(configured_state),
                                 "rebind-moved-worktree", "--path", str(self.tree)])
-        rebound = subprocess.run(  # nosec B603 # parsed owned helper output, no shell execution
-            argv, env=env, capture_output=True, text=True, timeout=30, check=True,
+        rebound = subprocess.run(  # nosec B603 # nosemgrep # asserted-equal fixed argv, no shell
+            ["python3", str(alias / ".." / "worker-lifecycle" / "worker-registry.py"),
+             "--state-dir", str(configured_state),
+             "rebind-moved-worktree", "--path", str(self.tree)], env=env, capture_output=True, text=True, timeout=30, check=True,
         )
         self.assertTrue(json.loads(rebound.stdout)["rebound"])
 
