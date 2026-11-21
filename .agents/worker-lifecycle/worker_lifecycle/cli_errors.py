@@ -34,6 +34,7 @@ def error_details(error: Exception, operation: str) -> dict:
     if operation in {
         "retire-worktree", "cleanup", "cleanup-worktree", "upgrade", "retire-enrolled-only",
         "reclaim-unowned", "relinquish-session", "retire-foreign-worktree",
+        "rebind-moved-worktree",
     } and isinstance(error, StoreConflict):
         reason = str(error)
     retirement = ("retire-worktree", "cleanup", "cleanup-worktree", "retire-enrolled-only",

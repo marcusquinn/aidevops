@@ -194,6 +194,63 @@ class GenerationEnrollment:
                 raise ValueError("not-enrolled") from error
             raise
 
+    def rebind_moved_admin(self, path: Path) -> dict:
+        """Re-bind a same-installation tree whose canonical checkout moved on disk.
+
+        Only the marker's `git_directory` path string may differ. Every physical
+        proof must still hold: installation, worktree path, both inodes, the
+        registry's generation at that path, and Git's own `gitdir` backlink. A
+        copy or restore has new inodes, so it keeps refusing. Journaled, idempotent
+        and never an admission or removal right.
+        """
+        with self.store.connection() as connection:
+            AdmissionRegistry._require_schema(connection)
+        with DirectoryHandle(path) as root:
+            directory = _git_directory(path)  # also proves the gitdir backlink
+            with DirectoryHandle(directory) as admin:
+                marker = directory / MARKER
+                value = _read_marker(marker)
+                generation = value.pop("generation_id")
+                expected = {
+                    "format": 2, "installation_id": self.store.installation_id(),
+                    "path": str(path), "directory": _directory_inode(path),
+                    "git_directory": value.get("git_directory"),
+                    "git_identity": _directory_inode(directory),
+                }
+                if encode(value) != encode(expected) or not root.matches_path() or not admin.matches_path():
+                    raise StoreConflict("generation-directory-mismatch")
+                previous = value["git_directory"]
+                current = str(directory)
+                if previous == current:
+                    return {"generation_id": generation, "rebound": False, "cleanup_authorized": False}
+                if not isinstance(previous, str):
+                    raise StoreConflict("generation-directory-mismatch")
+                with self.store.connection(write=True) as connection:
+                    row = connection.execute(
+                        "SELECT path,state FROM generation_admissions WHERE generation_id=?", (generation,),
+                    ).fetchone()
+                    if row is None or row["path"] != str(path) or row["state"] not in ("open", "closed"):
+                        raise StoreConflict("generation-directory-mismatch")
+                    self.store._event(connection, str(uuid5(UUID(generation), "rebind:" + current)), {
+                        "type": "rebind-admin-directory", "generation_id": generation,
+                        "path": str(path), "from": previous, "to": current,
+                    })
+                    # Replace atomically under the write transaction; replay repairs a crash.
+                    temporary = directory / f".aidevops-generation-{uuid4()}.tmp"
+                    descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                    try:
+                        with os.fdopen(descriptor, "wb") as stream:
+                            stream.write(encode(dict(expected, git_directory=current,
+                                                     generation_id=generation)).encode("utf-8"))
+                            stream.flush()
+                            os.fsync(stream.fileno())
+                        os.replace(temporary, marker)
+                    except BaseException:
+                        temporary.unlink(missing_ok=True)
+                        raise
+                return {"generation_id": generation, "rebound": True, "from": previous,
+                        "to": current, "cleanup_authorized": False}
+
     def _has_enrollment_history(self, path: Path) -> bool:
         """Match current admission or modern historical events, not observations."""
         with self.store.connection() as connection:

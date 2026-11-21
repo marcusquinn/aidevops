@@ -108,6 +108,12 @@ repair_worktree_pointers() {
 		fi
 	done
 	printf 'REPAIRED_WORKTREE_POINTERS=%s\n' "$changed"
+	# Enrolled trees keep the old admin path in their generation marker; re-bind
+	# is a separate, journaled step that proves inodes before accepting the move.
+	for ((i = 0; i < ${#wt_paths[@]}; i++)); do
+		printf 'REBIND_FOLLOWUP: python3 %s/../worker-lifecycle/worker-registry.py rebind-moved-worktree --path %q\n' \
+			"$SCRIPT_DIR" "${wt_paths[$i]}"
+	done
 	return 0
 }
 

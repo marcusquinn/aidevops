@@ -145,7 +145,13 @@ override it. A refusal prints the registry `detail`/`status` and the next step
 - `worktree-locked`: inspect the lock reason with `git worktree list --porcelain`.
   Only when the lock is no longer needed, run `git worktree unlock PATH` on the
   listed path and retry retirement.
-- `generation-directory-mismatch`: the tree was copied from another host or
+- `generation-directory-mismatch` after the canonical checkout moved on disk
+  (same installation, same worktree path and inodes; only the marker's admin
+  path is stale): run `worker-registry.py rebind-moved-worktree --path PATH`
+  (`canonical-recovery-helper.sh repair-worktrees` prints it per tree), then
+  retry retirement. It journals the move, rewrites only that marker field, and
+  refuses a tree whose inodes, path, registry generation or Git backlink differ.
+- `generation-directory-mismatch` for a copy: the tree was copied from another host or
   restored from backup. Rescue its work first, then retire it with
   `worker-registry.py retire-foreign-worktree` (GH#37828); see
   `reference/machine-migration.md` "Retiring the copies". It needs a verified

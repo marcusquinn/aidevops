@@ -927,6 +927,40 @@ class EnrollmentContract(unittest.TestCase):
         self.assertFalse(report["cleanup_authorized"])
         self.assertEqual(self.enrollment.resolve(self.tree), generation)
 
+    def test_moved_canonical_checkout_rebinds_and_journals(self):
+        generation = self.enrollment.resolve(self.tree, create=True)
+        moved = self.root / "moved"
+        self.repo.rename(moved)
+        self.git("-C", str(moved), "worktree", "repair", str(self.tree))
+        with self.assertRaisesRegex(StoreConflict, "^generation-directory-mismatch$"):
+            self.enrollment.inspect(self.tree)
+        result = self.enrollment.rebind_moved_admin(self.tree)
+        self.assertTrue(result["rebound"])
+        self.assertFalse(result["cleanup_authorized"])
+        self.assertEqual(self.enrollment.inspect(self.tree), generation)
+        with self.store.connection() as connection:
+            types = [json.loads(row["payload"])["type"] for row in connection.execute("SELECT payload FROM events")]
+        self.assertIn("rebind-admin-directory", types)
+        self.assertFalse(self.enrollment.rebind_moved_admin(self.tree)["rebound"])
+
+    def test_copied_tree_still_refuses_and_rebind_rejects_changed_inode(self):
+        self.enrollment.resolve(self.tree, create=True)
+        moved = self.root / "moved"
+        self.repo.rename(moved)
+        self.git("-C", str(moved), "worktree", "repair", str(self.tree))
+        # A forged directory inode in the marker fails the physical-identity proof.
+        marker = _git_directory(self.tree) / MARKER
+        value = json.loads(marker.read_text())
+        value["directory"] += 1
+        marker.write_text(json.dumps(value))
+        with self.assertRaisesRegex(StoreConflict, "^generation-directory-mismatch$"):
+            self.enrollment.rebind_moved_admin(self.tree)
+        # A copy at a new path keeps its old admin backlink and is never re-bound.
+        copy = self.root / "copy"
+        shutil.copytree(self.tree, copy, symlinks=True)
+        with self.assertRaises((ValueError, StoreConflict)):
+            self.enrollment.rebind_moved_admin(copy)
+
 
 if __name__ == "__main__":
     unittest.main()

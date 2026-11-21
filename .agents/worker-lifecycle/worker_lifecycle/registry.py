@@ -184,6 +184,11 @@ def argument_parser() -> argparse.ArgumentParser:
     proof.add_argument("--repo", required=True)
     proof.add_argument("--branch", required=True)
     proof.add_argument("--receipt-created-at", required=True)
+    rebind = commands.add_parser(
+        "rebind-moved-worktree",
+        help="re-bind a same-installation tree after its canonical checkout moved; never deletes",
+    )
+    rebind.add_argument("--path", required=True, type=Path)
     for name in ("enroll", "resolve-generation"):
         enrollment = commands.add_parser(name, help="enroll or resolve a linked worktree; schema 2 required")
         enrollment.add_argument("--path", required=True, type=Path)
@@ -295,6 +300,8 @@ def _maintenance_operation(store: LifecycleRegistry, args: argparse.Namespace) -
 def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
     if args.operation in {"verify-retirement", "compact", "raise-capacity"}:
         return _maintenance_operation(store, args)
+    if args.operation == "rebind-moved-worktree":
+        return _contended("enroll", lambda: GenerationEnrollment(store).rebind_moved_admin(args.path))
     if args.operation in {"reconcile", "enroll", "create-worktree", "admit-session"}:
         upgrade_registry(store)
     if args.operation in {"cleanup", "cleanup-worktree", "retire-enrolled-only",
