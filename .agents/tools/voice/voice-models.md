@@ -38,6 +38,7 @@ tools:
 | **This file** | Voice bridge engines (EdgeTTS, macOS Say, FacebookMMS), STT summary, selection guides |
 | `tools/voice/qwen3-tts.md` | Qwen3-TTS — quality + multilingual, voice cloning, voice design |
 | `tools/voice/local-tts-models.md` | Kokoro, Dia, F5-TTS, Bark, Coqui, Piper |
+| `tools/voice/voicestudio.md` | Self-hosted VoiceStudio server shared by projects: helper CLI + MCP |
 | `tools/voice/cloud-tts-apis.md` | ElevenLabs, MiniMax, OpenAI, Google Cloud, HF Inference |
 | `tools/voice/voice-ai-models.md` | High-level TTS/STT/S2S comparison tables and decision flow |
 | `tools/voice/transcription.md` | STT models, cloud APIs, transcription pipeline |

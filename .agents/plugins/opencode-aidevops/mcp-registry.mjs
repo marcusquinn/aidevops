@@ -789,6 +789,26 @@ export function getMcpRegistry() {
       description: "Official Backblaze B2 cloud storage MCP with application-key-only launcher",
     },
     {
+      // Self-hosted VoiceStudio `/mcp` through a stdlib proxy: the bearer key is
+      // injected by `aidevops secret`, and generated audio is written to a local
+      // file instead of returning base64 WAV into the model context.
+      name: "voicestudio",
+      type: "local",
+      command: [join(homedir(), ".aidevops", "agents", "scripts", "voicestudio-helper.sh"), "mcp"],
+      eager: false,
+      toolPattern: "voicestudio_*",
+      globallyEnabled: false,
+      activationAgent: "voicestudio",
+      agentSource: ["tools", "voice", "voicestudio.md"],
+      activationGuidance: [
+        "Pass output_path for generate_speech and local file arguments (ref_audio_file, audio_file) so audio never enters the context.",
+        "For long text use `voicestudio-helper.sh speak --file` instead: it splits at sentences, retries GPU timeouts and joins the pieces.",
+        "Clone only voices the user supplied or approved for this use; disconnect when the speech task is complete.",
+      ],
+      modelTier: "simple",
+      description: "Self-hosted VoiceStudio TTS, transcription and voice cloning (key from aidevops secrets)",
+    },
+    {
       // Self-hosted management `/api/mcp` bridged by pinned mcp-remote; the
       // token is injected by `aidevops secret`. The exact allowlist mirrors the
       // read-only NB_MCP_TOOLS set, so write tools stay denied client-side even
