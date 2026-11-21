@@ -10,7 +10,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 HELPER="${SCRIPT_DIR}/../worktree-helper.sh"
-REAL_GIT=$(command -p -v git)
+REAL_GIT=$(command -p -v git 2>/dev/null || command -v git) || {
+	printf 'FAIL git not found on PATH\n' >&2
+	exit 1
+}
 ROOT=$(mktemp -d)
 trap 'rm -rf "$ROOT"' EXIT
 

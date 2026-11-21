@@ -225,6 +225,9 @@ assert count == 0, count
 assert repaired == config, repaired
 "
 
+have_yaml=1
+python3 -c 'import yaml' >/dev/null 2>&1 || have_yaml=0
+
 _info "Test 10: sync repairs existing profiles even when no new profile is needed"
 tmp_root="$(mktemp -d)"
 trap 'rm -rf "${tmp_root}"' EXIT
@@ -258,8 +261,10 @@ with open(tabby_config, "w") as handle:
       cwd: {repo_path}
 """)
 PY
-sync_output=$(PYTHONPATH="${REPO_ROOT}/.agents/scripts" python3 "${HELPER}" --repos-json "${repos_json}" --tabby-config "${tabby_config}")
-if [[ "${sync_output}" == *"Repaired 1 existing Tabby profile(s)."* ]] && grep -q -- "exec aidevops opencode --tabby-shell" "${tabby_config}" && ! grep -q -- "TABBY_AUTORUN: opencode" "${tabby_config}"; then
+sync_output=""
+if ((have_yaml == 0)); then
+	_info "SKIP: host python3 has no PyYAML module; sync repair check skipped"
+elif sync_output=$(PYTHONPATH="${REPO_ROOT}/.agents/scripts" python3 "${HELPER}" --repos-json "${repos_json}" --tabby-config "${tabby_config}") && [[ "${sync_output}" == *"Repaired 1 existing Tabby profile(s)."* ]] && grep -q -- "exec aidevops opencode --tabby-shell" "${tabby_config}" && ! grep -q -- "TABBY_AUTORUN: opencode" "${tabby_config}"; then
 	_pass "sync repairs existing broken profile"
 else
 	_fail "sync did not repair existing profile: ${sync_output}"
@@ -281,9 +286,6 @@ resolved=$(HOME="${tmp_root}" XDG_CONFIG_HOME="${config_home}" TABBY_CONFIG="${e
 
 resolved=$(HOME="${tmp_root}" TABBY_CONFIG='' TABBY_CONFIG_DIRECTORY='' bash "${TABBY_HELPER}" config-path Darwin)
 [[ "$resolved" == "${tmp_root}/Library/Application Support/tabby/config.yaml" ]] && _pass "macOS default preserved" || _fail "macOS default mismatch: ${resolved}"
-
-have_yaml=1
-python3 -c 'import yaml' >/dev/null 2>&1 || have_yaml=0
 
 _info "Test 12: sync converts inline empty profiles and keeps valid YAML"
 inline_config="${tmp_root}/inline-empty.yaml"
@@ -322,7 +324,9 @@ _info "Test 14: malformed source is rejected without modification"
 malformed_config="${tmp_root}/malformed.yaml"
 printf 'version: 8\nprofiles: []\n  - name: broken\ngroups: []\n' >"${malformed_config}"
 malformed_before=$(shasum -a 256 "${malformed_config}" | cut -d ' ' -f 1)
-if PYTHONPATH="${REPO_ROOT}/.agents/scripts" python3 "${HELPER}" --repos-json "${repos_json}" --tabby-config "${malformed_config}" --status-only >/dev/null 2>&1; then
+if ((have_yaml == 0)); then
+	_info "SKIP: malformed-source check needs host PyYAML (not installed)"
+elif PYTHONPATH="${REPO_ROOT}/.agents/scripts" python3 "${HELPER}" --repos-json "${repos_json}" --tabby-config "${malformed_config}" --status-only >/dev/null 2>&1; then
 	_fail "malformed status unexpectedly succeeded"
 else
 	malformed_after=$(shasum -a 256 "${malformed_config}" | cut -d ' ' -f 1)
