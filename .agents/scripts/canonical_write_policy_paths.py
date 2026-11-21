@@ -92,9 +92,8 @@ def names_git_metadata(repo_root: str, target_path: str) -> bool:
     return any(fold_path_component(part) == ".git" for part in parts)
 
 
-def classify_location(raw_path: str) -> Classification:
-    """Classify a path as canonical, linked, Git metadata, outside Git, or unknown."""
-    probe_path = _existing_probe_path(raw_path)
+def _non_worktree_classification(probe_path: Path) -> Classification | None:
+    """Classify a probe outside any work tree; None when it is inside one."""
     try:
         inside = git_output(probe_path, "rev-parse", "--is-inside-work-tree")
         in_git_dir = (
@@ -103,17 +102,28 @@ def classify_location(raw_path: str) -> Classification:
         )
     except RuntimeError as exc:
         return Classification("unknown", False, reason=str(exc))
-    if in_git_dir:
-        # GH#39582: Git reports its own directory as outside the work tree;
-        # hooks, config and refs there are not ordinary outside paths.
-        return Classification(
-            GIT_METADATA, False, reason="path is inside a Git directory"
-        )
-    if inside != "true":
-        return Classification(
-            "outside", False, reason="path is outside a Git worktree"
-        )
+    if inside == "true":
+        return None
+    # GH#39582: Git reports its own directory as outside the work tree;
+    # hooks, config and refs there are not ordinary outside paths.
+    return (
+        Classification(GIT_METADATA, False, reason="path is inside a Git directory")
+        if in_git_dir
+        else Classification("outside", False, reason="path is outside a Git worktree")
+    )
 
+
+def classify_location(raw_path: str) -> Classification:
+    """Classify a path as canonical, linked, Git metadata, outside Git, or unknown."""
+    probe_path = _existing_probe_path(raw_path)
+    outside = _non_worktree_classification(probe_path)
+    if outside is not None:
+        return outside
+    return _worktree_classification(probe_path)
+
+
+def _worktree_classification(probe_path: Path) -> Classification:
+    """Classify a probe inside a work tree as canonical, linked, or unknown."""
     try:
         values = _repository_probes(probe_path)
     except RuntimeError as exc:
