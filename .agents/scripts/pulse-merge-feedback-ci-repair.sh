@@ -448,9 +448,8 @@ _dispatch_ci_fix_worker() {
 		return 0
 	fi
 
-	# t3225: Also collect raw failing check NAMES (one per line) for
-	# pattern classification. Failure to collect names is non-fatal — we
-	# fall back to the pre-t3225 behaviour (no pattern guidance block).
+	# t3225: raw failing check names (one per line) drive pattern classification;
+	# missing names are non-fatal and only omit the pattern guidance block.
 	if [[ -n "$failing_names" ]]; then
 		classification_output=$(_classify_ci_failures_by_pattern "$failing_names" 2>/dev/null) || classification_output=""
 	fi
