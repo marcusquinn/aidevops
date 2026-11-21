@@ -49,21 +49,13 @@ FIXTURE_GIT_ENV = dict(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GI
                        GIT_COMMITTER_EMAIL="fixture@example.invalid", LC_ALL="C")
 
 
-def fixture_git():
-    """Native Git for fixture setup and test-side assertions only (GH#39560).
-
-    Helpers under test still resolve `git` from PATH, including an installed
-    policy shim, so product verdicts keep their shim coverage. Fixture-owned
-    temporary repositories gain nothing from the shim's per-call guard, which
-    costs several extra process launches for every test-side Git call.
-    """
-    try:
-        return native_git.real_git()
-    except native_git.NativeGitUnavailable:
-        return "git"
-
-
-FIXTURE_GIT = fixture_git()
+# Native Git for fixture setup and test-side assertions only (GH#39560).
+# Helpers under test still resolve `git` from PATH, including an installed
+# policy shim, so product verdicts keep their shim coverage. Fixture-owned
+# temporary repositories gain nothing from the shim's per-call guard, which
+# costs several extra process launches for every test-side Git call. Without
+# native Git the shim cannot run either, so resolution failure stops the suite.
+FIXTURE_GIT = native_git.real_git()
 
 
 class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, MergeCases,
