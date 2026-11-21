@@ -1142,7 +1142,10 @@ _worktree_is_ref_update_race() {
 	*"incorrect old value provided"*) return 0 ;;
 	# GH#39663: Git 2.43 form. Requires the remote-tracking prefix and
 	# "but expected"; a bare "cannot lock ref" may be a stale .lock file.
-	*"cannot lock ref 'refs/remotes/origin/"*"but expected"*) return 0 ;;
+	# The reason must follow the quoted ref immediately, so "but expected"
+	# inside a stale-lock path is not misclassified.
+	*"cannot lock ref 'refs/remotes/origin/"*"': is at "*" but expected "*) return 0 ;;
+	*"cannot lock ref 'refs/remotes/origin/"*"': reference is missing but expected "*) return 0 ;;
 	*) return 1 ;;
 	esac
 }
