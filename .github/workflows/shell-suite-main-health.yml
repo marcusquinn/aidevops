@@ -47,6 +47,14 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq ripgrep
           rg --version | head -n 1
+          # GH#39718: schema suites `require("ajv/dist/2020")`; the root manifest pins
+          # the version and has no lockfile, so install only that exact version into a
+          # runner-temp prefix (no lifecycle scripts) and expose it through NODE_PATH.
+          ajv_version="$(jq -r '.dependencies.ajv // .devDependencies.ajv' package.json)"
+          deps_dir="${RUNNER_TEMP}/suite-deps"
+          mkdir -p "$deps_dir"
+          npm install --prefix "$deps_dir" --ignore-scripts --no-audit --no-fund "ajv@${ajv_version}"
+          echo "NODE_PATH=${deps_dir}/node_modules" >> "$GITHUB_ENV"
           git config --global user.name "aidevops-ci"
           git config --global user.email "ci@aidevops.invalid"
 

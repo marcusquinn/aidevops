@@ -193,11 +193,32 @@ if args.command == "all":
     # t19150: scheduled main-health mode: every root suite, no cap, no base comparison.
     # Sourced-only modules (no standalone entry) are skipped; their root suites exercise them.
     # Dual-use suites (sourced AND runnable: top-level main/exit or a BASH_SOURCE guard) stay.
-    standalone = re.compile(r"^(?:main\b|exit\b)|BASH_SOURCE\[0\]", re.M)
+    # GH#39718: only real entry points count. Heredoc bodies (stub scripts ending in
+    # `exit`), path derivation from BASH_SOURCE[0], and the `[[ BASH_SOURCE == $0 ]] &&
+    # set -euo pipefail` idiom do not make a sourced case module runnable on its own;
+    # running such a module alone fails with `command not found` and read as red.
+    entry_line = re.compile(r"^(?:main\b|exit\b)")
+    guard_line = re.compile(r"BASH_SOURCE\[0\]\}?\"?\s*(?:==|!=)\s*\"?\$\{?0\}?\"?")
+    heredoc_start = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+    def has_standalone_entry(text):
+        terminator = None
+        for line in text.splitlines():
+            if terminator is not None:
+                if line.strip() == terminator:
+                    terminator = None
+                continue
+            if entry_line.match(line):
+                return True
+            if guard_line.search(line) and not re.search(r"&&\s*set\s+-", line):
+                return True
+            opened = heredoc_start.search(line)
+            if opened:
+                terminator = opened.group(2)
+        return False
     ordered = []
     for t in tests:
         rel = str(t.relative_to(root))
-        if rel not in sourcers or standalone.search(test_bytes[rel].decode(errors="ignore")):
+        if rel not in sourcers or has_standalone_entry(test_bytes[rel].decode(errors="ignore")):
             ordered.append(rel)
     args.max = max(args.max, len(ordered))
     args.compare_base = False
