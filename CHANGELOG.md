@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.257] - 2026-11-21
+
+### Changed
+
+- Maintenance: mark t19246 complete (pr:#39678 completed:2026-11-21) (#39679)
+
+### Fixed
+
+- defer deploy reconciliation for supervising wrappers with a fresh LLM lock
+- judge LLM-lock owner by lock hold age, not wrapper process age (t19248)
+- restore auto-dispatch on consolidated rearm release and age stranded issues
+
 ## [3.39.256] - 2026-11-21
 
 ### Added
