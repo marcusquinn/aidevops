@@ -308,7 +308,7 @@ If the merge command reports that required checks are pending, do not run raw `g
 full-loop-helper.sh wait-checks "$PR_NUMBER" --repo "$REPO"
 ```
 
-Exit `8` remains pending and must resume through the same bounded wait path; exit `1` is terminal check failure and requires exact failed-check diagnostics; exit `2` is indeterminate API failure and must not be treated as success. Exit `9` (`WAIT_CHECKS=draft-required-missing`) means required checks remain missing or skipped on an unchanged draft; run `gh pr ready <PR>`, then wait again when readying is authorized.
+Exit `8` remains pending and must resume through the same bounded wait path; exit `1` is terminal check failure and requires exact failed-check diagnostics; exit `2` is indeterminate API failure and must not be treated as success. Exit `9` (`WAIT_CHECKS=draft-required-missing`) means required checks remain missing or skipped on an unchanged draft; run `gh pr ready <PR>`, then wait again when readying is authorized. Exit `10` (`WAIT_CHECKS=conflict-required-missing`) means required checks are missing because the PR conflicts with its base (GitHub starts no `pull_request` workflows); rebase onto `origin/<base>`, push, then wait again. Treat it as actionable, not a CI failure.
 
 An unresolved review-bot thread blocks merge even after a reply (GH#27137). Read and verify each finding, then fix it or classify it under `reference/review-bot-gate.md`. List threads with `pr-review-thread-response-scanner.sh scan-pr "$REPO" "$PR_NUMBER"` (thread IDs are the `thread_id:url` pairs in column 3), then use its `reply "$REPO" <thread_id> <body_file>` and `resolve "$REPO" <thread_id>` subcommands, never raw `gh api` mutations.
 

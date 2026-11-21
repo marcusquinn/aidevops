@@ -133,6 +133,16 @@ assert_eq "draft skipped required checks return 9" "9" "$draft_skipped_rc"
 assert_eq "ready missing checks remain pending" "8" "$ready_missing_rc"
 assert_contains "ready missing checks report timeout" "TIMEOUT:" "$ready_missing_output"
 
+set +e
+conflict_output=$(AIDEVOPS_GH_CHECKS_TEST_MERGEABLE=CONFLICTING AIDEVOPS_GH_CHECKS_EMPTY_SETTLE_SECONDS=0 AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS=$'Format\nLint' run_fixture_wait "$draft_skipped_dir" --timeout 5 --heartbeat 1 2>&1)
+conflict_rc=$?
+unknown_output=$(AIDEVOPS_GH_CHECKS_TEST_MERGEABLE=UNKNOWN AIDEVOPS_GH_CHECKS_EMPTY_SETTLE_SECONDS=0 AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS=$'Format\nLint' run_fixture_wait "$draft_skipped_dir" --timeout 1 --heartbeat 1 2>&1)
+unknown_rc=$?
+set -e
+assert_eq "conflicting PR with missing checks returns 10" "10" "$conflict_rc"
+assert_contains "conflict result identifies rebase" "WAIT_CHECKS=conflict-required-missing: PR 123 conflicts with main; rebase onto origin/main, push, then wait again" "$conflict_output"
+assert_eq "unknown mergeability stays pending" "8" "$unknown_rc"
+
 partial_dir="${TMPDIR_TEST}/partial"
 write_fixture "$partial_dir" 1 '[{"name":"Format","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
 set +e
