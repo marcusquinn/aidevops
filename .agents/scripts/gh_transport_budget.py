@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from gh_process_birth import process_birth
-from gh_transport_capacity import capacity_wait
+from gh_transport_capacity import capacity_wait, refund_pacing
 from gh_transport_identity import credentials_share_proven_owner, quota_owner
 from gh_transport_observation import (
     QuotaResponse,
@@ -106,6 +106,9 @@ class Budget:
         self.credential = credential or scope
         self.attributed = False
         self.birth = process_birth(os.getpid())
+        # Per-process pacing interval charged at admission, keyed by reservation.
+        self.last_pacing_charge = None
+        self.pacing_charges: dict[str, tuple[float, float]] = {}
         try:
             self._ensure_schema()
             with self.transaction():
@@ -248,9 +251,12 @@ class Budget:
             # A paced stale balance must not starve its own serialized refresh.
             # Omit only primary pacing evidence: capacity_wait still enforces
             # concurrency/secondary ceilings, and cooldown/exhaustion ran above.
+            self.last_pacing_charge = None
             reason, retry_at = capacity_wait(self, resource, None if refresh else row, total, now)
             if reason:
                 raise Deferred(reason, retryable=True, retry_at=retry_at)
+            if self.last_pacing_charge:
+                self.pacing_charges[reservation] = self.last_pacing_charge
             if refresh:
                 # A stale positive balance may be refreshed by one causally newer
                 # request. This is ordinary admitted work, never a reserve bypass.
@@ -264,9 +270,10 @@ class Budget:
             return reservation
 
     def finish(self, reservation: str, resource: str, headers: dict[str, str],
-               *, started: float, now: float | None = None) -> None:
+               *, started: float, now: float | None = None, free: bool = False) -> None:
         now = time.time() if now is None else now
         observed = _valid_observation(headers, resource, now)
+        charge = self.pacing_charges.pop(reservation, None)
         with self.transaction():
             if not observed:
                 # Uncertain execution may have spent a point. Keep its debt;
@@ -309,6 +316,8 @@ class Budget:
                         (self.scope, resource, credential, started),
                     )
             self.db.execute("DELETE FROM reservation WHERE id=?", (reservation,))
+            if free:
+                refund_pacing(self, resource, charge, observed[1], now)
         record_budget_transition(
             self,
             {"remaining": row[0], "reset": row[1]} if row else None,

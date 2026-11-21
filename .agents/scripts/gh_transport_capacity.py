@@ -88,4 +88,33 @@ def primary_wait(budget, resource, row, reserved, now):
         return PRIMARY_PACING, (slot * available - ahead * row[1]) / (available - ahead)
     budget.db.execute("INSERT OR REPLACE INTO pacing VALUES(?,?,?,?,?)",
                       (budget.scope, resource, row[1], slot + interval, row[0]))
+    # Remember exactly what this admission charged so a free response refunds
+    # that amount only (delivery reads below the floor charge a slot too).
+    budget.last_pacing_charge = (row[1], interval)
     return "", now
+
+
+def refund_pacing(budget, resource, charge, response_reset, now):
+    """Return the interval charged at admission after a free (304) response.
+
+    charge is (reset, interval) recorded when the read was admitted, or None if
+    it charged no slot (never creates a row). The refund applies only when the
+    response and the stored schedule still describe the charged window; it moves
+    pacing.retry_at back by that interval, clamped to now. Secondary-ceiling
+    history and reservations are untouched.
+    """
+    if not charge:
+        return
+    charged_reset, interval = charge
+    saved = budget.db.execute(
+        "SELECT reset,retry_at FROM pacing WHERE scope=? AND resource=?",
+        (budget.scope, resource),
+    ).fetchone()
+    if not saved or saved[0] != charged_reset or response_reset != charged_reset or charged_reset <= now:
+        return
+    refunded = max(now, saved[1] - interval)
+    if refunded < saved[1]:
+        budget.db.execute(
+            "UPDATE pacing SET retry_at=? WHERE scope=? AND resource=?",
+            (refunded, budget.scope, resource),
+        )
