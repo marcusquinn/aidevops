@@ -59,7 +59,7 @@ def ssh_argv(host, probe=True):
     return args
 
 
-def endpoint(host):
+def ssh_configuration(host):
     """Resolve aliases locally. Never print ssh -G output or private fields."""
     if host.get("identityFile") and not Path(host["identityFile"]).is_file():
         raise SessionError("Configured identity file is unavailable")
@@ -72,8 +72,20 @@ def endpoint(host):
     fields = dict(line.split(" ", 1) for line in result.stdout.splitlines() if " " in line)
     if result.returncode or not all(fields.get(k) for k in ("hostname", "user", "port")):
         raise SessionError("OpenSSH configuration resolution failed")
+    return fields
+
+
+def endpoint(host):
+    fields = ssh_configuration(host)
     identity = host.get("endpointId") or json.dumps(
         [fields["hostname"].lower(), fields["user"], fields["port"]])
+    return hashlib.sha256(identity.encode()).hexdigest()
+
+
+def authentication_endpoint(host):
+    """Different users on the same SSH listener share its pre-authentication limit."""
+    fields = ssh_configuration(host)
+    identity = json.dumps([fields["hostname"].lower(), fields["port"]])
     return hashlib.sha256(identity.encode()).hexdigest()
 
 

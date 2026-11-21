@@ -12,12 +12,14 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import tabby_session_auth as authentication
 import tabby_session_config as config
 import tabby_session_launch as launch
 import tabby_session_legacy as legacy
@@ -72,6 +74,15 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.endpoint(host()), config.endpoint(host("beta")))
         with mock.patch.object(config, "endpoint", side_effect=[config.SessionError("unavailable"), "same"]):
             self.assertEqual(config.equivalent_aliases([host(), host("beta")], host("beta"), "same"), {"dev-beta"})
+
+    def test_authentication_endpoint_groups_users_but_not_listeners(self):
+        fields = [dict(hostname="generic.invalid", user="first", port="22"),
+                  dict(hostname="GENERIC.invalid", user="second", port="22"),
+                  dict(hostname="generic.invalid", user="first", port="2222")]
+        with mock.patch.object(config, "ssh_configuration", side_effect=fields):
+            first = config.authentication_endpoint(host())
+            self.assertEqual(first, config.authentication_endpoint(host("beta")))
+            self.assertNotEqual(first, config.authentication_endpoint(host()))
 
     def test_explicit_identity_and_argv(self):
         with self.assertRaisesRegex(config.SessionError, "identity file"):
@@ -419,6 +430,7 @@ class OrchestrationTests(unittest.TestCase):
     def run_main(self, args, inventory_effect):
         output, errors = io.StringIO(), io.StringIO()
         with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(authentication, "authentication_endpoint", return_value="listener"))
             for name, value in (("endpoint", "endpoint"), ("equivalent_aliases", {"dev-alpha", "dev-beta"}),
                                 ("local_legacy", set()), ("tabby_executable", "tabby"), ("check_tabby", "1.0.236")):
                 stack.enter_context(mock.patch.object(app, name, return_value=value))
@@ -487,6 +499,84 @@ class OrchestrationTests(unittest.TestCase):
             connect.assert_not_called()
 
 
+class AuthenticationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.path = str(Path(self.temp.name) / "state")
+        patch = mock.patch.object(authentication, "authentication_endpoint", return_value="listener")
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_read_only_probe_does_not_initialize_directory_or_lock(self):
+        with authentication.authentication_slot(self.path, host(), create=False) as release:
+            release()
+        self.assertFalse(Path(self.path).exists())
+        directory = state.state_directory(self.path)
+        os.close(directory)
+        with authentication.authentication_slot(self.path, host(), create=False):
+            pass
+        self.assertEqual(list(Path(self.path).iterdir()), [])
+
+    def test_next_handshake_waits_only_until_authenticated_not_session_exit(self):
+        entered = threading.Event()
+        started = threading.Event()
+
+        def next_handshake():
+            started.set()
+            with authentication.authentication_slot(self.path, host()):
+                entered.set()
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with authentication.authentication_slot(self.path, host()) as authenticated:
+                future = pool.submit(next_handshake)
+                try:
+                    self.assertTrue(started.wait(2))
+                    self.assertFalse(entered.wait(0.05))
+                finally:
+                    authenticated()
+                self.assertTrue(entered.wait(2))
+                # This first session's context is still alive; only its handshake
+                # lock has been released. Repeated acknowledgement is harmless.
+                authenticated()
+            future.result(timeout=2)
+
+    def test_failed_handshake_releases_lock_without_removing_inode(self):
+        with self.assertRaisesRegex(RuntimeError, "failed handshake"):
+            with authentication.authentication_slot(self.path, host()):
+                before = (Path(self.path) / "authentication-listener.lock").stat().st_ino
+                raise RuntimeError("failed handshake")
+        with authentication.authentication_slot(self.path, host()):
+            self.assertEqual((Path(self.path) / "authentication-listener.lock").stat().st_ino, before)
+
+    def test_twenty_tabs_keep_one_handshake_pending_while_sessions_remain_live(self):
+        start = threading.Barrier(20)
+        connected = threading.Event()
+        mutex = threading.Lock()
+        counts = dict(pending=0, peak=0, connected=0)
+
+        def connect(_number):
+            start.wait(timeout=5)
+            with authentication.authentication_slot(self.path, host()) as ready:
+                with mutex:
+                    counts["pending"] += 1
+                    counts["peak"] = max(counts["peak"], counts["pending"])
+                # Model a nonzero SSH handshake, exposing overlap if the lock
+                # is absent. Connected transports remain live below this point.
+                connected.wait(0.005)
+                with mutex:
+                    counts["pending"] -= 1
+                    counts["connected"] += 1
+                    if counts["connected"] == 20:
+                        connected.set()
+                ready()
+                self.assertTrue(connected.wait(5))
+
+        with ThreadPoolExecutor(max_workers=20) as pool:
+            list(pool.map(connect, range(20)))
+        self.assertEqual(counts, dict(pending=0, peak=1, connected=20))
+
+
 class TransportTests(unittest.TestCase):
     def setUp(self):
         self.output = io.TextIOWrapper(io.BytesIO())
@@ -501,7 +591,9 @@ class TransportTests(unittest.TestCase):
         self.launch = self.stack.enter_context(mock.patch.object(transport.subprocess, "Popen"))
         self.launch.return_value.__enter__.return_value.wait.return_value = 0
         self.relay = self.stack.enter_context(mock.patch.object(transport, "relay_output"))
-        self.args = argparse.Namespace(token="a" * 48)
+        self.slot = self.stack.enter_context(mock.patch.object(transport, "authentication_slot"))
+        self.release_authentication = self.slot.return_value.__enter__.return_value
+        self.args = argparse.Namespace(token="a" * 48, state_dir="/unused/private-state")
         self.handle = mock.Mock()
         self.identity = {key: session()[key] for key in ("sid", "created", "server")}
 
@@ -519,6 +611,23 @@ class TransportTests(unittest.TestCase):
         self.inventory.assert_not_called()
         self.relay.call_args.args[2]("42")
         self.handle.write.assert_called_once_with(dict(phase="attaching", token=self.args.token, remote_pid="42"))
+
+    def test_authentication_slot_released_on_marker_before_session_exit(self):
+        def relay(_stream, _marker, ready, _output):
+            self.release_authentication.assert_not_called()
+            ready("42")
+            self.release_authentication.assert_called_once_with()
+            self.launch.return_value.__enter__.return_value.wait.assert_not_called()
+
+        self.relay.side_effect = relay
+        self.assertEqual(transport.attach_held(self.args, host(), [host()], self.identity, self.handle), 0)
+        self.slot.assert_called_once_with(self.args.state_dir, host())
+
+    def test_startup_failure_exits_authentication_slot(self):
+        self.launch.side_effect = OSError("SSH unavailable")
+        with self.assertRaises(OSError):
+            transport.attach_held(self.args, host(), [host()], self.identity, self.handle)
+        self.slot.return_value.__exit__.assert_called_once()
 
     def test_legacy_exact_and_ambiguous_attachments_still_block_duplicates(self):
         for target in ("oc-001", "$1", "oc-old-name"):
