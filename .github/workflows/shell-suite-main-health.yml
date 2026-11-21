@@ -39,6 +39,17 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # GH#39677: the suites assume the maintainer toolchain (the framework's exact
+      # search rule makes ripgrep a hard dependency); ubuntu-latest does not ship it,
+      # so 158 suites went red at once. Install it and give git a commit identity.
+      - name: Install suite toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ripgrep
+          rg --version | head -n 1
+          git config --global user.name "aidevops-ci"
+          git config --global user.email "ci@aidevops.invalid"
+
       - name: Run every root suite
         id: suites
         env:
