@@ -453,6 +453,7 @@ define_ci_dispatch_helpers() {
 		_ci_merge_check_sets
 		_ci_repair_required_checks_json
 		_ci_repair_checks_for_dispatch
+		_ci_repair_launch_labels_refuse
 		_dispatch_ci_fix_worker
 	)
 	local fn fn_src=""
