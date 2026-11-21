@@ -21,6 +21,7 @@ KNOWN_MATCHERS = {
     "git_push_force",
     "git_branch_force_delete",
     "git_stash_delete",
+    "git_stash_unscoped_restore",
     "gh_pr_disable_auto_direct",
     "gh_pr_merge_direct",
     "opencode_bare_continue",
