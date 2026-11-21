@@ -30,7 +30,7 @@ import worktree_lifecycle_status as lifecycle_status
 from worktree_recovery_producer_cases import ProducerCases
 from worktree_recovery_partial_cases import PartialCases
 from worktree_archive_merge_cases import MergeCases
-from worktree_archive_canonical_cases import CanonicalCases
+from worktree_archive_canonical_cases import CanonicalCases, hermetic_helper_path
 from worktree_archive_administration_cases import AdministrationCases
 from worktree_archive_metadata_cases import MetadataCases
 from worktree_archive_prune_cases import PruneCases
@@ -49,12 +49,9 @@ FIXTURE_GIT_ENV = dict(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GI
                        GIT_COMMITTER_EMAIL="fixture@example.invalid", LC_ALL="C")
 
 
-# Native Git for fixture setup and test-side assertions only (GH#39560).
-# Helpers under test still resolve `git` from PATH, including an installed
-# policy shim, so product verdicts keep their shim coverage. Fixture-owned
-# temporary repositories gain nothing from the shim's per-call guard, which
-# costs several extra process launches for every test-side Git call. Without
-# native Git the shim cannot run either, so resolution failure stops the suite.
+# Native Git for fixture setup and test-side assertions (GH#39560). Fixture-owned
+# temporary repositories gain nothing from the policy shim's per-call guard.
+# Without native Git the shim cannot run either, so resolution failure stops the suite.
 FIXTURE_GIT = native_git.real_git()
 
 
@@ -85,6 +82,10 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
         finally:
             os.umask(previous)
         cls.fixture_template = template
+        native_bin = template.parent / "native-bin"
+        native_bin.mkdir()
+        (native_bin / "git").symlink_to(FIXTURE_GIT)
+        cls.helper_path = hermetic_helper_path(os.environ.get("PATH", ""), native_bin)
 
     def setUp(self):
         self.addCleanup(os.umask, os.umask(0o022))
@@ -93,7 +94,7 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
         # macOS temp dirs live under the /var -> /private/var symlink; the lifecycle
         # state-parent guard requires a canonical path (GH#39524).
         self.root = Path(self.temp.name).resolve()
-        self.env = dict(os.environ, **FIXTURE_GIT_ENV,
+        self.env = dict(os.environ, **FIXTURE_GIT_ENV, PATH=self.helper_path,
                         AIDEVOPS_RECOVERY_TIMING_LOG=str(self.root / "timing.jsonl"),
                         AIDEVOPS_WORKTREE_RECOVERY_POLICY="git-only",
                         AIDEVOPS_WORKTREE_BASE_DIR=str(self.root),

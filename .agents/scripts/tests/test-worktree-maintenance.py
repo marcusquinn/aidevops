@@ -423,7 +423,12 @@ class MaintenancePreservationTests(unittest.TestCase):
             "test-worktree-archive-lifecycle.py"))
         fixture_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(fixture_module)
-        fixture = fixture_module.ArchiveLifecycle()
+        # The fixture's class-level template and helper PATH come from
+        # setUpClass (GH#39560); unittest runs it only for its own suite.
+        fixture_class = fixture_module.ArchiveLifecycle
+        fixture_class.setUpClass()
+        self.addCleanup(fixture_class.doClassCleanups)
+        fixture = fixture_class()
         self.addCleanup(fixture.doCleanups)
         fixture.setUp()
         fixture.env.update(AIDEVOPS_WORKTREE_TRASH_ROOT=str(fixture.archives),
