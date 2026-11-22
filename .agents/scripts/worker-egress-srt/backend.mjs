@@ -17,6 +17,7 @@ const cancellation = new AbortController();
 const quote = value => "'" + String(value).replaceAll("'", "'\\''") + "'";
 const digest = value => crypto.createHash('sha256').update(value).digest('hex');
 const inside = (child, parent) => child === parent || child.startsWith(parent + path.sep);
+const implicitTempPaths = ['/tmp/claude', '/private/tmp/claude'];
 class BackendError extends Error {}
 function insist(condition, reason) { if (!condition) throw new BackendError(reason); }
 
@@ -42,7 +43,9 @@ const providerHostRules = [
 ];
 
 function isProviderHostname(host) {
-  return providerHostRules.every(rule => rule(host));
+  if (!providerHostRules.every(rule => rule(host))) return false;
+  try { return !net.isIP(new URL('https://' + host).hostname); }
+  catch { return false; }
 }
 
 export function providerHost(policy) {
@@ -200,7 +203,24 @@ export function tightenMacProfile(profile) {
   let strict = profile.replace(rule, '');
   insist(!/\(allow\s+mach-lookup\b/.test(strict) && !/\(import\b/.test(strict), 'unknown-mach-rule');
   strict = strict.replace(/\(allow (?:user-preference-read|ipc-posix-shm|ipc-posix-sem)\)/g, '');
-  return strict + '\n(deny mach-lookup)\n(deny mach-register)\n';
+  const tempDenials = implicitTempPaths.map(p =>
+    `(deny file-read* file-write* (subpath ${JSON.stringify(p)}))`).join('\n');
+  return strict + '\n(deny mach-lookup)\n(deny mach-register)\n' + tempDenials + '\n';
+}
+
+// The pinned SRT always adds host /tmp/claude write binds. Apply private tmpfs
+// LAST, after every upstream mount, using argv rather than shell/profile parsing.
+// Resolve aliases on the host too: a symlink must not expose its target through
+// a canonical bind emitted by SRT. Unknown bwrap profile forms fail closed.
+export function tightenLinuxArgs(argv) {
+  const boundary = argv.indexOf('--');
+  insist(boundary >= 0 && !argv.slice(0, boundary).includes('--args'), 'unexpected-bwrap-profile');
+  const paths = new Set(implicitTempPaths);
+  for (const p of implicitTempPaths) {
+    try { paths.add(fs.realpathSync(p)); }
+    catch (error) { insist(error.code === 'ENOENT', 'temporary-path-unavailable'); }
+  }
+  return [...argv.slice(0, boundary), ...[...paths].flatMap(p => ['--tmpfs', p]), ...argv.slice(boundary)];
 }
 
 // Names the workload may see. The SRT-set names were verified against
@@ -464,10 +484,16 @@ function cleanEnvironment(envelope, scratch) {
   // credentials, NODE_OPTIONS, shell startup files or agent sockets into SRT.
   const search = [...new Set(Object.values(envelope.tools).map(t => path.dirname(t)))].join(path.delimiter);
   for (const key of Object.keys(process.env)) delete process.env[key];
-  Object.assign(process.env, { PATH: search, HOME: envelope.cwd, TMPDIR: scratch, LANG: 'C.UTF-8' });
+  Object.assign(process.env, { PATH: search, HOME: envelope.cwd, TMPDIR: scratch,
+    CLAUDE_CODE_TMPDIR: envelope.cwd, LANG: 'C.UTF-8' });
 }
 
 async function main(argv) {
+  if (argv[0] === 'bwrap') {
+    const tool = executable(argv[1]);
+    const child = spawnSync(tool, tightenLinuxArgs(argv.slice(2)), { stdio: 'inherit' });
+    return child.status ?? 126;
+  }
   // Receiver invoked on the host, before the one and only sandbox_apply call.
   if (argv[0] === 'seatbelt') {
     insist(process.platform === 'darwin' && argv[1] === '-p' && argv.length >= 5, 'seatbelt-argv');
@@ -511,7 +537,11 @@ async function main(argv) {
       // cannot open AF_UNIX sockets after apply-seccomp.
       const sockets = [manager.getLinuxHttpSocketPath(), manager.getLinuxSocksSocketPath()];
       insist(sockets.every(p => typeof p === 'string'), 'bridge-sockets-not-ready');
-      manager.updateConfig(settings(host, envelope, sockets));
+      const receiver = path.join(scratch, 'bwrap');
+      fs.writeFileSync(receiver, `#!${envelope.tools.shell}\nexec ${quote(process.execPath)} ${quote(fileURLToPath(import.meta.url))} bwrap ${quote(envelope.tools.bwrap)} "$@"\n`, { mode: 0o700 });
+      const config = settings(host, envelope, sockets);
+      config.bwrapPath = receiver;
+      manager.updateConfig(config);
     }
     if (process.platform === 'darwin') {
       // GH#38861 reviewed arm64 only (synthetic, DNS and Mach evidence). Intel
@@ -539,7 +569,12 @@ async function main(argv) {
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+function isEntrypoint() {
+  try { return Boolean(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url)); }
+  catch { return false; }
+}
+
+if (isEntrypoint()) {
   for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
     process.on(signal, () => cancellation.abort());
   }
