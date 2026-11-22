@@ -210,6 +210,14 @@ workspace temp directory, with an exclusive lock shared across watchdog
 subshells and concurrent candidates. Old cycle metadata expires after a day.
 An unlocked store is retried after expiry without restarting pulse.
 
+Within one pulse cycle, a name that passed `secret check` is reused by later
+candidates and gates for `AIDEVOPS_RUNNER_CAPABILITY_READABLE_TTL_SECONDS`
+(default 300, clamped 0–1800; 0 disables). Without this cache, parallel
+candidates re-decrypted the same names and timed out under gpg-agent contention.
+Only readability is reused: requirements, rejections and missing names are still
+checked every time, and a fresh unreadable result clears the readable cache.
+Reuse logs `runner_capability_secret_cache reused=N checked=M`.
+
 For unattended runners, provision the agent unlock outside AI chat. Set both
 `default-cache-ttl` and `max-cache-ttl` in the operator's `gpg-agent.conf` long
 enough for the intended unattended window, reload with `gpg-connect-agent
