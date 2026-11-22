@@ -103,11 +103,15 @@ PATH="$TMP_DIR/bin:$PATH" "$HELPER" --keywords 'x' --files 'README.md .agents/AG
 grep -qxF "Warning: --files entry 'README.md .agents/AGENTS.md' matches no tracked file (use a comma-separated list)" "$errors"
 PATH="$TMP_DIR/bin:$PATH" "$HELPER" --keywords 'x' --files 'README.md,.agents/AGENTS.md' --repo 'owner/repo' >"$TMP_DIR/valid.md" 2>"$errors"
 PATH="$TMP_DIR/bin:$PATH" "$HELPER" --keywords 'x' --files ' README.md, ,.agents/AGENTS.md,' --repo 'owner/repo' >"$output" 2>>"$errors"
+cmp -s "$TMP_DIR/valid.md" "$output"
+PATH="$TMP_DIR/bin:$PATH" "$HELPER" --keywords 'x' --files $'README.md,\n.agents/AGENTS.md' --repo 'owner/repo' >"$output" 2>>"$errors"
+cmp -s "$TMP_DIR/valid.md" "$output"
+PATH="$TMP_DIR/bin:$PATH" "$HELPER" --keywords 'x' --files $'README.md\n.agents/AGENTS.md\n' --repo 'owner/repo' >"$output" 2>>"$errors"
+cmp -s "$TMP_DIR/valid.md" "$output"
 if grep -q -e 'Warning: --files' -e 'fatal:' "$errors"; then
 	printf 'FAIL: comma-separated tracked --files warned or failed\n' >&2
 	exit 1
 fi
-cmp -s "$TMP_DIR/valid.md" "$output"
 PATH="$TMP_DIR/bin:$PATH" "$HELPER" --keywords 'x' --files 'not-yet-created.sh' --repo 'owner/repo' >"$output" 2>"$errors"
 grep -qxF "Warning: --files entry 'not-yet-created.sh' matches no tracked file" "$errors"
 

@@ -101,14 +101,16 @@ _live_sessions() {
 	return 0
 }
 
-# GH#39880: split --files on commas, trim each entry and drop empty ones, so
-# "a, b" and "a,,b" work. Warn on stderr for an entry git does not track: a
-# space-separated list otherwise prints an empty section that reads as "no
-# collisions". Untracked new targets are legitimate, so this never fails.
+# GH#39880: split --files on commas and newlines (read stops at the first
+# newline, so newlines become commas first), trim each entry and drop empty
+# ones, so "a, b", "a,,b" and one-path-per-line lists work. Warn on stderr for
+# an entry git does not track: a space-separated list otherwise prints an empty
+# section that reads as "no collisions". Untracked new targets are legitimate,
+# so this never fails.
 _target_files() {
 	local files_csv="$1"
 	local raw=() entry="" hint=""
-	IFS=',' read -r -a raw <<<"$files_csv"
+	IFS=',' read -r -a raw <<<"${files_csv//$'\n'/,}"
 	for entry in ${raw[@]+"${raw[@]}"}; do
 		entry="${entry#"${entry%%[![:space:]]*}"}"
 		entry="${entry%"${entry##*[![:space:]]}"}"
