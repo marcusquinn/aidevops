@@ -416,6 +416,22 @@ describe("bounded interactive operations", () => {
     }
   });
 
+  test("a fast non-zero exit with nested process groups is terminal with output (GH#39916)", async () => {
+    const instance = manager();
+    const shapes = [
+      "set -m; (echo boom >&2; exit 1) & wait; exit 1",
+      "set -m; (sleep 0.3) & echo boom >&2; exit 1",
+      "set -m; (echo boom >&2; exit 3) & wait $!",
+    ];
+    for (const shape of shapes) {
+      const started = await instance.start({ command: ["bash", "-c", shape], budgetMs: 20_000 }, owner);
+      const result = await terminal(instance, started.operation_id, owner, 5000);
+      assert.equal(result.state, "failed", shape);
+      assert.ok(result.process_exit > 0, shape);
+      assert.equal(result.evidence_state, "recorded", shape);
+    }
+  });
+
   test("detached test servers are drained on completion, cancellation and expiry (GH#33747)", async () => {
     const instance = manager({ killGraceMs: 50 });
     for (const mode of ["completion", "cancel", "expiry"]) {

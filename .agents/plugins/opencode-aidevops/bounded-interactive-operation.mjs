@@ -37,6 +37,7 @@ import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
 import { runtimeOwner } from "./runtime-owner.mjs";
 
 const MAX_OPERATIONS = 24;
+const EXIT_CLOSE_GRACE_MS = 2000;
 // GH#38704: "always" (default) restores after every terminal path, success
 // included; "unsuccessful" skips restoration after success so abort-only
 // cleanup cannot destroy a good result.
@@ -200,7 +201,10 @@ export class BoundedInteractiveOperationManager {
     await new Promise((resolve) => {
       const child = this.spawnOwned(operation, operation.command, "main");
       operation.child = child;
-      child.once("exit", () => { operation.childExited = true; });
+      child.once("exit", (code, signal) => {
+        operation.childExited = true;
+        this.closeAfterExitGrace(operation, child, code, signal);
+      });
       child.once("spawn", () => {
         operation.supervisorIdentity = this.processIdentity(child.pid);
         operation.state = "running";
@@ -234,7 +238,22 @@ export class BoundedInteractiveOperationManager {
     return signalled;
   }
 
+  // GH#39916: "close" waits for every holder of the supervisor's stdio pipes.
+  // An escaped descendant holding them would leave a failed command in
+  // running/timing_out with no output. After the supervisor itself has exited,
+  // finalize with its real status once a short grace for trailing output passes.
+  closeAfterExitGrace(operation, child, code, signal) {
+    const timer = this.setTimer(() => {
+      for (const stream of [child.stdout, child.stderr]) stream?.destroy?.();
+      if (!operation.spawnFailed) this.mainClosed(operation, code, signal);
+    }, EXIT_CLOSE_GRACE_MS);
+    timer?.unref?.();
+    child.once("close", () => this.clearTimer(timer));
+  }
+
   async mainClosed(operation, code, signal) {
+    if (operation.mainClosedDone) return;
+    operation.mainClosedDone = true;
     if (operation.budgetTimer) this.clearTimer(operation.budgetTimer);
     if (operation.killTimer) this.clearTimer(operation.killTimer);
     operation.child = null;
