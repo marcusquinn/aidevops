@@ -102,6 +102,29 @@ _gh_wrapper_pin_target_repo() {
 }
 
 #######################################
+# Shared create/comment prologue: buffer a stdin body, validate title/body
+# (GH#19857), then resolve and pin the write target (GH#39801).
+# Arguments: $1=operation label, remaining=gh arguments
+# Sets: _GH_WRAPPER_TARGET_ARGS (the final argv)
+# Returns: 0 ready; 1 rejected (diagnostic and audit already emitted)
+#######################################
+_gh_wrapper_prepare_write_args() {
+	local operation="$1"
+	shift
+	if ! _gh_wrapper_normalize_stdin_body_file "$@"; then
+		_gh_edit_audit_rejection "$operation" "$_GH_EDIT_REJECTION_REASON" "$@"
+		return 1
+	fi
+	set -- ${_GH_WRAPPER_BODY_FILE_ARGS[@]+"${_GH_WRAPPER_BODY_FILE_ARGS[@]}"}
+	if ! _gh_validate_edit_args "$@"; then
+		_gh_edit_audit_rejection "$operation" "$_GH_EDIT_REJECTION_REASON" "$@"
+		return 1
+	fi
+	_gh_wrapper_pin_target_repo "$operation" "$@" || return 1
+	return 0
+}
+
+#######################################
 # Scan normalized GitHub write arguments before public transport.
 # Private targets remain untouched; unknown targets fail closed.
 #######################################
@@ -775,20 +798,9 @@ _gh_ci_settle_derived_labels() {
 }
 
 gh_create_issue() {
-	local _gh_op="gh issue create"
 	_gh_wrapper_enter_cleanup_scope
 	gh_record_call graphql gh_create_issue 2>/dev/null || true
-	if ! _gh_wrapper_normalize_stdin_body_file "$@"; then
-		_gh_edit_audit_rejection "$_gh_op" "$_GH_EDIT_REJECTION_REASON" "$@"
-		return 1
-	fi
-	set -- ${_GH_WRAPPER_BODY_FILE_ARGS[@]+"${_GH_WRAPPER_BODY_FILE_ARGS[@]}"}
-	# GH#19857: validate title/body before creating (same invariant as edit wrappers)
-	if ! _gh_validate_edit_args "$@"; then
-		_gh_edit_audit_rejection "$_gh_op" "$_GH_EDIT_REJECTION_REASON" "$@"
-		return 1
-	fi
-	_gh_wrapper_pin_target_repo "$_gh_op" "$@" || return 1
+	_gh_wrapper_prepare_write_args "gh issue create" "$@" || return 1
 	set -- ${_GH_WRAPPER_TARGET_ARGS[@]+"${_GH_WRAPPER_TARGET_ARGS[@]}"}
 
 	# t3088: inject session origin only when the caller has not supplied one.
@@ -1352,17 +1364,7 @@ gh_create_pr() {
 	local _gh_op="gh pr create"
 	_gh_wrapper_enter_cleanup_scope
 	gh_record_call graphql gh_create_pr 2>/dev/null || true
-	if ! _gh_wrapper_normalize_stdin_body_file "$@"; then
-		_gh_edit_audit_rejection "$_gh_op" "$_GH_EDIT_REJECTION_REASON" "$@"
-		return 1
-	fi
-	set -- ${_GH_WRAPPER_BODY_FILE_ARGS[@]+"${_GH_WRAPPER_BODY_FILE_ARGS[@]}"}
-	# GH#19857: validate title/body before creating (same invariant as edit wrappers)
-	if ! _gh_validate_edit_args "$@"; then
-		_gh_edit_audit_rejection "$_gh_op" "$_GH_EDIT_REJECTION_REASON" "$@"
-		return 1
-	fi
-	_gh_wrapper_pin_target_repo "$_gh_op" "$@" || return 1
+	_gh_wrapper_prepare_write_args "$_gh_op" "$@" || return 1
 	set -- ${_GH_WRAPPER_TARGET_ARGS[@]+"${_GH_WRAPPER_TARGET_ARGS[@]}"}
 	local expected_origin_label=""
 	expected_origin_label=$(_gh_create_pr_expected_origin_label "$@") || return $?
@@ -1484,22 +1486,12 @@ _gh_recover_pr_if_exists() {
 # <!-- aidevops:sig --> marker, so callers that build their own footer
 # are not double-signed.
 gh_issue_comment() {
-	local _gh_op="gh issue comment"
 	_gh_wrapper_enter_cleanup_scope
 	# Before any transport, so the REST fallback cannot turn it into a new comment.
 	if gh_comment_selector_refused issue "$@"; then
 		return 1
 	fi
-	if ! _gh_wrapper_normalize_stdin_body_file "$@"; then
-		_gh_edit_audit_rejection "$_gh_op" "$_GH_EDIT_REJECTION_REASON" "$@"
-		return 1
-	fi
-	set -- ${_GH_WRAPPER_BODY_FILE_ARGS[@]+"${_GH_WRAPPER_BODY_FILE_ARGS[@]}"}
-	if ! _gh_validate_edit_args "$@"; then
-		_gh_edit_audit_rejection "$_gh_op" "$_GH_EDIT_REJECTION_REASON" "$@"
-		return 1
-	fi
-	_gh_wrapper_pin_target_repo "$_gh_op" "$@" || return 1
+	_gh_wrapper_prepare_write_args "gh issue comment" "$@" || return 1
 	set -- ${_GH_WRAPPER_TARGET_ARGS[@]+"${_GH_WRAPPER_TARGET_ARGS[@]}"}
 	local ephemeral_body_file="${AIDEVOPS_GH_EPHEMERAL_BODY_FILE:-}"
 	local gh_command="gh"
@@ -1537,21 +1529,11 @@ gh_issue_comment() {
 }
 
 gh_pr_comment() {
-	local _gh_op="gh pr comment"
 	_gh_wrapper_enter_cleanup_scope
 	if gh_comment_selector_refused pr "$@"; then
 		return 1
 	fi
-	if ! _gh_wrapper_normalize_stdin_body_file "$@"; then
-		_gh_edit_audit_rejection "$_gh_op" "$_GH_EDIT_REJECTION_REASON" "$@"
-		return 1
-	fi
-	set -- ${_GH_WRAPPER_BODY_FILE_ARGS[@]+"${_GH_WRAPPER_BODY_FILE_ARGS[@]}"}
-	if ! _gh_validate_edit_args "$@"; then
-		_gh_edit_audit_rejection "$_gh_op" "$_GH_EDIT_REJECTION_REASON" "$@"
-		return 1
-	fi
-	_gh_wrapper_pin_target_repo "$_gh_op" "$@" || return 1
+	_gh_wrapper_prepare_write_args "gh pr comment" "$@" || return 1
 	set -- ${_GH_WRAPPER_TARGET_ARGS[@]+"${_GH_WRAPPER_TARGET_ARGS[@]}"}
 	gh_record_call graphql gh_pr_comment 2>/dev/null || true
 	_gh_wrapper_auto_sig "$@"
