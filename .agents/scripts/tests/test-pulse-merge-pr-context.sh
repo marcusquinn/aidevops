@@ -556,6 +556,46 @@ test_successful_finalizer_dispatch_retires_retry_hint() {
 	return 0
 }
 
+orphan_tracking_gh() {
+	local scenario="$1"
+	shift
+	local args="$*" label="origin:interactive" author="maintainer"
+	printf 'gh %s\n' "$args" >>"$GH_CALL_LOG"
+	case "$args" in
+	'pr view '*)
+		[[ "$scenario" != untrusted ]] || author=outsider
+		if [[ "$scenario" == concurrent-edit && "$(grep -c '^gh pr view' "$GH_CALL_LOG")" -gt 1 ]]; then author=changed; fi
+		case "$scenario" in no-takeover | hold-for-review | needs-maintainer-review | external-contributor) label="$scenario" ;; esac
+		jq -n --arg label "$label" --arg author "$author" '{state:"OPEN",author:{login:$author},labels:[{name:"origin:interactive"},{name:$label}],body:"Original body\nRef #987",url:"source-pr"}'
+		;;
+	*search/issues*)
+		[[ "$scenario" != search-failure ]] || return 1
+		if [[ "$scenario" == reuse || "$scenario" == closed ]]; then
+			printf '{"incomplete_results":false,"items":[{"title":"Track interactive PR #123","number":456}]}'
+		else
+			printf '{"incomplete_results":false,"items":[]}'
+		fi
+		;;
+	*issues/456*)
+		local state=open
+		[[ "$scenario" != closed ]] || state=closed
+		jq -n --arg state "$state" '{state:$state,body:"<!-- pulse-interactive-tracking:123 -->",user:{login:"maintainer"}}'
+		;;
+	*issues/987*)
+		case "$scenario" in
+		target-unavailable) return 1 ;;
+		merged-pr) printf '{"state":"closed","pull_request":{}}' ;;
+		open-pr) printf '{"state":"open","pull_request":{}}' ;;
+		closed-issue) printf '{"state":"closed"}' ;;
+		open-issue) printf '{"state":"open"}' ;;
+		esac
+		;;
+	*pulls/123/files*) printf 'src/existing.sh\n' ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
 test_orphan_tracking_recovery() {
 	local scenario="" rc=0
 	for scenario in create reuse merged-pr open-pr closed-issue open-issue target-unavailable edit-failure create-failure verify-failure untrusted fresh no-takeover hold-for-review needs-maintainer-review external-contributor off detect dry-run search-failure closed concurrent-edit; do
@@ -582,41 +622,8 @@ test_orphan_tracking_recovery() {
 			}
 			_interactive_pr_is_stale() { [[ "$scenario" != fresh ]]; return $?; }
 			gh() {
-				local args="$*" label="origin:interactive" author="maintainer"
-				printf 'gh %s\n' "$args" >>"$GH_CALL_LOG"
-				case "$args" in
-				'pr view '*)
-					[[ "$scenario" != untrusted ]] || author=outsider
-					if [[ "$scenario" == concurrent-edit && "$(grep -c '^gh pr view' "$GH_CALL_LOG")" -gt 1 ]]; then author=changed; fi
-					case "$scenario" in no-takeover | hold-for-review | needs-maintainer-review | external-contributor) label="$scenario" ;; esac
-					jq -n --arg label "$label" --arg author "$author" '{state:"OPEN",author:{login:$author},labels:[{name:"origin:interactive"},{name:$label}],body:"Original body\nRef #987",url:"source-pr"}'
-					;;
-				*search/issues*)
-					[[ "$scenario" != search-failure ]] || return 1
-					if [[ "$scenario" == reuse || "$scenario" == closed ]]; then
-						printf '{"incomplete_results":false,"items":[{"title":"Track interactive PR #123","number":456}]}'
-					else
-						printf '{"incomplete_results":false,"items":[]}'
-					fi
-					;;
-				*issues/456*)
-					local state=open
-					[[ "$scenario" != closed ]] || state=closed
-					jq -n --arg state "$state" '{state:$state,body:"<!-- pulse-interactive-tracking:123 -->",user:{login:"maintainer"}}'
-					;;
-				*issues/987*)
-					case "$scenario" in
-					target-unavailable) return 1 ;;
-					merged-pr) printf '{"state":"closed","pull_request":{}}' ;;
-					open-pr) printf '{"state":"open","pull_request":{}}' ;;
-					closed-issue) printf '{"state":"closed"}' ;;
-					open-issue) printf '{"state":"open"}' ;;
-					esac
-					;;
-				*pulls/123/files*) printf 'src/existing.sh\n' ;;
-				*) return 1 ;;
-				esac
-				return 0
+				orphan_tracking_gh "$scenario" "$@"
+				return $?
 			}
 			gh_create_issue() {
 				local body_file="${10}"
