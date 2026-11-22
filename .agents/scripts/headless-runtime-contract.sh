@@ -221,21 +221,37 @@ When one named person can grant or approve it by answering in the issue (an
 approval, authorization or sign-off), also emit TERMINAL_BLOCKER_INPUT_OWNER and
 TERMINAL_BLOCKER_QUESTION as for input_required; the hold then publishes that
 ask. A hold with no public ask leaves nobody able to act (GH#38951).
+EOF
+	_worker_headless_contract_input_text
+	_worker_headless_contract_recovery_text
+	return 0
+}
+
+# input_required owner protocol and the precedent check before asking (GH#39901).
+_worker_headless_contract_input_text() {
+	cat <<'EOF'
 Only when a specific value, target, credential or decision is required, absent
-from the brief, repository, linked issues and your tools, and cannot be derived
-or safely chosen within delegated authority, use both lines:
+from the brief, repository (runbooks included), linked issues, trusted
+decisions on same-repo issues and your tools, and cannot be derived or safely
+chosen within delegated authority, use both lines:
 TERMINAL_BLOCKER_REASON=input_required
 TERMINAL_BLOCKER_INPUT_OWNER=maintainer
 Owner is one of user, contributor, maintainer or admin: whoever alone can
 supply it. Reversible implementation choices, naming, defaults and scope
 interpretation are yours to decide, never this class. Name the exact input and
 where you looked; never guess it. Not for tool permissions or external events.
+Before asking, look for a precedent (GH#39901): search the repository for the
+flag or term (rg -F -- "<term>"), and same-repo issues for the question
+(gh search issues --repo <slug> --limit 100 -- "<term>": flags before --, the
+term last; open and closed; narrow the term if the limit is hit), reading only
+OWNER/MEMBER comments. A precedent that decides the same question at the same
+scope is your answer: cite it and continue. It never extends credentials,
+spend, permissions or publication beyond what it explicitly covers.
 A spend, billing or credential-route decision only a maintainer can make is
 input_required with owner maintainer (or admin), not permission_required.
 If no class is established, omit the reason line: unknown evidence stays retryable
 with bounded cross-runner backoff, not a permanent hold.
 EOF
-	_worker_headless_contract_recovery_text
 	return 0
 }
 

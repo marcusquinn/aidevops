@@ -213,6 +213,19 @@ AI brief owner:
    (defaults, naming, reversible choices, scope interpretation) and revise the
    brief, which re-arms the circuit. Otherwise name the exact missing input and
    its owner (user, contributor, maintainer or admin) on the issue once.
+   Answer once per repository (GH#39901): before handling pending
+   `input_required` entries one at a time, group those in the same repository
+   that ask the same decision. Grouping is your judgment over the public asks,
+   not string equality. When any member is answered (an OWNER/MEMBER reply newer
+   than its ask, a brief revision, or a merged runbook, reference or PR that
+   records the answer), apply that answer to every member at the same scope:
+   one comment citing the source plus a standalone
+   `terminal-blocker-circuit:retry`, and record `brief_revision`. When none is
+   answered, post the canonical ask once on the oldest member and a pointer on
+   the rest ("Same decision as #N"), recording `human_decision` for each, as
+   `outlier_hold` does in `reference/recovery-policy.md`. Never carry an answer
+   across repositories, or extend credentials, spend, permissions, publication
+   or record changes beyond what it decided.
    Closing an investigation as not reproduced is delegated: when its only
    missing input is a recurrence and none was observed for 72h after its
    diagnostics merged, close it with that evidence and the recurrence signal
