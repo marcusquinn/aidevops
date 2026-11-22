@@ -2418,9 +2418,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19268 fix(full-loop): runtime-pending-notice ignores held PRs whose body was later rewritten to runtime-verified #bug ref:GH#39795 pr:#39798 completed:2026-11-22
 
-- [ ] t19270 fix(pulse): bind queued launch-recovery CLAIM_RELEASED to the exact claim generation #bug #interactive tier:standard ref:GH#39803 assignee:marcusquinn logged:2026-11-22 started:2026-11-22 -> [todo/tasks/t19270-brief.md]
+- [x] t19270 fix(pulse): bind queued launch-recovery CLAIM_RELEASED to the exact claim generation #bug #interactive tier:standard ref:GH#39803 assignee:marcusquinn logged:2026-11-22 started:2026-11-22 -> [todo/tasks/t19270-brief.md] pr:#39809 completed:2026-11-22
 
-- [ ] t19272 Isolate test-gh-wrapper-rest-fallback.sh from live gh transport admission state #auto-dispatch #bug ref:GH#39814
+- [x] t19272 Isolate test-gh-wrapper-rest-fallback.sh from live gh transport admission state #auto-dispatch #bug ref:GH#39814 pr:#39821 completed:2026-11-22
 
 ## In Progress
 
