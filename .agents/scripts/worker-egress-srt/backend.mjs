@@ -203,7 +203,7 @@ export function tightenMacProfile(profile) {
   let strict = profile.replace(rule, '');
   insist(!/\(allow\s+mach-lookup\b/.test(strict) && !/\(import\b/.test(strict), 'unknown-mach-rule');
   strict = strict.replace(/\(allow (?:user-preference-read|ipc-posix-shm|ipc-posix-sem)\)/g, '');
-  const tempDenials = implicitTempPaths.map(p =>
+  const tempDenials = temporaryHostPaths(true).map(p =>
     `(deny file-read* file-write* (subpath ${JSON.stringify(p)}))`).join('\n');
   return strict + '\n(deny mach-lookup)\n(deny mach-register)\n' + tempDenials + '\n';
 }
@@ -212,15 +212,25 @@ export function tightenMacProfile(profile) {
 // LAST, after every upstream mount, using argv rather than shell/profile parsing.
 // Resolve aliases on the host too: a symlink must not expose its target through
 // a canonical bind emitted by SRT. Unknown bwrap profile forms fail closed.
+function temporaryHostPaths(includeSpellings = false) {
+  const paths = new Set();
+  for (const p of implicitTempPaths) {
+    if (includeSpellings) paths.add(p);
+    try { paths.add(fs.realpathSync(p)); }
+    catch (error) {
+      insist(error.code === 'ENOENT', 'temporary-path-unavailable');
+    }
+  }
+  return [...paths];
+}
+
 export function tightenLinuxArgs(argv) {
   const boundary = argv.indexOf('--');
   insist(boundary >= 0 && !argv.slice(0, boundary).includes('--args'), 'unexpected-bwrap-profile');
-  const paths = new Set(implicitTempPaths);
-  for (const p of implicitTempPaths) {
-    try { paths.add(fs.realpathSync(p)); }
-    catch (error) { insist(error.code === 'ENOENT', 'temporary-path-unavailable'); }
-  }
-  return [...argv.slice(0, boundary), ...[...paths].flatMap(p => ['--tmpfs', p]), ...argv.slice(boundary)];
+  // An absent alias has no host grant to hide. Mounting it could require making
+  // /private on the read-only root of an ordinary Linux filesystem. Use only
+  // canonical destinations: modern bwrap refuses a symlink mount destination.
+  return [...argv.slice(0, boundary), ...temporaryHostPaths().flatMap(p => ['--tmpfs', p]), ...argv.slice(boundary)];
 }
 
 // Names the workload may see. The SRT-set names were verified against

@@ -11,7 +11,7 @@ import net from 'node:net';
 import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
-import { ENV_ADDED, ENV_ALLOWLIST, providerHost, settings, tightenMacCommand, tightenMacProfile } from '../worker-egress-srt/backend.mjs';
+import { ENV_ADDED, ENV_ALLOWLIST, providerHost, settings, tightenLinuxArgs, tightenMacCommand, tightenMacProfile } from '../worker-egress-srt/backend.mjs';
 
 const scripts = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const backend = path.join(scripts, 'worker-egress-srt/backend.mjs');
@@ -23,12 +23,13 @@ const policy = {
 
 test('only the exact provider policy is accepted; every relaxation fails closed', () => {
   assert.equal(providerHost(policy), 'api.openai.com');
+  assert.equal(providerHost({ ...policy, rules: [{ ...policy.rules[0], pattern: 'api.example.com' }] }), 'api.example.com');
   for (const key of ['default_action', 'raw_ip_action', 'private_network_action', 'loopback_action']) {
     assert.throws(() => providerHost({ ...policy, [key]: 'allow' }));
   }
-  for (const host of ['127.0.0.1', '2130706433', 'localhost', '*.openai.com', 'x.local',
+  for (const host of ['127.0.0.1', '2130706433', '0xc0.0.2.1', '0xc0000201', '0300.0.2.1', 'localhost', '*.openai.com', 'x.local',
     'api.openai.com:80', 'api.openai.com.', 'user@api.openai.com', 'api.openai.com;false']) {
-    assert.throws(() => providerHost({ ...policy, rules: [{ ...policy.rules[0], pattern: host }] }));
+    assert.throws(() => providerHost({ ...policy, rules: [{ ...policy.rules[0], pattern: host }] }), /provider-host/);
   }
   assert.throws(() => providerHost({ ...policy, rules: [...policy.rules, ...policy.rules] }));
 });
@@ -54,7 +55,55 @@ test('macOS DNS guard must recognize exactly one pinned Seatbelt invocation', ()
   const profile = tightenMacProfile('(version 1)\n(deny default)\n(allow mach-lookup\n (global-name "com.apple.system.opendirectoryd.libinfo"))\n(allow process-exec)');
   assert.doesNotMatch(profile, /allow mach-lookup/);
   assert.match(profile, /allow process-exec/);
+  for (const p of ['/tmp/claude', '/private/tmp/claude']) {
+    assert.ok(profile.includes(`(deny file-read* file-write* (subpath "${p}"))`));
+  }
   assert.throws(() => tightenMacProfile('(version 1)\n(deny default)\n(allow mach-lookup (unknown-filter "new"))'));
+});
+
+test('Linux temporary shadows follow all upstream mounts and preserve command argv', () => {
+  const before = ['--new-session', '--bind', '/tmp/claude', '/tmp/claude', '--dev', '/dev'];
+  const command = ['--', '/bin/bash', '-c', 'printf "%s" "a b;$(false)"'];
+  const tightened = tightenLinuxArgs([...before, ...command]);
+  assert.deepEqual(tightened.slice(0, before.length), before);
+  assert.deepEqual(tightened.slice(-command.length), command);
+  const shadows = tightened.slice(before.length, -command.length);
+  for (const p of ['/tmp/claude', '/private/tmp/claude']) {
+    if (fs.existsSync(p)) {
+      assert.ok(shadows.some((value, index) => value === '--tmpfs' && shadows[index + 1] === fs.realpathSync(p)));
+    } else assert.ok(!shadows.includes(p));
+  }
+  assert.throws(() => tightenLinuxArgs(['--args', '17', ...command]), /unexpected-bwrap-profile/);
+  assert.throws(() => tightenLinuxArgs(before), /unexpected-bwrap-profile/);
+});
+
+test('Linux shadows canonical temporary aliases but never mounts an absent /private', t => {
+  t.mock.method(fs, 'realpathSync', p => {
+    if (p === '/tmp/claude') return '/owned/alias-target';
+    throw Object.assign(new Error('synthetic absence'), { code: 'ENOENT' });
+  });
+  assert.deepEqual(tightenLinuxArgs(['--', '/bin/true']), [
+    '--tmpfs', '/owned/alias-target', '--', '/bin/true',
+  ]);
+});
+
+test('direct and absolute-symlink entrypoints execute while imports stay inert', () => {
+  const temp = process.env.AIDEVOPS_TEMP_DIR || path.join(os.homedir(), '.aidevops/.agent-workspace/tmp');
+  const root = fs.mkdtempSync(path.join(temp, 'srt-entry-'));
+  try {
+    const link = path.join(root, 'backend.mjs');
+    fs.symlinkSync(backend, link);
+    for (const entry of [backend, link]) {
+      const result = spawnSync(process.execPath, [entry], { encoding: 'utf8' });
+      assert.equal(result.status, 126);
+      assert.equal(JSON.parse(result.stdout).ready, false);
+    }
+    const imported = spawnSync(process.execPath, ['--input-type=module', '-e',
+      `await import(${JSON.stringify(pathToFileURL(backend).href)})`], { encoding: 'utf8' });
+    assert.equal(imported.status, 0, imported.stderr);
+    assert.equal(imported.stdout, '');
+    assert.equal(imported.stderr, '');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 // GH#38861: Homebrew binaries load dylibs through /opt/homebrew/opt/<keg>
@@ -129,6 +178,40 @@ test('real platform qualification (explicit opt-in, synthetic data, no provider 
       tools.python, '-I', '-c', 'import sys; print(sys.argv[1])', 'a b;$(false)']);
     assert.equal(run.status, 0, run.stdout + run.stderr);
     assert.equal(run.stdout.trim(), 'a b;$(false)');
+    // Unlisted synthetic HOST data at SRT's implicit write root must remain
+    // unreadable and unchanged; writes to a private tmpfs shadow are harmless.
+    const defaultTemp = '/tmp/claude';
+    let madeDefaultTemp = false;
+    try { fs.mkdirSync(defaultTemp, { mode: 0o700 }); madeDefaultTemp = true; }
+    catch (error) { if (error.code !== 'EEXIST') throw error; }
+    let hostRoot;
+    try {
+      hostRoot = fs.mkdtempSync(path.join(defaultTemp, 'aidevops-canary-'));
+      const hostFile = path.join(hostRoot, 'host-only');
+      fs.writeFileSync(hostFile, 'synthetic host marker', { mode: 0o600 });
+      const isolated = invoke(['run', '--policy', policyFile, '--', tools.python, '-I', '-c', String.raw`
+import os, sys, tempfile
+try:
+    assert open(sys.argv[1]).read() != 'synthetic host marker', 'host temp data exposed'
+except OSError:
+    pass
+try:
+    with open(sys.argv[1], 'a') as f:
+        f.write('escape')
+except OSError:
+    pass
+assert os.environ['TMPDIR'] == sys.argv[2]
+with tempfile.TemporaryFile() as f:
+    f.write(b'private temporary output')
+`, hostFile, output]);
+      assert.equal(isolated.status, 0, isolated.stdout + isolated.stderr);
+      assert.equal(fs.readFileSync(hostFile, 'utf8'), 'synthetic host marker');
+    } finally {
+      if (hostRoot) fs.rmSync(hostRoot, { recursive: true, force: true });
+      if (madeDefaultTemp) {
+        try { fs.rmdirSync(defaultTemp); } catch (error) { if (error.code !== 'ENOTEMPTY') throw error; }
+      }
+    }
     // The supervisor exports framework constants; the workload must not see them.
     const envRun = invoke(['run', '--policy', policyFile, '--', tools.python, '-I', '-c',
       'import os,json; print(json.dumps(sorted(os.environ)))']);
