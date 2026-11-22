@@ -93,3 +93,46 @@ _pcc_runner_capability_fenced() {
 		"$pr" "$repo" "$head" "$login" "$self_release" "$issue"
 	return 0
 }
+
+# GH#39913: a runner whose own exact-head continuations never launched twice
+# since the current release skips the head for the re-arm window (always when
+# re-arms are disabled), so a healthy runner continues it. Authorship is
+# GitHub-authenticated and the result only withholds this runner's dispatch.
+# Args: repo, issue, pr, head, comments, current release id, login, trusted logins
+# Returns: 0 when this runner must skip the head, 1 otherwise
+_pcc_runner_launch_fenced() {
+	local repo="$1" issue="$2" pr="$3" head="$4" comments="$5" release_id="$6" login="$7"
+	local trusted_logins="${8:-[]}" failed="" now=""
+	[[ "$release_id" =~ ^[1-9][0-9]*$ ]] || return 1
+	_pcc_login_is_safe "$login" || return 1
+	now=$(date +%s) || return 1
+	failed=$(jq -er --argjson release "$release_id" --arg self "$login" \
+		--arg session "$(_pcc_session_key "$repo" "$pr")" --argjson trusted_logins "$trusted_logins" \
+		--argjson rearm "$_PCC_ATTENTION_REARM_SECONDS" --argjson now "$now" \
+		"${_PCC_JQ_RELEASE_DEFS}${_PCC_JQ_LAUNCH_DEFS}"'
+		[flatten[] | select(trusted_event)] | sort_by(.id) as $c
+		| [$c[] | select(.id > $release and login == $self and unlaunched_episode($c))] as $episodes
+		| [$episodes[] | select(any(body_lines; claim_event))] as $mine
+		| select(($mine | length) >= 2)
+		# The window runs from the newest failure observation (the episode lease
+		# or worker_not_launched release), not the claim that opened it.
+		| ([$episodes[] | (.created_at // "") | (try epoch catch 0)] | max) as $newest
+		| select($rearm == 0 or ($now - $newest) < $rearm)
+		| $mine | length
+	' <<<"$comments" 2>/dev/null) || return 1
+	printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #%s in %s head=%s — runner %s never launched %s continuations since release=%s issue=#%s\n' \
+		"$pr" "$repo" "$head" "$login" "$failed" "$release_id" "$issue"
+	return 0
+}
+
+# Runner-local fences: a head this runner released for a missing capability or
+# whose launches failed on this runner is left to a healthy, capable runner.
+# Args: repo, issue, pr, head, comments, head date, release id, login, trusted logins
+# Returns: 0 when this runner must skip the head, 1 otherwise
+_pcc_runner_fenced() {
+	local repo="$1" issue="$2" pr="$3" head="$4" comments="$5" head_date="$6" release_id="$7" login="$8"
+	local trusted_logins="${9:-[]}"
+	_pcc_runner_capability_fenced "$repo" "$issue" "$pr" "$head" "$comments" "$head_date" "$login" && return 0
+	_pcc_runner_launch_fenced "$repo" "$issue" "$pr" "$head" "$comments" "$release_id" "$login" "$trusted_logins" && return 0
+	return 1
+}
