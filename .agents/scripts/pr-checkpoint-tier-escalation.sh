@@ -111,10 +111,12 @@ _pcc_runner_launch_fenced() {
 		--argjson rearm "$_PCC_ATTENTION_REARM_SECONDS" --argjson now "$now" \
 		"${_PCC_JQ_RELEASE_DEFS}${_PCC_JQ_LAUNCH_DEFS}"'
 		[flatten[] | select(trusted_event)] | sort_by(.id) as $c
-		| [$c[] | select(.id > $release and login == $self and unlaunched_episode($c) and
-			any(body_lines; claim_event))] as $mine
+		| [$c[] | select(.id > $release and login == $self and unlaunched_episode($c))] as $episodes
+		| [$episodes[] | select(any(body_lines; claim_event))] as $mine
 		| select(($mine | length) >= 2)
-		| ([$mine[] | (.created_at // "") | (try epoch catch 0)] | max) as $newest
+		# The window runs from the newest failure observation (the episode lease
+		# or worker_not_launched release), not the claim that opened it.
+		| ([$episodes[] | (.created_at // "") | (try epoch catch 0)] | max) as $newest
 		| select($rearm == 0 or ($now - $newest) < $rearm)
 		| $mine | length
 	' <<<"$comments" 2>/dev/null) || return 1

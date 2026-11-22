@@ -316,6 +316,15 @@ if ! _pcc_runner_launch_fenced o/r 9 9 headsha "$(not_launched_comments 2)" 31 p
 else
 	print_result "launch fence lifts once the newest failure is older than the re-arm window" 1
 fi
+# The window is anchored at the newest failure, not the claim that opened it:
+# claims older than the window still fence while their failure is inside it.
+late_failure=$(not_launched_comments 2 | jq -c '(.[0][] | select(.id == 45) | .created_at) = "2026-09-30T05:00:00Z"')
+_PCC_ATTENTION_REARM_SECONDS=$(($(date +%s) - $(jq -nr '"2026-09-30T03:00:00Z" | fromdateiso8601')))
+if _pcc_runner_launch_fenced o/r 9 9 headsha "$late_failure" 31 pulse-runner '[]' >/dev/null; then
+	print_result "launch fence re-arm window runs from the newest failure, not the claim" 0
+else
+	print_result "launch fence re-arm window runs from the newest failure, not the claim" 1
+fi
 _PCC_ATTENTION_REARM_SECONDS="$launch_fence_rearm"
 if output=$(_pcc_stall_release_evidence "$(not_launched_comments 1 issue-9)" "2026-09-30T00:30:00Z" key "[]" "" "" "" "" "$failed_session") &&
 	[[ "$output" == "$((40 + 2))"$'\t'"worker_not_launched"$'\t'"2"$'\t'* ]]; then
