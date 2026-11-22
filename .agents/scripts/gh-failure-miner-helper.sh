@@ -175,6 +175,9 @@ filter_signature_noise_lines() {
 				for (i = 5; i <= n; i++) {
 					payload = payload "\t" fields[i]
 				}
+			} else if (n == 3) {
+				# gh also combines the timestamp and payload in its third column.
+				payload = fields[3]
 			}
 			source_probe = payload
 			gsub(/^[[:space:]]+/, "", source_probe)
@@ -328,6 +331,9 @@ extract_failure_signature() {
 			n = split($0, fields, "\t")
 			if (n >= 4) {
 				payload = fields[4]
+			} else if (n == 3) {
+				# GH#39884: parse the timestamped payload, not the job/step prefix.
+				payload = fields[3]
 			}
 			sub(/^20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:.]+Z[[:space:]]+/, "", payload)
 			gsub(/^[[:space:]]+/, "", payload)
