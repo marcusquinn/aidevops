@@ -199,6 +199,14 @@ A runner-local account or credential that this runner lacks or the service
 rejects (for example a staging sign-in returning HTTP 401) is the same class,
 not permission_required; another runner may hold it (GH#34901).
 A host-local lock or serialization guard held on this runner pending its operator's reconciliation is runner_capability_unmet, not permission_required, because another runner may not hold it.
+A shared lock, lease or serialized resource held by another live session that did
+not free within the helper's bounded wait is:
+TERMINAL_BLOCKER_REASON=resource_contended
+Never classify live peer contention as input_required, unknown or
+runner_capability_unmet. Name the lock and observed wait in the protected dossier.
+Stop without retrying in-session when the helper says so; preserve every lock and
+publication guard. The issue returns to available after a short per-issue backoff,
+with no human hold or runner-capability cooldown.
 A brief precondition measured on this runner (local telemetry, logs, data or checkouts) that is unmet here is runner_capability_unmet, even when the brief names external_trigger_pending or input_required: another runner may meet it. Name the precondition and the value observed here.
 A VAULT_POLICY_DENIED with check unclassifiable_shell_read or classification_unavailable inside the worker's own worktree, asking for a local-only relaunch, is runner_capability_unmet; protected_read, classification_mutation, and owner-signed SSH or network grant denials remain permission_required.
 For an evidenced unresolved permission boundary, including a continued session

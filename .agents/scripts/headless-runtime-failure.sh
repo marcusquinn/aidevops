@@ -540,6 +540,7 @@ PY
 
 _hrff_blocked_exit_holds() {
 	declare -F gh_issue_edit_safe >/dev/null 2>&1 || return 1
+	[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" != resource_contended ]] || return 1
 	[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" != runner_capability_unmet ||
 		-n "${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}" ]] || return 1
 	return 0
@@ -1149,7 +1150,7 @@ _hrff_project_post_release_state() {
 	if [[ "$reason" == blocked || "$reason" == push_policy_timeout || "$reason" == network_policy_timeout ]]; then
 		draft_projection="blocked"
 		if declare -F _terminal_blocker_reason >/dev/null 2>&1 &&
-			[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" == runner_capability_unmet ]]; then
+			[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" =~ ^(runner_capability_unmet|resource_contended)$ ]]; then
 			draft_projection="available"
 		fi
 	fi
