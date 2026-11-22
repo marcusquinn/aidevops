@@ -8,8 +8,7 @@
 # caller-scoped inputs and the orchestrator's helper directory remain unchanged.
 # Dependencies: full-loop-helper-commit.sh and its shared logging/guard helpers.
 
-[[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
-
+# Include guard; this library does not change the caller's shell options.
 [[ -n "${_FULL_LOOP_COMMIT_GATES_LIB_LOADED:-}" ]] && return 0
 _FULL_LOOP_COMMIT_GATES_LIB_LOADED=1
 
