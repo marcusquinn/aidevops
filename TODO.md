@@ -2448,7 +2448,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19285 fix(terminal-blocker): classify live lock/lease contention as transient resource_contended, never a human hold #auto-dispatch #bug ref:GH#39887 -> [todo/tasks/t19285-brief.md] pr:#39895 completed:2026-11-22
 
-- [ ] t19290 fix(pulse): hand over stale interactive drafts to a real continuation worker #bug #framework ref:GH#39908 -> [todo/tasks/t19290-brief.md]
+- [x] t19290 fix(pulse): hand over stale interactive drafts to a real continuation worker #bug #framework ref:GH#39908 -> [todo/tasks/t19290-brief.md] pr:#39914 completed:2026-11-22
+
+- [ ] t19294 fix(checkpoints): a failed handover continuation launch must not consume the interactive-handover admission #bug ref:GH#39920 -> [todo/tasks/t19294-brief.md]
 
 ## In Progress
 
