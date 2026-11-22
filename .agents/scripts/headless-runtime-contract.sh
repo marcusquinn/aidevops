@@ -221,6 +221,15 @@ When one named person can grant or approve it by answering in the issue (an
 approval, authorization or sign-off), also emit TERMINAL_BLOCKER_INPUT_OWNER and
 TERMINAL_BLOCKER_QUESTION as for input_required; the hold then publishes that
 ask. A hold with no public ask leaves nobody able to act (GH#38951).
+EOF
+	_worker_headless_contract_input_text
+	_worker_headless_contract_recovery_text
+	return 0
+}
+
+# input_required owner protocol and the precedent check before asking (GH#39901).
+_worker_headless_contract_input_text() {
+	cat <<'EOF'
 Only when a specific value, target, credential or decision is required, absent
 from the brief, repository (runbooks included), linked issues, trusted
 decisions on same-repo issues and your tools, and cannot be derived or safely
@@ -242,7 +251,6 @@ input_required with owner maintainer (or admin), not permission_required.
 If no class is established, omit the reason line: unknown evidence stays retryable
 with bounded cross-runner backoff, not a permanent hold.
 EOF
-	_worker_headless_contract_recovery_text
 	return 0
 }
 
