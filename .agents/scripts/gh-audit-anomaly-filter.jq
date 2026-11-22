@@ -154,9 +154,10 @@ def blocked_exit_labels_added:
   and (($added | length) == (($companions | length) + 1))
   and (($companions | length) <= 1)
   and (($blocked_companions | type) == "array")
-  and all($companions[]; . as $label
+  # Scalar labels only: jq index() treats an array argument as a subsequence.
+  and all($companions[]; type == "string" and (. as $label
     | ($blocked_companions | index($label)) != null
-    and ($after_labels | index($label)) != null);
+    and ($after_labels | index($label)) != null));
 
 def expected_worker_blocked_exit_transition:
   comparable_state
