@@ -1067,7 +1067,9 @@ _parse_create_issue_args() {
 }
 
 # Provision tracking labels even in repositories that never ran routine logging.
-# Existing label metadata is left unchanged. API/creation failures fail closed.
+# Existing label metadata is left unchanged; missing labels use the canonical
+# catalog definition (colour/description) from label-sync-helper.sh.
+# API/creation failures fail closed.
 _ensure_tracking_labels() {
 	local repo_slug="$1"
 	_ensure_labels "$repo_slug" routines routine-tracking persistent no-auto-dispatch
@@ -1081,8 +1083,7 @@ _ensure_labels() {
 	shift
 	for label in "$@"; do
 		if ! gh api "repos/${repo_slug}/labels/${label}" --silent 2>/dev/null; then
-			if ! gh label create "$label" --repo "$repo_slug" --color BFD4F2 \
-				--description "Routine tracking lifecycle: ${label}" >/dev/null 2>&1; then
+			if ! "${SCRIPT_DIR}/label-sync-helper.sh" ensure "$repo_slug" "$label" >/dev/null 2>&1; then
 				# Another setup may have created it concurrently.
 				gh api "repos/${repo_slug}/labels/${label}" --silent 2>/dev/null || return 1
 			fi

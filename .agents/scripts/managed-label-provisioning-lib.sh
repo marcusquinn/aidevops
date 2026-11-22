@@ -48,9 +48,9 @@ _MANAGED_RELEASE_APPROVAL_LABEL_SPECS=(
 
 # GH#37697: the signed standing release policy is an approval-only issue.
 _MANAGED_RELEASE_POLICY_LABEL_SPECS=(
-	"release-standing-policy" "Signed standing authorization for routine Cloudron upstream releases" "B60205"
+	"release-standing-policy" "Signed standing authorization for routine Cloudron upstream releases" "FFF59D"
 	# GH#37993: the policy is a long-lived non-task record.
-	"persistent" "Persistent issue — do not close" "FBCA04"
+	"persistent" "Persistent issue — do not close" "FFF59D"
 	"${_MANAGED_NO_AUTO_DISPATCH_LABEL_SPECS[@]}"
 )
 
