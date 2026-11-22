@@ -38,7 +38,9 @@
 #                   what would happen (dry-run is the default).
 #   --repo SLUG     Limit to a single repo.
 #   --json          Emit one JSON object per repo.
-#   --branch NAME   Branch prefix for PRs (default: chore/badges-sync).
+#   --branch NAME   Branch prefix for PRs (default: chore/badges-sync). Must be
+#                   chore/badges-sync or start with chore/badges-sync- so the
+#                   merge gate's routine scope admission (GH#39785) applies.
 #   --no-workflow   Skip loc-badge workflow installation; only sync README blocks.
 #   -h, --help      Show this help.
 #
@@ -234,7 +236,9 @@ Options:
                 what would happen (dry-run is the default for safety).
   --repo SLUG   Limit to a single repo. Example: --repo owner/repo.
   --json        Emit one JSON object per repo describing outcome.
-  --branch NAME Branch name prefix (default: chore/badges-sync).
+  --branch NAME Branch name prefix (default: chore/badges-sync). Must be
+                chore/badges-sync or start with chore/badges-sync- so merge
+                gates can admit the PR by verified routine scope.
   --no-workflow Skip repo metrics workflow installation; only sync README blocks and local metrics.
   -h, --help    Show this help.
 
@@ -921,6 +925,12 @@ main() {
 	if [[ -z "$_OPT_BRANCH_NAME" ]]; then
 		_OPT_BRANCH_NAME="chore/badges-sync"
 	fi
+	# Marker PRs carry no issue identity; the merge gate admits only
+	# chore/badges-sync-* heads, so refuse a prefix it could never admit.
+	case "$_OPT_BRANCH_NAME" in
+	chore/badges-sync | chore/badges-sync-*) ;;
+	*) _die "--branch must be chore/badges-sync or start with chore/badges-sync- (routine scope admission, GH#39785)" ;;
+	esac
 	# Prefer the dedicated headless signing key when present (idempotent when
 	# the routine runner already exported it).
 	[[ "$_OPT_APPLY" -eq 0 ]] || headless_signing_export_key_env || true

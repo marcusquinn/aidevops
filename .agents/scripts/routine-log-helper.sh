@@ -1294,34 +1294,55 @@ cmd_ensure_anchor() {
 	return 0
 }
 
-# Retire only the built-in routine covered by verified diff scope. A bounded
-# complete list of open PRs protects legacy Ref identities from early closure.
+# _anchor_open_pr_reference <repo> <number> — read a fresh, complete open-PR
+# list. Returns 0 when any open PR references anchor #<number>, 1 when none
+# provably does, and 2 when the evidence is unavailable or incomplete.
+_anchor_open_pr_reference() {
+	local repo="$1" number="$2" prs="" rc=0
+	prs=$(gh pr list --repo "$repo" --state open --limit 1000 --json body) || return 2
+	jq -e 'type == "array" and length < 1000 and all(.[]; .body | type == "string")' <<<"$prs" >/dev/null || return 2
+	# Conservatively keep any prose reference too; never misread #12 as #123.
+	jq -e --arg n "$number" 'any(.[]; .body | test("(?i)\\bref[ :]+#" + $n + "([^0-9]|$)"))' <<<"$prs" >/dev/null || rc=$?
+	case "$rc" in 0 | 1) return "$rc" ;; esac
+	return 2
+}
+
+# Retire only the built-in routine covered by verified diff scope. References
+# are read immediately before each close, never from an earlier snapshot, and
+# re-read after it: a legacy runner that adds `Ref #N` inside that window gets
+# its anchor reopened, so an open PR never keeps referencing a closed anchor.
 cmd_retire_anchor() {
 	local key="${1:-}"
 	[[ "$key" == "badges-sync" ]] || return 1
 	_parse_anchor_args "$@" --title retirement || return 1
-	local repo="$_ANCHOR_REPO" issues="" prs="" number=""
+	local repo="$_ANCHOR_REPO" issues="" numbers="" number="" ref_rc=0
 	local marker="<!-- aidevops:routine-anchor:${key} -->"
 	issues=$(gh issue list --repo "$repo" --state open --label routine-tracking \
 		--limit 1000 --json number,body) || return 1
 	jq -e 'type == "array" and length < 1000 and all(.[]; (.number | type == "number") and (.body | type == "string"))' <<<"$issues" >/dev/null || return 1
-	prs=$(gh pr list --repo "$repo" --state open --limit 1000 --json body) || return 1
-	jq -e 'type == "array" and length < 1000 and all(.[]; .body | type == "string")' <<<"$prs" >/dev/null || return 1
+	numbers=$(jq -r --arg marker "$marker" '.[] | select(.body | contains($marker)) | .number' <<<"$issues") || return 1
+	[[ -n "$numbers" ]] || return 0
+	if ! declare -F gh_issue_comment >/dev/null; then
+		# shellcheck source=shared-gh-wrappers.sh
+		source "$SCRIPT_DIR/shared-gh-wrappers.sh" || return 1
+	fi
 	while IFS= read -r number; do
 		_is_valid_issue_number "$number" || return 1
-		# Conservatively keep any prose reference too; never misread #12 as #123.
-		if jq -e --arg n "$number" 'any(.[]; .body | test("(?i)\\bref[ :]+#" + $n + "([^0-9]|$)"))' <<<"$prs" >/dev/null; then
-			continue
-		fi
-		if ! declare -F gh_issue_comment >/dev/null; then
-			# shellcheck source=shared-gh-wrappers.sh
-			source "$SCRIPT_DIR/shared-gh-wrappers.sh" || return 1
-		fi
+		ref_rc=0
+		_anchor_open_pr_reference "$repo" "$number" || ref_rc=$?
+		case "$ref_rc" in 0) continue ;; 1) ;; *) return 1 ;; esac
 		printf '%s\n' 'Routine PRs are now admitted by verified diff scope; this anchor is no longer needed' |
 			gh_issue_comment "$number" --repo "$repo" --body-file - || return 1
 		gh issue edit "$number" --repo "$repo" --remove-label persistent || return 1
 		gh issue close "$number" --repo "$repo" --reason 'not planned' || return 1
-	done < <(jq -r --arg marker "$marker" '.[] | select(.body | contains($marker)) | .number' <<<"$issues")
+		ref_rc=0
+		_anchor_open_pr_reference "$repo" "$number" || ref_rc=$?
+		[[ "$ref_rc" -ne 1 ]] || continue
+		# Referenced or unverifiable after closing: restore and retry next run.
+		gh issue reopen "$number" --repo "$repo" || return 1
+		gh issue edit "$number" --repo "$repo" --add-label persistent || return 1
+		_log_warn "Reopened routine anchor #${number} in ${repo}: open PR reference not ruled out"
+	done <<<"$numbers"
 	return 0
 }
 
@@ -1477,7 +1498,8 @@ Usage:
 
   routine-log-helper.sh retire-anchor badges-sync --repo SLUG
     Close legacy badge anchors as not planned after removing persistent, only
-    when a complete open-PR list proves no Ref #N remains. Other keys refused.
+    when a complete open-PR list read just before closing proves no Ref #N
+    remains; reopen if one appears by the post-close re-read. Other keys refused.
 
   routine-log-helper.sh refresh-description <routine-id>
     Rebuild and push the GitHub issue body using current state and stored

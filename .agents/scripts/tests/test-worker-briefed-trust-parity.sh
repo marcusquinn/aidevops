@@ -43,6 +43,22 @@ ROUTINE_BASE_CONTENT=""
 ROUTINE_TREE_MODE=100644
 ROUTINE_TREE_TRUNCATED=false
 ROUTINE_REF_STATUS=ahead
+ROUTINE_HEAD=1111111111111111111111111111111111111111
+ROUTINE_BASE=2222222222222222222222222222222222222222
+ROUTINE_MERGE_BASE="$ROUTINE_BASE"
+
+# Recursive tree fixture: one entry per changed path. README/workflow entries
+# point at the fixture blob for that commit; other outputs get a stable ID.
+routine_tree_fixture() {
+	local content="$1" files="$2" sha=""
+	[[ -z "$content" ]] || sha=$(jq -r '.sha' <<<"$content")
+	jq -n --argjson files "$files" --arg sha "${sha:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" \
+		--arg mode "$ROUTINE_TREE_MODE" --argjson truncated "$ROUTINE_TREE_TRUNCATED" \
+		'{truncated:$truncated,tree:[$files[] | {path:.filename,type:"blob",mode:$mode,
+		 sha:(if .filename == "README.md" or .filename == ".github/workflows/loc-badge.yml"
+		  then $sha else "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" end)}]}'
+	return 0
+}
 
 # No network calls: any unexpected gh request fails rather than reaching GitHub.
 gh() {
@@ -70,23 +86,25 @@ gh() {
 		payload="$ROUTINE_META"
 		[[ -n "$payload" ]] || payload='{"head":{"sha":"0123456789abcdef0123456789abcdef01234567"}}'
 		;;
-	repos/owner/repo/contents/*)
-		if [[ "$endpoint" == *'ref=1111111111111111111111111111111111111111' ]]; then
-			payload="$ROUTINE_HEAD_CONTENT"
-		else
-			payload="$ROUTINE_BASE_CONTENT"
-		fi
+	# Only SHA-pinned reads are answered: an unpinned diff read fails the test.
+	repos/owner/repo/compare/"${ROUTINE_BASE}...${ROUTINE_HEAD}?per_page=1")
+		[[ "$PR_FILES_API_FAIL" == 0 ]] || return 1
+		payload=$(jq -n --argjson files "$PR_FILES" --arg mb "$ROUTINE_MERGE_BASE" \
+			'{merge_base_commit:{sha:$mb},files:$files}')
+		;;
+	repos/owner/repo/git/blobs/*)
+		payload="$ROUTINE_BASE_CONTENT"
+		[[ "$endpoint" != */"$(jq -r .sha <<<"$ROUTINE_HEAD_CONTENT")" ]] || payload="$ROUTINE_HEAD_CONTENT"
 		;;
 	repos/marcusquinn/aidevops/compare/*)
 		payload=$(jq -n --arg status "$ROUTINE_REF_STATUS" '{status:$status}')
 		;;
-	repos/owner/repo/git/trees/*)
-		payload="$ROUTINE_HEAD_CONTENT"
-		[[ "$endpoint" != *2222222222222222222222222222222222222222* ]] || payload="$ROUTINE_BASE_CONTENT"
-		payload=$(jq -n --arg sha "$(jq -r .sha <<<"$payload")" \
-			--arg mode "$ROUTINE_TREE_MODE" --argjson truncated "$ROUTINE_TREE_TRUNCATED" \
-			'{truncated:$truncated,tree:[{path:"README.md",type:"blob",mode:$mode,sha:$sha},
-			 {path:".github/workflows/loc-badge.yml",type:"blob",mode:$mode,sha:$sha}]}')
+	repos/owner/repo/git/trees/"$ROUTINE_HEAD"'?recursive=1')
+		payload=$(routine_tree_fixture "$ROUTINE_HEAD_CONTENT" "$PR_FILES")
+		;;
+	repos/owner/repo/git/trees/"$ROUTINE_MERGE_BASE"'?recursive=1')
+		payload=$(routine_tree_fixture "$ROUTINE_BASE_CONTENT" \
+			'[{"filename":"README.md"},{"filename":".github/workflows/loc-badge.yml"}]')
 		;;
 	repos/owner/repo/issues/42)
 		payload=$(jq -n --arg assoc "$ISSUE_ASSOC" --arg login "$ISSUE_LOGIN" --arg state "$ISSUE_STATE" \
@@ -355,6 +373,9 @@ expect_parity 1 'routine rename denied' ''
 PR_FILES='[{"filename":"README.md\nREADME.md","status":"added"}]'
 expect_parity 1 'newline filename denied before line conversion' ''
 PR_FILES='[{"filename":"docs/metrics/x","status":"modified"}]'
+ROUTINE_TREE_MODE=120000
+expect_parity 1 'symlinked metrics output denied by pinned head tree' ''
+ROUTINE_TREE_MODE=100644
 PR_BODY='<!-- aidevops:routine-pr:unknown -->'
 ROUTINE_META=$(jq --arg body "$PR_BODY" '.body=$body' <<<"$valid_meta")
 expect_parity 1 'unknown routine marker denied' ''
@@ -373,8 +394,12 @@ PR_FILES='[{"filename":"README.md","status":"modified"}]'
 ROUTINE_BASE_CONTENT=$(content_fixture $'intro\n<!-- aidevops:badges:start -->old<!-- aidevops:badges:end -->\nend\n')
 ROUTINE_HEAD_CONTENT=$(content_fixture $'intro\n<!-- aidevops:badges:start -->new<!-- aidevops:badges:end -->\nend\n')
 expect_parity 0 'README badge-only edit admitted' ''
+# The base tip advanced past the merge base: prose is compared at the merge base.
+ROUTINE_MERGE_BASE=3333333333333333333333333333333333333333
+expect_parity 0 'README badge-only edit admitted against merge base after base advanced' ''
+ROUTINE_MERGE_BASE="$ROUTINE_BASE"
 ROUTINE_TREE_MODE=120000
-expect_parity 1 'README symlink denied despite dereferenced regular Contents response' ''
+expect_parity 1 'README symlink denied by pinned head tree' ''
 ROUTINE_TREE_MODE=100644
 ROUTINE_TREE_TRUNCATED=true
 expect_parity 1 'truncated tree evidence denied' ''
@@ -420,8 +445,15 @@ bash -s -- "$SCRIPT_DIR" "$TEST_ROOT" <<'RETIRE_TEST'
 		local command="$1" action="${2:-}"
 		case "$command:$action" in
 		issue:list) printf '[{"number":77,"body":"<!-- aidevops:routine-anchor:badges-sync -->"},{"number":78,"body":"<!-- aidevops:routine-anchor:sync-workflows -->"}]\n' ;;
-		pr:list) printf '%s\n' "$RETIRE_PRS" ;;
-		issue:edit | issue:close) printf '%s\n' "$*" >>"$RETIRE_CALLS" ;;
+		pr:list)
+			# Simulate a legacy writer adding Ref #77 while the close is in flight.
+			if [[ -n "${RETIRE_PRS_AFTER_CLOSE:-}" ]] && grep -q 'issue close 77' "$RETIRE_CALLS"; then
+				printf '%s\n' "$RETIRE_PRS_AFTER_CLOSE"
+			else
+				printf '%s\n' "$RETIRE_PRS"
+			fi
+			;;
+		issue:edit | issue:close | issue:reopen) printf '%s\n' "$*" >>"$RETIRE_CALLS" ;;
 		*) return 1 ;;
 		esac
 		return 0
@@ -446,6 +478,13 @@ bash -s -- "$SCRIPT_DIR" "$TEST_ROOT" <<'RETIRE_TEST'
 	grep -q 'issue edit 77 .*--remove-label persistent' "$RETIRE_CALLS"
 	grep -q 'issue close 77 .*--reason not planned' "$RETIRE_CALLS"
 	if grep -q 'issue close 78' "$RETIRE_CALLS"; then exit 1; fi
+	if grep -q 'issue reopen' "$RETIRE_CALLS"; then exit 1; fi
 	if cmd_retire_anchor sync-workflows --repo owner/repo; then exit 1; fi
 	printf 'PASS retirement keeps referenced anchor, retires unreferenced badge anchor only\n'
+	: >"$RETIRE_CALLS"
+	RETIRE_PRS_AFTER_CLOSE='[{"body":"Ref #77"}]'
+	cmd_retire_anchor badges-sync --repo owner/repo 2>/dev/null
+	grep -q 'issue reopen 77 --repo owner/repo' "$RETIRE_CALLS"
+	grep -q 'issue edit 77 .*--add-label persistent' "$RETIRE_CALLS"
+	printf 'PASS reference added during close reopens the anchor with persistent restored\n'
 RETIRE_TEST

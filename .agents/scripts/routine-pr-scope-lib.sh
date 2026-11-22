@@ -10,27 +10,78 @@ _is_declared_output() {
 	return 1
 }
 
-_routine_tree_has_file() {
-	local tree="$1" path="$2" content="$3" sha=""
-	sha=$(jq -er '.sha | strings | select(test("^[0-9a-f]{40}$"))' <<<"$content") || return 1
-	jq -e --arg path "$path" --arg sha "$sha" '
-		.truncated == false and
-		([.tree[] | select(.path == $path and .type == "blob" and
-		 (.mode == "100644" or .mode == "100755") and .sha == $sha)] | length == 1)
-	' <<<"$tree" >/dev/null || return 1
+# Shared jq definitions for every evidence predicate below (not readonly: the
+# merge gate re-sources this library on each evaluation).
+_ROUTINE_JQ_DEFS='def git_sha: type == "string" and test("^[0-9a-f]{40}$");
+	def clean_path: type == "string" and (test("[[:cntrl:]]") | not);'
+
+# _routine_tree_blob <tree-json> <path> — print the object ID of the single
+# regular (non-symlink, non-submodule) blob at <path> in a complete recursive
+# tree. Contents API responses dereference some symlinks, so content is always
+# fetched by this pinned object ID instead.
+_routine_tree_blob() {
+	local tree="$1" path="$2"
+	jq -er --arg path "$path" "$_ROUTINE_JQ_DEFS"'
+		select(.truncated == false) | [.tree[] | select(.path == $path)] |
+		select(length == 1) | .[0] |
+		select(.type == "blob" and (.mode == "100644" or .mode == "100755")) |
+		.sha | select(git_sha)
+	' <<<"$tree" || return 1
+	return 0
+}
+
+# _routine_scope_compare <repo> <base> <head> <changed_files> — print the
+# three-dot comparison of the exact verified SHAs. Unlike the PR files
+# endpoint, which describes whichever head is current when it is read, this
+# evidence cannot be swapped by a push-and-restore between reads, and its
+# merge base is the commit the PR diff is computed against.
+_routine_scope_compare() {
+	local repo="$1" base="$2" head="$3" count="$4" compare=""
+	compare=$(gh api "repos/$repo/compare/${base}...${head}?per_page=1") || return 1
+	jq -e --argjson count "$count" "$_ROUTINE_JQ_DEFS"'
+		(.merge_base_commit.sha | git_sha) and
+		(.files | type == "array" and length == $count and length < 100) and
+		all(.files[]; (.status == "added" or .status == "modified") and
+		 (.filename | clean_path) and
+		 (.previous_filename == null)) and
+		([.files[].filename] | length == (unique | length))
+	' <<<"$compare" >/dev/null || return 1
+	printf '%s\n' "$compare"
+	return 0
+}
+
+# _routine_scope_content <repo> <path> <status> <head_blob> <merge_base> —
+# byte-exact README/workflow policy. Prints nothing for other declared outputs.
+_routine_scope_content() {
+	local repo="$1" path="$2" status="$3" head_blob="$4" merge_base="$5"
+	local dir="${BASH_SOURCE[0]%/*}" content="" previous="null" base_tree="" base_blob="" ref="" ref_status=""
+	case "$path" in README.md | .github/workflows/loc-badge.yml) ;; *) return 0 ;; esac
+	content=$(gh api "repos/$repo/git/blobs/$head_blob") || return 1
+	if [[ "$status" == "modified" ]]; then
+		base_tree=$(gh api "repos/$repo/git/trees/$merge_base?recursive=1") || return 1
+		base_blob=$(_routine_tree_blob "$base_tree" "$path") || return 1
+		previous=$(gh api "repos/$repo/git/blobs/$base_blob") || return 1
+	fi
+	ref=$(jq -n --argjson head "$content" --argjson base "$previous" '{head:$head,base:$base}' |
+		python3 "$dir/routine-pr-content.py" "$path" "$dir/../templates/workflows/loc-badge-caller.yml") || return 1
+	if [[ -n "$ref" ]]; then
+		# A workflow may execute only a pinned commit reachable from main.
+		ref_status=$(gh api "repos/marcusquinn/aidevops/compare/$ref...main" --jq .status) || return 1
+		case "$ref_status" in ahead | identical) ;; *) return 1 ;; esac
+	fi
 	return 0
 }
 
 # The marker selects a policy, never authority. Deliberately refuse a full API
 # page (even exactly 100 files) rather than guessing whether evidence is complete.
+# Every diff, tree and blob read is pinned to the verified head and merge base.
 #aidevops:trust-boundary — GH#17671 remains binding for all other worker PRs.
 _routine_pr_scope_check() {
 	local pr_number="$1" repo="$2"
-	local dir="${BASH_SOURCE[0]%/*}" meta="" files="" author="" permission=""
-	local head="" base="" path="" content="" previous="" ref="" fresh="" tree="" base_tree="" status=""
+	local meta="" compare="" listing="" author="" permission="" head="" base="" merge_base=""
+	local tree="" path="" status="" blob="" fresh=""
 	meta=$(gh api "repos/$repo/pulls/$pr_number") || return 1
-	jq -e --arg repo "$repo" '
-		def git_sha: type == "string" and test("^[0-9a-f]{40}$");
+	jq -e --arg repo "$repo" "$_ROUTINE_JQ_DEFS"'
 		.state == "open" and .draft == false and
 		([.labels[].name] | index("origin:worker") != null) and
 		([.labels[].name] | index("hold-for-review") == null) and
@@ -46,44 +97,19 @@ _routine_pr_scope_check() {
 	case "$permission" in write | maintain | admin) ;; *) return 1 ;; esac
 	head=$(jq -r .head.sha <<<"$meta")
 	base=$(jq -r .base.sha <<<"$meta")
-	files=$(gh api "repos/$repo/pulls/$pr_number/files?per_page=100") || return 1
-	jq -e --argjson count "$(jq .changed_files <<<"$meta")" '
-		type == "array" and length == $count and length < 100 and
-		all(.[]; (.status == "added" or .status == "modified") and
-		 (.filename | type == "string" and (test("[[:cntrl:]]") | not)) and
-		 (.previous_filename == null)) and
-		([.[].filename] | length == (unique | length))
-	' <<<"$files" >/dev/null || return 1
-	while IFS= read -r path; do
+	compare=$(_routine_scope_compare "$repo" "$base" "$head" "$(jq .changed_files <<<"$meta")") || return 1
+	merge_base=$(jq -r .merge_base_commit.sha <<<"$compare")
+	# Materialise the listing first: a failed producer must not look like no files.
+	listing=$(jq -r '.files[] | [.filename, .status] | @tsv' <<<"$compare") || return 1
+	[[ -n "$listing" ]] || return 1
+	tree=$(gh api "repos/$repo/git/trees/$head?recursive=1") || return 1
+	while IFS=$'\t' read -r path status; do
 		_is_declared_output "$path" || return 1
-		case "$path" in
-		README.md | .github/workflows/loc-badge.yml)
-			content=$(gh api "repos/$repo/contents/$path?ref=$head") || return 1
-			# Contents API dereferences some symlinks: independently require a
-			# regular tree entry and bind its object ID to the verified content.
-			if [[ -z "$tree" ]]; then
-				tree=$(gh api "repos/$repo/git/trees/$head?recursive=1") || return 1
-			fi
-			_routine_tree_has_file "$tree" "$path" "$content" || return 1
-			previous='null'
-			if jq -e --arg path "$path" '.[] | select(.filename == $path and .status == "modified")' <<<"$files" >/dev/null; then
-				previous=$(gh api "repos/$repo/contents/$path?ref=$base") || return 1
-				if [[ -z "$base_tree" ]]; then
-					base_tree=$(gh api "repos/$repo/git/trees/$base?recursive=1") || return 1
-				fi
-				_routine_tree_has_file "$base_tree" "$path" "$previous" || return 1
-			fi
-			ref=$(jq -n --argjson head "$content" --argjson base "$previous" '{head:$head,base:$base}' |
-				python3 "$dir/routine-pr-content.py" "$path" "$dir/../templates/workflows/loc-badge-caller.yml") || return 1
-			if [[ -n "$ref" ]]; then
-				# A workflow may execute only a pinned commit reachable from main.
-				status=$(gh api "repos/marcusquinn/aidevops/compare/$ref...main" --jq .status) || return 1
-				case "$status" in ahead | identical) ;; *) return 1 ;; esac
-			fi
-			;;
-		esac
-	done < <(jq -r '.[].filename' <<<"$files")
-	# Pin the verdict to the observed diff/body; a racing push is not admitted.
+		# Every admitted output, not only content-checked ones, must be regular.
+		blob=$(_routine_tree_blob "$tree" "$path") || return 1
+		_routine_scope_content "$repo" "$path" "$status" "$blob" "$merge_base" || return 1
+	done <<<"$listing"
+	# Pin the verdict to the observed head/body; a racing push is not admitted.
 	fresh=$(gh api "repos/$repo/pulls/$pr_number") || return 1
 	[[ "$(jq -Sc '{head:.head.sha,base:.base.sha,body,labels,state,draft,changed_files}' <<<"$fresh")" == \
 		"$(jq -Sc '{head:.head.sha,base:.base.sha,body,labels,state,draft,changed_files}' <<<"$meta")" ]] || return 1

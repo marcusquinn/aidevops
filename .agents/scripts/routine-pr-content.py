@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
-"""Byte-exact content evidence for deterministic routine PR admission."""
+"""Byte-exact content evidence for deterministic routine PR admission.
+
+Callers fetch each blob from the Git blobs API by the object ID recorded in a
+complete tree pinned to the verified commit, so the content is bound to that
+regular tree entry without re-deriving Git object IDs here.
+"""
 import base64
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -14,18 +18,14 @@ BADGE_END = b"<!-- aidevops:badges:end -->"
 
 
 def blob(value):
-    """Reject truncated, non-regular or unverifiable Contents API responses."""
+    """Decode a Git blob API response; reject truncated or non-base64 evidence."""
     if value is None:
         return b""
-    if value.get("type") != "file" or value.get("encoding") != "base64":
-        raise ValueError("not a complete regular file")
+    if value.get("encoding") != "base64":
+        raise ValueError("not a complete base64 blob")
     data = base64.b64decode("".join(value["content"].split()), validate=True)
-    # Git object identity, not a password/signature or trust primitive. Live
-    # GitHub permission, pinned tree evidence and byte equality provide admission.
-    digest = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data,
-                          usedforsecurity=False).hexdigest()
-    if len(data) != value["size"] or digest != value["sha"]:
-        raise ValueError("blob evidence mismatch")
+    if len(data) != value["size"]:
+        raise ValueError("blob evidence truncated")
     return data
 
 
