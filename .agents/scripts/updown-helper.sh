@@ -591,10 +591,11 @@ print_status_page_next_steps() {
 }
 
 # Prints the first answer of a DNS lookup, without the trailing dot or quotes.
+# awk reads every line (no early exit), so pipefail never sees a SIGPIPE.
 dns_first_answer() {
 	local type="$1"
 	local name="$2"
-	dig +short "$type" "$name" 2>/dev/null | head -n 1 | sed -e 's/\.$//' -e 's/^"//' -e 's/"$//'
+	dig +short "$type" "$name" 2>/dev/null | awk 'NR == 1 { sub(/\.$/, ""); gsub(/^"|"$/, ""); print }'
 	return 0
 }
 
