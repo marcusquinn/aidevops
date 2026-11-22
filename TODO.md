@@ -2428,7 +2428,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19275 fix: sync-workflows marker only for gate-admissible renders; keep anchors; refuse pin downgrade (GH#39793 follow-up) #bug #interactive ref:GH#39830 assignee:marcusquinn logged:2026-11-22 started:2026-11-22
 
-- [ ] t19276 fix(full-loop): restrict runtime-pending to Critical/High risk so workers stop parking unfinished Low/Medium work behind a human hold #bug ref:GH#39831
+- [x] t19276 fix(full-loop): restrict runtime-pending to Critical/High risk so workers stop parking unfinished Low/Medium work behind a human hold #bug ref:GH#39831 pr:#39836 completed:2026-11-22
+
+- [x] t19277 updown status-page custom domain is DNS-only; add status-page domain check and browse driver notes #bug ref:GH#39834 pr:#39835 completed:2026-11-22
 
 ## In Progress
 

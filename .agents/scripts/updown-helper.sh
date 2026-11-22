@@ -9,7 +9,7 @@
 # One updown.io account monitors every site; each site gets a status page on
 # its own status.<domain> subdomain. Guide: services/monitoring/updown.md
 #
-# Version: 1.1.0
+# Version: 1.2.0
 
 # Set strict mode
 set -euo pipefail
@@ -560,17 +560,99 @@ print_status_page() {
 	return 0
 }
 
-# The updown API has no custom-domain field, so the helper only explains it.
-print_status_page_next_steps() {
-	echo
-	echo "Next steps (the updown API cannot set a custom domain, so this helper does not):"
-	echo "  1. On updown.io, open this status page's settings and enter the site's status"
-	echo "     hostname, for example status.example.com, as its custom domain."
-	echo "  2. At the site's DNS host, add every record updown's custom-domain screen lists:"
-	echo "     CNAME status -> $STATUS_PAGE_CNAME_TARGET, plus any TXT record shown there."
-	echo "     This helper creates no DNS records. In Cloudflare set the CNAME to DNS only."
-	echo "     Proxied setups: services/monitoring/updown.md"
+# A status page's custom domain is set by DNS alone: a CNAME to page.updown.io
+# and a TXT record on _updown.<host> naming the page. updown.io's "Setup a
+# custom domain" screen (/public-status?page=p%2F<page token>) only lists these
+# two records; there is no field to fill in, so no updown.io UI step is needed.
+status_page_txt_value() {
+	local page_token="$1"
+	printf 'updown-page=p/%s' "$page_token"
 	return 0
+}
+
+print_status_page_records() {
+	local page_token="$1"
+	local host="$2"
+	echo "  $host  CNAME  $STATUS_PAGE_CNAME_TARGET   (Cloudflare: DNS only)"
+	echo "  _updown.$host  TXT  \"$(status_page_txt_value "$page_token")\""
+	return 0
+}
+
+print_status_page_next_steps() {
+	local page_token="$1"
+	echo
+	echo "Next steps: put the page on status.<domain> with two DNS records at the site's"
+	echo "DNS host (this helper creates no DNS records):"
+	print_status_page_records "$page_token" "status.example.com"
+	echo "updown issues the certificate on the first HTTPS request. Then check with:"
+	echo "  $(basename "$0") status-page domain $page_token status.example.com"
+	echo "Proxied Cloudflare setups: services/monitoring/updown.md"
+	return 0
+}
+
+# Prints the first answer of a DNS lookup, without the trailing dot or quotes.
+# awk reads every line (no early exit), so pipefail never sees a SIGPIPE.
+dns_first_answer() {
+	local type="$1"
+	local name="$2"
+	dig +short "$type" "$name" 2>/dev/null | awk 'NR == 1 { sub(/\.$/, ""); gsub(/^"|"$/, ""); print }'
+	return 0
+}
+
+# Read-only: print a page's two records for HOST, then check the CNAME, the
+# TXT record and https://HOST/ (200 with a verified certificate; the first
+# requests can fail while updown issues it, so they are retried).
+status_page_domain() {
+	local page_token="${1:-}"
+	local host="${2:-}"
+	validate_token "$page_token" "$KIND_STATUS_PAGE" || return 1
+	host=$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')
+	if [[ ! "$host" =~ ^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$ ]]; then
+		print_error "Give the status hostname, for example: status-page domain $page_token status.example.com"
+		return 1
+	fi
+
+	echo "DNS records for $host:"
+	print_status_page_records "$page_token" "$host"
+	echo
+
+	if ! command -v dig >/dev/null 2>&1; then
+		print_warning "dig is not installed; skipping the DNS and HTTPS checks"
+		return 1
+	fi
+
+	local failed=0 cname txt want_txt code="000" attempt
+	cname=$(dns_first_answer CNAME "$host")
+	if [[ "$cname" == "$STATUS_PAGE_CNAME_TARGET" ]]; then
+		print_success "CNAME $host -> $cname"
+	else
+		print_error "CNAME $host: expected $STATUS_PAGE_CNAME_TARGET, found ${cname:-nothing}"
+		failed=1
+	fi
+	want_txt=$(status_page_txt_value "$page_token")
+	txt=$(dig +short TXT "_updown.$host" 2>/dev/null | tr -d '"' | grep -Fx "$want_txt" || true)
+	if [[ -n "$txt" ]]; then
+		print_success "TXT _updown.$host = $txt"
+	else
+		print_error "TXT _updown.$host: expected \"$want_txt\""
+		failed=1
+	fi
+	if [[ "$failed" -ne 0 ]]; then
+		return 1
+	fi
+
+	for attempt in 1 2 3 4 5 6; do
+		code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "https://$host/" 2>/dev/null) || code="000"
+		if [[ "$code" == "200" ]]; then
+			print_success "https://$host/ answers 200 with a verified certificate"
+			return 0
+		fi
+		if [[ "$attempt" -lt 6 ]]; then
+			sleep 10
+		fi
+	done
+	print_error "https://$host/ answered $code after 6 tries; the certificate may still be pending, so try again in a few minutes"
+	return 1
 }
 
 status_page_list() {
@@ -600,7 +682,7 @@ status_page_add() {
 	response=$(execute_request "POST" "/status_pages" "$payload") || return 1
 	print_success "Status page added"
 	print_status_page "$response" || return 1
-	print_status_page_next_steps
+	print_status_page_next_steps "$(echo "$response" | jq -r '.token // "<page-token>"')"
 	return 0
 }
 
@@ -661,8 +743,11 @@ status_page_command() {
 	delete)
 		status_page_delete "$@" || return 1
 		;;
+	domain)
+		status_page_domain "$@" || return 1
+		;;
 	*)
-		print_error "Unknown status-page action: $action (use list, add, update or delete)"
+		print_error "Unknown status-page action: $action (use list, add, update, delete or domain)"
 		return 1
 		;;
 	esac
@@ -713,12 +798,15 @@ Status pages:
   status-page update <token> [same flags]
                                 Change only the given fields; --check replaces the list
   status-page delete <token>    Delete a status page
+  status-page domain <token> <host>
+                                Print the page's two DNS records for host, then
+                                check them and https://host/ (read-only)
 
-  The updown API cannot set a status page's custom domain. After 'status-page add',
-  enter status.<domain> as the page's custom domain on updown.io, then add every
-  DNS record that screen lists: CNAME status -> $STATUS_PAGE_CNAME_TARGET
-  (Cloudflare: DNS only), plus any TXT record shown there. This helper creates
-  no DNS records.
+  A status page's custom domain is set by DNS alone, with no updown.io screen:
+    status.<domain>          CNAME  $STATUS_PAGE_CNAME_TARGET   (Cloudflare: DNS only)
+    _updown.status.<domain>  TXT    "updown-page=p/<page-token>"
+  updown issues the certificate on the first HTTPS request. This helper creates
+  no DNS records; add them with the DNS host's API or panel.
 
   help                          Show this help message
 EOF
