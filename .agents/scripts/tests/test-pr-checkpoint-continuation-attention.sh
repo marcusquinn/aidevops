@@ -227,15 +227,18 @@ else
 fi
 
 # GH#38103: a never-launched continuation episode (edited claim and terminal
-# lease of the PR's own session) leaves the stall release current evidence; a
-# second one reaches the per-head fuse (stalls >= 2).
+# lease of the PR's own session) leaves the stall release current evidence.
+# GH#39913: failures count once per runner, so only a second failing runner
+# reaches the per-head fuse (stalls >= 2). Optional $2=distinct gives each
+# episode its own runner login.
 failed_launch_comments() {
-	local episodes="$1" id=40 n=0 out=""
+	local episodes="$1" mode="${2:-same}" id=40 n=0 out="" who="pulse-runner"
 	out='{"id":30,"created_at":"2026-09-30T01:00:00Z","author_association":"COLLABORATOR","user":{"login":"worker-bot"},"body":"DISPATCH_LEASE phase=ready lease_token=stall-lease session=s1"},{"id":31,"created_at":"2026-09-30T01:30:00Z","author_association":"OWNER","user":{"login":"pulse-runner"},"body":"CLAIM_RELEASED reason=worker_draft_checkpoint runner=pulse-runner ts=2026-09-30T01:30:00Z"}'
 	while [[ "$n" -lt "$episodes" ]]; do
-		out="${out},{\"id\":${id},\"created_at\":\"2026-09-30T02:0${n}:00Z\",\"updated_at\":\"2026-09-30T02:0${n}:30Z\",\"author_association\":\"OWNER\",\"user\":{\"login\":\"pulse-runner\"},\"body\":\"DISPATCH_CLAIM nonce=n${n} runner=pulse-runner lease_token=n${n} session=pr-checkpoint-continuation-o-r-9 phase=prelaunch\"}"
+		if [[ "$mode" == distinct ]]; then who="runner-${n}"; fi
+		out="${out},{\"id\":${id},\"created_at\":\"2026-09-30T02:0${n}:00Z\",\"updated_at\":\"2026-09-30T02:0${n}:30Z\",\"author_association\":\"OWNER\",\"user\":{\"login\":\"${who}\"},\"body\":\"DISPATCH_CLAIM nonce=n${n} runner=${who} lease_token=n${n} session=pr-checkpoint-continuation-o-r-9 phase=prelaunch\"}"
 		id=$((id + 1))
-		out="${out},{\"id\":${id},\"created_at\":\"2026-09-30T02:0${n}:40Z\",\"updated_at\":\"2026-09-30T02:0${n}:50Z\",\"author_association\":\"OWNER\",\"user\":{\"login\":\"pulse-runner\"},\"body\":\"DISPATCH_LEASE phase=terminal lease_token=n${n} session=pr-checkpoint-continuation-o-r-9 expires_at=0\"}"
+		out="${out},{\"id\":${id},\"created_at\":\"2026-09-30T02:0${n}:40Z\",\"updated_at\":\"2026-09-30T02:0${n}:50Z\",\"author_association\":\"OWNER\",\"user\":{\"login\":\"${who}\"},\"body\":\"DISPATCH_LEASE phase=terminal lease_token=n${n} session=pr-checkpoint-continuation-o-r-9 expires_at=0\"}"
 		id=$((id + 1))
 		n=$((n + 1))
 	done
@@ -243,13 +246,13 @@ failed_launch_comments() {
 	return 0
 }
 failed_session="pr-checkpoint-continuation-o-r-9"
-for failed_episodes in 1 2; do
-	expected_stalls=$((failed_episodes))
-	if output=$(_pcc_stall_release_evidence "$(failed_launch_comments "$failed_episodes")" "2026-09-30T00:30:00Z" key "[]" "" "" "" "" "$failed_session") &&
+for failed_case in 1:same:1 2:same:1 2:distinct:2; do
+	IFS=: read -r failed_episodes failed_mode expected_stalls <<<"$failed_case"
+	if output=$(_pcc_stall_release_evidence "$(failed_launch_comments "$failed_episodes" "$failed_mode")" "2026-09-30T00:30:00Z" key "[]" "" "" "" "" "$failed_session") &&
 		[[ "$output" == "31"$'\t'"worker_draft_checkpoint"$'\t'"${expected_stalls}"$'\t'* ]]; then
-		print_result "never-launched continuation episodes (${failed_episodes}) keep the stall release current" 0
+		print_result "never-launched continuation episodes (${failed_episodes}, ${failed_mode} runner) keep the stall release current, stalls=${expected_stalls}" 0
 	else
-		print_result "never-launched continuation episodes (${failed_episodes}) keep the stall release current" 1 "output=${output:-missing}"
+		print_result "never-launched continuation episodes (${failed_episodes}, ${failed_mode} runner) keep the stall release current, stalls=${expected_stalls}" 1 "output=${output:-missing}"
 	fi
 done
 if ! _pcc_stall_release_evidence "$(failed_launch_comments 1)" "2026-09-30T00:30:00Z" key "[]" "" "" "" >/dev/null 2>&1; then
@@ -261,31 +264,59 @@ fi
 # GH#38358: the runtime closes a failed continuation launch with its own
 # `CLAIM_RELEASED reason=worker_not_launched` in the same session (claim,
 # prelaunch lease, release; no ready lease). That episode is transparent too,
-# and counted once toward the per-head fuse.
+# and counted once per runner toward the per-head fuse (GH#39913). Optional
+# $3=distinct gives each episode its own runner login.
 not_launched_comments() {
-	local episodes="$1" session="${2:-pr-checkpoint-continuation-o-r-9}" id=40 n=0 out=""
+	local episodes="$1" session="${2:-pr-checkpoint-continuation-o-r-9}" mode="${3:-same}" id=40 n=0 out="" who="pulse-runner"
 	out='{"id":30,"created_at":"2026-09-30T01:00:00Z","author_association":"COLLABORATOR","user":{"login":"worker-bot"},"body":"DISPATCH_LEASE phase=ready lease_token=stall-lease session=s1"},{"id":31,"created_at":"2026-09-30T01:30:00Z","author_association":"OWNER","user":{"login":"pulse-runner"},"body":"CLAIM_RELEASED reason=worker_draft_checkpoint runner=pulse-runner ts=2026-09-30T01:30:00Z"}'
 	while [[ "$n" -lt "$episodes" ]]; do
-		out="${out},{\"id\":${id},\"created_at\":\"2026-09-30T02:0${n}:00Z\",\"author_association\":\"OWNER\",\"user\":{\"login\":\"pulse-runner\"},\"body\":\"DISPATCH_CLAIM nonce=n${n} runner=pulse-runner lease_token=n${n} session=${session} phase=prelaunch\"}"
+		if [[ "$mode" == distinct ]]; then who="runner-${n}"; fi
+		out="${out},{\"id\":${id},\"created_at\":\"2026-09-30T02:0${n}:00Z\",\"author_association\":\"OWNER\",\"user\":{\"login\":\"${who}\"},\"body\":\"DISPATCH_CLAIM nonce=n${n} runner=${who} lease_token=n${n} session=${session} phase=prelaunch\"}"
 		id=$((id + 1))
-		out="${out},{\"id\":${id},\"created_at\":\"2026-09-30T02:0${n}:10Z\",\"author_association\":\"OWNER\",\"user\":{\"login\":\"pulse-runner\"},\"body\":\"DISPATCH_LEASE phase=prelaunch lease_token=n${n} session=${session} attempt_id=unknown\"}"
+		out="${out},{\"id\":${id},\"created_at\":\"2026-09-30T02:0${n}:10Z\",\"author_association\":\"OWNER\",\"user\":{\"login\":\"${who}\"},\"body\":\"DISPATCH_LEASE phase=prelaunch lease_token=n${n} session=${session} attempt_id=unknown\"}"
 		id=$((id + 1))
-		out="${out},{\"id\":${id},\"created_at\":\"2026-09-30T02:0${n}:20Z\",\"author_association\":\"OWNER\",\"user\":{\"login\":\"pulse-runner\"},\"body\":\"CLAIM_RELEASED reason=worker_not_launched runner=pulse-runner claim_id=$((id - 2)) nonce=n${n} lease_token=n${n} session=${session}\"}"
+		out="${out},{\"id\":${id},\"created_at\":\"2026-09-30T02:0${n}:20Z\",\"author_association\":\"OWNER\",\"user\":{\"login\":\"${who}\"},\"body\":\"CLAIM_RELEASED reason=worker_not_launched runner=${who} claim_id=$((id - 2)) nonce=n${n} lease_token=n${n} session=${session}\"}"
 		id=$((id + 1))
 		n=$((n + 1))
 	done
 	printf '[[%s]]\n' "$out"
 	return 0
 }
-for failed_episodes in 1 2; do
-	if output=$(_pcc_stall_release_evidence "$(not_launched_comments "$failed_episodes")" "2026-09-30T00:30:00Z" key "[]" \
+for failed_case in 1:same:1 2:same:1 2:distinct:2; do
+	IFS=: read -r failed_episodes failed_mode expected_stalls <<<"$failed_case"
+	if output=$(_pcc_stall_release_evidence "$(not_launched_comments "$failed_episodes" "$failed_session" "$failed_mode")" "2026-09-30T00:30:00Z" key "[]" \
 		"2026-09-30T00:00:00Z" "" "" "" "$failed_session") &&
-		[[ "$output" == "31"$'\t'"worker_draft_checkpoint"$'\t'"${failed_episodes}"$'\t'"false"$'\t'"1"$'\t'* ]]; then
-		print_result "worker_not_launched episodes (${failed_episodes}) keep the stall release current and count once" 0
+		[[ "$output" == "31"$'\t'"worker_draft_checkpoint"$'\t'"${expected_stalls}"$'\t'"false"$'\t'"1"$'\t'* ]]; then
+		print_result "worker_not_launched episodes (${failed_episodes}, ${failed_mode} runner) keep the stall release current, stalls=${expected_stalls}" 0
 	else
-		print_result "worker_not_launched episodes (${failed_episodes}) keep the stall release current and count once" 1 "output=${output:-missing}"
+		print_result "worker_not_launched episodes (${failed_episodes}, ${failed_mode} runner) keep the stall release current, stalls=${expected_stalls}" 1 "output=${output:-missing}"
 	fi
 done
+# GH#39913: only the runner whose own launches failed twice skips the head,
+# and only inside the re-arm window (always when re-arms are disabled).
+launch_fence_rearm="$_PCC_ATTENTION_REARM_SECONDS"
+_PCC_ATTENTION_REARM_SECONDS=0
+if output=$(_pcc_runner_launch_fenced o/r 9 9 headsha "$(not_launched_comments 2)" 31 pulse-runner '[]') &&
+	[[ "$output" == *"STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #9 in o/r head=headsha"*"runner pulse-runner never launched 2 continuations since release=31"* ]]; then
+	print_result "runner with two never-launched continuations is fenced off the head" 0
+else
+	print_result "runner with two never-launched continuations is fenced off the head" 1 "output=${output:-missing}"
+fi
+if ! _pcc_runner_launch_fenced o/r 9 9 headsha "$(not_launched_comments 2)" 31 other-runner '[]' >/dev/null &&
+	! _pcc_runner_launch_fenced o/r 9 9 headsha "$(not_launched_comments 1)" 31 pulse-runner '[]' >/dev/null &&
+	! _pcc_runner_launch_fenced o/r 9 9 headsha "$(not_launched_comments 2 "$failed_session" distinct)" 31 runner-0 '[]' >/dev/null &&
+	! _pcc_runner_launch_fenced o/r 9 9 headsha "$(not_launched_comments 2)" 44 pulse-runner '[]' >/dev/null; then
+	print_result "launch fence spares other runners, a single failure and failures before the release" 0
+else
+	print_result "launch fence spares other runners, a single failure and failures before the release" 1
+fi
+_PCC_ATTENTION_REARM_SECONDS=43200
+if ! _pcc_runner_launch_fenced o/r 9 9 headsha "$(not_launched_comments 2)" 31 pulse-runner '[]' >/dev/null; then
+	print_result "launch fence lifts once the newest failure is older than the re-arm window" 0
+else
+	print_result "launch fence lifts once the newest failure is older than the re-arm window" 1
+fi
+_PCC_ATTENTION_REARM_SECONDS="$launch_fence_rearm"
 if output=$(_pcc_stall_release_evidence "$(not_launched_comments 1 issue-9)" "2026-09-30T00:30:00Z" key "[]" "" "" "" "" "$failed_session") &&
 	[[ "$output" == "$((40 + 2))"$'\t'"worker_not_launched"$'\t'"2"$'\t'* ]]; then
 	print_result "worker_not_launched from another session is a counted stall release" 0

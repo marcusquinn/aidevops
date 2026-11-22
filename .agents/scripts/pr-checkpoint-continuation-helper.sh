@@ -1523,11 +1523,14 @@ _pcc_stall_release_evidence() {
 				((.commit.committer.date // "") | (try epoch catch 0)) <= $end))] | length) as $progress
 		| ([$c[] | select(ownership($c) and (unlaunched_episode($c) | not))] | last) as $release
 		| select($release != null and ($release | unedited and stall_release))
-		# Each unlaunched episode after the release counts toward the per-head
-		# fuse, except the first: one bounded retry, then attention.
+		# GH#39913: a launch failure describes the runner, not the head. Each
+		# runner whose continuation never launched after the release counts
+		# once, except the first: a second failing runner reaches attention.
+		# Repeated failures of one runner fence only that runner
+		# (_pcc_runner_launch_fenced).
 		| ([$c[] | select(.id > $release.id and unlaunched_episode($c) and
-			any(body_lines; claim_event))] | length) as $failed_launches
-		| ([$failed_launches - 1, 0] | max) as $extra_stalls
+			any(body_lines; claim_event)) | login] | unique | length) as $failed_runners
+		| ([$failed_runners - 1, 0] | max) as $extra_stalls
 		| (checkpoint($c; $release) // {id: $release.id, attempt: ""}) as $pick
 		| [($release.id | tostring), ($release | release_reason), ((count_since($c; $head_epoch) + $extra_stalls) | tostring),
 			(any($c[]; head_attention) | tostring),
@@ -1990,6 +1993,7 @@ _pcc_dispatch_stalled() {
 			"${attention_epoch:-0}" "$release_epoch" "$comments" "$head_date" "$login" "$progress" "$nonprogress" || return 0
 	fi
 	_pcc_runner_capability_fenced "$repo" "$issue" "$pr" "$head" "$comments" "$head_date" "$login" && return 1
+	_pcc_runner_launch_fenced "$repo" "$issue" "$pr" "$head" "$comments" "$release_id" "$login" "$trusted_logins" && return 1
 	printf 'STALE_PR_CONTINUATION: issue #%s in %s — PR #%s preserved for exact-head continuation assignee=%s release=%s reason=%s\n' \
 		"$issue" "$repo" "$pr" "$runner" "$release_id" "$reason"
 	PCC_ALLOW_RELEASED=true
