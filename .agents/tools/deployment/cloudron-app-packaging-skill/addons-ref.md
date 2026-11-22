@@ -169,7 +169,7 @@ CLOUDRON_EMAIL_DOMAINS
 CLOUDRON_EMAIL_SERVER_HOST
 ```
 
-## proxyauth
+## proxyAuth
 
 Authentication wall. Reserves `/login` and `/logout` routes. Cannot be added to an existing app — reinstall required.
 

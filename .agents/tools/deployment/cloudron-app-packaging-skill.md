@@ -235,7 +235,7 @@ Full field reference: [manifest-ref.md](cloudron-app-packaging-skill/manifest-re
 | `turn` | STUN/TURN service | `CLOUDRON_TURN_SERVER` |
 | `docker` | Create containers (restricted) | `CLOUDRON_DOCKER_HOST` |
 
-Adding `oidc`, `ldap` or `proxyAuth` in an update does not enable SSO for existing installs (the `sso` flag is fixed at install). See [Adding an auth addon in an update](cloudron-app-packaging-skill/manifest-ref/05-behavior.md#adding-an-auth-addon-in-an-update).
+Adding `oidc`, `ldap` or `proxyAuth` in an update does not enable SSO for existing installs whose `sso` flag is `false` (the flag is fixed at install). Installs with `sso: true` receive the new addon's variables. See [Adding an auth addon in an update](cloudron-app-packaging-skill/manifest-ref/05-behavior.md#adding-an-auth-addon-in-an-update).
 
 Full env var lists and options: [addons-ref.md](cloudron-app-packaging-skill/addons-ref.md).
 
