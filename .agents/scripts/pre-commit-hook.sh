@@ -663,38 +663,63 @@ check_secrets() {
 	# every child exit 1-125 into one status (1 on BSD, 123 on GNU), which made
 	# "could not run" indistinguishable from "found secrets". Secretlint's
 	# contract: 0 = clean, 1 = findings, other = configuration/execution error.
-	# stdin is detached so the scanner never consumes git's pre-push ref list.
+	# Bounded batches keep each argv far below ARG_MAX (which xargs used to
+	# handle); stdin is detached so the scanner never reads git's pre-push refs.
+	# Missing config is matched as Secretlint's exact first line with exit 2
+	# (verified on 11.3.1, 11.7.1 and 13.1.0), so a configured rule ID that
+	# contains the same words cannot bypass the scan.
+	local missing_config_line="Error: secretlint config is not found"
+	local batch_size=100
+	local offset=0
 	local scan_output=""
 	local scan_status=0
-	scan_output=$("${scanner[@]}" --format compact "${staged_files[@]}" 2>&1 </dev/null) || scan_status=$?
+	local has_findings=0
+	local findings_output=""
+	local error_status=0
+	local error_output=""
+	while [[ $offset -lt ${#staged_files[@]} ]]; do
+		scan_status=0
+		scan_output=$("${scanner[@]}" --format compact "${staged_files[@]:offset:batch_size}" 2>&1 </dev/null) || scan_status=$?
+		if [[ $offset -eq 0 && $scan_status -eq 2 && "${scan_output%%$'\n'*}" == "$missing_config_line" ]]; then
+			# Unconfigured repository (config discovery is cwd-based, so the first
+			# batch decides): same outcome as an unavailable scanner.
+			print_warning "Secretlint: no config found (.secretlintrc*); secret scan skipped"
+			print_info "  Enable it with: secretlint-helper.sh init"
+			return 0
+		fi
+		offset=$((offset + batch_size))
+		case "$scan_status" in
+		0) ;;
+		1)
+			has_findings=1
+			findings_output+="${scan_output}"$'\n'
+			;;
+		*)
+			error_status=$scan_status
+			error_output+="${scan_output}"$'\n'
+			;;
+		esac
+	done
 
-	case "$scan_status" in
-	0)
-		print_success "$secrets_clean_msg"
-		;;
-	1)
-		[[ -n "$scan_output" ]] && printf '%s\n' "$scan_output" >&2
+	if [[ $has_findings -eq 1 ]]; then
+		printf '%s' "$findings_output" >&2
 		print_error "$secrets_found_msg"
 		print_info "Review the findings and either:"
 		print_info "  1. Remove the secrets from your code"
 		print_info "  2. Add to .secretlintignore if false positive"
 		print_info "  3. Use // secretlint-disable-line comment"
 		((++violations))
-		;;
-	*)
-		if [[ "$scan_output" == *"secretlint config is not found"* ]]; then
-			# Unconfigured repository: same outcome as an unavailable scanner.
-			print_warning "Secretlint: no config found (.secretlintrc*); secret scan skipped"
-			print_info "  Enable it with: secretlint-helper.sh init"
-		else
-			# Configured but the scanner failed: fail closed with an accurate reason.
-			[[ -n "$scan_output" ]] && printf '%s\n' "$scan_output" >&2
-			print_error "Secretlint could not run (exit ${scan_status}); secret gate cannot pass"
-			print_info "Fix the Secretlint configuration or installation, then retry the push"
-			((++violations))
-		fi
-		;;
-	esac
+	fi
+	if [[ $error_status -ne 0 ]]; then
+		# Configured but the scanner failed: fail closed with an accurate reason.
+		printf '%s' "$error_output" >&2
+		print_error "Secretlint could not run (exit ${error_status}); secret gate cannot pass"
+		print_info "Fix the Secretlint configuration or installation, then retry the push"
+		((++violations))
+	fi
+	if [[ $violations -eq 0 ]]; then
+		print_success "$secrets_clean_msg"
+	fi
 
 	return $violations
 }
