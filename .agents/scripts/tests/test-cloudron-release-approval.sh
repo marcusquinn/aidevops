@@ -21,7 +21,7 @@ cat >"${TEST_ROOT}/approval-helper.sh" <<'STUB'
 [[ "$*" == 'verify issue 12 owner/app --require-authority' ]] || exit 9
 printf 'verify\n' >>"${TEST_ROOT}/calls"
 case "$SCENARIO" in
-unsigned | request_unsigned | request_retry | policy_*) printf 'NO_APPROVAL\n'; exit 1 ;;
+unsigned | request_unsigned | request_retry | policy_* | notice_*) printf 'NO_APPROVAL\n'; exit 1 ;;
 api_error) printf 'API_ERROR\n'; exit 6 ;;
 bad_exit) printf 'VERIFIED\n'; exit 6 ;;
 stale) printf 'STALE_APPROVAL\n'; exit 2 ;;
@@ -80,7 +80,13 @@ request_issue_json() {
 	local body="" author=OWNER
 	body=$(jq -cn --arg head "$HEAD_SHA" '{schema:1,repository:"owner/app",pr:7,head:$head,version:"1.2.3",upstream:"4.5.6",owns_hold:true}')
 	[[ "$SCENARIO" != policy_outsider_request ]] || author=CONTRIBUTOR
-	jq -cn --arg body "$body" --arg author "$author" '{state:"open",author_association:$author,body:$body,labels:[{name:"release-approval-required"}]}'
+	local created=''
+	case "$SCENARIO" in
+	notice_young) created=$(date -u +%Y-%m-%dT%H:%M:%SZ) ;;
+	notice_*) created=2020-01-01T00:00:00Z ;;
+	esac
+	jq -cn --arg body "$body" --arg author "$author" --arg created "$created" \
+		'{state:"open",author_association:$author,body:$body,labels:[{name:"release-approval-required"}]} + (if $created == "" then {} else {created_at:$created} end)'
 	return 0
 }
 
@@ -158,6 +164,13 @@ gh() {
 		;;
 	'api repos/owner/app/issues/12/comments?'*) request_comments_json ;;
 	'api repos/owner/app/issues/12') request_issue_json ;;
+	'api repos/owner/app/issues/7/comments?'*)
+		if [[ "$SCENARIO" == notice_posted ]]; then
+			jq -cn --arg head "$HEAD_SHA" '[{author_association:"OWNER",body:("<!-- aidevops:cloudron-release-unsigned-notice " + $head + " -->\nnotice")}]'
+		else
+			printf '[]\n'
+		fi
+		;;
 	'api repos/owner/app/pulls/7') pull_request_json || return 1 ;;
 	'api repos/owner/app/contents/CloudronManifest.json?'*) printf '{"version":"1.2.3","upstreamVersion":"4.5.6","changelog":"file://CHANGELOG"}\n' ;;
 	'api repos/owner/app/contents/.github/workflows/cloudron-catalog-publish.yml?'*)
@@ -236,6 +249,13 @@ gh_issue_comment() {
 	local body=""
 	body=$(</dev/stdin)
 	printf 'comment %s\n' "$body" >>"${TEST_ROOT}/calls"
+	return 0
+}
+
+gh_pr_comment() {
+	local body=""
+	body=$(</dev/stdin)
+	printf 'pr-notice %s\n' "$body" >>"${TEST_ROOT}/calls"
 	return 0
 }
 
@@ -350,6 +370,30 @@ run_case run_in_progress 0 true false false
 run_case run_failed 1 true false false
 run_case close_error 1 true false true
 printf 'PASS close failure posts no approval-invalidating comment\n'
+
+# An old unsigned non-routine request earns one PR notice per head, never an
+# issue comment (which could stale the signature); young, signed and already
+# noticed requests earn none.
+assert_notice() {
+	local scenario="$1" expected="$2" count=0 calls=''
+	run_case "$scenario" 0 false false false || return 1
+	calls=$(<"${TEST_ROOT}/calls")
+	[[ "$calls" != *'comment '* || "$calls" == *'pr-notice '* ]] || return 1
+	count=$(printf '%s\n' "$calls" | grep -c '^pr-notice ' || true)
+	[[ "$count" -eq "$expected" ]] || {
+		printf 'FAIL %s notices=%s expected=%s\n' "$scenario" "$count" "$expected"
+		return 1
+	}
+	if [[ "$expected" -eq 1 ]]; then
+		[[ "$calls" == *'approve issue 12 owner/app'* && "$calls" != *$'\ncomment '* ]] || return 1
+	fi
+	return 0
+}
+assert_notice notice_old 1
+assert_notice notice_posted 0
+assert_notice notice_young 0
+assert_notice unsigned 0
+printf 'PASS unsigned-request notice: once per head, PR-only, age-gated\n'
 
 # GH#39648: open (or uncountable) review-bot threads keep the hold without a
 # toggle or merge attempt, and queue one targeted response for the held PR.
