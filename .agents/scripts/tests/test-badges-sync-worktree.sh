@@ -35,6 +35,7 @@ gh_create_pr() {
 	done
 	jq -n --arg head "$head" '[{headRefName:$head,title:"chore: aidevops badge sync",url:"https://example.invalid/o/r/pull/5"}]' >"$PR_STATE"
 	printf 'create\n' >>"$CALLS"
+	printf 'hint: if you need to wait for this pull request\n' >&2
 	printf 'https://example.invalid/o/r/pull/5\n'
 	return 0
 }
@@ -148,6 +149,7 @@ register_repo marcusquinn/test
 before="$(snapshot)"
 bash "$SCRIPTS/badges-sync-helper.sh" --apply --repo marcusquinn/test --json >"$ROOT/result"
 [[ "$(jq -r .outcome "$ROOT/result")" == APPLIED ]]
+[[ "$(jq -r .detail "$ROOT/result")" == 'PR: https://example.invalid/o/r/pull/5' ]]
 [[ "$(snapshot)" == "$before" ]]
 head="$(jq -r '.[0].headRefName' "$PR_STATE")"
 git -C "$CANONICAL" show "$head:README.md" | grep CURRENT >/dev/null
