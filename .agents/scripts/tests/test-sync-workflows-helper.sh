@@ -166,6 +166,16 @@ elif [[ "${1:-}" == api && "${2:-}" == repos/marcusquinn/aidevops/contents/.agen
 	[[ -f "$file" ]] || exit 1
 	jq -n --arg d "$(base64 <"$file" | tr -d '\n')" --argjson s "$(wc -c <"$file" | tr -d ' ')" \
 		'{encoding:"base64",content:$d,size:$s}'
+elif [[ "${1:-} ${2:-}" == "pr view" && "$*" == *"--json body"* ]]; then
+	printf '%s\n' "${GH_PR_VIEW_BODY:-}"
+elif [[ "${1:-} ${2:-}" == "pr view" && "$*" == *"--json labels"* && -n "${GH_PR_VIEW_LABELS:-}" ]]; then
+	# Already --jq-projected label names, as gh_pr_edit_safe's origin check reads them.
+	printf '%s\n' "$GH_PR_VIEW_LABELS"
+elif [[ "${1:-} ${2:-}" == "pr edit" ]]; then
+	while [[ $# -gt 0 ]]; do
+		[[ "$1" != --body-file ]] || cp "$2" "$GH_CALL_LOG.edit-body"
+		shift
+	done
 elif [[ "${1:-} ${2:-}" == "pr list" ]]; then
 	printf '%s\n' "${GH_EXACT_PRS_JSON:-[]}"
 elif [[ "${1:-} ${2:-}" == "issue list" ]]; then
@@ -550,6 +560,31 @@ _assert_exit "GH#39793 marker PR body has no issue identity" 0 "$(grep -cE '^(Re
 _assert_exit "GH#39793 marker PR creates no anchor" 0 "$(grep -c '^issue create ' "$TMPDIR_10/gh-calls.log")"
 _assert_exit "GH#39830 marker PR does not retire the anchor" 0 \
 	"$(grep -cE '^issue (close|edit) |routine-anchor-retiring' "$TMPDIR_10/gh-calls.log")"
+
+# GH#39830 review: a second same-branch publication to the open marker PR
+# (new runner bytes) after the template at the pin stopped matching must swap
+# the marker for the anchor Ref; promotion alone skips marker bodies.
+MARKER_BODY_10=$(cat "$TMPDIR_10/gh-calls.log.body")
+EXACT_PR_10='[{"url":"https://github.com/owner/repo-develop/pull/8","headRepository":{"nameWithOwner":"owner/repo-develop"}}]'
+# The reused PR is the open replacement the supersession pass keeps.
+REUSE_PRS_10=$(printf '%s\n' "$SYNC_PRS_10" | jq -c '. + [{number:8,html_url:"https://github.com/owner/repo-develop/pull/8",base:{ref:"develop"},head:{ref:"chore/workflow-sync-20990111",repo:{full_name:"owner/repo-develop"}}}]')
+_write_repos_json "$TMPDIR_10" "{\"initialized_repos\":[{\"path\":\"$REPO_10\",\"slug\":\"owner/repo-develop\",\"runner\":\"ubuntu-24.04\"}]}"
+: >"$TMPDIR_10/gh-calls.log"
+rm -f "$TMPDIR_10/gh-calls.log.edit-body"
+OUT_10_REUSE_DRIFT=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	AIDEVOPS_SESSION_ORIGIN=worker GH_ANCHOR_ISSUES_JSON="$ANCHOR_ISSUES_10" GH_TEMPLATE_DIR="$OLD_TEMPLATES_10" \
+	GH_SYNC_PRS_JSON="$REUSE_PRS_10" GH_SYNC_FILES_JSON="$STALE_FILES_10" GH_EXACT_PRS_JSON="$EXACT_PR_10" \
+	GH_PR_VIEW_BODY="$MARKER_BODY_10" GH_PR_VIEW_LABELS='["origin:worker"]' \
+	bash "$HELPER" --apply --force-ref --ref 1111111111111111111111111111111111111111 --branch chore/workflow-sync-20990111 2>&1)
+_assert_exit "GH#39830 reused marker PR publication succeeds" 0 "$?"
+_assert_contains "GH#39830 reused marker PR is reported" "$OUT_10_REUSE_DRIFT" "PR: https://github.com/owner/repo-develop/pull/8"
+_assert_exit "GH#39830 reused PR body is edited once" 1 "$(grep -c '^pr edit 8 ' "$TMPDIR_10/gh-calls.log")"
+_assert_exit "GH#39830 reused PR body now leads with the anchor Ref" 'Ref #42' \
+	"$(head -n 1 "$TMPDIR_10/gh-calls.log.edit-body" 2>/dev/null)"
+_assert_exit "GH#39830 reused PR body drops the routine marker" 0 \
+	"$(grep -c 'aidevops:routine-pr:sync-workflows' "$TMPDIR_10/gh-calls.log.edit-body" 2>/dev/null || true)"
+_assert_exit "GH#39830 reused PR body keeps one issue identity" 1 \
+	"$(grep -cE '^(Ref|For|Resolves) #' "$TMPDIR_10/gh-calls.log.edit-body" 2>/dev/null || true)"
 
 # Different date suffixes share the installation-scoped lock; a held lock must
 # prevent inspection/publication, and all preceding failure paths released it.

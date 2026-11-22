@@ -262,10 +262,12 @@ downgrade or missing evidence denies.
 
 The publisher and the gate share one decision, `_routine_sync_render_admits`
 in `routine-pr-scope-lib.sh` (GH#39830). Before choosing the marker, the
-publisher runs it over the exact bytes it will write and the default-branch
-caller. The publisher renders from the deployed template, so a template change
-not yet in the pinned ref fails this check and the run keeps the anchor
-identity instead of opening a marker PR the gate would reject. Runs that cannot
+publisher runs it over the exact bytes it will write and the caller at the PR
+merge base. The publisher renders from the deployed template, so a template
+change not yet in the pinned ref fails this check and the run keeps the anchor
+identity instead of opening a marker PR the gate would reject. When such a run
+pushes to an open exact-branch marker PR, the helper replaces the marker with
+the anchor `Ref` line, because `ensure-pr-anchor` skips marker bodies. Runs that cannot
 meet these conditions (for example a floating `@main` pin) keep
 `ensure-anchor` / `ensure-pr-anchor`. The sync helper never retires its anchor
 automatically: those runs still need it, and `ensure-anchor` reuses only an

@@ -1708,6 +1708,34 @@ _sync_promote_pr() {
 	return 0
 }
 
+# _sync_reconcile_pr_identity <slug> <pr-url> <anchor> — GH#39830: a reused
+# exact-branch PR must carry the identity chosen for the bytes just pushed.
+# When a later render on the same branch is no longer gate-admissible, swap
+# the routine marker for the anchor Ref; ensure-pr-anchor deliberately skips
+# marker bodies, so promotion alone would leave a PR the gate rejects. An
+# admitted render keeps its marker; a body that already has a Ref is kept.
+_sync_reconcile_pr_identity() {
+	local _slug="$1" _pr_ref="$2" _anchor="$3" _number="${2##*/}" _body="" _body_file="" _rc=0
+	[[ "$_anchor" =~ ^[1-9][0-9]*$ && "$_number" =~ ^[1-9][0-9]*$ ]] || return 0
+	_body=$(gh pr view "$_number" --repo "$_slug" --json body --jq '.body // ""') || return 1
+	[[ "$_body" == *"$_SYNC_ROUTINE_MARKER"* ]] || return 0
+	declare -F gh_pr_edit_safe >/dev/null 2>&1 || return 1
+	local _temp_root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	mkdir -p "$_temp_root" || return 1
+	_body_file=$(mktemp "${_temp_root%/}/sync-workflows-identity.XXXXXX") || return 1
+	# Drop the marker line and the blank line _create_pr_body_file adds after it.
+	{
+		printf 'Ref #%s\n\n' "$_anchor"
+		printf '%s\n' "$_body" | awk -v marker="$_SYNC_ROUTINE_MARKER" \
+			'$0 == marker { skip = 1; next } skip && $0 == "" { skip = 0; next } { skip = 0; print }'
+	} >"$_body_file" || _rc=1
+	if [[ "$_rc" -eq 0 ]] && ! gh_pr_edit_safe "$_number" --repo "$_slug" --body-file "$_body_file" >/dev/null; then
+		_rc=1
+	fi
+	rm -f "$_body_file"
+	return "$_rc"
+}
+
 # Branch names alone also match fork heads. Require the actual head repository
 # to match, case-insensitively, before accepting an exact-branch replacement.
 _sync_find_exact_pr() {
@@ -1748,6 +1776,11 @@ _sync_open_pr() {
 	if [[ -n "$_existing_pr" ]]; then
 		if [[ "$_sync_contributing" -eq 0 ]] && ! _sync_supersede_prs "$_slug" "$_branch_name" "$_workflow_relpath" "$_existing_pr" "$_default_branch"; then
 			printf '%s\t%s\t%s\tPR: %s; unable to supersede older sync PRs\n' "$_slug" "$_status" "$_STATUS_FAILED" "$_existing_pr"
+			return 1
+		fi
+		if ! _sync_reconcile_pr_identity "$_slug" "$_existing_pr" "$_anchor"; then
+			printf '%s\t%s\t%s\tPR: %s; unable to replace the routine marker with the anchor identity\n' \
+				"$_slug" "$_status" "$_STATUS_FAILED" "$_existing_pr"
 			return 1
 		fi
 		_sync_promote_pr "$_slug" "$_existing_pr"
