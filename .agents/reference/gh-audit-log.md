@@ -447,8 +447,16 @@ carry a `needs-*` label. For every table row:
    proof (`approval-helper.sh verify-permissions` / `verify`).
 3. Classify the entry: `expected` (cite the evidence), `reverted`, or `unexplained`.
 
-Outcome: all entries `expected` or `reverted` → close the alert with one evidence
-comment (`status:done`). Any `unexplained` → add `needs-maintainer-input` plus one
+Outcome: all entries `expected` or `reverted` → post one verified evidence report,
+then prepend the self-bound report-only receipt to that same comment as described
+in `reference/worker-discipline.md` "Read-only reports", and close the alert as
+completed (`status:done`). Scanner bodies opt in with
+`<!-- aidevops:completion-contract:report-only/v1 -->`. A `COLLABORATOR` may complete
+this path only when the issue author, closer and receipt author are the same login,
+the title starts with `GH Audit Anomaly Alert:` or `GH Audit Log Integrity Alert:`,
+the body contains `<!-- gh-audit-anomaly-scanner:`, and `monitoring` is present.
+The receipt and clean-worktree checks still apply; OWNER/MEMBER behaviour is unchanged.
+Any `unexplained` → add `needs-maintainer-input` plus one
 decision-ready comment naming those entries, and leave the alert open (the label also
 blocks redispatch). A recurring expected shape gets a separately scoped filter-fix
 task, as #38764 did for withdrawals.
