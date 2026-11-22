@@ -185,6 +185,13 @@ bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result"
 [[ "$(grep -c '^create$' "$CALLS")" == 1 ]]
 printf 'PASS stale dirty detector result revalidated against current remote default; no PR\n'
 
+# GH#39808: dry-run evaluates the remote default, not the stale local checkout.
+bash "$SCRIPTS/badges-sync-helper.sh" --repo marcusquinn/test --json >"$ROOT/result"
+! grep -q PLANNED "$ROOT/result"
+grep -q SKIPPED "$ROOT/result"
+[[ "$(snapshot)" == "$before" ]]
+printf 'PASS dry-run reports SKIPPED when local checkout is stale but remote is current\n'
+
 FAIL_QUERY=1 bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result" && exit 1
 [[ "$(jq -r .outcome "$ROOT/result")" == FAILED ]]
 [[ ! -d "$CANONICAL/.git/aidevops-badges-sync.lock" ]]
