@@ -93,6 +93,11 @@ gh() {
 		return 0
 	fi
 	if [[ "$first" == "run" && "$second" == "view" ]]; then
+		if [[ "${GH_LOG_SCENARIO:-}" == "three_column_suite_health" ]]; then
+			printf '%s\n' $'Run all shell suites on main\tUNKNOWN STEP\t2026-11-22T11:38:40.4688485Z * [new branch] planning/suite-timeout-budgets-follow-up -> origin/planning/suite-timeout-budgets-follow-up'
+			printf '%s\n' $'Run all shell suites on main\tRun every root suite\t2026-11-22T12:21:26.5245551Z ##[error]116 red suites on main (storm bound 10); see the suite-health artifact'
+			return 0
+		fi
 		if [[ "${GH_LOG_SCENARIO:-}" == "unstructured_echoed_runner_guard" ]]; then
 			printf '%s\n' 'sync / Sync Issue Hygiene on PR Merge	UNKNOWN STEP	2026-08-04T20:48:14.7114649Z ^[[36;1m  echo "::error::Runner Git binary is unavailable before guard activation"^[[0m'
 			printf '%s\n' 'sync / Sync Issue Hygiene on PR Merge	UNKNOWN STEP	2026-08-04T20:48:27.8644706Z ERROR: closing issue #29494 has no exact ref:GH#29494 TODO mapping'
@@ -129,6 +134,10 @@ assert_equals "GH#29522 timestamp-prefixed runner source cannot become infrastru
 GH_LOG_SCENARIO="qlty_unstructured_source"
 signature=$(extract_failure_signature "marcusquinn/aidevops" "30898422945" "91958107008")
 assert_equals "GH#29468 qlty source comment cannot mask structured error" "Qlty Smell Regression Enforce gate 2026-08-04T10:01:52.5242388Z ##[error]Qlty smell regression detected (exit 1)." "$signature"
+
+GH_LOG_SCENARIO="three_column_suite_health"
+signature=$(extract_failure_signature "marcusquinn/aidevops" "45018291419" "")
+assert_equals "GH#39884 three-column annotation wins over checkout timeout branch" "Run all shell suites on main Run every root suite 2026-11-22T12:21:26.5245551Z ##[error]116 red suites on main (storm bound 10); see the suite-health artifact" "$signature"
 GH_LOG_SCENARIO="echoed_runner_guard"
 
 event_file=$(mktemp)
@@ -164,6 +173,9 @@ assert_equals "cyan runner-echoed executable source is filtered" $'job\tStep\tti
 
 filtered=$(filter_signature_noise_lines $'sync / Sync Issue Hygiene on PR Merge\tUNKNOWN STEP\t2026-08-04T20:48:14.7114649Z ^[[36;1m  echo "::error::Runner Git binary is unavailable before guard activation"^[[0m\nsync / Sync Issue Hygiene on PR Merge\tUNKNOWN STEP\t2026-08-04T20:48:27.8644706Z ERROR: closing issue #29494 has no exact ref:GH#29494 TODO mapping')
 assert_equals "GH#29522 three-field timestamped source is filtered" $'sync / Sync Issue Hygiene on PR Merge\tUNKNOWN STEP\t2026-08-04T20:48:27.8644706Z ERROR: closing issue #29494 has no exact ref:GH#29494 TODO mapping' "$filtered"
+
+filtered=$(filter_signature_noise_lines $'job\tUNKNOWN STEP\t2026-11-22T11:38:40Z + # cannot merge\njob\tStep\t2026-11-22T12:21:26Z ##[error]real failure')
+assert_equals "GH#39884 three-column timestamped comments are filtered" $'job\tStep\t2026-11-22T12:21:26Z ##[error]real failure' "$filtered"
 
 filtered=$(filter_signature_noise_lines $'gate / review-bot-gate\tUNKNOWN STEP\t2026-06-30T20:14:24.8559907Z\t\033[36;1m# rate-limit grace is disabled — they cannot merge on rate-limit-only.\033[0m')
 signature=$(normalize_signature_line "$filtered")
