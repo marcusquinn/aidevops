@@ -785,3 +785,34 @@ _full_loop_report_external_authority_preflight() {
 	fi
 	return 0
 }
+
+# GH#39842: commit-and-pr continuing an existing draft completes the
+# draft->ready transition for worker completions and interactive --ready runs,
+# behind the same pushed-head proof as non-draft creation (_effective_pr_ready).
+# Interactive runs without --ready keep the draft. Failure keeps the durable draft
+# and prints the exact command. Reads caller-scoped create_ready and
+# FULL_LOOP_PUSHED_BRANCH. Args: $1=PR $2=repo $3=origin label. Always returns 0.
+_ready_continued_draft_pr() {
+	local pr_number="$1"
+	local repo="$2"
+	local origin_label="$3"
+	local want_ready="${create_ready:-0}"
+	[[ "$origin_label" != "origin:worker" ]] || want_ready=1
+	[[ "$want_ready" -eq 1 ]] || return 0
+	local is_draft=""
+	is_draft=$(_gh_with_timeout read gh api "repos/${repo}/pulls/${pr_number}" --jq '.draft' 2>/dev/null) || is_draft=""
+	[[ "$is_draft" == "true" ]] || return 0
+	local head_branch="${FULL_LOOP_PUSHED_BRANCH:-}"
+	[[ -n "$head_branch" ]] || head_branch=$(git branch --show-current 2>/dev/null || echo "")
+	local ready_cmd="gh pr ready ${pr_number} --repo ${repo}"
+	if [[ "$(_effective_pr_ready 1 "$head_branch")" != "1" ]]; then
+		print_warning "Continued PR #${pr_number} stays draft until its pushed head is verified; then run: ${ready_cmd}"
+		return 0
+	fi
+	if _gh_with_timeout write gh pr ready "$pr_number" --repo "$repo" >/dev/null 2>&1; then # aidevops-allow: raw-gh-wrapper
+		print_info "Marked continued draft PR #${pr_number} ready for review"
+		return 0
+	fi
+	print_warning "Could not mark continued draft PR #${pr_number} ready; run: ${ready_cmd}"
+	return 0
+}

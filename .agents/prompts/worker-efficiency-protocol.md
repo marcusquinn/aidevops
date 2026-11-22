@@ -23,7 +23,7 @@ escaping containment. See `reference/worktree-registry.md` for the lifetime cont
 git add -A && git commit -m 'feat: <what you just did> (<task-id>)'
 ```
 
-- After the first commit, push and open a draft PR. Later commits only need `git push`; finish with `gh pr ready`. In OpenCode, use the Write tool to create the PR body file before the GitHub call.
+- After the first commit, push and open a draft PR. Later commits only need `git push`; finish with `full-loop-helper.sh commit-and-pr`, which marks the draft ready at the verified pushed head. In OpenCode, use the Write tool to create the PR body file before the GitHub call.
 
 ```bash
 git push -u origin HEAD
