@@ -156,6 +156,26 @@ elif [[ "${1:-}" == api && "${2:-}" == repos/*/pulls/*/files\?* ]]; then
 	else
 		printf '%s\n' "${GH_SYNC_FILES_JSON:-[]}"
 	fi
+elif [[ "${1:-}" == api && "${2:-}" == repos/marcusquinn/aidevops/compare/* ]]; then
+	# GH#39830: framework lineage for the shared exact-render decision.
+	printf '%s\n' "${GH_COMPARE_STATUS:-ahead}"
+elif [[ "${1:-}" == api && "${2:-}" == repos/marcusquinn/aidevops/contents/.agents/templates/workflows/* ]]; then
+	# Template at the pinned ref; defaults to the deployed template.
+	file="${2##*/}"
+	file="${GH_TEMPLATE_DIR:-$HOME/.aidevops/agents/templates/workflows}/${file%%\?*}"
+	[[ -f "$file" ]] || exit 1
+	jq -n --arg d "$(base64 <"$file" | tr -d '\n')" --argjson s "$(wc -c <"$file" | tr -d ' ')" \
+		'{encoding:"base64",content:$d,size:$s}'
+elif [[ "${1:-} ${2:-}" == "pr view" && "$*" == *"--json body"* ]]; then
+	printf '%s\n' "${GH_PR_VIEW_BODY:-}"
+elif [[ "${1:-} ${2:-}" == "pr view" && "$*" == *"--json labels"* && -n "${GH_PR_VIEW_LABELS:-}" ]]; then
+	# Already --jq-projected label names, as gh_pr_edit_safe's origin check reads them.
+	printf '%s\n' "$GH_PR_VIEW_LABELS"
+elif [[ "${1:-} ${2:-}" == "pr edit" ]]; then
+	while [[ $# -gt 0 ]]; do
+		[[ "$1" != --body-file ]] || cp "$2" "$GH_CALL_LOG.edit-body"
+		shift
+	done
 elif [[ "${1:-} ${2:-}" == "pr list" ]]; then
 	printf '%s\n' "${GH_EXACT_PRS_JSON:-[]}"
 elif [[ "${1:-} ${2:-}" == "issue list" ]]; then
@@ -497,9 +517,36 @@ _assert_exit "GH#39696 worker PR body leads with the anchor Ref" 'Ref #42' "$FIR
 _assert_exit "GH#39696 worker PR body has one issue identity" 1 "$(grep -cE '^(Ref|For|Resolves) #' "$TMPDIR_10/gh-calls.log.body")"
 _assert_exit "GH#39696 existing anchor is reused, not recreated" 0 "$(grep -c '^issue create ' "$TMPDIR_10/gh-calls.log")"
 
+# GH#39830: a template rollout makes the deployed render differ from the
+# template at the pinned ref. The gate would reject a marker PR, so the
+# publisher keeps the anchor identity instead.
+OLD_TEMPLATES_10="$TMPDIR_10/old-templates"
+mkdir -p "$OLD_TEMPLATES_10"
+printf '%s\n# older template\n' "$CANONICAL_CALLER_CONTENT" >"$OLD_TEMPLATES_10/issue-sync-caller.yml"
+: >"$TMPDIR_10/gh-calls.log"
+OUT_10_DRIFT=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	AIDEVOPS_SESSION_ORIGIN=worker GH_ANCHOR_ISSUES_JSON="$ANCHOR_ISSUES_10" GH_TEMPLATE_DIR="$OLD_TEMPLATES_10" \
+	GH_SYNC_PRS_JSON="$SYNC_PRS_10" GH_SYNC_FILES_JSON="$STALE_FILES_10" GH_NEW_PR_NUMBER=7 \
+	bash "$HELPER" --apply --force-ref --ref 1111111111111111111111111111111111111111 --branch chore/workflow-sync-20990112 2>&1)
+_assert_exit "GH#39830 template-drift sync still publishes" 0 "$?"
+_assert_contains "GH#39830 template-drift sync explains the anchor fallback" "$OUT_10_DRIFT" "not gate-admissible as a routine marker PR"
+FIRST_BODY_LINE_10=$(head -n 1 "$TMPDIR_10/gh-calls.log.body")
+_assert_exit "GH#39830 template-drift PR keeps the anchor Ref" 'Ref #42' "$FIRST_BODY_LINE_10"
+_assert_exit "GH#39830 template-drift PR carries no routine marker" 0 \
+	"$(grep -c 'aidevops:routine-pr:sync-workflows' "$TMPDIR_10/gh-calls.log.body")"
+_assert_exit "GH#39830 gate decision read the template at the pinned ref" 1 \
+	"$(grep -c '^api repos/marcusquinn/aidevops/contents/.agents/templates/workflows/issue-sync-caller.yml?ref=1111111111111111111111111111111111111111' "$TMPDIR_10/gh-calls.log")"
+: >"$TMPDIR_10/gh-calls.log"
+OUT_10_UNREACHABLE=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	AIDEVOPS_SESSION_ORIGIN=worker GH_ANCHOR_ISSUES_JSON="$ANCHOR_ISSUES_10" GH_COMPARE_STATUS=diverged \
+	GH_SYNC_PRS_JSON="$SYNC_PRS_10" GH_SYNC_FILES_JSON="$STALE_FILES_10" GH_NEW_PR_NUMBER=9 \
+	bash "$HELPER" --apply --force-ref --ref 1111111111111111111111111111111111111111 --branch chore/workflow-sync-20990113 2>&1)
+_assert_exit "GH#39830 unreachable-pin sync still publishes" 0 "$?"
+_assert_exit "GH#39830 unreachable-pin PR keeps the anchor Ref" 'Ref #42' "$(head -n 1 "$TMPDIR_10/gh-calls.log.body")"
+
 # GH#39793: a 40-hex pin on the default sync branch is re-renderable by the merge
-# gate, so the PR carries the routine marker instead of an anchor and retires
-# the anchor. A floating ref (previous test) keeps the anchor identity.
+# gate, so the PR carries the routine marker instead of an anchor. GH#39830:
+# the anchor is kept for runs that are not gate-admissible, never retired here.
 : >"$TMPDIR_10/gh-calls.log"
 OUT_10_MARKER=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
 	AIDEVOPS_SESSION_ORIGIN=worker GH_ANCHOR_ISSUES_JSON='[]' \
@@ -511,8 +558,33 @@ FIRST_BODY_LINE_10=$(head -n 1 "$TMPDIR_10/gh-calls.log.body")
 _assert_exit "GH#39793 PR body leads with the sync-workflows marker" '<!-- aidevops:routine-pr:sync-workflows -->' "$FIRST_BODY_LINE_10"
 _assert_exit "GH#39793 marker PR body has no issue identity" 0 "$(grep -cE '^(Ref|For|Resolves) #' "$TMPDIR_10/gh-calls.log.body")"
 _assert_exit "GH#39793 marker PR creates no anchor" 0 "$(grep -c '^issue create ' "$TMPDIR_10/gh-calls.log")"
-_assert_exit "GH#39793 marker PR retires the anchor (lists routine anchors)" 1 \
-	"$(grep -c '^issue list .*--label routine-anchor-retiring' "$TMPDIR_10/gh-calls.log" | awk '{print ($1 > 0) ? 1 : 0}')"
+_assert_exit "GH#39830 marker PR does not retire the anchor" 0 \
+	"$(grep -cE '^issue (close|edit) |routine-anchor-retiring' "$TMPDIR_10/gh-calls.log")"
+
+# GH#39830 review: a second same-branch publication to the open marker PR
+# (new runner bytes) after the template at the pin stopped matching must swap
+# the marker for the anchor Ref; promotion alone skips marker bodies.
+MARKER_BODY_10=$(cat "$TMPDIR_10/gh-calls.log.body")
+EXACT_PR_10='[{"url":"https://github.com/owner/repo-develop/pull/8","headRepository":{"nameWithOwner":"owner/repo-develop"}}]'
+# The reused PR is the open replacement the supersession pass keeps.
+REUSE_PRS_10=$(printf '%s\n' "$SYNC_PRS_10" | jq -c '. + [{number:8,html_url:"https://github.com/owner/repo-develop/pull/8",base:{ref:"develop"},head:{ref:"chore/workflow-sync-20990111",repo:{full_name:"owner/repo-develop"}}}]')
+_write_repos_json "$TMPDIR_10" "{\"initialized_repos\":[{\"path\":\"$REPO_10\",\"slug\":\"owner/repo-develop\",\"runner\":\"ubuntu-24.04\"}]}"
+: >"$TMPDIR_10/gh-calls.log"
+rm -f "$TMPDIR_10/gh-calls.log.edit-body"
+OUT_10_REUSE_DRIFT=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	AIDEVOPS_SESSION_ORIGIN=worker GH_ANCHOR_ISSUES_JSON="$ANCHOR_ISSUES_10" GH_TEMPLATE_DIR="$OLD_TEMPLATES_10" \
+	GH_SYNC_PRS_JSON="$REUSE_PRS_10" GH_SYNC_FILES_JSON="$STALE_FILES_10" GH_EXACT_PRS_JSON="$EXACT_PR_10" \
+	GH_PR_VIEW_BODY="$MARKER_BODY_10" GH_PR_VIEW_LABELS='["origin:worker"]' \
+	bash "$HELPER" --apply --force-ref --ref 1111111111111111111111111111111111111111 --branch chore/workflow-sync-20990111 2>&1)
+_assert_exit "GH#39830 reused marker PR publication succeeds" 0 "$?"
+_assert_contains "GH#39830 reused marker PR is reported" "$OUT_10_REUSE_DRIFT" "PR: https://github.com/owner/repo-develop/pull/8"
+_assert_exit "GH#39830 reused PR body is edited once" 1 "$(grep -c '^pr edit 8 ' "$TMPDIR_10/gh-calls.log")"
+_assert_exit "GH#39830 reused PR body now leads with the anchor Ref" 'Ref #42' \
+	"$(head -n 1 "$TMPDIR_10/gh-calls.log.edit-body" 2>/dev/null)"
+_assert_exit "GH#39830 reused PR body drops the routine marker" 0 \
+	"$(grep -c 'aidevops:routine-pr:sync-workflows' "$TMPDIR_10/gh-calls.log.edit-body" 2>/dev/null || true)"
+_assert_exit "GH#39830 reused PR body keeps one issue identity" 1 \
+	"$(grep -cE '^(Ref|For|Resolves) #' "$TMPDIR_10/gh-calls.log.edit-body" 2>/dev/null || true)"
 
 # Different date suffixes share the installation-scoped lock; a held lock must
 # prevent inspection/publication, and all preceding failure paths released it.

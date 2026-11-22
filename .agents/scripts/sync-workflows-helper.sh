@@ -53,6 +53,10 @@ source "$SELF_DIR/scratch-worktree-helper.sh"
 # shellcheck source=./workflow-release-ref.sh
 source "$SELF_DIR/workflow-release-ref.sh"
 
+# GH#39830: the publisher and the merge gate share one exact-render decision.
+# shellcheck source=./routine-pr-scope-lib.sh
+source "$SELF_DIR/routine-pr-scope-lib.sh"
+
 # shellcheck source=/dev/null
 # gh wrappers inject signature footers and route around GraphQL rate limits.
 # Mandatory — this script ships as part of aidevops so the wrappers are
@@ -1244,31 +1248,75 @@ _sync_routine_anchor() {
 	return 0
 }
 
+# _sync_blob_json <file> — byte-exact Git blob API shape (base64, size) for a
+# local file, as the merge gate reads it from GitHub.
+_sync_blob_json() {
+	local _file="$1" _data="" _size=""
+	_data=$(base64 <"$_file" | tr -d '\n') || return 1
+	_size=$(wc -c <"$_file" | tr -d ' ') || return 1
+	jq -n --arg d "$_data" --argjson s "$_size" '{encoding:"base64",content:$d,size:$s}'
+	return $?
+}
+
+# _sync_marker_evidence <path> <base-ref> <relpath> <target-content> — print
+# {head,base} blob JSON: the exact bytes _sync_write_commit_push writes, and
+# the caller at the PR base the gate compares against (null when absent).
+_sync_marker_evidence() {
+	local _path="$1" _base_ref="$2" _relpath="$3" _target_content="$4"
+	local _scratch="" _head="" _base="null" _rc=1
+	git -C "$_path" rev-parse -q --verify "${_base_ref}^{commit}" >/dev/null || return 1
+	_scratch=$(mktemp "${TMPDIR:-/tmp}/sync-marker.XXXXXX") || return 1
+	if printf '%s\n' "$_target_content" >"$_scratch" && _head=$(_sync_blob_json "$_scratch"); then
+		_rc=0
+		if git -C "$_path" cat-file -e "${_base_ref}:${_relpath}" 2>/dev/null; then
+			git -C "$_path" cat-file blob "${_base_ref}:${_relpath}" >"$_scratch" &&
+				_base=$(_sync_blob_json "$_scratch") || _rc=1
+		fi
+	fi
+	rm -f "$_scratch"
+	[[ "$_rc" -eq 0 ]] || return 1
+	jq -nc --argjson head "$_head" --argjson base "$_base" '{head:$head,base:$base}'
+	return $?
+}
+
 # _sync_marker_eligible <slug> <path> <branch> <default_branch> <effective_ref>
-#   <workflow-relpath> <sync-contributing> — GH#39793: succeed only when the
-# merge gate's exact re-render (routine-pr-scope-lib.sh) can admit this PR:
-# a headless run without an explicit issue, a managed workflow only, the
-# default sync branch prefix, a 40-hex ref and plain runner/branch labels.
-# Anything else keeps the anchor identity.
+#   <workflow-relpath> <sync-contributing> <target-content> <remote> — succeed
+# only when the merge gate will admit this exact PR (GH#39793). Cheap
+# preconditions: a headless run without an explicit issue or CONTRIBUTING.md,
+# the default sync branch prefix and a 40-hex ref. Then (GH#39830) the gate's
+# own decision, _routine_sync_render_admits, must accept the bytes this run
+# will write against the default-branch caller: the deployed template differs
+# from the template at a preserved older pin whenever a template update rolls
+# out. Anything else keeps the anchor identity (linked-issue merge route).
 _sync_marker_eligible() {
 	local _slug="$1" _path="$2" _branch="$3" _default_branch="$4" _ref="${5#@}"
-	local _relpath="$6" _sync_contributing="$7" _runner=""
+	local _relpath="$6" _sync_contributing="$7" _target_content="$8" _remote="$9"
+	local _evidence="" _policy=""
 	[[ -z "${_OPT_ISSUE:-}" && "$_sync_contributing" -eq 0 ]] || return 1
 	declare -F session_origin_label >/dev/null 2>&1 || return 1
 	[[ "$(session_origin_label)" == "origin:worker" ]] || return 1
 	[[ "$_branch" == "$_SYNC_BRANCH_PREFIX"* ]] || return 1
 	[[ "$_ref" =~ ^[0-9a-f]{40}(\ #\ v[0-9]+\.[0-9]+\.[0-9]+)?$ ]] || return 1
 	[[ "$_default_branch" =~ ^[A-Za-z0-9._/-]+$ ]] || return 1
-	case "${_relpath##*/}" in
-	issue-sync.yml | review-bot-gate.yml | review-bot-gate-fork-review.yml | \
-		maintainer-gate.yml | loc-badge.yml | issue-triage-gate.yml) ;;
-	*) return 1 ;;
-	esac
-	[[ "${_relpath%/*}" == ".github/workflows" ]] || return 1
-	_runner=$(_read_runner_field "$_slug")
-	[[ -n "$_runner" ]] || _runner=$(_read_runner_from_file "$_path/$_relpath")
-	[[ -z "$_runner" || "$_runner" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
-	return 0
+	_is_sync_workflow_output "$_relpath" || return 1
+	# The gate compares against the PR merge base: the default ref the branch
+	# is reset to, or the fork point of an exact branch already checked out.
+	local _base_ref="" _rc=1
+	_base_ref=$(_remote_default_ref "$_remote" "$_default_branch")
+	if [[ "$(git -C "$_path" symbolic-ref --short HEAD 2>/dev/null)" == "$_branch" ]]; then
+		_base_ref=$(git -C "$_path" merge-base "$_base_ref" HEAD) || return 1
+	fi
+	if _evidence=$(_sync_marker_evidence "$_path" "$_base_ref" "$_relpath" "$_target_content") &&
+		_policy=$(_routine_sync_policy "$_slug" "$_default_branch") &&
+		_routine_sync_render_admits "$_relpath" "$(jq -c .head <<<"$_evidence")" \
+			"$(jq -c .base <<<"$_evidence")" "$_policy"; then
+		_rc=0
+	fi
+	if [[ "$_rc" -ne 0 ]]; then
+		printf '[%s] %s: %s is not gate-admissible as a routine marker PR; keeping the anchor identity\n' \
+			"$SCRIPT_NAME" "$_slug" "$_relpath" >&2
+	fi
+	return "$_rc"
 }
 
 # ─── Per-Repo Operation ─────────────────────────────────────────────────────
@@ -1660,6 +1708,34 @@ _sync_promote_pr() {
 	return 0
 }
 
+# _sync_reconcile_pr_identity <slug> <pr-url> <anchor> — GH#39830: a reused
+# exact-branch PR must carry the identity chosen for the bytes just pushed.
+# When a later render on the same branch is no longer gate-admissible, swap
+# the routine marker for the anchor Ref; ensure-pr-anchor deliberately skips
+# marker bodies, so promotion alone would leave a PR the gate rejects. An
+# admitted render keeps its marker; a body that already has a Ref is kept.
+_sync_reconcile_pr_identity() {
+	local _slug="$1" _pr_ref="$2" _anchor="$3" _number="${2##*/}" _body="" _body_file="" _rc=0
+	[[ "$_anchor" =~ ^[1-9][0-9]*$ && "$_number" =~ ^[1-9][0-9]*$ ]] || return 0
+	_body=$(gh pr view "$_number" --repo "$_slug" --json body --jq '.body // ""') || return 1
+	[[ "$_body" == *"$_SYNC_ROUTINE_MARKER"* ]] || return 0
+	declare -F gh_pr_edit_safe >/dev/null 2>&1 || return 1
+	local _temp_root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	mkdir -p "$_temp_root" || return 1
+	_body_file=$(mktemp "${_temp_root%/}/sync-workflows-identity.XXXXXX") || return 1
+	# Drop the marker line and the blank line _create_pr_body_file adds after it.
+	{
+		printf 'Ref #%s\n\n' "$_anchor"
+		printf '%s\n' "$_body" | awk -v marker="$_SYNC_ROUTINE_MARKER" \
+			'$0 == marker { skip = 1; next } skip && $0 == "" { skip = 0; next } { skip = 0; print }'
+	} >"$_body_file" || _rc=1
+	if [[ "$_rc" -eq 0 ]] && ! gh_pr_edit_safe "$_number" --repo "$_slug" --body-file "$_body_file" >/dev/null; then
+		_rc=1
+	fi
+	rm -f "$_body_file"
+	return "$_rc"
+}
+
 # Branch names alone also match fork heads. Require the actual head repository
 # to match, case-insensitively, before accepting an exact-branch replacement.
 _sync_find_exact_pr() {
@@ -1700,6 +1776,11 @@ _sync_open_pr() {
 	if [[ -n "$_existing_pr" ]]; then
 		if [[ "$_sync_contributing" -eq 0 ]] && ! _sync_supersede_prs "$_slug" "$_branch_name" "$_workflow_relpath" "$_existing_pr" "$_default_branch"; then
 			printf '%s\t%s\t%s\tPR: %s; unable to supersede older sync PRs\n' "$_slug" "$_status" "$_STATUS_FAILED" "$_existing_pr"
+			return 1
+		fi
+		if ! _sync_reconcile_pr_identity "$_slug" "$_existing_pr" "$_anchor"; then
+			printf '%s\t%s\t%s\tPR: %s; unable to replace the routine marker with the anchor identity\n' \
+				"$_slug" "$_status" "$_STATUS_FAILED" "$_existing_pr"
 			return 1
 		fi
 		_sync_promote_pr "$_slug" "$_existing_pr"
@@ -1986,7 +2067,7 @@ _sync_publish_rendered() {
 	# a PR would read as already current on the next run.
 	local _anchor=""
 	if _sync_marker_eligible "$_slug" "$_path" "$_branch_name" "$_default_branch" \
-		"$_effective_ref" "$_workflow_relpath" "$_sync_contributing"; then
+		"$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_target_content" "$_remote"; then
 		_anchor="$_SYNC_MARKER_IDENTITY"
 	else
 		_anchor=$(_sync_routine_anchor "$_slug" "$_status") || {
@@ -2008,25 +2089,14 @@ _sync_publish_rendered() {
 		return 1
 	fi
 
-	local _publish_rc=0
+	# GH#39830: the anchor is never retired here. Headless runs that are not
+	# gate-admissible still need it, and ensure-anchor only reuses an open
+	# anchor, so retiring per marker PR would create a new issue per cycle.
 	_sync_open_pr_and_warn \
 		"$_slug" "$_path" "$_status" "$_branch_name" \
 		"$_default_branch" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_target_content" \
-		"$_anchor" || _publish_rc=$?
-	if [[ "$_publish_rc" -eq 0 && "$_anchor" == "$_SYNC_MARKER_IDENTITY" ]]; then
-		_sync_retire_anchor "$_slug"
-	fi
-	return "$_publish_rc"
-}
-
-# GH#39793: once a marker PR is published the anchor is redundant. Retirement
-# keeps any anchor an open legacy PR still references; failure only warns.
-_sync_retire_anchor() {
-	local _slug="$1" _helper="${SELF_DIR}/routine-log-helper.sh"
-	[[ -f "$_helper" ]] || return 0
-	bash "$_helper" retire-anchor "$_SYNC_ANCHOR_KEY" --repo "$_slug" >&2 ||
-		printf '[%s] WARN: %s: anchor retirement deferred\n' "$SCRIPT_NAME" "$_slug" >&2
-	return 0
+		"$_anchor"
+	return $?
 }
 
 # Open the PR, then warn (never mutate) when the installed caller needs an

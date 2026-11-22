@@ -45,6 +45,9 @@ REPOS_JSON="${TEST_ROOT}/repos.json"
 ROUTINE_TREE_MODE=100644
 ROUTINE_TREE_TRUNCATED=false
 ROUTINE_REF_STATUS=ahead
+ROUTINE_PIN_BASE=""
+ROUTINE_PIN_HEAD=""
+ROUTINE_PIN_STATUS=ahead
 ROUTINE_HEAD=1111111111111111111111111111111111111111
 ROUTINE_BASE=2222222222222222222222222222222222222222
 ROUTINE_MERGE_BASE="$ROUTINE_BASE"
@@ -98,8 +101,13 @@ gh() {
 		payload="$ROUTINE_BASE_CONTENT"
 		[[ "$endpoint" != */"$(jq -r .sha <<<"$ROUTINE_HEAD_CONTENT")" ]] || payload="$ROUTINE_HEAD_CONTENT"
 		;;
-	repos/marcusquinn/aidevops/compare/*)
+	repos/marcusquinn/aidevops/compare/*...main)
 		payload=$(jq -n --arg status "$ROUTINE_REF_STATUS" '{status:$status}')
+		;;
+	# GH#39830: only the base-pin...head-pin direction is answered.
+	repos/marcusquinn/aidevops/compare/"${ROUTINE_PIN_BASE}...${ROUTINE_PIN_HEAD}")
+		[[ -n "$ROUTINE_PIN_BASE" ]] || return 1
+		payload=$(jq -n --arg status "$ROUTINE_PIN_STATUS" '{status:$status}')
 		;;
 	repos/owner/repo/git/trees/"$ROUTINE_HEAD"'?recursive=1')
 		payload=$(routine_tree_fixture "$ROUTINE_HEAD_CONTENT" "$PR_FILES")
@@ -522,6 +530,26 @@ rm -f "$REPOS_JSON"
 PR_FILES='[{"filename":".github/workflows/maintainer-gate.yml","status":"added"}]'
 ROUTINE_HEAD_CONTENT=$(content_fixture "$(sync_render maintainer-gate "$SYNC_SHA" mirror/aidevops)"$'\n')
 expect_parity 1 'sync-workflows mirror without any registry policy denied' ''
+# GH#39830: a sync preserves or advances the base caller's pin, never downgrades it.
+PR_FILES='[{"filename":".github/workflows/review-bot-gate.yml","status":"modified"}]'
+ROUTINE_TEMPLATE_CONTENT=$(sync_template review-bot-gate)
+ROUTINE_HEAD_CONTENT=$(content_fixture "$(sync_render review-bot-gate "$SYNC_SHA")"$'\n')
+ROUTINE_BASE_CONTENT="$ROUTINE_HEAD_CONTENT"
+expect_parity 0 'sync-workflows preserved base pin admitted' ''
+SYNC_OTHER_PIN=3333333333333333333333333333333333333333
+ROUTINE_BASE_CONTENT=$(content_fixture "$(sync_render review-bot-gate "$SYNC_OTHER_PIN")"$'\n')
+expect_parity 1 'sync-workflows pin change without lineage evidence denied' ''
+ROUTINE_PIN_BASE="$SYNC_OTHER_PIN"
+ROUTINE_PIN_HEAD="$SYNC_SHA"
+ROUTINE_PIN_STATUS=ahead
+expect_parity 0 'sync-workflows advanced pin admitted' ''
+ROUTINE_PIN_STATUS=behind
+expect_parity 1 'sync-workflows pin downgrade denied' ''
+ROUTINE_PIN_STATUS=diverged
+expect_parity 1 'sync-workflows pin outside the base pin lineage denied' ''
+ROUTINE_PIN_BASE=""
+ROUTINE_PIN_HEAD=""
+ROUTINE_PIN_STATUS=ahead
 
 _GH_PR_IDENTITY_ORIGIN=origin:worker
 _gh_validate_pr_worker_identity '<!-- aidevops:routine-pr:badges-sync -->' --repo owner/repo
