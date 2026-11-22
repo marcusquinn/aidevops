@@ -81,6 +81,45 @@ assert_eq 'mid-sentence on hold' 'false' "$(issue_body_has_defer_marker 'This ta
 assert_eq 'hold inside fence' 'false' "$(issue_body_has_defer_marker $'```\nOn hold\n```')"
 
 ###############################################################################
+# Part 1b: not-before time gate (GH#39856, pure function, fixed clock)
+###############################################################################
+
+printf '\n== not-before time gate ==\n'
+
+NB_NOW=1795000000 # 2026-11-18T11:06:40Z
+NB_FUTURE='<!-- aidevops:not-before at=2026-11-26T07:00:00Z reason=external_event_date -->'
+NB_PAST='<!-- aidevops:not-before at=2026-11-10T07:00:00Z reason=external_event_date -->'
+NB_PAST_RELEASED='<!-- aidevops:not-before-released at=2026-11-10T07:00:00Z -->'
+nb_comments() {
+	local association="$1" body="$2"
+	jq -cn --arg a "$association" --arg b "$body" '[[{author_association:$a,body:$b,created_at:"2026-11-01T00:00:00Z"}]]'
+	return 0
+}
+nb_state() {
+	issue_not_before_state "$1" "$2" "$3" "$NB_NOW" || printf 'error\n'
+	return 0
+}
+assert_eq 'no marker' 'none' "$(nb_state '[]' 'Plain body' true)"
+assert_eq 'future body marker holds' 'active 1795676400 2026-11-26T07:00:00Z' "$(nb_state '[]' $'Intro\n'"$NB_FUTURE" false)"
+assert_eq 'future trusted comment marker holds' 'active 1795676400 2026-11-26T07:00:00Z' "$(nb_state "$(nb_comments MEMBER "$NB_FUTURE")" '' false)"
+assert_eq 'untrusted comment marker ignored' 'none' "$(nb_state "$(nb_comments NONE "$NB_FUTURE")" '' false)"
+assert_eq 'expired trusted body marker releases' 'expired 1794294000 2026-11-10T07:00:00Z' "$(nb_state '[]' "$NB_PAST" true)"
+assert_eq 'expired untrusted body marker never releases' 'none' "$(nb_state '[]' "$NB_PAST" false)"
+assert_eq 'expired trusted comment marker releases' 'expired 1794294000 2026-11-10T07:00:00Z' "$(nb_state "$(nb_comments OWNER "$NB_PAST")" '' false)"
+assert_eq 'release receipt makes expiry one-shot' 'released 1794294000 2026-11-10T07:00:00Z' \
+	"$(nb_state "$(jq -cn --arg a "$NB_PAST" --arg r "$NB_PAST_RELEASED" '[{author_association:"OWNER",body:$a},{author_association:"COLLABORATOR",body:$r}]')" '' false)"
+assert_eq 'untrusted receipt cannot spend the release' 'expired 1794294000 2026-11-10T07:00:00Z' \
+	"$(nb_state "$(jq -cn --arg a "$NB_PAST" --arg r "$NB_PAST_RELEASED" '[{author_association:"OWNER",body:$a},{author_association:"NONE",body:$r}]')" '' false)"
+assert_eq 'latest marker wins while any is unexpired' 'active 1795676400 2026-11-26T07:00:00Z' "$(nb_state "$(nb_comments OWNER "$NB_PAST")" "$NB_FUTURE" false)"
+assert_eq 'malformed marker fails closed' 'invalid 0 -' "$(nb_state '[]' '<!-- aidevops:not-before at=next-tuesday -->' false)"
+assert_eq 'fenced example is not a marker' 'none' "$(nb_state '[]' $'```\n'"$NB_FUTURE"$'\n```' true)"
+assert_eq 'inline-code example is not a marker' 'none' "$(nb_state '[]' 'Use `'"$NB_FUTURE"'` to hold.' true)"
+assert_eq 'unreadable comments fail closed' 'error' "$(nb_state 'not-json' '' false)"
+nb_blocks=0
+issue_not_before_blocks 'not-json' '' false "$NB_NOW" && nb_blocks=1
+assert_eq 'unreadable comments block release' '1' "$nb_blocks"
+
+###############################################################################
 # Part 2: non-dep BLOCKED comment marker detection (pure regex)
 #
 # Mirror of the `_PULSE_DEP_GRAPH_NON_DEP_BLOCK_MARKERS` pattern at
@@ -162,6 +201,12 @@ printf '%s\n' "$*" >>"${GH_STUB_CALLS:-/dev/null}"
 # issue with no comments. GH_STUB_FAIL simulates an API outage.
 if [[ -n "${GH_STUB_FAIL:-}" ]]; then
 	exit 1
+fi
+# GH#39856: the issue read (body for the not-before gate) uses --jq.
+if [[ "$*" == "api repos/owner/repo/issues/123 --jq"* ]]; then
+	[[ -z "${GH_STUB_ISSUE_FAIL:-}" ]] || exit 1
+	printf '%s\n' "${GH_STUB_BODY:-}"
+	exit 0
 fi
 if [[ "${GH_STUB_COMMENTS:-}" && -f "${GH_STUB_COMMENTS}" ]]; then
 	cat "${GH_STUB_COMMENTS}"
@@ -259,6 +304,24 @@ jq '. + [{author_association:"OWNER",body:"DISPATCH_CLAIM nonce=next"}]' "$GH_ST
 export GH_STUB_COMMENTS="$STUB_DIR/new-claim.json"
 got=$(_should_defer_auto_unblock 'owner/repo' '123' 'false' || echo "__no_defer__")
 assert_eq 'new dispatch supersedes previous blocked attempt' '__no_defer__' "$got"
+
+# GH#39856: an unexpired not-before time gate defers even when the comment
+# history is otherwise clean; an expired one leaves the existing checks alone.
+jq -cn '[{author_association:"OWNER",body:"DISPATCH_CLAIM nonce=clean"}]' >"$STUB_DIR/clean.json"
+export GH_STUB_COMMENTS="$STUB_DIR/clean.json"
+got=$(GH_STUB_BODY='<!-- aidevops:not-before at=2999-01-01T00:00:00Z reason=external_event_date -->' \
+	_should_defer_auto_unblock 'owner/repo' '123' 'false' || echo "__no_defer__")
+assert_eq 'unexpired body not-before defers' 'not-before' "$got"
+jq -cn '[{author_association:"MEMBER",body:"<!-- aidevops:not-before at=2999-01-01T00:00:00Z reason=external_event_date -->"}]' >"$STUB_DIR/nb-comment.json"
+export GH_STUB_COMMENTS="$STUB_DIR/nb-comment.json"
+got=$(_should_defer_auto_unblock 'owner/repo' '123' 'false' || echo "__no_defer__")
+assert_eq 'unexpired trusted comment not-before defers' 'not-before' "$got"
+export GH_STUB_COMMENTS="$STUB_DIR/clean.json"
+got=$(GH_STUB_BODY='<!-- aidevops:not-before at=2020-01-01T00:00:00Z reason=external_event_date -->' \
+	_should_defer_auto_unblock 'owner/repo' '123' 'false' || echo "__no_defer__")
+assert_eq 'expired not-before does not defer by itself' '__no_defer__' "$got"
+got=$(GH_STUB_ISSUE_FAIL=1 _should_defer_auto_unblock 'owner/repo' '123' 'false' || echo "__no_defer__")
+assert_eq 'unreadable issue body defers unblock' 'issue-unavailable' "$got"
 
 printf '\n'
 printf 'Results: %d passed, %d failed\n' "$pass_count" "$fail_count"

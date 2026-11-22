@@ -275,7 +275,12 @@ gh() {
 		return 0
 		;;
 	"api repos/owner/repo/issues/20")
-		jq -cn --arg body "$BODY20" '{body:$body}'
+		jq -cn --arg body "$BODY20" --arg assoc "${ISSUE_ASSOC:-}" '{body:$body} + (if $assoc == "" then {} else {author_association:$assoc} end)'
+		return 0
+		;;
+	"api repos/owner/repo/issues/20/comments")
+		[[ "$*" == *"--method POST"* ]] || return 1
+		printf '%s\n' "$*" >>"${RECEIPT_LOG:-/dev/null}"
 		return 0
 		;;
 	esac
@@ -586,6 +591,58 @@ abandoned_summary=$(reconcile_dependants_after_verified_closure "owner/repo" 10 
 NO_SUCCESSOR=false
 unset DER_STALE_BLOCKED_SKIP_TTL_SECONDS
 NATIVE_EMPTY=false LIVE_REASON="" NATIVE_REASON=""
+
+# GH#39856: aidevops:not-before time gate. An unexpired marker holds through
+# both passes; an expired trusted marker releases a dependency-less
+# needs-dependency hold exactly once, with one receipt comment.
+NB_FUTURE='<!-- aidevops:not-before at=2999-01-01T00:00:00Z reason=external_event_date -->'
+NB_PAST='<!-- aidevops:not-before at=2026-11-12T07:00:00Z reason=external_event_date -->'
+NB_OBSERVATION='{"author_association":"OWNER","created_at":"2026-11-10T10:00:00Z","body":"CLAIM_RELEASED reason=blocked runner=x\nTerminal blocker: reason=external_trigger_pending owner=dependency-owner task=20"}'
+nb_comment() {
+	local association="$1" created="$2" body="$3"
+	jq -cn --arg a "$association" --arg c "$created" --arg b "$body" '{author_association:$a,created_at:$c,body:$b}'
+	return 0
+}
+nb_sweep() {
+	local before="$EDIT_COUNT"
+	reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || true
+	printf '%s\n' "$((EDIT_COUNT - before))"
+	return 0
+}
+RECEIPT_LOG=$(mktemp)
+DER_STALE_BLOCKED_SKIP_TTL_SECONDS=0
+EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10" COMMENTS="[[$(nb_comment MEMBER 2026-11-01T00:00:00Z "$NB_FUTURE")]]"
+assert_eq 0 "$(run_reconcile)" "unexpired trusted not-before keeps a resolved dependant blocked on close events"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20=$'Blocked by #10\n'"$NB_FUTURE" COMMENTS='[[]]'
+assert_eq 0 "$(nb_sweep)" "unexpired body not-before keeps the stale sweep from releasing"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10" COMMENTS="[[$(nb_comment NONE 2026-11-01T00:00:00Z "$NB_FUTURE")]]"
+assert_eq 1 "$(nb_sweep)" "untrusted not-before comments cannot hold"
+# The looping shape: external_trigger_pending release + needs-dependency, no
+# native edges and no declared blockers.
+NATIVE_EMPTY=true STALE_DEP_LABEL="" STALE_HOLD_LABEL="needs-dependency"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" BODY20="Results announced on the event date." COMMENTS="[[${NB_OBSERVATION}]]"
+assert_eq 0 "$(nb_sweep)" "external trigger hold without a time gate stays blocked"
+: >"$RECEIPT_LOG"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" COMMENTS="[[${NB_OBSERVATION},$(nb_comment OWNER 2026-11-10T10:05:00Z "$NB_PAST")]]"
+assert_eq 1 "$(nb_sweep)" "expired trusted not-before releases a dependency-less needs-dependency hold"
+assert_eq 1 "$(grep -c 'aidevops:not-before-released at=2026-11-12T07:00:00Z' "$RECEIPT_LOG")" "expired not-before release posts one receipt"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" \
+	COMMENTS="[[${NB_OBSERVATION},$(nb_comment OWNER 2026-11-10T10:05:00Z "$NB_PAST"),$(nb_comment COLLABORATOR 2026-11-12T08:00:00Z '<!-- aidevops:not-before-released at=2026-11-12T07:00:00Z -->')]]"
+assert_eq 0 "$(nb_sweep)" "a receipted expiry never releases the issue twice"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" \
+	COMMENTS="[[${NB_OBSERVATION},$(nb_comment OWNER 2026-11-10T10:05:00Z "$NB_PAST"),$(nb_comment OWNER 2026-11-13T09:00:00Z 'CLAIM_RELEASED reason=blocked runner=y')]]"
+assert_eq 0 "$(nb_sweep)" "a blocker observed after the gate expired still holds"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" \
+	COMMENTS="[[${NB_OBSERVATION},$(nb_comment OWNER 2026-11-10T10:05:00Z "$NB_PAST"$'\nHUMAN_UNBLOCK_REQUIRED')]]"
+assert_eq 0 "$(nb_sweep)" "an expired gate keeps independent strong hold markers"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" BODY20="$NB_PAST" COMMENTS="[[${NB_OBSERVATION}]]" ISSUE_ASSOC=NONE
+assert_eq 0 "$(nb_sweep)" "an expired body gate by an untrusted author never releases"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" ISSUE_ASSOC=MEMBER
+assert_eq 1 "$(nb_sweep)" "an expired body gate by a trusted author releases"
+NATIVE_EMPTY=false STALE_DEP_LABEL="blocked-by:#10" STALE_HOLD_LABEL="" ISSUE_ASSOC="" BODY20="Blocked by #10" COMMENTS='[[]]'
+unset DER_STALE_BLOCKED_SKIP_TTL_SECONDS
+rm -f "$RECEIPT_LOG"
+unset RECEIPT_LOG
 
 # GH#33957: bounded passes resume from a per-repo cursor in ascending issue
 # order until the whole blocked set is traversed. Unblock decisions are stubbed;

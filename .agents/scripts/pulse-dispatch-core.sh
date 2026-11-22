@@ -90,6 +90,9 @@ fi
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-locks.sh"
 # shellcheck source=pulse-dispatch-commit-gates.sh
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-commit-gates.sh"
+# GH#39856: not-before time gate (load-once guarded library).
+# shellcheck source=issue-hold-marker-lib.sh
+source "${BASH_SOURCE[0]%/*}/issue-hold-marker-lib.sh"
 
 _dispatch_has_interactive_hold() {
 	local issue_meta_json="$1"
@@ -411,6 +414,17 @@ _dispatch_dedup_dependency_gates() {
 	if is_blocked_by_unresolved "$_dispatch_issue_body" "$repo_slug" "$issue_number"; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unresolved blocked-by dependency (t1927)" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.blocked_by" "$_dss_t0"
+		return 1
+	fi
+	# GH#39856: an unexpired body aidevops:not-before time gate refuses dispatch
+	# even if another path advertised the issue as available. Body-only, so the
+	# gate costs no API call; comment markers keep status:blocked through the
+	# dependency passes, which own the release.
+	if declare -F issue_not_before_blocks >/dev/null 2>&1 &&
+		[[ "$_dispatch_issue_body" == *"aidevops:not-before"* ]] &&
+		issue_not_before_blocks '[]' "$_dispatch_issue_body" false; then
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=not_before_pending issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+		_ds_record "$issue_number" "$repo_slug" "dedup.not_before" "$_dss_t0"
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.blocked_by" "$_dss_t0"
