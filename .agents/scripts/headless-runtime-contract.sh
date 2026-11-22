@@ -227,16 +227,16 @@ decisions on same-repo issues and your tools, and cannot be derived or safely
 chosen within delegated authority, use both lines:
 TERMINAL_BLOCKER_REASON=input_required
 TERMINAL_BLOCKER_INPUT_OWNER=maintainer
-Before asking, look for a precedent (GH#39901): search the repository for the
-flag or term, and same-repo issues for the question
-(gh search issues --repo <slug> "<term>" --state all), reading only
-OWNER/MEMBER comments. A precedent that decides the same question at the same
-scope is your answer: cite it and continue. It never extends credentials,
-spend, permissions or publication beyond what it explicitly covers.
 Owner is one of user, contributor, maintainer or admin: whoever alone can
 supply it. Reversible implementation choices, naming, defaults and scope
 interpretation are yours to decide, never this class. Name the exact input and
 where you looked; never guess it. Not for tool permissions or external events.
+Before asking, look for a precedent (GH#39901): search the repository for the
+flag or term, and same-repo issues for the question
+(gh search issues --repo <slug> "<term>"; open and closed), reading only
+OWNER/MEMBER comments. A precedent that decides the same question at the same
+scope is your answer: cite it and continue. It never extends credentials,
+spend, permissions or publication beyond what it explicitly covers.
 A spend, billing or credential-route decision only a maintainer can make is
 input_required with owner maintainer (or admin), not permission_required.
 If no class is established, omit the reason line: unknown evidence stays retryable
