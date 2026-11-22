@@ -2434,9 +2434,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19278 fix(cloudron-release): unsigned-request notice never posts on macOS (GNU-only date -d) #bug ref:GH#39837 -> [todo/tasks/t19278-brief.md] pr:#39840 completed:2026-11-22
 
-- [ ] t19279 fix(full-loop): commit-and-pr readies a continued draft PR on worker or --ready completion #auto-dispatch #bug ref:GH#39842
+- [x] t19279 fix(full-loop): commit-and-pr readies a continued draft PR on worker or --ready completion #auto-dispatch #bug ref:GH#39842 pr:#39844 completed:2026-11-22
 
-- [ ] t19280 docs: Blender delegation non-Git scratch rule and native 4K vs AI upscale finding #documentation ref:GH#39845
+- [x] t19280 docs: Blender delegation non-Git scratch rule and native 4K vs AI upscale finding #documentation ref:GH#39845 pr:#39846 completed:2026-11-22
 
 ## In Progress
 
