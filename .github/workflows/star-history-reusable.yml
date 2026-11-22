@@ -41,8 +41,8 @@ jobs:
         run: |
           if [[ -z "${SYNC_PAT_PRESENT:-}" ]]; then
             echo "present=false" >>"$GITHUB_OUTPUT"
-            echo "::warning::Star History skipped: SYNC_PAT is not set. GitHub restricts timestamped stargazer history to repository collaborators. Fix: create a fine-grained PAT limited to this repository with Contents read/write and store it as the SYNC_PAT repository secret (see: aidevops --help sync-pat)."
-            echo "Star History skipped: SYNC_PAT repository secret is not set. Create a fine-grained PAT (this repository only, Contents read/write) and store it as SYNC_PAT; see aidevops --help sync-pat." >>"$GITHUB_STEP_SUMMARY"
+            echo "::warning::Star History skipped: SYNC_PAT is not set. GitHub restricts timestamped stargazer history to repository collaborators. Fix: create a fine-grained PAT limited to this repository with Contents and Pull requests read/write and store it as the SYNC_PAT repository secret (see: aidevops --help sync-pat)."
+            echo "Star History skipped: SYNC_PAT repository secret is not set. Create a fine-grained PAT (this repository only, Contents and Pull requests read/write) and store it as SYNC_PAT; see aidevops --help sync-pat." >>"$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           echo "present=true" >>"$GITHUB_OUTPUT"
