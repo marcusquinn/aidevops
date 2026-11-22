@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: update-star-history
@@ -30,6 +31,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: main
           token: ${{ secrets.SYNC_PAT }}
           fetch-depth: 1
 
@@ -41,23 +43,23 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --output docs/assets/star-history.svg
 
-      - name: Commit changed chart
-        run: |
-          set -euo pipefail
-          if git diff --quiet -- docs/assets/star-history.svg; then
-            echo "Star-history chart is already current"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/assets/star-history.svg
-          git commit -m "docs: refresh static star history"
-          for attempt in 1 2 3; do
-            git pull --rebase origin main
-            if git push origin HEAD:main; then
-              exit 0
-            fi
-            sleep $((attempt * 3))
-          done
-          echo "::error::Unable to push the refreshed star-history chart"
-          exit 1
+      # Use a stable PR branch: main requires reviews and status checks.
+      # SYNC_PAT also lets the refresh PR trigger its normal CI workflows.
+      - name: Open or update chart refresh pull request
+        uses: peter-evans/create-pull-request@3ffccacd46053766916f087ce41d627c0b8cf2d1 # v8
+        with:
+          token: ${{ secrets.SYNC_PAT }}
+          base: main
+          branch: automation/update-star-history
+          add-paths: docs/assets/star-history.svg
+          commit-message: 'docs: refresh static star history'
+          title: 'docs: refresh static star history'
+          body: |
+            Refresh the generated static star-history chart.
+
+            Scope: `docs/assets/star-history.svg` only.
+            Generated with `bash .agents/scripts/star-history-helper.sh fetch`.
+            Verify the SVG renders and let the normal PR checks and review run before merging.
+
+            [aidevops.sh](https://aidevops.sh) automated chart refresh.
+          labels: origin:worker
