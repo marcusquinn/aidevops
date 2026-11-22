@@ -1089,7 +1089,10 @@ release_notify_unsigned() {
 	[[ "$threshold" =~ ^[0-9]{1,9}$ && $((10#$threshold)) -gt 0 ]] || return 0
 	created=$(jq -r '.created_at // empty' <<<"$request") || return 0
 	[[ -n "$created" ]] || return 0
-	created=$(date -d "$created" +%s 2>/dev/null) || return 0
+	# GH#39837: GNU date -d first, then BSD (macOS) date -j -f; GitHub
+	# timestamps are UTC ISO-8601 with a Z suffix.
+	created=$(date -u -d "$created" '+%s' 2>/dev/null ||
+		TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$created" '+%s' 2>/dev/null) || return 0
 	now=$(date +%s) || return 0
 	age=$((now - created))
 	[[ "$age" -ge $((10#$threshold)) ]] || return 0
