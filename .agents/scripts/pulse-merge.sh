@@ -746,6 +746,12 @@ _pm_gate_origin_authority() {
 	labels_str=$(printf '%s' "$info_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || labels_str=""
 	is_draft=$(printf '%s' "$info_json" | jq -r '.isDraft // false' 2>/dev/null) || is_draft="false"
 	if [[ "$is_draft" == false ]] && _feedback_route_labels_include "$labels_str" hold-for-review; then
+		# t19286: a closed-issue hold whose issue another merged PR closed is
+		# superseded work, not a maintainer question.
+		if declare -F _feedback_route_close_superseded_closed_issue_hold >/dev/null 2>&1 \
+			&& _feedback_route_close_superseded_closed_issue_hold "$pr_number" "$repo_slug" "$linked_issue"; then
+			return 1
+		fi
 		# Recheck on the next merge pass after any verified recovery.
 		_feedback_route_release_projection_hold "$pr_number" "$repo_slug" || true
 		# GH#39645: route a liftable runtime-pending hold to a live verifier;
