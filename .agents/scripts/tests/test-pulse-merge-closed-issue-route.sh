@@ -21,6 +21,7 @@ ISSUE_LABELS='[]'
 PR_LABELS="origin:worker,conflict-feedback-routed"
 HEAD="abc123repairsha"
 WRITES=0 COMMENTS=0 DISPATCHES=0 FINISHED=0 FAIL_HOLD=0 COMMENT_NOOP=0
+CLOSES=0 FAIL_CLOSE=0 CLOSE_ARGS=""
 COMMENT_JSON='[]'
 AFTER_COMMENT_HEAD="" AFTER_COMMENT_LABELS="" AFTER_HOLD_HEAD=""
 PR_BODY=""
@@ -98,6 +99,11 @@ _feedback_route_gh_write() {
 			PR_LABELS="${PR_LABELS},hold-for-review"
 		fi
 		[[ -z "$AFTER_HOLD_HEAD" ]] || HEAD="$AFTER_HOLD_HEAD"
+		;;
+	close)
+		CLOSES=$((CLOSES + 1))
+		CLOSE_ARGS="$*"
+		[[ "$FAIL_CLOSE" == "0" ]] || return 1
 		;;
 	*) return 1 ;;
 	esac
@@ -318,6 +324,68 @@ _feedback_route_guard_closed_issue 100 owner/repo 42 conflict || rc=$?
 AFTER_HOLD_HEAD=""
 route conflict
 printf 'PASS: head drift at both write boundaries reclassifies before terminal success\n'
+
+# t19286: an issue another merged PR completed supersedes the worker PR.
+CLOSER=""
+_psh_find_merged_closer_for_closed_issue() {
+	[[ -n "$CLOSER" ]] || return 1
+	printf '%s' "$CLOSER"
+	return 0
+}
+supersede_case() {
+	PR_LABELS="$1" REASON="$2" CLOSER="$3" FAIL_CLOSE="${4:-0}"
+	COMMENT_JSON='[]' ISSUE_LABELS='[]' CLOSE_ARGS=""
+	reset_fuse
+	WRITES=0 COMMENTS=0 CLOSES=0 DISPATCHES=0
+	route ci
+	return $?
+}
+supersede_case "origin:worker-takeover" completed 200
+[[ "$CLOSES" == "1" && "$COMMENTS" == "0" && "$PR_LABELS" != *"hold-for-review"* && "$DISPATCHES" == "0" ]]
+[[ "$CLOSE_ARGS" == *"merged PR #200"* && "$CLOSE_ARGS" != *"--delete-branch"* ]]
+printf 'PASS: issue closed by another merged PR closes the worker PR, branch kept, no hold\n'
+for labels in "origin:worker,follow-up" "origin:worker,do-not-close" "origin:worker,no-auto-dispatch" "origin:interactive"; do
+	supersede_case "$labels" completed 200 || true
+	[[ "$CLOSES" == "0" ]]
+done
+supersede_case "origin:worker" not_planned 200
+[[ "$CLOSES" == "0" && "$COMMENT_JSON" == *"orphaned"* ]]
+supersede_case "origin:worker" completed ""
+[[ "$CLOSES" == "0" && "$PR_LABELS" == *"hold-for-review"* ]]
+printf 'PASS: protection labels, not-planned closure and no merged closer keep the hold path\n'
+supersede_case "origin:worker" completed 200 1
+[[ "$CLOSES" == "1" && "$COMMENTS" == "1" && "$PR_LABELS" == *"hold-for-review"* ]]
+printf 'PASS: a failed superseded close falls back to the maintainer hold\n'
+
+# t19286: an existing closed-issue hold is closed only with exact provenance.
+held_case() {
+	PR_LABELS="${1:-origin:worker-takeover,hold-for-review}"
+	CLOSER="${2-200}" EVENT_ACTOR="${3:-other-runner}" PR_BODY="${4:-}"
+	COMMENT_JSON='[{"id":1,"created_at":"2026-01-01T00:00:00Z","body":"<!-- feedback-route:closed-issue:PR100:ISSUE42:SHA0123456789012345678901234567890123456789:RUNNERa --> Holding this ci repair PR","user":{"login":"other-runner"},"author_association":"CONTRIBUTOR"}]'
+	[[ -z "${5:-}" ]] || COMMENT_JSON=$(printf '%s' "$COMMENT_JSON" | jq --arg body "$5" '. + [{id:2,created_at:"2026-01-02T00:00:00Z",body:$body,user:{login:"maintainer"},author_association:"OWNER"}]')
+	CLOSES=0 CLOSE_ARGS="" FAIL_CLOSE=0
+	_feedback_route_close_superseded_closed_issue_hold 100 owner/repo
+	return $?
+}
+HEAD="0123456789012345678901234567890123456789"
+held_case
+[[ "$CLOSES" == "1" && "$CLOSE_ARGS" == *"#42"*"merged PR #200"* ]]
+printf 'PASS: automation closed-issue hold for the current head is closed as superseded\n'
+if held_case "" "" ""; then exit 1; fi
+[[ "$CLOSES" == "0" ]]
+if held_case "" 200 maintainer; then exit 1; fi
+[[ "$CLOSES" == "0" ]]
+if held_case "" 200 "" "" "Please hold this until I check the data"; then exit 1; fi
+[[ "$CLOSES" == "0" ]]
+if held_case "" 200 "" '<!-- aidevops:pulse-todo-handoff id=example -->'; then exit 1; fi
+[[ "$CLOSES" == "0" ]]
+if held_case "origin:worker,hold-for-review,follow-up"; then exit 1; fi
+[[ "$CLOSES" == "0" ]]
+HEAD="1111111111111111111111111111111111111111"
+if held_case; then exit 1; fi
+[[ "$CLOSES" == "0" ]]
+HEAD="abc123repairsha" PR_BODY="" EVENT_ACTOR="" CLOSER="" REASON="completed"
+printf 'PASS: no closer, maintainer hold, later hold comment, projection, protection or new head preserve the hold\n'
 
 # GH#34600: automation-hold provenance shares the actor-pinned filter, so it
 # must match the runner's own login under CONTRIBUTOR and nobody else's.
