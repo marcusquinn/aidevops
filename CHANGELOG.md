@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.261] - 2026-11-22
+
+### Added
+
+- add --supersede to cloudron policy-request for signed standing policies
+- notify maintainer when a non-routine release request waits unsigned
+
+### Changed
+
+- Maintenance: mark t19268 complete (pr:#39798 completed:2026-11-22) (#39800)
+
+### Fixed
+
+- bind queued launch-recovery CLAIM_RELEASED to the exact claim generation
+- route held runtime-pending PRs whose body was rewritten to runtime-verified
+
 ## [3.39.260] - 2026-11-22
 
 ### Added
