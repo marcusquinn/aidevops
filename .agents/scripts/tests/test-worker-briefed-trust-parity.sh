@@ -453,6 +453,9 @@ bash -s -- "$SCRIPT_DIR" "$TEST_ROOT" <<'RETIRE_TEST'
 	RETIRE_OPEN='[{"number":77,"state":"OPEN","body":"<!-- aidevops:routine-anchor:badges-sync -->"},{"number":78,"state":"OPEN","body":"<!-- aidevops:routine-anchor:sync-workflows -->"}]'
 	RETIRE_REOPEN_FAIL=0
 	RETIRE_CALLS="$TEST_ROOT/retirement-calls"
+	# Live issue state, independent of the listing snapshot.
+	RETIRE_LIVE="$TEST_ROOT/retirement-live-state"
+	printf 'OPEN\n' >"$RETIRE_LIVE"
 	: >"$RETIRE_CALLS"
 	gh() {
 		local command="$1" action="${2:-}"
@@ -473,11 +476,17 @@ bash -s -- "$SCRIPT_DIR" "$TEST_ROOT" <<'RETIRE_TEST'
 			fi
 			;;
 		api:repos/owner/repo/labels/routine-anchor-retiring) ;;
+		issue:view) cat "$RETIRE_LIVE" ;;
 		issue:reopen)
 			printf '%s\n' "$*" >>"$RETIRE_CALLS"
 			[[ "$RETIRE_REOPEN_FAIL" == 0 ]] || return 1
+			printf 'OPEN\n' >"$RETIRE_LIVE"
 			;;
-		issue:edit | issue:close) printf '%s\n' "$*" >>"$RETIRE_CALLS" ;;
+		issue:close)
+			printf '%s\n' "$*" >>"$RETIRE_CALLS"
+			printf 'CLOSED\n' >"$RETIRE_LIVE"
+			;;
+		issue:edit) printf '%s\n' "$*" >>"$RETIRE_CALLS" ;;
 		*) return 1 ;;
 		esac
 		return 0
@@ -543,4 +552,13 @@ bash -s -- "$SCRIPT_DIR" "$TEST_ROOT" <<'RETIRE_TEST'
 	cmd_retire_anchor badges-sync --repo owner/repo
 	[[ "$(cat "$RETIRE_CALLS")" == 'issue edit 77 --repo owner/repo --remove-label routine-anchor-retiring' ]]
 	printf 'PASS failed restoration stays marked and is retried while the anchor is closed\n'
+	# A stale open snapshot cannot skip the reopen: restore reads live state.
+	: >"$RETIRE_CALLS"
+	printf 'CLOSED\n' >"$RETIRE_LIVE"
+	RETIRE_PRS='[{"body":"For #77"}]'
+	RETIRE_MARKED='[{"number":77,"state":"OPEN","body":"<!-- aidevops:routine-anchor:badges-sync -->"}]'
+	cmd_retire_anchor badges-sync --repo owner/repo 2>/dev/null
+	grep -q 'issue reopen 77 --repo owner/repo' "$RETIRE_CALLS"
+	[[ "$(sed -n '$p' "$RETIRE_CALLS")" == *'--remove-label routine-anchor-retiring'* ]]
+	printf 'PASS restoration reopens from live state, not a stale open snapshot\n'
 RETIRE_TEST

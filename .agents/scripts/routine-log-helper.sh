@@ -49,6 +49,7 @@ PERIOD_DAYS=7
 # Set before an anchor is closed; cleared only once retirement or restoration
 # completes, so an interrupted step is retried in any issue state.
 ANCHOR_RETIRING_LABEL="routine-anchor-retiring"
+ANCHOR_OPEN_STATE="OPEN"
 
 # =============================================================================
 # Logging
@@ -1319,12 +1320,14 @@ _anchor_open_pr_reference() {
 	return 2
 }
 
-# _anchor_restore <repo> <number> <is_open> — reopen a closed anchor and
+# _anchor_restore <repo> <number> — reopen the anchor unless its fresh state is
+# open (never the run's snapshot, which another run may have made stale), then
 # restore `persistent`; only then clear the retiring marker, so any failed step
 # is retried by the next run.
 _anchor_restore() {
-	local repo="$1" number="$2" is_open="$3"
-	if [[ "$is_open" != 1 ]]; then
+	local repo="$1" number="$2" state=""
+	state=$(gh issue view "$number" --repo "$repo" --json state --jq .state) || return 1
+	if [[ "$state" != "$ANCHOR_OPEN_STATE" ]]; then
 		gh issue reopen "$number" --repo "$repo" || return 1
 	fi
 	gh issue edit "$number" --repo "$repo" --add-label persistent || return 1
@@ -1343,7 +1346,7 @@ _anchor_retire_one() {
 	0)
 		# Referenced: keep it, finishing any interrupted retirement's restore.
 		[[ "$marked" == 1 ]] || return 0
-		_anchor_restore "$repo" "$number" "$is_open"
+		_anchor_restore "$repo" "$number"
 		return $?
 		;;
 	1) ;;
@@ -1362,7 +1365,7 @@ _anchor_retire_one() {
 		ref_rc=0
 		_anchor_open_pr_reference "$repo" "$number" || ref_rc=$?
 		if [[ "$ref_rc" -ne 1 ]]; then
-			_anchor_restore "$repo" "$number" 0
+			_anchor_restore "$repo" "$number"
 			return $?
 		fi
 	elif [[ "$marked" != 1 ]]; then
@@ -1391,10 +1394,10 @@ cmd_retire_anchor() {
 	jq -e "$complete" <<<"$marked" >/dev/null || return 1
 	# Read both lists from stdin (not argv) so large bodies cannot hit ARG_MAX.
 	# unique_by keeps the first entry, so a marked anchor's own state wins.
-	rows=$(printf '%s\n%s\n' "$open" "$marked" | jq -rs --arg marker "$marker" '
+	rows=$(printf '%s\n%s\n' "$open" "$marked" | jq -rs --arg marker "$marker" --arg open "$ANCHOR_OPEN_STATE" '
 		(.[1] | map(.number)) as $marked |
 		(.[1] + .[0]) | unique_by(.number) | .[] | select(.body | contains($marker)) |
-		.number as $n | [$n, (if .state == "OPEN" then 1 else 0 end),
+		.number as $n | [$n, (if .state == $open then 1 else 0 end),
 		 (if any($marked[]; . == $n) then 1 else 0 end)] | @tsv') || return 1
 	[[ -n "$rows" ]] || return 0
 	if ! declare -F gh_issue_comment >/dev/null; then
