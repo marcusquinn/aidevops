@@ -308,6 +308,34 @@ test_case14_opted_out_or_fresh_draft_not_handed_over() {
 	return 0
 }
 
+# Recovery must complete closing linkage before the same-pass stale recheck.
+test_orphan_draft_recheck_and_refusal_memo() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	local linked=0 handovers=0 rc=0
+	export AIDEVOPS_MERGE_VERDICT_DIR="${TEST_ROOT}/verdicts"
+	_interactive_pr_is_stale() { [[ "$linked" -eq 1 ]]; return $?; }
+	_recover_interactive_pr_work_issue() { linked=1; return 0; }
+	_interactive_pr_trigger_handover() { handovers=$((handovers + 1)); return 0; }
+	_interactive_draft_pr_try_handover 117 owner/repo origin:interactive || rc=1
+	[[ "$handovers" -eq 1 ]] || rc=1
+	_interactive_draft_handover_refused 118 owner/repo no-takeover || true
+	# Subshells and repeated passes must share the rate limit without hiding
+	# a different gate or a different PR.
+	( _interactive_draft_handover_refused 118 owner/repo no-takeover ) || true
+	_interactive_draft_handover_refused 118 owner/repo hold-for-review || true
+	_interactive_draft_handover_refused 119 owner/repo no-takeover || true
+	[[ "$(grep -c 'interactive-draft-handover: PR #118 refused: no-takeover' "$LOGFILE")" -eq 1 ]] || rc=1
+	[[ "$(grep -c 'interactive-draft-handover:' "$LOGFILE")" -eq 3 ]] || rc=1
+	AIDEVOPS_MERGE_VERDICT_TTL_S=0 _interactive_draft_handover_refused 118 owner/repo no-takeover || true
+	[[ "$(grep -c 'interactive-draft-handover: PR #118 refused: no-takeover' "$LOGFILE")" -eq 2 ]] || rc=1
+	print_result "orphan draft links and hands over in one pass; refusals are memoized per PR and gate" "$rc"
+	unset -f _interactive_pr_is_stale _recover_interactive_pr_work_issue _interactive_pr_trigger_handover
+	unset AIDEVOPS_MERGE_VERDICT_DIR
+	teardown_test_env
+	return 0
+}
+
 # =============================================================================
 # Case 6: explicit allow-auto-merge label opts interactive PRs into automation.
 # =============================================================================
@@ -515,6 +543,7 @@ main() {
 	test_case12_stale_interactive_without_claim_passes
 	test_case13_stale_draft_hands_over
 	test_case14_opted_out_or_fresh_draft_not_handed_over
+	test_orphan_draft_recheck_and_refusal_memo
 
 	echo ""
 	printf 'Results: %d/%d passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

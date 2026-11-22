@@ -409,7 +409,7 @@ _interactive_draft_pr_try_handover() {
 		declare -F _recover_interactive_pr_work_issue >/dev/null 2>&1 || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" recovery-helper-unavailable; return 1; }
 		# Recovery emits its own precise refusal; do not mask it with a second gate.
 		_recover_interactive_pr_work_issue "$pr_number" "$repo_slug" >/dev/null || return 1
-		_interactive_pr_is_stale "$pr_number" "$repo_slug" || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" linked-issue-staleness-or-claim; return 1; }
+		_interactive_pr_is_stale "$pr_number" "$repo_slug" || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" "${_INTERACTIVE_PR_STALE_REFUSAL:-linked-issue-staleness-or-claim}"; return 1; }
 	fi
 
 	_interactive_pr_trigger_handover "$pr_number" "$repo_slug" "stale interactive draft PR (GH#39158)" || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" takeover-not-confirmed; return 1; }

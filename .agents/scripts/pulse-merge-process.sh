@@ -1046,18 +1046,19 @@ _recover_interactive_pr_work_issue() {
 	local repo_slug="$2"
 	local meta="" author="" title="Track interactive PR #${pr_number}" matches="" issue="" issue_meta=""
 	local marker="<!-- pulse-interactive-tracking:${pr_number} -->"
-	local body_file="" files="" created="" existing="" live_meta=""
+	local body_file="" files="" created="" existing="" live_meta="" refusal=""
 	[[ "${DRY_RUN:-0}" != "1" ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" dry-run; return 1; }
 	[[ "${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-enforce}" == "enforce" ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" mode-not-enforce; return 1; }
 	meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,author,labels,body,url,headRefOid) || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" pr-metadata-unavailable; return 1; }
-	printf '%s' "$meta" | jq -e '.state == "OPEN" and
-		([.labels[].name] | index("origin:interactive") != null and
-		any(. == "no-takeover" or . == "needs-maintainer-review" or
-		. == "external-contributor" or . == "hold-for-review") == false)' >/dev/null || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" pr-state-or-protected-label; return 1; }
+	refusal=$(printf '%s' "$meta" | jq -r 'if .state != "OPEN" then "pr-not-open"
+		elif ([.labels[].name] | index("origin:interactive")) == null then "origin-interactive-missing"
+		else [.labels[].name | select(. == "no-takeover" or . == "needs-maintainer-review" or
+		. == "external-contributor" or . == "hold-for-review")][0] // empty end') || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" pr-metadata-invalid; return 1; }
+	[[ -z "$refusal" ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" "$refusal"; return 1; }
 	#aidevops:trust-boundary — labels alone cannot authorize creation or takeover.
 	author=$(printf '%s' "$meta" | jq -r '.author.login // empty')
 	[[ -n "$author" ]] && _is_collaborator_author "$author" "$repo_slug" || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" author-not-collaborator; return 1; }
-	_interactive_pr_is_stale "$pr_number" "$repo_slug" "" "" "" 1 || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" age-or-claim-not-eligible; return 1; }
+	_interactive_pr_is_stale "$pr_number" "$repo_slug" "" "" "" 1 || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" "${_INTERACTIVE_PR_STALE_REFUSAL:-age-or-claim-not-eligible}"; return 1; }
 	# For/Ref and legacy task-title numbers can name PRs or closed issues.
 	# Only an open issue is reusable; unreadable metadata must fail closed.
 	existing=$(_extract_pr_work_issue "$pr_number" "$repo_slug") || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" work-link-unavailable-or-ambiguous; return 1; }
