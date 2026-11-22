@@ -33,6 +33,7 @@ print_result() {
 
 setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
+	export PULSE_T2449_BLOCK_STATE_DIR="${TEST_ROOT}/t2449-blocks"
 	mkdir -p "${TEST_ROOT}/bin"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
 	export LOGFILE="${TEST_ROOT}/pulse.log"
