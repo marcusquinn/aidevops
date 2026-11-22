@@ -94,6 +94,11 @@ source "${_FULL_LOOP_COMMIT_DIR}/full-loop-helper-commit-history.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via the helper directory
 source "${_FULL_LOOP_COMMIT_DIR}/full-loop-helper-commit-gates.sh"
 
+# Squash-merged continuation recovery runs from _stage_and_commit (GH#39862).
+# shellcheck source=./full-loop-helper-commit-continuation.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via the helper directory
+source "${_FULL_LOOP_COMMIT_DIR}/full-loop-helper-commit-continuation.sh"
+
 # --- Argument Parsing ---
 
 # Parse commit-and-pr arguments into caller-scoped variables.
@@ -396,6 +401,19 @@ _stage_and_commit() {
 		if ! git commit -m "$commit_message"; then
 			print_error "git commit failed"
 			return 1
+		fi
+	fi
+	# GH#39862: before WIP finalization, validators, rebase or push, move a
+	# continuation of a squash-merged head onto a fresh branch holding only the
+	# post-merge unit. Updates the caller-scoped $branch (cmd_commit_and_pr) so
+	# every later push, PR lookup and merge summary uses the new head. Explicit
+	# --replace-pr and runtime-owned completion keep their audited paths.
+	if [[ -n "${repo:-}" && -n "${branch:-}" && -z "${replacement_pr:-}" &&
+		"${AIDEVOPS_RUNTIME_PENDING_COMPLETION:-0}" != 1 ]]; then
+		_recover_squash_merged_continuation "$repo" "$branch" "${skip_rebase:-0}" || return 1
+		if [[ -n "$FULL_LOOP_CONTINUATION_BRANCH" ]]; then
+			branch="$FULL_LOOP_CONTINUATION_BRANCH"
+			summary_decisions="${summary_decisions:+${summary_decisions}; }${FULL_LOOP_CONTINUATION_NOTE}"
 		fi
 	fi
 	return 0
