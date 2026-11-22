@@ -21,6 +21,9 @@ _DDPR_LIB_DIR="${BASH_SOURCE[0]%/*}"
 source "${_DDPR_LIB_DIR}/pr-checkpoint-target-lib.sh"
 unset _DDPR_LIB_DIR
 _DDPR_UNLINKED_PREFIX="WORKER_DRAFT_CHECKPOINT_UNLINKED:"
+# t19293: deliberately not a WORKER_DRAFT_CHECKPOINT: prefix, so every
+# continuation and attention consumer still treats the held draft as protected.
+_DDPR_SELF_HELD_PREFIX="WORKER_DRAFT_SELF_HELD:"
 
 _ddpr_gh_read() {
 	local rc=0
@@ -759,9 +762,12 @@ _ddpr_graphql_open_commits() {
 # worker costs less than a permanent stall and the fuse/terminal actions retire
 # the orphaned draft. Closing-reference drafts keep the worker route; protected,
 # cross-repository and non-worker drafts keep the plain durable block.
+# t19293 (GH#39919): a linked worker draft whose only protection is
+# hold-for-review is `held`: still a plain block, but layer 4 may ask the
+# re-arm route whether a trusted receipt answered the runner's own hold.
 #
 # Args: $1 = issue number, $2 = sibling JSON, $3 = title pattern, $4 = body pattern
-# Output: `unlinked|PR|reason` rows, then at most one `block|PR|worker|protected`
+# Output: `unlinked|PR|reason` rows, then at most one `block|PR|worker|held|protected`
 #######################################
 _ddpr_classify_sibling_drafts() {
 	local issue_number="$1"
@@ -774,6 +780,7 @@ _ddpr_classify_sibling_drafts() {
 		--arg body_pattern "$body_pattern" \
 		--arg seed_marker "<!-- aidevops:seed-pr issue=${issue_number} -->" \
 		--arg unlinked "unlinked" \
+		--arg hold "$_PCTL_HOLD_LABEL" \
 		"${_PR_CHECKPOINT_FOR_LINK_JQ_DEFS}"'
 		def names: [.labels[]?.name];
 		# GH#39908: a pulse-handed-over interactive draft (origin:worker-takeover)
@@ -783,6 +790,15 @@ _ddpr_classify_sibling_drafts() {
 			. == "no-auto-dispatch" or . == "needs-maintainer-review"
 		);
 		def worker_owned: names | any(. == "origin:worker" or . == "origin:worker-takeover");
+		def worker_checkpoint:
+			worker_owned and (dedup_protected | not) and (checkpoint_protected | not) and
+			.isCrossRepository == false;
+		def linked_worker_checkpoint:
+			worker_checkpoint and (((.closingIssuesReferences // []) | length) > 0 or checkpoint_draft_links($issue));
+		# Only the hold is set aside; every other label still decides the kind.
+		def self_held_checkpoint:
+			(names | any(. == $hold)) and
+			(.labels |= map(select(.name != $hold)) | linked_worker_checkpoint);
 		def seed_for_issue: (names | any(. == "seed-pr")) and ((.body // "") | contains($seed_marker));
 		# A proven dispatch identity for another target makes this issue related.
 		def unlinked_reason:
@@ -796,11 +812,11 @@ _ddpr_classify_sibling_drafts() {
 				(.isDraft == true) and (seed_for_issue | not) and
 				(((.title // "") | test($title_pattern; "i")) or ((.body // "") | test($body_pattern; "i")))
 			) |
-			if worker_owned and (dedup_protected | not) and (checkpoint_protected | not) and
-				.isCrossRepository == false then
-				if ((.closingIssuesReferences // []) | length) > 0 or checkpoint_draft_links($issue) then
+			if worker_checkpoint then
+				if linked_worker_checkpoint then
 					{number, kind: "worker"}
 				else {number, kind: $unlinked, reason: unlinked_reason} end
+			elif self_held_checkpoint then {number, kind: "held"}
 			else {number, kind: "protected"} end
 		] |
 		(.[] | select(.kind == $unlinked) | "\(.kind)|\(.number)|\(.reason)"),
@@ -868,6 +884,11 @@ _has_open_pr_check_healthy_sibling() {
 		if [[ "$draft_pr_kind" == "worker" ]]; then
 			printf 'WORKER_DRAFT_CHECKPOINT: draft PR #%s is a durable checkpoint for issue #%s; ordinary redispatch is blocked\n' \
 				"$draft_pr_number" "$issue_number"
+			return 0
+		fi
+		if [[ "$draft_pr_kind" == "held" ]]; then
+			printf '%s draft PR #%s is a durable checkpoint for issue #%s; ordinary redispatch is blocked\n' \
+				"$_DDPR_SELF_HELD_PREFIX" "$draft_pr_number" "$issue_number"
 			return 0
 		fi
 		printf 'draft PR #%s is a durable checkpoint for issue #%s; ordinary redispatch is blocked\n' \
