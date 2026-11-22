@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# Shared PR-description and explicit merge-message validation (GH#36797).
+# Shared PR-description and explicit merge-message validation (GH#36797),
+# plus the repository-target resolution shared with the gh shim (GH#39801).
 
 # Used by both the standalone gh shim and the safe-edit wrappers.
 _gh_extract_repo_from_args() {
@@ -26,6 +27,216 @@ _gh_extract_repo_from_args() {
 		esac
 		i=$((i + 1))
 	done
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# GH#39801: repository-target resolution.
+# Native gh resolves an omitted target itself, but each aidevops layer that must
+# know where a write lands (privacy guard, REST fallback, PR recovery, labels,
+# audit) read only an explicit --repo (see also GH#23883, GH#30855). These
+# helpers are the one resolver for those layers. They mirror native gh's
+# non-interactive base-repository choice (cli/cli ResolvedRemotes.BaseRepo):
+# -R/--repo, an issue/PR URL argument, GH_REPO, a `gh repo set-default` remote,
+# then the first github.com remote ranked upstream > github > origin > others.
+# No API calls. Parameter expansion only, so bash 3.2 and zsh behave the same.
+# -----------------------------------------------------------------------------
+_GH_TARGET_REPO=""
+_GH_TARGET_REPO_SOURCE=""
+_GH_TARGET_REPO_EXPLICIT=""
+_GH_TARGET_REPO_REFERENCE=""
+
+_gh_target_slug_valid() {
+	local slug="$1"
+	[[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+	return $?
+}
+
+# Print OWNER/REPO for a github.com HTTPS, SSH or scp-style URL.
+_gh_target_slug_from_url() {
+	local url="$1"
+	local rest="" owner="" repo_name=""
+	case "$url" in
+	https://github.com/* | http://github.com/* | ssh://github.com/*) rest="${url#*://github.com/}" ;;
+	https://*@github.com/* | http://*@github.com/* | ssh://*@github.com/*) rest="${url#*@github.com/}" ;;
+	*@github.com:*) rest="${url#*@github.com:}" ;;
+	*) return 1 ;;
+	esac
+	[[ "$rest" == */* ]] || return 1
+	owner="${rest%%/*}"
+	rest="${rest#*/}"
+	repo_name="${rest%%/*}"
+	repo_name="${repo_name%.git}"
+	_gh_target_slug_valid "${owner}/${repo_name}" || return 1
+	printf '%s/%s\n' "$owner" "$repo_name"
+	return 0
+}
+
+# Print OWNER/REPO for a github.com issue or pull-request URL.
+_gh_target_slug_from_reference() {
+	local ref="$1"
+	local rest="" owner="" repo_name="" kind="" number=""
+	case "$ref" in
+	https://github.com/*/*/*/* | http://github.com/*/*/*/*) rest="${ref#*://github.com/}" ;;
+	*) return 1 ;;
+	esac
+	owner="${rest%%/*}"
+	rest="${rest#*/}"
+	repo_name="${rest%%/*}"
+	rest="${rest#*/}"
+	kind="${rest%%/*}"
+	rest="${rest#*/}"
+	number="${rest%%[/?#]*}"
+	[[ "$kind" == "issues" || "$kind" == "pull" ]] || return 1
+	[[ "$number" =~ ^[0-9]+$ ]] || return 1
+	_gh_target_slug_valid "${owner}/${repo_name}" || return 1
+	printf '%s/%s\n' "$owner" "$repo_name"
+	return 0
+}
+
+# Normalize [github.com/]OWNER/REPO or a github.com URL to OWNER/REPO.
+_gh_target_normalize_repo() {
+	local value="$1"
+	case "$value" in
+	github.com/*) value="${value#github.com/}" ;;
+	*://* | *@github.com:*) value=$(_gh_target_slug_from_url "$value") || return 1 ;;
+	esac
+	_gh_target_slug_valid "$value" || return 1
+	printf '%s\n' "$value"
+	return 0
+}
+
+# GitHub repository names are case-insensitive.
+_gh_target_same_repo() {
+	local left="$1"
+	local right="$2"
+	[[ "$left" == "$right" ]] && return 0
+	left=$(printf '%s' "$left" | tr '[:upper:]' '[:lower:]')
+	right=$(printf '%s' "$right" | tr '[:upper:]' '[:lower:]')
+	[[ "$left" == "$right" ]]
+	return $?
+}
+
+# Print the repository native gh would use from the current checkout: a
+# gh-resolved remote (`gh repo set-default`, fork clones) first, otherwise the
+# highest-ranked github.com remote.
+_gh_target_repo_from_checkout() {
+	[[ "${GH_HOST:-github.com}" == "github.com" ]] || return 1
+	local remotes="" resolved="" remote="" url="" kind="" slug="" score=0
+	local best="" best_score=-1 chosen="" chosen_score=-1 key="" value="" resolution=""
+	remotes=$(git remote -v 2>/dev/null) || return 1
+	resolved=$(git config --get-regexp '^remote\..*\.gh-resolved$' 2>/dev/null) || resolved=""
+	while IFS=$' \t' read -r remote url kind; do
+		[[ "$kind" == "(fetch)" ]] || continue
+		slug=$(_gh_target_slug_from_url "$url") || continue
+		case "$remote" in
+		[Uu][Pp][Ss][Tt][Rr][Ee][Aa][Mm]) score=3 ;;
+		[Gg][Ii][Tt][Hh][Uu][Bb]) score=2 ;;
+		[Oo][Rr][Ii][Gg][Ii][Nn]) score=1 ;;
+		*) score=0 ;;
+		esac
+		if [[ "$score" -gt "$best_score" ]]; then
+			best="$slug"
+			best_score="$score"
+		fi
+		resolution=""
+		while IFS=' ' read -r key value; do
+			[[ "$key" == "remote.${remote}.gh-resolved" ]] && resolution="$value"
+		done <<<"$resolved"
+		[[ -n "$resolution" && "$score" -gt "$chosen_score" ]] || continue
+		[[ "$resolution" == "base" ]] || slug=$(_gh_target_normalize_repo "$resolution") || continue
+		chosen="$slug"
+		chosen_score="$score"
+	done <<<"$remotes"
+	[[ -n "$chosen" ]] || chosen="$best"
+	[[ -n "$chosen" ]] || return 1
+	printf '%s\n' "$chosen"
+	return 0
+}
+
+# Print the target native gh uses when no -R/--repo or URL names one.
+_gh_target_repo_default() {
+	if [[ -n "${GH_REPO:-}" ]]; then
+		_gh_target_normalize_repo "$GH_REPO"
+		return $?
+	fi
+	_gh_target_repo_from_checkout
+	return $?
+}
+
+# Resolve the target repository for gh-style issue/pr arguments.
+# Sets _GH_TARGET_REPO (OWNER/REPO), _GH_TARGET_REPO_SOURCE
+# (reference|explicit|env|checkout), _GH_TARGET_REPO_EXPLICIT and
+# _GH_TARGET_REPO_REFERENCE.
+# Returns: 0 resolved; 1 unresolvable; 2 -R/--repo value missing or malformed;
+#   3 the issue/PR URLs and -R/--repo name different repositories
+#   (_GH_TARGET_REPO is then the URL repository, as native gh uses it).
+_gh_resolve_target_repo() {
+	_GH_TARGET_REPO=""
+	_GH_TARGET_REPO_SOURCE=""
+	_GH_TARGET_REPO_EXPLICIT=""
+	_GH_TARGET_REPO_REFERENCE=""
+	local arg="" prev="" expect_repo=0 explicit="" explicit_seen=0 reference="" ref_slug="" conflict=0
+	for arg in "$@"; do
+		if [[ "$expect_repo" -eq 1 ]]; then
+			[[ -n "$arg" && "$arg" != -* ]] || return 2
+			explicit="$arg"
+			expect_repo=0
+			prev="$arg"
+			continue
+		fi
+		case "$arg" in
+		--repo | -R)
+			explicit_seen=1
+			expect_repo=1
+			;;
+		--repo=*)
+			explicit_seen=1
+			explicit="${arg#--repo=}"
+			;;
+		-R?*)
+			explicit_seen=1
+			explicit="${arg#-R}"
+			;;
+		https://github.com/* | http://github.com/*)
+			# A URL given as the value of a text flag is content, not a target.
+			case "$prev" in
+			--title | -t | --body | -b | --body-file | -F | --comment | -c) ;;
+			*)
+				if ref_slug=$(_gh_target_slug_from_reference "$arg"); then
+					[[ -z "$reference" ]] || _gh_target_same_repo "$reference" "$ref_slug" || conflict=1
+					[[ -n "$reference" ]] || reference="$ref_slug"
+				fi
+				;;
+			esac
+			;;
+		esac
+		prev="$arg"
+	done
+	[[ "$expect_repo" -eq 0 ]] || return 2
+	if [[ "$explicit_seen" -eq 1 ]]; then
+		_gh_target_slug_valid "$explicit" || explicit=$(_gh_target_normalize_repo "$explicit") || return 2
+		_GH_TARGET_REPO_EXPLICIT="$explicit"
+	fi
+	if [[ -n "$reference" ]]; then
+		_GH_TARGET_REPO="$reference"
+		_GH_TARGET_REPO_SOURCE="reference"
+		_GH_TARGET_REPO_REFERENCE="$reference"
+		[[ -z "$explicit" ]] || _gh_target_same_repo "$explicit" "$reference" || conflict=1
+		[[ "$conflict" -eq 0 ]] || return 3
+		return 0
+	fi
+	if [[ -n "$explicit" ]]; then
+		_GH_TARGET_REPO="$explicit"
+		_GH_TARGET_REPO_SOURCE="explicit"
+		return 0
+	fi
+	_GH_TARGET_REPO=$(_gh_target_repo_default) || {
+		_GH_TARGET_REPO=""
+		return 1
+	}
+	_GH_TARGET_REPO_SOURCE="checkout"
+	[[ -z "${GH_REPO:-}" ]] || _GH_TARGET_REPO_SOURCE="env"
 	return 0
 }
 

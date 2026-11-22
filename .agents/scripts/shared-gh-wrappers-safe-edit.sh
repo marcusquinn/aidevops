@@ -723,17 +723,20 @@ _gh_issue_edit_has_label_deltas() {
 # Returns 1 with stderr message on validation failure.
 #######################################
 gh_issue_edit_safe() {
+	local _gh_op="gh issue edit"
 	_gh_wrapper_enter_cleanup_scope
 	gh_record_call graphql gh_issue_edit_safe 2>/dev/null || true
 	if ! _gh_wrapper_normalize_stdin_body_file "$@"; then
-		_gh_edit_audit_rejection "gh issue edit" "$_GH_EDIT_REJECTION_REASON" "$@"
+		_gh_edit_audit_rejection "$_gh_op" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1
 	fi
 	set -- "${_GH_WRAPPER_BODY_FILE_ARGS[@]}"
 	if ! _gh_validate_edit_args "$@"; then
-		_gh_edit_audit_rejection "gh issue edit" "$_GH_EDIT_REJECTION_REASON" "$@"
+		_gh_edit_audit_rejection "$_gh_op" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1
 	fi
+	_gh_wrapper_pin_target_repo "$_gh_op" "$@" || return 1
+	set -- "${_GH_WRAPPER_TARGET_ARGS[@]}"
 	if ! _gh_guard_public_write_args "$@"; then
 		return 1
 	fi
@@ -903,10 +906,11 @@ sys.stdout.write("".join(result))
 # Returns 1 with stderr message on validation failure.
 #######################################
 gh_pr_edit_safe() {
+	local _gh_op="gh pr edit"
 	_gh_wrapper_enter_cleanup_scope
 	gh_record_call graphql gh_pr_edit_safe 2>/dev/null || true
 	if ! _gh_wrapper_normalize_stdin_body_file "$@"; then
-		_gh_edit_audit_rejection "gh pr edit" "$_GH_EDIT_REJECTION_REASON" "$@"
+		_gh_edit_audit_rejection "$_gh_op" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1
 	fi
 	set -- "${_GH_WRAPPER_BODY_FILE_ARGS[@]}"
@@ -915,12 +919,14 @@ gh_pr_edit_safe() {
 		set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
 	fi
 	if ! _gh_validate_edit_args "$@"; then
-		_gh_edit_audit_rejection "gh pr edit" "$_GH_EDIT_REJECTION_REASON" "$@"
+		_gh_edit_audit_rejection "$_gh_op" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1
 	fi
+	_gh_wrapper_pin_target_repo "$_gh_op" "$@" || return 1
+	set -- "${_GH_WRAPPER_TARGET_ARGS[@]}"
 	local _GH_PR_IDENTITY_ORIGIN="edit"
 	if ! _gh_validate_pr_closing_keywords "$@"; then
-		_gh_edit_audit_rejection "gh pr edit" "$_GH_EDIT_REJECTION_REASON" "$@"
+		_gh_edit_audit_rejection "$_gh_op" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1
 	fi
 	if ! _gh_guard_public_write_args "$@"; then

@@ -49,23 +49,97 @@ if ! command -v privacy_guard_public_write >/dev/null 2>&1; then
 	printf 'shared-gh-wrappers-create: privacy_guard_public_write did not load\n' >&2
 	return 1
 fi
+if ! command -v _gh_resolve_target_repo >/dev/null 2>&1; then
+	# shellcheck source=gh-closing-reference-lib.sh
+	# shellcheck disable=SC1091  # resolved from this module's directory at runtime
+	source "${_GH_WRAPPERS_CREATE_DIR}/gh-closing-reference-lib.sh" || return 1
+fi
 # shellcheck source=shared-gh-wrappers-comment-selector.sh
 # shellcheck disable=SC1091  # resolved from this module's directory at runtime
 source "${_GH_WRAPPERS_CREATE_DIR}/shared-gh-wrappers-comment-selector.sh" || return 1
+
+#######################################
+# Explain why a write target could not be resolved (GH#39801).
+# Arguments: $1=operation label, $2=_gh_resolve_target_repo exit code
+#######################################
+_gh_target_repo_block() {
+	local operation="$1"
+	local rc="$2"
+	local reason="no target repository: pass --repo OWNER/REPO, an issue/PR URL, or run from a checkout with a github.com remote"
+	case "$rc" in
+	2) reason="-R/--repo needs an OWNER/REPO value" ;;
+	3) reason="the issue/PR URL and -R/--repo name different repositories; pass one target" ;;
+	esac
+	printf '[aidevops][gh-wrapper][BLOCK] %s: %s.\n' "$operation" "$reason" >&2
+	return 0
+}
+
+#######################################
+# Resolve the write target once and pin it as --repo when it came from GH_REPO
+# or the checkout, so the privacy guard, native transport, REST fallback,
+# recovery and label helpers all act on the repository native gh would use
+# (GH#39801). URL targets are left as given; every stage already parses them.
+# Arguments: $1=operation label, remaining=gh arguments
+# Sets: _GH_WRAPPER_TARGET_ARGS
+# Returns: 0 resolved; 1 blocked with a target-specific diagnostic
+#######################################
+_GH_WRAPPER_TARGET_ARGS=()
+_gh_wrapper_pin_target_repo() {
+	local operation="$1"
+	shift
+	local rc=0
+	_GH_WRAPPER_TARGET_ARGS=("$@")
+	_gh_resolve_target_repo "$@" || rc=$?
+	if [[ "$rc" -ne 0 ]]; then
+		_gh_target_repo_block "$operation" "$rc"
+		_gh_edit_audit_rejection "$operation" "target repository unresolved (rc=${rc})" "$@"
+		return 1
+	fi
+	case "$_GH_TARGET_REPO_SOURCE" in
+	env | checkout) _GH_WRAPPER_TARGET_ARGS+=(--repo "$_GH_TARGET_REPO") ;;
+	esac
+	return 0
+}
+
+#######################################
+# Shared create/comment prologue: buffer a stdin body, validate title/body
+# (GH#19857), then resolve and pin the write target (GH#39801).
+# Arguments: $1=operation label, remaining=gh arguments
+# Sets: _GH_WRAPPER_TARGET_ARGS (the final argv)
+# Returns: 0 ready; 1 rejected (diagnostic and audit already emitted)
+#######################################
+_gh_wrapper_prepare_write_args() {
+	local operation="$1"
+	shift
+	if ! _gh_wrapper_normalize_stdin_body_file "$@"; then
+		_gh_edit_audit_rejection "$operation" "$_GH_EDIT_REJECTION_REASON" "$@"
+		return 1
+	fi
+	set -- ${_GH_WRAPPER_BODY_FILE_ARGS[@]+"${_GH_WRAPPER_BODY_FILE_ARGS[@]}"}
+	if ! _gh_validate_edit_args "$@"; then
+		_gh_edit_audit_rejection "$operation" "$_GH_EDIT_REJECTION_REASON" "$@"
+		return 1
+	fi
+	_gh_wrapper_pin_target_repo "$operation" "$@" || return 1
+	return 0
+}
 
 #######################################
 # Scan normalized GitHub write arguments before public transport.
 # Private targets remain untouched; unknown targets fail closed.
 #######################################
 _gh_guard_public_write_args() {
-	local repo="" text="" expect="" arg body_file
+	local repo="" text="" expect="" arg body_file rc=0
+	_gh_resolve_target_repo "$@" || rc=$?
+	if [[ "$rc" -ne 0 ]]; then
+		_gh_target_repo_block "public write" "$rc"
+		return 1
+	fi
+	repo="$_GH_TARGET_REPO"
 	for arg in "$@"; do
 		if [[ -n "$expect" ]]; then
 			case "$expect" in
-			repo)
-				[[ "$arg" != -* ]] || return 1
-				repo="$arg"
-				;;
+			repo) ;;
 			text) text+=$'\n'"$arg" ;;
 			body-file)
 				body_file="$arg"
@@ -78,10 +152,9 @@ _gh_guard_public_write_args() {
 		fi
 		case "$arg" in
 		--repo | -R) expect="repo" ;;
-		--repo=*) repo="${arg#--repo=}" ;;
-		--title | --body | --comment | -c) expect="text" ;;
+		--title | -t | --body | -b | --comment | -c) expect="text" ;;
 		--title=* | --body=* | --comment=* | -c=*) text+=$'\n'"${arg#*=}" ;;
-		--body-file) expect="body-file" ;;
+		--body-file | -F) expect="body-file" ;;
 		--body-file=*)
 			body_file="${arg#--body-file=}"
 			[[ -r "$body_file" ]] || return 1
@@ -89,7 +162,6 @@ _gh_guard_public_write_args() {
 			;;
 		esac
 	done
-	[[ "$expect" != "repo" ]] || return 1
 	if ! privacy_guard_public_write "$repo" "$text"; then
 		_gh_edit_audit_rejection "public write" "privacy guard blocked write" --repo "$repo"
 		return 1
@@ -728,16 +800,8 @@ _gh_ci_settle_derived_labels() {
 gh_create_issue() {
 	_gh_wrapper_enter_cleanup_scope
 	gh_record_call graphql gh_create_issue 2>/dev/null || true
-	if ! _gh_wrapper_normalize_stdin_body_file "$@"; then
-		_gh_edit_audit_rejection "gh issue create" "$_GH_EDIT_REJECTION_REASON" "$@"
-		return 1
-	fi
-	set -- ${_GH_WRAPPER_BODY_FILE_ARGS[@]+"${_GH_WRAPPER_BODY_FILE_ARGS[@]}"}
-	# GH#19857: validate title/body before creating (same invariant as edit wrappers)
-	if ! _gh_validate_edit_args "$@"; then
-		_gh_edit_audit_rejection "gh issue create" "$_GH_EDIT_REJECTION_REASON" "$@"
-		return 1
-	fi
+	_gh_wrapper_prepare_write_args "gh issue create" "$@" || return 1
+	set -- ${_GH_WRAPPER_TARGET_ARGS[@]+"${_GH_WRAPPER_TARGET_ARGS[@]}"}
 
 	# t3088: inject session origin only when the caller has not supplied one.
 	local -a _origin_label_args=()
@@ -1297,25 +1361,18 @@ _gh_create_pr_enforce_origin_postcondition() {
 }
 
 gh_create_pr() {
+	local _gh_op="gh pr create"
 	_gh_wrapper_enter_cleanup_scope
 	gh_record_call graphql gh_create_pr 2>/dev/null || true
-	if ! _gh_wrapper_normalize_stdin_body_file "$@"; then
-		_gh_edit_audit_rejection "gh pr create" "$_GH_EDIT_REJECTION_REASON" "$@"
-		return 1
-	fi
-	set -- ${_GH_WRAPPER_BODY_FILE_ARGS[@]+"${_GH_WRAPPER_BODY_FILE_ARGS[@]}"}
-	# GH#19857: validate title/body before creating (same invariant as edit wrappers)
-	if ! _gh_validate_edit_args "$@"; then
-		_gh_edit_audit_rejection "gh pr create" "$_GH_EDIT_REJECTION_REASON" "$@"
-		return 1
-	fi
+	_gh_wrapper_prepare_write_args "$_gh_op" "$@" || return 1
+	set -- ${_GH_WRAPPER_TARGET_ARGS[@]+"${_GH_WRAPPER_TARGET_ARGS[@]}"}
 	local expected_origin_label=""
 	expected_origin_label=$(_gh_create_pr_expected_origin_label "$@") || return $?
 	local _GH_PR_IDENTITY_ORIGIN="$expected_origin_label"
 	# GH#33539: negated closing keywords still close issues on merge.
 	if command -v _gh_validate_pr_closing_keywords >/dev/null 2>&1 &&
 		! _gh_validate_pr_closing_keywords "$@"; then
-		_gh_edit_audit_rejection "gh pr create" "$_GH_EDIT_REJECTION_REASON" "$@"
+		_gh_edit_audit_rejection "$_gh_op" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1
 	fi
 	local is_help=0
@@ -1434,15 +1491,8 @@ gh_issue_comment() {
 	if gh_comment_selector_refused issue "$@"; then
 		return 1
 	fi
-	if ! _gh_wrapper_normalize_stdin_body_file "$@"; then
-		_gh_edit_audit_rejection "gh issue comment" "$_GH_EDIT_REJECTION_REASON" "$@"
-		return 1
-	fi
-	set -- ${_GH_WRAPPER_BODY_FILE_ARGS[@]+"${_GH_WRAPPER_BODY_FILE_ARGS[@]}"}
-	if ! _gh_validate_edit_args "$@"; then
-		_gh_edit_audit_rejection "gh issue comment" "$_GH_EDIT_REJECTION_REASON" "$@"
-		return 1
-	fi
+	_gh_wrapper_prepare_write_args "gh issue comment" "$@" || return 1
+	set -- ${_GH_WRAPPER_TARGET_ARGS[@]+"${_GH_WRAPPER_TARGET_ARGS[@]}"}
 	local ephemeral_body_file="${AIDEVOPS_GH_EPHEMERAL_BODY_FILE:-}"
 	local gh_command="gh"
 	if [[ -n "$ephemeral_body_file" ]]; then
@@ -1483,15 +1533,8 @@ gh_pr_comment() {
 	if gh_comment_selector_refused pr "$@"; then
 		return 1
 	fi
-	if ! _gh_wrapper_normalize_stdin_body_file "$@"; then
-		_gh_edit_audit_rejection "gh pr comment" "$_GH_EDIT_REJECTION_REASON" "$@"
-		return 1
-	fi
-	set -- ${_GH_WRAPPER_BODY_FILE_ARGS[@]+"${_GH_WRAPPER_BODY_FILE_ARGS[@]}"}
-	if ! _gh_validate_edit_args "$@"; then
-		_gh_edit_audit_rejection "gh pr comment" "$_GH_EDIT_REJECTION_REASON" "$@"
-		return 1
-	fi
+	_gh_wrapper_prepare_write_args "gh pr comment" "$@" || return 1
+	set -- ${_GH_WRAPPER_TARGET_ARGS[@]+"${_GH_WRAPPER_TARGET_ARGS[@]}"}
 	gh_record_call graphql gh_pr_comment 2>/dev/null || true
 	_gh_wrapper_auto_sig "$@"
 	set -- ${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]+"${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"}
