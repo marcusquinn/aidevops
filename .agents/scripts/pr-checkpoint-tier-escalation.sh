@@ -122,3 +122,15 @@ _pcc_runner_launch_fenced() {
 		"$pr" "$repo" "$head" "$login" "$failed" "$release_id" "$issue"
 	return 0
 }
+
+# Runner-local fences: a head this runner released for a missing capability or
+# whose launches failed on this runner is left to a healthy, capable runner.
+# Args: repo, issue, pr, head, comments, head date, release id, login, trusted logins
+# Returns: 0 when this runner must skip the head, 1 otherwise
+_pcc_runner_fenced() {
+	local repo="$1" issue="$2" pr="$3" head="$4" comments="$5" head_date="$6" release_id="$7" login="$8"
+	local trusted_logins="${9:-[]}"
+	_pcc_runner_capability_fenced "$repo" "$issue" "$pr" "$head" "$comments" "$head_date" "$login" && return 0
+	_pcc_runner_launch_fenced "$repo" "$issue" "$pr" "$head" "$comments" "$release_id" "$login" "$trusted_logins" && return 0
+	return 1
+}

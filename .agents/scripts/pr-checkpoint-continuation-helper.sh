@@ -1992,8 +1992,7 @@ _pcc_dispatch_stalled() {
 		_pcc_stalled_rearm_or_block "$repo" "$issue" "$pr" "$head" "$release_id" "$stalls" "$pr_releases" \
 			"${attention_epoch:-0}" "$release_epoch" "$comments" "$head_date" "$login" "$progress" "$nonprogress" || return 0
 	fi
-	_pcc_runner_capability_fenced "$repo" "$issue" "$pr" "$head" "$comments" "$head_date" "$login" && return 1
-	_pcc_runner_launch_fenced "$repo" "$issue" "$pr" "$head" "$comments" "$release_id" "$login" "$trusted_logins" && return 1
+	_pcc_runner_fenced "$repo" "$issue" "$pr" "$head" "$comments" "$head_date" "$release_id" "$login" "$trusted_logins" && return 1
 	printf 'STALE_PR_CONTINUATION: issue #%s in %s — PR #%s preserved for exact-head continuation assignee=%s release=%s reason=%s\n' \
 		"$issue" "$repo" "$pr" "$runner" "$release_id" "$reason"
 	PCC_ALLOW_RELEASED=true
