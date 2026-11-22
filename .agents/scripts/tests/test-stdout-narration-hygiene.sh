@@ -77,7 +77,10 @@ trap 'rm -rf "$TMP"' EXIT
 # the test away from real session state as well as global Git hooks/config.
 export HOME="${TMP}/home"
 export AIDEVOPS_FULL_LOOP_CLEANUP_DIR="${TMP}/receipts"
-mkdir -p "$HOME"
+export XDG_CONFIG_HOME="${HOME}/.config"
+export GIT_CONFIG_GLOBAL="${TMP}/gitconfig"
+export GIT_CONFIG_NOSYSTEM=1
+mkdir -p "$HOME" "${TMP}/hooks"
 
 # Keep fixture commands offline, including cleanup's receipt reconciliation and
 # the pre-push hook's advisory SonarCloud lookup. Never use the runner's gh auth.
@@ -92,6 +95,7 @@ _setup_git_repo() {
 	git -C "$dir" init -q 2>/dev/null
 	git -C "$dir" config user.email "test@test.invalid" 2>/dev/null
 	git -C "$dir" config user.name "Test" 2>/dev/null
+	git -C "$dir" config core.hooksPath "${TMP}/hooks" 2>/dev/null
 	git -C "$dir" commit --allow-empty -m "init" -q 2>/dev/null
 	return 0
 }
