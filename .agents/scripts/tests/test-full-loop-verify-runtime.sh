@@ -362,6 +362,14 @@ check "merge refuses a hand-edited Critical self-assessed body" $?
 run_verify 7 --testing "$EVIDENCE"
 [[ "$VR_RC" -eq 0 && "$(body_level)" == "runtime-verified" ]] && grep -q 'VERIFY_RUNTIME_HOLD=absent' "$OUT"
 check "a Critical self-assessed body refused at merge is verified" $?
+reset_fixture; FAKE_LABELS=""
+FAKE_BODY=$(printf '%s' "$PENDING_BODY" |
+	awk '/^- \*\*Verification:\*\* runtime-pending —/ {print "- **Verification:**"; print "  - nested evidence bullet"; next} {print}')
+! _runtime_testing_merge_refusal "$(printf '%s' "$FAKE_BODY" | _runtime_testing_metadata_from_body)" >/dev/null
+check "merge refuses a Verification line with no level (GH#39918)" $?
+run_verify 7 --testing "$EVIDENCE"
+[[ "$VR_RC" -eq 0 && "$(body_level)" == "runtime-verified" && "$(body_evidence)" == "$FINAL_EVIDENCE" ]] && grep -q '^edit-body' "$WRITES"
+check "a Verification line with no level and nested bullets is rewritten (GH#39918)" $?
 
 # --- Dry run, idempotent rerun, head races ---
 reset_fixture
