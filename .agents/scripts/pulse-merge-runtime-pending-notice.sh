@@ -177,7 +177,7 @@ _pmrp_route_held_pr() {
 	local repo_slug="$2"
 	local linked_issue="${3:-}"
 	local labels="${4:-}"
-	local ci_rc=0
+	local ci_rc=0 risk="" level=""
 	[[ "${DRY_RUN:-0}" != "1" ]] || return 0
 	[[ "$pr_number" =~ ^[1-9][0-9]*$ && "$repo_slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 0
 	[[ -x "$_PMRP_FULL_LOOP_HELPER" || -f "$_PMRP_FULL_LOOP_HELPER" ]] || return 0
@@ -210,6 +210,24 @@ _pmrp_route_held_pr() {
 		_pmrp_route_held_ci_repair "$pr_number" "$repo_slug" "$linked_issue" "$labels" "$head"
 	fi
 	[[ "$ci_rc" -eq 0 ]] || return 0
+
+	risk=$(printf '%s' "$notice" | jq -r '.risk // "" | ascii_downcase') || return 0
+	level=$(printf '%s' "$notice" | jq -r '.level // ""') || return 0
+	case "${risk%%[^a-z]*}" in
+	low | medium)
+		# #aidevops:trust-boundary — preserve worker/takeover ownership and
+		# external/no-takeover exclusions even for legacy runtime-only holds.
+		declare -F _feedback_route_labels_allow_worker_route >/dev/null 2>&1 || return 0
+		_feedback_route_labels_allow_worker_route "$labels" 1 || return 0
+		if [[ "$level" == runtime-pending ]]; then
+			declare -F _route_pr_to_fix_worker >/dev/null 2>&1 || return 0
+			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" runtime-pending-legacy "$labels" "" "" "$head" || true
+		else
+			"$_PMRP_FULL_LOOP_HELPER" runtime-pending-notice "$pr_number" "$repo_slug" --lift-completed >>"$LOGFILE" 2>&1 || true
+		fi
+		return 0
+		;;
+	esac
 
 	sessions=$(_pmrp_interactive_sessions "$repo_slug")
 	if [[ -z "$sessions" ]]; then

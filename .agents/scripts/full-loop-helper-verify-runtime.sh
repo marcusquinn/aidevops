@@ -525,6 +525,9 @@ _verify_runtime_lift_hold() {
 		print_error "PR #${vr_pr} head is ${fresh_head:-unreadable}, not the verified ${vr_head:0:12}; ${_FULL_LOOP_HOLD_LABEL} kept"
 		return 1
 	fi
+	if [[ "${vr_legacy_completion:-0}" == 1 ]]; then
+		_verify_runtime_legacy_completed "$fresh_json" || return 1
+	fi
 	decision=$(_verify_runtime_hold_decision "$vr_pr" "$repo" "$fresh_json") || decision=""
 	case "$decision" in
 	lift) ;;
@@ -582,7 +585,21 @@ EOF
 	return "$rc"
 }
 
-# runtime-pending-notice <PR> [REPO]
+# Accept only unambiguous, merge-ready Low/Medium evidence. This never verifies
+# runtime behavior; it recognizes a completed legacy hold's regenerated body.
+_verify_runtime_legacy_completed() {
+	local pr_json="$1"
+	local metadata="" risk=""
+	metadata=$(printf '%s' "$pr_json" | jq -r '.body // ""' | _runtime_testing_metadata_from_body) || return 1
+	risk=$(printf '%s' "$metadata" | jq -r '.risk | ascii_downcase') || return 1
+	case "${risk%%[^a-z]*}" in low | medium) ;; *) return 1 ;; esac
+	[[ "$(printf '%s' "$metadata" | jq -r '.sections')" == 1 ]] || return 1
+	[[ -n "$(printf '%s' "$metadata" | jq -r '.evidence // ""')" ]] || return 1
+	_runtime_testing_merge_refusal "$metadata" >/dev/null || return 1
+	return 0
+}
+
+# runtime-pending-notice <PR> [REPO] [--lift-completed]
 # Read-only (t19241/GH#39645). Pulse routes a held runtime-pending PR to a live
 # interactive verifier. Prints one JSON object {pr, repo, head, held_since,
 # reason, command} and exits 0 only when the PR is open, carries a hold whose
@@ -594,7 +611,9 @@ EOF
 # otherwise, so a caller never notifies for a hold a verifier cannot lift.
 cmd_runtime_pending_notice() {
 	local pr="${1:-}" repo_arg="${2:-}"
+	local action="${3:-}" risk=""
 	local repo="" pr_json="" metadata="" level="" reason="" head="" held_since="" command=""
+	local -x AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1
 	local hold_decision
 	[[ "$pr" =~ ^[1-9][0-9]*$ ]] || return 1
 	repo=$(_merge_resolve_repo "$repo_arg") || return 1
@@ -605,19 +624,41 @@ cmd_runtime_pending_notice() {
 	[[ "$hold_decision" == "lift" ]] || return 1
 	metadata=$(printf '%s' "$pr_json" | jq -r '.body // ""' | _runtime_testing_metadata_from_body) || return 1
 	level=$(printf '%s' "$metadata" | jq -r '.level // ""') || return 1
+	risk=$(printf '%s' "$metadata" | jq -r '.risk // ""') || return 1
+	[[ "$(printf '%s' "$metadata" | jq -r '.sections')" == 1 ]] || return 1
 	# shellcheck disable=SC2154 # initialized by full-loop-helper-risk.sh
 	case "$level" in
 	"$_FULL_LOOP_RUNTIME_PENDING_SCOPE" | "$_full_loop_runtime_verified_marker") ;;
+	self-assessed) _verify_runtime_legacy_completed "$pr_json" || return 1 ;;
 	*) return 1 ;;
 	esac
 	reason=$(printf '%s' "$metadata" | jq -r '.evidence // ""') || return 1
 	head=$(printf '%s' "$pr_json" | jq -r '.headRefOid // ""') || return 1
 	[[ "$head" =~ ^[0-9a-f]{40}$ ]] || return 1
+	if [[ "$action" == --lift-completed ]]; then
+		_verify_runtime_legacy_completed "$pr_json" || return 1
+		_gh_current_user_allows_repo_write "$repo" || return 1
+		local vr_pr="$pr" vr_head="$head" vr_legacy_completion=1
+		local audit_file="" rc=0
+		audit_file=$(mktemp) || return 1
+		printf '%s\n' "${_FULL_LOOP_OPS_START}" \
+			"<!-- aidevops:legacy-runtime-completed head=${head} -->" \
+			"Legacy Low/Medium runtime-pending hold completed at head ${head}." \
+			"The regenerated Runtime Testing body is merge-ready; this is not an interactive runtime attestation." \
+			"Hold: remove hold-for-review only after rechecking the head and recorded runtime-pending-only scope (GH#39849)." \
+			'<!-- ops:end -->' >"$audit_file"
+		gh_pr_comment "$pr" --repo "$repo" --body-file "$audit_file" >/dev/null || rc=$?
+		rm -f "$audit_file"
+		[[ "$rc" == 0 ]] || return 1
+		_verify_runtime_lift_hold "$repo"
+		return $?
+	fi
+	[[ -z "$action" ]] || return 1
 	held_since=$(_hold_label_applied_at "$pr" "$repo") || held_since=""
 	command="full-loop-helper.sh verify-runtime ${pr} ${repo} --testing \"<evidence>\""
 	jq -nc --argjson pr "$pr" --arg repo "$repo" --arg head "$head" --arg since "$held_since" \
-		--arg reason "$reason" --arg command "$command" \
-		'{pr: $pr, repo: $repo, head: $head, held_since: $since, reason: $reason, command: $command}'
+		--arg reason "$reason" --arg command "$command" --arg risk "$risk" --arg level "$level" \
+		'{pr: $pr, repo: $repo, head: $head, held_since: $since, reason: $reason, command: $command, risk: $risk, level: $level}'
 	return 0
 }
 
