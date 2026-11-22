@@ -110,6 +110,11 @@ def file_text(contents, path, side):
 def check_upstream(doc, policy, old_up, new_up):
     mode = policy.get("upstream_mode", "semver")
     require(mode in ("semver", "commits"), "unsupported upstream mode")
+    # aidevops:trust-boundary — only this explicit signed opt-in relaxes 0.x minors.
+    require("zero_minor" not in policy or policy["zero_minor"] == "routine",
+            "unsupported zero_minor policy value")
+    require("zero_minor" not in policy or mode == "semver",
+            "zero_minor requires semver upstream mode")
     finding = doc.get("finding_upstream")
     if mode == "commits":
         upstream = policy.get("upstream_repository")
@@ -137,7 +142,7 @@ def check_upstream(doc, policy, old_up, new_up):
     old_tuple = version_tuple(old_up, UPSTREAM_VERSION, "base upstreamVersion")
     require(new_tuple > old_tuple, "upstreamVersion must increase")
     require(new_tuple[0] == old_tuple[0], "a major upstream bump needs a per-release signature")
-    require(old_tuple[0] > 0 or new_tuple[1] == old_tuple[1],
+    require(old_tuple[0] > 0 or new_tuple[1] == old_tuple[1] or policy.get("zero_minor") == "routine",
             "a 0.x minor upstream bump needs a per-release signature")
     version_tuple(finding, PACKAGE_VERSION, "finding upstream version")
     require(new_up.lstrip("v") == finding, "upstreamVersion must equal the monitor finding")

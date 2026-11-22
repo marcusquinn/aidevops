@@ -112,6 +112,12 @@ def unmet(reason=''):
     print('runner_capability_unmet' + (f' reason={reason}' if reason else ''))
     raise SystemExit(1)
 
+def unmet_exception(error):
+    # GH#39779: runner environment failures are re-checked next cycle
+    # (signal=check_error), never cooled down as invalid requirements.
+    # Parse errors in issue-declared requirements stay invalid_requirements.
+    unmet('check_error' if isinstance(error, (OSError, RuntimeError)) else '')
+
 def resolve_root(path):
     # GH#38825: name a missing repo root instead of a generic invalid map.
     if not Path(path).is_dir():
@@ -119,8 +125,13 @@ def resolve_root(path):
     return Path(path).resolve(strict=True)
 
 def check_rejections(names):
-    rejection = runpy.run_path(str(Path(sys.argv[5]).parent / 'runner-secret-rejection.py'))
-    rejected_name = rejection['process_names']('check', sorted(names))
+    # GH#39779: a busy or unreadable host-wide rejection state is transient,
+    # not an invalid requirement; name it as the standalone helper CLI does.
+    try:
+        rejection = runpy.run_path(str(Path(sys.argv[5]).parent / 'runner-secret-rejection.py'))
+        rejected_name = rejection['process_names']('check', sorted(names))
+    except (OSError, ValueError):
+        unmet('rejection_state_unreadable')
     if rejected_name:
         unmet(f'secret_rejected name={rejected_name}')
 
@@ -491,8 +502,8 @@ try:
         reason = run_check([executable], f'path={probe}', cwd=root)
         if reason:
             unmet(reason)
-except (OSError, ValueError, TypeError, AttributeError, RuntimeError):
-    unmet()
+except (OSError, ValueError, TypeError, AttributeError, RuntimeError) as error:
+    unmet_exception(error)
 PY
 	return 0
 }

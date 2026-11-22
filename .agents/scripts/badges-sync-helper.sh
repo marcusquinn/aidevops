@@ -733,6 +733,62 @@ _retire_repo_anchor() {
 	return 0
 }
 
+# _snapshot_extract <bare> <dest>
+# Extracts README.md, docs/metrics and .github/workflows from FETCH_HEAD.
+_snapshot_extract() {
+	local _bare="$1"
+	local _dest="$2"
+	local _paths=() _file
+	while IFS= read -r _file; do
+		[[ -n "$_file" ]] && _paths+=("$_file")
+	done < <(git --git-dir="$_bare" ls-tree -r --name-only FETCH_HEAD -- \
+		README.md docs/metrics .github/workflows 2>/dev/null)
+	[[ ${#_paths[@]} -gt 0 ]] || return 0
+	git --git-dir="$_bare" archive FETCH_HEAD -- "${_paths[@]}" | tar -x -C "$_dest" || return 1
+	return 0
+}
+
+# _remote_snapshot <slug> <canonical>
+# Prints a temp dir holding README.md, docs/metrics and .github/workflows from
+# the remote default branch (GH#39808). Returns 1 when unavailable.
+_remote_snapshot() {
+	local _slug="$1"
+	local _canonical="$2"
+	local _default _url _snap _bare
+	_default=$(gh api "repos/$_slug" --jq '.default_branch' 2>/dev/null) || return 1
+	[[ -n "$_default" && "$_default" != "null" ]] || return 1
+	_url=$(git -C "$_canonical" config --get remote.origin.url 2>/dev/null) || return 1
+	[[ -n "$_url" ]] || return 1
+	# Fetch into a scratch bare repo: the canonical checkout (refs, HEAD, index,
+	# working tree) is never written, and the canonical Git guard forbids fetch.
+	_snap=$(mktemp -d) || return 1
+	_bare="$_snap.git"
+	if git init -q --bare "$_bare" >/dev/null 2>&1 &&
+		git --git-dir="$_bare" fetch -q --depth 1 "$_url" "$_default" >/dev/null 2>&1 &&
+		_snapshot_extract "$_bare" "$_snap"; then
+		rm -rf "$_bare"
+		printf '%s\n' "$_snap"
+		return 0
+	fi
+	rm -rf "$_snap" "$_bare"
+	return 1
+}
+
+# _mark_unverified <suffix>
+# Filter: appends suffix to the detail of PLANNED rows read from stdin.
+_mark_unverified() {
+	local _suffix="$1"
+	local _line _out=""
+	while IFS= read -r _line; do
+		if [[ -n "$_suffix" && "$_line" == *$'\t'"${_STATUS_PLANNED}"$'\t'* ]]; then
+			_line="${_line}${_suffix}"
+		fi
+		_out+="${_line}"$'\n'
+	done
+	printf '%s' "$_out"
+	return 0
+}
+
 # _process_rows <apply> <branch_name> <no_workflow> <json> <workflow_only>
 # Reads TSV rows from stdin (slug\tpath\tstatus), processes each.
 _process_rows() {
@@ -819,15 +875,25 @@ _process_rows() {
 			continue
 		fi
 
+		# GH#39808: evaluate the remote default branch (what --apply uses),
+		# not the possibly stale canonical working tree.
+		local _eval_path="$_rpath" _unverified="" _snap=""
+		if _snap=$(_remote_snapshot "$_slug" "$_rpath"); then
+			_eval_path="$_snap"
+		else
+			_unverified=" (unverified: remote default branch unavailable; local checkout may be behind)"
+		fi
+
 		# Sync README badge block (skip when --workflow-only)
 		if [[ "$_workflow_only_arg" -eq 0 ]]; then
-			_tally_result_row "$_json_out" "$(_sync_readme "$_slug" "$_rpath" 0)" || _any_failed=1
+			_tally_result_row "$_json_out" "$(_sync_readme "$_slug" "$_eval_path" 0 | _mark_unverified "$_unverified")" || _any_failed=1
 		fi
 
 		# Install repo metrics workflow if not suppressed
 		if [[ "$_no_workflow" -eq 0 ]]; then
-			_tally_result_row "$_json_out" "$(_install_workflow "$_slug" "$_rpath" 0)" || _any_failed=1
+			_tally_result_row "$_json_out" "$(_install_workflow "$_slug" "$_eval_path" 0 | _mark_unverified "$_unverified")" || _any_failed=1
 		fi
+		[[ -z "$_snap" ]] || rm -rf "$_snap"
 	done
 
 	return "$_any_failed"

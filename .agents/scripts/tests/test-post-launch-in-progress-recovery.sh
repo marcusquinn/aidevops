@@ -44,16 +44,12 @@ gh() {
 		printf '%s\n' 'runner-a'
 		return 0
 	fi
-	if [[ "$command_name" == "api" && "$1" == "repos/owner/repo/issues/30029/comments" ]]; then
-		if [[ " $* " == *" --slurp "* ]]; then
-			jq -cn --arg body "$dispatch_identity" \
-				'{body:$body,author_association:"MEMBER",login:"runner-a"}'
-		else
-			jq -cn --arg body "$old_dispatch_identity" \
-				'{body:$body,author_association:"MEMBER",login:"runner-a"}'
-			jq -cn --arg body "$dispatch_identity" \
-				'{body:$body,author_association:"MEMBER",login:"runner-a"}'
-		fi
+	# GH#38185: production reads every page via --paginate --slurp and filters
+	# with standalone jq, so answer with slurped pages of raw comments.
+	if [[ "$command_name" == "api" && "$1" == "repos/owner/repo/issues/30029/comments?per_page=100" ]]; then
+		jq -cn --arg old "$old_dispatch_identity" --arg current "$dispatch_identity" \
+			'[[{body:$old,author_association:"MEMBER",user:{login:"runner-a"}},
+				{body:$current,author_association:"MEMBER",user:{login:"runner-a"}}]]'
 		return 0
 	fi
 	if [[ "$command_name" == "api" && "$1" == "repos/owner/repo/issues/comments/66" ]]; then

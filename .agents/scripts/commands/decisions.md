@@ -43,7 +43,13 @@ recommends, runs what it can, and writes.
    the maintainer runs that command, because it signs with their
    root-protected key. Never run it, and never remove `release-approval-required`
    or `hold-for-review` yourself. After the signature, routine r924 merges the
-   approved exact head.
+       approved exact head. A request unsigned past
+    `AIDEVOPS_CLOUDRON_APPROVAL_NOTICE_SECONDS` (default 86400; 0 disables)
+    also gets one push notice per PR head from r924, posted on the held PR
+    (never the request issue, so signatures stay valid). It names the exact
+    `NOT_ROUTINE` reason, the sign command and newer upstream findings queued
+    behind it. Mention a newer queued finding as a reason to prefer a
+    superseding PR before signing. `approve` items stay the queue source.
 4. For each `verify` item (a runtime-pending PR hold a verifier may lift), the
    `question` is the recorded pending check. When this machine has what the
    check needs, run it yourself from the exact PR head and record the observed

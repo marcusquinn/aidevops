@@ -10,6 +10,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.261] - 2026-11-22
+
+### Added
+
+- add --supersede to cloudron policy-request for signed standing policies
+- notify maintainer when a non-routine release request waits unsigned
+
+### Changed
+
+- Maintenance: mark t19268 complete (pr:#39798 completed:2026-11-22) (#39800)
+
+### Fixed
+
+- bind queued launch-recovery CLAIM_RELEASED to the exact claim generation
+- route held runtime-pending PRs whose body was rewritten to runtime-verified
+
+## [3.39.260] - 2026-11-22
+
+### Added
+
+- signed opt-in for routine 0.x minor upstream bumps (#39791)
+- record routine run outcome and alert on repeated no-ops
+
+### Changed
+
+- Maintenance: mark t19263 complete (pr:#39756 completed:2026-11-21) (#39757)
+- Maintenance: mark t19260 complete (pr:#39744 completed:2026-11-21) (#39745)
+- Maintenance: sync GitHub issue refs to TODO.md (#39732)
+- Maintenance: mark t19255 complete (pr:#39721 completed:2026-11-21) (#39728)
+- Documentation: CDN image gallery delivery and two-pass edge measurement guidance (#39712)
+
+### Fixed
+
+- fix stale test-counter-monotonic Layer 3 path after full-loop-helper split
+- guard unscoped git stash pop/apply in linked worktrees
+- validate PR Runtime Testing metadata before cloudron release approval request (GH#39786)
+- distinguish unverifiable signers and cache dispatch blocks
+- nginx2root advisory accepts fixed upstream nginx version as patched evidence
+- stop transient capability-check errors cooling down as invalid_requirements
+- pair brief-owner section markers (GH#39777)
+- secret-starvation escalation reads requires-secrets: body lines (GH#39776)
+- privacy-scan commit-and-pr text inputs before validators (#39771)
+- reserve non-priority health window, retry launchd load, clarify aggregate-stop alert (GH#39772) (#39774)
+- pre-kill WIP push counts commits against the resolved PR base, not hard-coded origin/main
+- recover enrolled worktrees after canonical moves (#39766)
+- repair test drift in three suites (#39758)
+- declare suite-timeout budgets for three slow suites (#39756)
+- count ready orphan-recovery PRs as in-flight work in has-open-pr
+- repair MaintenancePreservationTests fixture for registry-owned removal (GH#39754) (#39759)
+- guarded stale Git lock repair and sanctioned canonical gc
+- keep host Git policy shim off archive lifecycle helper PATH
+- add safety.actions_event_policy_auto_apply to the config schema (t19262)
+- skip sourced case modules and install ajv in shell suite main health (GH#39718)
+- list held-for-review PRs in the /decisions queue (t19260)
+- ignore a cancelled re-run of a check that passed on the PR head (t19261)
+- tell attached-prompt workers not to search sensitive temp (GH#39729) (#39734)
+- isolate worktree lifetime fixture state (GH#39736) (#39738)
+- record orphan-recovery gh pr create calls across subshell (GH#39731) (#39740)
+- start every scheduled routine run in a fresh session
+
 ## [3.39.259] - 2026-11-21
 
 ### Changed

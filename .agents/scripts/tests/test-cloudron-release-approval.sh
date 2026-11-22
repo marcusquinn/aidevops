@@ -21,7 +21,7 @@ cat >"${TEST_ROOT}/approval-helper.sh" <<'STUB'
 [[ "$*" == 'verify issue 12 owner/app --require-authority' ]] || exit 9
 printf 'verify\n' >>"${TEST_ROOT}/calls"
 case "$SCENARIO" in
-unsigned | request_unsigned | request_retry | policy_*) printf 'NO_APPROVAL\n'; exit 1 ;;
+unsigned | request_unsigned | request_retry | policy_* | notice_*) printf 'NO_APPROVAL\n'; exit 1 ;;
 api_error) printf 'API_ERROR\n'; exit 6 ;;
 bad_exit) printf 'VERIFIED\n'; exit 6 ;;
 stale) printf 'STALE_APPROVAL\n'; exit 2 ;;
@@ -70,6 +70,7 @@ pull_request_json() {
 		  elif $scenario == "wrong_base" then .base.ref = "develop"
 		  elif $scenario == "invalid_head" then .head.sha = "invalid"
 		  elif $scenario == "closed" then .state = "closed"
+		  elif $scenario == "request_no_verification" then .body = "## Runtime Testing\n\n- **Risk level:** Low\n"
 		  else . end'
 	return 0
 }
@@ -79,7 +80,13 @@ request_issue_json() {
 	local body="" author=OWNER
 	body=$(jq -cn --arg head "$HEAD_SHA" '{schema:1,repository:"owner/app",pr:7,head:$head,version:"1.2.3",upstream:"4.5.6",owns_hold:true}')
 	[[ "$SCENARIO" != policy_outsider_request ]] || author=CONTRIBUTOR
-	jq -cn --arg body "$body" --arg author "$author" '{state:"open",author_association:$author,body:$body,labels:[{name:"release-approval-required"}]}'
+	local created=''
+	case "$SCENARIO" in
+	notice_young) created=$(date -u +%Y-%m-%dT%H:%M:%SZ) ;;
+	notice_*) created=2020-01-01T00:00:00Z ;;
+	esac
+	jq -cn --arg body "$body" --arg author "$author" --arg created "$created" \
+		'{state:"open",author_association:$author,body:$body,labels:[{name:"release-approval-required"}]} + (if $created == "" then {} else {created_at:$created} end)'
 	return 0
 }
 
@@ -95,6 +102,16 @@ request_comments_json() {
 		;;
 	*) printf '[]\n' ;;
 	esac
+	return 0
+}
+
+# Comments on held PR #7; only notice_posted carries the trusted notice marker.
+pr_comments_json() {
+	if [[ "$SCENARIO" == notice_posted ]]; then
+		jq -cn --arg head "$HEAD_SHA" '[{author_association:"OWNER",body:("<!-- aidevops:cloudron-release-unsigned-notice " + $head + " -->\nnotice")}]'
+	else
+		printf '[]\n'
+	fi
 	return 0
 }
 
@@ -157,6 +174,7 @@ gh() {
 		;;
 	'api repos/owner/app/issues/12/comments?'*) request_comments_json ;;
 	'api repos/owner/app/issues/12') request_issue_json ;;
+	'api repos/owner/app/issues/7/comments?'*) pr_comments_json ;;
 	'api repos/owner/app/pulls/7') pull_request_json || return 1 ;;
 	'api repos/owner/app/contents/CloudronManifest.json?'*) printf '{"version":"1.2.3","upstreamVersion":"4.5.6","changelog":"file://CHANGELOG"}\n' ;;
 	'api repos/owner/app/contents/.github/workflows/cloudron-catalog-publish.yml?'*)
@@ -235,6 +253,13 @@ gh_issue_comment() {
 	local body=""
 	body=$(</dev/stdin)
 	printf 'comment %s\n' "$body" >>"${TEST_ROOT}/calls"
+	return 0
+}
+
+gh_pr_comment() {
+	local body=""
+	body=$(</dev/stdin)
+	printf 'pr-notice %s\n' "$body" >>"${TEST_ROOT}/calls"
 	return 0
 }
 
@@ -350,6 +375,30 @@ run_case run_failed 1 true false false
 run_case close_error 1 true false true
 printf 'PASS close failure posts no approval-invalidating comment\n'
 
+# An old unsigned non-routine request earns one PR notice per head, never an
+# issue comment (which could stale the signature); young, signed and already
+# noticed requests earn none.
+assert_notice() {
+	local scenario="$1" expected="$2" count=0 calls=''
+	run_case "$scenario" 0 false false false || return 1
+	calls=$(<"${TEST_ROOT}/calls")
+	[[ "$calls" != *'comment '* || "$calls" == *'pr-notice '* ]] || return 1
+	count=$(printf '%s\n' "$calls" | grep -c '^pr-notice ' || true)
+	[[ "$count" -eq "$expected" ]] || {
+		printf 'FAIL %s notices=%s expected=%s\n' "$scenario" "$count" "$expected"
+		return 1
+	}
+	if [[ "$expected" -eq 1 ]]; then
+		[[ "$calls" == *'approve issue 12 owner/app'* && "$calls" != *$'\ncomment '* ]] || return 1
+	fi
+	return 0
+}
+assert_notice notice_old 1
+assert_notice notice_posted 0
+assert_notice notice_young 0
+assert_notice unsigned 0
+printf 'PASS unsigned-request notice: once per head, PR-only, age-gated\n'
+
 # GH#39648: open (or uncountable) review-bot threads keep the hold without a
 # toggle or merge attempt, and queue one targeted response for the held PR.
 cat >"${TEST_ROOT}/pr-review-thread-response-scanner.sh" <<'STUB'
@@ -388,6 +437,16 @@ printf 'PASS dry run never writes\n'
 main process --repo owner/app --issue 12
 if grep -Eq 'merge$|pr-edit|comment |issue close' "${TEST_ROOT}/calls"; then exit 1; fi
 printf 'PASS scoped dry run retains approval checks and never writes\n'
+# A PR body with a Risk level but no Verification line fails before any write.
+export SCENARIO=request_no_verification
+: >"${TEST_ROOT}/calls"
+rm -f "${TEST_ROOT}/request"
+rc=0
+release_request owner/app 7 >/dev/null 2>"${TEST_ROOT}/err" || rc=$?
+[[ "$rc" -ne 0 ]]
+grep -q 'no recognized verification level' "${TEST_ROOT}/err"
+if grep -Eq '^(pr-edit |create |label create |issue-edit )' "${TEST_ROOT}/calls" || [[ -f "${TEST_ROOT}/request" ]]; then exit 1; fi
+printf 'PASS request refuses a PR body without Runtime Testing verification before any write\n'
 export SCENARIO=request
 rm -f "${TEST_ROOT}/merged"
 request_output=$(release_request owner/app 7)
@@ -975,6 +1034,25 @@ assert_routine not 'pinned content missing' 'del(.contents.Dockerfile)' 'missing
 # A pinned token equal to the package version may be an unrelated dependency.
 assert_routine not 'pinned package-version token' ".contents.Dockerfile.base = \"$(b64 "${BASE_DOCKERFILE}"$'ARG DEP=0.1.43\n')\" | $(dockerfile_head "${HEAD_DOCKERFILE}"$'ARG DEP=0.1.44\n')" 'pinned file changes beyond version substitution'
 assert_routine not '0.x minor upstream bump' "$(manifest_base '{"id":"io.example.app","version":"0.1.43","upstreamVersion":"0.5.3","changelog":"file://CHANGELOG"}') | $(manifest_head '{"id":"io.example.app","version":"0.1.44","upstreamVersion":"0.6.0","changelog":"file://CHANGELOG"}') | .finding_upstream = \"0.6.0\"" '0.x minor upstream bump'
+# GH#39783: exercise the complete predicate with consistent manifest, pin and
+# check substitutions, not only the upstream guard in isolation.
+(
+	BASE_MANIFEST="${BASE_MANIFEST//3.39.87/0.3.0}"
+	HEAD_MANIFEST="${HEAD_MANIFEST//3.39.114/0.4.1}"
+	BASE_DOCKERFILE="${BASE_DOCKERFILE//3.39.87/0.3.0}"
+	HEAD_DOCKERFILE="${HEAD_DOCKERFILE//3.39.114/0.4.1}"
+	BASE_CHECK="${BASE_CHECK//3.39.87/0.3.0}"
+	HEAD_CHECK="${HEAD_CHECK//3.39.114/0.4.1}"
+	assert_routine not '0.3.0 to 0.4.1 default' '.finding_upstream = "0.4.1"' '0.x minor upstream bump'
+	assert_routine routine '0.3.0 to 0.4.1 signed opt-in' '.finding_upstream = "0.4.1" | .policy.zero_minor = "routine"'
+	for invalid in '"allow"' 'null' 'false' '1' '[]' '{}'; do
+		assert_routine not 'unknown zero_minor value' ".policy.zero_minor = $invalid" 'unsupported zero_minor'
+	done
+	assert_routine not 'zero minor opt-in keeps major boundary' ".policy.zero_minor = \"routine\" | $(manifest_base "${BASE_MANIFEST/0.3.0/0.9.0}") | $(manifest_head "${HEAD_MANIFEST/0.4.1/1.0.0}") | .finding_upstream = \"1.0.0\"" 'major upstream bump'
+	assert_routine not 'zero minor opt-in keeps increasing rule' ".policy.zero_minor = \"routine\" | $(manifest_head "${HEAD_MANIFEST/0.4.1/0.2.0}") | .finding_upstream = \"0.2.0\"" 'must increase'
+	assert_routine not 'zero minor opt-in keeps finding rule' '.policy.zero_minor = "routine" | .finding_upstream = "0.4.2"' 'equal the monitor finding'
+	assert_routine not 'zero minor opt-in keeps file boundary' '.policy.zero_minor = "routine" | .files += [{filename:"start.sh",status:"modified"}]' 'outside the standing policy'
+)
 check_with_first_line() {
 	local line="$1" first='main() {'
 	printf '%s\n%s%s' "$first" "$line" "${HEAD_CHECK#"$first"}"
@@ -1395,6 +1473,26 @@ PY
 	# shellcheck source=../cloudron-release-approval-helper.sh
 	source "${SOURCE_DIR}/cloudron-release-approval-helper.sh"
 	SCRIPT_DIR="$SOURCE_DIR"
+	# Exercise the real CLI preview without network access or policy mutation.
+	preview=$(main policy-request owner/app --zero-minor-routine --dry-run) || exit 1
+	preview_policy=$(release_policy_metadata "$preview" owner/app) || exit 1
+	jq -e '.zero_minor == "routine"' <<<"$preview_policy" >/dev/null || exit 1
+	[[ "$preview" == *'0.x minor upstream releases are routine'* && "$preview" == *'new policy signature'* ]] || exit 1
+	default_preview=$(main policy-request owner/app --dry-run) || exit 1
+	default_policy=$(release_policy_metadata "$default_preview" owner/app) || exit 1
+	jq -e 'has("zero_minor") | not' <<<"$default_policy" >/dev/null || exit 1
+	for mode in commits commits-license-url; do
+		! main policy-request owner/app "$mode" up/proj --zero-minor-routine --dry-run >/dev/null || exit 1
+	done
+	(
+		release_policy_request() {
+			local repo="$1" mode="$2" upstream="$3" zero_minor="$4"
+			[[ "$repo" == owner/app && "$mode" == semver && -z "$upstream" && "$zero_minor" == true ]] || return 1
+			return 0
+		}
+		main policy-request owner/app --zero-minor-routine
+	) || exit 1
+	printf 'PASS zero-minor policy CLI preview and request forwarding\n'
 	# GH#38739: the pins policy mode signs validated JSON and rejects anything else.
 	PINS_JSON='{"upstream_repository":"up/proj","registry_images":["ghcr.io/up/svc"],"release_identity":{"commit_arg":"APP_COMMIT"},"release_checksum":{"arg":"APP_SHA256","asset":"checksums.txt","file":"app_{version}_linux_amd64"},"license_version_url":true}'
 	pins_body=$(release_policy_body owner/app cmd pins "$PINS_JSON") || { printf 'FAIL pins policy body\n'; exit 1; }
@@ -1607,8 +1705,12 @@ PY
 	}
 	gh_issue_edit_safe() {
 		local body=""
+		if [[ "$*" == '50 --repo owner/app --remove-label persistent' ]]; then
+			printf 'issue-edit %s\n' "$*" >>"${TEST_ROOT}/calls"
+			return 0
+		fi
 		body=$(</dev/stdin)
-		[[ "$*" == '50 --repo owner/app --body-file -' ]] || return 9
+		[[ "$*" == '50 --repo owner/app --body-file -' || "$*" == '51 --repo owner/app --body-file -' ]] || return 9
 		printf '%s\n' "$body" >"${TEST_ROOT}/policy-body"
 		printf 'issue-edit %s\n' "$*" >>"${TEST_ROOT}/calls"
 		return 0
@@ -1661,6 +1763,31 @@ PY
 	release_policy_metadata "$(<"${TEST_ROOT}/policy-body")" owner/app |
 		jq -e '.upstream_mode == "commits" and .upstream_repository == "upstream/project"' >/dev/null
 	printf 'PASS only an unsigned legacy policy can be finalized as a new commit policy for signing\n'
+	# GH#39805: a signed policy is only replaced with --supersede.
+	eval "$(declare -f gh | sed '1s/^gh/gh_policy_stub/')"
+	gh() {
+		if [[ "${1:-}" == issue && "${2:-}" == close ]]; then
+			printf 'gh %s\n' "$*" >>"${TEST_ROOT}/calls"
+			return 0
+		fi
+		gh_policy_stub "$@"
+	}
+	export POLICY_CASE=verified
+	: >"${TEST_ROOT}/calls"
+	refusal=$(release_policy_request owner/app semver '' true 2>&1) && exit 1
+	[[ "$refusal" == *'--supersede'* ]] || exit 1
+	if grep -Eq '^(create |issue-edit )|issue close' "${TEST_ROOT}/calls"; then exit 1; fi
+	: >"${TEST_ROOT}/calls"
+	dry=$(release_policy_request owner/app semver '' true true true) || exit 1
+	[[ "$dry" == *'Dry run: would remove persistent'* ]] || exit 1
+	if grep -Eq '^(create |issue-edit )|issue close' "${TEST_ROOT}/calls"; then exit 1; fi
+	: >"${TEST_ROOT}/calls"
+	superseded=$(release_policy_request owner/app semver '' true true) || exit 1
+	[[ "$superseded" == *'SUPERSEDED='* ]] || exit 1
+	grep -q '^gh issue close 50 --repo owner/app --reason not planned' "${TEST_ROOT}/calls"
+	grep -q '^create ' "${TEST_ROOT}/calls"
+	grep -q '^issue-edit 50 ' "${TEST_ROOT}/calls"
+	printf 'PASS --supersede replaces a signed policy; refusal and dry-run are non-mutating\n'
 	: >"${TEST_ROOT}/calls"
 	if release_policy_request owner/app commits '../unsafe' 2>/dev/null; then exit 1; fi
 	if grep -Eq '^(create |issue-edit )' "${TEST_ROOT}/calls"; then exit 1; fi

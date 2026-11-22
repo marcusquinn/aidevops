@@ -21,6 +21,29 @@
 [[ -n "${_FULL_LOOP_COMMIT_HISTORY_LIB_LOADED:-}" ]] && return 0
 _FULL_LOOP_COMMIT_HISTORY_LIB_LOADED=1
 
+# Explain the rebase recovery after a non-ancestor refusal. commit-and-pr has
+# already committed staged work by this point, so a clean worktree needs a plain
+# rebase; an unnamed stash would save nothing and its pop would restore another
+# worktree's entry from the shared stash list (GH#39787).
+# Args: $1=base ref (for example origin/main)
+_report_non_ancestor_recovery() {
+	local base_ref="$1"
+	local worktree_status="" head_short=""
+	if ! worktree_status=$(git status --porcelain 2>/dev/null); then
+		print_error "Rebase onto ${base_ref}, resolve any conflicts, then retry commit-and-pr."
+		return 0
+	fi
+	if [[ -z "$worktree_status" ]]; then
+		head_short=$(git rev-parse --short HEAD 2>/dev/null || echo "HEAD")
+		print_error "Pending changes are already committed at ${head_short}; the worktree is clean."
+		print_error "Run 'git rebase ${base_ref}' directly (no stash needed), resolve any conflicts, then retry commit-and-pr."
+		return 0
+	fi
+	print_error "Uncommitted changes remain. Commit them as WIP or use 'git rebase --autostash ${base_ref}'; never an unnamed stash/pop pair (the stash list is shared by all worktrees)."
+	print_error "Then resolve any conflicts and retry commit-and-pr."
+	return 0
+}
+
 # Replace branch history with one final commit when any branch commit is WIP.
 # The caller-supplied final message is authoritative. On commit-hook failure,
 # restore the original branch tip and preserve any hook-produced working changes.
@@ -66,7 +89,7 @@ _finalize_wip_history() {
 	# a concurrently advanced base instead of rejecting safe base drift here.
 	if ! git merge-base --is-ancestor "$base_oid" HEAD 2>/dev/null; then
 		print_error "Refusing WIP finalization: current ${base_ref} is not an ancestor of HEAD."
-		print_error "Rebase onto ${base_ref}, resolve any conflicts, then retry commit-and-pr."
+		_report_non_ancestor_recovery "$base_ref"
 		return 1
 	fi
 

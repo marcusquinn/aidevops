@@ -28,6 +28,7 @@ assert_reason 'GraphQL budget below circuit-breaker threshold' 'graphql_circuit_
 assert_reason 'DISPATCH_COOLDOWN_ACTIVE until=2026-05-02T23:00:00Z reason=no_worker_process' 'cooldown_no_worker_process'
 assert_reason 'dispatch_with_dedup: BLOCKED #3638 in exampleorg/examplerepo — requires cryptographic approval (ever-NMR)' 'ever_nmr_without_approval'
 assert_reason 'DISPATCH_BLOCK_REASON reason=ever_nmr_without_approval signal=ever-NMR issue requires approval' 'ever_nmr_without_approval'
+assert_reason 'DISPATCH_BLOCK_REASON reason=approval_signer_unverifiable issue=#39765 repo=example/repo' 'approval_signer_unverifiable'
 assert_reason 'dispatch_with_dedup: BLOCKED #3638 in exampleorg/examplerepo — ever-NMR issue lacks approval' 'ever_nmr_without_approval'
 assert_reason 'blocked by local capacity gate (ever-nmr check not run)' 'local_capacity_gate'
 assert_reason 'review-followup exemption: skipping historical ever-NMR check (GH#18648)' 'unclassified_signal'
@@ -103,6 +104,35 @@ printf 'PASS closed-issue structured reason attribution and benign classificatio
 # GH#36000: exercise the real LOGFILE reader before the legacy unit stub below.
 candidate='{"number":34526,"repo_slug":"example/repo","updatedAt":"2026-10-13T00:00:00Z","assignees":[],"labels":["status:available","auto-dispatch"]}'
 cache=$(_dispatch_negative_cache_path 34526 example/repo)
+# GH#39765: exercise the real gate -> reason recorder -> next-cycle cache path.
+(
+	source "$SCRIPT_DIR/../pulse-dispatch-commit-gates.sh"
+	_is_bot_generated_cleanup_issue() { return 1; }
+	_issue_thread_is_trusted_maintainer_only() { return 1; }
+	verify_calls=0
+	issue_has_required_approval() {
+		verify_calls=$((verify_calls + 1))
+		_NMR_APPROVAL_RESULT=UNVERIFIABLE_SIGNER
+		return 1
+	}
+	notify_ever_nmr_without_approval() { exit 1; }
+	_check_nmr_approval_gate 34526 example/repo '{"labels":[{"name":"needs-maintainer-review"}]}'
+	reason=$(_dispatch_candidate_failure_reason 34526 example/repo 1)
+	[[ "$reason" == approval_signer_unverifiable ]]
+	_dispatch_negative_cache_record "$candidate" "$reason"
+	for cycle in 2 3; do
+		[[ "$(_dispatch_negative_cache_reason "$candidate")" == approval_signer_unverifiable ]]
+	done
+	[[ "$verify_calls" == 1 ]]
+	changed=$(jq '.updatedAt="2026-10-13T00:00:01Z"' <<<"$candidate")
+	if _dispatch_negative_cache_reason "$changed"; then exit 1; fi
+	_check_nmr_approval_gate 34526 example/repo '{"labels":[{"name":"needs-maintainer-review"}]}'
+	[[ "$verify_calls" == 2 ]]
+	# Expiry also permits a retry after local key configuration changes.
+	_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS=0
+	if _dispatch_negative_cache_reason "$candidate"; then exit 1; fi
+)
+printf 'PASS unverifiable signer stays blocked, caches unchanged revisions, and retries changed comments\n'
 attention_verdict=$(
 	# Keep the production emitter and stub only the upstream evidence lookup.
 	# shellcheck source=../pr-checkpoint-continuation-helper.sh
