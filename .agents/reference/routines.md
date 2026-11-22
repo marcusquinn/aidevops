@@ -253,16 +253,25 @@ ref. The gate keeps every badge-sync check (write permission, same-repo head,
 complete SHA-pinned file list, regular blobs, no hold, head pinning) and also
 requires the PR base to be the repository default branch. It then re-renders
 the caller byte-for-byte in `routine-pr-content.py` from the template at the
-pinned ref in `marcusquinn/aidevops` (reachable from main), the declared
-registry policy (`workflow_reusable_repo`, `runner`, mirror helper provenance
-and secret injection), the base file's runner and the default-branch filter.
-Nothing from the PR is executed; any mismatch, unknown workflow, unreachable
-ref or missing evidence denies. Runs that cannot meet these conditions (for
-example a floating `@main` pin) keep `ensure-anchor` / `ensure-pr-anchor`.
-After a marker PR publishes, `retire-anchor sync-workflows` retires the repo's
-unreferenced anchor with the same safeguards as badge sync. Maintainer-defined
-agent routines also retain their `create-issue` tracking anchors; retirement
-cannot close anchors for other keys.
+pinned ref in `marcusquinn/aidevops` (reachable from main, and not older than
+the base caller's pin when it has one), the declared registry policy
+(`workflow_reusable_repo`, `runner`, mirror helper provenance and secret
+injection), the base file's runner and the default-branch filter. Nothing from
+the PR is executed; any mismatch, unknown workflow, unreachable ref, pin
+downgrade or missing evidence denies.
+
+The publisher and the gate share one decision, `_routine_sync_render_admits`
+in `routine-pr-scope-lib.sh` (GH#39830). Before choosing the marker, the
+publisher runs it over the exact bytes it will write and the default-branch
+caller. The publisher renders from the deployed template, so a template change
+not yet in the pinned ref fails this check and the run keeps the anchor
+identity instead of opening a marker PR the gate would reject. Runs that cannot
+meet these conditions (for example a floating `@main` pin) keep
+`ensure-anchor` / `ensure-pr-anchor`. The sync helper never retires its anchor
+automatically: those runs still need it, and `ensure-anchor` reuses only an
+open anchor, so per-run retirement would create a new anchor each cycle.
+Maintainer-defined agent routines also retain their `create-issue` tracking
+anchors.
 
 ## Scheduler ownership
 

@@ -1248,27 +1248,50 @@ _sync_routine_anchor() {
 	return 0
 }
 
-# _sync_blob_json <file> — Git blob API shape (base64, byte size) for a local
-# text file, as the merge gate reads it from GitHub.
+# _sync_blob_json <file> — byte-exact Git blob API shape (base64, size) for a
+# local file, as the merge gate reads it from GitHub.
 _sync_blob_json() {
-	local _file="$1"
-	jq -n --rawfile c "$_file" '{encoding:"base64", content:($c | @base64), size:($c | utf8bytelength)}'
+	local _file="$1" _data="" _size=""
+	_data=$(base64 <"$_file" | tr -d '\n') || return 1
+	_size=$(wc -c <"$_file" | tr -d ' ') || return 1
+	jq -n --arg d "$_data" --argjson s "$_size" '{encoding:"base64",content:$d,size:$s}'
+	return $?
+}
+
+# _sync_marker_evidence <path> <base-ref> <relpath> <target-content> — print
+# {head,base} blob JSON: the exact bytes _sync_write_commit_push writes, and
+# the caller at the PR base the gate compares against (null when absent).
+_sync_marker_evidence() {
+	local _path="$1" _base_ref="$2" _relpath="$3" _target_content="$4"
+	local _scratch="" _head="" _base="null" _rc=1
+	git -C "$_path" rev-parse -q --verify "${_base_ref}^{commit}" >/dev/null || return 1
+	_scratch=$(mktemp "${TMPDIR:-/tmp}/sync-marker.XXXXXX") || return 1
+	if printf '%s\n' "$_target_content" >"$_scratch" && _head=$(_sync_blob_json "$_scratch"); then
+		_rc=0
+		if git -C "$_path" cat-file -e "${_base_ref}:${_relpath}" 2>/dev/null; then
+			git -C "$_path" cat-file blob "${_base_ref}:${_relpath}" >"$_scratch" &&
+				_base=$(_sync_blob_json "$_scratch") || _rc=1
+		fi
+	fi
+	rm -f "$_scratch"
+	[[ "$_rc" -eq 0 ]] || return 1
+	jq -nc --argjson head "$_head" --argjson base "$_base" '{head:$head,base:$base}'
 	return $?
 }
 
 # _sync_marker_eligible <slug> <path> <branch> <default_branch> <effective_ref>
-#   <workflow-relpath> <sync-contributing> <target-content> — succeed only when
-# the merge gate will admit this exact PR (GH#39793). Cheap preconditions: a
-# headless run without an explicit issue or CONTRIBUTING.md, the default sync
-# branch prefix and a 40-hex ref. Then (GH#39830) the gate's own decision,
-# _routine_sync_render_admits, must accept the bytes this run will write
-# against the current caller: the deployed template differs from the template
-# at a preserved older pin whenever a template update rolls out. Anything else
-# keeps the anchor identity, which the existing linked-issue route merges.
+#   <workflow-relpath> <sync-contributing> <target-content> <remote> — succeed
+# only when the merge gate will admit this exact PR (GH#39793). Cheap
+# preconditions: a headless run without an explicit issue or CONTRIBUTING.md,
+# the default sync branch prefix and a 40-hex ref. Then (GH#39830) the gate's
+# own decision, _routine_sync_render_admits, must accept the bytes this run
+# will write against the default-branch caller: the deployed template differs
+# from the template at a preserved older pin whenever a template update rolls
+# out. Anything else keeps the anchor identity (linked-issue merge route).
 _sync_marker_eligible() {
 	local _slug="$1" _path="$2" _branch="$3" _default_branch="$4" _ref="${5#@}"
-	local _relpath="$6" _sync_contributing="$7" _target_content="$8"
-	local _scratch="" _head="" _base="null" _policy="" _rc=1
+	local _relpath="$6" _sync_contributing="$7" _target_content="$8" _remote="$9"
+	local _evidence="" _policy=""
 	[[ -z "${_OPT_ISSUE:-}" && "$_sync_contributing" -eq 0 ]] || return 1
 	declare -F session_origin_label >/dev/null 2>&1 || return 1
 	[[ "$(session_origin_label)" == "origin:worker" ]] || return 1
@@ -1276,16 +1299,14 @@ _sync_marker_eligible() {
 	[[ "$_ref" =~ ^[0-9a-f]{40}(\ #\ v[0-9]+\.[0-9]+\.[0-9]+)?$ ]] || return 1
 	[[ "$_default_branch" =~ ^[A-Za-z0-9._/-]+$ ]] || return 1
 	_is_sync_workflow_output "$_relpath" || return 1
-	_scratch=$(mktemp "${TMPDIR:-/tmp}/sync-marker-head.XXXXXX") || return 1
-	# The exact bytes _sync_write_commit_push writes.
-	if printf '%s\n' "$_target_content" >"$_scratch" &&
-		_head=$(_sync_blob_json "$_scratch") &&
-		{ [[ ! -f "$_path/$_relpath" ]] || _base=$(_sync_blob_json "$_path/$_relpath"); } &&
+	local _rc=1
+	if _evidence=$(_sync_marker_evidence "$_path" "$(_remote_default_ref "$_remote" "$_default_branch")" \
+		"$_relpath" "$_target_content") &&
 		_policy=$(_routine_sync_policy "$_slug" "$_default_branch") &&
-		_routine_sync_render_admits "$_relpath" "$_head" "$_base" "$_policy"; then
+		_routine_sync_render_admits "$_relpath" "$(jq -c .head <<<"$_evidence")" \
+			"$(jq -c .base <<<"$_evidence")" "$_policy"; then
 		_rc=0
 	fi
-	rm -f "$_scratch"
 	if [[ "$_rc" -ne 0 ]]; then
 		printf '[%s] %s: %s is not gate-admissible as a routine marker PR; keeping the anchor identity\n' \
 			"$SCRIPT_NAME" "$_slug" "$_relpath" >&2
@@ -2008,7 +2029,7 @@ _sync_publish_rendered() {
 	# a PR would read as already current on the next run.
 	local _anchor=""
 	if _sync_marker_eligible "$_slug" "$_path" "$_branch_name" "$_default_branch" \
-		"$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_target_content"; then
+		"$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_target_content" "$_remote"; then
 		_anchor="$_SYNC_MARKER_IDENTITY"
 	else
 		_anchor=$(_sync_routine_anchor "$_slug" "$_status") || {
