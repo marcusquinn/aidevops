@@ -186,8 +186,11 @@ _is_trusted_opencode_canary_issue_pr() {
 # github-actions[bot] titled exactly "Core files differ from the starter" with
 # label starter-sync. Trust is bound to that issue shape AND the PR diff: every
 # changed file must match a file or directory prefix in scripts/core-files.txt
-# read at the PR BASE sha, an exact path in the trusted issue's Files Scope,
-# or changelog.txt; renames are rejected. The issue body must be readable.
+# read at the PR BASE sha, a path in the trusted issue's Files Scope, or
+# changelog.txt; renames are rejected. The issue body must be readable. A
+# Files Scope line is a backticked path, optionally followed by exactly one
+# parenthesised qualifier (the generator writes "(only if step 4 calls for
+# it)"); a path may use `*` within one segment only (GH#39910).
 # API errors, truncated file lists (>= 100) or missing data fail closed. All
 # other merge gates (checks, reviews, review-bot, NMR) still apply. The gate
 # order is pinned by test_starter_sync_does_not_bypass_other_gates in
@@ -206,6 +209,7 @@ _is_trusted_starter_sync_issue_pr() {
 	local issue_api="$3"
 	local issue_meta="" login="" user_type="" title="" labels="" issue_scope=""
 	local required_title="Core files differ from the starter"
+	_PM_STARTER_SYNC_REFUSAL=""
 
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" && -n "$issue_api" ]] || return 1
 	issue_meta=$(gh api "$issue_api" 2>/dev/null) || return 1
@@ -218,7 +222,7 @@ _is_trusted_starter_sync_issue_pr() {
 	[[ ",${labels}," == *",starter-sync,"* ]] || return 1
 	issue_scope=$(jq -r '.body | split("\n") | (index("### Files Scope") // length) as $start |
 		.[$start + 1:] | (map(test("^#{1,6} ")) | index(true) // length) as $end |
-		.[:$end][] | select(test("^- `[^`]+`$")) | .[3:-1]' <<<"$issue_meta") || return 1
+		.[:$end][] | select(test("^- `[^`]+`( \\([^()`]*\\))?$")) | capture("^- `(?<p>[^`]+)`").p' <<<"$issue_meta") || return 1
 
 	local base_sha="" scope_list="" files_json=""
 	local file_count='' path='' entry='' in_scope=0
@@ -256,12 +260,42 @@ _is_trusted_starter_sync_issue_pr() {
 				break
 			fi
 		done <<<"$scope_list"
-		if [[ "$in_scope" -eq 0 ]] && ! grep -Fxq -- "$path" <<<"$issue_scope"; then
+		if [[ "$in_scope" -eq 0 ]] && ! _pm_starter_sync_issue_scope_has "$path" "$issue_scope"; then
+			_PM_STARTER_SYNC_REFUSAL="the PR changes ${path}, which is outside scripts/core-files.txt and the issue's Files Scope"
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — starter-sync PR changes out-of-scope file ${path} (GH#37289)" >>"$LOGFILE"
 			return 1
 		fi
 	done < <(printf '%s' "$files_json" | jq -r '.[].filename')
 	return 0
+}
+
+#######################################
+# Whether a changed path matches an entry of a trusted starter-sync issue's
+# Files Scope (GH#39910): an exact path, or an entry whose `*` wildcards stay
+# within one path segment.
+#
+#aidevops:trust-boundary — a wildcard entry may hold only [A-Za-z0-9._/*-],
+# never `**`, and must have as many `/` as the path, so `*` never crosses a
+# directory. Any other entry matches only exactly.
+#
+# Args: $1=changed path, $2=newline-separated scope entries
+# Returns: 0=in scope, 1=not in scope
+#######################################
+_pm_starter_sync_issue_scope_has() {
+	local path="$1"
+	local issue_scope="$2"
+	local entry=""
+	[[ -n "$path" ]] || return 1
+	while IFS= read -r entry; do
+		[[ -n "$entry" ]] || continue
+		[[ "$path" == "$entry" ]] && return 0
+		[[ "$entry" == *"*"* && "$entry" != *"**"* ]] || continue
+		[[ "$entry" =~ ^[A-Za-z0-9._/*-]+$ ]] || continue
+		[[ "${path//[^\/]/}" == "${entry//[^\/]/}" ]] || continue
+		# shellcheck disable=SC2053 # unquoted: the entry is the glob pattern
+		[[ "$path" == $entry ]] && return 0
+	done <<<"$issue_scope"
+	return 1
 }
 
 #######################################
@@ -551,11 +585,15 @@ _worker_briefed_trust_check() {
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} is a starter-sync issue and the diff stays within scripts/core-files.txt (GH#37289)" >>"$LOGFILE"
 		elif [[ "$_has_crypto" != "$_true_status" ]]; then
 			WORKER_BRIEFED_TRUST_REASON="linked issue #${linked_issue} author_association=${issue_author_assoc} (not OWNER/MEMBER) and no cryptographic approval signature found (t2449/t3052)"
+			# GH#39910: name the scoped refusal, so the fix is not mistaken for an approval.
+			if [[ -n "${_PM_STARTER_SYNC_REFUSAL:-}" ]]; then
+				WORKER_BRIEFED_TRUST_REASON+="; starter-sync scoped trust refused: ${_PM_STARTER_SYNC_REFUSAL} (GH#39910)"
+			fi
 			# GH#38496: only a maintainer approval can unblock it; pulse cannot.
 			_WORKER_BRIEFED_PERMANENT_BLOCK="untrusted_issue_author_no_crypto_approval"
 			echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — ${WORKER_BRIEFED_TRUST_REASON}" >>"$LOGFILE"
 			if [[ "$issue_author_login" == "$_PM_WORKFLOW_BOT_LOGIN" ]]; then
-				_worker_briefed_record_bot_decision "$linked_issue" "$repo_slug" ||
+				_worker_briefed_record_bot_decision "$linked_issue" "$repo_slug" "${_PM_STARTER_SYNC_REFUSAL:-}" "$pr_number" ||
 					echo "[pulse-merge] could not record bot issue #${linked_issue} approval decision in ${repo_slug}; retry on next pass" >>"$LOGFILE"
 			fi
 			return 1
@@ -607,10 +645,13 @@ _worker_briefed_pr_eligible() {
 # Record the conservative outcome for workflow-bot issues, without trusting a
 # forgeable generator marker. A maintainer can approve through the existing
 # SSH-signature path; the scoped pin-canary exception above remains unchanged.
+# Optional $3/$4 (GH#39910): a starter-sync scoped refusal and the PR it was
+# for. The comment then names it and the fix a worker can make, and is posted
+# once per distinct refusal instead of once per issue.
 _worker_briefed_record_bot_decision() {
-	local issue_number="$1" repo_slug="$2"
+	local issue_number="$1" repo_slug="$2" refusal="${3:-}" pr_number="${4:-}"
 	local marker="<!-- aidevops:worker-briefed-trust-decision:v1 -->"
-	local actor="" comments="" body_file="" candidate="" rc=0
+	local actor="" comments="" body_file="" candidate="" rc=0 scoped_text=""
 	[[ "${DRY_RUN:-0}" != "1" ]] || return 0
 	# Installation tokens can write repository comments without a /user endpoint.
 	actor=$(gh api user --jq '.login' 2>/dev/null) || actor=""
@@ -624,11 +665,16 @@ _worker_briefed_record_bot_decision() {
 			_issue_author_has_maintainer_authority "$repo_slug" "$candidate"; then
 			return 0
 		fi
-	done < <(jq -r --arg marker "$marker" \
-		'.[][] | select((.body // "") | contains($marker)) | .user.login // empty' <<<"$comments")
+	done < <(jq -r --arg marker "$marker" --arg refusal "$refusal" \
+		'.[][] | select((.body // "") | contains($marker) and contains($refusal)) | .user.login // empty' <<<"$comments")
+	local approve_lead="Next action (maintainer):"
+	if [[ -n "$refusal" ]]; then
+		scoped_text=" The starter-sync scoped exception was checked and refused${pr_number:+ for PR #${pr_number}}: ${refusal}. Next action (worker or interactive session): keep the PR to the issue's Files Scope, or move a change that belongs to the starter there first; the next merge pass re-checks every new head."
+		approve_lead="Or, to merge it as it is (maintainer):"
+	fi
 	body_file=$(mktemp "${TMPDIR:-/tmp}/worker-briefed-decision.XXXXXX") || return 1
 	printf '%s\n\n%s\n' "$marker" \
-		"Automated merge is blocked by the linked-issue trust gate (t2449/t3052). This workflow-bot issue has no verified maintainer approval or applicable scoped trust exception. Next action (maintainer): run \`$(approval_cli_prefix) approve issue ${issue_number}\` for ${repo_slug}. The next merge pass verifies the signature; all CI, review and hold gates still apply. Reference: pulse-merge-process-worker-briefed.sh, worker_briefed_trust_verdict." >"$body_file"
+		"Automated merge is blocked by the linked-issue trust gate (t2449/t3052). This workflow-bot issue has no verified maintainer approval or applicable scoped trust exception.${scoped_text} ${approve_lead} run \`$(approval_cli_prefix) approve issue ${issue_number}\` for ${repo_slug}. The next merge pass verifies the signature; all CI, review and hold gates still apply. Reference: pulse-merge-process-worker-briefed.sh, worker_briefed_trust_verdict." >"$body_file"
 	gh_issue_comment "$issue_number" --repo "$repo_slug" --body-file "$body_file" >/dev/null || rc=$?
 	rm -f "$body_file"
 	return "$rc"

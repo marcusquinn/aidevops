@@ -224,6 +224,7 @@ define_helpers_under_test() {
 		/^_pm_canary_shared_constants_patch_ok\(\) \{/,/^\}$/ { print }
 		/^_is_trusted_opencode_canary_issue_pr\(\) \{/,/^\}$/ { print }
 		/^_is_trusted_starter_sync_issue_pr\(\) \{/,/^\}$/ { print }
+		/^_pm_starter_sync_issue_scope_has\(\) \{/,/^\}$/ { print }
 	' "$extract_from")
 	if [[ -z "$src_worker_briefed" || -z "$src_issue_api" ]]; then
 		printf 'ERROR: could not extract helpers from %s / %s\n' "$MERGE_SCRIPT" "$extract_from" >&2
@@ -1112,6 +1113,40 @@ test_starter_sync_scoped_trust() {
 	_run_starter_sync_case "starter-sync: non-Bot author blocked" block "$ttl" "$ok_labels" User "includes/core.php"
 	_run_starter_sync_case "starter-sync: out-of-scope file blocked" block "$ttl" "$ok_labels" Bot "includes/own-feature.php"
 	_run_starter_sync_case "starter-sync: scope-list API failure fails closed" block "$ttl" "$ok_labels" Bot "includes/core.php" missing
+	# GH#39910: the generator qualifies conditional entries and uses wildcards.
+	local scope=$'### Files Scope\n- `phpstan-plugin.neon` (only if step 4 calls for it)\n- `includes/class-*-setup.php` (only if step 4 calls for it)\n- `notes.txt` and more\n## Acceptance'
+	_run_starter_sync_case "starter-sync: qualified scope entry passes" pass "$ttl" "$ok_labels" Bot "phpstan-plugin.neon" ok "$scope"
+	_run_starter_sync_case "starter-sync: one-segment wildcard entry passes" pass "$ttl" "$ok_labels" Bot "includes/class-foo-setup.php" ok "$scope"
+	_run_starter_sync_case "starter-sync: wildcard never crosses a directory" block "$ttl" "$ok_labels" Bot "includes/class-a/b-setup.php" ok "$scope"
+	_run_starter_sync_case "starter-sync: other trailing text admits nothing" block "$ttl" "$ok_labels" Bot "notes.txt" ok "$scope"
+	test_starter_sync_refusal_named
+	return 0
+}
+
+# GH#39910: a refused starter-sync PR's denial and bot-decision comment name
+# the out-of-scope file, and the comment is posted again for a new refusal.
+test_starter_sync_refusal_named() {
+	local label="starter-sync: refusal names the out-of-scope file (GH#39910)"
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	approval_cli_prefix() { printf 'sudo aidevops'; return 0; }
+	gh_issue_comment() { local f=""; while [[ $# -gt 0 ]]; do [[ "$1" == "--body-file" ]] && f="$2"; shift; done; cat "$f" >"${TEST_ROOT}/posted.txt"; return 0; }
+	_PM_WORKFLOW_BOT_LOGIN="github-actions[bot]"
+	jq -n '{author_association:"NONE",user:{login:"github-actions[bot]",type:"Bot"},title:"Core files differ from the starter",labels:[{name:"starter-sync"}],body:""}' >"${TEST_ROOT}/issue.json"
+	printf '[[{"user":{"login":"github-actions[bot]"},"body":"<!-- aidevops:worker-briefed-trust-decision:v1 -->\\nolder decision"}]]' >"${TEST_ROOT}/comments.json"
+	printf '0123456789abcdef0123456789abcdef01234567\n' >"${TEST_ROOT}/base-sha.txt"
+	printf 'includes/core.php\n' >"${TEST_ROOT}/core-files.txt"
+	jq -n '[{filename:"includes/own-feature.php",status:"modified"}]' >"${TEST_ROOT}/pr-files.json"
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+	local verdict="" result=0
+	verdict=$(worker_briefed_trust_verdict "103" "owner/repo" "origin:worker" "false" "45") || result=$?
+	if [[ "$result" -ne 0 && "$verdict" == *"refused: the PR changes includes/own-feature.php"* ]] &&
+		grep -q "refused for PR #103: the PR changes includes/own-feature.php" "${TEST_ROOT}/posted.txt" 2>/dev/null; then
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "exit=${result} verdict=${verdict} posted=$(tr '\n' '|' <"${TEST_ROOT}/posted.txt" 2>/dev/null)"
+	fi
+	teardown_test_env
 	return 0
 }
 
