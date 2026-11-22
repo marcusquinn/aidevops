@@ -635,44 +635,66 @@ check_secrets() {
 
 	print_info "Checking for exposed secrets (Secretlint, absolute-count security gate)..."
 
-	# Get staged files
-	local staged_files
-	staged_files=$(staged_diff --name-only --diff-filter=ACMR | tr '\n' ' ')
+	# Get staged files as a NUL-delimited array so paths with spaces stay intact.
+	local -a staged_files=()
+	local staged_file
+	while IFS= read -r -d '' staged_file; do
+		[[ -n "$staged_file" ]] && staged_files+=("$staged_file")
+	done < <(staged_diff --name-only --diff-filter=ACMR -z)
 
-	if [[ -z "$staged_files" ]]; then
+	if [[ ${#staged_files[@]} -eq 0 ]]; then
 		print_info "No files to check for secrets"
 		return 0
 	fi
 
-	# Check if secretlint is available
+	local -a scanner=()
 	if command -v secretlint &>/dev/null; then
-		if echo "$staged_files" | xargs secretlint --format compact 2>/dev/null; then
-			print_success "$secrets_clean_msg"
-		else
-			print_error "$secrets_found_msg"
-			print_info "Review the findings and either:"
-			print_info "  1. Remove the secrets from your code"
-			print_info "  2. Add to .secretlintignore if false positive"
-			print_info "  3. Use // secretlint-disable-line comment"
-			((++violations))
-		fi
+		scanner=(secretlint)
 	elif [[ -f "node_modules/.bin/secretlint" ]]; then
-		if echo "$staged_files" | xargs ./node_modules/.bin/secretlint --format compact 2>/dev/null; then
-			print_success "$secrets_clean_msg"
-		else
-			print_error "$secrets_found_msg"
-			((++violations))
-		fi
+		scanner=(./node_modules/.bin/secretlint)
 	elif command -v npx &>/dev/null && [[ -f ".secretlintrc.json" ]]; then
-		if echo "$staged_files" | xargs npx secretlint --format compact 2>/dev/null; then
-			print_success "$secrets_clean_msg"
-		else
-			print_error "$secrets_found_msg"
-			((++violations))
-		fi
+		scanner=(npx secretlint)
 	else
 		print_warning "Secretlint not available (install: npm install secretlint --save-dev)"
+		return 0
 	fi
+
+	# GH#39921: invoke Secretlint directly, never through xargs. xargs collapses
+	# every child exit 1-125 into one status (1 on BSD, 123 on GNU), which made
+	# "could not run" indistinguishable from "found secrets". Secretlint's
+	# contract: 0 = clean, 1 = findings, other = configuration/execution error.
+	# stdin is detached so the scanner never consumes git's pre-push ref list.
+	local scan_output=""
+	local scan_status=0
+	scan_output=$("${scanner[@]}" --format compact "${staged_files[@]}" 2>&1 </dev/null) || scan_status=$?
+
+	case "$scan_status" in
+	0)
+		print_success "$secrets_clean_msg"
+		;;
+	1)
+		[[ -n "$scan_output" ]] && printf '%s\n' "$scan_output" >&2
+		print_error "$secrets_found_msg"
+		print_info "Review the findings and either:"
+		print_info "  1. Remove the secrets from your code"
+		print_info "  2. Add to .secretlintignore if false positive"
+		print_info "  3. Use // secretlint-disable-line comment"
+		((++violations))
+		;;
+	*)
+		if [[ "$scan_output" == *"secretlint config is not found"* ]]; then
+			# Unconfigured repository: same outcome as an unavailable scanner.
+			print_warning "Secretlint: no config found (.secretlintrc*); secret scan skipped"
+			print_info "  Enable it with: secretlint-helper.sh init"
+		else
+			# Configured but the scanner failed: fail closed with an accurate reason.
+			[[ -n "$scan_output" ]] && printf '%s\n' "$scan_output" >&2
+			print_error "Secretlint could not run (exit ${scan_status}); secret gate cannot pass"
+			print_info "Fix the Secretlint configuration or installation, then retry the push"
+			((++violations))
+		fi
+		;;
+	esac
 
 	return $violations
 }
