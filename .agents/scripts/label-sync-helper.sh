@@ -47,6 +47,10 @@ LOG_PREFIX="LABEL-SYNC"
 #                      triage-failed). status:* colours must match the
 #                      runtime contract in shared-gh-wrappers-status.sh.
 #   Pending    FBCA04  yellow — queued/waiting, no human action implied.
+#   Standing   FFF59D  light lemon — tracker/anchor issue: keep open, never dispatched
+#                      as a task (persistent, routines, routine-tracking, supervisor,
+#                      contributor, quality-review, coderabbit-pulse,
+#                      release-standing-policy). Exclusive to this group.
 #   Ready      0E8A16  green — available, approved, actioned.
 #   Active     1D76DB / 5319E7 / 6F42C1 — in-progress → in-review → done.
 #   Metadata   pale tints (C2E0C6, C5DEF5, BFD4F2, D4C5F9, BFDADC) —
@@ -55,6 +59,7 @@ LOG_PREFIX="LABEL-SYNC"
 # The priority ramp (critical → low) intentionally spans Risk → Ready.
 
 LABEL_COLOR_ATTENTION="E4007C"
+LABEL_COLOR_STANDING="FFF59D"
 
 # --- GitHub Defaults (standard issue triage) ---
 GITHUB_DEFAULT_LABELS=(
@@ -139,9 +144,10 @@ SYSTEM_LABELS=(
 	"needs-source-access|${LABEL_COLOR_ATTENTION}|Blocked: a required external source refuses access; needs a permitted capture, an alternative source, or host recovery"
 	"needs-credentials|${LABEL_COLOR_ATTENTION}|Opt-out: block auto-dispatch — requires credentials or account access"
 	"ai-approved|0E8A16|Issue approved for AI agent processing"
-	"persistent|FBCA04|Persistent issue — do not close"
-	"supervisor|1D76DB|Supervisor health dashboard"
-	"contributor|A2EEEF|Contributor health dashboard"
+	"persistent|${LABEL_COLOR_STANDING}|Persistent issue — do not close"
+	"release-standing-policy|${LABEL_COLOR_STANDING}|Signed standing authorization for routine Cloudron upstream releases"
+	"supervisor|${LABEL_COLOR_STANDING}|Supervisor health dashboard"
+	"contributor|${LABEL_COLOR_STANDING}|Contributor health dashboard"
 	"critical|D73A4A|Critical human-attention issue"
 	"security|D73A4A|Security-sensitive issue"
 	"security-adjacent|D73A4A|Security-adjacent issue requiring human attention"
@@ -154,7 +160,7 @@ SYSTEM_LABELS=(
 	"security-review|${LABEL_COLOR_ATTENTION}|Requires security review — suspicious AI request"
 	"parent-task|D4C5F9|Parent/meta task — children implement, not this issue"
 	"quality-debt|D93F0B|Unactioned review feedback from merged PRs"
-	"quality-review|7057FF|Daily code quality review"
+	"quality-review|${LABEL_COLOR_STANDING}|Daily code quality review"
 	"review-feedback-scanned|5319E7|Merged PR already scanned for quality feedback"
 	"code-reviews-actioned|0E8A16|All review feedback has been actioned"
 	"not-planned|FFFFFF|Closed without implementation — not planned"
@@ -173,7 +179,7 @@ SYSTEM_LABELS=(
 	"review:decline|D73A4A|Advisory automated triage recommendation: decline"
 	"circuit-breaker|D93F0B|Circuit breaker tripped — automatic retry paused"
 	"needs-review-fixes|${LABEL_COLOR_ATTENTION}|PR has unaddressed review comments"
-	"coderabbit-pulse|7057FF|Daily CodeRabbit pulse review tracking"
+	"coderabbit-pulse|${LABEL_COLOR_STANDING}|Daily CodeRabbit pulse review tracking"
 	"multi-model|E99695|Cross-provider model routing"
 )
 
@@ -191,9 +197,9 @@ SOURCE_LABELS=(
 
 # --- Routine Labels ---
 ROUTINE_LABELS=(
-	"routines|0E8A16|Routine tracking"
+	"routines|${LABEL_COLOR_STANDING}|Routine tracking anchor — not a task"
 	"core|1D76DB|Framework-managed routine"
-	"routine-tracking|BFDADC|Execution tracking issue — not a task (pulse skips these)"
+	"routine-tracking|${LABEL_COLOR_STANDING}|Execution tracking issue — not a task (pulse skips these)"
 )
 
 # Every catalogued definition, used for drift repair of existing labels.

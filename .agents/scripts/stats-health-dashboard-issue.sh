@@ -34,6 +34,7 @@ fi
 _ROLE_SUPERVISOR="supervisor"
 _ROLE_CONTRIBUTOR="contributor"
 _HEALTH_PERSISTENT_LABEL="persistent"
+_HEALTH_STANDING_COLOR="FFF59D"
 _HEALTH_OPERATOR_LABEL_PREFIX="operator:"
 
 # --- Functions ---
@@ -56,11 +57,11 @@ _ensure_health_dashboard_labels() {
 	local role_label role_label_color role_label_desc
 	if [[ "$runner_role" == "$_ROLE_SUPERVISOR" ]]; then
 		role_label="$_ROLE_SUPERVISOR"
-		role_label_color="1D76DB"
+		role_label_color="$_HEALTH_STANDING_COLOR"
 		role_label_desc="Supervisor health dashboard"
 	else
 		role_label="$_ROLE_CONTRIBUTOR"
-		role_label_color="A2EEEF"
+		role_label_color="$_HEALTH_STANDING_COLOR"
 		role_label_desc="Contributor health dashboard"
 	fi
 	local labels_json rc=0
@@ -85,7 +86,7 @@ _ensure_health_dashboard_labels() {
 			return 1
 		fi
 	done <<EOF
-${_HEALTH_PERSISTENT_LABEL}|FBCA04|Persistent issue — do not close
+${_HEALTH_PERSISTENT_LABEL}|${_HEALTH_STANDING_COLOR}|Persistent issue — do not close
 source:health-dashboard|C2E0C6|Auto-created by stats-functions.sh health dashboard
 ${role_label}|${role_label_color}|${role_label_desc}
 ${runner_user}|0E8A16|Health dashboard runner: ${runner_user}
@@ -585,7 +586,7 @@ _create_health_issue() {
 	# t1890: health dashboard issues are management issues that should never be
 	# closed or dispatched. Add the "persistent" label for consistency with the
 	# quality review issue, so the dispatch filter only needs one label check.
-	gh label create "$_HEALTH_PERSISTENT_LABEL" --repo "$repo_slug" --color "FBCA04" \
+	gh label create "$_HEALTH_PERSISTENT_LABEL" --repo "$repo_slug" --color "$_HEALTH_STANDING_COLOR" \
 		--description "Persistent issue — do not close" --force 2>/dev/null || true
 
 	# Aliases are dedup metadata and may include local OS account names; keep
@@ -827,13 +828,13 @@ _resolve_runner_role_config() {
 	if [[ "$runner_role" == "$_ROLE_SUPERVISOR" ]]; then
 		runner_prefix="[Supervisor:${runner_user}]"
 		role_label="$_ROLE_SUPERVISOR"
-		role_label_color="1D76DB"
+		role_label_color="$_HEALTH_STANDING_COLOR"
 		role_label_desc="Supervisor health dashboard"
 		role_display="Supervisor"
 	else
 		runner_prefix="[Contributor:${runner_user}]"
 		role_label="$_ROLE_CONTRIBUTOR"
-		role_label_color="A2EEEF"
+		role_label_color="$_HEALTH_STANDING_COLOR"
 		role_label_desc="Contributor health dashboard"
 		role_display="Contributor"
 	fi

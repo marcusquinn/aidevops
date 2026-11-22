@@ -183,9 +183,9 @@ _quality_issue_create_dashboard() {
 	local issue_number=""
 
 	# Ensure labels exist
-	gh label create "$lbl_review" --repo "$repo_slug" --color "7057FF" \
+	gh label create "$lbl_review" --repo "$repo_slug" --color "FFF59D" \
 		--description "Daily code quality review" --force 2>/dev/null || true
-	gh label create "$lbl_persist" --repo "$repo_slug" --color "FBCA04" \
+	gh label create "$lbl_persist" --repo "$repo_slug" --color "FFF59D" \
 		--description "Persistent issue — do not close" --force 2>/dev/null || true
 	gh label create "$lbl_source" --repo "$repo_slug" --color "C2E0C6" \
 		--description "Auto-created by stats-functions.sh quality sweep" --force 2>/dev/null || true
