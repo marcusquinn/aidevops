@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.264] - 2026-11-22
+
+### Changed
+
+- Refactor: split full-loop commit validation gates below 2000 lines
+- Maintenance: sync GitHub issue refs to TODO.md (#39852)
+- Maintenance: mark t19279 complete (pr:#39844 completed:2026-11-22) (#39847)
+
+### Fixed
+
+- fix GNU stat output contamination in shell suite health
+- publish squash-merged continuation heads on fresh branches (#39870)
+- propose Star History updates through PRs
+- refresh star history through a pull request (#39869)
+- revisit merged For-#N partial on ready-handoff release (GH#39857) (#39859)
+- complete legacy Low/Medium runtime-pending holds
+
 ## [3.39.263] - 2026-11-22
 
 ### Added
