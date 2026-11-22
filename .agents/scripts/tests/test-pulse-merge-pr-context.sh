@@ -30,6 +30,7 @@ fail() {
 
 setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
+	export PULSE_T2449_BLOCK_STATE_DIR="${TEST_ROOT}/t2449-blocks"
 	export LOGFILE="${TEST_ROOT}/pulse.log"
 	export GH_CALL_LOG="${TEST_ROOT}/gh-calls.log"
 	: >"$LOGFILE"

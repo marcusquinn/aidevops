@@ -10,6 +10,7 @@ MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
 # shellcheck source=../gh-closing-reference-lib.sh
 source "${SCRIPT_DIR}/../gh-closing-reference-lib.sh"
 TEST_ROOT="$(mktemp -d)"
+export PULSE_T2449_BLOCK_STATE_DIR="${TEST_ROOT}/t2449-blocks"
 LOGFILE="${TEST_ROOT}/pulse.log"
 AGENTS_DIR="${TEST_ROOT}/agents"
 TRUST_CALLS="${TEST_ROOT}/trust-calls.log"

@@ -23,8 +23,8 @@
 #   decide       a recorded question with no later maintainer answer
 #   permission   needs-maintainer-permissions, unanswered
 #   credentials  needs-credentials, unanswered
-#   approve      a held pull request waiting on a signed release approval: the
-#                open release-approval-required issue that names it, and the
+#   approve      a held release PR or a current-head t2449 linked-issue trust
+#                wait recorded by pulse; shows the linked approval issue and
 #                `sudo aidevops approve issue` command the maintainer runs
 #   verify       a held pull request whose runtime-pending hold a verifier may
 #                lift (full-loop-helper.sh runtime-pending-notice, t19241);
@@ -76,12 +76,14 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 MD_REPOS_JSON="${MAINTAINER_DECISIONS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 MD_RECOVERY_DIR="${AIDEVOPS_BLOCKER_RECOVERY_DIR:-${HOME}/.aidevops/.agent-workspace/terminal-blocker-recovery}"
+MD_T2449_DIR="${PULSE_T2449_BLOCK_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse-t2449-permanent-blocks}"
 MD_HOLD_LABELS="needs-maintainer-input,needs-maintainer-permissions,needs-credentials,needs-source-access"
 # Holds a supervisor may state with a canonical public ask; searched too, but
 # kept only when a trusted comment carries that ask (see MD_CLASSIFY_JQ).
 MD_ASK_LABELS='hold-for-review "status:blocked"'
 MD_PR_HOLD_LABEL="hold-for-review"
 MD_RELEASE_LABEL="release-approval-required"
+MD_APPROVE_CLI_FALLBACK="sudo aidevops"
 MD_FULL_LOOP_HELPER="${MAINTAINER_DECISIONS_FULL_LOOP_HELPER:-${SCRIPT_DIR}/full-loop-helper.sh}"
 MD_SEARCH_PAGES=10
 MD_FORMAT="tsv"
@@ -235,7 +237,7 @@ def kinds: [
 	["decide", "Needs your decision"],
 	["permission", "Needs a permission decision"],
 	["credentials", "Needs credentials"],
-	["approve", "Needs your signed release approval (held PRs)"],
+	["approve", "Needs your signed approval (held PRs)"],
 	["verify", "Needs runtime verification (held PRs)"],
 	["held-pr", "Held PRs awaiting maintainer review"],
 	["replied", "Replied: check whether the reply answers the question"],
@@ -256,7 +258,8 @@ Usage: $(basename "$0") list [--repo owner/repo] [--format tsv|json|md] [--max N
 Read-only cross-repo maintainer decision queue for managed pulse repos.
 Lists open issues labelled ${MD_HOLD_LABELS//,/, }, plus hold-for-review and
 status:blocked issues only when a trusted comment carries a canonical ask, and
-open non-draft pull requests labelled ${MD_PR_HOLD_LABEL} (kinds verify, held-pr).
+open non-draft pull requests labelled ${MD_PR_HOLD_LABEL} (kinds approve, verify, held-pr),
+and current-head t2449 linked-issue trust waits recorded by pulse (kind approve).
 
 Options:
   --repo owner/repo   Limit to one repository
@@ -279,6 +282,29 @@ _md_managed_slugs() {
 	}
 	jq -r '.initialized_repos[]? | select(.pulse == true and (.local_only // false) == false and (.slug // "") != "") | .slug' \
 		"$MD_REPOS_JSON" | sort -u
+	return 0
+}
+
+# Prints repo, PR number, head SHA and epoch for local signed-approval waits.
+_md_t2449_refs() {
+	local slugs="$MD_REPO"
+	local file="" name="" repo="" number="" head="" block="" epoch="" rest=""
+	[[ -d "$MD_T2449_DIR" ]] || return 0
+	if [[ -z "$slugs" ]]; then
+		slugs=$(_md_managed_slugs) || return 1
+	fi
+	for file in "$MD_T2449_DIR"/*; do
+		[[ -f "$file" && ! -L "$file" ]] || continue
+		name="${file##*/}"
+		[[ "$name" =~ ^[A-Za-z0-9_.-]+--[A-Za-z0-9_.-]+--pr-[0-9]+$ ]] || continue
+		rest="${name#*--}"
+		repo="${name%%--*}/${rest%--pr-*}"
+		number="${name##*--pr-}"
+		grep -Fxq -- "$repo" <<<"$slugs" || continue
+		IFS=$'\t' read -r head block epoch rest <"$file" || continue
+		[[ "$head" =~ ^[[:xdigit:]]{40}$ && "$block" == untrusted_issue_author_no_crypto_approval && "$epoch" =~ ^[0-9]+$ ]] || continue
+		printf '%s\t%s\t%s\t%s\n' "$repo" "$number" "$head" "$epoch"
+	done
 	return 0
 }
 
@@ -469,7 +495,7 @@ _md_classify_pr() {
 	local notice="null"
 	local release=""
 	local release_final=""
-	local approve_cli="sudo aidevops"
+	local approve_cli="$MD_APPROVE_CLI_FALLBACK"
 	if ! pr_json=$(gh pr view "$number" --repo "$repo" --json number,title,url,createdAt,labels,comments,body,isDraft,state 2>/dev/null); then
 		_md_error_record "$repo" "$number" "pull request read failed" pr
 		return 0
@@ -488,7 +514,7 @@ _md_classify_pr() {
 			release="${release%%$'\t'*}"
 		fi
 		if declare -F approval_cli_prefix >/dev/null 2>&1; then
-			approve_cli=$(approval_cli_prefix) || approve_cli="sudo aidevops"
+			approve_cli=$(approval_cli_prefix) || approve_cli="$MD_APPROVE_CLI_FALLBACK"
 		fi
 	else
 		notice=$(_md_pr_runtime_notice "$repo" "$number")
@@ -498,6 +524,34 @@ _md_classify_pr() {
 		--arg release_label "$MD_RELEASE_LABEL" --arg release "$release" --arg release_final "$release_final" \
 		--arg approve_cli "$approve_cli" "$MD_CLASSIFY_PR_JQ" <<<"$pr_json" ||
 		_md_error_record "$repo" "$number" "classification failed" pr
+	return 0
+}
+
+# Prints one current-head t2449 trust wait; stale markers never become asks.
+_md_classify_trust_pr() {
+	local repo="$1" number="$2" head="$3" epoch="$4" now="$5"
+	local pr_json="" approve_cli="$MD_APPROVE_CLI_FALLBACK"
+	if ! pr_json=$(gh pr view "$number" --repo "$repo" --json number,title,url,state,isDraft,headRefOid,closingIssuesReferences 2>/dev/null); then
+		_md_error_record "$repo" "$number" "pull request read failed" pr
+		return 0
+	fi
+	jq -e --arg head "$head" --arg open OPEN '.state == $open and (.isDraft | not) and .headRefOid == $head' >/dev/null <<<"$pr_json" || return 0
+	if ! jq -e '.closingIssuesReferences | length == 1' >/dev/null <<<"$pr_json"; then
+		_md_error_record "$repo" "$number" "trust wait requires exactly one linked issue" pr
+		return 0
+	fi
+	if declare -F approval_cli_prefix >/dev/null 2>&1; then
+		approve_cli=$(approval_cli_prefix) || approve_cli="$MD_APPROVE_CLI_FALLBACK"
+	fi
+	jq -c --arg repo "$repo" --argjson epoch "$epoch" --argjson now "$now" --arg cli "$approve_cli" --arg kind approve '
+		.closingIssuesReferences[0].number as $issue
+		| {repo: $repo, number: .number, url: .url, title: (.title | gsub("[[:cntrl:]]"; " ")),
+		kind: $kind, type: "pr", reason: "t2449_issue_trust", asked_src: "t2449_marker",
+		question: "linked issue #\($issue) is not maintainer-authored; sign it so pulse can merge this PR",
+		command: "\($cli) approve issue \($issue) \($repo)", age_days: (($now - $epoch) / 86400 | floor),
+		asked_at: ($epoch | todateiso8601), asked_by: null, recommendation: null,
+		answered_at: null, answered_by: null, replied_at: null, reply_excerpt: null, park_action: null, hold_labels: []}' <<<"$pr_json" ||
+		_md_error_record "$repo" "$number" "trust classification failed" pr
 	return 0
 }
 
@@ -558,6 +612,7 @@ _md_list() {
 	local total=0
 	local repo_count=0
 	local status=0
+	local head="" epoch="" pr_count=0
 	refs=$(_md_discover issue | _md_interleave_refs) || return 1
 	# t19260: held PRs use their own refs and cap, so the issue --max
 	# round-robin is unchanged. A failed PR search still shows the issue
@@ -584,7 +639,14 @@ _md_list() {
 	while IFS=$'\t' read -r repo number; do
 		[[ -n "$repo" && "$number" =~ ^[0-9]+$ ]] || continue
 		_md_classify_pr "$repo" "$number" "$now" >>"$records"
+		pr_count=$((pr_count + 1))
 	done < <(printf '%s\n' "$pr_refs" | awk -v max="$MD_MAX" 'NR <= max')
+	while IFS=$'\t' read -r repo number head epoch; do
+		[[ "$pr_count" -lt "$MD_MAX" ]] || break
+		grep -Fxq -- "${repo}"$'\t'"${number}" <<<"$pr_refs" && continue
+		_md_classify_trust_pr "$repo" "$number" "$head" "$epoch" "$now" >>"$records"
+		pr_count=$((pr_count + 1))
+	done < <(_md_t2449_refs)
 	jq -s '.' "$records" | _md_render
 	rm -f "$records"
 	return "$status"
