@@ -1393,6 +1393,7 @@ _create_or_continue_pr() {
 		_reconcile_pr_origin_label "$continuation_pr" "$repo" "${origin_label#origin:}" || return 1
 		_reconcile_recovered_pr_metadata "$continuation_pr" "$repo" "$pr_title" "$pr_body" || return 1
 		_retarget_continuation_pr_base "$continuation_pr" "$repo" || return 1
+		_ready_continued_draft_pr "$continuation_pr" "$repo" "$origin_label" # GH#39842
 		printf '%s\n' "$continuation_pr"
 		return 0
 	fi
