@@ -637,23 +637,40 @@ _hrw_data_only_terminal_complete() {
 }
 
 # Reports are not publications. Bind the receipt to its own GitHub comment URL
-# and prove the closer's OWNER/MEMBER association using trusted comment metadata.
+# and prove the closer's association using trusted comment metadata.
 _hrw_report_only_terminal_complete() {
 	local session_key="$1" work_dir="$2" issue_number="$3" repo_slug="$4" issue_json="$5"
 	local comments=""
 	local comments_endpoint=""
 	printf -v comments_endpoint 'repos/%s/issues/%s/comments?per_page=100' "$repo_slug" "$issue_number"
 	local trusted_def='def trusted: (.author_association // "") | test("^(OWNER|MEMBER)$");'
-	jq -e --arg closed closed --arg completed completed "${trusted_def}"'
-		.state == $closed and .state_reason == $completed and trusted
+	# aidevops:trust-boundary — only scanner alerts may trust a COLLABORATOR,
+	# bound to the same issue author, closer and receipt author login.
+	local peer_login=""
+	local peer_def="def collaborator: .author_association == \$peer_association;"
+	local peer_association='COLLABORATOR'
+	peer_login=$(jq -r --arg peer_association "$peer_association" "${peer_def}"'
+		select(collaborator
+			and ((.title // "") |
+				startswith("GH Audit Anomaly Alert:") or startswith("GH Audit Log Integrity Alert:"))
+			and ((.body // "") | contains("<!-- gh-audit-anomaly-scanner:"))
+			and any(.labels[]?; .name == "monitoring"))
+		| .user.login // empty' <<<"$issue_json") || return 1
+	jq -e --arg closed closed --arg completed completed --arg peer "$peer_login" "${trusted_def}"'
+		def scanner_peer: $peer != "" and .user.login == $peer and .closed_by.login == $peer;
+		.state == $closed and .state_reason == $completed and (trusted or scanner_peer)
 		and ((.body // "") | contains("<!-- aidevops:completion-contract:report-only/v1 -->"))' \
 		<<<"$issue_json" >/dev/null 2>&1 || return 1
 	comments=$(gh api --paginate "$comments_endpoint" 2>/dev/null) || return 1
-	jq -se --arg repo "$repo_slug" --argjson issue "$issue_number" \
-		--arg closer "$(jq -r '.closed_by.login // ""' <<<"$issue_json")" "${trusted_def}"'
+	jq -se --arg repo "$repo_slug" --argjson issue "$issue_number" --arg peer "$peer_login" \
+		--arg peer_association "$peer_association" \
+		--arg closer "$(jq -r '.closed_by.login // ""' <<<"$issue_json")" "${trusted_def}${peer_def}"'
+		def report_writer:
+			if $peer == "" then trusted
+			else .user.login == $peer and (trusted or collaborator) end;
 		[.[][]] as $comments
-		| ($closer != "" and any($comments[]; trusted and .user.login == $closer))
-		and any($comments[]; trusted
+		| ($closer != "" and any($comments[]; report_writer and .user.login == $closer))
+		and any($comments[]; report_writer
 			and ((.body // "") | startswith("<!-- aidevops:report-only-completion:v1 -->\n"))
 			and (.html_url as $url | .id as $id
 				| (try (.body | split("\n")[1] | fromjson) catch {}) as $r

@@ -42,7 +42,7 @@ A recovery gap in a fail-closed safety or audit path is NOT Outcome C when it ca
 ## PR-less completion contracts
 
 For reports and data-only publication, issue generators must explicitly opt in
-through a marker in an OWNER/MEMBER issue body. Apart from the separately verified
+through a marker in an OWNER/MEMBER issue body (or the scanner-alert exception below). Apart from the separately verified
 consolidation exception below, labels, a closed issue, or prose alone cannot waive the PR path.
 These contracts classify completion evidence; they grant no publication,
 credential, or approval authority.
@@ -64,6 +64,14 @@ Verify the report and receipt, then close the exact issue as completed. The clos
 must also have OWNER/MEMBER association demonstrated by a comment on that issue
 (normally the receipt itself). The classifier checks the URL against GitHub's
 comment ID, repository and issue; another comment's URL is not accepted.
+
+Scanner-alert exception: a `COLLABORATOR` may use this report-only path only for
+an issue whose title starts with `GH Audit Anomaly Alert:` or
+`GH Audit Log Integrity Alert:`, whose body contains `<!-- gh-audit-anomaly-scanner:`,
+and whose labels include `monitoring`. The issue author, closer and receipt author
+must all be the same non-empty login, with a trusted OWNER/MEMBER/COLLABORATOR
+receipt association. The report-only opt-in, self-bound receipt and clean-worktree
+checks remain mandatory. This does not widen other report or publication contracts.
 
 ### Data-only publication
 

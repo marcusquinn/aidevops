@@ -542,6 +542,11 @@ test_report_only_completion() {
 	git -C "$WORK_DIR" checkout -q -b feature/report-only || return 1
 	local issue='{"state":"closed","state_reason":"completed","author_association":"OWNER","closed_by":{"login":"auditor"},"labels":[{"name":"auto-dispatch"},{"name":"status:in-progress"},{"name":"audit"}],"body":"<!-- aidevops:completion-contract:report-only/v1 -->"}'
 	local comments='[{"id":456,"html_url":"https://github.com/owner/repo/issues/123#issuecomment-456","user":{"login":"auditor"},"author_association":"MEMBER","body":"<!-- aidevops:report-only-completion:v1 -->\n{\"repository\":\"owner/repo\",\"issue\":123,\"status\":\"reported\",\"verified\":true,\"evidence_url\":\"https://github.com/owner/repo/issues/123#issuecomment-456\"}\n\nAudit report."}]'
+	local peer_issue="" peer_comments=""
+	peer_issue=$(jq '.author_association = "COLLABORATOR" | .user.login = "auditor"
+		| .title = "GH Audit Anomaly Alert: test" | .labels += [{"name":"monitoring"}]
+		| .body += "\n<!-- gh-audit-anomaly-scanner:test -->"' <<<"$issue")
+	peer_comments=$(jq '.[0].author_association = "COLLABORATOR"' <<<"$comments")
 	local shape="" result="" expected="" log=""
 	export STUB_ISSUE_STATE=CLOSED STUB_PR_NUMBERS=''
 	export STUB_GH_LOG="${TEST_ROOT}/report-gh.log"
@@ -584,6 +589,49 @@ test_report_only_completion() {
 			fi
 		elif [[ "$shape" != label-failure && "$log" == *'issue edit '* ]]; then
 			print_result "rejected report must not change labels: ${shape}" 1
+		fi
+		[[ "$shape" != dirty ]] || rm "${WORK_DIR}/unfinished"
+	done
+	for shape in valid integrity member-default non-alert missing-scanner missing-monitoring missing-opt-in different-closer different-receipt owner-receipt-other-login missing-author none contributor untrusted-receipt wrong-url wrong-issue wrong-repo unverified published missing-receipt open not-completed dirty branch-pr; do
+		export STUB_DATA_ISSUE="$peer_issue" STUB_DATA_COMMENTS="$peer_comments"
+		export STUB_BRANCH_PR_COUNT=0 STUB_LABEL_RC=0
+		case "$shape" in
+			integrity) STUB_DATA_ISSUE=$(jq '.title = "GH Audit Log Integrity Alert: test"' <<<"$peer_issue") ;;
+			member-default) STUB_DATA_ISSUE=$(jq '.author_association = "MEMBER"' <<<"$issue"); STUB_DATA_COMMENTS="$comments" ;;
+			non-alert) STUB_DATA_ISSUE=$(jq '.title = "Unrelated audit"' <<<"$peer_issue") ;;
+			missing-scanner) STUB_DATA_ISSUE=$(jq --arg body "$(jq -r .body <<<"$issue")" '.body = $body' <<<"$peer_issue") ;;
+			missing-monitoring) STUB_DATA_ISSUE=$(jq '.labels |= map(select(.name != "monitoring"))' <<<"$peer_issue") ;;
+			missing-opt-in) STUB_DATA_ISSUE=$(jq '.body = "<!-- gh-audit-anomaly-scanner:test -->"' <<<"$peer_issue") ;;
+			different-closer) STUB_DATA_ISSUE=$(jq '.closed_by.login = "other"' <<<"$peer_issue") ;;
+			different-receipt) STUB_DATA_COMMENTS=$(jq '.[0].user.login = "other"' <<<"$peer_comments") ;;
+			owner-receipt-other-login) STUB_DATA_COMMENTS=$(jq '. + [.[0] | .user.login = "other" | .author_association = "OWNER"] | .[0].body = "Closer proof only"' <<<"$peer_comments") ;;
+			missing-author) STUB_DATA_ISSUE=$(jq 'del(.user)' <<<"$peer_issue") ;;
+			none) STUB_DATA_ISSUE=$(jq '.author_association = "NONE"' <<<"$peer_issue") ;;
+			contributor) STUB_DATA_ISSUE=$(jq '.author_association = "CONTRIBUTOR"' <<<"$peer_issue") ;;
+			untrusted-receipt) STUB_DATA_COMMENTS=$(jq '.[0].author_association = "NONE"' <<<"$peer_comments") ;;
+			wrong-url) STUB_DATA_COMMENTS=$(jq '.[0].body |= sub("issuecomment-456"; "issuecomment-457")' <<<"$peer_comments") ;;
+			wrong-issue) STUB_DATA_COMMENTS=$(jq '.[0].body |= sub("123"; "124")' <<<"$peer_comments") ;;
+			wrong-repo) STUB_DATA_COMMENTS=$(jq '.[0].body |= sub("owner/repo"; "other/repo")' <<<"$peer_comments") ;;
+			unverified) STUB_DATA_COMMENTS=$(jq '.[0].body |= sub("true"; "false")' <<<"$peer_comments") ;;
+			published) STUB_DATA_COMMENTS=$(jq '.[0].body |= sub("reported"; "published")' <<<"$peer_comments") ;;
+			missing-receipt) STUB_DATA_COMMENTS='[]' ;;
+			open) STUB_DATA_ISSUE=$(jq '.state = "open"' <<<"$peer_issue") ;;
+			not-completed) STUB_DATA_ISSUE=$(jq '.state_reason = "not_planned"' <<<"$peer_issue") ;;
+			dirty) printf 'unfinished\n' >"${WORK_DIR}/unfinished" ;;
+			branch-pr) STUB_BRANCH_PR_COUNT=1 ;;
+		esac
+		: >"$STUB_GH_LOG"
+		result=$(_worker_external_terminal_complete issue-123 "$WORK_DIR" 2>/dev/null && printf 'accepted') || true
+		expected=""
+		case "$shape" in valid | integrity | member-default) expected=accepted ;; esac
+		if [[ "$result" == *"$expected" && ( -n "$expected" || "$result" != *accepted* ) ]]; then
+			print_result "scanner report-only replay: ${shape}" 0
+		else
+			print_result "scanner report-only replay: ${shape}" 1 "$result"
+		fi
+		log=$(<"$STUB_GH_LOG")
+		if [[ -z "$expected" && "$log" == *'issue edit '* ]]; then
+			print_result "rejected scanner report must not change labels: ${shape}" 1
 		fi
 		[[ "$shape" != dirty ]] || rm "${WORK_DIR}/unfinished"
 	done
