@@ -244,10 +244,25 @@ during the close reopens it with `persistent`; the marker is cleared only after
 retirement or restoration completes, so a failed step is retried in any state.
 Legacy PRs still use the existing linked-issue trust route unchanged.
 
-Workflow sync retains `ensure-anchor` / `ensure-pr-anchor` until an exact,
-trusted-ref re-render policy is implemented. Maintainer-defined agent routines
-also retain their `create-issue` tracking anchors; badge retirement cannot close
-anchors for other keys.
+Workflow sync PRs use `<!-- aidevops:routine-pr:sync-workflows -->`
+(GH#39793) when the run is headless, has no explicit `--issue`, touches one
+managed caller (`issue-sync`, `review-bot-gate`, `review-bot-gate-fork-review`,
+`maintainer-gate`, `loc-badge`, `issue-triage-gate`; never `linked-issue-check`
+or CONTRIBUTING.md), uses a `chore/workflow-sync-*` branch and pins a 40-hex
+ref. The gate keeps every badge-sync check (write permission, same-repo head,
+complete SHA-pinned file list, regular blobs, no hold, head pinning) and also
+requires the PR base to be the repository default branch. It then re-renders
+the caller byte-for-byte in `routine-pr-content.py` from the template at the
+pinned ref in `marcusquinn/aidevops` (reachable from main), the declared
+registry policy (`workflow_reusable_repo`, `runner`, mirror helper provenance
+and secret injection), the base file's runner and the default-branch filter.
+Nothing from the PR is executed; any mismatch, unknown workflow, unreachable
+ref or missing evidence denies. Runs that cannot meet these conditions (for
+example a floating `@main` pin) keep `ensure-anchor` / `ensure-pr-anchor`.
+After a marker PR publishes, `retire-anchor sync-workflows` retires the repo's
+unreferenced anchor with the same safeguards as badge sync. Maintainer-defined
+agent routines also retain their `create-issue` tracking anchors; retirement
+cannot close anchors for other keys.
 
 ## Scheduler ownership
 

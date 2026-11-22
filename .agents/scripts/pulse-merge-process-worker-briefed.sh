@@ -594,7 +594,8 @@ _worker_briefed_pr_eligible() {
 	if [[ -z "$linked_issue" ]]; then
 		local body=""
 		body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq .body) || return 1
-		if [[ "$body" != *'<!-- aidevops:routine-pr:badges-sync -->'* ]]; then
+		if [[ "$body" != *'<!-- aidevops:routine-pr:badges-sync -->'* &&
+			"$body" != *'<!-- aidevops:routine-pr:sync-workflows -->'* ]]; then
 			WORKER_BRIEFED_TRUST_REASON="no linked issue (t2449)"
 			return 1
 		fi

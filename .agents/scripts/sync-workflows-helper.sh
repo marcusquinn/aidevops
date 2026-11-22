@@ -112,6 +112,11 @@ readonly _STATUS_FAILED="FAILED"
 # GH#39696: per-repo routine anchor giving headless sync PRs an issue identity.
 readonly _SYNC_ANCHOR_KEY="sync-workflows"
 readonly _SYNC_ANCHOR_TITLE="aidevops workflow sync (routine anchor)"
+# GH#39793: PRs the merge gate can re-render byte-exactly carry this marker
+# instead of an anchor reference (see routine-pr-scope-lib.sh).
+readonly _SYNC_ROUTINE_MARKER="<!-- aidevops:routine-pr:sync-workflows -->"
+readonly _SYNC_MARKER_IDENTITY="marker"
+readonly _SYNC_BRANCH_PREFIX="chore/workflow-sync-"
 
 # Classification labels (must match check-workflows-helper.sh).
 readonly _CLASS_DRIFTED='DRIFTED/CALLER'
@@ -1196,8 +1201,14 @@ _create_pr_body_file() {
 	mkdir -p "$_temp_root" || return 1
 	local _body_file
 	_body_file=$(mktemp "${_temp_root%/}/sync-workflows-pr.XXXXXX") || return 1
+	# GH#39793: a verified-scope routine marker replaces the anchor identity.
+	if [[ "$_anchor" == "$_SYNC_MARKER_IDENTITY" ]]; then
+		printf '%s\n\n' "$_SYNC_ROUTINE_MARKER" >"$_body_file" || {
+			rm -f "$_body_file"
+			return 1
+		}
 	# One standalone non-closing identity line: a run must not close the anchor.
-	if [[ -n "$_anchor" ]] && ! printf 'Ref #%s\n\n' "$_anchor" >"$_body_file"; then
+	elif [[ -n "$_anchor" ]] && ! printf 'Ref #%s\n\n' "$_anchor" >"$_body_file"; then
 		rm -f "$_body_file"
 		return 1
 	fi
@@ -1230,6 +1241,33 @@ _sync_routine_anchor() {
 		return 1
 	fi
 	printf '%s\n' "$_number"
+	return 0
+}
+
+# _sync_marker_eligible <slug> <path> <branch> <default_branch> <effective_ref>
+#   <workflow-relpath> <sync-contributing> — GH#39793: succeed only when the
+# merge gate's exact re-render (routine-pr-scope-lib.sh) can admit this PR:
+# a headless run without an explicit issue, a managed workflow only, the
+# default sync branch prefix, a 40-hex ref and plain runner/branch labels.
+# Anything else keeps the anchor identity.
+_sync_marker_eligible() {
+	local _slug="$1" _path="$2" _branch="$3" _default_branch="$4" _ref="${5#@}"
+	local _relpath="$6" _sync_contributing="$7" _runner=""
+	[[ -z "${_OPT_ISSUE:-}" && "$_sync_contributing" -eq 0 ]] || return 1
+	declare -F session_origin_label >/dev/null 2>&1 || return 1
+	[[ "$(session_origin_label)" == "origin:worker" ]] || return 1
+	[[ "$_branch" == "$_SYNC_BRANCH_PREFIX"* ]] || return 1
+	[[ "$_ref" =~ ^[0-9a-f]{40}(\ #\ v[0-9]+\.[0-9]+\.[0-9]+)?$ ]] || return 1
+	[[ "$_default_branch" =~ ^[A-Za-z0-9._/-]+$ ]] || return 1
+	case "${_relpath##*/}" in
+	issue-sync.yml | review-bot-gate.yml | review-bot-gate-fork-review.yml | \
+		maintainer-gate.yml | loc-badge.yml | issue-triage-gate.yml) ;;
+	*) return 1 ;;
+	esac
+	[[ "${_relpath%/*}" == ".github/workflows" ]] || return 1
+	_runner=$(_read_runner_field "$_slug")
+	[[ -n "$_runner" ]] || _runner=$(_read_runner_from_file "$_path/$_relpath")
+	[[ -z "$_runner" || "$_runner" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
 	return 0
 }
 
@@ -1947,10 +1985,15 @@ _sync_publish_rendered() {
 	# GH#39696: resolve the PR identity before pushing; a pushed branch without
 	# a PR would read as already current on the next run.
 	local _anchor=""
-	_anchor=$(_sync_routine_anchor "$_slug" "$_status") || {
-		printf '%s\n' "$_anchor"
-		return 1
-	}
+	if _sync_marker_eligible "$_slug" "$_path" "$_branch_name" "$_default_branch" \
+		"$_effective_ref" "$_workflow_relpath" "$_sync_contributing"; then
+		_anchor="$_SYNC_MARKER_IDENTITY"
+	else
+		_anchor=$(_sync_routine_anchor "$_slug" "$_status") || {
+			printf '%s\n' "$_anchor"
+			return 1
+		}
+	fi
 	_write_output=$(_sync_write_commit_push \
 		"$_slug" "$_path" "$_status" "$_branch_name" \
 		"$_remote" "$_default_branch" "$_effective_ref" "$_target_content" \
@@ -1965,11 +2008,25 @@ _sync_publish_rendered() {
 		return 1
 	fi
 
+	local _publish_rc=0
 	_sync_open_pr_and_warn \
 		"$_slug" "$_path" "$_status" "$_branch_name" \
 		"$_default_branch" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_target_content" \
-		"$_anchor"
-	return $?
+		"$_anchor" || _publish_rc=$?
+	if [[ "$_publish_rc" -eq 0 && "$_anchor" == "$_SYNC_MARKER_IDENTITY" ]]; then
+		_sync_retire_anchor "$_slug"
+	fi
+	return "$_publish_rc"
+}
+
+# GH#39793: once a marker PR is published the anchor is redundant. Retirement
+# keeps any anchor an open legacy PR still references; failure only warns.
+_sync_retire_anchor() {
+	local _slug="$1" _helper="${SELF_DIR}/routine-log-helper.sh"
+	[[ -f "$_helper" ]] || return 0
+	bash "$_helper" retire-anchor "$_SYNC_ANCHOR_KEY" --repo "$_slug" >&2 ||
+		printf '[%s] WARN: %s: anchor retirement deferred\n' "$SCRIPT_NAME" "$_slug" >&2
+	return 0
 }
 
 # Open the PR, then warn (never mutate) when the installed caller needs an

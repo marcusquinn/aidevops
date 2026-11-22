@@ -497,6 +497,23 @@ _assert_exit "GH#39696 worker PR body leads with the anchor Ref" 'Ref #42' "$FIR
 _assert_exit "GH#39696 worker PR body has one issue identity" 1 "$(grep -cE '^(Ref|For|Resolves) #' "$TMPDIR_10/gh-calls.log.body")"
 _assert_exit "GH#39696 existing anchor is reused, not recreated" 0 "$(grep -c '^issue create ' "$TMPDIR_10/gh-calls.log")"
 
+# GH#39793: a 40-hex pin on the default sync branch is re-renderable by the merge
+# gate, so the PR carries the routine marker instead of an anchor and retires
+# the anchor. A floating ref (previous test) keeps the anchor identity.
+: >"$TMPDIR_10/gh-calls.log"
+OUT_10_MARKER=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	AIDEVOPS_SESSION_ORIGIN=worker GH_ANCHOR_ISSUES_JSON='[]' \
+	GH_SYNC_PRS_JSON="$SYNC_PRS_10" GH_SYNC_FILES_JSON="$STALE_FILES_10" GH_NEW_PR_NUMBER=8 \
+	bash "$HELPER" --apply --force-ref --ref 1111111111111111111111111111111111111111 --branch chore/workflow-sync-20990111 2>&1)
+_assert_exit "GH#39793 pinned worker sync publishes with the routine marker" 0 "$?"
+_assert_contains "GH#39793 marker sync reports new PR" "$OUT_10_MARKER" "PR: https://github.com/owner/repo-develop/pull/8"
+FIRST_BODY_LINE_10=$(head -n 1 "$TMPDIR_10/gh-calls.log.body")
+_assert_exit "GH#39793 PR body leads with the sync-workflows marker" '<!-- aidevops:routine-pr:sync-workflows -->' "$FIRST_BODY_LINE_10"
+_assert_exit "GH#39793 marker PR body has no issue identity" 0 "$(grep -cE '^(Ref|For|Resolves) #' "$TMPDIR_10/gh-calls.log.body")"
+_assert_exit "GH#39793 marker PR creates no anchor" 0 "$(grep -c '^issue create ' "$TMPDIR_10/gh-calls.log")"
+_assert_exit "GH#39793 marker PR retires the anchor (lists routine anchors)" 1 \
+	"$(grep -c '^issue list .*--label routine-anchor-retiring' "$TMPDIR_10/gh-calls.log" | awk '{print ($1 > 0) ? 1 : 0}')"
+
 # Different date suffixes share the installation-scoped lock; a held lock must
 # prevent inspection/publication, and all preceding failure paths released it.
 LOCK_KEY_10=$(printf '%s\n%s\n%s\n' owner/repo-develop .github/workflows/issue-sync.yml chore/workflow-sync- | git hash-object --stdin)
