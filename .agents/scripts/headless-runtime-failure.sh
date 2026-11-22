@@ -1123,11 +1123,12 @@ _hrff_project_post_release_state() {
 	if [[ "$reason" == "${_HRW_REASON_READY_MISSING_LINKAGE:-worker_ready_missing_linkage}" ||
 		"$reason" == "${_HRW_REASON_READY_MISSING_SUMMARY:-worker_ready_missing_summary}" ]]; then
 		_hrff_emit_release_terminal_lease "$issue_number" "$repo_slug" "$session_key"
+		# GH#39857: the `For #N` PR may have merged before this release, so the
+		# merge-time restore saw an active claim and skipped it. Revisit before
+		# deciding to unlock so restored auto-dispatch keeps its conversation lock.
+		_hrff_revisit_merged_partial "$issue_number" "$repo_slug"
 		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
 		print_info "Preserved in-review handoff on #${issue_number} (reason: ${reason})"
-		# GH#39857: the `For #N` PR may have merged before this release, so the
-		# merge-time restore saw an active claim and skipped it. Revisit now.
-		_hrff_revisit_merged_partial "$issue_number" "$repo_slug"
 		return 0
 	fi
 

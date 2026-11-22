@@ -524,6 +524,27 @@ for ready_reason in worker_ready_missing_linkage worker_ready_missing_summary; d
 	fi
 done
 
+# A merged-partial revisit can restore dispatch during either ready handoff.
+# Use the real unlock helper to prove it observes the restored labels.
+(
+	_hrff_revisit_merged_partial() {
+		GH_ISSUE_LABELS="auto-dispatch,status:available"
+		return 0
+	}
+	for ready_reason in worker_ready_missing_linkage worker_ready_missing_summary; do
+		: >"$CALL_LOG"
+		GH_ISSUE_LABELS="status:in-review"
+		_hrff_project_post_release_state "12345" "owner/repo" "assigned-bot" "$ready_reason"
+		if grep -q 'Retaining conversation lock for auto-dispatch issue #12345' "$CALL_LOG" &&
+			! grep -q '^UNLOCK ' "$CALL_LOG"; then
+			printf 'PASS %s revisit restores dispatch before unlock decision\n' "$ready_reason"
+		else
+			printf 'FAIL %s revisit unlocked restored dispatch\n' "$ready_reason"
+			exit 1
+		fi
+	done
+)
+
 # GH#35574: a denied terminal-lease transition on the ready handoff is
 # surfaced without raw helper output and never blocks the release.
 : >"$CALL_LOG"
