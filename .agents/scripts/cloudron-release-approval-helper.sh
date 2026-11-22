@@ -1049,7 +1049,8 @@ release_merge_approved_pr() {
 release_not_routine_reason() {
 	local repo="$1" pr="$2" head="$3" output='' reason=''
 	output=$(release_policy_authorizes "$repo" "$pr" "$head" 2>&1 >/dev/null) || true
-	reason=$(printf '%s\n' "$output" | sed -n 's/.*\(NOT_ROUTINE: [^)]*\).*/\1/;t found;d;:found;p;q')
+	# GH#39837: one -e per label command; BSD sed rejects ';' after a label.
+	reason=$(printf '%s\n' "$output" | sed -n -e 's/.*\(NOT_ROUTINE: [^)]*\).*/\1/' -e 't found' -e 'd' -e ':found' -e 'p' -e 'q')
 	if [[ -z "$reason" ]]; then
 		reason="${output%%$'\n'*}"
 		reason="${reason:0:300}"
@@ -1089,7 +1090,10 @@ release_notify_unsigned() {
 	[[ "$threshold" =~ ^[0-9]{1,9}$ && $((10#$threshold)) -gt 0 ]] || return 0
 	created=$(jq -r '.created_at // empty' <<<"$request") || return 0
 	[[ -n "$created" ]] || return 0
-	created=$(date -d "$created" +%s 2>/dev/null) || return 0
+	# GH#39837: GNU date -d first, then BSD (macOS) date -j -f; GitHub
+	# timestamps are UTC ISO-8601 with a Z suffix.
+	created=$(date -u -d "$created" '+%s' 2>/dev/null ||
+		TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$created" '+%s' 2>/dev/null) || return 0
 	now=$(date +%s) || return 0
 	age=$((now - created))
 	[[ "$age" -ge $((10#$threshold)) ]] || return 0
