@@ -100,6 +100,12 @@ Unknown values fail closed. This semver-only flag also works with the
 may contain breaking changes or destructive migrations. Use
 `needs-maintainer-review` as the per-PR brake before merge/publication.
 
+**Upgrading a signed policy.** Without `--supersede`, `policy-request` refuses
+to rewrite a signed policy. Re-run it with `--supersede` (add `--dry-run` to
+preview) to remove `persistent` from the old policy, comment, close it as not
+planned, and create the replacement. Sign the new issue with the printed
+`APPROVAL_COMMAND`; until then no standing policy applies.
+
 The policy issue is a long-lived non-task record (GH#37993): `policy-request`
 creates it with `persistent` + `no-auto-dispatch`, and issue creation adds no
 `status:*` label or assignee to `persistent`, dashboard, `release-approval-required`

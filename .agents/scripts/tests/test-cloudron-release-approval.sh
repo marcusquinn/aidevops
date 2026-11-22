@@ -1705,8 +1705,12 @@ PY
 	}
 	gh_issue_edit_safe() {
 		local body=""
+		if [[ "$*" == '50 --repo owner/app --remove-label persistent' ]]; then
+			printf 'issue-edit %s\n' "$*" >>"${TEST_ROOT}/calls"
+			return 0
+		fi
 		body=$(</dev/stdin)
-		[[ "$*" == '50 --repo owner/app --body-file -' ]] || return 9
+		[[ "$*" == '50 --repo owner/app --body-file -' || "$*" == '51 --repo owner/app --body-file -' ]] || return 9
 		printf '%s\n' "$body" >"${TEST_ROOT}/policy-body"
 		printf 'issue-edit %s\n' "$*" >>"${TEST_ROOT}/calls"
 		return 0
@@ -1759,6 +1763,31 @@ PY
 	release_policy_metadata "$(<"${TEST_ROOT}/policy-body")" owner/app |
 		jq -e '.upstream_mode == "commits" and .upstream_repository == "upstream/project"' >/dev/null
 	printf 'PASS only an unsigned legacy policy can be finalized as a new commit policy for signing\n'
+	# GH#39805: a signed policy is only replaced with --supersede.
+	eval "$(declare -f gh | sed '1s/^gh/gh_policy_stub/')"
+	gh() {
+		if [[ "${1:-}" == issue && "${2:-}" == close ]]; then
+			printf 'gh %s\n' "$*" >>"${TEST_ROOT}/calls"
+			return 0
+		fi
+		gh_policy_stub "$@"
+	}
+	export POLICY_CASE=verified
+	: >"${TEST_ROOT}/calls"
+	refusal=$(release_policy_request owner/app semver '' true 2>&1) && exit 1
+	[[ "$refusal" == *'--supersede'* ]] || exit 1
+	if grep -Eq '^(create |issue-edit )|issue close' "${TEST_ROOT}/calls"; then exit 1; fi
+	: >"${TEST_ROOT}/calls"
+	dry=$(release_policy_request owner/app semver '' true true true) || exit 1
+	[[ "$dry" == *'Dry run: would remove persistent'* ]] || exit 1
+	if grep -Eq '^(create |issue-edit )|issue close' "${TEST_ROOT}/calls"; then exit 1; fi
+	: >"${TEST_ROOT}/calls"
+	superseded=$(release_policy_request owner/app semver '' true true) || exit 1
+	[[ "$superseded" == *'SUPERSEDED='* ]] || exit 1
+	grep -q '^gh issue close 50 --repo owner/app --reason not planned' "${TEST_ROOT}/calls"
+	grep -q '^create ' "${TEST_ROOT}/calls"
+	grep -q '^issue-edit 50 ' "${TEST_ROOT}/calls"
+	printf 'PASS --supersede replaces a signed policy; refusal and dry-run are non-mutating\n'
 	: >"${TEST_ROOT}/calls"
 	if release_policy_request owner/app commits '../unsafe' 2>/dev/null; then exit 1; fi
 	if grep -Eq '^(create |issue-edit )' "${TEST_ROOT}/calls"; then exit 1; fi
