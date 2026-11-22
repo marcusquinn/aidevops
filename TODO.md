@@ -2424,6 +2424,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19273 fix(runner-capability): cache readable secret checks per pulse cycle so parallel candidates stop timing out on gpg contention #auto-dispatch #bug tier:standard ref:GH#39815 assignee:marcusquinn logged:2026-11-22 started:2026-11-22 -> [todo/tasks/t19273-brief.md]
 
+- [ ] t19274 fix(tests): make test-dispatch-max-parallel.sh timing cases deterministic under parallel load #auto-dispatch #bug tier:standard ref:GH#39823 logged:2026-11-22 -> [todo/tasks/t19274-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
