@@ -2416,7 +2416,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19263 fix(tests): declare suite-timeout budgets for three suites that exceed the 240s affected-tests default #auto-dispatch #bug ref:GH#39751 pr:#39756 completed:2026-11-21
 
-- [ ] t19268 fix(full-loop): runtime-pending-notice ignores held PRs whose body was later rewritten to runtime-verified #bug ref:GH#39795
+- [x] t19268 fix(full-loop): runtime-pending-notice ignores held PRs whose body was later rewritten to runtime-verified #bug ref:GH#39795 pr:#39798 completed:2026-11-22
 
 ## In Progress
 
