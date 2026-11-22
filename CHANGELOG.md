@@ -10,6 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.263] - 2026-11-22
+
+### Added
+
+- unify standing tracker labels on FFF59D light lemon (#39819)
+
+### Changed
+
+- Documentation: Blender delegation non-Git scratch rule and native 4K vs AI upscale finding
+- Maintenance: mark t19275 complete (pr:#39833 completed:2026-11-22) (#39841)
+- Maintenance: mark t19276 complete (pr:#39836 completed:2026-11-22) (#39839)
+- Maintenance: mark t19274 complete (pr:#39829 completed:2026-11-22) (#39827)
+- Maintenance: mark t19272 complete (pr:#39821 completed:2026-11-22) (#39813)
+
+### Fixed
+
+- commit-and-pr readies a continued draft PR on worker or --ready completion
+- sync-workflows marker only for gate-admissible renders; keep anchors; refuse pin downgrade (GH#39830)
+- make unsigned-request notice portable to macOS date and sed
+- refuse runtime-pending below Critical/High runtime risk
+- make dispatch-max-parallel timing cases deterministic under load
+- admit sync-workflows PRs by exact trusted-ref re-render (GH#39793)
+- APPLIED row shows PR URL, not gh stderr hint (GH#39818) (#39824)
+- cache readable secret checks per pulse cycle
+
 ## [3.39.262] - 2026-11-22
 
 ### Changed
