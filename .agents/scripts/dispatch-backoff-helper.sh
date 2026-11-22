@@ -250,7 +250,8 @@ _db_check_resource_contention_backoff() {
 		--argjson since "$since" --argjson now "$now" '
 		[inputs | fromjson? | select(type == "object")
 			| select(.event == "terminal_blocker_captured" and .reason == "resource_contended"
-				and (.issue_number | tostring) == $issue and .repo_slug == $repo
+				and (.issue_number | tostring) == $issue
+				and (.repo_slug | strings | ascii_downcase) == ($repo | ascii_downcase)
 				and (.ts | type) == "number")
 			| .ts | select(. >= $since and . <= $now) | floor]
 		| [length, (max // 0)] | @tsv' "$blocker_log" 2>/dev/null) || return 0

@@ -1243,7 +1243,7 @@ terminal_blocker_backoff_active() {
 			| select((.body // "") | contains("aidevops:terminal-blocker-circuit") | not)]
 			| sort_by(.created_at, (comment_id // 0), .body) | last) as $retry
 		| [$timely[] | select(hold_evidence($associations; $self))
-			| select((.body // "") | contains("Terminal blocker: reason=runner_capability_unmet ") | not)
+			| select(.body // "" | test("Terminal blocker: reason=(runner_capability_unmet|resource_contended) ") | not)
 			| . as $event | select(($retry | retry_after($event)) | not)
 			| . as $comment
 			| ((.body // "") | try capture("(?m)^CLAIM_RELEASED reason=blocked runner=(?<runner>[A-Za-z0-9-]+) ") catch null) as $release
