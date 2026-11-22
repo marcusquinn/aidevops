@@ -901,8 +901,7 @@ _feedback_route_closed_issue_current_labels() {
 #######################################
 _feedback_route_closed_issue_hold_receipt() {
 	local pr_number="$1" repo_slug="$2" sha="$3"
-	# Each local is assigned before it is read.
-	local comments candidate trusted author linked_issue event event_id actor marker timeline comment_time
+	local comments='' candidate='' trusted='' author='' linked_issue='' event='' event_id='' actor='' marker='' timeline='' comment_time=''
 	comments=$(gh api "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" --paginate --slurp 2>/dev/null) || return 1
 	marker="<!-- feedback-route:closed-issue:PR${pr_number}:ISSUE"
 	# aidevops:trust-boundary: never let an older receipt override a later hold comment.
@@ -937,7 +936,7 @@ _feedback_route_closed_issue_hold_receipt() {
 # Release only a hold whose latest hold-related comment and label event agree.
 _feedback_route_release_projection_hold() {
 	local pr_number="$1" repo_slug="$2"
-	local snapshot pr_status sha labels body receipt event_id actor
+	local snapshot='' pr_status='' sha='' labels='' body='' receipt='' event_id='' actor=''
 	[[ "${DRY_RUN:-0}" != "1" ]] || return 1
 	snapshot=$(_feedback_route_pr_snapshot "$pr_number" "$repo_slug") || return 1
 	IFS=$'\t' read -r pr_status sha labels <<<"$snapshot"
@@ -1009,7 +1008,7 @@ _Closed by deterministic merge pass (t19286)._"
 # Returns: 0 when the PR was closed; 1 otherwise.
 _feedback_route_close_superseded_closed_issue_hold() {
 	local pr_number="$1" repo_slug="$2"
-	local snapshot pr_state head labels receipt linked_issue event_id actor closer body
+	local snapshot='' pr_state='' head='' labels='' receipt='' linked_issue='' event_id='' actor='' closer='' body=''
 	[[ "${DRY_RUN:-0}" != "1" ]] || return 1
 	declare -F _psh_find_merged_closer_for_closed_issue >/dev/null 2>&1 || return 1
 	declare -F _pm_pr_body_is_todo_projection >/dev/null 2>&1 || return 1
