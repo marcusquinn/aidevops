@@ -140,6 +140,25 @@ def expected_owned_lifecycle_transition:
     or . == "protected_label_removed:status:in-progress"
     or . == "protected_label_removed:status:in-review");
 
+# GH#38360: the runtime blocked exit also adds the one needs-* companion that
+# names what unblocks it (headless-runtime-failure.sh
+# _hrff_blocked_companion_label). Accept status:blocked plus at most one label
+# from the canonical companion contract ($blocked_companions, built from
+# _blocked_companion_contract); any other or additional added label stays
+# reportable, and an unavailable contract ([]) restores the strict shape.
+def blocked_exit_labels_added:
+  (.delta.labels_added // []) as $added
+  | (.after.labels // []) as $after_labels
+  | ($added - ["status:blocked"]) as $companions
+  | ($added | index("status:blocked") != null)
+  and (($added | length) == (($companions | length) + 1))
+  and (($companions | length) <= 1)
+  and (($blocked_companions | type) == "array")
+  # Scalar labels only: jq index() treats an array argument as a subsequence.
+  and all($companions[]; type == "string" and (. as $label
+    | ($blocked_companions | index($label)) != null
+    and ($after_labels | index($label)) != null));
+
 def expected_worker_blocked_exit_transition:
   comparable_state
   and .op == $issue_edit
@@ -148,7 +167,7 @@ def expected_worker_blocked_exit_transition:
   and .flags.worker_blocked_exit_verified == "v1-release-persisted"
   and .suspicious == ["protected_label_removed:status:in-progress"]
   and (.delta.labels_removed // []) == ["status:in-progress"]
-  and (.delta.labels_added // []) == ["status:blocked"]
+  and blocked_exit_labels_added
   and .delta.title_delta_pct == 0
   and .delta.body_delta_pct == 0
   and ((.before.labels // []) | index("status:in-progress") != null)

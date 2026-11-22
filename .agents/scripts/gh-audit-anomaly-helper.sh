@@ -87,6 +87,21 @@ _ga_warn() {
 	return 0
 }
 
+# GH#39853: print the canonical needs-* blocked companion labels as a JSON
+# array, read from the same contract the runtime blocked exit uses
+# (shared-gh-wrappers-status.sh _blocked_companion_contract), so the filter
+# cannot drift from its producer. Prints [] when the contract is unavailable,
+# which keeps companion-bearing blocked exits reportable (fail closed).
+_ga_blocked_companions_json() {
+	local contract=""
+	if declare -F _blocked_companion_contract >/dev/null 2>&1; then
+		contract=$(_blocked_companion_contract 2>/dev/null) || contract=""
+	fi
+	jq -cRn '[inputs | split("\t")[0] | select(test("^needs-[a-z0-9-]+$"))] | unique' <<<"$contract" 2>/dev/null ||
+		printf '[]\n'
+	return 0
+}
+
 # Read the last scanned line number from the state file.
 # Returns 0 if state doesn't exist (scan from beginning).
 _ga_read_last_line() {
@@ -399,12 +414,15 @@ _cmd_scan_collect_anomalies() {
 		fi
 		# aidevops:trust-boundary — fail closed unless each expected transition has
 		# independently meaningful end-state evidence and no extra state change.
+		local blocked_companions
+		blocked_companions="$(_ga_blocked_companions_json)"
 		if ! jq -c --arg nmr "$GH_ANOMALY_NMR_LABEL" --arg permission "$GH_ANOMALY_PERMISSION_LABEL" \
 			--arg issue_edit "issue_edit" --arg approval_script "approval-helper.sh" \
 			--arg permission_script "worker-permission-helper.sh" \
 			--arg nmr_script "pulse-nmr-approval.sh" \
 			--arg full_loop_commit_script "full-loop-helper-commit.sh" \
 			--arg full_loop_script "full-loop-helper.sh" \
+			--argjson blocked_companions "$blocked_companions" \
 			-f "${SCRIPT_DIR}/gh-audit-anomaly-filter.jq" \
 			<"$parsable_file" >"$filtered_file" 2>/dev/null; then
 			rm -f "$filtered_file" "$parsable_file"

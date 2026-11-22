@@ -791,15 +791,20 @@ BLOCKED_LOG="${TEST_ROOT}/blocked-audit.log"
 	done
 	jq -se '.[0].flags.worker_blocked_exit_verified == "v1-release-persisted" and all(.[1:4][]; .flags == {})' "$BLOCKED_LOG" >/dev/null ||
 		fail 'blocked exit provenance did not fail closed'
+	# GH#39853: the producer's real shape adds one canonical needs-* companion
+	# (GH#38360) and is excluded; a second companion stays reportable.
 	jq -c 'select(.flags.worker_blocked_exit_verified) |
 		(.caller_function="main" | .flags={}),
 		(.delta.title_delta_pct=10), (.delta.body_delta_pct=10),
-		(.delta.labels_added += ["extra-label"])' "$BLOCKED_LOG" >"${TEST_ROOT}/blocked-negatives"
+		(.delta.labels_added += ["extra-label"]),
+		(.delta.labels_added += ["needs-ai-recovery"] | .after.labels += ["needs-ai-recovery"]),
+		(.delta.labels_added += ["needs-ai-recovery", "needs-dependency"]
+			| .after.labels += ["needs-ai-recovery", "needs-dependency"])' "$BLOCKED_LOG" >"${TEST_ROOT}/blocked-negatives"
 	cat "${TEST_ROOT}/blocked-negatives" >>"$BLOCKED_LOG"
 )
 blocked_output=$(GH_AUDIT_LOG_FILE="$BLOCKED_LOG" GH_ANOMALY_STATE_FILE="${TEST_ROOT}/blocked-state.json" \
 	GH_AUDIT_QUIET=true "$HELPER" scan --all --dry-run)
-[[ "$blocked_output" == *'**Anomalies found:** 8'* ]] || fail 'blocked exact-shape filter hid a generic or mutated edit'
+[[ "$blocked_output" == *'**Anomalies found:** 9'* ]] || fail 'blocked exact-shape filter hid a generic or mutated edit'
 (
 	CLI_SCRIPT_DIR="${SCRIPT_DIR}/.."
 	# shellcheck source=../gh-write-helper.sh
