@@ -350,6 +350,16 @@ ROUTINE_META=$(jq -n --arg body "$PR_BODY" '{state:"open",draft:false,body:$body
  base:{sha:"2222222222222222222222222222222222222222",repo:{full_name:"owner/repo"}}}')
 valid_meta="$ROUTINE_META"
 expect_parity 0 'badges marker with verified scope and no anchor admitted' ''
+# The verdict binds the merge to the admitted head on both paths.
+WORKER_BRIEFED_EXPECTED_HEAD=3333333333333333333333333333333333333333 \
+	expect_parity 1 'routine verdict for a different Pulse-pinned head denied' ''
+unset FULL_LOOP_EXPECTED_PR_HEAD_SHA
+_merge_worker_briefed_gate_pinned 100 owner/repo 0
+[[ "$FULL_LOOP_EXPECTED_PR_HEAD_SHA" == "$ROUTINE_HEAD" ]]
+FULL_LOOP_EXPECTED_PR_HEAD_SHA=3333333333333333333333333333333333333333
+if _merge_worker_briefed_gate_pinned 100 owner/repo 0 2>/dev/null; then exit 1; fi
+unset FULL_LOOP_EXPECTED_PR_HEAD_SHA
+printf 'PASS routine admission publishes the admitted head as the full-loop merge pin\n'
 for mutation in '.head.repo.full_name="outsider/fork"' '.head.ref="feature/forged"' \
 	'.changed_files=100' '.changed_files=2' '.head.sha="missing"' \
 	'.labels += [{name:"hold-for-review"}]' '.draft=true' \
@@ -439,12 +449,21 @@ bash -s -- "$SCRIPT_DIR" "$TEST_ROOT" <<'RETIRE_TEST'
 	source "$1/routine-log-helper.sh"
 	TEST_ROOT="$2"
 	RETIRE_PRS='[{"body":"Ref #77"}]'
+	RETIRE_MARKED='[]'
+	RETIRE_OPEN='[{"number":77,"state":"OPEN","body":"<!-- aidevops:routine-anchor:badges-sync -->"},{"number":78,"state":"OPEN","body":"<!-- aidevops:routine-anchor:sync-workflows -->"}]'
+	RETIRE_REOPEN_FAIL=0
 	RETIRE_CALLS="$TEST_ROOT/retirement-calls"
 	: >"$RETIRE_CALLS"
 	gh() {
 		local command="$1" action="${2:-}"
 		case "$command:$action" in
-		issue:list) printf '[{"number":77,"body":"<!-- aidevops:routine-anchor:badges-sync -->"},{"number":78,"body":"<!-- aidevops:routine-anchor:sync-workflows -->"}]\n' ;;
+		issue:list)
+			if [[ "$*" == *'--label routine-anchor-retiring'* ]]; then
+				printf '%s\n' "$RETIRE_MARKED"
+			else
+				printf '%s\n' "$RETIRE_OPEN"
+			fi
+			;;
 		pr:list)
 			# Simulate a legacy writer adding Ref #77 while the close is in flight.
 			if [[ -n "${RETIRE_PRS_AFTER_CLOSE:-}" ]] && grep -q 'issue close 77' "$RETIRE_CALLS"; then
@@ -453,7 +472,12 @@ bash -s -- "$SCRIPT_DIR" "$TEST_ROOT" <<'RETIRE_TEST'
 				printf '%s\n' "$RETIRE_PRS"
 			fi
 			;;
-		issue:edit | issue:close | issue:reopen) printf '%s\n' "$*" >>"$RETIRE_CALLS" ;;
+		api:repos/owner/repo/labels/routine-anchor-retiring) ;;
+		issue:reopen)
+			printf '%s\n' "$*" >>"$RETIRE_CALLS"
+			[[ "$RETIRE_REOPEN_FAIL" == 0 ]] || return 1
+			;;
+		issue:edit | issue:close) printf '%s\n' "$*" >>"$RETIRE_CALLS" ;;
 		*) return 1 ;;
 		esac
 		return 0
@@ -467,6 +491,12 @@ bash -s -- "$SCRIPT_DIR" "$TEST_ROOT" <<'RETIRE_TEST'
 	}
 	cmd_retire_anchor badges-sync --repo owner/repo
 	[[ ! -s "$RETIRE_CALLS" ]]
+	# Every supported reference form keeps the anchor, not only `Ref #N`.
+	for body in 'For #77' 'Resolves owner/repo#77' 'see GH#77.'; do
+		RETIRE_PRS=$(jq -n --arg body "$body" '[{body:$body}]')
+		cmd_retire_anchor badges-sync --repo owner/repo
+		[[ ! -s "$RETIRE_CALLS" ]]
+	done
 	RETIRE_PRS='null'
 	if cmd_retire_anchor badges-sync --repo owner/repo; then exit 1; fi
 	[[ ! -s "$RETIRE_CALLS" ]]
@@ -475,16 +505,42 @@ bash -s -- "$SCRIPT_DIR" "$TEST_ROOT" <<'RETIRE_TEST'
 	[[ ! -s "$RETIRE_CALLS" ]]
 	RETIRE_PRS='[{"body":"Ref #777"}]'
 	cmd_retire_anchor badges-sync --repo owner/repo
+	# The marker is recorded before the first destructive step and cleared last.
+	[[ "$(sed -n '1p' "$RETIRE_CALLS")" == *'issue edit 77 --repo owner/repo --add-label routine-anchor-retiring'* ]]
 	grep -q 'issue edit 77 .*--remove-label persistent' "$RETIRE_CALLS"
 	grep -q 'issue close 77 .*--reason not planned' "$RETIRE_CALLS"
+	[[ "$(sed -n '$p' "$RETIRE_CALLS")" == *'issue edit 77 --repo owner/repo --remove-label routine-anchor-retiring'* ]]
 	if grep -q 'issue close 78' "$RETIRE_CALLS"; then exit 1; fi
 	if grep -q 'issue reopen' "$RETIRE_CALLS"; then exit 1; fi
 	if cmd_retire_anchor sync-workflows --repo owner/repo; then exit 1; fi
 	printf 'PASS retirement keeps referenced anchor, retires unreferenced badge anchor only\n'
 	: >"$RETIRE_CALLS"
-	RETIRE_PRS_AFTER_CLOSE='[{"body":"Ref #77"}]'
+	RETIRE_PRS_AFTER_CLOSE='[{"body":"For #77"}]'
 	cmd_retire_anchor badges-sync --repo owner/repo 2>/dev/null
 	grep -q 'issue reopen 77 --repo owner/repo' "$RETIRE_CALLS"
 	grep -q 'issue edit 77 .*--add-label persistent' "$RETIRE_CALLS"
+	[[ "$(sed -n '$p' "$RETIRE_CALLS")" == *'--remove-label routine-anchor-retiring'* ]]
 	printf 'PASS reference added during close reopens the anchor with persistent restored\n'
+	# A failed reopen leaves the marker; the next run restores the closed anchor.
+	: >"$RETIRE_CALLS"
+	RETIRE_REOPEN_FAIL=1
+	if cmd_retire_anchor badges-sync --repo owner/repo 2>/dev/null; then exit 1; fi
+	if grep -q -- '--remove-label routine-anchor-retiring' "$RETIRE_CALLS"; then exit 1; fi
+	: >"$RETIRE_CALLS"
+	RETIRE_REOPEN_FAIL=0
+	unset RETIRE_PRS_AFTER_CLOSE
+	RETIRE_PRS='[{"body":"For #77"}]'
+	RETIRE_MARKED='[{"number":77,"state":"CLOSED","body":"<!-- aidevops:routine-anchor:badges-sync -->"}]'
+	RETIRE_OPEN=$(jq '[.[] | select(.number != 77)]' <<<"$RETIRE_OPEN")
+	cmd_retire_anchor badges-sync --repo owner/repo 2>/dev/null
+	grep -q 'issue reopen 77 --repo owner/repo' "$RETIRE_CALLS"
+	grep -q 'issue edit 77 .*--add-label persistent' "$RETIRE_CALLS"
+	[[ "$(sed -n '$p' "$RETIRE_CALLS")" == *'--remove-label routine-anchor-retiring'* ]]
+	if grep -q 'issue close' "$RETIRE_CALLS"; then exit 1; fi
+	# A marked, closed and still unreferenced anchor stays retired.
+	: >"$RETIRE_CALLS"
+	RETIRE_PRS='[]'
+	cmd_retire_anchor badges-sync --repo owner/repo
+	[[ "$(cat "$RETIRE_CALLS")" == 'issue edit 77 --repo owner/repo --remove-label routine-anchor-retiring' ]]
+	printf 'PASS failed restoration stays marked and is retried while the anchor is closed\n'
 RETIRE_TEST

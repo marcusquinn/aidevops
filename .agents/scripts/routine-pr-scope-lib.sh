@@ -97,6 +97,11 @@ _routine_pr_scope_check() {
 	case "$permission" in write | maintain | admin) ;; *) return 1 ;; esac
 	head=$(jq -r .head.sha <<<"$meta")
 	base=$(jq -r .base.sha <<<"$meta")
+	# Pulse re-runs this verdict pinned to the head it will merge; a verdict
+	# for any other head (even one that later reverts) is not admission.
+	if [[ -n "${WORKER_BRIEFED_EXPECTED_HEAD:-}" && "$head" != "$WORKER_BRIEFED_EXPECTED_HEAD" ]]; then
+		return 1
+	fi
 	compare=$(_routine_scope_compare "$repo" "$base" "$head" "$(jq .changed_files <<<"$meta")") || return 1
 	merge_base=$(jq -r .merge_base_commit.sha <<<"$compare")
 	# Materialise the listing first: a failed producer must not look like no files.
@@ -109,9 +114,15 @@ _routine_pr_scope_check() {
 		blob=$(_routine_tree_blob "$tree" "$path") || return 1
 		_routine_scope_content "$repo" "$path" "$status" "$blob" "$merge_base" || return 1
 	done <<<"$listing"
-	# Pin the verdict to the observed head/body; a racing push is not admitted.
+	# Refuse if metadata moved while evidence was read; the evidence itself is
+	# already pinned to $head, so this guards body/labels/state.
 	fresh=$(gh api "repos/$repo/pulls/$pr_number") || return 1
 	[[ "$(jq -Sc '{head:.head.sha,base:.base.sha,body,labels,state,draft,changed_files}' <<<"$fresh")" == \
 		"$(jq -Sc '{head:.head.sha,base:.base.sha,body,labels,state,draft,changed_files}' <<<"$meta")" ]] || return 1
+	# Bind the merge to the admitted head: full-loop pins this SHA as
+	# FULL_LOOP_EXPECTED_PR_HEAD_SHA, so the transport refuses any other head.
+	if [[ -n "${WORKER_BRIEFED_PLANNING_HEAD_FILE:-}" ]]; then
+		printf '%s\n' "$head" >"$WORKER_BRIEFED_PLANNING_HEAD_FILE" || return 1
+	fi
 	return 0
 }

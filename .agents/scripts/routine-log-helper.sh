@@ -46,6 +46,9 @@ source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
 CRON_BASE="${HOME}/.aidevops/.agent-workspace/cron"
 REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 PERIOD_DAYS=7
+# Set before an anchor is closed; cleared only once retirement or restoration
+# completes, so an interrupted step is retried in any issue state.
+ANCHOR_RETIRING_LABEL="routine-anchor-retiring"
 
 # =============================================================================
 # Logging
@@ -1066,8 +1069,16 @@ _parse_create_issue_args() {
 # Existing label metadata is left unchanged. API/creation failures fail closed.
 _ensure_tracking_labels() {
 	local repo_slug="$1"
+	_ensure_labels "$repo_slug" routines routine-tracking persistent no-auto-dispatch
+	return $?
+}
+
+# _ensure_labels <repo> <label>... — create any missing label; fail closed.
+_ensure_labels() {
+	local repo_slug="$1"
 	local label=""
-	for label in routines routine-tracking persistent no-auto-dispatch; do
+	shift
+	for label in "$@"; do
 		if ! gh api "repos/${repo_slug}/labels/${label}" --silent 2>/dev/null; then
 			if ! gh label create "$label" --repo "$repo_slug" --color BFD4F2 \
 				--description "Routine tracking lifecycle: ${label}" >/dev/null 2>&1; then
@@ -1295,54 +1306,105 @@ cmd_ensure_anchor() {
 }
 
 # _anchor_open_pr_reference <repo> <number> — read a fresh, complete open-PR
-# list. Returns 0 when any open PR references anchor #<number>, 1 when none
-# provably does, and 2 when the evidence is unavailable or incomplete.
+# list. Returns 0 when any open PR body mentions #<number> in any form (Ref,
+# For, closing keywords, GH#, owner/repo#), 1 when none provably does, and 2
+# when the evidence is unavailable or incomplete. Over-matching only keeps an
+# anchor open; the numeric boundary stops #770 from matching #77.
 _anchor_open_pr_reference() {
 	local repo="$1" number="$2" prs="" rc=0
 	prs=$(gh pr list --repo "$repo" --state open --limit 1000 --json body) || return 2
 	jq -e 'type == "array" and length < 1000 and all(.[]; .body | type == "string")' <<<"$prs" >/dev/null || return 2
-	# Conservatively keep any prose reference too; never misread #12 as #123.
-	jq -e --arg n "$number" 'any(.[]; .body | test("(?i)\\bref[ :]+#" + $n + "([^0-9]|$)"))' <<<"$prs" >/dev/null || rc=$?
+	jq -e --arg n "$number" 'any(.[]; .body | test("#" + $n + "([^0-9]|$)"))' <<<"$prs" >/dev/null || rc=$?
 	case "$rc" in 0 | 1) return "$rc" ;; esac
 	return 2
 }
 
-# Retire only the built-in routine covered by verified diff scope. References
-# are read immediately before each close, never from an earlier snapshot, and
-# re-read after it: a legacy runner that adds `Ref #N` inside that window gets
-# its anchor reopened, so an open PR never keeps referencing a closed anchor.
-cmd_retire_anchor() {
-	local key="${1:-}"
-	[[ "$key" == "badges-sync" ]] || return 1
-	_parse_anchor_args "$@" --title retirement || return 1
-	local repo="$_ANCHOR_REPO" issues="" numbers="" number="" ref_rc=0
-	local marker="<!-- aidevops:routine-anchor:${key} -->"
-	issues=$(gh issue list --repo "$repo" --state open --label routine-tracking \
-		--limit 1000 --json number,body) || return 1
-	jq -e 'type == "array" and length < 1000 and all(.[]; (.number | type == "number") and (.body | type == "string"))' <<<"$issues" >/dev/null || return 1
-	numbers=$(jq -r --arg marker "$marker" '.[] | select(.body | contains($marker)) | .number' <<<"$issues") || return 1
-	[[ -n "$numbers" ]] || return 0
-	if ! declare -F gh_issue_comment >/dev/null; then
-		# shellcheck source=shared-gh-wrappers.sh
-		source "$SCRIPT_DIR/shared-gh-wrappers.sh" || return 1
+# _anchor_restore <repo> <number> <is_open> — reopen a closed anchor and
+# restore `persistent`; only then clear the retiring marker, so any failed step
+# is retried by the next run.
+_anchor_restore() {
+	local repo="$1" number="$2" is_open="$3"
+	if [[ "$is_open" != 1 ]]; then
+		gh issue reopen "$number" --repo "$repo" || return 1
 	fi
-	while IFS= read -r number; do
-		_is_valid_issue_number "$number" || return 1
-		ref_rc=0
-		_anchor_open_pr_reference "$repo" "$number" || ref_rc=$?
-		case "$ref_rc" in 0) continue ;; 1) ;; *) return 1 ;; esac
+	gh issue edit "$number" --repo "$repo" --add-label persistent || return 1
+	gh issue edit "$number" --repo "$repo" --remove-label "$ANCHOR_RETIRING_LABEL" || return 1
+	_log_warn "Restored routine anchor #${number} in ${repo}: open PR reference not ruled out"
+	return 0
+}
+
+# _anchor_retire_one <repo> <number> <is_open> <marked> — advance one anchor.
+# References are read immediately before each close and re-read after it: a
+# legacy runner that adds `Ref #N` inside that window gets its anchor restored.
+_anchor_retire_one() {
+	local repo="$1" number="$2" is_open="$3" marked="$4" ref_rc=0
+	_anchor_open_pr_reference "$repo" "$number" || ref_rc=$?
+	case "$ref_rc" in
+	0)
+		# Referenced: keep it, finishing any interrupted retirement's restore.
+		[[ "$marked" == 1 ]] || return 0
+		_anchor_restore "$repo" "$number" "$is_open"
+		return $?
+		;;
+	1) ;;
+	*) return 1 ;;
+	esac
+	if [[ "$is_open" == 1 ]]; then
+		# Record pending restoration before the first destructive step.
+		if [[ "$marked" != 1 ]]; then
+			_ensure_labels "$repo" "$ANCHOR_RETIRING_LABEL" || return 1
+			gh issue edit "$number" --repo "$repo" --add-label "$ANCHOR_RETIRING_LABEL" || return 1
+		fi
 		printf '%s\n' 'Routine PRs are now admitted by verified diff scope; this anchor is no longer needed' |
 			gh_issue_comment "$number" --repo "$repo" --body-file - || return 1
 		gh issue edit "$number" --repo "$repo" --remove-label persistent || return 1
 		gh issue close "$number" --repo "$repo" --reason 'not planned' || return 1
 		ref_rc=0
 		_anchor_open_pr_reference "$repo" "$number" || ref_rc=$?
-		[[ "$ref_rc" -ne 1 ]] || continue
-		# Referenced or unverifiable after closing: restore and retry next run.
-		gh issue reopen "$number" --repo "$repo" || return 1
-		gh issue edit "$number" --repo "$repo" --add-label persistent || return 1
-		_log_warn "Reopened routine anchor #${number} in ${repo}: open PR reference not ruled out"
-	done <<<"$numbers"
+		if [[ "$ref_rc" -ne 1 ]]; then
+			_anchor_restore "$repo" "$number" 0
+			return $?
+		fi
+	elif [[ "$marked" != 1 ]]; then
+		return 0
+	fi
+	# Closed and provably unreferenced: retirement is complete.
+	gh issue edit "$number" --repo "$repo" --remove-label "$ANCHOR_RETIRING_LABEL" || return 1
+	return 0
+}
+
+# Retire only the built-in routine covered by verified diff scope. Open anchors
+# and marked anchors in any state are advanced, so an anchor whose restoration
+# failed after closing is never stranded.
+cmd_retire_anchor() {
+	local key="${1:-}"
+	[[ "$key" == "badges-sync" ]] || return 1
+	_parse_anchor_args "$@" --title retirement || return 1
+	local repo="$_ANCHOR_REPO" open="" marked="" rows="" number="" is_open="" flag=""
+	local marker="<!-- aidevops:routine-anchor:${key} -->"
+	local complete='type == "array" and length < 1000 and all(.[]; (.number | type == "number") and ([.body, .state] | all(type == "string")))'
+	open=$(gh issue list --repo "$repo" --state open --label routine-tracking \
+		--limit 1000 --json number,body,state) || return 1
+	marked=$(gh issue list --repo "$repo" --state all --label routine-tracking \
+		--label "$ANCHOR_RETIRING_LABEL" --limit 1000 --json number,body,state) || return 1
+	jq -e "$complete" <<<"$open" >/dev/null || return 1
+	jq -e "$complete" <<<"$marked" >/dev/null || return 1
+	# Read both lists from stdin (not argv) so large bodies cannot hit ARG_MAX.
+	# unique_by keeps the first entry, so a marked anchor's own state wins.
+	rows=$(printf '%s\n%s\n' "$open" "$marked" | jq -rs --arg marker "$marker" '
+		(.[1] | map(.number)) as $marked |
+		(.[1] + .[0]) | unique_by(.number) | .[] | select(.body | contains($marker)) |
+		.number as $n | [$n, (if .state == "OPEN" then 1 else 0 end),
+		 (if any($marked[]; . == $n) then 1 else 0 end)] | @tsv') || return 1
+	[[ -n "$rows" ]] || return 0
+	if ! declare -F gh_issue_comment >/dev/null; then
+		# shellcheck source=shared-gh-wrappers.sh
+		source "$SCRIPT_DIR/shared-gh-wrappers.sh" || return 1
+	fi
+	while IFS=$'\t' read -r number is_open flag; do
+		_is_valid_issue_number "$number" || return 1
+		_anchor_retire_one "$repo" "$number" "$is_open" "$flag" || return 1
+	done <<<"$rows"
 	return 0
 }
 

@@ -233,11 +233,16 @@ must touch only declared outputs. README edits are confined byte-for-byte to
 the badge block; the metrics workflow must equal the canonical rendered caller
 and pin a framework commit reachable from main. Missing evidence, API errors
 and full/truncated file pages fail closed. CI, review and hold gates still apply.
+The verdict is bound to the head it checked: Pulse re-runs it pinned to the head
+it merges, and full-loop pins the admitted head for the merge transport.
 
 Each badge sync run calls `routine-log-helper.sh retire-anchor badges-sync
---repo SLUG`. It removes `persistent` and closes an unreferenced legacy anchor
-as not planned; an open PR's `Ref #N` keeps it open until a later run. Legacy PRs
-still use the existing linked-issue trust route unchanged.
+--repo SLUG`. It marks an unreferenced legacy anchor `routine-anchor-retiring`,
+removes `persistent` and closes it as not planned. Any open PR body mentioning
+`#N` (`Ref`, `For`, closing keywords) keeps it open. A reference that appears
+during the close reopens it with `persistent`; the marker is cleared only after
+retirement or restoration completes, so a failed step is retried in any state.
+Legacy PRs still use the existing linked-issue trust route unchanged.
 
 Workflow sync retains `ensure-anchor` / `ensure-pr-anchor` until an exact,
 trusted-ref re-render policy is implemented. Maintainer-defined agent routines

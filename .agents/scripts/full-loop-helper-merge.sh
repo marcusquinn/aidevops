@@ -1728,8 +1728,9 @@ _merge_record_post_merge_audits() {
 	return 0
 }
 
-# GH#36922: a planning-checkpoint verdict is valid for one head only; pin it
-# via FULL_LOOP_EXPECTED_PR_HEAD_SHA so a later push is refused at merge.
+# GH#36922/GH#39785: planning-checkpoint and routine-scope verdicts are valid
+# for one head only; pin it via FULL_LOOP_EXPECTED_PR_HEAD_SHA so a later push
+# is refused at merge.
 _merge_worker_briefed_gate_pinned() {
 	local pr_number="$1" repo="$2" has_admin="$3"
 	local head_file="" pinned_head=""
@@ -1743,7 +1744,7 @@ _merge_worker_briefed_gate_pinned() {
 	rm -f "$head_file"
 	[[ -n "$pinned_head" ]] || return 0
 	if [[ -n "${FULL_LOOP_EXPECTED_PR_HEAD_SHA:-}" && "$FULL_LOOP_EXPECTED_PR_HEAD_SHA" != "$pinned_head" ]]; then
-		print_error "Merge blocked by GH#36922: PR head moved since planning-checkpoint check"
+		print_error "Merge blocked by GH#36922: PR head moved since head-pinned trust check"
 		return 1
 	fi
 	FULL_LOOP_EXPECTED_PR_HEAD_SHA="$pinned_head"
