@@ -776,8 +776,10 @@ _ddpr_classify_sibling_drafts() {
 		--arg unlinked "unlinked" \
 		"${_PR_CHECKPOINT_FOR_LINK_JQ_DEFS}"'
 		def names: [.labels[]?.name];
-		def dedup_protected: names | any(
-			. == "origin:interactive" or . == "hold-for-review" or
+		# GH#39908: a pulse-handed-over interactive draft (origin:worker-takeover)
+		# is a worker checkpoint, matching checkpoint_protected.
+		def dedup_protected: checkpoint_interactive_handed_over as $handed_over | names | any(
+			(. == "origin:interactive" and ($handed_over | not)) or . == "hold-for-review" or
 			. == "no-auto-dispatch" or . == "needs-maintainer-review"
 		);
 		def worker_owned: names | any(. == "origin:worker" or . == "origin:worker-takeover");

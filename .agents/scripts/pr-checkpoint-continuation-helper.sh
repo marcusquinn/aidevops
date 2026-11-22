@@ -97,6 +97,8 @@ _PCC_ATTENTION_REARM_SECONDS=$((10#$_PCC_ATTENTION_REARM_SECONDS))
 # Doubling cap; pulse-dispatch-lib.sh _dispatch_draft_hint_boundary mirrors it.
 _PCC_ATTENTION_REARM_MAX_DOUBLINGS=6
 _PCC_CAPABILITY_RELEASE_LINE='Terminal blocker: reason=runner_capability_unmet '
+# GH#39908: pulse-merge-conflict.sh _interactive_pr_trigger_handover marker.
+_PCC_INTERACTIVE_HANDOVER_MARKER='<!-- pulse-interactive-handover -->'
 # GH#36186: attention detail when an approved revision can no longer continue.
 # shellcheck disable=SC2016 # Markdown backticks, not command substitution.
 _PCC_APPROVAL_VALIDATION_NOTE='A trusted `CHECKPOINT_CONTINUATION_APPROVED` decision exists, but the current target could not be validated. This does not prove that the approval was consumed: approval validation also requires live metadata and permission checks. Retry when those checks are available before requesting a new revision approval. The legacy continuation route stays disabled while the trusted approval is unconsumed and unexpired (24 hours after it was posted); the re-arm window does not bypass revision validation (see `reference/checkpoint-revision-recovery.md`).'
@@ -1878,6 +1880,70 @@ _pcc_dispatch_expired_recovery_draft() {
 }
 
 #######################################
+# Print the id of the trusted, unedited pulse handover comment that is current
+# first-admission evidence for a handed-over interactive draft (GH#39908):
+# the newest such PR comment is no older than the head commit (a human push
+# after handover is a reclaim, not evidence) and no trusted coordination event
+# on the issue is newer than it. A continuation's own DISPATCH_CLAIM therefore
+# consumes the evidence, so this admits at most one launch per handover; later
+# attempts use the ordinary stall-release, fuse and attention logic.
+# Args: $1=PR comments JSON, $2=issue comments JSON, $3=head commit ISO date,
+#       $4=trusted logins JSON
+# Output: handover comment id
+# Returns: 0 when the handover is current evidence, 1 otherwise
+#######################################
+_pcc_interactive_handover_evidence() {
+	local pr_comments="$1" issue_comments="$2" head_date="$3"
+	local trusted_logins="${4:-[]}"
+	# Comment snapshots travel on stdin; argv cannot carry long threads.
+	printf '%s\n%s\n' "$pr_comments" "$issue_comments" | jq -ser \
+		--arg head_date "$head_date" --argjson trusted_logins "$trusted_logins" \
+		--arg marker "$_PCC_INTERACTIVE_HANDOVER_MARKER" "${_PCC_JQ_RELEASE_DEFS}"'
+		(.[0] | flatten) as $pr_comments | (.[1] | flatten) as $issue_comments
+		| ($head_date | epoch) as $head_epoch
+		| ([$pr_comments[] | select(trusted_event and ((.body // "") | startswith($marker)))]
+			| sort_by(.id) | last) as $handover
+		| select($handover != null and ($handover | unedited))
+		| (($handover.created_at // "") | (try epoch catch null)) as $handover_epoch
+		| select($handover_epoch != null and $handover_epoch >= $head_epoch)
+		| select([$issue_comments[] | select(trusted_event and coordination)
+			| ((.created_at // "") | (try epoch catch null)) | select(. == null or . >= $handover_epoch)]
+			| length == 0)
+		| $handover.id | tostring
+	'
+	return $?
+}
+
+#######################################
+# Continue a stale origin:interactive draft the pulse handed to the worker
+# pipeline (GH#39158). The handover applies origin:worker-takeover and links a
+# tracking issue, but a human draft has no worker claim, lease or release, so
+# neither the stall-release nor the expired-claim route could ever admit it
+# and the PR stayed parked (GH#39908). Requires both provenance labels and
+# current handover evidence; _pcc_dispatch re-verifies the exact draft,
+# protective labels, released issue state and claims before launch.
+# Args: repo, repo path, issue, PR, authenticated login, PR author, PR JSON,
+#       issue comments JSON, head commit ISO date, trusted logins JSON
+# Returns: 0 dispatched/deduplicated, 1 dispatch failed, 3 not applicable
+#######################################
+_pcc_dispatch_interactive_handover_draft() {
+	local repo="$1" path="$2" issue="$3" pr="$4" login="$5" runner="$6"
+	local pr_json="$7" comments="$8" head_date="$9"
+	local trusted_logins="${10:-[]}" pr_comments="" handover_id=""
+	jq -e '[.labels[]? | (.name? // .) | strings] as $names |
+		($names | index("origin:interactive")) != null and ($names | index("origin:worker-takeover")) != null' \
+		<<<"$pr_json" >/dev/null 2>&1 || return 3
+	pr_comments=$(_pcc_issue_comments "$repo" "$pr") || return 3
+	handover_id=$(_pcc_interactive_handover_evidence "$pr_comments" "$comments" "$head_date" "$trusted_logins") || return 3
+	[[ "$handover_id" =~ ^[1-9][0-9]*$ ]] || return 3
+	printf 'STALE_PR_CONTINUATION: issue #%s in %s — PR #%s preserved for exact-head continuation assignee=%s release=none reason=interactive_handover handover_comment=%s\n' \
+		"$issue" "$repo" "$pr" "$runner" "$handover_id"
+	PCC_ALLOW_RELEASED=true
+	_pcc_dispatch "$repo" "$path" "$pr" "$issue" "$runner" "$login" || return 1
+	return 0
+}
+
+#######################################
 # Read a PR's commits through REST, which supplies parent counts that the
 # gh pr view commit projection omits. Callers treat failure as no metadata,
 # so no release is credited as progress.
@@ -1951,6 +2017,10 @@ _pcc_dispatch_stalled() {
 		"${_PCC_STALL_FUSE_MARKER} pr=${pr} -->" "$commits" "$(_pcc_session_key "$repo" "$pr")") || {
 		local expired_rc=0
 		_pcc_dispatch_expired_recovery_draft "$repo" "$path" "$issue" "$pr" "$login" \
+			"$runner" "$pr_json" "$comments" "$head_date" "$trusted_logins" || expired_rc=$?
+		[[ "$expired_rc" -eq 3 ]] || return "$expired_rc"
+		expired_rc=0
+		_pcc_dispatch_interactive_handover_draft "$repo" "$path" "$issue" "$pr" "$login" \
 			"$runner" "$pr_json" "$comments" "$head_date" "$trusted_logins" || expired_rc=$?
 		[[ "$expired_rc" -eq 3 ]] || return "$expired_rc"
 		printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #%s in %s has no current stall release issue=#%s\n' "$pr" "$repo" "$issue"

@@ -1039,7 +1039,8 @@ _route_pr_has_linked_issue() {
 
 # Recover a tracking issue only for an aged, trusted interactive PR. The issue
 # stays non-dispatchable until its closing link is persisted and the normal
-# handover/claim gates have passed. A deterministic title + marker recovers a
+# handover/claim gates have passed; draft handover then releases it
+# (_interactive_handover_release_tracking_issue, GH#39908). A deterministic title + marker recovers a
 # successful create followed by a failed PR edit without creating another issue.
 _recover_interactive_pr_work_issue() {
 	local pr_number="$1"
@@ -1088,7 +1089,7 @@ _recover_interactive_pr_work_issue() {
 			# shellcheck disable=SC2016 # Markdown code spans, not shell substitution
 			while IFS= read -r existing; do printf -- '- `%s`\n' "$existing"; done <<<"$files"
 			printf '\n### Verification\n\nUse the existing checks and verification documented on the source PR; inspect its exact-head CI and review feedback before repair. Do not bypass approval or security gates.\n'
-			printf '\n### Recovery state\n\nInitially blocked pending verified PR linkage. Pulse owns linkage recovery; after verification, existing feedback routing transitions this issue to available when repair is needed. No independent dispatch before that transition.\n'
+			printf '\n### Recovery state\n\nInitially blocked pending verified PR linkage. Pulse owns linkage recovery; once the closing link is verified and the stale draft is handed over (origin:worker-takeover), the pulse releases this issue to available + auto-dispatch for one exact-head continuation of the source PR (GH#39908). No independent dispatch before that transition.\n'
 		} >"$body_file"
 		local create_rc=0
 		created=$(gh_create_issue --repo "$repo_slug" --title "$title" --label origin:interactive --label status:blocked --body-file "$body_file") || create_rc=$?
