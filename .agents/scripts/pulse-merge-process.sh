@@ -1046,38 +1046,43 @@ _recover_interactive_pr_work_issue() {
 	local repo_slug="$2"
 	local meta="" author="" title="Track interactive PR #${pr_number}" matches="" issue="" issue_meta=""
 	local marker="<!-- pulse-interactive-tracking:${pr_number} -->"
-	local body_file="" files="" created="" existing="" live_meta=""
-	[[ "${DRY_RUN:-0}" != "1" ]] || return 1
-	[[ "${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-enforce}" == "enforce" ]] || return 1
-	meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,author,labels,body,url,headRefOid) || return 1
-	printf '%s' "$meta" | jq -e '.state == "OPEN" and
-		([.labels[].name] | index("origin:interactive") != null and
-		any(. == "no-takeover" or . == "needs-maintainer-review" or
-		. == "external-contributor" or . == "hold-for-review") == false)' >/dev/null || return 1
+	local body_file="" files="" created="" existing="" live_meta="" refusal=""
+	[[ "${DRY_RUN:-0}" != "1" ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" dry-run; return 1; }
+	[[ "${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-enforce}" == "enforce" ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" mode-not-enforce; return 1; }
+	meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,author,labels,body,url,headRefOid) || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" pr-metadata-unavailable; return 1; }
+	refusal=$(printf '%s' "$meta" | jq -r 'if .state != "OPEN" then "pr-not-open"
+		elif ([.labels[].name] | index("origin:interactive")) == null then "origin-interactive-missing"
+		else [.labels[].name | select(. == "no-takeover" or . == "needs-maintainer-review" or
+		. == "external-contributor" or . == "hold-for-review")][0] // empty end') || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" pr-metadata-invalid; return 1; }
+	[[ -z "$refusal" ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" "$refusal"; return 1; }
 	#aidevops:trust-boundary — labels alone cannot authorize creation or takeover.
 	author=$(printf '%s' "$meta" | jq -r '.author.login // empty')
-	[[ -n "$author" ]] && _is_collaborator_author "$author" "$repo_slug" || return 1
-	_interactive_pr_is_stale "$pr_number" "$repo_slug" "" "" "" 1 || return 1
-	# Never replace a non-closing For/Ref work link with a new tracking issue.
-	existing=$(_extract_pr_work_issue "$pr_number" "$repo_slug") || return 1
+	[[ -n "$author" ]] && _is_collaborator_author "$author" "$repo_slug" || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" author-not-collaborator; return 1; }
+	_interactive_pr_is_stale "$pr_number" "$repo_slug" "" "" "" 1 || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" "${_INTERACTIVE_PR_STALE_REFUSAL:-age-or-claim-not-eligible}"; return 1; }
+	# For/Ref and legacy task-title numbers can name PRs or closed issues.
+	# Only an open issue is reusable; unreadable metadata must fail closed.
+	existing=$(_extract_pr_work_issue "$pr_number" "$repo_slug") || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" work-link-unavailable-or-ambiguous; return 1; }
 	if [[ -n "$existing" ]]; then
-		printf '%s' "$existing"
-		return 0
+		issue_meta=$(gh api "repos/${repo_slug}/issues/${existing}") || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" work-issue-metadata-unavailable; return 1; }
+		if printf '%s' "$issue_meta" | jq -e 'type == ({} | type) and .pull_request == null and .state == "open"' >/dev/null; then
+			issue="$existing"
+		fi
 	fi
-	matches=$(gh api -X GET search/issues -f q="repo:${repo_slug} is:issue in:title \"${title}\"") || return 1
-	printf '%s' "$matches" | jq -e 'select(.incomplete_results == false) | .items | arrays' >/dev/null || return 1
-	issue=$(printf '%s' "$matches" | jq -r --arg title "$title" '.items[] | select(.title == $title) | .number') || return 1
+	if [[ -z "$issue" ]]; then
+		matches=$(gh api -X GET search/issues -f q="repo:${repo_slug} is:issue in:title \"${title}\"") || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-search-failed; return 1; }
+		printf '%s' "$matches" | jq -e 'select(.incomplete_results == false) | .items | arrays' >/dev/null || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-search-incomplete; return 1; }
+		issue=$(printf '%s' "$matches" | jq -r --arg title "$title" '.items[] | select(.title == $title) | .number') || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-search-invalid; return 1; }
 	# Ambiguous search results must never choose somebody else's issue.
-	[[ "$issue" != *$'\n'* ]] || return 1
+	[[ "$issue" != *$'\n'* ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-search-ambiguous; return 1; }
 	if [[ -n "$issue" ]]; then
-		issue_meta=$(gh api "repos/${repo_slug}/issues/${issue}") || return 1
-		printf '%s' "$issue_meta" | jq -e --arg marker "$marker" '.state == "open" and (.body | contains($marker))' >/dev/null || return 1
+		issue_meta=$(gh api "repos/${repo_slug}/issues/${issue}") || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-metadata-unavailable; return 1; }
+		printf '%s' "$issue_meta" | jq -e --arg marker "$marker" '.pull_request == null and .state == "open" and (.body | contains($marker))' >/dev/null || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-issue-not-open-or-marker-mismatch; return 1; }
 		author=$(printf '%s' "$issue_meta" | jq -r '.user.login // empty')
-		_is_collaborator_author "$author" "$repo_slug" || return 1
+		_is_collaborator_author "$author" "$repo_slug" || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-author-not-collaborator; return 1; }
 	else
-		files=$(gh api --paginate "repos/${repo_slug}/pulls/${pr_number}/files" --jq '.[].filename') || return 1
-		[[ -n "$files" ]] || return 1
-		body_file=$(mktemp) || return 1
+		files=$(gh api --paginate "repos/${repo_slug}/pulls/${pr_number}/files" --jq '.[].filename') || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" pr-files-unavailable; return 1; }
+		[[ -n "$files" ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" pr-files-empty; return 1; }
+		body_file=$(mktemp) || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-tempfile-failed; return 1; }
 		{
 			printf '%s\n\n## Outcome\n\nComplete existing interactive PR %s through its existing CI, review and merge gates. Preserve its commits; repair only evidenced failures.\n\n### Files Scope\n' "$marker" "$(printf '%s' "$meta" | jq -r '.url')"
 			# shellcheck disable=SC2016 # Markdown code spans, not shell substitution
@@ -1088,21 +1093,22 @@ _recover_interactive_pr_work_issue() {
 		local create_rc=0
 		created=$(gh_create_issue --repo "$repo_slug" --title "$title" --label origin:interactive --label status:blocked --body-file "$body_file") || create_rc=$?
 		rm -f "$body_file"
-		[[ "$create_rc" -eq 0 ]] || return 1
+		[[ "$create_rc" -eq 0 ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-create-failed; return 1; }
 		issue="${created##*/}"
 	fi
-	[[ "$issue" =~ ^[0-9]+$ ]] || return 1
+	fi
+	[[ "$issue" =~ ^[0-9]+$ ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-number-invalid; return 1; }
 	# Do not overwrite concurrent body edits, new commits or newly applied holds.
-	live_meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,author,labels,body,url,headRefOid) || return 1
-	[[ "$(printf '%s' "$meta" | jq -Sc .)" == "$(printf '%s' "$live_meta" | jq -Sc .)" ]] || return 1
-	body_file=$(mktemp) || return 1
+	live_meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,author,labels,body,url,headRefOid) || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" pr-recheck-unavailable; return 1; }
+	[[ "$(printf '%s' "$meta" | jq -Sc .)" == "$(printf '%s' "$live_meta" | jq -Sc .)" ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" pr-changed-during-recovery; return 1; }
+	body_file=$(mktemp) || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" linkage-tempfile-failed; return 1; }
 	printf '%s\n\nResolves #%s\n' "$(printf '%s' "$meta" | jq -r '.body // ""')" "$issue" >"$body_file"
 	local edit_rc=0
 	gh_pr_edit_safe "$pr_number" --repo "$repo_slug" --body-file "$body_file" >/dev/null || edit_rc=$?
 	rm -f "$body_file"
-	[[ "$edit_rc" -eq 0 ]] || return 1
-	existing=$(_extract_linked_issue "$pr_number" "$repo_slug") || return 1
-	[[ "$existing" == "$issue" ]] || return 1
+	[[ "$edit_rc" -eq 0 ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" linkage-edit-failed; return 1; }
+	existing=$(_extract_linked_issue "$pr_number" "$repo_slug") || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" linkage-read-failed; return 1; }
+	[[ "$existing" == "$issue" ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" linkage-not-confirmed; return 1; }
 	printf '%s' "$issue"
 	return 0
 }

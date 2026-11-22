@@ -422,17 +422,23 @@ _interactive_pr_is_stale() {
 	local allow_orphan="${6:-0}"
 	local mode="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-enforce}"
 	_INTERACTIVE_PR_IDLE_SESSION_EVIDENCE=""
+	# Diagnostic only: callers may name the precise failed stage without
+	# repeating API requests. This value never authorizes a handover.
+	_INTERACTIVE_PR_STALE_REFUSAL="handover-mode-off"
 	[[ "$mode" == "off" ]] && return 1
+	_INTERACTIVE_PR_STALE_REFUSAL="invalid-pr-identity"
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 1
 
 	# Fetch PR metadata once. updatedAt can prove staleness without an extra
 	# commit lookup; fresh updatedAt still falls through to the head commit
 	# timestamp because automated comments/labels can mask an idle branch.
 	local pr_meta=""
+	_INTERACTIVE_PR_STALE_REFUSAL="stale-pr-metadata-unavailable"
 	pr_meta=$(gh pr view "$pr_number" --repo "$repo_slug" \
 		--json labels,updatedAt,headRefOid 2>/dev/null) || return 1
 
 	# Gate 1: must have origin:interactive
+	_INTERACTIVE_PR_STALE_REFUSAL="origin-interactive-missing"
 	printf '%s' "$pr_meta" | jq -e \
 		'.labels | map(.name) | index("origin:interactive")' \
 		>/dev/null 2>&1 || return 1
@@ -442,6 +448,7 @@ _interactive_pr_is_stale() {
 	if printf '%s' "$pr_meta" | jq -e \
 		'.labels | map(.name) | index("no-takeover")' \
 		>/dev/null 2>&1; then
+		_INTERACTIVE_PR_STALE_REFUSAL="no-takeover-label"
 		echo "[pulse-merge-conflict] _interactive_pr_is_stale: PR #${pr_number} has no-takeover label — skipping handover (GH#19864)" >>"$LOGFILE"
 		return 1
 	fi
@@ -453,6 +460,7 @@ _interactive_pr_is_stale() {
 	# A non-numeric value (e.g. "4h", empty, negative) triggers bash
 	# "value too great for base" and silently breaks stale detection.
 	if [[ ! "$threshold_secs" =~ ^[0-9]+$ ]] || [[ "$threshold_secs" -eq 0 ]]; then
+		_INTERACTIVE_PR_STALE_REFUSAL="invalid-age-threshold"
 		echo "[pulse-wrapper] _interactive_pr_is_stale: invalid AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS='${threshold_secs}' — must be a positive integer, returning not-stale (t2383)" >>"$LOGFILE"
 		return 1
 	fi
@@ -466,9 +474,11 @@ _interactive_pr_is_stale() {
 	if [[ -z "$updated_at" ]]; then
 		updated_at=$(printf '%s' "$pr_meta" | jq -r '.updatedAt // empty')
 	fi
+	_INTERACTIVE_PR_STALE_REFUSAL="updated-at-missing"
 	[[ -z "$updated_at" ]] && return 1
 	now_epoch=$(date +%s)
 	# Portable epoch parse — GNU date first (Linux CI), BSD date fallback (macOS)
+	_INTERACTIVE_PR_STALE_REFUSAL="updated-at-invalid"
 	updated_epoch=$(date -d "$updated_at" +%s 2>/dev/null) || \
 		updated_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$updated_at" +%s 2>/dev/null) || \
 		return 1
@@ -498,25 +508,31 @@ _interactive_pr_is_stale() {
 			[[ -n "$activity_at" ]] && activity_source="head_commit"
 		fi
 	fi
+	_INTERACTIVE_PR_STALE_REFUSAL="head-activity-unavailable"
 	[[ -z "$activity_at" ]] && return 1
 	if [[ "$activity_at" != "$updated_at" ]]; then
+		_INTERACTIVE_PR_STALE_REFUSAL="head-activity-invalid"
 		updated_epoch=$(date -d "$activity_at" +%s 2>/dev/null) || \
 			updated_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$activity_at" +%s 2>/dev/null) || \
 			return 1
 	fi
 	pr_age_secs=$(( now_epoch - updated_epoch ))
+	_INTERACTIVE_PR_STALE_REFUSAL="pr-not-idle"
 	[[ "$pr_age_secs" -lt "$age_floor_secs" ]] && return 1
 
 	# Gate 2 + 5: resolve linked issue, verify open, check status labels
 	local linked_issue
+	_INTERACTIVE_PR_STALE_REFUSAL="closing-link-unavailable"
 	linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug") || return 1
 	# Only the tracking recovery path may probe age before an issue exists.
 	# Normal handover still requires the issue/claim gates below.
 	if [[ -z "$linked_issue" ]]; then
 		[[ "$allow_orphan" == "1" && "$mode" == "enforce" && "$pr_age_secs" -ge "$threshold_secs" ]] && return 0
+		_INTERACTIVE_PR_STALE_REFUSAL="orphan-age-or-mode-not-eligible"
 		return 1
 	fi
 	local evidence="" evidence_session="" evidence_idle_secs="" applied_threshold_secs="$threshold_secs"
+	_INTERACTIVE_PR_STALE_REFUSAL="linked-issue-session-gates"
 	evidence=$(_interactive_pr_session_gates "$pr_number" "$repo_slug" "$linked_issue" "$pr_age_secs" \
 		"$threshold_secs" "$session_threshold_secs" "$activity_source") || return 1
 	if [[ -n "$evidence" ]]; then
@@ -529,6 +545,7 @@ _interactive_pr_is_stale() {
 		echo "[pulse-wrapper] would-handover: PR #${pr_number} in ${repo_slug} (idle $((pr_age_secs / 3600))h via ${activity_source} >= $((applied_threshold_secs / 3600))h, linked issue #${linked_issue}${evidence_session:+, idle session ${evidence_session}})" >>"$LOGFILE"
 	fi
 	[[ -n "$evidence_session" ]] && _INTERACTIVE_PR_IDLE_SESSION_EVIDENCE="${pr_number}|${repo_slug}|${evidence_session}|${evidence_idle_secs}"
+	_INTERACTIVE_PR_STALE_REFUSAL=""
 	return 0
 }
 
