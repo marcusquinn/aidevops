@@ -1689,6 +1689,27 @@ test_checkpoint_spec_receipt_outcomes() {
 	return 0
 }
 
+# GH#39857: a leaf released with worker_ready_missing_linkage (auto-dispatch
+# removed, status:in-review) whose For #N PR was merged by a different runner,
+# with a partial closeout comment and a newer sibling-issue cross-reference on
+# the timeline, must still return to the queue.
+test_cross_runner_leaf_with_sibling_reference() {
+	reset_case
+	TEST_REVIEW_ISSUES='[{"number":501}]'
+	TEST_PR_JSON=$(pr_json true runner2)
+	TEST_COMMENTS_JSON=$(pages "$(comment 1 MEMBER runner1 "DISPATCH_CLAIM nonce=n1 runner=runner1 ts=2026-10-10T09:30:00Z max_age_s=600 session=issue-501 phase=prelaunch")" \
+		"$(comment 2 MEMBER runner1 "CLAIM_RELEASED reason=worker_ready_missing_linkage runner=runner1 ts=2026-10-10T10:20:00Z")" \
+		"$(comment 3 MEMBER runner2 "<!-- PARTIAL_PARENT_CLOSEOUT:PR#900 -->
+## Partial Parent Closeout
+
+Delivered: spec only.")")
+	TEST_TIMELINE=$(printf '%s' "$TEST_TIMELINE" | jq -c '.[0] += [{event:"cross-referenced",source:{issue:{number:777,repository_url:"https://api.github.com/repos/owner/repo"}}}]')
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" \
+		"cross-runner leaf with closeout comment and sibling issue reference returns to queue"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -1747,6 +1768,7 @@ main() {
 	test_closed_checkpoint_scan_pagination
 	test_checkpoint_spec_dispatch_restore
 	test_checkpoint_spec_receipt_outcomes
+	test_cross_runner_leaf_with_sibling_reference
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]] || return 1

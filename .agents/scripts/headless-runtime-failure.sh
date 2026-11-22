@@ -1040,6 +1040,30 @@ _hrff_project_draft_checkpoint() {
 }
 
 #######################################
+# Return a ready-handoff issue to the queue when its non-closing PR already
+# merged (GH#39857). The shared guard re-reads the issue, PR, comments and open
+# PRs, and writes only when every continuation condition holds. Runs in a
+# subshell so pulse globals stay isolated. Always non-fatal.
+#
+# Args: $1 = issue_number, $2 = repo_slug
+#######################################
+_hrff_revisit_merged_partial() (
+	local issue_number="$1"
+	local repo_slug="$2"
+	local LOGFILE="" line=""
+	LOGFILE=$(mktemp "${TMPDIR:-/tmp}/partial-revisit.XXXXXX") || return 0
+	trap 'rm -f "$LOGFILE"' EXIT
+	# shellcheck disable=SC1091
+	source "${BASH_SOURCE[0]%/*}/pulse-merge.sh" >/dev/null 2>&1 || return 0
+	declare -F _pmpc_revisit_in_review_issue >/dev/null 2>&1 || return 0
+	_pmpc_revisit_in_review_issue "$repo_slug" "$issue_number" || true
+	if [[ -s "$LOGFILE" ]]; then
+		while IFS= read -r line; do print_info "$line"; done <"$LOGFILE"
+	fi
+	return 0
+)
+
+#######################################
 # Project issue lifecycle state after a persisted CLAIM_RELEASED comment.
 # Reason-specific paths preserve state that authoritative handoffs already
 # projected; the default path clears active status so re-dispatch is not
@@ -1099,6 +1123,10 @@ _hrff_project_post_release_state() {
 	if [[ "$reason" == "${_HRW_REASON_READY_MISSING_LINKAGE:-worker_ready_missing_linkage}" ||
 		"$reason" == "${_HRW_REASON_READY_MISSING_SUMMARY:-worker_ready_missing_summary}" ]]; then
 		_hrff_emit_release_terminal_lease "$issue_number" "$repo_slug" "$session_key"
+		# GH#39857: the `For #N` PR may have merged before this release, so the
+		# merge-time restore saw an active claim and skipped it. Revisit before
+		# deciding to unlock so restored auto-dispatch keeps its conversation lock.
+		_hrff_revisit_merged_partial "$issue_number" "$repo_slug"
 		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
 		print_info "Preserved in-review handoff on #${issue_number} (reason: ${reason})"
 		return 0
