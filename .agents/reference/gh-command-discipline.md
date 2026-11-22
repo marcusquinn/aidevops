@@ -90,6 +90,12 @@ their existing behavior.
   comment` or `gh-write-helper.sh pr comment`. Use `--body-file -` for streamed
   bodies; the executable loads the audited create/edit/comment wrappers
   internally without caller-side `source`.
+- Write target: pass `--repo owner/repo` for determinism. When omitted, the
+  wrappers and `gh` shim resolve it as native `gh` does (issue/PR URL argument,
+  `GH_REPO`, `gh repo set-default`, then the github.com remote ranked
+  `upstream` > `github` > `origin`) and pin it, so the privacy guard scans the
+  repository the write lands in. Unresolvable or conflicting targets block with
+  a target diagnostic before any visibility lookup (GH#39801).
 - Edit comments by exact ID only: `gh-write-helper.sh issue|pr comment-edit
   <comment-id> --repo owner/repo --body-file /abs/body.md [--target N]`. It
   refuses comments you did not author or that sit on another issue/PR. Never use
