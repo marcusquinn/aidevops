@@ -602,8 +602,14 @@ test_parallel_loop_launch_slot_gate_one_slot() {
 	: >"$activity"
 	# shellcheck disable=SC2317  # called via name resolution from loop
 	_dispatch_process_candidate() {
+		local waited=0
 		printf 'start\n' >>"$activity"
-		sleep 0.1
+		# Hold until a second candidate has started (bounded) so overlap is
+		# observed deterministically rather than by a fixed sleep window.
+		while (($(grep -c '^start$' "$activity") < 2)) && ((waited < 250)); do
+			sleep 0.02
+			waited=$((waited + 1))
+		done
 		printf 'end\n' >>"$activity"
 		_test_claim_launch_slot "$1" || return $?
 		return 0
@@ -636,17 +642,32 @@ test_parallel_loop_launch_slot_gate_one_slot() {
 # t19116: a holder whose claim fails after taking the slot releases it, so a
 # later candidate in the same round can still launch.
 test_parallel_loop_launch_slot_failed_holder_releases() {
+	# Ordering is signalled, not timed: 831 waits for 830's claim marker, then
+	# retries its claim (bounded) until 830's failed claim releases the slot.
+	local holder_marker="${TEST_ROOT}/launch-slot-holder-830.marker"
+	rm -f "$holder_marker"
 	# shellcheck disable=SC2317  # called via name resolution from loop
 	_dispatch_process_candidate() {
-		local issue_num
+		local issue_num waited=0 claim_rc=75
 		issue_num=$(jq -r '.number // 0' <<<"$1")
 		if [[ "$issue_num" == "830" ]]; then
-			sleep 0.02
 			_test_claim_launch_slot "$1" || return $?
+			: >"$holder_marker"
 			return 2
 		fi
-		sleep 0.2
-		_test_claim_launch_slot "$1" || return $?
+		while [[ ! -e "$holder_marker" ]] && ((waited < 500)); do
+			sleep 0.02
+			waited=$((waited + 1))
+		done
+		waited=0
+		while ((waited < 500)); do
+			claim_rc=0
+			_test_claim_launch_slot "$1" || claim_rc=$?
+			[[ "$claim_rc" -eq 75 ]] || break
+			sleep 0.02
+			waited=$((waited + 1))
+		done
+		[[ "$claim_rc" -eq 0 ]] || return "$claim_rc"
 		return 0
 	}
 
@@ -1446,7 +1467,19 @@ test_serial_loop_rest_reserve_recovery() {
 		seen=$(<"$MAX_FILE")
 		[[ "$seen" =~ ^[0-9]+$ ]] || seen=0
 		((active > seen)) && printf '%s\n' "$active" >"$MAX_FILE"
-		sleep 0.2
+		# Recover scenario: once parallel handoff has started (3 serial
+		# candidates done), hold until overlap is observed (bounded) instead
+		# of relying on a fixed sleep window.
+		if [[ "$scenario" == recover ]] && (($(wc -l <"$PROCESSED_FILE") >= 3)); then
+			local waited=0
+			while (($(<"$MAX_FILE") < 2)) && ((waited < 250)); do
+				sleep 0.02
+				seen=$(find "$ACTIVE_DIR" -type f | wc -l | tr -d ' ')
+				((seen > 1)) && printf '%s\n' "$seen" >"$MAX_FILE"
+				waited=$((waited + 1))
+			done
+		fi
+		sleep 0.05
 		printf '%s\n' "$issue" >>"$PROCESSED_FILE"
 		rm -f "${ACTIVE_DIR}/${issue}"
 		return 0
