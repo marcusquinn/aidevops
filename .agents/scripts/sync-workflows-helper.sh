@@ -1299,9 +1299,14 @@ _sync_marker_eligible() {
 	[[ "$_ref" =~ ^[0-9a-f]{40}(\ #\ v[0-9]+\.[0-9]+\.[0-9]+)?$ ]] || return 1
 	[[ "$_default_branch" =~ ^[A-Za-z0-9._/-]+$ ]] || return 1
 	_is_sync_workflow_output "$_relpath" || return 1
-	local _rc=1
-	if _evidence=$(_sync_marker_evidence "$_path" "$(_remote_default_ref "$_remote" "$_default_branch")" \
-		"$_relpath" "$_target_content") &&
+	# The gate compares against the PR merge base: the default ref the branch
+	# is reset to, or the fork point of an exact branch already checked out.
+	local _base_ref="" _rc=1
+	_base_ref=$(_remote_default_ref "$_remote" "$_default_branch")
+	if [[ "$(git -C "$_path" symbolic-ref --short HEAD 2>/dev/null)" == "$_branch" ]]; then
+		_base_ref=$(git -C "$_path" merge-base "$_base_ref" HEAD) || return 1
+	fi
+	if _evidence=$(_sync_marker_evidence "$_path" "$_base_ref" "$_relpath" "$_target_content") &&
 		_policy=$(_routine_sync_policy "$_slug" "$_default_branch") &&
 		_routine_sync_render_admits "$_relpath" "$(jq -c .head <<<"$_evidence")" \
 			"$(jq -c .base <<<"$_evidence")" "$_policy"; then
