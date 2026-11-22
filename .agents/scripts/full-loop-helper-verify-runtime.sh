@@ -199,7 +199,12 @@ if len(re.findall(r"^## Runtime Testing[ \t]*$", body, re.M)) != 1:
 section = re.search(r"^## Runtime Testing\s*\n(.*?)(?=^## |\Z)", body, re.M | re.S)
 start, end = section.span(1)
 text = body[start:end]
-pattern = re.compile(r"^- \*\*Verification:\*\*[ \t]+" + re.escape(level) + r"[ \t]+—[ \t]*(.*?)"
+# An empty or unrecognised level (GH#39918) matches any Verification line.
+if level in ("runtime-verified", "runtime-pending", "self-assessed"):
+    head = r"^- \*\*Verification:\*\*[ \t]+" + re.escape(level) + r"[ \t]+—[ \t]*(.*?)"
+else:
+    head = r"^- \*\*Verification:\*\*(.*?)"
+pattern = re.compile(head +
                      r"(?=^- \*\*|^(?:Resolves|Fixes|Closes|For|Ref) #\d+\b|^<!-- aidevops:|\Z)", re.M | re.S)
 matches = list(pattern.finditer(text))
 if len(matches) != 1:
@@ -371,6 +376,11 @@ _verify_runtime_select_level() {
 	self-assessed)
 		# High/Critical self-assessed bodies are refused at merge until a
 		# verifier records runtime evidence, so this route repairs them too.
+		[[ "$refusal_rc" -ne 0 ]] && return 0
+		;;
+	*)
+		# GH#39918: an empty or unrecognised level that merge refuses is
+		# repaired by the same rewrite instead of claiming merge accepts it.
 		[[ "$refusal_rc" -ne 0 ]] && return 0
 		;;
 	esac

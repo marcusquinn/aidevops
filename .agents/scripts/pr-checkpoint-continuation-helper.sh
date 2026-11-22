@@ -1883,22 +1883,29 @@ _pcc_dispatch_expired_recovery_draft() {
 # Print the id of the trusted, unedited pulse handover comment that is current
 # first-admission evidence for a handed-over interactive draft (GH#39908):
 # the newest such PR comment is no older than the head commit (a human push
-# after handover is a reclaim, not evidence) and no trusted coordination event
-# on the issue is newer than it. A continuation's own DISPATCH_CLAIM therefore
-# consumes the evidence, so this admits at most one launch per handover; later
-# attempts use the ordinary stall-release, fuse and attention logic.
+# after handover is a reclaim, not evidence) and every trusted coordination
+# event on the issue since it belongs to a never-launched episode of this PR's
+# continuation session. A launched continuation, or any other coordination,
+# consumes the evidence; later attempts use the ordinary stall-release, fuse
+# and attention logic.
+# GH#39920: a launch that never started (`worker_not_launched`, or a claim
+# closed without a ready lease) says nothing about the head, and the stall
+# route treats it as transparent, so it must not strand the draft here either.
+# As in GH#39913, failures count per runner: this runner retries once, a
+# second failing runner ends the route ("exhausted").
 # Args: $1=PR comments JSON, $2=issue comments JSON, $3=head commit ISO date,
-#       $4=trusted logins JSON
-# Output: handover comment id
+#       $4=trusted logins JSON, $5=continuation session key, $6=this runner login
+# Output: handover comment id<TAB>admit|exhausted<TAB>never-launched episodes
 # Returns: 0 when the handover is current evidence, 1 otherwise
 #######################################
 _pcc_interactive_handover_evidence() {
 	local pr_comments="$1" issue_comments="$2" head_date="$3"
-	local trusted_logins="${4:-[]}"
+	local trusted_logins="${4:-[]}" session="${5:-}" self="${6:-}"
 	# Comment snapshots travel on stdin; argv cannot carry long threads.
 	printf '%s\n%s\n' "$pr_comments" "$issue_comments" | jq -ser \
 		--arg head_date "$head_date" --argjson trusted_logins "$trusted_logins" \
-		--arg marker "$_PCC_INTERACTIVE_HANDOVER_MARKER" "${_PCC_JQ_RELEASE_DEFS}"'
+		--arg session "$session" --arg self "$self" \
+		--arg marker "$_PCC_INTERACTIVE_HANDOVER_MARKER" "${_PCC_JQ_RELEASE_DEFS}${_PCC_JQ_LAUNCH_DEFS}"'
 		(.[0] | flatten) as $pr_comments | (.[1] | flatten) as $issue_comments
 		| ($head_date | epoch) as $head_epoch
 		| ([$pr_comments[] | select(trusted_event and ((.body // "") | startswith($marker)))]
@@ -1906,10 +1913,16 @@ _pcc_interactive_handover_evidence() {
 		| select($handover != null and ($handover | unedited))
 		| (($handover.created_at // "") | (try epoch catch null)) as $handover_epoch
 		| select($handover_epoch != null and $handover_epoch >= $head_epoch)
-		| select([$issue_comments[] | select(trusted_event and coordination)
-			| ((.created_at // "") | (try epoch catch null)) | select(. == null or . >= $handover_epoch)]
-			| length == 0)
-		| $handover.id | tostring
+		| ([$issue_comments[] | select(trusted_event and coordination)] | sort_by(.id)) as $c
+		| [$c[] | select(((.created_at // "") | (try epoch catch null)) as $t
+			| $t == null or $t >= $handover_epoch)] as $after
+		| select(all($after[]; unlaunched_episode($c)))
+		| [$after[] | select(any(body_lines; claim_event))] as $failed
+		| ([$failed[] | login] | unique | length) as $runners
+		| ([$failed[] | select(login == $self)] | length) as $own
+		| [($handover.id | tostring),
+			(if $runners < 2 and $own < 2 then "admit" else "exhausted" end),
+			($failed | length | tostring)] | join("\t")
 	'
 	return $?
 }
@@ -1929,15 +1942,22 @@ _pcc_interactive_handover_evidence() {
 _pcc_dispatch_interactive_handover_draft() {
 	local repo="$1" path="$2" issue="$3" pr="$4" login="$5" runner="$6"
 	local pr_json="$7" comments="$8" head_date="$9"
-	local trusted_logins="${10:-[]}" pr_comments="" handover_id=""
+	local trusted_logins="${10:-[]}" pr_comments="" handover="" handover_id="" state="" failed=""
 	jq -e '[.labels[]? | (.name? // .) | strings] as $names |
 		($names | index("origin:interactive")) != null and ($names | index("origin:worker-takeover")) != null' \
 		<<<"$pr_json" >/dev/null 2>&1 || return 3
 	pr_comments=$(_pcc_issue_comments "$repo" "$pr") || return 3
-	handover_id=$(_pcc_interactive_handover_evidence "$pr_comments" "$comments" "$head_date" "$trusted_logins") || return 3
-	[[ "$handover_id" =~ ^[1-9][0-9]*$ ]] || return 3
-	printf 'STALE_PR_CONTINUATION: issue #%s in %s — PR #%s preserved for exact-head continuation assignee=%s release=none reason=interactive_handover handover_comment=%s\n' \
-		"$issue" "$repo" "$pr" "$runner" "$handover_id"
+	handover=$(_pcc_interactive_handover_evidence "$pr_comments" "$comments" "$head_date" \
+		"$trusted_logins" "$(_pcc_session_key "$repo" "$pr")" "$login") || return 3
+	IFS=$'\t' read -r handover_id state failed <<<"$handover"
+	[[ "$handover_id" =~ ^[1-9][0-9]*$ && "$failed" =~ ^[0-9]+$ ]] || return 3
+	if [[ "$state" != "admit" ]]; then
+		printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #%s in %s — interactive handover continuation never launched %s time(s); relaunch retries exhausted for runner %s issue=#%s handover_comment=%s (GH#39920)\n' \
+			"$pr" "$repo" "$failed" "$login" "$issue" "$handover_id"
+		return 1
+	fi
+	printf 'STALE_PR_CONTINUATION: issue #%s in %s — PR #%s preserved for exact-head continuation assignee=%s release=none reason=interactive_handover handover_comment=%s failed_launches=%s\n' \
+		"$issue" "$repo" "$pr" "$runner" "$handover_id" "$failed"
 	PCC_ALLOW_RELEASED=true
 	_pcc_dispatch "$repo" "$path" "$pr" "$issue" "$runner" "$login" || return 1
 	return 0
