@@ -587,8 +587,11 @@ EOF
 # interactive verifier. Prints one JSON object {pr, repo, head, held_since,
 # reason, command} and exits 0 only when the PR is open, carries a hold whose
 # recorded scope is runtime-pending alone with no PR-only contract (decision
-# "lift"), and its body declares runtime-pending verification. Exits 1 with no
-# output otherwise, so a caller never notifies for a hold a verifier cannot lift.
+# "lift"), and its body declares runtime-pending or runtime-verified evidence.
+# GH#39795: the recorded hold scope, not the body level, decides liftability;
+# an author who later rewrites the body to runtime-verified still needs a
+# verifier, and verify-runtime accepts that body. Exits 1 with no output
+# otherwise, so a caller never notifies for a hold a verifier cannot lift.
 cmd_runtime_pending_notice() {
 	local pr="${1:-}" repo_arg="${2:-}"
 	local repo="" pr_json="" metadata="" level="" reason="" head="" held_since="" command=""
@@ -602,7 +605,11 @@ cmd_runtime_pending_notice() {
 	[[ "$hold_decision" == "lift" ]] || return 1
 	metadata=$(printf '%s' "$pr_json" | jq -r '.body // ""' | _runtime_testing_metadata_from_body) || return 1
 	level=$(printf '%s' "$metadata" | jq -r '.level // ""') || return 1
-	[[ "$level" == "$_FULL_LOOP_RUNTIME_PENDING_SCOPE" ]] || return 1
+	# shellcheck disable=SC2154 # initialized by full-loop-helper-risk.sh
+	case "$level" in
+	"$_FULL_LOOP_RUNTIME_PENDING_SCOPE" | "$_full_loop_runtime_verified_marker") ;;
+	*) return 1 ;;
+	esac
 	reason=$(printf '%s' "$metadata" | jq -r '.evidence // ""') || return 1
 	head=$(printf '%s' "$pr_json" | jq -r '.headRefOid // ""') || return 1
 	[[ "$head" =~ ^[0-9a-f]{40}$ ]] || return 1
