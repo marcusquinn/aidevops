@@ -1,11 +1,28 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
+# Shared labels (not readonly: the merge gate re-sources this library).
+_ROUTINE_SYNC_KEY=sync-workflows
+_ROUTINE_MODIFIED=modified
+
 # Shared output policy: recovery and admission must use the same allowlist.
 _is_declared_output() {
 	local candidate="$1"
 	case "$candidate" in
 	README.md | .github/workflows/loc-badge.yml | docs/metrics/* | .github/badges/*) return 0 ;;
+	esac
+	return 1
+}
+
+# Managed workflow callers sync-workflows may rewrite (GH#39793). Mirrors the
+# workflow names routine-pr-content.py can re-render; CONTRIBUTING.md and
+# linked-issue-check stay outside the marker path.
+_is_sync_workflow_output() {
+	local candidate="$1"
+	case "$candidate" in
+	.github/workflows/issue-sync.yml | .github/workflows/review-bot-gate.yml | \
+		.github/workflows/review-bot-gate-fork-review.yml | .github/workflows/maintainer-gate.yml | \
+		.github/workflows/loc-badge.yml | .github/workflows/issue-triage-gate.yml) return 0 ;;
 	esac
 	return 1
 }
@@ -54,7 +71,7 @@ _routine_scope_compare() {
 # byte-exact README/workflow policy. Prints nothing for other declared outputs.
 _routine_scope_content() {
 	local repo="$1" path="$2" status="$3" head_blob="$4" merge_base="$5"
-	local dir="${BASH_SOURCE[0]%/*}" content="" previous="null" base_tree="" base_blob="" ref="" ref_status=""
+	local dir="${BASH_SOURCE[0]%/*}" content="" previous="null" base_tree="" base_blob="" ref=""
 	case "$path" in README.md | .github/workflows/loc-badge.yml) ;; *) return 0 ;; esac
 	content=$(gh api "repos/$repo/git/blobs/$head_blob") || return 1
 	if [[ "$status" == "modified" ]]; then
@@ -65,10 +82,59 @@ _routine_scope_content() {
 	ref=$(jq -n --argjson head "$content" --argjson base "$previous" '{head:$head,base:$base}' |
 		python3 "$dir/routine-pr-content.py" "$path" "$dir/../templates/workflows/loc-badge-caller.yml") || return 1
 	if [[ -n "$ref" ]]; then
-		# A workflow may execute only a pinned commit reachable from main.
-		ref_status=$(gh api "repos/marcusquinn/aidevops/compare/$ref...main" --jq .status) || return 1
-		case "$ref_status" in ahead | identical) ;; *) return 1 ;; esac
+		_routine_ref_reachable "$ref" || return 1
 	fi
+	return 0
+}
+
+# A workflow may execute only a pinned commit reachable from aidevops main.
+_routine_ref_reachable() {
+	local ref="$1" ref_status=""
+	[[ "$ref" =~ ^[0-9a-f]{40}$ ]] || return 1
+	ref_status=$(gh api "repos/marcusquinn/aidevops/compare/$ref...main" --jq .status) || return 1
+	case "$ref_status" in ahead | identical) return 0 ;; esac
+	return 1
+}
+
+# _routine_sync_policy <repo> <base_branch> — declared per-repo target policy
+# (reusable repository, runner override) from the local registry. Missing
+# entries yield restrictive defaults; a malformed registry fails closed.
+_routine_sync_policy() {
+	local repo="$1" base_branch="$2" registry="${REPOS_JSON:-$HOME/.config/aidevops/repos.json}"
+	if [[ ! -f "$registry" ]]; then
+		jq -nc --arg b "$base_branch" '{repo:"marcusquinn/aidevops",runner:null,base_branch:$b}'
+		return $?
+	fi
+	jq -c --arg s "$repo" --arg b "$base_branch" '
+		def field($k): ([.initialized_repos[]? | select(.slug == $s) | .[$k] // empty] | first // "") as $v |
+			if $v != "" then $v else (.[$k] // empty) end;
+		{repo: (field("workflow_reusable_repo") // "marcusquinn/aidevops"),
+		 runner: ([.initialized_repos[]? | select(.slug == $s) | .runner // empty] | first // null),
+		 base_branch: $b}' "$registry"
+	return $?
+}
+
+# _routine_sync_content <repo> <path> <status> <head_blob> <merge_base> <policy>
+# — exact re-render of a managed workflow caller from the trusted historical
+# template at the ref the head pins. Nothing from the PR is executed.
+_routine_sync_content() {
+	local repo="$1" path="$2" status="$3" head_blob="$4" merge_base="$5" policy="$6"
+	local dir="${BASH_SOURCE[0]%/*}" name="${path##*/}" head="" previous="null" ref="" template=""
+	local base_tree="" base_blob=""
+	name="${name%.yml}"
+	head=$(gh api "repos/$repo/git/blobs/$head_blob") || return 1
+	if [[ "$status" == "$_ROUTINE_MODIFIED" ]]; then
+		base_tree=$(gh api "repos/$repo/git/trees/$merge_base?recursive=1") || return 1
+		base_blob=$(_routine_tree_blob "$base_tree" "$path") || return 1
+		previous=$(gh api "repos/$repo/git/blobs/$base_blob") || return 1
+	fi
+	ref=$(jq -n --argjson head "$head" '{head:$head}' |
+		python3 "$dir/routine-pr-content.py" --sync-ref) || return 1
+	_routine_ref_reachable "$ref" || return 1
+	template=$(gh api "repos/marcusquinn/aidevops/contents/.agents/templates/workflows/${name}-caller.yml?ref=$ref") || return 1
+	jq -n --argjson head "$head" --argjson base "$previous" --argjson template "$template" \
+		--argjson policy "$policy" '{head:$head,base:$base,template:$template,policy:$policy}' |
+		python3 "$dir/routine-pr-content.py" --sync-validate "$name" >/dev/null || return 1
 	return 0
 }
 
@@ -79,15 +145,21 @@ _routine_scope_content() {
 _routine_pr_scope_check() {
 	local pr_number="$1" repo="$2"
 	local meta="" compare="" listing="" author="" permission="" head="" base="" merge_base=""
-	local tree="" path="" status="" blob="" fresh=""
+	local tree="" path="" status="" blob="" fresh="" key="" prefix="" policy="" default_branch=""
 	meta=$(gh api "repos/$repo/pulls/$pr_number") || return 1
-	jq -e --arg repo "$repo" "$_ROUTINE_JQ_DEFS"'
+	# One standalone marker selects which routine's policy applies.
+	case "$(jq -r '.body // ""' <<<"$meta")" in
+	*'<!-- aidevops:routine-pr:badges-sync -->'*) key="badges-sync" prefix="chore/badges-sync-" ;;
+	*'<!-- aidevops:routine-pr:sync-workflows -->'*) key=$_ROUTINE_SYNC_KEY prefix="chore/workflow-sync-" ;;
+	*) return 1 ;;
+	esac
+	jq -e --arg repo "$repo" --arg key "$key" --arg prefix "$prefix" "$_ROUTINE_JQ_DEFS"'
 		.state == "open" and .draft == false and
 		([.labels[].name] | index("origin:worker") != null) and
 		([.labels[].name] | index("hold-for-review") == null) and
 		.head.repo.full_name == $repo and .base.repo.full_name == $repo and
-		(.head.ref | startswith("chore/badges-sync-")) and
-		(.body | contains("<!-- aidevops:routine-pr:badges-sync -->")) and
+		(.head.ref | startswith($prefix)) and
+		(.body | contains("<!-- aidevops:routine-pr:" + $key + " -->")) and
 		(.body | split("aidevops:routine-pr:") | length == 2) and
 		(.head.sha | git_sha) and (.base.sha | git_sha) and
 		(.changed_files > 0 and .changed_files < 100)
@@ -108,9 +180,21 @@ _routine_pr_scope_check() {
 	listing=$(jq -r '.files[] | [.filename, .status] | @tsv' <<<"$compare") || return 1
 	[[ -n "$listing" ]] || return 1
 	tree=$(gh api "repos/$repo/git/trees/$head?recursive=1") || return 1
+	if [[ "$key" == "$_ROUTINE_SYNC_KEY" ]]; then
+		# The PR must target the repository default branch the sync rendered for.
+		default_branch=$(gh api "repos/$repo" --jq .default_branch) || return 1
+		[[ "$default_branch" == "$(jq -r .base.ref <<<"$meta")" ]] || return 1
+		policy=$(_routine_sync_policy "$repo" "$default_branch") || return 1
+	fi
 	while IFS=$'\t' read -r path status; do
-		_is_declared_output "$path" || return 1
 		# Every admitted output, not only content-checked ones, must be regular.
+		if [[ "$key" == "$_ROUTINE_SYNC_KEY" ]]; then
+			_is_sync_workflow_output "$path" || return 1
+			blob=$(_routine_tree_blob "$tree" "$path") || return 1
+			_routine_sync_content "$repo" "$path" "$status" "$blob" "$merge_base" "$policy" || return 1
+			continue
+		fi
+		_is_declared_output "$path" || return 1
 		blob=$(_routine_tree_blob "$tree" "$path") || return 1
 		_routine_scope_content "$repo" "$path" "$status" "$blob" "$merge_base" || return 1
 	done <<<"$listing"

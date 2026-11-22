@@ -11,7 +11,7 @@
 #   routine-log-helper.sh create-issue <routine-id> --repo SLUG --title "rNNN: Title" [--schedule EXPR] [--type TYPE]
 #   routine-log-helper.sh ensure-anchor <key> --repo SLUG --title TITLE
 #   routine-log-helper.sh ensure-pr-anchor <key> --repo SLUG --pr N --title TITLE
-#   routine-log-helper.sh retire-anchor badges-sync --repo SLUG
+#   routine-log-helper.sh retire-anchor <badges-sync|sync-workflows> --repo SLUG
 #   routine-log-helper.sh status
 #   routine-log-helper.sh help
 #
@@ -1381,7 +1381,7 @@ _anchor_retire_one() {
 # failed after closing is never stranded.
 cmd_retire_anchor() {
 	local key="${1:-}"
-	[[ "$key" == "badges-sync" ]] || return 1
+	[[ "$key" == "badges-sync" || "$key" == "sync-workflows" ]] || return 1
 	_parse_anchor_args "$@" --title retirement || return 1
 	local repo="$_ANCHOR_REPO" open="" marked="" rows="" number="" is_open="" flag=""
 	local marker="<!-- aidevops:routine-anchor:${key} -->"
@@ -1422,6 +1422,8 @@ _pr_anchor_backfill_body() {
 	printf '%s' "$meta" | jq -e '.state == "OPEN"' >/dev/null || return 3
 	printf '%s' "$meta" | jq -e '[.labels[].name] | index("origin:worker") != null' >/dev/null || return 3
 	body=$(printf '%s' "$meta" | jq -r '.body // ""') || return 1
+	# A verified-scope routine marker is its own identity (GH#39793).
+	[[ "$body" != *'<!-- aidevops:routine-pr:'* ]] || return 3
 	[[ -z "$(_gh_pr_body_closing_issues "$body")" && -z "$(_gh_pr_body_explicit_issues "$body")" ]] || return 3
 	printf '%s' "$body"
 	return 0
@@ -1561,7 +1563,7 @@ Usage:
     Prepend the anchor's Ref #N line to an open origin:worker routine PR whose
     body has no issue identity (pre-guard PRs). Other PRs are left unchanged.
 
-  routine-log-helper.sh retire-anchor badges-sync --repo SLUG
+  routine-log-helper.sh retire-anchor <badges-sync|sync-workflows> --repo SLUG
     Close legacy badge anchors as not planned after removing persistent, only
     when a complete open-PR list read just before closing proves no Ref #N
     remains; reopen if one appears by the post-close re-read. Other keys refused.

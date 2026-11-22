@@ -83,9 +83,113 @@ def validate(path, template, evidence):
     return validate_workflow(head, template)
 
 
+# --- sync-workflows (GH#39793) ------------------------------------------------
+# A pure port of sync-workflows-helper.sh _render_template_with_target,
+# _inject_mirror_read_secret, _inject_runner_in_content and
+# _rewrite_content_branch_filter. It only reads bytes: nothing from the PR is
+# executed, and the template comes from a main-reachable aidevops commit.
+SYNC_WORKFLOWS = {
+    "issue-sync", "review-bot-gate", "review-bot-gate-fork-review",
+    "maintainer-gate", "loc-badge", "issue-triage-gate",
+}
+# Workflows whose reusable fetches framework helpers from the configured repo.
+SYNC_HELPER_WORKFLOWS = {
+    "issue-sync", "review-bot-gate", "review-bot-gate-fork-review",
+    "loc-badge", "issue-triage-gate",
+}
+DEFAULT_REPO = b"marcusquinn/aidevops"
+REPO_RE = re.compile(rb"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+RUNNER_RE = re.compile(rb"^[A-Za-z0-9._-]+$")
+BRANCH_RE = re.compile(rb"^[A-Za-z0-9._/-]+$")
+PIN = rb"[0-9a-f]{40}(?: # v[0-9]+\.[0-9]+\.[0-9]+)?"
+REF_RE = re.compile(rb"^[ \t]*uses:[ \t]*[^ \t@]+/\.github/workflows/[^ \t@]+@(" + PIN + rb")$", re.M)
+READ_SECRET = (b"      AIDEVOPS_READ_TOKEN: "
+               b"${{ secrets.AIDEVOPS_READ_TOKEN }}")
+
+
+def sync_ref(head):
+    """Return the one 40-hex framework ref (with optional release comment) that
+    every executable `uses:` line pins. aidevops_ref lines, when a template has
+    them, are covered by the exact re-render comparison."""
+    found = set(REF_RE.findall(head))
+    if len(found) != 1:
+        raise ValueError("workflow must pin one framework commit on every uses line")
+    return found.pop()
+
+
+def inject_mirror(text, repo):
+    if not re.search(rb"^      aidevops_ref:", text, re.M):
+        raise ValueError("mirror render needs aidevops_ref")
+    text = re.sub(rb"^(      aidevops_ref:.*)$",
+                  lambda m: b"      aidevops_repository: " + repo + b"\n" + m[1],
+                  text, flags=re.M)
+    blocks = len(re.findall(rb"^    secrets:( inherit)?$", text, re.M))
+    tokens = len(re.findall(rb"^      AIDEVOPS_READ_TOKEN:", text, re.M))
+    if blocks > 0 and tokens >= blocks:
+        return text
+    pattern = rb"^    secrets: inherit$" if re.search(
+        rb"^    secrets: inherit$", text, re.M) else rb"^    secrets:$"
+    return re.sub(pattern, lambda m: b"    secrets:\n" + READ_SECRET, text, flags=re.M)
+
+
+def inject_runner(text, runner):
+    if re.search(rb"^    with:$", text, re.M):
+        return re.sub(rb"^(    with:)$",
+                      lambda m: m[1] + b"\n      runner: " + runner, text, flags=re.M)
+    return re.sub(rb"^(    uses:[ \t]*[^ \t]+/\.github/workflows/.+)$",
+                  lambda m: m[1] + b"\n    with:\n      runner: " + runner,
+                  text, flags=re.M)
+
+
+def render_sync(template, name, ref, policy, base):
+    repo = policy["repo"].encode()
+    if not REPO_RE.match(repo):
+        raise ValueError("invalid reusable repository policy")
+    runner = policy.get("runner")
+    if runner is None:
+        previous = re.search(rb"^      runner: (.+)$", base or b"", re.M)
+        runner = previous[1].decode() if previous else None
+    text = re.sub(rb"^([ \t]*uses:[ \t]*)marcusquinn/aidevops(/\.github/workflows/[^@\s]+)@\S+",
+                  lambda m: m[1] + repo + m[2] + b"@" + ref, template, flags=re.M)
+    text = re.sub(rb"marcusquinn/aidevops(/\.github/workflows/\S+)",
+                  lambda m: repo + m[1], text)
+    text = re.sub(rb"^(      aidevops_ref:).*$", lambda m: m[1] + b" " + ref, text, flags=re.M)
+    if repo != DEFAULT_REPO and name in SYNC_HELPER_WORKFLOWS:
+        text = inject_mirror(text.rstrip(b"\n") + b"\n", repo)
+    text = text.rstrip(b"\n") + b"\n"
+    if runner is not None:
+        runner = runner.encode() if isinstance(runner, str) else runner
+        if not RUNNER_RE.match(runner):
+            raise ValueError("runner policy is not a plain label")
+        text = inject_runner(text, runner).rstrip(b"\n") + b"\n"
+    branch = policy["base_branch"].encode()
+    if not BRANCH_RE.match(branch):
+        raise ValueError("unsupported base branch name")
+    if branch != b"main":
+        text = re.sub(rb"^([ \t]+branches:) \[main\]$",
+                      lambda m: m[1] + b" [" + branch + b"]", text, flags=re.M)
+    return text.rstrip(b"\n") + b"\n"
+
+
+def validate_sync(name, evidence):
+    if name not in SYNC_WORKFLOWS:
+        raise ValueError("unknown managed workflow")
+    head = blob(evidence["head"])
+    base = blob(evidence["base"]) if evidence.get("base") is not None else None
+    ref = sync_ref(head)
+    if render_sync(blob(evidence["template"]), name, ref, evidence["policy"], base) != head:
+        raise ValueError("workflow differs from exact trusted re-render")
+    return ref[:40].decode()
+
+
 if __name__ == "__main__":
     try:
-        print(validate(sys.argv[1], sys.argv[2], json.load(sys.stdin)))
-    except (ValueError, KeyError, TypeError, OSError) as error:
+        if sys.argv[1] == "--sync-ref":
+            print(sync_ref(blob(json.load(sys.stdin)["head"]))[:40].decode())
+        elif sys.argv[1] == "--sync-validate":
+            print(validate_sync(sys.argv[2], json.load(sys.stdin)))
+        else:
+            print(validate(sys.argv[1], sys.argv[2], json.load(sys.stdin)))
+    except (ValueError, KeyError, TypeError, OSError, IndexError) as error:
         print(f"Routine content refused: {error}", file=sys.stderr)
         sys.exit(1)

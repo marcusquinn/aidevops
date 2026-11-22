@@ -40,6 +40,8 @@ PR_FILES_API_FAIL=0
 ROUTINE_META=""
 ROUTINE_HEAD_CONTENT=""
 ROUTINE_BASE_CONTENT=""
+ROUTINE_TEMPLATE_CONTENT=""
+REPOS_JSON="${TEST_ROOT}/repos.json"
 ROUTINE_TREE_MODE=100644
 ROUTINE_TREE_TRUNCATED=false
 ROUTINE_REF_STATUS=ahead
@@ -55,7 +57,7 @@ routine_tree_fixture() {
 	jq -n --argjson files "$files" --arg sha "${sha:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" \
 		--arg mode "$ROUTINE_TREE_MODE" --argjson truncated "$ROUTINE_TREE_TRUNCATED" \
 		'{truncated:$truncated,tree:[$files[] | {path:.filename,type:"blob",mode:$mode,
-		 sha:(if .filename == "README.md" or .filename == ".github/workflows/loc-badge.yml"
+		 sha:(if .filename == "README.md" or (.filename | startswith(".github/workflows/") and endswith(".yml") and . != ".github/workflows/evil.yml")
 		  then $sha else "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" end)}]}'
 	return 0
 }
@@ -104,14 +106,15 @@ gh() {
 		;;
 	repos/owner/repo/git/trees/"$ROUTINE_MERGE_BASE"'?recursive=1')
 		payload=$(routine_tree_fixture "$ROUTINE_BASE_CONTENT" \
-			'[{"filename":"README.md"},{"filename":".github/workflows/loc-badge.yml"}]')
+			'[{"filename":"README.md"},{"filename":".github/workflows/loc-badge.yml"},{"filename":".github/workflows/review-bot-gate.yml"}]')
 		;;
 	repos/owner/repo/issues/42)
 		payload=$(jq -n --arg assoc "$ISSUE_ASSOC" --arg login "$ISSUE_LOGIN" --arg state "$ISSUE_STATE" \
 			--argjson labels "$ISSUE_LABELS" \
 			'{number:42,author_association:$assoc,user:{login:$login,type:"User"},state:$state,labels:$labels,title:"Generated service sync"}')
 		;;
-	repos/owner/repo) payload='{"permissions":{"push":true}}' ;;
+	repos/marcusquinn/aidevops/contents/.agents/templates/workflows/*) payload="$ROUTINE_TEMPLATE_CONTENT" ;;
+	repos/owner/repo) payload='{"permissions":{"push":true},"default_branch":"main"}' ;;
 	*) printf 'Unexpected gh call: %s\n' "$*" >&2; return 1 ;;
 	esac
 	if [[ -n "$filter" ]]; then jq -r "$filter" <<<"$payload"; else printf '%s\n' "$payload"; fi
@@ -433,15 +436,104 @@ ROUTINE_REF_STATUS=ahead
 ROUTINE_HEAD_CONTENT=$(content_fixture "$workflow"$'\n# unexpected workflow content\n')
 expect_parity 1 'modified workflow template denied' ''
 
+# GH#39793: sync-workflows marker admission by exact trusted-ref re-rendering.
+SYNC_SHA=1111111111111111111111111111111111111111
+sync_render() {
+	local name="$1" sha="$2" repo="${3:-marcusquinn/aidevops}"
+	sed -E -e 's|^([[:space:]]*uses:[[:space:]]*)marcusquinn/aidevops(/\.github/workflows/[^@[:space:]]+)@[^[:space:]]+|\1'"$repo"'\2@'"$sha"'|' \
+		-e 's|marcusquinn/aidevops(/\.github/workflows/[^[:space:]]+)|'"$repo"'\1|g' \
+		-e 's|^(      aidevops_ref:).*$|\1 '"$sha"'|' "$SCRIPT_DIR/../templates/workflows/${name}-caller.yml"
+	return 0
+}
+sync_template() {
+	content_fixture "$(<"$SCRIPT_DIR/../templates/workflows/${1}-caller.yml")"$'\n'
+	return 0
+}
+PR_BODY='<!-- aidevops:routine-pr:sync-workflows -->'
+sync_meta=$(jq -n --arg body "$PR_BODY" '{state:"open",draft:false,body:$body,
+ labels:[{name:"origin:worker"}],user:{login:"runner"},changed_files:1,
+ head:{ref:"chore/workflow-sync-20261122",sha:"1111111111111111111111111111111111111111",repo:{full_name:"owner/repo"}},
+ base:{ref:"main",sha:"2222222222222222222222222222222222222222",repo:{full_name:"owner/repo"}}}')
+ROUTINE_META="$sync_meta"
+rm -f "$REPOS_JSON"
+PR_FILES='[{"filename":".github/workflows/review-bot-gate.yml","status":"added"}]'
+ROUTINE_TEMPLATE_CONTENT=$(sync_template review-bot-gate)
+ROUTINE_HEAD_CONTENT=$(content_fixture "$(sync_render review-bot-gate "$SYNC_SHA")"$'\n')
+expect_parity 0 'sync-workflows exact trusted-ref render admitted without an anchor' ''
+for mutation in '.head.repo.full_name="outsider/fork"' '.head.ref="chore/badges-sync-1"' \
+	'.base.ref="develop"' '.changed_files=2' '.labels += [{name:"hold-for-review"}]' \
+	'.body="<!-- aidevops:routine-pr:badges-sync -->"'; do
+	ROUTINE_META=$(jq "$mutation" <<<"$sync_meta")
+	expect_parity 1 "sync-workflows metadata denied: $mutation" ''
+done
+ROUTINE_META="$sync_meta"
+ISSUE_PERMISSION="read"
+expect_parity 1 'read-only sync-workflows author denied' ''
+ISSUE_PERMISSION="write"
+ROUTINE_REF_STATUS=diverged
+expect_parity 1 'sync-workflows ref not reachable from framework main denied' ''
+ROUTINE_REF_STATUS=ahead
+ROUTINE_HEAD_CONTENT=$(content_fixture "$(sync_render review-bot-gate "$SYNC_SHA")"$'\n      malicious: true\n')
+expect_parity 1 'sync-workflows caller with extra content denied' ''
+ROUTINE_HEAD_CONTENT=$(content_fixture "$(sync_render review-bot-gate main)"$'\n')
+expect_parity 1 'sync-workflows floating ref denied' ''
+ROUTINE_HEAD_CONTENT=$(content_fixture "$(sync_render review-bot-gate "$SYNC_SHA")"$'\n')
+ROUTINE_HEAD_CONTENT=$(jq '.size=9999' <<<"$ROUTINE_HEAD_CONTENT")
+expect_parity 1 'sync-workflows truncated blob denied' ''
+ROUTINE_HEAD_CONTENT=$(content_fixture "$(sync_render review-bot-gate "$SYNC_SHA")"$'\n')
+ROUTINE_TREE_TRUNCATED=true
+expect_parity 1 'sync-workflows truncated tree denied' ''
+ROUTINE_TREE_TRUNCATED=false
+for path in .github/workflows/evil.yml .github/workflows/release-verify.yml \
+	.github/workflows/linked-issue-check.yml CONTRIBUTING.md; do
+	PR_FILES=$(jq -n --arg path "$path" '[{filename:$path,status:"added"}]')
+	expect_parity 1 "sync-workflows unmanaged path denied: $path" ''
+done
+PR_FILES='[{"filename":".github/workflows/review-bot-gate.yml","status":"added"},{"filename":"src/evil.sh","status":"added"}]'
+ROUTINE_META=$(jq '.changed_files=2' <<<"$sync_meta")
+expect_parity 1 'sync-workflows out-of-scope companion file denied' ''
+ROUTINE_META="$sync_meta"
+# Modified caller: the base file is compared at the merge base and its runner kept.
+PR_FILES='[{"filename":".github/workflows/review-bot-gate.yml","status":"modified"}]'
+ROUTINE_BASE_CONTENT=$(sync_template review-bot-gate)
+expect_parity 0 'sync-workflows modified caller admitted against merge base' ''
+awk '{print} /^    with:$/ {print "      runner: custom-label"}' "$SCRIPT_DIR/../templates/workflows/review-bot-gate-caller.yml" >"${TEST_ROOT}/base-runner.yml"
+ROUTINE_BASE_CONTENT=$(content_fixture "$(<"${TEST_ROOT}/base-runner.yml")"$'\n')
+expect_parity 1 'sync-workflows drops an existing runner label: denied' ''
+ROUTINE_HEAD_CONTENT=$(content_fixture "$(sync_render review-bot-gate "$SYNC_SHA" | awk '{print} /^    with:$/ {print "      runner: custom-label"}')"$'\n')
+expect_parity 0 'sync-workflows preserves the base file runner label' ''
+ROUTINE_BASE_CONTENT=$(sync_template review-bot-gate)
+expect_parity 1 'sync-workflows invents a runner label absent from policy: denied' ''
+# Declared per-repo policy from the registry: runner override and mirror repo.
+printf '{"initialized_repos":[{"slug":"owner/repo","runner":"ubuntu-24.04"}]}\n' >"$REPOS_JSON"
+expect_parity 1 'sync-workflows registry runner missing from head denied' ''
+ROUTINE_HEAD_CONTENT=$(content_fixture "$(sync_render review-bot-gate "$SYNC_SHA" | awk '{print} /^    with:$/ {print "      runner: ubuntu-24.04"}')"$'\n')
+expect_parity 0 'sync-workflows registry runner override admitted' ''
+PR_FILES='[{"filename":".github/workflows/maintainer-gate.yml","status":"added"}]'
+ROUTINE_TEMPLATE_CONTENT=$(sync_template maintainer-gate)
+printf '{"initialized_repos":[{"slug":"owner/repo","workflow_reusable_repo":"mirror/aidevops"}]}\n' >"$REPOS_JSON"
+ROUTINE_HEAD_CONTENT=$(content_fixture "$(sync_render maintainer-gate "$SYNC_SHA")"$'\n')
+expect_parity 1 'sync-workflows default repo caller denied when the registry declares a mirror' ''
+ROUTINE_HEAD_CONTENT=$(content_fixture "$(sync_render maintainer-gate "$SYNC_SHA" mirror/aidevops)"$'\n')
+expect_parity 0 'sync-workflows declared mirror caller admitted' ''
+printf '{"initialized_repos":[{"slug":"owner/repo","workflow_reusable_repo":"evil/aidevops"}]}\n' >"$REPOS_JSON"
+expect_parity 1 'sync-workflows mirror absent from registry policy denied' ''
+rm -f "$REPOS_JSON"
+PR_FILES='[{"filename":".github/workflows/maintainer-gate.yml","status":"added"}]'
+ROUTINE_HEAD_CONTENT=$(content_fixture "$(sync_render maintainer-gate "$SYNC_SHA" mirror/aidevops)"$'\n')
+expect_parity 1 'sync-workflows mirror without any registry policy denied' ''
+
 _GH_PR_IDENTITY_ORIGIN=origin:worker
 _gh_validate_pr_worker_identity '<!-- aidevops:routine-pr:badges-sync -->' --repo owner/repo
-for body in '<!-- aidevops:routine-pr:unknown -->' '<!-- aidevops:routine-pr:sync-workflows -->' \
+_gh_validate_pr_worker_identity '<!-- aidevops:routine-pr:sync-workflows -->' --repo owner/repo
+for body in '<!-- aidevops:routine-pr:unknown -->' '<!-- aidevops:routine-pr:sync-workflows -->
+<!-- aidevops:routine-pr:badges-sync -->' \
 	$'<!-- aidevops:routine-pr:badges-sync -->\n<!-- aidevops:routine-pr:unknown -->' \
 	'<!-- aidevops:routine-pr:badges-sync --><!-- aidevops:routine-pr:unknown -->'; do
 	if _gh_validate_pr_worker_identity "$body" --repo owner/repo; then exit 1; fi
 done
 unset _GH_PR_IDENTITY_ORIGIN
-printf 'PASS worker identity accepts badge marker only, not unknown or multiple policies\n'
+printf 'PASS worker identity accepts the badges/sync-workflows markers only, not unknown or multiple policies\n'
 
 # Retirement uses the existing helper, with no GitHub writes or new harness.
 bash -s -- "$SCRIPT_DIR" "$TEST_ROOT" <<'RETIRE_TEST'
@@ -521,7 +613,13 @@ bash -s -- "$SCRIPT_DIR" "$TEST_ROOT" <<'RETIRE_TEST'
 	[[ "$(sed -n '$p' "$RETIRE_CALLS")" == *'issue edit 77 --repo owner/repo --remove-label routine-anchor-retiring'* ]]
 	if grep -q 'issue close 78' "$RETIRE_CALLS"; then exit 1; fi
 	if grep -q 'issue reopen' "$RETIRE_CALLS"; then exit 1; fi
-	if cmd_retire_anchor sync-workflows --repo owner/repo; then exit 1; fi
+	if cmd_retire_anchor other-routine --repo owner/repo; then exit 1; fi
+	# GH#39793: the sync-workflows key is accepted, still keeping a referenced legacy anchor.
+	: >"$RETIRE_CALLS"
+	RETIRE_PRS='[{"body":"Ref #78"}]'
+	cmd_retire_anchor sync-workflows --repo owner/repo
+	[[ ! -s "$RETIRE_CALLS" ]]
+	RETIRE_PRS='[{"body":"Ref #777"}]'
 	printf 'PASS retirement keeps referenced anchor, retires unreferenced badge anchor only\n'
 	: >"$RETIRE_CALLS"
 	RETIRE_PRS_AFTER_CLOSE='[{"body":"For #77"}]'

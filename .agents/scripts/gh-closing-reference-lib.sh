@@ -490,9 +490,11 @@ _gh_validate_pr_worker_identity() {
 		issues=$(_gh_pr_body_explicit_issues "$body_text") || return 1
 	fi
 	# Syntax only: the live merge boundary verifies author, branch and exact diff.
-	# Unknown or multiple markers cannot replace an issue identity. Workflow sync
-	# retains its anchor until a safe exact-render policy is available.
-	if [[ -z "$issues" && "$body_text" == *'<!-- aidevops:routine-pr:badges-sync -->'* ]] &&
+	# Unknown or multiple markers cannot replace an issue identity (GH#39793:
+	# sync-workflows joins badges-sync once the gate re-renders it byte-exactly).
+	if [[ -z "$issues" ]] &&
+		[[ "$body_text" == *'<!-- aidevops:routine-pr:badges-sync -->'* ||
+		"$body_text" == *'<!-- aidevops:routine-pr:sync-workflows -->'* ]] &&
 		[[ "$(printf '%s' "$body_text" | grep -o 'aidevops:routine-pr:' | grep -c .)" == 1 ]]; then
 		return 0
 	fi
