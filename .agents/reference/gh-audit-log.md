@@ -360,7 +360,10 @@ The scanner:
    normalization, verified PR-review handoffs that replace only
    `status:in-progress` with `status:in-review` without content-length changes,
    runtime-owned blocked exits replacing only `status:in-progress` with
-   `status:blocked` with `worker_blocked_exit_verified: v1-release-persisted`
+   `status:blocked` plus at most one `needs-*` companion from the canonical
+   blocked companion contract (GH#38360; the scanner reads the list from
+   `_blocked_companion_contract`, GH#39853), with
+   `worker_blocked_exit_verified: v1-release-persisted`
    (live blocked state and a trusted blocked release newer than the last claim),
    signed worker-permission grants that remove `needs-maintainer-permissions`
    (optionally with `status:blocked`, adding only `status:available` or
@@ -451,7 +454,12 @@ Outcome: all entries `expected` or `reverted` → close the alert with one evide
 comment (`status:done`). Any `unexplained` → add `needs-maintainer-input` plus one
 decision-ready comment naming those entries, and leave the alert open (the label also
 blocks redispatch). A recurring expected shape gets a separately scoped filter-fix
-task, as #38764 did for withdrawals.
+task, as #38764 did for withdrawals. An `expected` entry that already carries a
+verified provenance flag (`flags.*_verified`) but was still reported means the
+producer changed and its filter did not; for example GH#38360 added blocked
+companions, which caused daily alerts until GH#39853. File the filter-fix task on
+the first such entry. Do not treat the documented narrow shape as proof that the
+scanner was correct to report it.
 
 Never edit the audit log, never change labels on the target issues, and keep the
 `[private repository]` placeholder in public comments. A `state_capture_unavailable:*`
