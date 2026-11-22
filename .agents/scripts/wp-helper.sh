@@ -14,6 +14,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 source "${SCRIPT_DIR}/wp-helper-change-plan.sh"
 source "${SCRIPT_DIR}/wp-helper-fluent-boards.sh"
 source "${SCRIPT_DIR}/wp-helper-fluentsmtp.sh"
+source "${SCRIPT_DIR}/wp-helper-config-secret.sh"
 
 set -euo pipefail
 
@@ -691,6 +692,12 @@ Commands:
                                          [--dry-run] --access-key-env VAR --secret-key-env VAR
                                        test --to ADDR [--from ADDR] [--lift-http-block]
                                        (services/email/ses.md "FluentSMTP")
+  --config-secret <site> <action> [--url URL]
+                                       Secret constant in wp-config.php (JSON output;
+                                       value only on stdin, never printed):
+                                       set CONSTANT --value-env VAR [--dry-run]
+                                       status CONSTANT | backups | undo --backup DIR
+                                       (tools/wordpress/wp-dev.md "Secrets in wp-config.php")
   <site> <wp-cli-command>             Run command on specific site
   help                                Show this help
 
@@ -719,6 +726,10 @@ Examples:
   # Run on ALL sites
   wp-helper.sh --all core version
   wp-helper.sh --all plugin list --status=active
+
+  # Rotate a stored secret into wp-config.php (never pass values as arguments)
+  aidevops secret CF_PURGE_TOKEN -- wp-helper.sh --config-secret production \
+    set CLOUDFLARE_API_TOKEN --value-env CF_PURGE_TOKEN
 EOF
 	return 0
 }
@@ -877,6 +888,10 @@ main() {
 	--fluentsmtp)
 		shift
 		cmd_fluentsmtp "$@" || return $?
+		;;
+	--config-secret)
+		shift
+		cmd_config_secret "$@" || return $?
 		;;
 	help | --help | -h)
 		show_help
