@@ -963,6 +963,7 @@ _dispatch_pr_repair_by_kind() {
 		review) _dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || dispatch_rc=$? ;;
 		conflict) _dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" || dispatch_rc=$? ;;
 		ci) _dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$checks_json" || dispatch_rc=$? ;;
+		runtime-pending-legacy) _dispatch_runtime_pending_completion_worker "$pr_number" "$repo_slug" "$linked_issue" || dispatch_rc=$? ;;
 	esac
 	return "$dispatch_rc"
 }
@@ -1316,6 +1317,7 @@ _route_pr_to_fix_worker() {
 		review)   routed_label="review-routed-to-issue" ;;
 		conflict) routed_label="conflict-feedback-routed" ;;
 		ci)       routed_label="ci-feedback-routed" ;;
+		runtime-pending-legacy) routed_label="runtime-pending-legacy-routed" ;;
 		*)
 			echo "[pulse-wrapper] _route_pr_to_fix_worker: unknown kind '${kind}'" >>"$LOGFILE"
 			return 1

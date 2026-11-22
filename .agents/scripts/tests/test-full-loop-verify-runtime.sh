@@ -107,6 +107,7 @@ reset_fixture() {
 	MOVE_HEAD_ON_EDIT=0
 	MOVE_HEAD_ON_UNLABEL=0
 	EDIT_AT_READ=""
+	PENDING_AT_READ=""
 	: >"$WRITES"
 	: >"$ASSOCIATIONS"
 	printf '0' >"$PR_READS"
@@ -116,7 +117,7 @@ reset_fixture() {
 fake_pr_json() {
 	jq -cn --arg state "$FAKE_STATE" --argjson cross "$FAKE_CROSS" --arg head "$FAKE_HEAD" \
 		--arg body "$FAKE_BODY" --arg labels "$FAKE_LABELS" --argjson closing "$FAKE_CLOSING" '{
-		state:$state, isCrossRepository:$cross, headRefOid:$head, author:{login:"worker-bot"},
+		state:$state, isCrossRepository:$cross, headRefOid:$head, headRefName:"feature/original", author:{login:"worker-bot"},
 		body:$body, labels:($labels | split(",") | map(select(. != "")) | map({name:.})),
 		closingIssuesReferences:$closing}'
 	return 0
@@ -131,6 +132,9 @@ fake_pr_read() {
 	printf '%s' "$reads" >"$PR_READS"
 	if [[ -n "$EDIT_AT_READ" && "$reads" -ge "$EDIT_AT_READ" ]]; then
 		FAKE_BODY="${FAKE_BODY}"$'\n\nEdited by a maintainer after the read.'
+	fi
+	if [[ -n "$PENDING_AT_READ" && "$reads" -ge "$PENDING_AT_READ" ]]; then
+		FAKE_BODY="$PENDING_BODY"
 	fi
 	if [[ -n "$jq_filter" ]]; then
 		fake_pr_json | jq -r "$jq_filter"
@@ -397,6 +401,95 @@ _record_hold_scope_marker 7 owner/repo "pr-only,runtime-pending" && grep -q '^co
 check "new scope posts a marker" $?
 ! _record_hold_scope_marker 7 owner/repo 'bad scope'
 check "malformed scope tokens are rejected" $?
+
+# --- Legacy Low/Medium completion: no interactive runtime attestation ---
+reset_fixture; FAKE_BODY="$SELF_BODY"
+notice=$(cmd_runtime_pending_notice 7 owner/repo)
+printf '%s' "$notice" | jq -e '.risk == "Low" and .level == "self-assessed"' >/dev/null
+check "notice exposes parsed Low completed metadata" $?
+no_writes
+check "default notice remains read-only" $?
+cmd_runtime_pending_notice 7 owner/repo --lift-completed >"$OUT" 2>&1
+check "Low completed hold lifts" $?
+[[ "$FAKE_LABELS" == "" && "$(body_level)" == self-assessed ]] && grep -q '^comment' "$WRITES"
+check "legacy lift audits without claiming runtime verification" $?
+for legacy_case in pending high pr-only unrecorded permission race fork no-takeover closed; do
+	reset_fixture; FAKE_BODY="$SELF_BODY"
+	case "$legacy_case" in
+	pending) FAKE_BODY="$PENDING_BODY" ;;
+	high) FAKE_BODY="$SELF_CRITICAL_BODY" ;;
+	pr-only) PR_ONLY_RC=0 ;;
+	unrecorded) FAKE_COMMENTS='[]' ;;
+	permission) WRITE_OK=0 ;;
+	race) PENDING_AT_READ=2 ;;
+	fork) FAKE_CROSS=true ;;
+	no-takeover) FAKE_LABELS='hold-for-review,no-takeover' ;;
+	closed) FAKE_STATE=CLOSED ;;
+	esac
+	! cmd_runtime_pending_notice 7 owner/repo --lift-completed >"$OUT" 2>&1 &&
+		! grep -q '^remove-label' "$WRITES"
+	check "legacy lift refuses ${legacy_case}" $?
+done
+reset_fixture; FAKE_BODY="$SELF_BODY"; MOVE_HEAD_ON_UNLABEL=1
+! cmd_runtime_pending_notice 7 owner/repo --lift-completed >"$OUT" 2>&1 &&
+	[[ ",${FAKE_LABELS}," == *",hold-for-review,"* ]]
+check "legacy head race reapplies hold" $?
+
+# The leased local repair branch must regenerate the original PR, never a new
+# repair-branch PR or a force push. GitHub and transport remain controlled stubs.
+reset_fixture; FAKE_BODY="$SELF_BODY"; FAKE_LABELS='origin:worker,hold-for-review'
+AIDEVOPS_PR_REPAIR_NUMBER=7
+AIDEVOPS_PR_REPAIR_HEAD_REF=feature/original
+AIDEVOPS_PR_REPAIR_HEAD_SHA="$LOCAL_HEAD"
+skip_rebase=1
+target=$(_runtime_completion_target_branch owner/repo repair/test)
+[[ "$target" == feature/original ]]
+check "completion maps repair checkout to original PR branch" $?
+FAKE_HEAD="$OTHER_HEAD"
+! _runtime_completion_target_branch owner/repo repair/test >/dev/null
+check "completion target rejects a moved head" $?
+FAKE_HEAD="$LOCAL_HEAD"; skip_rebase=0
+! _runtime_completion_target_branch owner/repo repair/test >/dev/null
+check "completion target requires no-rebase" $?
+skip_rebase=1; FAKE_LABELS='origin:worker,hold-for-review,no-takeover'
+! _runtime_completion_target_branch owner/repo repair/test >/dev/null
+check "completion target preserves no-takeover" $?
+
+reset_fixture; FAKE_BODY="$SELF_BODY"; FAKE_LABELS='origin:worker,hold-for-review'
+AIDEVOPS_RUNTIME_PENDING_COMPLETION=1
+REMOTE_CLASS=fast-forward
+_classify_remote_branch() { printf '%s %s\n' "$REMOTE_CLASS" "$LOCAL_HEAD"; return 0; }
+timeout() { shift; "$@"; return $?; }
+git() {
+	local action="${1:-}"
+	if [[ "$action" == push ]]; then
+		printf '%s\n' "$*" >>"$WRITES"
+		return 0
+	fi
+	if [[ "$action" == branch && "${2:-}" == --show-current ]]; then
+		printf 'repair/test\n'
+		return 0
+	fi
+	"$TEST_NATIVE_GIT" "$@"
+	return $?
+}
+: >"$WRITES"
+_push_branch feature/original 0 owner/repo
+grep -qx "push -u origin ${LOCAL_HEAD}:refs/heads/feature/original --force-with-lease=feature/original:${LOCAL_HEAD}" "$WRITES"
+check "completion binds ancestry-proven head to the observed remote lease" $?
+FAKE_LABELS='origin:worker,hold-for-review,no-takeover'
+: >"$WRITES"
+! _push_branch feature/original 0 owner/repo && no_writes
+check "prepush refresh preserves newly protected ownership" $?
+! _create_or_continue_pr '' owner/repo title body origin:worker >/dev/null
+check "completion publication cannot create a replacement PR" $?
+! _create_or_continue_pr 8 owner/repo title body origin:worker >/dev/null
+check "completion publication binds the dispatched PR number" $?
+for REMOTE_CLASS in foreign own-rewrite absent unknown; do
+	: >"$WRITES"
+	! _push_branch feature/original 0 owner/repo && no_writes
+	check "completion refuses ${REMOTE_CLASS} without a replacement branch" $?
+done
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1

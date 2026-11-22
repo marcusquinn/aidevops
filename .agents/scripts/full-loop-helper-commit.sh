@@ -500,6 +500,9 @@ _validate_commit_and_pr_inputs() {
 		print_error "Cannot commit-and-pr from ref '${branch:-detached}'. Must be in a safe linked worktree."
 		return 1
 	fi
+	if [[ "${AIDEVOPS_RUNTIME_PENDING_COMPLETION:-0}" == 1 ]]; then
+		branch=$(_runtime_completion_target_branch "$repo" "$branch") || return 1
+	fi
 	return 0
 }
 
@@ -555,7 +558,6 @@ _stage_and_commit() {
 	fi
 	return 0
 }
-
 
 # --- Rebase & Push ---
 
@@ -762,16 +764,15 @@ _pr_head_ref_for_repo() {
 _push_branch() {
 	local branch="$1"
 	local skip_hooks="${2:-0}"
-	local repo="${3:-}"
-	local replacement_pr="${4:-}"
+	local repo="${3:-}" replacement_pr="${4:-}"
 	FULL_LOOP_PUSHED_BRANCH=""
 
-	local classification="" remote_state="" remote_sha=""
+	local classification="" remote_state="" remote_sha="" lease_arg=""
 	classification=$(_classify_remote_branch "$branch")
 	remote_state="${classification%% *}"
 	remote_sha="${classification#* }"
+	[[ "${AIDEVOPS_RUNTIME_PENDING_COMPLETION:-0}" != 1 || ( "$skip_hooks" == 0 && ( "$remote_state" == same || "$remote_state" == fast-forward ) ) ]] || return 1
 
-	local lease_arg=""
 	case "$remote_state" in
 	absent) lease_arg="--force-with-lease=${branch}:" ;;
 	same | fast-forward | own-rewrite) lease_arg="--force-with-lease=${branch}:${remote_sha}" ;;
@@ -815,7 +816,12 @@ _push_branch() {
 	local push_timeout="${AIDEVOPS_PUSH_TIMEOUT_S:-300}"
 	[[ "$push_timeout" =~ ^[1-9][0-9]*$ ]] || push_timeout=300
 	local _push_args=(-u origin "$branch")
-	[[ -n "$lease_arg" ]] && _push_args+=("$lease_arg")
+	if [[ "${AIDEVOPS_RUNTIME_PENDING_COMPLETION:-0}" == 1 ]]; then
+		[[ "$(_runtime_completion_target_branch "$repo" "$(git branch --show-current)")" == "$branch" ]] || return 1
+		_push_args=(-u origin "$(git rev-parse HEAD):refs/heads/${branch}" "$lease_arg")
+	else
+		[[ -n "$lease_arg" ]] && _push_args+=("$lease_arg")
+	fi
 	[[ "$skip_hooks" == "1" ]] && _push_args+=(--no-verify)
 
 	local push_rc
@@ -1388,6 +1394,7 @@ _create_or_continue_pr() {
 	local pr_body="$4"
 	local origin_label="$5"
 	shift 5
+	[[ "${AIDEVOPS_RUNTIME_PENDING_COMPLETION:-0}" != 1 || ( -n "$continuation_pr" && "$continuation_pr" == "${AIDEVOPS_PR_REPAIR_NUMBER:-}" ) ]] || return 1
 	if [[ -n "$continuation_pr" ]]; then
 		print_info "Continuing existing issue-linked PR #${continuation_pr} at the final creation boundary"
 		_reconcile_pr_origin_label "$continuation_pr" "$repo" "${origin_label#origin:}" || return 1
