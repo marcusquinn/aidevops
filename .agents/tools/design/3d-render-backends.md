@@ -58,6 +58,12 @@ support, NDA and humans; pick them for those reasons, not speed.
 - **Eevee** needs an OpenGL/Vulkan-capable display stack; headless servers may
   require EGL support. Test one Eevee frame before committing a range.
 - Mac: Docker cannot use Metal. Local renders run in native Blender.
+- **4K stills: render natively.** On 2026-11-22 (architectural scene, ~110k
+  triangles, M3 Max Metal) a native 3840×2160 Cycles frame took ~30 s against
+  ~7 s at 1920×1080. A Real-ESRGAN 2× upscale of the 1080p frame (~25 s) smoothed
+  stone and mortar detail and added swirl artefacts on grass. Reserve AI
+  upscaling for long animations where 4× render time per frame is not worth it,
+  and check a crop at 100% before choosing.
 
 ## Cost method
 
