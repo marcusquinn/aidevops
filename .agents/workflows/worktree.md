@@ -88,7 +88,7 @@ ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh remove featur
 | "Worktree path already exists" | `worktree-helper.sh remove feature/auth --force` if safe, then re-add under `~/Git/_worktrees` |
 | Stale worktree references | `git worktree prune` |
 | Detached HEAD | `cd` into worktree, `git checkout feature/auth` |
-| Worktree deleted mid-session | `git branch --list feature/my-feature` → `worktree-helper.sh add feature/my-feature` → `git stash pop` |
+| Worktree deleted mid-session | `git branch --list feature/my-feature` → `worktree-helper.sh add feature/my-feature` → restore the logged `dirty_backup=` ID with `dirty-worktree-backup-helper.sh restore` (`reference/dirty-worktree-preservation.md`). Never use a bare `git stash pop`: the stash list is shared by all worktrees |
 
 ## Related
 

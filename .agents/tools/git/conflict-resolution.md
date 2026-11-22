@@ -140,10 +140,13 @@ git add <resolved-files> && git cherry-pick --continue
 ### Stash pop
 
 ```bash
-git stash pop
+git stash list --format='%gd %s'   # confirm the entry is yours: stashes are shared by all worktrees
+git stash pop 'stash@{N}'          # explicit ref only; bare pop/apply is forbidden (GH#39787)
 git add <resolved-files>
-git stash drop   # stash is NOT dropped automatically on conflict
 ```
+
+On conflict Git keeps the entry. Leave it in place: the shared command policy
+forbids `git stash drop`. Review leftovers with `stash-audit-helper.sh`.
 
 ## Common Conflict Patterns
 
