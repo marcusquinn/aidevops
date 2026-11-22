@@ -1002,8 +1002,11 @@ release_merge_approved_pr() {
 release_not_routine_reason() {
 	local repo="$1" pr="$2" head="$3" output='' reason=''
 	output=$(release_policy_authorizes "$repo" "$pr" "$head" 2>&1 >/dev/null) || true
-	reason=$(printf '%s\n' "$output" | sed -n 's/.*\(NOT_ROUTINE: [^)]*\).*/\1/p' | head -n 1)
-	[[ -n "$reason" ]] || reason=$(printf '%s\n' "$output" | head -n 1 | cut -c 1-300)
+	reason=$(printf '%s\n' "$output" | sed -n 's/.*\(NOT_ROUTINE: [^)]*\).*/\1/;t found;d;:found;p;q')
+	if [[ -z "$reason" ]]; then
+		reason="${output%%$'\n'*}"
+		reason="${reason:0:300}"
+	fi
 	[[ -n "$reason" ]] || reason='NOT_ROUTINE: no active signed standing policy covers this head'
 	printf '%s\n' "$reason"
 	return 0
