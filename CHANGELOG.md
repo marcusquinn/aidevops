@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.265] - 2026-11-22
+
+### Added
+
+- list t2449 linked-issue approval waits (GH#39881)
+
+### Changed
+
+- Maintenance: mark t19282 complete (pr:#39878 completed:2026-11-22) (#39882)
+
+### Fixed
+
+- warn when prework-discovery --files is not a comma-separated list
+- parse three-column failure miner log payloads (GH#39884) (#39894)
+- recover stale interactive orphan drafts (GH#39873)
+- audit scanner accepts the runtime blocked-exit companion label
+- credit same-runner audit alert report completion (GH#39876) (#39879)
+
 ## [3.39.264] - 2026-11-22
 
 ### Changed
