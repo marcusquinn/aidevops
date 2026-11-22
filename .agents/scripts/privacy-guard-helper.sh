@@ -572,7 +572,8 @@ privacy_guard_public_write() {
 	local target_status entities_file hits scan_rc public_tree="" tree_repo="" tree_result=""
 
 	if [[ -z "$repo" || ! "$repo" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]]; then
-		printf '[privacy-guard][BLOCK] Public-write target privacy could not be established.\n' >&2
+		# GH#39801: a missing target is a caller error, not a visibility failure.
+		printf '[privacy-guard][BLOCK] Public-write target repository is missing or malformed (expected OWNER/REPO; pass --repo).\n' >&2
 		return 1
 	fi
 	if privacy_is_target_public "https://github.com/${repo}.git"; then

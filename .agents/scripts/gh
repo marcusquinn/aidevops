@@ -709,6 +709,40 @@ for _cand in \
 	fi
 done
 
+# _shim_privacy_target_candidates
+# Appends OWNER/REPO write targets for _modified_args to the caller's
+# _candidates array (GH#39801). An unresolvable target leaves it empty, which
+# keeps the shim's fail-open contract; native gh rejects such writes itself.
+_shim_privacy_target_candidates() {
+	local _api_target="" _rc=0 _default=""
+	if [[ "${_modified_args[0]:-}" == "api" ]]; then
+		_api_target="$(_shim_api_target_from_path 2>/dev/null || true)"
+		_api_target="${_api_target#https://github.com/}"
+		# gh api expands {owner}/{repo} and :owner/:repo from the base repo.
+		case "$_api_target" in
+		*'{owner}'* | *'{repo}'* | *':owner'* | *':repo'*) _api_target="" ;;
+		esac
+		[[ -n "$_api_target" ]] || _api_target=$(_gh_target_repo_default 2>/dev/null) || _api_target=""
+		! _gh_target_slug_valid "$_api_target" || _candidates+=("$_api_target")
+		return 0
+	fi
+	_gh_resolve_target_repo "${_modified_args[@]}" || _rc=$?
+	[[ "$_rc" -eq 0 || "$_rc" -eq 3 ]] || return 0
+	if [[ -z "$_GH_TARGET_REPO_REFERENCE" ]]; then
+		_candidates+=("$_GH_TARGET_REPO")
+		return 0
+	fi
+	_candidates+=("$_GH_TARGET_REPO_REFERENCE")
+	if [[ -n "$_GH_TARGET_REPO_EXPLICIT" ]]; then
+		_default="$_GH_TARGET_REPO_EXPLICIT"
+	else
+		_default=$(_gh_target_repo_default 2>/dev/null) || _default=""
+	fi
+	[[ -z "$_default" ]] || _gh_target_same_repo "$_default" "$_GH_TARGET_REPO_REFERENCE" ||
+		_candidates+=("$_default")
+	return 0
+}
+
 # _shim_privacy_scan
 # Returns 0 to allow exec, 1 to block (caller should print no extra
 # message — this function emits its own mentoring error to stderr).
@@ -727,46 +761,23 @@ _shim_privacy_scan() {
 	# shellcheck source=/dev/null
 	source "$_PRIVACY_HELPER" 2>/dev/null || return 0
 
-	# Determine target repo from --repo arg, gh api /repos/owner/repo path, or
-	# current git remote.
-	local target_url="" _idx=0
-	while [[ $_idx -lt ${#_modified_args[@]} ]]; do
-		case "${_modified_args[$_idx]}" in
-		--repo)
-			target_url="${_modified_args[_idx + 1]:-}"
-			_idx=$((_idx + 2))
-			continue
-			;;
-		--repo=*) target_url="${_modified_args[$_idx]#--repo=}" ;;
-		-R)
-			target_url="${_modified_args[_idx + 1]:-}"
-			_idx=$((_idx + 2))
-			continue
-			;;
-		-R*) target_url="${_modified_args[$_idx]#-R}" ;;
-		esac
-		_idx=$((_idx + 1))
-	done
-	if [[ -z "$target_url" && "${_modified_args[0]:-}" == "api" ]]; then
-		target_url="$(_shim_api_target_from_path 2>/dev/null || true)"
-	fi
-	if [[ -z "$target_url" ]]; then
-		target_url=$(git remote get-url origin 2>/dev/null) || return 0
-		[[ -z "$target_url" ]] && return 0
-	fi
-	# Normalize bare owner/repo to a URL form privacy_is_target_public accepts.
-	if [[ "$target_url" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
-		target_url="https://github.com/${target_url}"
-	fi
-
+	# GH#39801: derive the target with the shared resolver so the scanned repo is
+	# the one native gh writes to (-R/--repo, URL argument, gh api path, GH_REPO,
+	# gh repo set-default, then the ranked github.com remote; not just origin).
+	local target_url="" _idx=0 _candidate=""
+	local -a _candidates=()
+	_shim_privacy_target_candidates
 	# Public-target check — bind the already-resolved native binary so helper
 	# probes cannot re-enter this PATH shim while its recursion guard is active.
-	# This covers both the auth status probe and the subsequent repo API query.
-	PRIVACY_GH_BIN="$REAL_GH" privacy_is_target_public "$target_url"
-	local _pub_rc=$?
-	if [[ $_pub_rc -ne 0 ]]; then
-		return 0
-	fi
+	# A URL argument can be the target or plain text (close --comment), so scan
+	# when any candidate is public.
+	for _candidate in ${_candidates[@]+"${_candidates[@]}"}; do
+		if PRIVACY_GH_BIN="$REAL_GH" privacy_is_target_public "https://github.com/${_candidate}"; then
+			target_url="https://github.com/${_candidate}"
+			break
+		fi
+	done
+	[[ -n "$target_url" ]] || return 0
 
 	# Build content blob from --body / --body-file / --title args plus
 	# `-f body=...` / `-F body=@...` forms used by gh api. Secret-material

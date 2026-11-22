@@ -423,6 +423,23 @@ for _body in "Hit a bug in ordinaryprivate today" "Mentions acme/ordinaryprivate
 	fi
 done
 
+# -- Test 2.2c (GH#39801): an omitted --repo is scanned against the repository
+# native gh writes to. With a private origin and a public upstream, native gh
+# targets upstream, so an origin-only inference would skip the scan.
+FORK_REPO="${TMP}/fork-repo"
+mkdir -p "$FORK_REPO"
+git -C "$FORK_REPO" init -q
+git -C "$FORK_REPO" remote add origin https://github.com/acme/longprivate.git
+git -C "$FORK_REPO" remote add upstream https://github.com/marcusquinn/aidevops.git
+rm -f "$RECORD_FILE"
+out=$(SHIM_CWD="$FORK_REPO" run_shim "$PATH_DIR" issue create --title "test" --body "Mentions acme/ordinaryprivate today" 2>&1)
+rc=$?
+if [[ "$rc" -eq 1 ]] && [[ ! -f "$RECORD_FILE" ]] && printf '%s' "$out" | grep -q 'BLOCK.*marcusquinn/aidevops'; then
+	pass "omitted --repo scans the ranked upstream target, not origin"
+else
+	fail "expected upstream-target BLOCK. rc=$rc out='$out'"
+fi
+
 # -- Test 2.2b: slug tracked in the target repo's default-branch tree is exempt
 # for the shim's legacy scan; an untracked private slug still blocks.
 TREE_REPO="${TMP}/tree-repo"
