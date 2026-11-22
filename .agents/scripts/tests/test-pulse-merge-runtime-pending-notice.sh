@@ -33,8 +33,13 @@ cat >"${WORK}/helper.sh" <<'EOF'
 #!/usr/bin/env bash
 [[ "$1" == "runtime-pending-notice" ]] || exit 2
 [[ "$(cat "$STUB_DIR/decision")" == "lift" ]] || exit 1
+if [[ "${4:-}" == --lift-completed ]]; then
+	printf 'lift\n' >>"$STUB_DIR/lifts"
+	exit 0
+fi
 jq -nc --argjson pr "$2" --arg repo "$3" --arg head "$(cat "$STUB_DIR/head")" \
-	'{pr: $pr, repo: $repo, head: $head, held_since: "2026-11-21T05:00:00Z", reason: "no device available", command: "full-loop-helper.sh verify-runtime \($pr) \($repo) --testing \"<evidence>\""}'
+	--arg risk "${STUB_RISK:-High}" --arg level "${STUB_LEVEL:-runtime-pending}" \
+	'{pr: $pr, repo: $repo, head: $head, risk:$risk, level:$level, held_since: "2026-11-21T05:00:00Z", reason: "no device available", command: "full-loop-helper.sh verify-runtime \($pr) \($repo) --testing \"<evidence>\""}'
 EOF
 # Like the real CLI, send opens --text-file as a path ("-" is not stdin).
 cat >"${WORK}/bus.sh" <<'EOF'
@@ -190,6 +195,57 @@ printf '75\n' >"${STUB_DIR}/route_rc"
 _pmrp_route_held_pr 14 o/r 77 "$WORKER_LABELS"
 check "a deferred CI repair route logs ATTENTION with its rc" "1" "$(grep -cF -e 'ATTENTION: PR #14 in o/r is held as runtime-pending with failing required checks and CI repair could not proceed (route rc=75;' "$LOGFILE")"
 rm -f "${STUB_DIR}/route_rc"
+
+# Legacy completion uses the same origin boundary but never notifies a verifier.
+printf 'green\n' >"${STUB_DIR}/ci"
+export STUB_RISK=Low STUB_LEVEL=runtime-pending
+before_routes=$(route_count)
+_pmrp_route_held_pr 15 o/r 77 "$WORKER_LABELS"
+check "Low pending routes completion" "$((before_routes + 1))" "$(route_count)"
+check "Low completion sends no interactive notice" "4" "$(sent_count)"
+check "completion kind and head reach the shared dispatcher" "1" "$(grep -cF '15|o/r|77|runtime-pending-legacy|' "${STUB_DIR}/routes")"
+for refused in "origin:interactive,hold-for-review" "origin:worker,hold-for-review,external-contributor" \
+	"origin:worker,hold-for-review,no-takeover" "hold-for-review"; do
+	_pmrp_route_held_pr 16 o/r 77 "$refused"
+	check "Low completion preserves owner [${refused}]" "$((before_routes + 1))" "$(route_count)"
+done
+STUB_RISK=Medium
+_pmrp_route_held_pr 17 o/r 77 "origin:interactive,origin:worker-takeover,hold-for-review"
+check "Medium takeover routes completion" "$((before_routes + 2))" "$(route_count)"
+STUB_LEVEL=self-assessed
+_pmrp_route_held_pr 17 o/r 77 "$WORKER_LABELS"
+check "completed Medium requests guarded lift" "lift" "$(<"${STUB_DIR}/lifts")"
+check "completed Medium launches no more workers" "$((before_routes + 2))" "$(route_count)"
+printf 'keep\n' >"${STUB_DIR}/decision"
+_pmrp_route_held_pr 18 o/r 77 "$WORKER_LABELS"
+check "non-liftable completed scope remains held" "1" "$(wc -l <"${STUB_DIR}/lifts" | tr -d ' ')"
+
+# Exercise the real completion dispatcher and prompt, stubbing only GitHub and
+# the already-covered CI branch lease/launcher. No worker or external write runs.
+# shellcheck source=../pulse-merge-feedback-ci-repair.sh
+source "${SCRIPTS_DIR}/pulse-merge-feedback-ci-repair.sh"
+ln -s "${WORK}/helper.sh" "${WORK}/full-loop-helper.sh"
+_PULSE_MERGE_DIR="$WORK"
+printf 'lift\n' >"${STUB_DIR}/decision"
+STUB_RISK=Low STUB_LEVEL=runtime-pending
+gh() {
+	printf '%s\tbranch\tfalse\t%s\n' "$HEAD_B" "$WORKER_LABELS"
+	return 0
+}
+_ci_repair_hash_text() { printf 'completion-fingerprint\n'; return 0; }
+_dispatch_ci_repair_session() {
+	local pr="$1" repo="$2" issue="$3" head="$4" branch="$5" fingerprint="$6" reason="$7"
+	_ci_repair_write_prompt "${WORK}/completion.md" "$repo" "$pr" "$issue" "$head" "$branch" "$fingerprint" "$reason"
+	return $?
+}
+_dispatch_runtime_pending_completion_worker 19 o/r 77
+check "real dispatcher prepares completion prompt" "0" "$?"
+check "completion prompt regenerates existing PR evidence" "1" "$(grep -cF 'then rerun full-loop-helper.sh commit-and-pr' "${WORK}/completion.md")"
+check "completion prompt names blocker protocol" "1" "$(grep -cF 'terminal blocker reason, naming the capability or secret name, never its value' "${WORK}/completion.md")"
+check "completion prompt includes deferred Verification data" "1" "$(grep -cF 'no device available' "${WORK}/completion.md")"
+STUB_RISK=High
+_dispatch_runtime_pending_completion_worker 19 o/r 77
+check "real completion dispatcher refuses High" "1" "$?"
 
 if [[ "$FAILURES" -gt 0 ]]; then
 	printf '%s failure(s)\n' "$FAILURES"

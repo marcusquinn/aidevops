@@ -412,12 +412,14 @@ _dispatch_runtime_pending_completion_worker() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local linked_issue="$3"
-	local notice="" info="" head="" branch="" cross="" labels="" fingerprint=""
+	local notice="" info="" head="" branch="" cross="" labels="" fingerprint="" risk=""
 	local _CI_REPAIR_RUNTIME_COMPLETION=1
 	[[ "${DRY_RUN:-0}" != 1 ]] || return 1
 	[[ "$linked_issue" =~ ^[1-9][0-9]*$ ]] || return 1
 	notice=$("${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/full-loop-helper.sh" runtime-pending-notice "$pr_number" "$repo_slug") || return 1
-	printf '%s' "$notice" | jq -e '.level == "runtime-pending" and (.risk | ascii_downcase | test("^(low|medium)([^a-z]|$)"))' >/dev/null || return 1
+	printf '%s' "$notice" | jq -e '.level == "runtime-pending"' >/dev/null || return 1
+	risk=$(printf '%s' "$notice" | jq -r '.risk | ascii_downcase') || return 1
+	case "${risk%%[^a-z]*}" in low | medium) ;; *) return 1 ;; esac
 	info=$(gh pr view "$pr_number" --repo "$repo_slug" --json headRefOid,headRefName,isCrossRepository,labels \
 		--jq '[.headRefOid,.headRefName,.isCrossRepository,([.labels[]?.name] | join(","))] | @tsv') || return 1
 	IFS=$'\t' read -r head branch cross labels <<<"$info"

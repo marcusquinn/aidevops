@@ -107,6 +107,7 @@ reset_fixture() {
 	MOVE_HEAD_ON_EDIT=0
 	MOVE_HEAD_ON_UNLABEL=0
 	EDIT_AT_READ=""
+	PENDING_AT_READ=""
 	: >"$WRITES"
 	: >"$ASSOCIATIONS"
 	printf '0' >"$PR_READS"
@@ -131,6 +132,9 @@ fake_pr_read() {
 	printf '%s' "$reads" >"$PR_READS"
 	if [[ -n "$EDIT_AT_READ" && "$reads" -ge "$EDIT_AT_READ" ]]; then
 		FAKE_BODY="${FAKE_BODY}"$'\n\nEdited by a maintainer after the read.'
+	fi
+	if [[ -n "$PENDING_AT_READ" && "$reads" -ge "$PENDING_AT_READ" ]]; then
+		FAKE_BODY="$PENDING_BODY"
 	fi
 	if [[ -n "$jq_filter" ]]; then
 		fake_pr_json | jq -r "$jq_filter"
@@ -397,6 +401,39 @@ _record_hold_scope_marker 7 owner/repo "pr-only,runtime-pending" && grep -q '^co
 check "new scope posts a marker" $?
 ! _record_hold_scope_marker 7 owner/repo 'bad scope'
 check "malformed scope tokens are rejected" $?
+
+# --- Legacy Low/Medium completion: no interactive runtime attestation ---
+reset_fixture; FAKE_BODY="$SELF_BODY"
+notice=$(cmd_runtime_pending_notice 7 owner/repo)
+printf '%s' "$notice" | jq -e '.risk == "Low" and .level == "self-assessed"' >/dev/null
+check "notice exposes parsed Low completed metadata" $?
+no_writes
+check "default notice remains read-only" $?
+cmd_runtime_pending_notice 7 owner/repo --lift-completed >"$OUT" 2>&1
+check "Low completed hold lifts" $?
+[[ "$FAKE_LABELS" == "" && "$(body_level)" == self-assessed ]] && grep -q '^comment' "$WRITES"
+check "legacy lift audits without claiming runtime verification" $?
+for legacy_case in pending high pr-only unrecorded permission race fork no-takeover closed; do
+	reset_fixture; FAKE_BODY="$SELF_BODY"
+	case "$legacy_case" in
+	pending) FAKE_BODY="$PENDING_BODY" ;;
+	high) FAKE_BODY="$SELF_CRITICAL_BODY" ;;
+	pr-only) PR_ONLY_RC=0 ;;
+	unrecorded) FAKE_COMMENTS='[]' ;;
+	permission) WRITE_OK=0 ;;
+	race) PENDING_AT_READ=2 ;;
+	fork) FAKE_CROSS=true ;;
+	no-takeover) FAKE_LABELS='hold-for-review,no-takeover' ;;
+	closed) FAKE_STATE=CLOSED ;;
+	esac
+	! cmd_runtime_pending_notice 7 owner/repo --lift-completed >"$OUT" 2>&1 &&
+		! grep -q '^remove-label' "$WRITES"
+	check "legacy lift refuses ${legacy_case}" $?
+done
+reset_fixture; FAKE_BODY="$SELF_BODY"; MOVE_HEAD_ON_UNLABEL=1
+! cmd_runtime_pending_notice 7 owner/repo --lift-completed >"$OUT" 2>&1 &&
+	[[ ",${FAKE_LABELS}," == *",hold-for-review,"* ]]
+check "legacy head race reapplies hold" $?
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1

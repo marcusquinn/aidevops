@@ -28,6 +28,8 @@
 #
 # Part of aidevops framework: https://aidevops.sh
 
+_VERIFY_RUNTIME_OPEN_STATE="OPEN"
+
 # Apply strict mode only when executed directly (not when sourced)
 [[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
 
@@ -391,7 +393,7 @@ _verify_runtime_prepare() {
 	# tostring, not `// "unknown"`: jq's alternative operator treats false as absent.
 	cross=$(printf '%s' "$pr_json" | jq -r '.isCrossRepository | tostring')
 	vr_head=$(printf '%s' "$pr_json" | jq -r '.headRefOid // ""')
-	if [[ "$state" != "OPEN" ]]; then
+	if [[ "$state" != "$_VERIFY_RUNTIME_OPEN_STATE" ]]; then
 		print_error "PR #${vr_pr} is ${state:-unreadable}; verify-runtime only records evidence on an open PR"
 		return 1
 	fi
@@ -590,6 +592,11 @@ EOF
 _verify_runtime_legacy_completed() {
 	local pr_json="$1"
 	local metadata="" risk=""
+	# #aidevops:trust-boundary — retain live ownership and same-repository
+	# constraints on the final read as well as the Pulse route's initial read.
+	printf '%s' "$pr_json" | jq -e --arg open "$_VERIFY_RUNTIME_OPEN_STATE" '.state == $open and .isCrossRepository == false
+		and all(.labels[]?; .name != "no-takeover" and .name != "external-contributor"
+			and .name != "needs-maintainer-review")' >/dev/null || return 1
 	metadata=$(printf '%s' "$pr_json" | jq -r '.body // ""' | _runtime_testing_metadata_from_body) || return 1
 	risk=$(printf '%s' "$metadata" | jq -r '.risk | ascii_downcase') || return 1
 	case "${risk%%[^a-z]*}" in low | medium) ;; *) return 1 ;; esac
@@ -600,11 +607,12 @@ _verify_runtime_legacy_completed() {
 }
 
 # runtime-pending-notice <PR> [REPO] [--lift-completed]
-# Read-only (t19241/GH#39645). Pulse routes a held runtime-pending PR to a live
-# interactive verifier. Prints one JSON object {pr, repo, head, held_since,
-# reason, command} and exits 0 only when the PR is open, carries a hold whose
+# Read-only by default (t19241/GH#39645). Prints one JSON object including
+# risk and level, and exits 0 only when the PR is open, carries a hold whose
 # recorded scope is runtime-pending alone with no PR-only contract (decision
-# "lift"), and its body declares runtime-pending or runtime-verified evidence.
+# "lift"), and its body declares runtime-pending, runtime-verified, or completed
+# Low/Medium self-assessed evidence. --lift-completed is an explicit write:
+# audit and lift a completed Low/Medium legacy runtime-only hold (GH#39849).
 # GH#39795: the recorded hold scope, not the body level, decides liftability;
 # an author who later rewrites the body to runtime-verified still needs a
 # verifier, and verify-runtime accepts that body. Exits 1 with no output
@@ -618,8 +626,8 @@ cmd_runtime_pending_notice() {
 	[[ "$pr" =~ ^[1-9][0-9]*$ ]] || return 1
 	repo=$(_merge_resolve_repo "$repo_arg") || return 1
 	pr_json=$(_flm_gh_read gh pr view "$pr" --repo "$repo" \
-		--json state,headRefOid,body,labels,closingIssuesReferences) || return 1
-	printf '%s' "$pr_json" | jq -e '.state == "OPEN"' >/dev/null 2>&1 || return 1
+		--json state,isCrossRepository,headRefOid,body,labels,closingIssuesReferences) || return 1
+	printf '%s' "$pr_json" | jq -e --arg open "$_VERIFY_RUNTIME_OPEN_STATE" '.state == $open' >/dev/null 2>&1 || return 1
 	hold_decision=$(_verify_runtime_hold_decision "$pr" "$repo" "$pr_json") || return 1
 	[[ "$hold_decision" == "lift" ]] || return 1
 	metadata=$(printf '%s' "$pr_json" | jq -r '.body // ""' | _runtime_testing_metadata_from_body) || return 1

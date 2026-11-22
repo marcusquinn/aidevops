@@ -21,8 +21,10 @@
 #   4. when the head's required checks are terminal-red on a worker PR, routes
 #      it to the existing in-place CI repair (t19244). The hold makes the merge
 #      pass skip the PR before its own CI repair stage, so without this a red
-#      runtime-pending PR waits for a human. The hold is never removed here.
-# Headless verifiers and removing the hold are out of scope.
+#      runtime-pending PR waits for a human;
+#   5. routes legacy Low/Medium pending work to a completion worker, or asks
+#      the helper to lift its runtime-only hold after the body is merge-ready.
+# High/Critical runtime verification remains interactive.
 
 [[ -n "${_PULSE_MERGE_RUNTIME_PENDING_NOTICE_LOADED:-}" ]] && return 0
 _PULSE_MERGE_RUNTIME_PENDING_NOTICE_LOADED=1
