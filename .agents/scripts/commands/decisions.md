@@ -43,8 +43,9 @@ recommends, runs what it can, and writes.
    equality, and give one numbered line per cluster that lists its issues.
    Then search each cluster for a precedent, because answered siblings are
    usually neither cited by a pending hold nor listed beyond the `answered`
-   count: `gh search issues --repo <slug> -- "<term>"` (flags before `--`) and
-   `rg "<term>"` in a checkout of that repository. Read only OWNER/MEMBER
+   count: `gh search issues --repo <slug> --limit 100 -- "<term>"` (flags
+   before `--`; narrow the term if the limit is hit) and `rg -F -- "<term>"` in
+   a checkout of that repository. Read only OWNER/MEMBER
    comments. When a trusted answer on a sibling issue, or a merged runbook or
    PR, already decides the cluster's question, show `precedent: <link>` and
    recommend applying it; the maintainer should not have to decide it twice.
