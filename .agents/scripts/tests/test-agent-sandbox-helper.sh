@@ -212,7 +212,7 @@ if grep -Fq 'session-alpha' "$receipt_path" || grep -Fq "$WORKTREE" "$receipt_pa
 else
 	pass "receipt excludes raw private identity and creation inputs"
 fi
-receipt_mode=$(stat -f '%Lp' "$receipt_path" 2>/dev/null || stat -c '%a' "$receipt_path")
+receipt_mode=$(stat -c '%a' "$receipt_path" 2>/dev/null || stat -f '%Lp' "$receipt_path")
 [[ "$receipt_mode" == "600" ]] && pass "receipt mode is 600" || fail "receipt mode is 600" "$receipt_mode"
 
 start_json=$(bash "$HELPER" start --id agent-01)

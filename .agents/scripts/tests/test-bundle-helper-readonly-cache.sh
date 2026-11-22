@@ -41,7 +41,7 @@ if [[ ! -f "${cache_files[0]:-}" ]]; then
 	printf 'FAIL bundle helper did not write user-local cache\n' >&2
 	exit 1
 fi
-if [[ "$(stat -f '%Lp' "${cache_files[0]}" 2>/dev/null || stat -c '%a' "${cache_files[0]}")" != "600" ]]; then
+if [[ "$(stat -c '%a' "${cache_files[0]}" 2>/dev/null || stat -f '%Lp' "${cache_files[0]}")" != "600" ]]; then
 	printf 'FAIL bundle cache file is not mode 600\n' >&2
 	exit 1
 fi
