@@ -114,27 +114,57 @@ _routine_sync_policy() {
 	return $?
 }
 
+# _routine_ref_not_older <base_ref> <head_ref> — a sync preserves or advances
+# a caller pin; it never moves one to an older framework commit (GH#39830).
+_routine_ref_not_older() {
+	local base_ref="$1" head_ref="$2" ref_status=""
+	[[ "$base_ref" =~ ^[0-9a-f]{40}$ && "$head_ref" =~ ^[0-9a-f]{40}$ ]] || return 1
+	[[ "$base_ref" != "$head_ref" ]] || return 0
+	ref_status=$(gh api "repos/marcusquinn/aidevops/compare/$base_ref...$head_ref" --jq .status) || return 1
+	[[ "$ref_status" == "ahead" ]] || return 1
+	return 0
+}
+
+# _routine_sync_render_admits <workflow-path> <head-blob> <base-blob|null> <policy>
+# — the one exact-render decision shared by the sync publisher (before it
+# chooses the marker) and the merge gate (GH#39830). Blobs are Git blob API
+# JSON. The head's single pin must be reachable from aidevops main and not
+# older than the base caller's pin, and the caller must equal the re-render of
+# the template at that pin. Nothing from the PR is executed.
+_routine_sync_render_admits() {
+	local path="$1" head="$2" previous="$3" policy="$4"
+	local dir="${BASH_SOURCE[0]%/*}" name="" ref="" base_ref="" template=""
+	_is_sync_workflow_output "$path" || return 1
+	name="${path##*/}"
+	name="${name%.yml}"
+	ref=$(jq -n --argjson head "$head" '{head:$head}' |
+		python3 "$dir/routine-pr-content.py" --sync-ref) || return 1
+	_routine_ref_reachable "$ref" || return 1
+	# A base without one 40-hex pin (for example floating @main) has no floor.
+	if [[ "$previous" != "null" ]] &&
+		base_ref=$(jq -n --argjson head "$previous" '{head:$head}' |
+			python3 "$dir/routine-pr-content.py" --sync-ref 2>/dev/null); then
+		_routine_ref_not_older "$base_ref" "$ref" || return 1
+	fi
+	template=$(gh api "repos/marcusquinn/aidevops/contents/.agents/templates/workflows/${name}-caller.yml?ref=$ref") || return 1
+	jq -n --argjson head "$head" --argjson base "$previous" --argjson template "$template" \
+		--argjson policy "$policy" '{head:$head,base:$base,template:$template,policy:$policy}' |
+		python3 "$dir/routine-pr-content.py" --sync-validate "$name" >/dev/null || return 1
+	return 0
+}
+
 # _routine_sync_content <repo> <path> <status> <head_blob> <merge_base> <policy>
-# — exact re-render of a managed workflow caller from the trusted historical
-# template at the ref the head pins. Nothing from the PR is executed.
+# — gate side of _routine_sync_render_admits over SHA-pinned PR blobs.
 _routine_sync_content() {
 	local repo="$1" path="$2" status="$3" head_blob="$4" merge_base="$5" policy="$6"
-	local dir="${BASH_SOURCE[0]%/*}" name="${path##*/}" head="" previous="null" ref="" template=""
-	local base_tree="" base_blob=""
-	name="${name%.yml}"
+	local head="" previous="null" base_tree="" base_blob=""
 	head=$(gh api "repos/$repo/git/blobs/$head_blob") || return 1
 	if [[ "$status" == "$_ROUTINE_MODIFIED" ]]; then
 		base_tree=$(gh api "repos/$repo/git/trees/$merge_base?recursive=1") || return 1
 		base_blob=$(_routine_tree_blob "$base_tree" "$path") || return 1
 		previous=$(gh api "repos/$repo/git/blobs/$base_blob") || return 1
 	fi
-	ref=$(jq -n --argjson head "$head" '{head:$head}' |
-		python3 "$dir/routine-pr-content.py" --sync-ref) || return 1
-	_routine_ref_reachable "$ref" || return 1
-	template=$(gh api "repos/marcusquinn/aidevops/contents/.agents/templates/workflows/${name}-caller.yml?ref=$ref") || return 1
-	jq -n --argjson head "$head" --argjson base "$previous" --argjson template "$template" \
-		--argjson policy "$policy" '{head:$head,base:$base,template:$template,policy:$policy}' |
-		python3 "$dir/routine-pr-content.py" --sync-validate "$name" >/dev/null || return 1
+	_routine_sync_render_admits "$path" "$head" "$previous" "$policy" || return 1
 	return 0
 }
 

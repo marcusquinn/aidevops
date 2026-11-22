@@ -53,6 +53,10 @@ source "$SELF_DIR/scratch-worktree-helper.sh"
 # shellcheck source=./workflow-release-ref.sh
 source "$SELF_DIR/workflow-release-ref.sh"
 
+# GH#39830: the publisher and the merge gate share one exact-render decision.
+# shellcheck source=./routine-pr-scope-lib.sh
+source "$SELF_DIR/routine-pr-scope-lib.sh"
+
 # shellcheck source=/dev/null
 # gh wrappers inject signature footers and route around GraphQL rate limits.
 # Mandatory — this script ships as part of aidevops so the wrappers are
@@ -1244,31 +1248,49 @@ _sync_routine_anchor() {
 	return 0
 }
 
+# _sync_blob_json <file> — Git blob API shape (base64, byte size) for a local
+# text file, as the merge gate reads it from GitHub.
+_sync_blob_json() {
+	local _file="$1"
+	jq -n --rawfile c "$_file" '{encoding:"base64", content:($c | @base64), size:($c | utf8bytelength)}'
+	return $?
+}
+
 # _sync_marker_eligible <slug> <path> <branch> <default_branch> <effective_ref>
-#   <workflow-relpath> <sync-contributing> — GH#39793: succeed only when the
-# merge gate's exact re-render (routine-pr-scope-lib.sh) can admit this PR:
-# a headless run without an explicit issue, a managed workflow only, the
-# default sync branch prefix, a 40-hex ref and plain runner/branch labels.
-# Anything else keeps the anchor identity.
+#   <workflow-relpath> <sync-contributing> <target-content> — succeed only when
+# the merge gate will admit this exact PR (GH#39793). Cheap preconditions: a
+# headless run without an explicit issue or CONTRIBUTING.md, the default sync
+# branch prefix and a 40-hex ref. Then (GH#39830) the gate's own decision,
+# _routine_sync_render_admits, must accept the bytes this run will write
+# against the current caller: the deployed template differs from the template
+# at a preserved older pin whenever a template update rolls out. Anything else
+# keeps the anchor identity, which the existing linked-issue route merges.
 _sync_marker_eligible() {
 	local _slug="$1" _path="$2" _branch="$3" _default_branch="$4" _ref="${5#@}"
-	local _relpath="$6" _sync_contributing="$7" _runner=""
+	local _relpath="$6" _sync_contributing="$7" _target_content="$8"
+	local _scratch="" _head="" _base="null" _policy="" _rc=1
 	[[ -z "${_OPT_ISSUE:-}" && "$_sync_contributing" -eq 0 ]] || return 1
 	declare -F session_origin_label >/dev/null 2>&1 || return 1
 	[[ "$(session_origin_label)" == "origin:worker" ]] || return 1
 	[[ "$_branch" == "$_SYNC_BRANCH_PREFIX"* ]] || return 1
 	[[ "$_ref" =~ ^[0-9a-f]{40}(\ #\ v[0-9]+\.[0-9]+\.[0-9]+)?$ ]] || return 1
 	[[ "$_default_branch" =~ ^[A-Za-z0-9._/-]+$ ]] || return 1
-	case "${_relpath##*/}" in
-	issue-sync.yml | review-bot-gate.yml | review-bot-gate-fork-review.yml | \
-		maintainer-gate.yml | loc-badge.yml | issue-triage-gate.yml) ;;
-	*) return 1 ;;
-	esac
-	[[ "${_relpath%/*}" == ".github/workflows" ]] || return 1
-	_runner=$(_read_runner_field "$_slug")
-	[[ -n "$_runner" ]] || _runner=$(_read_runner_from_file "$_path/$_relpath")
-	[[ -z "$_runner" || "$_runner" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
-	return 0
+	_is_sync_workflow_output "$_relpath" || return 1
+	_scratch=$(mktemp "${TMPDIR:-/tmp}/sync-marker-head.XXXXXX") || return 1
+	# The exact bytes _sync_write_commit_push writes.
+	if printf '%s\n' "$_target_content" >"$_scratch" &&
+		_head=$(_sync_blob_json "$_scratch") &&
+		{ [[ ! -f "$_path/$_relpath" ]] || _base=$(_sync_blob_json "$_path/$_relpath"); } &&
+		_policy=$(_routine_sync_policy "$_slug" "$_default_branch") &&
+		_routine_sync_render_admits "$_relpath" "$_head" "$_base" "$_policy"; then
+		_rc=0
+	fi
+	rm -f "$_scratch"
+	if [[ "$_rc" -ne 0 ]]; then
+		printf '[%s] %s: %s is not gate-admissible as a routine marker PR; keeping the anchor identity\n' \
+			"$SCRIPT_NAME" "$_slug" "$_relpath" >&2
+	fi
+	return "$_rc"
 }
 
 # ─── Per-Repo Operation ─────────────────────────────────────────────────────
@@ -1986,7 +2008,7 @@ _sync_publish_rendered() {
 	# a PR would read as already current on the next run.
 	local _anchor=""
 	if _sync_marker_eligible "$_slug" "$_path" "$_branch_name" "$_default_branch" \
-		"$_effective_ref" "$_workflow_relpath" "$_sync_contributing"; then
+		"$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_target_content"; then
 		_anchor="$_SYNC_MARKER_IDENTITY"
 	else
 		_anchor=$(_sync_routine_anchor "$_slug" "$_status") || {
@@ -2008,25 +2030,14 @@ _sync_publish_rendered() {
 		return 1
 	fi
 
-	local _publish_rc=0
+	# GH#39830: the anchor is never retired here. Headless runs that are not
+	# gate-admissible still need it, and ensure-anchor only reuses an open
+	# anchor, so retiring per marker PR would create a new issue per cycle.
 	_sync_open_pr_and_warn \
 		"$_slug" "$_path" "$_status" "$_branch_name" \
 		"$_default_branch" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_target_content" \
-		"$_anchor" || _publish_rc=$?
-	if [[ "$_publish_rc" -eq 0 && "$_anchor" == "$_SYNC_MARKER_IDENTITY" ]]; then
-		_sync_retire_anchor "$_slug"
-	fi
-	return "$_publish_rc"
-}
-
-# GH#39793: once a marker PR is published the anchor is redundant. Retirement
-# keeps any anchor an open legacy PR still references; failure only warns.
-_sync_retire_anchor() {
-	local _slug="$1" _helper="${SELF_DIR}/routine-log-helper.sh"
-	[[ -f "$_helper" ]] || return 0
-	bash "$_helper" retire-anchor "$_SYNC_ANCHOR_KEY" --repo "$_slug" >&2 ||
-		printf '[%s] WARN: %s: anchor retirement deferred\n' "$SCRIPT_NAME" "$_slug" >&2
-	return 0
+		"$_anchor"
+	return $?
 }
 
 # Open the PR, then warn (never mutate) when the installed caller needs an
