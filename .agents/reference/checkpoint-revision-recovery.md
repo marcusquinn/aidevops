@@ -95,7 +95,10 @@ terminal lease is ignored, GH#33839), Pulse routes the draft by release reason:
   `worker_noop_zero_output`, `worker_incomplete_exit`, `worker_not_launched`, `clean` and
   `worker_complete`. Zero-output, incomplete and never-launched exits with an unchanged head
   are runtime stalls, not worker decisions (GH#36597, GH#38358); a never-launched episode of
-  the PR's own session is transparent (GH#38103). Pulse launches one exact-head continuation per head. It finishes
+  the PR's own session is transparent (GH#38103). Pulse launches one exact-head continuation per head. It first
+  merges an advanced PR base locally, so guidance and decisions recorded on the base after the
+  checkpoint forked apply (GH#39907). A conflict needing out-of-scope changes aborts that merge;
+  the continuation then works from the checkpoint head and says so in the PR body. It finishes
   the missing in-scope work and marks the draft ready, or records a concrete blocker with
   `mark-blocked`; already-landed work is `decision already_landed`. It never closes the
   draft. If it also releases at the same head, Pulse posts one
