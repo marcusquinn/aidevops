@@ -117,7 +117,7 @@ reset_fixture() {
 fake_pr_json() {
 	jq -cn --arg state "$FAKE_STATE" --argjson cross "$FAKE_CROSS" --arg head "$FAKE_HEAD" \
 		--arg body "$FAKE_BODY" --arg labels "$FAKE_LABELS" --argjson closing "$FAKE_CLOSING" '{
-		state:$state, isCrossRepository:$cross, headRefOid:$head, author:{login:"worker-bot"},
+		state:$state, isCrossRepository:$cross, headRefOid:$head, headRefName:"feature/original", author:{login:"worker-bot"},
 		body:$body, labels:($labels | split(",") | map(select(. != "")) | map({name:.})),
 		closingIssuesReferences:$closing}'
 	return 0
@@ -434,6 +434,49 @@ reset_fixture; FAKE_BODY="$SELF_BODY"; MOVE_HEAD_ON_UNLABEL=1
 ! cmd_runtime_pending_notice 7 owner/repo --lift-completed >"$OUT" 2>&1 &&
 	[[ ",${FAKE_LABELS}," == *",hold-for-review,"* ]]
 check "legacy head race reapplies hold" $?
+
+# The leased local repair branch must regenerate the original PR, never a new
+# repair-branch PR or a force push. GitHub and transport remain controlled stubs.
+reset_fixture; FAKE_BODY="$SELF_BODY"; FAKE_LABELS='origin:worker,hold-for-review'
+AIDEVOPS_PR_REPAIR_NUMBER=7
+AIDEVOPS_PR_REPAIR_HEAD_REF=feature/original
+AIDEVOPS_PR_REPAIR_HEAD_SHA="$LOCAL_HEAD"
+skip_rebase=1
+target=$(_runtime_completion_target_branch owner/repo repair/test)
+[[ "$target" == feature/original ]]
+check "completion maps repair checkout to original PR branch" $?
+FAKE_HEAD="$OTHER_HEAD"
+! _runtime_completion_target_branch owner/repo repair/test >/dev/null
+check "completion target rejects a moved head" $?
+FAKE_HEAD="$LOCAL_HEAD"; skip_rebase=0
+! _runtime_completion_target_branch owner/repo repair/test >/dev/null
+check "completion target requires no-rebase" $?
+skip_rebase=1; FAKE_LABELS='origin:worker,hold-for-review,no-takeover'
+! _runtime_completion_target_branch owner/repo repair/test >/dev/null
+check "completion target preserves no-takeover" $?
+
+AIDEVOPS_RUNTIME_PENDING_COMPLETION=1
+REMOTE_CLASS=fast-forward
+_classify_remote_branch() { printf '%s %s\n' "$REMOTE_CLASS" "$LOCAL_HEAD"; return 0; }
+timeout() { shift; "$@"; return $?; }
+git() {
+	local action="${1:-}"
+	if [[ "$action" == push ]]; then
+		printf '%s\n' "$*" >>"$WRITES"
+		return 0
+	fi
+	"$TEST_NATIVE_GIT" "$@"
+	return $?
+}
+: >"$WRITES"
+_push_branch feature/original 0 owner/repo
+grep -qx 'push -u origin HEAD:refs/heads/feature/original' "$WRITES"
+check "completion pushes HEAD to original ref without force" $?
+for REMOTE_CLASS in foreign own-rewrite absent unknown; do
+	: >"$WRITES"
+	! _push_branch feature/original 0 owner/repo && no_writes
+	check "completion refuses ${REMOTE_CLASS} without a replacement branch" $?
+done
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1

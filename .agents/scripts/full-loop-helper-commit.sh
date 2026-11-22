@@ -500,6 +500,9 @@ _validate_commit_and_pr_inputs() {
 		print_error "Cannot commit-and-pr from ref '${branch:-detached}'. Must be in a safe linked worktree."
 		return 1
 	fi
+	if [[ "${AIDEVOPS_RUNTIME_PENDING_COMPLETION:-0}" == 1 ]]; then
+		branch=$(_runtime_completion_target_branch "$repo" "$branch") || return 1
+	fi
 	return 0
 }
 
@@ -555,7 +558,6 @@ _stage_and_commit() {
 	fi
 	return 0
 }
-
 
 # --- Rebase & Push ---
 
@@ -770,6 +772,7 @@ _push_branch() {
 	classification=$(_classify_remote_branch "$branch")
 	remote_state="${classification%% *}"
 	remote_sha="${classification#* }"
+	[[ "${AIDEVOPS_RUNTIME_PENDING_COMPLETION:-0}" != 1 || ( "$skip_hooks" == 0 && ( "$remote_state" == same || "$remote_state" == fast-forward ) ) ]] || return 1
 
 	local lease_arg=""
 	case "$remote_state" in
@@ -815,7 +818,11 @@ _push_branch() {
 	local push_timeout="${AIDEVOPS_PUSH_TIMEOUT_S:-300}"
 	[[ "$push_timeout" =~ ^[1-9][0-9]*$ ]] || push_timeout=300
 	local _push_args=(-u origin "$branch")
-	[[ -n "$lease_arg" ]] && _push_args+=("$lease_arg")
+	if [[ "${AIDEVOPS_RUNTIME_PENDING_COMPLETION:-0}" == 1 ]]; then
+		_push_args=(-u origin "HEAD:refs/heads/${branch}")
+	else
+		[[ -n "$lease_arg" ]] && _push_args+=("$lease_arg")
+	fi
 	[[ "$skip_hooks" == "1" ]] && _push_args+=(--no-verify)
 
 	local push_rc

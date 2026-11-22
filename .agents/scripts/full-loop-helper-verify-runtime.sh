@@ -587,6 +587,40 @@ EOF
 	return "$rc"
 }
 
+# A completion lease checks out repair/<...>, not the original local branch
+# (which may still belong to another worktree). Publish HEAD to the verified
+# original remote branch without renaming/displacing that worktree's local ref.
+_runtime_completion_target_branch() {
+	local repo="$1"
+	local local_branch="$2"
+	local pr="${AIDEVOPS_PR_REPAIR_NUMBER:-}" target="${AIDEVOPS_PR_REPAIR_HEAD_REF:-}"
+	local expected="${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}" pr_json="" head="" local_head=""
+	local metadata=""
+	local risk=""
+	local -x AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1
+	[[ "${skip_rebase:-0}" == 1 && "$pr" =~ ^[1-9][0-9]*$ && "$expected" =~ ^[0-9a-f]{40}$ ]] || return 1
+	[[ "$local_branch" == repair/* && -n "$target" && "$target" != main && "$target" != master ]] || return 1
+	git check-ref-format --branch "$target" >/dev/null || return 1
+	_gh_current_user_allows_repo_write "$repo" || return 1
+	pr_json=$(_flm_gh_read gh pr view "$pr" --repo "$repo" --json state,isCrossRepository,headRefOid,headRefName,body,labels,closingIssuesReferences) || return 1
+	# #aidevops:trust-boundary — the dispatch identity is not publication authority.
+	printf '%s' "$pr_json" | jq -e --arg target "$target" --arg open "$_VERIFY_RUNTIME_OPEN_STATE" '
+		.state == $open and .isCrossRepository == false and .headRefName == $target
+		and any(.labels[]?; .name == "origin:worker" or .name == "origin:worker-takeover")
+		and all(.labels[]?; .name != "no-takeover" and .name != "external-contributor" and .name != "needs-maintainer-review")' >/dev/null || return 1
+	[[ "$(_verify_runtime_hold_decision "$pr" "$repo" "$pr_json")" == lift ]] || return 1
+	metadata=$(printf '%s' "$pr_json" | jq -r '.body // ""' | _runtime_testing_metadata_from_body) || return 1
+	risk=$(printf '%s' "$metadata" | jq -r '.risk | ascii_downcase') || return 1
+	case "${risk%%[^a-z]*}" in low | medium) ;; *) return 1 ;; esac
+	[[ "$(printf '%s' "$metadata" | jq -r '.sections')" == 1 ]] || return 1
+	head=$(printf '%s' "$pr_json" | jq -r '.headRefOid // ""') || return 1
+	local_head=$(git rev-parse HEAD) || return 1
+	[[ "$head" == "$expected" || "$head" == "$local_head" ]] || return 1
+	git merge-base --is-ancestor "$head" HEAD || return 1
+	printf '%s\n' "$target"
+	return 0
+}
+
 # Accept only unambiguous, merge-ready Low/Medium evidence. This never verifies
 # runtime behavior; it recognizes a completed legacy hold's regenerated body.
 _verify_runtime_legacy_completed() {
