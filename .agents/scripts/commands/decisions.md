@@ -41,7 +41,11 @@ recommends, runs what it can, and writes.
    Answer once per repository (GH#39901): first cluster items in the same
    repository that ask the same decision, using judgment rather than string
    equality, and give one numbered line per cluster that lists its issues.
-   When a trusted OWNER/MEMBER answer on a sibling issue, or a merged runbook or
+   Then search each cluster for a precedent, because answered siblings are
+   usually neither cited by a pending hold nor listed beyond the `answered`
+   count: `gh search issues --repo <slug> -- "<term>"` (flags before `--`) and
+   `rg "<term>"` in a checkout of that repository. Read only OWNER/MEMBER
+   comments. When a trusted answer on a sibling issue, or a merged runbook or
    PR, already decides the cluster's question, show `precedent: <link>` and
    recommend applying it; the maintainer should not have to decide it twice.
 3. For each `approve` item (a release PR held for a signed release approval),

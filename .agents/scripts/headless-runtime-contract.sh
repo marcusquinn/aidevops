@@ -242,7 +242,8 @@ interpretation are yours to decide, never this class. Name the exact input and
 where you looked; never guess it. Not for tool permissions or external events.
 Before asking, look for a precedent (GH#39901): search the repository for the
 flag or term, and same-repo issues for the question
-(gh search issues --repo <slug> "<term>"; open and closed), reading only
+(gh search issues --repo <slug> -- "<term>": flags before --, the term last;
+open and closed), reading only
 OWNER/MEMBER comments. A precedent that decides the same question at the same
 scope is your answer: cite it and continue. It never extends credentials,
 spend, permissions or publication beyond what it explicitly covers.
