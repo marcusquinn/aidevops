@@ -80,6 +80,7 @@ runner_capability_check() {
 	python3 - "$repo_path" "$issue_meta_json" "$source" "$cycle" "${BASH_SOURCE[0]%/*}/network-tier-helper.sh" < <(
 		_runner_capability_python_runtime
 		_runner_capability_python_cycle
+		_runner_capability_python_secrets
 		_runner_capability_python_classes
 		_runner_capability_python_tools
 		_runner_capability_python_services
@@ -237,6 +238,12 @@ def check_cached_unreadable(handle, state):
         handle.truncate()
         handle.flush()
 
+PY
+	return 0
+}
+
+_runner_capability_python_secrets() {
+	cat <<'PY'
 def readable_ttl():
     # GH#39815: every candidate re-decrypted the same names at both gates;
     # under gpg-agent contention those checks hit check_timeout in bursts.
@@ -269,6 +276,32 @@ def remember_readable(handle, state, name):
     json.dump({'readable': readable}, handle)
     handle.truncate()
     handle.flush()
+
+def check_secrets(secrets, cycle):
+    # Loaded runners can exceed 5s; default 15s, clamped 1-60, invalid -> default.
+    try:
+        secret_timeout = int(os.environ.get('AIDEVOPS_RUNNER_CAPABILITY_SECRET_TIMEOUT_SECONDS', '15'))
+    except ValueError:
+        secret_timeout = 15
+    secret_timeout = min(60, max(1, secret_timeout))
+    check_rejections(secrets)
+    with cycle_state(cycle) as (handle, state):
+        check_cached_unreadable(handle, state)
+        reused = 0
+        for name in sorted(secrets):
+            # Only readability is reused; requirements stay fresh (GH#33399).
+            if cached_readable(state, name):
+                reused += 1
+                continue
+            reason = run_check(['aidevops', 'secret', 'check', name], f'name={name}', timeout=secret_timeout, secret=True)
+            if reason.startswith('secret_unreadable '):
+                unreadable(name, handle, state)
+            if reason:
+                unmet(reason)
+            remember_readable(handle, state, name)
+        if reused:
+            print(f'runner_capability_secret_cache reused={reused} checked={len(secrets) - reused}',
+                  file=sys.stderr)
 
 PY
 	return 0
@@ -511,35 +544,11 @@ try:
                            'ssh', cwd=root, timeout=network_timeout)
         if reason:
             unmet('ssh_network_requirement_unmet recovery=reference/ssh-bindings.md')
-    # Loaded runners can exceed 5s; default 15s, clamped 1-60, invalid -> default.
-    try:
-        secret_timeout = int(os.environ.get('AIDEVOPS_RUNNER_CAPABILITY_SECRET_TIMEOUT_SECONDS', '15'))
-    except ValueError:
-        secret_timeout = 15
-    secret_timeout = min(60, max(1, secret_timeout))
     if sys.argv[3] == 'fresh':
         print(f'runner_capability_check source=fresh requirements={len(secrets) + len(probes) + len(ssh_commands) + len(tools)}',
               file=sys.stderr)
     if secrets:
-        check_rejections(secrets)
-        cycle = sys.argv[4] if sys.argv[3] == 'fresh' else ''
-        with cycle_state(cycle) as (handle, state):
-            check_cached_unreadable(handle, state)
-            reused = 0
-            for name in sorted(secrets):
-                # Only readability is reused; requirements stay fresh (GH#33399).
-                if cached_readable(state, name):
-                    reused += 1
-                    continue
-                reason = run_check(['aidevops', 'secret', 'check', name], f'name={name}', timeout=secret_timeout, secret=True)
-                if reason.startswith('secret_unreadable '):
-                    unreadable(name, handle, state)
-                if reason:
-                    unmet(reason)
-                remember_readable(handle, state, name)
-            if reused:
-                print(f'runner_capability_secret_cache reused={reused} checked={len(secrets) - reused}',
-                      file=sys.stderr)
+        check_secrets(secrets, sys.argv[4] if sys.argv[3] == 'fresh' else '')
     for executable, probe in probes:
         reason = run_check([executable], f'path={probe}', cwd=root)
         if reason:
