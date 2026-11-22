@@ -2426,6 +2426,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19274 fix(tests): make test-dispatch-max-parallel.sh timing cases deterministic under parallel load #auto-dispatch #bug tier:standard ref:GH#39823 logged:2026-11-22 -> [todo/tasks/t19274-brief.md] pr:#39829 completed:2026-11-22
 
+- [ ] t19276 fix(full-loop): restrict runtime-pending to Critical/High risk so workers stop parking unfinished Low/Medium work behind a human hold #bug ref:GH#39831
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
