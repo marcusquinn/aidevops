@@ -122,9 +122,24 @@ test_workflow_contract() {
 	local token_contract='GH_TOKEN: ${{ secrets.SYNC_PAT }}'
 	# shellcheck disable=SC2016 # GitHub expression is an intentional literal contract.
 	local caller_token_contract='SYNC_PAT: ${{ secrets.SYNC_PAT }}'
-	assert_contains "workflow has a weekly schedule" "$WORKFLOW" "cron: '17 3 * * 0'"
-	assert_contains "workflow requires owner-authorised token" "$WORKFLOW" "$token_contract"
-	assert_contains "workflow generates only the static asset" "$WORKFLOW" "docs/assets/star-history.svg"
+	assert_contains "legacy workflow delegates to shared implementation" "$WORKFLOW" 'uses: ./.github/workflows/star-history-reusable.yml'
+	assert_not_contains "legacy workflow no longer duplicates the weekly schedule" "$WORKFLOW" 'cron:'
+	assert_contains "reusable workflow requires owner-authorised token" "$REUSABLE_WORKFLOW" "$token_contract"
+	assert_contains "reusable workflow generates only the static asset" "$REUSABLE_WORKFLOW" 'git add docs/assets/star-history.svg'
+	# shellcheck disable=SC2016 # Match the workflow expression literally.
+	assert_contains "reusable workflow checks out default branch" "$REUSABLE_WORKFLOW" 'ref: ${{ github.event.repository.default_branch }}'
+	assert_contains "reusable workflow proposes changes via wrapper" "$REUSABLE_WORKFLOW" 'gh-write-helper.sh pr create'
+	# shellcheck disable=SC2016 # Match runtime variables in the embedded shell literally.
+	assert_contains "reusable workflow deduplicates open refresh PRs" "$REUSABLE_WORKFLOW" 'gh pr list --repo "$GITHUB_REPOSITORY" --base "$DEFAULT_BRANCH"'
+	# shellcheck disable=SC2016 # Match runtime variables in the embedded shell literally.
+	assert_contains "reusable workflow pushes only refresh branch" "$REUSABLE_WORKFLOW" 'git push origin "HEAD:refs/heads/$branch"'
+	# shellcheck disable=SC2016 # Reject a literal default-branch push refspec.
+	assert_not_contains "reusable workflow never pushes default branch" "$REUSABLE_WORKFLOW" 'HEAD:$DEFAULT_BRANCH'
+	assert_not_contains "legacy workflow never pushes default branch" "$WORKFLOW" 'git push'
+	assert_not_contains "reusable workflow never force pushes" "$REUSABLE_WORKFLOW" '--force'
+	assert_contains "reusable workflow permits PR creation" "$REUSABLE_WORKFLOW" 'pull-requests: write'
+	assert_contains "legacy caller permits PR creation" "$WORKFLOW" 'pull-requests: write'
+	assert_contains "caller template permits PR creation" "$CALLER_TEMPLATE" 'pull-requests: write'
 	assert_contains "reusable workflow uses caller repository identity" "$REUSABLE_WORKFLOW" 'GITHUB_REPOSITORY'
 	assert_contains "reusable workflow declares optional SYNC_PAT" "$REUSABLE_WORKFLOW" 'required: false'
 	assert_not_contains "reusable workflow no longer requires SYNC_PAT" "$REUSABLE_WORKFLOW" 'required: true'
