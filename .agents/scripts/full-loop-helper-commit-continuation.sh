@@ -96,11 +96,12 @@ _select_merged_head_boundary() {
 # Detect a continuation of a merged PR's head and publish it on a fresh branch.
 # When a merged head is in HEAD's ancestry, replay only the commits after it onto
 # the refreshed base (rebase --onto). The merged remote ref is never pushed to.
-# Args: $1=repo slug $2=branch
+# Args: $1=repo slug $2=branch $3=skip rebase (optional, default 0)
 # Returns 0 when no recovery is needed or it succeeded (FULL_LOOP_CONTINUATION_BRANCH
 # names the new branch); 1 when publishing would be unsafe, with HEAD restored.
 _recover_squash_merged_continuation() {
 	local repo="$1" branch="$2"
+	local skip_rebase="${3:-0}"
 	FULL_LOOP_CONTINUATION_BRANCH=""
 	FULL_LOOP_CONTINUATION_NOTE=""
 	local prs=""
@@ -118,7 +119,7 @@ _recover_squash_merged_continuation() {
 	local boundary="" boundary_pr="" boundary_sha="" boundary_ahead=""
 	base_branch=$(_resolve_pr_base_branch origin) || return 1
 	printf -v base_ref 'origin/%s' "$base_branch"
-	if ! git fetch origin "$base_branch" --quiet 2>/dev/null; then
+	if ! git fetch origin "refs/heads/${base_branch}:refs/remotes/origin/${base_branch}" --quiet 2>/dev/null; then
 		print_error "Cannot refresh ${base_ref} to recover the continuation of a merged head; nothing was pushed."
 		return 1
 	fi
@@ -126,6 +127,10 @@ _recover_squash_merged_continuation() {
 	IFS=$'\t' read -r boundary_pr boundary_sha boundary_ahead <<<"$boundary"
 	if [[ -n "$boundary_sha" && "$boundary_ahead" == 0 ]]; then
 		print_error "HEAD has no commits beyond squash-merged PR #${boundary_pr}; nothing new to publish from '${branch}'."
+		return 1
+	fi
+	if [[ -n "$boundary_sha" && "$skip_rebase" == 1 ]]; then
+		print_error "Cannot recover the continuation of merged PR #${boundary_pr} with --no-rebase; replay is required, HEAD and branch unchanged, nothing was pushed."
 		return 1
 	fi
 

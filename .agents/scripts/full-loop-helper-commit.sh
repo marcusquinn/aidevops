@@ -410,7 +410,7 @@ _stage_and_commit() {
 	# --replace-pr and runtime-owned completion keep their audited paths.
 	if [[ -n "${repo:-}" && -n "${branch:-}" && -z "${replacement_pr:-}" &&
 		"${AIDEVOPS_RUNTIME_PENDING_COMPLETION:-0}" != 1 ]]; then
-		_recover_squash_merged_continuation "$repo" "$branch" || return 1
+		_recover_squash_merged_continuation "$repo" "$branch" "${skip_rebase:-0}" || return 1
 		if [[ -n "$FULL_LOOP_CONTINUATION_BRANCH" ]]; then
 			branch="$FULL_LOOP_CONTINUATION_BRANCH"
 			summary_decisions="${summary_decisions:+${summary_decisions}; }${FULL_LOOP_CONTINUATION_NOTE}"

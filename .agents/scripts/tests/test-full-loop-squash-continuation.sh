@@ -132,9 +132,36 @@ branch="$BR"
 replacement_pr=""
 summary_decisions=""
 GH_PULLS_OUTPUT="merged\t5\t${merged_head}\t${squash_sha}"
+# --no-rebase must refuse recovery before replay or branch renaming.
+skip_rebase=1
 : >"$LOG"
 rc=0
 _stage_and_commit "data: 2023 results" || rc=$?
+if [[ "$rc" -ne 0 && "$(git rev-parse HEAD)" == "$original_tip" &&
+	"$(git branch --show-current)" == "$BR" && -z "$FULL_LOOP_CONTINUATION_BRANCH" &&
+	! -e "$(git rev-parse --git-path rebase-merge)" ]] &&
+	grep -q -- '--no-rebase' "$LOG" && ! grep -q 'Replaying' "$LOG"; then
+	pass "--no-rebase refuses continuation replay without changing HEAD or branch"
+else
+	fail "--no-rebase refuses continuation replay without changing HEAD or branch" "rc=${rc}; $(cat "$LOG")"
+fi
+skip_rebase=0
+
+# Restrict the configured mapping and leave origin/main behind the live base.
+# Recovery must explicitly refresh the ref it uses, not just FETCH_HEAD.
+current_base=$(git rev-parse origin/main)
+git update-ref refs/remotes/origin/main "$squash_sha"
+git config remote.origin.fetch "+refs/heads/${BR}:refs/remotes/origin/${BR}"
+: >"$LOG"
+rc=0
+_stage_and_commit "data: 2023 results" || rc=$?
+if [[ "$(git rev-parse origin/main)" == "$current_base" ]] &&
+	git merge-base --is-ancestor "$current_base" HEAD; then
+	pass "restricted fetch refspec still refreshes origin/main and replays on current base"
+else
+	fail "restricted fetch refspec still refreshes origin/main and replays on current base"
+fi
+git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
 subjects=$(git log --format=%s origin/main..HEAD)
 files=$(git diff --name-only origin/main HEAD | tr '\n' ' ')
 if [[ "$rc" -eq 0 && "$branch" == "${BR}-s2" && "$(git branch --show-current)" == "${BR}-s2" &&
