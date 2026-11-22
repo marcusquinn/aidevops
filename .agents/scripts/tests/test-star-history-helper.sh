@@ -129,6 +129,8 @@ test_workflow_contract() {
 	# shellcheck disable=SC2016 # Match the workflow expression literally.
 	assert_contains "reusable workflow checks out default branch" "$REUSABLE_WORKFLOW" 'ref: ${{ github.event.repository.default_branch }}'
 	assert_contains "reusable workflow proposes changes via wrapper" "$REUSABLE_WORKFLOW" 'gh-write-helper.sh pr create'
+	# shellcheck disable=SC2016 # The runner creates this directory before the job starts.
+	assert_contains "PR wrapper uses the existing runner temporary directory" "$REUSABLE_WORKFLOW" 'AIDEVOPS_TEMP_DIR: ${{ runner.temp }}'
 	# shellcheck disable=SC2016 # Match runtime variables in the embedded shell literally.
 	assert_contains "reusable workflow deduplicates open refresh PRs" "$REUSABLE_WORKFLOW" 'gh pr list --repo "$GITHUB_REPOSITORY" --base "$DEFAULT_BRANCH"'
 	# shellcheck disable=SC2016 # Match runtime variables in the embedded shell literally.
