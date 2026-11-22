@@ -460,28 +460,42 @@ check_snyk() {
 check_secrets() {
 	print_section "Secret Detection (Secretlint)"
 
+	local secretlint_cmd=""
 	if command -v secretlint &>/dev/null; then
-		print_info "Running Secretlint scan..."
-
-		if secretlint "**/*" --format compact 2>/dev/null; then
-			count_success "Secretlint: No secrets detected"
-		else
-			count_failure "Secretlint: Potential secrets found"
-			return 1
-		fi
+		secretlint_cmd="secretlint"
 	elif [[ -f "$REPO_ROOT/node_modules/.bin/secretlint" ]]; then
-		print_info "Running Secretlint (local)..."
-
-		if "$REPO_ROOT/node_modules/.bin/secretlint" "**/*" --format compact 2>/dev/null; then
-			count_success "Secretlint: No secrets detected"
-		else
-			count_failure "Secretlint: Potential secrets found"
-			return 1
-		fi
+		secretlint_cmd="$REPO_ROOT/node_modules/.bin/secretlint"
 	else
 		print_skip "Secretlint not installed"
 		print_info "Install: npm install -g secretlint @secretlint/secretlint-rule-preset-recommend"
+		return 0
 	fi
+
+	if [[ ! -f ".secretlintrc.json" && ! -f ".secretlintrc.yaml" && ! -f ".secretlintrc.yml" && ! -f ".secretlintrc.js" && ! -f ".secretlintrc.cjs" && ! -f ".secretlintrc.mjs" && ! -f ".secretlintrc" ]]; then
+		print_skip "Secretlint configuration not found (.secretlintrc*)"
+		return 0
+	fi
+
+	print_info "Running Secretlint scan..."
+
+	# Secretlint contract: 0 = clean, 1 = findings, other = scanner error
+	local sl_output="" sl_status=0
+	sl_output=$("$secretlint_cmd" "**/*" --format compact 2>&1) || sl_status=$?
+	case "$sl_status" in
+	0)
+		count_success "Secretlint: No secrets detected"
+		;;
+	1)
+		[[ -n "$sl_output" ]] && printf '%s\n' "$sl_output"
+		count_failure "Secretlint: Potential secrets found"
+		return 1
+		;;
+	*)
+		[[ -n "$sl_output" ]] && printf '%s\n' "$sl_output"
+		count_failure "Secretlint could not run (exit $sl_status): scanner error, not a secrets finding"
+		return 1
+		;;
+	esac
 
 	return 0
 }

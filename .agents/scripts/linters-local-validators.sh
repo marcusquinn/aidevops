@@ -719,14 +719,26 @@ check_secrets() {
 	if [[ -n "$secretlint_cmd" ]]; then
 
 		if [[ -f ".secretlintrc.json" ]]; then
-			# Run scan and capture exit code
-			if "$secretlint_cmd" "${secretlint_targets[@]}" --format compact 2>/dev/null; then
+			# Secretlint contract: 0 = clean, 1 = findings, other = scanner error
+			local sl_output="" sl_status=0
+			sl_output=$("$secretlint_cmd" "${secretlint_targets[@]}" --format compact 2>&1) || sl_status=$?
+			case "$sl_status" in
+			0)
 				print_success "Secretlint: No secrets detected"
-			else
+				;;
+			1)
 				violations=1
+				[[ -n "$sl_output" ]] && printf '%s\n' "$sl_output"
 				print_error "Secretlint: Potential secrets detected!"
 				print_info "Run: bash $secretlint_script scan (for detailed results)"
-			fi
+				;;
+			*)
+				violations=1
+				print_error "Secretlint could not run (exit $sl_status): scanner error, not a secrets finding"
+				[[ -n "$sl_output" ]] && printf '%s\n' "$sl_output"
+				print_info "Check .secretlintrc.json and installed rule presets"
+				;;
+			esac
 		else
 			print_warning "Secretlint: Configuration not found"
 			print_info "Run: bash $secretlint_script init"
