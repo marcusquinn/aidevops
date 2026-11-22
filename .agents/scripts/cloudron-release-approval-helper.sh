@@ -997,6 +997,81 @@ release_merge_approved_pr() {
 	return 0
 }
 
+# Why the standing policy does not cover this head: the exact NOT_ROUTINE reason
+# from cloudron_routine_bump.py, else the first diagnostic line. Read-only.
+release_not_routine_reason() {
+	local repo="$1" pr="$2" head="$3" output='' reason=''
+	output=$(release_policy_authorizes "$repo" "$pr" "$head" 2>&1 >/dev/null) || true
+	reason=$(printf '%s\n' "$output" | sed -n 's/.*\(NOT_ROUTINE: [^)]*\).*/\1/;t found;d;:found;p;q')
+	if [[ -z "$reason" ]]; then
+		reason="${output%%$'\n'*}"
+		reason="${reason:0:300}"
+	fi
+	[[ -n "$reason" ]] || reason='NOT_ROUTINE: no active signed standing policy covers this head'
+	printf '%s\n' "$reason"
+	return 0
+}
+
+# Newer open upstream findings than the held PR's own finding, as "#N (fingerprint)".
+release_queued_findings() {
+	local repo="$1" pr="$2" view='' finding='' own_number='' own_fp='' own_state='' pages='' line='' number='' fp='' out=''
+	view=$(gh pr view "$pr" --repo "$repo" --json closingIssuesReferences) || return 0
+	finding=$(release_upstream_finding "$repo" "$(jq -c '{issues: [.closingIssuesReferences[].number]}' <<<"$view")") || return 0
+	IFS=$'\t' read -r own_number own_fp own_state <<<"$finding"
+	pages=$(gh api "repos/${repo}/issues?state=open&labels=type:maintenance&per_page=100" --paginate) || return 0
+	while IFS=$'\t' read -r number fp; do
+		[[ -n "$number" && "$number" != "$own_number" ]] || continue
+		release_finding_newer "$number" "$fp" "$own_number" "$own_fp" || continue
+		out="${out}#${number} (${fp#upstream-}) "
+	done < <(jq -rs --arg trusted "$RELEASE_TRUSTED_AUTHOR" 'add // [] | .[]
+		| select(.pull_request == null and ((.author_association // "") | test($trusted)))
+		| ((.body // "") | match("(?m)^<!-- aidevops:cloudron-package-monitor (upstream-(v[0-9]+\\.[0-9]+\\.[0-9]+|commit-[a-f0-9]{40})) -->$")? | .captures[0].string) as $fp
+		| select($fp != null) | [(.number | tostring), $fp] | @tsv' <<<"$pages")
+	printf '%s' "$out"
+	return 0
+}
+
+# One proactive notice per exact head when a non-routine request waits unsigned
+# past AIDEVOPS_CLOUDRON_APPROVAL_NOTICE_SECONDS (default 24 h; 0 disables).
+# Posted on the held PR, never the request issue, so the signed snapshot of the
+# request cannot go stale. Best effort: a failure never blocks the routine.
+release_notify_unsigned() {
+	local repo="$1" issue="$2" request="$3" pr="$4" head="$5"
+	local threshold="${AIDEVOPS_CLOUDRON_APPROVAL_NOTICE_SECONDS:-86400}" created='' now='' age='' verdict='' rc=0
+	local marker="<!-- aidevops:cloudron-release-unsigned-notice ${head} -->" comments='' reason='' queued='' advice='' cli=''
+	[[ "$threshold" =~ ^[0-9]{1,9}$ && $((10#$threshold)) -gt 0 ]] || return 0
+	created=$(jq -r '.created_at // empty' <<<"$request") || return 0
+	[[ -n "$created" ]] || return 0
+	created=$(date -d "$created" +%s 2>/dev/null) || return 0
+	now=$(date +%s) || return 0
+	age=$((now - created))
+	[[ "$age" -ge $((10#$threshold)) ]] || return 0
+	verdict=$(release_verify "$repo" "$issue") || rc=$?
+	#aidevops:trust-boundary — only a plainly unsigned request is nudged; stale or unverifiable ones keep their own path.
+	[[ "$rc" -ne 0 && "$verdict" == NO_APPROVAL ]] || return 0
+	jq -e --arg head "$head" --arg open_state open '.state == $open_state and .merged == false and .head.sha == $head' \
+		<<<"$(release_pr_raw "$repo" "$pr" 2>/dev/null)" >/dev/null 2>&1 || return 0
+	comments=$(gh api "repos/${repo}/issues/${pr}/comments?per_page=100" --paginate 2>/dev/null) || return 0
+	if jq -se --arg marker "$marker" --arg trusted "$RELEASE_TRUSTED_AUTHOR" \
+		'add // [] | any(.[]; ((.author_association // "") | test($trusted)) and (.body | contains($marker)))' <<<"$comments" >/dev/null 2>&1; then
+		return 0
+	fi
+	reason=$(release_not_routine_reason "$repo" "$pr" "$head")
+	queued=$(release_queued_findings "$repo" "$pr")
+	cli=$(approval_cli_prefix) || cli='sudo aidevops'
+	if [[ -n "$queued" ]]; then
+		advice="Newer upstream findings are queued behind this request: ${queued}. A superseding PR at the newest upstream that keeps this change would be a better thing to sign."
+	else
+		advice='No newer upstream findings are queued; signing this request releases the held head.'
+	fi
+	# shellcheck disable=SC2016 # Markdown backticks, not command substitution.
+	printf '%s\nRelease request #%s has waited %s h unsigned and is not covered by the standing policy, so it is not a routine bump.\n\nWhy: %s\n\n%s\n\nTo approve: `%s approve issue %s %s`\n\nThis notice is posted once per PR head and does not alter the request issue or its signature.\n' \
+		"$marker" "$issue" "$((age / 3600))" "$reason" "$advice" "$cli" "$issue" "$repo" |
+		gh_pr_comment "$pr" --repo "$repo" --body-file - >/dev/null || return 0
+	printf '%s issue %s: unsigned-request notice posted on PR #%s\n' "$repo" "$issue" "$pr"
+	return 0
+}
+
 release_process_issue() {
 	local repo="$1" issue="$2" apply="$3"
 	local before="" after="" body="" pr="" head="" version="" snapshot="" release_url="" runs="" run_id="" rc=0
@@ -1021,6 +1096,7 @@ release_process_issue() {
 	local authority=''
 	release_resolve_authority "$repo" "$issue" "$before" "$pr" "$head" "$apply" || rc=$?
 	if [[ "$rc" -eq 3 ]]; then
+		[[ "$apply" != true ]] || release_notify_unsigned "$repo" "$issue" "$before" "$pr" "$head" || true
 		[[ -z "$fingerprint" ]] || release_pending_cache_write "$repo" "$issue" "$fingerprint" || true
 		return 0
 	fi
