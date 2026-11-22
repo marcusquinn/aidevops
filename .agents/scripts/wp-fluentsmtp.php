@@ -77,7 +77,8 @@ if ( ! class_exists( 'WPFS_Cli' ) ) {
 				}
 				self::emit( call_user_func( self::HANDLERS[ $action ], $options ) );
 				return 0;
-			} catch ( WPFS_Error $error ) {
+			} catch ( WPAD_Config_Error $error ) {
+				// WPFS_Error extends WPAD_Config_Error; both carry the exit code.
 				fwrite( STDERR, 'ERROR: ' . $error->getMessage() . "\n" );
 				return (int) $error->getCode();
 			} catch ( Throwable $error ) {

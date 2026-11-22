@@ -313,6 +313,8 @@ For Fluent Boards cards (list, show, add, move, comment, tick checklist items, a
 
 For FluentSMTP Amazon SES connections (list, move to a new sending domain or region with keys in `wp-config.php`, proof send, checksummed undo), use `wp-helper.sh --fluentsmtp`: see `services/email/ses.md` "FluentSMTP".
 
+To write any other stored secret into a `wp-config.php` constant (value on stdin, backup, fresh-process check, undo), use `wp-helper.sh --config-secret`, not `wp config set`: see `wp-dev.md` "Secrets in wp-config.php".
+
 ## Security
 
 ```bash
@@ -388,7 +390,7 @@ wp option update rank_math_sitemap_last_modified $(date +%s)
 
 ## Disposable Docker-free fixture
 
-Runtime-verify `wp-helper.sh` WP-CLI payloads (`wp-fluentsmtp.php`, `wp-fluent-boards*.php`, `wp-change-plan*.php`) without Docker or MySQL. The Docker + MariaDB stack in `wp-plugin-release.md` (`plugin-check`) does not exercise `wp-helper.sh` transports. Keep every file under one fixture directory and delete it afterwards.
+Runtime-verify `wp-helper.sh` WP-CLI payloads (`wp-fluentsmtp.php`, `wp-config-secret.php`, `wp-fluent-boards*.php`, `wp-change-plan*.php`) without Docker or MySQL. The Docker + MariaDB stack in `wp-plugin-release.md` (`plugin-check`) does not exercise `wp-helper.sh` transports. Keep every file under one fixture directory and delete it afterwards.
 
 ```bash
 T="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}"
