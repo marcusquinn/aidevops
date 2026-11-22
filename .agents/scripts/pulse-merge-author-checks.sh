@@ -410,11 +410,12 @@ _interactive_handover_release_tracking_issue() {
 	' >/dev/null 2>&1 || return 1
 	author=$(printf '%s' "$issue_meta" | jq -r '.user.login // empty')
 	[[ -n "$author" ]] && _is_collaborator_author "$author" "$repo_slug" || return 1
+	# Count coordination lines per page; any page with history refuses.
 	comments=$(gh api --paginate "repos/${repo_slug}/issues/${issue}/comments?per_page=100" \
-		--jq '.[].body // ""' 2>/dev/null) || return 1
-	if printf '%s\n' "$comments" | grep -Eq '^(DISPATCH_CLAIM |DISPATCH_LEASE |CLAIM_RELEASED |Dispatching worker|Interactive session claimed|Terminal blocker:)'; then
-		return 1
-	fi
+		--jq '[.[] | (.body // "") | split("\n")[] |
+			select(test("^(DISPATCH_CLAIM |DISPATCH_LEASE |CLAIM_RELEASED |Dispatching worker|Interactive session claimed|Terminal blocker:)"))] | length' \
+		2>/dev/null) || return 1
+	[[ "$comments" =~ ^[0-9[:space:]]+$ && ! "$comments" =~ [1-9] ]] || return 1
 	set_issue_status "$issue" "$repo_slug" available --add-label auto-dispatch >/dev/null || return 1
 	echo "[pulse-wrapper] interactive-draft-handover: released tracking issue #${issue} for PR #${pr_number} in ${repo_slug} to status:available + auto-dispatch (GH#39908)" >>"$LOGFILE"
 	return 0
