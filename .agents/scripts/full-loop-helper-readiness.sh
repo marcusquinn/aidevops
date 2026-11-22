@@ -799,12 +799,18 @@ _ready_continued_draft_pr() {
 	local want_ready="${create_ready:-0}"
 	[[ "$origin_label" != "origin:worker" ]] || want_ready=1
 	[[ "$want_ready" -eq 1 ]] || return 0
+	local ready_cmd="gh pr ready ${pr_number} --repo ${repo}"
 	local is_draft=""
 	is_draft=$(_gh_with_timeout read gh api "repos/${repo}/pulls/${pr_number}" --jq '.draft' 2>/dev/null) || is_draft=""
-	[[ "$is_draft" == "true" ]] || return 0
+	# A confirmed non-draft needs nothing; an unreadable state keeps any draft
+	# but still prints the recovery command.
+	[[ "$is_draft" != "false" ]] || return 0
+	if [[ "$is_draft" != "true" ]]; then
+		print_warning "Could not read draft state of continued PR #${pr_number}; if it is still draft, run: ${ready_cmd}"
+		return 0
+	fi
 	local head_branch="${FULL_LOOP_PUSHED_BRANCH:-}"
 	[[ -n "$head_branch" ]] || head_branch=$(git branch --show-current 2>/dev/null || echo "")
-	local ready_cmd="gh pr ready ${pr_number} --repo ${repo}"
 	if [[ "$(_effective_pr_ready 1 "$head_branch")" != "1" ]]; then
 		print_warning "Continued PR #${pr_number} stays draft until its pushed head is verified; then run: ${ready_cmd}"
 		return 0
