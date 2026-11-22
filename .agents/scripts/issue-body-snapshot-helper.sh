@@ -5,6 +5,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=portable-stat.sh
+source "$SCRIPT_DIR/portable-stat.sh"
 SNAPSHOT_SCHEMA_VERSION=1
 
 snapshot_error() {
@@ -67,7 +69,7 @@ snapshot_validate() {
 	local mode="" body_file="" expected_hash="" actual_hash="" captured_at="" captured_epoch="" now_epoch=""
 
 	[[ -f "$snapshot_file" ]] || { snapshot_error "no durable fallback exists"; return 1; }
-	mode=$(stat -f '%Lp' "$snapshot_file" 2>/dev/null || stat -c '%a' "$snapshot_file" 2>/dev/null || true)
+	mode=$(_stat_batch '%a' "$snapshot_file" || true)
 	[[ "$mode" == "600" ]] || { snapshot_error "snapshot permissions are ${mode:-unknown}, expected 600"; return 1; }
 	jq -e --arg repo "$repo_slug" --argjson issue "$issue_number" --argjson schema "$SNAPSHOT_SCHEMA_VERSION" \
 		'type == "object" and .schemaVersion == $schema and .repo == $repo and .issue == $issue and

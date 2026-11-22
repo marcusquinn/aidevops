@@ -55,7 +55,7 @@ assert_not_contains() {
 
 file_mode() {
 	local path="$1"
-	stat -f '%Lp' "$path" 2>/dev/null || stat -c '%a' "$path" 2>/dev/null
+	stat -c '%a' "$path" 2>/dev/null || stat -f '%Lp' "$path" 2>/dev/null
 	return 0
 }
 
