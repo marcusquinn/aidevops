@@ -94,6 +94,23 @@ if grep -q -e 'Live sessions' -e 'late-row' "$output"; then
 	exit 1
 fi
 
+# GH#39880: a space-separated --files value warns on stderr naming the entry and
+# still exits 0; trimmed and empty comma entries neither warn nor change stdout.
+# git resolves paths against the current directory, so run from the repo root.
+cd "$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+errors="$TMP_DIR/errors.txt"
+PATH="$TMP_DIR/bin:$PATH" "$HELPER" --keywords 'x' --files 'README.md .agents/AGENTS.md' --repo 'owner/repo' >"$output" 2>"$errors"
+grep -qxF "Warning: --files entry 'README.md .agents/AGENTS.md' matches no tracked file (use a comma-separated list)" "$errors"
+PATH="$TMP_DIR/bin:$PATH" "$HELPER" --keywords 'x' --files 'README.md,.agents/AGENTS.md' --repo 'owner/repo' >"$TMP_DIR/valid.md" 2>"$errors"
+PATH="$TMP_DIR/bin:$PATH" "$HELPER" --keywords 'x' --files ' README.md, ,.agents/AGENTS.md,' --repo 'owner/repo' >"$output" 2>>"$errors"
+if grep -q -e 'Warning: --files' -e 'fatal:' "$errors"; then
+	printf 'FAIL: comma-separated tracked --files warned or failed\n' >&2
+	exit 1
+fi
+cmp -s "$TMP_DIR/valid.md" "$output"
+PATH="$TMP_DIR/bin:$PATH" "$HELPER" --keywords 'x' --files 'not-yet-created.sh' --repo 'owner/repo' >"$output" 2>"$errors"
+grep -qxF "Warning: --files entry 'not-yet-created.sh' matches no tracked file" "$errors"
+
 if "$HELPER" --blocker >"$output" 2>&1; then
 	printf 'FAIL: missing blocker value accepted\n' >&2
 	exit 1
