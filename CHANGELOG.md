@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.262] - 2026-11-22
+
+### Changed
+
+- Maintenance: isolate test-gh-wrapper-rest-fallback.sh from live gh admission state
+- Documentation: cloudron optionalSso and sso flag when adding auth addon in update (#39806)
+
+### Fixed
+
+- verify deterministic badges-sync PR scope (GH#39785)
+- badges-sync dry-run evaluates remote default branch (GH#39808) (#39812)
+- repoint test-peer-quarantine 9d at dispatch-dedup-assignment.sh parser (#39811)
+
 ## [3.39.261] - 2026-11-22
 
 ### Added
