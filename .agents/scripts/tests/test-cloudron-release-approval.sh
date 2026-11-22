@@ -105,6 +105,16 @@ request_comments_json() {
 	return 0
 }
 
+# Comments on held PR #7; only notice_posted carries the trusted notice marker.
+pr_comments_json() {
+	if [[ "$SCENARIO" == notice_posted ]]; then
+		jq -cn --arg head "$HEAD_SHA" '[{author_association:"OWNER",body:("<!-- aidevops:cloudron-release-unsigned-notice " + $head + " -->\nnotice")}]'
+	else
+		printf '[]\n'
+	fi
+	return 0
+}
+
 # GH#39648: review-bot thread gate; open threads only where a scenario plants them.
 review_threads_response() {
 	local nodes='[]'
@@ -164,13 +174,7 @@ gh() {
 		;;
 	'api repos/owner/app/issues/12/comments?'*) request_comments_json ;;
 	'api repos/owner/app/issues/12') request_issue_json ;;
-	'api repos/owner/app/issues/7/comments?'*)
-		if [[ "$SCENARIO" == notice_posted ]]; then
-			jq -cn --arg head "$HEAD_SHA" '[{author_association:"OWNER",body:("<!-- aidevops:cloudron-release-unsigned-notice " + $head + " -->\nnotice")}]'
-		else
-			printf '[]\n'
-		fi
-		;;
+	'api repos/owner/app/issues/7/comments?'*) pr_comments_json ;;
 	'api repos/owner/app/pulls/7') pull_request_json || return 1 ;;
 	'api repos/owner/app/contents/CloudronManifest.json?'*) printf '{"version":"1.2.3","upstreamVersion":"4.5.6","changelog":"file://CHANGELOG"}\n' ;;
 	'api repos/owner/app/contents/.github/workflows/cloudron-catalog-publish.yml?'*)
