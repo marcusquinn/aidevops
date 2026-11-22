@@ -86,6 +86,15 @@ GH_INFO_OUTPUT="${TMP}/info_output.log"
 GH_APP_TOKEN_CALLS="${TMP}/gh_app_token_calls.log"
 export AIDEVOPS_GH_API_LOG="${TMP}/gh-api-calls.log"
 
+# GH#39814: keep the operator's live GitHub admission state (governor pacing
+# budget, secondary/primary cooldown, read ramp) out of this suite, so results
+# never depend on real API pacing (observed as github-api-read-deferred).
+mkdir -m 700 "${TMP}/gh-transport-state" "${TMP}/gh-cooldown-home"
+export AIDEVOPS_GH_TRANSPORT_STATE_DIR="${TMP}/gh-transport-state"
+export AIDEVOPS_GH_SECONDARY_COOLDOWN_HOME="${TMP}/gh-cooldown-home"
+unset AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE \
+	AIDEVOPS_GH_READ_RAMP_STATE_FILE
+
 # Configurable stub behaviour per test via env vars:
 #   STUB_RATE_LIMIT_REMAINING  — what gh api rate_limit returns (default: 5000)
 #   STUB_PRIMARY_FAIL          — 1 to make gh issue create/comment/edit fail
