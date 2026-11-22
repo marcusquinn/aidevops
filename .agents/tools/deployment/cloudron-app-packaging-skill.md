@@ -232,6 +232,8 @@ Full field reference: [manifest-ref.md](cloudron-app-packaging-skill/manifest-re
 | `proxyauth` | Auth wall | -- |
 | `scheduler` | Cron tasks | -- |
 | `tls` | App certificate files | `/etc/certs/tls_cert.pem` |
+
+Adding `oidc`, `ldap` or `proxyauth` in an update does not enable SSO for existing installs (the `sso` flag is fixed at install). See [Adding an auth addon in an update](cloudron-app-packaging-skill/manifest-ref/05-behavior.md#adding-an-auth-addon-in-an-update).
 | `turn` | STUN/TURN service | `CLOUDRON_TURN_SERVER` |
 | `docker` | Create containers (restricted) | `CLOUDRON_DOCKER_HOST` |
 
