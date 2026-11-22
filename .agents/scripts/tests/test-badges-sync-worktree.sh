@@ -187,7 +187,9 @@ printf 'PASS stale dirty detector result revalidated against current remote defa
 
 # GH#39808: dry-run evaluates the remote default, not the stale local checkout.
 bash "$SCRIPTS/badges-sync-helper.sh" --repo marcusquinn/test --json >"$ROOT/result"
-! grep -q PLANNED "$ROOT/result"
+if grep -q PLANNED "$ROOT/result"; then
+	exit 1
+fi
 grep -q SKIPPED "$ROOT/result"
 [[ "$(snapshot)" == "$before" ]]
 printf 'PASS dry-run reports SKIPPED when local checkout is stale but remote is current\n'
