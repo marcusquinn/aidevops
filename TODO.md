@@ -2428,6 +2428,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19275 fix: sync-workflows marker only for gate-admissible renders; keep anchors; refuse pin downgrade (GH#39793 follow-up) #bug #interactive ref:GH#39830 assignee:marcusquinn logged:2026-11-22 started:2026-11-22
 
+- [ ] t19276 fix(full-loop): restrict runtime-pending to Critical/High risk so workers stop parking unfinished Low/Medium work behind a human hold #bug ref:GH#39831
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
