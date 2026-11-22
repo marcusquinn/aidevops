@@ -76,6 +76,10 @@ trap 'rm -rf "$TMP"' EXIT
 # Cleanup reconciles receipts from HOME even for a repo without remotes. Keep
 # the test away from real session state as well as global Git hooks/config.
 export HOME="${TMP}/home"
+export XDG_CONFIG_HOME="${TMP}/config"
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
 export AIDEVOPS_FULL_LOOP_CLEANUP_DIR="${TMP}/receipts"
 mkdir -p "$HOME"
 
@@ -92,7 +96,8 @@ _setup_git_repo() {
 	git -C "$dir" init -q 2>/dev/null
 	git -C "$dir" config user.email "test@test.invalid" 2>/dev/null
 	git -C "$dir" config user.name "Test" 2>/dev/null
-	git -C "$dir" commit --allow-empty -m "init" -q 2>/dev/null
+	# Disable inherited/template hooks only here; tests invoke real hooks below.
+	git -c core.hooksPath=/dev/null -C "$dir" commit --allow-empty -m "init" -q 2>/dev/null
 	return 0
 }
 
