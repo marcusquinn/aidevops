@@ -2440,9 +2440,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19281 fix(pulse-merge): route legacy Low/Medium runtime-pending holds to a completion worker instead of an interactive verifier #auto-dispatch #bug ref:GH#39849 -> [todo/tasks/t19281-brief.md] pr:#39851 completed:2026-11-22
 
-- [ ] t19282 fix(pulse-merge): stale interactive orphan drafts never hand over when Ref points at a merged PR, and refusals are silent #auto-dispatch #bug ref:GH#39873 -> [todo/tasks/t19282-brief.md]
+- [x] t19282 fix(pulse-merge): stale interactive orphan drafts never hand over when Ref points at a merged PR, and refusals are silent #auto-dispatch #bug ref:GH#39873 -> [todo/tasks/t19282-brief.md] pr:#39878 completed:2026-11-22
 
-- [ ] t19283 fix(audit): credit PR-less triage completion for GH audit alerts filed by COLLABORATOR runners #auto-dispatch #bug ref:GH#39876
+- [x] t19283 fix(audit): credit PR-less triage completion for GH audit alerts filed by COLLABORATOR runners #auto-dispatch #bug ref:GH#39876 pr:#39879 completed:2026-11-22
 
 ## In Progress
 
