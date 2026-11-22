@@ -365,7 +365,7 @@ terminal_blocker_capture_output() {
 	# Access denials keep their evidenced class; a scope edit cannot grant access.
 	# Verified admin/owner input and external-trigger holds likewise keep their class.
 	if [[ "$normalized" != "permission_required" && "$normalized" != "$_TBC_RUNNER_CAPABILITY" &&
-		"$normalized" != "$_TBC_SOURCE_ACCESS" && "$normalized" != input_required:* &&
+		"$normalized" != "resource_contended" && "$normalized" != "$_TBC_SOURCE_ACCESS" && "$normalized" != input_required:* &&
 		"$normalized" != "external_trigger_pending" && "${WORKER_ISSUE_NUMBER:-}" =~ ^[0-9]+$ &&
 		"${DISPATCH_REPO_SLUG:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
 		issue_json=$(gh api "repos/${DISPATCH_REPO_SLUG}/issues/${WORKER_ISSUE_NUMBER}" 2>/dev/null) || issue_json=""
