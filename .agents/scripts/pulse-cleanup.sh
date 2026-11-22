@@ -640,8 +640,13 @@ _launch_recovery_bind_ledger_claim() {
 	local repo_slug="$2"
 	local ledger_entry="$3"
 	local self_login="$4"
-	# Every local below is assigned (command substitution or read) before use.
-	local fields binding lease_token runner_device session_key claim_id claim_nonce
+	local fields=""
+	local binding=""
+	local lease_token=""
+	local runner_device=""
+	local session_key=""
+	local claim_id=""
+	local claim_nonce=""
 
 	fields=$(printf '%s' "$ledger_entry" | jq -r '[.lease_token // "", .runner_device // "", .session_key // ""] | @tsv' 2>/dev/null) || return 1
 	IFS=$'\t' read -r lease_token runner_device session_key <<<"$fields"
