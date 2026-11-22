@@ -430,6 +430,49 @@ _feedback_route_guard_closed_issue 100 owner/repo 42 ci || rc=$?
 HEAD="abc123repairsha" PR_BODY="" EVENT_ACTOR="" CLOSER="" REASON="completed"
 printf 'PASS: guard keeps a manual hold and closes only a proven automation hold\n'
 
+# t19288: the merge pass gives the held-PR proof a For #N work issue when the
+# PR has no closing target, and passes an existing closing target unchanged.
+gate_case() {
+	local linked="$1" resolver_rc="$2"
+	: >"${TEST_ROOT}/gate-calls"
+	: >"$LOGFILE"
+	(
+		local fn_src="" result=0
+		fn_src=$(awk '/^_pm_gate_origin_authority\(\) \{/,/^}$/ { print }' "${SCRIPT_DIR}/../pulse-merge.sh")
+		eval "$fn_src"
+		gh_pr_view() {
+			jq -cn '{isDraft:false,labels:[{name:"origin:worker-takeover"},{name:"hold-for-review"}],autoMergeRequest:null,headRefName:"feature/x",body:"Recovery PR\n\nFor #42"}'
+			return 0
+		}
+		_extract_pr_work_issue() {
+			printf 'resolver %s %s %s %s\n' "$1" "$2" "$3" "${4//$'\n'/ }" >>"${TEST_ROOT}/gate-calls"
+			[[ "$resolver_rc" == "0" ]] || return "$resolver_rc"
+			printf '42'
+			return 0
+		}
+		_feedback_route_close_superseded_closed_issue_hold() {
+			printf 'proof %s\n' "${3:-none}" >>"${TEST_ROOT}/gate-calls"
+			[[ "${3:-}" == "42" ]]
+		}
+		_feedback_route_release_projection_hold() { return 1; }
+		_pmrp_route_held_pr() { return 0; }
+		_pm_gate_origin_authority 100 owner/repo "$linked" worker 0 write || result=$?
+		[[ "$result" == "1" ]]
+	)
+	return $?
+}
+gate_case "" 0
+grep -qxF 'resolver 100 owner/repo explicit Recovery PR  For #42' "${TEST_ROOT}/gate-calls"
+grep -qxF 'proof 42' "${TEST_ROOT}/gate-calls"
+if grep -qF 'PR is draft or has hold-for-review' "$LOGFILE"; then exit 1; fi
+gate_case 42 0
+if grep -qF 'resolver' "${TEST_ROOT}/gate-calls"; then exit 1; fi
+grep -qxF 'proof 42' "${TEST_ROOT}/gate-calls"
+gate_case "" 2
+grep -qxF 'proof none' "${TEST_ROOT}/gate-calls"
+grep -qF 'PR is draft or has hold-for-review' "$LOGFILE"
+printf 'PASS: merge pass resolves a For #N work issue for the held-PR proof; ambiguity keeps the hold\n'
+
 # GH#34600: automation-hold provenance shares the actor-pinned filter, so it
 # must match the runner's own login under CONTRIBUTOR and nobody else's.
 HOLD_COMMENTS='[[{"id":1,"created_at":"2026-01-01T00:00:00Z","body":"x<!-- m -->","user":{"login":"automation"},"author_association":"CONTRIBUTOR"},{"id":2,"created_at":"2026-01-01T00:00:01Z","body":"x<!-- m -->","user":{"login":"someone-else"},"author_association":"MEMBER"}]]'
