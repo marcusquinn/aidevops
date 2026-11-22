@@ -9,6 +9,9 @@ from pathlib import Path
 import re
 import sys
 
+BADGE_START = b"<!-- aidevops:badges:start -->"
+BADGE_END = b"<!-- aidevops:badges:end -->"
+
 
 def blob(value):
     """Reject truncated, non-regular or unverifiable Contents API responses."""
@@ -26,38 +29,38 @@ def blob(value):
     return data
 
 
-def validate(path, template, evidence):
-    head, base = blob(evidence["head"]), blob(evidence["base"])
-    if path == "README.md":
-        start, end = b"<!-- aidevops:badges:start -->", b"<!-- aidevops:badges:end -->"
+def outside_badges(data, required):
+    if data.count(BADGE_START) == data.count(BADGE_END) == 0 and not required:
+        return data
+    if data.count(BADGE_START) != 1 or data.count(BADGE_END) != 1:
+        raise ValueError("ambiguous badge block")
+    start, end = data.index(BADGE_START), data.index(BADGE_END)
+    if end < start:
+        raise ValueError("reversed badge block")
+    return data[:start] + data[end + len(BADGE_END):]
 
-        def outside(data, required):
-            if data.count(start) == data.count(end) == 0 and not required:
-                return data
-            if data.count(start) != 1 or data.count(end) != 1:
-                raise ValueError("ambiguous badge block")
-            a, b = data.index(start), data.index(end)
-            if b < a:
-                raise ValueError("reversed badge block")
-            return data[:a] + data[b + len(end):]
 
-        head_outside = outside(head, True)
-        base_outside = outside(base, False)
-        if start not in base and end not in base:
-            # Match inject_block's first-install whitespace exactly, without
-            # stripping/normalising any existing README content.
-            block = head[head.index(start):head.index(end) + len(end)]
-            heading = re.search(rb"^# .*\n", base, re.M)
-            if heading:
-                offset = heading.end()
-                expected = base[:offset] + b"\n" + block + b"\n" + base[offset:]
-            else:
-                expected = block + b"\n\n" + base
-            if head != expected:
-                raise ValueError("README differs from deterministic block insertion")
-        elif head_outside != base_outside:
-            raise ValueError("README changed outside badge block")
-        return ""
+def validate_readme(head, base):
+    head_outside = outside_badges(head, True)
+    base_outside = outside_badges(base, False)
+    if BADGE_START not in base and BADGE_END not in base:
+        # Match inject_block's first-install whitespace exactly, without
+        # stripping/normalising any existing README content.
+        block = head[head.index(BADGE_START):head.index(BADGE_END) + len(BADGE_END)]
+        heading = re.search(rb"^# .*\n", base, re.M)
+        if heading:
+            offset = heading.end()
+            expected = base[:offset] + b"\n" + block + b"\n" + base[offset:]
+        else:
+            expected = block + b"\n\n" + base
+        if head != expected:
+            raise ValueError("README differs from deterministic block insertion")
+    elif head_outside != base_outside:
+        raise ValueError("README changed outside badge block")
+    return ""
+
+
+def validate_workflow(head, template):
     # Reproduce the installer's two substitutions, including optional tag comment.
     match = re.search(rb"^      aidevops_ref: ([0-9a-f]{40})(?: # [^\r\n]+)?$", head, re.M)
     if not match:
@@ -71,6 +74,13 @@ def validate(path, template, evidence):
     if head != expected:
         raise ValueError("workflow differs from canonical template")
     return match[1].decode()
+
+
+def validate(path, template, evidence):
+    head, base = blob(evidence["head"]), blob(evidence["base"])
+    if path == "README.md":
+        return validate_readme(head, base)
+    return validate_workflow(head, template)
 
 
 if __name__ == "__main__":
