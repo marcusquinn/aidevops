@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.266] - 2026-11-22
+
+### Added
+
+- answer repeated maintainer asks once — precedent check and sibling fan-out
+
+### Changed
+
+- Maintenance: mark t19285 complete (pr:#39895 completed:2026-11-22) (#39898)
+- Maintenance: mark t19284 complete (pr:#39886 completed:2026-11-22) (#39892)
+
+### Fixed
+
+- close worker PRs superseded by a merged closer instead of holding them
+- fix live lock contention recovery (GH#39887)
+
 ## [3.39.265] - 2026-11-22
 
 ### Added
