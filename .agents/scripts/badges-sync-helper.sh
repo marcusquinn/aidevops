@@ -38,7 +38,9 @@
 #                   what would happen (dry-run is the default).
 #   --repo SLUG     Limit to a single repo.
 #   --json          Emit one JSON object per repo.
-#   --branch NAME   Branch prefix for PRs (default: chore/badges-sync).
+#   --branch NAME   Branch prefix for PRs (default: chore/badges-sync). Must be
+#                   chore/badges-sync or start with chore/badges-sync- so the
+#                   merge gate's routine scope admission (GH#39785) applies.
 #   --no-workflow   Skip loc-badge workflow installation; only sync README blocks.
 #   -h, --help      Show this help.
 #
@@ -61,6 +63,8 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=./workflow-release-ref.sh
 source "$SELF_DIR/workflow-release-ref.sh"
+# shellcheck source=routine-pr-scope-lib.sh
+source "$SELF_DIR/routine-pr-scope-lib.sh" || exit 1
 
 # shellcheck source=/dev/null
 if [[ -f "$SELF_DIR/shared-constants.sh" ]]; then
@@ -188,7 +192,6 @@ readonly _STATUS_APPLIED="APPLIED"
 readonly _STATUS_FAILED="FAILED"
 readonly _STATUS_BLOCKED_SIGNING="BLOCKED-SIGNING"
 readonly _STATUS_BLOCKED_RETAINED="BLOCKED-RETAINED"
-readonly _BADGES_ANCHOR_TITLE="aidevops badge sync (routine anchor)"
 
 readonly _BRANCH_DEFAULT_NAME="main"
 
@@ -233,7 +236,9 @@ Options:
                 what would happen (dry-run is the default for safety).
   --repo SLUG   Limit to a single repo. Example: --repo owner/repo.
   --json        Emit one JSON object per repo describing outcome.
-  --branch NAME Branch name prefix (default: chore/badges-sync).
+  --branch NAME Branch name prefix (default: chore/badges-sync). Must be
+                chore/badges-sync or start with chore/badges-sync- so merge
+                gates can admit the PR by verified routine scope.
   --no-workflow Skip repo metrics workflow installation; only sync README blocks and local metrics.
   -h, --help    Show this help.
 
@@ -429,55 +434,13 @@ _install_workflow() {
 
 # ─── PR creation ────────────────────────────────────────────────────────────
 
-# _routine_anchor <slug> — print the repo's open badge-sync routine anchor
-# issue number (GH#39696). Headless runs stamp origin:worker, whose PR body
-# needs exactly one explicit issue identity: without it creation is rejected
-# and the t2449 merge gate never admits the PR. Prints nothing for other
-# origins, which need no anchor. Prints a FAILED row instead when a required
-# anchor is unavailable, so nothing is pushed without a PR.
-_routine_anchor() {
-	local _slug="$1"
-	local _helper="" _number=""
-	declare -F session_origin_label >/dev/null 2>&1 || return 0
-	[[ "$(session_origin_label)" == "origin:worker" ]] || return 0
-	if ! _helper=$(_resolve_helper routine-log-helper.sh); then
-		printf '%s\t%s\troutine anchor unavailable: routine-log-helper.sh not found\n' \
-			"$_slug" "$_STATUS_FAILED"
-		return 1
-	fi
-	if ! _number=$(bash "$_helper" ensure-anchor badges-sync --repo "$_slug" \
-		--title "$_BADGES_ANCHOR_TITLE") ||
-		[[ ! "$_number" =~ ^[1-9][0-9]*$ ]]; then
-		printf '%s\t%s\troutine anchor unavailable: ensure-anchor failed for badges-sync\n' \
-			"$_slug" "$_STATUS_FAILED"
-		return 1
-	fi
-	printf '%s\n' "$_number"
-	return 0
-}
-
-# _link_open_pr_anchor <slug> <pr_url> — give an open origin:worker sync PR
-# without an issue identity its anchor Ref line, so the merge gate can admit
-# the PR that blocks every later run. Best effort: the skip row still prints.
-_link_open_pr_anchor() {
-	local _slug="$1" _url="$2"
-	local _helper="" _number="${2##*/}"
-	[[ "$_number" =~ ^[1-9][0-9]*$ ]] || return 0
-	_helper=$(_resolve_helper routine-log-helper.sh) || return 0
-	bash "$_helper" ensure-pr-anchor badges-sync --repo "$_slug" --pr "$_number" \
-		--title "$_BADGES_ANCHOR_TITLE" >&2 ||
-		_warn "$_slug: could not link open sync PR $_url to its routine anchor"
-	return 0
-}
-
-# _open_pr <slug> <path> <branch> <default_branch> <description> [anchor]
+# _open_pr <slug> <path> <branch> <default_branch> <description>
 _open_pr() {
 	local _slug="$1"
 	local _path="$2"
 	local _branch_name="$3"
 	local _default_branch="$4"
 	local _description="$5"
-	local _anchor="${6:-}"
 
 	if ! command -v gh_create_pr >/dev/null 2>&1; then
 		printf '%s\t%s\tgh_create_pr unavailable — source shared-gh-wrappers.sh\n' \
@@ -486,9 +449,7 @@ _open_pr() {
 	fi
 
 	local _pr_title="chore: aidevops badge sync — ${_description}"
-	# One standalone non-closing identity line: a run must not close the anchor.
-	local _pr_body=""
-	[[ -z "$_anchor" ]] || _pr_body="Ref #${_anchor}"$'\n\n'
+	local _pr_body=$'<!-- aidevops:routine-pr:badges-sync -->\n\n'
 	_pr_body+=$(printf '%s\n' \
 		"## Summary" \
 		"" \
@@ -601,7 +562,6 @@ _apply_repo() (
 		'[.[] | select((.headRefName | startswith($prefix)) or
 		 (.title | startswith("chore: aidevops badge sync")))][0].url // empty') || return 1
 	if [[ -n "$_existing" ]]; then
-		_link_open_pr_anchor "$_slug" "$_existing"
 		printf '%s\t%s\topen sync PR: %s\n' "$_slug" "$_STATUS_SKIPPED" "$_existing"
 		return 0
 	fi
@@ -671,16 +631,6 @@ _find_retained_worktree() {
 	return 0
 }
 
-# _is_declared_output <path> — 0 when <path> is regenerable sync output.
-_is_declared_output() {
-	local _candidate="$1"
-	case "$_candidate" in
-	README.md | .github/workflows/loc-badge.yml) return 0 ;;
-	docs/metrics/* | .github/badges/*) return 0 ;;
-	esac
-	return 1
-}
-
 # _recover_retained_worktree <slug> <path> <branch> <default>
 # Refresh a retained worktree onto the current remote default when every
 # uncommitted change and unpublished commit touches only declared outputs.
@@ -731,12 +681,6 @@ _publish_worktree() {
 		return 0
 	fi
 	git -C "$_path" commit -q -m "chore: refresh aidevops badges, metrics and workflow" || return 1
-	# Resolve the PR identity before pushing: a branch without a PR is clutter.
-	local _anchor=""
-	_anchor=$(_routine_anchor "$_slug") || {
-		printf '%s\n' "$_anchor"
-		return 1
-	}
 	# A recovered branch already published without a PR is helper-owned output;
 	# replace it only if the remote still holds the commit we observed.
 	[[ -z "$_lease" ]] || _push_args+=("--force-with-lease=refs/heads/${_branch}:${_lease}")
@@ -756,12 +700,12 @@ _publish_worktree() {
 		return 1
 	fi
 	printf '%s\n' "$_push_output" >&2
-	_open_pr "$_slug" "$_path" "$_branch" "$_default" "README, metrics and refresh workflow" "$_anchor"
+	_open_pr "$_slug" "$_path" "$_branch" "$_default" "README, metrics and refresh workflow"
 	return $?
 }
 
 # _list_actionable_repos <filter_slug>
-# Emits TSV: slug\tpath\tstatus for repos needing sync.
+# Emits TSV: slug\tpath\tstatus, including current repos for anchor retirement.
 _list_actionable_repos() {
 	local _filter_slug="$1"
 	local _check_args=(--json)
@@ -773,10 +717,19 @@ _list_actionable_repos() {
 	[[ "$_check_rc" -le 1 ]] || return 1
 	[[ -n "$_json" ]] || return "$_check_rc"
 
-	# Filter to DRIFTED, METRICS-MISSING, and NO-BLOCK (actionable); carry slug, path, status
+	# Current repos must retry retirement after a referenced legacy PR merges.
 	printf '%s\n' "$_json" | jq -r \
-		'select((.classification == "DRIFTED") or (.classification == "METRICS-MISSING") or (.classification == "NO-BLOCK"))
+		'select((.classification == "DRIFTED") or (.classification == "METRICS-MISSING") or (.classification == "NO-BLOCK") or (.classification == "CURRENT"))
 		| [.slug, .path, .classification] | @tsv' || return 1
+	return 0
+}
+
+# Best effort, including current repos whose legacy PR has just resolved.
+_retire_repo_anchor() {
+	local _slug="$1" _routine_helper=""
+	_routine_helper=$(_resolve_helper routine-log-helper.sh) || return 0
+	bash "$_routine_helper" retire-anchor badges-sync --repo "$_slug" >&2 ||
+		_warn "$_slug: anchor retirement deferred"
 	return 0
 }
 
@@ -867,6 +820,15 @@ _process_rows() {
 			_COUNT_SKIPPED=$((_COUNT_SKIPPED + 1))
 			continue
 		fi
+		# Best effort and apply-only, even when generated outputs are current.
+		if [[ "$_apply" -eq 1 ]]; then
+			_retire_repo_anchor "$_slug"
+		fi
+		if [[ "$_status" == "CURRENT" && "$_workflow_only_arg" -eq 0 ]]; then
+			_print_result_row "$_json_out" "${_slug}	${_STATUS_SKIPPED}	badge block and metrics current"
+			_COUNT_SKIPPED=$((_COUNT_SKIPPED + 1))
+			continue
+		fi
 
 		# Resolve path
 		local _rpath="${_path/#\~/$HOME}"
@@ -912,29 +874,35 @@ _process_rows() {
 			_print_result_row "$_json_out" "$_apply_result"
 			continue
 		fi
-
-		# GH#39808: evaluate the remote default branch (what --apply uses),
-		# not the possibly stale canonical working tree.
-		local _eval_path="$_rpath" _unverified="" _snap=""
-		if _snap=$(_remote_snapshot "$_slug" "$_rpath"); then
-			_eval_path="$_snap"
-		else
-			_unverified=" (unverified: remote default branch unavailable; local checkout may be behind)"
-		fi
-
-		# Sync README badge block (skip when --workflow-only)
-		if [[ "$_workflow_only_arg" -eq 0 ]]; then
-			_tally_result_row "$_json_out" "$(_sync_readme "$_slug" "$_eval_path" 0 | _mark_unverified "$_unverified")" || _any_failed=1
-		fi
-
-		# Install repo metrics workflow if not suppressed
-		if [[ "$_no_workflow" -eq 0 ]]; then
-			_tally_result_row "$_json_out" "$(_install_workflow "$_slug" "$_eval_path" 0 | _mark_unverified "$_unverified")" || _any_failed=1
-		fi
-		[[ -z "$_snap" ]] || rm -rf "$_snap"
+		_dry_run_repo "$_slug" "$_rpath" "$_no_workflow" "$_workflow_only_arg" "$_json_out" || _any_failed=1
 	done
 
 	return "$_any_failed"
+}
+
+# _dry_run_repo <slug> <rpath> <no_workflow> <workflow_only> <json_out>
+# GH#39808: evaluate the remote default branch (what --apply uses), not the
+# possibly stale canonical working tree. Returns 1 when any row failed.
+_dry_run_repo() {
+	local _slug="$1" _rpath="$2" _no_workflow="$3" _workflow_only_arg="$4" _json_out="$5"
+	local _eval_path="$_rpath" _unverified="" _snap="" _failed=0
+	if _snap=$(_remote_snapshot "$_slug" "$_rpath"); then
+		_eval_path="$_snap"
+	else
+		_unverified=" (unverified: remote default branch unavailable; local checkout may be behind)"
+	fi
+
+	# Sync README badge block (skip when --workflow-only)
+	if [[ "$_workflow_only_arg" -eq 0 ]]; then
+		_tally_result_row "$_json_out" "$(_sync_readme "$_slug" "$_eval_path" 0 | _mark_unverified "$_unverified")" || _failed=1
+	fi
+
+	# Install repo metrics workflow if not suppressed
+	if [[ "$_no_workflow" -eq 0 ]]; then
+		_tally_result_row "$_json_out" "$(_install_workflow "$_slug" "$_eval_path" 0 | _mark_unverified "$_unverified")" || _failed=1
+	fi
+	[[ -z "$_snap" ]] || rm -rf "$_snap"
+	return "$_failed"
 }
 
 # _tally_result_row <json_out> <result_tsv>
@@ -1029,6 +997,12 @@ main() {
 	if [[ -z "$_OPT_BRANCH_NAME" ]]; then
 		_OPT_BRANCH_NAME="chore/badges-sync"
 	fi
+	# Marker PRs carry no issue identity; the merge gate admits only
+	# chore/badges-sync-* heads, so refuse a prefix it could never admit.
+	case "$_OPT_BRANCH_NAME" in
+	chore/badges-sync | chore/badges-sync-*) ;;
+	*) _die "--branch must be chore/badges-sync or start with chore/badges-sync- (routine scope admission, GH#39785)" ;;
+	esac
 	# Prefer the dedicated headless signing key when present (idempotent when
 	# the routine runner already exported it).
 	[[ "$_OPT_APPLY" -eq 0 ]] || headless_signing_export_key_env || true

@@ -37,6 +37,28 @@ WRITER_LOGIN=runner
 SYNC_HEAD=""
 PR_FILES='[{"filename":".agents/scripts/example.sh","status":"modified"}]'
 PR_FILES_API_FAIL=0
+ROUTINE_META=""
+ROUTINE_HEAD_CONTENT=""
+ROUTINE_BASE_CONTENT=""
+ROUTINE_TREE_MODE=100644
+ROUTINE_TREE_TRUNCATED=false
+ROUTINE_REF_STATUS=ahead
+ROUTINE_HEAD=1111111111111111111111111111111111111111
+ROUTINE_BASE=2222222222222222222222222222222222222222
+ROUTINE_MERGE_BASE="$ROUTINE_BASE"
+
+# Recursive tree fixture: one entry per changed path. README/workflow entries
+# point at the fixture blob for that commit; other outputs get a stable ID.
+routine_tree_fixture() {
+	local content="$1" files="$2" sha=""
+	[[ -z "$content" ]] || sha=$(jq -r '.sha' <<<"$content")
+	jq -n --argjson files "$files" --arg sha "${sha:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" \
+		--arg mode "$ROUTINE_TREE_MODE" --argjson truncated "$ROUTINE_TREE_TRUNCATED" \
+		'{truncated:$truncated,tree:[$files[] | {path:.filename,type:"blob",mode:$mode,
+		 sha:(if .filename == "README.md" or .filename == ".github/workflows/loc-badge.yml"
+		  then $sha else "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" end)}]}'
+	return 0
+}
 
 # No network calls: any unexpected gh request fails rather than reaching GitHub.
 gh() {
@@ -61,7 +83,28 @@ gh() {
 		payload="$PR_FILES"
 		;;
 	repos/owner/repo/pulls/100)
-		payload='{"head":{"sha":"0123456789abcdef0123456789abcdef01234567"}}'
+		payload="$ROUTINE_META"
+		[[ -n "$payload" ]] || payload='{"head":{"sha":"0123456789abcdef0123456789abcdef01234567"}}'
+		;;
+	# Only SHA-pinned reads are answered: an unpinned diff read fails the test.
+	repos/owner/repo/compare/"${ROUTINE_BASE}...${ROUTINE_HEAD}?per_page=1")
+		[[ "$PR_FILES_API_FAIL" == 0 ]] || return 1
+		payload=$(jq -n --argjson files "$PR_FILES" --arg mb "$ROUTINE_MERGE_BASE" \
+			'{merge_base_commit:{sha:$mb},files:$files}')
+		;;
+	repos/owner/repo/git/blobs/*)
+		payload="$ROUTINE_BASE_CONTENT"
+		[[ "$endpoint" != */"$(jq -r .sha <<<"$ROUTINE_HEAD_CONTENT")" ]] || payload="$ROUTINE_HEAD_CONTENT"
+		;;
+	repos/marcusquinn/aidevops/compare/*)
+		payload=$(jq -n --arg status "$ROUTINE_REF_STATUS" '{status:$status}')
+		;;
+	repos/owner/repo/git/trees/"$ROUTINE_HEAD"'?recursive=1')
+		payload=$(routine_tree_fixture "$ROUTINE_HEAD_CONTENT" "$PR_FILES")
+		;;
+	repos/owner/repo/git/trees/"$ROUTINE_MERGE_BASE"'?recursive=1')
+		payload=$(routine_tree_fixture "$ROUTINE_BASE_CONTENT" \
+			'[{"filename":"README.md"},{"filename":".github/workflows/loc-badge.yml"}]')
 		;;
 	repos/owner/repo/issues/42)
 		payload=$(jq -n --arg assoc "$ISSUE_ASSOC" --arg login "$ISSUE_LOGIN" --arg state "$ISSUE_STATE" \
@@ -296,3 +339,226 @@ if _create_github_issue owner/repo 'r004: Content update' body >/dev/null 2>&1; 
 fi
 printf 'PASS label provisioning failure prevents anchor creation\n'
 ANCHOR_TEST
+
+# GH#39785: exercise the actual shared scope predicate through both merge paths.
+PR_BODY='<!-- aidevops:routine-pr:badges-sync -->'
+ISSUE_PERMISSION="write"
+PR_FILES='[{"filename":"docs/metrics/repo-metrics.json","status":"modified"}]'
+ROUTINE_META=$(jq -n --arg body "$PR_BODY" '{state:"open",draft:false,body:$body,
+ labels:[{name:"origin:worker"}],user:{login:"runner"},changed_files:1,
+ head:{ref:"chore/badges-sync-123",sha:"1111111111111111111111111111111111111111",repo:{full_name:"owner/repo"}},
+ base:{sha:"2222222222222222222222222222222222222222",repo:{full_name:"owner/repo"}}}')
+valid_meta="$ROUTINE_META"
+expect_parity 0 'badges marker with verified scope and no anchor admitted' ''
+# The verdict binds the merge to the admitted head on both paths.
+WORKER_BRIEFED_EXPECTED_HEAD=3333333333333333333333333333333333333333 \
+	expect_parity 1 'routine verdict for a different Pulse-pinned head denied' ''
+unset FULL_LOOP_EXPECTED_PR_HEAD_SHA
+_merge_worker_briefed_gate_pinned 100 owner/repo 0
+[[ "$FULL_LOOP_EXPECTED_PR_HEAD_SHA" == "$ROUTINE_HEAD" ]]
+FULL_LOOP_EXPECTED_PR_HEAD_SHA=3333333333333333333333333333333333333333
+if _merge_worker_briefed_gate_pinned 100 owner/repo 0 2>/dev/null; then exit 1; fi
+unset FULL_LOOP_EXPECTED_PR_HEAD_SHA
+printf 'PASS routine admission publishes the admitted head as the full-loop merge pin\n'
+for mutation in '.head.repo.full_name="outsider/fork"' '.head.ref="feature/forged"' \
+	'.changed_files=100' '.changed_files=2' '.head.sha="missing"' \
+	'.labels += [{name:"hold-for-review"}]' '.draft=true' \
+	'.body += "\n<!-- aidevops:routine-pr:unknown\n -->"'; do
+	ROUTINE_META=$(jq "$mutation" <<<"$valid_meta")
+	expect_parity 1 "routine metadata denied: $mutation" ''
+done
+ROUTINE_META="$valid_meta"
+ISSUE_PERMISSION="read"
+expect_parity 1 'read-only routine author denied' ''
+ISSUE_PERMISSION="write"
+PR_FILES_API_FAIL=1
+expect_parity 1 'routine file API failure denied' ''
+PR_FILES_API_FAIL=0
+for path in .github/workflows/evil.yml src/evil.sh; do
+	PR_FILES=$(jq -n --arg path "$path" '[{filename:$path,status:"modified"}]')
+	expect_parity 1 "out-of-scope routine path denied: $path" ''
+done
+PR_FILES='[{"filename":"docs/metrics/x","status":"renamed","previous_filename":"src/x"}]'
+expect_parity 1 'routine rename denied' ''
+PR_FILES='[{"filename":"README.md\nREADME.md","status":"added"}]'
+expect_parity 1 'newline filename denied before line conversion' ''
+PR_FILES='[{"filename":"docs/metrics/x","status":"modified"}]'
+ROUTINE_TREE_MODE=120000
+expect_parity 1 'symlinked metrics output denied by pinned head tree' ''
+ROUTINE_TREE_MODE=100644
+PR_BODY='<!-- aidevops:routine-pr:unknown -->'
+ROUTINE_META=$(jq --arg body "$PR_BODY" '.body=$body' <<<"$valid_meta")
+expect_parity 1 'unknown routine marker denied' ''
+PR_BODY='<!-- aidevops:routine-pr:badges-sync -->'
+ROUTINE_META="$valid_meta"
+
+content_fixture() {
+	local text="$1" data="" sha=""
+	data=$(printf '%s' "$text" | base64 | tr -d '\n')
+	sha=$(printf '%s' "$text" | git hash-object --stdin)
+	jq -n --arg data "$data" --arg sha "$sha" --argjson size "$(printf '%s' "$text" | wc -c)" \
+		'{type:"file",encoding:"base64",content:$data,sha:$sha,size:$size}'
+	return 0
+}
+PR_FILES='[{"filename":"README.md","status":"modified"}]'
+ROUTINE_BASE_CONTENT=$(content_fixture $'intro\n<!-- aidevops:badges:start -->old<!-- aidevops:badges:end -->\nend\n')
+ROUTINE_HEAD_CONTENT=$(content_fixture $'intro\n<!-- aidevops:badges:start -->new<!-- aidevops:badges:end -->\nend\n')
+expect_parity 0 'README badge-only edit admitted' ''
+# The base tip advanced past the merge base: prose is compared at the merge base.
+ROUTINE_MERGE_BASE=3333333333333333333333333333333333333333
+expect_parity 0 'README badge-only edit admitted against merge base after base advanced' ''
+ROUTINE_MERGE_BASE="$ROUTINE_BASE"
+ROUTINE_TREE_MODE=120000
+expect_parity 1 'README symlink denied by pinned head tree' ''
+ROUTINE_TREE_MODE=100644
+ROUTINE_TREE_TRUNCATED=true
+expect_parity 1 'truncated tree evidence denied' ''
+ROUTINE_TREE_TRUNCATED=false
+ROUTINE_HEAD_CONTENT=$(content_fixture $'evil\n<!-- aidevops:badges:start -->new<!-- aidevops:badges:end -->\nend\n')
+expect_parity 1 'README edit outside badge block denied' ''
+ROUTINE_HEAD_CONTENT=$(content_fixture $'intro\n<!-- aidevops:badges:start -->new\nend\n')
+expect_parity 1 'README missing end marker denied' ''
+ROUTINE_HEAD_CONTENT=$(jq '.size=9999' <<<"$ROUTINE_BASE_CONTENT")
+expect_parity 1 'truncated content denied' ''
+ROUTINE_BASE_CONTENT=$(content_fixture $'# Project\n\nOriginal prose\n')
+ROUTINE_HEAD_CONTENT=$(content_fixture $'# Project\n\n<!-- aidevops:badges:start -->new<!-- aidevops:badges:end -->\n\nOriginal prose\n')
+expect_parity 0 'deterministic first badge block insertion admitted' ''
+PR_FILES='[{"filename":".github/workflows/loc-badge.yml","status":"added"}]'
+workflow=$(sed -E 's/@main$/@1111111111111111111111111111111111111111/; s/^(      aidevops_ref:).*$/\1 1111111111111111111111111111111111111111/' "$SCRIPT_DIR/../templates/workflows/loc-badge-caller.yml")
+ROUTINE_HEAD_CONTENT=$(content_fixture "$workflow"$'\n')
+expect_parity 0 'exact pinned workflow template admitted' ''
+ROUTINE_REF_STATUS=diverged
+expect_parity 1 'workflow ref not reachable from framework main denied' ''
+ROUTINE_REF_STATUS=ahead
+ROUTINE_HEAD_CONTENT=$(content_fixture "$workflow"$'\n# unexpected workflow content\n')
+expect_parity 1 'modified workflow template denied' ''
+
+_GH_PR_IDENTITY_ORIGIN=origin:worker
+_gh_validate_pr_worker_identity '<!-- aidevops:routine-pr:badges-sync -->' --repo owner/repo
+for body in '<!-- aidevops:routine-pr:unknown -->' '<!-- aidevops:routine-pr:sync-workflows -->' \
+	$'<!-- aidevops:routine-pr:badges-sync -->\n<!-- aidevops:routine-pr:unknown -->' \
+	'<!-- aidevops:routine-pr:badges-sync --><!-- aidevops:routine-pr:unknown -->'; do
+	if _gh_validate_pr_worker_identity "$body" --repo owner/repo; then exit 1; fi
+done
+unset _GH_PR_IDENTITY_ORIGIN
+printf 'PASS worker identity accepts badge marker only, not unknown or multiple policies\n'
+
+# Retirement uses the existing helper, with no GitHub writes or new harness.
+bash -s -- "$SCRIPT_DIR" "$TEST_ROOT" <<'RETIRE_TEST'
+	set -euo pipefail
+	source "$1/routine-log-helper.sh"
+	TEST_ROOT="$2"
+	RETIRE_PRS='[{"body":"Ref #77"}]'
+	RETIRE_MARKED='[]'
+	RETIRE_OPEN='[{"number":77,"state":"OPEN","body":"<!-- aidevops:routine-anchor:badges-sync -->"},{"number":78,"state":"OPEN","body":"<!-- aidevops:routine-anchor:sync-workflows -->"}]'
+	RETIRE_REOPEN_FAIL=0
+	RETIRE_CALLS="$TEST_ROOT/retirement-calls"
+	# Live issue state, independent of the listing snapshot.
+	RETIRE_LIVE="$TEST_ROOT/retirement-live-state"
+	printf 'OPEN\n' >"$RETIRE_LIVE"
+	: >"$RETIRE_CALLS"
+	gh() {
+		local command="$1" action="${2:-}"
+		case "$command:$action" in
+		issue:list)
+			if [[ "$*" == *'--label routine-anchor-retiring'* ]]; then
+				printf '%s\n' "$RETIRE_MARKED"
+			else
+				printf '%s\n' "$RETIRE_OPEN"
+			fi
+			;;
+		pr:list)
+			# Simulate a legacy writer adding Ref #77 while the close is in flight.
+			if [[ -n "${RETIRE_PRS_AFTER_CLOSE:-}" ]] && grep -q 'issue close 77' "$RETIRE_CALLS"; then
+				printf '%s\n' "$RETIRE_PRS_AFTER_CLOSE"
+			else
+				printf '%s\n' "$RETIRE_PRS"
+			fi
+			;;
+		api:repos/owner/repo/labels/routine-anchor-retiring) ;;
+		issue:view) cat "$RETIRE_LIVE" ;;
+		issue:reopen)
+			printf '%s\n' "$*" >>"$RETIRE_CALLS"
+			[[ "$RETIRE_REOPEN_FAIL" == 0 ]] || return 1
+			printf 'OPEN\n' >"$RETIRE_LIVE"
+			;;
+		issue:close)
+			printf '%s\n' "$*" >>"$RETIRE_CALLS"
+			printf 'CLOSED\n' >"$RETIRE_LIVE"
+			;;
+		issue:edit) printf '%s\n' "$*" >>"$RETIRE_CALLS" ;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	gh_issue_comment() {
+		local body=""
+		body=$(cat)
+		[[ "$*" == '77 --repo owner/repo --body-file -' && "$body" == *'verified diff scope'* ]] || return 1
+		printf 'comment 77\n' >>"$RETIRE_CALLS"
+		return 0
+	}
+	cmd_retire_anchor badges-sync --repo owner/repo
+	[[ ! -s "$RETIRE_CALLS" ]]
+	# Every supported reference form keeps the anchor, not only `Ref #N`.
+	for body in 'For #77' 'Resolves owner/repo#77' 'see GH#77.'; do
+		RETIRE_PRS=$(jq -n --arg body "$body" '[{body:$body}]')
+		cmd_retire_anchor badges-sync --repo owner/repo
+		[[ ! -s "$RETIRE_CALLS" ]]
+	done
+	RETIRE_PRS='null'
+	if cmd_retire_anchor badges-sync --repo owner/repo; then exit 1; fi
+	[[ ! -s "$RETIRE_CALLS" ]]
+	RETIRE_PRS=$(jq -n '[range(1000) | {body:""}]')
+	if cmd_retire_anchor badges-sync --repo owner/repo; then exit 1; fi
+	[[ ! -s "$RETIRE_CALLS" ]]
+	RETIRE_PRS='[{"body":"Ref #777"}]'
+	cmd_retire_anchor badges-sync --repo owner/repo
+	# The marker is recorded before the first destructive step and cleared last.
+	[[ "$(sed -n '1p' "$RETIRE_CALLS")" == *'issue edit 77 --repo owner/repo --add-label routine-anchor-retiring'* ]]
+	grep -q 'issue edit 77 .*--remove-label persistent' "$RETIRE_CALLS"
+	grep -q 'issue close 77 .*--reason not planned' "$RETIRE_CALLS"
+	[[ "$(sed -n '$p' "$RETIRE_CALLS")" == *'issue edit 77 --repo owner/repo --remove-label routine-anchor-retiring'* ]]
+	if grep -q 'issue close 78' "$RETIRE_CALLS"; then exit 1; fi
+	if grep -q 'issue reopen' "$RETIRE_CALLS"; then exit 1; fi
+	if cmd_retire_anchor sync-workflows --repo owner/repo; then exit 1; fi
+	printf 'PASS retirement keeps referenced anchor, retires unreferenced badge anchor only\n'
+	: >"$RETIRE_CALLS"
+	RETIRE_PRS_AFTER_CLOSE='[{"body":"For #77"}]'
+	cmd_retire_anchor badges-sync --repo owner/repo 2>/dev/null
+	grep -q 'issue reopen 77 --repo owner/repo' "$RETIRE_CALLS"
+	grep -q 'issue edit 77 .*--add-label persistent' "$RETIRE_CALLS"
+	[[ "$(sed -n '$p' "$RETIRE_CALLS")" == *'--remove-label routine-anchor-retiring'* ]]
+	printf 'PASS reference added during close reopens the anchor with persistent restored\n'
+	# A failed reopen leaves the marker; the next run restores the closed anchor.
+	: >"$RETIRE_CALLS"
+	RETIRE_REOPEN_FAIL=1
+	if cmd_retire_anchor badges-sync --repo owner/repo 2>/dev/null; then exit 1; fi
+	if grep -q -- '--remove-label routine-anchor-retiring' "$RETIRE_CALLS"; then exit 1; fi
+	: >"$RETIRE_CALLS"
+	RETIRE_REOPEN_FAIL=0
+	unset RETIRE_PRS_AFTER_CLOSE
+	RETIRE_PRS='[{"body":"For #77"}]'
+	RETIRE_MARKED='[{"number":77,"state":"CLOSED","body":"<!-- aidevops:routine-anchor:badges-sync -->"}]'
+	RETIRE_OPEN=$(jq '[.[] | select(.number != 77)]' <<<"$RETIRE_OPEN")
+	cmd_retire_anchor badges-sync --repo owner/repo 2>/dev/null
+	grep -q 'issue reopen 77 --repo owner/repo' "$RETIRE_CALLS"
+	grep -q 'issue edit 77 .*--add-label persistent' "$RETIRE_CALLS"
+	[[ "$(sed -n '$p' "$RETIRE_CALLS")" == *'--remove-label routine-anchor-retiring'* ]]
+	if grep -q 'issue close' "$RETIRE_CALLS"; then exit 1; fi
+	# A marked, closed and still unreferenced anchor stays retired.
+	: >"$RETIRE_CALLS"
+	RETIRE_PRS='[]'
+	cmd_retire_anchor badges-sync --repo owner/repo
+	[[ "$(cat "$RETIRE_CALLS")" == 'issue edit 77 --repo owner/repo --remove-label routine-anchor-retiring' ]]
+	printf 'PASS failed restoration stays marked and is retried while the anchor is closed\n'
+	# A stale open snapshot cannot skip the reopen: restore reads live state.
+	: >"$RETIRE_CALLS"
+	printf 'CLOSED\n' >"$RETIRE_LIVE"
+	RETIRE_PRS='[{"body":"For #77"}]'
+	RETIRE_MARKED='[{"number":77,"state":"OPEN","body":"<!-- aidevops:routine-anchor:badges-sync -->"}]'
+	cmd_retire_anchor badges-sync --repo owner/repo 2>/dev/null
+	grep -q 'issue reopen 77 --repo owner/repo' "$RETIRE_CALLS"
+	[[ "$(sed -n '$p' "$RETIRE_CALLS")" == *'--remove-label routine-anchor-retiring'* ]]
+	printf 'PASS restoration reopens from live state, not a stale open snapshot\n'
+RETIRE_TEST

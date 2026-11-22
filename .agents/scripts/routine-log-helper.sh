@@ -11,6 +11,7 @@
 #   routine-log-helper.sh create-issue <routine-id> --repo SLUG --title "rNNN: Title" [--schedule EXPR] [--type TYPE]
 #   routine-log-helper.sh ensure-anchor <key> --repo SLUG --title TITLE
 #   routine-log-helper.sh ensure-pr-anchor <key> --repo SLUG --pr N --title TITLE
+#   routine-log-helper.sh retire-anchor badges-sync --repo SLUG
 #   routine-log-helper.sh status
 #   routine-log-helper.sh help
 #
@@ -45,6 +46,10 @@ source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
 CRON_BASE="${HOME}/.aidevops/.agent-workspace/cron"
 REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 PERIOD_DAYS=7
+# Set before an anchor is closed; cleared only once retirement or restoration
+# completes, so an interrupted step is retried in any issue state.
+ANCHOR_RETIRING_LABEL="routine-anchor-retiring"
+ANCHOR_OPEN_STATE="OPEN"
 
 # =============================================================================
 # Logging
@@ -1065,8 +1070,16 @@ _parse_create_issue_args() {
 # Existing label metadata is left unchanged. API/creation failures fail closed.
 _ensure_tracking_labels() {
 	local repo_slug="$1"
+	_ensure_labels "$repo_slug" routines routine-tracking persistent no-auto-dispatch
+	return $?
+}
+
+# _ensure_labels <repo> <label>... — create any missing label; fail closed.
+_ensure_labels() {
+	local repo_slug="$1"
 	local label=""
-	for label in routines routine-tracking persistent no-auto-dispatch; do
+	shift
+	for label in "$@"; do
 		if ! gh api "repos/${repo_slug}/labels/${label}" --silent 2>/dev/null; then
 			if ! gh label create "$label" --repo "$repo_slug" --color BFD4F2 \
 				--description "Routine tracking lifecycle: ${label}" >/dev/null 2>&1; then
@@ -1293,6 +1306,111 @@ cmd_ensure_anchor() {
 	return 0
 }
 
+# _anchor_open_pr_reference <repo> <number> — read a fresh, complete open-PR
+# list. Returns 0 when any open PR body mentions #<number> in any form (Ref,
+# For, closing keywords, GH#, owner/repo#), 1 when none provably does, and 2
+# when the evidence is unavailable or incomplete. Over-matching only keeps an
+# anchor open; the numeric boundary stops #770 from matching #77.
+_anchor_open_pr_reference() {
+	local repo="$1" number="$2" prs="" rc=0
+	prs=$(gh pr list --repo "$repo" --state open --limit 1000 --json body) || return 2
+	jq -e 'type == "array" and length < 1000 and all(.[]; .body | type == "string")' <<<"$prs" >/dev/null || return 2
+	jq -e --arg n "$number" 'any(.[]; .body | test("#" + $n + "([^0-9]|$)"))' <<<"$prs" >/dev/null || rc=$?
+	case "$rc" in 0 | 1) return "$rc" ;; esac
+	return 2
+}
+
+# _anchor_restore <repo> <number> — reopen the anchor unless its fresh state is
+# open (never the run's snapshot, which another run may have made stale), then
+# restore `persistent`; only then clear the retiring marker, so any failed step
+# is retried by the next run.
+_anchor_restore() {
+	local repo="$1" number="$2" state=""
+	state=$(gh issue view "$number" --repo "$repo" --json state --jq .state) || return 1
+	if [[ "$state" != "$ANCHOR_OPEN_STATE" ]]; then
+		gh issue reopen "$number" --repo "$repo" || return 1
+	fi
+	gh issue edit "$number" --repo "$repo" --add-label persistent || return 1
+	gh issue edit "$number" --repo "$repo" --remove-label "$ANCHOR_RETIRING_LABEL" || return 1
+	_log_warn "Restored routine anchor #${number} in ${repo}: open PR reference not ruled out"
+	return 0
+}
+
+# _anchor_retire_one <repo> <number> <is_open> <marked> — advance one anchor.
+# References are read immediately before each close and re-read after it: a
+# legacy runner that adds `Ref #N` inside that window gets its anchor restored.
+_anchor_retire_one() {
+	local repo="$1" number="$2" is_open="$3" marked="$4" ref_rc=0
+	_anchor_open_pr_reference "$repo" "$number" || ref_rc=$?
+	case "$ref_rc" in
+	0)
+		# Referenced: keep it, finishing any interrupted retirement's restore.
+		[[ "$marked" == 1 ]] || return 0
+		_anchor_restore "$repo" "$number"
+		return $?
+		;;
+	1) ;;
+	*) return 1 ;;
+	esac
+	if [[ "$is_open" == 1 ]]; then
+		# Record pending restoration before the first destructive step.
+		if [[ "$marked" != 1 ]]; then
+			_ensure_labels "$repo" "$ANCHOR_RETIRING_LABEL" || return 1
+			gh issue edit "$number" --repo "$repo" --add-label "$ANCHOR_RETIRING_LABEL" || return 1
+		fi
+		printf '%s\n' 'Routine PRs are now admitted by verified diff scope; this anchor is no longer needed' |
+			gh_issue_comment "$number" --repo "$repo" --body-file - || return 1
+		gh issue edit "$number" --repo "$repo" --remove-label persistent || return 1
+		gh issue close "$number" --repo "$repo" --reason 'not planned' || return 1
+		ref_rc=0
+		_anchor_open_pr_reference "$repo" "$number" || ref_rc=$?
+		if [[ "$ref_rc" -ne 1 ]]; then
+			_anchor_restore "$repo" "$number"
+			return $?
+		fi
+	elif [[ "$marked" != 1 ]]; then
+		return 0
+	fi
+	# Closed and provably unreferenced: retirement is complete.
+	gh issue edit "$number" --repo "$repo" --remove-label "$ANCHOR_RETIRING_LABEL" || return 1
+	return 0
+}
+
+# Retire only the built-in routine covered by verified diff scope. Open anchors
+# and marked anchors in any state are advanced, so an anchor whose restoration
+# failed after closing is never stranded.
+cmd_retire_anchor() {
+	local key="${1:-}"
+	[[ "$key" == "badges-sync" ]] || return 1
+	_parse_anchor_args "$@" --title retirement || return 1
+	local repo="$_ANCHOR_REPO" open="" marked="" rows="" number="" is_open="" flag=""
+	local marker="<!-- aidevops:routine-anchor:${key} -->"
+	local complete='type == "array" and length < 1000 and all(.[]; (.number | type == "number") and ([.body, .state] | all(type == "string")))'
+	open=$(gh issue list --repo "$repo" --state open --label routine-tracking \
+		--limit 1000 --json number,body,state) || return 1
+	marked=$(gh issue list --repo "$repo" --state all --label routine-tracking \
+		--label "$ANCHOR_RETIRING_LABEL" --limit 1000 --json number,body,state) || return 1
+	jq -e "$complete" <<<"$open" >/dev/null || return 1
+	jq -e "$complete" <<<"$marked" >/dev/null || return 1
+	# Read both lists from stdin (not argv) so large bodies cannot hit ARG_MAX.
+	# unique_by keeps the first entry, so a marked anchor's own state wins.
+	rows=$(printf '%s\n%s\n' "$open" "$marked" | jq -rs --arg marker "$marker" --arg open "$ANCHOR_OPEN_STATE" '
+		(.[1] | map(.number)) as $marked |
+		(.[1] + .[0]) | unique_by(.number) | .[] | select(.body | contains($marker)) |
+		.number as $n | [$n, (if .state == $open then 1 else 0 end),
+		 (if any($marked[]; . == $n) then 1 else 0 end)] | @tsv') || return 1
+	[[ -n "$rows" ]] || return 0
+	if ! declare -F gh_issue_comment >/dev/null; then
+		# shellcheck source=shared-gh-wrappers.sh
+		source "$SCRIPT_DIR/shared-gh-wrappers.sh" || return 1
+	fi
+	while IFS=$'\t' read -r number is_open flag; do
+		_is_valid_issue_number "$number" || return 1
+		_anchor_retire_one "$repo" "$number" "$is_open" "$flag" || return 1
+	done <<<"$rows"
+	return 0
+}
+
 # Read an open origin:worker PR that lacks any issue identity and output its
 # current body. Returns 0 when a backfill is needed, 3 when the PR is closed,
 # not worker-origin or already identified, and 1 when it cannot be read.
@@ -1443,6 +1561,11 @@ Usage:
     Prepend the anchor's Ref #N line to an open origin:worker routine PR whose
     body has no issue identity (pre-guard PRs). Other PRs are left unchanged.
 
+  routine-log-helper.sh retire-anchor badges-sync --repo SLUG
+    Close legacy badge anchors as not planned after removing persistent, only
+    when a complete open-PR list read just before closing proves no Ref #N
+    remains; reopen if one appears by the post-close re-read. Other keys refused.
+
   routine-log-helper.sh refresh-description <routine-id>
     Rebuild and push the GitHub issue body using current state and stored
     description data. Does NOT record a new run entry or modify metrics.
@@ -1524,6 +1647,9 @@ main() {
 		;;
 	ensure-pr-anchor)
 		cmd_ensure_pr_anchor "$@"
+		;;
+	retire-anchor)
+		cmd_retire_anchor "$@"
 		;;
 	status)
 		cmd_status "$@"

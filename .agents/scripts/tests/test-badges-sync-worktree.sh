@@ -16,7 +16,8 @@ export PATH="$ROOT/bin:$PATH"
 printf '[]\n' >"$PR_STATE"
 touch "$CALLS"
 cp "$SCRIPT_DIR/../badges-sync-helper.sh" "$SCRIPT_DIR/../badges-check-helper.sh" \
-	"$SCRIPT_DIR/../workflow-release-ref.sh" "$SCRIPT_DIR/../headless-signing-lib.sh" "$SCRIPTS/"
+	"$SCRIPT_DIR/../workflow-release-ref.sh" "$SCRIPT_DIR/../headless-signing-lib.sh" \
+	"$SCRIPT_DIR/../routine-pr-scope-lib.sh" "$SCRIPTS/"
 chmod +x "$SCRIPTS/"*.sh
 
 # Production orchestration calls these public helper interfaces. Worktrees and
@@ -161,9 +162,9 @@ printf 'PASS dirty/off-default canonical preserved; README, metrics and workflow
 bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result"
 [[ "$(jq -r .outcome "$ROOT/result")" == SKIPPED ]]
 [[ "$(grep -c '^create$' "$CALLS")" == 1 ]]
-grep -qx 'anchor ensure-pr-anchor badges-sync' "$CALLS"
+grep -qx 'anchor retire-anchor badges-sync' "$CALLS"
 grep -q '^anchor ensure-anchor' "$CALLS" && exit 1
-printf 'PASS rerun deduplicates existing sync PR and offers it the routine anchor\n'
+printf 'PASS rerun deduplicates existing sync PR and retires only unreferenced anchors\n'
 
 for extra in '{"local_only":true}' '{"contributed":true}' '{"role":"contributor"}' '{"maintenance":false}'; do
 	register_repo marcusquinn/test "$extra"
@@ -349,22 +350,33 @@ git -C "$ROOT/remote.git" -c gpg.ssh.allowedSignersFile="$ROOT/allowed-signers" 
 printf 'PASS retained worktree published with a commit signed by the dedicated headless key\n'
 unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
 
-# GH#39696: a headless (origin:worker) PR needs exactly one explicit issue
-# identity. An unavailable anchor publishes nothing; an available one is the
-# only Ref line in the body.
-[[ "$(head -n 1 "$PR_BODY")" == '## Summary' ]]
+# GH#39785: marker replaces anchor identity; retirement is best effort.
+grep -qx '<!-- aidevops:routine-pr:badges-sync -->' "$PR_BODY"
 printf '[]\n' >"$PR_STATE"
-creates_before="$(grep -c '^create$' "$CALLS")"
-TEST_ORIGIN=worker FAIL_ANCHOR=1 bash "$SCRIPTS/badges-sync-helper.sh" --apply --workflow-only --json >"$ROOT/result" && exit 1
-[[ "$(jq -r .outcome "$ROOT/result")" == FAILED ]]
-[[ "$(jq -r .detail "$ROOT/result")" == *'routine anchor unavailable'* ]]
-[[ "$(grep -c '^create$' "$CALLS")" == "$creates_before" ]]
-TEST_ORIGIN=worker bash "$SCRIPTS/badges-sync-helper.sh" --apply --workflow-only --json >"$ROOT/result"
+TEST_ORIGIN=worker FAIL_ANCHOR=1 bash "$SCRIPTS/badges-sync-helper.sh" --apply --workflow-only --json >"$ROOT/result"
 [[ "$(jq -r .outcome "$ROOT/result")" == APPLIED ]]
-[[ "$(head -n 1 "$PR_BODY")" == 'Ref #77' ]]
-[[ "$(grep -c '#[0-9]' "$PR_BODY")" == 1 ]]
+grep -qx '<!-- aidevops:routine-pr:badges-sync -->' "$PR_BODY"
+if grep -q '^Ref #' "$PR_BODY"; then exit 1; fi
+if grep -q 'anchor ensure-' "$CALLS"; then exit 1; fi
 [[ "$(snapshot)" == "$before" ]]
-printf 'PASS worker PR carries one anchor Ref line; unavailable anchor fails closed without a PR\n'
+printf 'PASS worker PR carries marker without Ref; failed retirement never creates an anchor\n'
+
+# No-drift runs must still retry retirement after the old PR resolves.
+cat >"$SCRIPTS/badges-check-helper.sh" <<'STUB'
+#!/usr/bin/env bash
+jq -cn --arg path "$CANONICAL" '{slug:"marcusquinn/test",path:$path,classification:"CURRENT"}'
+STUB
+export CANONICAL
+retire_before="$(grep -c '^anchor retire-anchor badges-sync$' "$CALLS")"
+creates_before="$(grep -c '^create$' "$CALLS")"
+bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result"
+[[ "$(jq -r .outcome "$ROOT/result")" == SKIPPED ]]
+[[ "$(grep -c '^anchor retire-anchor badges-sync$' "$CALLS")" == "$((retire_before + 1))" ]]
+[[ "$(grep -c '^create$' "$CALLS")" == "$creates_before" ]]
+bash "$SCRIPTS/badges-sync-helper.sh" --json >"$ROOT/result"
+[[ "$(grep -c '^anchor retire-anchor badges-sync$' "$CALLS")" == "$((retire_before + 1))" ]]
+[[ "$(snapshot)" == "$before" ]]
+printf 'PASS current repos retry retirement without publishing; dry runs never retire\n'
 
 # Routine wiring uses the same no-filter selector exercised above.
 # shellcheck source=../routines/core-routines.sh
