@@ -275,12 +275,25 @@ import re
 import sys
 
 root = Path(sys.argv[1])
-pattern = re.compile(r"stat -f [^\n]*2>/dev/null" + r" \|\| stat -c")
+# Do not cross a completed command substitution or a shell statement boundary.
+# Allow newlines (and explicit continuations) inside the same fallback command.
+pattern = re.compile(r"\bstat\s+-f\s+[^);|&]*?" + r"\|\|\s*stat\s+-c\b")
+unsafe = [
+    'mode="$(BSD_QUERY \'%Lp\' "$file" 2>/dev/null || stat -c \'%a\' "$file")"',
+    'mode="$(BSD_QUERY \'%Lp\' "$file" 2>/dev/null ||\n    stat -c \'%a\' "$file")"',
+    'mode="$(BSD_QUERY \'%Lp\' "$file" 2>/dev/null ||\\\n    stat -c \'%a\' "$file")"',
+]
+safe = 'mode=$(stat -f \'%Lp\' "$file" 2>/dev/null) ||\n mode=$(stat -c \'%a\' "$file")'
+# Assemble unsafe examples so the source scanner does not flag its own fixtures.
+if not all(pattern.search(text.replace("BSD_QUERY", "stat " + "-f").replace("\\\n", " \n")) for text in unsafe) or pattern.search(safe):
+    print("BSD-first fallback guard self-check failed", file=sys.stderr)
+    sys.exit(1)
 bad = []
 for path in sorted(root.rglob("*.sh")):
-    for number, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
-        if pattern.search(line):
-            bad.append(f"{path.relative_to(root)}:{number}")
+    text = path.read_text(errors="replace").replace("\\\n", " \n")
+    for match in pattern.finditer(text):
+        number = text.count("\n", 0, match.start()) + 1
+        bad.append(f"{path.relative_to(root)}:{number}")
 if bad:
     print("Unsafe BSD-first stat output fallback: " + ", ".join(bad), file=sys.stderr)
     sys.exit(1)

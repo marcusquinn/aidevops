@@ -5,6 +5,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
+# shellcheck source=../portable-stat.sh
+source "${SCRIPT_DIR}/portable-stat.sh"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export HOME="${TEST_ROOT}/home"
@@ -41,7 +43,7 @@ if [[ ! -f "${cache_files[0]:-}" ]]; then
 	printf 'FAIL bundle helper did not write user-local cache\n' >&2
 	exit 1
 fi
-if [[ "$(stat -c '%a' "${cache_files[0]}" 2>/dev/null || stat -f '%Lp' "${cache_files[0]}")" != "600" ]]; then
+if [[ "$(_stat_batch '%a' "${cache_files[0]}")" != "600" ]]; then
 	printf 'FAIL bundle cache file is not mode 600\n' >&2
 	exit 1
 fi

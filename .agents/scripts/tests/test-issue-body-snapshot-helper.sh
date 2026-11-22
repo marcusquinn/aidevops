@@ -48,6 +48,21 @@ jq -e '.repo == "owner/repo" and .issue == 45 and .title and .body and .sourceUp
 fallback=$(GH_FAIL=1 "$HELPER" fetch owner/repo 45) || fail "validated fallback failed"
 [[ "$fallback" == *'"snapshotFallback":true'* ]] || fail "fallback was not identified"
 
+# A failed stat lookup must not accept plausible stdout as a permission result.
+cat >"${FAKE_BIN}/stat" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${2:-}" == "%a" || "${2:-}" == "%Lp" ]]; then
+	printf '600\n'
+	exit 1
+fi
+if [[ "${1:-}" == "-c" ]]; then printf '1\n'; exit 0; fi
+exit 1
+EOF
+chmod +x "${FAKE_BIN}/stat"
+if GH_FAIL=1 "$HELPER" fetch owner/repo 45 2>"${TEST_TMP}/error"; then fail "failed permission lookup was accepted"; fi
+[[ "$(<"${TEST_TMP}/error")" == *"permission lookup failed"* ]] || fail "lookup failure blocker was not precise"
+rm -f "${FAKE_BIN}/stat"
+
 if GH_FAIL=1 ISSUE_BODY_SNAPSHOT_ENABLED=0 "$HELPER" fetch owner/repo 45 2>"${TEST_TMP}/error"; then fail "disabled snapshot fallback was accepted"; fi
 [[ "$(<"${TEST_TMP}/error")" == *"snapshots are disabled"* ]] || fail "rollback flag blocker was not precise"
 
