@@ -9,7 +9,8 @@ _FULL_LOOP_RISK_LIB_LOADED=1
 _full_loop_runtime_verified_marker="runtime-verified"
 # GH#39558: declared when this runner cannot exercise a Critical/High change.
 # The PR is published under hold-for-review and stays unmergeable until a
-# verifier records runtime-verified evidence.
+# verifier records runtime-verified evidence. Low/Medium risk refuses it
+# (GH#39831): it is not a way to defer remaining task steps.
 _full_loop_runtime_pending_marker="runtime-pending"
 _full_loop_pending_diff_target="WORKTREE"
 # Runtime-owned paths never enter product staging or prospective PR metadata.
@@ -534,6 +535,11 @@ _resolve_runtime_testing_level() {
 	local requested_testing_level="${2:-}"
 	local summary_testing="${3:-}"
 	local testing_level=""
+	# Critical/High are the only levels whose merge requires runtime evidence.
+	local requires_runtime=0
+	case "$runtime_risk" in
+	Critical | High) requires_runtime=1 ;;
+	esac
 
 	if [[ -n "$requested_testing_level" ]]; then
 		testing_level=$(_normalize_runtime_testing_level "$requested_testing_level") || return 1
@@ -551,8 +557,17 @@ _resolve_runtime_testing_level() {
 		print_error "${_full_loop_runtime_pending_marker} requires --testing \"<why this runner cannot exercise the change, and what was verified>\"; PR body generation blocked."
 		return 1
 	fi
+	# GH#39831: the hold is a verifier route for Critical/High changes. At
+	# Low/Medium risk it protects nothing and parked unfinished worker steps
+	# behind a human.
+	if [[ "$testing_level" == "$_full_loop_runtime_pending_marker" && "$requires_runtime" -eq 0 ]]; then
+		print_error "${_full_loop_runtime_pending_marker} is only for Critical/High runtime risk; this ${runtime_risk:-unclassified}-risk PR merges on self-assessed evidence, so a hold would only park work for a human. PR body generation blocked."
+		print_error "Task steps still to run (including steps that need this branch pushed): commit and run 'git push -u origin HEAD' without opening a PR, finish them on this branch, then run commit-and-pr with their evidence. Worker PRs always open non-draft, so a PR opened now could merge before those steps run."
+		print_error "Steps this runner cannot run: end with the brief's terminal blocker instead of opening a held PR. Use --testing-level self-assessed only when the task's completion criteria are met; never close an issue over unfinished task work."
+		return 1
+	fi
 
-	if [[ "$runtime_risk" == "Critical" || "$runtime_risk" == "High" ]] &&
+	if [[ "$requires_runtime" -eq 1 ]] &&
 		[[ "$testing_level" != "$_full_loop_runtime_verified_marker" && "$testing_level" != "$_full_loop_runtime_pending_marker" ]]; then
 		print_error "${runtime_risk} runtime risk requires ${_full_loop_runtime_verified_marker} evidence; PR body generation blocked."
 		print_error "If this runner cannot exercise the change, rerun with --testing-level ${_full_loop_runtime_pending_marker} --testing \"<why, and what was verified>\": the PR opens under hold-for-review for a verifier. Never bypass commit-and-pr."
