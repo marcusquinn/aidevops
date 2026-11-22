@@ -338,6 +338,14 @@ runtime_state_validation=$(cd "$RUNTIME_STATE_REPO" &&
 	_validate_pending_runtime_metadata "" self-assessed "diff reviewed" "Add planning data in this session" HEAD &&
 	printf 'accepted')
 assert_contains "pending metadata accepts Low-only diff with runtime leftovers" "$runtime_state_validation" "accepted"
+pending_in_runtime_state_repo() {
+	(cd "$RUNTIME_STATE_REPO" && _validate_pending_runtime_metadata "$@")
+	return $?
+}
+assert_rejected "GH#39831 pre-staging validation refuses Low runtime-pending" \
+	pending_in_runtime_state_repo "" runtime-pending \
+	"the publication step needs the pushed input; local validation passes" \
+	"Add planning data in this session" HEAD
 runtime_state_staging=$(cd "$RUNTIME_STATE_REPO" && _stage_product_changes &&
 	git diff --cached --name-only | LC_ALL=C sort | tr '\n' ',')
 assert_contains "product staging matches pending risk paths" "<$runtime_state_staging>" \
@@ -735,6 +743,20 @@ refusal_guidance=$(_build_pr_body "2" "Credential rotation" "self-assessed" "src
 	"Resolves" "Critical" "self-assessed" 2>&1 >/dev/null)
 assert_contains "Critical refusal names the runtime-pending route" "$refusal_guidance" \
 	"--testing-level runtime-pending"
+
+# GH#39831: below Critical/High the hold protects nothing, so runtime-pending
+# is refused with the push-and-continue route instead of parking the work.
+deferred_reason="the publication step needs the pushed input; local validation passes"
+assert_rejected "runtime-pending is refused at Low risk" \
+	_build_pr_body "2" "Docs wording" "$deferred_reason" "README.md" "" "Resolves" "Low" "runtime-pending"
+assert_rejected "runtime-pending is refused at Medium risk" \
+	_build_pr_body "2" "Widget label" "$deferred_reason" "src/widget.ts" "" "Resolves" "Medium" "runtime-pending"
+low_pending_guidance=$(_build_pr_body "2" "Docs wording" "$deferred_reason" "README.md" "" \
+	"Resolves" "Low" "runtime-pending" 2>&1 >/dev/null)
+assert_contains "Low refusal names the push-and-continue route" "$low_pending_guidance" "git push -u origin HEAD"
+assert_contains "Low refusal names the blocker route" "$low_pending_guidance" "terminal blocker"
+assert_accepted "runtime-pending stays accepted at High risk" \
+	_build_pr_body "2" "Polling loop" "$deferred_reason" "src/poller.sh" "" "Resolves" "High" "runtime-pending"
 
 assert_accepted "commit-and-pr detects a runtime-pending body for the hold" \
 	_pr_body_declares_runtime_pending "$pending_body"
