@@ -378,13 +378,60 @@ _interactive_draft_handover_refused() {
 }
 
 #######################################
+# GH#39908: release the pulse tracking issue of a handed-over draft for the
+# continuation worker. _recover_interactive_pr_work_issue creates it as bare
+# status:blocked until linkage is verified; nothing else ever transitioned it,
+# so the draft and its issue stayed parked. Only the issue this PR closes, with
+# this PR's tracking marker, a collaborator author, no assignee, status:blocked
+# as its only status, no hold label and no coordination history (a worker's
+# own block is never undone here) becomes status:available + auto-dispatch.
+# set_issue_status drops the blocked-owned needs-* companion.
+#aidevops:trust-boundary — the marker, closing link and collaborator author
+# are each verified live; labels on the PR alone grant nothing.
+# Args: $1=pr_number, $2=repo_slug
+# Returns: 0 released, 1 not applicable or failed
+#######################################
+_interactive_handover_release_tracking_issue() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local issue="" issue_meta="" author="" comments=""
+	local marker="<!-- pulse-interactive-tracking:${pr_number} -->"
+	declare -F _extract_linked_issue >/dev/null 2>&1 || return 1
+	declare -F set_issue_status >/dev/null 2>&1 || return 1
+	issue=$(_extract_linked_issue "$pr_number" "$repo_slug") || return 1
+	[[ "$issue" =~ ^[1-9][0-9]*$ ]] || return 1
+	issue_meta=$(gh api "repos/${repo_slug}/issues/${issue}" 2>/dev/null) || return 1
+	printf '%s' "$issue_meta" | jq -e --arg marker "$marker" '
+		[.labels[]? | (.name? // .) | strings] as $names |
+		.pull_request == null and .state == "open" and ((.body // "") | contains($marker)) and
+		((.assignees // []) | length) == 0 and
+		([$names[] | select(startswith("status:"))] == ["status:blocked"]) and
+		([$names[] | select(test("^(hold-for-review|no-auto-dispatch|no-takeover|needs-maintainer-review|parent-task|persistent)$"))] | length) == 0
+	' >/dev/null 2>&1 || return 1
+	author=$(printf '%s' "$issue_meta" | jq -r '.user.login // empty')
+	[[ -n "$author" ]] && _is_collaborator_author "$author" "$repo_slug" || return 1
+	# Count coordination lines per page; any page with history refuses.
+	comments=$(gh api --paginate "repos/${repo_slug}/issues/${issue}/comments?per_page=100" \
+		--jq '[.[] | (.body // "") | split("\n")[] |
+			select(test("^(DISPATCH_CLAIM |DISPATCH_LEASE |CLAIM_RELEASED |Dispatching worker|Interactive session claimed|Terminal blocker:)"))] | length' \
+		2>/dev/null) || return 1
+	[[ "$comments" =~ ^[0-9[:space:]]+$ && ! "$comments" =~ [1-9] ]] || return 1
+	set_issue_status "$issue" "$repo_slug" available --add-label auto-dispatch >/dev/null || return 1
+	echo "[pulse-wrapper] interactive-draft-handover: released tracking issue #${issue} for PR #${pr_number} in ${repo_slug} to status:available + auto-dispatch (GH#39908)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # GH#39158: Hand a stale origin:interactive DRAFT PR to the worker pipeline.
 # Mirrors the non-draft stale path (GH#23425): orphan drafts get a tracking
 # issue via _recover_interactive_pr_work_issue, then _interactive_pr_is_stale
 # decides, then _interactive_pr_trigger_handover (idempotent) applies
-# origin:worker-takeover. The PR stays draft and is never merged here; the
-# continuation worker decides readiness. hold-for-review / no-takeover and
-# fresh drafts are left untouched.
+# origin:worker-takeover. The PR stays draft and is never merged here.
+# GH#39908: a confirmed (or earlier) handover also releases the pulse
+# tracking issue, so dispatch dedup reports the draft as WORKER_DRAFT_CHECKPOINT
+# and pr-checkpoint-continuation-helper.sh dispatch-stalled admits it once on
+# the handover evidence; that continuation worker decides readiness.
+# hold-for-review / no-takeover and fresh drafts are left untouched.
 # Args: $1=pr_number, $2=repo_slug, $3=labels_str
 # Returns: 0 if handover confirmed, 1 otherwise
 #######################################
@@ -393,13 +440,16 @@ _interactive_draft_pr_try_handover() {
 	local repo_slug="$2"
 	local labels_str="$3"
 
-	# Opted out, or already handed over (idempotent): nothing to do.
+	# Opted out: nothing to do. Already handed over: only finish the release.
 	local wrapped=","
 	wrapped+="${labels_str},"
 	case "$wrapped" in
 	*,hold-for-review,*) _interactive_draft_handover_refused "$pr_number" "$repo_slug" hold-for-review; return 1 ;;
 	*,no-takeover,*) _interactive_draft_handover_refused "$pr_number" "$repo_slug" no-takeover; return 1 ;;
-	*,origin:worker-takeover,*) return 1 ;;
+	*,origin:worker-takeover,*)
+		_interactive_handover_release_tracking_issue "$pr_number" "$repo_slug" || true
+		return 1
+		;;
 	esac
 	declare -F _interactive_pr_is_stale >/dev/null 2>&1 || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" stale-helper-unavailable; return 1; }
 	declare -F _interactive_pr_trigger_handover >/dev/null 2>&1 || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" handover-helper-unavailable; return 1; }
@@ -413,6 +463,7 @@ _interactive_draft_pr_try_handover() {
 	fi
 
 	_interactive_pr_trigger_handover "$pr_number" "$repo_slug" "stale interactive draft PR (GH#39158)" || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" takeover-not-confirmed; return 1; }
+	_interactive_handover_release_tracking_issue "$pr_number" "$repo_slug" || true
 	return 0
 }
 

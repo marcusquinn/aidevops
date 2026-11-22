@@ -8,6 +8,7 @@ _PR_CHECKPOINT_TARGET_LIB_LOADED=1
 _PCTL_INTERACTIVE_LABEL="origin:interactive"
 _PCTL_AUTO_DISPATCH_LABEL="auto-dispatch"
 _PCTL_HOLD_LABEL="hold-for-review"
+_PCTL_TAKEOVER_LABEL="origin:worker-takeover"
 _PCTL_LABELED_EVENT="labeled"
 
 _PCTL_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
@@ -98,6 +99,12 @@ _pr_checkpoint_trusted_logins() {
 #aidevops:trust-boundary — GH#38124: identity reuses the same-repository,
 # worker-origin and no-protective-label gates above; a head ref on a
 # same-repository PR requires push access, so it adds no new writer.
+#aidevops:trust-boundary — GH#39908: origin:interactive protects a draft only
+# until the pulse hands it over. The stale-handover gates (collaborator author,
+# idle PR, no live claim; pulse-merge-conflict.sh _interactive_pr_is_stale)
+# apply origin:worker-takeover, and removing that label reclaims the PR, as
+# feedback routing already treats it (_feedback_route_labels_block_routing).
+# Every other protective label, including no-takeover, still rejects.
 # shellcheck disable=SC2016 # jq program text, not shell expansion.
 _PR_CHECKPOINT_FOR_LINK_JQ_DEFS='
 	def checkpoint_label_names: [.labels[]? | (.name? // .) | strings];
@@ -106,10 +113,13 @@ _PR_CHECKPOINT_FOR_LINK_JQ_DEFS='
 	def checkpoint_has_label($name): checkpoint_label_names | any(. == $name);
 	def for_issue_line($issue):
 		(.body // "") | test("(?m)^For #" + ($issue | tostring) + "([.]([ \\t]|$)|[ \\t]*$)");
+	def checkpoint_interactive_handed_over: checkpoint_has_label(takeover_origin_label);
 	def checkpoint_protected:
-		checkpoint_label_names | any(test(
-			"^(origin:interactive|hold-for-review|no-auto-dispatch|no-takeover|needs-maintainer-review|persistent)$"
-		));
+		checkpoint_interactive_handed_over as $handed_over |
+		checkpoint_label_names | any(
+			test("^(hold-for-review|no-auto-dispatch|no-takeover|needs-maintainer-review|persistent)$") or
+			(. == "origin:interactive" and ($handed_over | not))
+		);
 	def recovery_draft_links($issue):
 		(.closingIssuesReferences == []) and
 		(.isDraft == true) and (.isCrossRepository == false) and
@@ -337,11 +347,13 @@ _pr_checkpoint_pr_metadata_is_eligible() {
 	printf '%s' "$pr_json" | jq -e --argjson pr "$pr_number" \
 		--arg expected_head_sha "$expected_head_sha" --arg expected_head_ref "$expected_head_ref" \
 		--arg expected_author "$expected_author" --arg interactive_label "$_PCTL_INTERACTIVE_LABEL" \
-		--arg hold_label "$_PCTL_HOLD_LABEL" '
+		--arg hold_label "$_PCTL_HOLD_LABEL" --arg takeover_label "$_PCTL_TAKEOVER_LABEL" '
 		def names: [.labels[]? | if type == "string" then . else (.name // empty) end];
-		def worker_owned: names | any(. == "origin:worker" or . == "origin:worker-takeover");
-		def protected: names | any(
-			. == $interactive_label or . == $hold_label or
+		def worker_owned: names | any(. == "origin:worker" or . == $takeover_label);
+		# GH#39908: the pulse handover label releases interactive provenance only.
+		def handed_over: names | any(. == $takeover_label);
+		def protected: handed_over as $handed_over | names | any(
+			(. == $interactive_label and ($handed_over | not)) or . == $hold_label or
 			. == "no-auto-dispatch" or . == "no-takeover" or
 			. == "needs-maintainer-review" or . == "persistent"
 		);
