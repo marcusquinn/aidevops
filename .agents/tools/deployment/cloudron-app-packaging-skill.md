@@ -229,11 +229,13 @@ Full field reference: [manifest-ref.md](cloudron-app-packaging-skill/manifest-re
 | `ldap` / `oidc` | LDAP v3 / OpenID Connect auth | `CLOUDRON_LDAP_URL` / `CLOUDRON_OIDC_DISCOVERY_URL` |
 | `sendmail` / `recvmail` | Outgoing SMTP / Incoming IMAP | `CLOUDRON_MAIL_SMTP_SERVER` / `CLOUDRON_MAIL_IMAP_SERVER` |
 | `email` | Full SMTP + IMAP + ManageSieve | multiple |
-| `proxyauth` | Auth wall | -- |
+| `proxyAuth` | Auth wall | -- |
 | `scheduler` | Cron tasks | -- |
 | `tls` | App certificate files | `/etc/certs/tls_cert.pem` |
 | `turn` | STUN/TURN service | `CLOUDRON_TURN_SERVER` |
 | `docker` | Create containers (restricted) | `CLOUDRON_DOCKER_HOST` |
+
+Adding `oidc`, `ldap` or `proxyAuth` in an update does not enable SSO for existing installs whose `sso` flag is `false` (the flag is fixed at install). Installs with `sso: true` receive the new addon's variables. See [Adding an auth addon in an update](cloudron-app-packaging-skill/manifest-ref/05-behavior.md#adding-an-auth-addon-in-an-update).
 
 Full env var lists and options: [addons-ref.md](cloudron-app-packaging-skill/addons-ref.md).
 
