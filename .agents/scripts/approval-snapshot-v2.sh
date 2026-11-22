@@ -112,7 +112,14 @@ _approval_snapshot_v2_terminal_blocker_filters() {
 			and (test("\\b(password|token|secret|api[_ -]?key|authorization)\\s*[:=]"; "i") | not)
 			and (test("\\bbasic\\s+\\S"; "i") | not);
 		def canonical_terminal_blocker_release:
-			terminal_blocker_envelope and (
+			# Normalize only the exact new writer-produced reason/action pair to
+			# the existing runner-recovery envelope; keep all other bytes bound.
+			(if contains("Terminal blocker: reason=resource_contended owner=runner-recovery ")
+				and contains("\nNext action: Redispatch after the session holding the shared lock or lease ends; no person needs to act. Preserve every lock and publication guard.\n")
+			then sub("Terminal blocker: reason=resource_contended owner=runner-recovery "; "Terminal blocker: reason=runner_capability_unmet owner=runner-recovery ")
+				| sub("\nNext action: Redispatch after the session holding the shared lock or lease ends; no person needs to act\\. Preserve every lock and publication guard\\.\n";
+					"\nNext action: Release for a capable runner. Recheck declared secret and local-data requirements before claiming; do not impose a global issue hold or publish secret values.\n")
+			else . end | terminal_blocker_envelope) and (
 				(capture("Terminal blocker: reason=(?<r>[a-z_]+) ").r) as $r
 				| (capture("\\nNext action: (?<a>[^\\n]*)\\n").a) as $a
 				| (capture("\\nInput requested: (?<q>[^\\n]*)\\n") // {q: null}).q as $q
@@ -131,6 +138,7 @@ _approval_snapshot_v2_terminal_blocker_filters() {
 					external_trigger_pending: "Wait for the specified external trigger",
 					permission_required: "Resolve the evidenced permission",
 					source_access_blocked: "Verify access to the denied source",
+					resource_contended: "Redispatch after the session holding the shared lock or lease ends",
 					runner_capability_unmet: "Release for a capable runner",
 					push_policy_timeout: "Retry policy evaluation",
 					network_policy_timeout: "Retry the same outbound",

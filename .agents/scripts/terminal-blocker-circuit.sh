@@ -168,7 +168,7 @@ _TBC_INPUT_OWNERS='user contributor maintainer admin'
 _terminal_blocker_reason() {
 	local fingerprint="$1"
 	local reason=""
-	for reason in missing_files_scope files_scope_excluded target_code_blocker external_trigger_pending permission_required "$_TBC_SOURCE_ACCESS" push_policy_timeout network_policy_timeout runner_capability_unmet unknown; do
+	for reason in missing_files_scope files_scope_excluded target_code_blocker external_trigger_pending permission_required "$_TBC_SOURCE_ACCESS" push_policy_timeout network_policy_timeout runner_capability_unmet resource_contended unknown; do
 		if [[ "$fingerprint" == "$(_terminal_blocker_hash "v2:${reason}")" ]]; then
 			printf '%s\n' "$reason"
 			return 0
@@ -253,7 +253,7 @@ if not blocked and sys.argv[2] != 'true':
     raise SystemExit(1)
 
 reasons = re.findall(r"^TERMINAL_BLOCKER_REASON=(.*)$", candidate, re.M)
-allowed = {'missing_files_scope', 'files_scope_excluded', 'target_code_blocker', 'external_trigger_pending', 'permission_required', 'source_access_blocked', 'push_policy_timeout', 'network_policy_timeout', 'runner_capability_unmet'}
+allowed = {'missing_files_scope', 'files_scope_excluded', 'target_code_blocker', 'external_trigger_pending', 'permission_required', 'source_access_blocked', 'push_policy_timeout', 'network_policy_timeout', 'runner_capability_unmet', 'resource_contended'}
 input_owners = {'user', 'contributor', 'maintainer', 'admin'}
 reason = reasons[0] if len(reasons) == 1 else 'unknown'
 def emit(value, ask_owner=''):
@@ -718,7 +718,7 @@ terminal_blocker_release_mode() {
 	local transient_reason=""
 	transient_reason=$(_terminal_blocker_reason "$blocker_fingerprint")
 	case "$transient_reason" in
-	push_policy_timeout | network_policy_timeout | "$_TBC_RUNNER_CAPABILITY")
+	push_policy_timeout | network_policy_timeout | "$_TBC_RUNNER_CAPABILITY" | resource_contended)
 		printf 'first\n'
 		return 0
 		;;
@@ -1110,6 +1110,10 @@ _terminal_blocker_recovery() {
 	local projected_state="status:blocked" question="" trigger=""
 	reason=$(_terminal_blocker_reason "$fingerprint")
 	case "$reason" in
+	resource_contended)
+		owner="$_TBC_RUNNER_RECOVERY_OWNER"
+		action='Redispatch after the session holding the shared lock or lease ends; no person needs to act. Preserve every lock and publication guard.'
+		;;
 	runner_capability_unmet)
 		owner="runner-recovery"
 		action='Release for a capable runner. Recheck declared secret and local-data requirements before claiming; do not impose a global issue hold or publish secret values.'
