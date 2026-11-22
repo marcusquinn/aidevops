@@ -1049,7 +1049,8 @@ release_merge_approved_pr() {
 release_not_routine_reason() {
 	local repo="$1" pr="$2" head="$3" output='' reason=''
 	output=$(release_policy_authorizes "$repo" "$pr" "$head" 2>&1 >/dev/null) || true
-	reason=$(printf '%s\n' "$output" | sed -n 's/.*\(NOT_ROUTINE: [^)]*\).*/\1/;t found;d;:found;p;q')
+	# GH#39837: one -e per label command; BSD sed rejects ';' after a label.
+	reason=$(printf '%s\n' "$output" | sed -n -e 's/.*\(NOT_ROUTINE: [^)]*\).*/\1/' -e 't found' -e 'd' -e ':found' -e 'p' -e 'q')
 	if [[ -z "$reason" ]]; then
 		reason="${output%%$'\n'*}"
 		reason="${reason:0:300}"
