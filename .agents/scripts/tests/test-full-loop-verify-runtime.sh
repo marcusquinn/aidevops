@@ -455,6 +455,7 @@ skip_rebase=1; FAKE_LABELS='origin:worker,hold-for-review,no-takeover'
 ! _runtime_completion_target_branch owner/repo repair/test >/dev/null
 check "completion target preserves no-takeover" $?
 
+reset_fixture; FAKE_BODY="$SELF_BODY"; FAKE_LABELS='origin:worker,hold-for-review'
 AIDEVOPS_RUNTIME_PENDING_COMPLETION=1
 REMOTE_CLASS=fast-forward
 _classify_remote_branch() { printf '%s %s\n' "$REMOTE_CLASS" "$LOCAL_HEAD"; return 0; }
@@ -465,13 +466,25 @@ git() {
 		printf '%s\n' "$*" >>"$WRITES"
 		return 0
 	fi
+	if [[ "$action" == branch && "${2:-}" == --show-current ]]; then
+		printf 'repair/test\n'
+		return 0
+	fi
 	"$TEST_NATIVE_GIT" "$@"
 	return $?
 }
 : >"$WRITES"
 _push_branch feature/original 0 owner/repo
-grep -qx 'push -u origin HEAD:refs/heads/feature/original' "$WRITES"
-check "completion pushes HEAD to original ref without force" $?
+grep -qx "push -u origin ${LOCAL_HEAD}:refs/heads/feature/original --force-with-lease=feature/original:${LOCAL_HEAD}" "$WRITES"
+check "completion binds ancestry-proven head to the observed remote lease" $?
+FAKE_LABELS='origin:worker,hold-for-review,no-takeover'
+: >"$WRITES"
+! _push_branch feature/original 0 owner/repo && no_writes
+check "prepush refresh preserves newly protected ownership" $?
+! _create_or_continue_pr '' owner/repo title body origin:worker >/dev/null
+check "completion publication cannot create a replacement PR" $?
+! _create_or_continue_pr 8 owner/repo title body origin:worker >/dev/null
+check "completion publication binds the dispatched PR number" $?
 for REMOTE_CLASS in foreign own-rewrite absent unknown; do
 	: >"$WRITES"
 	! _push_branch feature/original 0 owner/repo && no_writes
