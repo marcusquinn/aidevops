@@ -415,14 +415,16 @@ past_now=$(date -u -j -v+10H -f '%Y-%m-%dT%H:%M:%SZ' "$q_until" '+%s' 2>/dev/nul
 	}
 TESTS_RUN=$((TESTS_RUN + 1))
 
-# Spot-check that dispatch-dedup-helper.sh contains the t3194 marker so a
-# regression that strips the parser block fails this test.
-if grep -q 'peer-quarantine-until=\*' "$DEDUP" \
+# Spot-check that the parser owner (dispatch-dedup-assignment.sh) keeps the
+# peer-quarantine-until=* match and dispatch-dedup-helper.sh keeps the t3194
+# marker, so a regression that strips either fails this test.
+DEDUP_ASSIGNMENT="$(dirname "$DEDUP")/dispatch-dedup-assignment.sh"
+if grep -q 'peer-quarantine-until=\*' "$DEDUP_ASSIGNMENT" \
 	&& grep -q 't3194:' "$DEDUP"; then
-	echo "${TEST_GREEN}PASS${TEST_NC}: 9d: dispatch-dedup-helper.sh carries t3194 parser block"
+	echo "${TEST_GREEN}PASS${TEST_NC}: 9d: dispatch-dedup-assignment.sh carries parser; dispatch-dedup-helper.sh carries t3194 marker"
 else
 	TESTS_FAILED=$((TESTS_FAILED + 1))
-	echo "${TEST_RED}FAIL${TEST_NC}: 9d: dispatch-dedup-helper.sh missing t3194 parser block"
+	echo "${TEST_RED}FAIL${TEST_NC}: 9d: dispatch-dedup-assignment.sh missing peer-quarantine-until=* parser or dispatch-dedup-helper.sh missing t3194 marker"
 fi
 TESTS_RUN=$((TESTS_RUN + 1))
 
