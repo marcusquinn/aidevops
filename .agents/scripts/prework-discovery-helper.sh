@@ -101,6 +101,29 @@ _live_sessions() {
 	return 0
 }
 
+# GH#39880: split --files on commas and newlines (read stops at the first
+# newline, so newlines become commas first), trim each entry and drop empty
+# ones, so "a, b", "a,,b" and one-path-per-line lists work. Warn on stderr for
+# an entry git does not track: a space-separated list otherwise prints an empty
+# section that reads as "no collisions". Untracked new targets are legitimate,
+# so this never fails.
+_target_files() {
+	local files_csv="$1"
+	local raw=() entry="" hint=""
+	IFS=',' read -r -a raw <<<"${files_csv//$'\n'/,}"
+	for entry in ${raw[@]+"${raw[@]}"}; do
+		entry="${entry#"${entry%%[![:space:]]*}"}"
+		entry="${entry%"${entry##*[![:space:]]}"}"
+		[[ -n "$entry" ]] || continue
+		printf '%s\n' "$entry"
+		git ls-files --error-unmatch -- "$entry" >/dev/null 2>&1 && continue
+		hint=""
+		[[ "$entry" != *[[:space:]]* ]] || hint=" (use a comma-separated list)"
+		printf "Warning: --files entry '%s' matches no tracked file%s\n" "$entry" "$hint" >&2
+	done
+	return 0
+}
+
 main() {
 	local keywords=""
 	local blocker=""
@@ -125,10 +148,15 @@ main() {
 		return 2
 	fi
 	printf '## Prework discovery\n\n'
+	local files=() entry=""
 	if [[ -n "$files_csv" ]]; then
-		IFS=',' read -r -a files <<<"$files_csv"
+		while IFS= read -r entry; do
+			files+=("$entry")
+		done < <(_target_files "$files_csv")
 		printf '### Recent commits on target files\n\n'
-		git log --since="$since" --oneline -- "${files[@]}" || true
+		if [[ ${#files[@]} -gt 0 ]]; then
+			git log --since="$since" --oneline -- "${files[@]}" || true
+		fi
 		printf '\n'
 	fi
 	local repo_args=()
