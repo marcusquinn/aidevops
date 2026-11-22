@@ -2446,7 +2446,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19284 feat(maintainer-decisions): list t2449 linked-issue approval waits in the decision queue #auto-dispatch #feat ref:GH#39881 -> [todo/tasks/t19284-brief.md] pr:#39886 completed:2026-11-22
 
-- [ ] t19285 fix(terminal-blocker): classify live lock/lease contention as transient resource_contended, never a human hold #auto-dispatch #bug ref:GH#39887 -> [todo/tasks/t19285-brief.md]
+- [x] t19285 fix(terminal-blocker): classify live lock/lease contention as transient resource_contended, never a human hold #auto-dispatch #bug ref:GH#39887 -> [todo/tasks/t19285-brief.md] pr:#39895 completed:2026-11-22
 
 ## In Progress
 
