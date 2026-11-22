@@ -32,7 +32,7 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: write
-      pull-requests: write
+    # PR writes use SYNC_PAT, not GITHUB_TOKEN; keep downstream caller permissions stable.
     steps:
       - name: Require owner-authorised repository token
         id: token
