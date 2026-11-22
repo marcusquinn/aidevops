@@ -749,7 +749,7 @@ _pm_gate_origin_authority() {
 		# t19286: a closed-issue hold whose issue another merged PR closed is
 		# superseded work, not a maintainer question.
 		if declare -F _feedback_route_close_superseded_closed_issue_hold >/dev/null 2>&1 \
-			&& _feedback_route_close_superseded_closed_issue_hold "$pr_number" "$repo_slug"; then
+			&& _feedback_route_close_superseded_closed_issue_hold "$pr_number" "$repo_slug" "$linked_issue"; then
 			return 1
 		fi
 		# Recheck on the next merge pass after any verified recovery.

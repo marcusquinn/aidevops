@@ -27,6 +27,8 @@ AFTER_COMMENT_HEAD="" AFTER_COMMENT_LABELS="" AFTER_HOLD_HEAD=""
 PR_BODY=""
 
 gh_pr_view() {
+	# Simulates a maintainer hold comment landing during the held-PR reads.
+	[[ "${LATE_HOLD_COMMENT:-0}" == "0" ]] || : >"${TEST_ROOT}/late-hold-comment"
 	printf '%s\n' "$PR_BODY"
 	return 0
 }
@@ -40,7 +42,11 @@ gh() {
 			'{state:$state,state_reason:$reason,labels:$labels}'
 		;;
 	"repos/owner/repo/issues/100/comments?per_page=100")
-		printf '%s\n' "$COMMENT_JSON"
+		if [[ -e "${TEST_ROOT}/late-hold-comment" ]]; then
+			printf '%s\n' "$COMMENT_JSON" | jq '. + [{id:3,created_at:"2026-01-03T00:00:00Z",body:"Hold: I still need this",user:{login:"maintainer"},author_association:"OWNER"}]'
+		else
+			printf '%s\n' "$COMMENT_JSON"
+		fi
 		;;
 	"repos/owner/repo/issues/100/timeline?per_page=100")
 		printf '%s\n' '[{"id":99,"created_at":"2026-01-01T00:00:02Z"}]'
@@ -358,16 +364,18 @@ supersede_case "origin:worker" completed 200 1
 printf 'PASS: a failed superseded close falls back to the maintainer hold\n'
 
 # t19286: an existing closed-issue hold is closed only with exact provenance.
+HELD_RECEIPT_JSON='[{"id":1,"created_at":"2026-01-01T00:00:00Z","body":"<!-- feedback-route:closed-issue:PR100:ISSUE42:SHA0123456789012345678901234567890123456789:RUNNERa --> Holding this ci repair PR","user":{"login":"other-runner"},"author_association":"CONTRIBUTOR"}]'
 held_case() {
 	PR_LABELS="${1:-origin:worker-takeover,hold-for-review}"
 	CLOSER="${2-200}" EVENT_ACTOR="${3:-other-runner}" PR_BODY="${4:-}"
-	COMMENT_JSON='[{"id":1,"created_at":"2026-01-01T00:00:00Z","body":"<!-- feedback-route:closed-issue:PR100:ISSUE42:SHA0123456789012345678901234567890123456789:RUNNERa --> Holding this ci repair PR","user":{"login":"other-runner"},"author_association":"CONTRIBUTOR"}]'
+	COMMENT_JSON="$HELD_RECEIPT_JSON"
 	[[ -z "${5:-}" ]] || COMMENT_JSON=$(printf '%s' "$COMMENT_JSON" | jq --arg body "$5" '. + [{id:2,created_at:"2026-01-02T00:00:00Z",body:$body,user:{login:"maintainer"},author_association:"OWNER"}]')
 	CLOSES=0 CLOSE_ARGS="" FAIL_CLOSE=0
-	_feedback_route_close_superseded_closed_issue_hold 100 owner/repo
+	_feedback_route_close_superseded_closed_issue_hold 100 owner/repo "${6-42}"
 	return $?
 }
 HEAD="0123456789012345678901234567890123456789"
+REASON="completed" ISSUE_LABELS='[]'
 held_case
 [[ "$CLOSES" == "1" && "$CLOSE_ARGS" == *"#42"*"merged PR #200"* ]]
 printf 'PASS: automation closed-issue hold for the current head is closed as superseded\n'
@@ -384,8 +392,43 @@ if held_case "origin:worker,hold-for-review,follow-up"; then exit 1; fi
 HEAD="1111111111111111111111111111111111111111"
 if held_case; then exit 1; fi
 [[ "$CLOSES" == "0" ]]
-HEAD="abc123repairsha" PR_BODY="" EVENT_ACTOR="" CLOSER="" REASON="completed"
+HEAD="0123456789012345678901234567890123456789"
 printf 'PASS: no closer, maintainer hold, later hold comment, projection, protection or new head preserve the hold\n'
+
+# A PR relinked to another issue, or with no linked issue, keeps its hold.
+for expected_issue in 43 ""; do
+	if held_case "" 200 "" "" "" "$expected_issue"; then exit 1; fi
+	[[ "$CLOSES" == "0" ]]
+done
+# Orphaned closures stay held even when a merged PR closed the issue.
+REASON="not_planned"
+if held_case; then exit 1; fi
+[[ "$CLOSES" == "0" ]]
+REASON="completed" ISSUE_LABELS='[{"name":"consolidated"}]'
+if held_case; then exit 1; fi
+[[ "$CLOSES" == "0" ]]
+ISSUE_LABELS='[]'
+# A maintainer hold comment that lands during the reads wins.
+LATE_HOLD_COMMENT=1
+if held_case; then exit 1; fi
+[[ "$CLOSES" == "0" ]]
+LATE_HOLD_COMMENT=0
+rm -f "${TEST_ROOT}/late-hold-comment"
+printf 'PASS: relinked PR, orphaned closure and a late hold comment preserve the hold\n'
+
+# The guard closes an already-held PR only through the held-PR proof.
+PR_LABELS="origin:worker,hold-for-review" CLOSER=200 EVENT_ACTOR="other-runner" PR_BODY=""
+COMMENT_JSON='[]' CLOSES=0
+reset_fuse
+rc=0
+_feedback_route_guard_closed_issue 100 owner/repo 42 ci || rc=$?
+[[ "$rc" == "76" && "$CLOSES" == "0" && "$PR_LABELS" == *"hold-for-review"* ]]
+PR_LABELS="origin:worker,hold-for-review" COMMENT_JSON="$HELD_RECEIPT_JSON" CLOSES=0
+rc=0
+_feedback_route_guard_closed_issue 100 owner/repo 42 ci || rc=$?
+[[ "$rc" == "76" && "$CLOSES" == "1" ]]
+HEAD="abc123repairsha" PR_BODY="" EVENT_ACTOR="" CLOSER="" REASON="completed"
+printf 'PASS: guard keeps a manual hold and closes only a proven automation hold\n'
 
 # GH#34600: automation-hold provenance shares the actor-pinned filter, so it
 # must match the runner's own login under CONTRIBUTOR and nobody else's.
