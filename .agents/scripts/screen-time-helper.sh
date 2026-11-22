@@ -55,43 +55,68 @@ _validated_daily_hours() {
 }
 
 #######################################
-# Record each previously unseen observed local date.
+# True when a recomputed daily value exceeds the recorded one.
+# Arguments:
+#   $1 - recomputed hours
+#   $2 - recorded hours (empty when the date is unrecorded)
+# Returns: 0 when the value should be appended
+#######################################
+_snapshot_value_grew() {
+	local hours="$1"
+	local recorded="$2"
+	if [[ -z "$recorded" ]]; then
+		return 0
+	fi
+	awk -v new="$hours" -v old="$recorded" 'BEGIN { exit !(new > old + 0.05) }'
+	return $?
+}
+
+#######################################
+# Record each previously unseen observed local date, and raise the last few
+# completed days when later evidence grew them (display spans are written when
+# they end; history is append-only and the last row per date wins).
 #######################################
 cmd_snapshot() {
 	mkdir -p "$HISTORY_DIR"
-	local earliest_date today existing_dates current_date added
+	local earliest_date today existing_dates revisable current_date added collector recorded
 	earliest_date=$(_screen_time_engine earliest)
 	if [[ -z "$earliest_date" ]]; then
 		echo "No observed screen-time source data available"
 		return 0
 	fi
 	today=$(date +%Y-%m-%d)
-	existing_dates=""
-	if [[ -f "$HISTORY_FILE" ]]; then
-		existing_dates=$(jq -r 'select(type == "object" and (.date | type) == "string") | .date' "$HISTORY_FILE" 2>/dev/null | sort -u || true)
-	fi
+	# Only dates the current collector accepts count as recorded: on Linux,
+	# legacy login-session proxy rows must not block activity-based rows.
+	existing_dates=$(_screen_time_engine history-dates 2>/dev/null || true)
+	revisable=$(_screen_time_engine revisable-dates 2>/dev/null || true)
+	collector=$(_screen_time_engine collector)
 	current_date="$earliest_date"
 	added=0
 	while [[ "$current_date" < "$today" ]]; do
+		recorded=""
 		if [[ -n "$existing_dates" ]] && grep -qxF "$current_date" <<<"$existing_dates"; then
-			current_date=$(_next_date "$current_date")
-			continue
+			recorded=$(awk -v date="$current_date" '$1 == date { print $2 }' <<<"$revisable")
+			if [[ -z "$recorded" ]]; then
+				current_date=$(_next_date "$current_date")
+				continue
+			fi
 		fi
 		local raw_hours hours record
 		raw_hours=$(_screen_time_engine date --date "$current_date")
 		hours=$(_validated_daily_hours "$raw_hours")
-		if [[ "$hours" != "unavailable" ]]; then
+		if [[ "$hours" != "unavailable" ]] && _snapshot_value_grew "$hours" "$recorded"; then
 			record=$(jq -cn \
 				--arg date "$current_date" \
 				--arg hours "$hours" \
+				--arg collector "$collector" \
 				--arg hostname "$(hostname -s 2>/dev/null || hostname)" \
-				'{date:$date,screen_hours:($hours|tonumber),status:"observed",source:"interval-engine",hostname:$hostname,recorded_at:(now|strftime("%Y-%m-%dT%H:%M:%SZ"))}')
+				'{date:$date,screen_hours:($hours|tonumber),status:"observed",source:"interval-engine",collector:$collector,hostname:$hostname,recorded_at:(now|strftime("%Y-%m-%dT%H:%M:%SZ"))}')
 			printf '%s\n' "$record" >>"$HISTORY_FILE"
 			added=$((added + 1))
 		fi
 		current_date=$(_next_date "$current_date")
 	done
-	echo "Snapshot complete: ${added} new local-date observation(s) added to ${HISTORY_FILE}"
+	echo "Snapshot complete: ${added} new or revised local-date observation(s) added to ${HISTORY_FILE}"
 	return 0
 }
 
@@ -134,13 +159,38 @@ cmd_profile_stats() {
 	return $?
 }
 
+#######################################
+# Emit human input-activity profile JSON (time from each keyboard/mouse
+# input until the idle cut-off). On Linux this is the same measure as
+# profile-stats; on macOS it complements display-on screen time.
+#######################################
+cmd_input_stats() {
+	if _screen_time_engine input-profile; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Record one human-input activity sample (Linux and macOS).
+# A per-minute scheduler builds the active intervals that input-stats
+# (and, on Linux, profile-stats and snapshot) read.
+#######################################
+cmd_sample() {
+	mkdir -p "$HISTORY_DIR"
+	_screen_time_engine sample
+	return $?
+}
+
 case "${1:-help}" in
 snapshot) cmd_snapshot ;;
+sample) cmd_sample ;;
 query) cmd_query "${2:-1}" ;;
 history) cmd_history ;;
 profile-stats) cmd_profile_stats ;;
+input-stats) cmd_input_stats ;;
 help | *)
-	echo "Usage: screen-time-helper.sh {snapshot|query [days]|history|profile-stats}"
+	echo "Usage: screen-time-helper.sh {snapshot|sample|query [days]|history|profile-stats|input-stats}"
 	echo "Platform: ${OS_TYPE}"
 	return 0 2>/dev/null || exit 0
 	;;

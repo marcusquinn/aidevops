@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { resolveTrustedExecutable } from "../../scripts/trusted-executable.mjs";
+import { LOADED_VERSION, readVersion } from "./deployed-version.mjs";
 
 export const ROOT_BROKER = "/etc/aidevops/source-access/source-access-helper.py";
 // Absolute, root-controlled interpreter: the printed `sudo` command must not
@@ -12,17 +11,6 @@ export const ROOT_BROKER = "/etc/aidevops/source-access/source-access-helper.py"
 export const BROKER_PYTHON = resolveTrustedExecutable("python3");
 const REQUEST_ID_PATTERN = /^[a-f0-9]{32,64}$/;
 
-function readVersion(path) {
-  try {
-    return readFileSync(path, "utf8").trim().split(/\r?\n/, 1)[0];
-  } catch {
-    return "";
-  }
-}
-
-// Preserve the loaded version across updates; never substitute the new on-disk
-// value for a missing startup value (an unknown version cannot prove drift).
-const LOADED_VERSION = readVersion(join(homedir(), ".aidevops", "agents", "VERSION"));
 
 export function sourceAccessVersionChanged(scriptsDir, loadedVersion = LOADED_VERSION) {
   const deployedVersion = readVersion(join(dirname(scriptsDir), "VERSION"));

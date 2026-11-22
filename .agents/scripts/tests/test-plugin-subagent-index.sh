@@ -49,6 +49,7 @@ setup() {
 	cp "$REPO_ROOT/.agents/scripts/portable-stat.sh" "$agents_dir/scripts/"
 	cp "$REPO_ROOT/.agents/scripts/runtime-env.sh" "$agents_dir/scripts/"
 	cp "$REPO_ROOT"/.agents/scripts/shared-*.sh "$agents_dir/scripts/"
+	cp "$REPO_ROOT/.agents/scripts/gh-closing-reference-lib.sh" "$agents_dir/scripts/"
 	chmod +x "$agents_dir/scripts/subagent-index-helper.sh" "$agents_dir/scripts/plugin-loader-helper.sh"
 
 	cat >"$agents_dir/example-plugin/plugin.json" <<'JSON'

@@ -4,6 +4,14 @@
 
 set -uo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="${SCRIPT_DIR}/../../.."
 SETUP_SH="${REPO_ROOT}/setup.sh"
@@ -175,14 +183,14 @@ test_linked_worktree_checkout_contract() {
 	}
 	source_repo="$tmp_dir/repo"
 	linked_worktree="$tmp_dir/linked"
-	/usr/bin/git init -q "$source_repo" &&
-		/usr/bin/git -C "$source_repo" config user.email "test@example.invalid" &&
-		/usr/bin/git -C "$source_repo" config user.name "Test" &&
-		/usr/bin/git -C "$source_repo" config commit.gpgsign false &&
+	"$TEST_NATIVE_GIT" init -q "$source_repo" &&
+		"$TEST_NATIVE_GIT" -C "$source_repo" config user.email "test@example.invalid" &&
+		"$TEST_NATIVE_GIT" -C "$source_repo" config user.name "Test" &&
+		"$TEST_NATIVE_GIT" -C "$source_repo" config commit.gpgsign false &&
 		printf 'fixture\n' >"$source_repo/file" &&
-		/usr/bin/git -C "$source_repo" add file &&
-		/usr/bin/git -C "$source_repo" commit -qm fixture &&
-		/usr/bin/git -C "$source_repo" worktree add -q -b linked-test "$linked_worktree" || {
+		"$TEST_NATIVE_GIT" -C "$source_repo" add file &&
+		"$TEST_NATIVE_GIT" -C "$source_repo" commit -qm fixture &&
+		"$TEST_NATIVE_GIT" -C "$source_repo" worktree add -q -b linked-test "$linked_worktree" || {
 		print_result "linked worktree fixture created" 1
 		rm -rf "$tmp_dir"
 		return 0

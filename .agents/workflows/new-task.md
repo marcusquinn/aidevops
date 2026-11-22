@@ -306,7 +306,9 @@ Tasks without a complete How section will fail tier:simple dispatch.
 - Each title still gets its own GitHub issue (separate API call per title).
 - The `.task-counter` branch is updated per allocation — that is unavoidable.
 - The planning files (`TODO.md`, `todo/tasks/*.md`) use a **single** publication: direct commit+push when allowed, or one planning-only PR when branch protection requires PRs.
-- `--labels` applies the same label set to all tasks in the batch.
+- Run batch from a linked worktree (or pass `--repo-path <linked-worktree>`); it refuses a canonical checkout before claiming any ID.
+- `--labels` applies the same label set to all tasks in the batch; `no-auto-dispatch` there tags TODO lines `#no-auto-dispatch` instead of `#auto-dispatch`.
+- If an issue cannot be created, the summary keeps the claimed ID (`ref none`) and prints its exact recovery commands; do not re-run the batch.
 - Batch issues keep the `publication:pending` hold (their bodies are template stubs) until the completed briefs reach the default branch; this is the issue-first exception.
 - `--no-issue` skips GitHub issue creation (useful for offline / bulk planning).
 

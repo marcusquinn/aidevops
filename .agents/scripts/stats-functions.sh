@@ -38,6 +38,9 @@ PERSON_STATS_LAST_RUN="${PERSON_STATS_LAST_RUN:-${HOME}/.aidevops/logs/person-st
 PERSON_STATS_CACHE_DIR="${PERSON_STATS_CACHE_DIR:-${HOME}/.aidevops/logs}"
 QUALITY_SWEEP_STATE_DIR="${QUALITY_SWEEP_STATE_DIR:-${HOME}/.aidevops/logs/quality-sweep-state}"
 CODERABBIT_ISSUE_SPIKE="${CODERABBIT_ISSUE_SPIKE:-10}"
+# Merged-PR coverage alert: percentage threshold and minimum seven-day sample.
+CODERABBIT_COVERAGE_THRESHOLD="${CODERABBIT_COVERAGE_THRESHOLD:-50}"
+CODERABBIT_COVERAGE_MIN_PRS="${CODERABBIT_COVERAGE_MIN_PRS:-20}"
 SESSION_COUNT_WARN="${SESSION_COUNT_WARN:-5}"
 
 # Validate numeric config if _validate_int is available (from worker-lifecycle-common.sh)

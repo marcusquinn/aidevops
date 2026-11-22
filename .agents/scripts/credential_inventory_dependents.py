@@ -14,7 +14,10 @@ never claims "unused" without evidence.
 from __future__ import annotations
 
 import json
+import os
+import signal
 import subprocess  # nosec B404 -- exception classes only; commands run via credential_inventory_scan.run_tool
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -22,6 +25,7 @@ from typing import Any
 import credential_inventory_scan as scan
 
 GREP_TIMEOUT = 30
+SCAN_TIMEOUT = 5
 MAX_WORKERS = 8
 CONFIG_SUFFIXES = {".json", ".conf", ".toml", ".yaml", ".yml"}
 REGISTRY_FILE = "credential-inventory.json"
@@ -132,8 +136,49 @@ def scan_local(report: Report, home: Path, needles: scan.Needles) -> None:
 
 
 def find_dependents(names: list[str], home: Path | None = None) -> dict[str, Any]:
-    """Search all local sources for `names` (canonical first, then aliases)."""
+    """Bound the whole scan, including discovery, file reads and worker shutdown.
+
+    Isolate the scan so a stalled filesystem or executor cannot hold the caller
+    open. Kill the process group on timeout to also reap git/crontab descendants.
+    """
     home = home or Path.home()
+    print(f"Scanning dependents (up to {SCAN_TIMEOUT}s)...", file=sys.stderr, flush=True)
+    command = [sys.executable, str(Path(__file__).resolve()), str(home), *names]
+    process = subprocess.Popen(  # nosec B603 -- current interpreter, fixed script, argv only
+        command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        text=True, start_new_session=True,
+    )
+    try:
+        try:
+            output, _ = process.communicate(timeout=SCAN_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            # Do not wait indefinitely for an escaped pipe holder or kernel I/O.
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+            reason = "whole scan timeout"
+        else:
+            try:
+                if process.returncode == 0:
+                    return json.loads(output)
+            except ValueError:
+                pass
+            reason = "scan failed"
+    finally:
+        if process.stdout is not None:
+            process.stdout.close()
+    report = Report(names)
+    report.add("scan", "local sources", [], reason)
+    return report.result()
+
+
+def scan_dependents(names: list[str], home: Path) -> dict[str, Any]:
+    """Unbounded worker; called only inside the supervised scan process."""
     needles = scan.build_needles(names)
     report = Report(names)
     scan_repos(report, home, needles)
@@ -157,3 +202,7 @@ def render(result: dict[str, Any]) -> str:
     elif not result["literal"]:
         lines.append("No references found in the scanned sources.")
     return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    print(json.dumps(scan_dependents(sys.argv[2:], Path(sys.argv[1]))))

@@ -31,24 +31,27 @@ model: simple
 
 | Tier | Current ordered mapping | Use When |
 |------|-------|----------|
-| `simple` | openai/gpt-6-luna → anthropic/claude-haiku-5-5 | Complete low-consequence execution contracts |
-| `standard` | openai/gpt-6.1-sol (medium) → openai/gpt-5.6-terra → zai-coding-plan/glm-5.2 → anthropic/claude-sonnet-5-5 | Established-pattern implementation with normal judgment and recovery |
-| `thinking` | openai/gpt-6.1-sol → anthropic/claude-opus-5-5 | Daily-driver coordination, consequential decisions and synthesis-heavy work |
+| `simple` | openai/gpt-6-luna → anthropic/claude-haiku-5-5 | Complete low-consequence execution contracts; also the OpenCode compaction route |
+| `standard` | anthropic/claude-sonnet-5-5 (medium) → openai/gpt-6.1-sol → openai/gpt-6.1-terra → opencode-go/deepseek-v4.1-flash (high) | Established-pattern implementation with normal judgment and recovery |
+| `thinking` | anthropic/claude-opus-5-5 (high) → openai/gpt-6.1-sol | Daily-driver coordination, consequential decisions and synthesis-heavy work |
 
 **Model IDs**: Always fully-qualified (`claude-sonnet-5-5`, not `claude-sonnet-4`). Short-form → `ProviderModelNotFoundError`. CLI prefix: `anthropic/`, `google/`, `openai/`.
 
 Only `simple`, `standard`, and `thinking` are valid authored tiers. Concrete models and provider reasoning levels are resolved from the active routing table at execution time.
 
 OpenCode's unpinned `agent.compaction` follows the first `simple` candidate
-with at least the managed 240K compaction input budget, so a smaller first
-candidate (Haiku's 168K) is skipped rather than disabling the route. An explicit
-compaction model or variant is preserved; no fitting candidate leaves compaction
-on OpenCode's parent model.
+that has credentials (stored auth, env key or provider options) and at least
+the managed 240K compaction input budget. Haiku 5.5 (1M context) compacts by
+default; without Anthropic credentials it is skipped and Luna compacts; with no usable candidate,
+compaction stays on OpenCode's parent model. An explicit compaction model or
+variant is preserved.
 
-OpenCode sends the session variant with compaction, so the plugin `chat.params`
-hook clamps compaction effort down (never up) to the routed simple variant, or
-to `high` on the parent model (`AIDEVOPS_COMPACTION_MAX_EFFORT` overrides).
-Opus 5.5 `max` compactions stalled for 165-196s with no output (GH#32934).
+OpenCode builds compaction options from the parent message's variant and
+ignores `agent.compaction.variant`, so the plugin `chat.params` hook applies a
+fixed compaction effort, raising or lowering it via the compaction model's own
+variant catalogue: `settings.compaction_reasoning` (default `high`; `medium`
+to `max`), `AIDEVOPS_COMPACTION_EFFORT` overrides, `AIDEVOPS_COMPACTION_MAX_EFFORT`
+caps. Opus 5.5 `max` compactions stalled for 165-196s with no output (GH#32934).
 
 **Local execution** is a provider/runtime policy, not a workload tier. A local model may be placed in any canonical tier's ordered model list. Privacy policy still fails closed when no approved local runtime is available.
 
@@ -85,6 +88,8 @@ at request time. Interactive diagnostics: `model-availability-helper.sh check`.
 3. **Auth + availability checks** (`headless-runtime-helper.sh`, `model-availability-helper.sh`) → providers/models that can actually run now
 4. **Result**: dispatch selects the first healthy allowed candidate; availability failures move right within the same tier
 
+A custom table is merged per key: omitted tiers and the `providers` section inherit from the framework table, so an override needs only the keys it changes. Do not copy the whole framework table; the copy drifts when provider endpoints change.
+
 Optional worker-only balancing: set `"round_robin": true` on an individual tier
 in `custom/configs/model-routing-table.json` to rotate independent worker
 selections across distinct healthy providers. The default is `false` (priority
@@ -102,23 +107,30 @@ task title/prompt metadata. Remote providers are denied for `local-only` and
 `AIDEVOPS_VAULT_PROVIDER_AI_APPROVED=1` dispatch gate. `secret` classification
 is always denied because secrets must flow through secret tooling, not prompts.
 
-- **Shared default**: The framework routing table lists smoke-tested OpenAI models first so workers can continue during Anthropic cooldowns. Anthropic remains the fallback, and local custom routing can still reorder or replace these defaults.
+- **Shared default**: The framework routing table lists Anthropic models first on every tier. OpenAI models follow as same-tier fallbacks, so workers continue during Anthropic cooldowns. Local custom routing can still reorder or replace these defaults.
 - **Pulse**: Resolves `thinking` through `model-availability-helper.sh resolve thinking`, so it follows routing-table order, health checks, local routing-table overrides, and `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST`.
 - **Workers**: Follow configured candidate order within canonical `simple`, `standard`, or `thinking` routes after allowlist filtering and auth checks.
 - **Local switch**: Set `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai` to force both pulse and workers onto the default OpenAI fallbacks. If you want OpenAI primary but Anthropic fallback, reorder `custom/configs/model-routing-table.json` and omit the allowlist.
-- **Current default mapping**: The active routing table maps `simple` to OpenAI Luna then Anthropic Haiku 5.5, `standard` to OpenAI Sol then Terra then Z.AI GLM then Anthropic Sonnet 5.5, and `thinking` to OpenAI Sol then Anthropic Opus 5.5. Availability and provider policy decide the exact model at execution time.
-- **Reasoning mapping**: `medium` is the minimum selected variant (including custom-table overrides and headless environment overrides). OpenCode subagent children follow the same floor, even under a `low` parent ceiling (GH#33342). Only explicit native agent pins keep their own variant. Luna, Sol, Terra, Haiku 5.5, Sonnet 5.5 and specialist Astra use `medium`. Thinking-tier Opus 5.5 uses `high`, which is the background ceiling: no shipped route uses xhigh/max for workers. Interactive effort remains the user's choice; Haiku 5.5 has adaptive effort variants (`low` to `max`, API default `medium`), while the older Haiku 4.5 has only budget variants (`high`, `max`), so a custom Haiku 4.5 route should keep `high`. GLM-5.2 has no known variant and retains its provider default; never guess one. The same model can serve two tiers: tier lookup keeps the requested tier (headless) or the tier whose variant matches (OpenCode telemetry) rather than the first tier listing the model.
+- **Current default mapping**: The active routing table maps `simple` to Anthropic Haiku 5.5 then OpenAI Luna. `standard` maps to Anthropic Sonnet 5.5, then OpenAI Sol, then Terra, then OpenCode Go DeepSeek V4.1 Flash. `thinking` maps to Anthropic Opus 5.5 then OpenAI Sol. Availability and provider policy decide the exact model at execution time.
+- **Reasoning mapping**: `medium` is the minimum selected variant (including custom-table overrides and headless environment overrides). OpenCode subagent children follow the same floor, even under a `low` parent ceiling (GH#33342). Only explicit native agent pins keep their own variant. Simple-tier Luna and Haiku 5.5 use `high` (GH#36169: both cost $0.10/$0.50 per 1M, so the extra reasoning is nearly free); Sol, Terra, Sonnet 5.5 and specialist Astra use `medium`. Thinking-tier Opus 5.5 uses `high`, which is the background ceiling: no shipped route uses xhigh/max for workers. Interactive effort remains the user's choice; Haiku 5.5 has adaptive effort variants (`low` to `max`, API default `medium`), while the older Haiku 4.5 has only budget variants (`high`, `max`), so a custom Haiku 4.5 route should keep `high`. Models with no known variant keep their provider default; never guess one. The same model can serve two tiers: tier lookup keeps the requested tier (headless) or the tier whose variant matches (OpenCode telemetry) rather than the first tier listing the model.
 - **Haiku 5.5 update (2026-10-07, GH#33278)**: The `simple`-tier Anthropic fallback moved from Haiku 4.5 to `anthropic/claude-haiku-5-5` at `medium`. Anthropic's pricing page lists $0.10 in / $0.50 out / $0.01 cache read for prompts up to 100K tokens and 5x those rates above 100K; cost estimates model only the base tier. It has a 1M window, 128K output and adaptive thinking. models.dev lists it natively, so no catalog bridge entry is needed; a live OpenCode headless run succeeded. Setup migrates provider-prefixed Haiku 4.5 pins once (`migration-haiku-5-5.sh`, same files and backups as the Sonnet 5.5 migration).
 - **Sonnet 5.5 update (2026-09-28, GH#32848)**: Sonnet references moved from Sonnet 4.6 / Sonnet 5 to `anthropic/claude-sonnet-5-5`. It costs the same as Sonnet 5 for input and output ($2/$10); Anthropic's pricing page lists its cache read at $0.10 (0.05x input; corrected 2026-10-07). It is 30%+ faster, and uses fewer tokens per task. A live OpenCode headless run succeeded at the default and `medium` variants. Until models.dev lists it, `anthropic-catalog-bridge.mjs` registers the ID from the Sonnet 5 catalog metadata; the native entry wins once published. Setup migrates provider-prefixed user pins once (`migration-sonnet-5-5.sh`: config.jsonc, settings.json, custom routing table, opencode.json, `*_MODEL(S)` lines in credentials.sh), with backups under `~/.aidevops/config-backups/migrations/`. Claude Code accepts the ID with an unknown-catalog warning and assumes a 200K window until it updates.
-- **Anthropic generation update (2026-09-27)**: Anthropic OAuth is available again. The fallbacks moved from Sonnet 4.6 / Opus 4.6 to Sonnet 5 / Opus 5.5 after live headless smoke tests, including tool calls. OpenAI stays primary; the provider-family A/B in `workflows/optimize-tiers.md` (`--preset openai-anthropic`) supplies evidence before any primary change. Plugin config load drops legacy `(via aidevops)` Anthropic model overrides left by versions before GH#32447, because they masked native tool-call, attachment and cost metadata. OpenCode uses `interactive_default` when configured, otherwise the thinking model, as its default only when no explicit user model exists; existing model/variant pins are preserved.
-- **Provider A/B outcome (2026-10-01, GH#32539)**: The OpenAI-vs-Anthropic worker trial was stopped early after 4.4 days. On the standard tier, the OpenAI arm verified 97% of issues at about $1.26 per verified issue. The Anthropic arm verified 81% at about $3.81, using about 2.8× the tokens per issue. OpenAI-primary order and `round_robin: false` stay the shipped default. Anthropic remains a same-tier availability fallback.
+- **Anthropic generation update (2026-09-27)**: Anthropic OAuth is available again. The fallbacks moved from Sonnet 4.6 / Opus 4.6 to Sonnet 5 / Opus 5.5 after live headless smoke tests, including tool calls. OpenAI stayed primary at that point (superseded 2026-11-04); the provider-family A/B in `workflows/optimize-tiers.md` (`--preset openai-anthropic`) supplies evidence before any primary change. Plugin config load drops legacy `(via aidevops)` Anthropic model overrides left by versions before GH#32447, because they masked native tool-call, attachment and cost metadata. OpenCode uses `interactive_default` when configured, otherwise the thinking model, as its default only when no explicit user model exists; existing model/variant pins are preserved.
+- **Provider A/B outcome (2026-10-01, GH#32539)**: The OpenAI-vs-Anthropic worker trial was stopped early after 4.4 days. On the standard tier, the OpenAI arm verified 97% of issues at about $1.26 per verified issue. The Anthropic arm verified 81% at about $3.81, using about 2.8× the tokens per issue. OpenAI-primary order was the shipped default until the 2026-11-04 Anthropic-primary update; `round_robin: false` remains.
+- **Terra 6.1 update (2026-10-26, GH#35706)**: The second `standard` candidate moved from `openai/gpt-5.6-terra` to `openai/gpt-6.1-terra` at medium. OpenAI's Standard pricing lists it at $1/$0.05/$5 (input/cached/output per 1M, short context ≤272K) versus GPT-5.6 Terra's $2/$0.20/$12. It advertises 922K input natively, so the ~240K GPT-6 context cap covers `gpt-6.1-terra` and `gpt-6.1-terra-fast`. `gpt-5.6-terra` keeps its pricing and GPT-5.6 limits for historical requests and custom routes.
 - **Sol 6.1 update (2026-09-30)**: `standard` and `thinking` primaries moved from `openai/gpt-6-sol` to `openai/gpt-6.1-sol` at medium (GH#33114). Input/output prices are unchanged; cached input halves to $0.10 per 1M. The superseded `gpt-6-sol` IDs keep their pricing for historical requests and the ~240K context cap, but no longer inherit routed reasoning.
 - **Standard update (2026-09-27)**: `standard` moved from GPT-5.6 Terra to GPT-6 Sol, with Terra kept as the first same-tier fallback. OpenAI's Standard pricing lists Sol at $2/$0.20/$10 (input/cached/output per 1M) versus Terra's $2/$0.20/$12. Both now run at medium. Standard and thinking therefore share Sol medium as primary, with different fallbacks; whether thinking should move to high is a follow-up decision, not part of the minimum-effort change. Watch the 800K per-issue breaker in `configs/dispatch-cost-budgets.conf` for trips during the first week.
 - **Generation update (2026-09-22)**: GPT-6 Luna and GPT-6 Sol became the simple and thinking primaries. Both now use medium. Catalog visibility is not a guarantee of headless OAuth availability: the runtime still probes and follows same-tier fallbacks.
+- **Entitlement failover (GH#36698)**: Credential presence does not establish model entitlement. A definite pre-generation rejection (`model_not_found`, or Codex `is not supported when using Codex with a ChatGPT account`) marks only that model unavailable for the current auth. Interactive OpenCode re-prompts the same child on the next connected candidate of the same tier, in routing-table order, and logs `requested=… rejected=… next=…`. It never substitutes a lower tier; if no same-tier candidate remains, the Task reports the tier, requested model and rejected models. Headless workers record a model-level `model_unavailable` backoff, so other models from that provider stay usable. Records expire after 15 minutes (interactive) or, headless, 1 hour for a first rejection. Each repeated headless rejection under the same auth doubles the previous backoff, up to `AIDEVOPS_MODEL_UNAVAILABLE_BACKOFF_MAX_S` (default 24 hours), so an unentitled model costs about one burst a day instead of one an hour (GH#38713). Concurrent rejections during an active backoff do not escalate it. Records clear at once when the OpenAI auth changes. A successful run with the model resets its history, and `headless-runtime-helper.sh backoff clear <model>` resets it by hand. A restored subscription returns the model to its configured position with no config edit.
 - **Capability escalation**: The exact structured marker `BLOCKED: capability limit - <evidence>` advances headless workers through an explicitly configured `reasoning_escalation` ladder before `escalation_order`. No reasoning ladder is shipped by default: thinking stops at Sol medium. Escalation never re-runs an identical model and reasoning route (GH#32929): when the next tier resolves to the current route, as standard and thinking both do at Sol medium, the runtime tries that tier's ladder, then its next healthy distinct candidate (thinking: Opus 5.5 high), then the following tier; nothing distinct is terminal. Use bounded specialist advice before abandoning a genuinely difficult task, not automatic whole-session Astra promotion. Unknown variants and models never receive guessed reasoning settings. Explicit model pins remain pinned. Interactive OpenCode escalates tiers only when child identity is known and it has attempted no side effects. Generic `BLOCKED` remains terminal. Permission, authentication, provider, rate-limit, secret, policy, trust-boundary, locality, and billing failures never escalate capability to bypass controls.
 - **OpenAI tier rationale**: Luna handles bounded work; Sol medium handles both established-pattern implementation and parent coordination. Terra remains a standard fallback. The separate `specialist_advisor` route selects Astra medium only for explicit bounded advisory requests; it is neither a tier nor an automatic fallback. Request contract and feedback policy: `reference/agent-routing.md` "Specialist advice without promoting the parent".
 - **OpenAI pro caveat**: `openai/gpt-5.6-sol-pro` passed a live OpenCode ChatGPT OAuth smoke test on 2026-07-10, but OpenAI publishes neither an API price nor comparative Sol Pro benchmarks. It remains excluded from automatic workers pending repository-specific completion-rate evidence. Historical `gpt-5.5-pro` and older `*-pro`/`o3-pro` IDs remain excluded.
-- **GLM-5.2 option**: Standard routing may use `zai-coding-plan/glm-5.2` when that OpenCode provider is authenticated. Direct `zai/glm-5.2` is intentionally excluded.
+- **Anthropic-primary update (2026-11-04, maintainer decision)**: Every tier now lists Anthropic first: Haiku 5.5, Sonnet 5.5, Opus 5.5. OpenAI Luna, Sol and Terra stay as same-tier fallbacks, so a restored OpenAI subscription is used again with no config change. This reverses the GH#32539 OpenAI-primary default. That trial measured OpenAI standard workers at about a third of the Anthropic cost per verified issue, so expect higher API-equivalent cost estimates. Unpinned OpenCode sessions without `interactive_default` now start on Opus 5.5, the thinking primary.
+- **Luna-first simple tier (2026-11-10, maintainer decision, t18954)**: `simple` lists Luna before Haiku 5.5 again; standard and thinking stay Anthropic-primary. A free OpenAI (ChatGPT) account still serves Luna at no cost after a paid subscription lapses, so simple subagents and OpenCode compaction (which takes the first credentialed simple-tier candidate whose input limit fits) avoid spending Anthropic quota. With no OpenAI credentials, `applyCompactionRouting` skips Luna and compaction routes to Haiku 5.5. Limits: the GH#36698 entitlement failover covers subagents and headless workers, not compaction; the compaction model is fixed at config time, so a Luna rejection during compaction is not yet retried on Haiku (t18957). Headless simple workers on a ChatGPT-OAuth-only account still resolve to Haiku, because the availability probe checks the OpenAI platform API (t18955). Ledger evidence: after the paid subscription lapsed, Luna still served interactive children on 2026-11-09 (32 requests, 0 errors), while compaction had moved to Haiku 5.5 (186 compactions on 2026-11-09, ~107K average prompt).
+- **GLM-5.2 removal and DeepSeek fallback (2026-11-04)**:
+  - `zai-coding-plan/glm-5.2` (added in GH#27045) left the shipped `standard` tier. The current OpenCode `zai-coding-plan` catalogue no longer lists it.
+  - `opencode-go/deepseek-v4.1-flash` is the last `standard` candidate. Its catalogue entry lists $0.15/$0.003/$0.60 per 1M input/cached/output tokens, 1M context, tool calls, and only `low`/`high`/`max` variants, so it routes at `high`, the lowest variant at or above the medium floor.
+  - `opencode-go` and `zai-coding-plan` are routable only with their own OpenCode `auth.json` entry (`headless-runtime-provider.sh`, `model-availability-probe-lib.sh`). An unknown provider is no longer assumed available just because it is listed.
 - **Tier-aware effort**: `AIDEVOPS_HEADLESS_VARIANT_SIMPLE`, `AIDEVOPS_HEADLESS_VARIANT_STANDARD`, and `AIDEVOPS_HEADLESS_VARIANT_THINKING` can temporarily override routing-table reasoning.
 - **Fallback**: If routed resolution fails entirely, the framework uses the active table's ordered candidates and then its shipped deterministic table. An explicit provider allowlist fails closed when no listed candidate is usable.
 - **Deprecated**: `PULSE_MODEL` and `AIDEVOPS_HEADLESS_MODELS` env vars are respected as overrides for one release cycle with deprecation warnings. Remove from `credentials.sh`.
@@ -193,6 +205,7 @@ claim and defines the evidence required before reconsideration.
 Auto-update overwrites `~/.aidevops/agents/configs/*.json` and `~/.aidevops/agents/scripts/*`, so user-specific routing must live outside those paths.
 
 - Put persistent model-order overrides in `~/.aidevops/agents/custom/configs/model-routing-table.json`
+- ChatGPT OAuth restrictions (`chatgpt_oauth_restrictions.openai_unsupported`) and `providers.openai.oauth_auth_file` resolve per field, identically for dispatch availability and worker selection: the first table defining a valid value wins (custom, then framework). A tiers-only custom table inherits all shipped denials; an explicit array (even `[]`) replaces them for that account, and a malformed value falls back to the framework list, never allow-all.
 - Put the provider pin in `~/.config/aidevops/credentials.sh`
 - Do not rely on `.bashrc`, `.zshrc`, or `.profile` for pulse/worker provider pins; scheduled daemons intentionally do not source interactive shell startup files.
 
@@ -206,7 +219,7 @@ For example, after validating Anthropic OAuth and both model variants locally:
   "interactive_default": { "model": "anthropic/claude-opus-5-5", "variant": "medium" },
   "tiers": {
     "simple": { "models": ["anthropic/claude-haiku-5-5", "openai/gpt-6-luna"] },
-    "standard": { "models": ["anthropic/claude-sonnet-5-5", "openai/gpt-5.6-terra"] },
+    "standard": { "models": ["anthropic/claude-sonnet-5-5", "openai/gpt-6.1-terra"] },
     "thinking": {
       "models": ["anthropic/claude-opus-5-5", "openai/gpt-6.1-sol"],
       "reasoning": { "anthropic/claude-opus-5-5": "xhigh" }
@@ -215,7 +228,7 @@ For example, after validating Anthropic OAuth and both model variants locally:
 }
 ```
 
-This is a per-user opt-in, not a new shared default. As with other same-model
+The tier order matches the shipped default since 2026-11-04. `interactive_default` and the `xhigh` reasoning override remain per-user opt-ins. As with other same-model
 children, an interactive child cannot exceed its known parent's effort ceiling;
 switch the parent to `xhigh` explicitly when deeper interactive work requires it.
 Restart OpenCode after changing the override.
@@ -225,7 +238,7 @@ Example custom override for OpenAI-capable headless routing:
 ```json
 {
   "tiers": {
-    "standard": { "models": ["openai/gpt-5.6-terra", "anthropic/claude-sonnet-5-5"] },
+    "standard": { "models": ["openai/gpt-6.1-terra", "anthropic/claude-sonnet-5-5"] },
     "thinking": { "models": ["openai/gpt-6.1-sol", "anthropic/claude-opus-5-5"] }
   }
 }

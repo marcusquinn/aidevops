@@ -656,7 +656,7 @@ test_reconcile_tip_fetch_depth() {
 		CAS_GIT_CONTEXT_PATH=""
 		_cas_read_default_counter_for_reconcile main >/dev/null
 	)
-	if [[ $(<"$tmpdir/fetches") == *$'fetch -q --depth=1 origin main\n'* ]] &&
+	if [[ $(<"$tmpdir/fetches") == *$'fetch -q --depth=1 --no-tags --filter=blob:none origin main\n'* ]] &&
 		[[ $(<"$tmpdir/fetches") == *'fetch -q origin main'* ]]; then
 		pass "$name"
 	else
@@ -781,6 +781,36 @@ test_create_issue_reports_collision() {
 	return 0
 }
 test_create_issue_reports_collision
+
+test_scope_check_inline_code_comment_opener() {
+	local name="24: scope-check ignores comment opener inside inline code"
+	local helper="${CLAIM_SCRIPT%/*}/brief-readiness-helper.sh"
+	local body out rc=0
+	body=$'- Match the `<!-- aidevops:generator=x` marker.\n\n### Files Scope\n\n- `.agents/scripts/example.sh`\n'
+	out=$(bash "$helper" scope-check "$body" 2>&1) || rc=$?
+	if [[ $rc -eq 0 ]]; then
+		pass "$name"
+	else
+		fail "$name" "rc=${rc} out=${out}"
+	fi
+	return 0
+}
+test_scope_check_inline_code_comment_opener
+
+test_scope_check_unclosed_comment_names_cause() {
+	local name="25: scope-check names an unclosed HTML comment hiding Files Scope"
+	local helper="${CLAIM_SCRIPT%/*}/brief-readiness-helper.sh"
+	local body out rc=0
+	body=$'Intro <!-- never closed\n\n### Files Scope\n\n- `.agents/scripts/example.sh`\n'
+	out=$(bash "$helper" scope-check "$body" 2>&1) || rc=$?
+	if [[ $rc -ne 0 && "$out" == *"unclosed HTML comment"* ]]; then
+		pass "$name"
+	else
+		fail "$name" "rc=${rc} out=${out}"
+	fi
+	return 0
+}
+test_scope_check_unclosed_comment_names_cause
 
 # ---------------------------------------------------------------------------
 # Summary

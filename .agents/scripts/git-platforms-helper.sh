@@ -18,14 +18,6 @@ readonly USAGE_COMMAND_OPTIONS="Usage: $0 <command> [options]"
 
 # Common constants
 
-
-# HTTP Constants
-# Common message constants
-readonly HELP_SHOW_MESSAGE="Show this help"
-readonly USAGE_COMMAND_OPTIONS="Usage: $0 <command> [options]"
-
-# Common constants
-
 CONFIG_FILE="../configs/git-platforms-config.json"
 
 # Constants for repeated strings
@@ -66,8 +58,9 @@ load_config() {
 
 # Get platform configuration
 get_platform_config() {
-    local platform="$command"
-    local account_name="$account_name"
+    local platform="$1"
+    local account_name="$2"
+    load_config
     
     if [[ -z "$platform" || -z "$account_name" ]]; then
         print_error "Platform and account name are required"
@@ -89,14 +82,14 @@ get_platform_config() {
 
 # Make API request
 api_request() {
-    local platform="$command"
-    local account_name="$account_name"
-    local endpoint="$target"
+    local platform="$1"
+    local account_name="$2"
+    local endpoint="$3"
     local method="${4:-GET}"
-    local data="$5"
+    local data="${5:-}"
 
     local config
-    config=$(get_platform_config "$platform" "$account_name")
+    config=$(get_platform_config "$platform" "$account_name") || return 1
     local api_token
     api_token=$(echo "$config" | jq -r '.api_token')
     local base_url
@@ -158,7 +151,7 @@ list_platforms() {
 
 # GitHub functions
 github_list_repositories() {
-    local account_name="$command"
+    local account_name="$1"
     local visibility="${2:-all}"
     
     print_info "Listing GitHub repositories for account: $account_name"
@@ -173,9 +166,9 @@ github_list_repositories() {
 }
 
 github_create_repository() {
-    local account_name="$command"
-    local repo_name="$account_name"
-    local description="$target"
+    local account_name="$1"
+    local repo_name="$2"
+    local description="${3:-}"
     local private="${4:-false}"
     
     if [[ -z "$repo_name" ]]; then
@@ -206,7 +199,7 @@ github_create_repository() {
 
 # GitLab functions
 gitlab_list_projects() {
-    local account_name="$command"
+    local account_name="$1"
     local visibility="${2:-private}"
     
     print_info "Listing GitLab projects for account: $account_name"
@@ -224,9 +217,9 @@ gitlab_list_projects() {
 }
 
 gitlab_create_project() {
-    local account_name="$command"
-    local project_name="$account_name"
-    local description="$target"
+    local account_name="$1"
+    local project_name="$2"
+    local description="${3:-}"
     local visibility="${4:-private}"
     
     if [[ -z "$project_name" ]]; then
@@ -257,7 +250,7 @@ gitlab_create_project() {
 
 # Gitea functions
 gitea_list_repositories() {
-    local account_name="$command"
+    local account_name="$1"
     
     print_info "Listing Gitea repositories for account: $account_name"
     local response
@@ -274,9 +267,9 @@ gitea_list_repositories() {
 }
 
 gitea_create_repository() {
-    local account_name="$command"
-    local repo_name="$account_name"
-    local description="$target"
+    local account_name="$1"
+    local repo_name="$2"
+    local description="${3:-}"
     local private="${4:-false}"
     
     if [[ -z "$repo_name" ]]; then
@@ -306,8 +299,8 @@ gitea_create_repository() {
 
 # Local Git functions
 local_git_init() {
-    local repo_path="$command"
-    local repo_name="$account_name"
+    local repo_path="$1"
+    local repo_name="$2"
 
     if [[ -z "$repo_path" || -z "$repo_name" ]]; then
         print_error "Repository path and name are required"
@@ -366,9 +359,9 @@ local_git_list() {
 
 # Repository management across platforms
 clone_repository() {
-    local platform="$command"
-    local account_name="$account_name"
-    local repo_identifier="$target"
+    local platform="$1"
+    local account_name="$2"
+    local repo_identifier="$3"
     local local_path="${4:-$HOME/git}"
 
     if [[ -z "$platform" || -z "$account_name" || -z "$repo_identifier" ]]; then
@@ -415,7 +408,7 @@ clone_repository() {
 
 # Start MCP servers for Git platforms
 start_mcp_servers() {
-    local platform="$command"
+    local platform="$1"
     local port="${2:-3006}"
 
     print_info "Starting MCP server for $platform on port $port"
@@ -453,8 +446,8 @@ start_mcp_servers() {
 
 # Comprehensive repository audit
 audit_repositories() {
-    local platform="$command"
-    local account_name="$account_name"
+    local platform="$1"
+    local account_name="$2"
 
     print_info "Auditing repositories for $platform account: $account_name"
     echo ""
@@ -519,31 +512,20 @@ show_help() {
 
 # Main script logic
 main() {
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    # Assign positional parameters to local variables
-    local platform="$account_name"
-    local account_name="$target"
-    local repo_name="$options"
-    local description="$param5"
+    local subcommand="${1:-help}"
+    local platform="${2:-}"
+    local account_name="${3:-}"
+    local repo_name="${4:-}"
+    local description="${5:-}"
+
+    if [[ "$subcommand" == "help" ]]; then
+        show_help
+        return 0
+    fi
 
     check_dependencies
 
-    case "$command" in
+    case "$subcommand" in
         "platforms")
             list_platforms
             ;;
@@ -588,5 +570,3 @@ main() {
 }
 
 main "$@"
-
-return 0

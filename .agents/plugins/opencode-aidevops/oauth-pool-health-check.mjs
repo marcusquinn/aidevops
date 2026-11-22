@@ -10,7 +10,7 @@
  * @module oauth-pool-health-check
  */
 
-import { getAccounts, getPendingToken } from "./oauth-pool-storage.mjs";
+import { getAccounts, getPendingToken, poolAccountLabel } from "./oauth-pool-storage.mjs";
 import {
   ANTHROPIC_USER_AGENT, OPENCODE_USER_AGENT,
   getEndpointCooldownValue,
@@ -73,7 +73,7 @@ async function checkAccountTokenValidity(prov, account) {
 }
 
 async function formatAccountCheckLines(prov, account, now) {
-  const lines = [`  ${account.email}:`];
+  const lines = [`  ${poolAccountLabel(account)}:`];
   const expiresIn = account.expires - now;
   lines.push(expiresIn <= 0
     ? `    Token: EXPIRED (${new Date(account.expires).toLocaleString()})`

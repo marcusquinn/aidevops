@@ -368,6 +368,9 @@ class RepoLayoutMigrationTest(unittest.TestCase):
         fresh = json.loads(self._run("prune", "--state-dir", str(self.state)).stdout)
         self.assertEqual(fresh["pruned"], [])
 
+        # Retention 0 expires only receipts finished before the current whole
+        # second, so both retention-0 prunes must run after that second ends.
+        time.sleep(1.1)
         dry_run = json.loads(
             self._run("prune", "--state-dir", str(self.state), "--retention-days", "0").stdout
         )
@@ -375,7 +378,6 @@ class RepoLayoutMigrationTest(unittest.TestCase):
         self.assertEqual(len(dry_run["pruned"][0]["files"]), len(database_backups))
         self.assertTrue(all(path.exists() for path in database_backups))
 
-        time.sleep(1.1)
         pruned = json.loads(
             self._run(
                 "prune", "--state-dir", str(self.state), "--retention-days", "0", "--apply"

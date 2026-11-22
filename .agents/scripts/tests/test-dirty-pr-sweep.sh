@@ -181,6 +181,23 @@ case "$decision" in
 	*) print_result "close path: >7d old + >3d idle → close" 1 "got: $decision" ;;
 esac
 
+# GH#36112: a held, Ref-only Pulse TODO handoff is owned by the merge pass;
+# its Ref line must not drive rebase, conflict routing, close or notify.
+PR_TODO_HANDOFF=$(mkpr 210 "DIRTY" \
+	"$(iso_n_seconds_ago 3600)" \
+	"$(iso_n_seconds_ago 1800)" \
+	"marcusquinn" \
+	"aidevops/pulse-todo-0123456789abcdef" \
+	'["origin:worker","hold-for-review"]' \
+	"## Related issues
+
+- Ref #42")
+decision=$(_dirty_pr_classify "$PR_TODO_HANDOFF" "test/repo" "" "marcusquinn")
+case "$decision" in
+	"skip|pulse-todo-handoff-owned-by-merge-pass") print_result "Pulse TODO handoff → skip (merge pass supersedes)" 0 ;;
+	*) print_result "Pulse TODO handoff → skip (merge pass supersedes)" 1 "got: $decision" ;;
+esac
+
 # =============================================================================
 # Test 3: notify path — non-TODO conflicts
 # =============================================================================

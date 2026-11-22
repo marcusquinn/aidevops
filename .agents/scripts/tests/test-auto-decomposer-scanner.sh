@@ -9,10 +9,10 @@
 # Verifies:
 #   1. auto-decomposer-scanner.sh is executable and shellcheck-clean
 #   2. help subcommand prints the usage block with all three subcommands
-#   3. Scanner is wired into pulse-simplification.sh via _run_auto_decomposer_scanner
+#   3. Scanner is wired into pulse-simplification-review.sh via _run_auto_decomposer_scanner
 #   4. Wrapper uses per-parent contributor-role filter (t2573: no global last-run gate)
-#   5. Wrapper is registered in pulse-dispatch-engine.sh via run_stage_with_timeout
-#   6. Constants AUTO_DECOMPOSER_INTERVAL / AUTO_DECOMPOSER_PARENT_STATE exist in pulse-wrapper.sh
+#   5. Wrapper is registered in pulse-dispatch-engine-housekeeping.sh with a timeout
+#   6. Constants AUTO_DECOMPOSER_INTERVAL / AUTO_DECOMPOSER_PARENT_STATE exist in pulse-wrapper-config.sh
 #   7. Scanner uses worker-ready body template (5+ of 7 t2417 headings)
 #   8. Scanner dedupes via title + source:auto-decomposer label
 #   9. Scanner generator marker is pre-dispatch-validator friendly
@@ -82,7 +82,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCANNER="$SCRIPT_DIR/auto-decomposer-scanner.sh"
 WRAPPER="$SCRIPT_DIR/pulse-simplification-review.sh"
 SCAN_LIB="$SCRIPT_DIR/pulse-simplification-scan.sh"
-ENGINE="$SCRIPT_DIR/pulse-dispatch-engine.sh"
+ENGINE="$SCRIPT_DIR/pulse-dispatch-engine-housekeeping.sh"
 BOOTSTRAP="$SCRIPT_DIR/pulse-wrapper-config.sh"
 
 for required in "$SCANNER" "$WRAPPER" "$SCAN_LIB" "$ENGINE" "$BOOTSTRAP"; do
@@ -189,7 +189,7 @@ assert_grep_fixed \
 	'origin:worker' \
 	"$SCANNER"
 
-# --- Wrapper wiring (pulse-simplification.sh) ---
+# --- Wrapper wiring (pulse-simplification-review.sh) ---
 
 assert_grep \
 	"8: _run_auto_decomposer_scanner wrapper defined" \
@@ -214,11 +214,11 @@ assert_grep_fixed \
 # --- Dispatch engine registration ---
 
 assert_grep \
-	"12: dispatch engine registers _run_auto_decomposer_scanner via run_stage_with_timeout" \
-	'_run_optional_stage_with_timeout "auto_decomposer_scanner".*_run_auto_decomposer_scanner' \
+	"12: housekeeping registers _run_auto_decomposer_scanner with an optional stage timeout" \
+	'_pulse_run_optional_stage_with_timeout "auto_decomposer_scanner".*_run_auto_decomposer_scanner' \
 	"$ENGINE"
 
-# --- Constants in pulse-wrapper.sh bootstrap ---
+# --- Constants in pulse-wrapper-config.sh bootstrap ---
 
 assert_grep \
 	"13a: AUTO_DECOMPOSER_PARENT_STATE constant defined in pulse-wrapper (t2573)" \
@@ -226,7 +226,7 @@ assert_grep \
 	"$BOOTSTRAP"
 
 assert_grep \
-	"13b: AUTO_DECOMPOSER_INTERVAL constant defined with 604800 default (7d per-parent gate, t2573)" \
+	"13b: AUTO_DECOMPOSER_INTERVAL defaults to the parent re-file gate" \
 	'^AUTO_DECOMPOSER_INTERVAL="\$\{AUTO_DECOMPOSER_INTERVAL:-\$\{PARENT_TASK_REFILE_GATE_SECONDS\}\}"' \
 	"$BOOTSTRAP"
 

@@ -231,5 +231,5 @@ client.google_maps_reviews(
 ## Related
 
 - [Crawl4AI](../browser/crawl4ai.md) — Web crawling for AI/LLM applications
-- [Stagehand](../browser/stagehand.md) — AI-powered browser automation
+- [Playwright](../browser/playwright.md) — Browser automation
 - [Context7](../context/context7.md) — Library documentation lookup

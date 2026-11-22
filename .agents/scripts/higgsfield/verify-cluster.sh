@@ -69,31 +69,31 @@ else
 	fail=1
 fi
 
-if node -e "
-import('./higgsfield-video.mjs').then(m => {
-  const required = ['generateVideo','generateLipsync','batchVideo','batchLipsync','downloadFromHistory','downloadVideoFromApiData','matchJobSetsToSubmittedJobs','downloadMatchedVideos'];
-  const missing = required.filter(k => typeof m[k] === 'undefined');
-  if (missing.length) { console.error('MISSING from video:', missing.join(',')); process.exit(1); }
-  console.log('VIDEO_EXPORTS_OK');
+# Each entry is "module|comma-separated exports" for the module that owns them
+# since the GH#19223/GH#35388 decompositions.
+owner_checks=(
+	"higgsfield-video.mjs|generateVideo,downloadVideoFromApiData,downloadVideoFromHistory"
+	"higgsfield-lipsync.mjs|generateLipsync"
+	"higgsfield-batch-video.mjs|batchVideo,batchLipsync,downloadFromHistory,pollAndDownloadVideos,submitVideoJobOnPage,matchJobSetsToSubmittedJobs,downloadMatchedVideos"
+	"higgsfield-commands.mjs|seedBracket,useApp,screenshot,checkCredits,listAssets,manageAssets"
+	"higgsfield-studio-commands.mjs|mixedMediaPreset,motionPreset,cinemaStudio,motionControl,editImage,upscale,editVideo,storyboard,vibeMotion,aiInfluencer,createCharacter,featurePage"
+	"higgsfield-pipeline.mjs|pipeline"
+	"higgsfield-asset-chain.mjs|assetChain"
+	"higgsfield-tests.mjs|authHealthCheck,smokeTest,runSelfTests"
+)
+for entry in "${owner_checks[@]}"; do
+	module="${entry%%|*}"
+	required="${entry#*|}"
+	if ! MODULE="$module" REQUIRED="$required" node -e "
+import('./' + process.env.MODULE).then(m => {
+  const missing = process.env.REQUIRED.split(',').filter(k => typeof m[k] === 'undefined');
+  if (missing.length) { console.error('MISSING from ' + process.env.MODULE + ':', missing.join(',')); process.exit(1); }
+  console.log('EXPORTS_OK ' + process.env.MODULE);
 }).catch(e => { console.error(e.message); process.exit(1); });
 " 2>&1; then
-	:
-else
-	fail=1
-fi
-
-if node -e "
-import('./higgsfield-commands.mjs').then(m => {
-  const required = ['pipeline','seedBracket','useApp','screenshot','checkCredits','listAssets','manageAssets','assetChain','mixedMediaPreset','motionPreset','cinemaStudio','motionControl','editImage','upscale','editVideo','storyboard','vibeMotion','aiInfluencer','createCharacter','featurePage','authHealthCheck','smokeTest','runSelfTests'];
-  const missing = required.filter(k => typeof m[k] === 'undefined');
-  if (missing.length) { console.error('MISSING from commands:', missing.join(',')); process.exit(1); }
-  console.log('COMMANDS_EXPORTS_OK');
-}).catch(e => { console.error(e.message); process.exit(1); });
-" 2>&1; then
-	:
-else
-	fail=1
-fi
+		fail=1
+	fi
+done
 
 echo
 echo "=== 4. qlty smells in cluster ==="

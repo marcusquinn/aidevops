@@ -62,6 +62,11 @@ export LOGFILE
 LARGE_FILE_LINE_THRESHOLD=2000
 export LARGE_FILE_LINE_THRESHOLD
 
+# GH#38785: keep tip-object fetch state and advisories inside the sandbox.
+PULSE_TIP_OBJECTS_STATE_DIR="${TMP}/supervisor"
+PULSE_CANONICAL_RECOVERY_ADVISORY_DIR="${TMP}/advisories"
+export PULSE_TIP_OBJECTS_STATE_DIR PULSE_CANONICAL_RECOVERY_ADVISORY_DIR
+
 # Disable SSH/GPG signing for all git operations in this test process.
 # Exported so all git subprocesses inherit these settings.
 # GIT_CONFIG_GLOBAL=/dev/null prevents reading ~/.gitconfig which has
@@ -379,6 +384,115 @@ test_triage_refresh_before_issue_targets_large_files() {
 	return 0
 }
 
+# GH#38785: worker merges create the remote tip on the forge, so a lagging
+# canonical mirror lacks its objects. Refresh must fetch them into the pulse
+# sidecar cache (the real canonical Git guard, active here, forbids canonical
+# fetches) without touching canonical refs, HEAD, index, worktree or objects;
+# the gate must then measure the pinned blob from the cache.
+test_refresh_fetches_absent_tip_objects_without_ref_changes() {
+	local sandbox="${TMP}/sandbox-absent"
+	_setup_git_sandbox "$sandbox" || {
+		print_result "test_refresh_fetches_absent_tip_objects_without_ref_changes" 1 "sandbox setup failed"
+		return 0
+	}
+	# Advance the remote again after the sandbox last fetched (a worker merge).
+	local i
+	for i in $(seq 1 400); do
+		printf '# line %d\n' "$i"
+	done >"${sandbox}.work-copy/large-target.sh"
+	_git_test -C "${sandbox}.work-copy" commit -q -am "worker merge: reduce to 400 lines"
+	_git_test -C "${sandbox}.work-copy" push -q
+	local remote_sha before_refs before_head before_index before_objects absent_log="${TMP}/absent.log"
+	remote_sha=$(_git_test -C "${sandbox}.work-copy" rev-parse HEAD)
+	before_objects=$(_git_test -C "$sandbox" count-objects -v)
+	before_refs=$(_git_test -C "$sandbox" show-ref)
+	before_head=$(_git_test -C "$sandbox" rev-parse HEAD)
+	before_index=$(_git_test hash-object "${sandbox}/.git/index")
+	if _git_test -C "$sandbox" cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+		print_result "test_refresh_fetches_absent_tip_objects_without_ref_changes" 1 \
+			"pre-condition: remote tip unexpectedly present locally"
+		return 0
+	fi
+
+	local gate_rc=0
+	(
+		# shellcheck disable=SC1090
+		source "${WRAPPER_SCRIPT}" --self-check >/dev/null 2>&1 || true
+		LOGFILE="$absent_log"
+		# Run under the real canonical Git guard: register the sandbox as a
+		# managed root and put the repo's guard shim first on PATH, as the
+		# pulse runtime does. The probe proves the guard blocks canonical fetch.
+		printf '{"initialized_repos":[{"path":"%s"}]}\n' "$sandbox" >"${TMP}/guard-repos.json"
+		export AIDEVOPS_REPOS_FILE="${TMP}/guard-repos.json"
+		PATH="${SCRIPT_DIR_TEST}/..:${PATH}"
+		hash -r
+		local probe_rc=0
+		git -C "$sandbox" fetch aidevops-guard-probe-missing >/dev/null 2>&1 || probe_rc=$?
+		printf 'guard-probe-rc=%s\n' "$probe_rc" >>"$LOGFILE"
+		# The sourced wrapper declares the associative sentinel; reset it only.
+		_PULSE_REFRESHED_THIS_CYCLE=()
+		_pulse_refresh_repo "$sandbox" 2>>"$LOGFILE"
+		_large_file_gate_issue_labels() { printf ''; return 0; }
+		_large_file_gate_issue_title() { printf 'Issue 9998'; return 0; }
+		_large_file_gate_apply() { printf 'apply\n' >>"$LOGFILE"; return 0; }
+		_large_file_gate_clear_stale_label() { printf 'clear\n' >>"$LOGFILE"; return 0; }
+		_issue_targets_large_files "9998" "owner/repo" \
+			"## How"$'\n'"- EDIT: \`large-target.sh\`" "$sandbox" "true"
+	) || gate_rc=$?
+
+	local failures="" cache_dir=""
+	cache_dir=$(printf '%s\n' "${PULSE_TIP_OBJECTS_STATE_DIR}/canonical-object-cache/sandbox-absent-"*.git)
+	[[ -d "$cache_dir" ]] || failures+=" no-cache-dir"
+	_git_test -C "$cache_dir" cat-file -e "${remote_sha}^{commit}" 2>/dev/null || failures+=" tip-absent-from-cache"
+	! _git_test -C "$sandbox" cat-file -e "${remote_sha}^{commit}" 2>/dev/null || failures+=" canonical-objects-written"
+	[[ "$(_git_test -C "$sandbox" count-objects -v)" == "$before_objects" ]] || failures+=" canonical-object-count-changed"
+	grep -Fxq 'guard-probe-rc=42' "$absent_log" || failures+=" guard-inactive($(grep -F 'guard-probe-rc=' "$absent_log"))"
+	[[ "$(_git_test -C "$sandbox" show-ref)" == "$before_refs" ]] || failures+=" refs-changed"
+	[[ "$(_git_test -C "$sandbox" rev-parse HEAD)" == "$before_head" ]] || failures+=" head-changed"
+	[[ "$(_git_test hash-object "${sandbox}/.git/index")" == "$before_index" ]] || failures+=" index-changed"
+	[[ -z "$(_git_test -C "$sandbox" status --porcelain)" ]] || failures+=" worktree-dirty"
+	[[ "$gate_rc" -eq 1 ]] || failures+=" gate_rc=${gate_rc}"
+	grep -Fq "fetched remote tip objects ${remote_sha}" "$absent_log" || failures+=" no-fetch-log"
+	grep -Fq "measured #9998 targets from pinned remote blob ${remote_sha}" "$absent_log" || failures+=" no-pinned-measurement"
+	! grep -Fq 'deferring #9998' "$absent_log" || failures+=" deferred"
+	! grep -Fxq 'apply' "$absent_log" || failures+=" gate-applied"
+	print_result "test_refresh_fetches_absent_tip_objects_without_ref_changes" \
+		"$([[ -z "$failures" ]] && printf 0 || printf 1)" "failures:${failures}"
+	return 0
+}
+
+# GH#38785: a persistent fetch failure escalates to a local advisory instead
+# of a silent benign deferral, and clears itself after recovery.
+test_tip_object_fetch_failure_escalates_to_local_advisory() {
+	local repo="${TMP}/advisory-repo"
+	local twin_repo="${TMP}/other-team/advisory-repo"
+	local failures=""
+	(
+		# shellcheck disable=SC1090
+		source "${WRAPPER_SCRIPT}" --self-check >/dev/null 2>&1 || true
+		PULSE_TIP_OBJECTS_ADVISORY_AFTER_SECONDS=60
+		key=$(_pulse_tip_object_key "$repo" "$repo") || exit 10
+		since_file="${PULSE_TIP_OBJECTS_STATE_DIR}/canonical-tip-objects-${key}.since"
+		advisory="${PULSE_CANONICAL_RECOVERY_ADVISORY_DIR}/canonical-tip-objects-${key}.advisory"
+		_pulse_refresh_tip_objects_advisory "$repo" "failed"
+		[[ -f "$since_file" && ! -f "$advisory" ]] || exit 11
+		printf '%s\n' "$(($(date +%s) - 120))" >"$since_file"
+		# A same-basename repo succeeding must not clear this repo's timer.
+		_pulse_refresh_tip_objects_advisory "$twin_repo" "ok"
+		[[ -f "$since_file" ]] || exit 16
+		_pulse_refresh_tip_objects_advisory "$repo" "failed"
+		[[ -f "$advisory" ]] || exit 12
+		grep -Fq 'advisory-repo: remote tip objects unavailable' "$advisory" || exit 13
+		! grep -Fq "$TMP" "$advisory" || exit 14
+		_pulse_refresh_tip_objects_advisory "$repo" "ok"
+		[[ ! -f "$advisory" && ! -f "$since_file" ]] || exit 15
+		exit 0
+	) || failures="rc=$?"
+	print_result "test_tip_object_fetch_failure_escalates_to_local_advisory" \
+		"$([[ -z "$failures" ]] && printf 0 || printf 1)" "$failures"
+	return 0
+}
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -389,6 +503,8 @@ test_nonexistent_path_is_noop
 test_refresh_pulls_before_gate_measures
 test_sentinel_prevents_double_pull
 test_triage_refresh_before_issue_targets_large_files
+test_refresh_fetches_absent_tip_objects_without_ref_changes
+test_tip_object_fetch_failure_escalates_to_local_advisory
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 

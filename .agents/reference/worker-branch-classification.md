@@ -181,7 +181,7 @@ issue-numbered worktree exists.
 
 **What changed (PR for GH#21355):**
 
-1. `headless-runtime-lib.sh::append_worker_headless_contract` — contract bumped
+1. `headless-runtime-contract.sh::append_worker_headless_contract` — contract bumped
    from V6 to V7. The contradictory "If not set, create a worktree yourself via
    `worktree-helper.sh add`" clause is removed. The prohibition is now
    unconditional with rationale: "Pre-creation is guaranteed by the dispatcher
@@ -218,7 +218,7 @@ catches this as an explicit fatal rather than a silent wrong-directory error.
 - Phase 5 / t2820 — log-tail-based reclassification of `worker_failed`:
   `reference/worker-diagnostics.md:375`
 - t2899 — default-branch guard on signal 2: PR #21045
-- Headless contract: `headless-runtime-lib.sh::append_worker_headless_contract`
+- Headless contract: `headless-runtime-contract.sh::append_worker_headless_contract`
 - Pre-creation: `pulse-dispatch-worker-launch.sh::_dlw_precreate_worktree`
 - Classification: `headless-runtime-helper.sh::_worker_produced_output`
 - Orphan log emitter: `headless-runtime-helper.sh::_handle_worker_branch_orphan`

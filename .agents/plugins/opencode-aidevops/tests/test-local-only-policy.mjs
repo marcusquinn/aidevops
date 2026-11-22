@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtempSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,8 +18,10 @@ import {
   assertLocalOnlyEgress,
   assertLocalOnlyToolCall,
   captureLocalOnlyMcpConfig,
+  isLocalProvider,
   isLoopbackDestination,
   loadLocalOnlyPolicy,
+  localProvidersOverrideFile,
   parseLocalProviders,
 } from "../local-only-policy.mjs";
 import { selectConnectedRoutingCandidate } from "../model-routing.mjs";
@@ -28,9 +30,17 @@ const PLUGIN_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO_ROOT = resolve(PLUGIN_DIR, "../../..");
 const SENTINEL = "SENTINEL-GH34125-must-not-leave-device";
 
+// No operator override, so the shared list applies whatever the developer's
+// own ~/.config contains. Every bound fixture uses it unless it builds its own
+// override home; without it a developer override changes the local list.
+const NO_OVERRIDE_HOME = mkdtempSync(join(tmpdir(), "aidevops-no-override-"));
+process.on("exit", () => rmSync(NO_OVERRIDE_HOME, { recursive: true, force: true }));
+const NO_OVERRIDE_ENV = { HOME: NO_OVERRIDE_HOME, XDG_CONFIG_HOME: "" };
+const BOUND_SHARED = { ...NO_OVERRIDE_ENV, AIDEVOPS_RUNTIME_POLICY: "local-only" };
+
 test("literal shell readers deny credential paths and symlink aliases", () => {
   const root = mkdtempSync(join(tmpdir(), "local-only-reader-"));
-  const policy = loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: "local-only" });
+  const policy = loadLocalOnlyPolicy(BOUND_SHARED);
   try {
     writeFileSync(join(root, ".env"), SENTINEL);
     writeFileSync(join(root, "public.txt"), "public fixture");
@@ -54,27 +64,32 @@ test("binding: unset and provider-* opt-outs are unbound; local tokens and unkno
   assert.equal(loadLocalOnlyPolicy({}).bound, false);
   assert.equal(loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: "provider-ai" }).bound, false);
   for (const value of ["local-only", "LOCAL-LLM-ONLY", " local-ai "]) {
-    const policy = loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: value });
+    const policy = loadLocalOnlyPolicy({ ...NO_OVERRIDE_ENV, AIDEVOPS_RUNTIME_POLICY: value });
     assert.equal(policy.bound, true, value);
     assert.equal(policy.reason, "declared");
   }
-  const unknown = loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: "lcoal-only" });
+  const unknown = loadLocalOnlyPolicy({ ...NO_OVERRIDE_ENV, AIDEVOPS_RUNTIME_POLICY: "lcoal-only" });
   assert.equal(unknown.bound, true);
   assert.equal(unknown.reason, "unrecognised-policy-fails-closed");
 });
 
 test("binding is frozen and the shared provider list matches the headless helper", () => {
-  const policy = loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: "local-only" });
+  const policy = loadLocalOnlyPolicy(BOUND_SHARED);
   assert.ok(Object.isFrozen(policy) && Object.isFrozen(policy.localProviders));
   assert.throws(() => { policy.bound = false; }, TypeError);
   assert.equal(LOCAL_PROVIDERS_FILE, join(REPO_ROOT, ".agents/configs/local-ai-providers.conf"));
+  assert.equal(policy.localProvidersSource, "shared");
   assert.deepEqual([...policy.localProviders], ["local", "ollama", "llama", "llama.cpp", "llamacpp"]);
   assert.deepEqual(parseLocalProviders("# c\n ollama # x\n\nlocal\n"), ["ollama", "local"]);
+  assert.deepEqual(parseLocalProviders("ollama\nbad/id\n"), [], "one invalid entry invalidates the list");
+  assert.deepEqual(parseLocalProviders("ollama\nopen ai\n"), [], "internal spaces must not create a provider ID");
+  assert.deepEqual(parseLocalProviders("ollama\nopen\tai\n"), [], "internal tabs invalidate the list");
+  assert.deepEqual(parseLocalProviders(`${"x".repeat(65)}\n`), []);
 });
 
 test("missing provider list fails closed: a bound session treats nothing as local", () => {
   const policy = loadLocalOnlyPolicy(
-    { AIDEVOPS_RUNTIME_POLICY: "local-only" },
+    BOUND_SHARED,
     { providersFile: join(tmpdir(), "aidevops-missing-local-providers.conf") },
   );
   assert.throws(
@@ -83,10 +98,98 @@ test("missing provider list fails closed: a bound session treats nothing as loca
   );
 });
 
+// GH#35723: operator-owned override at ${XDG_CONFIG_HOME:-~/.config}/aidevops.
+function overrideFixture(t, { content = "custom-local\n", mode = 0o600, symlink = false } = {}) {
+  const home = mkdtempSync(join(tmpdir(), "aidevops-provider-override-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const file = localProvidersOverrideFile({ HOME: home });
+  mkdirSync(dirname(file), { recursive: true });
+  const target = symlink ? join(home, "real-providers.conf") : file;
+  writeFileSync(target, content, { mode });
+  chmodSync(target, mode);
+  if (symlink) symlinkSync(target, file);
+  return { home, file, env: { AIDEVOPS_RUNTIME_POLICY: "local-only", HOME: home } };
+}
+
+function helperAllows(env, model) {
+  const result = spawnSync("bash", [join(REPO_ROOT, ".agents/scripts/vault-data-policy-helper.sh"), "check",
+    "--model", model, "--title", "t", "--prompt", "p"], { encoding: "utf8", env: { PATH: process.env.PATH, ...env } });
+  assert.ok(result.status === 0 || result.status === 64, result.stderr);
+  return result.status === 0;
+}
+
 const LOCAL_URL = "http://127.0.0.1:11434/v1";
+const CUSTOM_LOCAL = { model: { providerID: "custom-local", api: { url: "http://127.0.0.1:8765/v1" } } };
+const OLLAMA_LOCAL = { model: { providerID: "ollama", api: { url: LOCAL_URL } } };
+
+test("operator override replaces the shared list, keeps the loopback check and matches the headless helper", (t) => {
+  const f = overrideFixture(t);
+  const policy = loadLocalOnlyPolicy(f.env);
+  assert.equal(policy.localProvidersSource, "operator");
+  assert.deepEqual([...policy.localProviders], ["custom-local"]);
+  assert.doesNotThrow(() => assertLocalOnlyEgress(policy, CUSTOM_LOCAL, "chat"));
+  assert.throws(() => assertLocalOnlyEgress(policy, OLLAMA_LOCAL, "chat"), /provider "ollama"/);
+  assert.throws(() => assertLocalOnlyEgress(policy,
+    { model: { providerID: "custom-local", api: { url: "https://api.example.com/v1" } } }, "chat"), /non-loopback/);
+  assert.equal(helperAllows(f.env, "custom-local/m"), true);
+  assert.equal(helperAllows(f.env, "ollama/m"), false);
+  writeFileSync(f.file, "ollama\n");
+  assert.deepEqual([...policy.localProviders], ["custom-local"], "loaded policy is frozen");
+  const xdg = join(f.home, "xdg");
+  assert.equal(loadLocalOnlyPolicy({ ...f.env, XDG_CONFIG_HOME: xdg }).localProvidersSource, "shared");
+  assert.equal(helperAllows({ ...f.env, XDG_CONFIG_HOME: xdg }, "ollama/m"), true);
+});
+
+test("present but untrusted override fails closed in both gates; it never falls back to the shared list", (t) => {
+  const cases = {
+    "group/world-readable mode": { mode: 0o644 },
+    "group-writable mode": { mode: 0o620 },
+    "symlink to a 0600 file": { symlink: true },
+    "invalid provider ID": { content: "custom-local\nopenai/gpt\n" },
+    "internal provider space": { content: "custom-local\nopen ai\n" },
+    "internal provider tab": { content: "custom-local\nopen\tai\n" },
+    "oversized file": { content: `# ${"x".repeat(65537)}\ncustom-local\n` },
+  };
+  for (const [name, options] of Object.entries(cases)) {
+    const f = overrideFixture(t, options);
+    const policy = loadLocalOnlyPolicy(f.env);
+    assert.deepEqual([...policy.localProviders], [], name);
+    for (const input of [CUSTOM_LOCAL, OLLAMA_LOCAL]) {
+      assert.throws(() => assertLocalOnlyEgress(policy, input, "chat"), { code: "VAULT_POLICY_DENIED" }, name);
+    }
+    assert.equal(helperAllows(f.env, "custom-local/m"), false, name);
+    assert.equal(helperAllows(f.env, "ollama/m"), false, name);
+    assert.equal(helperAllows(f.env, "openai/m"), false, name);
+  }
+  const absent = overrideFixture(t);
+  rmSync(absent.file);
+  assert.equal(loadLocalOnlyPolicy(absent.env).localProvidersSource, "shared");
+  assert.equal(helperAllows(absent.env, "ollama/m"), true);
+  assert.equal(helperAllows(absent.env, "custom-local/m"), false);
+  assert.equal(isLocalProvider(loadLocalOnlyPolicy({ ...absent.env, AIDEVOPS_RUNTIME_POLICY: "" }), "custom-local"), false);
+});
+
+test("inaccessible configuration root fails closed in both gates", {
+  skip: !process.getuid || process.getuid() === 0,
+}, (t) => {
+  const f = overrideFixture(t);
+  const configHome = join(f.home, ".config");
+  chmodSync(configHome, 0o600);
+  try {
+    for (const env of [f.env, { ...f.env, XDG_CONFIG_HOME: configHome }]) {
+      const policy = loadLocalOnlyPolicy(env);
+      assert.equal(policy.localProvidersSource, "operator-invalid");
+      assert.deepEqual([...policy.localProviders], []);
+      assert.equal(helperAllows(env, "custom-local/m"), false);
+      assert.equal(helperAllows(env, "ollama/m"), false, "must not fall back to shared providers");
+    }
+  } finally {
+    chmodSync(configHome, 0o700);
+  }
+});
 
 test("egress gate: V1 and V2 input shapes; unknown provider is non-local; unbound is a no-op", () => {
-  const bound = loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: "local-only" });
+  const bound = loadLocalOnlyPolicy(BOUND_SHARED);
   assert.doesNotThrow(() => assertLocalOnlyEgress(bound, { model: { providerID: "ollama", api: { url: LOCAL_URL } } }, "chat"));
   assert.doesNotThrow(() => assertLocalOnlyEgress(
     bound, { provider: { info: { id: "local" }, options: { baseURL: "http://localhost:8080" } } }, "chat"));
@@ -100,7 +203,7 @@ test("egress gate: V1 and V2 input shapes; unknown provider is non-local; unboun
 });
 
 test("egress gate: a remote endpoint under a local provider name is refused (security review GH#34125)", () => {
-  const bound = loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: "local-only" });
+  const bound = loadLocalOnlyPolicy(BOUND_SHARED);
   const remoteUnderLocalName = [
     // V1: options.baseURL overrides model.api.url, as in OpenCode resolveSDK.
     [{ model: { providerID: "ollama", api: { url: LOCAL_URL } }, provider: { options: { baseURL: "https://api.example.com/v1" } } }, "chat"],
@@ -129,7 +232,7 @@ test("bound routing never selects a non-local candidate; no local candidate yiel
       { id: "anthropic", models: { fallback: { id: "fallback" } } },
     ],
   };
-  const bound = loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: "local-only" });
+  const bound = loadLocalOnlyPolicy(BOUND_SHARED);
   assert.equal(selectConnectedRoutingCandidate(routing, "standard", providerState, bound), "ollama/qwen");
   const noLocal = { connected: ["openai", "anthropic"], all: providerState.all };
   assert.equal(selectConnectedRoutingCandidate(routing, "standard", noLocal, bound), "");
@@ -142,8 +245,9 @@ test("bound routing never selects a non-local candidate; no local candidate yiel
 // Real plugin factory in an isolated child, driven in OpenCode request order:
 // chat.params runs before the provider stream (session/llm/request.ts), and a
 // thrown hook aborts the request (plugin/index.ts Effect.promise).
-function runPluginRequest(providerID, runtimePolicy, apiUrl = LOCAL_URL, agent = "build") {
+function runPluginRequest(providerID, runtimePolicy, apiUrl = LOCAL_URL, agent = "build", setupHome = () => {}) {
   const home = mkdtempSync(join(tmpdir(), "aidevops-local-only-home-"));
+  setupHome(home);
   const script = [
     "const [pluginUrl, directory, providerID, sentinel, apiUrl, agent] = process.argv.slice(1);",
     "const sent = [];",
@@ -167,22 +271,51 @@ function runPluginRequest(providerID, runtimePolicy, apiUrl = LOCAL_URL, agent =
       { cwd: REPO_ROOT, encoding: "utf8", env, timeout: 60000 },
     );
     assert.equal(result.status, 0, result.stderr);
-    return JSON.parse(result.stdout);
+    const evidence = JSON.parse(result.stdout);
+    let log = "";
+    try { log = readFileSync(join(home, ".aidevops", "logs", "opencode-plugin.log"), "utf8"); } catch { /* no log written */ }
+    return { ...evidence, log: log.split("\n").filter((line) => line.includes("local-only:")) };
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
 }
 
 test("sentinel: bound session blocks a remote provider before send, even after env is cleared", () => {
-  const evidence = runPluginRequest("anthropic", "local-only");
+  const evidence = runPluginRequest("anthropic", "local-only", LOCAL_URL, "title");
   assert.match(evidence.denial, /^VAULT_POLICY_DENIED: /);
   assert.ok(!evidence.denial.includes(SENTINEL), "denial must be content-free");
   assert.deepEqual(evidence.sent, []);
+  const logged = evidence.log.join("\n");
+  assert.match(logged, /local-only: bound reason=declared localProvidersSource=\w+ providers=\d+/);
+  assert.match(logged, /local-only: denied surface=chat agent=title provider=anthropic session=ses_t reason=non-local-provider/);
+  assert.ok(!logged.includes(SENTINEL) && !logged.includes(LOCAL_URL), "log must be content-free");
 });
 
 test("sentinel: bound session allows a local provider; unbound session is unchanged", () => {
-  assert.deepEqual(runPluginRequest("ollama", "local-only"), { denial: "", sent: [SENTINEL] });
-  assert.deepEqual(runPluginRequest("anthropic", "", "https://api.anthropic.com/v1"), { denial: "", sent: [SENTINEL] });
+  const local = runPluginRequest("ollama", "local-only");
+  assert.deepEqual({ denial: local.denial, sent: local.sent }, { denial: "", sent: [SENTINEL] });
+  assert.ok(!local.log.some((line) => line.includes("denied")), "allowed request logs no denial");
+  const unbound = runPluginRequest("anthropic", "", "https://api.anthropic.com/v1");
+  assert.deepEqual({ denial: unbound.denial, sent: unbound.sent }, { denial: "", sent: [SENTINEL] });
+  assert.ok(!unbound.log.some((line) => line.includes("local-only: bound")), "unbound process logs no bound line");
+});
+
+test("sentinel: real plugin honours a 0600 operator override and denies everything for a 0644 copy", () => {
+  const writeOverride = (mode) => (home) => {
+    const file = localProvidersOverrideFile({ HOME: home });
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, "custom-local\n", { mode });
+    chmodSync(file, mode);
+  };
+  const customUrl = "http://127.0.0.1:8765/v1";
+  const custom = runPluginRequest("custom-local", "local-only", customUrl, "build", writeOverride(0o600));
+  assert.deepEqual({ denial: custom.denial, sent: custom.sent }, { denial: "", sent: [SENTINEL] });
+  const replaced = runPluginRequest("ollama", "local-only", LOCAL_URL, "build", writeOverride(0o600));
+  assert.match(replaced.denial, /provider "ollama"/);
+  assert.deepEqual(replaced.sent, []);
+  const insecure = runPluginRequest("custom-local", "local-only", customUrl, "build", writeOverride(0o644));
+  assert.match(insecure.denial, /VAULT_POLICY_DENIED/);
+  assert.deepEqual(insecure.sent, []);
 });
 
 test("sentinel: bound session blocks a remote endpoint configured under a local provider name", () => {
@@ -190,6 +323,9 @@ test("sentinel: bound session blocks a remote endpoint configured under a local 
   assert.match(evidence.denial, /non-loopback or unknown endpoint/);
   assert.ok(!evidence.denial.includes("api.example.com"), "denial must not echo the endpoint");
   assert.deepEqual(evidence.sent, []);
+  const logged = evidence.log.join("\n");
+  assert.match(logged, /denied surface=chat agent=build provider=ollama session=ses_t reason=non-loopback-endpoint/);
+  assert.ok(!logged.includes("api.example.com"), "log must not echo the endpoint");
 });
 
 test("delegated specialist with an explicit remote model is denied at the real chat.params hook", () => {
@@ -199,7 +335,7 @@ test("delegated specialist with an explicit remote model is denied at the real c
 });
 
 test("tool policy rejects opaque execution, wrappers, unknown MCP and unsafe curl options", () => {
-  const policy = loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: "local-only" });
+  const policy = loadLocalOnlyPolicy(BOUND_SHARED);
   const config = { local_server: { type: "local" }, loop: { type: "remote", url: LOCAL_URL },
     remote: { type: "remote", url: "https://api.example.com" } };
   captureLocalOnlyMcpConfig(config);
@@ -262,6 +398,10 @@ test("real pre-tool hooks: fake external endpoint receives nothing; literal loop
       process.env.AIDEVOPS_RUNTIME_POLICY = '';
       policy.captureLocalOnlyMcpConfig({ remote: {type:'remote',url:'http://0.0.0.0:'+port}, local: {type:'local'} },home);
       const {createQualityHooks} = await import(pluginDir + '/quality-hooks.mjs');
+      const {processStartIdentity} = await import(pluginDir + '/process-start-identity.mjs');
+      process.env.OPENCODE_PID = String(process.pid);
+      process.env.OPENCODE_PID_START_IDENTITY = processStartIdentity(process.pid);
+      process.env.OPENCODE_SESSION_ID = 'ses_local_only_fixture';
       const hooks = createQualityHooks({scriptsDir: pluginDir+'/../../scripts', logsDir: home, repositoryDir: home});
       const external = 'http://0.0.0.0:'+port+'/'+sentinel;
       for (const [tool,args] of [['remote_send',{content:sentinel}],['webfetch',{url:external}],
@@ -284,10 +424,10 @@ test("real pre-tool hooks: fake external endpoint receives nothing; literal loop
       const url = 'http://127.0.0.1:'+port+'/local';
       const command = policy.LOCAL_ONLY_CURL+" --disable --noproxy '*' --proxy '' --max-time 30 --url '"+url+"'";
       const shell = {args:{command:'curl '+url,workdir:home}};
-      await hooks.toolExecuteBefore({tool:'bash'},shell);
+      await hooks.toolExecuteBefore({tool:'bash',sessionID:'ses_local_only_fixture'},shell);
       assert.equal(shell.args.command,command);
       const bounded = {args:{action:'start',command:['curl',url],cwd:home}};
-      await hooks.toolExecuteBefore({tool:'aidevops_bounded_operation'},bounded);
+      await hooks.toolExecuteBefore({tool:'aidevops_bounded_operation',sessionID:'ses_local_only_fixture'},bounded);
       assert.equal(bounded.args.command[0],policy.LOCAL_ONLY_CURL);
       assert.equal(bounded.args.command[1],'--disable');
       const result = execFileSync(policy.LOCAL_ONLY_CURL,['--disable','--noproxy','*','--proxy','','--max-time','30','--url',url],{encoding:'utf8'});
@@ -387,7 +527,9 @@ test("bound Ollama helper uses loopback without proxies or redirect fallback", a
   try {
     const scripts = join(REPO_ROOT, ".agents/scripts");
     const python = 'import sys; sys.path.insert(0,sys.argv[1]); import email_md_summary as m; print(m._summarise_with_ollama(sys.argv[2],"subject"))';
-    const env = { ...process.env, AIDEVOPS_RUNTIME_POLICY: "local-only",
+    // The Python gate delegates to vault-data-policy-helper.sh, which also
+    // honours the operator override, so keep the shared list here too.
+    const env = { ...process.env, ...BOUND_SHARED,
       HTTP_PROXY: "http://0.0.0.0:1", HTTPS_PROXY: "http://0.0.0.0:1", NO_PROXY: "" };
     const local = `http://127.0.0.1:${server.address().port}`;
     const result = await childResult("python3", ["-c", python, scripts, SENTINEL], { ...env, OLLAMA_API_URL: local + "/local" });
@@ -419,7 +561,7 @@ test("launcher disables remote OTEL before host startup, preserving unbound envi
 });
 
 test("MCP approvals cannot cross project configuration boundaries", () => {
-  const policy = loadLocalOnlyPolicy({ AIDEVOPS_RUNTIME_POLICY: "local-only" });
+  const policy = loadLocalOnlyPolicy(BOUND_SHARED);
   const localProject = join(REPO_ROOT, "project-local");
   const remoteProject = join(REPO_ROOT, "project-remote");
   captureLocalOnlyMcpConfig({ same: { type: "local" } }, localProject);

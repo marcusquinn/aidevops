@@ -58,6 +58,19 @@ export function isHeadless() {
   );
 }
 
+/**
+ * ACP runs in the server process with the `acp` subcommand in argv, including
+ * compiled Bun builds. Keep this separate from headless detection: ACP clients
+ * are interactive and still need permission brokers and other interactive hooks.
+ * @param {string[]} [argv]
+ * @returns {boolean}
+ */
+export function isAcpServer(argv = process.argv) {
+  // The selected subcommand is the first positional; `opencode run acp` passes
+  // "acp" as a message argument and must not match.
+  return argv.slice(2).find((arg) => !arg.startsWith("-")) === "acp";
+}
+
 // ---------------------------------------------------------------------------
 // EADDRINUSE detection (shared)
 // ---------------------------------------------------------------------------

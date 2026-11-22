@@ -25,6 +25,7 @@ _RUN_RESULT_ROLE_MODEL_REPLAY="${HEADLESS_ROLE_MODEL_REPLAY:-model-replay}"
 _RUN_RESULT_RATE_LIMIT="rate_limit"
 _RUN_RESULT_BLOCKED="blocked"
 _RUN_RESULT_MODEL_BLOCKED_SIGNAL="model_blocked_signal"
+_RUN_RESULT_POST_PR_HANDOFF="post_pr_handoff"
 
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	_result_lib_path="${BASH_SOURCE[0]%/*}"
@@ -37,6 +38,9 @@ _initialize_run_result() {
 	if [[ ! "${exit_code:-}" =~ ^[0-9]+$ ]]; then
 		exit_code=1
 	fi
+	# GH#38481: the attempt's exit code is a caller local; keep it with the
+	# per-attempt runtime classification for the runner-health recorder.
+	_run_exit_code="$exit_code"
 	discovered_session=$(extract_session_id_from_output "$output_file")
 	activity_detected=$(output_has_activity "$output_file")
 	_run_activity_detected="$activity_detected"
@@ -47,6 +51,8 @@ _initialize_run_result() {
 	_run_classification_source=""
 	_run_classification_pattern=""
 	_HRW_PR_LESS_VERIFIED_CONTEXT=""
+	_HRW_OWN_MERGED_VERIFIED_CONTEXT=""
+	_HRW_OWN_MERGED_RUNTIME_SESSION=""
 	return 0
 }
 
@@ -131,10 +137,59 @@ _run_result_reconcile_unknown_blocker() {
 	declare -F gh_pr_checks_observed_json >/dev/null 2>&1 || return 1
 	gh_pr_checks_observed_json "${DISPATCH_REPO_SLUG:-}" "${handoff#*|}" all "$head" >/dev/null 2>&1 || checks_rc=$?
 	[[ "$checks_rc" -eq 0 || "$checks_rc" -eq 8 ]] || return 1
-	_run_result_label="post_pr_handoff"
+	_run_result_label="$_RUN_RESULT_POST_PR_HANDOFF"
 	_run_failure_reason=""
 	_run_classification_source="verified_pr_handoff"
 	_run_classification_pattern="unknown_blocker_ready_pr"
+	rm -f "$output_file"
+	return 0
+}
+
+# GH#38303: true when the live issue is in the runner's own handed-off state,
+# which `dispatch-claim-helper.sh verify-worker-ownership` refuses.
+_run_result_issue_handed_off_by_runner() {
+	local repo_slug="$1" issue_number="$2" runner="$3" live_issue=""
+	live_issue=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
+	jq -e --arg runner "$runner" '.pull_request == null
+		and ([.assignees[]?.login] == [$runner])
+		and (.state == "closed" or ([.labels[]?.name] | index("status:in-review") != null))
+	' <<<"$live_issue" >/dev/null 2>&1
+	return $?
+}
+
+# GH#38303: a no-signal exit after the worker's own exact-head non-draft PR
+# cannot continue: that handoff left the issue in a state the runtime ownership
+# fence refuses. Route it through the post-PR handoff gate, which owns exact-head
+# verification and summary/linkage preservation. Draft PRs, repair/checkpoint
+# contracts, dirty worktrees, merged PRs lacking evidence and unreadable state
+# keep the premature_exit continuation path. GH#38329: cleanliness uses the
+# shared task-worktree status, so the post-merge cleanup-deferred marker that
+# `full-loop-helper.sh merge` writes does not hide a merged own-PR handoff.
+_run_result_reconcile_signal_less_handoff() {
+	[[ -z "${AIDEVOPS_PR_REPAIR_NUMBER:-}" ]] || return 1
+	declare -F _pr_handoff_state_for_branch_or_issue >/dev/null 2>&1 || return 1
+	declare -F _hrw_task_worktree_status >/dev/null 2>&1 || return 1
+	local issue_number="${WORKER_ISSUE_NUMBER:-${session_key#issue-}}" repo_slug="${DISPATCH_REPO_SLUG:-}"
+	local runner="${WORKER_GITHUB_LOGIN:-${AIDEVOPS_WORKER_GITHUB_LOGIN:-}}"
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ && -n "$repo_slug" && -n "$runner" && -d "${work_dir:-}" ]] || return 1
+	local dirty="" branch="" head="" handoff=""
+	dirty=$(_hrw_task_worktree_status "$work_dir") || return 1
+	[[ -z "$dirty" ]] || return 1
+	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || return 1
+	head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || return 1
+	[[ -n "$branch" && -n "$head" ]] || return 1
+	handoff=$(_pr_handoff_state_for_branch_or_issue "$branch" "$issue_number" \
+		"$repo_slug" head-only "$head" 1) || return 1
+	case "${handoff%%|*}" in
+	ready | ready_missing_summary | ready_missing_linkage | merged) ;;
+	*) return 1 ;;
+	esac
+	_run_result_issue_handed_off_by_runner "$repo_slug" "$issue_number" "$runner" || return 1
+	_run_result_label="$_RUN_RESULT_POST_PR_HANDOFF"
+	_run_failure_reason=""
+	_run_classification_source="worker_pr_handoff_without_signal"
+	_run_classification_pattern="${handoff%%|*}"
+	print_info "[lifecycle] signal-less exit after own PR handoff session=${session_key} pr=#${handoff#*|} state=${handoff%%|*} — routing through post-PR handoff gate (continuation would be ownership-fenced)"
 	rm -f "$output_file"
 	return 0
 }
@@ -153,6 +208,102 @@ _run_result_capture_live_blocker() {
 		terminal_blocker_capture_output "$output_file" true || true
 	fi
 	return 0
+}
+
+# GH#36457: infrastructure refusals are runner-local, not a task hold. Never
+# replace an explicit policy/permission/secret dossier with this inference.
+_run_result_classify_lifecycle_refusal() {
+	[[ "${AIDEVOPS_TERMINAL_BLOCKER_EXPLICIT_REASON:-}" == false &&
+		-z "${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}" &&
+		"$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" == unknown ]] || return 1
+	_hrff_lifecycle_refusal_only "$discovered_session" || return 1
+	AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=$(_terminal_blocker_hash 'v2:runner_capability_unmet') || return 1
+	_run_classification_source="lifecycle_admission_evidence"
+	_run_classification_pattern="refusals_without_completed_tools"
+	return 0
+}
+
+# Objective proof complements, rather than broadens, model marker parsing.
+_run_result_terminal_completion_confirmed() {
+	_HRW_PR_LESS_REJECTION=""
+	if [[ "${_run_classification_source:-}" == "pr_less_completion_rejected" ]]; then
+		_run_classification_source=""
+		_run_classification_pattern=""
+	fi
+	if _hrw_own_merged_terminal_complete "$session_key" "${work_dir:-}"; then
+		_run_failure_reason=""
+		_run_classification_source="merged_pr_cleanup_receipt"
+		_run_classification_pattern="verified_own_merged_objective"
+		return 0
+	fi
+	if _hrw_continued_merged_terminal_complete "$session_key" "${work_dir:-}"; then
+		_run_failure_reason=""
+		_run_classification_source="merged_pr_continuation_evidence"
+		_run_classification_pattern="verified_prior_merged_objective"
+		return 0
+	fi
+	if _hrw_pr_less_terminal_complete "$session_key" "${work_dir:-}" \
+		"$(_hrw_issue_number_for_session "$session_key")" "${DISPATCH_REPO_SLUG:-}"; then
+		if [[ -n "${_HRW_SCOPED_DELIVERY_RECEIPT:-}" ]]; then
+			_run_failure_reason=""
+			_run_classification_source="scoped_delivery_receipt"
+			_run_classification_pattern="verified_already_delivered_scope"
+		elif [[ -n "${_HRW_REVIEW_TRIAGE_VERIFIED:-}" ]]; then
+			_run_failure_reason=""
+			_run_classification_source="review_triage_receipt"
+			_run_classification_pattern="verified_no_code_review_triage"
+		fi
+		return 0
+	fi
+	# A triage receipt cannot be replaced by a model's completion token. Keep the
+	# existing implementation marker path for other outcomes and merged receipts.
+	if [[ -z "${_HRW_REVIEW_TRIAGE_CANDIDATE:-}" &&
+		"${_HRW_PR_LESS_REJECTION:-}" != issue_evidence_unavailable ]] && output_has_completion_signal "$output_file"; then
+		return 0
+	fi
+	if [[ -n "${_HRW_PR_LESS_REJECTION:-}" ]]; then
+		_run_classification_source="pr_less_completion_rejected"
+		_run_classification_pattern="$_HRW_PR_LESS_REJECTION"
+	fi
+	return 1
+}
+
+# GH#37926: a checkpoint-continuation session that leaves the draft head
+# unchanged and records no terminal state (mark-complete/blocked/progress) did
+# not succeed. Fails open (returns 1) whenever evidence is unavailable.
+_run_result_continuation_exited_unchanged() {
+	local repair_pr="${AIDEVOPS_PR_REPAIR_NUMBER:-}" start_head="${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}"
+	local repo_slug="${DISPATCH_REPO_SLUG:-}" state_dir="" state_file="" current_head=""
+	[[ "$repair_pr" =~ ^[0-9]+$ && "$start_head" =~ ^[0-9a-fA-F]{40,64}$ && -n "$repo_slug" && -n "${work_dir:-}" ]] || return 1
+	[[ -n "${AIDEVOPS_PR_REPAIR_LINKED_ISSUE:-}" ]] || return 1
+	current_head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || return 1
+	[[ "$current_head" == "$start_head" ]] || return 1
+	state_dir="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pr-review-thread-response}"
+	state_file="${state_dir}/$(printf '%s' "$repo_slug" | tr '/:' '--')-${repair_pr}.state"
+	if [[ -f "$state_file" ]] && grep -q '^completed_at=' "$state_file"; then
+		return 1
+	fi
+	return 0
+}
+
+_run_result_flag_unchanged_continuation() {
+	_run_result_label="premature_exit"
+	_run_classification_source="continuation_unchanged_head"
+	_run_classification_pattern="no_terminal_state_unchanged_head"
+	rm -f "$output_file"
+	print_warning "$selected_model checkpoint continuation exited with unchanged head and no terminal state (premature exit — will attempt continuation)"
+	return 0
+}
+
+# Issue worker exited without confirmed completion. Returns 0 for a verified
+# own-PR handoff (GH#38303), otherwise 77 so the attempt loop continues it.
+_run_result_classify_incomplete_issue_exit() {
+	_run_result_reconcile_signal_less_handoff && return 0
+	_log_empty_result_gaps "$output_file" "$selected_model" "$session_key"
+	_run_result_label="premature_exit"
+	rm -f "$output_file"
+	print_warning "$selected_model worker exited with activity but no completion signal (premature exit — will attempt continuation)"
+	return 77
 }
 
 _handle_run_result_success_output() {
@@ -177,11 +328,12 @@ _handle_run_result_success_output() {
 			_run_result_label="$_RUN_RESULT_BLOCKED"
 			_run_failure_reason="$_RUN_RESULT_BLOCKED"
 			_run_classification_source="live_issue_blocked_backstop"
+			_run_result_classify_lifecycle_refusal || true
 			rm -f "$output_file"
 			return 83
 		fi
 		if output_has_post_pr_handoff_signal "$output_file"; then
-			_run_result_label="post_pr_handoff"
+			_run_result_label="$_RUN_RESULT_POST_PR_HANDOFF"
 			rm -f "$output_file"
 			return 0
 		fi
@@ -222,7 +374,9 @@ _handle_run_result_success_output() {
 			_run_classification_source="$_RUN_RESULT_MODEL_BLOCKED_SIGNAL"
 			_run_classification_pattern="terminal_blocked"
 			if declare -F terminal_blocker_capture_output >/dev/null 2>&1; then
-				terminal_blocker_capture_output "$output_file" || true
+				# Judge the final part with the pattern that classified this exit.
+				terminal_blocker_capture_output "$output_file" false "${_HEADLESS_BLOCKED_LINE_PATTERN:-}" || true
+				_run_result_classify_lifecycle_refusal || true
 				local blocker_reason=""
 				blocker_reason=$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")
 				_run_result_reconcile_unknown_blocker "$blocker_reason" && return 0
@@ -237,17 +391,14 @@ _handle_run_result_success_output() {
 			print_warning "$selected_model worker reported a terminal BLOCKED state"
 			return 83
 		fi
-		# GH#33672: reconcile verified PR-less terminal objectives before the
-		# continuation gate. Prose alone ("already delivered") is not evidence.
-		if ! output_has_completion_signal "$output_file" &&
-			! _hrw_pr_less_terminal_complete "$session_key" "${work_dir:-}" \
-			"$(_hrw_issue_number_for_session "$session_key")" "${DISPATCH_REPO_SLUG:-}"; then
-			_log_empty_result_gaps "$output_file" "$selected_model" "$session_key"
-			_run_result_label="premature_exit"
-			rm -f "$output_file"
-			print_warning "$selected_model worker exited with activity but no completion signal (premature exit — will attempt continuation)"
-			return 77
+		if ! _run_result_terminal_completion_confirmed; then
+			_run_result_classify_incomplete_issue_exit
+			return $?
 		fi
+	fi
+	if ! _run_result_is_issue_worker && _run_result_continuation_exited_unchanged; then
+		_run_result_flag_unchanged_continuation
+		return 77
 	fi
 	_run_result_label="success"
 	rm -f "$output_file"

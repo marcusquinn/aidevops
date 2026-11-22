@@ -71,4 +71,43 @@ grep -q 'mode=delete' "$WRAPPER_LOGFILE" || {
 	exit 1
 }
 
+# GH#37214: recoverable trash stays bounded (N+1 trashed workspaces leave <= N).
+export AIDEVOPS_TODO_SYNC_TRASH_ROOT="${TEST_ROOT}/trash"
+export PULSE_TODO_SYNC_STALE_CLEANUP_MODE=trash
+export PULSE_TODO_SYNC_MAX_RECOVERIES_PER_RUN=20
+export TODO_SYNC_TRASH_MAX_COUNT=5
+export PULSE_TODO_SYNC_PRESSURE_COUNT_THRESHOLD=100
+for index in 1 2 3 4 5 6 7 8; do
+	make_workspace "pulse-todo-sync.BBBB${index}${index}" "999999" "dead-b${index}" "$old_epoch" >/dev/null
+done
+trashed=$(_ptsw_sweep_stale_workspaces)
+[[ "$trashed" -eq 8 ]] || {
+	printf 'FAIL expected 8 workspaces trashed, got %s\n' "$trashed" >&2
+	exit 1
+}
+bucket_count=$(find "$AIDEVOPS_TODO_SYNC_TRASH_ROOT" -mindepth 1 -maxdepth 1 -name 'aidevops-pulse-todo-sync-*' | wc -l | tr -d ' ')
+[[ "$bucket_count" -eq 5 ]] || {
+	printf 'FAIL expected trash bounded to 5 buckets, got %s\n' "$bucket_count" >&2
+	exit 1
+}
+
+# Age cutoff: an old bucket is pruned by the owner; unmarked entries are untouched.
+old_bucket="${AIDEVOPS_TODO_SYNC_TRASH_ROOT}/aidevops-pulse-todo-sync-old-$(($(date +%s) - 10 * 86400))-1-1"
+mkdir -p "$old_bucket" "${AIDEVOPS_TODO_SYNC_TRASH_ROOT}/aidevops-pulse-todo-sync-unmarked-1000000000-1-1"
+: >"${old_bucket}/${_PTSW_OWNER_MARKER}"
+dry_out=$(bash "${SCRIPTS_DIR}/todo-sync-trash-retention.sh" prune)
+[[ -d "$old_bucket" && "$dry_out" == *"eligible=1"* ]] || {
+	printf 'FAIL dry run should report 1 eligible bucket without deleting: %s\n' "$dry_out" >&2
+	exit 1
+}
+bash "${SCRIPTS_DIR}/todo-sync-trash-retention.sh" prune --apply >/dev/null
+[[ ! -e "$old_bucket" ]] || {
+	printf 'FAIL aged bucket was not pruned\n' >&2
+	exit 1
+}
+[[ -d "${AIDEVOPS_TODO_SYNC_TRASH_ROOT}/aidevops-pulse-todo-sync-unmarked-1000000000-1-1" ]] || {
+	printf 'FAIL unmarked bucket must never be deleted\n' >&2
+	exit 1
+}
+
 printf 'PASS TODO-sync stale cleanup scales under pressure and preserves active/legacy workspaces\n'

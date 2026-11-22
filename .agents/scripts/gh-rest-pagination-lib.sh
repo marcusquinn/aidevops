@@ -7,6 +7,8 @@
 # bodies and keeps temporary response data in a private, short-lived directory.
 # Set AIDEVOPS_GH_EXPLICIT_PAGINATION_DISABLE=1 to retain native pagination;
 # AIDEVOPS_GH_REST_MAX_PAGES bounds explicit loops from 1 to 1000 (default 100).
+# Pages whose --include this loop added carry AIDEVOPS_GH_PAGINATION_INCLUDE_OWNED=1
+# so the governed transport may revalidate their frame with an ETag (GH#39233).
 
 _GHRP_ARGS=()
 _GHRP_BASE_ARGS=()
@@ -14,6 +16,7 @@ _GHRP_ENDPOINT_INDEX=-1
 _GHRP_BASE_ENDPOINT_INDEX=-1
 _GHRP_ENDPOINT=""
 _GHRP_INCLUDE_REQUESTED=0
+_GHRP_PAGE_FRAME_OWNED=0
 _GHRP_SLURP_REQUESTED=0
 _GHRP_SILENT_REQUESTED=0
 _GHRP_HOSTNAME="${GH_HOST:-github.com}"
@@ -221,8 +224,11 @@ _ghrp_build_base_args() {
 		_GHRP_BASE_ARGS+=("$arg")
 		index=$((index + 1))
 	done
+	# Caller-requested headers must stay live; only loop-added ones may replay.
+	_GHRP_PAGE_FRAME_OWNED=0
 	if [[ "$_GHRP_INCLUDE_REQUESTED" -eq 0 ]]; then
 		_GHRP_BASE_ARGS+=(--include)
+		_GHRP_PAGE_FRAME_OWNED=1
 	fi
 	[[ "$_GHRP_BASE_ENDPOINT_INDEX" -ge 0 ]] || return 1
 	return 0
@@ -503,6 +509,7 @@ _ghrp_run() {
 
 		_GHRP_FALLBACK_SAFE=0
 		AIDEVOPS_GH_PAGE_NUMBER="$page_count" \
+			AIDEVOPS_GH_PAGINATION_INCLUDE_OWNED="$_GHRP_PAGE_FRAME_OWNED" \
 			AIDEVOPS_GH_ROUTE_DECISION="${AIDEVOPS_GH_ROUTE_DECISION:-explicit-rest-pagination}" \
 			_shim_run_single_transport "$executable" "$path" "$caller" "$retry" "${page_args[@]}" >"$response_file"
 		rc=$?

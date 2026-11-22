@@ -324,6 +324,103 @@ cmd_group_ensure() {
 	return $?
 }
 
+# Add one repository without replacing any existing group membership. Unlike
+# group-ensure, this never changes group policy or enables fork workflows.
+cmd_repo_ensure() {
+	local repo="" group="" label="" dry_run=false
+	while [[ $# -gt 0 ]]; do
+		local opt="$1" val="${2:-}"
+		case "$opt" in
+		--repo | --group | --label)
+			if [[ $# -lt 2 || -z "$val" ]]; then
+				_ro_err "repo-ensure: ${opt} needs a value"
+				return 1
+			fi
+			case "$opt" in
+			--repo) repo="$val" ;;
+			--group) group="$val" ;;
+			--label) label="$val" ;;
+			esac
+			shift 2
+			;;
+		--dry-run) dry_run=true; shift ;;
+		*) _ro_err "repo-ensure: unknown option: $opt"; return 1 ;;
+		esac
+	done
+	if [[ ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+		_ro_err "repo-ensure: --repo must be OWNER/REPO"
+		return 1
+	fi
+	_ro_require_tools gh jq || return 1
+	local org="${repo%%/*}" metadata groups candidates gid runners labels fork
+	metadata=$(_ro_api "read repository" "repos/$repo") || return 1
+	# Public repos and personal accounts must never be enrolled in org pools.
+	if ! printf '%s' "$metadata" | jq -e '.private == true and .owner.type == "Organization"' >/dev/null; then
+		printf 'Runner onboarding skipped: %s is not a private organization repository\n' "$repo"
+		return 0
+	fi
+	# Print a concrete safe retry even if the token cannot list runner groups.
+	printf 'Runner recovery (authorized org admin): bash %q repo-ensure --repo %q' "$RUNNER_ORG_SELF" "$repo"
+	[[ -z "$group" ]] || printf ' --group %q' "$group"
+	[[ -z "$label" ]] || printf ' --label %q' "$label"
+	printf '\n'
+	groups=$(_ro_api "discover runner groups" --paginate "orgs/$org/actions/runner-groups?per_page=100" \
+		--jq '.runner_groups[]' | jq -sc '.') || return 1
+	local selected_visibility="selected"
+	candidates=$(printf '%s' "$groups" | jq -c --arg group "$group" --arg visibility "$selected_visibility" \
+		'[.[] | select(.visibility == $visibility and .allows_public_repositories == false and
+		(.inherited != true) and (.restricted_to_workflows != true)) | select($group == "" or .name == $group)]') || return 1
+	if [[ "$group" == "" && "$(printf '%s' "$groups" | jq --arg visibility "$selected_visibility" '[.[] | select(.visibility == $visibility)] | length')" == 0 ]]; then
+		printf 'No selected-repository runner groups; retaining GitHub-hosted runner fallback\n'
+		return 0
+	fi
+	if [[ "$(printf '%s' "$candidates" | jq length)" != 1 ]]; then
+		_ro_err "repo-ensure: need one private selected group; rerun with --group NAME --label POOL_LABEL (no policy changed)"
+		return 1
+	fi
+	gid=$(printf '%s' "$candidates" | jq -r '.[0].id')
+	runners=$(_ro_api "read group runners" --paginate "$(_ro_gpath "$org" "$gid")/runners?per_page=100" \
+		--jq '.runners[]' | jq -sc '.') || return 1
+	# Require a custom label common to all group runners, not a generic OS label.
+	labels=$(printf '%s' "$runners" | jq -c '
+		[.[] | [.labels[] | select(.type == "custom") | .name]] |
+		if length == 0 then [] else reduce .[] as $labels (.[0]; . - (. - $labels)) end') || return 1
+	if [[ -z "$label" && "$(printf '%s' "$labels" | jq length)" == 1 ]]; then
+		label=$(printf '%s' "$labels" | jq -r '.[0]')
+	fi
+	if [[ -z "$label" ]] || ! printf '%s' "$labels" | jq -e --arg label "$label" 'index($label) != null' >/dev/null; then
+		_ro_err "repo-ensure: no unambiguous common custom runner label; check pool registration and rerun with --label POOL_LABEL"
+		return 1
+	fi
+	fork=$(_ro_api "check private fork workflows" "repos/$repo/actions/permissions/fork-pr-workflows-private-repos") || return 1
+	if ! printf '%s' "$fork" | jq -e '.run_workflows_from_fork_pull_requests == false' >/dev/null; then
+		_ro_err "repo-ensure: fork PR workflows must be explicitly off before enrollment (no settings changed)"
+		return 1
+	fi
+	local rid variable membership
+	rid=$(printf '%s' "$metadata" | jq -er '.id | numbers') || return 1
+	printf 'Runner commands (after verifying private visibility and fork workflows off):\n'
+	printf 'gh api -X PUT %q\n' "$(_ro_gpath "$org" "$gid")/repositories/$rid"
+	printf 'gh variable set CI_RUNNER --repo %q --body %q\n' "$repo" "$label"
+	[[ "$dry_run" == false ]] || return 0
+	_ro_api "add repository to runner group" -X PUT "$(_ro_gpath "$org" "$gid")/repositories/$rid" >/dev/null || return 1
+	gh variable set CI_RUNNER --repo "$repo" --body "$label" || return 1
+	# Verify both settings; a partial failure is safe to retry additively.
+	membership=$(_ro_api "verify group membership" --paginate "$(_ro_gpath "$org" "$gid")/repositories?per_page=100" \
+		--jq '.repositories[].id') || return 1
+	if ! printf '%s' "$membership" | jq -se --argjson id "$rid" 'index($id) != null' >/dev/null; then
+		_ro_err "repo-ensure: ${repo} missing from runner group after enrollment; rerun to retry"
+		return 1
+	fi
+	variable=$(_ro_api "verify CI_RUNNER" "repos/$repo/actions/variables/CI_RUNNER" --jq '.value') || return 1
+	if [[ "$variable" != "$label" ]]; then
+		_ro_err "repo-ensure: CI_RUNNER readback mismatch; rerun to retry"
+		return 1
+	fi
+	printf 'Runner enrollment verified for %s (CI_RUNNER=%s)\n' "$repo" "$label"
+	return 0
+}
+
 # ---------------------------------------------------------------- key use
 
 # Ensure the key env var is present; otherwise re-exec via aidevops secret.
@@ -526,6 +623,9 @@ github-runner-org-helper.sh - org self-hosted runner onboarding (GitHub App, pri
 Commands:
   group-ensure --org ORG --name NAME [--repos all-private|r1,r2] [--dry-run]
       Create or reconcile a private-only runner group (allows_public_repositories=false).
+  repo-ensure --repo OWNER/REPO [--group NAME] [--label POOL_LABEL] [--dry-run]
+      Add one private org repo to an existing selected group and set CI_RUNNER.
+      Requires fork PR workflows off; never replaces membership or group policy.
   verify-key --org ORG --app-id ID --secret NAME
       Verify the App key (JWT), App ID/owner, and installation permissions.
   push-key --secret NAME --host USER@HOST --dest PATH
@@ -548,6 +648,7 @@ main() {
 	case "$command" in
 	status) cmd_status "$@" ;;
 	group-ensure) cmd_group_ensure "$@" ;;
+	repo-ensure) cmd_repo_ensure "$@" ;;
 	verify-key) cmd_verify_key "$@" ;;
 	push-key) cmd_push_key "$@" ;;
 	help | -h | --help) usage ;;

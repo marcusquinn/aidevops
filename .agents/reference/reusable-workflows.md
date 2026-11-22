@@ -28,6 +28,14 @@ The reusable pattern solves all three at once:
 | `issue-sync.yml` | `issue-sync-reusable.yml` | `issue-sync-caller.yml` | t2770 (PR #20662) |
 | `review-bot-gate.yml` | `review-bot-gate-reusable.yml` | `review-bot-gate-caller.yml` | GH#20727 |
 | `maintainer-gate.yml` | `maintainer-gate-reusable.yml` | `maintainer-gate-caller.yml` | GH#21154 |
+| `issue-triage-gate.yml` | `issue-triage-gate-reusable.yml` | `issue-triage-gate-caller.yml` | GH#36905 |
+
+`issue-triage-gate` runs on `issues: [opened, reopened]` and applies
+`needs-maintainer-review` + `external-contributor` to issues from authors
+without write access at creation time. Its redirect-link scanner is fetched
+from `aidevops_repository` at `aidevops_ref` (kept equal to the `uses:` ref),
+never from the caller repository. Pulse stage 0b remains the fallback for repos
+without the caller.
 
 ## Architecture
 
@@ -109,18 +117,25 @@ Issue Sync keeps its normal reusable job at the established `actions: read`
 ceiling. A separate maintenance call owns cross-run artifact deletion so cleanup
 authority cannot make existing mutable `@main` callers fail at workflow startup.
 
-Maintenance is fail-safe and opt-in:
+Maintenance is bounded and prunes by default:
 
 1. Every successful checkpoint upload exposes its artifact ID to the caller.
-2. The maintenance workflow defaults to a read-only plan showing count and bytes.
-3. After an owner reviews that plan, setting the repository variable
-   `AIDEVOPS_COORDINATOR_ARTIFACT_CLEANUP=apply` enables deletion.
-4. Apply always retains the artifact produced by the completed run plus one
+2. The maintenance workflow defaults to `apply`. Setting the repository variable
+   `AIDEVOPS_COORDINATOR_ARTIFACT_CLEANUP=plan` switches to a read-only plan.
+3. Apply always retains the artifact produced by the completed run plus one
    newest fallback. A missing or mismatched protected artifact stops deletion.
+4. Each run pages the inventory oldest-first and deletes while paging. It caps
+   deletions (`AIDEVOPS_COORDINATOR_CLEANUP_MAX_DELETES`, default 400) and wall
+   time (`AIDEVOPS_COORDINATOR_CLEANUP_MAX_SECONDS`, default 420), paces DELETEs
+   below the secondary rate limit, and continues past isolated failures, so a
+   large backlog shrinks on every run.
+5. Checkpoints upload with `retention-days: 30`. A weekly `schedule:` run in the
+   caller restores the newest checkpoint and, when it is at least 10 days old,
+   re-uploads it unchanged, so an idle repository never loses its only
+   checkpoint to the organisation retention limit.
 
-Run `aidevops sync-workflows --apply` to install the maintenance job in existing
-callers. Review at least one successful plan before enabling the repository
-variable. Removing the variable returns maintenance to read-only planning.
+Run `aidevops sync-workflows --apply` to install the schedule and maintenance job
+in existing callers.
 
 ## Pinning strategies
 
@@ -156,6 +171,25 @@ aidevops sync-workflows --apply # update pins to current aidevops version
 These are the canonical drift tools for managed downstream repos. Use
 `check-workflows` when auditing, and `sync-workflows --apply` when you are ready
 to update caller YAMLs to the current framework template/pin.
+
+### Dependabot exclusion
+
+Exclude aidevops pins from downstream Dependabot `github-actions` updates.
+aidevops releases several times a day. For a SHA pin with a `# vX.Y.Z`
+comment, Dependabot opens a PR per release that bumps only `uses:`, leaving
+`with.aidevops_ref` behind (GH#36723). Advance pins with `sync-workflows
+--force-ref` instead. Each `github-actions` update entry carries:
+
+```yaml
+    ignore:
+      - dependency-name: "marcusquinn/aidevops*"
+```
+
+`aidevops sync-dependabot` (dry run) classifies every eligible registered
+repository; `--apply` opens one insert-only PR per repository that lacks the
+exclusion, through the GitHub API without touching local checkouts. Flow-style
+or ambiguous layouts report `UNSUPPORTED` for a manual edit. Other actions and
+ecosystems keep their schedule.
 
 `check-workflows` is a read-only audit of each registered local checkout. JSON
 rows include an `evidence` object with the local branch, known upstream,
@@ -239,6 +273,21 @@ The caller YAML becomes `with: runner: "[self-hosted, linux, x64]"` and GitHub A
 - **`default_workflow_permissions: read` repos (GH#20967).** GitHub's recommended security default is `default_workflow_permissions: read`. Reusable workflow job-level `permissions:` declarations cannot exceed the CALLER's ceiling — they are capped at whatever the caller workflow grants. A caller with no `permissions:` block inherits the repo's restrictive default, so GitHub refuses to create any jobs (`conclusion: startup_failure`, zero jobs). The canonical caller templates include a top-level `permissions:` block that is the union of all job-level permissions used by the reusable workflow. If you add a new permission to a reusable workflow job, also update the matching caller template. The aidevops repository enforces this invariant through the required `Framework Validation` status check, which runs `test-reusable-workflow-caller.sh` and `test-reusable-workflow-permission-contracts.sh`; do not widen a reusable workflow permission until compatible callers can land without breaking mutable `@main` consumers.
 
   Verification: `gh api repos/OWNER/REPO/actions/permissions/workflow --jq .default_workflow_permissions` returns `"read"` or `"write"`. A `"read"` repo will fail without the caller's `permissions:` block.
+
+## `pull_request_target` Actions event policy (public repositories)
+
+GitHub blocks `pull_request_target` by default in public repositories from **2026-12-02** unless an applicable Actions event policy explicitly allows it. Brownouts enforce the block early on **2026-11-09 and 2026-11-16, 16:00–18:00 UTC**: affected runs end `startup_failure` with zero jobs, so required gates such as `maintainer-gate` cannot report and no PR merges. Other events (`pull_request`, `issues`, `push`, `schedule`) are unaffected.
+
+A `restrict_action_events` rule limits the targeted workflows to `allowed_events`. These files also declare `issues`, `issue_comment`, `push`, `schedule`, `workflow_dispatch`, etc., so `allowed_events` must be the **union of every event declared in the targeted files' `on:` blocks** (plus `workflow_call` when a file calls a local reusable workflow). Too narrow a list silently stops those other triggers. The helper computes the union with a real YAML parser (`yq`).
+
+```bash
+actions-event-policy-helper.sh status --repo OWNER/REPO   # exit 0 covered/not applicable, 1 uncovered, 2 error
+actions-event-policy-helper.sh plan --repo OWNER/REPO     # print the exact policy JSON (read-only)
+actions-event-policy-helper.sh apply --repo OWNER/REPO    # create/update policy aidevops-pull-request-target-gates (repo admin)
+actions-event-policy-helper.sh status --all-managed       # public repos in repos.json
+```
+
+`security-posture-helper.sh` warns and `aidevops sync-workflows` prints the `apply` command for uncovered public repositories; neither mutates settings. Run `apply` per repository, as an administrator (the policies API returns 404 without admin access).
 
 ## Framework self-test assumption guard
 

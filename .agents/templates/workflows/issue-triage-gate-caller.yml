@@ -1,0 +1,31 @@
+name: Issue Triage Gate
+
+# Managed by aidevops framework.
+# Upstream logic lives in:
+# marcusquinn/aidevops/.github/workflows/issue-triage-gate-reusable.yml
+# Applies needs-maintainer-review + external-contributor to issues opened by
+# authors without write access, at creation time (GH#36905). Event metadata
+# only: no caller-repository code is checked out or executed.
+#
+# Manage with:
+#   aidevops check-workflows --workflow issue-triage-gate
+#   aidevops sync-workflows --workflow issue-triage-gate --install-missing
+
+permissions:
+  issues: write
+  contents: read
+
+on:
+  issues:
+    types: [opened, reopened]
+
+jobs:
+  triage:
+    uses: marcusquinn/aidevops/.github/workflows/issue-triage-gate-reusable.yml@main
+    # GH#20976: `secrets: inherit` only works within the same GitHub account/org.
+    # The optional read token fetches the scanner from a private framework mirror.
+    secrets:
+      AIDEVOPS_READ_TOKEN: ${{ secrets.AIDEVOPS_READ_TOKEN }}
+    with:
+      # Keep this equal to the ref on `uses:` so the scanner is pinned with the reusable YAML.
+      aidevops_ref: main

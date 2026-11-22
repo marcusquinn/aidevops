@@ -307,6 +307,94 @@ WRAPPER
 	return 0
 }
 
+# GH#38627: stale and active bundles, each with a wake-recording wrapper.
+setup_rebase_bundles() {
+	local bundle_name=""
+	local bundle_agents=""
+	for bundle_name in active stale; do
+		bundle_agents="${TEST_ROOT}/rebase-${bundle_name}/agents"
+		rm -rf "${TEST_ROOT:?}/rebase-${bundle_name}"
+		mkdir -p "${bundle_agents}/scripts"
+		: >"${bundle_agents}/.bundle-manifest"
+		cat >"${bundle_agents}/scripts/pulse-wrapper.sh" <<WRAPPER
+#!/usr/bin/env bash
+# Supports --refill-only for the mixed-version compatibility probe.
+printf '${bundle_name} %s\n' "\$*" >>"\$PULSE_EVENT_TEST_WAKE_LOG"
+rm -f "\$PULSE_EVENT_REFILL_TRIGGER_FILE"
+WRAPPER
+		chmod +x "${bundle_agents}/scripts/pulse-wrapper.sh"
+	done
+	ln -s "${TEST_ROOT}/rebase-active/agents" "${HOME}/.aidevops/agents"
+	export PULSE_EVENT_TEST_WAKE_LOG="${TEST_ROOT}/rebase-wake.log"
+	rm -f "$PULSE_EVENT_TEST_WAKE_LOG"
+	PULSE_EVENT_REFILL_WRAPPER="${TEST_ROOT}/rebase-stale/agents/scripts/pulse-wrapper.sh"
+	PULSE_EVENT_REFILL_WAKE_PASSES=1
+	return 0
+}
+
+test_signal_from_inactive_bundle_wakes_active_wrapper() {
+	reset_state
+	unset AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR
+	setup_rebase_bundles
+	pulse_event_refill_signal 561 5561
+	local wake_lines=""
+	wake_lines=$(cat "$PULSE_EVENT_TEST_WAKE_LOG" 2>/dev/null) || wake_lines=""
+	assert_eq "inactive bundle exit wakes the active bundle wrapper" "active --refill-only --refill-source=worker-exit" "$wake_lines"
+	assert_file_absent "rebased wake consumes the trigger" "$PULSE_EVENT_REFILL_TRIGGER_FILE"
+	if grep -q 'action=wake_rebased' "$LOGFILE"; then
+		pass "rebased wake is logged"
+	else
+		fail "rebased wake is logged" "wake_rebased was not logged"
+	fi
+	return 0
+}
+
+test_signal_during_runtime_transition_retains_trigger() {
+	reset_state
+	setup_rebase_bundles
+	export AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR="${TEST_ROOT}/runtime-transition.lock.d"
+	mkdir -p "$AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR"
+	printf '%s\n' "$$" >"${AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR}/pid"
+	pulse_event_refill_signal 571 5571
+	assert_file_exists "runtime transition retains the trigger" "$PULSE_EVENT_REFILL_TRIGGER_FILE"
+	assert_file_absent "runtime transition invokes no wrapper" "$PULSE_EVENT_TEST_WAKE_LOG"
+	if grep -q 'action=wake_skipped reason=runtime-transition' "$LOGFILE"; then
+		pass "runtime transition skip is logged"
+	else
+		fail "runtime transition skip is logged" "runtime-transition skip was not logged"
+	fi
+	# A dead owner no longer marks a transition.
+	printf '99999999\n' >"${AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR}/pid"
+	pulse_event_refill_signal 572 5572
+	assert_file_absent "dead transition owner does not block the rebased wake" "$PULSE_EVENT_REFILL_TRIGGER_FILE"
+	rm -rf "$AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR"
+	unset AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR
+	return 0
+}
+
+test_refill_only_defers_during_runtime_transition() {
+	reset_state
+	pulse_event_refill_write_trigger 581 5581
+	export AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR="${TEST_ROOT}/runtime-transition.lock.d"
+	mkdir -p "$AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR"
+	printf '%s\n' "$$" >"${AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR}/pid"
+	local lock_calls_file="${TEST_ROOT}/refill-lock-calls.log"
+	rm -f "$lock_calls_file"
+	(
+		acquire_instance_lock() {
+			printf 'acquire\n' >>"$lock_calls_file"
+			return 0
+		}
+		_pulse_run_refill_only
+	)
+	assert_file_absent "transition-deferred refill never takes the instance lock" "$lock_calls_file"
+	assert_file_exists "transition-deferred refill retains the trigger" "$PULSE_EVENT_REFILL_TRIGGER_FILE"
+	assert_eq "transition-deferred refill dispatches nothing" "0" "$APPLY_CALLS"
+	rm -rf "$AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR"
+	unset AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR
+	return 0
+}
+
 test_stale_wake_lock_is_reclaimed() {
 	reset_state
 	local fake_wrapper="${TEST_ROOT}/fake-stale-wake-wrapper.sh"
@@ -344,6 +432,9 @@ main() {
 	test_wrapper_refill_only_cli_short_circuit
 	test_signal_wake_coalesces_parallel_exits
 	test_signal_from_inactive_bundle_retains_trigger
+	test_signal_from_inactive_bundle_wakes_active_wrapper
+	test_signal_during_runtime_transition_retains_trigger
+	test_refill_only_defers_during_runtime_transition
 	test_stale_wake_lock_is_reclaimed
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]

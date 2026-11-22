@@ -31,6 +31,14 @@ import {
   createQualityHooks,
 } from "../quality-hooks.mjs";
 import { FAIL_REASON } from "../quality-hooks-signature.mjs";
+import { processStartIdentity } from "../process-start-identity.mjs";
+import { resolveTrustedExecutable } from "../../../scripts/trusted-executable.mjs";
+
+const realGit = resolveTrustedExecutable("git");
+
+// Parallel `npm run test` load can push a cold helper spawn past the 5s
+// production default (GH#38750); production default is unchanged.
+process.env.AIDEVOPS_SIGNATURE_HELPER_TIMEOUT_MS ||= "60000";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -482,14 +490,14 @@ describe("tryRepairSignature", () => {
     const repo = join(dir, "repo");
     const linked = join(dir, "repo-linked");
     mkdirSync(repo);
-    execFileSync("/usr/bin/git", ["init"], { cwd: repo, stdio: "ignore" });
-    execFileSync("/usr/bin/git", ["config", "user.email", "test@example.invalid"], { cwd: repo });
-    execFileSync("/usr/bin/git", ["config", "user.name", "Test"], { cwd: repo });
-    execFileSync("/usr/bin/git", ["config", "commit.gpgsign", "false"], { cwd: repo });
+    execFileSync(realGit, ["init"], { cwd: repo, stdio: "ignore" });
+    execFileSync(realGit, ["config", "user.email", "test@example.invalid"], { cwd: repo });
+    execFileSync(realGit, ["config", "user.name", "Test"], { cwd: repo });
+    execFileSync(realGit, ["config", "commit.gpgsign", "false"], { cwd: repo });
     writeFileSync(join(repo, "README.md"), "fixture\n");
-    execFileSync("/usr/bin/git", ["add", "README.md"], { cwd: repo, stdio: "ignore" });
-    execFileSync("/usr/bin/git", ["commit", "--no-gpg-sign", "-m", "init"], { cwd: repo, stdio: "ignore" });
-    execFileSync("/usr/bin/git", ["worktree", "add", "-b", "linked-fixture", linked], {
+    execFileSync(realGit, ["add", "README.md"], { cwd: repo, stdio: "ignore" });
+    execFileSync(realGit, ["commit", "--no-gpg-sign", "-m", "init"], { cwd: repo, stdio: "ignore" });
+    execFileSync(realGit, ["worktree", "add", "-b", "linked-fixture", linked], {
       cwd: repo,
       stdio: "ignore",
     });
@@ -669,9 +677,14 @@ printf '\n\n${SIG_MARKER}\n---\n[aidevops.sh](https://aidevops.sh) v9.9.9 stub\n
 
   test("pre-execution hook resolves model by session without process-env leakage", async () => {
     const priorSigModel = process.env.AIDEVOPS_SIG_MODEL;
+    const keys = ["OPENCODE_PID", "OPENCODE_PID_START_IDENTITY", "OPENCODE_SESSION_ID"];
+    const saved = keys.map((key) => process.env[key]);
     process.env.AIDEVOPS_SIG_MODEL = "openai/stale-global";
     const dir = mkdtempSync(join(tmpdir(), "session-hook-model-"));
     try {
+      process.env.OPENCODE_PID = String(process.pid);
+      process.env.OPENCODE_PID_START_IDENTITY = processStartIdentity(process.pid);
+      process.env.OPENCODE_SESSION_ID = "session-a";
       const scriptsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "scripts");
       const hooks = createQualityHooks({
         scriptsDir,
@@ -681,15 +694,16 @@ printf '\n\n${SIG_MARKER}\n---\n[aidevops.sh](https://aidevops.sh) v9.9.9 stub\n
       });
 
       const sessionAOutput = {
-        args: { command: 'gh issue comment 1 --repo o/r --body "one"', workdir: process.cwd() },
+        args: { command: 'gh issue comment 1 --repo o/r --body "one"', workdir: dir },
       };
       await hooks.toolExecuteBefore(
         { tool: "bash", sessionID: "session-a" },
         sessionAOutput,
       );
       const sessionBOutput = {
-        args: { command: 'gh issue comment 1 --repo o/r --body "two"', workdir: process.cwd() },
+        args: { command: 'gh issue comment 1 --repo o/r --body "two"', workdir: dir },
       };
+      process.env.OPENCODE_SESSION_ID = "session-b";
       await hooks.toolExecuteBefore(
         { tool: "bash", sessionID: "session-b" },
         sessionBOutput,
@@ -698,6 +712,10 @@ printf '\n\n${SIG_MARKER}\n---\n[aidevops.sh](https://aidevops.sh) v9.9.9 stub\n
       assert.match(sessionAOutput.args.command, / with session-a/);
       assert.doesNotMatch(sessionBOutput.args.command, / with stale-global/);
     } finally {
+      keys.forEach((key, index) => {
+        if (saved[index] === undefined) delete process.env[key];
+        else process.env[key] = saved[index];
+      });
       if (priorSigModel === undefined) delete process.env.AIDEVOPS_SIG_MODEL;
       else process.env.AIDEVOPS_SIG_MODEL = priorSigModel;
       rmSync(dir, { recursive: true, force: true });

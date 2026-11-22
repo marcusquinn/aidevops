@@ -13,6 +13,8 @@ function fixture() {
   const commandPolicy = join(root, "command-policy-helper.py");
   writeFileSync(helper, `#!/usr/bin/env bash\ncat > "${capture}"\nprintf 'bounded receipt\\nfull_log: output-sandbox-helper.sh show out_fixture\\n'\n`);
   writeFileSync(commandPolicy, 'import json\nprint(json.dumps({"decision": "allow"}))\n');
+  writeFileSync(join(root, "worker-lifecycle-session-helper.py"),
+    'import json\nprint(json.dumps({"status": "not-applicable"}))\n');
   chmodSync(helper, 0o700);
   return { root, capture };
 }

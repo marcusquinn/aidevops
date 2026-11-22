@@ -33,6 +33,72 @@ _PREFLIGHT_CLEANUP_SYSTEMD_UNIT_SEQUENCE=0
 
 # --- Preflight helper functions (extracted) ---
 
+# Local Directory Services can stop resolving the logged-in account (GH#37260).
+# Bound both lookups: dscl itself may hang during the outage. No process scans.
+_preflight_macos_user_lookup_ok() {
+	[[ "$(uname -s)" == "Darwin" ]] || return 0
+	if ! declare -F timeout_sec >/dev/null; then
+		# Independently sourced routine callers also need the portable timeout.
+		# shellcheck source=./shared-constants.sh
+		source "${BASH_SOURCE[0]%/*}/shared-constants.sh" || return 1
+	fi
+	local name="" record_type="/Users"
+	name=$(timeout_sec 3 id -un 2>/dev/null) || return 1
+	[[ -n "$name" && ! "$name" =~ ^[0-9]+$ ]] || return 1
+	timeout_sec 3 dscl . -read "${record_type}/$name" UniqueID >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# One WARN per rejected invocation; one persistent advisory also holds the last
+# notification attempt. Reserve it under a kernel file lock before notifying so
+# simultaneous routine/pulse ticks cannot duplicate notifications. Fail closed
+# on unwritable state, but never turn a skipped cycle into a scheduler error.
+_preflight_macos_user_lookup_gate() {
+	_preflight_macos_user_lookup_ok && return 0
+	local message="macOS cannot look up your user account; restart the Mac before entering your password at the lock screen"
+	printf '[pulse-wrapper] WARN: %s; skipping cycle\n' "$message" >>"${LOGFILE:-/dev/stderr}" || true
+	_preflight_macos_user_lookup_advisory "$message" || true
+	return 1
+}
+
+# macOS ships Perl with flock; no extra lock files, stale PID recovery, or Bash
+# 4-only descriptors. The kernel releases the lock even on process termination.
+_preflight_macos_user_lookup_advisory() {
+	local message="$1"
+	local dir="${HOME}/.aidevops/advisories"
+	local marker="$dir/macos-user-lookup.advisory"
+	mkdir -p "$dir" 2>/dev/null || return 1
+	timeout_sec 5 perl -MFcntl=:DEFAULT,:flock - "$marker" "$message" >/dev/null 2>&1 <<'PERL' || true
+		my ($path, $message) = @ARGV;
+		sysopen(my $fh, $path, O_RDWR | O_CREAT, 0600) or exit 0;
+		flock($fh, LOCK_EX | LOCK_NB) or exit 0;
+		my $last = <$fh> // 0;
+		chomp $last;
+		$last = 0 unless $last =~ /^\d+$/;
+		exit 0 if time - $last < 3600;
+		sub stamp {
+			seek($fh, 0, 0) or exit 0;
+			truncate($fh, 0) or exit 0;
+			my $text = time . "\n$message\n";
+			syswrite($fh, $text) == length($text) or exit 0;
+		}
+		stamp();
+		my $pid = fork();
+		exit 0 unless defined $pid;
+		if ($pid == 0) {
+			exec "osascript", "-e", "display notification \"$message\" with title \"AI DevOps\"";
+			exit 0;
+		}
+		local $SIG{ALRM} = sub { kill "KILL", $pid; };
+		alarm 3;
+		my $waited = waitpid($pid, 0);
+		alarm 0;
+		waitpid($pid, 0) if $waited == -1;
+		stamp();
+PERL
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Helpers for _run_preflight_stages (GH#18656)
 # -----------------------------------------------------------------------------
@@ -65,12 +131,13 @@ _preflight_cleanup_systemd_unit_name() {
 # Submit one cleanup helper to a bounded transient user service. The child is
 # started without shell evaluation and receives only non-secret operational
 # settings needed by the cleanup helpers; credentials are resolved from HOME.
-# Args: $1=helper path, $2=log path, $3=stable cleanup name
+# Args: $1=helper path, $2=log path, $3=stable cleanup name, $4..=helper args
 #######################################
 _preflight_launch_systemd_cleanup() {
 	local helper="$1"
 	local log_file="$2"
 	local cleanup_name="$3"
+	shift 3
 	local runtime_max="${AIDEVOPS_CLEANUP_SYSTEMD_RUNTIME_MAX_SEC:-3600}"
 	[[ "$runtime_max" =~ ^[1-9][0-9]*$ ]] || runtime_max=3600
 
@@ -86,6 +153,10 @@ _preflight_launch_systemd_cleanup() {
 	local -a allowed_env_names=(
 		XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_RUNTIME_DIR
 		AIDEVOPS_LOG_DIR AIDEVOPS_TEMP_DIR AIDEVOPS_WORKTREE_BASE_DIR
+		AIDEVOPS_WORKTREE_PRESERVE_PATTERNS AIDEVOPS_MAX_WORKTREES
+		AIDEVOPS_WORKTREE_CLEANUP_THRESHOLD
+		AIDEVOPS_MIN_WORKTREE_FREE_KB AIDEVOPS_MIN_WORKTREE_FREE_PERCENT
+		AIDEVOPS_MIN_WORKTREE_FREE_PERCENT_CEILING_KB
 		AIDEVOPS_HEADLESS_METRICS_FILE AIDEVOPS_ORPHAN_TRASH_ROOT
 		AIDEVOPS_SKIP_INFRA_FAILURE_ESCALATION
 		AIDEVOPS_DIRTY_BACKUP_ROOT AIDEVOPS_DIRTY_BACKUP_RETENTION_DAYS
@@ -104,6 +175,8 @@ _preflight_launch_systemd_cleanup() {
 		ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS PULSE_IDLE_CPU_THRESHOLD
 		WORKTREE_UNATTRIBUTED_RETENTION_DAYS AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE
 		AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_DAYS AIDEVOPS_WORKTREE_ARCHIVE_MAX_TOTAL_SIZE
+		AIDEVOPS_WORKER_BUS_RELAY WORKER_BUS_RELAY_MIN_INTERVAL WORKER_BUS_RELAY_STATE_DIR
+		WORKER_BUS_RELAY_CALL_TIMEOUT AIDEVOPS_SESSION_BUS_DIR
 	)
 	local -a child_env=("HOME=${HOME}" "PATH=${PATH:-/usr/local/bin:/usr/bin:/bin}")
 	local env_name="" env_value=""
@@ -123,7 +196,7 @@ _preflight_launch_systemd_cleanup() {
 		--property=IOSchedulingClass=idle \
 		--property="StandardOutput=append:${log_file}" \
 		--property="StandardError=append:${log_file}" \
-		"$env_bin" -i "${child_env[@]}" "$helper" </dev/null >/dev/null 2>>"$log_file"
+		"$env_bin" -i "${child_env[@]}" "$helper" "$@" </dev/null >/dev/null 2>>"$log_file"
 	return $?
 }
 
@@ -134,15 +207,16 @@ _preflight_launch_systemd_cleanup() {
 # GH#32528: the fallback starts a new session (setsid, else perl POSIX::setsid).
 # launchd tears down the job's process group when pulse-wrapper.sh exits, so a
 # plain nohup child was killed mid-run and cleanup never reached most repos.
-# Args: $1=helper path, $2=log path, $3=stable cleanup name
+# Args: $1=helper path, $2=log path, $3=stable cleanup name, $4..=helper args
 #######################################
 _preflight_launch_async_cleanup() {
 	local helper="$1"
 	local log_file="$2"
 	local cleanup_name="$3"
+	shift 3
 
 	if _preflight_cleanup_systemd_user_service_available; then
-		if _preflight_launch_systemd_cleanup "$helper" "$log_file" "$cleanup_name"; then
+		if _preflight_launch_systemd_cleanup "$helper" "$log_file" "$cleanup_name" "$@"; then
 			echo "[pulse-wrapper] ${cleanup_name} cleanup started in an isolated transient user service" >>"${LOGFILE:-/dev/null}"
 			return 0
 		fi
@@ -150,13 +224,13 @@ _preflight_launch_async_cleanup() {
 	fi
 
 	if command -v setsid >/dev/null 2>&1; then
-		setsid nohup "$helper" </dev/null >>"$log_file" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+		setsid nohup "$helper" "$@" </dev/null >>"$log_file" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 	elif command -v perl >/dev/null 2>&1; then
 		# Stock macOS lacks setsid(1); perl's POSIX::setsid is always present.
-		perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 127' nohup "$helper" \
+		perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 127' nohup "$helper" "$@" \
 			</dev/null >>"$log_file" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 	else
-		nohup "$helper" </dev/null >>"$log_file" 2>&1 &
+		nohup "$helper" "$@" </dev/null >>"$log_file" 2>&1 &
 	fi
 	local helper_pid=$!
 	disown "$helper_pid" 2>/dev/null || true
@@ -194,6 +268,68 @@ _preflight_start_merge_first() {
 }
 
 #######################################
+# Start the isolated async cleanup helpers (GH#37218). Launching is cheap and
+# never consumes the pulse cycle budget, so it runs before early dispatch and
+# outside any budgeted stage: a long first wave must not defer
+# preflight_cleanup_and_ledger and starve worktree cleanup. Each helper keeps
+# its own single-runner lock and cadence gate. Missing helpers are skipped;
+# their synchronous fallbacks stay in _preflight_cleanup_and_ledger.
+#
+# Sets _PULSE_ASYNC_CLEANUPS_STARTED=1 in the caller shell so the later
+# cleanup stage does not launch the same helpers twice in one cycle.
+#######################################
+_preflight_start_async_cleanups() {
+	local logs_dir="${HOME}/.aidevops/logs"
+	_PULSE_ASYNC_CLEANUPS_STARTED=1
+	# GH#20554/GH#29292: worktree cleanup (20+ worktrees × 2-5s gh API calls)
+	# runs in a transient user service on systemd so the parent pulse
+	# TimeoutStartSec cannot kill it. Cadence: CLEANUP_WORKTREES_ASYNC_CADENCE_MIN.
+	# Progress and last-run timestamp: ~/.aidevops/logs/cleanup_worktrees.*
+	local worktrees_helper="${SCRIPT_DIR}/cleanup-worktrees-async-helper.sh"
+	if [[ -x "$worktrees_helper" ]]; then
+		_preflight_launch_async_cleanup "$worktrees_helper" \
+			"${logs_dir}/cleanup_worktrees.log" "worktrees" || true
+	fi
+	# GH#21997/GH#29292: stash auditing uses the same isolated launcher.
+	# Progress: ~/.aidevops/logs/cleanup_stashes.*
+	local stashes_helper="${SCRIPT_DIR}/cleanup-stashes-async-helper.sh"
+	if [[ -x "$stashes_helper" ]]; then
+		_preflight_launch_async_cleanup "$stashes_helper" \
+			"${logs_dir}/cleanup_stashes.log" "stashes" || true
+	fi
+	# GH#22415/GH#29292: remote branch cleanup stays dry-run by default and
+	# skips when GitHub API budget is below the configured floor.
+	# Progress: ~/.aidevops/logs/cleanup_remote_branches.*
+	local remote_branches_helper="${SCRIPT_DIR}/cleanup-remote-branches-async-helper.sh"
+	if [[ -x "$remote_branches_helper" ]]; then
+		_preflight_launch_async_cleanup "$remote_branches_helper" \
+			"${logs_dir}/cleanup_remote_branches.log" "remote-branches" || true
+	fi
+	_preflight_start_worker_bus_relay || true
+	return 0
+}
+
+#######################################
+# t18911/GH#37327: start the session-bus steering relay (t18905) detached,
+# outside the cycle budget. As a budgeted pipeline stage it was deferred on
+# every cycle, so running workers never received maintainer-steering
+# pointers. Pulse calls this at cycle start and on every busy-lock tick
+# (_pulse_run_routines_while_busy). The helper owns its single-runner lock,
+# per-worker interval, per-call timeouts, stop/rate-limit/circuit checks and
+# the REST-core deferrable gate, so a run that finds another run, no live
+# worker or no budget exits at once. AIDEVOPS_WORKER_BUS_RELAY=0 disables it.
+#######################################
+_preflight_start_worker_bus_relay() {
+	[[ "${AIDEVOPS_WORKER_BUS_RELAY:-1}" != "0" ]] || return 0
+	[[ -z "${STOP_FLAG:-}" || ! -f "$STOP_FLAG" ]] || return 0
+	local relay_helper="${SCRIPT_DIR}/worker-bus-relay-helper.sh"
+	[[ -x "$relay_helper" ]] || return 0
+	_preflight_launch_async_cleanup "$relay_helper" \
+		"${HOME}/.aidevops/logs/worker-bus-relay.log" "worker-bus-relay" relay || true
+	return 0
+}
+
+#######################################
 # Cleanup + zombie reap + ledger maintenance. Runs before worker counting
 # so count_active_workers sees accurate slot availability.
 #######################################
@@ -207,6 +343,14 @@ _preflight_cleanup_and_ledger() {
 	if declare -F sweep_closed_auto_dispatch_issues >/dev/null 2>&1; then
 		run_stage_with_timeout "sweep_closed_auto_dispatch_issues" "$PRE_RUN_STAGE_TIMEOUT" sweep_closed_auto_dispatch_issues || true
 	fi
+	# GH#38141: idle GitHub request-coordination state otherwise grows without
+	# bound. The collector is stamp-limited to one completed sweep per day and
+	# self-budgets below this timeout, so it amortises without blocking dispatch.
+	if declare -F gh_request_state_gc >/dev/null 2>&1; then
+		local _gh_request_state_gc_timeout="${GH_REQUEST_STATE_GC_TIMEOUT:-60}"
+		[[ "$_gh_request_state_gc_timeout" =~ ^[0-9]+$ ]] || _gh_request_state_gc_timeout=60
+		run_stage_with_timeout "gh_request_state_gc" "$_gh_request_state_gc_timeout" gh_request_state_gc || true
+	fi
 	# Fast API-free recovery runs synchronously before the long async cleanup.
 	# This prevents a stale async lock from leaving the dispatch worktree cap
 	# saturated by abandoned detached linter/regression fixtures.
@@ -215,41 +359,19 @@ _preflight_cleanup_and_ledger() {
 		[[ "$_temp_cleanup_timeout" =~ ^[0-9]+$ ]] || _temp_cleanup_timeout=60
 		run_stage_with_timeout "cleanup_stale_temp_worktrees" "$_temp_cleanup_timeout" cleanup_stale_temp_worktrees || true
 	fi
-	# GH#20554/GH#29292: Worktree cleanup is moved to an async background job so
-	# a slow cleanup (20+ worktrees × 2-5s gh API calls each) never blocks the
-	# pulse cycle. On systemd it runs in a transient user service so the parent
-	# pulse TimeoutStartSec cannot kill it. The helper retains its single-runner
-	# lock and cadence gate (CLEANUP_WORKTREES_ASYNC_CADENCE_MIN, default 10 min).
-	# Progress and last-run timestamp: ~/.aidevops/logs/cleanup_worktrees.*
-	local _cleanup_async_helper="${SCRIPT_DIR}/cleanup-worktrees-async-helper.sh"
-	if [[ -x "$_cleanup_async_helper" ]]; then
-		_preflight_launch_async_cleanup "$_cleanup_async_helper" \
-			"${HOME}/.aidevops/logs/cleanup_worktrees.log" "worktrees"
-	else
-		# Fallback: synchronous with short timeout (old GH#18979 behaviour)
+	# GH#37218: async worktree/stash/remote-branch helpers normally start from
+	# _run_preflight_stages before early dispatch, outside the cycle budget.
+	# Standalone callers (or a cycle that has not started them) launch here.
+	if [[ "${_PULSE_ASYNC_CLEANUPS_STARTED:-0}" != "1" ]]; then
+		_preflight_start_async_cleanups || true
+	fi
+	# Fallbacks for missing async helpers stay synchronous and budgeted.
+	if [[ ! -x "${SCRIPT_DIR}/cleanup-worktrees-async-helper.sh" ]]; then
+		# Old GH#18979 behaviour: synchronous with a short timeout.
 		run_stage_with_timeout "cleanup_worktrees" 60 cleanup_worktrees 60 || true
 	fi
-	# GH#21997/GH#29292: Stash cleanup uses the same isolated async launcher so
-	# slow auditing cannot stall preflight or share the parent pulse lifetime.
-	# The helper retains its single-runner lock and cadence gate.
-	# Progress: ~/.aidevops/logs/cleanup_stashes.*
-	local _cleanup_stashes_async_helper="${SCRIPT_DIR}/cleanup-stashes-async-helper.sh"
-	if [[ -x "$_cleanup_stashes_async_helper" ]]; then
-		_preflight_launch_async_cleanup "$_cleanup_stashes_async_helper" \
-			"${HOME}/.aidevops/logs/cleanup_stashes.log" "stashes"
-	else
-		# Fallback: synchronous with the standard pre-run stage timeout.
+	if [[ ! -x "${SCRIPT_DIR}/cleanup-stashes-async-helper.sh" ]]; then
 		run_stage_with_timeout "cleanup_stashes" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stashes || true
-	fi
-	# GH#22415/GH#29292: Remote branch cleanup uses the isolated async launcher so
-	# cross-repo audits do not block preflight or share the parent pulse lifetime.
-	# The helper remains dry-run by default, retains its lock/cadence gate, and
-	# skips when GitHub API budget is below the configured floor.
-	# Progress: ~/.aidevops/logs/cleanup_remote_branches.*
-	local _cleanup_remote_branches_async_helper="${SCRIPT_DIR}/cleanup-remote-branches-async-helper.sh"
-	if [[ -x "$_cleanup_remote_branches_async_helper" ]]; then
-		_preflight_launch_async_cleanup "$_cleanup_remote_branches_async_helper" \
-			"${HOME}/.aidevops/logs/cleanup_remote_branches.log" "remote-branches"
 	fi
 
 	# GH#25136: OpenCode DB archive/VACUUM is heavy SQLite maintenance, not
@@ -458,11 +580,13 @@ _preflight_label_maintenance() {
 # 724s against floor=600s enumeration=300s). The configured minimum stays a
 # lower bound. The dispatch reserve is ignored when that gate is off, its
 # estimator is not loaded, or it could never fit one cycle.
+# GH#36603: round admission also requires the pre-stage margin on top of the
+# floor, so the reserve includes it (0 when the margin helper is not loaded).
 # Stdout: seconds. Returns 1 when the configured minimum is invalid.
 _preflight_post_label_refill_required_seconds() {
 	local required="${PULSE_POST_LABEL_REFILL_MIN_REMAINING_SECONDS:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
 	local finalise="${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}" floor="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}"
-	local cycle="${PULSE_STALE_THRESHOLD:-}" lock="${PULSE_LOCK_MAX_AGE_S:-1800}" enumeration="" reserve=0
+	local cycle="${PULSE_STALE_THRESHOLD:-}" lock="${PULSE_LOCK_MAX_AGE_S:-1800}" enumeration="" reserve=0 margin=0
 	[[ "$required" =~ ^[1-9][0-9]*$ ]] || return 1
 	if [[ "${AIDEVOPS_PULSE_DISPATCH_BUDGET_RESERVE:-1}" == "1" && "$finalise" =~ ^[0-9]{1,5}$ &&
 		"$cycle" =~ ^[1-9][0-9]{0,8}$ && "$lock" =~ ^[1-9][0-9]{0,8}$ ]] &&
@@ -470,8 +594,12 @@ _preflight_post_label_refill_required_seconds() {
 		[[ "$floor" =~ ^[1-9][0-9]*$ ]] || floor=600
 		[[ "$lock" -lt "$cycle" ]] && cycle="$lock"
 		enumeration=$(_PULSE_FIRST_DISPATCH_WAVE=0 _dispatch_enumeration_expected_seconds) || enumeration=""
+		if declare -F _dispatch_prestage_margin_seconds >/dev/null 2>&1; then
+			margin=$(_dispatch_prestage_margin_seconds) || margin=0
+		fi
+		[[ "$margin" =~ ^[0-9]{1,5}$ ]] || margin=0
 		if [[ "${#floor}" -le 9 && "$enumeration" =~ ^[0-9]{1,5}$ ]]; then
-			reserve=$((10#$finalise + 10#$floor + 10#$enumeration))
+			reserve=$((10#$finalise + 10#$floor + 10#$margin + 10#$enumeration))
 			((reserve > required && reserve < cycle)) && required="$reserve"
 		fi
 	fi
@@ -510,6 +638,31 @@ _preflight_refill_reserved_timeout() {
 	return 0
 }
 
+# GH#37986: log-only mirror of the reserve _preflight_refill_reserved_timeout
+# applies, so a deferral line says how far short the cycle fell. Keep the
+# reserve and margin rules identical to that gate. This never admits a stage.
+# Stdout: "remaining=<s>s, required=<s>s" ("?" for an unavailable value).
+_preflight_refill_reserved_deficit() {
+	local configured="${PULSE_POST_LABEL_REFILL_MIN_REMAINING_SECONDS:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
+	local refill_reserve="" margin=5 remaining="" required="?"
+	remaining=$(_pulse_cycle_remaining_seconds 0) || remaining=""
+	[[ "$remaining" =~ ^-?[0-9]+$ ]] || remaining=""
+	refill_reserve=$(_preflight_post_label_refill_required_seconds) || refill_reserve=""
+	if [[ "$refill_reserve" =~ ^[0-9]+$ ]]; then
+		if [[ "$configured" =~ ^[0-9]+$ && "$refill_reserve" -gt "$configured" ]]; then
+			if [[ -n "$remaining" && "$remaining" -ge "$refill_reserve" ]]; then
+				margin=60
+			else
+				refill_reserve="$configured"
+			fi
+		fi
+		# The gate needs at least one second beyond the reserve and its margin.
+		required=$((refill_reserve + margin + 1))
+	fi
+	printf 'remaining=%ss, required=%ss\n' "${remaining:-?}" "$required"
+	return 0
+}
+
 #######################################
 # Normalize NMR only after live author-authority, provenance, breaker, and
 # security classification in auto_approve_maintainer_issues. Running this after the first
@@ -536,8 +689,10 @@ _preflight_early_dispatch() {
 	# Internal, dynamically scoped only to this fill. Never export to workers
 	# or use it to bypass dispatch admission, trust, claim or ledger checks.
 	local _PULSE_FIRST_DISPATCH_WAVE=1
-	# A partial first-wave census must not populate the full-scan snapshot key.
-	local PULSE_DISPATCH_CANDIDATE_SNAPSHOT_ENABLED=0
+	# First waves use a separate durable partial key, retaining an interrupted
+	# ranked remainder without contaminating the full-census snapshot.
+	# GH#36122: label this path in apply_dispatch_max's breaker skip line.
+	local _PULSE_DISPATCH_BREAKER_CONTEXT="early"
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag present — skipping early dispatch_max" >>"$LOGFILE"
 	else
@@ -605,6 +760,8 @@ _preflight_post_label_refill_wall_clock_allows() {
 # ledger, trust, and per-candidate timeout gates across multiple fill passes.
 #######################################
 _preflight_post_label_refill() {
+	# GH#36122: label this path in apply_dispatch_max's breaker skip line.
+	local _PULSE_DISPATCH_BREAKER_CONTEXT="post_label"
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag present — skipping post-label dispatch_max" >>"$LOGFILE"
 	else
@@ -629,6 +786,42 @@ _preflight_post_label_refill() {
 # _run_preflight_stages() with independent timeouts. See the call site below.
 
 #######################################
+# GH#37939: cooperative budget for the single-pass reconcile child. It must
+# end before the stage watchdog, keeping the 20s allowance of the former
+# 380/360 pair: min(configured RECONCILE_TIME_BUDGET_SECS, stage - 20), floor
+# 1s. A configured 0 (unbounded) or longer budget is clamped; a shorter one
+# is kept. A non-numeric value uses the child's own 360s default.
+# Arguments: $1 - stage watchdog budget in seconds
+# Output: cooperative budget in seconds
+#######################################
+_preflight_reconcile_cooperative_budget() {
+	local stage_budget="$1"
+	local configured="${RECONCILE_TIME_BUDGET_SECS:-360}" cap=1
+	[[ "$configured" =~ ^[0-9]+$ ]] || configured=360
+	[[ "$stage_budget" =~ ^[0-9]+$ ]] && cap=$((stage_budget - 20))
+	[[ "$cap" -ge 1 ]] || cap=1
+	if [[ "$configured" -eq 0 || "$configured" -gt "$cap" ]]; then
+		configured="$cap"
+	fi
+	printf '%s\n' "$configured"
+	return 0
+}
+
+#######################################
+# Run reconcile_issues_single_pass under its stage watchdog with the clamped
+# cooperative budget. The function-local shadow reaches only this stage's
+# child (dynamic scope), never later stages or direct callers.
+# Arguments: $1 - stage watchdog budget in seconds
+#######################################
+_preflight_run_reconcile_single_pass() {
+	local stage_budget="$1" cooperative_budget
+	cooperative_budget=$(_preflight_reconcile_cooperative_budget "$stage_budget")
+	local RECONCILE_TIME_BUDGET_SECS="$cooperative_budget"
+	run_stage_with_timeout "reconcile_issues_single_pass" "$stage_budget" reconcile_issues_single_pass
+	return $?
+}
+
+#######################################
 # Ownership normalization + issue reconciliation stages.
 # Ensures active labels reflect ownership (prevents multi-worker overlap),
 # closes issues whose linked PRs already merged, and reconciles status:done
@@ -637,6 +830,25 @@ _preflight_post_label_refill() {
 _preflight_ownership_reconcile() {
 	local outer_budget="${1:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
 	[[ "$outer_budget" =~ ^[1-9][0-9]*$ ]] || outer_budget=600
+	# The wrapper may clamp the requested timeout to the remaining cycle time.
+	# Its exported deadline, not the original argument, bounds both children.
+	local deadline="${PULSE_STAGE_DEADLINE_EPOCH:-}" now="" deadline_remaining=""
+	if [[ "$deadline" =~ ^[1-9][0-9]*$ ]] && now=$(date +%s 2>/dev/null) && [[ "$now" =~ ^[0-9]+$ ]]; then
+		deadline_remaining=$((deadline - now))
+		if [[ "$deadline_remaining" -le 0 ]]; then
+			echo "[pulse-wrapper] Ownership reconciliation deferred: parent deadline exhausted" >>"$LOGFILE"
+			return 124
+		fi
+		[[ "$outer_budget" -le "$deadline_remaining" ]] || outer_budget="$deadline_remaining"
+	fi
+	# Synchronous recovery shares this cycle's clock. When catch-up is pending,
+	# leave it half the available ownership allocation instead of consuming all
+	# remaining time. Standalone calls and unclamped async runs keep their budget.
+	if [[ -n "$deadline_remaining" && "${AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP:-1}" == "1" && "$outer_budget" -ge 30 ]] &&
+		declare -F _pulse_blocker_refresh_starved >/dev/null 2>&1 && _pulse_blocker_refresh_starved; then
+		outer_budget=$((outer_budget / 2))
+		echo "[pulse-wrapper] Ownership reconciliation reserving time for blocker recovery: budget=${outer_budget}s" >>"$LOGFILE"
+	fi
 	local ownership_start=$SECONDS reserve=8 reconcile_budget remaining
 	# Leave room for the outer wrapper's two-second watchdog cadence and cleanup.
 	[[ "$outer_budget" -gt 16 ]] || reserve=2
@@ -648,26 +860,44 @@ _preflight_ownership_reconcile() {
 	prefetch_contribution_watch
 	_log_substage_timing "substage:ownership_reconcile/prefetch_contribution_watch" "$_ss0" 0
 
+	# GH#36908: live intake has its own timeout, before the cache/cursor pass
+	# starts its internal cooperative budget. A stale snapshot cannot hide intake.
+	local intake_budget=$((outer_budget - (SECONDS - ownership_start) - reserve))
+	if [[ "$intake_budget" -gt 0 ]]; then
+		[[ "$intake_budget" -le 60 ]] || intake_budget=60
+		run_stage_with_timeout "reconcile_new_external_issues" "$intake_budget" reconcile_new_external_issues || true
+	fi
+
 	# t2776: single-pass reconcile — iterates the issue list ONCE per repo and
 	# applies all five reconcile checks in sub-stage order (close-merged-PR,
 	# stale-done, open-with-merged-PR, parent-task, labelless backfill).
 	# Replaces the five sequential stage calls that each had their own per-repo
 	# fetch loop; now 5N → N iterations per cycle.
-	# Run the shorter, higher-value pass first. The 360s internal budget gets a
-	# watchdog allowance; normalization receives only the time actually left.
+	# Run the shorter, higher-value pass first. Its cooperative budget (at most
+	# 360s) is clamped 20s inside this stage budget so it yields at its cursor
+	# before the watchdog (GH#37939); normalization receives the time left.
+	# GH#35684: normalization is the only recovery for stranded dispatch claims,
+	# so when the budget allows both stages, keep a floor for it.
+	local normalize_floor="${AIDEVOPS_PULSE_NORMALIZE_FLOOR_S:-60}"
+	[[ "$normalize_floor" =~ ^[0-9]+$ ]] || normalize_floor=60
 	remaining=$((outer_budget - (SECONDS - ownership_start) - reserve))
 	if [[ "$remaining" -gt 0 ]]; then
 		reconcile_budget=$remaining
+		if [[ "$remaining" -gt $((normalize_floor * 2)) ]]; then
+			reconcile_budget=$((remaining - normalize_floor))
+		fi
 		[[ "$reconcile_budget" -le 380 ]] || reconcile_budget=380
-		run_stage_with_timeout "reconcile_issues_single_pass" "$reconcile_budget" reconcile_issues_single_pass || true
+		_preflight_run_reconcile_single_pass "$reconcile_budget" || true
 	fi
 
 	# Ensure active labels reflect ownership to prevent multi-worker overlap.
 	remaining=$((outer_budget - (SECONDS - ownership_start) - reserve))
 	if [[ "$remaining" -gt 0 ]]; then
-		run_stage_with_timeout "normalize_active_issue_assignments" "$remaining" normalize_active_issue_assignments || true
+		run_stage_with_timeout "normalize_active_issue_assignments" "$remaining" normalize_active_issue_assignments || return $?
 	else
 		echo "[pulse-wrapper] Assignment normalization deferred: ownership budget exhausted" >>"$LOGFILE"
+		# Keep unfinished ownership work eligible for the next resumable pass.
+		return 124
 	fi
 
 	return 0
@@ -687,6 +917,102 @@ _preflight_prefetch_reserved_finalise_seconds() {
 	[[ "$finalise_seconds" =~ ^[0-9]+$ ]] || finalise_seconds=90
 	[[ "$pipeline_seconds" =~ ^[0-9]+$ ]] || pipeline_seconds=180
 	printf '%s\n' "$((finalise_seconds + pipeline_seconds))"
+	return 0
+}
+
+#######################################
+# GH#37854: starvation bound for the prefetch snapshot. Early dispatch runs
+# first and can consume nearly the whole cycle, leaving prefetch clamped to a
+# window it cannot finish (or deferred outright), so STATE_FILE froze for days.
+# When the snapshot is missing or older than the bound, the caller promotes
+# prefetch ahead of early dispatch so it receives the full stage budget.
+# AIDEVOPS_PULSE_PREFETCH_STARVATION_S=0 disables promotion (legacy order).
+# Returns: 0 when the snapshot is starved, 1 otherwise (or undeterminable).
+#######################################
+_preflight_prefetch_starved() {
+	local bound="${AIDEVOPS_PULSE_PREFETCH_STARVATION_S:-7200}"
+	[[ "$bound" =~ ^[0-9]+$ ]] || bound=7200
+	[[ "$bound" -gt 0 ]] || return 1
+	local state_file="${STATE_FILE:-}"
+	[[ -n "$state_file" ]] || return 1
+	[[ -s "$state_file" ]] || return 0
+	declare -F _file_mtime_epoch >/dev/null 2>&1 || return 1
+	local mtime=""
+	mtime=$(_file_mtime_epoch "$state_file" 2>/dev/null) || return 1
+	[[ "$mtime" =~ ^[0-9]+$ ]] || return 1
+	local now
+	now=$(date +%s)
+	[[ $((now - mtime)) -gt "$bound" ]] && return 0
+	return 1
+}
+
+#######################################
+# GH#37986: starvation bound for label maintenance. The stage runs after early
+# dispatch and only when the cycle still holds the post-label refill reserve,
+# so a busy runner deferred it on every cycle (66 hours measured). It is the
+# only path that removes needs-simplification and needs-consolidation holds:
+# held issues are filtered out before dispatch can re-measure them. When any
+# substage has not started within the bound, the caller runs one bounded slice
+# before early dispatch. The stage runs its stalest substage first, so every
+# slice that passes the REST gate moves the stalest attempt forward.
+#   AIDEVOPS_PULSE_LABEL_MAINTENANCE_STARVATION_S   bound in seconds (default
+#     7200; 0 disables promotion and keeps the legacy order).
+#   AIDEVOPS_PULSE_LABEL_MAINTENANCE_STARVED_SLICE_S   promoted slice timeout
+#     (default 180, minimum 60; read by the caller).
+# Reads the attempt epochs _preflight_label_maintenance_order reads, with the
+# same fallback to the completion epochs.
+# Arguments: $1 - bound multiplier (default 1). The caller passes 2 on a cycle
+#   that already promoted prefetch. A substage with no recorded attempt has no
+#   measurable age: at multiplier 1 it is starved, and above 1 the multiplied
+#   bound applies to the oldest recorded attempt. With no attempt recorded at
+#   all, a multiplier above 1 waits for a cycle that did not promote prefetch.
+# Stdout (when starved): seconds since the stalest substage last started, or
+#   "never" when a substage has no recorded attempt.
+# Returns: 0 when starved, 1 otherwise (or when the clock cannot be read).
+#######################################
+_preflight_label_maintenance_starved() {
+	local factor="${1:-1}"
+	local bound="${AIDEVOPS_PULSE_LABEL_MAINTENANCE_STARVATION_S:-7200}"
+	[[ "$bound" =~ ^[0-9]{1,9}$ ]] || bound=7200
+	[[ "$((10#$bound))" -gt 0 ]] || return 1
+	[[ "$factor" =~ ^[1-9]$ ]] || factor=1
+	bound=$((10#$bound * factor))
+	local state_file="${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}.attempts"
+	local key=""
+	local epoch=""
+	local extra=""
+	local now="" stalest=0 missing=0 consolidation=0 backfill=0 simplification=0
+	[[ -f "$state_file" ]] || state_file="${state_file%.attempts}"
+	if [[ -r "$state_file" && -f "$state_file" ]]; then
+		while read -r key epoch extra; do
+			[[ -z "$extra" && "$epoch" =~ ^[0-9]{1,12}$ ]] || continue
+			case "$key" in
+				consolidation) consolidation="$((10#$epoch))" ;;
+				backfill) backfill="$((10#$epoch))" ;;
+				simplification) simplification="$((10#$epoch))" ;;
+			esac
+		done <"$state_file"
+	fi
+	now=$(date +%s 2>/dev/null) || return 1
+	[[ "$now" =~ ^[0-9]+$ ]] || return 1
+	# stalest: the oldest recorded attempt; missing: a substage has none.
+	for epoch in "$consolidation" "$backfill" "$simplification"; do
+		if [[ "$epoch" -eq 0 ]]; then
+			missing=1
+		elif [[ "$stalest" -eq 0 || "$epoch" -lt "$stalest" ]]; then
+			stalest="$epoch"
+		fi
+	done
+	if [[ "$missing" -eq 1 && "$factor" -eq 1 ]]; then
+		printf 'never\n'
+		return 0
+	fi
+	[[ "$stalest" -gt 0 && $((now - stalest)) -gt "$bound" ]] || return 1
+	if [[ "$missing" -eq 1 ]]; then
+		printf 'never\n'
+	else
+		printf '%s\n' "$((now - stalest))"
+	fi
 	return 0
 }
 

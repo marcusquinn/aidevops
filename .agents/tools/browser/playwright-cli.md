@@ -165,6 +165,8 @@ playwright-cli tracing-stop
 
 ## Comparison with Other Tools
 
+Stagehand is not recommended; use it only when the user explicitly asks to try it.
+
 | Feature | playwright-cli | agent-browser | Playwright Extension | Stagehand |
 |---------|---------------|---------------|----------------------|-----------|
 | **Maintainer** | Microsoft | Vercel | Microsoft | Browserbase |

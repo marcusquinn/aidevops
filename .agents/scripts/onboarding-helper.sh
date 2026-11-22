@@ -61,13 +61,16 @@ _get_setting() {
 	return 0
 }
 
-# Write a setting to settings.json
+# Write a setting to settings.json. Returns settings-helper's status so an
+# unknown key or invalid value is never reported as saved (GH#38877).
 _set_setting() {
 	local key="$1"
 	local value="$2"
-	if [[ -x "$SETTINGS_HELPER" ]]; then
-		bash "$SETTINGS_HELPER" set "$key" "$value" >/dev/null
+	if [[ ! -x "$SETTINGS_HELPER" ]]; then
+		print_error "settings-helper.sh not found: $SETTINGS_HELPER"
+		return 1
 	fi
+	bash "$SETTINGS_HELPER" set "$key" "$value" >/dev/null || return 1
 	return 0
 }
 
@@ -659,19 +662,17 @@ configure_dirs() {
 	return 0
 }
 
-# Sync git_parent_dirs from repos.json into settings.json
+# Enable repo sync in settings.json once parent directories are configured.
+# The directory list itself stays in repos.json (git_parent_dirs), which
+# repo-sync-helper.sh reads; settings.json has no directories key (GH#38877).
 _sync_dirs_to_settings() {
 	local config_file="$1"
 
-	if [[ ! -f "$config_file" ]] || ! command -v jq &>/dev/null; then
+	if [[ ! -f "$config_file" ]]; then
 		return 0
 	fi
 
-	local dirs_json
-	dirs_json=$(jq -c '[.git_parent_dirs[]? // empty]' "$config_file" || echo '["~/Git"]')
-
-	_set_setting "repo_sync.directories" "$dirs_json"
-	_set_setting "repo_sync.enabled" "true"
+	_set_setting "repo_sync.enabled" "true" || return 1
 	return 0
 }
 
@@ -1067,7 +1068,7 @@ save_work_type() {
 	local work_type="$1"
 
 	_ensure_settings
-	_set_setting "user.work_type" "$work_type"
+	_set_setting "onboarding.work_type" "$work_type" || return 1
 	echo "Saved work type: $work_type"
 	return 0
 }
@@ -1080,24 +1081,30 @@ save_concepts() {
 
 	# Accept comma-separated list or JSON array
 	if [[ "$concepts" == \[* ]]; then
-		_set_setting "user.familiar_concepts" "$concepts"
+		_set_setting "onboarding.familiarity" "$concepts" || return 1
 	else
 		# Convert comma-separated to JSON array
 		local json_array
-		json_array=$(jq -n --arg concepts "$concepts" '$concepts | split(",") | map(gsub("^[[:space:]]+|[[:space:]]+$"; ""))')
-		_set_setting "user.familiar_concepts" "$json_array"
+		json_array=$(jq -cn --arg concepts "$concepts" '$concepts | split(",") | map(gsub("^[[:space:]]+|[[:space:]]+$"; ""))')
+		_set_setting "onboarding.familiarity" "$json_array" || return 1
 	fi
 	echo "Saved familiar concepts"
 	return 0
 }
 
-# Save orchestration preference to settings.json
+# Save orchestration preference. The canonical toggle is
+# orchestration.supervisor_pulse in config.jsonc (aidevops config), not
+# settings.json, which has no orchestration section (GH#38877).
 save_orchestration() {
 	local enabled="$1"
+	local config_helper="${SCRIPT_DIR}/config-helper.sh"
 
-	_ensure_settings
-	_set_setting "orchestration.enabled" "$enabled"
-	echo "Saved orchestration.enabled: $enabled"
+	if [[ ! -x "$config_helper" ]]; then
+		print_error "config-helper.sh not found: $config_helper"
+		return 1
+	fi
+	bash "$config_helper" set orchestration.supervisor_pulse "$enabled" >/dev/null || return 1
+	echo "Saved orchestration.supervisor_pulse: $enabled"
 	return 0
 }
 
@@ -1141,7 +1148,7 @@ show_help() {
 	echo "  settings            - Show current settings from settings.json"
 	echo "  save-work-type <t>  - Save work type (web, devops, seo, wordpress)"
 	echo "  save-concepts <c>   - Save familiar concepts (comma-separated or JSON array)"
-	echo "  save-orchestration  - Save orchestration enabled/disabled (true/false)"
+	echo "  save-orchestration  - Save orchestration.supervisor_pulse (true/false; setup.sh applies it)"
 	echo "  json                - Output status as JSON for programmatic use"
 	echo "  help                - Show this help message"
 	echo ""
@@ -1300,7 +1307,7 @@ main() {
 		# If no arg, try to use saved work_type from settings
 		if [[ -z "$arg" ]]; then
 			local saved_type
-			saved_type=$(_get_setting "user.work_type")
+			saved_type=$(_get_setting "onboarding.work_type")
 			if [[ "$saved_type" != "null" && -n "$saved_type" ]]; then
 				arg="$saved_type"
 			fi

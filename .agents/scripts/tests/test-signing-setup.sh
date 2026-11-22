@@ -42,7 +42,7 @@ cat >"${FAKE_BIN}/ssh-add" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${AIDEVOPS_SIGNING_TEST_CALL_LOG:?}"
 case "${1:-}" in
--l) exit 0 ;;
+-l) exit "${AIDEVOPS_SIGNING_TEST_LIST_EXIT:-0}" ;;
 -L)
 	[[ "${SSH_AUTH_SOCK:-}" == "${AIDEVOPS_SIGNING_TEST_SOCKET:?}" ]] || exit 1
 	[[ "${AIDEVOPS_SIGNING_TEST_NOT_LOADED:-0}" == 0 || -f "${AIDEVOPS_SIGNING_TEST_CALL_LOG}.loaded" ]] || exit 1
@@ -88,6 +88,25 @@ if grep -qF "config --global user.signingkey ${TEST_HOME}/.ssh/id_ed25519_signin
 	exit 1
 fi
 
+# GH#37169: headless-first setup and key rotation retain both signing roles.
+ssh-keygen -t ed25519 -N '' -q -f "${TEST_HOME}/.ssh/id_ed25519"
+interactive_key=$(<"${TEST_HOME}/.ssh/id_ed25519.pub")
+signers="${TEST_HOME}/.ssh/allowed_signers"
+HOME="$TEST_HOME" PATH="${FAKE_BIN}:$PATH" "${SCRIPT_DIR}/signing-setup.sh" setup >/dev/null
+grep -qxF "aidevops-test@example.invalid $PUBLIC_KEY" "$signers"
+grep -qxF "aidevops-test@example.invalid $interactive_key" "$signers"
+HOME="$TEST_HOME" PATH="${FAKE_BIN}:$PATH" "${SCRIPT_DIR}/signing-setup.sh" setup >/dev/null
+[[ $(grep -cxF "aidevops-test@example.invalid $interactive_key" "$signers") == 1 ]]
+ssh-keygen -t ed25519 -N '' -C aidevops-headless-signing -q -f "${TEST_ROOT}/rotated"
+cp "${TEST_ROOT}/rotated.pub" "${TEST_HOME}/.ssh/id_ed25519_signing.pub"
+rotated_key=$(<"${TEST_HOME}/.ssh/id_ed25519_signing.pub")
+AIDEVOPS_SIGNING_TEST_PUBLIC_KEY="$rotated_key" HOME="$TEST_HOME" PATH="${FAKE_BIN}:$PATH" "${SCRIPT_DIR}/signing-setup.sh" headless-setup >/dev/null
+AIDEVOPS_SIGNING_TEST_PUBLIC_KEY="$rotated_key" HOME="$TEST_HOME" PATH="${FAKE_BIN}:$PATH" "${SCRIPT_DIR}/signing-setup.sh" headless-setup >/dev/null
+grep -qxF "aidevops-test@example.invalid $interactive_key" "$signers"
+[[ $(grep -cxF "aidevops-test@example.invalid $rotated_key" "$signers") == 1 ]]
+# Restore the original key for the existing agent tests.
+printf '%s\n' "$PUBLIC_KEY" >"${TEST_HOME}/.ssh/id_ed25519_signing.pub"
+
 : >"$CALL_LOG"
 agent_output=$(HOME="$TEST_HOME" PATH="${FAKE_BIN}:$PATH" \
 	"${SCRIPT_DIR}/signing-setup.sh" agent-start)
@@ -97,6 +116,27 @@ if [[ "$agent_output" != *"Signing key already loaded in ssh-agent"* ]]; then
 fi
 if grep -qF "${TEST_HOME}/.ssh/id_ed25519_signing" "$CALL_LOG"; then
 	printf 'FAIL agent-start redundantly loaded an existing signing key\n'
+	exit 1
+fi
+
+# GH#36493: a live agent without identities (ssh-add -l exit 1) is reused.
+empty_agent_output=$(AIDEVOPS_SIGNING_TEST_LIST_EXIT=1 HOME="$TEST_HOME" PATH="${FAKE_BIN}:$PATH" \
+	"${SCRIPT_DIR}/signing-setup.sh" agent-start)
+if [[ "$empty_agent_output" != *"Reusing existing ssh-agent"* ]] || \
+	[[ "$empty_agent_output" == *"Starting new ssh-agent"* ]]; then
+	printf 'FAIL agent-start replaced a live agent that had no identities\n%s\n' "$empty_agent_output"
+	exit 1
+fi
+
+# GH#36493: an unreachable agent (exit 2) named by agent.env is reported.
+stale_output=$(AIDEVOPS_SIGNING_TEST_LIST_EXIT=2 HOME="$TEST_HOME" PATH="${FAKE_BIN}:$PATH" \
+	"${SCRIPT_DIR}/signing-setup.sh" check)
+if [[ "$stale_output" != *"names an unreachable ssh-agent"* ]]; then
+	printf 'FAIL check did not report a stale agent.env\n%s\n' "$stale_output"
+	exit 1
+fi
+if [[ "$check_output" == *"unreachable ssh-agent"* ]]; then
+	printf 'FAIL check reported a live agent as unreachable\n%s\n' "$check_output"
 	exit 1
 fi
 
@@ -186,6 +226,112 @@ output=$("${script_dir}/signing-setup.sh" agent-start </dev/null)
 output=$("${script_dir}/signing-setup.sh" agent-start </dev/null)
 [[ "$output" == *"Signing key already loaded in ssh-agent"* ]]
 printf 'PASS real ssh-agent rejects encrypted keys and loads passphrase-less keys idempotently\n'
+EOF
+
+# GH#36493: simulate a reboot. agent.env names a socket whose agent is gone;
+# the shared ensure step restarts the agent with the headless key, no prompt.
+# Newer OpenSSH binds agent sockets under $HOME/.ssh/agent/, so use a short
+# HOME to stay within the Unix socket path limit.
+SHORT_HOME=$(mktemp -d /tmp/aidv-sg.XXXXXX)
+trap 'cleanup; rm -rf "$SHORT_HOME"' EXIT
+mkdir -p "${SHORT_HOME}/.ssh"
+# A newly reachable agent is not healed if the dedicated key could not load.
+ssh-keygen -t ed25519 -N 'x' -q -f "${SHORT_HOME}/.ssh/id_ed25519_signing"
+printf 'export SSH_AUTH_SOCK=%q\nexport SSH_AGENT_PID=%q\n' \
+	"${TEST_ROOT}/dead-agent.sock" "999999" >"${SHORT_HOME}/.ssh/agent.env"
+env -u SSH_AUTH_SOCK -u SSH_AGENT_PID HOME="$SHORT_HOME" bash -s -- "$SCRIPT_DIR" <<'EOF'
+set -euo pipefail
+script_dir="$1"
+# shellcheck source=/dev/null
+source "${script_dir}/headless-ssh-agent-lib.sh"
+# Observe the newly started agent in the child before the real key load fails.
+# Keep this wrapper local to the failed-load scenario; do not mock ssh-add.
+ssh-add() {
+	local argument="${1:-}"
+	if [[ "$argument" == "${HOME}/.ssh/id_ed25519_signing" ]]; then
+		printf 'export SSH_AUTH_SOCK=%q\nexport SSH_AGENT_PID=%q\n' \
+			"$SSH_AUTH_SOCK" "$SSH_AGENT_PID" >"${HOME}/.ssh/failed-load-agent.env"
+	fi
+	command ssh-add "$@"
+	return $?
+}
+export -f ssh-add
+if headless_ssh_agent_ensure "${script_dir}/signing-setup.sh"; then
+	trap 'kill "${SSH_AGENT_PID:-0}" 2>/dev/null || true' EXIT
+	printf 'FAIL recovery accepted a reachable agent after key loading failed\n'
+	exit 1
+fi
+[[ "$HEADLESS_SSH_AGENT_STATUS" == "dead" ]]
+# GH#36550: the empty agent is stopped and never persisted, so agent.env keeps
+# naming the dead agent and every later ensure keeps reporting the failure.
+if headless_ssh_agent_reachable; then
+	kill "${SSH_AGENT_PID:-0}" 2>/dev/null || true
+	printf 'FAIL failed key loading left a reachable empty agent persisted\n'
+	exit 1
+fi
+grep -qF 'dead-agent.sock' "${HOME}/.ssh/agent.env"
+for staged in "${HOME}"/.ssh/agent.env.*; do
+	[[ ! -e "$staged" ]] || { printf 'FAIL staged agent env left behind: %s\n' "$staged"; exit 1; }
+done
+# Inspect the captured agent, not the stale values restored from agent.env.
+(
+	# shellcheck source=/dev/null
+	source "${HOME}/.ssh/failed-load-agent.env"
+	trap 'kill "$SSH_AGENT_PID" 2>/dev/null || true' EXIT
+	[[ "$SSH_AUTH_SOCK" != *"dead-agent.sock" ]]
+	[[ "$SSH_AGENT_PID" != "999999" ]]
+	# ssh-agent -k sends SIGTERM without waiting; allow up to five seconds.
+	# A zombie has stopped, even if its parent has not reaped it yet.
+	agent_stopped=false
+	for attempt in {1..50}; do
+		if ! kill -0 "$SSH_AGENT_PID" 2>/dev/null; then
+			agent_stopped=true
+			break
+		fi
+		agent_state=$(ps -o stat= -p "$SSH_AGENT_PID" 2>/dev/null || true)
+		if [[ "$agent_state" == *Z* ]]; then
+			agent_stopped=true
+			break
+		fi
+		sleep 0.1
+	done
+	if [[ "$agent_stopped" != true ]]; then
+		printf 'FAIL failed key loading left the new agent process running after five seconds\n'
+		exit 1
+	fi
+	if ssh-add -l >/dev/null 2>&1; then
+		printf 'FAIL failed key loading left the new agent socket reachable\n'
+		exit 1
+	else
+		# Exit 1 is a reachable empty agent; only exit 2 means unreachable.
+		[[ "$?" -eq 2 ]]
+	fi
+)
+if headless_ssh_agent_ensure "${script_dir}/signing-setup.sh"; then
+	trap 'kill "${SSH_AGENT_PID:-0}" 2>/dev/null || true' EXIT
+	printf 'FAIL repeated recovery reported success after key loading failed\n'
+	exit 1
+fi
+[[ "$HEADLESS_SSH_AGENT_STATUS" == "dead" ]]
+printf 'PASS failed key loading stops the new agent and keeps reporting dead\n'
+EOF
+cp "${TEST_HOME}/.ssh/id_ed25519_signing" "${TEST_HOME}/.ssh/id_ed25519_signing.pub" "${SHORT_HOME}/.ssh/"
+printf 'export SSH_AUTH_SOCK=%q\nexport SSH_AGENT_PID=%q\n' \
+	"${TEST_ROOT}/dead-agent.sock" "999999" >"${SHORT_HOME}/.ssh/agent.env"
+env -u SSH_AUTH_SOCK -u SSH_AGENT_PID HOME="$SHORT_HOME" bash -s -- "$SCRIPT_DIR" <<'EOF'
+set -euo pipefail
+script_dir="$1"
+# shellcheck source=/dev/null
+source "${script_dir}/headless-ssh-agent-lib.sh"
+headless_ssh_agent_ensure "${script_dir}/signing-setup.sh"
+trap 'kill "${SSH_AGENT_PID:-0}" 2>/dev/null || true' EXIT
+[[ "$HEADLESS_SSH_AGENT_STATUS" == "healed" ]]
+[[ "$SSH_AUTH_SOCK" != *"dead-agent.sock" ]]
+loaded_keys=$(ssh-add -L)
+grep -qxF -- "$(<"${HOME}/.ssh/id_ed25519_signing.pub")" <<<"$loaded_keys"
+headless_ssh_agent_ensure "${script_dir}/signing-setup.sh"
+[[ "$HEADLESS_SSH_AGENT_STATUS" == "live" ]]
+printf 'PASS stale agent.env is healed with the headless key and then reused\n'
 EOF
 
 printf 'PASS encrypted keys warn and failed/unconfirmed loads return errors with remediation\n'

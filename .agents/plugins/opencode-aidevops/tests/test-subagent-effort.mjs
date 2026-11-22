@@ -3,7 +3,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerDelegatedDomainProfiles } from "../config-agent-profiles.mjs";
@@ -19,14 +19,282 @@ import {
 import {
   appendCapabilityEscalationContract,
   capabilityEscalationEvidence,
+  createInteractiveSubagentEscalator,
 } from "../subagent-effort-escalation.mjs";
 import { SubagentLifecycleTracker, eventSessionID } from "../subagent-lifecycle-tracker.mjs";
+import { authSignatureFromHeaders, clearModelUnavailable, markModelUnavailable } from "../model-unavailability.mjs";
+import { recordCodexModelRejection } from "../openai-codex-model-fallback.mjs";
+import { createPrimaryEntitlementFailover } from "../primary-entitlement-failover.mjs";
 
 const TIER_REASONING = {
   simple: { openai: "low" },
   standard: { openai: "max" },
   thinking: { openai: "xhigh" },
 };
+
+let primaryFixtureSequence = 0;
+function primaryFailoverFixture(t, options = {}) {
+  const prompts = [];
+  const logs = [];
+  const toasts = [];
+  const headers = { authorization: `Bearer primary-fixture-${++primaryFixtureSequence}` };
+  const signature = authSignatureFromHeaders(headers);
+  const models = ["openai/first", "openai/second", "anthropic/sonnet"];
+  let authSignature = signature;
+  const error = { name: "APIError", data: { statusCode: 400,
+    message: "The 'first' model is not supported when using Codex with a ChatGPT account." } };
+  const context = {
+    modelRouting: { tiers: {
+      standard: { models: options.models || models, reasoning: { openai: "medium", anthropic: "high" } },
+      simple: { models: ["openai/luna"] },
+    } },
+    getSession: async () => ({ id: "root", ...options.session }),
+    modelIdentity: (model) => `${model?.providerID || ""}/${model?.modelID || ""}`,
+    resolveAvailability: () => ({ authSignature }),
+    resolveProviderState: async () => ({ connected: options.connected || ["openai", "anthropic"], all: [
+      { id: "openai", models: { first: { id: "first" }, second: { id: "second" }, luna: { id: "luna" } } },
+      { id: "anthropic", models: { sonnet: { id: "sonnet" } } },
+    ] }),
+    qualityLog: (_level, message) => logs.push(message),
+    client: { tui: { showToast: async (request) => toasts.push(request.body.message) }, session: { prompt: async (request) => {
+      prompts.push(request);
+      return options.prompt ? options.prompt(request, signature) : { data: { parts: [{ type: "text", text: "done" }] } };
+    } } },
+  };
+  const hooks = createPrimaryEntitlementFailover(context, { isHeadless: () => options.headless || false });
+  const output = () => ({ message: { sessionID: "root", agent: "Build+", model: { providerID: "openai", modelID: "first" } },
+    parts: [{ type: "text", text: "hello" }] });
+  const send = (type, properties = {}) => hooks.handleEvent({ event: { type, properties: { sessionID: "root", ...properties } } });
+  const reject = (model = "openai/first") => markModelUnavailable(model, signature);
+  const finish = async (failure = error) => {
+    await send("session.error", { error: failure });
+    // The processor emits idle before completing its assistant. This idle must
+    // not race a new prompt into the still-running original loop.
+    await send("session.idle");
+    assert.equal(prompts.length, 0);
+    await send("message.updated", { info: { id: "failed", sessionID: "root", role: "assistant", time: { completed: 1 } } });
+    await send("session.idle");
+  };
+  t.after(() => models.forEach((model) => clearModelUnavailable(model, signature)));
+  return { hooks, prompts, logs, toasts, headers, output, send, reject, error, finish, changeAuth: () => { authSignature = `${signature}-new`; } };
+}
+
+test("GH#37005 primary rejection continues the same session and skips rejected models within TTL", async (t) => {
+  const f = primaryFailoverFixture(t);
+  await f.hooks.chatMessage({}, f.output());
+  f.hooks.chatParams({ sessionID: "root", model: { providerID: "openai", id: "first" } });
+  // User parts are not generated assistant output and must not suppress recovery.
+  await f.send("message.part.updated", { part: { type: "text", messageID: "user", text: "hello" } });
+  await recordCodexModelRejection(Response.json({ error: { message: f.error.data.message } }, { status: 400 }),
+    "https://chatgpt.com/backend-api/codex/responses", { headers: f.headers, body: JSON.stringify({ model: "first" }) });
+  await f.finish();
+  assert.equal(f.prompts.length, 1);
+  assert.equal(f.prompts[0].path.id, "root");
+  assert.deepEqual(f.prompts[0].body.model, { providerID: "openai", modelID: "second" });
+  assert.equal(f.prompts[0].body.variant, "medium");
+  const next = f.output();
+  await f.hooks.chatMessage({}, next);
+  assert.equal(next.message.model.modelID, "second");
+  f.changeAuth();
+  const reauthenticated = f.output();
+  await f.hooks.chatMessage({}, reauthenticated);
+  assert.equal(reauthenticated.message.model.modelID, "first");
+});
+
+test("GH#37005 primary candidate walk is bounded, deduplicated and never lowers tier", async (t) => {
+  let f;
+  f = primaryFailoverFixture(t, { models: ["openai/first", "openai/second", "openai/second"],
+    prompt: async () => {
+      f.reject("openai/second");
+      // The SDK can deliver the error event while the recovery prompt is pending.
+      await f.send("session.error", { error: f.error });
+      return { data: { info: { error: f.error } } };
+    } });
+  await f.hooks.chatMessage({}, f.output());
+  f.reject();
+  await f.finish();
+  await f.send("session.error", { error: f.error });
+  assert.deepEqual(f.prompts.map((p) => p.body.model.modelID), ["second"]);
+  assert.equal(f.logs.length, 1);
+  assert.match(f.logs[0], /standard.*openai\/first.*Re-authenticate.*routing/);
+  assert.deepEqual(f.toasts, f.logs);
+  await assert.rejects(f.hooks.chatMessage({}, f.output()), /No available standard model/);
+});
+
+test("GH#37005 primary fallback skips disconnected and cached candidates", async (t) => {
+  const f = primaryFailoverFixture(t, { connected: ["anthropic"] });
+  await f.hooks.chatMessage({}, f.output());
+  f.reject();
+  f.reject("openai/second");
+  await f.finish();
+  assert.deepEqual(f.prompts.map((p) => p.body.model), [{ providerID: "anthropic", modelID: "sonnet" }]);
+  assert.equal(f.prompts[0].body.variant, "high");
+});
+
+test("GH#37005 primary recovery excludes children, headless, non-entitlement and generated turns", async (t) => {
+  for (const options of [{ session: { parentID: "parent" } }, { headless: true }, {}, { generated: true }]) {
+    const f = primaryFailoverFixture(t, options);
+    await f.hooks.chatMessage({}, f.output());
+    f.reject();
+    if (options.generated) {
+      await f.send("message.updated", { info: { id: "assistant", sessionID: "root", role: "assistant" } });
+      await f.send("message.part.updated", { part: { messageID: "assistant", type: "tool" } });
+    }
+    await f.finish(Object.keys(options).length ? f.error : {
+      name: "APIError", data: { statusCode: 401, message: f.error.data.message },
+    });
+    assert.equal(f.prompts.length, 0);
+  }
+});
+
+test("GH#37005 duplicate client turns cannot request the rejected model during recovery", async (t) => {
+  let f;
+  const observed = {};
+  f = primaryFailoverFixture(t, { prompt: async (request) => {
+    observed.duplicate = await f.hooks.chatMessage({}, f.output()).then(() => null, (error) => error);
+    const continuation = { message: { sessionID: "root", model: request.body.model }, parts: request.body.parts };
+    await f.hooks.chatMessage({}, continuation);
+    observed.model = continuation.message.model.modelID;
+    await f.send("session.idle");
+    return { data: { parts: [{ type: "text", text: "done" }] } };
+  } });
+  await f.hooks.chatMessage({}, f.output());
+  f.reject();
+  await f.finish();
+  assert.equal(f.prompts.length, 1);
+  assert.match(observed.duplicate?.message ?? "", /already in progress/);
+  assert.equal(observed.model, "second");
+});
+
+test("GH#37005 internal/out-of-table requests clear stale primary recovery", async (t) => {
+  for (const internal of [true, false]) {
+    const f = primaryFailoverFixture(t);
+    await f.hooks.chatMessage({}, f.output());
+    if (internal) {
+      f.hooks.chatParams({ sessionID: "root", model: { providerID: "openai", id: "luna" } });
+    } else {
+      const manual = f.output();
+      manual.message.model.modelID = "unlisted";
+      await f.hooks.chatMessage({}, manual);
+    }
+    f.reject();
+    await f.finish();
+    assert.equal(f.prompts.length, 0);
+  }
+});
+
+test("entitlement rejection retries the next connected model in the same tier", async (t) => {
+  const prompts = [];
+  const headers = { authorization: "Bearer test-failover", "chatgpt-account-id": "test-account" };
+  const signature = authSignatureFromHeaders(headers);
+  const policy = { effort: "standard", routedModel: "openai/sol", attempt: 1 };
+  const routing = { tiers: { standard: { models: ["openai/sol", "anthropic/sonnet"] }, simple: { models: ["openai/luna"] } } };
+  const context = {
+    modelRouting: routing,
+    policies: new Map([["child", policy]]),
+    client: { session: { prompt: async (request) => {
+      prompts.push(request);
+      return { data: { parts: [{ type: "text", text: "result" }] } };
+    } } },
+    getSession: async () => ({ id: "child", parentID: "parent" }),
+    resolveProviderState: async () => ({ connected: ["openai", "anthropic"], all: [
+      { id: "openai", models: { sol: { id: "sol" }, luna: { id: "luna" } } },
+      { id: "anthropic", models: { sonnet: { id: "sonnet" } } },
+    ] }),
+    resolveAvailability: () => ({ authSignature: signature }),
+  };
+  await recordCodexModelRejection(Response.json({ error: { code: "model_not_found" } }, { status: 404 }),
+    "https://chatgpt.com/backend-api/codex/responses", { headers, body: JSON.stringify({ model: "sol" }) });
+  t.after(() => clearModelUnavailable("openai/sol", signature));
+  const hooks = createInteractiveSubagentEscalator(context);
+  hooks.beforeTool({ tool: "task", sessionID: "parent", callID: "call" }, {});
+  hooks.handleEvent({ event: { type: "session.error", properties: { sessionID: "child", error: {
+    name: "APIError", data: { statusCode: 404, responseBody: '{"error":{"code":"model_not_found"}}' },
+  } } } });
+  const output = { output: "failed", metadata: { sessionId: "child", status: "error" } };
+  await hooks.afterTool({ tool: "task", sessionID: "parent", callID: "call" }, output);
+  assert.deepEqual(prompts.map((request) => request.body.model), [{ providerID: "anthropic", modelID: "sonnet" }]);
+  assert.equal(output.output, "result");
+  assert.equal(output.metadata.status, "completed");
+});
+
+test("exhausted same-tier candidates report rejection without a lower-tier retry", async (t) => {
+  let hooks;
+  const prompts = [];
+  const errorEvent = () => ({ event: { type: "session.error", properties: { sessionID: "child", error: {
+    name: "APIError", data: { statusCode: 404, responseBody: '{"error":{"code":"model_not_found"}}' },
+  } } } });
+  const context = {
+    modelRouting: { tiers: { standard: { models: ["openai/first", "openai/second", "openai/second"] }, simple: { models: ["openai/luna"] } } },
+    policies: new Map([["child", { effort: "standard", routedModel: "openai/first", attempt: 1 }]]),
+    client: { session: { prompt: async (request) => {
+      prompts.push(request.body.model.modelID);
+      markModelUnavailable("openai/second", "test-exhaustion");
+      hooks.handleEvent(errorEvent());
+      return { error: { name: "APIError" } };
+    } } },
+    getSession: async () => ({ id: "child", parentID: "parent" }),
+    resolveProviderState: async () => ({ connected: ["openai"], all: [{ id: "openai", models: {
+      first: { id: "first" }, second: { id: "second" }, luna: { id: "luna" },
+    } }] }),
+    resolveAvailability: () => ({ authSignature: "test-exhaustion" }),
+  };
+  markModelUnavailable("openai/first", "test-exhaustion");
+  t.after(() => {
+    clearModelUnavailable("openai/first", "test-exhaustion");
+    clearModelUnavailable("openai/second", "test-exhaustion");
+  });
+  hooks = createInteractiveSubagentEscalator(context);
+  hooks.beforeTool({ tool: "task", sessionID: "parent", callID: "call" }, {});
+  hooks.handleEvent(errorEvent());
+  const output = { output: "failed", metadata: { sessionId: "child", status: "error" } };
+  await hooks.afterTool({ tool: "task", sessionID: "parent", callID: "call" }, output);
+  assert.deepEqual(prompts, ["second"]);
+  assert.match(output.output, /standard.*requested=openai\/first rejected=openai\/first,openai\/second/);
+  assert.equal(output.metadata.status, "error");
+});
+
+test("GH#37649 exhausted pools reroute unpinned children and name the reset when no model remains", async () => {
+  const until = Date.now() + 600_000;
+  const client = {
+    provider: { list: async () => ({ data: { connected: ["anthropic", "openai"], all: [
+      { id: "anthropic", models: { sonnet: { id: "sonnet" } } },
+      { id: "openai", models: { sol: { id: "sol" } } },
+    ] } }) },
+    session: { get: async ({ path }) => ({ data: { id: path.id, parentID: "parent", agent: "general" } }) },
+  };
+  const hooks = (models, pinned = new Set()) => createSubagentEffortHooks(client, {
+    modelRouting: { tiers: { standard: { models } } },
+    agentRoutingState: { tiers: new Map([["general", "standard"]]), pinned },
+    resolveRateLimits: () => ({ anthropic: until }),
+  });
+  const message = (sessionID) => ({ sessionID, agent: "general", model: { providerID: "anthropic", modelID: "sonnet" } });
+
+  const routed = message("child-routed");
+  await hooks(["anthropic/sonnet", "openai/sol"]).chatMessage({}, { message: routed, parts: [{ type: "text", text: "inspect" }] });
+  assert.deepEqual(routed.model, { providerID: "openai", modelID: "sol" });
+
+  const pinned = message("child-pinned");
+  await hooks(["anthropic/sonnet", "openai/sol"], new Set(["general"])).chatMessage({}, { message: pinned, parts: [{ type: "text", text: "inspect" }] });
+  assert.deepEqual(pinned.model, { providerID: "anthropic", modelID: "sonnet" }, "explicit pins are never substituted");
+
+  await assert.rejects(
+    hooks(["anthropic/sonnet"]).chatMessage({}, { message: message("child-blocked"), parts: [{ type: "text", text: "inspect" }] }),
+    new RegExp(`requested=anthropic/sonnet rate_limited=anthropic/sonnet@${new Date(until).toISOString().replace(/[.]/g, "\\.")}`),
+  );
+});
+
+test("only definite model rejections become failover evidence", () => {
+  const lifecycle = new SubagentLifecycleTracker();
+  for (const error of [
+    { name: "APIError", data: { statusCode: 401, responseBody: '{"error":{"code":"model_not_found"}}' } },
+    { name: "APIError", data: { statusCode: 404, responseBody: '{"error":{"code":"other"}}' } },
+    { name: "OtherError", data: { statusCode: 404, responseBody: '{"error":{"code":"model_not_found"}}' } },
+  ]) {
+    lifecycle.handleEvent({ type: "session.error", properties: { sessionID: "child", error } });
+    assert.equal(lifecycle.takeEntitlementRejection("child"), false);
+  }
+});
 
 test("missing and legacy indexes cannot recursively register leaf profiles", () => {
   assert.deepEqual(loadAgentIndex(".agents", () => ""), []);
@@ -485,6 +753,74 @@ test("interactive routing selects an authenticated same-tier fallback", async ()
 
   await hooks.chatMessage({}, output);
   assert.deepEqual(output.message.model, { providerID: "anthropic", modelID: "sonnet" });
+});
+
+test("interactive routing checks the current account rather than the last rejected account", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "routing-auth-"));
+  const previous = process.env.XDG_DATA_HOME;
+  process.env.XDG_DATA_HOME = root;
+  mkdirSync(join(root, "opencode"));
+  const signature = authSignatureFromHeaders({ authorization: "Bearer token-a", "chatgpt-account-id": "a" });
+  t.after(() => {
+    if (previous === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = previous;
+    clearModelUnavailable("openai/terra", signature);
+    rmSync(root, { recursive: true, force: true });
+  });
+  const setAuth = (access, accountId) => writeFileSync(join(root, "opencode", "auth.json"),
+    JSON.stringify({ openai: { type: "oauth", access, accountId } }));
+  const client = {
+    provider: { list: async () => ({ data: { connected: ["openai", "anthropic"], all: [
+      { id: "openai", models: { terra: { id: "terra" } } },
+      { id: "anthropic", models: { sonnet: { id: "sonnet" } } },
+    ] } }) },
+    session: { get: async ({ path }) => ({ data: { id: path.id, parentID: "parent", agent: "general" } }) },
+  };
+  const hooks = createSubagentEffortHooks(client, {
+    modelRouting: { tiers: { standard: { models: ["openai/terra", "anthropic/sonnet"] } } },
+    agentRoutingState: { tiers: new Map([["general", "standard"]]), pinned: new Set() },
+  });
+  markModelUnavailable("openai/terra", signature);
+  for (const [access, accountId, expected] of [["token-a", "a", "anthropic"], ["token-b", "b", "openai"]]) {
+    setAuth(access, accountId);
+    const message = { sessionID: `child-${accountId}`, agent: "general" };
+    await hooks.chatMessage({}, { message, parts: [{ type: "text", text: "inspect" }] });
+    assert.equal(message.model.providerID, expected);
+  }
+});
+
+test("routing fails with the rejected same-tier models instead of a lower tier", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "routing-exhausted-"));
+  const previous = process.env.XDG_DATA_HOME;
+  process.env.XDG_DATA_HOME = root;
+  mkdirSync(join(root, "opencode"));
+  writeFileSync(join(root, "opencode", "auth.json"), JSON.stringify({ openai: { type: "oauth", access: "token-x" } }));
+  const signature = authSignatureFromHeaders({ authorization: "Bearer token-x" });
+  t.after(() => {
+    if (previous === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = previous;
+    clearModelUnavailable("openai/sol", signature);
+    clearModelUnavailable("openai/terra", signature);
+    rmSync(root, { recursive: true, force: true });
+  });
+  const client = {
+    provider: { list: async () => ({ data: { connected: ["openai"], all: [
+      { id: "openai", models: { sol: { id: "sol" }, terra: { id: "terra" }, luna: { id: "luna" } } },
+    ] } }) },
+    session: { get: async ({ path }) => ({ data: { id: path.id, parentID: "parent", agent: "general" } }) },
+  };
+  const hooks = createSubagentEffortHooks(client, {
+    modelRouting: { tiers: { simple: { models: ["openai/luna"] }, standard: { models: ["openai/sol", "openai/terra"] } } },
+    agentRoutingState: { tiers: new Map([["general", "standard"]]), pinned: new Set() },
+  });
+  markModelUnavailable("openai/sol", signature);
+  markModelUnavailable("openai/terra", signature);
+  const message = { sessionID: "child-exhausted", agent: "general" };
+  await assert.rejects(
+    hooks.chatMessage({}, { message, parts: [{ type: "text", text: "inspect" }] }),
+    /'standard' routing: requested=openai\/sol rejected=openai\/sol,openai\/terra/,
+  );
+  assert.equal(message.model, undefined);
 });
 
 test("opted-in general child uses its stable arm and records the parent decision", async () => {

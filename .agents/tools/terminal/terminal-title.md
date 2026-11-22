@@ -91,6 +91,7 @@ Both runtimes add an expanded **Prompts** section immediately below the session 
 
 ## Related
 
+- [Remote Tabby/tmux sessions](remote-sessions.md) - Stable attachments, reviewed title forwarding, opt-in clipboard permissions
 - `workflows/git-workflow.md` - Git workflow with branch naming
 - `workflows/branch.md` - Branch creation and lifecycle
 - `tools/opencode/opencode.md` - OpenCode session management

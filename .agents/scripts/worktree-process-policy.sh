@@ -28,6 +28,10 @@ worktree_process_platform() {
 
 worktree_process_inspector_allowed() {
 	local platform="${1:-$(worktree_process_platform)}"
+	# Explicit maintenance is user-space only, including on non-NixOS Linux.
+	if [[ -n "${AIDEVOPS_WORKTREE_MAINTENANCE_PLAN:-}${AIDEVOPS_WORKTREE_MAINTENANCE_CONFIRM:-}" ]]; then
+		return 1
+	fi
 	# The NixOS adapter stays unprivileged. A denied read remains unknown;
 	# existing recoverable cleanup must still prove every candidate predicate.
 	[[ "$platform" == nixos ]] && return 1

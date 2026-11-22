@@ -42,6 +42,7 @@ fi
 #######################################
 # Configuration
 #######################################
+PULSE_ELASTIC_DISPATCH_ENABLED="${PULSE_ELASTIC_DISPATCH_ENABLED:-1}" # Fresh owner lease, not cycle age, bounds dispatch
 PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-3600}"                                       # 60 min hard ceiling — workers need 10-20 min to solve issues; 15 min was killing active workers (GH#19166)
 PULSE_IDLE_TIMEOUT="${PULSE_IDLE_TIMEOUT:-1800}"                                             # 30 min idle before kill — the per-worker activity watchdog (300s) is the real stall detector
 PULSE_IDLE_CPU_THRESHOLD="${PULSE_IDLE_CPU_THRESHOLD:-2}"                                    # CPU% below this = idle (0-100 scale) — lowered from 5 to reduce false positives on I/O-bound work
@@ -60,38 +61,43 @@ PULSE_EVENT_REFILL_WAKE_PASSES="${PULSE_EVENT_REFILL_WAKE_PASSES:-2}"           
 ORPHAN_MAX_AGE="${ORPHAN_MAX_AGE:-7200}"                                                     # 2 hours — kill orphans older than this
 ORPHAN_INACTIVITY_AGE="${ORPHAN_INACTIVITY_AGE:-259200}"                                   # 3 days — require session inactivity before orphan cleanup
 ORPHAN_WORKTREE_GRACE_SECS="${ORPHAN_WORKTREE_GRACE_SECS:-1800}"                             # 30 min grace for 0-commit worktrees with no open PR (t1884)
-RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-512}"                                                # 512 MB per worker (opencode headless is lightweight)
-RAM_RESERVE_MB="${RAM_RESERVE_MB:-6144}"                                                     # 6 GB reserved for OS + user apps
-# Compute sensible default cap from total RAM (not free RAM — that's volatile).
-# Formula: (total_ram_mb - reserve) / ram_per_worker, clamped to [4, 64].
-# This replaces the old static default of 8 which silently throttled capable machines (t1532).
-# t2950: ceiling raised 32→64; on a 64GB runner (64*1024-6144)/512=116 workers fit physically — old clamp left >70% headroom unused.
+# GH#35537 worker resource policy: RAM is the only host resource that limits
+# workers. CPU load and core counts never cap, close or pace admission — Macs
+# and servers schedule their own CPU at sustained 100% per core. Do not
+# reintroduce a CPU/load term here; see reference/configuration.md "Worker
+# resource policy" and tests/test-pulse-ram-admission.sh.
+# 1536 MB per worker: measured headless worker process trees (opencode plus
+# git/node/test children) used 0.7-1.6 GB on 2026-10-23; the former 512 MB
+# estimate admitted about 3x more workers than RAM could hold.
+# Per-host tuning (GH#39157): env wins, then config.jsonc, then the default.
+# Validate here, before the automatic cap below uses them in arithmetic.
+RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-$(config_get "orchestration.ram_per_worker_mb" "1536")}"
+RAM_RESERVE_MB="${RAM_RESERVE_MB:-$(config_get "orchestration.ram_reserve_mb" "6144")}" # 6 GB reserved for OS + user apps
+RAM_PER_WORKER_MB=$(_validate_int RAM_PER_WORKER_MB "$RAM_PER_WORKER_MB" 1536 1)
+RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 6144)
+# Automatic cap from total RAM (not free RAM — that's volatile):
+# (total_ram_mb - reserve) / ram_per_worker, clamped to [2, 64]. Live free RAM
+# bounds each pass further in calculate_max_workers / the refill cap.
+# t1532 replaced a static default of 8; t2950 raised the ceiling 32→64;
+# GH#35537 removed GH#32663's 50%-of-cores bound.
 MAX_WORKERS_CAP_FLOOR=2
-MAX_WORKERS_CAP_CEILING=64                                                                           # t2950: raised from 32; modern 64GB+ runners support far more concurrency
-# GH#32663: auto cap = 50% of logical CPU cores, bounded by total RAM. Worker
-# CPU (opencode, git, tests) scales with cores; a fixed default of 8 left large
-# runners idle and stale per-machine overrides (e.g. 2) starved the fleet.
-# Config value 0 (the shipped default) selects this auto cap.
-_default_cap=8
-_cpu_cores=""
+MAX_WORKERS_CAP_CEILING=64
+_default_cap="$MAX_WORKERS_CAP_CEILING"
 if [[ "$(uname)" == "Darwin" ]]; then
 	_total_mb=$(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%d", $1/1048576}')
-	_cpu_cores=$(sysctl -n hw.logicalcpu 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || true)
 elif [[ -f /proc/meminfo ]]; then
 	_total_mb=$(awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo 2>/dev/null)
-	_cpu_cores=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || true)
-fi
-[[ "$_cpu_cores" =~ ^[1-9][0-9]*$ ]] || _cpu_cores=""
-if [[ -n "$_cpu_cores" ]]; then
-	_default_cap=$((_cpu_cores / 2))
 fi
 if [[ "${_total_mb:-0}" =~ ^[0-9]+$ && "${_total_mb:-0}" -gt 0 ]]; then
-	_ram_cap=$(((_total_mb - RAM_RESERVE_MB) / RAM_PER_WORKER_MB))
-	[[ "$_ram_cap" -lt "$_default_cap" ]] && _default_cap="$_ram_cap"
+	_ram_per_worker_for_cap="$RAM_PER_WORKER_MB"
+	[[ "$_ram_per_worker_for_cap" =~ ^[1-9][0-9]*$ ]] || _ram_per_worker_for_cap=1536
+	_default_cap=$(((_total_mb - RAM_RESERVE_MB) / _ram_per_worker_for_cap))
+else
+	_default_cap=8 # total RAM unreadable: modest ceiling; live RAM still bounds each pass
 fi
 [[ "$_default_cap" -lt "$MAX_WORKERS_CAP_FLOOR" ]] && _default_cap="$MAX_WORKERS_CAP_FLOOR"
 [[ "$_default_cap" -gt "$MAX_WORKERS_CAP_CEILING" ]] && _default_cap="$MAX_WORKERS_CAP_CEILING"
-MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-$(config_get "orchestration.max_workers_cap" "0")}" # 0/auto = 50% of cores bounded by RAM; override via config or env
+MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-$(config_get "orchestration.max_workers_cap" "0")}" # 0/auto = total-RAM ceiling; override via config or env
 # Retain provenance after resolving auto: shared-host sizing must not divide an
 # operator's explicit per-runner ceiling (GH#33770).
 MAX_WORKERS_CAP_AUTO=0
@@ -101,8 +107,8 @@ case "$MAX_WORKERS_CAP" in
 	MAX_WORKERS_CAP_AUTO=1
 	;;
 esac
-MAX_LOAD_PER_CORE="${MAX_LOAD_PER_CORE:-$(config_get "orchestration.max_load_per_core" "4.0")}" # Positive load/core threshold (1.0 = 100% busy); validated by _pulse_cpu_pressure
-CPU_IDLE_ADMIT_PERCENT="${CPU_IDLE_ADMIT_PERCENT:-$(config_get "orchestration.cpu_idle_admit_percent" "25")}" # Above the load threshold, admit idle-core headroom while CPU idle >= this % (0 disables; GH#33754)
+# orchestration.max_load_per_core / cpu_idle_admit_percent are deprecated and
+# inert (GH#35537): CPU never gates admission.
 VAULT_DEVICE_HELPER="${VAULT_DEVICE_HELPER:-${SCRIPT_DIR}/vault-device-helper.sh}"                         # Non-secret Vault fleet status helper; schedulers may call can-dispatch for Vault-sensitive work
 VAULT_DEVICE_DISPATCH_PREFLIGHT="${VAULT_DEVICE_DISPATCH_PREFLIGHT:-0}"                                    # 0=disabled until task metadata requires Vault routing; 1=consult local heartbeat/trust state
 VAULT_DEVICE_DISPATCH_NEEDS_UNLOCKED="${VAULT_DEVICE_DISPATCH_NEEDS_UNLOCKED:-0}"                          # 1=Vault-sensitive work requires a fresh unlocked heartbeat before local dispatch
@@ -327,8 +333,6 @@ PULSE_EVENT_REFILL_WAKE_PASSES=$(_validate_int PULSE_EVENT_REFILL_WAKE_PASSES "$
 ORPHAN_MAX_AGE=$(_validate_int ORPHAN_MAX_AGE "$ORPHAN_MAX_AGE" 7200)
 ORPHAN_INACTIVITY_AGE=$(_validate_int ORPHAN_INACTIVITY_AGE "$ORPHAN_INACTIVITY_AGE" 259200 86400)
 ORPHAN_WORKTREE_GRACE_SECS=$(_validate_int ORPHAN_WORKTREE_GRACE_SECS "$ORPHAN_WORKTREE_GRACE_SECS" 1800 60)
-RAM_PER_WORKER_MB=$(_validate_int RAM_PER_WORKER_MB "$RAM_PER_WORKER_MB" 512 1)
-RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 6144)
 MAX_WORKERS_CAP=$(_validate_int MAX_WORKERS_CAP "$MAX_WORKERS_CAP" "${_default_cap:-8}" 1)
 DAILY_PR_CAP=$(_validate_int DAILY_PR_CAP "$DAILY_PR_CAP" 5 1)
 PRODUCT_RESERVATION_PCT=$(_validate_int PRODUCT_RESERVATION_PCT "$PRODUCT_RESERVATION_PCT" 60 0)
@@ -422,7 +426,18 @@ PULSE_EVENT_REFILL_TRIGGER_FILE="${PULSE_EVENT_REFILL_TRIGGER_FILE:-${AIDEVOPS_P
 PULSE_EVENT_REFILL_HELPER="${PULSE_EVENT_REFILL_HELPER:-${SCRIPT_DIR}/pulse-event-refill.sh}"
 PULSE_EVENT_REFILL_WRAPPER="${PULSE_EVENT_REFILL_WRAPPER:-${SCRIPT_DIR}/pulse-wrapper.sh}"
 export AIDEVOPS_PULSE_EVENT_REFILL_ENABLED PULSE_EVENT_REFILL_TRIGGER_FILE
-OPENCODE_BIN="${OPENCODE_BIN:-$(command -v opencode 2>/dev/null || echo "opencode")}"
+# GH#39095: resolve the binary for the active OpenCode profile. Under
+# AIDEVOPS_OPENCODE_PROFILE=v2 workers must run the isolated `opencode2`
+# runtime; a hardcoded `command -v opencode` picked whichever `opencode` came
+# first on the launchd PATH (possibly a V1 install), and because launchd
+# exports OPENCODE_BIN the wrong binary reached every worker launch.
+_pulse_opencode_binary=""
+if declare -F aidevops_opencode_profile_value >/dev/null 2>&1; then
+	_pulse_opencode_binary=$(aidevops_opencode_profile_value binary 2>/dev/null) || _pulse_opencode_binary=""
+fi
+_pulse_opencode_binary="${_pulse_opencode_binary:-opencode}"
+OPENCODE_BIN="${OPENCODE_BIN:-$(command -v "$_pulse_opencode_binary" 2>/dev/null || echo "$_pulse_opencode_binary")}"
+unset _pulse_opencode_binary
 # PULSE_DIR: working directory for the supervisor pulse session.
 # Defaults to a neutral workspace path so pulse sessions are not associated
 # with any specific managed repo in the host app's session database.
@@ -450,9 +465,6 @@ COMPLEXITY_DEBT_COUNT_FILE="${HOME}/.aidevops/logs/complexity-debt-count" # trac
 DEDUP_CLEANUP_LAST_RUN="${HOME}/.aidevops/logs/dedup-cleanup-last-run"
 DEDUP_CLEANUP_INTERVAL="${DEDUP_CLEANUP_INTERVAL:-86400}"  # 1 day in seconds
 DEDUP_CLEANUP_BATCH_SIZE="${DEDUP_CLEANUP_BATCH_SIZE:-50}" # Max issues to close per run
-CODERABBIT_REVIEW_LAST_RUN="${HOME}/.aidevops/logs/coderabbit-review-last-run"
-CODERABBIT_REVIEW_INTERVAL="${CODERABBIT_REVIEW_INTERVAL:-86400}" # 1 day in seconds
-CODERABBIT_REVIEW_ISSUE="2632"                                    # Issue where CodeRabbit full reviews are requested
 POST_MERGE_SCANNER_LAST_RUN="${HOME}/.aidevops/logs/post-merge-scanner-last-run"
 POST_MERGE_SCANNER_INTERVAL="${POST_MERGE_SCANNER_INTERVAL:-86400}"             # 1 day in seconds
 # t2949: parent-task nudge/re-file gate thresholds (reduced from 24h/86400 to 4h/14400).
@@ -528,7 +540,6 @@ COMPLEXITY_LLM_SWEEP_INTERVAL=$(_validate_int COMPLEXITY_LLM_SWEEP_INTERVAL "$CO
 COMPLEXITY_FUNC_LINE_THRESHOLD=$(_validate_int COMPLEXITY_FUNC_LINE_THRESHOLD "$COMPLEXITY_FUNC_LINE_THRESHOLD" 100 50)
 COMPLEXITY_FILE_VIOLATION_THRESHOLD=$(_validate_int COMPLEXITY_FILE_VIOLATION_THRESHOLD "$COMPLEXITY_FILE_VIOLATION_THRESHOLD" 1 1)
 COMPLEXITY_MD_MIN_LINES=$(_validate_int COMPLEXITY_MD_MIN_LINES "$COMPLEXITY_MD_MIN_LINES" 500 10)
-CODERABBIT_REVIEW_INTERVAL=$(_validate_int CODERABBIT_REVIEW_INTERVAL "$CODERABBIT_REVIEW_INTERVAL" 86400 3600)
 POST_MERGE_SCANNER_INTERVAL=$(_validate_int POST_MERGE_SCANNER_INTERVAL "$POST_MERGE_SCANNER_INTERVAL" 86400 3600)
 AUTO_DECOMPOSER_INTERVAL=$(_validate_int AUTO_DECOMPOSER_INTERVAL "$AUTO_DECOMPOSER_INTERVAL" 14400 3600)
 FAST_FAIL_SKIP_THRESHOLD=$(_validate_int FAST_FAIL_SKIP_THRESHOLD "$FAST_FAIL_SKIP_THRESHOLD" 5 1)

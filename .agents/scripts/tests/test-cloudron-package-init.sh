@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 INSTALL_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit 1
 AGENTS_DIR="${INSTALL_DIR}/.agents"
 CLOUDRON_CALLER_FRAMEWORK_REF="22a6b4b29087ce2fcf3857596a40ff7b2c436482"
-CLOUDRON_CATALOG_FRAMEWORK_REF="c3f8b562466f9528601bfcbc516c346598026b75"
+CLOUDRON_CATALOG_FRAMEWORK_REF="6606b999d0ed310aeb78efc802e216d6751bda9c"
 TEST_ROOT=""
 PASSED=0
 FAILED=0
@@ -86,6 +86,58 @@ test_cloudron_workflow_scaffolding() {
 	return 0
 }
 
+test_catalog_migration() {
+	local repo_dir="${TEST_ROOT}/migration"
+	local helper="${AGENTS_DIR}/scripts/cloudron-package-helper.sh"
+	local workflow="${repo_dir}/.github/workflows/cloudron-catalog-publish.yml"
+	mkdir -p "${repo_dir}/.github/workflows"
+	printf '{}\n' >"${repo_dir}/CloudronManifest.json"
+	cat >"$workflow" <<'YAML'
+name: Inline catalog
+on: [pull_request]
+env:
+  IMAGE_REPOSITORY: ghcr.io/example/package
+  CLOUDRON_CLI_VERSION: 8.2.6
+  CLOUDRON_CLI_INTEGRITY: sha512-example
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate package
+        run: bash ./test/package-test.sh
+      - name: Validate patch
+        run: bash scripts/check-patch.sh
+YAML
+	local before=""
+	before=$(cksum "$workflow")
+	bash "$helper" scaffold catalog "$repo_dir"
+	assert_equal "$before" "$(cksum "$workflow")" "default scaffold preserves inline workflow"
+	bash "$helper" scaffold catalog --migrate "$repo_dir"
+	assert_equal true "$(grep -Fq "cloudron-catalog-publish-reusable.yml@${CLOUDRON_CATALOG_FRAMEWORK_REF}" "$workflow" && printf true || printf false)" "migration pins fixed reusable workflow"
+	assert_equal true "$(grep -Fq 'bash ./test/package-test.sh' "$workflow" && grep -Fq 'bash scripts/check-patch.sh' "$workflow" && printf true || printf false)" "migration preserves both package checks"
+	assert_equal true "$(grep -Fq 'image_repository: ghcr.io/example/package' "$workflow" && grep -Fq 'cli_version: 8.2.6' "$workflow" && printf true || printf false)" "migration preserves image and CLI inputs"
+	before=$(cksum "$workflow")
+	assert_equal false "$(bash "$helper" scaffold catalog "$repo_dir" --migrate >/dev/null 2>&1 && printf true || printf false)" "existing caller requires manual pin review"
+	assert_equal "$before" "$(cksum "$workflow")" "existing caller inputs remain unchanged"
+	cat >"$workflow" <<'YAML'
+jobs:
+  preflight:
+    steps:
+      - name: Custom authorization
+        run: check-policy
+  runtime-smoke:
+    steps: []
+YAML
+	before=$(cksum "$workflow")
+	local output=""
+	if output=$(bash "$helper" scaffold catalog --migrate "$repo_dir" 2>&1); then
+		assert_equal blocked migrated "unmapped configuration blocks migration"
+	fi
+	assert_equal true "$(grep -Fq 'runtime-smoke' <<<"$output" && grep -Fq 'Custom authorization' <<<"$output" && printf true || printf false)" "migration lists unmapped jobs and steps"
+	assert_equal "$before" "$(cksum "$workflow")" "blocked migration leaves original bytes intact"
+	return 0
+}
+
 test_cloudron_registration_metadata() {
 	local home_dir="${TEST_ROOT}/home"
 	local repo_dir="${TEST_ROOT}/registered"
@@ -117,6 +169,99 @@ GITCONFIG
 	return 0
 }
 
+test_catalog_secret_preflight() {
+	local repo_dir="${TEST_ROOT}/secret-preflight" output=""
+	mkdir -p "$repo_dir"
+	git -C "$repo_dir" init --quiet
+	git -C "$repo_dir" remote add origin https://github.com/example/package.git
+	printf '{}\n' >"${repo_dir}/CloudronManifest.json"
+	gh() {
+		local command="$1" target="${2:-}"
+		case "$command $target" in
+		'repo view') printf 'example/package\n' ;;
+		'api repos/example/package/rules/branches/main')
+			[[ "$RULES_CASE" != error ]] || return 1
+			if [[ "$RULES_CASE" == baseline ]]; then
+				printf '[{"type":"non_fast_forward"},{"type":"deletion"}]\n'
+			else
+				printf '[{"type":"required_status_checks"}]\n'
+			fi
+			;;
+		'secret list')
+			[[ "$*" == 'secret list --repo example/package --json name' ]] || return 9
+			[[ "$SECRET_CASE" != error ]] || return 1
+			if [[ "$SECRET_CASE" == present ]]; then
+				printf '[{"name":"CLOUDRON_RELEASE_PAT"}]\n'
+			else
+				printf '[]\n'
+			fi
+			;;
+		'api /repos/example/package/actions/variables') printf '%s\n' "$PUBLICATION_ENABLED" ;;
+		*) return 9 ;;
+		esac
+		return 0
+	}
+	export -f gh
+	export SECRET_CASE=missing PUBLICATION_ENABLED=true RULES_CASE=baseline
+	output=$(bash "${AGENTS_DIR}/scripts/cloudron-package-helper.sh" scaffold catalog "$repo_dir" 2>&1)
+	assert_equal false "$(grep -Fq 'CLOUDRON_RELEASE_PAT' <<<"$output" && printf true || printf false)" "baseline rules publish with the job token, no PAT warning"
+	rm "${repo_dir}/.github/workflows/cloudron-catalog-publish.yml"
+	export RULES_CASE=error
+	output=$(bash "${AGENTS_DIR}/scripts/cloudron-package-helper.sh" scaffold catalog "$repo_dir" 2>&1)
+	assert_equal true "$(grep -Fq 'unable to read branch rules' <<<"$output" && printf true || printf false)" "unreadable rules warn"
+	rm "${repo_dir}/.github/workflows/cloudron-catalog-publish.yml"
+	export RULES_CASE=required
+	output=$(bash "${AGENTS_DIR}/scripts/cloudron-package-helper.sh" scaffold catalog "$repo_dir" 2>&1)
+	assert_equal true "$(grep -Fq 'missing CLOUDRON_RELEASE_PAT' <<<"$output" && printf true || printf false)" "plain scaffold warns about missing PAT"
+	assert_equal true "$(grep -Fq 'Contents write' <<<"$output" && printf true || printf false)" "warning includes restricted PAT setup"
+	rm "${repo_dir}/.github/workflows/cloudron-catalog-publish.yml"
+	export SECRET_CASE=present
+	output=$(bash "${AGENTS_DIR}/scripts/cloudron-package-helper.sh" scaffold catalog "$repo_dir" 2>&1)
+	assert_equal false "$(grep -Fq 'Publication blocked' <<<"$output" && printf true || printf false)" "present PAT permits scaffold without warning"
+	# A minimal supported inline workflow exercises the migration warning too.
+	printf 'on: [pull_request]\njobs:\n  preflight:\n    steps: []\n' >"${repo_dir}/.github/workflows/cloudron-catalog-publish.yml"
+	export SECRET_CASE=missing
+	output=$(bash "${AGENTS_DIR}/scripts/cloudron-package-helper.sh" scaffold catalog --migrate "$repo_dir" 2>&1)
+	assert_equal true "$(grep -Fq 'missing CLOUDRON_RELEASE_PAT' <<<"$output" && printf true || printf false)" "migration warns about missing PAT"
+	# Source with help, never scan the host registry or mutate package issues.
+	(
+		set -- help
+		source "${AGENTS_DIR}/scripts/cloudron-package-monitor-helper.sh" >/dev/null
+		local entry='{"slug":"example/package"}' rc=0
+		output=$(_cloudron_monitor_publication_secret "$entry") || rc=$?
+		[[ "$rc" == 3 && "$output" == *'missing CLOUDRON_RELEASE_PAT'* ]] || exit 1
+		RULES_CASE=baseline
+		output=$(_cloudron_monitor_publication_secret "$entry") || exit 1
+		[[ -z "$output" ]] || exit 1
+		RULES_CASE=error
+		if _cloudron_monitor_publication_secret "$entry" 2>/dev/null; then exit 1; fi
+		RULES_CASE=required
+		SECRET_CASE=present
+		_cloudron_monitor_publication_secret "$entry" || exit 1
+		SECRET_CASE=error
+		if _cloudron_monitor_publication_secret "$entry"; then exit 1; fi
+		PUBLICATION_ENABLED=false
+		_cloudron_monitor_publication_secret "$entry" || exit 1
+		PUBLICATION_ENABLED=true
+		SECRET_CASE=missing
+		REPOS_FILE="${TEST_ROOT}/monitor-repos.json"
+		printf '{"initialized_repos":[{"slug":"example/package","app_type":"cloudron-package"}]}' >"$REPOS_FILE"
+		_cloudron_monitor_upstream_entry() { return 0; }
+		_cloudron_monitor_compatibility_entry() { return 0; }
+		_cloudron_monitor_reconcile_entry() { printf 'RECONCILE\n'; return 0; }
+		output=$(_cloudron_monitor_run upstream true)
+		[[ "$output" == 'FINDING example/package:'* && "$output" != *$'\n'* && "$output" != *RECONCILE* ]] || exit 1
+		output=$(_cloudron_monitor_run compatibility false)
+		[[ "$output" == 'FINDING example/package:'* && "$output" != *$'\n'* ]] || exit 1
+		SECRET_CASE=present
+		output=$(_cloudron_monitor_run upstream true)
+		[[ "$output" == RECONCILE ]] || exit 1
+	) || return 1
+	printf 'PASS monitor baseline token, rules error, secret present, absent, inaccessible and publication disabled\n'
+	unset -f gh
+	return 0
+}
+
 test_cloudron_publishing_command_syntax() {
 	local publishing_skill="${AGENTS_DIR}/tools/deployment/cloudron-app-publishing-skill.md"
 	assert_equal true "$(grep -Fq 'cloudron versions update --version=1.0.0 --state=published' "$publishing_skill" && printf true || printf false)" "publishing guidance uses equals-form options"
@@ -142,6 +287,8 @@ main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
 	test_cloudron_workflow_scaffolding
+	test_catalog_migration
+	test_catalog_secret_preflight
 	test_cloudron_registration_metadata
 	test_cloudron_publishing_command_syntax
 	test_documentation_layout_scaffolding

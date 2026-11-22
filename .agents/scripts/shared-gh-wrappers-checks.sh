@@ -602,6 +602,8 @@ _gh_pr_checks_exact_aggregate() {
 				| (if .status == "COMPLETED" then (.conclusion // "") else (.status // "") end) as $state
 				| {
 					_dedup_key: ("check\u0000" + .name + "\u0000" + $workflow + "\u0000" + $event),
+					# IDs retain creation order even when a queued run has no startedAt.
+					_sort_id: (.databaseId // 0),
 					_sort_at: (.startedAt // ""),
 					isRequired: .isRequired,
 					name: .name,
@@ -616,7 +618,7 @@ _gh_pr_checks_exact_aggregate() {
 				}
 			else error("unsupported check context") end
 		)
-		| sort_by(._sort_at) | reverse
+		| sort_by(._sort_id // 0, ._sort_at) | reverse
 		| reduce .[] as $item (
 			{seen: {}, items: []};
 			if .seen[$item._dedup_key] then .
@@ -624,7 +626,7 @@ _gh_pr_checks_exact_aggregate() {
 		)
 		| .items
 		| if $mode == $required_mode then map(select(.isRequired == true)) else . end
-		| map(del(._dedup_key, ._sort_at, .isRequired))
+		| map(del(._dedup_key, ._sort_id, ._sort_at, .isRequired))
 	' "$pages_file" 2>/dev/null
 	return $?
 }
@@ -697,7 +699,7 @@ _gh_pr_checks_exact_query() {
 											isRequired(pullRequestId: $id)
 										}
 										... on CheckRun {
-											name status conclusion startedAt completedAt detailsUrl
+											databaseId name status conclusion startedAt completedAt detailsUrl
 											checkSuite { workflowRun { event workflow { name } } }
 											isRequired(pullRequestId: $id)
 										}
@@ -1466,8 +1468,11 @@ gh_pr_check_runs_rest() {
 	# distinguishing retryable admission deferrals/timeouts; /status alone is
 	# insufficient signal for branch-protection gating.
 	local runs="" runs_rc=0
+	# GH#38234: a conclusion with completed_at is terminal even when GitHub
+	# still reports a stale status=in_progress after an Actions incident.
 	runs=$(_gh_checks_api_read "repos/${slug}/commits/${sha}/check-runs?per_page=100" --paginate \
-		--jq '[.check_runs[]? | {name, conclusion, status}]' 2>/dev/null) || runs_rc=$?
+		--jq '[.check_runs[]? | {name, conclusion,
+			status: (if .conclusion != null and .completed_at != null then "completed" else .status end)}]' 2>/dev/null) || runs_rc=$?
 	[[ "$runs_rc" -eq 0 ]] || return "$runs_rc"
 
 	if [[ -z "$runs" ]]; then

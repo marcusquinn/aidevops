@@ -45,7 +45,7 @@ Ask a focused question when stills, browser access, feature intent, or branding 
 
 1. **Read `DESIGN.md`** in the project root when present. Extract colours, typography, radius, elevation, spacing, product tone, and agent prompt guidance.
 2. If `DESIGN.md` is absent, use `tools/design/design-md.md` to create or derive a lightweight design brief before composing visuals.
-3. Use browser automation only from authorised user-provided app URLs or local dev servers. Prefer `tools/browser/browser-automation.md` to choose Playwright, dev-browser, Chrome DevTools, or Stagehand.
+3. Use browser automation only from authorised user-provided app URLs or local dev servers. Prefer `tools/browser/browser-automation.md` to choose Playwright, dev-browser, or Chrome DevTools.
 4. Capture assets at render-friendly dimensions. Prefer UI slices, DOM elements, and state screenshots over full-page images. Avoid `fullPage: true` unless explicitly needed for the deliverable.
 5. Store source stills under `public/<flow-or-screen>/<state>.png`. Treat `<flow-or-screen>` and `<state>` as user-provided path components: sanitize directory and file names, then validate that the resolved real path stays inside `public/` before writing. This prevents path traversal vulnerabilities. Document the selector, viewport, state setup, and capture command in the project README or notes.
 

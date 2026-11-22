@@ -7,9 +7,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 MERGE_PROCESS="${SCRIPT_DIR}/../pulse-merge-backlog.sh" # moved from pulse-merge-process.sh (GH#27171)
 REST_STATE_MODULE="${SCRIPT_DIR}/../pulse-merge-rest-state.sh"
+# The backlog module reads _PMP_CHECK_FAILURE, which pulse-merge-process.sh owns.
+PROCESS_MODULE="${SCRIPT_DIR}/../pulse-merge-process.sh"
 
 # shellcheck source=/dev/null
 source "$REST_STATE_MODULE"
+# Load the production constant instead of copying it, so a rename fails here.
+_pmp_check_failure_def=$(grep -m 1 -E '^_PMP_CHECK_FAILURE="[A-Z_]+"$' "$PROCESS_MODULE") || {
+	printf 'failed to load _PMP_CHECK_FAILURE from %s\n' "$PROCESS_MODULE" >&2
+	exit 1
+}
+eval "$_pmp_check_failure_def"
 
 TESTS_RUN=0
 TESTS_FAILED=0

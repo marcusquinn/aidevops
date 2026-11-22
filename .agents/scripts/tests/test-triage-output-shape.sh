@@ -1147,6 +1147,45 @@ test_nonzero_runtime_with_valid_json_blocks_post_and_cache() {
 	teardown_test_env
 }
 
+test_auth_marker_after_long_lifecycle_output_is_classified() {
+	setup_test_env
+	load_helpers_under_test
+	local out="${TEST_ROOT}/long-output.txt"
+	local i=0
+	while ((i < 60)); do
+		printf '[lifecycle] INFO padding line %s to exceed the bounded head sample size\n' "$i" >>"$out"
+		i=$((i + 1))
+	done
+	printf '%s\n' 'Public triage provider authentication unavailable: Anthropic OAuth requires the plugin disabled by OPENCODE_PURE (Model not found)' >>"$out"
+	local sample reason ok=0 detail=""
+	sample=$(_triage_runtime_output_sample "$out")
+	reason=$(_triage_runtime_result_failure_reason 86 0 "$sample")
+	if [[ "$reason" != "triage-provider-auth-unsupported" ]]; then
+		ok=1
+		detail="got '${reason}'"
+	fi
+	print_result "auth marker after >4KB lifecycle output is classified" "$ok" "$detail"
+	teardown_test_env
+}
+
+test_auth_cooldown_records_and_expires_on_fingerprint_change() {
+	setup_test_env
+	load_helpers_under_test
+	local auth="${TEST_ROOT}/auth.json"
+	export OPENCODE_AUTH_FILE="$auth"
+	export TRIAGE_CACHE_DIR="${TEST_ROOT}/cache"
+	printf '%s\n' '{"anthropic":{"type":"oauth"}}' >"$auth"
+	local ok=0 detail=""
+	_triage_auth_cooldown_active "anthropic/x" && { ok=1; detail="active before record"; }
+	_triage_auth_cooldown_record "anthropic/x"
+	_triage_auth_cooldown_active "anthropic/x" || { ok=1; detail="${detail} not active after record"; }
+	printf '%s\n' '{"anthropic":{"type":"oauth"},"openai":{"type":"api"}}' >"$auth"
+	_triage_auth_cooldown_active "anthropic/x" && { ok=1; detail="${detail} active after pool change"; }
+	print_result "auth cooldown follows provider pool fingerprint" "$ok" "$detail"
+	unset OPENCODE_AUTH_FILE TRIAGE_CACHE_DIR
+	teardown_test_env
+}
+
 test_review_artifact_cleanup_failure_blocks_post_and_cache() {
 	setup_test_env
 	load_helpers_under_test
@@ -1390,6 +1429,8 @@ main() {
 	test_prelaunch_classifier_covers_runtime_guard_modes
 	test_prelaunch_contract_failure_is_infrastructure
 	test_nonzero_runtime_with_valid_json_blocks_post_and_cache
+	test_auth_marker_after_long_lifecycle_output_is_classified
+	test_auth_cooldown_records_and_expires_on_fingerprint_change
 	test_review_artifact_cleanup_failure_blocks_post_and_cache
 	test_pr_revision_change_before_post_blocks_comment_and_cache
 	test_issue_text_change_before_post_blocks_comment_and_cache

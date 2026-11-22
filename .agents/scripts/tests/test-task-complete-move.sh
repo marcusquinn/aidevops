@@ -26,6 +26,15 @@
 
 set -u
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+export AIDEVOPS_TASK_COMPLETE_ALLOW_CANONICAL=1 # disposable fixture repos
+
 # Fixture repositories are disposable; use native Git rather than the runtime
 # canonical-worktree guard shim that protects the actual source checkout.
 PATH="/usr/bin:/bin:/usr/sbin:/sbin"
@@ -108,6 +117,23 @@ exit 0
 HOOK
 	chmod +x "$hooks_dir/commit-msg"
 	git -C "$repo_path" config core.hooksPath "$hooks_dir"
+	return 0
+}
+
+# Write a Git proxy that rejects --path-format like Git versions before 2.31.
+make_path_format_rejecting_git() {
+	local mock_dir="$1"
+	mkdir -p "$mock_dir"
+	{
+		printf '%s\n' '#!/usr/bin/env bash'
+		printf '%s\n' 'for argument in "$@"; do'
+		# shellcheck disable=SC2016 # Writing literal shell code into the proxy.
+		printf '%s\n' '  [[ "$argument" == --path-format=* ]] && exit 129'
+		printf '%s\n' 'done'
+		# shellcheck disable=SC2016 # Writing literal shell code into the proxy.
+		printf '%s\n' 'exec "$TEST_NATIVE_GIT" "$@"'
+	} >"$mock_dir/git"
+	chmod +x "$mock_dir/git"
 	return 0
 }
 
@@ -492,6 +518,87 @@ if printf '%s\n' "$completed_line" | grep -qE 'pr:#9000 pr:#9001'; then
 	pass "distinct existing PR proof is preserved"
 else
 	fail "distinct existing PR proof is preserved" "got: $completed_line"
+fi
+
+# =============================================================================
+# Test 10: unresolved Git checkout blocks before TODO.md mutation
+# =============================================================================
+printf '\nTest 10: unresolved Git checkout blocks before TODO.md mutation\n'
+
+FIXTURE="${FIXTURE_HEADER}- [ ] t1000 unresolved checkout task #tag ~1h ref:GH#1000 logged:2026-01-01
+${FIXTURE_SECTIONS}"
+
+setup_repo "$FIXTURE" "repo10-unresolved-checkout"
+MOCK_GIT_DIR="$TMP/mock-git-path-format"
+make_path_format_rejecting_git "$MOCK_GIT_DIR"
+todo_before=$(<"$REPO_PATH/TODO.md")
+if env -u AIDEVOPS_TASK_COMPLETE_ALLOW_CANONICAL PATH="$MOCK_GIT_DIR:$PATH" "$HELPER" t1000 --verified 2026-01-15 --no-push \
+	--skip-merge-check --repo-path "$REPO_PATH" >/dev/null 2>&1; then
+	fail "helper rejects an unresolved Git checkout" "helper unexpectedly succeeded"
+else
+	pass "helper rejects an unresolved Git checkout"
+fi
+
+if [[ $(<"$REPO_PATH/TODO.md") == "$todo_before" ]]; then
+	pass "TODO.md remains unchanged when Git checkout guard blocks completion"
+else
+	fail "TODO.md remains unchanged when Git checkout guard blocks completion" "TODO.md was modified"
+fi
+
+# =============================================================================
+# Test 11: indented subtask completes in place under its parent (GH#37919)
+# =============================================================================
+printf '\nTest 11: indented subtask completes in place under its parent\n'
+
+FIXTURE="${FIXTURE_HEADER}- [ ] t1100 parent #parent-task ref:GH#1100
+  - [x] t1101 done child pr:#201 completed:2026-01-10
+  - [ ] t1102 open child ref:GH#1102
+      BRIEF: todo/tasks/t1102-brief.md
+  - [ ] t1103 sibling child
+${FIXTURE_SECTIONS}"
+
+setup_repo "$FIXTURE" "repo11-indented"
+"$HELPER" t1102 --verified 2026-01-15 --no-push --skip-merge-check \
+	--repo-path "$REPO_PATH" >/dev/null 2>&1
+
+if grep -qE "^  - \[x\] t1102 .*verified:2026-01-15 completed:" "$REPO_PATH/TODO.md"; then
+	pass "t1102 ticked in place with indentation and proof"
+else
+	fail "t1102 ticked in place with indentation and proof" "line not updated in place"
+fi
+
+if task_not_in_section "t1102" "Done" "$REPO_PATH/TODO.md"; then
+	pass "t1102 not moved to ## Done"
+else
+	fail "t1102 not moved to ## Done" "subtask was moved"
+fi
+
+if grep -qE "^- \[ \] t1100 " "$REPO_PATH/TODO.md" && grep -qE "^  - \[ \] t1103 sibling child$" "$REPO_PATH/TODO.md" \
+	&& grep -qE "^      BRIEF: todo/tasks/t1102-brief.md$" "$REPO_PATH/TODO.md"; then
+	pass "parent, sibling and BRIEF line unchanged"
+else
+	fail "parent, sibling and BRIEF line unchanged" "unexpected change"
+fi
+
+# =============================================================================
+# Test 12: task IDs match literally (t12.1 must not match t1201)
+# =============================================================================
+printf '\nTest 12: dotted task ID does not match look-alike ID\n'
+
+FIXTURE="${FIXTURE_HEADER}- [ ] t12 parent ref:GH#1200
+  - [ ] t1201 lookalike child ref:GH#1201
+  - [ ] t12.1 dotted child ref:GH#1202
+${FIXTURE_SECTIONS}"
+
+setup_repo "$FIXTURE" "repo12-literal-id"
+"$HELPER" t12.1 --verified 2026-01-15 --no-push --skip-merge-check \
+	--repo-path "$REPO_PATH" >/dev/null 2>&1 || true
+
+if grep -qE "^  - \[x\] t12\.1 .*verified:2026-01-15" "$REPO_PATH/TODO.md" \
+	&& grep -qE "^  - \[ \] t1201 lookalike child ref:GH#1201$" "$REPO_PATH/TODO.md"; then
+	pass "t12.1 completed; t1201 left open"
+else
+	fail "t12.1 completed; t1201 left open" "wrong task matched"
 fi
 
 # =============================================================================

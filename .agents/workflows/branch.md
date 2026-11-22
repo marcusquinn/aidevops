@@ -55,7 +55,7 @@ Commits: conventional (`feat:` `fix:` `refactor:` `docs:` `chore:` `test:`). Inc
 | Review | `git add . && git commit -m "fix: ..." && git push` → `workflows/code-audit-remote.md` | Address feedback |
 | Merge | `full-loop-helper.sh merge NUMBER OWNER/REPO --squash` | Required lifecycle gate |
 | Release | `.agents/scripts/version-manager.sh release [major\|minor\|patch]` → `workflows/release.md` | Releases only |
-| Postflight | `gh run watch $(gh run list --limit=1 --json databaseId -q '.[0].databaseId') --exit-status` → `workflows/postflight.md` | Releases only |
+| Postflight | `gh run view RUN_ID --json status,conclusion` (one-shot; the shim refuses `gh run watch`) → `workflows/postflight.md` | Releases only |
 | Cleanup | `worktree-helper.sh remove {type}/{desc}` / `git push origin --delete {name}` | Remove merged worktree; delete branch if needed |
 
 ## Chore, Refactor, Release, Experiment
@@ -88,15 +88,26 @@ git fetch origin main && git merge origin/main
 
 ## Safety: Protecting Uncommitted Work
 
-Before reset, clean, rebase, or checkout with local changes:
+Before reset, clean, rebase, or checkout with local changes, prefer a WIP commit
+(`git add -A && git commit -m "wip: ..."`), or `git rebase --autostash` for a
+rebase. Both keep the changes on this branch.
+
+Every worktree of a repository shares one stash list. Never use an unnamed
+`git stash` … `git stash pop` pair: `git stash` exits 0 even when it saved
+nothing, and a bare `pop`/`apply` then restores another session's newest entry
+(GH#39787). The shared command policy forbids `pop`/`apply` without an explicit
+ref. If you must stash, name the entry and restore only that ref:
 
 ```bash
-git stash --include-untracked -m "safety: before [operation]"
+git stash push --include-untracked -m "safety: <unique-token> before [operation]"
+git stash list --format='%gd %s'   # note the ref whose subject has <unique-token>
 # ... perform operation ...
-git stash pop   # or: git stash show -p to review on conflict
+git stash pop 'stash@{N}'          # only if that entry exists; quote the braces
 ```
 
-`git restore` only recovers tracked files — untracked files are permanently lost without stash.
+If no entry carries your token, the stash saved nothing, so there is nothing to
+restore. `git restore` only recovers tracked files. Untracked files are lost
+unless a WIP commit or `--include-untracked` stash captured them.
 
 ## Related Workflows
 

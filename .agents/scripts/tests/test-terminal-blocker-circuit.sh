@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Regression coverage for GH#30926 unchanged terminal-blocker suppression.
+# GH#39538: real-timeout bounded-intake cases dominate: 215s idle, 527s on a
+# loaded macOS host, beyond the affected-tests helper's 240s default.
+# aidevops:suite-timeout=900
 
 set -euo pipefail
 
@@ -17,6 +20,13 @@ export AIDEVOPS_WORKER_BLOCKER_LOG_FILE="${TEST_ROOT}/captured-blockers.jsonl"
 # terminal-blocker-recovery-helper.sh and would otherwise write owner/repo#42
 # into the live ~/.aidevops queue and consume the pulse recovery budget.
 export AIDEVOPS_BLOCKER_RECOVERY_DIR="${TEST_ROOT}/default-recovery-queue"
+# Never consult the runner's registry, including from spawned helper CLIs.
+export REPOS_JSON="${TEST_ROOT}/repos.json"
+printf '{"initialized_repos":[{"slug":"owner/repo"}]}\n' >"$REPOS_JSON"
+# GH#36232: fixtures date permission_required holds against the wall clock.
+# Keep them inside the unevidenced-permission backoff window; the window test
+# sets its own window and clock.
+export ZERO_OUTPUT_HOLD_WINDOW_SECONDS=999999999
 
 cleanup() {
 	rm -rf "$TEST_ROOT"
@@ -42,6 +52,76 @@ source "${SCRIPT_DIR}/terminal-blocker-circuit.sh"
 # shellcheck source=../headless-runtime-failure.sh
 source "${SCRIPT_DIR}/headless-runtime-failure.sh"
 
+# These circuit fixtures represent separate owned attempts. The integrated
+# release-authority cases live in test-headless-runtime-release-unlock.sh.
+_hrff_check_release_claim() {
+	_HRFF_RELEASE_CLAIM_OWNED=1
+	_HRFF_RELEASE_CLAIM_ID=100
+	return 0
+}
+
+# Exercise the production triage parser with bounded inference responses, never
+# contact a provider from this suite (including the older unknown-release cases).
+test_unknown_triage() (
+	local captured='{"explicit_reason":false,"detail":"BLOCKED: Only unfinished authorized implementation remains; no external prerequisite exists. Await model publication."}'
+	local issue='{"body":"### Files Scope\n- helper.sh"}' reason="" expected="" status=0
+	local WORKER_WORKTREE_PATH="$SCRIPT_DIR" TRIAGE_RESPONSE="" AIDEVOPS_TERMINAL_BLOCKER_TRIAGE=""
+	timeout() {
+		# Consume the producer's input before exiting, as the real helper does.
+		# Otherwise pipefail can report a scheduling-dependent broken pipe.
+		while IFS= read -r; do :; done
+		printf '%s\n' "$TRIAGE_RESPONSE"
+		return 0
+	}
+	TRIAGE_RESPONSE='{"reason":"unknown","owner":"","pending_only":true}'
+	_terminal_blocker_triage_unknown "$captured" "$issue" || status=1
+	[[ "$AIDEVOPS_TERMINAL_BLOCKER_TRIAGE" =~ ^pending_work\ brief=[a-f0-9]{64}\ head=[a-f0-9]{40,64}$ ]] || status=1
+	for reason in external_trigger_pending permission_required input_required files_scope_excluded source_access_blocked runner_capability_unmet; do
+		TRIAGE_RESPONSE=$(jq -nc --arg reason "$reason" '{reason:$reason,owner:"maintainer",pending_only:false,trigger_evidence:"Await model publication"}')
+		_terminal_blocker_triage_unknown "$captured" "$issue" || status=1
+		expected="known:${reason}"
+		[[ "$reason" != input_required ]] || expected="${expected}:maintainer"
+		[[ "$AIDEVOPS_TERMINAL_BLOCKER_TRIAGE" == "$expected" ]] || status=1
+		# GH#38353: only the external class carries its quoted trigger.
+		[[ "$reason" != external_trigger_pending || "${AIDEVOPS_TERMINAL_BLOCKER_TRIGGER:-}" == 'Await model publication' ]] || status=1
+	done
+	TRIAGE_RESPONSE='{"reason":"permission_required","owner":"","pending_only":true}'
+	if _terminal_blocker_triage_unknown "$captured" "$issue"; then status=1; fi
+	TRIAGE_RESPONSE='not JSON'
+	if _terminal_blocker_triage_unknown "$captured" "$issue"; then status=1; fi
+	TRIAGE_RESPONSE='{"reason":"unknown","owner":"","pending_only":true}'
+	if _terminal_blocker_triage_unknown '{"explicit_reason":true,"detail":"BLOCKED: ambiguous reason declarations"}' "$issue"; then status=1; fi
+	TRIAGE_RESPONSE='{"reason":"external_trigger_pending","owner":"","pending_only":false}'
+	if _terminal_blocker_triage_unknown "$captured" "$issue"; then status=1; fi
+	TRIAGE_RESPONSE='{"reason":"unknown","owner":"","pending_only":true}'
+	local output="${TEST_ROOT}/long-triage.ndjson" log="${TEST_ROOT}/triage.log"
+	local WORKER_ISSUE_NUMBER=42 DISPATCH_REPO_SLUG=owner/repo
+	gh() { printf '%s\n' "$issue"; return 0; }
+	python3 -c 'import json; print(json.dumps({"type":"text","text":"BLOCKED: " + "x" * 3000 + " remains incomplete, draft pushed, no external dependency"}))' >"$output"
+	terminal_blocker_capture_output "$output" 2>"$log" || status=1
+	[[ "$AIDEVOPS_TERMINAL_BLOCKER_TRIAGE" == pending_work\ brief=* ]] || status=1
+	if ! rg -q 'terminal_blocker_triage ran:pending_work' "$log"; then status=1; fi
+	if _terminal_blocker_triage_unknown '{"explicit_reason":true,"detail":"BLOCKED: ambiguous"}' "$issue" 2>"$log"; then status=1; fi
+	if ! rg -q 'terminal_blocker_triage skipped:explicit_or_empty' "$log"; then status=1; fi
+	python3 -c 'import json; print(json.dumps({"type":"text","text":"BLOCKED: " + "x" * 17000 + " permission denied"}))' >"$output"
+	terminal_blocker_capture_output "$output" 2>"$log" || status=1
+	[[ -z "$AIDEVOPS_TERMINAL_BLOCKER_TRIAGE" ]] || status=1
+	if ! rg -q 'terminal_blocker_triage skipped:truncated_evidence' "$log"; then status=1; fi
+	TRIAGE_RESPONSE='{"reason":"source_access_blocked","owner":"","pending_only":false}'
+	printf '%s\n' '{"type":"text","text":"BLOCKED: official site returns 403"}' >"$output"
+	terminal_blocker_capture_output "$output" 2>"$log" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == source_access_blocked ]] || status=1
+	[[ "$AIDEVOPS_TERMINAL_BLOCKER_TRIAGE" == known:source_access_blocked ]] || status=1
+	[[ "$status" == 0 ]] || return 1
+	return 0
+)
+if test_unknown_triage; then
+	print_result "unknown triage classifies pending work and concrete prerequisites; malformed/conflicting evidence stays held" 0
+else
+	print_result "unknown triage classifies pending work and concrete prerequisites; malformed/conflicting evidence stays held" 1
+fi
+_terminal_blocker_triage_unknown() { return 1; }
+
 _terminal_blocker_dependency_signature() {
 	local repo_slug="$1"
 	local issue_number="$2"
@@ -56,6 +136,32 @@ _terminal_blocker_target_revision() {
 	[[ -n "$repo_path" && "$TEST_TARGET_REVISION" != "unavailable" ]] || return 1
 	printf '%s\n' "$TEST_TARGET_REVISION"
 	return 0
+}
+
+test_older_input_circuit_survives_other_reason() {
+	local issue='{"title":"Decision","body":"unchanged"}' revision="" fp="" other="" comments="" status=0
+	revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" input_required)
+	fp=$(_terminal_blocker_hash 'v2:input_required')
+	other=$(_terminal_blocker_hash 'v2:runner_capability_unmet')
+	comments=$(jq -nc --arg rev "$revision" --arg fp "$fp" --arg other "$other" '[
+		{body:("<!-- aidevops:terminal-blocker-circuit revision="+$rev+" blocker="+$fp+" -->"),created_at:"2026-01-01T00:00:00Z",author_association:"OWNER"},
+		{body:("<!-- aidevops:terminal-blocker-circuit revision="+$rev+" blocker="+$other+" -->"),created_at:"2026-01-02T00:00:00Z",author_association:"MEMBER"}]')
+	terminal_blocker_input_circuit_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" || status=1
+	terminal_blocker_circuit_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || status=1
+	terminal_blocker_input_circuit_active "$comments" '{"title":"Decision","body":"changed"}' owner/repo 42 "$TEST_ROOT" && status=1
+	comments=$(jq -c '. + [{body:"terminal-blocker-circuit:retry",created_at:"2026-01-03T00:00:00Z",author_association:"OWNER"}]' <<<"$comments")
+	terminal_blocker_input_circuit_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" && status=1
+	print_result "older input circuit survives differing reason until brief change or trusted retry" "$status"
+	return 0
+}
+
+# GH#36126: the recovery helper loads pulse-dep-graph.sh only when this is
+# undefined. Default to no declared dependency so release cases never reach
+# native GraphQL; TEST_BLOCKED_BY=unresolved holds a re-armed release.
+TEST_BLOCKED_BY=resolved
+is_blocked_by_unresolved() {
+	[[ "$TEST_BLOCKED_BY" == unresolved ]] && return 0
+	return 1
 }
 
 test_normalized_blocker_fingerprint() {
@@ -89,6 +195,7 @@ test_worker_contract_reason_protocol() {
 		append_worker_headless_contract '/full-loop Fix the scoped helper'
 	) || status=1
 	reason=$(printf '%s\n' "$contract" | rg '^TERMINAL_BLOCKER_REASON=target_code_blocker$') || status=1
+	[[ $(printf '%s\n' "$contract" | rg -c '^TERMINAL_BLOCKER_REASON=source_access_blocked$') == 1 ]] || status=1
 	[[ "$contract" == *'TERMINAL_BLOCKER_REASON=missing_files_scope'* &&
 		"$contract" == *'SAME final assistant text message'* &&
 		"$contract" == *'unknown evidence stays retryable'* ]] || status=1
@@ -169,13 +276,17 @@ test_dispatch_hold_revalidates_revision() {
 	terminal_blocker_circuit_active "$comments" '{"title":"Fix scope","body":"Files Scope: b.sh"}' \
 		"owner/repo" 42 "$TEST_ROOT" >/dev/null && changed_status=1
 	TEST_DEPENDENCIES="unavailable"
-	terminal_blocker_circuit_active "$comments" "$issue_json" "owner/repo" 42 "$TEST_ROOT" >/dev/null && ambiguous_status=1
+	terminal_blocker_circuit_active "$comments" "$issue_json" "owner/repo" 42 "$TEST_ROOT" >/dev/null || ambiguous_status=1
 	TEST_DEPENDENCIES='{"nodes":[],"truncated":false}'
+	# GH#37200: a caller without a checkout (status wrapper) cannot evaluate a
+	# default-branch-bound circuit, so it must not hold the release forever.
+	local no_checkout_status=0
+	terminal_blocker_circuit_active "$comments" "$issue_json" "owner/repo" 42 "" >/dev/null 2>&1 && no_checkout_status=1
 	local status=1
-	if [[ "$same_status" -eq 0 && "$changed_status" -eq 0 && "$ambiguous_status" -eq 0 ]]; then
+	if [[ "$same_status" -eq 0 && "$changed_status" -eq 0 && "$ambiguous_status" -eq 0 && "$no_checkout_status" -eq 0 ]]; then
 		status=0
 	fi
-	print_result "dispatch hold is cross-runner durable but fails open on changed or ambiguous identity" "$status"
+	print_result "dispatch hold re-arms on changed identity, holds on unavailable revision, not on missing checkout" "$status"
 	return 0
 }
 
@@ -314,9 +425,12 @@ test_external_trigger_pending_revision() {
 	changed=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" external_trigger_pending) || status=1
 	[[ "$revision" != "$changed" ]] || status=1
 	TEST_DEPENDENCIES=unavailable
-	terminal_blocker_circuit_active "$circuit" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && status=1
-	TEST_DEPENDENCIES='{"nodes":[],"truncated":false}'
+	# GH#37200: an unavailable dependency lookup holds an existing circuit.
+	terminal_blocker_circuit_active "$circuit" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null 2>&1 || status=1
 	comments=$(printf '%s' "$circuit" | jq -c '. + [{body:"terminal-blocker-circuit:retry",created_at:"2026-08-31T11:00:00Z",author_association:"MEMBER"}]')
+	# ...but a trusted retry still re-arms it during the outage.
+	terminal_blocker_circuit_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null 2>&1 && status=1
+	TEST_DEPENDENCIES='{"nodes":[],"truncated":false}'
 	terminal_blocker_circuit_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && status=1
 	TEST_TARGET_REVISION='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 	unset AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
@@ -368,6 +482,33 @@ test_source_access_blocked_revision() {
 	return 0
 }
 
+# GH#35685: a missing Files Scope heading must not overwrite an explicit
+# input_required owner or external trigger; malformed signals still infer scope.
+test_explicit_blocker_survives_missing_scope() {
+	local output="${TEST_ROOT}/explicit-no-scope.ndjson" status=0
+	gh() { printf '%s\n' '{"body":"No scope heading here."}'; return 0; }
+	export WORKER_ISSUE_NUMBER=42 DISPATCH_REPO_SLUG="owner/repo"
+	printf '%s\n' '{"type":"text","text":"BLOCKED: duplicate rejected\nTERMINAL_BLOCKER_REASON=input_required\nTERMINAL_BLOCKER_INPUT_OWNER=admin"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == input_required ]] || status=1
+	[[ "$(_terminal_blocker_input_owner "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == admin ]] || status=1
+	printf '%s\n' '{"type":"text","text":"BLOCKED: waiting for model ID\nTERMINAL_BLOCKER_REASON=external_trigger_pending"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == external_trigger_pending ]] || status=1
+	# Malformed owner fails closed to the structural missing-scope inference.
+	printf '%s\n' '{"type":"text","text":"BLOCKED: unsure\nTERMINAL_BLOCKER_REASON=input_required\nTERMINAL_BLOCKER_INPUT_OWNER=human"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == missing_files_scope ]] || status=1
+	# Absent signal likewise.
+	printf '%s\n' '{"type":"text","text":"BLOCKED: stuck"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == missing_files_scope ]] || status=1
+	unset -f gh
+	unset WORKER_ISSUE_NUMBER DISPATCH_REPO_SLUG AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
+	print_result "explicit input_required/external_trigger_pending survive missing Files Scope; malformed signals infer scope" "$status"
+	return 0
+}
+
 test_input_required_owner_class() {
 	local issue='{"title":"Deploy check","body":"### Files Scope\n- deploy.sh"}'
 	local output="${TEST_ROOT}/input.ndjson" fingerprint="" revision="" changed="" fragment="" observation="" status=0
@@ -401,6 +542,410 @@ test_input_required_owner_class() {
 	_terminal_blocker_input_owner "$(_terminal_blocker_hash 'v2:target_code_blocker')" >/dev/null && status=1
 	unset AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
 	print_result "input_required names a user/contributor/maintainer/admin owner, needs two observations and re-arms on brief change" "$status"
+	return 0
+}
+
+# GH#36760: only explicit final-assistant questions may reach issue comments.
+test_input_required_public_question() {
+	local output="${TEST_ROOT}/question.ndjson" fragment="" fingerprint="" status=0 question=""
+	local HOME="$TEST_ROOT" PRIVACY_REPOS_CONFIG="$REPOS_JSON"
+	local PRIVACY_ENTITY_CONFIG="${TEST_ROOT}/question-entities.txt"
+	printf 'client: Synthetic Question Client\n' >"$PRIVACY_ENTITY_CONFIG"
+	fingerprint=$(_terminal_blocker_hash 'v2:input_required:maintainer')
+	# Construct sensitive-shaped synthetic fixtures at runtime so public-write
+	# guards do not mistake their source for committed private material.
+	local private_path='/ho'
+	private_path+='me/example/private-project'
+	question="Which staging target for Synthetic Question Client at ${private_path} with "
+	question+='ghp_'
+	question+='0123456789abcdef should be used?'
+	jq -nc --arg text "BLOCKED: protected dossier stays private
+TERMINAL_BLOCKER_REASON=input_required
+TERMINAL_BLOCKER_INPUT_OWNER=maintainer
+TERMINAL_BLOCKER_QUESTION=${question}" '{type:"text",text:$text}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	fragment=$(terminal_blocker_observation_fragment 111111111111111111111111 "$fingerprint")
+	[[ "$fragment" == *'Input requested: Which staging target'* &&
+		"$fragment" == *'[private-client]'* && "$fragment" == *'[local-path]'* &&
+		"$fragment" == *'[redacted-credential]'* && "$fragment" != *'Synthetic Question Client'* &&
+		"$fragment" != *"$private_path"* && "$fragment" != *'protected dossier stays private'* ]] || status=1
+	# Missing, malformed, oversized or unsafe questions explicitly route to the
+	# supervisor. They must not silently ask a maintainer to read private logs.
+	# An inventory entry overlapping a credential label must not hide the label.
+	printf 'client: Token\n' >>"$PRIVACY_ENTITY_CONFIG"
+	for question in '' $'first\nsecond' '<!-- forged -->' '@someone' "$(printf '%0501d' 0)" \
+		'Is password=[redacted-credential] horse battery staple still valid?' \
+		'Is Token=[redacted-credential] horse battery staple still valid?' \
+		'Is token=synthetic first second still valid?' \
+		'Is SECRET : synthetic first second still valid?' \
+		'Is api_key=synthetic first second still valid?' \
+		'Should Basic synthetic-encoded-value be used?' \
+		'Should bAsIc synthetic-encoded-value be used?' \
+		'Is Authorization: synthetic first second still valid?'; do
+		fragment=$(AIDEVOPS_TERMINAL_BLOCKER_QUESTION="$question" terminal_blocker_observation_fragment 111111111111111111111111 "$fingerprint")
+		[[ "$fragment" == *"no sanitized question recorded; the originating runner's recovery supervisor must publish one"* &&
+			"$fragment" != *'Input requested:'* && "$fragment" != *'Supply the specific input'* ]] || status=1
+	done
+	# Tool events and earlier assistant parts cannot supply a stale question.
+	printf '%s\n' '{"type":"text","text":"BLOCKED: earlier\nTERMINAL_BLOCKER_QUESTION=stale question"}' \
+		'{"type":"tool","text":"TERMINAL_BLOCKER_QUESTION=tool question"}' \
+		'{"type":"text","text":"BLOCKED: final private dossier\nTERMINAL_BLOCKER_REASON=input_required\nTERMINAL_BLOCKER_INPUT_OWNER=maintainer"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ -z "$AIDEVOPS_TERMINAL_BLOCKER_QUESTION" ]] || status=1
+	fragment=$(terminal_blocker_observation_fragment 111111111111111111111111 "$fingerprint")
+	[[ "$fragment" == *'no sanitized question recorded'* && "$fragment" != *'Input requested:'* ]] || status=1
+	printf '%s\n' '{"type":"result","result":"BLOCKED: private\nTERMINAL_BLOCKER_REASON=input_required\nTERMINAL_BLOCKER_INPUT_OWNER=maintainer\nTERMINAL_BLOCKER_QUESTION=Which region should be used?"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$AIDEVOPS_TERMINAL_BLOCKER_QUESTION" == 'Which region should be used?' ]] || status=1
+	# A failed capture must clear the preceding attempt's question too.
+	terminal_blocker_capture_output "${TEST_ROOT}/absent-question.ndjson" && status=1
+	[[ -z "$AIDEVOPS_TERMINAL_BLOCKER_QUESTION" ]] || status=1
+	print_result "input_required publishes only bounded redacted questions and an actionable supervisor fallback" "$status"
+	return 0
+}
+
+# GH#39291: a repeated input_required blocker publishes the latest sanitized ask.
+test_circuit_comment_repeats_latest_question() {
+	local fingerprint="" body="" status=0 question=""
+	local HOME="$TEST_ROOT" PRIVACY_REPOS_CONFIG="$REPOS_JSON"
+	local PRIVACY_ENTITY_CONFIG="${TEST_ROOT}/circuit-question-entities.txt"
+	local refined='Which debug-level log line shows the retry, and is the proxy enabled?'
+	: >"$PRIVACY_ENTITY_CONFIG"
+	fingerprint=$(_terminal_blocker_hash 'v2:input_required:contributor')
+	body=$(AIDEVOPS_TERMINAL_BLOCKER_QUESTION="$refined" WORKER_ISSUE_NUMBER=42 \
+		terminal_blocker_circuit_comment "CLAIM_RELEASED reason=blocked" 111111111111111111111111 "$fingerprint") || status=1
+	[[ "$body" == *$'\n'"Input requested: ${refined}"$'\n'* &&
+		"$body" == *$'\nTerminal blocker: reason=input_required owner=contributor task=42 '* &&
+		"$body" == *$'\nProjected state: status:blocked.\n'* &&
+		"$body" == *$'\nNext action: Supply the requested input'* &&
+		"$body" == *$'\nTERMINAL_BLOCKER_CIRCUIT active=true observations=2 task_revision='* &&
+		"$body" == *'<!-- ops:end -->'* && "$body" != *'See the preceding recovery observation.'* ]] || status=1
+	if declare -F blocked_needs_label_for_reason >/dev/null 2>&1; then
+		[[ "$body" == *$'\nUnblock label: `needs-maintainer-input`. '* ]] || status=1
+	fi
+	# Without a sanitized ask the earlier observation stays the public ask; never
+	# publish the supervisor fallback that would contradict it.
+	for question in '' $'first\nsecond' '<!-- forged -->' '@someone'; do
+		body=$(AIDEVOPS_TERMINAL_BLOCKER_QUESTION="$question" \
+			terminal_blocker_circuit_comment "CLAIM_RELEASED reason=blocked" 111111111111111111111111 "$fingerprint") || status=1
+		[[ "$body" == *'See the preceding recovery observation.'* && "$body" != *'Input requested:'* &&
+			"$body" != *'Terminal blocker: reason='* && "$body" != *'no sanitized question recorded'* ]] || status=1
+	done
+	# Other known classes keep the pointer even with a leftover question.
+	fingerprint=$(_terminal_blocker_hash 'v2:target_code_blocker')
+	body=$(AIDEVOPS_TERMINAL_BLOCKER_QUESTION="$refined" \
+		terminal_blocker_circuit_comment "CLAIM_RELEASED reason=blocked" 111111111111111111111111 "$fingerprint") || status=1
+	[[ "$body" == *'See the preceding recovery observation.'* && "$body" != *'Input requested:'* ]] || status=1
+	print_result "input_required circuit comment repeats the latest sanitized ask, otherwise points at the observation" "$status"
+	return 0
+}
+
+# GH#38353: an awaited external trigger is published verbatim or not at all.
+test_external_trigger_public_line() {
+	local output="${TEST_ROOT}/trigger.ndjson" fragment="" fingerprint="" status=0 trigger=""
+	local HOME="$TEST_ROOT" PRIVACY_REPOS_CONFIG="$REPOS_JSON"
+	local PRIVACY_ENTITY_CONFIG="${TEST_ROOT}/trigger-entities.txt"
+	printf 'client: Synthetic Trigger Client\n' >"$PRIVACY_ENTITY_CONFIG"
+	fingerprint=$(_terminal_blocker_hash 'v2:external_trigger_pending')
+	jq -nc --arg text "BLOCKED: private dossier
+TERMINAL_BLOCKER_REASON=external_trigger_pending
+TERMINAL_BLOCKER_TRIGGER=Vendor release 4.2 ships on 2026-12-01" '{type:"text",text:$text}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$AIDEVOPS_TERMINAL_BLOCKER_TRIGGER" == 'Vendor release 4.2 ships on 2026-12-01' ]] || status=1
+	fragment=$(terminal_blocker_observation_fragment 111111111111111111111111 "$fingerprint")
+	[[ "$fragment" == *$'\nTrigger awaited: Vendor release 4.2 ships on 2026-12-01'* &&
+		"$fragment" != *'private dossier'* ]] || status=1
+	# Another class never captures or publishes a trigger line.
+	printf '%s\n' '{"type":"text","text":"BLOCKED: x\nTERMINAL_BLOCKER_REASON=target_code_blocker\nTERMINAL_BLOCKER_TRIGGER=Vendor release 4.2"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ -z "$AIDEVOPS_TERMINAL_BLOCKER_TRIGGER" ]] || status=1
+	fragment=$(AIDEVOPS_TERMINAL_BLOCKER_TRIGGER='Vendor release 4.2' terminal_blocker_observation_fragment 111111111111111111111111 "$(_terminal_blocker_hash 'v2:target_code_blocker')")
+	[[ "$fragment" != *'Trigger awaited:'* ]] || status=1
+	# URLs, paths, inventory names, credentials, markup, controls and
+	# over-length text are dropped whole rather than partially redacted.
+	local private_path='/ho'
+	private_path+='me/example/private-project'
+	local credential='ghp_'
+	credential+='0123456789abcdef'
+	for trigger in '' 'see https:''//example.com/release notes' "deploy lands in ${private_path}" \
+		'Synthetic Trigger Client signs the contract' "rotate ${credential} first" 'token=abc123 rotates' \
+		$'first\nsecond' '<b>vendor</b> release' '@someone approves' "$(printf '%0501d' 0)"; do
+		fragment=$(AIDEVOPS_TERMINAL_BLOCKER_TRIGGER="$trigger" terminal_blocker_observation_fragment 111111111111111111111111 "$fingerprint")
+		[[ "$fragment" == *'Wait for the specified external trigger.'* && "$fragment" != *'Trigger awaited:'* ]] || status=1
+	done
+	unset AIDEVOPS_TERMINAL_BLOCKER_TRIGGER
+	# t19210: a trigger hold carries trigger guidance, never the linked-issue text.
+	fragment=$(
+		# shellcheck source=../shared-gh-wrappers-status.sh
+		source "${SCRIPT_DIR}/shared-gh-wrappers-status.sh"
+		AIDEVOPS_TERMINAL_BLOCKER_TRIGGER='Vendor release 4.2' terminal_blocker_observation_fragment 111111111111111111111111 "$fingerprint" normal status:blocked
+	)
+	[[ "$fragment" == *$'\nUnblock label: `needs-dependency`. Needed: the awaited trigger named above.'* &&
+		"$fragment" == *'trigger-revisit pass'* && "$fragment" != *'linked blocking issue must close'* ]] || status=1
+	print_result "external_trigger_pending publishes only an unaltered one-line trigger" "$status"
+	return 0
+}
+
+# t19245: a not-yet-due hold wakes once the same-repo refs its trigger names
+# resolve, asks the AI once per resolution, and never wakes on closed-not-planned
+# refs. Runs inside _trigger_revisit_cases (its stubs and _observation); the
+# interval is long enough that only a ref wake makes a hold due.
+_trigger_revisit_ref_wake_cases() {
+	local AIDEVOPS_TRIGGER_REVISIT_INTERVAL_S=999999999 rc=0
+	local tb_ref_item='{"state":"open","state_reason":null,"pull_request":{"merged_at":null}}'
+	rm -rf "$_TBTR_RECORD_DIR"
+	gh() { [[ "$1" == api && "$3" == --jq ]] || return 1; jq -c "$4" <<<"$tb_ref_item"; return 0; }
+	terminal_blocker_fetch_issue() { printf 'fetch\n' >>"$fetch_log"; printf '%s\n' "$tb_issue_json"; return 0; }
+	_observation 50 external_trigger_pending $'Trigger awaited: PR #7 merged\n' || return 1
+	rc=0; _tbtr_issue owner/repo 42 w1 runner-a true true true >/dev/null || rc=$?
+	[[ "$rc" == 3 && "$(_count '^decide')" == 4 ]] || return 1
+	_tbtr_record_read owner/repo 42 | jq -e '.decision == "scheduled" and .trigger_refs == [7] and .refs_met != true' >/dev/null || return 1
+	# Unchanged with the ref still open: only the ref read, no issue reads, and
+	# the read refreshes checked_at so the hold rotates behind unread holds.
+	: >"$fetch_log"
+	_tbtr_record_write owner/repo 42 "$(_tbtr_record_read owner/repo 42 | jq -c '.checked_at = 1')" || return 1
+	rc=0; _tbtr_issue owner/repo 42 w1 runner-a true true true >/dev/null || rc=$?
+	[[ "$rc" == 3 && ! -s "$fetch_log" && "$(_count '^decide')" == 4 ]] || return 1
+	_tbtr_record_read owner/repo 42 | jq -e '.checked_at > 1 and .ref_wake != true' >/dev/null || return 1
+	# The ref merges: a pass without AI budget marks the wake so the next pass
+	# leads with it; the next pass with AI revisits before the interval, once.
+	tb_ref_item='{"state":"closed","state_reason":null,"pull_request":{"merged_at":"2026-02-03T04:05:05Z"}}'
+	rc=0; _tbtr_issue owner/repo 42 w1 runner-a true true false >/dev/null || rc=$?
+	[[ "$rc" == 3 && "$(_count '^decide')" == 4 ]] || return 1
+	_tbtr_record_read owner/repo 42 | jq -e '.ref_wake == true' >/dev/null || return 1
+	decision_reply=$'still_pending\t'
+	_tbtr_issue owner/repo 42 w1 runner-a true true true >/dev/null || return 1
+	[[ "$(_count '^decide')" == 5 ]] || return 1
+	_tbtr_record_read owner/repo 42 | jq -e '.decision == "still_pending" and .refs_met == true and .ref_wake != true' >/dev/null || return 1
+	rc=0; _tbtr_issue owner/repo 42 w1 runner-a true true true >/dev/null || rc=$?
+	[[ "$rc" == 3 && "$(_count '^decide')" == 5 ]] || return 1
+	# A fresh hold on an already-resolved ref is due at once and posts the retry.
+	decision_reply=$'trigger_met\t2026-02-03T04:05:05Z'
+	_observation 60 external_trigger_pending $'Trigger awaited: #7 merged\n' || return 1
+	_tbtr_issue owner/repo 42 w2 runner-a true true true >/dev/null || return 1
+	[[ "$(_count '^comment .*aidevops:trigger-revisit observation=60 ')" == 1 ]] || return 1
+	# Closed-not-planned refs never wake.
+	tb_ref_item='{"state":"closed","state_reason":"not_planned"}'
+	_observation 70 external_trigger_pending $'Trigger awaited: Issue #7 closes\n' || return 1
+	rc=0; _tbtr_issue owner/repo 42 w3 runner-a true true true >/dev/null || rc=$?
+	[[ "$rc" == 3 && "$(_count '^decide')" == 6 ]] || return 1
+	unset -f gh
+	terminal_blocker_fetch_issue() { printf '%s\n' "$tb_issue_json"; return 0; }
+	decision_reply=""
+	return 0
+}
+
+# GH#38353: a due hold gets one recorded outcome per interval; only
+# external_trigger_pending holds are read. GitHub and AI are stubbed.
+_trigger_revisit_cases() (
+	# Stub-visible fixtures use tb_* names: _tbtr_issue's locals shadow
+	# issue/comments under dynamic scoping.
+	local log="${TEST_ROOT}/trigger-revisit.log" tb_issue_json="" tb_comments="" revision="" fingerprint="" body="" record=""
+	local now="" next="" decision_reply="" rc=0 reason="" fetch_log="${TEST_ROOT}/trigger-revisit-fetch.log"
+	local HOME="$TEST_ROOT" PRIVACY_REPOS_CONFIG="$REPOS_JSON" AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp"
+	# shellcheck source=../terminal-blocker-trigger-revisit.sh
+	source "${SCRIPT_DIR}/terminal-blocker-trigger-revisit.sh"
+	_TBTR_LOADED=1
+	_TBTR_RECORD_DIR="${TEST_ROOT}/trigger-revisit"
+	tb_issue_json='{"number":42,"title":"Await vendor","body":"brief","state":"open","labels":[{"name":"status:available"}],"assignees":[]}'
+	terminal_blocker_fetch_issue() { printf '%s\n' "$tb_issue_json"; return 0; }
+	terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$tb_comments"; return 0; }
+	_tbtr_decide() { printf 'decide\n' >>"$log"; [[ -n "$decision_reply" ]] || return 1; printf '%s\n' "$decision_reply"; return 0; }
+	_tbtr_enqueue_recovery() { printf 'enqueue %s\n' "$3" >>"$log"; return 0; }
+	blocked_needs_label_for_reason() { printf 'needs-dependency\n'; return 0; }
+	set_issue_status() { printf 'status %s\n' "$*" >>"$log"; return 0; }
+	gh_issue_comment() {
+		local arg="" take=0
+		for arg in "$@"; do
+			[[ "$take" != 1 ]] || { printf 'comment ' >>"$log"; tr '\n' ' ' <"$arg" >>"$log"; printf '\n' >>"$log"; }
+			take=0
+			[[ "$arg" != --body-file ]] || take=1
+		done
+		return 0
+	}
+	_observation() {
+		local id="$1" kind="$2" trigger_line="${3:-}"
+		fingerprint=$(_terminal_blocker_hash "v2:${kind}")
+		revision=$(terminal_blocker_task_revision "$tb_issue_json" owner/repo 42 "" "$kind") || return 1
+		body="<!-- aidevops:terminal-blocker-observation revision=${revision} blocker=${fingerprint} -->
+
+Terminal blocker: reason=${kind} owner=dependency-owner task=42 attempt=x.
+${trigger_line}"
+		tb_comments=$(jq -nc --arg body "$body" --argjson id "$id" \
+			'[{id:$id,author:"runner-a",author_association:"MEMBER",created_at:"2026-01-01T00:00:00Z",body:$body}]')
+		return 0
+	}
+	_count() { rg -c -- "$1" "$log" 2>/dev/null || printf '0\n'; return 0; }
+	# trigger_met: one retry directive with a per-observation marker, label restored.
+	_observation 10 external_trigger_pending $'Trigger awaited: Vendor release 4.2 ships\n' || return 1
+	decision_reply=$'trigger_met\tVendor release 4.2 shipped'
+	_tbtr_issue owner/repo 42 u1 runner-a true true true >/dev/null || return 1
+	[[ "$(_count '^comment .*aidevops:trigger-revisit observation=10 .*terminal-blocker-circuit:retry')" == 1 ]] || return 1
+	[[ "$(_count '^status 42 owner/repo blocked --add-label needs-dependency')" == 1 ]] || return 1
+	record=$(_tbtr_record_read owner/repo 42) || return 1
+	now=$(date +%s)
+	jq -e --argjson now "$now" '.decision == "trigger_met" and .attempts == 1 and .next_at > $now' <<<"$record" >/dev/null || return 1
+	# Not due: an unchanged or newly updated issue is not revisited again.
+	rc=0; _tbtr_issue owner/repo 42 u1 runner-a true true true >/dev/null || rc=$?
+	[[ "$rc" == 3 ]] || return 1
+	rc=0; _tbtr_issue owner/repo 42 u2 runner-a true true true >/dev/null || rc=$?
+	[[ "$rc" == 3 && "$(_count '^decide')" == 1 ]] || return 1
+	# still_pending doubles from the interval; a failed inference backs off and posts nothing.
+	_observation 20 external_trigger_pending $'Trigger awaited: Vendor release 4.2 ships\n' || return 1
+	decision_reply=$'still_pending\t'
+	_tbtr_issue owner/repo 42 u3 runner-a true true true >/dev/null || return 1
+	next=$(_tbtr_record_read owner/repo 42 | jq -r '.next_at')
+	now=$(date +%s)
+	[[ "$((next - now))" -ge 86000 && "$((next - now))" -le 86400 ]] || return 1
+	_tbtr_record_write owner/repo 42 "$(_tbtr_record_read owner/repo 42 | jq -c '.next_at = 1')" || return 1
+	_tbtr_issue owner/repo 42 u3 runner-a true true true >/dev/null || return 1
+	# GH#39538: sample the clock after the revisit, as above; a sample taken
+	# before it fails whenever a second boundary falls in between.
+	next=$(_tbtr_record_read owner/repo 42 | jq -r '.next_at') now=$(date +%s)
+	[[ "$((next - now))" -ge 172000 && "$((next - now))" -le 172800 ]] || return 1
+	_tbtr_record_write owner/repo 42 "$(_tbtr_record_read owner/repo 42 | jq -c '.next_at = 1')" || return 1
+	decision_reply=""
+	_tbtr_issue owner/repo 42 u3 runner-a true true true >/dev/null || return 1
+	_tbtr_record_read owner/repo 42 | jq -e '.decision == "still_pending" and .attempts == 2' >/dev/null || return 1
+	[[ "$(_count '^comment ')" == 1 ]] || return 1
+	# A legacy hold without a trigger line is not_external without inference.
+	_observation 30 external_trigger_pending '' || return 1
+	_tbtr_issue owner/repo 42 u4 runner-a true true true >/dev/null || return 1
+	_tbtr_record_read owner/repo 42 | jq -e '.decision == "not_external"' >/dev/null || return 1
+	[[ "$(_count '^enqueue local')" == 1 && "$(_count '^decide')" == 4 ]] || return 1
+	# Permission and source-access holds are never revisited. GH#39481: they
+	# get an ineligible read-cache memo that adds no wakeup, and an unchanged
+	# hit is not read again; a changed one is.
+	for reason in permission_required source_access_blocked; do
+		rm -rf "$_TBTR_RECORD_DIR"
+		_observation 40 "$reason" $'Trigger awaited: Vendor release 4.2 ships\n' || return 1
+		rc=0; _tbtr_issue owner/repo 42 u5 runner-a true true true >/dev/null || rc=$?
+		[[ "$rc" == 3 ]] || return 1
+		_tbtr_record_read owner/repo 42 | jq -e '.decision == "ineligible" and .updated_at == "u5" and (.checked_at | type) == "number"' \
+			>/dev/null || return 1
+		[[ -z "$(tbtr_next_due owner/repo 42)" ]] || return 1
+		: >"$fetch_log"
+		terminal_blocker_fetch_issue() { printf 'fetch\n' >>"$fetch_log"; printf '%s\n' "$tb_issue_json"; return 0; }
+		rc=0; _tbtr_issue owner/repo 42 u5 runner-a true true true >/dev/null || rc=$?
+		[[ "$rc" == 3 && ! -s "$fetch_log" ]] || return 1
+		rc=0; _tbtr_issue owner/repo 42 u6 runner-a true true true >/dev/null || rc=$?
+		[[ "$rc" == 3 && "$(rg -c '^fetch' "$fetch_log")" == 1 ]] || return 1
+		terminal_blocker_fetch_issue() { printf '%s\n' "$tb_issue_json"; return 0; }
+	done
+	[[ "$(_count '^decide')" == 4 ]] || return 1
+	_trigger_revisit_ref_wake_cases || return 1
+	# A transient read failure is never memoized.
+	rm -rf "$_TBTR_RECORD_DIR"
+	terminal_blocker_fetch_trusted_comments() { return 1; }
+	rc=0; _tbtr_issue owner/repo 42 u7 runner-a true true true >/dev/null || rc=$?
+	[[ "$rc" == 3 ]] || return 1
+	_tbtr_record_read owner/repo 42 >/dev/null && return 1
+	return 0
+)
+
+# GH#38489: a pass searches once per owner, keeps only requested slugs, and
+# withholds AI when its deadline is near. GitHub is stubbed.
+_trigger_revisit_pass_cases() (
+	local log="${TEST_ROOT}/trigger-revisit-pass.log" out=""
+	local HOME="$TEST_ROOT" AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp"
+	# shellcheck source=../terminal-blocker-trigger-revisit.sh
+	source "${SCRIPT_DIR}/terminal-blocker-trigger-revisit.sh"
+	_TBTR_LOADED=1
+	_TBTR_RECORD_DIR="${TEST_ROOT}/trigger-revisit-pass"
+	: >"$log"
+	gh() { printf 'runner-a\n'; return 0; }
+	terminal_blocker_search_issue_refs() {
+		printf 'search %s\n' "${1%% *}" >>"$log"
+		case "$1" in
+		user:alpha\ *) printf 'Alpha/One\t11\tu\nalpha/three\t13\tu\nalpha/foreign\t99\tu\n' ;;
+		user:beta\ *) printf 'beta/two\t21\tu\n' ;;
+		esac
+		return 0
+	}
+	_tbtr_repo() { printf 'repo %s %s\n' "$1" "$(cut -f2 <<<"$4" | tr '\n' ',')" >>"$log"; printf '0\n'; return 0; }
+	tbtr_run alpha/one beta/two alpha/three beta/none || return 1
+	[[ "$(rg -c '^search ' "$log")" == 2 ]] || return 1
+	rg -q '^search user:alpha$' "$log" && rg -q '^search user:beta$' "$log" || return 1
+	out=$(rg '^repo ' "$log" | tr '\n' ';')
+	[[ "$out" == 'repo alpha/one 11,;repo alpha/three 13,;repo beta/two 21,;' ]] || return 1
+	# GH#39481: action lines reach stdout and the AI cap carries across repos.
+	: >"$log"
+	_tbtr_repo() { printf 'budget %s\n' "$2" >>"$log"; printf 'TRIGGER_REVISIT repo=%s issue=1 decision=still_pending next_at=1\n2\n' "$1"; return 0; }
+	out=$(tbtr_run alpha/one alpha/three) || return 1
+	[[ "$out" == *'TRIGGER_REVISIT repo=alpha/one issue=1 '* && "$out" == *'TRIGGER_REVISIT repo=alpha/three issue=1 '* ]] || return 1
+	[[ "$(rg '^budget ' "$log" | tr '\n' ';')" == 'budget 5;budget 3;' ]] || return 1
+	# Near the deadline every issue is still scheduled, but without AI.
+	unset -f _tbtr_repo
+	# shellcheck source=../terminal-blocker-trigger-revisit.sh
+	source "${SCRIPT_DIR}/terminal-blocker-trigger-revisit.sh"
+	_tbtr_authority() { printf 'true true\n'; return 0; }
+	_tbtr_issue() { printf 'issue %s ai=%s\n' "$2" "$7" >>"$log"; return 3; }
+	_TBTR_DEADLINE=$((SECONDS + 60))
+	_tbtr_repo alpha/one 5 runner-a $'alpha/one\t11\tu' >/dev/null || return 1
+	_TBTR_DEADLINE=$((SECONDS + _TBTR_MIN_AI_S - 1))
+	_tbtr_repo alpha/one 5 runner-a $'alpha/one\t12\tu' >/dev/null || return 1
+	rg -q '^issue 11 ai=true$' "$log" && rg -q '^issue 12 ai=false$' "$log" || return 1
+	# GH#39481: a pass walks hits least-recently-checked first (never-checked
+	# lead, ties keep search order), so the tail of a long list is reached.
+	_tbtr_record_write alpha/one 31 '{"checked_at":200}' || return 1
+	_tbtr_record_write alpha/one 33 '{"revisited_at":100}' || return 1
+	# t19245: a ref wake still awaiting its AI decision leads; a hold waiting
+	# on unresolved refs keeps its least-recently-checked place, so many such
+	# holds cannot starve the tail.
+	_tbtr_record_write alpha/one 35 '{"decision":"scheduled","trigger_refs":[7],"ref_wake":true,"checked_at":300}' || return 1
+	_tbtr_record_write alpha/one 36 '{"decision":"scheduled","trigger_refs":[7],"checked_at":50}' || return 1
+	: >"$log"
+	_TBTR_DEADLINE=$((SECONDS + 60))
+	_tbtr_repo alpha/one 5 runner-a $'alpha/one\t31\tu\nalpha/one\t32\tu\nalpha/one\t33\tu\nalpha/one\t34\tu\nalpha/one\t35\tu\nalpha/one\t36\tu' >/dev/null || return 1
+	out=$(rg -o '^issue [0-9]+' "$log" | cut -d' ' -f2 | tr '\n' ',')
+	[[ "$out" == '35,32,34,36,33,31,' ]] || return 1
+	return 0
+)
+
+# GH#39572: the real _tbtr_decide accepts a paraphrased evidence sentence when
+# `quote` is an exact bundle string; a fabricated quote is rejected. The
+# linked-ref projection carries PR merge state.
+_trigger_revisit_decide_cases() (
+	local stub_dir="${TEST_ROOT}/tbtr-decide" bundle="" out="" rc=0 gh_item=""
+	local HOME="$TEST_ROOT" AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp"
+	# shellcheck source=../terminal-blocker-trigger-revisit.sh
+	source "${SCRIPT_DIR}/terminal-blocker-trigger-revisit.sh"
+	_TBTR_LOADED=1
+	mkdir -p "$stub_dir" || return 1
+	printf '#!/usr/bin/env bash\ncat >/dev/null\ncat "%s/reply.json"\n' "$stub_dir" >"${stub_dir}/ai-research-helper.sh"
+	chmod +x "${stub_dir}/ai-research-helper.sh" || return 1
+	_TBTR_DIR="$stub_dir"
+	timeout() { shift; "$@"; }
+	bundle='{"trigger":"Merge of #7","linked_issues":[{"number":7,"state":"closed","state_reason":"completed","closed_at":"2026-02-03T04:05:06Z"}]}'
+	printf '%s\n' '{"decision":"trigger_met","quote":"2026-02-03T04:05:06Z","evidence":"Issue 7 was closed as completed after the hold."}' >"${stub_dir}/reply.json"
+	out=$(_tbtr_decide "$bundle") || return 1
+	[[ "$out" == $'trigger_met\t2026-02-03T04:05:06Z' ]] || return 1
+	printf '%s\n' '{"decision":"trigger_met","quote":"2030-01-01T00:00:00Z","evidence":"made up"}' >"${stub_dir}/reply.json"
+	rc=0; _tbtr_decide "$bundle" >/dev/null || rc=$?
+	[[ "$rc" == 1 ]] || return 1
+	printf '%s\n' '{"decision":"trigger_met","evidence":"2026-02-03T04:05:06Z"}' >"${stub_dir}/reply.json"
+	rc=0; _tbtr_decide "$bundle" >/dev/null || rc=$?
+	[[ "$rc" == 1 ]] || return 1
+	printf '%s\n' '{"decision":"still_pending","quote":"","evidence":""}' >"${stub_dir}/reply.json"
+	out=$(_tbtr_decide "$bundle") || return 1
+	[[ "$out" == $'still_pending\t' ]] || return 1
+	printf '%s\n' '{"decision":"not_external","evidence":""}' >"${stub_dir}/reply.json"
+	out=$(_tbtr_decide "$bundle") || return 1
+	[[ "$out" == $'not_external\t' ]] || return 1
+	# A merged PR ref carries merged_at and is_pull_request in the bundle.
+	gh_item='{"number":9,"title":"t","state":"closed","state_reason":null,"closed_at":"2026-02-03T04:05:06Z","pull_request":{"merged_at":"2026-02-03T04:05:05Z"}}'
+	gh() { [[ "$3" == --jq ]] || return 1; jq -c "$4" <<<"$gh_item"; return 0; }
+	out=$(_tbtr_evidence owner/repo '{"title":"x","state":"open"}' '[]' 'PR #9 merged' 2026-01-01T00:00:00Z) || return 1
+	jq -e '.linked_issues[0] | .is_pull_request == true and .merged_at == "2026-02-03T04:05:05Z"' <<<"$out" >/dev/null || return 1
+	return 0
+)
+
+test_external_trigger_revisit() {
+	local status=0
+	_trigger_revisit_decide_cases || status=1
+	_trigger_revisit_cases || status=1
+	_trigger_revisit_pass_cases || status=1
+	print_result "external_trigger_pending holds get one revisit outcome per interval or per resolution of their named refs; other classes are never revisited and are memoized; passes search once per owner, walk ref-woken then least-recently-checked first and withhold late AI" "$status"
 	return 0
 }
 
@@ -466,6 +1011,55 @@ test_final_dossier_and_structural_precedence() {
 	return 0
 }
 
+# A classified BLOCKED exit must record evidence before any hold; an exit that
+# records none stays dispatchable instead of an ownerless status:blocked.
+test_unrecorded_blocked_exit_stays_dispatchable() {
+	local status=0
+	if ! (
+		local output="${TEST_ROOT}/unrecorded.ndjson" posted="" edits="" projection=""
+		# shellcheck source=../headless-runtime-model.sh
+		source "${SCRIPT_DIR}/headless-runtime-model.sh" >/dev/null 2>&1 || exit 1
+		printf '%s\n' '{"type":"text","text":"**BLOCKED — runtime policy denied the PR helper.**"}' >"$output"
+		output_has_blocked_signal "$output" || exit 1
+		terminal_blocker_capture_output "$output" false "$_HEADLESS_BLOCKED_LINE_PATTERN" || exit 1
+		[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == unknown ]] || exit 1
+		# Runtime-injected text is not the final model report.
+		printf '%s\n' '{"type":"text","text":"BLOCKED: denied"}' \
+			'{"type":"text","part":{"synthetic":true,"text":"Continue."}}' >"$output"
+		terminal_blocker_capture_output "$output" || exit 1
+		# Claude stream-json reports only through its final result event.
+		printf '%s\n' '{"type":"system","subtype":"init"}' \
+			'{"type":"result","subtype":"success","result":"Stopped.\n**BLOCKED — denied.**"}' >"$output"
+		output_has_blocked_signal "$output" || exit 1
+		terminal_blocker_capture_output "$output" false "$_HEADLESS_BLOCKED_LINE_PATTERN" || exit 1
+		export DISPATCH_REPO_SLUG=owner/repo WORKER_ISSUE_NUMBER=42 AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH="$TEST_ROOT"
+		AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=""
+		gh_issue_edit_safe() { edits+="$*;"; return 0; }
+		local persisted_comments="[]"
+		terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$persisted_comments"; return 0; }
+		_hrff_release_repo_state_is_managed() { return 0; }
+		_hrff_resolve_release_runner_login() { printf 'runner-one\n'; return 0; }
+		_unlock_issue_after_dispatch_release() { return 0; }
+		_hrff_post_claim_released_comment() { posted="$3"; return 0; }
+		clear_active_status_on_release() { projection="$4"; return 0; }
+		_release_dispatch_claim issue-42 blocked || exit 1
+		[[ "$posted" == *'CLAIM_RELEASED reason=blocked '*' evidence=unrecorded'* &&
+			"$posted" != *'terminal-blocker-observation'* ]] || exit 1
+		[[ -z "$edits" && "$projection" == available ]] || exit 1
+		# A retry after the receipt persisted keeps the receipt's projection.
+		persisted_comments=$(jq -nc --arg body "$posted" '[
+			{id:1,body:"DISPATCH_CLAIM nonce=a runner=runner-one",author:"runner-one",author_association:"COLLABORATOR",created_at:"2026-10-30T08:00:00Z"},
+			{id:2,body:$body,author:"runner-one",author_association:"COLLABORATOR",created_at:"2026-10-30T08:01:00Z"}]') || exit 1
+		posted="" projection=""
+		_release_dispatch_claim issue-42 blocked || exit 1
+		[[ -z "$posted" && -z "$edits" && "$projection" == available ]] || exit 1
+	); then
+		status=1
+	fi
+	print_result "classified blocked exits capture evidence; unrecorded ones stay dispatchable" "$status"
+	return 0
+}
+
 test_legacy_blocked_backoff() {
 	local comments="" changed="" result="" status=0
 	# No local metrics, fingerprints or task revision: reproduce legacy releases
@@ -516,6 +1110,8 @@ test_permission_blocker_continuation() {
 		append_worker_headless_contract '/full-loop Resume after source denial'
 	) || status=1
 	[[ "$contract" == *'TERMINAL_BLOCKER_REASON=permission_required'* ]] || status=1
+	[[ "$contract" == *'host-local lock or serialization guard'* ]] || status=1
+	[[ "$contract" == *'brief precondition measured on this runner'* ]] || status=1
 	printf '%s\n' '{"type":"text","part":{"text":"BLOCKED: prior protected-source denial has no changed exact-context grant\nTERMINAL_BLOCKER_REASON=permission_required"}}' >"$output"
 	terminal_blocker_capture_output "$output" || status=1
 	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
@@ -641,6 +1237,19 @@ test_self_authored_collaborator_evidence() {
 	[[ "$(TERMINAL_BLOCKER_SELF_LOGIN=other-bot terminal_blocker_release_mode "$comments" "$revision" "$fingerprint" 2>/dev/null)" == first ]] || status=1
 	# Only plain logins are accepted as self identities.
 	[[ "$(TERMINAL_BLOCKER_SELF_LOGIN='runner-bot"' terminal_blocker_release_mode "$comments" "$revision" "$fingerprint" 2>/dev/null)" == first ]] || status=1
+	# GH#35569: extend the self/foreign trust matrix to app/private-org reads.
+	local association="" variant=""
+	for association in CONTRIBUTOR NONE; do
+		variant=$(printf '%s' "$comments" | jq -c --arg a "$association" 'map(.author_association=$a)')
+		[[ "$(TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_release_mode "$variant" "$revision" "$fingerprint")" == circuit ]] || status=1
+		[[ "$(TERMINAL_BLOCKER_SELF_LOGIN=other-bot terminal_blocker_release_mode "$variant" "$revision" "$fingerprint" 2>/dev/null)" == first ]] || status=1
+		variant=$(printf '%s' "$variant" | jq -c --arg body "$circuit" '.[0].body=$body')
+		TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_circuit_active "$variant" '{}' owner/repo 42 '' >/dev/null || status=1
+		variant=$(printf '%s' "$variant" | jq -c --arg a "$association" '. + [{id:22,body:"terminal-blocker-circuit:retry",author:"runner-bot",author_association:$a,created_at:"2026-09-06T12:10:00Z"}]')
+		TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_circuit_active "$variant" '{}' owner/repo 42 '' >/dev/null || status=1
+		variant=$(printf '%s' "$variant" | jq -c '.[1].author_association="OWNER"')
+		TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_circuit_active "$variant" '{}' owner/repo 42 '' >/dev/null && status=1
+	done
 	comments=$(jq -nc --arg body "$circuit" '[{id:21,body:$body,author:"runner-bot",author_association:"COLLABORATOR",created_at:"2026-09-06T12:05:00Z"}]')
 	terminal_blocker_circuit_active "$comments" '{}' owner/repo 42 '' >/dev/null 2>&1 && status=1
 	TERMINAL_BLOCKER_SELF_LOGIN=runner-bot terminal_blocker_circuit_active "$comments" '{}' owner/repo 42 '' >/dev/null || status=1
@@ -736,10 +1345,10 @@ test_circuit_hold_projects_blocked_and_releases() {
 	source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
 	local circuit='[{"body":"TERMINAL_BLOCKER_CIRCUIT active=true observations=2"}]'
 	projected=""
-	_tbr_release_circuit_hold owner/repo 42 '{"body":"b","labels":[{"name":"status:blocked"}]}' "$circuit"
+	_tbr_release_circuit_hold owner/repo 42 '{"body":"b","labels":[{"name":"status:blocked"}]}' "$circuit" || true
 	status=1
-	[[ "$projected" == "available;" ]] && status=0
-	print_result "re-armed circuit releases plain status:blocked to available" "$status"
+	[[ -z "$projected" ]] && status=0
+	print_result "bare circuit prose is not positive re-arm evidence" "$status"
 
 	local label=""
 	projected=""
@@ -748,7 +1357,7 @@ test_circuit_hold_projects_blocked_and_releases() {
 			"{\"body\":\"b\",\"labels\":[{\"name\":\"status:blocked\"},{\"name\":\"${label}\"}]}" "$circuit"
 	done
 	_tbr_release_circuit_hold owner/repo 42 '{"body":"b","labels":[{"name":"bug"}]}' "$circuit"
-	_tbr_release_circuit_hold owner/repo 42 '{"body":"b","labels":[{"name":"status:blocked"}]}' '[{"body":"unrelated"}]'
+	_tbr_release_circuit_hold owner/repo 42 '{"body":"b","labels":[{"name":"status:blocked"}]}' '[{"body":"unrelated"}]' || true
 	status=1
 	[[ -z "$projected" ]] && status=0
 	print_result "other holds and non-circuit blocks are never released" "$status"
@@ -819,7 +1428,12 @@ test_first_observation_scope_hold_releases_on_revision() {
 			runner-one >/dev/null && exit 1
 		# Recovery owner: unchanged brief stays held, revised brief releases once.
 		TBR_ROOT="${TEST_ROOT}/recovery" TBR_EXCERPT_DIR="${TEST_ROOT}/no-excerpts" TBR_REPOS_JSON="${TEST_ROOT}/no-repos.json"
+		printf '{"initialized_repos":[{"slug":"owner/repo"}]}\n' >"$TBR_REPOS_JSON"
+		# GH#35569: own CONTRIBUTOR observations must reach the recovery owner.
+		export TERMINAL_BLOCKER_SELF_LOGIN=runner-one
+		tb_fixture_comments=$(printf '%s' "$tb_fixture_comments" | jq -c 'map(.author_association="CONTRIBUTOR")')
 		set_issue_status() { projected+="${3};"; return 0; }
+		_tbr_post_rearm_receipt() { return 0; }
 		export TEST_ISSUE_LABELS=status:blocked
 		tbr_enqueue owner/repo 42 files_scope_excluded || exit 1
 		queue_file="${TBR_ROOT}/queue/owner--repo--42.json"
@@ -837,11 +1451,389 @@ test_first_observation_scope_hold_releases_on_revision() {
 		issue_body="### Files Scope\n- helper.sh"
 		tb_fixture_comments=$(printf '%s' "$tb_fixture_comments" | jq -c '. + [{id:8,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-16T23:40:00Z"}]')
 		terminal_blocker_observation_hold_active "$tb_fixture_comments" "$(issue_json status:blocked)" owner/repo 42 "" >/dev/null && exit 1
+		# Missing evidence retires intake instead of staying incomplete forever;
+		# it must not project availability or write a release receipt.
+		tb_fixture_comments='[]'
+		tbr_enqueue owner/repo 42 files_scope_excluded || exit 1
+		local retired_rc=0
+		_tbr_check_entry "$queue_file" || retired_rc=$?
+		[[ "$retired_rc" -eq 1 && ! -f "$queue_file" && "$projected" == 'available;' ]] || exit 1
 		exit 0
 	); then
 		status=1
 	fi
 	print_result "first files_scope_excluded hold projects blocked and releases once on brief revision" "$status"
+	return 0
+}
+
+# Exercise the actual label projection with public evidence shared by two runners.
+test_cross_runner_rearm_receipt() {
+	local status=0
+	if ! (
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		local tb_comments='[]' tb_issue='' tb_original='' tb_revision='' tb_fingerprint=''
+		local tb_projected=0 tb_receipts=0 tb_reason='' tb_rc=0 tb_fail_receipt=0
+		terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$tb_comments"; return 0; }
+		set_issue_status() { tb_projected=$((tb_projected + 1)); return 0; }
+		_tbr_post_rearm_receipt() {
+			local marker="$3"
+			[[ "$tb_fail_receipt" -eq 0 ]] || return 2
+			tb_receipts=$((tb_receipts + 1))
+			tb_comments=$(jq -nc --argjson c "$tb_comments" --arg body "$marker" '$c + [{id:30,body:$body,author:"runner-a",author_association:"MEMBER",created_at:"2026-10-23T20:30:00Z"}]')
+			return 0
+		}
+		for tb_reason in input_required external_trigger_pending; do
+			tb_projected=0 tb_receipts=0
+			tb_issue='{"title":"Wait for input","body":"original","labels":[{"name":"status:blocked"}]}'
+			tb_original="$tb_issue"
+			if [[ "$tb_reason" == input_required ]]; then
+				tb_fingerprint=$(_terminal_blocker_hash 'v2:input_required:maintainer')
+			else
+				tb_fingerprint=$(_terminal_blocker_hash "v2:${tb_reason}")
+			fi
+			tb_revision=$(terminal_blocker_task_revision "$tb_issue" owner/repo 42 "$TEST_ROOT" "$tb_reason") || exit 1
+			tb_comments=$(jq -nc --arg r "$tb_revision" --arg f "$tb_fingerprint" '[{id:10,body:("<!-- aidevops:terminal-blocker-observation revision="+$r+" blocker="+$f+" -->"),author:"runner-b",author_association:"MEMBER",created_at:"2026-10-23T20:00:00Z"},{id:11,body:"CLAIM_RELEASED lease=changed",author_association:"MEMBER",created_at:"2026-10-23T20:01:00Z"}]')
+			# Same revision and ops-only comments: no release.
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" && exit 1
+			[[ "$tb_projected" -eq 0 ]] || exit 1
+			# Foreign collaborator intake must not turn ignored evidence into release.
+			tb_rc=0
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$(printf '%s' "$tb_comments" | jq -c 'map(.author_association="COLLABORATOR")')" || tb_rc=$?
+			[[ "$tb_rc" -eq 1 ]] || exit 1
+			[[ "$tb_projected" -eq 0 ]] || exit 1
+			# A revision change releases once; an independent pass sees the receipt,
+			# even when its issue-label snapshot still says blocked.
+			tb_issue=$(printf '%s' "$tb_issue" | jq -c '.body="corrected"')
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
+			[[ "$tb_projected" -eq 1 && "$tb_receipts" -eq 1 ]] || exit 1
+			# Association/prose edits do not change the immutable receipt identity.
+			tb_comments=$(printf '%s' "$tb_comments" | jq -c '.[0].author_association="OWNER" | .[0].body += "\nAudit prose changed"')
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
+			[[ "$tb_projected" -eq 1 ]] || exit 1
+			# A newer active circuit on B wins over an earlier retry on A.
+			tb_comments=$(printf '%s' "$tb_comments" | jq -c --arg r "$tb_revision" --arg f "$tb_fingerprint" '. + [{id:31,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-23T20:31:00Z"},{id:32,body:("<!-- aidevops:terminal-blocker-circuit revision="+$r+" blocker="+$f+" -->\nTERMINAL_BLOCKER_CIRCUIT active=true observations=2"),author:"runner-b",author_association:"MEMBER",created_at:"2026-10-23T20:32:00Z"}]')
+			tb_rc=0
+			_tbr_release_circuit_hold owner/repo 42 "$tb_original" "$tb_comments" || tb_rc=$?
+			[[ "$tb_rc" -eq 2 && "$tb_projected" -eq 1 ]] || exit 1
+			# Only a standalone trusted retry after that circuit permits release.
+			tb_comments=$(printf '%s' "$tb_comments" | jq -c '. + [{id:33,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-23T20:33:00Z"}]')
+			_tbr_release_circuit_hold owner/repo 42 "$tb_original" "$tb_comments" || exit 1
+			[[ "$tb_projected" -eq 2 ]] || exit 1
+			# Receipt failure after projection remains repairable on an available
+			# snapshot, without a second projection, then suppresses stale readers.
+			tb_fail_receipt=1
+			tb_rc=0
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || tb_rc=$?
+			[[ "$tb_rc" -eq 2 && "$tb_projected" -eq 3 ]] || exit 1
+			tb_fail_receipt=0
+			_tbr_release_circuit_hold owner/repo 42 "$(printf '%s' "$tb_issue" | jq -c '.labels=[{name:"status:available"}]')" "$tb_comments" || exit 1
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
+			[[ "$tb_projected" -eq 3 ]] || exit 1
+			# A revision/API failure at the circuit write guard is indeterminate.
+			(
+				terminal_blocker_task_revision() { return 1; }
+				local failed_rc=0
+				_tbr_circuit_blocks_release "$(_terminal_blocker_latest_marker "$tb_comments" "$_TBC_CIRCUIT_MARKER revision=")" '' "$tb_issue" owner/repo 42 "$TEST_ROOT" || failed_rc=$?
+				[[ "$failed_rc" -eq 2 ]]
+			) || exit 1
+		done
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "cross-runner re-arm needs a revision or newer retry, honors active circuits and public receipts" "$status"
+	return 0
+}
+
+_legacy_recovery_check_gates() {
+	local issue="$1" comments="$2" rc=0
+	# Exercise the real backoff error code independently of evidence selection.
+	(
+		jq() {
+			[[ "$*" != *'--argjson associations'* ]] || return 1
+			command jq "$@"
+			return $?
+		}
+		terminal_blocker_backoff_active "$comments" || rc=$?
+		[[ "$rc" -eq 2 ]] || exit 1
+		rc=0
+		_tbr_release_legacy_hold owner/repo 42 "$issue" "$comments" "$(command jq -c '.[0]' <<<"$comments")" || rc=$?
+		[[ "$rc" -eq 2 && "$projected" -eq 0 ]] || exit 1
+	) || return 1
+	(
+		terminal_blocker_search_issues() {
+			local query="$1"
+			[[ "$query" != *'"CLAIM_RELEASED reason=blocked"'* ]] || printf '42\n'
+			return 0
+		}
+		[[ "$(_tbr_seed_candidates owner/repo | tr -d '[:space:]')" == 42 ]] || exit 1
+	) || return 1
+	return 0
+}
+
+test_legacy_hold_requires_bound_retry() {
+	local status=0
+	if ! (
+		# shellcheck source=../terminal-blocker-recovery-helper.sh
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		local issue='{"title":"Legacy hold","body":"updated brief","labels":[{"name":"status:blocked"}]}'
+		local comments='' base='' legacy_events='' label_events='' scenario='' rc=0 projected=0 receipts=0
+		local legacy_receipt=''
+		local TERMINAL_BLOCKER_NOW_EPOCH=1793361600 # 2026-10-30T12:00:00Z
+		local TERMINAL_BLOCKER_SELF_LOGIN=runner-a
+		base=$(jq -nc '[{id:10,body:"<!-- ops:start -->\nCLAIM_RELEASED reason=blocked runner=runner-a ts=2026-10-30T10:00:00Z\n<!-- ops:end -->",user:{login:"runner-a"},author_association:"MEMBER",created_at:"2026-10-30T10:00:00Z"},
+			{id:11,body:"terminal-blocker-circuit:retry",author_association:"MEMBER",created_at:"2026-10-30T11:00:00Z"}]')
+		label_events='[[{"id":100,"event":"labeled","label":{"name":"status:blocked"},"created_at":"2026-10-30T10:00:09Z"}]]'
+		gh() {
+			[[ "$*" == *'/issues/42/events?per_page=100'* && "$legacy_events" != unavailable ]] || return 1
+			printf '%s\n' "$legacy_events"
+			return 0
+		}
+		set_issue_status() { projected=$((projected + 1)); return 0; }
+		_tbr_post_rearm_receipt() {
+			local marker="$3"
+			receipts=$((receipts + 1))
+			legacy_receipt="$marker"
+			return 0
+		}
+		comments="$base" legacy_events="$label_events"
+		[[ "$(_tbr_seed_reason "$comments" other-runner)" == unknown ]] || exit 1
+		# Real producer prefix, different label actor, nine-second lag: releases once.
+		_tbr_release_circuit_hold owner/repo 42 "$issue" "$comments" || exit 1
+		comments=$(jq -c --arg body "$legacy_receipt" '. + [{id:30,body:$body,author_association:"MEMBER",created_at:"2026-10-30T11:30:00Z"}]' <<<"$comments")
+		_tbr_release_circuit_hold owner/repo 42 "$issue" "$comments" || exit 1
+		[[ "$projected" -eq 1 && "$receipts" -eq 1 ]] || exit 1
+		local released="$comments" available='{"labels":[{"name":"status:available"}]}'
+		_tbr_release_circuit_hold owner/repo 42 "$available" "$comments" || exit 1
+		[[ "$projected" -eq 1 && "$receipts" -eq 1 ]] || exit 1
+		comments=$(jq -c '.[-1].body |= "> " + .' <<<"$released")
+		rc=0
+		_tbr_release_circuit_hold owner/repo 42 "$available" "$comments" || rc=$?
+		[[ "$rc" -eq 2 && "$projected" -eq 1 && "$receipts" -eq 1 ]] || exit 1
+		# Each immutable identity participates in the receipt hash.
+		for scenario in release label retry; do
+			comments="$released" legacy_events="$label_events"
+			case "$scenario" in
+			release) comments=$(jq -c '.[0].id=12' <<<"$comments") ;;
+			label) legacy_events=$(jq -c '.[0][0].id=101' <<<"$legacy_events") ;;
+			retry) comments=$(jq -c '.[1].id=13' <<<"$comments") ;;
+			esac
+			_tbr_release_circuit_hold owner/repo 42 "$issue" "$comments" || exit 1
+			[[ "$receipts" -eq "$projected" ]] || exit 1
+			comments=$(jq -c --arg body "$legacy_receipt" '. + [{id:31,body:$body,author_association:"MEMBER",created_at:"2026-10-30T11:31:00Z"}]' <<<"$comments")
+			_tbr_release_circuit_hold owner/repo 42 "$issue" "$comments" || exit 1
+			[[ "$receipts" -eq "$projected" ]] || exit 1
+		done
+		[[ "$projected" -eq 4 ]] || exit 1
+		for scenario in no_retry active expired untrusted_retry quoted_retry forged_release untrusted_release future_release future_retry old_retry newer_release newer_label same_second missing_event_id missing_release_id missing_retry_id unavailable malformed no_events unlabelled future_label structured permission absent; do
+			comments="$base" legacy_events="$label_events" projected=0 receipts=0 rc=0
+			case "$scenario" in
+			no_retry) comments=$(jq -c '.[0:1]' <<<"$comments") ;;
+			active) comments=$(jq -c '.[0:1] | .[0].created_at="2026-10-30T11:59:00Z" | . + [.[0] | .id=12 | .created_at="2026-10-30T11:59:01Z"]' <<<"$comments") ;;
+			expired) comments=$(jq -c '.[0:1] | . + [.[0] | .id=9 | .created_at="2026-10-29T10:00:00Z"]' <<<"$comments") ;;
+			untrusted_retry) comments=$(jq -c '.[1].author_association="COLLABORATOR"' <<<"$comments") ;;
+			quoted_retry) comments=$(jq -c '.[1].body="> terminal-blocker-circuit:retry"' <<<"$comments") ;;
+			forged_release) comments=$(jq -c '.[0].user.login="imposter"' <<<"$comments") ;;
+			untrusted_release) comments=$(jq -c '.[0].user.login="runner-b" | .[0].author_association="NONE" | .[0].body |= sub("runner-a";"runner-b")' <<<"$comments") ;;
+			future_release) comments=$(jq -c '.[0].created_at="2026-10-31T10:00:00Z"' <<<"$comments") ;;
+			future_retry) comments=$(jq -c '.[1].created_at="2026-10-31T11:00:00Z"' <<<"$comments") ;;
+			old_retry) comments=$(jq -c '.[1].created_at="2026-10-30T09:00:00Z"' <<<"$comments") ;;
+			newer_release) comments=$(jq -c '. + [.[0] | .id=12 | .created_at="2026-10-30T11:30:00Z"]' <<<"$comments") ;;
+			newer_label) legacy_events=$(jq -c '.[0] += [.[0][0] | .id=101 | .created_at="2026-10-30T11:30:00Z"]' <<<"$legacy_events") ;;
+			same_second) comments=$(jq -c '.[1].created_at="2026-10-30T10:00:09Z"' <<<"$comments") ;;
+			missing_event_id) legacy_events=$(jq -c '.[0][0] |= del(.id)' <<<"$legacy_events") ;;
+			missing_release_id) comments=$(jq -c '.[0] |= del(.id)' <<<"$comments") ;;
+			missing_retry_id) comments=$(jq -c '.[1] |= del(.id)' <<<"$comments") ;;
+			unavailable) legacy_events=unavailable ;;
+			malformed) legacy_events='{}' ;;
+			no_events) legacy_events='[[]]' ;;
+			unlabelled) legacy_events=$(jq -c '.[0][0].event="unlabeled"' <<<"$legacy_events") ;;
+			future_label) legacy_events=$(jq -c '.[0][0].created_at="2026-10-31T10:00:00Z"' <<<"$legacy_events") ;;
+			structured) comments=$(jq -c '. + [{id:8,body:"<!-- aidevops:terminal-blocker-observation revision=111111111111111111111111 blocker=222222222222222222222222 -->",author_association:"MEMBER",created_at:"2026-10-29T10:00:00Z"}]' <<<"$comments") ;;
+			permission) comments=$(jq -c --arg f "$(_terminal_blocker_hash v2:permission_required)" '.[0:1] + [{id:8,body:("<!-- aidevops:terminal-blocker-observation revision=111111111111111111111111 blocker="+$f+" -->"),author_association:"MEMBER",created_at:"2026-10-29T10:00:00Z"}]' <<<"$comments") ;;
+			absent) comments='[]' ;;
+			esac
+			_tbr_release_circuit_hold owner/repo 42 "$issue" "$comments" || rc=$?
+			[[ "$rc" -ne 0 && "$projected" -eq 0 && "$receipts" -eq 0 ]] || { printf 'legacy scenario failed: %s\n' "$scenario" >&2; exit 1; }
+		done
+		comments="$base" legacy_events="$label_events"
+		for scenario in hold-for-review needs-maintainer-permissions no-auto-dispatch parent-task needs-maintainer-review status:in-progress; do
+			_tbr_release_circuit_hold owner/repo 42 "$(jq -c --arg hold "$scenario" '.labels += [{name:$hold}]' <<<"$issue")" "$comments" || exit 1
+			[[ "$projected" -eq 0 ]] || exit 1
+		done
+		# The real backoff predicate must distinguish jq failure from expiry;
+		# recovery must fail closed even though the trusted retry is otherwise valid.
+		_legacy_recovery_check_gates "$issue" "$comments" || exit 1
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "legacy bare holds release only on a trusted retry after the current label event, once" "$status"
+	return 0
+}
+
+# GH#35745: a held unknown first observation (projected status:blocked) gets
+# the wake conditions of the other held classes. It is queued and seeded, holds
+# for an unchanged brief across default-branch movement, and a standalone
+# OWNER/MEMBER retry or a repaired brief releases it once. An unrecognised
+# fingerprint (which also maps to unknown) is never released.
+test_unknown_hold_rearms_on_trusted_retry() {
+	local status=0
+	if ! (
+		# shellcheck source=../terminal-blocker-recovery-helper.sh
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		local tb_comments='[]' tb_issue='' tb_revision='' tb_fingerprint='' tb_observation='' tb_raw='' tb_other=''
+		local tb_projected=0 tb_receipts=0 tb_rc=0 tb_enqueued=0
+		terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$tb_comments"; return 0; }
+		set_issue_status() { tb_projected=$((tb_projected + 1)); return 0; }
+		_tbr_post_rearm_receipt() {
+			local marker="$3"
+			tb_receipts=$((tb_receipts + 1))
+			tb_comments=$(jq -nc --argjson c "$tb_comments" --arg body "$marker" '$c + [{id:30,body:$body,author:"runner-a",author_association:"MEMBER",created_at:"2026-10-26T12:30:00Z"}]')
+			return 0
+		}
+		gh_issue_edit_safe() { return 0; }
+		_hrff_enqueue_blocker_recovery() { tb_enqueued=$((tb_enqueued + 1)); return 0; }
+		tb_fingerprint=$(_terminal_blocker_hash 'v2:unknown')
+		tb_issue='{"title":"Award update","body":"original","labels":[{"name":"status:blocked"}]}'
+		# The runtime revision (fingerprint only) equals the recovery revision
+		# (explicit reason) and ignores default-branch HEAD.
+		tb_revision=$(AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT="$tb_fingerprint" \
+			terminal_blocker_task_revision "$tb_issue" owner/repo 42 "$TEST_ROOT") || exit 1
+		[[ "$(terminal_blocker_task_revision "$tb_issue" owner/repo 42 "$TEST_ROOT" unknown)" == "$tb_revision" ]] || exit 1
+		[[ "$(TEST_TARGET_REVISION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+			terminal_blocker_task_revision "$tb_issue" owner/repo 42 "$TEST_ROOT" unknown)" == "$tb_revision" ]] || exit 1
+		# The runtime queues the held observation for the recovery owner.
+		_HRFF_TERMINAL_BLOCKER_FRAGMENT=observed AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT="$tb_fingerprint" \
+			_hrff_enqueue_observation_recovery 42 owner/repo
+		[[ "$tb_enqueued" -eq 1 ]] || exit 1
+		tb_observation=$(jq -nc --arg r "$tb_revision" --arg f "$tb_fingerprint" '[{id:10,body:("CLAIM_RELEASED reason=blocked runner=runner-b ts=2026-10-26T11:36:17Z\n<!-- aidevops:terminal-blocker-observation revision="+$r+" blocker="+$f+" -->\n\nTerminal blocker: reason=unknown owner=worker-triage task=42 attempt=abc.\nProjected state: status:blocked."),author:"runner-b",author_association:"MEMBER",created_at:"2026-10-26T11:36:31Z"}]')
+		tb_comments="$tb_observation"
+		# Seed backfill picks up a stranded unknown hold from any trusted runner.
+		tb_raw=$(jq -nc --argjson c "$tb_comments" '[$c | map(. + {user:{login:.author}})]')
+		[[ "$(_tbr_seed_reason "$tb_raw" other-runner)" == unknown ]] || exit 1
+		# Unchanged brief and no retry: held, never released.
+		terminal_blocker_observation_hold_active "$tb_comments" "$tb_issue" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+		_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" && exit 1
+		[[ "$tb_projected" -eq 0 ]] || exit 1
+		# A COLLABORATOR retry is not authority to clear the hold.
+		tb_comments=$(printf '%s' "$tb_comments" | jq -c '. + [{id:11,body:"terminal-blocker-circuit:retry",author_association:"COLLABORATOR",created_at:"2026-10-26T11:45:36Z"}]')
+		_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" && exit 1
+		[[ "$tb_projected" -eq 0 ]] || exit 1
+		# A standalone OWNER retry line (with leading prose) releases exactly once.
+		tb_comments=$(printf '%s' "$tb_comments" | jq -c '. + [{id:12,body:"Award import queue: automatic retry 1 of 3.\n\nterminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-26T11:45:37Z"}]')
+		terminal_blocker_observation_hold_active "$tb_comments" "$tb_issue" owner/repo 42 "$TEST_ROOT" >/dev/null && exit 1
+		_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
+		_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
+		[[ "$tb_projected" -eq 1 && "$tb_receipts" -eq 1 ]] || exit 1
+		# A repaired brief also re-arms without a retry.
+		tb_projected=0 tb_receipts=0
+		tb_comments="$tb_observation"
+		_tbr_release_circuit_hold owner/repo 42 "$(printf '%s' "$tb_issue" | jq -c '.body="repaired"')" "$tb_comments" || exit 1
+		[[ "$tb_projected" -eq 1 && "$tb_receipts" -eq 1 ]] || exit 1
+		# An unrecognised fingerprint maps to unknown but is never released.
+		tb_projected=0 tb_receipts=0
+		tb_other=$(_terminal_blocker_hash 'v2:not-a-class')
+		tb_comments=$(jq -nc --arg r "$tb_revision" --arg f "$tb_other" '[{id:20,body:("<!-- aidevops:terminal-blocker-observation revision="+$r+" blocker="+$f+" -->"),author:"runner-b",author_association:"MEMBER",created_at:"2026-10-26T11:36:31Z"},{id:21,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-26T11:45:37Z"}]')
+		_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || tb_rc=$?
+		[[ "$tb_rc" -eq 2 && "$tb_projected" -eq 0 ]] || exit 1
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "held unknown observation is queued and seeded; trusted retry or repaired brief releases it once" "$status"
+	return 0
+}
+
+# GH#35925: retry-only classes must be seeded on every runner, including old
+# timeout observations whose revision no longer matches the current task.
+test_retry_only_observation_recovery() {
+	local status=0
+	if ! (
+		# shellcheck source=../terminal-blocker-recovery-helper.sh
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		local reason="" association="" scenario="" tb_comments="" observation="" raw=""
+		local issue='{"title":"Fix helper","body":"original","labels":[{"name":"status:blocked"}]}'
+		local revision="" fingerprint="" body="" retry_at="" projected=0 receipts=0 rc=0 enqueued=0
+		set_issue_status() {
+			projected=$((projected + 1))
+			return 0
+		}
+		_tbr_post_rearm_receipt() {
+			local marker="$3"
+			receipts=$((receipts + 1))
+			tb_comments=$(jq -c --arg body "$marker" '. + [{id:30,body:$body,author_association:"MEMBER",created_at:"2026-10-29T04:00:00Z"}]' <<<"$tb_comments")
+			return 0
+		}
+		gh_issue_edit_safe() { return 0; }
+		_hrff_enqueue_blocker_recovery() {
+			enqueued=$((enqueued + 1))
+			return 0
+		}
+		# GH#36044: a runner-capability release is never queued.
+		_HRFF_TERMINAL_BLOCKER_FRAGMENT=observed AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=$(_terminal_blocker_hash 'v2:runner_capability_unmet') \
+			_hrff_enqueue_observation_recovery 42 owner/repo
+		[[ "$enqueued" -eq 0 ]] || exit 1
+		for reason in permission_required push_policy_timeout network_policy_timeout; do
+			terminal_blocker_rearms_on_revision "$reason" && exit 1
+			terminal_blocker_observation_recoverable "$reason" || exit 1
+			fingerprint=$(_terminal_blocker_hash "v2:${reason}")
+			# GH#36044: the enqueue helper queues a held retry-only observation,
+			# so a trusted retry does not wait for the seed. This checks the
+			# helper directly; the blocked release call site is unchanged.
+			enqueued=0
+			_HRFF_TERMINAL_BLOCKER_FRAGMENT=observed AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT="$fingerprint" \
+				_hrff_enqueue_observation_recovery 42 owner/repo
+			[[ "$enqueued" -eq 1 ]] || exit 1
+			revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" "$reason") || exit 1
+			# A legacy revision mismatch must not implicitly release retry-only holds.
+			[[ "$reason" == permission_required ]] || revision=cccccccccccccccccccccccc
+			observation=$(jq -nc --arg r "$revision" --arg f "$fingerprint" --arg reason "$reason" \
+				'[{id:10,body:("<!-- aidevops:terminal-blocker-observation revision="+$r+" blocker="+$f+" -->\nTerminal blocker: reason="+$reason+" owner=runner-recovery"),author:"runner-b",user:{login:"runner-b"},author_association:"MEMBER",created_at:"2026-10-29T02:00:00Z"}]')
+			raw=$(jq -nc --argjson c "$observation" '[$c]')
+			[[ "$(_tbr_seed_reason "$raw" other-runner)" == "$reason" ]] || exit 1
+			for scenario in unchanged brief dependency merge collaborator quoted predating; do
+				tb_comments="$observation" projected=0 receipts=0
+				local changed="$issue"
+				case "$scenario" in
+				brief) changed=$(jq -c '.body="corrected"' <<<"$issue") ;;
+				dependency) TEST_DEPENDENCIES='[{"number":99,"state":"closed"}]' ;;
+				merge) TEST_TARGET_REVISION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ;;
+				collaborator | quoted | predating)
+					association=OWNER body=terminal-blocker-circuit:retry retry_at=2026-10-29T03:00:00Z
+					[[ "$scenario" != collaborator ]] || association=COLLABORATOR
+					[[ "$scenario" != quoted ]] || body='> terminal-blocker-circuit:retry'
+					[[ "$scenario" != predating ]] || retry_at=2026-10-29T01:00:00Z
+					tb_comments=$(jq -c --arg a "$association" --arg body "$body" --arg at "$retry_at" '. + [{id:11,body:$body,author_association:$a,created_at:$at}]' <<<"$tb_comments")
+					;;
+				esac
+				terminal_blocker_observation_hold_active "$tb_comments" "$changed" owner/repo 42 "$TEST_ROOT" >/dev/null || exit 1
+				_tbr_release_circuit_hold owner/repo 42 "$changed" "$tb_comments" && exit 1
+				[[ "$projected" -eq 0 && "$receipts" -eq 0 ]] || exit 1
+				TEST_DEPENDENCIES='[]'
+				TEST_TARGET_REVISION=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+			done
+			for association in OWNER MEMBER; do
+				projected=0 receipts=0
+				tb_comments=$(jq -c --arg a "$association" '. + [{id:12,body:"terminal-blocker-circuit:retry",author_association:$a,created_at:"2026-10-29T03:00:00Z"}]' <<<"$observation")
+				terminal_blocker_observation_hold_active "$tb_comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && exit 1
+				# Missing/foreign collaborator observation is never release authority.
+				for raw in '[]' "$(jq -c '.[0].author_association="COLLABORATOR"' <<<"$tb_comments")"; do
+					rc=0
+					_tbr_release_circuit_hold owner/repo 42 "$issue" "$raw" || rc=$?
+					[[ "$rc" -eq 1 && "$projected" -eq 0 ]] || exit 1
+				done
+				_tbr_release_circuit_hold owner/repo 42 "$issue" "$tb_comments" || exit 1
+				_tbr_release_circuit_hold owner/repo 42 "$issue" "$tb_comments" || exit 1
+				[[ "$projected" -eq 1 && "$receipts" -eq 1 ]] || exit 1
+			done
+		done
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "permission and policy timeout observations queue via the enqueue helper, seed across runners and release exactly once only on trusted retry" "$status"
 	return 0
 }
 
@@ -880,448 +1872,25 @@ test_blocked_backoff_cli() {
 	return 0
 }
 
-test_push_policy_timeout_checkpoint() {
-	local output="${TEST_ROOT}/push-timeout.ndjson"
-	local status=0 fingerprint="" release="" head=""
-	printf '%s\n' '{"type":"text","text":"BLOCKED: command policy timed out under host load\nTERMINAL_BLOCKER_REASON=push_policy_timeout"}' >"$output"
-	terminal_blocker_capture_output "$output" || status=1
-	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
-	[[ "$(_terminal_blocker_reason "$fingerprint")" == push_policy_timeout ]] || status=1
-	[[ "$(_terminal_blocker_recovery "$fingerprint")" == *'owner=runner-recovery'* ]] || status=1
-	# Even repeated observations must not create a permanent task-revision hold.
-	local comments='[{"id":1,"body":"observation","author_association":"OWNER","created_at":"2026-10-01T00:00:00Z"}]'
-	[[ "$(terminal_blocker_release_mode "$comments" 111111111111111111111111 "$fingerprint")" == first ]] || status=1
-	local repo="${TEST_ROOT}/push-checkpoint"
-	command -p git clone -q --shared --bare "${SCRIPT_DIR}/../.." "$repo"
-	command -p git -C "$repo" branch feature/push-checkpoint
-	command -p git -C "$repo" symbolic-ref HEAD refs/heads/feature/push-checkpoint
-	head=$(command -p git -C "$repo" rev-parse HEAD)
-	release=$(AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH="$repo" _hrff_build_claim_released_line push_policy_timeout fixture 0 1)
-	[[ "$release" == *'reason=push_policy_timeout'* && "$release" == *"branch=feature/push-checkpoint head=${head}"* ]] || status=1
-	[[ "$release" != *"$repo"* ]] || status=1
-	if ! (
-		# Use the existing classifier-fixture pattern from test-integration-recovery.
-		# shellcheck source=../headless-runtime-result.sh
-		source "${SCRIPT_DIR}/headless-runtime-result.sh"
-		_headless_private_workload_enabled() { return 1; }
-		output_has_completion_signal() { return 0; }
-		output_has_blocked_signal() { return 0; }
-		output_has_post_pr_handoff_signal() { return 1; }
-		output_has_missing_context_blocked_signal() { return 1; }
-		output_has_capability_blocked_signal() { return 1; }
-		print_warning() { return 0; }
-		# shellcheck disable=SC2034
-		role=worker session_key=issue-42 discovered_session="" selected_model=fixture work_dir="$repo"
-		output_file="$output"
-		result_rc=0
-		_run_failure_reason=""
-		_handle_run_result_success_output || result_rc=$?
-		[[ "$result_rc" == 83 && "$_run_failure_reason" == push_policy_timeout ]]
-	); then
-		status=1
-	fi
-	print_result "push policy timeout stays transient and releases exact branch/HEAD without paths" "$status"
-	return 0
-}
-
-test_affected_host_reproduction_alias() {
-	local output="${TEST_ROOT}/affected-host.ndjson" status=0 fingerprint="" revision="" changed="" comments=""
-	local issue='{"title":"Reproduce before fixing","body":"### Files Scope\n- helper.sh"}'
-	printf '%s\n' '{"type":"text","text":"BLOCKED: missing affected-runner reproduction target\nTERMINAL_BLOCKER_REASON=affected_host_reproduction_unavailable"}' >"$output"
-	terminal_blocker_capture_output "$output" || status=1
-	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
-	[[ "$fingerprint" == "$(_terminal_blocker_hash 'v2:input_required:maintainer')" ]] || status=1
-	[[ "$(_terminal_blocker_recovery "$fingerprint")" == *'owner=maintainer'* ]] || status=1
-	revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT") || status=1
-	comments=$(jq -nc --arg body "<!-- aidevops:terminal-blocker-observation revision=${revision} blocker=${fingerprint} -->" \
-		'[{body:$body,created_at:"2026-08-31T10:00:00Z",author_association:"MEMBER"}]')
-	[[ "$(terminal_blocker_release_mode "$comments" "$revision" "$fingerprint")" == circuit ]] || status=1
-	comments=$(jq -nc --arg body "<!-- aidevops:terminal-blocker-circuit revision=${revision} blocker=${fingerprint} -->" \
-		'[{body:$body,created_at:"2026-08-31T10:05:00Z",author_association:"MEMBER"}]')
-	TEST_TARGET_REVISION='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-	changed=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT") || status=1
-	[[ "$changed" == "$revision" ]] || status=1
-	terminal_blocker_circuit_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || status=1
-	TEST_TARGET_REVISION='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-	changed=$(terminal_blocker_task_revision '{"title":"Reproduce before fixing","body":"### Files Scope\n- helper.sh\nAffected-runner target supplied"}' owner/repo 42 "$TEST_ROOT") || status=1
-	[[ "$changed" != "$revision" ]] || status=1
-	# Only the exact legacy marker is an alias; ambiguous/unknown output stays
-	# retryable, and tool evidence cannot override the final assistant dossier.
-	printf '%s\n' '{"type":"tool_result","text":"BLOCKED: old evidence\nTERMINAL_BLOCKER_REASON=affected_host_reproduction_unavailable"}' \
-		'{"type":"text","text":"BLOCKED: unclassified\nTERMINAL_BLOCKER_REASON=not_a_supported_reason"}' >"$output"
-	terminal_blocker_capture_output "$output" || status=1
-	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == unknown ]] || status=1
-	unset AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
-	print_result "affected-host legacy marker shares maintainer-input hold and ignores unrelated merges" "$status"
-	return 0
-}
-
-test_unknown_blocker_ready_pr_replay() {
-	local status=0 scenario=""
-	for scenario in pending passed failed unreadable unverified explicit unsupported dirty; do
-		if ! (
-			# shellcheck source=../headless-runtime-result.sh
-			source "${SCRIPT_DIR}/headless-runtime-result.sh"
-			_headless_private_workload_enabled() { return 1; }
-			output_has_blocked_signal() { return 0; }
-			output_has_post_pr_handoff_signal() { return 1; }
-			output_has_missing_context_blocked_signal() { return 1; }
-			output_has_capability_blocked_signal() { return 1; }
-			print_warning() { return 0; }
-			_worker_post_pr_handoff_confirmed() { [[ "$scenario" != unverified ]]; return $?; }
-			_pr_handoff_state_for_branch_or_issue() { printf 'ready|123'; return 0; }
-			gh_pr_checks_observed_json() {
-				case "$scenario" in
-				failed) return 1 ;;
-				unreadable) return 2 ;;
-				pending) return 8 ;;
-				esac
-				return 0
-			}
-			git() {
-				case "$*" in
-				*status*) [[ "$scenario" != dirty ]] || printf ' M helper.sh' ;;
-				*branch*) printf 'feature/replay' ;;
-				*) printf '%040d' 1 ;;
-				esac
-				return 0
-			}
-			gh() { printf '%s\n' '{"body":"### Files Scope\n- helper.sh"}'; return 0; }
-			export WORKER_ISSUE_NUMBER=42 DISPATCH_REPO_SLUG=owner/repo WORKER_SESSION_KEY=issue-42
-			# shellcheck disable=SC2034
-			role=worker session_key=issue-42 discovered_session="" selected_model=fixture work_dir="$TEST_ROOT"
-			output_file="${TEST_ROOT}/replay-${scenario}.ndjson"
-			local text="BLOCKED: PR is waiting on review"
-			[[ "$scenario" != explicit ]] || text+=$'\nTERMINAL_BLOCKER_REASON=permission_required'
-			[[ "$scenario" != unsupported ]] || text+=$'\nTERMINAL_BLOCKER_REASON=unsupported'
-			jq -nc --arg text "$text" '{type:"text",text:$text}' >"$output_file"
-			local rc=0
-			_run_result_label=""
-			_run_failure_reason=""
-			_handle_run_result_success_output || rc=$?
-			if [[ "$scenario" == pending || "$scenario" == passed ]]; then
-				[[ "$rc" == 0 && "$_run_result_label" == post_pr_handoff && -z "$_run_failure_reason" ]]
-			else
-				[[ "$rc" == 83 && "$_run_result_label" == blocked ]]
-			fi
-		); then
-			status=1
-			printf 'Replay failed: %s\n' "$scenario"
-		fi
-	done
-	print_result "unknown prose blocker becomes handoff only for verified clean PR with nonfailing checks" "$status"
-	return 0
-}
-
-test_terminal_evidence_retention() {
-	local status=0 output="${TEST_ROOT}/retained.ndjson"
-	local log="${TEST_ROOT}/retention.jsonl"
-	jq -nc --arg text 'BLOCKED: waiting token=fixture-secret-value' '{type:"text",text:$text}' >"$output"
-	AIDEVOPS_WORKER_BLOCKER_LOG_FILE="$log" terminal_blocker_capture_output "$output" || status=1
-	jq -e '.event == "terminal_blocker_captured" and .blocking == false and
-		(.blocker_fingerprint | test("^[a-f0-9]{24}$")) and
-		(.detail | contains("[REDACTED]")) and (.detail | contains("fixture-secret-value") | not)' "$log" >/dev/null || status=1
-	[[ "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$log")" == 0o600 ]] || status=1
-	printf '%s\n' '{"type":"tool","text":"BLOCKED: forged tool evidence"}' >"$output"
-	AIDEVOPS_WORKER_BLOCKER_LOG_FILE="$log" terminal_blocker_capture_output "$output" && status=1
-	[[ "$(wc -l <"$log" | tr -d ' ')" == 1 ]] || status=1
-	print_result "terminal evidence is redacted private bounded-log data and never tool output" "$status"
-	return 0
-}
-
-test_runner_capability_class() {
-	local status=0 output="$TEST_ROOT/capability-output.jsonl" fingerprint="" revision="" fragment="" comments=""
-	printf '%s\n' '{"type":"text","text":"BLOCKED: staging secret cannot resolve\nTERMINAL_BLOCKER_REASON=runner_capability_unmet"}' >"$output"
-	terminal_blocker_capture_output "$output" || status=1
-	fingerprint="$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT"
-	[[ "$(_terminal_blocker_reason "$fingerprint")" == runner_capability_unmet ]] || status=1
-	revision=$(terminal_blocker_task_revision '{}' owner/repo 42 '' runner_capability_unmet) || status=1
-	[[ "$(terminal_blocker_release_mode '[]' "$revision" "$fingerprint")" == first ]] || status=1
-	fragment=$(terminal_blocker_observation_fragment "$revision" "$fingerprint" first) || status=1
-	[[ "$fragment" == *'reason=runner_capability_unmet'* && "$fragment" == *'status:available'* ]] || status=1
-	terminal_blocker_circuit_comment release "$revision" "$fingerprint" >/dev/null && status=1
-	comments=$(jq -nc --arg body "CLAIM_RELEASED reason=blocked runner=maintainer ts=2026-01-01T00:00:00Z
-$fragment" '[{author_association:"OWNER",author:"maintainer",body:$body,created_at:"2026-01-01T00:00:00Z"},{author_association:"OWNER",author:"maintainer",body:$body,created_at:"2026-01-01T00:00:01Z"}]')
-	TERMINAL_BLOCKER_NOW_EPOCH=1767225660 terminal_blocker_backoff_active "$comments" >/dev/null && status=1
-	print_result "runner capability is known and never opens a shared circuit or backoff" "$status"
-	return 0
-}
-
-# GH#35090 replay: a later lease/label write bumps updatedAt, and App-routed
-# private-org reads report the runner's own comments as CONTRIBUTOR/NONE. The
-# live gate must re-import its own observation; another login's comment cools
-# nobody else. Runs inside test_worker_capability_cooldown's subshell and uses
-# its candidate, fixture_comments, login and gh stub through dynamic scope.
-_capability_cooldown_own_contributor_replay() {
-	local trusted_comments="$fixture_comments" bumped="" association="" before="" after=""
-	bumped=$(jq -c '.updatedAt = "2026-10-18T12:05:00Z"' <<<"$candidate") || return 1
-	for association in CONTRIBUTOR NONE; do
-		fixture_comments=$(jq -c --arg a "$association" 'map(.author_association = $a)' <<<"$trusted_comments")
-		rm -f "$HOME/.aidevops/logs/dispatch-capability-cooldown/owner--repo--42"
-		before=$(rg -c 'runner_capability_unmet cooldown active' "$LOGFILE" || true)
-		_dispatch_skip_for_capability_cooldown "$bumped" 42 owner/repo '' || return 1
-		after=$(rg -c 'runner_capability_unmet cooldown active' "$LOGFILE" || true)
-		((${after:-0} == ${before:-0} + 1)) || return 1
-		[[ "$(_dispatch_filter_capability_cooled_candidates owner/repo '' "[$bumped]")" == '[]' ]] || return 1
-		login=runner-two
-		_dispatch_skip_for_capability_cooldown "$bumped" 42 owner/repo '' && return 1
-		login=runner-one
-	done
-	fixture_comments="$trusted_comments"
-	return 0
-}
-
-test_worker_capability_cooldown() {
-	local status=0
-	if ! (
-		# shellcheck source=../pulse-dispatch-lib-candidates.sh
-		source "${SCRIPT_DIR}/pulse-dispatch-lib-candidates.sh"
-		HOME="$TEST_ROOT/capability-home"
-		LOGFILE="$TEST_ROOT/capability-pulse.log"
-		_DISPATCH_ELIGIBILITY_INELIGIBLE=ineligible
-		_DISPATCH_VALUE_UNKNOWN=unknown
-		_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS=21600
-		_dispatch_stats_increment() { return 0; }
-		local fixture_issue='{"title":"Fix native test","body":"### Files Scope\n- helper.sh"}'
-		local candidate='{"number":42,"repo_slug":"owner/repo","repo_path":"","updatedAt":"2026-10-18T12:00:00Z","labels":[]}'
-		local revision="" fingerprint="" fragment="" fixture_comments="" login=runner-one now="" filtered="" changed=""
-		local fixture_reads=true
-		now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-		revision=$(terminal_blocker_task_revision "$fixture_issue" owner/repo 42 '' runner_capability_unmet)
-		fingerprint=$(_terminal_blocker_hash v2:runner_capability_unmet)
-		fragment=$(terminal_blocker_observation_fragment "$revision" "$fingerprint" first)
-		fixture_comments=$(jq -nc --arg body "$fragment" --arg now "$now" \
-			'[{id:1,user:{login:"runner-one"},author_association:"COLLABORATOR",body:$body,created_at:$now}]')
-		gh() {
-			local operation="$1" endpoint="$2"
-			[[ "$operation" == api ]] || return 1
-			[[ "$endpoint" == user || "$fixture_reads" == true ]] || return 1
-			case "$endpoint" in
-			user) printf '%s\n' "$login" ;;
-			repos/owner/repo/issues/42) printf '%s\n' "$fixture_issue" ;;
-			repos/owner/repo/issues/42/comments*) printf '%s\n' "$fixture_comments" ;;
-			*) return 1 ;;
-			esac
-			return 0
-		}
-		_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' || exit 1
-		filtered=$(_dispatch_filter_capability_cooled_candidates owner/repo '' "[$candidate]")
-		[[ "$filtered" == '[]' ]] || exit 1
-		rg -q 'runner_capability_unmet cooldown recorded signal=worker_observation' "$LOGFILE" || exit 1
-		# Cached passes only verify the login, not refetch issues/comments or
-		# refresh the observation TTL.
-		local original="" retained=""
-		original=$(<"$HOME/.aidevops/logs/dispatch-capability-cooldown/owner--repo--42")
-		fixture_reads=false
-		_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' || exit 1
-		retained=$(<"$HOME/.aidevops/logs/dispatch-capability-cooldown/owner--repo--42")
-		[[ "$original" == "$retained" ]] || exit 1
-		login=runner-two
-		[[ "$(_dispatch_filter_capability_cooled_candidates owner/repo '' "[$candidate]")" == "[$candidate]" ]] || exit 1
-		_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' && exit 1
-		login=runner-one
-		fixture_reads=true
-		_capability_cooldown_own_contributor_replay || exit 1
-		# Selection rejects a different runner, edited brief, later different
-		# blocker, and explicit retry without a global hold; it accepts the
-		# runner's own comment whatever association GitHub reports.
-		fixture_comments=$(jq -c 'map(.author = .user.login)' <<<"$fixture_comments")
-		TERMINAL_BLOCKER_SELF_LOGIN=runner-two terminal_blocker_runner_capability_observation_epoch \
-			"$fixture_comments" "$fixture_issue" owner/repo 42 && exit 1
-		changed=$(jq -c 'map(.author_association="CONTRIBUTOR")' <<<"$fixture_comments")
-		TERMINAL_BLOCKER_SELF_LOGIN=runner-one terminal_blocker_runner_capability_observation_epoch \
-			"$changed" "$fixture_issue" owner/repo 42 >/dev/null || exit 1
-		changed=$(jq -c 'map(.author_association="CONTRIBUTOR" | .author="runner-two")' <<<"$fixture_comments")
-		TERMINAL_BLOCKER_SELF_LOGIN=runner-one terminal_blocker_runner_capability_observation_epoch \
-			"$changed" "$fixture_issue" owner/repo 42 && exit 1
-		TERMINAL_BLOCKER_SELF_LOGIN=runner-one terminal_blocker_runner_capability_observation_epoch \
-			"$fixture_comments" '{"title":"Fix native test","body":"changed"}' owner/repo 42 && exit 1
-		changed=$(jq -c --arg blocker "$(_terminal_blocker_hash v2:target_code_blocker)" \
-			'. + [ (.[0] | .id=2 | .body |= sub("blocker=[a-f0-9]{24}"; "blocker=" + $blocker)) ]' <<<"$fixture_comments")
-		TERMINAL_BLOCKER_SELF_LOGIN=runner-one terminal_blocker_runner_capability_observation_epoch \
-			"$changed" "$fixture_issue" owner/repo 42 && exit 1
-		changed=$(jq -c '. + [{id:2,author:"maintainer",author_association:"OWNER",created_at:.[0].created_at,body:"terminal-blocker-circuit:retry"}]' <<<"$fixture_comments")
-		TERMINAL_BLOCKER_SELF_LOGIN=runner-one terminal_blocker_runner_capability_observation_epoch \
-			"$changed" "$fixture_issue" owner/repo 42 && exit 1
-		changed=$(jq -c '. + [(.[0] | .id=2 | .author="runner-two" | .author_association="OWNER")]' <<<"$fixture_comments")
-		TERMINAL_BLOCKER_SELF_LOGIN=runner-one terminal_blocker_runner_capability_observation_epoch \
-			"$changed" "$fixture_issue" owner/repo 42 >/dev/null || exit 1
-		HOME="$TEST_ROOT/other-runner"
-		[[ "$(_dispatch_filter_capability_cooled_candidates owner/repo '' "[$candidate]")" == "[$candidate]" ]] || exit 1
-		fixture_comments=$(jq -c 'map(.created_at="2020-01-01T00:00:00Z")' <<<"$fixture_comments")
-		_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' && exit 1
-		fixture_comments=$(jq -c 'map(.created_at="2999-01-01T00:00:00Z")' <<<"$fixture_comments")
-		_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' && exit 1
-		exit 0
-	); then
-		status=1
-	fi
-	print_result "worker observation cools only its own runner and enumeration reuses bounded trusted evidence" "$status"
-	return 0
-}
-
-test_verification_environment_alias() {
-	local output="$TEST_ROOT/environment-alias.jsonl" status=0
-	printf '%s\n' '{"type":"text","text":"BLOCKED: native test binary absent\nTERMINAL_BLOCKER_REASON=verification_environment_missing_prerequisites"}' >"$output"
-	terminal_blocker_capture_output "$output" || status=1
-	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == runner_capability_unmet ]] || status=1
-	printf '%s\n' '{"type":"text","text":"BLOCKED: unknown\nTERMINAL_BLOCKER_REASON=some_other_environment_problem"}' >"$output"
-	terminal_blocker_capture_output "$output" || status=1
-	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == unknown ]] || status=1
-	print_result "only exact allowlisted environment alias becomes runner capability" "$status"
-	return 0
-}
-
-test_target_code_blocker_observation_rearms() {
-	local status=0 issue='{"title":"Fix helper","body":"### Files Scope\n- helper.sh"}'
-	local fingerprint="" revision="" comments="" held=0
-	fingerprint=$(_terminal_blocker_hash 'v2:target_code_blocker')
-	revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" target_code_blocker) || status=1
-	comments=$(jq -nc --arg body "Terminal blocker: reason=target_code_blocker owner=target-maintainer
-<!-- aidevops:terminal-blocker-observation revision=${revision} blocker=${fingerprint} -->" \
-		'[{id:5,body:$body,author_association:"MEMBER",created_at:"2026-10-16T23:00:00Z"}]')
-	# Same target revision: still held.
-	terminal_blocker_observation_hold_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || status=1
-	# Target code changed: re-armed.
-	TEST_TARGET_REVISION='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-	terminal_blocker_observation_hold_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && status=1
-	TEST_TARGET_REVISION='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-	# Trusted OWNER retry after the observation re-arms an unchanged revision.
-	terminal_blocker_observation_hold_active "$(jq -c '. + [{id:6,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-16T23:30:00Z"}]' <<<"$comments")" \
-		"$issue" owner/repo 42 "$TEST_ROOT" >/dev/null && status=1
-	# An unreadable target revision fails closed (rc 2), never releases.
-	TEST_TARGET_REVISION=unavailable
-	terminal_blocker_observation_hold_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || held=$?
-	TEST_TARGET_REVISION='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-	[[ "$held" -eq 2 ]] || status=1
-	# Other hold labels keep the release helper from touching the issue.
-	(
-		# shellcheck source=../terminal-blocker-recovery-helper.sh
-		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
-		local touched=""
-		set_issue_status() { touched="x"; return 0; }
-		_tbr_release_circuit_hold owner/repo 42 '{"labels":[{"name":"status:blocked"},{"name":"needs-maintainer-review"}]}' "$comments"
-		_tbr_release_circuit_hold owner/repo 42 '{"labels":[{"name":"status:blocked"},{"name":"needs-maintainer-permissions"}]}' "$comments"
-		[[ -z "$touched" ]]
-	) || status=1
-	print_result "target_code_blocker first observation holds at same revision, re-arms on target change or retry" "$status"
-	return 0
-}
-
-# GH#35290: exercise the real CLI and timeout boundary with inherited GitHub
-# fixtures, not a replacement pending implementation. No live queue is touched.
-_bounded_seed_resume_checks() {
-	local rc=0
-	# Seed resumes after a slow candidate; newly seeded entries cannot
-	# masquerade as empty intake. Reuse the caller's isolated GitHub fixture.
-	export TB_SEED=1 BLOCKER_RECOVERY_STAGE_SECONDS=2 BLOCKER_RECOVERY_BUDGET_SECONDS=6
-	rm -f "${TBR_ROOT}/queue/owner--repo--42.json"
-	bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
-	[[ "$rc" -eq 2 && "$(<"${TBR_ROOT}/seed-owner--repo.cursor")" == 1 ]] || return 1
-	rc=0
-	bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
-	[[ "$rc" -eq 2 && -f "${TBR_ROOT}/queue/owner--repo--42.json" ]] || return 1
-	[[ "$(<"${TBR_ROOT}/err")" == *'reason=unobserved_entries'* && ! -f "${TBR_ROOT}/last_seed_epoch" ]] || return 1
-	export TB_SEED_FAST=1
-	bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" seed >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || return 1
-	[[ -f "${TBR_ROOT}/last_seed_epoch" ]] || return 1
-	# A failed remote-policy observation is not permission to retire evidence.
-	(
-		_tbr_policy_enabled() { return 2; }
-		tbr_enqueue owner/repo 42 files_scope_excluded policy_remote || exit 1
-		rc=0
-		_tbr_check_entry "${TBR_ROOT}/queue/owner--repo--42.json" >/dev/null || rc=$?
-		[[ "$rc" -eq 2 && -f "${TBR_ROOT}/queue/owner--repo--42.json" && -f "${TBR_ROOT}/decisions/owner--repo--42.json" ]]
-	) || return 1
-	return 0
-}
-
-test_bounded_recovery_intake() {
-	local status=0
-	if ! (
-		# shellcheck source=../terminal-blocker-recovery-helper.sh
-		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
-		TBR_ROOT="${TEST_ROOT}/bounded-intake"
-		TBR_REPOS_JSON="${TEST_ROOT}/bounded-repos.json"
-		export TB_INTAKE_FIXTURE="$TBR_ROOT" WORKER_GITHUB_LOGIN=runner-one TERMINAL_BLOCKER_SELF_LOGIN=runner-one
-		export AIDEVOPS_BLOCKER_RECOVERY_DIR="$TBR_ROOT" REPOS_JSON="$TBR_REPOS_JSON"
-		export BLOCKER_RECOVERY_STAGE_SECONDS=1 BLOCKER_RECOVERY_BUDGET_SECONDS=1
-		_tbr_init_dirs || exit 1
-		printf '{"initialized_repos":[]}\n' >"$TBR_REPOS_JSON"
-		date +%s >"${TBR_ROOT}/last_seed_epoch"
-		local fixture_brief='{"title":"Held integration","body":"### Files Scope\n- helper.sh"}' revision=""
-		revision=$(terminal_blocker_task_revision "$fixture_brief" owner/repo 42 "" files_scope_excluded) || exit 1
-		jq -nc --argjson brief "$fixture_brief" '$brief + {state:"open",labels:[{name:"status:blocked"}]}' >"${TBR_ROOT}/issue.json"
-		jq -nc --arg body "Terminal blocker: reason=files_scope_excluded owner=brief-author
-<!-- aidevops:terminal-blocker-observation revision=${revision} blocker=$(_terminal_blocker_hash 'v2:files_scope_excluded') -->" \
-			'[[{id:7,body:$body,user:{login:"runner-one"},author_association:"MEMBER",created_at:"2026-10-16T23:32:17Z"}]]' >"${TBR_ROOT}/comments.json"
-		gh() {
-			local args="$*"
-			printf '%s\n' "$args" >>"${TB_INTAKE_FIXTURE}/requests"
-			case "$args" in
-			"api repos/owner/repo/issues/1" | "api repos/owner/repo/issues/1/comments?per_page=100 --paginate --slurp")
-				[[ "${TB_SEED_FAST:-0}" -eq 0 ]] || { printf '[]\n'; return 0; }
-				sleep 5
-				return 1
-				;;
-			"api repos/owner/repo/issues/2") printf '{"state":"closed"}\n' ;;
-			"api repos/owner/repo/issues/42") jq -c . "${TB_INTAKE_FIXTURE}/issue.json" ;;
-			"api repos/owner/repo/issues/42/comments?per_page=100 --paginate --slurp") jq -c . "${TB_INTAKE_FIXTURE}/comments.json" ;;
-			"api repos/owner/repo")
-				[[ "${TB_SEED:-0}" -eq 1 ]] || return 1
-				printf '{"permissions":{"push":true},"default_branch":"main"}\n'
-				;;
-			"api -X GET repos/owner/repo/commits"*) printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' ;;
-			"api -X GET repos/owner/repo/contents/.aidevops.json"*) printf 'HTTP 404\n' >&2; return 1 ;;
-			"api -X GET search/issues"*)
-				[[ "${TB_SEED:-0}" -eq 1 ]] || return 1
-				printf '1\n42\n'
-				;;
-			*) return 1 ;;
-			esac
-			return 0
-		}
-		export -f gh
-		tbr_enqueue owner/repo 1 permission_required || exit 1
-		tbr_enqueue owner/repo 2 permission_required || exit 1
-		tbr_enqueue owner/repo 42 files_scope_excluded || exit 1
-		printf '{"wake":"brief_revision","next_action":"hold unchanged brief","evidence":"fixture"}\n' |
-			tbr_record owner/repo 42 || exit 1
-		local rc=0 started="$SECONDS" decision=""
-		decision=$(jq -c . "${TBR_ROOT}/decisions/owner--repo--42.json")
-		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
-		[[ "$rc" -eq 2 && $((SECONDS - started)) -le 3 && ! -s "${TBR_ROOT}/out" ]] || exit 1
-		[[ "$(<"${TBR_ROOT}/err")" == *'incomplete stage=entry'* && "$(<"${TBR_ROOT}/err")" == *'stage=entry_issue'* ]] || exit 1
-		[[ "$(<"${TBR_ROOT}/pending_cursor")" == owner--repo--1.json && -f "${TBR_ROOT}/queue/owner--repo--1.json" ]] || exit 1
-		# Resume past the stalled entry: retire closed entries and suppress an
-		# unchanged held decision, then wrap and retry (not delete) the slow one.
-		export BLOCKER_RECOVERY_BUDGET_SECONDS=4
-		rc=0
-		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending --count >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
-		[[ "$rc" -eq 2 && "$(<"${TBR_ROOT}/out")" == 0 ]] || exit 1
-		[[ ! -f "${TBR_ROOT}/queue/owner--repo--2.json" && -f "${TBR_ROOT}/queue/owner--repo--42.json" ]] || exit 1
-		[[ "$(jq -c . "${TBR_ROOT}/decisions/owner--repo--42.json")" == "$decision" ]] || exit 1
-		# With only the unchanged held entry, observation is complete and empty.
-		rm -f "${TBR_ROOT}/queue/owner--repo--1.json"
-		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || exit 1
-		[[ ! -s "${TBR_ROOT}/out" ]] || exit 1
-		# Seed failures are explicit too, and never stamp an incomplete scan.
-		rm -f "${TBR_ROOT}/last_seed_epoch"
-		printf '{"initialized_repos":[{"slug":"owner/repo","pulse":true}]}\n' >"$TBR_REPOS_JSON"
-		rc=0
-		bash "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" pending >"${TBR_ROOT}/out" 2>"${TBR_ROOT}/err" || rc=$?
-		[[ "$rc" -eq 2 && ! -f "${TBR_ROOT}/last_seed_epoch" ]] || exit 1
-		[[ "$(<"${TBR_ROOT}/err")" == *'incomplete stage=seed'* ]] || exit 1
-		_bounded_seed_resume_checks || exit 1
-		exit 0
-	); then
-		status=1
-	fi
-	print_result "bounded intake resumes past stalled reads, preserves held decisions, and distinguishes incomplete from empty" "$status"
-	return 0
-}
+# shellcheck source=test-terminal-blocker-circuit-capability.sh
+source "${SCRIPT_DIR}/tests/test-terminal-blocker-circuit-capability.sh"
+# shellcheck source=test-terminal-blocker-circuit-discovery.sh
+source "${SCRIPT_DIR}/tests/test-terminal-blocker-circuit-discovery.sh"
+# shellcheck source=test-terminal-blocker-circuit-lifecycle.sh
+source "${SCRIPT_DIR}/tests/test-terminal-blocker-circuit-lifecycle.sh"
+# shellcheck source=test-terminal-blocker-circuit-rearm.sh
+source "${SCRIPT_DIR}/tests/test-terminal-blocker-circuit-rearm.sh"
 
 main() {
+	test_lifecycle_refusal_classification
+	test_lifecycle_refusal_backfill
+	test_owner_scoped_discovery
+	test_unclassified_hold_intake
+	test_hold_for_review_intake
+	test_recovery_graphql_fallback
+	test_fleet_capability_hold
+	test_fleet_escalation_upsert
+	test_capability_checkpoint_attention
 	test_bounded_recovery_intake
 	test_target_code_blocker_observation_rearms
 	test_worker_capability_cooldown
@@ -1333,16 +1902,23 @@ main() {
 	test_push_policy_timeout_checkpoint
 	test_normalized_blocker_fingerprint
 	test_worker_contract_reason_protocol
+	test_older_input_circuit_survives_other_reason
 	test_task_revision_inputs
 	test_release_modes_and_retry
 	test_dispatch_hold_revalidates_revision
 	test_brief_only_revision
 	test_external_trigger_pending_revision
 	test_source_access_blocked_revision
+	test_explicit_blocker_survives_missing_scope
 	test_input_required_owner_class
+	test_input_required_public_question
+	test_circuit_comment_repeats_latest_question
+	test_external_trigger_public_line
+	test_external_trigger_revisit
 	test_excluded_scope_revision
 	test_unknown_and_redaction
 	test_final_dossier_and_structural_precedence
+	test_unrecorded_blocked_exit_stays_dispatchable
 	test_release_integration_bounds_comments
 	test_legacy_blocked_backoff
 	test_blocked_backoff_trust
@@ -1353,6 +1929,17 @@ main() {
 	test_collaborator_runner_release_opens_circuit
 	test_circuit_hold_projects_blocked_and_releases
 	test_first_observation_scope_hold_releases_on_revision
+	test_cross_runner_rearm_receipt
+	test_legacy_hold_requires_bound_retry
+	test_unknown_hold_rearms_on_trusted_retry
+	test_retry_only_observation_recovery
+	test_unevidenced_permission_window_rearm
+	test_decided_permission_window_holds
+	test_unevidenced_permission_window_evidence
+	test_permission_window_rearms_once_per_result
+	test_mechanical_rearm_pass
+	test_rearm_waits_for_blocked_by_dependency
+	test_mechanical_rearm_scheduler
 	test_blocked_backoff_cli
 	printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]

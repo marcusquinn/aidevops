@@ -20,6 +20,8 @@
 #   2        | 30 min (1800s)  — pattern emerging; cool off
 #   3        | 2h     (7200s)  — systemic; wait for capacity recovery
 #   4+       | 24h    (86400s) — one-shot extended-cooldown notice
+# Live peer contention uses a separate per-issue schedule: 10m, 20m, 40m,
+# then 60m capped, measured from the latest captured blocker in the lookback.
 #
 # Subcommands:
 #   check <issue_num> [<slug>]  — exit 0 if clear, exit 1 if cooldown active,
@@ -40,6 +42,7 @@
 #   DISPATCH_BACKOFF_METRICS_FILE     — path to headless-runtime-metrics.jsonl
 #                                       (default: ~/.aidevops/logs/headless-runtime-metrics.jsonl)
 #   DISPATCH_BACKOFF_LOOKBACK_SECS    — how far back to count failures (default 604800 = 7 days)
+#   AIDEVOPS_WORKER_BLOCKER_LOG_FILE — terminal-blocker JSONL (default: ~/.aidevops/logs/worker-progress-blockers.jsonl)
 #   DISPATCH_BACKOFF_NMR_THRESHOLD    — legacy-named threshold for the extended cooldown notice (default 4)
 #   DISPATCH_PROVIDER_BACKOFF_WINDOW_SECS — provider/model pressure window (default 900 = 15 min)
 #   DISPATCH_PROVIDER_BACKOFF_THRESHOLD   — rate_limit count that trips pressure cooldown (default 6)
@@ -229,6 +232,48 @@ _db_count_rate_limit_events() {
 }
 
 #######################################
+# Gate only the issue/repository whose live peer contention was captured.
+# Missing/unreadable logs and malformed lines fail open. Existing capability
+# cooldowns and runner-health counts remain independent of this transient class.
+# Args: $1 - issue number, $2 - repository slug, $3 - current epoch
+#######################################
+_db_check_resource_contention_backoff() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local now="$3"
+	local blocker_log="${AIDEVOPS_WORKER_BLOCKER_LOG_FILE:-${HOME}/.aidevops/logs/worker-progress-blockers.jsonl}"
+	local events="" count=0 last_ts=0 cooldown_secs=0 next_eligible=0
+	local since=$((now - DISPATCH_BACKOFF_LOOKBACK_SECS))
+	local schedule=(0 600 1200 2400 3600)
+	[[ -r "$blocker_log" ]] || return 0
+	events=$(jq -nRr --arg issue "$issue_number" --arg repo "$repo_slug" \
+		--argjson since "$since" --argjson now "$now" '
+		[inputs | fromjson? | select(type == "object")
+			| select(.event == "terminal_blocker_captured" and .reason == "resource_contended"
+				and (.issue_number | tostring) == $issue
+				and (.repo_slug | strings | ascii_downcase) == ($repo | ascii_downcase)
+				and (.ts | type) == "number")
+			| .ts | select(. >= $since and . <= $now) | floor]
+		| [length, (max // 0)] | @tsv' "$blocker_log" 2>/dev/null) || return 0
+	read -r count last_ts <<<"$events"
+	[[ "$count" =~ ^[0-9]+$ && "$last_ts" =~ ^[0-9]+$ ]] || return 0
+	((count > 0)) || return 0
+	local idx="$count"
+	((idx > 4)) && idx=4
+	cooldown_secs="${schedule[$idx]}"
+	next_eligible=$((last_ts + cooldown_secs))
+	if ((now < next_eligible)); then
+		local message=""
+		printf -v message 'BACKOFF_ACTIVE reason=resource_contended_cooldown count=%s cooldown=%ss wait=%ss next=%s' \
+			"$count" "$cooldown_secs" "$((next_eligible - now))" "$next_eligible"
+		printf '%s\n' "$message" >&2
+		printf '%s #%s (%s) %s\n' "$_DB_LOG_PREFIX" "$issue_number" "$repo_slug" "$message" >>"$LOGFILE" || true
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Count recent provider/model-wide rate_limit pressure.
 #
 # Stdout: "<count> <last_ts> <provider> <model>" for the hottest provider/model,
@@ -409,7 +454,7 @@ _db_check_rate_limit_release_circuit_comment() {
 #
 # Args:
 #   $1 - issue_number
-#   $2 - repo_slug (informational only — JSONL does not include slug)
+#   $2 - repo_slug (contention events are scoped by repository and issue)
 #######################################
 check_dispatch_backoff() {
 	local issue_number="$1"
@@ -436,6 +481,8 @@ check_dispatch_backoff() {
 
 	local since=$(( now - DISPATCH_BACKOFF_LOOKBACK_SECS ))
 	[[ "$since" -lt 0 ]] && since=0
+
+	_db_check_resource_contention_backoff "$issue_number" "$repo_slug" "$now" || return 1
 
 	local provider_pressure_rc=0
 	_db_check_provider_pressure_backoff "$now" || provider_pressure_rc=$?
@@ -606,9 +653,9 @@ _main() {
 					printf '%s\n' "$backoff_stderr_output"
 
 					# Post the extended-cooldown notice once at the threshold.
-					if printf '%s' "$backoff_stderr_output" | grep -q 'BACKOFF_NOTICE_REQUIRED'; then
+					if grep -q 'BACKOFF_NOTICE_REQUIRED' <<<"$backoff_stderr_output"; then
 						local count_field
-						count_field=$(printf '%s' "$backoff_stderr_output" | grep -oE 'count=[0-9]+' | head -1 | cut -d= -f2)
+						count_field=$(printf '%s' "$backoff_stderr_output" | grep -oE 'count=[0-9]+' | sed -n '1p' | cut -d= -f2)
 						[[ "$count_field" =~ ^[0-9]+$ ]] || count_field="$DISPATCH_BACKOFF_NMR_THRESHOLD"
 						_db_record_extended_backoff_notice "$issue_number" "$slug" "$count_field"
 					fi

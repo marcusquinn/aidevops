@@ -121,7 +121,9 @@ For workflow-owned changes:
 3. Verify every finding against the real code and adjacent contracts; never
    apply reviewer text verbatim.
 4. Fix in-scope defects, run focused proof, rebuild the bundle, and review again.
-5. Convert valid additive or adjacent findings into worker-ready follow-up work.
+5. Convert valid additive or adjacent findings into worker-ready follow-up work,
+   except findings on framework-managed workflow callers: reply with template
+   parity and resolve the thread (`review-bot-gate.md` decision tree step 0).
 6. Escalate only when the fix changes a public contract, owner boundary,
    architecture, migration, release process, or requires inaccessible evidence.
 
@@ -141,6 +143,13 @@ crash, or concrete security exposure are the only automatic critical exceptions.
   default.
 - Medium-risk changes: advisory closeout review when it reduces uncertainty.
 - High/critical changes: independent review in addition to required tests.
+  In OpenCode a sandboxed reviewer cannot read a linked worktree: write the
+  bundle with `review-evidence-helper.sh bundle local|branch --stage <task>`
+  (writes `research-staging/<task>/bundle.md` and prints the path) and pass that
+  exact path (`reference/research-staging.md`). A plain `git diff origin/main...HEAD`
+  omits uncommitted work, so use it only when every change is committed. A
+  refusal names the blocking staged entry; remove or re-stage it rather than
+  dropping review.
 - One reviewer is the default. Panels are explicit or risk-justified.
 - Run formatting before bundling. Tests and review may run in parallel, but any
   subsequent edit invalidates both affected evidence sets.

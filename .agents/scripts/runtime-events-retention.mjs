@@ -3,17 +3,17 @@
 
 /** Verified partition/archive maintenance for append-only runtime evidence. */
 
-import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
   closeSync,
   existsSync,
   fsyncSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
-  renameSync,
+  readFileSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -26,20 +26,19 @@ import {
 import { runRetentionCommand } from "./runtime-events-retention-cli.mjs";
 import { buildRuntimeEventRetentionInventory } from "./runtime-events-retention-inventory.mjs";
 import { runRuntimeEventMaintenance } from "./runtime-events-retention-maintenance.mjs";
+import { isProtectedRuntimeEvent } from "./runtime-events-retention-policy.mjs";
 import { verifyArchiveArtifacts } from "./runtime-events-retention-verification.mjs";
+import { retentionStages, sqlite, sqliteRows } from "./runtime-events-retention-sqlite.mjs";
 import { canonicalizeSqliteDbPath, sqlEscape } from "./sqlite-process.mjs";
+
+export { isProtectedRuntimeEvent };
 
 export const RUNTIME_EVENT_ARCHIVE_SCHEMA_VERSION = 1;
 export const RUNTIME_EVENT_ACTIVE_DAYS_DEFAULT = 30;
 export const RUNTIME_EVENT_ARCHIVE_MAX_ROWS_DEFAULT = 5000;
 export const RUNTIME_EVENT_MAINTENANCE_MAX_PARTITIONS_DEFAULT = 20;
 export const RUNTIME_EVENT_MAINTENANCE_MAX_DURATION_SECONDS_DEFAULT = 120;
-const SQLITE_OUTPUT_MAX_BYTES = 256 * 1024 * 1024;
 
-const ERROR_STATUS = new Set([
-  "blocked", "cancelled", "denied", "error", "failed", "rejected", "timed_out", "timeout",
-]);
-const PROTECTED_EVENT_TYPE = /^(audit|deploy|full-loop|objective|permission|release|security|session|subagent|worker)\.|(^|\.)(blocked|cancelled|completed|denied|error|failed|rejected|started|stopped|terminated|timeout)(\.|$)/;
 const EVENT_COLUMNS = [
   "id", "envelope_version", "occurred_at", "event_id", "event_type", "correlation_id",
   "causation_id", "subject_id", "session_id", "worker_id", "parent_worker_id",
@@ -94,51 +93,6 @@ function normalizedMaxRows(value) {
     throw new TypeError("archive max rows must be an integer from 1 to 100000");
   }
   return parsed;
-}
-
-function sqlite(dbPath, sql, { json = false, readonly = false, timeoutMs = 30000 } = {}) {
-  const args = ["-cmd", ".timeout 15000"];
-  if (json) args.push("-json");
-  if (readonly) args.push("-readonly");
-  args.push(dbPath);
-  return execFileSync("sqlite3", args, {
-    encoding: "utf8",
-    input: sql,
-    // A full archive batch returns up to max-rows events with 16 KiB payloads
-    // as escaped JSON, far beyond Node's 1 MiB default (ENOBUFS).
-    maxBuffer: SQLITE_OUTPUT_MAX_BYTES,
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: timeoutMs,
-  }).trim();
-}
-
-function sqliteRows(dbPath, sql, options = {}) {
-  const output = sqlite(dbPath, sql, { ...options, json: true });
-  if (!output) return [];
-  const parsed = JSON.parse(output);
-  return Array.isArray(parsed) ? parsed : [];
-}
-
-function parsedPayload(row) {
-  try {
-    const payload = JSON.parse(row.payload_json || "{}");
-    return payload && typeof payload === "object" ? payload : {};
-  } catch {
-    return {};
-  }
-}
-
-/** True when a row belongs to the minimum terminal/error/lifecycle/security/audit envelope. */
-export function isProtectedRuntimeEvent(row) {
-  if (row?.state_version !== null && row?.state_version !== undefined) return true;
-  const eventType = String(row?.event_type || "").toLowerCase();
-  if (PROTECTED_EVENT_TYPE.test(eventType)) return true;
-  const payload = parsedPayload(row);
-  if (payload.success === false || payload.error_type ||
-      (payload.exit_code !== undefined && Number(payload.exit_code) !== 0)) {
-    return true;
-  }
-  return ERROR_STATUS.has(String(payload.status || "").toLowerCase());
 }
 
 function normalizedEventRow(row) {
@@ -223,8 +177,13 @@ function atomicWrite(filePath, contents) {
     fsyncSync(descriptor);
     closeSync(descriptor);
     descriptor = undefined;
-    renameSync(tempPath, filePath);
-    chmodSync(filePath, 0o444);
+    try {
+      // Publish without replacing an artifact another retention writer owns.
+      linkSync(tempPath, filePath);
+      chmodSync(filePath, 0o444);
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
     if (existsSync(tempPath)) unlinkSync(tempPath);
@@ -256,25 +215,53 @@ function persistPartition(archiveDir, partition) {
   const archiveFile = `${partition.header.partition_id}.jsonl`;
   const archivePath = join(archiveDir, archiveFile);
   const manifestPath = `${archivePath}.manifest.json`;
-  const expectedManifest = manifestForContents(partition.header, archiveFile, partition.contents);
-
   if (!existsSync(archivePath)) atomicWrite(archivePath, partition.contents);
-  if (!existsSync(manifestPath)) atomicWrite(manifestPath, `${canonicalJson(expectedManifest)}\n`);
+  if (!existsSync(manifestPath)) {
+    // Recover an interruption between the two writes. Compare the entire
+    // artifact with the selected source, allowing only its original timestamps.
+    // A new created_at/cutoff would otherwise generate an invalid sidecar.
+    const contents = readFileSync(archivePath, "utf8");
+    const header = JSON.parse(contents.slice(0, contents.indexOf("\n")));
+    const expectedHeader = { ...partition.header, created_at: header.created_at, cutoff_at: header.cutoff_at };
+    const expectedContents = canonicalJson(expectedHeader) + partition.contents.slice(partition.contents.indexOf("\n"));
+    if (contents !== expectedContents || !Number.isFinite(Date.parse(header.created_at)) ||
+        !Number.isFinite(Date.parse(header.cutoff_at))) {
+      throw new Error("archive partition does not match selected source");
+    }
+    const manifest = manifestForContents(expectedHeader, archiveFile, contents);
+    atomicWrite(manifestPath, `${canonicalJson(manifest)}\n`);
+  }
 
   const verified = verifyRuntimeEventArchive(archivePath, manifestPath);
   if (!verified.ok || verified.manifest?.source_sha256 !== partition.header.source_sha256) {
     throw new Error(`archive partition verification failed: ${verified.errors.join("; ")}`);
   }
+  // File fsync alone does not persist a newly published name. Sync both
+  // artifacts' directory and its ancestors before SQLite commits deletion.
+  // Existing ancestors may come from an interrupted mkdir, so retry must not
+  // assume their directory entries were already synced by the previous attempt.
+  let directory = archiveDir;
+  for (;;) {
+    const descriptor = openSync(directory, "r");
+    try {
+      fsyncSync(descriptor);
+    } finally {
+      closeSync(descriptor);
+    }
+    const parent = dirname(directory);
+    if (directory === parent) break;
+    directory = parent;
+  }
   return { archivePath, manifest: verified.manifest, manifestPath };
 }
 
-function candidateRows(dbPath, cutoffAt, maxRows, { readonly = false } = {}) {
+function candidateRows(dbPath, cutoffAt, maxRows, { readonly = false, timeoutMs } = {}) {
   return sqliteRows(dbPath, `
     SELECT ${EVENT_COLUMNS.join(", ")}
     FROM runtime_events
     WHERE occurred_at < ${sqlEscape(cutoffAt)} AND state_version IS NULL
     ORDER BY id ASC LIMIT ${maxRows};
-  `, { readonly });
+  `, { readonly, timeoutMs });
 }
 
 function archiveManifestInsertSql(manifest) {
@@ -294,9 +281,10 @@ function archiveManifestInsertSql(manifest) {
   );`;
 }
 
-function pruneVerifiedSource(dbPath, manifest) {
-  const predicate = `id <= ${manifest.source_last_id} AND occurred_at < ${sqlEscape(manifest.cutoff_at)} AND state_version IS NULL`;
-  sqlite(dbPath, `.bail on
+function pruneVerifiedSource(dbPath, manifest, stages) {
+  // Bound all three scans to this partition, not every older protected state row.
+  const predicate = `id BETWEEN ${manifest.source_first_id} AND ${manifest.source_last_id} AND occurred_at < ${sqlEscape(manifest.cutoff_at)} AND state_version IS NULL`;
+  stages.run("prune_source", (timeoutMs) => sqlite(dbPath, `.bail on
 BEGIN IMMEDIATE;
 CREATE TEMP TABLE runtime_retention_assert(ok INTEGER NOT NULL CHECK(ok = 1));
 INSERT INTO runtime_retention_assert VALUES ((
@@ -316,13 +304,13 @@ BEGIN
 END;
 ${archiveManifestInsertSql(manifest)}
 COMMIT;
-`);
-  const remaining = Number(sqlite(dbPath, `SELECT COUNT(*) FROM runtime_events WHERE ${predicate};`) || 0);
-  const manifestRows = Number(sqlite(dbPath, `
+`, { timeoutMs }));
+  const remaining = Number(stages.run("verify_source", (timeoutMs) => sqlite(dbPath, `SELECT COUNT(*) FROM runtime_events WHERE ${predicate};`, { timeoutMs })) || 0);
+  const manifestRows = Number(stages.run("verify_manifest", (timeoutMs) => sqlite(dbPath, `
     SELECT COUNT(*) FROM runtime_event_archives
     WHERE partition_id = ${sqlEscape(manifest.partition_id)}
       AND archive_sha256 = ${sqlEscape(manifest.archive_sha256)};
-  `) || 0);
+  `, { timeoutMs })) || 0);
   if (remaining !== 0 || manifestRows !== 1) throw new Error("archive commit verification failed");
 }
 
@@ -332,6 +320,7 @@ export function archiveRuntimeEvents(options = {}) {
   const archiveDir = normalizedArchiveDir(options.archiveDir, dbPath);
   const cutoffAt = normalizedCutoff(options.cutoff, options);
   const maxRows = normalizedMaxRows(options.maxRows);
+  const stages = retentionStages(options);
   if (!existsSync(dbPath)) {
     return Object.freeze({
       applied: false,
@@ -341,10 +330,24 @@ export function archiveRuntimeEvents(options = {}) {
       status: "database_missing",
     });
   }
-  if (options.apply && !initialiseRuntimeEventStore(dbPath)) {
-    throw new Error("runtime-event store is unavailable");
+  if (options.apply) {
+    stages.run("initialise_store", (timeoutMs) => {
+      let failure;
+      const initialized = initialiseRuntimeEventStore(dbPath, {
+        executeSync: (sql) => {
+          try {
+            // Recompute the remaining budget for each initialization query.
+            return stages.run("initialise_sqlite", (remaining) => sqlite(dbPath, sql, { timeoutMs: Math.min(timeoutMs, remaining) }));
+          } catch (error) {
+            failure = error;
+            throw error;
+          }
+        },
+      });
+      if (!initialized) throw failure || new Error("runtime-event store is unavailable");
+    });
   }
-  const selectedRows = candidateRows(dbPath, cutoffAt, maxRows + 1, { readonly: !options.apply });
+  const selectedRows = stages.run("select_candidates", (timeoutMs) => candidateRows(dbPath, cutoffAt, maxRows + 1, { readonly: !options.apply, timeoutMs }));
   const moreCandidates = selectedRows.length > maxRows;
   const rows = selectedRows.slice(0, maxRows);
   if (rows.length === 0) {
@@ -369,11 +372,12 @@ export function archiveRuntimeEvents(options = {}) {
   };
   if (!options.apply) return Object.freeze(result);
 
-  const persisted = persistPartition(archiveDir, partition);
+  stages.setPartition(partition.header.partition_id);
+  const persisted = stages.run("persist_archive", () => persistPartition(archiveDir, partition));
   if (options.simulateInterruption === "after_archive") {
     throw new Error("simulated interruption after verified archive");
   }
-  pruneVerifiedSource(dbPath, persisted.manifest);
+  pruneVerifiedSource(dbPath, persisted.manifest, stages);
   return Object.freeze({
     ...result,
     applied: true,

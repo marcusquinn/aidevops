@@ -46,6 +46,8 @@ object-storage-helper.sh audit-protection example-idrive-e2 example-idrive-backu
 
 Copy and download remain preview-only, even with their confirmation token. Do not use this integration to change lifecycle rules, retention, legal holds, Object Lock, bucket policies, versioning, or delete objects. Those operations require a future provider adapter with an explicit exact target (bucket/key/version), proposed effect, confirmation, post-change read-back, and no automatic retry after an ambiguous response.
 
+Bucket migration is the narrow exception: `object-storage-helper.sh migrate-plan` (read-only preflight), `migrate-run --confirm migrate:<src>:<dst>` (copy plus `rclone check --one-way`, resumable, per-bucket `VERIFIED`/`COPY_FAIL`/`CHECK_FAIL` status; rclone >= 1.70; `--lane large|small`; optional `--remote-host <alias>`) and `migrate-retire-source --bucket <b> --confirm retire:<src>:<dst>:<b>` (source delete only after `VERIFIED` status, exact token, and an immediate re-check). Policies and ACLs are not copied; review them from the plan output. No other delete is permitted.
+
 Object Lock at bucket creation and compliance retention can be irreversible. Read-only audits can run concurrently; any future protection-changing operation must serialize by exact bucket/key/version target.
 
 ## Configuration

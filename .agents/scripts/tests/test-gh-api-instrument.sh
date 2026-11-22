@@ -32,6 +32,12 @@ trap 'rm -rf "$TMPDIR"' EXIT
 export AIDEVOPS_GH_API_LOG="$TMPDIR/gh-api-calls.log"
 export AIDEVOPS_GH_API_REPORT="$TMPDIR/report.json"
 export AIDEVOPS_GH_API_EVIDENCE="$TMPDIR/evidence.json"
+# gh_trim_log sweeps orphaned shim scratch in the agent temp root (t19021);
+# never let a test run reach the host's root.
+export AIDEVOPS_TEMP_DIR="$TMPDIR/agent-tmp"
+mkdir -p "$AIDEVOPS_TEMP_DIR"
+# The foreign-device hint falls back to the pulse log; never read the host's.
+export AIDEVOPS_QUOTA_PULSE_LOG="$TMPDIR/pulse.log"
 unset AIDEVOPS_GH_QUOTA_COST AIDEVOPS_GH_QUOTA_COST_ON_SUCCESS
 
 assert_eq() {
@@ -536,6 +542,251 @@ assert_eq "duplicate attempt ID surfaced" "1" "$(jq -r '._meta.duplicate_attempt
 assert_eq "duplicate makes exactness false" "false" "$(jq -r '._meta.attempts_exact' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "malformed row surfaced" "1" "$(jq -r '._meta.malformed_records' "$AIDEVOPS_GH_API_REPORT")"
 
+# --- GH#36048: separate interleaved auth/reset series, not auth-mode labels --
+gh_clear_log
+pool_a=$(printf 'pool-a' | _ghqa_sha256_stdin)
+pool_b=$(printf 'pool-b' | _ghqa_sha256_stdin)
+fixture_now=$(date +%s)
+fixture_minute=$((fixture_now / 60 * 60 - 180))
+quota_fixture() {
+	local offset="$1" id="$2" remaining="$3" cost="$4" fingerprint="$5" reset="$6"
+	_gh_append_v2 attempt pool-fixture rest gh-pat rest-core rest-selected \
+		"$remaining" logical-pool "$id" 1 0 success 200 10 "$cost" \
+		"$((fixture_minute + offset))" "$fingerprint" "$reset" "${7:-}"
+	return 0
+}
+quota_fixture 1 a1 100 1 "$pool_a" 2000000000
+quota_fixture 2 b1 4900 1 "$pool_b" 2000000100
+quota_fixture 61 a2 90 1 "$pool_a" 2000000000
+quota_fixture 62 b2 4898 1 "$pool_b" 2000000100
+# Duplicate replay and append-order inversion must not invent quota drain.
+quota_fixture 62 b2 4898 1 "$pool_b" 2000000100
+quota_fixture 122 a4 85 1 "$pool_a" 2000000000
+quota_fixture 121 a3 87 1 "$pool_a" 2000000000
+# A new reset with the same token starts a fresh baseline.
+quota_fixture 123 a5 4999 1 "$pool_a" 2000003600
+quota_fixture 124 a6 4998 1 "$pool_a" 2000003600
+# Old v2 rows still count, but are not merged into an invented unknown pool.
+printf '%s\told-v2\trest\tgh-pat\trest-core\trest-selected\t20\tv2\tattempt\told\told-attempt\t1\t0\tsuccess\t200\t1\t1\n' "$fixture_now" >>"$AIDEVOPS_GH_API_LOG"
+# A header-less native write knows its credential and cost but not its reset.
+quota_fixture 70 a-write "" 1 "$pool_a" ""
+gh_aggregate_calls
+assert_eq "three independent auth/reset series" "3" "$(jq '.rest_core_attribution.series | length' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "pool A observed drop excludes resets and duplicate rows" "15" "$(jq --arg fp "$pool_a" '.rest_core_attribution.series[] | select(.auth_fingerprint == $fp and .reset_epoch == 2000000000) | .remaining_drop' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "pool A residual subtracts only interval-owned costs" "12" "$(jq --arg fp "$pool_a" '.rest_core_attribution.series[] | select(.auth_fingerprint == $fp and .reset_epoch == 2000000000) | .unattributed_cost' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "pool B never absorbs pool A drain" "1" "$(jq --arg fp "$pool_b" '.rest_core_attribution.series[] | select(.auth_fingerprint == $fp) | .unattributed_cost' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "top minute ranks residual, not append order" "9" "$(jq --arg fp "$pool_a" '.rest_core_attribution.series[] | select(.auth_fingerprint == $fp and .reset_epoch == 2000000000) | .top_unattributed_minutes[0].unattributed_cost' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "old v2 and reset-unknown metadata exclusion is explicit" "2" "$(jq '.rest_core_attribution.missing_metadata_attempts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "reset-unknown cost is visible beside the same credential minute" "1" "$(jq --arg fp "$pool_a" --argjson minute "$((fixture_minute + 60))" '.rest_core_attribution.series[] | select(.auth_fingerprint == $fp and .reset_epoch == 2000000000) | .minutes[] | select(.minute_ts == $minute) | .same_credential_reset_unknown_cost' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "reset-unknown cost never reaches another credential" "0" "$(jq --arg fp "$pool_b" '.rest_core_attribution.series[] | select(.auth_fingerprint == $fp) | .same_credential_reset_unknown_cost' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "new reset does not create negative drops" "0" "$(jq '.rest_core_attribution.series[] | select(.reset_epoch == 2000003600) | .unattributed_cost' "$AIDEVOPS_GH_API_REPORT")"
+gh_record_attempt rest metadata-caller logical-meta attempt-meta 1 0 success 200 1 1 gh-pat rest-core rest-selected 99 "$pool_a" 2000000000 "" 4901
+assert_eq "attempt metadata is appended in fields 20 and 21" "$pool_a:2000000000" "$(awk -F '\t' '$11 == "attempt-meta" {print $20 ":" $21}' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "cumulative used counter appends after existing fields" "4901" "$(awk -F '\t' '$11 == "attempt-meta" {print $22}' "$AIDEVOPS_GH_API_LOG")"
+gh_record_attempt rest metadata-caller logical-meta attempt-invalid 1 0 success 200 1 1 gh-pat rest-core rest-selected 98 'not-a-digest' 'not-an-epoch' "" 'not-a-counter'
+assert_eq "arbitrary auth text cannot enter fingerprint column" ":" "$(awk -F '\t' '$11 == "attempt-invalid" {print $20 ":" $21}' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "arbitrary text cannot enter used column" "" "$(awk -F '\t' '$11 == "attempt-invalid" {print $22}' "$AIDEVOPS_GH_API_LOG")"
+gh_record_attempt rest metadata-caller logical-meta attempt-zero 1 0 success 304 1 0 gh-pat rest-core rest-selected 5000 "$pool_a" 2000000000 "" 0
+assert_eq "zero used is preserved, not treated as missing" "0" "$(awk -F '\t' '$11 == "attempt-zero" {print $22}' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "legacy callers leave used unknown" "" "$(awk -F '\t' '$11 == "a1" {print $22}' "$AIDEVOPS_GH_API_LOG")"
+
+# --- GH#36187: used-counter external costs never change remaining residuals --
+gh_clear_log
+quota_fixture 1 external-base 100 1 "$pool_a" 2000000000 0
+quota_fixture 2 other-base 4900 1 "$pool_b" 2000000100 100
+# A missing used sample still contributes its local attempt cost.
+quota_fixture 60 external-missing 99 1 "$pool_a" 2000000000
+quota_fixture 61 external-next 90 1 "$pool_a" 2000000000 10
+quota_fixture 61 external-next 90 1 "$pool_a" 2000000000 10
+quota_fixture 62 other-next 4898 1 "$pool_b" 2000000100 102
+# Clamp each interval separately, not the aggregate, and ignore counter drops.
+quota_fixture 121 external-clamp 89 5 "$pool_a" 2000000000 11
+quota_fixture 122 external-backwards 88 1 "$pool_a" 2000000000 9
+quota_fixture 123 external-after-drop 87 1 "$pool_a" 2000000000 12
+quota_fixture 124 external-reset 4999 1 "$pool_a" 2000003600 1000
+quota_fixture 125 external-reset-next 4998 1 "$pool_a" 2000003600 1001
+gh_aggregate_calls
+external_series='.rest_core_attribution.series[] | select(.reset_epoch == 2000000000)'
+assert_eq "external used delta excludes baseline, duplicates and local costs" "10" "$(jq "$external_series | .same_login_external_cost" "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "external minute costs reconcile to series" "10" "$(jq "$external_series | [.minutes[].same_login_external_cost] | add" "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "remaining residual is unchanged by external label" "8" "$(jq "$external_series | .unattributed_cost" "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "other credential external cost stays independent" "1" "$(jq '.rest_core_attribution.series[] | select(.reset_epoch == 2000000100) | .same_login_external_cost' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "new reset starts external baseline" "0" "$(jq '.rest_core_attribution.series[] | select(.reset_epoch == 2000003600) | .same_login_external_cost' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "device attribution without login mapping stays unknown" "unknown" "$(jq -r "$external_series | .other_devices" "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "external attribution is explicitly an upper bound" "true" "$(jq '.rest_core_attribution.same_login_external_cost_is_upper_bound' "$AIDEVOPS_GH_API_REPORT")"
+
+# --- GH#36312: read-only quota report joins independent CI evidence ---------
+gh_clear_log
+quota_fixture 1 report-base 4900 1 "$pool_a" 2000000000 100
+quota_fixture 61 report-newer 4897 1 "$pool_a" 2000000000 103
+quota_fixture 62 report-late 4898 1 "$pool_a" 2000000000 102
+quota_fixture 123 report-final 4895 1 "$pool_a" 2000000000 105
+quota_fixture 123 report-final 4895 1 "$pool_a" 2000000000 105
+ci_fixture="$TMPDIR/ci-samples.jsonl"
+ci_sample() {
+	local fingerprint="$1" reset="$2" id="$3" before="$4" after="$5" cost="$6"
+	jq -cn --arg fp "$fingerprint" --arg id "$id" --argjson reset "$reset" \
+		--argjson before "$before" --argjson after "$after" --argjson cost "$cost" \
+		--argjson ts "$((fixture_minute + 70))" \
+		'{event:"quota-ci-sample",auth_fingerprint:$fp,sample_id:$id,
+		  sample_start:$ts,sample_end:($ts+1),before:{used:$before,reset:$reset},
+		  after:{used:$after,reset:$reset},known_api_requests:$cost}' >>"$ci_fixture"
+	return 0
+}
+ci_sample "$pool_a" 2000000000 audit-1 103 104 1
+ci_sample "$pool_a" 2000000000 audit-1 103 104 1
+ci_sample "$pool_a" 2000000000 audit-overlap 103 104 1
+ci_sample "$pool_b" 2000000000 other-credential 100 105 5
+ci_sample "$pool_a" 2000000100 other-reset 100 105 5
+ci_sample "$pool_a" 2000000000 impossible-cost 100 101 2
+ci_sample "$pool_a" 2000000000 outside-range 99 100 1
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture")
+assert_eq "quota report orders late counters without double counting" "5:3:1" \
+	"$(jq -r '[.used_delta,.known_local_cost,.counter_regressions] | join(":")' <<<"$quota_report")"
+assert_eq "CI counts only independent same-series nonoverlapping evidence" "1" \
+	"$(jq '.attributed_ci_cost' <<<"$quota_report")"
+assert_eq "proven local plus CI coverage is non-null" "0.8" "$(jq '.accounted_fraction' <<<"$quota_report")"
+assert_eq "unattributed residual retains upper-bound semantics" "1:true:unknown" \
+	"$(jq -r '[.unattributed_cost,.unattributed_is_upper_bound,.other_devices] | join(":")' <<<"$quota_report")"
+assert_eq "duplicate attempt ID is visible but adds no coverage" "1" "$(jq '.duplicate_attempt_ids' <<<"$quota_report")"
+assert_eq "no claim evidence leaves foreign-device hint unknown" "unknown" "$(jq -r '.foreign_device_hint' <<<"$quota_report")"
+claim_fixture="${TEST_TMP_DIR:-${TMPDIR:-/tmp}}/claims.$$.txt"
+printf 'DISPATCH_CLAIM nonce=n1 runner=Self-Login ts=t max_age_s=1 device=dev-a\nDISPATCH_CLAIM nonce=n2 runner=other ts=t device=dev-z\n' >"$claim_fixture"
+quota_report=$(AIDEVOPS_DEVICE_ID=dev-a AIDEVOPS_QUOTA_SELF_LOGIN=self-login AIDEVOPS_QUOTA_CLAIM_EVIDENCE_FILE="$claim_fixture" bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture")
+assert_eq "same-login claims from only the local device report none" "none" "$(jq -r '.foreign_device_hint' <<<"$quota_report")"
+printf 'DISPATCH_CLAIM nonce=n3 runner=self-login ts=t device=dev-b\n' >>"$claim_fixture"
+quota_report=$(AIDEVOPS_DEVICE_ID=dev-a AIDEVOPS_QUOTA_SELF_LOGIN=self-login AIDEVOPS_QUOTA_CLAIM_EVIDENCE_FILE="$claim_fixture" bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture")
+assert_eq "same-login claim from another device reports the hint" "same_login_foreign_device" "$(jq -r '.foreign_device_hint' <<<"$quota_report")"
+AIDEVOPS_DEVICE_ID=dev-a AIDEVOPS_QUOTA_SELF_LOGIN=self-login AIDEVOPS_QUOTA_CLAIM_EVIDENCE_FILE="$claim_fixture" \
+	bash "${PARENT_DIR}/gh-api-instrument.sh" report "$AIDEVOPS_GH_API_REPORT" 3600 >/dev/null 2>&1 || true
+assert_eq "instrument report carries the same hint" "same_login_foreign_device" "$(jq -r '.rest_core_attribution.foreign_device_hint' "$AIDEVOPS_GH_API_REPORT")"
+rm -f "$claim_fixture"
+# GH#37888: without a claims file, positive pulse-log evidence is automatic.
+pulse_now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+printf '[%s] [pulse-wrapper] cycle\n[pulse-wrapper] Stale assignment skip (cross-runner guard): #1 in o/r — runner=self-login device=dev-a vs self=self-login, comment age 1s < max_runtime 9s\nCLAIM_LOST: runner=self-login lost to other on issue #2 winner_claim_ts=%s winner_age=1s — backing off\n' \
+	"$pulse_now" "$pulse_now" >"$AIDEVOPS_QUOTA_PULSE_LOG"
+assert_eq "pulse log with only local-device or other-login evidence stays unknown" "unknown" \
+	"$(AIDEVOPS_DEVICE_ID=dev-a python3 "${PARENT_DIR}/gh_quota_foreign_device.py" "" "")"
+printf '[pulse-wrapper] Stale assignment skip (cross-runner guard): #3 in o/r — runner=self-login device=dev-b vs self=self-login, comment age 1s < max_runtime 9s\n' >>"$AIDEVOPS_QUOTA_PULSE_LOG"
+quota_report=$(AIDEVOPS_DEVICE_ID=dev-a bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture")
+assert_eq "pulse-log guard line for another same-login device reports the hint" "same_login_foreign_device" "$(jq -r '.foreign_device_hint' <<<"$quota_report")"
+printf '[2001-01-01T00:00:00Z] [pulse-wrapper] cycle\n[pulse-wrapper] Stale assignment skip (cross-runner guard): #3 in o/r — runner=self-login device=dev-b vs self=self-login, comment age 1s < max_runtime 9s\nCLAIM_LOST: runner=self-login lost to self-login on issue #4 winner_claim_ts=2001-01-01T00:00:00Z winner_age=1s — backing off\n' >"$AIDEVOPS_QUOTA_PULSE_LOG"
+assert_eq "pulse-log evidence older than the lookback is ignored" "unknown" \
+	"$(AIDEVOPS_DEVICE_ID=dev-a python3 "${PARENT_DIR}/gh_quota_foreign_device.py" "" "")"
+printf 'CLAIM_LOST: runner=self-login lost to self-login on issue #5 winner_claim_ts=%s winner_age=1s — backing off\n' "$pulse_now" >>"$AIDEVOPS_QUOTA_PULSE_LOG"
+assert_eq "same-login CLAIM_LOST in the pulse log reports the hint" "same_login_foreign_device" \
+	"$(AIDEVOPS_DEVICE_ID=dev-a python3 "${PARENT_DIR}/gh_quota_foreign_device.py" "" "")"
+rm -f "$AIDEVOPS_QUOTA_PULSE_LOG"
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600)
+assert_eq "no CI evidence never invents CI cost" "null" "$(jq '.attributed_ci_cost' <<<"$quota_report")"
+: >"$ci_fixture"
+ci_sample "$pool_a" 2000000000 possibly-local 100 105 1
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture")
+assert_eq "CI probe possibly logged locally cannot claim spare interval capacity" "0:0.6" \
+	"$(jq -r '[.attributed_ci_cost,.accounted_fraction] | join(":")' <<<"$quota_report")"
+: >"$ci_fixture"
+ci_sample "$pool_a" 2000000000 audit-1 103 104 1
+quota_fixture 80 report-unknown 4896 '' "$pool_a" 2000000000 104
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture")
+assert_eq "unknown request cost invalidates coverage, not replaced by delta" "null:1" \
+	"$(jq -r '[.accounted_fraction,.unknown_cost_attempts] | map(tostring) | join(":")' <<<"$quota_report")"
+quota_fixture 81 report-no-reset '' 1 "$pool_a" ''
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture")
+assert_eq "reset-unknown costs stay separately labelled and cannot prove coverage" "1:1:null" \
+	"$(jq -r '[.missing_metadata_attempts,.same_credential_reset_unknown_cost,.accounted_fraction] | map(tostring) | join(":")' <<<"$quota_report")"
+
+# --- GH#36804: explicit saved login identities bridge tokens, not pools ------
+gh_clear_log
+quota_fixture 1 identity-base 4900 1 "$pool_a" 2000000000 100
+quota_fixture 123 identity-final 4895 1 "$pool_a" 2000000000 105
+ci_identity() {
+	local fingerprint="$1" login="$2" host="${3:-github.com}" pool="${4:-rest-core}"
+	jq -cn --arg fp "$fingerprint" --arg login "$login" --arg host "$host" --arg pool "$pool" \
+		'{event:"quota-ci-identity",auth_fingerprint:$fp,login:$login,host:$host,pool:$pool}' >>"$ci_fixture"
+	return 0
+}
+ci_decisions="$TMPDIR/ci-decisions.jsonl"
+: >"$ci_fixture"
+ci_sample "$pool_b" 2000000000 cross-token 101 103 2
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture" 2>"$ci_decisions")
+assert_eq "reset alone never joins unrelated tokens" "null" "$(jq '.attributed_ci_cost' <<<"$quota_report")"
+assert_eq "unmatched sample is audited" "unmatched_identity_or_reset" "$(jq -r '.reason' "$ci_decisions")"
+ci_identity "$pool_a" operator
+ci_identity "$pool_b" OPERATOR
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture" 2>"$ci_decisions")
+assert_eq "saved same-login identities credit cross-token known costs" "2:0.6" \
+	"$(jq -r '[.attributed_ci_cost,.accounted_fraction] | join(":")' <<<"$quota_report")"
+assert_eq "every evidence row has one decision" "3" "$(jq -s 'length' "$ci_decisions")"
+assert_eq "credited decision explains cost" "credited:2" \
+	"$(jq -r 'select(.series) | .series[] | [.reason,.credited_cost] | join(":")' "$ci_decisions")"
+assert_eq "diagnostics contain no raw login or sample ID" "0" \
+	"$(jq -s '[.[] | tostring | select(test("operator|cross-token"; "i"))] | length' "$ci_decisions")"
+ci_identity "$pool_b" another-login
+ci_identity "$pool_b" operator
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture" 2>"$ci_decisions")
+assert_eq "identity conflicts are sticky and cannot bridge tokens" "null" "$(jq '.attributed_ci_cost' <<<"$quota_report")"
+for mismatch in login host pool; do
+	: >"$ci_fixture"
+	ci_sample "$pool_b" 2000000000 isolated 101 103 2
+	ci_identity "$pool_a" operator
+	case "$mismatch" in
+	login) ci_identity "$pool_b" other ;;
+	host) ci_identity "$pool_b" operator enterprise.example ;;
+	pool) ci_identity "$pool_b" operator github.com graphql ;;
+	esac
+	quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture" 2>"$ci_decisions")
+	assert_eq "different $mismatch cannot establish shared quota identity" "null" "$(jq '.attributed_ci_cost' <<<"$quota_report")"
+done
+: >"$ci_fixture"
+ci_identity "$pool_a" operator
+ci_identity "$pool_b" operator
+ci_sample "$pool_b" 2000000000 credited 101 103 2
+ci_sample "$pool_b" 2000000000 credited 101 103 2
+ci_sample "$pool_a" 2000000000 overlapping 102 103 1
+ci_sample "$pool_b" 2000000000 locally-covered 104 105 1
+ci_sample "$pool_b" 2000000000 outside-observation 99 100 1
+ci_sample "$pool_b" 2000000000 conflicting 100 101 1
+ci_sample "$pool_b" 2000000000 conflicting 100 102 2
+printf '%s\n' 'not JSON secret-must-not-leak' '{"event":"quota-ci-sample"}' >>"$ci_fixture"
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture" 2>"$ci_decisions")
+assert_eq "cross-token overlap never counts twice" "2" "$(jq '.attributed_ci_cost' <<<"$quota_report")"
+assert_eq "all rows including malformed and conflicting copies are audited" "11" "$(jq -s 'length' "$ci_decisions")"
+assert_eq "duplicate and all conflicting copies are explained" "1:2:2" \
+	"$(jq -sr '[([.[] | select(.reason == "duplicate")] | length),([.[] | select(.reason == "conflicting_id")] | length),([.[] | select(.reason == "invalid_sample")] | length)] | join(":")' "$ci_decisions")"
+assert_eq "coverage decisions distinguish rejection and overlap" "credited:locally_covered:outside_observed_interval:overlapping_ci" \
+	"$(jq -sr '[.[] | .series[]? | .reason] | sort | join(":")' "$ci_decisions")"
+
+# Conflicting saved IDs invalidate credit even across the report-window boundary.
+for copy_order in before after; do
+	: >"$ci_fixture"
+	ci_sample "$pool_a" 2000000000 window-conflict 101 103 2
+	python3 - "$ci_fixture" "$copy_order" <<'PY_WINDOW_CONFLICT'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+inside = path.read_text(encoding="utf-8")
+outside = json.loads(inside)
+outside.update(sample_start=0, sample_end=1)
+outside = json.dumps(outside) + "\n"
+path.write_text(outside + inside if sys.argv[2] == "before" else inside + outside,
+                encoding="utf-8")
+PY_WINDOW_CONFLICT
+	quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture" 2>"$ci_decisions")
+	assert_eq "out-of-window conflict $copy_order in-window copy prevents CI credit" "null" \
+		"$(jq '.attributed_ci_cost' <<<"$quota_report")"
+	assert_eq "both conflicting copies are audited with outside copy $copy_order" "2" \
+		"$(jq -s '[.[] | select(.reason == "conflicting_id")] | length' "$ci_decisions")"
+done
+: >"$ci_fixture"
+printf '\377\n' >>"$ci_fixture"
+ci_sample "$pool_a" 2000000000 after-invalid-utf8 101 103 2
+quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture" 2>"$ci_decisions")
+assert_eq "invalid UTF-8 does not prevent later valid CI credit" "2" "$(jq '.attributed_ci_cost' <<<"$quota_report")"
+assert_eq "invalid UTF-8 receives its own decision before the valid row" "invalid_sample:evaluated" \
+	"$(jq -sr '[.[].reason] | join(":")' "$ci_decisions")"
+
 # --- Test 11: command arguments remain private and exit status is preserved --
 gh_clear_log
 gh_run_transport_attempt rest privacy-caller logical-private 1 0 -- true \
@@ -572,6 +823,53 @@ gh_aggregate_calls
 assert_eq "successful inferred and explicit costs reconcile" "4" "$(jq -r '._meta.known_quota_cost' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "failed inferred cost remains unknown" "1" "$(jq -r '._meta.unknown_quota_cost_attempts' "$AIDEVOPS_GH_API_REPORT")"
 
+# --- Test 11b2: normal-mode gh api rows carry static request labels (GH#38327)
+label_bin="$TMPDIR/label-bin"
+mkdir -p "$label_bin"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$label_bin/gh"
+chmod +x "$label_bin/gh"
+label_row() {
+	gh_clear_log
+	gh_run_transport_attempt rest label-caller logical-label 1 0 -- "$label_bin/gh" "$@"
+	awk -F '\t' '$9 == "attempt" { row = $23 "|" $24 "|" $25 } END { print row }' "$AIDEVOPS_GH_API_LOG"
+	return 0
+}
+assert_eq "issue read is labelled GET/repos-issues" "GET|repos-issues|repos/:o/:r/issues/:id" \
+	"$(label_row api 'repos/private-owner/private-repo/issues/42' --jq '.title')"
+assert_eq "explicit method and review family" "POST|repos-pulls|repos/:o/:r/pulls/:id/reviews" \
+	"$(label_row api --method post '/repos/{owner}/{repo}/pulls/7/reviews?per_page=1')"
+assert_eq "field implies POST" "POST|repos-issues|repos/:o/:r/issues/:id/comments" \
+	"$(label_row api -H 'Accept: x' 'repos/o/r/issues/9/comments' -f body=private-payload)"
+assert_eq "explicit method wins over fields" "PATCH|repos-issues|repos/:o/:r/issues/:id" \
+	"$(label_row api -X PATCH repos/o/r/issues/3 -F state=closed)"
+assert_eq "shorthand cluster consumes the method operand" "PATCH|repos-issues|repos/:o/:r/issues/:id" \
+	"$(label_row api -iX PATCH repos/o/r/issues/42)"
+assert_eq "attached cluster operand" "PATCH|repos-issues|repos/:o/:r/issues/:id" \
+	"$(label_row api -iXPATCH repos/o/r/issues/42)"
+assert_eq "cluster field implies POST" "POST|repos-issues|repos/:o/:r/issues/:id/comments" \
+	"$(label_row api repos/o/r/issues/9/comments -if body=x)"
+assert_eq "missing method operand stays unknown" "unknown|unknown|unknown" \
+	"$(label_row api repos/o/r/issues/42 --method)"
+assert_eq "missing header operand stays unknown" "unknown|unknown|unknown" \
+	"$(label_row api repos/o/r/issues/42 -H)"
+assert_eq "root classes" "GET|rate-limit|rate-limit" "$(label_row api rate_limit)"
+assert_eq "user family" "GET|users|user" "$(label_row api user)"
+assert_eq "permission family" "GET|repos-other|repos/:o/:r/collaborators/:u/permission" \
+	"$(label_row api repos/o/r/collaborators/someone/permission)"
+assert_eq "check runs keep the static family" "GET|repos-checks|repos/:o/:r/check-runs/:id" \
+	"$(label_row api repos/o/r/check-runs/11)"
+assert_eq "non-api command stays unknown" "unknown|unknown|unknown" "$(label_row pr view 5)"
+assert_eq "full URL stays unknown" "unknown|unknown|unknown" \
+	"$(label_row api 'https://api.github.com/repos/o/r/issues/1')"
+label_row api 'repos/private-owner/private-repo/issues/42' -f body=private-payload >/dev/null
+if grep -Eq 'private-owner|private-repo|private-payload' "$AIDEVOPS_GH_API_LOG"; then
+	echo "  FAIL: request labels exposed request text"
+	FAIL=$((FAIL + 1))
+else
+	echo "  PASS: request labels exclude request text"
+	PASS=$((PASS + 1))
+fi
+
 # --- Test 11c: exact-frame capture honours success-only quota costs ----------
 exact_success_result="$TMPDIR/exact-success.result"
 exact_failure_result="$TMPDIR/exact-failure.result"
@@ -601,6 +899,111 @@ assert_eq "exact successful frame records inferred quota" "1" \
 	"$(awk -F '\t' 'NR == 1 { print $7 }' "$exact_success_result")"
 assert_eq "exact failed frame leaves inferred quota unknown" "x" \
 	"$(awk -F '\t' 'NR == 1 { print $7 }' "$exact_failure_result")"
+gh_clear_log
+AIDEVOPS_GH_AUTH_FINGERPRINT="$pool_a" \
+	_ghqa_record_result_file "$exact_success_result" frame-metadata logical-frame 0
+assert_eq "header reset reaches attempt record with credential digest" "$pool_a:1800000000" \
+	"$(awk -F '\t' 'NR == 1 {print $20 ":" $21}' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "response used counter survives deferred log append" "10" \
+	"$(awk -F '\t' 'NR == 1 {print $22}' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "capture timestamp survives deferred log append" \
+	"$(awk -F '\t' 'NR == 1 {print $12}' "$exact_success_result")" \
+	"$(awk -F '\t' 'NR == 1 {print $1}' "$AIDEVOPS_GH_API_LOG")"
+gh_record_attempt rest timestamp-caller logical-ts captured-ts 1 0 success 200 1 1 gh-pat rest-core rest-selected 99 "$pool_a" 1800000000 "$fixture_minute"
+assert_eq "explicit captured time is not replaced by append time" "$fixture_minute" \
+	"$(awk -F '\t' '$11 == "captured-ts" {print $1}' "$AIDEVOPS_GH_API_LOG")"
+AIDEVOPS_GH_AUTH_FINGERPRINT="$pool_a" _ghqa_record_bootstrap success 1 0 1 99 1800000000 4901
+assert_eq "bootstrap preserves known reset metadata" "$pool_a:1800000000" \
+	"$(awk -F '\t' '$2 == "gh-quota-bootstrap" {print $20 ":" $21}' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "bootstrap preserves observed cumulative counter" "4901" \
+	"$(awk -F '\t' '$2 == "gh-quota-bootstrap" {print $22}' "$AIDEVOPS_GH_API_LOG")"
+
+# Incomplete response latency/remaining headers must not erase available quota
+# headers, nor turn unknown costs into claimed coverage (GH#36312).
+partial_result="$TMPDIR/partial-headers.result"
+partial_frames=$'frame\t1\t1\t200\tcore\t0\tx\t1800000000\tx\nframe\t2\t1\tx\tcore\t11\t4989\tx\tx'
+_ghqa_write_incomplete_frames "$partial_result" graphql 1 1 "$partial_frames" 25
+gh_clear_log
+AIDEVOPS_GH_AUTH_FINGERPRINT="$pool_a" \
+	_ghqa_record_result_file "$partial_result" partial-headers logical-partial 0
+assert_eq "partial REST frame preserves zero used and reset despite missing other headers" \
+	"rest:rest-core:$pool_a:1800000000:0" \
+	"$(awk -F '\t' 'NR == 1 { print $3 ":" $5 ":" $20 ":" $21 ":" $22 }' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "partial frame with no reset preserves used without inventing reset" \
+	":11" "$(awk -F '\t' 'NR == 2 { print $21 ":" $22 }' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "both partial-frame costs remain unknown" "2" \
+	"$(awk -F '\t' '$17 == "" { n++ } END { print n+0 }' "$AIDEVOPS_GH_API_LOG")"
+
+# Request labels travel from private debug capture through the real row writers.
+request_debug="$TMPDIR/request-labels.debug"
+python3 - "$request_debug" <<'PY_REQUEST_LABELS'
+import sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(
+    "* Request at 2026-11-05 12:00:00 +0000\n"
+    "> PATCH /repos/private-owner/private-repo/issues/123?token=private-value HTTP/1.1\n"
+    "> Authorization: private-value\n"
+    "< HTTP/1.1 200 OK\n"
+    "< X-Ratelimit-Resource: core\n"
+    "< X-Ratelimit-Used: 1\n"
+    "< X-Ratelimit-Remaining: 4999\n"
+    "< X-Ratelimit-Reset: 1800000000\n"
+    "* Request took 1ms\n"
+)
+PY_REQUEST_LABELS
+request_parsed=$(python3 "$PARENT_DIR/gh-quota-debug-filter.py" "$request_debug")
+assert_eq "debug parser emits only bounded request labels" "PATCH:repos-issues" \
+	"$(printf '%s\n' "$request_parsed" | awk -F '\t' '$1 == "frame" {print $11 ":" $12}')"
+assert_eq "request metadata does not invalidate complete response" "0" \
+	"$(
+		_ghqa_capture_frames_valid "$request_parsed" 1
+		printf '%s' "$?"
+	)"
+request_result="$TMPDIR/request-labels.result"
+_ghqa_write_complete_frames "$request_result" "$exact_success_state" rest 1 0 "$request_parsed" gh api repos/example/example/issues
+gh_clear_log
+_ghqa_record_result_file "$request_result" request-labels logical-labels 0
+assert_eq "complete attempt retains method and endpoint class" "PATCH:repos-issues" \
+	"$(awk -F '\t' 'NR == 1 {print $23 ":" $24}' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "native frame family reaches appended column 25" "repos/:o/:r/issues/:id" \
+	"$(awk -F '\t' 'NR == 1 {print $25}' "$AIDEVOPS_GH_API_LOG")"
+request_partial="$TMPDIR/request-partial.result"
+_ghqa_write_incomplete_frames "$request_partial" rest 1 1 "$request_parsed" 1
+_ghqa_record_result_file "$request_partial" request-partial logical-partial-labels 0
+assert_eq "incomplete attempt retains labels without claiming cost" ":PATCH:repos-issues" \
+	"$(awk -F '\t' 'NR == 2 {print $17 ":" $23 ":" $24}' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "partial native frame retains sanitized family" "repos/:o/:r/issues/:id" \
+	"$(awk -F '\t' 'NR == 2 {print $25}' "$AIDEVOPS_GH_API_LOG")"
+gh_record_attempt rest unsafe-labels unsafe-labels unsafe-labels 1 0 success 200 1 1 gh-pat rest-core selected 99 "" "" "" "" "private-method" "/repos/private-owner/private-repo"
+assert_eq "append boundary rejects arbitrary request text" "unknown:unknown" \
+	"$(awk -F '\t' 'NR == 3 {print $23 ":" $24}' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "private request text never reaches attempt rows" "0" \
+	"$(awk '/private-owner|private-repo|private-value|private-method/ {n++} END {print n+0}' "$AIDEVOPS_GH_API_LOG")"
+python3 - "$PARENT_DIR" "$request_debug" <<'PY_REQUEST_AMBIGUITY'
+import runpy
+import subprocess
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+parser = str(Path(sys.argv[1]) / "gh-quota-debug-filter.py")
+_request_metadata = runpy.run_path(parser)["_request_metadata"]
+start = b"* Request at 2026-11-05 12:00:00 +0000\n"
+request = b"> GET /repos/secret/secret/actions/runs/123?secret=value HTTP/2.0\n"
+assert _request_metadata([start, request]) == ("GET", "repos-actions", "repos/:o/:r/actions/:id")
+assert _request_metadata([start, start, request]) == ("unknown",) * 3
+assert _request_metadata([request]) == ("unknown",) * 3
+assert _request_metadata([start, b"> SECRET /secret HTTP/1.1\n"]) == ("unknown",) * 3
+end = b"* Request took 1ms\n"
+for stream in (
+    start + request + start + request + end + start + request + end + end,
+    start + request,
+):
+    Path(sys.argv[2]).write_bytes(stream)
+    output = subprocess.check_output([sys.executable, parser, sys.argv[2]], text=True)
+    rows = [line.split("\t") for line in output.splitlines() if line.startswith("frame\t")]
+    assert rows and all(row[10:] == ["unknown"] * 3 for row in rows)
+PY_REQUEST_AMBIGUITY
+assert_eq "ambiguous and unsupported request lines stay unknown" "0" "$?"
 
 # --- Test 11d: successful native multi-frame REST costs are exact -----------
 native_multi_result="$TMPDIR/native-multi.result"
@@ -613,6 +1016,12 @@ _ghqa_write_complete_frames "$native_multi_result" "$native_multi_state" graphql
 assert_eq "native multi-frame REST pages retain separate exact attempts" \
 	"rest:1:success:1,rest:2:success:1,rest:3:success:1" \
 	"$(awk -F '\t' '{ value = value (value ? "," : "") $2 ":" $3 ":" $4 ":" $7 } END { print value }' "$native_multi_result")"
+gh_clear_log
+AIDEVOPS_GH_AUTH_FINGERPRINT="$pool_a" \
+	_ghqa_record_result_file "$native_multi_result" native-multi logical-native-multi 2
+assert_eq "every native page retains its own counter and retry index" \
+	"1:2:500,2:2:501,3:2:502" \
+	"$(awk -F '\t' '{ value = value (value ? "," : "") $12 ":" $13 ":" $22 } END { print value }' "$AIDEVOPS_GH_API_LOG")"
 
 native_single_result="$TMPDIR/native-single.result"
 native_single_state="$TMPDIR/native-single.state"
@@ -646,6 +1055,12 @@ _ghqa_write_complete_frames "$native_conditional_result" "$native_conditional_st
 assert_eq "native conditional REST response preserves exact zero cost" \
 	"rest:1:success:0,rest:2:success:1" \
 	"$(awk -F '\t' '{ value = value (value ? "," : "") $2 ":" $3 ":" $4 ":" $7 } END { print value }' "$native_conditional_result")"
+gh_clear_log
+AIDEVOPS_GH_AUTH_FINGERPRINT="$pool_a" \
+	_ghqa_record_result_file "$native_conditional_result" native-conditional logical-conditional 0
+assert_eq "conditional cost stays zero while cumulative used remains available" \
+	"0:500,1:501" \
+	"$(awk -F '\t' '{ value = value (value ? "," : "") $17 ":" $22 } END { print value }' "$AIDEVOPS_GH_API_LOG")"
 
 native_mixed_result="$TMPDIR/native-mixed.result"
 native_mixed_state="$TMPDIR/native-mixed.state"
@@ -881,11 +1296,20 @@ assert_eq "concurrent attempt IDs remain unique" "12" "$(cut -f11 "$AIDEVOPS_GH_
 SHIM_FIXTURE="$TMPDIR/shim-fixture"
 NATIVE_FIXTURE="$TMPDIR/native-fixture"
 mkdir -p "$SHIM_FIXTURE" "$NATIVE_FIXTURE"
+# Keep the isolated native-gh PATH usable on systems (including Nix) whose
+# standard tools do not live in /usr/bin or /bin. Never expose the real gh.
+for fixture_tool in bash cat dd dirname basename date awk sed grep tr mktemp mkdir chmod rm rmdir uname jq cut sort wc sleep stat ps flock python3 shasum sha256sum openssl; do
+	fixture_tool_path=$(command -v "$fixture_tool" || true)
+	if [[ -n "$fixture_tool_path" ]]; then
+		ln -s "$fixture_tool_path" "$NATIVE_FIXTURE/$fixture_tool"
+	fi
+done
 cp "${PARENT_DIR}/gh" "$SHIM_FIXTURE/gh"
 cp "${PARENT_DIR}/gh-native-transport-lib.sh" "$SHIM_FIXTURE/gh-native-transport-lib.sh"
 cp "${PARENT_DIR}/gh-api-guards-lib.sh" "$SHIM_FIXTURE/gh-api-guards-lib.sh"
 cp "${PARENT_DIR}/managed-label-provisioning-lib.sh" "$SHIM_FIXTURE/managed-label-provisioning-lib.sh"
 cp "${PARENT_DIR}/gh-write-policy-lib.sh" "$SHIM_FIXTURE/gh-write-policy-lib.sh"
+cp "${PARENT_DIR}/gh-closing-reference-lib.sh" "$SHIM_FIXTURE/gh-closing-reference-lib.sh"
 cp "${PARENT_DIR}/gh-api-instrument.sh" "$SHIM_FIXTURE/gh-api-instrument.sh"
 cp "${PARENT_DIR}/gh-rest-pagination-lib.sh" "$SHIM_FIXTURE/gh-rest-pagination-lib.sh"
 chmod +x "$SHIM_FIXTURE/gh"
@@ -1033,6 +1457,13 @@ PATH="$NATIVE_FIXTURE:/usr/bin:/bin" NATIVE_AUTH_TOKEN_STATUS=23 \
 auth_token_failure_status=$?
 set -e
 assert_eq "local auth token preserves native failure status" "23" "$auth_token_failure_status"
+# t19021: the auth exec must not strand per-invocation attempt state.
+auth_attempt_temp="$TMPDIR/auth-attempt-temp"
+mkdir -p "$auth_attempt_temp"
+PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_TEMP_DIR="$auth_attempt_temp" \
+	"$SHIM_FIXTURE/gh" auth token >/dev/null 2>/dev/null
+assert_eq "local auth token leaves no request-attempt scratch" "0" \
+	"$(find "$auth_attempt_temp" -name 'gh-request-attempts.*' | wc -l | tr -d ' ')"
 
 # Credential-mutating auth commands must bypass transport framing too. This
 # keeps device-flow prompts and Keychain writes under native gh control.
@@ -1306,6 +1737,51 @@ PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
 	bash -euo pipefail "$SHIM_FIXTURE/parent-caller.sh"
 assert_eq "interpreter flags preserve framework caller attribution" "2" "$(awk -F'\t' '$9 == "attempt" && $2 == "parent-caller.sh" { count++ } END { print count + 0 }' "$AIDEVOPS_GH_API_LOG")"
 
+# Pulse repository auth re-enters the shim through a python3 resolver hop
+# (`github_auth_runtime.py exec-gh <shim> ...`). Attribution must walk past that
+# exact hop to the framework caller instead of falling back to gh_api_rest.
+cat >"$SHIM_FIXTURE/github_auth_runtime.py" <<'EOF_AUTH_HOP'
+import pathlib
+import subprocess
+import sys
+
+sys.exit(subprocess.call([str(pathlib.Path(sys.argv[2]).resolve()), *sys.argv[3:]]))
+EOF_AUTH_HOP
+cat >"$SHIM_FIXTURE/auth-hop-caller.sh" <<'EOF_AUTH_HOP_CALLER'
+#!/usr/bin/env bash
+python3 "$AUTH_HOP_FIXTURE" exec-gh "$GH_SHIM_FIXTURE" api '/repos/private-owner/private-repo/issues?per_page=100' --paginate >/dev/null
+EOF_AUTH_HOP_CALLER
+chmod +x "$SHIM_FIXTURE/auth-hop-caller.sh"
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_PAGINATED_RESPONSE=1 \
+	GH_SHIM_FIXTURE="$SHIM_FIXTURE/gh" \
+	AUTH_HOP_FIXTURE="$SHIM_FIXTURE/github_auth_runtime.py" \
+	bash "$SHIM_FIXTURE/auth-hop-caller.sh"
+assert_eq "pulse auth resolver hop preserves framework caller attribution" "2" "$(awk -F'\t' '$9 == "attempt" && $2 == "auth-hop-caller.sh" { count++ } END { print count + 0 }' "$AIDEVOPS_GH_API_LOG")"
+
+# Keep the caller outside the spaced directory to isolate resolver recognition.
+spaced_shim_fixture="$TMPDIR/shim fixture with spaces"
+cp -R "$SHIM_FIXTURE" "$spaced_shim_fixture"
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_PAGINATED_RESPONSE=1 \
+	GH_SHIM_FIXTURE="$spaced_shim_fixture/gh" \
+	AUTH_HOP_FIXTURE="$spaced_shim_fixture/github_auth_runtime.py" \
+	bash "$SHIM_FIXTURE/auth-hop-caller.sh"
+assert_eq "spaced resolver path preserves framework caller attribution" "2" "$(awk -F'\t' '$9 == "attempt" && $2 == "auth-hop-caller.sh" { count++ } END { print count + 0 }' "$AIDEVOPS_GH_API_LOG")"
+
+# Match the real auth runtime's resolved child path through a directory alias.
+symlink_shim_fixture="$TMPDIR/symlink shim with spaces"
+ln -s "$SHIM_FIXTURE" "$symlink_shim_fixture"
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_PAGINATED_RESPONSE=1 \
+	GH_SHIM_FIXTURE="$symlink_shim_fixture/gh" \
+	AUTH_HOP_FIXTURE="$symlink_shim_fixture/github_auth_runtime.py" \
+	bash "$SHIM_FIXTURE/auth-hop-caller.sh"
+assert_eq "spaced directory symlink preserves framework caller attribution" "2" "$(awk -F'\t' '$9 == "attempt" && $2 == "auth-hop-caller.sh" { count++ } END { print count + 0 }' "$AIDEVOPS_GH_API_LOG")"
+
 # --- Test 16: managed scratch cleanup is owner-aware and exact ---------------
 scratch_fixture="$TMPDIR/managed-scratch"
 mkdir -p "$scratch_fixture"
@@ -1365,10 +1841,12 @@ kill_bin="$scratch_fixture/kill-bin"
 aggregate_marker="$scratch_fixture/aggregate-killed.marker"
 aggregate_owner_pid_file="$scratch_fixture/aggregate-owner.pid"
 mkdir -p "$kill_bin"
+GH_API_NATIVE_CP=$(command -v cp)
+export GH_API_NATIVE_CP
 cat >"$kill_bin/cp" <<'EOF_KILL_CP'
 #!/usr/bin/env bash
 set -euo pipefail
-/bin/cp "$@"
+"$GH_API_NATIVE_CP" "$@"
 printf 'ready\n' >"$GH_API_KILL_MARKER"
 kill -KILL "$PPID"
 exit 137

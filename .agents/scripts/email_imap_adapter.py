@@ -77,7 +77,7 @@ def _get_password():
     password = os.environ.get("IMAP_PASSWORD", "")
     if not password:
         print("ERROR: IMAP_PASSWORD environment variable not set", file=sys.stderr)
-        print("Set it via: IMAP_PASSWORD=$(gopass show -o email-imap-account) python3 ...",
+        print("Set it via: IMAP_PASSWORD=$(gopass show -o aidevops/EMAIL_IMAP_<ACCOUNT>) python3 ...",
               file=sys.stderr)
         sys.exit(1)
     return password

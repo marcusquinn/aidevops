@@ -467,6 +467,23 @@ _validate_and_normalize_args() {
 	return 0
 }
 
+# _warn_interactive_scope_missing_paths — GH#38978: warn (never fail) about
+# literal Files Scope paths missing from the default branch and not declared
+# `NEW: path`. The author can still correct a wrong path; a worker reads it as
+# an instruction to create the file (GH#38966).
+_warn_interactive_scope_missing_paths() {
+	local body="$1"
+	local missing_path="" missing_paths=""
+	declare -F _brief_files_scope_missing_paths >/dev/null 2>&1 || return 0
+	missing_paths=$(_brief_files_scope_missing_paths "$body" "$REPO_PATH") || missing_paths=""
+	while IFS= read -r missing_path; do
+		[[ -n "$missing_path" ]] || continue
+		log_warn "Files Scope path not on the default branch: ${missing_path}"
+		log_warn "  if intentionally new, declare \`NEW: ${missing_path}\` under ### Files to Modify; otherwise correct it"
+	done <<<"$missing_paths"
+	return 0
+}
+
 # _validate_interactive_dispatch_scope — fail before allocation when an
 # interactive session files auto-dispatch work without a canonical Files Scope.
 # An explicit pending hold withholds auto-dispatch from the created issue
@@ -484,6 +501,9 @@ _validate_interactive_dispatch_scope() {
 	local fmt_helper="${SCRIPT_DIR}/issue-body-format-helper.sh"
 	local body="$TASK_DESCRIPTION" normalized=""
 	[[ -r "$scope_lib" ]] || return 0
+	if [[ -n "$TASK_BRIEF_FILE" && -f "$TASK_BRIEF_FILE" && -r "$TASK_BRIEF_FILE" ]]; then
+		body+=$'\n\n'"$(<"$TASK_BRIEF_FILE")"
+	fi
 	# shellcheck source=./pre-dispatch-validator-lib-brief-scope.sh
 	# shellcheck disable=SC1091
 	source "$scope_lib"
@@ -492,7 +512,10 @@ _validate_interactive_dispatch_scope() {
 		normalized=$("$fmt_helper" normalize "$body" 2>/dev/null) && body="$normalized"
 	fi
 	_brief_requires_files_scope "$body" 1 || return 0
-	_brief_files_scope_has_path "$body" && return 0
+	if _brief_files_scope_has_path "$body"; then
+		_warn_interactive_scope_missing_paths "$body"
+		return 0
+	fi
 
 	log_error "auto-dispatch brief has no canonical Files Scope; add before claiming:"
 	log_error "  ### Files Scope"
@@ -935,7 +958,7 @@ check_framework_routing() {
 	# Check if we're already in the aidevops repo — no routing needed
 	local remote_url
 	remote_url=$(git -C "$repo_path" remote get-url origin 2>/dev/null || echo "")
-	if printf '%s' "$remote_url" | grep -qE "marcusquinn/aidevops(\.git)?$"; then
+	if grep -qE "marcusquinn/aidevops(\.git)?$" <<<"$remote_url"; then
 		return 0
 	fi
 
@@ -1387,6 +1410,29 @@ _main_create_issues() {
 	return 0
 }
 
+# t19157: an interactive OpenCode session watches the issues it files, so a
+# worker on any runner picking them up, blocking or finishing reaches it over
+# the session bus (reference/session-bus.md "Issue watches"). Best effort: 5 s
+# per watch, silent; the bus CLI refuses headless and presence-less sessions.
+_main_watch_created_issues() {
+	local platform="$1"
+	local issue_nums_csv="$2"
+	local slug="" helper="${AIDEVOPS_SESSION_BUS_HELPER:-${SCRIPT_DIR}/session-bus-helper.sh}" num
+	case "$platform" in
+	github) ;;
+	*) return 0 ;;
+	esac
+	[[ -n "${AIDEVOPS_OPENCODE_SESSION_ID:-${OPENCODE_SESSION_ID:-}}" && -x "$helper" ]] || return 0
+	slug="${CLAIM_VERIFIED_TARGET:-$(_extract_github_slug "$REPO_PATH" "$REMOTE_NAME" 2>/dev/null || true)}"
+	[[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 0
+	local IFS=','
+	for num in $issue_nums_csv; do
+		[[ "$num" =~ ^[0-9]+$ ]] || continue
+		timeout_sec 5 "$helper" watch-issue "${slug}#${num}" --new >/dev/null 2>&1 || true
+	done
+	return 0
+}
+
 # Emit machine-readable output lines to stdout.
 _main_output_results() {
 	local first_id="$1"
@@ -1489,7 +1535,7 @@ _pc_sanitize_keywords() {
 	local w
 	for w in "${kw[@]}"; do
 		printf '%s\t%s\n' "${#w}" "$w"
-	done | sort -k1,1nr | head -n 4 | cut -f2-
+	done | sort -k1,1nr | sed -n '1,4p' | cut -f2-
 	return 0
 }
 
@@ -1852,7 +1898,7 @@ _warn_dispatch_path_auto_dispatch() {
 	local _matched=""
 	local _p
 	for _p in "${_patterns[@]}"; do
-		if printf '%s' "$_combined" | grep -qF "$_p"; then
+		if grep -qF "$_p" <<<"$_combined"; then
 			_matched="$_p"
 			break
 		fi
@@ -2061,7 +2107,7 @@ main() {
 	alloc_output=$(_main_resolve_allocation) || alloc_rc=$?
 
 	# Dry-run paths print directly and return early
-	if echo "$alloc_output" | grep -q "^task_id=tDRY_RUN"; then
+	if grep -q "^task_id=tDRY_RUN" <<<"$alloc_output"; then
 		echo "$alloc_output"
 		[[ -z "$CLAIM_VERIFIED_TARGET" ]] || printf 'target_repo=%s\n' "$CLAIM_VERIFIED_TARGET"
 		return $alloc_rc
@@ -2101,6 +2147,7 @@ main() {
 			_issue_nums_csv) _issue_nums_csv="$issue_value" ;;
 			esac
 		done <<<"$issue_output"
+		_main_watch_created_issues "$platform" "$_issue_nums_csv"
 	fi
 
 	# --- Output machine-readable results ---

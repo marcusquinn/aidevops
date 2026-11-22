@@ -70,6 +70,83 @@ test_resolve_clamps_to_anthropic_limit() {
 	return 0
 }
 
+# Write a minimal PNG signature + IHDR header. Args: $1=path $2=width-bytes $3=height-bytes (octal escapes).
+_write_png_header() {
+	local path="$1"
+	local width_bytes="$2"
+	local height_bytes="$3"
+	# shellcheck disable=SC2059 # octal escapes are the intended format input
+	printf "\\211PNG\\r\\n\\032\\n\\000\\000\\000\\015IHDR${width_bytes}${height_bytes}\\010\\006\\000\\000\\000" >"$path"
+	return 0
+}
+
+# GH#39031: run the real guardrail with a PATH that has od/tr but no sips/magick.
+_guardrail_without_resize_tool() {
+	local tmp_dir="$1"
+	local max_dim="$2"
+	local original_path="$PATH"
+	local tool="" rc=0
+	mkdir -p "${tmp_dir}/bin"
+	for tool in od tr; do
+		[[ -e "${tmp_dir}/bin/${tool}" ]] || ln -s "$(command -v "$tool")" "${tmp_dir}/bin/${tool}"
+	done
+	PATH="${tmp_dir}/bin"
+	enforce_screenshot_size_guardrails "$tmp_dir" "$max_dim" >/dev/null 2>&1 || rc=$?
+	PATH="$original_path"
+	return "$rc"
+}
+
+test_guardrail_without_resize_tool() {
+	local tmp_dir result=0
+	tmp_dir=$(mktemp -d)
+	_write_png_header "${tmp_dir}/fits.png" '\000\000\005\240' '\000\000\003\204'
+	[[ "$(_png_header_dimensions "${tmp_dir}/fits.png")" == "1440 900" ]] || result=1
+	_guardrail_without_resize_tool "$tmp_dir" 1568 || result=1
+	print_result "guardrail passes a fitting PNG without sips or magick" "$result"
+
+	result=0
+	if _guardrail_without_resize_tool "$tmp_dir" 800; then result=1; fi
+	print_result "guardrail fails when a resize is needed and no tool exists" "$result"
+
+	result=0
+	rm -f "${tmp_dir}/fits.png"
+	printf 'not a png' >"${tmp_dir}/broken.png"
+	if _guardrail_without_resize_tool "$tmp_dir" 1568; then result=1; fi
+	print_result "guardrail fails on an unreadable PNG header without a tool" "$result"
+
+	rm -rf "$tmp_dir"
+	return 0
+}
+
+test_screenshot_file_stem() {
+	local script_dir result=0
+	script_dir=$(mktemp -d)
+	_generate_screenshot_script "${script_dir}/screenshot.mjs" "$(js_escape_string "http://127.0.0.1:8080")" \
+		"{name:'desktop',width:1440,height:900}" "'/'" "$script_dir" 30000 false true
+	node --check "${script_dir}/screenshot.mjs" || result=1
+	node - "${script_dir}/screenshot.mjs" <<'JS' || result=1
+const fs = require('node:fs');
+const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
+const source = fs.readFileSync(process.argv[2], 'utf8');
+const body = source.slice(source.indexOf('function fileStem('), source.indexOf('\n}\n', source.indexOf('function fileStem(')) + 2);
+const fileStem = new Function('createHash', `${body}\nreturn fileStem;`)(createHash);
+assert.equal(fileStem('/'), 'index');
+assert.equal(fileStem('/about/team'), 'about_team');
+const longA = fileStem(`/?q=${'x'.repeat(1500)}`);
+const longB = fileStem(`/?q=${'x'.repeat(1500)}y`);
+for (const stem of [longA, longB, fileStem('/search?q=a b&c=%20')]) {
+  assert.match(stem, /^[A-Za-z0-9._-]+$/);
+  assert.ok(Buffer.byteLength(stem) <= 89, stem);
+}
+assert.notEqual(longA, longB);
+assert.equal(fileStem('/search?q=1'), fileStem('/search?q=1'));
+JS
+	rm -rf "$script_dir"
+	print_result "screenshot filenames are safe, bounded and distinct" "$result"
+	return 0
+}
+
 test_guardrail_resizes_oversized_images() {
 	local tmp_dir original_path
 	tmp_dir=$(mktemp -d)
@@ -383,6 +460,7 @@ JS
 	node_path=$(command -v node)
 	local runtime_env=(
 		AIDEVOPS_PLAYWRIGHT_MODULE=""
+		AIDEVOPS_PLAYWRIGHT_EXECUTABLE=""
 		AIDEVOPS_PLAYWRIGHT_BROWSER="chromium"
 		AIDEVOPS_PLAYWRIGHT_RUNTIME_DIR="$runtime_dir"
 		FAKE_PLAYWRIGHT_BROWSER="$browser_path"
@@ -403,6 +481,34 @@ JS
 		print_result "runtime resolves setup-owned prefix without npx" 0
 	else
 		print_result "runtime resolves setup-owned prefix without npx" 1 "resolved=${resolved:-none}, runtime_check=${check_ok}, stale_detected=${stale_ok}"
+	fi
+
+	# GH#36181: with bundled Chromium removed, a valid configured executable
+	# satisfies readiness; unset, invalid or stale-pin cases do not.
+	# GH#36325: clear the bundled-browser override and isolate persisted settings.
+	local missing_env=("${runtime_env[@]}" FAKE_PLAYWRIGHT_BROWSER="${tmp_dir}/removed-chromium" AIDEVOPS_PLAYWRIGHT_VERSION="9.9.9" \
+		AIDEVOPS_PLAYWRIGHT_BROWSER="" AIDEVOPS_SETTINGS_FILE="${tmp_dir}/no-settings.json")
+	local configured_ok=0 unset_ok=0 invalid_ok=0 configured_stale_ok=0 configured_status=""
+	if configured_status=$(cd "${tmp_dir}/isolated" && env "${missing_env[@]}" AIDEVOPS_PLAYWRIGHT_EXECUTABLE="$browser_path" \
+		node "$PLAYWRIGHT_RUNTIME" runtime-check) &&
+		[[ "$configured_status" == *"\"configuredExecutable\":\"${browser_path}\""* ]]; then
+		configured_ok=1
+	fi
+	if ! (cd "${tmp_dir}/isolated" && env "${missing_env[@]}" node "$PLAYWRIGHT_RUNTIME" runtime-check >/dev/null); then
+		unset_ok=1
+	fi
+	if ! (cd "${tmp_dir}/isolated" && env "${missing_env[@]}" AIDEVOPS_PLAYWRIGHT_EXECUTABLE="${tmp_dir}" \
+		node "$PLAYWRIGHT_RUNTIME" runtime-check >/dev/null); then
+		invalid_ok=1
+	fi
+	if ! (cd "${tmp_dir}/isolated" && env "${missing_env[@]}" AIDEVOPS_PLAYWRIGHT_EXECUTABLE="$browser_path" \
+		AIDEVOPS_PLAYWRIGHT_VERSION="9.9.10" node "$PLAYWRIGHT_RUNTIME" runtime-check >/dev/null); then
+		configured_stale_ok=1
+	fi
+	if [[ "$configured_ok" -eq 1 && "$unset_ok" -eq 1 && "$invalid_ok" -eq 1 && "$configured_stale_ok" -eq 1 ]]; then
+		print_result "runtime-check accepts a valid configured executable" 0
+	else
+		print_result "runtime-check accepts a valid configured executable" 1 "configured=${configured_ok}, unset=${unset_ok}, invalid=${invalid_ok}, stale=${configured_stale_ok}"
 	fi
 
 	rm -rf "$tmp_dir"
@@ -454,6 +560,20 @@ JS
 	return 0
 }
 
+test_frames_arguments() {
+	local result=0 output
+	output=$(cmd_frames --help) || result=1
+	[[ "$output" == *"Frames-specific Options"* ]] || result=1
+	if cmd_frames >/dev/null 2>&1; then result=1; fi
+	if cmd_frames --url >/dev/null 2>&1; then result=1; fi
+	if cmd_frames --url http://localhost --measure-file "$SCRIPT_DIR" >/dev/null 2>&1; then result=1; fi
+	if cmd_frames --url http://localhost --measure-file "$HELPER" --format invalid >/dev/null 2>&1; then result=1; fi
+	if cmd_frames --url http://localhost --measure-file "$HELPER" --no-after --after-selector body >/dev/null 2>&1; then result=1; fi
+	if cmd_frames --unknown value >/dev/null 2>&1; then result=1; fi
+	print_result "frames: help and argument validation" "$result"
+	return 0
+}
+
 main() {
 	# Source after function declarations so helper functions are available here.
 	# main() in helper is guarded and will not auto-run when sourced.
@@ -467,6 +587,9 @@ main() {
 	test_resolve_default_max_dim
 	test_resolve_invalid_max_dim_falls_back
 	test_resolve_clamps_to_anthropic_limit
+	# Before the stubbing tests below: these exercise the real image functions.
+	test_guardrail_without_resize_tool
+	test_screenshot_file_stem
 	test_guardrail_resizes_oversized_images
 	test_guardrail_fails_hard_limit_violation
 
@@ -480,6 +603,7 @@ main() {
 	test_stability_unknown_option_rejected
 	test_journey_requires_config_and_environment
 	test_journey_runner_syntax
+	test_frames_arguments
 	test_stability_script_generation
 	test_generated_page_urls
 	test_format_stability_markdown_stable

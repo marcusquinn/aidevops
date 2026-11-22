@@ -21,8 +21,32 @@ readonly USAGE_COMMAND_OPTIONS="Usage: $0 <command> [options]"
 
 # Common constants
 
-CONFIG_FILE="../configs/spaceship-config.json"
-API_BASE_URL="https://api.spaceship.com/v1"
+# Optional JSON fallback, resolved from the script directory (not the caller's cwd)
+# Default: repository-root configs/ (documented); falls back to .agents/configs/.
+CONFIG_FILE="${SPACESHIP_CONFIG_FILE:-${SCRIPT_DIR}/../../configs/spaceship-config.json}"
+if [[ -z "${SPACESHIP_CONFIG_FILE:-}" && ! -f "$CONFIG_FILE" && -f "${SCRIPT_DIR}/../configs/spaceship-config.json" ]]; then
+    CONFIG_FILE="${SCRIPT_DIR}/../configs/spaceship-config.json"
+fi
+# Official docs: https://docs.spaceship.dev/ (auth: X-API-Key + X-API-Secret headers)
+API_BASE_URL="${SPACESHIP_API_BASE_URL:-https://spaceship.dev/api/v1}"
+
+# jq filters for the availability response (result + premiumPricing)
+readonly JQ_IS_AVAILABLE='if .result == "available" then "true" else "false" end'
+readonly JQ_REGISTER_PRICE='(.premiumPricing // []) | map(select(.operation == "register")) | .[0] | if . then "\(.price) \(.currency)" else "N/A" end'
+
+# Endpoint path builders: domain_endpoint <domain> [suffix], dns_endpoint <domain>
+domain_endpoint() {
+    local domain="$1"
+    local suffix="${2:-}"
+    printf '%s/%s%s' "$DOMAINS_ENDPOINT" "$domain" "$suffix"
+    return 0
+}
+
+dns_endpoint() {
+    local domain="$1"
+    printf 'dns/records/%s' "$domain"
+    return 0
+}
 
 # Check dependencies
 check_dependencies() {
@@ -41,111 +65,143 @@ check_dependencies() {
     return 0
 }
 
-# Load configuration
-load_config() {
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        print_error "$ERROR_CONFIG_NOT_FOUND"
-        print_info "Copy and customize: cp ../configs/spaceship-config.json.txt $CONFIG_FILE"
-        exit 1
-    fi
-
-    if ! jq empty "$CONFIG_FILE" 2>/dev/null; then
-        print_error "$ERROR_INVALID_JSON"
-        exit 1
-    fi
-
+# Normalise an account name to an env-var segment (e.g. my-acct -> MY_ACCT)
+account_env_segment() {
+    local account_name="$1"
+    printf '%s' "$account_name" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9' '_'
     return 0
 }
 
-# Get account configuration
-get_account_config() {
-    local account_name="$command"
-    
-    if [[ -z "$account_name" ]]; then
-        print_error "$ERROR_ACCOUNT_REQUIRED"
-        list_accounts
-        exit 1
+# Resolve credentials for an account into SPACESHIP_RESOLVED_KEY / _SECRET.
+# Order: env (aidevops secret injection) SPACESHIP_<ACCOUNT>_API_KEY/_API_SECRET,
+# then SPACESHIP_API_KEY/_API_SECRET, then the JSON config file fallback.
+# Values are never printed.
+resolve_credentials() {
+    local account_name="$1"
+    local seg key_var secret_var
+    seg=$(account_env_segment "$account_name")
+    key_var="SPACESHIP_${seg}_API_KEY"
+    secret_var="SPACESHIP_${seg}_API_SECRET"
+
+    SPACESHIP_RESOLVED_KEY="${!key_var:-${SPACESHIP_API_KEY:-}}"
+    SPACESHIP_RESOLVED_SECRET="${!secret_var:-${SPACESHIP_API_SECRET:-}}"
+
+    if [[ -z "$SPACESHIP_RESOLVED_KEY" || -z "$SPACESHIP_RESOLVED_SECRET" ]] && [[ -f "$CONFIG_FILE" ]]; then
+        local cfg
+        cfg=$(jq -c ".accounts.\"$account_name\" // empty" "$CONFIG_FILE" 2>/dev/null || true)
+        if [[ -n "$cfg" ]]; then
+            [[ -n "$SPACESHIP_RESOLVED_KEY" ]] || SPACESHIP_RESOLVED_KEY=$(printf '%s' "$cfg" | jq -r '.api_key // empty')
+            [[ -n "$SPACESHIP_RESOLVED_SECRET" ]] || SPACESHIP_RESOLVED_SECRET=$(printf '%s' "$cfg" | jq -r '.api_secret // empty')
+        fi
     fi
-    
-    local account_config
-    account_config=$(jq -r ".accounts.\"$account_name\"" "$CONFIG_FILE")
-    if [[ "$account_config" == "null" ]]; then
-        print_error "Account '$account_name' not found in configuration"
-        list_accounts
-        exit 1
+
+    if [[ -z "$SPACESHIP_RESOLVED_KEY" || -z "$SPACESHIP_RESOLVED_SECRET" ]]; then
+        print_error "No Spaceship credentials for account '$account_name'" >&2
+        print_info "Run via: aidevops secret ${key_var} ${secret_var} -- $0 <command> ..." >&2
+        print_info "Or provide the JSON config fallback: $CONFIG_FILE" >&2
+        return 1
     fi
-    
-    echo "$account_config"
     return 0
 }
 
-# Make API request
+# Make API request. Sends X-API-Key / X-API-Secret via curl stdin config so
+# credentials never appear in argv or output. Prints the response body;
+# returns 1 on non-2xx. Set SPACESHIP_DRY_RUN=1 to print non-GET requests only.
 api_request() {
-    local account_name="$command"
-    local method="$account_name"
-    local endpoint="$target"
-    local data="$options"
-    
-    local config
-    config=$(get_account_config "$account_name")
-    local api_key
-    api_key=$(echo "$config" | jq -r '.api_key')
-    local api_secret
-    api_secret=$(echo "$config" | jq -r '.api_secret')
-    
-    if [[ "$api_key" == "null" || "$api_secret" == "null" ]]; then
-        print_error "Invalid API credentials for account '$account_name'"
-        exit 1
-    fi
-    
-    local auth_header="$AUTH_HEADER_PREFIX $api_key"
+    local account_name="$1"
+    local method="$2"
+    local endpoint="$3"
+    local data="${4:-}"
     local url="$API_BASE_URL/$endpoint"
-    
-    if [[ "$method" == "GET" ]]; then
-        curl -s -H "$auth_header" -H "$CONTENT_TYPE_JSON" "$url"
-    elif [[ "$method" == "POST" ]]; then
-        curl -s -X POST -H "$auth_header" -H "$CONTENT_TYPE_JSON" -d "$data" "$url"
-    elif [[ "$method" == "PUT" ]]; then
-        curl -s -X PUT -H "$auth_header" -H "$CONTENT_TYPE_JSON" -d "$data" "$url"
-    elif [[ "$method" == "DELETE" ]]; then
-        curl -s -X DELETE -H "$auth_header" -H "$CONTENT_TYPE_JSON" "$url"
+
+    if [[ "${SPACESHIP_DRY_RUN:-0}" == "1" && "$method" != "GET" ]]; then
+        print_info "[dry-run] $method $url" >&2
+        if [[ -n "$data" ]]; then
+            printf '%s\n' "$data" | jq '.' >&2
+        fi
+        return 0
     fi
-    return 0
+
+    resolve_credentials "$account_name" || return 1
+
+    local body_file
+    body_file=$(mktemp) || return 1
+    local header_file
+    header_file=$(mktemp) || return 1
+    local -a args=(-s -S -D "$header_file" -o "$body_file" -w '%{http_code}' -X "$method" -K - -H "$CONTENT_TYPE_JSON")
+    if [[ -n "$data" ]]; then
+        args+=(-d "$data")
+    fi
+    args+=("$url")
+
+    local http_code
+    http_code=$(printf 'header = "X-API-Key: %s"\nheader = "X-API-Secret: %s"\n' \
+        "$SPACESHIP_RESOLVED_KEY" "$SPACESHIP_RESOLVED_SECRET" | curl "${args[@]}") || http_code="000"
+
+    # Async operations (HTTP 202) return an operation ID header; hand it to callers
+    # via SPACESHIP_OPERATION_FILE (api_request runs in a subshell, so no globals).
+    if [[ -n "${SPACESHIP_OPERATION_FILE:-}" ]]; then
+        tr -d '\r' <"$header_file" | awk -F': ' 'tolower($1)=="spaceship-async-operationid"{print $2; exit}' >"$SPACESHIP_OPERATION_FILE"
+    fi
+    cat "$body_file"
+    rm -f "$body_file" "$header_file"
+
+    if [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+        return 0
+    fi
+    print_error "Spaceship API returned HTTP $http_code" >&2
+    return 1
 }
 
-# List all configured accounts
+# List all configured accounts (config file and SPACESHIP_<ACCOUNT>_API_KEY env vars)
 list_accounts() {
-    load_config
     print_info "Available Spaceship accounts:"
-    jq -r '.accounts | keys[]' "$CONFIG_FILE" | while read -r account; do
-        local description
-        description=$(jq -r ".accounts.\"$account\".description" "$CONFIG_FILE")
-        local email
-        email=$(jq -r ".accounts.\"$account\".email" "$CONFIG_FILE")
-        echo "  - $account ($email) - $description"
-    done
+    local found=0
+    if [[ -f "$CONFIG_FILE" ]] && jq empty "$CONFIG_FILE" 2>/dev/null; then
+        local account
+        while read -r account; do
+            [[ -n "$account" ]] || continue
+            local description email
+            description=$(jq -r ".accounts.\"$account\".description // \"\"" "$CONFIG_FILE")
+            email=$(jq -r ".accounts.\"$account\".email // \"\"" "$CONFIG_FILE")
+            echo "  - $account ($email) - $description"
+            found=1
+        done < <(jq -r '.accounts // {} | keys[]' "$CONFIG_FILE")
+    fi
+    local var
+    while read -r var; do
+        [[ -n "$var" ]] || continue
+        echo "  - env: ${var%_API_KEY} (names only; values hidden)"
+        found=1
+    done < <(compgen -e | grep -E '^SPACESHIP_.+_API_KEY$' || true)
+    if [[ "$found" -eq 0 ]]; then
+        print_info "None found. Store SPACESHIP_<ACCOUNT>_API_KEY and SPACESHIP_<ACCOUNT>_API_SECRET with 'aidevops secret set'."
+    fi
     return 0
 }
 
-# List domains
+# List domains (paginated, 100 per page)
 list_domains() {
-    local account_name="$command"
-    
+    local account_name="$1"
     print_info "Listing domains for account: $account_name"
-    local response
-    if response=$(api_request "$account_name" "GET" "$DOMAINS_ENDPOINT"); then
-        echo "$response" | jq -r '.data[] | "\(.domain) - Status: \(.status) - Expires: \(.expires_at)"'
-    else
-        print_error "Failed to retrieve domains"
-        echo "$response"
-    fi
+    local skip=0 total=1 response
+    while [[ "$skip" -lt "$total" ]]; do
+        if ! response=$(api_request "$account_name" "GET" "${DOMAINS_ENDPOINT}?take=100&skip=${skip}"); then
+            print_error "Failed to retrieve domains"
+            echo "$response"
+            return 1
+        fi
+        echo "$response" | jq -r '.items[] | "\(.name) - Status: \(.lifecycleStatus) - Expires: \(.expirationDate)"'
+        total=$(echo "$response" | jq -r '.total // 0')
+        skip=$((skip + 100))
+    done
     return 0
 }
 
 # Check domain availability
 check_domain_availability() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
 
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -154,11 +210,11 @@ check_domain_availability() {
 
     print_info "Checking availability for domain: $domain"
     local response
-    if response=$(api_request "$account_name" "GET" "domains/check?domain=$domain"); then
+    if response=$(api_request "$account_name" "GET" "$(domain_endpoint "$domain" /available)"); then
         local available
-        available=$(echo "$response" | jq -r '.available')
+        available=$(echo "$response" | jq -r "$JQ_IS_AVAILABLE")
         local price
-        price=$(echo "$response" | jq -r '.price // "N/A"')
+        price=$(echo "$response" | jq -r "$JQ_REGISTER_PRICE")
 
         if [[ "$available" == "true" ]]; then
             print_success "Domain $domain is available for registration"
@@ -177,8 +233,8 @@ check_domain_availability() {
 
 # Purchase domain
 purchase_domain() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
     local years="${3:-1}"
     local auto_renew="${4:-false}"
 
@@ -190,9 +246,9 @@ purchase_domain() {
     # First check availability
     print_info "Checking availability before purchase..."
     local availability
-    availability=$(api_request "$account_name" "GET" "domains/check?domain=$domain")
+    availability=$(api_request "$account_name" "GET" "$(domain_endpoint "$domain" /available)") || return 1
     local available
-    available=$(echo "$availability" | jq -r '.available')
+    available=$(echo "$availability" | jq -r "$JQ_IS_AVAILABLE")
 
     if [[ "$available" != "true" ]]; then
         print_error "Domain $domain is not available for registration"
@@ -200,7 +256,7 @@ purchase_domain() {
     fi
 
     local price
-    price=$(echo "$availability" | jq -r '.price')
+    price=$(echo "$availability" | jq -r "$JQ_REGISTER_PRICE")
     print_warning "Domain $domain will be purchased for $price for $years year(s)"
     print_warning "This action will charge your account. Continue? (y/N)"
 
@@ -210,27 +266,65 @@ purchase_domain() {
         return 0
     fi
 
-    local data=$(jq -n \
-        --arg domain "$domain" \
+    local contact_id="${SPACESHIP_CONTACT_ID:-}"
+    if [[ -z "$contact_id" ]]; then
+        print_error "Set SPACESHIP_CONTACT_ID to an existing Spaceship contact ID (see 'contacts' on an owned domain)"
+        return 1
+    fi
+
+    local data
+    data=$(jq -n \
         --argjson years "$years" \
         --argjson auto_renew "$auto_renew" \
-        '{domain: $domain, years: $years, auto_renew: $auto_renew}')
+        --arg contact "$contact_id" \
+        '{autoRenew: $auto_renew, years: $years, privacyProtection: {level: "high", userConsent: true},
+          contacts: {registrant: $contact, admin: $contact, tech: $contact, billing: $contact}}')
 
     print_info "Purchasing domain: $domain"
-    local response
-    if response=$(api_request "$account_name" "POST" "$DOMAINS_ENDPOINT" "$data"); then
-        print_success "Domain purchased successfully"
-        echo "$response" | jq '.'
+    local response op_file operation_id
+    op_file=$(mktemp) || return 1
+    if response=$(SPACESHIP_OPERATION_FILE="$op_file" api_request "$account_name" "POST" "$DOMAINS_ENDPOINT/$domain" "$data"); then
+        operation_id=$(cat "$op_file")
+        rm -f "$op_file"
+        print_success "Domain registration accepted (pending; not yet complete)"
+        if [[ -n "$operation_id" ]]; then
+            print_info "Operation ID: $operation_id"
+            print_info "Check final status: $0 operation-status $account_name $operation_id"
+        fi
+        [[ -z "$response" ]] || echo "$response" | jq '.'
     else
+        rm -f "$op_file"
         print_error "Failed to purchase domain"
         echo "$response"
+        return 1
+    fi
+    return 0
+}
+
+# Check status of an asynchronous operation (e.g. domain registration)
+get_operation_status() {
+    local account_name="$1"
+    local operation_id="${2:-}"
+
+    if [[ -z "$operation_id" ]]; then
+        print_error "Operation ID is required"
+        return 1
+    fi
+
+    local response
+    if response=$(api_request "$account_name" "GET" "async-operations/$operation_id"); then
+        echo "$response" | jq '.'
+    else
+        print_error "Failed to get operation status"
+        echo "$response"
+        return 1
     fi
     return 0
 }
 
 # Bulk domain availability check
 bulk_check_domains() {
-    local account_name="$command"
+    local account_name="$1"
     shift
     local domains=("$@")
 
@@ -253,8 +347,8 @@ bulk_check_domains() {
 
 # Get domain details
 get_domain_details() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
     
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -263,7 +357,7 @@ get_domain_details() {
     
     print_info "Getting details for domain: $domain"
     local response
-    if response=$(api_request "$account_name" "GET" "domains/$domain"); then
+    if response=$(api_request "$account_name" "GET" "$(domain_endpoint "$domain")"); then
         echo "$response" | jq '.'
     else
         print_error "Failed to get domain details"
@@ -274,8 +368,8 @@ get_domain_details() {
 
 # List DNS records
 list_dns_records() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
     
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -283,23 +377,44 @@ list_dns_records() {
     fi
     
     print_info "Listing DNS records for domain: $domain"
-    local response
-    if response=$(api_request "$account_name" "GET" "domains/$domain/dns"); then
-        echo "$response" | jq -r '.data[] | "\(.name) \(.type) \(.content) (TTL: \(.ttl))"'
-    else
-        print_error "Failed to retrieve DNS records"
-        echo "$response"
-    fi
+    local response skip=0 total=1
+    while [[ "$skip" -lt "$total" ]]; do
+        if ! response=$(api_request "$account_name" "GET" "$(dns_endpoint "$domain")?take=100&skip=${skip}"); then
+            print_error "Failed to retrieve DNS records"
+            echo "$response"
+            return 1
+        fi
+        echo "$response" | jq -r '.items[] | "\(.name) \(.type) \(.address // .cname // .nameserver // .value // .exchange // .target // "") (TTL: \(.ttl))"'
+        total=$(echo "$response" | jq -r '.total // 0')
+        skip=$((skip + 100))
+    done
+    return 0
+}
+
+# Build a Spaceship resource-record object (value field depends on record type)
+dns_record_payload() {
+    local name="$1"
+    local type="$2"
+    local content="$3"
+    local ttl="$4"
+    jq -n --arg name "$name" --arg type "$type" --arg content "$content" --arg ttl "$ttl" '
+        ($type | ascii_upcase) as $t
+        | {type: $t, name: $name, ttl: ($ttl | tonumber)}
+        + (if ($t == "A" or $t == "AAAA") then {address: $content}
+           elif $t == "CNAME" then {cname: $content}
+           elif $t == "MX" then {exchange: ($content | split(" ") | .[1] // .[0]), preference: (($content | split(" ") | if length > 1 then .[0] else "10" end) | tonumber)}
+           elif $t == "NS" then {nameserver: $content}
+           else {value: $content} end)'
     return 0
 }
 
 # Add DNS record
 add_dns_record() {
-    local account_name="$command"
-    local domain="$account_name"
-    local name="$target"
-    local type="$options"
-    local content="$param5"
+    local account_name="$1"
+    local domain="$2"
+    local name="$3"
+    local type="$4"
+    local content="$5"
     local ttl="${6:-3600}"
     
     if [[ -z "$domain" || -z "$name" || -z "$type" || -z "$content" ]]; then
@@ -307,16 +422,12 @@ add_dns_record() {
         exit 1
     fi
     
-    local data=$(jq -n \
-        --arg name "$name" \
-        --arg type "$type" \
-        --arg content "$content" \
-        --arg ttl "$ttl" \
-        '{name: $name, type: $type, content: $content, ttl: ($ttl | tonumber)}')
+    local data
+    data=$(dns_record_payload "$name" "$type" "$content" "$ttl" | jq -c '{items: [.]}')
     
     print_info "Adding DNS record: $name $type $content"
     local response
-    if response=$(api_request "$account_name" "POST" "domains/$domain/dns" "$data"); then
+    if response=$(api_request "$account_name" "PUT" "$(dns_endpoint "$domain")" "$data"); then
         print_success "DNS record added successfully"
         echo "$response" | jq '.'
     else
@@ -328,52 +439,72 @@ add_dns_record() {
 
 # Update DNS record
 update_dns_record() {
-    local account_name="$command"
-    local domain="$account_name"
-    local record_id="$target"
-    local name="$options"
-    local type="$param5"
-    local content="$param6"
+    local account_name="$1"
+    local domain="$2"
+    # Spaceship has no record IDs and matches records by type+name+value, so the
+    # old record's value is required to remove it before adding the new one.
+    local old_content="$3"
+    local name="$4"
+    local type="$5"
+    local content="$6"
     local ttl="${7:-3600}"
     
-    if [[ -z "$domain" || -z "$record_id" || -z "$name" || -z "$type" || -z "$content" ]]; then
-        print_error "Domain, record ID, name, type, and content are required"
+    if [[ -z "$domain" || -z "$old_content" || -z "$name" || -z "$type" || -z "$content" ]]; then
+        print_error "Domain, old content, name, type, and new content are required"
         exit 1
     fi
     
-    local data=$(jq -n \
-        --arg name "$name" \
-        --arg type "$type" \
-        --arg content "$content" \
-        --arg ttl "$ttl" \
-        '{name: $name, type: $type, content: $content, ttl: ($ttl | tonumber)}')
+    # Build and validate both payloads before DELETE so a bad TTL/content never
+    # removes the working record.
+    local del_payload add_payload del_data add_data
+    if ! del_payload=$(dns_record_payload "$name" "$type" "$old_content" "3600") || [[ -z "$del_payload" ]] ||
+        ! add_payload=$(dns_record_payload "$name" "$type" "$content" "$ttl") || [[ -z "$add_payload" ]]; then
+        print_error "Invalid DNS record values (check TTL and content); nothing was changed"
+        return 1
+    fi
+    if ! del_data=$(echo "$del_payload" | jq -c '[del(.ttl)]') || [[ -z "$del_data" ]] ||
+        ! add_data=$(echo "$add_payload" | jq -c '{force: true, items: [.]}') || [[ -z "$add_data" ]]; then
+        print_error "Failed to build DNS payloads; nothing was changed"
+        return 1
+    fi
     
-    print_info "Updating DNS record: $record_id"
+    print_info "Replacing DNS record: $name $type ($old_content -> $content)"
     local response
-    if response=$(api_request "$account_name" "PUT" "domains/$domain/dns/$record_id" "$data"); then
-        print_success "DNS record updated successfully"
+    if ! response=$(api_request "$account_name" "DELETE" "$(dns_endpoint "$domain")" "$del_data"); then
+        print_error "Failed to remove old DNS record; nothing was changed"
+        echo "$response"
+        return 1
+    fi
+    if response=$(api_request "$account_name" "PUT" "$(dns_endpoint "$domain")" "$add_data"); then
+        print_success "DNS record replaced successfully"
         echo "$response" | jq '.'
     else
-        print_error "Failed to update DNS record"
+        print_error "Old record removed but adding the new record failed; re-add it manually"
         echo "$response"
+        return 1
     fi
     return 0
 }
 
 # Delete DNS record
 delete_dns_record() {
-    local account_name="$command"
-    local domain="$account_name"
-    local record_id="$target"
+    local account_name="$1"
+    local domain="$2"
+    local name="${3:-}"
+    local type="${4:-}"
+    local content="${5:-}"
 
-    if [[ -z "$domain" || -z "$record_id" ]]; then
-        print_error "Domain and record ID are required"
+    if [[ -z "$domain" || -z "$name" || -z "$type" || -z "$content" ]]; then
+        print_error "Domain, name, type, and content are required (records are matched by value)"
         exit 1
     fi
 
-    print_warning "Deleting DNS record: $record_id"
+    local data
+    data=$(dns_record_payload "$name" "$type" "$content" "3600" | jq -c '[del(.ttl)]')
+
+    print_warning "Deleting DNS record: $name $type"
     local response
-    if response=$(api_request "$account_name" "DELETE" "domains/$domain/dns/$record_id"); then
+    if response=$(api_request "$account_name" "DELETE" "$(dns_endpoint "$domain")" "$data"); then
         print_success "DNS record deleted successfully"
     else
         print_error "Failed to delete DNS record"
@@ -384,8 +515,8 @@ delete_dns_record() {
 
 # Get domain nameservers
 get_nameservers() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
 
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -394,8 +525,8 @@ get_nameservers() {
 
     print_info "Getting nameservers for domain: $domain"
     local response
-    if response=$(api_request "$account_name" "GET" "domains/$domain/nameservers"); then
-        echo "$response" | jq -r '.data[]'
+    if response=$(api_request "$account_name" "GET" "$(domain_endpoint "$domain")"); then
+        echo "$response" | jq -r '.nameservers | "provider: \(.provider)", (.hosts // [])[]'
     else
         print_error "Failed to get nameservers"
         echo "$response"
@@ -405,26 +536,43 @@ get_nameservers() {
 
 # Update nameservers
 update_nameservers() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
     shift 2
-    local nameservers=("$@")
+    local nameservers=()
+    local arg
+    for arg in "$@"; do
+        if [[ "$arg" == "--dry-run" ]]; then
+            export SPACESHIP_DRY_RUN=1
+        else
+            nameservers+=("$arg")
+        fi
+    done
 
     if [[ -z "$domain" || ${#nameservers[@]} -eq 0 ]]; then
-        print_error "Domain and at least one nameserver are required"
+        print_error "Domain and at least one nameserver (or 'basic') are required"
         exit 1
     fi
 
-    local ns_json
-    ns_json=$(printf '%s\n' "${nameservers[@]}" | jq -R . | jq -s .)
     local data
-    data=$(jq -n --argjson nameservers "$ns_json" '{nameservers: $nameservers}')
+    if [[ ${#nameservers[@]} -eq 1 && "${nameservers[0]}" == "basic" ]]; then
+        # Spaceship's own DNS: provider "basic", hosts omitted
+        data=$(jq -cn '{provider: "basic"}')
+    else
+        local ns_json
+        ns_json=$(printf '%s\n' "${nameservers[@]}" | jq -R . | jq -s .)
+        data=$(jq -cn --argjson hosts "$ns_json" '{provider: "custom", hosts: $hosts}')
+    fi
 
     print_info "Updating nameservers for domain: $domain"
     local response
-    if response=$(api_request "$account_name" "PUT" "domains/$domain/nameservers" "$data"); then
-        print_success "Nameservers updated successfully"
-        echo "$response" | jq '.'
+    if response=$(api_request "$account_name" "PUT" "$(domain_endpoint "$domain" /nameservers)" "$data"); then
+        if [[ "${SPACESHIP_DRY_RUN:-0}" == "1" ]]; then
+            print_info "Dry run: no request sent"
+        else
+            print_success "Nameservers updated successfully"
+            echo "$response" | jq '.'
+        fi
     else
         print_error "Failed to update nameservers"
         echo "$response"
@@ -434,8 +582,8 @@ update_nameservers() {
 
 # Check domain availability
 check_availability() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
 
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -444,11 +592,11 @@ check_availability() {
 
     print_info "Checking availability for domain: $domain"
     local response
-    if response=$(api_request "$account_name" "GET" "domains/check?domain=$domain"); then
+    if response=$(api_request "$account_name" "GET" "$(domain_endpoint "$domain" /available)"); then
         local available
-        available=$(echo "$response" | jq -r '.available')
+        available=$(echo "$response" | jq -r "$JQ_IS_AVAILABLE")
         local price
-        price=$(echo "$response" | jq -r '.price')
+        price=$(echo "$response" | jq -r "$JQ_REGISTER_PRICE")
 
         if [[ "$available" == "true" ]]; then
             print_success "Domain $domain is available for $price"
@@ -465,8 +613,8 @@ check_availability() {
 
 # Get domain contacts
 get_domain_contacts() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
 
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -475,8 +623,8 @@ get_domain_contacts() {
 
     print_info "Getting contacts for domain: $domain"
     local response
-    if response=$(api_request "$account_name" "GET" "domains/$domain/contacts"); then
-        echo "$response" | jq '.'
+    if response=$(api_request "$account_name" "GET" "$(domain_endpoint "$domain")"); then
+        echo "$response" | jq '.contacts'
     else
         print_error "Failed to get domain contacts"
         echo "$response"
@@ -486,9 +634,9 @@ get_domain_contacts() {
 
 # Enable/disable domain lock
 toggle_domain_lock() {
-    local account_name="$command"
-    local domain="$account_name"
-    local action="$target"  # "lock" or "unlock"
+    local account_name="$1"
+    local domain="$2"
+    local action="$3"  # "lock" or "unlock"
 
     if [[ -z "$domain" || -z "$action" ]]; then
         print_error "Domain and action (lock/unlock) are required"
@@ -501,14 +649,14 @@ toggle_domain_lock() {
     fi
 
     local data
-    data=$(jq -n --arg locked "$locked" '{locked: ($locked | test("true"))}')
+    data=$(jq -cn --arg locked "$locked" '{isLocked: ($locked == "true")}')
 
     # Bash 3.2 compat: ${var^} requires Bash 4+
     local action_cap
     action_cap="$(printf '%s' "${action:0:1}" | tr '[:lower:]' '[:upper:]')${action:1}"
     print_info "${action_cap}ing domain: $domain"
     local response
-    if response=$(api_request "$account_name" "PUT" "domains/$domain/lock" "$data"); then
+    if response=$(api_request "$account_name" "PUT" "$(domain_endpoint "$domain" /transfer/lock)" "$data"); then
         print_success "Domain ${action}ed successfully"
         echo "$response" | jq '.'
     else
@@ -520,8 +668,8 @@ toggle_domain_lock() {
 
 # Get domain transfer status
 get_transfer_status() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
 
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -530,7 +678,7 @@ get_transfer_status() {
 
     print_info "Getting transfer status for domain: $domain"
     local response
-    if response=$(api_request "$account_name" "GET" "domains/$domain/transfer"); then
+    if response=$(api_request "$account_name" "GET" "$(domain_endpoint "$domain" /transfer)"); then
         echo "$response" | jq '.'
     else
         print_error "Failed to get transfer status"
@@ -541,8 +689,8 @@ get_transfer_status() {
 
 # Audit domain configuration
 audit_domain() {
-    local account_name="$command"
-    local domain="$account_name"
+    local account_name="$1"
+    local domain="$2"
 
     if [[ -z "$domain" ]]; then
         print_error "$ERROR_DOMAIN_NAME_REQUIRED"
@@ -571,22 +719,27 @@ audit_domain() {
 
 # Monitor domain expiration
 monitor_expiration() {
-    local account_name="$command"
+    local account_name="$1"
     local days_threshold="${2:-30}"
 
     print_info "Monitoring domain expiration (threshold: $days_threshold days)"
-    local response
-    if response=$(api_request "$account_name" "GET" "$DOMAINS_ENDPOINT"); then
+    local response skip=0 total=1
+    while [[ "$skip" -lt "$total" ]]; do
+        if ! response=$(api_request "$account_name" "GET" "${DOMAINS_ENDPOINT}?take=100&skip=${skip}"); then
+            print_error "Failed to retrieve domain expiration data"
+            echo "$response"
+            return 1
+        fi
         echo "$response" | jq -r --arg threshold "$days_threshold" '
-            .data[] |
-            select(.expires_at != null) |
-            select(((.expires_at | strptime("%Y-%m-%d") | mktime) - now) / 86400 < ($threshold | tonumber)) |
-            "\(.domain) expires on \(.expires_at) (\((((.expires_at | strptime("%Y-%m-%d") | mktime) - now) / 86400 | floor)) days)"
+            def days: ((.expirationDate | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) - now) / 86400;
+            .items[] |
+            select(.expirationDate != null) |
+            select(days < ($threshold | tonumber)) |
+            "\(.name) expires on \(.expirationDate) (\(days | floor) days)"
         '
-    else
-        print_error "Failed to retrieve domain expiration data"
-        echo "$response"
-    fi
+        total=$(echo "$response" | jq -r '.total // 0')
+        skip=$((skip + 100))
+    done
     return 0
 }
 
@@ -601,12 +754,13 @@ show_help() {
     echo "  domain-details [account] [domain]           - Get domain details"
     echo "  dns-records [account] [domain]              - List DNS records"
     echo "  add-dns [account] [domain] [name] [type] [content] [ttl] - Add DNS record"
-    echo "  update-dns [account] [domain] [id] [name] [type] [content] [ttl] - Update DNS record"
-    echo "  delete-dns [account] [domain] [id]          - Delete DNS record"
+    echo "  update-dns [account] [domain] [old_content] [name] [type] [new_content] [ttl] - Replace DNS record (delete old value, add new)"
+    echo "  delete-dns [account] [domain] [name] [type] [content] - Delete DNS record"
     echo "  nameservers [account] [domain]              - Get nameservers"
-    echo "  update-ns [account] [domain] [ns1] [ns2...] - Update nameservers"
+    echo "  update-ns [account] [domain] [ns1] [ns2...|basic] [--dry-run] - Update nameservers"
     echo "  check-availability [account] [domain]       - Check domain availability"
     echo "  purchase [account] [domain] [years] [auto_renew] - Purchase domain"
+    echo "  operation-status [account] [operation_id]   - Check async operation (e.g. purchase) status"
     echo "  bulk-check [account] [domain1] [domain2...] - Bulk check domain availability"
     echo "  contacts [account] [domain]                 - Get domain contacts"
     echo "  lock [account] [domain]                     - Lock domain"
@@ -628,33 +782,23 @@ show_help() {
 
 # Main script logic
 main() {
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    # Assign positional parameters to local variables
-    local domain="$target"
-    local param4="$options"
-    local param5="$param5"
-    local param6="$param6"
-    local param7="$param7"
-    local param8="$param8"
+    local subcommand="${1:-help}"
+    local account_name="${2:-}"
+    local domain="${3:-}"
+    local param4="${4:-}"
+    local param5="${5:-}"
+    local param6="${6:-}"
+    local param7="${7:-}"
+    local param8="${8:-}"
+
+    if [[ "$subcommand" == "help" ]]; then
+        show_help
+        return 0
+    fi
 
     check_dependencies
 
-    case "$command" in
+    case "$subcommand" in
         "accounts")
             list_accounts
             ;;
@@ -674,42 +818,45 @@ main() {
             update_dns_record "$account_name" "$domain" "$param4" "$param5" "$param6" "$param7" "$param8"
             ;;
         "delete-dns")
-            delete_dns_record "$account_name" "$domain" "$param4"
+            delete_dns_record "$account_name" "$domain" "$param4" "$param5" "$param6"
             ;;
         "nameservers")
             get_nameservers "$account_name" "$domain"
             ;;
         "update-ns")
             shift 3
-            update_nameservers "$param2" "$param3" "$@"
+            update_nameservers "$account_name" "$domain" "$@"
             ;;
         "check-availability")
-            check_domain_availability "$param2" "$param3"
+            check_domain_availability "$account_name" "$domain"
             ;;
         "purchase")
-            purchase_domain "$param2" "$param3" "$param4" "$param5"
+            purchase_domain "$account_name" "$domain" "$param4" "$param5"
+            ;;
+        "operation-status")
+            get_operation_status "$account_name" "$domain"
             ;;
         "bulk-check")
             shift 2
-            bulk_check_domains "$param2" "$@"
+            bulk_check_domains "$account_name" "$@"
             ;;
         "contacts")
-            get_domain_contacts "$param2" "$param3"
+            get_domain_contacts "$account_name" "$domain"
             ;;
         "lock")
-            toggle_domain_lock "$param2" "$param3" "lock"
+            toggle_domain_lock "$account_name" "$domain" "lock"
             ;;
         "unlock")
-            toggle_domain_lock "$param2" "$param3" "unlock"
+            toggle_domain_lock "$account_name" "$domain" "unlock"
             ;;
         "transfer-status")
-            get_transfer_status "$param2" "$param3"
+            get_transfer_status "$account_name" "$domain"
             ;;
         "audit")
-            audit_domain "$param2" "$param3"
+            audit_domain "$account_name" "$domain"
             ;;
         "monitor-expiration")
-            monitor_expiration "$param2" "$param3"
+            monitor_expiration "$account_name" "$domain"
             ;;
         "help"|*)
             show_help
@@ -719,5 +866,3 @@ main() {
 }
 
 main "$@"
-
-return 0

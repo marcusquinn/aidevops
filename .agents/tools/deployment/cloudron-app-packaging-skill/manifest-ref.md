@@ -29,7 +29,7 @@ The `containerPort` is the port inside the container. `defaultValue` is the sugg
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `addons` | object | Keys: `email`, `ldap`, `localstorage`, `mongodb`, `mysql`, `oidc`, `postgresql`, `proxyauth`, `recvmail`, `redis`, `sendmail`, `scheduler`, `tls`. Values are option objects (often `{}`) |
+| `addons` | object | Keys: `email`, `ldap`, `localstorage`, `mongodb`, `mysql`, `oidc`, `postgresql`, `proxyAuth`, `recvmail`, `redis`, `sendmail`, `scheduler`, `tls`. Values are option objects (often `{}`) |
 
 ## Metadata (for App Store / CloudronVersions.json)
 
@@ -48,8 +48,8 @@ The `containerPort` is the port inside the container. `defaultValue` is the sugg
 | `tags` | string array | Filterable tags: `blog`, `chat`, `git`, `email`, `sync`, `gallery`, `notes`, `project`, `hosting`, `wiki` |
 | `mediaLinks` | URL array | Screenshot URLs (3:1 aspect ratio, HTTPS); pin to a commit SHA; frozen per published version |
 | `packagerName` | string | Name of package maintainer |
-| `packagerUrl` | URL | Package maintainer URL |
-| `packageUrl` | URL | Package source repository URL. Requires `minBoxVersion: 10.0.0` |
+| `packagerUrl` | URL | Package maintainer URL; ca.cloudron.io uses it for the listing's "By" link, and for the Package link when `packageUrl` is unset |
+| `packageUrl` | URL | Package source repository URL. Requires `minBoxVersion: 10.0.0`; any catalog entry with it breaks the whole catalog on Cloudron 9.x. ca.cloudron.io uses it for the listing's Package link |
 | `documentationUrl` | URL | Link to app docs |
 | `forumUrl` | URL | Link to support forum |
 | `upstreamVersion` | string | Upstream app version (display only) |
@@ -66,7 +66,7 @@ The `containerPort` is the port inside the container. `defaultValue` is the sugg
 | `capabilities` | string array | Extra Linux capabilities: `net_admin`, `mlock`, `ping`, `vaapi` |
 | `runtimeDirs` | string array | Writable subdirs of `/app/code` (not backed up, not persisted across updates) |
 | `persistentDirs` | string array | Writable dirs persisted across updates but not in filesystem backup. Use with `backupCommand`. Requires `minBoxVersion: 9.1.0` |
-| `backupCommand` | string | Shell command run during backup (app must be running) to dump persistent data into `/app/data`. It shares the app network namespace, so `localhost` works. Requires `minBoxVersion: 9.1.0` |
+| `backupCommand` | string | Shell command run during backup (app must be running) to dump persistent data into `/app/data`. Requires `minBoxVersion: 9.1.0`. Cloudron 9.1.7 and 9.2.0 run it in a separate network namespace, so reaching the app via `localhost` can fail; use `minBoxVersion: 10.0.0` or later if the command needs `localhost` |
 | `restoreCommand` | string | Shell command run during restore before the app container starts to populate `persistentDirs` from `/app/data`. The app is not running, so `localhost` cannot be used. Requires `minBoxVersion: 9.1.0` |
 
 ## Post-install

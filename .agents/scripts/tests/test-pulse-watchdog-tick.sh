@@ -25,6 +25,8 @@ if [[ "$*" == *"--property=ActiveState"* ]]; then
 	exit 0
 fi
 if [[ "$*" == *" start "* ]]; then
+	# Reject the blocking form: a real oneshot would outlive watchdog's timeout.
+	[[ "$*" == *"--no-block"* ]] || exit 1
 	printf '%s\n' "$*" >>"$SYSTEMCTL_LOG"
 	exit 0
 fi
@@ -66,3 +68,71 @@ if [[ ! -s "$SYSTEMCTL_LOG" ]]; then
 	exit 1
 fi
 printf 'PASS: dead systemd-owned Pulse is revived\n'
+
+# GH#35704: the supervisor watchdog's optional heartbeat is best effort, not
+# a replacement for termination checks, child status, guards or refill work.
+(
+	# shellcheck source=../pulse-watchdog.sh
+	source "${SCRIPT_DIR}/../pulse-watchdog.sh"
+	LOGFILE="${TEST_ROOT}/supervisor.log"
+	STOP_FLAG="${TEST_ROOT}/stop"
+	PULSE_STALE_THRESHOLD=3600
+	watchdog_ticks=0
+	heartbeat_calls=0
+	guard_calls=0
+	kill_calls=0
+	child_status=0
+	ps() { [[ "$watchdog_ticks" -lt 2 ]]; }
+	wait() { return "$child_status"; }
+	sleep() {
+		local interval="$1"
+		[[ "$interval" == 60 || "$interval" == 2 ]] || exit 1
+		watchdog_ticks=$((watchdog_ticks + 1))
+		return 0
+	}
+	_pulse_cycle_state_supervisor_heartbeat() {
+		heartbeat_calls=$((heartbeat_calls + 1))
+		return 1
+	}
+	guard_child_processes() {
+		guard_calls=$((guard_calls + 1))
+		return 0
+	}
+	maybe_refill_underfilled_pool_during_active_pulse() {
+		local previous_epoch="$1"
+		printf '%s\n' "$previous_epoch" >>"${TEST_ROOT}/refill-calls"
+		printf '%s\n' "$((previous_epoch + 1))"
+		return 0
+	}
+	_kill_tree() {
+		kill_calls=$((kill_calls + 1))
+		return 0
+	}
+	_force_kill_tree() { return 1; }
+	start_epoch=$(date +%s)
+	_run_pulse_watchdog sandbox "$start_epoch" 1800
+	[[ "$heartbeat_calls" == 2 && "$guard_calls" == 2 && "$kill_calls" == 0 ]] || { printf 'FAIL: failed heartbeat cadence and guards\n' >&2; exit 1; }
+	[[ "$(wc -l <"${TEST_ROOT}/refill-calls")" -eq 2 ]] || { printf 'FAIL: failed heartbeat refill\n' >&2; exit 1; }
+	[[ ! -s "$LOGFILE" ]] || { printf 'FAIL: failed heartbeat log progress\n' >&2; exit 1; }
+	printf 'PASS: failed heartbeat preserves watchdog cadence, guards and refill without log progress\n'
+
+	# Optional callback absence and callback failure both preserve child failures.
+	unset -f _pulse_cycle_state_supervisor_heartbeat
+	watchdog_ticks=0
+	child_status=9
+	watchdog_rc=0
+	_run_pulse_watchdog sandbox "$start_epoch" 1800 || watchdog_rc=$?
+	[[ "$watchdog_rc" == 9 && "$watchdog_ticks" == 2 ]] || { printf 'FAIL: absent heartbeat callback preserves supervisor failure status\n' >&2; exit 1; }
+	printf 'PASS: absent heartbeat callback preserves supervisor failure status\n'
+
+	# A stop wins before heartbeat/guard/refill and cannot turn a child exit 0
+	# into success. No real supervisor or external process is terminated here.
+	: >"$STOP_FLAG"
+	watchdog_ticks=0
+	child_status=0
+	guard_calls=0
+	watchdog_rc=0
+	_run_pulse_watchdog sandbox "$start_epoch" 1800 || watchdog_rc=$?
+	[[ "$watchdog_rc" == 1 && "$kill_calls" == 1 && "$guard_calls" == 0 ]] || { printf 'FAIL: stop flag priority and watchdog status\n' >&2; exit 1; }
+	printf 'PASS: stop flag retains priority and unsuccessful watchdog status\n'
+)

@@ -3,6 +3,14 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 set -u
+
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 source "${SCRIPT_DIR}/../repo-verify-config-lib.sh"
 
@@ -38,7 +46,7 @@ test_exact_package_scripts() {
 {"scripts":{"format":"prettier --write . && prettier --check .","format:fix":"prettier --write .","lint":"eslint .","lint:fix":"eslint --fix .","typecheck":"tsc --noEmit"}}
 JSON
 	: >"$root/pnpm-lock.yaml"
-	/usr/bin/git -C "$root" add package.json pnpm-lock.yaml
+	"$TEST_NATIVE_GIT" -C "$root" add package.json pnpm-lock.yaml
 	repo_verify_detect "$root" || true
 	assert_equal "ready" "$REPO_VERIFY_STATUS" "package scripts are detected"
 	assert_equal "pnpm run lint" "$REPO_VERIFY_LINT" "package manager follows exact lockfile"
@@ -54,7 +62,7 @@ test_conflicting_lockfiles() {
 	printf '%s\n' '{"scripts":{"lint":"eslint ."}}' >"$root/package.json"
 	: >"$root/pnpm-lock.yaml"
 	: >"$root/yarn.lock"
-	/usr/bin/git -C "$root" add package.json pnpm-lock.yaml yarn.lock
+	"$TEST_NATIVE_GIT" -C "$root" add package.json pnpm-lock.yaml yarn.lock
 	repo_verify_detect "$root" || true
 	assert_equal "ambiguous" "$REPO_VERIFY_STATUS" "multiple package manager locks are ambiguous"
 	assert_equal "" "$REPO_VERIFY_LINT" "ambiguous package manager does not invent a command"
@@ -66,7 +74,7 @@ test_package_manager_declaration_conflict() {
 	new_repo "$root"
 	printf '%s\n' '{"packageManager":"pnpm@10.0.0","scripts":{"lint":"eslint ."}}' >"$root/package.json"
 	: >"$root/package-lock.json"
-	/usr/bin/git -C "$root" add package.json package-lock.json
+	"$TEST_NATIVE_GIT" -C "$root" add package.json package-lock.json
 	repo_verify_detect "$root" || true
 	assert_equal "ambiguous" "$REPO_VERIFY_STATUS" "packageManager conflicting with lockfile is ambiguous"
 	return 0
@@ -85,14 +93,14 @@ test_python_evidence() {
 	local root="$1/python-weak"
 	new_repo "$root"
 	printf '%s\n' '[project]' 'name="fixture"' '# [tool.ruff]' >"$root/pyproject.toml"
-	/usr/bin/git -C "$root" add pyproject.toml
+	"$TEST_NATIVE_GIT" -C "$root" add pyproject.toml
 	repo_verify_detect "$root" || true
 	assert_equal "none" "$REPO_VERIFY_STATUS" "plain pyproject does not imply Ruff"
 
 	root="$1/python-ruff"
 	new_repo "$root"
 	printf '%s\n' '[tool.ruff]' 'line-length=100' >"$root/pyproject.toml"
-	/usr/bin/git -C "$root" add pyproject.toml
+	"$TEST_NATIVE_GIT" -C "$root" add pyproject.toml
 	repo_verify_detect "$root" || true
 	assert_equal "defaults(PYTHON_RUFF)" "$REPO_VERIFY_SOURCE" "committed Ruff config is exact evidence"
 	assert_equal "ruff check ." "$REPO_VERIFY_LINT" "Ruff lint command is seeded"
@@ -100,7 +108,7 @@ test_python_evidence() {
 	root="$1/python-ruff-no-newline"
 	new_repo "$root"
 	printf '%s' '[tool.ruff]' >"$root/pyproject.toml"
-	/usr/bin/git -C "$root" add pyproject.toml
+	"$TEST_NATIVE_GIT" -C "$root" add pyproject.toml
 	repo_verify_detect "$root" || true
 	assert_equal "defaults(PYTHON_RUFF)" "$REPO_VERIFY_SOURCE" "section on final unterminated line is detected"
 	return 0
@@ -144,7 +152,7 @@ test_feature_opt_out() {
 	new_repo "$root"
 	printf '%s\n' '{"features":{"code_quality":false}}' >"$root/.aidevops.json"
 	printf '%s\n' '{"scripts":{"lint":"eslint ."}}' >"$root/package.json"
-	/usr/bin/git -C "$root" add package.json
+	"$TEST_NATIVE_GIT" -C "$root" add package.json
 	repo_verify_detect "$root" || true
 	assert_equal "disabled" "$REPO_VERIFY_STATUS" "code-quality feature false disables inferred checks"
 	return 0
@@ -154,14 +162,14 @@ test_canonical_tracked_config_guard() {
 	local root="$1/canonical"
 	new_repo "$root"
 	printf '%s\n' '{}' >"$root/.aidevops.json"
-	/usr/bin/git -C "$root" add .aidevops.json
-	/usr/bin/git -C "$root" -c user.email=test@example.com -c user.name=Test commit -q -m config
-	/usr/bin/git -C "$root" branch -m develop
+	"$TEST_NATIVE_GIT" -C "$root" add .aidevops.json
+	"$TEST_NATIVE_GIT" -C "$root" -c user.email=test@example.com -c user.name=Test commit -q -m config
+	"$TEST_NATIVE_GIT" -C "$root" branch -m develop
 	local status=0
 	repo_verify_config_is_safe_to_modify "$root" || status=$?
 	assert_equal "1" "$status" "canonical tracked config is protected on non-main default branch"
 	local linked="$1/linked"
-	/usr/bin/git -C "$root" worktree add -q -b feature/test "$linked"
+	"$TEST_NATIVE_GIT" -C "$root" worktree add -q -b feature/test "$linked"
 	status=0
 	repo_verify_config_is_safe_to_modify "$linked" || status=$?
 	assert_equal "0" "$status" "tracked config is writable in a linked worktree"
@@ -176,8 +184,8 @@ test_concurrent_registration_writes() {
 	new_repo "$root_b"
 	printf '%s\n' '{"scripts":{"lint":"eslint ."}}' >"$root_a/package.json"
 	printf '%s\n' '{"scripts":{"lint":"eslint ."}}' >"$root_b/package.json"
-	/usr/bin/git -C "$root_a" add package.json
-	/usr/bin/git -C "$root_b" add package.json
+	"$TEST_NATIVE_GIT" -C "$root_a" add package.json
+	"$TEST_NATIVE_GIT" -C "$root_b" add package.json
 	jq -n --arg a "$root_a" --arg b "$root_b" '{initialized_repos:[{path:$a,features:[]},{path:$b,features:[]}]}' >"$repos_file"
 	(AIDEVOPS_REPOS_FILE="$repos_file" repo_verify_migrate_registration "$root_a") &
 	local pid_a=$!
@@ -195,7 +203,7 @@ test_config_merge() {
 	new_repo "$root"
 	printf '%s\n' '{"custom":{"keep":true},"features":{"planning":true}}' >"$root/.aidevops.json"
 	printf '%s\n' '{"scripts":{"lint":"eslint .","lint:fix":"eslint --fix ."}}' >"$root/package.json"
-	/usr/bin/git -C "$root" add package.json
+	"$TEST_NATIVE_GIT" -C "$root" add package.json
 	repo_verify_apply_config "$root" true
 	assert_equal "true" "$(jq -r '.custom.keep' "$root/.aidevops.json")" "configure preserves unknown keys"
 	assert_equal "true" "$(jq -r '.features.planning' "$root/.aidevops.json")" "configure preserves existing features"

@@ -116,6 +116,12 @@ aidevops is an opinionated framework. Architectural decisions — what the proje
 
 If you're unsure whether your contribution is in scope, open an issue first to discuss before investing time in a PR.
 
+## Link Policy
+
+Use full, direct URLs only. **URL shorteners and redirect links are not allowed** in issues, pull requests, comments, reviews or discussions (for example `bit.ly`, `is.gd`, `tinyurl.com`, `t.co`, or `google.com/url` wrappers).
+
+Content containing a redirect link is treated as spam and handled automatically, without comment: it is closed or hidden, locked, and the author is blocked from all of the maintainers' repositories. Maintainers and automation never open redirect links, so they add nothing to a report.
+
 ## Questions?
 
 Open an issue or start a discussion. We're happy to help!

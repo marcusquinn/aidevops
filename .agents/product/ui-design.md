@@ -52,7 +52,7 @@ tools:
 ### Typography
 
 - **System fonts preferred**: SF Pro (iOS), Roboto (Android), system-ui (web)
-- **Custom fonts** only when brand identity requires it
+- **Custom fonts** only when brand identity requires it; choose, license and self-host them with `tools/design/font-pairing.md`
 - **Type scale**: 5 sizes max — Title, Headline, Body, Caption, Footnote
 - **Line height**: 1.4–1.6× body, 1.2× headings. Use weight (not size) for hierarchy.
 

@@ -16,6 +16,9 @@ TESTS_RUN=0
 TESTS_FAILED=0
 REMOTE_BODY=""
 EDIT_CALLS=0
+READ_OVERRIDE=0
+READ_OUTPUT=""
+FAIL_READBACK=0
 
 pass() {
 	local name="$1"
@@ -45,7 +48,13 @@ _gh_with_timeout() {
 
 gh() {
 	if [[ "${1:-}" == "api" ]]; then
-		printf '%s\n' "$REMOTE_BODY"
+		if [[ "$READ_OVERRIDE" -eq 1 || ( "$FAIL_READBACK" -eq 1 && "$EDIT_CALLS" -gt 0 ) ]]; then
+			printf '%s' "$READ_OUTPUT"
+		elif [[ "$*" == *"--jq"* ]]; then
+			printf '%s\n' "$REMOTE_BODY"
+		else
+			jq -cn --arg body "$REMOTE_BODY" '{title: "Worker PR", body: (if $body == "" then null else $body end)}'
+		fi
 		return 0
 	fi
 	return 1
@@ -70,7 +79,48 @@ gh_pr_edit_safe() {
 	return 0
 }
 
+eval "$(sed -n '/^_read_pr_metadata_json() {/,/^}/p' "$COMMIT_HELPER")"
 eval "$(sed -n '/^_ensure_worker_pr_linkage() {/,/^}/p' "$COMMIT_HELPER")"
+
+test_untrusted_reads_fail_closed() {
+	local output=""
+	local rc=0
+	for output in '' 'not json' '{}' '{"title":"PR"}' '{"body":null}' '{"title":4,"body":""}' '{"title":"PR","body":false}' '[]' '{"title":"PR","body":null} {}'; do
+		REMOTE_BODY="Curated worker context"
+		EDIT_CALLS=0
+		READ_OVERRIDE=1
+		READ_OUTPUT="$output"
+		rc=0
+		_ensure_worker_pr_linkage 77 owner/repo 42 'Resolves #42' || rc=$?
+		if [[ "$rc" -eq 1 && "$EDIT_CALLS" -eq 0 && "$REMOTE_BODY" == "Curated worker context" ]]; then
+			pass "untrusted worker read fails closed: ${output:-empty stdout}"
+		else
+			fail "untrusted worker read fails closed: ${output:-empty stdout}" "rc=${rc}; edits=${EDIT_CALLS}"
+		fi
+	done
+	READ_OVERRIDE=0
+	return 0
+}
+
+test_untrusted_readback_fails_closed() {
+	local output=""
+	local rc=0
+	for output in '' 'not json'; do
+		REMOTE_BODY=""
+		EDIT_CALLS=0
+		FAIL_READBACK=1
+		READ_OUTPUT="$output"
+		rc=0
+		_ensure_worker_pr_linkage 77 owner/repo 42 'Resolves #42' || rc=$?
+		if [[ "$rc" -eq 1 && "$EDIT_CALLS" -eq 1 ]]; then
+			pass "untrusted worker readback rejects repair success: ${output:-empty stdout}"
+		else
+			fail "untrusted worker readback rejects repair success" "rc=${rc}; edits=${EDIT_CALLS}"
+		fi
+	done
+	FAIL_READBACK=0
+	return 0
+}
 
 test_empty_body_is_repaired() {
 	REMOTE_BODY=""
@@ -120,6 +170,8 @@ test_ambiguous_reference_fails_closed() {
 	return 0
 }
 
+test_untrusted_reads_fail_closed
+test_untrusted_readback_fails_closed
 test_empty_body_is_repaired
 test_nonclosing_body_is_preserved_and_repaired
 test_existing_local_reference_is_accepted

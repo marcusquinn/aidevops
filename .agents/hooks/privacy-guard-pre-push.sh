@@ -80,6 +80,18 @@ if ! privacy_is_target_public "$remote_url"; then
 fi
 
 [[ "${PRIVACY_GUARD_DEBUG:-0}" == "1" ]] && privacy_log INFO "target public ($remote_url) — scanning diff"
+target_repo=""
+if [[ "$remote_url" =~ github\.com[:/]([^/]+/[^/]+) ]]; then
+	target_repo="${BASH_REMATCH[1]%.git}"
+fi
+
+# Tracking refs describe the fetch repository, which can differ from pushurl.
+# Only a tree from the public push target may exempt private entities.
+_fetch_repo=""
+_fetch_url=$(git remote get-url "$remote_name" 2>/dev/null) || _fetch_url=""
+if [[ "$_fetch_url" =~ github\.com[:/]([^/]+/[^/]+) ]]; then
+	_fetch_repo="${BASH_REMATCH[1]%.git}"
+fi
 
 # Enumerate private entity inventory once for the whole push.
 entities_file=$(mktemp 2>/dev/null) || {
@@ -191,15 +203,14 @@ for _ref_entry in "${_all_refs[@]}"; do
 
 	_scan_base="$remote_sha"
 	_public_head=""
+	if [[ -n "$_default_remote_head" && -n "$_fetch_repo" && "$_fetch_repo" == "$target_repo" ]]; then
+		_public_head=$(git rev-parse --verify "${_default_remote_head}^{commit}" 2>/dev/null) || _public_head=""
+	fi
 	if [[ -z "$_scan_base" || "$_scan_base" =~ ^0+$ ]]; then
 		_scan_base=$(git merge-base "$local_sha" "$_default_remote_head" 2>/dev/null || echo "")
 		[[ -z "$_scan_base" ]] && _scan_base="$remote_sha"
-	elif [[ -n "$_default_remote_head" ]]; then
-		# Existing branches may import already-public lines when merging main.
-		# Pin the default tip; an unknown tip retains the unfiltered scan.
-		_public_head=$(git rev-parse --verify "${_default_remote_head}^{commit}" 2>/dev/null) || _public_head=""
 	fi
-	hits_output=$(privacy_scan_public_diff "$_scan_base" "$local_sha" "$entities_file" "$_public_head")
+	hits_output=$(privacy_scan_public_diff "$_scan_base" "$local_sha" "$entities_file" "$_public_head" "$target_repo")
 	scan_rc=$?
 	if [[ "$scan_rc" -ne 0 && ("$scan_rc" -ne 1 || -z "$hits_output") ]]; then
 		privacy_log ERROR "private-entity scan failed (rc=${scan_rc}, ref=${remote_ref}) — failing closed; no verified findings"

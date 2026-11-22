@@ -148,6 +148,7 @@ _append_todo_entry() {
 	local title="$2"
 	local task_ref="$3"
 	local todo_file="$4"
+	local labels="${5:-}"
 	local today
 	today=$(date +%Y-%m-%d)
 
@@ -156,7 +157,14 @@ _append_todo_entry() {
 		ref_field=" ref:${task_ref}"
 	fi
 
-	local entry="- [ ] ${task_id} ${title} #auto-dispatch ~1h${ref_field} logged:${today}"
+	# GH#35484: an explicit no-auto-dispatch label is a durable hold; the
+	# TODO tag must match it instead of the #auto-dispatch default.
+	local dispatch_tag="#auto-dispatch"
+	if [[ ",${labels// /}," == *",no-auto-dispatch,"* ]]; then
+		dispatch_tag="#no-auto-dispatch"
+	fi
+
+	local entry="- [ ] ${task_id} ${title} ${dispatch_tag} ~1h${ref_field} logged:${today}"
 
 	# Scan for the first "## Ready" (or "## Backlog") header and track the
 	# last "- [ ]" task line within that section. Insert after that line so
@@ -259,6 +267,7 @@ _BATCH_REPO_PATH=""
 _BATCH_RESULT_IDS=()
 _BATCH_RESULT_TITLES=()
 _BATCH_RESULT_REFS=()
+_BATCH_UNTRACKED_IDS=()
 _BATCH_PUBLICATION_RESULT="not-run"
 
 # ---------------------------------------------------------------------------
@@ -437,7 +446,8 @@ _commit_batch_planning() {
 	if [[ -x "$planning_helper" ]]; then
 		log_info "Committing $n planning file(s)..."
 		local output=""
-		if output=$("$planning_helper" "$commit_msg"); then
+		# Publish from the batch target, not the caller's cwd (--repo-path).
+		if output=$(cd "$repo_path" && "$planning_helper" "$commit_msg"); then
 			_BATCH_PUBLICATION_RESULT=$(printf '%s\n' "$output" | grep '^AIDEVOPS_PLANNING_COMMIT_RESULT=' | tail -1 | cut -d= -f2-)
 			[[ -n "$_BATCH_PUBLICATION_RESULT" ]] || _BATCH_PUBLICATION_RESULT="published"
 		else
@@ -548,16 +558,71 @@ _process_one_batch_title() {
 			log_warn "Brief creation failed for $task_id — continuing"
 	fi
 
-	_append_todo_entry "$task_id" "$title" "$task_ref" "$todo_file" ||
+	_append_todo_entry "$task_id" "$title" "$task_ref" "$todo_file" "$_BATCH_LABELS" ||
 		log_warn "TODO entry failed for $task_id — continuing"
+	local resolve_rc=0
 	if [[ "$_BATCH_NO_ISSUE" != "true" && "$_BATCH_OFFLINE" != "true" ]]; then
-		task_ref=$(_resolve_pending_task_ref "$task_id" "$task_ref" "$repo_path" "$todo_file") || return 1
+		local resolved_ref=""
+		if resolved_ref=$(_resolve_pending_task_ref "$task_id" "$task_ref" "$repo_path" "$todo_file"); then
+			task_ref="$resolved_ref"
+		else
+			# GH#35484: the ID is already claimed on the counter. Keep it in the
+			# summary with exact recovery commands instead of dropping it, so a
+			# retry does not burn fresh IDs.
+			task_ref="none"
+			_BATCH_UNTRACKED_IDS+=("$task_id")
+			resolve_rc=1
+		fi
 	fi
 
 	_BATCH_RESULT_IDS+=("$task_id")
 	_BATCH_RESULT_TITLES+=("$title")
 	_BATCH_RESULT_REFS+=("${task_ref:-offline}")
+	if [[ "$resolve_rc" -ne 0 ]]; then
+		log_warn "Allocated $task_id without a tracker issue: $title"
+		return 1
+	fi
 	log_success "Allocated $task_id ($task_ref): $title"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _print_batch_recovery: list allocated IDs whose tracker issue could not be
+# created, with the exact per-ID recovery commands (GH#35484).
+# Args: repo_path
+# ---------------------------------------------------------------------------
+_print_batch_recovery() {
+	local repo_path="$1"
+	[[ ${#_BATCH_UNTRACKED_IDS[@]} -gt 0 ]] || return 0
+	echo "Allocated IDs without a tracker issue (IDs stay claimed; do not re-run batch):"
+	local tid=""
+	for tid in "${_BATCH_UNTRACKED_IDS[@]}"; do
+		echo "  ${tid}: complete ${repo_path}/todo/tasks/${tid}-brief.md (What/Why/How/Files Scope), then:"
+		echo "    (cd \"${repo_path}\" && ~/.aidevops/agents/scripts/issue-sync-helper.sh push ${tid})"
+	done
+	echo ""
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _refuse_canonical_batch_target: canonical checkouts are read-only service
+# mirrors (GH#35484). Refuse before any ID is claimed or file is written, so
+# nothing has to be recovered. Classification failure fails closed.
+# Args: repo_path
+# ---------------------------------------------------------------------------
+_refuse_canonical_batch_target() {
+	local repo_path="$1"
+	local classification=""
+	classification=$(python3 "${SCRIPT_DIR}/canonical-write-policy-helper.py" classify \
+		--cwd "$repo_path" --field classification 2>/dev/null) || {
+		log_error "Cannot classify $repo_path; refusing to write planning files"
+		return 1
+	}
+	if [[ "$classification" == "canonical" ]]; then
+		log_error "Canonical checkout is read-only: $repo_path"
+		log_error "Run batch from a linked worktree, e.g. --repo-path <linked-worktree> (worktree-helper.sh add <branch>)"
+		return 1
+	fi
 	return 0
 }
 
@@ -591,6 +656,10 @@ cmd_batch() {
 		return 1
 	fi
 
+	if [[ "$_BATCH_DRY_RUN" != "true" ]]; then
+		_refuse_canonical_batch_target "$repo_path" || return 1
+	fi
+
 	local claim_script="$SCRIPT_DIR/claim-task-id.sh"
 	if [[ ! -x "$claim_script" ]]; then
 		log_error "claim-task-id.sh not found or not executable: $claim_script"
@@ -606,6 +675,7 @@ cmd_batch() {
 	_BATCH_RESULT_IDS=()
 	_BATCH_RESULT_TITLES=()
 	_BATCH_RESULT_REFS=()
+	_BATCH_UNTRACKED_IDS=()
 	_BATCH_PUBLICATION_RESULT="not-run"
 	local any_failed=false
 
@@ -621,9 +691,14 @@ cmd_batch() {
 	fi
 
 	_print_batch_summary
+	_print_batch_recovery "$repo_path"
 
 	if [[ "$any_failed" == "true" ]]; then
-		log_warn "Some tasks failed to allocate or publish; affected issues remain publication:pending and are safe to retry"
+		if [[ ${#_BATCH_UNTRACKED_IDS[@]} -gt 0 ]]; then
+			log_warn "Some allocated IDs have no tracker issue; use the per-ID recovery commands above instead of re-running batch"
+		else
+			log_warn "Some tasks failed to allocate or publish; affected issues remain publication:pending and are safe to retry"
+		fi
 		return 1
 	fi
 

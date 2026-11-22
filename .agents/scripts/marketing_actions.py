@@ -8,9 +8,6 @@ from __future__ import annotations
 import base64
 import difflib
 import getpass
-import hashlib
-import hmac
-import json
 import os
 import stat
 from datetime import datetime, timezone
@@ -18,11 +15,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import marketing_action_approval as approval_records
 import marketing_action_io as action_io
 
 INPUT_SCHEMA = "aidevops.marketing-action-input/v1"
 PLAN_SCHEMA = "aidevops.marketing-action-plan/v1"
-APPROVAL_SCHEMA = "aidevops.marketing-action-approval/v1"
+APPROVAL_SCHEMA = approval_records.APPROVAL_SCHEMA
 RECEIPT_SCHEMA = "aidevops.marketing-action-receipt/v1"
 ALLOWED_ACTIONS = {"title", "meta_description", "internal_link"}
 EXCLUDED_ACTIONS = {
@@ -40,7 +38,7 @@ EXCLUDED_ACTIONS = {
     "community_post",
 }
 MAX_ACTIONS = 50
-MAX_APPROVAL_TTL_SECONDS = 900
+MAX_APPROVAL_TTL_SECONDS = approval_records.MAX_APPROVAL_TTL_SECONDS
 ActionError = action_io.ActionError
 _require = action_io.require
 canonical_json = action_io.canonical_json
@@ -172,71 +170,25 @@ def validate_plan(value: Any) -> dict[str, Any]:
     return value
 
 
-def _read_inherited_fd(name: str, maximum: int) -> bytes:
-    raw_fd = os.environ.get(name)
-    _require(raw_fd is not None and raw_fd.isdigit(), f"trusted runtime did not supply {name}")
-    fd = int(raw_fd)
-    metadata = os.fstat(fd)
-    _require(stat.S_ISFIFO(metadata.st_mode) or stat.S_ISSOCK(metadata.st_mode), f"{name} must be an inherited pipe")
-    value = os.read(fd, maximum + 1)
-    _require(len(value) <= maximum, f"{name} exceeds byte budget")
-    return value
-
-
-def _parse_time(value: Any, field: str) -> datetime:
-    _require(isinstance(value, str) and value.endswith("Z"), f"{field} must be a UTC timestamp")
-    try:
-        return datetime.fromisoformat(value[:-1] + "+00:00")
-    except ValueError as error:
-        raise ActionError(f"{field} must be a UTC timestamp") from error
-
-
 def _verify_cancellation(approval: dict[str, Any]) -> None:
-    path = Path(approval["cancellation_path"])
-    _require(path.is_absolute() and path.is_file() and not path.is_symlink(), "cancellation state is unavailable")
-    metadata = path.stat()
-    _require(metadata.st_uid == os.getuid() and stat.S_IMODE(metadata.st_mode) == 0o600,
-             "cancellation state is not private to the operator")
-    expected = f"active:{approval['nonce']}\n".encode("utf-8")
-    _require(path.read_bytes() == expected, "operation was cancelled")
+    try:
+        approval_records.verify_cancellation(approval)
+    except approval_records.ApprovalError as error:
+        raise ActionError(str(error)) from error
 
 
 def verify_runtime_approval(
     plan: dict[str, Any], operation: str, receipt_digest: str | None = None
 ) -> dict[str, Any]:
-    """Consume and authenticate one runtime-provided approval from inherited pipes."""
-    approval_raw = _read_inherited_fd("AIDEVOPS_MARKETING_APPROVAL_FD", 16_384)
-    key = _read_inherited_fd("AIDEVOPS_MARKETING_APPROVAL_KEY_FD", 256)
-    _require(len(key) >= 32, "runtime approval key is too short")
+    """Return the root-owned operator approval record for exactly this plan and operation.
+
+    Records are minted only by `sudo aidevops approve marketing-plan` (root + TTY);
+    environment variables, pipes, and caller-supplied files grant nothing.
+    """
     try:
-        approval = json.loads(approval_raw)
-    except json.JSONDecodeError as error:
-        raise ActionError("runtime approval is not valid JSON") from error
-    _require(isinstance(approval, dict), "runtime approval must be an object")
-    fields = {
-        "schema", "operation", "plan_digest", "project_root", "worktree_identity", "action_set", "owner",
-        "issued_at", "expires_at", "nonce", "cancellation_path", "receipt_digest", "signature",
-    }
-    _keys(approval, fields, fields, "approval")
-    _require(approval["schema"] == APPROVAL_SCHEMA and approval["operation"] == operation,
-             "approval version or operation does not match")
-    _require(approval["plan_digest"] == plan["plan_digest"], "approval plan digest does not match")
-    _require(approval["project_root"] == plan["project_root"], "approval project does not match")
-    _require(approval["worktree_identity"] == plan["worktree_identity"], "approval worktree does not match")
-    _require(approval["action_set"] == plan["action_set"], "approval action set does not match")
-    _require(approval["receipt_digest"] == receipt_digest, "approval receipt digest does not match")
-    _require(approval["owner"] == plan["owner"] == getpass.getuser(), "approval owner does not match")
-    issued = _parse_time(approval["issued_at"], "approval.issued_at")
-    expires = _parse_time(approval["expires_at"], "approval.expires_at")
-    now = datetime.now(timezone.utc)
-    _require(issued <= now < expires, "approval is stale or not yet valid")
-    _require((expires - issued).total_seconds() <= MAX_APPROVAL_TTL_SECONDS, "approval freshness window is too broad")
-    signature = approval.pop("signature")
-    expected = hmac.new(key, canonical_json(approval), hashlib.sha256).hexdigest()
-    _require(isinstance(signature, str) and hmac.compare_digest(signature, expected), "approval signature is invalid")
-    approval["signature"] = signature
-    _verify_cancellation(approval)
-    return approval
+        return approval_records.verify(plan, operation, PLAN_SCHEMA, receipt_digest)
+    except approval_records.ApprovalError as error:
+        raise ActionError(str(error)) from error
 
 
 def _validate_receipt_for_plan(receipt: Any, plan: dict[str, Any]) -> dict[str, Any]:

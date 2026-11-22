@@ -97,6 +97,10 @@ WEIGHT_NON_COLLAB=2
 WEIGHT_DOMAIN_REPEAT=2
 WEIGHT_PATTERN_MATCH=1
 WEIGHT_FILELINE_REFS=1
+# GH#35655: any URL-shortener/redirector link (configs/redirect-hosts.conf)
+# from a non-collaborator is spam by policy: 2 (non-collab) + 3 = 5.
+WEIGHT_REDIRECT_LINK=3
+REDIRECT_SCANNER="${SCRIPT_DIR}/redirect_link_policy.py"
 
 # Hosts excluded from single-domain repetition (always lowercased).
 DEFAULT_EXCLUDE_HOSTS="github.com,githubusercontent.com"
@@ -269,6 +273,25 @@ _priv_count_pattern_matches() {
 	return 0
 }
 
+# Return 1 when the body contains a redirect/shortener link, else 0.
+# Lexical only — never resolves the link (GH#35655).
+# Args: $1 = body text
+_priv_redirect_link_signal() {
+	local body="$1"
+	local rc=0
+	if [[ -z "$body" || ! -f "$REDIRECT_SCANNER" ]]; then
+		echo 0
+		return 0
+	fi
+	printf '%s' "$body" | python3 "$REDIRECT_SCANNER" scan >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		echo 1
+	else
+		echo 0
+	fi
+	return 0
+}
+
 # Fetch issue/PR body via the rate-limit-aware wrapper.
 # Args: $1 = type (issue|pr), $2 = number, $3 = slug
 _priv_get_body() {
@@ -284,7 +307,7 @@ _priv_get_body() {
 
 # Compose composite score and pipe-delimited breakdown.
 # Args: $1 = body, $2 = type, $3 = number, $4 = slug, $5 = optional precomputed author_association
-# Output: score|verdict|assoc=X|domain_max=N|patterns=N|fileline=N
+# Output: score|verdict|assoc=X|domain_max=N|patterns=N|fileline=N|redirect=N
 _priv_compute_score() {
 	local body="$1" type="$2" num="$3" slug="$4"
 
@@ -309,11 +332,15 @@ _priv_compute_score() {
 	local fileline_signal=0
 	[[ "$fileline" -ge "$FILELINE_MIN" ]] && fileline_signal=1
 
+	local redirect_signal
+	redirect_signal=$(_priv_redirect_link_signal "$body")
+
 	local score=0
 	score=$((score + non_collab * WEIGHT_NON_COLLAB))
 	score=$((score + domain_signal * WEIGHT_DOMAIN_REPEAT))
 	score=$((score + patterns * WEIGHT_PATTERN_MATCH))
 	score=$((score + fileline_signal * WEIGHT_FILELINE_REFS))
+	score=$((score + redirect_signal * WEIGHT_REDIRECT_LINK))
 
 	local verdict
 	if [[ "$score" -ge "$SPAM_THRESHOLD" ]]; then
@@ -324,8 +351,8 @@ _priv_compute_score() {
 		verdict="clean"
 	fi
 
-	printf '%d|%s|assoc=%s|domain_max=%d|patterns=%d|fileline=%d\n' \
-		"$score" "$verdict" "$assoc" "$domain_max" "$patterns" "$fileline"
+	printf '%d|%s|assoc=%s|domain_max=%d|patterns=%d|fileline=%d|redirect=%d\n' \
+		"$score" "$verdict" "$assoc" "$domain_max" "$patterns" "$fileline" "$redirect_signal"
 	return 0
 }
 
@@ -453,12 +480,14 @@ cmd_score() {
 
 	if [[ "$json" -eq 1 ]]; then
 		# Use jq to keep JSON valid if string fields contain special characters.
-		local score verdict assoc_raw domain_raw patterns_raw fileline_raw
-		IFS='|' read -r score verdict assoc_raw domain_raw patterns_raw fileline_raw <<<"$result"
+		local score verdict assoc_raw domain_raw patterns_raw fileline_raw redirect_raw
+		IFS='|' read -r score verdict assoc_raw domain_raw patterns_raw fileline_raw redirect_raw <<<"$result"
 		local assoc="${assoc_raw#*=}"
 		local domain="${domain_raw#*=}"
 		local patterns="${patterns_raw#*=}"
 		local fileline="${fileline_raw#*=}"
+		local redirect="${redirect_raw#*=}"
+		[[ "$redirect" =~ ^[0-9]+$ ]] || redirect=0
 		jq -n \
 			--arg type "$type" \
 			--argjson number "$num" \
@@ -469,7 +498,8 @@ cmd_score() {
 			--argjson domain_max "$domain" \
 			--argjson patterns "$patterns" \
 			--argjson fileline_refs "$fileline" \
-			'{type: $type, number: $number, repo: $repo, score: $score, verdict: $verdict, author_association: $author_association, domain_max: $domain_max, patterns: $patterns, fileline_refs: $fileline_refs}'
+			--argjson redirect_link "$redirect" \
+			'{type: $type, number: $number, repo: $repo, score: $score, verdict: $verdict, author_association: $author_association, domain_max: $domain_max, patterns: $patterns, fileline_refs: $fileline_refs, redirect_link: $redirect_link}'
 	else
 		printf '%s\n' "$result"
 	fi

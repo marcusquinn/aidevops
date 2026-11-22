@@ -96,7 +96,116 @@ has_worker_for_repo_issue() {
 		return 0
 	fi
 
+	# GH#36186: an exact-head draft continuation runs under the session key
+	# pr-checkpoint-continuation-<safe-slug>-<pr>, which names the PR, not
+	# the issue. Recognise it when that PR links this issue.
+	if _has_live_checkpoint_continuation_for_issue "$issue_number" "$repo_slug" "$worker_lines"; then
+		return 0
+	fi
+
 	return 1
+}
+
+# Per-process cache of "slug|pr|linked issue numbers" rows (GH#36186).
+_PULSE_CONTINUATION_LINK_CACHE=""
+# Result of the last _continuation_pr_linked_issues call (space-separated).
+_PULSE_CONTINUATION_LINKED=""
+
+#######################################
+# Resolve the issue numbers a PR links (closing references plus `#N` mentions
+# in its body) into _PULSE_CONTINUATION_LINKED, cached per process. Call it
+# directly, not in a command substitution, so the cache persists.
+# Arguments: $1 repo slug, $2 PR number
+# Exit codes: 0 resolved, 1 PR unreadable
+#######################################
+_continuation_pr_linked_issues() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local cache_row="" cache_key="${repo_slug}|${pr_number}|" pr_json="" linked=""
+	_PULSE_CONTINUATION_LINKED=""
+	while IFS= read -r cache_row; do
+		if [[ "$cache_row" == "$cache_key"* ]]; then
+			_PULSE_CONTINUATION_LINKED="${cache_row#"$cache_key"}"
+			return 0
+		fi
+	done <<<"$_PULSE_CONTINUATION_LINK_CACHE"
+	pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json closingIssuesReferences,body 2>/dev/null) || return 1
+	linked=$(printf '%s' "$pr_json" | jq -r '
+		([.closingIssuesReferences[]?.number] +
+			[(.body // "") | scan("(?:^|[^0-9A-Za-z_/])#([0-9]+)") | .[0] | tonumber]) |
+		unique | map(tostring) | join(" ")
+	' 2>/dev/null) || return 1
+	_PULSE_CONTINUATION_LINK_CACHE="${_PULSE_CONTINUATION_LINK_CACHE}${_PULSE_CONTINUATION_LINK_CACHE:+$'\n'}${cache_key}${linked}"
+	_PULSE_CONTINUATION_LINKED="$linked"
+	return 0
+}
+
+#######################################
+# GH#36186: true when a local draft-checkpoint continuation session for a PR
+# linked to this issue is running. A running continuation whose linkage cannot
+# be read fails closed (treated as live) so dispatch never launches a
+# competing worker on transient API errors.
+# Arguments: $1 issue number, $2 repo slug, $3 active worker lines
+# Exit codes: 0 live continuation, 1 none
+#######################################
+_has_live_checkpoint_continuation_for_issue() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local worker_lines="$3"
+	local session_prefix="" pr_numbers="" pr_number=""
+	[[ -n "$worker_lines" && "$repo_slug" == */* ]] || return 1
+	session_prefix="pr-checkpoint-continuation-$(printf '%s' "$repo_slug" | tr '/:' '--')-"
+	# The session key is lossy (org/a-b vs org-a/b): when the process line
+	# exposes WORKER_REPO_SLUG, it must match this repo before the line counts.
+	pr_numbers=$(printf '%s\n' "$worker_lines" | awk -v prefix="$session_prefix" -v slug="$repo_slug" '
+		{
+			other = 0
+			for (i = 1; i <= NF; i++) {
+				if (index($i, "WORKER_REPO_SLUG=") == 1 && substr($i, 18) != slug) other = 1
+			}
+			if (other) next
+			for (i = 1; i < NF; i++) {
+				if ($i == "--session-key" && index($(i + 1), prefix) == 1) {
+					rest = substr($(i + 1), length(prefix) + 1)
+					if (rest ~ /^[1-9][0-9]*$/) print rest
+				}
+			}
+		}
+	' | sort -u) || pr_numbers=""
+	[[ -n "$pr_numbers" ]] || return 1
+	while IFS= read -r pr_number; do
+		[[ "$pr_number" =~ ^[1-9][0-9]*$ ]] || continue
+		if ! _continuation_pr_linked_issues "$repo_slug" "$pr_number"; then
+			[[ -n "${LOGFILE:-}" ]] && echo "[pulse-wrapper] has_worker: continuation for PR #${pr_number} in ${repo_slug} has unreadable linkage; treating issue #${issue_number} as owned (GH#36186)" >>"$LOGFILE"
+			return 0
+		fi
+		[[ " ${_PULSE_CONTINUATION_LINKED} " == *" ${issue_number} "* ]] && return 0
+	done <<<"$pr_numbers"
+	return 1
+}
+
+#######################################
+# Run one dedup layer as a timed dispatch sub-stage (GH#37883). The layer's
+# exit status is returned unchanged and its stdout (the block signal) passes
+# through untouched; recording writes only to the stage log. Callers that did
+# not load dispatch-stage-instrument.sh run the layer untimed. Locals use a
+# _dlt_ prefix so layers reading caller-scoped variables see no shadowing.
+# Args: issue number, repo slug, stage name, command and arguments
+#######################################
+_dedup_layer_timed() {
+	local _dlt_issue="$1" _dlt_repo="$2" _dlt_stage="$3"
+	shift 3
+	local _dlt_t0="" _dlt_rc=0 _ds_stage_attempt_id=""
+	if ! declare -F _ds_record >/dev/null 2>&1 || ! declare -F _ds_now_ns >/dev/null 2>&1 ||
+		! declare -F _ds_stage_start >/dev/null 2>&1; then
+		"$@" || _dlt_rc=$?
+		return "$_dlt_rc"
+	fi
+	_dlt_t0=$(_ds_now_ns)
+	_ds_stage_start "$_dlt_issue" "$_dlt_repo" "$_dlt_stage" "$_dlt_t0" _ds_stage_attempt_id
+	"$@" || _dlt_rc=$?
+	_ds_record "$_dlt_issue" "$_dlt_repo" "$_dlt_stage" "$_dlt_t0" "$_ds_stage_attempt_id"
+	return "$_dlt_rc"
 }
 
 #######################################
@@ -115,11 +224,18 @@ check_dispatch_dedup() {
 	local issue_title="${4:-}"
 	local self_login="${5:-}"
 
-	_dedup_layer1_ledger_check "$issue_number" "$repo_slug" && return 0
-	_dedup_layer2_process_match "$issue_number" "$repo_slug" && return 0
-	_dedup_layer3_title_match "$title" && return 0
+	# GH#37883: each layer is a dedup.layer* sub-stage of dedup.7_layers.
+	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer1_ledger" \
+		_dedup_layer1_ledger_check "$issue_number" "$repo_slug" && return 0
+	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer2_process" \
+		_dedup_layer2_process_match "$issue_number" "$repo_slug" && return 0
+	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer3_title" \
+		_dedup_layer3_title_match "$title" && return 0
+	# GH#38770: audit alerts are dispatchable only on the producing runner.
+	_dedup_audit_alert_locality "$issue_number" "$repo_slug" "$issue_title" "$self_login" && return 0
 	local _pr_evidence_rc=0
-	_dedup_layer4_pr_evidence "$issue_number" "$repo_slug" "$issue_title" || _pr_evidence_rc=$?
+	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer4_pr_evidence" \
+		_dedup_layer4_pr_evidence "$issue_number" "$repo_slug" "$issue_title" || _pr_evidence_rc=$?
 	if [[ "$_pr_evidence_rc" -eq 0 ]]; then
 		return 0
 	fi
@@ -134,8 +250,10 @@ check_dispatch_dedup() {
 	# dispatch_max a distinct benign rc so the stage wrapper suppresses generic
 	# "Stage failed" noise and refill loops can skip this candidate for the
 	# current pulse cycle (GH#23541).
-	_dedup_layer5_dispatch_comment "$issue_number" "$repo_slug" "$self_login" && return 3
-	_dedup_layer6_assignee_and_stale "$issue_number" "$repo_slug" "$self_login" && return 3
+	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer5_dispatch_comment" \
+		_dedup_layer5_dispatch_comment "$issue_number" "$repo_slug" "$self_login" && return 3
+	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer6_assignee" \
+		_dedup_layer6_assignee_and_stale "$issue_number" "$repo_slug" "$self_login" && return 3
 	[[ "$_pr_evidence_rc" -eq 2 ]] && return 0
 
 	return 1
@@ -498,32 +616,57 @@ _auto_dispatch_lock_required() {
 # Reconcile conversation locks for every visible auto-dispatch issue,
 # including blocked and queued work that cannot reach the launch path yet.
 # Only markers owned by this mechanism may trigger an unlock.
+#
+# GH#38274: one jq pass classifies every issue (policy as in
+# _auto_dispatch_lock_required). A per-issue jq/marker subshell cost 3.4s for
+# 505 auto-dispatch issues and pushed large repositories past their census
+# budget. Issues already locked with a recorded marker need no work, so they
+# no longer rewrite the marker or log a line every cycle.
+# Row policy column: 1 = lock required, x = no-auto-dispatch (never unlock),
+# 0 = neither (unlock only a marker this mechanism owns).
 #######################################
 reconcile_auto_dispatch_issue_locks() {
 	local slug="$1"
 	local issue_json="$2"
-	local issue_num="" marker="" labels="" labels_csv="" lock_snapshot="" lock_states="" locked_state=""
+	local issue_num="" marker="" marker_prefix="" policy="" lock_snapshot="" lock_states="" locked_state="" rows=""
 	[[ -n "$slug" && -n "$issue_json" ]] || return 1
 	lock_snapshot=$(_read_issue_conversation_locks_batch "$slug" "$issue_json") || return 1
 	lock_states=$(printf '%s' "$lock_snapshot" | jq -ce '
 		map({key: (.number | tostring), value: .locked}) | from_entries
 	' 2>/dev/null) || return 1
+	rows=$(printf '%s' "$issue_json" | jq -r --argjson states "$lock_states" \
+		--arg auto_dispatch_label "$_PULSE_DISPATCH_AUTO_LABEL" '
+		.[] | ([.labels[]? | .name? // .]) as $labels | (.number | tostring) as $issue |
+		(($labels | index("no-auto-dispatch")) != null) as $opted_out |
+		[$issue,
+			(if (($labels | index($auto_dispatch_label)) != null and ($opted_out | not)) then "1"
+			elif $opted_out then "x" else "0" end),
+			(if ($states | has($issue)) then ($states[$issue] | tostring) else "unknown" end)
+		] | @tsv
+	' 2>/dev/null) || return 1
+	marker_prefix=$(_auto_dispatch_lock_marker "" "$slug") || return 1
 
-	while IFS=$'\t' read -r issue_num labels; do
+	while IFS=$'\t' read -r issue_num policy locked_state; do
 		[[ "$issue_num" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || continue
-		marker=$(_auto_dispatch_lock_marker "$issue_num" "$slug") || continue
-		labels_csv=",${labels},"
-		if _auto_dispatch_lock_required "$labels"; then
-			locked_state=$(printf '%s' "$lock_states" | jq -r --arg issue_num "$issue_num" \
-				'if has($issue_num) then .[$issue_num] | tostring else "unknown" end' 2>/dev/null) || return 1
-			[[ "$locked_state" == "true" || "$locked_state" == "$_PULSE_DISPATCH_FALSE" ]] || return 1
+		marker="${marker_prefix}${issue_num}"
+		case "$policy" in
+		1)
+			case "$locked_state" in
+			true) [[ ! -f "$marker" ]] || continue ;;
+			"$_PULSE_DISPATCH_FALSE") ;;
+			*) return 1 ;;
+			esac
 			_apply_issue_conversation_lock_state "$issue_num" "$slug" resolved "$locked_state" || return 1
-		elif [[ -f "$marker" && "$labels_csv" != *,no-auto-dispatch,* ]]; then
+			;;
+		0)
+			[[ -f "$marker" ]] || continue
 			gh issue unlock "$issue_num" --repo "$slug" >/dev/null 2>&1 || return 1
 			rm -f "$marker" 2>/dev/null || return 1
 			echo "[pulse-wrapper] Unlocked #${issue_num} in ${slug} after auto-dispatch removal (GH#30180)" >>"$LOGFILE"
-		fi
-	done < <(printf '%s' "$issue_json" | jq -r '.[] | [(.number | tostring), ([.labels[]? | .name? // .] | join(","))] | @tsv' 2>/dev/null)
+			;;
+		*) ;;
+		esac
+	done <<<"$rows"
 
 	return 0
 }
@@ -638,7 +781,7 @@ _task_id_in_recent_commits() {
 	# Subtask decimal suffix preserved (GH#19165) — t2053.2 must NOT match parent t2053 commits.
 	local -a subject_patterns=()
 	local task_id_match
-	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | head -1 | sed 's/[.]/\\./g') || task_id_match=""
+	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | sed -n '1p' | sed 's/[.]/\\./g') || task_id_match=""
 	if [[ -n "$task_id_match" ]]; then
 		subject_patterns+=("$task_id_match")
 	fi
@@ -646,7 +789,7 @@ _task_id_in_recent_commits() {
 	# Pattern 2: GH#NNN from title (e.g., "GH#17574: fix pulse dispatch")
 	# Subject-only: body mentions of other GH# IDs must not match.
 	local gh_id_match
-	gh_id_match=$(printf '%s' "$issue_title" | grep -oE '^GH#[0-9]+' | head -1) || gh_id_match=""
+	gh_id_match=$(printf '%s' "$issue_title" | grep -oE '^GH#[0-9]+' | sed -n '1p') || gh_id_match=""
 	if [[ -n "$gh_id_match" ]]; then
 		subject_patterns+=("$gh_id_match")
 	fi
@@ -764,16 +907,16 @@ _task_id_in_changed_files() {
 
 	# Check for tNNN or tNNN.X completion marker: "- [x] tNNN ..."
 	local task_id_match
-	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | head -1 | sed 's/[.]/\\./g') || task_id_match=""
+	task_id_match=$(printf '%s' "$issue_title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*' | sed -n '1p' | sed 's/[.]/\\./g') || task_id_match=""
 	if [[ -n "$task_id_match" ]]; then
-		if printf '%s' "$todo_content" | grep -qE "^\s*-\s*\[x\]\s+${task_id_match}(\s|$)"; then
+		if printf '%s' "$todo_content" | grep -E "^\s*-\s*\[x\]\s+${task_id_match}(\s|$)" >/dev/null; then
 			echo "[pulse-wrapper] _task_id_in_changed_files: found completed '${task_id_match}' in TODO.md on origin/main" >>"$LOGFILE"
 			return 0
 		fi
 	fi
 
 	# Check for GH#NNN completion marker: "- [x] ... GH#NNN ..."
-	if printf '%s' "$todo_content" | grep -qE "^\s*-\s*\[x\].*\bGH#${issue_number}\b"; then
+	if printf '%s' "$todo_content" | grep -E "^\s*-\s*\[x\].*\bGH#${issue_number}\b" >/dev/null; then
 		echo "[pulse-wrapper] _task_id_in_changed_files: found completed 'GH#${issue_number}' in TODO.md on origin/main" >>"$LOGFILE"
 		return 0
 	fi

@@ -5,6 +5,7 @@ import {
   routingCandidateIndex,
   routingCandidates,
   routingModelIdentity,
+  routingUnavailableDetail,
   nextRoutingTier,
   selectConnectedRoutingCandidate,
 } from "./model-routing.mjs";
@@ -75,13 +76,18 @@ async function applyConnectedRoutingModel(context, route, message, policy) {
     return;
   }
   const routing = policy.armRouting || context.modelRouting;
+  const availability = context.resolveAvailability?.() || {};
   const routedModel = selectConnectedRoutingCandidate(
     routing,
     route.effort,
     providerState,
+    undefined,
+    availability,
   );
   if (!routedModel) {
-    throw new Error(`[aidevops] No connected model is available for '${route.effort}' routing`);
+    // GH#36698/GH#37649: name same-tier models rejected for the current auth or
+    // rate limited so the failure is actionable; never substitute a lower tier.
+    throw new Error(`[aidevops] No connected model is available for '${route.effort}' routing${routingUnavailableDetail(routing, route.effort, availability)}`);
   }
   message.model = routingModelIdentity(routedModel);
   policy.routedModel = routedModel;
@@ -93,6 +99,23 @@ function applySpecialistPolicy(context, agentName, text, policy) {
   validateSpecialistRequest(text);
   policy.effort = "thinking";
   policy.reason = "specialist_advice";
+}
+
+async function checkSpecialistAvailability(context, policy) {
+  if (policy.reason !== "specialist_advice") return;
+  const model = context.agentRoutingState.specialistAdvisor.model;
+  const routing = { ...context.modelRouting, tiers: { thinking: { models: [model] } } };
+  const providerState = await context.resolveProviderState();
+  if (!providerState) {
+    throw new Error(`[aidevops] Specialist advisory route unavailable: unable to read provider state for ${model}. No automatic substitute is authorized; retain the evidence and use the declared blocker or user-escalation path.`);
+  }
+  const available = selectConnectedRoutingCandidate(
+    routing, "thinking", providerState, undefined,
+    context.resolveAvailability?.() || {},
+  );
+  if (!available) {
+    throw new Error(`[aidevops] Specialist advisory route unavailable: ${model} is not available for the connected account or locality policy. No automatic substitute is authorized; retain the evidence and use the declared blocker or user-escalation path.`);
+  }
 }
 
 async function routeChatMessage(context, output) {
@@ -145,6 +168,7 @@ async function routeTierMessage(context, output, { agentName, text, now }) {
     createdAt: now,
   };
   applySpecialistPolicy(context, agentName, text, policy);
+  await checkSpecialistAvailability(context, policy);
   context.policies.set(sessionID, policy);
 
   if (!context.modelRouting || route.pinned) return;

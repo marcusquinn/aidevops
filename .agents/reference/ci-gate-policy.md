@@ -121,7 +121,8 @@ run those directly too, without `-k` (they do not provide unittest filtering).
    signal.
 5. Convert advisory E2E, visual, performance, and flaky integration findings
    into follow-up tasks with worker-ready evidence instead of blocking unrelated
-   develop PRs or spawning duplicate worker attempts.
+   develop PRs or spawning duplicate worker attempts. To reproduce a flaky test,
+   run `test-load-repro-helper.sh run --runs N --concurrency P -- <cmd>`.
 6. If an E2E failure is required by branch protection, fix or explicitly
    quarantine the failing path before merge; do not bypass production/release
    gates silently.
@@ -168,6 +169,71 @@ run those directly too, without `-k` (they do not provide unittest filtering).
     minutes return monthly, so keep the app installed (it is not a reason to
     remove Qlty) and never make "qlty check" a required check on a limited
     repository. Setup guidance: `tools/code-review/qlty.md`.
+15. Codacy's PR aggregation can stay `ACTION_REQUIRED` after a later commit
+    removed the flagged code. `gh-checks-wait-helper.sh` runs
+    `codacy-stale-check-helper.sh classify` on a failing Codacy check: when the
+    head commit's `deltaIssues` is empty and every PR-level issue's `lineText`
+    is absent from the head file, it reports `STALE (codacy PR aggregation)`
+    with that evidence and treats the check like a skipped one (a recorded
+    note, not a pass). Any missing `CODACY_API_TOKEN`, API error, present line
+    or head-commit finding keeps the failure terminal. If the classifier cannot
+    run, recover with a clean single-commit replacement PR; never bypass the
+    gate, and `reanalyzeCommit` needs a token with write access (403 otherwise).
+
+## Hosted CI demand and required contexts
+
+For public aidevops CI, keep GitHub-hosted execution (GH#37499). Do not activate
+`CI_RUNNER` or enroll public jobs in private infrastructure. Public job logs expose
+runner and machine names; a guarded selector is not a runner admission boundary.
+
+- Cancel superseded PR validation with a workflow/PR-number concurrency group.
+  For mixed event workflows, enable cancellation only for PR events and use a
+  distinct non-PR group. In `pull_request_target`, `github.ref` is the base branch,
+  not a PR identity: use `github.event.pull_request.number`.
+- Keep cancellation disabled for main pushes, release/publication, durable sync
+  and post-merge acceptance. A shared group with `cancel-in-progress: false`
+  still replaces older **pending** runs. Use SHA/run ID groups for independent
+  main validation; retain serialized groups for publication or mutable state.
+- Label-only refreshes must not displace head validation, even in the pending
+  queue. Use separate groups/identities. The Qlty new-file gate gives label
+  events unique groups; the regression gate has a separate refresh caller.
+  Review-bot evaluators retain their documented job-level, non-cancelling
+  admission rule (GH#2973/GH#28316).
+- Consolidate small lints into steps only when their required check contexts
+  remain intact. A step name does **not** publish a job check context. Without
+  explicit authority to migrate protection, retain the existing lint jobs and
+  names rather than manufacture successful placeholder checks. GH#37499 retains
+  the counter, portability, shell-init, parity, cascade, URL and task-ID jobs on
+  this basis; no branch protection is changed.
+- Prefer narrow `paths:` filters for optional workflows. For required checks,
+  keep the workflow triggered and scope expensive steps/jobs internally so a
+  docs/planning PR does not remain permanently `expected`. Code Quality scope
+  excludes nested Markdown and planning files from shell work and heavy
+  substantive analysis; workflow/source edits still run full validation, and
+  missing diff metadata still runs everything. Release version bumps get the
+  same scope when a strict zero-context parse shows only version-reference
+  lines changed in the version files (GH#39544); `main` push CI stays full.
+- Keep blocking regression, portability, lifecycle and security checks on PRs.
+  `code-quality-advisory.yml` consolidates the three full-tree complexity totals
+  and Python Lizard/Pyflakes reports into one post-merge job. They were already
+  informational; required PR regression checks are not moved or weakened.
+
+### GH#37499 measurement checkpoint
+
+The pre-change Code Quality run `42728170506` on head `573d73fa5` had 12 successful
+jobs: job creation-to-start median **68.5 s**, max **257 s**. Actions job timestamps
+show Complexity Analysis executing for 656 s (nesting 290 s; lifecycle contracts
+262 s), Framework Validation 489 s, and ShellCheck 255 s. These are one-run
+measurements, not a 24-hour baseline or proof of improvement.
+
+After merge, compare equal pre/post 24-hour windows using the Actions runs and
+per-run jobs APIs. Record run/job identity, head SHA, event, attempt, created/start/
+completion times, sample count, median/p95/max queue delay and execution separately.
+Exclude cancelled/failed runs, retries, outages and job-less samples consistently;
+compare like workflows/events, and retain raw timestamps. Run-level
+`run_started_at - created_at` may be zero while individual jobs queue for minutes;
+it is not a substitute for job creation-to-start. The post-merge window cannot be
+observed before merge; no 24-hour reduction is claimed by this PR.
 
 ## Private repositories and public launch
 

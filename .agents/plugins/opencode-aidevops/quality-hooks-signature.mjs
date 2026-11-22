@@ -99,7 +99,8 @@ function _generateSignature(helperPath, bodyValue, log, options = {}) {
     // legitimate gh writes plus the plugin test suite (GH#32807).
     const sig = execFileSync(helperPath, ["footer", "--no-session", "--body", bodyValue], {
       encoding: "utf-8",
-      timeout: 5000,
+      // AIDEVOPS_SIGNATURE_HELPER_TIMEOUT_MS: test-load override, clamped 5s..120s (GH#38750).
+      timeout: Math.min(Math.max(process.env.AIDEVOPS_SIGNATURE_HELPER_TIMEOUT_MS | 0, 5000), 120000),
       stdio: ["pipe", "pipe", "pipe"],
       env: _signatureHelperEnv(options.model, options.useProcessModelFallback),
     });

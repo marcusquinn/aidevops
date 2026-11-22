@@ -31,7 +31,14 @@ COMMAND="report"
 WINDOW="15m"
 SINCE="24h"
 RECENT_SINCE="1h"
-REPORT_BUDGET_SECONDS="${PULSE_CHECK_REPORT_BUDGET_SECONDS:-45}"
+# GH#39206: empty means "resolve from mode" after argument parsing. Interactive
+# report/json stay fast; the daily apply routine (r915, ~5m) needs room for the
+# 24h worker history and a full repos.json queue scan on a loaded host.
+REPORT_BUDGET_SECONDS="${PULSE_CHECK_REPORT_BUDGET_SECONDS:-}"
+COMPONENT_BUDGET_SECONDS="${PULSE_CHECK_COMPONENT_BUDGET_SECONDS:-}"
+QUEUE_BUDGET_SECONDS="${PULSE_CHECK_QUEUE_BUDGET_SECONDS:-}"
+INTERACTIVE_BUDGETS="45 10 20"
+APPLY_BUDGETS="300 60 210"
 VERIFY_DELIVERY=0
 APPLY_REPO="${PULSE_CHECK_APPLY_REPO:-}"
 JSON_OUTPUT=0
@@ -54,7 +61,7 @@ Options:
   --window <15m|30m|1h>       Current-state window (default: ${WINDOW})
   --since <1h|6h|24h|48h|7d> Historical worker summary window (default: ${SINCE})
   --recent <1h|6h|24h>       Recent worker outcome window (default: ${RECENT_SINCE})
-  --budget <seconds>         Collection deadline; missing evidence stays unknown (default: ${REPORT_BUDGET_SECONDS})
+  --budget <seconds>         Collection deadline; missing evidence stays unknown (default: 45; apply: 300)
   --verify-delivery          Also verify GitHub delivery counts within the collection deadline
   --repo <owner/repo>        Repo for --apply self-improvement issues
   --max-issues <N>           Per-repo auto-dispatch issue scan limit (default: ${MAX_ISSUES_PER_REPO})
@@ -109,7 +116,15 @@ _validate_numeric_options() {
 	[[ "$NMR_INACTIVE_MINUTES" =~ ^[0-9]+$ ]] || NMR_INACTIVE_MINUTES=10080
 	[[ "$FAILURE_FAMILY_THRESHOLD" =~ ^[0-9]+$ ]] || FAILURE_FAMILY_THRESHOLD=3
 	[[ "$FAILURE_FAMILY_RECOVERY_SECONDS" =~ ^[0-9]+$ ]] || FAILURE_FAMILY_RECOVERY_SECONDS=86400
-	[[ "$REPORT_BUDGET_SECONDS" =~ ^[1-9][0-9]*$ ]] || REPORT_BUDGET_SECONDS=45
+	local budget_defaults="$INTERACTIVE_BUDGETS"
+	if [[ "$APPLY_MODE" -eq 1 ]]; then
+		budget_defaults="$APPLY_BUDGETS"
+	fi
+	local default_total="" default_component="" default_queue=""
+	read -r default_total default_component default_queue <<<"$budget_defaults"
+	[[ "$REPORT_BUDGET_SECONDS" =~ ^[1-9][0-9]*$ ]] || REPORT_BUDGET_SECONDS="$default_total"
+	[[ "$COMPONENT_BUDGET_SECONDS" =~ ^[1-9][0-9]*$ ]] || COMPONENT_BUDGET_SECONDS="$default_component"
+	[[ "$QUEUE_BUDGET_SECONDS" =~ ^[1-9][0-9]*$ ]] || QUEUE_BUDGET_SECONDS="$default_queue"
 	return 0
 }
 
@@ -120,7 +135,7 @@ _run_json_helper() {
 	local output=""
 	local rc=0 started="$SECONDS" state="ok"
 	local remaining=$((_PULSE_CHECK_REPORT_DEADLINE - SECONDS))
-	local component_budget="${_PULSE_CHECK_COMPONENT_BUDGET:-10}"
+	local component_budget="${_PULSE_CHECK_COMPONENT_BUDGET:-${COMPONENT_BUDGET_SECONDS:-10}}"
 	if [[ "$remaining" -le 0 ]]; then
 		state="deadline_exhausted"
 	else
@@ -149,7 +164,7 @@ _scan_auto_dispatch_queue() {
 	fi
 
 	local remaining=$((_PULSE_CHECK_REPORT_DEADLINE - SECONDS))
-	local queue_budget="${PULSE_CHECK_QUEUE_BUDGET_SECONDS:-20}"
+	local queue_budget="${QUEUE_BUDGET_SECONDS:-20}"
 	[[ "$queue_budget" =~ ^[1-9][0-9]*$ ]] || queue_budget=20
 	if [[ "$remaining" -le 2 ]]; then
 		queue_budget=1
@@ -176,12 +191,23 @@ _collect_report_json() {
 	local queue="{}"
 	local pulse_health="{}"
 	local delivery='{"_collection":{"state":"not_requested"}}'
+	local detector_status='{}'
+	local detector_file="${PULSE_CHECK_DETECTOR_STATUS_FILE:-${HOME}/.aidevops/cache/fix-the-fixer-detector-status.json}"
+	if [[ -f "$detector_file" ]]; then
+		detector_status=$(jq -ce --argjson now "$(date +%s)" \
+			'[objects][0] // {} | if (.timestamp | type) == "number" and .timestamp <= $now and .timestamp > ($now - 86400) then . else {} end' \
+			"$detector_file" 2>/dev/null) || detector_status='{}'
+	fi
 	_PULSE_CHECK_REPORT_DEADLINE=$((SECONDS + REPORT_BUDGET_SECONDS))
 
 	current_state=$(_run_json_helper '{}' "$CURRENT_STATE_HELPER" --window "$WINDOW" --json)
 	if [[ -f "$PULSE_HEALTH_FILE" ]]; then
 		pulse_health=$(jq -c 'if type == "object" then . else {} end' "$PULSE_HEALTH_FILE" 2>/dev/null || printf '{}')
 		current_state=$(printf '%s' "$current_state" | jq -c --argjson health "$pulse_health" '. + {pulse_health: $health}' 2>/dev/null || printf '%s' "$current_state")
+	fi
+	local underfill_file="${HOME}/.aidevops/cache/pulse-underfill.json" underfill='{}'
+	if [[ -f "$underfill_file" ]]; then
+		underfill=$(jq -c --argjson now "$(date +%s)" 'if .timestamp > ($now - 900) and .timestamp <= $now and .streak >= 3 then {runner, timestamp, streak, deficit, top, reasons, host, capacity} else {} end' "$underfill_file" 2>/dev/null || printf '{}')
 	fi
 	worker_summary=$(_run_json_helper '{}' "$WORKER_ACTIVITY_HELPER" summary --since "$SINCE" --json --no-pr-check)
 	worker_recent=$(_run_json_helper '{}' "$WORKER_ACTIVITY_HELPER" summary --since "$RECENT_SINCE" --json --no-pr-check)
@@ -227,7 +253,21 @@ _collect_report_json() {
 		--argjson api "$api_budget" \
 		--argjson queue "$queue" \
 		--argjson delivery "$delivery" \
-		-f "$REPORT_FILTER"
+		--arg approve_cli "$(approval_cli_prefix)" \
+		-f "$REPORT_FILTER" |
+		jq --argjson underfill "$underfill" --argjson detector "$detector_status" \
+			--argjson budget_total "$REPORT_BUDGET_SECONDS" \
+			--argjson budget_component "$COMPONENT_BUDGET_SECONDS" \
+			--argjson budget_queue "$QUEUE_BUDGET_SECONDS" '
+			.inputs.collection_budget_seconds = {total: $budget_total, component: $budget_component, queue: $budget_queue}
+			| .current_state.underfill_attribution = $underfill
+			| .current_state.fix_the_fixer_detector = $detector
+			| if ($detector.processed // 0) > 0 and $detector.classified == 0 and ($detector.skipped_auth // 0) > 0 then
+				.findings += [{id:"fix-the-fixer-detector-auth-degraded", severity:"high", autofile:false,
+					title:"Fix-the-fixer detector capability degraded (zero classifications)",
+					evidence:[("processed=" + ($detector.processed|tostring) + ", classified=0, skipped_auth=" + ($detector.skipped_auth|tostring))],
+					recommendation:"Configure a direct API credential securely: aidevops secret set ANTHROPIC_API_KEY; rerun the detector to verify recovery."}]
+			  else . end'
 	return 0
 }
 
@@ -244,6 +284,7 @@ _render_text_report() {
 		"- Fresh cross-runner durable dispatch claims: " + (.summary.fresh_cross_runner_durable_claims | count_text) + " (fleet activity: " + (.summary.fleet_activity_state // unknown) + "; audit evidence, not a process count)",
 		"- Auto-dispatch queue: " + (.summary.auto_dispatch_available_unassigned | count_text) + " available (" + (.summary.auto_dispatch_eligible_available_unassigned | count_text) + " label-eligible; launch admission not verified) / " + (.summary.auto_dispatch_open | count_text) + " open across " + (.queue.repos | count_text) + " pulse repos",
 		"- Queue scan state: " + (.summary.auto_dispatch_scan_state // "scanned"),
+		"- Unknown checkpoint triage: " + (.queue.unknown_checkpoint_triage | count_text) + " observed; oldest release age: " + (.queue.oldest_unknown_checkpoint_triage_age_min | count_text) + " minutes; unreadable/unscanned: " + (.queue.unknown_checkpoint_triage_unreadable | count_text),
 		"- Queue coverage: " + (.queue.repos_scanned | count_text) + "/" + (.queue.repos | count_text) + " repositories; counts are " + .summary.queue_counts_basis + ", not independent work targets",
 		"- Collection evidence: " + (.collection | tojson),
 		"- Current window launches: " + (.summary.worker_launches_in_window | count_text) + "; terminal worker events: " + (.summary.worker_terminal_events_in_window | count_text),
@@ -253,6 +294,7 @@ _render_text_report() {
 		"- GraphQL: " + (.summary.graphql_budget_status // unknown),
 		"- REST transport admission: " + ((.summary.rest_admission // {state:"unknown"}) | tojson),
 		"- Current launch blockers: " + ((.current_state.top_pre_launch_blockers // []) | tojson),
+		"- Sustained underfill attribution: " + ((.current_state.underfill_attribution // {}) | tojson),
 		"- Secondary cooldown: " + (.summary.secondary_cooldown_state // unknown),
 		"- Runtime freshness: " + (.summary.runtime_freshness_status // unknown),
 		"- Runner health: " + (.summary.runner_health // unknown),

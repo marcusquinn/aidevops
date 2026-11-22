@@ -192,6 +192,15 @@ const EVENT_REDUCERS = new Map([
   ["permission.replied", replyPermission],
 ]);
 
+// GH#39151 / GH#39556: truncated/empty-turn notices live in their own module.
+export {
+  EMPTY_TOOL_ERROR_NOTE,
+  EMPTY_TOOL_NOTE,
+  EMPTY_TURN_NOTE,
+  OUTPUT_LIMIT_NOTE,
+  createOutputLimitNotice,
+} from "./output-limit-notice.mjs";
+
 // Session metadata changes are not model or tool activity.
 const NON_ACTIVITY_EVENTS = new Set(["session.created", "session.updated", "session.idle"]);
 

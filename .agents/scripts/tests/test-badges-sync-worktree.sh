@@ -9,14 +9,15 @@ ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT"' EXIT
 export HOME="$ROOT/home"
 export AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees"
-export PR_STATE="$ROOT/prs.json" CALLS="$ROOT/calls"
+export PR_STATE="$ROOT/prs.json" CALLS="$ROOT/calls" PR_BODY="$ROOT/pr-body"
 SCRIPTS="$HOME/.aidevops/agents/scripts"
 mkdir -p "$SCRIPTS" "$HOME/.config/aidevops" "$ROOT/bin" "$AIDEVOPS_WORKTREE_BASE_DIR"
 export PATH="$ROOT/bin:$PATH"
 printf '[]\n' >"$PR_STATE"
 touch "$CALLS"
 cp "$SCRIPT_DIR/../badges-sync-helper.sh" "$SCRIPT_DIR/../badges-check-helper.sh" \
-	"$SCRIPT_DIR/../workflow-release-ref.sh" "$SCRIPTS/"
+	"$SCRIPT_DIR/../workflow-release-ref.sh" "$SCRIPT_DIR/../headless-signing-lib.sh" \
+	"$SCRIPT_DIR/../routine-pr-scope-lib.sh" "$SCRIPTS/"
 chmod +x "$SCRIPTS/"*.sh
 
 # Production orchestration calls these public helper interfaces. Worktrees and
@@ -28,15 +29,25 @@ gh_create_pr() {
 		opt="$1"; shift
 		case "$opt" in
 		--head) head="$1"; shift ;;
-		--body-file) [[ "$1" == '-' ]]; shift; cat >/dev/null ;;
+		--body-file) [[ "$1" == '-' ]]; shift; cat >"$PR_BODY" ;;
 		*) shift ;;
 		esac
 	done
-	jq -n --arg head "$head" '[{headRefName:$head,title:"chore: aidevops badge sync",url:"test-pr"}]' >"$PR_STATE"
+	jq -n --arg head "$head" '[{headRefName:$head,title:"chore: aidevops badge sync",url:"https://example.invalid/o/r/pull/5"}]' >"$PR_STATE"
 	printf 'create\n' >>"$CALLS"
-	printf 'test-pr\n'
+	printf 'hint: if you need to wait for this pull request\n' >&2
+	printf 'https://example.invalid/o/r/pull/5\n'
 	return 0
 }
+session_origin_label() { printf 'origin:%s\n' "${TEST_ORIGIN:-interactive}"; return 0; }
+STUB
+# GH#39696: anchor lookups are served locally; FAIL_ANCHOR simulates a failed list.
+cat >"$SCRIPTS/routine-log-helper.sh" <<'STUB'
+#!/usr/bin/env bash
+set -eu
+printf 'anchor %s %s\n' "$1" "$2" >>"$CALLS"
+[[ "${FAIL_ANCHOR:-0}" != 1 ]]
+[[ "$1" != ensure-anchor ]] || printf '77\n'
 STUB
 cat >"$ROOT/bin/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -138,6 +149,7 @@ register_repo marcusquinn/test
 before="$(snapshot)"
 bash "$SCRIPTS/badges-sync-helper.sh" --apply --repo marcusquinn/test --json >"$ROOT/result"
 [[ "$(jq -r .outcome "$ROOT/result")" == APPLIED ]]
+[[ "$(jq -r .detail "$ROOT/result")" == 'PR: https://example.invalid/o/r/pull/5' ]]
 [[ "$(snapshot)" == "$before" ]]
 head="$(jq -r '.[0].headRefName' "$PR_STATE")"
 git -C "$CANONICAL" show "$head:README.md" | grep CURRENT >/dev/null
@@ -152,7 +164,9 @@ printf 'PASS dirty/off-default canonical preserved; README, metrics and workflow
 bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result"
 [[ "$(jq -r .outcome "$ROOT/result")" == SKIPPED ]]
 [[ "$(grep -c '^create$' "$CALLS")" == 1 ]]
-printf 'PASS rerun deduplicates existing sync PR\n'
+grep -qx 'anchor retire-anchor badges-sync' "$CALLS"
+grep -q '^anchor ensure-anchor' "$CALLS" && exit 1
+printf 'PASS rerun deduplicates existing sync PR and retires only unreferenced anchors\n'
 
 for extra in '{"local_only":true}' '{"contributed":true}' '{"role":"contributor"}' '{"maintenance":false}'; do
 	register_repo marcusquinn/test "$extra"
@@ -173,6 +187,15 @@ bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result"
 [[ "$(snapshot)" == "$before" ]]
 [[ "$(grep -c '^create$' "$CALLS")" == 1 ]]
 printf 'PASS stale dirty detector result revalidated against current remote default; no PR\n'
+
+# GH#39808: dry-run evaluates the remote default, not the stale local checkout.
+bash "$SCRIPTS/badges-sync-helper.sh" --repo marcusquinn/test --json >"$ROOT/result"
+if grep -q PLANNED "$ROOT/result"; then
+	exit 1
+fi
+grep -q SKIPPED "$ROOT/result"
+[[ "$(snapshot)" == "$before" ]]
+printf 'PASS dry-run reports SKIPPED when local checkout is stale but remote is current\n'
 
 FAIL_QUERY=1 bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result" && exit 1
 [[ "$(jq -r .outcome "$ROOT/result")" == FAILED ]]
@@ -213,12 +236,39 @@ FAIL_METRICS=1 bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/resu
 [[ "$(snapshot)" == "$before" ]]
 printf 'PASS metrics failure retains recoverable worktree without publishing a PR\n'
 
+retained_branch() {
+	git -C "$CANONICAL" worktree list --porcelain | sed -n 's#^branch refs/heads/\(chore/badges-sync-.*\)#\1#p'
+	return 0
+}
+
+# GH#36491: the retained worktree is recovered and published, not skipped.
+retained_before="$(retained_branch)"
+adds_before="$(grep -c '^add$' "$CALLS")"
 bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result"
 [[ "$(jq -r .outcome "$ROOT/result")" == APPLIED ]]
 head="$(jq -r '.[0].headRefName' "$PR_STATE")"
+[[ -n "$retained_before" && "$head" == "$retained_before" ]]
+[[ "$(grep -c '^add$' "$CALLS")" == "$adds_before" ]]
 git -C "$CANONICAL" cat-file -e "$head:docs/metrics/badges/languages.svg"
+[[ "$(git -C "$CANONICAL" worktree list --porcelain | grep -c '^worktree ')" == 1 ]]
 [[ "$(snapshot)" == "$before" ]]
-printf 'PASS missing metrics asset regenerated even with current badge block and JSON\n'
+printf 'PASS retained recovery worktree regenerated and published without allocating another\n'
+
+# A retained worktree holding anything beyond declared outputs is never reset.
+printf '[]\n' >"$PR_STATE"
+blocked_tree="$AIDEVOPS_WORKTREE_BASE_DIR/blocked-recovery"
+git -C "$CANONICAL" worktree add -q -b chore/badges-sync-99999999999999-blocked "$blocked_tree" origin/trunk
+printf 'operator note\n' >"$blocked_tree/notes.txt"
+adds_before="$(grep -c '^add$' "$CALLS")"
+bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result" && exit 1
+[[ "$(jq -r .outcome "$ROOT/result")" == BLOCKED-RETAINED ]]
+[[ "$(jq -r .detail "$ROOT/result")" == *'notes.txt'* ]]
+[[ "$(<"$blocked_tree/notes.txt")" == 'operator note' ]]
+[[ "$(grep -c '^add$' "$CALLS")" == "$adds_before" ]]
+[[ "$(snapshot)" == "$before" ]]
+printf 'PASS retained worktree with non-regenerable content is BLOCKED-RETAINED, untouched, and fails the run\n'
+# Explicit fixture cleanup of the operator-owned worktree.
+git -C "$CANONICAL" worktree remove --force "$blocked_tree"
 
 printf '[]\n' >"$PR_STATE"
 git -C "$ROOT/upstream" rm -q README.md .github/workflows/loc-badge.yml
@@ -234,6 +284,101 @@ caller="$(git -C "$CANONICAL" show "$head:.github/workflows/loc-badge.yml")"
 [[ "$caller" == *'aidevops_ref: main'* ]]
 [[ "$(snapshot)" == "$before" ]]
 printf 'PASS workflow-only publication tolerates missing remote README\n'
+
+# Reject a real push before it reaches the bare remote, just like readiness gates.
+printf '[]\n' >"$PR_STATE"
+cat >"$CANONICAL/.git/hooks/pre-push" <<'HOOK'
+#!/usr/bin/env bash
+printf 'JS_TOOL_READINESS=blocked:snapshot-incomplete-installed-inventory (eslint tsc)\n' >&2
+printf 'JS_TOOL_READINESS_HINT=restore approved worktree-local dependencies\n' >&2
+exit 1
+HOOK
+chmod +x "$CANONICAL/.git/hooks/pre-push"
+adds_before="$(grep -c '^add$' "$CALLS")"
+creates_before="$(grep -c '^create$' "$CALLS")"
+bash "$SCRIPTS/badges-sync-helper.sh" --apply --workflow-only --json >"$ROOT/result" && exit 1
+[[ "$(jq -r .outcome "$ROOT/result")" == BLOCKED-READINESS ]]
+[[ "$(jq -r .detail "$ROOT/result")" == *'JS_TOOL_READINESS_HINT=restore approved worktree-local dependencies'* ]]
+[[ "$(git -C "$CANONICAL" worktree list --porcelain | grep -c '^worktree ')" == 2 ]]
+first_retained="$(jq -r '.detail | sub(".*retained recovery worktree: "; "")' "$ROOT/result")"
+# The retry recovers the same worktree and retries publication; a persistent
+# block stays a failure instead of a silent success skip (GH#36491).
+bash "$SCRIPTS/badges-sync-helper.sh" --apply --workflow-only --json >"$ROOT/result" && exit 1
+[[ "$(jq -r .outcome "$ROOT/result")" == BLOCKED-READINESS ]]
+retained="$(jq -r '.detail | sub(".*retained recovery worktree: "; "")' "$ROOT/result")"
+[[ -d "$retained" && "$(cd "$retained" && pwd -P)" == "$(cd "$first_retained" && pwd -P)" ]]
+[[ "$(git -C "$retained" log -1 --format=%s)" == 'chore: refresh aidevops badges, metrics and workflow' ]]
+[[ "$(git -C "$CANONICAL" worktree list --porcelain | grep -c '^worktree ')" == 2 ]]
+[[ "$(grep -c '^add$' "$CALLS")" == "$((adds_before + 1))" ]]
+[[ "$(grep -c '^create$' "$CALLS")" == "$creates_before" ]]
+[[ "$(snapshot)" == "$before" ]]
+printf 'PASS readiness push rejection preserves hint, reuses one retained worktree, and keeps failing across retries\n'
+rm -f "$CANONICAL/.git/hooks/pre-push"
+
+# GH#36491: an unavailable signer blocks before any worktree work. The global
+# interactive key below is unusable without a prompt. The fixture HOME owns the
+# global config; the repository-level commit.gpgsign=false is overridden here.
+git config --global gpg.format ssh
+git config --global user.signingkey "$ROOT/interactive-key.pub"
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=commit.gpgsign GIT_CONFIG_VALUE_0=true
+retained_head="$(git -C "$retained" rev-parse HEAD)"
+adds_before="$(grep -c '^add$' "$CALLS")"
+bash "$SCRIPTS/badges-sync-helper.sh" --apply --workflow-only --json >"$ROOT/result" && exit 1
+[[ "$(jq -r .outcome "$ROOT/result")" == BLOCKED-SIGNING ]]
+[[ "$(jq -r .detail "$ROOT/result")" == *'aidevops signing headless-setup'* ]]
+[[ "$(git -C "$retained" rev-parse HEAD)" == "$retained_head" ]]
+[[ "$(grep -c '^add$' "$CALLS")" == "$adds_before" ]]
+[[ "$(grep -c '^create$' "$CALLS")" == "$creates_before" ]]
+printf 'PASS unavailable signing is BLOCKED-SIGNING with no worktree changes\n'
+
+# With the dedicated headless key in a live agent, the commit is signed with
+# it even though the global default is still the interactive key.
+mkdir -p "$HOME/.ssh"
+ssh-keygen -q -t ed25519 -N '' -C aidevops-headless-signing -f "$HOME/.ssh/id_ed25519_signing"
+# Unix socket paths are length-limited; keep the agent socket short.
+AGENT_DIR="$(mktemp -d /tmp/aidv-bs.XXXXXX)"
+trap '[[ -z "${SSH_AGENT_PID:-}" ]] || kill "$SSH_AGENT_PID" 2>/dev/null || true; rm -rf "$ROOT" "$AGENT_DIR"' EXIT
+eval "$(ssh-agent -s -a "$AGENT_DIR/agent.sock")" >/dev/null
+ssh-add -q "$HOME/.ssh/id_ed25519_signing" 2>/dev/null
+bash "$SCRIPTS/badges-sync-helper.sh" --apply --workflow-only --json >"$ROOT/result"
+[[ "$(jq -r .outcome "$ROOT/result")" == APPLIED ]]
+head="$(jq -r '.[0].headRefName' "$PR_STATE")"
+printf 'test@example.invalid %s\n' "$(<"$HOME/.ssh/id_ed25519_signing.pub")" >"$ROOT/allowed-signers"
+# Verify on the published remote copy; the canonical fixture stays read-only.
+git -C "$ROOT/remote.git" -c gpg.ssh.allowedSignersFile="$ROOT/allowed-signers" verify-commit "$head" 2>/dev/null
+[[ "$(git config --global user.signingkey)" == "$ROOT/interactive-key.pub" ]]
+[[ "$(git -C "$CANONICAL" worktree list --porcelain | grep -c '^worktree ')" == 1 ]]
+[[ "$(grep -c '^add$' "$CALLS")" == "$adds_before" ]]
+printf 'PASS retained worktree published with a commit signed by the dedicated headless key\n'
+unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+
+# GH#39785: marker replaces anchor identity; retirement is best effort.
+grep -qx '<!-- aidevops:routine-pr:badges-sync -->' "$PR_BODY"
+printf '[]\n' >"$PR_STATE"
+TEST_ORIGIN=worker FAIL_ANCHOR=1 bash "$SCRIPTS/badges-sync-helper.sh" --apply --workflow-only --json >"$ROOT/result"
+[[ "$(jq -r .outcome "$ROOT/result")" == APPLIED ]]
+grep -qx '<!-- aidevops:routine-pr:badges-sync -->' "$PR_BODY"
+if grep -q '^Ref #' "$PR_BODY"; then exit 1; fi
+if grep -q 'anchor ensure-' "$CALLS"; then exit 1; fi
+[[ "$(snapshot)" == "$before" ]]
+printf 'PASS worker PR carries marker without Ref; failed retirement never creates an anchor\n'
+
+# No-drift runs must still retry retirement after the old PR resolves.
+cat >"$SCRIPTS/badges-check-helper.sh" <<'STUB'
+#!/usr/bin/env bash
+jq -cn --arg path "$CANONICAL" '{slug:"marcusquinn/test",path:$path,classification:"CURRENT"}'
+STUB
+export CANONICAL
+retire_before="$(grep -c '^anchor retire-anchor badges-sync$' "$CALLS")"
+creates_before="$(grep -c '^create$' "$CALLS")"
+bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result"
+[[ "$(jq -r .outcome "$ROOT/result")" == SKIPPED ]]
+[[ "$(grep -c '^anchor retire-anchor badges-sync$' "$CALLS")" == "$((retire_before + 1))" ]]
+[[ "$(grep -c '^create$' "$CALLS")" == "$creates_before" ]]
+bash "$SCRIPTS/badges-sync-helper.sh" --json >"$ROOT/result"
+[[ "$(grep -c '^anchor retire-anchor badges-sync$' "$CALLS")" == "$((retire_before + 1))" ]]
+[[ "$(snapshot)" == "$before" ]]
+printf 'PASS current repos retry retirement without publishing; dry runs never retire\n'
 
 # Routine wiring uses the same no-filter selector exercised above.
 # shellcheck source=../routines/core-routines.sh

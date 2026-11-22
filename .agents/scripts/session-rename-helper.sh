@@ -43,6 +43,8 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 readonly DEFAULT_DB_PATH="${HOME:-}/.local/share/opencode/opencode.db"
 readonly DEFAULT_LIST_LIMIT=10
 readonly AIDEVOPS_TITLE_SUFFIX_ERE='[[:space:]]+· AIDevOps [0-9]+\.[0-9]+\.[0-9]+$'
+# GH#37630: session-bus address token `· @<last 6 of the session ID>`.
+readonly SESSION_ADDRESS_TOKEN_ERE='[[:space:]]+· @[a-z0-9]{6}([^a-z0-9]|$)'
 
 # =============================================================================
 # Helpers
@@ -114,28 +116,67 @@ _get_aidevops_version() {
 	return 0
 }
 
-# Append the aidevops version to titles, replacing any older suffix.
-# Paused (t18612): the OpenCode 1.x sidebar footer shows the version instead,
-# as OpenCode 2 does; AIDEVOPS_SESSION_TITLE_VERSION_SUFFIX=true restores it.
+# Strip the session-bus address token and the version suffix from a title.
 # Arguments:
 #   $1 - raw title
-# Output: title with idempotent suffix when enabled and a version is known
+# Output: base title
+_strip_title_decorations() {
+	local raw_title="$1"
+	printf '%s' "$raw_title" |
+		sed -E -e "s/${SESSION_ADDRESS_TOKEN_ERE}/\\1/g" -e "s/${AIDEVOPS_TITLE_SUFFIX_ERE}//"
+	return 0
+}
+
+# Print the session-bus address token (`@` + last 6 session-ID characters,
+# lowercased) for interactive root sessions; nothing otherwise (GH#37630).
+# Mirrors .opencode/lib/session-title-suffix.ts.
+# Arguments:
+#   $1 - sqlite database path
+#   $2 - session ID
+_session_address_token() {
+	local db_path="$1"
+	local session_id="$2"
+	case "${AIDEVOPS_SESSION_TITLE_ID:-}" in
+	false | FALSE | False | 0) return 0 ;;
+	esac
+	if [[ -n "${FULL_LOOP_HEADLESS:-}${AIDEVOPS_HEADLESS:-}${OPENCODE_HEADLESS:-}${GITHUB_ACTIONS:-}" ]]; then
+		return 0
+	fi
+	[[ "$session_id" =~ ^ses_[A-Za-z0-9]{6,}$ ]] || return 0
+
+	local escaped_session_id parent_id
+	escaped_session_id="$(_sql_escape "$session_id")"
+	parent_id="$(sqlite3 "$db_path" \
+		"SELECT COALESCE(parent_id, '') FROM session WHERE id = '${escaped_session_id}';" 2>/dev/null || true)"
+	[[ -z "$parent_id" ]] || return 0
+
+	printf '@%s' "$(printf '%s' "${session_id: -6}" | tr '[:upper:]' '[:lower:]')"
+	return 0
+}
+
+# Append the session-bus address token and the aidevops version to titles,
+# replacing older decorations. Order: `<title> · @xxxxxx[ · AIDevOps <v>]`.
+# Version paused (t18612): the OpenCode 1.x sidebar footer shows the version
+# instead, as OpenCode 2 does; AIDEVOPS_SESSION_TITLE_VERSION_SUFFIX=true restores it.
+# Arguments:
+#   $1 - raw title
+#   $2 - address token (optional, from _session_address_token)
+# Output: title with idempotent decorations
 _with_aidevops_title_suffix() {
 	local raw_title="$1"
+	local token="${2:-}"
 	local version=""
 	case "${AIDEVOPS_SESSION_TITLE_VERSION_SUFFIX:-}" in
 	true | TRUE | True | 1) version="$(_get_aidevops_version)" ;;
 	esac
 
-	local base_title
-	base_title="$(printf '%s' "$raw_title" | sed -E "s/${AIDEVOPS_TITLE_SUFFIX_ERE}//")"
+	local title
+	title="$(_strip_title_decorations "$raw_title")"
+	[[ -n "$title" ]] || return 0
 
-	if [[ -z "$version" ]]; then
-		printf '%s' "$base_title"
-		return 0
-	fi
-
-	printf '%s · AIDevOps %s' "$base_title" "$version"
+	[[ -z "$token" ]] || title="${title} · ${token}"
+	[[ -z "$version" ]] || title="${title} · AIDevOps ${version}"
+	printf '%s' "$title"
 	return 0
 }
 
@@ -213,7 +254,7 @@ cmd_rename() {
 	now_ms="$(date +%s)000"
 
 	local display_title
-	display_title="$(_with_aidevops_title_suffix "$new_title")"
+	display_title="$(_with_aidevops_title_suffix "$new_title" "$(_session_address_token "$db_path" "$session_id")")"
 
 	local escaped_title escaped_session_id
 	escaped_title="$(_sql_escape "$display_title")"
@@ -270,7 +311,7 @@ _is_title_overwritable() {
 	current_title="$(sqlite3 "$db_path" \
 		"SELECT COALESCE(title, '') FROM session WHERE id = '${escaped_session_id}';" 2>/dev/null || echo "")"
 
-	case "$current_title" in
+	case "$(_strip_title_decorations "$current_title")" in
 	"" | "New Session" | HEAD | main | master) return 0 ;;
 	*) return 1 ;;
 	esac

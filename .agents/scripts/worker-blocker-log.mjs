@@ -167,7 +167,10 @@ export function appendWorkerBlockerEvent(input, options = {}) {
     if (existsSync(logPath) && lstatSync(logPath).isSymbolicLink()) return false;
     lockPath = `${logPath}.lock`;
     lockToken = acquireLock(lockPath);
-    if (!lockToken) return false;
+    if (!lockToken) {
+      process.stderr.write("worker-blocker-log: lock not acquired within wait budget; event dropped\n");
+      return false;
+    }
     return appendNormalizedWorkerBlockerEventsUnlocked(logPath, [input], options, maxBytes);
   } catch {
     return false;

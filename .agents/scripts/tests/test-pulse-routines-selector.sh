@@ -329,7 +329,6 @@ TODOEOF
 	local repo_ids=""
 	repo_ids=$(_collect_routine_ids "$REPO_ROOT/TODO.md")
 	if [[ $'\n'"$repo_ids"$'\n' == *$'\nr-gh-audit-scan\n'* ]] &&
-		[[ $'\n'"$repo_ids"$'\n' == *$'\nr-pulse-check\n'* ]] &&
 		[[ $'\n'"$repo_ids"$'\n' != *$'\nr004\n'* ]]; then
 		pass "Case 7b (GH#28808): repository TODO ignores fenced r004 and keeps descriptive IDs"
 	else
@@ -441,6 +440,9 @@ SCHEDULE_SCRIPT
 		source "$PULSE_ROUTINES"
 		# shellcheck source=../routines/core-routines.sh
 		source "$CORE_ROUTINES"
+		# This recursion fixture authorizes dispatch explicitly; quota behavior
+		# is exercised independently by _test_quota_slot_evaluation.
+		pulse_rest_core_priority_allows_next() { return 0; }
 		launchctl() {
 			[[ "$*" == 'list sh.aidevops.profile-readme-update' ]]
 			return $?
@@ -573,6 +575,8 @@ LIFECYCLE
             command() {
                 if [[ "${1:-}" == -v ]]; then
                     case "$ROUTINE_TEST_MODE:${2:-}" in
+                    # Legacy PGID modes must not take the systemd-run path.
+                    setsid:systemd-run|perl:systemd-run|job-control:systemd-run) return 1 ;;
                     perl:setsid|job-control:setsid|job-control:perl) return 1 ;;
                     esac
                 fi
@@ -613,6 +617,51 @@ LIFECYCLE
 		pass "GH#34867: $mode agent survives parent exit, isolates PGID, excludes duplicates and records $expected"
 	else
 		fail "GH#34867: $mode detached agent $expected" "see $root"
+	fi
+	return 0
+}
+
+_test_outcome_contract() {
+	local tmpdir="$1"
+	local root="${tmpdir}/outcome"
+	mkdir -p "$root"
+	if (
+		ROUTINE_STATE_FILE="$root/state.json"
+		LOGFILE="$root/pulse.log"
+		ROUTINE_LOG_HELPER="$root/missing-helper"
+		gh_create_issue() {
+			printf '%s\n' "$*" >>"$root/alerts"
+			return 0
+		}
+		printf 'work\nROUTINE_OUTCOME: delivered PR#12\n' >"$root/delivered.out"
+		printf 'work\nROUTINE_OUTCOME: noop nothing due\n' >"$root/noop.out"
+		printf 'work, no outcome line\n' >"$root/none.out"
+		[[ "$(_routine_parse_outcome "$root/delivered.out")" == "delivered|PR#12" ]] || exit 1
+		[[ "$(_routine_parse_outcome "$root/noop.out")" == "noop|nothing due" ]] || exit 1
+		[[ "$(_routine_parse_outcome "$root/none.out")" == "unknown|" ]] || exit 1
+		local i=0
+		for i in 1 2 3 4; do
+			_routine_finalize_terminal r-out "$_ROUTINE_STATUS_SUCCESS" "$(date +%s)" "" 0 noop "nothing due" 3 owner/repo
+		done
+		jq -e '."r-out".last_outcome == "noop" and ."r-out".consecutive_noops == 4 and ."r-out".noop_alerted == true' "$ROUTINE_STATE_FILE" >/dev/null || exit 1
+		# Exactly one alert at the threshold; later no-ops of the streak stay quiet.
+		[[ "$(wc -l <"$root/alerts" | tr -d '[:space:]')" == 1 ]] || exit 1
+		# Unknown keeps the streak; delivered resets it and re-arms the alert.
+		_routine_finalize_terminal r-out "$_ROUTINE_STATUS_SUCCESS" "$(date +%s)" "" 0 unknown "" 3 owner/repo
+		jq -e '."r-out".last_outcome == "unknown" and ."r-out".consecutive_noops == 4' "$ROUTINE_STATE_FILE" >/dev/null || exit 1
+		_routine_finalize_terminal r-out "$_ROUTINE_STATUS_SUCCESS" "$(date +%s)" "" 0 delivered "PR#12" 3 owner/repo
+		jq -e '."r-out".last_outcome == "delivered" and ."r-out".consecutive_noops == 0 and ."r-out".noop_alerted == null' "$ROUTINE_STATE_FILE" >/dev/null || exit 1
+		for i in 1 2 3; do
+			_routine_finalize_terminal r-out "$_ROUTINE_STATUS_SUCCESS" "$(date +%s)" "" 0 noop "again" 3 owner/repo
+		done
+		[[ "$(wc -l <"$root/alerts" | tr -d '[:space:]')" == 2 ]] || exit 1
+		# Failures never count as no-ops.
+		_routine_finalize_terminal r-fail "$_ROUTINE_STATUS_FAILURE" "$(date +%s)" "" 0 noop "x" 1 owner/repo
+		jq -e '."r-fail".consecutive_noops == null' "$ROUTINE_STATE_FILE" >/dev/null || exit 1
+	); then
+		pass "t19258: outcome parsing, noop streak, single alert per streak and delivered reset"
+	else
+		fail "t19258: routine outcome contract" "see $root"
 	fi
 	return 0
 }
@@ -775,6 +824,191 @@ _test_platform_scheduler_ownership() {
 	return 0
 }
 
+# Detached routine runners must leave the pulse unit cgroup via systemd-run
+# --scope (same class as GH#33993 workers). setsid alone is not enough when
+# aidevops-supervisor-pulse.service uses KillMode=control-group.
+# The backend is chosen before launch: a fast-exiting runner must run exactly
+# once (GH#35761 review), and a failed probe must use session detach once.
+# Args: $1=tmpdir $2=probe (ok|fail)
+_test_detached_systemd_scope() {
+	local tmpdir="$1"
+	local probe="$2"
+	local root="${tmpdir}/systemd-scope-${probe}"
+	mkdir -p "$root/bin"
+	if (
+		local attempt=0
+		export ROUTINE_TEST_ROOT="$root" ROUTINE_TEST_PROBE="$probe"
+		export HEADLESS_RUNTIME_HELPER="$root/headless.sh"
+		export ROUTINE_LOG_HELPER="$root/lifecycle.sh"
+		export LOGFILE="$root/pulse.log"
+		export ROUTINE_STATE_FILE="$root/state.json"
+		export PATH="$root/bin:$PATH"
+		cat >"$root/bin/systemd-run" <<'RUN'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${ROUTINE_TEST_ROOT}/systemd-run-args"
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--user | --scope | --collect | --quiet)
+		shift
+		;;
+	--unit | --description)
+		shift 2
+		;;
+	--unit=* | --description=*)
+		shift
+		;;
+	*)
+		break
+		;;
+	esac
+done
+exec "$@"
+RUN
+		chmod +x "$root/bin/systemd-run"
+		# Fast exit: the runner finishes before cgroup membership is confirmed.
+		cat >"$HEADLESS_RUNTIME_HELPER" <<'AGENT'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$ROUTINE_TEST_ROOT/invocations"
+exit 0
+AGENT
+		cat >"$ROUTINE_LOG_HELPER" <<'LIFECYCLE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$ROUTINE_TEST_ROOT/lifecycle"
+LIFECYCLE
+		chmod +x "$HEADLESS_RUNTIME_HELPER" "$ROUTINE_LOG_HELPER"
+		bash -c '
+			source "$1"
+			# The user-manager probe is host-specific; pin its outcome.
+			if [[ "$ROUTINE_TEST_PROBE" == ok ]]; then
+				systemd_scope_available() { return 0; }
+			else
+				systemd_scope_available() { return 1; }
+			fi
+			_routine_dispatch_agent r-scope "Scope agent" Build+ "$ROUTINE_TEST_ROOT"
+		' _ "$PULSE_ROUTINES" || exit 1
+		# Dispatch has returned, so every launch has already happened; wait for
+		# the single runner to finish and release its lock.
+		while [[ "$attempt" -lt 100 ]]; do
+			if [[ -s "$root/invocations" && ! -d "${ROUTINE_STATE_FILE}.r-scope.runner" ]] &&
+				jq -e '."r-scope".last_status == "success"' "$ROUTINE_STATE_FILE" >/dev/null 2>&1; then
+				break
+			fi
+			sleep 0.1
+			attempt=$((attempt + 1))
+		done
+		[[ "$attempt" -lt 100 ]] || exit 1
+		sleep 0.5
+		[[ "$(wc -l <"$root/invocations" | tr -d '[:space:]')" == 1 ]] || exit 1
+		if [[ "$probe" == ok ]]; then
+			[[ "$(wc -l <"$root/systemd-run-args" | tr -d '[:space:]')" == 1 ]] || exit 1
+			grep -Eq -- '--scope' "$root/systemd-run-args" || exit 1
+			grep -Eq -- '--user' "$root/systemd-run-args" || exit 1
+			grep -Eq -- 'isolation=systemd_scope(_unconfirmed)? unit=aidevops-routine-r-scope-' "$root/pulse.log" || exit 1
+		else
+			[[ ! -e "$root/systemd-run-args" ]] || exit 1
+			grep -Eq -- 'isolation=session' "$root/pulse.log" || exit 1
+		fi
+		! grep -Eq -- 'falling back' "$root/pulse.log" || exit 1
+	); then
+		pass "GH#35760: routine detach probe=${probe} launches exactly once (scope when available)"
+	else
+		fail "GH#35760: routine detach probe=${probe}" "see $root"
+	fi
+	return 0
+}
+
+# GH#35979: quota deferrals must not suppress later local calendar evaluations.
+_test_quota_slot_evaluation() {
+	local tmpdir="$1"
+	local root="${tmpdir}/quota-slots"
+	mkdir -p "$root/repo"
+	_make_todo "$root/repo" \
+		'- [x] r-slot-one First repeat:daily(@00:00) timezone:Europe/London agent:Build+' \
+		'- [x] r-slot-two Second repeat:daily(@00:00) timezone:Europe/London agent:Build+'
+	if (
+		export LOGFILE="$root/pulse.log"
+		export REPOS_JSON="$root/repos.json"
+		export ROUTINE_SCHEDULE_HELPER="$SCHEDULE_HELPER"
+		export AIDEVOPS_ROUTINE_LATE_THRESHOLD_SECONDS=0
+		# Isolate dispatch from real workers and host routine state, while using
+		# the production evaluator, schedule helper, and dispatch decision path.
+		printf '{"initialized_repos":[{"slug":"local/slots","path":"%s","pulse":true}]}' "$root/repo" >"$REPOS_JSON"
+		_evaluate_session_miner_routine() { return 0; }
+		_evaluate_issue_archive_routine() { return 0; }
+		_routine_retry_blocked() { return 1; }
+		_routine_platform_owned() { return 1; }
+		_routine_last_run_epoch() {
+			printf '1\n'
+			return 0
+		}
+		_routine_mark_dispatched() { return 0; }
+		_routine_dispatch_agent() {
+			local id="$1"
+			printf '%s\n' "$id" >>"$root/dispatches"
+			return 0
+		}
+		# Standalone loading without either quota checker must defer due work.
+		unset -f pulse_rest_core_priority_allows_next pulse_rest_core_priority_allows
+		evaluate_routines --skip-publication || exit 1
+		[[ ! -e "$root/dispatches" ]] || exit 1
+		grep -q 'routine_slot_deferred routine=r-slot-one ' "$LOGFILE" || exit 1
+		grep -q 'routine_slot_deferred routine=r-slot-two ' "$LOGFILE" || exit 1
+		local allow=1
+		pulse_rest_core_priority_allows_next() {
+			local priority="$1"
+			[[ "$priority" == scheduled || "$priority" == deferrable ]] || return 2
+			return "$allow"
+		}
+		evaluate_routines || exit 1
+		[[ ! -e "$root/dispatches" ]] || exit 1
+		grep -q 'routine_slot_deferred routine=r-slot-one .*delay_seconds=' "$LOGFILE" || exit 1
+		grep -q 'routine_slot_deferred routine=r-slot-two .*delay_seconds=' "$LOGFILE" || exit 1
+		! grep -q 'outcome=dispatch' "$LOGFILE" || exit 1
+		allow=0
+		evaluate_routines --skip-publication || exit 1
+		[[ "$(wc -l <"$root/dispatches" | tr -d '[:space:]')" == 2 ]] || exit 1
+		[[ "$(grep -c 'routine_slot_late .*outcome=dispatch' "$LOGFILE")" == 2 ]] || exit 1
+		# Independent known timezone boundary (2026-10-29 17:00 London = UTC).
+		[[ "$(AIDEVOPS_SCHEDULE_TIMEZONE=Europe/London AIDEVOPS_SCHEDULE_NOW_EPOCH=1793297940 \
+			"$SCHEDULE_HELPER" latest-slot 'cron(0 7,12,17 * * *)')" == 1793293200 ]] || exit 1
+	); then
+		pass 'GH#35979: exhausted quota evaluates every slot; recovery dispatches with lateness'
+	else
+		fail 'GH#35979: scheduled quota handling' 'calendar evaluation or lateness mismatch'
+	fi
+	return 0
+}
+
+# Exercise threshold parsing through the slot logger without wall-clock races.
+_test_slot_late_threshold() {
+	local tmpdir="$1"
+	if (
+		LOGFILE="$tmpdir/threshold.log"
+		ROUTINE_SCHEDULE_HELPER=_threshold_slot
+		_threshold_slot() { printf '1000\n'; return 0; }
+		date() { printf '1250\n'; return 0; }
+		local threshold="" expected="" actual=0
+		for threshold in 0300 08 0 000 00000000000000000000008 \
+			9223372036854775807 9223372036854775808 18446744073709551616 invalid; do
+			case "$threshold" in
+			08 | 0 | 000 | 00000000000000000000008) expected=1 ;;
+			*) expected=0 ;;
+			esac
+			: >"$LOGFILE"
+			AIDEVOPS_ROUTINE_LATE_THRESHOLD_SECONDS="$threshold" \
+				_routine_log_slot r-threshold 'daily(@00:00)' '' dispatch || exit 1
+			actual=$(grep -c 'routine_slot_late ' "$LOGFILE")
+			[[ "$actual" == "$expected" ]] || exit 1
+		done
+	); then
+		pass 'GH#35979: late threshold uses decimal and rejects integer overflow'
+	else
+		fail 'GH#35979: late threshold parsing' 'decimal, zero, range or fallback mismatch'
+	fi
+	return 0
+}
+
 main() {
 	local tmpdir
 	tmpdir=$(mktemp -d) || {
@@ -785,6 +1019,8 @@ main() {
 	trap "rm -rf '$tmpdir'" EXIT
 
 	_test_selector_cases "$tmpdir"
+	_test_quota_slot_evaluation "$tmpdir"
+	_test_slot_late_threshold "$tmpdir"
 	_test_platform_scheduler_ownership
 	_test_metachar_guard
 	_test_markdown_escaped_cron
@@ -799,7 +1035,10 @@ main() {
 		done
 	done
 	_test_stale_agent_recovery "$tmpdir"
+	_test_outcome_contract "$tmpdir"
 	_test_sigterm_agent_runner "$tmpdir"
+	_test_detached_systemd_scope "$tmpdir" ok
+	_test_detached_systemd_scope "$tmpdir" fail
 
 	# === Summary ===
 	printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"

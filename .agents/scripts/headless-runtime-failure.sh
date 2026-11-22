@@ -30,6 +30,7 @@
 readonly _HEADLESS_RUNTIME_FAILURE_LOADED=1
 
 _HRFF_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_HRFF_SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]] && _HRFF_SCRIPT_DIR="."
 if [[ -r "${_HRFF_SCRIPT_DIR}/lib/version.sh" ]]; then
 	# shellcheck source=lib/version.sh
 	source "${_HRFF_SCRIPT_DIR}/lib/version.sh"
@@ -46,6 +47,12 @@ fi
 source "${_HRFF_SCRIPT_DIR}/terminal-blocker-circuit.sh"
 # shellcheck source=fast-fail-release-policy.sh
 source "${_HRFF_SCRIPT_DIR}/fast-fail-release-policy.sh"
+# shellcheck source=headless-runtime-release-claim.sh
+source "${_HRFF_SCRIPT_DIR}/headless-runtime-release-claim.sh"
+# shellcheck source=headless-runtime-release-retry.sh
+source "${_HRFF_SCRIPT_DIR}/headless-runtime-release-retry.sh"
+# shellcheck source=aidevops-cli/aidevops-project-config-lib.sh
+source "${_HRFF_SCRIPT_DIR}/aidevops-cli/aidevops-project-config-lib.sh"
 unset _HRFF_SCRIPT_DIR
 : "${AIDEVOPS_UNKNOWN_VERSION:=unknown}"
 
@@ -63,6 +70,8 @@ readonly _HRFF_RETRY_CLASS_REMEDIATION="meaningful_remediation"
 readonly _HRFF_RETRY_CLASS_UNKNOWN="unknown"
 readonly _HRFF_OPEN_ISSUE_STATE="open"
 readonly _HRFF_SESSION_COUNT_QUERY_PREFIX="SELECT count(*) FROM session WHERE time_created >= "
+# Projection-only reason for a blocked exit that recorded no hold evidence.
+readonly _HRFF_REASON_BLOCKED_UNRECORDED="blocked_unrecorded"
 
 #######################################
 # Count attempt-local OpenCode model activity. Fresh runs are scoped to sessions
@@ -96,196 +105,72 @@ _hrff_attempt_activity_count() {
 	return 0
 }
 
-# Per-issue transient rate-limit release circuit breaker (t3570 / GH#23102).
-# These defaults intentionally keep the first transient failures visible while
-# suppressing repeated CLAIM_RELEASED storms during provider capacity outages.
-: "${AIDEVOPS_RATE_LIMIT_RELEASE_CIRCUIT_THRESHOLD:=3}"
-: "${AIDEVOPS_RATE_LIMIT_RELEASE_CIRCUIT_LOOKBACK_SECS:=86400}"
-: "${AIDEVOPS_RATE_LIMIT_RELEASE_CIRCUIT_COOLDOWN_SECS:=1800}"
-
 #######################################
-# Convert an epoch to a UTC-ish human timestamp for audit comments.
-#
-# Args:
-#   $1 = epoch seconds
+# GH#37527: snapshot attempt activity from an isolated DB before finalization
+# merges or discards it. Ephemeral roles discard the DB and a failed merge keeps
+# the rows out of the shared DB, so a later shared-DB read would report a false
+# zero. Snapshots accumulate across invocations bound to one attempt start.
+# Args: $1 = isolated DB path. Unreadable evidence records no snapshot.
 #######################################
-_hrff_epoch_to_utc() {
-	local epoch="$1"
-	date -u -r "$epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || \
-		date -u -d "@${epoch}" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || \
-		printf 'epoch:%s' "$epoch"
+_hrff_snapshot_attempt_activity() {
+	local db_path="$1"
+	local start_epoch_ms="${_WORKER_START_EPOCH_MS:-0}"
+	local count=""
+	[[ "$start_epoch_ms" =~ ^[0-9]+$ && "$start_epoch_ms" -gt 0 ]] || return 0
+	count=$(_hrff_attempt_activity_count "$db_path" "$start_epoch_ms" "${_WORKER_PERSISTED_SESSION_ID:-}") || return 0
+	if [[ "${_WORKER_ATTEMPT_ACTIVITY_START_MS:-}" != "$start_epoch_ms" ||
+		! "${_WORKER_ATTEMPT_ACTIVITY_COUNT:-}" =~ ^[0-9]+$ ]]; then
+		_WORKER_ATTEMPT_ACTIVITY_COUNT=0
+	fi
+	_WORKER_ATTEMPT_ACTIVITY_COUNT=$((_WORKER_ATTEMPT_ACTIVITY_COUNT + count))
+	_WORKER_ATTEMPT_ACTIVITY_START_MS="$start_epoch_ms"
 	return 0
 }
 
 #######################################
-# Return recent issue comments needed by the rate-limit release breaker.
-#
-# Args:
-#   $1 = issue_number
-#   $2 = repo_slug
+# Resolve attempt activity: the live isolated DB plus finalized snapshots. The
+# shared DB is read only when no isolated DB or snapshot exists for this start.
+# Args: $1 = attempt start epoch ms, $2 = persisted session ID.
+# Outputs a non-negative integer, or returns 1 when evidence is unavailable.
 #######################################
-_hrff_rate_limit_release_comments_json() {
-	local issue_number="$1"
-	local repo_slug="$2"
-
-	gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" \
-		--jq '[.[] | {created_at: .created_at, body: (.body // "")}]' 2>/dev/null || return 1
+_hrff_resolved_attempt_activity_count() {
+	local start_epoch_ms="$1"
+	local persisted_session_id="${2:-}"
+	local isolated_db="${_WORKER_ISOLATED_DB_PATH:-}"
+	local shared_db="${HOME}/.local/share/opencode/opencode.db"
+	local snapshot=0
+	local has_snapshot=0
+	local count=""
+	[[ "$start_epoch_ms" =~ ^[0-9]+$ && "$start_epoch_ms" -gt 0 ]] || return 1
+	if [[ "${_WORKER_ATTEMPT_ACTIVITY_START_MS:-}" == "$start_epoch_ms" &&
+		"${_WORKER_ATTEMPT_ACTIVITY_COUNT:-}" =~ ^[0-9]+$ ]]; then
+		snapshot="$_WORKER_ATTEMPT_ACTIVITY_COUNT"
+		has_snapshot=1
+	fi
+	if [[ -n "$isolated_db" && -f "$isolated_db" ]]; then
+		count=$(_hrff_attempt_activity_count "$isolated_db" "$start_epoch_ms" "$persisted_session_id") || count=""
+	elif [[ "$has_snapshot" -eq 0 ]]; then
+		count=$(_hrff_attempt_activity_count "$shared_db" "$start_epoch_ms" "$persisted_session_id") || count=""
+	else
+		count=0
+	fi
+	if [[ ! "$count" =~ ^[0-9]+$ ]]; then
+		[[ "$has_snapshot" -eq 1 ]] || return 1
+		count=0
+	fi
+	printf '%s\n' "$((count + snapshot))"
 	return 0
 }
 
-#######################################
-# Check whether the transient rate-limit release breaker is currently active.
-#
-# Args:
-#   $1 = issue_number
-#   $2 = repo_slug
-#   $3 = now_epoch
-#   $4 = comments_json
-# Returns: 0 active, 1 inactive.
-#######################################
-_hrff_rate_limit_release_circuit_active() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local now_epoch="$3"
-	local comments_json="$4"
-
-	if [[ "${AIDEVOPS_RATE_LIMIT_RELEASE_CIRCUIT_OVERRIDE:-0}" == "1" ]]; then
-		return 1
-	fi
-
-	local latest_override=""
-	latest_override=$(printf '%s' "$comments_json" | jq -r \
-		'[.[] | select((.body // "") | test("rate-limit-release-circuit-breaker:override")) | .created_at] | max // ""' \
-		2>/dev/null) || latest_override=""
-
-	local marker_line=""
-	marker_line=$(printf '%s' "$comments_json" | jq -r \
-		'[.[] | select((.body // "") | contains("rate-limit-release-circuit-breaker")) | .body] | last // ""' \
-		2>/dev/null | grep -oE '<!-- rate-limit-release-circuit-breaker[^>]*-->' | tail -1) || marker_line=""
-
-	[[ -n "$marker_line" ]] || return 1
-
-	local next_epoch=""
-	next_epoch=$(printf '%s' "$marker_line" | grep -oE 'next_epoch=[0-9]+' | cut -d= -f2 || true)
-	[[ "$next_epoch" =~ ^[0-9]+$ ]] || return 1
-
-	if [[ -n "$latest_override" ]]; then
-		local marker_created=""
-		marker_created=$(printf '%s' "$comments_json" | jq -r --arg marker "$marker_line" \
-			'[.[] | select((.body // "") | contains($marker)) | .created_at] | last // ""' \
-			2>/dev/null) || marker_created=""
-		if [[ -n "$marker_created" && "$latest_override" > "$marker_created" ]]; then
-			return 1
-		fi
-	fi
-
-	if [[ "$now_epoch" -lt "$next_epoch" ]]; then
-		print_info "Transient rate-limit release circuit active for #${issue_number} (${repo_slug}); suppressing duplicate CLAIM_RELEASED until $(_hrff_epoch_to_utc "$next_epoch")"
-		return 0
-	fi
-
-	return 1
-}
-
-#######################################
-# Count recent transient rate-limit release comments for an issue.
-#
-# Args:
-#   $1 = comments_json
-#   $2 = since_epoch
-#######################################
-_hrff_count_recent_rate_limit_releases() {
-	local comments_json="$1"
-	local since_epoch="$2"
-
-	printf '%s' "$comments_json" | jq -r --argjson since "$since_epoch" '
-		[.[]
-		 | select((.body // "") | contains("CLAIM_RELEASED reason=rate_limit_transient"))
-		 | select(((.created_at // "1970-01-01T00:00:00Z") | fromdateiso8601? // 0) >= $since)
-		] | length' 2>/dev/null || printf '0'
-	return 0
-}
-
-#######################################
-# Post one consolidated audit comment once the threshold is crossed.
-#
-# Args:
-#   $1 = issue_number
-#   $2 = repo_slug
-#   $3 = count_after_increment
-#   $4 = next_epoch
-#######################################
-_hrff_post_rate_limit_release_circuit_comment() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local count_after_increment="$3"
-	local next_epoch="$4"
-
-	local next_human=""
-	next_human=$(_hrff_epoch_to_utc "$next_epoch")
-	local cooldown_secs="$AIDEVOPS_RATE_LIMIT_RELEASE_CIRCUIT_COOLDOWN_SECS"
-	local body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
-<!-- rate-limit-release-circuit-breaker issue=${issue_number} count=${count_after_increment} next_epoch=${next_epoch} -->
-RATE_LIMIT_RELEASE_CIRCUIT active=true count=${count_after_increment} cooldown=${cooldown_secs}s next=${next_human}
-
-Repeated transient provider rate-limit releases for this issue reached the circuit-breaker threshold. Further duplicate \`CLAIM_RELEASED reason=rate_limit_transient\` audit comments are suppressed until ${next_human} to reduce comment storms and wasted dispatch cycles.
-
-Dispatch resumes after the cooldown expires. Maintainers can override early by posting a comment containing \`rate-limit-release-circuit-breaker:override\`.
-<!-- ops:end -->"
-
-	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--method POST \
-		--field body="$body" \
-		>/dev/null 2>&1 || print_warning "Failed to post rate-limit release circuit comment on #${issue_number} (non-fatal)"
-	return 0
-}
-
-#######################################
-# Evaluate the transient rate-limit release breaker before posting a release.
-#
-# Args:
-#   $1 = issue_number
-#   $2 = repo_slug
-# Returns: 0 post normal release, 1 suppress duplicate release comment.
-#######################################
-_hrff_handle_rate_limit_release_circuit() {
-	local issue_number="$1"
-	local repo_slug="$2"
-
-	local now_epoch=""
-	now_epoch=$(date +%s 2>/dev/null) || now_epoch=0
-	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=0
-
-	local comments_json=""
-	comments_json=$(_hrff_rate_limit_release_comments_json "$issue_number" "$repo_slug") || comments_json=""
-	[[ -n "$comments_json" ]] || return 0
-
-	if _hrff_rate_limit_release_circuit_active "$issue_number" "$repo_slug" "$now_epoch" "$comments_json"; then
-		return 1
-	fi
-
-	local threshold="$AIDEVOPS_RATE_LIMIT_RELEASE_CIRCUIT_THRESHOLD"
-	local lookback="$AIDEVOPS_RATE_LIMIT_RELEASE_CIRCUIT_LOOKBACK_SECS"
-	local cooldown="$AIDEVOPS_RATE_LIMIT_RELEASE_CIRCUIT_COOLDOWN_SECS"
-	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=3
-	[[ "$lookback" =~ ^[0-9]+$ ]] || lookback=86400
-	[[ "$cooldown" =~ ^[0-9]+$ ]] || cooldown=1800
-	[[ "$threshold" -gt 0 ]] || return 0
-
-	local since_epoch=$(( now_epoch - lookback ))
-	[[ "$since_epoch" -lt 0 ]] && since_epoch=0
-	local previous_count=""
-	previous_count=$(_hrff_count_recent_rate_limit_releases "$comments_json" "$since_epoch") || previous_count=0
-	[[ "$previous_count" =~ ^[0-9]+$ ]] || previous_count=0
-	local count_after_increment=$(( previous_count + 1 ))
-
-	if [[ "$count_after_increment" -ge "$threshold" ]]; then
-		local next_epoch=$(( now_epoch + cooldown ))
-		_hrff_post_rate_limit_release_circuit_comment "$issue_number" "$repo_slug" "$count_after_increment" "$next_epoch"
-	fi
-
-	return 0
-}
+_HRFF_RATELIMIT_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_HRFF_RATELIMIT_DIR" == "${BASH_SOURCE[0]}" ]] && _HRFF_RATELIMIT_DIR="."
+# shellcheck source=headless-runtime-failure-ratelimit.sh
+if ! source "${_HRFF_RATELIMIT_DIR}/headless-runtime-failure-ratelimit.sh"; then
+	printf 'ERROR: failed to load %s/headless-runtime-failure-ratelimit.sh\n' "$_HRFF_RATELIMIT_DIR" >&2
+	unset _HRFF_RATELIMIT_DIR
+	return 1 2>/dev/null || exit 1
+fi
+unset _HRFF_RATELIMIT_DIR
 
 #######################################
 # Return success when a GitHub issue unlock failure is benign.
@@ -357,21 +242,50 @@ _unlock_issue_after_dispatch_release() {
 #######################################
 # Check whether dispatch release may mutate issue state for a repo.
 #
+# A confirmed unmanaged repo is a benign no-op. An indeterminate verdict
+# (GitHub could not answer, e.g. REST deferred under quota pressure) is
+# retried after AIDEVOPS_RELEASE_AUTHORITY_RETRY_DELAYS seconds (default
+# "15 45"); if still unanswered the release is reported unpersisted instead
+# of silently skipped, which stranded claims on live issues (GH#36184).
+#
 # Args:
 #   $1 = issue_number
 #   $2 = repo_slug
+# Globals written:
+#   _HRFF_RELEASE_AUTHORITY_SKIP_RC — status the caller returns when this
+#   returns non-zero: 0 = confirmed unmanaged, 1 = release unpersisted.
+# Returns: 0 when the release may proceed, 1 otherwise.
 #######################################
 _hrff_release_repo_state_is_managed() {
 	local issue_number="$1"
 	local repo_slug="$2"
+	local guard_rc=0 delay=""
+	local -a retry_delays=()
 
-	if declare -F aidevops_can_manage_repo_issue_state >/dev/null 2>&1; then
-		if ! aidevops_can_manage_repo_issue_state "$repo_slug"; then
-			print_info "Skipping CLAIM_RELEASED for #${issue_number} in ${repo_slug}: repo state is not managed by this account"
-			return 1
-		fi
-	fi
-	return 0
+	_HRFF_RELEASE_AUTHORITY_SKIP_RC=0
+	declare -F aidevops_can_manage_repo_issue_state >/dev/null 2>&1 || return 0
+	read -r -a retry_delays <<<"${AIDEVOPS_RELEASE_AUTHORITY_RETRY_DELAYS-15 45}" || true
+	aidevops_can_manage_repo_issue_state "$repo_slug" || guard_rc=$?
+	for delay in ${retry_delays[@]+"${retry_delays[@]}"}; do
+		[[ "$guard_rc" -eq 2 ]] || break
+		[[ "$delay" =~ ^[0-9]+$ ]] || continue
+		print_info "Repo-state authority for #${issue_number} in ${repo_slug} is indeterminate; retrying claim release in ${delay}s"
+		sleep "$delay"
+		guard_rc=0
+		aidevops_can_manage_repo_issue_state "$repo_slug" || guard_rc=$?
+	done
+	case "$guard_rc" in
+	0) return 0 ;;
+	2)
+		_HRFF_RELEASE_AUTHORITY_SKIP_RC=1
+		print_warning "Claim release for #${issue_number} in ${repo_slug} remains unpersisted: repo-state authority could not be determined (GitHub lookup unavailable); retaining issue lifecycle state"
+		return 1
+		;;
+	esac
+	# Replay keeps its retry row on denial so restored authority can still publish.
+	[[ "${_HRRR_REPLAY:-0}" != 1 ]] || _HRFF_RELEASE_AUTHORITY_SKIP_RC=1
+	print_info "Skipping CLAIM_RELEASED for #${issue_number} in ${repo_slug}: repo state is not managed by this account"
+	return 1
 }
 
 #######################################
@@ -464,6 +378,7 @@ _hrff_build_claim_released_line() {
 	local opencode_version="${AIDEVOPS_UNKNOWN_VERSION:-}"
 	local release_ts=""
 	local machine_readable_part=""
+	local checkpoint_variant=""
 
 	if declare -F aidevops_find_version >/dev/null 2>&1; then
 		aidevops_version=$(aidevops_find_version 2>/dev/null || printf '%s' "$AIDEVOPS_UNKNOWN_VERSION")
@@ -475,6 +390,23 @@ _hrff_build_claim_released_line() {
 
 	release_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	machine_readable_part="CLAIM_RELEASED reason=${reason} runner=${runner_name} ts=${release_ts} aidevops_version=${aidevops_version} opencode_version=${opencode_version}"
+	# GH#38215: publish the effective runtime tier, not the dispatcher's initial
+	# guess. The attempt loop updates it after model rotation/escalation. Only
+	# checkpoint workers carry this head binding; legacy releases stay unknown.
+	# Pinned models can leave the runtime's default tier unchanged: verify the
+	# actual model and reasoning variant against that tier before publishing it.
+	if [[ "${AIDEVOPS_DISPATCH_TIER:-}" =~ ^(simple|standard|thinking)$ &&
+		"${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}" =~ ^[a-f0-9]{40,64}$ &&
+		"${AIDEVOPS_ROUTING_MODEL:-}" =~ ^[A-Za-z0-9._:/-]+$ &&
+		"${AIDEVOPS_ROUTING_VARIANT:-}" =~ ^[A-Za-z0-9_-]*$ ]] &&
+		declare -F model_tier_candidate_index >/dev/null &&
+		model_tier_candidate_index "$AIDEVOPS_DISPATCH_TIER" "$AIDEVOPS_ROUTING_MODEL" >/dev/null 2>&1 &&
+		checkpoint_variant=$(model_tier_variant "$AIDEVOPS_DISPATCH_TIER" "$AIDEVOPS_ROUTING_MODEL" 2>/dev/null); then
+		if [[ "$checkpoint_variant" == "${AIDEVOPS_ROUTING_VARIANT:-}" ]]; then
+			machine_readable_part+=" checkpoint_tier=${AIDEVOPS_DISPATCH_TIER} checkpoint_head=${AIDEVOPS_PR_REPAIR_HEAD_SHA}"
+			machine_readable_part+=" checkpoint_model=${AIDEVOPS_ROUTING_MODEL} checkpoint_variant=${AIDEVOPS_ROUTING_VARIANT:-default}"
+		fi
+	fi
 	if [[ -n "$exit_code_arg" ]]; then
 		machine_readable_part+=" exit=${exit_code_arg}"
 	fi
@@ -506,23 +438,37 @@ _hrff_build_claim_released_line() {
 #   $1 = issue_number
 #   $2 = repo_slug
 #   $3 = comment_body
+#   $4-$6 = optional session, runner and original claim ID (inherit release context)
 #######################################
 _hrff_post_claim_released_comment() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local comment_body="$3"
+	local post_session="${4:-${AIDEVOPS_DISPATCH_LEASE_SESSION:-${session_key:-}}}"
+	local post_runner="${5:-${runner_name:-}}" post_claim_id="${6:-${_HRFF_RELEASE_CLAIM_ID:-}}"
 	local attempts="${AIDEVOPS_CLAIM_RELEASE_POST_ATTEMPTS:-3}"
 	local retry_delay="${AIDEVOPS_CLAIM_RELEASE_POST_RETRY_DELAY:-1}"
 	local attempt=1
-	local post_error=""
+	local post_error="" projection_line=""
+	projection_line=$(jq -Rrs '[split("\n")[] | select(startswith("CLAIM_RELEASED "))] |
+		if length == 1 then .[0] else error("ambiguous release line") end' <<<"$comment_body") || return 1
 
 	[[ "$attempts" =~ ^[1-9][0-9]*$ ]] || attempts=3
 	[[ "$retry_delay" =~ ^[0-9]+$ ]] || retry_delay=1
 	while [[ "$attempt" -le "$attempts" ]]; do
+		# Refresh after backoff too. This is not an atomic GitHub transaction;
+		# bound release fields and the post-write check limit stale projections.
+		_hrff_check_release_claim "$issue_number" "$repo_slug" "$post_runner" "$post_session" || return 1
+		[[ "$_HRFF_RELEASE_CLAIM_OWNED" -eq 1 && "${_HRFF_RELEASE_CLAIM_ID:-}" == "$post_claim_id" ]] || return 1
 		if post_error=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 			--method POST \
 			--field body="$comment_body" \
 			2>&1 >/dev/null); then
+			_hrff_check_release_claim "$issue_number" "$repo_slug" "$post_runner" "$post_session" "$projection_line" || return 1
+			if [[ "$_HRFF_RELEASE_CLAIM_OWNED" -ne 1 || "${_HRFF_RELEASE_CLAIM_ID:-}" != "$post_claim_id" ]]; then
+				print_warning "Release persisted for #${issue_number}, but projection is held: claim generation changed; do not replay"
+				return 1
+			fi
 			return 0
 		fi
 		post_error="${post_error//$'\n'/ }"
@@ -546,8 +492,55 @@ _hrff_post_claim_released_comment() {
 # available for a capable runner (GH#34758). Legacy consumers clear to
 # available. Returns 0 when the exit projects status:blocked.
 #######################################
+# Structured plugin refusals plus the runtime-owned session DB, never model prose.
+# Unreadable evidence fails closed; completed tools in child sessions count too.
+_hrff_lifecycle_refusal_only() {
+	local session_id="$1"
+	local db_path="${_WORKER_ISOLATED_DB_PATH:-${HOME}/.local/share/opencode/opencode.db}"
+	local evidence_dir="${HOME}/.aidevops/logs/lifecycle-admission"
+	[[ "$session_id" =~ ^[A-Za-z0-9_-]+$ && -f "$db_path" && -d "$evidence_dir" ]] || return 1
+	python3 - "$session_id" "$db_path" "$evidence_dir" <<'PY'
+import json
+import re
+import sqlite3
+import sys
+from pathlib import Path
+
+session, database, directory = sys.argv[1:]
+try:
+    with sqlite3.connect(Path(database).resolve().as_uri() + "?mode=ro", uri=True) as db:
+        # Require the session itself to exist; an empty/wrong DB is not evidence.
+        owned = {row[0] for row in db.execute("""WITH RECURSIVE owned(id) AS (
+            SELECT id FROM session WHERE id = ? UNION
+            SELECT s.id FROM session s JOIN owned o ON s.parent_id = o.id)
+            SELECT id FROM owned""", (session,))}
+        if not owned:
+            sys.exit(1)
+        count = db.execute("""WITH RECURSIVE owned(id) AS (
+            SELECT id FROM session WHERE id = ? UNION
+            SELECT s.id FROM session s JOIN owned o ON s.parent_id = o.id)
+            SELECT count(*) FROM part WHERE session_id IN (SELECT id FROM owned)
+            AND json_extract(data, '$.type') = 'tool'
+            AND json_extract(data, '$.state.status') = 'completed'""", (session,)).fetchone()[0]
+    refused = False
+    for path in Path(directory).glob("*.jsonl"):
+        for line in path.open():
+            event = json.loads(line)
+            if event.get("schema") == 1 and event.get("session") in owned and event.get("outcome") == "refused":
+                # Policy refusals anywhere in the same session tree veto recovery.
+                if not re.fullmatch(r"helper-(?:timeout|unavailable|exit-[0-9]+)|ENOENT|ETIMEDOUT", event.get("reason", "")):
+                    sys.exit(1)
+                refused = True
+    sys.exit(0 if refused and count == 0 else 1)
+except (OSError, ValueError, TypeError, AttributeError, sqlite3.Error):
+    sys.exit(1)
+PY
+	return $?
+}
+
 _hrff_blocked_exit_holds() {
 	declare -F gh_issue_edit_safe >/dev/null 2>&1 || return 1
+	[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" != resource_contended ]] || return 1
 	[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" != runner_capability_unmet ||
 		-n "${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}" ]] || return 1
 	return 0
@@ -564,10 +557,19 @@ _hrff_prepare_terminal_blocker_release() {
 	_HRFF_TERMINAL_BLOCKER_MODE="normal"
 	_HRFF_TERMINAL_BLOCKER_FRAGMENT=""
 	_HRFF_TERMINAL_BLOCKER_CIRCUIT_BODY=""
-	[[ -n "$repo_path" && "$blocker_fingerprint" =~ ^[a-f0-9]{24}$ ]] || return 0
+	# Empty until this release's observation, or an earlier one, is evidence.
+	_HRFF_TERMINAL_BLOCKER_EVIDENCE=""
 	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
 		--jq '{title: (.title // ""), body: (.body // "")}' 2>/dev/null) || return 0
 	comments_json=$(terminal_blocker_fetch_trusted_comments "$issue_number" "$repo_slug") || return 0
+	local input_hold_rc=0
+	terminal_blocker_input_circuit_active "$comments_json" "$issue_json" "$repo_slug" "$issue_number" "$repo_path" || input_hold_rc=$?
+	if [[ "$input_hold_rc" -ne 1 ]]; then
+		_HRFF_TERMINAL_BLOCKER_MODE=open
+		_HRFF_TERMINAL_BLOCKER_EVIDENCE=circuit
+		return 0
+	fi
+	[[ -n "$repo_path" && "$blocker_fingerprint" =~ ^[a-f0-9]{24}$ ]] || return 0
 	task_revision=$(terminal_blocker_task_revision \
 		"$issue_json" "$repo_slug" "$issue_number" "$repo_path") || return 0
 	# GH#33025: the login that authors this runner's releases also recognises
@@ -581,9 +583,11 @@ _hrff_prepare_terminal_blocker_release() {
 		fi
 		_HRFF_TERMINAL_BLOCKER_FRAGMENT=$(terminal_blocker_observation_fragment \
 			"$task_revision" "$blocker_fingerprint" "$mode" "$projected_state") || _HRFF_TERMINAL_BLOCKER_FRAGMENT=""
+		[[ -z "$_HRFF_TERMINAL_BLOCKER_FRAGMENT" ]] || _HRFF_TERMINAL_BLOCKER_EVIDENCE="observation"
 		;;
 	circuit)
 		_HRFF_TERMINAL_BLOCKER_MODE="circuit"
+		_HRFF_TERMINAL_BLOCKER_EVIDENCE="prior_observation"
 		_HRFF_TERMINAL_BLOCKER_CIRCUIT_BODY=$(terminal_blocker_circuit_comment \
 			"$machine_readable_part" "$task_revision" "$blocker_fingerprint") || {
 			_HRFF_TERMINAL_BLOCKER_MODE="normal"
@@ -592,6 +596,11 @@ _hrff_prepare_terminal_blocker_release() {
 		;;
 	open)
 		_HRFF_TERMINAL_BLOCKER_MODE="open"
+		_HRFF_TERMINAL_BLOCKER_EVIDENCE="circuit"
+		;;
+	normal)
+		# A repeated unknown dossier for this revision keeps its earlier observation.
+		_HRFF_TERMINAL_BLOCKER_EVIDENCE="prior_observation"
 		;;
 	esac
 	return 0
@@ -650,6 +659,10 @@ _hrff_hold_terminal_blocker_circuit() {
 		return 0
 	fi
 	[[ -z "$runner_name" ]] || hold_args+=(--remove-assignee "$runner_name")
+	# GH#38360: name the companion so set_issue_status need not guess it.
+	local companion=""
+	companion=$(_hrff_blocked_companion_label)
+	[[ -z "$companion" ]] || hold_args+=(--add-label "$companion")
 	if declare -F set_issue_status >/dev/null 2>&1; then
 		set_issue_status "$issue_number" "$repo_slug" blocked \
 			${hold_args[@]+"${hold_args[@]}"} >/dev/null 2>&1 ||
@@ -660,17 +673,20 @@ _hrff_hold_terminal_blocker_circuit() {
 }
 
 #######################################
-# GH#34846: a held first observation of a revision-re-armed class has no
-# circuit, so queue it for the runner-local recovery owner, which returns the
-# issue to status:available once a relevant revision or trusted retry lands.
+# GH#34846: a held first observation of a re-armable class has no circuit, so
+# queue it for the runner-local recovery owner, which returns the issue to
+# status:available once a relevant revision or trusted retry lands.
+# GH#36044: retry-only classes (GH#35925, e.g. permission_required) are queued
+# too; otherwise only the slow cross-repo seed could find them and a trusted
+# retry stayed unapplied for hours.
 # Call only after the observation release is persisted and projected.
 #######################################
 _hrff_enqueue_observation_recovery() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	[[ -n "${_HRFF_TERMINAL_BLOCKER_FRAGMENT:-}" ]] || return 0
-	declare -F terminal_blocker_rearms_on_revision >/dev/null 2>&1 || return 0
-	terminal_blocker_rearms_on_revision "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" || return 0
+	declare -F terminal_blocker_observation_recoverable >/dev/null 2>&1 || return 0
+	terminal_blocker_observation_recoverable "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" || return 0
 	_hrff_blocked_exit_holds || return 0
 	_hrff_enqueue_blocker_recovery "$issue_number" "$repo_slug"
 	return 0
@@ -691,12 +707,17 @@ _hrff_handle_terminal_blocker_release() {
 			print_warning "Could not persist runner-local rejected-secret cooldown"
 	fi
 	_hrff_prepare_terminal_blocker_release "$issue_number" "$repo_slug" "$machine_readable_part" "$release_reason"
+	# A classified replay must not degrade to a dispatchable unrecorded exit.
+	if [[ "${_HRRR_REPLAY:-0}" == 1 && -n "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}" &&
+		-z "${_HRFF_TERMINAL_BLOCKER_FRAGMENT:-}" && -z "${_HRFF_TERMINAL_BLOCKER_EVIDENCE:-}" ]]; then
+		return 11
+	fi
 	_hrff_apply_terminal_permission_hold "$issue_number" "$repo_slug" || return 11
 	case "${_HRFF_TERMINAL_BLOCKER_MODE:-normal}" in
 	circuit)
 		if ! _hrff_post_claim_released_comment "$issue_number" "$repo_slug" \
 			"$_HRFF_TERMINAL_BLOCKER_CIRCUIT_BODY"; then
-			print_warning "Terminal blocker circuit for #${issue_number} remains unpersisted and retryable; retaining issue lifecycle state"
+			print_warning "Terminal blocker release or ownership verification incomplete for #${issue_number}; retaining issue state; reconcile persisted comments before retrying"
 			return 11
 		fi
 		print_info "Opened unchanged terminal-blocker circuit on #${issue_number}"
@@ -720,6 +741,29 @@ _hrff_handle_terminal_blocker_release() {
 	return 0
 }
 
+# Persist one bound release, then project only while its generation still matches.
+_hrff_persist_and_project_release() {
+	local issue_number="$1" repo_slug="$2" runner_name="$3" reason="$4"
+	local projection_reason="$5" session_key="$6" claim_id="$7"
+	local machine_readable_part="$8" terminal_blocker_fragment="$9" comment_body=""
+	comment_body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+${machine_readable_part}${terminal_blocker_fragment}
+<!-- ops:end -->"
+	if ! _hrff_post_claim_released_comment "$issue_number" "$repo_slug" "$comment_body" "$session_key" "$runner_name" "$claim_id"; then
+		print_warning "Claim release or ownership verification incomplete for #${issue_number}; retaining issue state; reconcile persisted comments before retrying"
+		return 1
+	fi
+	print_info "Released claim on #${issue_number} (reason: ${reason})"
+	_hrff_check_release_claim "$issue_number" "$repo_slug" "$runner_name" "$session_key" "$machine_readable_part" || return 1
+	if [[ "$_HRFF_RELEASE_CLAIM_OWNED" -ne 1 || "${_HRFF_RELEASE_CLAIM_ID:-}" != "$claim_id" ]]; then
+		print_info "Preserved issue lifecycle state on #${issue_number}: release generation changed after publication"
+		return 0
+	fi
+	_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$projection_reason" "$session_key" || return 1
+	[[ "$projection_reason" != blocked ]] || _hrff_enqueue_observation_recovery "$issue_number" "$repo_slug"
+	return 0
+}
+
 #######################################
 # Release a dispatch claim by posting a CLAIM_RELEASED comment.
 # The dedup guard recognises this and allows immediate re-dispatch
@@ -731,16 +775,103 @@ _hrff_handle_terminal_blocker_release() {
 #   $3 = exit_code (optional — included in comment when provided by exit trap)
 #   $4 = session_count (optional — session_count from worker DB for exit trap)
 #######################################
+# GH#37344: a release that cannot be published (for example GitHub admission
+# deferred) leaves private retry evidence for the Pulse recovery consumer.
 _release_dispatch_claim() {
+	local session_key="$1" reason="${2:-worker_failed}" rc=0
+	local issue_number="" repo_slug="${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}"
+
+	# GH#38982: once a delivery is complete or merged, resuming its finished
+	# conversation exits with no progress. Clear it before projection so the
+	# next continuation starts fresh from the brief; interruptions keep resume.
+	case "$(_hrff_verified_release_reason "$reason")" in
+	worker_complete | worker_merged_partial | worker_merged_partial_no_progress)
+		if [[ "$session_key" == issue-* ]] && declare -F clear_session_id_all_providers >/dev/null 2>&1; then
+			clear_session_id_all_providers "$session_key" ||
+				print_warning "[lifecycle] session_clear_failed session=${session_key} reason=${reason}"
+		fi
+		;;
+	esac
+	_hrff_release_dispatch_claim_attempt "$@" || rc=$?
+	issue_number=$(_hrff_release_issue_number "$session_key")
+	if [[ "$rc" -eq 0 ]]; then
+		_hrrr_clear "$session_key" "$issue_number" "$repo_slug"
+	else
+		_hrrr_record "$session_key" "$reason" "${3:-}" "${4:-}" "$issue_number" "$repo_slug"
+	fi
+	return "$rc"
+}
+
+# Persist bounded, non-secret lifecycle metadata even when detached output is lost.
+_hrff_log_prelaunch_abort() {
+	local session="$1" cause="$2"
+	local unknown="unavailable"
+	local stage="${_WORKER_PRELAUNCH_LAST_STAGE:-$unknown}"
+	local attempt="${AIDEVOPS_ATTEMPT_ID:-$unknown}"
+	local log_dir="${HOME}/.aidevops/logs"
+	[[ "$session" =~ ^[A-Za-z0-9._:-]+$ ]] || session="$unknown"
+	[[ "$cause" =~ ^[A-Za-z0-9._:-]+$ ]] || cause="$unknown"
+	[[ "$stage" =~ ^[A-Za-z0-9._:-]+$ ]] || stage="$unknown"
+	[[ "$attempt" =~ ^[A-Za-z0-9._:-]+$ ]] || attempt="$unknown"
+	if ! (umask 077; mkdir -p "$log_dir" && printf '[lifecycle] prelaunch_abort session=%s attempt_id=%s stage=%s cause=%s\n' "$session" "$attempt" "$stage" "$cause" >>"${log_dir}/headless-prelaunch.log"); then
+		print_warning "[lifecycle] unable to persist prelaunch abort session=${session} attempt_id=${attempt} stage=${stage} cause=${cause}"
+	fi
+	return 0
+}
+
+_hrff_release_fragment() {
+	local reason="$1" fragment="$2"
+	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
+		fragment=$'\nDraft checkpoint: partial work is preserved on the draft PR. Next action: Pulse continues the exact head (bounded per head and per PR).\n'
+	elif [[ "$reason" == "${_HRW_REASON_NOT_LAUNCHED:-worker_not_launched}" && "${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" == revision ]]; then
+		fragment=$'\nRuntime did not launch, so the approved head is unchanged. The revision continuation approval stays reusable for this exact head (bounded retries within its validity window); no new approval is needed unless the head, brief or approval window changes.\n'
+	elif [[ "$reason" == "${_HRW_REASON_MERGED_PARTIAL:-worker_merged_partial}" ]]; then
+		fragment=$'\nPartial PR merged; issue stays open for continuation from the brief ledger. Next action: dispatch a continuation worker.\n'
+	elif [[ "$reason" == worker_merged_partial_no_progress ]]; then
+		fragment=$'\nBLOCKED: continuation delivered no new PR or head after a merged partial. AI brief owner: reconcile merged worker-side scope with remaining acceptance items before retrying.\n'
+	fi
+	if [[ "$reason" == worker_merged_partial* && -n "${_HRW_MERGED_DELIVERY_KEY:-}" ]]; then
+		fragment+="MERGED_PARTIAL_DELIVERY key=${_HRW_MERGED_DELIVERY_KEY}"$'\n'
+	fi
+	_HRFF_RELEASE_FRAGMENT="$fragment"
+	return 0
+}
+
+# Fence direct release/EXIT callers as well as _cmd_run_finish. Supervisor
+# callers without worker launch state retain their existing recovery rules.
+_hrff_verified_release_reason() {
+	local reason="$1"
+	if [[ "$reason" == worker_complete && -n "${_WORKER_RUNTIME_LAUNCH_STARTED+x}" ]] &&
+		declare -F _hrw_runtime_launch_confirmed >/dev/null 2>&1 &&
+		! _hrw_runtime_launch_confirmed; then
+		reason="worker_not_launched"
+	fi
+	printf '%s\n' "$reason"
+	return 0
+}
+
+# Public audit records carry only the managed log ID, never a private path.
+_hrff_attempt_log_field() {
+	local attempt_log_id="${AIDEVOPS_WORKER_ATTEMPT_LOG:-}"
+	attempt_log_id="${attempt_log_id##*/}"
+	if [[ "$attempt_log_id" =~ ^worker-[A-Za-z0-9_.-]+\.log\.[A-Za-z0-9]+$ ]]; then
+		printf ' attempt_log=%s' "$attempt_log_id"
+	fi
+	return 0
+}
+
+_hrff_release_dispatch_claim_attempt() {
 	local session_key="$1"
 	local reason="${2:-worker_failed}"
 	local exit_code_arg="${3:-}"
 	local session_count_arg="${4:-}"
 	local issue_number=""
-	local repo_slug="${DISPATCH_REPO_SLUG:-}"
+	# GH#35684: model selection runs before _cmd_run_prepare exports
+	# DISPATCH_REPO_SLUG, so a pre-launch failure must fall back to the
+	# dispatcher-supplied WORKER_REPO_SLUG or the claim is stranded.
+	local repo_slug="${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}"
 	local runner_name=""
 	local machine_readable_part=""
-	local comment_body=""
 	local repair_pr_number="${AIDEVOPS_PR_REPAIR_NUMBER:-}"
 
 	# Direct PR-remediation workers are dispatched against a pull request rather
@@ -765,24 +896,39 @@ _release_dispatch_claim() {
 	if ! _hrff_release_context_is_valid "$issue_number" "$repo_slug"; then
 		return 0
 	fi
-	_hrff_release_repo_state_is_managed "$issue_number" "$repo_slug" || return 0
+	_hrff_release_repo_state_is_managed "$issue_number" "$repo_slug" || return "${_HRFF_RELEASE_AUTHORITY_SKIP_RC:-0}"
+	runner_name=$(_hrff_resolve_release_runner_login)
+	_hrff_check_release_claim "$issue_number" "$repo_slug" "$runner_name" "$session_key" || return 1
+	[[ "$_HRFF_RELEASE_CLAIM_OWNED" -eq 1 ]] || return 0
+	local claim_id="${_HRFF_RELEASE_CLAIM_ID:-}"
+	[[ "$claim_id" =~ ^[1-9][0-9]*$ ]] || return 1
+
+	reason=$(_hrff_verified_release_reason "$reason")
 
 	if [[ "$reason" == "rate_limit_transient" ]]; then
 		if ! _hrff_handle_rate_limit_release_circuit "$issue_number" "$repo_slug"; then
 			# The per-issue breaker is already active. Keep state cleanup so the
 			# GitHub issue is not stranded in an active lifecycle state, but skip
 			# the duplicate CLAIM_RELEASED audit comment that caused storms.
+			_hrff_check_release_claim "$issue_number" "$repo_slug" "$runner_name" "$session_key" || return 1
+			[[ "$_HRFF_RELEASE_CLAIM_OWNED" -eq 1 && "${_HRFF_RELEASE_CLAIM_ID:-}" == "$claim_id" ]] || return 0
 			_hrff_release_rate_limit_circuit_cleanup "$issue_number" "$repo_slug"
 			return 0
 		fi
 	fi
 
-	runner_name=$(_hrff_resolve_release_runner_login)
 	if [[ "$reason" == blocked ]] && _hrff_blocked_release_persisted "$issue_number" "$repo_slug" "$runner_name"; then
-		_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$reason"
+		_hrff_check_release_claim "$issue_number" "$repo_slug" "$runner_name" "$session_key" || return 1
+		[[ "$_HRFF_RELEASE_CLAIM_OWNED" -eq 1 && "${_HRFF_RELEASE_CLAIM_ID:-}" == "$claim_id" ]] || return 0
+		local persisted_reason="$reason"
+		[[ "${_HRFF_PERSISTED_RELEASE_UNRECORDED:-0}" -eq 0 ]] || persisted_reason="$_HRFF_REASON_BLOCKED_UNRECORDED"
+		_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$persisted_reason"
 		return $?
 	fi
 	machine_readable_part=$(_hrff_build_claim_released_line "$reason" "$runner_name" "$exit_code_arg" "$session_count_arg")
+	machine_readable_part+=" claim_id=${claim_id} nonce=${AIDEVOPS_DISPATCH_LEASE_TOKEN:-} lease_token=${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}"
+	machine_readable_part+=" device=${AIDEVOPS_DISPATCH_LEASE_DEVICE:-${AIDEVOPS_DEVICE_ID:-}} session=${AIDEVOPS_DISPATCH_LEASE_SESSION:-$session_key}"
+	machine_readable_part+="$(_hrff_attempt_log_field)"
 	local terminal_blocker_fragment=""
 	case "$reason" in
 	blocked | push_policy_timeout | network_policy_timeout)
@@ -793,29 +939,130 @@ _release_dispatch_claim() {
 		terminal_blocker_fragment="${_HRFF_TERMINAL_BLOCKER_FRAGMENT:-}"
 		;;
 	esac
-	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
-		terminal_blocker_fragment=$'\nDraft checkpoint: partial work is blocked. Next action: verify the exact head and current brief before resuming.\n'
-	elif [[ "$reason" == "${_HRW_REASON_MERGED_PARTIAL:-worker_merged_partial}" ]]; then
-		terminal_blocker_fragment=$'\nPartial PR merged; issue stays open for continuation from the brief ledger. Next action: dispatch a continuation worker.\n'
-	elif [[ "$reason" == worker_merged_partial_no_progress ]]; then
-		terminal_blocker_fragment=$'\nBLOCKED: continuation delivered no new PR or head after a merged partial. AI brief owner: reconcile merged worker-side scope with remaining acceptance items before retrying.\n'
+	# A held status:blocked needs evidence that an owner can re-arm: recovery
+	# retires evidence-less entries (GH#35569) and the dependency sweep defers
+	# to that absent owner, so an unrecorded hold never cleared. Unclassified
+	# or unreadable evidence stays retryable; a repeat records it before a hold.
+	local projection_reason="$reason"
+	if [[ "$reason" == blocked && -z "$terminal_blocker_fragment" &&
+		-z "${_HRFF_TERMINAL_BLOCKER_EVIDENCE:-}" ]]; then
+		machine_readable_part+=" evidence=unrecorded"
+		projection_reason="$_HRFF_REASON_BLOCKED_UNRECORDED"
+		print_warning "Blocked exit on #${issue_number} recorded no terminal-blocker evidence; keeping it dispatchable"
 	fi
-	if [[ "$reason" == worker_merged_partial* && -n "${_HRW_MERGED_DELIVERY_KEY:-}" ]]; then
-		terminal_blocker_fragment+="MERGED_PARTIAL_DELIVERY key=${_HRW_MERGED_DELIVERY_KEY}"$'\n'
-	fi
-	comment_body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
-${machine_readable_part}${terminal_blocker_fragment}
-<!-- ops:end -->"
-
-	if ! _hrff_post_claim_released_comment "$issue_number" "$repo_slug" "$comment_body"; then
-		print_warning "Claim release for #${issue_number} remains unpersisted and retryable; retaining issue lifecycle state"
-		return 1
-	fi
-	print_info "Released claim on #${issue_number} (reason: ${reason})"
-	_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$reason" || return 1
-	[[ "$reason" != blocked ]] || _hrff_enqueue_observation_recovery "$issue_number" "$repo_slug"
+	_hrff_release_fragment "$reason" "$terminal_blocker_fragment"
+	terminal_blocker_fragment="$_HRFF_RELEASE_FRAGMENT"
+	_hrff_persist_and_project_release "$issue_number" "$repo_slug" "$runner_name" "$reason" \
+		"$projection_reason" "$session_key" "$claim_id" "$machine_readable_part" "$terminal_blocker_fragment" || return 1
 	return 0
 }
+
+#######################################
+# GH#35574: post this attempt's authenticated DISPATCH_LEASE phase=terminal at
+# release time. dispatch-claim-helper.sh signs it with the claim's lease token,
+# device and session plus AIDEVOPS_ATTEMPT_ID, which is exactly what
+# _dd_has_matching_terminal_lease requires to retire a generation-marked
+# dispatch. The later worker-event emission stays as a fallback and is a no-op
+# once the lease is terminal. Never prints the token; always non-fatal.
+#
+# Args: $1 = issue_number, $2 = repo_slug, $3 = session_key (optional)
+#######################################
+_hrff_emit_release_terminal_lease() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local session_key="${3:-}"
+	local helper="${DISPATCH_CLAIM_HELPER:-${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/dispatch-claim-helper.sh}"
+	local lease_session=""
+
+	[[ -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" && "$issue_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 0
+	if [[ ! -x "$helper" ]]; then
+		print_warning "Terminal lease helper unavailable for #${issue_number}; retaining eligible checkpoint evidence locally"
+	fi
+	lease_session="${AIDEVOPS_DISPATCH_LEASE_SESSION:-${session_key:-issue-${issue_number}}}"
+	# shellcheck source=./terminal-lease-recovery.sh
+	source "${BASH_SOURCE[0]%/*}/terminal-lease-recovery.sh"
+	if _terminal_lease_emit_or_record "$issue_number" "$repo_slug" "$lease_session" "$helper"; then
+		print_info "Posted terminal dispatch lease on #${issue_number} after ready handoff release"
+		return 0
+	fi
+	print_warning "Terminal dispatch lease not posted on #${issue_number}; checkpoint recovery recorded locally when eligible"
+	return 0
+}
+
+#######################################
+# Project a released draft checkpoint as available for exact-head continuation.
+# Always non-fatal.
+#
+# Args: $1 = issue_number, $2 = repo_slug, $3 = runner_name
+#######################################
+_hrff_project_draft_checkpoint() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local runner_name="$3"
+	local spec_restore_rc=0 dispatch_restored=0
+
+	# GH#36019: the draft is preserved work awaiting exact-head continuation
+	# (pr-checkpoint-continuation-helper.sh dispatch-stalled). A closing-linked
+	# draft projected as status:blocked was rejected by that target fence and
+	# held silently; WORKER_DRAFT_CHECKPOINT dedup still blocks redispatch.
+	if declare -F clear_active_status_on_release >/dev/null 2>&1; then
+		clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" available \
+			|| print_warning "Failed to project draft checkpoint state on #${issue_number} (non-fatal)"
+	fi
+	# A draft may have merged between checkpoint classification and release.
+	# Reconcile only after projection/unassignment; the shared guard requires
+	# available state and proves that NO open PR still owns the issue.
+	# shellcheck source=pulse-merge-partial-continuation.sh
+	source "${BASH_SOURCE[0]%/*}/pulse-merge-partial-continuation.sh"
+	if _pmpc_restore_available_dispatch "$repo_slug" "$issue_number" 1; then
+		dispatch_restored=1
+	fi
+	# GH#38021: the escalation removed auto-dispatch, and a canonical
+	# consolidated spec is filtered out of dispatch without it. Put back
+	# only what this run removed; the draft still routes the exact head.
+	_pmpc_restore_checkpoint_spec_dispatch "$repo_slug" "$issue_number" || spec_restore_rc=$?
+	if [[ "$spec_restore_rc" -eq 0 ]]; then
+		dispatch_restored=1
+		print_info "Restored auto-dispatch on consolidated spec #${issue_number} removed by this run's draft checkpoint"
+	elif [[ "$spec_restore_rc" -eq 2 ]]; then
+		print_warning "[lifecycle] checkpoint_spec_dispatch_not_restored issue=${issue_number} — this run's draft checkpoint removed auto-dispatch; the issue was unreadable, held, owned or not available afterwards"
+	fi
+	# aidevops:trust-boundary — the lock decision follows the label state left
+	# by the restores above (GH#30180). A restore returns the issue to the
+	# dispatch queue, so this release must not reopen its conversation; the
+	# unlock helper re-reads the labels in every other case.
+	if [[ "$dispatch_restored" -eq 1 ]]; then
+		print_info "Retaining conversation lock for #${issue_number} in ${repo_slug}: this release restored auto-dispatch"
+	else
+		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
+	fi
+	print_info "Projected draft checkpoint #${issue_number} for exact-head continuation"
+	return 0
+}
+
+#######################################
+# Return a ready-handoff issue to the queue when its non-closing PR already
+# merged (GH#39857). The shared guard re-reads the issue, PR, comments and open
+# PRs, and writes only when every continuation condition holds. Runs in a
+# subshell so pulse globals stay isolated. Always non-fatal.
+#
+# Args: $1 = issue_number, $2 = repo_slug
+#######################################
+_hrff_revisit_merged_partial() (
+	local issue_number="$1"
+	local repo_slug="$2"
+	local LOGFILE="" line=""
+	LOGFILE=$(mktemp "${TMPDIR:-/tmp}/partial-revisit.XXXXXX") || return 0
+	trap 'rm -f "$LOGFILE"' EXIT
+	# shellcheck disable=SC1091
+	source "${BASH_SOURCE[0]%/*}/pulse-merge.sh" >/dev/null 2>&1 || return 0
+	declare -F _pmpc_revisit_in_review_issue >/dev/null 2>&1 || return 0
+	_pmpc_revisit_in_review_issue "$repo_slug" "$issue_number" || true
+	if [[ -s "$LOGFILE" ]]; then
+		while IFS= read -r line; do print_info "$line"; done <"$LOGFILE"
+	fi
+	return 0
+)
 
 #######################################
 # Project issue lifecycle state after a persisted CLAIM_RELEASED comment.
@@ -828,12 +1075,14 @@ ${machine_readable_part}${terminal_blocker_fragment}
 #   $2 = repo_slug
 #   $3 = runner_name
 #   $4 = reason
+#   $5 = session_key (optional; lease session fallback)
 #######################################
 _hrff_project_post_release_state() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local runner_name="$3"
 	local reason="$4"
+	local session_key="${5:-}"
 
 	# Older standalone consumers without safe-edit retain their existing cleanup;
 	# only the full runtime's named safe-edit path can produce verified provenance.
@@ -851,12 +1100,7 @@ _hrff_project_post_release_state() {
 		return 0
 	fi
 	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
-		if declare -F clear_active_status_on_release >/dev/null 2>&1; then
-			clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" \
-				|| print_warning "Failed to project draft checkpoint state on #${issue_number} (non-fatal)"
-		fi
-		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
-		print_info "Projected draft checkpoint #${issue_number} as blocked partial work"
+		_hrff_project_draft_checkpoint "$issue_number" "$repo_slug" "$runner_name"
 		return 0
 	fi
 	# GH#33545: same projection as a draft checkpoint (clear active status,
@@ -874,8 +1118,16 @@ _hrff_project_post_release_state() {
 	# status:in-review with the runner assigned. The generic projection counts
 	# only closing keywords, so a deliberate `For #N` PR would reset the issue
 	# to status:available and orphan the open PR. Keep that state; only unlock.
+	# GH#35574: this attempt has ended, so retire its generation-marked dispatch
+	# lock now. Merged-partial continuation trusts CLAIM_RELEASED, but dedup
+	# accepts only the authenticated terminal lease for marked dispatches.
 	if [[ "$reason" == "${_HRW_REASON_READY_MISSING_LINKAGE:-worker_ready_missing_linkage}" ||
 		"$reason" == "${_HRW_REASON_READY_MISSING_SUMMARY:-worker_ready_missing_summary}" ]]; then
+		_hrff_emit_release_terminal_lease "$issue_number" "$repo_slug" "$session_key"
+		# GH#39857: the `For #N` PR may have merged before this release, so the
+		# merge-time restore saw an active claim and skipped it. Revisit before
+		# deciding to unlock so restored auto-dispatch keeps its conversation lock.
+		_hrff_revisit_merged_partial "$issue_number" "$repo_slug"
 		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
 		print_info "Preserved in-review handoff on #${issue_number} (reason: ${reason})"
 		return 0
@@ -891,10 +1143,16 @@ _hrff_project_post_release_state() {
 	# GH#34758: a runner-capability release is runner-local. Its open draft
 	# stays available so a capable runner's exact-head continuation can run,
 	# matching the "Projected state: status:available" recovery text.
-	local draft_projection="blocked"
-	if [[ "$reason" == blocked ]] && declare -F _terminal_blocker_reason >/dev/null 2>&1 &&
-		[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" == runner_capability_unmet ]]; then
-		draft_projection="available"
+	# GH#36019: every other non-blocked release (stall, clean, worker_complete,
+	# ...) leaves preserved work that Pulse continues or records attention for;
+	# only the terminal-blocker classes project an open draft as blocked.
+	local draft_projection="available"
+	if [[ "$reason" == blocked || "$reason" == push_policy_timeout || "$reason" == network_policy_timeout ]]; then
+		draft_projection="blocked"
+		if declare -F _terminal_blocker_reason >/dev/null 2>&1 &&
+			[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" =~ ^(runner_capability_unmet|resource_contended)$ ]]; then
+			draft_projection="available"
+		fi
 	fi
 	if declare -F clear_active_status_on_release >/dev/null 2>&1; then
 		clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" "$draft_projection" \
@@ -908,6 +1166,7 @@ _hrff_project_post_release_state() {
 _hrff_blocked_release_persisted() {
 	local issue_number="$1" repo_slug="$2" runner_name="$3"
 	local comments_json=""
+	_HRFF_PERSISTED_RELEASE_UNRECORDED=0
 	comments_json=$(terminal_blocker_fetch_trusted_comments "$issue_number" "$repo_slug") || return 1
 	comments_json=$(jq -c 'map(select((.body // "")
 		| test("(?m)^CLAIM_RELEASED reason=blocked |^DISPATCH_CLAIM ")))' <<<"$comments_json") || return 1
@@ -915,13 +1174,43 @@ _hrff_blocked_release_persisted() {
 	# attempt. Legacy consumers still use the existing circuit retry semantics.
 	jq -e 'any(.[]; (.body // "")
 		| test("(?m)^DISPATCH_CLAIM "))' <<<"$comments_json" >/dev/null 2>&1 || return 1
-	TERMINAL_BLOCKER_SELF_LOGIN="$runner_name" terminal_blocker_has_current_hold "$comments_json"
-	return $?
+	TERMINAL_BLOCKER_SELF_LOGIN="$runner_name" terminal_blocker_has_current_hold "$comments_json" || return 1
+	# The persisted receipt, not this retry, decides the projection: a retry
+	# must not turn an evidence=unrecorded release into status:blocked.
+	if jq -e --arg self "$runner_name" --argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" \
+		"${_TBC_HOLD_EVIDENCE_JQ}"'
+		map(select(hold_evidence($authoritative; $self)))
+		| sort_by([.created_at // "", .id // 0]) | last | (.body // "")
+		| test("(?m)^CLAIM_RELEASED reason=blocked .* evidence=unrecorded$")
+	' <<<"$comments_json" >/dev/null 2>&1; then
+		_HRFF_PERSISTED_RELEASE_UNRECORDED=1
+	fi
+	return 0
+}
+
+#######################################
+# GH#38360: print the needs-* companion that explains this blocked exit.
+# Missing runner secrets need credentials; otherwise the classified blocker
+# reason picks the owner (unknown or unclassified routes to AI recovery).
+# Prints nothing when the shared companion mapping is unavailable.
+#######################################
+_hrff_blocked_companion_label() {
+	declare -F blocked_needs_label_for_reason >/dev/null 2>&1 || return 0
+	if [[ -n "${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}" ]]; then
+		blocked_needs_label_for_reason missing_secret
+		return 0
+	fi
+	local reason=""
+	if declare -F _terminal_blocker_reason >/dev/null 2>&1; then
+		reason=$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}" 2>/dev/null) || reason=""
+	fi
+	blocked_needs_label_for_reason "${reason:-unknown}"
+	return 0
 }
 
 _hrff_project_blocked_exit() {
 	local issue_number="$1" repo_slug="$2" runner_name="$3"
-	local issue_json="" status="" issue_endpoint=""
+	local issue_json="" status="" issue_endpoint="" companion=""
 	local -a edit_args=()
 	printf -v issue_endpoint 'repos/%s/issues/%s' "$repo_slug" "$issue_number"
 	issue_json=$(gh api "$issue_endpoint" 2>/dev/null) || return 1
@@ -937,6 +1226,13 @@ _hrff_project_blocked_exit() {
 		[[ -z "$status" ]] || edit_args+=(--remove-label "$status")
 	done < <(jq -r '.labels[]?.name | select(startswith("status:") and . != "status:blocked")' <<<"$issue_json")
 	[[ -z "$runner_name" ]] || edit_args+=(--remove-assignee "$runner_name")
+	# GH#38360: the hold names what unblocks it.
+	companion=$(_hrff_blocked_companion_label)
+	if [[ -n "$companion" ]]; then
+		declare -F ensure_blocked_companion_label >/dev/null 2>&1 &&
+			ensure_blocked_companion_label "$repo_slug" "$companion"
+		edit_args+=(--add-label "$companion")
+	fi
 	gh_issue_edit_safe "$issue_number" --repo "$repo_slug" --add-label status:blocked \
 		${edit_args[@]+"${edit_args[@]}"} || return 1
 	return 0
@@ -1005,346 +1301,15 @@ _hrff_resolve_release_runner_login() {
 	return 0
 }
 
-#######################################
-# Classify worker termination reason for CLAIM_RELEASED audit lines.
-# Called from _exit_trap_handler before posting the claim release.
-#
-# Args:
-#   $1 = wait_status  (bash exit status; >128 means signal N = wait_status - 128)
-#   $2 = start_epoch_ms (milliseconds epoch when worker was prepared; 0 = unknown)
-#   $3 = persisted_session_id (optional continued-session identity)
-#   $4 = exit_code_file (optional sentinel base path)
-#
-# Globals (optional, set by _invoke_opencode / _cmd_run_prepare):
-#   _WORKER_ISOLATED_DB_PATH  — path to isolated worker opencode.db (if active)
-#
-# Returns classification string via stdout:
-#   "clean"                   — exit status 0 (unexpected in EXIT trap context)
-#   "signal_killed:<signum>"  — received signal N (wait_status > 128)
-#   "crash_during_startup"    — non-zero exit, no OpenCode session found in DB
-#   "crash_during_execution"  — non-zero exit, session(s) present in worker DB
-#   "process_exit"            — fallback when classifier cannot determine reason
-#
-# Exit: always 0
-#######################################
-classify_worker_exit() {
-	local wait_status="$1"
-	local start_epoch_ms="${2:-0}"
-	local persisted_session_id="${3:-${_WORKER_PERSISTED_SESSION_ID:-}}"
-	local exit_code_file="${4:-}"
-	local kill_reason=""
-
-	# Kill-site sentinels are more authoritative than the recorded wait status.
-	# A watchdog can hard-kill a worker while the wrapper still persists status 0;
-	# preserve natural/unknown fallbacks so ordinary clean and signal exits retain
-	# the existing classifier behaviour.
-	if [[ -n "$exit_code_file" ]] && declare -F classify_worker_kill_reason >/dev/null 2>&1; then
-		kill_reason=$(classify_worker_kill_reason "$exit_code_file" "$wait_status") || kill_reason=""
-		case "$kill_reason" in
-		"" | natural | unknown) ;;
-		*)
-			printf '%s' "$kill_reason"
-			return 0
-			;;
-		esac
-	fi
-
-	# Signal detection: bash encodes signal N as exit status 128+N
-	if [[ "$wait_status" =~ ^[0-9]+$ ]] && (( wait_status > 128 )); then
-		printf '%s' "signal_killed:$((wait_status - 128))"
-		return 0
-	fi
-
-	# Clean exit (unusual in EXIT trap context — trap is normally cleared on success).
-	# t3050: a clean exit with zero opencode sessions means the wrapper returned 0
-	# cleanly but the worker never produced model output. This is a startup-phase
-	# failure (sandbox crash, OpenCode init failure, prompt parse error before
-	# tool use), not a successful run. The worker_noop_zero_output reason is
-	# already recognised by _maybe_reclassify_worker_failed_as_no_work in
-	# worker-lifecycle-common.sh and by escalate_issue_tier — emitting it
-	# directly here ensures the reason is authoritative from the trap rather
-	# than inferred later from orphan-worktree state.
-	if [[ "$wait_status" == "0" ]]; then
-		local _shared_db_zo="${HOME}/.local/share/opencode/opencode.db"
-		local _db_zo="${_WORKER_ISOLATED_DB_PATH:-}"
-		[[ -z "$_db_zo" || ! -f "$_db_zo" ]] && _db_zo="$_shared_db_zo"
-		if [[ -f "$_db_zo" && "$start_epoch_ms" =~ ^[0-9]+$ && "$start_epoch_ms" -gt 0 ]]; then
-			local _cnt_zo=""
-			_cnt_zo=$(_hrff_attempt_activity_count "$_db_zo" "$start_epoch_ms" "$persisted_session_id") || _cnt_zo=""
-			if [[ "$_cnt_zo" =~ ^[0-9]+$ && "$_cnt_zo" -eq 0 ]]; then
-				printf '%s' "worker_noop_zero_output"
-				return 0
-			fi
-		fi
-		printf '%s' "clean"
-		return 0
-	fi
-
-	# Session creation check: count sessions created since worker started.
-	# Primary: isolated worker DB (still present when EXIT fires during _invoke_opencode).
-	# Fallback: shared DB (~/.local/share/opencode/opencode.db) after merge completes.
-	local session_count=0
-	local shared_db_path="${HOME}/.local/share/opencode/opencode.db"
-	local isolated_db="${_WORKER_ISOLATED_DB_PATH:-}"
-	local active_db=""
-
-	if [[ -n "$isolated_db" && -f "$isolated_db" ]]; then
-		active_db="$isolated_db"
-	elif [[ -f "$shared_db_path" ]]; then
-		active_db="$shared_db_path"
-	fi
-
-	if ! command -v sqlite3 >/dev/null 2>&1 || [[ -z "$active_db" ]]; then
-		# sqlite3 unavailable or no DB found — cannot classify by session
-		print_warning "[exit-classifier] sqlite3 unavailable or DB missing (isolated=${isolated_db:-none} shared=${shared_db_path}) — using ${_HRFF_FALLBACK_EXIT} fallback"
-		printf '%s' "$_HRFF_FALLBACK_EXIT"
-		return 0
-	fi
-
-	local raw_count=""
-	if [[ "$start_epoch_ms" =~ ^[0-9]+$ ]] && ((start_epoch_ms > 0)); then
-		if [[ -n "$persisted_session_id" ]]; then
-			raw_count=$(_hrff_attempt_activity_count "$active_db" "$start_epoch_ms" "$persisted_session_id") || raw_count=""
-		else
-			raw_count=$(sqlite3 "$active_db" "${_HRFF_SESSION_COUNT_QUERY_PREFIX}${start_epoch_ms}" 2>/dev/null) || raw_count=""
-		fi
-	else
-		# No start time: count all sessions (crude fallback — may over-count)
-		raw_count=$(sqlite3 "$active_db" "SELECT count(*) FROM session" 2>/dev/null) || raw_count=""
-	fi
-
-	if [[ ! "$raw_count" =~ ^[0-9]+$ ]]; then
-		# sqlite3 returned non-numeric output (e.g. error or corrupt DB)
-		print_warning "[exit-classifier] sqlite3 query failed for ${active_db} — using ${_HRFF_FALLBACK_EXIT} fallback"
-		printf '%s' "$_HRFF_FALLBACK_EXIT"
-		return 0
-	fi
-	session_count="$raw_count"
-
-	if (( session_count == 0 )); then
-		printf '%s' "crash_during_startup"
-	else
-		printf '%s' "crash_during_execution"
-	fi
-	return 0
-}
-
-#######################################
-# Classify worker kill_reason for the [lifecycle] worker_exited log line.
-#
-# t3063: surfaces the kill PATH on the same line as wait_status so Phase 2
-# log aggregation finds the reason class without a PID-join across scripts.
-# Complementary to classify_worker_exit (which classifies CRASH vs CLEAN);
-# this answers "if killed, which kill path fired the SIGTERM/SIGKILL?".
-#
-# Sentinel precedence (highest to lowest):
-#   1. ${exit_code_file}.kill_reason — explicit class written by kill site
-#      (PR #21784/t3056 sites: hard_kill_stall, no_output_stall,
-#      phase1_zero_output, wall_clock_stale, cold_start_timeout,
-#      progress_timeout, idle_timeout, stop_flag, stage_timeout_*,
-#      process_guard_*, wait_loop_timeout_*).
-#   2. ${exit_code_file}.watchdog_stall_killed → hard_kill_stall
-#      (worker exceeded HARD_KILL_SECONDS, t2956 / Issue #21231).
-#   3. ${exit_code_file}.watchdog_killed → no_output_stall
-#      (legacy passive watchdog kill — output file silent).
-#   4. ${exit_code_file}.rate_limit_fast → rate_limit_fast
-#      (30s fast-exit monitor caught 429/overload, GH#21578 / t3021).
-#   5. wait_status > 128 with no sentinel → unknown
-#      (signal-killed but kill path unidentified — acceptance target: 0%).
-#   6. otherwise → natural
-#      (clean exit or voluntary failure exit).
-#
-# The .kill_reason sentinel is the forward-compatible extension point: any
-# kill site that adds a new class only needs to write its class string to
-# ${exit_code_file}.kill_reason; this classifier picks it up without code
-# changes here.
-#
-# Args:
-#   $1 = exit_code_file path (sentinel files are checked at ${path}.<class>)
-#   $2 = wait_status integer ($? from `wait`)
-#
-# Returns 0 always; outputs kill_reason class string on stdout.
-#######################################
-classify_worker_kill_reason() {
-	local exit_code_file="${1:-}"
-	local wait_status="${2:-0}"
-
-	# Highest-precedence path: explicit class written by a kill site.
-	if [[ -n "$exit_code_file" && -f "${exit_code_file}.kill_reason" ]]; then
-		local _explicit
-		_explicit=$(<"${exit_code_file}.kill_reason")
-		# Strip CR/LF; bail to inference path if file is empty or whitespace-only.
-		_explicit="${_explicit//$'\r'/}"
-		_explicit="${_explicit//$'\n'/}"
-		# Trim leading/trailing spaces and tabs (bash 3.2 compatible).
-		_explicit="${_explicit#"${_explicit%%[![:space:]]*}"}"
-		_explicit="${_explicit%"${_explicit##*[![:space:]]}"}"
-		if [[ -n "$_explicit" ]]; then
-			printf '%s' "$_explicit"
-			return 0
-		fi
-	fi
-
-	# Inferred classification from existing watchdog sentinels.
-	# Precedence: stall_killed (hard kill) → watchdog_killed (passive stall)
-	# → rate_limit_fast. The watchdog writes both .watchdog_killed and
-	# .watchdog_stall_killed on a hard kill, so stall_killed must be checked first.
-	if [[ -n "$exit_code_file" ]]; then
-		if [[ -f "${exit_code_file}.watchdog_stall_killed" ]]; then
-			printf '%s' "hard_kill_stall"
-			return 0
-		fi
-		if [[ -f "${exit_code_file}.watchdog_killed" ]]; then
-			printf '%s' "no_output_stall"
-			return 0
-		fi
-		if [[ -f "${exit_code_file}.rate_limit_fast" ]]; then
-			printf '%s' "rate_limit_fast"
-			return 0
-		fi
-	fi
-
-	# No sentinel — signal-killed (wait_status > 128) is "unknown"
-	# (acceptance target: 0% of these); voluntary exits are "natural".
-	if [[ "$wait_status" =~ ^[0-9]+$ ]] && (( wait_status > 128 )); then
-		printf '%s' "unknown"
-		return 0
-	fi
-
-	printf '%s' "natural"
-	return 0
-}
-
-#######################################
-# Remove the runtime-only deferred-cleanup marker from the index.
-#
-# The merge lifecycle writes this marker after the final implementation commit.
-# A worker exit must not turn that process-local ownership sentinel into product
-# history, including when another path staged it before the EXIT trap ran.
-#
-# Args:
-#   $1 = worktree path
-#######################################
-_hrff_unstage_deferred_cleanup_marker() {
-	local work_dir="$1"
-
-	git -C "$work_dir" reset -q HEAD -- "$_HRFF_DEFERRED_CLEANUP_MARKER" >/dev/null 2>&1 || true
-	return 0
-}
-
-#######################################
-# Return dirty status excluding the runtime-only deferred-cleanup marker.
-#
-# Args:
-#   $1 = worktree path
-#######################################
-_hrff_actionable_dirty_status() {
-	local work_dir="$1"
-
-	git -C "$work_dir" status --porcelain --untracked-files=all -- . \
-		"$_HRFF_DEFERRED_CLEANUP_EXCLUDE_PATHSPEC" 2>/dev/null || true
-	return 0
-}
-
-#######################################
-# Stage worker-authored changes without the runtime-only cleanup marker.
-#
-# Args:
-#   $1 = worktree path
-#######################################
-_hrff_stage_actionable_worker_changes() {
-	local work_dir="$1"
-
-	git -C "$work_dir" add -A -- . \
-		"$_HRFF_DEFERRED_CLEANUP_EXCLUDE_PATHSPEC" >/dev/null 2>&1 || return 1
-	return 0
-}
-
-#######################################
-# Preserve and push any worker WIP before worker exits.
-# Best-effort, fail-open — never blocks claim release or shutdown.
-#
-# t2923: Prevents workers dying mid-implementation from abandoning
-# unreachable commits. Next dispatch can continue from the pushed branch
-# instead of rewriting the same code from scratch.
-#
-# GH#22965: Dirty worktrees with no local-only commits must also be
-# preserved. Create a normal WIP commit from tracked/untracked work and push it;
-# if commit/push cannot complete, archive a binary patch locally and mark the
-# failure as worker_dirty_work_preserved so zero-output retry holds do not
-# misclassify the issue as a malformed brief.
-#
-# Globals consumed:
-#   _WORKER_WORKTREE_PATH  — set by _cmd_run_prepare in headless-runtime-helper.sh
-#   WORKER_NO_EXIT_PUSH    — escape hatch: set to "1" to disable push
-#######################################
-_push_wip_commits_on_exit() {
-	# Escape hatch: WORKER_NO_EXIT_PUSH=1 disables the push (e.g. in tests)
-	[[ "${WORKER_NO_EXIT_PUSH:-0}" == "1" ]] && return 0
-	_WORKER_DIRTY_WORK_PRESERVED=0
-
-	local work_dir="${_WORKER_WORKTREE_PATH:-}"
-	if [[ -z "$work_dir" || ! -d "$work_dir" ]]; then
-		return 0
-	fi
-
-	# Get the branch name — skip if detached HEAD or default branch
-	local branch_name=""
-	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null) || return 0
-	case "$branch_name" in
-	HEAD | main | master | "")
-		return 0
-		;;
-	esac
-
-	_hrff_unstage_deferred_cleanup_marker "$work_dir"
-	local dirty_status=""
-	dirty_status=$(_hrff_actionable_dirty_status "$work_dir")
-	if [[ -n "$dirty_status" ]]; then
-		print_info "[lifecycle] worker_exit_preserving_dirty_work branch=${branch_name}"
-		_hrff_stage_actionable_worker_changes "$work_dir" || true
-		if ! git -C "$work_dir" diff --cached --quiet --exit-code >/dev/null 2>&1; then
-			if git -C "$work_dir" commit -m "wip: preserve worker changes on abnormal exit" >/dev/null 2>&1; then
-				_WORKER_DIRTY_WORK_PRESERVED=1
-				print_info "[lifecycle] worker_exit_committed_dirty_work branch=${branch_name}"
-			else
-				_worker_archive_dirty_worktree_patch "$work_dir" "$branch_name"
-			fi
-		else
-			_worker_archive_dirty_worktree_patch "$work_dir" "$branch_name"
-		fi
-	fi
-
-	# Count commits ahead of origin/main (or origin/master) — fail-open
-	local ahead_count=0
-	ahead_count=$(git -C "$work_dir" rev-list --count "origin/main..HEAD" 2>/dev/null || true)
-	[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
-	if [[ "$ahead_count" -eq 0 ]]; then
-		ahead_count=$(git -C "$work_dir" rev-list --count "origin/master..HEAD" 2>/dev/null || true)
-		[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
-	fi
-	if [[ "$ahead_count" -eq 0 ]]; then
-		return 0
-	fi
-
-	# Push best-effort — never block exit on push failure
-	print_info "[lifecycle] worker_exit_pushing_wip branch=${branch_name} ahead=${ahead_count}"
-	if git -C "$work_dir" push -u origin "${branch_name}" 2>/dev/null; then
-		print_info "[lifecycle] worker_exit_pushed_wip branch=${branch_name} ahead=${ahead_count}"
-	else
-		print_warning "[lifecycle] worker_exit_push_failed branch=${branch_name} ahead=${ahead_count}"
-		_worker_archive_dirty_worktree_patch "$work_dir" "$branch_name"
-		# GH#34040: committed work has no diff to archive; bundle it instead.
-		local bundle_file=""
-		if bundle_file=$(_worker_write_recovery_bundle "$work_dir" "$branch_name"); then
-			_WORKER_DIRTY_WORK_PRESERVED=1
-			print_warning "[lifecycle] worker_dirty_work_preserved bundle=${bundle_file}"
-		else
-			print_warning "[lifecycle] work_lost branch=${branch_name} ahead=${ahead_count} — push and recovery bundle both failed"
-		fi
-	fi
-	return 0
-}
+_HRFF_CLASSIFY_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_HRFF_CLASSIFY_DIR" == "${BASH_SOURCE[0]}" ]] && _HRFF_CLASSIFY_DIR="."
+# shellcheck source=headless-runtime-failure-classify.sh
+if ! source "${_HRFF_CLASSIFY_DIR}/headless-runtime-failure-classify.sh"; then
+	printf 'ERROR: failed to load %s/headless-runtime-failure-classify.sh\n' "$_HRFF_CLASSIFY_DIR" >&2
+	unset _HRFF_CLASSIFY_DIR
+	return 1 2>/dev/null || exit 1
+fi
+unset _HRFF_CLASSIFY_DIR
 
 #######################################
 # Capture the caller-provided terminal-outcome destination before any runtime
@@ -1375,8 +1340,8 @@ _hrff_retry_class_for_reason() {
 	local session_count="$2"
 	case "$reason" in
 	opencode_version_pin_failed | canary_failed | worker_prepare_failed | duplicate_session | \
-		worker_noop_zero_output | crash_during_startup | access_denied | auth_error | rate_limit* | provider_error | \
-		startup_no_model_activity | service_interruption_exhausted | worker_runtime_not_invoked | \
+		worker_noop_zero_output | crash_during_startup | access_denied | auth_error | rate_limit* | provider_error | model_unavailable | \
+		startup_no_model_activity | service_interruption_exhausted | worker_runtime_not_invoked | worker_not_launched | \
 		worker_sensitive_temp_preflight_failed | worker_ownership_lost | worker_ledger_ready_failed | \
 		worker_claim_ready_transition_failed | signal_terminated_continue | watchdog_stall_killed)
 		printf '%s\n' "$_HRFF_RETRY_CLASS_INFRASTRUCTURE"
@@ -1409,14 +1374,9 @@ _hrff_retry_class_for_reason() {
 #######################################
 _hrff_worker_session_count() {
 	local start_epoch_ms="${_WORKER_START_EPOCH_MS:-0}"
-	local active_db="${_WORKER_ISOLATED_DB_PATH:-}"
-	local shared_db="${HOME}/.local/share/opencode/opencode.db"
 	local persisted_session_id="${_WORKER_PERSISTED_SESSION_ID:-}"
 	local count="0"
-	[[ -n "$active_db" && -f "$active_db" ]] || active_db="$shared_db"
-	if [[ -f "$active_db" && "$start_epoch_ms" =~ ^[0-9]+$ && "$start_epoch_ms" -gt 0 ]]; then
-		count=$(_hrff_attempt_activity_count "$active_db" "$start_epoch_ms" "$persisted_session_id") || count="0"
-	fi
+	count=$(_hrff_resolved_attempt_activity_count "$start_epoch_ms" "$persisted_session_id") || count="0"
 	[[ "$count" =~ ^[0-9]+$ ]] || count="0"
 	printf '%s\n' "$count"
 	return 0
@@ -1597,22 +1557,63 @@ _worker_secure_branch_commits() {
 }
 
 #######################################
-# Record deterministic launch capability failures in the local runner-health
+# GH#38481: positive evidence that the last runtime spawn failed because the
+# runtime binary is missing on this runner (stale shim, deleted nvm version,
+# package upgrade in flight). All must hold: the spawn was attempted, the
+# same-shell classification is runtime_command_missing, the attempt exited
+# 127, and neither this attempt nor an earlier one in the process had
+# activity. Bare worker_not_launched also covers benign admission cases (lock
+# contention, revision continuation), so it never counts without this proof.
+# Globals read: _WORKER_RUNTIME_LAUNCH_STARTED, _run_runtime_error_type,
+#   _run_exit_code, _run_activity_detected, _HRW_PRIOR_ATTEMPT_ACTIVITY
+# Returns: 0 when the evidence is complete, 1 otherwise
+#######################################
+_hrff_runtime_missing_evidenced() {
+	[[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" == "1" ]] || return 1
+	[[ "${_run_runtime_error_type:-}" == "runtime_command_missing" ]] || return 1
+	[[ "${_run_exit_code:-}" == "127" ]] || return 1
+	[[ "${_run_activity_detected:-}" == "0" ]] || return 1
+	[[ "${_HRW_PRIOR_ATTEMPT_ACTIVITY:-0}" != "1" ]] || return 1
+	return 0
+}
+
+#######################################
+# Record evidenced startup and deterministic launch failures in the local runner-health
 # breaker before releasing the shared issue claim. This path is fail-open:
 # missing or broken health tooling must never strand the issue claim.
+# Callers: the EXIT trap and _hrw_finish_not_launched (which disarms the trap
+# through _hrw_finish_cleanup, so one launch is recorded once).
+# Globals read: _HRW_PRIOR_ATTEMPT_ACTIVITY (set by the attempt loop), plus the
+#   per-attempt runtime evidence read by _hrff_runtime_missing_evidenced
 # Args: $1=session key, $2=terminal reason
 #######################################
 _hrff_record_runner_health_failure() {
 	local session_key="$1"
 	local reason="$2"
-	[[ "$reason" == "worker_signing_unavailable" ]] || return 0
+	case "$reason" in
+	worker_signing_unavailable)
+		# GH#37597: an earlier attempt in this process already ran with
+		# activity, so a continuation's preflight failure does not prove the
+		# runner cannot sign. Record it audit-only instead of tripping at 1.
+		if [[ "${_HRW_PRIOR_ATTEMPT_ACTIVITY:-0}" == "1" ]]; then
+			reason="worker_signing_unavailable_after_activity"
+		fi
+		;;
+	crash_during_startup | worker_noop_zero_output) reason="no_worker_process" ;;
+	"${_HRW_REASON_NOT_LAUNCHED:-worker_not_launched}" | "${_HRFF_PRELAUNCH_NOT_INVOKED:-worker_runtime_not_invoked}")
+		_hrff_runtime_missing_evidenced || return 0
+		reason="worker_runtime_missing"
+		;;
+	*) return 0 ;;
+	esac
 
 	local helper="${_HRFF_RUNNER_HEALTH_HELPER_OVERRIDE:-${BASH_SOURCE[0]%/*}/pulse-runner-health-helper.sh}"
 	local issue_number=""
 	local issue_id="$session_key"
 	issue_number=$(_hrff_release_issue_number "$session_key")
-	if [[ -n "${DISPATCH_REPO_SLUG:-}" && -n "$issue_number" ]]; then
-		issue_id="${DISPATCH_REPO_SLUG}#${issue_number}"
+	local repo_slug="${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}"
+	if [[ -n "$repo_slug" && -n "$issue_number" ]]; then
+		issue_id="${repo_slug}#${issue_number}"
 	fi
 
 	if [[ ! -x "$helper" ]]; then
@@ -1621,6 +1622,49 @@ _hrff_record_runner_health_failure() {
 	fi
 	if ! "$helper" record-outcome "$reason" "$issue_id"; then
 		print_warning "[exit-trap] runner-health recording failed; continuing claim release for session=${session_key}"
+	fi
+	return 0
+}
+
+#######################################
+# Fill the canonical metric gap when an EXIT trap bypasses normal result handling.
+# Preserve the observed process status; the result/reason describe task outcome.
+# Args: $1=session, $2=reason, $3=exit status, $4=activity count
+#######################################
+_hrff_record_exit_metric() {
+	local session_key="$1"
+	local reason="$2"
+	local exit_status="$3"
+	local session_count="$4"
+	local metric_key="${AIDEVOPS_RUN_ID:-${_WORKER_START_EPOCH_MS:-0}}:${session_key}"
+	[[ "${_HEADLESS_RUNTIME_LAST_METRIC_KEY:-}" != "$metric_key" ]] || return 0
+	declare -F append_runtime_metric >/dev/null 2>&1 || return 0
+
+	local model="${AIDEVOPS_ROUTING_MODEL:-unknown}"
+	local result="${_HRW_TELEMETRY_FAILED:-failed}" activity=0 duration_ms=0 end_ms=0
+	local start_ms="${_WORKER_START_EPOCH_MS:-0}"
+	case "$reason" in
+	"${_HRW_REASON_WORKER_COMPLETE:-worker_complete}") result="success" ;;
+	"${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}") result="deferred" ;;
+	esac
+	[[ "$session_count" =~ ^[1-9][0-9]*$ ]] && activity=1
+	# GH#37597: name the failing signing preflight stage (configure, prepare,
+	# heal) and probe kind so the next occurrence is diagnosable from metrics.
+	local launch_failure_cause=""
+	if [[ "$reason" == "worker_signing_unavailable" ]]; then
+		launch_failure_cause="${_WORKER_SIGNING_FAILURE_DETAIL:-}"
+	fi
+	end_ms=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null) || end_ms=0
+	if [[ "$start_ms" =~ ^[0-9]+$ && "$end_ms" =~ ^[0-9]+$ ]] &&
+		((start_ms > 0 && end_ms >= start_ms)); then
+		duration_ms=$((end_ms - start_ms))
+	fi
+	if ! append_runtime_metric "worker" "$session_key" "$model" "${model%%/*}" \
+		"$result" "$exit_status" "$reason" "$activity" "$duration_ms" \
+		"${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}" \
+		"${_WORKER_WORKTREE_PATH:-}" "" "${_WORKER_PERSISTED_SESSION_ID:-}" \
+		"" "" "" "exit_trap" "" "$launch_failure_cause" || [[ "${_HEADLESS_RUNTIME_LAST_METRIC_KEY:-}" != "$metric_key" ]]; then
+		print_warning "[exit-trap] metric recording failed; continuing terminal handoff for session=${session_key}"
 	fi
 	return 0
 }
@@ -1648,7 +1692,6 @@ _hrff_finalize_exit_trap() {
 		last_stage="${last_stage:-${_WORKER_PRELAUNCH_LAST_STAGE:-}}"
 		last_completed_stage="${last_completed_stage:-${_WORKER_PRELAUNCH_LAST_COMPLETED_STAGE:-}}"
 	fi
-	print_info "[exit-trap] session=$session_key exit=$exit_status reason=$reason session_count=$session_count last_stage=${last_stage:-unknown} last_completed_stage=${last_completed_stage:-unknown}"
 	_push_wip_commits_on_exit
 	if [[ "${_WORKER_DIRTY_WORK_PRESERVED:-0}" == "1" ]]; then
 		if _recover_dirty_worker_pr "$session_key"; then
@@ -1664,6 +1707,11 @@ _hrff_finalize_exit_trap() {
 			reason="worker_dirty_work_preserved"
 		fi
 	fi
+	# Status zero is process evidence, not proof of a completed task or handoff.
+	# Dirty-work recovery above may supply an authoritative checkpoint instead.
+	[[ "$reason" != "clean" ]] || reason="worker_incomplete_exit"
+	print_info "[exit-trap] session=$session_key exit=$exit_status reason=$reason session_count=$session_count last_stage=${last_stage:-unknown} last_completed_stage=${last_completed_stage:-unknown}"
+	_hrff_record_exit_metric "$session_key" "$reason" "$exit_status" "$session_count"
 	if ! _hrff_write_external_outcome "$session_key" "$reason" "$session_count"; then
 		print_warning "[exit-trap] failed to persist external outcome for session=${session_key}"
 	fi
@@ -1768,6 +1816,7 @@ _exit_trap_handler() {
 			last_stage="${last_stage:-${_WORKER_PRELAUNCH_LAST_STAGE:-}}"
 			last_completed_stage="${last_completed_stage:-${_WORKER_PRELAUNCH_LAST_COMPLETED_STAGE:-}}"
 		fi
+		_hrff_log_prelaunch_abort "$session_key" "$reason"
 		print_warning "[exit-trap] runtime invocation never started after worker preparation; reason=${reason} last_stage=${last_stage:-unknown} last_completed_stage=${last_completed_stage:-unknown}"
 		if [[ ! "$exit_status" =~ ^[1-9][0-9]*$ ]]; then
 			exit_status=1
@@ -1792,14 +1841,9 @@ _exit_trap_handler() {
 			fi
 
 			# Re-read session count for the enriched comment (best-effort)
-			local _db="${_WORKER_ISOLATED_DB_PATH:-}"
-			local _shared="${HOME}/.local/share/opencode/opencode.db"
-			[[ -z "$_db" || ! -f "$_db" ]] && _db="$_shared"
-			if [[ -f "$_db" && "$_start_ms" =~ ^[0-9]+$ ]] && ((_start_ms > 0)); then
-				local _cnt=""
-				_cnt=$(_hrff_attempt_activity_count "$_db" "$_start_ms" "${_WORKER_PERSISTED_SESSION_ID:-}") || _cnt=""
-				[[ "$_cnt" =~ ^[0-9]+$ ]] && session_count="$_cnt"
-			fi
+			local _cnt=""
+			_cnt=$(_hrff_resolved_attempt_activity_count "$_start_ms" "${_WORKER_PERSISTED_SESSION_ID:-}") || _cnt=""
+			[[ "$_cnt" =~ ^[0-9]+$ ]] && session_count="$_cnt"
 		else
 			print_warning "[exit-trap] classify_worker_exit not available — using process_exit fallback"
 		fi
@@ -1820,6 +1864,8 @@ _recover_dirty_worker_pr() {
 	local branch_name=""
 
 	[[ -n "$work_dir" && -d "$work_dir" && -n "$repo_slug" ]] || return 1
+	# Local preservation without a known base must not publish or reuse a stale remote.
+	[[ "${_WORKER_BASE_UNRESOLVED:-0}" == "1" ]] && return 1
 	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 	case "$branch_name" in
 	HEAD | main | master | "") return 1 ;;
@@ -1832,6 +1878,7 @@ _recover_dirty_worker_pr() {
 }
 
 _HRFF_FASTFAIL_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_HRFF_FASTFAIL_DIR" == "${BASH_SOURCE[0]}" ]] && _HRFF_FASTFAIL_DIR="."
 # shellcheck source=headless-runtime-failure-fastfail.sh
 source "${_HRFF_FASTFAIL_DIR}/headless-runtime-failure-fastfail.sh"
 unset _HRFF_FASTFAIL_DIR

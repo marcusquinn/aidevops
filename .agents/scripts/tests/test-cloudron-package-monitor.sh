@@ -108,10 +108,6 @@ if [[ "${1:-}" == "api" && "${2:-}" == "/repos/exampleorg/example-package/conten
     exit 0
 fi
 source "${0%/*}/gh-source"
-if [[ "${1:-}" == "repo" && "${2:-}" == "view" ]]; then
-    printf '%s\n' 'ADMIN'
-    exit 0
-fi
 if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
     search=""
     shift 2
@@ -131,7 +127,58 @@ fi
 exit 1
 GH
 	write_fake_issue_wrapper "$bin_dir"
+	write_fake_catalog_commands "$bin_dir"
 	chmod +x "${bin_dir}/gh"
+	return 0
+}
+
+write_fake_catalog_commands() {
+	local bin_dir="$1"
+	cat >>"${bin_dir}/gh-source" <<'CATALOG'
+if [[ "${1:-}" == "api" && "${2:-}" == repos/*/labels/auto-dispatch ]]; then
+    case "${MONITOR_LABEL_STATE:-present}" in
+        missing) printf 'gh: Not Found (HTTP 404)\n' >&2; exit 1 ;;
+        error) printf 'gh: server error (HTTP 500)\n' >&2; exit 1 ;;
+    esac
+    printf '%s\n' '{"name":"auto-dispatch"}'
+    exit 0
+fi
+if [[ "${1:-}" == "repo" && "${2:-}" == "view" ]]; then
+    printf '%s\n' 'ADMIN'
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == /repos/*/actions/variables ]]; then
+    printf '%s' "${MONITOR_PUBLICATION_ENABLED:-false}"
+    exit 0
+fi
+if [[ "$*" == 'api repos/exampleorg/example-package/rules/branches/main' ]]; then
+    printf '%s\n' '[{"type":"non_fast_forward"},{"type":"deletion"}]'
+    exit 0
+fi
+if [[ "$*" == 'secret list --repo exampleorg/example-package --json name' ]]; then
+    printf '%s\n' '[{"name":"CLOUDRON_RELEASE_PAT"}]'
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == /repos/*/contents/CloudronVersions.json* ]]; then
+    [[ "${MONITOR_CATALOG_STATE:-}" != error ]] || exit 1
+    if [[ "${MONITOR_CATALOG_STATE:-}" == published ]]; then
+        printf '%s\n' '{"versions":{"1.0.0":{}}}'
+    else
+        printf '%s\n' '{"versions":{}}'
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == /repos/*/actions/workflows/cloudron-catalog-publish.yml/runs* ]]; then
+    printf '%s\n' "${MONITOR_ACTIVE_RUNS:-0}"
+    exit 0
+fi
+if [[ "${1:-}" == workflow && "${2:-}" == run ]]; then
+    printf 'DISPATCH %s\n' "$*" >>"${MONITOR_TEST_LOG}"
+    [[ "${MONITOR_DISPATCH_FAIL:-false}" != true ]] || exit 1
+    exit 0
+fi
+CATALOG
+	return 0
 }
 
 # Label inventory/create stubs, appended to the gh-source file the gh stub sources.
@@ -152,26 +199,135 @@ LABELS
 	return 0
 }
 
-write_fake_source_commands() {
+write_fake_supersede_commands() {
 	local bin_dir="$1"
-	cat >"${bin_dir}/gh-source" <<'SOURCE'
-if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/upstream/git/ref/tags/desktop-v2.0.0" ]]; then
-    printf '%s\n' '{"object":{"type":"commit","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}'
-    exit 0
-fi
-if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ]]; then
-    printf '%s\n' '{"parents":[{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}'
-    exit 0
-fi
-if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/example-package/issues/101" ]]; then
-    if [[ "${MONITOR_ISSUE_STATE:-}" == claimed ]]; then
-        printf '%s\n' '{"state":"open","assignees":[{"login":"exampleorg"}],"labels":[{"name":"auto-dispatch"},{"name":"status:claimed"}]}'
+	cat >>"${bin_dir}/gh-source" <<'SUPERSEDE'
+if [[ "${1:-}" == api && "${2:-}" == 'repos/exampleorg/example-package/issues?state=open&per_page=100' ]]; then
+    [[ "${MONITOR_SUPERSEDE:-}" != list-error ]] || exit 1
+    if [[ -n "${MONITOR_SUPERSEDE:-}" ]]; then
+        printf '%s\n' '[[{"number":90,"body":"<!-- aidevops:cloudron-package-monitor upstream-v1.5.0 -->"}]]'
     else
-        printf '%s\n' '{"state":"open","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}'
+        printf '%s\n' '[[]]'
     fi
     exit 0
 fi
+if [[ "${1:-}" == api && "${2:-}" == repos/exampleorg/example-package/issues/90 ]]; then
+    [[ "${MONITOR_SUPERSEDE:-}" != issue-error ]] || exit 1
+    old_marker='upstream-v1.5.0'
+    [[ "${MONITOR_SUPERSEDE:-}" != newer ]] || old_marker='upstream-v9.0.0'
+    [[ "${MONITOR_SUPERSEDE:-}" != commit ]] || old_marker='upstream-commit-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    jq -nc --arg marker "$old_marker" --arg scenario "${MONITOR_SUPERSEDE:-}" '{
+        state:"open", author_association:(if $scenario == "untrusted" then "CONTRIBUTOR" else "OWNER" end),
+        body:("<!-- aidevops:cloudron-package-monitor " + $marker + " -->"),
+        assignees:(if $scenario == "assigned" then [{login:"worker"}] else [] end),
+        labels:(if $scenario == "claimed" then [{name:"status:claimed"}] elif $scenario == "in-progress" then [{name:"status:in-progress"}] else [] end)}'
+    exit 0
+fi
+if [[ "${1:-}" == pr && "${2:-}" == list ]]; then
+    # The stalled-finding path must never depend on a repository-wide PR list.
+    if [[ -n "${MONITOR_STALLED:-}" ]]; then
+        jq -nc '[range(1000) | {number:., closingIssuesReferences:[]}]'
+        exit 0
+    fi
+    [[ "${MONITOR_SUPERSEDE:-}" != pr-error ]] || exit 1
+    if [[ "${MONITOR_SUPERSEDE:-}" == linked ]]; then
+        printf '%s\n' '[{"closingIssuesReferences":[{"number":90}]}]'
+    elif [[ "${MONITOR_SUPERSEDE:-}" == malformed-pr-error ]]; then
+        printf '%s\n' '[{"closingIssuesReferences":["invalid"]}]'
+    else
+        printf '%s\n' '[]'
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == 'repos/exampleorg/example-package/issues/90/timeline?per_page=100' ]]; then
+    [[ "${MONITOR_SUPERSEDE:-}" != timeline-error ]] || exit 1
+    if [[ "${MONITOR_SUPERSEDE:-}" == referenced ]]; then
+        printf '%s\n' '[[{"event":"cross-referenced","source":{"issue":{"pull_request":{},"state":"open"}}}]]'
+    elif [[ "${MONITOR_SUPERSEDE:-}" == malformed-timeline-error ]]; then
+        printf '%s\n' '[[{"event":"cross-referenced","source":{"issue":"invalid"}}]]'
+    elif [[ "${MONITOR_SUPERSEDE:-}" == historical ]]; then
+        printf '%s\n' '[[{"event":"connected"},{"event":"disconnected"},{"event":"cross-referenced","source":{"issue":{"pull_request":{},"state":"closed"}}}]]'
+    else
+        printf '%s\n' '[[]]'
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == issue && "${2:-}" == close ]]; then
+    printf 'CLOSE %s\n' "$3" >>"${MONITOR_TEST_LOG}"
+    exit 0
+fi
+SUPERSEDE
+	return 0
+}
+
+write_fake_source_commands() {
+	local bin_dir="$1"
+	cat >"${bin_dir}/gh-source" <<'SOURCE'
+if [[ "${1:-}" == "api" && "${2:-}" == repos/exampleorg/*/git/ref/tags/desktop-v* ]]; then
+    printf '%s\n' '{"object":{"type":"commit","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}'
+    exit 0
+fi
+if [[ "${1:-}" == "api" && "${2:-}" == repos/exampleorg/*/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]]; then
+    jq -nc --arg date "${MONITOR_RELEASE_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
+        '{parents:[{sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],commit:{committer:{date:$date}}}'
+    exit 0
+fi
+if [[ "${1:-}" == "api" && "${2:-}" == 'repos/exampleorg/app/contents/src-tauri/Cargo.toml?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ]]; then
+    printf 'PIN %s\n' "$2" >>"${MONITOR_API_LOG:-/dev/null}"
+    printf '%s' "${MONITOR_PIN_CONTENT:-relay rev = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" | base64
+    exit 0
+fi
+if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/example-package/issues/101" ]]; then
+    if [[ -n "${MONITOR_STALLED:-}" ]]; then
+        jq -nc --arg scenario "$MONITOR_STALLED" '{state:(if $scenario == "closed-issue" then "closed" else "open" end),
+            html_url:"https://github.com/exampleorg/example-package/issues/101", assignees:[],
+            labels:([{name:"auto-dispatch"},{name:"status:available"}] +
+                (if $scenario == "in-review" then [{name:"status:in-review"}] else [{name:"hold-for-review"}] end) +
+                (if $scenario == "issue-approval" then [{name:"release-approval-required"}]
+                 elif $scenario == "no-auto-dispatch" then [{name:"no-auto-dispatch"}] else [] end))}'
+    elif [[ "${MONITOR_ISSUE_STATE:-}" == claimed ]]; then
+        printf '%s\n' '{"state":"open","html_url":"https://github.com/exampleorg/example-package/issues/101","assignees":[{"login":"exampleorg"}],"labels":[{"name":"auto-dispatch"},{"name":"status:claimed"}]}'
+    else
+        printf '%s\n' '{"state":"open","html_url":"https://github.com/exampleorg/example-package/issues/101","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}'
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == 'repos/exampleorg/example-package/issues?state=open&labels=release-approval-required&per_page=100' ]]; then
+    [[ "${MONITOR_STALLED:-}" != approval-error ]] || exit 1
+    if [[ "${MONITOR_STALLED:-}" == open-approval ]]; then
+        printf '%s\n' '[[],[{"number":102}]]'
+    else
+        printf '%s\n' '[[]]'
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == api && "${2:-}" == 'repos/exampleorg/example-package/issues/101/timeline?per_page=100' ]]; then
+    [[ "${MONITOR_STALLED:-}" != timeline-error ]] || exit 1
+    if [[ "${MONITOR_STALLED:-}" == no-pr || "${MONITOR_STALLED:-}" == closing-only ]]; then
+        printf '%s\n' '[[]]'
+    elif [[ "${MONITOR_STALLED:-}" == foreign-pr ]]; then
+        printf '%s\n' '[[{"event":"cross-referenced","source":{"issue":{"repository_url":"https://api.github.com/repos/other/repo","number":89,"pull_request":{}}}}]]'
+    else
+        printf '%s\n' '[[],[{"event":"cross-referenced","source":{"issue":{"repository_url":"https://api.github.com/repos/exampleorg/example-package","number":89,"pull_request":{}}}}]]'
+    fi
+    exit 0
+fi
+if [[ "${1:-}" == pr && "${2:-}" == view && "${3:-}" == 89 ]]; then
+    [[ "${MONITOR_STALLED:-}" != pr-error ]] || exit 1
+    jq -nc --arg scenario "${MONITOR_STALLED:-}" '{state:(if $scenario == "closed-pr" then "CLOSED" elif $scenario == "merged-pr" then "MERGED" else "OPEN" end),
+        mergeable:(if $scenario == "clean-pr" then "MERGEABLE" elif $scenario == "unknown-pr" then "UNKNOWN" else "CONFLICTING" end),
+        labels:(if $scenario == "pr-approval" then [{name:"release-approval-required"}] else [] end)}'
+    exit 0
+fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/example-package/issues/101/comments?per_page=100" ]]; then
+    if [[ -n "${MONITOR_SUPERSEDE:-}" ]]; then
+        if grep -Fq 'aidevops:cloudron-upstream-retained' "${MONITOR_TEST_LOG}"; then
+            printf '%s\n' '[{"body":"aidevops:cloudron-upstream-retained upstream-v2.0.0","author_association":"OWNER"}]'
+        else
+            printf '%s\n' '[]'
+        fi
+        exit 0
+    fi
     source_marker='<!-- aidevops:cloudron-source-ready desktop-v2.0.0-ghcr.io/exampleorg/upstream:sha-bbbbbbb-sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->'
     if [[ -n "${MONITOR_FORGED_MARKER:-}" ]]; then
         printf '[{"body":"<!-- aidevops:terminal-blocker-circuit revision=012345678901234567890123 blocker=%s -->","author_association":"OWNER","user":{"login":"exampleorg"}},{"body":"%s","author_association":"COLLABORATOR","user":{"login":"other"}}]\n' "${MONITOR_CIRCUIT_BLOCKER}" "$source_marker"
@@ -198,6 +354,28 @@ if [[ "${1:-}" == "attestation" && "${2:-}" == "verify" ]]; then
     exit 0
 fi
 SOURCE
+	write_fake_closing_reference_commands "$bin_dir"
+	return 0
+}
+
+write_fake_closing_reference_commands() {
+	local bin_dir="$1"
+	cat >>"${bin_dir}/gh-source" <<'CLOSING'
+if [[ "${1:-}" == api && "${2:-}" == graphql ]]; then
+    [[ "$*" == *'--paginate --slurp'* && "$*" == *'number=101'* &&
+        "$*" == *'includeClosedPrs: true'* && "$*" == *'after: $endCursor'* ]] || exit 1
+    [[ "${MONITOR_STALLED:-}" != closing-error ]] || exit 1
+    jq -nc --arg scenario "${MONITOR_STALLED:-}" '
+        def page($nodes): {data:{repository:{issue:{closedByPullRequestsReferences:{nodes:$nodes}}}}};
+        if $scenario == "malformed-closing-error" then [page(null)]
+        elif $scenario == "closing-only" or $scenario == "duplicate-link" then
+            [page([]), page([{number:89, repository:{nameWithOwner:"exampleorg/example-package"}}])]
+        elif $scenario == "foreign-pr" then
+            [page([{number:89, repository:{nameWithOwner:"other/repo"}}])]
+        else [page([])] end'
+    exit 0
+fi
+CLOSING
 	return 0
 }
 
@@ -242,11 +420,13 @@ WRAPPER
 #!/usr/bin/env bash
 set -euo pipefail
 body_file=""
+target="$1"
 while [[ $# -gt 0 ]]; do
     if [[ "$1" == "--body-file" ]]; then body_file="$2"; break; fi
     shift
 done
 printf 'CALL_RETRY\n' >>"${MONITOR_TEST_LOG}"
+printf 'COMMENT %s\n' "$target" >>"${MONITOR_TEST_LOG}"
 cat "$body_file" >>"${MONITOR_TEST_LOG}"
 COMMENT
 	cat >"${bin_dir}/docker" <<'DOCKER'
@@ -272,6 +452,7 @@ else
 fi
 DOCKER
 	write_fake_source_commands "$bin_dir"
+	write_fake_supersede_commands "$bin_dir"
 	write_fake_label_commands "$bin_dir"
 	chmod +x "${bin_dir}/gh_create_issue" "${bin_dir}/gh_issue_comment" "${bin_dir}/docker"
 	return 0
@@ -367,6 +548,116 @@ test_monitor_deduplicates_and_preserves_source() {
 	return 0
 }
 
+test_monitor_setup_audit_reports_gaps() {
+	local home_dir="${TEST_ROOT}/setup-home"
+	local repo_dir="${TEST_ROOT}/setup-package"
+	local bin_dir="${TEST_ROOT}/setup-bin"
+	local log_file="${TEST_ROOT}/setup-issues.log"
+	local repos_tmp="${home_dir}/.config/aidevops/repos.tmp.json"
+	local output=""
+	write_fake_commands "$bin_dir"
+	write_fixture "$home_dir" "$repo_dir"
+	printf '{}\n' >"${repo_dir}/.aidevops.json"
+	: >"$log_file"
+
+	output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" bash "$HELPER" setup 2>&1)
+	assert_equal 1 "$(printf '%s\n' "$output" | grep -c '^SETUP ')" "setup audit reports only the missing pulse flag on a configured package"
+	assert_equal 0 "$(printf '%s\n' "$output" | grep -c 'upstream_slug')" "configured upstream slug is not reported"
+
+	jq '.initialized_repos[0].pulse = true' "${home_dir}/.config/aidevops/repos.json" >"$repos_tmp"
+	mv "$repos_tmp" "${home_dir}/.config/aidevops/repos.json"
+	output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" bash "$HELPER" setup 2>&1)
+	assert_equal 0 "$(printf '%s\n' "$output" | grep -c '^SETUP ')" "fully configured package prints no SETUP lines"
+
+	jq '.initialized_repos[0] |= (del(.app_type) | del(.cloudron_package) | .pulse = false | .maintenance = false)' "${home_dir}/.config/aidevops/repos.json" >"$repos_tmp"
+	mv "$repos_tmp" "${home_dir}/.config/aidevops/repos.json"
+	rm -f "${repo_dir}/.aidevops.json"
+	output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_LABEL_STATE=missing bash "$HELPER" setup --apply 2>&1)
+	assert_equal 6 "$(printf '%s\n' "$output" | grep -c '^SETUP ')" "unregistered package reports every onboarding gap"
+	grep -Fq 'fix: aidevops repos maintenance on exampleorg/example-package' <<<"$output" && assert_equal true true "gap line carries a fix command" || assert_equal true false "gap line carries a fix command"
+	grep -Fq 'fix: label-sync-helper.sh sync --repo exampleorg/example-package' <<<"$output" && assert_equal true true "missing label has a fix command" || assert_equal true false "missing label has a fix command"
+	assert_equal 0 "$(grep -c '^CALL ' "$log_file")" "setup audit never creates issues"
+
+	output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_LABEL_STATE=error bash "$HELPER" setup 2>&1) && assert_equal true false "label API error fails the setup run" || assert_equal true true "label API error fails the setup run"
+	grep -Fq 'could not verify labels' <<<"$output" && assert_equal true true "label API error is not reported as a gap" || assert_equal true false "label API error is not reported as a gap"
+
+	rm -f "${repo_dir}/CloudronManifest.json"
+	output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" bash "$HELPER" setup 2>&1)
+	assert_equal 0 "$(printf '%s\n' "$output" | grep -c '^SETUP ')" "repository without a manifest is ignored"
+	return 0
+}
+
+test_monitor_reports_stranded_upstream_findings() {
+	local scenario="" mode="" case_root="" log_file="" output="" rc=0 expected=0 expected_rc=0
+	for scenario in conflicting in-review closed-pr merged-pr closing-only duplicate-link no-auto-dispatch issue-approval pr-approval open-approval closed-issue clean-pr unknown-pr no-pr foreign-pr approval-error timeline-error closing-error malformed-closing-error pr-error; do
+		case_root="${TEST_ROOT}/stalled-${scenario}"
+		log_file="${case_root}/issues.log"
+		write_fake_commands "${case_root}/bin"
+		write_fixture "${case_root}/home" "${case_root}/package"
+		# Seed an existing fingerprint, without creating or changing an issue.
+		printf 'upstream-v2.0.0\n' >"$log_file"
+		for mode in report apply; do
+			rc=0
+			output=$(HOME="${case_root}/home" PATH="${case_root}/bin:$PATH" MONITOR_TEST_LOG="$log_file" \
+				MONITOR_STALLED="$scenario" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${case_root}/bin/gh_issue_comment" \
+				bash "$HELPER" upstream "--${mode}" 2>&1) || rc=$?
+			expected_rc=0
+			[[ "$scenario" != *-error ]] || expected_rc=1
+			assert_equal "$expected_rc" "$rc" "stalled ${scenario} ${mode}: API errors propagate"
+			expected=0
+			case "$scenario" in
+			conflicting | in-review | closed-pr | merged-pr | closing-only | duplicate-link | no-auto-dispatch) expected=1 ;;
+			esac
+			assert_equal "$expected" "$(grep -c '^FINDING exampleorg/example-package issue #101 PR #89: stranded upstream-v2.0.0' <<<"$output" || true)" "stalled ${scenario} ${mode}: report only non-approval stranded findings"
+			if [[ "$expected" == 1 ]]; then
+				assert_equal 0 "$(grep -c '^Already handled' <<<"$output" || true)" "stalled ${scenario} ${mode}: not silently handled"
+			fi
+		done
+		assert_equal 'upstream-v2.0.0' "$(cat "$log_file")" "stalled ${scenario}: no issue, comment, label, close or retry writes"
+	done
+	return 0
+}
+
+test_monitor_supersedes_only_idle_upstream_findings() {
+	local scenario="" case_root="" home_dir="" repo_dir="" bin_dir="" log_file="" rc=0 expected=0
+	for scenario in idle assigned claimed in-progress linked referenced untrusted newer list-error issue-error pr-error timeline-error malformed-pr-error malformed-timeline-error historical commit; do
+		case_root="${TEST_ROOT}/supersede-${scenario}"
+		home_dir="${case_root}/home" repo_dir="${case_root}/package" bin_dir="${case_root}/bin" log_file="${case_root}/issues.log"
+		write_fake_commands "$bin_dir"
+		write_fixture "$home_dir" "$repo_dir"
+		if [[ "$scenario" == commit ]]; then
+			write_fake_commit_source_commands "$bin_dir"
+			jq '.initialized_repos[0].cloudron_package.upstream_source = "commits"' "${home_dir}/.config/aidevops/repos.json" >"${case_root}/config.json"
+			mv "${case_root}/config.json" "${home_dir}/.config/aidevops/repos.json"
+		fi
+		rc=0
+		HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_SUPERSEDE="$scenario" \
+			MONITOR_REMOTE_VERSION=05a1372 MONITOR_UPSTREAM_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+			CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" \
+			bash "$HELPER" upstream --apply >/dev/null 2>&1 || rc=$?
+		expected=0
+		[[ "$scenario" != *-error ]] || expected=1
+		assert_equal "$expected" "$rc" "supersede ${scenario}: API failures fail closed"
+		expected=0
+		[[ "$scenario" != idle && "$scenario" != commit && "$scenario" != historical ]] || expected=1
+		assert_equal "$expected" "$(grep -c '^CLOSE 90$' "$log_file" || true)" "supersede ${scenario}: only idle older findings close"
+		if [[ "$expected" == 1 ]]; then
+			grep -Fq 'Superseded by https://github.com/exampleorg/example-package/issues/101' "$log_file" &&
+				assert_equal true true "supersede ${scenario}: signed wrapper comment links replacement" ||
+				assert_equal true false "supersede ${scenario}: signed wrapper comment links replacement"
+		fi
+		case "$scenario" in
+		assigned | claimed | in-progress | linked | referenced)
+			HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_SUPERSEDE="$scenario" \
+				CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" \
+				bash "$HELPER" upstream --apply >/dev/null
+			assert_equal 1 "$(grep -c '^COMMENT 101$' "$log_file" || true)" "supersede ${scenario}: one retained-work note across retries"
+			;;
+		esac
+	done
+	return 0
+}
+
 test_monitor_scopes_package_tests_when_present() {
 	local presence=""
 	local home_dir=""
@@ -392,6 +683,65 @@ test_monitor_scopes_package_tests_when_present() {
 		assert_equal 2 "$(grep -c '^CALL ' "$log_file")" "both finding types generated with package tests ${presence}"
 		assert_equal "$expected" "$(grep -c "^- \`test/package-test.sh\`$" "$log_file" || true)" "package tests ${presence}: exact scope path on its own line"
 		assert_equal "$expected" "$(grep -c "^- \`test/package-test.sh\`: version and digest assertions that must track the bump\.$" "$log_file" || true)" "package tests ${presence}: matching file note"
+	done
+	return 0
+}
+
+test_monitor_policy_briefs() {
+	local home_dir="${TEST_ROOT}/policy-home" repo_dir="${TEST_ROOT}/policy-package"
+	local bin_dir="${TEST_ROOT}/policy-bin" log_file="" scenario="" scope=""
+	local expected_scope="- \`CHANGELOG\`
+- \`CloudronManifest.json\`
+- \`Dockerfile.cloudron\`
+- \`test/baseline.sha256\`
+- \`test/package-test.sh\`
+- \`test/verify-buzz-image.sh\`"
+	write_fake_commands "$bin_dir"
+	write_fixture "$home_dir" "$repo_dir"
+	mkdir -p "${repo_dir}/test"
+	printf '# Version assertions\n' >"${repo_dir}/test/package-test.sh"
+	for scenario in verified license identity invalid_identity unavailable compatibility; do
+		log_file="${TEST_ROOT}/policy-${scenario}.log"
+		(
+			export HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file"
+			export CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue"
+			# shellcheck source=../cloudron-package-monitor-helper.sh
+			source "$HELPER"
+			# Mock only the verified lookup boundary; signature/freshness behavior
+			# remains owned by test-cloudron-release-approval.sh.
+			_cloudron_monitor_active_policy() {
+				[[ "$scenario" != unavailable ]] || return 1
+				local license_flag=""
+				[[ "$scenario" != license ]] || license_flag=',"license_version_url":true'
+				[[ "$scenario" != identity ]] || license_flag=',"release_identity":{"commit_arg":"COMMIT"}'
+				[[ "$scenario" != invalid_identity ]] || license_flag=',"release_identity":false'
+				printf '138\t{"changelog_files":["CHANGELOG"],"pinned_files":["Dockerfile.cloudron"],"check_files":["test/package-test.sh"],"companion_image":{"verify_file":"test/verify-buzz-image.sh"},"catalog_baseline":{"file":"test/baseline.sha256"}%s}\n' "$license_flag"
+				return 0
+			}
+			fingerprint="upstream-v1.10.0"
+			[[ "$scenario" != compatibility ]] || fingerprint="compatibility-base-6.0.1"
+			_cloudron_monitor_create_issue exampleorg/example-package 'Update upstream' "$fingerprint" 'New upstream' 'Run preflight' CloudronManifest.json "$repo_dir"
+		) >/dev/null
+		if [[ "$scenario" == verified ]]; then
+			scope=$(awk '/^## Files Scope$/{capture=1;next} /^## /{capture=0} capture && /^- /{print}' "$log_file")
+			assert_equal "$expected_scope" "$scope" 'policy brief lists exactly all policy file classes'
+			assert_equal 1 "$(grep -c '^## Standing release policy #138$' "$log_file" || true)" 'policy brief links verified standing policy'
+			assert_equal 1 "$(grep -c 'version tokens only' "$log_file" || true)" 'policy checks use version tokens only'
+			assert_equal 1 "$(grep -c 'r924 merges and publishes automatically' "$log_file" || true)" 'routine publication replaces per-release signature requirement'
+			assert_equal 1 "$(grep -Fc 'jq -cS '\''.versions["<base version>"].manifest'\'' CloudronVersions.json | shasum -a 256' "$log_file" || true)" 'baseline guidance preserves exact canonical manifest hash command'
+			assert_equal 1 "$(grep -c 'closing reference to this upstream finding' "$log_file" || true)" 'policy brief preserves finding closure reference'
+			assert_equal 1 "$(grep -c 'Do not edit README, docs' "$log_file" || true)" 'policy brief excludes unrelated files'
+			assert_equal 0 "$(grep -c 'upstreamLicense.url' "$log_file" || true)" 'policy without license permission keeps manifest restriction'
+		elif [[ "$scenario" == license || "$scenario" == identity ]]; then
+			assert_equal 1 "$(grep -c 'additionally update upstreamLicense.url' "$log_file" || true)" 'license-permitting policy allows license URL update'
+			assert_equal 0 "$(grep -c 'Increment only the package patch' "$log_file" || true)" 'permitted brief drops blanket manifest prohibition'
+		elif [[ "$scenario" == invalid_identity ]]; then
+			assert_equal 0 "$(grep -c 'upstreamLicense.url' "$log_file" || true)" 'non-object identity keeps manifest restriction'
+		else
+			assert_equal 0 "$(grep -c 'Standing release policy' "$log_file" || true)" "${scenario}: no policy guidance"
+			assert_equal 1 "$(grep -c 'version and digest assertions that must track the bump' "$log_file" || true)" "${scenario}: legacy test note retained"
+			assert_equal 1 "$(grep -c 'only after signed maintainer approval' "$log_file" || true)" "${scenario}: legacy release boundary retained"
+		fi
 	done
 	return 0
 }
@@ -777,6 +1127,7 @@ test_monitor_rejects_blank_package_title() {
 
 test_monitor_waits_for_release_parent_image_and_rearms_once() {
 	local case_root="${TEST_ROOT}/source-readiness" home_dir="" repo_dir="" bin_dir="" log_file="" api_log="" releases_file="" config_tmp="" blocker="" blocked_log="" permission_blocker=""
+	local held_scenario=""
 	home_dir="${case_root}/home"
 	repo_dir="${case_root}/package"
 	bin_dir="${case_root}/bin"
@@ -817,6 +1168,13 @@ test_monitor_waits_for_release_parent_image_and_rearms_once() {
 	[[ "$(grep -c '^CALL_RETRY$' "$blocked_log" || true)" == 0 ]] && assert_equal true true "existing trusted retry is not duplicated" || assert_equal true false "existing trusted retry is not duplicated"
 	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$blocked_log" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_ISSUE_STATE=claimed MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" bash "$HELPER" upstream --apply >/dev/null
 	[[ "$(grep -c '^CALL_RETRY$' "$blocked_log" || true)" == 0 ]] && assert_equal true true "claimed issue is never rearmed by the routine" || assert_equal true false "claimed issue is never rearmed by the routine"
+	for held_scenario in conflicting in-review no-auto-dispatch issue-approval; do
+		HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$blocked_log" MONITOR_API_LOG="$api_log" \
+			MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_IMAGE_STATE=ready \
+			MONITOR_STALLED="$held_scenario" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" \
+			bash "$HELPER" upstream --apply >/dev/null
+		assert_equal 0 "$(grep -c '^CALL_RETRY$' "$blocked_log" || true)" "positive source proof never retries ${held_scenario} mixed with status:available"
+	done
 	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$blocked_log" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_FORGED_MARKER=true MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" bash "$HELPER" upstream --apply >/dev/null
 	assert_equal 1 "$(grep -c '^CALL_RETRY$' "$blocked_log")" "untrusted collaborator marker cannot suppress a proven-source retry"
 	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_API_LOG="$api_log" MONITOR_RELEASES_FILE="$releases_file" MONITOR_CIRCUIT_BLOCKER="$blocker" MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" CLOUDRON_PACKAGE_COMMENT_WRAPPER="${bin_dir}/gh_issue_comment" bash "$HELPER" upstream --apply >/dev/null
@@ -824,6 +1182,56 @@ test_monitor_waits_for_release_parent_image_and_rearms_once() {
 	assert_equal 1 "$(grep -c '^CALL_RETRY$' "$log_file")" "existing target-code circuit receives one proven-source retry"
 	grep -Fq 'terminal-blocker-circuit:retry' "$log_file" && assert_equal true true "ready source retry carries standalone circuit directive" || assert_equal true false "ready source retry carries standalone circuit directive"
 	grep -Fq -- '--source-digest bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "$api_log" && assert_equal true true "upstream attestation is bound to release-parent commit" || assert_equal true false "upstream attestation is bound to release-parent commit"
+	assert_monitor_bounded_wait_and_companion_pin "$home_dir" "$bin_dir" "$releases_file" "$case_root" "$config_tmp" "$log_file"
+	return 0
+}
+
+assert_monitor_bounded_wait_and_companion_pin() {
+	local home_dir="$1" bin_dir="$2" releases_file="$3" case_root="$4" config_tmp="$5" log_file="$6"
+	# Expired waits must be visible and deduplicated, without asserting readiness.
+	local overdue_log="${case_root}/overdue.log" run=0
+	for run in 1 2; do
+		HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$overdue_log" MONITOR_RELEASES_FILE="$releases_file" \
+			MONITOR_RELEASE_DATE=2020-01-01T00:00:00Z MONITOR_IMAGE_STATE=missing \
+			CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" upstream --apply >/dev/null
+	done
+	assert_equal 1 "$(grep -c '^CALL ' "$overdue_log")" "expired missing-image wait creates one durable finding"
+	grep -Fq 'Do not update or publish the package without qualified source proof' "$overdue_log" &&
+		assert_equal true true "overdue finding does not authorize unqualified source" || assert_equal true false "overdue finding does not authorize unqualified source"
+	# Advance the persisted first observation, not the release timestamp: daily
+	# releases with fresh commits must not keep restarting the wait deadline.
+	local wait_file="" daily_log="${case_root}/daily.log" daily_version=""
+	for wait_file in "${home_dir}/.aidevops/cache/cloudron-image-waits/"*; do
+		printf '1\n' >"$wait_file"
+	done
+	for daily_version in 2.1.0 2.2.0; do
+		printf '[{"tag_name":"desktop-v%s","draft":false,"prerelease":false}]\n' "$daily_version" >"$releases_file"
+		HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$daily_log" MONITOR_RELEASES_FILE="$releases_file" \
+			MONITOR_IMAGE_STATE=missing CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" \
+			bash "$HELPER" upstream --apply >/dev/null
+	done
+	assert_equal 1 "$(grep -c '^CALL ' "$daily_log")" "daily releases preserve the outage deadline and deduplicate its finding"
+	printf '%s\n' '[{"tag_name":"desktop-v2.0.0","draft":false,"prerelease":false}]' >"$releases_file"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_RELEASES_FILE="$releases_file" \
+		MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" upstream --apply >/dev/null
+	[[ ! -f "$wait_file" ]] && assert_equal true true "positive source proof clears the unresolved wait" ||
+		assert_equal true false "positive source proof clears the unresolved wait"
+	# Companion releases use the pinned source repository for both attestations.
+	jq '.initialized_repos[0].cloudron_package |= (.upstream_slug = "exampleorg/app" |
+		.upstream_image.source_slug = "exampleorg/upstream" |
+		.upstream_image.source_pin = {path:"src-tauri/Cargo.toml",regex:"rev = ([a-f0-9]{40})"})' \
+		"${home_dir}/.config/aidevops/repos.json" >"$config_tmp"
+	mv "$config_tmp" "${home_dir}/.config/aidevops/repos.json"
+	local pin_log="${case_root}/pin.log" pin_api="${case_root}/pin-api.log" rc=0
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$pin_log" MONITOR_API_LOG="$pin_api" MONITOR_RELEASES_FILE="$releases_file" \
+		MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" upstream --apply >/dev/null
+	assert_equal 1 "$(grep -c '^CALL ' "$pin_log")" "companion release accepts a qualified image of its exact source pin"
+	assert_equal 2 "$(grep -c -- '--repo exampleorg/upstream' "$pin_api")" "both attestations are verified in the image source repository"
+	grep -Fq 'src-tauri/Cargo.toml?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$pin_api" &&
+		assert_equal true true "pin is read from the immutable release tree" || assert_equal true false "pin is read from the immutable release tree"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$pin_log" MONITOR_RELEASES_FILE="$releases_file" \
+		MONITOR_PIN_CONTENT='no revision here' MONITOR_IMAGE_STATE=ready bash "$HELPER" upstream >/dev/null 2>&1 || rc=$?
+	assert_equal 1 "$rc" "missing captured source revision fails closed"
 	return 0
 }
 
@@ -884,11 +1292,200 @@ test_monitor_ensures_maintenance_label() {
 	return 0
 }
 
+test_monitor_reconciles_catalog_once() {
+	local home_dir="${TEST_ROOT}/catalog-home" repo_dir="${TEST_ROOT}/catalog-package" bin_dir="${TEST_ROOT}/catalog-bin"
+	local log_file="${TEST_ROOT}/catalog.log" output="" rc=0 run=0
+	write_fake_commands "$bin_dir"
+	write_fixture "$home_dir" "$repo_dir"
+	# Keep upstream detection idle, isolating the publication-recovery path.
+	output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_REMOTE_VERSION=2.0.0 MONITOR_PUBLICATION_ENABLED=true \
+		MONITOR_TEST_LOG="$log_file" bash "$HELPER" upstream)
+	[[ "$output" == *"manifest v1.0.0 is absent"* ]] && assert_equal true true "dry run reports catalog drift" || assert_equal true false "dry run reports catalog drift"
+	[[ ! -f "$log_file" ]] && assert_equal true true "dry run never dispatches" || assert_equal true false "dry run never dispatches"
+	for run in disabled published active error dispatch-error; do
+		rc=0
+		HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_REMOTE_VERSION=2.0.0 MONITOR_TEST_LOG="$log_file" \
+			MONITOR_PUBLICATION_ENABLED="$([[ "$run" != disabled ]] && printf true || printf false)" \
+			MONITOR_CATALOG_STATE="$run" MONITOR_ACTIVE_RUNS="$([[ "$run" == active ]] && printf 1 || printf 0)" \
+			MONITOR_DISPATCH_FAIL="$([[ "$run" == dispatch-error ]] && printf true || printf false)" \
+			bash "$HELPER" upstream --apply >/dev/null 2>&1 || rc=$?
+		case "$run" in
+		error | dispatch-error) assert_equal 1 "$rc" "$run fails closed" ;;
+		*) assert_equal 0 "$rc" "$run does not require dispatch" ;;
+		esac
+	done
+	assert_equal 1 "$(grep -c '^DISPATCH ' "$log_file")" "only failed dispatch was attempted"
+	for run in 1 2; do
+		HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_REMOTE_VERSION=2.0.0 MONITOR_PUBLICATION_ENABLED=true \
+			MONITOR_TEST_LOG="$log_file" bash "$HELPER" upstream --apply >/dev/null
+	done
+	assert_equal 2 "$(grep -c '^DISPATCH ' "$log_file")" "failed dispatch retries, successful dispatch is deduplicated"
+	grep -Fq 'workflow run cloudron-catalog-publish.yml --repo exampleorg/example-package --ref main' "$log_file" &&
+		assert_equal true true "reconciliation uses the enabled main caller" || assert_equal true false "reconciliation uses the enabled main caller"
+	return 0
+}
+
+write_signing_gh_stub() {
+	# Offline stand-in for the Git Database API: it returns a GitHub-shaped signed
+	# commit (payload plus detached signature) without storing it locally, so the
+	# workflow must rebuild the exact object before the atomic push.
+	local stub_dir="$1"
+	mkdir -p "$stub_dir"
+	cat >"$stub_dir/gh" <<'PY'
+#!/usr/bin/env python3
+import base64, hashlib, json, subprocess, sys
+endpoint = sys.argv[2].rsplit('/git/', 1)[1]
+body = json.load(sys.stdin)
+def git(*args, data=None):
+    return subprocess.run(['git', *args], input=data, capture_output=True, check=True).stdout.decode().strip()
+if endpoint == 'blobs':
+    print(git('hash-object', '-w', '--stdin', data=base64.b64decode(body['content'])))
+elif endpoint == 'trees':
+    item = body['tree'][0]
+    entries = [line for line in git('ls-tree', body['base_tree']).splitlines() if line.split('\t', 1)[1] != item['path']]
+    entries.append(item['mode'] + ' blob ' + item['sha'] + '\t' + item['path'])
+    print(git('mktree', data=('\n'.join(entries) + '\n').encode()))
+else:
+    head = ('tree %s\nparent %s\n' % (body['tree'], body['parents'][0])
+            + 'author github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com> 1700000000 +0000\n'
+            + 'committer GitHub <noreply@github.com> 1700000000 +0000')
+    signature = '-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQ\n=test\n-----END PGP SIGNATURE-----\n'
+    raw = (head + '\ngpgsig ' + signature.replace('\n', '\n ') + '\n\n' + body['message']).encode()
+    sha = hashlib.sha1(b'commit %d\0' % len(raw) + raw).hexdigest()
+    print(json.dumps({'sha': sha, 'verification': {'verified': True, 'reason': 'valid', 'signature': signature,
+                                                    'payload': head + '\n\n' + body['message']}}))
+PY
+	chmod 0755 "$stub_dir/gh"
+	# macOS /usr/bin/base64 rejects GNU `-w0`; shim it only when the host lacks it.
+	if ! base64 -w0 "$0" >/dev/null 2>&1; then
+		local real_base64
+		real_base64="$(command -v base64)" || return 1
+		cat >"$stub_dir/base64" <<SH
+#!/bin/sh
+if [ "\$1" = "-w0" ]; then
+	shift
+	if [ \$# -gt 0 ]; then
+		$real_base64 -i "\$1" | tr -d '\\n'
+	else
+		$real_base64 | tr -d '\\n'
+	fi
+else
+	exec $real_base64 "\$@"
+fi
+SH
+		chmod 0755 "$stub_dir/base64"
+	fi
+	return 0
+}
+
+test_catalog_atomic_push_races() {
+	# Execute the actual workflow shell against disposable local bare remotes.
+	write_signing_gh_stub "$TEST_ROOT/signing-gh"
+	python3 - "$SCRIPT_DIR/../../../.github/workflows/cloudron-catalog-publish-reusable.yml" "$TEST_ROOT" <<'PY'
+import os
+import pathlib
+import subprocess
+import sys
+import textwrap
+
+workflow = pathlib.Path(sys.argv[1]).read_text()
+step = workflow.split('      - name: Commit catalog and push tag atomically\n', 1)[1]
+script = textwrap.dedent(step.split('        run: |\n', 1)[1].split('\n  release:', 1)[0])
+editor = pathlib.Path(sys.argv[2]) / 'tag-editor'
+editor.write_text('#!/usr/bin/env python3\nimport pathlib, sys\npathlib.Path(sys.argv[1]).write_text("Catalog test tag\\n")\n')
+editor.chmod(0o755)
+env = dict(os.environ, GIT_AUTHOR_NAME='Catalog Test', GIT_AUTHOR_EMAIL='test@example.invalid',
+           GIT_COMMITTER_NAME='Catalog Test', GIT_COMMITTER_EMAIL='test@example.invalid', GIT_EDITOR=str(editor))
+stub_bin = pathlib.Path(sys.argv[2]) / 'signing-gh'
+
+def git(cwd, *args):
+    result = subprocess.run(['git', *args], cwd=cwd, env=env, text=True, capture_output=True)
+    if result.returncode:
+        raise AssertionError(result.stderr)
+    return result.stdout.strip()
+
+for scenario in ('unchanged', 'docs', 'signed', 'signed-docs', 'source', 'reverted-source', 'renamed-source',
+                 'catalog', 'second-race'):
+    signed = scenario.startswith('signed')
+    root = pathlib.Path(sys.argv[2]) / ('push-' + scenario)
+    root.mkdir()
+    remote, worker, racer = (root / name for name in ('origin.git', 'worker', 'racer'))
+    git(root, 'init', '--bare', '--initial-branch=main', str(remote))
+    git(root, 'clone', str(remote), str(worker))
+    (worker / 'CloudronVersions.json').write_text('{"versions":{}}\n')
+    (worker / 'Dockerfile').write_text('FROM scratch\n')
+    git(worker, 'add', '.')
+    git(worker, 'commit', '-m', 'validated package')
+    source = git(worker, 'rev-parse', 'HEAD')
+    git(worker, 'push', 'origin', 'HEAD:main')
+    git(root, 'clone', str(remote), str(racer))
+    if scenario not in ('unchanged', 'signed'):
+        path = 'README.md' if scenario in ('docs', 'signed-docs', 'second-race') else 'CloudronVersions.json' if scenario == 'catalog' else 'Dockerfile'
+        (racer / path).write_text('concurrent change\n')
+        git(racer, 'add', '.')
+        git(racer, 'commit', '-m', 'concurrent change')
+        if scenario == 'reverted-source':
+            git(racer, 'revert', '--no-edit', 'HEAD')
+        if scenario == 'renamed-source':
+            git(racer, 'mv', 'Dockerfile', 'README.md')
+            git(racer, 'commit', '-m', 'rename source into docs')
+        git(racer, 'push', 'origin', 'HEAD:main')
+    if scenario == 'second-race':
+        # Reject the second push to prove there is no retry loop.
+        hook = remote / 'hooks/pre-receive'
+        hook.write_text('#!/bin/sh\nexit 1\n')
+        hook.chmod(0o755)
+    expected_main = git(racer, 'ls-remote', 'origin', 'refs/heads/main').split()[0]
+    catalog = '{"versions":{"1.0.0":{}}}\n'
+    (worker / 'CloudronVersions.json').write_text(catalog)
+    # Unsigned scenarios lack SIGN_TOKEN and must take the warned fallback.
+    signing = dict(SIGN_TOKEN='test-sign-token', GITHUB_REPOSITORY='exampleorg/example-package', RUNNER_TEMP=str(root),
+                   PATH=str(stub_bin) + os.pathsep + env['PATH']) if signed else {}
+    result = subprocess.run(['bash', '-c', script], cwd=worker,
+                            env=dict(env, **signing, SOURCE_SHA=source, VERSION='1.0.0', PUSH_TOKEN='test-placeholder'),
+                            text=True, capture_output=True)
+    success = scenario in ('unchanged', 'docs', 'signed', 'signed-docs')
+    assert (result.returncode == 0) == success, (scenario, result.stdout, result.stderr)
+    if success:
+        assert ('publishing the unsigned atomic commit' in result.stdout) != signed, (scenario, result.stdout)
+    tag = git(worker, 'ls-remote', 'origin', 'refs/tags/v1.0.0')
+    assert bool(tag) == success, scenario
+    if success:
+        git(racer, 'fetch', 'origin', 'main', '--tags')
+        assert git(racer, 'show', 'v1.0.0:CloudronVersions.json') == catalog.strip()
+        assert git(racer, 'show', '-s', '--format=%(trailers:key=Cloudron-Source,valueonly)', 'v1.0.0^{commit}') == source
+        git(racer, 'merge-base', '--is-ancestor', source, 'v1.0.0')
+        assert git(racer, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'v1.0.0') == 'CloudronVersions.json'
+        published = git(racer, 'cat-file', 'commit', 'v1.0.0^{commit}')
+        # Runner-local signing config may sign fallback commits; check for GitHub's.
+        github_signed = '\ncommitter GitHub <noreply@github.com>' in published and '\ngpgsig -----BEGIN PGP' in published
+        assert github_signed == signed, (scenario, published)
+        assert git(racer, 'rev-parse', 'origin/main') == git(racer, 'rev-parse', 'v1.0.0^{commit}'), scenario
+        assert git(racer, 'show', '-s', '--format=%s', 'v1.0.0^{commit}') == 'chore: publish Cloudron package 1.0.0 [skip ci]'
+        release = workflow.split('      - name: Verify existing tag, public image and catalog; repair release only\n', 1)[1]
+        verification = textwrap.dedent(release.split('        run: |\n', 1)[1]).split('image=$(jq', 1)[0]
+        checked = subprocess.run(['bash', '-c', verification + '\ntest "$source_sha" = "$EXPECTED_SOURCE"'],
+                                 cwd=racer, env=dict(env, VERSION='1.0.0', RUNNER_TEMP=str(root), EXPECTED_SOURCE=source),
+                                 text=True, capture_output=True)
+        assert checked.returncode == 0, (scenario, checked.stderr)
+    else:
+        assert git(racer, 'ls-remote', 'origin', 'refs/heads/main').split()[0] == expected_main
+    print('PASS workflow atomic push:', scenario)
+PY
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
+	test_catalog_atomic_push_races
+	test_monitor_reconciles_catalog_once
 	test_monitor_deduplicates_and_preserves_source
+	test_monitor_setup_audit_reports_gaps
+	test_monitor_reports_stranded_upstream_findings
+	test_monitor_supersedes_only_idle_upstream_findings
 	test_monitor_scopes_package_tests_when_present
+	test_monitor_policy_briefs
 	test_monitor_uses_remote_manifest_and_fails_closed
 	test_monitor_rejects_invalid_release_timeout
 	test_monitor_selects_configured_stream

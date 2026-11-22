@@ -74,7 +74,7 @@ function pickNewestCompletedCloudfrontJob(projectApiData) {
 }
 
 function logCloudfrontDownloadOutcome(httpCode, size, videoUrl) {
-  const shortName = videoUrl.substring(videoUrl.lastIndexOf('/') + 1);
+  const shortName = redactMediaUrl(videoUrl).split('/').pop();
   if (httpCode === '200') {
     console.log(`CloudFront returned ${httpCode} but file too small (${size}B), skipping: ${shortName}`);
   } else {
@@ -90,7 +90,7 @@ function tryCloudfrontDownload(videoUrl, outputDir, combinedMeta, options) {
     if (httpCode === '200' && size > 10000) {
       const result = finalizeDownload(savePath, {
         command: 'video', type: 'video', ...combinedMeta,
-        strategy: 'api-interception', cloudFrontUrl: videoUrl,
+        strategy: 'api-interception', cloudFrontUrl: redactMediaUrl(videoUrl),
       }, outputDir, options);
       if (!result.skipped) {
         console.log(`Downloaded full-quality video (${(size / 1024 / 1024).toFixed(1)}MB, HTTP ${httpCode}): ${savePath}`);
@@ -110,32 +110,66 @@ export function downloadVideoFromApiData(projectApiData, outputDir, combinedMeta
   return tryCloudfrontDownload(job.results.raw.url, outputDir, combinedMeta, options);
 }
 
+const PRESET_THUMBNAIL_HOST = 'cdn.higgsfield.ai';
+
+/** Strip query/fragment so signed media URLs are never logged or stored. */
+export function redactMediaUrl(url) {
+  return String(url || '').split(/[?#]/)[0];
+}
+
+/**
+ * Choose the generated output among a history card's <video> elements.
+ * Every card also holds a portrait "General" preset thumbnail on
+ * cdn.higgsfield.ai; the output is the CloudFront MP4 loaded after "Play video".
+ * Prefers an exact width/height match, then the largest loaded CloudFront video.
+ */
+export function pickOutputVideo(candidates, target = { width: 1280, height: 720 }) {
+  const usable = (candidates || []).filter(c => (c?.src || '').startsWith('https://')
+    && !c.src.startsWith(`https://${PRESET_THUMBNAIL_HOST}/`));
+  const area = c => c.width * c.height;
+  const ranked = [...usable].sort((a, b) =>
+    (b.src.includes('cloudfront.net') - a.src.includes('cloudfront.net')) || (area(b) - area(a)));
+  const exact = ranked.find(c => c.width === target.width && c.height === target.height);
+  return exact || ranked[0] || null;
+}
+
+async function loadCardOutputVideo(page) {
+  const play = page.locator('main li').first().getByRole('button', { name: /Play video/i });
+  await play.first().click({ force: true, timeout: 3000 }).catch(() => {});
+  const cardVideos = () => [...document.querySelectorAll('main li:first-child video')].map(v => ({
+    src: v.currentSrc || v.src, width: v.videoWidth, height: v.videoHeight,
+  }));
+  await page.waitForFunction(
+    `(${cardVideos})().some(c => c.src.includes('cloudfront.net') && c.width > 0)`,
+    null, { timeout: 15000 },
+  ).catch(() => {});
+  return page.evaluate(cardVideos);
+}
+
 async function downloadVideoViaCdnFallback(page, outputDir, combinedMeta, options) {
-  console.log('Falling back to CDN video src (motion template quality)...');
+  console.log('Falling back to loaded history card video (after Play video)...');
   await clickHistoryTab(page);
 
-  const videoSrc = await page.evaluate(() => {
-    const firstItem = document.querySelector('main li');
-    const video = firstItem?.querySelector('video');
-    return video?.src || video?.querySelector('source')?.src || null;
-  });
-
-  if (!videoSrc) return null;
+  const picked = pickOutputVideo(await loadCardOutputVideo(page), options.videoTarget);
+  if (!picked) return null;
+  console.log(`Selected card video ${picked.width}x${picked.height} (not the preset thumbnail)`);
 
   const filename = buildDescriptiveFilename(combinedMeta, 'higgsfield-video.mp4', 0);
   const savePath = safeJoin(outputDir, sanitizePathSegment(filename, 'video.mp4'));
   try {
-    curlDownload(videoSrc, savePath);
+    ensureDir(outputDir);
+    curlDownload(picked.src, savePath);
     const result = finalizeDownload(savePath, {
       command: 'video', type: 'video', ...combinedMeta,
-      strategy: 'cdn-fallback', cdnUrl: videoSrc,
+      strategy: 'card-video', cdnUrl: redactMediaUrl(picked.src),
+      width: picked.width, height: picked.height,
     }, outputDir, options);
     if (!result.skipped) {
-      console.log(`Downloaded video (CDN fallback): ${savePath}`);
+      console.log(`Downloaded video (card video): ${savePath}`);
     }
     return result.path;
   } catch (curlErr) {
-    console.log(`CDN video download failed: ${curlErr.message}`);
+    console.log(`Card video download failed: ${curlErr.message}`);
     return null;
   }
 }

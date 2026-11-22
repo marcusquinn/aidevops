@@ -79,7 +79,7 @@ pulse_repo_auth_config_fault() {
 	# which is what the gh shim itself would consult.
 	if [[ -f "$registry" ]] && configured=$(jq -r '[.initialized_repos[]? | select(.pulse_auth != null) | (.slug // "") | ascii_downcase] | join("\n")' "$registry" 2>/dev/null); then
 		lower_slug=$(printf '%s' "$repo_slug" | tr '[:upper:]' '[:lower:]')
-		printf '%s\n' "$configured" | grep -qxF "$lower_slug" || return 1
+		printf '%s\n' "$configured" | grep -xF "$lower_slug" >/dev/null || return 1
 	elif [[ ! -e "$registry" ]]; then
 		return 1
 	fi
@@ -117,7 +117,7 @@ prefetch_repo_auth_faults() {
 	while IFS='|' read -r slug path; do
 		[[ -n "$slug" ]] || continue
 		lower_slug=$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')
-		printf '%s\n' "$configured" | grep -qxF "$lower_slug" || continue
+		printf '%s\n' "$configured" | grep -xF "$lower_slug" >/dev/null || continue
 		fault_class=$(pulse_repo_auth_config_fault "$slug") || continue
 		faults="${faults}- \`${path:-<unknown path>}\`: repo auth config invalid (class=${fault_class}); candidates, dispatch metadata and recovery observation for this repo are unavailable until fixed"$'\n'
 		printf '[pulse-wrapper] prefetch: repo auth config invalid for %s (class=%s); remedy: %s\n' \

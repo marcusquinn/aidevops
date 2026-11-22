@@ -119,6 +119,17 @@ def account_resources(token: str, account_id: str) -> tuple[list[dict], list[dic
     return found, unreadable
 
 
+def zone_accounts(zones: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Accounts named on zone objects, for tokens without Account Settings Read (GH#36391)."""
+    found: dict[str, dict[str, str]] = {}
+    for zone in zones:
+        account = zone.get("account") or {}
+        if account.get("id"):
+            ref = fingerprint(account["id"])
+            found.setdefault(ref, {"name": str(account.get("name") or ""), "fingerprint": ref, "source": "zones"})
+    return sorted(found.values(), key=lambda item: item["fingerprint"])
+
+
 def observe(token: str) -> dict[str, Any]:
     """Everything the token can see, with account IDs fingerprinted."""
     observation: dict[str, Any] = {"verified_at": rules.now_iso(), "errors": []}
@@ -128,7 +139,6 @@ def observe(token: str) -> dict[str, Any]:
         accounts = []
         observation["errors"].append(str(exc))
     ids = [str(account.get("id")) for account in accounts if account.get("id")]
-    observation["token"] = verify_token(token, ids)
     observation["accounts"] = [{"name": str(account.get("name") or ""), "fingerprint": fingerprint(account["id"])}
                                for account in accounts if account.get("id")]
     try:
@@ -136,11 +146,17 @@ def observe(token: str) -> dict[str, Any]:
     except ApiError as exc:
         zones = []
         observation["errors"].append(str(exc))
+    zone_ids = [str((zone.get("account") or {}).get("id")) for zone in zones if (zone.get("account") or {}).get("id")]
+    observation["token"] = verify_token(token, ids or list(dict.fromkeys(zone_ids)))
     observation["zones"] = sorted(
         ({"name": str(zone.get("name")), "status": str(zone.get("status") or ""),
           "account": fingerprint((zone.get("account") or {}).get("id", ""))} for zone in zones if zone.get("name")),
         key=lambda zone: zone["name"],
     )
+    if not observation["accounts"]:
+        observation["accounts"] = zone_accounts(zones)
+    # Resources are enumerated only for /accounts results, so a zone-scoped
+    # token does not add unreadable noise for accounts it cannot list.
     observation["resources"], observation["unreadable"] = [], []
     for account_id in ids:
         found, unreadable = account_resources(token, account_id)

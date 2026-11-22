@@ -9,7 +9,7 @@ SANDBOX_HELPER="${SCRIPT_DIR}/sandbox-exec-helper.sh"
 NETWORK_HELPER="${SCRIPT_DIR}/network-tier-helper.sh"
 HEADLESS_HELPER="${SCRIPT_DIR}/headless-runtime-helper.sh"
 HEADLESS_INVOKE="${SCRIPT_DIR}/headless-runtime-invoke.sh"
-HEADLESS_WORKER="${SCRIPT_DIR}/headless-runtime-worker.sh"
+HEADLESS_WORKER="${SCRIPT_DIR}/headless-runtime-worker-invocation.sh"
 TEST_ROOT="$(mktemp -d)"
 TEST_HOME="${TEST_ROOT}/home"
 BACKEND="${TEST_ROOT}/egress-backend"
@@ -188,6 +188,18 @@ test_required_mode_rejects_invalid_probe() {
 	return 0
 }
 
+test_required_mode_rejects_directory_backend() {
+	local status=0
+	HOME="$TEST_HOME" AIDEVOPS_WORKER_EGRESS_BACKEND="$TEST_HOME" \
+		"$SANDBOX_HELPER" run --egress-mode required -- "$TARGET" >/dev/null 2>&1 || status=$?
+	if [[ "$status" -eq 126 ]]; then
+		pass "required mode rejects executable directory as backend"
+	else
+		fail "required mode rejects executable directory as backend" "status=${status}"
+	fi
+	return 0
+}
+
 test_backend_wraps_process_tree() {
 	rm -f "$MARKER" "$CHILD_MARKER" "$BACKEND_LOG"
 	local status=0
@@ -304,6 +316,7 @@ main() {
 	test_provider_policy_rejects_non_https_provider
 	test_required_mode_fails_closed_without_backend
 	test_required_mode_rejects_invalid_probe
+	test_required_mode_rejects_directory_backend
 	test_backend_wraps_process_tree
 	test_backend_denial_blocks_arbitrary_binary
 	test_backend_denial_blocks_interpreter

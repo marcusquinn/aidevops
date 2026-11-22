@@ -63,6 +63,7 @@ export function isSafeCommand(parts: string[]): boolean {
 export async function executeCommand(
   parts: string[],
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  preserveOutput = false,
 ): Promise<RunnerResult> {
   const startTime = Date.now();
 
@@ -88,6 +89,9 @@ export async function executeCommand(
       },
     });
 
+    // Drain pipes concurrently so a large JSON outbox cannot block process exit.
+    const stdout = new Response(proc.stdout).text();
+    const stderr = new Response(proc.stderr).text();
     // Race between command completion and timeout
     const timeoutPromise = new Promise<"timeout">((resolve) => {
       setTimeout(() => resolve("timeout"), timeoutMs);
@@ -109,13 +113,13 @@ export async function executeCommand(
       };
     }
 
-    const output = await new Response(proc.stdout).text();
-    const error = await new Response(proc.stderr).text();
+    const output = await stdout;
+    const error = await stderr;
     const exitCode = await proc.exited;
 
     return {
       success: exitCode === 0,
-      output: truncateOutput(output),
+      output: preserveOutput ? output : truncateOutput(output),
       error: truncateOutput(error),
       exitCode,
       durationMs: Date.now() - startTime,

@@ -437,6 +437,17 @@ _ptsw_move_to_recoverable_trash() {
 	[[ ! -e "$destination" && ! -L "$destination" ]] || return 1
 	mv "$workspace_root" "$destination" 2>/dev/null || return 1
 	[[ ! -e "$workspace_root" && ! -L "$workspace_root" ]] || return 1
+	_ptsw_bound_recoverable_trash
+	return 0
+}
+
+# Apply age/count retention to trashed TODO-sync buckets right after adding one,
+# so the recoverable trash stays bounded even when no cleanup command runs
+# (GH#37214). Best effort: a retention failure never fails the sweep.
+_ptsw_bound_recoverable_trash() {
+	local retention="${_PTSW_SCRIPT_DIR}/todo-sync-trash-retention.sh"
+	[[ -f "$retention" ]] || return 0
+	bash "$retention" prune --apply >/dev/null 2>&1 || true
 	return 0
 }
 

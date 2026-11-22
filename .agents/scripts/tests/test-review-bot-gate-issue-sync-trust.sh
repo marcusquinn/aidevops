@@ -179,35 +179,35 @@ run_case \
 
 run_case \
 	'external user cannot spoof marker and deterministic branch' \
-	true false false CONTRIBUTOR wait strict \
+	true false false CONTRIBUTOR pass fast \
 	CONTRIBUTOR attacker 999 User \
 	'marcusquinn/aidevops' 'marcusquinn/aidevops' \
 	'aidevops/issue-sync-todo' "${MARKER}"
 
 run_case \
 	'lookalike bot ID remains external' \
-	true false false CONTRIBUTOR wait strict \
+	true false false CONTRIBUTOR pass fast \
 	CONTRIBUTOR 'github-actions[bot]' 999 Bot \
 	'marcusquinn/aidevops' 'marcusquinn/aidevops' \
 	'aidevops/issue-sync-todo' "${MARKER}"
 
 run_case \
 	'forked Issue Sync branch remains external' \
-	true false false CONTRIBUTOR wait strict \
+	true false false CONTRIBUTOR pass fast \
 	CONTRIBUTOR 'github-actions[bot]' 41898282 Bot \
 	'attacker/aidevops' 'marcusquinn/aidevops' \
 	'aidevops/issue-sync-todo' "${MARKER}"
 
 run_case \
 	'wrong same-repository branch remains external' \
-	true false false CONTRIBUTOR wait strict \
+	true false false CONTRIBUTOR pass fast \
 	CONTRIBUTOR 'github-actions[bot]' 41898282 Bot \
 	'marcusquinn/aidevops' 'marcusquinn/aidevops' \
 	'feature/not-issue-sync' "${MARKER}"
 
 run_case \
 	'missing generated marker remains external' \
-	true false false CONTRIBUTOR wait strict \
+	true false false CONTRIBUTOR pass fast \
 	CONTRIBUTOR 'github-actions[bot]' 41898282 Bot \
 	'marcusquinn/aidevops' 'marcusquinn/aidevops' \
 	'aidevops/issue-sync-todo' 'ordinary pull request'

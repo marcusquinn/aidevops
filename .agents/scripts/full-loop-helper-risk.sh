@@ -7,7 +7,14 @@
 [[ -n "${_FULL_LOOP_RISK_LIB_LOADED:-}" ]] && return 0
 _FULL_LOOP_RISK_LIB_LOADED=1
 _full_loop_runtime_verified_marker="runtime-verified"
+# GH#39558: declared when this runner cannot exercise a Critical/High change.
+# The PR is published under hold-for-review and stays unmergeable until a
+# verifier records runtime-verified evidence. Low/Medium risk refuses it
+# (GH#39831): it is not a way to defer remaining task steps.
+_full_loop_runtime_pending_marker="runtime-pending"
 _full_loop_pending_diff_target="WORKTREE"
+# Runtime-owned paths never enter product staging or prospective PR metadata.
+_full_loop_runtime_paths=(".agents/loop-state" ".agents/.full-loop-cleanup-deferred")
 
 # Normalize a caller-supplied risk level to the spelling used in PR bodies.
 _normalize_runtime_risk() {
@@ -33,9 +40,11 @@ _normalize_runtime_testing_level() {
 	local normalized=""
 	normalized=$(printf '%s' "$requested_testing_level" | tr '[:upper:]' '[:lower:]')
 	case "$normalized" in
-	"$_full_loop_runtime_verified_marker" | self-assessed) printf '%s\n' "$normalized" ;;
+	"$_full_loop_runtime_verified_marker" | "$_full_loop_runtime_pending_marker" | self-assessed)
+		printf '%s\n' "$normalized"
+		;;
 	*)
-		print_error "Invalid --testing-level '${requested_testing_level}'. Expected ${_full_loop_runtime_verified_marker} or self-assessed."
+		print_error "Invalid --testing-level '${requested_testing_level}'. Expected ${_full_loop_runtime_verified_marker}, ${_full_loop_runtime_pending_marker} or self-assessed."
 		return 1
 		;;
 	esac
@@ -69,20 +78,43 @@ _runtime_risk_rank() {
 	return 0
 }
 
+# App-test definitions in catalog repos (GH#38640): only the root-anchored
+# blueprints/<app>/test.yml form. A global test.yml basename would also match
+# test-environment config, and repo-declared globs would let a change downgrade
+# its own risk, so neither is accepted here.
+_runtime_path_is_app_test_definition() {
+	local path="$1"
+	local rest="${path#blueprints/}"
+	[[ "$rest" != "$path" ]] || return 1
+	case "$rest" in
+	*/*/*) return 1 ;;
+	?*/test.yml | ?*/test.yaml) return 0 ;;
+	esac
+	return 1
+}
+
 # Low-risk paths are the non-runtime categories listed in full-loop.md.
 _runtime_path_is_low() {
 	local path="$1"
+	_runtime_path_is_app_test_definition "$path" && return 0
 	case "$path" in
 	*.md | *.mdx | *.rst | *.adoc | docs/*.txt | */docs/*.txt | README | README.* | */README | */README.* | CHANGELOG* | */CHANGELOG* | LICENSE | LICENSE.* | */LICENSE | */LICENSE.* | \
-		*.d.ts | *.d.mts | *.d.cts | *.pyi | */tests/* | */test/* | */__tests__/* | test-* | test_* | *_test.* | *.test.* | *.spec.* | \
+		*.d.ts | *.d.mts | *.d.cts | *.pyi | */tests/* | */test/* | */__tests__/* | \
 		.github/* | .qlty/* | .shellcheckrc | */.shellcheckrc | .markdownlint* | */.markdownlint* | .yamllint* | */.yamllint* | \
 		.eslintrc* | */.eslintrc* | eslint.config.* | */eslint.config.* | .prettierrc* | */.prettierrc* | prettier.config.* | */prettier.config.* | \
-		.stylelintrc* | */.stylelintrc* | stylelint.config.* | */stylelint.config.* | biome.json | */biome.json | *lint*.config.* | *linters*.conf | \
-		.agents/prompts/* | todo/*.json | todo/*.jsonl | */todo/*.json | */todo/*.jsonl)
+		.stylelintrc* | */.stylelintrc* | stylelint.config.* | */stylelint.config.* | biome.json | */biome.json | *linters*.conf | \
+		.agents/prompts/* | .agents/configs/prompt-hook-candidates.conf | todo/*.json | todo/*.jsonl | */todo/*.json | */todo/*.jsonl)
 		return 0
 		;;
-	*) return 1 ;;
 	esac
+	# Basename-only forms: a directory or substring must not make runtime source Low.
+	local base="${path##*/}"
+	case "$base" in
+	test-* | test_* | *_test.* | *.test.* | *.spec.* | *lint.config.* | *lint-staged.config.*)
+		return 0
+		;;
+	esac
+	return 1
 }
 
 _runtime_paths_are_low() {
@@ -473,9 +505,24 @@ _runtime_evidence_is_substantive() {
 		[[ "$normalized" == *"not runtime verified"* ]]; then
 		return 1
 	fi
-	detail="${normalized//$_full_loop_runtime_verified_marker/}"
-	detail=$(printf '%s' "$detail" | tr -d '[:space:][:punct:]')
+	# Neither status marker is evidence on its own, in any spelling.
+	detail=$(printf '%s' "$normalized" | tr -d '[:space:][:punct:]')
+	detail="${detail//runtimeverified/}"
+	detail="${detail//runtimepending/}"
 	[[ -n "$detail" ]] && return 0
+	return 1
+}
+
+# A runtime-pending reason naturally states what it is not ("not
+# runtime-verified: no sandbox here; unit tests pass"). Drop that negated
+# claim, then require the same substantive detail as verified evidence.
+_runtime_pending_reason_is_substantive() {
+	local summary_testing="${1:-}"
+	local normalized=""
+	normalized=$(printf '%s' "$summary_testing" | tr '[:upper:]' '[:lower:]')
+	normalized="${normalized//not ${_full_loop_runtime_verified_marker}/}"
+	normalized="${normalized//not runtime verified/}"
+	_runtime_evidence_is_substantive "$normalized" && return 0
 	return 1
 }
 
@@ -488,6 +535,11 @@ _resolve_runtime_testing_level() {
 	local requested_testing_level="${2:-}"
 	local summary_testing="${3:-}"
 	local testing_level=""
+	# Critical/High are the only levels whose merge requires runtime evidence.
+	local requires_runtime=0
+	case "$runtime_risk" in
+	Critical | High) requires_runtime=1 ;;
+	esac
 
 	if [[ -n "$requested_testing_level" ]]; then
 		testing_level=$(_normalize_runtime_testing_level "$requested_testing_level") || return 1
@@ -501,14 +553,140 @@ _resolve_runtime_testing_level() {
 		print_error "${_full_loop_runtime_verified_marker} requires non-empty testing evidence; PR body generation blocked."
 		return 1
 	fi
+	if [[ "$testing_level" == "$_full_loop_runtime_pending_marker" ]] && ! _runtime_pending_reason_is_substantive "$summary_testing"; then
+		print_error "${_full_loop_runtime_pending_marker} requires --testing \"<why this runner cannot exercise the change, and what was verified>\"; PR body generation blocked."
+		return 1
+	fi
+	# GH#39831: the hold is a verifier route for Critical/High changes. At
+	# Low/Medium risk it protects nothing and parked unfinished worker steps
+	# behind a human.
+	if [[ "$testing_level" == "$_full_loop_runtime_pending_marker" && "$requires_runtime" -eq 0 ]]; then
+		print_error "${_full_loop_runtime_pending_marker} is only for Critical/High runtime risk; this ${runtime_risk:-unclassified}-risk PR merges on self-assessed evidence, so a hold would only park work for a human. PR body generation blocked."
+		print_error "Task steps still to run (including steps that need this branch pushed): commit and run 'git push -u origin HEAD' without opening a PR, finish them on this branch, then run commit-and-pr with their evidence. Worker PRs always open non-draft, so a PR opened now could merge before those steps run."
+		print_error "Steps this runner cannot run: end with the brief's terminal blocker instead of opening a held PR. Use --testing-level self-assessed only when the task's completion criteria are met; never close an issue over unfinished task work."
+		return 1
+	fi
 
-	if [[ "$runtime_risk" == "Critical" || "$runtime_risk" == "High" ]] &&
-		[[ "$testing_level" != "$_full_loop_runtime_verified_marker" ]]; then
+	if [[ "$requires_runtime" -eq 1 ]] &&
+		[[ "$testing_level" != "$_full_loop_runtime_verified_marker" && "$testing_level" != "$_full_loop_runtime_pending_marker" ]]; then
 		print_error "${runtime_risk} runtime risk requires ${_full_loop_runtime_verified_marker} evidence; PR body generation blocked."
+		print_error "If this runner cannot exercise the change, rerun with --testing-level ${_full_loop_runtime_pending_marker} --testing \"<why, and what was verified>\": the PR opens under hold-for-review for a verifier. Never bypass commit-and-pr."
 		return 1
 	fi
 
 	printf '%s\n' "$testing_level"
+	return 0
+}
+
+# Parse the generated `## Runtime Testing` section of a PR body (stdin) into
+# JSON {present, sections, risk, level, evidence}. One parser serves
+# continued-PR inheritance and the merge-time recheck, so both read the format
+# that _build_pr_body emits. `sections` > 1 means the metadata is ambiguous and
+# consumers must fail closed. The body travels on stdin: it can exceed argv limits.
+_runtime_testing_metadata_from_body() {
+	python3 -c '
+import json, re, sys
+body = sys.stdin.read()
+sections = len(re.findall(r"^## Runtime Testing[ \t]*$", body, re.M))
+section = re.search(r"^## Runtime Testing\s*\n(.*?)(?=^## |\Z)", body, re.M | re.S)
+text = section[1] if section else ""
+text = re.split(r"^(?:Resolves|Fixes|Closes|For|Ref) #\d+\b|^<!-- aidevops:", text, maxsplit=1, flags=re.M)[0]
+risk = re.search(r"^- \*\*Risk level:\*\*[ \t]+(.+)$", text, re.M)
+# Any "- **" bullet ends the evidence: a hand-added "- **Notes:**" must not
+# pass as evidence. _build_pr_body renders bold bullets inside evidence plainly.
+verification = re.search(r"^- \*\*Verification:\*\*[ \t]+([\w-]+)[ \t]+—[ \t]*(.*?)(?=^- \*\*|\Z)", text, re.M | re.S)
+print(json.dumps({"present": bool(section), "sections": sections,
+                  "risk": risk[1].strip() if risk else "",
+                  "level": verification[1] if verification else "",
+                  "evidence": verification[2].strip() if verification else ""}))
+'
+	return $?
+}
+
+# GH#39558: merge-time recheck of the creation-time runtime gate, for bodies
+# edited or written outside commit-and-pr. Prints the refusal reason and
+# returns 1 when declared metadata is not merge-ready. A body without the
+# generated section stays mergeable: other helpers create most such PRs, so a
+# missing section is not evidence of risk.
+# Arguments: metadata JSON from _runtime_testing_metadata_from_body
+_runtime_testing_merge_refusal() {
+	local metadata="$1"
+	local risk="" level="" evidence="" sections=""
+	local remedy="a verifier with write access exercises the exact PR head, then runs full-loop-helper.sh verify-runtime <PR> --testing \"<evidence>\" from that checkout (GH#39639; it records ${_full_loop_runtime_verified_marker} evidence and lifts a runtime-only hold-for-review)"
+	if ! risk=$(printf '%s' "$metadata" | jq -er '.risk | strings') ||
+		! level=$(printf '%s' "$metadata" | jq -er '.level | strings') ||
+		! evidence=$(printf '%s' "$metadata" | jq -er '.evidence | strings'); then
+		printf 'runtime testing metadata is unreadable\n'
+		return 1
+	fi
+	sections=$(printf '%s' "$metadata" | jq -r '.sections // 0')
+	if [[ ! "$sections" =~ ^[0-9]+$ ]] || ((sections > 1)); then
+		printf 'the body has %s Runtime Testing sections, so its metadata is ambiguous; keep only the generated section\n' "$sections"
+		return 1
+	fi
+	risk=$(printf '%s' "$risk" | tr '[:upper:]' '[:lower:]')
+	level=$(printf '%s' "$level" | tr '[:upper:]' '[:lower:]')
+	# A present section must still parse: a malformed Risk or Verification
+	# line would otherwise read as empty and skip the High/Critical refusal.
+	if [[ "$(printf '%s' "$metadata" | jq -r '.present // false')" == "true" ]]; then
+		case "${risk%%[^a-z]*}" in
+		low | medium | high | critical) ;;
+		*)
+			printf 'the Runtime Testing section has no recognized risk level; restore "- **Risk level:** <Low|Medium|High|Critical>"\n'
+			return 1
+			;;
+		esac
+		case "$level" in
+		"$_full_loop_runtime_verified_marker" | "$_full_loop_runtime_pending_marker" | self-assessed) ;;
+		*)
+			printf 'the Runtime Testing section has no recognized verification level; restore "- **Verification:** <level> — <evidence>"\n'
+			return 1
+			;;
+		esac
+	fi
+	if [[ "$level" == "$_full_loop_runtime_pending_marker" ]]; then
+		printf 'runtime verification is pending (%s); %s\n' "$_full_loop_runtime_pending_marker" "$remedy"
+		return 1
+	fi
+	case "$risk" in
+	critical* | high*)
+		if [[ "$level" != "$_full_loop_runtime_verified_marker" ]] || ! _runtime_evidence_is_substantive "$evidence"; then
+			printf 'the body declares %s runtime risk without %s evidence; %s\n' \
+				"${risk%% *}" "$_full_loop_runtime_verified_marker" "$remedy"
+			return 1
+		fi
+		;;
+	esac
+	return 0
+}
+
+# GH#39558: true when a generated PR body declares runtime-pending evidence,
+# so commit-and-pr applies the verified hold-for-review label. Ambiguous
+# (multi-section) metadata also takes the hold: fail closed.
+_pr_body_declares_runtime_pending() {
+	local pr_body="$1"
+	local metadata="" level="" sections=""
+	metadata=$(printf '%s' "$pr_body" | _runtime_testing_metadata_from_body) || return 1
+	level=$(printf '%s' "$metadata" | jq -r '.level // ""') || return 1
+	sections=$(printf '%s' "$metadata" | jq -r '.sections // 0') || return 1
+	[[ "$level" == "$_full_loop_runtime_pending_marker" ]] && return 0
+	[[ "$sections" =~ ^[0-9]+$ ]] && ((sections > 1)) && return 0
+	return 1
+}
+
+# GH#39558: free-text PR body inputs must not carry their own Runtime Testing
+# heading, or the body would hold two sections and an example could stand in
+# for the generated metadata. Arguments: any number of free-text fields.
+_pr_body_inputs_reserve_runtime_section() {
+	local field=""
+	for field in "$@"; do
+		# Here-string, not a pipe: grep -q exits on first match, and under
+		# pipefail the writer's SIGPIPE would turn a match into a false miss.
+		if grep -Eq '^##[[:space:]]+Runtime Testing[[:space:]]*$' <<<"$field"; then
+			print_error "PR body inputs must not contain a '## Runtime Testing' heading: commit-and-pr generates that section from --risk-level/--testing-level/--testing. Remove the heading from --summary/--testing/--decisions."
+			return 1
+		fi
+	done
 	return 0
 }
 
@@ -529,12 +707,16 @@ _pending_runtime_comparison_base() {
 # Callers supply the resolved branch-owned comparison base, not the remote tip.
 _pending_runtime_files_changed() {
 	local base_ref="$1"
-	local files_changed=""
+	local files_changed="" path=""
+	local -a product_paths=(":/")
+	for path in "${_full_loop_runtime_paths[@]}"; do
+		product_paths+=(":(top,exclude,literal)${path}")
+	done
 	git rev-parse --verify "${base_ref}^{commit}" >/dev/null 2>&1 || return 1
 	files_changed=$(
 		{
-			git diff --name-only "$base_ref" --
-			git ls-files --others --exclude-standard
+			git diff --name-only "$base_ref" -- "${product_paths[@]}"
+			git ls-files --others --exclude-standard -- "${product_paths[@]}"
 		} | LC_ALL=C sort -u | tr '\n' ',' | sed 's/,$//; s/,/, /g'
 	) || return 1
 	printf '%s\n' "$files_changed"

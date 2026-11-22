@@ -6,13 +6,16 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import Request
 
 from _knowledge_social_linkedin import API_VERSION
-from _knowledge_social_linkedin_provider import PROFILE_NAME, _access_token
+from _knowledge_social_linkedin_provider import PROFILE_NAME, _access_token, _profile_prefix
 from _knowledge_social_outbound import ClaimedOperation
 from _knowledge_social_outbound_provider import (
     ProviderAdapterError,
@@ -27,6 +30,12 @@ from knowledge_social_store import SocialStoreError, validate_opaque
 API_BASE = "https://api.linkedin.com/rest"
 POST_ENDPOINT = "posts"
 IDENTITY_ENDPOINT = "memberAuthorizations"
+ORGANIZATION_ACL_ENDPOINT = "organizationAcls"
+ORGANIZATION_WRITE_SCOPE = "w_organization_social"
+ORGANIZATION_ACCOUNT = re.compile(r"^org_([0-9]{1,20})$")
+ACL_PAGE_SIZE = 100
+MAX_ACL_PAGES = 5
+_UNAVAILABLE = "LinkedIn outbound capability or identity is unavailable"
 MAX_RESPONSE_BYTES = 1024 * 1024
 HTTP_TIMEOUT_SECONDS = 60
 UrlOpen = Callable[..., Any]
@@ -53,7 +62,7 @@ def _decode_response(payload: bytes) -> dict[str, Any]:
 
 def _request(token: str, endpoint: str, *, method: str, data: bytes | None = None) -> Request:
     endpoint_name = endpoint.split("?", 1)[0]
-    if endpoint_name not in (IDENTITY_ENDPOINT, POST_ENDPOINT):
+    if endpoint_name not in (IDENTITY_ENDPOINT, ORGANIZATION_ACL_ENDPOINT, POST_ENDPOINT):
         raise ProviderAdapterError("LinkedIn write endpoint is not allowlisted")
     return Request(
         f"{API_BASE}/{endpoint}",
@@ -67,6 +76,32 @@ def _request(token: str, endpoint: str, *, method: str, data: bytes | None = Non
             "X-Restli-Protocol-Version": "2.0.0",
         },
         method=method,
+    )
+
+
+def _organization_urn(account_id: str) -> str | None:
+    """Map an `org_<digits>` approved account to its organization URN."""
+    matched = ORGANIZATION_ACCOUNT.fullmatch(account_id)
+    return f"urn:li:organization:{matched.group(1)}" if matched else None
+
+
+def _require_organization_scope(profile: str) -> None:
+    raw = os.environ.get(f"{_profile_prefix(profile)}_SCOPES", "")
+    scopes = {item for item in re.split(r"[\s,]+", raw) if item}
+    if ORGANIZATION_WRITE_SCOPE not in scopes:
+        raise ProviderIdentityError(
+            "LinkedIn organization posting requires the w_organization_social scope"
+        )
+
+
+def _is_admin_of(item: Any, organization_urn: str) -> bool:
+    if not isinstance(item, dict):
+        return False
+    target = item.get("organization", item.get("organizationTarget"))
+    return (
+        target == organization_urn
+        and item.get("role") == "ADMINISTRATOR"
+        and item.get("state") == "APPROVED"
     )
 
 
@@ -87,9 +122,45 @@ class LinkedInPreparedProvider:
     claimed: ClaimedOperation
     opener: UrlOpen = redirect_free_provider_open
 
+    def _verify_organization(self, token: str, organization_urn: str) -> None:
+        _require_organization_scope(_profile(self.claimed))
+        start = 0
+        for _page in range(MAX_ACL_PAGES):
+            query = urlencode(
+                {
+                    "q": "roleAssignee",
+                    "role": "ADMINISTRATOR",
+                    "state": "APPROVED",
+                    "count": ACL_PAGE_SIZE,
+                    "start": start,
+                }
+            )
+            request = _request(token, f"{ORGANIZATION_ACL_ENDPOINT}?{query}", method="GET")
+            with self.opener(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+                status = getattr(response, "status", 200)
+                raise_for_provider_rate_limit(status, response.headers)
+                if status != 200:
+                    raise ProviderIdentityError(_UNAVAILABLE)
+                payload = _decode_response(response.read(MAX_RESPONSE_BYTES + 1))
+            elements = payload.get("elements")
+            if not isinstance(elements, list):
+                raise ProviderIdentityError(_UNAVAILABLE)
+            if any(_is_admin_of(item, organization_urn) for item in elements):
+                return
+            if len(elements) < ACL_PAGE_SIZE:
+                break
+            start += len(elements)
+        raise ProviderIdentityError(
+            "LinkedIn member is not an approved administrator of the approved organization"
+        )
+
     def verify_identity(self) -> None:
         try:
             token = _access_token(_profile(self.claimed))
+            organization_urn = _organization_urn(self.claimed.remote_account_id)
+            if organization_urn is not None:
+                self._verify_organization(token, organization_urn)
+                return
             request = _request(
                 token, f"{IDENTITY_ENDPOINT}?q=memberAndApplication", method="GET"
             )
@@ -121,9 +192,13 @@ class LinkedInPreparedProvider:
         if self.claimed.action != "post" or self.claimed.payload is None:
             return None, "validation"
         token = _access_token(_profile(self.claimed))
+        organization_urn = _organization_urn(self.claimed.remote_account_id)
+        if organization_urn is not None:
+            # Re-check the scope immediately before the write boundary.
+            _require_organization_scope(_profile(self.claimed))
         body = json.dumps(
             {
-                "author": self.claimed.remote_account_id,
+                "author": organization_urn or self.claimed.remote_account_id,
                 "commentary": self.claimed.payload,
                 "visibility": "PUBLIC",
                 "distribution": {
@@ -163,5 +238,5 @@ class LinkedInPreparedProvider:
             return None, "provider_unavailable"
         except (URLError, OSError):
             return None, "provider_unavailable"
-        except (SocialStoreError, ProviderAdapterError, UnicodeError):
+        except (SocialStoreError, ProviderAdapterError, ProviderIdentityError, UnicodeError):
             return None, "validation"

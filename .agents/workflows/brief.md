@@ -121,6 +121,10 @@ Interactive `claim-task-id.sh --labels auto-dispatch` refuses a description
 without it, and the `gh_create_issue` PATH command refuses an unscoped
 `auto-dispatch` body, because the author can fix it on the spot; scripts that
 source the library only warn (GH#32880).
+A file the work creates must also appear as `` `NEW: path` `` under
+`### Files to Modify`: Files Scope lines carry no prefix, so interactive filing
+warns about each listed path missing from the default branch that is not
+declared new; a worker reads an unmarked missing path as an order to create it (GH#38978).
 Also list any test file a required CI gate will demand
 (for example platform/bash-compat fixes need a changed test). Planning-only
 issues start with `Planning-only:` instead.
@@ -201,6 +205,25 @@ Once every blocker closes, Pulse changes the next leaf to `status:available`;
 the completing worker closes only its own leaf and does not edit its successor.
 Independent children may remain `status:available` for parallel dispatch, while
 the roadmap parent keeps `parent-task` and never receives `#auto-dispatch`.
+
+### Waiting on an upstream release
+
+When a worker-ready issue must wait until a third-party upstream tags a release
+containing a specific commit, never leave the blocker as prose only. Keep
+`#auto-dispatch` with `status:blocked` and put this marker on its own line in
+the issue body, with the full 40-character commit SHA:
+
+```text
+<!-- aidevops:upstream-release-gate repo=OWNER/REPO commit=SHA -->
+```
+
+Pulse's stale-blocked sweep checks the highest version-sorted upstream tags (not
+GitHub Releases, so tag-only upstreams work) and moves the issue to
+`status:available` once every gate is in a tag and every native or declared
+blocker is closed. Holds still win. Untrusted-author issues, malformed markers
+and more than five gates stay blocked; an unreachable upstream or commit is
+reported as a sweep failure. Markers inside fenced code blocks are examples,
+not gates. Still describe the resume condition and verification in prose.
 
 ## Seeded Draft PR Decision
 

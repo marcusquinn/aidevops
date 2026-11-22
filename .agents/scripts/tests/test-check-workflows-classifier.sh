@@ -37,6 +37,7 @@ readonly -a _WORKFLOWS=(
 	"maintainer-gate.yml:maintainer-gate-reusable.yml:maintainer-gate-caller.yml"
 	"loc-badge.yml:loc-badge-reusable.yml:loc-badge-caller.yml"
 	"linked-issue-check.yml:linked-issue-check-reusable.yml:linked-issue-check-caller.yml"
+	"issue-triage-gate.yml:issue-triage-gate-reusable.yml:issue-triage-gate-caller.yml"
 )
 
 readonly _T_GREEN='\033[0;32m'

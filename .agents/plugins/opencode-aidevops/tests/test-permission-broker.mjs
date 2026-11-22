@@ -179,6 +179,54 @@ test("headless workers auto-allow read-only toolchain roots but never writes or 
   assert.equal(existsSync(requestFile), false);
   assert.match(readFileSync(blockerLog, "utf8"), /permission_read_only_root_allowed/);
 
+  await ask("local-bin-read", "read", [`${root}/.local/bin/*`]);
+  assert.equal(replies.at(-1).body.response, "once");
+  assert.equal(existsSync(requestFile), false);
+  assert.doesNotMatch(readFileSync(blockerLog, "utf8"), /permission_request_captured|permission_required/);
+
+  broker.recordToolCall({ tool: "read", callID: "local-bin-legacy" }, { args: {} });
+  const localBinOutput = { status: "ask" };
+  broker.permissionAsk({ type: "external_directory", pattern: `${root}/.local/bin/*`, callID: "local-bin-legacy" }, localBinOutput);
+  assert.equal(localBinOutput.status, "allow");
+  assert.equal(existsSync(requestFile), false);
+
+  for (const tool of ["write", "edit", "bash"]) {
+    await ask(`local-bin-${tool}`, tool, [`${root}/.local/bin/*`]);
+    assert.equal(replies.at(-1).body.response, "reject");
+  }
+  for (const [id, pattern] of [
+    ["credential", `${root}/.local/bin/.env`],
+    ["escape", `${root}/.local/bin/../share/*`],
+    ["prefix", `${root}/.local/bin-other/*`],
+    ["mixed", `${root}/outside/*`],
+  ]) {
+    await ask(`local-bin-${id}`, "read", [`${root}/.local/bin/*`, pattern]);
+    assert.equal(replies.at(-1).body.response, "reject");
+  }
+
+  broker.recordToolCall({ tool: "read", callID: "local-bin-auth" }, { args: { filePath: `${root}/.local/bin/auth.json` } });
+  await broker.handleEvent({ event: { type: "permission.asked", properties: {
+    id: "local-bin-auth", sessionID: "session-nvm", permission: "external_directory",
+    patterns: [`${root}/.local/bin/*`], tool: { callID: "local-bin-auth" },
+  } } });
+  assert.equal(replies.at(-1).body.response, "reject");
+  assert.match(readFileSync(requestFile, "utf8"), /"grantable": false/);
+
+  mkdirSync(join(root, "outside-secret"), { recursive: true });
+  mkdirSync(join(root, ".local"), { recursive: true });
+  symlinkSync(join(root, "outside-secret"), join(root, ".local", "bin"));
+  await ask("local-bin-symlink", "read", [`${root}/.local/bin/*`]);
+  assert.equal(replies.at(-1).body.response, "reject");
+
+  mkdirSync(join(root, ".ssh"), { recursive: true });
+  writeFileSync(join(root, ".ssh", "id_rsa"), "x");
+  symlinkSync(join(root, ".ssh", "id_rsa"), join(root, "outside-secret", "link"));
+  rmSync(requestFile, { force: true });
+  await ask("local-bin-ssh-link", "read", [`${root}/.local/bin/link`]);
+  assert.equal(replies.at(-1).body.response, "reject");
+  assert.match(readFileSync(requestFile, "utf8"), /"grantable": false/);
+  assert.doesNotMatch(readFileSync(requestFile, "utf8"), /"grantable": true/);
+
   await ask("nvm-write", "write", [`${root}/.nvm/*`]);
   assert.equal(replies.at(-1).body.response, "reject");
   assert.equal(existsSync(requestFile), true);
@@ -405,6 +453,59 @@ test("action-only permissions are non-grantable", async () => {
   assert.match(capture.requests[0].risk.reason, /exact OpenCode pattern rule/);
   rmSync(root, { recursive: true, force: true });
   delete process.env.AIDEVOPS_PERMISSION_REQUEST_FILE;
+});
+
+test("doom_loop passes only designed bounded-operation polls (GH#39048)", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-permission-broker-"));
+  const previous = preserveWorkerEnvironment();
+  t.after(() => { restoreWorkerEnvironment(previous); rmSync(root, { recursive: true, force: true }); });
+  const requestFile = join(root, "request.json");
+  const blockerLog = join(root, "blockers.jsonl");
+  process.env.AIDEVOPS_PERMISSION_REQUEST_FILE = requestFile;
+  const replies = [];
+  const broker = createPermissionBroker({
+    client: { postSessionIdPermissionsPermissionId: async (value) => replies.push(value) },
+    isHeadless: () => true, home: root, blockerLogPath: blockerLog,
+  });
+  const doomLoop = (id, tool, input) => ({
+    id, sessionID: "worker", permission: "doom_loop", patterns: [tool], always: [tool], metadata: { tool, input },
+  });
+  const poll = { action: "status", operation_id: "op_1", wait_seconds: 60 };
+
+  for (const [id, input] of [["status", poll], ["output", { action: "output", operation_id: "op_1" }]]) {
+    await broker.handleEvent({ event: { type: "permission.asked", properties: doomLoop(id, "aidevops_bounded_operation", input) } });
+    const output = { status: "ask" };
+    broker.permissionAsk(doomLoop(`${id}-hook`, "aidevops_bounded_operation", input), output);
+    assert.equal(output.status, "allow");
+  }
+  const legacy = { status: "ask" };
+  broker.permissionAsk({ id: "legacy", type: "doom_loop", pattern: "aidevops_bounded_operation", metadata: { input: poll } }, legacy);
+  assert.equal(legacy.status, "allow");
+  assert.deepEqual(replies.map((reply) => reply.body.response), ["once", "once"]);
+  assert.equal(existsSync(requestFile), false);
+  const allowed = readFileSync(blockerLog, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  assert.ok(allowed.every((event) => event.event === "permission_designed_poll_allowed" && event.blocking === false));
+
+  for (const [id, tool, input] of [
+    ["start", "aidevops_bounded_operation", { action: "start", command: ["true"] }],
+    ["cancel", "aidevops_bounded_operation", { action: "cancel", operation_id: "op_1" }],
+    ["bash", "bash", { command: "sleep 60" }],
+  ]) {
+    await broker.handleEvent({ event: { type: "permission.asked", properties: doomLoop(id, tool, input) } });
+    const output = { status: "ask" };
+    broker.permissionAsk(doomLoop(`${id}-hook`, tool, input), output);
+    assert.equal(output.status, "deny");
+  }
+  assert.deepEqual(replies.slice(2).map((reply) => reply.body.response), ["reject", "reject", "reject"]);
+  // start/cancel share one stable request ID (same permission, pattern, tool).
+  const capture = JSON.parse(readFileSync(requestFile, "utf8"));
+  assert.deepEqual(capture.requests.map((request) => request.tool).sort(), ["aidevops_bounded_operation", "bash"]);
+  assert.ok(capture.requests.every((request) => request.permission === "doom_loop" && request.risk.grantable === false));
+
+  const interactive = createPermissionBroker({ client: {}, isHeadless: () => false, home: root, blockerLogPath: blockerLog });
+  const untouched = { status: "ask" };
+  interactive.permissionAsk(doomLoop("interactive", "aidevops_bounded_operation", poll), untouched);
+  assert.equal(untouched.status, "ask");
 });
 
 test("capture write failure still denies the permission without crashing", async () => {

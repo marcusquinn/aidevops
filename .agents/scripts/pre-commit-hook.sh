@@ -93,6 +93,53 @@ get_modified_shell_files() {
 #   - New task-list entry whose ID already appears elsewhere → fail.
 #   - Two new task-list entries with the same ID in one commit → fail.
 #   - TODO.md doesn't exist in HEAD (first commit) → any duplicate fails.
+#   - Rows inside <!-- ... --> comments (GH#17804 template examples) are
+#     documentation and never count (GH#35755).
+#   - Task IDs compare without leading zeros (t034 == t34), so normalizing a
+#     historical padded duplicate is not a new collision (GH#35755). Routine
+#     IDs stay literal because they are routine state keys.
+
+# Print task/routine IDs from TODO checkbox rows on stdin, one per line.
+# Comment stripping matches issue-sync-pr-task-resolver.sh todo_strip_comments
+# (kept inline because this hook must stay self-contained when sourced).
+_todo_duplicate_check_ids() {
+	awk '
+		{
+			line = $0
+			out = ""
+			while (length(line) > 0) {
+				if (in_comment) {
+					pos = index(line, "-->")
+					if (pos == 0) { line = ""; break }
+					line = substr(line, pos + 3)
+					in_comment = 0
+				} else {
+					pos = index(line, "<!--")
+					if (pos == 0) { out = out line; line = ""; break }
+					out = out substr(line, 1, pos - 1)
+					line = substr(line, pos + 4)
+					in_comment = 1
+				}
+			}
+			if (!match(out, /^[[:space:]]*- \[[ x-]\][[:space:]]+[tr][0-9]+(\.[0-9]+)*/)) next
+			id = substr(out, RSTART, RLENGTH)
+			sub(/^[[:space:]]*- \[[ x-]\][[:space:]]+/, "", id)
+			if (substr(id, 1, 1) == "t") {
+				count = split(substr(id, 2), parts, ".")
+				id = "t"
+				for (i = 1; i <= count; i++) {
+					segment = parts[i]
+					sub(/^0+/, "", segment)
+					if (segment == "") segment = "0"
+					id = id (i > 1 ? "." : "") segment
+				}
+			}
+			print id
+		}
+	' || return 1
+	return 0
+}
+
 validate_duplicate_task_ids() {
 	# Only check if TODO.md is staged
 	if ! staged_diff --name-only | grep -q '^TODO\.md$'; then
@@ -110,10 +157,10 @@ validate_duplicate_task_ids() {
 
 	local staged_dupes head_dupes new_dupes
 	staged_dupes=$(printf '%s\n' "$staged_todo" \
-		| sed -nE 's/^[[:space:]]*- \[[ x-]\][[:space:]]+([tr][0-9]+(\.[0-9]+)*).*/\1/p' \
+		| _todo_duplicate_check_ids \
 		| sort | uniq -d)
 	head_dupes=$(printf '%s\n' "$head_todo" \
-		| sed -nE 's/^[[:space:]]*- \[[ x-]\][[:space:]]+([tr][0-9]+(\.[0-9]+)*).*/\1/p' \
+		| _todo_duplicate_check_ids \
 		| sort | uniq -d)
 
 	# IDs duplicated in staged that were NOT already duplicated in HEAD =
@@ -312,14 +359,26 @@ _count_repeated_literals() {
 	return 0
 }
 
-# Same pipeline but prints the top-3 "count: literal" display form.
+# Same pipeline, printing "  <count>x: <literal>" display lines from stdin.
 # Applies the same sed pre-strip as _count_repeated_literals so that display
 # output matches the counter — no phantom truncated literals like `4x: "`.
+# The whole literal is printed, including inner spaces (GH#36999).
+#
+# Modes (first argument):
+#   top (default)    — the first three repeated literals (pre-existing debt view)
+#   all              — every repeated literal
+#   new <baseline>   — only literals not already repeated >=3x in <baseline>,
+#                      i.e. the ones that make the ratchet block (GH#36999).
+#                      Compared on literal text, so a pre-existing literal
+#                      whose count grew is not reported as new.
 _show_repeated_literals() {
+	local mode="${1:-top}"
+	local baseline="${2:-}"
 	local _ext_literal='"[^"]{4,}"'
 	local _ext_numeric='^"[0-9]+\.?[0-9]*"$'
 	local _ext_varref='^"\$'
-	grep -v '^[[:space:]]*#' |
+	local listing
+	listing=$(grep -v '^[[:space:]]*#' |
 		sed -E '
 			s/"\$[A-Za-z_][A-Za-z0-9_]*"//g
 			s/"\$\{[^}]*\}"//g
@@ -329,7 +388,23 @@ _show_repeated_literals() {
 		grep -oE "$_ext_literal" |
 		grep -vE "$_ext_numeric" |
 		grep -vE "$_ext_varref" |
-		sort | uniq -c | awk '$1 >= 3 {print "  " $1 "x: " $2}' | head -3
+		sort | uniq -c |
+		awk '$1 >= 3 { n = $1; sub(/^[[:space:]]*[0-9]+[[:space:]]/, ""); print "  " n "x: " $0 }') ||
+		listing="" # grep exits 1 on no match; under pipefail that means none, not an error
+	[[ -n "$listing" ]] || return 0
+	case "$mode" in
+	all) printf '%s\n' "$listing" ;;
+	new)
+		# phase= assignments, not NR==FNR: an empty baseline (new file) must
+		# not make the current listing look like the baseline.
+		awk '
+			phase == "base" { sub(/^ *[0-9]+x: /, ""); seen[$0] = 1; next }
+			{ literal = $0; sub(/^ *[0-9]+x: /, "", literal) }
+			literal != "" && !(literal in seen) { print }
+		' phase=base <(printf '%s\n' "$baseline" | _show_repeated_literals all) phase=cur - <<<"$listing"
+		;;
+	*) head -3 <<<"$listing" ;;
+	esac
 	return 0
 }
 
@@ -368,7 +443,8 @@ validate_string_literals() {
 			if ((staged_repeated > head_repeated)); then
 				# NEW repeated literals introduced by this commit — ratchet blocks.
 				print_error "NEW repeated string literals in $file (new: $((staged_repeated - head_repeated)), pre-existing: $head_repeated)"
-				<"$file" _show_repeated_literals
+				# Name the offending literals, not the file's top 3 (GH#36999).
+				<"$file" _show_repeated_literals new "$head_content"
 				((++violations))
 			elif ((staged_repeated > 0)); then
 				# Pre-existing debt — advisory only, never blocks. Test fixtures
@@ -421,6 +497,83 @@ validate_portable_stat() {
 		fi
 	done
 
+	return $violations
+}
+
+# Print logical lines (backslash continuations joined) where one `gh api`
+# pipeline segment combines --slurp with --jq/--template. Quoted strings are
+# blanked first, so a jq filter's own `|` cannot split a segment and a later
+# `| jq --slurp` stage is not mistaken for a gh flag.
+# Stdin: shell source. Stdout: offending lines. Returns 0 always.
+_gh_api_slurp_filter_hits() {
+	sed -e :a -e '/\\$/N; s/\\\n[[:space:]]*/ /; ta' |
+		awk -v sq="'" '
+			/^[[:space:]]*#/ { next }
+			{
+				line = $0
+				gsub(sq "[^" sq "]*" sq, "Q", line)
+				gsub(/"[^"]*"/, "Q", line)
+				n = split(line, seg, "|")
+				for (i = 1; i <= n; i++) {
+					s = " " seg[i] " "
+					if (s ~ /gh[[:space:]]+api[[:space:]]/ &&
+						s ~ /[[:space:]]--slurp[[:space:]=]/ &&
+						s ~ /[[:space:]]--(jq|template)[[:space:]=]/) {
+						print $0
+						break
+					}
+				}
+			}'
+	return 0
+}
+
+# ABSOLUTE gate (GH#38185): native `gh api` rejects --slurp combined with
+# --jq/--template before sending any request, so such a call fails on every
+# run (t2572, GH#20219, GH#38185). Use `--paginate --slurp | jq '...'`.
+# Test files are exempt: they model the invalid combination on purpose.
+validate_gh_api_slurp_filter() {
+	local violations=0
+	local file="" base="" hits=""
+
+	print_info "Validating gh api --slurp/--jq usage (absolute)..."
+	for file in "$@"; do
+		base="${file##*/}"
+		case "$base" in
+			test-*) continue ;;
+		esac
+		hits=$(git show ":$file" 2>/dev/null | _gh_api_slurp_filter_hits)
+		if [[ -n "$hits" ]]; then
+			print_error "gh api combines --slurp with --jq/--template in $file; gh rejects it on every call. Pipe the --slurp output to jq instead:"
+			printf '%s\n' "$hits" >&2
+			((++violations))
+		fi
+	done
+	return $violations
+}
+
+# GH#36686: parse modified scripts with the macOS-shipped /bin/bash 3.2, which
+# launchd uses and which rejects constructs Bash 5 accepts (GH#19252). Runs
+# only where /bin/bash is really 3.x (every Mac); CI runs the same parse on
+# Ubuntu in a pinned bash:3.2 container. Syntax errors are bugs: absolute gate.
+validate_bash32_parse() {
+	local violations=0
+	local major=""
+	[[ -x /bin/bash ]] || return 0
+	major=$(/bin/bash -c 'printf "%s" "${BASH_VERSINFO[0]}"' 2>/dev/null || true)
+	[[ "$major" == "3" ]] || return 0
+
+	print_info "Validating /bin/bash 3.2 parse (absolute)..."
+	local file result
+	for file in "$@"; do
+		# Parse the index, not unstaged edits. Fail closed if blob retrieval
+		# fails: otherwise bash would accept the empty pipe as valid syntax.
+		if ! result=$(set -o pipefail; git show ":$file" 2>&1 | /bin/bash -n 2>&1); then
+			print_error "Bash 3.2 cannot parse $file (macOS launchd runs scripts with /bin/bash 3.2):"
+			printf '%s\n' "$result" >&2
+			((++violations))
+		fi
+	done
+	[[ "$violations" -eq 0 ]] || print_info "Common cause: heredoc inside \$(). See .agents/reference/bash-compat.md"
 	return $violations
 }
 
@@ -821,7 +974,7 @@ _init_root_file_allowlist() {
 		".qlty/qlty.toml" ".qlty.toml" ".qltyignore"
 		".secretlintignore" ".secretlintrc.json"
 		# Tool configs (non-dotfile)
-		"biome.json"
+		"biome.json" "ruff.toml" "mypy.ini"
 		"eslint.config.js" "eslint.config.mjs" "eslint.config.cjs"
 		"eslint.config.ts" "eslint.config.mts" "eslint.config.cts"
 		# Vitest resolves vitest.config.{ts,mts,cts,js,mjs,cjs}; Vitest 4
@@ -1092,7 +1245,7 @@ check_workflow_files() {
 	# avoids an extra process when no workflow files are staged.
 	local staged_workflows
 	staged_workflows=$(staged_diff --name-only --diff-filter=ACM \
-		| grep -E '^\.github/workflows/[^/]+\.ya?ml$' || true)
+		| grep -E '^(\.github/workflows|\.agents/templates/workflows)/[^/]+\.ya?ml$' || true)
 
 	if [[ -z "$staged_workflows" ]]; then
 		return 0
@@ -1197,6 +1350,12 @@ main_pre_commit() {
 	echo "" >&2
 
 	validate_portable_stat "${modified_files[@]}" || ((total_violations += $?))
+	echo "" >&2
+
+	validate_gh_api_slurp_filter "${modified_files[@]}" || ((total_violations += $?))
+	echo "" >&2
+
+	validate_bash32_parse "${modified_files[@]}" || ((total_violations += $?))
 	echo "" >&2
 
 	# Final decision

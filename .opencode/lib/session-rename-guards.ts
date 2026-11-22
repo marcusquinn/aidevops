@@ -14,7 +14,13 @@
 import type { Database } from "bun:sqlite"
 
 const AIDEVOPS_TITLE_SUFFIX_RE = /\s+· AIDevOps \d+\.\d+\.\d+$/
+// GH#37630: session-bus address token, see session-title-suffix.ts.
+const SESSION_ADDRESS_TOKEN_RE = /\s+· @[a-z0-9]{6}(?![a-z0-9])/g
 const CURRENT_CONTEXT_SEPARATOR = " — Current: "
+
+function baseTitle(title: string): string {
+  return title.replace(SESSION_ADDRESS_TOKEN_RE, "").replace(AIDEVOPS_TITLE_SUFFIX_RE, "").trim()
+}
 
 /**
  * Check whether a branch name is a default (non-feature) branch.
@@ -63,7 +69,7 @@ export function isTitleOverwritable(db: Database, sessionID: string): boolean {
     return true
   }
 
-  switch (row.title) {
+  switch (baseTitle(row.title)) {
     case "":
     case "New Session":
     case "HEAD":
@@ -85,8 +91,8 @@ export function purposePreservingTitle(
   requestedTitle: string,
   replacePurpose = false,
 ): string {
-  const currentBase = currentTitle.replace(AIDEVOPS_TITLE_SUFFIX_RE, "").trim()
-  const requestedBase = requestedTitle.replace(AIDEVOPS_TITLE_SUFFIX_RE, "").trim()
+  const currentBase = baseTitle(currentTitle)
+  const requestedBase = baseTitle(requestedTitle)
 
   if (!currentBase || isDefaultBranchTitle(currentBase) || currentBase === "New Session") {
     return requestedBase

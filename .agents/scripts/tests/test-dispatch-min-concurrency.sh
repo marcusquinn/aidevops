@@ -58,10 +58,10 @@ source "${SCRIPT_DIR}/pulse-dispatch-worker-launch.sh"
 # shellcheck source=../pulse-capacity-alloc.sh
 source "${SCRIPT_DIR}/pulse-capacity-alloc.sh"
 
-# Deterministic CPU admission gate: never read the host's live load or iostat
-# idle. Cases needing a closed gate set TEST_CPU_GATE=closed explicitly.
-_pulse_cpu_pressure() {
-	printf '1.00 16 %s 4.0 na\n' "${TEST_CPU_GATE:-open}"
+# Deterministic RAM admission (GH#35537): never read the host's live memory.
+# Cases needing exhausted RAM set TEST_RAM_SLOTS=0 explicitly.
+_pulse_ram_admission() {
+	printf '%s 131072 0 0\n' "${TEST_RAM_SLOTS:-64}"
 	return 0
 }
 
@@ -287,6 +287,35 @@ JSON
 		print_result "capacity: one healthy account defaults to max cap for OpenAI and Anthropic" 0
 	else
 		print_result "capacity: one healthy account defaults to max cap for OpenAI and Anthropic" 1 "failures=${failures} last_result=${result}"
+	fi
+	return 0
+}
+
+# GH#36707: an exhausted planning provider must not zero global capacity when
+# the worker selector would launch a healthy fallback provider.
+test_capacity_falls_back_from_exhausted_provider() {
+	local selector="${TEST_ROOT}/select-stub.sh" cooldown result pinned capacity_file
+	printf '#!/usr/bin/env bash\nprintf "openai/test-model\\n"\n' >"$selector"
+	cooldown=$((($(date +%s) + 3600) * 1000))
+	reset_capacity_pressure_env
+	TEST_MAX_WORKERS=24
+	TEST_ACTIVE_WORKERS=0
+	AIDEVOPS_MIN_WORKER_CONCURRENCY=0
+	PULSE_MODEL="anthropic/test-model"
+	PULSE_CAPACITY_SELECT_HELPER="$selector"
+	printf '{"anthropic":[{"status":"rate-limited","cooldownUntil":%s}],"openai":[{"status":"idle"}]}\n' "$cooldown" >"${HOME}/.aidevops/oauth-pool.json"
+	capacity_file=$(mktemp)
+	_dispatch_compute_capacity >"$capacity_file"
+	result=$(<"$capacity_file")
+	PULSE_DISPATCH_CAPACITY_PROVIDER="anthropic"
+	_dispatch_compute_capacity >"$capacity_file"
+	pinned=$(<"$capacity_file")
+	rm -f "$capacity_file"
+	unset PULSE_CAPACITY_SELECT_HELPER PULSE_DISPATCH_CAPACITY_PROVIDER
+	if [[ "$result" == "24 0 24" && "$pinned" == "0 0 0" ]]; then
+		print_result "capacity: exhausted provider falls back to selector provider; explicit pin holds" 0
+	else
+		print_result "capacity: exhausted provider falls back to selector provider; explicit pin holds" 1 "fallback=${result} pinned=${pinned}"
 	fi
 	return 0
 }
@@ -625,6 +654,97 @@ test_min_worker_floor_refill_stops_after_triage_only_round() {
 	return 0
 }
 
+# GH#39682: a supervisor drain written during a refill round stops the next
+# round; without a drain the same stubs keep refilling.
+test_min_worker_floor_refill_stops_on_supervisor_drain() {
+	(
+		AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+		AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS=1
+		STOP_FLAG="${HOME}/.aidevops/logs/stop"
+		drain_flag="${TEST_ROOT}/refill-llm-drain.flag"
+		calls_file="${TEST_ROOT}/refill-llm-drain-calls.txt"
+		: >"$LOGFILE"
+		pulse_apply_provider_load_capacity_cap() { printf '6 1\n'; return 0; }
+		count_active_workers() { printf '2\n'; return 0; }
+		_adaptive_launch_settle_wait() { return 0; }
+		_pulse_llm_drain_requested() {
+			[[ -f "$drain_flag" ]] || return 1
+			printf 'bundle-next\n'
+			return 0
+		}
+		dispatch_max() {
+			printf 'dispatch\n' >>"$calls_file"
+			[[ -z "${TEST_SET_DRAIN:-}" ]] || : >"$drain_flag"
+			printf '1\n'
+			return 0
+		}
+
+		rm -f "$drain_flag"
+		: >"$calls_file"
+		TEST_SET_DRAIN=1 _dispatch_min_worker_floor_refill 6 2
+		local drained_rounds no_drain_rounds
+		drained_rounds=$(wc -l <"$calls_file" | tr -d ' ')
+		rm -f "$drain_flag"
+		: >"$calls_file"
+		_dispatch_min_worker_floor_refill 6 2
+		no_drain_rounds=$(wc -l <"$calls_file" | tr -d ' ')
+		if [[ "$drained_rounds" -eq 1 && "$no_drain_rounds" -eq 6 ]] \
+			&& grep -q 'Minimum worker floor refill stopped: supervisor drain requested for activated bundle bundle-next' "$LOGFILE"; then
+			return 0
+		fi
+		printf 'drained_rounds=%s no_drain_rounds=%s\n' "$drained_rounds" "$no_drain_rounds" \
+			>"${TEST_ROOT}/refill-llm-drain-failure.txt"
+		return 1
+	)
+	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "refill: supervisor drain stops the next refill round" 0
+	else
+		print_result "refill: supervisor drain stops the next refill round" 1 \
+			"$(<"${TEST_ROOT}/refill-llm-drain-failure.txt")"
+	fi
+	return 0
+}
+
+# GH#39510: refill rounds under the early first wave run as normal refills;
+# the caller's first-wave scope is restored after the refill returns.
+test_min_worker_floor_refill_runs_normal_refill_scope() {
+	(
+		AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+		AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS=1
+		STOP_FLAG="${HOME}/.aidevops/logs/stop"
+		TEST_WAVE_FILE="${TEST_ROOT}/refill-wave-scope.txt"
+		: >"$TEST_WAVE_FILE"
+		: >"$LOGFILE"
+		pulse_apply_provider_load_capacity_cap() {
+			printf '6 1\n'
+			return 0
+		}
+		dispatch_max() {
+			printf '%s\n' "${_PULSE_FIRST_DISPATCH_WAVE:-unset}" >>"$TEST_WAVE_FILE"
+			printf '0\n'
+			return 0
+		}
+		local _PULSE_FIRST_DISPATCH_WAVE=1
+		_dispatch_min_worker_floor_refill 6 2
+		if [[ "$(<"$TEST_WAVE_FILE")" == 0 && "$_PULSE_FIRST_DISPATCH_WAVE" == 1 ]]; then
+			return 0
+		fi
+		printf 'refill_waves=%s caller_wave=%s\n' "$(tr '\n' ',' <"$TEST_WAVE_FILE")" \
+			"$_PULSE_FIRST_DISPATCH_WAVE" >"${TEST_ROOT}/refill-wave-scope-failure.txt"
+		return 1
+	)
+	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "refill: early first-wave refill rounds use normal refill scope (GH#39510)" 0
+	else
+		print_result "refill: early first-wave refill rounds use normal refill scope (GH#39510)" 1 \
+			"$(<"${TEST_ROOT}/refill-wave-scope-failure.txt")"
+	fi
+	unset TEST_WAVE_FILE AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS
+	return 0
+}
+
 test_apply_dispatch_refill_reuses_initial_worker_counts() {
 	(
 		AIDEVOPS_MIN_WORKER_CONCURRENCY=6
@@ -731,6 +851,76 @@ test_early_exit_refill_reuses_precomputed_active_count() {
 		print_result "early recycle: refill reuses precomputed active count" 1 "$(<"${TEST_ROOT}/early-precomputed-failure.txt")"
 	fi
 	unset TEST_COUNT_ACTIVE_CALLS_FILE AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS PULSE_BACKFILL_MAX_ATTEMPTS PULSE_LAUNCH_GRACE_SECONDS PRE_RUN_STAGE_TIMEOUT
+	return 0
+}
+
+# GH#39682: a supervisor drain on the owned LLM lock stops the recycle loop
+# before its next fill or supervisor rerun.
+test_early_exit_recycle_stops_on_supervisor_drain() {
+	(
+		AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS=1
+		PULSE_BACKFILL_MAX_ATTEMPTS=2
+		PULSE_LAUNCH_GRACE_SECONDS=0
+		PRE_RUN_STAGE_TIMEOUT=1
+		drain_flag="${TEST_ROOT}/recycle-llm-drain.flag"
+		calls_file="${TEST_ROOT}/recycle-llm-drain-calls.txt"
+		rm -f "$drain_flag"
+		: >"$calls_file"
+		get_max_workers_target() { printf '6\n'; return 0; }
+		count_active_workers() { printf '1\n'; return 0; }
+		count_runnable_candidates() { printf '8\n'; return 0; }
+		count_queued_without_worker() { printf '0\n'; return 0; }
+		_dispatch_min_worker_floor_refill() { return 0; }
+		run_underfill_worker_recycler() { return 0; }
+		prefetch_state() { return 0; }
+		_pulse_llm_drain_requested() {
+			[[ -f "$drain_flag" ]] || return 1
+			printf 'bundle-next\n'
+			return 0
+		}
+		dispatch_max() {
+			printf 'dispatch\n' >>"$calls_file"
+			: >"$drain_flag"
+			printf '1\n'
+			return 0
+		}
+		run_pulse() { printf 'run_pulse\n' >>"$calls_file"; return 0; }
+
+		# Drain arrives during the first fill: no supervisor rerun, no 2nd fill.
+		_run_early_exit_recycle_loop 1
+		[[ "$(tr '\n' ' ' <"$calls_file")" == "dispatch " ]] || {
+			printf 'mid-fill calls=%s\n' "$(tr '\n' ' ' <"$calls_file")" >"${TEST_ROOT}/recycle-llm-drain-failure.txt"
+			return 1
+		}
+		# Drain already present: no fill at all.
+		: >"$calls_file"
+		_run_early_exit_recycle_loop 1
+		[[ ! -s "$calls_file" ]] || {
+			printf 'pre-fill calls=%s\n' "$(tr '\n' ' ' <"$calls_file")" >"${TEST_ROOT}/recycle-llm-drain-failure.txt"
+			return 1
+		}
+		grep -q "Early-exit recycle stopped: supervisor drain requested; activated bundle bundle-next" "$LOGFILE" || {
+			printf 'drain stop not logged\n' >"${TEST_ROOT}/recycle-llm-drain-failure.txt"
+			return 1
+		}
+		# Drain arrives during prefetch: the supervisor is not relaunched.
+		rm -f "$drain_flag"
+		: >"$calls_file"
+		dispatch_max() { printf 'dispatch\n' >>"$calls_file"; printf '1\n'; return 0; }
+		prefetch_state() { : >"$drain_flag"; return 0; }
+		_run_early_exit_recycle_loop 1
+		[[ "$(tr '\n' ' ' <"$calls_file")" == "dispatch " ]] || {
+			printf 'mid-prefetch calls=%s\n' "$(tr '\n' ' ' <"$calls_file")" >"${TEST_ROOT}/recycle-llm-drain-failure.txt"
+			return 1
+		}
+		return 0
+	)
+	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "early recycle: supervisor drain stops fill and supervisor rerun" 0
+	else
+		print_result "early recycle: supervisor drain stops fill and supervisor rerun" 1 "$(<"${TEST_ROOT}/recycle-llm-drain-failure.txt")"
+	fi
 	return 0
 }
 
@@ -906,6 +1096,46 @@ EOF
 	return 0
 }
 
+test_no_selectable_model_canary_stays_hard_under_minimum_floor() {
+	# GH#38717: exit 75 means no model in the dispatch tier is selectable; a
+	# stale soft reason file must not turn it into a minimum-floor bypass.
+	local fake_helper worker_log state_dir args_file
+	fake_helper="${TEST_ROOT}/fake-no-model-canary.sh"
+	worker_log="${TEST_ROOT}/worker-no-model.log"
+	state_dir="${HOME}/.aidevops/.agent-workspace/headless-runtime"
+	args_file="${TEST_ROOT}/no-model-canary.args"
+	mkdir -p "$state_dir"
+	printf 'inconclusive\n' >"${state_dir}/canary-last-fail.reason"
+	cat >"$fake_helper" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >"${args_file}"
+exit 75
+EOF
+	chmod +x "$fake_helper"
+	HEADLESS_RUNTIME_HELPER="$fake_helper"
+	AIDEVOPS_HEADLESS_RUNTIME_DIR="$state_dir"
+	AIDEVOPS_DISPATCH_LEDGER_DIR="${TEST_ROOT}/empty-ledger"
+	mkdir -p "$AIDEVOPS_DISPATCH_LEDGER_DIR"
+	TEST_ACTIVE_WORKERS=5
+	AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+	_DLW_CANARY_SOFT_BYPASS_REASON="stale"
+	local args=""
+	if _dlw_canary_preflight 106 "o/r" "$worker_log" "thinking" "anthropic/pick"; then
+		print_result "canary: no selectable model stays hard under minimum floor" 1 "unexpected success"
+		return 0
+	fi
+	args=$(<"$args_file")
+	if [[ -n "${_DLW_CANARY_SOFT_BYPASS_REASON:-}" ]]; then
+		print_result "canary: no selectable model stays hard under minimum floor" 1 \
+			"soft_bypass_reason=${_DLW_CANARY_SOFT_BYPASS_REASON}"
+	elif [[ "$args" != *"--tier thinking"* || "$args" != *"--initial-model anthropic/pick"* || "$args" == *"--model "* ]]; then
+		print_result "canary: no selectable model stays hard under minimum floor" 1 "args=${args}"
+	else
+		print_result "canary: no selectable model stays hard under minimum floor" 0
+	fi
+	return 0
+}
+
 test_soft_canary_bypass_reason_propagates_to_worker_env() {
 	local -a worker_cmd=(env)
 	_DLW_CANARY_SOFT_BYPASS_REASON="inconclusive"
@@ -1044,6 +1274,7 @@ for test_name in \
 	test_capacity_uses_configured_provider_account_multiplier \
 	test_capacity_env_multiplier_overrides_config \
 	test_capacity_defaults_single_account_to_max_cap \
+	test_capacity_falls_back_from_exhausted_provider \
 	test_capacity_recent_service_interruptions_reduce_slots \
 	test_capacity_recent_progress_gets_runway_under_pressure \
 	test_capacity_clamps_provider_cap_below_active_to_zero_available \
@@ -1055,13 +1286,17 @@ for test_name in \
 	test_apply_dispatch_skips_refill_when_capacity_cap_disables_floor \
 	test_min_worker_floor_refill_uses_precomputed_counts \
 	test_min_worker_floor_refill_stops_after_triage_only_round \
+	test_min_worker_floor_refill_stops_on_supervisor_drain \
+	test_min_worker_floor_refill_runs_normal_refill_scope \
 	test_apply_dispatch_refill_reuses_initial_worker_counts \
 	test_early_exit_refill_reuses_precomputed_active_count \
+	test_early_exit_recycle_stops_on_supervisor_drain \
 	test_active_pulse_refill_uses_min_floor_above_raw_max \
 	test_soft_canary_failure_bypasses_with_recent_worker_evidence \
 	test_hard_canary_failure_blocks_despite_recent_worker_evidence \
 	test_local_error_canary_failure_stays_hard_under_minimum_floor \
 	test_soft_canary_failure_bypasses_under_minimum_floor_without_recent_evidence \
+	test_no_selectable_model_canary_stays_hard_under_minimum_floor \
 	test_soft_canary_bypass_reason_propagates_to_worker_env \
 	test_class_cap_value_arithmetic \
 	test_class_cap_limits_class_to_half_of_target \

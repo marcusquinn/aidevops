@@ -16,6 +16,8 @@
 #   - _complexity_run_llm_sweep: creates meta reviews outside measured function debt
 #   - _complexity_scan_check_interval: returns 0 when no last-run file
 #   - _complexity_scan_check_interval: returns 1 when interval not elapsed
+#   - _complexity_scan_permission_gate: unverified identity fails closed (GH#37554)
+#   - _complexity_release_creation_holds: lifts only write-author creation holds (GH#37554)
 
 set -euo pipefail
 
@@ -92,7 +94,7 @@ teardown_test_env() {
 
 # Disposable fixture repositories bypass the production canonical-repository shim.
 _fixture_git() {
-	/usr/bin/git "$@"
+	command -p git "$@"
 	return $?
 }
 
@@ -104,6 +106,12 @@ gh_issue_list() {
 
 gh_create_issue() {
 	printf '%s\n' "$*" >"$GH_CREATE_ISSUE_LOG"
+	return 0
+}
+
+repo_allows_pulse_write_actions() {
+	local slug="$1"
+	[[ "$slug" == "test/repo" && "${GH_WRITE_ALLOWED:-true}" == "true" ]] || return 1
 	return 0
 }
 
@@ -145,8 +153,35 @@ case "$cmd" in
 		;;
 	issue)
 		if [[ "$subcmd" == "list" ]]; then
-			printf '%s\n' "${GH_ISSUE_LIST_JSON:-[]}"
+			if [[ "$args" == *'--label quality-debt'* ]]; then
+				if [[ -f "${GH_ISSUE_LIST_LOG}.closed" ]]; then
+					printf '[]\n'
+				else
+					printf '%s\n' "${GH_SWEEP_ISSUES_JSON:-[]}"
+				fi
+			elif [[ "$args" == *'--jq length'* ]]; then
+				printf '%s\n' "${GH_SWEEP_ISSUES_JSON:-[]}" | jq length
+			else
+				printf '%s\n' "${GH_ISSUE_LIST_JSON:-[]}"
+			fi
 			exit 0
+		fi
+		if [[ "$subcmd" == "view" ]]; then
+			[[ "${GH_VIEW_FAIL:-false}" == "true" ]] && exit 1
+			if [[ -f "${GH_ISSUE_LIST_LOG}.commented" ]]; then
+				printf 'true\n'
+			else
+				printf 'false\n'
+			fi
+		fi
+		if [[ "$subcmd" == "comment" ]]; then
+			printf '%s\n' "${args//$'\n'/ }" >>"${GH_ISSUE_LIST_LOG}.writes"
+			: >"${GH_ISSUE_LIST_LOG}.commented"
+		fi
+		if [[ "$subcmd" == "close" ]]; then
+			[[ "${GH_CLOSE_FAIL:-false}" == "true" ]] && exit 1
+			printf '%s\n' "$args" >>"${GH_ISSUE_LIST_LOG}.writes"
+			: >"${GH_ISSUE_LIST_LOG}.closed"
 		fi
 		;;
 esac
@@ -387,7 +422,64 @@ test_llm_sweep_meta_review_is_not_measured_debt() {
 		print_result "_complexity_run_llm_sweep: canonical scope authorizes only generator and regression test" 1 \
 			"expected exact two-file scope, got: ${scope}"
 	fi
+	# GH#37554: a verified-admin stall review must be dispatchable, never an
+	# inferred interactive claim or a creation hold.
+	if [[ "$create_args" == *'--label auto-dispatch'* && "$create_args" == *'--label origin:worker'* &&
+		"$create_args" != *'hold-for-review'* ]]; then
+		print_result "_complexity_run_llm_sweep: verified-admin review is dispatchable" 0
+	else
+		print_result "_complexity_run_llm_sweep: verified-admin review is dispatchable" 1 "create=${create_args}"
+	fi
 	unset GH_ISSUE_LIST_JSON _COMPLEXITY_SCAN_SKIP_REVIEW_GATE
+	return 0
+}
+
+test_recovered_sweep_cleanup() {
+	install_fake_gh_for_sweep
+	local scenario="" writes="" expected=""
+	for scenario in zero decreased throughput dispatched stalled unmarked denied retry unreadable dedup active; do
+		rm -f "$COMPLEXITY_LLM_SWEEP_LAST_RUN" "${GH_ISSUE_LIST_LOG}.commented" "${GH_ISSUE_LIST_LOG}.closed"
+		: >"${GH_ISSUE_LIST_LOG}.writes"
+		printf '10\n' >"$COMPLEXITY_DEBT_COUNT_FILE"
+		export GH_OPEN_DEBT_COUNT=10 GH_RECENT_CLOSURES=0 GH_ISSUE_LIST_JSON='[]'
+		export GH_WRITE_ALLOWED=true GH_CLOSE_FAIL=false GH_VIEW_FAIL=false
+		export GH_SWEEP_ISSUES_JSON='[{"number":99,"body":"<!-- aidevops:generator=complexity-stall-sweep stall_hours=6 -->"}]'
+		expected=2
+		case "$scenario" in
+			zero) export GH_OPEN_DEBT_COUNT=0 ;;
+			decreased) export GH_OPEN_DEBT_COUNT=5 ;;
+			throughput) export GH_RECENT_CLOSURES=2 ;;
+			dispatched) export GH_ISSUE_LIST_JSON='[{"number":42,"title":"active debt","labels":[{"name":"status:in-review"}]}]' ;;
+			stalled) expected=0 ;;
+			unmarked) export GH_OPEN_DEBT_COUNT=0 GH_SWEEP_ISSUES_JSON='[{"number":99,"body":"Unrelated simplification debt stalled review"}]'; expected=0 ;;
+			denied) export GH_OPEN_DEBT_COUNT=0 GH_WRITE_ALLOWED=false; expected=0 ;;
+			retry) export GH_OPEN_DEBT_COUNT=0 GH_CLOSE_FAIL=true ;;
+			unreadable) export GH_OPEN_DEBT_COUNT=0 GH_VIEW_FAIL=true; expected=0 ;;
+			dedup) export GH_OPEN_DEBT_COUNT=0 ;;
+			active)
+				export GH_OPEN_DEBT_COUNT=0 GH_SWEEP_ISSUES_JSON='[{"number":99,"body":"<!-- aidevops:generator=complexity-stall-sweep stall_hours=6 -->","labels":[{"name":"status:in-progress"}]}]'
+				expected=0
+				;;
+		esac
+		if [[ "$scenario" == "dedup" ]]; then
+			_complexity_run_llm_sweep "test/repo" "100000" "maintainer"
+		else
+			_complexity_llm_sweep_due "100000" "test/repo" || true
+		fi
+		# Retry after a failed close must reuse its rationale, not comment again.
+		export GH_CLOSE_FAIL=false
+		rm -f "$COMPLEXITY_LLM_SWEEP_LAST_RUN"
+		_complexity_llm_sweep_due "200000" "test/repo" || true
+		writes=$(wc -l <"${GH_ISSUE_LIST_LOG}.writes")
+		if [[ "$writes" -eq "$expected" ]] &&
+			{ [[ "$expected" -eq 0 ]] || grep -qF -- '--reason not planned' "${GH_ISSUE_LIST_LOG}.writes"; }; then
+			print_result "recovered stall review: ${scenario}" 0
+		else
+			print_result "recovered stall review: ${scenario}" 1 "expected ${expected} writes, got ${writes}"
+		fi
+	done
+	unset GH_OPEN_DEBT_COUNT GH_RECENT_CLOSURES GH_ISSUE_LIST_JSON GH_SWEEP_ISSUES_JSON
+	unset GH_WRITE_ALLOWED GH_CLOSE_FAIL GH_VIEW_FAIL
 	return 0
 }
 
@@ -485,6 +577,154 @@ test_check_interval_due_when_elapsed() {
 }
 
 # =============================================================================
+# Tests: verified-admin authority (GH#37554)
+# =============================================================================
+
+test_permission_gate_fails_closed() {
+	local result=""
+	result=$(
+		_gh_current_user_allows_repo_write() {
+			AIDEVOPS_GH_WRITE_PERMISSION_USER="${FIXTURE_USER}"
+			AIDEVOPS_GH_WRITE_PERMISSION_LEVEL="${FIXTURE_LEVEL}"
+			[[ -n "$FIXTURE_USER" && "$FIXTURE_LEVEL" != read ]] || return 1
+			return 0
+		}
+		local scenario=""
+		for scenario in "co-admin:admin" "writer:write" "reader:read" ":unknown"; do
+			FIXTURE_USER="${scenario%%:*}" FIXTURE_LEVEL="${scenario#*:}"
+			if _complexity_scan_permission_gate "owner/repo"; then
+				printf 'run-%s,' "$_COMPLEXITY_SCAN_SKIP_REVIEW_GATE"
+			else
+				printf 'skip-%s,' "$_COMPLEXITY_SCAN_SKIP_REVIEW_GATE"
+			fi
+		done
+	)
+	# Only a verified admin runs, and never with a creation hold; an empty
+	# identity (the GH#37554 root cause) skips instead of creating held issues.
+	if [[ "$result" == "run-true,skip-false,skip-false,skip-false," ]]; then
+		print_result "_complexity_scan_permission_gate: verified admin runs unheld; unverified identity fails closed" 0
+	else
+		print_result "_complexity_scan_permission_gate: verified admin runs unheld; unverified identity fails closed" 1 "got: ${result}"
+	fi
+	return 0
+}
+
+# Run _complexity_release_creation_holds against one held-issue fixture.
+# Arguments: $1 - hold label actor, $2 - hold label time, $3 - author permission,
+#            $4 - body marker, $5 - skip-gate value
+# Output: edit log contents
+run_release_fixture() {
+	local hold_actor="$1"
+	local hold_time="$2"
+	local author_perm="$3"
+	local marker="$4"
+	local skip_gate="$5"
+	local edit_log="${TEST_ROOT}/release-edits.log"
+	: >"$edit_log"
+	(
+		FIXTURE_HELD=$(jq -cn --arg body "$marker" \
+			'[{number:7,body:$body,author:{login:"co-admin"},createdAt:"2026-11-10T23:00:57Z"}]')
+		gh_issue_list() { printf '%s\n' "$FIXTURE_HELD"; return 0; }
+		gh() { printf '%s|%s\n' "$hold_actor" "$hold_time"; return 0; }
+		_gh_collaborator_permission_lookup() { printf -v "$3" '%s' "$author_perm"; return 0; }
+		gh_issue_edit_safe() { printf '%s\n' "$*" >>"$edit_log"; return 0; }
+		gh_issue_comment() { return 0; }
+		_COMPLEXITY_SCAN_SKIP_REVIEW_GATE="$skip_gate"
+		_complexity_release_creation_holds "owner/repo"
+	)
+	cat "$edit_log"
+	return 0
+}
+
+test_release_creation_holds() {
+	local gen='<!-- aidevops:generator=agent-doc-simplification-gate cited_file=x.md threshold=500 -->'
+	local edits=""
+	edits=$(run_release_fixture co-admin 2026-11-10T23:00:58Z "write" "$gen" true)
+	if [[ "$edits" == *'--remove-label hold-for-review'* && "$edits" == *'--add-label auto-dispatch'* ]]; then
+		print_result "release creation holds: write-authorized author creation hold is released" 0
+	else
+		print_result "release creation holds: write-authorized author creation hold is released" 1 "edits=${edits}"
+	fi
+	local scenario="" actor="" at="" perm="" body="" gate=""
+	for scenario in later-hold other-actor read-only unmarked unverified-pulse; do
+		actor=co-admin at=2026-11-10T23:00:58Z perm="write" body="$gen" gate=true
+		case "$scenario" in
+		later-hold) at=2026-11-11T02:00:00Z ;;
+		other-actor) actor=maintainer ;;
+		read-only) perm="read" ;;
+		unmarked) body='Human-authored issue' ;;
+		unverified-pulse) gate=false ;;
+		esac
+		edits=$(run_release_fixture "$actor" "$at" "$perm" "$body" "$gate")
+		if [[ -z "$edits" ]]; then
+			print_result "release creation holds: ${scenario} hold is preserved" 0
+		else
+			print_result "release creation holds: ${scenario} hold is preserved" 1 "edits=${edits}"
+		fi
+	done
+	return 0
+}
+
+# Run the backfill with one failing dependency. Arguments: $1 - mode
+# (list|timeline|perm). Output: edit log, "---", then diagnostic log lines.
+run_failure_fixture() {
+	local mode="$1"
+	local edit_log="${TEST_ROOT}/failure-edits.log"
+	local diag_log="${TEST_ROOT}/failure-diag.log"
+	: >"$edit_log"
+	: >"$diag_log"
+	(
+		LOGFILE="$diag_log"
+		FIXTURE_HELD=$(jq -cn '[{number:7,body:"<!-- aidevops:generator=agent-doc-simplification-gate cited_file=x.md -->",author:{login:"co-admin"},createdAt:"2026-11-10T23:00:57Z"}]')
+		gh_issue_list() { [[ "$mode" == list ]] && return 1; printf '%s\n' "$FIXTURE_HELD"; return 0; }
+		gh() { [[ "$mode" == timeline ]] && return 1; printf 'co-admin|2026-11-10T23:00:58Z\n'; return 0; }
+		_gh_collaborator_permission_lookup() {
+			if [[ "$mode" != perm ]]; then
+				printf -v "$3" '%s' write
+				return 0
+			fi
+			AIDEVOPS_GH_COLLAB_PERMISSION_HTTP=502
+			AIDEVOPS_GH_COLLAB_PERMISSION_REASON=bad-gateway
+			return 1
+		}
+		gh_issue_edit_safe() { printf '%s\n' "$*" >>"$edit_log"; return 0; }
+		gh_issue_comment() { return 0; }
+		_COMPLEXITY_SCAN_SKIP_REVIEW_GATE=true
+		_complexity_release_creation_holds "owner/repo"
+	) || {
+		echo "NONZERO"
+		return 0
+	}
+	cat "$edit_log"
+	echo "---"
+	cat "$diag_log"
+	return 0
+}
+
+test_release_creation_hold_failure_logging() {
+	local out=""
+	out=$(run_failure_fixture list)
+	if [[ "$out" == *"issue list read failed"* && "$out" != *NONZERO* ]]; then
+		print_result "creation-hold backfill: list failure is logged, returns 0" 0
+	else
+		print_result "creation-hold backfill: list failure is logged, returns 0" 1 "out=${out}"
+	fi
+	out=$(run_failure_fixture timeline)
+	if [[ "$out" == "---"* && "$out" == *"timeline read failed for #7"* && "$out" == *"timeline_failed=1"* ]]; then
+		print_result "creation-hold backfill: timeline failure logs retry, no release" 0
+	else
+		print_result "creation-hold backfill: timeline failure logs retry, no release" 1 "out=${out}"
+	fi
+	out=$(run_failure_fixture perm)
+	if [[ "$out" == "---"* && "$out" == *"http=502 reason=bad-gateway"* ]]; then
+		print_result "creation-hold backfill: permission failure logs HTTP/reason, no release" 0
+	else
+		print_result "creation-hold backfill: permission failure logs HTTP/reason, no release" 1 "out=${out}"
+	fi
+	return 0
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -506,12 +746,16 @@ main() {
 	test_llm_sweep_due_when_zero_recent_closures
 	test_llm_sweep_skips_when_all_debt_is_in_review
 	test_llm_sweep_meta_review_is_not_measured_debt
+	test_recovered_sweep_cleanup
 	test_both_stall_issue_creators_use_meta_label
 	test_recent_closures_defaults_empty_arithmetic_inputs
 	test_llm_sweep_unset_interval_does_not_trip_strict_mode
 	test_check_interval_due_when_no_last_run
 	test_check_interval_not_due_when_recent
 	test_check_interval_due_when_elapsed
+	test_permission_gate_fails_closed
+	test_release_creation_holds
+	test_release_creation_hold_failure_logging
 
 	echo ""
 	echo "Results: ${TESTS_RUN} run, $((TESTS_RUN - TESTS_FAILED)) passed, ${TESTS_FAILED} failed"

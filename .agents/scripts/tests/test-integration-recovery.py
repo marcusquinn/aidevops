@@ -165,6 +165,17 @@ class RecoveryTests(unittest.TestCase):
         self.assertIsNone(recovery.observe(self.db, result["id"], state))
         self.assertEqual(self.db.execute("SELECT status FROM requests").fetchone()[0], "resolved")
 
+    def test_persistent_quality_dashboard_retires_without_waking(self):
+        result = recovery.capture(self.db, self.envelope, self.request)
+        state = self.state()
+        state["issue"]["labels"] = [{"name": "persistent"}]
+        self.assertIsNotNone(recovery.observe(self.db, result["id"], state))
+        state["issue"]["labels"].append({"name": "quality-review"})
+        self.assertIsNone(recovery.observe(self.db, result["id"], state))
+        self.assertEqual(recovery.pending(self.db), [])
+        self.assertEqual(recovery.show(self.db, result["id"])["observed"]["retirement_reason"], "status_surface")
+        self.assertEqual(self.db.execute("SELECT status FROM requests").fetchone()[0], "resolved")
+
     def test_prior_queue_schema_migrates_without_losing_request(self):
         root = Path(self.tmp.name) / "older"
         root.mkdir(mode=0o700)

@@ -71,526 +71,11 @@ PY
 	return 0
 }
 
-#######################################
-# Build a mock gh executable for claim protocol tests.
-# Uses env vars:
-#   MOCK_GH_STATE_DIR, MOCK_OLD_CLAIM_CREATED_AT, MOCK_NEW_CLAIM_CREATED_AT,
-#   MOCK_OLD_CLAIM_RUNNER
-# Returns: path to mock gh directory via stdout
-#######################################
-create_mock_gh() {
-	local state_dir="$1"
-	local mock_bin_dir
-	mock_bin_dir="${state_dir}/bin"
-	mkdir -p "$mock_bin_dir"
+# shellcheck source=test-dispatch-claim-mocks.sh
+source "${SCRIPT_DIR}/test-dispatch-claim-mocks.sh"
 
-	cat >"${mock_bin_dir}/gh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-local_state_dir="${MOCK_GH_STATE_DIR:?}"
-post_body_file="${local_state_dir}/post_body.txt"
-delete_log_file="${local_state_dir}/delete_ids.log"
-post_attempts_file="${local_state_dir}/post_attempts.txt"
-
-if [[ "${1:-}" != "api" ]]; then
-	exit 1
-fi
-shift
-
-endpoint="${1:-}"
-shift || true
-
-if [[ "$endpoint" == "user" ]]; then
-	printf 'mockrunner\n'
-	exit 0
-fi
-
-if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
-	method="GET"
-	body=""
-	while [[ "$#" -gt 0 ]]; do
-		case "$1" in
-		--method)
-			method="$2"
-			shift 2
-			;;
-		--field)
-			if [[ "$2" == body=* ]]; then
-				body="${2#body=}"
-			fi
-			shift 2
-			;;
-		--jq)
-			shift 2
-			;;
-		*)
-			shift
-			;;
-		esac
-	done
-
-	if [[ "$method" == "POST" ]]; then
-		post_attempts=0
-		if [[ -f "$post_attempts_file" ]]; then
-			post_attempts=$(<"$post_attempts_file")
-		fi
-		post_attempts=$((post_attempts + 1))
-		printf '%s' "$post_attempts" >"$post_attempts_file"
-		if [[ "${MOCK_POST_FAILS:-0}" =~ ^[0-9]+$ && "$post_attempts" -le "${MOCK_POST_FAILS:-0}" ]]; then
-			printf 'mock transient claim post failure %s\n' "$post_attempts" >&2
-			exit 1
-		fi
-		printf '%s' "$body" >"$post_body_file"
-		printf '999\n'
-		exit 0
-	fi
-
-	if [[ -f "$post_body_file" ]]; then
-		new_body=$(<"$post_body_file")
-	else
-		new_body=""
-	fi
-
-	jq -n \
-		--arg runner "${MOCK_OLD_CLAIM_RUNNER:?}" \
-		--arg old_ts "${MOCK_OLD_CLAIM_CREATED_AT:?}" \
-		--arg new_body "$new_body" \
-		--arg new_ts "${MOCK_NEW_CLAIM_CREATED_AT:?}" \
-		--argjson hide_new "$("${0%/*}/mock-hide-new-claim")" \
-		'[
-			{id: 1, body: ("DISPATCH_CLAIM nonce=old-nonce runner=" + $runner + " ts=" + $old_ts + " max_age_s=120" + (if env.MOCK_OLD_CLAIM_DEVICE then " lease_token=old-nonce device=" + env.MOCK_OLD_CLAIM_DEVICE + " session=issue-42 phase=prelaunch expires_at=4102444800" else "" end)), created_at: $old_ts},
-			{id: 999, body: $new_body, created_at: $new_ts, user:{login:($new_body | capture("runner=(?<login>[^ ]+)").login)}, author_association:"MEMBER"}
-		] | map(. + {user:{login:(.user.login // (.body | capture("runner=(?<login>[^ ]+)").login))}, author_association:(.author_association // "MEMBER")}) | if $hide_new == 1 then map(select(.id != 999)) else . end'
-	exit 0
-fi
-
-if [[ "$endpoint" == repos/*/issues/comments/* ]]; then
-	comment_id="${endpoint##*/}"
-	printf '%s\n' "$comment_id" >>"$delete_log_file"
-	exit 0
-fi
-
-exit 1
-EOF
-	chmod +x "${mock_bin_dir}/gh"
-	write_mock_hide_new_claim "$mock_bin_dir"
-	printf '%s' "$mock_bin_dir"
-	return 0
-}
-
-#######################################
-# GH#34922: helper for create_mock_gh simulating read-after-write lag.
-# Prints 1 (hide our new claim) for the first MOCK_HIDE_NEW_CLAIM_READS
-# comment reads after the claim POST, else 0.
-# Args: $1 = mock bin dir
-#######################################
-write_mock_hide_new_claim() {
-	local mock_bin_dir="$1"
-	cat >"${mock_bin_dir}/mock-hide-new-claim" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-state_dir="${MOCK_GH_STATE_DIR:?}"
-limit="${MOCK_HIDE_NEW_CLAIM_READS:-0}"
-hidden_file="${state_dir}/hidden_reads.txt"
-hidden=0
-[[ -f "$hidden_file" ]] && hidden=$(<"$hidden_file")
-if [[ -f "${state_dir}/post_body.txt" && "$limit" =~ ^[0-9]+$ && "$hidden" -lt "$limit" ]]; then
-	printf '%s' "$((hidden + 1))" >"$hidden_file"
-	printf '1\n'
-	exit 0
-fi
-printf '0\n'
-EOF
-	chmod +x "${mock_bin_dir}/mock-hide-new-claim"
-	return 0
-}
-
-#######################################
-# Write the header and argument parser for the stale-worker mock gh executable.
-# Args: $1 = mock gh executable path
-#######################################
-write_stale_worker_mock_header() {
-	local mock_gh_path="$1"
-	cat >"$mock_gh_path" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-local_state_dir="${MOCK_GH_STATE_DIR:?}"
-post_body_file="${local_state_dir}/post_body.txt"
-terminal_body="${MOCK_TERMINAL_BODY:-}"
-dispatch_body="${MOCK_DISPATCH_BODY:-Dispatching worker (PID 12345)}"
-paginated_comments="${MOCK_PAGINATED_COMMENTS:-false}"
-
-if [[ "${1:-}" != "api" ]]; then
-	exit 1
-fi
-shift
-
-endpoint="${1:-}"
-shift || true
-
-if [[ "$endpoint" == "user" ]]; then
-	printf 'mockrunner\n'
-	exit 0
-fi
-
-if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
-	method="GET"
-	body=""
-	while [[ "$#" -gt 0 ]]; do
-		case "$1" in
-		--method)
-			method="$2"
-			shift 2
-			;;
-		--field)
-			if [[ "$2" == body=* ]]; then
-				body="${2#body=}"
-			fi
-			shift 2
-			;;
-		--jq)
-			shift 2
-			;;
-		*)
-			shift
-			;;
-		esac
-	done
-
-EOF
-	return 0
-}
-
-#######################################
-# Write the POST handling branch for the stale-worker mock gh executable.
-# Args: $1 = mock gh executable path
-#######################################
-write_stale_worker_mock_post_handler() {
-	local mock_gh_path="$1"
-	cat >>"$mock_gh_path" <<'EOF'
-
-	if [[ "$method" == "POST" ]]; then
-		printf '%s' "$body" >"$post_body_file"
-		printf '999\n'
-		exit 0
-	fi
-
-	if [[ -f "$post_body_file" ]]; then
-		new_body=$(<"$post_body_file")
-	else
-		new_body=""
-	fi
-
-EOF
-	return 0
-}
-
-#######################################
-# Write terminal-comment response branches for the stale-worker mock gh executable.
-# Args: $1 = mock gh executable path
-#######################################
-write_stale_worker_mock_terminal_responses() {
-	local mock_gh_path="$1"
-	cat >>"$mock_gh_path" <<'EOF'
-
-	if [[ -n "$terminal_body" ]]; then
-		if [[ "$paginated_comments" == "true" ]]; then
-			jq -n \
-				--arg dispatch_body "$dispatch_body" \
-				--arg dispatch_ts "${MOCK_DISPATCH_CREATED_AT:?}" \
-				--arg terminal_body "$terminal_body" \
-				--arg terminal_ts "${MOCK_TERMINAL_CREATED_AT:?}" \
-				--arg new_body "$new_body" \
-				--arg claim_ts "${MOCK_CLAIM_CREATED_AT:?}" \
-				'[
-					[{id: 1, body_start: "human discussion", body: "human discussion", created_at: "2026-05-01T00:00:00Z"}],
-					[
-						{id: 10, body_start: $dispatch_body, body: $dispatch_body, created_at: $dispatch_ts},
-						{id: 11, body_start: $terminal_body, body: $terminal_body, created_at: $terminal_ts},
-						{id: 999, body_start: $new_body, body: $new_body, created_at: $claim_ts}
-					]
-			] | map(map(. + {user:{login:"mockrunner"}, author_association:"MEMBER"}))'
-			exit 0
-		fi
-		jq -n \
-			--arg dispatch_body "$dispatch_body" \
-			--arg dispatch_ts "${MOCK_DISPATCH_CREATED_AT:?}" \
-			--arg terminal_body "$terminal_body" \
-			--arg terminal_ts "${MOCK_TERMINAL_CREATED_AT:?}" \
-			--arg new_body "$new_body" \
-			--arg claim_ts "${MOCK_CLAIM_CREATED_AT:?}" \
-			'[
-				{id: 10, body_start: $dispatch_body, body: $dispatch_body, created_at: $dispatch_ts},
-				{id: 11, body_start: $terminal_body, body: $terminal_body, created_at: $terminal_ts},
-				{id: 999, body_start: $new_body, body: $new_body, created_at: $claim_ts}
-		] | map(. + {user:{login:"mockrunner"}, author_association:"MEMBER"})'
-		exit 0
-	fi
-
-EOF
-	return 0
-}
-
-#######################################
-# Write non-terminal response branches for the stale-worker mock gh executable.
-# Args: $1 = mock gh executable path
-#######################################
-write_stale_worker_mock_active_responses() {
-	local mock_gh_path="$1"
-	cat >>"$mock_gh_path" <<'EOF'
-
-	if [[ "$paginated_comments" == "true" ]]; then
-		jq -n \
-			--arg dispatch_body "$dispatch_body" \
-			--arg dispatch_ts "${MOCK_DISPATCH_CREATED_AT:?}" \
-			--arg new_body "$new_body" \
-			--arg claim_ts "${MOCK_CLAIM_CREATED_AT:?}" \
-			'[
-				[{id: 1, body_start: "human discussion", body: "human discussion", created_at: "2026-05-01T00:00:00Z"}],
-				[
-					{id: 10, body_start: $dispatch_body, body: $dispatch_body, created_at: $dispatch_ts},
-					{id: 999, body_start: $new_body, body: $new_body, created_at: $claim_ts}
-				]
-			] | map(map(. + {user:{login:"mockrunner"}, author_association:"MEMBER"}))'
-			exit 0
-		fi
-
-	jq -n \
-		--arg dispatch_body "$dispatch_body" \
-		--arg dispatch_ts "${MOCK_DISPATCH_CREATED_AT:?}" \
-		--arg new_body "$new_body" \
-		--arg claim_ts "${MOCK_CLAIM_CREATED_AT:?}" \
-		'[
-			{id: 10, body_start: $dispatch_body, body: $dispatch_body, created_at: $dispatch_ts},
-			{id: 999, body_start: $new_body, body: $new_body, created_at: $claim_ts}
-	] | map(. + {user:{login:"mockrunner"}, author_association:"MEMBER"})'
-	exit 0
-fi
-
-exit 1
-EOF
-	return 0
-}
-
-#######################################
-# Build a mock gh executable for stale-worker takeover claim tests.
-# Uses env vars:
-#   MOCK_GH_STATE_DIR, MOCK_DISPATCH_CREATED_AT, MOCK_CLAIM_CREATED_AT
-# Returns: path to mock gh directory via stdout
-#######################################
-create_stale_worker_mock_gh() {
-	local state_dir="${1:?state_dir is required}"
-	local terminal_body="${2:-}"
-	local mock_bin_dir
-	local mock_gh_path
-	mock_bin_dir="${state_dir}/bin"
-	mock_gh_path="${mock_bin_dir}/gh"
-	mkdir -p "$mock_bin_dir"
-
-	write_stale_worker_mock_header "$mock_gh_path"
-	write_stale_worker_mock_post_handler "$mock_gh_path"
-	write_stale_worker_mock_terminal_responses "$mock_gh_path"
-	write_stale_worker_mock_active_responses "$mock_gh_path"
-
-	chmod +x "${mock_bin_dir}/gh"
-	MOCK_TERMINAL_BODY="$terminal_body" printf '%s' "$mock_bin_dir"
-	return 0
-}
-
-#######################################
-# Build a mock gh executable for claim-only orphan recovery tests.
-# Uses env vars:
-#   MOCK_GH_STATE_DIR, MOCK_CLAIM_CREATED_AT, MOCK_ASSIGNEE_COUNT,
-#   MOCK_INCLUDE_DISPATCH
-# Returns: path to mock gh directory via stdout
-#######################################
-create_claim_orphan_mock_gh() {
-	local state_dir="$1"
-	local mock_bin_dir
-	mock_bin_dir="${state_dir}/bin"
-	mkdir -p "$mock_bin_dir"
-
-	cat >"${mock_bin_dir}/gh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-local_state_dir="${MOCK_GH_STATE_DIR:?}"
-release_body_file="${local_state_dir}/release_body.txt"
-issue_call_file="${local_state_dir}/issue_calls.txt"
-
-if [[ "${1:-}" != "api" ]]; then
-	exit 1
-fi
-shift
-
-endpoint="${1:-}"
-shift || true
-
-if [[ "$endpoint" == "user" ]]; then
-	printf 'mockrunner\n'
-	exit 0
-fi
-
-if [[ "$endpoint" == repos/*/issues/[0-9]* && "$endpoint" != */comments* ]]; then
-	printf '1\n' >>"$issue_call_file"
-	printf '%s\n' "${MOCK_ASSIGNEE_COUNT:-0}"
-	exit 0
-fi
-
-if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
-	method="GET"
-	body=""
-	while [[ "$#" -gt 0 ]]; do
-		case "$1" in
-		--method)
-			method="$2"
-			shift 2
-			;;
-		--field)
-			if [[ "$2" == body=* ]]; then
-				body="${2#body=}"
-			fi
-			shift 2
-			;;
-		--jq | --paginate | --slurp)
-			shift
-			[[ "${1:-}" != .* ]] || shift
-			;;
-		*)
-			shift
-			;;
-		esac
-	done
-
-	if [[ "$method" == "POST" ]]; then
-		printf '%s' "$body" >"$release_body_file"
-		printf '1001\n'
-		exit 0
-	fi
-
-	call=1
-	[[ ! -f "${local_state_dir}/comment_calls" ]] || call=$(( $(<"${local_state_dir}/comment_calls") + 1 ))
-	printf '%s' "$call" >"${local_state_dir}/comment_calls"
-	[[ "${MOCK_REFRESH_FAIL:-false}" != true || "$call" -eq 1 ]] || exit 1
-	jq -n --arg claim_ts "${MOCK_CLAIM_CREATED_AT:?}" --argjson call "$call" \
-		--arg device "${MOCK_CLAIM_DEVICE:-orphan-device}" --arg session "${MOCK_CLAIM_SESSION:-issue-42}" \
-		--arg expiry "${MOCK_CLAIM_EXPIRY-auto}" --arg event "${MOCK_NEW_EVENT:-}" '
-		(if $expiry == "auto" then (($claim_ts | fromdateiso8601) + 120 | tostring) else $expiry end) as $expiry |
-		[
-			{id: 999, body: ("DISPATCH_CLAIM nonce=claim-only runner=mockrunner ts=" + $claim_ts +
-				" max_age_s=300 lease_token=claim-only device=" + $device + " session=" + $session +
-				" phase=prelaunch" + (if $expiry == "missing" then "" else " expires_at=" + $expiry end)), created_at: $claim_ts},
-			(if env.MOCK_INCLUDE_DISPATCH == "true" then
-				{id:1000, body:"Dispatching worker (deterministic).", created_at:env.MOCK_DISPATCH_CREATED_AT} else empty end),
-			(if $call > 1 and $event != "" then
-				{id:1001, body:$event, created_at:$claim_ts} else empty end)
-		] | map(. + {user:{login:"mockrunner"}, author_association:"MEMBER"})
-	'
-	exit 0
-fi
-
-exit 1
-EOF
-	chmod +x "${mock_bin_dir}/gh"
-	printf '%s' "$mock_bin_dir"
-	return 0
-}
-
-#######################################
-# Build a mock gh executable that returns gh --paginate --slurp shaped output:
-# an array of pages. The active claim is only present on the second page, which
-# catches regressions where claim readers inspect only the oldest REST page.
-# Uses env vars:
-#   MOCK_GH_STATE_DIR, MOCK_OLD_CLAIM_CREATED_AT, MOCK_NEW_CLAIM_CREATED_AT
-# Returns: path to mock gh directory via stdout
-#######################################
-create_paginated_mock_gh() {
-	local state_dir="$1"
-	local mock_bin_dir
-	mock_bin_dir="${state_dir}/bin"
-	mkdir -p "$mock_bin_dir"
-
-	cat >"${mock_bin_dir}/gh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-local_state_dir="${MOCK_GH_STATE_DIR:?}"
-post_body_file="${local_state_dir}/post_body.txt"
-
-if [[ "${1:-}" != "api" ]]; then
-	exit 1
-fi
-shift
-
-endpoint="${1:-}"
-shift || true
-
-if [[ "$endpoint" == "user" ]]; then
-	printf 'mockrunner\n'
-	exit 0
-fi
-
-if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
-	method="GET"
-	body=""
-	while [[ "$#" -gt 0 ]]; do
-		case "$1" in
-		--method)
-			method="$2"
-			shift 2
-			;;
-		--field)
-			if [[ "$2" == body=* ]]; then
-				body="${2#body=}"
-			fi
-			shift 2
-			;;
-		--paginate | --slurp)
-			shift
-			;;
-		*)
-			shift
-			;;
-		esac
-	done
-
-	if [[ "$method" == "POST" ]]; then
-		printf '%s' "$body" >"$post_body_file"
-		printf '999\n'
-		exit 0
-	fi
-
-	if [[ -f "$post_body_file" ]]; then
-		new_body=$(<"$post_body_file")
-	else
-		new_body=""
-	fi
-
-	jq -n \
-		--arg marker "${MOCK_OLD_CLAIM_MARKER:-DISPATCH_CLAIM}" \
-		--arg old_ts "${MOCK_OLD_CLAIM_CREATED_AT:?}" \
-		--arg new_body "$new_body" \
-		--arg new_ts "${MOCK_NEW_CLAIM_CREATED_AT:?}" \
-		'[
-			[
-				{id: 1, body: "human discussion", created_at: "2026-05-01T00:00:00Z"}
-			],
-			[
-				{id: 2, body: ($marker + " nonce=old-nonce runner=mockrunner ts=" + $old_ts + " max_age_s=1800 version=3.14.23"), created_at: $old_ts},
-				{id: 999, body: $new_body, created_at: $new_ts}
-			]
-		] | map(map(. + {user:{login:"mockrunner"}, author_association:"MEMBER"}))'
-	exit 0
-fi
-
-exit 1
-EOF
-	chmod +x "${mock_bin_dir}/gh"
-	printf '%s' "$mock_bin_dir"
-	return 0
-}
+# shellcheck source=test-dispatch-claim-handoff.sh
+source "${SCRIPT_DIR}/test-dispatch-claim-handoff.sh"
 
 #######################################
 # Test: ops-wrapped dispatch comments still annotate stale takeover (t355x)
@@ -1488,6 +973,170 @@ test_check_releases_claim_only_orphan() {
 	return 0
 }
 
+test_sweep_checkpoint_orphan() {
+	local result=0
+	(
+		# shellcheck source=../dispatch-claim-helper.sh
+		source "$CLAIM_HELPER"
+		local tmp_dir fixture scenario expected live
+		tmp_dir=$(mktemp -d)
+		_resolve_runner() { printf '%s' runner; return 0; }
+		_resolve_device_id() { printf '%s' device; return 0; }
+		aidevops_can_manage_repo_issue_state() { return 0; }
+		_dch_session_has_live_executor() { [[ "$live" == yes ]] && return 0; return 1; }
+		_fetch_claim_marker_comments() {
+			if [[ "$scenario" == drift && -f "${tmp_dir}/read" ]]; then
+				jq -c '. + [.[0] | .id=11 | .body="DISPATCH_LEASE phase=ready lease_token=token device=device session=pr-session expires_at=4102444800"]' <<<"$fixture"
+			else
+				: >"${tmp_dir}/read"
+				printf '%s' "$fixture"
+			fi
+			return 0
+		}
+		gh() { printf '%s' posted >"${tmp_dir}/posted"; return 0; }
+		for scenario in expired live other_device other_runner no_approval ready released edited executor drift; do
+			fixture='[{"id":10,"author":"runner","author_association":"MEMBER","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","body":"DISPATCH_CLAIM nonce=token runner=runner phase=prelaunch lease_token=token device=device session=pr-session expires_at=1 checkpoint_mode=revision checkpoint_approval=22"}]'
+			expected=no
+			live=no
+			case "$scenario" in
+			expired) expected=yes ;;
+			live) fixture=${fixture/expires_at=1/expires_at=4102444800} ;;
+			other_device) fixture=${fixture/device=device/device=other} ;;
+			other_runner) fixture=${fixture/\"author\":\"runner\"/\"author\":\"other\"} ;;
+			no_approval) fixture=${fixture/checkpoint_approval=22/checkpoint_approval=} ;;
+			ready) fixture=${fixture/phase=prelaunch/phase=ready} ;;
+			released) fixture=$(jq -c '. + [.[0] | .id=11 | .body="CLAIM_RELEASED nonce=token"]' <<<"$fixture") ;;
+			edited) fixture=${fixture/updated_at\":\"2026-01-01/updated_at\":\"2026-01-02} ;;
+			executor) live=yes ;;
+			esac
+			rm -f "${tmp_dir}/posted" "${tmp_dir}/read"
+			cmd_sweep_pr_checkpoint_claim 42 owner/repo || return 1
+			if [[ "$expected" == yes ]]; then
+				[[ -f "${tmp_dir}/posted" ]] || return 1
+			else
+				[[ ! -f "${tmp_dir}/posted" ]] || return 1
+			fi
+		done
+		rm -rf "$tmp_dir"
+		return 0
+	) || result=1
+	print_result "checkpoint sweep releases only expired owned unlaunched claims" "$result"
+	return 0
+}
+
+test_checkpoint_sweep_rotation() {
+	local result=0
+	(
+		# shellcheck source=../pulse-draft-checkpoint-unblock.sh
+		source "${SCRIPT_DIR}/../pulse-draft-checkpoint-unblock.sh"
+		local tmp_dir
+		tmp_dir=$(mktemp -d)
+		local SCRIPT_DIR="$tmp_dir" HOME="$tmp_dir" LOGFILE="${tmp_dir}/log"
+		export MOCK_SWEEP_LOG="${tmp_dir}/visits"
+		cat >"${tmp_dir}/dispatch-claim-helper.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$2" >>"$MOCK_SWEEP_LOG"
+EOF
+		chmod +x "${tmp_dir}/dispatch-claim-helper.sh"
+		_pdcu_draft_closing_refs() { printf '1\t11\thead\n2\t12\thead\n3\t13\thead\n'; return 0; }
+		PULSE_CHECKPOINT_CLAIM_SWEEP_LIMIT=2 _pdcu_sweep_expired_claims owner/repo || return 1
+		PULSE_CHECKPOINT_CLAIM_SWEEP_LIMIT=2 _pdcu_sweep_expired_claims owner/repo || return 1
+		[[ "$(<"$MOCK_SWEEP_LOG")" == $'1\n2\n3\n1' ]] || return 1
+		rm -rf "$tmp_dir"
+		return 0
+	) || result=1
+	print_result "checkpoint sweep bounds visits and rotates across cycles" "$result"
+	return 0
+}
+
+test_checkpoint_sweep_cycle_and_refs() {
+	local result=0
+	(
+		# shellcheck source=../pulse-draft-checkpoint-unblock.sh
+		source "${SCRIPT_DIR}/../pulse-draft-checkpoint-unblock.sh"
+		# shellcheck source=../pulse-wrapper-cycle.sh
+		source "${SCRIPT_DIR}/../pulse-wrapper-cycle.sh"
+		local tmp_dir refs keyword visits="" HOME REPOS_JSON
+		tmp_dir=$(mktemp -d)
+		HOME="$tmp_dir" REPOS_JSON="${tmp_dir}/repos.json"
+		_pmpc_gh_read() {
+			jq -nc --arg body "$keyword #42" '[{number:7, state:"open", draft:true,
+				labels:[{name:"origin:worker"}], body:$body, head:{sha:"head"},
+				base:{ref:"main", repo:{default_branch:"main"}}}]'
+			return 0
+		}
+		for keyword in For Ref Refs; do
+			refs=$(_pdcu_draft_closing_refs owner/repo true) || return 1
+			[[ "$refs" == $'42\t7\thead' ]] || return 1
+			refs=$(_pdcu_draft_closing_refs owner/repo) || return 1
+			[[ -z "$refs" ]] || return 1
+		done
+		mkdir -p "${HOME}/.aidevops/cache"
+		printf '%s\n' '{"initialized_repos":[{"slug":"owner/repo","pulse":true},{"slug":"owner/local","pulse":true,"local_only":true}]}' >"$REPOS_JSON"
+		touch "${HOME}/.aidevops/cache/pulse-stale-blocked-reconcile-last-run"
+		_file_mtime_epoch() { date +%s; return 0; }
+		_pulse_stale_blocked_sweep_deadline() { printf '%s\n' "$(($(date +%s) + 60))"; return 0; }
+		_pdcu_sweep_expired_claims() { visits="${visits}${1} "; return 0; }
+		_pulse_reconcile_stale_blocked_if_due || return 1
+		_pulse_reconcile_stale_blocked_if_due || return 1
+		[[ "$visits" == 'owner/repo owner/repo ' ]] || return 1
+		rm -rf "$tmp_dir"
+		return 0
+	) || result=1
+	print_result "checkpoint sweep recognizes For/Ref/Refs and runs every cycle despite fresh cadence" "$result"
+	return 0
+}
+
+test_checkpoint_consensus_failure_recovers() {
+	local result=0
+	(
+		# shellcheck source=../dispatch-claim-helper.sh
+		source "$CLAIM_HELPER"
+		local swept=no rc=0
+		_resolve_runner() { printf runner; return 0; }
+		aidevops_can_manage_repo_issue_state() { return 0; }
+		_interactive_claim_fence_blocks_dispatch() { return 1; }
+		_dch_checkpoint_snapshot() { printf '{"approval_id":22}'; return 0; }
+		_generate_nonce() { printf token; return 0; }
+		_post_claim() { printf 10; return 0; }
+		sleep() { return 0; }
+		_fetch_claims() { return 1; }
+		cmd_sweep_pr_checkpoint_claim() { swept=yes; return 0; }
+		cmd_claim_pr_checkpoint 42 owner/repo 7 0123456789012345678901234567890123456789 branch runner pr-session 2>/dev/null || rc=$?
+		[[ "$rc" == 1 && "$swept" == yes ]] || return 1
+		return 0
+	) || result=1
+	print_result "checkpoint consensus read failure attempts safe recovery" "$result"
+	return 0
+}
+
+test_checkpoint_sweep_cli() {
+	local tmp_dir result=0
+	tmp_dir=$(mktemp -d)
+	mkdir -p "${tmp_dir}/bin"
+	cat >"${tmp_dir}/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${2:-}" == user ]]; then
+	printf 'mockrunner\n'
+elif [[ " $* " == *' --method POST '* ]]; then
+	printf '%s\n' "$*" >"${MOCK_SWEEP_DIR}/posted"
+else
+	printf '%s\n' '[[{"id":10,"user":{"login":"mockrunner"},"author_association":"MEMBER","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","body":"DISPATCH_CLAIM nonce=token runner=mockrunner phase=prelaunch lease_token=token device=fixture-device session=fixture-session expires_at=1 checkpoint_mode=revision checkpoint_approval=22"}]]'
+fi
+EOF
+	chmod +x "${tmp_dir}/bin/gh"
+	PATH="${tmp_dir}/bin:$PATH" MOCK_SWEEP_DIR="$tmp_dir" AIDEVOPS_DEVICE_ID=fixture-device \
+		"$CLAIM_HELPER" sweep-pr-checkpoint-claim 42 owner/repo || result=1
+	if [[ -f "${tmp_dir}/posted" ]] && grep -q 'CLAIM_RELEASED reason=claim_only_no_worker' "${tmp_dir}/posted"; then
+		:
+	else
+		result=1
+	fi
+	print_result "checkpoint sweep CLI posts an expired claim release against fixture GitHub" "$result"
+	rm -rf "$tmp_dir"
+	return 0
+}
+
 #######################################
 # Test: fresh claim-only marker stays active during the grace window.
 #######################################
@@ -2175,25 +1824,6 @@ claim_released reason=worker_complete
 	return 0
 }
 
-test_claim_winner_persisted_expiry() {
-	local result=0
-	(
-		local implementation="" output="" rc=0
-		implementation=$(awk '/^_resolve_claim_race_result\(\) \{/,/^}$/ { print }' "$CLAIM_HELPER")
-		eval "$implementation"
-		LEGACY_DEVICE_MARKER=legacy
-		_resolve_device_id() { printf 'fixture-device'; }
-		_now_epoch() { printf '1050'; }
-		output=$(_resolve_claim_race_result 42 owner/repo runner fixture 10 '[{"nonce":"fixture","runner":"runner","device":"fixture-device","age_seconds":50,"lease_expires_at":1120}]') || return 1
-		[[ "$output" == *"expires_at=1120" ]] || return 1
-		_now_epoch() { printf '1121'; }
-		_resolve_claim_race_result 42 owner/repo runner fixture 10 '[{"nonce":"fixture","runner":"runner","device":"fixture-device","age_seconds":121,"lease_expires_at":1120}]' >/dev/null 2>&1 || rc=$?
-		[[ "$rc" == 2 ]]
-	) || result=1
-	print_result "CLAIM_WON reports persisted expiry and rejects consensus-expired leases" "$result"
-	return 0
-}
-
 #######################################
 # Main
 #######################################
@@ -2238,6 +1868,8 @@ main() {
 	test_help_exits_zero
 	test_check_and_claim_ceremony
 	test_claim_winner_persisted_expiry
+	test_claim_handoff_lease_after_slow_consensus
+	test_claim_publishes_win_only_after_handoff
 	test_claim_missing_args
 	test_claim_non_numeric_issue
 	test_check_missing_args
@@ -2249,6 +1881,11 @@ main() {
 	test_pr_checkpoint_target_verification
 	test_env_var_defaults
 	test_check_releases_claim_only_orphan
+	test_sweep_checkpoint_orphan
+	test_checkpoint_sweep_rotation
+	test_checkpoint_sweep_cycle_and_refs
+	test_checkpoint_consensus_failure_recovers
+	test_checkpoint_sweep_cli
 	test_check_preserves_fresh_claim_only_marker
 	test_check_releases_claim_with_uncorrelated_launch_text
 	test_orphan_release_revalidation

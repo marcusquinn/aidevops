@@ -204,17 +204,18 @@ def _hands_back_to_user(text: str, open_count: int) -> bool:
     return open_count <= 1 and _reports_blocker(text)
 
 
-def _stop_reason(state: dict, final_text: str, cwd: str):
+def _stop_reason(state: dict, final_text: str, cwd: str, session_id: str):
     """Block reason for open todos, or (GH#35121) for an unasked closeout that
     leaves session-edited files uncommitted once every todo is terminal."""
     open_todos = _open_todos(state["todos"])
+    filing = capture and capture.filing_block(final_text, _state_file(session_id))
+    if filing:
+        return filing
     if _hands_back_to_user(final_text, len(open_todos)):
         return None
     if open_todos:
         return _block_reason(open_todos, final_text)
-    if capture is None:
-        return None
-    return capture.capture_block(state["edits"], _without_code(final_text), cwd)
+    return capture and capture.capture_block(state["edits"], _without_code(final_text), cwd)
 
 
 def _state_file(session_id: str) -> Path:
@@ -265,7 +266,7 @@ def decide(payload: dict):
         final_text = state["assistant"]
     reason = None
     if not USER_STOP_RE.search(state["user"]):
-        reason = _stop_reason(state, final_text, str(payload.get("cwd") or ""))
+        reason = _stop_reason(state, final_text, str(payload.get("cwd") or ""), session_id)
     if reason:
         _record_block(session_id, blocks + 1)
     return reason

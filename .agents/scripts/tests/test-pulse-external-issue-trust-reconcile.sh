@@ -19,6 +19,7 @@ _PIR_STATUS_AVAILABLE="status:available"
 _PIR_PERSISTENT_LABEL="persistent"
 _PIR_TRIAGE_FAILED_LABEL="triage-failed"
 AUTHORITY_RC=1
+GH_EDIT_RC=0
 GH_EDIT_LOG="$TEST_ROOT/edit.log"
 LIVE_ISSUE_JSON=""
 LIVE_FALLBACK_LOG="$TEST_ROOT/live-fallback.log"
@@ -42,13 +43,16 @@ _gh_actor_has_repo_write_authority() {
 
 gh_issue_edit_safe() {
 	printf '%s\n' "$*" >>"$GH_EDIT_LOG"
-	return 0
+	return "$GH_EDIT_RC"
 }
 
 gh() {
 	local command="$1"
 	shift
 	if [[ "$command" == "api" ]]; then
+		case "$*" in
+		*'/timeline?'* | *'/comments?'*) printf '%s\n' '[[]]'; return 0 ;;
+		esac
 		printf '%s\n' "api" >>"$LIVE_FALLBACK_LOG"
 		printf '%s\n' "$LIVE_ISSUE_JSON"
 		return 0
@@ -98,17 +102,80 @@ test_live_author_metadata_fallback() {
 	PULSE_EXTERNAL_TRUST_FALLBACK_MAX=1
 	_PIR_EXTERNAL_TRUST_FALLBACKS_USED=0
 	_PIR_EXTERNAL_TRUST_FALLBACK_DIAGNOSTIC_SLUGS=""
+	_PIR_MISSING_AUTHOR_METADATA_BLOCKED=0
 	: >"$LOGFILE"
 	_action_reconcile_external_issue_gate owner/repo 28698 "status:available" "" "" || rc=$?
 	_action_reconcile_external_issue_gate owner/repo 28697 "status:available" "" "" || rc=$?
 	if [[ "$(grep -c '^api$' "$LIVE_FALLBACK_LOG")" -eq 1 ]] \
 		&& [[ "$(grep -c 'cache author metadata missing' "$LOGFILE")" -eq 1 ]] \
+		&& [[ "$_PIR_MISSING_AUTHOR_METADATA_BLOCKED" -eq 2 ]] \
 		&& grep -q 'response lacked author association' "$LOGFILE"; then
 		record "missing live metadata is bounded and aggregated fail-closed" 0
 	else
 		record "missing live metadata is bounded and aggregated fail-closed" 1
 	fi
 	unset PULSE_EXTERNAL_TRUST_FALLBACK_MAX
+	return 0
+}
+
+# GH#36905: an issue that already has NMR (for example from an issue form)
+# still gets external-contributor when the author lacks write authority.
+test_nmr_present_external_contributor_backfill() {
+	local rc=0
+
+	AUTHORITY_RC=1
+	: >"$GH_EDIT_LOG"
+	_action_reconcile_external_issue_gate owner/repo 36905 \
+		"needs-maintainer-review" NONE reporter || rc=$?
+	if [[ "$rc" -eq 0 && "$_PIR_EXTERNAL_GATE_MUTATED" -eq 1 ]] \
+		&& grep -q -- '--add-label external-contributor' "$GH_EDIT_LOG" \
+		&& ! grep -q -- '--add-label needs-maintainer-review' "$GH_EDIT_LOG"; then
+		record "NMR-held external issue gains external-contributor" 0
+	else
+		record "NMR-held external issue gains external-contributor" 1
+	fi
+
+	GH_EDIT_RC=1
+	: >"$GH_EDIT_LOG"
+	: >"$LOGFILE"
+	rc=0
+	_action_reconcile_external_issue_gate owner/repo 36905 \
+		"needs-maintainer-review" NONE reporter || rc=$?
+	if [[ "$rc" -eq 0 && "$_PIR_EXTERNAL_GATE_MUTATED" -eq 0 ]] \
+		&& grep -q -- '--add-label external-contributor' "$GH_EDIT_LOG" \
+		&& grep -qF 'external-contributor backfill failed for #36905 in owner/repo' "$LOGFILE"; then
+		record "failed external-contributor backfill leaves NMR gate blocked without mutation" 0
+	else
+		record "failed external-contributor backfill leaves NMR gate blocked without mutation" 1
+	fi
+	GH_EDIT_RC=0
+
+	: >"$GH_EDIT_LOG"
+	rc=0
+	_action_reconcile_external_issue_gate owner/repo 36905 \
+		"needs-maintainer-review,external-contributor" NONE reporter || rc=$?
+	[[ "$rc" -eq 0 && "$_PIR_EXTERNAL_GATE_MUTATED" -eq 0 && ! -s "$GH_EDIT_LOG" ]] \
+		&& record "fully labelled external issue is not edited again" 0 \
+		|| record "fully labelled external issue is not edited again" 1
+
+	AUTHORITY_RC=0
+	: >"$GH_EDIT_LOG"
+	rc=0
+	_action_reconcile_external_issue_gate owner/repo 36905 \
+		"needs-maintainer-review" COLLABORATOR writer || rc=$?
+	[[ "$rc" -eq 0 && ! -s "$GH_EDIT_LOG" ]] \
+		&& record "write-authorized NMR issue gets no external-contributor" 0 \
+		|| record "write-authorized NMR issue gets no external-contributor" 1
+
+	AUTHORITY_RC=2
+	: >"$GH_EDIT_LOG"
+	rc=0
+	_action_reconcile_external_issue_gate owner/repo 36905 \
+		"needs-maintainer-review" COLLABORATOR writer || rc=$?
+	[[ "$rc" -eq 0 && ! -s "$GH_EDIT_LOG" ]] \
+		&& record "unavailable authority lookup leaves NMR issue unchanged" 0 \
+		|| record "unavailable authority lookup leaves NMR issue unchanged" 1
+	AUTHORITY_RC=1
 	return 0
 }
 
@@ -178,6 +245,8 @@ main() {
 	_action_reconcile_external_issue_gate owner/repo 28700 "" COLLABORATOR writer || rc=$?
 	[[ "$rc" -eq 1 ]] && record "write-authorized collaborator continues" 0 \
 		|| record "write-authorized collaborator continues" 1
+
+	test_nmr_present_external_contributor_backfill
 
 	AUTHORITY_RC=2
 	: >"$GH_EDIT_LOG"

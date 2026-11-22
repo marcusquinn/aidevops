@@ -42,13 +42,23 @@ local_day_epoch() {
 	return 0
 }
 
+# knowledgeC writes each /display/isBacklit row when its span ends: the display
+# held ZVALUEINTEGER from ZSTARTDATE to ZENDDATE (GH#37492).
+insert_backlit_span() {
+	local db="$1"
+	local start_epoch="$2"
+	local end_epoch="$3"
+	local state="$4"
+	sqlite3 "$db" "
+		INSERT INTO ZOBJECT (ZSTREAMNAME, ZCREATIONDATE, ZSTARTDATE, ZENDDATE, ZVALUEINTEGER) VALUES ('/display/isBacklit', $(core_data_offset "$end_epoch"), $(core_data_offset "$start_epoch"), $(core_data_offset "$end_epoch"), ${state});"
+	return 0
+}
+
 insert_backlit_pair() {
 	local db="$1"
 	local on_epoch="$2"
 	local off_epoch="$3"
-	sqlite3 "$db" "
-		INSERT INTO ZOBJECT (ZSTREAMNAME, ZCREATIONDATE, ZVALUEINTEGER) VALUES ('/display/isBacklit', $(core_data_offset "$on_epoch"), 1);
-		INSERT INTO ZOBJECT (ZSTREAMNAME, ZCREATIONDATE, ZVALUEINTEGER) VALUES ('/display/isBacklit', $(core_data_offset "$off_epoch"), 0);"
+	insert_backlit_span "$db" "$on_epoch" "$off_epoch" 1
 	return 0
 }
 
@@ -121,13 +131,12 @@ test_union_clipping_and_failure_status() {
 
 	local repeated_db="${tmpdir}/repeated.db"
 	create_knowledge_db "$repeated_db"
-	sqlite3 "$repeated_db" "
-		INSERT INTO ZOBJECT VALUES('/display/isBacklit', $(core_data_offset "$((now - one_hour * 3))"), 1, NULL, NULL, NULL);
-		INSERT INTO ZOBJECT VALUES('/display/isBacklit', $(core_data_offset "$((now - one_hour * 2))"), 1, NULL, NULL, NULL);
-		INSERT INTO ZOBJECT VALUES('/display/isBacklit', $(core_data_offset "$((now - one_hour))"), 0, NULL, NULL, NULL);"
+	insert_backlit_span "$repeated_db" "$((now - one_hour * 3))" "$((now - one_hour))" 1
+	insert_backlit_span "$repeated_db" "$((now - one_hour * 2))" "$((now - one_hour))" 1
+	insert_backlit_span "$repeated_db" "$((now - one_hour))" "$now" 0
 	local repeated_hours
 	repeated_hours=$(query_hours "$repeated_db" 1)
-	[[ "$repeated_hours" == "2.0" ]] || fail "expected repeated ON events not to double count, got ${repeated_hours}"
+	[[ "$repeated_hours" == "2.0" ]] || fail "expected overlapping ON spans not to double count, got ${repeated_hours}"
 
 	local invalid_db="${tmpdir}/invalid.db"
 	printf '%s\n' 'not sqlite' >"$invalid_db"
@@ -165,23 +174,37 @@ PY
 
 	local zero_db="${tmpdir}/observed-zero.db"
 	create_knowledge_db "$zero_db"
-	sqlite3 "$zero_db" "INSERT INTO ZOBJECT (ZSTREAMNAME,ZCREATIONDATE,ZVALUEINTEGER) VALUES('/display/isBacklit',$(core_data_offset "$((now - 3600))"),0);"
+	insert_backlit_span "$zero_db" "$((now - 7200))" "$((now - 3600))" 0
 	local zero_json
 	zero_json=$(AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$zero_db")
 	[[ "$(printf '%s' "$zero_json" | jq -r '.today_hours')" == "0" || "$(printf '%s' "$zero_json" | jq -r '.today_hours')" == "0.0" ]] || fail "explicit OFF observation was not preserved as legitimate zero: ${zero_json}"
 	[[ "$(printf '%s' "$zero_json" | jq -r '.periods.day.status')" == "ok" ]] || fail "explicit zero observation was marked unavailable"
 
+	local stale_db="${tmpdir}/unobserved-stale.db"
+	create_knowledge_db "$stale_db"
+	insert_backlit_pair "$stale_db" "$((now - 6 * 86400))" "$((now - 6 * 86400 + 3600))"
+	local stale_json
+	mkdir -p "${tmpdir}/unobserved-stale-home"
+	stale_json=$(HOME="${tmpdir}/unobserved-stale-home" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$stale_db")
+	[[ "$(printf '%s' "$stale_json" | jq -r '.periods.day.status')" == "unavailable" ]] || fail "unobserved stale day was not unavailable: ${stale_json}"
+	[[ "$(printf '%s' "$stale_json" | jq -r '.periods.day.reason')" == "no-observations-in-period" ]] || fail "unobserved stale day reason missing: ${stale_json}"
+	[[ "$(printf '%s' "$stale_json" | jq -r '.periods.day.hours')" == "null" ]] || fail "unobserved stale day was rendered as zero: ${stale_json}"
+
+	# Midday anchor: 4h app spans from a wall-clock "now" after 20:00 would cross
+	# local midnight into the excluded current day and break the 32h expectation.
+	local sparse_now
+	sparse_now=$(python3 -c 'import datetime as d; print(int(d.datetime(2026,7,12,12).astimezone().timestamp()))')
 	local sparse_db="${tmpdir}/relative-sparse.db"
 	create_knowledge_db "$sparse_db"
-	insert_backlit_pair "$sparse_db" "$((now - 2 * 86400))" "$((now - 2 * 86400 + 3600))"
-	insert_backlit_pair "$sparse_db" "$((now - 3600))" "$now"
+	insert_backlit_pair "$sparse_db" "$((sparse_now - 2 * 86400))" "$((sparse_now - 2 * 86400 + 3600))"
+	insert_backlit_pair "$sparse_db" "$((sparse_now - 3600))" "$sparse_now"
 	local day
 	for day in 1 2 3 4 5 6 7 8; do
-		insert_app_usage "$sparse_db" "$((now - day * 86400))" "$((now - day * 86400 + 4 * 3600))"
+		insert_app_usage "$sparse_db" "$((sparse_now - day * 86400))" "$((sparse_now - day * 86400 + 4 * 3600))"
 	done
 	local sparse_json
 	mkdir -p "${tmpdir}/sparse-home"
-	sparse_json=$(HOME="${tmpdir}/sparse-home" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$sparse_db")
+	sparse_json=$(HOME="${tmpdir}/sparse-home" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$sparse_now" profile_stats "$sparse_db")
 	[[ "$(printf '%s' "$sparse_json" | jq -r '.periods.month.source')" == "macos-knowledge-db:/app/usage-union" ]] || fail "two sparse backlit days incorrectly beat eight app-usage days"
 	[[ "$(printf '%s' "$sparse_json" | jq -r '.month_hours')" == "32" || "$(printf '%s' "$sparse_json" | jq -r '.month_hours')" == "32.0" ]] || fail "relative app coverage duration was not selected"
 	pass "empty sources, explicit zero, and relative sparse-source selection are distinct"
@@ -198,7 +221,7 @@ test_snapshot_omits_unobserved_stale_dates() {
 	fixture_values=$(python3 -c 'import datetime as d; today=d.date.today(); observed=today-d.timedelta(days=5); zero=today-d.timedelta(days=4); epoch=lambda day,h:int(d.datetime.combine(day,d.time(h)).timestamp()); print(observed,zero,epoch(observed,10),epoch(observed,11),epoch(zero,12))')
 	read -r observed_date zero_date observed_start observed_end zero_event <<<"$fixture_values"
 	insert_backlit_pair "$db" "$observed_start" "$observed_end"
-	sqlite3 "$db" "INSERT INTO ZOBJECT (ZSTREAMNAME,ZCREATIONDATE,ZVALUEINTEGER) VALUES('/display/isBacklit',$(core_data_offset "$zero_event"),0);"
+	insert_backlit_span "$db" "$((zero_event - 600))" "$zero_event" 0
 	HOME="$fixture_home" AIDEVOPS_SCREEN_TIME_OS_TYPE=Darwin AIDEVOPS_KNOWLEDGE_DB="$db" "$HELPER" snapshot >/dev/null
 	local history="${fixture_home}/.aidevops/.agent-workspace/observability/screen-time.jsonl"
 	local rows dates zero_hours
@@ -208,7 +231,25 @@ test_snapshot_omits_unobserved_stale_dates() {
 	if [[ "$rows" != "2" || "$dates" != "${observed_date} ${zero_date} " || ("$zero_hours" != "0" && "$zero_hours" != "0.0") ]]; then
 		fail "snapshot fabricated stale gap coverage or lost explicit zero: rows=${rows} dates=${dates} zero=${zero_hours}"
 	fi
-	pass "snapshot omits unobserved stale dates and records explicit zero-event dates"
+
+	# GH#37492: a recent day recorded while its display span was still open is
+	# raised once the span is written; older recorded days stay final.
+	local revise_values recent_date
+	revise_values=$(python3 -c 'import datetime as d; day=d.date.today()-d.timedelta(days=1); epoch=lambda h:int(d.datetime.combine(day,d.time(h)).timestamp()); print(day,epoch(9),epoch(10),epoch(14),epoch(16))')
+	local first_start first_end second_start second_end
+	read -r recent_date first_start first_end second_start second_end <<<"$revise_values"
+	insert_backlit_pair "$db" "$first_start" "$first_end"
+	HOME="$fixture_home" AIDEVOPS_SCREEN_TIME_OS_TYPE=Darwin AIDEVOPS_KNOWLEDGE_DB="$db" "$HELPER" snapshot >/dev/null
+	insert_backlit_pair "$db" "$second_start" "$second_end"
+	insert_backlit_pair "$db" "$((observed_end + 600))" "$((observed_end + 1200))"
+	HOME="$fixture_home" AIDEVOPS_SCREEN_TIME_OS_TYPE=Darwin AIDEVOPS_KNOWLEDGE_DB="$db" "$HELPER" snapshot >/dev/null
+	HOME="$fixture_home" AIDEVOPS_SCREEN_TIME_OS_TYPE=Darwin AIDEVOPS_KNOWLEDGE_DB="$db" "$HELPER" snapshot >/dev/null
+	local recent_values observed_rows
+	recent_values=$(jq -r --arg date "$recent_date" 'select(.date == $date) | .screen_hours * 10 | round' "$history" | tr '\n' ' ')
+	observed_rows=$(jq -r --arg date "$observed_date" 'select(.date == $date) | .date' "$history" | wc -l | tr -d ' ')
+	[[ "$recent_values" == "10 30 " && "$observed_rows" == "1" ]] ||
+		fail "snapshot did not raise the recent day once, or revised a final day: recent=${recent_values} observed_rows=${observed_rows}"
+	pass "snapshot omits unobserved stale dates, records explicit zeros, and raises grown recent days"
 	return 0
 }
 
@@ -327,82 +368,216 @@ PY
 	[[ "$(printf '%s' "$output" | jq -r '.periods.day.period_semantics')" == "completed-local-calendar-days" ]] || fail "pmset fallback changed profile period semantics"
 	[[ "$(printf '%s' "$output" | jq -r '.periods.month.source')" == "screen-time-history:daily-observations" ]] || fail "short pmset coverage displaced richer month history"
 	[[ "$(printf '%s' "$output" | jq -r '.periods.month.reason')" == "richer-calendar-coverage" ]] || fail "richer history selection reason missing"
-	pass "permission-free pmset fallback supplies completed-day screen time"
+
+	# GH#37492: the assertion still held (display on since yesterday 20:00) has
+	# no log line until released, so it is read live from `pmset -g assertions`.
+	local held_fixture="${tmpdir}/pmset-assertions.txt"
+	printf '   pid 390(powerd): [0x000153bb000181aa] 16:00:00 PreventUserIdleSystemSleep named: "Powerd - Prevent sleep while display is on"  \n' >"$held_fixture"
+	output=$(HOME="$fixture_home" AIDEVOPS_PMSET_FIXTURE="$fixture" AIDEVOPS_PMSET_ASSERTIONS_FIXTURE="$held_fixture" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$db")
+	[[ "$(printf '%s' "$output" | jq -r '.today_hours')" == "10" || "$(printf '%s' "$output" | jq -r '.today_hours')" == "10.0" ]] ||
+		fail "held display assertion was not counted until release: ${output}"
+
+	# A readable backlit stream with gaps is unioned with pmset, not replaced.
+	local readable_db="${tmpdir}/pmset-union-knowledge.db"
+	create_knowledge_db "$readable_db"
+	insert_backlit_pair "$readable_db" "$((yesterday_start + 16 * 3600))" "$((yesterday_start + 17 * 3600))"
+	insert_backlit_pair "$readable_db" "$((yesterday_start + 9 * 3600))" "$((yesterday_start + 10 * 3600))"
+	output=$(HOME="$fixture_home" AIDEVOPS_PMSET_FIXTURE="$fixture" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$readable_db")
+	[[ "$(printf '%s' "$output" | jq -r '.today_hours')" == "7" || "$(printf '%s' "$output" | jq -r '.today_hours')" == "7.0" ]] ||
+		fail "backlit spans and pmset assertions did not union to 7h: ${output}"
+	[[ "$(printf '%s' "$output" | jq -r '.periods.day.source')" == "macos-knowledge-db:/display/isBacklit+macos-pmset-display-assertions" ]] ||
+		fail "union provenance missing: ${output}"
+	pass "permission-free pmset fallback supplies completed-day screen time, held assertions and backlit union"
 	return 0
 }
 
-test_linux_state_machine() {
+linux_helper() {
+	local home="$1"
+	local now="$2"
+	shift 2
+	HOME="$home" AIDEVOPS_SCREEN_TIME_OS_TYPE=Linux AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" "$HELPER" "$@"
+	return $?
+}
+
+test_linux_input_activity_intervals() {
 	local tmpdir="$1"
-	local now
-	now=$(python3 -c 'import datetime as d; print(int(d.datetime(2033,5,19,12).timestamp()))')
-	local fixture="${tmpdir}/logind.txt"
-	python3 - "$fixture" "$now" <<'PY'
+	local home="${tmpdir}/linux-activity-home"
+	local observability="${home}/.aidevops/.agent-workspace/observability"
+	mkdir -p "$observability"
+	local base now yesterday
+	read -r base now yesterday <<<"$(python3 -c 'import datetime as d; t=d.date.today(); y=t-d.timedelta(days=1); e=lambda day,h:int(d.datetime.combine(day,d.time(h)).timestamp()); print(e(y,9), e(t,12), y)')"
+	# Legacy login-session proxy rows (24h/day, no collector) must never count.
+	python3 - "${observability}/screen-time.jsonl" "$now" <<'PY'
 import datetime as dt
+import json
 import sys
-
-target = sys.argv[1]
-now = int(sys.argv[2])
-events = [
-    (-30, "New session c1 of user fixture."),
-    (-29, "Session c1 locked."),
-    (-28, "Session c1 unlocked."),
-    (-27, "Lid closed."),
-    (-26, "Lid opened."),
-    (-25, "Removed session c1."),
-]
-with open(target, "w", encoding="utf-8") as handle:
-    for hours, message in events:
-        stamp = dt.datetime.fromtimestamp(now + hours * 3600, dt.timezone.utc).isoformat()
-        handle.write(f"{stamp} host systemd-logind[1]: {message}\n")
-PY
-	local output hours source
-	output=$(AIDEVOPS_SCREEN_TIME_OS_TYPE=Linux AIDEVOPS_LOGIND_FIXTURE="$fixture" \
-		AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" AIDEVOPS_SCREEN_TIME_USER=fixture "$HELPER" profile-stats)
-	hours=$(printf '%s' "$output" | jq -r '.today_hours')
-	source=$(printf '%s' "$output" | jq -r '.periods.day.source')
-	[[ "$hours" == "3" || "$hours" == "3.0" ]] || fail "expected lock/lid/session state to produce 3.0h, got ${hours}"
-	[[ "$source" == *"session-lid-lock-state"* ]] || fail "Linux provenance missing state semantics: ${source}"
-	pass "Linux state retains username-less session OFF events and clips active windows"
-	local zero_fixture="${tmpdir}/logind-zero.txt"
-	python3 - "$zero_fixture" "$now" <<'PY'
-import datetime as dt
-import sys
-stamp = dt.datetime.fromtimestamp(int(sys.argv[2]) - 30 * 3600, dt.timezone.utc).isoformat()
+today = dt.datetime.fromtimestamp(int(sys.argv[2])).date()
 with open(sys.argv[1], "w", encoding="utf-8") as handle:
-    handle.write(f"{stamp} host systemd-logind[1]: New session z1 of user fixture.\n")
-    handle.write(f"{stamp} host systemd-logind[1]: Removed session z1.\n")
+    for age in range(1, 7):
+        handle.write(json.dumps({"date": str(today - dt.timedelta(days=age)), "screen_hours": 24}) + "\n")
 PY
-	local zero_output
-	zero_output=$(AIDEVOPS_SCREEN_TIME_OS_TYPE=Linux AIDEVOPS_LOGIND_FIXTURE="$zero_fixture" \
-		AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" AIDEVOPS_SCREEN_TIME_USER=fixture "$HELPER" profile-stats)
-	[[ "$(printf '%s' "$zero_output" | jq -r '.today_hours')" == "0" || "$(printf '%s' "$zero_output" | jq -r '.today_hours')" == "0.0" ]] || fail "explicit zero-duration logind events were not preserved"
-	[[ "$(printf '%s' "$zero_output" | jq -r '.periods.day.status')" == "ok" ]] || fail "explicit logind zero was treated as source failure"
+	local unsampled
+	unsampled=$(linux_helper "$home" "$now" profile-stats)
+	[[ "$(printf '%s' "$unsampled" | jq -r '[.collection_status, .today_hours, .week_hours] | map(tostring) | join(",")')" == "unavailable,null,null" ]] ||
+		fail "Linux without input samples reported proxy or history hours: ${unsampled}"
 
-	local missing_journal="${tmpdir}/missing-journal"
-	local wtmp_fixture="${tmpdir}/wtmp.txt"
-	printf '%s|%s\n' "$((now - 30 * 3600))" "$((now - 29 * 3600))" >"$wtmp_fixture"
-	local fallback
-	fallback=$(AIDEVOPS_SCREEN_TIME_OS_TYPE=Linux AIDEVOPS_LOGIND_FIXTURE="$missing_journal" \
-		AIDEVOPS_LAST_FIXTURE="$wtmp_fixture" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" \
-		AIDEVOPS_SCREEN_TIME_USER=fixture "$HELPER" profile-stats)
-	[[ "$(printf '%s' "$fallback" | jq -r '.today_hours')" == "1" || "$(printf '%s' "$fallback" | jq -r '.today_hours')" == "1.0" ]] || fail "wtmp fallback hours were not parsed"
-	[[ "$(printf '%s' "$fallback" | jq -r '.periods.day.source')" == "linux-wtmp:login-session-proxy" ]] || fail "wtmp fallback provenance was not truthful"
-	pass "Linux collection failure falls back to clipped wtmp sessions with proxy provenance"
+	# GH#36709: completed days before the first sample are unknown, not 0h.
+	local fresh_home="${tmpdir}/linux-fresh-sampler-home"
+	mkdir -p "${fresh_home}/.aidevops/.agent-workspace/observability"
+	PYTHONPATH="$SCRIPTS_DIR" python3 - "${fresh_home}/.aidevops/.agent-workspace/observability" "$((now - 7200))" <<'PY'
+import sys
+from screen_time_linux_activity import record_sample
+directory, start = sys.argv[1], int(sys.argv[2])
+for minute in range(0, 61):
+    record_sample(directory, start + minute * 60, {"last_input": start + minute * 60, "kinds": ["tty-atime"]})
+PY
+	local fresh
+	fresh=$(linux_helper "$fresh_home" "$now" profile-stats)
+	[[ "$(printf '%s' "$fresh" | jq -r '[.collection_status, .today_hours, .week_hours, .month_hours, .year_hours, .periods.month.reason] | map(tostring) | join(",")')" == "ok,null,null,null,null,before-first-sample" ]] ||
+		fail "Linux periods before the first sample rendered as observed zero: ${fresh}"
 
-	local empty_journal="${tmpdir}/empty-logind.txt"
-	local realistic_last="${tmpdir}/last-F.txt"
-	: >"$empty_journal"
-	cat >"$realistic_last" <<'EOF'
-fixture  pts/0  host  Wed May 18 01:00:00 2033 - Wed May 18 02:00:00 2033  (01:00)
-fixture  pts/1  host  Wed May 18 03:00:00 2033   still logged in
-EOF
-	local empty_fallback
-	empty_fallback=$(TZ=UTC AIDEVOPS_SCREEN_TIME_OS_TYPE=Linux AIDEVOPS_LOGIND_FIXTURE="$empty_journal" \
-		AIDEVOPS_LAST_FIXTURE="$realistic_last" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" \
-		AIDEVOPS_SCREEN_TIME_USER=fixture "$HELPER" profile-stats)
-	[[ "$(printf '%s' "$empty_fallback" | jq -r '.today_hours')" == "22" || "$(printf '%s' "$empty_fallback" | jq -r '.today_hours')" == "22.0" ]] || fail "real last -F completed+active records were not clipped to the completed day"
-	[[ "$(printf '%s' "$empty_fallback" | jq -r '.periods.day.reason')" == *"journal-readable-no-user-observations"* ]] || fail "empty readable logind did not truthfully fall back"
-	pass "empty logind falls back and parses realistic local last -F records"
+	# 09:00-10:00 typing, idle, one key at 10:58, suspended 11:00-13:00, one key at 13:10.
+	PYTHONPATH="$SCRIPTS_DIR" python3 - "$observability" "$base" <<'PY'
+import sys
+from screen_time_linux_activity import record_sample
+directory, base = sys.argv[1], int(sys.argv[2])
+def last_input(minute):
+    if minute <= 60:
+        return minute * 60
+    if minute < 118:
+        return 3600
+    return 118 * 60 if minute < 250 else 250 * 60
+for minute in list(range(0, 121)) + list(range(240, 271)):
+    record_sample(directory, base + minute * 60, {"last_input": base + last_input(minute), "kinds": ["tty-atime"]})
+PY
+	local output
+	output=$(linux_helper "$home" "$now" profile-stats)
+	# 65m (input + 5m cut-off) + 2m (tail clipped at suspend) + 5m = 1.2h.
+	[[ "$(printf '%s' "$output" | jq -r '.today_hours')" == "1.2" ]] || fail "input activity intervals were not 1.2h: ${output}"
+	[[ "$(printf '%s' "$output" | jq -r '.week_hours')" == "1.2" ]] || fail "legacy Linux proxy history displaced activity data: ${output}"
+	[[ "$(printf '%s' "$output" | jq -r '.periods.day.source')" == "linux-input-activity:idle-cutoff-300s" ]] || fail "Linux activity provenance missing: ${output}"
+	# Coverage starts at the first sample (yesterday 09:00), not 28 days ago.
+	[[ "$(printf '%s' "$output" | jq -r '.periods.month.coverage_days')" == "0.6" ]] || fail "Linux month coverage was not clipped to sampling start: ${output}"
+
+	linux_helper "$home" "$now" snapshot >/dev/null
+	local snapshot_hours
+	snapshot_hours=$(jq -r --arg date "$yesterday" 'select(.date == $date and ((.collector // "") | startswith("linux-input-activity"))) | .screen_hours' "${observability}/screen-time.jsonl")
+	[[ "$snapshot_hours" == "1.2" ]] || fail "snapshot did not record the activity day beside legacy rows: ${snapshot_hours}"
+	[[ "$(linux_helper "$home" "$now" history)" == *"1 valid day(s)"* ]] || fail "Linux history counted legacy proxy rows"
+	# GH#36737: the snapshot's whole-day row must not displace partial live
+	# coverage, and under 7 sampled days there is no 365-day projection.
+	output=$(linux_helper "$home" "$now" profile-stats)
+	[[ "$(printf '%s' "$output" | jq -r '[.periods.month.source, .periods.month.coverage_days, (.periods.month.observed_since_epoch | type), .year_hours, .periods.year.reason] | map(tostring) | join(",")')" == "linux-input-activity:idle-cutoff-300s,0.6,number,null,fewer-than-7-sampled-days" ]] ||
+		fail "Linux snapshot history displaced live sampler coverage or projected a year: ${output}"
+	pass "Linux input activity clips idle and suspend gaps and ignores legacy proxy history"
+	return 0
+}
+
+write_probe_fixture() {
+	local fixture="$1"
+	local now="$2"
+	local idle="$3"
+	python3 - "$fixture" "$now" "$idle" <<'PY'
+import json
+import sys
+now, idle = int(sys.argv[2]), sys.argv[3]
+payload = {
+    "sessions": [
+        {"Type": "tty", "Class": "user", "State": "active", "TTY": "pts/7", "LockedHint": "no"},
+        {"Type": "wayland", "Class": "user", "State": "active", "TTY": "tty2", "LockedHint": "yes"},
+        {"Type": "x11", "Class": "user", "State": "online", "TTY": "", "LockedHint": "no", "IdleHint": "no", "IdleSinceHint": "0"},
+        {"Type": "tty", "Class": "user", "State": "closing", "TTY": "pts/9", "LockedHint": "no"},
+    ],
+    "tty_atime": {"pts/7": now - 30, "pts/9": now - 5, "tty2": now - 1, "pts/3": now - 90},
+    "who": ["pts/3", "tty2"],
+}
+if idle:
+    payload["desktop_idle_seconds"] = int(idle)
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump(payload, handle)
+PY
+	return 0
+}
+
+test_linux_input_evidence_probe() {
+	local tmpdir="$1"
+	local now="$2"
+	local home="${tmpdir}/linux-probe-home"
+	local fixture="${tmpdir}/linux-probe.json"
+	local state="${home}/.aidevops/.agent-workspace/observability/screen-activity-state.json"
+	write_probe_fixture "$fixture" "$now" ""
+	AIDEVOPS_SCREEN_ACTIVITY_FIXTURE="$fixture" linux_helper "$home" "$now" sample >/dev/null
+	# Closing sessions, locked desktops and their VT are ignored; an unmanaged
+	# desktop is reported as unobservable rather than active.
+	[[ "$(jq -r '.last_input | floor' "$state")" == "$((now - 30))" ]] || fail "probe did not take the latest live tty input: $(<"$state")"
+	[[ "$(jq -r '.evidence | join(",")' "$state")" == "graphical-idle-unavailable,locked,tty-atime" ]] || fail "probe evidence kinds wrong: $(<"$state")"
+	[[ "$(linux_helper "$home" "$now" profile-stats | jq -r '.collection_status')" == "partial" ]] || fail "unobservable desktop was not surfaced as partial"
+	write_probe_fixture "$fixture" "$now" 20
+	AIDEVOPS_SCREEN_ACTIVITY_FIXTURE="$fixture" linux_helper "$home" "$((now + 60))" sample >/dev/null
+	[[ "$(jq -r '.last_input | floor' "$state")" == "$((now + 40))" ]] || fail "desktop idle time was not used for graphical input: $(<"$state")"
+	pass "Linux probe reads tty atime and desktop idle, ignoring locked and closing sessions"
+	return 0
+}
+
+macos_input_helper() {
+	local home="$1"
+	local now="$2"
+	shift 2
+	if HOME="$home" AIDEVOPS_SCREEN_TIME_OS_TYPE=Darwin AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" "$HELPER" "$@"; then
+		return 0
+	fi
+	return 1
+}
+
+test_macos_input_activity_matches_linux_rule() {
+	local tmpdir="$1"
+	local home="${tmpdir}/macos-input-home"
+	local observability="${home}/.aidevops/.agent-workspace/observability"
+	local fixture="${tmpdir}/hid-idle.json"
+	mkdir -p "$observability"
+	local base now
+	read -r base now <<<"$(python3 -c 'import datetime as d; t=d.date.today(); y=t-d.timedelta(days=1); e=lambda day,h:int(d.datetime.combine(day,d.time(h)).timestamp()); print(e(y,9), e(t,12))')"
+	# Yesterday from 09:00: typing to 09:30, idle to 10:00, locked 10:01-10:10,
+	# another console user 10:11-10:20, typing again 10:21-10:30.
+	AIDEVOPS_HID_IDLE_FIXTURE="$fixture" PYTHONPATH="$SCRIPTS_DIR" python3 - "$observability" "$base" "$fixture" <<'PY'
+import json
+import sys
+from screen_time_macos_input import macos_input_sample
+directory, base, fixture = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+for minute in range(0, 91):
+    payload = {"idle_seconds": 0, "locked": False, "on_console": True}
+    if 30 < minute <= 60:
+        payload["idle_seconds"] = (minute - 30) * 60
+    elif 60 < minute <= 70:
+        payload["locked"] = True
+    elif 70 < minute <= 80:
+        payload["on_console"] = False
+    with open(fixture, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+    macos_input_sample(base + minute * 60, directory)
+PY
+	local output
+	output=$(macos_input_helper "$home" "$now" input-stats)
+	# 30m typing + 5m cut-off + 9m after unlock = 44m = 0.7h.
+	[[ "$(printf '%s' "$output" | jq -r '[.today_hours, .periods.day.source, (.evidence | join(","))] | map(tostring) | join(",")')" == "0.7,macos-input-activity:idle-cutoff-300s,hid-idle" ]] ||
+		fail "macOS input activity did not follow the Linux idle, lock and console rules: ${output}"
+	[[ "$(jq -r '.collector' "${observability}/screen-activity.jsonl" | sort -u)" == "macos-input-activity" ]] ||
+		fail "macOS activity records were not tagged with the macOS collector"
+
+	# Live sampler path through the helper: lock, unreadable idle, unknown console.
+	local state="${observability}/screen-activity-state.json"
+	printf '%s\n' '{"idle_seconds": 3, "locked": true, "on_console": true}' >"$fixture"
+	AIDEVOPS_HID_IDLE_FIXTURE="$fixture" macos_input_helper "$home" "$now" sample >/dev/null
+	[[ "$(jq -r '.evidence | join(",")' "$state")" == "locked" ]] || fail "locked Mac console counted input: $(<"$state")"
+	printf '%s\n' '{"locked": false, "on_console": true}' >"$fixture"
+	AIDEVOPS_HID_IDLE_FIXTURE="$fixture" macos_input_helper "$home" "$((now + 60))" sample >/dev/null
+	[[ "$(macos_input_helper "$home" "$((now + 60))" input-stats | jq -r '.collection_status')" == "partial" ]] ||
+		fail "unreadable HIDIdleTime was not surfaced as partial"
+	printf '%s\n' '{"idle_seconds": 3}' >"$fixture"
+	AIDEVOPS_HID_IDLE_FIXTURE="$fixture" macos_input_helper "$home" "$((now + 120))" sample >/dev/null
+	[[ "$(jq -r '[(.last_input | floor), (.evidence | join(","))] | map(tostring) | join(",")' "$state")" == "$((now + 117)),hid-idle,console-state-unknown" ]] ||
+		fail "HID idle input without console state was not sampled: $(<"$state")"
+	pass "macOS input activity uses HIDIdleTime with the Linux idle cut-off, lock and console rules"
 	return 0
 }
 
@@ -448,8 +623,8 @@ test_corrupt_core_data_and_history_paths_are_safe() {
 	insert_app_usage "$db" "$previous_noon" "$((previous_noon + 3600))"
 	sqlite3 "$db" "
 		UPDATE ZOBJECT SET ZVALUESTRING='valid.app' WHERE ZSTREAMNAME='/app/usage';
-		INSERT INTO ZOBJECT (ZSTREAMNAME,ZCREATIONDATE,ZVALUEINTEGER) VALUES('/display/isBacklit','broken',1);
-		INSERT INTO ZOBJECT (ZSTREAMNAME,ZCREATIONDATE,ZVALUEINTEGER) VALUES('/display/isBacklit',1e999,1);
+		INSERT INTO ZOBJECT (ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUEINTEGER) VALUES('/display/isBacklit','broken','broken',1);
+		INSERT INTO ZOBJECT (ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUEINTEGER) VALUES('/display/isBacklit',1e999,1e999,1);
 		INSERT INTO ZOBJECT (ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUESTRING) VALUES('/app/usage','broken','also-broken','bad.app');
 		INSERT INTO ZOBJECT (ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUESTRING) VALUES('/app/usage',1e999,1e999,'infinite.app');"
 	local profile_json app_json
@@ -484,10 +659,11 @@ test_screen_engine_sibling_modules_deploy_together() {
 		"${SCRIPTS_DIR}/screen_time_interval_common.py" \
 		"${SCRIPTS_DIR}/screen_time_macos.py" \
 		"${SCRIPTS_DIR}/screen_time_macos_apps.py" \
+		"${SCRIPTS_DIR}/screen_time_macos_input.py" \
 		"${SCRIPTS_DIR}/screen_time_macos_pmset.py" \
 		"${SCRIPTS_DIR}/screen_time_linux.py" \
-		"${SCRIPTS_DIR}/screen_time_linux_wtmp.py" \
-		"${SCRIPTS_DIR}/screen_time_linux_logind.py" \
+		"${SCRIPTS_DIR}/screen_time_linux_activity.py" \
+		"${SCRIPTS_DIR}/screen_time_sources.py" \
 		"${SCRIPTS_DIR}/screen_time_history.py" "$deploy_dir/"
 	local output
 	output=$(python3 "${deploy_dir}/screen-time-interval-engine.py" history-summary --os-type Unsupported)
@@ -536,6 +712,7 @@ main() {
 
 	local db="${tmpdir}/knowledgeC.db"
 	create_knowledge_db "$db"
+	unset AIDEVOPS_SCREEN_ACTIVITY_DIR AIDEVOPS_SCREEN_ACTIVITY_FIXTURE AIDEVOPS_SCREEN_ACTIVITY_IDLE_SECONDS AIDEVOPS_HID_IDLE_FIXTURE
 	: >"${tmpdir}/empty-pmset.log"
 	export AIDEVOPS_PMSET_FIXTURE="${tmpdir}/empty-pmset.log"
 
@@ -578,7 +755,9 @@ main() {
 	test_local_midnight_dst_boundaries "$tmpdir"
 	test_profile_completed_day_dst_semantics "$tmpdir"
 	test_pmset_permission_free_fallback "$tmpdir"
-	test_linux_state_machine "$tmpdir"
+	test_linux_input_activity_intervals "$tmpdir"
+	test_linux_input_evidence_probe "$tmpdir" "$now"
+	test_macos_input_activity_matches_linux_rule "$tmpdir"
 	test_history_calendar_coverage_and_staleness "$tmpdir"
 	test_corrupt_core_data_and_history_paths_are_safe "$tmpdir" "$now"
 	test_screen_engine_sibling_modules_deploy_together "$tmpdir"

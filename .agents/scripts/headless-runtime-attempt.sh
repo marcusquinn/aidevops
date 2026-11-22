@@ -25,6 +25,12 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	SCRIPT_DIR="$(cd "$_attempt_lib_path" && pwd)"
 	unset _attempt_lib_path
 fi
+# Shared probe, process-scoped config and agent heal (GH#36491).
+_attempt_module_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_attempt_module_dir" == "${BASH_SOURCE[0]}" ]] && _attempt_module_dir="."
+# shellcheck source=./headless-signing-lib.sh
+source "${_attempt_module_dir}/headless-signing-lib.sh" || return 1
+unset _attempt_module_dir
 
 # Preserve a machine-readable exit-trap reason while identifying the exact
 # prelaunch helper that failed in the worker log.
@@ -47,39 +53,62 @@ _headless_worker_runs_sandboxed() {
 }
 
 # Verify that a worker can create a signed commit without prompting before any
-# model tokens are spent. commit-tree exercises Git's effective signing config
-# without moving refs or changing the worktree.
+# model tokens are spent. commit-tree -S exercises Git's effective signing config
+# without moving refs or changing the worktree (GH#36515: commit-tree ignores
+# commit.gpgsign, so the shared probe passes -S whenever signing is required).
 #
 # GH#33064: the sandbox never receives SSH_AUTH_SOCK (passing it would expose
 # every key in the user's agent to the model process). Probe without the
 # launcher's agent whenever the worker will be sandboxed, so an agent-only
 # signer fails pre-launch instead of at the worker's first commit.
+#
+# GH#37336: LLM routines run with --dir set to a canonical checkout rather than
+# a dispatcher-created linked worktree. The shared probe signs in a private
+# bare repository there, because the canonical Git guard rejects commit-tree.
 _headless_worker_signing_commit_probe() {
 	local work_dir="$1"
-	local tree_id=""
-	tree_id=$(git -C "$work_dir" rev-parse 'HEAD^{tree}' 2>/dev/null) || return 1
-	(
-		if _headless_worker_runs_sandboxed; then
-			unset SSH_AUTH_SOCK SSH_AGENT_PID
-		fi
-		GIT_TERMINAL_PROMPT=0 \
-			SSH_ASKPASS=/usr/bin/false \
-			SSH_ASKPASS_REQUIRE=force \
-			DISPLAY=aidevops-headless \
-			git -C "$work_dir" commit-tree "$tree_id" \
-				-m "aidevops headless signing preflight" </dev/null >/dev/null 2>&1
-	) || return 1
+	local drop_agent=0
+	_headless_worker_runs_sandboxed && drop_agent=1
+	_HEADLESS_SIGNING_PROBE_FAILURE=""
+	headless_signing_commit_probe "$work_dir" "$drop_agent" && return 0
+	_HEADLESS_SIGNING_PROBE_FAILURE=$(_headless_worker_signing_probe_failure_kind "$work_dir" "$drop_agent")
+	return 1
+}
+
+# GH#37597: name why the prompt-free probe failed so a post-merge continuation
+# failure is diagnosable from durable metrics. Read-only Git queries only.
+# Args: $1 = worktree, $2 = drop_agent flag used by the probe
+# Stdout: one constant token
+_headless_worker_signing_probe_failure_kind() {
+	local work_dir="$1"
+	local drop_agent="$2"
+	if [[ ! -d "$work_dir" ]]; then
+		printf 'worktree_missing\n'
+	elif headless_signing_is_main_worktree "$work_dir"; then
+		printf 'isolated_sign_failed\n'
+	elif ! git -C "$work_dir" rev-parse --verify --quiet 'HEAD^{tree}' >/dev/null 2>&1; then
+		printf 'head_tree_unresolved\n'
+	elif [[ "$drop_agent" == "1" ]]; then
+		printf 'sign_failed_without_agent\n'
+	else
+		printf 'sign_failed\n'
+	fi
+	return 0
+}
+
+# Record the failing signing preflight stage (configure, prepare, heal) with
+# the probe failure kind, e.g. "probe_after_heal:sign_failed".
+# Args: $1 = stage token
+_headless_worker_signing_failure_stage() {
+	local stage="$1"
+	_HEADLESS_SIGNING_FAILURE_STAGE="${stage}${_HEADLESS_SIGNING_PROBE_FAILURE:+:${_HEADLESS_SIGNING_PROBE_FAILURE}}"
 	return 0
 }
 
 _append_headless_worker_git_config_env() {
 	local config_key="$1"
 	local config_value="$2"
-	local config_count="${GIT_CONFIG_COUNT:-0}"
-	[[ "$config_count" =~ ^[0-9]+$ ]] || return 1
-	export "GIT_CONFIG_KEY_${config_count}=${config_key}"
-	export "GIT_CONFIG_VALUE_${config_count}=${config_value}"
-	export GIT_CONFIG_COUNT=$((config_count + 1))
+	headless_signing_append_git_config_env "$config_key" "$config_value" || return 1
 	return 0
 }
 
@@ -88,22 +117,31 @@ _append_headless_worker_git_config_env() {
 # process-scoped Git config inherited by the runtime and exit-trap Git commands.
 # During migration, an existing effective signing configuration remains valid
 # only when the same noninteractive signed-commit probe succeeds (GH#29902).
+# The agent heal in _prepare_headless_worker_signing needs the dedicated key,
+# so this migration path fails closed with setup guidance instead (GH#36515).
 _configure_headless_worker_signing_env() {
 	local work_dir="$1"
+	_HEADLESS_SIGNING_FAILURE_STAGE="" _HEADLESS_SIGNING_PROBE_FAILURE=""
 	[[ "${_AIDEVOPS_HEADLESS_SIGNING_ENV_CONFIGURED:-0}" == "1" ]] && return 0
 	local signing_required=""
 	signing_required=$(git -C "$work_dir" config --bool commit.gpgsign 2>/dev/null || true)
 	[[ "$signing_required" == "$_HEADLESS_SIGNING_TRUE" ]] || return 0
 	local signing_public_key="${AIDEVOPS_HEADLESS_SIGNING_PUBLIC_KEY:-${HOME}/.ssh/id_ed25519_signing.pub}"
 	if [[ ! -r "$signing_public_key" ]]; then
-		_headless_worker_signing_commit_probe "$work_dir" || return 1
+		if ! _headless_worker_signing_commit_probe "$work_dir"; then
+			_headless_worker_signing_failure_stage "configure_probe_no_dedicated_key"
+			print_error "[lifecycle] existing commit signing cannot sign without a prompt and no dedicated headless signing key exists; run 'aidevops signing headless-setup' directly in a terminal"
+			return 1
+		fi
 		export _AIDEVOPS_HEADLESS_SIGNING_ENV_CONFIGURED=1
 		return 0
 	fi
 	export _AIDEVOPS_HEADLESS_SIGNING_GIT_CONFIG_START="${GIT_CONFIG_COUNT:-0}"
+	_HEADLESS_SIGNING_FAILURE_STAGE="configure_git_config_env"
 	_append_headless_worker_git_config_env "gpg.format" "ssh" || return 1
 	_append_headless_worker_git_config_env "user.signingkey" "$signing_public_key" || return 1
 	_append_headless_worker_git_config_env "commit.gpgsign" "$_HEADLESS_SIGNING_TRUE" || return 1
+	_HEADLESS_SIGNING_FAILURE_STAGE=""
 	export _AIDEVOPS_HEADLESS_SIGNING_ENV_CONFIGURED=1
 	return 0
 }
@@ -114,29 +152,49 @@ _configure_headless_worker_signing_env() {
 _prepare_headless_worker_signing() {
 	local work_dir="$1"
 	local signing_required=""
-	local signing_helper="${AIDEVOPS_SIGNING_SETUP_HELPER:-${SCRIPT_DIR}/signing-setup.sh}"
-	local signing_key="${AIDEVOPS_HEADLESS_SIGNING_KEY:-${HOME}/.ssh/id_ed25519_signing}"
-	local agent_env="${AIDEVOPS_SSH_AGENT_ENV:-${HOME}/.ssh/agent.env}"
+	_HEADLESS_SIGNING_FAILURE_STAGE="" _HEADLESS_SIGNING_PROBE_FAILURE=""
 
 	signing_required=$(git -C "$work_dir" config --bool commit.gpgsign 2>/dev/null || true)
 	[[ "$signing_required" == "$_HEADLESS_SIGNING_TRUE" ]] || return 0
 	if [[ "${_AIDEVOPS_HEADLESS_SIGNING_ENV_CONFIGURED:-0}" != "1" ]]; then
+		_headless_worker_signing_failure_stage "prepare_env_unconfigured"
 		print_error "[lifecycle] dedicated headless signing configuration is unavailable; run 'aidevops signing headless-setup' directly in a terminal"
 		return 1
 	fi
 	_headless_worker_signing_commit_probe "$work_dir" && return 0
 
-	if [[ -f "$signing_key" && -x "$signing_helper" ]]; then
-		"$signing_helper" agent-start >/dev/null 2>&1 || true
-		if [[ -r "$agent_env" ]]; then
-			# shellcheck source=/dev/null
-			. "$agent_env" >/dev/null 2>&1 || true
-		fi
+	if headless_signing_heal_agent; then
 		_headless_worker_signing_commit_probe "$work_dir" && return 0
+		_headless_worker_signing_failure_stage "probe_after_heal"
+	else
+		_headless_worker_signing_failure_stage "heal_unavailable"
 	fi
 
-	print_error "[lifecycle] headless commit signing is unavailable; run 'aidevops signing headless-setup' directly in a terminal, then 'aidevops signing agent-start'"
+	print_error "[lifecycle] headless commit signing is unavailable stage=${_HEADLESS_SIGNING_FAILURE_STAGE}; run 'aidevops signing headless-setup' directly in a terminal, then 'aidevops signing agent-start'"
 	return 1
+}
+
+# GH#38982 defence in depth: return 0 only when the head recorded with the
+# persisted issue session is the exact head of a merged PR on its branch.
+# Squash merges leave no ancestry, so ask GitHub for exact-head PR state. A
+# head with no PR (interrupted before the first commit), an open PR, or any
+# unknown/API failure keeps the existing resume behaviour.
+_persisted_session_head_merged() {
+	local provider="$1"
+	local session_key="$2"
+	local repo_slug="${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}"
+	local issue_number="" recorded="" head_sha="" head_branch="" handoff=""
+	[[ "$session_key" =~ ^issue-([1-9][0-9]*)$ && "$repo_slug" == */* ]] || return 1
+	issue_number="${BASH_REMATCH[1]}"
+	declare -F _pr_handoff_state_for_branch_or_issue >/dev/null 2>&1 || return 1
+	recorded=$(get_session_head "$provider" "$session_key") || return 1
+	head_sha="${recorded%%$'\t'*}"
+	head_branch="${recorded#*$'\t'}"
+	[[ "$head_sha" =~ ^[0-9a-f]{40}$ && -n "$head_branch" && "$head_branch" != "$recorded" ]] || return 1
+	handoff=$(_pr_handoff_state_for_branch_or_issue "$head_branch" "$issue_number" \
+		"$repo_slug" head-only "$head_sha" 0) || return 1
+	[[ "$handoff" =~ ^merged\|[1-9][0-9]*$ ]] || return 1
+	return 0
 }
 
 # Resolve prompt transport, provider/session state, and the runtime command.
@@ -190,8 +248,16 @@ _prepare_run_attempt_command() {
 		fi
 	elif [[ "$role" == "pulse" ]]; then
 		clear_session_id "$provider" "$session_key"
+	elif _headless_session_key_is_fresh_per_run "$session_key"; then
+		# GH#39726: every routine run starts fresh; drop any legacy row.
+		clear_session_id "$provider" "$session_key"
 	else
 		persisted_session=$(get_session_id "$provider" "$session_key")
+		if [[ -n "$persisted_session" ]] && _persisted_session_head_merged "$provider" "$session_key"; then
+			print_info "[lifecycle] persisted_session_skipped session=${session_key} reason=prior_head_merged"
+			clear_session_id "$provider" "$session_key"
+			persisted_session=""
+		fi
 	fi
 	case "$runtime" in
 	claude)
@@ -303,18 +369,24 @@ _configure_run_attempt_context() {
 		return 11
 	fi
 	if [[ "$role" == "worker" ]]; then
+		_WORKER_SIGNING_FAILURE_DETAIL=""
 		if ! _configure_headless_worker_signing_env "$work_dir"; then
+			# GH#37597: keep the failing stage for the durable exit metric.
+			_WORKER_SIGNING_FAILURE_DETAIL="worker_signing_${_HEADLESS_SIGNING_FAILURE_STAGE:-configure_unknown}"
 			_report_run_attempt_prelaunch_failure \
 				"_configure_run_attempt_context.configure_headless_signing" 87 \
 				"worker_signing_unavailable"
+			print_error "[lifecycle] worker_signing_failure_detail=${_WORKER_SIGNING_FAILURE_DETAIL} session=${session_key}"
 			printf '87' >"$exit_code_file" 2>/dev/null || true
 			exit_code=87
 			return 87
 		fi
 		if ! _prepare_headless_worker_signing "$work_dir"; then
+			_WORKER_SIGNING_FAILURE_DETAIL="worker_signing_${_HEADLESS_SIGNING_FAILURE_STAGE:-prepare_unknown}"
 			_report_run_attempt_prelaunch_failure \
 				"_configure_run_attempt_context.prepare_headless_signing" 87 \
 				"worker_signing_unavailable"
+			print_error "[lifecycle] worker_signing_failure_detail=${_WORKER_SIGNING_FAILURE_DETAIL} session=${session_key}"
 			printf '87' >"$exit_code_file" 2>/dev/null || true
 			exit_code=87
 			return 87

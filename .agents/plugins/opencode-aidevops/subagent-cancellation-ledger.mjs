@@ -91,6 +91,10 @@ export class SubagentCancellationLedger {
     if (!sessionID || !callID || part?.type !== "tool") return;
     if (["pending", "running"].includes(status)) {
       this.beforeTool({ tool: part.tool, sessionID, callID }, { args: part.state?.input || {} });
+    } else if (part.state?.metadata?.interrupted === true) {
+      // GH#35529: an interrupted call may have partly run; keep it in flight
+      // so receipts report its outcome as unknown rather than failed.
+      return;
     } else if (["completed", "error", "failed", "aborted", "cancelled", "canceled"].includes(status)) {
       this.afterSideEffect({ tool: part.tool, sessionID, callID }, { status, error: part.state?.error });
     }

@@ -33,7 +33,7 @@ PASSED=0
 FAILED=0
 WARNINGS=0
 SKIPPED=0
-POSTFLIGHT_COMMIT_SHA=""
+POSTFLIGHT_COMMIT_SHA="${POSTFLIGHT_COMMIT_SHA:-}"
 POSTFLIGHT_STABLE_RELEASE_CHECKS=""
 
 print_header() {
@@ -233,6 +233,35 @@ _postflight_report_advisory_checks() {
 	return 0
 }
 
+# Resolve against the remote tag, not the caller's potentially unrelated HEAD.
+resolve_release_commit() {
+	local repo="$1"
+	local release_tag="${POSTFLIGHT_RELEASE_TAG:-}"
+	local tag_sha explicit_sha
+	if [[ -z "$release_tag" ]]; then
+		POSTFLIGHT_COMMIT_SHA="${POSTFLIGHT_COMMIT_SHA:-$(git -C "$ORIGINAL_PWD" rev-parse HEAD 2>/dev/null || true)}"
+		return 0
+	fi
+	# The commits endpoint peels annotated tags and works without a local tag fetch.
+	tag_sha=$(gh api "repos/${repo}/commits/${release_tag}" --jq '.sha' 2>/dev/null) || {
+		count_failure "Could not resolve release tag $release_tag to a commit"
+		return 1
+	}
+	if [[ ! "$tag_sha" =~ ^[0-9a-f]{40}$ ]]; then
+		count_failure "Invalid commit returned for release tag $release_tag"
+		return 1
+	fi
+	if [[ -n "$POSTFLIGHT_COMMIT_SHA" ]]; then
+		explicit_sha=$(git -C "$ORIGINAL_PWD" rev-parse --verify "${POSTFLIGHT_COMMIT_SHA}^{commit}" 2>/dev/null) || explicit_sha="$POSTFLIGHT_COMMIT_SHA"
+		if [[ "$explicit_sha" != "$tag_sha" ]]; then
+			count_failure "Release commit mismatch: $release_tag resolves to $tag_sha, but explicit SHA is $POSTFLIGHT_COMMIT_SHA"
+			return 1
+		fi
+	fi
+	POSTFLIGHT_COMMIT_SHA="$tag_sha"
+	return 0
+}
+
 # Check GitHub Actions CI/CD status using release-owned exact-SHA evidence.
 check_cicd_status() {
 	print_section "CI/CD Pipeline Status"
@@ -249,7 +278,8 @@ check_cicd_status() {
 		return 1
 	fi
 	print_info "Repository: $repo"
-	release_sha="${POSTFLIGHT_COMMIT_SHA:-$(git -C "$ORIGINAL_PWD" rev-parse HEAD 2>/dev/null || true)}"
+	resolve_release_commit "$repo" || return 1
+	release_sha="$POSTFLIGHT_COMMIT_SHA"
 	if [[ -z "$release_sha" ]]; then
 		count_failure "Could not determine exact release commit"
 		return 1
@@ -430,28 +460,42 @@ check_snyk() {
 check_secrets() {
 	print_section "Secret Detection (Secretlint)"
 
+	local secretlint_cmd=""
 	if command -v secretlint &>/dev/null; then
-		print_info "Running Secretlint scan..."
-
-		if secretlint "**/*" --format compact 2>/dev/null; then
-			count_success "Secretlint: No secrets detected"
-		else
-			count_failure "Secretlint: Potential secrets found"
-			return 1
-		fi
+		secretlint_cmd="secretlint"
 	elif [[ -f "$REPO_ROOT/node_modules/.bin/secretlint" ]]; then
-		print_info "Running Secretlint (local)..."
-
-		if "$REPO_ROOT/node_modules/.bin/secretlint" "**/*" --format compact 2>/dev/null; then
-			count_success "Secretlint: No secrets detected"
-		else
-			count_failure "Secretlint: Potential secrets found"
-			return 1
-		fi
+		secretlint_cmd="$REPO_ROOT/node_modules/.bin/secretlint"
 	else
 		print_skip "Secretlint not installed"
 		print_info "Install: npm install -g secretlint @secretlint/secretlint-rule-preset-recommend"
+		return 0
 	fi
+
+	if [[ ! -f ".secretlintrc.json" && ! -f ".secretlintrc.yaml" && ! -f ".secretlintrc.yml" && ! -f ".secretlintrc.js" && ! -f ".secretlintrc.cjs" && ! -f ".secretlintrc.mjs" && ! -f ".secretlintrc" ]]; then
+		print_skip "Secretlint configuration not found (.secretlintrc*)"
+		return 0
+	fi
+
+	print_info "Running Secretlint scan..."
+
+	# Secretlint contract: 0 = clean, 1 = findings, other = scanner error
+	local sl_output="" sl_status=0
+	sl_output=$("$secretlint_cmd" "**/*" --format compact 2>&1) || sl_status=$?
+	case "$sl_status" in
+	0)
+		count_success "Secretlint: No secrets detected"
+		;;
+	1)
+		[[ -n "$sl_output" ]] && printf '%s\n' "$sl_output"
+		count_failure "Secretlint: Potential secrets found"
+		return 1
+		;;
+	*)
+		[[ -n "$sl_output" ]] && printf '%s\n' "$sl_output"
+		count_failure "Secretlint could not run (exit $sl_status): scanner error, not a secrets finding"
+		return 1
+		;;
+	esac
 
 	return 0
 }

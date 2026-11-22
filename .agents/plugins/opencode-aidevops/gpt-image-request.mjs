@@ -6,55 +6,28 @@
 // https://github.com/yuji-hatakeyama/opencode-gpt-imagegen
 
 const CODEX_RESPONSES_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
+const CODEX_MODELS_ENDPOINT = "https://chatgpt.com/backend-api/codex/models?client_version=1.0.0";
 const OPENAI_IMAGES_GENERATE_ENDPOINT = "https://api.openai.com/v1/images/generations";
 const OPENAI_IMAGES_EDIT_ENDPOINT = "https://api.openai.com/v1/images/edits";
-import { readFileSync } from "node:fs";
-import { parseImageSse, redactProviderDetail } from "./gpt-image-sse.mjs";
+import { parseImageSse } from "./gpt-image-sse.mjs";
+import {
+  MAX_API_RESPONSE_BYTES,
+  MODEL_SLUG,
+  fetchImageResponse,
+  imageRequestError,
+  readBoundedJson,
+  transportFailure,
+  withImageRequestTimeout,
+} from "./gpt-image-http.mjs";
+import { CODEX_FALLBACK_MODEL } from "./openai-codex-model-fallback.mjs";
 
-export { parseImageSse };
+export { parseImageSse, imageRequestError };
 export const DEFAULT_API_IMAGE_MODEL = "gpt-image-2";
 export const API_IMAGE_MODELS = Object.freeze([
   "gpt-image-2",
   "gpt-image-2.5-flare",
   "gpt-image-2.5-sunburst",
 ]);
-
-const MODEL_ROUTING_TABLE = new URL("../../configs/model-routing-table.json", import.meta.url);
-const MAX_API_RESPONSE_BYTES = 96 * 1024 * 1024;
-const MAX_ERROR_RESPONSE_BYTES = 64 * 1024;
-const IMAGE_REQUEST_TIMEOUT_MS = 180_000;
-const TRANSPORT_CODES = new Set(["ECONNRESET", "ETIMEDOUT", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"]);
-
-function transportFailure(route, phase, cause, { started, response, signal }) {
-  const elapsedMs = Math.min(IMAGE_REQUEST_TIMEOUT_MS, Math.max(0, Math.round(performance.now() - started)));
-  const code = signal.aborted ? "timeout" :
-    [cause?.code, cause?.cause?.code].find((value) => TRANSPORT_CODES.has(value)) || "unknown";
-  const status = response ? ` status=${response.status}` : "";
-  const error = new Error(`OpenAI image transport failure route=${route} phase=${phase} elapsed_ms=${elapsedMs}${status} code=${code}; provider outcome unconfirmed; do not automatically retry.`);
-  error.code = "IMAGE_TRANSPORT_FAILURE";
-  error.phase = phase;
-  error.route = route;
-  return error;
-}
-
-async function fetchImageResponse(fetchImpl, endpoint, init, route, started) {
-  try {
-    return await fetchImpl(endpoint, init);
-  } catch (error) {
-    throw transportFailure(route, "request", error, { started, signal: init.signal });
-  }
-}
-
-async function withImageRequestTimeout(operation) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), IMAGE_REQUEST_TIMEOUT_MS);
-  timer.unref?.();
-  try {
-    return await operation(controller.signal);
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 function imageToolArgs(args) {
   return {
@@ -63,15 +36,6 @@ function imageToolArgs(args) {
     quality: args.quality || "auto",
     ...(args.size && args.size !== "auto" ? { size: args.size } : {}),
   };
-}
-
-function subscriptionRouterModels() {
-  const routing = JSON.parse(readFileSync(MODEL_ROUTING_TABLE, "utf8"));
-  const models = ["thinking", "standard", "simple"]
-    .flatMap((tier) => routing.tiers?.[tier]?.models || [])
-    .filter((model) => model.startsWith("openai/"))
-    .map((model) => model.slice("openai/".length));
-  return [...new Set(models)].slice(0, 2);
 }
 
 function oauthRequestBody(args, images, model) {
@@ -98,33 +62,127 @@ function oauthHeaders(auth) {
   };
 }
 
+const MAX_ROUTER_CANDIDATES = 3;
+
+export const NO_COMPATIBLE_IMAGE_MODEL_MESSAGE =
+  "No compatible image-capable Codex model was found among the attempted candidates; this bounded probe does not establish account-wide image entitlement. Use auth=\"openrouter\" or auth=\"api\" (explicit billing routes) instead.";
+
+function isImageToolStripped(error) {
+  return /Tool choice 'image_generation' not found/i.test(String(error?.message || ""));
+}
+
+// Live Codex model slugs for this account (best effort; [] on any failure).
+async function listCodexModels(auth, fetchImpl, signal) {
+  try {
+    const response = await fetchImpl(CODEX_MODELS_ENDPOINT, {
+      method: "GET",
+      headers: { ...oauthHeaders(auth), Accept: "application/json" },
+      signal,
+    });
+    if (!response?.ok) return [];
+    const payload = await response.json();
+    const entries = Array.isArray(payload?.models) ? payload.models : Array.isArray(payload?.data) ? payload.data : [];
+    return entries
+      .map((entry) => (typeof entry === "string" ? entry : entry?.slug || entry?.id))
+      .filter((slug) => typeof slug === "string" && MODEL_SLUG.test(slug));
+  } catch {
+    return [];
+  }
+}
+
+async function attemptOAuthRouter(auth, args, images, model, ctx) {
+  const { fetchImpl, signal, started } = ctx;
+  const response = await fetchImageResponse(fetchImpl, CODEX_RESPONSES_ENDPOINT, {
+    method: "POST",
+    headers: oauthHeaders(auth),
+    body: JSON.stringify(oauthRequestBody(args, images, model)),
+    signal,
+  }, "oauth", started);
+  if (!response.ok) return { response, base64: "", error: await imageRequestError(response, "oauth") };
+  let base64;
+  try {
+    base64 = await parseImageSse(response.body, (error) => {
+      throw transportFailure("oauth", "response-body", error, { started, response, signal });
+    });
+  } catch (error) {
+    if (error?.code !== "model_not_found" && !isImageToolStripped(error)) throw error;
+    return { response, base64: "", error };
+  }
+  return {
+    response,
+    base64,
+    routerModel: model,
+    requestedModel: null,
+    providerModel: null,
+  };
+}
+
 export async function requestOAuthImage(auth, args, images, fetchImpl) {
-  const models = subscriptionRouterModels();
-  if (models.length === 0) throw new Error("No OpenAI subscription router model is configured.");
+  return withImageRequestTimeout(async (signal) => {
+    const ctx = { fetchImpl, signal, started: performance.now() };
+    let result = await attemptOAuthRouter(auth, args, images, CODEX_FALLBACK_MODEL, ctx);
+    const rejected = result.error?.code === "model_not_found";
+    if (!rejected) {
+      if (isImageToolStripped(result.error)) result.error = compatibilityError(result.error);
+      return result;
+    }
+    // The hardcoded router slug is not available to this account: try the
+    // account's live Codex models (bounded), never a guessed slug.
+    const candidates = (await listCodexModels(auth, fetchImpl, signal))
+      .filter((slug) => slug !== CODEX_FALLBACK_MODEL)
+      .slice(0, MAX_ROUTER_CANDIDATES);
+    let stripped = false;
+    for (const model of candidates) {
+      const next = await attemptOAuthRouter(auth, args, images, model, ctx);
+      if (next.response.ok && !next.error) return next;
+      if (isImageToolStripped(next.error)) {
+        stripped = true;
+        continue;
+      }
+      if (next.error?.code === "model_not_found") continue;
+      return next;
+    }
+    if (stripped) result.error = compatibilityError(result.error);
+    return result;
+  });
+}
+
+function compatibilityError(cause) {
+  const error = new Error(NO_COMPATIBLE_IMAGE_MODEL_MESSAGE);
+  error.code = "no_compatible_image_model";
+  error.status = cause?.status || 400;
+  return error;
+}
+
+const OPENROUTER_IMAGES_ENDPOINT = "https://openrouter.ai/api/v1/images";
+export const DEFAULT_OPENROUTER_IMAGE_MODEL = "openai/gpt-image-2.6-sunburst";
+
+export async function requestOpenRouterImage(auth, args, fetchImpl) {
   return withImageRequestTimeout(async (signal) => {
     const started = performance.now();
-    let result;
-    for (const model of models) {
-      const response = await fetchImageResponse(fetchImpl, CODEX_RESPONSES_ENDPOINT, {
-        method: "POST",
-        headers: oauthHeaders(auth),
-        body: JSON.stringify(oauthRequestBody(args, images, model)),
-        signal,
-      }, "oauth", started);
-      if (response.ok) {
-        return {
-          response,
-          base64: await parseImageSse(response.body, (error) => {
-            throw transportFailure("oauth", "response-body", error, { started, response, signal });
-          }),
-          requestedModel: null,
-          providerModel: null,
-        };
-      }
-      result = { response, base64: "", error: await imageRequestError(response, "oauth") };
-      if (result.error.code !== "model_not_found") return result;
-    }
-    return result;
+    const requestedModel = DEFAULT_OPENROUTER_IMAGE_MODEL;
+    const body = {
+      model: requestedModel,
+      prompt: args.prompt,
+      quality: args.quality || "auto",
+      size: args.size || "auto",
+      output_format: args.format || "png",
+    };
+    const response = await fetchImageResponse(fetchImpl, OPENROUTER_IMAGES_ENDPOINT, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${auth.accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    }, "openrouter", started);
+    if (!response.ok) return { response, base64: "", error: await imageRequestError(response, "openrouter") };
+    const payload = await readBoundedJson(response, MAX_API_RESPONSE_BYTES, "OpenRouter image response", (error) => {
+      throw transportFailure("openrouter", "response-body", error, { started, response, signal });
+    });
+    const base64 = payload?.data?.[0]?.b64_json;
+    if (typeof base64 !== "string" || !base64) throw new Error("OpenRouter image response did not contain an image.");
+    const responseModel = payload?.model;
+    const providerModel = typeof responseModel === "string" && MODEL_SLUG.test(responseModel.replace("/", "-")) ? responseModel : null;
+    return { response, base64, requestedModel, providerModel };
   });
 }
 
@@ -166,31 +224,6 @@ function apiRequest(auth, args, images, signal) {
   };
 }
 
-async function readBoundedJson(response, byteLimit, label, onReadError) {
-  if (!response.body?.getReader) throw new Error(`${label} did not include a response body.`);
-  const reader = response.body.getReader();
-  const chunks = [];
-  let totalBytes = 0;
-  while (true) {
-    let chunk;
-    try {
-      chunk = await reader.read();
-    } catch (error) {
-      if (onReadError) return onReadError(error);
-      throw error;
-    }
-    const { done, value } = chunk;
-    if (done) break;
-    totalBytes += value.byteLength;
-    if (totalBytes > byteLimit) {
-      await reader.cancel().catch(() => {});
-      throw new Error(`${label} exceeded the safe response limit.`);
-    }
-    chunks.push(Buffer.from(value));
-  }
-  return JSON.parse(Buffer.concat(chunks, totalBytes).toString("utf8"));
-}
-
 export async function requestApiImage(auth, args, images, fetchImpl) {
   return withImageRequestTimeout(async (signal) => {
     const started = performance.now();
@@ -215,21 +248,4 @@ export async function requestApiImage(auth, args, images, fetchImpl) {
         : null;
     return { response, base64, requestedModel, providerModel };
   });
-}
-
-export async function imageRequestError(response, mode) {
-  let code = "";
-  let message = "";
-  try {
-    const payload = await readBoundedJson(response, MAX_ERROR_RESPONSE_BYTES, "OpenAI image error response");
-    code = payload?.error?.code || payload?.error?.type || "";
-    message = payload?.error?.message || "";
-  } catch {
-    message = "provider returned a non-JSON error";
-  }
-  const detail = [code, message].filter(Boolean).map(redactProviderDetail).join(": ");
-  const error = new Error(`OpenAI ${mode} image request failed (${response.status})${detail ? `: ${detail}` : "."}`);
-  error.code = code;
-  error.status = response.status;
-  return error;
 }

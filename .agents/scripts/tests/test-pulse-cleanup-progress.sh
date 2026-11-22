@@ -86,6 +86,49 @@ rc=0
 # Restore production inventory for the following parser checks.
 source "${SCRIPT_DIR}/pulse-cleanup-progress.sh"
 
+# Capacity mode has its own repository cursor and never scans registry/fixtures.
+# A slow merged scan cannot starve guarded per-candidate work on the next pass.
+(
+	capacity_repo="${TEST_ROOT}/capacity-repo"
+	git init -q "$capacity_repo"
+	mkdir -p "${TEST_ROOT}/active" "${TEST_ROOT}/dirty" "${TEST_ROOT}/unknown" "${TEST_ROOT}/eligible"
+	_PULSE_CLEANUP_SCRIPT_DIR="$SCRIPT_DIR"
+	_pc_cleanup_fixture_passes() { exit 99; }
+	_pc_progress_jobs() { exit 99; }
+	_pc_progress_repo_jobs() {
+		local repo="$1" candidate=""
+		jq -cn --arg repo "$repo" '["merged",$repo]'
+		for candidate in active dirty unknown eligible; do
+			jq -cn --arg repo "$repo" --arg path "${TEST_ROOT}/$candidate" '["orphan",$repo,"owner/repo",$path,"feature","main"]'
+		done
+		return 0
+	}
+	_pc_cleanup_merged_repo() { printf '110\n' >"$CLOCK"; printf '0\n'; return 0; }
+	_cleanup_single_worktree() {
+		local repo="$1" path="$2"
+		[[ "$repo" == "$capacity_repo" && "$path" == "${TEST_ROOT}/eligible" ]] || return 1
+		rmdir "$path"
+		return 0
+	}
+	printf '100\n' >"$CLOCK"
+	rc=0
+	_pc_cleanup_resumable_unlocked 5 "$capacity_repo" || rc=$?
+	[[ "$rc" == 124 ]]
+	identity=$(git -C "$capacity_repo" rev-parse --path-format=absolute --git-common-dir | tr -d '\n' | git hash-object --stdin)
+	cursor="${PULSE_STATE_DIR}/worktree-capacity-${identity}-next.json"
+	[[ "$(jq -r '.[0]' "$cursor")" == orphan ]]
+	global_cursor=$(<"${PULSE_STATE_DIR}/worktree-cleanup-next.json")
+	printf '100\n' >"$CLOCK"
+	_pc_cleanup_resumable_unlocked 5 "$capacity_repo" || [[ "$?" == 124 ]]
+	[[ "$CLEANUP_WORKTREES_REMOVED_COUNT" == 1 && ! -e "${TEST_ROOT}/eligible" ]]
+	[[ -d "${TEST_ROOT}/active" && -d "${TEST_ROOT}/dirty" && -d "${TEST_ROOT}/unknown" ]]
+	[[ "$(<"${PULSE_STATE_DIR}/worktree-cleanup-next.json")" == "$global_cursor" ]]
+	gh() { printf '99\n'; return 0; }
+	rc=0
+	_pc_cleanup_resumable_unlocked 5 "$capacity_repo" || rc=$?
+	[[ "$rc" == 76 && "$CLEANUP_WORKTREES_SKIPPED" == 1 ]]
+)
+
 # Exercise the production NUL-delimited inventory parser, live remote slug,
 # detached candidates, paths with spaces, and local-only repository exclusion.
 git() {

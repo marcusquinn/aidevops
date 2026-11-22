@@ -21,7 +21,7 @@
  */
 
 import { ApprovalManager } from "./approval";
-import { BUILTIN_COMMANDS, getApprovalManager, setApprovalManager } from "./commands";
+import { createBuiltinCommands, getApprovalManager, setApprovalManager } from "./commands";
 import {
   handleBotRemovedFromGroup,
   handleBusinessRequest,
@@ -39,6 +39,8 @@ import { formatLeakWarning, redactLeaks, scanForLeaks } from "./leak-detector";
 import { Logger } from "./logger";
 import { CommandRouter } from "./router";
 import { SessionStore } from "./session";
+import { relayOutbox } from "./session-bus";
+import { sendRelayMessage } from "./session-bus-relay";
 import type {
   BotConfig,
   ChatItem,
@@ -73,14 +75,20 @@ export class SimplexAdapter {
   private hasConnected = false;
   private contactNames: Map<number, string> = new Map();
   private groupNames: Map<number, string> = new Map();
+  private relayTimer: ReturnType<typeof setInterval> | null = null;
+  private relayRunning = false;
+  private pendingRelay: Map<string, (ok: boolean) => void> = new Map();
 
   /** Initialize adapter with config (use loadConfig() for file-based config) */
   constructor(config: BotConfig) {
     this.config = config;
     this.logger = new Logger(this.config.logLevel);
     this.router = new CommandRouter();
-    this.router.registerAll(BUILTIN_COMMANDS);
+    this.router.registerAll(createBuiltinCommands(config));
     this.sessions = new SessionStore(this.config.dataDir);
+    if (config.sessionBus?.enabled) {
+      this.relayTimer = setInterval(() => void this.relayTick(), 5000);
+    }
 
     // Initialise the exec approval manager with config
     const approvalConfig: Partial<ExecApprovalConfig> = this.config.execApproval ?? {};
@@ -152,6 +160,10 @@ export class SimplexAdapter {
   disconnect(): void {
     this.intentionalDisconnect = true;
     this.hasConnected = false;
+    if (this.relayTimer) clearInterval(this.relayTimer);
+    this.relayTimer = null;
+    for (const resolve of this.pendingRelay.values()) resolve(false);
+    this.pendingRelay.clear();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -195,6 +207,25 @@ export class SimplexAdapter {
     await this.sendCommand(`${target} ${safeText}`);
   }
 
+  /** Send using the numeric API reference and require a correlated success response. */
+  private async sendRelay(channel: string, text: string): Promise<void> {
+    await sendRelayMessage(channel, text, {
+      socket: this.ws,
+      pending: this.pendingRelay,
+      nextCorrelationId: () => String(++this.corrIdCounter),
+      redact: value => this.scanAndRedact(value),
+      leakDetection: this.config.leakDetection,
+    });
+  }
+
+  private async relayTick(): Promise<void> {
+    if (this.relayRunning || !this.isConnected()) return;
+    this.relayRunning = true;
+    try { await relayOutbox((channel, text) => this.sendRelay(channel, text)); }
+    catch { this.logger.warn("Session bus relay failed; will retry"); }
+    finally { this.relayRunning = false; }
+  }
+
   /**
    * Scan outbound text for credential/secret leaks and redact if found.
    * This is the send-boundary gate — all outbound messages pass through here.
@@ -224,6 +255,11 @@ export class SimplexAdapter {
     }
 
     if (response.corrId) {
+      const pending = this.pendingRelay.get(response.corrId);
+      if (pending) {
+        this.pendingRelay.delete(response.corrId);
+        pending(response.resp?.type === "newChatItems");
+      }
       this.logger.debug(`Response for corrId ${response.corrId}:`, response.resp?.type);
       return;
     }

@@ -9,8 +9,9 @@
  */
 
 import {
-  getAccounts, getPendingToken, getPoolFilePath,
+  getAccounts, getPendingToken, getPoolFilePath, poolAccountKey, poolAccountLabel,
 } from "./oauth-pool-storage.mjs";
+import { describeUsage } from "./oauth-pool-ordering.mjs";
 import { getEndpointCooldownValue } from "./oauth-pool-token-endpoint.mjs";
 export {
   formatDuration, formatAgo, poolActionCheck,
@@ -48,12 +49,14 @@ export function poolActionList(provider, accounts, hint, now) {
       ? ` (cooldown: ${Math.ceil((a.cooldownUntil - now) / 60000)}m remaining)` : "";
     const lu = a.lastUsed ? ` | last used: ${new Date(a.lastUsed).toLocaleString()}` : "";
     const aid = a.accountId ? ` | id: ${a.accountId.slice(0, 8)}...` : "";
+    const org = a.orgId ? ` | org: ${String(a.orgId).slice(0, 8)}` : "";
     const pri = a.priority ? ` | priority: ${a.priority}` : "";
-    return `${i + 1}. ${a.email} [${a.status}]${cd}${lu}${aid}${pri}`;
+    const usage = provider === "anthropic" ? ` | usage: ${describeUsage(a, now)}` : "";
+    return `${i + 1}. ${poolAccountLabel(a)} [${a.status}]${cd}${lu}${aid}${org}${pri}${usage}`;
   });
   const pending = getPendingToken(provider);
   const pl = pending
-    ? `\n\nPENDING: Unassigned token (added: ${pending.added}). Use assign-pending <email> to assign it.`
+    ? `\n\nPENDING: Unassigned token (added: ${pending.added}). Use assign-pending <email> [org] to assign it.`
     : "";
   return `${provider} pool (${accounts.length} account${accounts.length === 1 ? "" : "s"}):\n\n${lines.join("\n")}${pl}`;
 }
@@ -89,9 +92,10 @@ export async function poolActionRotate(client, provider, accounts, resolveInject
     return `Cannot rotate: only ${accounts.length} account(s). Add more with \`${poolAccountAddCommand(provider)}\`.`;
   }
   const current = [...accounts].sort((a, b) => new Date(b.lastUsed || 0) - new Date(a.lastUsed || 0))[0];
-  if (!(await resolveInjectFn(provider)(client, current?.email))) {
+  // Skip by seat key, not email, so same-email seats rotate (GH#38959).
+  if (!(await resolveInjectFn(provider)(client, current ? poolAccountKey(current) : undefined))) {
     return `Rotation failed (${provider}) -- no other active accounts available.`;
   }
   const newest = [...getAccounts(provider)].sort((a, b) => new Date(b.lastUsed || 0) - new Date(a.lastUsed || 0))[0];
-  return `Rotated (${provider}): now using ${newest?.email || "unknown"}. Previous: ${current?.email || "unknown"}.`;
+  return `Rotated (${provider}): now using ${newest ? poolAccountLabel(newest) : "unknown"}. Previous: ${current ? poolAccountLabel(current) : "unknown"}.`;
 }

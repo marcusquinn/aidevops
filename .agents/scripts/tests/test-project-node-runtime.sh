@@ -59,6 +59,28 @@ PATH="$root/active:$PATH" _project_node_bin "$root/alias" . >"$root/output" 2>"$
 [[ "$alias_rc" -eq 2 ]] || { printf 'FAIL alias pin should mean no requirement, rc=%s\n' "$alias_rc"; exit 1; }
 printf 'PASS alias pin is not treated as an unsatisfiable requirement\n'
 
+# GH#39156: unversioned Homebrew kegs and <prefix>/bin installs are candidates,
+# but a shared multi-tool bin is never returned as the PATH prefix.
+mkdir -p "$root/brew/opt/node/bin" "$root/sys/bin" "$root/sys26/bin"
+printf '#!/bin/sh\nprintf "v24.18.0\\n"\n' >"$root/brew/opt/node/bin/node"
+cp "$root/brew/opt/node/bin/node" "$root/sys/bin/node"
+printf '#!/bin/sh\nexit 0\n' >"$root/sys/bin/git"
+printf '#!/bin/sh\nexit 0\n' >"$root/sys/bin/npm"
+printf '#!/bin/sh\nprintf "v26.1.0\\n"\n' >"$root/sys26/bin/node"
+chmod +x "$root/brew/opt/node/bin/node" "$root/sys/bin/node" "$root/sys/bin/git" "$root/sys/bin/npm" "$root/sys26/bin/node"
+actual=$(PATH="$root/active:$PATH" AIDEVOPS_NODE_BREW_PREFIXES="$root/brew" _project_node_bin "$root/project" packages/app)
+[[ "$actual" == "$root/brew/opt/node/bin" ]] || { printf 'FAIL unversioned Homebrew keg not selected: %s\n' "$actual"; exit 1; }
+printf 'PASS unversioned Homebrew node keg resolves\n'
+actual=$(PATH="$root/active:$PATH" AIDEVOPS_NODE_BREW_PREFIXES="$root/sys" AIDEVOPS_TEMP_DIR="$root/tmp" _project_node_bin "$root/project" packages/app)
+[[ -n "$actual" && "$actual" != "$root/sys/bin" && "$actual" == "$root/tmp/"* ]] || { printf 'FAIL shared prefix bin returned: %s\n' "$actual"; exit 1; }
+[[ "$("$actual/node" --version)" == v24.18.0 && -L "$actual/npm" && ! -e "$actual/git" ]] || { printf 'FAIL private Node link dir incomplete or leaks other tools: %s\n' "$actual"; exit 1; }
+printf 'PASS shared prefix Node resolves through a private link dir\n'
+if PATH="$root/active:$PATH" AIDEVOPS_NODE_BREW_PREFIXES="$root/sys26" AIDEVOPS_TEMP_DIR="$root/tmp" \
+	_project_node_bin "$root/project" packages/app >"$root/output" 2>"$root/error"; then
+	printf 'FAIL shared prefix Node with another major accepted\n'; exit 1
+fi
+printf 'PASS shared prefix Node with another major fails closed\n'
+
 # Exercise the worker preparation path without a live dispatch claim.
 # shellcheck source=../headless-runtime-worker-prepare.sh
 source "$SCRIPT_DIR/headless-runtime-worker-prepare.sh"

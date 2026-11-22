@@ -88,6 +88,9 @@ jobs:
           existing=$(gh api "repos/${REPO}/issues?state=open&per_page=100" \
             --jq ".[] | select(.title == \"${title}\") | .number" | command head -n 1)
           [[ -n "$existing" ]] && exit 0
+          # GH#35752: worker auto-merge trusts these exact titles plus this
+          # Files Scope (+ verify tests) via _is_trusted_opencode_canary_issue_pr
+          # in .agents/scripts/pulse-merge-process.sh; keep them in sync.
           # GH#32979: auto-dispatch bodies need a canonical Files Scope (exact
           # repo-relative files) or the pulse pre-claim gate rejects them every
           # cycle; raw canary output stays fenced and bounded.

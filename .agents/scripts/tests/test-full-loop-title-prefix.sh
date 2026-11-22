@@ -153,6 +153,78 @@ else
 	print_result "Case 7b: exact match 12345 → t9999" 1 "(got: ${result})"
 fi
 
+# Explicit --title validation (GH#36016). No network or real push/PR writes.
+eval "$(sed -n '/^_validate_explicit_pr_title()/,/^}/p' "${TEST_SCRIPTS_DIR}/full-loop-helper.sh")"
+print_warning() {
+	printf 'WARNING: %s\n' "$*" >&2
+	return 0
+}
+print_error() {
+	printf 'ERROR: %s\n' "$*" >&2
+	return 0
+}
+ISSUE_TITLE="Issue-only work"
+ISSUE_LOOKUP_RC=0
+gh() {
+	printf '%s\n' "$ISSUE_TITLE"
+	if [[ "$ISSUE_LOOKUP_RC" -ne 0 ]]; then
+		return 1
+	fi
+	return 0
+}
+TITLE_TODO="${TEST_ROOT}/titles.md"
+cat >"$TITLE_TODO" <<'EOF'
+- [ ] t100 First matching task ref:GH#123
+- [x] t456 Another valid task ref:GH#123
+- [ ] t789 Wrong issue ref:GH#1234
+- [ ] t4560 Longer task ref:GH#124
+EOF
+
+check_title() {
+	local name="$1" title="$2" expected="$3" expected_rc="$4" expected_warnings="$5"
+	local actual="" rc=0 warnings=0
+	actual=$(_validate_explicit_pr_title 123 "$title" example/repo "$TITLE_TODO" 2>"${TEST_ROOT}/title-stderr") || rc=$?
+	warnings=$(grep -c '^WARNING:' "${TEST_ROOT}/title-stderr" || true)
+	if [[ "$actual" == "$expected" && "$rc" -eq "$expected_rc" && "$warnings" -eq "$expected_warnings" ]]; then
+		print_result "$name" 0
+	else
+		print_result "$name" 1 "(got: ${actual}, rc=${rc}, warnings=${warnings})"
+	fi
+	return 0
+}
+
+check_title "Issue-number prefix is corrected once to derived task prefix" "t123: x" "t100: x" 0 1
+check_title "Any exact TODO task/issue match is accepted" "t456: x" "t456: x" 0 0
+check_title "Different issue ref is not proof" "t789: x" "" 1 0
+check_title "Task prefix of a longer TODO ID is not proof" "t45: x" "" 1 0
+if grep -q 'Use.*--title t100:' "${TEST_ROOT}/title-stderr"; then
+	print_result "Rejected title includes the derived-prefix remedy" 0
+else
+	print_result "Rejected title includes the derived-prefix remedy" 1
+fi
+check_title "GH issue prefix stays unchanged" "GH#123: x" "GH#123: x" 0 0
+check_title "Unprefixed title stays unchanged" "x" "x" 0 0
+TITLE_TODO="${TEST_ROOT}/missing.md"
+ISSUE_TITLE="Implement t456: linked task"
+check_title "Linked issue title supplies task proof" "t456: x" "t456: x" 0 0
+ISSUE_TITLE="Implement t123: same-number claimed task"
+check_title "Proven same-number task stays unchanged" "t123: x" "t123: x" 0 0
+ISSUE_TITLE="Implement t4560: different task"
+check_title "Linked issue task match has a token boundary" "t456: x" "" 1 0
+check_title "Unproven task fails with no title output" "t999: x" "" 1 0
+check_title "Issue-only t123 is rewritten as GH#123 with one warning" "t123: x" "GH#123: x" 0 1
+check_title "Issue-title longer ID does not prove shorter task" "t456: x" "" 1 0
+ISSUE_TITLE=""
+check_title "Successful empty title does not prove unrelated task" "t456: x" "" 1 0
+check_title "Successful empty title permits issue-number rewrite" "t123: x" "GH#123: x" 0 1
+ISSUE_LOOKUP_RC=1
+check_title "Failed lookup blocks issue-number rewrite" "t123: x" "" 1 0
+check_title "Failed lookup rejects unrelated task" "t456: x" "" 1 0
+ISSUE_TITLE="Implement t123: partial output from failed lookup"
+check_title "Failed lookup cannot supply task proof" "t123: x" "" 1 0
+TITLE_TODO="${TEST_ROOT}/titles.md"
+check_title "TODO proof does not require issue-title lookup" "t456: x" "t456: x" 0 0
+
 # ============================================================================
 # Summary
 # ============================================================================

@@ -56,10 +56,10 @@ gh_token_has_workflow_scope() {
 	# gh auth status outputs scopes in various formats depending on version:
 	#   Token scopes: 'admin:public_key', 'gist', 'read:org', 'repo', 'workflow'
 	#   Token scopes: admin:public_key, gist, read:org, repo, workflow
-	if echo "$auth_output" | grep -q "'workflow'"; then
+	if grep -q "'workflow'" <<<"$auth_output"; then
 		return 0
 	fi
-	if echo "$auth_output" | grep -qiE 'Token scopes:.*workflow'; then
+	if grep -qiE 'Token scopes:.*workflow' <<<"$auth_output"; then
 		return 0
 	fi
 
@@ -355,6 +355,15 @@ _gh_wrapper_auto_assignee() {
 	return 0
 }
 
+# GH#36978: the signature footer carries the single canonical origin marker.
+# Drop standalone origin marker lines from the body it is appended to, so a
+# marker already present in the body cannot be duplicated next to the footer.
+# Reads stdin, writes stdout.
+_gh_wrapper_strip_origin_marker_lines() {
+	awk '!/^<!-- aidevops:origin:(interactive|worker) -->[[:space:]]*$/'
+	return 0
+}
+
 # t2115: Auto-append signature footer to --body/--body-file and issue-close
 # --comment/-c content when missing.
 # Populates global _GH_WRAPPER_SIG_MODIFIED_ARGS with the (possibly modified) args.
@@ -440,6 +449,30 @@ _gh_wrapper_auto_sig_close_comment() {
 	return 0
 }
 
+# Update the shared argv array for an inline body without duplicating provenance.
+_gh_wrapper_auto_sig_inline() {
+	local sig_helper="$1" body_val="$2" body_idx="$3" is_eq_form="$4"
+	local sig_footer
+	if grep -Fqx '<!-- aidevops:sig -->' <<<"$body_val"; then
+		# A signature alone does not preserve the origin provenance.
+		grep -Eq '^<!-- aidevops:origin:(interactive|worker) -->$' <<<"$body_val" && return 0
+		sig_footer=$'\n'"<!-- aidevops:$(session_origin_label) -->"
+	else
+		sig_footer=$("$sig_helper" footer --body "$body_val" 2>/dev/null || echo "")
+	fi
+	[[ -z "$sig_footer" ]] && return 0
+	local new_body="${body_val}${sig_footer}"
+	if [[ "$sig_footer" == *'<!-- aidevops:origin:'* ]]; then
+		new_body="$(printf '%s\n' "$body_val" | _gh_wrapper_strip_origin_marker_lines)${sig_footer}"
+	fi
+	if [[ "$is_eq_form" -eq 1 ]]; then
+		_GH_WRAPPER_SIG_MODIFIED_ARGS[body_idx]="--body=${new_body}"
+	else
+		_GH_WRAPPER_SIG_MODIFIED_ARGS[body_idx + 1]="$new_body"
+	fi
+	return 0
+}
+
 _gh_wrapper_auto_sig() {
 	_GH_WRAPPER_SIG_MODIFIED_ARGS=("$@")
 	local sig_helper
@@ -483,17 +516,7 @@ _gh_wrapper_auto_sig() {
 
 	# Handle --body case
 	if [[ $body_idx -ge 0 && -n "$body_val" ]]; then
-		# Already signed — skip only for a standalone canonical marker line.
-		grep -Fqx '<!-- aidevops:sig -->' <<<"$body_val" && return 0
-		local sig_footer
-		sig_footer=$("$sig_helper" footer --body "$body_val" 2>/dev/null || echo "")
-		[[ -z "$sig_footer" ]] && return 0
-		local new_body="${body_val}${sig_footer}"
-		if [[ "$is_eq_form" -eq 1 ]]; then
-			_GH_WRAPPER_SIG_MODIFIED_ARGS[body_idx]="--body=${new_body}"
-		else
-			_GH_WRAPPER_SIG_MODIFIED_ARGS[body_idx + 1]="$new_body"
-		fi
+		_gh_wrapper_auto_sig_inline "$sig_helper" "$body_val" "$body_idx" "$is_eq_form"
 		return 0
 	fi
 
@@ -503,7 +526,8 @@ _gh_wrapper_auto_sig() {
 	if [[ $body_file_idx -ge 0 && -n "$body_file_val" && -f "$body_file_val" ]]; then
 		local abs_body_file_val
 		abs_body_file_val=$(_gh_wrapper_abs_body_file_path "$body_file_val") || abs_body_file_val="$body_file_val"
-		if grep -Fqx '<!-- aidevops:sig -->' "$abs_body_file_val" 2>/dev/null; then
+		if grep -Fqx '<!-- aidevops:sig -->' "$abs_body_file_val" 2>/dev/null &&
+			grep -Eq '^<!-- aidevops:origin:(interactive|worker) -->$' "$abs_body_file_val"; then
 			if [[ "$bf_is_eq" -eq 1 ]]; then
 				_GH_WRAPPER_SIG_MODIFIED_ARGS[body_file_idx]="--body-file=${abs_body_file_val}"
 			else
@@ -512,7 +536,11 @@ _gh_wrapper_auto_sig() {
 			return 0
 		fi
 		local sig_footer
-		sig_footer=$("$sig_helper" footer 2>/dev/null || echo "")
+		if grep -Fqx '<!-- aidevops:sig -->' "$abs_body_file_val"; then
+			sig_footer=$'\n'"<!-- aidevops:$(session_origin_label) -->"
+		else
+			sig_footer=$("$sig_helper" footer 2>/dev/null || echo "")
+		fi
 		[[ -z "$sig_footer" ]] && return 0
 		local signed_body_file
 		signed_body_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-gh-body.XXXXXX") || return 0
@@ -521,7 +549,11 @@ _gh_wrapper_auto_sig() {
 		# until the wrapper delegates to gh, then the wrapper-level trap removes it.
 		push_cleanup "rm -f \"$signed_body_file\""
 		{
-			cat "$abs_body_file_val"
+			if [[ "$sig_footer" == *'<!-- aidevops:origin:'* ]]; then
+				_gh_wrapper_strip_origin_marker_lines <"$abs_body_file_val"
+			else
+				cat "$abs_body_file_val"
+			fi
 			printf '%s' "$sig_footer"
 		} >"$signed_body_file" || return 0
 		if [[ "$bf_is_eq" -eq 1 ]]; then

@@ -213,7 +213,7 @@ peekaboo click --on "Submit" --snapshot "$SNAPSHOT"
 | Use case | Tool |
 |----------|------|
 | macOS native app automation, screen capture with AI, menu bar/dock/spaces | **Peekaboo** |
-| Cross-platform web automation | agent-browser, Playwright, Stagehand |
+| Cross-platform web automation | agent-browser, Playwright |
 | Linux/Windows | Any cross-platform tool |
 
 ## Troubleshooting

@@ -13,6 +13,24 @@ import sqlite3
 import sys
 from unittest.mock import patch
 
+import native_git
+
+
+def hermetic_helper_path(path, native_bin):
+    """Keep a host-installed aidevops Git policy shim off the helpers' PATH (GH#39560).
+
+    Whether the shim leads PATH depends on the host and launcher, not on the
+    case, so it was never a controlled test variable. Where it leads, each
+    product Git call adds the shim's bash and Python guard launches (about 8x a
+    native call); its verdict for these temporary repositories is always
+    "allowed". guarded_object_import_proof below still installs the production
+    shim explicitly to prove helper behaviour under it. Any other leading `git`
+    (for example the git-spawn-profile-helper.sh logger) is kept, so spawn
+    profiles still count every call.
+    """
+    shimmed = native_git.is_git_shim(shutil.which("git", path=path))
+    return os.pathsep.join((str(native_bin), path)) if shimmed else path
+
 
 class CanonicalCases:
     def guarded_object_import_proof(self, archive):
@@ -116,6 +134,47 @@ class CanonicalCases:
         path.write_bytes(path.read_bytes() + b"damage")
         with self.assertRaisesRegex(ValueError, "archive-changed"):
             proof.check()
+
+    def test_canonical_proof_accepts_legacy_guards_creation_and_recovers_stuck_slot(self):
+        # GH#35957: macOS (and explicit legacy-guards) creation records only a
+        # worktree_creation_backends entry. Run that contract on Linux CI too.
+        self.env["AIDEVOPS_WORKTREE_MANAGER"] = "legacy-guards"
+        archive = self.archive()
+
+        def unsealed(*args):
+            # Pre-fix failure shape: registered copy, no sealed creation receipt.
+            self.helper(*args)
+            (Path(args[3]).parent / ".creation.json").unlink()
+            raise ValueError("creation-interrupted")
+
+        with self.assertRaisesRegex(ValueError, "creation-interrupted"):
+            self.canonical_proof(archive, unsealed)
+        from worktree_archive_restore import RestorationProof
+        from worktree_recovery_migration_state import publish
+        directory = self.root / "proof"
+        record = json.loads((directory / "journal.json").read_text())
+        stuck = record["canonical_restore"]
+        self.assertEqual(stuck["state"], "restoring")
+        stuck_target = directory / stuck["slot"] / "worktree"
+        self.assertTrue(stuck_target.is_dir())
+        # Resume from the journalled record, as the producer/retirement callers do.
+        with patch.dict(os.environ, self.env):
+            proof = RestorationProof(directory, record, self.helper,
+                                     lambda value: publish(directory / "journal.json", value))
+        proof.check()
+        receipt = record["canonical_restore"]
+        self.assertEqual(receipt["state"], "cleaned")
+        self.assertEqual(receipt["registration"]["backend"], "legacy-guards")
+        self.assertEqual(list((self.root / "proof").glob(".restore-*")), [])
+        listed = self.git(self.repo, "worktree", "list", "--porcelain")
+        self.assertNotIn(str(stuck_target).encode(), listed)
+        self.assertNotIn(str(self.root / "proof" / receipt["slot"]).encode(), listed)
+        with closing(sqlite3.connect(self.env["WORKTREE_REGISTRY_DB"])) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM worktree_creation_backends WHERE path LIKE ?",
+                                                (str(self.root / "proof") + "/%",)).fetchone(), (0,))
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM worktree_owners WHERE worktree_path LIKE ?",
+                                                (str(self.root / "proof") + "/%",)).fetchone(), (0,))
+        self.assertTrue(self.work.exists())
 
     def test_canonical_proof_requires_real_patch_application(self):
         archive = self.archive()

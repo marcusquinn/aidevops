@@ -40,104 +40,125 @@ source "${_PULSE_CLEANUP_SCRIPT_DIR}/pulse-cleanup-worktree-removal-central.sh"
 # shellcheck disable=SC1091 # Sibling library resolved at runtime
 source "${_PULSE_CLEANUP_SCRIPT_DIR}/pulse-cleanup-worktree-removal-profile.sh"
 
+# Temporary backlog pass; remove together with worker-legacy-cleanup.py.
+# This consumes observation-era bindings, not legacy owner JSON or fake admissions.
+_cleanup_log_diagnostics() {
+	local result="$1"
+	local diagnostics=""
+	diagnostics=$(jq -c '[.results[] | select(.status == "unavailable" or (.status | startswith("source-absen")) or .operation != null or .errno != null or .quarantined == true)]' <<<"$result") || return 1
+	if [[ "$diagnostics" != '[]' ]]; then
+		printf '[pulse-wrapper] Cleanup diagnostics: %s\n' "$diagnostics" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+# Always-on interim pass: removes worktrees whose work is provably finished while
+# cleanup_policy.decide_cleanup still lacks a production evidence collector. It
+# supplies none of that policy's six proofs and claims no cleanup authorization;
+# it answers only whether the work finished and whether removal would lose it.
+# Stage 1 removal is archive-free by explicit operator decision; stage 2 archives
+# finished trees with local state (commits bundled) before removing them (GH#38394).
+_cleanup_reclaim_finished_worktrees() {
+	local state_dir="$1"
+	local python="$2"
+	local budget="$3"
+	local result="" removed="" refused="" failed="" reclaimed="" deferred="" resume="" archived=0 reasons=""
+	# Owners come from the lifecycle registry, never a host process scan.
+	if ! result=$("$python" -E -s -B "${_PULSE_CLEANUP_SCRIPT_DIR}/../worker-lifecycle/worktree-reclaim.py" \
+		--state-dir "$state_dir" --apply --budget-seconds "$budget" 2>>"$LOGFILE"); then
+		printf '[pulse-wrapper] Finished-worktree reclaim unavailable\n' >>"$LOGFILE"
+		return 0
+	fi
+	removed=$(jq -er '.removed | numbers' <<<"$result") || return 0
+	refused=$(jq -er '.refused | numbers' <<<"$result") || return 0
+	failed=$(jq -er '.failed | numbers' <<<"$result") || return 0
+	reclaimed=$(jq -er '(.reclaimed_bytes / 1048576 | floor) | numbers' <<<"$result") || return 0
+	# Trees deferred for repeat unreadable state, and where a stopped pass resumes (GH#38376).
+	deferred=$(jq -r '.quarantine_deferred // 0' <<<"$result") || deferred=0
+	resume=$(jq -r '.resume_after // ""' <<<"$result") || resume=""
+	archived=$(jq -er '(.archived // 0) | numbers' <<<"$result") || archived=0
+	# Top-5 refusal reasons, so refused=N explains itself (GH#39034).
+	reasons=$(jq -r '[(.results // [])[] | select(.decision == "refuse") | (.reason // "unknown" | tostring)]
+		| group_by(.) | map({reason: .[0], count: length}) | sort_by(-.count, .reason) | .[:5]
+		| map("\(.reason | gsub("[[:space:],:]"; "_")):\(.count)") | join(",")' <<<"$result") || reasons=""
+	CLEANUP_WORKTREES_REMOVED_COUNT=$((CLEANUP_WORKTREES_REMOVED_COUNT + removed))
+	CLEANUP_WORKTREES_ARCHIVED_COUNT=$((CLEANUP_WORKTREES_ARCHIVED_COUNT + archived))
+	printf '[pulse-wrapper] Finished-worktree reclaim: removed=%s archived=%s refused=%s failed=%s deferred=%s resume_after=%s reclaimed_mib=%s reasons=%s\n' \
+		"$removed" "$archived" "$refused" "$failed" "$deferred" "${resume:-none}" "$reclaimed" "${reasons:-none}" >>"$LOGFILE"
+	return 0
+}
+
+_cleanup_observation_era_worktrees() {
+	local state_dir="$1"
+	local python="$2"
+	local budget="$3"
+	local result="" retired="" retained="" skipped_nondumpable=""
+	if ! result=$("$python" -E -s -B "${_PULSE_CLEANUP_SCRIPT_DIR}/../worker-lifecycle/worker-legacy-cleanup.py" \
+		--state-dir "$state_dir" --repos-config "${HOME}/.config/aidevops/repos.json" \
+		--output-root "${AIDEVOPS_WORKTREE_ARCHIVE_ROOT:-${HOME}/.aidevops/recovery/archives}" \
+		--apply --budget-seconds "$budget" 2>>"$LOGFILE"); then
+		printf '[pulse-wrapper] Observation-era cleanup unavailable: %s\n' "$result" >>"$LOGFILE"
+		return 0
+	fi
+	retired=$(jq -er '.retired | numbers' <<<"$result") || return 0
+	skipped_nondumpable=$(jq -er '.skipped_nondumpable // 0 | numbers' <<<"$result") || return 0
+	retained=$(jq -c '[.results[] | select(.status == "retained")] | group_by(.reason) | map({reason: .[0].reason, count: length})' <<<"$result") || return 0
+	CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT=$(jq -er '.archive_failed | numbers' <<<"$result") || return 0
+	_cleanup_log_diagnostics "$result" || return 0
+	# Accumulate: an earlier pass in the same stage may already have retired trees,
+	# and assignment here would drop its removals from the stage metrics.
+	CLEANUP_WORKTREES_REMOVED_COUNT=$((CLEANUP_WORKTREES_REMOVED_COUNT + retired))
+	CLEANUP_WORKTREES_ARCHIVED_COUNT=$((CLEANUP_WORKTREES_ARCHIVED_COUNT + retired))
+	# Only the admission pass may acknowledge completion of the scheduled run.
+	printf '[pulse-wrapper] Observation-era cleanup: retired=%s retained=%s skipped_nondumpable=%s\n' "$retired" "$retained" "$skipped_nondumpable" >>"$LOGFILE"
+	return 0
+}
+
 # Retain the public pass orchestrator here for source-location contract checks.
 cleanup_worktrees() {
-	# The caller still owns the hard watchdog. Bounded invocations persist fair
-	# progress before each guarded operation so interruption cannot pin the queue.
-	local cleanup_budget="${1:-}"
-	if [[ -n "$cleanup_budget" ]]; then
-		# shellcheck source=./pulse-cleanup-progress.sh
-		source "${_PULSE_CLEANUP_SCRIPT_DIR}/pulse-cleanup-progress.sh"
-		_pc_cleanup_resumable "$cleanup_budget"
-		return $?
-	fi
-	CLEANUP_WORKTREES_SKIPPED=0
+	local cleanup_budget="${1:-120}"
+	local state_dir="" python="" result="" retired="" pass_budget=0
+	local failed="" archive_failed="" held="" reconciled="" quarantined=0
+	CLEANUP_WORKTREES_SKIPPED=1
 	CLEANUP_WORKTREES_REMOVED_COUNT=0
 	CLEANUP_WORKTREES_ARCHIVED_COUNT=0
 	CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT=0
-	local total_removed=0
-	total_removed=$(_pc_cleanup_fixture_passes)
-	CLEANUP_WORKTREES_REMOVED_COUNT="$total_removed"
-	# GH#18979: Skip cleanup when API rate limit is low — both passes call
-	# `gh pr list` per repo/worktree, and blocking rate-limit waits cause
-	# the cleanup stage to hang for 10+ minutes, stalling the entire pulse
-	# cycle. The cost of skipping one cleanup pass is negligible (worktrees
-	# accumulate slowly); the cost of hanging is total pipeline stall.
-	local _rl_remaining=""
-	_rl_remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null) || _rl_remaining=""
-	if [[ "$_rl_remaining" =~ ^[0-9]+$ ]] && [[ "$_rl_remaining" -lt 100 ]]; then
-		echo "[pulse-wrapper] Worktree cleanup: skipped — GraphQL rate limit low (${_rl_remaining} remaining)" >>"$LOGFILE"
-		CLEANUP_WORKTREES_SKIPPED=1
+	[[ "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" != 1 ]] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+	python=$(type -P python3) || return 0
+	# shellcheck source=./worker-lifecycle-state.sh
+	source "${_PULSE_CLEANUP_SCRIPT_DIR}/worker-lifecycle-state.sh" || return 0
+	state_dir=$(worker_lifecycle_state_dir) || return 0
+	[[ -n "$state_dir" && -d "$state_dir" ]] || return 0
+	[[ "$cleanup_budget" =~ ^[0-9]+$ && "$cleanup_budget" -ge 3 ]] || return 0
+	pass_budget=$((cleanup_budget / 3))
+	# Reclaim runs first: it is the only pass that reliably retires anything, and a
+	# budget this stage can exhaust must not be spent ahead of it. Measured on a
+	# busy host, the observation-era pass retired nothing in 866 of 934 runs.
+	_cleanup_reclaim_finished_worktrees "$state_dir" "$python" "$pass_budget"
+	_cleanup_observation_era_worktrees "$state_dir" "$python" "$pass_budget"
+	# No pass initializes/migrates state or consults old owner files.
+	# Each gets a third of the budget; the scheduler retains its hard watchdog.
+	if ! result=$("$python" -E -s -B "${_PULSE_CLEANUP_SCRIPT_DIR}/../worker-lifecycle/worker-registry.py" \
+		--state-dir "$state_dir" cleanup --repos-config "${HOME}/.config/aidevops/repos.json" \
+		--output-root "${AIDEVOPS_WORKTREE_ARCHIVE_ROOT:-${HOME}/.aidevops/recovery/archives}" \
+		--budget-seconds "$pass_budget" 2>>"$LOGFILE"); then
+		printf '[pulse-wrapper] Admission cleanup unavailable; backlog pass reported separately\n' >>"$LOGFILE"
 		return 0
 	fi
-
-	# Pass 1: remove worktrees for merged PRs
-	local merged_removed
-	merged_removed=$(_pc_cleanup_merged_passes)
-	total_removed=$((total_removed + merged_removed))
-
-	# Pass 2: age-based orphan cleanup
-	local now_epoch
-	now_epoch=$(date +%s)
-
-	local repos_json="${HOME}/.config/aidevops/repos.json"
-	[[ -f "$repos_json" ]] && command -v jq &>/dev/null || return 0
-	_pc_log_local_only_worktree_skips "$repos_json"
-
-	local repo_paths_age
-	repo_paths_age=$(jq -r '.initialized_repos[] | select((.local_only // false) == false) | .path // ""' "$repos_json" || echo "")
-
-	local rp_age
-	while IFS= read -r rp_age; do
-		[[ -z "$rp_age" ]] && continue
-		[[ ! -d "$rp_age/.git" ]] && continue
-
-		local main_branch
-		main_branch=$(git -C "$rp_age" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || main_branch="main"
-
-		local repo_slug_age
-		repo_slug_age=$(git -C "$rp_age" remote get-url origin 2>/dev/null | sed 's|.*github.com[:/]||;s|\.git$||') || repo_slug_age=""
-
-		# Parse worktree list — non-porcelain: "path  hash [branch]" per line.
-		# Using process substitution (not pipe) so total_removed propagates.
-		local wt_line_age
-		while IFS= read -r wt_line_age; do
-			local wt_path_age
-			wt_path_age=$(printf '%s' "$wt_line_age" | awk '{print $1}')
-			[[ -z "$wt_path_age" ]] && continue
-			[[ "$wt_path_age" == "$rp_age" ]] && continue
-			[[ ! -d "$wt_path_age" ]] && continue
-
-			local wt_branch_age=""
-			if [[ "$wt_line_age" == *"["*"]"* ]]; then
-				wt_branch_age=$(printf '%s' "$wt_line_age" | sed 's/.*\[//;s/\]//')
-			fi
-
-			if _cleanup_single_worktree "$rp_age" "$wt_path_age" "$wt_branch_age" \
-				"$now_epoch" "$repo_slug_age" "$main_branch"; then
-				total_removed=$((total_removed + 1))
-			fi
-		done < <(git -C "$rp_age" worktree list 2>/dev/null)
-		_pc_cleanup_stale_profile_publication_intents "$rp_age" "$now_epoch" || true
-	done <<<"$repo_paths_age"
-	# Pass 3: registered linked worktrees accidentally created beside canonical
-	# repos are moved into the central worktree base instead of cluttering the
-	# canonical repo parent.
-	local registered_moved
-	registered_moved=$(_pc_relocate_registered_worktrees "$repos_json")
-	if [[ "$registered_moved" -gt 0 ]]; then
-		echo "[pulse-wrapper] Worktree relocation total: $registered_moved worktree(s) moved to central base" >>"$LOGFILE"
-	fi
-
-	# Passes 4-5: filesystem outliers, then localdev registration reclaim.
-	local orphan_dirs_moved
-	orphan_dirs_moved=$(_pc_cleanup_outlier_passes "$repos_json" "$now_epoch")
-	total_removed=$((total_removed + orphan_dirs_moved))
-
-	if [[ "$total_removed" -gt 0 ]]; then
-		echo "[pulse-wrapper] Worktree cleanup total: $total_removed worktree(s) removed across all repos" >>"$LOGFILE"
-	fi
-	CLEANUP_WORKTREES_REMOVED_COUNT="$total_removed"
-
+	retired=$(jq -er '.retired | numbers' <<<"$result") || return 0
+	failed=$(jq -er '.failed | numbers' <<<"$result") || return 0
+	held=$(jq -er '.held | numbers' <<<"$result") || return 0
+	reconciled=$(jq -er '.reconciled | numbers' <<<"$result") || return 0
+	archive_failed=$(jq -er '.archive_failed | numbers' <<<"$result") || return 0
+	quarantined=$(jq -er '(.quarantined // 0) | numbers' <<<"$result") || quarantined=0
+	CLEANUP_WORKTREES_REMOVED_COUNT=$((CLEANUP_WORKTREES_REMOVED_COUNT + retired))
+	# Lifecycle retirement archives everything it retires; reclaim counts only stage 2.
+	CLEANUP_WORKTREES_ARCHIVED_COUNT=$((CLEANUP_WORKTREES_ARCHIVED_COUNT + retired))
+	CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT=$((CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT + archive_failed))
+	_cleanup_log_diagnostics "$result" || return 0
+	CLEANUP_WORKTREES_SKIPPED=0
+	printf '[pulse-wrapper] Lifecycle cleanup: retired=%s failed=%s held=%s archive_failed=%s reconciled=%s quarantined=%s\n' \
+		"$retired" "$failed" "$held" "$archive_failed" "$reconciled" "$quarantined" >>"$LOGFILE"
 	return 0
 }

@@ -129,6 +129,10 @@ STUB
 cat >"${TEST_ROOT}/bin/npm" <<'STUB'
 #!/usr/bin/env bash
 args=" $* "
+if [[ "$args" == ' --version ' ]]; then
+	printf '11.8.0\n'
+	exit 0
+fi
 if [[ "$args" == *" view aidevops@1.2.3 version dist --json "* ]]; then
 	jq -cn --arg version "${FAKE_NPM_VERSION:-1.2.3}" \
 		--arg integrity "${FAKE_NPM_INTEGRITY:?}" \
@@ -142,6 +146,11 @@ if [[ "$args" == *" install "* ]]; then
 	exit 0
 fi
 if [[ "$args" == *" audit signatures "* ]]; then
+	case "${FAKE_NPM_AUDIT_SCHEMA:-valid}" in
+	legacy) printf '%s\n' '{"invalid":[],"missing":[]}' ; exit 0 ;;
+	malformed) printf '%s\n' '{' ; exit 0 ;;
+	missing-bundles) printf '%s\n' '{"invalid":[],"missing":[],"verified":[{}]}' ; exit 0 ;;
+	esac
 	invalid='[]'
 	[[ "${FAKE_NPM_AUDIT_INVALID:-0}" == "1" ]] && invalid='[{"code":"invalid"}]'
 	jq -cn --arg version "${FAKE_NPM_VERSION:-1.2.3}" \
@@ -214,6 +223,10 @@ if [[ "$(jq -r '.id' <<<"$_FULL_LOOP_RELEASE_RUN_JSON")" != "11" ]]; then
 	printf 'FAIL recovery workflow was not correlated by exact release display title\n'
 	exit 1
 fi
+if [[ "$_FULL_LOOP_RELEASE_RECOVERY_RUN_COUNT" != "1" ]]; then
+	printf 'FAIL correlated recovery runs were not counted (got %s)\n' "$_FULL_LOOP_RELEASE_RECOVERY_RUN_COUNT"
+	exit 1
+fi
 printf 'PASS exact push and recovery workflow runs are correlated durably\n'
 
 export FAKE_RECOVERY_RUN_MODE=failed
@@ -258,6 +271,11 @@ _full_loop_release_find_workflow_run test/repo v1.2.3 \
 	3333333333333333333333333333333333333333
 if [[ "$(jq -r '.id' <<<"$_FULL_LOOP_RELEASE_RUN_JSON")" != "201" ]]; then
 	printf 'FAIL newest matching workflow run beyond the first oversized page was not selected\n'
+	exit 1
+fi
+if [[ "$_FULL_LOOP_RELEASE_RECOVERY_RUN_COUNT" != "2" ]]; then
+	printf 'FAIL correlated recovery count ignored unrelated runs incorrectly (got %s)\n' \
+		"$_FULL_LOOP_RELEASE_RECOVERY_RUN_COUNT"
 	exit 1
 fi
 _full_loop_release_find_workflow_run test/repo v1.2.3 \
@@ -336,6 +354,71 @@ if [[ "$postflight_dispatch_rc" -ne 8 ]] ||
 fi
 printf 'PASS postflight dispatch is bound to the verified tag without republishing\n'
 
+# GH#35565: a quota-deferred GitHub release is reported, and a deferred
+# recovery may be retried within the per-correlation bound.
+(
+	_full_loop_release_verify_channels() { return 1; }
+	_full_loop_release_resolve_tag_commit() { printf '%s\n' 3333333333333333333333333333333333333333; return 0; }
+	fixture_event=push
+	fixture_updated=$(jq -nr --argjson epoch "$(date -u +%s)" '$epoch - 1200 | todateiso8601')
+	fixture_recoveries=0
+	fixture_deferred=1
+	_full_loop_release_find_workflow_run() {
+		_FULL_LOOP_RELEASE_RUN_JSON=$(jq -cn --arg event "$fixture_event" --arg updated "$fixture_updated" \
+			'{id:42,event:$event,head_sha:"3333333333333333333333333333333333333333",
+			status:"completed",conclusion:"success",created_at:$updated,updated_at:$updated}')
+		_FULL_LOOP_RELEASE_RECOVERY_RUN_COUNT="$fixture_recoveries"
+		return 0
+	}
+	_full_loop_release_fetch_run_jobs() {
+		local marker_conclusion=skipped
+		[[ "$fixture_deferred" == "1" ]] && marker_conclusion=success
+		_FULL_LOOP_RELEASE_RUN_JOBS_JSON=$(jq -cn --arg conclusion "$marker_conclusion" \
+			'{total_count:1,jobs:[{name:"Publish",status:"completed",conclusion:"success",
+			steps:[{name:"Record deferred GitHub release",number:1,status:"completed",conclusion:$conclusion}]}]}')
+		return 0
+	}
+	deferred_check() {
+		local expected_rc="$1"
+		local label="$2"
+		local expected_line="${3:-}"
+		local actual_rc=0
+		local out="${TEST_ROOT}/deferred-release-inspect.txt"
+		_full_loop_release_inspect_remote test/repo v1.2.3 >"$out" || actual_rc=$?
+		if [[ "$actual_rc" -ne "$expected_rc" ]]; then
+			printf 'FAIL deferred GitHub release: %s (rc=%s, expected %s)\n' "$label" "$actual_rc" "$expected_rc"
+			exit 1
+		fi
+		if [[ -n "$expected_line" ]] && ! grep -q "^${expected_line}" "$out"; then
+			printf 'FAIL deferred GitHub release: %s did not print %s\n' "$label" "$expected_line"
+			exit 1
+		fi
+		printf 'PASS deferred GitHub release: %s\n' "$label"
+		return 0
+	}
+	deferred_check 5 'push run past the grace reports the deferral and recovers' \
+		'GITHUB_RELEASE=deferred reason=installation-rate-limit'
+	deferred_check 5 'push run deferral prints the earliest retry time' 'GITHUB_RELEASE_RETRY_AFTER='
+	fixture_event=workflow_dispatch
+	fixture_recoveries=1
+	deferred_check 5 'deferred recovery run past the grace is retried'
+	fixture_recoveries=4
+	deferred_check 8 'deferred recovery retries stop at the correlation bound' \
+		'GITHUB_RELEASE_RECOVERY=exhausted runs=4'
+	fixture_recoveries=''
+	deferred_check 8 'unknown recovery count never redispatches'
+	fixture_recoveries=1
+	fixture_updated=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	deferred_check 8 'recent deferred recovery waits for the grace' 'GITHUB_RELEASE_RETRY_AFTER='
+	fixture_updated=$(jq -nr --argjson epoch "$(date -u +%s)" '$epoch - 1200 | todateiso8601')
+	fixture_deferred=0
+	deferred_check 8 'successful non-deferred recovery never loops'
+	_full_loop_release_fetch_run_jobs() { return 1; }
+	deferred_check 8 'unverifiable jobs evidence never redispatches a recovery run'
+	fixture_event=push
+	deferred_check 5 'unverifiable jobs evidence keeps the one push-run recovery'
+) || exit 1
+
 for schema_mode in empty object malformed malformed-run api-failure; do
 	export FAKE_RUN_SCHEMA_MODE="$schema_mode"
 	schema_rc=0
@@ -367,6 +450,24 @@ if [[ "$_FULL_LOOP_RELEASE_NPM_INTEGRITY" != "$FAKE_NPM_INTEGRITY" ]]; then
 	printf 'FAIL npm provenance verification omitted exact package integrity\n'
 	exit 1
 fi
+export FAKE_RECOVERY_RUN_MODE=failed
+for audit_schema in legacy malformed missing-bundles; do
+	export FAKE_NPM_AUDIT_SCHEMA="$audit_schema"
+	audit_rc=0
+	_full_loop_release_verify_npm_provenance test/repo v1.2.3 1.2.3 2>"${TEST_ROOT}/audit-error" || audit_rc=$?
+	if [[ "$audit_rc" -ne 2 ]] || ! grep -q 'verified-attestation capability.*npm 11.8.0' "${TEST_ROOT}/audit-error"; then
+		printf 'FAIL %s npm audit output was not diagnosed as unsupported or malformed\n' "$audit_schema"
+		exit 1
+	fi
+	inspect_rc=0
+	_full_loop_release_inspect_remote test/repo v1.2.3 > /dev/null 2>"${TEST_ROOT}/audit-error" || inspect_rc=$?
+	if [[ "$inspect_rc" -ne 1 ]]; then
+		printf 'FAIL %s npm audit output was treated as release propagation\n' "$audit_schema"
+		exit 1
+	fi
+done
+unset FAKE_NPM_AUDIT_SCHEMA
+export FAKE_RECOVERY_RUN_MODE=pending
 set_fake_provenance_payload "https://github.com/attacker/repo" "refs/heads/main"
 if _full_loop_release_verify_npm_provenance test/repo v1.2.3 1.2.3; then
 	printf 'FAIL foreign npm provenance repository was accepted\n'

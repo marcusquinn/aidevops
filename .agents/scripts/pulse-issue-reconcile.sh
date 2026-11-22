@@ -67,6 +67,13 @@ if [[ -z "${_SHARED_PHASE_FILING_LOADED:-}" ]]; then
 	source "$(dirname "${BASH_SOURCE[0]}")/shared-phase-filing.sh" 2>/dev/null || true
 fi
 
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/shared-approval-cli.sh"
+fi
+
 # t2776: module-level label constant shared by reconcile functions and the
 # single-pass to keep the string literal count below the ratchet threshold.
 [[ -n "${_PIR_PT_LABEL+x}" ]] || _PIR_PT_LABEL="parent-task"
@@ -238,6 +245,8 @@ source "${_PIR_SCRIPT_DIR}/pulse-issue-reconcile-normalize.sh"
 # shellcheck source=./pulse-issue-reconcile-actions.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${_PIR_SCRIPT_DIR}/pulse-issue-reconcile-actions.sh"
+# shellcheck source=./pulse-new-external-issues.sh
+source "${_PIR_SCRIPT_DIR}/pulse-new-external-issues.sh"
 # shellcheck source=./pulse-issue-reconcile-parent.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${_PIR_SCRIPT_DIR}/pulse-issue-reconcile-parent.sh"
@@ -312,7 +321,7 @@ _normalize_get_feedback_routed_rows() {
 		else
 			# No feedback label — check body for markers
 			_cand_body=$(gh issue view "$_cand_num" --repo "$slug" --json body --jq '.body' 2>/dev/null) || _cand_body=""
-			if printf '%s' "$_cand_body" | grep -qE '<!-- (ci-feedback|conflict-feedback|review-followup):PR'; then
+			if printf '%s' "$_cand_body" | grep -E '<!-- (ci-feedback|conflict-feedback|review-followup):PR' >/dev/null; then
 				echo "$_cand_num"
 			fi
 		fi
@@ -375,7 +384,7 @@ _normalize_get_stale_feedback_interactive_rows() {
 			printf '%s|%s\n' "$_cand_num" "$_assignees"
 		else
 			_cand_body=$(gh issue view "$_cand_num" --repo "$slug" --json body --jq '.body' 2>/dev/null) || _cand_body=""
-			if printf '%s' "$_cand_body" | grep -qE '<!-- (ci-feedback|conflict-feedback|review-followup):PR'; then
+			if printf '%s' "$_cand_body" | grep -E '<!-- (ci-feedback|conflict-feedback|review-followup):PR' >/dev/null; then
 				printf '%s|%s\n' "$_cand_num" "$_assignees"
 			fi
 		fi
@@ -605,42 +614,144 @@ _normalize_log_timing() {
 	return 0
 }
 
-# Normalization passes in canonical order. Each pass lists open issues per
-# pulse repo, so a full sweep exceeds the remaining ownership budget on large
-# fleets: with a fixed order the stage watchdog killed every cycle inside
-# Pass 1 and Passes 2/2b/3 never ran (stale assignments and stampless
-# interactive claims stayed dispatch-blocked for days).
-_NORMALIZE_PASSES="reassign_self unassign_stale unassign_stampless_interactive label_invariants"
+# shellcheck source=./pulse-issue-reconcile-rotation.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime
+source "${_PIR_SCRIPT_DIR}/pulse-issue-reconcile-rotation.sh"
 
 #######################################
-# Print normalization passes least-recently-started first so a stage timeout
-# never starves a pass. Missing, unreadable or future-dated start stamps sort
-# first; ties keep the canonical order.
-# Args: $1 state_dir, $2 now_epoch
-# Stdout: one pass name per line
-# Returns: 0 always
+# Resolve the runner's GitHub login once per process, with a small file cache
+# keyed by the auth fingerprint (TTL ~1h; override PULSE_RUNNER_LOGIN_TTL).
+# Prints the login (empty on failure). Always returns 0.
 #######################################
-_normalize_pass_order() {
-	local state_dir="$1" now_epoch="$2" pass="" started=0 index=0
-	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=0
-	for pass in $_NORMALIZE_PASSES; do
-		started=0
-		if [[ -f "${state_dir}/${pass}" ]]; then
-			read -r started <"${state_dir}/${pass}" 2>/dev/null || started=0
+_PULSE_RUNNER_LOGIN_MEMO=""
+_pulse_resolve_runner_login() {
+	if [[ -n "$_PULSE_RUNNER_LOGIN_MEMO" ]]; then
+		printf '%s\n' "$_PULSE_RUNNER_LOGIN_MEMO"
+		return 0
+	fi
+	local ttl="${PULSE_RUNNER_LOGIN_TTL:-3600}"
+	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=3600
+	local cache_dir="${HOME}/.aidevops/cache"
+	local fp_src="${GH_TOKEN:-}${GITHUB_TOKEN:-}${GH_HOST:-}${GH_CONFIG_DIR:-}"
+	local hosts_file="${GH_CONFIG_DIR:-${HOME}/.config/gh}/hosts.yml"
+	if [[ -f "$hosts_file" ]]; then
+		fp_src="${fp_src}$(cksum <"$hosts_file" 2>/dev/null)"
+	fi
+	local fp
+	fp=$(printf '%s' "$fp_src" | cksum | tr -d ' \t' | cut -c1-24)
+	local cache_file="${cache_dir}/runner-login-${fp}"
+	local login="" now mtime
+	now=$(date +%s)
+	if [[ -f "$cache_file" ]]; then
+		mtime=$(_file_mtime_epoch "$cache_file" 2>/dev/null || echo 0)
+		[[ "$mtime" =~ ^[0-9]+$ ]] || mtime=0
+		if [[ $((now - mtime)) -lt "$ttl" ]]; then
+			login=$(head -n 1 "$cache_file" 2>/dev/null || echo "")
 		fi
-		[[ "$started" =~ ^[0-9]+$ && "$started" -le "$now_epoch" ]] || started=0
-		printf '%s %s %s\n' "$started" "$index" "$pass"
-		index=$((index + 1))
-	done | sort -n -k1,1 -k2,2 | awk '{ print $3 }'
+	fi
+	if [[ -z "$login" ]]; then
+		login=$(gh api user --jq '.login' 2>/dev/null || echo "")
+		if [[ -n "$login" ]]; then
+			mkdir -p "$cache_dir" 2>/dev/null || true
+			printf '%s\n' "$login" >"$cache_file" 2>/dev/null || true
+		fi
+	fi
+	_PULSE_RUNNER_LOGIN_MEMO="$login"
+	printf '%s\n' "$login"
 	return 0
 }
 
-# Best effort: an unwritable stamp only makes the pass sort first again.
-_normalize_mark_pass_started() {
-	local state_dir="$1" pass="$2" now_epoch=""
-	now_epoch=$(date +%s 2>/dev/null) || return 0
-	mkdir -p "$state_dir" 2>/dev/null || return 0
-	printf '%s\n' "$now_epoch" >"${state_dir}/${pass}" 2>/dev/null || true
+#######################################
+# Per-run shared live open-issue listing for the normalization passes.
+# Fetched lazily once per repo (union of fields every pass needs), cached
+# under _NORMALIZE_LISTING_DIR for the duration of one
+# normalize_active_issue_assignments run. A failed fetch is remembered so no
+# other pass retries it this run.
+#
+# The listing is deliberately wider than PULSE_QUEUED_SCAN_LIMIT
+# (PULSE_NORMALIZE_LISTING_LIMIT, default 5x) so client-side filtered passes
+# are not starved by non-matching issues; each consumer applies
+# PULSE_QUEUED_SCAN_LIMIT after its own filter (unfiltered passes slice first).
+#
+# Args: $1 slug
+# Output: JSON array on stdout.
+# Returns: 0 ok; 1 listing failed; 2 no run active (caller must fetch itself).
+#######################################
+_NORMALIZE_LISTING_DIR=""
+_normalize_repo_listing() {
+	local slug="$1"
+	local dir="$_NORMALIZE_LISTING_DIR"
+	[[ -n "$dir" && -d "$dir" ]] || return 2
+	local key="${slug//\//-}"
+	if [[ -f "${dir}/${key}.failed" ]]; then
+		return 1
+	fi
+	if [[ ! -f "${dir}/${key}.json" ]]; then
+		local json=""
+		json=$(gh_issue_list --repo "$slug" --state open \
+			--json number,assignees,labels,createdAt,updatedAt \
+			--limit "${PULSE_NORMALIZE_LISTING_LIMIT:-$((PULSE_QUEUED_SCAN_LIMIT * 5))}" 2>"${dir}/${key}.err") || json=""
+		if [[ -z "$json" || "$json" == "null" ]]; then
+			local err_msg
+			err_msg=$(cat "${dir}/${key}.err" 2>/dev/null || echo "unknown error")
+			echo "[pulse-wrapper] normalize_active_issue_assignments: gh_issue_list FAILED for ${slug}: ${err_msg}" >>"$LOGFILE"
+			: >"${dir}/${key}.failed"
+			return 1
+		fi
+		printf '%s' "$json" >"${dir}/${key}.json"
+	fi
+	cat "${dir}/${key}.json"
+	return 0
+}
+
+#######################################
+# Listing for _normalize_reassign_self: the shared per-run listing, or (when no
+# run is active, e.g. a direct call) a per-pass fetch. Prints JSON; returns 1
+# on failure (logged).
+#######################################
+_normalize_reassign_fetch() {
+	local slug="$1"
+	local rc=0 json="" err_file="" err_msg=""
+	json=$(_normalize_repo_listing "$slug") || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		printf '%s' "$json" | jq -c --argjson n "$PULSE_QUEUED_SCAN_LIMIT" '.[0:$n]' 2>/dev/null || return 1
+		return 0
+	fi
+	[[ "$rc" -eq 2 ]] || return 1
+	err_file=$(mktemp)
+	# t2773: route through gh_issue_list wrapper (REST fallback on rate-limit exhaustion)
+	json=$(gh_issue_list --repo "$slug" --state open --json number,assignees,labels --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>"$err_file") || json=""
+	if [[ -z "$json" || "$json" == "null" ]]; then
+		err_msg=$(cat "$err_file" 2>/dev/null || echo "unknown error")
+		echo "[pulse-wrapper] normalize_active_issue_assignments: gh_issue_list FAILED for ${slug}: ${err_msg}" >>"$LOGFILE"
+		rm -f "$err_file"
+		return 1
+	fi
+	rm -f "$err_file"
+	printf '%s' "$json"
+	return 0
+}
+
+#######################################
+# Listing for _normalize_unassign_stampless_interactive: issues assigned to the
+# runner with origin:interactive. Shared per-run listing filtered client-side,
+# or a filtered per-pass fetch when no run is active. Prints JSON ("" on
+# failure). Always returns 0.
+#######################################
+_normalize_stampless_fetch() {
+	local slug="$1"
+	local runner_user="$2"
+	local rc=0 json=""
+	json=$(_normalize_repo_listing "$slug") || rc=$?
+	if [[ "$rc" -eq 2 ]]; then
+		# t2773: gh_issue_list wrapper (REST fallback on rate-limit exhaustion).
+		gh_issue_list --repo "$slug" --assignee "$runner_user" --label origin:interactive \
+			--state open --json number,updatedAt,labels \
+			--limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null || true
+	elif [[ "$rc" -eq 0 ]]; then
+		printf '%s' "$json" | jq -c --arg u "$runner_user" --argjson n "$PULSE_QUEUED_SCAN_LIMIT" \
+			'[.[] | select((.assignees // [] | map(.login) | index($u)) and (.labels // [] | map(.name) | index("origin:interactive")))] | .[0:$n]' 2>/dev/null || true
+	fi
 	return 0
 }
 
@@ -655,23 +766,15 @@ _normalize_reassign_self() {
 
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
+		_normalize_mark_repo_started reassign_self "$slug"
 		local _repo_start=$SECONDS _repo_gh_calls=0
 		local _repo_timing="substage:normalize/reassign_self/repo:${slug//\//-}:direct_gh_calls="
 
-		local issue_rows="" issue_rows_json="" issue_rows_err=""
-		issue_rows_err=$(mktemp)
-		# t2773: route through gh_issue_list wrapper (REST fallback on rate-limit exhaustion)
-		_repo_gh_calls=$((_repo_gh_calls + 1))
-		issue_rows_json=$(gh_issue_list --repo "$slug" --state open --json number,assignees,labels --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>"$issue_rows_err") || issue_rows_json=""
-		if [[ -z "$issue_rows_json" || "$issue_rows_json" == "null" ]]; then
-			local _issue_rows_err_msg
-			_issue_rows_err_msg=$(cat "$issue_rows_err" 2>/dev/null || echo "unknown error")
-			echo "[pulse-wrapper] normalize_active_issue_assignments: gh_issue_list FAILED for ${slug}: ${_issue_rows_err_msg}" >>"$LOGFILE"
-			rm -f "$issue_rows_err"
+		local issue_rows_json=""
+		if ! issue_rows_json=$(_normalize_reassign_fetch "$slug"); then
 			_normalize_log_timing "${_repo_timing}${_repo_gh_calls}" "$_repo_start" 1
 			continue
 		fi
-		rm -f "$issue_rows_err"
 
 		# Pass 1: status:queued or status:in-progress with no assignees (original)
 		local issue_rows
@@ -736,7 +839,7 @@ _normalize_reassign_self() {
 			fi
 		done <<<"$all_rows"
 		_normalize_log_timing "${_repo_timing}${_repo_gh_calls}" "$_repo_start" 0
-	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
+	done < <(_normalize_rotated_slugs reassign_self "$(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)")
 
 	if [[ "$total_checked" -gt 0 ]]; then
 		echo "[pulse-wrapper] Assignment normalization: assigned ${total_assigned}/${total_checked} active unassigned issues to ${runner_user} (skipped_claimed=${total_skipped_claimed})" >>"$LOGFILE"
@@ -828,21 +931,16 @@ _normalize_unassign_stampless_interactive() {
 
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
+		_normalize_mark_repo_started unassign_stampless_interactive "$slug"
 		if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
 			|| ! repo_allows_pulse_write_actions "$slug"; then
 			continue
 		fi
 
-		# t2773: route through gh_issue_list wrapper (REST fallback on rate-limit exhaustion).
-		# This fetch is assignee-filtered, so it cannot use the prefetch cache
-		# (which holds all open issues without per-assignee partitioning).
+		# Live (non-cache) listing: shared per-run listing filtered to the
+		# runner's origin:interactive issues (see _normalize_stampless_fetch).
 		local json
-		json=$(gh_issue_list --repo "$slug" \
-			--assignee "$runner_user" \
-			--label origin:interactive \
-			--state open \
-			--json number,updatedAt,labels \
-			--limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || json=""
+		json=$(_normalize_stampless_fetch "$slug" "$runner_user")
 		[[ -n "$json" && "$json" != "null" ]] || continue
 
 		# GH#20048: filter out non-task issues (routine-tracking, supervisor, etc.)
@@ -875,7 +973,9 @@ _normalize_unassign_stampless_interactive() {
 
 			local labels_csv=""
 			labels_csv=$(printf '%s' "$json" | jq -r --argjson n "$issue_num" '[.[] | select(.number == $n) | .labels[].name] | join(",")' 2>/dev/null) || labels_csv=""
-			if [[ ",${labels_csv}," == *",status:in-review,"* ]]; then
+			local label_tokens=",${labels_csv},"
+			local active_status_re=",(${_PIR_STATUS_IN_PROGRESS}|${_PIR_STATUS_QUEUED}|${_PIR_STATUS_CLAIMED}),"
+			if [[ "$label_tokens" == *",status:in-review,"* ]]; then
 				local open_pr_count=0 open_pr_rc=0
 				open_pr_count=$(gh_pr_list --repo "$slug" --state open --search "$issue_num" --json number --jq 'length' 2>/dev/null) || open_pr_rc=$?
 				if [[ "$open_pr_rc" -ne 0 ]]; then
@@ -890,18 +990,19 @@ _normalize_unassign_stampless_interactive() {
 					echo "[pulse-wrapper] Stampless interactive auto-release: reset status:in-review #${issue_num} in ${slug} to available (>${age_threshold_seconds}s old, no stamp, no open PR)" >>"$LOGFILE"
 					total_released=$((total_released + 1))
 				fi
-			elif [[ "$labels_csv" == *"$_PIR_STATUS_IN_PROGRESS"* || "$labels_csv" == *"$_PIR_STATUS_QUEUED"* ]]; then
-				# Reset lifecycle state too, otherwise the reassign pass re-claims it.
+			elif [[ "$label_tokens" =~ $active_status_re ]]; then
+				# Reset lifecycle state too, otherwise the reassign pass re-claims it
+				# (or an unassigned status:claimed is left behind).
 				if set_issue_status "$issue_num" "$slug" "available" --remove-assignee "$runner_user" >/dev/null 2>&1; then
 					echo "[pulse-wrapper] Stampless interactive auto-release: reset active status #${issue_num} in ${slug} to available (>${age_threshold_seconds}s old, no stamp)" >>"$LOGFILE"
 					total_released=$((total_released + 1))
 				fi
-			elif gh issue edit "$issue_num" --repo "$slug" --remove-assignee "$runner_user" >/dev/null 2>&1; then
+			elif gh_issue_edit_safe "$issue_num" --repo "$slug" --remove-assignee "$runner_user" >/dev/null 2>&1; then
 				echo "[pulse-wrapper] Stampless interactive auto-release: unassigned ${runner_user} from #${issue_num} in ${slug} (>${age_threshold_seconds}s old, no stamp)" >>"$LOGFILE"
 				total_released=$((total_released + 1))
 			fi
 		done <<<"$rows"
-	done < <(jq -r '.initialized_repos[] | select((.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" 2>/dev/null || true)
+	done < <(_normalize_rotated_slugs unassign_stampless_interactive "$(jq -r '.initialized_repos[] | select((.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" 2>/dev/null || true)")
 
 	if [[ "$total_released" -gt 0 ]]; then
 		echo "[pulse-wrapper] Stampless interactive cleanup: released ${total_released} issues for dispatch" >>"$LOGFILE"
@@ -939,6 +1040,7 @@ _normalize_unassign_stampless_interactive() {
 normalize_active_issue_assignments() {
 	local repos_json="$REPOS_JSON"
 	local _phase_start=$SECONDS
+	local _listing_dir=""
 
 	# Pass 0 (GH#28211): scan the authoritative local stamp index directly.
 	# Run before repos.json and GitHub-user gates so recovery does not depend on
@@ -949,7 +1051,7 @@ normalize_active_issue_assignments() {
 	[[ -f "$repos_json" ]] || return 0
 
 	local runner_user
-	runner_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+	runner_user=$(_pulse_resolve_runner_login)
 	if [[ -z "$runner_user" ]]; then
 		echo "[pulse-wrapper] Assignment normalization skipped: unable to resolve runner user" >>"$LOGFILE"
 		return 0
@@ -965,6 +1067,9 @@ normalize_active_issue_assignments() {
 	# label, no assignee).
 	# Pass 2 (unassign_stale): reset stale assignments (active label, assignee
 	# present, no running worker).
+	# Pass 2c (unassign_available_stale, GH#39327): release stale assignees from
+	# open status:available + auto-dispatch issues (prior-lifecycle assignees
+	# after a reopen, or is-assigned stale recovery); capped per cycle.
 	# Pass 2b (unassign_stampless_interactive, t2148): recover aged stampless origin:interactive claims.
 	# Closes the leak where `claim-task-id.sh` auto-assigns on creation
 	# (per t1970) but the interactive session never runs the formal
@@ -981,9 +1086,22 @@ normalize_active_issue_assignments() {
 	# Pass 3 (label_invariants, t2040): enforce label invariants (at most one
 	# status:*, at most one tier:*); bounded by PULSE_QUEUED_SCAN_LIMIT per repo.
 	#
-	# Passes are independent; each re-lists its own issues. Run them
-	# least-recently-started first and stamp the start before running, so a
-	# pass interrupted by the stage watchdog yields first place next cycle.
+	# Passes are independent but share one live open-issue listing per repo
+	# per run (fetched lazily by the first pass that reaches the repo; see
+	# _normalize_repo_listing). Run them least-recently-started first and stamp
+	# the start before running, so a pass interrupted by the stage watchdog
+	# yields first place next cycle.
+	_listing_dir=$(mktemp -d 2>/dev/null) || _listing_dir=""
+	if [[ -z "$_listing_dir" ]]; then
+		# No shared cache: skip listing-dependent passes rather than listing
+		# each repo once per pass. Independent cleanups still run.
+		echo "[pulse-wrapper] normalize_active_issue_assignments: mktemp -d failed; skipping listing-dependent passes this run" >>"$LOGFILE"
+		_normalize_stale_close_pending_checkpoint_leases
+		_normalize_deferred_claim_releases
+		return 0
+	fi
+	_NORMALIZE_LISTING_DIR="$_listing_dir"
+	_NORMALIZE_REPO_CURSOR_DIR="${AIDEVOPS_NORMALIZE_REPO_CURSOR_DIR:-${HOME}/.aidevops/cache/normalize-repo-cursor}"
 	local pass_state_dir="${HOME}/.aidevops/cache/normalize-pass-started"
 	local pass="" pass_order=""
 	# Resolve the order up front: passes read their own stdin streams.
@@ -996,7 +1114,12 @@ normalize_active_issue_assignments() {
 			_normalize_reassign_self "$runner_user" "$repos_json" "$dedup_helper"
 			;;
 		unassign_stale)
+			_normalize_stale_close_pending_checkpoint_leases
+			_normalize_deferred_claim_releases
 			_normalize_unassign_stale "$runner_user" "$repos_json" "$now_epoch" "$cross_runner_max_runtime"
+			;;
+		unassign_available_stale)
+			_normalize_unassign_available_stale "$runner_user" "$repos_json" "$now_epoch" "$dedup_helper"
 			;;
 		unassign_stampless_interactive)
 			_normalize_unassign_stampless_interactive "$runner_user" "$repos_json" "$now_epoch" "$stampless_age_threshold"
@@ -1008,6 +1131,10 @@ normalize_active_issue_assignments() {
 		esac
 		_normalize_log_timing "substage:normalize/${pass}" "$_phase_start" 0
 	done
+
+	_NORMALIZE_LISTING_DIR=""
+	_NORMALIZE_REPO_CURSOR_DIR=""
+	[[ -n "$_listing_dir" ]] && rm -rf "$_listing_dir"
 
 	return 0
 }
@@ -1129,7 +1256,7 @@ Thanks for filing this issue. Because it was created by a contributor outside th
 
 **What happens next:** a maintainer will triage this issue and either
 
-- approve it cryptographically with \`sudo aidevops approve issue <N> <owner/repo>\` (which clears \`needs-maintainer-review\`), after which the pulse may dispatch a worker, OR
+- approve it cryptographically with \`$(approval_cli_prefix) approve issue <N> <owner/repo>\` (which clears \`needs-maintainer-review\`), after which the pulse may dispatch a worker, OR
 - claim a fresh internal task ID via \`claim-task-id.sh\` and file a maintainer-authored follow-up that credits you as reporter.
 
 **Why this gate exists:** the aidevops pulse auto-dispatches workers on issues that carry maintainer-trust labels. For issues from contributors outside the maintainer team, a human in the loop catches injection attempts, scope/trust mismatches, and speculative work the pulse shouldn't burn a worker on. This is a soft gate, not a rejection — the content of the issue has not been judged.
@@ -1178,9 +1305,9 @@ _lia_author_authority() {
 	assoc=$(printf '%s' "$issue_json" | jq -r '.author_association // "NONE"' 2>/dev/null || echo "NONE")
 	author_type=$(printf '%s' "$issue_json" | jq -r '.user.type // ""' 2>/dev/null || echo "")
 	author_login=$(printf '%s' "$issue_json" | jq -r '.user.login // ""' 2>/dev/null || echo "")
-	if printf '%s\n' "$issue_body" | grep -Fqx '<!-- aidevops:origin:interactive -->'; then
+	if printf '%s\n' "$issue_body" | grep -Fx '<!-- aidevops:origin:interactive -->' >/dev/null; then
 		reported_origin="$origin_interactive"
-	elif printf '%s\n' "$issue_body" | grep -Fqx '<!-- aidevops:origin:worker -->'; then
+	elif printf '%s\n' "$issue_body" | grep -Fx '<!-- aidevops:origin:worker -->' >/dev/null; then
 		reported_origin="$origin_worker"
 	fi
 	if [[ "$author_type" == "Bot" ]]; then
@@ -1282,7 +1409,7 @@ Thanks for filing this issue. Because it was created by a contributor outside th
 
 **What happens next:** a maintainer will triage this issue and either
 
-- approve it cryptographically with \`sudo aidevops approve issue ${issue_num} ${slug}\` (which clears \`needs-maintainer-review\`), after which the pulse may dispatch a worker, OR
+- approve it cryptographically with \`$(approval_cli_prefix) approve issue ${issue_num} ${slug}\` (which clears \`needs-maintainer-review\`), after which the pulse may dispatch a worker, OR
 - claim a fresh internal task ID via \`claim-task-id.sh\` and file a maintainer-authored follow-up that credits you as reporter.
 
 **Why this gate exists:** the aidevops pulse auto-dispatches workers on issues that carry maintainer-trust labels. For issues from contributors outside the maintainer team, a human in the loop catches injection attempts, scope/trust mismatches, and speculative work the pulse shouldn't burn a worker on. This is a soft gate, not a rejection — the content of the issue has not been judged.
@@ -1354,6 +1481,7 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 # Sub-stage order (short-circuit per issue — first action that fires skips rest):
 #   0a. persistent non-task label hygiene (_should/_action_reconcile_persistent_issue*)
 #   0b. external issue trust gate (_should/_action_reconcile_external_issue_gate)
+#   0c. stranded consolidated issues (_should/_action_reconcile_stranded_consolidated)
 #   1. close_issues_with_merged_prs  (_should_ciw + _action_ciw_single)
 #   2. reconcile_stale_done_issues   (_should_rsd + _action_rsd_single)
 #   3. reconcile_open_issues_with_merged_prs (_should_oimp + _action_oimp_single)
@@ -1468,9 +1596,71 @@ _pir_initialize_backfill_gates() {
 	return 0
 }
 
+# Repair only signed, unambiguous PR provenance from write-authorized authors.
+# Re-read each candidate before mutation: a stale list must not replace an origin.
+_pir_backfill_pr_origin() {
+	local slug="$1" pr_json="" candidates="" number="" live="" origin="" author="" assoc=""
+	pr_json=$(gh api "repos/${slug}/pulls?state=open&per_page=100" 2>/dev/null) || return 0
+	candidates=$(printf '%s' "$pr_json" | jq -r '.[] | select(([.labels[]?.name | select(startswith("origin:"))] | length) == 0) | .number' 2>/dev/null) || return 0
+	local checked=0
+	while IFS= read -r number; do
+		[[ "$number" =~ ^[0-9]+$ ]] || continue
+		[[ "$checked" -lt 10 ]] || break
+		live=$(gh api "repos/${slug}/issues/${number}" 2>/dev/null) || continue
+		origin=$(printf '%s' "$live" | jq -r '
+			select(.state == "open" and has("pull_request")) |
+			select(([.labels[]?.name | select(startswith("origin:"))] | length) == 0) |
+			(.body // "" | split("\n")) as $lines |
+			[$lines[] | select(test("^<!-- aidevops:origin:(worker|interactive) -->$"))] as $markers |
+			select(($markers | length) == 1 and ($lines | index("<!-- aidevops:sig -->") != null)) |
+			$markers[0] | capture("origin:(?<origin>worker|interactive)").origin' 2>/dev/null) || continue
+		[[ -n "$origin" ]] || continue
+		checked=$((checked + 1))
+		author=$(printf '%s' "$live" | jq -r '.user.login // ""')
+		assoc=$(printf '%s' "$live" | jq -r '.author_association // ""')
+		# #aidevops:trust-boundary: fail closed on unknown authority or missing helper.
+		[[ -n "$author" && -n "$assoc" ]] || continue
+		declare -F _gh_actor_has_repo_write_authority >/dev/null 2>&1 || continue
+		_gh_actor_has_repo_write_authority "$slug" "$author" "$assoc" || continue
+		if set_origin_label "$number" "$slug" "$origin" --pr; then
+			printf '[pulse-wrapper] PR origin backfill: applied origin:%s to PR #%s (author=%s, assoc=%s)\n' "$origin" "$number" "$author" "$assoc" >>"$LOGFILE"
+		fi
+	done <<<"$candidates"
+	return 0
+}
+
+# REST includes trust metadata unavailable in `gh issue list --json`. Fetch
+# one paginated list, stopping at the issue scan limit (PRs do not count).
+# Emit nothing on failure so a partial list cannot masquerade as a full scan.
+_pir_list_open_issues_with_trust() {
+	local slug="$1"
+	local limit="${PULSE_QUEUED_SCAN_LIMIT:-100}"
+	[[ "$limit" =~ ^[1-9][0-9]*$ ]] || return 1
+	local max_pages="${PULSE_QUEUED_MAX_PAGES:-20}"
+	[[ "$max_pages" =~ ^[1-9][0-9]*$ ]] || max_pages=20
+	local page=1 page_rows="" page_count=0 issues="[]" issue_count=0
+	while [[ "$issue_count" -lt "$limit" ]]; do
+		[[ "$page" -le "$max_pages" ]] || return 1
+		page_rows=$(gh api "repos/${slug}/issues?state=open&per_page=100&page=${page}" 2>/dev/null) || return 1
+		page_count=$(printf '%s' "$page_rows" | jq -er --arg array_type "$_PIR_JSON_TYPE_ARRAY" \
+			'select(type == $array_type) | length') || return 1
+		issues=$(printf '%s\n%s\n' "$issues" "$page_rows" | jq -sc --argjson limit "$limit" '
+			add | map(select(.pull_request == null)) | .[:$limit]
+		') || return 1
+		issue_count=$(printf '%s' "$issues" | jq 'length') || return 1
+		[[ "$page_count" -lt 100 ]] && break
+		page=$((page + 1))
+	done
+	printf '%s' "$issues" | jq -c 'map({number, title, labels, body: (.body // ""),
+		updatedAt: .updated_at, assignees,
+		authorAssociation: .author_association, author: .user})' || return 1
+	return 0
+}
+
 # Repo-owned caps and cached fields stay live while issue-stage helpers run.
 _pir_reconcile_slug() {
 	local slug="$1" _slug_start="$2"
+	_pir_backfill_pr_origin "$slug"
 	# Per-repo caps (reset each slug)
 	local ciw_per_repo=0 ciw_max_repo=20
 	local rsd_per_repo=0 rsd_max_repo=20
@@ -1480,14 +1670,12 @@ _pir_reconcile_slug() {
 	# The cache (written each cycle by pulse-prefetch.sh) covers:
 	#   number, title, labels, updatedAt, assignees, body plus
 	#   authorAssociation/author trust metadata from canonical snapshots.
-	#   Legacy/fallback rows without trust metadata block lifecycle actions.
+	#   Legacy rows without trust metadata block lifecycle actions.
 	local issues_json="" _cache_issues_sp=""
 	if _cache_issues_sp=$(_read_cache_issues_for_slug "$slug" 2>/dev/null); then
 		issues_json="$_cache_issues_sp"
 	else
-		issues_json=$(gh_issue_list --repo "$slug" --state open \
-			--json number,title,labels,body \
-			--limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || issues_json="[]"
+		issues_json=$(_pir_list_open_issues_with_trust "$slug") || issues_json="[]"
 	fi
 	[[ -n "$issues_json" && "$issues_json" != "null" ]] || return 0
 
@@ -1631,6 +1819,16 @@ _pir_reconcile_issue_stages() {
 		fi
 	fi
 
+	# Stage 0c: stranded consolidated originals and legacy successors (GH#37600).
+	if [[ "$stranded_checked" -lt "$stranded_max" ]] &&
+		_should_reconcile_stranded_consolidated "$labels_csv" "$issue_body"; then
+		local _stranded_rc=0
+		_action_reconcile_stranded_consolidated "$slug" "$issue_num" "$labels_csv" \
+			"$issue_body" "$issue_author_association" || _stranded_rc=$?
+		stranded_checked=$((stranded_checked + _PIR_STRANDED_LOOKUP_USED))
+		[[ "$_stranded_rc" -eq 0 ]] && return 0
+	fi
+
 	# Stage 1: close issues whose dedup guard detects a merged PR
 	if [[ "$_ciw_rsd_enabled" == "1" ]] && \
 		[[ "$ciw_per_repo" -lt "$ciw_max_repo" ]] && \
@@ -1711,6 +1909,8 @@ _pir_finish_reconcile_cycle() {
 	elif [[ "$_total_actions" -gt 0 ]]; then
 		echo "[pulse-wrapper] reconcile_issues_single_pass: persistent_repaired=${persistent_repaired} external_gated=${external_gated} ciw_closed=${ciw_closed} rsd_closed=${rsd_closed} rsd_reset=${rsd_reset} oimp_closed=${oimp_total_closed} cpt_closed=${cpt_total_closed} cpt_nudged=${cpt_total_nudged} cpt_escalated=${cpt_total_escalated} cpt_reopened=${cpt_total_reopened} lia_fixed=${lia_fixed} pbf_run=${pbf_total_run} cbb_run=${cbb_total_run}" >>"$LOGFILE"
 	fi
+	# Always emit this diagnostic, including otherwise silent no-op passes.
+	echo "[pulse-wrapper] reconcile_issues_single_pass: missing_author_metadata_blocked=${_PIR_MISSING_AUTHOR_METADATA_BLOCKED:-0}" >>"$LOGFILE"
 	return 0
 }
 
@@ -1718,6 +1918,18 @@ _pir_finish_reconcile_cycle() {
 # within the 600s ownership-stage timeout. Budget=0 disables it. Each call
 # owns fresh timestamps, caps and counters; helpers mutate these locals through
 # Bash 3.2 dynamic scope, never a command substitution or pipeline subshell.
+_pir_reconcile_cycle_repairs() {
+	_repair_pending_planning_publications "$repos_json"
+
+	# Closed-parent cursor repair, with separate scan caps.
+	if declare -F _repair_recently_closed_parents_cycle >/dev/null 2>&1; then
+		_repair_recently_closed_parents_cycle "$repos_json" "$cpt_max_reopens" \
+			"$cpt_max_repair_repo_scans" "$cpt_max_repair_candidates"
+		cpt_total_reopened="$_PIR_RECENT_PARENT_CYCLE_REOPENED"
+	fi
+	return 0
+}
+
 reconcile_issues_single_pass() {
 	local repos_json="$REPOS_JSON"
 	[[ -f "$repos_json" ]] || return 0
@@ -1742,22 +1954,23 @@ reconcile_issues_single_pass() {
 	local cbb_total_run=0 cbb_max_per_cycle=10
 	_pir_initialize_backfill_gates
 	local persistent_repaired=0 external_gated=0 ciw_closed=0 rsd_closed=0 rsd_reset=0 lia_fixed=0
+	local _PIR_MISSING_AUTHOR_METADATA_BLOCKED=0
+	local stranded_checked=0 stranded_max="${AIDEVOPS_RECONCILE_STRANDED_CONSOLIDATED_MAX:-5}"
+	[[ "$stranded_max" =~ ^[0-9]+$ ]] || stranded_max=5
 	local _b64d_flag="-d"
 	[[ "$(uname -s)" == "Darwin" ]] && _b64d_flag="-D"
 	local _t2984_start_ts=$SECONDS _t2984_budget=0 _t2984_aborted=0
 	_t2984_budget="${RECONCILE_TIME_BUDGET_SECS:-360}"
 	[[ "$_t2984_budget" =~ ^[0-9]+$ ]] || _t2984_budget=360
-	_repair_pending_planning_publications "$repos_json"
-
-	# Closed-parent cursor repair precedes open issues, with separate scan caps.
-	if declare -F _repair_recently_closed_parents_cycle >/dev/null 2>&1; then
-		_repair_recently_closed_parents_cycle "$repos_json" "$cpt_max_reopens" \
-			"$cpt_max_repair_repo_scans" "$cpt_max_repair_candidates"
-		cpt_total_reopened="$_PIR_RECENT_PARENT_CYCLE_REOPENED"
-	fi
 	# GH#34299: resume where the previous aborted or killed pass stopped.
 	local _sp_cursor_file="" _sp_cursor_slug="" _sp_cursor_issue="" _sp_cursor_attempts=0
 	_pir_sp_cursor_load
+	# GH#37949: with a budget, alternate priority so repairs cannot starve issues.
+	local _sp_repairs_done=0
+	if [[ "$_t2984_budget" -le 0 ]] || ! _pir_sp_issues_first; then
+		_sp_repairs_done=1
+		_pir_reconcile_cycle_repairs
+	fi
 	local _sp_slugs=""
 	_sp_slugs=$(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 	local slug=""
@@ -1767,7 +1980,8 @@ reconcile_issues_single_pass() {
 		if [[ "$_t2984_budget" -gt 0 ]]; then
 			if [[ $((SECONDS - _t2984_start_ts)) -ge "$_t2984_budget" ]]; then
 				_t2984_aborted=1
-				_pir_sp_cursor_write "$slug" "" 0
+				# Keep the saved issue position when yielding at the resume slug.
+				[[ "$slug" == "${_sp_cursor_slug:-}" ]] || _pir_sp_cursor_write "$slug" "" 0
 				break
 			fi
 		fi
@@ -1777,6 +1991,9 @@ reconcile_issues_single_pass() {
 		[[ "$_t2984_aborted" -eq 1 ]] && break
 	done < <(_pir_sp_rotate_slugs "$_sp_slugs")
 	[[ "$_t2984_aborted" -eq 1 ]] || _pir_sp_cursor_clear
+	if [[ "$_sp_repairs_done" -eq 0 && "$_t2984_aborted" -eq 0 ]]; then
+		_pir_reconcile_cycle_repairs
+	fi
 	_pir_finish_reconcile_cycle
 	return 0
 }

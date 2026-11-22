@@ -15,6 +15,13 @@ if [[ -z "${_DSI_SCRIPT_DIR:-}" ]]; then
 	unset _dsi_policy_path
 fi
 
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/shared-approval-cli.sh"
+fi
+
 #######################################
 # Validate issue exists, is OPEN, and emit metadata via stdout (single jq call).
 # Sets _DSI_ISSUE_TITLE, _DSI_ISSUE_LABELS, _DSI_ISSUE_URL, _DSI_ISSUE_ASSIGNEES.
@@ -159,13 +166,11 @@ _dsi_guard_issue_author_trust() {
 	fi
 
 	#aidevops:trust-boundary -- label mutation is containment, never the authority source.
-	if declare -F gh_issue_edit_safe >/dev/null 2>&1; then
-		gh_issue_edit_safe "$issue_number" --repo "$repo_slug" \
-			--add-label "needs-maintainer-review" >/dev/null 2>&1 || true
-	else
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--add-label "needs-maintainer-review" >/dev/null 2>&1 || true
-	fi
+	# shellcheck source=protected-label-guard.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/protected-label-guard.sh"
+	protected_label_edit "$issue_number" "$repo_slug" \
+		"containment; association=${author_association}; authority=${AIDEVOPS_GH_ACTOR_AUTHORITY_REASON:-unknown}" \
+		--add-label "needs-maintainer-review" >/dev/null || true
 	_dsi_err "Issue #${issue_number} in ${repo_slug} has untrusted, external-source, or unknown author authority (${author_association}; external_source=${external_source}; ${AIDEVOPS_GH_ACTOR_AUTHORITY_REASON:-unknown}) and no verified approval; refusing manual worker dispatch"
 	return 1
 }
@@ -185,7 +190,7 @@ _dsi_guard_no_maintainer_review_required() {
 	#aidevops:trust-boundary -- manual dispatch must not bypass signed/maintainer issue approval.
 	if [[ "$labels_with_commas" == *",needs-maintainer-review,"* ]]; then
 		_dsi_err "Issue #${issue_number} in ${repo_slug} still requires maintainer review; refusing manual worker dispatch"
-		_dsi_info "  Required action: run 'sudo aidevops approve issue ${issue_number} ${repo_slug}' or record an equivalent maintainer decision before dispatch."
+		_dsi_info "  Required action: run '$(approval_cli_prefix) approve issue ${issue_number} ${repo_slug}' or record an equivalent maintainer decision before dispatch."
 		return 1
 	fi
 
@@ -200,7 +205,7 @@ _dsi_guard_no_maintainer_permission_required() {
 	labels_with_commas=$(printf ',%s,' "$labels_csv")
 	if [[ "$labels_with_commas" == *",needs-maintainer-permissions,"* ]]; then
 		_dsi_err "Issue #${issue_number} in ${repo_slug} is waiting for a scoped maintainer permission grant; refusing manual worker dispatch"
-		_dsi_info "  Run the request-specific 'sudo aidevops approve permissions ... --request perm-...' command from the issue comment."
+		_dsi_info "  Run the request-specific '$(approval_cli_prefix) approve permissions ... --request perm-...' command from the issue comment."
 		return 1
 	fi
 	return 0

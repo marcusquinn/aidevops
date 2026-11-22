@@ -63,6 +63,28 @@ Do not turn these commands into a committed one-off script. If the helper or an 
 
 **Check for**: JS errors, failed requests (404s, CORS), CSS warnings, mixed content, deprecation warnings, layout shift (CLS), horizontal overflow, unintended wrapping/truncation, navigation orientation changes, touch target size/spacing, text scaling/readability, light/dark theme regressions, and reduced-motion behaviour when animations are present.
 
+**Content and data checks** (only when the change affects them; use the same `--measure-file` hook, no new harness):
+
+| Check | When | Evidence |
+|-------|------|----------|
+| Data reconciliation | Dashboards, tables, reports, pricing or any screen showing totals | Measure function returns displayed rows and totals; recompute from the displayed (rounded) values; repeated facts match; relative figures name a baseline |
+| Content stress | Text, layout or component changes | Screenshots with the longest real label/name, a short one, translated or 30–40% longer copy, and RTL where supported; empty, loading, error and slow/offline states via the app's own fixtures or dev tooling |
+| Rendered fonts | Font, typography or theme changes | `font-pairing.md` §5 measure function: expected families loaded, no third-party font host, no missing glyphs |
+| Browser surfaces | Themed or custom-styled UI | Selection, caret, focus ring, scrollbar and tabular numerals visible in screenshots or computed styles; contrast still passes |
+
+```javascript
+// reconcile.js: trusted operator code; replace the selectors with the screen's own
+() => {
+  const num = (el) => Number(el.textContent.replace(/[^0-9.-]/g, ''));
+  const rows = [...document.querySelectorAll('[data-row-amount]')].map(num);
+  const shown = num(document.querySelector('[data-total]'));
+  const sum = Math.round(rows.reduce((a, b) => a + b, 0) * 100) / 100;
+  return { rows: rows.length, sum, shown, reconciles: sum === shown };
+}
+```
+
+Report a failed reconciliation as a data defect in the fixture or query, not a styling issue.
+
 ### 3. Accessibility Verification
 
 Always check accessibility relevant to the changed surface, using the smallest existing route that provides evidence. A full matrix is for broad component/layout changes and release readiness, not every CSS edit.
@@ -91,6 +113,7 @@ Always check accessibility relevant to the changed surface, using the smallest e
 ### Screenshots — <selected affected viewports>: [before when decision-relevant] [after] -- <what changed>
 ### Responsive Behaviour — conventions checked, devices tested, key layout/navigation/wrapping decisions, follow-up issues
 ### Browser Errors — <none or list>
+### Content and Data — reconciliation, content stress, rendered fonts, browser surfaces: pass/fail/not checked
 ### Accessibility — contrast pass/fail, keyboard pass/fail, axe violations
 ### Issues Found — [device] <description> [S1/S2/S3]
 ```
@@ -116,6 +139,8 @@ Apply the principles relevant to the changed surface; report observed violations
 | Paragraph width <=740px (~75 chars/line) | Inspect `max-width`; screenshot at desktop-lg |
 | Body text >=16px; supplementary >=14px | Playwright `evaluate()` computed `font-size` |
 | Max 3 font families (headings, body, code) | Inspect computed `font-family`; flag 4th |
+| Intended fonts actually render, licensed and served without a third-party host | `font-pairing.md` §5 measure function |
+| Aligned numbers (tables, prices, KPIs) use tabular figures | Inspect computed `font-variant-numeric` |
 | Distinct font weights (700 headings, 400 body, 600 labels) | Verify in screenshots |
 | Line height >=1.4 body, >=1.2 headings | Inspect computed `line-height` |
 | No character overlap from letter spacing; verify custom fonts at small sizes/bold | Visual check |

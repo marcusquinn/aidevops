@@ -5,10 +5,85 @@
 # Usage: worktree-artefact-reclaim.sh [--force] [--max-seconds N] [--idle-days N]
 # Defaults: dry run, 60 seconds, AIDEVOPS_WORKTREE_IDLE_DAYS (14).
 # .hermit itself contains project configuration; only its cache(s) qualify.
-# No permanent-delete fallback: without a native cleaner/trash, retain output.
+# Linux same-device Trash cannot reclaim space: delete only verified output.
+# Other filesystems/platforms require a native cleaner or Trash backend.
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Separate mode for the shared, regenerable Turborepo cache. The caller holds
+# the async cleanup lock and supplies the outer deadline.
+if [[ "${1:-}" == "--turbo-cache" ]]; then
+	python3 - "${2:-}" <<'PY'
+import os
+import re
+import stat
+import subprocess
+import sys
+import time
+
+repo = os.path.realpath(sys.argv[1])
+age = os.environ.get('AIDEVOPS_TURBO_CACHE_MAX_AGE_DAYS', '3')
+size = os.environ.get('AIDEVOPS_TURBO_CACHE_MAX_SIZE', '20G')
+match = re.fullmatch(r'([1-9][0-9]*)([KMGTP]?)', size, re.IGNORECASE)
+if not age.isdigit() or int(age) < 1 or not match:
+    sys.exit('invalid turbo cache policy')
+limit = int(match[1]) * 1024 ** ('KMGTP'.index(match[2].upper()) + 1 if match[2] else 0)
+if not os.path.isfile(os.path.join(repo, 'turbo.json')):
+    sys.exit(0)
+def git(*args):
+    return subprocess.run(['git', '-C', repo, *args], stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL, timeout=5)
+tracked = git('ls-files', '--', '.turbo')
+if git('check-ignore', '-q', '.turbo/').returncode or tracked.returncode or tracked.stdout:
+    sys.exit(0)
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+try:
+    root = os.open(repo, flags)
+    try:
+        turbo = os.open('.turbo', flags, dir_fd=root)
+        try:
+            cache = os.open('cache', flags, dir_fd=turbo)
+        finally:
+            os.close(turbo)
+    finally:
+        os.close(root)
+except OSError:
+    sys.exit(0)
+removed = 0
+freed = 0
+entries = []
+cutoff = time.time() - int(age) * 86400
+try:
+    # Turbo's content-addressed cache entries are regular files in this directory.
+    # Never traverse directories or follow symlinks, even during concurrent builds.
+    for name in os.listdir(cache):
+        try:
+            info = os.stat(name, dir_fd=cache, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        if stat.S_ISREG(info.st_mode):
+            entries.append((info.st_mtime_ns, name, info.st_ino, info.st_size))
+    total = sum(entry[3] for entry in entries)
+    for mtime, name, inode, length in sorted(entries):
+        if mtime / 1e9 >= cutoff and total <= limit:
+            break
+        try:
+            current = os.stat(name, dir_fd=cache, follow_symlinks=False)
+            if not stat.S_ISREG(current.st_mode) or (current.st_ino, current.st_mtime_ns, current.st_size) != (inode, mtime, length):
+                continue
+            os.unlink(name, dir_fd=cache)
+        except FileNotFoundError:
+            continue
+        removed += 1
+        freed += length
+        total -= length
+finally:
+    os.close(cache)
+    print(f'turbo-cache-prune repo={os.path.basename(repo)} removed_files={removed} freed_kb={freed // 1024}', flush=True)
+PY
+	exit $?
+fi
 
 # Internal subprocess boundary: the Python coordinator applies the same deadline
 # to guard probes as to Git, sizing, and cleaners. Unknown evidence vetoes work.
@@ -51,6 +126,7 @@ python3 - "$SCRIPT_DIR/worktree-artefact-reclaim.sh" "$@" <<'PY'
 import argparse
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import stat
@@ -225,6 +301,35 @@ def guarded(wt, branch):
     return run(['bash', helper, '--check-worktree', str(wt), branch]).returncode == 0
 
 
+def same_filesystem_trash(path):
+    """Match task scratch policy without creating or emptying user Trash."""
+    if not sys.platform.startswith('linux'):
+        return False
+    data_home = Path(os.environ.get('XDG_DATA_HOME', ''))
+    if not data_home.is_absolute():
+        data_home = Path.home() / '.local/share'
+    trash = data_home / 'Trash'
+    try:
+        while not trash.exists():
+            trash = trash.parent
+        return path.lstat().st_dev == trash.stat().st_dev
+    except OSError:
+        return False
+
+
+def reject_mounted_artefact(path):
+    # is_mount() cannot identify same-device bind mounts; rmtree crosses them.
+    with open('/proc/self/mountinfo') as mounts:
+        for line in mounts:
+            remaining()
+            fields = line.split()
+            if len(fields) < 6:
+                raise ValueError('mount evidence unavailable; retained')
+            mount = Path(re.sub(r'\\([0-7]{3})', lambda match: chr(int(match[1], 8)), fields[4]))
+            if mount == path or path in mount.parents:
+                raise ValueError('mounted artefact retained')
+
+
 def reclaim(wt, paths):
     # Cargo's target is explicit: never let workspace/config defaults choose a
     # shared cache outside the verified worktree. Other outputs move in a batch.
@@ -236,6 +341,14 @@ def reclaim(wt, paths):
         if not safe_candidate(wt, path):
             raise ValueError('candidate changed; retained')
         size(path)  # Revalidate nested-repository/mount boundaries before cleaning.
+        if same_filesystem_trash(path):
+            if not shutil.rmtree.avoids_symlink_attacks:
+                raise ValueError('safe recursive deletion unavailable; retained')
+            reject_mounted_artefact(path)
+            remaining()
+            shutil.rmtree(path)
+            print(f'[worktree-artefacts] deleted={str(path)!r}', flush=True)
+            continue
         if path.name == 'target' and cargo:
             result = run([cargo, 'clean', '--manifest-path', str(path.parent / 'Cargo.toml'), '--target-dir', str(path)])
             if result.returncode == 0:

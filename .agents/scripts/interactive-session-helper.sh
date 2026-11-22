@@ -120,10 +120,14 @@ _isc_stamp_path() {
 _isc_current_user() {
 	local login=""
 	login=$(gh api user --jq '.login' 2>/dev/null) || login=""
-	# Reject JSON null / empty / literal "null"
-	if [[ -z "$login" || "$login" == "null" ]]; then
-		printf ''
-		return 0
+	# REST core and GraphQL have separate quotas. Identity must always come
+	# from the authenticated credential, never from caller/environment input.
+	if [[ "$login" == "null" || ! "$login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]; then
+		login=$(gh api graphql -f 'query=query { viewer { login } }' \
+			--jq '.data.viewer.login // empty' 2>/dev/null) || login=""
+	fi
+	if [[ "$login" == "null" || ! "$login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]; then
+		login=""
 	fi
 	printf '%s' "$login"
 	return 0
@@ -133,10 +137,12 @@ _isc_current_user() {
 # issue-state routines in this repo. External upstream repos do not run our
 # pulse, so posting claim/status/lockdown lifecycle markers there is noise.
 #
-# Returns 0 for maintainer-equivalent access, 1 otherwise, 75 for deferred reads.
-# Lookup failures are
-# treated as NOT authorized: skipping a claim is safer than publicly applying
-# internal aidevops workflow state to an upstream project we cannot verify.
+# Returns 0 for maintainer-equivalent access, 1 for confirmed insufficient
+# permission (read/triage/none), 2 for a lookup failure (retryable; reason in
+# AIDEVOPS_GH_COLLAB_PERMISSION_REASON), 75 for deferred reads.
+# Lookup failures are treated as NOT authorized: skipping a claim is safer than
+# publicly applying internal aidevops workflow state to an upstream project we
+# cannot verify. They are reported as lookup failures, not permission facts.
 _isc_can_manage_issue_state() {
 	local slug="${1:-}"
 	local user="${2:-}"
@@ -157,7 +163,7 @@ _isc_can_manage_issue_state() {
 	local permission_rc=0
 	_gh_collaborator_permission_lookup "$slug" "$user" permission || permission_rc=$?
 	[[ "$permission_rc" -ne 75 ]] || return 75
-	[[ "$permission_rc" -eq 0 ]] || return 1
+	[[ "$permission_rc" -eq 0 ]] || return 2
 	case "$permission" in
 		admin | maintain | write)
 			return 0
@@ -241,6 +247,12 @@ _isc_normalize_owned_pr() {
 	' <<<"$metadata" >/dev/null || return 1
 	prs=$(gh pr list --repo "$slug" --head "$branch" --state open \
 		--json number,isCrossRepository,closingIssuesReferences 2>/dev/null) || return 1
+	# PRs that do not close this issue belong to other work, e.g. a stamp
+	# written from another task's worktree (GH#35951). Never edit or block on
+	# them; only PRs that claim this issue continue to the strict checks.
+	prs=$(jq -c --argjson issue "$issue" '
+		[.[] | select(any(.closingIssuesReferences[]?; .number == $issue))]
+	' <<<"$prs") || return 1
 	[[ "$(jq 'length' <<<"$prs")" == 0 ]] && return 0
 	jq -e '([.labels[].name] | index("status:in-review") != null)' \
 		<<<"$metadata" >/dev/null || return 1

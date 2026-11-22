@@ -16,10 +16,11 @@
 #   9. Advisory regenerates on resume→trip cycle (state change).
 #  10. Status --json emits valid JSON.
 #  11. RUNNER_HEALTH_DISABLED=1 short-circuits all subcommands.
-#  12. Recognised zero-attempt signals (5 listed in the helper).
+#  12. Recognised zero-attempt signals (6 listed in the helper).
 #  13. Unrecognised signal acts as real-attempt (resets counter).
 #  14. Deterministic signing failure trips immediately without changing the
 #      ordinary zero-attempt threshold.
+#  15. Missing runtime binary trips at its dedicated threshold of 3 (GH#38481).
 #
 # All tests run inside an isolated sandbox HOME; no system state is touched.
 
@@ -216,15 +217,17 @@ for i in 1 2 3; do
 	_h record-outcome no_worker_process "owner/repo#$i" >/dev/null 2>&1
 done
 [[ -f "$RUNNER_HEALTH_ADVISORY_FILE" ]] && advisory_count=1 || advisory_count=0
-mtime1=$(stat -f '%m' "$RUNNER_HEALTH_ADVISORY_FILE" 2>/dev/null \
-	|| stat -c '%Y' "$RUNNER_HEALTH_ADVISORY_FILE" 2>/dev/null \
+# GNU first: on Linux `stat -f` succeeds with filesystem stats (free blocks
+# drift between calls), so the BSD form must only be the fallback.
+mtime1=$(stat -c '%Y' "$RUNNER_HEALTH_ADVISORY_FILE" 2>/dev/null \
+	|| stat -f '%m' "$RUNNER_HEALTH_ADVISORY_FILE" 2>/dev/null \
 	|| echo "0")
 sleep 1
 # Trigger another outcome — but breaker already tripped so trip path
 # shouldn't fire again. Record outcome won't re-trip a tripped breaker.
 _h record-outcome no_worker_process owner/repo#4 >/dev/null 2>&1
-mtime2=$(stat -f '%m' "$RUNNER_HEALTH_ADVISORY_FILE" 2>/dev/null \
-	|| stat -c '%Y' "$RUNNER_HEALTH_ADVISORY_FILE" 2>/dev/null \
+mtime2=$(stat -c '%Y' "$RUNNER_HEALTH_ADVISORY_FILE" 2>/dev/null \
+	|| stat -f '%m' "$RUNNER_HEALTH_ADVISORY_FILE" 2>/dev/null \
 	|| echo "0")
 if [[ "$advisory_count" -eq 1 && "$mtime1" == "$mtime2" ]]; then
 	print_result "advisory file written once on trip, not regenerated on subsequent records" "PASS"
@@ -264,18 +267,18 @@ else
 fi
 _teardown_sandbox
 
-# --- Test 11: all 5 documented zero-attempt signals are recognised ---
+# --- Test 11: all 6 documented zero-attempt signals are recognised ---
 _setup_sandbox
 local_total=0
-for sig in no_worker_process no_branch_created low_token_usage watchdog_killed_no_commit worker_signing_unavailable; do
+for sig in no_worker_process no_branch_created low_token_usage watchdog_killed_no_commit worker_signing_unavailable worker_runtime_missing; do
 	_h record-outcome "$sig" "owner/repo#$local_total" >/dev/null 2>&1
 	local_total=$((local_total + 1))
 done
 counter=$(jq -r '.consecutive_zero_attempts' "$RUNNER_HEALTH_STATE_FILE" 2>/dev/null || echo "x")
-if [[ "$counter" == "5" ]]; then
-	print_result "all 5 zero-attempt signals increment counter" "PASS"
+if [[ "$counter" == "6" ]]; then
+	print_result "all 6 zero-attempt signals increment counter" "PASS"
 else
-	print_result "all 5 zero-attempt signals increment counter" "FAIL" "got: $counter"
+	print_result "all 6 zero-attempt signals increment counter" "FAIL" "got: $counter"
 fi
 _teardown_sandbox
 
@@ -311,6 +314,283 @@ else
 		"ordinary_rc=$ordinary_rc signing_rc=$signing_rc reason=$reason"
 fi
 _teardown_sandbox
+
+# --- Test 14: routine signing failure is audit-only, not issue-runner health ---
+_setup_sandbox
+_h record-outcome no_worker_process owner/repo#1 >/dev/null 2>&1
+for routine in routine-pulse routine-maintenance routine-pulse; do
+	_h record-outcome worker_signing_unavailable "$routine" >/dev/null 2>&1
+done
+routine_rc=0
+_h is-paused || routine_rc=$?
+counter=$(jq -r '.consecutive_zero_attempts' "$RUNNER_HEALTH_STATE_FILE")
+routine_entries=$(jq '[.last_outcomes[] | select(.issue | startswith("routine-"))] | length' "$RUNNER_HEALTH_STATE_FILE")
+if [[ "$routine_rc" -eq 1 && "$counter" -eq 1 && "$routine_entries" -eq 3 ]]; then
+	print_result "routine signing failures are audited without changing issue health" "PASS"
+else
+	print_result "routine signing failures are audited without changing issue health" "FAIL" \
+		"paused_rc=$routine_rc counter=$counter ledger_entries=$routine_entries"
+fi
+# GH#29920 remains intact even after the excluded routine failures.
+_h record-outcome worker_signing_unavailable routine-tools/app#2 >/dev/null 2>&1
+issue_rc=0
+_h is-paused || issue_rc=$?
+if [[ "$issue_rc" -eq 0 ]]; then
+	print_result "issue signing failure still trips immediately after routine outcomes" "PASS"
+else
+	print_result "issue signing failure still trips immediately after routine outcomes" "FAIL" "paused_rc=$issue_rc"
+fi
+_teardown_sandbox
+
+# --- Test 14b: post-activity continuation signing failure is audit-only (GH#37597) ---
+_setup_sandbox
+_h record-outcome no_worker_process owner/repo#1 >/dev/null 2>&1
+_h record-outcome worker_signing_unavailable_after_activity owner/repo#1 >/dev/null 2>&1
+continuation_rc=0
+_h is-paused || continuation_rc=$?
+counter=$(jq -r '.consecutive_zero_attempts' "$RUNNER_HEALTH_STATE_FILE")
+entries=$(jq '[.last_outcomes[] | select(.signal == "worker_signing_unavailable_after_activity")] | length' "$RUNNER_HEALTH_STATE_FILE")
+if [[ "$continuation_rc" -eq 1 && "$counter" -eq 1 && "$entries" -eq 1 ]]; then
+	print_result "post-activity continuation signing failure is audited without tripping" "PASS"
+else
+	print_result "post-activity continuation signing failure is audited without tripping" "FAIL" \
+		"paused_rc=$continuation_rc counter=$counter ledger_entries=$entries"
+fi
+_teardown_sandbox
+
+# --- Test 14c: missing runtime binary trips at its dedicated threshold of 3 (GH#38481) ---
+# The default threshold is raised to 10 so only the per-signal threshold can trip.
+_setup_sandbox
+export RUNNER_HEALTH_FAILURE_THRESHOLD=10
+_h record-outcome worker_runtime_missing owner/repo#1 >/dev/null 2>&1
+_h record-outcome worker_runtime_missing owner/repo#2 >/dev/null 2>&1
+second_rc=0
+_h is-paused || second_rc=$?
+_h record-outcome worker_runtime_missing owner/repo#3 >/dev/null 2>&1
+third_rc=0
+_h is-paused || third_rc=$?
+reason=$(jq -r '.circuit_breaker.reason' "$RUNNER_HEALTH_STATE_FILE" 2>/dev/null || echo "x")
+entries=$(jq '[.last_outcomes[] | select(.signal == "worker_runtime_missing" and .zero_attempt)] | length' "$RUNNER_HEALTH_STATE_FILE")
+if [[ "$second_rc" -eq 1 && "$third_rc" -eq 0 && "$entries" -eq 3 &&
+	"$reason" == *"signal=worker_runtime_missing consecutive_zero_attempts=3"* ]]; then
+	print_result "two runtime-missing outcomes stay closed; the third trips the breaker" "PASS"
+else
+	print_result "two runtime-missing outcomes stay closed; the third trips the breaker" "FAIL" \
+		"second_rc=$second_rc third_rc=$third_rc entries=$entries reason=$reason"
+fi
+_teardown_sandbox
+
+_setup_sandbox
+export RUNNER_HEALTH_FAILURE_THRESHOLD=10
+_h record-outcome worker_runtime_missing owner/repo#1 >/dev/null 2>&1
+_h record-outcome worker_runtime_missing owner/repo#2 >/dev/null 2>&1
+_h record-outcome real_attempt_with_commit owner/repo#3 >/dev/null 2>&1
+_h record-outcome worker_runtime_missing owner/repo#4 >/dev/null 2>&1
+reset_rc=0
+_h is-paused || reset_rc=$?
+counter=$(jq -r '.consecutive_zero_attempts' "$RUNNER_HEALTH_STATE_FILE")
+if [[ "$reset_rc" -eq 1 && "$counter" -eq 1 ]]; then
+	print_result "a real attempt between runtime-missing outcomes resets the streak" "PASS"
+else
+	print_result "a real attempt between runtime-missing outcomes resets the streak" "FAIL" \
+		"paused_rc=$reset_rc counter=$counter"
+fi
+_teardown_sandbox
+
+# Routine signing failures must leave even an expired issue window untouched.
+_setup_sandbox
+_h record-outcome no_worker_process owner/repo#1 >/dev/null 2>&1
+expired_state=$(jq '.window_started_at = "2000-01-01T00:00:00Z"' "$RUNNER_HEALTH_STATE_FILE")
+printf '%s\n' "$expired_state" >"$RUNNER_HEALTH_STATE_FILE"
+_h record-outcome worker_signing_unavailable routine-pulse >/dev/null 2>&1
+counter=$(jq -r '.consecutive_zero_attempts' "$RUNNER_HEALTH_STATE_FILE")
+window=$(jq -r '.window_started_at' "$RUNNER_HEALTH_STATE_FILE")
+if [[ "$counter" -eq 1 && "$window" == "2000-01-01T00:00:00Z" ]]; then
+	print_result "routine signing leaves expired issue counter and window untouched" "PASS"
+else
+	print_result "routine signing leaves expired issue counter and window untouched" "FAIL" \
+		"counter=$counter window=$window"
+fi
+_h record-outcome no_worker_process owner/repo#2 >/dev/null 2>&1
+counter=$(jq -r '.consecutive_zero_attempts' "$RUNNER_HEALTH_STATE_FILE")
+window=$(jq -r '.window_started_at' "$RUNNER_HEALTH_STATE_FILE")
+if [[ "$counter" -eq 1 && "$window" != "2000-01-01T00:00:00Z" ]]; then
+	print_result "next issue outcome still expires and re-anchors stale window" "PASS"
+else
+	print_result "next issue outcome still expires and re-anchors stale window" "FAIL" \
+		"counter=$counter window=$window"
+fi
+_teardown_sandbox
+
+# A successful update check with unchanged deployment must not resume dispatch.
+_setup_sandbox
+mkdir -p "$HOME/.aidevops/agents/scripts"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$HOME/.aidevops/agents/scripts/auto-update-helper.sh"
+chmod +x "$HOME/.aidevops/agents/scripts/auto-update-helper.sh"
+printf '%s\n' 'unchanged' >"$HOME/.aidevops/agents/VERSION"
+for i in 1 2 3; do
+	_h record-outcome no_worker_process "owner/repo#$i" >/dev/null 2>&1
+done
+rc=0
+_h is-paused || rc=$?
+outcome=$(jq -r '.circuit_breaker.last_update_outcome' "$RUNNER_HEALTH_STATE_FILE")
+if [[ "$rc" -eq 0 && "$outcome" == "no_change" ]]; then
+	print_result "no-op update keeps breaker paused" "PASS"
+else
+	print_result "no-op update keeps breaker paused" "FAIL" "rc=$rc outcome=$outcome"
+fi
+_teardown_sandbox
+
+# --- Streak tests (t18927): window measures idleness, not streak age ---
+_rh_epoch_ts() {
+	local epoch="$1"
+	date -u -d "@${epoch}" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+		|| date -u -r "$epoch" '+%Y-%m-%dT%H:%M:%SZ'
+	return 0
+}
+
+# Record zero-attempt outcomes at a fixed gap (minutes); optionally one
+# overridden gap at index N and one real-attempt outcome at index M.
+_rh_run_streak() {
+	local gap_min="$1"
+	local count="$2"
+	local gap_override_idx="${3:-0}"
+	local gap_override_min="${4:-0}"
+	local real_idx="${5:-0}"
+	local t=1800000000 i signal ts
+	for ((i = 1; i <= count; i++)); do
+		if [[ "$i" -gt 1 ]]; then
+			if [[ "$i" -eq "$gap_override_idx" ]]; then
+				t=$((t + gap_override_min * 60))
+			else
+				t=$((t + gap_min * 60))
+			fi
+		fi
+		signal="no_worker_process"
+		[[ "$i" -eq "$real_idx" ]] && signal="real_attempt_with_commit"
+		ts=$(_rh_epoch_ts "$t") || return 1
+		[[ -n "$ts" ]] || return 1
+		RUNNER_HEALTH_TEST_NOW="$ts" _h record-outcome "$signal" "owner/repo#$i" >/dev/null 2>&1
+	done
+	return 0
+}
+
+_setup_sandbox
+export RUNNER_HEALTH_FAILURE_THRESHOLD=10 RUNNER_HEALTH_WINDOW_HOURS=6
+_rh_run_streak 50 10
+if _h is-paused; then
+	print_result "10 zero-attempts 50min apart trip the breaker" "PASS"
+else
+	print_result "10 zero-attempts 50min apart trip the breaker" "FAIL"
+fi
+_teardown_sandbox
+
+_setup_sandbox
+export RUNNER_HEALTH_FAILURE_THRESHOLD=10 RUNNER_HEALTH_WINDOW_HOURS=6
+_rh_run_streak 50 10 5 420
+if _h is-paused; then
+	print_result "idle gap beyond window decays streak (no trip)" "FAIL"
+else
+	print_result "idle gap beyond window decays streak (no trip)" "PASS"
+fi
+_teardown_sandbox
+
+_setup_sandbox
+export RUNNER_HEALTH_FAILURE_THRESHOLD=10 RUNNER_HEALTH_WINDOW_HOURS=6
+_rh_run_streak 50 10 0 0 5
+if _h is-paused; then
+	print_result "real attempt mid-streak resets it (no trip)" "FAIL"
+else
+	print_result "real attempt mid-streak resets it (no trip)" "PASS"
+fi
+_teardown_sandbox
+
+# --- GH#38977: capability burst + self-probe ---
+# Fixed clock: 2026-11-18T08:30:00Z == 1794990600. Blockers carry a sentinel
+# detail field and one malformed line; only metadata may be consumed.
+_rh_burst_setup() {
+	local issues="$1"
+	_setup_sandbox
+	export RUNNER_HEALTH_TEST_NOW="2026-11-18T08:30:00Z"
+	export AIDEVOPS_WORKER_BLOCKER_LOG_FILE="$SANDBOX/blockers.jsonl"
+	printf '#!/usr/bin/env bash\nexit 1\n' >"$SANDBOX/probe-fail"
+	printf '#!/usr/bin/env bash\nprintf "4999\\n"\n' >"$SANDBOX/probe-pass"
+	chmod +x "$SANDBOX/probe-fail" "$SANDBOX/probe-pass"
+	local n="" ts=1794990000
+	printf '{not json\n' >"$AIDEVOPS_WORKER_BLOCKER_LOG_FILE"
+	for n in $issues; do
+		printf '{"event":"terminal_blocker_captured","reason":"runner_capability_unmet","ts":%s,"repo_slug":"owner/repo","issue_number":%s,"detail":"PRIVATE-SENTINEL"}\n' \
+			"$ts" "$n" >>"$AIDEVOPS_WORKER_BLOCKER_LOG_FILE"
+		ts=$((ts + 60))
+	done
+	return 0
+}
+
+_rh_burst_teardown() {
+	unset RUNNER_HEALTH_TEST_NOW AIDEVOPS_WORKER_BLOCKER_LOG_FILE RUNNER_HEALTH_PROBE_CMD AIDEVOPS_RUNNER_CAPABILITY_BURST_MAX
+	_teardown_sandbox
+	return 0
+}
+
+_rh_burst_setup "11 12 13"
+rc=0
+RUNNER_HEALTH_PROBE_CMD="$SANDBOX/probe-fail" _h is-paused || rc=$?
+reason=$(jq -r '.circuit_breaker.reason // empty' "$RUNNER_HEALTH_STATE_FILE" 2>/dev/null || true)
+if [[ "$rc" -eq 0 && "$reason" == "capability_burst probe=probe_cmd distinct_issues=3 "* ]] &&
+	! grep -q 'PRIVATE-SENTINEL' "$RUNNER_HEALTH_STATE_FILE"; then
+	print_result "capability burst on 3 issues + failing probe trips the breaker" "PASS"
+else
+	print_result "capability burst on 3 issues + failing probe trips the breaker" "FAIL" "rc=$rc reason=$reason"
+fi
+# Self-heal: before the probe interval the trip holds; after it a passing
+# re-probe resumes, and the already-probed burst does not re-trip.
+rc_hold=0
+RUNNER_HEALTH_TEST_NOW="2026-11-18T08:35:00Z" RUNNER_HEALTH_PROBE_CMD="$SANDBOX/probe-pass" _h is-paused || rc_hold=$?
+rc_heal=0
+RUNNER_HEALTH_TEST_NOW="2026-11-18T08:41:00Z" RUNNER_HEALTH_PROBE_CMD="$SANDBOX/probe-pass" _h is-paused || rc_heal=$?
+rc_again=0
+# Probe due and burst still in a widened window: only the probed-evidence
+# marker prevents a re-trip on the same blockers.
+AIDEVOPS_RUNNER_CAPABILITY_BURST_WINDOW_SECS=7200 RUNNER_HEALTH_TEST_NOW="2026-11-18T08:52:00Z" \
+	RUNNER_HEALTH_PROBE_CMD="$SANDBOX/probe-fail" _h is-paused || rc_again=$?
+if [[ "$rc_hold" -eq 0 && "$rc_heal" -eq 1 && "$rc_again" -eq 1 ]]; then
+	print_result "capability trip self-heals once a re-probe passes after the interval" "PASS"
+else
+	print_result "capability trip self-heals once a re-probe passes after the interval" "FAIL" \
+		"hold=$rc_hold heal=$rc_heal again=$rc_again"
+fi
+_rh_burst_teardown
+
+_rh_burst_setup "11 12 13"
+rc=0
+RUNNER_HEALTH_PROBE_CMD="$SANDBOX/probe-pass" _h is-paused || rc=$?
+audit=$(jq -r '[.last_outcomes[] | select(.signal == "capability_burst_probe_passed")] | length' "$RUNNER_HEALTH_STATE_FILE" 2>/dev/null || echo 0)
+if [[ "$rc" -eq 1 && "$audit" == "1" ]]; then
+	print_result "capability burst + passing probe stays closed and records an audit entry" "PASS"
+else
+	print_result "capability burst + passing probe stays closed and records an audit entry" "FAIL" "rc=$rc audit=$audit"
+fi
+_rh_burst_teardown
+
+_rh_burst_setup "11 11 12"
+rc=0
+RUNNER_HEALTH_PROBE_CMD="$SANDBOX/probe-fail" _h is-paused || rc=$?
+if [[ "$rc" -eq 1 && ! -f "$RUNNER_HEALTH_STATE_FILE" ]]; then
+	print_result "repeat blocks on the same issue are not a capability burst" "PASS"
+else
+	print_result "repeat blocks on the same issue are not a capability burst" "FAIL" "rc=$rc"
+fi
+_rh_burst_teardown
+
+_rh_burst_setup "11 12 13"
+rc=0
+AIDEVOPS_RUNNER_CAPABILITY_BURST_MAX=0 RUNNER_HEALTH_PROBE_CMD="$SANDBOX/probe-fail" _h is-paused || rc=$?
+if [[ "$rc" -eq 1 && ! -f "$RUNNER_HEALTH_STATE_FILE" ]]; then
+	print_result "AIDEVOPS_RUNNER_CAPABILITY_BURST_MAX=0 disables the capability rule" "PASS"
+else
+	print_result "AIDEVOPS_RUNNER_CAPABILITY_BURST_MAX=0 disables the capability rule" "FAIL" "rc=$rc"
+fi
+_rh_burst_teardown
 
 echo ""
 echo "Tests run: $TESTS_RUN, failed: $TESTS_FAILED"

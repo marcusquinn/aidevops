@@ -17,15 +17,17 @@ assert_eq() {
 		printf 'FAIL: %s (expected %s, got %s)\n' "$description" "$expected" "$actual" >&2
 		fail=$((fail + 1))
 	fi
+	return 0
 }
 
-assert_eq "pin version is explicit" "1.19.3" "$OPENCODE_PINNED_VERSION"
+assert_eq "pin version is explicit" "1.19.6" "$OPENCODE_PINNED_VERSION"
 assert_eq "pin platform is scoped" "Linux" "$OPENCODE_PIN_PLATFORM"
 assert_eq "pin runtime is scoped" "headless" "$OPENCODE_PIN_RUNTIME_MODE"
 assert_eq "introduction date is recorded" "2026-07-30" "$OPENCODE_PIN_INTRODUCED_DATE"
-assert_eq "last canary is recorded" "2026-10-20" "$OPENCODE_PIN_LAST_CANARY_DATE"
-assert_eq "review deadline is recorded" "2026-10-27" "$OPENCODE_PIN_REVIEW_DEADLINE"
-assert_eq "plugin compatibility signal is explicit" "1.19.3" "$OPENCODE_PLUGIN_TESTED_VERSION"
+assert_eq "last canary is recorded" "2026-11-17" "$OPENCODE_PIN_LAST_CANARY_DATE"
+assert_eq "last canary result is recorded" "pass:1.19.6" "$OPENCODE_PIN_LAST_CANARY_RESULT"
+assert_eq "review deadline is recorded" "2026-11-24" "$OPENCODE_PIN_REVIEW_DEADLINE"
+assert_eq "plugin compatibility signal is explicit" "1.19.6" "$OPENCODE_PLUGIN_TESTED_VERSION"
 
 fixture_root=$(mktemp -d "${TMPDIR:-/tmp}/opencode-pin-policy.XXXXXX")
 trap 'rm -rf "$fixture_root"' EXIT INT TERM
@@ -85,8 +87,9 @@ status=$(
 	AIDEVOPS_AGENTS_DIR="$REPO_ROOT/.agents" PATH="/usr/bin:/bin" \
 		"$REPO_ROOT/.agents/scripts/opencode-pin-canary.sh" status
 )
-profile_tested=$(AIDEVOPS_AGENTS_DIR="$REPO_ROOT/.agents" aidevops_opencode_profile_value testedVersion v1)
-[[ "$status" == *"pinned=1.19.3"* && "$status" == *"registry-latest="* && "$status" == *"plugin-tested=${profile_tested}"* && "$status" == *"last-canary=2026-10-20"* ]] || {
+[[ "$status" == *"pinned=1.19.6"* && "$status" == *"registry-latest="* &&
+	"$status" == *"plugin-tested=1.19.6"* &&
+	"$status" == *"last-canary=2026-11-17 (pass:1.19.6) review-deadline=2026-11-24"* ]] || {
 	printf 'FAIL: status omits compatibility evidence: %s\n' "$status" >&2
 	fail=$((fail + 1))
 }
@@ -95,7 +98,9 @@ workflow="$REPO_ROOT/.github/workflows/opencode-pin-canary.yml"
 canary_script="$REPO_ROOT/.agents/scripts/opencode-pin-canary.sh"
 if grep -q 'persist-credentials: false' "$workflow" && grep -q 'record-review:' "$workflow" &&
 	grep -q 'needs: linux-headless-canary' "$workflow" &&
-	grep -q 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c' "$workflow"; then
+	# GH#35753: assert a full commit-SHA pin, not one exact SHA, so reviewed
+	# Dependabot action bumps do not break this credential-separation check.
+	grep -Eq 'actions/download-artifact@[0-9a-f]{40}([[:space:]]|$)' "$workflow"; then
 	printf 'PASS: candidate execution is separated from the issue-write token\n'
 else
 	printf 'FAIL: candidate execution can retain or reach repository write credentials\n' >&2

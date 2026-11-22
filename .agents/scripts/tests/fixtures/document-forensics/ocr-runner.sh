@@ -29,6 +29,17 @@ rotated)
 	[[ "$transform" == "rotate-90" ]] && confidence=95
 	[[ "$transform" == "original" ]] && confidence=16
 	;;
+flipped)
+	[[ "$transform" == "flip-vertical" ]] && confidence=94
+	[[ "$transform" == "original" ]] && confidence=17
+	;;
+upright-strong)
+	[[ "$transform" == "original" ]] && confidence=80
+	[[ "$transform" == "rotate-90" ]] && confidence=100
+	;;
+fractional)
+	[[ "$transform" == "original" ]] && confidence=92
+	;;
 normal-scan)
 	[[ "$transform" == "original" ]] && confidence=91
 	;;
@@ -64,6 +75,10 @@ esac
 
 if [[ "$kind" == "sparse" ]]; then
 	printf 'x y\n' >"$text_output"
+elif [[ "$kind" == "upright-strong" ]]; then
+	for _ in 1 2 3 4 5 6; do
+		printf 'Upright application form paragraph with plenty of readable words for strong evidence.\n'
+	done >"$text_output"
 else
 	printf 'Readable forensic fixture text for %s page %s using %s with enough words for conservative evidence.\n' \
 		"$kind" "$page" "$transform" >"$text_output"

@@ -275,6 +275,12 @@ fi
 # These ruleset-only scenarios have no classic branch protection. Model that
 # explicitly rather than letting the new metadata lookup return empty output.
 if [[ "$1" == "api" && "$2" == repos/*/branches/* && "$2" != */protection/* ]]; then
+	# GH#37026: any settings failure now falls back to branch metadata, so the
+	# generic-error case must make this read fail too to stay fail-closed.
+	if [[ "${MOCK_BRANCH_METADATA_MODE:-ok}" == error ]]; then
+		printf 'gh: mock branch metadata API error\n' >&2
+		exit 1
+	fi
 	apply_jq '{"name":"main","protected":false}' "$@"
 	exit 0
 fi
@@ -608,10 +614,12 @@ test_branch_protection_api_error() {
 	reset_logs
 	export MOCK_REPO_MODE="ok"
 	export MOCK_BP_MODE="error"
+	export MOCK_BRANCH_METADATA_MODE="error"
 	export MOCK_ROLLUP_MODE="all_required_pass"
 	assert_returns 1 "branch protection API error → blocked (fail-closed)"
 	assert_log_contains "branch protection API failed" \
 		"bp_error: fail-closed message logged"
+	unset MOCK_BRANCH_METADATA_MODE
 	return 0
 }
 

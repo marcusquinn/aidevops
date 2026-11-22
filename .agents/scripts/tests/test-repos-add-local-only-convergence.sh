@@ -4,6 +4,14 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit 1
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/aidevops-repos-local-only.XXXXXX")"
@@ -75,7 +83,7 @@ printf 'preserve me\n' >"${bootstrap_repo}/untracked.txt"
 
 if (
 	cd "$bootstrap_repo" || exit 1
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$REPO_ROOT/aidevops.sh" repos add \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$REPO_ROOT/aidevops.sh" repos add \
 		--slug example/bootstrap-repo
 ) >/dev/null 2>&1; then
 	printf 'FAIL bootstrap registration accepted missing confirmation\n'
@@ -88,7 +96,7 @@ fi
 
 if (
 	cd "$bootstrap_repo" || exit 1
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$REPO_ROOT/aidevops.sh" repos add \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$REPO_ROOT/aidevops.sh" repos add \
 		--slug example/wrong-repo --confirm REGISTER_CANONICAL_REPOSITORY
 ) >/dev/null 2>&1; then
 	printf 'FAIL bootstrap registration accepted a mismatched slug\n'
@@ -98,7 +106,7 @@ fi
 git -C "$bootstrap_repo" worktree add -q -b test/bootstrap-linked "$linked_repo"
 if (
 	cd "$linked_repo" || exit 1
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$REPO_ROOT/aidevops.sh" repos add \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$REPO_ROOT/aidevops.sh" repos add \
 		--slug example/bootstrap-repo --confirm REGISTER_CANONICAL_REPOSITORY
 ) >/dev/null 2>&1; then
 	printf 'FAIL bootstrap registration accepted a linked worktree\n'
@@ -108,7 +116,7 @@ git -C "$bootstrap_repo" worktree remove "$linked_repo"
 
 if ! (
 	cd "$bootstrap_repo" || exit 1
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$REPO_ROOT/aidevops.sh" repos add \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$REPO_ROOT/aidevops.sh" repos add \
 		--slug example/bootstrap-repo --confirm REGISTER_CANONICAL_REPOSITORY
 ) >/dev/null; then
 	printf 'FAIL confirmed bootstrap registration was rejected\n'

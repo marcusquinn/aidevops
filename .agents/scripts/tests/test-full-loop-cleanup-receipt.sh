@@ -87,6 +87,45 @@ _full_loop_receipt_lock_acquire
 _full_loop_receipt_lock_release
 printf 'PASS failed owner write leaves no permanent empty-owner lock\n'
 
+# GH#38267: a holder killed mid-publication left a 0-byte owner file that no
+# reclaim path accepted, wedging every receipt mutation until manual deletion.
+mkdir -p "$receipt_lock_dir"
+: >"${receipt_lock_dir}/owner"
+if _full_loop_receipt_reclaim_stale_ownerless_lock "$receipt_lock_dir" 5; then
+	printf 'FAIL fresh empty receipt lock owner was reclaimed\n'
+	exit 1
+fi
+[[ -f "${receipt_lock_dir}/owner" ]]
+printf 'PASS fresh empty receipt lock owner remains protected\n'
+
+touch -t 202001010000 "${receipt_lock_dir}/owner"
+_full_loop_receipt_reclaim_stale_ownerless_lock "$receipt_lock_dir" 5
+[[ ! -e "$receipt_lock_dir" ]]
+printf 'PASS stale empty receipt lock owner is reclaimed\n'
+
+mkdir -p "$receipt_lock_dir"
+printf '%s\n' 'not-a-pid garbage' >"${receipt_lock_dir}/owner"
+touch -t 202001010000 "${receipt_lock_dir}/owner"
+_full_loop_receipt_reclaim_stale_ownerless_lock "$receipt_lock_dir" 5
+[[ ! -e "$receipt_lock_dir" ]]
+printf 'PASS stale unparseable receipt lock owner is reclaimed\n'
+
+mkdir -p "$receipt_lock_dir"
+: >"${receipt_lock_dir}/owner"
+touch -t 202001010000 "${receipt_lock_dir}/owner"
+_full_loop_receipt_lock_acquire
+IFS=' ' read -r published_pid _ <"${receipt_lock_dir}/owner"
+[[ "$published_pid" =~ ^[0-9]+$ ]]
+for leaked_owner_tmp in "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}"/.mutation.lock.owner.*; do
+	[[ ! -e "$leaked_owner_tmp" ]] || {
+		printf 'FAIL owner publication leaked temp file: %s\n' "$leaked_owner_tmp"
+		exit 1
+	}
+done
+_full_loop_receipt_lock_release
+[[ ! -e "$receipt_lock_dir" ]]
+printf 'PASS acquire reclaims stale empty owner and publishes atomically\n'
+
 # GH#34808: a lock taken inside $(...) and abandoned by a SIGKILLed subshell
 # must be reclaimable while the parent shell is still alive.
 subshell_pidfile="${TEST_ROOT}/subshell-holder.pid"
@@ -126,6 +165,36 @@ rm -f "${receipt_lock_dir}/owner"
 rmdir "$receipt_lock_dir"
 printf 'PASS timeout names holder\n'
 
+# Exercise the real timeout and both callers with a deterministic ps response:
+# arguments and local paths must not reach either operator-facing failure.
+(
+	ps() {
+		printf '%s\n' '/private/bin/bash /private/jobs/worker.sh --token=example-secret /private/data'
+		return 0
+	}
+	sleep() { return 0; }
+	_full_loop_recreated_worktree_identity_matches() { return 0; }
+	mkdir -p "$receipt_lock_dir"
+	printf '%s\n' "$OWNER_PID" >"${receipt_lock_dir}/owner"
+	[[ "$(_full_loop_receipt_holder_command "$OWNER_PID")" == 'bash worker.sh' ]]
+	if full_loop_write_cleanup_deferred example/repo 101 "${TEST_ROOT}/worktree-one" feature/one "$OWNER_PID" session-one; then
+		printf 'FAIL cleanup receipt unexpectedly acquired held lock\n'
+		exit 1
+	fi
+	[[ "$_FULL_LOOP_CLEANUP_FAILURE_REASON" == *'holder-cmd=bash worker.sh' ]]
+	[[ "$_FULL_LOOP_CLEANUP_FAILURE_REASON" != *example-secret* && "$_FULL_LOOP_CLEANUP_FAILURE_REASON" != *'/private/'* ]]
+	if refusal=$(full_loop_supersede_cleaned_receipts_for_recreated_worktree "${TEST_ROOT}/worktree-one" feature/one \
+		0123456789012345678901234567890123456789 "$OWNER_PID" session-one 2>&1); then
+		printf 'FAIL reconciliation unexpectedly acquired held lock\n'
+		exit 1
+	fi
+	[[ "$refusal" == *'Cleanup-receipt reconciliation refused: could not acquire the receipt lock:'*'holder-cmd=bash worker.sh'* ]]
+	[[ "$refusal" != *example-secret* && "$refusal" != *'/private/'* ]]
+	rm -f "${receipt_lock_dir}/owner"
+	rmdir "$receipt_lock_dir"
+)
+printf 'PASS holder diagnostic is sanitized and propagated to both failures\n'
+
 mkdir -p "$receipt_lock_dir"
 touch -t 202001010000 "$receipt_lock_dir"
 (
@@ -154,6 +223,7 @@ jq -e --argjson owner_pid "$OWNER_PID" '
 	and .cleanup_lease.state == "pending"
 	and .owner.pid == $owner_pid
 	and (.owner.process_identity | length > 0)
+	and (.created_at | test("[.][0-9]{6}Z$"))
 ' "$receipt_one" >/dev/null
 full_loop_cleanup_owner_alive "$receipt_one"
 [[ "$_FULL_LOOP_CLEANUP_OWNER_PID" == "$OWNER_PID" ]]
@@ -260,6 +330,40 @@ printf 'PASS newer claim by the same session expires the older post-merge lease\
 sqlite3 "$WORKTREE_REGISTRY_DB" "DELETE FROM worktree_owners;"
 cp "${TEST_ROOT}/receipt-live-owner.json" "$receipt_one"
 
+# GH#37448: the session that ran `complete` relinquishes its live-owner lease.
+for wrong_owner in "99999999 session-one" "${OWNER_PID} other-session" "${OWNER_PID} full-loop-lifecycle"; do
+	read -r wrong_pid wrong_session <<<"$wrong_owner"
+	if full_loop_mark_cleanup_owner_relinquished example/repo 101 "$wrong_pid" "$wrong_session"; then
+		printf 'FAIL a non-owner relinquished the cleanup lease: %s\n' "$wrong_owner"
+		exit 1
+	fi
+	cmp -s "$receipt_one" "${TEST_ROOT}/receipt-live-owner.json"
+done
+_clean_deferred_parent_alive "${TEST_ROOT}/worktree-one"
+printf 'PASS only the exact receipt owner can relinquish; otherwise the live owner keeps the tree\n'
+
+claim_worktree_ownership "${TEST_ROOT}/worktree-one" feature/one --owner-pid "$OWNER_PID" \
+	--session session-one --task post-merge-cleanup
+full_loop_mark_cleanup_owner_relinquished example/repo 101 "$OWNER_PID" session-one
+cp "$receipt_one" "${TEST_ROOT}/receipt-relinquished.json"
+full_loop_mark_cleanup_owner_relinquished example/repo 101 "$OWNER_PID" session-one
+cmp -s "$receipt_one" "${TEST_ROOT}/receipt-relinquished.json"
+full_loop_cleanup_owner_alive "$receipt_one"
+deferred_state=0
+_clean_deferred_parent_alive "${TEST_ROOT}/worktree-one" 2>/dev/null || deferred_state=$?
+[[ "$deferred_state" -eq 2 && "$(registry_row_count "${TEST_ROOT}/worktree-one")" == "0" ]]
+printf 'PASS relinquished live-owner lease expires and releases only its post-merge registry claim\n'
+
+jq '.owner_relinquished.session = "other-session"' "$receipt_one" >"${receipt_one}.tmp"
+mv "${receipt_one}.tmp" "$receipt_one"
+if full_loop_cleanup_owner_relinquished "$receipt_one"; then
+	printf 'FAIL a relinquish record naming another session was accepted\n'
+	exit 1
+fi
+printf 'PASS a relinquish record that does not name the receipt owner fails closed\n'
+sqlite3 "$WORKTREE_REGISTRY_DB" "DELETE FROM worktree_owners;"
+cp "${TEST_ROOT}/receipt-live-owner.json" "$receipt_one"
+
 jq '.owner.process_identity = "different process generation"' "$receipt_one" >"${receipt_one}.tmp"
 mv "${receipt_one}.tmp" "$receipt_one"
 if full_loop_cleanup_owner_alive "$receipt_one"; then
@@ -334,12 +438,28 @@ selected_receipt=$(full_loop_cleanup_receipt_for_worktree "${TEST_ROOT}/worktree
 [[ "$selected_receipt" == "$newest_receipt" ]]
 printf 'PASS reused worktree paths select the newest lifecycle receipt\n'
 
+# Legacy and precise receipts must sort chronologically in the same second.
+(
+	export AIDEVOPS_FULL_LOOP_CLEANUP_DIR="${TEST_ROOT}/precision-receipts"
+	mkdir -p "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR"
+	jq -n '{worktree:"precision",created_at:"2026-08-02T00:00:00Z"}' \
+		>"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/legacy.json"
+	jq -n '{worktree:"precision",created_at:"2026-08-02T00:00:00.500000Z"}' \
+		>"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/precise.json"
+	[[ "$(full_loop_cleanup_receipt_for_worktree precision)" == "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/precise.json" ]]
+	[[ "$(_full_loop_cleanup_receipt_for_worktree_unlocked_fallback precision)" == "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/precise.json" ]]
+	[[ "$(_full_loop_recreated_receipt_scan "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" precision | sed -n '4p')" == "\"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/precise.json\"" ]]
+	full_loop_cleanup_owner_lease_aged "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/precise.json"
+)
+printf 'PASS precise receipts retain chronological lookup and lease-age compatibility\n'
+
 migrated_receipt="${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/example_migrated-104.json"
 jq '.repository = "example/migrated" | .pr_number = 104
 	| .migration = {from_repository:"example/repo",to_repository:"example/migrated",migrated_at:.created_at}' \
 	"$newest_receipt" >"$migrated_receipt"
 selected_receipt=$(full_loop_cleanup_receipt_for_worktree "${TEST_ROOT}/worktree-one")
 [[ "$selected_receipt" == "$migrated_receipt" ]]
+[[ "$(_full_loop_recreated_receipt_scan "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" "${TEST_ROOT}/worktree-one" | sed -n '4p')" == "\"${migrated_receipt}\"" ]]
 printf 'PASS equal-time receipt lookup preserves migrated-receipt preference\n'
 
 lookup_bin="${TEST_ROOT}/lookup-bin"
@@ -388,15 +508,29 @@ printf 'PASS receipt lookup scans all valid receipts with one jq process\n'
 	_full_loop_active_recreated_receipts_are_cleaned "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" target
 	IFS= read -r lookup_count <"$lookup_counter"
 	[[ "$lookup_count" -eq 2 ]]
+	# GH#38149: reconciliation validates, selects and checks CLEANED state in
+	# one jq process over the same set.
+	printf '0\n' >"$lookup_counter"
+	scan_output=$(_full_loop_recreated_receipt_scan "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" target)
+	IFS= read -r lookup_count <"$lookup_counter"
+	[[ "$lookup_count" -eq 1 ]]
+	[[ "$scan_output" == "3001"$'\n'"1"$'\n'"1"$'\n'"\"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/target.json\"" ]]
+	scan_output=$(_full_loop_recreated_receipt_scan "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" absent)
+	[[ "$scan_output" == "3001"$'\n'"0"$'\n'"0"$'\n''""' ]]
 	export PATH="$lookup_original_path"
 	printf '{"worktree":"target","resource_cleanup_state":"CLEANUP_DEFERRED"}\n' \
 		>"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/active.json"
 	if _full_loop_active_recreated_receipts_are_cleaned "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" target; then
 		exit 1
 	fi
+	scan_output=$(_full_loop_recreated_receipt_scan "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" target)
+	[[ "$scan_output" == "3002"$'\n'"2"$'\n'"0"$'\n'* ]]
 	for invalid_json in '{bad' '[]' ''; do
 		printf '%s' "$invalid_json" >"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/invalid.json"
 		if _full_loop_valid_receipt_file_count "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR"; then
+			exit 1
+		fi
+		if _full_loop_recreated_receipt_scan "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" target >/dev/null; then
 			exit 1
 		fi
 	done
@@ -405,13 +539,19 @@ printf 'PASS receipt lookup scans all valid receipts with one jq process\n'
 	if _full_loop_valid_receipt_file_count "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR"; then
 		exit 1
 	fi
+	if _full_loop_recreated_receipt_scan "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" target >/dev/null; then
+		exit 1
+	fi
 	rm "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/invalid.json"
 	ln -s "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/target.json" "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/linked.json"
 	if _full_loop_valid_receipt_file_count "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR"; then
 		exit 1
 	fi
+	if _full_loop_recreated_receipt_scan "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" target >/dev/null; then
+		exit 1
+	fi
 )
-printf 'PASS 3000-receipt validation uses two jq processes and rejects unsafe evidence\n'
+printf 'PASS 3000-receipt validation uses bounded jq processes and rejects unsafe evidence\n'
 
 invalid_receipt="${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/invalid.json"
 printf '%s\n' '{invalid-json' >"$invalid_receipt"
@@ -598,6 +738,13 @@ printf 'PASS authorization-gap evidence remains detached from terminal cleanup r
 	"$TEST_GIT" -C "$marker_repo" commit -q -m seed
 	"$TEST_GIT" -C "$marker_repo" remote add origin git@github.com:example/repo.git
 	"$TEST_GIT" -C "$marker_repo" worktree add -q -b feature/marker "$marker_worktree"
+	# Enrollment is not deletion authority. The positive cleanup below uses
+	# explicit operator confirmation and verifies the real archive/receipt path.
+	export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_ROOT}/marker-native-state"
+	lifecycle_entry="${SCRIPTS_DIR}/../worker-lifecycle/worker-registry.py"
+	python3 -E -s -B "$lifecycle_entry" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR" init >/dev/null
+	python3 -E -s -B "$lifecycle_entry" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR" \
+		enroll --path "$marker_worktree" >/dev/null
 	# shellcheck source=../shared-constants.sh
 	source "${SCRIPT_DIR}/shared-constants.sh"
 	# shellcheck source=../full-loop-helper-merge.sh
@@ -699,14 +846,20 @@ printf 'PASS authorization-gap evidence remains detached from terminal cleanup r
 	[[ -d "$marker_worktree" ]]
 	"$TEST_GIT" -C "$marker_repo" worktree unlock "$marker_worktree"
 	export AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_ROOT}/marker-clean-archive"
-	if ! cmd_remove "$marker_worktree"; then
-		"$TEST_GIT" -C "$marker_worktree" status --short
-		printf 'FAIL finalized marker-only manual removal\n'
-		exit 1
-	fi
+	# No real network is required for this disposable repository's archive.
+	"$TEST_GIT" -C "$marker_repo" remote remove origin
+	jq -n --arg path "$marker_repo" \
+		'{initialized_repos:[{path:$path,slug:"example/repo"}]}' >"${TEST_ROOT}/marker-native-repos.json"
+	mkdir -p "${TEST_ROOT}/marker-native-archives"
+	python3 -E -s -B "$lifecycle_entry" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR" \
+		retire-enrolled-only --path "$marker_worktree" --confirm \
+		--repos-config "${TEST_ROOT}/marker-native-repos.json" \
+		--output-root "${TEST_ROOT}/marker-native-archives" >/dev/null
 	[[ ! -e "$marker_worktree" ]]
+	[[ ! -f "$AIDEVOPS_CLEANUP_LOG" ]]
+	full_loop_mark_cleanup_cleaned_for_identity example/repo 106 "$marker_worktree"
 	jq -e '.resource_cleanup_state == "CLEANED" and .cleanup_lease.state == "released"' "$marker_receipt" >/dev/null
-	printf 'PASS finalized marker-only worktree removes without force and records durable cleanup\n'
+	printf 'PASS registry retirement archives the finalized tree and records cleanup without a legacy log\n'
 )
 
 # GH#33890: merge cleanup records a same-repository alias (local repair branch

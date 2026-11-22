@@ -8,7 +8,8 @@ import { homedir } from "os";
 import { recordPermissionBlocker } from "./permission-broker-blocker-log.mjs";
 import { isManagedToolOutputRead } from "./permission-broker-tool-output.mjs";
 import { impossibleExternalRead as classifyImpossibleRead, rejectImpossibleToolRead } from "./permission-broker-read-target.mjs";
-import { isReadOnlyRootRead } from "./permission-broker-read-only-root.mjs";
+import { isReadOnlyRootRead, resolvedRiskTargets } from "./permission-broker-read-only-root.mjs";
+import { isDesignedPollDoomLoop, recordDesignedPollAllow } from "./permission-broker-designed-poll.mjs";
 
 const REQUEST_SCHEMA = "aidevops-permission-capture/v1";
 const MAX_PATTERN_LENGTH = 500;
@@ -36,14 +37,14 @@ export function sanitizePermissionText(value, options = {}) {
   return sanitized.slice(0, options.maxLength || MAX_PATTERN_LENGTH);
 }
 
-function classifyRisk(permission, patterns, tool) {
+function classifyRisk(permission, patterns, tool, targets = []) {
   const combined = patterns.join("\n");
   let risk;
   if (!PATTERN_CAPABLE_PERMISSIONS.has(permission)) {
     risk = { level: "critical", grantable: false, reason: "permission cannot be represented as an exact OpenCode pattern rule" };
   } else if (patterns.length === 0) {
     risk = { level: "critical", grantable: false, reason: "request omitted an exact permission pattern" };
-  } else if (patterns.some((pattern) => FORBIDDEN_PATTERN.test(pattern))) {
+  } else if ([...patterns, ...targets].some((pattern) => FORBIDDEN_PATTERN.test(pattern))) {
     risk = { level: "critical", grantable: false, reason: "sensitive credential or signing-key location" };
   } else if (["bash", "edit", "write"].includes(tool) || ["bash", "edit"].includes(permission)) {
     risk = { level: "high", grantable: true, reason: "capability can modify or execute content" };
@@ -159,7 +160,7 @@ function capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath,
     patterns,
     tool,
     intent: sanitizePermissionText(toolContext.intent || raw?.metadata?.description || raw?.title || "", { ...options, maxLength: MAX_INTENT_LENGTH }),
-    risk: classifyRisk(permission, patterns, tool),
+    risk: classifyRisk(permission, patterns, tool, resolvedRiskTargets(raw, toolContext.target)),
     opencode: {
       request_id: sanitizePermissionText(raw?.id || "", { ...options, maxLength: 100 }),
       session_id: sanitizePermissionText(raw?.sessionID || "", { ...options, maxLength: 100 }),
@@ -221,8 +222,17 @@ async function replyPermissionRequest(client, request, response) {
   }
 }
 
+// Requests a headless worker may allow once, checked after impossible reads.
+// Returns the post-allow audit hook for an allowed request, otherwise null.
+function onceAllowance(context, request) {
+  if (isDesignedPollDoomLoop(request)) return () => recordDesignedPollAllow(context, request, sanitizePermissionText);
+  if (isManagedToolOutputRead(context.toolCalls, request, context.dataHome)) return () => {};
+  if (isReadOnlyRootRead(context, request, FORBIDDEN_PATTERN)) return () => recordReadOnlyRootAllow(context, request);
+  return null;
+}
+
 async function handlePermissionEvent(context, input) {
-  const { client, isHeadless, toolCalls, loggedEvents, home, dataHome, blockerLogPath } = context;
+  const { client, isHeadless, toolCalls, loggedEvents, home, blockerLogPath } = context;
   const event = input?.event;
   if (!isHeadless() || event?.type !== "permission.asked") return;
   const request = event.properties || {};
@@ -230,10 +240,9 @@ async function handlePermissionEvent(context, input) {
     await replyPermissionRequest(client, request, "reject");
     return;
   }
-  if (isManagedToolOutputRead(toolCalls, request, dataHome)
-    && await replyPermissionRequest(client, request, "once")) return;
-  if (isReadOnlyRootRead(context, request, FORBIDDEN_PATTERN) && await replyPermissionRequest(client, request, "once")) {
-    recordReadOnlyRootAllow(context, request);
+  const recordAllow = onceAllowance(context, request);
+  if (recordAllow && await replyPermissionRequest(client, request, "once")) {
+    recordAllow();
     return;
   }
   capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath, request);
@@ -241,7 +250,7 @@ async function handlePermissionEvent(context, input) {
 }
 
 function handlePermissionAsk(context, input, output) {
-  const { isHeadless, toolCalls, loggedEvents, home, dataHome, blockerLogPath } = context;
+  const { isHeadless, toolCalls, loggedEvents, home, blockerLogPath } = context;
   if (!isHeadless()) return;
   const impossible = impossibleExternalRead(context, input);
   if (impossible) {
@@ -249,13 +258,10 @@ function handlePermissionAsk(context, input, output) {
     output.message = impossible;
     return;
   }
-  if (isManagedToolOutputRead(toolCalls, input, dataHome)) {
+  const recordAllow = onceAllowance(context, input);
+  if (recordAllow) {
     output.status = "allow";
-    return;
-  }
-  if (isReadOnlyRootRead(context, input, FORBIDDEN_PATTERN)) {
-    output.status = "allow";
-    recordReadOnlyRootAllow(context, input);
+    recordAllow();
     return;
   }
   capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath, input || {});

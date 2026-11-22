@@ -166,5 +166,46 @@ fi
 assert_occurrence_count "transport failure does not retry alternate property" "$REQUEST_LOG" "searchconsole.googleapis.com" "1"
 assert_contains "transport diagnostic is retained" "$OUTPUT_LOG" "simulated curl failure"
 
+# gcloud default ADC fallback (GH#36898): keyless impersonated ADC written by
+# `gcloud auth application-default login --impersonate-service-account=<sa>`,
+# with no explicit path and no gsc-credentials.json.
+reset_case
+unset GOOGLE_APPLICATION_CREDENTIALS
+rm -f "${HOME}/.config/aidevops/gsc-credentials.json"
+export CLOUDSDK_CONFIG="${TMP_HOME}/gcloud-config"
+mkdir -p "$CLOUDSDK_CONFIG"
+printf '%s\n' '{"type":"impersonated_service_account","source_credentials":{"type":"authorized_user"}}' >"${CLOUDSDK_CONFIG}/application_default_credentials.json"
+run_export
+assert_contains "gcloud default ADC used when nothing else is configured" "$GCLOUD_LOG" "credentials=${CLOUDSDK_CONFIG}/application_default_credentials.json"
+assert_contains "gcloud default ADC token scoped" "$GCLOUD_LOG" "--scopes=https://www.googleapis.com/auth/webmasters.readonly"
+assert_not_contains "impersonated ADC omits user quota header" "$REQUEST_LOG" "x-goog-user-project"
+assert_contains "gcloud default ADC export reaches the API" "$REQUEST_LOG" "searchconsole.googleapis.com"
+
+reset_case
+SAVED_GCLOUD_OUTPUT="$GCLOUD_TOKEN"
+export GCLOUD_TOKEN=""
+if run_export; then
+	printf 'FAIL: ADC refresh failure should fail\n'
+	FAIL=$((FAIL + 1))
+else
+	printf 'PASS: ADC refresh failure fails\n'
+	PASS=$((PASS + 1))
+fi
+assert_contains "refresh failure points at gcloud login" "$OUTPUT_LOG" "gcloud auth application-default login"
+assert_not_contains "refresh failure is not reported as unconfigured" "$OUTPUT_LOG" "GSC credentials not configured"
+export GCLOUD_TOKEN="$SAVED_GCLOUD_OUTPUT"
+
+reset_case
+rm -f "${CLOUDSDK_CONFIG}/application_default_credentials.json"
+if run_export; then
+	printf 'FAIL: missing credentials should fail\n'
+	FAIL=$((FAIL + 1))
+else
+	printf 'PASS: missing credentials fail\n'
+	PASS=$((PASS + 1))
+fi
+assert_contains "no credentials reports not configured" "$OUTPUT_LOG" "GSC credentials not configured"
+assert_not_contains "no credentials skips gcloud" "$GCLOUD_LOG" "print-access-token"
+
 printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

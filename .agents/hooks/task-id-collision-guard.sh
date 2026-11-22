@@ -337,17 +337,37 @@ _repo_has_claim() {
 }
 
 # ---------------------------------------------------------------------------
+# A shallow repository cannot prove that an at-or-below-counter task ID was
+# never claimed: the claim commit may sit behind the shallow boundary. CI once
+# made its full clone shallow with depth-limited refetches, so every task ID
+# claimed more than ~100 claims earlier failed as unclaimed (GH#35949).
+# Returns 0 when the current repository is shallow, 1 otherwise.
+# ---------------------------------------------------------------------------
+_repo_history_is_shallow() {
+	local shallow=""
+	shallow=$(git rev-parse --is-shallow-repository 2>/dev/null) || return 1
+	[[ "$shallow" == "true" ]] && return 0
+	return 1
+}
+
+# ---------------------------------------------------------------------------
 # Extract all tNNN references from text.
 # Outputs one per line.
 # ---------------------------------------------------------------------------
+# Allocator range claims are a separate, legacy-only grammar consumed by
+# _branch_has_claim/_repo_has_claim. Remove only that exact generated form
+# before lexical task-ID validation so `t120..t130` is not misclassified as
+# a malformed canonical ID when check-pr scans the claim commit itself.
+_tid_scan_text() {
+	local text="${1:-}"
+	printf '%s' "$text" | sed -E 's/chore: claim t[0-9]+\.\.t[0-9]+//g'
+	return 0
+}
+
 _extract_tids() {
 	local text="${1:-}"
 	local scan_text=""
-	# Allocator range claims are a separate, legacy-only grammar consumed by
-	# _branch_has_claim/_repo_has_claim. Remove only that exact generated form
-	# before lexical task-ID validation so `t120..t130` is not misclassified as
-	# a malformed canonical ID when check-pr scans the claim commit itself.
-	scan_text=$(printf '%s' "$text" | sed -E 's/chore: claim t[0-9]+\.\.t[0-9]+//g')
+	scan_text=$(_tid_scan_text "$text")
 	if task_identity_has_malformed_candidate "$scan_text"; then
 		# Preserve padded tokens for actionable diagnostics, without weakening
 		# the generic malformed sentinel for other invalid identities.
@@ -456,11 +476,11 @@ _verify_tid_via_issues() {
 _report_violations() {
 	local violations="${1:-}"
 	local subject="${2:-<unknown>}"
-	printf '\n[task-id-guard][BLOCK] Commit subject references invented or unclaimed task ID(s):\n\n' >&2
+	printf '\n[task-id-guard][BLOCK] Invented, unclaimed or malformed task ID(s) in this message:\n\n' >&2
 	printf '  Subject: %s\n\n' "$subject" >&2
 	printf '%b\n' "$violations" >&2
 	printf '  To fix:\n' >&2
-	printf '    1. Remove the t-ID from the commit subject/body, OR\n' >&2
+	printf '    1. Remove the t-ID from the commit message or PR title/body named above, OR\n' >&2
 	printf '    2. Claim the ID first: claim-task-id.sh --title "..." → then use the allocated ID, OR\n' >&2
 	printf '    3. If cross-referencing another person'"'"'s task, add "Resolves/Closes/Fixes/Ref/For #NNN" footer\n' >&2
 	printf '       where the linked issue title contains the t-ID.\n' >&2
@@ -516,6 +536,12 @@ _check_tid() {
 			return 2
 		fi
 		if [[ "$verify_rc" -eq 1 ]]; then
+			# Allow only this unprovable ID; the caller keeps checking the
+			# message's other IDs, and IDs above the counter still block.
+			if _repo_history_is_shallow; then
+				_warn "${tid} — ≤ counter ${counter} with no visible 'chore: claim ${tid}' commit, but history is shallow so the claim may be hidden; allowing. Fetch full history (git fetch --unshallow) to verify."
+				return 0
+			fi
 			CHECK_MESSAGE_VIOLATION="  ${tid} — ≤ counter ${counter}, but no 'chore: claim ${tid}' commit on this branch, in repo history, or linked issue title\n"
 			return 1
 		fi
@@ -536,15 +562,48 @@ _check_tid() {
 }
 
 # ---------------------------------------------------------------------------
+# Describe the malformed-identity sentinel: name the first offending token and
+# the message part that holds it (GH#38221). Without this the report showed
+# only the subject, sending authors to rewrite a valid subject while the real
+# token (often a tNNN placeholder) sat in the body.
+# Args: message text, first-line label, remaining-text label
+# Outputs one printf %b-formatted violation line.
+# ---------------------------------------------------------------------------
+_describe_malformed() {
+	local msg="${1:-}"
+	local first_label="${2:-commit subject}"
+	local rest_label="${3:-commit body}"
+	local first_line="${msg%%$'\n'*}"
+	local rest=""
+	local token=""
+	local label="$first_label"
+	[[ "$msg" == *$'\n'* ]] && rest="${msg#*$'\n'}"
+	if ! token=$(task_identity_first_malformed_candidate "$(_tid_scan_text "$first_line")"); then
+		label="$rest_label"
+		token=$(task_identity_first_malformed_candidate "$(_tid_scan_text "$rest")") || token=""
+	fi
+	if [[ -z "$token" ]]; then
+		printf '%s' '  malformed task identity\n'
+		return 0
+	fi
+	printf "  malformed task identity token '%s' in %s (write <task-id> for placeholders)\\\\n" "$token" "$label"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Core check: given a commit message, check if any t\d+ reference is invented.
 # Args:
 #   arg1 = full commit message text
 #   arg2 = commit subject (for display in errors), optional
+#   arg3/arg4 = labels for the first line and the rest in malformed-token
+#               diagnostics (default: commit subject / commit body)
 # Returns 0 (clean), 1 (violation found), 2 (fail-open — skip).
 # ---------------------------------------------------------------------------
 _check_message() {
 	local msg="${1:-}"
 	local subject="${2:-<unknown>}"
+	local first_label="${3:-commit subject}"
+	local rest_label="${4:-commit body}"
 
 	if [[ -z "$msg" ]]; then
 		_debug "Empty commit message — allowing"
@@ -587,6 +646,8 @@ _check_message() {
 			return 2
 		fi
 		if [[ "$check_rc" -eq 1 ]]; then
+			[[ "$tid" == "__malformed__" ]] &&
+				CHECK_MESSAGE_VIOLATION=$(_describe_malformed "$msg" "$first_label" "$rest_label")
 			violations="${violations}${CHECK_MESSAGE_VIOLATION}"
 		fi
 	done <<<"$tids"
@@ -680,7 +741,7 @@ _check_push_commit() {
 	fi
 
 	local rc=0
-	_check_message "$commit_msg" "$subject" || rc=$?
+	_check_message "$commit_msg" "$subject" "commit subject" "commit body or associated PR title/body" || rc=$?
 	if [[ "$rc" -eq 1 ]]; then
 		printf '[task-id-guard][VIOLATION] commit %s: %s\n' "$commit_hash" "$subject" >&2
 		return 1
@@ -734,9 +795,9 @@ _check_pr_title() {
 	pr_body=$(gh pr view "$pr_number" --json body --jq '.body' 2>/dev/null)
 	pr_combined="${pr_title}"$'\n\n'"${pr_body:-}"
 	_debug "Checking PR #${pr_number} title: $pr_title"
-	_check_message "$pr_combined" "PR #${pr_number} title: ${pr_title}"
+	_check_message "$pr_combined" "PR #${pr_number} title: ${pr_title}" "PR title" "PR body"
 	title_rc=$?
-	[[ "$title_rc" -eq 1 ]] && printf '[task-id-guard][VIOLATION] PR #%s title references invented t-ID: %s\n' "$pr_number" "$pr_title" >&2
+	[[ "$title_rc" -eq 1 ]] && printf '[task-id-guard][VIOLATION] PR #%s title/body references an invented, unclaimed or malformed t-ID: %s\n' "$pr_number" "$pr_title" >&2
 	return "$title_rc"
 }
 

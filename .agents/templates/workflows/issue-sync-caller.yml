@@ -38,6 +38,10 @@ on:
     types: [closed]
   issues:
     types: [opened, edited, assigned, closed, reopened]
+  # Weekly checkpoint keepalive: re-uploads the newest coordinator checkpoint
+  # before it can age past the organisation artifact retention limit.
+  schedule:
+    - cron: '17 3 * * 1'
   workflow_dispatch:
     inputs:
       command:
@@ -93,9 +97,10 @@ jobs:
       cursor: ${{ inputs.cursor || '' }}
       task_id: ${{ inputs.task_id || '' }}
 
-  # Default is a read-only inventory. After reviewing one successful plan, a
-  # repository owner can explicitly enable bounded cleanup by setting the
-  # repository variable AIDEVOPS_COORDINATOR_ARTIFACT_CLEANUP=apply.
+  # Default is bounded pruning (apply): each run keeps the just-uploaded
+  # checkpoint plus one fallback and deletes a capped number of older ones.
+  # A repository owner can switch to a read-only inventory by setting the
+  # repository variable AIDEVOPS_COORDINATOR_ARTIFACT_CLEANUP=plan.
   coordinator-artifact-maintenance:
     needs: sync
     if: ${{ always() && needs.sync.result == 'success' && needs.sync.outputs.coordinator_artifact_id != '' }}
@@ -107,5 +112,5 @@ jobs:
       AIDEVOPS_READ_TOKEN: ${{ secrets.AIDEVOPS_READ_TOKEN }}
     with:
       aidevops_ref: main
-      mode: ${{ vars.AIDEVOPS_COORDINATOR_ARTIFACT_CLEANUP == 'apply' && 'apply' || 'plan' }}
+      mode: ${{ vars.AIDEVOPS_COORDINATOR_ARTIFACT_CLEANUP == 'plan' && 'plan' || 'apply' }}
       protected_artifact_id: ${{ needs.sync.outputs.coordinator_artifact_id }}

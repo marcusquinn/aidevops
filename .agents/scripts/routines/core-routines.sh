@@ -39,6 +39,7 @@ r920|x|Memory audit — mine actionable learning patterns|repeat:daily(@04:00)|~
 r921|x|README badges — remediate managed repo drift|repeat:weekly(sun@08:10)|~5m|scripts/badges-sync-helper.sh --apply --json|script
 r922|x|Storage hygiene — reclaim tmp, worktrees, OpenCode DBs, observability|repeat:daily(@05:30)|~10m|scripts/storage-cleanup-helper.sh all --apply|script
 r923|x|Cert watch — CT issuance and CAA audit for operated domains|repeat:daily(@06:40)|~3m|scripts/cert-watch-helper.sh run --apply|script
+r924|x|Cloudron releases — process signed approvals|repeat:cron(*/30 * * * *)|~3m|scripts/cloudron-release-approval-helper.sh process --apply|script
 ENTRIES
 	return 0
 }
@@ -590,9 +591,9 @@ describe_r909() {
 	local os="${1:-darwin}"
 	local screen_time_check
 	if _is_darwin_os "$os"; then
-		screen_time_check="System Settings → Screen Time — raw data"
+		screen_time_check="System Settings → Screen Time — raw data; \`~/.aidevops/.agent-workspace/observability/screen-activity.jsonl\` — input-activity intervals from the per-minute \`sh.aidevops.screen-activity-sampler\` (HIDIdleTime, same 5-minute idle rule as Linux); \`screen-time-helper.sh input-stats\`"
 	else
-		screen_time_check="\`~/.aidevops/.agent-workspace/cron/screen-time/\` — snapshot data (no native Screen Time on Linux)"
+		screen_time_check="\`~/.aidevops/.agent-workspace/observability/screen-activity.jsonl\` — input-activity intervals from the per-minute \`aidevops-screen-activity-sampler\` (no native Screen Time on Linux); \`screen-time-helper.sh profile-stats\` reports \`unavailable\` until it has samples"
 	fi
 	cat <<EOF
 # r909: Screen time snapshot
@@ -955,6 +956,11 @@ $(_scheduler_row_calendar "$os" "StartCalendarInterval: Hour=6, Minute=20" "sh.a
 - Uses wrapper-created issues with \`--body-file\` and dedupe markers.
 - Does not increase concurrency by itself; recommendations must cite evidence.
 - JSON output removes raw worker examples that may contain repo slugs or paths.
+- \`apply\` collects within 300s total, 60s per component and 210s for the
+  queue scan (interactive \`report\`/\`json\`: 45/10/20); override with
+  \`PULSE_CHECK_REPORT_BUDGET_SECONDS\`, \`PULSE_CHECK_COMPONENT_BUDGET_SECONDS\`
+  or \`PULSE_CHECK_QUEUE_BUDGET_SECONDS\`. The resolved values are reported
+  under \`inputs.collection_budget_seconds\` (GH#39206).
 
 ## What to check
 
@@ -997,6 +1003,46 @@ dedicated platform unit.
 - Reads only registrations with \`app_type: cloudron-package\` and explicit upstream metadata.
 - Requires ADMIN or MAINTAIN authority before creating a target-local issue.
 - Never changes package source, tags, releases, catalogs, images, or deployments.
+$(_pulse_diag_commands "$os")
+$(_platform_footnote "$os")
+EOF
+	return 0
+}
+
+describe_r924() {
+	local os="${1:-}"
+	[[ -n "$os" ]] || os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+	cat <<EOF
+# r924: Cloudron signed release approvals
+
+## Overview
+
+Processes release-approval-required issues in registered Cloudron package repos.
+The maintainer signs once with \`sudo aidevops approve issue <N> <repo>\`.
+
+It also owns the worker release handoff (GH#36268). A held worker PR gets its
+approval request once checks are green. Older unsigned upstream bumps that main
+or the requested PR already bundles are closed with their findings.
+
+## Schedule
+
+| Field | Value |
+|-------|-------|
+| Frequency | Every 30 minutes |
+| Type | script |
+| Expected duration | ~3 minutes |
+| Script | \`scripts/cloudron-release-approval-helper.sh process --apply\` |
+$(_scheduler_row_pulse "repeat:cron(*/30 * * * *)")
+
+## Safety rails
+
+- Requires ADMIN/MAINTAIN authority and a verified signed issue approval.
+- Binds the merge to the approved head; changed heads require re-approval.
+- Keeps all existing merge, review, checks and publication workflow gates.
+- Waits at most 120 seconds per catalog run, resuming on the next invocation.
+- Closes only after verifying catalog version, tag and GitHub release.
+- Never supersedes signed approvals, human PRs or non-upstream PRs; branches are kept.
+- Never enables publication or deploys an app. NMR semantics are unchanged.
 $(_pulse_diag_commands "$os")
 $(_platform_footnote "$os")
 EOF
@@ -1169,6 +1215,7 @@ having to remember a manual cleanup:
 | artefacts | \`worktree-artefact-reclaim.sh --force\` (ignored build output in idle worktrees, to Trash) |
 | opencode | \`opencode-db-maintenance-helper.sh auto\` (idle DBs, layout backups) |
 | observability | \`observability-helper.sh retention-maintenance --apply\` |
+| gitlocks | \`canonical-recovery-helper.sh repair-stale-locks --apply\` (unheld Git locks 60+ min old and pack temporaries 2+ days old in canonical repos; audited) |
 
 Run \`aidevops cleanup\` any time for a read-only size report, or
 \`aidevops cleanup <store>\` to preview one store.

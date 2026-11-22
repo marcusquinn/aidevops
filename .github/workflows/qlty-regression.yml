@@ -29,16 +29,14 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   detect-scope:
     name: Detect PR scope
     runs-on: ubuntu-latest
-    # t2231/t3403: fast-fail gate — skip entirely when a labeled event is
-    # unrelated to 'ratchet-bump'. Cascade can still fire N workflow runs on
-    # bulk label application, but cancel-in-progress is disabled so these
-    # cheap skipped runs cannot cancel the required scan from opened/synchronize.
+    # Label refreshes have their own caller workflow identity (GH#31789), so
+    # superseded head runs can cancel without unrelated labels evicting them.
     if: >-
       github.event.action != 'labeled' ||
       github.event.label.name == 'ratchet-bump'

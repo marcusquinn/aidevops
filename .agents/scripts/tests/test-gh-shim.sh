@@ -32,6 +32,7 @@ unset AIDEVOPS_GH_QUOTA_COST
 unset AIDEVOPS_GH_QUOTA_COST_ON_SUCCESS
 unset AIDEVOPS_GH_GRAPHQL_COST_FROM_RESPONSE
 unset GH_HOST
+unset AIDEVOPS_GH_EXPLICIT_PAGINATION_DISABLE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 REPO_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit
@@ -64,6 +65,13 @@ _fail() {
 
 TMP=$(mktemp -d 2>/dev/null || mktemp -d -t gh-shim-test)
 trap 'rm -rf "$TMP"' EXIT
+
+# Hermetic HOME (GH#36255): the shim falls back to
+# ~/.aidevops/agents/scripts/<lib> for any library missing beside it and reads
+# governor/cache state under HOME, so a deployed install changed this suite's
+# result. Only the tree under test may be sourced.
+export HOME="$TMP/home"
+mkdir -p "$HOME"
 
 # Stub real gh — writes its argv (one per line) to $STUB_GH_LOG and
 # exits 0. The shim will exec this when forwarding.
@@ -103,6 +111,14 @@ if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+/labels\?per_page=100$ ]]; the
 	if [[ -z "${STUB_MANAGED_LABELS+x}" ]]; then
 		managed_labels=$'origin:worker\norigin:interactive\norigin:worker-takeover\nstatus:in-review\nbug'
 	fi
+	# The explicit REST paginator requests --include and parses the header
+	# block; no Link header means a single page.
+	for arg in "$@"; do
+		if [[ "$arg" == "--include" || "$arg" == "-i" ]]; then
+			printf 'HTTP/2.0 200 OK\r\nX-Ratelimit-Resource: core\r\n\r\n'
+			break
+		fi
+	done
 	printf '%s\n' "$managed_labels"
 	exit 0
 fi
@@ -281,6 +297,11 @@ if [[ "$1" == "issue" && "$2" == "view" && -n "${STUB_NATIVE_ISSUE_VIEW_JSON:-}"
 	printf '%s\n' "$STUB_NATIVE_ISSUE_VIEW_JSON"
 	exit 0
 fi
+# Safe-body edit cases target a non-worker PR with readable origin labels.
+if [[ "$*" == 'pr view 42 --repo owner/repo --json labels --jq [.labels[].name]' ]]; then
+	printf '%s\n' '[]'
+	exit 0
+fi
 EOF
 chmod +x "$TMP/bin/gh"
 
@@ -308,12 +329,17 @@ cp "$REPO_DIR/.agents/scripts/gh-native-transport-lib.sh" "$TMP/scripts/gh-nativ
 cp "$REPO_DIR/.agents/scripts/gh-api-guards-lib.sh" "$TMP/scripts/gh-api-guards-lib.sh"
 cp "$REPO_DIR/.agents/scripts/managed-label-provisioning-lib.sh" "$TMP/scripts/managed-label-provisioning-lib.sh"
 cp "$REPO_DIR/.agents/scripts/gh-write-policy-lib.sh" "$TMP/scripts/gh-write-policy-lib.sh"
+cp "$REPO_DIR/.agents/scripts/gh-closing-reference-lib.sh" "$TMP/scripts/gh-closing-reference-lib.sh"
 cp "$REPO_DIR/.agents/scripts/gh-api-instrument.sh" "$TMP/scripts/gh-api-instrument.sh"
 cp "$REPO_DIR/.agents/scripts/gh-quota-attribution-lib.sh" "$TMP/scripts/gh-quota-attribution-lib.sh"
+cp "$REPO_DIR/.agents/scripts/gh-rest-pagination-lib.sh" "$TMP/scripts/gh-rest-pagination-lib.sh"
 cp "$REPO_DIR/.agents/scripts/gh-quota-debug-filter.py" "$TMP/scripts/gh-quota-debug-filter.py"
 cp "$REPO_DIR/.agents/scripts/gh_quota_debug_response.py" "$TMP/scripts/gh_quota_debug_response.py"
 cp "$REPO_DIR/.agents/scripts/gh_quota_debug_cache.py" "$TMP/scripts/gh_quota_debug_cache.py"
+cp "$REPO_DIR/.agents/scripts/gh_quota_debug_request.py" "$TMP/scripts/gh_quota_debug_request.py"
 cp "$REPO_DIR/.agents/scripts/gh_native_response.py" "$TMP/scripts/gh_native_response.py"
+cp "$REPO_DIR/.agents/scripts/gh_conditional_cache.py" "$TMP/scripts/gh_conditional_cache.py"
+cp "$REPO_DIR/.agents/scripts/gh_conditional_request.py" "$TMP/scripts/gh_conditional_request.py"
 cp "$REPO_DIR/.agents/scripts/shared-gh-wrappers-rest-fallback.sh" "$TMP/scripts/shared-gh-wrappers-rest-fallback.sh"
 cp "$REPO_DIR/.agents/scripts/shared-gh-wrappers-rest-read-semantics.sh" "$TMP/scripts/shared-gh-wrappers-rest-read-semantics.sh"
 cp "$REPO_DIR/.agents/scripts/log-issue-helper.sh" "$TMP/scripts/log-issue-helper.sh"
@@ -410,6 +436,23 @@ _argv_has_pair() {
 	fi
 	return 1
 }
+
+# The shim sources the closing-reference library without the safe-edit module.
+# An explicit repo must reach the identity metadata lookup on body edits.
+if (
+	source "${REPO_DIR}/.agents/scripts/gh-closing-reference-lib.sh"
+	gh_pr_view() {
+		[[ "$*" == '42 --repo owner/repo --json labels --jq [.labels[].name]' ]] || return 1
+		printf '%s\n' '["origin:worker"]'
+		return 0
+	}
+	_GH_PR_IDENTITY_ORIGIN=edit
+	_gh_validate_pr_closing_keywords 42 --repo owner/repo --body 'For #123'
+); then
+	_pass "standalone PR body validation passes explicit repo to identity lookup"
+else
+	_fail "standalone PR body validation passes explicit repo to identity lookup"
+fi
 
 # --- Focused test modules ---
 

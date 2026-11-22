@@ -48,15 +48,17 @@ for controlled re-tests and `entity-evidence-audit.md` for source independence.
 Recognition requires an accurate identity/category association, not a name match;
 recommendation requires an actual recommendation, not any mention. Preserve answer
 captures for coding decisions. Citation does not prove endorsement or verification.
-Do not derive a retrieval denominator from the citation list. These outcomes need
-not follow a linear sequence and should not be collapsed into one authority score.
+Do not derive a retrieval denominator from the citation list; capture observed
+retrievals instead (`query-fanout-research.md` "Observed Fan-Out Capture"). These
+outcomes need not follow a linear sequence and should not be collapsed into one
+authority score.
 
 ## Diagnostic Evidence
 
 | Area | Record |
 |------|--------|
 | Grounding eligibility | Queries tested; predicted-to-ground queries; confirmed grounded queries; key blockers |
-| Fan-out and criteria gaps | Missing high-priority branches; partial branches; missing decision criteria |
+| Fan-out and criteria gaps | Observed versus modeled sub-queries; missing high-priority branches; partial branches; missing decision criteria |
 | SRO and snippet findings | Low-survival sections; high-survival sections; sentence-level edits to test |
 | Integrity and hallucination risk | Conflicting facts; unsupported claims; canonical source gaps |
 | Agent discoverability | Task set used; completion failures; navigation/comprehension blockers |

@@ -70,6 +70,18 @@ gh() {
 	local command="${1:-}"
 	local subcommand="${2:-}"
 	local args="$*"
+	if [[ "$command" == "api" && -n "${GH_FLAKY_DIR:-}" ]]; then
+		local marker="${GH_FLAKY_DIR}/${subcommand//[^A-Za-z0-9]/_}"
+		if [[ ! -e "$marker" ]]; then
+			: >"$marker"
+			printf '%s\n' 'gh: Bad Gateway (HTTP 502)' >&2
+			return 1
+		fi
+	fi
+	if [[ "$command" == "api" && "${GH_TAG_ABSENT:-false}" == "true" && "$subcommand" == */git/ref/tags/* ]]; then
+		printf '%s\n' 'gh: Not Found (HTTP 404)' >&2
+		return 1
+	fi
 	if [[ "$command" == "api" && -n "$GH_RELEASE_TAG_MODE" ]]; then
 		case "$subcommand" in
 		"repos/example/repo/git/ref/tags/v1.2.3")
@@ -129,6 +141,17 @@ gh() {
 			jq -cn --arg head_ref "$GH_PR_HEAD_REF" --arg head_oid "$GH_PR_HEAD_OID" \
 				--arg head_repo "$GH_PR_HEAD_REPO" \
 				'{headRefName:$head_ref,headRefOid:$head_oid,headRepository:{nameWithOwner:$head_repo},isCrossRepository:false}'
+			return 0
+		fi
+		# GH#36174 merge-time closure check reads body plus parsed references.
+		if [[ "$args" == *"body,closingIssuesReferences"* ]]; then
+			printf '%s\n' '{"body":"Resolves #42","closingIssuesReferences":[{"number":42,"repository":{"owner":{"login":"example"},"name":"repo"}}]}'
+			return 0
+		fi
+		# t2449 worker-briefed trust verdict reads labels, draft state, head and body.
+		if [[ "$args" == *"labels,isDraft,headRefOid,body"* ]]; then
+			jq -cn --arg head_oid "$GH_PR_HEAD_OID" \
+				'{labels:[],isDraft:false,headRefOid:$head_oid,body:"Resolves #42"}'
 			return 0
 		fi
 		if [[ "$args" == *"body"* ]]; then
@@ -296,6 +319,17 @@ GIT
 exit 1
 TRASH
 	chmod +x "${TEST_ROOT}/bin/trash"
+	# parent-task-keyword-guard.sh runs as a subprocess, so the in-process gh()
+	# fixture is invisible to it; answer its label lookup without the network.
+	cat >"${TEST_ROOT}/bin/gh" <<'GH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
+	printf '%s\n' '{"labels":[]}'
+	exit 0
+fi
+exit 1
+GH
+	chmod +x "${TEST_ROOT}/bin/gh"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
 
 	local canonical_repo="${TEST_ROOT}/repo"
@@ -352,6 +386,25 @@ configure_alias_repo_identity() {
 configure_managed_repo_identity() {
 	local worktree_path="${TEST_ROOT}/worktrees/repo-feature-full-loop-cleanup"
 	git -C "$worktree_path" remote add managed "https://github.com/${GH_PR_BASE_REPO}.git"
+	return 0
+}
+
+test_runtime_paths_are_git_excluded() {
+	local worktree_path="${TEST_ROOT}/worktrees/repo-feature-full-loop-cleanup"
+	local target="${worktree_path}"$'\t''feature/full-loop-cleanup'$'\t''false'
+	local rc=0 exclude_file=""
+	_merge_record_deferred_cleanup_owner 123 example/repo "$target" || rc=1
+	[[ -f "${worktree_path}/.agents/.full-loop-cleanup-deferred" ]] || rc=1
+	( STATE_DIR=".agents/loop-state"; STATE_FILE="${STATE_DIR}/full-loop.local.state"; save_state task test ) || rc=1
+	_full_loop_exclude_runtime_path "$worktree_path" '/.agents/.full-loop-cleanup-deferred' || rc=1
+	_full_loop_exclude_runtime_path "$worktree_path" '/.agents/loop-state/' || rc=1
+	exclude_file=$(git -C "$worktree_path" rev-parse --git-path info/exclude) || rc=1
+	[[ $(grep -Fxc '/.agents/.full-loop-cleanup-deferred' "$exclude_file") == 1 ]] || rc=1
+	[[ $(grep -Fxc '/.agents/loop-state/' "$exclude_file") == 1 ]] || rc=1
+	git -C "$worktree_path" add -A || rc=1
+	[[ -z $(git -C "$worktree_path" status --porcelain -- .agents) ]] || rc=1
+	[[ -z $(git -C "$worktree_path" ls-files -- .agents/.full-loop-cleanup-deferred .agents/loop-state) ]] || rc=1
+	print_result "linked worktree runtime state stays unstaged and excludes are idempotent" "$rc"
 	return 0
 }
 
@@ -869,6 +922,48 @@ test_untracked_only_canonical_fast_forwards_through_helper() {
 	return 0
 }
 
+# GH#36289: an unborn canonical default branch (git init + remote, all work in
+# linked worktrees) routes to the audited fast-forward instead of reading the
+# literal "HEAD" from `git rev-parse HEAD` and dead-ending.
+test_unborn_canonical_fast_forwards_through_helper() {
+	make_fast_forward_fixture "unborn-seed"
+	local origin_repo="${TEST_ROOT}/ff-unborn-seed-origin.git"
+	FF_CANONICAL="${TEST_ROOT}/ff-unborn"
+	FF_HELPER_LOG="${TEST_ROOT}/ff-unborn-helper.log"
+	rm -f "$FF_HELPER_LOG"
+	mkdir -p "$FF_CANONICAL"
+	git -C "$FF_CANONICAL" init -q -b main
+	git -C "$FF_CANONICAL" remote add origin "$origin_repo"
+	local output=""
+	local sync_rc=0
+	local rc=0
+	output=$(run_interactive_sync_report 2>&1) || sync_rc=$?
+	grep -qF -- "fast-forward-current --repo ${FF_CANONICAL} --branch main --issue 33013 --confirm FAST_FORWARD_CANONICAL_BRANCH" \
+		"$FF_HELPER_LOG" || rc=1
+	[[ "$sync_rc" -eq 0 ]] || rc=1
+	[[ "$output" == *"LIFECYCLE_STATE=CANONICAL_SYNCED sha=${FF_TIP}"* ]] || rc=1
+	[[ "$output" != *"sync-mirror"* ]] || rc=1
+	[[ "$(git -C "$FF_CANONICAL" rev-parse HEAD)" == "$FF_TIP" ]] || rc=1
+	print_result "unborn canonical default branch fast-forwards through the audited helper" "$rc" "$output"
+
+	# With fast-forward disabled, the pending report names the same route.
+	FF_CANONICAL="${TEST_ROOT}/ff-unborn-optout"
+	FF_HELPER_LOG="${TEST_ROOT}/ff-unborn-optout-helper.log"
+	rm -f "$FF_HELPER_LOG"
+	mkdir -p "$FF_CANONICAL"
+	git -C "$FF_CANONICAL" init -q -b main
+	git -C "$FF_CANONICAL" remote add origin "$origin_repo"
+	rc=0
+	sync_rc=0
+	output=$(SYNC_ENV_OVERRIDE="AIDEVOPS_MERGE_CANONICAL_FAST_FORWARD=0" run_interactive_sync_report 2>&1) || sync_rc=$?
+	[[ "$sync_rc" -ne 0 ]] || rc=1
+	[[ "$output" == *"CANONICAL_SYNC_NEXT=canonical-recovery-helper.sh fast-forward-current"* ]] || rc=1
+	[[ ! -s "$FF_HELPER_LOG" ]] || rc=1
+	git -C "$FF_CANONICAL" rev-parse --verify --quiet 'HEAD^{commit}' >/dev/null && rc=1
+	print_result "unborn canonical pending report names fast-forward-current" "$rc" "$output"
+	return 0
+}
+
 assert_sync_report_does_not_mutate() {
 	local label="$1"
 	local expected_next="$2"
@@ -985,12 +1080,41 @@ test_release_tag_commit_resolution() {
 	return 0
 }
 
+test_release_evidence_transient_read_retry() {
+	setup_subject
+	local stderr_file="${TEST_ROOT}/tag-retry.stderr"
+	local rc=0
+	local old_backoff="${AIDEVOPS_GH_READ_BACKOFF:-}"
+
+	AIDEVOPS_GH_READ_BACKOFF="0 0 0"
+	GH_RELEASE_TAG_MODE="annotated"
+	GH_FLAKY_DIR="${TEST_ROOT}/flaky"
+	mkdir -p "$GH_FLAKY_DIR"
+	_full_loop_verify_published_release "example/repo" "v1.2.3" "$GH_RELEASE_TAG_COMMIT" \
+		"release.yml" "push" 2>"$stderr_file" || rc=1
+	GH_FLAKY_DIR=""
+
+	GH_TAG_ABSENT="true"
+	if _full_loop_verify_published_release "example/repo" "v1.2.3" "$GH_RELEASE_TAG_COMMIT" 2>"$stderr_file"; then rc=1; fi
+	[[ "$(<"$stderr_file")" == *"not found"* ]] || rc=1
+	GH_TAG_ABSENT="false"
+	GH_RELEASE_TAG_MODE=""
+	if [[ -n "$old_backoff" ]]; then AIDEVOPS_GH_READ_BACKOFF="$old_backoff"; else unset AIDEVOPS_GH_READ_BACKOFF; fi
+
+	print_result "release evidence retries transient reads and keeps 404 tags failing as not found" "$rc"
+	return 0
+}
+
 main() {
 	resolve_fixture_git
 	setup_subject
+	test_runtime_paths_are_git_excluded
+	setup_subject
+	test_release_evidence_transient_read_retry
 	test_refresh_canonical_reports_pending_without_mutation
 	test_interactive_merge_fast_forwards_canonical_through_helper
 	test_untracked_only_canonical_fast_forwards_through_helper
+	test_unborn_canonical_fast_forwards_through_helper
 	test_canonical_fast_forward_exclusions
 	test_canonical_guard_denial_is_reported
 	test_planning_reconcile_waits_for_canonical_sync

@@ -1115,7 +1115,7 @@ run_post_publication_gates() {
 	fi
 	run_post_release_agent_sync || deployment_exit=$?
 	if [[ "$hotfix_exit" -eq 0 && "$deployment_exit" -eq 76 ]]; then
-		print_info "Published; deployment deferred until the active runtime includes v${version}. Auto-update or aidevops update converges it; then run aidevops release reconcile <source-PR>."
+		print_info "Published; deployment deferred until the active runtime includes v${version}. Next (same session, do not wait for auto-update): run aidevops update, then aidevops release reconcile <source-PR>."
 		return 76
 	fi
 

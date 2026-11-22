@@ -20,7 +20,6 @@
 
 import json
 import os
-import sys
 
 settings_path = os.path.expanduser("~/.claude/settings.json")
 
@@ -34,7 +33,8 @@ changed = False
 
 # --- Safety hooks: PreToolUse for Bash ---
 # Ensures the git safety guard hook is always present
-hook_command = "$HOME/.aidevops/hooks/git_safety_guard.py"
+legacy_hook_command = "$HOME/.aidevops/hooks/git_safety_guard.py"
+hook_command = "exec " + legacy_hook_command
 hook_entry = {
     "type": "command",
     "command": hook_command
@@ -44,6 +44,12 @@ if "hooks" not in settings:
     settings["hooks"] = {}
 if "PreToolUse" not in settings["hooks"]:
     settings["hooks"]["PreToolUse"] = []
+
+for rule in settings["hooks"]["PreToolUse"]:
+    for hook in rule.get("hooks", []):
+        if hook.get("command") == legacy_hook_command:
+            hook["command"] = hook_command
+            changed = True
 
 # Bash consumes the shared command policy. Edit|Write remains the distinct
 # canonical-workspace file protection surface in the same hook.

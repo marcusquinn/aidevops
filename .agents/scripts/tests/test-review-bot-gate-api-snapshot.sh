@@ -39,6 +39,7 @@ print_result() {
 load_helper_functions() {
 	local source_copy="${TEST_ROOT}/review-bot-gate-helper.sh"
 	grep -v '^main "\$@"' "$HELPER_SCRIPT" >"$source_copy"
+	_RBG_SCRIPT_DIR="$(cd "$(dirname "$HELPER_SCRIPT")" && pwd)"
 	# shellcheck disable=SC1090
 	source "$source_copy"
 	return 0
@@ -327,11 +328,12 @@ test_rest_association_failure_remains_blocked() {
 	calls=$(call_count)
 	command_calls=$(matching_call_count 'command:')
 	pull_metadata_calls=$(exact_call_count 'metadata:repos/testorg/testrepo/pulls/123')
-	if [[ "$RUN_STATUS" -eq 1 && "$RUN_OUTPUT" == "WAITING" && "$calls" == "4" &&
+	# GH#36931: unknown authors use the advisory default; merge authority stays with crypto approval.
+	if [[ "$RUN_STATUS" -eq 0 && "$RUN_OUTPUT" == "PASS_ADVISORY" && "$calls" == "4" &&
 		"$command_calls" == "0" && "$pull_metadata_calls" == "1" ]]; then
-		print_result "REST association failure keeps unknown authors blocked" 0
+		print_result "REST association failure leaves unknown authors on the advisory default" 0
 	else
-		print_result "REST association failure keeps unknown authors blocked" 1 \
+		print_result "REST association failure leaves unknown authors on the advisory default" 1 \
 			"status=${RUN_STATUS} output=${RUN_OUTPUT} calls=${calls} command=${command_calls} pull=${pull_metadata_calls}"
 	fi
 	return 0
@@ -353,7 +355,8 @@ test_finalized_external_association_avoids_metadata_retry() {
 	IFS= read -r output <"$output_file" || true
 	calls=$(call_count)
 	pull_metadata_calls=$(exact_call_count 'metadata:repos/testorg/testrepo/pulls/123')
-	if [[ "$status" -eq 1 && "$output" == "WAITING" && "$calls" == "3" &&
+	# GH#36931: external authors use the advisory default; only the lookup count is the contract here.
+	if [[ "$status" -eq 0 && "$output" == "PASS_ADVISORY" && "$calls" == "3" &&
 		"$pull_metadata_calls" == "0" ]]; then
 		print_result "finalized external association avoids a duplicate REST metadata lookup" 0
 	else

@@ -8,9 +8,10 @@
 # test-pulse-runner-health-helper.sh.
 #
 # What this test asserts:
-#   1. pulse-wrapper.sh references pulse-runner-health-helper.sh.
-#   2. The is-paused check happens BEFORE apply_dispatch_max
-#      (i.e., upstream in the same code block, not after).
+#   1. The shared dispatch gate (pulse-wrapper-dispatch-gates.sh, GH#36122)
+#      runs pulse-runner-health-helper.sh is-paused.
+#   2. The main cycle calls that gate BEFORE apply_dispatch_max, and
+#      apply_dispatch_max itself gates every other caller.
 #   3. pulse-wrapper.sh skips fill-floor and increments the
 #      pulse_dispatch_runner_health_breaker_tripped counter when paused.
 #   4. pulse-cleanup.sh wires record-outcome no_worker_process into the
@@ -26,6 +27,8 @@ AGENT_SCRIPT_DIR="${SCRIPT_DIR}/.."
 WRAPPER="${AGENT_SCRIPT_DIR}/pulse-wrapper.sh"
 CLEANUP="${AGENT_SCRIPT_DIR}/pulse-cleanup.sh"
 HEALTH_HELPER="${AGENT_SCRIPT_DIR}/pulse-runner-health-helper.sh"
+GATES="${AGENT_SCRIPT_DIR}/pulse-wrapper-dispatch-gates.sh"
+ENGINE="${AGENT_SCRIPT_DIR}/pulse-dispatch-engine.sh"
 
 TEST_RED='\033[0;31m'
 TEST_GREEN='\033[0;32m'
@@ -51,7 +54,7 @@ print_result() {
 
 echo "Integration tests for pulse-wrapper + pulse-runner-health-helper:"
 
-for f in "$WRAPPER" "$CLEANUP" "$HEALTH_HELPER"; do
+for f in "$WRAPPER" "$CLEANUP" "$HEALTH_HELPER" "$GATES" "$ENGINE"; do
 	if [[ ! -f "$f" ]]; then
 		print_result "required file exists: $(basename "$f")" "FAIL" "missing at $f"
 		exit 1
@@ -59,24 +62,34 @@ for f in "$WRAPPER" "$CLEANUP" "$HEALTH_HELPER"; do
 done
 print_result "required files exist (wrapper, cleanup, health helper)" "PASS"
 
-# --- Test 1: pulse-wrapper.sh references the helper by basename ---
-if grep -q 'pulse-runner-health-helper.sh' "$WRAPPER"; then
-	print_result "pulse-wrapper.sh references pulse-runner-health-helper.sh" "PASS"
+# --- Test 1: the shared dispatch gate runs the helper's is-paused check ---
+# GH#36122: the breakers live in pulse-wrapper-dispatch-gates.sh so every
+# launch path (not only the main cycle) consults them.
+# shellcheck disable=SC2016 # matches literal source text, not an expansion
+if grep -q 'pulse-runner-health-helper.sh' "$GATES" && grep -qF '"$helper" is-paused' "$GATES"; then
+	print_result "dispatch gates run pulse-runner-health-helper.sh is-paused" "PASS"
 else
-	print_result "pulse-wrapper.sh references pulse-runner-health-helper.sh" "FAIL"
+	print_result "dispatch gates run pulse-runner-health-helper.sh is-paused" "FAIL"
 fi
 
-# --- Test 2: is-paused check happens before apply_dispatch_max ---
-# Capture line numbers; is-paused must appear before the first uncommented
-# call to apply_dispatch_max.
-is_paused_line=$(grep -n 'is-paused' "$WRAPPER" | head -1 | cut -d: -f1)
-fill_floor_line=$(grep -n '^[[:space:]]*apply_dispatch_max' "$WRAPPER" | head -1 | cut -d: -f1)
-if [[ -n "$is_paused_line" ]] && [[ -n "$fill_floor_line" ]] \
-	&& [[ "$is_paused_line" -lt "$fill_floor_line" ]]; then
-	print_result "is-paused check precedes apply_dispatch_max" "PASS"
+# --- Test 2: main-cycle breaker gate happens before apply_dispatch_max ---
+# Line numbers of the first gate call and the first non-comment
+# apply_dispatch_max invocation; `|| true` keeps a missing match reportable.
+# grep -m1 reads the file itself, so no reader closes the pipe early.
+gate_line=$(grep -n -m1 -F 'pulse_dispatch_breakers_allow "main"' "$WRAPPER" | cut -d: -f1 || true)
+fill_floor_line=$(grep -n -m1 '^[^#]*apply_dispatch_max' "$WRAPPER" | cut -d: -f1 || true)
+if [[ -n "$gate_line" ]] && [[ -n "$fill_floor_line" ]] \
+	&& [[ "$gate_line" -lt "$fill_floor_line" ]]; then
+	print_result "breaker gate precedes main-cycle apply_dispatch_max" "PASS"
 else
-	print_result "is-paused check precedes apply_dispatch_max" "FAIL" \
-		"is_paused=$is_paused_line fill_floor=$fill_floor_line"
+	print_result "breaker gate precedes main-cycle apply_dispatch_max" "FAIL" \
+		"gate=$gate_line fill_floor=$fill_floor_line"
+fi
+# shellcheck disable=SC2016 # matches literal source text, not an expansion
+if grep -qF 'pulse_dispatch_breakers_allow "${_PULSE_DISPATCH_BREAKER_CONTEXT:-dispatch_max}"' "$ENGINE"; then
+	print_result "apply_dispatch_max gates every caller on the shared breakers" "PASS"
+else
+	print_result "apply_dispatch_max gates every caller on the shared breakers" "FAIL"
 fi
 
 # --- Test 3: counter increment present ---
@@ -116,6 +129,36 @@ if [[ "$rc" -eq 0 ]]; then
 else
 	print_result "tripped breaker → is-paused returns 0 (consumed by wrapper as paused)" "FAIL" \
 		"got rc=$rc"
+fi
+
+# --- Test 6: diagnose preserves null fields and surfaces a blocked pause ---
+status_text=$("$HEALTH_HELPER" status)
+diagnose_text=$("$HEALTH_HELPER" diagnose)
+status_json=$("$HEALTH_HELPER" status --json)
+diagnose_json=$("$HEALTH_HELPER" diagnose --json)
+if [[ "$status_text" == *'last update run:     never (n/a)'* && "$status_text" == *'reason:              integration test trip'* ]] \
+	&& [[ "$diagnose_text" == *'last update:         n/a'* && "$diagnose_text" == *'reason:              integration test trip'* ]] \
+	&& jq -e '.circuit_breaker.last_update_outcome == null and .circuit_breaker.reason == "integration test trip"' <<<"$status_json" >/dev/null \
+	&& jq -e '.last_update_outcome == null and .reason == "integration test trip" and .finding == "PAUSED_NO_UPDATE" and (.advice | contains("pulse-runner-health-helper.sh resume"))' <<<"$diagnose_json" >/dev/null; then
+	print_result "status and diagnose preserve null update and pause reason" "PASS"
+else
+	print_result "status and diagnose preserve null update and pause reason" "FAIL"
+fi
+
+# A fixed historical timestamp is portable across GNU and BSD date.
+jq '.circuit_breaker.tripped_at = "2000-01-01T00:00:00Z" | .window_started_at = null' "$RUNNER_HEALTH_STATE_FILE" >"$SANDBOX/aged.json"
+mv "$SANDBOX/aged.json" "$RUNNER_HEALTH_STATE_FILE"
+diagnose_json=$(RUNNER_HEALTH_NO_UPDATE_PAUSE_HOURS=24 "$HEALTH_HELPER" diagnose --json)
+if jq -e '.finding == "STUCK_TRIPPED" and .last_update_outcome == null and .reason == "integration test trip" and (.advice | contains("pulse-runner-health-helper.sh resume"))' <<<"$diagnose_json" >/dev/null; then
+	print_result "aged no-update pause requires review and resume" "PASS"
+else
+	print_result "aged no-update pause requires review and resume" "FAIL"
+fi
+diagnose_json=$(RUNNER_HEALTH_NO_UPDATE_PAUSE_HOURS=1000000 "$HEALTH_HELPER" diagnose --json)
+if jq -e '.finding == "PAUSED_NO_UPDATE"' <<<"$diagnose_json" >/dev/null; then
+	print_result "configured pause age controls escalation" "PASS"
+else
+	print_result "configured pause age controls escalation" "FAIL"
 fi
 
 # Cleanup.

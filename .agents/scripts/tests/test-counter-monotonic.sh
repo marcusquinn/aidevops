@@ -146,24 +146,28 @@ test_workflow_uses_base10() {
 # Layer 3 tests: full-loop-helper.sh auto-reset
 # ──────────────────────────────────────────────────────────────
 
+# The rebase/push stage lives in the sourced commit library since the
+# full-loop-helper split (GH#39794), not in the full-loop-helper.sh orchestrator.
+FULL_LOOP_REBASE_LIB="${REPO_ROOT}/.agents/scripts/full-loop-helper-commit.sh"
+
 test_full_loop_has_counter_reset() {
-	local helper="${REPO_ROOT}/.agents/scripts/full-loop-helper.sh"
+	local helper="$FULL_LOOP_REBASE_LIB"
 	if [[ ! -f "$helper" ]]; then
-		print_result "full-loop: helper exists" 1 "full-loop-helper.sh not found"
+		print_result "full-loop: helper exists" 1 "full-loop-helper-commit.sh not found"
 		return 0
 	fi
-	# Check that _rebase_and_push contains the t2229 auto-reset block
+	# Check that _rebase_for_push contains the t2229 auto-reset block
 	if grep -q 't2229' "$helper" && grep -q 'Auto-resetting .task-counter' "$helper"; then
-		print_result "full-loop: _rebase_and_push has t2229 counter auto-reset" 0
+		print_result "full-loop: _rebase_for_push has t2229 counter auto-reset" 0
 	else
-		print_result "full-loop: _rebase_and_push has t2229 counter auto-reset" 1 \
-			"Expected t2229 counter drift reset in _rebase_and_push"
+		print_result "full-loop: _rebase_for_push has t2229 counter auto-reset" 1 \
+			"Expected t2229 counter drift reset in _rebase_for_push"
 	fi
 	return 0
 }
 
 test_full_loop_reset_uses_base10() {
-	local helper="${REPO_ROOT}/.agents/scripts/full-loop-helper.sh"
+	local helper="$FULL_LOOP_REBASE_LIB"
 	[[ ! -f "$helper" ]] && { print_result "full-loop: uses base-10" 1 "helper missing"; return 0; }
 	# The reset comparison should use 10# for octal safety
 	if grep -A5 'Auto-resetting' "$helper" | grep -q '10#' || \

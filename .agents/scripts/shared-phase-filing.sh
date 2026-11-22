@@ -64,6 +64,8 @@ AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE="${AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE:-1}"
 _PHASE_MARKER_AUTO_FIRE="auto-fire"
 _PHASE_MARKER_REQUIRES_DECISION="requires-decision"
 _PHASE_MARKER_NONE="none"
+# Idle-parent progression mode / child trigger reason (GH#38349).
+_PHASE_MODE_SEQUENTIAL="sequential"
 
 _phase_log() {
 	local _log="${LOGFILE:-/dev/null}"
@@ -132,9 +134,9 @@ _find_parent_task_for_child() {
 #######################################
 _phase_marker_for_line() {
 	local line="$1" fallback="${2:-$_PHASE_MARKER_NONE}"
-	if printf '%s' "$line" | grep -qiF '[auto-fire:on-prior-merge]'; then
+	if grep -qiF '[auto-fire:on-prior-merge]' <<<"$line"; then
 		printf '%s' "$_PHASE_MARKER_AUTO_FIRE"
-	elif printf '%s' "$line" | grep -qiF '[requires-decision]'; then
+	elif grep -qiF '[requires-decision]' <<<"$line"; then
 		printf '%s' "$_PHASE_MARKER_REQUIRES_DECISION"
 	else
 		printf '%s' "$fallback"
@@ -155,7 +157,7 @@ _phase_marker_for_line() {
 #######################################
 _parse_phase_line_list_form() {
 	local line="$1"
-	printf '%s' "$line" | grep -qE '^[[:space:]]*-[[:space:]]+[Pp]hase[[:space:]]+[0-9]+' || return 0
+	grep -qE '^[[:space:]]*-[[:space:]]+[Pp]hase[[:space:]]+[0-9]+' <<<"$line" || return 0
 
 	local phase_num description marker child_ref
 	phase_num=$(printf '%s' "$line" | grep -oE '[Pp]hase[[:space:]]+[0-9]+' | grep -oE '[0-9]+')
@@ -196,7 +198,7 @@ _parse_phase_line_list_form() {
 #######################################
 _parse_phase_line_bold_form() {
 	local line="$1" global_auto_fire="${2:-none}"
-	printf '%s' "$line" | grep -qE '^[[:space:]]*([-*+][[:space:]]+)?\*\*[Pp]hase[[:space:]]+[0-9]+' || return 0
+	grep -qE '^[[:space:]]*([-*+][[:space:]]+)?\*\*[Pp]hase[[:space:]]+[0-9]+' <<<"$line" || return 0
 
 	local phase_num description marker child_ref
 	phase_num=$(printf '%s' "$line" | grep -oE '\*\*[Pp]hase[[:space:]]+[0-9]+' | grep -oE '[0-9]+')
@@ -243,7 +245,7 @@ _parse_phase_line_bold_form() {
 #######################################
 _parse_phase_line_numbered_form() {
 	local line="$1"
-	printf '%s' "$line" | grep -qE '^[[:space:]]*[0-9]+\.[[:space:]]+' || return 0
+	grep -qE '^[[:space:]]*[0-9]+\.[[:space:]]+' <<<"$line" || return 0
 
 	local phase_num description marker child_ref
 	phase_num=$(printf '%s' "$line" | sed -E 's/^[[:space:]]*([0-9]+)\..*/\1/')
@@ -291,18 +293,18 @@ _parse_phases_section() {
 
 	# Global opt-in marker: flips narrative bold-form phases to auto-fire.
 	local global_auto_fire="$_PHASE_MARKER_NONE"
-	if printf '%s' "$body" | grep -qF '<!-- phase-auto-fire:on -->'; then
+	if grep -qF '<!-- phase-auto-fire:on -->' <<<"$body"; then
 		global_auto_fire="$_PHASE_MARKER_AUTO_FIRE"
 	fi
 
 	# Extract the ## Phases section: everything between "## Phases" and the
 	# next ## heading (or end of string). Use awk for multi-line extraction.
 	local phases_block
-	phases_block=$(printf '%s' "$body" | awk '
+	phases_block=$(awk '
 		/^## Phases/ { found=1; next }
 		found && /^## / { exit }
 		found { print }
-	')
+	' <<<"$body")
 	[[ -n "$phases_block" ]] || return 0
 
 	# Dispatch each non-empty line to the appropriate per-form parser.
@@ -342,6 +344,10 @@ decomposition. Phase $((phase_num - 1)) has been completed and merged."
 declares planned phases but had no worker-dispatchable child issue for the next
 phase. Filing Phase ${phase_num} moves the parent out of the parent-task dispatch
 block while preserving the parent as the tracker."
+	elif [[ "$trigger_reason" == "$_PHASE_MODE_SEQUENTIAL" ]]; then
+		why_detail="This phase was auto-filed because every previously filed phase child of
+parent task #${parent_issue} (_${parent_title}_) is closed and Phase ${phase_num} is
+the next declared phase without a child issue (GH#38349)."
 	fi
 
 	cat <<MD
@@ -379,10 +385,48 @@ MD
 }
 
 #######################################
+# Append " #<child>" to the first phase-<N> line inside the ## Phases
+# section, in any form _parse_phases_section accepts (list, bold, numbered).
+# Lines outside the section, including other numbered lists, are untouched;
+# a line that already carries the ref is left as is (GH#38349).
+#
+# Args: $1=body, $2=phase_num, $3=child_issue_num
+# Output: the (possibly unchanged) body on stdout
+# Returns: 0 always
+#######################################
+_phase_body_with_child_ref() {
+	local body="$1"
+	local phase_num="$2"
+	local child_issue_num="$3"
+	printf '%s\n' "$body" | awk -v n="$phase_num" -v c="$child_issue_num" '
+		/^## / { in_phases = ($0 ~ /^## Phases/) }
+		in_phases && !filed {
+			# Exactly the forms the _parse_phase_line_* parsers accept: a bare
+			# list phase uses "-" only; "*"/"+" bullets count only before bold.
+			end_re = "([^0-9]|$)"
+			list_re = "^[[:space:]]*-[[:space:]]+[Pp]hase[[:space:]]+" n end_re
+			bold_re = "^[[:space:]]*([-*+][[:space:]]+)?\\*\\*[Pp]hase[[:space:]]+" n end_re
+			num_re = "^[[:space:]]*" n "\\.[[:space:]]+"
+			if ($0 ~ list_re || $0 ~ bold_re || $0 ~ num_re) {
+				filed = 1
+				if ($0 !~ ("#" c end_re)) {
+					sub(/[[:space:]]*$/, "")
+					$0 = $0 " #" c
+				}
+			}
+		}
+		{ print }
+	'
+	return 0
+}
+
+#######################################
 # Update the parent issue's ## Phases section to record the newly filed
 # child issue number on the appropriate phase line. Best-effort.
 #
 # Args: $1=parent_issue, $2=repo_slug, $3=phase_num, $4=child_issue_num
+# Globals: sets _PHASE_SECTION_RECORDED=1 only when the parent body now
+#          records the child on that phase (edit succeeded or already present)
 # Returns: 0 always
 #######################################
 _update_parent_phases_section() {
@@ -392,30 +436,31 @@ _update_parent_phases_section() {
 	local child_issue_num="$4"
 	local _log="${LOGFILE:-/dev/null}"
 	local parent_api="repos/${repo_slug}/issues/${parent_issue}"
+	_PHASE_SECTION_RECORDED=0
 
 	# Read current parent body
-	local parent_body
+	local parent_body updated_body recorded_child=""
 	parent_body=$(gh api "$parent_api" \
 		--jq '.body // ""' 2>/dev/null) || parent_body=""
 	[[ -n "$parent_body" ]] || return 0
 
-	# Find the phase line and append the child issue reference.
-	# Use sed to find the line matching "Phase <N>" and append " #<child>".
-	# BSD sed compatible (macOS default). The pattern matches "Phase <N>"
-	# where <N> is exactly $phase_num (word-bounded by whitespace/punctuation),
-	# and appends the child ref only if it's not already present.
-	local updated_body
-	updated_body=$(printf '%s' "$parent_body" | sed -E "/^[[:space:]]*[-*+][[:space:]]+(\*\*)?[Pp]hase[[:space:]]+${phase_num}([^0-9]|$)/ {
-		/#${child_issue_num}([^0-9]|$)/!s/[[:space:]]*$/ #${child_issue_num}/
-	}")
+	updated_body=$(_phase_body_with_child_ref "$parent_body" "$phase_num" "$child_issue_num")
 
 	# Only update if the body actually changed
 	if [[ "$updated_body" != "$parent_body" ]]; then
 		# gh_issue_edit_safe is always available via shared-constants.sh
-		gh_issue_edit_safe "$parent_issue" --repo "$repo_slug" \
-			--body "$updated_body" 2>>"$_log" || true
-		_phase_log "Updated parent #${parent_issue} ## Phases section with child #${child_issue_num} for Phase ${phase_num}"
+		if gh_issue_edit_safe "$parent_issue" --repo "$repo_slug" \
+			--body "$updated_body" 2>>"$_log"; then
+			_PHASE_SECTION_RECORDED=1
+			_phase_log "Updated parent #${parent_issue} ## Phases section with child #${child_issue_num} for Phase ${phase_num}"
+		else
+			_phase_log "Failed to record child #${child_issue_num} on Phase ${phase_num} of parent #${parent_issue}"
+		fi
+		return 0
 	fi
+	recorded_child=$(_parse_phases_section "$parent_body" |
+		awk -F'\t' -v n="$phase_num" '$1 == n { print $4; exit }')
+	[[ "$recorded_child" == "$child_issue_num" ]] && _PHASE_SECTION_RECORDED=1
 	return 0
 }
 
@@ -503,7 +548,9 @@ _phase_release_filing_lock() {
 # Find an already-open child issue for the deterministic parent/phase title.
 # This is a GitHub-side idempotency guard used after taking the local mutex.
 #
-# Args: $1=repo_slug, $2=parent_issue, $3=phase_num, $4=phase_desc
+# Args: $1=repo_slug, $2=parent_issue, $3=phase_num, $4=phase_desc,
+#       $5=state (open by default; "all" also links a closed child whose ref
+#       never reached the parent body, GH#38349)
 # Output: issue number on stdout (empty if none found)
 # Returns: 0 always
 #######################################
@@ -512,12 +559,13 @@ _find_existing_phase_child_issue() {
 	local parent_issue="$2"
 	local phase_num="$3"
 	local phase_desc="$4"
+	local issue_state="${5:-open}"
 	local issue_title="Phase ${phase_num} of #${parent_issue}: ${phase_desc}"
 	local search_query="Phase ${phase_num} of #${parent_issue} in:title"
 	local issue_num=""
 
 	issue_num=$(gh issue list --repo "$repo_slug" \
-		--state open \
+		--state "$issue_state" \
 		--search "$search_query" \
 		--json number,title \
 		--jq '.[] | [.number, .title] | @tsv' 2>/dev/null \
@@ -527,7 +575,7 @@ _find_existing_phase_child_issue() {
 			fi
 		done \
 		| sort -n \
-		| head -1) || issue_num=""
+		| sed -n '1p') || issue_num=""
 	printf '%s' "$issue_num"
 	return 0
 }
@@ -555,8 +603,9 @@ _create_or_reuse_phase_child_issue() {
 		return 0
 	fi
 
-	local existing_issue_num
-	existing_issue_num=$(_find_existing_phase_child_issue "$repo_slug" "$parent_issue" "$phase_num" "$phase_desc")
+	local existing_issue_num search_state="open"
+	[[ "$trigger_reason" == "$_PHASE_MODE_SEQUENTIAL" ]] && search_state="all"
+	existing_issue_num=$(_find_existing_phase_child_issue "$repo_slug" "$parent_issue" "$phase_num" "$phase_desc" "$search_state")
 	if [[ -n "$existing_issue_num" ]]; then
 		_phase_log "Parent #${parent_issue}: Phase ${phase_num} already has open child #${existing_issue_num} by deterministic-title search — reuse"
 		_phase_release_filing_lock "$lock_dir"
@@ -608,7 +657,7 @@ _identify_merged_phase() {
 			title_phase_num=$(printf '%s' "$child_title" \
 				| grep -ioE '[Pp]hase[[:space:]]+[0-9]+' \
 				| grep -oE '[0-9]+' \
-				| head -1)
+				| sed -n '1p')
 			if [[ -n "$title_phase_num" ]]; then
 				merged_phase_num="$title_phase_num"
 				_phase_log "Child #${child_issue}: matched Phase ${merged_phase_num} via title '${child_title}'"
@@ -670,12 +719,23 @@ _create_phase_child_issue() {
 # plan but no filed children. This is the bootstrap path used by parent-task
 # reconciliation; post-merge sequencing still uses auto_file_next_phase.
 #
-# Args: $1=parent_issue, $2=repo_slug
+# Mode "sequential" (GH#38349) is the idle-parent progression path: the caller
+# has verified every filed child is closed. It files only the first unfiled
+# phase, stops when that phase is requires-decision (a real human decision),
+# and honours an existing hold-for-review instead of filing around it.
+#
+# Args: $1=parent_issue, $2=repo_slug, $3=mode ("" bootstrap | "sequential")
 # Returns: 0 if a phase child was filed, 1 otherwise
 #######################################
 auto_file_next_unfiled_parent_phase() {
 	local parent_issue="$1"
 	local repo_slug="$2"
+	local mode="${3:-}"
+	local sequential=0 trigger_reason="bootstrap"
+	if [[ "$mode" == "$_PHASE_MODE_SEQUENTIAL" ]]; then
+		sequential=1
+		trigger_reason="$_PHASE_MODE_SEQUENTIAL"
+	fi
 	[[ "$parent_issue" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 1
 	[[ "${AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE:-0}" == "1" ]] || return 1
 
@@ -692,6 +752,12 @@ auto_file_next_unfiled_parent_phase() {
 		_phase_log "Parent #${parent_issue}: carries no-auto-dispatch, skip phase bootstrap"
 		return 1
 		;;
+	*,hold-for-review,*)
+		if [[ "$sequential" -eq 1 ]]; then
+			_phase_log "Parent #${parent_issue}: carries hold-for-review, skip sequential phase filing"
+			return 1
+		fi
+		;;
 	esac
 
 	local phases
@@ -702,7 +768,11 @@ auto_file_next_unfiled_parent_phase() {
 	while IFS=$'\t' read -r p_num p_desc p_marker p_child; do
 		[[ "$p_num" =~ ^[0-9]+$ ]] || continue
 		[[ -z "$p_child" ]] || continue
-		[[ "$p_marker" != "$_PHASE_MARKER_REQUIRES_DECISION" ]] || continue
+		if [[ "$p_marker" == "$_PHASE_MARKER_REQUIRES_DECISION" ]]; then
+			[[ "$sequential" -eq 1 ]] || continue
+			_phase_log "Parent #${parent_issue}: Phase ${p_num} requires a decision, stop sequential filing"
+			return 1
+		fi
 		next_phase_num="$p_num"
 		next_desc="$p_desc"
 		next_marker="$p_marker"
@@ -714,16 +784,25 @@ auto_file_next_unfiled_parent_phase() {
 	_phase_log "Bootstrapping Phase ${next_phase_num} ('${next_desc}', marker=${next_marker}) for parent #${parent_issue}"
 	local new_issue_url
 	new_issue_url=$(_create_or_reuse_phase_child_issue \
-		"$parent_issue" "$parent_title" "$next_phase_num" "$next_desc" "$repo_slug" "bootstrap")
+		"$parent_issue" "$parent_title" "$next_phase_num" "$next_desc" "$repo_slug" "$trigger_reason")
 	[[ -n "$new_issue_url" ]] || return 1
 
 	local new_issue_num; new_issue_num=$(printf '%s' "$new_issue_url" | grep -oE '[0-9]+$')
 	[[ -n "$new_issue_num" ]] || return 1
 	_update_parent_phases_section "$parent_issue" "$repo_slug" "$next_phase_num" "$new_issue_num"
+	# Sequential progression must leave durable evidence, or every reconcile
+	# cycle would re-link the same child and comment again (GH#38349).
+	if [[ "$sequential" -eq 1 && "${_PHASE_SECTION_RECORDED:-0}" != "1" ]]; then
+		_phase_log "Parent #${parent_issue}: could not record #${new_issue_num} on Phase ${next_phase_num}; leave for hold"
+		return 1
+	fi
+	local filing_note="Phase-only parent bootstrap: auto-filed"
+	[[ "$sequential" -eq 1 ]] &&
+		filing_note="All filed phase children are closed; sequential progression linked"
 	gh_issue_comment "$parent_issue" --repo "$repo_slug" \
-		--body "Phase-only parent bootstrap: auto-filed Phase ${next_phase_num} as #${new_issue_num}: ${next_desc}
+		--body "${filing_note} Phase ${next_phase_num} as #${new_issue_num}: ${next_desc}
 
-_Sequential phase bootstrap by \`shared-phase-filing.sh\` (t2740)._" >/dev/null 2>&1 || true
+_Sequential phase filing by \`shared-phase-filing.sh\` (t2740, GH#38349)._" >/dev/null 2>&1 || true
 	_phase_log "Bootstrapped Phase ${next_phase_num} as #${new_issue_num} for parent #${parent_issue}"
 	return 0
 }

@@ -25,6 +25,8 @@ from ._common import (
     atomic_write_json,
     build_auth_entry,
     call_token_endpoint,
+    pool_account_key,
+    pool_account_label,
     release_lock,
     token_refresh_error_label,
 )
@@ -60,22 +62,23 @@ def _try_refresh_token(account: dict, provider: str, now_ms: int, ua_header: str
     print("REFRESHED", file=sys.stderr)
 
 
-def _identify_current_email(accounts: list[dict], current_access: str) -> str:
-    """Resolve which account the current ``auth.json`` access token belongs to.
+def _identify_current_account(accounts: list[dict], current_access: str) -> dict:
+    """Resolve which seat the current ``auth.json`` access token belongs to.
 
-    Falls back to the most recently used account if no access token matches.
+    Falls back to the most recently used seat if no access token matches.
+    Identity is the seat key (email + optional orgId, GH#38959), so a Team and
+    a Personal seat on one email are distinct rotation candidates.
     """
     if current_access:
         for a in accounts:
             if a.get("access", "") == current_access:
-                return a.get("email", "unknown")
-    sorted_by_used = sorted(accounts, key=lambda a: a.get("lastUsed", ""), reverse=True)
-    return sorted_by_used[0].get("email", "unknown")
+                return a
+    return sorted(accounts, key=lambda a: a.get("lastUsed", ""), reverse=True)[0]
 
 
-def _is_immediately_available(account: dict, current_email: str, now_ms: int) -> bool:
+def _is_immediately_available(account: dict, current_key: str, now_ms: int) -> bool:
     """Tier-1 check: the account is non-current, active/idle, and not in cooldown."""
-    if account.get("email") == current_email:
+    if pool_account_key(account) == current_key:
         return False
     if account.get("status", "active") not in ("active", "idle"):
         return False
@@ -83,9 +86,42 @@ def _is_immediately_available(account: dict, current_email: str, now_ms: int) ->
     return not cd or cd <= now_ms
 
 
+USAGE_REMAINING_FLOOR_PCT = 5
+USAGE_MAX_AGE_MS = 8 * 24 * 60 * 60 * 1000
+
+
+def _to_ms(value: object) -> int:
+    try:
+        n = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+    if n != n or n <= 0:
+        return 0
+    return int(n * 1000) if n < 1e12 else int(n)
+
+
+def _reset_sort_key(account: dict, now_ms: int) -> tuple[int, int]:
+    """Reset-aware ordering key (t19125); mirrors oauth-pool-ordering.mjs.
+
+    ``(0, resetAt)`` for a seat with a future reset, fresh data and quota above
+    the floor (earliest deadline first); ``(1, 0)`` otherwise, so seats without
+    data keep the caller's LRU tiebreak.
+    """
+    reset = _to_ms(account.get("usageResetAt"))
+    if not reset or reset <= now_ms:
+        return (1, 0)
+    observed = _to_ms(account.get("usageObservedAt"))
+    if observed and now_ms - observed > USAGE_MAX_AGE_MS:
+        return (1, 0)
+    pct = account.get("usageRemainingPct")
+    if isinstance(pct, (int, float)) and not isinstance(pct, bool) and pct <= USAGE_REMAINING_FLOOR_PCT:
+        return (1, 0)
+    return (0, reset)
+
+
 def _select_rotation_candidate(
     accounts: list[dict],
-    current_email: str,
+    current_key: str,
     now_ms: int,
 ) -> tuple[dict | None, bool]:
     """Pick the next account to rotate to.
@@ -93,11 +129,14 @@ def _select_rotation_candidate(
     Returns ``(next_account, all_rate_limited)``. When all accounts are
     rate-limited (Tier 2), ``all_rate_limited`` is True and the candidate
     is the one with the *shortest* cooldown remaining. Otherwise (Tier 1),
-    candidates are sorted by ``(-priority, lastUsed)``.
+    candidates are sorted by ``(-priority, reset group, reset, lastUsed)``;
+    seats with no usable reset data fall back to ``(-priority, lastUsed)``.
     """
-    candidates = [a for a in accounts if _is_immediately_available(a, current_email, now_ms)]
+    candidates = [a for a in accounts if _is_immediately_available(a, current_key, now_ms)]
     if candidates:
-        candidates.sort(key=lambda a: (-(a.get("priority") or 0), a.get("lastUsed", "")))
+        candidates.sort(
+            key=lambda a: (-(a.get("priority") or 0), *_reset_sort_key(a, now_ms), a.get("lastUsed", ""))
+        )
         return candidates[0], False
 
     fallback = sorted(accounts, key=lambda a: a.get("cooldownUntil") or 0)
@@ -106,10 +145,10 @@ def _select_rotation_candidate(
     return fallback[0], True
 
 
-def _update_last_used(pool: dict, provider: str, email: str) -> None:
+def _update_last_used(pool: dict, provider: str, seat_key: str) -> None:
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     for a in pool[provider]:
-        if a.get("email") == email:
+        if pool_account_key(a) == seat_key:
             a["lastUsed"] = now_iso
             return
 
@@ -117,8 +156,8 @@ def _update_last_used(pool: dict, provider: str, email: str) -> None:
 def _print_rotation_outcome(
     all_rate_limited: bool,
     next_account: dict,
-    current_email: str,
-    next_email: str,
+    current_label: str,
+    next_label: str,
     now_ms: int,
 ) -> None:
     if all_rate_limited:
@@ -127,8 +166,8 @@ def _print_rotation_outcome(
         print(f"OK_COOLDOWN:{wait_mins}")
     else:
         print("OK")
-    print(current_email)
-    print(next_email)
+    print(current_label)
+    print(next_label)
 
 
 def cmd_rotate() -> None:
@@ -143,8 +182,8 @@ def cmd_rotate() -> None:
     # State that crosses the lock boundary so we can print after releasing.
     all_rate_limited = False
     next_account: dict | None = None
-    current_email = ""
-    next_email = ""
+    current_label = ""
+    next_label = ""
     now_ms = int(time.time() * 1000)
 
     try:
@@ -162,15 +201,17 @@ def cmd_rotate() -> None:
         current_auth = auth.get(provider, {})
         current_access = current_auth.get("access", "")
 
-        current_email = _identify_current_email(accounts, current_access)
+        current_account = _identify_current_account(accounts, current_access)
+        current_label = pool_account_label(current_account)
 
         now_ms = int(time.time() * 1000)
-        next_account, all_rate_limited = _select_rotation_candidate(accounts, current_email, now_ms)
+        next_account, all_rate_limited = _select_rotation_candidate(
+            accounts, pool_account_key(current_account), now_ms)
         if next_account is None:
             print("ERROR:no_alternate")
             sys.exit(0)
 
-        next_email = next_account.get("email", "unknown")
+        next_label = pool_account_label(next_account)
 
         # Auto-refresh if expired and refresh token available
         if next_account.get("expires", 0) <= now_ms and next_account.get("refresh"):
@@ -179,10 +220,10 @@ def cmd_rotate() -> None:
         auth[provider] = build_auth_entry(provider, next_account, current_auth)
         atomic_write_json(auth_path, auth)
 
-        _update_last_used(pool, provider, next_email)
+        _update_last_used(pool, provider, pool_account_key(next_account))
         atomic_write_json(pool_path, pool)
     finally:
         release_lock(lock_fd)
         lock_fd.close()
 
-    _print_rotation_outcome(all_rate_limited, next_account, current_email, next_email, now_ms)
+    _print_rotation_outcome(all_rate_limited, next_account, current_label, next_label, now_ms)

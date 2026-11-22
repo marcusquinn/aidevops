@@ -72,7 +72,7 @@ identifiers used for an intentional comparison:
 simple
 standard
 thinking
-openai/gpt-5.6-terra
+openai/gpt-6.1-terra
 anthropic/claude-sonnet-5-5
 google/gemini-pro
 openrouter/deepseek-r1
@@ -170,10 +170,10 @@ auto-reason-{slug}/
 Prefer at least two independent model families in the judge panel when available. Example:
 
 ```text
-author: openai/gpt-5.6-terra
+author: openai/gpt-6.1-terra
 critic: anthropic/claude-haiku-5-5
-synthesizer: openai/gpt-5.6-terra
-judges: anthropic/claude-haiku-5-5,google/gemini-pro,openai/gpt-5.6-terra
+synthesizer: openai/gpt-6.1-terra
+judges: anthropic/claude-haiku-5-5,google/gemini-pro,openai/gpt-6.1-terra
 ```
 
 If only one provider is configured, proceed with same-provider fresh contexts and state the limitation in `summary.md`.

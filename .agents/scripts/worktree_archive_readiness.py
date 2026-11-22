@@ -7,7 +7,11 @@ READINESS_ADMIN_FILES = {
     "aidevops/js-readiness.json", "aidevops/js-restore.json",
     "aidevops/js-readiness-entry", "aidevops/js-prepare.json",
 }
-OPAQUE_ADMIN_FILES = READINESS_ADMIN_FILES | {"aidevops-profile-publication.json"}
+# Legacy admission diagnostics are preserved as data, not added to the current
+# readiness protocol or interpreted as dependency-install approval.
+OPAQUE_ADMIN_FILES = READINESS_ADMIN_FILES | {
+    "aidevops/js-admission.json", "aidevops-profile-publication.json",
+}
 MAX_READINESS_BYTES = 1024 * 1024
 
 

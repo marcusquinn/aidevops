@@ -447,6 +447,51 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# Test 11d.0: holder-blocked auto records skips, exits 0, and notice escalates
+# -----------------------------------------------------------------------------
+
+skip_state="$SANDBOX/skip-state"
+skip_bin="$SANDBOX/skip-bin"
+mkdir -p "$skip_bin"
+printf '%s\n' '#!/usr/bin/env bash' "printf '%s\\n' 4242" 'exit 0' >"$skip_bin/lsof"
+chmod +x "$skip_bin/lsof"
+skip_rc_ok=true
+for _i in 1 2 3; do
+	set +e
+	PATH="$skip_bin:$PATH" OPENCODE_MAINTENANCE_SINGLE_DB=1 OPENCODE_MAINTENANCE_STATE_DIR="$skip_state" \
+		_run_helper auto >/dev/null 2>&1
+	rc=$?
+	set -e
+	[[ "$rc" -eq 0 ]] || skip_rc_ok=false
+done
+if [[ "$skip_rc_ok" == true ]] && grep -q '"consecutive": 3' "$skip_state/auto-skips.json" 2>/dev/null; then
+	_pass "holder-blocked auto records consecutive skips and exits 0"
+else
+	_fail "auto-skips.json not recorded as expected (rc_ok=$skip_rc_ok)"
+fi
+
+set +e
+out=$(VACUUM_FREELIST_THRESHOLD=0.0 OPENCODE_MAINTENANCE_STATE_DIR="$skip_state" _run_helper notice 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 && "$out" == *"3 consecutive"* && "$out" == *"MB reclaimable"* && "$out" == *"maintenance-window --force-opencode"* ]]; then
+	_pass "notice escalates after repeated skips with reclaimable pages"
+else
+	_fail "notice missing skip escalation (rc=$rc) — output: $out"
+fi
+
+rm -f "$skip_state/auto-skips.json"
+set +e
+out=$(VACUUM_FREELIST_THRESHOLD=0.0 OPENCODE_MAINTENANCE_STATE_DIR="$skip_state" _run_helper notice 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 && "$out" != *"consecutive"* ]]; then
+	_pass "missing skip state produces no escalation and no error"
+else
+	_fail "missing skip state mishandled (rc=$rc) — output: $out"
+fi
+
+# -----------------------------------------------------------------------------
 # Test 11d.1: invalid integer environment thresholds fall back safely
 # -----------------------------------------------------------------------------
 

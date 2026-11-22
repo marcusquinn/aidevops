@@ -5,6 +5,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../pulse-merge-feedback-finalizer.sh"
+source "${SCRIPT_DIR}/../pulse-merge-issue-closeout.sh"
 source "${SCRIPT_DIR}/../pulse-merge-process.sh"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
@@ -20,8 +21,17 @@ ISSUE_LABELS='[]'
 PR_LABELS="origin:worker,conflict-feedback-routed"
 HEAD="abc123repairsha"
 WRITES=0 COMMENTS=0 DISPATCHES=0 FINISHED=0 FAIL_HOLD=0 COMMENT_NOOP=0
+CLOSES=0 FAIL_CLOSE=0 CLOSE_ARGS=""
 COMMENT_JSON='[]'
 AFTER_COMMENT_HEAD="" AFTER_COMMENT_LABELS="" AFTER_HOLD_HEAD=""
+PR_BODY=""
+
+gh_pr_view() {
+	# Simulates a maintainer hold comment landing during the held-PR reads.
+	[[ "${LATE_HOLD_COMMENT:-0}" == "0" ]] || : >"${TEST_ROOT}/late-hold-comment"
+	printf '%s\n' "$PR_BODY"
+	return 0
+}
 
 gh() {
 	local command="$1" endpoint="$2"
@@ -32,7 +42,14 @@ gh() {
 			'{state:$state,state_reason:$reason,labels:$labels}'
 		;;
 	"repos/owner/repo/issues/100/comments?per_page=100")
-		printf '%s\n' "$COMMENT_JSON"
+		if [[ -e "${TEST_ROOT}/late-hold-comment" ]]; then
+			printf '%s\n' "$COMMENT_JSON" | jq '. + [{id:3,created_at:"2026-01-03T00:00:00Z",body:"Hold: I still need this",user:{login:"maintainer"},author_association:"OWNER"}]'
+		else
+			printf '%s\n' "$COMMENT_JSON"
+		fi
+		;;
+	"repos/owner/repo/issues/100/timeline?per_page=100")
+		printf '%s\n' '[{"id":99,"created_at":"2026-01-01T00:00:02Z"}]'
 		;;
 	user)
 		[[ "${IDENTITY_FAIL:-0}" == "0" ]] || return 1
@@ -82,8 +99,17 @@ _feedback_route_gh_write() {
 		;;
 	edit)
 		[[ "$FAIL_HOLD" == "0" ]] || return 1
-		PR_LABELS="${PR_LABELS},hold-for-review"
+		if [[ "${6:-}" == "--remove-label" ]]; then
+			PR_LABELS="${PR_LABELS/,hold-for-review/}"
+		else
+			PR_LABELS="${PR_LABELS},hold-for-review"
+		fi
 		[[ -z "$AFTER_HOLD_HEAD" ]] || HEAD="$AFTER_HOLD_HEAD"
+		;;
+	close)
+		CLOSES=$((CLOSES + 1))
+		CLOSE_ARGS="$*"
+		[[ "$FAIL_CLOSE" == "0" ]] || return 1
 		;;
 	*) return 1 ;;
 	esac
@@ -118,6 +144,36 @@ route ci
 [[ "$COMMENTS" == "1" && "$WRITES" == "2" && "$DISPATCHES" == "0" && "$FINISHED" == "3" ]]
 [[ ! -e "${TEST_ROOT}/deferred" ]]
 printf 'PASS: completed closed issue held once across conflict/CI retries\n'
+
+PR_BODY='<!-- aidevops:pulse-todo-handoff id=example -->'
+WRITES=0 COMMENTS=0
+rc=0
+_feedback_route_guard_closed_issue 100 owner/repo 42 ci || rc=$?
+[[ "$rc" == "75" && "$WRITES" == "0" && "$COMMENTS" == "0" ]]
+PR_BODY=""
+printf 'PASS: TODO projection defers without writing a hold\n'
+
+_feedback_route_latest_hold_event() {
+	printf '99\t%s\n' "${EVENT_ACTOR:-other-runner}"
+	return 0
+}
+HEAD="0123456789012345678901234567890123456789"
+PR_BODY='<!-- aidevops:pulse-todo-handoff id=example -->'
+PR_LABELS="origin:worker,hold-for-review"
+COMMENT_JSON='[{"id":1,"created_at":"2026-01-01T00:00:00Z","body":"<!-- feedback-route:closed-issue:PR100:ISSUE42:SHA0123456789012345678901234567890123456789:RUNNERa --> Holding for review","user":{"login":"other-runner"},"author_association":"CONTRIBUTOR"}]'
+WRITES=0
+_feedback_route_release_projection_hold 100 owner/repo
+[[ "$WRITES" == "1" && "$PR_LABELS" == "origin:worker" ]]
+PR_LABELS="origin:worker,hold-for-review"
+EVENT_ACTOR="maintainer"
+if _feedback_route_release_projection_hold 100 owner/repo; then exit 1; fi
+[[ "$WRITES" == "1" ]]
+EVENT_ACTOR="other-runner"
+COMMENT_JSON=$(printf '%s' "$COMMENT_JSON" | jq '. + [{id:2,created_at:"2026-01-02T00:00:00Z",body:"Holding for review",user:{login:"maintainer"}}]')
+if _feedback_route_release_projection_hold 100 owner/repo; then exit 1; fi
+[[ "$WRITES" == "1" ]]
+HEAD="abc123repairsha" PR_BODY="" EVENT_ACTOR=""
+printf 'PASS: stale projection hold requires latest trusted receipt and matching label actor\n'
 
 PR_LABELS="origin:worker"
 COMMENT_JSON='[]'
@@ -274,6 +330,148 @@ _feedback_route_guard_closed_issue 100 owner/repo 42 conflict || rc=$?
 AFTER_HOLD_HEAD=""
 route conflict
 printf 'PASS: head drift at both write boundaries reclassifies before terminal success\n'
+
+# t19286: an issue another merged PR completed supersedes the worker PR.
+CLOSER=""
+_psh_find_merged_closer_for_closed_issue() {
+	[[ -n "$CLOSER" ]] || return 1
+	printf '%s' "$CLOSER"
+	return 0
+}
+supersede_case() {
+	PR_LABELS="$1" REASON="$2" CLOSER="$3" FAIL_CLOSE="${4:-0}"
+	COMMENT_JSON='[]' ISSUE_LABELS='[]' CLOSE_ARGS=""
+	reset_fuse
+	WRITES=0 COMMENTS=0 CLOSES=0 DISPATCHES=0
+	route ci
+	return $?
+}
+supersede_case "origin:worker-takeover" completed 200
+[[ "$CLOSES" == "1" && "$COMMENTS" == "0" && "$PR_LABELS" != *"hold-for-review"* && "$DISPATCHES" == "0" ]]
+[[ "$CLOSE_ARGS" == *"merged PR #200"* && "$CLOSE_ARGS" != *"--delete-branch"* ]]
+printf 'PASS: issue closed by another merged PR closes the worker PR, branch kept, no hold\n'
+for labels in "origin:worker,follow-up" "origin:worker,do-not-close" "origin:worker,no-auto-dispatch" "origin:interactive"; do
+	supersede_case "$labels" completed 200 || true
+	[[ "$CLOSES" == "0" ]]
+done
+supersede_case "origin:worker" not_planned 200
+[[ "$CLOSES" == "0" && "$COMMENT_JSON" == *"orphaned"* ]]
+supersede_case "origin:worker" completed ""
+[[ "$CLOSES" == "0" && "$PR_LABELS" == *"hold-for-review"* ]]
+printf 'PASS: protection labels, not-planned closure and no merged closer keep the hold path\n'
+supersede_case "origin:worker" completed 200 1
+[[ "$CLOSES" == "1" && "$COMMENTS" == "1" && "$PR_LABELS" == *"hold-for-review"* ]]
+printf 'PASS: a failed superseded close falls back to the maintainer hold\n'
+
+# t19286: an existing closed-issue hold is closed only with exact provenance.
+HELD_RECEIPT_JSON='[{"id":1,"created_at":"2026-01-01T00:00:00Z","body":"<!-- feedback-route:closed-issue:PR100:ISSUE42:SHA0123456789012345678901234567890123456789:RUNNERa --> Holding this ci repair PR","user":{"login":"other-runner"},"author_association":"CONTRIBUTOR"}]'
+held_case() {
+	PR_LABELS="${1:-origin:worker-takeover,hold-for-review}"
+	CLOSER="${2-200}" EVENT_ACTOR="${3:-other-runner}" PR_BODY="${4:-}"
+	COMMENT_JSON="$HELD_RECEIPT_JSON"
+	[[ -z "${5:-}" ]] || COMMENT_JSON=$(printf '%s' "$COMMENT_JSON" | jq --arg body "$5" '. + [{id:2,created_at:"2026-01-02T00:00:00Z",body:$body,user:{login:"maintainer"},author_association:"OWNER"}]')
+	CLOSES=0 CLOSE_ARGS="" FAIL_CLOSE=0
+	_feedback_route_close_superseded_closed_issue_hold 100 owner/repo "${6-42}"
+	return $?
+}
+HEAD="0123456789012345678901234567890123456789"
+REASON="completed" ISSUE_LABELS='[]'
+held_case
+[[ "$CLOSES" == "1" && "$CLOSE_ARGS" == *"#42"*"merged PR #200"* ]]
+printf 'PASS: automation closed-issue hold for the current head is closed as superseded\n'
+if held_case "" "" ""; then exit 1; fi
+[[ "$CLOSES" == "0" ]]
+if held_case "" 200 maintainer; then exit 1; fi
+[[ "$CLOSES" == "0" ]]
+if held_case "" 200 "" "" "Please hold this until I check the data"; then exit 1; fi
+[[ "$CLOSES" == "0" ]]
+if held_case "" 200 "" '<!-- aidevops:pulse-todo-handoff id=example -->'; then exit 1; fi
+[[ "$CLOSES" == "0" ]]
+if held_case "origin:worker,hold-for-review,follow-up"; then exit 1; fi
+[[ "$CLOSES" == "0" ]]
+HEAD="1111111111111111111111111111111111111111"
+if held_case; then exit 1; fi
+[[ "$CLOSES" == "0" ]]
+HEAD="0123456789012345678901234567890123456789"
+printf 'PASS: no closer, maintainer hold, later hold comment, projection, protection or new head preserve the hold\n'
+
+# A PR relinked to another issue, or with no linked issue, keeps its hold.
+for expected_issue in 43 ""; do
+	if held_case "" 200 "" "" "" "$expected_issue"; then exit 1; fi
+	[[ "$CLOSES" == "0" ]]
+done
+# Orphaned closures stay held even when a merged PR closed the issue.
+REASON="not_planned"
+if held_case; then exit 1; fi
+[[ "$CLOSES" == "0" ]]
+REASON="completed" ISSUE_LABELS='[{"name":"consolidated"}]'
+if held_case; then exit 1; fi
+[[ "$CLOSES" == "0" ]]
+ISSUE_LABELS='[]'
+# A maintainer hold comment that lands during the reads wins.
+LATE_HOLD_COMMENT=1
+if held_case; then exit 1; fi
+[[ "$CLOSES" == "0" ]]
+LATE_HOLD_COMMENT=0
+rm -f "${TEST_ROOT}/late-hold-comment"
+printf 'PASS: relinked PR, orphaned closure and a late hold comment preserve the hold\n'
+
+# The guard closes an already-held PR only through the held-PR proof.
+PR_LABELS="origin:worker,hold-for-review" CLOSER=200 EVENT_ACTOR="other-runner" PR_BODY=""
+COMMENT_JSON='[]' CLOSES=0
+reset_fuse
+rc=0
+_feedback_route_guard_closed_issue 100 owner/repo 42 ci || rc=$?
+[[ "$rc" == "76" && "$CLOSES" == "0" && "$PR_LABELS" == *"hold-for-review"* ]]
+PR_LABELS="origin:worker,hold-for-review" COMMENT_JSON="$HELD_RECEIPT_JSON" CLOSES=0
+rc=0
+_feedback_route_guard_closed_issue 100 owner/repo 42 ci || rc=$?
+[[ "$rc" == "76" && "$CLOSES" == "1" ]]
+HEAD="abc123repairsha" PR_BODY="" EVENT_ACTOR="" CLOSER="" REASON="completed"
+printf 'PASS: guard keeps a manual hold and closes only a proven automation hold\n'
+
+# t19288: the merge pass gives the held-PR proof a For #N work issue when the
+# PR has no closing target, and passes an existing closing target unchanged.
+gate_case() {
+	local linked="$1" resolver_rc="$2"
+	: >"${TEST_ROOT}/gate-calls"
+	: >"$LOGFILE"
+	(
+		local fn_src="" result=0
+		fn_src=$(awk '/^_pm_gate_origin_authority\(\) \{/,/^}$/ { print }' "${SCRIPT_DIR}/../pulse-merge.sh")
+		eval "$fn_src"
+		gh_pr_view() {
+			jq -cn '{isDraft:false,labels:[{name:"origin:worker-takeover"},{name:"hold-for-review"}],autoMergeRequest:null,headRefName:"feature/x",body:"Recovery PR\n\nFor #42"}'
+			return 0
+		}
+		_extract_pr_work_issue() {
+			printf 'resolver %s %s %s %s\n' "$1" "$2" "$3" "${4//$'\n'/ }" >>"${TEST_ROOT}/gate-calls"
+			[[ "$resolver_rc" == "0" ]] || return "$resolver_rc"
+			printf '42'
+			return 0
+		}
+		_feedback_route_close_superseded_closed_issue_hold() {
+			printf 'proof %s\n' "${3:-none}" >>"${TEST_ROOT}/gate-calls"
+			[[ "${3:-}" == "42" ]]
+		}
+		_feedback_route_release_projection_hold() { return 1; }
+		_pmrp_route_held_pr() { return 0; }
+		_pm_gate_origin_authority 100 owner/repo "$linked" worker 0 write || result=$?
+		[[ "$result" == "1" ]]
+	)
+	return $?
+}
+gate_case "" 0
+grep -qxF 'resolver 100 owner/repo explicit Recovery PR  For #42' "${TEST_ROOT}/gate-calls"
+grep -qxF 'proof 42' "${TEST_ROOT}/gate-calls"
+if grep -qF 'PR is draft or has hold-for-review' "$LOGFILE"; then exit 1; fi
+gate_case 42 0
+if grep -qF 'resolver' "${TEST_ROOT}/gate-calls"; then exit 1; fi
+grep -qxF 'proof 42' "${TEST_ROOT}/gate-calls"
+gate_case "" 2
+grep -qxF 'proof none' "${TEST_ROOT}/gate-calls"
+grep -qF 'PR is draft or has hold-for-review' "$LOGFILE"
+printf 'PASS: merge pass resolves a For #N work issue for the held-PR proof; ambiguity keeps the hold\n'
 
 # GH#34600: automation-hold provenance shares the actor-pinned filter, so it
 # must match the runner's own login under CONTRIBUTOR and nobody else's.

@@ -9,7 +9,9 @@
 _TEST_HEADLESS_RUNTIME_CHECKPOINT_TESTS_LOADED=1
 
 test_post_pr_handoff_detects_open_pending_pr() {
-	local work_dir="${TEST_ROOT}/repo-post-pr-handoff"
+	local session_key="${1:-issue-99999}"
+	local WORKER_ISSUE_NUMBER=99999 WORKER_REPO_SLUG="test-owner/test-repo"
+	local work_dir="${TEST_ROOT}/repo-post-pr-handoff-${session_key}"
 	mkdir -p "$work_dir"
 	init_git_worktree "$work_dir"
 	git -C "$work_dir" checkout -q -b "feature/auto-test-issue-99999"
@@ -39,7 +41,7 @@ test_post_pr_handoff_detects_open_pending_pr() {
 		return 1
 	}
 
-	if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+	if _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
 		print_result "post-PR watchdog handoff detects open pending PR" 0
 	else
 		print_result "post-PR watchdog handoff detects open pending PR" 1 \
@@ -121,7 +123,9 @@ EOF
 }
 
 test_post_pr_handoff_rejects_mismatched_head_or_missing_summary() {
-	local work_dir="${TEST_ROOT}/repo-post-pr-incomplete"
+	local session_key="${1:-issue-99999}"
+	local WORKER_ISSUE_NUMBER=99999 WORKER_REPO_SLUG="test-owner/test-repo"
+	local work_dir="${TEST_ROOT}/repo-post-pr-incomplete-${session_key}"
 	mkdir -p "$work_dir"
 	init_git_worktree "$work_dir"
 	git -C "$work_dir" checkout -q -b "feature/auto-test-issue-99999"
@@ -131,6 +135,7 @@ test_post_pr_handoff_rejects_mismatched_head_or_missing_summary() {
 	local remote_head="different-head"
 	local summary_count=1
 	local remote_is_draft="false"
+	local pr_body="Resolves #99999"
 
 	gh_pr_list() {
 		printf '[{"number":125,"state":"OPEN","isDraft":%s,"mergedAt":null,"headRefOid":"%s","labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' "$remote_is_draft" "$remote_head"
@@ -147,30 +152,37 @@ test_post_pr_handoff_rejects_mismatched_head_or_missing_summary() {
 			fi
 			return 0
 		elif [[ "$args" == *"api repos/"* && "$args" == *"/pulls/125"* ]]; then
-			printf '%s' 'Resolves #99999'
+			printf '%s' "$pr_body"
 			return 0
 		fi
 		return 1
 	}
 
-	if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+	if _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
 		print_result "post-PR watchdog handoff rejects mismatched PR head" 1
 	else
 		print_result "post-PR watchdog handoff rejects mismatched PR head" 0
 	fi
 	remote_head="$expected_head"
 	summary_count=0
-	if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+	if _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
 		print_result "post-PR watchdog handoff rejects missing MERGE_SUMMARY" 1
 	else
 		print_result "post-PR watchdog handoff rejects missing MERGE_SUMMARY" 0
 	fi
 	summary_count=1
 	remote_is_draft="true"
-	if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+	if _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
 		print_result "post-PR watchdog handoff rejects draft PR" 1
 	else
 		print_result "post-PR watchdog handoff rejects draft PR" 0
+	fi
+	remote_is_draft="false"
+	pr_body="For #99999"
+	if _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
+		print_result "post-PR handoff rejects missing closing linkage" 1
+	else
+		print_result "post-PR handoff rejects missing closing linkage" 0
 	fi
 
 	unset DISPATCH_REPO_SLUG 2>/dev/null || true
@@ -595,10 +607,92 @@ test_unverified_post_pr_handoff_with_partial_pr_is_checkpointed() {
 	return 0
 }
 
+# GH#36171: a transport deferral leaves exact-head state unreadable. It must
+# neither release the claim nor fast-fail into a tier escalation; after the
+# bounded re-verification it is recorded as deferred, never success.
+test_unreadable_post_pr_handoff_is_deferred_without_escalation() {
+	local result=""
+	local fast_fail_marker="${TEST_ROOT}/unreadable-handoff-fast-fail"
+	rm -f "$fast_fail_marker"
+	result=$(
+		(
+			_run_result_label="post_pr_handoff"
+			AIDEVOPS_POST_PR_HANDOFF_VERIFY_ATTEMPTS=2
+			AIDEVOPS_POST_PR_HANDOFF_VERIFY_DELAY_SECONDS=0
+			confirm_calls=0
+			_worker_post_pr_handoff_confirmed() {
+				confirm_calls=$((confirm_calls + 1))
+				_WORKER_POST_PR_HANDOFF_STATE="unknown"
+				return 1
+			}
+			_worker_produced_output() { printf 'pr_exists'; return 0; }
+			_report_failure_to_fast_fail() { printf '%s\n' "$*" >"$fast_fail_marker"; return 0; }
+			_release_dispatch_claim() { printf 'release=%s\n' "$2"; return 0; }
+
+			_hrw_finish_success_run "issue-99999" "${TEST_ROOT}"
+			printf 'rc=%s|calls=%s|terminal=%s|event=%s|status=%s|classification=%s\n' "$?" "$confirm_calls" \
+				"$_HRW_TERMINAL_OUTCOME" "$_HRW_FINAL_RUNTIME_EVENT" \
+				"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
+		) 2>&1
+	)
+	if [[ ! -f "$fast_fail_marker" &&
+		"$result" != *"release="* &&
+		"$result" == *"rc=0|calls=2|terminal=deferred|event=worker.deferred|status=checkpointed|classification=worker_post_pr_handoff_verification_deferred"* ]]; then
+		print_result "unreadable POST_PR_HANDOFF is deferred with the claim retained, not escalated" 0
+	else
+		print_result "unreadable POST_PR_HANDOFF is deferred with the claim retained, not escalated" 1 \
+			"result=${result} fast_fail=$([[ -f "$fast_fail_marker" ]] && echo yes || echo no)"
+	fi
+	return 0
+}
+
+# GH#36171: a handoff that confirms on re-verification follows the normal
+# verified success path (worker_complete release, success terminal).
+test_post_pr_handoff_confirmed_on_reverification_completes() {
+	local result=""
+	local fast_fail_marker="${TEST_ROOT}/reverified-handoff-fast-fail"
+	rm -f "$fast_fail_marker"
+	result=$(
+		(
+			_run_result_label="post_pr_handoff"
+			AIDEVOPS_POST_PR_HANDOFF_VERIFY_DELAY_SECONDS=0
+			confirm_calls=0
+			_worker_post_pr_handoff_confirmed() {
+				confirm_calls=$((confirm_calls + 1))
+				if [[ "$confirm_calls" -ge 2 ]]; then
+					_WORKER_POST_PR_HANDOFF_STATE="ready"
+					return 0
+				fi
+				_WORKER_POST_PR_HANDOFF_STATE="unknown"
+				return 1
+			}
+			_worker_produced_output() { printf 'pr_exists'; return 0; }
+			_hrw_terminal_objective_complete() { return 1; }
+			_report_failure_to_fast_fail() { printf '%s\n' "$*" >"$fast_fail_marker"; return 0; }
+			_release_dispatch_claim() { printf 'release=%s\n' "$2"; return 0; }
+
+			_hrw_finish_success_run "issue-99999" "${TEST_ROOT}"
+			printf 'rc=%s|calls=%s|terminal=%s\n' "$?" "$confirm_calls" "$_HRW_TERMINAL_OUTCOME"
+		) 2>&1
+	)
+	if [[ ! -f "$fast_fail_marker" &&
+		"$result" == *"release=worker_complete"* &&
+		"$result" == *"rc=0|calls=2|terminal=success"* &&
+		"$result" != *"worker_post_pr_handoff_unverified"* ]]; then
+		print_result "POST_PR_HANDOFF confirmed on re-verification completes normally" 0
+	else
+		print_result "POST_PR_HANDOFF confirmed on re-verification completes normally" 1 \
+			"result=${result} fast_fail=$([[ -f "$fast_fail_marker" ]] && echo yes || echo no)"
+	fi
+	return 0
+}
+
 # GH#34931: merged exact-head delivery is completion only with a closed issue.
 # Exercise the real handoff classifier, including linkage and summary probes.
 test_post_pr_handoff_after_merge_completes_closed_issue() {
-	local work_dir="${TEST_ROOT}/repo-post-pr-handoff-merged"
+	local session_key="${1:-issue-99999}"
+	local WORKER_ISSUE_NUMBER=99999 WORKER_REPO_SLUG="test-owner/test-repo"
+	local work_dir="${TEST_ROOT}/repo-post-pr-handoff-merged-${session_key}"
 	mkdir -p "$work_dir"
 	init_git_worktree "$work_dir"
 	git -C "$work_dir" checkout -q -b "feature/auto-test-issue-99999"
@@ -643,10 +737,10 @@ test_post_pr_handoff_after_merge_completes_closed_issue() {
 			_report_failure_to_fast_fail() { printf 'unexpected-fast-fail\n'; return 0; }
 			_escalate_worker_tier() { printf 'unexpected-escalation\n'; return 0; }
 
-			_hrw_finish_success_run "issue-99999" "$work_dir"
+			_hrw_finish_success_run "$session_key" "$work_dir"
 			printf 'rc=%s|terminal=%s\n' "$?" "$_HRW_TERMINAL_OUTCOME"
 			for fixture_issue_state in open unknown api_failure; do
-				if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+				if _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
 					printf 'unexpected-accepted-issue=%s\n' "$fixture_issue_state"
 				fi
 				# The open-issue merged checkpoint route must remain unchanged.
@@ -656,17 +750,24 @@ test_post_pr_handoff_after_merge_completes_closed_issue() {
 			done
 			fixture_issue_state="closed"
 			fixture_summary_count=0
-			if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
-				printf 'unexpected-accepted-missing-summary\n'
+			# t19196: after merge a missing summary gates nothing (closed issue,
+			# exact head and closing linkage already verified by the probe).
+			if ! _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
+				printf 'unexpected-rejected-missing-summary\n'
 			fi
+			fixture_issue_state="open"
+			if _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
+				printf 'unexpected-accepted-open-missing-summary\n'
+			fi
+			fixture_issue_state="closed"
 			fixture_summary_count=1
 			fixture_pr_body="For #99999"
-			if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+			if _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
 				printf 'unexpected-accepted-partial-linkage\n'
 			fi
 			fixture_pr_body="Resolves #99999"
 			remote_head="different-head"
-			if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+			if _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
 				printf 'unexpected-accepted-mismatched-head\n'
 			fi
 			return 0
@@ -719,6 +820,7 @@ test_closed_unmerged_pr_is_failed_not_completed() {
 
 # GH#33545: a ready partial PR that merged is a continuation, not a draft.
 test_merged_partial_pr_is_deferred_continuation_not_draft() {
+	local session_key="${1:-issue-99999}"
 	local result=""
 	result=$(
 		(
@@ -728,7 +830,7 @@ test_merged_partial_pr_is_deferred_continuation_not_draft() {
 			_hrw_merged_checkpoint_delivery() { _HRW_MERGED_DELIVERY_REPEATED=0; return 0; }
 			_release_dispatch_claim() { printf 'release=%s\n' "$2"; return 0; }
 			_report_failure_to_fast_fail() { return 0; }
-			_hrw_finish_success_run "issue-99999" "${TEST_ROOT}"
+			_hrw_finish_success_run "$session_key" "${TEST_ROOT}"
 			printf 'terminal=%s|%s|%s|%s\n' "$_HRW_TERMINAL_OUTCOME" "$_HRW_FINAL_RUNTIME_EVENT" \
 				"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
 		)
@@ -994,11 +1096,182 @@ test_access_denied_has_provider_failure_evidence() {
 	return 0
 }
 
+test_post_pr_handoff_validates_dispatch_identity() {
+	local result=""
+	result=$(
+		local WORKER_ISSUE_NUMBER=99999 WORKER_REPO_SLUG="test-owner/test-repo"
+		local DISPATCH_REPO_SLUG="test-owner/test-repo"
+		local session_key="" calls=0
+		gh() { return 0; }
+		git() {
+			printf '%s\n' fixture-head
+			return 0
+		}
+		_pr_handoff_state_for_branch_or_issue() {
+			[[ "$*" == 'fixture-head 99999 test-owner/test-repo head-only fixture-head 1' ]] || return 1
+			printf 'ready|123'
+			return 0
+		}
+		for session_key in manual-cli-99999-1700000000 issue-99999; do
+			_worker_post_pr_handoff_confirmed "$session_key" "$TEST_ROOT" && calls=$((calls + 1))
+		done
+		unset WORKER_REPO_SLUG
+		_worker_post_pr_handoff_confirmed manual-cli-99999-1 "$TEST_ROOT" && calls=$((calls + 1))
+		unset WORKER_ISSUE_NUMBER
+		_worker_post_pr_handoff_confirmed issue-99999 "$TEST_ROOT" && calls=$((calls + 1))
+		WORKER_ISSUE_NUMBER=99999
+		WORKER_REPO_SLUG="test-owner/test-repo"
+		printf 'accepted=%s\n' "$calls"
+		# Any attribution failure must stop before querying even a ready PR.
+		_pr_handoff_state_for_branch_or_issue() { printf 'ready|123'; return 0; }
+		for session_key in issue- issue-0 issue-99999-extra manual-cli-99999 manual-cli-099999-1 manual-cli-99999-text arbitrary-99999-1 manual-cli-88888-1 issue-88888; do
+			_worker_post_pr_handoff_confirmed "$session_key" "$TEST_ROOT" && printf 'unexpected-accept:%s\n' "$session_key"
+		done
+		unset WORKER_ISSUE_NUMBER
+		_worker_post_pr_handoff_confirmed manual-cli-99999-1 "$TEST_ROOT" && printf 'unexpected-unbound\n'
+		WORKER_ISSUE_NUMBER=99999
+		for DISPATCH_REPO_SLUG in '' malformed owner/repo/extra other/repo; do
+			_worker_post_pr_handoff_confirmed manual-cli-99999-1 "$TEST_ROOT" && printf 'unexpected-repo\n'
+		done
+		return 0
+	)
+	if [[ "$result" == 'accepted=4' ]]; then
+		print_result "handoff binds launcher session, issue and repository before canonical verification" 0
+	else
+		print_result "handoff binds launcher session, issue and repository before canonical verification" 1 "$result"
+	fi
+	return 0
+}
+
+test_draft_release_after_partial_merge_restores_dispatch() {
+	local result=""
+	result=$(
+		# shellcheck source=../pulse-merge-partial-continuation.sh
+		source "${SCRIPT_DIR}/pulse-merge-partial-continuation.sh"
+		local open_prs='[[]]'
+		local dispatch_count=0 unlock_count=0
+		_pmpc_gh_read() {
+			# Avoid case terminators inside $(): Bash 3.2 misparses them here.
+			if [[ "$*" == *'/comments?'* ]]; then
+				printf '%s' '[[{"author_association":"MEMBER","created_at":"2026-11-07T00:00:00Z","body":"CLAIM_RELEASED reason=worker_draft_checkpoint runner=runner1"}]]'
+			elif [[ "$*" == *'/pulls?'* ]]; then
+				printf '%s' "$open_prs"
+			else
+				printf '%s' '{"state":"open","labels":[{"name":"status:available"},{"name":"origin:interactive"}],"assignees":[]}'
+			fi
+			return 0
+		}
+		clear_active_status_on_release() { printf 'projection=%s\n' "$*"; return 0; }
+		_unlock_issue_after_dispatch_release() { unlock_count=$((unlock_count + 1)); return 0; }
+		set_issue_status() {
+			[[ "$*" == '99999 owner/repo available --add-label auto-dispatch' ]] || return 1
+			dispatch_count=$((dispatch_count + 1))
+			return 0
+		}
+		gh_issue_comment() { return 0; }
+		print_info() { return 0; }
+		_hrff_project_post_release_state 99999 owner/repo runner1 worker_draft_checkpoint
+		# GH#30180: a release that restores the label keeps the conversation locked.
+		printf 'dispatch=%s unlock=%s\n' "$dispatch_count" "$unlock_count"
+		# An actual open draft must retain exact-head continuation, not redispatch.
+		open_prs='[[{"number":123,"body":"For #99999","draft":true}]]'
+		_hrff_project_post_release_state 99999 owner/repo runner1 worker_draft_checkpoint
+		printf 'open-draft=%s unlock=%s\n' "$dispatch_count" "$unlock_count"
+	)
+	if [[ "$result" == *'dispatch=1 unlock=0'* && "$result" == *'open-draft=1 unlock=1'* ]]; then
+		print_result "late draft release restores available dispatch after partial merge but preserves open draft" 0
+	else
+		print_result "late draft release restores available dispatch after partial merge but preserves open draft" 1 "$result"
+	fi
+	return 0
+}
+
+# GH#38021: the checkpoint escalation and its release projection run in one
+# process, so a canonical consolidated spec gets back the auto-dispatch label
+# that this run removed while its draft stays open. A spec that did not carry
+# the label before the checkpoint is left without it.
+# GH#30180: the restored spec is dispatchable again, so its conversation lock
+# is kept; the spec left without the label is unlocked as before.
+# Args: $1=1 when the spec carries auto-dispatch before the checkpoint, else 0
+test_draft_checkpoint_restores_consolidated_spec_dispatch() {
+	local carried="$1"
+	local status_log="${TEST_ROOT}/spec-dispatch-status-${carried}.log"
+	local unlock_log="${TEST_ROOT}/spec-dispatch-unlock-${carried}.log"
+	local expected="99999 test-owner/test-repo in-review --remove-label auto-dispatch --add-assignee worker-bot"
+	local expected_unlocks="99999 test-owner/test-repo"
+	local name="draft checkpoint leaves a consolidated spec without auto-dispatch as it found it"
+	local result="" transitions="" unlocks=""
+	if [[ "$carried" -eq 1 ]]; then
+		expected+=$'\n''99999 test-owner/test-repo available --add-label auto-dispatch'
+		expected_unlocks=""
+		name="draft checkpoint restores the auto-dispatch it removed from a consolidated spec and keeps it locked"
+	fi
+	: >"$status_log"
+	: >"$unlock_log"
+	result=$(
+		# shellcheck source=../pulse-merge-partial-continuation.sh
+		source "${SCRIPT_DIR}/pulse-merge-partial-continuation.sh"
+		_PMPC_CHECKPOINT_SPEC_RECEIPT=""
+		local spec_body='_Supersedes #88 — this issue is the consolidated spec._'
+		local released=0
+		_pmpc_gh_read() {
+			# Avoid case terminators inside $(): Bash 3.2 misparses them here.
+			if [[ "$*" == *'/comments?'* ]]; then
+				printf '%s' '[[{"author_association":"MEMBER","created_at":"2026-11-07T00:00:00Z","body":"CLAIM_RELEASED reason=worker_draft_checkpoint runner=worker-bot"}]]'
+			elif [[ "$*" == *'/pulls?'* ]]; then
+				printf '%s' '[[{"number":123,"body":"For #99999","draft":true}]]'
+			elif [[ "$released" -eq 1 ]]; then
+				jq -cn --arg body "$spec_body" '{state: "open", body: $body, assignees: [],
+					labels: [{name: "status:available"}, {name: "consolidated"}]}'
+			else
+				jq -cn --arg body "$spec_body" --arg carried "$carried" '{state: "open", body: $body,
+					assignees: [{login: "worker-bot"}],
+					labels: ([{name: "status:in-progress"}, {name: "consolidated"}]
+						+ (if $carried == "1" then [{name: "auto-dispatch"}] else [] end))}'
+			fi
+			return 0
+		}
+		gh() {
+			printf '%s\n' '{"state":"OPEN","labels":[{"name":"status:in-review"},{"name":"consolidated"}],"assignees":[{"login":"worker-bot"}]}'
+			return 0
+		}
+		_hrff_resolve_release_runner_login() { printf 'worker-bot'; return 0; }
+		clear_active_status_on_release() { released=1; return 0; }
+		_unlock_issue_after_dispatch_release() { printf '%s\n' "$*" >>"$unlock_log"; return 0; }
+		set_issue_status() { printf '%s\n' "$*" >>"$status_log"; return 0; }
+		gh_issue_comment() { printf 'unexpected-comment\n'; return 0; }
+		print_info() { return 0; }
+		print_warning() { return 0; }
+		_release_dispatch_claim() {
+			local release_reason="$2"
+			_hrff_project_post_release_state 99999 test-owner/test-repo worker-bot "$release_reason"
+			return 0
+		}
+		_escalate_worker_pr_checkpoint issue-99999 test-owner/test-repo draft_checkpoint
+		printf 'classification=%s\n' "${_HRW_RECOVERY_CLASSIFICATION:-}"
+	)
+	transitions=$(<"$status_log")
+	unlocks=$(<"$unlock_log")
+	if [[ "$transitions" == "$expected" && "$unlocks" == "$expected_unlocks" &&
+		"$result" == *"classification=worker_draft_checkpoint"* && "$result" != *unexpected-comment* ]]; then
+		print_result "$name" 0
+	else
+		print_result "$name" 1 "result=${result} transitions=${transitions} unlocks=${unlocks}"
+	fi
+	return 0
+}
+
 test_pr_checkpoint_lifecycle_cases() {
+	test_draft_release_after_partial_merge_restores_dispatch
+	test_draft_checkpoint_restores_consolidated_spec_dispatch 1
+	test_draft_checkpoint_restores_consolidated_spec_dispatch 0
 	test_post_pr_handoff_detects_open_pending_pr
+	test_post_pr_handoff_detects_open_pending_pr manual-cli-99999-1700000000
+	test_post_pr_handoff_validates_dispatch_identity
 	test_post_pr_handoff_propagates_classifier_failure
 	test_post_pr_handoff_treats_ci_as_monitoring_state
 	test_post_pr_handoff_rejects_mismatched_head_or_missing_summary
+	test_post_pr_handoff_rejects_mismatched_head_or_missing_summary manual-cli-99999-1700000000
 	test_failed_worker_draft_checkpoint_preserves_continuation_without_completion
 	test_dirty_worktree_checkpoint_is_deferred_not_complete
 	test_exit_trap_dirty_checkpoint_is_deferred_not_complete
@@ -1011,10 +1284,14 @@ test_pr_checkpoint_lifecycle_cases() {
 	test_ready_missing_summary_preserves_in_review_handoff
 	test_ready_missing_linkage_preserves_in_review_handoff
 	test_unverified_post_pr_handoff_with_partial_pr_is_checkpointed
+	test_unreadable_post_pr_handoff_is_deferred_without_escalation
+	test_post_pr_handoff_confirmed_on_reverification_completes
 	test_post_pr_handoff_after_merge_completes_closed_issue
+	test_post_pr_handoff_after_merge_completes_closed_issue manual-cli-99999-1700000000
 	test_failed_ci_ready_pr_is_durable_handoff
 	test_closed_unmerged_pr_is_failed_not_completed
 	test_merged_partial_pr_is_deferred_continuation_not_draft
+	test_merged_partial_pr_is_deferred_continuation_not_draft manual-cli-99999-1700000000
 	test_failed_worker_ready_pr_remains_completed_handoff
 	test_worker_recovery_reconciles_missing_origin_with_exact_provenance
 	test_worker_recovery_rejects_conflicting_origin_and_retains_claim

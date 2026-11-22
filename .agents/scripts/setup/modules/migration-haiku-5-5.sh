@@ -59,7 +59,9 @@ _haiku55_render() {
 
 _haiku55_file_mode() {
 	local path="$1"
-	stat -f '%Lp' "$path" 2>/dev/null || stat -c '%a' "$path" 2>/dev/null || printf '600\n'
+	# shellcheck source=../../portable-stat.sh
+	source "${BASH_SOURCE[0]%/*}/../../portable-stat.sh" || return 1
+	_stat_batch '%a' "$path" || printf '600\n'
 	return 0
 }
 

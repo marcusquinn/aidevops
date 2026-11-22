@@ -44,7 +44,11 @@ ARCHIVE_DB="${SANDBOX}/opencode-archive.db"
 # Never classify against the host's real headless-runtime ledger.
 export OPENCODE_DB_HEADLESS_LEDGER="${SANDBOX}/headless-ledger.db"
 
+# Batch-adaptation state (GH#38590) must never touch the host's real logs dir.
+export OPENCODE_DB_ARCHIVE_STATE_DIR="${SANDBOX}/archive-state"
+
 _reset_dbs() {
+	rm -rf "$OPENCODE_DB_ARCHIVE_STATE_DIR"
 	rm -f "$ACTIVE_DB" "$ARCHIVE_DB" "${ACTIVE_DB}-wal" "${ACTIVE_DB}-shm" "${ARCHIVE_DB}-wal" "${ARCHIVE_DB}-shm"
 	return 0
 }
@@ -581,8 +585,8 @@ fi
 
 _reset_dbs
 now_seconds=$(date +%s)
-old_default_ms=$(((now_seconds - 91 * 86400) * 1000))
-recent_default_ms=$(((now_seconds - 89 * 86400) * 1000))
+old_default_ms=$(((now_seconds - 31 * 86400) * 1000))
+recent_default_ms=$(((now_seconds - 29 * 86400) * 1000))
 worker_old_ms=$(((now_seconds - 8 * 86400) * 1000))
 worker_recent_ms=$(((now_seconds - 6 * 86400) * 1000))
 _make_active_db_with_sessions "default_old,${old_default_ms}
@@ -596,7 +600,9 @@ sqlite3 "$OPENCODE_DB_HEADLESS_LEDGER" "CREATE TABLE worker_sessions (session_id
 INSERT INTO worker_sessions (session_id) VALUES ('worker_old'), ('worker_recent');"
 
 set +e
-out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" archive --max-duration-seconds 30 2>&1)
+# Keep worker events so the restore round-trip below can verify event moves.
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_ARCHIVE_WORKER_EVENT_MINUTES=0 \
+	"$HELPER" archive --max-duration-seconds 30 2>&1)
 rc=$?
 set -e
 
@@ -609,7 +615,7 @@ fi
 split_active=$(sqlite3 "$ACTIVE_DB" "SELECT GROUP_CONCAT(id, ',') FROM (SELECT id FROM session ORDER BY id);")
 split_archived=$(sqlite3 "$ARCHIVE_DB" "SELECT GROUP_CONCAT(id, ',') FROM (SELECT id FROM session ORDER BY id);")
 if [[ "$split_active" == "default_recent,interactive_8d,worker_recent" && "$split_archived" == "default_old,worker_child,worker_old" ]]; then
-	_pass "default retention archives workers after 7 days and interactive sessions after 90"
+	_pass "default retention archives workers after 7 days and interactive sessions after 30"
 else
 	_fail "split retention mismatch: active=${split_active}, archived=${split_archived}"
 fi
@@ -636,6 +642,62 @@ if [[ "$rc" -eq 4 ]]; then
 	_pass "restore reports exit 4 for sessions absent from the archive"
 else
 	_fail "restore of missing session returned rc=${rc}, expected 4"
+fi
+
+# GH#38491: terminated worker sessions lose only their active-DB events after
+# the inactivity window; recent workers and interactive sessions keep theirs.
+_reset_dbs
+now_seconds=$(date +%s)
+dead_ms=$(((now_seconds - 2 * 3600) * 1000))
+live_ms=$(((now_seconds - 5 * 60) * 1000))
+_make_active_db_with_sessions "worker_dead,${dead_ms}
+worker_dead_child,${dead_ms}
+worker_live,${live_ms}
+interactive_old,${dead_ms}"
+sqlite3 "$ACTIVE_DB" "INSERT INTO event VALUES ('evt-worker_dead-2', 'worker_dead', 2, 'message.updated.1', '{}');"
+sqlite3 "$OPENCODE_DB_HEADLESS_LEDGER" "INSERT OR IGNORE INTO worker_sessions (session_id) VALUES ('worker_dead'), ('worker_dead_child'), ('worker_live');"
+transcript_before=$(sqlite3 "$ACTIVE_DB" 'SELECT (SELECT COUNT(*) FROM session), (SELECT COUNT(*) FROM message), (SELECT COUNT(*) FROM part);')
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	"$HELPER" archive --worker-events-only --dry-run 2>&1) || true
+if [[ "$out" == *"would expire 4 active-DB events of 3 inactive session(s)"* &&
+	"$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM event;')" == 5 ]]; then
+	_pass "event expiry dry run reports idle-session events without deleting"
+else
+	_fail "worker event expiry dry run mismatch: $out"
+fi
+set +e
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	OPENCODE_DB_ARCHIVE_WORKER_EVENT_BATCH_BYTES=1 "$HELPER" archive --worker-events-only 2>&1)
+rc=$?
+set -e
+remaining_events=$(sqlite3 "$ACTIVE_DB" "SELECT GROUP_CONCAT(aggregate_id, ',') FROM (SELECT aggregate_id FROM event ORDER BY aggregate_id);")
+transcript_after=$(sqlite3 "$ACTIVE_DB" 'SELECT (SELECT COUNT(*) FROM session), (SELECT COUNT(*) FROM message), (SELECT COUNT(*) FROM part);')
+if [[ "$rc" -eq 0 && "$out" == *"expired 4 active-DB events"* && "$remaining_events" == "worker_live" &&
+	"$transcript_before" == "$transcript_after" && ! -e "$ARCHIVE_DB" ]]; then
+	_pass "event expiry drops idle interactive and worker events, keeps transcripts and recent sessions (GH#38630)"
+else
+	_fail "event expiry mismatch: rc=$rc events=$remaining_events transcript=$transcript_before->$transcript_after output=$out"
+fi
+
+# GH#38630: over the byte cap the pass warns and still expires only idle sessions.
+_reset_dbs
+now_seconds=$(date +%s)
+dead_ms=$(((now_seconds - 2 * 3600) * 1000))
+older_ms=$(((now_seconds - 5 * 3600) * 1000))
+live_ms=$(((now_seconds - 5 * 60) * 1000))
+_make_active_db_with_sessions "idle_new,${dead_ms}
+idle_old,${older_ms}
+live_one,${live_ms}"
+set +e
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	OPENCODE_DB_EVENT_MAX_BYTES=1 "$HELPER" archive --worker-events-only 2>&1)
+rc=$?
+set -e
+remaining_events=$(sqlite3 "$ACTIVE_DB" "SELECT GROUP_CONCAT(aggregate_id, ',') FROM (SELECT aggregate_id FROM event ORDER BY aggregate_id);")
+if [[ "$rc" -eq 0 && "$out" == *"exceeds OPENCODE_DB_EVENT_MAX_BYTES"* && "$remaining_events" == "live_one" ]]; then
+	_pass "event expiry above OPENCODE_DB_EVENT_MAX_BYTES warns and never touches live sessions"
+else
+	_fail "event cap expiry mismatch: rc=$rc events=$remaining_events output=$out"
 fi
 rm -f "$OPENCODE_DB_HEADLESS_LEDGER"
 
@@ -858,11 +920,11 @@ interrupt_output="${SANDBOX}/interrupt-output.log"
 OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
 	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 OPENCODE_DB_ARCHIVE_BATCH_SIZE=1 \
 	OPENCODE_DB_ARCHIVE_BATCH_DELAY_SECONDS=10 \
-	"$HELPER" archive --retention-days 0 --max-duration-seconds 30 >"$interrupt_output" 2>&1 &
+	"$HELPER" archive --retention-days 0 --max-duration-seconds 60 >"$interrupt_output" 2>&1 &
 archive_pid=$!
 archive_progress=0
 interrupt_log=""
-for _attempt in {1..100}; do
+for _attempt in {1..400}; do
 	if [[ -f "$interrupt_output" ]]; then
 		interrupt_log=$(<"$interrupt_output")
 		if [[ "$interrupt_log" == *"Archived 1/2 sessions"* ]]; then
@@ -917,10 +979,13 @@ if [[ "$out" == *"project with spaces"* && "$out" == *"project-b"* && "$out" == 
 else
 	_fail "isolated dry-run mismatch: $out"
 fi
+set +e
 out=$(OPENCODE_DB_PATH="$SANDBOX/missing.db" OPENCODE_INTERACTIVE_ROOT="$isolated_root" \
 	OPENCODE_DB_HOLDER_COMMAND="$mock_holder" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
 	"$HELPER" archive-all --apply --retention-days 0 2>&1)
-if [[ ! -f "$isolated_root/project-b/opencode/opencode-archive.db" && "$out" == *"hold the active DB open"* ]]; then
+rc=$?
+set -e
+if [[ "$rc" -eq 2 && ! -f "$isolated_root/project-b/opencode/opencode-archive.db" && "$out" == *"hold the active DB open"* && "$out" == *"rc=2"* ]]; then
 	_pass "scheduled inventory skips live-held isolated DBs"
 else
 	_fail "isolated holder veto mismatch: $out"
@@ -935,20 +1000,510 @@ else
 	_fail "isolated event move mismatch: $out"
 fi
 transcript_before=$(sqlite3 "$isolated_archive" 'SELECT (SELECT COUNT(*) FROM session) || (SELECT COUNT(*) FROM message) || (SELECT COUNT(*) FROM part);')
+mock_active_only="${SANDBOX}/mock-active-only"
+# The argument is expanded by the generated holder command, not this script.
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' 'case "$2" in */opencode.db) printf "4242\n" ;; esac' >"$mock_active_only"
+chmod +x "$mock_active_only"
 out=$(OPENCODE_DB_PATH="$isolated_db" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
-	"$HELPER" archive --dry-run --archive-event-retention-days 1 2>&1)
+	OPENCODE_DB_HOLDER_COMMAND="$mock_active_only" "$HELPER" archive --events-only --dry-run --archive-event-retention-days 1 2>&1)
 if [[ "$out" == *"would expire 1 archived events"* && "$(sqlite3 "$isolated_archive" 'SELECT COUNT(*) FROM event;')" == 1 ]]; then
 	_pass "archived event expiry dry run never deletes rows with no active candidates"
 else
 	_fail "event expiry preview mismatch: $out"
 fi
 out=$(OPENCODE_DB_PATH="$isolated_db" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
-	"$HELPER" archive --apply --archive-event-retention-days 1 2>&1)
+	OPENCODE_DB_HOLDER_COMMAND="$mock_active_only" "$HELPER" archive --apply --archive-event-retention-days 1 2>&1) || true
 transcript_after=$(sqlite3 "$isolated_archive" 'SELECT (SELECT COUNT(*) FROM session) || (SELECT COUNT(*) FROM message) || (SELECT COUNT(*) FROM part);')
-if [[ "$(sqlite3 "$isolated_archive" 'SELECT COUNT(*) FROM event;')" == 0 && "$transcript_before" == "$transcript_after" ]]; then
-	_pass "opt-in archived event expiry preserves session/message/part rows"
+if [[ "$(sqlite3 "$isolated_archive" 'SELECT COUNT(*) FROM event;')" == 0 && "$transcript_before" == "$transcript_after" && "$out" == *"expired 1 events"* && "$out" == *"hold the active DB open"* && "$(sqlite3 "$isolated_archive" 'PRAGMA quick_check;')" == ok ]]; then
+	_pass "archived event expiry proceeds with active holder and preserves transcripts"
 else
 	_fail "event expiry transcript mismatch: $out"
+fi
+out=$(OPENCODE_DB_PATH="$isolated_db" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	OPENCODE_DB_HOLDER_COMMAND="$mock_active_only" "$HELPER" archive --events-only --apply --archive-event-retention-days 1 2>&1)
+if [[ "$out" == *"expired 0 events"* ]]; then
+	_pass "archived event expiry is idempotent"
+else
+	_fail "event expiry repeat mismatch: $out"
+fi
+
+# A persisted old-shape archive must migrate before a new-shape copy, and
+# restore must preserve non-default values (not just silently apply defaults).
+_reset_dbs
+_make_active_db_1_18_3
+_make_legacy_archive_db_without_session_path
+sqlite3 "$ARCHIVE_DB" "CREATE TABLE session_context_epoch (session_id text PRIMARY KEY, baseline text NOT NULL, snapshot text NOT NULL, baseline_seq integer NOT NULL);"
+sqlite3 "$ACTIVE_DB" <<'SQL'
+ALTER TABLE session_context_epoch ADD COLUMN replacement_seq integer;
+ALTER TABLE session_context_epoch ADD COLUMN revision integer DEFAULT 0 NOT NULL;
+ALTER TABLE session_context_epoch ADD COLUMN agent text DEFAULT 'build' NOT NULL;
+UPDATE session_context_epoch SET replacement_seq=42, revision=17, agent='plan';
+SQL
+epoch_before=$(sqlite3 "$ACTIVE_DB" 'SELECT * FROM session_context_epoch;')
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 2>&1)
+epoch_archived=$(sqlite3 "$ARCHIVE_DB" 'SELECT * FROM session_context_epoch;')
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" restore --session ses-1183 2>&1)
+epoch_restored=$(sqlite3 "$ACTIVE_DB" 'SELECT * FROM session_context_epoch;')
+if [[ "$epoch_before" == "$epoch_archived" && "$epoch_before" == "$epoch_restored" ]]; then
+	_pass "new epoch columns survive legacy archive migration and archive/restore round-trip"
+else
+	_fail "new epoch round-trip mismatch: before=$epoch_before archived=$epoch_archived restored=$epoch_restored"
+fi
+
+# A destination downgraded to the old epoch shape must not lose new values.
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 2>&1)
+sqlite3 "$ACTIVE_DB" 'ALTER TABLE session_context_epoch DROP COLUMN replacement_seq; ALTER TABLE session_context_epoch DROP COLUMN revision; ALTER TABLE session_context_epoch DROP COLUMN agent;'
+set +e
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" restore --session ses-1183 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 3 && "$(sqlite3 "$ARCHIVE_DB" 'SELECT * FROM session_context_epoch;')" == "$epoch_before" && "$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM session;')" == 0 ]]; then
+	_pass "restore to legacy epoch shape refuses non-default archive-only values without mutation"
+else
+	_fail "legacy epoch restore lost values: rc=$rc output=$out"
+fi
+sqlite3 "$ARCHIVE_DB" "UPDATE session_context_epoch SET replacement_seq=NULL, revision=0, agent='build';"
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" restore --session ses-1183 2>&1)
+if [[ "$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM session_context_epoch;')" == 1 ]]; then
+	_pass "restore to legacy epoch shape allows representable default values"
+else
+	_fail "legacy default epoch restore failed: $out"
+fi
+
+# Inject delays into actual SQLite candidate execution and between durable
+# copy/delete commits. Only this fixture-local executable is interposed.
+sqlite_bin=$(command -v sqlite3)
+mkdir -p "$SANDBOX/slow-sqlite"
+cat >"$SANDBOX/slow-sqlite/sqlite3" <<'PY'
+#!/usr/bin/env python3
+import os
+from pathlib import Path
+import subprocess
+import sys
+args = sys.argv[1:]
+real = os.environ["TEST_REAL_SQLITE"]
+if os.environ["TEST_SQLITE_STAGE"] == "candidate":
+    if any(arg.startswith("SELECT COUNT(*) FROM session WHERE") for arg in args):
+        Path(os.environ["TEST_SQLITE_MARKER"]).touch()
+        os.execv(real, [real, args[0], "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000000000) SELECT sum(x) FROM n;"])
+elif len(args) == 1:
+    sql = sys.stdin.read()
+    sql = sql.replace("COMMIT;\nBEGIN IMMEDIATE;\nCREATE TEMP TABLE archive_copy_guard", "COMMIT;\n.shell sleep 30\nBEGIN IMMEDIATE;\nCREATE TEMP TABLE archive_copy_guard")
+    sys.exit(subprocess.run([real, *args], input=sql, text=True).returncode)
+os.execv(real, [real, *args])
+PY
+chmod +x "$SANDBOX/slow-sqlite/sqlite3"
+for sql_stage in candidate commit_gap; do
+	_reset_dbs
+	_make_active_db_1_18_3
+	before_fingerprint=$(_fixture_graph_fingerprint "$ACTIVE_DB")
+	started=$SECONDS
+	set +e
+	out=$(PATH="$SANDBOX/slow-sqlite:$PATH" TEST_REAL_SQLITE="$sqlite_bin" TEST_SQLITE_STAGE="$sql_stage" \
+		TEST_SQLITE_MARKER="$SANDBOX/candidate-started" \
+		OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+		"$HELPER" archive --retention-days 0 --max-duration-seconds 10 2>&1)
+	rc=$?
+	set -e
+	elapsed=$((SECONDS - started))
+	if [[ "$rc" -eq 2 && "$elapsed" -le 14 && "$(_fixture_graph_fingerprint "$ACTIVE_DB")" == "$before_fingerprint" && -f "$SANDBOX/candidate-started" ]]; then
+		_pass "deadline interrupts SQLite $sql_stage without losing the active graph"
+	else
+		_fail "SQLite deadline $sql_stage mismatch: rc=$rc elapsed=$elapsed output=$out"
+	fi
+	if [[ "$sql_stage" == commit_gap ]]; then
+		if [[ "$(_fixture_graph_fingerprint "$ARCHIVE_DB")" == "$before_fingerprint" ]]; then
+			_pass "interrupted copy/delete gap retains a complete durable archive copy"
+		else
+			_fail "copy/delete gap archive copy mismatch: $out"
+		fi
+		# These retries test the duplicate guard, not batch adaptation: drop the
+		# marker so the killed 1-session batch is not deferred as oversized.
+		rm -rf "$OPENCODE_DB_ARCHIVE_STATE_DIR"
+		# A changed source must not be deleted in favor of a stale duplicate.
+		sqlite3 "$ACTIVE_DB" "UPDATE message SET data='changed';"
+		set +e
+		out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+			OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 2>&1)
+		rc=$?
+		set -e
+		if [[ "$rc" -eq 1 && "$(sqlite3 "$ACTIVE_DB" 'SELECT data FROM message;')" == changed ]]; then
+			_pass "retry refuses to delete active values that differ from a durable archive copy"
+		else
+			_fail "stale duplicate guard mismatch: rc=$rc output=$out"
+		fi
+		sqlite3 "$ACTIVE_DB" "UPDATE message SET data='{\"role\":\"assistant\"}';"
+		out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+			OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 2>&1)
+		if [[ "$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM session;')" == 0 && "$(_fixture_graph_fingerprint "$ARCHIVE_DB")" == "$before_fingerprint" ]]; then
+			_pass "retry completes interrupted durable copies without duplicate or missing graph rows"
+		else
+			_fail "durable duplicate retry mismatch: $out"
+		fi
+	fi
+done
+
+# The deadline covers preflight and batch delays, not just the between-batch
+# loop. Fixtures stay queryable and committed batches are preserved.
+for budget_stage in preflight batch; do
+	_reset_dbs
+	_make_active_db_1_18_3
+	_add_second_active_1_18_3_session
+	wal_delay=0
+	batch_delay=0
+	if [[ "$budget_stage" == preflight ]]; then wal_delay=20; else batch_delay=20; fi
+	started=$SECONDS
+	set +e
+	out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+		OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS="$wal_delay" OPENCODE_DB_ARCHIVE_BATCH_SIZE=1 \
+		OPENCODE_DB_ARCHIVE_BATCH_DELAY_SECONDS="$batch_delay" \
+		"$HELPER" archive --retention-days 0 --max-duration-seconds 10 2>&1)
+	rc=$?
+	set -e
+	elapsed=$((SECONDS - started))
+	active_check=$(sqlite3 "$ACTIVE_DB" 'PRAGMA quick_check;')
+	remaining=$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM session;')
+	if [[ "$rc" -eq 2 && "$elapsed" -le 15 && "$active_check" == ok && "$out" == *"deferred/partial"* ]] &&
+		{ [[ "$budget_stage" == preflight && "$remaining" == 2 && ! -e "$ARCHIVE_DB" ]] ||
+			[[ "$budget_stage" == batch && "$remaining" == 1 && "$(sqlite3 "$ARCHIVE_DB" 'SELECT COUNT(*) FROM session;')" == 1 ]]; }; then
+		_pass "per-DB deadline bounds $budget_stage and preserves session ownership"
+	else
+		_fail "deadline $budget_stage mismatch: rc=$rc elapsed=$elapsed remaining=$remaining output=$out"
+	fi
+done
+
+# GH#38590: a batch write killed by the deadline leaves an in-flight marker;
+# the next run halves the session limit and still archives; a 1-session batch
+# that is killed again is deferred as oversized with one warning.
+_reset_dbs
+_make_active_db_1_18_3
+_add_second_active_1_18_3_session
+set +e
+out=$(PATH="$SANDBOX/slow-sqlite:$PATH" TEST_REAL_SQLITE="$sqlite_bin" TEST_SQLITE_STAGE="commit_gap" \
+	TEST_SQLITE_MARKER="$SANDBOX/candidate-started" \
+	OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	OPENCODE_DB_ARCHIVE_BATCH_SIZE=2 "$HELPER" archive --retention-days 0 --max-duration-seconds 10 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 2 && -n "$(find "$OPENCODE_DB_ARCHIVE_STATE_DIR" -name '*.sessions.inflight' 2>/dev/null)" ]]; then
+	_pass "killed batch write leaves an in-flight marker"
+else
+	_fail "in-flight marker missing after killed batch: rc=$rc output=$out"
+fi
+set +e
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	OPENCODE_DB_ARCHIVE_BATCH_SIZE=2 "$HELPER" archive --retention-days 0 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 && "$out" == *"halving limits to 1 row"* && "$out" == *"Archived 1/2 sessions [batch 1]"* &&
+	"$out" == *"Archived 2/2 sessions [batch 2]"* && "$out" == *"Phase seconds:"* &&
+	-z "$(find "$OPENCODE_DB_ARCHIVE_STATE_DIR" -name '*.sessions.inflight' 2>/dev/null)" ]]; then
+	_pass "next run halves the batch limit, archives, clears the marker and regrows"
+else
+	_fail "halved retry mismatch: rc=$rc output=$out"
+fi
+
+_reset_dbs
+_make_active_db_1_18_3
+set +e
+out=$(PATH="$SANDBOX/slow-sqlite:$PATH" TEST_REAL_SQLITE="$sqlite_bin" TEST_SQLITE_STAGE="commit_gap" \
+	TEST_SQLITE_MARKER="$SANDBOX/candidate-started" \
+	OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	OPENCODE_DB_ARCHIVE_BATCH_SIZE=1 "$HELPER" archive --retention-days 0 --max-duration-seconds 10 2>&1)
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	OPENCODE_DB_ARCHIVE_BATCH_SIZE=1 "$HELPER" archive --retention-days 0 2>&1)
+rc=$?
+set -e
+if [[ "$out" == *"deferring it as oversized"* && "$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM session;')" == 1 ]]; then
+	_pass "an interrupted 1-session batch is deferred as oversized"
+else
+	_fail "oversized deferral mismatch: rc=$rc output=$out"
+fi
+
+# Signal the scheduled runner, rather than its foreground SQLite child. Its
+# EXIT receipt must include the signal status and it must release its lock.
+_reset_dbs
+_make_active_db_1_18_3
+for signal_name in SIGTERM SIGINT; do
+	async_home="$SANDBOX/async-$signal_name"
+	mkdir -p "$async_home"
+	if HOME="$async_home" OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+		OPENCODE_INTERACTIVE_ROOT="$SANDBOX/no-projects" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=10 \
+		python3 - "$SCRIPT_DIR/../opencode-db-archive-async-helper.sh" "$signal_name" <<'PY'
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+
+runner = subprocess.Popen(["bash", sys.argv[1]])
+log = Path(os.environ["HOME"]) / ".aidevops/logs/opencode-db-archive.log"
+try:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if log.exists() and "Archive inventory:" in log.read_text():
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("archive did not start")
+    sig = getattr(signal, sys.argv[2])
+    runner.send_signal(sig)
+    assert runner.wait(timeout=5) == 128 + sig
+    assert f"Terminal: PID={runner.pid} rc={128 + sig}" in log.read_text()
+    assert not (log.parent / "opencode-db-archive.lock").exists()
+    assert not (log.parent / "opencode-db-archive.last-run").exists()
+finally:
+    if runner.poll() is None:
+        runner.terminate()
+        runner.wait(timeout=5)
+PY
+	then
+		_pass "async $signal_name records terminal rc and drains before releasing lock"
+	else
+		_fail "async $signal_name terminal receipt/lock mismatch"
+	fi
+done
+
+# Ordinary nonzero archive exits must also reach the terminal receipt.
+async_home="$SANDBOX/async-deferred"
+mkdir -p "$async_home"
+set +e
+HOME="$async_home" OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_INTERACTIVE_ROOT="$SANDBOX/no-projects" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=10 OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC=1 \
+	bash "$SCRIPT_DIR/../opencode-db-archive-async-helper.sh"
+rc=$?
+set -e
+async_log=$(<"$async_home/.aidevops/logs/opencode-db-archive.log")
+if [[ "$rc" -eq 0 && "$async_log" == *"Protected skip/deferred"* && ! -f "$async_home/.aidevops/logs/opencode-db-archive.last-run" &&
+	"$(<"$async_home/.aidevops/logs/opencode-db-archive.deferrals")" == 1 ]]; then
+	_pass "async deferred outcome exits 0 (no failed unit), counts the deferral and skips last-run"
+else
+	_fail "async deferred terminal status mismatch: rc=$rc log=$async_log"
+fi
+
+# A complete pass today limits later hourly invocations to the worker event
+# expiry (GH#35517, GH#38491); that pass never counts as a full-pass deferral.
+date +%s >"$async_home/.aidevops/logs/opencode-db-archive.last-run"
+set +e
+HOME="$async_home" OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_INTERACTIVE_ROOT="$SANDBOX/no-projects" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 bash "$SCRIPT_DIR/../opencode-db-archive-async-helper.sh"
+rc=$?
+set -e
+async_log=$(<"$async_home/.aidevops/logs/opencode-db-archive.log")
+if [[ "$rc" -eq 0 && "$async_log" == *"running worker event expiry only"* && "$async_log" == *"Worker event expiry finished rc="* &&
+	"$(<"$async_home/.aidevops/logs/opencode-db-archive.deferrals")" == 1 ]]; then
+	_pass "async runner only expires worker events after a complete pass today"
+else
+	_fail "async completed-today worker pass mismatch: rc=$rc log=$async_log"
+fi
+
+# --- GH#35517 idle gate: archive DBs held only by idle OpenCode processes ---
+activity_dir="$SANDBOX/opencode-activity"
+mkdir -p "$activity_dir"
+mock_ps="$SANDBOX/mock-ps"
+cat >"$mock_ps" <<'SH'
+#!/usr/bin/env bash
+# Fixture `ps -o comm=|etime= -p PID`. Optionally flips the holder heartbeat to
+# busy after MOCK_PS_FLIP_AFTER gate checks, simulating a session waking up.
+if [[ "${2:-}" == "etime=" ]]; then
+	printf '%s\n' "${MOCK_PS_ETIME:-02:00:00}"
+	exit 0
+fi
+if [[ -n "${MOCK_PS_FLIP_AFTER:-}" ]]; then
+	count=$(($(cat "$MOCK_PS_COUNT_FILE" 2>/dev/null || echo 0) + 1))
+	printf '%s\n' "$count" >"$MOCK_PS_COUNT_FILE"
+	if ((count > MOCK_PS_FLIP_AFTER)); then
+		cp "$MOCK_PS_FLIP_SOURCE" "$MOCK_PS_FLIP_TARGET"
+	fi
+fi
+printf '%s\n' "${MOCK_PS_COMM:-opencode}"
+exit 0
+SH
+chmod +x "$mock_ps"
+
+_write_heartbeat() {
+	local target="$1"
+	local busy="$2"
+	local last="$3"
+	local sessions="$4"
+	printf '{"pid":4242,"instance":"t","busy_sessions":%s,"last_activity_epoch":%s,"updated_epoch":%s,"sessions":%s}\n' \
+		"$busy" "$last" "$(date +%s)" "$sessions" >"$target"
+	return 0
+}
+
+# _held_archive [VAR=value ...] — fixture env first so callers can override.
+_held_archive() {
+	local rc=0
+	env OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+		OPENCODE_DB_HOLDER_COMMAND="$mock_holder" OPENCODE_DB_PS_COMMAND="$mock_ps" \
+		OPENCODE_DB_ACTIVITY_DIR="$activity_dir" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+		OPENCODE_DB_ARCHIVE_USER_IDLE_SECONDS=0 "$@" \
+		"$HELPER" archive --retention-days 0 2>&1 || rc=$?
+	((rc != 0)) || return 0
+	return "$rc"
+}
+
+# _held_case <label> <expected output> [VAR=value ...]
+_held_case() {
+	local label="$1"
+	local expect="$2"
+	shift 2
+	local out="" rc=0
+	_reset_dbs
+	_make_active_db_1_18_3
+	_add_second_active_1_18_3_session
+	set +e
+	out=$(_held_archive "$@")
+	rc=$?
+	set -e
+	if [[ "$rc" -eq 2 && "$out" == *"$expect"* && "$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM session;')" == 2 && ! -e "$ARCHIVE_DB" ]]; then
+		_pass "idle gate defers: $label"
+	else
+		_fail "idle gate $label mismatch: rc=$rc output=$out"
+	fi
+	return 0
+}
+
+hb_file="$activity_dir/4242-t.json"
+old_epoch=$(($(date +%s) - 3600))
+rm -f "$activity_dir"/*.json
+_held_case "holder without heartbeat" "no activity heartbeat"
+_write_heartbeat "$hb_file" 1 "$old_epoch" '[]'
+_held_case "busy holder" "has 1 busy session"
+_write_heartbeat "$hb_file" 0 "$(date +%s)" '[]'
+_held_case "recently active holder" "was active"
+_write_heartbeat "$hb_file" 0 "$old_epoch" '[]'
+_held_case "non-OpenCode holder" "is not an OpenCode process" MOCK_PS_COMM=bash
+# Idle heartbeat written 2h ago, but the holder started 1 min ago: PID reuse.
+printf '{"pid":4242,"instance":"t","busy_sessions":0,"last_activity_epoch":%s,"updated_epoch":%s,"sessions":[]}\n' \
+	"$((old_epoch - 3600))" "$((old_epoch - 3600))" >"$hb_file"
+_held_case "heartbeat from an earlier process with the same PID" "no activity heartbeat" MOCK_PS_ETIME=01:00
+_held_case "unknown holder start time" "start time is unknown" MOCK_PS_ETIME=garbage
+_write_heartbeat "$hb_file" 0 "$old_epoch" '[]'
+user_idle_mock="$SANDBOX/user-idle"
+printf '%s\n' '#!/usr/bin/env bash' 'printf "5"' >"$user_idle_mock"
+chmod +x "$user_idle_mock"
+_held_case "recent user input" "user input 5s ago" OPENCODE_DB_ARCHIVE_USER_IDLE_SECONDS=1800 OPENCODE_DB_USER_IDLE_COMMAND="$user_idle_mock"
+_held_case "idle gate disabled" "hold the active DB open" OPENCODE_DB_ARCHIVE_IDLE_GATE=0
+
+# All holders idle: archive in held mode, keep heartbeat-listed sessions, no VACUUM.
+_reset_dbs
+_make_active_db_1_18_3
+_add_second_active_1_18_3_session
+_write_heartbeat "$hb_file" 0 "$old_epoch" '["ses-1183-b"]'
+set +e
+out=$(_held_archive)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 && "$out" == *"Idle gate passed"* && "$out" == *"VACUUM skipped"* &&
+	"$(sqlite3 "$ACTIVE_DB" 'SELECT id FROM session;')" == "ses-1183-b" &&
+	"$(sqlite3 "$ARCHIVE_DB" 'SELECT id FROM session;')" == "ses-1183" ]]; then
+	_pass "idle holders allow held-mode archive and protect heartbeat-listed sessions"
+else
+	_fail "held-mode archive mismatch: rc=$rc output=$out"
+fi
+
+# Existing archives expire events independently of the held session batch size,
+# and a subsequent held run must not rescan the whole archive for integrity.
+sqlite3 "$ARCHIVE_DB" "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<25) INSERT INTO event SELECT 'expiry-'||x, 'ses-1183', 100+x, 'fixture', '{}' FROM n;"
+mkdir -p "$SANDBOX/trace-sqlite"
+cat >"$SANDBOX/trace-sqlite/sqlite3" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >>"$SQLITE_TRACE_FILE"
+exec "$REAL_SQLITE" "$@"
+SH
+chmod +x "$SANDBOX/trace-sqlite/sqlite3"
+: >"$SANDBOX/sqlite-trace"
+_write_heartbeat "$hb_file" 0 "$old_epoch" '[]'
+set +e
+out=$(_held_archive PATH="$SANDBOX/trace-sqlite:$PATH" REAL_SQLITE="$sqlite_bin" SQLITE_TRACE_FILE="$SANDBOX/sqlite-trace" OPENCODE_DB_HOLDER_COMMAND="$mock_active_only")
+rc=$?
+set -e
+trace=$(<"$SANDBOX/sqlite-trace")
+if [[ "$rc" -eq 0 && "$out" == *"Idle gate passed"* && "$out" == *"expired 26 events"* &&
+	"$trace" == *"LIMIT 500"* && "$trace" != *"PRAGMA integrity_check"* ]]; then
+	_pass "held expiry uses archive-sized batches and existing archive skips integrity scan"
+else
+	_fail "held expiry or repeated integrity scan mismatch: rc=$rc output=$out"
+fi
+
+# GH#37656: a busy holder that lists its sessions no longer blocks archiving of
+# other inactive sessions; its own sessions stay protected.
+_reset_dbs
+_make_active_db_1_18_3
+_add_second_active_1_18_3_session
+_write_heartbeat "$hb_file" 2 "$(date +%s)" '["ses-1183-b"]'
+set +e
+out=$(_held_archive)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 && "$out" == *"Idle gate passed"* &&
+	"$(sqlite3 "$ACTIVE_DB" 'SELECT id FROM session;')" == "ses-1183-b" &&
+	"$(sqlite3 "$ARCHIVE_DB" 'SELECT id FROM session;')" == "ses-1183" ]]; then
+	_pass "busy holder with listed sessions archives other sessions and keeps its own"
+else
+	_fail "busy-holder per-session archive mismatch: rc=$rc output=$out"
+fi
+
+# A holder waking up between batches stops the run with committed batches kept.
+_reset_dbs
+_make_active_db_1_18_3
+_add_second_active_1_18_3_session
+_write_heartbeat "$hb_file" 0 "$old_epoch" '[]'
+_write_heartbeat "$SANDBOX/busy-heartbeat.json" 1 "$(date +%s)" '[]'
+rm -f "$SANDBOX/ps-count"
+set +e
+out=$(_held_archive OPENCODE_DB_ARCHIVE_HELD_BATCH_SIZE=1 \
+	MOCK_PS_FLIP_AFTER=1 MOCK_PS_COUNT_FILE="$SANDBOX/ps-count" \
+	MOCK_PS_FLIP_SOURCE="$SANDBOX/busy-heartbeat.json" MOCK_PS_FLIP_TARGET="$hb_file")
+rc=$?
+set -e
+if [[ "$rc" -eq 2 && "$out" == *"Archive paused"* &&
+	"$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM session;')" == 1 &&
+	"$(sqlite3 "$ARCHIVE_DB" 'SELECT COUNT(*) FROM session;')" == 1 ]]; then
+	_pass "held-mode archive pauses between batches when a holder becomes busy"
+else
+	_fail "held-mode pause mismatch: rc=$rc output=$out"
+fi
+
+# Check discovery's query boundary directly: a payload prefix must not trigger
+# sizing of the rest of the candidate window, including oversized sessions.
+if python3 - "$HELPER" <<'PY'
+from pathlib import Path
+import subprocess
+import sys
+
+source = Path(sys.argv[1]).read_text()
+selector = source[source.index('_archive_select_batch() {'):source.index('_archive_run_batches() {')]
+setup = '''
+has_session_message_table=1 has_event_table=1
+has_session_input_table=1 has_session_context_epoch_table=1
+candidate_filter=1
+_archive_octet_supported() { return 0; }
+_archive_len_expr() { printf 'octet_length(%s)\\n' "$1"; return 0; }
+_archive_active_query() {
+    printf 'query\\n' >&2
+    case "$1" in *octet_length*"SUM(b) OVER"*) ;; *) printf 'bad-sql\\n' >&2 ;; esac
+    printf 'one\\ntwo\\n'
+    return 0
+}
+'''
+for deadline, expected, count, bad, status in [
+    (4102444800, 'one\ntwo\n', 1, 0, 0),
+    (0, '', 0, 0, 2),
+]:
+    result = subprocess.run(['bash', '-c', selector + setup + f'_archive_select_batch 500 10 {deadline}'],
+                            capture_output=True, text=True, check=False)
+    assert (result.returncode, result.stdout, result.stderr.count('query\n'), result.stderr.count('bad-sql')) == (status, expected, count, bad), result
+PY
+then
+	_pass "candidate sizing uses one window-sum query and honours the deadline"
+else
+	_fail "candidate sizing issued extra queries or ignored the deadline"
 fi
 
 printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"

@@ -15,8 +15,13 @@ import {
   resolveSessionRecoveryMarker,
   writeSessionRecoveryMarker,
 } from "../../plugins/opencode-aidevops/session-recovery-marker.mjs";
+import { relocatedSessionDirectory } from "../../plugins/opencode-aidevops/session-recovery-layout.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "aidevops-session-recovery-"));
+// Keep resolution hermetic: never read the operator's repos.json.
+const reposFile = join(root, "repos.json");
+writeFileSync(reposFile, `${JSON.stringify({ initialized_repos: [] })}\n`);
+process.env.AIDEVOPS_REPOS_JSON = reposFile;
 const workDir = join(root, "work");
 const directory = join(root, "repo");
 const dataDir = join(workDir, "opencode-interactive", "project-repo-test");
@@ -225,5 +230,54 @@ assert.throws(
   () => resolveSessionRecoveryMarker({ cwd: markerDirectory, workDir }),
   /ENOENT|does not match/,
 );
+
+// GH#36438: the owner/repo migration moved `<parent>/<name>` to
+// `<parent>/<name>/<name>`; a marker (and session row) still naming the
+// non-repository owner directory relaunches in the registered repository.
+const staleOwner = join(root, "owner");
+const movedRepo = join(staleOwner, "owner");
+mkdirSync(join(movedRepo, ".git"), { recursive: true });
+const staleSessionID = "ses_StaleLayout0001";
+const staleDataDir = join(workDir, "opencode-interactive", "project-stale-test");
+mkdirSync(join(staleDataDir, "opencode"), { recursive: true });
+const staleSqlite = spawnSync("sqlite3", [
+  join(staleDataDir, "opencode", "opencode.db"),
+  [
+    "CREATE TABLE session (id text PRIMARY KEY, parent_id text, directory text NOT NULL);",
+    `INSERT INTO session (id, parent_id, directory) VALUES ('${staleSessionID}', NULL, '${realpathSync(staleOwner)}');`,
+  ].join(" "),
+], { encoding: "utf8" });
+assert.equal(staleSqlite.status, 0, staleSqlite.stderr);
+const staleMarker = writeSessionRecoveryMarker({
+  sessionID: staleSessionID, directory: staleOwner, dataDir: staleDataDir, workDir,
+});
+assert.equal(
+  resolveSessionRecoveryMarker({ cwd: staleMarker, workDir }).directory,
+  realpathSync(staleOwner),
+  "an unregistered child must not relocate the marker directory",
+);
+writeFileSync(reposFile, `${JSON.stringify({ initialized_repos: [{ path: movedRepo }] })}\n`);
+assert.equal(
+  resolveSessionRecoveryMarker({ cwd: staleMarker, workDir }).directory,
+  realpathSync(movedRepo),
+  "a stale owner directory must relaunch in its registered moved repository",
+);
+const staleCli = spawnSync(process.execPath, [resolverPath, "resolve", "--cwd", staleMarker, "--work-dir", workDir], {
+  encoding: "utf8",
+});
+assert.equal(staleCli.status, 3, staleCli.stderr);
+assert.equal(staleCli.stdout, `${realpathSync(movedRepo)}\t${realpathSync(staleDataDir)}\t${staleSessionID}\n`);
+// The relaunched session re-records the repository while its row keeps the old directory.
+writeSessionRecoveryMarker({ sessionID: staleSessionID, directory: movedRepo, dataDir: staleDataDir, workDir });
+assert.equal(resolveSessionRecoveryMarker({ cwd: staleMarker, workDir }).directory, realpathSync(movedRepo));
+// Ordinary non-repository directories (for example home) and other shapes stay unchanged.
+const plainParent = join(root, "plain");
+mkdirSync(join(plainParent, "other", ".git"), { recursive: true });
+writeFileSync(reposFile, `${JSON.stringify({
+  initialized_repos: [{ path: movedRepo }, { path: join(plainParent, "other") }],
+})}\n`);
+assert.equal(relocatedSessionDirectory(realpathSync(plainParent)), realpathSync(plainParent));
+assert.equal(relocatedSessionDirectory(realpathSync(root)), realpathSync(root));
+assert.equal(relocatedSessionDirectory(realpathSync(movedRepo)), realpathSync(movedRepo));
 
 console.log("All session recovery marker tests passed");

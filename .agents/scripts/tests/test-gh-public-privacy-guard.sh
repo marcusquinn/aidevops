@@ -85,6 +85,24 @@ else
 	fail "private person hit is generic" "rc=$rc out=$out"
 fi
 
+printf 'repo\t%s\n' 'synthetic-owner/longprivate' >"$TMP/repo-entities.tsv"
+for text in 'scripts/build-banner.sh Requires: longprivate >= 1.0' 'scripts/build-banner.sh gettext_longprivate'; do
+	out=$(privacy_scan_public_text "$text" "$TMP/repo-entities.tsv")
+	rc=$?
+	if [[ "$rc" -eq 1 && "$out" == '[private-repo]' ]]; then
+		pass "script reference does not exempt private basename"
+	else
+		fail "script reference does not exempt private basename" "rc=$rc out=$out"
+	fi
+done
+out=$(privacy_scan_public_text 'scripts/build-banner.sh' "$TMP/repo-entities.tsv")
+rc=$?
+if [[ "$rc" -eq 0 && -z "$out" ]]; then
+	pass "script reference without private basename is allowed"
+else
+	fail "script reference without private basename" "rc=$rc out=$out"
+fi
+
 out=$(privacy_scan_secret_material_text "Worker guidance: edit .agents/scripts/$ALLOWED_BASENAME" 2>"$TMP/allow-path.err")
 rc=$?
 err=$(<"$TMP/allow-path.err")

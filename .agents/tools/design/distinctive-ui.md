@@ -34,7 +34,9 @@ tools:
   requirements. Familiar patterns are not evidence of AI authorship or failure.
 - **Load on demand**: [Composition](distinctive-ui-composition.md) before choosing
   page shape; [audit](distinctive-ui-audit.md) for critique and handoff;
-  [Hallmark assessment and licence](hallmark.md) for provenance, not every build.
+  [font pairing](font-pairing.md) when choosing or replacing fonts. Source
+  assessments ([Hallmark](hallmark.md), [Impeccable](impeccable.md),
+  [Taste Skill](taste-skill.md)) are for provenance, not every build.
 - **Reuse**: `tools/design/design-md.md` owns tokens and durable preferences;
   `workflows/ui-verification.md` owns rendered verification. No new dependency,
   `.hallmark/` cache, score stamp, or parallel token source is required.
@@ -60,6 +62,12 @@ brand notes and nearby working examples. Inspect only relevant code for:
 
 - Actual audience, task, primary action, content and factual proof available.
 - Page family: marketing, application, content, commerce or native interface.
+- **Visitor mode**, per surface: *persuade/experience* (the design is what the
+  visitor judges, so the visual idea may structure the page), *operate* (the
+  visitor came to do a job: the page is first a working product of its category;
+  the visual idea lends type, palette, density and one signature move, never the
+  navigation model or controls), or *read* (a document of its kind: an expressive
+  frame around a calm reading column). One product can mix modes across pages.
 - Existing routes, component ownership, semantic tokens, fonts and licences,
   spacing, icons, framework, component primitives and theme support.
 - Current state/validation behaviour, keyboard paths, responsive conventions,
@@ -93,7 +101,7 @@ cross-cutting choices to the Markdown rationale of `DESIGN.md`:
 
 | Field | Record |
 |-------|--------|
-| Intent | Audience, job, primary action, tone and source of each assumption |
+| Intent | Audience, job, visitor mode, primary action, tone and source of each assumption |
 | Preserved | Brand, tokens, behaviours, routes and component contracts |
 | Structure | Page family, information order, navigation, main content and close |
 | Alternatives | Nearby arrangements considered and why they fit less well |
@@ -143,6 +151,13 @@ request changes treatment, not information architecture; a structural redesign
 may reorganise presentation without losing information or actions. Source docs
 are evidence to adapt, not automatically verbatim page copy.
 
+**Scoped refinements** name one dimension on one surface: *bolder* or *quieter*
+(emphasis and contrast), *distill* (remove what does not serve the task),
+*clarify* (labels, errors, microcopy), *typeset* (`font-pairing.md`), *colorize*,
+*layout* (spacing and rhythm), *harden* (states, long and translated content,
+failures), *adapt* (viewports and input), *polish* (finish against `DESIGN.md`).
+Change that dimension only, keep behaviour, and verify it as a redesign.
+
 ### Study
 
 Reuse `ui-ux-inspiration.md` for discovery and rendered extraction. Explain the
@@ -172,17 +187,31 @@ with provenance and explicit adaptations for accessibility or product needs.
 - **Copy and proof**: Specific labels explain the action and consequence. Never
   invent customers, metrics, prices, certifications or testimonials to fill a
   composition. Use conspicuous prototype placeholders or omit unsupported proof.
+- **Data truth**: Sample or live data must agree with itself. Compute totals from
+  the rows shown, bind a fact shown twice to one value, derive totals and deltas
+  from the rounded figures displayed, name the baseline of every relative figure
+  ("vs last Monday") and give every figure a unit. No placeholder people, firms
+  or vanity numbers.
 - **Type and colour**: Design hierarchy with roles and legibility. A system font,
   white surface, familiar grid or intentional gradient can fit the brief; no
-  style alone is a defect. Check long copy, translations and text scaling.
+  style alone is a defect. Check long copy, translations and text scaling. Choose
+  and license faces with `font-pairing.md`; use tabular figures for aligned data.
+- **Browser surfaces**: Text selection, caret, custom scrollbars, focus rings,
+  link underline offset and form autofill still carry the design. Theme them from
+  existing `DESIGN.md` roles where the platform allows, and keep contrast.
 - **Assets**: Prefer useful real product evidence. Add illustration, photography
   or motion only when it explains, demonstrates or supports the intended tone.
   Reuse `content/production-image.md` / `content/production-video.md` for production,
   rights, generation and optimization. No forced provider, grain filter or CDN.
+  Use pictures nobody could mistake for the client's own product, people or place
+  unless they are; record source, creator, licence and credit for each asset.
 - **States**: Cover applicable default, hover, focus, active, disabled, loading,
   empty, error and success states. Immediate visible focus, useful inline errors,
   preserved input and recovery matter more than animated decoration. Undo needs
   real backend support; retain confirmations for destructive/irreversible actions.
+  Harden against real content: very long and very short text, translation
+  expansion, right-to-left where supported, large datasets, slow or failed
+  requests and missing permissions.
 - **Motion**: Follow the project's authorized motion policy; use no motion when
   none is needed. Reduced-motion support and essential feedback remain required.
 

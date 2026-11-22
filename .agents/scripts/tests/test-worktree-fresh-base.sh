@@ -9,6 +9,10 @@ HELPER="${SCRIPT_DIR}/../worktree-helper.sh"
 ADD_HELPER="${SCRIPT_DIR}/../worktree-helper-add.sh"
 REAL_GIT=$(command -v git)
 ROOT=$(mktemp -d)
+# macOS returns a temp path under the /var symlink. The helper resolves
+# worktree paths to their physical form, and cleanup receipts are matched by
+# path string, so the fixture must use the physical form throughout.
+ROOT=$(cd "$ROOT" && pwd -P)
 trap 'rm -rf "$ROOT"' EXIT
 
 REMOTE="${ROOT}/remote.git"
@@ -18,6 +22,9 @@ WORKTREES="${ROOT}/worktrees"
 HOME="${ROOT}/home"
 export HOME AIDEVOPS_WORKTREE_BASE_DIR="$WORKTREES"
 export AIDEVOPS_FULL_LOOP_CLEANUP_DIR="${ROOT}/cleanup-receipts"
+# Never register fixture worktrees in the invoking session's lifecycle state.
+unset AIDEVOPS_WORKSPACE_DIR AIDEVOPS_LIFECYCLE_STATE_DIR
+unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
 REGISTRY_DB="${HOME}/.aidevops/.agent-workspace/worktree-registry.db"
 
 git init -q --bare "$REMOTE"
@@ -111,6 +118,69 @@ if ! grep -qF 'credential.helper=!gh auth git-credential' "$GITHUB_AUTH_RETRY_LO
 	exit 1
 fi
 printf 'PASS GitHub SSH askpass failure retries through transient gh HTTPS auth\n'
+
+# GH#38060: concurrent fetches of one remote-tracking ref make Git reject all
+# but one ref update. That is not a stale base. The fetch is repeated a bounded
+# number of times; any other failure is still returned after one attempt.
+RACE_FETCH_LOG="${ROOT}/race-fetch.log"
+# Args: $1 - fetches that fail before one succeeds, $2 - git error text
+race_fetch_case() {
+	local failures="$1"
+	local message="$2"
+	local case_rc=0
+	: >"$RACE_FETCH_LOG"
+	(
+		cd "$CANONICAL" || exit 1
+		SCRIPT_DIR="$(cd "$(dirname "$ADD_HELPER")" && pwd)"
+		# shellcheck source=../worktree-helper-add.sh
+		source "$ADD_HELPER"
+		sleep() { return 0; }
+		git() {
+			local git_args="$*"
+			local attempts=0
+			case "$git_args" in
+			*" fetch "*)
+				printf 'fetch\n' >>"$RACE_FETCH_LOG"
+				attempts=$(wc -l <"$RACE_FETCH_LOG" | tr -d ' ')
+				[[ "$attempts" -le "$failures" ]] || return 0
+				printf 'error: fetching ref refs/remotes/origin/main failed: %s\n' "$message" >&2
+				return 1
+				;;
+			esac
+			"$REAL_GIT" "$@"
+			return $?
+		}
+		_worktree_fetch_origin_branch "$CANONICAL" main 2>/dev/null
+	) || case_rc=$?
+	RACE_FETCH_ATTEMPTS=$(wc -l <"$RACE_FETCH_LOG" | tr -d ' ')
+	return "$case_rc"
+}
+if ! race_fetch_case 1 'incorrect old value provided' || [[ "$RACE_FETCH_ATTEMPTS" != 2 ]]; then
+	printf 'FAIL lost ref-update race was not recovered by one repeat fetch: attempts=%s\n' "$RACE_FETCH_ATTEMPTS"
+	exit 1
+fi
+if race_fetch_case 9 'incorrect old value provided' || [[ "$RACE_FETCH_ATTEMPTS" != 3 ]]; then
+	printf 'FAIL persistent ref-update rejection was not bounded to two repeats: attempts=%s\n' "$RACE_FETCH_ATTEMPTS"
+	exit 1
+fi
+if race_fetch_case 1 'unrelated transport failure' || [[ "$RACE_FETCH_ATTEMPTS" != 1 ]]; then
+	printf 'FAIL unrelated fetch failure was retried as a ref-update race: attempts=%s\n' "$RACE_FETCH_ATTEMPTS"
+	exit 1
+fi
+# GH#39663: Git 2.43 reports the same race as "is at X but expected Y".
+if ! race_fetch_case 1 "cannot lock ref 'refs/remotes/origin/develop': is at a but expected b" || [[ "$RACE_FETCH_ATTEMPTS" != 2 ]]; then
+	printf 'FAIL git 2.43 cannot-lock-ref race was not recovered by one repeat fetch: attempts=%s\n' "$RACE_FETCH_ATTEMPTS"
+	exit 1
+fi
+if race_fetch_case 1 "cannot lock ref 'refs/remotes/origin/develop': Unable to create '/x/develop.lock': File exists." || [[ "$RACE_FETCH_ATTEMPTS" != 1 ]]; then
+	printf 'FAIL stale-lock cannot-lock-ref failure was retried: attempts=%s\n' "$RACE_FETCH_ATTEMPTS"
+	exit 1
+fi
+if race_fetch_case 1 "cannot lock ref 'refs/remotes/origin/develop': Unable to create '/x but expected y/develop.lock': File exists." || [[ "$RACE_FETCH_ATTEMPTS" != 1 ]]; then
+	printf 'FAIL stale-lock with "but expected" in path was retried: attempts=%s\n' "$RACE_FETCH_ATTEMPTS"
+	exit 1
+fi
+printf 'PASS lost ref-update race repeats the fetch at most twice; other failures are not retried\n'
 
 # A registered sibling can exist while its index is unreadable. The fetch
 # selector must skip that candidate and use the bootstrap path instead of
@@ -236,9 +306,9 @@ REGISTRATION_FAILURE_OUTPUT=$(
 	HOME="$BROKEN_HOME" AIDEVOPS_SKIP_AUTO_CLAIM=1 \
 		"$HELPER" add "$REGISTRATION_FAILURE_BRANCH" "$REGISTRATION_FAILURE_PATH" 2>&1
 ) || REGISTRATION_FAILURE_RC=$?
-if [[ "$REGISTRATION_FAILURE_RC" -eq 0 || ! -d "$REGISTRATION_FAILURE_PATH" ||
-	"$REGISTRATION_FAILURE_OUTPUT" != *"AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=REGISTRATION_FAILED"* ]]; then
-	printf 'FAIL registration failure did not preserve unverifiable path recreation: rc=%s output=%s\n' \
+if [[ "$REGISTRATION_FAILURE_RC" -eq 0 || -e "$REGISTRATION_FAILURE_PATH" ||
+	"$REGISTRATION_FAILURE_OUTPUT" != *"WORKTREE_OWNERSHIP_ERROR_STAGE=lifecycle:begin-create"* ]]; then
+	printf 'FAIL unavailable registry did not prevent worktree creation: rc=%s output=%s\n' \
 		"$REGISTRATION_FAILURE_RC" "$REGISTRATION_FAILURE_OUTPUT"
 	exit 1
 fi
@@ -253,7 +323,94 @@ jq -e '
 	printf 'FAIL registration failure retired selectable terminal receipt evidence\n'
 	exit 1
 }
-printf 'PASS registration failure preserves terminal receipt and unverifiable worktree generation\n'
+printf 'PASS unavailable registry prevents creation and preserves terminal receipt\n'
+
+# GH#38685: a retired worker leaves an unsealed Pulse lifetime row for a path
+# that no longer exists. Unprovable completion must fail with the named cause
+# and remediation, not a bare ValueError; provable completion seals the stale
+# generation into history and lets the replacement creation proceed.
+# Args: $1 - path, $2 - lifetime record JSON
+seed_stale_lifetime() {
+	local seed_path="$1"
+	local seed_record="$2"
+	sqlite3 "$REGISTRY_DB" \
+		"CREATE TABLE IF NOT EXISTS worktree_managed_lifetimes (path TEXT PRIMARY KEY, record TEXT NOT NULL);
+		 INSERT INTO worktree_managed_lifetimes VALUES ('${seed_path}', '${seed_record}');"
+	return 0
+}
+STALE_BRANCH="test/stale-lifetime-unproven"
+STALE_PATH="${WORKTREES}/canonical-test-stale-lifetime-unproven"
+git -C "$CANONICAL" branch "$STALE_BRANCH" "$PINNED_SHA"
+# An invalid recorded boot identity can never be proven drained.
+STALE_RECORD='{"schema":1,"manager":"pulse","generation":"'"$(printf 'a%.0s' {1..32})"'","state":"running","identity":{"path":"'"$STALE_PATH"'","source_inode":"1:2"},"launches":[{"unit":"aidevops-worker-gh38685","invocation":"'"$(printf 'b%.0s' {1..32})"'","boot_id":"unknown","cgroup":"/fixture"}],"created_at":1}'
+seed_stale_lifetime "$STALE_PATH" "$STALE_RECORD"
+STALE_RC=0
+STALE_OUTPUT=$(
+	cd "$CANONICAL" || exit 1
+	AIDEVOPS_SKIP_AUTO_CLAIM=1 "$HELPER" add "$STALE_BRANCH" "$STALE_PATH" 2>&1
+) || STALE_RC=$?
+if [[ "$STALE_RC" -eq 0 || -e "$STALE_PATH" ||
+	"$STALE_OUTPUT" != *"WORKTREE_OWNERSHIP_ERROR_STAGE=lifecycle:begin-create"* ||
+	"$STALE_OUTPUT" != *"WORKTREE_OWNERSHIP_ERROR_REASON=stale-lifetime-record"* ||
+	"$STALE_OUTPUT" != *"no sealed generation"* ||
+	"$STALE_OUTPUT" != *"pass an explicit alternate path"* ]]; then
+	printf 'FAIL unprovable stale lifetime record did not fail with cause and remediation: rc=%s output=%s\n' \
+		"$STALE_RC" "$STALE_OUTPUT"
+	exit 1
+fi
+[[ "$(sqlite3 "$REGISTRY_DB" "SELECT record FROM worktree_managed_lifetimes WHERE path = '${STALE_PATH}';")" == "$STALE_RECORD" ]] || {
+	printf 'FAIL refused stale lifetime record was mutated or deleted\n'
+	exit 1
+}
+printf 'PASS unprovable stale lifetime record fails with explicit cause and remediation\n'
+
+RETIRED_BRANCH="test/stale-lifetime-retired"
+RETIRED_PATH="${WORKTREES}/canonical-test-stale-lifetime-retired"
+RETIRED_GENERATION=$(printf 'c%.0s' {1..32})
+git -C "$CANONICAL" branch "$RETIRED_BRANCH" "$PINNED_SHA"
+# A never-admitted generation is provably complete: sealing cancels admission.
+seed_stale_lifetime "$RETIRED_PATH" '{"schema":1,"manager":"pulse","generation":"'"$RETIRED_GENERATION"'","state":"created","identity":{"path":"'"$RETIRED_PATH"'","source_inode":"1:3"},"launches":[],"created_at":1}'
+RETIRED_RC=0
+RETIRED_OUTPUT=$(
+	cd "$CANONICAL" || exit 1
+	AIDEVOPS_SKIP_AUTO_CLAIM=1 "$HELPER" add "$RETIRED_BRANCH" "$RETIRED_PATH" 2>&1
+) || RETIRED_RC=$?
+RETIRED_HISTORY=$(sqlite3 "$REGISTRY_DB" \
+	"SELECT json_extract(record, '\$.state') || '|' || json_extract(record, '\$.admission_cancelled')
+	 FROM worktree_lifetime_history WHERE path = '${RETIRED_PATH}' AND generation = '${RETIRED_GENERATION}';")
+RETIRED_ACTIVE=$(sqlite3 "$REGISTRY_DB" \
+	"SELECT COUNT(*) FROM worktree_managed_lifetimes WHERE path = '${RETIRED_PATH}'
+	 AND json_extract(record, '\$.generation') = '${RETIRED_GENERATION}';")
+if [[ "$RETIRED_RC" -ne 0 || ! -d "$RETIRED_PATH" || "$RETIRED_HISTORY" != "sealed|1" || "$RETIRED_ACTIVE" != 0 ]]; then
+	printf 'FAIL provably retired stale lifetime record blocked creation: rc=%s history=%s active=%s output=%s\n' \
+		"$RETIRED_RC" "$RETIRED_HISTORY" "$RETIRED_ACTIVE" "$RETIRED_OUTPUT"
+	exit 1
+fi
+printf 'PASS provably retired stale lifetime record is sealed into history and creation proceeds\n'
+
+# A sealed Pulse row is still refused while a live owner lease names the path:
+# Pulse proofs never inspect owner leases, so begin-create must.
+LEASED_BRANCH="test/stale-lifetime-leased"
+LEASED_PATH="${WORKTREES}/canonical-test-stale-lifetime-leased"
+LEASED_RECORD='{"schema":1,"manager":"pulse","generation":"'"$(printf 'd%.0s' {1..32})"'","state":"sealed","sealed_at":1,"admission_cancelled":true,"identity":{"path":"'"$LEASED_PATH"'","source_inode":"1:4"},"launches":[],"created_at":1}'
+git -C "$CANONICAL" branch "$LEASED_BRANCH" "$PINNED_SHA"
+sqlite3 "$REGISTRY_DB" "INSERT INTO worktree_owners (worktree_path, branch, owner_pid, owner_session, owner_batch, task_id, owner_comm, owner_process_start, owner_dead_seen_at)
+	VALUES ('${LEASED_PATH}', '${LEASED_BRANCH}', $$, 'leased-session', '', '', 'bash', '', '');"
+seed_stale_lifetime "$LEASED_PATH" "$LEASED_RECORD"
+LEASED_RC=0
+LEASED_OUTPUT=$(
+	cd "$CANONICAL" || exit 1
+	AIDEVOPS_SKIP_AUTO_CLAIM=1 "$HELPER" add "$LEASED_BRANCH" "$LEASED_PATH" 2>&1
+) || LEASED_RC=$?
+if [[ "$LEASED_RC" -eq 0 || -e "$LEASED_PATH" ||
+	"$LEASED_OUTPUT" != *"WORKTREE_OWNERSHIP_ERROR_REASON=stale-lifetime-record"* ]] ||
+	[[ "$(sqlite3 "$REGISTRY_DB" "SELECT record FROM worktree_managed_lifetimes WHERE path = '${LEASED_PATH}';")" != "$LEASED_RECORD" ]]; then
+	printf 'FAIL live owner lease did not refuse replacement of a sealed Pulse record: rc=%s output=%s\n' \
+		"$LEASED_RC" "$LEASED_OUTPUT"
+	exit 1
+fi
+sqlite3 "$REGISTRY_DB" "DELETE FROM worktree_owners WHERE worktree_path = '${LEASED_PATH}';"
+printf 'PASS live owner lease refuses replacement of a sealed Pulse record without mutating it\n'
 
 ACTIVE_RECEIPT_BRANCH="test/recreated-active-path"
 ACTIVE_RECEIPT_PATH="${WORKTREES}/canonical-test-recreated-active-path"

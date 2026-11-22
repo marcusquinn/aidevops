@@ -15,6 +15,13 @@ Blocks pushes to public GitHub repos that contain private repo slugs in `TODO.md
 
 Private slugs are enumerated from `initialized_repos[]` entries with `mirror_upstream` or `local_only: true`, plus optional extras in `~/.aidevops/configs/privacy-guard-extra-slugs.txt`.
 
+For entity matches, a literal term already present in the verified public default
+branch tree is not treated as a new disclosure. A repo basename is checked
+separately from its full slug. Public writes use this exception only when the
+local origin matches the target and its default-branch ref is available; without
+a verified public tree, entity checks remain strict. Secret and local-path checks
+always apply, even to text already present in the public tree.
+
 - Bypass: `PRIVACY_GUARD_DISABLE=1 git push ...`
 - Fail-open on offline/unauthenticated `gh`
 - Test harness: `.agents/scripts/test-privacy-guard.sh`
@@ -27,10 +34,11 @@ Private slugs are enumerated from `initialized_repos[]` entries with `mirror_ups
 Blocks pushes that introduce new violations of three complexity metrics:
 - Function body > 100 lines
 - Nesting depth > 8
-- File > 1500 lines
+- Non-README Markdown > 1000 lines at the repository root, > 500 elsewhere
 
 Wraps `complexity-regression-helper.sh check` for each metric. Uses `git merge-base HEAD <origin-default>` as base, where `<origin-default>` is resolved via `origin/HEAD` → `origin/main` → `origin/master` → `@{u}`. This avoids spurious false-positives after a rebase (GH#20045).
 
+- Synced-record repos (email archives, transcripts, data snapshots): exempt those paths from the Markdown size check only with `.aidevops.json` `{"complexity":{"file_size_exclude":["clients/*"]}}`. Patterns are root-relative shell-case globs (`*` crosses `/`). An untracked (default) config applies immediately; a tracked config is read from the base commit, so it applies after it merges (GH#39490).
 - Bypass: `COMPLEXITY_GUARD_DISABLE=1 git push ...`
 - Fail-open when helper is missing or upstream is unreachable
 
@@ -125,6 +133,10 @@ an interrupted writer cannot leave stale lock ownership behind.
 - All hooks: `git push --no-verify`
 - Disable autofix only: `AIDEVOPS_PREPUSH_AUTOFIX=0 git push ...`
 - Debug discovery: `AIDEVOPS_PREPUSH_REPO_VERIFY_DEBUG=1 git push ...`
+
+### Push timeout in `full-loop-helper.sh commit-and-pr`
+
+Code-diff pushes legitimately take ~75s or more (privacy, complexity, repo-verify typecheck, secretlint/SonarCloud). The helper's push timeout defaults to 300s; override with `AIDEVOPS_PUSH_TIMEOUT_S=<seconds>` (positive integer; invalid values fall back to 300). A timeout advisory means `git push` did not finish within that budget. The budget covers pre-push hooks and the network transfer. To check a slow hook, use the debug flags above rather than bypassing; `--skip-hooks` is for doc-only diffs only.
 
 ### Test harness
 

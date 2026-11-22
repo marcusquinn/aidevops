@@ -134,6 +134,33 @@ _cleanup_stale_tracking_files() {
 	return 0
 }
 
+#######################################
+# t18922: run one session-bus steering relay pass (t18905) on this check's
+# cadence. Pulse starts the relay only at cycle start and on busy-lock ticks;
+# under the KeepAlive pulse supervisor no tick loses the instance lock, so a
+# long cycle left running workers without maintainer steering for the whole
+# cycle. This check runs every 2 minutes on launchd, systemd and cron. The
+# relay finds workers from bus presence, keeps its own single-runner lock,
+# per-worker interval and REST budget gate, and never writes to GitHub. It
+# runs after the worker checks and is bounded, so it cannot delay them. It
+# also gets only the time the checks left before the 120 s service deadline
+# (systemd TimeoutStartSec, launchd/cron interval), minus a 10 s margin.
+# Disable: AIDEVOPS_WORKER_BUS_RELAY=0.
+#######################################
+_check_run_bus_relay() {
+	[[ "${AIDEVOPS_WORKER_BUS_RELAY:-1}" != "0" ]] || return 0
+	local relay_helper="${SCRIPT_DIR}/worker-bus-relay-helper.sh"
+	[[ -x "$relay_helper" ]] || return 0
+	local relay_timeout="${WORKER_WATCHDOG_RELAY_TIMEOUT:-90}"
+	[[ "$relay_timeout" =~ ^[1-9][0-9]{0,3}$ ]] || relay_timeout=90
+	local check_remaining=$((110 - SECONDS))
+	[[ "$check_remaining" -ge 10 ]] || return 0
+	[[ "$relay_timeout" -le "$check_remaining" ]] || relay_timeout="$check_remaining"
+	timeout_sec "$relay_timeout" "$relay_helper" relay \
+		</dev/null >>"${HOME}/.aidevops/logs/worker-bus-relay.log" 2>&1 || true
+	return 0
+}
+
 # =============================================================================
 # cmd_check
 # =============================================================================
@@ -150,6 +177,8 @@ cmd_check() {
 	if [[ -z "$workers" ]]; then
 		# No workers running — clean up stale tracking files
 		rm -f "${IDLE_STATE_DIR}"/idle-* "${IDLE_STATE_DIR}"/stall-* "${IDLE_STATE_DIR}"/stall-grace-* 2>/dev/null || true
+		# Bus presence, not this process scan, decides which workers to steer.
+		_check_run_bus_relay
 		return 0
 	fi
 
@@ -169,6 +198,7 @@ cmd_check() {
 	fi
 
 	_cleanup_stale_tracking_files
+	_check_run_bus_relay
 
 	return 0
 }
@@ -301,7 +331,7 @@ _status_print_scheduler() {
 			# Capture output to avoid SIGPIPE under set -o pipefail
 			local launchctl_out
 			launchctl_out=$(launchctl list 2>/dev/null) || true
-			if echo "$launchctl_out" | grep -q "${LAUNCHD_LABEL}"; then
+			if grep -q "${LAUNCHD_LABEL}" <<<"$launchctl_out"; then
 				echo "  Status: installed and loaded"
 			else
 				echo "  Status: installed but NOT loaded"
@@ -616,7 +646,7 @@ cmd_uninstall() {
 		if command -v crontab >/dev/null 2>&1; then
 			local current_crontab
 			current_crontab=$(crontab -l 2>/dev/null) || true
-			if echo "$current_crontab" | grep -qF "$CRON_MARKER"; then
+			if grep -qF "$CRON_MARKER" <<<"$current_crontab"; then
 				echo "$current_crontab" | grep -vF "$CRON_MARKER" | crontab -
 				echo "Also removed leftover cron entry"
 			fi
@@ -626,7 +656,7 @@ cmd_uninstall() {
 		_require_crontab || return 1
 		local current_crontab
 		current_crontab=$(crontab -l 2>/dev/null) || true
-		if echo "$current_crontab" | grep -qF "$CRON_MARKER"; then
+		if grep -qF "$CRON_MARKER" <<<"$current_crontab"; then
 			echo "$current_crontab" | grep -vF "$CRON_MARKER" | crontab -
 			echo "Uninstalled cron entry for worker-watchdog"
 		else

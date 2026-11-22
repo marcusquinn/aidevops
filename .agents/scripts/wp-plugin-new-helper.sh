@@ -305,6 +305,7 @@ _quality_plan() {
 	fi
 	printf 'Quality:      register repos.json features: ["code-quality"] for the daily sweep\n'
 	if [[ "$visibility" == private ]]; then
+		printf 'Runners:      enroll private org repo in its selected pool before first PR; require fork PR workflows off\n'
 		printf 'Quality:      defer hosted onboarding until public by default; verify any existing private-plan capacity\n'
 	else
 		printf 'Quality:      Codacy API add + grade badge with CODACY_API_TOKEN; otherwise report missing token\n'
@@ -373,6 +374,7 @@ cmd_quality() {
 		return 1
 	fi
 	command -v python3 >/dev/null 2>&1 || return 1
+	bash "${SCRIPT_DIR}/github-runner-org-helper.sh" repo-ensure --repo "$repo" || return 1
 	python3 "${SCRIPT_DIR}/wp_plugin_quality.py" onboard "$repo" "$path" "$visibility" || return 1
 	(cd "$path" && bash "${SCRIPT_DIR}/repo-metrics-helper.sh" generate .) || return 1
 	if [[ -n "$pr" ]]; then
@@ -426,6 +428,9 @@ _copy_starter() {
 		[[ "$P_PLUGIN_URI" == "https://github.com/$source_repo" ]] || homepage=(--homepage "$P_PLUGIN_URI")
 		gh repo create "$source_repo" "--${P_VISIBILITY}" --template "$STARTER_REPO" \
 			--description "$P_DESCRIPTION" ${homepage[@]+"${homepage[@]}"} || return 1
+		# Provision before the first branch push/PR can trigger CI. Failure keeps
+		# the generated repo intact; repo-ensure prints an admin retry command.
+		bash "${SCRIPT_DIR}/github-runner-org-helper.sh" repo-ensure --repo "$source_repo" || return 1
 		_wait_template "$parent" "$source_repo" || return 1
 	fi
 	git -C "$parent" -c advice.detachedHead=false clone --quiet ${clone_args[@]+"${clone_args[@]}"} \

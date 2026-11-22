@@ -18,6 +18,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 if [[ -f "$SCRIPT_DIR/shared-constants.sh" ]]; then
     source "$SCRIPT_DIR/shared-constants.sh"
 fi
+# shellcheck source=./gsc-auth-lib.sh
+source "$SCRIPT_DIR/gsc-auth-lib.sh"
 
 # =============================================================================
 # Configuration
@@ -36,38 +38,37 @@ readonly ROW_LIMIT=25000
 # GSC API Functions
 # =============================================================================
 
-# Use an explicit ADC file when set; otherwise use the documented GSC file.
+# Credential resolution and scoped ADC tokens are shared with the
+# keyword-research GSC path (gsc-auth-lib.sh, GH#36898).
 _gsc_credential_file() {
-    if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
-        printf '%s\n' "$GOOGLE_APPLICATION_CREDENTIALS"
-    elif [[ -f "$CONFIG_DIR/gsc-credentials.json" ]]; then
-        printf '%s\n' "$CONFIG_DIR/gsc-credentials.json"
-    fi
+    gsc_adc_credential_file
     return 0
 }
 
-# Get access token from service account or environment
+# Get access token from GSC_ACCESS_TOKEN or Application Default Credentials
 get_access_token() {
     source "$CONFIG_DIR/credentials.sh" 2>/dev/null || true
-    
+
     if [[ -n "${GSC_ACCESS_TOKEN:-}" ]]; then
         echo "$GSC_ACCESS_TOKEN"
         return 0
     fi
-    
+
     local cred_file
     cred_file=$(_gsc_credential_file)
     if [[ -n "$cred_file" && -f "$cred_file" ]]; then
         local token
-        token=$(GOOGLE_APPLICATION_CREDENTIALS="$cred_file" gcloud auth application-default print-access-token --scopes=https://www.googleapis.com/auth/webmasters.readonly 2>/dev/null || echo "")
-        if [[ -n "$token" ]]; then
+        if token=$(gsc_adc_access_token "$cred_file"); then
             echo "$token"
             return 0
         fi
+        print_error "GSC credentials found at $cred_file, but the access token request failed"
+        print_error "Re-authenticate: gcloud auth application-default login (keyless: add --impersonate-service-account=<sa>)"
+        return 1
     fi
-    
+
     print_error "GSC credentials not configured"
-    print_error "Use ~/.config/aidevops/gsc-credentials.json, GOOGLE_APPLICATION_CREDENTIALS, or GSC_ACCESS_TOKEN in ~/.config/aidevops/credentials.sh"
+    print_error "Use GSC_ACCESS_TOKEN in ~/.config/aidevops/credentials.sh, GOOGLE_APPLICATION_CREDENTIALS, ~/.config/aidevops/gsc-credentials.json, or gcloud auth application-default login"
     return 1
 }
 
@@ -326,8 +327,10 @@ Output:
     ~/.aidevops/.agent-workspace/work/seo-data/{domain}/gsc-{start}-{end}.toon
 
 Requirements:
-    - Service-account or user ADC JSON at ~/.config/aidevops/gsc-credentials.json
-      (or set GOOGLE_APPLICATION_CREDENTIALS to an alternate JSON file)
+    - Application Default Credentials, first found of:
+        GOOGLE_APPLICATION_CREDENTIALS, ~/.config/aidevops/gsc-credentials.json,
+        or gcloud's default ADC (gcloud auth application-default login, including
+        keyless --impersonate-service-account=<sa>)
     - User ADC must contain quota_project_id, or set GSC_QUOTA_PROJECT
     - Or GSC_ACCESS_TOKEN set in ~/.config/aidevops/credentials.sh
     - The authenticated account must have access to the GSC property

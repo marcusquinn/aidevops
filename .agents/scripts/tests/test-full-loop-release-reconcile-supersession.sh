@@ -269,6 +269,7 @@ printf 'PASS unpublished protected predecessors require merged ancestry and a pu
 		  protected_head:$protected_head,protected_merged_at:$protected_merged_at}') || exit 1
 	malformed_protected_json=$(jq -c '.protected_merged_at = "invalid"' \
 		<<<"$protected_json") || exit 1
+	_full_loop_write_release_receipt test/repo 93 published || exit 1
 	if _full_loop_release_write_protected_successor_receipt test/repo 92 \
 		1111111111111111111111111111111111111111 "$malformed_protected_json" 93 \
 		2222222222222222222222222222222222222222 v1.2.4 \
@@ -278,6 +279,7 @@ printf 'PASS unpublished protected predecessors require merged ancestry and a pu
 	malformed_evidence=$(_full_loop_release_evidence_path test/repo 92 successor) || exit 1
 	[[ ! -e "$malformed_evidence" &&
 		! -e "${AIDEVOPS_FULL_LOOP_RECEIPT_DIR}/test_repo-92.status" ]] || exit 1
+	_full_loop_write_release_receipt test/repo 91 published || exit 1
 	_full_loop_release_write_protected_successor_receipt test/repo 90 \
 		1111111111111111111111111111111111111111 "$protected_json" 91 \
 		2222222222222222222222222222222222222222 v1.2.4 \

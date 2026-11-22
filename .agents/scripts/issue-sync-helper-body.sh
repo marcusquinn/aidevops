@@ -205,6 +205,27 @@ _body_sync_apply() {
 	return 0
 }
 
+# #aidevops:trust-boundary — re-resolve current identity and repository
+# permission for every invocation; never infer authority from edit success.
+# Arguments: $1 repo slug, $2 command name for messages
+# Sets AIDEVOPS_GH_WRITE_PERMISSION_USER on success.
+_issue_sync_require_maintain_authority() {
+	local repo="$1" command_name="$2"
+	_gh_current_user_allows_repo_write "$repo" || {
+		print_error "${command_name} requires current maintainer authority (${AIDEVOPS_GH_WRITE_PERMISSION_REASON:-unknown})"
+		return 1
+	}
+	[[ -n "${AIDEVOPS_GH_WRITE_PERMISSION_USER:-}" ]] || return 1
+	case "${AIDEVOPS_GH_WRITE_PERMISSION_LEVEL:-unknown}" in
+	admin | maintain) ;;
+	*)
+		print_error "${command_name} requires admin or maintain authority (current: ${AIDEVOPS_GH_WRITE_PERMISSION_LEVEL:-unknown})"
+		return 1
+		;;
+	esac
+	return 0
+}
+
 cmd_sync_body() {
 	local target_task="${1:-}"
 	[[ "$target_task" =~ ^t[0-9]+(\.[0-9]+)*$ ]] || {
@@ -220,24 +241,94 @@ cmd_sync_body() {
 	issue_number=$(resolve_task_gh_number "$target_task" "$todo_file" "$repo" || true)
 	[[ "$issue_number" =~ ^[1-9][0-9]*$ ]] || {
 		print_error "sync-body requires an immutable task/ref mapping for $target_task"
+		describe_task_issue_mapping "$target_task" "$todo_file" "$repo"
 		return 1
 	}
-	# #aidevops:trust-boundary — re-resolve current identity and repository
-	# permission for every invocation; never infer authority from edit success.
-	_gh_current_user_allows_repo_write "$repo" || {
-		print_error "sync-body requires current maintainer authority (${AIDEVOPS_GH_WRITE_PERMISSION_REASON:-unknown})"
-		return 1
-	}
+	_issue_sync_require_maintain_authority "$repo" sync-body || return 1
 	self_login="${AIDEVOPS_GH_WRITE_PERMISSION_USER:-}"
-	[[ -n "$self_login" ]] || return 1
-	case "${AIDEVOPS_GH_WRITE_PERMISSION_LEVEL:-unknown}" in
-	admin | maintain) ;;
-	*)
-		print_error "sync-body requires admin or maintain authority (current: ${AIDEVOPS_GH_WRITE_PERMISSION_LEVEL:-unknown})"
-		return 1
-		;;
-	esac
 	_body_sync_apply "$target_task" "$repo" "$todo_file" "$project_root" \
 		"$issue_number" "$self_login" "${ALLOW_CLOSED_BODY_SYNC:-false}"
 	return $?
+}
+
+# GH#37294: explicit maintainer rebind after a TODO.md task row was renamed.
+# Points <new_task> at the coordinator task that already owns the issue; the
+# issue identity never moves. Refuses unless TODO.md has exactly one live
+# <new_task> row whose ref:GH# is the issue owned by <old_task>, and no live
+# <old_task> row. Afterwards `enrich <new_task>` (or `sync-body` for held
+# issues) regenerates the title, Task ID, and Blocked by from TODO.md.
+cmd_rebind_task() {
+	local new_task="${1:-}" old_task="${2:-}"
+	local id_re='^t[0-9]+(\.[0-9]+)*$'
+	[[ "$new_task" =~ $id_re && "$old_task" =~ $id_re && "$new_task" != "$old_task" ]] || {
+		print_error "rebind-task requires <new-task> --from <old-task> (two different tNNN IDs)"
+		return 1
+	}
+	_init_cmd || return 1
+	local repo="$_CMD_REPO" todo_file="$_CMD_TODO"
+	local coordinator="${SCRIPT_DIR}/task-coordinator.mjs"
+	[[ -f "$coordinator" ]] || {
+		print_error "rebind-task requires the task coordinator"
+		return 1
+	}
+	local new_count="" old_line="" new_line="" ref=""
+	new_count=$(strip_code_fences <"$todo_file" | awk -v wanted="$new_task" '
+		match($0, /^[[:space:]]*-[[:space:]]+\[.\][[:space:]]+/) {
+			split(substr($0, RLENGTH + 1), fields, /[[:space:]]+/)
+			if (fields[1] == wanted) count++
+		}
+		END { print count + 0 }') || return 1
+	[[ "$new_count" == "1" ]] || {
+		print_error "rebind-task requires exactly one live TODO.md row for ${new_task} (found ${new_count})"
+		return 1
+	}
+	old_line=$(_first_todo_task_line_or_empty "$old_task" "$todo_file") || return 1
+	[[ -z "$old_line" ]] || {
+		print_error "rebind-task refuses while TODO.md still has a live ${old_task} row"
+		return 1
+	}
+	new_line=$(_first_todo_task_line_or_empty "$new_task" "$todo_file") || return 1
+	[[ "$new_line" =~ ref:GH#([0-9]+) ]] && ref="${BASH_REMATCH[1]}"
+	[[ "$ref" =~ ^[1-9][0-9]*$ ]] || {
+		print_error "rebind-task requires ref:GH#NNN on the ${new_task} TODO.md row"
+		return 1
+	}
+	_issue_sync_require_maintain_authority "$repo" rebind-task || return 1
+
+	local repository_id="" issue_json="" issue_id="" issue_number="" source_json="" source_number=""
+	repository_id=$(resolve_repository_node_id "$repo") || {
+		print_error "rebind-task could not verify the repository identity of ${repo}"
+		return 1
+	}
+	issue_json=$(_gh_with_timeout read gh issue view "$ref" --repo "$repo" --json id,number 2>/dev/null) || issue_json=""
+	issue_id=$(printf '%s' "$issue_json" | jq -r '.id // ""' 2>/dev/null || true)
+	issue_number=$(printf '%s' "$issue_json" | jq -r '.number // "" | tostring' 2>/dev/null || true)
+	[[ -n "$issue_id" && "$issue_number" == "$ref" ]] || {
+		print_error "rebind-task could not read #${ref} in ${repo}"
+		return 1
+	}
+	source_json=$(node "$coordinator" resolve-issue --task-id "$old_task" --forge github \
+		--repository-id "$repository_id" 2>/dev/null) || source_json=""
+	source_number=$(printf '%s' "$source_json" | jq -r --arg issue "$issue_id" \
+		'select(.issueId == $issue and .role == "home") | .displayNumber | tostring' 2>/dev/null || true)
+	[[ "$source_number" == "$ref" ]] || {
+		print_error "rebind-task: ${old_task} does not own #${ref} in the coordinator for ${repo}"
+		describe_task_issue_mapping "$new_task" "$todo_file" "$repo"
+		return 1
+	}
+	if [[ "${DRY_RUN:-false}" == true ]]; then
+		print_info "[DRY-RUN] Would rebind ${new_task} to #${ref} (currently owned by ${old_task}) in ${repo}"
+		return 0
+	fi
+	node "$coordinator" alias-task --task-id "$new_task" --from-task-id "$old_task" --forge github \
+		--repository-id "$repository_id" --issue-id "$issue_id" --display-number "$ref" >/dev/null || {
+		print_error "rebind-task: coordinator refused to alias ${new_task} to #${ref}"
+		return 1
+	}
+	[[ "$(resolve_task_gh_number "$new_task" "$todo_file" "$repo" || true)" == "$ref" ]] || {
+		print_error "rebind-task: ${new_task} does not resolve to #${ref} after the alias write"
+		return 1
+	}
+	print_success "Rebound ${new_task} to #${ref} (was ${old_task}). Next: issue-sync-helper.sh enrich ${new_task} --repo ${repo}"
+	return 0
 }

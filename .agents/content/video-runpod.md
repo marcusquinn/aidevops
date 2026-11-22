@@ -38,14 +38,15 @@ changing any Serverless endpoint or Pod.
 
 ## Quick Reference
 
-- **Auth**: `Authorization: Bearer $RUNPOD_API_KEY` (`aidevops secret set RUNPOD_API_KEY`)
+- **Auth**: `Authorization: Bearer $RUNPOD_API_KEY`, where `RUNPOD_API_KEY` exists only inside a process started with `aidevops secret RUNPOD_API_KEY -- <cmd>` (never exported to your shell). It resolves to the account-named key declared by `aidevops secret default runpod NAME`; setup: `tools/infrastructure/runpod.md`
 - **Public Endpoint sync**: `POST https://api.runpod.ai/v2/<endpoint-id>/runsync`
   with `{"input":{...}}`
 - **Async**: `POST .../<endpoint-id>/run` returns a job ID; poll
   `GET .../<endpoint-id>/status/<job-id>` with bounded backoff
 - **Model list and per-model schema/pricing**: `https://docs.runpod.io/public-endpoints/reference`
 - **Serverless ComfyUI worker**: GitHub `runpod-workers/worker-comfyui`
-- **CLI**: `runpodctl` (Pods/Serverless lifecycle, see `cloud-gpu.md`)
+- **CLI**: `runpodctl` (Pods/Serverless lifecycle; `serverless run <id> --input-file payload.json` submits on `/run` and polls; see `tools/infrastructure/runpod.md`)
+- **MCP**: on-demand `@runpod` for interactive inspection; endpoint runs and other billable writes need approval
 - **JS/TS**: `@runpod/ai-sdk-provider` integrates Public Endpoints with the Vercel AI SDK
 
 <!-- AI-CONTEXT-END -->
@@ -53,6 +54,7 @@ changing any Serverless endpoint or Pod.
 ## Public Endpoints
 
 ```bash
+# Save as flux.sh and run: aidevops secret RUNPOD_API_KEY -- bash flux.sh
 curl -s -X POST "https://api.runpod.ai/v2/black-forest-labs-flux-1-schnell/runsync" \
   -H "Authorization: Bearer $RUNPOD_API_KEY" \
   -H "Content-Type: application/json" \

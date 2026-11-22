@@ -185,9 +185,39 @@ test_creates_worker_ready_issue() {
 	assert_file_contains "worker issue has canonical Files Scope" "${TEST_ROOT}/created-body" "### Files Scope"
 	# shellcheck disable=SC2016 # Literal Markdown scope declarations.
 	assert_file_contains "worker issue scopes the exact source diff" "${TEST_ROOT}/created-body" '- EDIT: `package.json`'
-	# shellcheck disable=SC2016 # Literal Markdown scope declarations.
-	assert_file_contains "worker issue permits narrow trust-policy repair" "${TEST_ROOT}/created-body" '- EDIT: `.agents/configs/trusted-dependabot-updates.conf`'
+	if grep -qF '.agents/' "${TEST_ROOT}/created-body"; then
+		printf 'FAIL project intake references framework-only paths\n' >&2
+		return 1
+	fi
 	assert_file_contains "worker issue carries idempotency marker" "${TEST_ROOT}/created-body" "aidevops:dependabot-pr-intake repo=owner/repo pr=30038"
+	return 0
+}
+
+test_framework_scope_and_approval_reason() {
+	local scope_lines=""
+	local body=""
+
+	scope_lines=$(_pulse_dependabot_intake_scope_lines "30038" "marcusquinn/aidevops" "head-current" "policy-ineligible")
+	# shellcheck disable=SC2016 # Literal Markdown scope declaration.
+	[[ "$scope_lines" == *'- EDIT: `.agents/configs/trusted-dependabot-updates.conf`'* ]] || return 1
+	# GH#36704: approval-only intakes must not claim the shared allowlist footprint.
+	body=$(_pulse_dependabot_intake_scope_lines "30038" "marcusquinn/aidevops" "head-current" "approval-required")
+	[[ "$body" != *'trusted-dependabot-updates.conf'* && "$body" == *'package.json'* ]] || {
+		printf 'FAIL approval-only scope omits the shared allowlist\n' >&2
+		return 1
+	}
+	printf 'PASS approval-only scope omits the shared allowlist\n'
+	body=$(_pulse_dependabot_intake_body "30038" "marcusquinn/aidevops" "head-current" "policy-ineligible" "marker" "$scope_lines")
+	[[ "$body" == *'.agents/scripts/trusted-dependabot-lib.sh'* ]] || return 1
+	[[ "$body" == *'update the narrow policy with evidence'* ]] || return 1
+	_pulse_route_dependabot_pr_to_worker_issue "30038" "owner/repo" "app/dependabot" "head-current" "approval-required"
+	assert_file_contains "approval-only gate has distinct reason" "${TEST_ROOT}/created-body" '**approval-required**'
+	assert_file_contains "approval-only gate preserves allowlist" "${TEST_ROOT}/created-body" 'Do not change the allowlist'
+	assert_file_contains "approval-only gate names maintainer approval" "${TEST_ROOT}/created-body" 'sudo aidevops approve pr 30038 owner/repo'
+	assert_file_contains "approval-only gate names identical replacement" "${TEST_ROOT}/created-body" 'maintainer-authored replacement PR with the identical diff'
+	assert_file_contains "approval-only gate leaves supersession to pulse" "${TEST_ROOT}/created-body" 'Pulse closes the bot PR as superseded after the replacement merges'
+	# shellcheck disable=SC2016 # Literal Markdown code span.
+	assert_file_contains "intake forbids closing keywords for the source PR" "${TEST_ROOT}/created-body" 'refer to the source PR only as `Supersedes #30038`'
 	return 0
 }
 
@@ -396,6 +426,63 @@ test_rejects_unverified_author() {
 	[[ ! -e "${TEST_ROOT}/create-args" && ! -e "${TEST_ROOT}/pr-edit-args" &&
 		! -e "${TEST_ROOT}/idempotent-comment-args" ]]
 	return $?
+}
+
+# GH#39280 stubs: the real resolver and exact-head verifier live in
+# trusted-dependabot-lib.sh and are covered by test-pulse-merge-trusted-dependabot.sh.
+_trusted_dependency_bot_for_author() {
+	[[ "$1" == "app/acme-renovate" && "$2" == "owner/repo" ]] || return 1
+	printf 'acme-renovate\n'
+	return 0
+}
+
+_is_authentic_dependency_bot_pr() {
+	if [[ "$AUTHENTIC" -eq 1 && "$1" == "30038" && "$2" == "owner/repo" &&
+		"$3" == "app/acme-renovate" && "$4" == "head-current" && "$5" == "acme-renovate" ]]; then
+		_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON=""
+		return 0
+	fi
+	_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON="$AUTH_FAILURE_REASON"
+	return 1
+}
+
+test_configured_dependency_bot_routes_only_repairs() {
+	local route_rc=0
+
+	rm -f "${TEST_ROOT}/create-args" "${TEST_ROOT}/created-body" "${TEST_ROOT}/pr-edit-args"
+	OPEN_ISSUES_JSON="[]"
+	CLOSED_ISSUES_JSON="[]"
+	AUTHENTIC=1
+	PR_LABELS=""
+	LABEL_SNAPSHOT=$'origin:worker\ndependencies\nauto-dispatch\ntier:standard'
+	_pulse_route_dependabot_pr_to_worker_issue \
+		"30038" "owner/repo" "app/acme-renovate" "head-current" "policy-ineligible" || route_rc=$?
+	[[ "$route_rc" -eq 1 && ! -e "${TEST_ROOT}/create-args" ]] || return 1
+	printf 'PASS configured dependency bot gets no policy or approval intake\n'
+	route_rc=0
+	_pulse_route_dependabot_pr_to_worker_issue \
+		"30038" "owner/repo" "app/other-renovate" "head-current" "terminal-ci-failure" || route_rc=$?
+	[[ "$route_rc" -eq 1 && ! -e "${TEST_ROOT}/create-args" ]] || return 1
+	printf 'PASS unconfigured dependency bot is not routed\n'
+	_pulse_route_dependabot_pr_to_worker_issue \
+		"30038" "owner/repo" "app/acme-renovate" "head-current" "terminal-ci-failure" || return 1
+	assert_file_contains "configured dependency bot intake names the bot" \
+		"${TEST_ROOT}/create-args" "Dependency bot acme-renovate PR #30038 requires worker resolution"
+	assert_file_contains "configured dependency bot intake records exact-head proof" \
+		"${TEST_ROOT}/created-body" "live Dependency bot acme-renovate Bot identity"
+	assert_file_contains "configured dependency bot intake routes terminal CI" \
+		"${TEST_ROOT}/created-body" "**terminal-ci-failure**"
+	rm -f "${TEST_ROOT}/create-args"
+	route_rc=0
+	AUTHENTIC=0
+	AUTH_FAILURE_REASON="commit-author-mismatch"
+	_pulse_route_dependabot_pr_to_worker_issue \
+		"30038" "owner/repo" "app/acme-renovate" "head-current" "merge-conflict" || route_rc=$?
+	AUTHENTIC=1
+	AUTH_FAILURE_REASON="snapshot-unavailable"
+	[[ "$route_rc" -eq 1 && ! -e "${TEST_ROOT}/create-args" && ! -e "${TEST_ROOT}/pr-edit-args" ]] || return 1
+	printf 'PASS modified configured-bot branch fails closed without writes\n'
+	return 0
 }
 
 test_classifies_human_modified_bot_branch() {
@@ -799,6 +886,7 @@ main() {
 	# shellcheck source=../pulse-dispatch-dedup-layers.sh
 	source "${SCRIPT_DIR}/../pulse-dispatch-dedup-layers.sh"
 	test_creates_worker_ready_issue
+	test_framework_scope_and_approval_reason
 	test_provisions_missing_dependencies_label
 	printf 'PASS missing dependencies label is provisioned once\n'
 	test_existing_dependencies_label_skips_create
@@ -819,6 +907,7 @@ main() {
 	test_rejects_unverified_author
 	printf 'PASS unverified authors fail closed\n'
 	test_classifies_human_modified_bot_branch
+	test_configured_dependency_bot_routes_only_repairs
 	test_preserves_explicit_maintainer_hold
 	test_closes_policy_held_source_after_verified_replacement
 	test_policy_only_replacement_preserves_source

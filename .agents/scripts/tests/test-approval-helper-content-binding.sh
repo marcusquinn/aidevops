@@ -13,6 +13,8 @@ source "${SCRIPT_DIR}/../approval-snapshot-v2.sh"
 TEST_ROOT="$(mktemp -d -t approval-content-binding.XXXXXX)"
 FIXTURES="${TEST_ROOT}/fixtures"
 TEST_HOME="${TEST_ROOT}/home"
+# Per-lane scratch directory; lanes run in parallel with isolated fixtures.
+LANE_DIR="$TEST_ROOT"
 TESTS_RUN=0
 TESTS_FAILED=0
 PR_HEAD="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -55,13 +57,26 @@ fi
 case "$endpoint" in
 	user) printf '%s\n' "${GH_AUTH_USER:-maintainer}" ;;
 graphql)
+	# Linked-source history queries pass the source node as `-f id=...`.
+	if [[ " $* " == *" id="* ]]; then
+		[[ -f "${FIXTURES}/graphql-source-edits.json" ]] || exit 1
+		cat "${FIXTURES}/graphql-source-edits.json"
+		exit 0
+	fi
 	[[ -f "${FIXTURES}/graphql-edits-41.json" ]] || exit 1
 	cat "${FIXTURES}/graphql-edits-41.json"
 	;;
 repos/owner/repo/collaborators/trusted-collab/permission | repos/owner/repo/collaborators/maintainer/permission) printf '%s\n' "${GH_PERMISSION:-write}" ;;
-repos/owner/repo/collaborators/contributor/permission) printf '%s\n' "read" ;;
+repos/owner/repo/collaborators/contributor/permission | repos/owner/repo/collaborators/link-author/permission) printf '%s\n' "read" ;;
 repos/owner/repo/collaborators/github-actions%5Bbot%5D/permission | repos/owner/repo/collaborators/github-actions\[bot\]/permission) printf '%s\n' "none" ;;
-	repos/owner/repo/issues/41) cat "${FIXTURES}/issue-41.json" ;;
+	repos/owner/repo/issues/41)
+		if [[ "${GH_RACE_FIRST_ISSUE:-0}" == 1 && ! -f "${FIXTURES}/race-read" ]]; then
+			: >"${FIXTURES}/race-read"
+			cat "${FIXTURES}/issue-41-before-race.json"
+		else
+			cat "${FIXTURES}/issue-41.json"
+		fi
+		;;
 repos/owner/repo/issues/41/comments*) cat "${FIXTURES}/comments-41.json" ;;
 repos/owner/repo/issues/41/timeline*) cat "${FIXTURES}/timeline-41.json" ;;
 repos/owner/repo/issues/42) cat "${FIXTURES}/issue-42.json" ;;
@@ -79,7 +94,7 @@ EOF
 }
 
 write_baseline_fixtures() {
-	rm -f "${FIXTURES}/graphql-edits-41.json"
+	rm -f "${FIXTURES}/graphql-edits-41.json" "${FIXTURES}/graphql-source-edits.json"
 	cat >"${FIXTURES}/issue-41.json" <<'EOF'
 {"id":4100,"node_id":"I_41","number":41,"user":{"id":101,"node_id":"U_101","login":"external-author","type":"User"},"author_association":"CONTRIBUTOR","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","title":"Reviewed issue","body":"Issue body with https://example.invalid/opaque"}
 EOF
@@ -129,7 +144,11 @@ append_signed_comment() {
 	if [[ "${STRIP_CONTENT_DIGESTS:-0}" == "1" ]]; then
 		payload=$(jq -cS 'del(.issue.content_digests)' <<<"$payload") || return 1
 	fi
-	signature_file="${TEST_ROOT}/signature-${number}.txt"
+	# Simulate a pre-GH#38006 signature without linked-source digests.
+	if [[ "${STRIP_LINKED_DIGESTS:-0}" == "1" ]]; then
+		payload=$(jq -cS 'del(.issue.content_digests.linked_frame, .issue.content_digests.linked_bodies)' <<<"$payload") || return 1
+	fi
+	signature_file="${LANE_DIR}/signature-${number}.txt"
 	sign_payload "$payload" "$signature_file" || return 1
 	signature=$(<"$signature_file")
 	body="<!-- aidevops-signed-approval -->
@@ -147,14 +166,14 @@ ${signature}
 		.[0] += [{id:$id,node_id:("APPROVAL_" + ($id|tostring)),event:"commented",created_at:$created_at,actor:{id:1,node_id:"U_1",login:"maintainer",type:"User"}}]
 	' "$timeline_file") || return 1
 	printf '%s\n' "$updated" >"$timeline_file"
-	printf '%s\n' "$payload" >"${TEST_ROOT}/payload-${number}.json"
+	printf '%s\n' "$payload" >"${LANE_DIR}/payload-${number}.json"
 	return 0
 }
 
 replace_with_legacy_comment() {
 	local number="$1"
 	local payload="APPROVE:issue:owner/repo:${number}:2026-01-01T00:05:00Z"
-	local signature_file="${TEST_ROOT}/legacy-signature.txt" signature="" body=""
+	local signature_file="${LANE_DIR}/legacy-signature.txt" signature="" body=""
 	sign_payload "$payload" "$signature_file" || return 1
 	signature=$(<"$signature_file")
 	body="<!-- aidevops-signed-approval -->
@@ -174,12 +193,12 @@ run_verify() {
 	local expected_head="${3:-}"
 	if [[ -n "$expected_head" ]]; then
 		HOME="$TEST_HOME" PATH="${TEST_ROOT}/bin:$PATH" FIXTURES="$FIXTURES" \
-			AIDEVOPS_APPROVAL_PUB="${TEST_ROOT}/approval.pub" \
+			AIDEVOPS_APPROVAL_PUB="${TEST_APPROVAL_PUB:-${TEST_ROOT}/approval.pub}" \
 			"$APPROVAL_HELPER" verify "$kind" "$number" owner/repo --expect-head "$expected_head" 2>/dev/null
 		return $?
 	fi
 	HOME="$TEST_HOME" PATH="${TEST_ROOT}/bin:$PATH" FIXTURES="$FIXTURES" \
-		AIDEVOPS_APPROVAL_PUB="${TEST_ROOT}/approval.pub" \
+		AIDEVOPS_APPROVAL_PUB="${TEST_APPROVAL_PUB:-${TEST_ROOT}/approval.pub}" \
 		"$APPROVAL_HELPER" verify "$kind" "$number" owner/repo 2>/dev/null
 	return $?
 }
@@ -295,7 +314,7 @@ file_mode() {
 }
 
 test_snapshot_temp_permissions() {
-	local AIDEVOPS_TEMP_DIR="${TEST_ROOT}/managed-temp-permissions"
+	local AIDEVOPS_TEMP_DIR="${LANE_DIR}/managed-temp-permissions"
 	local temp_dir="" json_file=""
 	temp_dir=$(_approval_snapshot_v2_create_temp_dir) || {
 		print_result "snapshot staging uses a private managed temp directory" 1
@@ -330,7 +349,7 @@ PY
 }
 
 test_large_snapshots_avoid_argv_limits() {
-	local AIDEVOPS_TEMP_DIR="${TEST_ROOT}/managed-temp-large"
+	local AIDEVOPS_TEMP_DIR="${LANE_DIR}/managed-temp-large"
 	local payload="" issue_digest="" pr_head=""
 	write_baseline_fixtures
 	write_large_fixture_body "$FIXTURES/comments-41.json" i
@@ -372,7 +391,7 @@ render_current_claim_writer() (
 	gh_issue_comment() {
 		while [[ $# -gt 0 ]]; do
 			if [[ "$1" == "--body" ]]; then
-				printf '%s' "$2" >"${TEST_ROOT}/current-claim.txt"
+				printf '%s' "$2" >"${LANE_DIR}/current-claim.txt"
 				return 0
 			fi
 			shift
@@ -380,7 +399,7 @@ render_current_claim_writer() (
 		return 1
 	}
 	_isc_post_claim_comment 41 owner/repo maintainer /fixture/linked-worktree
-	cat "${TEST_ROOT}/current-claim.txt"
+	cat "${LANE_DIR}/current-claim.txt"
 )
 
 test_trusted_lifecycle_comments() {
@@ -472,6 +491,65 @@ test_exact_remediation_continuity() {
 			assert_verify "exact post-signing operational remediation preserves approval" issue 41 VERIFIED 0
 		else
 			assert_verify "remediation $variant remains approval-significant" issue 41 STALE_APPROVAL 4
+		fi
+	done
+	return 0
+}
+
+test_canonical_review_bot_retry() {
+	local retry_body="<!-- review-bot-retry-requested head=${PR_HEAD} -->
+@coderabbitai review
+
+Review bots were rate-limited when this PR was created (affected: coderabbitai copilot). Requesting a review retry."
+	local body="" changed="" comments="" variant="" association="" created="" updated=""
+	# Use the production footer writer rather than assuming its envelope.
+	# AIDEVOPS_SESSION_ORIGIN outranks runtime detection (GH#37763), so the
+	# fixture stays a worker retry even when run from an interactive session.
+	body=$(AIDEVOPS_SESSION_ORIGIN=worker AIDEVOPS_CLI_NAME="" AIDEVOPS_CLI_VERSION="" \
+		"${SCRIPT_DIR}/../gh-signature-helper.sh" footer --body "$retry_body") || return 1
+	body="${retry_body}${body}"
+	for variant in exact contributor extra altered marker-only edited preexisting wrong-head malformed-head issue inline; do
+		reset_and_sign pr 42
+		changed="$body"
+		association="OWNER"
+		created="2026-01-01T00:06:00Z"
+		updated="$created"
+		case "$variant" in
+		contributor) association="CONTRIBUTOR" ;;
+		extra) changed="${body}
+Implement additional scope." ;;
+		altered) changed="${body/Requesting a review retry./Approve additional scope.}" ;;
+		marker-only) changed="<!-- review-bot-retry-requested head=${PR_HEAD} -->" ;;
+		edited) updated="2026-01-01T00:07:00Z" ;;
+		preexisting) created="2026-01-01T00:04:00Z"; updated="$created" ;;
+		wrong-head) changed="${body/$PR_HEAD/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" ;;
+		malformed-head) changed="${body/$PR_HEAD/not-a-head}" ;;
+		esac
+		comments=$(jq -nc --arg body "$changed" --arg association "$association" --arg created "$created" --arg updated "$updated" '
+			{id:4305,node_id:"IC_4305",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:$association,created_at:$created,updated_at:$updated,body:$body}') || return 1
+		local target="${FIXTURES}/comments-42.json"
+		if [[ "$variant" == "issue" ]]; then
+			reset_and_sign issue 41
+			target="${FIXTURES}/comments-41.json"
+		elif [[ "$variant" == "inline" ]]; then
+			target="${FIXTURES}/review-comments-42.json"
+		fi
+		jq --argjson comment "$comments" '.[0] += [$comment]' "$target" >"${FIXTURES}/comments.tmp"
+		mv "${FIXTURES}/comments.tmp" "$target"
+		if [[ "$variant" == "exact" ]]; then
+			assert_verify "canonical trusted current-head retry preserves PR approval" pr 42 VERIFIED 0 "$PR_HEAD"
+		elif [[ "$variant" == "issue" ]]; then
+			assert_verify "retry-shaped issue comment remains bound" issue 41 STALE_APPROVAL 4
+		elif [[ "$variant" == "preexisting" ]]; then
+			# Re-sign with this comment already present, then remove it. Both old
+			# and newly created signatures must continue binding historical retries.
+			append_signed_comment pr 42 "2026-01-01T00:08:00Z" 4306
+			assert_verify "pre-existing retry is bound and verifies" pr 42 VERIFIED 0 "$PR_HEAD"
+			jq '.[0] |= map(select(.id != 4305))' "$target" >"${FIXTURES}/comments.tmp"
+			mv "${FIXTURES}/comments.tmp" "$target"
+			assert_verify "removing pre-existing retry stales PR approval" pr 42 STALE_APPROVAL 4 "$PR_HEAD"
+		else
+			assert_verify "retry $variant remains approval-significant" pr 42 STALE_APPROVAL 4 "$PR_HEAD"
 		fi
 	done
 	return 0
@@ -574,6 +652,86 @@ ${worker_footer}"
 	return 0
 }
 
+terminal_release_fixture() (
+	local reason="$1" question="${2:-}" triage="${3:-}" trigger="${4:-}" companion="${5:-}"
+	local fingerprint=""
+	# shellcheck source=../terminal-blocker-circuit.sh
+	source "${SCRIPT_DIR}/../terminal-blocker-circuit.sh"
+	# GH#38353: production writers load the GH#38360 companion-label helpers.
+	if [[ -n "$companion" ]]; then
+		# shellcheck source=../shared-gh-wrappers-status.sh
+		source "${SCRIPT_DIR}/../shared-gh-wrappers-status.sh"
+	fi
+	if [[ "$reason" == input_required ]]; then
+		fingerprint=$(_terminal_blocker_hash "v2:${reason}:maintainer")
+	else
+		fingerprint=$(_terminal_blocker_hash "v2:${reason}")
+	fi
+	WORKER_ISSUE_NUMBER=41 AIDEVOPS_TERMINAL_BLOCKER_QUESTION="$question" \
+		AIDEVOPS_TERMINAL_BLOCKER_TRIAGE="$triage" AIDEVOPS_TERMINAL_BLOCKER_TRIGGER="$trigger" \
+		terminal_blocker_observation_fragment aaaaaaaaaaaaaaaaaaaaaaaa "$fingerprint" normal status:blocked
+	return 0
+)
+
+# Append one trusted OWNER release comment to issue 41 and assert the verdict.
+assert_trusted_release_verdict() {
+	local body="$1" label="$2" expected="$3" code="$4" comments=""
+	reset_and_sign issue 41
+	comments=$(jq -c --arg body "$body" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+	printf '%s\n' "$comments" >"${FIXTURES}/comments-41.json"
+	assert_verify "$label" issue 41 "$expected" "$code"
+	return 0
+}
+
+# GH#38353: the published trigger and the GH#38360 companion line stay
+# canonical; misplaced, URL-bearing, altered or extended lines stay bound.
+test_trigger_and_companion_release_comments() {
+	local worker_footer="<!-- aidevops:origin:worker -->
+<!-- aidevops:sig -->
+---
+[aidevops.sh](https://aidevops.sh) v3.32.275 automated scan."
+	local release_prefix="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+CLAIM_RELEASED reason=blocked runner=runner-a ts=2026-01-01T00:07:00Z issue=41"
+	local triage="" fragment="" trigger_release="" body="" spec="" reason="" question=""
+	local -a bodies=()
+	triage="pending_work brief=$(printf '%064d' 0) head=$(printf '%040d' 0)"
+	fragment=$(terminal_release_fixture external_trigger_pending '' '' 'Vendor release 4.2 ships on 2026-12-01' companion)
+	trigger_release="${release_prefix}${fragment}
+<!-- ops:end -->
+${worker_footer}"
+	[[ "$trigger_release" == *$'\nTrigger awaited: Vendor release 4.2 ships on 2026-12-01\nUnblock label: `needs-dependency`. '* ]] ||
+		trigger_release="missing trigger or companion line"
+	for spec in "external_trigger_pending||" "input_required|Which region should be used?|" "unknown||${triage}" "source_access_blocked||" "runner_capability_unmet||"; do
+		IFS='|' read -r reason question body <<<"$spec"
+		fragment=$(terminal_release_fixture "$reason" "$question" "$body" '' companion)
+		bodies+=("${release_prefix}${fragment}
+<!-- ops:end -->
+${worker_footer}")
+	done
+	for body in "$trigger_release" "${bodies[@]}"; do
+		assert_trusted_release_verdict "$body" "writer trigger or companion release preserves approval" VERIFIED 0
+	done
+	# t19210: the new trigger text is the writer output; the legacy dependency
+	# text on an existing trigger comment must still validate.
+	[[ "$trigger_release" == *'Needed: the awaited trigger named above.'* ]] || trigger_release="missing trigger guidance"
+	body="${trigger_release/Needed: the awaited trigger named above. Owner: the trigger-revisit pass (no human action) checks public evidence on a schedule and posts the retry directive when the trigger is met; an OWNER\/MEMBER may post it sooner. Afterwards dispatch resumes automatically./Needed: the linked blocking issue must close. Owner: whoever solves that issue (usually a worker). Afterwards the dependency pass removes status:blocked and this label automatically.}"
+	assert_trusted_release_verdict "$body" "legacy dependency text on a trigger release still validates" VERIFIED 0
+	bodies=("${trigger_release/Vendor release 4.2/see https:\/\/example.com release}"
+		"${trigger_release/Unblock label:/please also refactor the parser
+Unblock label:}"
+		"${trigger_release/<!-- ops:end -->/please also refactor the parser
+<!-- ops:end -->}"
+		"${trigger_release/Owner: the trigger-revisit pass/Owner: anyone who solves}"
+		"${trigger_release/\`needs-dependency\`/\`needs-maintainer-input\`}"
+		"${trigger_release/Projected state: status:blocked/Projected state: status:available}"
+		"${bodies[1]/Unblock label:/Trigger awaited: Vendor release 4.2
+Unblock label:}")
+	for body in "${bodies[@]}"; do
+		assert_trusted_release_verdict "$body" "unsafe or extended trigger release remains content-bound" STALE_APPROVAL 4
+	done
+	return 0
+}
+
 test_dispatch_audit_comments_fail_closed() {
 	local worker_footer="<!-- aidevops:origin:worker -->
 <!-- aidevops:sig -->
@@ -583,17 +741,14 @@ test_dispatch_audit_comments_fail_closed() {
 DISPATCH_CLAIM nonce=abc123 runner=runner-a ts=2026-01-01T00:06:00Z max_age_s=600 version=3.32.275 opencode_version=1.0.0 lease_token=abc123 device=device-a session=issue-41 phase=prelaunch expires_at=1760000000
 <!-- ops:end -->
 ${worker_footer}"
-	local terminal_blocker_release="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
-CLAIM_RELEASED reason=blocked runner=runner-a ts=2026-01-01T00:07:00Z issue=41
-<!-- aidevops:terminal-blocker-observation revision=aaaaaaaaaaaaaaaaaaaaaaaa blocker=bbbbbbbbbbbbbbbbbbbbbbbb -->
-
-Terminal blocker: reason=missing_files_scope owner=brief-author task=41 attempt=cccccccccccccccccccc.
-Projected state: status:blocked.
-Next action: Add a canonical ### Files Scope (or legacy ## Files Scope) section listing the permitted paths in the issue body.
-Raw evidence remains in protected worker telemetry.
+	local terminal_blocker_release="" fragment="" reason="" triage="" invalid="" release_prefix=""
+	local dispatch_comments="" input_release=""
+	fragment=$(terminal_release_fixture missing_files_scope)
+	release_prefix="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+CLAIM_RELEASED reason=blocked runner=runner-a ts=2026-01-01T00:07:00Z issue=41"
+	terminal_blocker_release="${release_prefix}${fragment}
 <!-- ops:end -->
 ${worker_footer}"
-	local dispatch_comments=""
 	reset_and_sign issue 41
 	dispatch_comments=$(jq -c --arg body "$dispatch_claim_audit" '.[0] += [{id:4315,node_id:"IC_4315",user:{id:105,node_id:"U_105",login:"external-author",type:"User"},author_association:"CONTRIBUTOR",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
 	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
@@ -604,18 +759,59 @@ ${worker_footer}"
 	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
 	assert_verify "trusted canonical terminal-blocker release preserves approval" issue 41 VERIFIED 0
 
-	# GH#33332: input_required releases are canonical writer output too.
-	local input_release="${terminal_blocker_release/reason=missing_files_scope owner=brief-author/reason=input_required owner=maintainer}"
-	input_release="${input_release/Next action: Add a canonical ### Files Scope (or legacy ## Files Scope) section listing the permitted paths in the issue body./Next action: Supply the specific input named in the protected dossier in the issue brief; a brief or dependency change re-arms dispatch. The recovery supervisor first decides anything AI can resolve within delegated authority.}"
+	for reason in missing_files_scope files_scope_excluded target_code_blocker external_trigger_pending permission_required source_access_blocked push_policy_timeout network_policy_timeout runner_capability_unmet input_required unknown; do
+		fragment=$(terminal_release_fixture "$reason")
+		input_release="${release_prefix}${fragment}
+<!-- ops:end -->
+${worker_footer}"
+		reset_and_sign issue 41
+		dispatch_comments=$(jq -c --arg body "$input_release" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+		printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
+		assert_verify "writer release $reason preserves approval" issue 41 VERIFIED 0
+	done
+	fragment=$(terminal_release_fixture input_required 'Which region should be used?')
+	input_release="${release_prefix}${fragment}
+<!-- ops:end -->
+${worker_footer}"
 	reset_and_sign issue 41
 	dispatch_comments=$(jq -c --arg body "$input_release" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
 	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
-	assert_verify "trusted canonical input_required release preserves approval" issue 41 VERIFIED 0
+	assert_verify "writer input question preserves approval" issue 41 VERIFIED 0
+
+	triage="pending_work brief=$(printf '%064d' 0) head=$(printf '%040d' 0)"
+	fragment=$(terminal_release_fixture unknown '' "$triage")
+	reset_and_sign issue 41
+	dispatch_comments=$(jq -c --arg body "${release_prefix}${fragment}
+<!-- ops:end -->
+${worker_footer}" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
+	assert_verify "writer unknown triage preserves approval" issue 41 VERIFIED 0
+
+	for invalid in '<' '@' $'\n'; do
+		reset_and_sign issue 41
+		dispatch_comments=$(jq -c --arg body "${input_release/Which region should be used?/Which${invalid}region}" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+		printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
+		assert_verify "unsafe input question remains content-bound" issue 41 STALE_APPROVAL 4
+	done
+	reset_and_sign issue 41
+	dispatch_comments=$(jq -c --arg body "$input_release" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:105,node_id:"U_105",login:"external",type:"User"},author_association:"CONTRIBUTOR",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
+	assert_verify "external terminal release remains content-bound" issue 41 STALE_APPROVAL 4
 
 	reset_and_sign issue 41
 	dispatch_comments=$(jq -c --arg body "${input_release/owner=maintainer/owner=human}" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
 	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
 	assert_verify "input_required release with unlisted owner remains content-bound" issue 41 STALE_APPROVAL 4
+
+	local mismatch_bodies=("${terminal_blocker_release/reason=missing_files_scope owner=brief-author/reason=source_access_blocked owner=access-owner}" "${terminal_blocker_release/<!-- ops:end -->/Input requested: Which region?
+<!-- ops:end -->}" "${input_release/Which region should be used?/-----BEGIN key}")
+	local mismatch_body=""
+	for mismatch_body in "${mismatch_bodies[@]}"; do
+		reset_and_sign issue 41
+		dispatch_comments=$(jq -c --arg body "$mismatch_body" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+		printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
+		assert_verify "uncorrelated terminal-blocker release remains content-bound" issue 41 STALE_APPROVAL 4
+	done
 
 	reset_and_sign issue 41
 	dispatch_comments=$(jq -c --arg body "${terminal_blocker_release}
@@ -662,10 +858,12 @@ test_post_approval_linked_references() {
 write_locked_issue_fixture() {
 	local include_tier="${1:-true}"
 	local initial_status="${2:-}"
+	local extra_label="${3:-}"
 	write_baseline_fixtures
-	jq --arg include_tier "$include_tier" --arg initial_status "$initial_status" '.locked = true | .active_lock_reason = "resolved" | .labels = ([{id:6,node_id:"L_6",name:"external-contributor"},{id:7,node_id:"L_7",name:"origin:interactive"},{id:8,node_id:"L_8",name:"review:approve"}] + if $include_tier == "true" then [{id:9,node_id:"L_9",name:"tier:standard"}] else [] end + if $initial_status != "" then [{id:10,node_id:"L_10",name:("status:" + $initial_status)}] else [] end) | .assignees = []' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	[[ -z "${LINKED_SOURCE_BODY:-}" ]] || set_linked_source_body 41 "$LINKED_SOURCE_BODY"
+	jq --arg include_tier "$include_tier" --arg initial_status "$initial_status" --arg extra_label "$extra_label" '.locked = true | .active_lock_reason = "resolved" | .labels = ([{id:6,node_id:"L_6",name:"external-contributor"},{id:7,node_id:"L_7",name:"origin:interactive"},{id:8,node_id:"L_8",name:"review:approve"}] + if $include_tier == "true" then [{id:9,node_id:"L_9",name:"tier:standard"}] else [] end + if $initial_status != "" then [{id:10,node_id:"L_10",name:("status:" + $initial_status)}] else [] end + if $extra_label != "" then [{id:13,node_id:"L_13",name:$extra_label}] else [] end) | .assignees = []' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
 	jq '.[0] += [{id:418,node_id:"EV_418",event:"locked",created_at:"2026-01-01T00:04:00Z",actor:{id:1,node_id:"U_1",login:"maintainer",type:"User"}}]' "${FIXTURES}/timeline-41.json" >"${FIXTURES}/timeline.tmp" && mv "${FIXTURES}/timeline.tmp" "${FIXTURES}/timeline-41.json"
-	append_signed_comment issue 41 "2026-01-01T00:05:00Z" 4199
+	append_signed_comment issue 41 "2026-01-01T00:05:00Z" 4199 "${SIGNED_SOURCE_PROFILE:-$APPROVAL_SNAPSHOT_PROFILE_SOURCE_STATE_UNBOUND}"
 	return 0
 }
 
@@ -684,7 +882,7 @@ render_self_hosting_writer() (
 	gh_issue_comment() {
 		while [[ $# -gt 0 ]]; do
 			if [[ "$1" == --body ]]; then
-				printf '%s' "$2" >"${TEST_ROOT}/self-hosting-body.txt"
+				printf '%s' "$2" >"${LANE_DIR}/self-hosting-body.txt"
 				return 0
 			fi
 			shift
@@ -692,7 +890,7 @@ render_self_hosting_writer() (
 		return 1
 	}
 	_sht_apply_label_and_comment 41 owner/repo pulse-dispatch- '<!-- self-hosting-tier-override -->' tier:standard
-	cat "${TEST_ROOT}/self-hosting-body.txt"
+	cat "${LANE_DIR}/self-hosting-body.txt"
 	printf '\n<!-- aidevops:origin:worker -->\n<!-- aidevops:sig -->\n---\n[aidevops.sh](https://aidevops.sh) v3.32.337 automated scan.'
 )
 
@@ -792,6 +990,124 @@ test_locked_issue_tier_backfill_continuity() {
 	jq '.labels |= map(select(.name != "tier:standard"))' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
 	append_issue_timeline_event '{"id":4213,"node_id":"EV_4213","event":"unlabeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"tier:standard"}}'
 	assert_verify "trusted tier removal remains stale" issue 41 STALE_APPROVAL 4
+
+	# The fix-the-fixer detector labels newly auto-dispatched issues right after
+	# approval; that observability classification must not stale the approval.
+	write_locked_issue_fixture
+	jq '.labels += [{id:12,node_id:"L_12",name:"fix-the-fixer"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4214,"node_id":"EV_4214","event":"labeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"fix-the-fixer"}}'
+	assert_verify "trusted fix-the-fixer classification preserves locked issue approval" issue 41 VERIFIED 0
+
+	write_locked_issue_fixture
+	jq '.labels += [{id:12,node_id:"L_12",name:"fix-the-fixer"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4215,"node_id":"EV_4215","event":"labeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":2,"login":"contributor","type":"User"},"label":{"name":"fix-the-fixer"}}'
+	assert_verify "untrusted fix-the-fixer classification remains stale" issue 41 STALE_APPROVAL 4
+
+	# GH#37993: persistent is add-only after signing. It marks a long-lived
+	# non-task record and only restricts automation.
+	write_locked_issue_fixture
+	jq '.labels += [{id:14,node_id:"L_14",name:"persistent"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4216,"node_id":"EV_4216","event":"labeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"persistent"}}'
+	assert_verify "trusted persistent addition preserves locked issue approval" issue 41 VERIFIED 0
+
+	write_locked_issue_fixture
+	jq '.labels += [{id:14,node_id:"L_14",name:"persistent"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4217,"node_id":"EV_4217","event":"labeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":2,"login":"contributor","type":"User"},"label":{"name":"persistent"}}'
+	assert_verify "untrusted persistent addition remains stale" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture
+	jq '.labels += [{id:14,node_id:"L_14",name:"persistent"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	assert_verify "persistent addition without a visible event remains stale" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture true "" persistent
+	jq '.labels |= map(select(.name != "persistent"))' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4218,"node_id":"EV_4218","event":"unlabeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"persistent"}}'
+	assert_verify "trusted persistent removal remains stale" issue 41 STALE_APPROVAL 4
+	return 0
+}
+
+# GH#37762: signed permission requests add, and signed grants/withdrawals
+# remove, the needs-maintainer-permissions hold. That dispatch hold is not
+# scope-bearing, so authorized toggles must not stale a prior issue approval.
+test_locked_issue_permission_hold_continuity() {
+	local hold="needs-maintainer-permissions"
+	write_locked_issue_fixture true "" "$hold"
+	jq --arg hold "$hold" '.labels |= map(select(.name != $hold))' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4221,"node_id":"EV_4221","event":"unlabeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"needs-maintainer-permissions"}}'
+	assert_verify "trusted permission-hold removal preserves locked issue approval" issue 41 VERIFIED 0
+
+	write_locked_issue_fixture
+	jq --arg hold "$hold" '.labels += [{id:13,node_id:"L_13",name:$hold}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4222,"node_id":"EV_4222","event":"labeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"needs-maintainer-permissions"}}'
+	assert_verify "trusted permission-hold request preserves locked issue approval" issue 41 VERIFIED 0
+
+	write_locked_issue_fixture true "" "$hold"
+	jq --arg hold "$hold" '.labels |= map(select(.name != $hold))' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4223,"node_id":"EV_4223","event":"unlabeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":2,"login":"contributor","type":"User"},"label":{"name":"needs-maintainer-permissions"}}'
+	assert_verify "untrusted permission-hold removal remains stale" issue 41 STALE_APPROVAL 4
+
+	# A timeline that omits the hold removal (visibility lag or truncation) must
+	# not verify on the strength of another visible authorized mutation.
+	write_locked_issue_fixture true "" "$hold"
+	jq --arg hold "$hold" '.labels |= map(select(.name != $hold)) | .assignees = [{id:1,node_id:"U_1",login:"maintainer",type:"User"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4224,"node_id":"EV_4224","event":"assigned","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"assignee":{"id":1,"login":"maintainer","type":"User"}}'
+	assert_verify "hidden permission-hold removal remains stale" issue 41 STALE_APPROVAL 4
+	return 0
+}
+
+# GH#38279: the CI/review/conflict feedback redispatch swaps origin:interactive
+# for origin:worker and adds a source:*-feedback label. Those provenance labels
+# never widen scope, so an authorized transition must not stale the approval.
+_provenance_redispatch_fixture() {
+	local actor_id="$1" actor_login="$2"
+	local event="" event_id="" event_name="" event_label=""
+	write_locked_issue_fixture
+	jq '.labels |= (map(select(.name != "origin:interactive")) + [{id:15,node_id:"L_15",name:"origin:worker"},{id:16,node_id:"L_16",name:"source:ci-feedback"}])' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	for event in "4231 labeled origin:worker" "4232 labeled source:ci-feedback" "4233 unlabeled origin:interactive"; do
+		read -r event_id event_name event_label <<<"$event"
+		append_issue_timeline_event "$(jq -nc --argjson id "$event_id" --arg event "$event_name" --arg label "$event_label" \
+			--argjson actor_id "$actor_id" --arg actor "$actor_login" \
+			'{id:$id,node_id:("EV_" + ($id | tostring)),event:$event,created_at:"2026-01-01T00:06:00Z",actor:{id:$actor_id,login:$actor,type:"User"},label:{name:$label}}')"
+	done
+	return 0
+}
+
+test_locked_issue_provenance_label_continuity() {
+	_provenance_redispatch_fixture 1 maintainer
+	assert_verify "trusted feedback-redispatch provenance labels preserve locked issue approval" issue 41 VERIFIED 0
+
+	_provenance_redispatch_fixture 2 contributor
+	assert_verify "untrusted provenance label changes remain stale" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture
+	jq '.labels += [{id:17,node_id:"L_17",name:"hold-for-review"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4234,"node_id":"EV_4234","event":"labeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"hold-for-review"}}'
+	assert_verify "trusted non-provenance label change remains stale" issue 41 STALE_APPROVAL 4
+	return 0
+}
+
+test_locked_issue_label_replay() {
+	local label="" output="" rc=0
+	for label in needs-maintainer-review status:available; do
+		write_locked_issue_fixture true "" "$label"
+		jq --arg label "$label" '.labels |= map(select(.name != $label)) | .assignees = [{id:1,node_id:"U_1",login:"maintainer",type:"User"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+		append_issue_timeline_event '{"id":4225,"event":"assigned","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"assignee":{"id":1,"login":"maintainer","type":"User"}}'
+		assert_verify "hidden ${label} removal remains stale after retry" issue 41 STALE_APPROVAL 4
+	done
+
+	write_locked_issue_fixture
+	jq '.assignees = [{id:1,node_id:"U_1",login:"maintainer",type:"User"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	cp "${FIXTURES}/issue-41.json" "${FIXTURES}/issue-41-before-race.json"
+	jq '.labels += [{id:10,node_id:"L_10",name:"status:queued"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4226,"event":"assigned","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"assignee":{"id":1,"login":"maintainer","type":"User"}}'
+	append_issue_timeline_event '{"id":4227,"event":"labeled","created_at":"2026-01-01T00:06:01Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"status:queued"}}'
+	rm -f "${FIXTURES}/race-read"
+	output=$(GH_RACE_FIRST_ISSUE=1 run_verify issue 41) || rc=$?
+	if [[ "$output" == VERIFIED && "$rc" -eq 0 ]]; then
+		print_result "snapshot timeline race verifies after fresh read" 0
+	else
+		print_result "snapshot timeline race verifies after fresh read" 1 "expected=VERIFIED/0, actual=${output}/${rc}"
+	fi
 	return 0
 }
 
@@ -976,6 +1292,147 @@ test_locked_issue_trusted_content_edits() {
 	return 0
 }
 
+LINKED_BLOCK_START="<!-- This is an auto-generated comment: release notes by coderabbit.ai -->"
+LINKED_BLOCK_END="<!-- end of auto-generated comment: release notes by coderabbit.ai -->"
+
+set_linked_source_body() {
+	local number="$1"
+	local body="$2"
+	jq --arg body "$body" '.[0][0].source.issue.body = $body' "${FIXTURES}/timeline-${number}.json" >"${FIXTURES}/timeline.tmp" && mv "${FIXTURES}/timeline.tmp" "${FIXTURES}/timeline-${number}.json"
+	return $?
+}
+
+linked_block_body() {
+	local prefix="$1"
+	local summary="$2"
+	printf '%s\n%s\n%s\n%s' "$prefix" "$LINKED_BLOCK_START" "$summary" "$LINKED_BLOCK_END"
+	return 0
+}
+
+# Args: JSON array of {editedAt, login, type, diff}; optional hasNextPage.
+write_source_edit_history() {
+	local revisions_json="$1"
+	local has_next="${2:-false}"
+	jq -nc --argjson revisions "$revisions_json" --argjson has_next "$has_next" '
+		{data:{node:{__typename:"Issue",id:"I_9001",userContentEdits:{pageInfo:{hasNextPage:$has_next},nodes:(
+			$revisions | reverse | map({editedAt, diff, editor:(if .login == null then null else {__typename:.type, login} end)}))}}}}' >"${FIXTURES}/graphql-source-edits.json"
+	return 0
+}
+
+# Revision JSON: original source body before the 00:05 signature, then edits.
+source_revisions() {
+	local signed_body="$1"
+	shift
+	local revisions='[]'
+	revisions=$(jq -nc --arg body "$signed_body" '[{editedAt:"2026-01-01T00:00:30Z",login:"link-author",type:"User",diff:$body}]')
+	while [[ $# -ge 3 ]]; do
+		revisions=$(jq -c --arg at "$1" --arg editor "$2" --arg body "$3" '
+			. + [{editedAt:$at, login:($editor | split(":")[1]), type:($editor | split(":")[0]), diff:$body}]' <<<"$revisions")
+		shift 3
+	done
+	printf '%s\n' "$revisions"
+	return 0
+}
+
+# GH#38006: authorized and review-bot edits to a content-bound external linked
+# source body must not stale a continuously locked issue approval.
+test_locked_issue_linked_source_edits() {
+	local signed="" repaired="" refreshed="" revisions=""
+	signed=$(linked_block_body "Linked body" "Summary at signing")
+	repaired=$(linked_block_body "Linked body
+
+Repair notes by the maintainer" "Summary at signing")
+	refreshed=$(linked_block_body "Linked body
+
+Repair notes by the maintainer" "Summary after the repair commit")
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$repaired"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:maintainer "$repaired")"
+	assert_verify "maintainer linked-source body edit preserves locked issue approval" issue 41 VERIFIED 0
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$(linked_block_body "Linked body" "Summary after the repair commit")"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:09:00Z Bot:coderabbitai "$(linked_block_body "Linked body" "Summary after the repair commit")")"
+	assert_verify "CodeRabbit block-only linked-source edit preserves locked issue approval" issue 41 VERIFIED 0
+
+	# GH#37991 replay shape: maintainer repair notes, then a CodeRabbit refresh,
+	# against a payload signed before linked-source digests existed.
+	revisions=$(source_revisions "$signed" 2026-01-01T00:08:00Z User:maintainer "$repaired" 2026-01-01T00:09:00Z Bot:coderabbitai "$refreshed")
+	LINKED_SOURCE_BODY="$signed" STRIP_LINKED_DIGESTS=1 write_locked_issue_fixture
+	set_linked_source_body 41 "$refreshed"
+	write_source_edit_history "$revisions"
+	assert_verify "pre-GH#38006 payload verifies maintainer plus CodeRabbit linked-source edits" issue 41 VERIFIED 0
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$refreshed"
+	write_source_edit_history "$revisions"
+	assert_verify "maintainer plus CodeRabbit linked-source edits preserve locked issue approval" issue 41 VERIFIED 0
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$repaired"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:link-author "$repaired")"
+	assert_verify "external author linked-source body edit stales locked issue approval" issue 41 STALE_APPROVAL 4
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$repaired"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z Bot:coderabbitai "$repaired")"
+	assert_verify "CodeRabbit edit outside its block stales locked issue approval" issue 41 STALE_APPROVAL 4
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$(linked_block_body "Linked body" "Unlisted bot summary")"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z Bot:other-review-bot "$(linked_block_body "Linked body" "Unlisted bot summary")")"
+	assert_verify "unlisted bot linked-source edit stales locked issue approval" issue 41 STALE_APPROVAL 4
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$repaired"
+	assert_verify "linked-source GraphQL uncertainty fails closed" issue 41 API_ERROR 6
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$repaired"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:maintainer "$repaired")" true
+	assert_verify "paginated linked-source history fails closed" issue 41 API_ERROR 6
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$repaired"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:ghost "$repaired")"
+	assert_verify "ghost linked-source editor fails closed" issue 41 API_ERROR 6
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$repaired"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:maintainer "an unexplained revision")"
+	assert_verify "history that does not explain the current body fails closed" issue 41 API_ERROR 6
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$repaired"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:maintainer "$repaired")"
+	append_issue_comment 4430 contributor CONTRIBUTOR "Untrusted addition" 2
+	assert_verify "authorized linked-source edit cannot mask an untrusted comment" issue 41 STALE_APPROVAL 4
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source 41 '.title = "Retitled linked scope"'
+	set_linked_source_body 41 "$repaired"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:maintainer "$repaired")"
+	assert_verify "linked-source title stays bound" issue 41 STALE_APPROVAL 4
+
+	write_baseline_fixtures
+	set_linked_source_body 41 "$signed"
+	append_signed_comment issue 41 "2026-01-01T00:05:00Z"
+	set_linked_source_body 41 "$repaired"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:maintainer "$repaired")"
+	assert_verify "maintainer linked-source edit on an unlocked issue remains stale" issue 41 STALE_APPROVAL 4
+
+	# Older profiles keep exact-match linked-body behaviour.
+	local profile=""
+	for profile in "$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES" "$APPROVAL_SNAPSHOT_PROFILE_STABLE"; do
+		LINKED_SOURCE_BODY="$signed" SIGNED_SOURCE_PROFILE="$profile" STRIP_LINKED_DIGESTS=1 write_locked_issue_fixture
+		set_linked_source_body 41 "$repaired"
+		write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:maintainer "$repaired")"
+		assert_verify "${profile} profile linked-source body edit stays stale" issue 41 STALE_APPROVAL 4
+	done
+	return 0
+}
+
 test_locked_issue_continuity() {
 	# Production regression from the first #30153 signature: approval-helper
 	# performed the trusted handoff, then the narrowly scoped repository workflow
@@ -1077,7 +1534,7 @@ test_unanchored_lock_signature() {
 	append_issue_timeline_event '{"id":4180,"node_id":"EV_4180","event":"locked","created_at":"2026-01-01T00:03:00Z","actor":{"id":1,"node_id":"U_1","login":"maintainer","type":"User"}}'
 	append_issue_timeline_event '{"id":4181,"node_id":"EV_4181","event":"unlocked","created_at":"2026-01-01T00:03:30Z","actor":{"id":1,"node_id":"U_1","login":"maintainer","type":"User"}}'
 	append_signed_comment issue 41 "2026-01-01T00:05:00Z" 4199
-	if jq -e '.issue.lifecycle.locked == true and .issue.lifecycle.lock_anchor == null' "${TEST_ROOT}/payload-41.json" >/dev/null 2>&1; then
+	if jq -e '.issue.lifecycle.locked == true and .issue.lifecycle.lock_anchor == null' "${LANE_DIR}/payload-41.json" >/dev/null 2>&1; then
 		print_result "saturated timeline fixture produces an unanchored locked payload" 0
 	else
 		print_result "saturated timeline fixture produces an unanchored locked payload" 1
@@ -1197,15 +1654,14 @@ test_trusted_linked_source_profiles() {
 	return $?
 }
 
-main() {
-	install_gh_stub
-	write_baseline_fixtures
+lane_snapshot_and_authority() {
 	test_snapshot_temp_permissions
 	test_large_snapshots_avoid_argv_limits
-	ssh-keygen -t ed25519 -N '' -f "${TEST_ROOT}/approval.key" -q
-	cp "${TEST_ROOT}/approval.key.pub" "${TEST_ROOT}/approval.pub"
 	test_authority_bound_verification
+	return 0
+}
 
+lane_core_verification() {
 	reset_and_sign issue 41
 	assert_verify "unchanged issue V2 snapshot verifies" issue 41 VERIFIED 0
 	jq '.[0][-1].body = ("audit\tcontext\n" + .[0][-1].body)' "${FIXTURES}/comments-41.json" >"${FIXTURES}/comments.tmp" && mv "${FIXTURES}/comments.tmp" "${FIXTURES}/comments-41.json"
@@ -1219,7 +1675,7 @@ main() {
 	test_linked_source_timestamp_profiles
 	test_trusted_linked_source_profiles
 	local original_digest="" repeated_payload="" repeated_digest=""
-	original_digest=$(jq -r '.snapshot_sha256' "${TEST_ROOT}/payload-42.json")
+	original_digest=$(jq -r '.snapshot_sha256' "${LANE_DIR}/payload-42.json")
 	repeated_payload=$(PATH="${TEST_ROOT}/bin:$PATH" FIXTURES="$FIXTURES" approval_snapshot_v2_payload pr 42 owner/repo "2026-01-01T00:06:00Z")
 	repeated_digest=$(jq -r '.snapshot_sha256' <<<"$repeated_payload")
 	if [[ "$original_digest" != "$repeated_digest" ]]; then
@@ -1229,18 +1685,47 @@ main() {
 	fi
 	append_signed_comment pr 42 "2026-01-01T00:06:00Z" 4300
 	assert_verify "repeat approval verifies against the newest exact snapshot" pr 42 VERIFIED 0 "$PR_HEAD"
+	return 0
+}
+
+lane_lifecycle_comments() {
 	test_trusted_lifecycle_comments
 	test_exact_remediation_continuity
+	test_canonical_review_bot_retry
+	return 0
+}
+
+lane_dispatch_audit() {
 	test_trusted_dispatch_audit_comments
 	test_dispatch_audit_comments_fail_closed
+	test_trigger_and_companion_release_comments
 	test_post_approval_linked_references
+	return 0
+}
+
+lane_locked_continuity() {
 	test_locked_issue_continuity
 	test_unanchored_lock_signature
 	test_locked_issue_trusted_comment_continuity
-	test_locked_issue_trusted_content_edits
-	test_locked_issue_tier_backfill_continuity
-	test_signed_tier_self_hosting_continuity
+	return 0
+}
 
+lane_locked_edits() {
+	test_locked_issue_trusted_content_edits
+	test_locked_issue_linked_source_edits
+	test_locked_issue_tier_backfill_continuity
+	return 0
+}
+
+lane_locked_holds() {
+	test_locked_issue_permission_hold_continuity
+	test_locked_issue_provenance_label_continuity
+	test_locked_issue_label_replay
+	test_signed_tier_self_hosting_continuity
+	return 0
+}
+
+lane_drift_and_failures() {
 	reset_and_sign pr 42
 	local marker_drift="<!-- aidevops-signed-approval --> unsigned external drift"
 	local marker_comments=""
@@ -1276,6 +1761,19 @@ main() {
 	replace_with_legacy_comment 41
 	assert_verify "V1 signature is legacy and cannot become V2 authority" issue 41 LEGACY_APPROVAL 3
 
+	# Real signatures from a different signer remain fail-closed, but intact
+	# signatures are not confused with malformed or tampered signed content.
+	ssh-keygen -t ed25519 -N '' -f "${LANE_DIR}/other.key" -q
+	local kind=""
+	for kind in issue pr; do
+		local number=41
+		[[ "$kind" != pr ]] || number=42
+		reset_and_sign "$kind" "$number"
+		TEST_APPROVAL_PUB="${LANE_DIR}/other.key.pub" assert_verify "intact $kind approval with another local key is unverifiable" "$kind" "$number" UNVERIFIABLE_SIGNER 8
+		jq '.[0][-1].body |= sub("2026-01-01T00:05:00Z"; "2026-01-01T00:05:01Z")' "${FIXTURES}/comments-${number}.json" >"${FIXTURES}/comments.tmp" && mv "${FIXTURES}/comments.tmp" "${FIXTURES}/comments-${number}.json"
+		TEST_APPROVAL_PUB="${LANE_DIR}/other.key.pub" assert_verify "tampered $kind approval with another local key is malformed" "$kind" "$number" MALFORMED_APPROVAL 5
+	done
+
 	reset_and_sign issue 41
 	jq '.[0][-1].body |= sub("aidevops-approval/v2"; "aidevops-approval/v3")' "${FIXTURES}/comments-41.json" >"${FIXTURES}/comments.tmp" && mv "${FIXTURES}/comments.tmp" "${FIXTURES}/comments-41.json"
 	assert_verify "tampered signed payload is malformed" issue 41 MALFORMED_APPROVAL 5
@@ -1292,9 +1790,65 @@ main() {
 	else
 		print_result "snapshot API uncertainty fails closed" 1 "output=${output}, rc=${rc}"
 	fi
+	return 0
+}
 
-	printf '\nTests run: %d\nTests failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
-	[[ "$TESTS_FAILED" -eq 0 ]]
+# Run one lane in a background subshell with isolated fixtures and scratch
+# files so lanes never share mutable state. Output and counters land in the
+# lane directory and are merged in lane order by main().
+start_lane() {
+	local lane="$1"
+	local lane_root="${TEST_ROOT}/lane-${lane}"
+	mkdir -p "${lane_root}/fixtures"
+	(
+		LANE_DIR="$lane_root"
+		FIXTURES="${lane_root}/fixtures"
+		write_baseline_fixtures
+		"$lane"
+		printf '%s %s\n' "$TESTS_RUN" "$TESTS_FAILED" >"${lane_root}/counts"
+	) >"${lane_root}/output" 2>&1 &
+	LANE_PIDS+=("$!")
+	return 0
+}
+
+main() {
+	local lanes=(
+		lane_snapshot_and_authority
+		lane_core_verification
+		lane_lifecycle_comments
+		lane_dispatch_audit
+		lane_locked_continuity
+		lane_locked_edits
+		lane_locked_holds
+		lane_drift_and_failures
+	)
+	local lane="" pid="" run=0 failed=0
+	LANE_PIDS=()
+	install_gh_stub
+	ssh-keygen -t ed25519 -N '' -f "${TEST_ROOT}/approval.key" -q
+	cp "${TEST_ROOT}/approval.key.pub" "${TEST_ROOT}/approval.pub"
+	for lane in "${lanes[@]}"; do
+		start_lane "$lane"
+	done
+	for pid in "${LANE_PIDS[@]}"; do
+		wait "$pid" || true
+	done
+	for lane in "${lanes[@]}"; do
+		local lane_root="${TEST_ROOT}/lane-${lane}"
+		cat "${lane_root}/output"
+		if [[ -f "${lane_root}/counts" ]]; then
+			local lane_run="" lane_failed=""
+			read -r lane_run lane_failed <"${lane_root}/counts"
+			run=$((run + lane_run))
+			failed=$((failed + lane_failed))
+		else
+			printf 'FAIL %s did not complete\n' "$lane"
+			run=$((run + 1))
+			failed=$((failed + 1))
+		fi
+	done
+	printf '\nTests run: %d\nTests failed: %d\n' "$run" "$failed"
+	[[ "$failed" -eq 0 ]]
 	return $?
 }
 

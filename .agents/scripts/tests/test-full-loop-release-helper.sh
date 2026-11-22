@@ -22,6 +22,12 @@ export AIDEVOPS_REAL_GIT_BIN="$ROOT/bin/git"
 # This suite mocks Git and publication, not managed service completion. Native
 # owner-cgroup creation/removal is covered by test-worktree-owner-lifetime.py.
 export AIDEVOPS_WORKTREE_MANAGER=legacy-guards
+# GH#39344: the release executor now declares itself lifecycle owner and the
+# fence retires trees through the native registry, which needs real Git
+# metadata. Keep this fixture on legacy creation; the process fixture below
+# replaces only the registry executor with the stubbed native removal.
+unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
+export AIDEVOPS_LIFECYCLE_DISABLED=1
 export HOME="$ROOT/home"
 export AIDEVOPS_CLEANUP_LOG="$ROOT/cleanup.log"
 export WORKTREE_REGISTRY_DIR="$ROOT/registry"
@@ -238,6 +244,12 @@ if [[ "$0" == "$RELEASE_FIXTURE_SCRIPT_DIR/full-loop-release-helper.sh" ]]; then
 	capture_worktree_process_cwds() {
 		return 0
 	}
+	# The registry executor needs real Git metadata; after every fence probe
+	# passes, hand the final removal to the stubbed native Git (GH#39344).
+	_worktree_remove_with_native_git() {
+		"${AIDEVOPS_REAL_GIT_BIN:?}" worktree remove "$1" || return 1
+		return 0
+	}
 fi
 STUB
 export BASH_ENV="$ROOT/process-fixture.sh"
@@ -245,6 +257,10 @@ export BASH_ENV="$ROOT/process-fixture.sh"
 # shellcheck source=../audit-worktree-removal-helper.sh
 source "$SCRIPT_DIR/audit-worktree-removal-helper.sh"
 capture_worktree_process_cwds() {
+	return 0
+}
+_worktree_remove_with_native_git() {
+	"${AIDEVOPS_REAL_GIT_BIN:?}" worktree remove "$1" || return 1
 	return 0
 }
 
@@ -898,5 +914,33 @@ for scenario in published deployment live unknown unpublished reserved failed de
 	) || { printf 'FAIL competing lane scenario %s\n' "$scenario" >&2; exit 1; }
 done
 printf 'PASS competing published dead lanes finalize; uncertain and failed lanes refuse\n'
+
+# Exercise the CLI twice against the same lane, without advancing its age.
+(
+	cd "$ROOT/repo/linked-branch"
+	export PATH="$FIXTURE_PATH"
+	export GIT_CALL_LOG="$ROOT/git.log" GH_CALL_LOG="$ROOT/gh.log" FAKE_REPO_ROOT="$ROOT/repo"
+	export FAKE_CONTROL_PARENT="$ROOT/worktrees" AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees"
+	export AIDEVOPS_FULL_LOOP_REPO=marcusquinn/aidevops
+	export AIDEVOPS_FULL_LOOP_SOURCE_RESOLVER="$ROOT/source-resolver.sh"
+	export AIDEVOPS_FULL_LOOP_VERSION_MANAGER="$ROOT/version-manager.sh"
+	export AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$ROOT/retry-receipts"
+	export LANE_HEAD_FILE="$ROOT/retry-lane-head" LANE_STATE_FILE="$ROOT/retry-lane.json"
+	export VM_CALL_LOG="$ROOT/retry-vm.log" AIDEVOPS_TRUSTED_ISSUE_PRIORITY=critical
+	rc=0
+	bash "$SCRIPT_DIR/full-loop-release-helper.sh" patch 61 incremental --expected-sources 61,62 >"$ROOT/retry-first.log" 2>&1 || rc=$?
+	[[ "$rc" -eq 1 && ! -f "$VM_CALL_LOG" ]]
+	grep -q 'release-run-capture-authorization.*result=failed' "$ROOT/retry-first.log"
+	jq -e '.active == false and .terminal_receipt == "abandoned-prepublication"
+		and .reservation_recovery.reason == "owner-preparation-refused"' "$LANE_STATE_FILE" >/dev/null
+	if compgen -G "$ROOT/worktrees/aidevops-release-61-*" >/dev/null; then
+		printf 'FAIL pre-mutation refusal retained its disposable worktree\n'
+		exit 1
+	fi
+	bash "$SCRIPT_DIR/full-loop-release-helper.sh" patch 61 incremental --expected-sources 61 >"$ROOT/retry-second.log" 2>&1
+	grep -q 'release-run-capture-authorization.*result=ok' "$ROOT/retry-second.log"
+	grep -qx 'args=release patch --source-pr 61 --expected-sources 61@0000000000000000000000000000000000000000' "$VM_CALL_LOG"
+)
+printf 'PASS capture mismatch releases its own reservation; immediate corrected same-source patch reaches publication without grace\n'
 
 exit 0

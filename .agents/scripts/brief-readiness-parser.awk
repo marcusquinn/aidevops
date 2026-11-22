@@ -38,6 +38,22 @@ function strip_generated_tags(text, lower) {
 	return text
 }
 
+# Position of the first "<!--" outside an inline backtick code span, else 0.
+# An odd count of backticks before the opener means it renders as code text.
+function find_comment_open(text, offset, pos, head, ticks, tail) {
+	offset = 0
+	tail = text
+	while (match(tail, /<!--/)) {
+		pos = offset + RSTART
+		head = substr(text, 1, pos - 1)
+		ticks = gsub(/`/, "", head)
+		if (ticks % 2 == 0) return pos
+		offset = pos + 3
+		tail = substr(text, offset + 1)
+	}
+	return 0
+}
+
 BEGIN {
 	if (mode == "section") {
 		target = tolower(target)
@@ -65,9 +81,10 @@ mode == "visible" {
 			line = ""
 			break
 		}
-		if (match(line, /<!--/)) {
-			prefix = substr(line, 1, RSTART - 1)
-			rest = substr(line, RSTART + RLENGTH)
+		open_pos = find_comment_open(line)
+		if (open_pos > 0) {
+			prefix = substr(line, 1, open_pos - 1)
+			rest = substr(line, open_pos + 4)
 			if (match(rest, /-->/)) {
 				line = prefix substr(rest, RSTART + RLENGTH)
 				continue

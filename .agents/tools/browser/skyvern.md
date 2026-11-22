@@ -32,7 +32,6 @@ tools:
 
 - **Testing your own app**: Playwright — faster, deterministic, no LLM cost
 - **AI-native multi-step tasks**: browser-use — better Python integration, MIT license
-- **Natural language on known pages**: Stagehand — TypeScript-native, Browserbase cloud
 - **Bulk scraping**: Crawl4AI — optimised for content extraction at scale
 - **Persistent browser sessions**: dev-browser — preserves logins across sessions
 
@@ -205,6 +204,8 @@ requests.post(f"{BASE_URL}/api/v1/tasks", headers=HEADERS, json={
 
 ### vs Other Browser Tools
 
+Stagehand is not recommended; use it only when the user explicitly asks to try it.
+
 | Feature | Skyvern | browser-use | Playwright | Stagehand |
 |---------|---------|-------------|------------|-----------|
 | Vision AI | Primary (screenshots) | Hybrid (vision + DOM) | No | Yes (DOM-first) |
@@ -215,12 +216,12 @@ requests.post(f"{BASE_URL}/api/v1/tasks", headers=HEADERS, json={
 | Self-hosted | Yes | Yes | Yes | No (Browserbase) |
 | License | AGPL-3.0 | MIT | Apache-2.0 | MIT |
 | Language | Python | Python | Any | TypeScript |
-| Best for | Resilient automation, CAPTCHAs | AI-native tasks | Testing, speed | Natural language on known pages |
+| Best for | Resilient automation, CAPTCHAs | AI-native tasks | Testing, speed | Not recommended; explicit user request only |
 
 ## Related
 
 - `tools/browser/browser-automation.md` - Browser tool decision tree
 - `tools/browser/browser-use.md` - AI-native browser automation (MIT, Python)
 - `tools/browser/playwright.md` - Playwright direct automation
-- `tools/browser/stagehand.md` - Stagehand AI browser automation (TypeScript)
+- `tools/browser/stagehand.md` - Stagehand is not recommended; only when the user explicitly asks to try it
 - `tools/browser/crawl4ai.md` - Bulk web scraping and content extraction

@@ -98,11 +98,14 @@ install_gh_stub() {
 	local head_ref="${1:-feature/parent}"
 	local children="${2:-}"
 	local default_br="${3:-main}"
+	# Parent PR baseRefName (GH#39167); defaults to the default branch.
+	local base_ref="${4-$default_br}"
 
 	# Write env vars to a file so the stub can read them (avoids export escaping).
 	printf '%s' "$children" >"${TEST_ROOT}/gh-children.txt"
 	printf '%s' "$head_ref" >"${TEST_ROOT}/gh-head-ref.txt"
 	printf '%s' "$default_br" >"${TEST_ROOT}/gh-default-br.txt"
+	printf '%s' "$base_ref" >"${TEST_ROOT}/gh-base-ref.txt"
 
 	cat >"${TEST_ROOT}/bin/gh" <<'STUB_EOF'
 #!/usr/bin/env bash
@@ -122,6 +125,13 @@ default_br="main"
 # `gh pr view <N> --json headRefName -q ...`
 if [[ "${1:-}" == "pr" && "${2:-}" == "view" && "$*" == *"headRefName"* ]]; then
 	printf '%s\n' "$head_ref"
+	exit 0
+fi
+
+# `gh pr view <N> --json baseRefName -q ...` (GH#39167)
+if [[ "${1:-}" == "pr" && "${2:-}" == "view" && "$*" == *"baseRefName"* ]]; then
+	[[ -f "${test_root}/gh-base-ref.txt" ]] && cat "${test_root}/gh-base-ref.txt"
+	printf '\n'
 	exit 0
 fi
 
@@ -293,7 +303,7 @@ test_provided_head_ref_context_skips_view() {
 	: >"$LAST_GH_ARGS_FILE"
 	install_gh_stub "feature/from-view" "501" "main"
 
-	_retarget_stacked_children "100" "marcusquinn/aidevops" "feature/from-context"
+	_retarget_stacked_children "100" "marcusquinn/aidevops" "feature/from-context" "main"
 
 	if grep -q "pr view" "$LAST_GH_ARGS_FILE"; then
 		print_result "provided headRefName context skips gh_pr_view" 1 \
@@ -308,6 +318,55 @@ test_provided_head_ref_context_skips_view() {
 	fi
 
 	print_result "provided headRefName context skips gh_pr_view" 0
+	return 0
+}
+
+# ---------------------------------------------------------------
+# Test 6b: children follow the parent's base, not the default branch (GH#39167)
+# ---------------------------------------------------------------
+test_children_follow_parent_base() {
+	: >"$LOGFILE"
+	: >"$LAST_GH_ARGS_FILE"
+	install_gh_stub "feature/parent" "601" "main" "dev"
+
+	_retarget_stacked_children "100" "marcusquinn/aidevops"
+
+	if ! grep -q -- "pr edit 601 --repo marcusquinn/aidevops --base dev" "$LAST_GH_ARGS_FILE" ||
+		grep -q -- "--base main" "$LAST_GH_ARGS_FILE"; then
+		print_result "children follow parent baseRefName (dev), not main" 1 \
+			"Args: $(cat "$LAST_GH_ARGS_FILE")"
+		return 0
+	fi
+
+	: >"$LAST_GH_ARGS_FILE"
+	_retarget_stacked_children "100" "marcusquinn/aidevops" "feature/parent" "release/next"
+	if ! grep -q -- "pr edit 601 --repo marcusquinn/aidevops --base release/next" "$LAST_GH_ARGS_FILE"; then
+		print_result "children follow parent baseRefName (dev), not main" 1 \
+			"Context base not used. Args: $(cat "$LAST_GH_ARGS_FILE")"
+		return 0
+	fi
+
+	print_result "children follow parent baseRefName (dev), not main" 0
+	return 0
+}
+
+# ---------------------------------------------------------------
+# Test 6c: unresolvable parent base → no retarget to a guessed main (GH#39167)
+# ---------------------------------------------------------------
+test_unresolved_parent_base_no_main_fallback() {
+	: >"$LOGFILE"
+	: >"$LAST_GH_ARGS_FILE"
+	install_gh_stub "feature/parent" "701" "main" ""
+
+	_retarget_stacked_children "100" "marcusquinn/aidevops"
+
+	if grep -q "pr edit" "$LAST_GH_ARGS_FILE"; then
+		print_result "unresolved parent base → no guessed main retarget" 1 \
+			"Unexpected edit. Args: $(cat "$LAST_GH_ARGS_FILE")"
+		return 0
+	fi
+
+	print_result "unresolved parent base → no guessed main retarget" 0
 	return 0
 }
 
@@ -334,9 +393,11 @@ test_retarget_called_before_merge() {
 	fi
 
 	# Retarget must appear before the gh pr merge call.
-	local retarget_pos merge_pos
-	retarget_pos=$(printf '%s\n' "$func_body" | grep -n '_retarget_stacked_children' | head -1 | cut -d: -f1)
-	merge_pos=$(printf '%s\n' "$func_body" | grep -n 'gh pr merge' | head -1 | cut -d: -f1)
+	# grep -m1 on a here-string instead of `printf | grep | head -1`: no
+	# early-exit reader under pipefail, so no SIGPIPE flake (GH#35943).
+	local retarget_pos="" merge_pos=""
+	retarget_pos=$(grep -n -m1 -- '_retarget_stacked_children' <<<"$func_body" | cut -d: -f1) || retarget_pos=""
+	merge_pos=$(grep -n -m1 -- 'gh pr merge' <<<"$func_body" | cut -d: -f1) || merge_pos=""
 
 	if [[ -z "$retarget_pos" || -z "$merge_pos" ]]; then
 		print_result "retarget called before merge in _process_single_ready_pr" 1 \
@@ -369,6 +430,8 @@ main() {
 	test_head_ref_failure_noop
 	test_audit_log_carries_t2412_tag
 	test_provided_head_ref_context_skips_view
+	test_children_follow_parent_base
+	test_unresolved_parent_base_no_main_fallback
 	test_retarget_called_before_merge
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

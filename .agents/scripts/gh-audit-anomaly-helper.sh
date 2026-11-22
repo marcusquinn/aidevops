@@ -11,6 +11,8 @@
 #
 # State is persisted in ~/.aidevops/logs/gh-audit-scanner.state (JSON):
 #   {"last_scan_ts": "2026-04-20T09:00:00Z", "last_line": 42}
+# last_line indexes the log that was live at last_scan_ts. Rotated logs
+# (gh-audit.<UTC>.log) newer than last_scan_ts are scanned before the live log.
 #
 # Usage:
 #   gh-audit-anomaly-helper.sh scan [--all] [--dry-run] [--repo SLUG]
@@ -33,16 +35,20 @@ init_log_file || true
 # Constants
 # =============================================================================
 
-readonly GH_ANOMALY_VERSION="1.2.0"
+readonly GH_ANOMALY_VERSION="1.3.0"
 readonly GH_ANOMALY_STATE_FILE_DEFAULT="${HOME}/.aidevops/logs/gh-audit-scanner.state"
 readonly GH_ANOMALY_LOG_DIR_DEFAULT="${HOME}/.aidevops/logs"
 readonly GH_ANOMALY_LOG_FILENAME="gh-audit.log"
 readonly GH_ANOMALY_DEFAULT_REPO="marcusquinn/aidevops"
 readonly GH_ANOMALY_NMR_LABEL="needs-maintainer-review"
 readonly GH_ANOMALY_PERMISSION_LABEL="needs-maintainer-permissions"
-# GH#34499: the evidence (gh-audit.log) exists only on the producing runner, so
-# alerts are a durable locality hold, never pulse worker candidates.
-readonly GH_ANOMALY_HOLD_LABEL="no-auto-dispatch"
+# GH#38770: alerts are auto-dispatched, but only to the producing runner (the
+# issue author), which alone holds the gh-audit.log evidence (GH#34499). The
+# pulse dedup layer enforces that locality for issues carrying the scanner marker.
+readonly GH_ANOMALY_DISPATCH_LABEL="auto-dispatch"
+readonly GH_ANOMALY_STATUS_LABEL="status:available"
+# Hours before the maintainer runner flags an unclaimed alert (GH#38770).
+readonly GH_ANOMALY_STALE_HOURS=72
 readonly GH_ANOMALY_REDACTED_REPO="[private repository]"
 # Maximum anomaly entries to include in an issue (prevents overly large issues)
 readonly GH_ANOMALY_MAX_ISSUE_ENTRIES=20
@@ -81,6 +87,21 @@ _ga_warn() {
 	return 0
 }
 
+# GH#39853: print the canonical needs-* blocked companion labels as a JSON
+# array, read from the same contract the runtime blocked exit uses
+# (shared-gh-wrappers-status.sh _blocked_companion_contract), so the filter
+# cannot drift from its producer. Prints [] when the contract is unavailable,
+# which keeps companion-bearing blocked exits reportable (fail closed).
+_ga_blocked_companions_json() {
+	local contract=""
+	if declare -F _blocked_companion_contract >/dev/null 2>&1; then
+		contract=$(_blocked_companion_contract 2>/dev/null) || contract=""
+	fi
+	jq -cRn '[inputs | split("\t")[0] | select(test("^needs-[a-z0-9-]+$"))] | unique' <<<"$contract" 2>/dev/null ||
+		printf '[]\n'
+	return 0
+}
+
 # Read the last scanned line number from the state file.
 # Returns 0 if state doesn't exist (scan from beginning).
 _ga_read_last_line() {
@@ -100,13 +121,62 @@ _ga_read_last_line() {
 	return 0
 }
 
-# Write the scanner state file.
-_ga_write_state() {
-	local last_line="$1"
+# Read the last scan timestamp from the state file ("" when unknown).
+_ga_read_last_scan_ts() {
 	local state_file
 	state_file="$(_ga_state_path)"
-	local ts
-	ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')"
+	local last_scan_ts=""
+	if [[ -f "$state_file" ]] && command -v jq &>/dev/null; then
+		last_scan_ts=$(jq -r '.last_scan_ts // ""' "$state_file" 2>/dev/null) || last_scan_ts=""
+	fi
+	printf '%s\n' "$last_scan_ts"
+	return 0
+}
+
+# Current UTC time in the state-file format.
+_ga_now_ts() {
+	date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ'
+	return 0
+}
+
+# List rotated audit logs created at or after the last scan, oldest first.
+# gh-audit-log-helper.sh rotates by renaming the live log to
+# <basename>.<YYYYMMDDTHHMMSSZ>.log, so the first match held the checkpoint and
+# any later matches were never scanned (GH#37904). An equal timestamp is
+# included: rescanning duplicates is safer than skipping entries.
+# Args: live log path, last_scan_ts (ISO-8601 UTC)
+_ga_pending_rotations() {
+	local log_file="$1"
+	local last_scan_ts="$2"
+	local since="${last_scan_ts//-/}"
+	since="${since//:/}"
+	[[ "$since" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || return 0
+
+	local log_dir base candidate suffix
+	log_dir="$(dirname "$log_file")"
+	base="$(basename "$log_file")"
+	base="${base%.log}"
+	for candidate in "${log_dir}/${base}".*.log; do
+		[[ -f "$candidate" ]] || continue
+		suffix="${candidate##*/}"
+		suffix="${suffix#"${base}".}"
+		suffix="${suffix%.log}"
+		[[ "$suffix" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || continue
+		[[ "$suffix" < "$since" ]] && continue
+		printf '%s\n' "$candidate"
+	done
+	return 0
+}
+
+# Write the scanner state file.
+# Args: last_line [scan_ts]. Pass the scan start time so a rotation during the
+# scan sorts after the checkpoint and its remainder is scanned next time.
+_ga_write_state() {
+	local last_line="$1"
+	local ts="${2:-}"
+	local state_file
+	state_file="$(_ga_state_path)"
+	[[ -n "$ts" ]] || ts="$(_ga_now_ts)"
 	local state_dir
 	state_dir="$(dirname "$state_file")"
 	[[ ! -d "$state_dir" ]] && mkdir -p "$state_dir" || true
@@ -176,6 +246,72 @@ _ga_format_anomaly_row() {
 	return 0
 }
 
+# Read at most five complete timeline pages. Never classify a truncated timeline.
+_ga_self_reversal_timeline() {
+	local repo="$1" number="$2"
+	local page response pages=""
+	for page in 1 2 3 4 5; do
+		response=$(gh api "repos/${repo}/issues/${number}/timeline?per_page=100&page=${page}" 2>/dev/null) || return 1
+		jq -e 'type == "array"' <<<"$response" >/dev/null 2>&1 || return 1
+		pages+="${response}"$'\n'
+		if [[ "$(jq 'length' <<<"$response")" -lt 100 ]]; then
+			jq -sc 'add' <<<"$pages"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# Only suppress an entry when every signal is independently proven benign.
+# Timeline timestamps precede the post-operation audit timestamp; require a
+# unique removal in the preceding minute rather than matching an older cycle.
+_ga_filter_self_reversals() {
+	local login entry repo number timeline
+	local kept=()
+	[[ ${#_sc_anomaly_entries[@]} -gt 0 ]] || return 0
+	login=$(gh api user --jq .login 2>/dev/null) || return 0
+	[[ "$login" =~ ^[A-Za-z0-9-]+(\[bot\])?$ ]] || return 0
+	for entry in "${_sc_anomaly_entries[@]}"; do
+		if ! jq -e '
+			(.suspicious | length > 0 and all(.[]; type == "string" and startswith("protected_label_removed:") and length > 24))
+			and (.repo | type == "string" and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))
+			and (.number | type == "number" and . > 0 and floor == .)
+		' <<<"$entry" >/dev/null 2>&1; then
+			kept+=("$entry")
+			continue
+		fi
+		repo=$(jq -r '.repo' <<<"$entry")
+		number=$(jq -r '.number' <<<"$entry")
+		if ! timeline=$(_ga_self_reversal_timeline "$repo" "$number"); then
+			kept+=("$entry")
+			continue
+		fi
+		# aidevops:trust-boundary — missing, ambiguous, or foreign events retain
+		# the alert. All intervening label events, not just adds, are checked.
+		if jq -e --arg login "$login" --argjson entry "$entry" '
+			($entry.ts | fromdateiso8601) as $ts |
+			. as $timeline |
+			all($entry.suspicious[]; ltrimstr("protected_label_removed:") as $label |
+				[$timeline[] | select(.label.name == $label and (.event == "labeled" or .event == "unlabeled")) |
+					. + {epoch: (.created_at | fromdateiso8601)}] | sort_by(.epoch) as $events |
+				[$events[] | select(.event == "unlabeled" and .epoch <= $ts and .epoch >= ($ts - 60))] as $removals |
+				($removals | length) == 1 and
+				($removals[0] as $removed |
+					[$events[] | select(.event == "labeled" and .epoch <= $ts)] | last as $added |
+					$added != null and $added.actor.login == $login and $removed.actor.login == $login and
+					$added.epoch < $removed.epoch and
+					($removed.epoch - $added.epoch) <= 86400 and
+					all($events[] | select(.epoch >= $added.epoch and .epoch <= $removed.epoch); .actor.login == $login)))
+		' <<<"$timeline" >/dev/null 2>&1; then
+			_ga_info "Excluded protected-label self_reversal"
+		else
+			kept+=("$entry")
+		fi
+	done
+	_sc_anomaly_entries=("${kept[@]}")
+	return 0
+}
+
 # =============================================================================
 # Commands
 # =============================================================================
@@ -212,13 +348,48 @@ _cmd_scan_parse_args() {
 	return 0
 }
 
+# Write every parsable NDJSON object in the scan window to parsable_file and
+# record how many lines were unparsable in the caller-scoped _sc_malformed_count.
+#
+# An interrupted append leaves the log without a trailing newline, so the next
+# event concatenates onto the partial one and both become unreadable (GH#38229).
+# Aborting the whole scan on such a line froze the checkpoint and ended anomaly
+# detection for every later entry, which is strictly worse than reporting the
+# corruption: a torn line is itself an audit finding, so it is counted here and
+# surfaced in the report rather than suppressed or allowed to block the scan.
+# Only objects are accepted; any other JSON value is counted as malformed.
+# Args: log_file skip_count parsable_file
+# Returns 1 when the window cannot be read at all.
+_cmd_scan_partition_parsable() {
+	local log_file="$1" skip_count="$2" parsable_file="$3"
+	local window_lines parsable_lines
+
+	if ! tail -n +"$((skip_count + 1))" "$log_file" |
+		jq -Rr 'if (fromjson? | type) == "object" then . else empty end' \
+			>"$parsable_file" 2>/dev/null; then
+		return 1
+	fi
+
+	window_lines="$(tail -n +"$((skip_count + 1))" "$log_file" | wc -l | tr -d ' ')"
+	parsable_lines="$(wc -l <"$parsable_file" | tr -d ' ')"
+	_sc_malformed_count=$((window_lines - parsable_lines))
+	[[ "$_sc_malformed_count" -lt 0 ]] && _sc_malformed_count=0
+	if [[ "$_sc_malformed_count" -gt 0 ]]; then
+		_ga_warn "Malformed audit NDJSON: ${_sc_malformed_count} unparsable line(s) reported, scan continues"
+	fi
+	return 0
+}
+
 # Collect NDJSON entries with non-empty suspicious[] arrays into the
-# caller-scoped array _sc_anomaly_entries.
+# caller-scoped array _sc_anomaly_entries. Unparsable lines are counted in the
+# caller-scoped _sc_malformed_count and reported, never silently dropped.
 # Args: log_file skip_count
-# Returns 1 when jq cannot parse the scan window so the checkpoint is preserved.
+# Returns 1 only when the anomaly filter itself fails on parsable records, so
+# the checkpoint is preserved for genuine filter failures.
 _cmd_scan_collect_anomalies() {
 	local log_file="$1" skip_count="$2"
 	_sc_anomaly_entries=()
+	_sc_malformed_count=0
 
 	if command -v jq &>/dev/null; then
 		# Single jq pass: skip counted lines, emit only actionable anomalies.
@@ -226,29 +397,43 @@ _cmd_scan_collect_anomalies() {
 		# Verified approvals and permission-block transitions intentionally remove
 		# protected labels. Keep them in the immutable log, but suppress alerts only
 		# when capture, provenance, proof, and the complete semantic delta match.
-		local line filtered_file
+		local line filtered_file parsable_file
 		filtered_file="$(mktemp -t gh-audit-anomaly-filter.XXXXXX)" || {
 			_ga_warn "Could not create anomaly scan buffer"
 			return 1
 		}
+		parsable_file="$(mktemp -t gh-audit-anomaly-parsable.XXXXXX)" || {
+			rm -f "$filtered_file"
+			_ga_warn "Could not create anomaly parse buffer"
+			return 1
+		}
+		if ! _cmd_scan_partition_parsable "$log_file" "$skip_count" "$parsable_file"; then
+			rm -f "$filtered_file" "$parsable_file"
+			_ga_warn "Could not read the audit scan window — checkpoint not advanced"
+			return 1
+		fi
 		# aidevops:trust-boundary — fail closed unless each expected transition has
 		# independently meaningful end-state evidence and no extra state change.
-		if ! tail -n +"$((skip_count + 1))" "$log_file" |
-			jq -c --arg nmr "$GH_ANOMALY_NMR_LABEL" --arg permission "$GH_ANOMALY_PERMISSION_LABEL" \
-				--arg issue_edit "issue_edit" --arg approval_script "approval-helper.sh" \
-				--arg permission_script "worker-permission-helper.sh" \
-				--arg nmr_script "pulse-nmr-approval.sh" \
-				--arg full_loop_commit_script "full-loop-helper-commit.sh" \
-				--arg full_loop_script "full-loop-helper.sh" \
-				-f "${SCRIPT_DIR}/gh-audit-anomaly-filter.jq" >"$filtered_file" 2>/dev/null; then
-			rm -f "$filtered_file"
-			_ga_warn "Malformed audit NDJSON detected — checkpoint not advanced"
+		local blocked_companions
+		blocked_companions="$(_ga_blocked_companions_json)"
+		if ! jq -c --arg nmr "$GH_ANOMALY_NMR_LABEL" --arg permission "$GH_ANOMALY_PERMISSION_LABEL" \
+			--arg issue_edit "issue_edit" --arg approval_script "approval-helper.sh" \
+			--arg permission_script "worker-permission-helper.sh" \
+			--arg nmr_script "pulse-nmr-approval.sh" \
+			--arg full_loop_commit_script "full-loop-helper-commit.sh" \
+			--arg full_loop_script "full-loop-helper.sh" \
+			--argjson blocked_companions "$blocked_companions" \
+			-f "${SCRIPT_DIR}/gh-audit-anomaly-filter.jq" \
+			<"$parsable_file" >"$filtered_file" 2>/dev/null; then
+			rm -f "$filtered_file" "$parsable_file"
+			_ga_warn "Anomaly filter failed on parsable audit records — checkpoint not advanced"
 			return 1
 		fi
 		while IFS= read -r line; do
 			_sc_anomaly_entries+=("$line")
 		done <"$filtered_file"
-		rm -f "$filtered_file"
+		rm -f "$filtered_file" "$parsable_file"
+		_ga_filter_self_reversals
 		return 0
 	fi
 
@@ -265,13 +450,82 @@ _cmd_scan_collect_anomalies() {
 	return 0
 }
 
+# Append lines [skip+1, total] of one log segment to the scan window.
+# Uses caller-scoped _sc_lines_to_scan and _sc_scan_desc.
+# Args: segment_file skip_count total_lines window_file
+_cmd_scan_append_segment() {
+	local segment_file="$1" skip_count="$2" total_lines="$3" window_file="$4"
+	[[ "$total_lines" -gt "$skip_count" ]] || return 0
+	# awk terminates a final unterminated line so segments never merge.
+	tail -n +"$((skip_count + 1))" "$segment_file" | awk '1' >>"$window_file" || return 1
+	_sc_lines_to_scan=$((_sc_lines_to_scan + total_lines - skip_count))
+	_sc_scan_desc="${_sc_scan_desc:+${_sc_scan_desc}; }Lines $((skip_count + 1))–${total_lines} of \`$(basename "$segment_file")\`"
+	return 0
+}
+
+# Assemble the unscanned audit window into window_file (GH#37904).
+# Without rotation: the live log after the checkpoint. With rotation: the rest of
+# the rotated file that held the checkpoint, every later rotated file, then the
+# whole live log. A live log shorter than the checkpoint with no rotated file to
+# explain it is rescanned from line 1 (duplicates are safer than gaps).
+# Uses caller-scoped _sc_rotated_files; sets _sc_lines_to_scan and _sc_scan_desc.
+# Args: live_log start_line live_total window_file
+_cmd_scan_build_window() {
+	local log_file="$1" start_line="$2" total_lines="$3" window_file="$4"
+	local live_skip="$start_line"
+	_sc_lines_to_scan=0
+	_sc_scan_desc=""
+
+	if [[ ${#_sc_rotated_files[@]} -gt 0 ]]; then
+		local rotated rotated_lines rotated_skip first=1
+		for rotated in "${_sc_rotated_files[@]}"; do
+			rotated_lines="$(wc -l <"$rotated" | tr -d ' ')"
+			rotated_skip=0
+			if [[ "$first" -eq 1 ]]; then
+				if [[ "$start_line" -le "$rotated_lines" ]]; then
+					rotated_skip="$start_line"
+				else
+					_ga_warn "Checkpoint line ${start_line} exceeds $(basename "$rotated") (${rotated_lines} lines); rescanning it from line 1"
+				fi
+				first=0
+			fi
+			_cmd_scan_append_segment "$rotated" "$rotated_skip" "$rotated_lines" "$window_file" || return 1
+		done
+		live_skip=0
+	elif [[ "$start_line" -gt "$total_lines" ]]; then
+		_ga_warn "Audit log (${total_lines} lines) is shorter than checkpoint ${start_line} and no rotated log explains it; rescanning from line 1"
+		live_skip=0
+	fi
+
+	_cmd_scan_append_segment "$log_file" "$live_skip" "$total_lines" "$window_file" || return 1
+	return 0
+}
+
+# Advance the checkpoint after a successful scan. `scan --all` reads only the
+# live log, so while rotated logs newer than the checkpoint are pending it keeps
+# the old checkpoint; the next incremental scan then covers them (duplicates
+# are preferred over gaps).
+# Uses caller-scoped _sc_scan_all.
+# Args: live_log total_lines scan_started_ts
+_cmd_scan_advance_checkpoint() {
+	local log_file="$1" total_lines="$2" scan_started_ts="$3"
+	if [[ "$_sc_scan_all" -eq 1 && -n "$(_ga_pending_rotations "$log_file" "$(_ga_read_last_scan_ts)")" ]]; then
+		_ga_warn "--all does not scan rotated logs; rotated logs are pending, so the checkpoint was not advanced"
+		return 0
+	fi
+	_ga_write_state "$total_lines" "$scan_started_ts"
+	return 0
+}
+
 # Build the markdown issue body for an anomaly report.
-# Args: scan_ts anomaly_count skip_count total_lines issue_repo entry1 entry2 ...
+# Reads the caller-scoped _sc_malformed_count set by _cmd_scan_collect_anomalies.
+# Args: scan_ts anomaly_count scan_desc issue_repo entry1 entry2 ...
 # Output: issue body markdown on stdout.
 _cmd_scan_build_issue_body() {
-	local scan_ts="$1" anomaly_count="$2" skip_count="$3" total_lines="$4"
-	local issue_repo="$5"
-	shift 5
+	local scan_ts="$1" anomaly_count="$2" scan_desc="$3"
+	local issue_repo="$4"
+	shift 4
+	local malformed_count="${_sc_malformed_count:-0}"
 
 	# Header (heredoc is easier to review than concatenation).
 	cat <<BODY
@@ -279,7 +533,8 @@ _cmd_scan_build_issue_body() {
 
 **Scan time:** ${scan_ts}
 **Anomalies found:** ${anomaly_count}
-**Log scanned:** Lines $((skip_count + 1))–${total_lines} of \`gh-audit.log\`
+**Malformed lines:** ${malformed_count}
+**Log scanned:** ${scan_desc}
 
 ## Anomalous Entries
 
@@ -298,19 +553,51 @@ BODY
 		included=$((included + 1))
 	done
 
+	if [[ "$malformed_count" -gt 0 ]]; then
+		cat <<INTEGRITY
+
+## Log Integrity
+
+${malformed_count} line(s) in the scanned window were not parsable NDJSON objects and
+were excluded from anomaly matching. The usual cause is an interrupted append that left
+the log without a trailing newline, merging a partial event with the next one; the events
+on those lines were therefore not checked for suspicious signals.
+
+Locate them without mutating the append-only log:
+
+\`\`\`bash
+jq -nR '[inputs | input_line_number as \$n | [fromjson?] | if length == 0 then \$n else empty end]' \\
+  ~/.aidevops/logs/gh-audit.log
+\`\`\`
+
+If a reported line shows a truncated prefix followed by a complete later event, the
+truncation is a write fault rather than evidence of tampering. If it shows edited or
+reordered content, treat it as a tampering finding and follow the forensics workflow in
+\`reference/gh-audit-log.md\`.
+INTEGRITY
+	fi
+
 	cat <<FOOTER
 
 ## Next Steps
 
-**Review owner:** the runner that filed this alert (the issue author). The evidence in \`gh-audit.log\` exists only on that runner, so this alert is labelled \`${GH_ANOMALY_HOLD_LABEL}\` and is never dispatched to workers.
+**Triage owner:** the runner that filed this alert (the issue author). The evidence in \`gh-audit.log\` exists only on that runner, so this alert is auto-dispatched to that runner only; other runners never claim it (GH#38770).
 
-1. Review each entry in \`~/.aidevops/logs/gh-audit.log\`, including each snapshot's \`capture_status\`.
-2. Verify the current GitHub state and cross-reference the events API:
-   \`gh api /repos/OWNER/REPO/issues/N/events --jq '[.[] | select(.event == "renamed")]'\`
-3. A \`state_capture_unavailable:*\` signal means the audit read failed; it is not evidence that content was wiped.
-4. If a destructive edit is confirmed, recover content from GitHub history or a committed backup. The audit log stores lengths, not content.
-5. See \`reference/gh-audit-log.md\` for the forensics workflow.
+The worker triages each entry automatically, following "Alert Triage Contract" in \`reference/gh-audit-log.md\`:
 
+1. Find the local log record by \`ts\` + \`repo\` + \`number\` and read \`flags\`, \`caller_*\` and \`delta\`.
+2. Check live GitHub state (issue events/timeline, protected label restored, \`approval-helper.sh verify-permissions\` / \`verify\`).
+3. Classify each entry as \`expected\` (with evidence), \`reverted\` or \`unexplained\`.
+4. All \`expected\`/\`reverted\`: post one verified evidence report with the self-bound report-only receipt described in \`reference/worker-discipline.md\` "Read-only reports", then close this alert as completed. A \`COLLABORATOR\` must be the same login as the issue author, closer and receipt author. Any \`unexplained\`: add \`needs-maintainer-input\` with one decision-ready comment and leave it open.
+5. A \`state_capture_unavailable:*\` signal means the audit read failed; it is not evidence that content was wiped.
+
+If the producing runner never claims the alert, the maintainer runner's pulse adds \`needs-maintainer-input\` after ${GH_ANOMALY_STALE_HOURS} hours.
+
+### Files Scope
+
+- READ-ONLY: \`~/.aidevops/logs/gh-audit.log\` (local evidence; no repository edits are needed)
+
+<!-- aidevops:completion-contract:report-only/v1 -->
 <!-- gh-audit-anomaly-scanner:${scan_ts} -->
 FOOTER
 
@@ -339,7 +626,8 @@ _cmd_scan_file_issue() {
 			--title "$title" \
 			--body-file "$body_file" \
 			--label "monitoring" \
-			--label "$GH_ANOMALY_HOLD_LABEL" \
+			--label "$GH_ANOMALY_STATUS_LABEL" \
+			--label "$GH_ANOMALY_DISPATCH_LABEL" \
 			2>"$gh_stderr_file") || {
 			local gh_err
 			gh_err="$(tr '\n' ' ' <"$gh_stderr_file")"
@@ -355,7 +643,8 @@ _cmd_scan_file_issue() {
 			--title "$title" \
 			--body-file "$body_file" \
 			--label "monitoring" \
-			--label "$GH_ANOMALY_HOLD_LABEL") || {
+			--label "$GH_ANOMALY_STATUS_LABEL" \
+			--label "$GH_ANOMALY_DISPATCH_LABEL") || {
 			_ga_warn "Failed to create anomaly issue on ${issue_repo}"
 			return 1
 		}
@@ -363,6 +652,45 @@ _cmd_scan_file_issue() {
 
 	_ga_info "Filed anomaly report: ${issue_url}"
 	return 0
+}
+
+# Render the findings and file the alert issue.
+# Reads the caller-scoped _sc_* scan state set by cmd_scan.
+# Args: anomaly_count
+_cmd_scan_report_findings() {
+	local anomaly_count="$1"
+	local scan_ts
+	scan_ts="$(_ga_now_ts)"
+
+	# Build the body in a tempfile; gh issue create --body-file is safer than
+	# --body for large content (avoids argv size limits and shell quoting).
+	local body_file
+	body_file="$(mktemp -t gh-audit-anomaly-body.XXXXXX)"
+	_cmd_scan_build_issue_body "$scan_ts" "$anomaly_count" "$_sc_scan_desc" \
+		"$_sc_issue_repo" "${_sc_anomaly_entries[@]}" >"$body_file"
+
+	if [[ "$_sc_dry_run" -eq 1 ]]; then
+		_ga_info "DRY RUN — findings detected, would file issue on ${_sc_issue_repo}"
+		cat "$body_file"
+		rm -f "$body_file"
+		return 0
+	fi
+
+	if ! command -v gh &>/dev/null; then
+		_ga_warn "gh CLI not available — cannot file issue. Body printed to stderr."
+		cat "$body_file" >&2
+		rm -f "$body_file"
+		return 0
+	fi
+
+	local title="GH Audit Anomaly Alert: ${anomaly_count} suspicious operations detected"
+	if [[ "$anomaly_count" -eq 0 ]]; then
+		title="GH Audit Log Integrity Alert: ${_sc_malformed_count} malformed audit line(s)"
+	fi
+	local exit_code=0
+	_cmd_scan_file_issue "$_sc_issue_repo" "$title" "$body_file" || exit_code=$?
+	rm -f "$body_file"
+	return "$exit_code"
 }
 
 # Scan the gh-audit.log for entries with non-empty suspicious[] arrays.
@@ -388,65 +716,63 @@ cmd_scan() {
 		return 0
 	fi
 
-	local total_lines start_line skip_count lines_to_scan
+	local scan_started_ts total_lines start_line rotated
+	scan_started_ts="$(_ga_now_ts)"
 	total_lines="$(wc -l <"$log_file" | tr -d ' ')"
 	start_line=0
-	[[ "$_sc_scan_all" -eq 0 ]] && start_line="$(_ga_read_last_line)"
-	skip_count="$start_line"
-	lines_to_scan=$((total_lines - skip_count))
+	local -a _sc_rotated_files=()
+	if [[ "$_sc_scan_all" -eq 0 ]]; then
+		start_line="$(_ga_read_last_line)"
+		while IFS= read -r rotated; do
+			[[ -n "$rotated" ]] && _sc_rotated_files+=("$rotated")
+		done < <(_ga_pending_rotations "$log_file" "$(_ga_read_last_scan_ts)")
+	fi
 
-	if [[ "$lines_to_scan" -le 0 ]]; then
+	local window_file _sc_lines_to_scan=0 _sc_scan_desc=""
+	window_file="$(mktemp -t gh-audit-anomaly-window.XXXXXX)" || {
+		_ga_warn "Could not create audit scan window — checkpoint not advanced"
+		return 1
+	}
+	if ! _cmd_scan_build_window "$log_file" "$start_line" "$total_lines" "$window_file"; then
+		rm -f "$window_file"
+		_ga_warn "Could not read audit log window — checkpoint not advanced"
+		return 1
+	fi
+
+	if [[ "$_sc_lines_to_scan" -le 0 ]]; then
+		rm -f "$window_file"
 		_ga_info "No new entries since last scan (last_line=${start_line}, total=${total_lines})"
 		return 0
 	fi
 
-	_ga_info "Scanning ${lines_to_scan} entries (lines ${start_line}+1..${total_lines})"
+	if [[ ${#_sc_rotated_files[@]} -gt 0 ]]; then
+		_ga_info "Detected ${#_sc_rotated_files[@]} rotated audit log(s) since the last scan"
+	fi
+	_ga_info "Scanning ${_sc_lines_to_scan} entries (${_sc_scan_desc})"
 
 	local -a _sc_anomaly_entries=()
-	if ! _cmd_scan_collect_anomalies "$log_file" "$skip_count"; then
+	local _sc_malformed_count=0
+	if ! _cmd_scan_collect_anomalies "$window_file" 0; then
+		rm -f "$window_file"
 		_ga_warn "Audit scan aborted without updating state"
 		return 1
 	fi
+	rm -f "$window_file"
 
 	local anomaly_count="${#_sc_anomaly_entries[@]}"
 	_ga_info "Found ${anomaly_count} anomalous entries"
+	[[ "$_sc_malformed_count" -gt 0 ]] &&
+		_ga_info "Found ${_sc_malformed_count} malformed audit line(s) — reported as a log-integrity finding"
 
-	[[ "$_sc_dry_run" -eq 0 ]] && _ga_write_state "$total_lines"
+	[[ "$_sc_dry_run" -eq 0 ]] && _cmd_scan_advance_checkpoint "$log_file" "$total_lines" "$scan_started_ts"
 
-	if [[ "$anomaly_count" -eq 0 ]]; then
+	if [[ "$anomaly_count" -eq 0 && "$_sc_malformed_count" -eq 0 ]]; then
 		_ga_info "No anomalies found — no issue filed"
 		return 0
 	fi
 
-	local scan_ts
-	scan_ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')"
-
-	# Build the body in a tempfile; gh issue create --body-file is safer than
-	# --body for large content (avoids argv size limits and shell quoting).
-	local body_file
-	body_file="$(mktemp -t gh-audit-anomaly-body.XXXXXX)"
-	_cmd_scan_build_issue_body "$scan_ts" "$anomaly_count" "$skip_count" \
-		"$total_lines" "$_sc_issue_repo" "${_sc_anomaly_entries[@]}" >"$body_file"
-
-	if [[ "$_sc_dry_run" -eq 1 ]]; then
-		_ga_info "DRY RUN — anomalies found, would file issue on ${_sc_issue_repo}"
-		cat "$body_file"
-		rm -f "$body_file"
-		return 0
-	fi
-
-	if ! command -v gh &>/dev/null; then
-		_ga_warn "gh CLI not available — cannot file issue. Body printed to stderr."
-		cat "$body_file" >&2
-		rm -f "$body_file"
-		return 0
-	fi
-
-	local title="GH Audit Anomaly Alert: ${anomaly_count} suspicious operations detected"
-	local exit_code=0
-	_cmd_scan_file_issue "$_sc_issue_repo" "$title" "$body_file" || exit_code=$?
-	rm -f "$body_file"
-	return "$exit_code"
+	_cmd_scan_report_findings "$anomaly_count"
+	return $?
 }
 
 # Show scanner status.
@@ -476,7 +802,18 @@ cmd_status() {
 		last_line=$(jq -r '.last_line // 0' "$state_file" 2>/dev/null || echo "0")
 		echo "Last scan:  ${last_scan}"
 		echo "Last line:  ${last_line}"
-		echo "Unscanned:  $((total_lines - last_line)) entries"
+		local rotated_count=0 rotated
+		while IFS= read -r rotated; do
+			[[ -n "$rotated" ]] && rotated_count=$((rotated_count + 1))
+		done < <(_ga_pending_rotations "$log_file" "$last_scan")
+		if [[ "$rotated_count" -gt 0 ]]; then
+			echo "Rotated:    ${rotated_count} rotated log(s) since last scan (scanned on next run)"
+			echo "Unscanned:  ${total_lines} live entries plus the rotated remainder"
+		elif [[ "$last_line" -gt "$total_lines" ]]; then
+			echo "Unscanned:  ${total_lines} entries (log shorter than checkpoint; next scan restarts at line 1)"
+		else
+			echo "Unscanned:  $((total_lines - last_line)) entries"
+		fi
 	else
 		echo "Last scan:  never"
 	fi
@@ -491,15 +828,22 @@ gh-audit-anomaly-helper.sh — Scan gh-audit.log for anomalous operations
 Reads the gh-audit.log, finds entries with non-empty suspicious[] arrays,
 and opens a GitHub issue summary when anomalies are detected.
 
+Lines that are not parsable NDJSON objects (typically a torn append) are
+excluded from signal matching, counted as a log-integrity finding, and reported
+without blocking the scan or the checkpoint.
+
 Commands:
   scan [--all] [--dry-run] [--repo SLUG]   Scan for anomalies, file issue
   status                                    Show scanner status
   help                                      Show this help
 
 Options:
-  --all        Scan from the beginning (ignore last-scan state)
+  --all        Scan the live log from the beginning (ignore last-scan state)
   --dry-run    Print findings without filing an issue or updating state
   --repo SLUG  Override the repo to file issues in (default: marcusquinn/aidevops)
+
+Rotated logs created since the last scan are scanned before the live log, from
+the saved checkpoint onward, so rotation never hides entries.
 
 Routine entry for TODO.md:
   - [x] r-gh-audit-scan Scan gh-audit.log for anomalies \

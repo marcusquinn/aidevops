@@ -3,15 +3,18 @@
 
 # Tabby profiles
 
-Use `.agents/scripts/tabby-profile-sync.py` to generate aidevops project profiles
-from `repos.json`. When `~/.buzz` exists, setup/update also generates a `Buzz`
-profile rooted there so OpenCode opens the Buzz-scoped session namespace. The
-profile is omitted when Buzz has not created that workspace, and an existing
-profile with the same working directory remains user-owned and unchanged.
+For live multi-host tmux tabs, use `aidevops tabby sessions new|restore|list|doctor`;
+see [Remote Tabby sessions](../tools/terminal/remote-sessions.md). Session leases
+are separate from profile reconciliation and do not change `tabby status`.
+
+Use `.agents/scripts/tabby-profile-sync.py` to generate project profiles from
+`repos.json` only for paths strictly inside the resolved Git workspace root
+(`~/Git`, or `AIDEVOPS_GIT_WORKSPACE_ROOT`). Existing user-owned profiles outside
+that root are preserved; the obsolete managed Buzz workspace profile is removed.
 
 `tabby-helper.sh status` reports pending reconciliation without changing the
 configuration. `tabby-helper.sh sync`, including the setup/update path, removes
-only profiles confidently identified as aidevops-generated when their cwd is
+only profiles confidently identified as aidevops-generated inside the root when their cwd is
 both missing and unregistered, or when a later managed profile duplicates an
 earlier managed profile's normalized cwd. It preserves custom profiles,
 custom/managed same-cwd pairs, existing unregistered profiles, and missing paths
@@ -93,6 +96,41 @@ the OpenCode session ID and local directory references, use owner-only
 permissions, and are inert unless Tabby starts the launcher from that exact
 marker directory.
 
+Tabby uses the reported directory both for restoration and as the starting
+directory of any new tab opened from the focused OpenCode tab. Restored
+plain-shell tabs also start there. Setup therefore sources
+`scripts/tabby-recovery-shell-guard.sh` from interactive bash/zsh startup files
+(`setup_tabby_recovery_shell_guard`, run only when Tabby is installed). An
+interactive shell that starts inside a marker moves to the session's project
+directory, or to `$HOME` if the marker is unusable. When the owning OpenCode
+process is gone, the shell prints the `cd <marker> && aidevops opencode
+--tabby-shell` (or `opencode2`) resume command at the first prompt.
+Command-string shells (`-c`), including managed profiles, skip the guard so
+they can still restore the session. Set `AIDEVOPS_TABBY_MARKER_GUARD=0` to opt
+out.
+
+### Maintenance restarts
+
+`aidevops opencode-db maintenance-window --restart-interactive`
+(`opencode-session-restart-helper.sh`) stops idle TUIs. Under `--tabby-shell`
+the TUI is a child of the launcher, so the helper writes a hold file named
+after the launcher PID (`opencode-session-restart/tabby-holds/<pid>`) before
+the stop. The launcher waits in the same tab and, once `resume` releases the
+hold, reopens `opencode --session <id>`, keeping the tab's profile name,
+colour and position. Ctrl-C while waiting leaves a shell instead.
+
+When the tab is gone, or its launcher predates hold support (tabs opened
+before the update leave a shell after the stop), `resume` (or
+`opencode-session-restart-helper.sh tabby-open <ses_id>`) opens a new tab with
+`Tabby profile <name>`. Tabby's CLI
+cannot pass a directory or command, and it does not reload an externally
+edited `config.yaml`, so the helper finds the unique aidevops OpenCode profile
+for the session's directory (`tabby_session_resume.py`) and writes a
+short-lived claim under `opencode-tabby-recovery/launch-claims/`. The first
+`--tabby-shell` launch in that profile directory takes the claim and resumes
+the claimed marker with the normal validation. `Tabby run` would also resume
+the session, but in an anonymous tab without the profile name or colours.
+
 ## OpenCode V2 (`opencode2`)
 
 V2 server plugins run in the tty-less background service, so the V2 TUI plugin
@@ -103,7 +141,7 @@ marker for the routed root session and reports it with `OSC 1337`. Switching
 sessions rewrites the marker.
 
 Launching `opencode2` from a marker directory, whether Tabby re-runs the
-profile command or you type it in a restored shell tab, resolves the marker
+profile command or you run the printed resume command in a restored shell tab, resolves the marker
 against the V2 data home and the `session_v2` table, then runs
 `--session <id>` in the session's directory. The shim only opens the project
 directory, without resuming, when:

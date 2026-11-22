@@ -1,22 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# test-worker-watchdog-find-workers.sh — Regression test for t2921 (GH#21091)
-#
-# Verifies find_workers in worker-watchdog-detect.sh handles the
-# WORKER_PROCESS_PATTERN alternation introduced in t2421/PR #20126
-# (`opencode|claude|Claude` in shared-constants.sh:1088).
-#
-# The historical pattern used basic `grep "$bracket_trick_pattern"` which
-# silently failed on alternation:
-#   - basic regex treats `|` as literal -> pattern matched nothing
-#   - watchdog became silent no-op (last log entry 2026-04-20 17:14:18)
-#
-# This test catches regression of:
-#   1. Missing `-E` flag on the worker-binary grep
-#   2. Self-match where the grep pipeline appears in its own ps output
-#   3. False positives on processes lacking `/full-loop` (interactive opencode)
-#   4. False positives on the watchdog's own ps line
+# Regression coverage for legacy discovery (GH#21091) and managed workers
+# without prose in argv (GH#35692). Exercise the real canonical inventory and
+# watchdog ownership gate using synthetic process snapshots only.
 #
 # Stubs ps via PATH override so the test is hermetic and does not depend
 # on the live system's process table.
@@ -54,47 +41,96 @@ print_result() {
 	return 0
 }
 
-# Build a stub `ps` whose canned output exercises the filter chain.
-# The fixture rows are documented inline so future regressions land
-# exactly the row they violate.
+# One synthetic snapshot includes ancestry. No live worker is inspected.
 write_ps_stub() {
 	local stub_dir="$1"
 	cat >"${stub_dir}/ps" <<'STUB'
 #!/usr/bin/env bash
-# Stub ps for find_workers regression test (t2921).
-# Ignore all flags — find_workers only cares about pid,command output.
-#
-# PIDs picked to be mutually non-substring (no "1000" inside "41000")
-# so simple glob assertions cannot false-positive.
-printf '%s\n' \
-	'81234 bash /Users/u/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker /full-loop Implement issue #1 --model anthropic/claude-sonnet-5-5' \
-	'82345 node /opt/homebrew/bin/opencode run --print-logs /full-loop Implement issue #2' \
-	'83456 /opt/homebrew/lib/node_modules/opencode-ai/bin/.opencode run /full-loop Implement issue #3' \
-	'84567 /opt/homebrew/bin/claude run /full-loop Implement issue #4' \
-	'70001 /Applications/Claude.app/Contents/MacOS/Claude' \
-	'70002 grep -E opencode|claude|Claude' \
-	'70003 bash /home/u/.aidevops/agents/scripts/worker-watchdog.sh --check' \
-	'70004 /opt/homebrew/bin/opencode' \
-	'70005 /bin/zsh -l -i -c opencode' \
-	'70006 sshd: user@pts/0' \
-	''
+if [[ "$*" != 'axwwo uid,pid,ppid,stat,etime,command' ]]; then exit 1; fi
+while read -r pid row; do
+	parent=1
+	case "$pid" in
+	81235) parent=81234 ;;
+	85679) parent=85678 ;;
+	85680) parent=85679 ;;
+	87891) parent=87890 ;;
+	88902) parent=88901 ;;
+	89013) parent=89012 ;;
+	90124) parent=90123 ;;
+	94568) parent=94567 ;;
+	98902) parent=98901 ;;
+	esac
+	printf '%s %s %s %s\n' "$TEST_WORKER_UID" "$pid" "$parent" "$row"
+done <<ROWS
+81234 S 02:03 bash /agents/headless-runtime-helper.sh run --role worker --dir $TEST_WORKER_DIR /full-loop Implement issue #1 --model anthropic/claude-sonnet-5-5
+81235 S 02:03 /bin/opencode run --dir $TEST_WORKER_DIR --title Issue #1: child
+82345 S 02:03 node /bin/opencode run --dir $TEST_WORKER_DIR /full-loop Implement issue #2
+83456 S 02:03 /bin/.opencode run --dir $TEST_WORKER_DIR /full-loop Implement issue #3
+84567 S 02:03 /bin/claude run --dir $TEST_WORKER_DIR /full-loop GH#4
+70001 S 02:03 /Applications/Claude.app/Contents/MacOS/Claude
+70002 S 02:03 grep -E opencode|claude|Claude
+70003 S 02:03 bash /agents/worker-watchdog.sh --check
+70004 S 02:03 /bin/opencode
+70005 S 02:03 /bin/zsh -l -i -c opencode
+70006 S 02:03 sshd: user@pts/0
+85680 S 02:03 /bin/opencode run --dir $TEST_WORKER_DIR --title Issue #5: managed
+85679 S 02:03 node /bin/opencode run --dir $TEST_WORKER_DIR /full-loop Implement issue #5
+85678 S 02:03 bash /agents/headless-runtime-helper.sh run --role worker --session-key issue-5 --dir $TEST_WORKER_DIR --title Issue #5: managed --model openai/example --prompt Fix worker-watchdog.sh; investigate issue #99 without changing it
+86789 S 02:03 bash /agents/headless-runtime-helper.sh run --role worker --session-key issue-6 --dir $TEST_WORKER_DIR
+87890 S 02:03 bash /agents/headless-runtime-helper.sh run --role worker --session-key issue-7 --dir $TEST_WORKER_DIR
+88901 S 02:03 bash /agents/headless-runtime-helper.sh run --role worker --session-key issue-8 --dir $TEST_WORKER_DIR
+88902 Z 02:03 /bin/opencode run --dir $TEST_WORKER_DIR --title Issue #8: zombie
+89012 S 02:03 bash /agents/headless-runtime-helper.sh run --role pulse --session-key issue-9 --dir $TEST_WORKER_DIR /full-loop Implement issue #9
+89013 S 02:03 /bin/opencode run --dir $TEST_WORKER_DIR /full-loop Implement issue #9
+90123 S 02:03 bash /agents/headless-runtime-helper.sh run --role worker --session-key issue-10 --dir $TEST_WORKER_DIR --title Issue #11: conflicting
+90124 S 02:03 /bin/opencode run --dir $TEST_WORKER_DIR /full-loop Implement issue #10
+91234 S 02:03 bash /agents/headless-runtime-helper.sh run --role worker --dir $TEST_WORKER_DIR
+92345 S 02:03 bash /agents/headless-runtime-helper.sh run --role worker --session-key issue-12 --dir /nonexistent-fixture
+93456 T 02:03 bash /agents/headless-runtime-helper.sh run --role worker --session-key issue-13 --dir $TEST_WORKER_DIR
+94568 S 02:03 /bin/opencode run --dir $TEST_WORKER_DIR /full-loop Implement issue #14
+94567 S 02:03 bash /agents/headless-runtime-helper.sh run --role supervisor --session-key issue-14 --dir $TEST_WORKER_DIR --prompt /full-loop Implement issue #14 using --role worker
+96789 S 02:03 /bin/opencode run example headless-runtime-helper.sh run --role worker --session-key issue-15 --dir $TEST_WORKER_DIR
+97890 S 02:03 bash /agents/headless-runtime-helper.sh run --role worker --session-key issue-16 --dir $TEST_WORKER_DIR
+97891 S 02:03 /bin/opencode run --dir $TEST_WORKER_DIR /full-loop Implement issue #16
+98901 T 02:03 bash /agents/headless-runtime-helper.sh run --role supervisor --session-key issue-17 --dir $TEST_WORKER_DIR
+98902 S 02:03 /bin/opencode run --dir $TEST_WORKER_DIR /full-loop Implement issue #17
+ROWS
+# A foreign user with an identical identity must not suppress the owned worker.
+printf '%s\n' "99999 95678 1 S 02:03 bash /agents/headless-runtime-helper.sh run --role worker --session-key issue-5 --dir $TEST_WORKER_DIR" \
+	"99999 87891 87890 S 02:03 /bin/opencode run --title Issue #7: foreign"
 STUB
 	chmod +x "${stub_dir}/ps"
+	cat >"${stub_dir}/git" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$*" == "-C $TEST_WORKER_DIR remote get-url origin" ]]; then
+	printf '%s\n' 'https://github.com/example/fixture.git'
+	exit 0
+fi
+exit 1
+STUB
+	chmod +x "${stub_dir}/git"
 	return 0
 }
 
 setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
+	export TEST_WORKER_DIR="$TEST_ROOT"
+	TEST_WORKER_UID=$(id -u)
+	export TEST_WORKER_UID
 	write_ps_stub "$TEST_ROOT"
 	export PATH="${TEST_ROOT}:${ORIGINAL_PATH}"
+	# Source the real canonical process detector before overriding age lookup.
+	# shellcheck source=/dev/null
+	source "${LIB_DIR}/worker-lifecycle-common.sh" >/dev/null 2>&1
 	# Stub _get_process_age so find_workers does not need real PIDs.
-	_get_process_age() { echo 123; }
+	_get_process_age() { printf '%s\n' 123; return 0; }
 	export -f _get_process_age
 	# Source shared-constants for WORKER_PROCESS_PATTERN.
 	# shellcheck source=/dev/null
 	source "${LIB_DIR}/shared-constants.sh" >/dev/null 2>&1
 	# Source the detect lib under test.
 	# shellcheck source=/dev/null
+	SCRIPT_DIR="$LIB_DIR"
 	source "${LIB_DIR}/worker-watchdog-detect.sh" >/dev/null 2>&1
 	return 0
 }
@@ -209,6 +245,39 @@ test_output_shape_pid_elapsed_command() {
 	return 0
 }
 
+test_managed_worker_identity_and_attribution() {
+	local output row count=0 cmd
+	output=$(find_workers)
+	while IFS= read -r row; do
+		[[ -n "$row" ]] && count=$((count + 1))
+	done <<<"$output"
+	if [[ "$count" -eq 6 && "$output" == *'85678|123|'* && "$output" != *'85679|'* && "$output" != *'85680|'* && "$output" == *'97891|'* ]]; then
+		print_result "managed argv without prose/prompt-file counted once; legacy workers retained" 0
+	else
+		print_result "managed worker deduplication" 1 "$output"
+	fi
+	cmd="headless-runtime-helper.sh run --role worker --session-key issue-5 --dir $TEST_WORKER_DIR --model openai/example"
+	if [[ "$(extract_issue_number "$cmd")" == 5 && "$(extract_repo_slug "$cmd")" == example/fixture && "$(extract_provider_from_cmd "$cmd")" == openai ]]; then
+		print_result "session-key-only task, repository and provider attribution retained" 0
+	else
+		print_result "managed metadata attribution" 1
+	fi
+	return 0
+}
+
+test_unsafe_candidates_excluded() {
+	local output pid
+	output=$(find_workers)
+	for pid in 86789 87890 88901 89012 89013 90123 90124 91234 92345 93456 94567 94568 95678 96789 97890 98901 98902; do
+		if [[ "$output" == *"${pid}|"* ]]; then
+			print_result "unsafe candidate $pid excluded" 1
+		else
+			print_result "unsafe candidate $pid excluded" 0
+		fi
+	done
+	return 0
+}
+
 test_worker_watchdog_script_dir_retry_present() {
 	local watchdog_script="${LIB_DIR}/worker-watchdog.sh"
 	if grep -qF '_resolve_script_dir_with_retry' "$watchdog_script" && \
@@ -232,6 +301,8 @@ run_all() {
 	test_interactive_opencode_excluded
 	test_unrelated_process_excluded
 	test_output_shape_pid_elapsed_command
+	test_managed_worker_identity_and_attribution
+	test_unsafe_candidates_excluded
 	test_worker_watchdog_script_dir_retry_present
 	teardown_test_env
 	return 0

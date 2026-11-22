@@ -368,6 +368,140 @@ _check_gh_slurp_prerequisite() {
 }
 
 # -----------------------------------------------------------------------------
+# _advisory_summary: print the human summary line of one advisory file.
+# Skips metadata a writer may put first (blank lines, `# check:`-style
+# comments, epoch stamps, `[advisory:<id>]` headers) and unwraps `title:`.
+# Metadata is never displayed or executed here; probes belong to
+# `aidevops security`.
+# -----------------------------------------------------------------------------
+_advisory_summary() {
+	local advisory_file="$1"
+	local line=""
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		line="${line#"${line%%[![:space:]]*}"}"
+		case "$line" in
+		'' | '#'* | '[advisory:'*']') continue ;;
+		'title: '*) line="${line#title: }" ;;
+		esac
+		[[ "$line" =~ ^[0-9]+$ ]] && continue
+		printf '%s' "$line"
+		return 0
+	done <"$advisory_file"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# _advisory_entry: format one advisory line for the greeting (t19020).
+# Only security advisories point at `aidevops security`; other advisories
+# carry their own next step in the summary. Every entry keeps its dismiss hint.
+# -----------------------------------------------------------------------------
+_advisory_entry() {
+	local adv_id="$1"
+	local summary="$2"
+	case "$summary" in
+	'[SECURITY ADVISORY]'* | '[ADVISORY]'*)
+		printf "%s Run in your terminal: \`aidevops security\` | Dismiss: \`aidevops security dismiss %s\`\n" "$summary" "$adv_id"
+		;;
+	*)
+		printf "%s Dismiss: \`aidevops security dismiss %s\`\n" "$summary" "$adv_id"
+		;;
+	esac
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# _advisory_top3: render "<numeric-key><TAB><label>" rows as
+# "a, b, c (+N more)", highest key first, then by label.
+# -----------------------------------------------------------------------------
+_advisory_top3() {
+	local rows="$1"
+	local total=0 shown="" key="" label=""
+	total=$(printf '%s\n' "$rows" | grep -c .) || total=0
+	while IFS=$'\t' read -r key label; do
+		[[ -n "$label" ]] || continue
+		shown="${shown:+$shown, }${label}"
+	done < <(printf '%s\n' "$rows" | grep . | sort -t $'\t' -k1,1nr -k2,2 | awk 'NR<=3')
+	if [[ "$total" -gt 3 ]]; then
+		shown="${shown} (+$((total - 3)) more)"
+	fi
+	printf '%s' "$shown"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# _advisory_lines: one greeting line per advisory that needs a human (t19020).
+# Per-repo sync-pat/cross-account/onboarding advisories are omitted when the
+# setup-debt [WARN] aggregate already counts them; underfill-* (per launch
+# gate), canonical-recovery-* (per checkout) and workflow-drift-* (per update
+# day) collapse to one line each.
+# Args: $1 advisories dir, $2 dismissed file, $3 "1" when debt is aggregated.
+# -----------------------------------------------------------------------------
+_advisory_lines() {
+	local advisories_dir="$1"
+	local dismissed_file="$2"
+	local debt_covered="$3"
+	local advisory_file="" adv_id="" summary="" top=""
+	local underfill_rows="" underfill_single="" underfill_ids="" underfill_count=0
+	local canonical_rows="" canonical_single="" canonical_count=0
+	local drift_single="" drift_latest="" drift_count=0
+	for advisory_file in "$advisories_dir"/*.advisory; do
+		[[ -f "$advisory_file" ]] || continue
+		adv_id=$(basename "$advisory_file" .advisory)
+		if [[ -f "$dismissed_file" ]] && grep -qxF "$adv_id" "$dismissed_file" 2>/dev/null; then
+			continue
+		fi
+		if [[ "$debt_covered" == 1 ]]; then
+			case "$adv_id" in
+			sync-pat-* | cross-account-inherit-* | repo-onboarding-*) continue ;;
+			esac
+		fi
+		summary=$(_advisory_summary "$advisory_file")
+		[[ -n "$summary" ]] || continue
+		case "$adv_id" in
+		underfill-*)
+			top="${adv_id#underfill-}"
+			[[ "$summary" == *' top='* ]] && top="${summary##* top=}"
+			underfill_rows+="${top##*:}"$'\t'"${top}"$'\n'
+			underfill_ids+="${adv_id#underfill-}, "
+			underfill_count=$((underfill_count + 1))
+			underfill_single=$(_advisory_entry "$adv_id" "$summary")
+			;;
+		canonical-recovery-*)
+			canonical_rows+="0"$'\t'"${adv_id#canonical-recovery-}"$'\n'
+			canonical_count=$((canonical_count + 1))
+			canonical_single=$(_advisory_entry "$adv_id" "$summary")
+			;;
+		workflow-drift-*)
+			# Day-stamped IDs sort ascending, so the last one seen is newest.
+			drift_count=$((drift_count + 1))
+			drift_latest="${adv_id#workflow-drift-}"
+			drift_single=$(_advisory_entry "$adv_id" "$summary")
+			;;
+		*) _advisory_entry "$adv_id" "$summary" ;;
+		esac
+	done
+	if [[ "$drift_count" -eq 1 ]]; then
+		printf '%s\n' "$drift_single"
+	elif [[ "$drift_count" -gt 1 ]]; then
+		printf "Workflow templates changed in %d updates (latest %s) — downstream callers may have drifted. Detect: \`aidevops check-workflows\` | Dismiss: \`aidevops security dismiss workflow-drift-<YYYYMMDD>\`\n" \
+			"$drift_count" "$drift_latest"
+	fi
+	if [[ "$canonical_count" -eq 1 ]]; then
+		printf '%s\n' "$canonical_single"
+	elif [[ "$canonical_count" -gt 1 ]]; then
+		printf "[CANONICAL DIAGNOSTIC] %d canonical checkouts need manual review: %s. Details: ~/.aidevops/advisories/canonical-recovery-<repo>.advisory | Dismiss: \`aidevops security dismiss canonical-recovery-<repo>\`\n" \
+			"$canonical_count" "$(_advisory_top3 "$canonical_rows")"
+	fi
+	if [[ "$underfill_count" -eq 1 ]]; then
+		printf '%s\n' "$underfill_single"
+	elif [[ "$underfill_count" -gt 1 ]]; then
+		printf "Pulse underfill across %d launch gates: %s. AI-diagnosable with pulse-current-state-helper.sh --window 1h --json; clears when the worker pool recovers. Dismiss: \`aidevops security dismiss underfill-<gate>\` (%s)\n" \
+			"$underfill_count" "$(_advisory_top3 "$underfill_rows")" "${underfill_ids%, }"
+	fi
+	return 0
+}
+
+# -----------------------------------------------------------------------------
 # _check_advisories: surface active security advisories (not yet dismissed).
 # -----------------------------------------------------------------------------
 _check_advisories() {
@@ -382,14 +516,16 @@ _check_advisories() {
 
 	# t2816: prepend a single aggregated [WARN] line for setup debt so the
 	# OpenCode plugin classifier (greeting.mjs) escalates the toast variant
-	# to warning when there is non-zero debt. The per-repo [ADVISORY] lines
-	# below remain as info-tier follow-up detail.
+	# to warning when there is non-zero debt. t19020: the per-repo advisories
+	# it counts are then omitted below (`setup-debt-helper.sh summary` lists them).
 	local setup_debt_helper="$SCRIPT_DIR/setup-debt-helper.sh"
+	local debt_covered=0
 	if [[ -x "$setup_debt_helper" ]]; then
 		local debt_line
 		debt_line=$("$setup_debt_helper" summary --format=toast 2>/dev/null) || debt_line=""
 		if [[ -n "$debt_line" ]]; then
 			advisories_output="$debt_line"
+			debt_covered=1
 		fi
 	fi
 
@@ -414,29 +550,15 @@ _check_advisories() {
 		fi
 	fi
 
-	local advisory_file
-	for advisory_file in "$advisories_dir"/*.advisory; do
-		[[ -f "$advisory_file" ]] || continue
-		local adv_id
-		adv_id=$(basename "$advisory_file" .advisory)
-		# Skip dismissed advisories
-		if [[ -f "$dismissed_file" ]] && grep -qxF "$adv_id" "$dismissed_file" 2>/dev/null; then
-			continue
+	local advisory_lines=""
+	advisory_lines=$(_advisory_lines "$advisories_dir" "$dismissed_file" "$debt_covered")
+	if [[ -n "$advisory_lines" ]]; then
+		if [[ -n "$advisories_output" ]]; then
+			advisories_output=$(printf '%s\n%s' "$advisories_output" "$advisory_lines")
+		else
+			advisories_output="$advisory_lines"
 		fi
-		local first_line
-		# Display only the human summary; optional # check: metadata is never
-		# displayed or executed here. Probes belong to aidevops security.
-		first_line=$(head -1 "$advisory_file" | sed 's/^[[:space:]]*//')
-		if [[ -n "$first_line" ]]; then
-			local entry
-			entry=$(printf "%s Run in your terminal: \`aidevops security\` | Dismiss: \`aidevops security dismiss %s\`" "$first_line" "$adv_id")
-			if [[ -n "$advisories_output" ]]; then
-				advisories_output=$(printf '%s\n%s' "$advisories_output" "$entry")
-			else
-				advisories_output="$entry"
-			fi
-		fi
-	done
+	fi
 
 	echo "$advisories_output"
 	return 0
@@ -465,8 +587,10 @@ _check_contribution_watch() {
 	local cw_count
 	cw_count=$(jq -r --arg user "$cw_username" '
 		[.items | to_entries[] |
+		 select((.value.last_any_comment // "") != "") |
 		 select(.value.last_any_comment > (.value.last_our_comment // "")) |
-		 select(.value.last_notified == "" or .value.last_any_comment > .value.last_notified)
+		 select((.value.state // "") != "closed" or .value.last_any_comment > (.value.closed_at // "")) |
+		 select(.value.last_any_comment > (.value.last_seen // ""))
 		] | length
 	' "$cw_state" 2>/dev/null) || cw_count=0
 
@@ -476,6 +600,21 @@ _check_contribution_watch() {
 
 	echo "$contribution_watch"
 	return 0
+}
+
+# -----------------------------------------------------------------------------
+# _in_isolated_runtime_session: true inside a pinned Buzz/team-interface runtime.
+# Those sessions export per-process XDG_CONFIG_HOME/XDG_DATA_HOME that point at
+# an immutable runtime anchor or session shard. A background setup.sh inherits
+# them and rewrites the anchor's opencode.json (plugin entry → live deploy), so
+# the anchor fails content verification on its next start. The host's own
+# auto-update daemon redeploys from a clean environment instead.
+# -----------------------------------------------------------------------------
+_in_isolated_runtime_session() {
+	if [[ -n "${AIDEVOPS_REMOTE_RUNTIME_ANCHOR:-}" || "${AIDEVOPS_REMOTE_INTERFACE:-}" == "1" || -n "${AIDEVOPS_TEAM_INTERFACE_OVERLAY:-}" ]]; then
+		return 0
+	fi
+	return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -493,6 +632,11 @@ _hotfix_auto_apply() {
 	local auto_restart_pulse="$3"
 	local framework_repo="${AIDEVOPS_FRAMEWORK_REPO:-$HOME/Git/aidevops}"
 	local setup_script="${framework_repo}/setup.sh"
+
+	if _in_isolated_runtime_session; then
+		echo "Hotfix v${hotfix_version} available — deferred to the host auto-update (isolated runtime session)"
+		return 0
+	fi
 
 	echo "Hotfix v${hotfix_version} available — auto-applying (auto_hotfix_accept=true)..."
 
@@ -674,7 +818,7 @@ _check_script_drift() {
 	local has_code_drift=0
 	while IFS= read -r filepath; do
 		case "$filepath" in
-		.agents/scripts/* | .agents/agents/* | .agents/workflows/* | .agents/prompts/* | .agents/hooks/* | setup.sh | aidevops.sh | VERSION)
+		.agents/scripts/* | .agents/agents/* | .agents/workflows/* | .agents/prompts/* | .agents/hooks/* | .agents/worker-lifecycle/* | setup.sh | aidevops.sh | VERSION)
 			has_code_drift=1
 			break
 			;;
@@ -686,7 +830,13 @@ _check_script_drift() {
 		return 0
 	fi
 
-	# Framework code drift detected.
+	# Framework code drift detected. Pinned runtimes must not redeploy: their
+	# inherited per-process config paths would become setup's write target.
+	if _in_isolated_runtime_session; then
+		echo ""
+		return 0
+	fi
+
 	# setup.sh --stage ai-session applies changed deploy stages first; the setup
 	# mode falls back to full non-interactive setup when it cannot prove safety.
 	local setup_script="$framework_repo/setup.sh"

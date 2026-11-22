@@ -1,8 +1,8 @@
 name: PATH portability
 
 # Exercises PATH-order, native-git and trusted-executable resolution on real
-# macOS and Ubuntu runners: tools must resolve through PATH (no FHS-only
-# absolute paths) without changing macOS launchd or Ubuntu behaviour.
+# Ubuntu runners: tools must resolve through PATH (no FHS-only absolute paths).
+# macOS coverage runs via .agents/scripts/macos-local-checks.sh, not hosted CI.
 
 on:
   workflow_dispatch:
@@ -16,6 +16,7 @@ on:
       - '.agents/scripts/native_git.py'
       - '.agents/scripts/canonical*git*.py'
       - '.agents/scripts/canonical_write_policy_paths.py'
+      - '.agents/scripts/canonical_write_runtime_allow.py'
       - '.agents/scripts/command_policy_git_query.py'
       - '.agents/hooks/git_safety_guard.py'
       - '.agents/scripts/tests/test-*git*.sh'
@@ -27,6 +28,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   path-portability:
     name: PATH portability (${{ matrix.os }})
@@ -34,7 +39,7 @@ jobs:
     timeout-minutes: 15
     strategy:
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
+        os: [ ubuntu-latest ]
       fail-fast: false
 
     steps:

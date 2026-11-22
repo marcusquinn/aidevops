@@ -62,6 +62,10 @@ worktree-archive-helper.sh prune --older-than 14d --max-total-size 20G \
 
 `--reason` accepts `failed-worker`, `post-pr-cleanup` or `unattributed-worktree`. Use `--unattributed` instead of `--issue` when no issue is proven. Untracked capture defaults to at most 10,000 paths and 1 GiB; override those bounds with `AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_FILES` and `AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES`. `AIDEVOPS_WORKTREE_ARCHIVE_ROOT` changes the default root.
 
+Capacity and failed captures (GH#36564): before allocating, `archive` estimates the commit payload with `git rev-list --objects --disk-usage HEAD ^<base>`. If that estimate plus `AIDEVOPS_WORKTREE_ARCHIVE_RESERVE_BYTES` (default 512 MiB) exceeds free space at the archive root, it refuses with `producer:insufficient-capacity; estimate=…; reserve=…; free=…; no archive written; source retained`. A capture that fails after allocation, including a late-writer fingerprint mismatch, removes its own unmanifested directory, so a refused cleanup leaves no archive bytes. Producer failures that are not policy refusals report `producer:evidence-unavailable; cause=<category>; exit=<code>`, where the category is a fixed name, not raw stderr.
+
+The capacity `estimate` includes the configured maximum untracked bytes in addition to the Git estimate, even when the current untracked payload is smaller. Capacity operands use nonnegative decimal integers (leading zeros are decimal); invalid values fail closed with `archive capacity unavailable`. The comparison uses arbitrary-precision arithmetic, not Bash integer arithmetic.
+
 ## Archive layout
 
 The path is `<root>/<owner>__<repo>/<issue>/<UTC timestamp>/`:
@@ -69,7 +73,7 @@ The path is `<root>/<owner>__<repo>/<issue>/<UTC timestamp>/`:
 | Artifact | Purpose |
 |---|---|
 | `manifest.json` | Schema, source and Git metadata, artifact sizes/SHA-256 hashes, and restore command |
-| `commits.bundle` | Incremental Git bundle when `HEAD` contains commits beyond the exact base SHA |
+| `commits.bundle` | Incremental Git bundle when `HEAD` contains commits beyond the exact base SHA that no remote-tracking ref reaches; omitted for published heads |
 | `diff.patch` | Binary-safe unstaged tracked changes; present even when empty |
 | `staged.patch` | Binary-safe staged changes; present even when empty |
 | `untracked-files.txt` | Human-readable escaped inventory; present even when empty |
@@ -77,6 +81,8 @@ The path is `<root>/<owner>__<repo>/<issue>/<UTC timestamp>/`:
 | `failure.log` | Optional final 256 KiB excerpt supplied with `--failure-log` |
 
 The manifest records the repository, issue, reason, creation time, source worktree, source Git common directory, branch, `HEAD`, base branch and exact base SHA, default branch, remote branch state, dirty state, artifacts, and restore instructions. `verify` rejects missing, changed, or unsafe artifacts.
+
+`remote_branch_state` (GH#36607) is `published` when `HEAD` differs from the base, the index has no merge in progress, and every commit since the base is reachable from a `refs/remotes/` ref; `unpublished` when some commit is not; `unknown` otherwise (including `HEAD` equal to the base). A published archive stores no bundle and its patches apply on the recorded head, so the capacity estimate counts no commit payload. `verify-local` requires that head and its complete graph in the shared repository and still on a remote-tracking ref; otherwise removal is refused. Restore imports a missing published head only through the same explicitly authorized origin fetch as base recovery (`AIDEVOPS_WORKTREE_BASE_RECOVERY_SOURCE`); there is no implicit network access.
 
 Historical self-contained archives include a complete `HEAD` ancestry bundle, including
 when HEAD equals the base. Verification checks it in an empty repository rather
@@ -110,6 +116,16 @@ files. Git defines the inventory with `ls-files --others --exclude-standard`;
 ignored files and raw Git administration are excluded. `git-only` is the retained
 manifest policy name, not an alternative creation mode. There are no
 project-specific or directory-specific exclusions.
+GH#36883: a `config.worktree` whose keys are all runtime-local (currently only
+`codex.localenvironmentconfigpath`) is kept as exact bytes in the 0600
+`worktree-config-v1` artifact and fingerprinted by SHA-256 and key names, never
+values, so drift blocks `source-matches`. Restore never writes it or changes
+`extensions.worktreeConfig`; it reports the omitted keys (receipt field
+`omitted_runtime_config`). Other, mixed or comment-only content, symlinks and
+pending merges still fail with `git_admin:requires_preservation:config.worktree`
+or an equivalent refusal, and the source is retained.
+An empty or absent `config.worktree` does not block ordinary Git-only capture,
+including worktrees containing the disposable `codex-thread.json` runtime record.
 The shared repository must retain the recorded base. An empty delta needs no bundle.
 Unmerged and intent-to-add index entries fail closed because two patches cannot
 preserve their index state. Patch output explicitly overrides color and path-prefix
@@ -130,6 +146,23 @@ provisioning is separate and must use the restored lockfiles, not the base versi
 
 Existing receipts keep their original policy; retries never silently downgrade
 them. Legacy readers and already-captured transaction recovery remain available.
+A source whose transaction holds a legacy `preserve-v1` journal is never resumed
+by capture (GH#36607): it reserves a stable git-only successor transaction
+(`sha256("<id>:git-only-successor/v1")`), and the legacy journal and archive stay
+for the existing retention, `worktree_recovery_migrate.py` and retirement paths.
+
+Earlier versions could leave a manifest-less partial capture under
+`.producer-archives/<id>/`, which blocks retries with `producer:capture-incomplete`.
+`worktree-archive-helper.sh sweep-partials --dry-run|--apply [--output-root DIR]`
+is the one-time cleanup. Under each producer operation lock (busy locks are skipped,
+never waited on) it rechecks that the journal phase is `reserved` or `capturing`,
+the directory and output inodes match the journal, and the source still matches
+its recorded identity and content fingerprint, including untracked files. New
+reservations persist this fingerprint before capture writes any payload. Journals
+without a fingerprint (or with a Git-only schema-2 snapshot) cannot authorize
+partial cleanup; their partials stay for review. It then lists (dry run) or removes only exact-layout
+`<owner>__<repo>/<issue>/<timestamp>/` directories with no `manifest.json` and no
+pin. Anything else stays for review. A retry then captures normally.
 New capture rejects `AIDEVOPS_WORKTREE_RECOVERY_POLICY=preserve-v1` and the obsolete
 `--self-contained`, `--include-ignored`, and `--preserve-git-admin` creation options.
 Schema-2 receipts do not prove preservation of untracked files and cannot authorize
@@ -146,8 +179,8 @@ receipt evidence, then restore with `worktree-archive-helper.sh restore <path>
 schema. It excludes transaction scratch, legacy full-copy directories and symlinked
 entries. Listing is discovery, not verification or removal authority. Legacy
 `worktree-helper.sh recovery` inventory remains a report of the separate full-copy store.
-Producer archives retain `.aidevops-archive-pin`; this discovery change does not
-expand retention selection, remove pins or enable automatic expiry.
+Producer archives retain `.aidevops-archive-pin`; listing does not remove pins.
+Their evidence-based expiry is described under "Retention".
 
 Retries reuse a valid reservation; drift, unsupported input or incomplete evidence
 preserves the source and existing artifacts without a full-copy fallback. Do not
@@ -340,9 +373,24 @@ Other entries under `aidevops/` remain unsupported; the
 Symlinks and oversized readiness records fail closed during capture, and the
 artifact reader also enforces the size limit before restoring them.
 
+The legacy `aidevops/js-admission.json` record is preserved under the same
+bounded opaque-byte policy, including its original branch, HEAD and policy
+bindings. Capture and restore neither interpret this record nor execute its
+contents, approve dependency installation, or change lifecycle/ownership evidence.
+It is historical data, not fresh admission authority; restored work still requires
+the current readiness and dependency-policy checks. Unknown sibling files and the
+`aidevops/js-install-partial` marker remain blocked.
+
 The known `aidevops-profile-publication.json` record is also preserved as opaque
 bytes under the same 1 MiB limit. It is historical metadata, not fresh publication
 or removal authority; restore does not rewrite its original path bindings.
+Git-only capture (including structured merges) rejects the legacy admission
+record with `git_admin:requires_preservation:aidevops/js-admission.json` because
+it does not preserve `git-admin.json`. Source comparison also rejects that record
+if it appears after capture; retain the source rather than discard it. The
+publication record is not guarded this way: profile-readme recovery retires
+completed publication worktrees through Git-only capture. The historical
+`preserve-v1` reader and administration-preservation path remain unchanged.
 Special working-file permissions (for example, a tracked file with mode 0600)
 remain unsupported and block migration rather than being normalized or discarded.
 
@@ -365,6 +413,10 @@ Unfinished operations and unknown admin entries remain unsupported: errors have
 the stable form `git_admin:unfinished_operation:NAME` or
 `git_admin:unknown_entry:PATH`. `index.lock` always fails with
 `git_admin:index_locked:index.lock`. Symlinks and split indexes also fail closed.
+Runtime records (`aidevops-permission-pending`, `aidevops-generation.json`,
+`codex-thread.json`) are regular-file session state, not Git state: capture skips
+them and restore never copies the source bytes, so a recovery cannot resume or
+impersonate the source session.
 Location-dependent `core.worktree` and config includes are rejected with
 `git_admin:location_dependent_config:KEY`, rather than activating source paths
 in an independent restore. Private symbolic refs targeting unrelated shared refs
@@ -390,9 +442,11 @@ separate requirements.
 
 The recommended policy is `--older-than 14d --max-total-size 20G`. `prune` selects verified archives older than the age limit, then oldest remaining eligible archives until their retained size is at or below the cap. This is irreversible expiry: it can destroy the last copy of unpublished work. Always inspect `--dry-run` output before using `--apply` in a manual operation.
 
-Create `.aidevops-archive-pin` inside an archive directory to retain it regardless of age or size. Remove the marker only when expiry is appropriate. Pinned, corrupt, incomplete, unknown-content, invalid-date and symlinked archives are kept with a diagnostic; these protected bytes are outside the eligible-size cap and require investigation rather than forced deletion. Verification requires the complete artifact inventory, mandatory patches and untracked inventory, matching hashes, and no symlinked artifacts. Apply rechecks verification, manifest, pin and directory identity, using no-follow directory descriptors to anchor removal inside the selected store. Platforms without symlink-resistant removal fail closed.
+Create `.aidevops-archive-pin` inside an archive directory to retain it regardless of age or size. Remove the marker only when expiry is appropriate. Pinned, corrupt, incomplete, unknown-content, invalid-date and symlinked archives are kept with a diagnostic; these protected bytes are outside the eligible-size cap and require investigation rather than forced deletion. Retention runs `verify-structure`, not a full `verify`: it requires the archive schema, the complete artifact inventory, mandatory patches and untracked inventory, directory contents equal to that inventory, matching hashes, and no symlinked artifacts. It does not import base objects or restore, because restorability does not change whether an expired archive may be deleted; a full recovery copy or tampered archive still fails the structural check and is kept. Apply rechecks the structural check, manifest, pin and directory identity, using no-follow directory descriptors to anchor removal inside the selected store. Platforms without symlink-resistant removal fail closed.
 
-Archives are immutable after publication. Set pins before retention claims an archive: apply atomically moves the selected directory into a private `.prune-<id>/archive` transaction, revalidates it there, then removes it. A replacement created at its old name is never deleted. A failed/interrupted transaction is retained outside normal retention selection and reported for recovery inspection; it is not silently considered successfully pruned. Do not modify a claimed transaction concurrently. Pin and manifest changes observed during final verification preserve that transaction.
+Archives are immutable after publication. Set pins before retention claims an archive: apply atomically moves the selected directory into a private `.prune-<id>/archive` transaction, revalidates it there, then removes it. A replacement created at its old name is never deleted. An archive that fails verification is renamed back to its public name (when still free), the transaction directory is removed, and it is reported as `kept` without failing the command. Any other failed/interrupted transaction is retained outside normal retention selection and reported for recovery inspection; it is not silently considered successfully pruned. Do not modify a claimed transaction concurrently. Pin and manifest changes observed during the final structural check preserve that transaction.
+
+Producer archives (`.producer-archives/<id>/…`) keep their producer pin and expire only on evidence, never by the compact age or the size cap. All of these must hold: the journal records a completed capture (`archived`, or `verified` for legacy receipts); the recorded source path and its Git registration no longer exist (`source_removal_outcome` `removed`, or `pending` with both paths observed absent); and the archive contains no `.keep`. An **empty delta** — HEAD equal to the recorded base, a clean state and only zero-byte patches and untracked inventory — preserves nothing and expires at the next apply pass. Any other producer archive expires `--producer-ttl-days` (default 30, `AIDEVOPS_WORKTREE_PRODUCER_ARCHIVE_TTL_DAYS`) after capture. Protected producer bytes count toward the cap but are never removed by it. Apply re-checks this evidence under the producer transaction lock, requires the exact pin bytes and no `.keep`, removes through the same claimed transaction, then retires `.producer-transactions/<id>/`. Touch `<archive>/.keep` to retain a producer archive indefinitely.
 
 After successful asynchronous worktree cleanup, Pulse runs compact retention once under the existing cleanup lock and a 120-second budget. It defaults to **dry-run**, not irreversible deletion. Explicitly enable expiry with `storage.worktree_archive_retention_mode: "apply"` in the normal aidevops user config; `"off"` disables the pass. `AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE` overrides config (`off`, `dry-run`, `apply`); `AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_DAYS` and `AIDEVOPS_WORKTREE_ARCHIVE_MAX_TOTAL_SIZE` override 14 days and 20G. Invalid policy preserves archives. Outcomes and failures appear as `compact-retention mode=... rc=...` in `cleanup_worktrees.log`; a retention failure does not block independent worktree cleanup.
 

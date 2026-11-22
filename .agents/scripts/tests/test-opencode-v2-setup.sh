@@ -30,19 +30,18 @@ setup_track_configured() { :; }
 source "$REPO_ROOT/.agents/scripts/setup/modules/mcp-setup.sh"
 
 config="$SANDBOX/opencode.json"
-cat >"$config" <<'JSON'
-{"plugin":["file:///custom/plugin.mjs","file:///old/plugins/opencode-aidevops/index.mjs"]}
-JSON
+jq -n --arg old "file://$HOME/.aidevops/agents/plugins/opencode-aidevops/index.mjs" \
+	'{plugin:["file:///custom/plugin.mjs", "file:///old/plugins/opencode-aidevops/custom.mjs", $old]}' >"$config"
 # setup.sh's print_* helpers write to stdout; the captured status must stay clean.
 print_success() { printf '[SUCCESS] %s\n' "$1"; }
 registered_status=$(_setup_opencode_plugins_register_file_url "$config" \
-	"$REPO_ROOT/.agents/plugins/opencode-aidevops/v2-plugin" plugins 2>/dev/null)
+	"$HOME/.aidevops/agents/plugins/opencode-aidevops/v2-plugin" plugins 2>/dev/null)
 print_success() { :; }
 [[ "$registered_status" == "true" ]]
 jq -e '
   (has("plugin") | not)
   and ((.plugins | index("file:///custom/plugin.mjs")) != null)
-  and ([.plugins[] | select(contains("/plugins/opencode-aidevops/"))] | length == 1)
+  and ((.plugins | index("file:///old/plugins/opencode-aidevops/custom.mjs")) != null)
   and ([.plugins[] | select(endswith("/v2-plugin"))] | length == 1)
 ' "$config" >/dev/null
 
@@ -87,6 +86,52 @@ PATH="$SANDBOX/bin:$PATH" AIDEVOPS_OPENCODE_PROFILE=v1 \
 [[ "$(<"$HOME/.aidevops/.opencode-v1-bin-resolved")" == "$HOME/.local/bin/opencode" ]]
 [[ "$(<"$HOME/.aidevops/.opencode-v2-bin-resolved")" == "$HOME/.local/bin/opencode2" ]]
 [[ -x "$HOME/.local/bin/opencode" && -x "$HOME/.local/bin/opencode2" ]]
+
+# GH#38922: with no profile override, a global OpenCode 2 (`opencode v2.3.0`)
+# is validated and recorded as the primary runtime, never healed to V1.
+(
+	cat >"$SANDBOX/bin/opencode" <<'SHIM'
+#!/usr/bin/env bash
+[[ "${1:-}" == "--version" ]] && printf 'opencode v2.3.0\n'
+[[ "${1:-}" == "--help" ]] && printf 'OpenCode command line interface\nrun  Run OpenCode with a message\n'
+exit 0
+SHIM
+	npm_global_install() { touch "$SANDBOX/unexpected-v1-heal"; return 1; }
+	PATH="$SANDBOX/bin:$PATH" AIDEVOPS_INSTALL_OPENCODE2_PREVIEW=0 setup_opencode_runtimes
+	[[ ! -e "$SANDBOX/unexpected-v1-heal" ]]
+	[[ "$("$SANDBOX/bin/opencode" --version)" == "opencode v2.3.0" ]]
+	[[ "$(<"$HOME/.aidevops/.opencode-bin-resolved")" == "$HOME/.local/bin/opencode" ]]
+	[[ "$("$HOME/.local/bin/opencode" --version)" == "opencode v2.3.0" ]]
+	if grep -Fq '# aidevops:opencode-v2-isolation' "$HOME/.local/bin/opencode"; then
+		printf 'global OpenCode 2 received the isolated V2 shim\n' >&2
+		exit 1
+	fi
+	# The isolated opencode2 shim exports the V2 profile with a private
+	# OPENCODE_CONFIG; that is not an explicit choice, so setup run from such a
+	# session still detects the global OpenCode 2 and skips the V1 rollback.
+	PATH="$SANDBOX/bin:$PATH" AIDEVOPS_INSTALL_OPENCODE2_PREVIEW=0 AIDEVOPS_OPENCODE_PROFILE=v2 \
+		OPENCODE_CONFIG="$SANDBOX/isolated-opencode.json" setup_opencode_runtimes
+	[[ ! -e "$SANDBOX/unexpected-v1-heal" ]]
+	[[ "$("$HOME/.local/bin/opencode" --version)" == "opencode v2.3.0" ]]
+	# A non-canonical spelling of the shared config that does not exist yet is
+	# still the shared config, so an explicit V1 stays explicit (realpath parity
+	# with shared_config_profile()).
+	[[ ! -e "$HOME/.config/opencode/opencode.json" ]] || mv "$HOME/.config/opencode/opencode.json" "$SANDBOX/shared-config.bak"
+	AIDEVOPS_OPENCODE_PROFILE=v1 OPENCODE_CONFIG="$HOME/.config/opencode/./opencode.json" \
+		_setup_opencode_profile_override_is_explicit
+	if AIDEVOPS_OPENCODE_PROFILE=v1 OPENCODE_CONFIG="$SANDBOX/isolated-opencode.json" \
+		_setup_opencode_profile_override_is_explicit; then
+		printf 'isolated OPENCODE_CONFIG was treated as an explicit shared profile\n' >&2
+		exit 1
+	fi
+	[[ ! -e "$SANDBOX/shared-config.bak" ]] || mv "$SANDBOX/shared-config.bak" "$HOME/.config/opencode/opencode.json"
+	cat >"$SANDBOX/bin/opencode" <<'SHIM'
+#!/usr/bin/env bash
+[[ "${1:-}" == "--version" ]] && printf '1.18.29\n'
+[[ "${1:-}" == "--help" ]] && printf 'opencode run [message]\n'
+exit 0
+SHIM
+)
 isolated_pool="$SANDBOX/isolated-oauth-pool.json"
 resolved_pool=$(AIDEVOPS_OAUTH_POOL_FILE="$isolated_pool" node --input-type=module -e \
 	'import(process.argv[1]).then((module) => process.stdout.write(module.POOL_FILE))' \
@@ -287,5 +332,33 @@ printf '{"pid":%s}\n' "$fake_service_pid" >"$service_state/opencode/service.json
 AIDEVOPS_OPENCODE_V2_STATE_HOME="$service_state" _restart_opencode_v2_service_after_deploy
 [[ ! -s "$restart_log" ]] || { printf 'V2 service restarted when it must be skipped\n' >&2; exit 1; }
 set -e
+
+# A validated native executable at its own launcher path is backed up to a
+# framework-owned path and wrapped, instead of failing the stage.
+_native_case() {
+	local profile="$1" name="$2" version="$3" help_text="$4" case_home="$SANDBOX/native-$2"
+	mkdir -p "$case_home/.local/bin"
+	cat >"$case_home/.local/bin/$name" <<SHIM
+#!/usr/bin/env bash
+[[ "\${1:-}" == "--version" ]] && printf '$version\n'
+[[ "\${1:-}" == "--help" ]] && printf '$help_text\n'
+exit 0
+SHIM
+	chmod +x "$case_home/.local/bin/$name"
+	(
+		export HOME="$case_home"
+		export AIDEVOPS_OPENCODE_PROFILE="$profile"
+		# Model "no other opencode installed" regardless of the host PATH.
+		_setup_find_valid_opencode_binary() { return 1; }
+		stable=$(_setup_ensure_opencode_stable_shim "$HOME/.local/bin/$name")
+		[[ "$stable" == "$HOME/.local/bin/$name" ]]
+		[[ "$("$stable" --version)" == "$version" ]]
+		[[ -x "$HOME/.aidevops/opencode-native/$name" ]]
+		grep -Fq "opencode-native/$name" "$stable"
+	) || { printf 'native %s executable at launcher path was not accepted\n' "$name" >&2; exit 1; }
+	return 0
+}
+_native_case v2 opencode2 'opencode v2.3.0' $'OpenCode command line interface\nrun  Run OpenCode with a message'
+_native_case v1 opencode '1.18.29' 'opencode run [message]'
 
 printf 'OpenCode V2 setup tests passed\n'

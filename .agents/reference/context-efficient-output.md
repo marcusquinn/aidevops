@@ -76,24 +76,84 @@ a lifecycle transition occurs; omit it for an immediate snapshot. The start
 action returns after the owned process spawns, so the primary session remains
 available for progress reports and scoped cancellation.
 
+Every tool call is a full model turn over the whole session context, so polling
+is the expensive part (t18953). For a command likely to finish within 60
+seconds, pass `wait_seconds` (up to 60; larger values are clamped) on `start`.
+It waits for a terminal state, and a terminal `start` or `status` receipt
+carries its first output window inline as `output` (`output_offset`/
+`output_limit`, default 1/120). One call then replaces start → status → output.
+A failed inline read becomes `output_error` on the receipt instead of failing it.
+
+Cancellation ends only the local process group. For `["ssh","host","<cmd>"]`
+the remote non-TTY shell is not signalled and keeps running (for example a
+cancelled `sleep 3600; rm -f PAUSE` still fires at its original deadline).
+Run timers locally (`["bash","-c","sleep N"]`, then a separate ssh call), or use
+`ssh -tt` so the remote side gets SIGHUP when the client dies (commands that
+ignore SIGHUP, such as under `nohup`, keep running). Clean up remotely
+by PID from `ps -o pid,ppid,args` and confirm the process exited, never `pkill -f` on a pattern your own
+command line contains (it kills its own remote shell).
+
+Do not assume bounded operations inherit session secrets: wrap the command as
+`aidevops secret NAME -- <argv>`, and never put a secret value in argv.
+
+`budget_seconds` defaults to 900 seconds; explicitly setting it to `0` also
+selects that default. Other values are clamped at start to
+0.01–86,400 seconds (24 hours); `budget_ms` in the receipt is the effective
+limit. There is no separate two-hour or idle timeout in the bounded-operation
+manager or supervisor. This budget is not a guarantee of host uptime or survival
+across plugin/session teardown (see lifecycle limits below).
+
 The receipt distinguishes running, failed, timed-out, cancelled, and
 restoration-failed states. `AIDEVOPS_PROGRESS: ...` lines count as explicit
 meaningful progress; ordinary output is not a heartbeat substitute and is not
-copied into status receipts. An optional restoration argv runs after every
-terminal command path, and its exit remains independently visible. Raw output
+copied into status receipts. `progress_overdue` is diagnostic only: missing
+progress does not cancel an operation or shorten its budget. An optional restoration argv runs after every
+terminal command path, **including success**, and its exit remains independently visible. It must
+therefore be safe to run after a successful command. For abort-only cleanup (kill remote work, delete
+partial output), pass `restoration_on: "unsuccessful"`: restoration is then skipped after success and
+reported as `restoration_state: not_required`, while failure, timeout, cancel, disposal and session
+deletion still run it. Example: `restoration_command: ["ssh", "host", "pkill -f copy.sh; rm -f partial.sql"]`
+with `restoration_on: "unsuccessful"`. The default `always` and the receipt field `restoration_on` keep
+existing callers unchanged (GH#38704). Raw output
 is represented only by an opaque output ID when terminal evidence storage is
-available.
+available. Restoration receipts retain their own `restoration_termination_cause`
+and `restoration_signal`: a budget stop remains `timed_out`, and a disposal stop
+remains `cancelled`, even when a TERM handler exits zero during cleanup.
 
-After a terminal receipt reports `evidence_state: recorded`, retrieve a bounded
-slice through the same native tool with action `output`, the receipt's
+After a terminal receipt reports `evidence_state: recorded`, page further
+bounded slices through the same native tool with action `output`, the receipt's
 `operation_id`, and optional `output_offset`/`output_limit` values. Retrieval is
 terminal-only, limited to 500 lines per call, and revalidates session ownership;
 callers cannot use a bare output ID to bypass the operation generation.
+`output_offset` is 1-based; zero is rejected.
+
+Read the output slice that proves a claim before writing that claim into any
+durable record (ledger, work log, commit message, PR or issue body). A passing
+exit code or the first lines of output do not necessarily prove a specific
+assertion; a first line that contains the exact match is valid evidence.
+Retrieval depends on the in-memory generation, which can expire on reload or
+restart; if a claim's evidence was not read before expiry, record it as
+unconfirmed and rerun the read-only check rather than restating it.
 
 Cancellation is restricted to the runtime session that started the operation
 and signals only the retained detached process group. The implementation is an
 OpenCode process-lifetime adapter, not a durable scheduler: restarting or
 forcibly terminating OpenCode expires the in-memory operation generation.
+Plugin disposal or reload also terminates active operations; they do not survive
+it. Receipts record the first observed `termination_cause` (for example `budget`,
+`cancel`, `dispose`, `session_deleted`, `signal_sigterm`, `signal_sigint`,
+`parent_disconnect`, `post_exit_cleanup`, `spawn_error`, or `supervisor_exit`).
+`dispose` covers disposal during reload too; it does not identify why the host
+disposed the plugin. `supervisor_exit` is a fallback for an abnormal supervisor
+exit without an earlier cause, not proof of who sent a signal. These diagnostics
+do not establish the cause of historical interruptions, and receipts remain
+in-memory/session-owned; a host crash may prevent final evidence from being saved.
+Start accepts optional `kill_grace_seconds`, clamped to 0.01–300 seconds, for a
+live command's TERM handler to stop remote work and release locks before SIGKILL.
+The default remains 0.5 seconds. `kill_grace_ms` records the effective grace;
+it also applies to restoration. Once the main command exits, owned descendants
+are drained, not kept alive for the rest of the grace period. Budget expiry can
+therefore take up to the grace period longer to finish.
 Commands must remain in the supervisor-owned process group; self-daemonizing or
 new-session (`setsid`) commands are unsupported and belong in a purpose-built
 service or the headless scheduler rather than this interactive adapter.

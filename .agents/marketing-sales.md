@@ -47,6 +47,7 @@ Marketing agent: strategy, campaigns, paid ads (Meta/Google), email, landing pag
 - **Private prospecting**: `/prospecting` coordinates local-first evidence, lead scoring, Reddit SEO, insights, scoped REST/MCP, and the workbench. Start with `marketing-sales/prospecting.md`; it never sends outreach or activates providers/schedules by default.
 - **Public engagement**: `/public-engagement` prepares disclosed, evidence-backed public-conversation drafts. Start with `marketing-sales/public-engagement.md`; the private outbox remains the only execution boundary and is disabled by default.
 - **Affiliate programmes**: `marketing-sales/affiliate-programmes.md` owns dated requirements, offline signup handoffs and the authenticated personal referral-link ledger; no live signup adapter is enabled.
+- **Local Services Ads**: `marketing-sales/local-services-ads.md` covers LSA readiness, local paid-search product fit and first-party lead measurement; proposals only, no account or spending changes.
 
 **Paid Advertising & CRO** ([Indexsy Skills](https://github.com/Indexsy-Skills/skills)):
 

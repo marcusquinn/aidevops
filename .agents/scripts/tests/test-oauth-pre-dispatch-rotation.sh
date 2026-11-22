@@ -325,11 +325,14 @@ rm -rf "$fixture"
 # fail and dispatch reports `launch_recovery:no_worker_process` even when a
 # healthy second OAuth account is available.
 
-LIB_FILE="${SCRIPTS_DIR}/headless-runtime-lib.sh"
+# The canary lives in headless-runtime-canary.sh (extracted in GH#33448); the
+# data dir, rotation and `opencode run` invocation (via canary_run_args) span
+# separate functions, so scan the whole file in order.
+LIB_FILE="${SCRIPTS_DIR}/headless-runtime-canary.sh"
 canary_wiring=$(awk '
 	/_canary_data_dir=\$\(mktemp -d/ { in_canary=1 }
 	in_canary && /_maybe_rotate_isolated_auth/ { rotate_line=NR }
-	in_canary && /"\$_effective_opencode_bin" run/ { opencode_line=NR }
+	in_canary && /"\$_effective_opencode_bin" "\$\{canary_run_args\[@\]\}"/ { opencode_line=NR }
 	END {
 		if (rotate_line > 0 && opencode_line > 0 && rotate_line < opencode_line) {
 			print "ok"

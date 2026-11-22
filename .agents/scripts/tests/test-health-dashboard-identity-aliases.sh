@@ -583,6 +583,98 @@ else
 	fail "stale archive selects only other operators with old freshness markers" "selected=${stale_selected}"
 fi
 
+# Exercise the paginated REST shape, including a later-page oldest issue,
+# exact age filtering, PR exclusion and trusted recommendations on later pages.
+test_aged_holds() (
+	gh() {
+		local args="$*"
+		[[ "$args" == *"--paginate --slurp"* ]] || return 1
+		[[ "$fetch_mode" != failed ]] || return 1
+		if [[ "$fetch_mode" == empty ]]; then
+			printf '[[]]\n'
+			return 0
+		fi
+		if [[ "$args" == *"/comments?"* ]]; then
+			jq -n '[[range(100) | {author_association:"OWNER",body:"Recommended path: old"}],
+				[{author_association:"MEMBER",body:"Recommended path: latest"},
+				 {author_association:"NONE",body:"Recommended path: untrusted"}]]'
+		else
+			jq -n 'def issue($n; $seconds): {number:$n,title:"held",html_url:("https://github.com/owner/repo/issues/" + ($n|tostring)),created_at:((now-$seconds)|floor|todateiso8601)};
+				[[range(1;101) | issue(.; 3*86400+3600+.*10)],
+				 [issue(101;3*86400+7200), (issue(102;9*86400) + {pull_request:{}}), issue(103;2*86400)]]'
+		fi
+		return 0
+	}
+	local result="" first="" fetch_mode="" rendered=""
+	result=$(_health_aged_hold_section owner/repo)
+	[[ "$result" == *"days (101)"* && "$result" == *"91 more not shown"* ]] || return 1
+	first=$(printf '%s\n' "$result" | jq -Rs 'split("\n") | map(select(startswith("| 3d"))) | .[0]')
+	[[ "$first" == *"#101 held | latest"* && "$result" != *"untrusted"* ]] || return 1
+	# Fetch failures must survive optional-section rendering; a healthy empty
+	# response must still omit the section entirely.
+	fetch_mode=failed
+	result=$(_health_aged_hold_section owner/repo) || return 1
+	rendered=$(_dashboard_optional_section "Maintainer decisions waiting" "$result")
+	[[ "$rendered" == *"### Maintainer decisions waiting"* &&
+		"$rendered" == *"issue fetch failed this cycle"* ]] || return 1
+	fetch_mode=empty
+	result=$(_health_aged_hold_section owner/repo) || return 1
+	rendered=$(_dashboard_optional_section "Maintainer decisions waiting" "$result")
+	[[ -z "$result" && -z "$rendered" ]] || return 1
+	# No API calls or aged section for contributor dashboards.
+	_health_aged_hold_section() { printf 'AGED_HOLD_SENTINEL'; return 0; }
+	local args=() i role
+	for ((i=0; i<34; i++)); do args+=(""); done
+	args[3]="owner/repo"
+	for role in contributor supervisor; do
+		args[26]="$role"
+		result=$(_build_health_issue_body "${args[@]}")
+		if [[ "$role" == contributor ]]; then
+			[[ "$result" != *"AGED_HOLD_SENTINEL"* ]] || return 1
+		else
+			[[ "$result" == *"AGED_HOLD_SENTINEL"* ]] || return 1
+		fi
+	done
+	return 0
+)
+if test_aged_holds; then
+	pass "aged holds paginate, sort exact ages, select latest trusted recommendation and respect role"
+else
+	fail "aged holds paginate, sort exact ages, select latest trusted recommendation and respect role"
+fi
+
+# GH#38311: decision comments name their ask with other labels or point to
+# the issue that holds the decision; the newest trusted comment with an ask
+# wins, and labels are taken in priority order within one comment.
+test_hold_ask_extraction() (
+	gh() {
+		case "$*" in
+		*"/issues/1/comments?"*)
+			jq -n '[[{author_association:"OWNER",body:"**Needs:** budget\n**Owner/action:** @ops must record the quote | now\n**Unblock evidence:** receipt"},
+				{author_association:"NONE",body:"Recommended path: untrusted"}]]' ;;
+		*"/issues/2/comments?"*)
+			jq -n '[[{author_association:"MEMBER",body:"Recommended path: older ask"},
+				{author_association:"OWNER",body:"Held with the chain. The decision and evidence are on #13780 (https://github.com/o/r/issues/13780)."}]]' ;;
+		*"/issues/3/comments?"*)
+			jq -n '[[{author_association:"OWNER",body:"- **Next action:** later\n- **Recommended path**: pick B"}]]' ;;
+		*"/issues/4/comments?"*)
+			jq -n '[[{author_association:"OWNER",body:"Claimed for work."}]]' ;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	[[ "$(_health_hold_recommendation owner/repo 1)" == "ops must record the quote  now" ]] || return 1
+	[[ "$(_health_hold_recommendation owner/repo 2)" == "Decision on #13780" ]] || return 1
+	[[ "$(_health_hold_recommendation owner/repo 3)" == "pick B" ]] || return 1
+	[[ -z "$(_health_hold_recommendation owner/repo 4)" ]] || return 1
+	return 0
+)
+if test_hold_ask_extraction; then
+	pass "hold ask extraction reads Owner/action lines, decision pointers and label priority from trusted comments"
+else
+	fail "hold ask extraction reads Owner/action lines, decision pointers and label priority from trusted comments"
+fi
+
 printf '\n== Summary ==\n'
 if ((TESTS_FAILED > 0)); then
 	printf '  %d failed of %d tests\n' "$TESTS_FAILED" "$TESTS_RUN"

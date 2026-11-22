@@ -10,13 +10,14 @@ from pathlib import Path
 import stat
 
 from worktree_archive_administration import administration
-from worktree_archive_git import capture_bundle, git
+from worktree_archive_git import capture_bundle, git, git_dirs
 from worktree_archive_merge_index import merge_entries, merge_path, validate_merge_index, validate_merge_working
 from worktree_archive_merge_objects import MERGE_FILES, merge_oid, merge_roots, validate_merge_metadata, verify_merge_objects
 
 
-def merge_pending(root):
-    admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
+def merge_pending(root, *, admin=None):
+    if admin is None:
+        admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
     return os.path.lexists(admin / 'MERGE_HEAD')
 
 
@@ -31,27 +32,38 @@ def validate_merge(state):
     return state
 
 
-def supported_merge_administration(root):
-    state = administration(root, allow_merge=True)
+def supported_merge_administration(root, admin=None, common=None):
+    state = administration(root, allow_merge=True, dirs=(admin, common))
     if state['refs'] or 'SQUASH_MSG' in state['files'] or 'config.worktree' in state['files']:
         raise ValueError('merge:unsupported_private_state')
-    if git(root, 'rev-parse', '--is-shallow-repository').strip() != b'false':
+    if common is not None:
+        # Git marks the repository shallow once `$GIT_COMMON_DIR/shallow` opens, even if empty.
+        try:
+            os.stat(Path(os.fsdecode(common)) / 'shallow')
+            shallow = True
+        except FileNotFoundError:
+            shallow = False
+    else:
+        shallow = git(root, 'rev-parse', '--is-shallow-repository').strip() != b'false'
+    if shallow:
         raise ValueError('merge:shallow_history')
-    draft = bytes.fromhex(state['files'].get('COMMIT_EDITMSG', '')).rstrip(b'\n')
-    if draft and draft != git(root, 'log', '-1', '--format=%B').rstrip(b'\n'):
-        raise ValueError('merge:uncommitted_message_draft')
-    if state['files'].get('FETCH_HEAD'):
-        raise ValueError('merge:unpreserved_fetch_head')
     return state
 
 
 def supported_merge_index(root):
-    flags = git(root, 'ls-files', '-v', '-z').split(b'\0')
-    if any(entry and entry[:1] not in (b'H', b'M') for entry in flags):
+    """Check index flags and intent-to-add; return this pass's `--stage` bytes.
+
+    One `ls-files -v --stage` read yields the flags and the exact stage listing.
+    The intent-to-add view pair runs whenever an empty-blob entry exists.
+    """
+    # Imported here: worktree_archive_state imports this module.
+    from worktree_archive_state import intent_to_add_differs, tagged_index
+    tags, index = tagged_index(root)
+    if any(tag not in (b'H', b'M') for tag in tags):
         raise ValueError('merge:unsupported_index_flags')
-    options = ('--cached', '--raw', '-z', '--no-ext-diff')
-    if git(root, 'diff', *options, '--ita-visible-in-index') != git(root, 'diff', *options, '--ita-invisible-in-index'):
+    if intent_to_add_differs(root, index):
         raise ValueError('merge:intent_to_add')
+    return index
 
 
 def merge_working_paths(root, head, entries):
@@ -59,7 +71,7 @@ def merge_working_paths(root, head, entries):
     for entry in git(root, 'ls-tree', '-r', '-z', head).split(b'\0'):
         if entry:
             metadata, path = entry.split(b'\t', 1)
-            if metadata.split()[0] not in (b'100644', b'100755'):
+            if metadata.split()[0] not in (b'100644', b'100755', b'120000'):
                 raise ValueError('merge:unsupported_head_entry')
             paths.add(path.hex())
     attributes = git(root, 'check-attr', '-z', '--stdin', 'filter', data=b'\0'.join(bytes.fromhex(path) for path in sorted(paths)) + b'\0')
@@ -74,8 +86,10 @@ def merge_working_file(root, path):
     observed = fingerprint(root, raw, git_metadata=True)
     if observed == ['missing']:
         return None
+    if observed[0] == 'symlink':
+        return ['symlink', os.fsencode(observed[1]).hex()]
     if observed[0] != 'file':
-        raise ValueError('merge:symlink_not_supported')
+        raise ValueError('merge:unsupported_file')
     relative = Path(os.fsdecode(raw))
     parent = open_parent(root, relative.parts[:-1])
     try:
@@ -91,13 +105,16 @@ def merge_working_file(root, path):
         os.close(parent)
 
 
-def merge_state(root):
-    """Capture a supported merge structurally; never copy a raw index or reflog."""
-    state = supported_merge_administration(root)
-    supported_merge_index(root)
-    entries = merge_entries(root, '--stage')
+def merge_state(root, admin=None, common=None, head=None):
+    """Capture a supported merge structurally; never copy a raw index or reflog.
+
+    A caller may pass the HEAD its directory spawn resolved in this same pass.
+    """
+    state = supported_merge_administration(root, admin, common)
+    entries = merge_entries(root, '--stage', listing=supported_merge_index(root))
     undo = merge_entries(root, '--resolve-undo')
-    head = git(root, 'rev-parse', 'HEAD').strip().decode('ascii')
+    if head is None:
+        head = git(root, 'rev-parse', 'HEAD').strip().decode('ascii')
     paths = merge_working_paths(root, head, entries + undo)
     working = {path: merge_working_file(root, path) for path in paths}
     result = validate_merge({'schema': 1, 'head': head, 'metadata': {name: value for name, value in state['files'].items() if name in MERGE_FILES},
@@ -119,9 +136,10 @@ def load_merge(archive, manifest):
 
 
 def capture_merge(root, archive):
-    if not merge_pending(root):
+    admin, common = git_dirs(root)  # One spawn shared by the pending check and the capture.
+    if not merge_pending(root, admin=admin):
         return
-    state = merge_state(root)
+    state = merge_state(root, admin, common)
     # Full closure is intentional: MERGE_HEAD/ORIG_HEAD need not be ancestors of
     # HEAD or of the shared base. This bundle is independent of the source.
     capture_bundle(root, archive, merge_roots(state), '')

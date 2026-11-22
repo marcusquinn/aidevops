@@ -54,6 +54,19 @@ yourself from printed output. The launcher already provides `PATH`.
 
 ### 2. Read pre-fetched state (DO NOT re-fetch)
 
+**Stale-state override:** if the launch prompt says no current snapshot exists,
+do not read or rely on the old snapshot. This overrides all pre-fetched-state
+instructions below. Run `bash ~/.aidevops/agents/scripts/pulse-wrapper.sh --command list-scope`
+to obtain current schedule-filtered `slug|path` pairs from configuration (use the
+path for `repo-cap` and dispatch). Limit
+triage and `list-candidates SLUG 100` to those slugs; use the named helpers and
+targeted `gh` reads for current evidence. `list-candidates` returns issues, not
+PRs, so in stale mode only, discover live PRs with one bounded call per scoped
+slug (`gh pr list --repo SLUG --state open --limit 50 --json number,title,headRefName,statusCheckRollup,reviewDecision,mergeable`),
+overriding the "do NOT run `gh pr list`" rule below. Do not infer absent data from the old
+snapshot. If scope lookup fails or returns no slugs, log a diagnostic and exit
+cleanly rather than using persisted scope or broadening to all repositories.
+
 The wrapper already fetched all open PRs and issues. Data is in your prompt between `--- PRE-FETCHED STATE ---` markers or in the state file path provided. Use it directly — do NOT run `gh pr list` or `gh issue list` (root cause of the "only processes first repo" bug).
 
 **Sandbox rule:** this unattended pulse runs from the aidevops agent workspace, not from each repo. Do NOT run Bash with `workdir` set to a managed repo path (for example to run `git worktree list`). OpenCode treats that as high-risk `external_directory` shell access and stalls for human permission. Use pre-fetched state or wrapper/helper functions from the current workspace; if required repo/worktree data is missing, log a diagnostic and exit cleanly.
@@ -62,15 +75,17 @@ The wrapper already fetched all open PRs and issues. Data is in your prompt betw
 
 **Most merging is handled deterministically by `merge_ready_prs_all_repos()` in pulse-wrapper.sh** before the LLM session starts. Focus on edge cases: PRs needing CI fix workers, `CHANGES_REQUESTED`, external contributor PRs, complex merge conflicts.
 
-For remaining collaborator PRs where CI passes: `REVIEW_REQUIRED` is NOT a merge blocker. Approve then merge:
+For remaining collaborator PRs where CI passes, first apply every pre-merge check below. Never merge an `origin:interactive` PR that the deterministic pass skipped under the GH#23238 manual-merge preference. Do not add `allow-auto-merge` or change preferences to bypass that decision. Explicit trusted PR-body text withholding merge authority (for example "No merge is authorized" or "no automatic merge") is a hold even if the PR is ready and green; do not approve or merge it until the trusted owner lifts the hold.
+
+For otherwise eligible PRs, `REVIEW_REQUIRED` alone is not a merge blocker; use the guarded approval/merge path without bypassing required approvals:
 
 ```bash
 ~/.aidevops/agents/scripts/pulse-wrapper.sh --command approve-pr NUMBER SLUG AUTHOR
 full-loop-helper.sh merge NUMBER SLUG --squash
 ```
 
-**Merge criteria:** CI all PASS (or NONE/PENDING) + author is collaborator → approve and merge.
-`CHANGES_REQUESTED` → dispatch fix worker. `APPROVED` → merge directly.
+**Merge criteria:** CI all PASS (or NONE/PENDING) + collaborator author + all policy/authority gates clear → attempt the guarded merge path.
+`CHANGES_REQUESTED` → dispatch fix worker. `APPROVED` does not override a policy or authority hold.
 Check external contributor gate before ANY approve/merge (see Pre-merge checks below).
 
 ### 3.5. Triage reviews for needs-maintainer-review issues (DETERMINISTIC — handled by shell)
@@ -87,7 +102,7 @@ Skip when: all slots occupied, issue created <5 min ago, or maintainer already c
 # Atomic dispatch — runs all 7 dedup layers, assigns, launches, records ledger.
 # Model selection is automatic via the runtime resolver; there is no model argument.
 ~/.aidevops/agents/scripts/pulse-wrapper.sh --command dispatch NUMBER SLUG \
-  "Issue #NUMBER: TITLE" "TASK_ID: TITLE" RUNNER_USER PATH \
+  "Issue #NUMBER: TITLE" "TASK_ID: TITLE" RUNNER_USER "PATH" \
   "/full-loop Implement issue #NUMBER (URL) -- DESCRIPTION"
 ```
 
@@ -214,6 +229,8 @@ Output a brief summary of total actions taken across all cycles (past tense).
 10. Oldest issues
 11. FOSS contributions — only when all managed-repo work is dispatched
 
+Merge-pass ordering (GH#39281): up to `PULSE_MERGE_CI_REPAIR_LANE_LIMIT` (default 2; 0 disables) failing-CI PRs without a CI-repair lease for their head run ahead of merge-ready PRs, once per head per cursor walk. A resumed walk always evaluates its cursor PR before any promoted lane item, so the cursor advances every pass.
+
 ## PRs — Merge, Fix, or Flag
 
 ### Pre-merge checks (MANDATORY for every PR in write-authorized managed repos)
@@ -226,13 +243,14 @@ For repos where `repo_allows_pulse_write_actions SLUG` fails (role=`contributor`
 
 3. **Workflow file guard.** `check_workflow_merge_guard` from `pulse-wrapper.sh`.
 
-4. **Review add-on.** `review-bot-gate-helper.sh check NUMBER SLUG`. Merge on `PASS`, `PASS_ADVISORY`, or `PASS_RATE_LIMITED`. `WAITING` is reserved for explicit strict/wait policy or the external-contributor trust boundary.
+4. **Review add-on.** `review-bot-gate-helper.sh check NUMBER SLUG`. Merge on `PASS`, `PASS_ADVISORY`, or `PASS_RATE_LIMITED`. `WAITING` is reserved for explicit strict/wait policy (GH#36931).
 
 5. **Unresolved review suggestions.** Check with `gh api "repos/SLUG/pulls/NUMBER/comments"`. If actionable, dispatch a fix worker (label `needs-review-fixes`).
 
 ### PR triage
 
-- **Green CI + collaborator** → `approve_collaborator_pr` then `full-loop-helper.sh merge NUMBER SLUG --squash`
+- **GH#23238 manual-merge preference / explicit trusted PR-body merge hold** → skip, even with green CI or approval; never override the deterministic pass
+- **Green CI + collaborator + all pre-merge gates clear** → `approve_collaborator_pr` then `full-loop-helper.sh merge NUMBER SLUG --squash`
 - **Green CI + strict-policy `WAITING` on bots** → skip; run `request-retry` only when a true rate-limit notice makes a retry useful
 - **Failing CI** → check if systemic (same check fails on 3+ PRs → file workflow issue). If per-PR, dispatch fix worker.
 - **Open 6+ hours with no recent commits** → comment, consider closing and re-filing
@@ -300,7 +318,7 @@ resolver default. See [Task Taxonomy](../reference/task-taxonomy.md) for tier pu
 
 ### Per-repo worker cap
 
-Default `MAX_WORKERS_PER_REPO=5`. Run `~/.aidevops/agents/scripts/pulse-wrapper.sh --command repo-cap PATH` before dispatching — returns 0 (at cap, skip) or 1 (below cap, safe to dispatch). Deterministic pulse dispatch does not apply this per-repo cap; it is a supervisor check only.
+Default `MAX_WORKERS_PER_REPO=5`. Run `~/.aidevops/agents/scripts/pulse-wrapper.sh --command repo-cap "PATH"` before dispatching — returns 0 (at cap, skip) or 1 (below cap, safe to dispatch). Deterministic pulse dispatch does not apply this per-repo cap; it is a supervisor check only.
 
 Read the stdout `PULSE_COMMAND_RESULT` line rather than shell status probes: OpenCode may hide nonzero exit statuses. `command=repo-cap rc=0 outcome=at-cap` means skip; `command=repo-cap rc=1 outcome=below-cap` means capacity is available. After dispatch, `command=dispatch rc=0 outcome=launched` confirms launch; `rc=1` or `rc=3` with `outcome=deferred` means no launch. Other statuses report `outcome=failed`; do not count them as launches or available capacity. Both commands preserve their exit statuses and print exactly one result line in addition to any delegate output. Usage errors return 2 on stderr with no result line.
 
@@ -309,10 +327,10 @@ Read the stdout `PULSE_COMMAND_RESULT` line rather than shell status probes: Ope
 Quality-debt workers MUST use pre-created worktrees:
 
 ```bash
-~/.aidevops/agents/scripts/pulse-wrapper.sh --command create-debt-worktree PATH NUMBER TITLE
+~/.aidevops/agents/scripts/pulse-wrapper.sh --command create-debt-worktree "PATH" NUMBER TITLE
 
 ~/.aidevops/agents/scripts/pulse-wrapper.sh --command dispatch NUMBER SLUG \
-  "Issue #NUMBER: TITLE" "GH#NUMBER: TITLE" RUNNER_USER QD_WT_PATH \
+  "Issue #NUMBER: TITLE" "GH#NUMBER: TITLE" RUNNER_USER "QD_WT_PATH" \
   "/full-loop Implement issue #NUMBER (URL) -- TITLE"
 ```
 

@@ -160,24 +160,56 @@ _pcr_jq_required() {
 # State detection + attempt counting
 # -----------------------------------------------------------------------------
 
+# Untracked OS/runtime metadata that never represents human work (t19020).
+# Finder writes .DS_Store into any browsed directory, and OpenCode installs
+# plugin dependencies under .opencode/ (its generated .gitignore misses npm's
+# lockfile). These alone must not ask a human to review a canonical checkout;
+# every tracked edit and any other untracked path still counts.
+# Args: $1 - one `git status --porcelain -z --untracked-files=all` record
+# (NUL-delimited, so paths are raw rather than C-quoted, and untracked
+# directories are expanded to files). Returns 0 when it is noise.
+_pcr_is_metadata_noise() {
+	local row="$1"
+	local path=""
+	[[ "$row" == '?? '* ]] || return 1
+	path="${row:3}"
+	case "${path##*/}" in
+	.DS_Store | Thumbs.db | desktop.ini) return 0 ;;
+	esac
+	case "$path" in
+	.opencode/package-lock.json | .opencode/bun.lock | .opencode/package.json | .opencode/node_modules/*) return 0 ;;
+	esac
+	return 1
+}
+
 # Detect repo state. Echoes one of:
 #   "clean" | "unmerged" | "uncommitted" | "not-a-repo"
+# Unmerged wins over uncommitted, so the scan stops early only on a conflict.
 _pcr_detect_state() {
 	local repo_path="$1"
+	local row="" state="clean" skip_next=0
 	if ! git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 		printf 'not-a-repo'
 		return 0
 	fi
-	# Unmerged file status codes: UU AA DD AU UA DU UD.
-	if git -C "$repo_path" status --porcelain 2>/dev/null | grep -qE '^(UU|AA|DD|AU|UA|DU|UD)'; then
-		printf 'unmerged'
-		return 0
-	fi
-	if [[ -n "$(git -C "$repo_path" status --porcelain 2>/dev/null)" ]]; then
-		printf 'uncommitted'
-		return 0
-	fi
-	printf 'clean'
+	while IFS= read -r -d '' row; do
+		# A rename/copy record is followed by its source path as a bare record.
+		if [[ "$skip_next" -eq 1 ]]; then
+			skip_next=0
+			continue
+		fi
+		[[ -n "$row" ]] || continue
+		case "${row:0:2}" in
+		UU | AA | DD | AU | UA | DU | UD)
+			state="unmerged"
+			break
+			;;
+		R? | C? | ?R | ?C) skip_next=1 ;;
+		esac
+		_pcr_is_metadata_noise "$row" && continue
+		state="uncommitted"
+	done < <(git -C "$repo_path" status --porcelain -z --untracked-files=all 2>/dev/null)
+	printf '%s' "$state"
 	return 0
 }
 
@@ -334,8 +366,9 @@ _pcr_advisory_body() {
       ${sanitised}
 
   Failure mode: ${failure_mode}
-  Effect:       PR processing, CI failure routing, and completion sweep are
-                paused for this repo until the working tree is clean.
+  Effect:       Diagnostic only. Pulse issue and PR processing continue, but
+                this checkout is not auto-synchronized and local quality scans
+                skip it until the working tree is clean.
 
   Inspection (run in a SEPARATE terminal, not in AI chat):
 
@@ -346,6 +379,7 @@ _pcr_advisory_body() {
     git ls-files --others --exclude-standard
 
   Resolve or preserve this state manually. Pulse will not mutate this checkout.
+  Audited preservation route: reference/dirty-worktree-preservation.md
 
   Dismiss after fixing:  aidevops security dismiss canonical-recovery-${repo_basename}
 EOF

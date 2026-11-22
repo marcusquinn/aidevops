@@ -88,10 +88,32 @@ describe("GPT image OpenCode tool", () => {
     const output = await tool.execute({ prompt: "draw a test", out: "generated/test.png", quality: "low" });
     assert.equal(calls, 1);
     assert.match(output, /ChatGPT subscription OAuth/);
+    assert.match(output, /OAuth router model: gpt-6-sol/);
     assert.match(output, /generated\/test\.png/);
     assert.match(output, /Requested size: auto; native dimensions: 1x1/);
+    assert.match(output, /OAuth router model: gpt-6-sol/);
     assert.match(output, /Requested image model: provider-managed; provider-confirmed image model: unknown/);
     assert.doesNotMatch(output, new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  });
+
+  test("surfaces classified HTTP 200 SSE errors without saving or marking success", async () => {
+    const root = await projectRoot();
+    let successes = 0;
+    const tool = createTool({
+      projectRoot: root,
+      resolveOAuthAccount: async () => ({ email: "person@example.test", access: "test" }),
+      markOAuthSuccess: () => { successes += 1; },
+      fetchImpl: async () => new Response(`data: ${JSON.stringify({
+        type: "response.failed",
+        response: { error: { message: "Tool choice 'image_generation' not found in 'tools' parameter" } },
+      })}\n\n`),
+    });
+    await assert.rejects(
+      tool.execute({ prompt: "draw a test", out: "generated/test.png" }),
+      { code: "no_compatible_image_model" },
+    );
+    assert.equal(successes, 0);
+    await assert.rejects(access(join(root, "generated/test.png")), { code: "ENOENT" });
   });
 
   test("routes outputs and references into a validated session-owned linked worktree", async () => {
@@ -161,17 +183,23 @@ describe("GPT image OpenCode tool", () => {
     assert.equal(calls, 0);
   });
 
-  test("surfaces OAuth and Platform API dimension mismatches without writing artifacts", async () => {
+  test("saves native OAuth output with a size warning but rejects API size mismatches", async () => {
     const root = await projectRoot();
+    let requestSize;
     const oauthTool = createTool({
       projectRoot: root,
       resolveOAuthAccount: async () => ({ email: "person@example.test", access: "oauth-test-token" }),
-      fetchImpl: async () => oauthSuccess(),
+      fetchImpl: async (_url, init) => {
+        requestSize = JSON.parse(init.body).tools[0].size;
+        return oauthSuccess(WEBP_BASE64);
+      },
     });
-    await assert.rejects(
-      oauthTool.execute({ prompt: "draw", out: "oauth.png", size: "1024x1024" }),
-      /returned 1x1 PNG for requested 1024x1024; no artifact was written/,
-    );
+    const output = await oauthTool.execute({ prompt: "draw", out: "oauth.webp", format: "webp", size: "1456x1088" });
+    assert.equal(requestSize, "1456x1088");
+    assert.match(output, /Requested size: 1456x1088; native dimensions: 1x1/);
+    assert.match(output, /Warning: OAuth size is best-effort; the provider returned 1x1 rather than 1456x1088/);
+    assert.match(output, /Saved native output without resizing/);
+    assert.deepEqual(await readFile(join(root, "oauth.webp")), Buffer.from(WEBP_BASE64, "base64"));
 
     const apiTool = createTool({
       projectRoot: root,
@@ -182,8 +210,45 @@ describe("GPT image OpenCode tool", () => {
       apiTool.execute({ prompt: "draw", out: "api.png", size: "1024x1024", auth: "api", account: "work" }),
       /returned 1x1 PNG for requested 1024x1024; no artifact was written/,
     );
-    await assert.rejects(access(join(root, "oauth.png")), /ENOENT/);
     await assert.rejects(access(join(root, "api.png")), /ENOENT/);
+  });
+
+  test("writes a PNG through the explicit OpenRouter route and rejects references", async () => {
+    const root = await projectRoot();
+    let captured;
+    const tool = createTool({
+      projectRoot: root,
+      readSecret: (name) => {
+        assert.equal(name, "OPENROUTER_API_KEY");
+        return "unit-test-credential-value";
+      },
+      fetchImpl: async (url, init) => {
+        captured = { url, auth: init.headers.Authorization };
+        return Response.json({ data: [{ b64_json: PNG_BASE64 }] });
+      },
+    });
+    const output = await tool.execute({ prompt: "draw", out: "or.png", auth: "openrouter" });
+    assert.match(output, /Billing route: OpenRouter API/);
+    assert.equal(captured.url, "https://openrouter.ai/api/v1/images");
+    assert.deepEqual(await readFile(join(root, "or.png")), Buffer.from(PNG_BASE64, "base64"));
+    await assert.rejects(
+      tool.execute({ prompt: "draw", out: "or2.png", auth: "openrouter", images: ["or.png"] }),
+      /does not support reference images/,
+    );
+  });
+
+  test("still rejects invalid native OAuth raster data with best-effort sizing", async () => {
+    const root = await projectRoot();
+    const tool = createTool({
+      projectRoot: root,
+      resolveOAuthAccount: async () => ({ email: "person@example.test", access: "oauth-test-token" }),
+      fetchImpl: async () => oauthSuccess(PNG_BASE64),
+    });
+    await assert.rejects(
+      tool.execute({ prompt: "draw", out: "invalid.webp", format: "webp", size: "1456x1088" }),
+      /invalid WebP/,
+    );
+    await assert.rejects(access(join(root, "invalid.webp")), /ENOENT/);
   });
 
   test("requests and writes a selected native WebP", async () => {
@@ -200,6 +265,18 @@ describe("GPT image OpenCode tool", () => {
     const output = await tool.execute({ prompt: "draw a test", out: "generated/test.webp", format: "webp" });
     assert.equal(requestBody.tools[0].output_format, "webp");
     assert.match(output, /generated\/test\.webp/);
+    assert.doesNotMatch(output, /Warning:/);
+  });
+
+  test("explains unaligned dimensions before authentication or network access", async () => {
+    const tool = createTool({
+      resolveOAuthAccount: async () => assert.fail("must validate size before authentication"),
+      fetchImpl: async () => assert.fail("must validate size before generation"),
+    });
+    await assert.rejects(
+      tool.execute({ prompt: "draw a test", out: "test.webp", format: "webp", size: "1448x1086" }),
+      /width and height must be multiples of 16/,
+    );
   });
 
   test("rejects format and extension mismatches before network access", async () => {

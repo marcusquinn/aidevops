@@ -15,9 +15,28 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
+## Playwright is not Playwriter
+
+The names differ by a few letters, and models tend to auto-correct one into the other. Treat them as different tools (GH#35617):
+
+| Name | What it is | When |
+|------|------------|------|
+| **Playwright** (`@playwright/mcp`, `playwright`, `playwright-cli`, `@playwright` agent) | Microsoft's browser automation, isolated browser | **Default for all browser work** |
+| **Playwriter** (`playwriter@0.9.0`, `@playwriter` agent) | Third-party extension relay into the user's open tabs | **Only when the user's own words say "Playwriter"** |
+
+Never select, suggest, or delegate to Playwriter because a request says "Playwright", "browser" or "test in the browser", and never "correct" the user's spelling. If unsure which they meant, use Playwright.
+
+Stagehand is not recommended; use it only when the user explicitly asks to try it.
+
 ## Decision Tree
 
-Default Playwright automation to a fresh, isolated **headless Brave** browser when installed (bundled Chromium otherwise), including authenticated flows when credentials or an approved session can be provided without using the user's profile. Do not ask for an existing tab just because a page requires login. Use a separate headed browser only when the user must see or assist with the flow (for example, a passkey, MFA, or visual guidance), or when the task itself requires a visible browser. Microsoft's Playwright Extension is an interactive-only exception when an available user explicitly needs selected tabs from their existing browser. Prefer ARIA snapshots over screenshots (50-200 tokens vs ~1K); see `playwright.md` for runtime overrides.
+Default Playwright automation to a fresh, isolated **headless Brave** browser when installed (bundled Chromium otherwise), including authenticated flows when credentials or an approved session can be provided without using the user's profile. Do not ask for an existing tab just because a page requires login. Playwright has three window modes; choose the least visible one that works:
+
+- **headless** (default): no window.
+- **headed-hidden**: a real headed browser with every window minimised, for sites that challenge or render differently in headless mode while the user keeps working. On macOS, focus returns to the previous app when the browser takes it.
+- **headed**: a visible separate window, only when the user must see or assist with the flow (for example, a passkey, MFA, or visual guidance), or when the task itself requires a visible browser.
+
+Selection details, including `AIDEVOPS_PLAYWRIGHT_HEADED`, are in `playwright.md` "Window modes". Microsoft's Playwright Extension is an interactive-only exception when an available user explicitly needs selected tabs from their existing Chrome/Edge/Chromium. Playwright-launched browsers announce automation (`navigator.webdriver`, `--enable-automation`), so social platforms such as X block them. When the user asks to "use my browser" or "use my logged-in tab" in an interactive session and `aidevops opencode-browse status` shows the extension connected, use the `@opencode-browse` agent: OpenCode browse drives the everyday Chrome, Edge, Brave, Arc, Vivaldi or Chromium through its extension in a task-scoped session (`opencode-browse.md`). Never use browse in headless or worker runtimes, or for work Playwright can do in isolation. Without a paired browse, say in one turn that the everyday tab cannot be driven, then offer `aidevops opencode-browse install` (or `pair` for another browser) or `chromium-debug-use-helper.sh launch <url>`: a plain-process Brave on a dedicated profile with one manual login, attached through CDP (`chromium-debug-use.md`). Do not try the extension with Brave, AppleScript JavaScript, or cookie extraction first. Prefer ARIA snapshots over screenshots (50-200 tokens vs ~1K); see `playwright.md` for runtime overrides.
 
 For repeatable browser operations or web data mining that should learn, optimize,
 persist profile state, or graduate into reusable private workflows, start with
@@ -27,18 +46,22 @@ replacing them.
 ```text
 EXTRACT?
   Web search + crawl → WaterCrawl | Bulk CSS/XPath → Crawl4AI | One-off authenticated → curl-copy
-  Need login first → isolated headless Playwright then extract | Unknown structure → opt-in Stagehand v4 after model/data/cost consent
+  Need login first → isolated headless Playwright then extract | Unknown structure → Playwright with bounded DOM/ARIA selector discovery
 
 AUTOMATE?
   Password manager/extensions:
     User present + current browser required → Playwright Extension | Unlock once → dev-browser | Programmatic → standalone Playwright + Bitwarden CLI
-  Live already-open Chromium/Chrome session:
-    Inspect current state / understand workflow first → chromium-debug-use
-    Interactive selected tabs → Playwright Extension | Repeatable isolated flow → standalone Playwright (headless Brave preferred) / dev-browser
+  User's own browser / everyday logged-in tab (interactive only):
+    → browse installed + extension connected → @opencode-browse (opencode-browse.md); any Chromium-family browser, incl. Brave
+    → not paired → offer aidevops opencode-browse install (or pair), else the dedicated-profile route below
+  User's logged-in session / user-assisted login on a bot-defended site (X, social):
+    → chromium-debug-use-helper.sh launch (dedicated profile, plain process) + connectOverCDP; launch-stop when done
+    Everyday already-open tab: not drivable over CDP; use browse above, or Chrome/Edge/Chromium selected tabs → Playwright Extension (not Brave)
+  Live Chromium session: inspect state first → chromium-debug-use | Repeatable isolated flow → standalone Playwright (headless Brave preferred) / dev-browser
   Parallel sessions: speed → Playwright | CLI → playwright-cli/agent-browser --session
   Persistent login: with extensions → dev-browser | without → playwright-cli/storageState
   Proxy: direct → standalone Playwright/Crawl4AI | interactive use of existing browser's proxy/VPN → Playwright Extension
-  Changing selectors or unknown structure → opt-in Stagehand v4 when the measured full-flow retry/maintenance cost may exceed model-backed automation
+  Changing selectors or unknown structure → Playwright with bounded selector discovery; if that fails, browser-use CLI 3.0 or Skyvern
   AI agent CLI-first → playwright-cli (Microsoft) or agent-browser (Vercel, Rust)
   Just fast → Playwright direct (0.9s form fill)
 
@@ -73,7 +96,7 @@ const elements = await page.evaluate(() =>
 
 ## Historical Benchmarks (2026-01-24, macOS ARM64, headless, warm daemon — reproduce: `browser-benchmark.md`)
 
-These Stagehand v3 results predate v4 and are **not a current v4 cost/latency comparison**. Overhead in that run: dev-browser +0.1-0.4s | agent-browser +0.5-1.5s (cold) | older Stagehand +1-5s (AI).
+These historical Stagehand v3 results predate v4 and are **not current routing guidance or a current v4 cost/latency comparison**. Overhead in that run: dev-browser +0.1-0.4s | agent-browser +0.5-1.5s (cold) | older Stagehand +1-5s (AI).
 
 | Test | Playwright | dev-browser | agent-browser | Crawl4AI | Stagehand v3 (historical) |
 |------|-----------|-------------|---------------|----------|-----------|
@@ -86,13 +109,11 @@ The later v4.1.0 **heading-only** probes are separate: three corrected public-pa
 extractions took 10.0–14.3s versus 8–10ms for a locator; on a private
 authenticated dashboard, three extractions took 2.76–3.43s versus 9–12ms,
 but only one matched the DOM. These are not full-flow or comparable Playwriter
-benchmarks. Stagehand may still win *end-to-end* when selectors change often,
-retries and maintenance dominate, and a representative opt-in comparison shows
-higher task success or lower total time. No measured v4 result here establishes
-that win. Check model spend, data-sharing consent, and recovery/cleanup before
-selecting it; see `browser-benchmark.md` for samples and caveats.
+benchmarks. No measured v4 result establishes an end-to-end win. Stagehand is
+not recommended and is available only when the user explicitly asks to try it;
+see `browser-benchmark.md` for samples and caveats.
 
-## Feature Matrix
+## Feature Matrix (historical comparison, not routing guidance)
 
 | Feature | Playwright | playwright-cli | dev-browser | agent-browser | Crawl4AI | Stagehand |
 |---------|-----------|----------------|-------------|---------------|----------|-----------|
@@ -113,7 +134,7 @@ Use `chromium-debug-use` when the fastest path is to inspect a browser session t
 | The flow should become reproducible, isolated, parallel, or CI-friendly | `tools/browser/playwright.md` | Fresh contexts are better for repeatable automation |
 | The flow needs a managed persistent profile that aidevops can keep reusing | `tools/browser/dev-browser.md` | Better long-lived state than a user-owned live browser |
 | An available user explicitly wants selected-tab consent in their everyday browser instead of a separate profile | `tools/browser/playwright.md` extension mode | Official extension limits each interactive client to its selected tab group |
-| The page structure is still fuzzy and you want natural-language exploration before hardening selectors | `tools/browser/stagehand.md` | Better when the next step is exploratory automation |
+| The page structure is still fuzzy | `tools/browser/playwright.md`, then `tools/browser/browser-use.md` if needed | Discover selectors with bounded DOM/ARIA inspection before escalating |
 | The goal is console, network, performance, or general DevTools inspection against the same live browser | `tools/browser/chrome-devtools.md` | Better debugging surface than automation-first CDP commands |
 
 ## Parallel Sessions
@@ -168,4 +189,4 @@ The same contract applies to Stagehand's adaptive actions; it changes neither ro
 
 <!-- AI-CONTEXT-END -->
 
-Per-tool docs: `playwright.md` · `playwright-cli.md` · `chromium-debug-use.md` · `dev-browser.md` · `agent-browser.md` · `crawl4ai.md` · `stagehand.md`. Legacy explicit-only compatibility: `playwriter.md`. Ethics: respect ToS, rate limit (2-5s delays), no spam, legitimate use only, no personal data without consent.
+Per-tool docs: `playwright.md` · `playwright-cli.md` · `chromium-debug-use.md` · `dev-browser.md` · `agent-browser.md` · `crawl4ai.md`. Stagehand: `stagehand.md` (not recommended; only when the user names it). Legacy explicit-only compatibility: `playwriter.md` (Playwriter, not Playwright; only when the user names it). Ethics: respect ToS, rate limit (2-5s delays), no spam, legitimate use only, no personal data without consent.

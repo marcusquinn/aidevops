@@ -72,10 +72,10 @@ fi
 
 active_line=$(grep -n 'has active dispatch comment.*active claim' "${SCRIPTS_DIR}/pulse-dispatch-lib-capacity.sh" | cut -d: -f1 | head -1)
 block_line=$(grep -n 'DISPATCH_BLOCK_REASON reason=' "${SCRIPTS_DIR}/pulse-dispatch-lib-capacity.sh" | cut -d: -f1 | head -1)
-if [[ -n "$active_line" && -n "$block_line" && "$active_line" -lt "$block_line" ]]; then
-	pass "dedup-active evidence takes precedence over stale historical block reasons"
+if [[ -n "$active_line" && -n "$block_line" && "$block_line" -lt "$active_line" ]]; then
+	pass "structured DISPATCH_BLOCK_REASON evidence takes precedence over generic active-claim prose (GH#33623)"
 else
-	fail "dedup-active evidence takes precedence over stale historical block reasons" \
+	fail "structured DISPATCH_BLOCK_REASON evidence takes precedence over generic active-claim prose (GH#33623)" \
 		"active_line=${active_line:-missing}, block_line=${block_line:-missing}"
 fi
 

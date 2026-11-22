@@ -21,13 +21,26 @@ function toolPath(tool, args) {
   return args.filePath || args.file_path || args.path || "";
 }
 
+// Name the blocking entry relative to the staging root (never its contents) so the
+// primary session can remove or re-stage it instead of abandoning the route.
+function stagedEntryLabel(stagingRoot, directory, name) {
+  return relative(stagingRoot, join(realpathSync(directory), name)) || name;
+}
+
 function validatedChildDirectory(directory, entry, stagingRoot) {
-  if (CREDENTIAL_NAME.test(entry.name)) throw new Error("Research staging contains a credential-like path");
+  if (CREDENTIAL_NAME.test(entry.name)) {
+    const label = stagedEntryLabel(stagingRoot, directory, entry.name);
+    throw new Error(`Research staging contains a credential-like path: ${label}`);
+  }
 
   const child = join(directory, entry.name);
-  if (entry.isSymbolicLink()) throw new Error("Research staging symlinks are denied");
+  if (entry.isSymbolicLink()) {
+    const label = stagedEntryLabel(stagingRoot, directory, entry.name);
+    throw new Error(`Research staging symlinks are denied: ${label}`);
+  }
   if (!isPathWithin(stagingRoot, realpathSync(child))) {
-    throw new Error("Research staging path resolves outside the staging root");
+    const label = stagedEntryLabel(stagingRoot, directory, entry.name);
+    throw new Error(`Research staging path resolves outside the staging root: ${label}`);
   }
   return entry.isDirectory() ? child : "";
 }

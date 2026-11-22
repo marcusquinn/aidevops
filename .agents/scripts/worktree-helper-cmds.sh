@@ -141,6 +141,14 @@ _remove_show_guard_error() {
 		printf '%s\n' "Reason: git-metadata-unreadable — the guard could not prove the exact worktree registration is readable and unlocked." >&2
 		printf '%s\n' "Recovery: repair Git metadata access and verify the exact worktree block is unlocked before retrying. --force cannot bypass this protection." >&2
 		;;
+	git-worktree-identity-changed)
+		printf '%s\n' "Reason: git-worktree-identity-changed — the worktree path, Git administration or HEAD changed or became unreadable during the archive/removal step." >&2
+		printf '%s\n' "Recovery: the source was preserved; verify 'git worktree list --porcelain' still lists the exact path, then retry. --force cannot bypass this protection." >&2
+		;;
+	compact-recovery-capture-failed)
+		printf '%s\n' "Reason: compact-recovery-capture-failed — the recoverable archive could not be captured or verified; the source was preserved." >&2
+		printf '%s\n' "Recovery: read the capture diagnostic above or ${AIDEVOPS_CLEANUP_LOG:-${HOME}/.aidevops/logs/cleanup_worktrees.log}, resolve it, then retry. --force cannot bypass this protection." >&2
+		;;
 	cwd-visibility-degraded)
 		printf '%s\n' "Reason: cwd-visibility-degraded — targeted recovery could not prove a clean, unowned worktree merged (exact-head merged PR, or local default-branch ancestry for local_only repos)." >&2
 		printf '%s\n' "Recovery: resolve dirty, claim, ownership, open-PR, or merge-proof state and retry. --force cannot bypass live-CWD protection." >&2
@@ -150,6 +158,17 @@ _remove_show_guard_error() {
 		printf '%s\n' "Recovery: inspect the cleanup audit log, resolve the safety condition, then retry." >&2
 		;;
 	esac
+	return 0
+}
+
+# Preserve a specific post-archive refusal, falling back to the generic notice.
+_remove_show_archive_failure() {
+	local path_to_remove="$1"
+	if [[ -n "${WORKTREE_REMOVAL_GUARD_REASON:-}" ]]; then
+		_remove_show_guard_error "$path_to_remove" "$WORKTREE_REMOVAL_GUARD_REASON"
+	else
+		printf '%b\n' "${YELLOW}Cleanup stopped: the source remains protected and its recoverable archive was retained.${NC}"
+	fi
 	return 0
 }
 
@@ -417,7 +436,9 @@ _remove_finalize_post_removal() {
 	if [[ -n "$removed_branch" ]]; then
 		localdev_auto_branch_rm "$removed_branch"
 		preview_proxy_auto_free "$removed_branch"
-		if [[ -f "${SCRIPT_DIR}/local-branch-cleanup-helper.sh" ]]; then
+		if [[ "${AIDEVOPS_WORKTREE_MAINTENANCE_KEEP_BRANCH:-}" == 1 ]]; then
+			printf 'branch preserved: explicit worker archive plan for %s\n' "$removed_branch"
+		elif [[ -f "${SCRIPT_DIR}/local-branch-cleanup-helper.sh" ]]; then
 			bash "${SCRIPT_DIR}/local-branch-cleanup-helper.sh" --repo "$(get_repo_root)" --branch "$removed_branch" --apply ||
 				printf 'branch preserved: local branch cleanup failed for %s\n' "$removed_branch" >&2
 		else
@@ -506,7 +527,7 @@ _remove_cleanup_and_execute() {
 		"${SCRIPT_NAME:-worktree-helper.sh}" "$_WT_REMOVE_MODE_MANUAL" \
 		"$audit_context" "$allow_degraded" "$force_remove"; then
 		[[ "$cleanup_lease_acquired" != "$_WT_BOOL_TRUE" ]] || _clean_release_removal_lease "$path_to_remove" || true
-		printf '%b\n' "${YELLOW}Cleanup stopped: the source remains protected and its recoverable archive was retained.${NC}"
+		_remove_show_archive_failure "$path_to_remove"
 		return 1
 	fi
 	if ! prune_missing_worktree_metadata "$repo_context" "$path_to_remove"; then
@@ -539,11 +560,6 @@ _remove_cleanup_and_execute() {
 # Remove a worktree by branch name or path, with optional --force.
 cmd_remove() {
 	local target=""
-	local force_remove=0
-	_WT_REMOVE_DEGRADED_RECOVERY=0
-	_WT_REMOVE_DEGRADED_BRANCH=""
-	_WT_REMOVE_DEGRADED_PR=""
-	_WT_REMOVE_DEGRADED_AUDIT_CONTEXT=""
 
 	# Parse arguments
 	while [[ $# -gt 0 ]]; do
@@ -551,7 +567,8 @@ cmd_remove() {
 		shift
 		case "$_ropt" in
 		--force | -f)
-			force_remove=1
+			# Compatibility spelling; never bypass registry evidence.
+			:
 			;;
 		*)
 			target="$_ropt"
@@ -565,22 +582,24 @@ cmd_remove() {
 		return 1
 	fi
 
-	# Export for ownership check
-	if [[ "$force_remove" -eq 1 ]]; then
-		export WORKTREE_FORCE_REMOVE="1"
-	fi
-
 	# Resolve target to an absolute path
 	local path_to_remove
 	if ! path_to_remove=$(_remove_resolve_path "$target"); then
 		return 1
 	fi
 
-	# Validate path is safe to remove
-	_remove_validate_path "$path_to_remove" || return 1
-
-	# Clean up runtime files and execute removal
-	_remove_cleanup_and_execute "$path_to_remove" || return 1
+	# The registry validates the generation, owners and preservation. Do not
+	# infer authority from legacy ownership, cwd scans or branch/PR status.
+	# shellcheck source=./worker-lifecycle-state.sh
+	source "${BASH_SOURCE[0]%/*}/worker-lifecycle-state.sh" || return 1
+	# GH#36494: an explicit operator request prints the refusal's next step.
+	# GH#37432: an explicit removal may end the calling session's own run.
+	if ! WORKER_LIFECYCLE_EXPLAIN_REFUSAL=1 WORKER_LIFECYCLE_RELINQUISH_CALLER=1 \
+		worker_lifecycle_cleanup_worktree "$path_to_remove"; then
+		printf 'Retirement refused; worktree retained: %s\n' "$path_to_remove" >&2
+		printf '%s\n' '--force cannot override lifecycle registry checks.' >&2
+		return 1
+	fi
 
 	return 0
 }

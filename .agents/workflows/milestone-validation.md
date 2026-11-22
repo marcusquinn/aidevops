@@ -54,7 +54,7 @@ failed; you are not implementing features.
 the milestone failed. Continue only with planned checks whose results can change
 the repair plan; do not broaden verification merely to collect more output.
 
-**Use the cheapest tool that works.** `curl` + status codes for most checks. Playwright only for rendered output, JS-dependent content, or visual layout. Stagehand only when page structure is unknown.
+**Use the cheapest tool that works.** `curl` + status codes for most checks. Playwright for rendered output, JS-dependent content, visual layout, and bounded discovery of unknown page structure.
 
 ## Lifecycle Position
 

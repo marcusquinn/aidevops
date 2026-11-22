@@ -326,10 +326,12 @@ else
 	print_result "Fix B: partial when open PR exists" 1 "got '$crash_type_pr'"
 fi
 
-# Test 6: returns 'partial' when a remote branch references the issue
+# Test 6: returns 'partial' when a remote branch references the issue.
+# GH#36766 (b2b0de099): the classifier reads `gh api --paginate --slurp`, so
+# the branches response is an array of pages, each an array of branches.
 reset_gh_state
 printf '[]' >"$GH_PR_LIST_RESPONSE"
-printf '[{"name":"bugfix/t18418-fix"},{"name":"main"}]' >"$GH_API_BRANCHES_RESPONSE"
+printf '[[{"name":"bugfix/t18418-fix"},{"name":"main"}]]' >"$GH_API_BRANCHES_RESPONSE"
 crash_type_branch=$(_classify_stale_recovery_crash_type "18418" "owner/repo")
 if [[ "$crash_type_branch" == "partial" ]]; then
 	print_result "Fix B: partial when issue-named branch exists" 0
@@ -340,7 +342,7 @@ fi
 # Test 7: returns 'no_work' when no PR and no matching branch
 reset_gh_state
 printf '[]' >"$GH_PR_LIST_RESPONSE"
-printf '[{"name":"main"},{"name":"feature/unrelated-9999"}]' >"$GH_API_BRANCHES_RESPONSE"
+printf '[[{"name":"main"},{"name":"feature/unrelated-9999"}]]' >"$GH_API_BRANCHES_RESPONSE"
 crash_type_none=$(_classify_stale_recovery_crash_type "18418" "owner/repo")
 if [[ "$crash_type_none" == "no_work" ]]; then
 	print_result "Fix B: no_work when no PR and no matching branch" 0
@@ -348,20 +350,22 @@ else
 	print_result "Fix B: no_work when no PR and no matching branch" 1 "got '$crash_type_none'"
 fi
 
-# Test 8: defensive — returns no_work for invalid issue number
+# Test 8: defensive — invalid input is not failure evidence. GH#36766
+# (b2b0de099) changed this from no_work to unknown so bad input never feeds
+# the no_work fast-fail breaker.
 crash_type_invalid=$(_classify_stale_recovery_crash_type "not-a-number" "owner/repo")
-if [[ "$crash_type_invalid" == "no_work" ]]; then
-	print_result "Fix B: no_work on invalid issue number" 0
+if [[ "$crash_type_invalid" == "unknown" ]]; then
+	print_result "Fix B: unknown on invalid issue number" 0
 else
-	print_result "Fix B: no_work on invalid issue number" 1 "got '$crash_type_invalid'"
+	print_result "Fix B: unknown on invalid issue number" 1 "got '$crash_type_invalid'"
 fi
 
-# Test 9: defensive — returns no_work for empty repo slug
+# Test 9: defensive — empty repo slug is not failure evidence (GH#36766).
 crash_type_no_repo=$(_classify_stale_recovery_crash_type "18418" "")
-if [[ "$crash_type_no_repo" == "no_work" ]]; then
-	print_result "Fix B: no_work on empty repo slug" 0
+if [[ "$crash_type_no_repo" == "unknown" ]]; then
+	print_result "Fix B: unknown on empty repo slug" 0
 else
-	print_result "Fix B: no_work on empty repo slug" 1 "got '$crash_type_no_repo'"
+	print_result "Fix B: unknown on empty repo slug" 1 "got '$crash_type_no_repo'"
 fi
 
 # --- Fix C: pre-launch aborts delete noisy dispatch claims ---
@@ -516,6 +520,30 @@ if [[ "$first_observation" != "$second_observation" &&
 	print_result "blocker recovery uses real lifecycle attempt identity and allowlisted actions" 0
 else
 	print_result "blocker recovery uses real lifecycle attempt identity and allowlisted actions" 1
+fi
+
+# GH#36760: the contract shared by normal, clean-room and fallback launches
+# requests a public-safe question; the rendered observation names that input.
+question_contract=$(_dlw_first_pass_completion_contract)
+if [[ "$question_contract" == *'TERMINAL_BLOCKER_QUESTION=<sanitized one-line question>'* &&
+	"$question_contract" == *'at most 500 characters'* &&
+	"$question_contract" == *'never include secrets'* ]]; then
+	print_result "worker contract requests a bounded public-safe input question" 0
+else
+	print_result "worker contract requests a bounded public-safe input question" 1
+fi
+blocker_fingerprint=$(_terminal_blocker_hash 'v2:input_required:maintainer')
+input_observation=$(PRIVACY_REPOS_CONFIG="$REPOS_JSON" \
+	AIDEVOPS_TERMINAL_BLOCKER_QUESTION='Which deployment region should be used?' \
+	terminal_blocker_observation_fragment 111111111111111111111111 "$blocker_fingerprint")
+missing_observation=$(AIDEVOPS_TERMINAL_BLOCKER_QUESTION='' \
+	terminal_blocker_observation_fragment 111111111111111111111111 "$blocker_fingerprint")
+if [[ "$input_observation" == *'Input requested: Which deployment region should be used?'* &&
+	"$missing_observation" == *"no sanitized question recorded; the originating runner's recovery supervisor must publish one"* &&
+	"$missing_observation" != *'Input requested:'* ]]; then
+	print_result "input blocker observation exposes the question or names supervisor recovery" 0
+else
+	print_result "input blocker observation exposes the question or names supervisor recovery" 1
 fi
 
 reset_gh_state

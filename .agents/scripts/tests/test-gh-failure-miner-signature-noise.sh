@@ -84,7 +84,20 @@ gh() {
 		printf '%s\n' '{"jobs":[{"id":91958107008,"conclusion":"failure","check_run_url":"https://api.github.com/repos/marcusquinn/aidevops/check-runs/91958107008","steps":[{"name":"Enforce gate","conclusion":"failure"}]}]}'
 		return 0
 	fi
+	if [[ "$first" == "api" && "$second" == "repos/marcusquinn/aidevops" ]]; then
+		printf '%s\n' 'main'
+		return 0
+	fi
+	if [[ "$first" == "api" && "$second" == "repos/marcusquinn/aidevops/actions/runs?created="* ]]; then
+		printf '%s\n' "${GH_RUNS_JSON:-{\}}"
+		return 0
+	fi
 	if [[ "$first" == "run" && "$second" == "view" ]]; then
+		if [[ "${GH_LOG_SCENARIO:-}" == "three_column_suite_health" ]]; then
+			printf '%s\n' $'Run all shell suites on main\tUNKNOWN STEP\t2026-11-22T11:38:40.4688485Z * [new branch] planning/suite-timeout-budgets-follow-up -> origin/planning/suite-timeout-budgets-follow-up'
+			printf '%s\n' $'Run all shell suites on main\tRun every root suite\t2026-11-22T12:21:26.5245551Z ##[error]116 red suites on main (storm bound 10); see the suite-health artifact'
+			return 0
+		fi
 		if [[ "${GH_LOG_SCENARIO:-}" == "unstructured_echoed_runner_guard" ]]; then
 			printf '%s\n' 'sync / Sync Issue Hygiene on PR Merge	UNKNOWN STEP	2026-08-04T20:48:14.7114649Z ^[[36;1m  echo "::error::Runner Git binary is unavailable before guard activation"^[[0m'
 			printf '%s\n' 'sync / Sync Issue Hygiene on PR Merge	UNKNOWN STEP	2026-08-04T20:48:27.8644706Z ERROR: closing issue #29494 has no exact ref:GH#29494 TODO mapping'
@@ -121,6 +134,10 @@ assert_equals "GH#29522 timestamp-prefixed runner source cannot become infrastru
 GH_LOG_SCENARIO="qlty_unstructured_source"
 signature=$(extract_failure_signature "marcusquinn/aidevops" "30898422945" "91958107008")
 assert_equals "GH#29468 qlty source comment cannot mask structured error" "Qlty Smell Regression Enforce gate 2026-08-04T10:01:52.5242388Z ##[error]Qlty smell regression detected (exit 1)." "$signature"
+
+GH_LOG_SCENARIO="three_column_suite_health"
+signature=$(extract_failure_signature "marcusquinn/aidevops" "45018291419" "")
+assert_equals "GH#39884 three-column annotation wins over checkout timeout branch" "Run all shell suites on main Run every root suite 2026-11-22T12:21:26.5245551Z ##[error]116 red suites on main (storm bound 10); see the suite-health artifact" "$signature"
 GH_LOG_SCENARIO="echoed_runner_guard"
 
 event_file=$(mktemp)
@@ -156,6 +173,9 @@ assert_equals "cyan runner-echoed executable source is filtered" $'job\tStep\tti
 
 filtered=$(filter_signature_noise_lines $'sync / Sync Issue Hygiene on PR Merge\tUNKNOWN STEP\t2026-08-04T20:48:14.7114649Z ^[[36;1m  echo "::error::Runner Git binary is unavailable before guard activation"^[[0m\nsync / Sync Issue Hygiene on PR Merge\tUNKNOWN STEP\t2026-08-04T20:48:27.8644706Z ERROR: closing issue #29494 has no exact ref:GH#29494 TODO mapping')
 assert_equals "GH#29522 three-field timestamped source is filtered" $'sync / Sync Issue Hygiene on PR Merge\tUNKNOWN STEP\t2026-08-04T20:48:27.8644706Z ERROR: closing issue #29494 has no exact ref:GH#29494 TODO mapping' "$filtered"
+
+filtered=$(filter_signature_noise_lines $'job\tUNKNOWN STEP\t2026-11-22T11:38:40Z + # cannot merge\njob\tStep\t2026-11-22T12:21:26Z ##[error]real failure')
+assert_equals "GH#39884 three-column timestamped comments are filtered" $'job\tStep\t2026-11-22T12:21:26Z ##[error]real failure' "$filtered"
 
 filtered=$(filter_signature_noise_lines $'gate / review-bot-gate\tUNKNOWN STEP\t2026-06-30T20:14:24.8559907Z\t\033[36;1m# rate-limit grace is disabled — they cannot merge on rate-limit-only.\033[0m')
 signature=$(normalize_signature_line "$filtered")
@@ -195,6 +215,59 @@ assert_equals "infrastructure title names events rather than checks" "Infrastruc
 strong_single_events='[{"repo":"marcusquinn/aidevops","source_kind":"pr","source_ref":"3","source_url":"https://example.invalid/pull/3","check_name":"CI","conclusion":"failure","signature":"infra:billing_annotation","is_infra":true,"infra_reason":"billing_annotation"}]'
 strong_single_cluster=$(build_infra_advisory_cluster "$strong_single_events" "marcusquinn/aidevops" "2")
 assert_equals "structured billing annotation remains sufficient evidence" "billing_annotation" "$(printf '%s\n' "$strong_single_cluster" | jq -r '.infra_reasons[0]')"
+
+wf_failed='{"workflow_runs":[
+  {"id":3,"workflow_id":7,"name":"Issue Sync","event":"pull_request_target","status":"completed","conclusion":"failure","created_at":"2026-11-19T03:00:00Z","head_branch":"x"},
+  {"id":2,"workflow_id":7,"name":"Issue Sync","event":"pull_request_target","status":"completed","conclusion":"failure","created_at":"2026-11-19T02:00:00Z","head_branch":"x"},
+  {"id":1,"workflow_id":7,"name":"Issue Sync","event":"pull_request_target","status":"completed","conclusion":"failure","created_at":"2026-11-19T01:00:00Z","head_branch":"x"},
+  {"id":4,"workflow_id":8,"name":"CI","event":"pull_request","status":"completed","conclusion":"failure","created_at":"2026-11-19T03:00:00Z","head_branch":"x"},
+  {"id":5,"workflow_id":9,"name":"Build","event":"push","status":"completed","conclusion":"failure","created_at":"2026-11-19T03:00:00Z","head_branch":"feature"}
+]}'
+wf_selected=$(select_current_workflow_failures_json "$wf_failed" "main")
+assert_equals "GH#39228 three failed pull_request_target runs of one workflow are selected" "3" "$(printf '%s\n' "$wf_selected" | jq 'length')"
+assert_equals "GH#39228 pull_request and non-default push runs are excluded" "1" "$(printf '%s\n' "$wf_selected" | jq '[.[].workflow_id] | unique | length')"
+
+wf_recovered=$(printf '%s\n' "$wf_failed" | jq -c '.workflow_runs += [{"id":6,"workflow_id":7,"name":"Issue Sync","event":"pull_request_target","status":"completed","conclusion":"success","created_at":"2026-11-19T04:00:00Z","head_branch":"x"}]')
+wf_selected=$(select_current_workflow_failures_json "$wf_recovered" "main")
+assert_equals "GH#39228 newest successful run suppresses recovered workflow" "0" "$(printf '%s\n' "$wf_selected" | jq 'length')"
+
+GH_RUNS_JSON="$wf_failed"
+GH_LOG_SCENARIO="echoed_runner_guard"
+e2e_events=$(extract_failed_events_json "48" "100" "marcusquinn/aidevops" "true" "8" "false")
+e2e_clusters=$(build_repo_clusters_json "$e2e_events")
+assert_equals "GH#39228 end-to-end report yields one workflow cluster" "1" "$(printf '%s\n' "$e2e_clusters" | jq 'length')"
+assert_equals "GH#39228 cluster counts every failed run" "3" "$(printf '%s\n' "$e2e_clusters" | jq '.[0].count')"
+assert_equals "GH#39228 cluster is named for the workflow" "Issue Sync" "$(printf '%s\n' "$e2e_clusters" | jq -r '.[0].check_name')"
+GH_RUNS_JSON="$wf_recovered"
+e2e_events=$(extract_failed_events_json "48" "100" "marcusquinn/aidevops" "true" "8" "false")
+assert_equals "GH#39228 end-to-end report is empty once newest run succeeded" "0" "$(printf '%s\n' "$e2e_events" | jq 'length')"
+unset GH_RUNS_JSON GH_LOG_SCENARIO
+
+sched_runs='{"workflow_runs":[{"id":11,"workflow_id":21,"name":"Shell Suite Main Health","event":"schedule","status":"completed","conclusion":"failure","created_at":"2026-11-20T03:00:00Z","head_branch":"main"}]}'
+sched_selected=$(select_current_workflow_failures_json "$sched_runs" "main")
+assert_equals "GH#39472 single failed scheduled run is selected" "1" "$(printf '%s\n' "$sched_selected" | jq 'length')"
+sched_events='[{"repo":"marcusquinn/aidevops","source_kind":"workflow","source_ref":"schedule:11","source_url":"u","check_name":"Shell Suite Main Health","conclusion":"failure","signature":"sig","is_infra":false}]'
+sched_clusters=$(build_repo_clusters_json "$sched_events")
+assert_equals "GH#39472 scheduled cluster is flagged" "true" "$(printf '%s\n' "$sched_clusters" | jq -r '.[0].scheduled')"
+nonsched_clusters=$(build_repo_clusters_json "$(printf '%s\n' "$sched_events" | jq -c '.[0].source_ref="push:11"')")
+assert_equals "GH#39472 non-scheduled single event is not flagged" "false" "$(printf '%s\n' "$nonsched_clusters" | jq -r '.[0].scheduled')"
+
+# GH#39595: closed issue newer than every failed event suppresses refiling.
+gh() {
+	if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
+		printf '%s\n' '[{"closedAt":"2026-11-20T16:45:00Z"}]'
+		return 0
+	fi
+	return 1
+}
+if closed_issue_covers_signal "marcusquinn/aidevops" "gh-failure-miner:x" "2026-11-20T12:33:00Z"; then rc=0; else rc=1; fi
+assert_equals "GH#39595 closure after newest event suppresses filing" "0" "$rc"
+if closed_issue_covers_signal "marcusquinn/aidevops" "gh-failure-miner:x" "2026-11-20T18:00:00Z"; then rc=0; else rc=1; fi
+assert_equals "GH#39595 failure newer than closure still files" "1" "$rc"
+if closed_issue_covers_signal "marcusquinn/aidevops" "gh-failure-miner:x" ""; then rc=0; else rc=1; fi
+assert_equals "GH#39595 unknown event time still files" "1" "$rc"
+newest_clusters=$(build_repo_clusters_json "$(printf '%s\n' "$sched_events" | jq -c '.[0].completed_at="2026-11-20T12:33:00Z"')")
+assert_equals "GH#39595 cluster records newest event time" "2026-11-20T12:33:00Z" "$(printf '%s\n' "$newest_clusters" | jq -r '.[0].newest_event_at')"
 
 printf '\nTests run: %s, failures: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -ne 0 ]]; then

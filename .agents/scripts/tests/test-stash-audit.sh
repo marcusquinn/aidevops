@@ -14,17 +14,25 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 STASH_HELPER="${SCRIPT_DIR}/../stash-audit-helper.sh"
 
-GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
+GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-${TEST_NATIVE_GIT}}"
 git() {
 	"$GIT_BIN" "$@"
 	return $?
 }
 export -f git
 
-# Source the helper so the test-local /usr/bin/git wrapper also applies to
+# Source the helper so the test-local native Git wrapper also applies to
 # helper calls under runtimes that install a canonical-repo git guard.
 # shellcheck source=../stash-audit-helper.sh
 source "$STASH_HELPER"

@@ -64,7 +64,7 @@ tech-stack-helper.sh lookup example.com --provider crft --json
 
 # SEO integration
 tech-stack-helper.sh lookup client-site.com --provider crft --json | jq '.technologies'
-pagespeed-helper.sh run client-site.com  # detailed Lighthouse
+pagespeed-helper.sh lighthouse https://client-site.com  # detailed Lighthouse
 
 # Competitor batch
 for site in competitor1.com competitor2.com competitor3.com; do

@@ -11,6 +11,21 @@ Reference for diagnosing headless worker failures. Workers are OpenCode instance
 
 <!-- AI-CONTEXT-END -->
 
+## macOS user lookup outage: restart, do not retry
+
+If `id -un` prints a numeric UID (for example `501`), tools report
+`No user exists for uid`, or Directory Services cannot read the current
+account's `UniqueID`, stop retrying operations and polling for recovery.
+Checkpoint the session locally (Git/SSH may already be unusable), then tell
+the user to restart the Mac. Pulse and scheduled routine evaluation skip work
+while this check fails; `~/.aidevops/advisories/macos-user-lookup.advisory`
+records the restart warning and last notification attempt (at most hourly).
+
+The lock screen may reject the correct password during this outage. Restart
+before entering the password there. Do not reset the password in Recovery mode
+to work around the outage: that sets the login keychain aside rather than fixing
+user lookup. Restart first, then reassess any remaining account problem.
+
 ## Worker Lifecycle
 
 ```text
@@ -51,11 +66,38 @@ every refusal as an opaque `worker_worktree_live_owner` retry.
 Terminal continuation refusals have no runtime metric because the model was
 never invoked. `pulse-diagnose-helper.sh issue <N> --repo <owner/repo>` reports
 their count and reason distribution from pulse logs separately from model
-attempts. Repeated `CLAIM_RELEASED` zero-attempt evidence participates in the
-bounded dispatch-infrastructure hold instead of creating an unbounded claim and
-release comment loop. Once zero-attempt infrastructure evidence reaches the hold
-threshold, comment-bloat clean-room mode cannot bypass that hold; clean-room
-fallback remains available for model/brief zero-output evidence.
+attempts. Repeated zero-attempt evidence feeds a self-healing, windowed
+dispatch backoff (GH#36214) instead of an unbounded claim and release comment
+loop. Evidence is unmatched `DISPATCH_CLAIM` comments, orphan
+`DISPATCH_LEASE phase=prelaunch` comments (one per author and lease token, left
+when a pre-launch abort deletes its claim), and zero-output receipts. Authors
+must be OWNER/MEMBER or have verified repository write access, so peer runners
+that GitHub labels COLLABORATOR count. `dispatch_with_dedup` evaluates the
+backoff before claiming: while evidence inside `ZERO_OUTPUT_HOLD_WINDOW_SECONDS`
+(default 12h) reaches `ZERO_OUTPUT_BRIEF_REWRITE_HOLD_THRESHOLD` (default 4), the
+attempt posts no claim or lease, leaves labels unchanged, and logs
+`DISPATCH_BLOCK_REASON reason=zero_attempt_backoff`. At most one
+`dispatch-infrastructure-failure` notice is posted per window. Dispatch resumes
+when evidence ages out, or sooner after an OWNER/MEMBER
+`<!-- dispatch-infrastructure-reset -->` comment. Comment-bloat clean-room mode
+cannot bypass the backoff; clean-room fallback remains available for model/brief
+zero-output evidence.
+
+A `permission_required` terminal-blocker hold (observation or circuit) with no
+published permission request uses the same window (GH#36232). With no
+`needs-maintainer-permissions` label and no undecided
+`<!-- aidevops-permission-request -->` comment (no later OWNER/MEMBER signed
+grant, withdrawal or retry), the hold stops blocking once its newest event is
+one window old. `terminal-blocker-recovery-helper.sh` then projects
+`status:available` with decision `unevidenced_permission_window`. Its hidden
+rearm receipt binds the event and window index, so it releases at most once per
+window. Re-arming grants nothing: a worker that meets the real guard again must
+run `worker-permission-helper.sh request`, and that request keeps the hold.
+After a re-arm, the login that released the hold skips the issue for
+`AIDEVOPS_PERMISSION_PEER_GRACE_SECONDS` (default 3600; 0 disables), so a peer
+gets the first claim (GH#38957). Dedup logs
+`TERMINAL_BLOCKER_PERMISSION_PEER_PREFERENCE retry_after=<epoch>`. A peer either
+completes the task or adds the second-runner evidence for the fleet hold.
 
 ### Dispatch claim comment states
 
@@ -92,6 +134,30 @@ without a new denied tool call. Its known-blocker circuit is bound to the issue,
 not unrelated code/brief edits or dependency API availability. Resolve the
 human-owned prerequisite before explicitly retrying; scheduling consent never
 grants source access, and the original guard must verify the exact context.
+When the same final message also carries exactly one valid
+`TERMINAL_BLOCKER_INPUT_OWNER` and one `TERMINAL_BLOCKER_QUESTION`, the
+capture records `input_required:<owner>` instead (GH#38951): one named person
+can answer it in the issue, so the release publishes `Input requested:` and the
+`/decisions` queue lists it. A bare denial with no ask keeps its class.
+
+An `external_trigger_pending` report may add one final-message
+`TERMINAL_BLOCKER_TRIGGER=<event, owner or date>` line (GH#38353); AI triage of
+an unclassified report supplies its quoted evidence instead. The release
+publishes it as `Trigger awaited: <text>` only when every privacy guard leaves it
+unchanged: URLs, paths, inventory names, credential shapes, markup, controls and
+over 500 characters drop the line whole. `approval-snapshot-v2.sh` treats the
+exact line (and the GH#38360 `Unblock label:` companion line) as canonical;
+extra prose stays content-bound. `terminal-blocker-trigger-revisit.sh`, a
+post-dispatch housekeeping stage on maintainer repos, revisits each hold once
+due (first after `AIDEVOPS_TRIGGER_REVISIT_INTERVAL_S`, default 24 hours, then
+doubling to 7 days). An AI decision over the trigger and newer issue and linked
+evidence records one outcome per hold in
+`~/.aidevops/logs/terminal-blocker-trigger-revisit/`: `trigger_met` (quoted
+evidence required) posts the standalone retry directive or queues recovery,
+`still_pending` schedules the next revisit, and `not_external` routes the hold
+to recovery triage. The pass restores `status:blocked` when a held unassigned
+issue shows `status:available`. Permission and source-access holds are never
+revisited.
 
 A missing verification tool, or a forbidden dependency install, is not a
 permission boundary (GH#34110). Workers first check repository-declared tools
@@ -100,7 +166,16 @@ permission boundary (GH#34110). Workers first check repository-declared tools
 hold. A missing static linter that CI also runs (ShellCheck, markdownlint) is a
 CI handoff, not this class (GH#34758). A capability release keeps an open draft
 `status:available`, and `pr-checkpoint-continuation-helper.sh dispatch-stalled`
-continues that exact head once per head before posting attention.
+continues that exact head on another runner. Capability releases describe the
+releasing runner, not the head, so together they count as one original stall;
+one genuine stall after them still posts attention (GH#35883). A runner whose
+own login released the head for a missing capability skips it without a
+comment until a newer standalone OWNER/MEMBER `terminal-blocker-circuit:retry`;
+a new head re-arms every runner. The successor's worker fence accepts the
+capability release after ownership transfers. Continuation also links worker
+drafts whose only link is a line-start `For #N` or `Ref #N` (GH#33374), and
+treats `origin:interactive` as provenance: with `auto-dispatch` it holds the
+draft only while a newer trusted interactive session claim owns the issue.
 `repo-verify-pre-push.sh` labels missing Python tools as tooling, not
 source defects. Terminal-only reports create no progress-blocker events;
 `pulse-diagnose-helper.sh issue` shows a separate "Terminal blocker" section and
@@ -257,6 +332,7 @@ Safety boundaries:
   Actions incident suppresses the rerun and classifies delayed queued checks as
   provider saturation; an unavailable status feed fails open. Use
   `AIDEVOPS_SKIP_GITHUB_ACTIONS_STATUS=1` only as an explicit emergency bypass.
+  For runs still stranded after recovery, see [orphaned queued runs](#orphaned-queued-runs-after-a-github-incident).
 
 Diagnosis commands:
 
@@ -275,6 +351,32 @@ required checks limited to fast core gates where possible and run broad E2E at
 staging/release boundaries. If advisory E2E finds a real defect, file a focused
 follow-up task with the failing check/artifact evidence instead of closing the
 current PR or redispatching duplicate workers. Full policy: `ci-gate-policy.md`.
+
+### Orphaned queued runs after a GitHub incident
+
+Ordinary pending checks are not failures. Suspect an orphan only when a run
+remains queued long after `gh-status-helper.sh check-actions` reports Actions
+operational, newer runs in the same repository finish, and cancellation or
+rerun requests return contradictory run states. Check the PR head and workflow
+definitions before taking action; an unavailable status feed is not evidence of
+recovery.
+
+If each affected `pull_request` workflow includes `ready_for_review` and the PR
+is already ready, an authorized operator can re-trigger it once without changing
+the head:
+
+```bash
+gh pr ready <pr-number> --repo <owner/repo> --undo
+gh pr ready <pr-number> --repo <owner/repo>
+```
+
+Confirm new runs target the same head and satisfy the required check names;
+normal CI and merge protections still apply. If the workflow instead supports
+`workflow_dispatch`, dispatch it on the PR branch only when its resulting check
+names and association satisfy the PR's required checks. Otherwise leave the PR
+pending and escalate the provider issue; do not create an empty commit or bypass
+a gate. Avoid closing and reopening the PR, which can change issue and automation
+state. Do not repeat the toggle while replacement runs are pending.
 
 ### Review-thread remediation
 
@@ -407,6 +509,32 @@ ps aux | grep 'worker-activity-watchdog\|activity_watchdog' | grep -v grep
 grep WATCHDOG_KILL /tmp/pulse-*-<issue>.log
 # Check for CLAIM_RELEASED on the issue
 gh api repos/<slug>/issues/<num>/comments --jq '.[] | select(.body | test("CLAIM_RELEASED")) | .created_at'
+```
+
+**Quiet worker not killed (GH#36700)**: a stall is deliberately deferred while
+there is evidence of live work — CI-wait text, an established HTTPS/API socket
+in the worker process tree (`network_active`), or recent CPU (`cpu_active`).
+Deferrals never write to the monitored output file. They are recorded as
+`[lifecycle] worker_stall_deferred ... elapsed=… hard_kill=…` in the shared
+lifecycle log (`WORKER_LIFECYCLE_LOG`, default
+`~/.aidevops/logs/pulse-dispatch.log`) and in the per-attempt
+`<exit-code-file>.watchdog_events` file, which also starts with a
+`watchdog_monitoring` line proving the watchdog ran. The wrapper log names both
+paths in `activity_watchdog_started` and prints `watchdog_summary` (deferral
+count and last event only) after the worker exits. The `.watchdog_events`
+sidecar is temporary: normal attempt cleanup deletes it, so for post-run
+diagnosis use the shared lifecycle log, which keeps `worker_stall_deferred` and
+`worker_killed` events. A deferred worker is killed only by the
+`WORKER_STALL_HARD_KILL_SECONDS` cap (default 1500s, `hard_kill_cap_active`;
+`0` disables it). The cap is checked only at a confirmed stall and each deferral
+resets the stall timer, so the kill can land up to one more
+`WORKER_STALL_TIMEOUT` window (default 600s) plus poll overhead after the cap,
+up to about 2100s with defaults. An external per-attempt timeout (`timeout(1)`,
+systemd `TimeoutStartSec`) shorter than cap + stall timeout + margin can end the
+worker first; raise the external timeout or lower the cap for that runner.
+
+```bash
+rg 'worker_stall_deferred|worker_killed' ~/.aidevops/logs/pulse-dispatch.log | tail -20
 ```
 
 ### Provider-scoped startup (t3420)
@@ -963,8 +1091,12 @@ Current orphan-loop recovery uses `status:blocked`; the root-cause repair or an 
 
 ## GitHub API Budget, Instrumentation, and Cache Priming
 
+- **Native composite accounting (GH#37888):** one native CLI invocation is not necessarily one HTTP request. Before attributing a quota residual to another device, distinguish logical events from transport attempts and check opaque native pagination/composite paths. For a bounded reproduction of the affected command on the affected host, use the existing opt-in `AIDEVOPS_GH_EXACT_QUOTA_CAPTURE=1` with `GH_DEBUG` unset. `gh-quota-attribution-lib.sh` captures response frames through `gh-quota-debug-filter.py`, records observed attempts rather than a guessed per-subcommand cost, and deletes private debug payloads before appending sanitized telemetry. This mode suppresses native stderr (including errors), serializes capture by credential, and can fall back to opaque accounting; inspect the exit status, attempt metadata and route decisions, not just the logical row count. Do not enable it fleet-wide as a transparent fix or infer that every frame has known quota cost. Correlate a complete credential/reset series with the routine's execution interval. A process/network sample alone, especially one showing no connection, neither measures request cost nor proves an off-host consumer. See `reference/github-api-transport.md` for exact-capture versus admission-governor boundaries.
+
 - **REST fallback (t2574, t2744, t2902, t3459, GH#22478):** `shared-gh-wrappers.sh` routes eligible reads/writes through REST when GraphQL remaining <= the fallback threshold, preserving GraphQL for calls without REST equivalents. Eligible `gh_issue_view`, `gh_issue_list`, `gh_pr_view`, and `gh_pr_list` reads route to REST proactively before spending a GraphQL-backed `gh` call. During a pulse cycle, `pulse-wrapper.sh` exports `AIDEVOPS_GH_FORCE_REST_READS=1` when GraphQL remaining is at or below `AIDEVOPS_GH_REST_FALLBACK_THRESHOLD` but above the hard circuit-breaker floor, so supported wrappers avoid both repeated `rate_limit` probes and first GraphQL attempts. Issue search uses `/search/issues` to preserve search semantics; PR `--search` remains GraphQL-only because the REST pulls endpoint has no equivalent. Overrides: `AIDEVOPS_GH_REST_FALLBACK_THRESHOLD`, `AIDEVOPS_GH_REST_FALLBACK_CACHE_TTL`, `AIDEVOPS_PULSE_FORCE_REST_READS_ON_LOW_GRAPHQL=0`.
 - **Instrumentation (t2902):** routed `gh` calls append to `~/.aidevops/logs/gh-api-calls.log` and aggregate by stage in `~/.aidevops/logs/gh-api-calls-by-stage.json`. Helper: `gh-api-instrument.sh record|report|trim|clear`. Instrumentation is fail-open.
+- **Same-login external REST drain (t18804, GH#36054):** first compare the local `~/.aidevops/state/device-id` with `device=` in `DISPATCH_CLAIM` comments for the same `runner=` login; a different device is evidence of another device using that login, not proof of its exact quota cost. Automate it offline: save claim comment text to a file and set `AIDEVOPS_QUOTA_CLAIM_EVIDENCE_FILE` plus `AIDEVOPS_QUOTA_SELF_LOGIN`; `gh-checks-wait-helper.sh quota-report` (`foreign_device_hint`) and `gh-api-instrument.sh report` (`rest_core_attribution.foreign_device_hint`) then emit `same_login_foreign_device`, `none` or `unknown` without spending quota. Without that file both reports fall back automatically to the local `pulse.log` (GH#37888): a cross-runner guard line whose `runner=` equals `self=` but whose `device=` is not local, or a `CLAIM_LOST` against the same login, within the last 7 days (`AIDEVOPS_QUOTA_FOREIGN_DEVICE_LOOKBACK_S`) yields `same_login_foreign_device`; the fallback never yields `none`. The operator fix is one login or GitHub App installation per host, or one pulse per login. A user token shares one 5,000/h REST-core quota with every client of that login, including hosted apps and CI using the owner's PAT. Run `gh-api-instrument.sh report <out> <window_s>` and read `rest_core_attribution.series[]`: `same_login_external_cost` is an upper-bound estimate of quota use not explained by logged local attempts, not proof of an off-host consumer; unknown costs and uninstrumented local callers can also contribute. Check for an ownerless stale `ever-nmr-cache.json.lockdir` and lock timeouts: repeated cache misses can trigger paginated timeline calls; lock reclamation is tracked by GH#37869. Per-minute bursts aligned to wall-clock boundaries (for example every `:x0`/`:x5`) with low local `logged_quota_cost` suggest a scheduled consumer to investigate. Sample free `gh api rate_limit` every 2-3 s across a boundary to confirm aggregate quota changes, not the consumer's identity; search owned app repos for `*/5` crons using a user token as one hypothesis, and corroborate with consumer-side logs. Fix at the identified consumer: conditional requests (`If-None-Match`; a 304 costs no quota) with a cache that survives restarts or a `since=` change scan, or a GitHub App installation access token with its own installation quota. A GitHub App user access token still shares the user's quota.
+- **Same-host, other-OS-user pulse (GH#37313):** a second OS account on the same server that runs its own `pulse-wrapper.sh`/`pulse-merge-routine.sh` with the same GitHub login spends the shared REST-core quota but writes `gh-api-calls.log` under its own home, so this account's `quota-report` counts it as `same_login_external_cost`. Signature: unattributed bursts of 200-500/min with 1-30 logged calls, not aligned to `:x0`/`:x5`, and, optionally, several `auth_fingerprint` series (non-specific: the other account's token is absent from this log, so a same-login drain can show a single series). Check with `ps -eo user,args | rg 'pulse-wrapper|pulse-merge-routine|gh-transport-governor'` (more than one user) and compare `gh api user --jq .login` as each account (the other account's log is unreadable by design, so ask its operator to run `gh-checks-wait-helper.sh quota-report 5400`; `used_delta` is shared-quota change, not that account's own requests, so compare its `known_local_cost` and time-bounded logs against the affected intervals before attributing the drain). Fix by giving each OS account its own GitHub App installation or separate login, or by running one pulse per login. An App installation token isolates only the runner registration requests; jobs on those runners can still spend the shared user quota if they use a user PAT, so check job credentials before excluding a runner pool.
 - **Circuit breaker (t2690, t2744, t2896):** worker dispatch pauses when GraphQL budget is below the emergency 5% floor. Counter: `pulse_dispatch_circuit_broken` in `pulse-stats.json`. Overrides: `AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD`, `AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER=1`.
 - **Budget priority scheduler (GH#22479):** when GraphQL remaining falls below the optional-stage reserve threshold (default `AIDEVOPS_PULSE_PREFETCH_BUDGET_THRESHOLD`, override `AIDEVOPS_PULSE_OPTIONAL_BUDGET_THRESHOLD`), the wrapper enters reserve mode instead of skipping the whole cycle. Merge readiness, dispatch capacity/safety gates, dependency graph refresh, and dispatch attempts retain first claim on budget. Optional cache priming, review/enrichment scanners, routine evaluation, canonical maintenance, dashboard freshness checks, and the LLM supervisor defer until budget recovers. Counters: `pulse_graphql_budget_reserve_mode`, `pulse_graphql_budget_stage_deferred`, and `pulse_graphql_budget_stage_deferred_<stage>`.
 - **Rate-limit status cache (t3422):** `pulse-rate-limit-circuit-breaker.sh` caches the free `gh api rate_limit` response for 20s at `~/.aidevops/cache/pulse-graphql-rate-limit.json`. Use `pulse-rate-limit-circuit-breaker.sh status --cached` inside diagnostics that must not touch the network; use plain `status` when you need a fresh free endpoint read. Override: `AIDEVOPS_PULSE_RATE_LIMIT_CACHE_TTL`.
@@ -1052,6 +1184,38 @@ runner infrastructure, recursive scope, or actual lint/type/test diagnostics.
 Keep heartbeat wrappers narrowly scoped or temporary unless the project already
 has a reusable CI helper.
 
+## Sustained underfill attribution (GH#36625)
+
+After three distinct Pulse cycles with at least 50% vacant slots, runnable work
+for at least 5% of slots, load below the core count and memory above the existing
+RAM reserve, Pulse emits `UNDERFILL_ATTRIBUTION runner=... deficit=... top=reason:count,...`.
+Load is diagnostic only: this does not change RAM-only worker admission.
+
+`pulse-check-helper.sh` includes the fresh attribution in its health summary and
+JSON `current_state.underfill_attribution`. The local cache is
+`~/.aidevops/cache/pulse-underfill.json`; it records blocker counts, headroom,
+disk free, and the raw/final target and explicit config-clamp source. Each sample
+counts the new log interval since the prior sample (up to 1 MiB), not historical
+failures from the whole log. Several recycler calls in one cycle count only once.
+A gap longer than 15 minutes resets the consecutive-cycle trigger.
+
+Remedies are data in `configs/underfill-remediation.conf`. Worktree pressure uses
+the existing isolated async cleanup launcher and its lock/cadence safeguards,
+outside the dispatch deadline. Permission, secret, pacing and checkpoint causes
+produce local advisories with diagnostic/recovery steps; no approval, safety cap
+or secret-store gate is relaxed. Checkpoints route to the existing pulse-check
+triage digest. The advisory channel is `~/.aidevops/advisories/underfill-*.advisory`,
+deduplicated per local runner account and cause for 24 hours. Deficit recovery
+below 50% clears the advisories and re-arms escalation. No GitHub comment stream
+or new ops issue is created. A full explicitly clamped pool is compared against
+detected per-runner RAM capacity to expose a potentially intentional config cap;
+the advisory never changes that setting automatically.
+
+Verify without dispatching or touching live cleanup state:
+`bash .agents/scripts/tests/test-pulse-underfill-attribution.sh`.
+On a live capped runner, check the health summary after three qualified cycles;
+do not create artificial worktree pressure on a production runner.
+
 ## Diagnostic Quick Reference
 
 | Symptom | Check | Likely cause |
@@ -1062,7 +1226,7 @@ has a reusable CI helper.
 | Workers dispatch but produce 0 bytes | Version check, `opencode --version` | Wrong OpenCode version, auth failure |
 | PRs created but not merged | `pulse-diagnose-helper.sh pr <PR> --repo <owner/repo>` and `gh pr checks <PR> --repo <owner/repo> --watch=false` | Review bot gate, required-check failure/pending, mergeability, or branch-protection state |
 | Claim/release loop | Comment history on issue | Stale claims, guard rejections — recreate issue with clean context |
-| Watchdog doesn't fire | `ps aux \| grep watchdog` | Watchdog process died with subshell |
+| Watchdog doesn't fire | `ps aux \| grep watchdog`; `rg worker_stall_deferred ~/.aidevops/logs/pulse-dispatch.log`; wrapper `watchdog_summary` | Liveness deferral (`network_active`/`cpu_active`/`ci_wait`) until the hard cap, an external timeout shorter than the cap plus one stall window, or the watchdog process died |
 | `CLAIM_RELEASED reason=launch_recovery:no_worker_process` on multiple issues | `grep "no active worker process" ~/.aidevops/logs/pulse-wrapper.log` | Cluster failure on one runner — retries at same tier (no cascade escalation, t2815); check system load |
 | `CLAIM_RELEASED reason=stale_assignment_reset` while the worker still ran | `rg "Stale assignment (reset\|skip)" ~/.aidevops/logs/pulse-wrapper.log`; compare the release `device=` with the dispatch marker's `device=` | Stale sweep judged the dispatch local. Same-login dispatches from another device use the cross-runner `WORKER_MAX_RUNTIME` expiry (GH#35218); a mismatch here means the device ID is unset or shared between hosts |
 | Few workers despite a full queue | `pulse-stage-timings.log` stages at `600`/exit `124`; `dispatch-stages.tsv` per-stage averages; `rg -o "DISPATCH_BLOCK_REASON reason=[a-z_]+" pulse.log \| sort \| uniq -c`; `pulse-watchdog.log` "pulse dead for"; `auto-update.log` "Requesting Pulse restart" count | Slow preflight or routine stage ahead of dispatch, costly late rejections, or redeploys killing in-flight cycles (GH#32633) |
@@ -1183,7 +1347,7 @@ When workers are failing systemically:
 5. **Watchdog**: `ps aux | grep watchdog` — are watchdog processes surviving?
 6. **Pulse log**: `tail -30 ~/.aidevops/logs/pulse.log` — dedup blocked? backoff? claim errors?
 7. **Issue comments**: check for `CLAIM_RELEASED` / `DISPATCH_CLAIM` comment loops
-8. **Review add-on**: `review-bot-gate-helper.sh check <PR>` — default no-response is `PASS_ADVISORY`; `WAITING` means explicit strict/wait policy or the external-contributor trust boundary is blocking
+8. **Review add-on**: `review-bot-gate-helper.sh check <PR>` — default no-response is `PASS_ADVISORY`; `WAITING` means explicit strict/wait policy is blocking (GH#36931)
 
 ## Pre-Dispatch Eligibility Gate (t2424)
 

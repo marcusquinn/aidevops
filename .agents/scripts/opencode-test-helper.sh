@@ -40,7 +40,8 @@ Commands:
                                Capture TUI text; repeat --expect TEXT to assert
                                Options: --cwd DIR, --data-dir DIR, --seconds 20,
                                --tui-config FILE, --isolated-config,
-                               --cols 200, --rows 50,
+                                --cols 200, --rows 50, --click-text TEXT,
+                                --keys SEQ (unicode escapes, after click),
                                --binary opencode (opencode2: best effort)
   
 Examples:
@@ -167,7 +168,7 @@ run_passthrough() {
     return 0
 }
 
-# Capture an existing session's render without sending interactive input.
+# Capture an existing session's render, optionally injecting interaction.
 tui_capture() {
     local cwd=""
     local data_dir=""
@@ -200,7 +201,7 @@ tui_capture() {
                 data_dir=${option#*=}
                 shift
                 ;;
-            --session | --out | --seconds | --tui-config | --cols | --rows | --binary | --expect)
+            --session | --out | --seconds | --tui-config | --cols | --rows | --binary | --expect | --click-text | --keys)
                 # Skip values so an expectation such as '--cwd' is not parsed
                 # as a launcher-directory option. Python validates all flags.
                 if [[ $# -lt 2 ]]; then

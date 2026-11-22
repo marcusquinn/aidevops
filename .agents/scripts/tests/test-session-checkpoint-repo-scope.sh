@@ -39,6 +39,11 @@ trap 'rm -rf "$tmp_root"' EXIT
 
 export HOME="${tmp_root}/home"
 mkdir -p "$HOME"
+mkdir -p "$HOME/.config/aidevops"
+# A synthetic legacy assignment with a redirection makes accidental sourcing
+# visible without touching any real credential configuration.
+# shellcheck disable=SC2016
+printf '%s\n' 'SYNTHETIC=harmless >"${HOME}/credential-sentinel"' >"$HOME/.config/aidevops/credentials.sh"
 
 tmp_bin="${tmp_root}/bin"
 mkdir -p "$tmp_bin"
@@ -80,7 +85,30 @@ assert_not_contains "repo one reload" "$load_one_again" "SIBLING_REPO_SCOPED_NOT
 continuation_one="$(cd "$repo_one" && "$HELPER" continuation 2>&1)"
 assert_contains "repo one continuation" "$continuation_one" "TARGET_REPO_SCOPED_NOTE"
 assert_contains "repo one continuation memory label" "$continuation_one" "Repo-scoped memories"
+assert_contains "unavailable observer" "$continuation_one" "unavailable (no read-only batch observer)"
 assert_not_contains "repo one continuation" "$continuation_one" "SIBLING_REPO_SCOPED_NOTE"
+
+(cd "$repo_one" && "$HELPER" auto-save --task t1 >/dev/null)
+autosave_load="$(cd "$repo_one" && "$HELPER" load 2>&1)"
+assert_contains "auto-save unavailable batch" "$autosave_load" "unavailable (no read-only batch observer)"
+set +e
+grep -n -i -E '^[^#]*(pulse-wrapper|pulse-lifecycle)' "$HELPER" >/dev/null
+pulse_grep_rc=$?
+set -e
+case "$pulse_grep_rc" in
+0) fail "checkpoint helper has an executable Pulse launch path" ;;
+1) ;;
+*) fail "Pulse launch-path check could not run (grep exit ${pulse_grep_rc})" ;;
+esac
+for args in 'list --active' '--dry-run list' 'unexpected'; do
+	# Deliberate splitting exercises separate command-line arguments.
+	# shellcheck disable=SC2086
+	if bash "${REPO_ROOT}/.agents/scripts/pulse-wrapper.sh" $args >/dev/null 2>&1; then
+		fail "unsupported Pulse arguments unexpectedly succeeded: $args"
+	fi
+done
+[[ ! -e "$HOME/credential-sentinel" ]] || fail "checkpoint or invalid Pulse invocation sourced credentials"
+[[ ! -e "$HOME/.aidevops/logs/pulse-wrapper.lockdir" ]] || fail "invalid Pulse invocation acquired lifecycle lock"
 
 mkdir -p "$HOME/.aidevops/.agent-workspace/tmp"
 printf '%s\n' "LEGACY_UNRELATED_CHECKPOINT_STATE" >"$HOME/.aidevops/.agent-workspace/tmp/session-checkpoint.md"

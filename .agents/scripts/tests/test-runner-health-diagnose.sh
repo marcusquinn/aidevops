@@ -9,13 +9,14 @@
 # emits an actionable finding:
 #
 #   HEALTHY          — counter at zero, no recent zero-attempt events
-#   BUILDING         — counter > 0 and matches log evidence (or breaker
-#                      recently tripped and not yet verified)
+#   BUILDING         — counter > 0 and matches log evidence
+#   TRIPPED          — dispatch blocked, recovery not yet verified
 #   RECOVERABLE_TRIPPED
 #                    — tripped, update ran, deployed artifacts match repo
 #   WIRING_GAP       — log shows zero-attempt events the counter never saw
 #   TRIGGER_MISSED   — counter reached threshold but breaker stayed closed
-#   STUCK_TRIPPED    — breaker tripped >24h, last update failed
+#   STUCK_TRIPPED    — breaker tripped longer than RUNNER_HEALTH_NO_UPDATE_PAUSE_HOURS
+#                      (default 24h); update outcome empty/never/failed/helper_missing
 #
 # Each test builds a synthetic state file + pulse log under a sandbox HOME,
 # calls `diagnose --json`, and asserts the `finding` field. JSON path makes
@@ -224,16 +225,16 @@ else
 fi
 _teardown_sandbox
 
-# --- Test 6: BUILDING when tripped recently (not stuck) ---
+# --- Test 6: TRIPPED when recovery is not yet verified ---
 _setup_sandbox
 # tripped_at = 1h before TEST_NOW → recent trip, age 1h, not stuck.
 _write_state 10 tripped '2026-04-30T11:00:00Z' ran 'consecutive_zero_attempts=10'
 _write_log_events 10
 got=$(_finding)
-if [[ "$got" == "BUILDING" ]]; then
-	print_result "tripped 1h ago + update=ran → BUILDING" "PASS"
+if [[ "$got" == "TRIPPED" ]]; then
+	print_result "tripped 1h ago + update=ran → TRIPPED" "PASS"
 else
-	print_result "tripped 1h ago + update=ran → BUILDING" "FAIL" "got: $got"
+	print_result "tripped 1h ago + update=ran → TRIPPED" "FAIL" "got: $got"
 fi
 _teardown_sandbox
 

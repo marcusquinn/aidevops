@@ -167,8 +167,14 @@ test_process_pr_runtime_reuses_one_view() {
 }
 
 test_merge_ready_pr_list_failure_logs_error() {
-	if ! file_contains "$MERGE_PROCESS" '|| pr_json=""'; then
-		print_result "merge-ready list failure leaves empty output for error guard" 1 "gh_pr_list failure fallback must be empty so the existing -z guard logs the error"
+	# The list read records its exit status instead of substituting a value,
+	# so the guard sees the failure, logs it and marks the list incomplete
+	# before any [] fallback (an incomplete list never counts as "no PRs").
+	# shellcheck disable=SC2016 # The assertions check literal shell source.
+	if ! file_contains "$MERGE_PROCESS" '|| pr_list_rc=$?' \
+		|| ! file_contains "$MERGE_PROCESS" 'pulse_pr_list_get FAILED for ${repo_slug}: list_state=incomplete' \
+		|| ! file_contains "$MERGE_PROCESS" 'pr_list_complete=0'; then
+		print_result "merge-ready list failure reaches error logging guard" 1 "pulse_pr_list_get failure must keep its exit status, log list_state=incomplete and mark the list incomplete"
 		return 0
 	fi
 	if file_contains "$MERGE_PROCESS" '|| pr_json="[]"'; then

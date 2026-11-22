@@ -4,25 +4,71 @@
 
 [[ "${BASH_SOURCE[0]}" == "$0" ]] && set -euo pipefail
 
+# Shared awk functions for TODO row parsing (GH#35755).
+# todo_strip_comments drops <!-- ... --> spans, including multi-line comments,
+# with the same semantics as issue-sync-lib-parse.sh strip_html_comments, while
+# keeping one output line per input line so FNR diagnostics stay exact. The
+# GH#17804 TODO template keeps its format examples (t1, t2, ...) in a comment.
+# todo_normalize_id strips leading zeros per dotted segment (t034 -> t34), the
+# same identity task-id-normalize-helper.sh applies, so a normalized historical
+# duplicate is compared with its padded baseline rather than reported as new.
+_TODO_ROW_AWK_FUNCTIONS='
+function todo_strip_comments(line,    out, pos) {
+	out = ""
+	while (length(line) > 0) {
+		if (todo_in_comment) {
+			pos = index(line, "-->")
+			if (pos == 0) return out
+			line = substr(line, pos + 3)
+			todo_in_comment = 0
+		} else {
+			pos = index(line, "<!--")
+			if (pos == 0) return out line
+			out = out substr(line, 1, pos - 1)
+			line = substr(line, pos + 4)
+			todo_in_comment = 1
+		}
+	}
+	return out
+}
+function todo_normalize_id(id,    count, parts, i, segment, out) {
+	count = split(substr(id, 2), parts, ".")
+	out = substr(id, 1, 1)
+	for (i = 1; i <= count; i++) {
+		segment = parts[i]
+		sub(/^0+/, "", segment)
+		if (segment == "") segment = "0"
+		out = out (i > 1 ? "." : "") segment
+	}
+	return out
+}
+'
+
 # Emit one canonical key per task ID and issue mapping on TODO checkbox rows.
 # Keeping this parser here makes issue-sync resolution, push guards, and merge
-# guards agree about what constitutes a mapping.
+# guards agree about what constitutes a mapping. Rows inside HTML comments are
+# documentation, never mappings. Pass "normalize" as $2 to emit task IDs
+# without leading zeros (duplicate comparison); the default keeps literal IDs.
 todo_mapping_keys() {
 	local todo_file="$1"
+	local normalize="0"
 
+	[[ "${2:-}" == "normalize" ]] && normalize="1"
 	[[ -f "$todo_file" ]] || return 1
-	awk '
+	awk -v normalize="$normalize" "${_TODO_ROW_AWK_FUNCTIONS}"'
+		{ $0 = todo_strip_comments($0) }
 		/^[[:space:]]*-[[:space:]]\[[^]]\][[:space:]]+t[0-9]+(\.[0-9]+)*([[:space:]]|$)/ {
 			task = $0
 			sub(/^[[:space:]]*-[[:space:]]\[[^]]\][[:space:]]+/, "", task)
 			split(task, fields, /[[:space:]]+/)
-			print "task:" fields[1]
+			print "task:" (normalize == "1" ? todo_normalize_id(fields[1]) : fields[1])
 			while (match($0, /ref:GH#[0-9]+/)) {
 				print "issue:" substr($0, RSTART + 7, RLENGTH - 7)
 				$0 = substr($0, RSTART + RLENGTH)
 			}
 		}
-	' "$todo_file"
+	' "$todo_file" || return 1
+	return 0
 }
 
 # Report duplicate task IDs and issue mappings introduced relative to a
@@ -46,13 +92,13 @@ todo_duplicate_report() {
 	candidate_counts="${temp_dir}/candidate-counts"
 	baseline_counts="${temp_dir}/baseline-counts"
 	regressions="${temp_dir}/regressions"
-	if ! todo_mapping_keys "$todo_file" >"$candidate_keys"; then
+	if ! todo_mapping_keys "$todo_file" normalize >"$candidate_keys"; then
 		rm -rf "$temp_dir"
 		return 2
 	fi
 	: >"$baseline_keys"
 	if [[ -n "$baseline_file" ]]; then
-		if [[ ! -f "$baseline_file" ]] || ! todo_mapping_keys "$baseline_file" >"$baseline_keys"; then
+		if [[ ! -f "$baseline_file" ]] || ! todo_mapping_keys "$baseline_file" normalize >"$baseline_keys"; then
 			rm -rf "$temp_dir"
 			return 2
 		fi
@@ -73,17 +119,25 @@ todo_duplicate_report() {
 		rm -rf "$temp_dir"
 		return 2
 	}
+	# With no regressions an empty first file would make FNR == NR true for the
+	# TODO file itself, so the diagnostic pass must not run at all.
+	if [[ ! -s "$regressions" ]]; then
+		rm -rf "$temp_dir"
+		return 0
+	fi
 
 	# Gather every affected line in one pass; avoid rescanning a large TODO.md for
-	# every duplicate mapping while retaining actionable diagnostics.
-	awk '
+	# every duplicate mapping while retaining actionable diagnostics. Comment
+	# stripping and ID normalization match todo_mapping_keys exactly.
+	awk "${_TODO_ROW_AWK_FUNCTIONS}"'
 		FNR == NR { order[++count] = $1; wanted[$1] = 1; next }
 		{
+			$0 = todo_strip_comments($0)
 			if ($0 ~ /^[[:space:]]*-[[:space:]]\[[^]]\][[:space:]]+t[0-9]+(\.[0-9]+)*([[:space:]]|$)/) {
 				task = $0
 				sub(/^[[:space:]]*-[[:space:]]\[[^]]\][[:space:]]+/, "", task)
 				split(task, fields, /[[:space:]]+/)
-				key = "task:" fields[1]
+				key = "task:" todo_normalize_id(fields[1])
 				if (key in wanted) lines[key] = lines[key] (lines[key] ? "," : "") FNR
 			}
 			while (match($0, /ref:GH#[0-9]+/)) {

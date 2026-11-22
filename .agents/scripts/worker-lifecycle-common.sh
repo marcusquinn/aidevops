@@ -291,9 +291,11 @@ _emit_worker_runtime_event() {
 	worker.completed | worker.failed | worker.deferred)
 		if [[ -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" && "${WORKER_ISSUE_NUMBER:-}" =~ ^[0-9]+$ && -n "${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}" ]]; then
 			local lease_helper="${BASH_SOURCE[0]%/*}/dispatch-claim-helper.sh"
-			"$lease_helper" transition terminal "$WORKER_ISSUE_NUMBER" \
-				"${DISPATCH_REPO_SLUG:-$WORKER_REPO_SLUG}" "$AIDEVOPS_DISPATCH_LEASE_TOKEN" \
-				"${AIDEVOPS_DISPATCH_LEASE_SESSION:-${_invoke_session_key:-issue-${WORKER_ISSUE_NUMBER}}}" 0 >/dev/null 2>&1 || true
+			# shellcheck source=./terminal-lease-recovery.sh
+			source "${BASH_SOURCE[0]%/*}/terminal-lease-recovery.sh"
+			_terminal_lease_emit_or_record "$WORKER_ISSUE_NUMBER" \
+				"${DISPATCH_REPO_SLUG:-$WORKER_REPO_SLUG}" \
+				"${AIDEVOPS_DISPATCH_LEASE_SESSION:-${_invoke_session_key:-issue-${WORKER_ISSUE_NUMBER}}}" "$lease_helper" || true
 		fi
 		;;
 	esac
@@ -1202,16 +1204,14 @@ _escalate_body_has_investigation_context() {
 		'^#{1,6}[[:space:]]+Approach[[:space:]]*:?[[:space:]]*$' \
 		'^#{1,6}[[:space:]]+Acceptance criteria[[:space:]]*:?[[:space:]]*$' \
 		'^#{1,6}[[:space:]]+Verification[[:space:]]*:?[[:space:]]*$'; do
-		printf '%s\n' "$issue_body" | grep -qiE "$heading_pattern" || return 1
+		grep -qiE "$heading_pattern" <<<"$issue_body" || return 1
 	done
 
 	# A bounded investigation still needs a concrete starting surface.
-	printf '%s\n' "$issue_body" |
-		grep -qE '[a-zA-Z0-9_.-]+(/[a-zA-Z0-9_.-]+)+\.[a-zA-Z0-9]+' || return 1
+	grep -qE '[a-zA-Z0-9_.-]+(/[a-zA-Z0-9_.-]+)+\.[a-zA-Z0-9]+' <<<"$issue_body" || return 1
 	# Verification must name something executable, not only a prose promise.
 	# shellcheck disable=SC2016 # Backticks are literal Markdown delimiters in the regex.
-	printf '%s\n' "$issue_body" |
-		grep -qE '(^|[[:space:]`])((bash|shellcheck|pytest|python[0-9]*|node|npm|pnpm|yarn|bun|make)[[:space:]]|go[[:space:]]+test([[:space:]]|$)|cargo[[:space:]]+test([[:space:]]|$)|git[[:space:]]+diff([[:space:]]|$)|[.]/|[.][[:alnum:]_/-]+\.sh([[:space:]`]|$))' || return 1
+	grep -qE '(^|[[:space:]`])((bash|shellcheck|pytest|python[0-9]*|node|npm|pnpm|yarn|bun|make)[[:space:]]|go[[:space:]]+test([[:space:]]|$)|cargo[[:space:]]+test([[:space:]]|$)|git[[:space:]]+diff([[:space:]]|$)|[.]/|[.][[:alnum:]_/-]+\.sh([[:space:]`]|$))' <<<"$issue_body" || return 1
 	return 0
 }
 
@@ -1249,7 +1249,7 @@ _escalate_body_quality_gate() {
 	# Check for file path indicators: paths with extensions, EDIT:/NEW: prefixes,
 	# backtick-quoted paths, or "Files to Modify" section headers.
 	# shellcheck disable=SC2016 # pattern is literal regex; no variable expansion intended
-	if echo "$issue_body" | grep -qE '(EDIT:|NEW:|`[a-zA-Z0-9_./-]+\.[a-z]+`|Files to Modify|## How|\.sh:|\.py:|\.ts:|\.js:|\.md:)'; then
+	if grep -qE '(EDIT:|NEW:|`[a-zA-Z0-9_./-]+\.[a-z]+`|Files to Modify|## How|\.sh:|\.py:|\.ts:|\.js:|\.md:)' <<<"$issue_body"; then
 		return 0
 	fi
 
@@ -1476,8 +1476,16 @@ _worker_failure_reason_is_completion_infrastructure() {
 
 _no_work_reason_is_prelaunch_skip() {
 	local reason="${1:-}"
-	_worker_failure_reason_is_launch_preflight "$reason"
-	return $?
+	# Completion-path infrastructure failures (GitHub API / command-policy
+	# timeouts, blocked push of a prepared commit) happen AFTER the worker read
+	# the brief and may hold a local checkpoint. The fast-fail recorder already
+	# skips them; the breaker must too, or escalate_issue_tier(crash_type=no_work)
+	# can trip t2769 on work that was actually done (GH#38752).
+	if _worker_failure_reason_is_launch_preflight "$reason" ||
+		_worker_failure_reason_is_completion_infrastructure "$reason"; then
+		return 0
+	fi
+	return 1
 }
 
 _log_no_work_skip_escalation() {

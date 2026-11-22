@@ -124,6 +124,24 @@ test_cleanup_sweeps_stale_todo_sync_workspace() {
 	return 0
 }
 
+test_cleanup_sweeps_stale_research_staging() {
+	local staging="${HOME}/.aidevops/.agent-workspace/tmp/research-staging"
+	local outside="${TEST_ROOT}/outside-target"
+	mkdir -p "${staging}/old-task" "${staging}/new-task" "$outside"
+	: >"${staging}/old-task/file.txt"
+	: >"${staging}/new-task/file.txt"
+	: >"${outside}/keep.txt"
+	ln -s "$outside" "${staging}/old-link"
+	touch -t 202601010000 "${staging}/old-task/file.txt" "${staging}/old-task"
+	touch -h -t 202601010000 "${staging}/old-link"
+	aidevops_pulse_tmp_cleanup 60
+	[[ ! -e "${staging}/old-task" ]] || return 1
+	[[ -e "${staging}/new-task/file.txt" ]] || return 1
+	[[ ! -L "${staging}/old-link" ]] || return 1
+	[[ -e "${outside}/keep.txt" ]] || return 1
+	return 0
+}
+
 main() {
 	setup
 	if test_fallback_home_workspace; then record "fallback home pulse tmp" 0; else record "fallback home pulse tmp" 1; fi
@@ -132,6 +150,7 @@ main() {
 	if test_worker_log_setup_uses_per_user_dir; then record "worker log setup avoids global tmp" 0; else record "worker log setup avoids global tmp" 1; fi
 	if test_cleanup_removes_only_old_pulse_logs; then record "cleanup removes old pulse logs" 0; else record "cleanup removes old pulse logs" 1; fi
 	if test_cleanup_sweeps_stale_todo_sync_workspace; then record "cleanup sweeps stale TODO-sync workspaces" 0; else record "cleanup sweeps stale TODO-sync workspaces" 1; fi
+	if test_cleanup_sweeps_stale_research_staging; then record "cleanup sweeps stale research-staging children" 0; else record "cleanup sweeps stale research-staging children" 1; fi
 	teardown
 	printf '\nPassed: %s, Failed: %s\n' "$PASS" "$FAIL"
 	[[ "$FAIL" -eq 0 ]] || return 1

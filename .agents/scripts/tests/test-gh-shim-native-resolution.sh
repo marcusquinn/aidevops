@@ -43,7 +43,7 @@ for shim_path in \
 	"$TMP/home/.aidevops/agents/scripts/gh" \
 	"$TMP/repo/.agents/scripts/gh"; do
 	cp "$SHIM" "$shim_path"
-	for module in gh-native-transport-lib.sh gh-api-guards-lib.sh gh-write-policy-lib.sh; do
+	for module in gh-native-transport-lib.sh gh-api-guards-lib.sh gh-write-policy-lib.sh gh-closing-reference-lib.sh; do
 		cp "${REPO_DIR}/.agents/scripts/${module}" "$(dirname "$shim_path")/${module}"
 	done
 	chmod +x "$shim_path"
@@ -155,6 +155,20 @@ if [[ $(wc -l <"$TMP/native.log" | tr -d ' ') -eq 8 ]]; then
 	pass "concurrent hot-deployment fixture has one native exec per invocation"
 else
 	fail "concurrent fixture produced an unexpected native invocation count"
+fi
+
+mkdir -p "$TMP/runtime-bundles/b/agents/scripts/gh-shim"
+cp "$SHIM" "$TMP/runtime-bundles/b/agents/scripts/gh-shim/gh"
+for module in gh-native-transport-lib.sh gh-api-guards-lib.sh gh-write-policy-lib.sh gh-closing-reference-lib.sh; do
+	cp "${REPO_DIR}/.agents/scripts/${module}" "$TMP/runtime-bundles/b/agents/scripts/gh-shim/${module}"
+done
+chmod +x "$TMP/runtime-bundles/b/agents/scripts/gh-shim/gh"
+: >"$TMP/native.log"
+if NATIVE_GH_LOG="$TMP/native.log" PATH="$TMP/runtime-bundles/old/agents/scripts:$TMP/home/.aidevops/agents/scripts:$TMP/runtime-bundles/b/agents/scripts/gh-shim:$TMP/native-linux:${TEST_SYS_PATH}" \
+	"$TMP/runtime-bundles/old/agents/scripts/gh" --version && grep -Fxq -- "--version" "$TMP/native.log"; then
+	pass "runtime-bundle gh-shim generation is skipped in favour of native gh"
+else
+	fail "runtime-bundle gh-shim generation was selected or native gh not reached"
 fi
 
 printf 'Results: %s passed, %s failed\n' "$PASS" "$FAIL"

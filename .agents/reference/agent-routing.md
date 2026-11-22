@@ -54,7 +54,7 @@ not depend on a user remembering to request learning or feedback capture.
 2. If it is clearly code work (`implement`, `fix`, `refactor`, `CI`), use Build+ or omit `--agent`.
 3. Resolve a narrow user-intent match through `reference/domain-index.md` before using a broad primary-agent trigger. Select knowledge without service probes for conceptual work; before provider-dependent execution, apply the Core rule readiness gate above. Execute only when every mandatory dimension is true and task authority permits it; otherwise use the reported fallback.
 4. If uncertain, default to Build+; it can load narrower docs on demand.
-   For a native macOS dialog or desktop app UI test, Build+ delegates a bounded task to `macos-automator`, which connects its scoped MCP on demand. On other platforms do not claim a local desktop automation capability.
+   For a native macOS dialog or desktop app UI test, Build+ delegates a bounded task to `macos-automator`, which connects its scoped MCP on demand and follows its "Bounded Native Operation" contract. Web pages route to browser automation, not native control of the operator's everyday browser. On other platforms do not claim a local desktop automation capability.
 5. **Bundle-aware routing (t1364.6):** project bundles can define `agent_routing` overrides. Check with `bundle-helper.sh get agent_routing <repo-path>`. An explicit `--agent` flag wins.
 
 The selected agent changes the system prompt and domain knowledge loaded for the worker.
@@ -69,7 +69,7 @@ set lives in `configs/worker-permission-policy.json`.
 
 ## Interactive subagent progress
 
-- Use subagents for independent advisory work, not the implementation critical path. Bounded browser operations through `playwright` are an execution exception when the parent supplies target, authorization, allowed actions and stop conditions; the parent still owns verification and final actions. The other default execution exception is the post-merge local standard-tier release handoff in `workflows/release.md`.
+- Use subagents for independent advisory work, not the implementation critical path. Bounded browser operations through `playwright`, and native desktop operations through `macos-automator`, are an execution exception when the parent supplies target, authorization, allowed actions, stop conditions and an action/time budget; the parent still owns verification and final actions. The other default execution exception is the post-merge local standard-tier release handoff in `workflows/release.md`.
 - Dispatch at most two children in one batch and do not launch another batch until they return.
 - Prefix every delegated prompt with `[effort:simple]`, `[effort:standard]`, or `[effort:thinking]`; use the lowest tier that can reliably complete the task.
 - Use `simple` only for bounded, low-consequence advisory work with objective parent-verifiable evidence. The parent must validate the result; fluent output alone is not successful completion.
@@ -77,11 +77,12 @@ set lives in `configs/worker-permission-policy.json`.
 - Batch independent children in one parallel call. Require final-only summaries with the decision, evidence (paths/lines or commands), uncertainty, and next action; raw logs stay in child context and the parent owns synthesis.
 - Keep the parent progressing on non-overlapping work. Do not finalize with children pending; use their returned evidence or complete the work locally and disregard late results.
 - Subagents must not dispatch further subagents. OpenCode clamps configured child reasoning to the parent's known effort only for the exact same model. Different models retain their tier's reasoning: effort names are not comparable compute budgets across models. A medium parent does not globally cap children at medium.
+- Browser children use `playwright` (Playwright) by default. `playwriter` (Playwriter) is a different, legacy tool: delegate to it only when the user's own message names Playwriter, never from "Playwright", "browser" or a paraphrase, and never auto-correct one name into the other (GH#35617; `tools/browser/browser-automation.md`).
 - OpenCode `playwright` children in interactive and headless sessions prefer connected GPT-6 Luna xhigh for bounded browser operations even under a standard/thinking parent. This does not change the simple tier. Explicit agent model pins win. If Luna is unavailable, use connected Sol medium or the connected parent model/effort; if Luna was removed from the simple route, use normal tier routing. Report browser state and evidence to the parent on capability failure; do not automatically replay clicks or escalate a child that has acted on a site. The parent can continue with its existing model or explicitly request a fresh, bounded stronger child after assessing effects. Model/variant labels do not prove a cost saving; compare verified outcomes, retries and allowance use before broadening.
 - In interactive OpenCode sessions, an eligible child can end with the exact marker `BLOCKED: capability limit - <evidence>`. The plugin re-prompts that same child session at the next configured tier so prior evidence is retained. Generic blockers, headless dispatch, terminal tiers, and children that attempted side effects never take this automatic path.
 - For full-loop work, persist stable unit IDs, dependencies, explicit file/question ownership, effort tier, and a reuse key before dispatch. Parallel-ready units must have disjoint file ownership; overlap is serialized even when capacity is available.
 - Effective concurrency is the minimum of the plan cap, mode cap, and available global slots. Interactive batches remain capped at two; headless uses its configured per-task cap.
-- Persist completed-unit evidence and reuse it after retries or runtime interruption. The primary repeats delegated exploration only when its evidence is absent, stale, or contradictory.
+- Persist completed-unit evidence and reuse it after retries or runtime interruption. The primary repeats delegated exploration only when its evidence is absent, stale, or contradictory. After an interrupted Task, recover from its cancellation receipt and a read-only look at the named child session before re-delegating; never replay a listed side effect.
 - Consolidate adversarial review into bounded correctness/concurrency, security/trust, compatibility/quality, and test-adequacy units, followed by one synthesis and one repair pass.
 
 ### Focused domain delegation (OpenCode native Task)
@@ -254,6 +255,14 @@ restart; unsupported runtimes must not pretend it exists. Honour local-only,
 provider and billing constraints before delegating. A missing/disabled profile is
 unavailable; never silently switch providers or start an external worker instead.
 Existing user model/variant pins and custom routing remain explicit overrides.
+Native Task routing checks the routing table's `chatgpt_oauth_restrictions`
+against the active OpenAI auth type before accepting catalog-listed models.
+Research uses only available same-tier candidates; if none remain it reports no
+route. The pinned specialist is checked separately: an unavailable account/model
+reports `Specialist advisory route unavailable` before inference, without changing
+providers, purchasing an alternative, or treating self-review as independent review.
+These ChatGPT restrictions do not apply to API-key authentication. Restart OpenCode
+after deploying routing/plugin updates; already-running sessions retain loaded code.
 Advice cannot supply authority, consent, taste or values, inaccessible context,
 unknown secrets, publication or destructive-operation permission, or acceptance of
 an irreversible commitment. Ask or stop at those human-exclusive boundaries, and

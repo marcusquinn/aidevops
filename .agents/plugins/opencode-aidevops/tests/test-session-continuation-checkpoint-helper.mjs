@@ -121,6 +121,67 @@ fi
   assert.equal(blockerGuard.injectSteering({ sessionID: "mixed" }, claimCall).kind, "completion");
   assert.match(claimCall.messages.at(-1).parts[0].text, /not yet valid/);
 
+  // GH#37979: a closeout whose only ask is permission to file an issue is
+  // steered once per session scope; authority, "not needed" and release asks
+  // are left alone.
+  const askWith = (ask) => ["Done.", "", "**What next**", "- **Session:** x — Done", "- **Needed from you:**", `  ${ask}`, "- **Left to capture:** None", "- **Close:** Ready to close"].join("\n");
+  const fileAsk = askWith("1. **Should I file a worker-ready issue so X warns about Y?**");
+  const fileResult = blockerGuard.completeText({ sessionID: "filing" }, { text: fileAsk });
+  assert.equal(fileResult.filing, true, "filing-permission ask is steered");
+  const fileCall = request("filing");
+  assert.equal(blockerGuard.injectSteering({ sessionID: "filing" }, fileCall).kind, "filing");
+  assert.match(fileCall.messages.at(-1).parts[0].text, /file it now/);
+  assert.equal(blockerGuard.completeText({ sessionID: "filing" }, { text: fileAsk }).corrected, false, "second matching closeout queues nothing");
+  assert.equal(blockerGuard.completeText({ sessionID: "filing-discarded" }, { text: fileAsk }).filing, true);
+  blockerGuard.beforeTool({ sessionID: "filing-discarded", tool: "bash", callID: "filing-tool" }, { args: {} });
+  assert.equal(blockerGuard.injectSteering({ sessionID: "filing-discarded" }, request("filing-discarded")).injected, false, "tool call discards pending filing steering");
+  assert.equal(blockerGuard.completeText({ sessionID: "filing-discarded" }, { text: fileAsk }).filing, true, "discarded steering does not consume the allowance");
+  assert.equal(blockerGuard.injectSteering({ sessionID: "filing-discarded" }, request("filing-discarded")).kind, "filing");
+  assert.equal(blockerGuard.completeText({ sessionID: "filing-discarded" }, { text: fileAsk }).corrected, false, "delivered steering consumes the allowance");
+  for (const [name, ask] of [
+    ["not needed option", "1. **Should I file an issue for X?** y = file · n = not needed"],
+    ["undecided expected behaviour", "1. Should I file an issue, or is this expected behaviour?"],
+    ["undecided intended behavior", "1. Should I file an issue, or is this intended behavior?"],
+    ["undecided necessity", "1. Should I file an issue, or is it unnecessary?"],
+    ["other organisation", "1. **Should I file an issue in another organisation's repository?**"],
+    ["third-party repository", "1. Should I file an issue in a third-party repository?"],
+    ["third party repo", "1. Should I file an issue in a third party repo?"],
+    ["external repository", "1. Should I file an issue in an external repository?"],
+    ["upstream repositories", "1. Should I file an issue in upstream repositories?"],
+    ["secret", "1. **Should I file a task to rotate the secret?**"],
+    ["spend", "1. **Should I file a task to approve the spend?**"],
+    ["release", "1. **Should I release v1.2.3?**"],
+    ["create release", "1. Should I create a release for this issue?"],
+    ["open pull request", "1. Should I open a pull request for this issue?"],
+    ["merge", "1. **Should I merge the PR for the issue?**"],
+    ["mention only", "1. **Is the issue fix acceptable?**"],
+    ["mixed deploy last", "1. Should I file an issue?\n2. May I deploy the release?"],
+    ["mixed deploy first", "1. May I deploy the release?\n2. Should I file an issue?"],
+    ["compound deploy", "1. Should I file an issue and deploy the release?"],
+    ["compound merge", "1. Should I file an issue and merge the PR?"],
+    ["compound release", "1. Should I file an issue then release the fix?"],
+    ["compound publish", "1. Should I file an issue and also publish the package?"],
+    ["compound ship", "1. Should I file an issue, also ship the fix?"],
+    ["inline private data", "1. Should I file an issue containing `private data`?"],
+    ["inline secret", "1. Should I file an issue containing `credentials`?"],
+    ["fenced ask", "```text\n1. Should I file an issue?\n```"],
+  ]) {
+    assert.equal(blockerGuard.completeText({ sessionID: `filing-${name}` }, { text: askWith(ask) }).corrected, false, `${name} ask is not steered`);
+  }
+  assert.equal(blockerGuard.completeText({ sessionID: "filing-lead" }, { text: askWith("1. **File a worker task to add the warning?**") }).filing, true, "bare filing verb lead matches");
+  for (const item of ["issue", "worker task", "local TODO", "actionable follow-up ticket", "follow-up"]) {
+    assert.equal(blockerGuard.completeText({ sessionID: `filing-item-${item}` }, { text: askWith(`1. Should I create a ${item}?`) }).filing, true, `${item} remains a filing item`);
+  }
+  for (const [name, ask] of [
+    ["all filing", "1. Should I file an issue?\n2. Should I log a task?"],
+    ["deploy topic", "1. Should I file an issue for the failing deploy test?"],
+    ["release topic", "1. Should I file an issue about release failures?"],
+    ["compound topic", "1. Should I file an issue about the build and release pipeline?"],
+    ["fenced exclusions", "1. Should I file an issue?\n```text\n2. May I deploy with private data?\n```"],
+  ]) {
+    assert.equal(blockerGuard.completeText({ sessionID: `filing-${name}` }, { text: askWith(ask) }).filing, true, `${name} remains filing-only`);
+  }
+
   // GH#35121: a closeout that asks for nothing while files this session
   // edited remain uncommitted is steered toward the Capture Check, across
   // every touched repository. Read-only sessions, asks, committed edits and
@@ -186,6 +247,80 @@ fi
   gitIn(coordRepo, "add", "workflow.md");
   gitIn(coordRepo, "-c", "commit.gpgSign=false", "commit", "-qm", "workflow");
   assert.equal(captureGuard.completeText({ sessionID: "multi" }, { text: closeout }).corrected, false, "committed session edits are captured");
+
+  // GH#35968: repeated-operation cycles of period 1-4, failing or not, are
+  // detected; only progress (a new edit or a todo change) clears the window.
+  const loopFixture = () => {
+    const saved = [];
+    const guard = createSessionContinuationGuard({ repository, checkpointAdapter: { load: () => null, save: (recovery) => saved.push(recovery) } });
+    let callNumber = 0;
+    const call = (tool, args, output, sessionID = "loop") => {
+      callNumber += 1;
+      const callID = `loop-${callNumber}`;
+      guard.beforeTool({ sessionID, tool, callID }, { args });
+      return guard.afterTool({ sessionID, tool, callID }, output);
+    };
+    return { guard, saved, call };
+  };
+  const failOut = () => ({ output: "error: failed", metadata: { exit: 1 } });
+  const okOut = (text = "ok") => ({ output: text, metadata: { status: "completed" } });
+  const fires = (steps) => steps.map((step) => step()).flatMap((result, index) => (result.replan ? [index + 1] : []));
+
+  const identical = loopFixture();
+  assert.deepEqual(fires(Array.from({ length: 6 }, () => () => identical.call("bash", { command: "A" }, failOut()))), [3], "identical failures fire once at the threshold");
+  assert.equal(identical.saved.length, 1);
+  assert.match(identical.saved[0].trigger, /^3 identical bash operations failed/);
+
+  const alternating = loopFixture();
+  const alternatingResults = Array.from({ length: 20 }, (_, index) => alternating.call("bash", { command: index % 2 ? "B" : "A" }, failOut()));
+  assert.deepEqual(alternatingResults.flatMap((result, index) => (result.replan ? [index + 1] : [])), [6], "A/B failures fire once by threshold x period");
+  assert.match(alternatingResults[5].correction, /bash -> bash tool-call cycle repeated 3 times with failures/);
+  assert.equal(alternating.saved.length, 1, "a failing cycle saves one recovery checkpoint");
+  assert.equal(alternating.saved[0].status, "recovering");
+
+  const mixedLoop = loopFixture();
+  assert.deepEqual(fires(Array.from({ length: 8 }, (_, index) => () => (index % 2
+    ? mixedLoop.call("read", { filePath: "notes.md" }, okOut(`read ${index}`))
+    : mixedLoop.call("bash", { command: "npm test" }, failOut())))), [6], "fail/success alternation fires");
+
+  const successLoop = loopFixture();
+  const successFires = fires(Array.from({ length: 14 }, (_, index) => () => successLoop.call("bash", { command: index % 2 ? "git status" : "gh pr checks 1" }, okOut("unchanged"))));
+  assert.deepEqual(successFires, [10], "identical successful A/B cycles fire after threshold+2 repetitions");
+  assert.equal(successLoop.saved.length, 0, "non-progressing successes steer without a recovery checkpoint");
+  assert.equal(successLoop.guard.completeText({ sessionID: "loop" }, { text: "The task is complete." }).corrected, false, "a success-only loop never blocks completion");
+
+  const changingOutputs = loopFixture();
+  assert.deepEqual(fires(Array.from({ length: 20 }, (_, index) => () => changingOutputs.call("bash", { command: "gh pr checks 1" }, okOut(`pending ${index}`)))), [], "polling with changing output is not a loop");
+
+  const progressing = loopFixture();
+  const readThenEdit = [];
+  for (let round = 0; round < 4; round += 1) {
+    for (const file of ["a.md", "b.md", "c.md"]) readThenEdit.push(() => progressing.call("read", { filePath: file }, okOut("same")));
+    readThenEdit.push(() => progressing.call("edit", { filePath: "a.md", oldString: `v${round}`, newString: `v${round + 1}` }, okOut("Edit applied successfully.")));
+  }
+  assert.deepEqual(fires(readThenEdit), [], "distinct reads followed by new edits are progress");
+
+  const editReset = loopFixture();
+  const test = () => editReset.call("bash", { command: "npm test" }, failOut());
+  const sameEdit = () => editReset.call("edit", { filePath: "a.md", oldString: "x", newString: "y" }, okOut());
+  assert.deepEqual(fires([test, test, test, sameEdit, test, test, test]), [3, 7], "a new edit clears the signalled set so the same loop can fire again");
+  assert.equal(editReset.saved.length, 2, "each signalled failing loop saves a recovery checkpoint");
+  const windowReset = loopFixture();
+  const windowTest = () => windowReset.call("bash", { command: "npm test" }, failOut());
+  const windowEdit = () => windowReset.call("edit", { filePath: "a.md", oldString: "x", newString: "y" }, okOut());
+  assert.deepEqual(fires([windowTest, windowEdit, windowTest, windowEdit, windowTest, windowEdit, windowTest]), [7], "progress clears stale window entries");
+  const reapply = loopFixture();
+  const reapplyTest = () => reapply.call("bash", { command: "npm test" }, failOut());
+  const reapplyEdit = () => reapply.call("edit", { filePath: "a.md", oldString: "x", newString: "y" }, okOut());
+  assert.deepEqual(fires([reapplyEdit, reapplyTest, reapplyEdit, reapplyTest, reapplyEdit, reapplyTest]), [6], "re-applying the same edit is not progress");
+
+  const todoReset = loopFixture();
+  const todoFail = () => todoReset.call("bash", { command: "npm test" }, failOut());
+  const todoChange = () => todoReset.call("todowrite", { todos: [{ content: "Fix test", status: "in_progress" }] }, okOut());
+  assert.deepEqual(fires([todoFail, todoFail, todoFail, todoChange, todoFail, todoFail, todoFail]), [3, 7], "a todo status change clears the signalled set");
+
+  const polling = loopFixture();
+  assert.deepEqual(fires(Array.from({ length: 30 }, () => () => polling.call("aidevops_bounded_operation", { action: "status", operation_id: "op-1", wait_seconds: 30 }, okOut("running")))), [], "designed bounded-operation polling is exempt");
 } finally {
   rmSync(fixtureDir, { recursive: true, force: true });
 }

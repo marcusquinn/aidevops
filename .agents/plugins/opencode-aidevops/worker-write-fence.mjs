@@ -8,6 +8,7 @@ import { realpathSync } from "fs";
 import { homedir } from "os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "path";
 import { isHeadless } from "./proxy-lifecycle.mjs";
+import { assertWorkerPushTarget } from "./worker-push-fence.mjs";
 
 // Stable prefix; fenceMessage() appends the target and the accepted roots.
 export const SIBLING_WORKTREE_MESSAGE =
@@ -113,9 +114,11 @@ function segmentGitTarget(tokens, cwd) {
   const rest = tokens.slice(index + 1);
   const mutating = MUTATING_GIT_VERBS.has(verb)
     || (verb === "worktree" && MUTATING_WORKTREE_SUBCOMMANDS.has(rest[0]));
-  return { dir, mutating };
+  return { dir, mutating, verb, rest };
 }
 
+
+// GH#36608: push destinations are fenced in worker-push-fence.mjs.
 export function assertWorkerGitTargets(command, cwd, env = process.env) {
   if (!workerFenceActive(env) || typeof command !== "string" || !command) return;
   let current = resolve(cwd || process.cwd());
@@ -124,10 +127,11 @@ export function assertWorkerGitTargets(command, cwd, env = process.env) {
     if (tokens[0] === "cd" && tokens[1]) {
       current = resolve(current, tokens[1]);
     } else if (tokens[0] === "git") {
-      const { dir, mutating } = segmentGitTarget(tokens, current);
+      const { dir, mutating, verb, rest } = segmentGitTarget(tokens, current);
       if (mutating && isOutsideWorkerRoots(dir, env)) {
         throw new Error(fenceMessage("Git target", dir, env));
       }
+      if (verb === "push") assertWorkerPushTarget(rest, dir, env);
     }
   }
 }

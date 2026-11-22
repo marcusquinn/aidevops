@@ -47,14 +47,16 @@ export const ASTRA_OUTPUT_DEFAULT = 128000;
 
 /**
  * Default GPT-6 Sol/Luna compaction target, not a provider capacity claim.
- * GPT-6.1 Sol advertises 922K input natively; the cap keeps sessions below
- * OpenAI's 272K short-context price boundary.
+ * GPT-6.1 Sol and Terra advertise 922K input natively; the cap keeps sessions
+ * below OpenAI's 272K short-context price boundary.
  */
 export const GPT6_COMPACTION_TARGET = 240000;
 export const GPT6_OUTPUT_DEFAULT = 128000;
 export const GPT6_MODEL_IDS = [
   "gpt-6.1-sol",
   "gpt-6.1-sol-fast",
+  "gpt-6.1-terra",
+  "gpt-6.1-terra-fast",
   "gpt-6-sol",
   "gpt-6-sol-fast",
   "gpt-6-luna",

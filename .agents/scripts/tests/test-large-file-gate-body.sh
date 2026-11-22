@@ -339,6 +339,298 @@ assert_contains \
 	"complexity-bump-ok"
 
 ######################################################################
+# Part 6: Reused debt-issue body refresh (GH#37989)
+#
+# A reused file-size-debt issue whose body predates `### Files Scope`
+# fails the pre-dispatch validator forever. The gate rewrites such a body
+# to the current template, and leaves every other body alone.
+######################################################################
+
+printf '\n%s\n\n' '--- Part 6: Reused debt-issue body refresh (GH#37989) ---'
+
+assert_eq() {
+	local test_name="$1"
+	local expected="$2"
+	local actual="$3"
+
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$actual" == "$expected" ]]; then
+		printf '  %sPASS%s %s\n' "$TEST_GREEN" "$TEST_NC" "$test_name"
+		return 0
+	fi
+	printf '  %sFAIL%s %s\n' "$TEST_RED" "$TEST_NC" "$test_name"
+	printf '       expected: %q\n' "$expected"
+	printf '       actual:   %q\n' "$actual"
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	return 0
+}
+
+REFRESH_TMP=$(mktemp -d) || exit 1
+trap 'rm -rf "$REFRESH_TMP"' EXIT
+LOGFILE="${REFRESH_TMP}/pulse.log"
+LARGE_FILE_LINE_THRESHOLD=2000
+: >"$LOGFILE"
+# shellcheck source=../pulse-dispatch-large-file-gate.sh
+source "$GATE_SCRIPT"
+
+LF_PATH=".agents/scripts/pulse-issue-reconcile.sh"
+STUB_ISSUE_JSON=""
+STUB_EDIT_RC=0
+EDIT_LOG="${REFRESH_TMP}/edits.log"
+EDIT_BODY="${REFRESH_TMP}/edit-body.md"
+CREATE_BODY="${REFRESH_TMP}/create-body.md"
+
+gh() { return 0; }
+sleep() { return 0; }
+set_issue_status() { return 0; }
+gh_issue_view() {
+	printf '%s' "$STUB_ISSUE_JSON"
+	return 0
+}
+gh_issue_edit_safe() {
+	local arg="" next_is_file=false
+	printf '%s\n' "$*" >>"$EDIT_LOG"
+	for arg in "$@"; do
+		if [[ "$next_is_file" == true ]]; then
+			cp "$arg" "$EDIT_BODY"
+			next_is_file=false
+		fi
+		[[ "$arg" != "--body-file" ]] || next_is_file=true
+	done
+	return "$STUB_EDIT_RC"
+}
+gh_create_issue() {
+	local prev=""
+	local arg=""
+	for arg in "$@"; do
+		[[ "$prev" != "--body" ]] || printf '%s' "$arg" >"$CREATE_BODY"
+		prev="$arg"
+	done
+	return 0
+}
+
+# Build an issue JSON object with the given body and label names.
+stub_issue() {
+	local body="$1"
+	shift
+	local labels_json=""
+	labels_json=$(printf '%s\n' "$@" | jq -R 'select(length > 0) | {name: .}' | jq -s '.')
+	STUB_ISSUE_JSON=$(jq -n --arg body "$body" --argjson labels "$labels_json" \
+		'{body: $body, labels: $labels}')
+	return 0
+}
+
+edit_count() {
+	if [[ -f "$EDIT_LOG" ]]; then
+		wc -l <"$EDIT_LOG" | tr -d ' '
+	else
+		printf '0'
+	fi
+	return 0
+}
+
+reset_refresh_state() {
+	rm -f "$EDIT_LOG" "$EDIT_BODY" "$CREATE_BODY"
+	: >"$LOGFILE"
+	STUB_EDIT_RC=0
+	return 0
+}
+
+# The pre-template body shape the gate wrote at v3.13.0 (EDIT under ## How).
+STALE_BODY="<!-- aidevops:generator=large-file-simplification-gate cited_file=${LF_PATH} threshold=2000 -->
+
+## What
+Simplify \`${LF_PATH}\` — currently over 2000 lines.
+
+## Why
+Issue #21375 is blocked by the large-file gate.
+
+## How
+- EDIT: \`${LF_PATH}\`"
+
+# Test 6.1: new-issue body is byte-identical to the pre-change template.
+# shellcheck disable=SC2016 # Literal Markdown fixture.
+EXPECTED_NEW_BODY=$(
+	cat <<'BODY'
+<!-- aidevops:generator=large-file-simplification-gate cited_file=.agents/scripts/pulse-issue-reconcile.sh threshold=2000 -->
+
+## What
+Simplify `.agents/scripts/pulse-issue-reconcile.sh` — currently over 2000 lines. Break into smaller, focused modules.
+
+## Why
+Issue #37939 is blocked by the large-file gate. Workers dispatched against this file spend most of their context budget reading it, leaving insufficient capacity for implementation.
+
+### Files Scope
+
+- EDIT: `.agents/scripts/pulse-issue-reconcile.sh`
+- NEW: `.agents/scripts/pulse-issue-reconcile-*.sh`
+
+## How
+- Extract cohesive function groups into separate files
+- Keep a thin orchestrator in the original file that sources the extracted modules
+- Verify: `wc -l .agents/scripts/pulse-issue-reconcile.sh` is 1200 lines or fewer, and so is every new module (headroom target: 60% of the 2000-line threshold)
+- Why headroom: hot files regrow, so a split that only just clears 2000 lines is back over it within days. Put frequently changed function groups in their own modules; find them with `git log --since=30.days --format= --name-only -- .agents/scripts/pulse-issue-reconcile.sh` and recent commit subjects (`git log --since=30.days --format=%s -- .agents/scripts/pulse-issue-reconcile.sh`)
+- Verify: `python3 ~/.aidevops/agents/scripts/file-split-verify.py --base origin/main --head HEAD` exits 0 (pure move: `removed-only=0 review=0 gated=0`); paste its summary line into the PR body (playbook section 7.5)
+
+**Reference pattern:** `.agents/reference/large-file-split.md` (playbook for file splits — covers identity-key preservation, CI false-positives, and PR body template).
+
+**Precedent in this repo:** `issue-sync-helper.sh` + `issue-sync-lib.sh` (simple split) and `headless-runtime-lib.sh` + sub-libraries (complex split). For shell scripts, copy the include-guard and SCRIPT_DIR-fallback pattern from the simple precedent.
+
+**Expected CI gate overrides:** This PR will likely trigger a complexity regression from the file-split identity-key change. Apply the `complexity-bump-ok` label AND include a `## Complexity Bump Justification` section in the PR body citing scanner evidence. See the playbook section 4 (Known CI False-Positive Classes).
+
+_Created by large-file simplification gate (pulse-dispatch-core.sh)_
+BODY
+)
+reset_refresh_state
+_large_file_gate_file_new_debt_issue "$LF_PATH" "37939" "owner/repo" "" >/dev/null
+assert_eq \
+	"refresh: new-issue body unchanged by builder extraction" \
+	"$EXPECTED_NEW_BODY" \
+	"$(<"$CREATE_BODY")"
+
+# Test 6.2: scope fallback (validator library unavailable) uses the same rule.
+_saved_lfg_dir="$_LFG_SCRIPT_DIR"
+_LFG_SCRIPT_DIR="${REFRESH_TMP}/missing"
+fallback_rc=0
+_large_file_gate_body_has_scope_path "$STALE_BODY" || fallback_rc=$?
+assert_eq "refresh: fallback rule rejects a body without a scope" "1" "$fallback_rc"
+fallback_rc=0
+_large_file_gate_body_has_scope_path "$EXPECTED_NEW_BODY" || fallback_rc=$?
+assert_eq "refresh: fallback rule accepts the current template" "0" "$fallback_rc"
+_LFG_SCRIPT_DIR="$_saved_lfg_dir"
+
+# Test 6.3: reopening a stale marked body rewrites it, naming the held issue.
+reset_refresh_state
+stub_issue "$STALE_BODY" "file-size-debt" "auto-dispatch"
+out=$(_large_file_gate_reopen_debt_issue "21376" "$LF_PATH" "owner/repo" "37939")
+assert_eq "refresh: reopen result unchanged" "#21376 (reopened)" "$out"
+assert_eq "refresh: reopen writes one body edit" "1" "$(edit_count)"
+assert_contains "refresh: reopen edit targets the debt issue" \
+	"$(cat "$EDIT_LOG" 2>/dev/null)" "21376 --repo owner/repo --body-file"
+assert_eq "refresh: reopened body is the current template for the held issue" \
+	"$(_large_file_gate_debt_issue_body "$LF_PATH" "37939" "")" \
+	"$(cat "$EDIT_BODY" 2>/dev/null)"
+
+# Test 6.4: the refreshed body passes the pre-dispatch validator.
+_log() { return 0; }
+# shellcheck source=../pre-dispatch-validator-lib-brief-scope.sh
+source "${SCRIPT_DIR_TEST}/../pre-dispatch-validator-lib-brief-scope.sh"
+validator_rc=0
+_validate_implementation_brief_scope "21376" "$(cat "$EDIT_BODY" 2>/dev/null)" 1 "file-size-debt,auto-dispatch" || validator_rc=$?
+assert_eq "refresh: refreshed body passes _validate_implementation_brief_scope" "0" "$validator_rc"
+validator_rc=0
+_validate_implementation_brief_scope "21376" "$STALE_BODY" 1 "file-size-debt,auto-dispatch" || validator_rc=$?
+assert_eq "refresh: stale body is the validator failure being repaired" "40" "$validator_rc"
+
+# Test 6.5: finding an open stale debt issue rewrites it the same way.
+reset_refresh_state
+stub_issue "$STALE_BODY" "file-size-debt" "auto-dispatch"
+_large_file_gate_find_existing_debt_issue() {
+	printf 'open:21376'
+	return 0
+}
+_large_file_gate_close_duplicate_debt_issues() { return 0; }
+out=$(_large_file_gate_create_debt_issue "$LF_PATH" "37939" "owner/repo" "")
+assert_eq "refresh: open reuse result unchanged" "#21376 (existing)" "$out"
+assert_eq "refresh: open reuse writes one body edit" "1" "$(edit_count)"
+assert_eq "refresh: open reuse body is the current template for the held issue" \
+	"$(_large_file_gate_debt_issue_body "$LF_PATH" "37939" "")" \
+	"$(cat "$EDIT_BODY" 2>/dev/null)"
+
+# Test 6.6: a body that already declares a scope is never edited.
+reset_refresh_state
+stub_issue "$EXPECTED_NEW_BODY" "file-size-debt"
+_large_file_gate_create_debt_issue "$LF_PATH" "40000" "owner/repo" "" >/dev/null
+assert_eq "refresh: scoped body is not edited" "0" "$(edit_count)"
+
+# Test 6.7: a body without this path's generator marker is never edited.
+reset_refresh_state
+stub_issue "${STALE_BODY//cited_file=${LF_PATH} /cited_file=other.sh }" "file-size-debt"
+_large_file_gate_create_debt_issue "$LF_PATH" "37939" "owner/repo" "" >/dev/null
+assert_eq "refresh: body for another cited path is not edited" "0" "$(edit_count)"
+reset_refresh_state
+stub_issue "Hand-written brief mentioning ${LF_PATH}" "file-size-debt"
+_large_file_gate_create_debt_issue "$LF_PATH" "37939" "owner/repo" "" >/dev/null
+assert_eq "refresh: body without the generator marker is not edited" "0" "$(edit_count)"
+
+# Test 6.8: an issue without the file-size-debt label is never edited.
+reset_refresh_state
+stub_issue "$STALE_BODY" "auto-dispatch"
+_large_file_gate_create_debt_issue "$LF_PATH" "37939" "owner/repo" "" >/dev/null
+assert_eq "refresh: unlabelled issue is not edited" "0" "$(edit_count)"
+
+# Test 6.9: a brief-owner hold keeps the body untouched.
+reset_refresh_state
+stub_issue "$STALE_BODY" "file-size-debt"
+issue_brief_hold_blocks_auto_release() { return 0; }
+_large_file_gate_create_debt_issue "$LF_PATH" "37939" "owner/repo" "" >/dev/null
+assert_eq "refresh: brief-held body is not edited" "0" "$(edit_count)"
+unset -f issue_brief_hold_blocks_auto_release
+
+# Test 6.10: a failed edit logs one warning and leaves the result unchanged.
+reset_refresh_state
+stub_issue "$STALE_BODY" "file-size-debt"
+STUB_EDIT_RC=1
+reopen_rc=0
+out=$(_large_file_gate_reopen_debt_issue "21376" "$LF_PATH" "owner/repo" "37939") || reopen_rc=$?
+assert_eq "refresh: failed edit keeps reopen output" "#21376 (reopened)" "$out"
+assert_eq "refresh: failed edit keeps reopen return code" "0" "$reopen_rc"
+assert_eq "refresh: failed edit logs one warning" "1" \
+	"$(grep -c 'WARN: reopened file-size-debt #21376 but failed to refresh its body' "$LOGFILE")"
+STUB_EDIT_RC=0
+
+######################################################################
+# Part 7: Files Scope paths missing from the default branch (GH#38978)
+#
+# _brief_files_scope_missing_paths warns at authoring time about literal
+# scope paths absent from the default branch unless declared `NEW:`.
+######################################################################
+
+printf '\n%s\n\n' '--- Part 7: Missing Files Scope paths (GH#38978) ---'
+
+SCOPE_REPO="${REFRESH_TMP}/scope-repo"
+mkdir -p "${SCOPE_REPO}/.agents/scripts"
+printf 'x\n' >"${SCOPE_REPO}/.agents/scripts/exists.sh"
+git -C "$SCOPE_REPO" init -q
+git -C "$SCOPE_REPO" add -A
+git -C "$SCOPE_REPO" -c user.name=t -c user.email=t@example.invalid commit -q -m init
+
+MISSING_BODY=$'## What\n\nx\n\n### Files Scope\n\n- `.agents/scripts/exists.sh`\n- `.agents/scripts/does-not-exist.sh`\n- `.agents/scripts/does-not-exist.sh`\n\n## Why\n\ny\n'
+assert_eq "missing-scope: one line for the one missing file" ".agents/scripts/does-not-exist.sh" \
+	"$(_brief_files_scope_missing_paths "$MISSING_BODY" "$SCOPE_REPO")"
+
+DECLARED_BODY="${MISSING_BODY}"$'\n### Files to Modify\n\n- NEW: `.agents/scripts/does-not-exist.sh` — new helper\n'
+assert_eq "missing-scope: NEW: declaration under Files to Modify silences it" "" \
+	"$(_brief_files_scope_missing_paths "$DECLARED_BODY" "$SCOPE_REPO")"
+
+GLOB_BODY=$'### Files Scope\n\n- `.agents/scripts/*.sh`\n'
+glob_rc=0
+glob_out=$(_brief_files_scope_missing_paths "$GLOB_BODY" "$SCOPE_REPO") || glob_rc=$?
+assert_eq "missing-scope: glob entries print nothing" "0:" "${glob_rc}:${glob_out}"
+
+nongit_rc=0
+nongit_out=$(_brief_files_scope_missing_paths "$MISSING_BODY" "${REFRESH_TMP}/not-a-repo") || nongit_rc=$?
+assert_eq "missing-scope: non-git repo_path prints nothing and returns 0" "0:" "${nongit_rc}:${nongit_out}"
+
+# claim-task-id.sh: the warning never changes the interactive scope gate's status.
+CLAIM_SCRIPT="${SCRIPT_DIR_TEST}/../claim-task-id.sh"
+claim_rc=0
+claim_err=$(
+	SCRIPT_DIR="${SCRIPT_DIR_TEST}/.."
+	# shellcheck source=../shared-constants.sh
+	source "${SCRIPT_DIR}/shared-constants.sh"
+	eval "$(sed -n '/^_warn_interactive_scope_missing_paths() {/,/^}/p;/^_validate_interactive_dispatch_scope() {/,/^}/p' "$CLAIM_SCRIPT")"
+	detect_session_origin() { printf 'interactive\n'; }
+	NO_ISSUE=false DRY_RUN=false TASK_BRIEF_FILE="" TASK_LABELS="auto-dispatch"
+	TASK_DESCRIPTION="$MISSING_BODY" REPO_PATH="$SCOPE_REPO"
+	_validate_interactive_dispatch_scope 2>&1 >/dev/null
+) || claim_rc=$?
+assert_eq "missing-scope: claim-task-id scope gate still exits 0" "0" "$claim_rc"
+# shellcheck disable=SC2016 # literal Markdown backticks in the expected hint
+assert_contains "missing-scope: claim-task-id warns with the path and NEW: hint" "$claim_err" \
+	'declare `NEW: .agents/scripts/does-not-exist.sh` under ### Files to Modify'
+
+######################################################################
 # Summary
 ######################################################################
 

@@ -298,11 +298,11 @@ dns_operation() {
 main() {
     # Assign positional parameters to local variables
     local command="${1:-help}"
-    local param2="$2"
-    local param3="$3"
-    local param4="$4"
-    local param5="$5"
-    local param6="$6"
+    local param2="${2:-}"
+    local param3="${3:-}"
+    local param4="${4:-}"
+    local param5="${5:-}"
+    local param6="${6:-}"
 
     local provider="$param2"
     local domain="$param3"

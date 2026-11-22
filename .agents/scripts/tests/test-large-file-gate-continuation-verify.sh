@@ -99,6 +99,8 @@ GH_CREATE_RESPONSE_URL=""
 GH_REMOTE_CONTENT_RESPONSE=""
 GH_REMOTE_CONTENT_FAIL=""
 GH_LABELS_RESPONSE=""
+GH_LOCK_COUNT_RESPONSE="0"
+GH_LOCK_COUNT_FAIL=""
 : >"$GH_CALLS_LOG"
 
 # =============================================================================
@@ -150,6 +152,12 @@ gh() {
 	done
 	if [[ "$1" == "api" && "$2" == "repos/owner/repo" ]]; then
 		printf 'main\n'
+		return 0
+	fi
+	# GH#39315: consolidation-lock marker count for normalization.
+	if [[ "$1" == "api" && "$2" == repos/owner/repo/issues/*/comments ]]; then
+		[[ -z "$GH_LOCK_COUNT_FAIL" ]] || return 1
+		printf '%s\n' "$GH_LOCK_COUNT_RESPONSE"
 		return 0
 	fi
 	if [[ "$1" == "api" && "$2" == "--method" && "$3" == "GET" && "$4" == repos/owner/repo/contents/* ]]; then
@@ -318,6 +326,11 @@ assert_contains \
 	"reopened canonical issue removes stale solved labels" \
 	"--remove-label solved:worker --remove-label solved:interactive" \
 	"$(cat "$GH_CALLS_LOG")"
+# GH#39315: a stale consolidated label makes the dispatch gate skip it forever.
+assert_contains \
+	"reopened canonical issue removes consolidation lifecycle labels" \
+	"--remove-label consolidated --remove-label needs-consolidation --remove-label consolidation-in-progress" \
+	"$(cat "$GH_CALLS_LOG")"
 assert_contains \
 	"reopened canonical issue restores active lifecycle labels" \
 	"--add-label file-size-debt --add-label auto-dispatch" \
@@ -333,6 +346,28 @@ assert_eq \
 	"normalization avoids ad hoc issue-edit mutations" \
 	"0" \
 	"$(grep -cF 'gh issue edit' "$GH_CALLS_LOG" || true)"
+# GH#39315: a live cross-runner consolidation lock, or a failed lock lookup,
+# keeps consolidation-in-progress while still clearing consolidated.
+for _lock_case in live failed; do
+	: >"$GH_CALLS_LOG"
+	if [[ "$_lock_case" == "live" ]]; then
+		GH_LOCK_COUNT_RESPONSE="1"
+	else
+		GH_LOCK_COUNT_FAIL="1"
+	fi
+	_large_file_gate_normalize_debt_issue "18706" "owner/repo"
+	_lock_call=$(grep -F 'set_issue_status 18706 owner/repo available' "$GH_CALLS_LOG" | tail -1)
+	assert_contains \
+		"${_lock_case} consolidation lock still clears consolidated" \
+		"--remove-label consolidated --remove-label needs-consolidation" \
+		"$_lock_call"
+	assert_eq \
+		"${_lock_case} consolidation lock preserves consolidation-in-progress" \
+		"0" \
+		"$(printf '%s\n' "$_lock_call" | grep -cF 'consolidation-in-progress' || true)"
+	GH_LOCK_COUNT_RESPONSE="0"
+	GH_LOCK_COUNT_FAIL=""
+done
 issue_brief_hold_blocks_auto_release() { return 0; }
 : >"$GH_CALLS_LOG"
 _large_file_gate_normalize_debt_issue "18706" "owner/repo"
@@ -458,25 +493,35 @@ assert_eq "lagging mirror admits unchanged and verified-absent targets" "0" "$rc
 rc=0
 _large_file_gate_repo_matches_remote_default "$TMP" "missing.sh" || rc=$?
 assert_eq "lagging mirror admits a verified-absent NEW target alone" "0" "$rc"
-fixture_agents_tree=$(printf '100644 blob %s\tupstream-agent.sh\n' "$fixture_blob" | command git -C "$fixture_repo" mktree) || exit 1
-fixture_upstream_tree=$(printf '040000 tree %s\t.agents\n100644 blob %s\t.upstream-dot.sh\n100644 blob %s\ttarget.sh\n100644 blob %s\tupstream-new.sh\n' \
-	"$fixture_agents_tree" "$fixture_blob" "$fixture_blob" "$fixture_blob" | command git -C "$fixture_repo" mktree) || exit 1
+fixture_agents_tree=$(printf '100644 blob %s\tambiguous.sh\n100644 blob %s\tupstream-agent.sh\n' \
+	"$fixture_blob" "$fixture_blob" | command git -C "$fixture_repo" mktree) || exit 1
+fixture_upstream_tree=$(printf '040000 tree %s\t.agents\n100644 blob %s\t.upstream-dot.sh\n100644 blob %s\tambiguous.sh\n100644 blob %s\ttarget.sh\n100644 blob %s\tupstream-new.sh\n' \
+	"$fixture_agents_tree" "$fixture_blob" "$fixture_blob" "$fixture_blob" "$fixture_blob" | command git -C "$fixture_repo" mktree) || exit 1
 fixture_remote=$(printf 'upstream addition fixture\n' | env \
 	GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid \
 	GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid \
 	git -C "$fixture_repo" commit-tree "$fixture_upstream_tree" -p "$fixture_remote") || exit 1
+# GH#38785: a target added upstream is measured from its pinned blob.
 rc=0
 _large_file_gate_repo_matches_remote_default "$TMP" "upstream-new.sh" || rc=$?
-assert_eq "target added upstream but missing locally still defers" "1" "$rc"
+assert_eq "target added upstream but missing locally uses the pinned blob" "0" "$rc"
+_large_file_gate_collect_large_files "upstream-new.sh" "$TMP" "9994" "$_LFG_REMOTE_MEASUREMENT_SHA"
+assert_eq "upstream addition is measured from the pinned blob" "false" "$_LFG_FOUND_LARGE"
 rc=0
 _large_file_gate_repo_matches_remote_default "$TMP" "upstream-new.sh:1-3000" || rc=$?
-assert_eq "upstream addition with a line range still defers" "1" "$rc"
+assert_eq "upstream addition with a line range uses the pinned blob" "0" "$rc"
 rc=0
 _large_file_gate_repo_matches_remote_default "$TMP" "upstream-agent.sh" || rc=$?
-assert_eq "target added upstream under .agents still defers" "1" "$rc"
+assert_eq "target added upstream under .agents uses the pinned blob" "0" "$rc"
 rc=0
 _large_file_gate_repo_matches_remote_default "$TMP" "upstream-dot.sh" || rc=$?
-assert_eq "target added upstream with dot prefix still defers" "1" "$rc"
+assert_eq "target added upstream with dot prefix uses the pinned blob" "0" "$rc"
+rc=0
+_large_file_gate_repo_matches_remote_default "$TMP" "ambiguous.sh" || rc=$?
+assert_eq "ambiguous upstream addition still defers" "1" "$rc"
+rc=0
+_large_file_gate_collect_large_files "ambiguous.sh" "$TMP" "9994" "$fixture_remote" || rc=$?
+assert_eq "ambiguous upstream addition measurement fails closed" "1" "$rc"
 printf 'changed target\n' >>"${TMP}/target.sh"
 rc=0
 _large_file_gate_repo_matches_remote_default "$TMP" "target.sh" || rc=$?

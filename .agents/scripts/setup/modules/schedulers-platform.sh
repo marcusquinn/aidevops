@@ -322,6 +322,9 @@ setup_complexity_scan() {
 #   - Script: pulse-merge-routine.sh run
 #   - Interval: 60s (down from 120s) — targets <=90s PR-green-to-merged latency
 #   - Log: pulse-merge.log (isolated from main pulse log)
+#   - ProcessType: Interactive (GH#38455). With no ProcessType, launchd applies
+#     throttled "light resource limits". Background is never used: it left
+#     this agent stuck in xpcproxy (t3381).
 #
 # Args: $1=label $2=wrapper_script $3=log_dir
 _install_pulse_merge_routine_launchd() {
@@ -376,6 +379,8 @@ _install_pulse_merge_routine_launchd() {
 		<key>HOME</key>
 		<string>${_xml_pmr_home}</string>
 ${_env_overrides_xml}	</dict>
+	<key>ProcessType</key>
+	<string>Interactive</string>
 	<key>RunAtLoad</key>
 	<false/>
 	<key>KeepAlive</key>
@@ -471,9 +476,11 @@ setup_pulse_merge_routine() {
 	_pulse_runtime_pin_preserves_scheduler "$pmr_installed" || pin_scheduler_rc=$?
 	if [[ "$pin_scheduler_rc" -eq 0 ]]; then
 		print_info "Pulse merge scheduler preserved while its bounded runtime pin is active"
+		_schedulers_defer_template_hash "pulse merge scheduler preserved by runtime pin"
 		return 0
 	elif [[ "$pin_scheduler_rc" -ne 1 ]]; then
 		print_error "Pulse merge scheduler refused an invalid runtime pin"
+		_schedulers_defer_template_hash "pulse merge scheduler refused an invalid runtime pin"
 		return 1
 	fi
 
@@ -934,6 +941,77 @@ setup_opencode_db_maintenance() {
 	return 0
 }
 
+# Print the opencode DB archive LaunchAgent plist: one StartCalendarInterval
+# entry per hour in [start_hour, end_hour] (GH#35517).
+_opencode_db_archive_plist() {
+	local label="$1"
+	local script="$2"
+	local home="$3"
+	local log="$4"
+	local budget_sec="$5"
+	local start_hour="$6"
+	local end_hour="$7"
+	local minute="$8"
+	local calendar_xml="" hour=""
+	local xml_script xml_home xml_log xml_path xml_bash
+	for ((hour = start_hour; hour <= end_hour; hour++)); do
+		calendar_xml="${calendar_xml}
+		<dict>
+			<key>Hour</key>
+			<integer>${hour}</integer>
+			<key>Minute</key>
+			<integer>${minute}</integer>
+		</dict>"
+	done
+	xml_script=$(_xml_escape "$script")
+	xml_home=$(_xml_escape "$home")
+	xml_log=$(_xml_escape "$log")
+	xml_path=$(_xml_escape "$(aidevops_launchd_sanitized_path "${PATH}")")
+	xml_bash=$(_xml_escape "$(_resolve_modern_bash)")
+	cat <<ARCHIVE_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>${xml_bash}</string>
+		<string>${xml_script}</string>
+	</array>
+	<key>StartCalendarInterval</key>
+	<array>${calendar_xml}
+	</array>
+	<key>StandardOutPath</key>
+	<string>${xml_log}</string>
+	<key>StandardErrorPath</key>
+	<string>${xml_log}</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>${xml_home}</string>
+		<key>PATH</key>
+		<string>${xml_path}</string>
+		<key>OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC</key>
+		<string>${budget_sec}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityBackgroundIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+</dict>
+</plist>
+ARCHIVE_PLIST
+	return 0
+}
+
 # Setup opencode DB archive scheduler (GH#25136).
 # Runs independently from pulse preflight so archive/VACUUM work does not track
 # dispatch-loop cadence. The async helper keeps its single-runner lock and
@@ -951,70 +1029,35 @@ setup_opencode_db_archive() {
 	fi
 
 	local archive_log_dir="$archive_home/.aidevops/logs"
-	local archive_hour="${OPENCODE_DB_ARCHIVE_HOUR:-5}"
+	# GH#35517: hourly attempts across an overnight window so DBs held by
+	# OpenCode get several idle-gated chances; the helper no-ops after one
+	# complete pass per day.
+	local archive_start_hour="${OPENCODE_DB_ARCHIVE_START_HOUR:-0}"
+	local archive_end_hour="${OPENCODE_DB_ARCHIVE_END_HOUR:-7}"
 	local archive_minute="${OPENCODE_DB_ARCHIVE_MINUTE:-0}"
 	local archive_budget_sec="${OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC:-60}"
 	local archive_env="OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC=${archive_budget_sec}"
+	if ! [[ "$archive_start_hour" =~ ^[0-9]+$ && "$archive_end_hour" =~ ^[0-9]+$ && "$archive_minute" =~ ^[0-9]+$ ]] ||
+		((archive_start_hour > archive_end_hour || archive_end_hour > 23 || archive_minute > 59)); then
+		print_warning "Invalid OPENCODE_DB_ARCHIVE_START_HOUR/END_HOUR/MINUTE — using 0-7 at :00"
+		archive_start_hour=0
+		archive_end_hour=7
+		archive_minute=0
+	fi
+	local archive_window="${archive_start_hour}-${archive_end_hour}"
+	local archive_on_calendar
+	archive_on_calendar=$(printf '*-*-* %02d..%02d:%02d:00' "$archive_start_hour" "$archive_end_hour" "$archive_minute")
 	mkdir -p "$archive_log_dir"
 
 	if [[ "$(uname -s)" == "Darwin" ]]; then
 		local archive_label="sh.aidevops.opencode-db-archive"
 		local archive_plist="$archive_home/Library/LaunchAgents/${archive_label}.plist"
-		local _xml_archive_script _xml_archive_home _xml_archive_log _xml_archive_path
-		_xml_archive_script=$(_xml_escape "$archive_script")
-		_xml_archive_home=$(_xml_escape "$archive_home")
-		_xml_archive_log=$(_xml_escape "${archive_log_dir}/opencode-db-archive.log")
-		_xml_archive_path=$(_xml_escape "$(aidevops_launchd_sanitized_path "${PATH}")")
-
 		local archive_plist_content
-		archive_plist_content=$(cat <<ARCHIVE_PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key>
-	<string>${archive_label}</string>
-	<key>ProgramArguments</key>
-	<array>
-		<string>$(_xml_escape "$(_resolve_modern_bash)")</string>
-		<string>${_xml_archive_script}</string>
-	</array>
-	<key>StartCalendarInterval</key>
-	<dict>
-		<key>Hour</key>
-		<integer>${archive_hour}</integer>
-		<key>Minute</key>
-		<integer>${archive_minute}</integer>
-	</dict>
-	<key>StandardOutPath</key>
-	<string>${_xml_archive_log}</string>
-	<key>StandardErrorPath</key>
-	<string>${_xml_archive_log}</string>
-	<key>EnvironmentVariables</key>
-	<dict>
-		<key>HOME</key>
-		<string>${_xml_archive_home}</string>
-		<key>PATH</key>
-		<string>${_xml_archive_path}</string>
-		<key>OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC</key>
-		<string>${archive_budget_sec}</string>
-	</dict>
-	<key>RunAtLoad</key>
-	<false/>
-	<key>KeepAlive</key>
-	<false/>
-	<key>ProcessType</key>
-	<string>Background</string>
-	<key>LowPriorityBackgroundIO</key>
-	<true/>
-	<key>Nice</key>
-	<integer>10</integer>
-</dict>
-</plist>
-ARCHIVE_PLIST
-		)
+		archive_plist_content=$(_opencode_db_archive_plist "$archive_label" "$archive_script" "$archive_home" \
+			"${archive_log_dir}/opencode-db-archive.log" "$archive_budget_sec" \
+			"$archive_start_hour" "$archive_end_hour" "$archive_minute")
 		if _launchd_install_if_changed "$archive_label" "$archive_plist" "$archive_plist_content"; then
-			print_info "OpenCode DB archive enabled (launchd, daily ${archive_hour}:${archive_minute})"
+			print_info "OpenCode DB archive enabled (launchd, hourly ${archive_window}h until a full daily pass)"
 		else
 			print_warning "Failed to install opencode DB archive LaunchAgent"
 		fi
@@ -1024,16 +1067,16 @@ ARCHIVE_PLIST
 		_install_scheduler_linux \
 			"aidevops-opencode-db-archive" \
 			"aidevops: opencode-db-archive" \
-			"${archive_minute} ${archive_hour} * * *" \
+			"${archive_minute} ${archive_window} * * *" \
 			"\"${archive_script}\"" \
-			"86400" \
+			"3600" \
 			"${archive_log_dir}/opencode-db-archive.log" \
 			"${archive_env}" \
-			"OpenCode DB archive enabled (daily ${archive_hour}:${archive_minute})" \
+			"OpenCode DB archive enabled (hourly ${archive_window}h until a full daily pass)" \
 			"Failed to install opencode DB archive scheduler" \
 			"false" \
 			"true" \
-			"*-*-* ${archive_hour}:${archive_minute}:00" \
+			"${archive_on_calendar}" \
 			"3600"
 	fi
 	return 0
@@ -1136,7 +1179,7 @@ HYGIENE_PLIST
 }
 
 # Setup repo-sync scheduler if not already installed.
-# Keeps local git repos up to date with daily ff-only pulls.
+# Reports daily read-only remote drift; never pulls or changes checkouts.
 # Respects config: aidevops config set orchestration.repo_sync false
 setup_repo_sync() {
 	local repo_sync_script="$HOME/.aidevops/agents/scripts/repo-sync-helper.sh"

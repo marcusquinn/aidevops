@@ -118,6 +118,23 @@ _pulse_wrapper_resolve_script_dir() {
 	return 1
 }
 
+# Reject unsupported positional lifecycle arguments before any bootstrap,
+# credential loading, lease acquisition, jitter, or lifecycle side effects.
+# The explicitly selected command facade owns its own arguments.
+if [[ "${BASH_SOURCE[0]:-}" == "${0:-}" && "${1:-}" != --command ]]; then
+	for _pulse_cli_arg in "$@"; do
+		case "$_pulse_cli_arg" in
+		-*) ;;
+		*)
+			printf 'pulse-wrapper: unsupported positional argument: %s\n' "$_pulse_cli_arg" >&2
+			printf '%s\n' 'usage: pulse-wrapper.sh [options] | --command <command> [args...]' >&2
+			exit 2
+			;;
+		esac
+	done
+	unset _pulse_cli_arg
+fi
+
 #######################################
 # PATH normalisation
 # The MCP shell environment may have a minimal PATH that excludes /bin
@@ -320,6 +337,9 @@ source "${SCRIPT_DIR}/pulse-meta-parse.sh"
 source "${SCRIPT_DIR}/pulse-repo-meta.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-routines.sh"
+# GH#37914: cycle-owned routines ticker for long cycles.
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/pulse-routines-tick.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/dependabot-alert-monitor.sh"
 # GH#23604: semantics-preserving exact-output PR-list provider cache used by
@@ -410,6 +430,9 @@ source "${SCRIPT_DIR}/pulse-canonical-maintenance.sh"
 # t2350 (GH#19948): DIRTY-PR sweep runs every 30min after the merge pass.
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-dirty-pr-sweep.sh"
+# t18771 (GH#35655): redirect-link spam sweep — close/hide + block authors.
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/redirect-link-guard-helper.sh"
 # t2865 (GH#20922): canonical-worktree pull conflict auto-recovery.
 # Called from _pulse_refresh_repo on git pull --ff-only failure.
 # shellcheck source=/dev/null
@@ -417,14 +440,15 @@ source "${SCRIPT_DIR}/pulse-canonical-recovery.sh"
 
 #######################################
 # SSH agent integration for commit signing (t1882)
-# Source the persisted agent.env so headless workers can sign commits
-# without a passphrase prompt. Safe to source even if the file doesn't
-# exist — the conditional guard prevents errors.
+# Source the persisted agent.env so headless workers and script routines can
+# sign commits without a passphrase prompt. GH#36493: agent.env outlives its
+# ssh-agent across reboots; restart a dead agent with the dedicated headless
+# key so routines and workers inherit a live SSH_AUTH_SOCK.
 #######################################
-if [[ -f "$HOME/.ssh/agent.env" ]]; then
-	# shellcheck source=/dev/null
-	. "$HOME/.ssh/agent.env" >/dev/null 2>&1 || true
-fi
+# shellcheck source=./headless-ssh-agent-lib.sh
+source "${SCRIPT_DIR}/headless-ssh-agent-lib.sh"
+# The outcome is logged after pulse-wrapper-config.sh defines LOGFILE.
+headless_ssh_agent_ensure "${SCRIPT_DIR}/signing-setup.sh" || true
 
 #######################################
 # Source credentials.sh for API keys (GH#17546)
@@ -465,6 +489,18 @@ source "${SCRIPT_DIR}/pulse-budget-priority.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/pulse-wrapper-config.sh"
 
+# GH#36493: report the headless ssh-agent check performed above. A heal is
+# rare (once after a reboot); a persistent failure is logged each cycle
+# because routines and workers cannot sign or authenticate until fixed.
+case "${HEADLESS_SSH_AGENT_STATUS:-}" in
+healed)
+	printf '[pulse-wrapper] Restarted stale headless ssh-agent from ~/.ssh/agent.env (GH#36493)\n' >>"$LOGFILE" 2>/dev/null || true
+	;;
+dead)
+	printf '[pulse-wrapper] WARN: ~/.ssh/agent.env names an unreachable ssh-agent and self-heal failed; run: aidevops signing agent-start\n' >>"$LOGFILE" 2>/dev/null || true
+	;;
+esac
+
 # Cycle-running helpers + bootstrap helpers extracted to two sub-libraries
 # (GH#21311 / t2936-child). Order matters only insofar as
 # pulse-wrapper-config.sh must be sourced first (already done above) so
@@ -497,473 +533,20 @@ mkdir -p "$PULSE_DIR"
 # Provided by pulse-wrapper-cycle.sh (GH#21311 / t2936-child):
 # _pulse_refresh_repo, run_pulse.
 
-#######################################
-# Check if the pulse is allowed to run.
-#
-# Consent model (layered, highest priority first):
-#   1. Session stop flag — `aidevops pulse stop` creates this to pause
-#      the pulse without uninstalling it. Checked first so stop always wins.
-#   2. Session start flag — `aidevops pulse start` creates this. If present,
-#      the pulse runs regardless of config (explicit user action).
-#   3. Config consent — setup.sh writes orchestration.supervisor_pulse=true
-#      when the user consents. This is the persistent, reboot-surviving gate.
-#
-# If none of the above are set, the pulse was installed without config
-# consent (shouldn't happen after GH#2926) — skip as a safety fallback.
-#
-# Returns: 0 if pulse should run, 1 if not
-#######################################
-check_session_gate() {
-	# Stop flag takes priority — user explicitly paused
-	if [[ -f "$STOP_FLAG" ]]; then
-		echo "[pulse-wrapper] Pulse paused (stop flag present) — resume with: aidevops pulse start" >>"$LOGFILE"
-		return 1
-	fi
+# Session consent and dispatch-budget admission helpers (GH#20781).
+# shellcheck source=./pulse-wrapper-admission.sh
+# shellcheck disable=SC1091  # sibling module resolved at runtime via SCRIPT_DIR
+source "${SCRIPT_DIR}/pulse-wrapper-admission.sh"
 
-	# Session start flag — explicit user action, always allowed
-	if [[ -f "$SESSION_FLAG" ]]; then
-		return 0
-	fi
+# Triage, large-file gate, merge, LLM supervisor and routine defaults (GH#38106).
+# shellcheck source=./pulse-wrapper-defaults.sh
+# shellcheck disable=SC1091  # sibling module resolved at runtime via SCRIPT_DIR
+source "${SCRIPT_DIR}/pulse-wrapper-defaults.sh"
 
-	# Config consent — the persistent gate that survives reboots.
-	# Delegates to config_enabled from config-helper.sh (sourced via
-	# shared-constants.sh), which handles: env var override
-	# (AIDEVOPS_SUPERVISOR_PULSE) > user JSONC config > defaults.
-	# Single canonical implementation shared with pulse-session-helper.sh.
-	if type config_enabled &>/dev/null && config_enabled "orchestration.supervisor_pulse"; then
-		return 0
-	fi
-
-	echo "[pulse-wrapper] Pulse not enabled — set orchestration.supervisor_pulse=true in config or run: aidevops pulse start" >>"$LOGFILE"
-	return 1
-}
-
-#######################################
-# Daily complexity scan helpers (GH#5628, GH#15285)
-#######################################
-
-#######################################
-# Simplification state tracking — git-committed registry of simplified files.
-#
-# State file: .agents/configs/simplification-state.json (in repo, on main)
-# Format: { "files": { "path": { "hash": "<git blob sha>", "at": "ISO", "pr": N } } }
-#
-# - "hash" is the git blob SHA of the file at simplification time
-# - When scan sees a file in state with matching hash → skip (already done)
-# - When hash differs → file changed since simplification → create recheck issue
-# - State is committed to main and pushed, so all users share it
-#######################################
-
-#######################################
-# Complexity scan (GH#5628, GH#15285)
-#
-# Deterministic scan using shell-based heuristics via complexity-scan-helper.sh:
-# - Batch hash comparison against simplification-state.json (skip unchanged files)
-# - Shell heuristics: line count, function count, nesting depth
-# - No per-file LLM analysis — LLM reserved for daily deep sweep only
-#
-# Scans both shell scripts (.sh) and agent docs (.md) for complexity:
-# - .sh files: functions exceeding COMPLEXITY_FUNC_LINE_THRESHOLD lines
-# - .md files: agent docs at/above COMPLEXITY_MD_MIN_LINES (default 500);
-#   classification determines compress-vs-split action.
-#
-# Protected files (build.txt, AGENTS.md, pulse.md, pulse-sweep.md) are excluded.
-# Results processed longest-first. .md issues get tier:standard by default.
-#
-# Daily LLM sweep (GH#15285): if simplification debt hasn't decreased in 6h,
-# creates a tier:thinking issue for LLM-powered deep review of stalled debt.
-#
-# Runs at most once per COMPLEXITY_SCAN_INTERVAL (default 15 min).
-# Creates up to 5 issues per run; open cap (500) prevents backlog flooding.
-#
-# Returns: 0 always (best-effort, never breaks the pulse)
-#######################################
-
-# count_active_workers: now provided by worker-lifecycle-common.sh (sourced above).
-# Removed from pulse-wrapper.sh to eliminate divergence with stats-functions.sh.
-
-#######################################
-# Triage content-hash dedup (GH#17746).
-#
-# Without dedup, NMR issues are re-triaged every pulse cycle:
-# lock → agent → no output → unlock → repeat. This wastes tokens,
-# API calls, and pollutes the issue timeline with lock/unlock events.
-#
-# Strategy: hash the issue body + human comments (excluding bot and
-# review comments). Cache the hash. Skip triage when content is
-# unchanged. Re-triage when the author edits the body or adds a
-# new comment.
-#######################################
-TRIAGE_CACHE_DIR="${TRIAGE_CACHE_DIR:-${HOME}/.aidevops/.agent-workspace/tmp/triage-cache}"
-
-#######################################
-# GH#17827, t2014: Triage failure retry cap (default 1 — single attempt).
-#
-# When triage fails (no review posted), the GH#17873 fix intentionally
-# skips caching the content hash so the next cycle retries. But failing
-# triages are overwhelmingly deterministic (format-validation rejections,
-# not transient model quota) — three retries per content version burn
-# three full opus agent invocations (~100K chars each) and three
-# lock/unlock pairs on the issue timeline, all to reach the same outcome.
-#
-# Solution: cap retries at 1. The FIRST failure increments the counter
-# to 1, sees 1 >= TRIAGE_MAX_RETRIES, caches the hash, and marks the
-# issue with triage-failed. Subsequent cycles skip via the content-hash
-# cache — zero lock/unlock, zero agent invocations. A new human comment
-# changes the hash and resets the counter, giving another attempt.
-#
-# Transient failures (network, gh API, model rate-limit) are caught
-# earlier in the dispatch loop (before lock_issue_for_worker) or
-# handled by the model rotation pool, so the retry budget here adds no
-# value for transients — only cost for deterministic failures.
-#
-# Maintainers can force a re-triage by removing the triage-failed label
-# and the corresponding .failures/.hash files in TRIAGE_CACHE_DIR.
-#######################################
-TRIAGE_MAX_RETRIES="${TRIAGE_MAX_RETRIES:-1}"
-
-#######################################
-# Atomic dispatch: dedup guard + assign + launch in a single call (GH#12436)
-#
-# Root cause of GH#12141 and GH#12155: the pulse.md instructed the LLM to
-# run check_dispatch_dedup, then gh issue edit, then headless-runtime-helper.sh
-# as three separate steps. The LLM skipped check_dispatch_dedup entirely in
-# both incidents — zero DISPATCH_CLAIM comments were posted. This function
-# makes the dedup guard non-skippable by wrapping all three steps into a
-# single deterministic call. The LLM calls one function; the function
-# enforces all 7 dedup layers before assigning and launching.
-#
-# Arguments:
-#   $1 - issue_number
-#   $2 - repo_slug (owner/repo)
-#   $3 - dispatch_title (e.g., "Issue #42: Fix auth")
-#   $4 - issue_title (e.g., "t042: Fix auth" — for merged-PR fallback)
-#   $5 - self_login (runner's GitHub login)
-#   $6 - repo_path (local path to the repo for the worker)
-#   $7 - prompt (full prompt string for the worker, e.g., "/full-loop ...")
-#   $8 - session_key (optional; defaults to "issue-${issue_number}")
-#
-# Exit codes:
-#   0 - dispatched successfully
-#   1 - dedup guard blocked dispatch (duplicate detected)
-#   2 - dispatch failed after passing dedup (assign or launch error)
-#######################################
-
-#######################################
-# Issue consolidation: detect multi-comment issues where substantive
-# comments (not dispatch/approval machinery) have materially changed
-# the issue's scope since the body was written.
-#
-# Threshold: ISSUE_CONSOLIDATION_COMMENT_THRESHOLD (default 2) substantive
-# comments with >500 chars each (excludes dispatch claims, approval sigs,
-# bot comments, and recovery comments).
-#
-# When triggered, adds a "needs-consolidation" label and posts a comment
-# explaining the action. The issue is skipped for dispatch until a
-# consolidation worker merges the comment thread into a clean issue.
-#
-# Arguments: $1 issue_number, $2 repo_slug
-# Returns: 0 if consolidation is needed, 1 if not
-#
-# Defaults are owned by pulse-triage.sh (module-level := block) which is
-# sourced above. Declarations removed from here to eliminate duplicate-default
-# drift (t2143). Override via env before sourcing pulse-triage.sh if needed.
-#######################################
-
-#######################################
-# Large-file simplification gate: check if an issue body references
-# files that exceed a line count threshold, indicating the worker will
-# spend most of its context budget just reading the target file.
-#
-# When a large file is detected, the function:
-#   1. Checks if a simplification task already exists for that file
-#   2. If not, logs the finding for the simplification routine to pick up
-#   3. Adds a label so the issue is held until simplification runs
-#
-# Arguments: $1 issue_number, $2 repo_slug, $3 issue_body, $4 repo_path
-# Returns: 0 if gate triggered (hold dispatch), 1 if clear
-#######################################
-LARGE_FILE_LINE_THRESHOLD="${LARGE_FILE_LINE_THRESHOLD:-2000}"
-
-# t2024: Scoped-range exemption for the large-file gate.
-#
-# The gate's purpose is to prevent a worker from paying the complexity tax
-# of navigating a huge file when it only needs to understand a small section.
-# If the issue body cites an explicit line range (e.g., "EDIT: file.sh:221-253")
-# and the range is at most SCOPED_RANGE_THRESHOLD lines, the worker can
-# navigate the cited range directly without reading the whole file — so we
-# pass the gate regardless of the enclosing file's total line count.
-#
-# Single-line citations (e.g., "file.sh:1477") are treated as context references
-# for the human reader, not implementation targets, and are excluded from
-# gate evaluation entirely. A worker never "edits line 1477" — they edit a
-# function or a range; a bare line number is documentation, not a target.
-#
-# File references without any line qualifier (e.g., "file.sh") fall through
-# to the existing file-size check — this preserves the original safety for
-# whole-file rewrites where the worker really does need to understand everything.
-SCOPED_RANGE_THRESHOLD="${SCOPED_RANGE_THRESHOLD:-300}"
-
-#######################################
-# Per-issue retry state (t1888, GH#2076, GH#17384)
-#
-# Cause-aware retry backoff. See config block at line ~205 for the full
-# decision tree. Key invariant: rate-limit failures with available accounts
-# do NOT increment the counter or delay retry — they rotate immediately.
-# Only exhaustion of all accounts or non-rate-limit failures trigger backoff.
-#
-# State file: FAST_FAIL_STATE_FILE (JSON, ~200 bytes per entry)
-# Format: { "slug/number": { "count": N, "ts": epoch, "reason": "...",
-#            "retry_after": epoch, "backoff_secs": N } }
-#
-# Integration points:
-#   - pulse-wrapper.sh: fast_fail_record() on launch failure (recover_failed_launch_state)
-#   - worker-watchdog.sh: _watchdog_record_failure_and_escalate() on worker kill
-#   - pulse-wrapper.sh: fast_fail_reset() on PR merge / issue close
-#   - pulse-wrapper.sh: fast_fail_is_skipped() in deterministic dispatch loop
-#
-# All functions are best-effort — failures are logged but never fatal.
-#######################################
-
-# dispatch_count_exceeded removed (t1927). An arbitrary hard cap on dispatch
-# attempts gives up instead of solving. The correct approach is:
-#   1. fast_fail with exponential backoff (already implemented) — gives the
-#      system breathing room between attempts
-#   2. escalate_issue_tier (already implemented) — moves to higher-capability
-#      models after consecutive failures
-#   3. stale recovery records fast-fail (already implemented) — silent timeouts
-#      count as failures and feed into backoff + escalation
-#   4. blocked-by enforcement (already implemented) — skips genuinely blocked work
-#
-# Together, these ensure the system keeps trying with progressively more
-# capable models and longer backoff intervals, rather than giving up at an
-# arbitrary number. The measure of success is issues getting solved, not
-# issues getting labeled "stuck".
-
-#######################################
-# Apply dispatch_max after a pulse pass.
-#######################################
-# Deterministic merge pass: approve and merge all ready PRs.
-#
-# Runs every pulse cycle as a wrapper-level stage (not LLM-dependent).
-# This prevents PR backlogs from accumulating when the LLM fails to
-# execute merge steps or the prefetch was broken.
-#
-# A PR is merge-ready when ALL of:
-#   1. mergeable == MERGEABLE (not conflicting)
-#   2. Author is a collaborator (admin/maintain/write permission)
-#   3. Not modifying .github/workflows/ without workflow token scope
-#   4. No linked issue with needs-maintainer-review label
-#   5. Not from an external contributor
-#
-# REVIEW_REQUIRED is not a blocker — the pulse user auto-approves
-# collaborator PRs via approve_collaborator_pr().
-#
-# Conflicting PRs are closed with a comment (they will be superseded
-# by workers re-dispatching the issue).
-#
-# Returns: 0 always (non-fatal — merge failures don't block the pulse)
-#######################################
-PULSE_MERGE_BATCH_LIMIT="${PULSE_MERGE_BATCH_LIMIT:-50}"
-PULSE_MERGE_CLOSE_CONFLICTING="${PULSE_MERGE_CLOSE_CONFLICTING:-true}"
-
-#######################################
-# Decide whether to invoke the LLM supervisor this cycle.
-#
-# Returns 0 (true = run LLM) when:
-#   - Last LLM run was >24h ago (daily sweep)
-#   - Backlog is stalled: issue+PR count unchanged for 30+ min
-#   - No backlog snapshot exists yet (first run)
-#
-# Returns 1 (false = skip LLM) when:
-#   - Backlog is progressing (counts are decreasing)
-#   - Daily sweep not yet due
-#
-# Side effect: writes the trigger mode to ${PULSE_DIR}/llm_trigger_mode
-#   Values: "daily_sweep" | "stall" | "first_run"
-#   Callers read this file to select the correct agent prompt
-#   (pulse-sweep.md for daily_sweep, pulse.md for stall/first_run).
-#
-# State files:
-#   ${PULSE_DIR}/last_llm_run_epoch     — epoch of last LLM invocation
-#   ${PULSE_DIR}/backlog_snapshot.txt    — "epoch issues_count prs_count"
-#   ${PULSE_DIR}/llm_trigger_mode        — last trigger reason (daily_sweep|stall|first_run)
-#######################################
-PULSE_LLM_STALL_THRESHOLD="${PULSE_LLM_STALL_THRESHOLD:-$(config_get "orchestration.llm_stall_threshold" "3600")}" # 1h (was 30 min; dispatch_max handles routine dispatch)
-PULSE_LLM_DAILY_INTERVAL="${PULSE_LLM_DAILY_INTERVAL:-86400}"                                                      # 24h
-
-#######################################
-# Routine evaluation (t1925)
-#
-# Evaluates repeat: fields in TODO.md routines sections across pulse-enabled
-# repos. Dispatches due routines:
-#   - run: → execute script directly (zero LLM tokens)
-#   - agent: → dispatch via headless-runtime-helper.sh
-#
-# State file: ~/.aidevops/.agent-workspace/routine-state.json
-# Schedule parser: routine-schedule-helper.sh
-#######################################
-ROUTINE_STATE_FILE="${HOME}/.aidevops/.agent-workspace/routine-state.json"
-ROUTINE_SCHEDULE_HELPER="${SCRIPT_DIR}/routine-schedule-helper.sh"
-ROUTINE_LOG_HELPER="${SCRIPT_DIR}/routine-log-helper.sh"
-
-# ---------------------------------------------------------------------------
-# _pulse_execute_self_check
-#
-# Phase 0 (t1963, GH#18357): validate that all expected functions and module
-# include-guards are present. Extracted from main() (GH#18689) to reduce
-# cyclomatic complexity — the self-check body was ~100 lines inside main().
-#
-# Exit 0: all functions and guards present.
-# Exit 1: at least one expected symbol is missing (names printed to stderr).
-# ---------------------------------------------------------------------------
-_pulse_execute_self_check() {
-	local _sc_missing=()
-	local _sc_fn
-	local _sc_expected_fns=(
-		resolve_dispatch_model_for_labels
-		acquire_instance_lock
-		_pulse_exit_cleanup
-		check_dedup
-		prefetch_state
-		_extract_frontmatter_field
-		check_external_contributor_pr
-		run_cmd_with_timeout
-		run_pulse
-		cleanup_worktrees
-		normalize_active_issue_assignments
-		issue_has_required_approval
-		run_weekly_complexity_scan
-		get_repo_path_by_slug
-		get_repo_role_by_slug
-		dispatch_with_dedup
-		_triage_content_hash
-		normalize_count_output
-		_ff_key
-		build_dependency_graph_cache
-		dependabot_alert_monitor_scan_repos
-		dispatch_max
-		merge_ready_prs_all_repos
-		rotate_pulse_log
-		evaluate_routines
-		evaluate_routines_locked
-		_pulse_run_routines_while_busy
-		main
-		write_pulse_health_file
-		calculate_max_workers
-		dispatch_enrichment_workers
-		dispatch_triage_reviews
-		sync_todo_refs_for_repo
-		sync_todo_refs_all_repos
-		_pulse_execute_self_check
-		_pulse_handle_self_check
-		_pulse_setup_dry_run_mode
-		_pulse_run_deterministic_pipeline
-		_pulse_maybe_run_llm_supervisor
-		_pulse_set_graphql_budget_priority
-		_pulse_set_rest_core_budget_priority
-		_pulse_stage_priority_class
-		_pulse_run_budget_priority_stage
-		_pulse_run_budget_priority_stage_with_timeout
-		_pulse_run_optional_stage
-		_pulse_run_optional_stage_with_timeout
-		_carry_forward_pr_diff
-		_dispatch_pr_fix_worker
-		_close_conflicting_pr
-		_interactive_pr_is_stale
-		_interactive_pr_trigger_handover
-		_dispatch_ci_fix_worker
-		_dispatch_conflict_fix_worker
-		run_canonical_maintenance
-		dirty_pr_sweep_all_repos
-		_pulse_refresh_repo
-		pulse_canonical_recover
-		check_dispatch_backoff
-	)
-	for _sc_fn in "${_sc_expected_fns[@]}"; do
-		if ! declare -F "$_sc_fn" >/dev/null 2>&1; then
-			_sc_missing+=("$_sc_fn")
-		fi
-	done
-	# Module include guards. Appended as each phase lands.
-	# Phase 1 (t1966, GH#18364): 5 leaf modules
-	# Phase 2 (t1967, GH#18367): 4 leaves with fan-in
-	# Phase 3 (t1971, GH#18372): 4 operational plumbing clusters
-	# Phase 4 (t1972, GH#18378): pr-gates + merge cycle co-extracted
-	# Phase 5 (t1973, GH#18380): cleanup + issue-reconcile extracted
-	# Phase 6 (t1974, GH#18382): simplification cluster (29 fns, largest)
-	# Phase 7 (t1975, GH#18385): prefetch cluster (26 fns)
-	# Phase 8 (t1976, GH#18387): triage cluster (10 fns)
-	# Phase 9 (t1977, GH#18389): dispatch-core + dispatch-engine (26 fns)
-	# Phase 10 (t1978, GH#18391): quality-debt + ancillary-dispatch (FINAL — clears 2K gate)
-	# GH#19836: pulse-merge.sh further split into three modules (conflict + feedback extracted).
-	# GH#20781: config block extracted to pulse-wrapper-config.sh.
-	local _sc_expected_guards=(
-		_PULSE_BUDGET_PRIORITY_LOADED
-		_PULSE_WRAPPER_CONFIG_LOADED
-		_PULSE_MODEL_ROUTING_LOADED
-		_PULSE_INSTANCE_LOCK_LOADED
-		_PULSE_META_PARSE_LOADED
-		_PULSE_REPO_META_LOADED
-		_PULSE_ROUTINES_LOADED
-		_PULSE_QUEUE_GOVERNOR_LOADED
-		_PULSE_NMR_APPROVAL_LOADED
-		_PULSE_DEP_GRAPH_LOADED
-		_PULSE_FAST_FAIL_LOADED
-		_PULSE_CAPACITY_LOADED
-		_PULSE_LOGGING_LOADED
-		_PULSE_WATCHDOG_LOADED
-		_PULSE_CAPACITY_ALLOC_LOADED
-		_PULSE_MERGE_LOADED
-		_PULSE_MERGE_CONFLICT_LOADED
-		_PULSE_MERGE_FEEDBACK_LOADED
-		_PULSE_CLEANUP_LOADED
-		_PULSE_ISSUE_RECONCILE_LOADED
-		_PULSE_SIMPLIFICATION_LOADED
-		_PULSE_SIMPLIFICATION_STATE_LOADED
-		_PULSE_PREFETCH_LOADED
-		_PULSE_PREFETCH_INFRA_LOADED
-		_PULSE_PREFETCH_FETCH_LOADED
-		_PULSE_PREFETCH_REPO_LOADED
-		_PULSE_PREFETCH_ORCHESTRATION_LOADED
-		_PULSE_PREFETCH_SECONDARY_LOADED
-		_PULSE_PREFETCH_WORKERS_LOADED
-		_PULSE_TRIAGE_LOADED
-		_PULSE_DISPATCH_CORE_LOADED
-		_PULSE_DISPATCH_ENGINE_LOADED
-		_PULSE_QUALITY_DEBT_LOADED
-		_PULSE_ANCILLARY_DISPATCH_LOADED
-		_PULSE_CANONICAL_MAINTENANCE_LOADED
-		_PULSE_DIRTY_PR_SWEEP_LOADED
-		_PULSE_CANONICAL_RECOVERY_LOADED
-	)
-	local _sc_guard="" _sc_val=""
-	# The `${array[@]+"${array[@]}"}` pattern is safe under `set -u`
-	# when the array is empty — required in Phase 0 where no module
-	# guards exist yet.
-	# GH#18614: all guard names in _sc_expected_guards are simple scalar
-	# variables (e.g. _PULSE_MODEL_ROUTING_LOADED="1"). The indirect
-	# expansion ${!_sc_guard:-} is therefore safe — it will never silently
-	# read only the first element of an array. Never add array names to
-	# _sc_expected_guards; use a dedicated scalar for each module.
-	for _sc_guard in ${_sc_expected_guards[@]+"${_sc_expected_guards[@]}"}; do
-		_sc_val="${!_sc_guard:-}"
-		if [[ -z "$_sc_val" ]]; then
-			_sc_missing+=("${_sc_guard} (module not loaded)")
-		fi
-	done
-	if [[ ${#_sc_missing[@]} -eq 0 ]]; then
-		printf 'self-check: ok (%d canonical functions defined, %d module guards verified)\n' \
-			"${#_sc_expected_fns[@]}" "${#_sc_expected_guards[@]}"
-		return 0
-	fi
-	printf 'self-check: FAIL: %d missing:\n' "${#_sc_missing[@]}" >&2
-	local _sc_item
-	for _sc_item in "${_sc_missing[@]}"; do
-		printf '  - %s\n' "$_sc_item" >&2
-	done
-	return 1
-}
+# Phase 0 self-check inventory and executor (t1963, GH#37476, GH#38106).
+# shellcheck source=./pulse-wrapper-self-check.sh
+# shellcheck disable=SC1091  # sibling module resolved at runtime via SCRIPT_DIR
+source "${SCRIPT_DIR}/pulse-wrapper-self-check.sh"
 
 # Cross-issue no-work circuit breaker, kept independent of cycle orchestration.
 # shellcheck source=./pulse-wrapper-dispatch-gates.sh
@@ -997,75 +580,6 @@ source "${SCRIPT_DIR}/pulse-wrapper-dispatch-gates.sh"
 source "${SCRIPT_DIR}/pulse-wrapper-cycle-gates.sh"
 
 # ---------------------------------------------------------------------------
-# GH#33307: dispatch wall-clock reserve.
-#
-# Dispatch_max refuses each candidate when the cycle budget is below the
-# per-candidate floor (DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR, default 600s;
-# the floor itself is unchanged here). Two cycle-level gaps starved batch
-# dispatch for 45+ minutes:
-#   1. Pre-dispatch merge stages could spend the floor that dispatch_max
-#      needs later in the same cycle.
-#   2. Once the budget was spent, dispatch_max, its minimum-floor refill and
-#      the cycle-final event drain each re-enumerated every candidate
-#      (~250s apiece) only to stop at the floor, then consumed the refill
-#      trigger. That pushed the cycle ~750s past its budget, delaying the
-#      next fresh-budget cycle.
-# The reserve leaves one floor for dispatch before merge-only stages run; the
-# admission gate skips enumeration entirely when no candidate could launch,
-# preserving the existing per-candidate early-stop for genuinely overrun
-# cycles. Missing/invalid cycle clocks fail open (legacy behaviour).
-# ---------------------------------------------------------------------------
-_pulse_dispatch_floor_seconds() {
-	local floor_seconds="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}"
-	[[ "$floor_seconds" =~ ^[1-9][0-9]*$ ]] || floor_seconds=600
-	printf '%s\n' "$floor_seconds"
-	return 0
-}
-
-# Stdout: finalisation reserve plus one dispatch floor, for stages that must
-# leave dispatch_max a launchable budget.
-_pulse_dispatch_reserved_finalise_seconds() {
-	local finalise_seconds="${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}" floor_seconds=""
-	[[ "$finalise_seconds" =~ ^[0-9]+$ ]] || finalise_seconds=90
-	floor_seconds=$(_pulse_dispatch_floor_seconds)
-	if [[ "${AIDEVOPS_PULSE_DISPATCH_BUDGET_RESERVE:-1}" != "1" ]]; then
-		printf '%s\n' "$finalise_seconds"
-		return 0
-	fi
-	printf '%s\n' "$((finalise_seconds + floor_seconds + $(_dispatch_enumeration_expected_seconds)))"
-	return 0
-}
-
-# GH#33737: optional stages that run before the early (first-wave) dispatch
-# must leave that fill its admission reserve. Cache prime ran unbounded here
-# (822-1624s) and left early dispatch with too little budget every cycle.
-# Stdout: finalisation reserve + dispatch floor + first-wave enumeration estimate.
-_pulse_first_wave_dispatch_reserve_seconds() {
-	local _PULSE_FIRST_DISPATCH_WAVE=1 finalise_seconds="${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}"
-	local enumeration_seconds=300
-	[[ "$finalise_seconds" =~ ^[0-9]+$ ]] || finalise_seconds=90
-	if [[ "${AIDEVOPS_PULSE_DISPATCH_BUDGET_RESERVE:-1}" != "1" ]]; then
-		printf '%s\n' "$finalise_seconds"
-		return 0
-	fi
-	if declare -F _dispatch_enumeration_expected_seconds >/dev/null 2>&1; then
-		enumeration_seconds=$(_dispatch_enumeration_expected_seconds) || enumeration_seconds=300
-	fi
-	[[ "$enumeration_seconds" =~ ^[0-9]+$ ]] || enumeration_seconds=300
-	printf '%s\n' "$((finalise_seconds + $(_pulse_dispatch_floor_seconds) + enumeration_seconds))"
-	return 0
-}
-
-# Returns 0 when one dispatch candidate can still be admitted this cycle (or
-# the cycle clock is unavailable), 1 after logging a skip.
-# Args: $1=dispatch context for the log line
-_pulse_cycle_budget_admits_dispatch() {
-	local dispatch_context="$1"
-	_dispatch_cycle_budget_admits_round "$dispatch_context" before || return 1
-	return 0
-}
-
-# ---------------------------------------------------------------------------
 # _pulse_run_routines_while_busy (GH#35349)
 #
 # Evaluate due routines when this invocation cannot run a full cycle because
@@ -1077,15 +591,20 @@ _pulse_cycle_budget_admits_dispatch() {
 # routines.lockdir; runner locks plus last_run state prevent a second start
 # for the same slot. The REST budget gate still applies.
 # AIDEVOPS_PULSE_BUSY_ROUTINES=0 disables the pass.
+# t18911: each tick also starts the detached steering relay, so live workers
+# get maintainer-steering pointers while a long cycle holds the lock.
 #
 # Args: $1=context label for the log line
 # ---------------------------------------------------------------------------
 _pulse_run_routines_while_busy() {
 	local busy_context="${1:-busy}"
-	[[ "${AIDEVOPS_PULSE_BUSY_ROUTINES:-1}" == "1" ]] || return 0
 	# Diagnostic modes exercise the full path and never start routines here.
 	[[ "${PULSE_DRY_RUN:-0}${PULSE_CANARY_MODE:-0}" == "00" ]] || return 0
 	[[ ! -f "$STOP_FLAG" ]] || return 0
+	if declare -F _preflight_start_worker_bus_relay >/dev/null 2>&1; then
+		_preflight_start_worker_bus_relay || true
+	fi
+	[[ "${AIDEVOPS_PULSE_BUSY_ROUTINES:-1}" == "1" ]] || return 0
 	declare -F evaluate_routines_locked >/dev/null 2>&1 || return 0
 	check_session_gate || return 0
 	echo "[pulse-wrapper] Routines-only pass: instance lock busy (${busy_context}); evaluating due routines (GH#35349)" >>"$WRAPPER_LOGFILE"
@@ -1104,9 +623,54 @@ _pulse_run_routines_while_busy() {
 # Side effects:
 #   - merges ready PRs across all repos
 #
+# GH#37476: each phase lives in a _pulse_pipeline_* helper below, defined in
+# execution order. Helpers are plain calls (no subshell, no `||` wrapper), so
+# set -e behaviour, globals and side-effect order are unchanged. The merge
+# phase assigns _pulse_merge_stage_reserve_s, declared here, through bash
+# dynamic scoping; the PR sweeps reuse it. tests/test-permission-block-breaker.sh
+# extracts this function plus every _pulse_pipeline_* helper.
+# t19015: a cooperatively drained cycle stops at the next phase boundary
+# (_pulse_cycle_drain_exit, pulse-dispatch-lib.sh); prefetch counters and
+# merge health are still collected.
+#
 # Exit code: always 0
 # ---------------------------------------------------------------------------
 _pulse_run_deterministic_pipeline() {
+	if _pulse_cycle_drain_exit "cycle_start_stages"; then
+		_pulse_drain_prefetch_counters
+		return 0
+	fi
+	_pulse_pipeline_cycle_start_stages
+	local _pulse_merge_stage_reserve_s=""
+	_pulse_cycle_drain_exit "merge_pass" && return 0
+	_pulse_pipeline_merge_pass
+	if _pulse_cycle_drain_exit "pr_sweeps"; then
+		_pulse_pipeline_accumulate_merge_health
+		return 0
+	fi
+	_pulse_pipeline_pr_sweeps "$_pulse_merge_stage_reserve_s"
+	_pulse_pipeline_accumulate_merge_health
+	_pulse_cycle_drain_exit "graph_stages" && return 0
+	_pulse_pipeline_graph_stages
+	_pulse_cycle_drain_exit "dispatch_max" && return 0
+	_pulse_pipeline_dispatch_max
+	# Main dispatch has had its turn (including stop/breaker/quota gates).
+	# Later maintenance can use the normal finalisation-only budget again.
+	_PULSE_MAIN_DISPATCH_RESERVE_S=0
+	_pulse_cycle_drain_exit "maintenance_stages" && return 0
+	_pulse_pipeline_maintenance_stages
+	# t19074: bounds how long later drains may skip this tail.
+	! declare -F _pulse_drain_tail_note_complete >/dev/null 2>&1 || _pulse_drain_tail_note_complete
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_pipeline_cycle_start_stages (GH#37476: pipeline phase 1)
+#
+# Prefetch-counter drain, stop-flag blocker note, orphan reaper, and the short
+# stale-queued-runs / Dependabot stages that must precede the long merge pass.
+# ---------------------------------------------------------------------------
+_pulse_pipeline_cycle_start_stages() {
 	_pulse_drain_prefetch_counters # t3027: bridge subshell counters
 	if [[ -f "$STOP_FLAG" ]]; then
 		_pulse_cycle_state_note_blocker stop-requested pulse-wrapper stop-flag || true
@@ -1121,6 +685,10 @@ _pulse_run_deterministic_pipeline() {
 			reap_orphan_workers || true
 	fi
 
+	# t18905/t18911: the session-bus steering relay is no longer a budgeted
+	# stage here; it starts detached at cycle start and on busy-lock ticks
+	# (_preflight_start_worker_bus_relay), so cycle budget cannot starve it.
+
 	# GH#33602: bounded, hourly stale Actions queue cleanup, then the grouped
 	# Dependabot alert monitor (dedupes by package/ecosystem/patched version).
 	# GH#34000: both are short and run before the long merge/sync/graph stages
@@ -1134,7 +702,16 @@ _pulse_run_deterministic_pipeline() {
 		_pulse_run_optional_stage_with_timeout "dependabot_alert_monitor" "$PRE_RUN_STAGE_TIMEOUT" \
 			dependabot_alert_monitor_scan_repos || true
 	fi
+	return 0
+}
 
+# ---------------------------------------------------------------------------
+# _pulse_pipeline_merge_pass (GH#37476: pipeline phase 2)
+#
+# Assigns the caller's _pulse_merge_stage_reserve_s (dynamic scope) so the
+# later PR sweeps keep the same dispatch-floor reserve.
+# ---------------------------------------------------------------------------
+_pulse_pipeline_merge_pass() {
 	# Deterministic merge pass: approve and merge all ready PRs across pulse
 	# repos. This runs BEFORE the LLM session because merging is free (no
 	# worker slot) and deterministic (no judgment needed). Previously merging
@@ -1185,7 +762,6 @@ _pulse_run_deterministic_pipeline() {
 	# graceful merge deadline and stage clamp both honour this reserve, so a
 	# long backlog pauses at its PR cursor and resumes next cycle instead of
 	# leaving dispatch_max below its per-candidate floor.
-	local _pulse_merge_stage_reserve_s=""
 	_pulse_merge_stage_reserve_s=$(_pulse_dispatch_reserved_finalise_seconds)
 	# GH#33569: this in-cycle pass is defence-in-depth for the standalone merge
 	# routine. Give it a fixed graceful share (cursor resumes next cycle) and
@@ -1202,7 +778,16 @@ _pulse_run_deterministic_pipeline() {
 			_pulse_run_budget_priority_stage_with_timeout "deterministic_merge_pass" "$_pulse_merge_in_cycle_budget_s" \
 			merge_ready_prs_all_repos || true
 	fi
+	return 0
+}
 
+# ---------------------------------------------------------------------------
+# _pulse_pipeline_pr_sweeps (GH#37476: pipeline phase 3)
+#
+# Args: $1=dispatch-floor reserve seconds computed by the merge pass
+# ---------------------------------------------------------------------------
+_pulse_pipeline_pr_sweeps() {
+	local _pulse_merge_stage_reserve_s="$1"
 	# t2350 (GH#19948): DIRTY-PR sweep — auto-rebase young + TODO-only conflicts,
 	# auto-close stale abandoned PRs, escalate anything else. Internally gated
 	# on DIRTY_PR_SWEEP_INTERVAL (default 30min) so this is cheap to call every
@@ -1215,6 +800,21 @@ _pulse_run_deterministic_pipeline() {
 			_pulse_run_budget_priority_stage_with_timeout "dirty_pr_sweep" "$PRE_RUN_STAGE_TIMEOUT" \
 			dirty_pr_sweep_all_repos || true
 	fi
+	# t18771 (GH#35655): redirect-link spam sweep. Workflows close/hide spam
+	# without comment; only the maintainer token can block authors, so the
+	# pulse completes the ban. Interval-gated (REDIRECT_SPAM_SWEEP_INTERVAL).
+	if [[ ! -f "$STOP_FLAG" ]]; then
+		AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_merge_stage_reserve_s" \
+			_pulse_run_budget_priority_stage_with_timeout "redirect_spam_sweep" "$PRE_RUN_STAGE_TIMEOUT" \
+			redirect_spam_sweep_all_repos || true
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_pipeline_accumulate_merge_health (GH#37476: pipeline phase 4)
+# ---------------------------------------------------------------------------
+_pulse_pipeline_accumulate_merge_health() {
 	# Accumulate health counters written by merge_ready_prs_all_repos (GH#18571, GH#15107).
 	# The function runs in a subshell via run_stage_with_timeout, so variable
 	# updates are lost. Read the temp file it writes and accumulate here.
@@ -1231,7 +831,16 @@ _pulse_run_deterministic_pipeline() {
 		fi
 		rm -f "$_merge_health_file" || true
 	fi
+	return 0
+}
 
+# ---------------------------------------------------------------------------
+# _pulse_pipeline_graph_stages (GH#37476: pipeline phase 5)
+#
+# Issue-state sync, forced dependency-graph rebuild, then blocked-status and
+# repaired-brief hold refresh from the fresh graph.
+# ---------------------------------------------------------------------------
+_pulse_pipeline_graph_stages() {
 	# GitHub issue-state sync: reconcile local TODO.md refs and
 	# closed/reopened issue state before constructing the dependency graph.
 	# Without this, a closed blocker can leave stale TODO.md/cache state that
@@ -1263,39 +872,48 @@ _pulse_run_deterministic_pipeline() {
 	else
 		_pulse_run_budget_priority_stage_with_timeout "refresh_blocked_status_from_graph" "$PRE_RUN_STAGE_TIMEOUT" \
 			refresh_blocked_status_from_graph || true
-		# GH#32689: release missing_files_scope holds once the brief is scoped,
-		# so repaired briefs never wait on a manual label change.
-		_pulse_run_budget_priority_stage_with_timeout "release_repaired_brief_holds" "$PRE_RUN_STAGE_TIMEOUT" \
-			release_repaired_brief_holds || true
+		# GH#37501: repaired brief holds are released in the independently
+		# budgeted housekeeping lane, not before the next admission round.
 	fi
+	return 0
+}
 
+# ---------------------------------------------------------------------------
+# _pulse_pipeline_dispatch_max (GH#37476: pipeline phase 6)
+#
+# Runner-local breaker pre-check, then the budget-admitted dispatch_max round.
+# ---------------------------------------------------------------------------
+_pulse_pipeline_dispatch_max() {
 	# Dispatch_max runs EVERY cycle — before the LLM session,
 	# not after. This ensures workers are dispatched every 2-min cycle
 	# regardless of whether the LLM supervisor is running.
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag appeared — skipping dispatch_max" >>"$LOGFILE"
 	else
+		# GH#36122: runner-local breakers live in pulse-wrapper-dispatch-gates.sh
+		# and are run in order by pulse_dispatch_breakers_allow:
 		# t2770: cross-issue no_work rate circuit breaker check.
 		# Pauses dispatch when many different issues return no_work in a short
 		# window — symptomatic of auth outage, GraphQL exhaustion, or wrapper
 		# stall. Complementary to the per-issue no_work escalation (GH#20639).
-		local _nw_rc=0
-		is_no_work_rate_acceptable || _nw_rc=$?
+		# GH#36033: permission-block storm breaker (one-hour runner pause).
 		# t2897: per-runner zero-attempt circuit breaker check.
 		# Pauses dispatch ONLY on this runner when N consecutive zero-attempt
 		# worker dispatches signal a stale or broken local install. The
 		# breaker auto-trips an `aidevops update`; if VERSION changed, the
 		# t2579 restart hook refreshes code on the next cycle and the
-		# breaker reopens on the first non-zero-attempt outcome.
-		local _rh_rc=1
-		local _rh_helper="${SCRIPT_DIR}/pulse-runner-health-helper.sh"
-		if [[ -x "$_rh_helper" ]]; then
-			"$_rh_helper" is-paused >/dev/null 2>&1 && _rh_rc=0 || _rh_rc=1
-		fi
-		if [[ "$_nw_rc" -eq 1 ]]; then
+		# breaker reopens on the first non-zero-attempt outcome
+		# (pulse-runner-health-helper.sh is-paused).
+		# apply_dispatch_max re-checks the breakers for its other callers; this
+		# pre-check keeps the main cycle's blocker notes and counters.
+		local _breakers_rc=0
+		pulse_dispatch_breakers_allow "main" || _breakers_rc=$?
+		if [[ "$_breakers_rc" -ne 0 && "$PULSE_DISPATCH_BREAKER_TRIPPED" == "no_work" ]]; then
 			echo "[pulse-wrapper] Dispatch_max skipped: no_work rate circuit breaker tripped (t2770)" >>"$LOGFILE"
 			_pulse_cycle_state_note_blocker dispatch-no-work-rate pulse-wrapper no-work-rate || true
-		elif [[ "$_rh_rc" -eq 0 ]]; then
+		elif [[ "$_breakers_rc" -ne 0 && "$PULSE_DISPATCH_BREAKER_TRIPPED" == "permission_block" ]]; then
+			_pulse_cycle_state_note_blocker dispatch-permission-block-rate pulse-wrapper permission-block-rate || true
+		elif [[ "$_breakers_rc" -ne 0 ]]; then
 			echo "[pulse-wrapper] Dispatch_max skipped: runner-health circuit breaker tripped (t2897)" >>"$LOGFILE"
 			_pulse_cycle_state_note_blocker runner-health pulse-wrapper runner-health || true
 			if declare -F pulse_stats_increment >/dev/null 2>&1; then
@@ -1308,7 +926,15 @@ _pulse_run_deterministic_pipeline() {
 			_pulse_run_budget_priority_stage "dispatch_max" apply_dispatch_max || true
 		fi
 	fi
+	return 0
+}
 
+# ---------------------------------------------------------------------------
+# _pulse_pipeline_maintenance_stages (GH#37476: pipeline phase 7)
+#
+# Canonical maintenance and the dashboard freshness watchdog, after dispatch.
+# ---------------------------------------------------------------------------
+_pulse_pipeline_maintenance_stages() {
 	# GH#19949: Canonical-repo fast-forward + stale worktree sweep.
 	# Cadence-gated (~30 min) — the function's internal cadence check skips
 	# if too soon. Runs after routine evaluation and before health snapshot
@@ -1372,70 +998,215 @@ _pulse_run_deterministic_pipeline() {
 # (GH#21311 / t2936-child).
 
 main() {
-	# GH#18670: declare this process as headless BEFORE anything else runs
-	# so every child shell stage sees AIDEVOPS_HEADLESS and
-	# detect_session_origin() returns "worker". Without this, shell stages
-	# default to "interactive", label new issues with origin:interactive,
-	# and trigger GH#18352's dedup guard (origin:interactive + maintainer
-	# assignee → blocked), draining the queue indefinitely. Scoped to
-	# main() so callers sourcing pulse-wrapper.sh for testing do not
-	# inherit the env var.
+	# GH#18670: declare this process as headless BEFORE anything else runs so
+	# every child shell stage sees AIDEVOPS_HEADLESS and detect_session_origin()
+	# returns "worker" (otherwise new issues get origin:interactive and GH#18352's
+	# dedup guard drains the queue). Scoped to main() so callers sourcing
+	# pulse-wrapper.sh for testing do not inherit the env var.
 	export AIDEVOPS_HEADLESS=true
 
-	# t3033: capture script path and load-time mtime for post-cycle self-respawn.
-	# If the source file changes during a cycle (e.g. aidevops update / setup.sh),
-	# we exec at cycle end so the next iteration runs fresh code without waiting
-	# for the next launchd tick. Captured here — before any cycle work — so the
-	# comparison at cycle end detects changes made DURING the cycle, not changes
-	# that were present before it started. Uses BSD stat (-f '%m') with GNU fallback
-	# (-c '%Y'), consistent with the pre-jitter fast-fail stat calls at line ~151.
+	# Before refill-only, busy-lock routines, lifecycle work or dispatch.
+	_preflight_macos_user_lookup_gate || return 0
+
+	# t3033: capture script path and load-time mtime before any cycle work so
+	# _pulse_reexec_if_source_changed detects changes made DURING the cycle.
 	local _pw_self="${BASH_SOURCE[0]:-$0}"
 	local _pw_mtime_loaded
 	_pw_mtime_loaded=$(_file_mtime_epoch "$_pw_self")
 
-	# GH#18689: --self-check and --dry-run arg scanning extracted to helpers.
-	# GH#18770: the `_sc_rc=$?` capture MUST be guarded by `|| _sc_rc=$?`
-	# on the call itself — otherwise, under `set -euo pipefail` (line 42),
-	# any non-zero return from _pulse_handle_self_check (which is the
-	# normal path when --self-check is not requested: returns 2 as the
-	# "not a self-check invocation" signal) kills the script at the call
-	# site BEFORE `_sc_rc=$?` can capture it. The pulse then dies with
-	# exit 2 on every launchd restart, never acquiring the instance lock,
-	# never dispatching. Regressed in PR #18712 which extracted the
-	# handler without reviewing the set -e exit-code propagation. Same
-	# bug class as the aidevops.sh getent regression (GH#18784) and the
-	# interactive-session-helper set -e kill (GH#18786). See the pre-merge
-	# checklist item 4 in `.agents/reference/bash-compat.md`.
+	# GH#18689/GH#18770: keep the `|| _sc_rc=$?` guard on the call. Under
+	# `set -euo pipefail` the normal "not a self-check invocation" return 2
+	# would otherwise kill the script here, before the lock is ever acquired
+	# (pre-merge checklist item 4 in `.agents/reference/bash-compat.md`).
 	local _sc_rc=0
 	_pulse_handle_self_check "$@" || _sc_rc=$?
 	[[ "$_sc_rc" -ne 2 ]] && return "$_sc_rc"
 	_pulse_setup_dry_run_mode "$@"
 	_pulse_setup_canary_mode "$@"
 
+	# Refresh local process evidence before busy/idle/rate-limit early returns.
+	_pulse_reconcile_worker_lifecycle || true
+
+	# GH#37476: phase helpers set _pw_skip_cycle/_pw_skip_rc for early returns.
+	local _pw_skip_cycle=0 _pw_skip_rc=0
+	_pulse_run_entry_modes "$@"
+	if [[ "$_pw_skip_cycle" -eq 1 ]]; then return "$_pw_skip_rc"; fi
+	_pulse_entry_short_circuits
+	if [[ "$_pw_skip_cycle" -eq 1 ]]; then return 0; fi
+
+	# GH#4513/t18678: EXIT handler BEFORE the mkdir lock; never on the shared
+	# push_cleanup stack. Rationale: the "main() phase helpers" block below.
+	trap '_pulse_exit_cleanup' EXIT
+
+	if ! acquire_instance_lock; then
+		_pulse_run_routines_while_busy "lock-busy"
+		return 0
+	fi
+	_dispatch_cleanup_stale_benign_blocks || true
+
+	# GH#22525 read routing, --canary short-circuit, session and dedup gates.
+	_pulse_cycle_entry_gates
+	if [[ "$_pw_skip_cycle" -eq 1 ]]; then return 0; fi
+
+	# GH#22479: classify budget for priority scheduling instead of skipping the
+	# whole cycle, then reserve the main-dispatch round (GH#37051).
+	_pulse_set_graphql_budget_priority
+	_pulse_set_rest_core_budget_priority
+	local _PULSE_MAIN_DISPATCH_RESERVE_S=0
+	_pulse_reserve_main_dispatch_budget
+	local _cycle_dispatch_before
+	_cycle_dispatch_before=$(_pulse_capture_dispatch_total)
+	_PULSE_CYCLE_DISPATCH_BEFORE="$_cycle_dispatch_before"
+	_pulse_run_cycle_setup_stages
+
+	# Phase 0 (t1963): --dry-run short-circuits here, after bootstrap, sourcing,
+	# lock, session gate, dedup guard and log rotation (_pulse_prepare_cycle_logs).
+	if [[ "${PULSE_DRY_RUN:-0}" == "1" ]]; then
+		printf 'dry-run: ok (bootstrap + sourcing + lock + session-gate + dedup + log-rotate exercised; pre-flight stages and beyond skipped)\n'
+		return 0
+	fi
+	_pulse_start_cycle_observation
+
+	# Routine evaluation (t1925, GH#31855) before preflight spends REST budget,
+	# then the cycle-owned routines ticker (GH#37914).
+	_pulse_run_cycle_routines
+
+	# Run pre-flight stages (cleanup, prefetch, normalization)
+	if ! _run_preflight_stages; then
+		_pulse_finish_idle_cycle "$_cycle_dispatch_before" preflight-failed preflight
+		return 0
+	fi
+	_pulse_stop_flag_before_pipeline "$_cycle_dispatch_before"
+	if [[ "$_pw_skip_cycle" -eq 1 ]]; then return 0; fi
+
+	# Deterministic pipeline and cycle-final refill, the LLM supervisor outside
+	# the instance lock (GH#18689), then one terminal outcome (GH#28361).
+	_pulse_cycle_state_publish deterministic || true
+	_pulse_run_deterministic_pipeline
+	_pulse_drain_cycle_final_refill
+	_pulse_run_supervisor_phase
+	_pulse_record_cycle_terminal "$_cycle_dispatch_before"
+
+	_pulse_reexec_if_source_changed "$_pw_self" "$_pw_mtime_loaded" "$@"
+
+	_pulse_efficiency_cycle_finish
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# main() phase helpers (GH#37476)
+#
+# Extracted verbatim from main(), in execution order. Every helper is a plain
+# call from main() (no subshell, no `||` wrapper), so set -e behaviour, global
+# and dynamically scoped state, log lines and side-effect order are unchanged.
+# Helpers that replace an early return from main() set the caller's
+# _pw_skip_cycle=1 (plus _pw_skip_rc where the code is not 0) and return 0;
+# main() then returns at the same point.
+#
+# EXIT trap and instance lock rationale (kept from main()):
+# GH#4513: Acquire exclusive instance lock FIRST — before any other
+# check. Uses mkdir atomicity as the ONLY primitive (POSIX-guaranteed,
+# works identically on macOS APFS/HFS+ and Linux ext4/btrfs/xfs).
+#
+# flock was removed in GH#18668 after recurring FD 9 inheritance
+# deadlocks. bash has no built-in fcntl(F_SETFD, FD_CLOEXEC), so any
+# persistent FD held by the parent is inherited by every daemonising
+# descendant (git hooks, ancillary workers). See the module header of
+# pulse-instance-lock.sh and reference/bash-fd-locking.md for history.
+#
+# Register EXIT trap BEFORE acquiring the lock so the lock is always
+# released on exit — including set -e aborts, SIGTERM, and return paths.
+# SIGKILL cannot be trapped; stale-lock detection handles that case.
+# GH#33739: _pulse_cycle_index_record_once runs after the interrupted
+# finaliser so killed/aborted cycles still append one partial index record.
+# t18678 (GH#34469): one dedicated handler (pulse-instance-lock.sh) owns all
+# process-lifetime cleanup. Never move it onto the shared
+# push_cleanup/_run_cleanups stack, whose RETURN traps fire in callers.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# _pulse_run_cycle_routines
+#
+# Cycle-start routine evaluation (t1925, GH#31855), the GH#35349 backstop
+# sharing routines.lockdir. GH#37914: launchd and systemd timers start no
+# second invocation while this cycle runs, so the busy pass never fires in a
+# long cycle. A cycle-owned child then ticks routines until this process
+# exits; the EXIT handler and the source re-exec path stop it.
+# ---------------------------------------------------------------------------
+_pulse_run_cycle_routines() {
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Stop flag appeared — skipping routine evaluation" >>"$LOGFILE"
+		return 0
+	fi
+	_pulse_run_budget_priority_stage_with_timeout "evaluate_routines" "$PRE_RUN_STAGE_TIMEOUT" \
+		evaluate_routines_locked || true
+	_pulse_start_routines_ticker || true
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_run_entry_modes
+#
+# Refill-only and merge-only modes, then the bootstrap busy-lock routines
+# pass. Sets _pw_skip_cycle=1 and _pw_skip_rc to main()'s former return code.
+# Each mode runner stays a plain statement, so under set -e a failing runner
+# still aborts at the same point; otherwise its status is returned by main().
+# Args: main()'s arguments
+# ---------------------------------------------------------------------------
+_pulse_run_entry_modes() {
 	# Event refill skips preflight/LLM but keeps the main lock and dispatch gates.
 	_pulse_setup_refill_only_mode "$@"
 	if [[ "${PULSE_REFILL_ONLY:-0}" == "1" ]]; then
 		_pulse_run_refill_only
-		return $?
+		_pw_skip_rc=$?
+		_pw_skip_cycle=1
+		return 0
 	fi
 	_pulse_setup_merge_only_mode "$@"
 	if [[ "${PULSE_MERGE_ONLY:-0}" == "1" ]]; then
 		_pulse_run_merge_only
-		return $?
+		_pw_skip_rc=$?
+		_pw_skip_cycle=1
+		return 0
 	fi
 	# GH#35349: the pre-jitter fast-fail saw a live lock holder; this tick only
 	# evaluates due routines, then exits like the previous fast-fail did.
 	if [[ "${_PULSE_BUSY_AT_BOOTSTRAP:-0}" == "1" ]]; then
 		_pulse_run_routines_while_busy "bootstrap"
+		_pw_skip_rc=0
+		_pw_skip_cycle=1
 		return 0
 	fi
+	return 0
+}
 
+# ---------------------------------------------------------------------------
+# _pulse_entry_short_circuits
+#
+# Invocation-source accounting, then the is-running and rate-limit
+# short-circuits that run before the mkdir instance lock. Sets
+# _pw_skip_cycle=1 where main() previously returned 0.
+# ---------------------------------------------------------------------------
+_pulse_entry_short_circuits() {
 	# GH#20580: Detect and record invocation source before acquiring the lock
 	# so every invocation — including those that fail the lock — is counted.
 	local _invocation_source="unknown"
 	_detect_invocation_source
 	_record_invocation_source "$_invocation_source"
 
+	_pulse_entry_is_running_short_circuit
+	if [[ "$_pw_skip_cycle" -eq 1 ]]; then return 0; fi
+	_pulse_entry_rate_limit_short_circuit
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_entry_is_running_short_circuit
+#
+# Sets _pw_skip_cycle=1 when a live, young lock holder means this tick only
+# runs the busy routines pass (main() then returns 0).
+# ---------------------------------------------------------------------------
+_pulse_entry_is_running_short_circuit() {
 	# GH#20611: Is-running short-circuit — exit 0 immediately before attempting
 	# mkdir lock acquisition when a pulse process is already alive. Eliminates
 	# lock contention for the common launchd-fires-while-running case.
@@ -1479,6 +1250,7 @@ main() {
 				if [[ "$_ir_age" =~ ^[0-9]+$ ]] && [[ "$_ir_age" -le "$_ir_max" ]]; then
 					echo "[pulse-wrapper] Pulse already running (PID: ${_ir_pid}, age ${_ir_age}s), skipping" >>"$WRAPPER_LOGFILE"
 					_pulse_run_routines_while_busy "is-running"
+					_pw_skip_cycle=1
 					return 0
 				fi
 				echo "[pulse-wrapper] Lock holder PID ${_ir_pid} age ${_ir_age}s > ceiling ${_ir_max}s — deferring to acquire_instance_lock for reclaim (t2829)" >>"$WRAPPER_LOGFILE"
@@ -1487,7 +1259,16 @@ main() {
 			fi
 		fi
 	fi
+	return 0
+}
 
+# ---------------------------------------------------------------------------
+# _pulse_entry_rate_limit_short_circuit
+#
+# Idle-backoff gate plus the entry-point rate-limit cooldown. Sets
+# _pw_skip_cycle=1 wherever main() previously returned 0.
+# ---------------------------------------------------------------------------
+_pulse_entry_rate_limit_short_circuit() {
 	# GH#20578: Entry-point rate-limit cooldown. Short-circuit BEFORE the
 	# mkdir instance lock to eliminate unnecessary lock contention from
 	# redundant scheduler invocations (launchd ThrottleInterval edge cases,
@@ -1506,10 +1287,13 @@ main() {
 	# lock holder = stale stamp from a crashed cycle. Clear it and proceed
 	# rather than perpetuating the lockout. Steady-state behaviour (lock
 	# held by a real running pulse) is unchanged. Pattern mirrors the
-	# kill -0 lock check at lines ~1208-1234 above.
+	# kill -0 lock check in _pulse_entry_is_running_short_circuit above.
 	if [[ "${PULSE_DRY_RUN:-0}" != "1" && "${PULSE_CANARY_MODE:-0}" != "1" ]]; then
 		# t3027 (GH#21584): idle-backoff gate (helper has full docs).
-		_pulse_check_idle_backoff_gate || return 0
+		if ! _pulse_check_idle_backoff_gate; then
+			_pw_skip_cycle=1
+			return 0
+		fi
 
 		local _rl_ts_file="${HOME}/.aidevops/logs/pulse-wrapper-last-run.ts"
 		local _rl_now
@@ -1532,6 +1316,7 @@ main() {
 			if [[ "$_rl_lock_pid" =~ ^[0-9]+$ ]] && kill -0 "$_rl_lock_pid" 2>/dev/null; then
 				echo "[pulse-wrapper] Rate-limited: last run ${_rl_elapsed}s ago < ${PULSE_MIN_INTERVAL_S}s threshold — skipping cycle (GH#20578)" >>"$WRAPPER_LOGFILE"
 				_pulse_run_routines_while_busy "rate-limited"
+				_pw_skip_cycle=1
 				return 0
 			fi
 			# Stale stamp recovery: no live lock holder. Clear stamp and
@@ -1545,33 +1330,16 @@ main() {
 		fi
 		printf '%s\n' "$_rl_now" >"$_rl_ts_file" || true
 	fi
+	return 0
+}
 
-	# GH#4513: Acquire exclusive instance lock FIRST — before any other
-	# check. Uses mkdir atomicity as the ONLY primitive (POSIX-guaranteed,
-	# works identically on macOS APFS/HFS+ and Linux ext4/btrfs/xfs).
-	#
-	# flock was removed in GH#18668 after recurring FD 9 inheritance
-	# deadlocks. bash has no built-in fcntl(F_SETFD, FD_CLOEXEC), so any
-	# persistent FD held by the parent is inherited by every daemonising
-	# descendant (git hooks, ancillary workers). See the module header of
-	# pulse-instance-lock.sh and reference/bash-fd-locking.md for history.
-	#
-	# Register EXIT trap BEFORE acquiring the lock so the lock is always
-	# released on exit — including set -e aborts, SIGTERM, and return paths.
-	# SIGKILL cannot be trapped; stale-lock detection handles that case.
-	# GH#33739: _pulse_cycle_index_record_once runs after the interrupted
-	# finaliser so killed/aborted cycles still append one partial index record.
-	# t18678 (GH#34469): one dedicated handler (pulse-instance-lock.sh) owns all
-	# process-lifetime cleanup. Never move it onto the shared
-	# push_cleanup/_run_cleanups stack, whose RETURN traps fire in callers.
-	trap '_pulse_exit_cleanup' EXIT
-
-	if ! acquire_instance_lock; then
-		_pulse_run_routines_while_busy "lock-busy"
-		return 0
-	fi
-	_dispatch_cleanup_stale_benign_blocks || true
-
+# ---------------------------------------------------------------------------
+# _pulse_configure_gh_read_routing
+#
+# Post-lock gh read routing: REST-first reads plus the persistent PR view and
+# per-cycle PR list caches. Exports are process-global, as they were inline.
+# ---------------------------------------------------------------------------
+_pulse_configure_gh_read_routing() {
 	# GH#22525: enable REST-first read routing before any post-lock pulse gate
 	# runs. GH#22507 originally flipped this after session/dedup gates, leaving
 	# early-cycle issue/pr list/view reads on GraphQL and visible as top pressure
@@ -1633,6 +1401,20 @@ main() {
 	else
 		export PULSE_PR_LIST_PROVIDER_CACHE_DISABLE=1
 	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_cycle_entry_gates
+#
+# Post-lock gh read routing, the --canary short-circuit, cycle-state start,
+# health file, supervisor breaker refresh, then the session and dedup gates.
+# Sets _pw_skip_cycle=1 wherever main() previously returned 0.
+# ---------------------------------------------------------------------------
+_pulse_cycle_entry_gates() {
+	_pulse_configure_gh_read_routing
+	unset AIDEVOPS_PULSE_ASSIGNED_CACHE_FILE
+	unset AIDEVOPS_PULSE_ASSIGNED_CACHE_CYCLE
 
 	# --canary short-circuit (GH#18790): sourcing, _pulse_handle_self_check,
 	# and acquire_instance_lock have all passed cleanly. The EXIT trap releases
@@ -1640,7 +1422,20 @@ main() {
 	# log rotation, or any side-effecting stage.
 	if [[ "${PULSE_CANARY_MODE:-0}" == "1" ]]; then
 		printf 'canary: ok (sourcing + _pulse_handle_self_check + acquire_instance_lock passed)\n'
+		_pw_skip_cycle=1
 		return 0
+	fi
+	# The instance lock serializes cycles. Reset even on an inherited environment
+	# so an assignment change is visible on the next cycle. Cache only blockers;
+	# dispatch-permitting checks must still consult current ownership.
+	local assigned_cache_file="${PULSE_DIR}/is-assigned-cycle.cache"
+	if [[ "${PULSE_DRY_RUN:-0}" != "1" && ! -L "$assigned_cache_file" ]] &&
+		(
+			umask 077
+			: >"$assigned_cache_file"
+		); then
+		export AIDEVOPS_PULSE_ASSIGNED_CACHE_FILE="$assigned_cache_file"
+		export AIDEVOPS_PULSE_ASSIGNED_CACHE_CYCLE="${BASHPID:-$$}-${RANDOM}"
 	fi
 	if [[ "${PULSE_DRY_RUN:-0}" != "1" ]]; then
 		_pulse_cycle_state_start
@@ -1656,6 +1451,7 @@ main() {
 		_pulse_cycle_state_note_blocker session-gate pulse-wrapper session-gate || true
 		_pulse_cycle_state_finish_if_needed blocked
 		_pulse_cycle_index_record_once
+		_pw_skip_cycle=1
 		return 0
 	fi
 
@@ -1663,22 +1459,55 @@ main() {
 		_pulse_cycle_state_note_blocker dedup pulse-wrapper dedup || true
 		_pulse_cycle_state_finish_if_needed blocked
 		_pulse_cycle_index_record_once
+		_pw_skip_cycle=1
 		return 0
 	fi
+	return 0
+}
 
-	# GH#22479: classify budget for priority scheduling instead of skipping the
-	# whole cycle. Merge/dispatch/safety stages keep first claim; optional stages
-	# defer in reserve mode. The t2690 dispatch breaker still fail-closes actual
-	# worker launch at the emergency floor.
-	_pulse_set_graphql_budget_priority
-	_pulse_set_rest_core_budget_priority
-	local _cycle_dispatch_before
-	_cycle_dispatch_before=$(_pulse_capture_dispatch_total)
-	_PULSE_CYCLE_DISPATCH_BEFORE="$_cycle_dispatch_before"
+# ---------------------------------------------------------------------------
+# _pulse_reserve_main_dispatch_budget
+#
+# Assigns main()'s local _PULSE_MAIN_DISPATCH_RESERVE_S (dynamic scope); the
+# `local` declaration stays in main() so every later stage, including the
+# deterministic pipeline that resets it, sees the same variable.
+# GH#22479 (kept from main()): classify budget for priority scheduling instead
+# of skipping the whole cycle. Merge/dispatch/safety stages keep first claim;
+# optional stages defer in reserve mode. The t2690 dispatch breaker still
+# fail-closes actual worker launch at the emergency floor.
+# ---------------------------------------------------------------------------
+_pulse_reserve_main_dispatch_budget() {
+	# GH#37051: protect the full main-dispatch round before any optional
+	# preflight/pipeline stage can spend it. The watchdog takes the maximum
+	# of this and a stage's own reserve; nested stages never add it twice.
+	# Leave 60s for watchdog teardown and transitions into enumeration.
+	if [[ "${AIDEVOPS_PULSE_DISPATCH_BUDGET_RESERVE:-1}" == "1" ]]; then
+		_PULSE_MAIN_DISPATCH_RESERVE_S=$(($(_pulse_dispatch_reserved_finalise_seconds) + 60))
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_run_cycle_setup_stages
+#
+# Cycle-entry event refill, low-GraphQL REST forcing, the bounded pre-dispatch
+# stages and log preparation, in that original order.
+# ---------------------------------------------------------------------------
+_pulse_run_cycle_setup_stages() {
 	if [[ "${PULSE_DRY_RUN:-0}" != "1" ]]; then
 		pulse_event_refill_drain "cycle-entry" || true
 	fi
 
+	_pulse_force_rest_reads_if_graphql_low
+	_pulse_run_pre_dispatch_stages
+	_pulse_prepare_cycle_logs
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_force_rest_reads_if_graphql_low
+# ---------------------------------------------------------------------------
+_pulse_force_rest_reads_if_graphql_low() {
 	# GH#22478: if GraphQL headroom is already inside the REST fallback reserve,
 	# force all supported read/list wrappers through REST for the whole pulse
 	# cycle. This remains as a stronger low-budget fallback for paths not covered
@@ -1698,21 +1527,23 @@ main() {
 			fi
 		fi
 	fi
+	return 0
+}
 
-	# t2994: pre-warm L3 caches when sentinel is stale. Runs after lock,
-	# canary, session, and dedup gates have all passed (so a real cycle is
-	# about to run) and BEFORE prefetch_state inside the cycle. Steady-state
-	# launchd respawns skip via the staleness gate; first-cycle-after-deploy
-	# (or after a long quiet period) primes once. See helper comment for
-	# the launchd-bypass rationale.
-	# GH#33737: bound the prime and clamp it (plus the detector below) so the
-	# early dispatch keeps its first-wave admission reserve. A clamped or
-	# deferred prime is non-fatal: prefetch_state refreshes the same caches.
+# ---------------------------------------------------------------------------
+# _pulse_run_pre_dispatch_stages
+#
+# Bounded runaway-log detector, checkpoint-claim ledger sweep, stale-blocked reconcile and the
+# fix-the-fixer detector, all clamped to the first-wave dispatch reserve.
+# Runs inside main()'s dynamic scope, so _PULSE_MAIN_DISPATCH_RESERVE_S stays
+# visible to the stage watchdogs exactly as it was inline.
+# ---------------------------------------------------------------------------
+_pulse_run_pre_dispatch_stages() {
+	# GH#37501: prefetch_state already refreshes the conditional L3 snapshots.
+	# A stale prime must not add a second cold refresh before first admission;
+	# housekeeping warms it independently after early dispatch instead.
 	local _pulse_pre_dispatch_reserve_s=""
 	_pulse_pre_dispatch_reserve_s=$(_pulse_first_wave_dispatch_reserve_seconds)
-	AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_pre_dispatch_reserve_s" \
-		_pulse_run_optional_stage_with_timeout "cache_prime" "${PULSE_CACHE_PRIME_TIMEOUT:-300}" \
-		_pulse_prime_caches_if_stale || true
 
 	# GH#21756: Runaway-log self-healing detector. Catches pulse-wrapper.log
 	# growing at MB/s from tight error loops (the GH#21729 failure mode).
@@ -1720,16 +1551,34 @@ main() {
 	# Fail-open: never blocks the pulse cycle.
 	_pulse_check_runaway_log || true
 
+	# GH#38144: release this device's own expired revision-checkpoint claims
+	# from the device-local ledger. A critical stage of its own, because an
+	# empty or unexpired ledger makes no GitHub reads and a stranded claim
+	# blocks continuation; the deferrable stale_blocked_reconcile stage below
+	# keeps only the repo-scanning fallback rotation.
+	local _pulse_checkpoint_ledger_timeout="${PULSE_CHECKPOINT_LEDGER_SWEEP_TIMEOUT_SECONDS:-45}"
+	[[ "$_pulse_checkpoint_ledger_timeout" =~ ^[1-9][0-9]*$ ]] || _pulse_checkpoint_ledger_timeout=45
+	AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_pre_dispatch_reserve_s" \
+		_pulse_run_budget_priority_stage_with_timeout "checkpoint_ledger_sweep" "$_pulse_checkpoint_ledger_timeout" \
+		_pulse_sweep_checkpoint_ledger || true
+
 	# Recover dependency close events missed by async merge/issue-close races.
 	# Cadence limits frequency, not duration: a cold sweep can visit hundreds of
 	# blocked issues before early dispatch. Bound it like cache priming while
 	# preserving the first-wave reserve and the reconciler's fail-closed checks.
 	# The sweep stops before this deadline and resumes from a per-repo cursor
-	# on the next cycle (GH#33957).
+	# on the next cycle (GH#33957). GH#38680: the stage grows by the ready-lane
+	# reserve only while a pulse repo holds ready dependants (local hint reads);
+	# the reserve is spent on ready-only passes, never on the rotation.
 	local _pulse_stale_blocked_timeout="${PULSE_STALE_BLOCKED_RECONCILE_TIMEOUT_SECONDS:-60}"
+	local _pulse_stale_blocked_ready_s=0
 	[[ "$_pulse_stale_blocked_timeout" =~ ^[1-9][0-9]*$ ]] || _pulse_stale_blocked_timeout=60
+	_pulse_stale_blocked_ready_s=$(_pulse_stale_blocked_ready_extension) || _pulse_stale_blocked_ready_s=0
+	[[ "$_pulse_stale_blocked_ready_s" =~ ^[0-9]{1,4}$ ]] || _pulse_stale_blocked_ready_s=0
 	AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_pre_dispatch_reserve_s" \
-		_pulse_run_budget_priority_stage_with_timeout "stale_blocked_reconcile" "$_pulse_stale_blocked_timeout" \
+		PULSE_STALE_BLOCKED_READY_RESERVE_S="$_pulse_stale_blocked_ready_s" \
+		_pulse_run_budget_priority_stage_with_timeout "stale_blocked_reconcile" \
+		"$((_pulse_stale_blocked_timeout + _pulse_stale_blocked_ready_s))" \
 		_pulse_reconcile_stale_blocked_if_due || true
 
 	# t3077: LLM-driven fix-the-fixer detector. Classifies new auto-dispatch
@@ -1748,7 +1597,23 @@ main() {
 	AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_pre_dispatch_reserve_s" \
 		_pulse_run_optional_stage_with_timeout "fix_the_fixer_detector" "$_pulse_detector_timeout" \
 		_pulse_run_fix_the_fixer_detector_if_stale || true
+	return 0
+}
 
+# ---------------------------------------------------------------------------
+# _pulse_prepare_cycle_logs
+#
+# Log rotation, cycle-index start mark and the stale consolidation sentinel
+# sweep, immediately before the --dry-run short-circuit in main().
+#
+# Dry-run scope (kept from main(), Phase 0 / t1963): bootstrap, sourcing,
+# config validation, lock acquisition, session gate, dedup guard, and log
+# rotation have all run cleanly by that point — the Phase 0 scope of the
+# dry-run smoke test. Pre-flight stages after it are skipped because they
+# start touching worktrees, GitHub state, and process spawning. Later phases
+# may shim those sites individually.
+# ---------------------------------------------------------------------------
+_pulse_prepare_cycle_logs() {
 	# Rotate hot log to cold archive if over cap (t1886)
 	# Run before any log writes so the new cycle starts with a fresh hot log.
 	rotate_pulse_log || true
@@ -1766,18 +1631,15 @@ main() {
 	# one process sweeps at a time.
 	# shellcheck disable=SC2086,SC2015
 	rm -f "${HOME}/.aidevops/cache/pulse-cycle-"*"-consolidation-fired" 2>/dev/null || true
+	return 0
+}
 
-	# Phase 0 (t1963): --dry-run short-circuits here. Bootstrap, sourcing,
-	# config validation, lock acquisition, session gate, dedup guard, and
-	# log rotation have all run cleanly by this point — that is the Phase 0
-	# scope of the dry-run smoke test. Pre-flight stages below are skipped
-	# because they start touching worktrees, GitHub state, and process
-	# spawning. Later phases may shim those sites individually.
-	if [[ "${PULSE_DRY_RUN:-0}" == "1" ]]; then
-		printf 'dry-run: ok (bootstrap + sourcing + lock + session-gate + dedup + log-rotate exercised; pre-flight stages and beyond skipped)\n'
-		return 0
-	fi
-
+# ---------------------------------------------------------------------------
+# _pulse_start_cycle_observation
+#
+# Opens the typed cycle-evidence window and drains approval merge triggers.
+# ---------------------------------------------------------------------------
+_pulse_start_cycle_observation() {
 	# GH#27777: bracket every real pulse cycle with typed production evidence.
 	# The fail-open finish hook is also registered in the EXIT cleanup path so
 	# unexpected set -e exits publish a conservative partial cycle rather than
@@ -1791,89 +1653,266 @@ main() {
 	# rather than waiting for the next 60s cycle. Best-effort — never aborts
 	# the cycle. See pulse-wrapper-bootstrap.sh::_drain_merge_trigger_file_if_present.
 	_pulse_run_budget_priority_stage "approval_merge_trigger" _drain_merge_trigger_file_if_present || true
+	return 0
+}
 
-	# Routine evaluation (t1925, GH#31855): give due routines a budget decision
-	# before preflight can consume the cycle's REST allowance or hold the Pulse
-	# instance long enough for the next scheduler restart. The stage-level gate
-	# still defers on low/unknown quota, and evaluate_routines retains its
-	# per-work-unit REST hard-floor checks. GH#35349: busy scheduler ticks also
-	# evaluate routines (_pulse_run_routines_while_busy); this in-cycle call is
-	# the backstop and shares their routines.lockdir.
-	if [[ -f "$STOP_FLAG" ]]; then
-		echo "[pulse-wrapper] Stop flag appeared — skipping routine evaluation" >>"$LOGFILE"
-	else
-		_pulse_run_budget_priority_stage_with_timeout "evaluate_routines" "$PRE_RUN_STAGE_TIMEOUT" \
-			evaluate_routines_locked || true
-	fi
-
-	# Run pre-flight stages (cleanup, prefetch, normalization)
-	if ! _run_preflight_stages; then
-		_pulse_cycle_state_note_blocker preflight-failed pulse-wrapper preflight || true
-		_pulse_record_cycle_outcome "$_cycle_dispatch_before"
-		_pulse_cycle_state_write_terminal_if_current || true
-		_pulse_cycle_index_record_once
-		_pulse_efficiency_cycle_finish idle
-		return 0
-	fi
-
-	# Re-check stop flag immediately before run_pulse() — a stop may have
-	# been issued during the prefetch/cleanup phase above (t2943)
-	if [[ -f "$STOP_FLAG" ]]; then
-		echo "[pulse-wrapper] Stop flag appeared during setup — aborting before run_pulse()" >>"$LOGFILE"
-		_pulse_cycle_state_note_blocker stop-requested pulse-wrapper stop-flag || true
-		_pulse_record_cycle_outcome "$_cycle_dispatch_before"
-		_pulse_cycle_state_write_terminal_if_current || true
-		_pulse_cycle_index_record_once
-		_pulse_efficiency_cycle_finish idle
-		return 0
-	fi
-
-	# Run deterministic pipeline: merge pass, dep graph, blocked-status refresh,
-	# and fill floor. GH#18689:
-	# extracted to helper.
-	_pulse_cycle_state_publish deterministic || true
-	_pulse_run_deterministic_pipeline
-	# GH#33307: an exhausted cycle cannot launch a candidate; leave the refill
-	# trigger for a fresh-budget worker-exit refill or the next cycle instead of
-	# re-enumerating every candidate and consuming the trigger with 0 launches.
-	local _pulse_refill_trigger="${PULSE_EVENT_REFILL_TRIGGER_FILE:-${HOME}/.aidevops/cache/pulse-event-refill.trigger}"
-	if [[ ! -f "$_pulse_refill_trigger" ]] || _pulse_cycle_budget_admits_dispatch "Event refill drain (cycle-final)"; then
-		pulse_event_refill_drain "cycle-final" || true
-	fi
-
-	# Run LLM supervisor if stall/daily-sweep/force conditions are met.
-	# GH#18689: extracted to _pulse_maybe_run_llm_supervisor().
-	_pulse_cycle_state_publish supervising || true
-	# Release the instance lock BEFORE the LLM session so the next 2-min cycle
-	# can run deterministic ops concurrently. Terminal publication briefly
-	# reacquires this lock and writes only when health still names this cycle,
-	# preventing a slow supervisor from overwriting a newer cycle (GH#28361).
-	release_instance_lock
-	# GH#34000: an incomplete prefetch still runs the deterministic pipeline, but
-	# the supervisor prompt reads STATE_FILE, so defer it to a complete cycle —
-	# unless prefetch has degraded long enough that the supervisor would starve;
-	# then run it with the state file marked incomplete.
-	if [[ "${_PULSE_PREFETCH_DEGRADED:-0}" == "1" ]]; then
-		if _pulse_degraded_prefetch_supervisor_escape_due; then
-			echo "[pulse-wrapper] LLM supervisor: prefetch incomplete, but no supervisor attempt within ${PULSE_LLM_DEGRADED_ESCAPE_SECONDS:-21600}s — running with state marked incomplete (GH#34000 starvation escape)" >>"$LOGFILE"
-			_PULSE_SUPERVISOR_STATE_INCOMPLETE=1 _pulse_run_optional_stage "llm_supervisor" _pulse_maybe_run_llm_supervisor || true
-		else
-			echo "[pulse-wrapper] Skipping LLM supervisor: prefetch state incomplete this cycle (GH#34000)" >>"$LOGFILE"
-		fi
-	else
-		_pulse_run_optional_stage "llm_supervisor" _pulse_maybe_run_llm_supervisor || true
-	fi
-
-	# GH#28361: compute one terminal typed outcome after both deterministic and
-	# LLM dispatch paths, then project it through health and idle-backoff
-	# contracts. A cumulative registration count detects launches even when a
-	# different worker completes during the same cycle.
+# ---------------------------------------------------------------------------
+# _pulse_record_cycle_terminal
+#
+# GH#28361: compute one terminal typed outcome after both deterministic and
+# LLM dispatch paths, then project it through health and idle-backoff
+# contracts. A cumulative registration count detects launches even when a
+# different worker completes during the same cycle.
+# Args: $1=dispatch total captured at cycle entry
+# ---------------------------------------------------------------------------
+_pulse_record_cycle_terminal() {
+	local _cycle_dispatch_before="$1"
 	_pulse_record_cycle_outcome "$_cycle_dispatch_before"
 	_pulse_cycle_state_write_terminal_if_current || true
 	# GH#33739: record the cycle index from the terminal path (after the LLM
 	# supervisor) and before any t3033 exec, which skips EXIT traps.
 	_pulse_cycle_index_record_once
+	return 0
+}
 
+# ---------------------------------------------------------------------------
+# _pulse_finish_idle_cycle
+#
+# Blocker note plus terminal bookkeeping for the preflight-failed and
+# stop-flag early exits.
+# Args: $1=dispatch total captured at cycle entry, $2=blocker kind,
+#       $3=blocker fingerprint
+# ---------------------------------------------------------------------------
+_pulse_finish_idle_cycle() {
+	local _cycle_dispatch_before="$1"
+	local _blocker_kind="$2"
+	local _blocker_fingerprint="$3"
+	_pulse_cycle_state_note_blocker "$_blocker_kind" pulse-wrapper "$_blocker_fingerprint" || true
+	_pulse_record_cycle_outcome "$_cycle_dispatch_before"
+	_pulse_cycle_state_write_terminal_if_current || true
+	_pulse_cycle_index_record_once
+	_pulse_efficiency_cycle_finish idle
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_stop_flag_before_pipeline
+#
+# Sets _pw_skip_cycle=1 when a stop was requested during preflight.
+# Args: $1=dispatch total captured at cycle entry
+# ---------------------------------------------------------------------------
+_pulse_stop_flag_before_pipeline() {
+	local _cycle_dispatch_before="$1"
+	# Re-check stop flag immediately before run_pulse() — a stop may have
+	# been issued during the prefetch/cleanup phase above (t2943)
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Stop flag appeared during setup — aborting before run_pulse()" >>"$LOGFILE"
+		_pulse_finish_idle_cycle "$_cycle_dispatch_before" stop-requested stop-flag
+		_pw_skip_cycle=1
+		return 0
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_drain_cycle_final_refill
+# ---------------------------------------------------------------------------
+_pulse_drain_cycle_final_refill() {
+	# GH#33307: an exhausted cycle cannot launch a candidate; leave the refill
+	# trigger for a fresh-budget worker-exit refill or the next cycle instead of
+	# re-enumerating every candidate and consuming the trigger with 0 launches.
+	# t19015: a drained cycle cannot dispatch either; the activated bundle
+	# consumes the retained trigger.
+	_pulse_cycle_drain_exit "cycle_final_refill" && return 0
+	local _pulse_refill_trigger="${PULSE_EVENT_REFILL_TRIGGER_FILE:-${HOME}/.aidevops/cache/pulse-event-refill.trigger}"
+	if [[ ! -f "$_pulse_refill_trigger" ]] || _pulse_cycle_budget_admits_dispatch "Event refill drain (cycle-final)"; then
+		pulse_event_refill_drain "cycle-final" || true
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_run_supervisor_phase
+#
+# Publishes the supervising state, releases the instance lock, then runs the
+# conditional LLM supervisor (_pulse_maybe_run_llm_supervisor, GH#18689).
+# ---------------------------------------------------------------------------
+_pulse_run_supervisor_phase() {
+	_pulse_cycle_state_publish supervising || true
+	# GH#37907: read a deploy drain request before lock release removes it. A
+	# drained earlier-bundle cycle skips the optional LLM supervisor and exits
+	# so the scheduler starts the activated bundle without another long phase,
+	# unless the supervisor is starved (GH#38162 drain escape below).
+	local _pulse_drain_bundle=""
+	if declare -F _pulse_drain_requested_bundle >/dev/null 2>&1; then
+		_pulse_drain_bundle=$(_pulse_drain_requested_bundle) || _pulse_drain_bundle=""
+	fi
+	# GH#38048/GH#38908: hand the cycle's full census to the next dispatch
+	# process while the instance lock (and any drain marker) still exist. The
+	# EXIT-trap cleanup runs after the LLM supervisor and lock release, when
+	# the next cycle may already have started its first wave without it. A
+	# drained cycle dispatches nothing more and moves the census; any other
+	# cycle shares a copy and keeps its own for the early-exit recycle loop.
+	if [[ -n "$_pulse_drain_bundle" ]] && declare -F _dispatch_cleanup_cycle_cache >/dev/null 2>&1; then
+		_dispatch_cleanup_cycle_cache || true
+	elif declare -F _dispatch_share_cycle_census >/dev/null 2>&1; then
+		_dispatch_share_cycle_census || true
+	fi
+	# Release the instance lock BEFORE the LLM session so the next 2-min cycle
+	# can run deterministic ops concurrently. Terminal publication briefly
+	# reacquires this lock and writes only when health still names this cycle,
+	# preventing a slow supervisor from overwriting a newer cycle (GH#28361).
+	# Linux owns this bounded background lane in the service cgroup. Join only
+	# after admission/refill and lock release, before service exit or source
+	# re-exec can kill it. The next cycle must not wait for maintenance to finish.
+	release_instance_lock
+	_pulse_finish_post_dispatch_housekeeping
+	local _pulse_supervisor_age=""
+	_pulse_supervisor_age=$(_pulse_supervisor_last_attempt_age) || _pulse_supervisor_age="unknown"
+	if [[ -n "$_pulse_drain_bundle" ]]; then
+		# GH#38162: hourly drift redeploys drain most cycles on a loaded runner,
+		# so an unconditional skip starved the supervisor (and terminal-blocker
+		# recovery) for days. Once the latest attempt/success is older than
+		# PULSE_LLM_DRAIN_ESCAPE_SECONDS (default 2h, below the 3h recovery
+		# interval; 0 disables), make one normally gated supervisor decision.
+		# The lock is already released and the census handed off, so the drain
+		# contract (no new census or dispatch from this bundle) is unchanged.
+		if ! _pulse_supervisor_starved_for "${PULSE_LLM_DRAIN_ESCAPE_SECONDS:-7200}"; then
+			_pulse_take_drain_escape_deferral >/dev/null || true
+			echo "[pulse-wrapper] Skipping LLM supervisor: cooperative drain requested; activated bundle ${_pulse_drain_bundle} starts next cycle (GH#37907, last_attempt_age_s=${_pulse_supervisor_age})" >>"$LOGFILE"
+			return 0
+		fi
+		# GH#38210/GH#38580: let the activated bundle's first dispatch wave go
+		# first, even across repeated drains, until the deferral backstop.
+		_pulse_defer_drain_supervisor_escape "$_pulse_drain_bundle" "$_pulse_supervisor_age" && return 0
+		echo "[pulse-wrapper] LLM supervisor: cooperative drain requested, but no supervisor attempt within ${PULSE_LLM_DRAIN_ESCAPE_SECONDS:-7200}s — evaluating supervisor before bundle ${_pulse_drain_bundle} starts (GH#38162 starvation escape, last_attempt_age_s=${_pulse_supervisor_age})" >>"$LOGFILE"
+		# The drain marker is removed with the lock, so flag the escape for the
+		# supervisor stage: it must not run the dispatch_max recycle loop.
+		_PULSE_DRAIN_ESCAPE=1 _pulse_run_supervisor_decision "$_pulse_supervisor_age"
+		return 0
+	fi
+	if _pulse_take_drain_escape_deferral; then
+		echo "[pulse-wrapper] LLM supervisor: evaluating the deferred drain escape after this cycle's dispatch wave (GH#38210, last_attempt_age_s=${_pulse_supervisor_age})" >>"$LOGFILE"
+	fi
+	_pulse_run_supervisor_decision "$_pulse_supervisor_age"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_drain_escape_deferral_file / _pulse_take_drain_escape_deferral
+#
+# GH#38210: a pending deferral of the GH#38162 drain escape. Taking it
+# removes the marker. Returns: 0 when a deferral was pending, 1 otherwise.
+# ---------------------------------------------------------------------------
+_pulse_drain_escape_deferral_file() {
+	printf '%s/llm_drain_escape_deferred\n' "${PULSE_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}"
+	return 0
+}
+
+_pulse_take_drain_escape_deferral() {
+	local marker=""
+	marker=$(_pulse_drain_escape_deferral_file)
+	[[ -f "$marker" ]] || return 1
+	rm -f "$marker" 2>/dev/null || true
+	return 0
+}
+
+# Stdout: the epoch at which the pending deferral was first recorded
+# Returns: 0 with an epoch, 1 when no parseable deferral is pending
+_pulse_drain_escape_deferral_epoch() {
+	local marker="" deferred_epoch=""
+	marker=$(_pulse_drain_escape_deferral_file)
+	[[ -f "$marker" ]] || return 1
+	read -r deferred_epoch _ 2>/dev/null <"$marker" || [[ -n "$deferred_epoch" ]] || return 1
+	[[ "$deferred_epoch" =~ ^[0-9]+$ ]] || return 1
+	printf '%s\n' "$deferred_epoch"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_defer_drain_supervisor_escape
+#
+# GH#38210: running the starved supervisor (~15 min) in the drained cycle
+# delayed the activated bundle until its census handoff had expired. Defer
+# the escape instead: the next undrained cycle (normally the activated
+# bundle's) evaluates the supervisor after its dispatch wave.
+# GH#38580: running an already-deferred escape in a second drained cycle
+# still blocked the scheduler from starting the activated bundle for the
+# whole supervisor session (up to 55 min), with every worker slot empty,
+# because the supervisor cannot dispatch (GH#36343). A drained cycle keeps
+# the deferral pending (first-deferral epoch preserved) and exits instead.
+# Backstop: once the deferral is PULSE_LLM_DRAIN_ESCAPE_MAX_DEFER_SECONDS old
+# (default 4h, ~6h without a supervisor; 0 never runs it while drained), the
+# drained cycle runs the escape so persistent drains cannot starve it.
+# PULSE_LLM_DRAIN_ESCAPE_DEFER=0 runs the escape immediately, as before.
+# Args: $1=activated bundle id $2=supervisor attempt age (for the log line)
+# Returns: 0 when deferred (caller skips the supervisor), 1 to run it now
+# ---------------------------------------------------------------------------
+_pulse_defer_drain_supervisor_escape() {
+	local bundle="$1"
+	local supervisor_age="$2"
+	local marker="" now_epoch="" deferred_epoch="" deferral_age=0 max_defer=""
+	[[ "${PULSE_LLM_DRAIN_ESCAPE_DEFER:-1}" != "0" ]] || return 1
+	marker=$(_pulse_drain_escape_deferral_file)
+	now_epoch=$(date +%s) || return 1
+	if deferred_epoch=$(_pulse_drain_escape_deferral_epoch); then
+		[[ "$now_epoch" -le "$deferred_epoch" ]] || deferral_age=$((now_epoch - deferred_epoch))
+		max_defer="${PULSE_LLM_DRAIN_ESCAPE_MAX_DEFER_SECONDS:-14400}"
+		[[ "$max_defer" =~ ^[0-9]+$ ]] || max_defer=14400
+		if [[ "$max_defer" -gt 0 && "$deferral_age" -ge "$max_defer" ]]; then
+			_pulse_take_drain_escape_deferral || true
+			echo "[pulse-wrapper] LLM supervisor: drain escape deferred ${deferral_age}s (backstop ${max_defer}s) across drained cycles — running it in this drained cycle (GH#38580, last_attempt_age_s=${supervisor_age})" >>"$LOGFILE"
+			return 1
+		fi
+		# Keep the first-deferral epoch so the backstop measures total delay.
+		printf '%s %s\n' "$deferred_epoch" "$bundle" >"$marker" 2>/dev/null || true
+		echo "[pulse-wrapper] LLM supervisor: cooperative drain requested again; keeping the GH#38162 escape deferred ${deferral_age}s so bundle ${bundle} starts and dispatches first (GH#38580, last_attempt_age_s=${supervisor_age})" >>"$LOGFILE"
+		return 0
+	fi
+	printf '%s %s\n' "$now_epoch" "$bundle" >"$marker" 2>/dev/null || return 1
+	echo "[pulse-wrapper] LLM supervisor: cooperative drain requested and no supervisor attempt within ${PULSE_LLM_DRAIN_ESCAPE_SECONDS:-7200}s — deferring the GH#38162 escape until after bundle ${bundle}'s first dispatch wave (GH#38210, last_attempt_age_s=${supervisor_age})" >>"$LOGFILE"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_run_supervisor_decision
+#
+# GH#34000: an incomplete prefetch still runs the deterministic pipeline, but
+# the supervisor prompt reads STATE_FILE, so defer the snapshot-driven
+# triggers (daily sweep, stall) to a complete cycle — unless prefetch has
+# degraded long enough that the supervisor would starve; then run the full
+# trigger set with the state file marked incomplete. GH#38162: queue-driven
+# blocker recovery does not depend on STATE_FILE, so evaluate it on every
+# degraded cycle (state still marked incomplete for the prompt).
+# Args: $1=latest supervisor attempt/success age in seconds (for log lines)
+# ---------------------------------------------------------------------------
+_pulse_run_supervisor_decision() {
+	local _pulse_supervisor_age="$1"
+	local _stage="llm_supervisor"
+	if [[ "${_PULSE_PREFETCH_DEGRADED:-0}" != "1" ]]; then
+		_pulse_run_optional_stage "$_stage" _pulse_maybe_run_llm_supervisor || true
+		return 0
+	fi
+	if _pulse_degraded_prefetch_supervisor_escape_due; then
+		echo "[pulse-wrapper] LLM supervisor: prefetch incomplete, but no supervisor attempt within ${PULSE_LLM_DEGRADED_ESCAPE_SECONDS:-21600}s — running with state marked incomplete (GH#34000 starvation escape, last_attempt_age_s=${_pulse_supervisor_age})" >>"$LOGFILE"
+		_PULSE_SUPERVISOR_STATE_INCOMPLETE=1 _pulse_run_optional_stage "$_stage" _pulse_maybe_run_llm_supervisor || true
+		return 0
+	fi
+	echo "[pulse-wrapper] LLM supervisor: prefetch state incomplete this cycle; evaluating queue-driven triggers only (GH#38162, last_attempt_age_s=${_pulse_supervisor_age})" >>"$LOGFILE"
+	_PULSE_SUPERVISOR_STATE_INCOMPLETE=1 _PULSE_SUPERVISOR_QUEUE_TRIGGERS_ONLY=1 _pulse_run_optional_stage "$_stage" _pulse_maybe_run_llm_supervisor || true
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_reexec_if_source_changed
+#
+# Args: $1=script path captured at main() entry, $2=load-time mtime,
+#       $3...=main()'s original arguments (passed to exec unchanged)
+# ---------------------------------------------------------------------------
+_pulse_reexec_if_source_changed() {
+	local _pw_self="$1"
+	local _pw_mtime_loaded="$2"
+	shift 2
 	# t3033: self-respawn when source file was modified during this cycle.
 	#
 	# If aidevops update / setup.sh deployed a new pulse-wrapper.sh while this
@@ -1902,6 +1941,8 @@ main() {
 			[[ "$_pw_mtime_now" != "$_pw_mtime_loaded" ]]; then
 			echo "[pulse-wrapper] t3033: source modified (${_pw_mtime_loaded} -> ${_pw_mtime_now}) — releasing lock and re-execing for fresh code" >>"$WRAPPER_LOGFILE"
 			_pulse_efficiency_cycle_finish
+			# exec keeps this PID, so the ticker would outlive it (GH#37914).
+			_pulse_stop_routines_ticker || true
 			release_instance_lock
 			aidevops_runtime_bundle_lease_release
 			exec "$_pw_self" "$@"
@@ -1909,100 +1950,13 @@ main() {
 			echo "[pulse-wrapper] t3033: exec failed for '${_pw_self}' — continuing with normal exit" >>"$WRAPPER_LOGFILE"
 		fi
 	fi
-
-	_pulse_efficiency_cycle_finish
 	return 0
 }
 
-#######################################
-# Clean verified stale OpenCode sessions
-#
-# Criteria (ALL must be true):
-#   - Explicit disposable session mode (`opencode run`)
-#   - Not owned by a managed service cgroup
-#   - Older than ORPHAN_MAX_AGE seconds
-#   - Session DB activity older than ORPHAN_INACTIVITY_AGE seconds
-#   - Process tree is idle, with all evidence revalidated before SIGTERM
-#
-# Persistent modes, active sessions, and ambiguous evidence fail closed.
-# The classifier covers both no-TTY and TTY-attached disposable sessions but
-# never kills an unrelated parent terminal shell.
-#######################################
-
-#######################################
-# Kill workers stalled on rate-limited providers.
-#
-# When a provider hits its rate limit, already-running workers don't exit —
-# they hang indefinitely waiting for the API to respond. The retry/rotation
-# logic in headless-runtime-helper.sh only runs AFTER the process exits,
-# creating a deadlock: worker waits for API → API is rate-limited → worker
-# never exits → rotation never fires → slot wasted permanently.
-#
-# Observed in production: 20 of 24 worker slots consumed by stalled openai
-# workers with 306 bytes of output (just the sandbox startup line, zero LLM
-# activity) for 20-30 minutes. 0% CPU, 0 commits, 0 PRs.
-#
-# Detection: a worker running >STALLED_WORKER_MIN_AGE seconds with a log
-# file ≤STALLED_WORKER_MAX_LOG_BYTES is stalled. The log file only contains
-# the sandbox startup line when the LLM never responded.
-#
-# Action: kill the stalled worker, record provider backoff so the next
-# dispatch rotates to a working provider, and log the kill for audit.
-#######################################
-STALLED_WORKER_MIN_AGE="${STALLED_WORKER_MIN_AGE:-300}"             # 5 minutes
-STALLED_WORKER_MAX_LOG_BYTES="${STALLED_WORKER_MAX_LOG_BYTES:-500}" # just the startup line
-
-#######################################
-# Legacy compatibility: cleanup_stale_opencode remains callable, but its unsafe
-# age/CPU-only TTY cleanup is consolidated into cleanup_orphans.
-#######################################
-STALE_OPENCODE_MAX_AGE="${STALE_OPENCODE_MAX_AGE:-28800}" # 8 hours — was 4h, increased to avoid killing long-running complex tasks
-
-#######################################
-# Enrich failed issues with thinking-tier analysis before re-dispatch.
-#
-# When a worker fails (premature_exit, idle kill), the issue body often
-# lacks the implementation context needed for success. This function
-# spawns an inline thinking-tier worker to analyze the codebase and append
-# a "## Worker Guidance" section with concrete file paths, patterns,
-# and verification commands.
-#
-# Triggered by: fast_fail_record sets enrichment_needed=true on the
-# first non-rate-limit failure. Runs at most once per issue.
-#
-# Arguments:
-#   $1 - available worker slots
-# Outputs: updated available count to stdout
-# Exit code: always 0
-#######################################
-ENRICHMENT_MAX_PER_CYCLE="${ENRICHMENT_MAX_PER_CYCLE:-2}"
-
-#######################################
-# Dispatch FOSS contribution workers when idle capacity exists (t1702)
-#
-# Reads the pre-fetched FOSS scan from STATE_FILE and dispatches workers
-# for eligible repos. Respects the FOSS_MAX_DISPATCH_PER_CYCLE cap and
-# available worker slots.
-#
-# Arguments:
-#   $1 - available worker slots (AVAILABLE)
-#   $2 - repos JSON path (default: REPOS_JSON)
-#
-# Outputs: updated available count to stdout (one integer)
-# Exit code: always 0
-#######################################
-
-#######################################
-# Sync GitHub issue refs to TODO.md and close completed issues for a repo
-#
-# Arguments:
-#   $1 - repo slug (owner/repo)
-#   $2 - repo path (canonical path on disk)
-#
-# Exit code: always 0
-#######################################
-# sync_todo_refs_for_repo and _pulse_is_sourced provided by
-# pulse-wrapper-cycle.sh (GH#21311 / t2936-child).
+# Stalled-worker, stale-session and enrichment defaults (GH#38106).
+# shellcheck source=./pulse-wrapper-worker-defaults.sh
+# shellcheck disable=SC1091  # sibling module resolved at runtime via SCRIPT_DIR
+source "${SCRIPT_DIR}/pulse-wrapper-worker-defaults.sh"
 
 # Policy-compatible command router for supervisor prompts. Keep this source
 # before the inline entrypoint gate: a sourced wrapper exposes the same functions.

@@ -101,9 +101,23 @@ run_pass_case 'plugin test' 'Fix macOS catalogue' '## Summary' $'.agents/plugins
 run_fail_case 'summary claim without evidence' 'Add catalogue helper' $'## Summary\nFix macOS and Linux handling.\n## Runtime Testing\nTests passed.' '.agents/scripts/catalogue.sh'
 run_pass_case 'signature excluded' 'Add catalogue helper' $'## Summary\nAdds a helper.\n<!-- aidevops:sig -->\nLinux macOS' '.agents/scripts/catalogue.sh'
 
-for test_path in .agents/tests/test-platform.sh tests/test-platform.sh packages/example/tests/test-platform.sh; do
+run_pass_case \
+	'action updates with platform workflow filenames' \
+	'GH#37613: chore(deps): bump the actions group with 4 updates' \
+	$'## Summary\nOne-line action pin changes only.\n## Files Changed\n.github/workflows/code-quality.yml, .github/workflows/code-review-monitoring.yml, .github/workflows/macos-verification-refresh.yml, .github/workflows/opencode-agent.yml\n## Runtime Testing\nWorkflow lint passed.' \
+	$'.github/workflows/code-quality.yml\n.github/workflows/code-review-monitoring.yml\n.github/workflows/macos-verification-refresh.yml\n.github/workflows/opencode-agent.yml'
+run_fail_case 'title claim survives file list' 'Fix macOS workflow' $'## Files Changed\n.github/workflows/macos-verification-refresh.yml' '.github/workflows/macos-verification-refresh.yml'
+run_fail_case 'summary claim survives file list' 'Update workflow' $'## Summary\nFix macOS behavior.\n## Files Changed\n.github/workflows/macos-verification-refresh.yml' '.github/workflows/macos-verification-refresh.yml'
+run_fail_case 'claim after file list' 'Update workflow' $'## Files Changed\n.github/workflows/example.yml\n## Changes\nFix Linux behavior.' '.github/workflows/example.yml'
+
+for test_path in .agents/tests/test-platform.sh tests/test-platform.sh packages/example/tests/test-platform.sh \
+	.agents/worker-lifecycle/tests/test_directory_handle.py \
+	.agents/worker-lifecycle/tests/test_filesystem.py \
+	.agents/worker-lifecycle/tests/test_preservation.py; do
 	run_pass_case "repository test $test_path" 'Fix Linux portability' '## Summary' "${test_path}"$'\n.agents/scripts/catalogue.sh'
 done
+
+run_fail_case 'worker lifecycle production is not a test' 'Fix macOS handling' '## Summary' '.agents/worker-lifecycle/worker_lifecycle/filesystem.py'
 
 run_fail_case 'testing is not regression rationale' 'Fix macOS handling' $'## Runtime Testing\nAutomated coverage is impossible because the host is unavailable.' '.agents/scripts/catalogue.sh'
 

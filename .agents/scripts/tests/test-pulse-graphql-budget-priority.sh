@@ -9,6 +9,7 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 export HOME="${TMP_DIR}/home"
+unset DER_RETRY_DIR
 export PULSE_JITTER_MAX=0
 export LOGFILE="${HOME}/.aidevops/logs/pulse.log"
 export WRAPPER_LOGFILE="$LOGFILE"
@@ -70,7 +71,10 @@ _pulse_set_rest_core_budget_priority
 [[ "${AIDEVOPS_PULSE_GRAPHQL_BUDGET_CLASS}" == "reserve" ]]
 [[ "${AIDEVOPS_PULSE_REST_CORE_BUDGET_CLASS}" == "normal" ]]
 _pulse_should_defer_budget_priority_stage "dashboard_freshness_check"
-_pulse_should_defer_budget_priority_stage "evaluate_routines"
+if _pulse_should_defer_budget_priority_stage "evaluate_routines"; then
+	printf 'FAIL: local calendar evaluation deferred by API budget\n' >&2
+	exit 1
+fi
 _pulse_should_defer_budget_priority_stage "pr_review_thread_response"
 export AIDEVOPS_SKIP_PULSE_PREFETCH_BUDGET_GATE=1
 if _pulse_should_defer_budget_priority_stage "preflight_prefetch_and_scope"; then
@@ -108,6 +112,7 @@ fi
 [[ "$(_pulse_stage_priority_class "sync_todo_refs_all_repos")" == "deferrable" ]]
 [[ "$(_pulse_stage_priority_class "build_dependency_graph_cache")" == "deferrable" ]]
 [[ "$(_pulse_stage_priority_class "refresh_blocked_status_from_graph")" == "deferrable" ]]
+[[ "$(_pulse_stage_priority_class "worker_bus_relay")" == "deferrable" ]]
 [[ "$(_pulse_stage_priority_class "approval_merge_trigger")" == "progress" ]]
 [[ "$(_pulse_stage_priority_class "deterministic_merge_pass")" == "progress" ]]
 [[ "$(_pulse_stage_priority_class "preflight_early_dispatch")" == "progress" ]]
@@ -139,6 +144,51 @@ if _pulse_should_defer_budget_priority_stage "reap_orphan_workers"; then
 fi
 grep -q '_pulse_run_budget_priority_stage_with_timeout "stale_blocked_reconcile"' "${TEST_SCRIPT_DIR}/../pulse-wrapper.sh"
 grep -q '^[[:space:]]*_pulse_reconcile_stale_blocked_if_due || true' "${TEST_SCRIPT_DIR}/../pulse-wrapper.sh"
+
+# GH#38144 regression: with stale_blocked_reconcile deferred (REST reserve),
+# the ledger stage still runs and releases this device's expired own claim.
+[[ "$(_pulse_stage_priority_class "checkpoint_ledger_sweep")" == "critical" ]]
+grep -q '_pulse_run_budget_priority_stage_with_timeout "checkpoint_ledger_sweep"' "${TEST_SCRIPT_DIR}/../pulse-wrapper.sh"
+grep -q '^[[:space:]]*_pulse_sweep_checkpoint_ledger || true' "${TEST_SCRIPT_DIR}/../pulse-wrapper.sh"
+reconcile_body="$(declare -f _pulse_reconcile_stale_blocked_if_due)"
+if [[ "$reconcile_body" == *_pulse_sweep_checkpoint_ledger* ]]; then
+	printf 'FAIL: ledger sweep still nested in the deferrable stale-blocked stage\n' >&2
+	exit 1
+fi
+if _pulse_should_defer_budget_priority_stage "checkpoint_ledger_sweep"; then
+	printf 'FAIL: checkpoint ledger sweep deferred in REST reserve mode\n' >&2
+	exit 1
+fi
+LEDGER_DIR="${TMP_DIR}/ledger-sweep"
+mkdir -p "${LEDGER_DIR}/bin"
+cat >"${LEDGER_DIR}/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${2:-}" == user ]]; then
+	printf 'mockrunner\n'
+elif [[ " $* " == *' --method POST '* ]]; then
+	printf '%s\n' "$*" >"${MOCK_SWEEP_DIR}/posted"
+else
+	printf '%s\n' '[[{"id":10,"user":{"login":"mockrunner"},"author":"mockrunner","author_association":"MEMBER","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","body":"DISPATCH_CLAIM nonce=token runner=mockrunner phase=prelaunch lease_token=token device=fixture-device session=fixture-session expires_at=1 checkpoint_mode=revision checkpoint_approval=22"}]]'
+fi
+EOF
+chmod +x "${LEDGER_DIR}/bin/gh"
+printf '{"repo":"owner/repo","issue":42,"claim_id":10,"nonce":"token","session":"fixture-session","expires_at":%s}\n' \
+	"$(($(date +%s) - 100))" >"${LEDGER_DIR}/ledger.jsonl"
+(
+	unset -f gh
+	export PATH="${LEDGER_DIR}/bin:$PATH" MOCK_SWEEP_DIR="$LEDGER_DIR" AIDEVOPS_DEVICE_ID=fixture-device \
+		AIDEVOPS_CHECKPOINT_CLAIM_LEDGER="${LEDGER_DIR}/ledger.jsonl" AIDEVOPS_TEST_MODE=1 \
+		AIDEVOPS_REPO_STATE_GUARD_TEST_BYPASS=1
+	_pulse_run_budget_priority_stage_with_timeout "stale_blocked_reconcile" 10 \
+		_pulse_reconcile_stale_blocked_if_due
+	[[ "$_PULSE_BUDGET_STAGE_DEFERRED" == "1" ]]
+	_pulse_run_budget_priority_stage_with_timeout "checkpoint_ledger_sweep" 30 \
+		_pulse_sweep_checkpoint_ledger
+	[[ "$_PULSE_BUDGET_STAGE_DEFERRED" == "0" ]]
+)
+grep -q 'CLAIM_RELEASED reason=claim_only_no_worker' "${LEDGER_DIR}/posted"
+[[ ! -s "${LEDGER_DIR}/ledger.jsonl" ]]
+grep -q 'CHECKPOINT_LEDGER_SWEEP outcome=released issue=42 repo=owner/repo' "$LOGFILE"
 grep -q '_pulse_run_budget_priority_stage "approval_merge_trigger" _drain_merge_trigger_file_if_present' "${TEST_SCRIPT_DIR}/../pulse-wrapper.sh"
 _pulse_defer_budget_priority_stage "dashboard_freshness_check"
 grep -q 'pulse_rest_core_budget_reserve_mode' "${TMP_DIR}/counters.log"
@@ -257,5 +307,23 @@ if _cb_rest_core_priority_decision_allows progress 'emergency 0 5000 500 500 0 9
 	exit 1
 fi
 [[ "$(_cb_rest_core_thresholds 1001 1000)" == '0 500 0' ]]
+
+# Scheduled dispatch uses protected headroom, never the hard floor or unknown
+# quota. Local evaluation must still run with both API pools exhausted.
+_cb_rest_core_priority_decision_allows scheduled 'reserve 126 5000 500 500 100 9999999999'
+for snapshot in 'reserve 125 5000 500 500 100 9999999999' 'emergency 0 5000 500 500 0 9999999999' 'unknown ? ? ? 500 0 ?'; do
+	if _cb_rest_core_priority_decision_allows scheduled "$snapshot"; then
+		printf 'FAIL: scheduled dispatch ignored its quota floor\n' >&2
+		exit 1
+	fi
+done
+export GH_REST_CORE_REMAINING=0
+export GH_GRAPHQL_REMAINING=0
+rm -f "${HOME}/.aidevops/cache/pulse-rest-core.json"
+if _pulse_should_defer_budget_priority_stage evaluate_routines; then
+	printf 'FAIL: exhausted quota suppressed calendar evaluation\n' >&2
+	exit 1
+fi
+_pulse_should_defer_budget_priority_stage dashboard_freshness_check
 
 printf 'PASS pulse-graphql-budget-priority\n'

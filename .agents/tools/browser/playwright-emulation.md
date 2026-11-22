@@ -143,7 +143,6 @@ for (const scheme of ['light', 'dark'] as const) {
 ## Integration
 
 - **Chrome DevTools MCP**: navigate in mobile emulation → `npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222` for Lighthouse mobile audit.
-- **Stagehand**: `new Stagehand({ env: 'LOCAL', browserOptions: { ...devices['iPhone 13'] } })` → `stagehand.act('tap the hamburger menu')`.
 
 ## Related
 

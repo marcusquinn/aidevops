@@ -7,13 +7,17 @@
 # and the referenced section's single fenced JSON block from ONE pinned
 # remote default-branch commit. Never reads managed repository directories,
 # never evaluates policy text, never writes.
+# t19065 (GH#38636): `.aidevops.json` is local config that init gitignores and
+# the update migration untracks, which silently dropped delegated policy. With
+# no remote `.aidevops.json` or no `recovery_policy` key, the conventional
+# tracked `.agents/recovery-policy.md#Recovery policy` applies instead.
 #
 # Usage: recovery-policy-helper.sh <owner/repo>
 #
 # Exit codes:
 #   0  valid policy; stdout is {repo, revision, path, heading, actions}
-#   3  no policy declared (no .aidevops.json or no recovery_policy key):
-#      existing recovery behaviour applies
+#   3  no policy declared (no `.aidevops.json` pointer and no conventional
+#      `.agents/recovery-policy.md`): existing recovery behaviour applies
 #   1  invalid policy, insufficient access or API failure: fail closed,
 #      existing recovery behaviour applies
 # Reference: reference/recovery-policy.md
@@ -22,6 +26,8 @@
 [[ "${BASH_SOURCE[0]}" == "$0" ]] && set -euo pipefail
 
 RECOVERY_POLICY_NONE=3
+RECOVERY_POLICY_CONVENTIONAL_PATH=".agents/recovery-policy.md"
+RECOVERY_POLICY_CONVENTIONAL_HEADING="Recovery policy"
 
 # Print one repository file's decoded content at an exact revision.
 # Returns 0 on success, RECOVERY_POLICY_NONE on HTTP 404, 1 otherwise.
@@ -89,7 +95,7 @@ try:
 except ValueError as exc:
     sys.exit(f"policy: invalid JSON: {exc}")
 actions = policy.get("actions") if isinstance(policy, dict) else None
-allowed = {"outlier_hold", "session_cap_split", "brief_authority"}
+allowed = {"outlier_hold", "session_cap_split", "brief_authority", "scope_acceptance"}
 if not isinstance(actions, dict) or not actions.keys() <= allowed:
     sys.exit("policy: unknown action or invalid actions object")
 def text(value):
@@ -117,6 +123,12 @@ for name, action in actions.items():
             type(action.get("session_budget")) is int and action["session_budget"] > 0 and
             text(action.get("split_pattern"))):
         sys.exit("policy: session_cap_split requires positive session_budget and split_pattern")
+    # t19120: closing a phase needs the repo to name its own never-accept
+    # boundary; framework exclusions apply on top of it.
+    excluded = action.get("excluded_asks")
+    if name == "scope_acceptance" and not (
+            isinstance(excluded, list) and excluded and all(text(e) for e in excluded)):
+        sys.exit("policy: scope_acceptance requires non-empty excluded_asks")
 print(json.dumps(dict(repo=repo, revision=revision, path=path, heading=heading, actions=actions)))
 ' "$repo" "$revision" "$path" "$heading" || return 1
 	return 0
@@ -133,20 +145,31 @@ recovery_policy_load() {
 	branch=$(printf '%s' "$metadata" | jq -er '.default_branch | select(type == "string" and length > 0)') || return 1
 	revision=$(gh api -X GET "repos/${repo}/commits" -f sha="$branch" -f per_page=1 --jq '.[0].sha') || return 1
 	[[ "$revision" =~ ^[0-9a-f]{40}$ ]] || return 1
-	config=$(_recovery_policy_file "$repo" "$revision" .aidevops.json) || {
-		rc=$?
-		return "$rc"
-	}
-	printf '%s' "$config" | jq -e 'type == "object"' >/dev/null 2>&1 || return 1
-	printf '%s' "$config" | jq -e 'has("recovery_policy")' >/dev/null || return "$RECOVERY_POLICY_NONE"
-	pointer=$(printf '%s' "$config" | jq -er '.recovery_policy | select(type == "string" and length > 0)') || return 1
-	# A repository-relative Markdown file plus an exact ATX heading, not a URL.
-	path="${pointer%%#*}"
-	heading="${pointer#*#}"
-	[[ "$pointer" == *'#'* && "$path" =~ ^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*\.md$ && -n "$heading" ]] || return 1
-	case "/$path/" in */../* | */./*) return 1 ;; esac
-	# A declared but missing document is invalid, not "no policy".
-	document=$(_recovery_policy_file "$repo" "$revision" "$path") || return 1
+	config=$(_recovery_policy_file "$repo" "$revision" .aidevops.json) || rc=$?
+	[[ "$rc" -eq 0 || "$rc" -eq "$RECOVERY_POLICY_NONE" ]] || return 1
+	if [[ "$rc" -eq 0 ]]; then
+		printf '%s' "$config" | jq -e 'type == "object"' >/dev/null 2>&1 || return 1
+		if printf '%s' "$config" | jq -e 'has("recovery_policy")' >/dev/null; then
+			pointer=$(printf '%s' "$config" | jq -er '.recovery_policy | select(type == "string" and length > 0)') || return 1
+		fi
+	fi
+	if [[ -n "$pointer" ]]; then
+		# A repository-relative Markdown file plus an exact ATX heading, not a URL.
+		path="${pointer%%#*}"
+		heading="${pointer#*#}"
+		[[ "$pointer" == *'#'* && "$path" =~ ^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*\.md$ && -n "$heading" ]] || return 1
+		case "/$path/" in */../* | */./*) return 1 ;; esac
+		# A declared but missing document is invalid, not "no policy".
+		document=$(_recovery_policy_file "$repo" "$revision" "$path") || return 1
+	else
+		# t19065: the conventional tracked document survives the untrack
+		# migration; its absence is "no policy", an invalid one fails closed.
+		path="$RECOVERY_POLICY_CONVENTIONAL_PATH"
+		heading="$RECOVERY_POLICY_CONVENTIONAL_HEADING"
+		rc=0
+		document=$(_recovery_policy_file "$repo" "$revision" "$path") || rc=$?
+		[[ "$rc" -eq 0 ]] || return "$rc"
+	fi
 	_recovery_policy_parse "$repo" "$revision" "$path" "$heading" "$document" || return 1
 	return 0
 }

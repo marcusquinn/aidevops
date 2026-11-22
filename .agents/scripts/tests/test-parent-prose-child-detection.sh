@@ -215,7 +215,7 @@ fi
 # --- Source wiring assertion — the helper is actually called in reconcile ---
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET="$SCRIPT_DIR/pulse-issue-reconcile-actions.sh"
+TARGET="$("$SCRIPT_DIR/tests/pira-combined-source.sh")"
 
 TESTS_RUN=$((TESTS_RUN + 1))
 if grep -qF '_extract_children_from_prose' "$TARGET" 2>/dev/null &&

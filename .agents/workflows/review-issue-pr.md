@@ -246,11 +246,11 @@ For interactive maintainer review, complete the full checklist and post the stru
 
 1. Verify checkout freshness and report provenance.
 2. Complete duplicate, temporal, root-cause, safety, and dispatchability checks.
-3. Post the review using the format below so the decision has durable evidence.
-4. End every review with `Maintainer approval`: include the ready-to-run command after an `Approve` recommendation; otherwise state why none is appropriate. Never wait for the user to request it.
+3. For an issue, check approval first with `approval-helper.sh verify issue <number> <owner/repo>`. In `--report-only` mode, never change labels; list recommendations only, and for an unsigned issue withhold the approval command while recommended non-lifecycle labels remain unapplied. If already approved, list missing non-lifecycle labels without applying them. If verification is uncertain (e.g. `API_ERROR`), apply nothing and withhold the approval command until verification succeeds. Otherwise apply every recommended non-lifecycle label, including `bug` and `enhancement`, before presenting or running the approval command. After signing, apply only lifecycle/tier labels accepted by approval continuity. A later non-lifecycle label event can permanently stale approval even if removed.
+4. Post the review using the format below so the decision has durable evidence.
+5. End every review with `Maintainer approval`: include the ready-to-run command after an `Approve` recommendation; otherwise state why none is appropriate. Never wait for the user to request it. After a PR approval is signed, post later review notes on the linked issue, not the PR: any non-bot PR comment stales it (`reference/auto-merge.md:75`); `gh-write-helper.sh pr comment` refuses without `--allow-approval-stale`.
 
-Before claiming approval is missing or asking the maintainer to approve again,
-query the authoritative current state with
+Before claiming approval is missing or asking the maintainer to approve again, query the authoritative current state with
 `approval-helper.sh verify issue <number> <owner/repo>`. Never infer approval
 state from local `sudo` availability, an earlier label snapshot, or a failed
 attempt to invoke the signing command. Write-authorized comments after approval on a locked issue do not stale it (`reference/auto-merge.md`).
@@ -259,7 +259,7 @@ Do not expose an approval command as the next action merely because a dispatch h
 
 Assessment language describes a recommendation, not an exercised authority action. Use `Recommendation: Approve`, never `Approved`, until a trusted maintainer actually performs the approval step. Apply the same distinction in the task-tool result and user-facing summary.
 
-For an issue with an imperfect linked PR, recommend issue approval when the problem and root-cause direction are valid, then record a separate PR disposition: `merge`, `repair`, `replace`, or `close`. Do not downgrade the issue to `Request Changes` because implementation needs work.
+For an issue with an imperfect linked PR, recommend issue approval when the problem and root-cause direction are valid, then record a separate PR disposition: `merge`, `repair`, `replace`, or `close`. Do not downgrade the issue to `Request Changes` because implementation needs work. If the linked PR is external/fork and the disposition is `repair` or `replace` (or an approval-bound PR edit is planned), withhold the issue approval command, since the repair stales it; record the disposition and give the single post-repair `pre-merge-gate` batch command (`workflows/review.md` "External PR authority preflight"). Issue approval stays immediate for `merge`, `close`, or no linked PR.
 
 For batch reviews, group approved targets by repository and use the batch syntax
 in `reference/task-lifecycle.md`. One command must list all eligible targets and
@@ -318,7 +318,7 @@ accept one exact `APPROVE`; never mix repositories or include non-Approve target
 - Complexity: Low (`tier:simple`) / Medium (`tier:standard`) / High (`tier:thinking`)
 - **Recommendation**: APPROVE / REQUEST CHANGES / DECLINE
 - **PR disposition**: MERGE / REPAIR / REPLACE / CLOSE / NOT APPLICABLE — [owner and immediate next action]
-- **Labels**: [e.g., `tier:simple`, `bug`, `status:available`]
+- **Labels**: [e.g., `tier:simple`, `bug`, `status:available` — check issue approval first; in report-only mode or if approved, list missing non-lifecycle labels without applying them (report-only on an unsigned issue also withholds the approval command until they are applied); if uncertain, withhold the approval command; otherwise apply them before presenting the approval command. Apply only continuity-accepted lifecycle/tier labels after signing]
 - **Implementation guidance**: [key steps, production-facing verification, and any focused coverage justified by `reference/ci-gate-policy.md`]
 
 ### Dispatchability Assessment
@@ -337,7 +337,7 @@ accept one exact `APPROVE`; never mix repositories or include non-Approve target
 
 [`sudo aidevops approve issue|pr <numbers...> <owner/repo>` or mixed
 `sudo aidevops approve batch issue:<N> pr:<N>... <owner/repo>`; otherwise
-`No approval command — <reason>`.]
+`No approval command — <reason>` (external PR repair: use `pre-merge-gate` batch).]
 ```
 
 **Why this section exists**: Tier recommendations without brief verification led to issues being labelled `tier:simple` when no brief with code blocks existed — making them undispatchable at that tier. This section forces the reviewer to check prerequisites before recommending a tier, whether invoked via `/review-issue-pr` or encountered mid-session. See AGENTS.md "Briefs, Tiers, and Dispatchability" for the full prerequisite chain.
@@ -352,6 +352,7 @@ After a verdict is reached, the reporter must always be informed — regardless 
 | Recommend APPROVE → PR merged same session | Comment on source issue: thank reporter, link to merged PR, close issue |
 | Recommend REQUEST CHANGES | Post the exact repair plan and route it to the responsible maintainer/worker; ask no discoverable questions and do not wait passively on the contributor |
 | Recommend DECLINE | Comment explaining why (out of scope, by design, duplicate) and close issue |
+| Spam (including any redirect/shortener link) | **No comment.** Label `spam`, close not-planned, lock as spam, delete or minimize bot comments, block the author (`redirect-link-guard-helper.sh enforce-issue <repo> <N>`). Never open the link; see `reference/gh-command-discipline.md` "Redirect links". Leave the re-applied `needs-maintainer-review` label in place |
 
 **Template — issue converted to internal task:**
 

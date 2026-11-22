@@ -145,8 +145,10 @@ for ((i = 0; i < ${#_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}; i++)); do
 		break
 	fi
 done
-assert_eq "body unchanged when already signed" "$original_body" "$body_val"
+assert_eq "signed body receives missing origin only" "${original_body}"$'\n'"<!-- aidevops:$(session_origin_label) -->" "$body_val"
 assert_not_contains "no stub footer appended" "stub footer" "$body_val"
+_gh_wrapper_auto_sig --body "$body_val"
+assert_eq "body with both markers is unchanged" "$body_val" "${_GH_WRAPPER_SIG_MODIFIED_ARGS[1]}"
 
 # Inline documentation of the marker is not a completed footer.
 inline_marker_body="Documentation mentions <!-- aidevops:sig --> inline"
@@ -392,6 +394,66 @@ chmod +x "${STUB_DIR}/gh"
 rc=0
 gh_pr_comment 19999 --repo "owner/repo" --body "test" || rc=$?
 assert_eq "exit code 42 propagated from gh through gh_pr_comment" "42" "$rc"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 13 (GH#36978): origin marker appears exactly once after signing
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 13 (GH#36978): body with a standalone origin marker keeps one marker"
+cat >"${TMPDIR_TEST}/gh-signature-helper.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '\n<!-- aidevops:origin:interactive -->\n<!-- aidevops:sig -->\n---\nstub footer.\n'
+exit 0
+STUB
+chmod +x "${TMPDIR_TEST}/gh-signature-helper.sh"
+marker_body=$'Body text\n\n<!-- aidevops:origin:interactive -->\n'
+_gh_wrapper_auto_sig --repo "owner/repo" --body "$marker_body"
+body_val="${_GH_WRAPPER_SIG_MODIFIED_ARGS[3]}"
+marker_count=$(grep -Fxc '<!-- aidevops:origin:interactive -->' <<<"$body_val" || true)
+assert_eq "--body keeps exactly one origin marker" "1" "$marker_count"
+assert_contains "--body keeps original content" "Body text" "$body_val"
+
+marker_file="${TMPDIR_TEST}/marker-body.md"
+printf '%s' "$marker_body" >"$marker_file"
+_gh_wrapper_auto_sig --repo "owner/repo" --body-file "$marker_file"
+signed_file="${_GH_WRAPPER_SIG_MODIFIED_ARGS[3]}"
+marker_count=$(grep -Fxc '<!-- aidevops:origin:interactive -->' "$signed_file" || true)
+assert_eq "--body-file keeps exactly one origin marker" "1" "$marker_count"
+
+# A pre-signed body still needs provenance, without duplicating its signature.
+printf '%s' "$original_body" >"$marker_file"
+_gh_wrapper_auto_sig --body-file="$marker_file"
+signed_file="${_GH_WRAPPER_SIG_MODIFIED_ARGS[0]#--body-file=}"
+signed_content=$(<"$signed_file")
+assert_contains "signed file receives missing origin" "<!-- aidevops:$(session_origin_label) -->" "$signed_content"
+marker_count=$(grep -Fxc '<!-- aidevops:sig -->' "$signed_file" || true)
+assert_eq "signed file retains one signature" "1" "$marker_count"
+assert_eq "signed source file is unchanged" "$original_body" "$(<"$marker_file")"
+_gh_wrapper_auto_sig --body-file "$signed_file"
+assert_eq "file with both markers is reused" "$signed_file" "${_GH_WRAPPER_SIG_MODIFIED_ARGS[1]}"
+
+# Exercise the CLI's validation ordering without making any GitHub calls.
+rc=0
+(
+	source "${PARENT_DIR}/gh-write-helper.sh" help >/dev/null
+	_gh_wrapper_auto_sig() { return 99; }
+	gh_issue_edit_safe() { return 98; }
+	_gh_edit_audit_rejection() { return 0; }
+	printf ' \t\n' >"${TMPDIR_TEST}/empty-body.md"
+	for body_option in --body-file --body-file=; do
+		edit_rc=0
+		if [[ "$body_option" == --body-file ]]; then
+			main issue edit 1 --body-file "${TMPDIR_TEST}/empty-body.md" || edit_rc=$?
+		else
+			main issue edit 1 --body-file="${TMPDIR_TEST}/empty-body.md" || edit_rc=$?
+		fi
+		[[ "$edit_rc" == 1 ]] || exit 1
+	done
+	edit_rc=0
+	printf ' \t\n' | main issue edit 1 --body-file - || edit_rc=$?
+	[[ "$edit_rc" == 1 ]] || exit 1
+) || rc=$?
+assert_eq "CLI rejects whitespace files and stdin before signing" "0" "$rc"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Summary

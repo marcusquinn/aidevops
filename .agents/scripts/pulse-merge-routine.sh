@@ -280,6 +280,12 @@ _pmr_graphql_budget_allows_run() {
 # succeeds; unlike a known floor, it is logged as an availability/evidence fault.
 _pmr_rest_core_progress_allows_run() {
 	local progress_rc=0
+	# Merge housekeeping is optional; dispatch and active workers retain their
+	# existing critical/progress admission paths below this independent reserve.
+	if declare -F gh_budget_worker_reserve_allows >/dev/null 2>&1 && ! gh_budget_worker_reserve_allows; then
+		_pmr_log WARN "Worker REST reserve reached; deferring optional merge routine"
+		return 1
+	fi
 	if declare -F pulse_rest_core_priority_allows_next >/dev/null 2>&1; then
 		pulse_rest_core_priority_allows_next progress "merge_routine_start" || progress_rc=$?
 	elif declare -F pulse_rest_core_priority_allows >/dev/null 2>&1; then
@@ -308,6 +314,13 @@ _pmr_rest_core_progress_allows_run() {
 
 _pmr_require_gh_auth() {
 	local token=""
+	# GH#37232: never let `gh auth token` open a macOS keychain dialog from launchd.
+	# shellcheck source=./background-keychain-helper.sh
+	source "${SCRIPT_DIR}/background-keychain-helper.sh"
+	if ! background_keychain_gh_ready "pulse-merge-routine"; then
+		_pmr_log WARN "macOS keychain locked or gh item missing; skipping merge cycle without prompting (re-check backoff 10m, GH#37232)"
+		return 1
+	fi
 	if ! token=$(gh auth token 2>/dev/null) || [[ -z "$token" ]]; then
 		_pmr_log ERROR "GitHub authentication unavailable; aborting merge routine before API access to prevent unauthenticated requests"
 		printf '%s\n' 'pulse-merge-routine: GitHub authentication unavailable; refusing unauthenticated API access' >&2
@@ -324,7 +337,41 @@ _pmr_require_gh_auth() {
 # any FD-inheritance gotchas. PID-based stale detection lets the next runner
 # reclaim the lock if the previous instance crashed.
 
+_pmr_init_collab_memo() {
+	local root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	# Never reuse an inherited file: every run starts fresh, including failures
+	# during scratch creation before the auth or quota probes.
+	unset AIDEVOPS_GH_COLLAB_MEMO_FILE AIDEVOPS_GH_COLLAB_STATS_FILE
+	PMR_COLLAB_SCRATCH_DIR=""
+	mkdir -p "$root" || return 1
+	PMR_COLLAB_SCRATCH_DIR=$(mktemp -d "${root}/collab-memo.XXXXXXXX") || return 1
+	AIDEVOPS_GH_COLLAB_MEMO_FILE=$(mktemp "${PMR_COLLAB_SCRATCH_DIR}/memo.XXXXXXXX") || return 1
+	AIDEVOPS_GH_COLLAB_STATS_FILE=$(mktemp "${PMR_COLLAB_SCRATCH_DIR}/stats.XXXXXXXX") || return 1
+	_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
+	export AIDEVOPS_GH_COLLAB_MEMO_FILE AIDEVOPS_GH_COLLAB_STATS_FILE
+	return 0
+}
+
 _pmr_release_lock() {
+	if [[ -n "${AIDEVOPS_GH_COLLAB_STATS_FILE:-}" && -f "$AIDEVOPS_GH_COLLAB_STATS_FILE" ]]; then
+		local hits=0 misses=0 line="" distinct=0
+		while IFS= read -r line; do
+			case "$line" in
+			hit) hits=$((hits + 1)) ;;
+			miss\ *) misses=$((misses + 1)) ;;
+			esac
+		done <"$AIDEVOPS_GH_COLLAB_STATS_FILE"
+		_pmr_log INFO "collab_memo hits=${hits} misses=${misses}"
+		distinct=$(sort -u "$AIDEVOPS_GH_COLLAB_STATS_FILE" | awk '/^miss / { n++ } END { print n+0 }')
+		_pmr_log INFO "collab_memo distinct_miss_keys=${distinct}"
+		rm -f "$AIDEVOPS_GH_COLLAB_STATS_FILE"
+	fi
+	if [[ -n "${PMR_COLLAB_SCRATCH_DIR:-}" ]]; then
+		rm -f "${AIDEVOPS_GH_COLLAB_MEMO_FILE:-}"
+		rmdir "$PMR_COLLAB_SCRATCH_DIR" 2>/dev/null || true
+		PMR_COLLAB_SCRATCH_DIR=""
+	fi
+	unset AIDEVOPS_GH_COLLAB_MEMO_FILE AIDEVOPS_GH_COLLAB_STATS_FILE
 	rm -rf "$LOCK_DIR" 2>/dev/null || true
 	return 0
 }
@@ -480,6 +527,7 @@ cmd_run() {
 	if ! _pmr_acquire_lock; then
 		exit 0
 	fi
+	_pmr_init_collab_memo || return 1
 	if ! _pmr_require_gh_auth; then
 		return 1
 	fi
@@ -557,6 +605,7 @@ cmd_dry_run() {
 	if ! _pmr_acquire_lock; then
 		exit 0
 	fi
+	_pmr_init_collab_memo || return 1
 	if ! _pmr_require_gh_auth; then
 		return 1
 	fi

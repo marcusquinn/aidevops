@@ -173,7 +173,7 @@ _dispatch_triage_review_worker() {
 	# classification only. Suppression diagnostics never retain this content.
 	local raw_sample=""
 	if [[ -f "$review_output_file" ]]; then
-		raw_sample=$(head -c 1000 "$review_output_file" 2>/dev/null || true)
+		raw_sample=$(_triage_runtime_output_sample "$review_output_file")
 	fi
 	local artifact_cleanup_status=0
 	_triage_cleanup_sensitive_artifact_dir "$review_artifact_dir" \
@@ -187,6 +187,9 @@ _dispatch_triage_review_worker() {
 		"$runtime_status" "$artifact_cleanup_status" "$raw_sample")
 	if [[ -n "$infra_failure_reason" ]]; then
 		echo "[pulse-wrapper] Triage runtime failure for #${issue_num} in ${repo_slug}: ${infra_failure_reason} — infrastructure/contract failure, not a review failure (GH#23854)" >>"$LOGFILE"
+	fi
+	if [[ "$infra_failure_reason" == "triage-provider-auth-unsupported" ]]; then
+		_triage_auth_cooldown_record "$resolved_model"
 	fi
 
 	# Validate output safety and post or suppress the review comment.
@@ -688,7 +691,7 @@ _triage_review_shape_failure_reason() {
 		return 0
 	fi
 	if ! printf '%s\n' "$review_text" \
-		| grep -qxF -- "- **Recommendation:** ${expected_recommendation}" 2>/dev/null; then
+		| grep -xF -- "- **Recommendation:** ${expected_recommendation}" >/dev/null 2>&1; then
 		printf '%s\n' 'recommendation-mismatch'
 		return 0
 	fi
@@ -862,7 +865,7 @@ _extract_and_post_triage_review() {
 
 	# NEVER post raw sandbox/infrastructure output. A failed runtime may mix
 	# startup logs, execution metadata, or internal paths into model text.
-	if printf '%s\n' "$review_text" | grep -qE '\[SANDBOX\]|\[INFO\] Executing|timeout=[0-9]+s|network_blocked=|sandbox-exec-helper|/opt/homebrew/|opencode run ' 2>/dev/null; then
+	if printf '%s\n' "$review_text" | grep -E '\[SANDBOX\]|\[INFO\] Executing|timeout=[0-9]+s|network_blocked=|sandbox-exec-helper|/opt/homebrew/|opencode run ' >/dev/null 2>&1; then
 		echo "[pulse-wrapper] SECURITY: triage review for #${issue_num} contained raw sandbox output — suppressed (${#review_text} chars)" >>"$LOGFILE"
 		_log_suppressed_triage_output "$issue_num" "$repo_slug" \
 			"raw-sandbox-output" "$output_chars"

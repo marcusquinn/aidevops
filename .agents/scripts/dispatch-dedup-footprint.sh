@@ -81,6 +81,15 @@ _FOOTPRINT_LOW_INFO_BASENAMES="${AIDEVOPS_FOOTPRINT_LOW_INFO_BASENAMES:-VERSION 
 # immediate eviction on known-close events (t2927/GH#21103).
 _FOOTPRINT_CACHE_TTL=30
 
+# GH#38055: open-PR list for claimed-issue PR evidence, fetched at most once
+# per in-flight cache rebuild. One rebuild can evaluate dozens of claimed
+# issues; fetching per issue made the footprint stage take minutes. Only
+# valid inside _footprint_refresh_inflight_cache, which activates and clears
+# it, so standalone evidence checks always read the live PR list.
+_FOOTPRINT_OPEN_PRS_MEMO_ACTIVE=0
+_FOOTPRINT_OPEN_PRS_REPO=""
+_FOOTPRINT_OPEN_PRS_JSON=""
+
 #######################################
 # Compute a portable SHA-256 digest for text.
 # Args: $1 = text
@@ -856,7 +865,7 @@ _footprint_coordinator_log() {
 }
 
 #######################################
-# GH#33293: determine whether a claimed `no-auto-dispatch` coordination
+# GH#33293/GH#36817: determine whether any claimed
 # issue has evidence of active implementation. Without evidence, such an
 # issue is a coordination container — like `parent-task` — and must not
 # reserve its declared Files Scope indefinitely just because a maintainer
@@ -869,6 +878,8 @@ _footprint_coordinator_log() {
 #   2. An open PR that either closes this issue (standard closing
 #      keywords) or whose branch name encodes the issue number, matching
 #      the aidevops worktree-branch convention (".../auto-...-gh<N>").
+#   3. An interactive-claim stamp with an existing worktree_path directory.
+#      Unreadable or malformed stamps retain the reservation (fail closed).
 #
 # Args: $1 = repo_slug, $2 = issue_number
 # Exit: 0 = evidence found (keep reserving); 1 = no evidence (skip, like
@@ -885,15 +896,40 @@ _footprint_claimed_coordinator_has_evidence() {
 		local ledger_hit=""
 		ledger_hit=$(jq -r --arg key "issue-${issue_number}" \
 			'select(.session_key == $key and (.status == "in-flight" or .status == "launched")) | .session_key' \
-			"$ledger_file" 2>/dev/null | head -1) || ledger_hit=""
+			"$ledger_file" 2>/dev/null | sed -n '1p') || ledger_hit=""
 		[[ -n "$ledger_hit" ]] && return 0
 	fi
 
+	# Match interactive-session-helper.sh's stamp naming and JSON schema.
+	local stamp_file="${HOME}/.aidevops/.agent-workspace/interactive-claims/${repo_slug//\//-}-${issue_number}.json"
+	local stamp_worktree=""
+	if [[ -e "$stamp_file" || -L "$stamp_file" ]]; then
+		[[ -f "$stamp_file" && -r "$stamp_file" && ! -L "$stamp_file" ]] || return 0
+		stamp_worktree=$(jq -ers --arg slug "$repo_slug" --argjson issue "$issue_number" '
+			if length == 1 then .[0] else error("multiple stamps") end |
+			select(type == "object" and .slug == $slug and .issue == $issue) |
+			.worktree_path | select(type == "string" and length > 0)
+		' "$stamp_file" 2>/dev/null) || return 0
+		[[ -d "$stamp_worktree" ]] && return 0
+	fi
+
 	# Evidence 2 — an open PR linked to the issue (closing keyword in its
-	# body) or a branch whose name encodes the issue number.
+	# body) or a branch whose name encodes the issue number. GH#38055: reuse
+	# the list fetched earlier in the same rebuild. A failed fetch is reused
+	# as "no PR evidence" (the existing failure semantics) for that rebuild
+	# only, so a failing API is not retried once per claimed issue.
 	local prs="" pr_hit="0"
-	prs=$(gh pr list --repo "$repo_slug" --state open \
-		--json number,headRefName,body --limit 100 2>/dev/null) || prs=""
+	if [[ -n "$_FOOTPRINT_OPEN_PRS_REPO" && "$_FOOTPRINT_OPEN_PRS_REPO" == "$repo_slug" ]]; then
+		prs="$_FOOTPRINT_OPEN_PRS_JSON"
+	else
+		prs=$(gh pr list --repo "$repo_slug" --state open \
+			--json number,headRefName,body --limit 100 2>/dev/null) || prs=""
+		[[ -n "$prs" ]] || prs="[]"
+		if [[ "${_FOOTPRINT_OPEN_PRS_MEMO_ACTIVE:-0}" == "1" ]]; then
+			_FOOTPRINT_OPEN_PRS_REPO="$repo_slug"
+			_FOOTPRINT_OPEN_PRS_JSON="$prs"
+		fi
+	fi
 	[[ -n "$prs" ]] || prs="[]"
 	pr_hit=$(printf '%s' "$prs" | jq -r --arg n "$issue_number" '
 		[.[] | select(
@@ -914,8 +950,8 @@ _footprint_claimed_coordinator_has_evidence() {
 # (GH#32977), so it is owned work even before the worker registers.
 # Parent-task issues are coordination containers, not worker
 # implementation claims, so their broad planning footprints do not block
-# worker-ready child dispatch. GH#33293: a claimed `no-auto-dispatch`
-# coordination issue is skipped the same way unless it carries evidence of
+# worker-ready child dispatch. GH#33293/GH#36817: any claimed
+# issue is skipped the same way unless it carries evidence of
 # active implementation (see _footprint_claimed_coordinator_has_evidence).
 #
 # Returns a newline-separated list of "file|issue_number" pairs.
@@ -944,45 +980,54 @@ _footprint_refresh_inflight_cache() {
 	local all_inflight
 	all_inflight=$(_footprint_fetch_active_issues "$repo_slug")
 
-	local issue_count
-	issue_count=$(printf '%s' "$all_inflight" | jq 'length' 2>/dev/null) || issue_count=0
-	[[ "$issue_count" =~ ^[0-9]+$ ]] || issue_count=0
+	# GH#38089: one jq pass emits each issue's number, parent-task and
+	# status:claimed flags, and base64 body as a TSV row. The previous
+	# per-index loop parsed the whole array four times per issue (O(n^2)
+	# bytes: ~394 MB for 82 enrichment briefs), which dominated
+	# dedup.footprint under host load. Issues without a number contributed
+	# nothing before and are filtered here; tab is IFS whitespace, so every
+	# emitted field must be non-empty except the trailing body.
+	local issue_rows=""
+	issue_rows=$(printf '%s' "$all_inflight" | jq -r '
+		.[]? | select(.number != null)
+		| [(.number | tostring),
+			(any((.labels // [])[]?; .name == "parent-task") | tostring),
+			(any((.labels // [])[]?; .name == "status:claimed") | tostring),
+			((.body // "") | tostring | @base64)]
+		| @tsv' 2>/dev/null) || issue_rows=""
 
 	local cache_data=""
-	local i=0
-	while [[ "$i" -lt "$issue_count" ]]; do
-		local num body is_parent_task is_no_auto_dispatch is_claimed paths
-		num=$(printf '%s' "$all_inflight" | jq -r ".[$i].number // empty" 2>/dev/null)
-		body=$(printf '%s' "$all_inflight" | jq -r ".[$i].body // empty" 2>/dev/null)
-		is_parent_task=$(printf '%s' "$all_inflight" | jq -r ".[$i] | any((.labels // [])[]?; .name == \"parent-task\")" 2>/dev/null) || is_parent_task="false"
-		if [[ "$is_parent_task" == "true" ]]; then
-			i=$((i + 1))
-			continue
-		fi
+	local num="" is_parent_task="" is_claimed="" body_b64="" body="" paths="" p=""
+	_FOOTPRINT_OPEN_PRS_MEMO_ACTIVE=1
+	_FOOTPRINT_OPEN_PRS_REPO=""
+	_FOOTPRINT_OPEN_PRS_JSON=""
+	while IFS=$'\t' read -r num is_parent_task is_claimed body_b64; do
+		[[ -n "$num" ]] || continue
+		[[ "$is_parent_task" == "true" ]] && continue
 
-		# GH#33293: a claimed no-auto-dispatch coordination issue only
+		# GH#36817: any claimed issue only
 		# holds its footprint when there is evidence of active
 		# implementation; otherwise it is skipped like parent-task.
-		is_no_auto_dispatch=$(printf '%s' "$all_inflight" | jq -r ".[$i] | any((.labels // [])[]?; .name == \"no-auto-dispatch\")" 2>/dev/null) || is_no_auto_dispatch="false"
-		is_claimed=$(printf '%s' "$all_inflight" | jq -r ".[$i] | any((.labels // [])[]?; .name == \"status:claimed\")" 2>/dev/null) || is_claimed="false"
-		if [[ "$is_no_auto_dispatch" == "true" && "$is_claimed" == "true" ]] &&
-			[[ -n "$num" ]] && ! _footprint_claimed_coordinator_has_evidence "$repo_slug" "$num"; then
+		if [[ "$is_claimed" == "true" ]] &&
+			! _footprint_claimed_coordinator_has_evidence "$repo_slug" "$num"; then
 			_footprint_coordinator_log "event=footprint_stale_coordinator issue=#${num} repo=${repo_slug}"
-			i=$((i + 1))
 			continue
 		fi
 
-		if [[ -n "$num" && -n "$body" ]]; then
-			paths=$(_footprint_extract_paths "$body")
-			if [[ -n "$paths" ]]; then
-				while IFS= read -r p; do
-					[[ -n "$p" ]] || continue
-					cache_data="${cache_data}${p}|${num}\n"
-				done <<<"$paths"
-			fi
+		[[ -n "$body_b64" ]] || continue
+		body=$(printf '%s' "$body_b64" | base64 -d 2>/dev/null) || body=""
+		[[ -n "$body" ]] || continue
+		paths=$(_footprint_extract_paths "$body")
+		if [[ -n "$paths" ]]; then
+			while IFS= read -r p; do
+				[[ -n "$p" ]] || continue
+				cache_data="${cache_data}${p}|${num}\n"
+			done <<<"$paths"
 		fi
-		i=$((i + 1))
-	done
+	done <<<"$issue_rows"
+	_FOOTPRINT_OPEN_PRS_MEMO_ACTIVE=0
+	_FOOTPRINT_OPEN_PRS_REPO=""
+	_FOOTPRINT_OPEN_PRS_JSON=""
 
 	# Store in cache
 	_FOOTPRINT_CACHE_REPO="$repo_slug"

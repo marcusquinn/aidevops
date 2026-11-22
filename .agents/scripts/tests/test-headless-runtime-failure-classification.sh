@@ -76,6 +76,51 @@ check_classification() {
 
 echo "${TEST_BLUE}=== headless runtime failure classification tests ===${TEST_NC}"
 
+# Record only positively classified zero-activity failures, not general failures.
+_HRFF_RUNNER_HEALTH_HELPER_OVERRIDE="$FIXTURE_DIR/health-helper"
+export _HRFF_RUNNER_HEALTH_HELPER_OVERRIDE
+# shellcheck disable=SC2016 # Variables are expanded by the fixture at runtime.
+printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$*" >>"$FIXTURE_HEALTH_LOG"' >"$_HRFF_RUNNER_HEALTH_HELPER_OVERRIDE"
+chmod +x "$_HRFF_RUNNER_HEALTH_HELPER_OVERRIDE"
+export FIXTURE_HEALTH_LOG="$FIXTURE_DIR/health.log"
+_hrff_record_runner_health_failure issue-123 crash_during_startup
+_hrff_record_runner_health_failure issue-123 worker_noop_zero_output
+_hrff_record_runner_health_failure issue-123 crash_during_execution
+assert_eq "only zero-activity startup outcomes recorded" "2" "$(wc -l <"$FIXTURE_HEALTH_LOG" | tr -d ' ')"
+# GH#37597: a fresh dispatch's signing failure keeps the trip-at-1 signal; a
+# continuation after an attempt with activity is recorded audit-only.
+: >"$FIXTURE_HEALTH_LOG"
+_HRW_PRIOR_ATTEMPT_ACTIVITY=0 _hrff_record_runner_health_failure issue-123 worker_signing_unavailable
+_HRW_PRIOR_ATTEMPT_ACTIVITY=1 _hrff_record_runner_health_failure issue-123 worker_signing_unavailable
+assert_eq "signing outcome attribution follows prior attempt activity" \
+	"worker_signing_unavailable|worker_signing_unavailable_after_activity" \
+	"$(cut -d' ' -f2 "$FIXTURE_HEALTH_LOG" | paste -sd'|' -)"
+# GH#38481: a not-launched attempt counts as a missing runtime binary only with
+# positive evidence: spawn attempted, runtime_command_missing, exit 127, no activity.
+record_not_launched() {
+	local reason="$1" launched="$2" runtime_type="$3" exit_status="$4" activity="$5" prior="$6"
+	_WORKER_RUNTIME_LAUNCH_STARTED="$launched" _run_runtime_error_type="$runtime_type" \
+		_run_exit_code="$exit_status" _run_activity_detected="$activity" \
+		_HRW_PRIOR_ATTEMPT_ACTIVITY="$prior" \
+		_hrff_record_runner_health_failure issue-123 "$reason"
+	return 0
+}
+: >"$FIXTURE_HEALTH_LOG"
+record_not_launched worker_not_launched 1 runtime_command_missing 127 0 0
+assert_eq "evidenced missing runtime records worker_runtime_missing" \
+	"worker_runtime_missing" "$(cut -d' ' -f2 "$FIXTURE_HEALTH_LOG" | paste -sd'|' -)"
+: >"$FIXTURE_HEALTH_LOG"
+record_not_launched worker_not_launched "" "" "" "" 0
+record_not_launched worker_runtime_not_invoked 0 "" "" "" 0
+record_not_launched worker_not_launched 1 runtime_permission_denied 127 0 0
+record_not_launched worker_not_launched 1 runtime_command_missing 1 0 0
+record_not_launched worker_not_launched 1 runtime_command_missing 127 1 0
+record_not_launched worker_not_launched 1 runtime_command_missing 127 0 1
+record_not_launched worker_not_launched 0 runtime_command_missing 127 0 0
+record_not_launched worker_failed 1 runtime_command_missing 127 0 0
+assert_eq "not-launched outcomes without complete runtime-missing evidence record nothing" \
+	"0" "$(wc -l <"$FIXTURE_HEALTH_LOG" | tr -d ' ')"
+
 check_classification \
 	"openai_rate_limit" \
 	'{"provider":"openai","error":{"type":"rate_limit","message":"Too many requests"},"status":429}' \

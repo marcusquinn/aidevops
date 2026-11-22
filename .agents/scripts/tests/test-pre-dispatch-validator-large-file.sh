@@ -17,6 +17,14 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 HELPER_SCRIPT="${SCRIPT_DIR}/../pre-dispatch-validator-helper.sh"
 
@@ -153,7 +161,7 @@ if [[ "\${1:-}" == "clone" ]]; then
 fi
 
 # Pass-through for other git commands
-/usr/bin/git "\$@"
+"$TEST_NATIVE_GIT" "\$@"
 GITEOF
 	chmod +x "${TEST_ROOT}/bin/git"
 	return 0
@@ -170,7 +178,7 @@ test_large_file_premise_falsified() {
 
 	# Issue body with marker: file threshold=100
 	local body_file="${TEST_ROOT}/issue_body.txt"
-	printf '<!-- aidevops:generator=large-file-simplification-gate cited_file=.agents/scripts/big-file.sh threshold=100 -->\n## What\nSimplify big-file.sh\n' >"$body_file"
+	printf '<!-- aidevops:generator=large-file-simplification-gate cited_file=.agents/scripts/big-file.sh threshold=100 -->\n## What\nSimplify big-file.sh\n\n### Files Scope\n\n- \x60.agents/scripts/big-file.sh\x60\n' >"$body_file"
 	create_gh_stub_with_body_file "$body_file"
 
 	# Create git stub that produces a file with 50 lines (under threshold of 100)
@@ -200,7 +208,7 @@ test_large_file_premise_holds() {
 	setup_test_env
 
 	local body_file="${TEST_ROOT}/issue_body.txt"
-	printf '<!-- aidevops:generator=large-file-simplification-gate cited_file=.agents/scripts/big-file.sh threshold=100 -->\n## What\nSimplify big-file.sh\n' >"$body_file"
+	printf '<!-- aidevops:generator=large-file-simplification-gate cited_file=.agents/scripts/big-file.sh threshold=100 -->\n## What\nSimplify big-file.sh\n\n### Files Scope\n\n- \x60.agents/scripts/big-file.sh\x60\n' >"$body_file"
 	create_gh_stub_with_body_file "$body_file"
 
 	# Create git stub that produces a file with 150 lines (over threshold of 100)
@@ -230,7 +238,7 @@ test_large_file_deleted() {
 	setup_test_env
 
 	local body_file="${TEST_ROOT}/issue_body.txt"
-	printf '<!-- aidevops:generator=large-file-simplification-gate cited_file=.agents/scripts/deleted-file.sh threshold=100 -->\n## What\nSimplify deleted-file.sh\n' >"$body_file"
+	printf '<!-- aidevops:generator=large-file-simplification-gate cited_file=.agents/scripts/deleted-file.sh threshold=100 -->\n## What\nSimplify deleted-file.sh\n\n### Files Scope\n\n- \x60.agents/scripts/deleted-file.sh\x60\n' >"$body_file"
 	create_gh_stub_with_body_file "$body_file"
 
 	# Git stub creates repo but without the cited file
@@ -255,7 +263,7 @@ test_agent_doc_premise_falsified() {
 	setup_test_env
 
 	local body_file="${TEST_ROOT}/issue_body.txt"
-	printf '<!-- aidevops:generator=agent-doc-simplification-gate cited_file=.agents/reference/guide.md threshold=500 -->\n## Agent doc simplification\n' >"$body_file"
+	printf '<!-- aidevops:generator=agent-doc-simplification-gate cited_file=.agents/reference/guide.md threshold=500 -->\n## Agent doc simplification\n\n### Files Scope\n\n- \x60.agents/reference/guide.md\x60\n' >"$body_file"
 	create_gh_stub_with_body_file "$body_file"
 
 	local file_content=""
@@ -284,7 +292,7 @@ test_agent_doc_premise_holds() {
 	setup_test_env
 
 	local body_file="${TEST_ROOT}/issue_body.txt"
-	printf '<!-- aidevops:generator=agent-doc-simplification-gate cited_file=.agents/reference/guide.md threshold=500 -->\n## Agent doc simplification\n' >"$body_file"
+	printf '<!-- aidevops:generator=agent-doc-simplification-gate cited_file=.agents/reference/guide.md threshold=500 -->\n## Agent doc simplification\n\n### Files Scope\n\n- \x60.agents/reference/guide.md\x60\n' >"$body_file"
 	create_gh_stub_with_body_file "$body_file"
 
 	local file_content=""
@@ -313,7 +321,7 @@ test_function_complexity_falsified() {
 	setup_test_env
 
 	local body_file="${TEST_ROOT}/issue_body.txt"
-	printf '<!-- aidevops:generator=function-complexity-gate cited_file=.agents/scripts/simple.sh threshold=50 -->\n## Complexity finding\n' >"$body_file"
+	printf '<!-- aidevops:generator=function-complexity-gate cited_file=.agents/scripts/simple.sh threshold=50 -->\n## Complexity finding\n\n### Files Scope\n\n- \x60.agents/scripts/simple.sh\x60\n' >"$body_file"
 	create_gh_stub_with_body_file "$body_file"
 
 	# Create a file with only short functions (under 50 lines each)
@@ -349,7 +357,7 @@ test_function_complexity_holds() {
 	setup_test_env
 
 	local body_file="${TEST_ROOT}/issue_body.txt"
-	printf '<!-- aidevops:generator=function-complexity-gate cited_file=.agents/scripts/complex.sh threshold=5 -->\n## Complexity finding\n' >"$body_file"
+	printf '<!-- aidevops:generator=function-complexity-gate cited_file=.agents/scripts/complex.sh threshold=5 -->\n## Complexity finding\n\n### Files Scope\n\n- \x60.agents/scripts/complex.sh\x60\n' >"$body_file"
 	create_gh_stub_with_body_file "$body_file"
 
 	# Create a file with a function exceeding 5 lines
@@ -386,7 +394,7 @@ test_function_marker_markdown_uses_file_lines() {
 	setup_test_env
 
 	local body_file="${TEST_ROOT}/issue_body.txt"
-	printf '<!-- aidevops:generator=function-complexity-gate cited_file=.agents/aidevops/knowledge-plane.md threshold=500 -->\n## Agent doc simplification\n**Current size:** 1029 lines\n' >"$body_file"
+	printf '<!-- aidevops:generator=function-complexity-gate cited_file=.agents/aidevops/knowledge-plane.md threshold=500 -->\n## Agent doc simplification\n**Current size:** 1029 lines\n\n### Files Scope\n\n- \x60.agents/aidevops/knowledge-plane.md\x60\n' >"$body_file"
 	create_gh_stub_with_body_file "$body_file"
 
 	local file_content=""

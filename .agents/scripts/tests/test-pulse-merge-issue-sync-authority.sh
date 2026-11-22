@@ -7,7 +7,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 2
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+# shellcheck source=../gh-closing-reference-lib.sh
+source "${SCRIPT_DIR}/../gh-closing-reference-lib.sh"
 TEST_ROOT="$(mktemp -d)"
+export PULSE_T2449_BLOCK_STATE_DIR="${TEST_ROOT}/t2449-blocks"
 LOGFILE="${TEST_ROOT}/pulse.log"
 AGENTS_DIR="${TEST_ROOT}/agents"
 TRUST_CALLS="${TEST_ROOT}/trust-calls.log"
@@ -21,7 +24,8 @@ WORKER_BRIEFED_CALLS="${TEST_ROOT}/worker-briefed-calls.log"
 DEPENDABOT_ROUTE_CALLS="${TEST_ROOT}/dependabot-route-calls.log"
 PULSE_UNKNOWN_STATE="UNKNOWN"
 PULSE_REVIEW_EVIDENCE_SCHEMA="aidevops.review-gate-evidence/v1"
-export LOGFILE AGENTS_DIR
+AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp"
+export LOGFILE AGENTS_DIR AIDEVOPS_TEMP_DIR
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
 mkdir -p "${AGENTS_DIR}/scripts"
@@ -49,17 +53,24 @@ gate_src=$(awk '
 	/^_pm_gate_review_mode\(\) \{/,/^}$/ { print }
 	/^_pm_gate_author_trust\(\) \{/,/^}$/ { print }
 	/^_pm_gate_route_ineligible_author\(\) \{/,/^}$/ { print }
+	/^_pm_gate_route_configured_dependency_bot\(\) \{/,/^}$/ { print }
+	/^_pm_log_once_per_head\(\) \{/,/^}$/ { print }
 	/^_pm_gate_repository_and_issue\(\) \{/,/^}$/ { print }
 	/^_pm_gate_origin_authority\(\) \{/,/^}$/ { print }
 	/^_pm_gate_review_bot\(\) \{/,/^}$/ { print }
 	/^_check_pr_merge_gates\(\) \{/,/^}$/ { print }
 ' "$MERGE_SCRIPT")
+# GH#38042: origin authority calls the unlabeled worker-branch gate.
+gate_src+=$'\n'$(awk '/^_pm_gate_unlabeled_worker_branch\(\) \{/,/^}$/ { print }' \
+	"${MERGE_SCRIPT%/*}/pulse-merge-partial-continuation.sh")
 [[ -n "$gate_src" ]] || {
 	printf 'FAIL could not extract _check_pr_merge_gates\n' >&2
 	exit 1
 }
 
 _handle_changes_requested_review_gate() { return 0; }
+# Closure validation has its own merge-contradiction harness.
+_gh_pr_merge_closure_check() { return 0; }
 _pulse_is_trusted_issue_sync_pr() {
 	printf '%s %s %s\n' "$1" "$2" "$3" >>"$TRUST_CALLS"
 	[[ "$FIXTURE_TRUSTED" -eq 1 && "$3" == "head-current" ]]
@@ -71,6 +82,7 @@ _is_collaborator_author() {
 _is_trusted_dependabot_update_pr() { [[ "$FIXTURE_DEPENDABOT_TRUSTED" -eq 1 ]]; }
 _pulse_route_dependabot_pr_to_worker_issue() {
 	printf '%s %s %s %s %s\n' "$1" "$2" "$3" "$4" "$5" >>"$DEPENDABOT_ROUTE_CALLS"
+	[[ "${FIXTURE_ROUTE_RC:-1}" -eq 0 ]] && return 0
 	return 1
 }
 _has_maintainer_crypto_approval() { [[ "$FIXTURE_CRYPTO_APPROVED" -eq 1 ]]; }
@@ -164,7 +176,7 @@ FIXTURE_LABELS="origin:worker,hold-for-review"
 : >"$LOGFILE"
 result=$(run_gate head-current pulse-runner)
 if [[ "$result" -eq 1 ]] && [[ ! -s "$WORKER_BRIEFED_CALLS" ]] &&
-	grep -qF "trusted generated TODO PR is draft or has hold-for-review" "$LOGFILE"; then
+	grep -qF "PR is draft or has hold-for-review" "$LOGFILE"; then
 	print_result "trusted Pulse TODO handoff still honours hold-for-review" 0
 else
 	print_result "trusted Pulse TODO handoff still honours hold-for-review" 1 \
@@ -222,7 +234,7 @@ FIXTURE_CRYPTO_APPROVED=0
 : >"$LOGFILE"
 result=$(run_gate head-current 'dependabot[bot]')
 if [[ "$result" -eq 1 ]] &&
-	grep -qF "950 owner/repo dependabot[bot] head-current policy-ineligible" "$DEPENDABOT_ROUTE_CALLS" &&
+	grep -qF "950 owner/repo dependabot[bot] head-current approval-required" "$DEPENDABOT_ROUTE_CALLS" &&
 	grep -qF "remains external and lacks current-head maintainer crypto-approval" "$LOGFILE"; then
 	print_result "verified Dependabot without independent authority enters lifecycle reconciliation" 0
 else
@@ -251,6 +263,60 @@ else
 	print_result "unverified Dependabot remains eligible for defect repair intake" 1 \
 		"rc=${result} route=$(cat "$DEPENDABOT_ROUTE_CALLS") log=$(cat "$LOGFILE")"
 fi
+
+# GH#39280: a configured Renovate App with a terminal required-check failure
+# routes to intake instead of the collaborator skip; it never passes the gate.
+_trusted_dependency_bot_for_author() {
+	[[ "$1" == "app/acme-renovate" && "$2" == "owner/repo" ]] || return 1
+	printf 'acme-renovate\n'
+	return 0
+}
+FIXTURE_TERMINAL_RC=0
+_check_required_checks_has_terminal_failure() {
+	[[ "$FIXTURE_TERMINAL_RC" -eq 0 ]] && return 0
+	return 1
+}
+FIXTURE_ROUTE_RC=0
+: >"$DEPENDABOT_ROUTE_CALLS"
+: >"$LOGFILE"
+result=$(run_gate head-current app/acme-renovate)
+if [[ "$result" -eq 1 ]] &&
+	grep -qF "950 owner/repo app/acme-renovate head-current terminal-ci-failure" "$DEPENDABOT_ROUTE_CALLS" &&
+	grep -qF "configured dependency bot acme-renovate PR has terminal CI failures; routed to worker intake" "$LOGFILE" &&
+	! grep -qF "is not a collaborator" "$LOGFILE"; then
+	print_result "configured Renovate terminal failure routes to worker intake" 0
+else
+	print_result "configured Renovate terminal failure routes to worker intake" 1 \
+		"rc=${result} route=$(cat "$DEPENDABOT_ROUTE_CALLS") log=$(cat "$LOGFILE")"
+fi
+
+FIXTURE_TERMINAL_RC=1
+: >"$DEPENDABOT_ROUTE_CALLS"
+: >"$LOGFILE"
+result=$(run_gate head-current app/acme-renovate)
+result_repeat=$(run_gate head-current app/acme-renovate)
+wait_lines=$(grep -cF "configured dependency bot acme-renovate remains external" "$LOGFILE") || wait_lines=0
+if [[ "$result" -eq 1 && "$result_repeat" -eq 1 && "$wait_lines" -eq 1 && ! -s "$DEPENDABOT_ROUTE_CALLS" ]]; then
+	print_result "configured Renovate without terminal failure waits, logged once per head" 0
+else
+	print_result "configured Renovate without terminal failure waits, logged once per head" 1 \
+		"rc=${result}/${result_repeat} lines=${wait_lines} route=$(cat "$DEPENDABOT_ROUTE_CALLS")"
+fi
+
+FIXTURE_ROUTE_RC=1
+# Every fixture shares PR 950/head-current; clear the earlier Actions case marker.
+rm -rf "${AIDEVOPS_TEMP_DIR}/pulse-merge-log-once"
+: >"$LOGFILE"
+result=$(run_gate head-current app/other-renovate)
+result_repeat=$(run_gate head-current app/other-renovate)
+skip_lines=$(grep -cF "author app/other-renovate is not a collaborator; bot is not listed" "$LOGFILE") || skip_lines=0
+if [[ "$result" -eq 1 && "$result_repeat" -eq 1 && "$skip_lines" -eq 1 ]]; then
+	print_result "unconfigured bot keeps the skip, logged once per head" 0
+else
+	print_result "unconfigured bot keeps the skip, logged once per head" 1 \
+		"rc=${result}/${result_repeat} lines=${skip_lines} log=$(cat "$LOGFILE")"
+fi
+unset -f _trusted_dependency_bot_for_author _check_required_checks_has_terminal_failure
 
 # GH#34731: exercise the real permission helpers, not the collaborator stub.
 # A bot must reach lifecycle reconciliation even when the user API would fail.
@@ -283,7 +349,7 @@ for author in app/dependabot 'dependabot[bot]'; do
 	: >"$LOGFILE"
 	result=$(run_gate head-current "$author")
 	if [[ "$result" -eq 1 && ! -s "$PERMISSION_CALLS" ]] &&
-		grep -qF "950 owner/repo $author head-current policy-ineligible" "$DEPENDABOT_ROUTE_CALLS"; then
+		grep -qF "950 owner/repo $author head-current approval-required" "$DEPENDABOT_ROUTE_CALLS"; then
 		print_result "$author reaches lifecycle routing with real permission helpers" 0
 	else
 		print_result "$author reaches lifecycle routing with real permission helpers" 1

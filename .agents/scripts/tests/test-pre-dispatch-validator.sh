@@ -16,8 +16,27 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 HELPER_SCRIPT="${SCRIPT_DIR}/../pre-dispatch-validator-helper.sh"
+
+# GH#38192: under macOS /bin/bash 3.2, the first test subshell that sources
+# shared-constants.sh hits its Bash 4 re-exec guard, which execs this whole
+# suite again inside that subshell with output discarded. The subshell then
+# exits 0 and scope-gate cases see rc=0. Let the guard re-exec the suite once,
+# here, before any test runs; no redirect, since exec would inherit it. Bash 4+
+# skips this block.
+if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]]; then
+	# shellcheck source=../shared-constants.sh
+	source "${SCRIPT_DIR}/../shared-constants.sh" || true
+fi
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -311,7 +330,7 @@ if [[ "\${1:-}" == "clone" ]]; then
 fi
 
 # Pass-through for other git commands
-/usr/bin/git "\$@"
+"$TEST_NATIVE_GIT" "\$@"
 GITEOF
 	chmod +x "${TEST_ROOT}/bin/git"
 	return 0
@@ -1172,6 +1191,99 @@ test_brief_scope_worker_discovery() {
 	return 0
 }
 
+# GH#37052: external author + verified signed approval dispatches with worker
+# scope discovery; no approval or a stale digest stays untrusted_author rc=1.
+test_brief_scope_signed_approval_external() {
+	local rc=0 tmp="" fake_helper=""
+	tmp=$(mktemp -d) || return 1
+	fake_helper="${tmp}/approval-helper.sh"
+	# shellcheck disable=SC2016 # literal fake-helper source, expanded when it runs
+	printf '#!/usr/bin/env bash\nprintf "%%s\\n" "${FAKE_APPROVAL_RESULT:-NO_APPROVAL}"\n[[ "${FAKE_APPROVAL_RESULT:-}" == "VERIFIED" ]]\n' >"$fake_helper"
+	(
+		# shellcheck source=../shared-constants.sh
+		source "${SCRIPT_DIR}/../shared-constants.sh" >/dev/null 2>&1
+		# shellcheck source=../pulse-dispatch-core.sh
+		source "${SCRIPT_DIR}/../pulse-dispatch-core.sh" >/dev/null 2>&1
+		LOGFILE="${tmp}/log"
+		export AIDEVOPS_TEMP_DIR="${tmp}/state"
+		export BRIEF_SCOPE_APPROVAL_HELPER="$fake_helper"
+		unset AIDEVOPS_BRIEF_SCOPE_WORKER_DISCOVERY
+		gh() { printf 'read\n'; return 0; }
+		repo_allows_pulse_write_actions() { return 0; }
+		local meta='{"author":{"login":"outsider"},"labels":[{"name":"auto-dispatch"},{"name":"external-contributor"}],"body":"## What\nUnscoped external brief"}'
+		export PULSE_BRIEF_SCOPE_UNTRUSTED_DEFER_SECS=0
+		FAKE_APPROVAL_RESULT=NO_APPROVAL _dispatch_preclaim_brief_scope 37052 owner/repo "$meta" && exit 1
+		FAKE_APPROVAL_RESULT=STALE_APPROVAL _dispatch_preclaim_brief_scope 37052 owner/repo "$meta" && exit 2
+		FAKE_APPROVAL_RESULT=VERIFIED _dispatch_preclaim_brief_scope 37052 owner/repo "$meta" || exit 3
+		rg -q "signed maintainer approval verified" "$LOGFILE" || exit 4
+		# An unchanged untrusted body is deferred within the TTL (no re-verification).
+		export PULSE_BRIEF_SCOPE_UNTRUSTED_DEFER_SECS=600
+		FAKE_APPROVAL_RESULT=NO_APPROVAL _dispatch_preclaim_brief_scope 37052 owner/repo "$meta" && exit 5
+		FAKE_APPROVAL_RESULT=VERIFIED _dispatch_preclaim_brief_scope 37052 owner/repo "$meta" && exit 6
+		exit 0
+	) >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "signed-approved external briefs dispatch for worker scope discovery" 0
+	else
+		print_result "signed-approved external briefs dispatch for worker scope discovery" 1 "rc=${rc}"
+	fi
+	rm -rf "$tmp"
+	return 0
+}
+
+# GH#38178: the release stage runs in a 12 s housekeeping slice. It must yield
+# (rc 0, cursor kept, no repo work) at the deadline, rotate from the cursor,
+# and stop before the next candidate inside a repo once the deadline is near.
+test_brief_hold_release_rotates_and_yields() {
+	local rc=0 tmp=""
+	tmp=$(mktemp -d) || return 1
+	(
+		# shellcheck source=../shared-constants.sh
+		source "${SCRIPT_DIR}/../shared-constants.sh" >/dev/null 2>&1
+		# shellcheck source=../pulse-simplification-review.sh
+		source "${SCRIPT_DIR}/../pulse-simplification-review.sh" >/dev/null 2>&1
+		# shellcheck source=../pulse-dispatch-brief-scope.sh
+		source "${SCRIPT_DIR}/../pulse-dispatch-brief-scope.sh" >/dev/null 2>&1
+		declare -F _pulse_scanner_deadline_reached >/dev/null || exit 9
+		declare -F release_repaired_brief_holds >/dev/null || exit 11
+		LOGFILE="${tmp}/log"
+		# Inside a repo: a near deadline stops before the next candidate.
+		repo_allows_pulse_write_actions() { return 0; }
+		gh() { printf '%s\n' '[{"number":7,"body":"x","author":{"login":"m"},"labels":[]}]'; return 0; }
+		_release_repaired_brief_hold() { printf 'released\n' >>"${tmp}/holds"; return 0; }
+		[[ "$(PULSE_STAGE_DEADLINE_EPOCH=$(date +%s) _release_repaired_brief_holds_repo o/a 1)" == "0" ]] || exit 7
+		[[ ! -s "${tmp}/holds" ]] || exit 8
+		[[ "$(PULSE_STAGE_DEADLINE_EPOCH=$(($(date +%s) + 600)) _release_repaired_brief_holds_repo o/a 1)" == "1" ]] || exit 10
+		# Across repos: rotate from the cursor and yield with it kept.
+		export AIDEVOPS_BRIEF_HOLD_RELEASE_CURSOR_DIR="${tmp}/cursor"
+		DEP_GRAPH_CACHE_FILE="${tmp}/graph.json"
+		printf '%s\n' '{"repos":{"o/a":{},"o/b":{},"o/c":{}}}' >"$DEP_GRAPH_CACHE_FILE"
+		mkdir -p "${tmp}/cursor"
+		printf 'o/a\n' >"${tmp}/cursor/repo.cursor"
+		_release_repaired_brief_holds_repo() {
+			printf '%s ' "$1" >>"${tmp}/visits"
+			printf '0\n'
+			return 0
+		}
+		# Deadline already reached: yield before any repo, cursor unchanged.
+		PULSE_STAGE_DEADLINE_EPOCH=$(date +%s) release_repaired_brief_holds || exit 1
+		[[ ! -s "${tmp}/visits" ]] || exit 2
+		[[ "$(sed -n '1p' "${tmp}/cursor/repo.cursor")" == "o/a" ]] || exit 3
+		grep -q 'yielded after 0 repo' "$LOGFILE" || exit 4
+		# Comfortable deadline: one full rotation after the cursor.
+		PULSE_STAGE_DEADLINE_EPOCH=$(($(date +%s) + 600)) release_repaired_brief_holds || exit 5
+		[[ "$(cat "${tmp}/visits")" == "o/b o/c o/a " ]] || exit 6
+		exit 0
+	) >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "brief-hold release rotates repos and yields before the stage deadline" 0
+	else
+		print_result "brief-hold release rotates repos and yields before the stage deadline" 1 "rc=${rc}"
+	fi
+	rm -rf "$tmp"
+	return 0
+}
+
 test_brief_hold_release_is_body_bound() {
 	local rc=0
 	(
@@ -1610,6 +1722,8 @@ main() {
 	test_preclaim_hold_once
 	test_brief_scope_self_heal_and_release
 	test_brief_scope_worker_discovery
+	test_brief_scope_signed_approval_external
+	test_brief_hold_release_rotates_and_yields
 	test_brief_hold_release_is_body_bound
 	test_zero_progress_meta_recovered_blocks_dispatch
 	test_zero_progress_meta_recovered_readonly_allows_dispatch_without_write

@@ -8,6 +8,11 @@ add-ons such as CodeRabbit are advisory: absent, pending, unavailable,
 rate-limited, or late results never delay a trusted maintainer-controlled PR.
 Late feedback is swept after merge and filed as worker-ready follow-up issues.
 
+CodeRabbit posts `COMMENTED` reviews (`.coderabbit.yaml`
+`request_changes_workflow: false`, GH#35860), so its findings never set
+`reviewDecision=CHANGES_REQUESTED`. Re-enabling formal change requests restores
+the t2093 close-and-redispatch loop for every worker PR CodeRabbit comments on.
+
 Gemini Code Assist's retired GitHub review integration is legacy-only. The
 framework still recognizes its historical comments, reviews, and threads, but
 does not advertise it as active, accept new per-tool policy, or let stale
@@ -18,17 +23,24 @@ legacy field. The retained identity filters make a future restoration reversible
 Repositories with an exceptional sensitivity requirement may explicitly opt into
 review-before-merge with `review_gate.completion_behavior: strict`. Strict is
 never the framework default. Mirror strict CI intent with the repository Actions
-variable `AIDEVOPS_REVIEW_GATE_COMPLETION_BEHAVIOR=strict`. The GH#17671
-external-contributor trust boundary remains fail-closed independently.
+variable `AIDEVOPS_REVIEW_GATE_COMPLETION_BEHAVIOR=strict`.
+
+Review bots never hold merge progress by default, for any author (GH#36931).
+Their findings become follow-up issues. The GH#17671 external-contributor trust
+boundary is exact-head maintainer cryptographic approval, enforced by Pulse and
+full-loop before every merge transport, not by waiting for a bot review.
 
 ## Enforcement Layers
 
 1. **CI**: `.github/workflows/review-bot-gate.yml` may remain a required compatibility
    status, but default missing/late review emits `PASS_ADVISORY` and succeeds. It
-   blocks for missing completion only under explicit strict policy or the external
-   trust boundary.
+   blocks for missing completion only under explicit strict policy. Same-repository
+   PRs are evaluated on `pull_request`. Fork PRs are evaluated on `pull_request_target`,
+   because fork `pull_request` tokens cannot post the status (GH#36961). The fork run
+   checks out only `main`'s aidevops scripts, never PR code (GH#36954).
 2. **Pulse merge path**: `review-bot-gate-helper.sh status-json` supplies typed,
-   exact-head evidence. `PASS_ADVISORY` is valid only for trusted authors.
+   exact-head evidence. `PASS_ADVISORY` is valid for every author on a stable
+   head; `SKIP` (label) is valid only for trusted authors.
 3. **Worker merge path**: `full-loop-helper.sh merge` accepts the same default
    advisory outcome after required CI succeeds.
 4. **Branch protection**: a required `review-bot-gate` context is compatible with
@@ -69,21 +81,55 @@ that label while reusing reviewer enumeration and dismissal mechanics.
 
 - Before merging, run `review-bot-gate-helper.sh check <PR_NUMBER>` to collect
   available feedback. Default no-response output is `PASS_ADVISORY`, not `WAITING`.
-- `WAITING` means the repository explicitly selected strict/wait behavior or the
-  external-contributor trust boundary applies.
+- `WAITING` means the repository explicitly selected strict/wait behavior.
 - `skip-review-gate` remains an auditable internal exception for strict setups;
   default advisory repositories do not need it.
 - ALWAYS read bot reviews that are available before merging. Address critical/security findings; note non-critical suggestions for follow-up.
 - `PASS_ADVISORY` means no completed add-on review was required under the permanent
   default. `PASS_RATE_LIMITED` is the narrower true-rate-limit outcome. Both
-  delegate late feedback to the post-merge scanner for trusted exact-head PRs.
-  API-exhausted runs do not retry immediately. External/unknown authors and
-  explicit `wait` or `strict` policies remain fail-closed.
+  delegate late feedback to the post-merge scanner for exact-head PRs from any
+  author. API-exhausted runs do not retry immediately. Explicit `wait` or
+  `strict` policies remain fail-closed.
 - When many PRs are rate-limited simultaneously, use `request-retry` on the highest-priority PRs first. Stagger retries to avoid re-triggering rate limits.
+
+### External PR review-limit recovery (GH#36900)
+
+Only strict/wait repositories can leave an external PR `WAITING`. There, after
+independent author, issue, and approval gates pass, Pulse requests a review
+retry when the PR has valid current-head `WAITING` evidence. It verifies
+managed-repository write authority and rechecks that the PR is open, non-draft,
+not held for review, and still on the observed head before calling the shared
+`request-retry` command. That command owns bot-notice detection and idempotency;
+historical-review and per-head retry handling is tracked by GH#36899.
+
+Requesting review never clears the gate in the same invocation. Subsequent bot
+events or Pulse passes must observe successful review evidence normally. Missing,
+malformed, API-error, head-drift, and trusted-author outcomes do not request this
+external recovery. No labels, approvals, commit statuses, or branches are changed.
 
 ## Additive suggestion decision tree
 
 When a review bot comments with a suggestion that isn't a correctness issue in the PR's own code:
+
+0. **Does the finding target a framework-managed workflow caller?** These
+   `.github/workflows/*.yml` files carry a `Managed by aidevops` header and are
+   rendered from `.agents/templates/workflows/*-caller.yml`. Other managed
+   copies have no shared parity check here; use steps 1-3. From the PR worktree, confirm
+   parity with `aidevops check-workflows --workflow <name> --repo <owner/repo>`
+   and note the reported evidence source; without `--repo` it reads the
+   registered checkout, not the PR worktree.
+   - A local content change is drift that `sync-workflows` overwrites. Reply on
+     the thread with that parity evidence, then **resolve the thread**. An
+     unresolved bot thread blocks merge (GH#27137) even after a reply.
+   - A `uses:` `@ref` / `aidevops_ref` pin is not drift: parity ignores refs
+     and `sync-workflows` preserves existing pins unless `--force-ref` is set.
+     Pinning is a per-repository operator choice; keep the template ref unless
+     the operator asked for a pin, say so in the reply, and resolve the thread.
+   - Do not file a follow-up for intentional template design, such as a
+     template's `@main` reusable-workflow ref.
+   - Only a concrete template defect goes to
+     `framework-issue-helper.sh log`, targeting the template, not the copy.
+   - Not a managed workflow caller → go to 1.
 
 1. **Is the suggestion a correctness fix for code introduced by this PR?**
    - Yes → expand the PR, add a commit, re-request review.
@@ -130,9 +176,10 @@ The review add-on check runs after the `origin:interactive` (t2411) and
   to that head and verifies the response; full-loop refreshes mutable authority
   before every retry or fallback merge transport. Any missing or mismatched
   field remains external and fail-closed.
-- **External contributors**: advisory, rate-limit, and skip outcomes remain
-  fail-closed; completed review evidence is required in addition to independent
-  maintainer/cryptographic authority.
+- **External contributors**: advisory and rate-limit outcomes pass like any
+  other author (GH#36931); the skip label is denied. Merge still requires the
+  approved linked issue plus V2 maintainer approval of the exact current head,
+  re-verified immediately before every merge transport.
 
 The helper is still evaluated and audited on every merge path; advisory is an
 explicit successful policy outcome, not a bypass. Draft, `hold-for-review`, human

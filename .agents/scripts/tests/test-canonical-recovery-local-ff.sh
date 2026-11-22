@@ -5,6 +5,14 @@
 # Fixture test for canonical-recovery-helper.sh fast-forward-local (remote-less repos).
 
 set -uo pipefail
+
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
 HELPER="${SCRIPT_DIR}/canonical-recovery-helper.sh"
 ROOT=$(mktemp -d)
@@ -14,7 +22,7 @@ mkdir -p "$HOME"
 LOCAL_REPO="${ROOT}/local-only"
 LOCAL_WT="${ROOT}/local-only-wt"
 LOCAL_BACKUPS="${ROOT}/local-backups"
-GIT=/usr/bin/git
+GIT="$TEST_NATIVE_GIT"
 
 mkdir -p "$LOCAL_REPO"
 "$GIT" -C "$LOCAL_REPO" init -q -b main

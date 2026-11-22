@@ -27,6 +27,29 @@ SH
 chmod +x "$TMP_DIR/bin/gh"
 export GH_STUB_LOG="$TMP_DIR/gh.log"
 
+# t18895: stub `aidevops sessions` helper. Rows for #123 and the repo; the
+# repo call repeats the #123 session, which the helper must not list twice.
+cat >"$TMP_DIR/bin/session-bus-stub" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$BUS_STUB_LOG"
+[[ "$1" == who ]] || exit 1
+peer='peer-123 · busy · #123 · owner/repo@feature/x · worktree repo-x · task: same issue · 5s ago'
+case "$*" in
+*'#123'*) printf '%s\n' "$peer" ;;
+'who owner/repo') printf '%s\nother-1 · idle · owner/repo@main · worktree repo · 1m ago\n' "$peer" ;;
+esac
+exit 0
+SH
+cat >"$TMP_DIR/bin/session-bus-slow" <<'SH'
+#!/usr/bin/env bash
+sleep 20
+printf 'late-row\n'
+SH
+chmod +x "$TMP_DIR/bin/session-bus-stub" "$TMP_DIR/bin/session-bus-slow"
+export BUS_STUB_LOG="$TMP_DIR/bus.log"
+# Default: no bus, so the GitHub assertions below stay hermetic.
+export AIDEVOPS_SESSION_BUS_HELPER="$TMP_DIR/bin/missing-session-bus"
+
 output="$TMP_DIR/out.md"
 PATH="$TMP_DIR/bin:$PATH" "$HELPER" --keywords 'helper token efficiency' --files '.agents/AGENTS.md' --repo 'owner/repo' >"$output"
 
@@ -47,6 +70,50 @@ grep -q 'develop deploy in:title' "$GH_STUB_LOG"
 grep -q 'deploy in:title' "$GH_STUB_LOG"
 grep -q 'migration in:title' "$GH_STUB_LOG"
 grep -q 'CI in:title' "$GH_STUB_LOG"
+if grep -q 'Live sessions' "$output"; then
+	printf 'FAIL: live sessions section printed without a bus helper\n' >&2
+	exit 1
+fi
+
+# t18895: live sessions from the bus, as warnings; exit code unchanged.
+AIDEVOPS_SESSION_BUS_HELPER="$TMP_DIR/bin/session-bus-stub" PATH="$TMP_DIR/bin:$PATH" \
+	"$HELPER" --keywords 'fix GH#123 parser' --files 'README.md' --repo 'owner/repo' >"$output"
+grep -q '^### Live sessions' "$output"
+grep -q '^Warning: live sessions on the same issue, worktree or files' "$output"
+grep -q '^Also live in owner/repo:' "$output"
+grep -q '^- other-1 · idle' "$output"
+[[ "$(grep -c '^- peer-123 ' "$output")" -eq 1 ]]
+grep -qxF 'who #123 README.md --repo owner/repo' "$BUS_STUB_LOG"
+grep -qxF 'who owner/repo' "$BUS_STUB_LOG"
+
+# A bus helper over its 5 s budget prints nothing extra.
+AIDEVOPS_SESSION_BUS_HELPER="$TMP_DIR/bin/session-bus-slow" PATH="$TMP_DIR/bin:$PATH" \
+	"$HELPER" --keywords 'fix GH#123 parser' --repo 'owner/repo' >"$output"
+if grep -q -e 'Live sessions' -e 'late-row' "$output"; then
+	printf 'FAIL: live sessions section printed after the bus timed out\n' >&2
+	exit 1
+fi
+
+# GH#39880: a space-separated --files value warns on stderr naming the entry and
+# still exits 0; trimmed and empty comma entries neither warn nor change stdout.
+# git resolves paths against the current directory, so run from the repo root.
+cd "$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+errors="$TMP_DIR/errors.txt"
+PATH="$TMP_DIR/bin:$PATH" "$HELPER" --keywords 'x' --files 'README.md .agents/AGENTS.md' --repo 'owner/repo' >"$output" 2>"$errors"
+grep -qxF "Warning: --files entry 'README.md .agents/AGENTS.md' matches no tracked file (use a comma-separated list)" "$errors"
+PATH="$TMP_DIR/bin:$PATH" "$HELPER" --keywords 'x' --files 'README.md,.agents/AGENTS.md' --repo 'owner/repo' >"$TMP_DIR/valid.md" 2>"$errors"
+PATH="$TMP_DIR/bin:$PATH" "$HELPER" --keywords 'x' --files ' README.md, ,.agents/AGENTS.md,' --repo 'owner/repo' >"$output" 2>>"$errors"
+cmp -s "$TMP_DIR/valid.md" "$output"
+PATH="$TMP_DIR/bin:$PATH" "$HELPER" --keywords 'x' --files $'README.md,\n.agents/AGENTS.md' --repo 'owner/repo' >"$output" 2>>"$errors"
+cmp -s "$TMP_DIR/valid.md" "$output"
+PATH="$TMP_DIR/bin:$PATH" "$HELPER" --keywords 'x' --files $'README.md\n.agents/AGENTS.md\n' --repo 'owner/repo' >"$output" 2>>"$errors"
+cmp -s "$TMP_DIR/valid.md" "$output"
+if grep -q -e 'Warning: --files' -e 'fatal:' "$errors"; then
+	printf 'FAIL: comma-separated tracked --files warned or failed\n' >&2
+	exit 1
+fi
+PATH="$TMP_DIR/bin:$PATH" "$HELPER" --keywords 'x' --files 'not-yet-created.sh' --repo 'owner/repo' >"$output" 2>"$errors"
+grep -qxF "Warning: --files entry 'not-yet-created.sh' matches no tracked file" "$errors"
 
 if "$HELPER" --blocker >"$output" 2>&1; then
 	printf 'FAIL: missing blocker value accepted\n' >&2

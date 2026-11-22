@@ -39,6 +39,11 @@ permissions:
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  # GH#36961: fork PR runs get a read-only token and cannot post the required
+  # review-bot-gate status. pull_request_target evaluates fork PRs in base
+  # context; the gate checks out only aidevops scripts at main, never PR code.
+  pull_request_target:
+    types: [opened, synchronize, reopened]
   pull_request_review:
     types: [submitted, edited, dismissed]
   pull_request_review_comment:
@@ -57,7 +62,14 @@ jobs:
     # Retired Gemini actors remain only for historical/reinstall compatibility.
     if: >
       (
-        github.event_name == 'pull_request' ||
+        (
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        ) ||
+        (
+          github.event_name == 'pull_request_target' &&
+          github.event.pull_request.head.repo.full_name != github.repository
+        ) ||
         (
           (
             github.event_name == 'pull_request_review' ||

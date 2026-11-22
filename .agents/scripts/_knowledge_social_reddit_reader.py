@@ -5,13 +5,12 @@
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Any, Protocol
 
 from _knowledge_social_collect_cli import GuardedReaderProcess
-from _knowledge_social_fixture import FixtureSequence
+from _knowledge_social_reader_contract import FixtureReader, ReaderContract
 from _knowledge_social_reddit import (
     PageRequest,
     RedditAdapterError,
@@ -39,23 +38,21 @@ class RedditReader(Protocol):
     def page(self, request: PageRequest) -> dict[str, Any]: ...
 
 
-def _decode_output(output: str) -> dict[str, Any]:
-    if len(output.encode("utf-8")) > MAX_RESPONSE_BYTES:
-        raise RedditAdapterError("Reddit read response exceeds the safety limit")
-    try:
-        payload = json.loads(output)
-    except json.JSONDecodeError as error:
-        raise RedditAdapterError("Reddit read provider returned no valid JSON") from error
-    if not isinstance(payload, dict):
-        raise RedditAdapterError("Reddit read response root must be an object")
-    return payload
-
-
-def _provider_failure(stderr: str) -> RedditProviderUnavailableError:
-    for message in SAFE_PROVIDER_FAILURES:
-        if f"ERROR: {message}" in stderr:
-            return RedditProviderUnavailableError(message)
-    return RedditProviderUnavailableError("Reddit read provider is unavailable")
+CONTRACT = ReaderContract(
+    adapter_error=RedditAdapterError,
+    unavailable_error=RedditProviderUnavailableError,
+    max_response_bytes=MAX_RESPONSE_BYTES,
+    safe_failures=SAFE_PROVIDER_FAILURES,
+    unavailable_message="Reddit read provider is unavailable",
+    oversize_message="Reddit read response exceeds the safety limit",
+    invalid_json_message="Reddit read provider returned no valid JSON",
+    root_message="Reddit read response root must be an object",
+    expectation_message="Reddit fixture request expectation must be an object",
+    checkpoint_message="Reddit request did not resume at the expected checkpoint",
+    response_message="Reddit fixture page response must be an object",
+)
+# Module-level alias retained for the existing sanitized-failure test import.
+_provider_failure = CONTRACT.provider_failure
 
 
 class GuardedPraw:
@@ -70,8 +67,8 @@ class GuardedPraw:
             profile=profile,
             environment=self._environment,
             timeout_seconds=READ_TIMEOUT_SECONDS,
-            decode_output=_decode_output,
-            provider_failure=_provider_failure,
+            decode_output=CONTRACT.decode_output,
+            provider_failure=CONTRACT.provider_failure,
             unavailable_error=RedditProviderUnavailableError,
             provider_name="Reddit",
         )
@@ -126,30 +123,15 @@ class GuardedPraw:
         return self.process.run(request.payload())
 
 
-def _fixture_page(entry: dict[str, Any], request: PageRequest) -> dict[str, Any]:
-    expectation = entry.get("expect_request", {})
-    if not isinstance(expectation, dict):
-        raise RedditAdapterError("Reddit fixture request expectation must be an object")
-    actual = request.payload()
-    if any(actual.get(key) != value for key, value in expectation.items()):
-        raise RedditAdapterError("Reddit request did not resume at the expected checkpoint")
-    response = entry.get("response", entry)
-    if not isinstance(response, dict):
-        raise RedditAdapterError("Reddit fixture page response must be an object")
-    return response
-
-
-class FixtureReddit:
+class FixtureReddit(FixtureReader):
     """Deterministic PRAW substitute for pagination and failure fixtures."""
 
     def __init__(self, path: Path) -> None:
-        self.fixture = FixtureSequence(path, "Reddit", RedditAdapterError)
+        super().__init__(path, "Reddit", CONTRACT)
 
-    def identity(self) -> dict[str, Any]:
+    def identity(self) -> dict[str, Any]:  # type: ignore[override]
+        # The Reddit reader protocol takes no expected ID; keep that surface.
         return self.fixture.identity()
-
-    def page(self, request: PageRequest) -> dict[str, Any]:
-        return _fixture_page(self.fixture.next_page(), request)
 
 
 def verified_identity(payload: dict[str, Any], expected_id: str) -> dict[str, Any]:

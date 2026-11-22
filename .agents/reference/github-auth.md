@@ -28,6 +28,36 @@ This is not a claim that every request from a Pulse process uses the App.
 - Prefer a separate private key of the same App for each trusted host so keys
   can be rotated independently. Each key still has App-wide authority.
 
+## Fast path
+
+```bash
+aidevops github auth app create --owner OWNER [--install-on OTHER_OWNER ...]
+aidevops github auth app bind --profile NAME [--owner OWNER] [--dry-run] [--replace]
+```
+
+`app create` runs GitHub's App Manifest flow. It serves a one-time page on
+`127.0.0.1` that posts a read-only manifest: the permissions in
+`DEFAULT_PULSE_READ_PERMISSIONS`, no webhook and no events. The owner clicks
+**Create GitHub App** and then **Install**. The CLI exchanges the one-time code
+and writes the key to `~/.config/aidevops/keys/<slug>.pem` with mode 0600. It
+never prints the key and never overwrites an existing file. It creates the
+profile named after the App slug, waits for the installations, then runs
+`app bind`. A personal-account App can only be created by that account.
+`--install-on` makes the App public so it can be installed on other accounts you
+control. Each installation keeps its own primary rate limit.
+
+`app bind` lists the App's installations with a JWT. For selected-repository
+installations it also lists the covered repositories. In one locked registry
+write it sets `read` to the App for each covered pulse repository and preserves
+`write`. Each repository it skips reports a reason: `no-installation`,
+`not-in-selected-installation`, `installation-suspended`, `local-only`,
+`legacy-binding-run-migrate`, `bound-to-other-app` (rebind with `--replace`) or
+`already-bound`. Skipped repositories keep inherited auth. A `read_check` then
+runs for one bound repository per owner.
+
+The manual steps below remain the reference for organizations whose policy
+forbids the manifest flow.
+
 ## Create and install the App
 
 1. In the intended GitHub account/organization settings, open **Developer
@@ -136,6 +166,42 @@ Consumer is recorded separately from caller and auth mode in optional TSV field
 them rather than guessing. Zero filtered events may mean the updated runtime has
 not emitted tagged records yet. Other hosts' calls and remaining GitHub quota are
 not inferred from this report. A failed aggregator is reported as an error.
+
+`usage` also reports `app_routing_opportunity`: attempts and known quota cost
+with auth reason `not-configured` (reads an App binding would route), the
+total known quota cost, their `routable_share`, the window's REST-core
+`rest_core_min_remaining`, and `owners_without_app_read` (owners with a
+pulse-enabled repository lacking an App read route). Missing per-reason cost
+data yields `routable_share: null`. `rest_core_cost_per_hour` is logged
+REST-core known cost scaled to one hour over the observed period, idle time
+included: from the later of the window start and the oldest retained log
+record, to report time. Under 15 minutes of coverage yields `null`.
+`rest_core_saturation` divides it by
+`rest_core_limit`, read from the Pulse probe cache
+(`AIDEVOPS_PULSE_REST_CORE_CACHE`, default
+`~/.aidevops/cache/pulse-rest-core.json`). Without that cache
+`rest_core_limit` and `rest_core_saturation` are `null`, while
+`rest_core_cost_per_hour` still reports the logged cost.
+
+```bash
+aidevops github auth advise [--since 24h] [--write-advisory]
+```
+
+`advise` computes the same object offline. With `--write-advisory` it writes
+`~/.aidevops/advisories/github-app-read-routing.advisory` only when the
+routable share is at least 0.5, at least one pulse owner lacks an App read
+binding, and REST-core is constrained: `min_remaining` reached 0, fell below
+the pulse hard floor, or `rest_core_saturation` is at least 0.75. The
+saturation test exists because the transport governor paces requests before
+quota reaches zero. Otherwise it removes that file. The session-start advisory
+display shows its first line once, and `aidevops security dismiss
+github-app-read-routing` suppresses it. Pulse refreshes it in the background at
+most every 6 hours (`AIDEVOPS_GITHUB_APP_ADVISE_INTERVAL`), at the start of each
+full cycle and when REST quota defers a progress stage. Early-return ticks
+(entry modes, short-circuits, lock-busy) skip it; a lock-busy tick means a full
+cycle is running and refreshes it. A failed refresh frees the 6h stamp and
+retries after 30 minutes (`AIDEVOPS_GITHUB_APP_ADVISE_RETRY_INTERVAL`);
+failures never affect the pulse.
 
 ## Upgrade and migration
 

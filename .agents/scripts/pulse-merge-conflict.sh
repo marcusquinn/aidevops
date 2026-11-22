@@ -21,7 +21,11 @@
 # Functions in this module (in source order):
 #   - _post_rebase_nudge_on_interactive_conflicting   (GH#18650 Fix 4)
 #   - _post_rebase_nudge_on_contributor_conflicting   (GH#20485)
+#   - _interactive_pr_session_bus                     (GH#38291)
+#   - _interactive_pr_idle_session_evidence           (GH#38291)
+#   - _interactive_pr_session_gates                   (GH#38291)
 #   - _interactive_pr_is_stale                        (t2189)
+#   - _interactive_pr_notify_idle_owner               (GH#38291)
 #   - _interactive_pr_trigger_handover                (t2189)
 #   - _is_planning_path_for_overlap                   (GH#18815)
 #   - _verify_pr_overlaps_commit                      (GH#18815)
@@ -40,6 +44,9 @@
 [[ -n "${_PULSE_MERGE_CONFLICT_LOADED:-}" ]] && return 0
 _PULSE_MERGE_CONFLICT_LOADED=1
 
+# shellcheck source=./shared-gh-commit-cache.sh
+source "${BASH_SOURCE[0]%/*}/shared-gh-commit-cache.sh"
+
 # t2863: Module-level variable defaults (set -u guards).
 # Ensures LOGFILE is safe to dereference in all functions when this module
 # is sourced outside the pulse-wrapper.sh bootstrap context.
@@ -50,10 +57,23 @@ _PULSE_MERGE_CONFLICT_LOADED=1
 : "${_PULSE_MERGE_CONFLICT_UNKNOWN_HEAD_BRANCH:=<branch>}"
 : "${_PULSE_MERGE_CONFLICT_DEFAULT_BASE_BRANCH:=main}"
 
-# t2948: Idle interactive PR handover threshold in seconds (default 4h).
+# Idle interactive PR handover threshold in seconds (default 12h, the
+# maintainer's takeover window; t2948 used 4h). Workers take over idle
+# interactive work by default (mode enforce); `no-takeover`, a live claim stamp
+# or an active issue status still keep it with the human.
 # Override via AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS env var.
 # See _interactive_pr_is_stale / _interactive_pr_trigger_handover.
-: "${AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS:=${IDLE_INTERACTIVE_HANDOVER_SECONDS:-14400}}"
+: "${AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS:=${IDLE_INTERACTIVE_HANDOVER_SECONDS:-43200}}"
+
+# GH#38291: a claim stamp or active status label held by a still-running but
+# idle interactive session yields after this many seconds of both session and
+# PR inactivity (default 4h). 0 disables the idle-session evidence path.
+: "${AIDEVOPS_IDLE_SESSION_HANDOVER_SECONDS:=14400}"
+# Wall-clock bound for each session-bus call made from the merge pass.
+: "${AIDEVOPS_IDLE_SESSION_BUS_TIMEOUT_SECONDS:=5}"
+# "<pr>|<repo>|<session>|<idle_secs>" from the last stale verdict that relied
+# on idle-session evidence; consumed by _interactive_pr_trigger_handover.
+_INTERACTIVE_PR_IDLE_SESSION_EVIDENCE=""
 
 #######################################
 # GH#18650 (Fix 4): Post a one-time rebase nudge on an origin:interactive
@@ -226,6 +246,133 @@ Every pulse cycle the deterministic merge pass evaluates open PRs with merge con
 }
 
 #######################################
+# GH#38291: Run one session-bus command with a hard wall-clock bound so the
+# merge pass never blocks on the bus. Stdout passes through; stderr dropped.
+#######################################
+_interactive_pr_session_bus() {
+	local helper="${AIDEVOPS_SESSION_BUS_HELPER:-${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/session-bus-helper.sh}"
+	local bus_timeout="${AIDEVOPS_IDLE_SESSION_BUS_TIMEOUT_SECONDS:-5}"
+	[[ -x "$helper" ]] || return 1
+	[[ "$bus_timeout" =~ ^[1-9][0-9]*$ ]] || bus_timeout=5
+	declare -F timeout_sec >/dev/null 2>&1 || return 1
+	timeout_sec "$bus_timeout" "$helper" "$@" </dev/null 2>/dev/null
+	return $?
+}
+
+#######################################
+# GH#38291: Prove that the interactive session holding a claim is idle.
+#
+# A long-lived TUI keeps its claim stamp and issue status label while its user
+# works on something else, so Gates 2 and 3 alone hold a PR indefinitely.
+# Every link below is required; any missing, unknown or timed-out link fails
+# closed (session treated as active):
+#   claim stamp pid + worktree_path
+#   → worktree registry owner for that path with the same pid → owner_session
+#   → bounded session-bus record for that session with the same pid,
+#     status=idle, last activity >= threshold, current issue/pr not this one.
+#
+# Args: $1 stamp_path, $2 pr_number, $3 linked_issue, $4 threshold_secs
+# Outputs: "<session_id>|<idle_secs>"
+# Returns: 0 when idle evidence holds, 1 otherwise
+#######################################
+_interactive_pr_idle_session_evidence() {
+	local stamp_path="$1"
+	local pr_number="$2"
+	local linked_issue="$3"
+	local threshold_secs="$4"
+	local stamp_row="" stamp_pid="" stamp_worktree="" owner_info="" owner_pid="" owner_session=""
+	local shown="" idle_secs="" now_epoch=0
+
+	[[ -f "$stamp_path" && "$threshold_secs" =~ ^[1-9][0-9]*$ ]] || return 1
+	[[ "$pr_number" =~ ^[0-9]+$ && "$linked_issue" =~ ^[0-9]+$ ]] || return 1
+	declare -F check_worktree_owner_snapshot >/dev/null 2>&1 || return 1
+	stamp_row=$(jq -r '[(.pid // "" | tostring), (.worktree_path // "" | tostring)] | join("\u001f")' \
+		"$stamp_path" 2>/dev/null) || return 1
+	IFS=$'\x1f' read -r stamp_pid stamp_worktree <<<"$stamp_row" || return 1
+	[[ "$stamp_pid" =~ ^[1-9][0-9]*$ && -n "$stamp_worktree" ]] || return 1
+
+	owner_info=$(check_worktree_owner_snapshot "$stamp_worktree" 2>/dev/null) || owner_info=""
+	IFS='|' read -r owner_pid owner_session _ <<<"$owner_info"
+	[[ "$owner_pid" == "$stamp_pid" && "$owner_session" =~ ^[A-Za-z0-9_-]{1,128}$ ]] || return 1
+
+	shown=$(_interactive_pr_session_bus show "$owner_session" --json) || return 1
+	now_epoch=$(date +%s)
+	idle_secs=$(jq -r --arg session "$owner_session" --argjson pid "$stamp_pid" \
+		--argjson now "$now_epoch" --argjson threshold "$threshold_secs" \
+		--arg issue "$linked_issue" --arg pr "$pr_number" '
+		select(.session_id == $session and .pid == $pid and .status == "idle"
+			and ((.last_activity_epoch | type) == "number")
+			and (($now - .last_activity_epoch) >= $threshold)
+			and ((.issue // "" | tostring) != $issue)
+			and ((.pr // "" | tostring) != $pr))
+		| ($now - .last_activity_epoch | floor | tostring)' <<<"$shown" 2>/dev/null) || return 1
+	[[ "$idle_secs" =~ ^[0-9]+$ ]] || return 1
+	printf '%s|%s\n' "$owner_session" "$idle_secs"
+	return 0
+}
+
+#######################################
+# Gates 2, 3 and 5 of _interactive_pr_is_stale for a resolved linked issue.
+# GH#38291: a status label or claim stamp yields only to idle-session
+# evidence after the shorter session window; otherwise the full PR-age
+# threshold still applies.
+# GH#38724: an active status label on an issue with no assignees owns nothing
+# (GH#33420 invariant, shared with interactive claim and dispatch dedup). It
+# is an orphan, so only the full PR-age threshold applies. Unknown assignee
+# data still fails closed as status_label.
+#
+# Args: $1 pr_number, $2 repo_slug, $3 linked_issue, $4 pr_age_secs,
+#       $5 threshold_secs, $6 session_threshold_secs, $7 activity_source
+# Outputs: "<session_id>|<idle_secs>" when idle-session evidence was used
+# Returns: 0 when the gates pass, 1 otherwise
+#######################################
+_interactive_pr_session_gates() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local pr_age_secs="$4"
+	local threshold_secs="$5"
+	local session_threshold_secs="$6"
+	local activity_source="$7"
+	local issue_meta="" session_gate="" stamp_path="" evidence="" evidence_session="" evidence_idle_secs=""
+	local orphan_label=0
+
+	issue_meta=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
+		--jq '{state, labels: [.labels[].name], assignees: (if (.assignees | type) == "array" then [.assignees[].login] else null end)}' \
+		2>/dev/null) || return 1
+	printf '%s' "$issue_meta" | jq -e '.state == "open"' >/dev/null 2>&1 || return 1
+	if printf '%s' "$issue_meta" | jq -e \
+		'.labels | any(. == "status:queued" or . == "status:in-progress" or . == "status:in-review" or . == "status:claimed")' \
+		>/dev/null 2>&1; then
+		if printf '%s' "$issue_meta" | jq -e '.assignees == []' >/dev/null 2>&1; then
+			orphan_label=1
+		else
+			session_gate="status_label"
+		fi
+	fi
+
+	# Gate 3: no live claim stamp (session gone)
+	# Stamp path: $CLAIM_STAMP_DIR/${flattened_slug}-${issue}.json
+	# See interactive-session-helper.sh:91 for the canonical pattern.
+	stamp_path="${CLAIM_STAMP_DIR:-$HOME/.aidevops/.agent-workspace/interactive-claims}/${repo_slug//\//-}-${linked_issue}.json"
+	[[ -f "$stamp_path" ]] && session_gate="${session_gate:+${session_gate}+}claim_stamp"
+
+	if [[ -z "$session_gate" ]]; then
+		[[ "$pr_age_secs" -ge "$threshold_secs" ]] || return 1
+		[[ "$orphan_label" -eq 1 ]] &&
+			echo "[pulse-wrapper] _interactive_pr_is_stale: PR #${pr_number} in ${repo_slug} — active status label on #${linked_issue} has no assignee and no local claim stamp; orphaned claim, PR idle $((pr_age_secs / 3600))h via ${activity_source} >= $((threshold_secs / 3600))h — handover eligible (GH#38724)" >>"$LOGFILE"
+		return 0
+	fi
+	[[ "$session_threshold_secs" -gt 0 && "$pr_age_secs" -ge "$session_threshold_secs" ]] || return 1
+	evidence=$(_interactive_pr_idle_session_evidence "$stamp_path" "$pr_number" "$linked_issue" \
+		"$session_threshold_secs") || return 1
+	IFS='|' read -r evidence_session evidence_idle_secs <<<"$evidence"
+	echo "[pulse-wrapper] _interactive_pr_is_stale: PR #${pr_number} in ${repo_slug} — ${session_gate} held by idle session ${evidence_session} (session idle $((evidence_idle_secs / 3600))h, PR idle $((pr_age_secs / 3600))h via ${activity_source} >= $((session_threshold_secs / 3600))h, not on #${linked_issue}/PR #${pr_number}) — handover eligible (GH#38291)" >>"$LOGFILE"
+	printf '%s\n' "$evidence"
+	return 0
+}
+
+#######################################
 # t2189: Detect whether an origin:interactive PR is idle enough to hand
 # over to the worker pipeline.
 #
@@ -242,18 +389,24 @@ Every pulse cycle the deterministic merge pass evaluates open PRs with merge con
 # Combined signal — ALL must hold for a stale handover-eligible PR:
 #   1. PR has origin:interactive label
 #   2. Linked issue has NO active status label (status:queued, in-progress,
-#      in-review, claimed) — an active status means a human is driving it
+#      in-review, claimed) — an active status means a human is driving it.
+#      GH#38724: a label with no assignee is an orphan and does not count.
 #   3. No live claim stamp file in $CLAIM_STAMP_DIR for the linked issue
 #      (session is gone; no interactive-session-helper.sh claim active)
-#   4. PR updatedAt older than AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS (default 14400 = 4h)
+#   4. PR updatedAt older than AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS (default 43200 = 12h)
 #   5. Linked issue is open (don't touch PRs whose issue was already closed)
 #
+# GH#38291: Gates 2 and 3 are also satisfied when the session holding them is
+# proven idle (_interactive_pr_idle_session_evidence): session and PR both
+# idle >= AIDEVOPS_IDLE_SESSION_HANDOVER_SECONDS (default 4h) and the session
+# is not on this issue or PR. The double signal justifies the shorter window.
+#
 # Env controls:
-#   AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE — off | detect | enforce (default: detect)
+#   AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE — off | detect | enforce (default: enforce)
 #     off:     returns 1 unconditionally (feature disabled)
 #     detect:  evaluates signal and logs would-handover decisions; still returns signal
 #     enforce: evaluates signal and returns it; caller acts
-#   AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS — age threshold seconds, default 14400 (4h; t2948)
+#   AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS — age threshold seconds, default 43200 (12h)
 #
 # Args: $1 = pr_number, $2 = repo_slug, $3 = updated_at (optional),
 #       $4 = head_ref_oid (optional), $5 = head_commit_at (optional)
@@ -266,18 +419,26 @@ _interactive_pr_is_stale() {
 	local precomputed_updated_at="${3:-}"
 	local precomputed_head_ref_oid="${4:-}"
 	local precomputed_head_commit_at="${5:-}"
-	local mode="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-detect}"
+	local allow_orphan="${6:-0}"
+	local mode="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-enforce}"
+	_INTERACTIVE_PR_IDLE_SESSION_EVIDENCE=""
+	# Diagnostic only: callers may name the precise failed stage without
+	# repeating API requests. This value never authorizes a handover.
+	_INTERACTIVE_PR_STALE_REFUSAL="handover-mode-off"
 	[[ "$mode" == "off" ]] && return 1
+	_INTERACTIVE_PR_STALE_REFUSAL="invalid-pr-identity"
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 1
 
 	# Fetch PR metadata once. updatedAt can prove staleness without an extra
 	# commit lookup; fresh updatedAt still falls through to the head commit
 	# timestamp because automated comments/labels can mask an idle branch.
 	local pr_meta=""
+	_INTERACTIVE_PR_STALE_REFUSAL="stale-pr-metadata-unavailable"
 	pr_meta=$(gh pr view "$pr_number" --repo "$repo_slug" \
 		--json labels,updatedAt,headRefOid 2>/dev/null) || return 1
 
 	# Gate 1: must have origin:interactive
+	_INTERACTIVE_PR_STALE_REFUSAL="origin-interactive-missing"
 	printf '%s' "$pr_meta" | jq -e \
 		'.labels | map(.name) | index("origin:interactive")' \
 		>/dev/null 2>&1 || return 1
@@ -287,28 +448,37 @@ _interactive_pr_is_stale() {
 	if printf '%s' "$pr_meta" | jq -e \
 		'.labels | map(.name) | index("no-takeover")' \
 		>/dev/null 2>&1; then
+		_INTERACTIVE_PR_STALE_REFUSAL="no-takeover-label"
 		echo "[pulse-merge-conflict] _interactive_pr_is_stale: PR #${pr_number} has no-takeover label — skipping handover (GH#19864)" >>"$LOGFILE"
 		return 1
 	fi
 
 	# Gate 4: age threshold (check updatedAt before commit lookup — cheapest filter)
-	local threshold_secs="${AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS:-${IDLE_INTERACTIVE_HANDOVER_SECONDS:-14400}}"  # default 4h (t2948; was 24h)
+	local threshold_secs="${AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS:-${IDLE_INTERACTIVE_HANDOVER_SECONDS:-43200}}"  # default 12h
 	local activity_at="" activity_source="updatedAt" now_epoch=0 updated_epoch=0 pr_age_secs=0
 	# t2383 Fix 2: validate threshold is a positive integer before arithmetic.
 	# A non-numeric value (e.g. "4h", empty, negative) triggers bash
 	# "value too great for base" and silently breaks stale detection.
 	if [[ ! "$threshold_secs" =~ ^[0-9]+$ ]] || [[ "$threshold_secs" -eq 0 ]]; then
+		_INTERACTIVE_PR_STALE_REFUSAL="invalid-age-threshold"
 		echo "[pulse-wrapper] _interactive_pr_is_stale: invalid AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS='${threshold_secs}' — must be a positive integer, returning not-stale (t2383)" >>"$LOGFILE"
 		return 1
 	fi
+	# GH#38291: idle-session evidence may satisfy Gates 2/3 after a shorter window,
+	# so the age filter uses the smaller threshold; invalid disables that path.
+	local session_threshold_secs="${AIDEVOPS_IDLE_SESSION_HANDOVER_SECONDS:-14400}" age_floor_secs="$threshold_secs"
+	[[ "$session_threshold_secs" =~ ^[0-9]+$ ]] || session_threshold_secs=0
+	[[ "$session_threshold_secs" -gt 0 && "$session_threshold_secs" -lt "$threshold_secs" ]] && age_floor_secs="$session_threshold_secs"
 	local updated_at=""
 	updated_at="$precomputed_updated_at"
 	if [[ -z "$updated_at" ]]; then
 		updated_at=$(printf '%s' "$pr_meta" | jq -r '.updatedAt // empty')
 	fi
+	_INTERACTIVE_PR_STALE_REFUSAL="updated-at-missing"
 	[[ -z "$updated_at" ]] && return 1
 	now_epoch=$(date +%s)
 	# Portable epoch parse — GNU date first (Linux CI), BSD date fallback (macOS)
+	_INTERACTIVE_PR_STALE_REFUSAL="updated-at-invalid"
 	updated_epoch=$(date -d "$updated_at" +%s 2>/dev/null) || \
 		updated_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$updated_at" +%s 2>/dev/null) || \
 		return 1
@@ -333,43 +503,73 @@ _interactive_pr_is_stale() {
 			activity_source="head_commit"
 		fi
 		if [[ -z "$activity_at" ]]; then
-			activity_at=$(gh api "repos/${repo_slug}/commits/${head_ref_oid}" \
-				--jq '.commit.committer.date // .commit.author.date // empty' 2>/dev/null) || activity_at=""
+			activity_at=$(gh_commit_by_sha_cached "$repo_slug" "$head_ref_oid" 2>/dev/null | \
+				jq -r '.commit.committer.date // .commit.author.date // empty') || activity_at=""
 			[[ -n "$activity_at" ]] && activity_source="head_commit"
 		fi
 	fi
+	_INTERACTIVE_PR_STALE_REFUSAL="head-activity-unavailable"
 	[[ -z "$activity_at" ]] && return 1
 	if [[ "$activity_at" != "$updated_at" ]]; then
+		_INTERACTIVE_PR_STALE_REFUSAL="head-activity-invalid"
 		updated_epoch=$(date -d "$activity_at" +%s 2>/dev/null) || \
 			updated_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$activity_at" +%s 2>/dev/null) || \
 			return 1
 	fi
 	pr_age_secs=$(( now_epoch - updated_epoch ))
-	[[ "$pr_age_secs" -lt "$threshold_secs" ]] && return 1
+	_INTERACTIVE_PR_STALE_REFUSAL="pr-not-idle"
+	[[ "$pr_age_secs" -lt "$age_floor_secs" ]] && return 1
 
 	# Gate 2 + 5: resolve linked issue, verify open, check status labels
 	local linked_issue
-	linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
-	[[ -z "$linked_issue" ]] && return 1
-	local issue_meta
-	issue_meta=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
-		--jq '{state, labels: [.labels[].name]}' 2>/dev/null) || return 1
-	printf '%s' "$issue_meta" | jq -e '.state == "open"' >/dev/null 2>&1 || return 1
-	printf '%s' "$issue_meta" | jq -e \
-		'.labels | any(. == "status:queued" or . == "status:in-progress" or . == "status:in-review" or . == "status:claimed")' \
-		>/dev/null 2>&1 && return 1
-
-	# Gate 3: no live claim stamp (session gone)
-	# Stamp path: $CLAIM_STAMP_DIR/${flattened_slug}-${issue}.json
-	# See interactive-session-helper.sh:91 for the canonical pattern.
-	local slug_flat stamp_path
-	slug_flat="${repo_slug//\//-}"
-	stamp_path="${CLAIM_STAMP_DIR:-$HOME/.aidevops/.agent-workspace/interactive-claims}/${slug_flat}-${linked_issue}.json"
-	[[ -f "$stamp_path" ]] && return 1
+	_INTERACTIVE_PR_STALE_REFUSAL="closing-link-unavailable"
+	linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug") || return 1
+	# Only the tracking recovery path may probe age before an issue exists.
+	# Normal handover still requires the issue/claim gates below.
+	if [[ -z "$linked_issue" ]]; then
+		[[ "$allow_orphan" == "1" && "$mode" == "enforce" && "$pr_age_secs" -ge "$threshold_secs" ]] && return 0
+		_INTERACTIVE_PR_STALE_REFUSAL="orphan-age-or-mode-not-eligible"
+		return 1
+	fi
+	local evidence="" evidence_session="" evidence_idle_secs="" applied_threshold_secs="$threshold_secs"
+	_INTERACTIVE_PR_STALE_REFUSAL="linked-issue-session-gates"
+	evidence=$(_interactive_pr_session_gates "$pr_number" "$repo_slug" "$linked_issue" "$pr_age_secs" \
+		"$threshold_secs" "$session_threshold_secs" "$activity_source") || return 1
+	if [[ -n "$evidence" ]]; then
+		IFS='|' read -r evidence_session evidence_idle_secs <<<"$evidence"
+		applied_threshold_secs="$session_threshold_secs"
+	fi
 
 	# All gates passed — PR is stale. Log in detect mode.
 	if [[ "$mode" == "detect" ]]; then
-		echo "[pulse-wrapper] would-handover: PR #${pr_number} in ${repo_slug} (idle $((pr_age_secs / 3600))h via ${activity_source} >= $((threshold_secs / 3600))h, linked issue #${linked_issue})" >>"$LOGFILE"
+		echo "[pulse-wrapper] would-handover: PR #${pr_number} in ${repo_slug} (idle $((pr_age_secs / 3600))h via ${activity_source} >= $((applied_threshold_secs / 3600))h, linked issue #${linked_issue}${evidence_session:+, idle session ${evidence_session}})" >>"$LOGFILE"
+	fi
+	[[ -n "$evidence_session" ]] && _INTERACTIVE_PR_IDLE_SESSION_EVIDENCE="${pr_number}|${repo_slug}|${evidence_session}|${evidence_idle_secs}"
+	_INTERACTIVE_PR_STALE_REFUSAL=""
+	return 0
+}
+
+#######################################
+# GH#38291: One non-waking session-bus notice to the idle owner session whose
+# evidence (from the last _interactive_pr_is_stale verdict) matches this PR.
+# Best effort: a failed notice never undoes the confirmed handover.
+# Args: $1 = pr_number, $2 = repo_slug, $3 = reason
+#######################################
+_interactive_pr_notify_idle_owner() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local reason="$3"
+	local evidence="${_INTERACTIVE_PR_IDLE_SESSION_EVIDENCE:-}"
+	local ev_pr="" ev_repo="" ev_session="" ev_idle_secs="" text=""
+	[[ -n "$evidence" ]] || return 0
+	IFS='|' read -r ev_pr ev_repo ev_session ev_idle_secs <<<"$evidence"
+	[[ "$ev_pr" == "$pr_number" && "$ev_repo" == "$repo_slug" && "$ev_idle_secs" =~ ^[0-9]+$ ]] || return 0
+	[[ "$ev_session" =~ ^[A-Za-z0-9_-]{1,128}$ ]] || return 0
+	text="aidevops pulse: handed PR #${pr_number} (${repo_slug}) to the worker pipeline — ${reason}. This session has been idle $((ev_idle_secs / 3600))h and is not on that PR or its issue. Workers use their own worktree; yours is untouched but will be behind the remote. To keep the PR yourself, add the no-takeover label to it."
+	if _interactive_pr_session_bus send "$ev_session" --sender pulse "$text" >/dev/null; then
+		echo "[pulse-wrapper] handover: notified idle owner session ${ev_session} for PR #${pr_number} in ${repo_slug} (GH#38291)" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] handover: owner notice to session ${ev_session} failed for PR #${pr_number} in ${repo_slug} — handover stands (GH#38291)" >>"$LOGFILE"
 	fi
 	return 0
 }
@@ -389,13 +589,17 @@ _interactive_pr_is_stale() {
 # Fail closed: return success only when worker-takeover metadata was already
 # present or is confirmed after application. Callers must not route otherwise.
 #
-# Args: $1 = pr_number, $2 = repo_slug
+# GH#38291: when the stale verdict relied on idle-session evidence, the owner
+# session gets ONE non-waking session-bus notice on the new handover.
+#
+# Args: $1 = pr_number, $2 = repo_slug, $3 = reason (optional)
 # Returns: 0 if takeover is confirmed, 1 otherwise
 #######################################
 _interactive_pr_trigger_handover() {
 	local pr_number="$1"
 	local repo_slug="$2"
-	local mode="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-detect}"
+	local reason="${3:-idle interactive PR}"
+	local mode="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-enforce}"
 	local takeover_label="origin:worker-takeover"
 	[[ "$mode" == "enforce" ]] || return 1
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 1
@@ -441,10 +645,14 @@ _interactive_pr_trigger_handover() {
 	# Post one-time handover comment via _gh_idempotent_comment
 	if declare -F _gh_idempotent_comment >/dev/null 2>&1; then
 		local marker="<!-- pulse-interactive-handover -->"
-		local threshold_h=$(( ${AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS:-${IDLE_INTERACTIVE_HANDOVER_SECONDS:-14400}} / 3600 ))
+		local threshold_h=$(( ${AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS:-${IDLE_INTERACTIVE_HANDOVER_SECONDS:-43200}} / 3600 ))
+		local heading="no interactive session activity for ${threshold_h}h"
+		if [[ "${_INTERACTIVE_PR_IDLE_SESSION_EVIDENCE:-}" == "${pr_number}|${repo_slug}|"* ]]; then
+			heading="owning interactive session idle for $(( ${AIDEVOPS_IDLE_SESSION_HANDOVER_SECONDS:-14400} / 3600 ))h+"
+		fi
 		local body
 		body="${marker}
-## Worker takeover — no interactive session activity for ${threshold_h}h
+## Worker takeover — ${heading}
 
 This \`origin:interactive\` PR has been idle past the handover threshold. The pulse is now routing it through the worker pipeline to drive it to merge:
 
@@ -472,7 +680,8 @@ Add the \`no-takeover\` label to this PR at any time. The routing gates will ski
 		_gh_idempotent_comment "$pr_number" "$repo_slug" "$marker" "$body" "pr" || true
 	fi
 
-	echo "[pulse-wrapper] handover: PR #${pr_number} in ${repo_slug} handed over to worker pipeline (t2189)" >>"$LOGFILE"
+	echo "[pulse-wrapper] handover: PR #${pr_number} in ${repo_slug} handed over to worker pipeline (${reason}; t2189)" >>"$LOGFILE"
+	_interactive_pr_notify_idle_owner "$pr_number" "$repo_slug" "$reason"
 	return 0
 }
 
@@ -540,8 +749,8 @@ _verify_pr_overlaps_commit() {
 	fi
 	[[ -n "$pr_files" ]] || return 1
 
-	commit_files=$(gh api "repos/${repo_slug}/commits/${commit_sha}" \
-		--jq '.files[].filename' 2>/dev/null) || return 1
+	commit_files=$(gh_commit_by_sha_cached "$repo_slug" "$commit_sha" 2>/dev/null | \
+		jq -r '.files[].filename') || return 1
 	[[ -n "$commit_files" ]] || return 1
 
 	# Compute intersection, excluding planning paths. Iterate the closing
@@ -553,7 +762,7 @@ _verify_pr_overlaps_commit() {
 		if _is_planning_path_for_overlap "$file"; then
 			continue
 		fi
-		if printf '%s\n' "$commit_files" | grep -Fxq -- "$file"; then
+		if grep -Fxq -- "$file" <<<"$commit_files"; then
 			return 0
 		fi
 	done <<<"$pr_files"
@@ -661,10 +870,12 @@ Earlier versions of \`_close_conflicting_pr\` would have auto-closed this PR wit
 #######################################
 _parse_squash_merge_pr() {
 	local subject="$1"
+	local squash_re='\(#([0-9]+)\)$'
 	[[ -n "$subject" ]] || return 0
-	printf '%s' "$subject" |
-		grep -oE '\(#[0-9]+\)$' |
-		grep -oE '[0-9]+' | head -1 || true
+	# Bash regex, not a pipe into head (GH#36235).
+	if [[ "$subject" =~ $squash_re ]]; then
+		printf '%s\n' "${BASH_REMATCH[1]}"
+	fi
 	return 0
 }
 
@@ -872,7 +1083,7 @@ _close_conflicting_pr_check_ownership_guard() {
 	# GH#18285 + GH#18650 Fix 4: post a one-time rebase nudge so the
 	# maintainer has a visible signal that their CONFLICTING PR needs
 	# manual attention.
-	if printf '%s\n' "$pr_labels" | grep -Fxq 'origin:interactive'; then
+	if grep -Fxq -- 'origin:interactive' <<<"$pr_labels"; then
 		echo "[pulse-wrapper] Deterministic merge: skipping auto-close of origin:interactive PR #${pr_number} — maintainer session work is never auto-closed" >>"$LOGFILE"
 		_post_rebase_nudge_on_interactive_conflicting "$pr_number" "$repo_slug"
 		return 0
@@ -880,8 +1091,8 @@ _close_conflicting_pr_check_ownership_guard() {
 
 	# Guard 2: origin:worker or origin:worker-takeover — pulse owns these
 	# PRs; close is safe and correct.
-	if printf '%s\n' "$pr_labels" | grep -Fxq 'origin:worker' ||
-		printf '%s\n' "$pr_labels" | grep -Fxq 'origin:worker-takeover'; then
+	if grep -Fxq -- 'origin:worker' <<<"$pr_labels" ||
+		grep -Fxq -- 'origin:worker-takeover' <<<"$pr_labels"; then
 		return 1
 	fi
 
@@ -1183,7 +1394,8 @@ _close_conflicting_pr() {
 	# mode" → "t153") so the classifier can search recent commits
 	# with a word-boundary-safe regex.
 	local task_id_from_pr
-	task_id_from_pr=$(printf '%s' "$pr_title" | grep -oE '^(t[0-9]+|GH#[0-9]+)' | head -1) || task_id_from_pr=""
+	task_id_from_pr=$(grep -oE -- '^(t[0-9]+|GH#[0-9]+)' <<<"$pr_title") || task_id_from_pr=""
+	task_id_from_pr="${task_id_from_pr%%$'\n'*}"
 	local linked_issue_for_supersession
 	linked_issue_for_supersession=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_issue_for_supersession=""
 
@@ -1212,6 +1424,36 @@ _close_conflicting_pr() {
 		_close_conflicting_pr_comment_not_landed \
 			"$pr_number" "$repo_slug" "$pr_title"
 	fi
+	return 0
+}
+
+#######################################
+# Print a backtick fence one longer than the longest backtick run in the
+# diff (minimum 3). PR diffs can contain triple backticks (markdown/docs
+# changes); a fixed ``` fence would break rendering and corrupt the worker
+# handoff (t2383 Fix 4).
+# GH#35943: match the backtick with a bracket expression. GNU grep reads
+# '\`' as its start-of-buffer anchor, so the escaped form never matched on
+# Linux runners and every diff kept a 3-backtick fence.
+#
+# Args:
+#   $1 - diff_content
+#######################################
+_carry_forward_diff_fence() {
+	local diff_content="$1"
+	local fence_len=3
+	local longest_run
+	longest_run=$(printf '%s' "$diff_content" | grep -oE '[`]{3,}' | awk '{ if (length > max) max = length } END { print max+0 }') || longest_run=0
+	[[ "$longest_run" =~ ^[0-9]+$ ]] || longest_run=0
+	if [[ "$longest_run" -ge "$fence_len" ]]; then
+		fence_len=$((longest_run + 1))
+	fi
+	local fence=""
+	local _i
+	for (( _i=0; _i<fence_len; _i++ )); do
+		fence="${fence}\`"
+	done
+	printf '%s' "$fence"
 	return 0
 }
 
@@ -1274,30 +1516,20 @@ _carry_forward_pr_diff() {
 
 	# --- Idempotency guard ---
 	# Marker format: <!-- t2118:prior-worker-diff:PR<N> -->
+	# GH#35943: here-string, not `printf | grep -q`. The pulse sources this
+	# file under pipefail; grep -q exits at the marker while printf is still
+	# writing the carried diff, SIGPIPE fails the pipeline and the guard
+	# re-appends the same diff.
 	local marker="<!-- t2118:prior-worker-diff:PR${pr_number} -->"
-	if printf '%s' "$current_body" | grep -qF "$marker"; then
+	if grep -qF -- "$marker" <<<"$current_body"; then
 		echo "[pulse-wrapper] _carry_forward_pr_diff: issue #${linked_issue} already has diff marker for PR #${pr_number} — skipping (t2118)" >>"$LOGFILE"
 		_CFPD_PRESERVED=1
 		return 0
 	fi
 
 	# --- Build the append section ---
-	# t2383 Fix 4: compute dynamic fence length. PR diffs can contain triple
-	# backticks (markdown/docs changes). A fixed ``` fence would break rendering
-	# and corrupt the worker handoff. Scan for the longest backtick run in the
-	# diff and use one more than that.
-	local fence_len=3
-	local longest_run
-	longest_run=$(printf '%s' "$diff_content" | grep -oE '\`{3,}' | awk '{ if (length > max) max = length } END { print max+0 }') || longest_run=0
-	[[ "$longest_run" =~ ^[0-9]+$ ]] || longest_run=0
-	if [[ "$longest_run" -ge "$fence_len" ]]; then
-		fence_len=$((longest_run + 1))
-	fi
-	local fence=""
-	local _i
-	for (( _i=0; _i<fence_len; _i++ )); do
-		fence="${fence}\`"
-	done
+	local fence
+	fence=$(_carry_forward_diff_fence "$diff_content")
 
 	local new_section
 	new_section="${marker}

@@ -41,6 +41,10 @@
 #                             defer the kill until the hard backstop.
 #   --phase1-timeout SECS     Seconds for initial output (default: 30)
 #   --poll-interval SECS      Seconds between checks (default: 10)
+#   --worker-db PATH          Worker's isolated OpenCode DB (optional). A part
+#                             updated within WORKER_DB_ACTIVITY_WINDOW_SECONDS
+#                             (default 120) defers a stall as live tool output
+#                             (GH#39197). Env fallback: WORKER_ACTIVITY_DB.
 #   --hard-kill-seconds SECS  Total elapsed seconds before a confirmed output
 #                             stall escalates to forced hard-kill (default: 1500
 #                             = 25 min). Output growth resets stall detection and
@@ -77,6 +81,10 @@ if [[ -r "${SCRIPT_DIR}/shared-repo-state-guard.sh" ]]; then
 	# shellcheck source=shared-repo-state-guard.sh
 	source "${SCRIPT_DIR}/shared-repo-state-guard.sh"
 fi
+if [[ -r "${SCRIPT_DIR}/shared-pr-base.sh" ]]; then
+	# shellcheck source=shared-pr-base.sh
+	source "${SCRIPT_DIR}/shared-pr-base.sh"
+fi
 
 #######################################
 # Configuration (from args, with defaults)
@@ -100,9 +108,20 @@ HARD_KILL_SECONDS="${WORKER_STALL_HARD_KILL_SECONDS:-1500}"
 # defers the stall kill — the worker is alive but doing non-output work
 # (API roundtrip, shellcheck, file read). Default 2% matches PULSE_IDLE_CPU_THRESHOLD.
 STALL_CPU_THRESHOLD="${WORKER_STALL_CPU_THRESHOLD:-2}"
+# GH#39197: OpenCode `run --format json` emits a tool event only when the tool
+# part completes, but rewrites the running part in the worker's isolated DB as
+# the tool's output streams. A recent part update is therefore live work that
+# the output file cannot show (long tests, lock waits, builds that print).
+WORKER_DB="${WORKER_ACTIVITY_DB:-}"
+DB_ACTIVITY_WINDOW="${WORKER_DB_ACTIVITY_WINDOW_SECONDS:-120}"
+_MONITOR_DB_ACTIVITY_AGE=""
 # t3056: Lifecycle log for structured kill-reason telemetry. Aggregatable
 # across all workers. Default: pulse-dispatch.log (same file the pulse reads).
 LIFECYCLE_LOG="${WORKER_LIFECYCLE_LOG:-${HOME}/.aidevops/logs/pulse-dispatch.log}"
+# GH#36700: per-attempt copy of this watchdog's decisions, next to the exit-code
+# file, so the worker wrapper can report why a quiet worker was (not) killed.
+# Never the monitored OUTPUT_FILE: writes there would count as output growth.
+WATCHDOG_EVENTS_FILE=""
 
 #######################################
 # Parse arguments
@@ -146,6 +165,11 @@ _parse_args() {
 			POLL_INTERVAL="$2"
 			shift 2
 			;;
+		--worker-db)
+			local _worker_db_arg="$2"
+			WORKER_DB="$_worker_db_arg"
+			shift 2
+			;;
 		--hard-kill-seconds)
 			# t2956: assign via `local` so the bare-positional ratchet
 			# (linters-local.sh::_ratchet_count_bare_positional) excludes
@@ -182,11 +206,41 @@ _parse_args() {
 	[[ "$POLL_INTERVAL" =~ ^[0-9]+$ ]] || POLL_INTERVAL=10
 	# t2956: HARD_KILL_SECONDS=0 disables the hard-kill branch (allowed).
 	[[ "$HARD_KILL_SECONDS" =~ ^[0-9]+$ ]] || HARD_KILL_SECONDS=1500
+	[[ "$DB_ACTIVITY_WINDOW" =~ ^[0-9]+$ ]] || DB_ACTIVITY_WINDOW=120
 	[[ "$WORKER_PID" =~ ^[0-9]+$ ]] || {
 		echo "Error: --worker-pid must be numeric" >&2
 		return 1
 	}
+	WATCHDOG_EVENTS_FILE="${EXIT_CODE_FILE}.watchdog_events"
 
+	return 0
+}
+
+#######################################
+# Append a watchdog event line to the per-attempt events file (GH#36700).
+# Best-effort: a write failure must never stop monitoring under set -e.
+#
+# Arguments:
+#   $1 - complete event line
+#######################################
+_watchdog_record_attempt_event() {
+	local event_line="$1"
+	[[ -n "$WATCHDOG_EVENTS_FILE" ]] || return 0
+	printf '%s\n' "$event_line" >>"$WATCHDOG_EVENTS_FILE" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Record a lifecycle event in the shared lifecycle log (pulse telemetry) and
+# in the per-attempt events file read by the worker wrapper (GH#36700).
+#
+# Arguments:
+#   $1 - complete event line
+#######################################
+_watchdog_record_event() {
+	local event_line="$1"
+	printf '%s\n' "$event_line" >>"$LIFECYCLE_LOG" 2>/dev/null || true
+	_watchdog_record_attempt_event "$event_line"
 	return 0
 }
 
@@ -333,7 +387,7 @@ _watchdog_lsof_network_active() {
 	lsof_output=$(lsof -nP -a -p "$pid_csv" -iTCP -sTCP:ESTABLISHED 2>/dev/null || true)
 	[[ -n "$lsof_output" ]] || return 1
 
-	if printf '%s\n' "$lsof_output" | grep -Eq -- '->[^[:space:]]+:(443|8443)([[:space:]]|$)'; then
+	if grep -Eq -- '->[^[:space:]]+:(443|8443)([[:space:]]|$)' <<<"$lsof_output"; then
 		return 0
 	fi
 	return 1
@@ -361,7 +415,7 @@ _watchdog_ss_network_active() {
 	local pid=""
 	for pid in "${pid_list[@]}"; do
 		[[ "$pid" =~ ^[0-9]+$ ]] || continue
-		if printf '%s\n' "$ss_output" | grep -Eq -- "[[:space:]][^[:space:]]+:(443|8443)([[:space:]]|$).*pid=${pid},"; then
+		if grep -Eq -- "[[:space:]][^[:space:]]+:(443|8443)([[:space:]]|$).*pid=${pid}," <<<"$ss_output"; then
 			return 0
 		fi
 	done
@@ -401,6 +455,32 @@ _watchdog_tree_network_active() {
 }
 
 #######################################
+# GH#39197: return whether the worker's isolated OpenCode DB shows a part
+# updated within DB_ACTIVITY_WINDOW seconds (see WORKER_DB above). Parts left
+# "running" by a killed earlier attempt never update, so they do not count.
+# Fails open: no DB, no sqlite3, a locked or malformed DB all return 1 and the
+# existing liveness checks decide.
+# Sets _MONITOR_DB_ACTIVITY_AGE (seconds since the newest part update) on 0.
+# Returns: 0 when a part was updated within the window, 1 otherwise
+#######################################
+_watchdog_db_part_activity() {
+	_MONITOR_DB_ACTIVITY_AGE=""
+	[[ -n "$WORKER_DB" && -r "$WORKER_DB" ]] || return 1
+	[[ "$DB_ACTIVITY_WINDOW" =~ ^[0-9]+$ && "$DB_ACTIVITY_WINDOW" -gt 0 ]] || return 1
+	command -v sqlite3 >/dev/null 2>&1 || return 1
+	local newest="" now_s="" age=0
+	newest=$(sqlite3 -readonly -cmd ".timeout 2000" "$WORKER_DB" \
+		"SELECT max(time_updated) FROM part;" 2>/dev/null) || return 1
+	[[ "$newest" =~ ^[0-9]+$ ]] || return 1
+	now_s=$(date +%s)
+	age=$((now_s - newest / 1000))
+	[[ "$age" -lt 0 ]] && age=0
+	[[ "$age" -le "$DB_ACTIVITY_WINDOW" ]] || return 1
+	_MONITOR_DB_ACTIVITY_AGE="$age"
+	return 0
+}
+
+#######################################
 # Get current size of the output file in bytes
 # Output: size in bytes (0 if file doesn't exist)
 #######################################
@@ -437,6 +517,37 @@ _output_has_ci_wait() {
 }
 
 #######################################
+# Print the remote-tracking ref a worker branch is measured against.
+#
+# t19266: uses the shared PR base resolver (GH#39167) so repositories whose
+# integration branch is develop/dev are not measured against a stale or
+# missing origin/main. A stale release-only main made every branch look
+# thousands of commits ahead; a missing main hid real WIP commits.
+# Falls back to origin/HEAD, then origin/main, then origin/master, using the
+# first ref that exists locally.
+#
+# Args: $1 = work_dir
+# Outputs: ref (e.g. origin/develop)
+# Returns: 0 resolved, 1 no usable ref
+#######################################
+_wip_push_base_ref() {
+	local work_dir="$1"
+	local repo_slug="${REPO_SLUG:-${DISPATCH_REPO_SLUG:-}}"
+	local base_branch="" origin_head="" candidate=""
+	if declare -F aidevops_pr_base_branch >/dev/null 2>&1; then
+		base_branch=$(aidevops_pr_base_branch "$repo_slug" "$work_dir" 2>/dev/null) || base_branch=""
+	fi
+	origin_head=$(git -C "$work_dir" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || origin_head=""
+	for candidate in ${base_branch:+"origin/${base_branch}"} ${origin_head:+"$origin_head"} origin/main origin/master; do
+		if git -C "$work_dir" rev-parse --verify --quiet "${candidate}^{commit}" >/dev/null 2>&1; then
+			printf '%s' "$candidate"
+			return 0
+		fi
+	done
+	return 1
+}
+
+#######################################
 # Push any local-only WIP commits to origin before killing the worker.
 # Best-effort, fail-open — never blocks the kill sequence.
 #
@@ -446,6 +557,7 @@ _output_has_ci_wait() {
 #
 # Globals consumed:
 #   WORKTREE_PATH        — set via --worktree-path arg
+#   REPO_SLUG            — set via --repo-slug arg (or DISPATCH_REPO_SLUG)
 #   WORKER_NO_EXIT_PUSH  — escape hatch: set to "1" to disable push
 #######################################
 _push_wip_before_kill() {
@@ -466,25 +578,25 @@ _push_wip_before_kill() {
 		;;
 	esac
 
-	# Count commits ahead of origin/main (or origin/master)
+	# Count only the worker's own commits: those not on the PR base branch.
+	local base_ref=""
+	base_ref=$(_wip_push_base_ref "$work_dir") || return 0
+	# Never push the integration branch itself (e.g. a worker left on develop).
+	[[ "$branch_name" == "${base_ref#origin/}" ]] && return 0
 	local ahead_count=0
-	ahead_count=$(git -C "$work_dir" rev-list --count "origin/main..HEAD" 2>/dev/null || true)
+	ahead_count=$(git -C "$work_dir" rev-list --count "${base_ref}..HEAD" 2>/dev/null || true)
 	[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
-	if [[ "$ahead_count" -eq 0 ]]; then
-		ahead_count=$(git -C "$work_dir" rev-list --count "origin/master..HEAD" 2>/dev/null || true)
-		[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
-	fi
 	if [[ "$ahead_count" -eq 0 ]]; then
 		return 0
 	fi
 
 	# Push best-effort — never block the kill sequence on push failure
-	printf '[WATCHDOG_WIP_PUSH] timestamp=%s branch=%s ahead=%s\n' \
-		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$branch_name" "$ahead_count" \
+	printf '[WATCHDOG_WIP_PUSH] timestamp=%s branch=%s ahead=%s base=%s\n' \
+		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$branch_name" "$ahead_count" "$base_ref" \
 		>>"$OUTPUT_FILE" 2>/dev/null || true
 	git -C "$work_dir" push -u origin "$branch_name" 2>/dev/null || true
-	printf '[WATCHDOG_WIP_PUSHED] branch=%s ahead=%s\n' \
-		"$branch_name" "$ahead_count" \
+	printf '[WATCHDOG_WIP_PUSHED] branch=%s ahead=%s base=%s\n' \
+		"$branch_name" "$ahead_count" "$base_ref" \
 		>>"$OUTPUT_FILE" 2>/dev/null || true
 	return 0
 }
@@ -527,8 +639,7 @@ _kill_worker() {
 		"$WORKER_PID" "$reason_class" "$_trigger_age" "$_deferral_detail" "${SESSION_KEY:-none}" \
 		"$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	worker_attempt_observability_enrich lifecycle_event "$lifecycle_event"
-	printf '%s\n' "$lifecycle_event" \
-		>>"$LIFECYCLE_LOG" 2>/dev/null || true
+	_watchdog_record_event "$lifecycle_event"
 
 	# t2923: Push WIP commits before killing so the work is reachable on origin.
 	# Must happen before SIGTERM so git operations complete cleanly.
@@ -716,16 +827,18 @@ _monitor_defer_stall() {
 	local lifecycle_event=""
 	# Legacy variable names for structural regression tests:
 	# deferred_stall_seconds=$((deferred_stall_seconds + stall_seconds))
-	# Expected labels: reason=ci_wait reason=network_active reason=cpu_active.
+	# Expected labels: reason=ci_wait reason=tool_output_active
+	# reason=network_active reason=cpu_active.
 	_MONITOR_DEFERRED_STALL_SECONDS=$((_MONITOR_DEFERRED_STALL_SECONDS + _MONITOR_STALL_SECONDS))
 	_MONITOR_LAST_DEFER_EPOCH=$(date +%s)
 	_MONITOR_LAST_DEFER_REASON="$reason"
-	printf -v lifecycle_event '[lifecycle] worker_stall_deferred pid=%s reason=%s %sstall_seconds=%ss deferred_total=%ss ts=%s' \
+	# GH#36700: elapsed and the effective cap show when the backstop kill lands.
+	printf -v lifecycle_event '[lifecycle] worker_stall_deferred pid=%s reason=%s %sstall_seconds=%ss deferred_total=%ss elapsed=%ss hard_kill=%ss ts=%s' \
 		"$WORKER_PID" "$reason" "$detail" "$_MONITOR_STALL_SECONDS" \
-		"$_MONITOR_DEFERRED_STALL_SECONDS" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+		"$_MONITOR_DEFERRED_STALL_SECONDS" "$((_MONITOR_LAST_DEFER_EPOCH - _MONITOR_START_EPOCH))" \
+		"$HARD_KILL_SECONDS" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	worker_attempt_observability_enrich lifecycle_event "$lifecycle_event"
-	printf '%s\n' "$lifecycle_event" \
-		>>"$LIFECYCLE_LOG" 2>/dev/null || true
+	_watchdog_record_event "$lifecycle_event"
 	_MONITOR_STALL_SECONDS=0
 	sleep "$POLL_INTERVAL"
 	return 0
@@ -766,6 +879,8 @@ _monitor_enforce_hard_kill() {
 	_MONITOR_CAP_LIVENESS="none_observed"
 	if _output_has_ci_wait; then
 		_MONITOR_CAP_LIVENESS="ci_wait"
+	elif _watchdog_db_part_activity; then
+		_MONITOR_CAP_LIVENESS="tool_output_active"
 	elif _watchdog_tree_network_active "$WORKER_PID"; then
 		_MONITOR_CAP_LIVENESS="network_active"
 	else
@@ -813,6 +928,12 @@ _monitor_handle_confirmed_stall() {
 
 	if _output_has_ci_wait; then
 		_monitor_defer_stall "ci_wait" ""
+		return 0
+	fi
+
+	# GH#39197: cheaper than the lsof probe and exact for streaming tools.
+	if _watchdog_db_part_activity; then
+		_monitor_defer_stall "tool_output_active" "signal=worker_db_part_update age=${_MONITOR_DB_ACTIVITY_AGE}s "
 		return 0
 	fi
 
@@ -880,6 +1001,12 @@ main() {
 	# Set here (not in _monitor) so _kill_worker can reference it
 	# from any context.
 	_WATCHDOG_START_EPOCH=$(date +%s)
+
+	# GH#36700: per-attempt proof that the watchdog is running and which
+	# thresholds are in effect. Not sent to the shared lifecycle log.
+	_watchdog_record_attempt_event "$(printf '[lifecycle] watchdog_monitoring pid=%s worker=%s stall_timeout=%ss phase1=%ss poll=%ss hard_kill=%ss cpu_threshold=%s%% ts=%s' \
+		"$$" "$WORKER_PID" "$STALL_TIMEOUT" "$PHASE1_TIMEOUT" "$POLL_INTERVAL" \
+		"$HARD_KILL_SECONDS" "$STALL_CPU_THRESHOLD" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
 
 	_monitor
 	return 0

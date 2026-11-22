@@ -102,4 +102,28 @@ warnings_after="$(jq -r '.linux.last_warning_count' "$AIDEVOPS_STATE_DIR/optimis
 [[ "$applied_after" == "$applied_before" ]] || fail "reminder should preserve last applied count"
 [[ "$warnings_after" == "$warnings_before" ]] || fail "reminder should preserve last warning count"
 
+bz="$tmpdir/bzpkg/bzdata"
+export AIDEVOPS_BACKBLAZE_BZDATA="$bz"
+export AIDEVOPS_OPTIMISE_NOW=1800000000
+assert_contains "$($HELPER macos health)" "backblaze_health=not-installed"
+assert_not_contains "$($HELPER macos reminder --format=toast --no-notify)" "Backblaze"
+mkdir -p "$tmpdir/bzpkg"
+assert_contains "$($HELPER macos health)" "backblaze_health=unknown"
+assert_contains "$($HELPER macos reminder --format=toast --no-notify)" "could not be read"
+mkdir -p "$bz/bzreports_lastfilestransmitted" "$bz/bzlogs/bztransmit"
+assert_contains "$($HELPER macos health)" "backblaze_health=unknown"
+printf '<x gmt_millis="%s000"/>\n' "$((1800000000 + 7200))" >"$bz/bzreports_lastfilestransmitted/bzstat_lastfile_transmitted.xml"
+assert_contains "$($HELPER macos health)" "backblaze_health=unknown"
+printf '<x acct="SECRET-ID" gmt_millis="%s000"/>\n' "$((1800000000 - 3600))" >"$bz/bzreports_lastfilestransmitted/bzstat_lastfile_transmitted.xml"
+assert_contains "$($HELPER macos health)" "backblaze_health=ok"
+printf '<x acct="SECRET-ID" gmt_millis="%s000"/>\n' "$((1800000000 - 72 * 3600))" >"$bz/bzreports_lastfilestransmitted/bzstat_lastfile_transmitted.xml"
+assert_contains "$($HELPER macos health)" "backblaze_health=stale:72"
+printf 'ERROR client is safety_frozen with hint: bzcf_missing_on_client\n' >"$bz/bzlogs/bztransmit/bztransmit20261108.log"
+assert_contains "$($HELPER macos health)" "backblaze_health=safety_frozen:bzcf_missing_on_client"
+bz_reminder="$($HELPER macos reminder --format=toast --no-notify)"
+assert_contains "$bz_reminder" "[WARN] Backblaze backup frozen since"
+assert_contains "$bz_reminder" "private encryption key"
+assert_not_contains "$bz_reminder" "SECRET-ID"
+unset AIDEVOPS_BACKBLAZE_BZDATA
+
 printf 'OK: optimise-indexing-backups-helper tests passed\n'

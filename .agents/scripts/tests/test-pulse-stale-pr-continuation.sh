@@ -67,6 +67,18 @@ else
 	print_result "Layer 4 allows dispatch after a subsequent valid empty lookup" 1
 fi
 
+# GH#38142: non-worker PR evidence is a named, cacheable block signal.
+export STUB_OPEN_PR_OUTPUT='open PR #241 is approved or mergeable for issue #123'
+export STUB_OPEN_PR_RC=0
+LAYER4_OUTPUT=""
+LAYER4_RC=0
+LAYER4_OUTPUT=$(_dedup_layer4_pr_evidence "123" "owner/repo" "Fixture") || LAYER4_RC=$?
+if [[ "$LAYER4_RC" -eq 0 && "$LAYER4_OUTPUT" == "pr_evidence_block: open PR #241 is approved or mergeable for issue #123" ]]; then
+	print_result "Layer 4 names non-worker PR evidence as pr_evidence_block" 0
+else
+	print_result "Layer 4 names non-worker PR evidence as pr_evidence_block" 1
+fi
+
 # Exercise the production router's event parsing/argument fence before replacing
 # it with a counter stub for the Layer 6 return-semantics tests below.
 ROUTE_ARGS_FILE="${TEST_ROOT}/route-args"
@@ -233,7 +245,7 @@ write_pr_snapshot() {
 		date -u -d "@${epoch}" +%Y-%m-%dT%H:%M:%SZ) || return 1
 	jq -n --arg ts "$timestamp" \
 		--arg oid "$oid" --arg updated "$updated" --argjson pr "$pr" --argjson complete "$complete" \
-		'{complete:$complete,timestamp:$ts,items:[{number:$pr,updatedAt:$updated,headRefOid:$oid}]}' >"$SNAPSHOT_FILE"
+		'{complete:$complete,timestamp:$ts,items:[{number:$pr,isDraft:true,updatedAt:$updated,headRefOid:$oid}]}' >"$SNAPSHOT_FILE"
 	return 0
 }
 # GH#34402: stub the bounded exact-PR REST read. Fingerprints are read inside
@@ -247,6 +259,16 @@ timeout_sec() {
 	return $?
 }
 gh() {
+	# Boundary comments are fetched once when recording, not on cache hits.
+	if [[ "$*" == *'/comments?per_page=100'* ]]; then
+		printf '[[]]\n'
+		return 0
+	fi
+	# GH#38261: record-time issue material reads are not exact-PR reads. Fail
+	# them so records keep metadata material, as before that change.
+	if [[ "$*" =~ ^api\ repos/[^/]+/[^/]+/issues/[0-9]+$ ]]; then
+		return 1
+	fi
 	printf '%s\n' "$*" >>"$GH_CALLS_FILE"
 	[[ -n "$STUB_PR_REST_JSON" ]] || return 1
 	printf '%s\n' "$STUB_PR_REST_JSON"
@@ -260,6 +282,28 @@ pr_rest_json() {
 }
 candidate='{"number":29507,"repo_slug":"owner/repo","updatedAt":"2026-09-29T12:01:00Z","assignees":[],"labels":["status:available"]}'
 cache_file="${HOME}/.aidevops/logs/dispatch-negative-cache/owner--repo--29507"
+# Quiet cooldowns use the real local snapshot head reader, without REST fallback.
+write_pr_snapshot 430 first-head
+_dispatch_negative_cache_record "$candidate" worker_draft_checkpoint_cooldown 29519
+if [[ "$(_dispatch_negative_cache_reason "$candidate")" == worker_draft_checkpoint_cooldown ]]; then
+	print_result "quiet checkpoint cooldown retains an unchanged snapshot head" 0
+else
+	print_result "quiet checkpoint cooldown retains an unchanged snapshot head" 1
+fi
+for snapshot_case in changed missing stale incomplete; do
+	case "$snapshot_case" in
+	changed) write_pr_snapshot 430 new-head ;;
+	missing) write_pr_snapshot 430 first-head 12345 ;;
+	stale) write_pr_snapshot 901 first-head ;;
+	incomplete) write_pr_snapshot 430 first-head 29519 false ;;
+	esac
+	if ! _dispatch_negative_cache_reason "$candidate" worker_draft_checkpoint_cooldown snapshot_only >/dev/null && [[ ! -s "$GH_CALLS_FILE" ]]; then
+		print_result "quiet checkpoint wakes for $snapshot_case PR evidence without REST" 0
+	else
+		print_result "quiet checkpoint wakes for $snapshot_case PR evidence without REST" 1
+	fi
+done
+rm -f "$cache_file"
 write_pr_snapshot 430 first-head
 : >"$LOGFILE"
 printf '%s\n' '[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #29507 (owner/repo)' >>"$LOGFILE"
@@ -349,13 +393,75 @@ else
 	print_result "incomplete snapshot records and reuses the exact PR revision" 1
 fi
 : >"$GH_CALLS_FILE"
-printf '%s\t%s\t%s\t%s\t%s\t\n' "$(($(date +%s) - _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS - 1))" \
+printf '%s\t%s\t%s\t%s\t%s\t0:43200\n' "$(($(date +%s) - 21600))" \
 	"2026-09-29T12:01:00Z" worker_draft_checkpoint_blocked 29519 "2026-09-29T12:00:00Z_rest-head" >"$cache_file"
 if ! _dispatch_negative_cache_reason "$candidate" >/dev/null && [[ ! -s "$GH_CALLS_FILE" ]]; then
 	print_result "expired hint is rejected before any exact-PR read" 0
 else
 	print_result "expired hint is rejected before any exact-PR read" 1
 fi
+STUB_PR_REST_JSON=""
+
+# GH#37595: an eligible refusal must persist and be reusable even when prefetch
+# has been deferred for hours. Enumeration stays network-free; the per-candidate
+# prefilter uses one bounded read instead of starting another expensive stage.
+write_pr_snapshot 10800 first-head
+STUB_PR_REST_JSON=$(pr_rest_json open true rest-head | jq '.labels = [{name:"z"},{name:"a"}]')
+_dispatch_stats_increment() { return 0; }
+_dispatch_mark_benign_blocked_candidate() { return 0; }
+printf '%s\n' \
+	'DISPATCH_CANDIDATE_ATTEMPT issue=#29507 repo=owner/repo' \
+	'WORKER_DRAFT_CHECKPOINT: draft PR #29519 is a durable checkpoint for issue #29507 in owner/repo' \
+	'STALLED_CHECKPOINT_CONTINUATION_SKIPPED issue=#29507 repo=owner/repo' \
+	'DISPATCH_BLOCK_REASON reason=worker_draft_checkpoint_blocked signal=test issue=#29507 repo=owner/repo' >"$LOGFILE"
+_dispatch_record_nonzero_dispatch_result 29507 owner/repo 1 "$candidate"
+_dispatch_cache_confirmed_block "$candidate" 29507 owner/repo
+if [[ "${_DISPATCH_CHECKPOINT_COOLDOWN_RECORDED:-0}" == 1 ]] &&
+	[[ "$(_dispatch_negative_cache_reason "$candidate")" == worker_draft_checkpoint_cooldown ]]; then
+	print_result "stale snapshot eligible refusal writes a REST-backed cooldown" 0
+else
+	print_result "stale snapshot eligible refusal writes a REST-backed cooldown" 1
+fi
+: >"$GH_CALLS_FILE"
+filtered=$(_dispatch_filter_checkpoint_cooled_candidates owner/repo "[$candidate]")
+if [[ "$filtered" != '[]' && ! -s "$GH_CALLS_FILE" ]]; then
+	print_result "stale-snapshot enumeration remains network-free" 0
+else
+	print_result "stale-snapshot enumeration remains network-free" 1
+fi
+if _dispatch_max_prefilter_cached_block "$candidate" "$TEST_ROOT/outcomes" &&
+	grep -q 'cross-cycle block:worker_draft_checkpoint_cooldown' "$LOGFILE" &&
+	! grep -q 'Stage start: dispatch_candidate_29507' "$LOGFILE" &&
+	[[ "$(wc -l <"$GH_CALLS_FILE" | tr -d ' ')" == 1 ]]; then
+	print_result "next cycle skips stale-snapshot checkpoint with one REST read and no candidate stage" 0
+else
+	print_result "next cycle skips stale-snapshot checkpoint with one REST read and no candidate stage" 1
+fi
+for mutation in head labels ready closed; do
+	saved_rest="$STUB_PR_REST_JSON"
+	case "$mutation" in
+	head) STUB_PR_REST_JSON=$(jq '.head.sha = "new-head"' <<<"$saved_rest") ;;
+	labels) STUB_PR_REST_JSON=$(jq '.labels += [{name:"retry"}]' <<<"$saved_rest") ;;
+	ready) STUB_PR_REST_JSON=$(jq '.draft = false' <<<"$saved_rest") ;;
+	closed) STUB_PR_REST_JSON=$(jq '.state = "closed"' <<<"$saved_rest") ;;
+	esac
+	if ! _dispatch_negative_cache_reason "$candidate" >/dev/null; then
+		print_result "REST cooldown wakes on PR $mutation change" 0
+	else
+		print_result "REST cooldown wakes on PR $mutation change" 1
+	fi
+	STUB_PR_REST_JSON="$saved_rest"
+done
+# A fresh snapshot and REST normalize labels identically, independent of order.
+write_pr_snapshot 0 rest-head
+snapshot=$(jq '.items[0].labels = ["a","z"]' "$SNAPSHOT_FILE")
+printf '%s\n' "$snapshot" >"$SNAPSHOT_FILE"
+if [[ "$(_dispatch_checkpoint_pr_head owner/repo 29519)" == rest-head_a,z ]]; then
+	print_result "snapshot and REST checkpoint keys share sorted label normalization" 0
+else
+	print_result "snapshot and REST checkpoint keys share sorted label normalization" 1
+fi
+rm -f "$cache_file"
 STUB_PR_REST_JSON=""
 unset -f gh timeout_sec
 
@@ -367,8 +473,8 @@ self_login="runner"
 rm -f "$ROUTE_ARGS_FILE" "${ROUTE_ARGS_FILE}.stalled"
 : >"$LOGFILE"
 LAYER4_RC=0
-_dedup_layer4_pr_evidence "29507" "owner/repo" "Fixture" >/dev/null || LAYER4_RC=$?
-if [[ "$LAYER4_RC" -eq 0 && ! -f "$ROUTE_ARGS_FILE" &&
+LAYER4_OUTPUT=$(_dedup_layer4_pr_evidence "29507" "owner/repo" "Fixture") || LAYER4_RC=$?
+if [[ "$LAYER4_RC" -eq 0 && "$LAYER4_OUTPUT" == stale_draft_checkpoint:* && ! -f "$ROUTE_ARGS_FILE" &&
 	"$(<"${ROUTE_ARGS_FILE}.stalled")" == "dispatch-stalled owner/repo ${TEST_ROOT}/repo 29507 29519 runner" ]] &&
 	grep -q 'STALE_PR_CONTINUATION: issue #29507 in owner/repo — PR #29519' "$LOGFILE" &&
 	grep -q 'routed stall-released worker draft PR #29519 for issue #29507' "$LOGFILE"; then
@@ -379,8 +485,9 @@ fi
 export STUB_STALLED_RESULT=1
 rm -f "$ROUTE_ARGS_FILE"
 LAYER4_RC=0
-_dedup_layer4_pr_evidence "29507" "owner/repo" "Fixture" >/dev/null || LAYER4_RC=$?
-if [[ "$LAYER4_RC" -eq 2 && "$(<"$ROUTE_ARGS_FILE")" == "blocked-attention owner/repo 29507 29519" ]]; then
+LAYER4_OUTPUT=$(_dedup_layer4_pr_evidence "29507" "owner/repo" "Fixture") || LAYER4_RC=$?
+if [[ "$LAYER4_RC" -eq 2 && "$LAYER4_OUTPUT" == WORKER_DRAFT_CHECKPOINT:* &&
+	"$(<"$ROUTE_ARGS_FILE")" == "blocked-attention owner/repo 29507 29519" ]]; then
 	print_result "declined stall route falls back to blocked attention and still blocks" 0
 else
 	print_result "declined stall route falls back to blocked attention and still blocks" 1

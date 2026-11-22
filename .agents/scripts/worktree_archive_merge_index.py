@@ -17,9 +17,12 @@ def merge_path(value):
     return raw
 
 
-def merge_entries(root, option):
+def merge_entries(root, option, listing=None):
+    """Parse `ls-files <option> -z`; a caller may pass this pass's listing bytes."""
+    if listing is None:
+        listing = git(root, 'ls-files', option, '-z')
     result = []
-    for entry in git(root, 'ls-files', option, '-z').split(b'\0'):
+    for entry in listing.split(b'\0'):
         if entry:
             metadata, path = entry.split(b'\t', 1)
             mode, oid, stage = metadata.decode('ascii').split()
@@ -32,7 +35,7 @@ def validate_merge_index(entries, stages):
     seen = {}
     for path, mode, oid, stage in entries:
         raw = merge_path(path)
-        if mode not in ('100644', '100755') or not isinstance(stage, int) or isinstance(stage, bool) or stage not in stages:
+        if mode not in ('100644', '100755', '120000') or not isinstance(stage, int) or isinstance(stage, bool) or stage not in stages:
             raise ValueError('merge:unsupported_index_entry')
         merge_oid(oid)
         current = seen.setdefault(raw, set())
@@ -51,9 +54,11 @@ def validate_merge_working(working, paths):
         if any(b'/'.join(raw.split(b'/')[:number]).hex() in working for number in range(1, len(raw.split(b'/')))):
             raise ValueError('merge:directory_file_conflict')
         if value is not None:
-            if not isinstance(value, list) or len(value) != 2 or value[0] not in (0o644, 0o755):
+            if not isinstance(value, list) or len(value) != 2 or value[0] not in (0o644, 0o755, 'symlink'):
                 raise ValueError('merge:invalid_working_file')
-            bytes.fromhex(value[1])
+            content = bytes.fromhex(value[1])
+            if value[0] == 'symlink' and (not content or b'\0' in content):
+                raise ValueError('merge:invalid_link_target')
 
 
 def restore_merge_index(root, state):

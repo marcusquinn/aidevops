@@ -38,8 +38,11 @@ import {
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { getAccounts, patchAccount } from "./oauth-pool-storage.mjs";
+import {
+  getAccounts, patchAccount, poolAccountKey, poolAccountLabel,
+} from "./oauth-pool-storage.mjs";
 import { ensureValidToken, normalizeExpiredCooldowns } from "./oauth-pool-refresh.mjs";
+import { compareByReset } from "./oauth-pool-ordering.mjs";
 
 // ---------------------------------------------------------------------------
 // Re-exports — public API (backward-compatible surface)
@@ -61,6 +64,7 @@ export {
   getAccounts, upsertAccount, savePendingToken, getPendingToken,
   assignPendingToken, removeAccount, patchAccount,
   withPoolLock, loadPool, savePool, getPoolFilePath,
+  poolAccountKey, poolAccountLabel, findAccountIndex, selectSeat, accountMatchesOrg,
 } from "./oauth-pool-storage.mjs";
 
 // Refresh & Cursor helpers
@@ -88,12 +92,15 @@ export { createPoolTool } from "./oauth-pool-tool.mjs";
 /**
  * Compare two accounts for rotation preference.
  * Primary: priority descending (higher priority first; missing/0 = default).
- * Secondary: lastUsed ascending (least recently used first, i.e. LRU).
+ * Secondary: soonest usable usage-window reset (t19125), when known.
+ * Tertiary: lastUsed ascending (least recently used first, i.e. LRU).
  */
 function compareAccountPriority(a, b) {
   const pa = a.priority || 0;
   const pb = b.priority || 0;
   if (pa !== pb) return pb - pa;
+  const byReset = compareByReset(a, b);
+  if (byReset !== 0) return byReset;
   return new Date(a.lastUsed || 0).getTime() - new Date(b.lastUsed || 0).getTime();
 }
 
@@ -102,14 +109,19 @@ function openCodeAuthPath() {
   return join(dataHome, "opencode", "auth.json");
 }
 
-export function readCurrentOpenAIAuth() {
+/** Read the OpenCode auth entry currently active for one provider. */
+export function readCurrentProviderAuth(provider) {
   const authPath = openCodeAuthPath();
   if (!existsSync(authPath)) return null;
   try {
-    return JSON.parse(readFileSync(authPath, "utf-8")).openai || null;
+    return JSON.parse(readFileSync(authPath, "utf-8"))[provider] || null;
   } catch {
     return null;
   }
+}
+
+export function readCurrentOpenAIAuth() {
+  return readCurrentProviderAuth("openai");
 }
 
 function matchesOpenAIAuth(account, auth) {
@@ -126,21 +138,21 @@ function isAvailableAccount(account, now = Date.now()) {
 
 /**
  * Generic pool account selection (shared by all inject functions).
- * Finds the best available account with a valid token.
+ * Finds the best available account with a valid token. `skipKey` is a
+ * poolAccountKey() (equal to the email for seats without orgId, GH#38959).
  */
-async function selectPoolAccount(provider, skipEmail) {
+async function selectPoolAccount(provider, skipKey) {
   const accounts = getAccounts(provider);
   if (accounts.length === 0) return null;
   normalizeExpiredCooldowns(provider, accounts);
   const now = Date.now();
-  const sorted = [...accounts]
-    .filter((a) => isAvailableAccount(a, now) && a.email !== skipEmail)
-    .sort(compareAccountPriority);
+  const eligible = (a) => isAvailableAccount(a, now) && !(skipKey && poolAccountKey(a) === skipKey);
+  const sorted = [...accounts].filter(eligible).sort(compareAccountPriority);
   for (const c of sorted) {
     if (await ensureValidToken(provider, c)) return c;
-    console.error(`[aidevops] OAuth pool: skipping invalid ${provider} token for ${c.email}`);
+    console.error(`[aidevops] OAuth pool: skipping invalid ${provider} token for ${poolAccountLabel(c)}`);
   }
-  const fb = accounts.find((a) => isAvailableAccount(a, now) && a.email !== skipEmail);
+  const fb = accounts.find(eligible);
   if (fb && await ensureValidToken(provider, fb)) return fb;
   return null;
 }
@@ -148,8 +160,8 @@ async function selectPoolAccount(provider, skipEmail) {
 // Runtime-neutral selection seam used by OpenCode V2's request hooks. V1 keeps
 // using the client.auth.set adapters below; exposing selection separately keeps
 // credential policy independent from either SDK's request shape.
-export async function selectRuntimePoolAccount(provider, skipEmail) {
-  return selectPoolAccount(provider, skipEmail);
+export async function selectRuntimePoolAccount(provider, skipKey) {
+  return selectPoolAccount(provider, skipKey);
 }
 
 export async function selectOpenAIStartupAccount(skipEmail) {
@@ -183,9 +195,12 @@ export async function selectOpenAIRequestAccount(email) {
 // Token injection — inject selected account into provider auth
 // ---------------------------------------------------------------------------
 
-export async function injectPoolToken(client, skipEmail) {
-  const account = await selectPoolAccount("anthropic", skipEmail);
+export async function injectPoolToken(client, skipKey) {
+  const account = await selectPoolAccount("anthropic", skipKey);
   if (!account) return false;
+  // GH#36707: mark the env token as pool-derived so headless selection and
+  // pulse capacity do not treat it as independent static-key capacity.
+  process.env.AIDEVOPS_ANTHROPIC_API_KEY_SOURCE = "oauth-pool";
   process.env.ANTHROPIC_API_KEY = account.access;
   try {
     await client.auth.set({
@@ -193,20 +208,23 @@ export async function injectPoolToken(client, skipEmail) {
       body: { type: "oauth", refresh: account.refresh, access: account.access, expires: account.expires },
     });
   } catch { /* best-effort */ }
-  patchAccount("anthropic", account.email, { lastUsed: new Date().toISOString(), status: "active" });
-  console.error(`[aidevops] OAuth pool: injected token for ${account.email} into built-in anthropic provider`);
+  patchAccount("anthropic", account, { lastUsed: new Date().toISOString(), status: "active" });
+  console.error(`[aidevops] OAuth pool: injected token for ${poolAccountLabel(account)} into built-in anthropic provider`);
   return true;
 }
 
 export async function applyOpenAIPoolAccount(client, account) {
-  process.env.OPENAI_API_KEY = account.access;
-  process.env.AIDEVOPS_OPENAI_API_KEY_SOURCE = "oauth-pool";
   try {
-    await client.auth.set({
+    const result = await client.auth.set({
       path: { id: "openai" },
       body: { type: "oauth", refresh: account.refresh, access: account.access, expires: account.expires, accountId: account.accountId || "" },
     });
-  } catch { /* best-effort */ }
+    if (result?.error) return false;
+  } catch {
+    return false;
+  }
+  process.env.OPENAI_API_KEY = account.access;
+  process.env.AIDEVOPS_OPENAI_API_KEY_SOURCE = "oauth-pool";
   patchAccount("openai", account.email, { lastUsed: new Date().toISOString(), status: "active" });
   console.error(`[aidevops] OAuth pool: injected token for ${account.email} into built-in openai provider`);
   return account;
@@ -221,8 +239,7 @@ export async function rotateOpenAIPoolToken(client, skipEmail) {
 export async function injectOpenAIPoolToken(client, skipEmail) {
   const account = await selectOpenAIStartupAccount(skipEmail);
   if (!account) return false;
-  await applyOpenAIPoolAccount(client, account);
-  return true;
+  return Boolean(await applyOpenAIPoolAccount(client, account));
 }
 
 // ---------------------------------------------------------------------------

@@ -108,12 +108,20 @@ auth)
 			exit $?
 		fi
 		# gh api user --jq '.login'
+		if [[ "$2" == "graphql" && "$*" == *'viewer { login }'* ]]; then
+			if [[ "${STUB_GH_MODE:-online}" == "graphql-only" ]]; then
+				printf '%s\n' "${STUB_VIEWER_LOGIN:-testuser}"
+				exit 0
+			fi
+			printf 'discard-failed-viewer-output\n'
+			exit 1
+		fi
 		if [[ "$2" == "user" ]]; then
 			if [[ "${STUB_GH_MODE:-online}" == "noisy-user-failure" ]]; then
 				printf 'synthetic-noisy-login\n'
 				exit 1
 			fi
-			if [[ "${STUB_GH_MODE:-online}" == "offline" ]]; then
+			if [[ "${STUB_GH_MODE:-online}" == "offline" || "${STUB_GH_MODE:-online}" == "graphql-only" ]]; then
 				exit 1
 			fi
 			printf 'testuser\n'
@@ -167,6 +175,13 @@ auth)
 			if [[ "${STUB_PERMISSION_FAIL:-0}" == "1" ]]; then
 				printf 'HTTP/2.0 403 Forbidden\n\n{"message":"Forbidden"}\n'
 				exit 1
+			fi
+			if [[ -n "${STUB_PERMISSION_SEQ_FILE:-}" && -s "$STUB_PERMISSION_SEQ_FILE" ]]; then
+				seq_perm=$(head -n 1 "$STUB_PERMISSION_SEQ_FILE")
+				tail -n +2 "$STUB_PERMISSION_SEQ_FILE" >"${STUB_PERMISSION_SEQ_FILE}.tmp"
+				mv "${STUB_PERMISSION_SEQ_FILE}.tmp" "$STUB_PERMISSION_SEQ_FILE"
+				printf 'HTTP/2.0 200 OK\n\n{"permission":"%s"}\n' "$seq_perm"
+				exit 0
 			fi
 			printf 'HTTP/2.0 200 OK\n\n{"permission":"%s"}\n' "${STUB_PERMISSION:-admin}"
 			exit 0
@@ -623,6 +638,60 @@ fi
 
 export STUB_GH_MODE=online
 
+# GH#36036: exercise the public command with REST identity unavailable, then
+# require a distinguishable failure when neither authenticated identity works.
+fallback_stamp=$(_isc_stamp_path 88890 testuser/repo)
+: >"$STUB_LOG"
+fallback_out=$(STUB_GH_MODE=graphql-only STUB_ISSUE_ASSIGNEES="" \
+	"$HELPER_PATH" claim 88890 testuser/repo --implementing 2>&1)
+fallback_rc=$?
+if [[ "$fallback_rc" -eq 0 && -f "$fallback_stamp" ]] &&
+	jq -e '.user == "testuser"' "$fallback_stamp" >/dev/null &&
+	grep -q 'viewer { login }' "$STUB_LOG" &&
+	grep -q 'issue edit 88890 .*--add-assignee testuser' "$STUB_LOG" &&
+	grep -q 'issue edit 88890 .*--add-label status:claimed' "$STUB_LOG"; then
+	print_result "REST identity failure uses GraphQL viewer to apply implementing claim" 0
+else
+	print_result "REST identity failure uses GraphQL viewer to apply implementing claim" 1 "$fallback_out"
+fi
+
+for identity_mode in offline noisy-user-failure; do
+	: >"$STUB_LOG"
+	unresolved_stamp=$(_isc_stamp_path 88891 testuser/repo)
+	unresolved_out=$(STUB_GH_MODE="$identity_mode" \
+		"$HELPER_PATH" claim 88891 testuser/repo --implementing 2>&1)
+	unresolved_rc=$?
+	if [[ "$unresolved_rc" -eq 75 && ! -f "$unresolved_stamp" &&
+		"$unresolved_out" == *"claim NOT applied for #88891"* &&
+		"$unresolved_out" == *"a worker may pick it up"* &&
+		"$unresolved_out" == *"interactive-session-helper.sh claim 88891 testuser/repo --implementing"* ]] &&
+		! grep -q 'issue edit\|issue comment' "$STUB_LOG"; then
+		print_result "unresolved implementing identity ($identity_mode) returns 75 without writes" 0
+	else
+		print_result "unresolved implementing identity ($identity_mode) returns 75 without writes" 1 "$unresolved_out (rc=$unresolved_rc)"
+	fi
+done
+
+for viewer_login in null 'bad/login' 'two logins' '-leading' 'trailing-'; do
+	invalid_login=$(STUB_GH_MODE=graphql-only STUB_VIEWER_LOGIN="$viewer_login" _isc_current_user)
+	if [[ -z "$invalid_login" ]]; then
+		print_result "malformed GraphQL viewer rejected ($viewer_login)" 0
+	else
+		print_result "malformed GraphQL viewer rejected ($viewer_login)" 1 "$invalid_login"
+	fi
+done
+
+for legacy_command in lockdown unlock; do
+	: >"$STUB_LOG"
+	STUB_GH_MODE=offline "$HELPER_PATH" "$legacy_command" 88892 testuser/repo >/dev/null 2>&1
+	legacy_rc=$?
+	if [[ "$legacy_rc" -eq 0 ]] && ! grep -q 'issue edit\|issue comment' "$STUB_LOG"; then
+		print_result "offline $legacy_command keeps exit 0 without writes" 0
+	else
+		print_result "offline $legacy_command keeps exit 0 without writes" 1 "rc=$legacy_rc"
+	fi
+done
+
 # =============================================================================
 # Test 8 — help subcommand
 # =============================================================================
@@ -723,6 +792,29 @@ if grep -q 'issue edit 56001' "$STUB_LOG" && grep -q 'add-label status:claimed' 
 else
 	print_result "GH#18786: claim applies status:claimed when absent" 1 \
 		"(stub log: $(tr '\n' '|' <"$STUB_LOG"))"
+fi
+
+# --- t18895: live sessions on the issue are printed, then the claim proceeds ---
+: >"$STUB_LOG"
+bus_stub="${STUB_BIN}/session-bus-stub"
+cat >"$bus_stub" <<'SH'
+#!/usr/bin/env bash
+printf 'bus %s\n' "$*" >>"${STUB_LOG:-/dev/null}"
+printf 'regress-56014-worker [worker] · busy · #56014 · regress/test@feature/x · 9s ago\n'
+SH
+chmod +x "$bus_stub"
+bus_claim_out=$(AIDEVOPS_SESSION_BUS_HELPER="$bus_stub" STUB_ISSUE_HAS_IN_REVIEW=0 STUB_GH_MODE=online \
+	"$HELPER_PATH" claim 56014 regress/test --worktree /tmp/regress-wt 2>&1)
+bus_claim_rc=$?
+if [[ $bus_claim_rc -eq 0 ]] &&
+	grep -q 'other live session(s) already on #56014' <<<"$bus_claim_out" &&
+	grep -q 'regress-56014-worker \[worker\]' <<<"$bus_claim_out" &&
+	grep -qxF 'bus who #56014 --repo regress/test' "$STUB_LOG" &&
+	grep -q 'issue edit 56014 .*add-label status:claimed' "$STUB_LOG"; then
+	print_result "t18895: claim warns about live sessions on the issue and still claims" 0
+else
+	print_result "t18895: claim warns about live sessions on the issue and still claims" 1 \
+		"(rc=$bus_claim_rc out=${bus_claim_out:0:200} log=$(tr '\n' '|' <"$STUB_LOG"))"
 fi
 
 # --- Case (d): idempotent path — label already present, no transition ---
@@ -1280,7 +1372,7 @@ external_stamp=$(_isc_stamp_path 61001 external/repo)
 rm -f "$external_stamp" >/dev/null 2>&1 || true
 : >"$STUB_LOG"
 external_out=$(STUB_PERMISSION=read STUB_ISSUE_HAS_IN_REVIEW=0 STUB_GH_MODE=online \
-	_isc_cmd_claim 61001 external/repo --worktree /tmp/external-wt 2>&1)
+	_isc_cmd_claim 61001 external/repo --implementing --worktree /tmp/external-wt 2>&1)
 external_rc=$?
 
 if [[ $external_rc -eq 0 ]] &&
@@ -1308,7 +1400,9 @@ lookup_fail_rc=$?
 if [[ $lookup_fail_rc -eq 0 ]] &&
 	[[ ! -f "$lookup_fail_stamp" ]] &&
 	! grep -q 'issue edit 61002' "$STUB_LOG" &&
-	printf '%s' "$lookup_fail_out" | grep -q 'not a maintainer-equivalent collaborator'; then
+	grep -q 'collaborator permission lookup failed' <<<"$lookup_fail_out" &&
+	! grep -q 'not a maintainer-equivalent collaborator' <<<"$lookup_fail_out" &&
+	! grep -q 'external repos should receive a PR' <<<"$lookup_fail_out"; then
 	print_result "permission lookup failure skips public claim lifecycle" 0
 else
 	lookup_fail_log=$(tr '\n' '|' <"$STUB_LOG")
@@ -1322,14 +1416,58 @@ deferred_stamp=$(_isc_stamp_path 61003 external/deferred)
 rm -f "$deferred_stamp" >/dev/null 2>&1 || true
 : >"$STUB_LOG"
 deferred_out=$(STUB_PERMISSION_FAIL=75 STUB_ISSUE_HAS_IN_REVIEW=0 STUB_GH_MODE=online \
-	_isc_cmd_claim 61003 external/deferred --worktree /tmp/external-wt 2>&1)
+	_isc_cmd_claim 61003 external/deferred --implementing --worktree /tmp/external-wt 2>&1)
 deferred_rc=$?
-if [[ "$deferred_rc" -eq 0 && ! -f "$deferred_stamp" && "$deferred_out" == *"deferred"* &&
+if [[ "$deferred_rc" -eq 75 && ! -f "$deferred_stamp" && "$deferred_out" == *"deferred"* &&
 	"$deferred_out" != *"not a maintainer-equivalent collaborator"* ]] &&
 	! grep -q 'issue edit 61003\|issue comment 61003' "$STUB_LOG"; then
 	print_result "deferred permission claim reports deferral without lifecycle writes" 0
 else
 	print_result "deferred permission claim reports deferral without lifecycle writes" 1 "$deferred_out"
+fi
+
+# GH#38798: a first "none" verdict on an implementing claim is re-verified once
+# with a fresh read; a confirmed admin verdict applies the claim, while a
+# repeated "none" stays an unapplied claim (rc 75 on an auto-dispatch issue).
+seq_file="${AIDEVOPS_TEMP_DIR:-${TMPDIR:-/tmp}}/perm-seq-38798.$$"
+printf 'none\nadmin\n' >"$seq_file"
+: >"$STUB_LOG"
+recheck_out=$(STUB_PERMISSION_SEQ_FILE="$seq_file" STUB_ISSUE_HAS_IN_REVIEW=0 STUB_GH_MODE=online \
+	_isc_cmd_claim 61004 recheck/repo --implementing --worktree /tmp/recheck-wt 2>&1)
+recheck_rc=$?
+if [[ "$recheck_rc" -eq 0 && "$recheck_out" == *"fresh permission re-check confirmed"* ]] &&
+	grep -q 'issue edit 61004\|issue comment 61004' "$STUB_LOG"; then
+	print_result "GH#38798: none then admin re-check applies implementing claim" 0
+else
+	print_result "GH#38798: none then admin re-check applies implementing claim" 1 "(rc=$recheck_rc, out=${recheck_out:0:300})"
+fi
+
+# GH#38946: the same fresh re-check applies to a plain (non --implementing)
+# claim, so a stale non-write verdict cannot skip a repository admin.
+printf 'none\nadmin\n' >"$seq_file"
+: >"$STUB_LOG"
+plain_recheck_out=$(STUB_PERMISSION_SEQ_FILE="$seq_file" STUB_ISSUE_HAS_IN_REVIEW=0 STUB_GH_MODE=online \
+	_isc_cmd_claim 61006 recheck/plain --worktree /tmp/recheck-wt 2>&1)
+plain_recheck_rc=$?
+if [[ "$plain_recheck_rc" -eq 0 && "$plain_recheck_out" == *"fresh permission re-check confirmed"* ]] &&
+	grep -q 'issue edit 61006\|issue comment 61006' "$STUB_LOG"; then
+	print_result "GH#38946: none then admin re-check applies plain claim" 0
+else
+	print_result "GH#38946: none then admin re-check applies plain claim" 1 "(rc=$plain_recheck_rc, out=${plain_recheck_out:0:300})"
+fi
+
+printf 'none\nnone\n' >"$seq_file"
+: >"$STUB_LOG"
+norecheck_out=$(STUB_PERMISSION_SEQ_FILE="$seq_file" STUB_ISSUE_HAS_AUTO_DISPATCH=1 STUB_ISSUE_HAS_IN_REVIEW=0 STUB_GH_MODE=online \
+	_isc_cmd_claim 61005 recheck/repo2 --implementing --worktree /tmp/recheck-wt 2>&1)
+norecheck_rc=$?
+rm -f "$seq_file" "${seq_file}.tmp"
+if [[ "$norecheck_rc" -eq 75 && "$norecheck_out" == *"claim NOT applied"* &&
+	"$norecheck_out" == *"http=200 reason=ok"* ]] &&
+	! grep -q 'issue edit 61005' "$STUB_LOG"; then
+	print_result "GH#38798: confirmed none on auto-dispatch exits 75 with http/reason" 0
+else
+	print_result "GH#38798: confirmed none on auto-dispatch exits 75 with http/reason" 1 "(rc=$norecheck_rc, out=${norecheck_out:0:400})"
 fi
 
 # =============================================================================

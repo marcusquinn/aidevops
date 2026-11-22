@@ -16,7 +16,24 @@ source "$HELPER"
 
 cleanup() {
 	local cleanup_pid=""
+	local cleanup_pid_file=""
+	local cleanup_pgid=""
+	local self_pgid=""
+	self_pgid="$(ps -o pgid= -p "$$" 2>/dev/null | tr -d '[:space:]')" || self_pgid=""
 	for cleanup_pid in $SURVIVOR_PIDS; do
+		kill -KILL "$cleanup_pid" 2>/dev/null || true
+	done
+	# Independent of test progress: kill every fixture PID (and its group)
+	# recorded on disk, even if the run was interrupted before the PID was
+	# added to SURVIVOR_PIDS.
+	for cleanup_pid_file in "$TEST_ROOT"/*.pid; do
+		[[ -f "$cleanup_pid_file" ]] || continue
+		cleanup_pid="$(tr -d '[:space:]' <"$cleanup_pid_file" 2>/dev/null)" || cleanup_pid=""
+		[[ "$cleanup_pid" =~ ^[0-9]+$ ]] || continue
+		cleanup_pgid="$(ps -o pgid= -p "$cleanup_pid" 2>/dev/null | tr -d '[:space:]')" || cleanup_pgid=""
+		if [[ -n "$cleanup_pgid" && "$cleanup_pgid" == "$cleanup_pid" && "$cleanup_pgid" != "$self_pgid" ]]; then
+			kill -KILL -- "-${cleanup_pid}" 2>/dev/null || true
+		fi
 		kill -KILL "$cleanup_pid" 2>/dev/null || true
 	done
 	rm -rf "$TEST_ROOT"
@@ -80,7 +97,8 @@ fi
 setsid bash --norc --noprofile -c '
 	printf "%s\n" "$$" >"$1"
 	trap "" TERM
-	while :; do sleep 1; done
+	# Lifetime cap so a SIGKILLed test runner cannot leak this forever.
+	while [[ "$SECONDS" -lt 60 ]]; do sleep 1; done
 ' nested-session "$pid_file" &
 if [[ "$mode" == "timeout" ]]; then
 	wait
@@ -119,12 +137,17 @@ test_primary_poll_disappearance_race() {
 	command sleep 30 &
 	target_pid=$!
 	SURVIVOR_PIDS="${SURVIVOR_PIDS} ${target_pid}"
-	# Reproduce a target disappearing between kill -0 and ps.
-	ps() { return 1; }
-	_sandbox_poll_child 10800 "$target_pid" "${TEST_ROOT}/race.tsv" &
+	# Reproduce a target disappearing between kill -0 and the state read.
+	# The mock lives only in the background subshell.
+	(
+		_sandbox_child_state() {
+			_SANDBOX_CHILD_STATE=""
+			return 0
+		}
+		_sandbox_poll_child 10800 "$target_pid" "${TEST_ROOT}/race.tsv"
+	) &
 	poll_pid=$!
 	SURVIVOR_PIDS="${SURVIVOR_PIDS} ${poll_pid}"
-	unset -f ps
 	if wait_for_process_exit "$poll_pid" && wait "$poll_pid"; then
 		record_result "primary poll exits on empty process state" 0
 	else
@@ -350,6 +373,9 @@ test_missing_self_pgid_avoids_group_signal() {
 
 main() {
 	trap cleanup EXIT
+	trap 'cleanup; exit 130' INT
+	trap 'cleanup; exit 143' TERM
+	trap 'cleanup; exit 129' HUP
 	if ! command -v setsid >/dev/null 2>&1; then
 		printf 'SKIP setsid is required for nested process-group fixture\n'
 		return 0

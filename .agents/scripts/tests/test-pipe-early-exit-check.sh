@@ -78,6 +78,41 @@ printf x | grep -q x
 EOF
 expect "ignores file without pipefail" 0 "$TMP/nopf.sh"
 
+# 4b. source-guarded library inherits the caller's pipefail -> judged (GH#36235)
+cat >"$TMP/lib.sh" <<'EOF'
+#!/usr/bin/env bash
+[[ -n "${_FIXTURE_LIB_LOADED:-}" ]] && return 0
+_FIXTURE_LIB_LOADED=1
+f() {
+	printf '%s' "$body" | grep -qF "$marker"
+	return $?
+}
+EOF
+expect "flags source-guarded library without pipefail" 1 "$TMP/lib.sh"
+if [[ "$LAST_OUT" != *"lib.sh:5:"* ]]; then
+	printf 'FAIL: library output lacks file:line\n%s\n' "$LAST_OUT"
+	FAILED=$((FAILED + 1))
+fi
+
+# 4c. guarded library using a here-string passes
+cat >"$TMP/libok.sh" <<'EOF'
+[[ -n "${_FIXTURE_LIB_OK_LOADED:-}" ]] && return 0
+f() {
+	grep -qF -- "$marker" <<<"$body"
+	return $?
+}
+EOF
+expect "allows here-string in source-guarded library" 0 "$TMP/libok.sh"
+
+# 4d. an indented guard-like line inside a function is not the top-level guard
+cat >"$TMP/indented.sh" <<'EOF'
+f() {
+	[[ -n "${_X_LOADED:-}" ]] && return 0
+	printf x | grep -q x
+}
+EOF
+expect "ignores indented guard-like line" 0 "$TMP/indented.sh"
+
 # 5. disable directive
 cat >"$TMP/dis.sh" <<'EOF'
 # pipe-early-exit-check:disable

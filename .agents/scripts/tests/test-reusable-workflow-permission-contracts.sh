@@ -8,7 +8,29 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)" || exit 1
 
-python3 - "$REPO_ROOT" <<'PYEOF'
+# Select the first python3 that can import PyYAML. Homebrew python3 often lacks
+# it while the macOS system interpreter has it (GH#39344). A missing parser
+# fails loudly: a skip that exits 0 would report unchecked contracts as passing.
+select_yaml_python() {
+	local candidate=""
+	local tabby_python="${HOME}/.aidevops/.agent-workspace/python-env/tabby/bin/python3"
+	for candidate in "${AIDEVOPS_TEST_PYTHON:-}" python3 /usr/bin/python3 "$tabby_python"; do
+		[[ -n "$candidate" ]] || continue
+		command -v "$candidate" >/dev/null 2>&1 || continue
+		if "$candidate" -c 'import yaml' >/dev/null 2>&1; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+	done
+	return 1
+}
+
+if ! PYTHON_BIN="$(select_yaml_python)"; then
+	printf 'FAIL: no python3 with PyYAML found; install PyYAML or set AIDEVOPS_TEST_PYTHON\n' >&2
+	exit 1
+fi
+
+"$PYTHON_BIN" - "$REPO_ROOT" <<'PYEOF'
 from __future__ import annotations
 
 import pathlib
@@ -209,7 +231,13 @@ def names_rollout(body: str, name: str) -> bool:
         try:
             words = shlex.split(line.replace("`", " "))
         except ValueError:
-            continue
+            # Ordinary prose can contain unmatched quotes (for example repo's).
+            # Preserve quoted single-token arguments without executing shell input.
+            words = [
+                word[1:-1] if len(word) >= 2 and word[0] in "\"'" and word[-1] == word[0]
+                else word
+                for word in line.replace("`", " ").split()
+            ]
         for index, word in enumerate(words):
             if pathlib.PurePosixPath(word).name not in (
                 "sync-workflows", "sync-workflows-helper.sh"
@@ -233,7 +261,10 @@ def rollout_failures(name: str, callers: list[str], changed: set[str], body: str
     if not names_rollout(body, name):
         failures.append(
             f"{name}: permission increase requires a named rollout in the PR body: "
-            f"aidevops sync-workflows --apply --workflow {name}"
+            f"aidevops sync-workflows --apply --workflow {name}. "
+            "Put the command on its own line. After editing the PR body, close/reopen "
+            "the PR or push a new commit to re-run the check; rerunning an existing "
+            "run uses the original PR body."
         )
     return failures
 
@@ -241,6 +272,35 @@ def rollout_failures(name: str, callers: list[str], changed: set[str], body: str
 def assert_rollout_contract() -> None:
     caller = ".agents/templates/workflows/fixture-caller.yml"
     command = "`aidevops sync-workflows --apply --workflow fixture`"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        reusable = pathlib.Path(temp_dir) / "fixture-reusable.yml"
+        existing_job = (
+            "jobs:\n  existing:\n    permissions:\n"
+            "      contents: write\n      actions: read\n    steps: []\n"
+        )
+        reusable.write_text(existing_job, encoding="utf-8")
+        before = reusable_permission_union(reusable)
+        for extra_permissions in (
+            "      contents: read\n",
+            "      contents: write\n      actions: read\n",
+        ):
+            reusable.write_text(
+                existing_job + "  added:\n    permissions:\n" + extra_permissions
+                + "    steps: []\n", encoding="utf-8",
+            )
+            after = reusable_permission_union(reusable)
+            assert before == after
+            assert not permission_increased(before, after)
+        for extra_permissions in ("      actions: write\n", "      issues: read\n"):
+            reusable.write_text(
+                existing_job + "  added:\n    permissions:\n" + extra_permissions
+                + "    steps: []\n", encoding="utf-8",
+            )
+            after = reusable_permission_union(reusable)
+            assert permission_increased(before, after)
+            failures = rollout_failures("fixture", [caller], set(), "none")
+            assert len(failures) == 2  # Both caller update and named rollout are required.
+            assert not rollout_failures("fixture", [caller], {caller}, command)
     assert permission_increased({"contents": "read"}, {"contents": "write"})
     assert permission_increased({}, {"actions": "read"})
     assert not permission_increased({"contents": "write"}, {"contents": "read"})
@@ -250,6 +310,18 @@ def assert_rollout_contract() -> None:
     assert rollout_failures("fixture", [caller], {caller}, command.replace("fixture", "other"))
     assert rollout_failures("fixture", [caller], {caller}, command.replace("--apply", "--json"))
     assert names_rollout("sync-workflows-helper.sh --workflow fixture --apply", "fixture")
+    prose_command = f"each repo's main: {command}"
+    assert names_rollout(prose_command, "fixture")
+    assert not rollout_failures("fixture", [caller], {caller}, prose_command)
+    assert not names_rollout(prose_command.replace("--workflow fixture", "--workflow other"), "fixture")
+    assert not names_rollout(prose_command.replace("--apply", "--json"), "fixture")
+    assert names_rollout('aidevops sync-workflows --apply --workflow "fixture"', "fixture")
+    for quote in ('"', "'"):
+        quoted_prose = prose_command.replace("workflow fixture", f"workflow {quote}fixture{quote}")
+        assert names_rollout(quoted_prose, "fixture")
+        assert not rollout_failures("fixture", [caller], {caller}, quoted_prose)
+        assert not names_rollout(quoted_prose.replace("fixture", "other"), "fixture")
+        assert not names_rollout(quoted_prose.replace("--apply", "--json"), "fixture")
 
 
 def check_permission_rollouts() -> list[str]:
@@ -288,21 +360,8 @@ def check_permission_rollouts() -> list[str]:
             continue  # New workflows have no installed callers to migrate.
         before = reusable_permission_union(path, revision=base)
         after = reusable_permission_union(path, revision=head)
-        increased = permission_increased(before, after)
-        # A job can gain permissions already used by another job, leaving the
-        # overall union unchanged. That still requires an explicit rollout plan.
-        old = load_mapping(path, base)
-        new = load_mapping(path, head)
-        for job_name, job in new["jobs"].items():
-            old_job = old["jobs"].get(job_name, {})
-            old_permissions = explicit_permissions(
-                old_job.get("permissions", old.get("permissions", {})), relative
-            )
-            new_permissions = explicit_permissions(
-                job.get("permissions", new.get("permissions", {})), relative
-            )
-            increased = increased or permission_increased(old_permissions, new_permissions)
-        if not increased:
+        # Installed callers already grant the union, so only union growth needs a rollout.
+        if not permission_increased(before, after):
             continue
         callers = []
         for caller in templates:

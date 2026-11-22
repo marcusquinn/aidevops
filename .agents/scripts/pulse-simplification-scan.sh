@@ -160,6 +160,89 @@ _complexity_recent_debt_closures() {
 	return 0
 }
 
+# Close one recovered review, preserving comment idempotency if closing fails.
+_complexity_close_recovered_review() {
+	local slug="$1"
+	local issue_number="$2"
+	local rationale="$3"
+	local commented=""
+	local marker="<!-- aidevops:complexity-stall-recovered -->"
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]]; then
+		echo "[pulse-wrapper] Complexity LLM sweep: invalid recovered stall review issue number — skipping" >>"$LOGFILE"
+		return 0
+	fi
+	if ! commented=$(gh issue view "$issue_number" --repo "$slug" --json comments \
+		--jq '[.comments[].body | contains("<!-- aidevops:complexity-stall-recovered -->")] | any' 2>/dev/null); then
+		echo "[pulse-wrapper] Complexity LLM sweep: comment lookup failed for recovered stall review #${issue_number} — skipping" >>"$LOGFILE"
+		return 0
+	fi
+	if [[ "$commented" != "true" && "$commented" != "false" ]]; then
+		echo "[pulse-wrapper] Complexity LLM sweep: invalid comment lookup result for recovered stall review #${issue_number} — skipping" >>"$LOGFILE"
+		return 0
+	fi
+	# #aidevops:trust-boundary — public comments do not prove write authority.
+	if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1; then
+		echo "[pulse-wrapper] Complexity LLM sweep: write-authority helper unavailable for recovered stall review #${issue_number} — skipping" >>"$LOGFILE"
+		return 0
+	fi
+	if ! repo_allows_pulse_write_actions "$slug"; then
+		echo "[pulse-wrapper] Complexity LLM sweep: write authority denied or unverified for recovered stall review #${issue_number} — skipping" >>"$LOGFILE"
+		return 0
+	fi
+	if [[ "$commented" == "false" ]]; then
+		if ! gh issue comment "$issue_number" --repo "$slug" \
+			--body "${marker}
+
+${rationale} The stall premise recovered; closing this automated review as not planned." >/dev/null 2>&1; then
+			echo "[pulse-wrapper] Complexity LLM sweep: comment failed for recovered stall review #${issue_number} — skipping close" >>"$LOGFILE"
+			return 0
+		fi
+	fi
+	if ! gh issue close "$issue_number" --repo "$slug" --reason 'not planned' >/dev/null 2>&1; then
+		echo "[pulse-wrapper] Complexity LLM sweep: close failed for recovered stall review #${issue_number} — will retry on next recovery check" >>"$LOGFILE"
+		return 0
+	fi
+	echo "[pulse-wrapper] Complexity LLM sweep: closed recovered stall review #${issue_number}" >>"$LOGFILE"
+	return 0
+}
+
+# Find open stall reviews by generator metadata, never by title alone.
+# GH#37554: stall reviews are dispatchable (no creation hold), so recovery must
+# not depend on hold-for-review. Reviews a worker is actively advancing are left
+# to their own lifecycle.
+_complexity_close_recovered_sweeps() {
+	local slug="$1"
+	local rationale="$2"
+	local reviews="" numbers="" issue_number=""
+	reviews=$(gh_issue_list --repo "$slug" --state open --label quality-debt \
+		--search 'in:title "simplification debt stalled"' \
+		--limit 100 --json number,body,labels 2>/dev/null) || return 0
+	numbers=$(printf '%s' "$reviews" | jq -r '.[] |
+		select((.body // "") | test("<!--\\s*aidevops:generator=complexity-stall-sweep(\\s|-->)")) |
+		select([(.labels // [])[].name] |
+			any(. == "status:queued" or . == "status:in-progress" or . == "status:in-review" or . == "status:claimed") | not) |
+		.number' 2>/dev/null) || return 0
+	while IFS= read -r issue_number; do
+		_complexity_close_recovered_review "$slug" "$issue_number" "$rationale"
+	done <<<"$numbers"
+	return 0
+}
+
+# Check the sweep window independently of live debt recovery.
+_complexity_sweep_interval_elapsed() {
+	local now_epoch="$1"
+	local sweep_interval="$2"
+	local last_sweep=0
+	if [[ -f "$COMPLEXITY_LLM_SWEEP_LAST_RUN" ]]; then
+		last_sweep=$(cat "$COMPLEXITY_LLM_SWEEP_LAST_RUN" 2>/dev/null || echo "0")
+		[[ "$last_sweep" =~ ^[0-9]+$ ]] || last_sweep=0
+		if [[ $((now_epoch - last_sweep)) -lt "$sweep_interval" ]]; then
+			return 1
+		fi
+	fi
+	return 0
+}
+
 # Check if the daily LLM sweep is due and debt is stalled.
 # The LLM sweep fires when:
 #   1. COMPLEXITY_LLM_SWEEP_INTERVAL has elapsed since last sweep, AND
@@ -172,16 +255,7 @@ _complexity_llm_sweep_due() {
 	local aidevops_slug="${2:-}"
 	local sweep_interval="${COMPLEXITY_LLM_SWEEP_INTERVAL:-0}"
 
-	# Interval guard
-	if [[ -f "$COMPLEXITY_LLM_SWEEP_LAST_RUN" ]]; then
-		local last_sweep
-		last_sweep=$(cat "$COMPLEXITY_LLM_SWEEP_LAST_RUN" 2>/dev/null || echo "0")
-		[[ "$last_sweep" =~ ^[0-9]+$ ]] || last_sweep=0
-		local elapsed=$((now_epoch - last_sweep))
-		if [[ "$elapsed" -lt "$sweep_interval" ]]; then
-			return 1
-		fi
-	fi
+	_complexity_sweep_interval_elapsed "$now_epoch" "$sweep_interval" || return 1
 
 	# Fetch current open debt count
 	local current_count=""
@@ -203,6 +277,7 @@ _complexity_llm_sweep_due() {
 	# No sweep needed when debt is already zero — nothing to act on (GH#17422)
 	if [[ "$current_count" -eq 0 ]]; then
 		echo "[pulse-wrapper] Complexity LLM sweep: debt is zero, no sweep required" >>"$LOGFILE"
+		_complexity_close_recovered_sweeps "$aidevops_slug" "No open function-complexity-debt issues remain."
 		printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
 		return 1
 	fi
@@ -211,6 +286,7 @@ _complexity_llm_sweep_due() {
 	if [[ -n "$prev_count" && "$prev_count" =~ ^[0-9]+$ ]]; then
 		if [[ "$current_count" -lt "$prev_count" ]]; then
 			echo "[pulse-wrapper] Complexity LLM sweep: debt reduced (${prev_count} → ${current_count}) — sweep not needed" >>"$LOGFILE"
+			_complexity_close_recovered_sweeps "$aidevops_slug" "Open function-complexity-debt decreased from ${prev_count} to ${current_count}."
 			printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
 			return 1
 		fi
@@ -224,6 +300,7 @@ _complexity_llm_sweep_due() {
 	[[ "$recent_closures" =~ ^[0-9]+$ ]] || recent_closures="0"
 	if [[ "$recent_closures" -gt 0 ]]; then
 		echo "[pulse-wrapper] Complexity LLM sweep: debt at ${current_count} but ${recent_closures} issue(s) closed in the last $((sweep_interval / 3600))h — active throughput, sweep not needed" >>"$LOGFILE"
+		_complexity_close_recovered_sweeps "$aidevops_slug" "Throughput resumed: ${recent_closures} function-complexity-debt issue(s) closed in the last $((sweep_interval / 3600))h."
 		printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
 		return 1
 	fi
@@ -248,6 +325,7 @@ _complexity_llm_sweep_due() {
 	fi
 	if [[ "$actionable_count" =~ ^[0-9]+$ && "$dispatched_count" =~ ^[0-9]+$ && "$actionable_count" -gt 0 && "$dispatched_count" -ge "$actionable_count" ]]; then
 		echo "[pulse-wrapper] Complexity LLM sweep: all ${actionable_count} debt issues are dispatched — sweep not needed" >>"$LOGFILE"
+		_complexity_close_recovered_sweeps "$aidevops_slug" "All ${actionable_count} remaining function-complexity-debt issues are advancing through dispatch or review."
 		printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
 		return 1
 	fi
@@ -256,14 +334,10 @@ _complexity_llm_sweep_due() {
 	return 0
 }
 
-# Run the daily LLM sweep: create a GitHub issue asking the LLM to review
-# why simplification debt is stalled and suggest approach adjustments.
-# Arguments: $1 - aidevops_slug, $2 - now_epoch, $3 - maintainer
-# Returns: 0 always (best-effort)
-_complexity_run_llm_sweep() {
+# Return success when an existing review suppresses creation.
+_complexity_sweep_already_open() {
 	local aidevops_slug="$1"
 	local now_epoch="$2"
-	local maintainer="$3"
 
 	# Dedup: check if an open sweep issue already exists (t1855).
 	# Both sweep code paths use different title patterns — check both. Stall
@@ -276,10 +350,25 @@ _complexity_run_llm_sweep() {
 		--json number --jq 'length' 2>/dev/null) || sweep_exists="0"
 	[[ "$sweep_exists" =~ ^[0-9]+$ ]] || sweep_exists="0"
 	if [[ "${sweep_exists:-0}" -gt 0 ]]; then
+		# Recheck live recovery before dedup suppresses another sweep. A still
+		# stalled premise never reaches the closure paths above.
+		_complexity_llm_sweep_due "$now_epoch" "$aidevops_slug" || true
 		echo "[pulse-wrapper] Complexity LLM sweep: skipping — open stall issue already exists" >>"$LOGFILE"
 		printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
 		return 0
 	fi
+	return 1
+}
+
+# Run the daily LLM sweep: create a GitHub issue asking the LLM to review
+# why simplification debt is stalled and suggest approach adjustments.
+# Arguments: $1 - aidevops_slug, $2 - now_epoch, $3 - maintainer
+# Returns: 0 always (best-effort)
+_complexity_run_llm_sweep() {
+	local aidevops_slug="$1"
+	local now_epoch="$2"
+	local maintainer="$3"
+	_complexity_sweep_already_open "$aidevops_slug" "$now_epoch" && return 0
 
 	local current_count=""
 	if [[ -f "$COMPLEXITY_DEBT_COUNT_FILE" ]]; then
@@ -299,7 +388,7 @@ The simplification debt count has not decreased in the last $((${COMPLEXITY_LLM_
 
 1. Are the open function-complexity-debt issues actionable? Check for issues that are blocked, stale, or need maintainer review.
 2. Are workers dispatching on function-complexity-debt issues? Check recent pulse logs for dispatch activity.
-3. Is the open debt cap (500) or the local worktree cap (\`AIDEVOPS_MAX_WORKTREES\`, default 200) being hit? Check pulse logs for \`local_capacity_gate\` and verify cleanup liveness before changing either safety cap.
+3. Is the open debt cap (500) or the local worktree cap (\`AIDEVOPS_MAX_WORKTREES\`, default 1000) being hit? Check pulse logs for \`local_capacity_gate\`; fix cleanup liveness rather than lowering either cap or throttling dispatch.
 4. Are there systemic blockers (e.g., all remaining issues require architectural decisions)?
 
 ### Suggested actions
@@ -336,8 +425,9 @@ This is an automated stall-detection sweep. The LLM should review the actual iss
 		--tokens 0 --time "$_sweep_elapsed" --session-type routine 2>/dev/null || true)
 	sweep_body="${sweep_body}${sig_footer}"
 
-	# Non-maintainer admins receive hold-for-review; NMR is reserved for
-	# external-author trust gates (GH#16786/GH#29394).
+	# Only an unverified creator receives hold-for-review; verified admins
+	# dispatch directly (GH#37554). NMR is reserved for external-author trust
+	# gates (GH#16786/GH#29394).
 	local sweep_review_label=""
 	if [[ "${_COMPLEXITY_SCAN_SKIP_REVIEW_GATE:-false}" != "true" ]]; then
 		sweep_review_label="--label hold-for-review"
@@ -349,9 +439,13 @@ This is an automated stall-detection sweep. The LLM should review the actual iss
 	# A stall review is quality-debt meta work, not a function violation. Giving
 	# it the function-complexity-debt label would inflate the open debt count and
 	# make closing the review look like real simplification throughput.
+	# GH#37554: explicit auto-dispatch + origin:worker. A session-inferred
+	# origin:interactive without auto-dispatch reads as a live interactive claim
+	# (dispatch-dedup-assignment.sh) and strands the review undispatched.
 	if gh_create_issue --repo "$aidevops_slug" \
 		--title "perf: simplification debt stalled — LLM sweep needed ($(date -u +%Y-%m-%d))" \
-		--label "quality-debt" $sweep_review_label --label "tier:thinking" --label "worker-ready" \
+		--label "quality-debt" $sweep_review_label --label "auto-dispatch" --label "origin:worker" \
+		--label "tier:thinking" --label "worker-ready" \
 		--body "$sweep_body" >/dev/null 2>&1; then
 		echo "[pulse-wrapper] Complexity LLM sweep: created stall-review issue" >>"$LOGFILE"
 	else
@@ -374,7 +468,7 @@ _complexity_scan_find_repo() {
 	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
 		aidevops_path=$(jq -r --arg slug "$aidevops_slug" \
 			'.initialized_repos[] | select(.slug == $slug) | .path' \
-			"$repos_json" 2>/dev/null | head -n 1)
+			"$repos_json" 2>/dev/null | sed -n '1p')
 	fi
 	if [[ -z "$aidevops_path" || "$aidevops_path" == "null" || ! -d "$aidevops_path" ]]; then
 		echo "[pulse-wrapper] Complexity scan: aidevops repo path not found — skipping" >>"$LOGFILE"
@@ -565,40 +659,128 @@ _complexity_scan_check_open_cap() {
 _complexity_scan_permission_gate() {
 	local aidevops_slug="$1"
 
-	# Permission gate: only admin users may create simplification issues.
-	# write/maintain collaborators are excluded — they could otherwise use
-	# bot-created function-complexity-debt issues to bypass the maintainer assignee
-	# gate (GH#16786, GH#18197). On personal repos, admin = repo owner only.
-	local current_user
-	current_user=$(gh api user --jq '.login' 2>/dev/null) || current_user=""
-	if [[ -n "$current_user" ]]; then
-		local perm_level
-		# #aidevops:trust-boundary — simplification issue creation requires
-		# confirmed admin access; permission lookup failures skip explicitly.
-		if ! _gh_collaborator_permission_lookup "$aidevops_slug" "$current_user" perm_level; then
-			echo "[pulse-wrapper] Complexity scan: skipped — permission check failed for user '$current_user' on $aidevops_slug (HTTP ${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-unknown})" >>"$LOGFILE"
-			return 1
-		fi
-		case "$perm_level" in
-		admin) ;; # allowed — repo owner/admin only
-		*)
-			echo "[pulse-wrapper] Complexity scan: skipped — user '$current_user' has '$perm_level' permission on $aidevops_slug (need admin)" >>"$LOGFILE"
-			return 1
-			;;
-		esac
+	# Permission gate: only admin users run the simplification scan, which keeps
+	# one scanner role per repo (GH#16786, GH#18197). On personal repos,
+	# admin = repo owner only.
+	# #aidevops:trust-boundary — identity and permission come from the same
+	# pinned credential and fail closed. GH#37554: a bare `gh api user` that
+	# resolved empty used to bypass this check entirely, so a write-collaborator
+	# pulse created issues held for a review nobody owned; debt stalled and the
+	# stall review was held too.
+	_COMPLEXITY_SCAN_SKIP_REVIEW_GATE=false
+	if ! declare -F _gh_current_user_allows_repo_write >/dev/null 2>&1; then
+		echo "[pulse-wrapper] Complexity scan: skipped — write-authority helper unavailable for $aidevops_slug" >>"$LOGFILE"
+		return 1
+	fi
+	if ! _gh_current_user_allows_repo_write "$aidevops_slug"; then
+		echo "[pulse-wrapper] Complexity scan: skipped — creator authority unverified for '${AIDEVOPS_GH_WRITE_PERMISSION_USER:-unknown}' on $aidevops_slug (${AIDEVOPS_GH_WRITE_PERMISSION_REASON:-unknown})" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ "${AIDEVOPS_GH_WRITE_PERMISSION_LEVEL:-}" != admin ]]; then
+		echo "[pulse-wrapper] Complexity scan: skipped — user '${AIDEVOPS_GH_WRITE_PERMISSION_USER:-unknown}' has '${AIDEVOPS_GH_WRITE_PERMISSION_LEVEL:-unknown}' permission on $aidevops_slug (need admin)" >>"$LOGFILE"
+		return 1
 	fi
 
-	# When the authenticated user IS the configured maintainer, skip the explicit
-	# hold — the standard auto-dispatch + PR review flow is sufficient (GH#16786).
-	local maintainer_from_config
-	maintainer_from_config=$(jq -r --arg slug "$aidevops_slug" \
-		'.initialized_repos[] | select(.slug == $slug) | .maintainer // empty' \
-		"$REPOS_JSON" 2>/dev/null)
-	[[ -z "$maintainer_from_config" ]] && maintainer_from_config=$(printf '%s' "$aidevops_slug" | cut -d/ -f1)
-	_COMPLEXITY_SCAN_SKIP_REVIEW_GATE=false
-	if [[ "$current_user" == "$maintainer_from_config" ]]; then
-		_COMPLEXITY_SCAN_SKIP_REVIEW_GATE=true
-	fi
+	# Verified admin authority is the dispatch authority for generated
+	# simplification work; the auto-dispatch + PR review flow is sufficient
+	# (GH#16786). No configured-maintainer identity is required (GH#37554).
+	_COMPLEXITY_SCAN_SKIP_REVIEW_GATE=true
+	return 0
+}
+
+# Generators whose issues the complexity scan creates; used to recognise
+# legacy creation-time holds (GH#37554).
+_COMPLEXITY_GENERATOR_MARKER_RE='<!--\s*aidevops:generator=(function-complexity-gate|agent-doc-simplification-gate|complexity-stall-sweep)(\s|-->)'
+
+# Succeed when every hold-for-review label event on an issue was applied by the
+# issue author within the creation window, i.e. the hold is the legacy
+# co-admin creation hold rather than a later deliberate decision hold.
+# Arguments: $1 - slug, $2 - issue number, $3 - author login, $4 - createdAt
+# Returns: 0 creation hold, 1 not a creation hold, 2 timeline read/parse failure
+_complexity_hold_is_creation_hold() {
+	local slug="$1"
+	local issue_number="$2"
+	local author="$3"
+	local created_at="$4"
+	local events="" verdict=""
+	events=$(gh api "repos/${slug}/issues/${issue_number}/timeline" --paginate \
+		--jq '.[] | select(.event == "labeled" and .label.name == "hold-for-review") | "\(.actor.login // "")|\(.created_at)"' \
+		2>/dev/null) || return 2
+	verdict=$(printf '%s\n' "$events" | jq -R -s --arg author "$author" --arg created "$created_at" '
+		[split("\n")[] | select(length > 0) | split("|")] as $events |
+		($created | fromdateiso8601) as $c |
+		($events | length) > 0 and
+		($events | all(.[0] == $author and ((.[1] | fromdateiso8601) - $c) <= 300))' 2>/dev/null) || return 2
+	[[ "$verdict" == true ]] && return 0
+	return 1
+}
+
+# Release legacy creation holds on generated simplification issues (GH#37554).
+# Before GH#37554, a pulse whose identity lookup failed skipped the permission
+# check and labelled every generated issue hold-for-review at creation. Lift
+# only holds the write-authorized author applied at creation; holds added later
+# (worker decision holds, maintainer holds) stay.
+# Arguments: $1 - slug
+# Returns: 0 always (best-effort)
+_complexity_release_creation_holds() {
+	local slug="$1"
+	[[ "${_COMPLEXITY_SCAN_SKIP_REVIEW_GATE:-false}" == true ]] || return 0
+	local held="" rows="" issue_number="" author="" created_at="" perm="" rc=0
+	local n_candidates=0 n_released=0 n_not_creation=0 n_timeline_fail=0 n_perm_fail=0 n_no_write=0 n_edit_fail=0
+	held=$(gh_issue_list --repo "$slug" --state open --label hold-for-review \
+		--limit 100 --json number,body,author,createdAt 2>/dev/null) || {
+		echo "[pulse-wrapper] Complexity scan: creation-hold backfill skipped — hold-for-review issue list read failed on ${slug} (will retry next cycle)" >>"$LOGFILE"
+		return 0
+	}
+	rows=$(printf '%s' "$held" | jq -r --arg re "$_COMPLEXITY_GENERATOR_MARKER_RE" '.[] |
+		select((.body // "") | test($re)) |
+		"\(.number)\t\(.author.login // "")\t\(.createdAt // "")"' 2>/dev/null | sed -n '1,10p') || {
+		echo "[pulse-wrapper] Complexity scan: creation-hold backfill skipped — could not parse hold-for-review issue list for ${slug} (will retry next cycle)" >>"$LOGFILE"
+		return 0
+	}
+	while IFS=$'\t' read -r issue_number author created_at; do
+		[[ "$issue_number" =~ ^[0-9]+$ && -n "$author" && -n "$created_at" ]] || continue
+		n_candidates=$((n_candidates + 1))
+		rc=0
+		_complexity_hold_is_creation_hold "$slug" "$issue_number" "$author" "$created_at" || rc=$?
+		if [[ "$rc" -eq 2 ]]; then
+			n_timeline_fail=$((n_timeline_fail + 1))
+			echo "[pulse-wrapper] Complexity scan: creation-hold backfill timeline read failed for #${issue_number} — will retry next cycle" >>"$LOGFILE"
+			continue
+		elif [[ "$rc" -ne 0 ]]; then
+			n_not_creation=$((n_not_creation + 1))
+			continue
+		fi
+		# #aidevops:trust-boundary — the author's verified write authority (the
+		# same authority dispatch admits), not the generator marker in a public
+		# body, justifies releasing the hold. Such an author could already file
+		# an unheld auto-dispatch issue, so the release grants nothing new.
+		perm=""
+		if ! _gh_collaborator_permission_lookup "$slug" "$author" perm 2>/dev/null; then
+			n_perm_fail=$((n_perm_fail + 1))
+			echo "[pulse-wrapper] Complexity scan: creation-hold backfill permission lookup failed for #${issue_number} author ${author} (http=${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-unknown} reason=${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-unknown}) — hold kept" >>"$LOGFILE"
+			continue
+		fi
+		case "$perm" in
+		admin | maintain | write) ;;
+		*)
+			n_no_write=$((n_no_write + 1))
+			echo "[pulse-wrapper] Complexity scan: creation-hold backfill kept hold on #${issue_number} — author ${author} lacks write authority (permission=${perm:-unknown})" >>"$LOGFILE"
+			continue
+			;;
+		esac
+		if gh_issue_edit_safe "$issue_number" --repo "$slug" \
+			--remove-label hold-for-review --add-label auto-dispatch >/dev/null 2>&1; then
+			n_released=$((n_released + 1))
+			gh_issue_comment "$issue_number" --repo "$slug" --body "<!-- aidevops:complexity-creation-hold-released -->
+Released the creation-time \`hold-for-review\`: this generated simplification issue was filed by write-authorized @${author}, whose pulse applied the hold because its identity check failed open (GH#37554). That path now fails closed; the approval instructions in the body no longer apply, and this issue is ready for automated dispatch." >/dev/null 2>&1 || true
+			echo "[pulse-wrapper] Complexity scan: released creation hold on #${issue_number} (${perm} author ${author}, GH#37554)" >>"$LOGFILE"
+		else
+			n_edit_fail=$((n_edit_fail + 1))
+			echo "[pulse-wrapper] Complexity scan: failed to release creation hold on #${issue_number} — will retry next cycle" >>"$LOGFILE"
+		fi
+	done <<<"$rows"
+	echo "[pulse-wrapper] Complexity scan: creation-hold backfill summary candidates=${n_candidates} released=${n_released} not_creation_hold=${n_not_creation} timeline_failed=${n_timeline_fail} permission_failed=${n_perm_fail} no_write_authority=${n_no_write} edit_failed=${n_edit_fail}" >>"$LOGFILE"
 	return 0
 }
 

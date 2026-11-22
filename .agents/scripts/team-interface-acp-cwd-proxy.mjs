@@ -32,13 +32,19 @@ function validateExecutable(configuredPath, label) {
 
 function parseArguments(argumentsList) {
   const separator = argumentsList.indexOf("--");
-  if (![2, 4].includes(separator) || argumentsList[0] !== "--cwd" || argumentsList.length < separator + 2) {
+  if (![2, 3, 4].includes(separator) || argumentsList[0] !== "--cwd" || argumentsList.length < separator + 2) {
     throw new Error(
       "usage: team-interface-acp-cwd-proxy.mjs --cwd ABSOLUTE_PATH " +
-      "[--buzz-cli ABSOLUTE_PATH] -- COMMAND [ARGS...]",
+      "[--buzz-cli ABSOLUTE_PATH | --no-publish] -- COMMAND [ARGS...]",
     );
   }
   if (separator === 4 && argumentsList[2] !== "--buzz-cli") {
+    throw new Error("ACP proxy received an unsupported option");
+  }
+  // --no-publish: Buzz 0.7+ plugin launches, where the app's harness kit
+  // posts replies; the proxy only binds each session to the agent worktree.
+  const publish = separator !== 3;
+  if (!publish && argumentsList[2] !== "--no-publish") {
     throw new Error("ACP proxy received an unsupported option");
   }
   const configuredCwd = argumentsList[1];
@@ -54,10 +60,12 @@ function parseArguments(argumentsList) {
     throw new Error("ACP proxy cwd must already be canonical");
   }
   return {
-    buzzCli: validateExecutable(
-      separator === 4 ? argumentsList[3] : DEFAULT_BUZZ_CLI,
-      "Buzz CLI",
-    ),
+    buzzCli: publish
+      ? validateExecutable(
+        separator === 4 ? argumentsList[3] : DEFAULT_BUZZ_CLI,
+        "Buzz CLI",
+      )
+      : null,
     command: argumentsList[separator + 1],
     commandArguments: argumentsList.slice(separator + 2),
     cwd,
@@ -94,7 +102,7 @@ async function forwardRequests(input, childInput, output, runtime) {
     }
     const rebound = bindSessionCwd(line, runtime.cwd);
     const message = JSON.parse(rebound);
-    if (message?.method === "session/prompt") {
+    if (runtime.turns && message?.method === "session/prompt") {
       const directReply = runtime.turns.begin(message);
       if (directReply) {
         await publishReply(runtime.buzzCli, directReply);
@@ -123,12 +131,14 @@ async function forwardResponses(childOutput, output, runtime) {
     } catch {
       throw new Error("ACP child emitted malformed NDJSON");
     }
-    if (message?.method === "session/update") {
-      runtime.turns.append(message);
-    }
-    const turn = runtime.turns.finish(message);
-    if (turn) {
-      await publishReply(runtime.buzzCli, turn);
+    if (runtime.turns) {
+      if (message?.method === "session/update") {
+        runtime.turns.append(message);
+      }
+      const turn = runtime.turns.finish(message);
+      if (turn) {
+        await publishReply(runtime.buzzCli, turn);
+      }
     }
     await writeLine(output, line);
   }
@@ -143,7 +153,7 @@ async function main() {
   });
   const exited = once(child, "exit");
   const input = createInterface({input: process.stdin, crlfDelay: Infinity});
-  const runtime = {buzzCli, cwd, turns: new TurnState()};
+  const runtime = {buzzCli, cwd, turns: buzzCli ? new TurnState() : null};
 
   for (const signal of ["SIGINT", "SIGTERM"]) {
     process.on(signal, () => {

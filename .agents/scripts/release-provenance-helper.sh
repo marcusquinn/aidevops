@@ -100,11 +100,13 @@ _release_provenance_read_json() {
 			cause="HTTP ${BASH_REMATCH[1]}"
 		elif [[ "$error_text" =~ (unexpected\ end\ of\ JSON\ input|invalid\ character) ]]; then
 			cause="JSON decode error"
+		elif [[ "$status" -ne 0 ]] && _release_gh_read_network_failure "$error_text"; then
+			cause="network transport error"
 		elif [[ ! "$response" =~ [^[:space:]] && ( "$status" -eq 0 || -z "$error_text" ) ]]; then
 			cause="empty response"
 		else
 			rm -f "$error_file"
-			_release_provenance_error "${purpose}: GitHub read failed (exit ${status}, attempt ${attempt}; not retryable)"
+			_release_provenance_error "${purpose}: GitHub read failed (exit ${status}, attempt ${attempt}; not retryable): $(_release_gh_read_diagnostic "$error_text")"
 			return 1
 		fi
 		[[ "$attempt" -ge "$max_attempts" ]] && break

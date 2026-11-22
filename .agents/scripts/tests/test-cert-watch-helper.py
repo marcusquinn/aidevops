@@ -3,6 +3,7 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Execute the real helper in isolated HOME with local network/GitHub fixtures."""
 import datetime as dt
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -67,8 +68,25 @@ elif tool == 'gh':
         save('writes.json', writes)
         body = Path(args[args.index('--body-file') + 1]).read_text()
         issues = read('issues.json', [])
-        issues.append({'body': body})
+        issues.append({'number': 100 + len(issues) + len(read('closed.json', [])), 'body': body})
         save('issues.json', issues)
+    elif args[:2] == ['issue', 'edit']:
+        writes = read('writes.json', [])
+        writes.append(args)
+        save('writes.json', writes)
+        issues = read('issues.json', [])
+        for issue in issues:
+            if str(issue['number']) == args[2]:
+                issue['body'] = Path(args[args.index('--body-file') + 1]).read_text()
+        save('issues.json', issues)
+    elif args[:2] == ['issue', 'close']:
+        writes = read('writes.json', [])
+        writes.append(args)
+        save('writes.json', writes)
+        closed = read('closed.json', [])
+        closed.append({'number': int(args[2]), 'comment': args[args.index('--comment') + 1]})
+        save('closed.json', closed)
+        save('issues.json', [i for i in read('issues.json', []) if str(i['number']) != args[2]])
     else:
         sys.exit('Unexpected gh invocation: ' + repr(args))
 else:
@@ -95,7 +113,10 @@ class CertWatchTest(unittest.TestCase):
         # Source fixtures expose only the managed creation contract. Production
         # privacy checks and all engine/control flow are executed unchanged.
         (scripts / 'shared-constants.sh').write_text('# fixture constants\n')
-        (scripts / 'shared-gh-wrappers.sh').write_text('gh_create_issue() { gh issue create "$@"; return $?; }\n')
+        (scripts / 'shared-gh-wrappers.sh').write_text(
+            'gh_create_issue() { gh issue create "$@"; return $?; }\n'
+            'gh_issue_edit_safe() { gh issue edit "$@"; return $?; }\n'
+            'gh_issue_close_safe() { gh issue close "$@"; return $?; }\n')
         commands = self.home / 'bin'
         commands.mkdir()
         for tool in ('curl', 'dig', 'gh'):
@@ -299,6 +320,154 @@ class CertWatchTest(unittest.TestCase):
         self.assertIn('r923|x|Cert watch', result.stdout)
         self.assertIn('# r923: Certificate Transparency and CAA watch', result.stdout)
         self.assertIn('repeat:daily(@06:40)', result.stdout)
+
+    def test_shared_parent_host_is_its_own_apex_without_caa_finding(self):
+        psl = self.home / 'public-suffix.dat'
+        psl.write_text('com\n')
+        self.config.update(public_suffix_file=str(psl), extra_domains=[])
+        self.write_config()
+        self.private_json('site-inventory.json', {'sites': {'site': {
+            'canonical_hostname': 'tidy-sites-123456.hostingersite.com', 'aliases': ['other.example.org']}}})
+        rows = self.run_helper('domains')
+        shared = next(r for r in rows if r['hostnames'] == ['tidy-sites-123456.hostingersite.com'])
+        self.assertEqual(shared['apex'], 'tidy-sites-123456.hostingersite.com')
+        self.assertTrue(shared['shared_parent'])
+        self.assertNotIn('hostingersite.com', [r['apex'] for r in rows])
+        self.assertNotIn('shared_parent', next(r for r in rows if r['apex'] == 'example.org'))
+        self.assertEqual([f for f in self.run_helper('run') if f['apex'] == shared['apex']], [])
+        queries = [a for call in json.loads((self.fixture_dir / 'curl-calls.json').read_text()) for a in call]
+        self.assertTrue(any('%25.tidy-sites-123456.hostingersite.com&' in q for q in queries))
+        self.assertFalse(any('%25.hostingersite.com&' in q for q in queries))
+
+    def test_configured_shared_parent(self):
+        psl = self.home / 'public-suffix.dat'
+        psl.write_text('com\n')
+        self.config.update(public_suffix_file=str(psl), extra_domains=[], shared_parent_domains=['example.com'])
+        self.write_config()
+        self.private_json('site-inventory.json', {'sites': {'site': {
+            'canonical_hostname': 'a.example.com', 'aliases': []}}})
+        self.assertEqual(self.run_helper('domains')[0]['apex'], 'a.example.com')
+
+    def test_shared_parent_explicit_anchor_does_not_group_child_hosts(self):
+        self.config['extra_domains'] = ['tenant.hostingersite.com']
+        self.write_config()
+        self.private_json('site-inventory.json', {'sites': {'site': {
+            'canonical_hostname': 'www.tenant.hostingersite.com', 'aliases': []}}})
+        rows = self.run_helper('domains')
+        self.assertEqual([r['apex'] for r in rows],
+                         ['tenant.hostingersite.com', 'www.tenant.hostingersite.com'])
+        self.assertTrue(all(r['shared_parent'] for r in rows))
+        self.assertEqual(self.run_helper('caa'), [])
+
+    def test_ad_hoc_shared_parent_skips_missing_but_keeps_dns_unknown(self):
+        name = 'tenant.hostingersite.com'
+        self.assertEqual(self.run_helper('caa', '--domain', name), [])
+        self.write_fixture('dns.json', {name: None})
+        self.assertEqual([f['kind'] for f in self.run_helper('caa', '--domain', name)], ['caa-unknown'])
+        self.assertEqual([f['kind'] for f in self.run_helper('caa', '--domain', 'nothostingersite.com')],
+                         ['caa-missing'])
+
+    def test_shared_parent_survives_explicit_anchor_and_ad_hoc_scan(self):
+        self.config.update(extra_domains=['tenant-1.hostingersite.com'])
+        self.write_config()
+        self.private_json('site-inventory.json', {'sites': {'site': {
+            'canonical_hostname': 'www.tenant-1.hostingersite.com', 'aliases': []}}})
+        self.assertTrue(self.run_helper('domains')[0].get('shared_parent'))
+        self.assertEqual([f for f in self.run_helper('caa', '--domain', 'tenant-1.hostingersite.com')], [])
+        self.assertEqual([f for f in self.run_helper('caa', '--domain', 'tenant-9.hostingersite.com')], [])
+
+    def test_www_san_with_expected_issuer_is_auto_known(self):
+        self.write_fixture('ct.json', [self.cert()])
+        self.run_helper('ct')
+        self.write_fixture('ct.json', [self.cert(), self.cert(2, sans='example.com\nwww.example.com')])
+        self.assertEqual(self.run_helper('ct'), [])
+        self.assertEqual(json.loads(self.state.read_text())['auto_known_sans'], {'www.example.com': '2'})
+
+    def test_www_san_is_not_benign_with_unexpected_issuer_or_other_name(self):
+        self.write_fixture('ct.json', [self.cert()])
+        self.run_helper('ct')
+        self.write_fixture('ct.json', [self.cert(2, 'Unexpected CA', 'www.example.com')])
+        kinds = {f['kind'] for f in self.run_helper('ct')}
+        self.assertEqual(kinds, {'ct-unexpected-issuer', 'ct-unknown-hostname'})
+        self.write_fixture('ct.json', [self.cert(3, sans='api.example.com')])
+        self.assertIn('ct-unknown-hostname', {f['kind'] for f in self.run_helper('ct')})
+        self.assertNotIn('api.example.com', json.loads(self.state.read_text()).get('auto_known_sans', {}))
+
+    def test_caa_missing_digest_dedups_updates_and_closes_legacy(self):
+        self.config['extra_domains'] = ['example.com', 'example.org']
+        self.write_config()
+        legacy = hashlib.sha256(b'example.com:caa-missing').hexdigest()[:20]
+        self.write_fixture('issues.json', [{'number': 7, 'body': (
+            '<!-- aidevops:generator=cert-watch apex=example.com finding=caa-missing key=' + legacy + ' -->\nold')}])
+        self.run_helper('run', '--apply')
+        issues = json.loads((self.fixture_dir / 'issues.json').read_text())
+        self.assertEqual(len(issues), 1)
+        body = issues[0]['body']
+        self.assertIn('digest=caa-missing', body)
+        self.assertIn('### example.com', body)
+        self.assertIn('### example.org', body)
+        self.assertIn('finding=caa-missing key=' + legacy, body)
+        closed = json.loads((self.fixture_dir / 'closed.json').read_text())
+        self.assertEqual([c['number'] for c in closed], [7])
+        self.assertIn('/issues/' + str(issues[0]['number']), closed[0]['comment'])
+        writes = (self.fixture_dir / 'writes.json').read_text()
+        self.run_helper('run', '--apply')
+        self.assertEqual((self.fixture_dir / 'writes.json').read_text(), writes)
+        # An update to the digest edits the same issue instead of adding another.
+        self.write_fixture('dns.json', {'example.org': [[0, 'issue', 'letsencrypt.org']]})
+        self.run_helper('run', '--apply')
+        issues = json.loads((self.fixture_dir / 'issues.json').read_text())
+        self.assertEqual(len(issues), 1)
+        self.assertNotIn('### example.org', issues[0]['body'])
+
+    def test_digest_closes_after_final_finding_but_not_dns_failure(self):
+        self.run_helper('run', '--apply')
+        before = (self.fixture_dir / 'issues.json').read_text()
+        self.write_fixture('dns.json', {'example.com': None})
+        self.run_helper('run', '--apply')
+        self.assertEqual((self.fixture_dir / 'issues.json').read_text(), before)
+        self.write_fixture('dns.json', {'example.com': [[0, 'issue', 'letsencrypt.org']]})
+        self.run_helper('run', '--apply')
+        self.assertEqual(json.loads((self.fixture_dir / 'issues.json').read_text()), [])
+        self.assertEqual(len(json.loads((self.fixture_dir / 'closed.json').read_text())), 1)
+        writes = (self.fixture_dir / 'writes.json').read_text()
+        self.run_helper('run', '--apply')
+        self.assertEqual((self.fixture_dir / 'writes.json').read_text(), writes)
+
+    def test_partial_digest_removes_only_scanned_resolved_sections(self):
+        self.config['extra_domains'] = ['example.com', 'example.org']
+        self.write_config()
+        self.run_helper('run', '--apply')
+        self.write_fixture('dns.json', {'example.com': [[0, 'issue', 'letsencrypt.org']],
+                                        'example.org': [[0, 'issue', 'letsencrypt.org']]})
+        self.run_helper('run', '--apply', '--domain', 'example.com')
+        issues = json.loads((self.fixture_dir / 'issues.json').read_text())
+        self.assertEqual(len(issues), 1)
+        self.assertNotIn('### example.com', issues[0]['body'])
+        self.assertIn('### example.org', issues[0]['body'])
+        self.run_helper('run', '--apply', '--domain', 'example.org')
+        self.assertEqual(json.loads((self.fixture_dir / 'issues.json').read_text()), [])
+
+    def test_digest_delivers_confirmed_findings_despite_other_apex_dns_failure(self):
+        self.config['extra_domains'] = ['example.com', 'example.org']
+        self.write_config()
+        self.write_fixture('dns.json', {'example.com': None})
+        self.run_helper('run', '--apply')
+        issues = json.loads((self.fixture_dir / 'issues.json').read_text())
+        self.assertEqual(len(issues), 1)
+        self.assertIn('### example.org', issues[0]['body'])
+        self.assertNotIn('### example.com', issues[0]['body'])
+
+    def test_caa_missing_without_fallback_stays_per_repo(self):
+        self.config['extra_domains'] = ['example.com', 'example.org']
+        self.config['fallback_repo'] = None
+        self.write_config()
+        self.private_json('hosting-fleet.json', {'site_repos': {
+            'example.com': 'owner/private', 'example.org': 'owner/private'}})
+        self.run_helper('run', '--apply')
+        issues = json.loads((self.fixture_dir / 'issues.json').read_text())
+        self.assertEqual(len(issues), 2)
+        self.assertFalse(any('digest=caa-missing' in i['body'] for i in issues))
 
     def test_unknown_caa_does_not_consume_new_issuer_check(self):
         self.write_fixture('ct.json', [self.cert()])

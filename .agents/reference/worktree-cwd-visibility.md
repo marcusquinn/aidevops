@@ -71,6 +71,34 @@ managed worktrees are safely cleaned. Success means verified preservation and
 removal for the candidate, not making every protected process CWD readable.
 See `scripts/worktree-archive-helper.md` for archive and idle-window contracts.
 
+### Reconcile recorded launches, not unrelated process CWDs
+
+`worktree-managed-lifetime.py reconcile-processes /absolute/worktree` persists
+completion of each recorded owner process by boot UUID, PID and process start
+identity. Missing PIDs, reused PIDs and previous boots are distinct outcomes;
+permission failures or malformed identities remain unknown. Completed launches
+stay in history and are not polled again. Lock expiry does not complete a launch,
+and a later admission does not erase earlier launches.
+
+For a bounded registry scan, run:
+
+```bash
+python3 .agents/scripts/worktree_lifecycle_status.py reconcile-processes --limit 1000
+```
+
+The ordinary lifecycle `reconcile` operation also reconciles process completion
+within its existing bounded, rotating batch. Writes use the registry transaction,
+revalidate source identity and do not seal generations or remove data. Reports
+show saved completions separately from fresh observations of unfinished launches.
+
+Parent completion is not descendant completion. Managed user-service invocations
+retain their existing completion contract. An observation-only legacy launch can
+prove all its old processes ended after its recorded boot has ended; a missing,
+empty or replaced cgroup during the same boot is insufficient. The resulting
+legacy receipt is distinct from a systemd `InvocationID` receipt and still must
+pass admission fencing, ownership, policy and archive checks. No reboot or service
+stop is performed by reconciliation.
+
 Legacy compact migration only preserves and compares data; its journal does not
 clear degraded CWD visibility, manufacture lifetime evidence or authorize source
 retirement. See [the migration contract](storage-lifecycle-worktree-recovery.md#explicit-compact-migration-no-retirement).
@@ -112,7 +140,9 @@ Implementation boundaries:
 - `scripts/worktree-process-policy.sh`: platform selection and inspector policy.
 - `scripts/worktree-process-providers.sh`: shared procfs/lsof observation adapters.
 - `scripts/worktree_process_proc.py`: Linux procfs collector using only Python
-  stdlib, without per-process subprocesses; initially selected only on NixOS.
+  stdlib, without per-process subprocesses; its `paths` scan is selected only on
+  NixOS, its `cwdmap` serves the shared procfs loop, and both share the census
+  attestation of privileged-session tasks (see the census section below).
 - `scripts/audit-worktree-removal-helper.sh`: identity, ownership and removal guards.
 
 Providers retain the existing stdout and exit-status contract: readable CWDs,
@@ -203,8 +233,10 @@ Do not propose this installation when the operator has no privilege authority:
    ```
 
    With no argument list, both sudo.ws and sudo-rs allow any arguments; the
-   executable is the argument validator. It requires exactly one
-   `[1-9][0-9]*` PID and refuses cross-user process reads. Do not add an
+   executable is the argument validator. Legacy mode requires exactly one
+   `[1-9][0-9]*` PID; `--cwds PID...` applies that same per-PID read to up to
+   4096 distinct PIDs in one call; the separately enabled reference mode below takes
+   `--references PID CANDIDATE`. All refuse cross-user process reads. Do not add an
    argument pattern such as `[1-9]*`: sudo-rs (the default `sudo` on Ubuntu
    25.10+ and 26.04 LTS) rejects wildcards in command arguments and ignores
    the whole line, and sudo.ws wildcards match more than digits anyway (GH#34621).
@@ -228,3 +260,123 @@ process cannot be proved foreign or zombie. Uninstalled, rejected, timed-out,
 or empty privileged reads retain `cwd-visibility-degraded`. No global `/proc`
 permission or ptrace setting changes are needed. Revoke the sudoers rule and
 remove the installed copy when privileged inspection is no longer needed.
+
+Each capture pass first sends the remaining PIDs in `--cwds` calls of at most
+4096 PIDs each (GH#38918), so N pending PIDs take `ceil(N/4096)` calls, each
+validated on its own. Each PID gets the legacy checks and the legacy output, and a
+refused or failed read is an opaque `F` line with no reason. The child arms a
+five-second deadline and prints only a completed response, bounded by a
+versioned header and a count trailer; the caller bounds the sudo wait to six
+seconds and accepts the response only when every PID appears once, in order.
+
+A timed-out batch, whether the caller's six-second wait (exit 124, for example
+slow sudo or PAM) or the child's own deadline (SIGALRM, exit 142), makes no
+per-PID calls and sends no further batches (GH#39335). Every link of it and of
+later batches that still exists stays degraded (status 2), and vanished links
+are skipped as before; one legacy call per PID would hit the same delay up to
+5 s each. An installed copy older than this mode refuses `--cwds`. A refused or
+malformed batch falls back to one legacy call per PID, so results are unchanged
+until the operator reviews and reinstalls the inspector. On a Linux fixture with
+106 protected same-user processes, one pass dropped from 106 sudo calls (about
+3.9 s) to one (about 0.4 s).
+
+### Registry full-reference inspection (separate opt-in)
+
+The registry retirement observer is stricter than the legacy CWD provider: it
+checks every thread's CWD and open-file references before planning, relocating
+and removing a tree. A successful legacy CWD diagnostic or sealed legacy receipt
+is not substitute evidence. Its path-free `process_observation` refusal identifies
+the actual PID/TID, failed stage, inspector status and daemon-exemption failure.
+Do not stop an SSH session or weaken the daemon-age check merely to clear this hold.
+
+After explicit operator review and installation of the updated root-owned inspector,
+`AIDEVOPS_PROTECTED_PROC_INSPECTION=1` enables its `--references PID CANDIDATE` mode
+for the normal guarded registry operation. This flag does not install anything or
+grant privilege. The new mode is disabled by default, on NixOS and during explicit
+maintenance. It uses only the validated fixed inspector path and resolved trusted
+sudo executable; no PATH-selected executable, interactive prompt or broad sudo fallback.
+
+The inspector accepts only a canonical directory owned by the invoking user. It
+rechecks process/thread start identities, the thread inventory and candidate identity;
+it returns versioned `clear`/`held` evidence bound to PID, start ticks and directory
+device/inode. It emits no CWDs, descriptor targets, arguments or environment data.
+The child arms its own two-second deadline; the caller bounds the sudo wait to three seconds.
+The caller validates the binding again. This is a fresh bounded census, not an
+atomic snapshot, future-writer exclusion, reusable lifetime proof or deletion permit.
+Unknown, partial, timed-out, mismatched or legacy-only output retains the worktree.
+The existing owner, admission, preservation and repeated retirement checks still apply.
+
+Existing root-owned copies are not updated by a source merge or ordinary user-space
+deployment. Review the expanded privilege scope before any operator-owned upgrade;
+an older installed copy simply refuses the new mode. Do not invoke a source-checkout
+copy through sudo. Remove the opt-in flag to disable reference inspection. Actual
+protected-process verification and retirement require their own operation authority.
+
+### Same-boot cleanup census (GH#38428)
+
+Sealing a managed worktree during `worktree-helper.sh clean --auto` requires a
+same-boot census with no references **and no uncertain tasks** for the invoking
+UID. On shared Linux hosts, non-dumpable same-UID tasks such as `ssh-agent`,
+`gpg-agent`, `sshd` session children and `(sd-pam)` hide their CWD and descriptors,
+which used to leave every candidate uncertain. Skips now name the cause, with counts
+and classes only, for example:
+
+```text
+Skipped <branch> - cleanup lease was not acquired: same-boot process census active or unavailable: status=available references=0 uncertain=2(nondumpable=2) excluded_nondumpable=3(pam-session-keeper=1,privsep-session=1,user-manager=1) privileged_census=inspection-not-enabled
+```
+
+`worktree_process_census.py` excludes an unreadable task only when
+`worktree_process_attestation.py` proves, from facts the user cannot forge, that it
+runs root-installed session code. A census running as root, or in a non-initial
+user namespace, never attests a task:
+
+- `user-manager`: the exec'd child of a root `systemd` PID 1 that PID 1 itself
+  records as both `MainPID` and `ExecMainPID` of `user@UID.service` (read with a
+  root-owned `systemctl` and an empty environment), unchanged across that query.
+  Names, the user-delegated cgroup and root-owned executables are not evidence;
+  without `systemctl` the task stays uncertain.
+- `pam-session-keeper`: the first child of that manager, forked within five seconds
+  of the manager starting and never exec'd.
+- `privsep-session`: an unprivileged, never-exec'd child of a root `sshd` or
+  `sshd-session`.
+
+Process names alone never grant an exclusion: renamed, exec'd, re-parented or late
+look-alikes stay `nondumpable` uncertain. Agents such as `ssh-agent` and `gpg-agent`
+run user-controllable code, so only the root census below can clear them.
+
+The removal guard and maintenance observer (`worktree_process_proc.py`, both
+`cwdmap` and `paths`/`denied`) apply the same predicate (GH#39034): a denied
+same-user process is excluded only when every thread attests, with the same
+non-root, initial-namespace, PID-namespace and `hidepid` preconditions. A failed
+precondition disables attestation, so denied processes stay degraded.
+`python3 .agents/scripts/worktree_process_proc.py denied` lists only unattested
+processes. A degraded guard result logs `worktree-degraded: … — cwd-visibility-degraded
+— mode=recoverable-required`; only a final refusal logs `worktree-skipped`. The async
+summary reports `refused=N skip_reasons=<reason:count,…>` (top five per worktree)
+and `outcome=no-progress` when a pass refused candidates and removed or archived
+none; the finished-worktree reclaim line adds `reasons=`.
+
+With the reviewed inspector installed as above and
+`AIDEVOPS_PROTECTED_PROC_INSPECTION=1` set, any remaining uncertainty triggers one
+`--census CANDIDATE` call. The root inspector checks every task of the invoking UID
+(CWD, descriptors, `PWD`/`AIDEVOPS_WORKTREE`) and returns only counts bound to the
+directory device and inode, within its own five-second deadline. It refuses a `/proc`
+from another PID namespace or a `hidepid`/`subset` mount rather than count a partial
+view. Like the unprivileged census, it sees only its own PID namespace; processes in
+other namespaces sharing a bind-mounted tree are outside both views. `privileged_census=clear`
+resolves the uncertainty; `held` keeps the tree; any other value
+(`inspection-not-enabled`, `inspector-unavailable`) leaves the original uncertainty
+in place. An installed copy older than this mode refuses `--census` and keeps the tree,
+so upgrade it through the same review steps. Do not stop session agents or relax the
+census to clear a skip.
+
+## Runtime verification on non-Linux hosts
+
+Procfs observer changes (`worktree_process_proc.py`, `worktree_process_attestation.py`,
+the lease census) need Linux runtime evidence. From any host with Docker run
+`linux-procfs-runtime-check.sh --base <base-scripts-dir> [--forged]`. It starts a stock
+Debian container, builds fixtures (root `sshd` parent with a setuid privsep child that
+never execs, an unattested non-dumpable `gpg-agent`, optionally a forged `sshd`-named process under a non-`sshd` parent),
+runs `denied`, `paths` and `cwdmap /proc` as UID 1000, and prints pid-normalised
+base and head reports plus a diff to paste into `--testing`. It exits 1 with a clear
+message when Docker is unavailable.

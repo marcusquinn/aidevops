@@ -31,6 +31,21 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	SCRIPT_DIR="$_FULL_LOOP_COMMIT_DIR"
 fi
 
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/shared-approval-cli.sh"
+fi
+
+# shellcheck source=./review-thread-gate-lib.sh
+source "${_FULL_LOOP_COMMIT_DIR}/review-thread-gate-lib.sh"
+
+_FULL_LOOP_BLOCKER_REVIEW_BOT="review-bot"
+# jq definition shared by both required-check sources: a required context
+# with no reported run at the PR head is pending, never absent (GH#38914).
+_FULL_LOOP_MISSING_CHECK_JQ='def missing_check: {name: ., state: "MISSING", bucket: "pending"};'
+
 # --- Pre-Merge Gate ---
 
 # Pre-merge gate (GH#17541) — deterministic enforcement of review-bot-gate
@@ -89,10 +104,41 @@ _full_loop_local_admission_evidence() {
 	return 1
 }
 
+#######################################
+# Build gh-pr-checks-shaped evidence for resolved required contexts from REST
+# check-runs on the exact PR head (GH#37923). A required context with no run is
+# reported pending, never absent. Latest run per name wins.
+# Args: $1=repo_slug, $2=head_sha, $3=newline-delimited required contexts
+# Output: JSON array of {name,state,bucket}
+# Returns: 0=built, 1=head/read/parse failure
+#######################################
+_full_loop_required_checks_from_check_runs() {
+	local repo="$1" head_sha="$2" contexts="$3"
+	local runs="" contexts_json=""
+	[[ "$head_sha" =~ ^[0-9a-fA-F]{6,64}$ && -n "$contexts" ]] || return 1
+	runs=$(gh api --paginate "repos/${repo}/commits/${head_sha}/check-runs?per_page=100" \
+		--jq '.check_runs[] | {id,name,status,conclusion,head_sha}' 2>/dev/null) || return 1
+	contexts_json=$(printf '%s\n' "$contexts" | jq -R -s -c 'split("\n") | map(select(length > 0))') || return 1
+	printf '%s\n' "$runs" | jq -s -c --arg head "$head_sha" --argjson contexts "$contexts_json" "${_FULL_LOOP_MISSING_CHECK_JQ}"'
+		def classify:
+			if .status != "completed" then {state: "IN_PROGRESS", bucket: "pending"}
+			elif .conclusion == "success" then {state: "SUCCESS", bucket: "pass"}
+			elif .conclusion == "skipped" then {state: "SKIPPED", bucket: "skipping"}
+			elif .conclusion == "cancelled" then {state: "CANCELLED", bucket: "cancel"}
+			else {state: ((.conclusion // "UNKNOWN") | ascii_upcase), bucket: "fail"} end;
+		[.[] | select(.head_sha == $head)] as $runs
+		| [$contexts[] as $c
+			| ([$runs[] | select(.name == $c)] | sort_by(.id) | last) as $r
+			| if $r == null then ($c | missing_check)
+			  else ({name: $c} + ($r | classify)) end]'
+	return $?
+}
+
 _full_loop_query_required_checks() {
 	local pr_number="$1"
 	local repo="$2"
 	local pr_head_ref="$3"
+	local head_sha="${4:-}"
 	local required_contexts=""
 	local required_contexts_rc=0
 	local required_checks=""
@@ -156,10 +202,25 @@ _full_loop_query_required_checks() {
 	fi
 
 	if [[ "$required_rc" -eq 1 && -z "$required_checks" && -n "$pr_head_ref" && "$required_checks_stderr" == "$expected_no_required_checks" ]]; then
-		required_checks="[]"
-		minimum_check_count=0
-		FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE="no-required-checks"
-		FULL_LOOP_REQUIRED_CHECKS_SUCCESS_SUMMARY="no required checks are configured"
+		# GH#37923: an empty PR rollup is not evidence that requirements are
+		# absent. Authoritative positive requirements are evaluated from exact-head
+		# REST check-runs; an unresolved resolver (error) never means "none".
+		if [[ "$required_contexts_rc" -ne 0 ]]; then
+			FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="required contexts unresolved and PR check rollup is empty"
+			return 1
+		fi
+		if [[ -n "$required_contexts" ]]; then
+			required_checks=$(_full_loop_required_checks_from_check_runs "$repo" "$head_sha" "$required_contexts") || {
+				FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="PR check rollup is empty and exact-head check-runs are unavailable"
+				return 1
+			}
+			FULL_LOOP_REQUIRED_CHECKS_SUCCESS_SUMMARY="required checks are terminal-success (exact-head check-runs)"
+		else
+			required_checks="[]"
+			minimum_check_count=0
+			FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE="no-required-checks"
+			FULL_LOOP_REQUIRED_CHECKS_SUCCESS_SUMMARY="no required checks are configured"
+		fi
 	elif [[ -n "$required_checks_stderr" || ("$required_rc" -ne 0 && "$required_rc" -ne 1 && "$required_rc" -ne 8) ]]; then
 		return 1
 	fi
@@ -167,7 +228,39 @@ _full_loop_query_required_checks() {
 		'type == "array" and length >= $minimum' >/dev/null 2>&1; then
 		return 1
 	fi
+	if [[ "$required_contexts_rc" -eq 0 && -n "$required_contexts" ]]; then
+		required_checks=$(_full_loop_add_unreported_required_checks "$required_checks" "$required_contexts") || return 1
+	fi
 	FULL_LOOP_REQUIRED_CHECKS_JSON="$required_checks"
+	return 0
+}
+
+#######################################
+# GH#38914: a fresh head's rollup lists only contexts whose jobs exist, so a
+# later required job (needs:, a gate workflow) is absent, not pending. Append
+# each absent required context as pending, as the exact-head check-run path
+# does, instead of granting terminal-success to the reported subset.
+# Args: $1=required checks JSON array, $2=newline-delimited required contexts
+# Output: JSON array with unreported contexts appended as pending
+# Returns: 0=built, 1=parse failure
+#######################################
+_full_loop_add_unreported_required_checks() {
+	local required_checks="$1"
+	local required_contexts="$2"
+	local missing_json="" missing_names=""
+
+	missing_json=$(printf '%s' "$required_checks" | jq -c --arg contexts "$required_contexts" '
+		(map(.name)) as $names
+		| [$contexts | split("\n")[] | select(length > 0)
+			| select(. as $c | any($names[]; . == $c) | not)]') || return 1
+	if [[ "$missing_json" == "[]" ]]; then
+		printf '%s\n' "$required_checks"
+		return 0
+	fi
+	missing_names=$(printf '%s' "$missing_json" | jq -r 'join(", ")') || missing_names=""
+	print_info "Required contexts not yet reported at the PR head: ${missing_names}" >&2
+	printf '%s' "$required_checks" | jq -c --argjson missing "$missing_json" \
+		"${_FULL_LOOP_MISSING_CHECK_JQ}"' . + [$missing[] | missing_check]' || return 1
 	return 0
 }
 
@@ -331,12 +424,113 @@ _full_loop_query_capability_checks() {
 		FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE="trusted-local-verification"
 		FULL_LOOP_REQUIRED_CHECKS_SUCCESS_SUMMARY="trusted local checks passed; Actions unavailable"
 	else
-		_full_loop_query_required_checks "$pr_number" "$repo" "$pr_head_ref" || {
+		_full_loop_query_required_checks "$pr_number" "$repo" "$pr_head_ref" "$verified_head" || {
 			_full_loop_record_check_read_failure "$pr_number" "$verified_head"
 			return 1
 		}
 	fi
 	return 0
+}
+
+#aidevops:trust-boundary GH#36901 -- the review-bot-gate maintainer override is
+# active only when cmd_merge parsed an explicit interactive flag. main() clears
+# any inherited value, and an undeclared headless probe fails closed.
+_full_loop_rbg_override_active() {
+	[[ -n "${_FULL_LOOP_RBG_OVERRIDE_REASON:-}" ]] || return 1
+	declare -F _merge_is_headless_session >/dev/null 2>&1 || return 1
+	_merge_is_headless_session && return 1
+	return 0
+}
+
+# Succeeds only when every non-passing required check is a terminal
+# review-bot-gate failure. Pending, missing or any other failing check blocks.
+_full_loop_non_passing_only_review_bot_gate() {
+	local non_passing="$1"
+	printf '%s' "$non_passing" | jq -e '
+		type == "array" and length > 0 and
+		all(.[]; (.name == "review-bot-gate" or .name == "gate / review-bot-gate") and (.bucket // "") == "fail")
+	' >/dev/null 2>&1
+	return $?
+}
+
+# Accepts the non-passing set only under an active override whose sole failure
+# is review-bot-gate; records the override as the success evidence.
+_full_loop_accept_rbg_override() {
+	local pr_number="$1" non_passing="$2"
+	_full_loop_rbg_override_active || return 1
+	_full_loop_non_passing_only_review_bot_gate "$non_passing" || return 1
+	print_warning "PR #${pr_number}: terminal review-bot-gate failure accepted by maintainer override (GH#36901): ${_FULL_LOOP_RBG_OVERRIDE_REASON}"
+	FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE="review-bot-gate-maintainer-override"
+	FULL_LOOP_REQUIRED_CHECKS_SUCCESS_SUMMARY="required checks passed except review-bot-gate (maintainer override)"
+	return 0
+}
+
+#######################################
+# Pulse parity (GH#27137, GH#39227): after required checks pass, a terminal
+# non-required failure that the pulse classifiers do not treat as advisory
+# (infrastructure, Qlty companions, provider quota, configured advisories)
+# blocks the merge. Pending non-required checks never block. Snapshot read
+# failures defer the merge; they are neither a pass nor a CI failure.
+# Args: $1=pr_number, $2=repo, $3=verified head, $4=required checks JSON
+# Returns: 0=acceptable, 1=blocked or deferred
+#######################################
+_full_loop_enforce_nonrequired_check_gate() {
+	local pr_number="$1" repo="$2" verified_head="$3" required_checks="$4"
+	local required_contexts="" checks_json="" snapshot_rc=0 kind="" failure_names=""
+	local snapshot_read_timeout=""
+
+	# Trusted local verification has no Actions checks; an accepted review-bot-gate
+	# override is itself a failing required context the classifiers would reject.
+	case "${FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE:-}" in
+	trusted-local-verification | review-bot-gate-maintainer-override) return 0 ;;
+	esac
+	declare -F _pmrc_snapshot_checks_acceptable >/dev/null 2>&1 || return 0
+	# The pulse classifiers append diagnostics to LOGFILE; blocking names are
+	# reported below, so discard them unless the caller configured a log.
+	: "${LOGFILE:=/dev/null}"
+	required_contexts=$(printf '%s' "$required_checks" | jq -r '.[]?.name // empty' 2>/dev/null) || required_contexts=""
+
+	# GH#39590: the snapshot reads through _pmrc_gh_read, not _flm_gh_read, so it
+	# missed the GH#38535 merge read timeout and kept the generic 15s budget (10s
+	# retry). Paced paginated check-run reads exceed that under sustained local
+	# demand and deferred every merge. Scope the merge budget to this call only;
+	# pulse merge passes keep their own deadline-bounded defaults.
+	if declare -F _flm_merge_read_timeout >/dev/null 2>&1; then
+		snapshot_read_timeout=$(_flm_merge_read_timeout) || snapshot_read_timeout=""
+	fi
+	[[ "$snapshot_read_timeout" =~ ^[1-9][0-9]{0,3}$ ]] || snapshot_read_timeout=60
+	checks_json=$(AIDEVOPS_GH_READ_TIMEOUT="$snapshot_read_timeout" \
+		AIDEVOPS_PULSE_MERGE_SNAPSHOT_RETRY_TIMEOUT_SECONDS=30 \
+		_pmrc_snapshot_checks_with_retry "$repo" "$verified_head" 2>/dev/null) || snapshot_rc=$?
+	if [[ "$snapshot_rc" -ne 0 ]]; then
+		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="$_FULL_LOOP_ERROR_READ_DEFERRED"
+		FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="$_FULL_LOOP_RETRY_DETAIL"
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="$_FULL_LOOP_ERROR_READ_DEFERRED"
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="non-required check snapshot read exit ${snapshot_rc}; preserve the PR and retry"
+		_full_loop_record_check_read_failure "$pr_number" "$verified_head"
+		return 1
+	fi
+	if _pmrc_snapshot_checks_acceptable "$repo" "$pr_number" "$checks_json" "$required_contexts" "" "$verified_head" >&2; then
+		return 0
+	fi
+	kind="${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:-}"
+	case "$kind" in
+	"$PMRC_BLOCKER_CHECKS_ACTIVE") return 0 ;; # only pending non-required checks
+	"$PMRC_BLOCKER_CHECKS_FAILED") ;;
+	*)
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="nonrequired-snapshot-unavailable"
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="non-required check classification unavailable (${kind:-unknown})"
+		_full_loop_record_check_read_failure "$pr_number" "$verified_head"
+		return 1
+		;;
+	esac
+	FULL_LOOP_PR_CHECK_STATUS="$_FULL_LOOP_CHECK_TERMINAL_FAILURE"
+	FULL_LOOP_PR_FAILURE_EVIDENCE="${_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON:-[]}"
+	export FULL_LOOP_PR_CHECK_STATUS FULL_LOOP_PR_FAILURE_EVIDENCE
+	failure_names=$(printf '%s' "$FULL_LOOP_PR_FAILURE_EVIDENCE" | jq -r 'map(.name) | join(",")' 2>/dev/null) || failure_names=""
+	_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$verified_head" "${failure_names:-nonrequired-check-failure}" || true
+	print_error "PR #${pr_number} has terminal non-required check failures at the current head: ${failure_names:-unclassified} (GH#27137 parity)"
+	return 1
 }
 
 _full_loop_verify_pr_readiness() {
@@ -391,6 +585,7 @@ _full_loop_verify_pr_readiness() {
 	# GitHub accepts completed SKIPPED checks for non-applicable required gates.
 	# Do not admit other skipping states or infer completion from the bucket alone.
 	non_passing=$(printf '%s' "$required_checks" | jq -c '[.[] | select(((.bucket == "pass") or (.bucket == "skipping" and .state == "SKIPPED")) | not)]')
+	_full_loop_accept_rbg_override "$pr_number" "$non_passing" && non_passing='[]'
 	if [[ "$(printf '%s' "$non_passing" | jq 'length')" -gt 0 ]]; then
 		if printf '%s' "$non_passing" | jq -e --arg pending "$_FULL_LOOP_CHECK_PENDING" 'all(.[]; (.bucket // "") == $pending)' >/dev/null 2>&1; then
 			FULL_LOOP_PR_CHECK_STATUS="$_FULL_LOOP_CHECK_PENDING"
@@ -408,6 +603,7 @@ _full_loop_verify_pr_readiness() {
 		fi
 		return 1
 	fi
+	_full_loop_enforce_nonrequired_check_gate "$pr_number" "$repo" "$verified_head" "$required_checks" || return 1
 	FULL_LOOP_PR_CHECK_STATUS="terminal-success"
 	export FULL_LOOP_PR_CHECK_STATUS
 	local local_branch=""
@@ -432,6 +628,27 @@ _full_loop_verify_pr_readiness() {
 	FULL_LOOP_VERIFIED_PR_HEAD_SHA="$verified_head"
 	export FULL_LOOP_VERIFIED_PR_HEAD_SHA
 	print_success "Remote PR evidence verified at head ${verified_head}; ${FULL_LOOP_REQUIRED_CHECKS_SUCCESS_SUMMARY}"
+	return 0
+}
+
+# GH#27137: same unresolved review-bot thread gate as the pulse merge pass.
+# Fails closed on unresolved or unverifiable threads.
+_full_loop_enforce_review_thread_gate() {
+	local pr_number="$1"
+	local repo="$2"
+	local thread_count="" thread_msg="" thread_hint=""
+	if ! thread_count=$(review_thread_gate_unresolved_bot_count "$repo" "$pr_number"); then
+		thread_msg="Merge blocked: unable to verify review-bot threads for PR #${pr_number} (GH#27137)"
+	elif [[ "$thread_count" -gt 0 ]]; then
+		thread_msg="Merge blocked: ${thread_count} unresolved review-bot thread(s) (GH#27137) on PR #${pr_number}; resolve or classify them first"
+		thread_hint="pr-review-thread-response-scanner.sh scan-pr ${repo} ${pr_number} (thread_id:url pairs in column 3); after reading and verifying each finding: pr-review-thread-response-scanner.sh reply ${repo} <thread_id> <body_file>, then pr-review-thread-response-scanner.sh resolve ${repo} <thread_id>"
+	fi
+	if [[ -n "$thread_msg" ]]; then
+		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="$_FULL_LOOP_BLOCKER_REVIEW_BOT"
+		print_error "$thread_msg"
+		[[ -z "$thread_hint" ]] || print_info "Review threads: ${thread_hint}" >&2
+		return 1
+	fi
 	return 0
 }
 
@@ -460,10 +677,14 @@ cmd_pre_merge_gate() {
 	FULL_LOOP_PR_FAILURE_EVIDENCE=""
 	if ! _full_loop_verify_pr_readiness "$pr_number" "$repo"; then
 		# Diagnostic only: never turn a failed authority check into merge readiness.
+		# The gate reports as its commit-status context, its job name or its
+		# workflow check name; mirrors pulse-merge-required-checks.sh (GH#39064).
 		if [[ "$FULL_LOOP_PR_CHECK_STATUS" == "terminal-failure" ]] &&
 			printf '%s' "$FULL_LOOP_PR_FAILURE_EVIDENCE" | jq -e '
+				["maintainer-gate", "Maintainer Review & Assignee Gate",
+					"gate / Maintainer Review & Assignee Gate"] as $authority |
 				type == "array" and length > 0 and
-				all(.[]; .name == "gate / Maintainer Review & Assignee Gate")
+				all(.[]; .name as $name | any($authority[]; . == $name))
 			' >/dev/null 2>&1; then
 			_full_loop_report_external_authority_preflight "$pr_number" "$repo" 1 || true
 		fi
@@ -472,7 +693,7 @@ cmd_pre_merge_gate() {
 
 	local rbg_helper=""
 	if ! rbg_helper=$(_full_loop_review_bot_gate_helper_path); then
-		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="review-bot"
+		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="$_FULL_LOOP_BLOCKER_REVIEW_BOT"
 		print_error "review-bot-gate-helper.sh not found — refusing an unreviewed merge"
 		return 1
 	fi
@@ -492,12 +713,23 @@ cmd_pre_merge_gate() {
 		print_success "Review bot gate: ${rbg_status} — safe to merge PR #${pr_number}"
 		;;
 	*)
-		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="review-bot"
+		#aidevops:trust-boundary GH#36901 -- only the explicit interactive
+		# maintainer override continues; external authority still runs below.
+		if _full_loop_rbg_override_active; then
+			print_warning "Review bot gate: ${rbg_status:-FAILED} — continuing under maintainer override (GH#36901) for PR #${pr_number}"
+			# GH#27137: the override never bypasses unresolved review-bot threads.
+			_full_loop_enforce_review_thread_gate "$pr_number" "$repo" || return 1
+			_full_loop_report_external_authority_preflight "$pr_number" "$repo"
+			return $?
+		fi
+		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="$_FULL_LOOP_BLOCKER_REVIEW_BOT"
 		print_error "Review bot gate: ${rbg_status:-FAILED} — do NOT merge PR #${pr_number}"
 		printf '%s\n' "$rbg_result" | tail -5
 		return 1
 		;;
 	esac
+
+	_full_loop_enforce_review_thread_gate "$pr_number" "$repo" || return 1
 
 	_full_loop_report_external_authority_preflight "$pr_number" "$repo"
 	return $?
@@ -524,7 +756,11 @@ _full_loop_report_external_authority_preflight() {
 	fi
 	declare -p FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS >/dev/null 2>&1 ||
 		FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS=()
-	if ! _merge_collect_external_authority_gaps "$pr_number" "$repo" "" "$diagnostic_only"; then
+	# GH#38007: advisory=1 (separate from diagnostic_only, which also makes the
+	# Cloudron guard read-only) lets a live PR needs-maintainer-review label
+	# become target pr:N so one batch command covers every missing approval.
+	# Merge transports never pass it and keep the unconditional hold.
+	if ! _merge_collect_external_authority_gaps "$pr_number" "$repo" "" "$diagnostic_only" 1; then
 		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="external-authority"
 		FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="unable to verify external/fork authority"
 		return 1
@@ -536,7 +772,7 @@ _full_loop_report_external_authority_preflight() {
 		FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="${approval_targets}"
 		print_error "External/fork PR #${pr_number} has missing cryptographic development authority"
 		print_info "After finalizing all approval-bound PR metadata, run this one command:"
-		printf 'sudo aidevops approve batch %s %s\n' "$approval_targets" "$repo"
+		printf '%s approve batch %s %s\n' "$(approval_cli_prefix)" "$approval_targets" "$repo"
 		return 1
 	fi
 
@@ -547,5 +783,42 @@ _full_loop_report_external_authority_preflight() {
 	else
 		print_success "External/fork authority preflight: no external authority targets for PR #${pr_number}"
 	fi
+	return 0
+}
+
+# GH#39842: commit-and-pr continuing an existing draft completes the
+# draft->ready transition for worker completions and interactive --ready runs,
+# behind the same pushed-head proof as non-draft creation (_effective_pr_ready).
+# Interactive runs without --ready keep the draft. Failure keeps the durable draft
+# and prints the exact command. Reads caller-scoped create_ready and
+# FULL_LOOP_PUSHED_BRANCH. Args: $1=PR $2=repo $3=origin label. Always returns 0.
+_ready_continued_draft_pr() {
+	local pr_number="$1"
+	local repo="$2"
+	local origin_label="$3"
+	local want_ready="${create_ready:-0}"
+	[[ "$origin_label" != "origin:worker" ]] || want_ready=1
+	[[ "$want_ready" -eq 1 ]] || return 0
+	local ready_cmd="gh pr ready ${pr_number} --repo ${repo}"
+	local is_draft=""
+	is_draft=$(_gh_with_timeout read gh api "repos/${repo}/pulls/${pr_number}" --jq '.draft' 2>/dev/null) || is_draft=""
+	# A confirmed non-draft needs nothing; an unreadable state keeps any draft
+	# but still prints the recovery command.
+	[[ "$is_draft" != "false" ]] || return 0
+	if [[ "$is_draft" != "true" ]]; then
+		print_warning "Could not read draft state of continued PR #${pr_number}; if it is still draft, run: ${ready_cmd}"
+		return 0
+	fi
+	local head_branch="${FULL_LOOP_PUSHED_BRANCH:-}"
+	[[ -n "$head_branch" ]] || head_branch=$(git branch --show-current 2>/dev/null || echo "")
+	if [[ "$(_effective_pr_ready 1 "$head_branch")" != "1" ]]; then
+		print_warning "Continued PR #${pr_number} stays draft until its pushed head is verified; then run: ${ready_cmd}"
+		return 0
+	fi
+	if _gh_with_timeout write gh pr ready "$pr_number" --repo "$repo" >/dev/null 2>&1; then # aidevops-allow: raw-gh-wrapper
+		print_info "Marked continued draft PR #${pr_number} ready for review"
+		return 0
+	fi
+	print_warning "Could not mark continued draft PR #${pr_number} ready; run: ${ready_cmd}"
 	return 0
 }

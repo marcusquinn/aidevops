@@ -21,17 +21,22 @@ import {
 } from "./oauth-pool.mjs";
 import {
   consumeV2Completion,
+  disposeObservability,
   handleEvent,
   initObservability,
   recordObjectiveDecision,
 } from "./observability.mjs";
 import { createObjectiveReceiptTool } from "./objective-receipt-tool.mjs";
+import { installDbActivityHeartbeat } from "./db-activity-heartbeat.mjs";
 import { createPermissionBroker } from "./permission-broker.mjs";
 import { installPluginConsoleRouter } from "./plugin-console.mjs";
 import { recordPluginHealthStage } from "./plugin-health.mjs";
 import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
 import { createQualityHooks } from "./quality-hooks.mjs";
+import { releasePreEditSessionOwnership } from "./pre-edit-check-process.mjs";
 import { createSessionContinuationGuard } from "./session-continuation-guard.mjs";
+import { createV2SessionBusHooks } from "./session-bus-v2.mjs";
+import { remoteBusContext } from "./session-bus-plugin.mjs";
 import { createSessionModelStore, createShellEnvHook } from "./shell-env.mjs";
 import {
   appendConversationSystemContext,
@@ -42,14 +47,14 @@ import {
   loadTeamInterfaceConversation,
 } from "./team-interface-context.mjs";
 import { enforceConversationPathAccess } from "./team-interface-path-guard.mjs";
-import { assertLocalOnlyEgress, initLocalOnlyPolicy } from "./local-only-policy.mjs";
+import { assertLocalOnlyEgress, formatLocalOnlyBinding, initLocalOnlyPolicy } from "./local-only-policy.mjs";
 import { createProviderErrorHandler } from "./provider-error-diagnostics.mjs";
 import { adaptToolDefinition } from "./tool-definition.mjs";
 import { createTools, tool } from "./tools.mjs";
 import { createSchemaGatedTools } from "./tool-schema.mjs";
 import { createTtsrHooks, isPluginGreetingEnabled } from "./ttsr.mjs";
 import { createRootSessionGreetingGate } from "./root-session-greeting-gate.mjs";
-import { isHeadless } from "./proxy-lifecycle.mjs";
+import { isAcpServer, isHeadless } from "./proxy-lifecycle.mjs";
 import { createV2McpRuntime } from "./v2-mcp-adapter.mjs";
 import {
   loadV2PrimaryProfiles,
@@ -61,6 +66,7 @@ import { applyV2PermissionEvaluation } from "./v2-permission-evaluation.mjs";
 import { registerV2SubagentProfiles } from "./v2-subagent-profiles.mjs";
 import { registerV2OnDemandMcpAgents } from "./v2-on-demand-mcp-agents.mjs";
 import { createV2ProviderAuthRuntime } from "./v2-provider-auth.mjs";
+import { createV2SubagentFailover } from "./v2-subagent-failover.mjs";
 import {
   addV1ToolsToV2Editor,
   applyLegacyToolOutput,
@@ -297,8 +303,12 @@ export function defineAidevopsV2Adapter(setup) {
   return { id: "aidevops", setup };
 }
 
-async function disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations }) {
+async function disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability, dbActivityHeartbeat, sessionBus }) {
   await stopEvents?.().catch(() => {});
+  // GH#35898: a disposed instance must not leave a stale idle heartbeat.
+  dbActivityHeartbeat?.remove();
+  // t18888: stop polling and withdraw this instance's presence records.
+  sessionBus?.dispose();
   try {
     boundedOperationManager?.dispose();
   } catch { /* best-effort cleanup */ }
@@ -306,6 +316,21 @@ async function disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRunti
   for (const registration of registrations.reverse()) {
     await registration.dispose().catch(() => {});
   }
+  // GH#35702: release the SQLite transport ownership taken by this setup's
+  // initObservability(); the final owner reaps the sqlite3 child.
+  try {
+    releaseObservability?.();
+  } catch { /* best-effort cleanup */ }
+}
+
+/** One idempotent release per successful initObservability() (GH#35702). */
+function observabilityRelease(owned) {
+  let released = !owned;
+  return () => {
+    if (released) return;
+    released = true;
+    disposeObservability();
+  };
 }
 
 export async function setupAidevopsV2(ctx) {
@@ -319,14 +344,17 @@ export async function setupAidevopsV2(ctx) {
     debug: process.env.AIDEVOPS_PLUGIN_DEBUG === "1",
   });
   recordPluginHealthStage("imported", { runtime: "v2" });
-  initObservability({
+  const releaseObservability = observabilityRelease(initObservability({
     aidevopsVersion: currentAidevopsVersion(),
     runtimeVersion: hostRuntimeVersion(ctx),
     adapterId: "opencode-v2",
-  });
+  }));
 
   // GH#34125 #aidevops:trust-boundary: bind before any hook registers.
   const localOnlyPolicy = initLocalOnlyPolicy(process.env);
+  const logLocalOnly = (line) => console.error(line);
+  // GH#38424: content-free binding state, so operators can confirm this process is bound.
+  logLocalOnly(formatLocalOnlyBinding(localOnlyPolicy));
   const conversation = loadTeamInterfaceConversation(process.env, AGENTS_DIR, {
     pluginEntryPath: PLUGIN_ENTRY_PATH,
     repositoryDir: directory,
@@ -334,6 +362,8 @@ export async function setupAidevopsV2(ctx) {
   const mcpRuntime = createV2McpRuntime(ctx, WORKSPACE_DIR, { repositoryDir: directory });
   let boundedOperationManager;
   let stopEvents;
+  let dbActivityHeartbeat;
+  let sessionBus;
   try {
     await mcpRuntime.initialize();
     const client = createCompatibilityClient(ctx, mcpRuntime.client);
@@ -343,9 +373,19 @@ export async function setupAidevopsV2(ctx) {
       recordOutput: createOutputSandboxRecorder(join(SCRIPTS_DIR, "output-sandbox-helper.sh")),
       readOutput: createOutputSandboxReader(join(SCRIPTS_DIR, "output-sandbox-helper.sh")),
     });
+    // t18888: same session bus as V1 (presence, delivery, wakes); messaging
+    // only in TUI/serve/ACP processes. qualityLog is defined below, so bind lazily.
+    sessionBus = createV2SessionBusHooks({
+      ctx,
+      directory,
+      headless: isHeadless(),
+      remote: remoteBusContext(conversation),
+      log: (level, message) => qualityLog(level, message),
+    });
     const baseTools = createSchemaGatedTools(tool, () => {
       const tools = createTools(SCRIPTS_DIR, run, {
         aidevopsRun: runChecked,
+        memoryRun: runChecked,
         sessionOrigin: process.env.AIDEVOPS_SESSION_ORIGIN,
         poolToolFactory: () => createPoolTool(client),
         ...v2ImageToolOptions(),
@@ -357,6 +397,7 @@ export async function setupAidevopsV2(ctx) {
         boundedOperationManager,
       });
       tools.aidevops_objective_receipt = createObjectiveReceiptTool(tool, recordObjectiveDecision);
+      sessionBus.addTool(tools, tool);
       return tools;
     });
 
@@ -366,6 +407,7 @@ export async function setupAidevopsV2(ctx) {
     });
     const sessionModels = createSessionModelStore();
     const { toolExecuteBefore, toolExecuteAfter, qualityLog } = createQualityHooks({
+      client,
       activeScriptsDir: join(ACTIVE_AGENTS_DIR, "scripts"),
       scriptsDir: SCRIPTS_DIR,
       logsDir: LOGS_DIR,
@@ -384,6 +426,8 @@ export async function setupAidevopsV2(ctx) {
     const shouldInjectGreeting = createRootSessionGreetingGate({
       getSession: (sessionID) => ctx.session.get({ sessionID }),
       isHeadless,
+      // V2 ACP runs a private `serve` process (no `acp` argv) that inherits OPENCODE_CLIENT=acp.
+      isAcpServer: () => process.env.OPENCODE_CLIENT === "acp" || isAcpServer(),
       log: qualityLog,
     });
     const greetingEnabled = () => isPluginGreetingEnabled(process.env, true);
@@ -445,9 +489,13 @@ export async function setupAidevopsV2(ctx) {
       permissionBroker.recordToolCall(input, output);
       await toolExecuteBefore(input, output);
       event.input = output.args;
+      // t18905: after the gates, so only tools that will run are published.
+      sessionBus.toolBefore(event);
     }));
     await register(registrations, ctx.tool.hook("execute.after", async (event) => {
       const output = legacyToolOutput(event.result || {});
+      // t18888: before quality hooks, so output scrubbing also covers peer messages.
+      sessionBus.toolAfter(event, output);
       await toolExecuteAfter(v1HookInput(event), output);
       if (event.status === "completed") applyLegacyToolOutput(event.result, output);
     }));
@@ -463,11 +511,14 @@ export async function setupAidevopsV2(ctx) {
     });
     await register(registrations, ctx.session.hook("prompt", async (event) => {
       compactionReplay.recordPrompt(event);
+      // t18888: after the verbatim record, deliver pending session-bus messages
+      // with this turn (V2 has no synthetic user-message parts).
+      await sessionBus.prompt(event);
     }));
     // Released 2.0.3 dispatches these hooks separately on the base transcript.
     // Keep framework transformations identical before adding compaction's tail.
     const transformContext = async (event) => {
-      assertLocalOnlyEgress(localOnlyPolicy, event, "context");
+      assertLocalOnlyEgress(localOnlyPolicy, event, "context", logLocalOnly);
       compactionReplay.inject(event);
       const input = v1HookInput(event);
       sessionModels.remember(event.sessionID, input.model.modelID);
@@ -501,12 +552,19 @@ export async function setupAidevopsV2(ctx) {
       // GH#34125: check the outgoing Request, and again after our own
       // provider-auth rewrite so no aidevops mutation can change the endpoint.
       // Other installed plugins are trusted in-process code (reference/vault.md).
-      assertLocalOnlyEgress(localOnlyPolicy, event, "http");
+      assertLocalOnlyEgress(localOnlyPolicy, event, "http", logLocalOnly);
       await providerAuth.httpRequest(event);
-      assertLocalOnlyEgress(localOnlyPolicy, event, "http");
+      assertLocalOnlyEgress(localOnlyPolicy, event, "http", logLocalOnly);
     }));
     await register(registrations, ctx.session.hook("http.response", providerAuth.httpResponse));
-    await register(registrations, ctx.session.hook("retry", providerAuth.retry));
+    // GH#37667: after account rotation, move a child whose provider OAuth pool
+    // is exhausted to the next same-tier model; the switch applies to the next
+    // retry attempt of the same Task run.
+    const subagentFailover = createV2SubagentFailover(ctx, modelRouting, qualityLog);
+    await register(registrations, ctx.session.hook("retry", async (event) => {
+      providerAuth.retry(event);
+      await subagentFailover(event);
+    }));
     await register(registrations, ctx.permission.hook("evaluate", async (event) => {
       applyV2PermissionEvaluation(permissionBroker, event);
     }));
@@ -514,6 +572,10 @@ export async function setupAidevopsV2(ctx) {
     const normalizeCompletion = createV2CompletionNormalizer();
     const providerErrorHandler = createProviderErrorHandler({ client, isHeadless,
       policy: localOnlyPolicy, resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID) });
+    // GH#35898: busy/idle heartbeat for the OpenCode DB archive idle gate
+    // (GH#35517). Without it, V2-held DBs fail closed and are never archived.
+    const heartbeat = installDbActivityHeartbeat();
+    dbActivityHeartbeat = heartbeat;
     stopEvents = await startEventLoop(ctx, async (input) => {
       const completed = normalizeCompletion(input.event);
       const observeContext = { resolveSessionModel: (sessionID) => sessionModels.resolve(sessionID) };
@@ -521,8 +583,11 @@ export async function setupAidevopsV2(ctx) {
         handleEvent(input, observeContext),
         completed ? handleEvent({ event: completed }, observeContext) : undefined,
         Promise.resolve(boundedOperationManager.handleEvent(input)),
+        releasePreEditSessionOwnership(input).catch(() => qualityLog("WARN", "Session ownership release unavailable")),
         permissionBroker.handleEvent(input),
         providerErrorHandler(input),
+        Promise.resolve().then(() => heartbeat.handleEvent(input)),
+        sessionBus.handleEvent(input),
       ]);
     });
     recordPluginHealthStage("factory_initialized", {
@@ -532,10 +597,10 @@ export async function setupAidevopsV2(ctx) {
     });
 
     return async () => {
-      await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations });
+      await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability, dbActivityHeartbeat, sessionBus });
     };
   } catch (error) {
-    await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations });
+    await disposeAidevopsV2({ stopEvents, boundedOperationManager, mcpRuntime, registrations, releaseObservability, dbActivityHeartbeat, sessionBus });
     throw error;
   }
 }

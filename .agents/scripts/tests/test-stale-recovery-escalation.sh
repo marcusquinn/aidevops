@@ -97,6 +97,16 @@ if [[ "\$1" == "api" && "\$2" == *"/labels?per_page=100"* ]]; then
 	exit 0
 fi
 
+# Current status transitions read an exact GraphQL label snapshot (GH#34003).
+# Reuse the REST label fixture above rather than silently returning no data.
+if [[ "\$1" == "api" && "\$2" == "graphql" && "\$*" == *'label0: label(name:'* ]]; then
+	"\$0" api 'repos/owner/repo/labels?per_page=100' | jq -Rn '
+		[inputs | split("\t") | {name: .[0], color: .[1], description: .[2]}]
+		| to_entries | map({key: ("label" + (.key | tostring)), value: .value})
+		| from_entries | {data: {repository: .}}'
+	exit \$?
+fi
+
 # Public-write privacy guard target probe: the fixture repo is public.
 if [[ "\$1" == "api" && "\$2" == "repos/owner/repo" ]]; then
 	printf '%s\n' false
@@ -145,6 +155,8 @@ if [[ "\$1" == "pr" && "\$2" == "list" ]]; then
 	case "${open_pr_kind}" in
 	ready) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[{"number":99999,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' ;;
 	ready_failed) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[{"number":99999,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE"}]}]' ;;
+	ready_overlap_failed) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[{"number":99999,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"__typename":"CheckRun","name":"ci","workflowName":"w","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-01-01T10:00:00Z","completedAt":"2026-01-01T10:20:00Z"},{"__typename":"CheckRun","name":"ci","workflowName":"w","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-01-01T10:05:00Z","completedAt":"2026-01-01T10:10:00Z"}]}]' ;;
+	ready_pending_newest) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[{"number":99999,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"__typename":"CheckRun","name":"ci","workflowName":"w","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-01-01T10:00:00Z","completedAt":"2026-01-01T10:20:00Z"},{"__typename":"CheckRun","name":"ci","workflowName":"w","status":"QUEUED","conclusion":null,"startedAt":null,"completedAt":null}]}]' ;;
 	ready_review_infra) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[{"number":99999,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"__typename":"CheckRun","name":"gate / review-bot-gate","status":"COMPLETED","conclusion":"FAILURE"},{"__typename":"StatusContext","context":"review-bot-gate","state":"SUCCESS"}]}]' ;;
 	nested_truncated)
 		python3 - <<'PY'
@@ -171,7 +183,9 @@ PY
 	recovery_for_ready) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[],"isDraft":false,"isCrossRepository":false,"body":"For #99999","labels":[{"name":"origin:worker-takeover"}],"statusCheckRollup":[]}]' ;;
 	recovery_for_cross) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[],"isDraft":true,"isCrossRepository":true,"body":"For #99999","labels":[{"name":"origin:worker-takeover"}],"statusCheckRollup":[]}]' ;;
 	recovery_for_protected) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[],"isDraft":true,"isCrossRepository":false,"body":"For #99999","labels":[{"name":"origin:worker-takeover"},{"name":"no-takeover"}],"statusCheckRollup":[]}]' ;;
-	recovery_bare) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[],"isDraft":true,"isCrossRepository":false,"body":"Recovered work for #99999","labels":[{"name":"origin:worker-takeover"}],"statusCheckRollup":[]}]' ;;
+	# GH#38111: since GH#37915 an inline "for #N" is an explicit reference
+	# (matching dispatch-dedup-pr.sh), so a bare mention has no For/Ref keyword.
+	recovery_bare) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[],"isDraft":true,"isCrossRepository":false,"body":"Recovered work on #99999","labels":[{"name":"origin:worker-takeover"}],"statusCheckRollup":[]}]' ;;
 	recovery_for_other_closing) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[{"number":123,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":true,"isCrossRepository":false,"body":"For #99999\nResolves #123","labels":[{"name":"origin:worker-takeover"}],"statusCheckRollup":[]}]' ;;
 	draft_mismatch) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[{"number":123,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":true,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' ;;
 	draft_ambiguous) printf '%s\n' '[{"number":${open_pr_number},"closingIssuesReferences":[{"number":99999,"repository":{"name":"repo","owner":{"login":"owner"}}},{"number":123,"repository":{"name":"repo","owner":{"login":"owner"}}}],"isDraft":true,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' ;;
@@ -356,7 +370,7 @@ else
 	print_result "Reset path: STALE_ESCALATED NOT emitted" 1 "(got: '$output')"
 fi
 
-if grep -q -- "--json number,closingIssuesReferences,isDraft,isCrossRepository,labels,body,statusCheckRollup" "$GH_CALLS_FILE" &&
+if grep -q -- "--json number,closingIssuesReferences,isDraft,isCrossRepository,headRefName,labels,body,statusCheckRollup" "$GH_CALLS_FILE" &&
 	! grep -q -- "--search" "$GH_CALLS_FILE"; then
 	print_result "Open PR lookup scans authoritative metadata without body-search filtering" 0
 else
@@ -426,7 +440,17 @@ else
 	print_result "Sweep classifier sees For #N recovery draft and skips reset" 1 "(got: '$for_open_pr')"
 fi
 
-for unsafe_kind in recovery_for_worker recovery_for_ready recovery_for_cross recovery_for_protected recovery_bare recovery_for_other_closing; do
+# A worker's own `For #N` checkpoint draft is the same durable checkpoint that
+# has-open-pr holds the issue for; preserve it for continuation, never reset.
+run_recover 0 "87|recovery_for_worker" 1
+if grep -q "STALE_PR_CONTINUATION: issue #99999 in owner/repo — PR #87" <<<"$output" &&
+	! grep -q "^issue edit" "$GH_CALLS_FILE"; then
+	print_result "worker For #N checkpoint draft requests exact-head continuation without reset" 0
+else
+	print_result "worker For #N checkpoint draft requests exact-head continuation without reset" 1 "(got: '$output')"
+fi
+
+for unsafe_kind in recovery_for_ready recovery_for_cross recovery_for_protected recovery_bare recovery_for_other_closing; do
 	run_recover 0 "86|${unsafe_kind}" 1
 	if ! grep -q "STALE_PR_CONTINUATION" <<<"$output"; then
 		print_result "${unsafe_kind} cannot authorize stale PR continuation" 0
@@ -512,6 +536,20 @@ else
 	print_result "Terminal ready PR escalates after verified structural-block read-back" 1 "(got: '$output')"
 fi
 
+run_recover 0 "86|ready_overlap_failed" 1
+if grep -q "STALE_READY_FAILED_ESCALATED" <<<"$output"; then
+	print_result "Overlapping runs use latest completedAt (CANCELLED wins)" 0
+else
+	print_result "Overlapping runs use latest completedAt (CANCELLED wins)" 1 "(got: '$output')"
+fi
+
+run_recover 0 "88|ready_pending_newest" 1
+if grep -q "STALE_PROGRESS_PRESERVED" <<<"$output" && ! grep -q "STALE_READY_FAILED_ESCALATED" <<<"$output"; then
+	print_result "Newest pending run without timestamps masks older failure" 0
+else
+	print_result "Newest pending run without timestamps masks older failure" 1 "(got: '$output')"
+fi
+
 run_recover 0 "81|ready_failed" 0
 if [[ "$rc" -ne 0 ]] && echo "$output" | grep -q "STALE_PR_ESCALATION_FAILED"; then
 	print_result "Terminal ready PR retains ownership when structural block is invisible" 0
@@ -537,8 +575,49 @@ if [[ "$(_stale_recovery_count_ticks_from_pages "$ticks")" == 1 ]]; then
 else
 	print_result "Maintainer release resets only prior ticks" 1
 fi
+# Merged-PR progress marker restarts the count at 1 (tick, progress, next tick = 2 < escalation of old 3).
+ticks='[[{"created_at":"2026-01-01T00:00:01Z","body":"<!-- stale-recovery-tick:1 -->"},{"created_at":"2026-01-01T00:00:02Z","body":"<!-- stale-recovery-tick:1 -->\n<!-- stale-recovery-progress:merged-pr -->"}]]'
+if [[ "$(_stale_recovery_count_ticks_from_pages "$ticks")" == 1 ]]; then
+	print_result "Merged-PR progress marker restarts tick count" 0
+else
+	print_result "Merged-PR progress marker restarts tick count" 1
+fi
+if merged_pr=$(gh() { printf '%s' '[{"number":7,"body":"Resolves: o/r#42","mergedAt":"2026-01-01T00:30:00Z"},{"number":8,"body":"Resolves: #421","mergedAt":"2026-01-01T00:40:00Z"},{"number":9,"body":"Resolves: x/y#42","mergedAt":"2026-01-01T00:50:00Z"}]'; }; _stale_recovery_find_merged_pr_since 42 o/r "2026-01-01T00:00:00Z") && [[ "$merged_pr" == 7 ]]; then
+	print_result "Merged PR referencing issue after tick is found" 0
+else
+	print_result "Merged PR referencing issue after tick is found" 1 "(got '$merged_pr')"
+fi
 
-release_result=$(bash -c '
+ticks='[[{"created_at":"2026-01-01T00:00:10Z","body":"<!-- stale-recovery-tick:1 -->\n<!-- stale-recovery-checked-through:2026-01-01T00:00:05Z -->"}]]'
+if [[ "$(_stale_recovery_latest_tick_ts_from_pages "$ticks")" == "2026-01-01T00:00:05Z" ]]; then
+	print_result "Tick retains the pre-search progress cutoff" 0
+else
+	print_result "Tick retains the pre-search progress cutoff" 1
+fi
+ticks='[[{"created_at":"2026-01-01T00:00:10Z","body":"<!-- stale-recovery-tick:1 -->"}]]'
+if [[ "$(_stale_recovery_latest_tick_ts_from_pages "$ticks")" == "2026-01-01T00:00:10Z" ]]; then
+	print_result "Legacy tick falls back to comment timestamp" 0
+else
+	print_result "Legacy tick falls back to comment timestamp" 1
+fi
+if merged_pr=$(gh() { jq -n '[range(0;101) | {number: ., body: (if . == 100 then "For #42" else "other" end), mergedAt: "2026-01-01T00:30:00Z"}]'; return 0; }; _stale_recovery_find_merged_pr_since 42 o/r "2026-01-01T00:00:00Z") && [[ "$merged_pr" == 100 ]]; then
+	print_result "Merged search checks results beyond the first page" 0
+else
+	print_result "Merged search checks results beyond the first page" 1
+fi
+if (gh() { jq -n '[range(0;1000) | {number: ., body: "other", mergedAt: "2026-01-01T00:30:00Z"}]'; return 0; }; _stale_recovery_find_merged_pr_since 42 o/r "2026-01-01T00:00:00Z"); then
+	print_result "Capped merged search without a match fails closed" 1
+else
+	print_result "Capped merged search without a match fails closed" 0
+fi
+if result=$(_stale_recovery_final_evidence_recheck() { return 0; }; _stale_recovery_find_merged_pr_since() { printf 7; return 0; }; set_issue_status() { printf MUTATED; return 0; }; _stale_recovery_escalate 42 o/r runner stale 2 2 dispatch 2026-01-01T00:00:00Z) && [[ "$result" == *STALE_PROGRESS_PRESERVED* && "$result" != *MUTATED* ]]; then
+	print_result "Final merged progress recheck prevents escalation" 0
+else
+	print_result "Final merged progress recheck prevents escalation" 1 "$result"
+fi
+
+for initial_state in blocked available; do
+	release_result=$(GH_TEST_STATE="$initial_state" bash -c '
 	source "$1" help >/dev/null
 	gh() {
 		case "$2" in
@@ -547,21 +626,22 @@ release_result=$(bash -c '
 		*/comments) printf "%s\n" '\''[[{"created_at":"2026-01-01T00:00:02Z","body":"<!-- stale-recovery-tick:escalated -->"}]]'\'' ;;
 		*/issues/99999)
 			if [[ "${GH_TEST_STATE:-blocked}" == available ]]; then
-				printf "%s\n" '\''{"state":"open","labels":[{"name":"status:available"},{"name":"auto-dispatch"}],"assignees":[]}'\''
+				printf "%s\n" "{\"state\":\"open\",\"labels\":[{\"name\":\"status:available\"}${GH_TEST_DISPATCH:-}],\"assignees\":[]}"
 			else
 				printf "%s\n" '\''{"state":"open","labels":[{"name":"status:blocked"}],"assignees":[]}'\''
 			fi ;;
 		esac
 	}
 	gh_issue_comment() { printf "COMMENT\n" >&2; return 0; }
-	set_issue_status() { printf "STATUS\n" >&2; GH_TEST_STATE=available; return 0; }
+	set_issue_status() { printf "STATUS\n" >&2; GH_TEST_STATE=available; GH_TEST_DISPATCH=",{\"name\":\"auto-dispatch\"}"; return 0; }
 	_ddh_release_stale_recovery 99999 owner/repo reviewed
 ' bash "${TEST_SCRIPTS_DIR}/dispatch-dedup-helper.sh" 2>&1)
-if [[ "$release_result" == *COMMENT* && "$release_result" == *STATUS* ]]; then
-	print_result "Reviewed release posts audit marker before label change" 0
-else
-	print_result "Reviewed release posts audit marker before label change" 1 "$release_result"
-fi
+	if [[ "$release_result" == *COMMENT* && "$release_result" == *STATUS* ]]; then
+		print_result "Reviewed release from ${initial_state} posts audit marker before label change" 0
+	else
+		print_result "Reviewed release from ${initial_state} posts audit marker before label change" 1 "$release_result"
+	fi
+done
 
 # =============================================================================
 # Summary

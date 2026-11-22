@@ -42,6 +42,14 @@ set -uo pipefail
 
 TEST_SCRIPTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_REPO_ROOT="$(cd "$TEST_SCRIPTS_DIR/../.." && pwd)"
+
+# GH#38475: no test may write to the real HOME. Test 14 used to call the shim
+# writer with the caller's HOME, which replaced the live ~/.local/bin/opencode
+# with a shim pointing at a fixture deleted moments later. Every worker launch
+# on that host then failed with exit 127 until setup regenerated the shim.
+TEST_SANDBOX_HOME=$(mktemp -d 2>/dev/null || mktemp -d -t t2954home)
+export HOME="$TEST_SANDBOX_HOME"
+trap 'rm -rf "$TEST_SANDBOX_HOME"' EXIT
 TEST_RED=$'\033[0;31m'
 TEST_GREEN=$'\033[0;32m'
 TEST_RESET=$'\033[0m'
@@ -183,6 +191,35 @@ run_resolver_with_explicit_bin() {
 	)
 }
 
+# Print the exec target of a generated OpenCode shim.
+shim_exec_target() {
+	local _shim="$1" _line=""
+	[[ -f "$_shim" ]] || return 1
+	_line=$(grep -m1 '^exec "' "$_shim" 2>/dev/null) || return 1
+	_line="${_line#exec \"}"
+	printf '%s' "${_line%%\"*}"
+	return 0
+}
+
+# GH#38475: the fixed-path sweep and login-shell probe intentionally look at
+# host locations (/opt/homebrew/bin, /usr/local/bin, Linuxbrew), so a host with
+# a real OpenCode install (every aidevops worker host) resolves it even under a
+# fixture HOME. A Claude-rejection test therefore passes on an empty result or
+# on a validated OpenCode outside the fixture; any target inside the fixture is
+# the Claude stub and fails.
+claude_rejected_result() {
+	local _result="$1" _fixture="$2" _target=""
+	[[ -z "$_result" ]] && return 0
+	if [[ "$_result" == "$_fixture"/* ]]; then
+		_target=$(shim_exec_target "$_result") || return 1
+	else
+		_target="$_result"
+	fi
+	[[ "$_target" != "$_fixture"/* ]] || return 1
+	_setup_validate_opencode_binary "$_target" || return 1
+	return 0
+}
+
 # --- Source the resolver and validator ---
 # tool-install.sh defines _setup_validate_opencode_binary;
 # schedulers.sh defines _resolve_pulse_runtime_binary and the helpers.
@@ -269,11 +306,11 @@ build_fixture_node_install "$fixture5" "claude" "nvm" "v24.13.1" >/dev/null
 result5=$(run_resolver "$fixture5")
 persisted_file5="$fixture5/.config/aidevops/scheduler-runtime-bin"
 claude_path5="$fixture5/.nvm/versions/node/v24.13.1/bin/opencode"
-if [[ -z "$result5" ]]; then
-	print_result "claude binary in nvm path — rejected; resolver returns empty" 0
+if claude_rejected_result "$result5" "$fixture5"; then
+	print_result "claude binary in nvm path — rejected; resolver returns empty or host OpenCode" 0
 else
-	print_result "claude binary in nvm path — rejected; resolver returns empty" 1 \
-		"expected empty result, got: $result5"
+	print_result "claude binary in nvm path — rejected; resolver returns empty or host OpenCode" 1 \
+		"expected empty or host OpenCode, got: $result5 target: $(shim_exec_target "$result5" || true)"
 fi
 if [[ ! -f "$persisted_file5" ]] || \
 	[[ "$(cat "$persisted_file5" 2>/dev/null)" != "$claude_path5" ]]; then
@@ -288,11 +325,11 @@ rm -rf "$fixture5"
 fixture5b=$(mktemp -d 2>/dev/null || mktemp -d -t t2954e2)
 claude_path5b=$(build_fixture_fixed_path "$fixture5b" "claude" ".local/bin/claude")
 result5b=$(run_resolver "$fixture5b")
-if [[ -z "$result5b" ]]; then
+if claude_rejected_result "$result5b" "$fixture5b"; then
 	print_result "claude fixed path — not returned as OpenCode fallback" 0
 else
 	print_result "claude fixed path — not returned as OpenCode fallback" 1 \
-		"expected empty result, got=$result5b claude=$claude_path5b"
+		"expected empty or host OpenCode, got=$result5b claude=$claude_path5b"
 fi
 rm -rf "$fixture5b"
 
@@ -446,19 +483,22 @@ fi
 # Test 14: A failed shim write must fail immediately without reporting a path.
 fixture14=$(mktemp -d 2>/dev/null || mktemp -d -t t2954n)
 explicit14=$(build_fixture_node_install "$fixture14" "opencode" "nvm" "v24.13.1")
-shim14=$(_pulse_write_direct_opencode_shim "$explicit14")
+shim14=$(HOME="$fixture14" _pulse_write_direct_opencode_shim "$explicit14")
 before14=$(cat "$shim14")
-if grep -Fq "\${HOME:+:\$HOME/.local/bin}" "$shim14" && \
+# shellcheck disable=SC2016 # the generated shim must defer HOME expansion to runtime.
+if [[ "$shim14" == "$fixture14/.local/bin/opencode" ]] && \
+	grep -Fq 'export PATH="${HOME:+$HOME/.local/bin:$HOME/.aidevops/agents/scripts:}${PATH:+$PATH:}' "$shim14" && \
 	grep -Fq '# aidevops:terminal-title-owner' "$shim14" && \
 	grep -Fq "OPENCODE_DISABLE_TERMINAL_TITLE=\"\${OPENCODE_DISABLE_TERMINAL_TITLE:-1}\"" "$shim14"; then
 	print_result "stable shim — runtime paths and terminal-title ownership are preserved" 0
 else
-	print_result "stable shim — runtime paths and terminal-title ownership are preserved" 1
+	print_result "stable shim — runtime paths and terminal-title ownership are preserved" 1 \
+		"shim=$shim14"
 fi
 cat() {
 	return 1
 }
-result14=$(_pulse_write_direct_opencode_shim "$explicit14" 2>/dev/null)
+result14=$(HOME="$fixture14" _pulse_write_direct_opencode_shim "$explicit14" 2>/dev/null)
 rc14=$?
 unset -f cat
 after14=$(cat "$shim14")
@@ -479,6 +519,30 @@ else
 	print_result "runtime resolution — empty HOME fails without a root-level path" 1 \
 		"rc=$rc15 result=$result15"
 fi
+
+# Test 16 (GH#38581): with a durable HOME, an ephemeral target is neither
+# accepted as a candidate nor written into the live daemon shim. The sandbox
+# HOME is itself under a temp root, so the predicate is narrowed in a subshell
+# to treat only the marked segment as ephemeral.
+fixture16=$(mktemp -d 2>/dev/null || mktemp -d -t t19055)
+target16=$(build_fixture_node_install "$fixture16/t19055-ephemeral" "opencode" "nvm" "v24.13.1")
+result16=$(
+	_setup_opencode_binary_is_ephemeral() {
+		[[ "${1:-}" == */t19055-ephemeral/* ]] && return 0
+		return 1
+	}
+	export HOME="$fixture16/home"
+	_pulse_validate_opencode_candidate "$target16" 1 && printf 'candidate-accepted\n'
+	_pulse_write_direct_opencode_shim "$target16" && printf 'shim-written\n'
+	true
+)
+if [[ -z "$result16" && ! -e "$fixture16/home/.local/bin/opencode" ]]; then
+	print_result "durable HOME — ephemeral target rejected and live shim untouched" 0
+else
+	print_result "durable HOME — ephemeral target rejected and live shim untouched" 1 \
+		"result=$result16"
+fi
+rm -rf "$fixture16"
 
 # --- Summary ---
 echo ""

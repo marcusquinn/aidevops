@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# GH#39344: 31 fixture scenarios; about 470s observed on a loaded macOS host.
+# aidevops:suite-timeout=900
 
 set -euo pipefail
 
@@ -11,7 +13,8 @@ export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 export GIT_CONFIG_COUNT=1
 export GIT_CONFIG_KEY_0=commit.gpgsign
 export GIT_CONFIG_VALUE_0=false
-REAL_GIT=$(command -p -v git 2>/dev/null || command -v git)
+# GH#39344: Bash 3.2 ignores -p with -v, so search the default PATH explicitly.
+REAL_GIT=$(PATH=$(command -p getconf PATH) command -v git 2>/dev/null || command -v git)
 export REAL_GIT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
@@ -30,6 +33,20 @@ TESTS_PASSED=0
 TESTS_FAILED=0
 
 TEST_DIR=""
+
+# macOS mktemp returns /var/... (a symlink to /private/var/...); lifecycle state
+# requires a canonical parent (state-parent-must-be-canonical), so resolve it.
+make_canonical_temp_dir() {
+	local raw_dir=""
+	local canonical_dir=""
+	raw_dir=$(mktemp -d) || return 1
+	if ! canonical_dir=$(cd "$raw_dir" && pwd -P); then
+		rmdir -- "$raw_dir" || return 1
+		return 1
+	fi
+	printf '%s\n' "$canonical_dir"
+	return 0
+}
 
 print_result() {
 	local test_name="$1"
@@ -79,21 +96,31 @@ install_helper_with_libs() {
 	local helper_path="${helper_dir}/profile-readme-helper.sh"
 	cp "${SOURCE_HELPER}" "${helper_path}"
 	chmod +x "${helper_path}"
-	cp "${SOURCE_DATA_LIB}" "${helper_dir}/profile-readme-data-lib.sh"
-	cp "${SOURCE_RENDER_LIB}" "${helper_dir}/profile-readme-render-lib.sh"
+	# Copy the profile-readme module family as a unit so helper splits cannot
+	# leave the isolated fixture without a sourced sub-library.
+	cp "${SOURCE_HELPER%/*}"/profile-readme-*-lib.sh "${helper_dir}/" || return 1
 	cp "${SOURCE_HELPER%/*}/profile-contribution-chart.py" "${helper_dir}/profile-contribution-chart.py"
 	cp "${SOURCE_HELPER%/*}/profile_contribution_data.py" "${helper_dir}/profile_contribution_data.py"
-	_test_copy_shared_deps "${SOURCE_HELPER%/*}" "${helper_dir}" shared-worktree-registry.sh shared-worktree-create.sh || return 1
+	_test_copy_shared_deps "${SOURCE_HELPER%/*}" "${helper_dir}" shared-worktree-registry.sh shared-worktree-create.sh worker-lifecycle-state.sh gh-closing-reference-lib.sh || return 1
+	# Creation and managed producers need the registry, launcher and Python package.
+	local lifecycle_dir="${helper_dir%/*}/worker-lifecycle"
+	mkdir -p "$lifecycle_dir" || return 1
+	cp "${SOURCE_HELPER%/*}/../worker-lifecycle/worker-registry.py" \
+		"${SOURCE_HELPER%/*}/../worker-lifecycle/worker-launch.py" "$lifecycle_dir/" || return 1
+	cp -R "${SOURCE_HELPER%/*}/../worker-lifecycle/worker_lifecycle" "$lifecycle_dir/" || return 1
 	cp "${SOURCE_HELPER%/*}/audit-worktree-removal-helper.sh" \
+		"${SOURCE_HELPER%/*}/audit-worktree-removal-recovery.sh" \
 		"${SOURCE_HELPER%/*}/shared-sqlite-backup.sh" \
 		"${SOURCE_HELPER%/*}/portable-stat.sh" \
 		"${SOURCE_HELPER%/*}/screen-time-interval-engine.py" \
 		"${SOURCE_HELPER%/*}/screen_time_interval_common.py" \
 		"${SOURCE_HELPER%/*}/screen_time_macos.py" \
 		"${SOURCE_HELPER%/*}/screen_time_macos_apps.py" \
+		"${SOURCE_HELPER%/*}/screen_time_macos_input.py" \
+		"${SOURCE_HELPER%/*}/screen_time_macos_pmset.py" \
 		"${SOURCE_HELPER%/*}/screen_time_linux.py" \
-		"${SOURCE_HELPER%/*}/screen_time_linux_logind.py" \
-		"${SOURCE_HELPER%/*}/screen_time_linux_wtmp.py" \
+		"${SOURCE_HELPER%/*}/screen_time_linux_activity.py" \
+		"${SOURCE_HELPER%/*}/screen_time_sources.py" \
 		"${SOURCE_HELPER%/*}/screen_time_history.py" "$helper_dir/"
 	# Copy the worktree module family as a unit, not a second hand-maintained
 	# dependency list that breaks whenever the runtime splits a module.
@@ -229,7 +256,7 @@ strip_dynamic_sections() {
 
 test_chart_assets_publish_and_chart_only_changes_are_not_skipped() {
 	local test_name="daily chart assets publish together and chart-only repairs commit without refetch"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="$TEST_DIR/home" fixture_repo="$TEST_DIR/profile-repo"
 	local fixture_remote="$TEST_DIR/profile-remote.git" helper_dir="$TEST_DIR/helper"
 	local stub_bin="$TEST_DIR/bin" output="$TEST_DIR/output" calls="$TEST_DIR/graphql-calls"
@@ -293,7 +320,7 @@ PY
 test_update_preserves_manual_sections() {
 	local test_name="profile update publishes once from a linked worktree and preserves the canonical checkout"
 
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -362,8 +389,8 @@ test_update_preserves_manual_sections() {
 
 test_update_recovers_dirty_profile_publication_worktree() {
 	local fixture_mode="${1:-0644}"
-	local test_name="legacy profile recovery preserves canonical untracked files with fixture mode $fixture_mode"
-	TEST_DIR=$(mktemp -d)
+	local test_name="legacy profile recovery retains source and canonical files with fixture mode $fixture_mode"
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -427,19 +454,21 @@ EOF
 		PROFILE_MARKER_EVIDENCE="$marker_evidence" \
 		PROFILE_RECOVERY_FIXTURE_MODE="$fixture_mode" \
 		bash "$helper_path" update >"$output_file" 2>&1 || update_rc=$?
-	if [[ "$update_rc" -ne 0 ]]; then
-		print_helper_failure "$test_name" "helper update command failed" "$output_file"
+	# The injected helper supplies legacy evidence only. An archive and a sealed
+	# managed run cannot replace registry-authorized retirement of the source.
+	if [[ "$update_rc" -eq 0 ]]; then
+		print_helper_failure "$test_name" "legacy cleanup unexpectedly succeeded" "$output_file"
 		return 0
 	fi
 
-	if [[ "$(git -C "$fixture_repo" worktree list --porcelain | grep -c '^worktree ' || true)" != "1" ]] ||
+	if [[ "$(git -C "$fixture_repo" worktree list --porcelain | grep -c '^worktree ' || true)" != "2" ]] ||
 		[[ ! -d "$recovery_root" ]] ||
-		! jq -e '.phase == "archived" and .caller == "profile-readme-helper.sh" and .source_removal_outcome == "removed"' \
+		! jq -e '.phase == "archived" and .caller == "profile-readme-helper.sh" and .source_removal_outcome == "pending"' \
 			"$recovery_root"/.producer-transactions/*/journal.json >/dev/null ||
 		[[ "$(cat "$marker_evidence" 2>/dev/null)" != "verified" ]] ||
 		[[ "$(git -C "$fixture_repo" status --porcelain --untracked-files=all)" != "$canonical_status_before" ]] ||
 		[[ "$(cat "${fixture_repo}/unrelated-local-work")" != 'unrelated work must survive recovery' ]]; then
-		print_helper_failure "$test_name" "scratch worktree leaked, recovery archive missing, or canonical checkout changed" "$output_file"
+		print_helper_failure "$test_name" "source or archive missing, false removal receipt, or canonical checkout changed" "$output_file"
 		return 0
 	fi
 
@@ -447,9 +476,148 @@ EOF
 	return 0
 }
 
+profile_publication_trees() {
+	local profile_repo="$1"
+	git -C "$profile_repo" worktree list --porcelain | sed -n 's/^worktree //p' | grep -- '-profile-readme-' || true
+	return 0
+}
+
+# GH#36543: a failed retirement must not leak its tree forever. Later runs sweep
+# earlier clean, published trees through the guarded path and keep dirty ones.
+test_update_sweeps_prior_publication_worktrees() {
+	local test_name="profile update sweeps earlier clean publication trees and preserves dirty ones"
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
+	local fixture_home="${TEST_DIR}/home" fixture_repo="${TEST_DIR}/profile-repo"
+	local fixture_remote="${TEST_DIR}/profile-remote.git" helper_dir="${TEST_DIR}/helper"
+	local refusing_helper="${TEST_DIR}/refusing-worktree-helper.sh" output_file="${TEST_DIR}/update-output"
+	local phase="" tree_a="" tree_b="" intent_dir="" remaining=""
+	local registry_dir="${fixture_home}/.aidevops/.agent-workspace"
+	local registry_db="${registry_dir}/worktree-registry.db"
+
+	mkdir -p "$helper_dir" "$fixture_home"
+	install_helper_with_libs "$helper_dir"
+	write_stub_dependencies "$helper_dir"
+	create_profile_repo_fixture "$fixture_home" "$fixture_repo" "$fixture_remote"
+	printf '#!/usr/bin/env bash\nexit 1\n' >"$refusing_helper"
+	chmod +x "$refusing_helper"
+	intent_dir="$(git -C "$fixture_repo" rev-parse --path-format=absolute --git-common-dir)/aidevops-profile-publication-intents"
+
+	for phase in refused-a refused-b sweep sweep-recheck; do
+		local worktree_helper="$refusing_helper" min_age="" run_output="$output_file"
+		if [[ "$phase" == sweep || "$phase" == sweep-recheck ]]; then
+			worktree_helper="${helper_dir}/worktree-helper.sh"
+			min_age=0
+		fi
+		if [[ "$phase" == sweep ]]; then
+			tree_b=$(profile_publication_trees "$fixture_repo" | grep -vxF -- "$tree_a" || true)
+			[[ -n "$tree_b" ]] && printf 'local edit\n' >"${tree_b}/unpublished-note"
+		fi
+		if [[ "$phase" == sweep-recheck ]]; then
+			# macOS and legacy-guard hosts quarantine a dead publisher's lease for
+			# WORKTREE_OWNER_DEAD_COOLDOWN_MINUTES before the clean tree may retire
+			# (GH#36741). Linux managed leases release at once, so recheck only when
+			# the first sweep preserved the clean tree, aging that first observation
+			# as a later hourly run would.
+			[[ -e "$tree_a" ]] || continue
+			local dead_seen="" tree_a_sql="${tree_a//\'/\'\'}"
+			if ! dead_seen=$(sqlite3 "$registry_db" \
+				"SELECT COALESCE(owner_dead_seen_at, '') FROM worktree_owners WHERE worktree_path = '${tree_a_sql}';") ||
+				[[ -z "$dead_seen" ]]; then
+				print_helper_failure "$test_name" "clean earlier tree survived without a dead-owner observation (a=${tree_a##*/})" "$output_file"
+				return 0
+			fi
+			run_output="${TEST_DIR}/update-output-recheck"
+			if ! sqlite3 "$registry_db" \
+				"UPDATE worktree_owners SET owner_dead_seen_at = '2000-01-01T00:00:00Z' WHERE worktree_path = '${tree_a_sql}' AND COALESCE(owner_dead_seen_at, '') != '';"; then
+				print_helper_failure "$test_name" "could not age clean earlier tree's dead-owner observation" "$output_file"
+				return 0
+			fi
+		fi
+		HOME="$fixture_home" \
+			PATH="${REAL_GIT%/*}:${PATH}:${SOURCE_HELPER%/*}" \
+			WORKTREE_REGISTRY_DIR="$registry_dir" \
+			WORKTREE_REGISTRY_DB="$registry_db" \
+			AIDEVOPS_REPOS_FILE="${fixture_home}/.config/aidevops/repos.json" \
+			AIDEVOPS_WORKTREE_BASE_DIR="${TEST_DIR}/worktrees" \
+			AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_DIR}/recovery" \
+			AIDEVOPS_PROFILE_WORKTREE_HELPER="$worktree_helper" \
+			AIDEVOPS_PROFILE_PUBLICATION_SWEEP_MIN_AGE_SECS="$min_age" \
+			bash "${helper_dir}/profile-readme-helper.sh" update >"$run_output" 2>&1 || true
+		[[ "$phase" == refused-a ]] && tree_a=$(profile_publication_trees "$fixture_repo")
+	done
+	[[ ! -f "${TEST_DIR}/update-output-recheck" ]] || cat "${TEST_DIR}/update-output-recheck" >>"$output_file"
+
+	remaining=$(profile_publication_trees "$fixture_repo")
+	if [[ -z "$tree_a" || -z "$tree_b" || "$tree_a" == *$'\n'* ]] ||
+		[[ "$remaining" != "$tree_b" || -e "$tree_a" ]] ||
+		[[ -e "${intent_dir}/${tree_a##*/}.json" || ! -f "${intent_dir}/${tree_b##*/}.json" ]] ||
+		[[ "$(cat "${tree_b}/unpublished-note" 2>/dev/null)" != 'local edit' ]] ||
+		! grep -q 'Profile publication sweep: retired 1 earlier worktree(s); 1 preserved' "$output_file"; then
+		print_helper_failure "$test_name" "expected only the dirty earlier tree to remain (a=${tree_a##*/} b=${tree_b##*/})" "$output_file"
+		return 0
+	fi
+	print_result "$test_name" 0
+	return 0
+}
+
+# GH#37159: a retained backlog must not starve refresh. Recovery is bounded by
+# count and examined trees; the run still completes and leaves the rest protected.
+test_update_bounds_recovery_with_retained_backlog() {
+	local test_name="profile update bounds recovery per run with a retained backlog"
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
+	local fixture_home="${TEST_DIR}/home" fixture_repo="${TEST_DIR}/profile-repo"
+	local fixture_remote="${TEST_DIR}/profile-remote.git" helper_dir="${TEST_DIR}/helper"
+	local refusing_helper="${TEST_DIR}/refusing-worktree-helper.sh" output_file="${TEST_DIR}/update-output"
+	local registry_dir="${fixture_home}/.aidevops/.agent-workspace"
+	local registry_db="${registry_dir}/worktree-registry.db"
+	local run=0 before=0 after=0 status=0 worktree_helper="" min_age="" cap="" remote_before="" remote_after=""
+
+	mkdir -p "$helper_dir" "$fixture_home"
+	install_helper_with_libs "$helper_dir"
+	write_stub_dependencies "$helper_dir"
+	create_profile_repo_fixture "$fixture_home" "$fixture_repo" "$fixture_remote"
+	printf '#!/usr/bin/env bash\nexit 1\n' >"$refusing_helper"
+	chmod +x "$refusing_helper"
+
+	for run in 1 2 3 4 5 6 7 8 9 10 11 12; do
+		worktree_helper="$refusing_helper" min_age="" cap=""
+		if [[ "$run" -eq 12 ]]; then
+			worktree_helper="${helper_dir}/worktree-helper.sh" min_age=0 cap=1
+		fi
+		if [[ "$run" -eq 12 ]]; then
+			before=$(profile_publication_trees "$fixture_repo" | grep -c . || true)
+			remote_before=$(git -C "$fixture_remote" rev-parse main)
+			sed -i.bak 's/"today_hours":1.0/"today_hours":7.5/' "${helper_dir}/screen-time-helper.sh"
+		fi
+		status=0
+		HOME="$fixture_home" \
+			PATH="${REAL_GIT%/*}:${PATH}:${SOURCE_HELPER%/*}" \
+			WORKTREE_REGISTRY_DIR="$registry_dir" \
+			WORKTREE_REGISTRY_DB="$registry_db" \
+			AIDEVOPS_REPOS_FILE="${fixture_home}/.config/aidevops/repos.json" \
+			AIDEVOPS_WORKTREE_BASE_DIR="${TEST_DIR}/worktrees" \
+			AIDEVOPS_WORKTREE_TRASH_ROOT="${TEST_DIR}/recovery" \
+			AIDEVOPS_PROFILE_WORKTREE_HELPER="$worktree_helper" \
+			AIDEVOPS_PROFILE_PUBLICATION_SWEEP_MIN_AGE_SECS="$min_age" \
+			AIDEVOPS_PROFILE_PUBLICATION_SWEEP_CAP="$cap" \
+			bash "${helper_dir}/profile-readme-helper.sh" update >"$output_file" 2>&1 || status=$?
+	done
+	after=$(profile_publication_trees "$fixture_repo" | grep -c . || true)
+	remote_after=$(git -C "$fixture_remote" rev-parse main)
+
+	if [[ "$status" -ne 0 ]] || [[ "$remote_before" == "$remote_after" ]] || [[ "$before" -lt 11 ]] || [[ "$after" -lt $((before - 1)) ]] ||
+		! grep -q 'Profile publication sweep: bound reached' "$output_file" ||
+		grep -q 'could not create profile publication worktree' "$output_file"; then
+		print_helper_failure "$test_name" "expected bounded recovery with retained backlog (before=${before} after=${after} status=${status})" "$output_file"
+		return 0
+	fi
+	print_result "$test_name" 0
+	return 0
+}
+
 test_update_dry_run_is_canonical_safe() {
 	local test_name="profile update dry-run leaves canonical checkout and remote unchanged"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -487,7 +655,7 @@ test_update_dry_run_is_canonical_safe() {
 
 test_update_prepublication_failure_is_canonical_safe() {
 	local test_name="profile update pre-publication failure leaves canonical checkout unchanged"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -523,7 +691,7 @@ test_update_prepublication_failure_is_canonical_safe() {
 
 test_internal_override_rejects_canonical_checkout() {
 	local test_name="profile publication override rejects a canonical checkout target"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -556,7 +724,7 @@ test_internal_override_rejects_canonical_checkout() {
 
 test_canonical_cleanliness_ignores_untracked_files() {
 	local test_name="profile publication ignores untracked canonical files but rejects tracked changes"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -591,7 +759,7 @@ test_canonical_cleanliness_ignores_untracked_files() {
 test_update_migrates_generated_readme_with_commit_history_chart() {
 	local test_name="profile update adds commit-history chart to older generated README"
 
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -664,7 +832,7 @@ teardown() {
 test_inject_markers_into_existing_readme() {
 	local test_name="inject markers into README without markers"
 
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -749,7 +917,7 @@ EOF
 test_diverged_history_recovery() {
 	local test_name="recover from diverged git history"
 
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -837,7 +1005,7 @@ EOF
 test_default_template_replaced_with_rich_readme() {
 	local test_name="default GitHub template replaced with rich profile README"
 
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -944,7 +1112,7 @@ EOF
 test_default_template_with_existing_markers_replaced() {
 	local test_name="default template with existing markers gets replaced"
 
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local fixture_home="${TEST_DIR}/home"
 	local fixture_repo="${TEST_DIR}/profile-repo"
 	local fixture_remote="${TEST_DIR}/profile-remote.git"
@@ -1047,7 +1215,7 @@ EOF
 test_session_time_vars_default_missing_null_values() {
 	local test_name="session time vars default missing and null values"
 
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local stdout_file="${TEST_DIR}/stdout"
 	local stderr_file="${TEST_DIR}/stderr"
 
@@ -1105,7 +1273,7 @@ test_session_time_vars_default_missing_null_values() {
 test_work_with_ai_worker_counts_above_thousand() {
 	local test_name="work with AI worker counts above one thousand render"
 
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	mkdir -p "${TEST_DIR}/home"
 
 	# shellcheck source=../profile-readme-data-lib.sh
@@ -1158,7 +1326,7 @@ test_work_with_ai_worker_counts_above_thousand() {
 
 test_work_with_ai_unavailable_is_not_zero() {
 	local test_name="work with AI renders collector failures as unavailable"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	mkdir -p "${TEST_DIR}/home"
 	# shellcheck source=../profile-readme-data-lib.sh
 	source "${SOURCE_DATA_LIB}"
@@ -1169,7 +1337,8 @@ test_work_with_ai_unavailable_is_not_zero() {
 	unavailable_json='{"status":"unavailable"}'
 	output_file="${TEST_DIR}/unavailable.md"
 	HOME="${TEST_DIR}/home" _generate_work_with_ai_table "$screen_json" "$unavailable_json" "$unavailable_json" "$unavailable_json" "$unavailable_json" >"$output_file"
-	if ! grep -qF '| Screen time' "$output_file" || ! grep -qF '| unavailable | unavailable | unavailable | unavailable |' "$output_file"; then
+	# Linux labels its row "Input activity (Linux)"; other platforms "Screen time".
+	if ! grep -qE '^\| (Screen time|Input activity)' "$output_file" || ! grep -qF '| unavailable | unavailable | unavailable | unavailable |' "$output_file"; then
 		print_result "$test_name" 1 "unavailable cells were not visibly rendered"
 		return 0
 	fi
@@ -1183,7 +1352,7 @@ test_work_with_ai_unavailable_is_not_zero() {
 
 test_model_usage_renders_activity_metrics_without_costs() {
 	local test_name="model usage renders cache and session activity without cost or savings claims"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	# shellcheck source=../profile-readme-data-lib.sh
 	source "$SOURCE_DATA_LIB"
 	# shellcheck source=../profile-readme-render-lib.sh
@@ -1213,7 +1382,7 @@ test_model_usage_renders_activity_metrics_without_costs() {
 
 test_observability_model_usage_calculates_sessions_and_hours() {
 	local test_name="observability model usage calculates distinct sessions and generation hours"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	# shellcheck source=../profile-readme-data-lib.sh
 	source "$SOURCE_DATA_LIB"
 	OBS_DB_FILE="${TEST_DIR}/llm-requests.db"
@@ -1251,7 +1420,7 @@ test_observability_model_usage_calculates_sessions_and_hours() {
 
 test_opencode_model_usage_deduplicates_variants_and_rejects_partial_duration() {
 	local test_name="OpenCode model usage deduplicates normalized sessions and leaves incomplete duration unavailable"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	# shellcheck source=../profile-readme-data-lib.sh
 	source "$SOURCE_DATA_LIB"
 	OPENCODE_DB_FILE="${TEST_DIR}/opencode.db"
@@ -1284,7 +1453,7 @@ test_opencode_model_usage_deduplicates_variants_and_rejects_partial_duration() {
 
 test_jsonl_model_usage_rejects_partial_duration() {
 	local test_name="JSONL model usage leaves partial duration unavailable"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	# shellcheck source=../profile-readme-data-lib.sh
 	source "$SOURCE_DATA_LIB"
 	METRICS_FILE="${TEST_DIR}/metrics.jsonl"
@@ -1305,7 +1474,7 @@ EOF
 
 test_screen_json_paths_are_optional_and_fail_visibly() {
 	local test_name="screen JSON paths are optional and invalid payloads remain visibly unavailable"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	# shellcheck source=../profile-readme-render-lib.sh
 	source "$SOURCE_RENDER_LIB"
 	local assignments screen_today screen_status screen_source
@@ -1330,13 +1499,28 @@ test_screen_json_paths_are_optional_and_fail_visibly() {
 		print_result "$test_name" 1 "malformed screen payload failure was not visible"
 		return 0
 	fi
+	# macOS input-activity row reuses the screen formatting; null periods stay unavailable.
+	local input_row input_note
+	eval "$(_generate_input_activity_vars '{"today_hours":1.25,"week_hours":7,"month_hours":20,"year_hours":null,"periods":{"month":{"status":"ok","source":"macos-input-activity:idle-cutoff-300s"}}}' "Input activity (Mac)")"
+	if [[ "$input_row" != "| Input activity (Mac) | 1.3h | 7h | 20h | unavailable |" || "$input_note" != *"from macos-input-activity:idle-cutoff-300s"* ]]; then
+		print_result "$test_name" 1 "macOS input-activity row or note malformed: ${input_row} / ${input_note}"
+		return 0
+	fi
+	# Linux evidence names whether a desktop or only terminals were measured.
+	if [[ "$(_input_evidence_note '{"evidence":["tty-atime"]}')" != *"terminal input only; no desktop session"* ||
+		"$(_input_evidence_note '{"evidence":["gnome-idle-monitor","tty-atime"]}')" != *"desktop and terminal input"* ||
+		"$(_input_evidence_note '{"evidence":["graphical-idle-unavailable","tty-atime"]}')" != *"idle time was unreadable"* ||
+		-n "$(_input_evidence_note '{}')" ]]; then
+		print_result "$test_name" 1 "Linux input evidence note did not distinguish desktop from terminal input"
+		return 0
+	fi
 	print_result "$test_name" 0
 	return 0
 }
 
 test_top_apps_batches_jq_processing() {
 	local test_name="top-app rendering batches jq processing"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	# shellcheck source=../profile-readme-render-lib.sh
 	source "$SOURCE_RENDER_LIB"
 	local db_path="${TEST_DIR}/knowledgeC.db"
@@ -1382,7 +1566,7 @@ EOF
 
 test_profile_update_lock_is_bounded() {
 	local test_name="profile update lock uses portable mtime and remains token-owned, race-safe, and stale-recoverable"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local result
 	result=$(
 		set -- help
@@ -1564,7 +1748,7 @@ test_token_totals_from_selected_model_population_are_equivalent() {
 
 test_profile_model_bundle_scans_each_population_once() {
 	local test_name="profile model bundle scans each required population once"
-	TEST_DIR=$(mktemp -d)
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
 	local calls_file="${TEST_DIR}/model-source-calls"
 	_get_model_usage_from_obs_db() {
 		local date_filter="${1:-}"
@@ -1648,13 +1832,69 @@ test_profile_model_bundle_scans_each_population_once() {
 	return 0
 }
 
+test_archive_capture_python39_zip_compatibility() {
+	local test_name="publication archive capture supports Python 3.9 zip and rejects incomplete records"
+	TEST_DIR=$(make_canonical_temp_dir) || return 1
+	if python3 - "${SOURCE_HELPER%/*}" "$TEST_DIR" <<'PY'
+import json
+from pathlib import Path
+import sys
+from unittest.mock import patch
+
+sys.path.insert(0, sys.argv[1])
+import worktree_archive_deletions as capture
+
+# Model the Python 3.9 zip signature even on newer Linux CI interpreters.
+def legacy_zip(*iterables):
+    return zip(*iterables)
+
+root = Path(sys.argv[2])
+oid = "a" * 40
+raw = f":100644 000000 {oid} {'0' * 40} D\0deleted.txt\0".encode()
+with patch.object(capture, "zip", legacy_zip, create=True):
+    for name, payload in (("empty", b""), ("deleted", raw)):
+        archive = root / name
+        archive.mkdir()
+        with patch.object(capture, "git", side_effect=lambda *args: payload if "--raw" in args else b""):
+            capture.capture(root, archive)
+        assert (archive / "diff.patch").read_bytes() == b""
+        assert (archive / "staged.patch").read_bytes() == b""
+        if payload:
+            expected = [[b"deleted.txt".hex(), "100644", oid]]
+            assert json.loads((archive / capture.NAME).read_text()) == {
+                "staged": expected, "unstaged": expected}
+        else:
+            assert not (archive / capture.NAME).exists()
+    with patch.object(capture, "git", return_value=b"orphan-header\0"):
+        try:
+            capture.capture(root, root)
+        except ValueError as error:
+            assert str(error) == "incomplete deletion record"
+        else:
+            raise AssertionError("incomplete deletion record accepted")
+PY
+	then
+		print_result "$test_name" 0
+	else
+		print_result "$test_name" 1 "Python 3.9-compatible capture or malformed-record guard failed"
+	fi
+	return 0
+}
+
 main() {
 	local mode="${1:-all}"
 	if [[ ! -x "${SOURCE_HELPER}" ]]; then
 		echo "Helper script not found or not executable: ${SOURCE_HELPER}" >&2
 		return 1
 	fi
+	# Keep managed launches independent of the invoking worktree and registry.
+	SUITE_ROOT=$(make_canonical_temp_dir) || return 1
+	trap 'rm -rf -- "$SUITE_ROOT"' EXIT
+	export AIDEVOPS_LIFECYCLE_STATE_DIR="$SUITE_ROOT/lifecycle"
+	cd "$SUITE_ROOT" || return 1
 
+	test_archive_capture_python39_zip_compatibility
+	teardown
 	if [[ "$mode" != "--unit-only" ]]; then
 		test_chart_assets_publish_and_chart_only_changes_are_not_skipped
 		teardown
@@ -1663,6 +1903,10 @@ main() {
 		test_update_recovers_dirty_profile_publication_worktree
 		teardown
 		test_update_recovers_dirty_profile_publication_worktree 0600
+		teardown
+		test_update_sweeps_prior_publication_worktrees
+		teardown
+		test_update_bounds_recovery_with_retained_backlog
 		teardown
 		test_update_dry_run_is_canonical_safe
 		teardown

@@ -34,6 +34,7 @@ tools:
 - **Auth**: API Tokens only (NEVER Global API Keys)
 - **Token creation**: Dashboard > My Profile > API Tokens > Create Token
 - **Permissions**: Zone:Read, DNS:Read, DNS:Edit (scope to specific zones)
+- **Cache guidance**: [Cloudflare + LiteSpeed cache notes](hostinger.md#cloudflare-cache-rules-that-skip-every-visitor-with-a-cookie)
 - **Config**: `configs/cloudflare-dns-config.json`
 - **Account ID**: Dashboard > Right sidebar > 32-char hex
 - **Zone ID**: Domain overview > Right sidebar > 32-char hex
@@ -77,6 +78,12 @@ Zone Settings:Read - Read zone settings (optional)
 4. **Zone Resources**: Include > Specific zones > [Select your domains]
 5. **IP Filtering** (recommended): Include > [Your home/office IP]
 6. **Expiration**: Set to 1 year maximum
+
+### Cache Rules and purge permissions
+
+- **Cache Rules API**: A token without rules permissions receives “request is not authorized” on `zones/<zone>/rulesets` when configuring the `http_request_cache_settings` phase. Grant **Zone → Cache Rules: Read** and **Zone → Cache Rules: Edit**, scoped to the required zone.
+- **Cache purge API**: Grant **Zone → Cache Purge** to purge and **Zone → Zone: Read** so the caller can find the zone. Scope the token to the relevant zone.
+- For Cloudflare Free edge TTL limits, safe development HTML caching, shared-zone purge scope and Smart Tiered Cache, see the [Hostinger LiteSpeed cache notes](hostinger.md#cloudflare-cache-rules-that-skip-every-visitor-with-a-cookie).
 
 ### 2. Collect IDs
 
@@ -183,6 +190,42 @@ undocumented field from dashboard wording. If the public API does not expose the
 separate migration preference, inspect an authorized dashboard network request or
 use Cloudflare Code Mode OpenAPI search, then document the verified field before
 automating it.
+
+## Email Routing on a Subdomain
+
+Use this when the apex MX belongs to another provider (Google Workspace, M365) and
+only a subdomain such as `marketing.<domain>` should forward through Cloudflare.
+Dashboard onboarding covers the apex only and proposes replacing the apex MX, so
+subdomain enablement is API-only:
+
+- Preview: `GET /zones/{zone_id}/email/routing/dns?subdomain=<sub>.<domain>`
+- Enable: `POST /zones/{zone_id}/email/routing/dns` with `{"name": "<sub>.<domain>"}`
+- Token permissions (observed): `Zone Settings Write`, `Email Routing Rules Write`,
+  `DNS Write`, and `Account Email Routing Addresses Write`. Without Zone Settings
+  Write the settings/DNS endpoints return code `10000`.
+
+**Apex side effect (not shown in the preview):** besides the subdomain MX and SPF,
+enablement can also create an apex `TXT "v=spf1 include:_spf.mx.cloudflare.net ~all"`
+when the apex had no SPF, plus a locked apex `cf2024-1._domainkey` DKIM record. That
+SPF omits the existing provider, so its outbound mail moves from SPF `none` to
+`softfail`. Cloudflare documents the same apex behaviour for normal onboarding in
+[Domain configuration](https://developers.cloudflare.com/email-service/configuration/domains/index.md).
+
+1. Export the zone's DNS records before enabling.
+2. Enable, then export again and diff. Never trust the preview or the POST response alone.
+3. If an apex SPF appeared and the apex had none, replace it with the real sending
+   provider's SPF (for example `v=spf1 include:_spf.google.com ~all`) or delete it;
+   unlock it first under Email Routing > Settings if it is locked. If the apex already
+   had SPF, Cloudflare does not add another; leave it unchanged.
+4. Keep the `cf2024-1._domainkey` record; its selector does not conflict with
+   provider DKIM selectors.
+5. Check the subdomain's routing status (`ready`), not the zone's. Zone-level
+   `misconfigured` (`mx.foreign`) is expected while the apex MX stays foreign.
+
+Disabling Email Routing later deletes every record Cloudflare associates with it,
+including unlocked records you edited. Destination-address verification links sit
+behind a Cloudflare challenge and fail in headless browsers; ask a human to open
+them in a normal browser.
 
 ## If a Token Is Compromised
 

@@ -149,9 +149,15 @@ _project_config_write_migration_issue() {
 	local body_file="$2"
 	local helper_dir="${BASH_SOURCE[0]%/*}"
 	[[ "$helper_dir" == "${BASH_SOURCE[0]}" ]] && helper_dir="."
+	local labels=() label=""
+	for label in auto-dispatch tier:simple; do
+		if "${helper_dir}/../label-sync-helper.sh" ensure "$repo_slug" "$label"; then
+			labels+=(--label "$label")
+		fi
+	done
 	"${helper_dir}/../gh-write-helper.sh" issue create --repo "$repo_slug" \
 		--title "chore: stop tracking local .aidevops.json" --body-file "$body_file" \
-		--label "auto-dispatch" --label "tier:simple" >/dev/null
+		${labels[@]+"${labels[@]}"} >/dev/null
 	return $?
 }
 
@@ -176,9 +182,11 @@ _project_config_queue_migration() {
 	trap 'rm -f "${body_file:-}"' RETURN
 	printf '%s\n' "$_PROJECT_CONFIG_MIGRATION_MARKER" "## Goal" "" \
 		"Stop tracking \`.aidevops.json\` while preserving its local bytes." "" \
-		"## Files Scope" "" "- \`.aidevops.json\`" "- \`.gitignore\`" "" \
+		"## Files Scope" "" "- \`.aidevops.json\`" "- \`.gitignore\`" \
+		"- \`.agents/recovery-policy.md\` (only when \`recovery_policy\` is declared)" "" \
 		"## Implementation" "" \
 		"In a fresh linked worktree, add \`.aidevops.json\` to \`.gitignore\`, run \`git rm --cached -- .aidevops.json\`, and commit the index-only migration. Never delete the local file or edit a canonical checkout." "" \
+		"If \`.aidevops.json\` declares \`recovery_policy\`, move that section's \`json\` block into a tracked \`.agents/recovery-policy.md\` under \`# Recovery policy\` in the same PR, or delegated queue recovery stops (reference/recovery-policy.md)." "" \
 		"## Verification" "" \
 		"- Confirm \`.aidevops.json\` remains byte-identical in the worktree." \
 		"- Confirm \`git ls-files -- .aidevops.json\` is empty and \`.gitignore\` contains the entry." >"$body_file"
@@ -203,5 +211,89 @@ _project_config_migrate_linked_worktree() {
 	_project_config_is_linked_worktree "$repo" || return 1
 	git -C "$repo" rm --cached -- .aidevops.json >/dev/null || return 1
 	print_info "Staged .aidevops.json index migration in the linked worktree; local file preserved"
+	return 0
+}
+
+# GH#39023: init run in a linked worktree writes the ignored config only to that
+# worktree, which is removed after the bootstrap PR merges. A framework-owned
+# copy keyed by slug lets `aidevops update` write it to the canonical checkout
+# once that checkout ignores the file. project-config-restore-helper.sh
+# --init-backup reads this same path.
+_project_config_backup_dir() {
+	printf '%s/.config/aidevops/project-config-backups' "$HOME"
+	return 0
+}
+
+_project_config_backup_file() {
+	local slug="$1"
+	# Owners have no consecutive hyphens, so the first "--" separates the parts.
+	[[ "$slug" =~ ^[A-Za-z0-9]+(-[A-Za-z0-9]+)*/[A-Za-z0-9._-]+$ ]] || return 1
+	[[ "${slug#*/}" != "." && "${slug#*/}" != ".." ]] || return 1
+	printf '%s/%s--%s.json' "$(_project_config_backup_dir)" "${slug%%/*}" "${slug#*/}"
+	return 0
+}
+
+_project_config_save_init_backup() {
+	local project_root="$1" slug="$2"
+	local config_file="${project_root}/.aidevops.json" backup="" backup_dir="" temp_file=""
+	[[ -f "$config_file" && ! -L "$config_file" ]] || return 1
+	backup=$(_project_config_backup_file "$slug") || return 1
+	backup_dir="${backup%/*}"
+	mkdir -p "$backup_dir" && chmod 700 "$backup_dir" || return 1
+	[[ -d "$backup_dir" && ! -L "$backup_dir" ]] || return 1
+	temp_file=$(mktemp "${backup_dir}/.backup.XXXXXX") || return 1
+	if ! cat "$config_file" >"$temp_file" || ! chmod 600 "$temp_file" || ! mv -f "$temp_file" "$backup"; then
+		rm -f "$temp_file"
+		return 1
+	fi
+	return 0
+}
+
+# Restore one saved init config through the restore helper's guards. The
+# canonical config, when present, stays the source of truth and is never
+# overwritten; the copy is then redundant and removed.
+_project_config_materialise_one() {
+	local registry="$1" helper="$2" backup="$3" slug="$4"
+	local count="" repo="" target="" reason=""
+	count=$(jq -r --arg slug "$slug" '[.initialized_repos[]? | select(.slug == $slug)] | length' "$registry" 2>/dev/null) || return 0
+	if [[ "$count" == "0" ]]; then
+		rm -f "$backup"
+		print_info "Removed saved init config for unregistered $slug"
+		return 0
+	fi
+	[[ "$count" == "1" ]] || return 0
+	repo=$(jq -r --arg slug "$slug" '.initialized_repos[] | select(.slug == $slug) | .path // empty' "$registry" 2>/dev/null) || return 0
+	[[ -n "$repo" && -d "$repo" ]] || return 0
+	target="${repo}/.aidevops.json"
+	if [[ -L "$target" ]]; then
+		return 0
+	elif [[ -e "$target" ]]; then
+		rm -f "$backup"
+		return 0
+	fi
+	if reason=$(AIDEVOPS_REPOS_FILE="$registry" bash "$helper" restore "$slug" --init-backup --apply 2>&1 >/dev/null) &&
+		[[ -f "$target" ]] && cmp -s "$backup" "$target"; then
+		rm -f "$backup"
+		print_success "Restored .aidevops.json saved by aidevops init: $target"
+	else
+		print_info "Saved init config for $slug not restored yet: ${reason:-unknown reason}"
+	fi
+	return 0
+}
+
+_project_config_materialise_init_backups() {
+	local registry="$1" helper="$2"
+	local backup_dir="" backup="" name="" slug=""
+	backup_dir=$(_project_config_backup_dir)
+	[[ -d "$backup_dir" && ! -L "$backup_dir" && -f "$registry" && -f "$helper" ]] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+	for backup in "$backup_dir"/*--*.json; do
+		[[ -f "$backup" && ! -L "$backup" ]] || continue
+		name="${backup##*/}"
+		name="${name%.json}"
+		slug="${name%%--*}/${name#*--}"
+		[[ "$(_project_config_backup_file "$slug")" == "$backup" ]] || continue
+		_project_config_materialise_one "$registry" "$helper" "$backup" "$slug"
+	done
 	return 0
 }

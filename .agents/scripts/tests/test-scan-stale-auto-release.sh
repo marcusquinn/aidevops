@@ -578,6 +578,26 @@ fi
 rm -f "${STAMP_DIR}/a-repo-122.json" "${STAMP_DIR}/b-repo-123.json"
 
 # =============================================================================
+# Test 18b — capped reaper rotates past a permanently preserved head stamp
+# (GH#37524). A fixed glob order re-examined the same first stamps every cycle,
+# so a releasable claim sorting after them was never reached.
+# =============================================================================
+: >"$RELEASE_LOG"
+rm -f "${STAMP_DIR}/.reap-cursor"
+write_stamp "a-invalid-126.json" "99999" "/nonexistent/path/126" "0" "a/repo"
+write_stamp "b-repo-127.json" "99999" "/nonexistent/path/127" "127" "b/repo"
+AIDEVOPS_DEAD_STAMP_REAP_LIMIT=1 _isc_cmd_reap_dead_stamps >/dev/null 2>/dev/null || true
+AIDEVOPS_DEAD_STAMP_REAP_LIMIT=1 _isc_cmd_reap_dead_stamps >/dev/null 2>/dev/null || true
+if [[ -f "${STAMP_DIR}/a-invalid-126.json" ]] &&
+	[[ ! -f "${STAMP_DIR}/b-repo-127.json" ]] &&
+	[[ "$(wc -l <"$RELEASE_LOG" | tr -d ' ')" -eq 1 ]]; then
+	pass "capped reaper rotates past a preserved head stamp"
+else
+	fail "capped reaper rotates past a preserved head stamp"
+fi
+rm -f "${STAMP_DIR}/a-invalid-126.json" "${STAMP_DIR}/.reap-cursor"
+
+# =============================================================================
 # Test 19 — direct pulse reaper rejects invalid issue and slug metadata
 # =============================================================================
 : >"$RELEASE_LOG"

@@ -89,6 +89,13 @@ jobs:
           fi
           echo "All plugin imports resolve successfully."
 
+      - name: Install chat scanner dependency
+        # Chat ingest tests run the real prompt guard. Its full pattern set
+        # needs ripgrep rather than the degraded grep-ERE fallback.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+
       - name: Run plugin tests
         # Load-time import resolution (above) cannot catch ReferenceErrors at
         # call time — e.g. `export { X } from "./Y"` is re-export only and

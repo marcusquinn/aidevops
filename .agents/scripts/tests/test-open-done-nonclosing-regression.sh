@@ -39,8 +39,11 @@ gh() {
 		[[ "$API_FAIL" == 0 ]] || return 1
 		if [[ "$*" == *'/comments'* ]]; then
 			printf '%s\n' "$COMMENTS_JSON"
-		elif [[ "$*" == *'/pulls/'* ]]; then
+		elif [[ "$*" == *'/pulls/'* && "$*" == *'--jq'* ]]; then
 			printf '%s\n' "$PR_BODY"
+		elif [[ "$*" == *'/pulls/'* ]]; then
+			# GH#36270: PR metadata reads parse the REST pulls object.
+			jq -nc --arg body "$PR_BODY" '{title:"fixture",body:$body}'
 		elif [[ "$*" == *'--jq'* ]]; then
 			printf '%s' "$ISSUE_JSON" | jq -r '.state | ascii_downcase'
 		else
@@ -175,6 +178,10 @@ _hrw_release_dispatch_claim() {
 }
 _hrw_pr_less_terminal_complete() { return 1; }
 _worker_post_pr_handoff_confirmed() { return 1; }
+# These finish-path cases model a launched runtime (GH#37669). GH#37708 also
+# requires this attempt's session evidence before the finish path may run.
+_WORKER_RUNTIME_LAUNCH_STARTED=1
+_run_metric_session_id="fixture-session"
 API_FAIL=0
 ISSUE_JSON='{"state":"open","labels":[{"name":"status:blocked"}]}'
 for _run_result_label in task_complete post_pr_handoff; do

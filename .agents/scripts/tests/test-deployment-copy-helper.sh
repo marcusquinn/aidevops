@@ -3,11 +3,41 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 set -euo pipefail
 
+# Resolve native Git once as an executable on the caller PATH (portable to
+# non-FHS hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+_resolve_native_git() {
+	local dir candidate target
+	local -a path_dirs=()
+	IFS=':' read -r -a path_dirs <<<"${PATH:-}"
+	for dir in "${path_dirs[@]}"; do
+		[[ "$dir" == /* ]] || continue
+		candidate="${dir}/git"
+		[[ -f "$candidate" && -x "$candidate" ]] || continue
+		# Skip the aidevops git wrapper.
+		if [[ "$candidate" == *aidevops* ]] || head -c 512 "$candidate" 2>/dev/null | grep -a 'aidevops' >/dev/null; then
+			continue
+		fi
+		while [[ -L "$candidate" ]]; do
+			target=$(readlink "$candidate") || break
+			[[ "$target" == /* ]] || target="$(dirname "$candidate")/${target}"
+			candidate="$target"
+		done
+		printf '%s\n' "$candidate"
+		return 0
+	done
+	return 1
+}
+TEST_NATIVE_GIT=$(_resolve_native_git) || {
+	printf '%s\n' 'Native Git (non-wrapper executable) not found on PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 HELPER="${SCRIPT_DIR}/../deployment-copy-helper.sh"
 PYTHON_HELPER="${SCRIPT_DIR}/../deployment-copy-helper.py"
 TEST_TMP_ROOT="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}"
-REAL_GIT="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}"
+REAL_GIT="${AIDEVOPS_REAL_GIT_BIN:-${TEST_NATIVE_GIT}}"
 TEST_ROOT=""
 REPO=""
 WORKTREE=""

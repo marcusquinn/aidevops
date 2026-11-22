@@ -34,6 +34,30 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+# Permission gate for lockdown/unlock. Returns 0 to proceed, 1 to skip with a
+# warning that distinguishes a lookup failure (retryable) from a confirmed
+# insufficient permission.
+_isc_state_permission_gate() {
+	local action="$1"
+	local issue="$2"
+	local slug="$3"
+	local user="$4"
+	local external_detail="${5:-}"
+	local gate_rc=0
+
+	_isc_can_manage_issue_state "$slug" "$user" || gate_rc=$?
+	if [[ "$gate_rc" -eq 0 ]]; then
+		return 0
+	fi
+	if [[ "$gate_rc" -eq 2 ]]; then
+		_isc_warn "$action: #$issue in $slug not applied — collaborator permission lookup failed (${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-unknown}); retry the $action"
+		return 1
+	fi
+	_isc_warn "$action: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator (http=${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-unknown} reason=${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-unknown})"
+	[[ -n "$external_detail" ]] && _isc_warn "$external_detail"
+	return 1
+}
+
 _isc_resolve_manageable_user() {
 	local action="$1"
 	local issue="$2"
@@ -45,24 +69,28 @@ _isc_resolve_manageable_user() {
 	if ! _isc_gh_reachable; then
 		_isc_warn "$offline_warning"
 		[[ -n "$offline_detail" ]] && _isc_warn "$offline_detail"
-		return 1
+		return 75
 	fi
 
 	local user
 	user=$(_isc_current_user)
 	if [[ -z "$user" ]]; then
 		_isc_warn "could not resolve gh user login — skipping $action on #$issue"
-		return 1
+		return 75
 	fi
 
 	local permission_rc=0
 	_isc_can_manage_issue_state "$slug" "$user" || permission_rc=$?
 	if [[ "$permission_rc" -eq 75 ]]; then
 		_isc_warn "$action: #$issue in $slug deferred — GitHub permission read admission deferred; retry when capacity returns"
-		return 1
+		return 75
+	fi
+	if [[ "$permission_rc" -eq 2 ]]; then
+		_isc_warn "$action: #$issue in $slug not applied — collaborator permission lookup failed (${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-unknown}); retry the $action"
+		return 2
 	fi
 	if [[ "$permission_rc" -ne 0 ]]; then
-		_isc_warn "$action: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
+		_isc_warn "$action: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator (http=${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-unknown} reason=${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-unknown})"
 		[[ -n "$external_detail" ]] && _isc_warn "$external_detail"
 		return 1
 	fi
@@ -121,15 +149,17 @@ _isc_claim_closed_issue_guard() {
 #   intends to take the issue itself instead of letting a worker pick it up.
 #
 # Behaviour:
-#   - Offline gh: warn-and-continue (exit 0). A collision with a pulse worker
-#     is harmless — the interactive work naturally becomes its own issue/PR.
+#   - Transient identity/permission failures: warn and exit 75 when
+#     --implementing; otherwise preserve the warn-and-continue exit 0.
+#   - Confirmed external non-maintainers: skip without writes (exit 0).
 #   - Idempotent: a re-call by the sole current assignee refreshes the stamp
 #     without a redundant GitHub edit.
 #   - Ownership failures fail closed: unavailable metadata, a foreign live
 #     interactive owner, or an unverifiable takeover never writes a stamp.
 #
 # Exit: 0 on a verified claim/idempotent skip, 1 on ownership conflict or
-# unverifiable metadata/transition, 2 on invalid arguments.
+# unverifiable metadata/transition, 2 on invalid arguments, 75 on a transient
+# identity/permission failure with --implementing (no stamp written).
 _isc_existing_stamp_worktree() {
 	local issue="$1"
 	local slug="$2"
@@ -372,6 +402,88 @@ _isc_validate_claim_request() {
 	return 0
 }
 
+# GH#38798: one fresh gh-fallback permission read, bypassing memo and ETag.
+# #aidevops:trust-boundary — only a confirmed admin|maintain|write verdict from
+# this fresh request grants; failures, 404s and 304s never do.
+# Args: $1=slug, $2=user. Returns 0 only for a confirmed write-level verdict.
+_isc_fresh_permission_confirms_write() {
+	local slug="$1"
+	local user="$2"
+	local fresh_perm="" fresh_rc=0
+	[[ -n "$slug" && -n "$user" ]] || return 1
+	declare -F _gh_collaborator_permission_lookup_uncached >/dev/null 2>&1 || return 1
+	AIDEVOPS_GH_COLLAB_SKIP_ETAG=1 _gh_collaborator_permission_lookup_uncached \
+		"$slug" "$user" fresh_perm "${_AIDEVOPS_GH_COLLAB_GH_FALLBACK_ROUTE:-gh-fallback}" || fresh_rc=$?
+	[[ "$fresh_rc" -eq 0 ]] || return 1
+	case "$fresh_perm" in
+	admin | maintain | write) return 0 ;;
+	esac
+	return 1
+}
+
+# Resolve a claim principal, distinguishing a transient implementing failure
+# from the legacy/external skip. Only a verified principal is printed.
+_isc_resolve_claim_user() {
+	local issue="$1"
+	local slug="$2"
+	local implementing="$3"
+	local user="" resolve_rc=0
+	user=$(_isc_resolve_manageable_user "claim" "$issue" "$slug" \
+		"gh offline or not authenticated — skipping claim on #$issue ($slug)" \
+		"" \
+		"external repos should receive a PR when possible plus at most one concise explanatory issue comment, not aidevops dispatch claims") || resolve_rc=$?
+	# GH#38798/GH#38946: every claim re-verifies a confirmed non-write verdict
+	# once with a fresh request before accepting it, so a stale or
+	# cross-credential memo entry cannot skip a repository admin.
+	if [[ "$resolve_rc" -eq 1 ]]; then
+		local recheck_user=""
+		recheck_user=$(_isc_current_user)
+		if _isc_fresh_permission_confirms_write "$slug" "$recheck_user"; then
+			_isc_info "claim: #$issue in $slug — fresh permission re-check confirmed @${recheck_user}; continuing"
+			printf '%s' "$recheck_user"
+			return 0
+		fi
+		# An auto-dispatch label implies we are maintainers on this repo, so an
+		# unapplied implementing claim must not look like a benign external skip.
+		if [[ "$implementing" -eq 1 ]] && _isc_has_label "$issue" "$slug" "auto-dispatch"; then
+			_isc_warn "claim NOT applied for #$issue in $slug; a worker may pick it up. Re-run: interactive-session-helper.sh claim $issue $slug --implementing"
+			return 75
+		fi
+	fi
+	if [[ "$resolve_rc" -ne 0 ]]; then
+		# Lookup failure (2) on an implementing claim is retryable: surface it as
+		# an unapplied claim so the caller does not run parallel to a worker.
+		if [[ ( "$resolve_rc" -eq 75 || "$resolve_rc" -eq 2 ) && "$implementing" -eq 1 ]]; then
+			_isc_warn "claim NOT applied for #$issue in $slug; a worker may pick it up. Re-run: interactive-session-helper.sh claim $issue $slug --implementing"
+			return 75
+		fi
+		return 1
+	fi
+	printf '%s' "$user"
+	return 0
+}
+
+# t18895: advisory only. Lists other live OpenCode sessions and pulse workers
+# already presenting the issue (from the local session bus) before the claim
+# proceeds. Silent when the bus helper is missing, fails or exceeds 5 s.
+_isc_claim_live_sessions_warning() {
+	local issue="$1"
+	local slug="$2"
+	local helper="${AIDEVOPS_SESSION_BUS_HELPER:-${SCRIPT_DIR}/session-bus-helper.sh}"
+	[[ -x "$helper" && "$issue" =~ ^[0-9]+$ ]] || return 0
+	local out="" row=""
+	out=$(mktemp) || return 0
+	timeout_sec 5 "$helper" who "#${issue}" --repo "$slug" >"$out" 2>/dev/null || : >"$out"
+	if [[ -s "$out" ]]; then
+		_isc_warn "claim: other live session(s) already on #$issue; compare approaches before continuing (aidevops sessions show <handle>):"
+		while IFS= read -r row; do
+			_isc_warn "  $row"
+		done <"$out"
+	fi
+	rm -f "$out"
+	return 0
+}
+
 _isc_cmd_claim() {
 	local issue="" slug="" worktree_path="" implementing=0 defer_comment=0
 	local replacement_pr="" replacement_reason=""
@@ -423,14 +535,12 @@ _isc_cmd_claim() {
 
 	_isc_validate_claim_request "$issue" "$slug" "$replacement_pr" "$replacement_reason" "$implementing" || return $?
 	_isc_validate_worktree_origin "$slug" "$worktree_path" || return 1
+	_isc_claim_live_sessions_warning "$issue" "$slug"
 
-	local user
-	if ! user=$(_isc_resolve_manageable_user "claim" "$issue" "$slug" \
-		"gh offline or not authenticated — skipping claim on #$issue ($slug)" \
-		"a collision with a worker is harmless; the interactive work will become its own issue/PR" \
-		"external repos should receive a PR when possible plus at most one concise explanatory issue comment, not aidevops dispatch claims"); then
-		return 0
-	fi
+	local user="" resolve_rc=0
+	user=$(_isc_resolve_claim_user "$issue" "$slug" "$implementing") || resolve_rc=$?
+	[[ "$resolve_rc" -ne 75 ]] || return 75
+	[[ "$resolve_rc" -eq 0 ]] || return 0
 
 	_isc_claim_closed_issue_guard "$issue" "$slug" && return 0
 
@@ -549,11 +659,8 @@ _isc_cmd_lockdown() {
 		return 0
 	fi
 
-	if ! _isc_can_manage_issue_state "$slug" "$user"; then
-		_isc_warn "lockdown: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
-		_isc_warn "external repos must not receive aidevops lockdown labels, locks, or audit comments"
-		return 0
-	fi
+	_isc_state_permission_gate "lockdown" "$issue" "$slug" "$user" \
+		"external repos must not receive aidevops lockdown labels, locks, or audit comments" || return 0
 
 	# Step 1: Apply status:in-review + self-assign (same as claim)
 	if set_issue_status "$issue" "$slug" "in-review" --add-assignee "$user" >/dev/null 2>&1; then
@@ -655,10 +762,7 @@ _isc_cmd_unlock() {
 		return 0
 	fi
 
-	if ! _isc_can_manage_issue_state "$slug" "$user"; then
-		_isc_warn "unlock: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
-		return 0
-	fi
+	_isc_state_permission_gate "unlock" "$issue" "$slug" "$user" || return 0
 
 	# Step 1: Unlock conversation
 	if gh issue unlock "$issue" --repo "$slug" >/dev/null 2>&1; then

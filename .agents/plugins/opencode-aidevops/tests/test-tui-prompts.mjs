@@ -8,6 +8,7 @@ import {
   isPromptsEnabled,
   openPromptsTimeline,
   setupPromptsSlot,
+  stampCommandPrompt,
 } from "../tui-prompts.mjs";
 
 test("prompt rows extract only real V1 text parts, newest first", () => {
@@ -33,6 +34,26 @@ test("prompt rows extract only real V1 text parts, newest first", () => {
     { id: "last", text: "newest prompt" }, { id: "first", text: "first prompt" },
   ]);
   assert.deepEqual(extractPromptRows(messages, () => { throw new Error("missing parts"); }), []);
+});
+
+test("slash-command turns show the typed command, not the expanded template", () => {
+  const template = "<!-- SPDX-License-Identifier: MIT -->\n<!-- SPDX-FileCopyrightText: x -->\n\nTask/Prompt: fix it\n\n## Gate";
+  const stamped = { type: "text", text: template, metadata: { other: 1 } };
+  const output = { parts: [{ type: "text", text: "hidden", synthetic: true }, stamped, { type: "file" }] };
+  assert.equal(stampCommandPrompt({ command: "full-loop", arguments: "fix it" }, output), true);
+  assert.deepEqual(stamped.metadata, { other: 1, aidevops: { command: { name: "full-loop", arguments: "fix it" } } });
+  assert.equal(output.parts[0].metadata, undefined);
+  assert.equal(stampCommandPrompt({ command: "", arguments: "x" }, output), false);
+  assert.equal(stampCommandPrompt({ command: "review" }, { parts: [{ type: "subtask" }] }), false);
+
+  const messages = [{ id: "legacy", role: "user" }, { id: "typed", role: "user" }, { id: "comment", role: "user" }];
+  const parts = { legacy: [{ type: "text", text: template }], typed: [stamped], comment: [{ type: "text", text: "<!-- only -->" }] };
+  assert.deepEqual(extractPromptRows(messages, (id) => parts[id], { width: 60 }), [
+    { id: "comment", text: "<!-- only -->" },
+    { id: "typed", text: "/full-loop fix it" },
+    { id: "legacy", text: "Task/Prompt: fix it ## Gate" },
+  ]);
+  assert.equal(extractPromptRows([{ id: "v2", type: "user", text: template }])[0].text, "Task/Prompt: fix it ## Gate");
 });
 
 test("V2 prompt rows use type, cap at eight, and truncate without splitting Unicode", () => {

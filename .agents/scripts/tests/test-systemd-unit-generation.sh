@@ -230,7 +230,134 @@ test_standalone_templates_use_control_group() {
 	return 0
 }
 
+# Render the real auto-update service via `auto-update-helper.sh enable` in an
+# isolated HOME and print its TimeoutStartSec value.
+# Args: $1 = scratch dir, $2 = update interval (minutes)
+render_autoupdate_timeout() {
+	local tmpdir="$1"
+	local interval="$2"
+	local home_dir="${tmpdir}/home-${interval}"
+	local bin_dir="${tmpdir}/bin"
+	local service_file="${home_dir}/.config/systemd/user/aidevops-auto-update.service"
+
+	mkdir -p "$bin_dir" "${home_dir}/.aidevops"
+	ln -s "${REPO_ROOT}/.agents" "${home_dir}/.aidevops/agents"
+	# Hermetic stubs: never touch the real user's systemd, crontab or linger state.
+	printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"${bin_dir}/systemctl"
+	printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"${bin_dir}/crontab"
+	printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"${bin_dir}/loginctl"
+	chmod +x "${bin_dir}/systemctl" "${bin_dir}/crontab" "${bin_dir}/loginctl"
+
+	HOME="$home_dir" PATH="${bin_dir}:${PATH}" AIDEVOPS_SCHEDULER=systemd \
+		AIDEVOPS_UPDATE_INTERVAL="$interval" \
+		bash "${REPO_SCRIPTS_DIR}/auto-update-helper.sh" enable >/dev/null 2>&1 || true
+
+	if [[ -f "$service_file" ]]; then
+		sed -n 's/^TimeoutStartSec=//p' "$service_file"
+	fi
+	return 0
+}
+
+# GH#37991: the auto-update unit timeout must fit a version update plus the
+# freshness checks. It tracks the interval but never drops below 600s.
+test_autoupdate_unit_timeout_floor() {
+	local tmpdir=""
+	local short_timeout=""
+	local long_timeout=""
+	local stale_templates=""
+	local relative_path=""
+	tmpdir=$(mktemp -d)
+
+	short_timeout=$(render_autoupdate_timeout "$tmpdir" 1)
+	long_timeout=$(render_autoupdate_timeout "$tmpdir" 15)
+	rm -rf "$tmpdir"
+
+	for relative_path in auto-update-helper.sh auto-update-helper-scheduler.sh; do
+		if grep -q '^TimeoutStartSec=120$' "${REPO_SCRIPTS_DIR}/${relative_path}"; then
+			stale_templates+="${relative_path} "
+		fi
+	done
+
+	if [[ "$short_timeout" == "600" && "$long_timeout" == "900" && -z "$stale_templates" ]]; then
+		print_result "auto-update unit timeout tracks interval with a 600s floor" 0
+	else
+		print_result "auto-update unit timeout tracks interval with a 600s floor" 1 \
+			"interval 1m=>'${short_timeout}' (want 600), 15m=>'${long_timeout}' (want 900), hard-coded 120 in: ${stale_templates:-none}"
+	fi
+	return 0
+}
+
 # --- Tests ---
+
+test_auto_update_idempotent_refresh() {
+	local tmpdir rc=0
+	tmpdir=$(mktemp -d)
+	mkdir -p "${tmpdir}/home/.aidevops/agents/scripts" "${tmpdir}/home/.config/systemd/user"
+	ln -s "${REPO_SCRIPTS_DIR}/auto-update-helper.sh" "${tmpdir}/home/.aidevops/agents/scripts/auto-update-helper.sh"
+	(
+		export HOME="${tmpdir}/home"
+		# Source the real command implementation, then replace only external dependencies.
+		source "${REPO_SCRIPTS_DIR}/auto-update-helper.sh" help >/dev/null
+		_daemon_is_loaded() { return 0; }
+		_get_scheduler_backend() { printf 'systemd\n'; return 0; }
+		get_feature_toggle() { printf '17\n'; return 0; }
+		systemctl() { printf '%s\n' "$*" >>"${tmpdir}/calls"; return 0; }
+		local AUTO_UPDATE_SERVICE_CONTENT="" AUTO_UPDATE_TIMER_CONTENT=""
+		_render_auto_update_systemd_units "$HOME/.aidevops/agents/scripts/auto-update-helper.sh" 17
+		printf '%s' "$AUTO_UPDATE_TIMER_CONTENT" >"${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.timer"
+		printf 'TimeoutStartSec=120\n' >"${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service"
+		cmd_enable --idempotent
+		cmp -s "${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service" <(printf '%s' "$AUTO_UPDATE_SERVICE_CONTENT") || exit 1
+		grep -q '^OnUnitActiveSec=1020$' "${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.timer" || exit 1
+		local inode inode_after
+		inode=$(ls -di "${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service") || exit 1
+		[[ -n "$inode" ]] || exit 1
+		cmd_enable --idempotent
+		inode_after=$(ls -di "${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service") || exit 1
+		[[ -n "$inode_after" && "$inode" == "$inode_after" ]] || exit 1
+		[[ "$(wc -l <"${tmpdir}/calls" | tr -d ' ')" == 1 ]] || exit 1
+		grep -qx -- '--user daemon-reload' "${tmpdir}/calls" || exit 1
+
+		# Exercise recovery in both shipped copies without a live user manager.
+		local implementation reload_status reload_attempts fallback_calls status
+		local unit_dir="$SYSTEMD_SERVICE_DIR"
+		for implementation in standalone scheduler; do
+			if [[ "$implementation" == scheduler ]]; then
+				source "${REPO_SCRIPTS_DIR}/auto-update-helper-scheduler.sh"
+			fi
+			_daemon_is_loaded() { return 0; }
+			_get_scheduler_backend() { printf 'systemd\n'; return 0; }
+			reload_status=1 reload_attempts=0 fallback_calls=0
+			systemctl() { reload_attempts=$((reload_attempts + 1)); return "$reload_status"; }
+			_cmd_enable_cron() { fallback_calls=$((fallback_calls + 1)); return 0; }
+			printf 'stale\n' >"${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service"
+			status=0
+			cmd_enable --idempotent || status=$?
+			[[ "$status" -ne 0 && "$reload_attempts" -eq 1 ]] || exit 1
+			[[ -f "${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.reload-pending" ]] || exit 1
+			reload_status=0
+			cmd_enable --idempotent || exit 1
+			[[ "$reload_attempts" -eq 2 ]] || exit 1
+			[[ ! -f "${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.reload-pending" ]] || exit 1
+			cmd_enable --idempotent || exit 1
+			[[ "$reload_attempts" -eq 2 ]] || exit 1
+			reload_status=1
+			_cmd_enable_systemd "$HOME/.aidevops/agents/scripts/auto-update-helper.sh" 17 || exit 1
+			[[ "$fallback_calls" -eq 1 ]] || exit 1
+			# A unit-directory error must fail rather than claim cron recovery.
+			mv "$unit_dir" "${unit_dir}.saved" || exit 1
+			printf 'not a directory\n' >"$unit_dir"
+			status=0
+			_cmd_enable_systemd "$HOME/.aidevops/agents/scripts/auto-update-helper.sh" 17 || status=$?
+			rm -f "$unit_dir"
+			mv "${unit_dir}.saved" "$unit_dir" || exit 1
+			[[ "$status" -eq 1 && "$fallback_calls" -eq 1 ]] || exit 1
+		done
+	) || rc=1
+	rm -rf "$tmpdir"
+	print_result "auto-update idempotent enable repairs drift once" "$rc"
+	return 0
+}
 
 test_quoted_stdout_fails_verify() {
 	local tmpdir
@@ -560,9 +687,14 @@ test_cleanup_helpers_use_transient_systemd_units() {
 	merge_first_source=$(declare -f _preflight_start_merge_first)
 	[[ "$merge_first_source" == *"nohup"* ]] || rc=1
 	[[ "$merge_first_source" != *"_preflight_launch_async_cleanup"* ]] || rc=1
-	cleanup_source=$(declare -f _preflight_cleanup_and_ledger)
+	# GH#37218: launches live in the unbudgeted starter; the cleanup stage only
+	# delegates to it when the cycle has not started the helpers yet.
+	cleanup_source=$(declare -f _preflight_start_async_cleanups)
 	launch_call_count=$(printf '%s\n' "$cleanup_source" | grep -c '_preflight_launch_async_cleanup')
 	[[ "$launch_call_count" == "3" && "$cleanup_source" != *"nohup"* ]] || rc=1
+	cleanup_source=$(declare -f _preflight_cleanup_and_ledger)
+	[[ "$cleanup_source" == *"_preflight_start_async_cleanups"* && "$cleanup_source" != *"nohup"* ]] || rc=1
+	[[ "$cleanup_source" != *"_preflight_launch_async_cleanup "* ]] || rc=1
 
 	rm -rf "$tmpdir"
 	print_result "cleanup helpers use isolated transient units with an environment allowlist" "$rc"
@@ -612,6 +744,8 @@ main() {
 	printf 'Running systemd unit generation tests...\n\n'
 	test_real_scheduler_units_verify
 	test_standalone_templates_use_control_group
+	test_autoupdate_unit_timeout_floor
+	test_auto_update_idempotent_refresh
 
 	if systemd_analyze_available; then
 		# Confirm the bug exists with quoted values (regression anchor)

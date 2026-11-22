@@ -175,6 +175,9 @@ filter_signature_noise_lines() {
 				for (i = 5; i <= n; i++) {
 					payload = payload "\t" fields[i]
 				}
+			} else if (n == 3) {
+				# gh also combines the timestamp and payload in its third column.
+				payload = fields[3]
 			}
 			source_probe = payload
 			gsub(/^[[:space:]]+/, "", source_probe)
@@ -328,6 +331,9 @@ extract_failure_signature() {
 			n = split($0, fields, "\t")
 			if (n >= 4) {
 				payload = fields[4]
+			} else if (n == 3) {
+				# GH#39884: parse the timestamped payload, not the job/step prefix.
+				payload = fields[3]
 			}
 			sub(/^20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:.]+Z[[:space:]]+/, "", payload)
 			gsub(/^[[:space:]]+/, "", payload)
@@ -649,6 +655,16 @@ filter_failed_check_runs() {
 	return 0
 }
 
+# True when a signature came from a real log fetch. job_not_started (0-step jobs)
+# and billing annotation detection short-circuit before fetching logs (GH#18978).
+signature_consumed_log_fetch() {
+	local signature="$1"
+	if [[ "$signature" == "job_not_started" ]] || [[ "$signature" == "infra:billing_annotation" ]]; then
+		return 1
+	fi
+	return 0
+}
+
 process_failed_runs() {
 	local failed_runs_json="$1"
 	local repo_slug="$2" source_kind="$3" source_ref="$4" source_url="$5"
@@ -689,7 +705,7 @@ process_failed_runs() {
 		# no gh run view call) both short-circuit before fetching any logs — counting them
 		# exhausts the budget for genuine failures in other PRs. (GH#18978)
 		if [[ "$include_logs" == "true" ]] && [[ -n "$run_id" ]] && [[ "$run_logs_checked" -lt "$max_run_logs" ]] &&
-			[[ "$signature" != "job_not_started" ]] && [[ "$signature" != "infra:billing_annotation" ]]; then
+			signature_consumed_log_fetch "$signature"; then
 			run_logs_checked=$((run_logs_checked + 1))
 		fi
 
@@ -725,6 +741,111 @@ process_failed_runs() {
 			"$run_affected_paths" "$run_annotations" >>"$event_file"
 
 		failed_index=$((failed_index + 1))
+	done
+
+	printf '%s' "$run_logs_checked"
+	return 0
+}
+
+# Select failed post-merge / repo-level workflow runs that are still current.
+# Input: Actions runs API payload ({workflow_runs:[...]}) and the default branch.
+# Only events with no open PR to repair are kept (push on the default branch,
+# schedule, workflow_dispatch, issues, pull_request_target). A workflow+event
+# group counts only when its newest completed run also failed, so recovered
+# failures never cluster (GH#30197 rule, GH#39228).
+select_current_workflow_failures_json() {
+	local runs_json="$1"
+	local default_branch="$2"
+	printf '%s\n' "$runs_json" | jq -c --arg default_branch "$default_branch" --argjson failing '["failure", "timed_out", "startup_failure"]' '
+		[(.workflow_runs // [])[]
+			| select(.status == "completed")
+			| select(
+				(.event == "push" and .head_branch == $default_branch)
+				or (.event as $e | ["schedule", "workflow_dispatch", "issues", "pull_request_target"] | index($e))
+			)
+			| select(.conclusion as $c | ($failing + ["success"]) | index($c))
+		]
+		| group_by([(.workflow_id | tostring), .event])
+		| map(sort_by(.created_at) | reverse)
+		| map(select(.[0].conclusion as $c | $failing | index($c)))
+		| map(.[] | select(.conclusion as $c | $failing | index($c)))
+	'
+	return 0
+}
+
+# Fetch only the repo-level runs that select_current_workflow_failures_json can
+# keep, filtered server-side by event (and by default branch for push), merged
+# and de-duplicated. One unfiltered page of 100 runs covered only ~25 minutes on
+# a busy repo (2,500 runs in 11 h), so an hourly miner never saw default-branch
+# push failures such as a workflow file that GitHub rejects (GH#39466).
+fetch_repo_level_runs_json() {
+	local repo_slug="$1" since_iso="$2" default_branch="$3"
+	local event="" query="" pages="" branch_uri=""
+
+	branch_uri=$(printf '%s' "$default_branch" | jq -sRr '@uri')
+	for event in push schedule workflow_dispatch issues pull_request_target; do
+		query="created=%3E%3D${since_iso}&event=${event}&per_page=100"
+		case "$event" in
+		push) query="${query}&branch=${branch_uri}" ;;
+		*) ;;
+		esac
+		# NOSONAR - $since_iso is output of date(1); $repo_slug is a validated owner/repo slug
+		pages+="$(gh api "repos/${repo_slug}/actions/runs?${query}" 2>/dev/null || printf '{}')"$'\n'
+	done
+	printf '%s' "$pages" | jq -cs '{workflow_runs: ([.[] | (.workflow_runs? // [])[]] | unique_by(.id))}' 2>/dev/null ||
+		printf '%s\n' '{}'
+	return 0
+}
+
+# Emit workflow-run events for one repo. Prints the updated run_logs_checked count.
+emit_workflow_run_events() {
+	local repo_slug="$1" since_iso="$2" include_logs="$3"
+	local run_logs_checked="$4" max_run_logs="$5" event_file="$6"
+
+	local default_branch runs_json failed_json
+	default_branch=$(gh api "repos/${repo_slug}" --jq '.default_branch' 2>/dev/null || printf '')
+	if [[ -z "$default_branch" ]]; then
+		printf '%s' "$run_logs_checked"
+		return 0
+	fi
+	runs_json=$(fetch_repo_level_runs_json "$repo_slug" "$since_iso" "$default_branch")
+	failed_json=$(select_current_workflow_failures_json "$runs_json" "$default_branch" 2>/dev/null || printf '[]')
+
+	local count index=0
+	count=$(printf '%s\n' "$failed_json" | jq "$JQ_COUNT")
+	while [[ "$index" -lt "$count" ]]; do
+		local run_json
+		run_json=$(printf '%s\n' "$failed_json" | jq -c ".[${index}]")
+		index=$((index + 1))
+
+		local run_id name event conclusion html_url completed_at head_sha
+		run_id=$(printf '%s\n' "$run_json" | jq -r '.id // empty')
+		name=$(printf '%s\n' "$run_json" | jq -r '.name // "unknown-workflow"')
+		event=$(printf '%s\n' "$run_json" | jq -r '.event // "none"')
+		conclusion=$(printf '%s\n' "$run_json" | jq -r '.conclusion // "none"')
+		html_url=$(printf '%s\n' "$run_json" | jq -r '.html_url // empty')
+		completed_at=$(printf '%s\n' "$run_json" | jq -r '.updated_at // empty')
+		head_sha=$(printf '%s\n' "$run_json" | jq -r '.head_sha // empty')
+		[[ -n "$run_id" ]] || continue
+
+		local signature
+		signature=$(resolve_check_signature '{}' "$run_id" "$repo_slug" "$include_logs" "$run_logs_checked" "$max_run_logs")
+		if [[ "$include_logs" == "true" ]] && [[ "$run_logs_checked" -lt "$max_run_logs" ]] &&
+			signature_consumed_log_fetch "$signature"; then
+			run_logs_checked=$((run_logs_checked + 1))
+		fi
+
+		local is_infra="false" infra_reason=""
+		if [[ "$signature" == infra:* ]]; then
+			is_infra="true"
+			infra_reason="${signature#infra:}"
+		fi
+
+		emit_event_json "$repo_slug" "workflow" "${event}:${run_id}" "$html_url" \
+			"" "$head_sha" "$name" "$conclusion" \
+			"$run_id" "$html_url" "$html_url" "$completed_at" \
+			"$signature" "" "$is_infra" "$infra_reason" \
+			"[]" "[]" >>"$event_file"
 	done
 
 	printf '%s' "$run_logs_checked"
@@ -804,6 +925,17 @@ extract_failed_events_json() {
 
 		index=$((index + 1))
 	done
+
+	# Post-merge and repo-level workflow runs have no open PR, so the notification
+	# path above drops them. Mine them from the Actions runs API (GH#39228).
+	if [[ -n "$allowlist_csv" ]]; then
+		local workflow_repo
+		while IFS= read -r workflow_repo; do
+			[[ -n "$workflow_repo" ]] || continue
+			run_logs_checked=$(emit_workflow_run_events "$workflow_repo" "$since_iso" \
+				"$include_logs" "$run_logs_checked" "$max_run_logs" "$event_file")
+		done < <(printf '%s\n' "$allowlist_csv" | tr ',' '\n')
+	fi
 
 	if [[ ! -s "$event_file" ]]; then
 		printf '%s\n' '[]'
@@ -946,6 +1078,8 @@ build_repo_clusters_json() {
 		check_name: .[0].check_name,
 		signature: .[0].signature,
 		count: length,
+		newest_event_at: (map(.completed_at // empty) | max // null),
+		scheduled: (any(.[]; .source_kind == "workflow" and ((.source_ref // "") | startswith("schedule:")))),
 		is_infra: (any(.[]; .is_infra == true)),
 		infra_reasons: (map(.infra_reason // empty) | unique),
 		sources: (map(.source_kind + ":" + .source_ref) | unique),
@@ -1173,6 +1307,41 @@ issue_already_exists() {
 	[[ "$existing_count" -gt 0 ]]
 }
 
+# GH#39595: a closed issue with the same signal tag whose closure is newer than
+# every failed event in the cluster adds no new evidence; refiling it only costs
+# a worker dispatch. Newer failures (or unknown event time) still file.
+closed_issue_covers_signal() {
+	local repo_slug="$1"
+	local signal_tag="$2"
+	local newest_event_at="${3:-}"
+	[[ -n "$newest_event_at" ]] || return 1
+	local newest_closed
+	newest_closed=$(gh issue list --repo "$repo_slug" --state closed --search "\"${signal_tag}\" in:body" --json closedAt --limit 10 2>/dev/null | jq -r '[.[].closedAt // empty] | max // empty') || newest_closed=""
+	[[ -n "$newest_closed" ]] || return 1
+	# ISO-8601 UTC timestamps compare lexically.
+	[[ "$newest_closed" > "$newest_event_at" ]]
+	return $?
+}
+
+# GH#39595: two runners can both pass issue_already_exists() before the search
+# index shows either issue. After creating, keep only the oldest open issue.
+close_if_duplicate_signal() {
+	local repo_slug="$1"
+	local pattern="$2"
+	local signal_tag="gh-failure-miner:${pattern}"
+	local created_url="$3"
+	local my_number="${created_url##*/}"
+	[[ "$my_number" =~ ^[0-9]+$ ]] || return 0
+	local oldest
+	oldest=$(gh issue list --repo "$repo_slug" --state open --search "\"${signal_tag}\" in:body" --json number --limit 20 2>/dev/null | jq -r '[.[].number] | min // empty') || oldest=""
+	if [[ "$oldest" =~ ^[0-9]+$ ]] && [[ "$oldest" -lt "$my_number" ]]; then
+		gh issue close "$my_number" --repo "$repo_slug" --reason "not planned" \
+			--comment "Duplicate of #${oldest} (same ${signal_tag}, filed concurrently by another runner)." >/dev/null 2>&1 || true
+		echo "suppressed: duplicate_of_#${oldest} (closed #${my_number})"
+	fi
+	return 0
+}
+
 is_qlty_empty_sarif_signature() {
 	local check_name="$1"
 	local signature="$2"
@@ -1268,8 +1437,10 @@ create_or_preview_issue() {
 			done
 		done
 	fi
-	"${create_cmd[@]}" >/dev/null
+	local created_url
+	created_url=$("${create_cmd[@]}" 2>/dev/null | tail -n 1) || created_url=""
 	echo "Created issue: ${title}"
+	close_if_duplicate_signal "$repo_slug" "$pattern_id" "$created_url"
 	return 0
 }
 
@@ -1278,12 +1449,17 @@ should_skip_code_defect_cluster() {
 	local check_name="$2"
 	local signature="$3"
 	local signal_tag="$4"
+	local newest_event_at="${5:-}"
 	if is_obsolete_qlty_empty_sarif_cluster "$check_name" "$signature"; then
 		echo "Skipping cluster for ${check_name} - empty SARIF failure signature is already handled by qlty-smell-threshold-helper.sh"
 		return 0
 	fi
 	if issue_already_exists "$repo_slug" "$signal_tag"; then
 		echo "Skipping cluster for ${check_name} - existing open issue with ${signal_tag}"
+		return 0
+	fi
+	if closed_issue_covers_signal "$repo_slug" "$signal_tag" "$newest_event_at"; then
+		echo "Skipping cluster for ${check_name} - suppressed: closed_after_newest_event (${signal_tag})"
 		return 0
 	fi
 	return 1
@@ -1338,8 +1514,10 @@ create_systemic_issues() {
 	#   error signature. Treating it as systemic creates false-positive issues (GH#18978).
 	local candidate_file
 	candidate_file=$(mktemp)
+	# GH#39472: a daily schedule yields one event per 24h window, so a scheduled
+	# workflow whose newest run failed is systemic at threshold 1.
 	printf '%s\n' "$clusters_json" | jq --argjson min_count "$systemic_threshold" '[.[] | select(
-		.count >= $min_count
+		(.count >= $min_count or (.scheduled // false) == true)
 		and (.is_infra // false) == false
 		and ((.signature // "") as $signature | ["billing_outage","job_not_started","signature_not_fetched"] | index($signature) | not)
 	)]' >"$candidate_file"
@@ -1363,12 +1541,14 @@ create_systemic_issues() {
 		repo_slug=$(printf '%s\n' "$cluster_json" | jq -r '.repo')
 		check_name=$(printf '%s\n' "$cluster_json" | jq -r '.check_name')
 		signature=$(printf '%s\n' "$cluster_json" | jq -r '.signature')
+		local newest_event_at
+		newest_event_at=$(printf '%s\n' "$cluster_json" | jq -r '.newest_event_at // empty')
 
 		local pattern_id
 		pattern_id=$(compute_pattern_id "${repo_slug}|${check_name}|${signature}")
 		local signal_tag="gh-failure-miner:${pattern_id}"
 
-		if should_skip_code_defect_cluster "$repo_slug" "$check_name" "$signature" "$signal_tag"; then
+		if should_skip_code_defect_cluster "$repo_slug" "$check_name" "$signature" "$signal_tag" "$newest_event_at"; then
 			idx=$((idx + 1))
 			continue
 		fi

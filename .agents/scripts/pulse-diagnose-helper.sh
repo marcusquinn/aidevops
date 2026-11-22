@@ -84,6 +84,9 @@ _build_rule_inventory() {
 	# Returns the inventory as newline-separated records.
 	# Fields: rule_id|script|line_range|regex|description
 	cat <<'INVENTORY'
+stale_draft_checkpoint|pulse-dispatch-dedup-layers.sh|319-330|DISPATCH_BLOCK_REASON reason=stale_draft_checkpoint |Released or expired worker draft checkpoint routed to bounded exact-head continuation or attention; duplicate dispatch remains blocked
+worker_draft_checkpoint_blocked|pulse-dispatch-dedup-layers.sh|319-330|DISPATCH_BLOCK_REASON reason=worker_draft_checkpoint_blocked |Worker draft checkpoint preserved; continuation requires verified release/ownership evidence or blocker recovery, not an active-claim assumption
+dedup_pr_evidence|pulse-dispatch-dedup-layers.sh|326-390|DISPATCH_BLOCK_REASON reason=dedup_pr_evidence |Open, draft or merged PR evidence holds the issue; cached across cycles while the issue and exact PR are unchanged (GH#38142)
 pm-auto-merge-interactive|pulse-merge.sh|1389|auto-merged origin:interactive PR #|Auto-merged origin:interactive PR (maintainer-authored, all checks pass)
 pm-auto-merge-worker-briefed|pulse-merge.sh|1393|auto-merged origin:worker \(worker-briefed\) PR #|Auto-merged origin:worker PR (maintainer-briefed issue, all gates pass)
 pm-retarget-stacked|pulse-merge.sh|1220|retargeting stacked PR #|Retargeted stacked child PR to default branch before parent branch deletion
@@ -143,7 +146,7 @@ pw-route-review-fix|pulse-merge-feedback.sh|574|_dispatch_pr_fix_worker: routed 
 pw-route-review-empty|pulse-merge-feedback.sh|536|_dispatch_pr_fix_worker: PR #.*CHANGES_REQUESTED but no substantive|Review fix skipped — CHANGES_REQUESTED but no substantive review content
 pw-feedback-routed|pulse-merge-feedback.sh|153|already has routed feedback marker|Feedback routing skipped — already routed for this PR
 pw-feedback-body-fail|pulse-merge-feedback.sh|145|failed to fetch issue.*body.*skipping body edit|Feedback routing skipped — failed to fetch issue body
-pmc-handover|pulse-merge-conflict.sh|308|handover: PR #.*handed over to worker pipeline|Interactive PR handed over to worker pipeline (idle >AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS, default 4h)
+pmc-handover|pulse-merge-conflict.sh|308|handover: PR #.*handed over to worker pipeline|Interactive PR handed over to worker pipeline (idle >AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS, default 12h)
 pmc-would-handover|pulse-merge-conflict.sh|212|would-handover: PR #|Would-handover detected (detect mode — not acting)
 pmc-handover-no-takeover|pulse-merge-conflict.sh|166|_interactive_pr_is_stale: PR #.*has no-takeover label|Handover skipped — PR has no-takeover label
 pmc-skip-interactive-close|pulse-merge-conflict.sh|583|Deterministic merge: skipping auto-close of origin:interactive PR|Skipped auto-close of origin:interactive PR — maintainer work never auto-closed
@@ -631,7 +634,7 @@ ${trusted_issue_text}"
 		completion_marker=$(_diagnose_route_marker "$combined_evidence" complete "$pr_number" "$pr_head" "$kind")
 	fi
 	if [[ -n "$kind" && -n "$pr_head" ]] && printf '%s' "$trusted_issue_text" \
-		| grep -qF "<!-- feedback-route:dispatch-release:${kind}:PR${pr_number}:SHA${pr_head} -->"; then
+		| grep -F "<!-- feedback-route:dispatch-release:${kind}:PR${pr_number}:SHA${pr_head} -->" >/dev/null; then
 		dispatch_release="$_BOOL_TRUE"
 	fi
 	if [[ -n "$terminal_label" || -n "$start_marker" || -n "$completion_marker" ]]; then

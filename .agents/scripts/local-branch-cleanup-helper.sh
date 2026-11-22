@@ -18,6 +18,7 @@ TRANSPORT=""
 FAILURES=0
 MAX_LOOKUPS=500
 LOOKUPS=0
+ANCESTRY_ALLOWED=1
 OPEN_PR_REFS=""
 OPEN_PR_STATUS=unavailable
 OPEN_PR_LOADED_AT=""
@@ -125,8 +126,8 @@ is_protected_branch() {
 }
 
 repo_slug() {
-	local url=""
-	url=$(repo_git remote get-url "$REMOTE_NAME" 2>/dev/null) || return 1
+	local remote="${1:-$REMOTE_NAME}" url=""
+	url=$(repo_git remote get-url "$remote" 2>/dev/null) || return 1
 	case "$url" in
 	git@github.com:*) url="${url#git@github.com:}" ;;
 	https://github.com/*) url="${url#https://github.com/}" ;;
@@ -135,6 +136,32 @@ repo_slug() {
 	url="${url%.git}"
 	[[ "$url" == */* ]] || return 1
 	printf '%s\n' "$url"
+	return 0
+}
+
+# Resolve once per scan, including when --remote selects a contributor's fork.
+# Missing/malformed metadata is not permission to trust the scanned repository.
+base_repo_slug() {
+	local slug="$1" data="" base=""
+	[[ "${AIDEVOPS_LOCAL_BRANCH_CLEANUP_SKIP_GH:-0}" != 1 && -n "$slug" ]] || return 1
+	command -v gh >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 1
+	data=$(AIDEVOPS_GH_ROUTE_DECISION="local-branch-cleanup-base-rest" gh api "repos/${slug}" 2>/dev/null) || return 1
+	base=$(printf '%s' "$data" | jq -er 'if .fork == true then .parent.full_name elif .fork == false then .full_name else empty end | select(type == "string")' 2>/dev/null) || return 1
+	[[ "$base" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+	printf '%s\n' "$base"
+	return 0
+}
+
+pr_head_identity() {
+	local branch="$1" slug="$2" remote="" head_slug="" merge_ref=""
+	PR_HEAD_OWNER="${slug%%/*}"
+	PR_HEAD_REF="$branch"
+	remote=$(repo_git config --get "branch.${branch}.remote") || return 0
+	merge_ref=$(repo_git config --get "branch.${branch}.merge") || return 0
+	head_slug=$(repo_slug "$remote") || return 0
+	[[ "$merge_ref" == refs/heads/* ]] || return 0
+	PR_HEAD_OWNER="${head_slug%%/*}"
+	PR_HEAD_REF="${merge_ref#refs/heads/}"
 	return 0
 }
 
@@ -170,17 +197,28 @@ load_open_pr_refs() {
 
 # Closed-PR lookups are budgeted by --max-lookups; each request counts.
 closed_pr_lookup() {
-	local branch="$1" sha="$2" slug="$3" owner="" page=1 data count
-	owner="${slug%%/*}"
+	local branch="$1" sha="$2" slug="$3" enforce_budget="${4:-0}" page=1 data count head_sha="" heads="" encoded_head=""
+	pr_head_identity "$branch" "$slug"
+	encoded_head=$(printf '%s' "${PR_HEAD_OWNER}:${PR_HEAD_REF}" | jq -sRr @uri) || { PR_STATUS=unavailable; return 0; }
 	PR_STATUS=none
 	while [[ "$page" -le 10 ]]; do
+		if [[ "$enforce_budget" -eq 1 && "$LOOKUPS" -ge "$MAX_LOOKUPS" ]]; then
+			PR_STATUS=budget
+			return 0
+		fi
 		LOOKUPS=$((LOOKUPS + 1))
-		data=$(AIDEVOPS_GH_ROUTE_DECISION="local-branch-cleanup-prs-rest" gh api "repos/${slug}/pulls?state=closed&head=${owner}:${branch}&per_page=100&page=${page}" 2>/dev/null) || { PR_STATUS=unavailable; return 0; }
+		data=$(AIDEVOPS_GH_ROUTE_DECISION="local-branch-cleanup-prs-rest" gh api "repos/${slug}/pulls?state=closed&head=${encoded_head}&per_page=100&page=${page}" 2>/dev/null) || { PR_STATUS=unavailable; return 0; }
 		count=$(printf '%s' "$data" | jq -r 'if type == "array" then length else -1 end' 2>/dev/null) || { PR_STATUS=unavailable; return 0; }
 		[[ "$count" =~ ^[0-9]+$ ]] || { PR_STATUS=unavailable; return 0; }
-		if printf '%s' "$data" | jq -e --arg b "$branch" --arg sha "$sha" 'any(.[]; .head.ref == $b and .head.sha == $sha and .merged_at != null)' >/dev/null; then
-			PR_STATUS=merged
-		fi
+		heads=$(printf '%s' "$data" | jq -r --arg b "$PR_HEAD_REF" '.[] | select(.head.ref == $b and .merged_at != null) | .head.sha // empty') || { PR_STATUS=unavailable; return 0; }
+		while IFS= read -r head_sha; do
+			[[ "$head_sha" =~ ^[0-9a-f]{40}$|^[0-9a-f]{64}$ ]] || continue
+			if [[ "$head_sha" == "$sha" ]]; then
+				PR_STATUS=merged
+			elif [[ "$PR_STATUS" != merged ]] && repo_git cat-file -e "${head_sha}^{commit}" 2>/dev/null && repo_git merge-base --is-ancestor "$sha" "$head_sha" 2>/dev/null; then
+				PR_STATUS=merged-ancestor
+			fi
+		done <<<"$heads"
 		[[ "$count" -lt 100 ]] && return 0
 		page=$((page + 1))
 	done
@@ -202,7 +240,8 @@ pr_evidence() {
 	command -v gh >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
 	load_open_pr_refs "$slug"
 	[[ "$OPEN_PR_STATUS" == ok ]] || return 0
-	if [[ $'\n'"$OPEN_PR_REFS" == *$'\n'"${branch}"$'\n'* ]]; then
+	pr_head_identity "$branch" "$slug"
+	if [[ $'\n'"$OPEN_PR_REFS" == *$'\n'"${branch}"$'\n'* || $'\n'"$OPEN_PR_REFS" == *$'\n'"${PR_HEAD_REF}"$'\n'* ]]; then
 		PR_STATUS=open
 		return 0
 	fi
@@ -212,7 +251,7 @@ pr_evidence() {
 		PR_STATUS=budget
 		return 0
 	fi
-	closed_pr_lookup "$branch" "$sha" "$slug"
+	closed_pr_lookup "$branch" "$sha" "$slug" "$enforce_budget"
 	return 0
 }
 
@@ -293,8 +332,9 @@ delete_branch() {
 		return 0
 	fi
 	# Recheck open PRs immediately before mutation; errors are conservative.
-	pr_evidence "$branch" "$sha" "$slug" "$((1 - merged_by_ancestry))"
-	if [[ "$PR_STATUS" == open || "$PR_STATUS" == unavailable ]]; then
+	pr_evidence "$branch" "$sha" "$slug" "$((1 - merged_by_ancestry))" 1
+	if [[ "$PR_STATUS" == open || "$PR_STATUS" == unavailable ||
+		("$merged_by_ancestry" -eq 0 && "$PR_STATUS" != merged && "$PR_STATUS" != merged-ancestor) ]]; then
 		report keep "$branch" 'open PR or github evidence unavailable'
 		return 0
 	fi
@@ -322,7 +362,7 @@ scan_branch() {
 	if is_protected_branch "$branch" "$default"; then reason='protected/default branch'
 	elif active_branch "$branch"; then reason='checked out'
 	else
-		if repo_git merge-base --is-ancestor "$sha" "$(ancestry_base_ref "$default")" 2>/dev/null; then
+		if [[ "$ANCESTRY_ALLOWED" -eq 1 ]] && repo_git merge-base --is-ancestor "$sha" "$(ancestry_base_ref "$default")" 2>/dev/null; then
 			merged_by_ancestry=1
 		fi
 		pr_evidence "$branch" "$sha" "$slug" "$((1 - merged_by_ancestry))" 1
@@ -333,10 +373,11 @@ scan_branch() {
 		elif [[ "$PR_STATUS" == unavailable ]]; then reason='github evidence unavailable'
 		elif [[ "$merged_by_ancestry" -eq 1 ]]; then reason='merged by ancestry'
 		elif [[ "$PR_STATUS" == merged ]]; then reason='merged PR head SHA'
+		elif [[ "$PR_STATUS" == merged-ancestor ]]; then reason='merged PR head ancestor'
 		else reason='unmerged local commits'
 		fi
 	fi
-	if [[ "$reason" != 'merged by ancestry' && "$reason" != 'merged PR head SHA' ]]; then
+	if [[ "$reason" != 'merged by ancestry' && "$reason" != 'merged PR head SHA' && "$reason" != 'merged PR head ancestor' ]]; then
 		report keep "$branch" "$reason"
 	elif [[ "$APPLY" -eq 1 ]]; then
 		delete_branch "$branch" "$sha" "$slug" "$merged_by_ancestry"
@@ -347,12 +388,18 @@ scan_branch() {
 }
 
 main() {
-	local default="" slug="" branch="" rc=0
+	local default="" slug="" scanned_slug="" branch="" rc=0
 	parse_args "$@" || return 1
 	repo_git rev-parse --git-dir >/dev/null 2>&1 || return 1
 	[[ -z "$ONLY_BRANCH" ]] || repo_git check-ref-format --branch "$ONLY_BRANCH" >/dev/null 2>&1 || return 1
 	default=$(default_branch)
-	slug=$(repo_slug) || slug=""
+	scanned_slug=$(repo_slug) || scanned_slug=""
+	slug=$(base_repo_slug "$scanned_slug") || slug=""
+	# A fork's default branch is not proof of an upstream merge. Require PR
+	# evidence rather than authorizing deletion from that remote's ancestry.
+	if [[ -n "$slug" && "$slug" != "$scanned_slug" ]]; then
+		ANCESTRY_ALLOWED=0
+	fi
 	# Retire the transport on every exit path, including a bounded caller's
 	# timeout signal; leftovers from hard kills are reclaimed by guarded cleanup.
 	trap 'cleanup_transport || true' EXIT

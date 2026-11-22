@@ -518,6 +518,37 @@ test_successful_refresh() {
 	return 0
 }
 
+test_total_contributions_block_does_not_collide() {
+	local case_root
+	case_root=$(create_fixture "total-contributions-chart") || return 1
+	local profile_repo="${case_root}/fixture"
+	cat >>"${profile_repo}/README.md" <<'README'
+
+<!-- TOTAL-CONTRIBUTIONS-START -->
+Chart
+<!-- TOTAL-CONTRIBUTIONS-END -->
+README
+	git -C "$profile_repo" add README.md
+	git -C "$profile_repo" commit -m "test: add total contributions chart block" >/dev/null
+	git -C "$profile_repo" push origin main >/dev/null
+
+	local output=""
+	if ! output=$(HOME="${case_root}/home" PATH="${case_root}/bin:${PATH}" GH_SCENARIO=success \
+		bash "$HELPER" update-contributions 2>&1); then
+		fail "total contributions block does not collide" "$output"
+		return 0
+	fi
+	local readme="${case_root}/remote-readme.md"
+	read_remote_readme "${case_root}/remote.git" "$readme"
+	if ! grep -Fq -- '- **[fork-one](https://example.invalid/fork-one)**' "$readme" ||
+		! grep -qxF '<!-- TOTAL-CONTRIBUTIONS-END -->' "$readme"; then
+		fail "total contributions block does not collide" "refresh output or chart block missing"
+		return 0
+	fi
+	pass "total contributions block does not collide"
+	return 0
+}
+
 test_unchanged_refresh_records_throttle() {
 	local case_root
 	case_root=$(create_fixture "unchanged") || return 1
@@ -646,6 +677,8 @@ test_renderer_failure_propagates() {
 main() {
 	TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/profile-contributions-test.XXXXXX") || return 1
 	trap teardown EXIT
+	# Each fixture has private registry state; do not inherit a real managed cwd.
+	cd "$TEST_ROOT" || return 1
 
 	run_failure_case "list-failure"
 	run_failure_case "list-failure-valid-output"
@@ -669,6 +702,7 @@ main() {
 	test_marker_topology_rejected "joined-end-before-start"
 	test_legacy_joined_marker_is_repaired
 	test_successful_refresh
+	test_total_contributions_block_does_not_collide
 	test_unchanged_refresh_records_throttle
 	test_push_failure_propagates
 	test_unrelated_local_work_is_not_published "dirty-readme"

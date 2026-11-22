@@ -62,8 +62,10 @@ fi
 [[ -z "${PURPLE+x}" ]] && PURPLE='\033[0;35m'
 [[ -z "${NC+x}" ]] && NC='\033[0m'
 
-# Common constants
-readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
+# Common constants (fallback if shared-constants.sh unavailable)
+if [[ -z "${ERROR_UNKNOWN_COMMAND:-}" ]]; then
+	readonly ERROR_UNKNOWN_COMMAND="Unknown command"
+fi
 readonly HELP_SHOW_MESSAGE="Show this help message"
 
 # Constants
@@ -1027,10 +1029,10 @@ show_help() {
 # Main function
 main() {
 	local command="${1:-help}"
-	local param2="$2"
-	local param3="$3"
-	local param4="$4"
-	local param5="$5"
+	local param2="${2:-}"
+	local param3="${3:-}"
+	local param4="${4:-}"
+	local param5="${5:-}"
 
 	case "$command" in
 	"docker-setup")

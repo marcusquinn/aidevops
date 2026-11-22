@@ -79,7 +79,21 @@ aidevops_service_path() {
 	local input_path="${1:-${PATH:-}}"
 	local stable_path=""
 	if [[ -n "${HOME:-}" ]]; then
-		stable_path="${HOME}/.bun/bin:${HOME}/.local/bin:${HOME}/.aidevops/agents/scripts:${HOME}/.aidevops/bin"
+		# npm global bin goes ahead of ~/.bun/bin so a stale Bun-global copy
+		# never shadows the npm copy the updater installs. Resolved once.
+		if [[ -z "${_AIDEVOPS_NPM_GLOBAL_BIN+x}" ]]; then
+			_AIDEVOPS_NPM_GLOBAL_BIN=""
+			if command -v npm >/dev/null 2>&1; then
+				_AIDEVOPS_NPM_GLOBAL_BIN="$(npm prefix -g 2>/dev/null || true)"
+				[[ -z "$_AIDEVOPS_NPM_GLOBAL_BIN" ]] || _AIDEVOPS_NPM_GLOBAL_BIN="${_AIDEVOPS_NPM_GLOBAL_BIN}/bin"
+			fi
+		fi
+		# The aidevops shim dirs (gh, git) lead: the npm global bin is often a
+		# package-manager root (Homebrew: /opt/homebrew/bin) that also holds
+		# native gh and git, and daemons re-exec from runtime bundles whose
+		# own script dir is stripped from PATH, so service order decides
+		# whether instrumentation, budget routing and Git guards run (GH#38642).
+		stable_path="${HOME}/.aidevops/agents/scripts:${HOME}/.aidevops/bin:${_AIDEVOPS_NPM_GLOBAL_BIN:+${_AIDEVOPS_NPM_GLOBAL_BIN}:}${HOME}/.bun/bin:${HOME}/.local/bin"
 	fi
 	stable_path=$(AIDEVOPS_PATH_KEEP_MISSING=1 aidevops_compose_path "$stable_path")
 	input_path=$(aidevops_compose_path "$input_path" "$AIDEVOPS_DAEMON_PATH_FALLBACK")
@@ -222,6 +236,15 @@ aidevops_physical_path() {
 	local uid=""
 	local mode=""
 	[[ -n "$candidate" && "$candidate" == /* ]] || return 1
+	if [[ "$trusted" != 1 && -L "$candidate" ]]; then
+		# One readlink spawn for the whole chain; the hop loop remains the fallback.
+		link=$(command -p readlink -f -- "$candidate" 2>/dev/null) || link=""
+		if [[ "$link" == /* && -f "$link" ]]; then
+			printf '%s' "$link"
+			return 0
+		fi
+		link=""
+	fi
 	while :; do
 		if [[ "$trusted" == 1 ]]; then
 			aidevops_dir_chain_is_trusted "${candidate%/*}/" || return 1
@@ -260,6 +283,7 @@ aidevops_is_git_shim() {
 # intentionally lead PATH. Follow symlinks and reject every deployed/source
 # copy of the shim. AIDEVOPS_REAL_GIT_BIN (operator override) wins.
 aidevops_resolve_native_git() {
+	local known_shim="${1:-}" # optional calling shim file; matched by inode, no readlink spawn
 	local candidate=""
 	local override="${AIDEVOPS_REAL_GIT_BIN:-${AIDEVOPS_REAL_GIT:-}}"
 	if [[ -n "$override" ]]; then
@@ -272,6 +296,7 @@ aidevops_resolve_native_git() {
 	fi
 	while IFS= read -r candidate; do
 		[[ "$candidate" == /* && -f "$candidate" && -x "$candidate" ]] || continue
+		[[ -n "$known_shim" && "$candidate" -ef "$known_shim" ]] && continue
 		aidevops_is_git_shim "$candidate" && continue
 		printf '%s' "$candidate"
 		return 0
@@ -283,6 +308,6 @@ aidevops_resolve_native_git() {
 [[ "${AIDEVOPS_RUNTIME_ENV_LIBRARY_ONLY:-0}" != 1 ]] || return 0
 PATH=$(aidevops_runtime_path "${PATH:-}")
 export PATH
-AIDEVOPS_REAL_GIT_BIN=$(aidevops_resolve_native_git) || return 1
+AIDEVOPS_REAL_GIT_BIN=$(aidevops_resolve_native_git "") || return 1
 export AIDEVOPS_REAL_GIT_BIN
 return 0

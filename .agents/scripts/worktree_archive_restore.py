@@ -12,31 +12,37 @@ import sys
 import uuid
 
 from worktree_archive_administration import git
-from worktree_archive_snapshot import fetch_preservation
+from worktree_archive_registration import (
+    NOT_ENROLLED, REGISTRATION_SQL,
+    creation_registration, registration_table,
+)
+from worktree_archive_objects import dependency_commit
+from worktree_archive_dependencies import import_published_head, object_present, object_store_files
+from worktree_archive_snapshot import fetch_preservation, report_preservation_import
+from worktree_archive_unsealed import UnsealedRecovery
 from worktree_recovery_timing import timed
 
 
-def object_store_files(objects):
-    """Traverse dependency files without accepting symlinked store entries."""
-    from worktree_lifetime_archive import require
-    pending = [objects]
-    while pending:
-        path = pending.pop()
-        require(not path.is_symlink(), "restore-proof:symlinked-object-store")
-        if path.is_dir():
-            pending.extend(path.iterdir())
-        else:
-            yield path
+def failure_message(final, default):
+    """Map a restore child's final exception line to its bounded message.
+
+    GH#35957: NotEnrolled becomes one bounded category so the child's detail
+    stays private; a ValueError keeps its policy message.
+    """
+    import re
+    if re.fullmatch(r"[A-Za-z0-9_.]*NotEnrolled: .*", final):
+        return NOT_ENROLLED
+    if final.startswith("ValueError: "):
+        return final.removeprefix("ValueError: ")
+    return default
 
 
 def creation_receipt(target, owner_pid):
     """Seal the creating actor/generation before any archive payload is applied."""
-    from worktree_lifetime_archive import inode, managed_module, require, transaction
+    from worktree_lifetime_archive import inode, require, transaction
     from worktree_recovery_migration_state import sync_directory
     with transaction() as connection:
-        managed = managed_module()
-        registered = managed.load(connection, str(target))
-        managed.verify_identity(registered, target)
+        registered = creation_registration(connection, target)
         owner = connection.execute("SELECT * FROM worktree_owners WHERE worktree_path = ?",
                                    (str(target),)).fetchone()
         actor = connection.execute("SELECT owner_pid, task_id, branch FROM worktree_owners WHERE worktree_path = ?",
@@ -67,6 +73,13 @@ def prepare(archive, target, verification=False):
     # our registered worktree at the available base first, then import objects
     # through that owned linked target without touching shared preservation refs.
     initial_head = manifest["base_sha"] if bundle.is_file() else manifest["head_sha"]
+    # GH#36607: a published archive has no bundle and depends on its pushed
+    # head. If the source store no longer holds it, start at the base and
+    # import the head through the owned target from the authorized origin.
+    published_import = (not bundle.is_file() and dependency_commit(manifest) != manifest["base_sha"]
+                        and not object_present(common, manifest["head_sha"]))
+    if published_import:
+        initial_head = manifest["base_sha"]
     environment = dict(os.environ, AIDEVOPS_SKIP_AUTO_CLAIM="1", WORKTREE_NODE_MODULES_RESTORE_ENABLED="0",
                        AIDEVOPS_WORKTREE_JS_BOOTSTRAP_ENABLED="0",
                        GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="core.hooksPath", GIT_CONFIG_VALUE_0=os.devnull)
@@ -80,8 +93,12 @@ def prepare(archive, target, verification=False):
     if bash is None:
         raise ValueError("Bash is unavailable")
     if verification:
-        for name in ("AIDEVOPS_WORKTREE_MANAGER", "AIDEVOPS_MANAGED_WORKTREE_RUN_UNIT"):
-            environment.pop(name, None)
+        # Never bind scratch to a worker's managed run unit. An explicit
+        # legacy-guards contract is kept: it selects the same creation record
+        # that macOS always writes, which creation_registration accepts.
+        if environment.get("AIDEVOPS_WORKTREE_MANAGER") != "legacy-guards":
+            environment.pop("AIDEVOPS_WORKTREE_MANAGER", None)
+        environment.pop("AIDEVOPS_MANAGED_WORKTREE_RUN_UNIT", None)
         environment.update(AIDEVOPS_WORKTREE_CREATE_TASK="archive-verification:" + target.parent.name,
                            AIDEVOPS_WORKTREE_CREATE_OWNER_PID=str(os.getppid()),
                            AIDEVOPS_WORKTREE_CREATE_SESSION="archive-verification:" + target.parent.name)
@@ -97,15 +114,20 @@ def prepare(archive, target, verification=False):
                        [str(Path(bash).absolute()), str(helper), "add", "recovery/" + uuid.uuid4().hex,
                         str(target), "--base", initial_head], cwd=repository,
                        env=environment, stdout=sys.stderr, check=True, timeout=180)
-    if bundle.is_file():
-        fetch_preservation(target, archive)
+    if published_import:
+        import_published_head(target, common, manifest["head_sha"])
+    imported = False
+    if bundle.is_file() or published_import:
+        # Non-None only after the complete bundle was verified and imported.
+        imported = fetch_preservation(target, archive) is not None
         if verification:
             git(target, "checkout", "--quiet", "--detach", manifest["head_sha"])
         else:
             git(target, "reset", "--hard", manifest["head_sha"])
+    return imported
 
 
-class RestorationProof:
+class RestorationProof(UnsealedRecovery):
     """Process-local proof, never reconstructed from a durable verified boolean.
 
     The caller owns the admission/operation lock for this object's whole lifetime.
@@ -153,6 +175,10 @@ class RestorationProof:
                 old_slot.rmdir()
                 previous["state"] = "cleaned"
                 save(record)
+            elif (previous.get("state") == "restoring"
+                  and not os.path.lexists(old_slot / ".creation.json")):
+                self.recover_unsealed(directory, previous, save, record,
+                                      Path(self.manifest["source_git_common_dir"]))
             else:
                 self.cleanup(directory, previous, save, record)
         import tempfile
@@ -163,6 +189,10 @@ class RestorationProof:
                    "archive_digest": self.archive_digest, "manifest_sha256": record["manifest_sha256"],
                    "source": record["source"], "base": self.manifest["base_sha"],
                    "capture_schema": self.manifest["schema"], "policy": "git-only"}
+        from worktree_archive_runtime_config import omitted_keys, restored_view
+        if omitted_keys(self.manifest):
+            # GH#36883: archived runtime-local config is evidence, not restored state.
+            receipt["omitted_runtime_config"] = omitted_keys(self.manifest)
         record["canonical_restore"] = receipt
         save(record)
         common = Path(self.manifest["source_git_common_dir"])
@@ -187,7 +217,8 @@ class RestorationProof:
                 "restore-proof:creation-identity-changed")
         with phase("compare-restoration"):
             from worktree_archive_snapshot import git_snapshot
-            require(git_snapshot(target) == record["source"]["snapshot"], "restore-proof:state-mismatch")
+            require(git_snapshot(target) == restored_view(record["source"]["snapshot"]),
+                    "restore-proof:state-mismatch")
         require(inode(self.archive) == self.archive_inode and fingerprint(self.archive) == self.archive_digest,
                 "restore-proof:archive-changed")
         with phase("dependency-seal"):
@@ -203,12 +234,11 @@ class RestorationProof:
             for _path in object_store_files(self.objects):
                 pass
             self.objects_digest = fingerprint(self.objects)
-            git(common, "cat-file", "-e", self.manifest["base_sha"] + "^{commit}")
-        from worktree_lifetime_archive import managed_module, transaction
+            # GH#36607: a published archive depends on its pushed head instead.
+            git(common, "cat-file", "-e", dependency_commit(self.manifest) + "^{commit}")
+        from worktree_lifetime_archive import transaction
         with transaction() as connection:
-            managed = managed_module()
-            registered = managed.load(connection, str(target))
-            managed.verify_identity(registered, target)
+            registered = creation_registration(connection, target)
             owner = connection.execute("SELECT * FROM worktree_owners WHERE worktree_path = ?",
                                        (str(target),)).fetchone()
             require(owner is not None, "restore-proof:owner-missing")
@@ -239,7 +269,37 @@ class RestorationProof:
                     "restore-proof:archive-changed")
             require(inode(self.common) == self.common_inode and fingerprint(self.objects) == self.objects_digest,
                     "restore-proof:base-changed")
-            git(self.common, "cat-file", "-e", self.manifest["base_sha"] + "^{commit}")
+            git(self.common, "cat-file", "-e", dependency_commit(self.manifest) + "^{commit}")
+
+    @staticmethod
+    def adopt_sealed(slot, receipt):
+        """GH#36468: make a sealed but never-compared copy reclaimable.
+
+        A proof that died (or failed) after ``.creation.json`` but before
+        comparison left state ``restoring``; cleanup refused it forever, so
+        every retry leaked nothing new but the slot stayed for good. The
+        caller holds the exclusive operation lock, so no live proof owns the
+        slot. Ownership is proven by the sealed creation receipt instead: slot
+        and target inodes must match, and cleanup still requires the current
+        registration and owner to equal the sealed ones (a transferred owner
+        stays retained). Only the content comparison is skipped: an
+        uncompared copy has no digest, and its archive is unchanged.
+        """
+        import hashlib
+        from worktree_lifetime_archive import inode, require
+        from worktree_recovery_migration_state import load
+        changed = "restore-proof:slot-changed"
+        creation = slot / ".creation.json"
+        require(slot == slot.resolve(strict=True) and inode(slot) == receipt["slot_inode"], changed)
+        require(creation.is_file() and not creation.is_symlink(), changed)
+        created = load(creation, "canonical-creation/v1")
+        target = slot / "worktree"
+        require(created["slot_inode"] == receipt["slot_inode"]
+                and (not os.path.lexists(target) or inode(target) == created["target_inode"]),
+                "restore-proof:creation-identity-changed")
+        receipt.update(state="cleanup-pending", uncompared=True, registration=created["registration"],
+                       owner=created["owner"], target_inode=created["target_inode"],
+                       creation_sha256=hashlib.sha256(creation.read_bytes()).hexdigest())
 
     @staticmethod
     def cleanup(directory, receipt, save, record):
@@ -247,6 +307,9 @@ class RestorationProof:
         name = receipt["slot"]
         require(Path(name).name == name and name.startswith(".restore-"), "restore-proof:unsafe-slot")
         slot = directory / name
+        if receipt["state"] == "restoring" and os.path.lexists(slot / ".creation.json"):
+            RestorationProof.adopt_sealed(slot, receipt)
+            save(record)
         if os.path.lexists(slot):
             require(slot == slot.resolve(strict=True) and inode(slot) == receipt["slot_inode"],
                     "restore-proof:slot-changed")
@@ -260,9 +323,9 @@ class RestorationProof:
         registered = receipt["registration"]
         # The same SQLite transaction excludes cooperative ownership replacement
         # across Git removal and registry cleanup. No manifest-supplied deletion path.
+        select_registration, delete_registration = REGISTRATION_SQL[registration_table(registered)]
         with transaction() as connection:
-            row = connection.execute("SELECT record FROM worktree_managed_lifetimes WHERE path = ?",
-                                     (str(target),)).fetchone()
+            row = connection.execute(select_registration, (str(target),)).fetchone()
             current = json.loads(row[0]) if row else None
             owner = connection.execute("SELECT * FROM worktree_owners WHERE worktree_path = ?",
                                        (str(target),)).fetchone()
@@ -273,10 +336,12 @@ class RestorationProof:
             if os.path.lexists(target):
                 require(inode(target) == receipt["target_inode"] and not target.is_symlink(),
                         "restore-proof:target-changed")
-                from worktree_archive_snapshot import git_snapshot
-                from worktree_recovery_retirement_transaction import fingerprint
-                require(git_snapshot(target) == receipt["source"]["snapshot"]
-                        and fingerprint(target) == receipt["target_digest"], "restore-proof:scratch-drift")
+                if not receipt.get("uncompared"):
+                    from worktree_archive_snapshot import git_snapshot
+                    from worktree_archive_runtime_config import restored_view
+                    from worktree_recovery_retirement_transaction import fingerprint
+                    require(git_snapshot(target) == restored_view(receipt["source"]["snapshot"])
+                            and fingerprint(target) == receipt["target_digest"], "restore-proof:scratch-drift")
                 # The canonical linked-removal exception verifies the checkout
                 # top-level as well as the common dir; -C <common> has no top-level.
                 entries = git(common, "worktree", "list", "--porcelain", "-z").split(b"\0")
@@ -285,7 +350,7 @@ class RestorationProof:
             require(not os.path.lexists(Path(registered["identity"]["admin"])),
                     "restore-proof:administration-remains")
             connection.execute("DELETE FROM worktree_owners WHERE worktree_path = ?", (str(target),))
-            connection.execute("DELETE FROM worktree_managed_lifetimes WHERE path = ?", (str(target),))
+            connection.execute(delete_registration, (str(target),))
         if os.path.lexists(slot):
             import hashlib
             creation = slot / ".creation.json"
@@ -300,8 +365,8 @@ class RestorationProof:
 
 if __name__ == "__main__":
     try:
-        prepare(Path(sys.argv[1]).resolve(strict=True), Path(sys.argv[2]).absolute(),
-                verification=sys.argv[3:] == ["--verification-copy"])
+        report_preservation_import(prepare(Path(sys.argv[1]).resolve(strict=True), Path(sys.argv[2]).absolute(),
+                                           verification=sys.argv[3:] == ["--verification-copy"]))
     except subprocess.CalledProcessError as error:
         # Python's default traceback omits the captured Git stderr. Carry only
         # fixed diagnostic categories across Bash; never expose Git argv/data.

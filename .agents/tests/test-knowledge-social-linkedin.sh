@@ -162,12 +162,18 @@ assert API_BASE == "https://api.linkedin.com/rest"
 assert READ_ENDPOINTS == {"memberAuthorizations", "memberSnapshotData"}
 assert callable(_http_exports())
 
-sources = [
-    path.read_text(encoding="utf-8")
-    for path in sorted(scripts.glob("*knowledge_social_linkedin*.py"))
-]
+paths = sorted(scripts.glob("*knowledge_social_linkedin*.py"))
+sources = [path.read_text(encoding="utf-8") for path in paths]
 assert all("linkedin-automation" not in source for source in sources)
 trees = [ast.parse(source) for source in sources]
+# The GET-only guard covers the read collector. The outbound publish provider
+# (_knowledge_social_linkedin_outbound_*.py) is a separate, intentionally
+# write-capable path with its own suite (test-social-linkedin-youtube-outbound.py).
+read_trees = [
+    tree
+    for path, tree in zip(paths, trees)
+    if not path.name.startswith("_knowledge_social_linkedin_outbound")
+]
 imports = {
     alias.name
     for tree in trees
@@ -180,7 +186,7 @@ imports = {
 assert all("linkedin_automation" not in name for name in imports)
 request_calls = [
     node
-    for tree in trees
+    for tree in read_trees
     for node in ast.walk(tree)
     if isinstance(node, ast.Call)
     and isinstance(node.func, ast.Name)

@@ -13,6 +13,7 @@ WORKER="${SCRIPT_DIR}/../task-publication-worker-helper.sh"
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export AIDEVOPS_TASK_COORDINATOR_DB="${TEST_ROOT}/coordinator.db"
+TEST_VALIDATOR="$(type -P true)"
 
 task_id=$(node "$COORDINATOR" allocate --operation-id worker-task | jq -r '.tasks[0].taskId')
 fixture_sha="0000000000000000000000000000000000000000"
@@ -136,6 +137,36 @@ hol_later=$(node "$COORDINATOR" lease-next --owner-id hol-later-owner --lease-se
 node "$COORDINATOR" lease-finish --owner-id hol-later-owner --repository-id repo-hol \
 	--fencing-token "$(jq -r '.fencingToken' <<<"$hol_later")" --status terminal --evidence '{"failure":"fixture-cleanup"}' >/dev/null
 
+# Malformed lease attempt counts must not abort before checkout validation.
+# Fixtures stay retryable so the requested and scheduled delays are observable;
+# each is made terminal after assertion so it cannot interfere with later leases.
+attempt_case=0
+for attempt_spec in 'null:1' '"":1' '"invalid":1' '0:1' '-1:1' '"08":1' '"1+1":1' '1:1' '2:2'; do
+	attempt="${attempt_spec%:*}"
+	expected_delay="${attempt_spec##*:}"
+	attempt_case=$((attempt_case + 1))
+	operation_id="invalid-attempt-${attempt_case}"
+	delay_log="${TEST_ROOT}/requested-delay-${attempt_case}"
+	node "$COORDINATOR" publication-intent --operation-id "$operation_id" --task-id "$task_id" \
+		--repository-id "$operation_id" --repository-path "${TEST_ROOT}/missing-worktree" \
+		--max-attempts 3 --payload '{"paths":["TODO.md"]}' >/dev/null
+	lease=$(node "$COORDINATOR" lease-next --owner-id attempt-owner --lease-seconds 30 --max-active 4)
+	lease=$(jq -c --argjson attempt "$attempt" '.batch[0].attemptCount = $attempt' <<<"$lease")
+	started_at=$(date +%s)
+	bash -c 'source "$1" metrics >/dev/null
+		eval "_orig_$(declare -f _publication_finish)"
+		delay_file="$3"
+		_publication_finish() { printf "%s\n" "${5:-0}" >"$delay_file"; _orig__publication_finish "$@"; }
+		_publication_process_lease "$2" attempt-owner' bash "$WORKER" "$lease" "$delay_log"
+	finished_at=$(date +%s)
+	[[ "$(<"$delay_log")" == "$expected_delay" ]]
+	[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT i.status FROM publication_intents i WHERE i.operation_id='$operation_id';")" == "retryable" ]]
+	available_at=$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT q.available_at FROM publication_queue q JOIN publication_intents i USING(intent_id) WHERE i.operation_id='$operation_id';")
+	[[ "$available_at" -ge $((started_at + expected_delay)) && "$available_at" -le $((finished_at + expected_delay)) ]]
+	[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT json_extract(evidence_json,'$.result') FROM publication_attempts WHERE intent_id=(SELECT intent_id FROM publication_intents WHERE operation_id='$operation_id') ORDER BY rowid DESC LIMIT 1;")" == "repository_worktree_unavailable" ]]
+	sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "UPDATE publication_intents SET status='terminal' WHERE operation_id='$operation_id';"
+done
+
 # End-to-end worker publication records the exact pushed commit, and an owner
 # made stale immediately before push cannot mutate the remote.
 git_root="${TEST_ROOT}/git"
@@ -150,10 +181,36 @@ GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Te
 git -C "${git_root}/work" push origin main >/dev/null 2>&1
 printf '%s\n' '- [ ] t001 worker publication' >>"${git_root}/work/TODO.md"
 enqueue git-publish repo-git "${git_root}/work"
-AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true "$WORKER" once
+AIDEVOPS_PLANNING_VALIDATOR="$TEST_VALIDATOR" "$WORKER" once
 pushed_sha=$(git --git-dir="${git_root}/remote.git" rev-parse main)
 recorded_sha=$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT json_extract(evidence_json,'$.commitSha') FROM terminal_evidence WHERE operation_id='git-publish';")
 [[ "$recorded_sha" == "$pushed_sha" ]]
+
+# Each successful publication models a new job's checkout of the remote head.
+# Only this test's disposable clone is reset, after its changes are published.
+refresh_fixture_checkout() {
+	git -C "${git_root}/work" fetch -q origin main
+	git -C "${git_root}/work" reset --hard FETCH_HEAD >/dev/null
+	return 0
+}
+refresh_fixture_checkout
+
+# A queue restored from another runner uses this job's matching checkout.
+printf '%s\n' '- [ ] runner-local publication' >>"${git_root}/work/TODO.md"
+enqueue git-relocated repo-git "${TEST_ROOT}/other-runner/work"
+REPOSITORY_ID=repo-git REPOSITORY_PATH="${git_root}/work" \
+	AIDEVOPS_PLANNING_VALIDATOR="$TEST_VALIDATOR" "$WORKER" once
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT status FROM publication_intents WHERE operation_id='git-relocated';")" == "published" ]]
+[[ "$(git --git-dir="${git_root}/remote.git" show main:TODO.md)" == *'runner-local publication'* ]]
+refresh_fixture_checkout
+
+# An unrelated job checkout must not replace a valid stored worktree.
+printf '%s\n' '- [ ] stored-path publication' >>"${git_root}/work/TODO.md"
+enqueue git-stored repo-git "${git_root}/work"
+REPOSITORY_ID=repo-other REPOSITORY_PATH="${TEST_ROOT}/missing-current" \
+	AIDEVOPS_PLANNING_VALIDATOR="$TEST_VALIDATOR" "$WORKER" once
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT status FROM publication_intents WHERE operation_id='git-stored';")" == "published" ]]
+refresh_fixture_checkout
 
 printf '%s\n' '- [ ] t002 stale publication' >>"${git_root}/work/TODO.md"
 enqueue git-stale repo-git "${git_root}/work"
@@ -165,7 +222,7 @@ sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "UPDATE publication_leases SET expires_a
 exit 0
 HOOK
 chmod +x "$stale_hook"
-if AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true AIDEVOPS_PLANNING_BEFORE_PUSH_HOOK="$stale_hook" "$WORKER" once >/dev/null 2>&1; then
+if AIDEVOPS_PLANNING_VALIDATOR="$TEST_VALIDATOR" AIDEVOPS_PLANNING_BEFORE_PUSH_HOOK="$stale_hook" "$WORKER" once >/dev/null 2>&1; then
 	printf 'FAIL stale publication worker reported success\n' >&2
 	exit 1
 fi
@@ -174,12 +231,13 @@ fi
 fence_ref=$(git --git-dir="${git_root}/remote.git" for-each-ref --format='%(refname)' refs/aidevops/publication-fences)
 [[ -n "$fence_ref" ]]
 stale_fence=$(git --git-dir="${git_root}/remote.git" rev-parse "$fence_ref")
-AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true "$WORKER" once
+AIDEVOPS_PLANNING_VALIDATOR="$TEST_VALIDATOR" "$WORKER" once
 after_recovery=$(git --git-dir="${git_root}/remote.git" rev-parse main)
 [[ "$after_recovery" != "$before_stale" ]]
 [[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT json_extract(evidence_json,'$.commitSha') FROM terminal_evidence WHERE operation_id='git-stale';")" == "$after_recovery" ]]
 recovered_fence=$(git --git-dir="${git_root}/remote.git" rev-parse "$fence_ref")
 [[ "$recovered_fence" != "$stale_fence" ]]
+refresh_fixture_checkout
 
 # A resumed stale owner cannot atomically move the target after takeover, even
 # when its target CAS expectation is current: the stale remote fence rejects all refs.
@@ -204,16 +262,17 @@ node "$COORDINATOR" forge-event --operation-id transition-closed --delivery-id t
 	--cursor-tiebreaker run-closed --repository-id repo-git --repository-slug owner/repo \
 	--repository-path "${git_root}/work" --event-kind issue --action closed --subject-id I_transition \
 	--cursor 2026-07-12T13:00:00Z >/dev/null
-AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true "$WORKER" once
+AIDEVOPS_PLANNING_VALIDATOR="$TEST_VALIDATOR" "$WORKER" once
 projected_todo=$(git --git-dir="${git_root}/remote.git" show main:TODO.md)
-expected_todo=$(printf '# Tasks\n- [x] %s mapped transition ref:GH#77\n- [ ] %s.1 child remains open\n- [ ] t001 worker publication\n- [ ] t002 stale publication' "$task_id" "$task_id")
+expected_todo=$(printf '# Tasks\n- [x] %s mapped transition ref:GH#77\n- [ ] %s.1 child remains open\n- [ ] t001 worker publication\n- [ ] runner-local publication\n- [ ] stored-path publication\n- [ ] t002 stale publication' "$task_id" "$task_id")
 [[ "$projected_todo" == "$expected_todo" ]]
 closed_sha=$(git --git-dir="${git_root}/remote.git" rev-parse main)
+refresh_fixture_checkout
 node "$COORDINATOR" forge-event --operation-id transition-duplicate-closed --delivery-id transition-duplicate-closed \
 	--cursor-tiebreaker run-duplicate-closed --repository-id repo-git --repository-slug owner/repo \
 	--repository-path "${git_root}/work" --event-kind issue --action closed --subject-id I_transition \
 	--cursor 2026-07-12T13:30:00Z >/dev/null
-AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true "$WORKER" once
+AIDEVOPS_PLANNING_VALIDATOR="$TEST_VALIDATOR" "$WORKER" once
 [[ "$(git --git-dir="${git_root}/remote.git" rev-parse main)" == "$closed_sha" ]]
 [[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT status FROM publication_intents WHERE operation_id='transition-duplicate-closed';")" == "terminal" ]]
 [[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT json_extract(evidence_json,'$.result') FROM terminal_evidence WHERE operation_id='transition-duplicate-closed' ORDER BY id DESC LIMIT 1;")" == "idempotent_transition" ]]
@@ -221,7 +280,7 @@ node "$COORDINATOR" forge-event --operation-id transition-reopened --delivery-id
 	--cursor-tiebreaker run-reopened --repository-id repo-git --repository-slug owner/repo \
 	--repository-path "${git_root}/work" --event-kind issue --action reopened --subject-id I_transition \
 	--cursor 2026-07-12T14:00:00Z >/dev/null
-AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true "$WORKER" once
+AIDEVOPS_PLANNING_VALIDATOR="$TEST_VALIDATOR" "$WORKER" once
 [[ "$(git --git-dir="${git_root}/remote.git" show main:TODO.md)" == "${expected_todo/\[x\]/[ ]}" ]]
 
 # Active initialization lock ownership is never stolen based on age alone.
@@ -246,11 +305,37 @@ AIDEVOPS_COORDINATOR_INIT_LOCK_ORPHAN_GRACE_MS=0 node "$COORDINATOR" status >/de
 [[ ! -d "${AIDEVOPS_TASK_COORDINATOR_DB}.init-lock" ]]
 
 # Fan-out reports any child failure rather than only the final wait status.
-enqueue child-failure repo-child-failure "${TEST_ROOT}/missing-repository"
+node "$COORDINATOR" publication-intent --operation-id child-failure --task-id "$task_id" \
+	--repository-id repo-child-failure --repository-path "${git_root}/work" \
+	--remote missing-remote --payload '{"paths":["TODO.md"]}' >/dev/null
 if AIDEVOPS_PUBLICATION_MAX_CONCURRENCY=3 "$WORKER" run >/dev/null 2>&1; then
 	printf 'FAIL worker run ignored a failed child\n' >&2
 	exit 1
 fi
+
+# Unavailable paths finish retryably with evidence, no active lease, and exit 0.
+# Reject ordinary directories and bare repositories as well as missing paths;
+# neither a mismatched nor an absent repository ID authorizes a local override.
+assert_unavailable_worktree() {
+	local operation_id="$1"
+	local stored_path="$2"
+	local current_id="$3"
+	local current_path="$4"
+	enqueue "$operation_id" "$operation_id" "$stored_path"
+	REPOSITORY_ID="$current_id" REPOSITORY_PATH="$current_path" "$WORKER" once
+	[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT status FROM publication_intents WHERE operation_id='$operation_id';")" == "retryable" ]]
+	[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT json_extract(evidence_json,'$.result') FROM publication_attempts WHERE intent_id=(SELECT intent_id FROM publication_intents WHERE operation_id='$operation_id');")" == "repository_worktree_unavailable" ]]
+	[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT COUNT(*) FROM publication_leases WHERE repository_id='$operation_id';")" == "0" ]]
+	# Keep earlier retryable cases out of the next case's lease selection.
+	sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "UPDATE publication_queue SET available_at=unixepoch()+3600 WHERE repository_id='$operation_id';"
+	return 0
+}
+assert_unavailable_worktree path-missing "${TEST_ROOT}/missing-repository" "" ""
+assert_unavailable_worktree path-directory "$git_root" "" ""
+assert_unavailable_worktree path-bare "${git_root}/remote.git" "" ""
+assert_unavailable_worktree path-mismatch "${TEST_ROOT}/missing-repository" repo-other "${git_root}/work"
+assert_unavailable_worktree path-no-id "${TEST_ROOT}/missing-repository" "" "${git_root}/work"
+assert_unavailable_worktree path-invalid-current "${git_root}/work" path-invalid-current "${TEST_ROOT}/missing-current"
 
 node "$COORDINATOR" verify | jq -e '.ok == true' >/dev/null
 bash -n "$WORKER"

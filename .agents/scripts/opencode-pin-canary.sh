@@ -66,10 +66,13 @@ install_isolated_plugin() {
 	local isolated_home="$2"
 	local isolated_cache="$3"
 	local source_root="$SCRIPT_DIR/../plugins/opencode-aidevops"
-	# Preserve the plugin's ../../scripts relative imports inside the isolated tree.
-	mkdir -p "$install_root" "$isolated_home" "$isolated_cache" "$install_root/../../scripts"
+	# Preserve relative imports and the policy read during plugin module loading.
+	# Copy only the repository policy, never the operator's config or credentials.
+	mkdir -p "$install_root" "$isolated_home" "$isolated_cache" \
+		"$install_root/../../scripts" "$install_root/../../configs"
 	cp -R "$source_root/." "$install_root/" || return 1
 	cp "$SCRIPT_DIR/"*.mjs "$install_root/../../scripts/" || return 1
+	cp "$SCRIPT_DIR/../configs/worker-permission-policy.json" "$install_root/../../configs/" || return 1
 	env -i \
 		HOME="$isolated_home" PATH="$PATH" \
 		GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
@@ -346,9 +349,11 @@ run_isolated_probe() {
 	health_nonce=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
 	jq -n --arg nonce "$health_nonce" '{nonce:$nonce,stages:[]}' >"$health_file"
 	chmod 600 "$health_file"
-	if [[ -e "$plugin_path" ]]; then
-		plugin_url=$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve().as_uri())' "$plugin_path")
+	if [[ ! -e "$plugin_path" ]]; then
+		printf 'FAIL: %s isolated plugin entry is missing: %s\n' "$label" "$plugin_path" >&2
+		return 1
 	fi
+	plugin_url=$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve().as_uri())' "$plugin_path")
 	if [[ "$OPENCODE_CANARY_PROFILE" == "v2" ]]; then
 		jq -n --arg api "http://127.0.0.1:${port}/v1" --arg plugin "$plugin_url" \
 			--arg provider "$provider_id" --arg model "$model_id" --arg model_ref "$model_ref" --arg provider_name "$OPENCODE_CANARY_PROVIDER_NAME" \

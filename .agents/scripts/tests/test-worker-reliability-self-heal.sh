@@ -5,10 +5,10 @@
 # Regression tests for t2119 + t2387 worker reliability self-heal bundle:
 #
 #   Part A — check_launchd_plist_drift:
-#     - No drift: stored hash matches current schedulers.sh hash → no-op.
+#     - No drift: stored hash matches the shared scheduler_template_hash → no-op.
 #     - Drift: stored hash differs → runs setup.sh and updates stamp.
 #     - Bootstrap: no stored hash → treated as drift (self-heals pre-t2119 installs).
-#     - Rate limit: stamp newer than interval → skipped without work.
+#     - Rate limit: a fresh attempt for the same template hash → skipped (t19030).
 #
 #   Part B — escalate_issue_tier no_work skipping (t2119 + t2387):
 #     - When crash_type="no_work", _escalate_body_quality_gate must NOT be
@@ -39,6 +39,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 AUTO_UPDATE_SCRIPT="${REPO_ROOT}/.agents/scripts/auto-update-freshness-lib.sh"
 HEADLESS_SCRIPT="${REPO_ROOT}/.agents/scripts/headless-runtime-helper.sh"
 HEADLESS_WORKER_SCRIPT="${REPO_ROOT}/.agents/scripts/headless-runtime-worker.sh"
+HEADLESS_INVOCATION_SCRIPT="${REPO_ROOT}/.agents/scripts/headless-runtime-worker-invocation.sh"
 LIFECYCLE_SCRIPT="${REPO_ROOT}/.agents/scripts/worker-lifecycle-common.sh"
 SCHEDULERS_SCRIPT="${REPO_ROOT}/.agents/scripts/setup/modules/schedulers.sh"
 
@@ -74,8 +75,11 @@ setup_test_env() {
 	mkdir -p "${TEST_ROOT}/home/.aidevops/logs"
 	mkdir -p "${TEST_ROOT}/install/.agents/scripts"
 	mkdir -p "${TEST_ROOT}/install/.agents/scripts/setup/modules"
-	# Install a fake schedulers.sh so drift detection has something to hash
+	# Install a fake schedulers.sh so drift detection has something to hash,
+	# plus the real shared hash contract the checker sources (t19030).
 	printf '#!/usr/bin/env bash\n# fake schedulers v1\n' >"${TEST_ROOT}/install/.agents/scripts/setup/modules/schedulers.sh"
+	cp "${REPO_ROOT}/.agents/scripts/setup/modules/schedulers-template-hash.sh" \
+		"${TEST_ROOT}/install/.agents/scripts/setup/modules/schedulers-template-hash.sh"
 	# Install a fake setup.sh so drift detection can "run" it
 	cat >"${TEST_ROOT}/install/setup.sh" <<'FSETUP'
 #!/usr/bin/env bash
@@ -132,14 +136,16 @@ define_preserve_helper() {
 	helper_src=$(awk '
 		/^_preserve_no_activity_output\(\) \{/,/^}$/ { print }
 	' "$HEADLESS_SCRIPT")
-	if [[ -z "$helper_src" && -f "$HEADLESS_WORKER_SCRIPT" ]]; then
+	local candidate=""
+	for candidate in "$HEADLESS_WORKER_SCRIPT" "$HEADLESS_INVOCATION_SCRIPT"; do
+		[[ -z "$helper_src" && -f "$candidate" ]] || continue
 		helper_src=$(awk '
 			/^_preserve_no_activity_output\(\) \{/,/^}$/ { print }
-		' "$HEADLESS_WORKER_SCRIPT")
-	fi
+		' "$candidate")
+	done
 	if [[ -z "$helper_src" ]]; then
-		printf 'ERROR: could not extract _preserve_no_activity_output from %s or %s\n' \
-			"$HEADLESS_SCRIPT" "$HEADLESS_WORKER_SCRIPT" >&2
+		printf 'ERROR: could not extract _preserve_no_activity_output from %s, %s or %s\n' \
+			"$HEADLESS_SCRIPT" "$HEADLESS_WORKER_SCRIPT" "$HEADLESS_INVOCATION_SCRIPT" >&2
 		return 1
 	fi
 	# shellcheck disable=SC1090
@@ -171,7 +177,9 @@ test_drift_bootstrap_triggers_setup() {
 test_drift_match_skips_setup() {
 	# Pre-seed a matching hash → no drift → setup must NOT run
 	local current_hash
-	current_hash=$(shasum -a 256 "${INSTALL_DIR}/.agents/scripts/setup/modules/schedulers.sh" | awk '{print $1}')
+	# shellcheck source=../setup/modules/schedulers-template-hash.sh
+	source "${INSTALL_DIR}/.agents/scripts/setup/modules/schedulers-template-hash.sh"
+	current_hash=$(scheduler_template_hash "${INSTALL_DIR}/.agents/scripts/setup/modules")
 	printf '%s\n' "$current_hash" >"${HOME}/.aidevops/.agent-workspace/tmp/schedulers-template-hash.state"
 	rm -f "${HOME}/.aidevops/.agent-workspace/tmp/plist-drift-check.stamp"
 	: >"$TEST_SETUP_LOG"
@@ -206,9 +214,15 @@ test_drift_mismatch_triggers_setup() {
 }
 
 test_drift_rate_limit_suppresses_check() {
-	# Fresh stamp + mismatched hash → should skip due to rate limit
+	# Fresh attempt for this same template hash + mismatched stored hash →
+	# should skip due to rate limit (t19030: a new hash would repair at once)
+	local current_hash
+	# shellcheck source=../setup/modules/schedulers-template-hash.sh
+	source "${INSTALL_DIR}/.agents/scripts/setup/modules/schedulers-template-hash.sh"
+	current_hash=$(scheduler_template_hash "${INSTALL_DIR}/.agents/scripts/setup/modules")
 	printf '%s\n' "deadbeefdeadbeefdeadbeefdeadbeef" \
 		>"${HOME}/.aidevops/.agent-workspace/tmp/schedulers-template-hash.state"
+	printf '%s\n' "$current_hash" >"${HOME}/.aidevops/.agent-workspace/tmp/plist-drift-attempt.state"
 	date +%s >"${HOME}/.aidevops/.agent-workspace/tmp/plist-drift-check.stamp"
 	: >"$TEST_SETUP_LOG"
 

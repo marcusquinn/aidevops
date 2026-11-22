@@ -70,6 +70,13 @@ SKIP_MERGE_CHECK=false
 VALID_TESTING_LEVELS="runtime-verified self-assessed untested"
 TASK_COMPLETE_ID_BOUNDARY="([[:space:]]|$)"
 
+# Escape ERE metacharacters so task IDs (e.g. t12.1) match literally.
+_tc_escape_ere() {
+	local raw="$1"
+	printf '%s' "$raw" | sed -e 's/[][\.^$*+?(){}|/]/\\&/g'
+	return 0
+}
+
 # Logging: uses shared log_* from shared-constants.sh
 
 # Show help
@@ -369,12 +376,14 @@ annotate_solved_label_for_pr() {
 _complete_task_require_open_task() {
 	local task_id="$1"
 	local todo_file="$2"
+	local id_re
+	id_re=$(_tc_escape_ere "$task_id")
 
-	if grep -qE "^[[:space:]]*- \[[ >]\] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file"; then
+	if grep -qE "^[[:space:]]*- \[[ >]\] ${id_re}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file"; then
 		return 0
 	fi
 
-	if grep -qE "^[[:space:]]*- \[x\] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file"; then
+	if grep -qE "^[[:space:]]*- \[x\] ${id_re}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file"; then
 		log_warn "Task $task_id is already marked complete"
 		return 2
 	fi
@@ -387,8 +396,10 @@ _complete_task_guard_explicit_subtasks() {
 	local task_id="$1"
 	local todo_file="$2"
 	local explicit_subtasks=""
+	local id_re
+	id_re=$(_tc_escape_ere "$task_id")
 
-	explicit_subtasks=$(grep -E "^[[:space:]]*- \[[ >]\] ${task_id}\.[0-9]+( |$)" "$todo_file" || true)
+	explicit_subtasks=$(grep -E "^[[:space:]]*- \[[ >]\] ${id_re}\.[0-9]+( |$)" "$todo_file" || true)
 	if [[ -z "$explicit_subtasks" ]]; then
 		return 0
 	fi
@@ -404,14 +415,16 @@ _complete_task_guard_indented_subtasks() {
 	local task_id="$1"
 	local todo_file="$2"
 	local task_line=""
-	task_line=$(grep -E "^[[:space:]]*- \[[ >]\] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file" | head -1)
+	local id_re
+	id_re=$(_tc_escape_ere "$task_id")
+	task_line=$(grep -m1 -E "^[[:space:]]*- \[[ >]\] ${id_re}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file")
 	local task_indent=""
 	task_indent=$(printf '%s\n' "$task_line" | sed -E 's/^([[:space:]]*).*/\1/' | wc -c)
 	task_indent=$((task_indent - 1)) # wc -c counts newline
 
 	local open_subtasks=""
-	open_subtasks=$(awk -v tid="$task_id" -v boundary="$TASK_COMPLETE_ID_BOUNDARY" -v tindent="$task_indent" '
-		BEGIN { found=0 }
+	open_subtasks=$(TC_TID_RE_GUARD="$id_re" awk -v boundary="$TASK_COMPLETE_ID_BOUNDARY" -v tindent="$task_indent" '
+		BEGIN { found=0; tid=ENVIRON["TC_TID_RE_GUARD"] }
 		$0 ~ ("^[[:space:]]*- \\[[ >]\\] " tid boundary) { found=1; next }
 		found && /^[[:space:]]*- \[/ {
 			match($0, /^[[:space:]]*/);
@@ -466,12 +479,16 @@ _complete_task_extract_block() {
 	local tmp_no_block="$5"
 	local tmp_block="$6"
 
+	local id_re
+	id_re=$(_tc_escape_ere "$task_id")
 	# shellcheck disable=SC2016
-	awk -v tid="$task_id" -v boundary="$TASK_COMPLETE_ID_BOUNDARY" -v proof="$proof_log" -v today="$today" -v bf="$tmp_block" '
-BEGIN { in_block=0; block_done=0; block="" }
+	TC_TID_RE_EXTRACT="$id_re" awk -v boundary="$TASK_COMPLETE_ID_BOUNDARY" -v proof="$proof_log" -v today="$today" -v bf="$tmp_block" '
+BEGIN { in_block=0; block_done=0; block=""; tid=ENVIRON["TC_TID_RE_EXTRACT"] }
 
 !in_block && !block_done && $0 ~ ("^[[:space:]]*- \\[[ >]\\] " tid boundary) {
     in_block=1
+    match($0, /^[[:space:]]*/)
+    task_indent=RLENGTH
     line=$0
     sub(/\[[ >]\]/, "[x]", line)
     sub(/[[:space:]]*$/, "", line)
@@ -495,7 +512,12 @@ BEGIN { in_block=0; block_done=0; block="" }
 }
 
 in_block {
-    if (/^$/ || /^- \[/) {
+    is_item=0
+    if ($0 ~ /^[[:space:]]*- \[/) {
+        match($0, /^[[:space:]]*/)
+        if (RLENGTH <= task_indent) is_item=1
+    }
+    if (/^$/ || is_item) {
         in_block=0
         block_done=1
     } else {
@@ -557,19 +579,22 @@ END {
 _complete_task_verify_update() {
 	local task_id="$1"
 	local todo_file="$2"
+	local id_re
+	id_re=$(_tc_escape_ere "$task_id")
 
-	if ! grep -qE "^[[:space:]]*- \[x\] ${task_id} " "$todo_file"; then
+	if ! grep -qE "^[[:space:]]*- \[x\] ${id_re} " "$todo_file"; then
 		log_error "Failed to update TODO.md for $task_id"
 		return 1
 	fi
 
-	if ! grep -E "^[[:space:]]*- \[x\] ${task_id} " "$todo_file" | grep -qE "(pr:#[0-9]+|verified:[0-9]{4}-[0-9]{2}-[0-9]{2})"; then
+	if ! grep -qE "^[[:space:]]*- \[x\] ${id_re} .*(pr:#[0-9]+|verified:[0-9]{4}-[0-9]{2}-[0-9]{2})" "$todo_file"; then
 		log_error "Failed to add proof-log to $task_id"
 		return 1
 	fi
 
 	local in_done_section=""
-	in_done_section=$(awk -v tid="$task_id" -v boundary="$TASK_COMPLETE_ID_BOUNDARY" '
+	in_done_section=$(TC_TID_RE_VERIFY="$id_re" awk -v boundary="$TASK_COMPLETE_ID_BOUNDARY" '
+		BEGIN { tid=ENVIRON["TC_TID_RE_VERIFY"] }
 		/^## (Done|Completed|Complete|Finished)$/ { in_done=1; next }
 		/^## /      { in_done=0; next }
 		in_done && $0 ~ ("^[[:space:]]*- \\[x\\] " tid boundary) { found=1 }
@@ -591,6 +616,66 @@ _complete_task_restore_backup() {
 
 	mv "${todo_file}.bak" "$todo_file"
 	rm -f "$tmp_no_block" "$tmp_block"
+	return 0
+}
+
+# Succeeds when the open task line has leading whitespace (a subtask).
+_complete_task_is_indented() {
+	local task_id="$1"
+	local todo_file="$2"
+
+	local id_re
+	id_re=$(_tc_escape_ere "$task_id")
+	grep -qE "^[[:space:]]+- \[[ >]\] ${id_re}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file"
+	return $?
+}
+
+# Tick an indented subtask in place: keep indentation, parent and continuation lines.
+_complete_task_in_place() {
+	local task_id="$1"
+	local proof_log="$2"
+	local today="$3"
+	local todo_file="$4"
+	local tmp_out="${todo_file}.in_place"
+
+	local id_re
+	id_re=$(_tc_escape_ere "$task_id")
+	# tid via ENVIRON: awk -v would reinterpret the backslash escapes.
+	# shellcheck disable=SC2016
+	TC_TID_RE="$id_re" awk -v boundary="$TASK_COMPLETE_ID_BOUNDARY" -v proof="$proof_log" -v today="$today" '
+BEGIN { tid = ENVIRON["TC_TID_RE"] }
+!done && $0 ~ ("^[[:space:]]+-[[:space:]]\\[[ >]\\][[:space:]]" tid boundary) {
+    line=$0
+    sub(/\[[ >]\]/, "[x]", line)
+    sub(/[[:space:]]*$/, "", line)
+    line_token_count=split(line, line_tokens, /[[:space:]]+/)
+    proof_token_count=split(proof, proof_tokens, /[[:space:]]+/)
+    for (p=1; p <= proof_token_count; p++) {
+        present=0
+        for (l=1; l <= line_token_count; l++) {
+            if (line_tokens[l] == proof_tokens[p]) { present=1; break }
+        }
+        if (!present) {
+            line = line " " proof_tokens[p]
+            line_tokens[++line_token_count] = proof_tokens[p]
+        }
+    }
+    print line " completed:" today
+    done=1
+    next
+}
+{ print }
+' "$todo_file" >"$tmp_out" || {
+		rm -f "$tmp_out"
+		return 1
+	}
+	mv "$tmp_out" "$todo_file"
+
+	if ! grep -qE "^[[:space:]]+- \[x\] ${id_re} .*(pr:#[0-9]+|verified:[0-9]{4}-[0-9]{2}-[0-9]{2})" "$todo_file"; then
+		log_error "Failed to add proof-log to $task_id"
+		return 1
+	fi
+	log_success "Marked $task_id complete in place under its parent with proof-log: $proof_log"
 	return 0
 }
 
@@ -618,6 +703,13 @@ complete_task() {
 
 	local today=""
 	today=$(date +%Y-%m-%d)
+
+	# Indented subtasks are completed in place under their parent (GH#37919).
+	if _complete_task_is_indented "$task_id" "$todo_file"; then
+		_complete_task_in_place "$task_id" "$proof_log" "$today" "$todo_file"
+		return $?
+	fi
+
 	COMPLETE_TASK_DONE_HEADING=""
 	_complete_task_set_done_heading "$todo_file" || return 1
 
@@ -861,15 +953,17 @@ task_issue_number() {
 	local todo_file="$2"
 	local task_line=""
 	local issue_number=""
+	local id_re
+	id_re=$(_tc_escape_ere "$task_id")
 
-	task_line=$(grep -E "^- \[[ >x]\] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file" | head -1 || true)
+	task_line=$(grep -m1 -E "^[[:space:]]*- \[[ >x]\] ${id_re}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file" || true)
 	if [[ -z "$task_line" ]]; then
 		log_error "Task $task_id not found in an open TODO.md entry"
 		return 1
 	fi
 	# An already-completed task is an idempotent no-op, so it does not need a
 	# footer for a commit that will not be created.
-	if [[ "$task_line" == "- [x]"* ]]; then
+	if [[ "$task_line" =~ ^[[:space:]]*-\ \[x\] ]]; then
 		return 0
 	fi
 
@@ -883,9 +977,39 @@ task_issue_number() {
 	return 0
 }
 
+# Refuse before any write when the target is a canonical (non-linked) checkout:
+# the canonical Git guard blocks `git add`/`commit` there, which would leave
+# TODO.md dirty. Set AIDEVOPS_TASK_COMPLETE_ALLOW_CANONICAL=1 for disposable
+# fixture repositories only.
+_guard_not_canonical_checkout() {
+	local repo_path="$1"
+	local git_dir=""
+	local common_dir=""
+
+	[[ "${AIDEVOPS_TASK_COMPLETE_ALLOW_CANONICAL:-0}" == "1" ]] && return 0
+	if ! git_dir=$(git -C "$repo_path" rev-parse --path-format=absolute --git-dir); then
+		log_error "Cannot resolve Git directory for $repo_path; refusing to edit TODO.md"
+		return 1
+	fi
+	if ! common_dir=$(git -C "$repo_path" rev-parse --path-format=absolute --git-common-dir); then
+		log_error "Cannot resolve Git common directory for $repo_path; refusing to edit TODO.md"
+		return 1
+	fi
+	if [[ -n "$git_dir" && "$git_dir" == "$common_dir" ]]; then
+		log_error "Refusing to edit TODO.md in a canonical checkout: $repo_path"
+		log_info "Create a linked worktree (worktree-helper.sh add) and rerun with --repo-path <worktree>, then open a PR"
+		return 1
+	fi
+	return 0
+}
+
 # Main
 main() {
 	if ! parse_args "$@"; then
+		return 1
+	fi
+
+	if ! _guard_not_canonical_checkout "$REPO_PATH"; then
 		return 1
 	fi
 

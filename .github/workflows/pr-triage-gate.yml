@@ -18,6 +18,7 @@ on:
     types: [opened]
 
 permissions:
+  contents: read
   pull-requests: write
   issues: write
 
@@ -30,8 +31,38 @@ jobs:
       group: pr-triage-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     steps:
+      # GH#35655: redirect-link spam gets no welcome comment. Sparse BASE
+      # checkout of the trusted scanner only — never PR head code. Lexical
+      # scan only; the link is never resolved.
+      - name: Checkout trusted redirect-link scanner
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: |
+            .agents/configs/redirect-hosts.conf
+            .agents/scripts/redirect_link_policy.py
+            .agents/scripts/redirect_link_rules.py
+          sparse-checkout-cone-mode: false
+
+      - name: Scan for redirect links
+        id: redirect
+        run: |
+          set -uo pipefail
+          scanner=".agents/scripts/redirect_link_policy.py"
+          spam=false
+          if [[ -f "$scanner" ]]; then
+            rc=0
+            jq -r '[.pull_request.title // "", .pull_request.body // ""] | join("\n")' "$GITHUB_EVENT_PATH" \
+              | python3 "$scanner" scan >/dev/null || rc=$?
+            [[ "$rc" -eq 1 ]] && spam=true
+          fi
+          echo "spam=${spam}" >> "$GITHUB_OUTPUT"
+
       - name: Check author association and apply triage label
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          REDIRECT_LINK_SPAM: ${{ steps.redirect.outputs.spam }}
         with:
           script: |
             const pr = context.payload.pull_request;
@@ -106,6 +137,35 @@ jobs:
               }
             }
 
+            // GH#35655: redirect-link spam is closed silently by the
+            // Redirect-Link Spam Guard; never thank or @-mention the author.
+            if (process.env.REDIRECT_LINK_SPAM === 'true') {
+              console.log(`PR #${pr.number} contains a redirect link — skipping welcome comment`);
+              return;
+            }
+
+            // Same lexical reference pattern as linked-issue-check-reusable.yml.
+            // That check still verifies the number is a local issue; this only
+            // decides whether the contributor's next step is "wait" or "link".
+            const hasIssueRef = /(closes?|fixes?|resolves?|for|ref)[:\s]+#\d+/i.test(pr.body || '');
+            const newIssueUrl = 'https://github.com/' + context.repo.owner + '/' + context.repo.repo + '/issues/new';
+            const status = hasIssueRef
+              ? [
+                'This PR has been queued for maintainer review. A maintainer will review it and either:',
+                '- **Approve** it using: `sudo aidevops approve pr ' + pr.number + '`',
+                '- **Request changes** if modifications are needed',
+                '- **Close** it if it\'s a duplicate or out of scope'
+              ]
+              : [
+                '**Action needed: this PR has no linked issue, so it is not in the review queue yet.**',
+                '',
+                'Every PR must reference a linked issue before a maintainer can review it:',
+                '1. [Open an issue](' + newIssueUrl + ') describing the problem and your evidence, or pick an existing one.',
+                '2. Add `Resolves #NNN` to this PR body (or `For #NNN` for partial work).',
+                '',
+                'The `linked-issue-check` re-runs when you edit the PR body.'
+              ];
+
             // Post a comment with approval instructions
             await github.rest.issues.createComment({
               owner: context.repo.owner,
@@ -114,14 +174,11 @@ jobs:
               body: [
                 `Thanks for the contribution, @${author}.`,
                 '',
-                'This PR has been queued for maintainer review. A maintainer will review it and either:',
-                '- **Approve** it using: `sudo aidevops approve pr ' + pr.number + '`',
-                '- **Request changes** if modifications are needed',
-                '- **Close** it if it\'s a duplicate or out of scope',
+                ...status,
                 '',
                 '**Requirements for external contributor PRs:**',
-                '- The PR body **must** reference a linked issue using `Closes #NNN`, `Fixes #NNN`, or `Resolves #NNN`',
-                '- If no issue exists for this change, please [create one](https://github.com/' + context.repo.owner + '/' + context.repo.repo + '/issues/new) first',
+                '- The PR body **must** reference a linked issue using `Closes #NNN`, `Fixes #NNN`, `Resolves #NNN`, `For #NNN`, or `Ref #NNN`',
+                '- If no issue exists for this change, please [create one](' + newIssueUrl + ') first',
                 '- PRs without a linked issue will be blocked by the merge gate',
                 '',
                 'The PR cannot be merged until a maintainer provides cryptographic approval.'

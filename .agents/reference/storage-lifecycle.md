@@ -56,6 +56,45 @@ most protective class wins.
 Age, count, or byte thresholds are soft limits: they select candidates only.
 Reference, lease, recovery, and audit checks remain hard vetoes.
 
+## Task scratch directories
+
+Project tooling and large verification harnesses must create task bases with
+`bash task-temp-helper.sh create TASK --max-age 24h --owner-pid "$OWNER_PID"`.
+Use the long-lived task/session PID, not a short-lived command-substitution shell.
+The helper prints a private 0700 directory under
+`${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}` and records the owner
+PID, process generation, task/session, creation time and expiry. This is ordinary
+scratch, not a replacement for `sensitive-temp-helper.sh`'s private hierarchy.
+Keep durable small receipts (for example `report.json`) outside the disposable
+task base; do not retain source exports, dependency trees or builds there.
+
+`system-cleanup.sh` defaults to dry-run; `--force` reclaims ownerless task bases
+on its next pass, without waiting seven days. Live ownership is a hard veto,
+including after the soft max-age deadline and under pressure. Unknown process
+identity or malformed task manifests fail closed. Unmanaged entries retain the
+seven-day inactivity policy; old legacy locks/leases no longer protect forever,
+while recognised live owner manifests still veto cleanup. Checkpoints, locks,
+pulse and repository-campaigns remain excluded.
+
+Below 10% free space (override `AIDEVOPS_TMP_MIN_FREE_PERCENT`) or
+`AIDEVOPS_TMP_MIN_FREE_GB` free GiB (default 0), eligible entries are processed
+largest first. Linux deletes them to actually free space under pressure. Above
+the thresholds, Linux also deletes eligible entries when their `st_dev` matches
+the user Trash location (`$XDG_DATA_HOME/Trash`, default `~/.local/share/Trash`).
+For a not-yet-created Trash, compare its nearest existing ancestor. A move to
+same-filesystem Trash would free no space, so no Trash backend is needed in this
+case. Cross-filesystem entries and macOS retain Trash; unknown device evidence
+does not authorise same-filesystem deletion. Neither threshold nor device match
+authorises deleting live or unidentified managed data.
+
+`worktree-artefact-reclaim.sh` uses the same Linux same-device decision for
+already-verified ignored output in idle linked worktrees, preserving all owner,
+cwd, Git, nested-repository and mount vetoes. Other devices/platforms retain the
+native cleaner/Trash path. Neither helper empties existing user Trash or claims
+to recover space from earlier Trash copies.
+The scheduled pulse and `aidevops cleanup tmp --apply` share this policy and emit
+one summary line, with per-entry details in `system-cleanup.log`.
+
 ## Initial Store Inventory
 
 | Store | Owner | Primary classes | Existing authority | Required next contract |
@@ -68,7 +107,7 @@ Reference, lease, recovery, and audit checks remain hard vetoes.
 | Pulse active logs and `~/.aidevops/logs/pulse-archive` | framework | active, archive | Pulse preserves active descriptors while gzip-rotating 50 MiB hot/wrapper logs and 1 MiB timing logs; cold archives converge under 1 GiB | Keep rotation producer-owned and never replace it with generic unlink-by-age cleanup |
 | OpenCode data under its application-data root | joint | active, recovery, archive, unknown | OpenCode owns session and DB formats; aidevops archive/maintenance helpers coordinate selected operations | Separate logical retention from WAL/fragmentation maintenance; report only classifications proven through OpenCode-aware queries |
 | npm and other package-manager caches | external | cache | Package manager owns lifecycle; npm cache status has a configurable 10 GiB advisory threshold | Context-only reporting; offer npm-owned verification or explicitly confirmed cleaning, never aidevops aggregate deletion |
-| OS temporary and Trash locations | external or joint | scratch, unknown | OS/runtime-specific | Reclaim only aidevops-attributable artifacts through an owner-aware migration; never broad-clean a directory |
+| OS temporary and Trash locations | external or joint | scratch, unknown | Eligible aidevops scratch and ignored worktree output bypass same-device Trash on Linux; existing Trash remains OS/user-owned | Reclaim only aidevops-attributable artifacts through an owner-aware migration; never broad-clean a directory |
 
 The inventory is intentionally conservative. A child implementation may split a
 row when one path contains artifacts with different owners or safety classes.

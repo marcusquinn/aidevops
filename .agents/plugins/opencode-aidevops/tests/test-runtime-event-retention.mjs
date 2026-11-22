@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { once } from "node:events";
 import {
   chmodSync,
   existsSync,
@@ -9,6 +10,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -312,6 +314,190 @@ test("bounded producer maintenance catches up across scheduled runs", {
     assert.equal(noOp.partitions_archived, 0);
     assert.equal(noOp.backlog_remaining, false);
   } finally {
+    rmSync(tempDir, { force: true, recursive: true });
+  }
+});
+
+test("large-store preview and interrupted apply preserve the same verified partition", {
+  skip: !sqliteAvailable() && "sqlite3 is unavailable",
+}, () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "aidevops-runtime-retention-large-"));
+  const dbPath = join(tempDir, "observability.db");
+  const archiveDir = join(tempDir, "archives");
+  try {
+    assert.equal(initialiseRuntimeEventStore(dbPath), true);
+    scalar(dbPath, `WITH RECURSIVE n(x) AS (
+      VALUES(1) UNION ALL SELECT x + 1 FROM n WHERE x < 300000
+    ) INSERT INTO runtime_events (
+      envelope_version, occurred_at, event_id, event_type, correlation_id,
+      subject_id, root_event_id, payload_json, payload_bytes
+    ) SELECT 1, '${OLD_TIME}', 'fixture:' || x,
+      CASE WHEN x <= 3382 THEN 'audit.recorded' ELSE 'message.part.delta' END,
+      'correlation:' || x, 'subject:' || x, 'root:' || x,
+      json_object('source', 'fixture', 'data', hex(zeroblob(256))),
+      length(json_object('source', 'fixture', 'data', hex(zeroblob(256)))) FROM n;`);
+    const options = { archiveDir, cutoff: CUTOFF, dbPath };
+    const preview = archiveRuntimeEvents(options);
+    assert.equal(preview.candidate_rows, 5000);
+    assert.equal(preview.protected_rows, 3382);
+    assert.equal(preview.compacted_rows, 1618);
+    assert.ok(preview.candidate_bytes > 4 * 1024 * 1024);
+    assert.throws(() => archiveRuntimeEvents({
+      ...options, apply: true, simulateInterruption: "after_archive",
+    }), /simulated interruption/);
+    const applied = archiveRuntimeEvents({ ...options, apply: true });
+    assert.equal(applied.partition_id, preview.partition_id);
+    const verified = verifyRuntimeEventArchive(join(archiveDir, applied.archive_file));
+    assert.equal(verified.ok, true);
+    assert.equal(verified.manifest.protected_row_count, 3382);
+    assert.equal(verified.manifest.compacted_row_count, 1618);
+    assert.equal(Number(scalar(dbPath, "SELECT COUNT(*) FROM runtime_events;")), 295000);
+    assert.equal(Number(scalar(dbPath, "SELECT COUNT(*) FROM runtime_event_archives;")), 1);
+    assert.equal(readdirSync(archiveDir).filter((name) => name.endsWith(".jsonl")).length, 1);
+    assert.throws(() => scalar(dbPath, "DELETE FROM runtime_events;"), /append-only/);
+  } finally {
+    rmSync(tempDir, { force: true, recursive: true });
+  }
+});
+
+test("write contention identifies the stage and resumes without losing verified archives", {
+  skip: !sqliteAvailable() && "sqlite3 is unavailable",
+}, async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "aidevops-runtime-retention-busy-"));
+  const dbPath = join(tempDir, "observability.db");
+  const archiveDir = join(tempDir, "archives");
+  let writer;
+  try {
+    assert.equal(initialiseRuntimeEventStore(dbPath), true);
+    appendFixture(10000, "audit.recorded", { source: "private-payload-sentinel" });
+    const options = { archiveDir, cutoff: CUTOFF, dbPath };
+    const preview = archiveRuntimeEvents(options);
+    writer = spawn("sqlite3", [dbPath], { stdio: ["pipe", "pipe", "pipe"] });
+    const ready = once(writer.stdout, "data");
+    writer.stdin.write("BEGIN IMMEDIATE;\n.print locked\n");
+    await ready;
+    assert.equal(archiveRuntimeEvents(options).partition_id, preview.partition_id);
+    const started = performance.now();
+    assert.throws(() => maintainRuntimeEvents({ ...options, apply: true, maxDurationSeconds: 1 }), (error) => {
+      assert.match(error.message, /stage=prune_source kind=busy elapsed_ms=\d+/);
+      assert.match(error.message, /commit_state=unknown recovery=retry_verified_retention/);
+      assert.doesNotMatch(error.message, /private-payload-sentinel|observability\.db|INSERT|DELETE/);
+      return true;
+    });
+    assert.ok(performance.now() - started < 3000, "contention must not wait the old 15-second busy timeout");
+    const archive = readdirSync(archiveDir).find((name) => name.endsWith(".jsonl"));
+    assert.equal(verifyRuntimeEventArchive(join(archiveDir, archive)).ok, true);
+    assert.equal(scalar(dbPath, "SELECT COUNT(*) FROM runtime_events;"), "1");
+    assert.equal(scalar(dbPath, "SELECT COUNT(*) FROM runtime_event_archives;"), "0");
+    const exited = once(writer, "exit");
+    writer.stdin.end("ROLLBACK;\n");
+    await exited;
+    writer = undefined;
+    assert.throws(() => scalar(dbPath, "DELETE FROM runtime_events;"), /append-only/);
+    assert.equal(archiveRuntimeEvents({ ...options, apply: true }).partition_id, preview.partition_id);
+    assert.equal(scalar(dbPath, "SELECT COUNT(*) FROM runtime_event_archives;"), "1");
+  } finally {
+    if (writer) {
+      const exited = once(writer, "exit");
+      writer.stdin.end("ROLLBACK;\n");
+      await exited;
+    }
+    rmSync(tempDir, { force: true, recursive: true });
+  }
+});
+
+test("timed-out pruning rolls back guards and retries the verified artifact", {
+  skip: !sqliteAvailable() && "sqlite3 is unavailable",
+}, () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "aidevops-runtime-retention-timeout-"));
+  const dbPath = join(tempDir, "observability.db");
+  const archiveDir = join(tempDir, "archives");
+  try {
+    assert.equal(initialiseRuntimeEventStore(dbPath), true);
+    appendFixture(11000, "audit.recorded");
+    // Disposable fixture only: emulate expensive work inside the writer's
+    // transaction without changing or bypassing any append-only guard.
+    scalar(dbPath, `CREATE TRIGGER fixture_slow_delete BEFORE DELETE ON runtime_events BEGIN
+      SELECT (WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000000000)
+        SELECT SUM(x) FROM n);
+    END;`);
+    const options = { archiveDir, cutoff: CUTOFF, dbPath };
+    const preview = archiveRuntimeEvents(options);
+    assert.throws(() => maintainRuntimeEvents({ ...options, apply: true, maxDurationSeconds: 1 }), /stage=prune_source kind=timeout/);
+    assert.equal(scalar(dbPath, "SELECT COUNT(*) FROM runtime_events;"), "1");
+    assert.equal(scalar(dbPath, "SELECT COUNT(*) FROM runtime_event_archives;"), "0");
+    scalar(dbPath, "DROP TRIGGER fixture_slow_delete;");
+    assert.throws(() => scalar(dbPath, "DELETE FROM runtime_events;"), /append-only/);
+    const applied = archiveRuntimeEvents({ ...options, apply: true });
+    assert.equal(applied.partition_id, preview.partition_id);
+    assert.equal(verifyRuntimeEventArchive(join(archiveDir, applied.archive_file)).ok, true);
+    assert.equal(scalar(dbPath, "SELECT COUNT(*) FROM runtime_event_archives;"), "1");
+  } finally {
+    rmSync(tempDir, { force: true, recursive: true });
+  }
+});
+
+test("an interrupted sidecar write is recovered from source-verified original bytes", {
+  skip: !sqliteAvailable() && "sqlite3 is unavailable",
+}, () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "aidevops-runtime-retention-sidecar-"));
+  const dbPath = join(tempDir, "observability.db");
+  const archiveDir = join(tempDir, "nested", "archives");
+  try {
+    assert.equal(initialiseRuntimeEventStore(dbPath), true);
+    appendFixture(12000, "audit.recorded");
+    const options = { archiveDir, cutoff: CUTOFF, dbPath };
+    assert.throws(() => archiveRuntimeEvents({
+      ...options, apply: true, simulateInterruption: "after_archive", createdAt: "2026-01-02T00:00:00.000Z",
+    }), /simulated interruption/);
+    const archive = readdirSync(archiveDir).find((name) => name.endsWith(".jsonl"));
+    const archivePath = join(archiveDir, archive);
+    const original = readFileSync(archivePath, "utf8");
+    // Reproduce exactly the on-disk state between publication of the two files.
+    unlinkSync(`${archivePath}.manifest.json`);
+    const applied = archiveRuntimeEvents({ ...options, apply: true });
+    assert.equal(applied.archive_file, archive);
+    assert.equal(readFileSync(archivePath, "utf8"), original);
+    const verified = verifyRuntimeEventArchive(archivePath);
+    assert.equal(verified.ok, true);
+    assert.equal(verified.manifest.created_at, "2026-01-02T00:00:00.000Z");
+    assert.equal(scalar(dbPath, "SELECT COUNT(*) FROM runtime_event_archives;"), "1");
+    assert.equal(scalar(dbPath, "SELECT COUNT(*) FROM runtime_events;"), "0");
+  } finally {
+    rmSync(tempDir, { force: true, recursive: true });
+  }
+});
+
+test("initialization contention uses bounded, payload-free SQLite diagnostics", {
+  skip: !sqliteAvailable() && "sqlite3 is unavailable",
+}, async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "aidevops-runtime-retention-init-"));
+  const dbPath = join(tempDir, "observability.db");
+  const archiveDir = join(tempDir, "archives");
+  let writer;
+  try {
+    assert.equal(initialiseRuntimeEventStore(dbPath), true);
+    appendFixture(13000, "audit.recorded");
+    scalar(dbPath, "DROP INDEX idx_runtime_events_worker_lineage;");
+    writer = spawn("sqlite3", [dbPath], { stdio: ["pipe", "pipe", "pipe"] });
+    const ready = once(writer.stdout, "data");
+    writer.stdin.write("BEGIN IMMEDIATE;\n.print locked\n");
+    await ready;
+    assert.throws(() => archiveRuntimeEvents({
+      archiveDir, cutoff: CUTOFF, dbPath, apply: true, sqliteBudgetMs: 600,
+    }), (error) => {
+      assert.match(error.message, /stage=initialise_sqlite kind=busy/);
+      assert.doesNotMatch(error.message, /observability\.db|fixture:|CREATE INDEX/);
+      return true;
+    });
+    assert.equal(existsSync(archiveDir), false);
+    assert.equal(scalar(dbPath, "SELECT COUNT(*) FROM runtime_events;"), "1");
+  } finally {
+    if (writer) {
+      const exited = once(writer, "exit");
+      writer.stdin.end("ROLLBACK;\n");
+      await exited;
+    }
     rmSync(tempDir, { force: true, recursive: true });
   }
 });

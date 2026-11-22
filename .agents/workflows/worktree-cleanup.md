@@ -126,6 +126,52 @@ decision emits a `thirdparty` row and the pass emits a summary with eligible,
 candidate_bytes, removed, archived and kept_open_pr counts. Enable apply with
 `WORKTREE_UNREGISTERED_APPLY=1` only after reviewing a clean report cycle.
 
+## Refused retirement and helper-retained worktrees
+
+`worktree-helper.sh remove` uses the lifecycle registry; `--force` cannot
+override it. A refusal prints the registry `detail`/`status` and the next step
+(GH#36494):
+
+- `not-enrolled`: the tree predates enrollment or was created without a declared
+  runtime. Stop any process using it, then run the printed
+  `worker-legacy-cleanup.py --confirm-legacy-path PATH` preview; add `--apply`
+  to archive, verify and remove it. Branches are kept. See
+  [LEGACY-CLEANUP.md](../worker-lifecycle/LEGACY-CLEANUP.md).
+- `waiting-for-runs`: a registered owner is still running; Pulse retries after it exits.
+- `coverage-gap`: enrolled without a registered owner; it stays retained.
+- `generation-marker-missing`: modern enrollment history exists but its marker is
+  missing. Retain the tree and inspect Git admin metadata and registry history;
+  legacy retirement is not applicable.
+- `worktree-locked`: inspect the lock reason with `git worktree list --porcelain`.
+  Only when the lock is no longer needed, run `git worktree unlock PATH` on the
+  listed path and retry retirement.
+- `generation-directory-mismatch` after the canonical checkout moved on disk
+  (same installation, same worktree path and inodes; only the marker's admin
+  path is stale): run `worker-registry.py --state-dir STATE_DIR rebind-moved-worktree --path PATH`
+  (`canonical-recovery-helper.sh repair-worktrees` prints it per tree), then
+  retry retirement. `STATE_DIR` must be this installation's existing lifecycle
+  registry (configured by `~/.config/aidevops/lifecycle-state-dir` or
+  `AIDEVOPS_LIFECYCLE_STATE_DIR`), not a new registry; rebind checks its identity
+  against the marker. It journals the move, rewrites only that marker field, and
+  refuses a tree whose inodes, path, registry generation or Git backlink differ.
+- `generation-directory-mismatch` for a copy: the tree was copied from another host or
+  restored from backup. Rescue its work first, then retire it with
+  `worker-registry.py retire-foreign-worktree` (GH#37828); see
+  `reference/machine-migration.md` "Retiring the copies". It needs a verified
+  rescue receipt that still matches the tree, or a clean tree whose HEAD is
+  reachable from a verified pushed ref (a live remote query, not a local
+  remote-tracking ref alone). It archives before removing, leaves the marker untouched,
+  never reopens admission, and refuses a marker of this installation, a registered
+  generation or path, or a tree Git does not register at that exact path.
+
+Script routines declare a lifecycle runtime only when their lifecycle prerequisite
+checks pass and the workload is not private. With lifecycle disabled, missing
+prerequisites or a private workload, the runner clears its ownership declarations;
+do not expect automatic retirement. Otherwise, worktrees their helpers create
+(for example badges sync) become eligible for registry cleanup after the routine
+exits. `registry-state-unavailable`, `python3-unavailable`,
+`jq-unavailable` and `lifecycle-disabled` name missing local prerequisites.
+
 ## Abandoned central test fixtures
 
 The API-free cleanup pass also recognises legacy `tmp.<random>-feature-auto-*`
@@ -139,6 +185,13 @@ candidate bytes, moved count, and skipped count. Test producers must set their
 own `AIDEVOPS_WORKTREE_BASE_DIR` and remove it in teardown.
 
 ## Manual Cleanup (interactive sessions)
+
+Legacy records with no descendant-completion contract use the explicit
+[legacy maintenance workflow](../reference/worktree-legacy-maintenance.md), not
+retroactive enrollment or a forced `sealed` state. `aidevops cleanup maintenance
+plan --repo PATH` is read-only; application stays entirely in user space and
+requires clear candidate-local process evidence. No administrative access or
+session shutdown is requested. It is never part of routine `all --apply`.
 
 ```bash
 # Merge through the lifecycle helper (required from inside a worktree)

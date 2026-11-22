@@ -18,12 +18,19 @@ from _team_interface_buzz_runtime_anchor import (
     validate_existing_pinned_runtime,
 )
 from _team_interface_buzz_runtime_install import (
-    backup_existing,
     buzz_is_running,
     default_app_data_dir,
+    install_payload,
 )
+from _team_interface_buzz_default_project import aidevops_project_root
 from _team_interface_buzz_runtime_io import RuntimeError, atomic_write, canonical_payload
-from _team_interface_buzz_runtime_prepare import prepare_runtime
+from _team_interface_buzz_runtime_prepare import prepare_desktop_runtime, prepare_runtime
+from _team_interface_buzz_runtime_prune import (
+    configured_app_data_dirs,
+    prune_command,
+    prune_runtime_anchors,
+    runtime_anchor_lock,
+)
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -168,20 +175,9 @@ def install_manifest(project_root, app_data_dir, replace, profile):
     if buzz_is_running():
         raise RuntimeError("quit Buzz before installing or replacing its custom runtime manifest")
     runtime_id = profile["id"]
-    target = app_data_dir / "custom_harnesses" / f"{runtime_id}.json"
     pinned = materialize_pinned_runtime(profile) if runtime_id == "aidevops-interactive-v1" else None
     payload = canonical_payload(materialized_manifest(project_root, profile, pinned))
-    backup = None
-    if target.exists() or target.is_symlink():
-        if target.is_symlink() or not target.is_file():
-            raise RuntimeError("existing Buzz runtime path is not a regular file")
-        if target.read_bytes() == payload:
-            return target, None
-        if not replace:
-            raise RuntimeError("Buzz runtime already exists with different content; inspect it or pass --replace")
-        backup = backup_existing(target, runtime_id)
-    atomic_write(target, payload)
-    return target, backup
+    return install_payload(app_data_dir, runtime_id, payload, replace, pinned)
 
 
 def parse_args(argv=None):
@@ -202,15 +198,33 @@ def parse_args(argv=None):
     prepare = commands.add_parser("prepare", help="prepare private inputs for one trusted launch")
     prepare.add_argument("--agents-dir", required=True)
     prepare.add_argument("--output-dir", required=True)
+    desktop = commands.add_parser(
+        "prepare-desktop",
+        help="prepare private inputs for an agent the Buzz aidevops plugin launches",
+    )
+    desktop.add_argument("--agents-dir", required=True)
+    desktop.add_argument("--output-dir", required=True)
+    desktop.add_argument("--member", required=True)
+    desktop.add_argument(
+        "--project-root",
+        default="",
+        help="registered project; empty means the registered aidevops repository",
+    )
+    desktop.add_argument("--repos", default="~/.config/aidevops/repos.json")
     verify = commands.add_parser("verify-anchor", help="verify an existing immutable runtime anchor")
     verify.add_argument("--root", required=True)
     verify.add_argument("--runtime", choices=tuple(RUNTIME_PROFILES), default="interactive")
+    prune = commands.add_parser("prune", help="move unused runtime anchors to Trash")
+    prune.add_argument("--runtime", choices=tuple(RUNTIME_PROFILES), default="interactive")
+    prune.add_argument("--app-data-dir", action="append", default=[])
+    prune.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
 
 
-def main(argv=None):
-    """Run one runtime management action."""
-    args = parse_args(argv)
+def anchor_command(args):
+    """Handle anchor preparation, verification and cleanup without project lookup."""
+    if args.command == "prune":
+        return prune_command(args, runtime_profile(args.runtime))
     if args.command == "prepare":
         agents_dir = Path(os.path.expanduser(args.agents_dir)).resolve()
         output_dir = Path(os.path.expanduser(args.output_dir))
@@ -224,7 +238,38 @@ def main(argv=None):
             raise RuntimeError("Buzz runtime anchor root must be absolute")
         validate_existing_pinned_runtime(root, runtime_profile(args.runtime))
         return 0
-    project_root = registered_project_root(args.project_root, args.repos)
+    raise RuntimeError("unknown Buzz runtime anchor action")
+
+
+def install_and_prune(project_root, app_data_dir, replace, profile):
+    """Serialize installation and optional cleanup without failing a completed install."""
+    with runtime_anchor_lock():
+        result = install_manifest(project_root, app_data_dir, replace, profile)
+        try:
+            directories = configured_app_data_dirs([app_data_dir])
+            prune_runtime_anchors(profile, directories)
+        except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as error:
+            print(f"Buzz runtime installed; cleanup skipped: {error}", file=sys.stderr)
+    return result
+
+
+def main(argv=None):
+    """Run one runtime management action."""
+    args = parse_args(argv)
+    if args.command in {"prune", "prepare", "verify-anchor"}:
+        return anchor_command(args)
+    if args.command == "prepare-desktop" and not args.project_root:
+        project_root = aidevops_project_root(args.repos, registered_project_root)
+    else:
+        project_root = registered_project_root(args.project_root, args.repos)
+    if args.command == "prepare-desktop":
+        agents_dir = Path(os.path.expanduser(args.agents_dir)).resolve()
+        output_dir = Path(os.path.expanduser(args.output_dir))
+        if not agents_dir.is_dir():
+            raise RuntimeError("canonical agents directory is unavailable")
+        prepare_desktop_runtime(agents_dir, output_dir, args.member)
+        atomic_write(output_dir / "project-root.txt", f"{project_root}\n".encode("utf-8"))
+        return 0
     profile = runtime_profile(args.runtime)
     if args.command == "manifest":
         payload = canonical_payload(materialized_manifest(project_root, profile))
@@ -240,7 +285,7 @@ def main(argv=None):
     )
     if not app_data_dir.is_absolute():
         raise RuntimeError("Buzz app-data directory must be absolute")
-    target, backup = install_manifest(project_root, app_data_dir, args.replace, profile)
+    target, backup = install_and_prune(project_root, app_data_dir, args.replace, profile)
     print(f"Installed {profile['id']} at {target}")
     if backup:
         print(f"Previous manifest backed up at {backup}")

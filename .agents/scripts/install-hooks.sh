@@ -21,6 +21,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK_SOURCE="${SCRIPT_DIR}/../hooks/git_safety_guard.py"
+LIFECYCLE_SOURCE="${SCRIPT_DIR}/../hooks/git_safety_lifecycle.py"
 
 # Colors — sourced from shared-constants.sh (Pattern A, t2053.3)
 # shellcheck source=shared-constants.sh
@@ -60,9 +61,56 @@ check_python() {
 }
 
 check_hook_source() {
-	if [[ ! -f "${HOOK_SOURCE}" ]]; then
-		printf "${RED}Error: Hook source not found at %s${NC}\n" "${HOOK_SOURCE}" >&2
-		printf "Run 'aidevops update' to restore framework files.\n" >&2
+	local source_path=""
+	for source_path in "$HOOK_SOURCE" "$LIFECYCLE_SOURCE"; do
+		if [[ ! -f "$source_path" ]]; then
+			printf "${RED}Error: Hook source not found at %s${NC}\n" "$source_path" >&2
+			printf "Run 'aidevops update' to restore framework files.\n" >&2
+			return 1
+		fi
+	done
+	return 0
+}
+
+# Check the future installed hook's helper resolution and actual admission API.
+# A private non-Git probe must not register the installer as a worktree owner.
+check_lifecycle_helper() {
+	local install_dir="$1"
+	if ! python3 -E -s -B - "$install_dir" <<'PY'
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+name = "worker-lifecycle-session-helper.py"
+candidates = [os.environ.get("AIDEVOPS_LIFECYCLE_SESSION_HELPER", ""),
+              str(Path(sys.argv[1]) / "scripts" / name),
+              str(Path.home() / ".aidevops" / "agents" / "scripts" / name)]
+helper = next((path for path in candidates if path and Path(path).is_file()), "")
+try:
+    if not helper:
+        raise ValueError("missing helper")
+    with tempfile.TemporaryDirectory(prefix="hook-admission-probe-") as directory:
+        environment = dict(os.environ, AIDEVOPS_LIFECYCLE_DISABLED="1",
+                           AIDEVOPS_LIFECYCLE_STATE_DIR=directory + "/state")
+        result = subprocess.run(
+            [sys.executable, "-E", "-s", "-B", helper, "--cwd", directory,
+             "--path", directory + "/probe", "--runtime-pid", str(os.getpid()),
+             "--session-id", "hook-install-preflight", "--command", "true"],
+            cwd=directory, env=environment, capture_output=True, text=True, timeout=10)
+        payload = json.loads(result.stdout)
+        if (result.returncode != 0 or not isinstance(payload, dict)
+                or payload.get("status") != "not-applicable"
+                or payload.get("cleanup_authorized") is not False):
+            raise ValueError("incompatible admission response")
+except (OSError, ValueError, subprocess.SubprocessError):
+    sys.exit(1)
+PY
+	then
+		printf 'Error: lifecycle admission helper is unavailable or incompatible; hooks were not changed.\n' >&2
+		printf "Run 'aidevops update' or './setup.sh --stage agents', or repair AIDEVOPS_LIFECYCLE_SESSION_HELPER.\n" >&2
 		return 1
 	fi
 	return 0
@@ -243,11 +291,14 @@ install_hook() {
 
 	check_python || return 1
 	check_hook_source || return 1
+	check_lifecycle_helper "$install_dir" || return 1
 
-	mkdir -p "${install_dir}/hooks"
+	mkdir -p "${install_dir}/hooks" || return 1
 
-	cp "${HOOK_SOURCE}" "${install_dir}/hooks/git_safety_guard.py"
-	chmod +x "${install_dir}/hooks/git_safety_guard.py"
+	# Install dependencies first; never publish a guard with a missing import.
+	cp "$LIFECYCLE_SOURCE" "${install_dir}/hooks/git_safety_lifecycle.py" || return 1
+	cp "$HOOK_SOURCE" "${install_dir}/hooks/git_safety_guard.py" || return 1
+	chmod +x "${install_dir}/hooks/git_safety_guard.py" || return 1
 	printf "${GREEN}+${NC} Deployed %s/hooks/git_safety_guard.py\n" "${install_dir}"
 
 	local settings_file="${install_dir}/settings.json"

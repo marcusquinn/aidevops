@@ -272,17 +272,122 @@ _cost_checkpoint_from_closeouts() {
 # Aggregates ALL workers (no author filter) — the breaker is per-issue,
 # not per-runner.
 #
-# Args: $1 = issue number, $2 = repo slug
+# Args: $1 = issue number, $2 = repo slug,
+#       $3 = optional issue updatedAt (ISO, e.g. 2026-11-14T12:00:00Z). When
+#            valid, a spent|attempts result is cached per issue and reused while
+#            updatedAt is unchanged and younger than
+#            AIDEVOPS_DISPATCH_COST_CACHE_TTL_SECONDS (default 1800).
 # Stdout: "spent_tokens|attempt_count"
 # Returns: 0 on success, 1 on fetch/parse failure (caller fail-open)
 #######################################
 _sum_issue_token_spend() {
 	local issue_number="$1"
 	local repo_slug="$2"
+	local updated_at="${3:-}"
 
 	if [[ ! "$issue_number" =~ ^[0-9]+$ ]] || [[ -z "$repo_slug" ]]; then
 		return 1
 	fi
+
+	local cache_file=""
+	if [[ "$updated_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$ ]]; then
+		cache_file=$(_cost_cache_path "$issue_number" "$repo_slug") || cache_file=""
+	fi
+	if [[ -n "$cache_file" ]]; then
+		local cached
+		if cached=$(_cost_cache_read "$cache_file" "$updated_at"); then
+			printf '%s\n' "$cached"
+			return 0
+		fi
+	fi
+
+	local result
+	result=$(_sum_issue_token_spend_uncached "$issue_number" "$repo_slug") || return 1
+	[[ -n "$cache_file" ]] && _cost_cache_write "$cache_file" "$updated_at" "$result"
+	printf '%s\n' "$result"
+	return 0
+}
+
+#######################################
+# Cache file path for an issue: <state>/dispatch-cost-cache/<owner>__<repo>/<issue>
+# Args: $1 = issue number, $2 = repo slug
+# Returns: 1 when the slug has unsafe characters.
+#######################################
+_cost_cache_path() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local repo_dir="${repo_slug//\//__}"
+	if [[ ! "$repo_dir" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+		return 1
+	fi
+	printf '%s/dispatch-cost-cache/%s/%s\n' \
+		"${AIDEVOPS_STATE_DIR:-$HOME/.aidevops/state}" "$repo_dir" "$issue_number"
+	return 0
+}
+
+#######################################
+# Print cached "spent|attempts" when the entry matches updatedAt and is fresh.
+# Args: $1 = cache file, $2 = updatedAt
+# Returns: 0 on hit, 1 on any miss/invalid entry.
+#######################################
+_cost_cache_read() {
+	local cache_file="$1"
+	local updated_at="$2"
+	[[ -f "$cache_file" ]] || return 1
+
+	if ! declare -F _file_mtime_epoch >/dev/null 2>&1; then
+		# shellcheck source=portable-stat.sh
+		source "${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/portable-stat.sh" 2>/dev/null || return 1
+	fi
+
+	local ttl="${AIDEVOPS_DISPATCH_COST_CACHE_TTL_SECONDS:-1800}"
+	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=1800
+	local mtime now
+	mtime=$(_file_mtime_epoch "$cache_file" 2>/dev/null) || return 1
+	[[ "$mtime" =~ ^[0-9]+$ ]] || return 1
+	now=$(date +%s)
+	if [[ "$mtime" -le 0 || $((now - mtime)) -ge "$ttl" ]]; then
+		return 1
+	fi
+
+	local line cached_ts cached_val
+	IFS= read -r line <"$cache_file" 2>/dev/null || true
+	cached_ts="${line%% *}"
+	cached_val="${line#* }"
+	[[ "$cached_ts" == "$updated_at" ]] || return 1
+	[[ "$cached_val" =~ ^[0-9]+\|[0-9]+$ ]] || return 1
+	printf '%s' "$cached_val"
+	return 0
+}
+
+#######################################
+# Atomically write "updatedAt spent|attempts". Failures are ignored.
+# Args: $1 = cache file, $2 = updatedAt, $3 = spent|attempts
+#######################################
+_cost_cache_write() {
+	local cache_file="$1"
+	local updated_at="$2"
+	local value="$3"
+	[[ "$value" =~ ^[0-9]+\|[0-9]+$ ]] || return 0
+	local cache_dir="${cache_file%/*}"
+	mkdir -p "$cache_dir" 2>/dev/null || return 0
+	local tmp_file
+	tmp_file=$(mktemp "${cache_dir}/.tmp.XXXXXX" 2>/dev/null) || return 0
+	if printf '%s %s\n' "$updated_at" "$value" >"$tmp_file" 2>/dev/null; then
+		mv -f "$tmp_file" "$cache_file" 2>/dev/null || rm -f "$tmp_file"
+	else
+		rm -f "$tmp_file"
+	fi
+	return 0
+}
+
+#######################################
+# Uncached aggregation (fetch comments, verify closeouts, sum footers).
+# Args: $1 = issue number, $2 = repo slug
+#######################################
+_sum_issue_token_spend_uncached() {
+	local issue_number="$1"
+	local repo_slug="$2"
 
 	local comments_json
 	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate --slurp 2>/dev/null) || return 1
@@ -460,7 +565,10 @@ _apply_cost_breaker_side_effects() {
 	local attempts="$6"
 	# NMR is an external-author trust gate, not a circuit breaker. Preserve any
 	# independently valid trust gate while recording the budget stop as lifecycle state.
-	set_issue_status "$issue_number" "$repo_slug" "blocked" 2>/dev/null || true
+	# GH#38360: root-cause triage is AI-owned (the meta flow below), so the
+	# hold routes to AI recovery; the meta filer adds needs-dependency once linked.
+	set_issue_status "$issue_number" "$repo_slug" "blocked" \
+		--add-label "${BLOCKED_NEEDS_AI_RECOVERY:-needs-ai-recovery}" 2>/dev/null || true
 
 	local _spent_k=$((spent / 1000))
 	local _budget_k=$((budget / 1000))
@@ -594,7 +702,11 @@ _check_cost_budget() {
 	fi
 
 	local spend_data
-	spend_data=$(_sum_issue_token_spend "$issue_number" "$repo_slug") || return 1
+	local updated_at=""
+	if [[ -n "$issue_meta_json" ]]; then
+		updated_at=$(printf '%s' "$issue_meta_json" | jq -r '.updatedAt // ""' 2>/dev/null) || updated_at=""
+	fi
+	spend_data=$(_sum_issue_token_spend "$issue_number" "$repo_slug" "$updated_at") || return 1
 
 	local spent attempts
 	spent="${spend_data%%|*}"

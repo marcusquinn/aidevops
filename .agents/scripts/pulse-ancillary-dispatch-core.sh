@@ -485,9 +485,9 @@ _triage_runtime_infra_failure_reason() {
 			printf '%s\n' '[pulse-wrapper] OpenCode error: Model not found (isolated provider authentication unavailable)' >>"$LOGFILE"
 		fi
 		printf '%s\n' 'triage-provider-auth-unsupported'
-	elif printf '%s' "$sample" | grep -qE 'Canary test FAILED|Canary failed.*aborting dispatch' 2>/dev/null; then
+	elif printf '%s' "$sample" | grep -E 'Canary test FAILED|Canary failed.*aborting dispatch' >/dev/null 2>&1; then
 		printf '%s\n' 'canary-unavailable'
-	elif printf '%s' "$sample" | grep -qE 'WORKER_ISSUE_NUMBER unset|WORKER_WORKTREE_PATH unset|worker env contract missing|worker --dir does not match WORKER_WORKTREE_PATH|worker worktree repo mismatch|WORKER_WORKTREE_PATH does not exist|incomplete worker ownership contract|worker ownership unavailable|worker_ownership_lost|runtime ownership fence stopped|worker_prepare_failed|OpenCode version drift|Failed to restore OpenCode|opencode version mismatch|launch cwd is deleted' 2>/dev/null; then
+	elif printf '%s' "$sample" | grep -E 'WORKER_ISSUE_NUMBER unset|WORKER_WORKTREE_PATH unset|worker env contract missing|worker --dir does not match WORKER_WORKTREE_PATH|worker worktree repo mismatch|WORKER_WORKTREE_PATH does not exist|incomplete worker ownership contract|worker ownership unavailable|worker_ownership_lost|runtime ownership fence stopped|worker_prepare_failed|OpenCode version drift|Failed to restore OpenCode|opencode version mismatch|launch cwd is deleted' >/dev/null 2>&1; then
 		printf '%s\n' 'prelaunch-contract-failure'
 	fi
 
@@ -502,6 +502,11 @@ _triage_runtime_result_failure_reason() {
 
 	if [[ "$runtime_status" -ne 0 ]]; then
 		failure_reason=$(_triage_runtime_infra_failure_reason "$raw_sample")
+		# Model text must not trigger the auth cooldown: also require the
+		# runtime's own exit status (86, set by headless-runtime-invoke.sh).
+		if [[ "$failure_reason" == "triage-provider-auth-unsupported" && "$runtime_status" -ne 86 ]]; then
+			failure_reason=""
+		fi
 	fi
 	if [[ "$artifact_cleanup_status" -ne 0 ]]; then
 		failure_reason="$_PAD_TRIAGE_RUNTIME_TEMP_FAILURE_REASON"
@@ -528,6 +533,83 @@ _triage_failure_is_infrastructure() {
 	canary-unavailable | prelaunch-contract-failure | triage-provider-auth-unsupported | github-comment-write-failed | github-review-label-write-failed | triage-runtime-failed | triage-runtime-temp-failed | github-current-snapshot-* | github-pr-revision-* | github-public-revision-* | triage-current-snapshot-hash-failed | triage-evidence-* | triage-prompt-* | scanner-unavailable-* | scanner-tempfile-* | scanner-input-* | scanner-error-*) return 0 ;;
 	*) return 1 ;;
 	esac
+}
+
+#######################################
+# Build a bounded classification sample from a runtime output file: head plus
+# tail, so fixed markers are found even after many lifecycle INFO lines
+# (GH#38655). The sample is held in memory only and never persisted or logged.
+#
+# Arguments:
+#   $1 - runtime output file
+#######################################
+_triage_runtime_output_sample() {
+	local output_file="$1"
+	[[ -f "$output_file" ]] || return 0
+	head -c 1000 "$output_file" 2>/dev/null || true
+	printf '\n'
+	tail -c 8000 "$output_file" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Fingerprint the provider pool for a triage model: model plus provider/auth
+# types only (never credential values). Prints a sha256 hex digest.
+#
+# Arguments:
+#   $1 - resolved triage model
+#######################################
+_triage_auth_fingerprint() {
+	local model="$1"
+	local auth_file="${OPENCODE_AUTH_FILE:-${HOME}/.local/share/opencode/auth.json}"
+	local pool=""
+	if [[ -f "$auth_file" ]]; then
+		pool=$(jq -r 'to_entries | map("\(.key):\(.value.type // "unknown")") | sort | join(",")' "$auth_file" 2>/dev/null || true)
+	fi
+	printf '%s|%s' "$model" "$pool" | shasum -a 256 2>/dev/null | cut -d' ' -f1
+	return 0
+}
+
+_triage_auth_cooldown_file() {
+	printf '%s\n' "${TRIAGE_CACHE_DIR:-${HOME}/.aidevops/.agent-workspace/tmp/triage-cache}/provider-auth-cooldown"
+	return 0
+}
+
+#######################################
+# Record a runner-local cooldown after triage-provider-auth-unsupported.
+# Arguments: $1 - resolved triage model
+#######################################
+_triage_auth_cooldown_record() {
+	local model="$1"
+	local cooldown_file=""
+	local fingerprint=""
+	cooldown_file=$(_triage_auth_cooldown_file)
+	fingerprint=$(_triage_auth_fingerprint "$model")
+	[[ -n "$fingerprint" ]] || return 0
+	mkdir -p "${cooldown_file%/*}" 2>/dev/null || return 0
+	printf '%s %s\n' "$(date +%s)" "$fingerprint" >"$cooldown_file" 2>/dev/null || true
+	echo "[pulse-wrapper] Triage provider-auth cooldown recorded (runner_capability_unmet; ttl=${TRIAGE_AUTH_COOLDOWN_TTL_SECONDS:-21600}s)" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
+
+#######################################
+# Return 0 when a cooldown is active for the current provider-pool fingerprint.
+# Arguments: $1 - resolved triage model
+#######################################
+_triage_auth_cooldown_active() {
+	local model="$1"
+	local cooldown_file="" recorded_at="" recorded_fp="" current_fp="" now=""
+	local ttl="${TRIAGE_AUTH_COOLDOWN_TTL_SECONDS:-21600}"
+	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=21600
+	cooldown_file=$(_triage_auth_cooldown_file)
+	[[ -f "$cooldown_file" ]] || return 1
+	read -r recorded_at recorded_fp <"$cooldown_file" || return 1
+	[[ "$recorded_at" =~ ^[0-9]+$ && -n "$recorded_fp" ]] || return 1
+	now=$(date +%s)
+	((now - recorded_at < ttl)) || return 1
+	current_fp=$(_triage_auth_fingerprint "$model")
+	[[ "$current_fp" == "$recorded_fp" ]] || return 1
+	return 0
 }
 
 #######################################

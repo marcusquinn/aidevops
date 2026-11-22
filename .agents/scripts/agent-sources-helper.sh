@@ -27,7 +27,17 @@ if [[ "${AGENTS_DIR}" != /* ]]; then
 	AGENTS_DIR="${PWD}/${AGENTS_DIR}"
 fi
 CUSTOM_DIR="${AGENTS_DIR}/custom"
-CONFIG_FILE="${AGENTS_DIR}/configs/agent-sources.json"
+LEGACY_CONFIG_FILE="${AGENTS_DIR}/configs/agent-sources.json"
+# Registration must survive framework deploys, which overwrite ${AGENTS_DIR}.
+# Persist under ~/.config/aidevops/ (like repos.json). An explicit
+# AIDEVOPS_AGENTS_DIR override (tests, sandboxes) keeps the legacy location.
+if [[ -n "${AIDEVOPS_AGENT_SOURCES_CONFIG:-}" ]]; then
+	CONFIG_FILE="${AIDEVOPS_AGENT_SOURCES_CONFIG}"
+elif [[ -n "${AIDEVOPS_AGENTS_DIR:-}" ]]; then
+	CONFIG_FILE="${LEGACY_CONFIG_FILE}"
+else
+	CONFIG_FILE="${HOME}/.config/aidevops/agent-sources.json"
+fi
 CAPABILITY_INDEX_FILE="${AGENTS_DIR}/agent-source-capabilities.toon"
 
 # Print an informational message in blue
@@ -78,6 +88,12 @@ show_help() {
 
 # Ensure the agent-sources.json config file exists, creating it with defaults if missing
 ensure_config() {
+	# One-time migration from the deploy-overwritten legacy location
+	if [[ ! -f "${CONFIG_FILE}" && "${CONFIG_FILE}" != "${LEGACY_CONFIG_FILE}" && -f "${LEGACY_CONFIG_FILE}" ]]; then
+		mkdir -p "$(dirname "${CONFIG_FILE}")"
+		cp "${LEGACY_CONFIG_FILE}" "${CONFIG_FILE}"
+		info "Migrated ${LEGACY_CONFIG_FILE} to ${CONFIG_FILE}"
+	fi
 	if [[ ! -f "${CONFIG_FILE}" ]]; then
 		mkdir -p "$(dirname "${CONFIG_FILE}")"
 		cat >"${CONFIG_FILE}" <<'DEFAULTJSON'
@@ -339,6 +355,25 @@ cmd_add() {
 	# Offer to sync
 	echo ""
 	info "Run 'agent-sources-helper.sh sync' to deploy agents to custom/"
+	return 0
+}
+
+# Fast-forward a source checkout. Skips quietly when there is no upstream or
+# the checkout is already current; otherwise surfaces the git error.
+# Args: $1=checkout path
+pull_source_checkout() {
+	local path="$1"
+	local upstream
+	upstream="$(git -C "${path}" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null)" || return 0
+	local err
+	if err="$(git -C "${path}" pull --ff-only 2>&1)"; then
+		return 0
+	fi
+	# Already current (e.g. fetch failed offline but HEAD contains upstream)
+	if git -C "${path}" merge-base --is-ancestor "${upstream}" HEAD 2>/dev/null; then
+		return 0
+	fi
+	warn "  Git pull failed, using current state: ${err%%$'\n'*}"
 	return 0
 }
 
@@ -687,7 +722,7 @@ cmd_sync() {
 
 		# Pull latest if it's a git repo
 		if [[ -d "${path}/.git" ]]; then
-			(cd "${path}" && git pull --ff-only 2>/dev/null) || warn "  Git pull failed, using current state"
+			pull_source_checkout "${path}"
 		fi
 
 		# Sync the full source .agents/ tree into custom/<source-name>/ so

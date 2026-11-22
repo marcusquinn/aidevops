@@ -3,12 +3,14 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
 # dependency-supersession-repoint-lib.sh — repoint dependants of a superseded
-# issue at its live successor (GH#35130).
+# issue at its open or completed successor (GH#35130, GH#36782).
 #
 # GH#34341 keeps dependants blocked at read time by following "Superseded by
 # #S". This library makes the graph itself truthful: it adds a native
 # blocked_by edge to #S, rewrites "Blocked by:" lines from #orig to #S and posts
-# one pointer comment. The old edge stays as history.
+# one pointer comment. The old edge stays as history. A dependant can opt out
+# of both repoint paths with <!-- aidevops:no-supersession-repoint -->. Remove
+# historical edges too when decoupling: readiness checks still follow them.
 #
 # Requires dependency-supersession-lib.sh. Writes use gh-write-helper.sh.
 
@@ -29,7 +31,7 @@ _dsr_rewrite_body() {
 	return $?
 }
 
-# Repoint one dependant from a superseded original to its open successor.
+# Repoint one dependant from a superseded original to its open/completed successor.
 # Args: $1 repo, $2 dependant number, $3 original, $4 successor
 # Returns: 0 on success or no-op; 1 on a failed read or write.
 dsr_repoint_dependant() {
@@ -45,10 +47,13 @@ dsr_repoint_dependant() {
 	state=$(printf '%s' "$issue_json" | jq -r '.state // ""') || return 1
 	[[ "$state" == "$DSR_STATE_OPEN" ]] || return 0
 	body=$(printf '%s' "$issue_json" | jq -r '.body // ""') || return 1
-	edges=$(gh api "repos/${repo}/issues/${dependant}/dependencies/blocked_by" --jq '.[].number' 2>/dev/null) || return 1
-	if ! printf '%s\n' "$edges" | grep -qx "$succ"; then
-		succ_id=$(gh api "repos/${repo}/issues/${succ}" --jq '.id' 2>/dev/null) || return 1
-		[[ "$succ_id" =~ ^[0-9]+$ ]] || return 1
+	# Respect explicit decoupling before any native edge or body mutation.
+	[[ "$body" == *'<!-- aidevops:no-supersession-repoint -->'* ]] && return 0
+	# Compare global issue IDs: a same-number blocker from another repo must not match.
+	edges=$(gh api "repos/${repo}/issues/${dependant}/dependencies/blocked_by" --jq '.[].id' 2>/dev/null) || return 1
+	succ_id=$(gh api "repos/${repo}/issues/${succ}" --jq '.id' 2>/dev/null) || return 1
+	[[ "$succ_id" =~ ^[0-9]+$ ]] || return 1
+	if ! grep -qx "$succ_id" <<<"$edges"; then
 		gh api -X POST "repos/${repo}/issues/${dependant}/dependencies/blocked_by" -F "issue_id=${succ_id}" >/dev/null 2>&1 || return 1
 		changed=true
 	fi
@@ -73,16 +78,17 @@ dsr_repoint_dependant() {
 }
 
 # Consolidation path: repoint every open dependant of a just-superseded issue.
-# Args: $1 repo, $2 original (closed), $3 successor (must be open)
+# Args: $1 repo, $2 original (closed), $3 successor (open or closed/completed)
 # Returns: 0 when all dependants were handled; 1 on any failure.
 dsr_repoint_dependants_of() {
 	local repo="$1"
 	local orig="$2"
 	local succ="$3"
-	local succ_state="" dependants="" dependant="" failed=0
+	local succ_json="" dependants="" dependant="" failed=0
 	[[ "$repo" == */* && "$orig" =~ ^[1-9][0-9]*$ && "$succ" =~ ^[1-9][0-9]*$ ]] || return 1
-	succ_state=$(gh api "repos/${repo}/issues/${succ}" --jq '.state' 2>/dev/null) || return 1
-	[[ "$succ_state" == "$DSR_STATE_OPEN" ]] || return 1
+	succ_json=$(gh api "repos/${repo}/issues/${succ}" 2>/dev/null) || return 1
+	printf '%s' "$succ_json" | jq -e --arg open "$DSR_STATE_OPEN" '
+		.state == $open or (.state == "closed" and .state_reason == "completed")' >/dev/null 2>&1 || return 1
 	dependants=$(gh api --paginate "repos/${repo}/issues/${orig}/dependencies/blocking" --jq ".[] | select(.state == \"${DSR_STATE_OPEN}\") | .number" 2>/dev/null) || return 1
 	while IFS= read -r dependant; do
 		[[ -n "$dependant" ]] || continue
@@ -93,7 +99,7 @@ dsr_repoint_dependants_of() {
 }
 
 # Sweep path: when every native blocker of a dependant is closed and at least
-# one was superseded by an open successor, repoint it. Same-repo blockers only.
+# one was superseded by an open or completed successor, repoint it. Same-repo blockers only.
 # Args: $1 repo, $2 dependant number
 # Returns: 0 when nothing failed; 1 on a failed read or write.
 dsr_repoint_if_superseded() {

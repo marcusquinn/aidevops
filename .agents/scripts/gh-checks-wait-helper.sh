@@ -11,6 +11,10 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 LOG_PREFIX="GH-CHECKS-WAIT"
 _GCW_DEFAULT_TIMEOUT="${AIDEVOPS_GH_CHECKS_TIMEOUT_SECONDS:-1800}"
+# t19045: a headless worker that omits --timeout must stay inside the 600s
+# shell-tool and activity-watchdog stall windows; match the worker contract's
+# 200s wait-checks chunk (headless-runtime-contract.sh Mandatory behavior 8).
+_GCW_DEFAULT_HEADLESS_TIMEOUT="${AIDEVOPS_GH_CHECKS_HEADLESS_TIMEOUT_SECONDS:-200}"
 _GCW_DEFAULT_INITIAL_INTERVAL="${AIDEVOPS_GH_CHECKS_INITIAL_INTERVAL_SECONDS:-15}"
 _GCW_DEFAULT_MAX_INTERVAL="${AIDEVOPS_GH_CHECKS_MAX_INTERVAL_SECONDS:-120}"
 _GCW_DEFAULT_HEARTBEAT_INTERVAL="${AIDEVOPS_GH_CHECKS_HEARTBEAT_SECONDS:-120}"
@@ -19,11 +23,24 @@ _GCW_ACTIVE_DEFERRAL=""
 _GCW_API_ERROR_VISIBLE=0
 _GCW_NEXT_INTERVAL=""
 _GCW_EMPTY_REQUIRED_SETTLE_SECONDS="${AIDEVOPS_GH_CHECKS_EMPTY_SETTLE_SECONDS:-90}"
+# GH#35830: a concurrency-cancelled run (e.g. after `gh pr ready`) is superseded
+# by a newer run that may not be visible yet. Treat cancel-only failures as
+# pending for this grace window before calling them terminal.
+_GCW_CANCEL_GRACE_SECONDS="${AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS-180}"
+_GCW_CANCEL_FIRST_EPOCH=""
+_GCW_GRACED_CLASSIFICATION=""
+_GCW_CONFIGURED_CACHED=0
+_GCW_CONFIGURED_RC=1
+_GCW_CONFIGURED_CONTEXTS=""
 
 usage() {
 	cat <<'EOF'
 Usage:
   gh-checks-wait-helper.sh wait PR_NUMBER [options]
+  gh-checks-wait-helper.sh quota-report [WINDOW_SECONDS] [CI_JSONL]
+      Emit quota-unattributed JSON evidence from response-owned local log samples
+      (default: last 3600 seconds; no network calls). Remainders are upper bounds,
+      not proof of bypass or attributed CI spend. Save stdout in the audit log.
   gh-checks-wait-helper.sh qlty-skips PR_NUMBER [--repo OWNER/REPO]
       Print "name<TAB>link" for each qlty check skipped as out of credits
       under ci-gate-policy rule 14 (nothing when none; exit 2 if unobservable).
@@ -31,7 +48,8 @@ Usage:
 Options:
   --repo OWNER/REPO          Repository (auto-detected when omitted)
   --all                      Include optional checks (default: required only)
-  --timeout SECONDS          Overall timeout (default: 1800)
+  --timeout SECONDS          Overall timeout (default: 1800; 200 in headless
+                             workers, AIDEVOPS_GH_CHECKS_HEADLESS_TIMEOUT_SECONDS)
   --initial-interval SECONDS First and post-transition poll interval (default: 15)
   --max-interval SECONDS     Maximum unchanged-state interval (default: 120)
   --heartbeat SECONDS        Sparse unchanged-state message interval (default: 120)
@@ -39,6 +57,9 @@ Options:
 The initial state is printed once. Later polls emit only state transitions,
 sparse heartbeats, and the terminal result. Pending timeouts return exit 8,
 terminal failures return exit 1, and indeterminate API failures return exit 2.
+Draft PRs with unchanged missing or skipped required checks return exit 9.
+Required checks missing past the settle window on a PR that conflicts with its
+base (GitHub starts no pull_request workflows) return exit 10 with a rebase step.
 EOF
 	return 0
 }
@@ -53,6 +74,18 @@ validate_positive_integer() {
 	local value="$1"
 	[[ "$value" =~ ^[1-9][0-9]*$ ]]
 	return $?
+}
+
+# t19045: true inside a dispatched headless worker. Mirrors the dispatch
+# markers listed for detect_session_origin (shared-gh-wrappers-session.sh).
+_gcw_is_headless_worker() {
+	local marker
+	for marker in "${FULL_LOOP_HEADLESS:-}" "${AIDEVOPS_HEADLESS:-}" "${OPENCODE_HEADLESS:-}"; do
+		case "$marker" in
+		true | 1) return 0 ;;
+		esac
+	done
+	return 1
 }
 
 resolve_repo() {
@@ -287,6 +320,52 @@ emit_qlty_billing_notes() {
 	return 0
 }
 
+# GH#38385: a failing Codacy check whose head commit has no new issues and whose
+# PR-level issue lines are gone from the head is stale PR aggregation. Evidence
+# comes from codacy-stale-check-helper.sh (fails closed). The verdict is cached
+# per wait in _GCW_CODACY_VERDICT ("" = unchecked, "stale:<evidence>", "real").
+_GCW_CODACY_VERDICT=""
+_GCW_CODACY_CHECKS=""
+
+# Result is returned in _GCW_CODACY_CHECKS (not stdout) so the verdict cache
+# survives across polls. Only the issue-aggregation check is suppressed; Codacy
+# coverage checks keep their own failures.
+apply_codacy_stale_policy() {
+	local checks="$1" pr_number="$2" repo="$3"
+	local has_fail="" evidence="" rc=0
+	has_fail=$(printf '%s' "$checks" | jq -r 'any(.[]; (.name | test("^codacy static code analysis"; "i")) and (.bucket | . == "fail"))')
+	if [[ "$has_fail" != "true" ]]; then
+		_GCW_CODACY_CHECKS="$checks"
+		return 0
+	fi
+	if [[ -z "$_GCW_CODACY_VERDICT" ]]; then
+		evidence=$("${SCRIPT_DIR}/codacy-stale-check-helper.sh" classify "$pr_number" --repo "$repo" 2>/dev/null) || rc=$?
+		if [[ "$rc" -eq 0 && "$evidence" == STALE* ]]; then
+			_GCW_CODACY_VERDICT="stale:${evidence}"
+		else
+			_GCW_CODACY_VERDICT="real"
+		fi
+	fi
+	if [[ "$_GCW_CODACY_VERDICT" != stale:* ]]; then
+		_GCW_CODACY_CHECKS="$checks"
+		return 0
+	fi
+	_GCW_CODACY_CHECKS=$(printf '%s' "$checks" | jq -c --arg ev "${_GCW_CODACY_VERDICT#stale:}" '
+		map(if (.name | test("^codacy static code analysis"; "i")) and (.bucket | . == "fail")
+		then . + {codacy_stale: $ev, bucket: "skipping"} else . end)')
+	return 0
+}
+
+emit_codacy_stale_notes() {
+	local checks="$1" previous="$2"
+	printf '%s' "$checks" | jq -r --argjson previous "${previous:-[]}" '
+		.[] | select(.codacy_stale != null) | . as $check
+		| select(any($previous[]; .codacy_stale != null and .name == $check.name and .link == $check.link) | not)
+		| "\(.codacy_stale): \(.name) \(.link)"
+	'
+	return 0
+}
+
 state_counts() {
 	local checks="$1"
 	local missing_contexts="${2:-}"
@@ -381,23 +460,80 @@ configured_context_missing_from_checks() {
 	return 1
 }
 
+# Print "<workflow name> (run <id>)" for each latest-per-workflow run at the
+# exact head that ended failure/startup_failure with zero jobs. Such a run
+# creates no check run, so its required context is simply absent. Read-only.
+# Fixture mode reads ${AIDEVOPS_GH_CHECKS_FIXTURE_DIR}/runs.json (entries carry
+# total_jobs); live mode reads the runs list and then jobs.total_count.
+zero_job_runs() {
+	local repo="$1"
+	local head="$2"
+	local fixture_dir="${AIDEVOPS_GH_CHECKS_FIXTURE_DIR:-}"
+	local runs_json="" candidates="" run_id="" run_name="" total="" separator="" output=""
+	if [[ -n "$fixture_dir" ]]; then
+		[[ -f "${fixture_dir}/runs.json" ]] || return 1
+		runs_json=$(<"${fixture_dir}/runs.json")
+	else
+		[[ -n "$head" ]] || return 1
+		runs_json=$(gh api -X GET "repos/${repo}/actions/runs" -f head_sha="$head" -f per_page=100 2>/dev/null) || return 1
+	fi
+	candidates=$(printf '%s' "$runs_json" | jq -r --arg head "$head" '
+		(.workflow_runs // [])
+		| map(select(.head_sha == $head or .head_sha == null))
+		| group_by(.workflow_id // .name)
+		| map(max_by(.run_number // 0))
+		| .[]
+		| select(.status == "completed" and (.conclusion == "failure" or .conclusion == "startup_failure"))
+		| [.id, .name, (.total_jobs // "")] | @tsv') || return 1
+	while IFS=$'\t' read -r run_id run_name total; do
+		[[ "$run_id" =~ ^[0-9]+$ ]] || continue
+		if [[ -z "$total" ]]; then
+			total=$(gh api -X GET "repos/${repo}/actions/runs/${run_id}/jobs" -f per_page=1 --jq '.total_count' 2>/dev/null) || continue
+		fi
+		[[ "$total" == "0" ]] || continue
+		output+="${separator}${run_name} (run ${run_id})"
+		separator=", "
+	done <<<"$candidates"
+	[[ -n "$output" ]] || return 1
+	printf '%s\n' "$output"
+	return 0
+}
+
 classify_state() {
 	local checks="$1"
 	local required_only="$2"
 	local pr_number="$3"
 	local repo="$4"
 	local elapsed="$5"
+	local head="${6:-}"
+	# t19014: wait_for_checks resolves the contexts once per wait and passes
+	# the read exit code and contexts. This function runs in a command
+	# substitution, so it cannot memoize them itself.
+	local passed_rc="${7:-}"
+	local passed_contexts="${8:-}"
 	local count=""
 	count=$(printf '%s' "$checks" | jq 'length')
-	if [[ "$required_only" -eq 1 ]]; then
-		local configured_contexts="" configured_rc=0
-		local missing_contexts=""
+	# Absent configured required contexts are never success, in required-only
+	# and --all mode alike.
+	local configured_contexts="" configured_rc=0
+	local missing_contexts="" zero_runs=""
+	if [[ "$passed_rc" =~ ^[0-9]+$ ]]; then
+		configured_rc="$passed_rc"
+		configured_contexts="$passed_contexts"
+	else
 		configured_contexts=$(configured_required_contexts "$pr_number" "$repo") || configured_rc=$?
-		if [[ "$configured_rc" -eq 0 && -n "$configured_contexts" ]] &&
-			missing_contexts=$(configured_context_missing_from_checks "$configured_contexts" "$checks"); then
-			printf 'pending\t%s\n' "$missing_contexts"
+	fi
+	if [[ "$configured_rc" -eq 0 && -n "$configured_contexts" ]] &&
+		missing_contexts=$(configured_context_missing_from_checks "$configured_contexts" "$checks"); then
+		if [[ "$elapsed" -ge "$_GCW_EMPTY_REQUIRED_SETTLE_SECONDS" ]] &&
+			zero_runs=$(zero_job_runs "$repo" "$head"); then
+			printf 'zero-job\t%s\t%s\n' "$missing_contexts" "$zero_runs"
 			return 0
 		fi
+		printf 'pending\t%s\n' "$missing_contexts"
+		return 0
+	fi
+	if [[ "$required_only" -eq 1 ]]; then
 		if [[ "$count" -eq 0 && "$configured_rc" -ne 0 && "$elapsed" -lt "$_GCW_EMPTY_REQUIRED_SETTLE_SECONDS" ]]; then
 			printf 'pending\n'
 			return 0
@@ -425,11 +561,66 @@ classify_state() {
 	return 0
 }
 
+# True when every failing check is a bare cancellation (no real failure).
+only_cancelled_failures() {
+	local checks="$1"
+	printf '%s' "$checks" | jq -e --arg pass "$_GCW_BUCKET_PASS" --arg pending "$_GCW_BUCKET_PENDING" --arg skipping "$_GCW_BUCKET_SKIPPING" \
+		'[.[] | select(.bucket != $pass and .bucket != $pending and .bucket != $skipping)] | length > 0 and all(.[]; .bucket == "cancel")' >/dev/null
+	return $?
+}
+
+# Sets _GCW_GRACED_CLASSIFICATION: a cancel-only failure stays pending until the
+# grace window since it was first seen elapses (GH#35830).
+apply_cancel_grace() {
+	local classification="$1" checks="$2" now_epoch="$3"
+	local attempt_checks="${4:-$checks}"
+	local cancelled_set=""
+	_GCW_GRACED_CLASSIFICATION="$classification"
+	if [[ "$classification" == "failure" ]] && only_cancelled_failures "$checks"; then
+		# GH#38537: while other checks are pending (often queued behind runner
+		# capacity), the superseding run may not be visible yet. Hold the
+		# cancellation and start its grace window only once nothing else is pending.
+		if printf '%s' "$checks" | jq -e --arg pending "$_GCW_BUCKET_PENDING" 'any(.[]; .bucket == $pending)' >/dev/null; then
+			_GCW_CANCEL_FIRST_EPOCH=""
+			_GCW_CANCEL_SET=""
+			_GCW_GRACED_CLASSIFICATION="$_GCW_BUCKET_PENDING"
+			return 0
+		fi
+		# Include run links and timestamps so a different cancelled attempt of the same check
+		# gets its own window; sort to ignore API ordering changes. Use raw attempt
+		# metadata without changing the canonical transition/heartbeat comparison.
+		cancelled_set=$(printf '%s' "$attempt_checks" | jq -c '[.[] | select(.bucket == "cancel") | {workflow, name, link, startedAt, completedAt}] | sort_by(.workflow, .name, .link, .startedAt, .completedAt)')
+		if [[ -z "$_GCW_CANCEL_FIRST_EPOCH" || "$cancelled_set" != "${_GCW_CANCEL_SET:-}" ]]; then
+			_GCW_CANCEL_FIRST_EPOCH="$now_epoch"
+		fi
+		_GCW_CANCEL_SET="$cancelled_set"
+		if [[ $((now_epoch - _GCW_CANCEL_FIRST_EPOCH)) -lt "$_GCW_CANCEL_GRACE_SECONDS" ]]; then
+			_GCW_GRACED_CLASSIFICATION="pending"
+		fi
+	else
+		_GCW_CANCEL_FIRST_EPOCH=""
+		_GCW_CANCEL_SET=""
+	fi
+	return 0
+}
+
 emit_failure_details() {
 	local checks="$1"
 	printf 'FAIL: required checks reached a terminal failure\n'
 	printf '%s' "$checks" | jq -r --arg pass "$_GCW_BUCKET_PASS" --arg pending "$_GCW_BUCKET_PENDING" --arg skipping "$_GCW_BUCKET_SKIPPING" \
 		'.[] | select(.bucket != $pass and .bucket != $pending and .bucket != $skipping) | "  \(.name): \(.bucket)\(if .link == "" then "" else " " + .link end)"'
+	return 0
+}
+
+emit_terminal_failure() {
+	local classification="$1" checks="$2" runs="$3" missing="$4" repo="$5"
+	if [[ "$classification" != "zero-job" ]]; then
+		emit_failure_details "$checks"
+		return 0
+	fi
+	printf 'FAIL: required contexts absent because workflow runs ended with zero jobs: %s\n' "$runs"
+	printf '  missing: %s\n' "$missing"
+	printf '  hint: gh run rerun <id> --repo %s (run IDs above; this helper does not rerun)\n' "$repo"
 	return 0
 }
 
@@ -489,6 +680,39 @@ read_draft_state() {
 	return $?
 }
 
+# Prints "STATE<TAB>mergedAt" (e.g. "MERGED\t2026-...Z"); empty on read failure.
+read_pr_lifecycle() {
+	local pr_number="$1"
+	local repo="$2"
+	if [[ -n "${AIDEVOPS_GH_CHECKS_TEST_PR_STATE+x}" ]]; then
+		printf '%s\n' "$AIDEVOPS_GH_CHECKS_TEST_PR_STATE"
+		return 0
+	fi
+	gh pr view "$pr_number" --repo "$repo" --json state,mergedAt --jq '[.state // "", .mergedAt // ""] | @tsv' 2>/dev/null
+	return $?
+}
+
+# Returns 0 (merged, exit 0 for caller), 1 (closed unmerged), 3 (open/unknown: keep polling).
+# Native auto-merge can merge while optional contexts are still non-terminal.
+check_pr_still_open() {
+	local pr_number="$1"
+	local repo="$2"
+	local lifecycle="" pr_state="" merged_at=""
+	lifecycle=$(read_pr_lifecycle "$pr_number" "$repo" 2>/dev/null || true)
+	IFS=$'\t' read -r pr_state merged_at <<<"$lifecycle"
+	case "$pr_state" in
+	MERGED)
+		printf 'MERGED: PR #%s merged at %s; check wait not required\n' "$pr_number" "${merged_at:-unknown time}"
+		return 0
+		;;
+	CLOSED)
+		printf 'CLOSED: PR #%s was closed without merging; check wait stopped\n' "$pr_number" >&2
+		return 1
+		;;
+	esac
+	return 3
+}
+
 note_if_draft() {
 	local pr_number="$1"
 	local repo="$2"
@@ -532,6 +756,25 @@ next_interval() {
 	return 0
 }
 
+# Next poll sleep: reset after a state change, otherwise back off; never sleep
+# past the draft-stall window or the remaining wall-clock --timeout (t19011:
+# callers run under a quiet-output watchdog; an uncapped sleep overshot 220s to 248s).
+poll_interval_after() {
+	local interval="$1" changed="$2" initial_interval="$3" max_interval="$4"
+	local draft_remaining="$5" timeout_remaining="$6"
+	if [[ "$changed" -eq 1 ]]; then
+		interval="$initial_interval"
+	else
+		interval=$(next_interval "$interval" "$max_interval")
+	fi
+	if [[ -n "$draft_remaining" && "$interval" -gt "$draft_remaining" ]]; then
+		interval="$draft_remaining"
+	fi
+	[[ "$interval" -le "$timeout_remaining" ]] || interval="$timeout_remaining"
+	printf '%s\n' "$interval"
+	return 0
+}
+
 emit_recovered_state() {
 	local state_summary="$1"
 	if [[ -n "$_GCW_ACTIVE_DEFERRAL" ]]; then
@@ -545,6 +788,113 @@ emit_recovered_state() {
 	return 0
 }
 
+# Uses the waiter's dynamically scoped observation and stability state.
+classify_draft_stall() {
+	if [[ "$required_only" -eq 1 && ( "$classification" == pending || "$classification" == success ) ]] &&
+		[[ -n "$missing_contexts" || "$current" == *'"bucket":"skipping"'* ]] &&
+		printf '%s' "$current" | jq -e 'all(.[]; .bucket == "pass" or .bucket == "skipping")' >/dev/null &&
+		[[ "$(read_draft_state "$pr_number" "$repo" 2>/dev/null || true)" == true ]]; then
+		if [[ -z "$draft_since" || "$draft_snapshot" != "$current|$missing_contexts" ]]; then
+			draft_since="$now_epoch"
+			draft_snapshot="$current|$missing_contexts"
+		fi
+		if [[ $((now_epoch - draft_since)) -ge "$draft_window" ]]; then
+			final_head=$(verified_head_sha "$pr_number" "$repo" 'before draft check result') || return 2
+			if [[ "$final_head" != "$initial_head" ]]; then
+				initial_head="$final_head"
+				previous="" draft_since=""
+				return 3
+			fi
+			printf 'WAIT_CHECKS=draft-required-missing: run gh pr ready %s --repo %s, then wait again\n' "$pr_number" "$repo"
+			return 9
+		fi
+		classification=pending
+	else
+		draft_since=""
+	fi
+	return 0
+}
+
+# Prints "MERGEABLE<TAB>baseRefName"; empty on read failure.
+read_mergeable_state() {
+	local pr_number="$1"
+	local repo="$2"
+	if [[ -n "${AIDEVOPS_GH_CHECKS_TEST_MERGEABLE+x}" ]]; then
+		printf '%s\t%s\n' "$AIDEVOPS_GH_CHECKS_TEST_MERGEABLE" "${AIDEVOPS_GH_CHECKS_TEST_BASE:-main}"
+		return 0
+	fi
+	gh pr view "$pr_number" --repo "$repo" --json mergeable,baseRefName --jq '[.mergeable // "", .baseRefName // ""] | @tsv' 2>/dev/null
+	return $?
+}
+
+# GitHub starts no pull_request workflows for a PR whose merge ref cannot be
+# built, so required contexts stay missing forever. Uses the waiter's
+# dynamically scoped state; reads PR mergeability at most once per heartbeat.
+# Returns 0 (keep waiting), 3 (head changed, restart), 10 (conflict).
+classify_conflict_stall() {
+	[[ "$required_only" -eq 1 && -n "$missing_contexts" && "$classification" == pending ]] || return 0
+	[[ "$elapsed" -ge "$_GCW_EMPTY_REQUIRED_SETTLE_SECONDS" ]] || return 0
+	local gap="$heartbeat_interval"
+	[[ "$gap" -gt 0 ]] || gap=120
+	if [[ -n "$conflict_checked_at" && $((now_epoch - conflict_checked_at)) -lt "$gap" ]]; then
+		return 0
+	fi
+	conflict_checked_at="$now_epoch"
+	local merge_state="" mergeable="" base_ref=""
+	merge_state=$(read_mergeable_state "$pr_number" "$repo" 2>/dev/null || true)
+	IFS=$'\t' read -r mergeable base_ref <<<"$merge_state"
+	[[ "$mergeable" == "CONFLICTING" ]] || return 0
+	final_head=$(verified_head_sha "$pr_number" "$repo" 'before conflict check result') || return 2
+	if [[ "$final_head" != "$initial_head" ]]; then
+		initial_head="$final_head"
+		previous="" conflict_checked_at=""
+		return 3
+	fi
+	printf 'WAIT_CHECKS=conflict-required-missing: PR %s conflicts with %s; rebase onto origin/%s, push, then wait again\n' \
+		"$pr_number" "${base_ref:-its base}" "${base_ref:-<base>}"
+	return 10
+}
+
+# Draft then conflict stall checks; same return codes (0 continue, 3 restart).
+classify_missing_stalls() {
+	local stall_rc=0
+	classify_draft_stall || stall_rc=$?
+	[[ "$stall_rc" -eq 0 ]] || return "$stall_rc"
+	classify_conflict_stall || stall_rc=$?
+	return "$stall_rc"
+}
+
+emit_wait_transition() {
+	if [[ -z "$previous" ]]; then
+		emit_initial_state "$current" "$missing_contexts"
+		changed=1
+	elif [[ "$current" != "$previous" ]]; then
+		emit_transitions "$previous" "$current"
+		changed=1
+	elif [[ "$heartbeat_interval" -gt 0 && "$now_epoch" -ge "$next_heartbeat" ]]; then
+		printf 'heartbeat: required checks unchanged for %ss (%s)\n' "$elapsed" "$state_summary"
+		next_heartbeat=$((now_epoch + heartbeat_interval))
+	fi
+	if [[ "$changed" -eq 1 ]]; then
+		next_heartbeat=$((now_epoch + heartbeat_interval))
+	fi
+	return 0
+}
+
+# t19014: the base branch's required contexts (3 REST reads) do not change
+# during one wait, so read them once instead of on every poll. Only a
+# successful read is kept; a failed read is retried on the next poll.
+# Branch protection still decides at merge time, so reuse cannot bypass a gate.
+# Sets _GCW_CONFIGURED_RC and _GCW_CONFIGURED_CONTEXTS.
+resolve_configured_contexts_once() {
+	local pr_number="$1" repo="$2"
+	[[ "${_GCW_CONFIGURED_CACHED:-0}" -eq 1 ]] && return 0
+	_GCW_CONFIGURED_RC=0
+	_GCW_CONFIGURED_CONTEXTS=$(configured_required_contexts "$pr_number" "$repo") || _GCW_CONFIGURED_RC=$?
+	[[ "$_GCW_CONFIGURED_RC" -eq 0 ]] && _GCW_CONFIGURED_CACHED=1
+	return 0
+}
+
 wait_for_checks() {
 	local pr_number="$1" repo="$2" required_only="$3" timeout="$4"
 	local initial_interval="$5" max_interval="$6" heartbeat_interval="$7"
@@ -552,6 +902,12 @@ wait_for_checks() {
 	start_epoch=$(current_epoch)
 	local next_heartbeat=$((start_epoch + heartbeat_interval))
 	local interval="$initial_interval" previous="" initial_head="" qlty_credit_policy=""
+	local draft_since="" draft_snapshot="" draft_window="$heartbeat_interval" conflict_checked_at=""
+	[[ "$draft_window" -gt 0 && "$draft_window" -le 120 ]] || draft_window=120
+	_GCW_CANCEL_FIRST_EPOCH=""
+	_GCW_CANCEL_SET=""
+	_GCW_CODACY_VERDICT=""
+	_GCW_CONFIGURED_CACHED=0
 	initial_head=$(verified_head_sha "$pr_number" "$repo" 'before required-check observation') || return 2
 	note_if_draft "$pr_number" "$repo"
 	_GCW_ACTIVE_DEFERRAL=""
@@ -560,8 +916,11 @@ wait_for_checks() {
 	while true; do
 		poll_number=$((poll_number + 1))
 		write_runtime_heartbeat
+		local lifecycle_rc=0
+		check_pr_still_open "$pr_number" "$repo" || lifecycle_rc=$?
+		[[ "$lifecycle_rc" -eq 3 ]] || return "$lifecycle_rc"
 		local raw="" fetch_rc=0 fetch_diagnostic="" fetch_diagnostic_file="" current="" now_epoch="" elapsed=0 changed=0 classification="" final_head="" state_summary=""
-		local missing_contexts=""
+		local missing_contexts="" zero_job_detail=""
 		fetch_diagnostic_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-gh-checks-wait-fetch.XXXXXX") || return 2
 		raw=$(fetch_checks "$pr_number" "$repo" "$required_only" "$poll_number" "$initial_head" 2>"$fetch_diagnostic_file") || fetch_rc=$?
 		fetch_diagnostic=$(<"$fetch_diagnostic_file")
@@ -586,27 +945,25 @@ wait_for_checks() {
 			current=$(apply_qlty_billing_policy "$current" "$qlty_credit_policy")
 		fi
 		emit_qlty_billing_notes "$current" "$previous" "$qlty_credit_policy"
-		IFS=$'\t' read -r classification missing_contexts <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed")"
+		apply_codacy_stale_policy "$current" "$pr_number" "$repo"
+		current="$_GCW_CODACY_CHECKS"
+		emit_codacy_stale_notes "$current" "$previous"
+		resolve_configured_contexts_once "$pr_number" "$repo"
+		IFS=$'\t' read -r classification missing_contexts zero_job_detail <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed" "$initial_head" "$_GCW_CONFIGURED_RC" "$_GCW_CONFIGURED_CONTEXTS")"
+		apply_cancel_grace "$classification" "$current" "$now_epoch" "$raw"
+		classification="$_GCW_GRACED_CLASSIFICATION"
 		state_summary=$(state_counts "$current" "$missing_contexts")
 		emit_recovered_state "$state_summary"
 		valid_state_seen=1
-		if [[ -z "$previous" ]]; then
-			emit_initial_state "$current" "$missing_contexts"
-			changed=1
-		elif [[ "$current" != "$previous" ]]; then
-			emit_transitions "$previous" "$current"
-			changed=1
-		elif [[ "$heartbeat_interval" -gt 0 && "$now_epoch" -ge "$next_heartbeat" ]]; then
-			printf 'heartbeat: required checks unchanged for %ss (%s)\n' "$elapsed" "$state_summary"
-			next_heartbeat=$((now_epoch + heartbeat_interval))
-		fi
-		if [[ "$changed" -eq 1 ]]; then
-			next_heartbeat=$((now_epoch + heartbeat_interval))
-		fi
+		local draft_rc=0
+		classify_missing_stalls || draft_rc=$?
+		[[ "$draft_rc" -ne 3 ]] || continue
+		[[ "$draft_rc" -eq 0 ]] || return "$draft_rc"
+		emit_wait_transition
 
 		case "$classification" in
-		failure)
-			emit_failure_details "$current"
+		failure | zero-job)
+			emit_terminal_failure "$classification" "$current" "$zero_job_detail" "$missing_contexts" "$repo"
 			return 1
 			;;
 		success | no-required | no-checks)
@@ -614,6 +971,7 @@ wait_for_checks() {
 			if [[ -n "$initial_head" && -n "$final_head" && "$initial_head" != "$final_head" ]]; then
 				printf '+ PR head changed while waiting; restarting required-check observation\n'
 				initial_head="$final_head"
+				_GCW_CODACY_VERDICT=""
 				previous=""
 				interval="$initial_interval"
 				poll_sleep "$interval"
@@ -632,11 +990,9 @@ wait_for_checks() {
 			return 2
 		fi
 		previous="$current"
-		if [[ "$changed" -eq 1 ]]; then
-			interval="$initial_interval"
-		else
-			interval=$(next_interval "$interval" "$max_interval")
-		fi
+		local draft_remaining=""
+		[[ -z "$draft_since" ]] || draft_remaining=$((draft_window - (now_epoch - draft_since)))
+		interval=$(poll_interval_after "$interval" "$changed" "$initial_interval" "$max_interval" "$draft_remaining" $((timeout - elapsed)))
 		poll_sleep "$interval"
 	done
 }
@@ -654,18 +1010,25 @@ cmd_wait() {
 	local initial_interval="$_GCW_DEFAULT_INITIAL_INTERVAL"
 	local max_interval="$_GCW_DEFAULT_MAX_INTERVAL"
 	local heartbeat_interval="$_GCW_DEFAULT_HEARTBEAT_INTERVAL"
+	local timeout_explicit=0
 	while [[ $# -gt 0 ]]; do
 		local opt="$1"
 		case "$opt" in
 		--repo) local repo_value="$2"; repo="$repo_value"; shift 2 ;;
 		--all) required_only=0; shift ;;
-		--timeout) local timeout_value="$2"; timeout="$timeout_value"; shift 2 ;;
+		--timeout) local timeout_value="$2"; timeout="$timeout_value"; timeout_explicit=1; shift 2 ;;
 		--initial-interval) local initial_value="$2"; initial_interval="$initial_value"; shift 2 ;;
 		--max-interval) local max_value="$2"; max_interval="$max_value"; shift 2 ;;
 		--heartbeat) local heartbeat_value="$2"; heartbeat_interval="$heartbeat_value"; shift 2 ;;
 		*) log_error "Unknown wait option: $opt"; return 1 ;;
 		esac
 	done
+	# t19045: an omitted --timeout in a headless worker must not outlast the
+	# watchdog stall window (the 1800s default did, ending in a cap kill).
+	if [[ "$timeout_explicit" -eq 0 && -z "${AIDEVOPS_GH_CHECKS_TIMEOUT_SECONDS:-}" ]] && _gcw_is_headless_worker; then
+		timeout="$_GCW_DEFAULT_HEADLESS_TIMEOUT"
+		printf 'NOTE: headless worker default --timeout %ss; call wait-checks again if checks are still pending.\n' "$timeout"
+	fi
 	if ! validate_nonnegative_integer "$timeout" || ! validate_nonnegative_integer "$heartbeat_interval" || \
 		! validate_positive_integer "$initial_interval" || ! validate_positive_integer "$max_interval"; then
 		log_error "timeout/heartbeat must be non-negative and poll intervals must be positive integers"
@@ -673,6 +1036,17 @@ cmd_wait() {
 	fi
 	if [[ "$initial_interval" -gt "$max_interval" ]]; then
 		log_error "initial interval cannot exceed maximum interval"
+		return 1
+	fi
+	# Canonical decimal only: reject octal-looking values and bound the length
+	# before arithmetic to avoid overflow or expression evaluation from config.
+	if [[ ! "$_GCW_CANCEL_GRACE_SECONDS" =~ ^(0|[1-9][0-9]{0,4})$ ]]; then
+		log_error "AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS must be a decimal integer from 0 to 86400 (no leading zeros)"
+		return 1
+	fi
+	_GCW_CANCEL_GRACE_SECONDS=$((10#${_GCW_CANCEL_GRACE_SECONDS}))
+	if [[ "$_GCW_CANCEL_GRACE_SECONDS" -gt 86400 ]]; then
+		log_error "AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS must be a decimal integer from 0 to 86400 (no leading zeros)"
 		return 1
 	fi
 	repo=$(resolve_repo "$repo") || {
@@ -728,11 +1102,29 @@ cmd_qlty_skips() {
 	return 0
 }
 
+# Compare cumulative used counters only inside one credential/reset series.
+# Reuse production TSV metadata without extra rate_limit requests or identity
+# probes. Unknown costs and unobserved CI spend are never invented as coverage.
+cmd_quota_report() {
+	local window="${1:-3600}"
+	# Optional saved quota-ci-sample JSONL from audit job output. Never fetch CI
+	# logs here: reporting must not spend any more of the quota being measured.
+	local ci_log="${2:-${AIDEVOPS_GH_CI_QUOTA_LOG:-}}"
+	if ! validate_positive_integer "$window"; then
+		log_error "quota-report WINDOW_SECONDS must be a positive integer"
+		return 2
+	fi
+	python3 "${SCRIPT_DIR}/gh-quota-report.py" \
+		"${AIDEVOPS_GH_API_LOG:-${HOME}/.aidevops/logs/gh-api-calls.log}" "$window" "$ci_log"
+	return $?
+}
+
 main() {
 	local command="${1:-help}"
 	shift || true
 	case "$command" in
 	wait) cmd_wait "$@" ;;
+	quota-report) cmd_quota_report "$@" ;;
 	qlty-skips) cmd_qlty_skips "$@" ;;
 	help | --help | -h) usage ;;
 	*) log_error "Unknown command: $command"; usage; return 1 ;;

@@ -155,13 +155,29 @@ verified before implementation; no LinkedIn SDK is installed or imported.
 ### Approved outbound posts
 
 The outbound queue can prepare an approved text `post` for the selected member
-only. It verifies the configured member through `memberAuthorizations` before
-the write boundary, then uses the official REST Posts route. This is a
-capability-gated route: absent write-product eligibility, token scope, or exact
-member binding fails closed before mutation. The queue does not emulate a write
-through browser automation, support organization posting, or infer access from
-the read-only Member Portability product. Receipts retain only operation and
-remote post IDs; post body and authorization values remain private.
+or, separately, for one organization (company page). Member posts verify the
+configured member through `memberAuthorizations` before the write boundary,
+then use the official REST Posts route. This is a capability-gated route:
+absent write-product eligibility, token scope, or exact binding fails closed
+before mutation. The queue does not emulate a write through browser
+automation or infer access from the read-only Member Portability product.
+Receipts retain only operation and remote post IDs; post body and
+authorization values remain private.
+
+**Organization posting.** Approve the intent against remote account ID
+`org_<numeric organization id>` (opaque-ID form of `urn:li:organization:<id>`).
+Before any write the adapter calls the official `organizationAcls` finder
+(`q=roleAssignee&role=ADMINISTRATOR&state=APPROVED`) with the token and requires
+an approved `ADMINISTRATOR` entry for exactly that organization, then posts with
+`author` set to the organization URN. The token's profile must also declare
+`LINKEDIN_<PROFILE>_SCOPES` including `w_organization_social` (the Posts
+API permission for organizations; the ACL read needs `rw_organization_admin` or
+`r_organization_admin`). A missing scope, missing write product, non-admin
+member or different organization is refused with no post. The ACL response is
+never stored. Endpoints and scopes were checked against Microsoft Learn
+"Posts API" and "Organization Access Control by Role". Each share still needs
+its own approval; there is no standing approval. Out of scope: scheduling,
+analytics, image/video posts.
 
 ## Content Best Practices
 

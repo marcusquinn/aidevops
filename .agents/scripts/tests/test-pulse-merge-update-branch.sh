@@ -127,6 +127,8 @@ define_helper_under_test() {
 	local helper_src
 	# shellcheck source=/dev/null
 	source "$REST_STATE_SCRIPT"
+	# shellcheck source=/dev/null
+	source "${SCRIPT_DIR}/../pulse-merge-timing.sh"
 	helper_src=$(awk '
 		/^_pmp_update_branch_conflict_cooldown_file\(\) \{/,/^}$/ { print }
 		/^_pmp_update_branch_conflict_cooldown_active\(\) \{/,/^}$/ { print }
@@ -455,9 +457,11 @@ test_nmr_guard_exists_before_close() {
 	fi
 
 	# NMR guard must appear BEFORE the _close_conflicting_pr call.
-	local nmr_pos close_pos
-	nmr_pos=$(printf '%s\n' "$block" | grep -n 'needs-maintainer-review' | head -1 | cut -d: -f1)
-	close_pos=$(printf '%s\n' "$block" | grep -n '_close_conflicting_pr' | head -1 | cut -d: -f1)
+	# grep -m1 on a here-string instead of `printf | grep | head -1`: no
+	# early-exit reader under pipefail, so no SIGPIPE flake (GH#35943).
+	local nmr_pos="" close_pos=""
+	nmr_pos=$(grep -n -m1 -- 'needs-maintainer-review' <<<"$block" | cut -d: -f1) || nmr_pos=""
+	close_pos=$(grep -n -m1 -- '_close_conflicting_pr' <<<"$block" | cut -d: -f1) || close_pos=""
 	if [[ -z "$nmr_pos" || -z "$close_pos" ]] || [[ "$nmr_pos" -ge "$close_pos" ]]; then
 		print_result "NMR guard + update-branch structure present" 1 \
 			"NMR guard must appear before _close_conflicting_pr (nmr_pos=${nmr_pos}, close_pos=${close_pos})"
@@ -465,8 +469,8 @@ test_nmr_guard_exists_before_close() {
 	fi
 
 	# update-branch must also appear BEFORE the final close.
-	local ub_pos
-	ub_pos=$(printf '%s\n' "$block" | grep -n '_attempt_pr_update_branch' | head -1 | cut -d: -f1)
+	local ub_pos=""
+	ub_pos=$(grep -n -m1 -- '_attempt_pr_update_branch' <<<"$block" | cut -d: -f1) || ub_pos=""
 	if [[ -z "$ub_pos" ]] || [[ "$ub_pos" -ge "$close_pos" ]]; then
 		print_result "NMR guard + update-branch structure present" 1 \
 			"update-branch must appear before _close_conflicting_pr (ub_pos=${ub_pos}, close_pos=${close_pos})"
@@ -634,6 +638,72 @@ test_required_check_pending_classifier_exists() {
 	return 0
 }
 
+# Behavioural cases for the policy-gate and external/fork skips (GH#39381).
+# Runs in a subshell with stubbed dependencies so the real function body is used.
+_run_ci_rebase_case() {
+	local failed_names="$1"
+	local external="$2"
+	local src
+	src=$(awk '
+		/^_pmp_ci_rebase_policy_gate_only_failure\(\) \{/,/^}$/ { print }
+		/^_pmp_ci_rebase_pr_is_external\(\) \{/,/^}$/ { print }
+		/^_pmp_ci_rebase_should_skip\(\) \{/,/^}$/ { print }
+		/^_attempt_pr_ci_rebase_retry\(\) \{/,/^}$/ { print }
+	' "$PROCESS_SCRIPT")
+	(
+		UB_CALLS=0
+		# shellcheck disable=SC1090
+		eval "$src"
+		_required_checks_terminal_failure_names() { printf '%s' "$failed_names"; return 0; }
+		_check_required_checks_has_terminal_failure() { return 0; }
+		_check_required_checks_have_pending_or_in_progress() { return 1; }
+		gh_pr_view() { printf '%s\n' "$external"; return 0; }
+		_pmp_update_branch_rest() { printf 'called\n' >>"${TEST_ROOT}/ub-called"; return 0; }
+		gh() { printf '1\n'; return 0; }
+		_attempt_pr_ci_rebase_retry 1 owner/repo main abc123 standard
+	)
+	return $?
+}
+
+test_ci_rebase_skips_policy_gate_only_failure() {
+	rm -f "${TEST_ROOT}/ub-called"
+	: >"$LOGFILE"
+	local rc=0
+	_run_ci_rebase_case "maintainer-gate" "0" || rc=$?
+	if [[ $rc -eq 1 && ! -f "${TEST_ROOT}/ub-called" ]] && grep -q "every terminal failed required context is a policy gate" "$LOGFILE"; then
+		print_result "CI-drift skips update-branch for policy-gate-only failure" 0
+	else
+		print_result "CI-drift skips update-branch for policy-gate-only failure" 1 "rc=${rc} log=$(cat "$LOGFILE")"
+	fi
+	return 0
+}
+
+test_ci_rebase_skips_external_pr() {
+	rm -f "${TEST_ROOT}/ub-called"
+	: >"$LOGFILE"
+	local rc=0
+	_run_ci_rebase_case "Lint" "1" || rc=$?
+	if [[ $rc -eq 1 && ! -f "${TEST_ROOT}/ub-called" ]] && grep -q "head-bound maintainer approval" "$LOGFILE"; then
+		print_result "CI-drift skips update-branch for external/fork PR" 0
+	else
+		print_result "CI-drift skips update-branch for external/fork PR" 1 "rc=${rc} log=$(cat "$LOGFILE")"
+	fi
+	return 0
+}
+
+test_ci_rebase_internal_real_ci_failure_still_updates() {
+	rm -f "${TEST_ROOT}/ub-called"
+	: >"$LOGFILE"
+	local rc=0
+	_run_ci_rebase_case "Lint"$'\n'"maintainer-gate" "0" || rc=$?
+	if [[ $rc -eq 0 && -f "${TEST_ROOT}/ub-called" ]]; then
+		print_result "CI-drift still updates internal PR with real CI failure" 0
+	else
+		print_result "CI-drift still updates internal PR with real CI failure" 1 "rc=${rc} log=$(cat "$LOGFILE")"
+	fi
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -660,6 +730,9 @@ main() {
 	test_unknown_mergeable_refreshed_before_conflict_handler
 	test_ci_rebase_update_branch_has_active_check_guard
 	test_required_check_pending_classifier_exists
+	test_ci_rebase_skips_policy_gate_only_failure
+	test_ci_rebase_skips_external_pr
+	test_ci_rebase_internal_real_ci_failure_still_updates
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

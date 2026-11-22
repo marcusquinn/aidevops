@@ -13,6 +13,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
 MERGE_PROCESS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process.sh"
 REQUIRED_CHECKS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-required-checks.sh"
+# GH#38259: extracted merge stages run through the timing wrapper.
+# shellcheck source=../pulse-merge-timing.sh
+source "${SCRIPT_DIR}/../pulse-merge-timing.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -188,6 +191,9 @@ define_function_under_test() {
 		/^_pmp_stage_review_and_gates\(\) \{/,/^\}$/ { print }
 		/^_pmp_stage_required_checks\(\) \{/,/^\}$/ { print }
 		/^_pmp_stage_pre_merge\(\) \{/,/^\}$/ { print }
+		/^_pmp_route_preflight_ci_failures\(\) \{/,/^\}$/ { print }
+		/^_pmp_active_checks_allow_native_defer\(\) \{/,/^\}$/ { print }
+		/^_pmp_admin_final_gate_or_route\(\) \{/,/^\}$/ { print }
 		/^_pmp_stage_admin_merge\(\) \{/,/^\}$/ { print }
 		/^_pmp_stage_ruleset_fallback\(\) \{/,/^\}$/ { print }
 		/^_pmp_stage_finalize_merge\(\) \{/,/^\}$/ { print }
@@ -247,7 +253,10 @@ _resolve_pr_mergeable_status() { return 0; }
 _extract_linked_issue() { printf '123'; return 0; }
 _check_pr_merge_gates() { return 0; }
 _pr_required_checks_pass() { return 0; }
+_check_required_checks_passing() { return 0; }
 approve_collaborator_pr() { return 0; }
+manual_release_hold_check() { return 0; }
+cloudron_release_merge_guard() { return 0; }
 # These fixtures are not Issue Sync PRs; the extracted approval helper must
 # take its non-trusted, no-write path.
 _pulse_is_trusted_issue_sync_pr() { return 1; }
@@ -776,8 +785,12 @@ test_stale_cache_401_retries_admin_merge_once() {
 	fi
 	print_result "successful merge invalidates repository PR-list caches" 0
 
-	if [[ -f "${HOME}/.cache/gh/graphql-401.cache" ]] || \
-		! find "${HOME}/.cache/gh" -path '*/aidevops-quarantine-*/*graphql-401.cache*' -type f | grep -q .; then
+	# Capture, then test: `find | grep -q .` under pipefail can report a
+	# SIGPIPE false negative (GH#35943).
+	local quarantined_401=""
+	quarantined_401=$(find "${HOME}/.cache/gh" -path '*/aidevops-quarantine-*/*graphql-401.cache*' -type f) ||
+		quarantined_401=""
+	if [[ -f "${HOME}/.cache/gh/graphql-401.cache" ]] || [[ -z "$quarantined_401" ]]; then
 		print_result "stale cache 401 quarantines only matching cache file" 1 "cache remediation did not quarantine stale 401 file"
 		teardown_test_env
 		unset GH_STUB_MODE

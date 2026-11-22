@@ -70,6 +70,15 @@ if [[ "$1" == "api" && "$2" == /repos/*/labels\?per_page=100 ]]; then
 		"status:blocked" "d93f0b" "Partial work blocked; inspect reason and next action"
 	exit 0
 fi
+# Status transitions read the exact label contract with one aliased GraphQL
+# query; serve it from the REST fixture above instead of failing closed.
+if [[ "$1" == "api" && "$2" == "graphql" && "$*" == *'label0: label(name:'* ]]; then
+	"$0" api '/repos/fixture/labels?per_page=100' | jq -Rn '
+		[inputs | split("\t") | {name: .[0], color: .[1], description: .[2]}]
+		| to_entries | map({key: ("label" + (.key | tostring)), value: .value})
+		| from_entries | {data: {repository: .}}'
+	exit $?
+fi
 if [[ "$1" == "issue" && "$2" == "view" ]]; then
 	cat "${GH_VIEW_LABELS}" 2>/dev/null || true
 	exit 0

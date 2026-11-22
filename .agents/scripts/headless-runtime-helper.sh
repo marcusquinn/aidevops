@@ -36,11 +36,11 @@ source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
 source "${SCRIPT_DIR}/worker-failure-evidence.sh"
 
 # SSH agent integration for commit signing (t1882)
-# Source persisted agent.env so workers can sign commits without passphrase prompts.
-if [[ -f "$HOME/.ssh/agent.env" ]]; then
-	# shellcheck source=/dev/null
-	. "$HOME/.ssh/agent.env" >/dev/null 2>&1 || true
-fi
+# Source persisted agent.env so workers can sign commits without passphrase
+# prompts. GH#36493: restart the agent when agent.env outlived it (reboot).
+# shellcheck source=./headless-ssh-agent-lib.sh
+source "${SCRIPT_DIR}/headless-ssh-agent-lib.sh"
+headless_ssh_agent_ensure "${SCRIPT_DIR}/signing-setup.sh" || true
 
 # Absolute fallback when both pool and routing table are unavailable (GH#17769)
 readonly DEFAULT_HEADLESS_MODELS="anthropic/claude-sonnet-5-5"
@@ -201,6 +201,11 @@ _finalize_isolated_runtime_data() {
 	local runtime_role="$2"
 	local ephemeral_run=0
 	[[ -n "$isolated_data_dir" && -d "$isolated_data_dir" ]] || return 0
+	# GH#37527: count attempt activity before merge/discard so exit
+	# classification cannot read a false zero from the shared DB.
+	if declare -F _hrff_snapshot_attempt_activity >/dev/null 2>&1; then
+		_hrff_snapshot_attempt_activity "${isolated_data_dir}/opencode/opencode.db"
+	fi
 	if _headless_run_is_ephemeral "$runtime_role"; then
 		ephemeral_run=1
 		print_info "[lifecycle] ephemeral_db_discarded role=$runtime_role pid=$$"
@@ -296,10 +301,22 @@ _store_headless_session_if_allowed() {
 	local session_id="$3"
 	local selected_model="$4"
 	local role="$5"
-	if _headless_run_is_ephemeral "$role"; then
+	if _headless_run_is_ephemeral "$role" ||
+		_headless_session_key_is_fresh_per_run "$session_key"; then
 		return 0
 	fi
-	store_session_id "$provider" "$session_key" "$session_id" "$selected_model"
+	# GH#38982: bind the session to the head this attempt ended at (the
+	# caller's dynamic work_dir), so a later dispatch can tell delivered work.
+	local head_sha="" head_branch=""
+	if [[ "$session_key" == issue-* && -n "${work_dir:-}" && -d "${work_dir:-}" ]]; then
+		head_sha=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || head_sha=""
+		head_branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || head_branch=""
+		[[ "$head_sha" =~ ^[0-9a-f]{40}$ && -n "$head_branch" ]] || {
+			head_sha=""
+			head_branch=""
+		}
+	fi
+	store_session_id "$provider" "$session_key" "$session_id" "$selected_model" "$head_sha" "$head_branch"
 	return $?
 }
 
@@ -478,6 +495,38 @@ _t3077_write_preflight_sentinel() {
 }
 
 #######################################
+# GH#39151: sectioned-write steering shared by resume prompts. OpenCode caps
+# each response at 32K output tokens; a finish of "length" aborts the in-flight
+# tool call, so nothing is written and a generic resume repeats the failure.
+#######################################
+_HEADLESS_OUTPUT_CLAMP_INSTRUCTION="Your previous response hit the 32K output-token limit and its tool call was discarded; nothing was written. Write large files in sections of under ~120 lines (Write, then Edit appends)."
+
+#######################################
+# Succeed when the session's last assistant message finished with "length".
+#
+# Args:
+#   $1 - OpenCode session id
+# Reads the worker-isolated DB when present, then the shared DB.
+# Returns: 0 when the last assistant finish is length, 1 otherwise or on
+#          missing sqlite3/DB/session (fail-open: no steering added).
+#######################################
+_session_hit_output_clamp() {
+	local session_id="$1"
+	local db_path="" finish="" json_finish="\$.finish" json_role="\$.role"
+	[[ "$session_id" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
+	command -v sqlite3 >/dev/null 2>&1 || return 1
+	for db_path in "${_WORKER_ISOLATED_DB_PATH:-}" "${HOME}/.local/share/opencode/opencode.db"; do
+		[[ -n "$db_path" && -f "$db_path" ]] || continue
+		finish=$(sqlite3 -readonly -cmd ".timeout 5000" "$db_path" \
+			"SELECT json_extract(data, '${json_finish}') FROM message WHERE session_id='${session_id}' AND json_extract(data, '${json_role}')='assistant' ORDER BY time_created DESC, id DESC LIMIT 1" 2>/dev/null) || finish=""
+		[[ -n "$finish" ]] || continue
+		[[ "$finish" == "length" ]] && return 0
+		return 1
+	done
+	return 1
+}
+
+#######################################
 # Derive structured, secret-free worker failure evidence fields.
 #
 # Args:
@@ -514,6 +563,10 @@ _derive_worker_failure_evidence() {
 	premature_exit)
 		launch_failure_cause="model_stopped_before_completion"
 		next_action="resume_session_with_completion_contract"
+		if _session_hit_output_clamp "${_run_metric_session_id:-}"; then
+			launch_failure_cause="output_clamp"
+			next_action="resume_session_with_sectioned_writes"
+		fi
 		;;
 	watchdog_stall_continue | service_interruption_continue | service_interruption_exhausted | signal_killed_continue)
 		launch_failure_cause="mid_session_interruption"
@@ -593,6 +646,10 @@ _derive_worker_failure_evidence() {
 #   $2 - work dir
 # Returns: 0 for an exact-head, linked, summarised ready PR, or a merged PR
 #          with the same evidence whose issue is confirmed closed.
+# Sets _WORKER_POST_PR_HANDOFF_STATE to the observed exact-head state so a
+# caller can separate unreadable GitHub state (`unknown`,
+# `merged_issue_unreadable`) from a definitive rejection (GH#36171).
+# `rejected` means the identity or local preconditions failed.
 #######################################
 _worker_post_pr_handoff_confirmed() {
 	local session_key="$1"
@@ -600,10 +657,22 @@ _worker_post_pr_handoff_confirmed() {
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
 	local branch_name
 	local local_head
-	local issue_number="${session_key#issue-}"
+	local issue_number=""
+	_WORKER_POST_PR_HANDOFF_STATE="rejected"
 
-	[[ "$session_key" == issue-* ]] || return 1
-	[[ -n "$repo_slug" ]] || return 1
+	# aidevops:trust-boundary — accept only launcher-defined identities. Manual
+	# sessions must bind to trusted dispatch metadata, never digits in prompt text.
+	if [[ "$session_key" =~ ^issue-([1-9][0-9]*)$ ]]; then
+		issue_number="${BASH_REMATCH[1]}"
+	elif [[ "$session_key" =~ ^manual-cli-([1-9][0-9]*)-[0-9]+$ ]]; then
+		issue_number="${BASH_REMATCH[1]}"
+		[[ "${WORKER_ISSUE_NUMBER:-}" == "$issue_number" ]] || return 1
+	else
+		return 1
+	fi
+	[[ "${WORKER_ISSUE_NUMBER:-$issue_number}" == "$issue_number" ]] || return 1
+	[[ "$repo_slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+	[[ "${WORKER_REPO_SLUG:-$repo_slug}" == "$repo_slug" ]] || return 1
 	command -v gh >/dev/null 2>&1 || return 1
 	if [[ -n "$work_dir" && -d "$work_dir" ]]; then
 		branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
@@ -615,15 +684,24 @@ _worker_post_pr_handoff_confirmed() {
 	local handoff_state=""
 	handoff_state=$(_pr_handoff_state_for_branch_or_issue \
 		"$branch_name" "$issue_number" "$repo_slug" "head-only" "$local_head" "1") || return 1
-	case "${handoff_state%%|*}" in
+	_WORKER_POST_PR_HANDOFF_STATE="${handoff_state%%|*}"
+	[[ -n "$_WORKER_POST_PR_HANDOFF_STATE" ]] || _WORKER_POST_PR_HANDOFF_STATE="unknown"
+	case "$_WORKER_POST_PR_HANDOFF_STATE" in
 	ready) return 0 ;;
-	merged)
+	merged | merged_missing_summary)
+		# t19196: a missing summary gates nothing after merge (linkage was verified).
 		# GH#34931: a worker may merge its own PR before emitting POST_PR_HANDOFF.
 		# Reopened/open issues remain merged checkpoints, never completion.
 		local issue_state=""
-		issue_state=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
-			--jq '.state | ascii_downcase' 2>/dev/null) || return 1
-		[[ "$issue_state" == "closed" ]] || return 1
+		if ! issue_state=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
+			--jq '.state | ascii_downcase' 2>/dev/null); then
+			_WORKER_POST_PR_HANDOFF_STATE="merged_issue_unreadable"
+			return 1
+		fi
+		if [[ "$issue_state" != "closed" ]]; then
+			_WORKER_POST_PR_HANDOFF_STATE="merged_issue_open"
+			return 1
+		fi
 		return 0
 		;;
 	esac
@@ -750,10 +828,10 @@ _execute_run_attempt() {
 	# The mismatch caused the guard to reject every legitimate dispatch, creating
 	# a claim→reject→release→reclaim loop. dispatch_with_dedup is the authoritative
 	# dedup layer; a second check here adds no safety and causes false rejections.
-	# GH#20542: DISPATCH_REPO_SLUG export moved to _cmd_run_prepare (called
-	# before the EXIT trap is armed) so _release_dispatch_claim always has a
-	# non-empty slug. The role+session_key guard here is no longer needed —
-	# _cmd_run_prepare sets the slug for all roles unconditionally.
+	# GH#20542: DISPATCH_REPO_SLUG export moved to _cmd_run_prepare. Model
+	# selection runs before it, so a selection failure releases the claim
+	# before the export; _release_dispatch_claim then falls back to the
+	# dispatcher-supplied WORKER_REPO_SLUG (GH#35684).
 
 	local output_file="" exit_code_file="" exit_code=0 permission_request_file=""
 	local start_ms=0 end_ms=0 duration_ms=0
@@ -976,6 +1054,9 @@ _worker_canary_soft_bypass_authorized() {
 	local role="$1"
 	local authorized_reason="${AIDEVOPS_WORKER_CANARY_SOFT_BYPASS_REASON:-}"
 	[[ "$role" == "$HEADLESS_ROLE_WORKER" ]] || return 1
+	# GH#36698: model_unavailable is soft only at the dispatcher, whose canary
+	# backs off the rejected model before this worker reselects. A worker whose
+	# own canary model is rejected must exit rather than run on that model.
 	case "$authorized_reason" in
 		inconclusive | overload | provider_error | rate_limit | timeout | transient) ;;
 		*) return 1 ;;
@@ -1060,6 +1141,8 @@ cmd_run() {
 cmd_canary() {
 	local role="worker"
 	local model_override=""
+	local initial_model=""
+	local tier_name="standard"
 
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
@@ -1072,9 +1155,12 @@ cmd_canary() {
 			model_override="${2:-}"
 			shift 2
 			;;
+		--initial-model)
+			initial_model="${2:-}"
+			shift 2
+			;;
 		--tier)
-			# Accepted for call-site clarity; the dispatcher resolves the
-			# concrete model before invoking this preflight.
+			tier_name="${2:-standard}"
 			shift 2
 			;;
 		*)
@@ -1087,9 +1173,21 @@ cmd_canary() {
 		print_error "The model-replay role is supported only by the run command"
 		return 1
 	fi
+	tier_name=$(_normalize_headless_tier "$tier_name")
 
-	local selected_model
-	selected_model=$(choose_model "$role" "$model_override") || return $?
+	# GH#38717: select exactly as the worker will (_select_cmd_run_model):
+	# requested tier, adaptive mode, dispatcher pick as a same-tier preference.
+	# A selection failure is not a probe failure; report it by exit code (75 =
+	# every candidate backed off, 78 = no candidate configured) and leave
+	# canary-last-fail* untouched, since that shared evidence describes the
+	# last real probe, not this tier.
+	local selected_model="" choose_exit=0
+	selected_model=$(choose_model "$role" "$model_override" "$tier_name" "adaptive" "$initial_model") || choose_exit=$?
+	if [[ "$choose_exit" -ne 0 ]]; then
+		[[ "$choose_exit" -eq 75 ]] || choose_exit=78
+		print_warning "[lifecycle] canary_model_selection_unavailable role=$role tier=$tier_name rc=$choose_exit"
+		return "$choose_exit"
+	fi
 	_enforce_opencode_version_pin || return $?
 	_run_canary_test "$selected_model"
 	return $?
@@ -1105,7 +1203,7 @@ headless-runtime-helper.sh - Model-aware headless runtime (OpenCode default, Cla
 
 Usage:
   headless-runtime-helper.sh select [--role pulse|worker|triage] [--model provider/model]
-  headless-runtime-helper.sh canary [--role pulse|worker|triage] [--model provider/model] [--tier simple|standard|thinking]
+  headless-runtime-helper.sh canary [--role pulse|worker|triage] [--model provider/model | --initial-model provider/model] [--tier simple|standard|thinking]
   headless-runtime-helper.sh run --role pulse|worker|triage|model-replay --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model | --initial-model provider/model] [--tier simple|standard|thinking] [--variant NAME] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--private-workload --private-profile-sha256 HASH] [--standalone-prompt] [--detach]
   headless-runtime-helper.sh backoff [status|set MODEL-OR-PROVIDER REASON [SECONDS]|clear MODEL-OR-PROVIDER]
   headless-runtime-helper.sh session [status|clear PROVIDER SESSION_KEY]

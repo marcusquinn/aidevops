@@ -39,7 +39,7 @@ set -uo pipefail
 
 SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "${SCRIPT_DIR_TEST}/../../.." && pwd)" || exit 1
-WORKFLOW="${REPO_ROOT}/.github/workflows/issue-sync.yml"
+WORKFLOW="${REPO_ROOT}/.github/workflows/issue-sync-reusable.yml"
 
 if [[ -t 1 ]]; then
 	TEST_GREEN=$'\033[0;32m'

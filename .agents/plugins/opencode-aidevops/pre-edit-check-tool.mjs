@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
-import { execFileSync, spawn } from "child_process";
+import { execFileSync } from "child_process";
 import { existsSync, realpathSync, statSync } from "fs";
 import { isAbsolute, join, relative, resolve, sep } from "path";
+import { runPreEditCheck } from "./pre-edit-check-process.mjs";
+import { admitToolOwner } from "./lifecycle-admission.mjs";
+import { formatPreEditCheckResult } from "./pre-edit-check-result.mjs";
 
-const PRE_EDIT_GUIDANCE = {
-  1: "STOP — you are on main/master branch. Create a worktree first.",
-  2: "Create a worktree before proceeding with edits.",
-  3: "WARNING — proceed with caution.",
-};
 const MAX_TARGET_PATHS = 32;
+const CANONICAL_RUNTIME_ALLOWED = "allowlisted-ignored-runtime-path";
 const EXTERNAL_TARGET_RESPONSE =
   "Git isolation not applicable: all explicit targetPaths resolve outside Git worktrees.\n"
   + "This result does not authorize file writes; runtime path, secret, destructive-operation, and managed-directory policies still apply.";
@@ -58,7 +57,7 @@ function classifyExplicitTarget(helper, targetPath, workdir) {
   const lexicallyRepositoryLocal = typeof repoRoot === "string"
     && repoRoot !== ""
     && pathIsWithin(lexicalTarget, repoRoot);
-  return { policy, targetPath, lexicallyRepositoryLocal };
+  return { policy, targetPath, lexicalTarget, lexicallyRepositoryLocal };
 }
 
 function classifyExplicitTargets(targetPaths, scriptsDir, workdir) {
@@ -103,8 +102,15 @@ function resolveRepositoryTargetScope(classifications) {
   if (repositoryTargets.some(({ policy }) => policy.target?.repo_root !== targetWorkdir)) {
     throw new Error("explicit repository targets span multiple worktrees");
   }
+  // GH#39573: pre-edit-check.sh exempts an allowlisted canonical runtime
+  // target, so pass a target without that exemption when one exists. The
+  // script runs from the repository root, so hand it the absolute lexical
+  // path resolved against the caller's workdir (symlinks left unresolved).
+  const representative = repositoryTargets.find(
+    ({ policy }) => policy.canonical_runtime_allow !== CANONICAL_RUNTIME_ALLOWED,
+  ) ?? repositoryTargets[0];
   return {
-    repositoryTarget: repositoryTargets[0].targetPath,
+    repositoryTarget: representative.lexicalTarget,
     targetWorkdir,
     terminalResponse: "",
   };
@@ -194,28 +200,6 @@ export function resolveGitWorktree(requestedWorkdir) {
 }
 
 /**
- * Format the pre-edit subprocess outcome for the tool response.
- * @param {{code: number|null, stdout: string, stderr: string, timedOut: boolean, error?: Error}} result
- * @param {number} timeoutMs
- * @returns {string}
- */
-function formatPreEditCheckResult(result, timeoutMs) {
-  const cmdOutput = (result.stdout + result.stderr).trim();
-  let response;
-  if (result.timedOut) {
-    response = `Pre-edit check TIMED OUT after ${timeoutMs}ms: child process tree terminated before returning\n${cmdOutput}`;
-  } else if (result.error) {
-    response = `Pre-edit check failed to start: ${result.error.message}\n${cmdOutput}`;
-  } else {
-    const code = result.code ?? 1;
-    response = code === 0
-      ? `Pre-edit check PASSED (exit 0):\n${cmdOutput}`
-      : `Pre-edit check exit ${code}: ${PRE_EDIT_GUIDANCE[code] || "Unknown"}\n${cmdOutput}`;
-  }
-  return response;
-}
-
-/**
  * Create the pre-edit check tool.
  * @param {function} tool - OpenCode tool factory
  * @param {object} z - OpenCode tool schema helpers
@@ -246,61 +230,17 @@ export function createPreEditCheckTool(tool, z, scriptsDir, timeoutMs = 120000) 
         ? [...(normalizedArgs.task ? ["--loop-mode"] : []), "--file", repositoryTarget]
         : (normalizedArgs.task ? ["--loop-mode", "--task", normalizedArgs.task] : []);
       const result = await runPreEditCheck(script, taskArgs, targetWorkdir, timeoutMs, context);
+      if (result.code === 0 && !result.timedOut && !result.error) {
+        try {
+          admitToolOwner({
+            scriptsDir, input: { tool: "aidevops_pre_edit_check", sessionID: context?.sessionID || "" },
+            output: { args: { cwd: targetWorkdir } }, bash: true,
+          });
+        } catch (error) {
+          return `Pre-edit check exit 1: ${error.message}`;
+        }
+      }
       return formatPreEditCheckResult(result, timeoutMs);
     },
-  });
-}
-
-/**
- * Run loop-mode checks in their own process group so a timeout cannot leave a
- * helper running long enough to create a worktree after the tool has returned.
- * @param {string} script
- * @param {string[]} args
- * @param {string} cwd
- * @param {number} timeoutMs
- * @param {object} [context] - OpenCode tool context
- * @returns {Promise<{code: number|null, stdout: string, stderr: string, timedOut: boolean, error?: Error}>}
- */
-function runPreEditCheck(script, args, cwd, timeoutMs, context) {
-  return new Promise((resolve) => {
-    const sessionID = String(context?.sessionID || "");
-    const sessionEnv = /^ses_[A-Za-z0-9_-]+$/.test(sessionID)
-      ? {
-          OPENCODE: "1",
-          OPENCODE_PID: String(process.pid),
-          OPENCODE_SESSION_ID: sessionID,
-          AIDEVOPS_OPENCODE_SESSION_ID: sessionID,
-        }
-      : {};
-    const child = spawn("bash", [script, ...args], {
-      cwd,
-      detached: true,
-      env: { ...process.env, ...sessionEnv },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    let spawnError;
-
-    child.stdout.setEncoding("utf-8");
-    child.stderr.setEncoding("utf-8");
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.on("error", (error) => { spawnError = error; });
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch {
-        child.kill("SIGKILL");
-      }
-    }, timeoutMs);
-
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code, stdout, stderr, timedOut, error: spawnError });
-    });
   });
 }

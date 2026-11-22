@@ -25,6 +25,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 #   _interactive_pr_is_stale + _interactive_pr_trigger_handover → pulse-merge-conflict.sh
 #   _extract_linked_issue                                        → pulse-merge.sh (still)
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+# shellcheck source=../gh-closing-reference-lib.sh
+source "${SCRIPT_DIR}/../gh-closing-reference-lib.sh"
+# shellcheck source=../shared-gh-commit-cache.sh
+source "${SCRIPT_DIR}/../shared-gh-commit-cache.sh"
 CONFLICT_SCRIPT="${SCRIPT_DIR}/../pulse-merge-conflict.sh"
 
 readonly TEST_RED='\033[0;31m'
@@ -86,6 +90,37 @@ reset_mock_state() {
 	# Clean up any stamp files left by prior tests
 	rm -rf "${TEST_ROOT}/interactive-claims"
 	mkdir -p "${TEST_ROOT}/interactive-claims"
+	# GH#38291 idle-session fixtures: registry owner row, bus record, notices.
+	rm -f "${TEST_ROOT}/registry-owner.txt" "${TEST_ROOT}/bus-show.json" "${TEST_ROOT}/bus-send.log" \
+		"${TEST_ROOT}/issue-assignees-json.txt"
+	_INTERACTIVE_PR_IDLE_SESSION_EVIDENCE=""
+	return 0
+}
+
+_iso_hours_ago() {
+	local hours="$1"
+	local epoch=$(( $(date +%s) - hours * 3600 ))
+	if date -u -r "$epoch" "+%Y-%m-%dT%H:%M:%SZ" >/dev/null 2>&1; then
+		date -u -r "$epoch" "+%Y-%m-%dT%H:%M:%SZ"
+	else
+		date -u -d "@$epoch" "+%Y-%m-%dT%H:%M:%SZ"
+	fi
+	return 0
+}
+
+# GH#38291: one claim stamp → registry owner → session-bus record chain.
+#   $1 bus status, $2 session idle hours, $3 bus issue JSON, $4 bus pr JSON,
+#   $5 registry owner pid (default: the stamp pid 4242)
+write_idle_session_fixture() {
+	local status="$1" idle_hours="$2" bus_issue="$3" bus_pr="$4" registry_pid="${5:-4242}"
+	local last_activity=$(( $(date +%s) - idle_hours * 3600 ))
+	printf '{"issue":42,"slug":"owner/repo","worktree_path":"%s","pid":4242}\n' \
+		"${TEST_ROOT}/wt-owner" >"${TEST_ROOT}/interactive-claims/owner-repo-42.json"
+	printf '%s|ses_idleowner|||2026-11-14T06:00:00Z|start\n' "$registry_pid" >"${TEST_ROOT}/registry-owner.txt"
+	printf '{"session_id":"ses_idleowner","pid":4242,"status":"%s","last_activity_epoch":%s,"issue":%s,"pr":%s}\n' \
+		"$status" "$last_activity" "$bus_issue" "$bus_pr" >"${TEST_ROOT}/bus-show.json"
+	printf '["status:in-review"]' >"${TEST_ROOT}/issue-labels-json.txt"
+	return 0
 }
 
 setup_test_env() {
@@ -107,6 +142,19 @@ setup_test_env() {
 	fi
 	cp "$mock_src" "${TEST_ROOT}/bin/gh"
 	chmod +x "${TEST_ROOT}/bin/gh"
+
+	# GH#38291: fake session bus — `show` replays bus-show.json (missing file =
+	# unknown session), `send` records the notice.
+	cat >"${TEST_ROOT}/bin/fake-session-bus.sh" <<'BUS'
+#!/usr/bin/env bash
+case "${1:-}" in
+show) [[ -f "${TEST_ROOT}/bus-show.json" ]] || exit 1; cat "${TEST_ROOT}/bus-show.json" ;;
+send) printf '%s\n' "$*" >>"${TEST_ROOT}/bus-send.log" ;;
+*) exit 1 ;;
+esac
+BUS
+	chmod +x "${TEST_ROOT}/bin/fake-session-bus.sh"
+	export AIDEVOPS_SESSION_BUS_HELPER="${TEST_ROOT}/bin/fake-session-bus.sh"
 	return 0
 }
 
@@ -154,6 +202,29 @@ define_helpers_under_test() {
 	# Stub _gh_idempotent_comment — records a call and returns success.
 	_gh_idempotent_comment() {
 		printf '_gh_idempotent_comment pr=%s repo=%s marker=%s\n' "$1" "$2" "$3" >>"${TEST_ROOT}/idempotent-comments.log"
+		return 0
+	}
+
+	# GH#38291 helpers and their registry/timeout dependencies.
+	local fn fn_src
+	for fn in _interactive_pr_session_bus _interactive_pr_idle_session_evidence _interactive_pr_session_gates _interactive_pr_notify_idle_owner; do
+		fn_src=$(awk -v name="$fn" '$0 ~ "^" name "\\(\\) \\{" { on = 1 } on { print } on && /^\}$/ { on = 0 }' "$CONFLICT_SCRIPT")
+		if [[ -z "$fn_src" ]]; then
+			printf 'ERROR: could not extract %s from %s\n' "$fn" "$CONFLICT_SCRIPT" >&2
+			return 1
+		fi
+		# shellcheck disable=SC1090
+		eval "$fn_src"
+	done
+	timeout_sec() {
+		shift
+		"$@"
+		return $?
+	}
+	check_worktree_owner_snapshot() {
+		local wt_path="$1"
+		[[ -f "${TEST_ROOT}/registry-owner.txt" && "$wt_path" == "${TEST_ROOT}/wt-owner" ]] || return 0
+		cat "${TEST_ROOT}/registry-owner.txt"
 		return 0
 	}
 	return 0
@@ -262,6 +333,23 @@ test_D2_updated_at_stale_skips_head_commit_lookup() {
 		return 0
 	fi
 	print_result "D2: stale updatedAt skips head commit lookup" 0
+	return 0
+}
+
+test_orphan_age_probe() {
+	reset_mock_state
+	local rc=0
+	(
+		_extract_linked_issue() { return 0; }
+		AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce _interactive_pr_is_stale 100 owner/repo "" "" "" 1 || exit 1
+		# Ordinary handover cannot skip issue/claim gates; detection never writes.
+		if AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce _interactive_pr_is_stale 100 owner/repo; then exit 1; fi
+		if AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=detect _interactive_pr_is_stale 100 owner/repo "" "" "" 1; then exit 1; fi
+		_extract_linked_issue() { return 1; }
+		if AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce _interactive_pr_is_stale 100 owner/repo "" "" "" 1; then exit 1; fi
+		exit 0
+	) || rc=$?
+	print_result "orphan age probe is explicit, enforce-only and fails closed on metadata errors" "$rc"
 	return 0
 }
 
@@ -458,19 +546,23 @@ test_L2_zero_seconds_returns_not_stale() {
 	return 0
 }
 
-test_L3_empty_seconds_uses_default_14400() {
+test_L3_empty_seconds_uses_default_12h() {
 	reset_mock_state
-	# Empty seconds triggers bash's :- default substitution to "14400" (4h), which is valid.
+	# Empty seconds and an unset mode use the defaults: 43200 (12h) and enforce.
 	# The PR is 48h old (reset_mock_state default), so it should return stale (0).
+	local rc=0
 	AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS="" \
-	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce \
-		_interactive_pr_is_stale "100" "owner/repo"
-	local rc=$?
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE="" \
+		_interactive_pr_is_stale "100" "owner/repo" || rc=$?
 	if [[ "$rc" -ne 0 ]]; then
-		print_result "L3: empty seconds falls back to default 14400 (stale)" 1 "Expected 0 (stale), got $rc"
+		print_result "L3: empty seconds and mode fall back to 12h enforce (stale)" 1 "Expected 0 (stale), got $rc"
 		return 0
 	fi
-	print_result "L3: empty seconds falls back to default 14400 (stale)" 0
+	if grep -q "would-handover: PR #100" "$LOGFILE" 2>/dev/null; then
+		print_result "L3: empty seconds and mode fall back to 12h enforce (stale)" 1 "Default mode logged detect-only would-handover"
+		return 0
+	fi
+	print_result "L3: empty seconds and mode fall back to 12h enforce (stale)" 0
 	return 0
 }
 
@@ -485,6 +577,145 @@ test_L4_negative_seconds_returns_not_stale() {
 		return 0
 	fi
 	print_result "L4: negative seconds returns not-stale" 0
+	return 0
+}
+
+# =============================================================================
+# GH#38291: idle-session evidence satisfies Gates 2/3 for a live-PID claim
+# =============================================================================
+
+_stale_rc() {
+	local rc=0
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce _interactive_pr_is_stale "100" "owner/repo" || rc=$?
+	printf '%s' "$rc"
+	return 0
+}
+
+test_M1_idle_session_claim_returns_stale() {
+	reset_mock_state
+	write_idle_session_fixture idle 7 null null
+	local rc=0
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce _interactive_pr_is_stale "100" "owner/repo" || rc=$?
+	if [[ "$rc" -eq 0 && "$_INTERACTIVE_PR_IDLE_SESSION_EVIDENCE" == "100|owner/repo|ses_idleowner|"* ]] \
+		&& grep -q 'held by idle session ses_idleowner' "$LOGFILE"; then
+		print_result "M1: stamp + status label held by an idle session (7h) returns stale with evidence" 0
+	else
+		print_result "M1: stamp + status label held by an idle session (7h) returns stale with evidence" 1 \
+			"rc=${rc}, evidence=${_INTERACTIVE_PR_IDLE_SESSION_EVIDENCE}, log=$(tr '\n' ';' <"$LOGFILE")"
+	fi
+	return 0
+}
+
+test_M2_fail_closed_session_evidence_cases() {
+	local busy recent on_issue on_pr unknown pid_mismatch no_owner bus_pid_mismatch disabled
+	reset_mock_state; write_idle_session_fixture busy 7 null null; busy=$(_stale_rc)
+	reset_mock_state; write_idle_session_fixture idle 1 null null; recent=$(_stale_rc)
+	reset_mock_state; write_idle_session_fixture idle 7 42 null; on_issue=$(_stale_rc)
+	reset_mock_state; write_idle_session_fixture idle 7 null 100; on_pr=$(_stale_rc)
+	reset_mock_state; write_idle_session_fixture idle 7 null null; rm -f "${TEST_ROOT}/bus-show.json"; unknown=$(_stale_rc)
+	reset_mock_state; write_idle_session_fixture idle 7 null null 9999; pid_mismatch=$(_stale_rc)
+	reset_mock_state; write_idle_session_fixture idle 7 null null; rm -f "${TEST_ROOT}/registry-owner.txt"; no_owner=$(_stale_rc)
+	reset_mock_state; write_idle_session_fixture idle 7 null null
+	sed 's/"pid":4242/"pid":5151/' "${TEST_ROOT}/bus-show.json" >"${TEST_ROOT}/bus-show.json.tmp"
+	mv "${TEST_ROOT}/bus-show.json.tmp" "${TEST_ROOT}/bus-show.json"
+	bus_pid_mismatch=$(_stale_rc)
+	reset_mock_state; write_idle_session_fixture idle 7 null null
+	disabled=$(AIDEVOPS_IDLE_SESSION_HANDOVER_SECONDS=0 _stale_rc)
+	if [[ "$busy$recent$on_issue$on_pr$unknown$pid_mismatch$no_owner$bus_pid_mismatch$disabled" == "111111111" ]]; then
+		print_result "M2: busy, recent, on-this-issue/PR, unknown bus, missing/mismatched owner, disabled → not-stale" 0
+	else
+		print_result "M2: busy, recent, on-this-issue/PR, unknown bus, missing/mismatched owner, disabled → not-stale" 1 \
+			"busy=${busy} recent=${recent} on_issue=${on_issue} on_pr=${on_pr} unknown=${unknown} pid_mismatch=${pid_mismatch} no_owner=${no_owner} bus_pid=${bus_pid_mismatch} disabled=${disabled}"
+	fi
+	return 0
+}
+
+test_M3_session_window_requires_pr_idle_too() {
+	local six_h two_h ungated_six_h
+	reset_mock_state; write_idle_session_fixture idle 7 null null
+	_iso_hours_ago 6 >"${TEST_ROOT}/updated.txt"; _iso_hours_ago 6 >"${TEST_ROOT}/head-commit.txt"
+	six_h=$(_stale_rc)
+	reset_mock_state; write_idle_session_fixture idle 7 null null
+	_iso_hours_ago 2 >"${TEST_ROOT}/updated.txt"; _iso_hours_ago 2 >"${TEST_ROOT}/head-commit.txt"
+	two_h=$(_stale_rc)
+	# Without a session gate the 12h PR-age threshold is unchanged.
+	reset_mock_state
+	_iso_hours_ago 6 >"${TEST_ROOT}/updated.txt"; _iso_hours_ago 6 >"${TEST_ROOT}/head-commit.txt"
+	ungated_six_h=$(_stale_rc)
+	if [[ "$six_h" == 0 && "$two_h" == 1 && "$ungated_six_h" == 1 ]]; then
+		print_result "M3: idle-session window applies to PR age too; ungated PRs keep the 12h threshold" 0
+	else
+		print_result "M3: idle-session window applies to PR age too; ungated PRs keep the 12h threshold" 1 \
+			"six_h=${six_h} two_h=${two_h} ungated_six_h=${ungated_six_h}"
+	fi
+	return 0
+}
+
+test_M4_handover_notifies_idle_owner_once() {
+	reset_mock_state
+	write_idle_session_fixture idle 7 null null
+	: >"${TEST_ROOT}/idempotent-comments.log"
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce _interactive_pr_is_stale "100" "owner/repo" || true
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce _interactive_pr_trigger_handover "100" "owner/repo" "unresolved review threads"
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce _interactive_pr_trigger_handover "100" "owner/repo" "unresolved review threads"
+	local sends=0
+	[[ -f "${TEST_ROOT}/bus-send.log" ]] && sends=$(grep -c '' "${TEST_ROOT}/bus-send.log")
+	if [[ "$sends" -eq 1 ]] \
+		&& grep -q '^send ses_idleowner --sender pulse .*PR #100 (owner/repo).*unresolved review threads.*no-takeover' "${TEST_ROOT}/bus-send.log" \
+		&& grep -q 'notified idle owner session ses_idleowner' "$LOGFILE"; then
+		print_result "M4: confirmed handover sends exactly one non-waking owner notice" 0
+	else
+		print_result "M4: confirmed handover sends exactly one non-waking owner notice" 1 \
+			"sends=${sends}, bus=$(tr '\n' ';' <"${TEST_ROOT}/bus-send.log" 2>/dev/null), log=$(tr '\n' ';' <"$LOGFILE")"
+	fi
+	return 0
+}
+
+test_M5_handover_without_session_evidence_sends_no_notice() {
+	reset_mock_state
+	: >"${TEST_ROOT}/idempotent-comments.log"
+	# Ordinary 48h no-stamp handover: no idle-session evidence, so no notice.
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce _interactive_pr_is_stale "100" "owner/repo" || true
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce _interactive_pr_trigger_handover "100" "owner/repo"
+	if [[ ! -s "${TEST_ROOT}/bus-send.log" ]] && grep -q 'handed over to worker pipeline' "$LOGFILE"; then
+		print_result "M5: handover without idle-session evidence sends no bus notice" 0
+	else
+		print_result "M5: handover without idle-session evidence sends no bus notice" 1 \
+			"bus=$(tr '\n' ';' <"${TEST_ROOT}/bus-send.log" 2>/dev/null), log=$(tr '\n' ';' <"$LOGFILE")"
+	fi
+	return 0
+}
+
+# GH#38724: an active status label with no assignee is an orphan (GH#33420)
+# and must not hold an idle PR forever; it gets the full 12h threshold only.
+test_N1_unassigned_status_label_is_orphan() {
+	local orphan_48h orphan_6h assigned_48h orphan_with_stamp logged=1
+	reset_mock_state
+	printf '["status:claimed"]' >"${TEST_ROOT}/issue-labels-json.txt"
+	printf '[]' >"${TEST_ROOT}/issue-assignees-json.txt"
+	orphan_48h=$(_stale_rc)
+	grep -q 'has no assignee and no local claim stamp; orphaned claim' "$LOGFILE" && logged=0
+	reset_mock_state
+	printf '["status:claimed"]' >"${TEST_ROOT}/issue-labels-json.txt"
+	printf '[]' >"${TEST_ROOT}/issue-assignees-json.txt"
+	_iso_hours_ago 6 >"${TEST_ROOT}/updated.txt"; _iso_hours_ago 6 >"${TEST_ROOT}/head-commit.txt"
+	orphan_6h=$(_stale_rc)
+	reset_mock_state
+	printf '["status:claimed"]' >"${TEST_ROOT}/issue-labels-json.txt"
+	printf '["claimant"]' >"${TEST_ROOT}/issue-assignees-json.txt"
+	assigned_48h=$(_stale_rc)
+	# A local stamp still requires idle-session evidence (none here).
+	reset_mock_state
+	printf '["status:claimed"]' >"${TEST_ROOT}/issue-labels-json.txt"
+	printf '[]' >"${TEST_ROOT}/issue-assignees-json.txt"
+	echo '{"pid":12345}' >"${TEST_ROOT}/interactive-claims/owner-repo-42.json"
+	orphan_with_stamp=$(_stale_rc)
+	if [[ "$orphan_48h$logged$orphan_6h$assigned_48h$orphan_with_stamp" == "00111" ]]; then
+		print_result "N1: unassigned status label is an orphan at 12h; assigned label, local stamp and 6h PR still hold" 0
+	else
+		print_result "N1: unassigned status label is an orphan at 12h; assigned label, local stamp and 6h PR still hold" 1 \
+			"orphan_48h=${orphan_48h} logged=${logged} orphan_6h=${orphan_6h} assigned_48h=${assigned_48h} orphan_with_stamp=${orphan_with_stamp}"
+	fi
 	return 0
 }
 
@@ -516,6 +747,7 @@ main() {
 	test_C_active_status_label_returns_not_stale
 	test_D_idle_no_stamp_no_status_returns_stale
 	test_D2_updated_at_stale_skips_head_commit_lookup
+	test_orphan_age_probe
 	test_E_missing_origin_interactive_returns_not_stale
 	test_F_mode_off_returns_not_stale_unconditionally
 	test_G_mode_detect_logs_and_returns_stale
@@ -526,8 +758,14 @@ main() {
 	test_K_no_takeover_label_blocks_handover
 	test_L_invalid_seconds_returns_not_stale
 	test_L2_zero_seconds_returns_not_stale
-	test_L3_empty_seconds_uses_default_14400
+	test_L3_empty_seconds_uses_default_12h
 	test_L4_negative_seconds_returns_not_stale
+	test_M1_idle_session_claim_returns_stale
+	test_M2_fail_closed_session_evidence_cases
+	test_M3_session_window_requires_pr_idle_too
+	test_M4_handover_notifies_idle_owner_once
+	test_M5_handover_without_session_evidence_sends_no_notice
+	test_N1_unassigned_status_label_is_orphan
 
 	printf '\n=== %d test(s), %d failure(s) ===\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

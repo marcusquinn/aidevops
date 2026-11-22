@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { checkRedactedEdit } from "../redacted-edit-guard.mjs";
 import { createQualityHooks } from "../quality-hooks.mjs";
+import { displayRedactionNote } from "../quality-hooks-output-scrub.mjs";
 
 // GH#35139: the worker write fence reads the ambient headless environment, and
 // this fixture writes outside any worker worktree. Run as an interactive session.
@@ -36,7 +37,8 @@ test("Read scrubbing followed by a neighbouring Edit fails closed before mutatio
   const hooks = createQualityHooks({ scriptsDir, logsDir: directory, repositoryDir: directory });
   const readOutput = { output: original, metadata: {} };
   await hooks.toolExecuteAfter({ tool: "read", callID: "" }, readOutput);
-  assert.equal(readOutput.output, `# before ${TOKEN} after\n`);
+  // GH#37382: the model is told that the placeholder is not source content.
+  assert.equal(readOutput.output, `# before ${TOKEN} after\n\n\n${displayRedactionNote(1)}`);
   const args = { filePath, oldString: readOutput.output, newString: readOutput.output.replace("before", "updated") };
   await assert.rejects(hooks.toolExecuteBefore({ tool: "edit", callID: "" }, { args }), /Edit blocked: display-redaction/);
   assert.equal(readFileSync(filePath, "utf8"), original);

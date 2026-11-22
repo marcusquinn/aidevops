@@ -27,7 +27,7 @@ import {
 } from "../playwriter-relay-lifecycle.mjs";
 
 const POSIX = process.platform !== "win32";
-const GUARDIAN_ARGS = ["--aidevops-relay-guardian", "npx", "-y", "playwriter@0.8.0"];
+const GUARDIAN_ARGS = ["--aidevops-relay-guardian", "npx", "-y", "playwriter@0.9.0"];
 const LAUNCHER = fileURLToPath(new URL("../playwriter-authenticated-relay.mjs", import.meta.url));
 
 function inspectSyntheticGuardian(pid) {
@@ -90,7 +90,7 @@ function writeSession(parent, supervisorPid, state) {
     schema: "aidevops-playwriter-relay/v2",
     host: "127.0.0.1",
     port: 19988,
-    version: "0.8.0",
+    version: "0.9.0",
     supervisorPid,
     owned: true,
     relayStartTime: inspectProcess(state.relayGroupId)?.startTime,
@@ -100,20 +100,20 @@ function writeSession(parent, supervisorPid, state) {
 }
 
 test("accepts only reviewed Playwriter package-runner commands", () => {
-  assert.deepEqual(validatePlaywriterCommand(["npx", "playwriter@0.8.0"]), [
-    "npx", "playwriter@0.8.0",
+  assert.deepEqual(validatePlaywriterCommand(["npx", "playwriter@0.9.0"]), [
+    "npx", "playwriter@0.9.0",
   ]);
-  assert.deepEqual(validatePlaywriterCommand(["bun", "x", "playwriter@0.8.0"]), [
-    "bun", "x", "playwriter@0.8.0",
+  assert.deepEqual(validatePlaywriterCommand(["bun", "x", "playwriter@0.9.0"]), [
+    "bun", "x", "playwriter@0.9.0",
   ]);
-  for (const unreviewed of ["playwriter@latest", "playwriter@0.5.0"]) {
+  for (const unreviewed of ["playwriter@latest", "playwriter@0.5.0", "playwriter@0.8.0"]) {
     assert.throws(
       () => validatePlaywriterCommand(["npx", unreviewed]),
       /reviewed Playwriter package shape/,
     );
   }
   assert.throws(
-    () => validatePlaywriterCommand(["sh", "-c", "playwriter@0.8.0"]),
+    () => validatePlaywriterCommand(["sh", "-c", "playwriter@0.9.0"]),
     /reviewed Playwriter package shape/,
   );
 });
@@ -157,7 +157,7 @@ test("rejects Windows before supervisor or guardian startup", () => {
     import assert from "node:assert/strict";
     Object.defineProperty(process, "platform", { value: "win32" });
     const { main } = await import(${JSON.stringify(launcher)});
-    for (const argv of ${JSON.stringify([["npx", "playwriter@0.8.0"], GUARDIAN_ARGS])}) {
+    for (const argv of ${JSON.stringify([["npx", "playwriter@0.9.0"], GUARDIAN_ARGS])}) {
       await assert.rejects(
         main(argv, {}),
         { message: "Authenticated Playwriter relay: requires POSIX process groups; Windows is not supported" },
@@ -177,7 +177,7 @@ test("proves both relay version and token enforcement", async (t) => {
   const server = createServer((request, response) => {
     if (request.url === "/version") {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end('{"version":"0.8.0"}');
+      response.end('{"version":"0.9.0"}');
       return;
     }
     const url = new URL(request.url, "http://127.0.0.1");
@@ -308,7 +308,7 @@ test("keeps legacy v1 reconciliation with exact package and relay argument token
     const check = () => alive(group.groupId) ? setTimeout(check, 10) : resolvePromise();
     check();
   });
-  const inspect = () => ({ groupId: group.groupId, argv: ["npx", "playwriter@0.8.0", "serve", "--host", "127.0.0.1"] });
+  const inspect = () => ({ groupId: group.groupId, argv: ["npx", "playwriter@0.9.0", "serve", "--host", "127.0.0.1"] });
   assert.deepEqual(await reconcileStaleRelays(parent, { inspect }), [session.name]);
   assert.equal(alive(group.descendantPid), false);
 });

@@ -19,6 +19,15 @@ edits Buzz identity/team stores, downloads or loads a model, or calls a relay.
 The earlier `aidevops-conversation-v1` runtime remains available as a read-only
 diagnostic profile. Team snapshots do not select it.
 
+Buzz Desktop 0.7+ (the `block/buzz-app` previews) has no custom-runtime store
+for these snapshots to target. There, the `buzz-aidevops` plugin
+(`.agents/plugins/buzz-aidevops/README.md`) adds an **aidevops** agent type: the
+owner creates each agent with its per-computer `role-host` name and a registered
+project, and the plugin starts `aidevops buzz acp --member NAME --project DIR`.
+That launcher reuses the roster selection, linked worktree, remote-interactive
+overlay and launcher below; Buzz's harness kit replaces the 0.5 owner-only
+environment checks and reply publishing.
+
 ## Recommended virtual-assistant topology
 
 Each VA server is one execution principal with its own local aidevops runtime,
@@ -48,6 +57,16 @@ CLI sequence, access-channel requirement, and disclosure checks are defined in
 `tools/ai-assistants/buzz-team-interface.md`.
 
 ## Generate and inspect
+
+Several Macs can join one community. Before generating a snapshot for each Mac,
+give it a distinct `LocalHostName` (System Settings > General > Sharing > Local
+hostname, or `sudo scutil --set LocalHostName Marcus-MacBook-Pro-02`), then
+check it with `scutil --get LocalHostName`. Identical hostnames would otherwise
+produce clashing agent names; numbering (`-01`, `-02`) keeps mentions unambiguous.
+If using `AIDEVOPS_BUZZ_HOST_SLUG` or `--host-slug`, use a distinct normalized
+slug for each Mac instead: overrides take precedence over `LocalHostName`. The
+interactive runtime must resolve the same slug as generation; set the environment
+override for the runtime when generation used `--host-slug`.
 
 Generate a mode-0600 snapshot in the user-facing Downloads folder:
 
@@ -214,6 +233,30 @@ app-data location is known and non-default. Installation is idempotent, refuses 
 different existing definition, and accepts `--replace` only while Buzz is stopped;
 replacement first writes a private rollback copy to `~/.aidevops/buzz-backups/`.
 
+Reinstalling the interactive runtime also refreshes imported agents' source
+digests in place, preserving Buzz identities, DMs and threads. With Buzz stopped,
+the installer matches this host's roster against the new anchor and changes only
+the digest line of otherwise exact canonical pointer prompts. Locally edited
+prompts are skipped and reported; launch-time source verification remains strict.
+Before changing the store or replacing the manifest, it saves the original
+`agents/managed-agents.json` as
+`~/.aidevops/buzz-backups/managed-agents.<timestamp>.json` (mode 600). Output lists
+only matched agent names and old/new 12-character digest prefixes, not store fields.
+An unchanged reinstall does not rewrite or back up the store again.
+
+Installation also repoints exact interactive command overrides from older anchors
+of the same runtime to the new anchor, with a private store backup before the
+change. Other commands are untouched. `aidevops buzz status` reports the number
+of stale interactive overrides against the installed manifest before reinstall.
+
+To roll back, quit Buzz, restore that private store backup to Buzz's
+`agents/managed-agents.json`, and restore the matching
+`~/.aidevops/buzz-backups/aidevops-interactive-v1.<timestamp>.json` manifest to
+`custom_harnesses/aidevops-interactive-v1.json`; keep both files mode 600. Restore
+both together so the stored digests agree with the previous immutable anchor.
+After pruning, first restore the old anchor from Trash to its original path;
+manifest and store backups alone do not contain the runtime files.
+
 Installation snapshots the complete agents tree, required local Node validator
 dependencies, the exact installed OpenCode plugin/SDK/Zod closure, and sanitized
 normal OpenCode config into an immutable owner-only anchor under
@@ -224,6 +267,29 @@ retaining normal interactive commands, agents, non-secret MCP definitions, and
 model routing. Credential-shaped provider fields plus MCP environment and header
 containers are removed before hashing or copying. A real ACP `session/prompt`
 canary verifies tool-schema resolution rather than stopping after startup.
+
+Successful installs prune unused sibling anchors to Trash using `trash` or
+`gio trash`, logging each move. The just-installed manifest protects its anchor.
+All `custom_harnesses/*.json` references in macOS `xyz.block.buzz.*` app-data
+directories (including development bundles), the selected app-data directory,
+and `AIDEVOPS_BUZZ_APP_DATA_DIR` are retained, as are anchors referenced by running
+processes. CLI installs and pruning share a nonblocking lock. Unreadable or invalid
+manifests and unavailable process checks refuse cleanup. Missing/failing Trash
+tools retain the anchor; there is no permanent-delete fallback and a cleanup
+failure does not undo a successful install.
+
+Inspect or prune independently (no project registration is needed):
+
+```bash
+python3 ~/.aidevops/agents/scripts/team-interface-buzz-runtime.py prune --dry-run
+python3 ~/.aidevops/agents/scripts/team-interface-buzz-runtime.py prune
+```
+
+On non-macOS hosts, set `AIDEVOPS_BUZZ_APP_DATA_DIR` or pass `--app-data-dir DIR`.
+Repeat `--app-data-dir` to protect additional non-default app-data directories;
+include every such location before pruning. Symlinks, staging directories and
+directories without a recognized anchor name and marker are never pruned.
+Use `verify-anchor --root /absolute/path/to/anchor` after restoring from Trash.
 
 After restarting Buzz, verify that **Aidevops Full Interactive V1** is ready before
 manually starting any imported member. The pinned `aidevops-buzz-acp-interactive`
@@ -248,6 +314,38 @@ cannot confirm an import or publish a relay message.
 To materialize or retain the diagnostic read-only runtime, explicitly use
 `--runtime conversation`. Its launcher remains `aidevops-buzz-acp` and its label
 is **Aidevops Restricted Conversation V1**.
+
+## Community layout and channel membership
+
+`.agents/configs/buzz-community-base.json` is a reusable layout: sections,
+channels with visibility, and which `<role>-<host-slug>` agents join which
+channels. `buzz-team-provision-helper.sh community plan [--host-slug S]` is
+read-only. It compares the template with the local identity store
+(`agents/identities.json` under the Buzz app-data directory, type
+`sh.aidevops.buzz/aidevops`) and `buzz channels list` / `channels members`, then
+prints: missing channels, missing agent drafts, one `member_add` request per
+channel (channel id, pubkeys, role `bot`), and private channels where the owner
+must first add the sending agent.
+
+Repository mappings in `agents.repo_channels` also contribute channels and agent
+memberships. Failed membership reads are listed as `unreadable_memberships`, not
+treated as missing members; no `member_add` requests are emitted for those
+channels until membership can be read successfully. Private channels only need
+owner action when the executing `aidevops-<host-slug>` agent is not already a
+member.
+
+Membership route and limits (observed on Buzz 1.0.0, plugin 1.2.x):
+
+- The local `buzz` CLI cannot add members: `channels add-member` is refused with
+  `Kind 9000 can't be signed by a local tool; use Buzz`.
+- An existing aidevops Buzz agent's `member_add {channel, pubkeys, role}` tool
+  works for channels it belongs to. Send it the planned request with
+  `buzz messages send --mention`.
+- For private channels the agent has not joined it is refused with
+  `restricted: not a channel member`; the owner adds that agent first.
+- `buzz-ctl` in a Cloudron container manages relay membership only.
+- Sidebar sections are per user: they can be captured, not pushed to others.
+- Do not work around these limits by editing the relay database.
 
 ## Safety and lifecycle
 

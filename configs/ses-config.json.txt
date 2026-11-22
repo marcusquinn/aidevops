@@ -1,47 +1,30 @@
 {
   "accounts": {
     "production": {
-      "aws_access_key_id": "YOUR_PRODUCTION_AWS_ACCESS_KEY_ID_HERE",
-      "aws_secret_access_key": "YOUR_PRODUCTION_AWS_SECRET_ACCESS_KEY_HERE",
+      "credential_prefix": "AWS_PRODUCTION",
       "region": "us-east-1",
       "description": "Production SES account",
       "account_email": "your-email@yourdomain.com",
-      "verified_domains": [
-        "yourdomain.com",
-        "mail.yourdomain.com"
-      ],
-      "verified_emails": [
-        "noreply@yourdomain.com",
-        "support@yourdomain.com"
-      ],
+      "verified_domains": ["yourdomain.com", "mail.yourdomain.com"],
+      "verified_emails": ["noreply@yourdomain.com", "support@yourdomain.com"],
       "inbound_mailbox": "your-ses-inbound-bucket/production"
     },
     "staging": {
-      "aws_access_key_id": "YOUR_STAGING_AWS_ACCESS_KEY_ID_HERE",
-      "aws_secret_access_key": "YOUR_STAGING_AWS_SECRET_ACCESS_KEY_HERE",
+      "profile": "aidevops-staging",
       "region": "us-east-1",
       "description": "Staging/Development SES account",
       "account_email": "your-email@yourdomain.com",
-      "verified_domains": [
-        "staging.yourdomain.com"
-      ],
-      "verified_emails": [
-        "test@yourdomain.com"
-      ],
+      "verified_domains": ["staging.yourdomain.com"],
+      "verified_emails": ["test@yourdomain.com"],
       "inbound_mailbox": "your-ses-inbound-bucket/staging"
     },
     "client-project": {
-      "aws_access_key_id": "YOUR_CLIENT_AWS_ACCESS_KEY_ID_HERE",
-      "aws_secret_access_key": "YOUR_CLIENT_AWS_SECRET_ACCESS_KEY_HERE",
+      "credential_prefix": "AWS_CLIENT_PROJECT",
       "region": "eu-west-1",
       "description": "Client project SES account",
       "account_email": "your-email@yourdomain.com",
-      "verified_domains": [
-        "clientdomain.com"
-      ],
-      "verified_emails": [
-        "noreply@clientdomain.com"
-      ]
+      "verified_domains": ["clientdomain.com"],
+      "verified_emails": ["noreply@clientdomain.com"]
     }
   },
   "monitoring": {
@@ -55,14 +38,7 @@
     "complaint_topic_arn": "arn:aws:sns:us-east-1:123456789012:ses-complaints",
     "delivery_topic_arn": "arn:aws:sns:us-east-1:123456789012:ses-deliveries"
   },
-  "common_domains": [
-    "gmail.com",
-    "yahoo.com",
-    "hotmail.com",
-    "outlook.com",
-    "aol.com",
-    "icloud.com"
-  ],
+  "common_domains": ["gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com", "icloud.com"],
   "test_emails": {
     "success": "success@simulator.amazonses.com",
     "bounce": "bounce@simulator.amazonses.com",

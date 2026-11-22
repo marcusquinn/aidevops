@@ -84,6 +84,8 @@ Music requests use the same `POST /api/v1/audio/speech` route; discover model ID
 
 Missing model-specific fields can return an unbilled 400. NanoGPT's OpenAI TTS upstream has returned `invalid_api_key` (unbilled 401) on both `/api/tts` and `/api/v1/audio/speech`; treat that upstream route as intermittently unavailable rather than repeatedly retrying it.
 
+NanoGPT also serves images with the same key (`image-models?detailed=true`, `images/generations`); see `content/media-generation-providers.md` "NanoGPT images".
+
 ## ChatGPT OAuth scope
 
 The ChatGPT OAuth pool's Codex responses route covers images, **not** TTS. OpenAI `/v1/audio/speech` requires an OpenAI Platform API key; OAuth pool credentials are not a substitute.

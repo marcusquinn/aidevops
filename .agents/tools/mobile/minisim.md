@@ -76,7 +76,6 @@ Install the MiniSim extension from the Raycast Store for keyboard-driven emulato
 
 ## Related Tools
 
-- `tools/browser/stagehand.md` - Browser automation (web testing)
 - `tools/browser/playwright.md` - Cross-browser testing
 - `tools/mobile/serve-sim.md` - Browser-visible Apple Simulator stream/control
 - `services/hosting/localhost.md` - Local development setup

@@ -6,7 +6,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
-FEEDBACK_SCRIPT="${SCRIPT_DIR}/../pulse-merge-feedback.sh"
+# The trusted body-review classifier moved to the review sub-library; the stale
+# path made every case error out while reporting "Tests run: 0".
+FEEDBACK_SCRIPT="${SCRIPT_DIR}/../pulse-merge-feedback-review.sh"
 
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -60,6 +62,7 @@ SCANNER
 	PULSE_REVIEW_REMEDIATION_MAINTAINER_ATTENTION_RC=12
 	PULSE_REVIEW_REMEDIATION_RETRYABLE_FAILURE_RC=13
 	PULSE_REVIEW_REMEDIATION_REPEAT_EXHAUSTED="repeat_exhausted"
+	PULSE_REVIEW_REMEDIATION_DEFERRED="deferred"
 	PULSE_MERGE_BOOL_TRUE="true"
 	_PULSE_MERGE_REMEDIATION_OUTCOME=""
 	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
@@ -85,8 +88,47 @@ teardown_test_env() {
 	return 0
 }
 
+# Dependencies added to the extracted review gate by GH#35867.
+define_review_gate_stubs() {
+	local active_reader_src=""
+	active_reader_src=$(awk '
+		/^_review_feedback_active_change_requests\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
+	' "$FEEDBACK_SCRIPT")
+	# Fail closed if production renames or removes the dependency.
+	[[ -n "$active_reader_src" ]] || return 1
+	# Routing/remediation cases need a trusted human request, independently of
+	# the body-only classifier's REVIEW_PAGES_JSON fixture.
+	ACTIVE_CHANGE_REQUESTS_JSON='[{"id":1,"state":"CHANGES_REQUESTED","submitted_at":"2026-08-03T00:00:00Z","user":{"login":"maintainer","type":"User"},"author_association":"OWNER"}]'
+	_review_feedback_active_change_requests() {
+		local pr_number="$1" repo_slug="$2"
+		[[ -n "$pr_number" && -n "$repo_slug" ]] || return 1
+		printf '%s\n' "$ACTIVE_CHANGE_REQUESTS_JSON"
+		return 0
+	}
+	# Keep _PULSE_MERGE_DIR pointing at the fixture scanner; override only the
+	# advisory helper so no production dismissal can run from this harness.
+	export ADVISORY_DISMISS_LOG="${TEST_ROOT}/advisory-dismiss.log"
+	cat >"${TEST_ROOT}/scripts/review-bot-gate-helper.sh" <<'HELPER'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${ADVISORY_DISMISS_LOG:?}"
+HELPER
+	AIDEVOPS_REVIEW_BOT_GATE_HELPER="${TEST_ROOT}/scripts/review-bot-gate-helper.sh"
+	return 0
+}
+
 define_helpers_under_test() {
 	local src_repo_path="" src_repeat_exhausted="" src_dispatch="" src_maybe_dispatch="" src_preflight_dispatch="" src_enabled="" src_trusted_body_review="" src_changes_gate=""
+	local src_interactive_handover=""
+	define_review_gate_stubs || return 1
+	src_interactive_handover=$(awk '
+		/^_pulse_merge_review_thread_interactive_handover\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
+	' "$MERGE_SCRIPT")
+	[[ -n "$src_interactive_handover" ]] || {
+		printf 'ERROR: could not extract _pulse_merge_review_thread_interactive_handover from %s\n' "$MERGE_SCRIPT" >&2
+		return 1
+	}
+	# shellcheck disable=SC1090
+	eval "$src_interactive_handover"
 	src_repo_path=$(awk '
 		/^_pulse_merge_repo_path_for_slug\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
 	' "$MERGE_SCRIPT")
@@ -363,6 +405,126 @@ test_repo_path_lookup_ignores_slug_case() {
 		print_result "repo path lookup ignores slug case" 1 \
 			"repo_path=${repo_path}, scanner=$(tr '\n' ';' <"$SCANNER_LOG"), log=$(tr '\n' ';' <"$LOGFILE")"
 	fi
+	teardown_test_env
+	return 0
+}
+
+# GH#38291: emulate _process_single_ready_pr's dynamic-scope pr_labels.
+_run_interactive_review_dispatch() {
+	local pr_labels="$1"
+	local pr_updated_at="2026-11-14T06:08:00Z"
+	local pr_head_ref_oid="abc123"
+	_pulse_merge_dispatch_review_thread_remediation 77 owner/repo "after unresolved review-bot thread preflight blocker"
+	return $?
+}
+
+test_interactive_review_threads_defer_while_session_active() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	local handover_log="${TEST_ROOT}/handover.log"
+	_interactive_pr_is_stale() { printf 'stale %s\n' "$*" >>"$handover_log"; return 1; }
+	_interactive_pr_trigger_handover() { printf 'handover %s\n' "$*" >>"$handover_log"; return 0; }
+
+	_run_interactive_review_dispatch "origin:interactive,status:in-review"
+
+	if [[ ! -s "$SCANNER_LOG" && "$_PULSE_MERGE_REMEDIATION_OUTCOME" == "deferred" ]] \
+		&& grep -q 'stale 77 owner/repo 2026-11-14T06:08:00Z abc123' "$handover_log" \
+		&& ! grep -q '^handover' "$handover_log" \
+		&& grep -q 'still owned by an active or unverified session' "$LOGFILE"; then
+		print_result "interactive review threads defer without scanner while session active (GH#38291)" 0
+	else
+		print_result "interactive review threads defer without scanner while session active (GH#38291)" 1 \
+			"outcome=${_PULSE_MERGE_REMEDIATION_OUTCOME}, scanner=$(tr '\n' ';' <"$SCANNER_LOG"), handover=$(tr '\n' ';' <"$handover_log" 2>/dev/null), log=$(tr '\n' ';' <"$LOGFILE")"
+	fi
+	unset -f _interactive_pr_is_stale _interactive_pr_trigger_handover
+	teardown_test_env
+	return 0
+}
+
+test_interactive_review_threads_hand_over_idle_session_then_dispatch() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	local handover_log="${TEST_ROOT}/handover.log"
+	_interactive_pr_is_stale() { return 0; }
+	_interactive_pr_trigger_handover() { printf 'handover %s\n' "$*" >>"$handover_log"; return 0; }
+
+	_run_interactive_review_dispatch "origin:interactive"
+
+	if grep -q 'include_human=true args=dispatch-pr owner/repo' "$SCANNER_LOG" \
+		&& [[ "$_PULSE_MERGE_REMEDIATION_OUTCOME" == "queued" ]] \
+		&& grep -q 'handover 77 owner/repo unresolved review threads after unresolved review-bot thread preflight blocker' "$handover_log"; then
+		print_result "stale interactive PR is handed over before review-thread dispatch (GH#38291)" 0
+	else
+		print_result "stale interactive PR is handed over before review-thread dispatch (GH#38291)" 1 \
+			"outcome=${_PULSE_MERGE_REMEDIATION_OUTCOME}, scanner=$(tr '\n' ';' <"$SCANNER_LOG"), handover=$(tr '\n' ';' <"$handover_log" 2>/dev/null)"
+	fi
+	unset -f _interactive_pr_is_stale _interactive_pr_trigger_handover
+	teardown_test_env
+	return 0
+}
+
+test_interactive_review_threads_unconfirmed_handover_defers() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	_interactive_pr_is_stale() { return 0; }
+	_interactive_pr_trigger_handover() { return 1; }
+
+	_run_interactive_review_dispatch "origin:interactive"
+
+	if [[ ! -s "$SCANNER_LOG" && "$_PULSE_MERGE_REMEDIATION_OUTCOME" == "deferred" ]] \
+		&& grep -q 'interactive handover was not confirmed' "$LOGFILE"; then
+		print_result "unconfirmed interactive handover defers review-thread dispatch (GH#38291)" 0
+	else
+		print_result "unconfirmed interactive handover defers review-thread dispatch (GH#38291)" 1 \
+			"outcome=${_PULSE_MERGE_REMEDIATION_OUTCOME}, scanner=$(tr '\n' ';' <"$SCANNER_LOG"), log=$(tr '\n' ';' <"$LOGFILE")"
+	fi
+	unset -f _interactive_pr_is_stale _interactive_pr_trigger_handover
+	teardown_test_env
+	return 0
+}
+
+# GH#39382: an orphan PR is not stale until recovery links a tracking issue.
+test_orphan_interactive_review_threads_recover_issue_then_hand_over() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	local handover_log="${TEST_ROOT}/handover.log" recovered_flag="${TEST_ROOT}/recovered"
+	_interactive_pr_is_stale() { [[ -f "$recovered_flag" ]]; return $?; }
+	_recover_interactive_pr_work_issue() { : >"$recovered_flag"; printf '501'; return 0; }
+	_interactive_pr_trigger_handover() { printf 'handover %s\n' "$*" >>"$handover_log"; return 0; }
+
+	_run_interactive_review_dispatch "origin:interactive,allow-auto-merge"
+
+	if grep -q 'include_human=true args=dispatch-pr owner/repo' "$SCANNER_LOG" \
+		&& [[ "$_PULSE_MERGE_REMEDIATION_OUTCOME" == "queued" ]] \
+		&& grep -q '^handover 77 owner/repo' "$handover_log"; then
+		print_result "orphan interactive PR gets a tracking issue, then hands over (GH#39382)" 0
+	else
+		print_result "orphan interactive PR gets a tracking issue, then hands over (GH#39382)" 1 \
+			"outcome=${_PULSE_MERGE_REMEDIATION_OUTCOME}, scanner=$(tr '\n' ';' <"$SCANNER_LOG"), handover=$(tr '\n' ';' <"$handover_log" 2>/dev/null), log=$(tr '\n' ';' <"$LOGFILE")"
+	fi
+	unset -f _interactive_pr_is_stale _recover_interactive_pr_work_issue _interactive_pr_trigger_handover
+	teardown_test_env
+	return 0
+}
+
+test_orphan_interactive_review_threads_failed_recovery_defers() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	local handover_log="${TEST_ROOT}/handover.log"
+	_interactive_pr_is_stale() { return 1; }
+	_recover_interactive_pr_work_issue() { return 1; }
+	_interactive_pr_trigger_handover() { printf 'handover %s\n' "$*" >>"$handover_log"; return 0; }
+
+	_run_interactive_review_dispatch "origin:interactive,allow-auto-merge"
+
+	if [[ ! -s "$SCANNER_LOG" && "$_PULSE_MERGE_REMEDIATION_OUTCOME" == "deferred" && ! -s "$handover_log" ]] \
+		&& grep -q 'still owned by an active or unverified session' "$LOGFILE"; then
+		print_result "orphan interactive PR without a recovered issue still defers (GH#39382)" 0
+	else
+		print_result "orphan interactive PR without a recovered issue still defers (GH#39382)" 1 \
+			"outcome=${_PULSE_MERGE_REMEDIATION_OUTCOME}, scanner=$(tr '\n' ';' <"$SCANNER_LOG"), handover=$(tr '\n' ';' <"$handover_log" 2>/dev/null), log=$(tr '\n' ';' <"$LOGFILE")"
+	fi
+	unset -f _interactive_pr_is_stale _recover_interactive_pr_work_issue _interactive_pr_trigger_handover
 	teardown_test_env
 	return 0
 }
@@ -723,10 +885,13 @@ test_changes_requested_skips_remediation_for_external_contributor() {
 	}
 	_pulse_merge_dismiss_coderabbit_nits() { return 1; }
 
+	# GH#35867 (#aidevops:trust-boundary in _handle_changes_requested_review_gate):
+	# an external-contributor PR is held without remediation AND without the
+	# destructive close-and-redispatch route; the contributor addresses review.
 	if _handle_changes_requested_review_gate 77 owner/repo CHANGES_REQUESTED 42 "origin:worker,external-contributor"; then
 		print_result "external contributor CHANGES_REQUESTED skips remediation" 1 \
 			"Expected gate to skip merge"
-	elif [[ ! -s "$SCANNER_LOG" ]] && grep -q 'route 77 owner/repo' "$route_log"; then
+	elif [[ ! -s "$SCANNER_LOG" && ! -s "$route_log" ]]; then
 		print_result "external contributor CHANGES_REQUESTED skips remediation" 0
 	else
 		print_result "external contributor CHANGES_REQUESTED skips remediation" 1 \
@@ -824,6 +989,11 @@ main() {
 	test_dry_run_preflight_blocker_never_dispatches
 	test_unresolved_conversation_dispatches_targeted_human_thread_remediation
 	test_repo_path_lookup_ignores_slug_case
+	test_interactive_review_threads_defer_while_session_active
+	test_interactive_review_threads_hand_over_idle_session_then_dispatch
+	test_interactive_review_threads_unconfirmed_handover_defers
+	test_orphan_interactive_review_threads_recover_issue_then_hand_over
+	test_orphan_interactive_review_threads_failed_recovery_defers
 	test_other_merge_failures_do_not_dispatch_review_thread_remediation
 	test_changes_requested_routes_by_default
 	test_changes_requested_translates_maintainer_route_outcome

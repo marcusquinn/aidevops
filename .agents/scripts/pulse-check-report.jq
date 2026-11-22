@@ -63,6 +63,13 @@ end) as $max_workers |
 (if $hist_delivery.delivered_successes == null then null else ($hist_delivery.delivered_successes | number_or_zero) end) as $hist_delivered |
 ($summary.metrics.failure_families // [] | map(select(non_failure_handoff_family | not))) as $failure_families |
 ($recent_summary.metrics.failure_families // [] | map(select(non_failure_handoff_family | not))) as $recent_failure_families |
+# Summary and actionable findings must use the same recurrence criteria.
+# Historical-only samples remain in remediation evidence, not current alerts.
+([$failure_families[] as $family
+  | $family
+  | select((.count // 0) >= $failure_threshold and (.distinct_sessions // 0) >= 2 and (.confidence // "low") == "high" and (.family // "") != "other-failure")
+  | select((([$recent_failure_families[] | select(.fingerprint == $family.fingerprint)] | first | .count) // 0) >= $failure_threshold)
+]) as $recurrent_failure_families |
 ($summary.progress_blockers // {}) as $progress_blockers |
 ($current.canonical_reconciliation.refusal_count // 0 | number_or_zero) as $canonical_reconciliation_refusal_count |
 ($current.canonical_reconciliation.classification // "none") as $canonical_reconciliation_classification |
@@ -148,7 +155,7 @@ end) as $max_workers |
     runtime_stale: $runtime_stale,
     zero_worker_active_claim_actionable: $zero_worker_active_claim_actionable,
     sustained_zero_worker_underutilization: $sustained_zero_worker_underutilization,
-    recurrent_failure_families: ([$failure_families[] | select((.count // 0) >= $failure_threshold and (.confidence // "low") == "high" and (.family // "") != "other-failure")] | length)
+    recurrent_failure_families: ($recurrent_failure_families | length)
   },
   queue: ($queue.aggregate // {}),
   current_state: {
@@ -303,7 +310,7 @@ end) as $max_workers |
           ("last_observed_at=" + (($current.permission_holds.last_observed_at // "unknown") | tostring)),
           "issue_identity=redacted; see pulse.log DISPATCH_BLOCK_REASON reason=needs_maintainer_permissions|permission_grant_unverified"
         ];
-        "Run pulse-diagnose-helper.sh issue <N> --repo <owner/repo> for each held issue. It names the request, its age, whether the owning session ended, and both signed exits: grant (sudo aidevops approve permissions ... --request perm-<id>) or withdraw (same command with --withdraw), which grants nothing and resumes dispatch. Requests never expire unsigned.";
+        ("Run pulse-diagnose-helper.sh issue <N> --repo <owner/repo> for each held issue. It names the request, its age, whether the owning session ended, and both signed exits: grant (" + ($ARGS.named.approve_cli // "sudo aidevops") + " approve permissions ... --request perm-<id>) or withdraw (same command with --withdraw), which grants nothing and resumes dispatch. Requests never expire unsigned.");
         false
       )
     else empty end,
@@ -467,11 +474,9 @@ end) as $max_workers |
     else empty end,
     empty
     ,
-    ($failure_families[] as $family
+    ($recurrent_failure_families[] as $family
       | $family
-      | select((.count // 0) >= $failure_threshold and (.distinct_sessions // 0) >= 2 and (.confidence // "low") == "high" and (.family // "") != "other-failure")
       | (([$recent_failure_families[] | select(.fingerprint == $family.fingerprint)] | first | .count) // 0) as $family_recent_count
-      | select($family_recent_count >= $failure_threshold)
       | finding(
           ("worker-failure-family-" + (.family // "unknown"));
           "high";

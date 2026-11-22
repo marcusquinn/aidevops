@@ -94,6 +94,23 @@ curl -X POST "https://matrix.example.com/_matrix/client/v3/login" \
 | `maxPromptLength` | `3000` | Max prompt length |
 | `responseTimeout` | `600` | Max seconds to wait for runner |
 | `sessionIdleTimeout` | `300` | Idle timeout before compaction |
+| `sessionBus.enabled` | `false` | Enable the optional session bus gateway |
+| `sessionBus.relayIntervalSeconds` | `5` | Outbox polling interval in seconds |
+
+## Session bus
+
+Enable `sessionBus.enabled` and configure an explicit `allowedUsers` list. Link
+Matrix users to entities using the session bus chat-ingest setup in
+`reference/session-bus.md`. Commands are available in mapped rooms:
+
+- `!sessions` lists live sessions; listings are redacted unless the SDK confirms exactly two joined members.
+- `!ask <target> <text>` and `!send <target> <text>` message a session.
+- `!bind <target>` binds this room; `!unbind` removes its binding. In a bound room, `!ai <text>` asks that session; an unbound room keeps the runner path.
+- `!launch <title> :: <task text>` creates and binds a session. The bus requires a verified owner for launch.
+
+Replies are polled from the Matrix outbox and acknowledged only after posting.
+An acknowledgement failure can cause a repeated post. Turning the feature off
+restores the existing runner behavior. Test against a configured homeserver before production use.
 
 ## Usage
 

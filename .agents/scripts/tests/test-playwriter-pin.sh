@@ -16,6 +16,8 @@ import sys
 
 repo_root = pathlib.Path(sys.argv[1])
 module_path = repo_root / ".agents/scripts/lib/mcp_config.py"
+# mcp_config imports sibling modules (mcp_outscraper, GH#34893).
+sys.path.insert(0, str(module_path.parent))
 spec = importlib.util.spec_from_file_location("mcp_config", module_path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -29,6 +31,10 @@ legacy_commands = [
     ["npx", "playwriter@0.5.0"],
     ["/opt/aidevops/bin/npx", "-y", "playwriter@0.5.0"],
     ["bun", "x", "playwriter@0.5.0"],
+    # GH#35514: generated 0.8.0 entries migrate to the 0.9.0 pin.
+    ["npx", "playwriter@0.8.0"],
+    ["/opt/aidevops/bin/npx", "-y", "playwriter@0.8.0"],
+    ["bun", "x", "playwriter@0.8.0"],
 ]
 for command in legacy_commands:
     playwriter = {
@@ -45,9 +51,10 @@ for command in legacy_commands:
     }
     module.register_standard_mcps(legacy_config, None, "npx")
     assert legacy_config["mcp"]["playwriter"] is playwriter
-    assert playwriter["command"][-1] == "playwriter@0.8.0"
+    assert playwriter["command"][-1] == "playwriter@0.9.0"
     assert "playwriter@latest" not in playwriter["command"]
     assert "playwriter@0.5.0" not in playwriter["command"]
+    assert "playwriter@0.8.0" not in playwriter["command"]
     assert playwriter["enabled"] is False
     assert playwriter["environment"] == {
         "PLAYWRITER_RELAY": "local",
@@ -80,7 +87,7 @@ opt_in_config = {
     "mcp": {
         "playwriter": {
             "type": "local",
-            "command": ["npx", "playwriter@0.8.0"],
+            "command": ["npx", "playwriter@0.9.0"],
             "environment": {"PLAYWRITER_TELEMETRY": "1"},
             "enabled": True,
         },
@@ -126,7 +133,7 @@ assert custom_latest_with_yes_config["tools"]["playwriter_*"] is False
 
 generated_config = {"mcp": {}, "tools": {}}
 module.register_standard_mcps(generated_config, None, "npx")
-assert generated_config["mcp"]["playwriter"]["command"] == ["npx", "playwriter@0.8.0"]
+assert generated_config["mcp"]["playwriter"]["command"] == ["npx", "playwriter@0.9.0"]
 assert generated_config["mcp"]["playwriter"]["environment"] == {
     "PLAYWRITER_TELEMETRY": "0",
     "DO_NOT_TRACK": "1",
@@ -135,8 +142,14 @@ assert generated_config["mcp"]["playwriter"]["enabled"] is False
 print("PASS Playwriter Python generator pins legacy and generated commands")
 PY
 
-if grep -Fq 'npm install -g playwriter@0.8.0' "${REPO_ROOT}/.agents/scripts/tool-version-check.sh" &&
-	! grep -Fq 'npm install -g playwriter@latest' "${REPO_ROOT}/.agents/scripts/tool-version-check.sh"; then
+# GH#35515: the updater derives the reviewed pin from mcp_config.py, the
+# single maintained source, and never targets @latest.
+TOOL_CHECK="${REPO_ROOT}/.agents/scripts/tool-version-check.sh"
+# Matching the literal variable reference in source.
+# shellcheck disable=SC2016
+if grep -Fq 'npm install -g playwriter@${PLAYWRITER_APPROVED_VERSION}' "$TOOL_CHECK" &&
+	grep -Fq "PLAYWRITER_MCP_PACKAGE = 'playwriter@" "$TOOL_CHECK" &&
+	! grep -Fq 'npm install -g playwriter@latest' "$TOOL_CHECK"; then
 	printf 'PASS Playwriter updater preserves the reviewed pin\n'
 else
 	printf 'FAIL Playwriter updater can restore an unreviewed version\n' >&2

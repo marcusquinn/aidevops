@@ -44,6 +44,7 @@ import {
   zstdCompressorKind,
 } from "./openai-codex-request.mjs";
 import { parseRetryAfterValue } from "./provider-auth-pool-recovery.mjs";
+import { recordCodexModelRejection } from "./openai-codex-model-fallback.mjs";
 
 export { isOpenAITokenRefreshRequest } from "./openai-auth-refresh-recovery.mjs";
 export {
@@ -124,7 +125,11 @@ export function extractBearerToken(input, init) {
 
 export function resolveOpenAIAccount(accessToken) {
   const accounts = getAccounts("openai");
-  if (accessToken) return accounts.find((account) => account.access === accessToken) ?? null;
+  if (accessToken) {
+    return accounts.find((account) => account.access === accessToken)
+      ?? accounts.find((account) => account.previousAccess === accessToken)
+      ?? null;
+  }
   return [...accounts].sort((a, b) => new Date(b.lastUsed || 0) - new Date(a.lastUsed || 0))[0] ?? null;
 }
 
@@ -184,6 +189,19 @@ async function handleOpenAIUsageLimit(ctx) {
   return retryOpenAIRequest(ctx, rotated, "usage-rotate");
 }
 
+// Adopt the pool account in the provider, then retry. On adoption failure keep
+// (or record) previousAccess so a later request can retry adoption.
+async function adoptAndRetryOpenAIAccount(ctx, current, kind, previousAccess) {
+  if (!await applyOpenAIPoolAccount(ctx.client, current)) {
+    if (previousAccess) patchAccount("openai", current.email, { previousAccess });
+    return ctx.response;
+  }
+  patchAccount("openai", current.email, { previousAccess: null });
+  const retryResponse = await retryOpenAIRequest(ctx, current, kind);
+  if (await isOpenAIAuthFailureResponse(retryResponse)) markRejectedTokenFailure("openai", current);
+  return retryResponse;
+}
+
 async function handleOpenAIAuthFailure(ctx) {
   const { client, input, init, response } = ctx;
   const current = resolveOpenAIAccount(extractBearerToken(input, init));
@@ -195,15 +213,14 @@ async function handleOpenAIAuthFailure(ctx) {
     patchAccount("openai", current.email, { accountId: requestAccountId });
   }
   console.error(`[aidevops] OpenAI provider: rejected token for ${currentEmail} — forcing one refresh`);
-  const refreshedAccess = await forceRefreshOpenAIToken(current);
-  if (refreshedAccess) {
-    await applyOpenAIPoolAccount(client, current);
-    const retryResponse = await retryOpenAIRequest(ctx, current, "auth-refresh");
-    if (await isOpenAIAuthFailureResponse(retryResponse)) {
-      markRejectedTokenFailure("openai", current);
-    }
-    return retryResponse;
+  const requestToken = extractBearerToken(input, init);
+  if (current.previousAccess && requestToken === current.previousAccess && current.access !== requestToken) {
+    // Already refreshed but not adopted: retry adoption before another refresh.
+    return adoptAndRetryOpenAIAccount(ctx, current, "auth-adopt");
   }
+  const previousAccess = requestToken || current.previousAccess || current.access;
+  const refreshedAccess = await forceRefreshOpenAIToken(current);
+  if (refreshedAccess) return adoptAndRetryOpenAIAccount(ctx, current, "auth-refresh", previousAccess);
   console.error(`[aidevops] OpenAI provider: refresh unavailable for ${currentEmail} — trying another pool account`);
   const rotated = await rotateOpenAIPoolToken(client, current?.email);
   if (!rotated?.access) return response;
@@ -225,6 +242,9 @@ async function maybeRotateBeforeOpenAIFetch(client, input, init) {
 }
 
 async function handleOpenAIProviderFetch({ client, originalFetch, input, init }) {
+  // Snapshot the body reference (immutable string) before the first fetch so a
+  // caller mutating init.body in flight cannot change the fallback retry; parsing stays deferred.
+  const originalBody = init?.body;
   const prepared = await prepareOpenAIRequest(input, init);
   const retryInput = buildRetryRequest(prepared.input);
   const firstInit = await maybeRotateBeforeOpenAIFetch(client, prepared.input, prepared.init);
@@ -232,6 +252,12 @@ async function handleOpenAIProviderFetch({ client, originalFetch, input, init })
   const firstKind = firstInit === prepared.init ? "initial" : "preflight-rotate";
   try {
     ctx.response = await recordAttempt(ctx.attempts, firstKind, () => originalFetch(prepared.input, firstInit));
+    // GH#36698: record a definite model rejection for same-tier routing
+    // failover; the rejected response is returned unchanged.
+    ctx.response = await recordCodexModelRejection(ctx.response, retryInput, extendRequestInit(init, {
+      headers: headersFrom(prepared.input, firstInit),
+      ...(originalBody === undefined ? {} : { body: originalBody }),
+    }));
     if (await isOpenAIUsageLimitResponse(ctx.response)) return await handleOpenAIUsageLimit(ctx);
     if (await isOpenAIAuthFailureResponse(ctx.response)) return await handleOpenAIAuthFailure(ctx);
     return ctx.response;

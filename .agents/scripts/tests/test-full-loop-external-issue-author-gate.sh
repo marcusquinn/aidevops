@@ -9,6 +9,7 @@ STATE_HELPER="${TEST_DIR}/../full-loop-helper-state-lifecycle.sh"
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 SCRIPT_DIR="$TEST_ROOT"
+cp "${TEST_DIR}/../protected-label-guard.sh" "$SCRIPT_DIR/protected-label-guard.sh"
 GH_CALLS="$TEST_ROOT/gh-calls.log"
 AUTHORITY_RC=1
 AIDEVOPS_GH_ACTOR_AUTHORITY_REASON="fixture-untrusted"

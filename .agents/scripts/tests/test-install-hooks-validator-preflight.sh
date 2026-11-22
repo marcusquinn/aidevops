@@ -201,7 +201,7 @@ _run_runtime_dependency_test() {
 	local test_home="$test_tmpdir/home"
 	mkdir -p "$test_home/.aidevops/agents/scripts"
 
-	if [[ "$mode" == "healthy" ]]; then
+	if [[ "$mode" != "missing" ]]; then
 		cat >"$test_home/.aidevops/agents/scripts/command-policy-helper.py" <<'PYEOF'
 #!/usr/bin/env python3
 raise SystemExit(0)
@@ -210,6 +210,38 @@ PYEOF
 #!/usr/bin/env python3
 raise SystemExit(0)
 PYEOF
+		cat >"$test_home/.aidevops/agents/scripts/worker-lifecycle-session-helper.py" <<'PYEOF'
+import argparse
+import json
+import os
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+for name in ("cwd", "path", "runtime-pid", "session-id", "command"):
+    parser.add_argument("--" + name, required=True)
+args = parser.parse_args()
+assert Path(args.cwd).resolve() == Path.cwd()
+assert not (Path(args.cwd) / ".git").exists()
+assert os.environ["AIDEVOPS_LIFECYCLE_DISABLED"] == "1"
+assert os.environ["AIDEVOPS_LIFECYCLE_STATE_DIR"] == args.cwd + "/state"
+assert args.path == args.cwd + "/probe"
+assert int(args.runtime_pid) > 0
+assert args.session_id == "hook-install-preflight" and args.command == "true"
+print(json.dumps({"status": "not-applicable", "cleanup_authorized": False}))
+PYEOF
+		case "$mode" in
+		help-only)
+			printf 'import sys\nsys.exit(0 if "--help" in sys.argv else 75)\n' \
+				>"$test_tmpdir/override.py"
+			;;
+		invalid-response)
+			printf 'print("{}")\n' >"$test_tmpdir/override.py"
+			;;
+		denied)
+			printf 'print(\x27{"status":"denied","cleanup_authorized":false}\x27)\n' \
+				>"$test_tmpdir/override.py"
+			;;
+		esac
 	fi
 
 	cat >"$test_tmpdir/harness.sh" <<HARNESS_EOF
@@ -223,7 +255,10 @@ HARNESS_EOF
 
 	local rc=0
 	local output=""
-	output=$(HOME="$test_home" bash "$test_tmpdir/harness.sh" 2>&1) || rc=$?
+	local helper="$test_home/.aidevops/agents/scripts/worker-lifecycle-session-helper.py"
+	[[ ! -f "$test_tmpdir/override.py" ]] || helper="$test_tmpdir/override.py"
+	output=$(HOME="$test_home" AIDEVOPS_LIFECYCLE_SESSION_HELPER="$helper" \
+		bash "$test_tmpdir/harness.sh" 2>&1) || rc=$?
 	rm -rf "$test_tmpdir"
 	if [[ "$rc" -ne 0 && "$mode" == "healthy" ]]; then
 		printf '%s\n' "$output" >&2
@@ -247,6 +282,16 @@ test_runtime_dependency_preflight() {
 	else
 		print_result "healthy deployed policy graph passes hook preflight" 1 "exit=$rc"
 	fi
+	local mode=""
+	for mode in help-only invalid-response denied; do
+		rc=0
+		_run_runtime_dependency_test "$mode" || rc=$?
+		if [[ "$rc" -ne 0 ]]; then
+			print_result "$mode lifecycle override blocks hook preflight" 0
+		else
+			print_result "$mode lifecycle override blocks hook preflight" 1 "expected non-zero exit"
+		fi
+	done
 	return 0
 }
 
@@ -257,6 +302,7 @@ test_installed_hook_probe() {
 	local installed_hook="$test_home/.aidevops/hooks/git_safety_guard.py"
 	mkdir -p "$(dirname "$installed_hook")"
 	cp "$TEST_SCRIPTS_DIR/../hooks/git_safety_guard.py" "$installed_hook"
+	cp "$TEST_SCRIPTS_DIR/../hooks/git_safety_lifecycle.py" "$(dirname "$installed_hook")/git_safety_lifecycle.py"
 	chmod +x "$installed_hook"
 	cat >"$test_tmpdir/harness.sh" <<HARNESS_EOF
 #!/usr/bin/env bash
@@ -441,6 +487,53 @@ _check_pre_commit_only_result() {
 	return "$result"
 }
 
+test_standalone_hook_bundle() {
+	local mode="$1"
+	local fixture="" install_dir="" result=0
+	local -a options=()
+	fixture=$(mktemp -d) || return 1
+	mkdir -p "$fixture/home" "$fixture/project" || return 1
+	install_dir="$fixture/home/.claude"
+	if [[ "$mode" == "project" ]]; then
+		options=(--project)
+		install_dir="$fixture/project/.claude"
+	fi
+	(cd "$fixture/project" && HOME="$fixture/home" \
+		AIDEVOPS_LIFECYCLE_SESSION_HELPER="$TEST_SCRIPTS_DIR/worker-lifecycle-session-helper.py" bash \
+		"$TEST_SCRIPTS_DIR/install-hooks.sh" "${options[@]}") >"$fixture/install.log" 2>&1 || result=1
+	HOME="$fixture/home" python3 -I -S -B -c \
+		'import sys; sys.path.insert(0, sys.argv[1]); import git_safety_guard' \
+		"$install_dir/hooks" >>"$fixture/install.log" 2>&1 || result=1
+	print_result "standalone $mode hook imports its installed lifecycle adapter" "$result"
+	rm -rf "$fixture"
+	return 0
+}
+
+test_standalone_missing_admission() {
+	local fixture="" mode="" result=0 helper=""
+	fixture=$(mktemp -d) || return 1
+	mkdir -p "$fixture/home/.claude" "$fixture/project" || return 1
+	printf '{"preserved":true}\n' >"$fixture/home/.claude/settings.json"
+	cp "$fixture/home/.claude/settings.json" "$fixture/before.json"
+	for mode in missing help-only invalid-response; do
+		helper="$fixture/$mode.py"
+		if [[ "$mode" == help-only ]]; then
+			printf 'import sys\nsys.exit(0 if "--help" in sys.argv else 75)\n' >"$helper"
+		elif [[ "$mode" == invalid-response ]]; then
+			printf 'print("{}")\n' >"$helper"
+		fi
+		result=0
+		(cd "$fixture/project" && HOME="$fixture/home" \
+			AIDEVOPS_LIFECYCLE_SESSION_HELPER="$helper" bash \
+			"$TEST_SCRIPTS_DIR/install-hooks.sh") >"$fixture/install.log" 2>&1 && result=1
+		cmp -s "$fixture/before.json" "$fixture/home/.claude/settings.json" || result=1
+		[[ ! -e "$fixture/home/.claude/hooks" ]] || result=1
+		print_result "standalone rejects $mode admission before changing hooks/settings" "$result"
+	done
+	rm -rf "$fixture"
+	return 0
+}
+
 # --- Run all tests ---
 main() {
 	echo "=== install-hooks-helper.sh validator preflight tests (t2226) ==="
@@ -456,6 +549,9 @@ main() {
 	test_help_text
 	test_runtime_dependency_preflight
 	test_installed_hook_probe
+	test_standalone_hook_bundle global
+	test_standalone_hook_bundle project
+	test_standalone_missing_admission
 	local mode
 	for mode in happy linked managed existing symlink hooks-path missing-runtime bad-validator bad-runtime local-runtime outside bare force unknown; do
 		test_pre_commit_only_case "$mode" || return 1

@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import sqlite3
 
-from screen_time_interval_common import DAY, WINDOWS, interval_seconds, local_date, safe_core_epoch, safe_float, state_intervals, union_intervals
+from screen_time_interval_common import DAY, WINDOWS, interval_seconds, local_date, safe_core_epoch, safe_float, union_intervals
 
 
 def unavailable(reason, source="macos-knowledge-db"):
@@ -19,8 +19,8 @@ def read_knowledge_rows(db_path):
         uri = f"file:{db_path}?mode=ro"
         with sqlite3.connect(uri, uri=True, timeout=5) as connection:
             backlit = connection.execute(
-                "SELECT ZCREATIONDATE, ZVALUEINTEGER FROM ZOBJECT "
-                "WHERE ZSTREAMNAME='/display/isBacklit' ORDER BY ZCREATIONDATE"
+                "SELECT ZSTARTDATE, ZENDDATE, ZVALUEINTEGER FROM ZOBJECT "
+                "WHERE ZSTREAMNAME='/display/isBacklit' ORDER BY ZSTARTDATE"
             ).fetchall()
             apps = connection.execute(
                 "SELECT ZSTARTDATE, ZENDDATE FROM ZOBJECT "
@@ -32,12 +32,20 @@ def read_knowledge_rows(db_path):
 
 
 def parse_backlit_rows(rows):
+    """Parse completed ``/display/isBacklit`` spans as ``(start, end, on)``.
+
+    Each row records the state the display held from ZSTARTDATE to ZENDDATE and
+    is written when that span ends, so ZCREATIONDATE is the end of the span, not
+    the start of the next one. Reading ``(ZCREATIONDATE, value)`` as a state
+    transition counted every display-off span as on and vice versa (GH#37492).
+    """
     parsed = []
-    for timestamp, state in rows:
-        epoch = safe_core_epoch(timestamp)
+    for start, end, state in rows:
+        left = safe_core_epoch(start)
+        right = safe_core_epoch(end)
         numeric_state = safe_float(state)
-        if epoch is not None and numeric_state is not None:
-            parsed.append((epoch, bool(numeric_state)))
+        if left is not None and right is not None and numeric_state is not None and right >= left:
+            parsed.append((left, right, bool(numeric_state)))
     return parsed
 
 
@@ -96,20 +104,20 @@ def source_payload(selection):
 
 def choose_source(backlit, apps, now):
     earliest = now - WINDOWS["year"]
-    backlit_intervals = state_intervals(backlit, earliest, now)
+    backlit_intervals = union_intervals([(left, right) for left, right, on in backlit if on], earliest, now)
     app_intervals = union_intervals(apps, earliest, now)
-    latest_backlit = max((item[0] for item in backlit), default=None)
+    latest_backlit = max((item[1] for item in backlit), default=None)
     latest_app = max((item[1] for item in apps), default=None)
     recent_backlit = latest_backlit is not None and now - latest_backlit <= 3 * DAY
     use_backlit = recent_backlit and not app_source_is_richer(backlit_intervals, app_intervals, now)
+    raw_backlit = [(left, right) for left, right, _ in backlit]
+    backlit_observations = [right for _, right, _ in backlit]
     if use_backlit:
-        raw = [(timestamp, timestamp) for timestamp, _ in backlit]
-        return source_payload({"source": "macos-knowledge-db:/display/isBacklit", "intervals": backlit_intervals, "raw_intervals": raw, "latest": latest_backlit, "observation_epochs": [item[0] for item in backlit]})
+        return source_payload({"source": "macos-knowledge-db:/display/isBacklit", "intervals": backlit_intervals, "raw_intervals": raw_backlit, "latest": latest_backlit, "observation_epochs": backlit_observations})
     if apps:
         return source_payload({"source": "macos-knowledge-db:/app/usage-union", "intervals": app_intervals, "raw_intervals": apps, "latest": latest_app, "observation_epochs": []})
     if backlit:
-        raw = [(timestamp, timestamp) for timestamp, _ in backlit]
-        return source_payload({"source": "macos-knowledge-db:/display/isBacklit-stale", "intervals": backlit_intervals, "raw_intervals": raw, "latest": latest_backlit, "observation_epochs": [item[0] for item in backlit]})
+        return source_payload({"source": "macos-knowledge-db:/display/isBacklit-stale", "intervals": backlit_intervals, "raw_intervals": raw_backlit, "latest": latest_backlit, "observation_epochs": backlit_observations})
     return None
 
 

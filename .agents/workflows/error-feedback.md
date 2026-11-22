@@ -24,8 +24,11 @@ gh run list --status failure --limit 1          # identify failure
 gh run view {run_id} --log-failed               # diagnose
 # fix locally, then:
 git add . && git commit -m "fix: CI error description"
-git push origin {branch} && gh run watch {run_id}
+git push origin {branch} &&
+  gh-checks-wait-helper.sh wait {pr_number} --repo {owner}/{repo} --all   # governed wait, only after a successful push
 ```
+
+The aidevops `gh` shim refuses `gh run watch` and `gh pr checks --watch`: they spend an unbounded number of ungoverned REST calls. Use the governed waiter or one-shot reads.
 
 ## GitHub Actions Monitoring
 
@@ -33,7 +36,7 @@ git push origin {branch} && gh run watch {run_id}
 gh run list --limit 10                          # recent runs
 gh run list --status failure --limit 5          # failed runs only
 gh run view {run_id} --log-failed               # failure logs
-gh run watch {run_id}                           # watch live
+gh run view {run_id} --json status,conclusion  # one-shot status (no `gh run watch`)
 gh api repos/{owner}/{repo}/actions/runs --jq '.workflow_runs[:5] | .[] | "\(.name): \(.conclusion // .status)"'
 ```
 

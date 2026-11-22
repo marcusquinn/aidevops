@@ -36,15 +36,20 @@ fi
 # Google Search Console API Functions
 # =============================================================================
 
+# shellcheck source=./gsc-auth-lib.sh
+source "${SCRIPT_DIR}/gsc-auth-lib.sh"
+
 _gsc_load_token() {
 	aidevops_load_secret GSC_ACCESS_TOKEN && return 0
-	if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" && -f "$GOOGLE_APPLICATION_CREDENTIALS" ]]; then
-		GSC_ACCESS_TOKEN=$(gcloud auth application-default print-access-token 2>/dev/null || true)
-		[[ -n "$GSC_ACCESS_TOKEN" ]] && return 0
-		print_error "Failed to get GSC access token. Run: gcloud auth application-default login"
+	local _cred_file
+	_cred_file=$(gsc_adc_credential_file)
+	if [[ -n "$_cred_file" && -f "$_cred_file" ]]; then
+		GSC_ACCESS_TOKEN=$(gsc_adc_access_token "$_cred_file") && return 0
+		GSC_ACCESS_TOKEN=""
+		print_error "GSC credentials found at $_cred_file, but the access token request failed. Run: gcloud auth application-default login"
 		return 1
 	fi
-	print_error "GSC credentials not configured. Set via: aidevops secret set GSC_ACCESS_TOKEN (or GOOGLE_APPLICATION_CREDENTIALS)"
+	print_error "GSC credentials not configured. Set via: aidevops secret set GSC_ACCESS_TOKEN (or GOOGLE_APPLICATION_CREDENTIALS, or gcloud auth application-default login)"
 	return 1
 }
 

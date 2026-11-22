@@ -16,6 +16,7 @@
 # Functions in this module (in source order):
 #   - _routine_last_run_epoch
 #   - _routine_update_state
+#   - _routine_launch_detached (systemd-run --scope escape from pulse cgroup)
 #   - _routine_execute
 #   - _routine_extract_section
 #   - _routine_parse_line
@@ -42,6 +43,17 @@ if ! declare -F _gh_secondary_cooldown_expires_at >/dev/null 2>&1; then
 	# shellcheck source=./shared-gh-secondary-cooldown.sh
 	source "${BASH_SOURCE[0]%/*}/shared-gh-secondary-cooldown.sh" || true
 fi
+# Shared transient-scope launcher (GH#35760). Non-fatal: without it, routines
+# keep the session-detach launcher.
+# shellcheck source=./systemd-scope-launch.sh
+source "${BASH_SOURCE[0]%/*}/systemd-scope-launch.sh" || true
+# Shared headless signing preparation (GH#36491). Non-fatal: without it,
+# script routines keep the inherited signing configuration.
+# shellcheck source=./headless-signing-lib.sh
+source "${BASH_SOURCE[0]%/*}/headless-signing-lib.sh" || true
+# Shared host-health gate for independently invoked routine evaluation.
+# shellcheck source=./pulse-dispatch-preflight-lib.sh
+source "${BASH_SOURCE[0]%/*}/pulse-dispatch-preflight-lib.sh" || return 1
 _PULSE_ROUTINES_LOADED=1
 _ROUTINE_STATUS_SUCCESS="success"
 _ROUTINE_STATUS_FAILURE="failure"
@@ -256,11 +268,18 @@ _routine_platform_owned() {
 # Arguments:
 #   $1 - routine ID
 #   $2 - status (success|failure)
+#   $3 - deferred-until epoch (optional)
+#   $4 - outcome (delivered|noop|unknown; optional, success runs only)
+#   $5 - outcome reason (optional)
+# delivered resets consecutive_noops and the one-alert-per-streak flag; noop
+# extends the streak; unknown records the outcome but leaves the streak alone.
 #######################################
 _routine_update_state() {
 	local routine_id="$1"
 	local status="$2"
 	local deferred_until="${3:-0}"
+	local outcome="${4:-}"
+	local outcome_reason="${5:-}"
 	local now_epoch=0
 	local now_iso
 	now_epoch=$(_routine_now_epoch)
@@ -268,6 +287,26 @@ _routine_update_state() {
 	[[ "$deferred_until" =~ ^[0-9]+$ ]] || deferred_until=0
 
 	mkdir -p "$(dirname "$ROUTINE_STATE_FILE")" 2>/dev/null || true
+
+	# Serialize the entire read-modify-rename, including reads by detached runners.
+	local write_lock="${ROUTINE_STATE_FILE}.write.lock"
+	local lock_held=0 attempts=0 lock_mtime=0 lock_now=0
+	while [[ "$attempts" -lt 50 ]]; do
+		if mkdir "$write_lock" 2>/dev/null; then
+			lock_held=1
+			break
+		fi
+		lock_mtime=$(_file_mtime_epoch "$write_lock") || lock_mtime=0
+		lock_now=$(date +%s)
+		if [[ "$lock_mtime" =~ ^[0-9]+$ ]] && [[ "$lock_mtime" -gt 0 ]] && [[ $((lock_now - lock_mtime)) -gt 30 ]]; then
+			rmdir "$write_lock" 2>/dev/null || true
+		fi
+		attempts=$((attempts + 1))
+		sleep 0.1
+	done
+	if [[ "$lock_held" -eq 0 ]]; then
+		echo "[pulse-wrapper] _routine_update_state: lock timeout for ${routine_id}" >>"${LOGFILE:-/dev/null}"
+	fi
 
 	local existing="{}"
 	if [[ -f "$ROUTINE_STATE_FILE" ]]; then
@@ -279,8 +318,18 @@ _routine_update_state() {
 	tmp_file=$(mktemp "$(dirname "$ROUTINE_STATE_FILE")/.routine-state.XXXXXX")
 	if echo "$existing" | jq --arg id "$routine_id" --arg ts "$now_iso" --arg st "$status" \
 		--arg success "$_ROUTINE_STATUS_SUCCESS" --arg deferred "$_ROUTINE_STATUS_DEFERRED" \
+		--arg outcome "$outcome" --arg reason "$outcome_reason" \
 		--argjson deferred_until "$deferred_until" '
 		.[$id] = ((.[$id] // {}) + {"last_attempt": $ts, "last_status": $st})
+		| if $st == $success and $outcome != "" then
+			.[$id].last_outcome = $outcome
+			| .[$id].last_outcome_reason = $reason
+			| if $outcome == "delivered" then
+				.[$id].consecutive_noops = 0 | del(.[$id].noop_alerted)
+			  elif $outcome == "noop" then
+				.[$id].consecutive_noops = ((.[$id].consecutive_noops // 0) + 1)
+			  else . end
+		  else . end
 		| if $st == $success then .[$id].last_run = $ts else . end
 		| if $st == "failure" then .[$id].consecutive_failures = ((.[$id].consecutive_failures // 0) + 1)
 		  elif $st == $success then del(.[$id].consecutive_failures)
@@ -294,6 +343,9 @@ _routine_update_state() {
 	else
 		rm -f "$tmp_file"
 		echo "[pulse-wrapper] _routine_update_state: failed to write state for ${routine_id}" >>"$LOGFILE"
+	fi
+	if [[ "$lock_held" -eq 1 ]]; then
+		rmdir "$write_lock" 2>/dev/null || true
 	fi
 	return 0
 }
@@ -392,13 +444,130 @@ _routine_finalize_terminal() {
 	local started_epoch="$3"
 	local session_key="${4:-}"
 	local deferred_until="${5:-0}"
+	local outcome="${6:-}"
+	local outcome_reason="${7:-}"
+	local noop_threshold="${8:-}"
+	local alert_repo="${9:-}"
 	local ended_epoch=0
 	local duration=0
 	ended_epoch=$(date +%s)
 	duration=$((ended_epoch - started_epoch))
 	[[ "$duration" -ge 0 ]] || duration=0
-	_routine_update_state "$routine_id" "$status" "$deferred_until"
+	_routine_update_state "$routine_id" "$status" "$deferred_until" "$outcome" "$outcome_reason"
 	_routine_record_lifecycle "$routine_id" "$status" "$duration" "$session_key"
+	if [[ "$status" == "$_ROUTINE_STATUS_SUCCESS" && "$outcome" == "noop" ]]; then
+		_routine_noop_alert_check "$routine_id" "$noop_threshold" "$alert_repo"
+	fi
+	return 0
+}
+
+#######################################
+# Prompt contract asking a routine worker to report its outcome on one line.
+#######################################
+_routine_outcome_contract() {
+	printf '%s' "End your final message with exactly one line: 'ROUTINE_OUTCOME: delivered <ref>' (a PR, issue, file or other artifact you produced) or 'ROUTINE_OUTCOME: noop <short reason>' (nothing needed doing, or nothing was produced)."
+	return 0
+}
+
+#######################################
+# Parse the last ROUTINE_OUTCOME line from worker output.
+# Output: "<outcome>|<reason>"; outcome is delivered|noop|unknown.
+#######################################
+_routine_parse_outcome() {
+	local output_file="$1"
+	local line="" outcome="unknown" why=""
+	if [[ -f "$output_file" ]]; then
+		line=$(grep -E '^[[:space:]]*ROUTINE_OUTCOME:[[:space:]]+(delivered|noop)([[:space:]]|$)' "$output_file" 2>/dev/null | tail -n 1 || true)
+	fi
+	if [[ "$line" =~ ROUTINE_OUTCOME:[[:space:]]+(delivered|noop)([[:space:]]+(.*))?$ ]]; then
+		outcome="${BASH_REMATCH[1]}"
+		why="${BASH_REMATCH[3]:-}"
+		why="${why:0:200}"
+	fi
+	printf '%s|%s' "$outcome" "$why"
+	return 0
+}
+
+#######################################
+# Alert once per no-op streak. Marks noop_alerted in state so later no-ops of
+# the same streak stay quiet; a delivered run clears the mark.
+# Args: $1=routine_id $2=threshold (default 6) $3=repo slug (optional)
+#######################################
+_routine_noop_alert_check() {
+	local routine_id="$1"
+	local threshold="${2:-}"
+	local alert_repo="${3:-}"
+	[[ "$threshold" =~ ^[0-9]+$ && "$threshold" -ge 1 ]] || threshold="${AIDEVOPS_ROUTINE_NOOP_ALERT:-6}"
+	[[ "$threshold" =~ ^[0-9]+$ && "$threshold" -ge 1 ]] || threshold=6
+	[[ -f "$ROUTINE_STATE_FILE" ]] || return 0
+	local noops=0 alerted="" last_reason=""
+	noops=$(jq -r --arg id "$routine_id" '.[$id].consecutive_noops // 0' "$ROUTINE_STATE_FILE" 2>/dev/null || true)
+	alerted=$(jq -r --arg id "$routine_id" '.[$id].noop_alerted // empty' "$ROUTINE_STATE_FILE" 2>/dev/null || true)
+	last_reason=$(jq -r --arg id "$routine_id" '.[$id].last_outcome_reason // empty' "$ROUTINE_STATE_FILE" 2>/dev/null || true)
+	[[ "$noops" =~ ^[0-9]+$ && "$noops" -ge "$threshold" && -z "$alerted" ]] || return 0
+
+	# Mark first so a failed or missing issue write can never repeat the alert.
+	local tmp_file
+	tmp_file=$(mktemp "$(dirname "$ROUTINE_STATE_FILE")/.routine-state.XXXXXX") || return 0
+	if jq --arg id "$routine_id" '.[$id].noop_alerted = true' "$ROUTINE_STATE_FILE" >"$tmp_file" 2>/dev/null; then
+		mv "$tmp_file" "$ROUTINE_STATE_FILE"
+	else
+		rm -f "$tmp_file"
+	fi
+	echo "[pulse-wrapper] routine ${routine_id}: ${noops} consecutive no-op runs (threshold ${threshold}); last reason: ${last_reason:-none}" >>"${LOGFILE:-/dev/null}"
+	if [[ -n "$alert_repo" ]] && declare -F gh_create_issue >/dev/null 2>&1; then
+		local body_file=""
+		body_file=$(mktemp "${TMPDIR:-/tmp}/routine-noop-alert.XXXXXX") || return 0
+		# shellcheck disable=SC2016 # Backticks are literal Markdown.
+		printf 'Routine `%s` has exited successfully %s times in a row without delivering anything (alert threshold %s).\n\nLast no-op reason: %s\n\nVerify: inspect the routine runner log and confirm the prompt and tools still work. A `ROUTINE_OUTCOME: delivered` run resets the streak. Tune the threshold with `noop_alert:N` on the routine line.\n\n### Files Scope\n\n- the routine definition and its prompt or script\n' \
+			"$routine_id" "$noops" "$threshold" "${last_reason:-none}" >"$body_file"
+		gh_create_issue --repo "$alert_repo" --title "routine ${routine_id}: ${noops} consecutive no-op runs" \
+			--body-file "$body_file" >>"${LOGFILE:-/dev/null}" 2>&1 || true
+		rm -f "$body_file"
+	fi
+	return 0
+}
+
+#######################################
+# Launch a detached routine runner outside the pulse unit cgroup (GH#33993 class).
+# setsid/nohup alone stay in aidevops-supervisor-pulse.service's cgroup, so
+# KillMode=control-group SIGTERMs long routines when a short event-refill wake ends.
+# The backend is chosen BEFORE launching and the runner is launched exactly once:
+# a fast routine exits before cgroup membership can be confirmed, so treating
+# that as a failed launch would rerun it. A launch that really failed is
+# recovered by the dispatched-state and runner-lock retry path.
+# Args: $1=routine_id $2=runner_log $3=kind (script|agent) $4..=runner argv
+#######################################
+_routine_launch_detached() {
+	local routine_id="$1"
+	local runner_log="$2"
+	local kind="$3"
+	shift 3
+	local runner_pid="" scope_name="" launch_result=""
+	local monitor_was_enabled=false
+
+	if declare -F systemd_scope_available >/dev/null 2>&1 && systemd_scope_available; then
+		scope_name="aidevops-routine-$(printf '%s' "$routine_id" | tr -c 'A-Za-z0-9_.-' '-')-$$-${RANDOM:-0}"
+		launch_result=$(systemd_scope_launch "$scope_name" "aidevops routine ${routine_id}" "$runner_log" "$@")
+		echo "[pulse-wrapper] routine ${routine_id}: detached ${kind} runner pid ${launch_result%% *} isolation=${launch_result#* } unit=${scope_name}.scope" >>"$LOGFILE"
+		return 0
+	fi
+
+	if command -v setsid >/dev/null 2>&1; then
+		setsid nohup "$@" </dev/null >>"$runner_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	elif command -v perl >/dev/null 2>&1; then
+		perl -MPOSIX -e 'POSIX::setsid() >= 0 or exit 126; exec @ARGV or exit 127' nohup "$@" \
+			</dev/null >>"$runner_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	else
+		# Job control gives the child its own process group even without setsid.
+		[[ "$-" != *m* ]] || monitor_was_enabled=true
+		set -m
+		nohup "$@" </dev/null >>"$runner_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+		[[ "$monitor_was_enabled" == true ]] || set +m
+	fi
+	runner_pid=$!
+	disown "$runner_pid" 2>/dev/null || true
+	echo "[pulse-wrapper] routine ${routine_id}: detached ${kind} runner pid ${runner_pid} isolation=session" >>"$LOGFILE"
 	return 0
 }
 
@@ -406,29 +575,27 @@ _routine_dispatch_agent() {
 	local routine_id="$1"
 	local module_path="${BASH_SOURCE[0]}"
 	local runner_log="${LOGFILE}.routine-${routine_id}.log"
+	# Args after $1: description, agent, dir, optional noop_alert threshold.
 	mkdir -p "$(dirname "$ROUTINE_STATE_FILE")" || return 1
 	export LOGFILE ROUTINE_STATE_FILE ROUTINE_LOG_HELPER HEADLESS_RUNTIME_HELPER
-	if command -v setsid >/dev/null 2>&1; then
-		# shellcheck disable=SC2016 # Expand positional arguments in the child.
-		setsid nohup bash -c 'source "$1" && shift && _routine_run_detached_agent "$@"' \
-			_ "$module_path" "$@" </dev/null >>"$runner_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
-	elif command -v perl >/dev/null 2>&1; then
-		perl -MPOSIX -e 'POSIX::setsid() >= 0 or exit 126; exec @ARGV or exit 127' nohup bash -c \
-			'source "$1" && shift && _routine_run_detached_agent "$@"' \
-			_ "$module_path" "$@" </dev/null >>"$runner_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
-	else
-		# Job control gives the child its own process group even without setsid.
-		local monitor_was_enabled=false
-		[[ "$-" != *m* ]] || monitor_was_enabled=true
-		set -m
-		# shellcheck disable=SC2016 # Expand positional arguments in the child.
-		nohup bash -c 'source "$1" && shift && _routine_run_detached_agent "$@"' \
-			_ "$module_path" "$@" </dev/null >>"$runner_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
-		[[ "$monitor_was_enabled" == true ]] || set +m
+	# shellcheck disable=SC2016 # Expand positional arguments in the child.
+	_routine_launch_detached "$routine_id" "$runner_log" "agent" \
+		bash -c 'source "$1" && shift && _routine_run_detached_agent "$@"' \
+		_ "$module_path" "$@"
+	return 0
+}
+
+#######################################
+# Derive owner/repo from a directory's origin remote; empty when unknown.
+#######################################
+_routine_repo_slug() {
+	local dir="$1"
+	local url=""
+	url=$(git -C "$dir" remote get-url origin 2>/dev/null || true)
+	url="${url%.git}"
+	if [[ "$url" =~ github\.com[:/]([^/]+/[^/]+)$ ]]; then
+		printf '%s' "${BASH_REMATCH[1]}"
 	fi
-	local runner_pid=$!
-	disown "$runner_pid" 2>/dev/null || true
-	echo "[pulse-wrapper] routine ${routine_id}: detached agent runner pid ${runner_pid}" >>"$LOGFILE"
 	return 0
 }
 
@@ -437,7 +604,9 @@ _routine_run_detached_agent() {
 	local description="$2"
 	local agent_name="$3"
 	local dispatch_dir="$4"
+	local noop_threshold="${5:-}"
 	local session_key="routine-${routine_id}"
+	local output_file="" alert_repo="" outcome="" outcome_reason="" parsed=""
 	local started_epoch=0
 	local lock_dir="${ROUTINE_STATE_FILE}.${routine_id}.runner"
 	local pid_file="$lock_dir/pid-${BASHPID:-$$}"
@@ -457,24 +626,33 @@ _routine_run_detached_agent() {
 	fi
 	echo "[pulse-wrapper] routine ${routine_id}: dispatching agent '${agent_name}' for '${description}'" >>"$LOGFILE"
 	# Run in the background and wait so a TERM/INT/HUP trap fires immediately.
+	output_file=$(mktemp "${ROUTINE_STATE_FILE}.${routine_id}.output.XXXXXX" 2>/dev/null) || output_file=""
 	"$HEADLESS_RUNTIME_HELPER" run \
 		--role worker \
 		--session-key "$session_key" \
 		--dir "$dispatch_dir" \
 		--agent "$agent_name" \
 		--title "Routine ${routine_id}: ${description}" \
-		--prompt "Execute routine ${routine_id}: ${description}" >>"$LOGFILE" 2>&1 &
+		--prompt "Execute routine ${routine_id}: ${description}. $(_routine_outcome_contract)" >"${output_file:-/dev/null}" 2>&1 &
 	_ROUTINE_RUNNER_CHILD_PID=$!
 	wait "$_ROUTINE_RUNNER_CHILD_PID" || exit_code=$?
 	_ROUTINE_RUNNER_CHILD_PID=""
+	if [[ -n "$output_file" ]]; then
+		cat "$output_file" >>"$LOGFILE" 2>/dev/null || true
+	fi
 	if [[ "$exit_code" -ne 0 ]]; then
 		status="$_ROUTINE_STATUS_FAILURE"
 		echo "[pulse-wrapper] routine ${routine_id}: agent exited with code ${exit_code}" >>"$LOGFILE"
 	else
-		echo "[pulse-wrapper] routine ${routine_id}: agent completed successfully" >>"$LOGFILE"
+		parsed=$(_routine_parse_outcome "$output_file")
+		outcome="${parsed%%|*}"
+		outcome_reason="${parsed#*|}"
+		echo "[pulse-wrapper] routine ${routine_id}: agent completed successfully (outcome=${outcome})" >>"$LOGFILE"
+		alert_repo=$(_routine_repo_slug "$dispatch_dir")
 	fi
+	[[ -z "$output_file" ]] || rm -f -- "$output_file"
 	_ROUTINE_RUNNER_FINALIZED=true
-	_routine_finalize_terminal "$routine_id" "$status" "$started_epoch" "$session_key"
+	_routine_finalize_terminal "$routine_id" "$status" "$started_epoch" "$session_key" 0 "$outcome" "$outcome_reason" "$noop_threshold" "$alert_repo"
 	rm -f -- "$pid_file"
 	rmdir -- "$lock_dir" 2>/dev/null || true
 	trap - EXIT TERM INT HUP
@@ -591,6 +769,45 @@ _routine_claim_runner_lock() {
 	return 0
 }
 
+# GH#36491: script routines that commit must sign with the dedicated headless
+# key, like workers, not the passphrase-protected interactive global key. Export
+# the key through process-scoped Git config so the child inherits it, and heal a
+# stopped headless agent once. Never blocks the launch: routines that do not
+# commit are unaffected, and committing helpers run their own fail-closed probe.
+_routine_prepare_signing() {
+	local routine_id="$1"
+	local repo_path="$2"
+	declare -F headless_signing_preflight >/dev/null 2>&1 || return 0
+	headless_signing_export_key_env || true
+	headless_signing_preflight "$repo_path" && return 0
+	echo "[pulse-wrapper] routine ${routine_id}: headless commit signing unavailable; committing steps will fail closed (run 'aidevops signing headless-setup' in a terminal)" >>"$LOGFILE"
+	return 0
+}
+
+# GH#36494: declare this runner as the lifecycle owner of worktrees that the
+# routine's helpers create, replacing any inherited identity. The runner waits
+# for the script, so its exit ends the owner and registry cleanup can archive
+# and retire those trees. Without a declaration they stay enrolled-only (a
+# coverage gap) or unenrolled, and no cleanup path can retire them.
+# Excluded or unavailable lifecycle hosts clear the declaration instead, so
+# helpers keep their plain creation path.
+_routine_declare_lifecycle_owner() {
+	local routine_id="$1"
+	local started_epoch="$2"
+	local runner_pid="${BASHPID:-$$}"
+	unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
+	if [[ "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" == 1 || "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" == 1 ]]; then
+		return 0
+	fi
+	command -v python3 >/dev/null 2>&1 || return 0
+	# shellcheck source=worker-lifecycle-state.sh
+	source "${BASH_SOURCE[0]%/*}/worker-lifecycle-state.sh" 2>/dev/null || return 0
+	[[ -n "$(worker_lifecycle_state_dir 2>/dev/null)" ]] || return 0
+	export AIDEVOPS_LIFECYCLE_RUNTIME_PID="$runner_pid"
+	export AIDEVOPS_LIFECYCLE_SESSION_ID="routine:${routine_id}:${started_epoch}:${runner_pid}"
+	return 0
+}
+
 _routine_run_detached_script() {
 	local routine_id="$1"
 	local script_path="$2"
@@ -607,6 +824,8 @@ _routine_run_detached_script() {
 	_routine_runner_arm_traps "$routine_id" "$started_epoch" "" "$pid_file" "$lock_dir"
 	_routine_update_state "$routine_id" "$_ROUTINE_STATUS_RUNNING"
 	_routine_record_lifecycle "$routine_id" "$_ROUTINE_STATUS_RUNNING" 0
+	_routine_prepare_signing "$routine_id" "$repo_path"
+	_routine_declare_lifecycle_owner "$routine_id" "$started_epoch"
 	# Background + wait so a TERM/INT/HUP trap fires immediately.
 	if [[ "$#" -gt 0 ]]; then
 		(cd "$repo_path" && "$script_path" "$@") >>"$LOGFILE" 2>&1 &
@@ -645,25 +864,10 @@ _routine_dispatch_script() {
 	local runner_log="${LOGFILE}.routine-${routine_id}.log"
 
 	export LOGFILE ROUTINE_STATE_FILE ROUTINE_LOG_HELPER
-	if command -v setsid >/dev/null 2>&1; then
-		# shellcheck disable=SC2016 # The child shell must expand its own positional arguments.
-		setsid nohup bash -c 'source "$1" && shift && _routine_run_detached_script "$@"' \
-			_ "$module_path" "$routine_id" "$script_path" "$repo_path" "$started_epoch" "$@" \
-			</dev/null >>"$runner_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
-	elif command -v perl >/dev/null 2>&1; then
-		perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 127' nohup bash -c \
-			'source "$1" && shift && _routine_run_detached_script "$@"' \
-			_ "$module_path" "$routine_id" "$script_path" "$repo_path" "$started_epoch" "$@" \
-			</dev/null >>"$runner_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
-	else
-		# shellcheck disable=SC2016 # The child shell must expand its own positional arguments.
-		nohup bash -c 'source "$1" && shift && _routine_run_detached_script "$@"' \
-			_ "$module_path" "$routine_id" "$script_path" "$repo_path" "$started_epoch" "$@" \
-			</dev/null >>"$runner_log" 2>&1 &
-	fi
-	local runner_pid=$!
-	disown "$runner_pid" 2>/dev/null || true
-	echo "[pulse-wrapper] routine ${routine_id}: detached script runner pid ${runner_pid}" >>"$LOGFILE"
+	# shellcheck disable=SC2016 # The child shell must expand its own positional arguments.
+	_routine_launch_detached "$routine_id" "$runner_log" "script" \
+		bash -c 'source "$1" && shift && _routine_run_detached_script "$@"' \
+		_ "$module_path" "$routine_id" "$script_path" "$repo_path" "$started_epoch" "$@"
 	return 0
 }
 
@@ -677,6 +881,9 @@ _routine_execute() {
 	local run_script="$3"
 	local agent_name="$4"
 	local repo_path="$5"
+	local schedule="${6:-}"
+	local timezone="${7:-}"
+	local noop_alert="${8:-}"
 	local agents_dir="${HOME}/.aidevops/agents"
 	local status="$_ROUTINE_STATUS_SUCCESS"
 	local started_epoch=0
@@ -708,6 +915,7 @@ _routine_execute() {
 			return 1
 		fi
 		_routine_mark_dispatched "$routine_id"
+		[[ -z "$schedule" ]] || _routine_log_slot "$routine_id" "$schedule" "$timezone" dispatch
 		# Bash 3.2 with nounset treats expansion of an empty array as an unbound
 		# variable. Keep the zero-argument path separate instead of expanding it.
 		if [[ "${#run_parts[@]}" -gt 1 ]]; then
@@ -729,6 +937,7 @@ _routine_execute() {
 			return 1
 		fi
 		echo "[pulse-wrapper] routine ${routine_id}: executing custom script ${custom_script}" >>"$LOGFILE"
+		[[ -z "$schedule" ]] || _routine_log_slot "$routine_id" "$schedule" "$timezone" dispatch
 		(cd "$repo_path" && "$custom_script") >>"$LOGFILE" 2>&1 || exit_code=$?
 		[[ "$exit_code" -eq 0 ]] || status="$_ROUTINE_STATUS_FAILURE"
 		_routine_finalize_terminal "$routine_id" "$status" "$started_epoch"
@@ -736,7 +945,8 @@ _routine_execute() {
 	fi
 
 	_routine_mark_dispatched "$routine_id"
-	_routine_dispatch_agent "$routine_id" "$description" "${agent_name:-Build+}" "${repo_path:-$PULSE_DIR}"
+	[[ -z "$schedule" ]] || _routine_log_slot "$routine_id" "$schedule" "$timezone" dispatch
+	_routine_dispatch_agent "$routine_id" "$description" "${agent_name:-Build+}" "${repo_path:-$PULSE_DIR}" "$noop_alert"
 	return $?
 }
 
@@ -762,6 +972,7 @@ _RPL_RUN=""
 _RPL_AGENT=""
 _RPL_DESC=""
 _RPL_TIMEZONE=""
+_RPL_NOOP_ALERT=""
 
 #######################################
 # Normalize one Markdown line before registry parsing.
@@ -970,6 +1181,7 @@ _routine_parse_line() {
 	_RPL_AGENT=""
 	_RPL_DESC=""
 	_RPL_TIMEZONE=""
+	_RPL_NOOP_ALERT=""
 
 	# Live routine definitions are top-level Markdown list items. Four-space
 	# indentation is a code block and must not become scheduler input.
@@ -1041,9 +1253,14 @@ _routine_parse_line() {
 		fi
 	fi
 
+	# Optional per-routine no-op alert threshold (noop_alert:N, positive integer).
+	if [[ "$line" =~ (^|[[:space:]])noop_alert:([0-9]+)([[:space:]]|$) ]]; then
+		_RPL_NOOP_ALERT="${BASH_REMATCH[2]}"
+	fi
+
 	# Extract description (text between ID and first field tag).
 	local description_tail="${line#*"${_RPL_ID}"}"
-	_RPL_DESC=$(printf '%s' "$description_tail" | sed -E 's/^[[:space:]]*//' | sed -E 's/[[:space:]]*(repeat:|run:|agent:|timezone:|#|~|@|started:|blocked-by:).*//')
+	_RPL_DESC=$(printf '%s' "$description_tail" | sed -E 's/^[[:space:]]*//' | sed -E 's/[[:space:]]*(repeat:|run:|agent:|timezone:|noop_alert:|#|~|@|started:|blocked-by:).*//')
 
 	return 0
 }
@@ -1071,21 +1288,61 @@ _routine_schedule_is_due() {
 }
 
 #######################################
-# Return whether another deferrable routine work unit may start.
+# Return whether another scheduled routine (or deferrable publication) may start.
 #######################################
 _routine_rest_core_allows_next() {
 	local context="$1"
+	local priority="${2:-scheduled}"
 	local budget_rc=0
 	if declare -F pulse_rest_core_priority_allows_next >/dev/null 2>&1; then
-		pulse_rest_core_priority_allows_next deferrable "$context" || budget_rc=$?
+		pulse_rest_core_priority_allows_next "$priority" "$context" || budget_rc=$?
 	elif declare -F pulse_rest_core_priority_allows >/dev/null 2>&1; then
-		pulse_rest_core_priority_allows deferrable || budget_rc=$?
+		pulse_rest_core_priority_allows "$priority" || budget_rc=$?
 	else
-		return 0
+		# Missing quota evidence must not authorize dispatch.
+		return 1
 	fi
 	[[ "$budget_rc" -eq 0 ]] && return 0
 	echo "[pulse-wrapper] evaluate_routines: REST-core reserve reached at ${context}; remaining routine work deferred (GH#29742)" >>"$LOGFILE"
 	return 1
+}
+
+#######################################
+# Emit one slot record per decision, not a false successful-run state update.
+# Deferred slots remain due and are re-evaluated on the next scheduler tick.
+#######################################
+_routine_log_slot() {
+	local routine_id="$1"
+	local expression="$2"
+	local timezone="$3"
+	local outcome="$4"
+	local slot="" now_epoch="" delay=0
+	local threshold="${AIDEVOPS_ROUTINE_LATE_THRESHOLD_SECONDS:-300}"
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=300
+	# Strip leading zeros before range checks and decimal arithmetic. Bash uses
+	# signed 64-bit integers; reject overflow before evaluating the input.
+	threshold="${threshold#"${threshold%%[!0]*}"}"
+	threshold="${threshold:-0}"
+	# Compare equal-length digits lexically to avoid overflowing the range check.
+	# shellcheck disable=SC2071
+	if [[ ${#threshold} -gt 19 ]] ||
+		[[ ${#threshold} -eq 19 && "$threshold" > 9223372036854775807 ]]; then
+		threshold=300
+	fi
+	threshold=$((10#$threshold))
+	slot=$(AIDEVOPS_SCHEDULE_TIMEZONE="${timezone:-${AIDEVOPS_SCHEDULE_TIMEZONE:-${TZ:-}}}" \
+		"$ROUTINE_SCHEDULE_HELPER" latest-slot "$expression" 2>/dev/null) || slot=""
+	now_epoch=$(date +%s)
+	if [[ "$slot" =~ ^[0-9]+$ ]]; then
+		delay=$((now_epoch - slot))
+		if [[ "$outcome" == "dispatch" && "$delay" -gt "$threshold" ]]; then
+			echo "[pulse-wrapper] routine_slot_late routine=${routine_id} slot_epoch=${slot} delay_seconds=${delay} outcome=${outcome}" >>"$LOGFILE"
+		fi
+	fi
+	if [[ "$outcome" == "deferred" ]]; then
+		echo "[pulse-wrapper] routine_slot_deferred routine=${routine_id} slot_epoch=${slot:-unknown} delay_seconds=${delay} reason=rest_core_budget" >>"$LOGFILE"
+	fi
+	return 0
 }
 
 #######################################
@@ -1104,11 +1361,12 @@ _evaluate_session_miner_routine() {
 		return 0
 	fi
 	if ! _routine_rest_core_allows_next "routine_execute:${routine_id}"; then
+		_routine_log_slot "$routine_id" "$schedule" "" deferred
 		return 0
 	fi
 	echo "[pulse-wrapper] routine ${routine_id} is due (expr=${schedule}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
 	_routine_execute "$routine_id" "Incremental session insight mining" \
-		"scripts/session-miner-pulse.sh --create-issues" "" "$PULSE_DIR"
+		"scripts/session-miner-pulse.sh --create-issues" "" "$PULSE_DIR" "$schedule" ""
 	return $?
 }
 
@@ -1133,11 +1391,41 @@ _evaluate_issue_archive_routine() {
 		return 0
 	fi
 	if ! _routine_rest_core_allows_next "routine_execute:${routine_id}"; then
+		_routine_log_slot "$routine_id" "$schedule" "" deferred
 		return 0
 	fi
 	echo "[pulse-wrapper] routine ${routine_id} is due (expr=${schedule}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
 	_routine_execute "$routine_id" "Archive issue and PR discussions to orphan branch" \
-		"scripts/issue-archive-helper.sh run" "" "$PULSE_DIR"
+		"scripts/issue-archive-helper.sh run" "" "$PULSE_DIR" "$schedule" ""
+	return $?
+}
+
+#######################################
+# Evaluate the opt-in Actions event policy maintenance routine.
+#######################################
+_evaluate_event_policy_routine() {
+	local routine_id="r-event-policy"
+	local schedule="${AIDEVOPS_EVENT_POLICY_SCHEDULE:-daily(@05:40)}"
+	local last_epoch=0
+	# Without a Pulse working directory there is nowhere to run the routine.
+	[[ -n "${PULSE_DIR:-}" ]] || return 0
+	if [[ "${AIDEVOPS_EVENT_POLICY_ENABLED:-1}" == "0" ]]; then
+		return 0
+	fi
+	if _routine_retry_blocked "$routine_id"; then
+		return 0
+	fi
+	last_epoch=$(_routine_last_run_epoch "$routine_id")
+	if ! _routine_schedule_is_due "$schedule" "$last_epoch" "" "$routine_id"; then
+		return 0
+	fi
+	if ! _routine_rest_core_allows_next "routine_execute:r-event-policy"; then
+		_routine_log_slot "$routine_id" "$schedule" "" deferred
+		return 0
+	fi
+	echo "[pulse-wrapper] event policy routine due (expr=${schedule}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
+	_routine_execute "$routine_id" "Check Actions event policies" \
+		"scripts/actions-event-policy-routine.sh" "" "$PULSE_DIR" "$schedule" ""
 	return $?
 }
 
@@ -1148,16 +1436,16 @@ _evaluate_issue_archive_routine() {
 # ([x] lines with repeat: fields), checks if due, and dispatches.
 #######################################
 evaluate_routines() {
+	_preflight_macos_user_lookup_gate || return 0
 	local publication_worker="${SCRIPT_DIR}/task-publication-worker-helper.sh"
 	local run_publication=1
 	# Busy-lock passes (GH#35349) run every scheduler tick; they evaluate
 	# calendar slots only and leave the publication worker to full cycles.
 	[[ "${1:-}" != "--skip-publication" ]] || run_publication=0
 	if [[ "$run_publication" -eq 1 && -x "$publication_worker" ]]; then
-		if ! _routine_rest_core_allows_next "routine_publication_worker"; then
-			return 0
+		if _routine_rest_core_allows_next "routine_publication_worker" deferrable; then
+			"$publication_worker" run >>"$LOGFILE" 2>&1 || echo "[pulse-wrapper] publication worker pass failed" >>"$LOGFILE"
 		fi
-		"$publication_worker" run >>"$LOGFILE" 2>&1 || echo "[pulse-wrapper] publication worker pass failed" >>"$LOGFILE"
 	fi
 	if [[ ! -x "$ROUTINE_SCHEDULE_HELPER" ]]; then
 		echo "[pulse-wrapper] evaluate_routines: schedule helper not found at ${ROUTINE_SCHEDULE_HELPER} — skipping" >>"$LOGFILE"
@@ -1171,6 +1459,7 @@ evaluate_routines() {
 	fi
 	_evaluate_session_miner_routine
 	_evaluate_issue_archive_routine
+	_evaluate_event_policy_routine
 
 	local routines_dispatched=0
 	local _routine_slug repo_path
@@ -1225,18 +1514,19 @@ evaluate_routines() {
 
 			if _routine_schedule_is_due "$_RPL_REPEAT" "$last_epoch" "$_RPL_TIMEZONE" "$_RPL_ID"; then
 				if ! _routine_rest_core_allows_next "routine_execute:${_RPL_ID}"; then
-					return 0
+					_routine_log_slot "$_RPL_ID" "$_RPL_REPEAT" "$_RPL_TIMEZONE" deferred
+					continue
 				fi
 				echo "[pulse-wrapper] routine ${_RPL_ID} is due (expr=${_RPL_REPEAT}, timezone=${timezone_context}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
-				_routine_execute "$_RPL_ID" "$_RPL_DESC" "$_RPL_RUN" "$_RPL_AGENT" "$repo_path"
+				_routine_execute "$_RPL_ID" "$_RPL_DESC" "$_RPL_RUN" "$_RPL_AGENT" "$repo_path" "$_RPL_REPEAT" "$_RPL_TIMEZONE" "$_RPL_NOOP_ALERT"
 				routines_dispatched=$((routines_dispatched + 1))
 			fi
 		done <<<"$routine_section"
 
-	# Routine evaluation only reads TODO.md and runs local scripts/agents;
-	# unlike code-automation dispatch it needs no GitHub remote, so
-	# local_only repos (e.g. a private routines-only repo created via
-	# init-routines-helper.sh --local) must still be evaluated here.
+		# Routine evaluation only reads TODO.md and runs local scripts/agents;
+		# unlike code-automation dispatch it needs no GitHub remote, so
+		# local_only repos (e.g. a private routines-only repo created via
+		# init-routines-helper.sh --local) must still be evaluated here.
 	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true) | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null || true)
 
 	if [[ "$routines_dispatched" -gt 0 ]]; then

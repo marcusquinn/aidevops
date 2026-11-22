@@ -4,7 +4,7 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { spawnSync } from 'node:child_process';
-import { accessSync, constants, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { accessSync, constants, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
@@ -16,6 +16,11 @@ const RUNTIME_DIR_ENV = 'AIDEVOPS_PLAYWRIGHT_RUNTIME_DIR';
 const VERSION_ENV = 'AIDEVOPS_PLAYWRIGHT_VERSION';
 // Reviewed pin for the framework-owned runtime. Bump deliberately.
 const PINNED_VERSION = '1.63.0';
+// Optional accessibility package installed beside the owned Playwright with
+// `install --with-axe` (GH#35759). Reviewed pin; bump deliberately.
+const AXE_PACKAGE = '@axe-core/playwright';
+const AXE_PINNED_VERSION = '4.14.0';
+const WITH_AXE_FLAG = '--with-axe';
 const INSTALL_COMMAND = 'node ~/.aidevops/agents/scripts/playwright-runtime.mjs install';
 const INSTALL_HINT =
   `Install the framework-owned runtime with \`${INSTALL_COMMAND}\`, ` +
@@ -32,13 +37,17 @@ export function playwrightRuntimeVersion() {
   return process.env[VERSION_ENV]?.trim() || PINNED_VERSION;
 }
 
-function installedRuntimeVersion(runtimeDir) {
+function installedPackageVersion(runtimeDir, packageName) {
   try {
-    const pkg = JSON.parse(readFileSync(join(runtimeDir, 'node_modules', 'playwright', 'package.json'), 'utf8'));
+    const pkg = JSON.parse(readFileSync(join(runtimeDir, 'node_modules', ...packageName.split('/'), 'package.json'), 'utf8'));
     return pkg.version || null;
   } catch {
     return null;
   }
+}
+
+function installedRuntimeVersion(runtimeDir) {
+  return installedPackageVersion(runtimeDir, 'playwright');
 }
 
 function runInherited(command, args, options = {}) {
@@ -47,33 +56,48 @@ function runInherited(command, args, options = {}) {
   return result.status === 0;
 }
 
-export function installPlaywrightRuntime(browsers = ['chromium']) {
+// Exact pins for the owned prefix: Playwright always, axe only when requested.
+function runtimePackagePins(version, withAxe) {
+  const pins = [{ name: 'playwright', version }];
+  if (withAxe) pins.push({ name: AXE_PACKAGE, version: AXE_PINNED_VERSION });
+  return pins;
+}
+
+// Check each pin separately so an already-current Playwright prefix still
+// receives axe when it is requested. All specs go in one exact-save install.
+function ensureRuntimePackages(runtimeDir, pins) {
+  const isCurrent = (pin) => installedPackageVersion(runtimeDir, pin.name) === pin.version;
+  if (pins.every(isCurrent)) return;
+  // Windows .cmd shims need a shell on current Node; quote the only free-form argument.
+  const isWindows = process.platform === 'win32';
+  const installed = runInherited(
+    isWindows ? 'npm.cmd' : 'npm',
+    [
+      'install', '--prefix', isWindows ? `"${runtimeDir}"` : runtimeDir,
+      '--ignore-scripts', '--no-audit', '--no-fund', '--save-exact',
+      ...pins.map((pin) => `${pin.name}@${pin.version}`),
+    ],
+    { shell: isWindows },
+  );
+  const missing = pins.find((pin) => !installed || !isCurrent(pin));
+  if (missing) throw new Error(`Failed to install ${missing.name}@${missing.version} into ${runtimeDir}`);
+}
+
+export function installPlaywrightRuntime(browsers = ['chromium'], { withAxe = false } = {}) {
   const runtimeDir = playwrightRuntimeDir();
   const version = playwrightRuntimeVersion();
   mkdirSync(runtimeDir, { recursive: true });
-
-  if (installedRuntimeVersion(runtimeDir) !== version) {
-    // Windows .cmd shims need a shell on current Node; quote the only free-form argument.
-    const isWindows = process.platform === 'win32';
-    const installed = runInherited(
-      isWindows ? 'npm.cmd' : 'npm',
-      [
-        'install', '--prefix', isWindows ? `"${runtimeDir}"` : runtimeDir,
-        '--ignore-scripts', '--no-audit', '--no-fund', '--save-exact', `playwright@${version}`,
-      ],
-      { shell: isWindows },
-    );
-    if (!installed || installedRuntimeVersion(runtimeDir) !== version) {
-      throw new Error(`Failed to install playwright@${version} into ${runtimeDir}`);
-    }
-  }
+  ensureRuntimePackages(runtimeDir, runtimePackagePins(version, withAxe));
 
   // Use the owned CLI so browser revisions match the resolved package.
   const cli = join(runtimeDir, 'node_modules', 'playwright', 'cli.js');
-  if (!runInherited(process.execPath, [cli, 'install', ...browsers])) {
-    throw new Error(`Playwright browser installation failed; retry: ${INSTALL_COMMAND} ${browsers.join(' ')}`);
+  if (browsers.length > 0 && !runInherited(process.execPath, [cli, 'install', ...browsers])) {
+    const retryArgs = [...(withAxe ? [WITH_AXE_FLAG] : []), ...browsers].join(' ');
+    throw new Error(`Playwright browser installation failed; retry: ${INSTALL_COMMAND} ${retryArgs}`);
   }
-  return { runtimeDir, version, browsers };
+  const result = { runtimeDir, version, browsers };
+  if (withAxe) result.axeVersion = AXE_PINNED_VERSION;
+  return result;
 }
 
 function findExecutable(candidate) {
@@ -108,8 +132,27 @@ function braveExecutableCandidates() {
   return ['brave-browser', 'brave', '/snap/bin/brave'];
 }
 
+// GH#36278: the browser choice must reach non-interactive processes (launchd,
+// auto-update, pulse, GUI-launched MCP clients) that never read shell rc files.
+// Precedence matches settings-helper.sh: env var, then settings.json
+// `browser.playwright_executable`. Returns the raw configured value or ''.
+export function configuredExecutableSetting() {
+  // The per-process bundled-browser selector overrides persisted browser choices.
+  if (process.env.AIDEVOPS_PLAYWRIGHT_BROWSER === 'chromium') return '';
+  const fromEnv = process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE?.trim();
+  if (fromEnv) return fromEnv;
+  const settingsPath = process.env.AIDEVOPS_SETTINGS_FILE?.trim()
+    || join(homedir(), '.config', 'aidevops', 'settings.json');
+  try {
+    const value = JSON.parse(readFileSync(settingsPath, 'utf8'))?.browser?.playwright_executable;
+    return typeof value === 'string' ? value.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
 export function resolvePlaywrightBrowserExecutable(runtime) {
-  const configuredExecutable = process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE?.trim();
+  const configuredExecutable = configuredExecutableSetting();
   if (configuredExecutable) return findExecutable(configuredExecutable) || configuredExecutable;
 
   if (process.env.AIDEVOPS_PLAYWRIGHT_BROWSER !== 'chromium') {
@@ -245,23 +288,79 @@ export async function playwrightStatus() {
   };
 }
 
-async function ownedChromiumExecutable(runtimeDir) {
+async function ownedRuntimeBrowser(runtimeDir) {
   const ownedModule = await validateModule(resolveFromAnchor(join(runtimeDir, 'package.json')));
-  if (!ownedModule) return null;
+  if (!ownedModule) return { packageImportable: false, chromiumExecutable: null };
   try {
-    return findExecutable((await loadPlaywright(ownedModule)).chromium.executablePath());
+    const chromiumExecutable = findExecutable((await loadPlaywright(ownedModule)).chromium.executablePath());
+    return { packageImportable: true, chromiumExecutable };
+  } catch {
+    return { packageImportable: true, chromiumExecutable: null };
+  }
+}
+
+// GH#36181: an explicitly configured browser is what every launch path uses, so
+// it satisfies readiness in place of bundled Chromium. Only a regular executable
+// file counts; an invalid path never makes the runtime ready.
+function configuredBrowserExecutable() {
+  const executable = findExecutable(configuredExecutableSetting());
+  try {
+    return executable && statSync(executable).isFile() ? executable : null;
   } catch {
     return null;
   }
 }
 
-// Setup idempotence: the owned prefix holds the pinned version and its Chromium.
+// Axe is optional: report whether it imports from the owned prefix, i.e.
+// beside the owned Playwright, without making it part of runtime readiness.
+async function ownedAxeStatus(runtimeDir) {
+  const installedVersion = installedPackageVersion(runtimeDir, AXE_PACKAGE);
+  let importable = false;
+  if (installedVersion) {
+    try {
+      const require = createRequire(pathToFileURL(join(runtimeDir, 'package.json')));
+      await import(pathToFileURL(realpathSync(require.resolve(AXE_PACKAGE))).href);
+      importable = true;
+    } catch {
+      importable = false;
+    }
+  }
+  return {
+    package: AXE_PACKAGE,
+    version: AXE_PINNED_VERSION,
+    installedVersion,
+    importable,
+    ready: importable && installedVersion === AXE_PINNED_VERSION,
+  };
+}
+
+// Setup idempotence: the owned prefix holds the pinned version plus either its
+// Chromium or a valid AIDEVOPS_PLAYWRIGHT_EXECUTABLE browser.
 export async function ownedRuntimeStatus() {
   const runtimeDir = playwrightRuntimeDir();
   const version = playwrightRuntimeVersion();
   const installedVersion = installedRuntimeVersion(runtimeDir);
-  const chromiumExecutable = installedVersion === version ? await ownedChromiumExecutable(runtimeDir) : null;
-  return { runtimeDir, version, installedVersion, chromiumExecutable, ready: Boolean(chromiumExecutable) };
+  const owned = installedVersion === version
+    ? await ownedRuntimeBrowser(runtimeDir)
+    : { packageImportable: false, chromiumExecutable: null };
+  const { chromiumExecutable } = owned;
+  const configuredExecutable = configuredBrowserExecutable();
+  // A configured but invalid executable must not be masked by bundled Chromium:
+  // launch paths use the configured value rather than falling back to the bundle.
+  const selectedExecutable = configuredExecutableSetting() ? configuredExecutable : chromiumExecutable;
+  const ready = Boolean(owned.packageImportable && selectedExecutable);
+  const axe = await ownedAxeStatus(runtimeDir);
+  return { runtimeDir, version, installedVersion, chromiumExecutable, configuredExecutable, ready, axe };
+}
+
+// Named browsers are always installed. With none named, bundled Chromium is the
+// default only when no valid configured browser replaces it (GH#36278), so
+// `install --with-axe` never re-downloads a Chromium the operator retired.
+function parseInstallArgs(args) {
+  const withAxe = args.includes(WITH_AXE_FLAG);
+  const browsers = args.filter((arg) => arg !== WITH_AXE_FLAG);
+  if (browsers.length > 0) return { withAxe, browsers };
+  return { withAxe, browsers: configuredBrowserExecutable() ? [] : ['chromium'] };
 }
 
 function writeLine(value) {
@@ -285,12 +384,22 @@ const COMMANDS = {
   status: async () => writeLine(await playwrightStatus()),
   check: async () => writeLine((await usableStatus()).module),
   'browser-executable': async () => writeLine((await usableStatus()).browserExecutable),
+  // Configured browser for launchers: resolved path, or the raw value when it
+  // does not resolve so the launch fails closed instead of using bundled
+  // Chromium. Prints nothing when no browser is configured.
+  'configured-executable': async () => {
+    const configured = configuredExecutableSetting();
+    if (configured) writeLine(findExecutable(configured) || configured);
+  },
   'runtime-check': async () => {
     const status = await ownedRuntimeStatus();
     writeLine(status);
     if (!status.ready) process.exitCode = 1;
   },
-  install: async (browsers) => writeLine(installPlaywrightRuntime(browsers.length > 0 ? browsers : ['chromium'])),
+  install: async (args) => {
+    const { browsers, withAxe } = parseInstallArgs(args);
+    writeLine(installPlaywrightRuntime(browsers, { withAxe }));
+  },
 };
 
 async function main() {

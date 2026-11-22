@@ -8,8 +8,16 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
+GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-${TEST_NATIVE_GIT}}"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 # Git reports canonical worktree paths; resolve macOS /var -> /private/var.
@@ -18,6 +26,9 @@ TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P)
 # without one, and the host registry must never be read or written.
 export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/registry"
 export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
+export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_ROOT}/lifecycle-state"
+export HOME="${TEST_ROOT}/home"
+mkdir -p "$HOME"
 
 LOGFILE="${TEST_ROOT}/pulse.log"
 export AIDEVOPS_CLEANUP_LOG="${TEST_ROOT}/cleanup_worktrees.log"
@@ -83,9 +94,43 @@ make_repo_with_worktree() {
 	printf 'base\n' >"${repo_path}/README.md"
 	git -C "$repo_path" add README.md
 	git -C "$repo_path" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m init
-	git -C "$repo_path" worktree add -q -b "$branch" "$wt_path" main
+	create_lifecycle_worktree "$repo_path" "$wt_path" "$branch" || return 1
+	register_fixture_repo "$repo_path" || return 1
 	backdate_worktree_activity "${wt_path}" 202001010000
 	return 0
+}
+
+# Registry retirement only acts inside registered repositories; the registration
+# lives in the isolated HOME so the host repos.json is never touched.
+register_fixture_repo() {
+	local repo_dir="$1"
+	local config="${HOME}/.config/aidevops/repos.json"
+	local current='{"initialized_repos":[]}'
+	mkdir -p "${config%/*}"
+	[[ -f "$config" ]] && current=$(<"$config")
+	jq --arg path "$repo_dir" '.initialized_repos += [{"slug":"testowner/testrepo","path":$path}]' \
+		<<<"$current" >"${config}.tmp" || return 1
+	chmod 600 "${config}.tmp"
+	mv "${config}.tmp" "$config"
+	return 0
+}
+
+# Registry-authorised retirement (GH#38667) refuses trees the lifecycle registry
+# did not enrol, so fixtures are created through the registry creation path.
+create_lifecycle_worktree() {
+	local repo_dir="$1"
+	local wt_path="$2"
+	local branch="$3"
+	local registry="${SCRIPT_DIR}/../worker-lifecycle/worker-registry.py"
+	local creator_pid="" rc=0
+	# Short-lived creator: retirement waits for the creating caller to exit.
+	sleep 2 &
+	creator_pid=$!
+	python3 "$registry" --state-dir "${AIDEVOPS_LIFECYCLE_STATE_DIR:?}" create-worktree \
+		--repo "$repo_dir" --path "$wt_path" --ref HEAD --pid "$creator_pid" \
+		--session-id fixture-creator --initialize -- -b "$branch" >/dev/null || rc=$?
+	wait "$creator_pid" || true
+	return "$rc"
 }
 
 test_current_cwd_skip() {
@@ -151,45 +196,12 @@ test_locked_orphan_is_preserved() {
 	return 0
 }
 
-test_late_write_before_permanent_remove_is_preserved() {
-	local repo_path="${TEST_ROOT}/repo-late-write"
-	local wt_path="${TEST_ROOT}/wt-late-write"
-	local wrapper_path="${TEST_ROOT}/late-write-git"
-	local marker_path="${TEST_ROOT}/late-write-injected"
-	local metadata=""
-	local wt_root=""
-	make_repo_with_worktree "$repo_path" "$wt_path" "feature/late-write"
-	wt_root=$("$GIT_BIN" -C "$wt_path" rev-parse --show-toplevel) || fail "late-write root became unreadable"
-	cat >"$wrapper_path" <<'LATE_WRITE_GIT'
-#!/usr/bin/env bash
-if [[ "$*" == *"worktree remove"* && ! -e "${LATE_WRITE_MARKER:?}" ]]; then
-	printf 'late state\n' >"${LATE_WRITE_WORKTREE:?}/late-write.txt" || exit 1
-	: >"$LATE_WRITE_MARKER"
-fi
-exec "${REAL_GIT:?}" "$@"
-LATE_WRITE_GIT
-	chmod +x "$wrapper_path"
-
-	if (
-		capture_worktree_process_cwds() { return 0; }
-		REAL_GIT="$GIT_BIN" LATE_WRITE_MARKER="$marker_path" \
-			LATE_WRITE_WORKTREE="$wt_path" AIDEVOPS_REAL_GIT_BIN="$wrapper_path" \
-			_pc_permanently_remove_eligible_orphan "$repo_path" "$wt_path" "feature/late-write" \
-			"fixture-policy-approved" 0 "" "fixture" "fixture"
-	); then
-		fail "late-write permanent cleanup was reported as complete"
-	fi
-	[[ -f "$wt_path/late-write.txt" && -e "$marker_path" ]] || fail "late write or source was removed"
-	metadata=$("$GIT_BIN" -C "$repo_path" worktree list --porcelain) || fail "late-write metadata became unreadable"
-	printf '%s\n' "$metadata" | grep -Fqx "worktree $wt_root" || fail "late-write registration was removed"
-	printf '%s\n' "$metadata" | grep -Fqx "branch refs/heads/feature/late-write" || fail "late-write branch identity was removed"
-	if [[ -f "$UNREGISTER_LOG" ]] && grep -Fxq "$wt_path" "$UNREGISTER_LOG"; then
-		fail "late-write worktree was unregistered"
-	fi
-	grep -q 'git-worktree-remove-failed.*mode=skipped' "$AIDEVOPS_CLEANUP_LOG" || fail "late-write refusal was not audited"
-	pass "pulse permanent cleanup preserves a write acquired after clean classification"
-	return 0
-}
+# The late-write-before-removal case no longer runs here: registry-authorised
+# retirement (GH#38667) never calls the shell-level Git override this case
+# injected. Late writes are covered on the registry path by
+# worker-lifecycle/tests/test_retirement.py
+# (test_late_write_before_relocation_preserves_source and
+# test_late_write_after_move_preserves_private_source).
 
 test_degraded_orphan_is_quarantined_with_bounded_retry() {
 	local repo_path="${TEST_ROOT}/repo-degraded"
@@ -617,7 +629,6 @@ test_permanent_removal_failure_has_no_git_fallback() {
 test_current_cwd_skip
 test_orphan_removal_unregisters
 test_locked_orphan_is_preserved
-test_late_write_before_permanent_remove_is_preserved
 test_orphan_crash_skips_closed_issue_comment
 test_orphan_crash_keeps_open_issue_recovery
 test_zombie_reaper_requires_ledger_repo

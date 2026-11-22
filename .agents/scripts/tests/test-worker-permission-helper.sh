@@ -204,7 +204,9 @@ for unsupported_permission in task read unknown; do
 	[[ "$unsupported_rc" -eq 1 ]]
 	grep -q 'permission_non_grantable' "$posted_comment"
 	grep -q 'static subagent allowlist/routing' "$posted_comment"
-	if grep -q 'sudo aidevops approve permissions' "$posted_comment" ||
+	# GH#35676: the only offered signature is a withdrawal, which grants nothing.
+	grep -q -- '--request perm-[0-9a-f]* --withdraw$' "$posted_comment"
+	if awk '/sudo aidevops approve permissions/ && !/--withdraw$/ { found = 1 } END { exit !found }' "$posted_comment" ||
 		grep -q 'needs-maintainer-permissions' "$gh_call_log" ||
 		[[ -f "${git_dir}/aidevops-permission-pending" ]]; then
 		printf 'unsupported permission invited approval or persisted an approval hold\n' >&2
@@ -241,11 +243,46 @@ for unsafe_pattern in '~/projects/app/src/**' '~/.ssh/**' '~/.cache/../.ssh/id' 
 		exit 1
 	fi
 done
-jq '.requests[0].tool = "read"' "$temp_capture" >"${temp_capture}.n"
+# GH#35676: scratch-path bash/read are owned recovery too; unsafe paths and
+# other tools still are not.
+for temp_tool in read bash; do
+	jq --arg t "$temp_tool" '.requests[0].tool = $t' "$temp_capture" >"${temp_capture}.n"
+	if ! permission_capture_is_temp_write_recovery "${temp_capture}.n"; then
+		printf 'scratch-path %s was not classified as owned recovery\n' "$temp_tool" >&2
+		exit 1
+	fi
+	# shellcheck disable=SC2088 # Literal tilde patterns mirror captured requests.
+	for unsafe_pattern in '~/projects/app/src/**' '~/.ssh/**' '~/.cache/../.ssh/id' '~/.aws/tmp/credentials' \
+		'~/.cache/opencode/node_modules/@opencode-ai/sdk/**' '~/tmp/app/node_modules/pkg/**'; do
+		jq --arg p "$unsafe_pattern" '.requests[0].patterns = [$p]' "${temp_capture}.n" >"${temp_capture}.u"
+		if permission_capture_is_temp_write_recovery "${temp_capture}.u"; then
+			printf 'non-temp %s misclassified as recovery: %s\n' "$temp_tool" "$unsafe_pattern" >&2
+			exit 1
+		fi
+	done
+done
+jq '.requests[0].tool = "task"' "$temp_capture" >"${temp_capture}.n"
 if permission_capture_is_temp_write_recovery "${temp_capture}.n"; then
-	printf 'temp read misclassified as write recovery\n' >&2
+	printf 'task request misclassified as temp recovery\n' >&2
 	exit 1
 fi
+# GH#38567: inline restricted PATH (GH#38523 shape) is owned recovery for
+# bash/read; writes into OS binary dirs and non-OS bin dirs are not.
+# shellcheck disable=SC2088 # Literal tilde patterns mirror captured requests.
+jq '.requests[0].tool = "bash" | .requests[0].patterns = ["/usr/bin/*", "~/.aidevops/.agent-workspace/tmp/gh38523-test/bin/*"]' \
+	"$temp_capture" >"${temp_capture}.n"
+if ! permission_capture_is_temp_write_recovery "${temp_capture}.n"; then
+	printf 'inline PATH request (tmp bin + /usr/bin) was not classified as owned recovery\n' >&2
+	exit 1
+fi
+for non_recovery in 'write:/usr/bin/*' 'bash:/usr/local/bin/*' 'bash:/usr/bin/../../etc/*' 'bash:/opt/homebrew/bin/*'; do
+	jq --arg t "${non_recovery%%:*}" --arg p "${non_recovery#*:}" '.requests[0].tool = $t | .requests[0].patterns = [$p]' \
+		"$temp_capture" >"${temp_capture}.n"
+	if permission_capture_is_temp_write_recovery "${temp_capture}.n"; then
+		printf 'non-recovery request misclassified as owned recovery: %s\n' "$non_recovery" >&2
+		exit 1
+	fi
+done
 permission_record_blocker "permission_capability_true_fixture" "blocked" "permission_required" "true" \
 	123 "owner/repo" "issue-123" "perm-true" "Boolean transport fixture" \
 	"external_directory" "read" "medium" "true"

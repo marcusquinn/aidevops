@@ -11,6 +11,13 @@
 [[ -n "${_PULSE_DIAGNOSE_ISSUE_LOADED:-}" ]] && return 0
 _PULSE_DIAGNOSE_ISSUE_LOADED=1
 
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/shared-approval-cli.sh"
+fi
+
 # Summarise terminal prelaunch failures that never reached runtime metrics.
 # Args: $1=issue_log_lines
 # Outputs compact JSON with a total and reason counts.
@@ -214,7 +221,7 @@ _issue_permission_hold_json() {
 	[[ -n "$issue_json" ]] || issue_json='{}'
 	[[ -n "$comments_json" ]] || comments_json='[]'
 	printf '%s\n%s\n' "$issue_json" "$comments_json" |
-		jq -sc --arg number "$issue_number" --arg repo "$repo_slug" --argjson now "$(date +%s)" '
+		jq -sc --arg number "$issue_number" --arg repo "$repo_slug" --argjson now "$(date +%s)" --arg approve_cli "$(approval_cli_prefix)" '
 		def trusted: (.author_association // "") as $a | ["OWNER", "MEMBER", "COLLABORATOR"] | index($a) != null;
 		def epoch: (.created_at // "") | (try fromdateiso8601 catch null);
 		.[0] as $issue | .[1] as $comments
@@ -242,8 +249,8 @@ _issue_permission_hold_json() {
 					elif (($decision.body // "") | contains("<!-- aidevops-signed-permission-withdrawal -->")) then "withdrawal"
 					else "grant" end),
 				owner_session_terminal: $released,
-				grant_command: ("sudo aidevops approve permissions issue " + $number + " " + $repo + " --request " + ($rid // "perm-<id>")),
-				withdraw_command: ("sudo aidevops approve permissions issue " + $number + " " + $repo + " --request " + ($rid // "perm-<id>") + " --withdraw")
+				grant_command: ($approve_cli + " approve permissions issue " + $number + " " + $repo + " --request " + ($rid // "perm-<id>")),
+				withdraw_command: ($approve_cli + " approve permissions issue " + $number + " " + $repo + " --request " + ($rid // "perm-<id>") + " --withdraw")
 			}
 		end' 2>/dev/null || _issue_permission_hold_fallback_json "$issue_json"
 	return 0
@@ -399,8 +406,15 @@ _cmd_issue_parse_args() {
 				return 1
 				;;
 			*)
+				# GH#38274: a positional owner/repo was silently dropped and the
+				# cwd origin substituted, diagnosing an unrelated same-number item.
 				if [[ -z "$_CMD_ISSUE_NUMBER" ]]; then
 					_CMD_ISSUE_NUMBER="${1}"
+				elif [[ -z "$_CMD_ISSUE_REPO_SLUG" && "${1}" == */* ]]; then
+					_CMD_ISSUE_REPO_SLUG="${1}"
+				else
+					print_error "unexpected argument: ${1} (use --repo <owner/repo>)"
+					return 1
 				fi
 				shift
 				;;
@@ -408,7 +422,7 @@ _cmd_issue_parse_args() {
 	done
 
 	if [[ -z "$_CMD_ISSUE_NUMBER" ]]; then
-		print_error "usage: pulse-diagnose-helper.sh issue <N> [--repo <slug>] [--verbose] [--json]"
+		print_error "usage: pulse-diagnose-helper.sh issue <N> [<owner/repo> | --repo <slug>] [--verbose] [--json]"
 		return 1
 	fi
 
@@ -535,9 +549,9 @@ _fetch_issue_linked_prs() {
 # Returns 0 if the comment body contains a lifecycle event marker.
 _comment_has_lifecycle_marker() {
 	local body="$1"
-	printf '%s' "$body" | grep -qE \
+	printf '%s' "$body" | grep -E \
 		'WORKER_BRANCH_ORPHAN|CLAIM_RELEASED|CLAIM_DEFERRED|[Ww]atchdog|STUCK_WORKER|source:ci-failure|source:conflict-feedback|DISPATCH_CLAIM|worker.kill|WORKER_KILLED|_aborting_dispatch' \
-		2>/dev/null
+		>/dev/null 2>&1
 	return $?
 }
 
@@ -550,7 +564,7 @@ _lifecycle_comment_excerpt() {
 		| grep -v '^---' \
 		| grep -v 'aidevops\.sh' \
 		| grep -E 'WORKER_BRANCH_ORPHAN|CLAIM_RELEASED|CLAIM_DEFERRED|[Ww]atchdog|STUCK_WORKER|source:ci|source:conflict|DISPATCH_CLAIM|worker.kill|WORKER_KILLED|_aborting' \
-		| head -2 \
+		| sed -n '1,2p' \
 		| sed 's/^[[:space:]]*//'
 	return 0
 }

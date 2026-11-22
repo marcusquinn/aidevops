@@ -14,6 +14,9 @@ shopt -s inherit_errexit 2>/dev/null || true
 # shellcheck source=../_opencode_config_paths.sh
 source "${BASH_SOURCE[0]%/*}/../_opencode_config_paths.sh"
 
+# GH#38922: prefer the runtime-profile helper from this source tree.
+_SETUP_MCP_OPENCODE_PROFILE_HELPER="${BASH_SOURCE[0]%/*}/../../opencode-runtime-profile.py"
+
 _SETUP_GOOGLE_ANALYTICS_MCP_KEY="google-analytics-mcp"
 _SETUP_GOOGLE_ANALYTICS_MCP_LABEL="Google Analytics MCP"
 
@@ -398,18 +401,37 @@ _setup_browser_tools_playwright() {
 	[[ -f "$runtime_script" ]] || runtime_script="$HOME/.aidevops/agents/scripts/playwright-runtime.mjs"
 	local install_command="node ~/.aidevops/agents/scripts/playwright-runtime.mjs install chromium firefox webkit"
 
-	if node "$runtime_script" runtime-check >/dev/null 2>&1; then
+	# runtime-check prints its JSON status on stdout even when not ready. It
+	# accepts a valid AIDEVOPS_PLAYWRIGHT_EXECUTABLE in place of bundled Chromium
+	# and reports it as configuredExecutable (GH#36181).
+	local runtime_status=""
+	if runtime_status=$(node "$runtime_script" runtime-check 2>/dev/null); then
 		print_success "Framework Playwright runtime already installed"
-		print_info "Playwright MCP runs via: npx -y @playwright/mcp@0.0.79 --headless --isolated"
+		if [[ "$runtime_status" == *'"chromiumExecutable":null'* && "$runtime_status" == *'"configuredExecutable":"'* ]]; then
+			print_info "Using configured Playwright browser; bundled Chromium is not required"
+		fi
+		print_info "Playwright MCP runs via: bash ~/.aidevops/agents/scripts/browser-mcp-launcher.sh playwright npx -y @playwright/mcp@0.0.79 --headless --isolated"
 		return 0
 	fi
 
+	# A valid AIDEVOPS_PLAYWRIGHT_EXECUTABLE replaces bundled Chromium, so a pin
+	# bump must not re-download the build the operator retired (GH#36190).
+	# Array, not a string: this module sets IFS=$'\n\t', which breaks word splitting.
+	local -a install_browsers=(chromium firefox webkit)
+	if [[ "$runtime_status" == *'"configuredExecutable":"'* ]]; then
+		install_browsers=(firefox webkit)
+		print_info "Using configured Playwright browser; skipping bundled Chromium download"
+	fi
+	local browser_list
+	browser_list=$(IFS=' '; echo "${install_browsers[*]}")
+	install_command="node ~/.aidevops/agents/scripts/playwright-runtime.mjs install ${browser_list}"
+
 	local install_playwright
-	setup_prompt install_playwright "Install Playwright with browsers (chromium, firefox, webkit)? [Y/n]: " "Y"
+	setup_prompt install_playwright "Install Playwright with browsers (${browser_list})? [Y/n]: " "Y"
 
 	if [[ "$install_playwright" =~ ^[Yy]?$ ]]; then
 		print_info "Installing framework Playwright runtime and browsers..."
-		if node "$runtime_script" install chromium firefox webkit; then
+		if node "$runtime_script" install "${install_browsers[@]}"; then
 			print_success "Playwright runtime and browsers installed"
 		else
 			print_warning "Playwright installation failed"
@@ -420,7 +442,56 @@ _setup_browser_tools_playwright() {
 		print_info "Install later with: ${install_command}"
 	fi
 
-	print_info "Playwright MCP runs via: npx -y @playwright/mcp@0.0.79 --headless --isolated"
+	print_info "Playwright MCP runs via: bash ~/.aidevops/agents/scripts/browser-mcp-launcher.sh playwright npx -y @playwright/mcp@0.0.79 --headless --isolated"
+	return 0
+}
+
+# OpenCode browse (GH#37155): drives the user's own Chromium-family browser via
+# the browse extension. Installs only when missing and a supported browser is
+# present; browse self-updates afterwards, so updates never reopen pairing.
+setup_opencode_browse() {
+	local helper="${INSTALL_DIR:-.}/.agents/scripts/opencode-browse-helper.sh"
+	[[ -f "$helper" ]] || helper="$HOME/.aidevops/agents/scripts/opencode-browse-helper.sh"
+	[[ -f "$helper" ]] || return 0
+	local helper_command=""
+	printf -v helper_command 'bash %q' "$helper"
+
+	if [[ "${AIDEVOPS_OPENCODE_BROWSE:-1}" == "0" ]]; then
+		print_info "OpenCode browse: skipped (AIDEVOPS_OPENCODE_BROWSE=0)"
+		return 0
+	fi
+	if bash "$helper" installed; then
+		# Keep %q quoting literal; setup print helpers interpret backslash escapes.
+		printf '%b[SUCCESS]%b %s\n' "$GREEN" "$NC" "OpenCode browse installed (self-updating; status: $helper_command status; pair: $helper_command pair)"
+		return 0
+	fi
+	if [[ "${CI:-}" == "true" || "${GITHUB_ACTIONS:-}" == "true" ]]; then
+		return 0
+	fi
+
+	local browsers=""
+	if ! browsers=$(bash "$helper" detect 2>/dev/null); then
+		print_info "OpenCode browse: no supported Chromium-family browser found; skipping"
+		return 0
+	fi
+	browsers=$(printf '%s\n' "$browsers" | cut -f1 | paste -sd ',' - | sed 's/,/, /g')
+	print_info "OpenCode browse lets agents use your own browser tabs (found: ${browsers})"
+
+	local install_browse=""
+	setup_prompt install_browse "Install OpenCode browse CLI? [Y/n]: " "Y"
+	if [[ ! "$install_browse" =~ ^[Yy]?$ ]]; then
+		printf '%b[INFO]%b %s\n' "$BLUE" "$NC" "Skipped OpenCode browse. Install later: $helper_command install"
+		return 0
+	fi
+
+	local -a browse_args=()
+	if [[ "${NON_INTERACTIVE:-false}" == "true" ]] || [[ ! -t 0 ]]; then
+		browse_args=(--no-wait)
+	fi
+	if ! bash "$helper" install ${browse_args[@]+"${browse_args[@]}"}; then
+		print_warning "OpenCode browse installation failed"
+		printf '%b[INFO]%b %s\n' "$BLUE" "$NC" "Run manually: $helper_command install"
+	fi
 	return 0
 }
 
@@ -452,6 +523,9 @@ setup_browser_tools() {
 
 	# Playwright MCP (cross-browser testing automation)
 	[[ "$has_node" == "true" ]] && _setup_browser_tools_playwright
+
+	# OpenCode browse (the user's own browser, extension-paired)
+	setup_opencode_browse
 
 	if [[ "$has_node" == "true" ]]; then
 		print_info "Interactive-only existing tabs: https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm"
@@ -512,17 +586,19 @@ _setup_opencode_plugins_register_file_url() {
 		return 0
 	fi
 
-	# Check if the plugin URL is already in the array
+	# Reconcile both keys even when the desired URL is already present: an old
+	# managed entry may still coexist with it after an interrupted migration.
 	local already_registered
-	already_registered=$(jq --arg url "$plugin_url" --arg key "$plugin_key" \
-		'(.[$key] // []) | map(select(. == $url)) | length' \
+	local managed_prefix="file://${HOME}/.aidevops/agents/plugins/opencode-aidevops/"
+	already_registered=$(jq --arg url "$plugin_url" --arg key "$plugin_key" --arg other "$other_plugin_key" --arg prefix "$managed_prefix" --arg kind string \
+		'(has($other) | not) and ([(.[$key] // [])[] | select(type == $kind and startswith($prefix))] == [$url])' \
 		"$opencode_config" || echo "0")
 
-	if [[ "$already_registered" -eq 0 ]]; then
+	if [[ "$already_registered" != "true" ]]; then
 		local tmp_config="${opencode_config}.tmp.$$"
-		if jq --arg url "$plugin_url" --arg key "$plugin_key" --arg other "$other_plugin_key" \
+		if jq --arg url "$plugin_url" --arg key "$plugin_key" --arg other "$other_plugin_key" --arg prefix "$managed_prefix" \
 			'.[$key] = (((.[$key] // []) + (.[$other] // []))
-			| map(select((type != "string") or (contains("/plugins/opencode-aidevops/") | not)))
+			| map(select((type != "string") or (startswith($prefix) | not)))
 			+ [$url] | unique) | del(.[$other])' \
 			"$opencode_config" >"$tmp_config"; then
 			mv "$tmp_config" "$opencode_config"
@@ -537,7 +613,7 @@ _setup_opencode_plugins_register_file_url() {
 		print_success "aidevops plugin already registered in opencode.json" >&2
 	fi
 
-	_setup_opencode_plugins_remove_cursor_oauth "$opencode_config" >&2
+	[[ "$other_plugin_key" == plugin ]] || _setup_opencode_plugins_remove_cursor_oauth "$opencode_config" >&2
 
 	echo "true"
 	return 0
@@ -616,7 +692,7 @@ _setup_opencode_plugins_remove_managed_symlink() {
 	[[ -L "$aidevops_plugin_dst" ]] || return 0
 	link_target=$(readlink "$aidevops_plugin_dst" 2>/dev/null || true)
 	case "$link_target" in
-	*/plugins/opencode-aidevops | */plugins/opencode-aidevops/*) ;;
+	"$HOME/.aidevops/agents/plugins/opencode-aidevops" | "$HOME/.aidevops/agents/plugins/opencode-aidevops/"*) ;;
 	*) return 0 ;;
 	esac
 	if rm -f "$aidevops_plugin_dst"; then
@@ -780,6 +856,43 @@ _setup_opencode_v1_find_config() {
 	return $?
 }
 
+_setup_opencode_v2_prepare_config() {
+	local config_home="$1" opencode_config_dir="$2" opencode_config="$3"
+	local opencode_config_parent="" dir=""
+	local managed_root="${HOME}/.aidevops/runtimes/opencode-v2"
+	opencode_config_parent=$(dirname "$opencode_config")
+	mkdir -p "$opencode_config_dir" "$opencode_config_parent" || return 1
+	if [[ "${AIDEVOPS_OPENCODE_GLOBAL_V2:-0}" != "1" ]]; then
+		for dir in "$config_home" "$opencode_config_dir" "$opencode_config_parent"; do
+			case "$dir" in "$managed_root"/*) chmod 700 "$dir" 2>/dev/null || true ;; esac
+		done
+	fi
+	if [[ ! -e "$opencode_config" ]]; then
+		(umask 077 && printf '{}\n' >"$opencode_config") || return 1
+	fi
+	_setup_opencode_v2_link_framework_guide "$opencode_config_dir"
+	return 0
+}
+
+# A fresh V1 install has no opencode.json until update_opencode_config writes
+# one later in setup, so plugin registration used to warn that the plugin was
+# missing and then "re-register" it (GH#38389). Create the minimal config now,
+# as the V2 path does. The directory comes from the V2-filtered XDG path; a
+# user-authored opencode.jsonc is never shadowed. Prints the config path.
+_setup_opencode_v1_ensure_config() {
+	local opencode_config_dir="$1"
+	local opencode_config="${opencode_config_dir}/opencode.json"
+	[[ -n "$opencode_config_dir" ]] || return 1
+	[[ -e "${opencode_config_dir}/opencode.jsonc" ]] && return 1
+	if [[ ! -e "$opencode_config" ]]; then
+		mkdir -p "$opencode_config_dir" || return 1
+		(umask 077 && printf '{\n  "%s": "%s"\n}\n' "\$schema" "https://opencode.ai/config.json" >"$opencode_config") || return 1
+		print_info "Created OpenCode config: $opencode_config" >&2
+	fi
+	printf '%s\n' "$opencode_config"
+	return 0
+}
+
 setup_opencode_plugins() {
 	local profile="${AIDEVOPS_OPENCODE_PROFILE:-v1}"
 	local binary_name="opencode"
@@ -800,6 +913,13 @@ setup_opencode_plugins() {
 		config_home="${AIDEVOPS_OPENCODE_V2_CONFIG_HOME:-${v2_root}/config}"
 		opencode_config_dir="${AIDEVOPS_OPENCODE_V2_CONFIG_DIR:-${config_home}/opencode}"
 		opencode_config="${AIDEVOPS_OPENCODE_V2_CONFIG:-${opencode_config_dir}/opencode.json}"
+		if [[ "${AIDEVOPS_OPENCODE_GLOBAL_V2:-0}" == "1" ]]; then
+			binary_name="opencode"
+			config_home=$(_setup_opencode_v1_ambient_path "${XDG_CONFIG_HOME:-}")
+			config_home="${config_home:-$HOME/.config}"
+			opencode_config_dir="${config_home}/opencode"
+			opencode_config=$(_setup_opencode_v1_find_config) || opencode_config="${opencode_config_dir}/opencode.json"
+		fi
 	else
 		config_home=$(_setup_opencode_v1_ambient_path "${XDG_CONFIG_HOME:-}")
 		config_home="${config_home:-$HOME/.config}"
@@ -838,16 +958,10 @@ setup_opencode_plugins() {
 	# Mechanism 1: file:// URL in opencode.json
 	local pool_plugin_registered=""
 	if [[ "$profile" == "v2" ]]; then
-		local opencode_config_parent=""
-		opencode_config_parent=$(dirname "$opencode_config")
-		mkdir -p "$opencode_config_dir" "$opencode_config_parent" || return 1
-		chmod 700 "$config_home" "$opencode_config_dir" "$opencode_config_parent" 2>/dev/null || true
-		if [[ ! -e "$opencode_config" ]]; then
-			(umask 077 && printf '{}\n' >"$opencode_config") || return 1
-		fi
-		_setup_opencode_v2_link_framework_guide "$opencode_config_dir"
+		_setup_opencode_v2_prepare_config "$config_home" "$opencode_config_dir" "$opencode_config" || return 1
 	fi
-	if [[ -n "$opencode_config" ]] || opencode_config=$(_setup_opencode_v1_find_config); then
+	if [[ -n "$opencode_config" ]] || opencode_config=$(_setup_opencode_v1_find_config) ||
+		{ [[ "$profile" != "v2" ]] && opencode_config=$(_setup_opencode_v1_ensure_config "$opencode_config_dir"); }; then
 		pool_plugin_registered=$(_setup_opencode_plugins_register_file_url "$opencode_config" "$aidevops_plugin_entrypoint" "$plugin_key")
 	else
 		print_info "opencode.json not found — run 'opencode' once to create it, then re-run setup"
@@ -871,7 +985,9 @@ setup_opencode_plugins() {
 	setup_track_configured "OpenCode plugins"
 
 	# Version-appropriate auth guidance
-	_setup_opencode_plugins_auth_guidance "$pool_plugin_registered" "$binary_path" "$binary_name"
+	if [[ "${AIDEVOPS_OPENCODE_SKIP_VERSION_GUIDANCE:-0}" != 1 ]]; then
+		_setup_opencode_plugins_auth_guidance "$pool_plugin_registered" "$binary_path" "$binary_name"
+	fi
 
 	return 0
 }
@@ -888,6 +1004,24 @@ setup_opencode_runtime_plugins() {
 	local selected_profile="v1"
 	if declare -F aidevops_opencode_profile_id >/dev/null 2>&1; then
 		selected_profile=$(aidevops_opencode_profile_id)
+	fi
+	if [[ -z "${AIDEVOPS_OPENCODE_PROFILE:-}" ]]; then
+		local installed="" helper="${_SETUP_MCP_OPENCODE_PROFILE_HELPER:-}"
+		[[ -f "$helper" ]] || helper="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}/scripts/opencode-runtime-profile.py"
+		if [[ -f "$helper" ]] && command -v python3 >/dev/null 2>&1; then
+			# GH#38922: the shared detector accepts `opencode v2.3.0` and bare `1.19.6`.
+			installed=$(python3 "$helper" installed 2>/dev/null || true)
+		fi
+		if [[ "$installed" == "v2" ]]; then
+			AIDEVOPS_OPENCODE_GLOBAL_V2=1 AIDEVOPS_OPENCODE_PROFILE=v2 setup_opencode_plugins || return $?
+			setup_opencode_v2_preview_plugins
+			return $?
+		elif [[ -z "$installed" ]]; then
+			print_info "OpenCode version unavailable or unparseable; using V1 plugin contract"
+			AIDEVOPS_OPENCODE_SKIP_VERSION_GUIDANCE=1 AIDEVOPS_OPENCODE_PROFILE=v1 setup_opencode_plugins || return $?
+			setup_opencode_v2_preview_plugins
+			return $?
+		fi
 	fi
 	if [[ "$selected_profile" == "v2" ]]; then
 		(
@@ -936,11 +1070,15 @@ setup_seo_mcps() {
 	fi
 
 	# GSC uses MCP (OAuth2 complexity warrants it)
-	local gsc_creds="$HOME/.config/aidevops/gsc-credentials.json"
+	# shellcheck source=../../gsc-auth-lib.sh
+	source "${INSTALL_DIR}/.agents/scripts/gsc-auth-lib.sh"
+	local gsc_creds
+	gsc_creds=$(gsc_adc_credential_file)
 	if [[ -f "$gsc_creds" ]]; then
 		print_success "Google Search Console credentials configured"
 	else
-		print_info "GSC: Create service account JSON at $gsc_creds"
+		print_info "GSC: Configure keyless ADC: gcloud auth application-default login --impersonate-service-account=SERVICE_ACCOUNT_EMAIL"
+		print_info "  Or provide service account JSON via GOOGLE_APPLICATION_CREDENTIALS or ~/.config/aidevops/gsc-credentials.json"
 		print_info "  See: ~/.aidevops/agents/seo/google-search-console.md"
 	fi
 
@@ -957,11 +1095,17 @@ _setup_google_analytics_mcp_detect_creds() {
 
 	if [[ -f "$gsc_creds" ]]; then
 		creds_path="$gsc_creds"
-		project_id=$(jq -r '.project_id // empty' "$gsc_creds" 2>/dev/null)
+		project_id=$(jq -r '.project_id // .quota_project_id // empty' "$gsc_creds" 2>/dev/null)
+		print_success "Found GSC credentials - sharing with Google Analytics MCP" >&2
+		# Authorized-user ADC files do not record granted scopes, so warn rather than verify.
+		if [[ "$(jq -r '.type // empty' "$gsc_creds" 2>/dev/null)" == "authorized_user" ]]; then
+			print_warning "User ADC may lack the Analytics scope; if calls fail, re-run: gcloud auth application-default login --scopes=https://www.googleapis.com/auth/analytics.readonly,https://www.googleapis.com/auth/cloud-platform" >&2
+		fi
 		if [[ -n "$project_id" ]]; then
 			enable_mcp="true"
-			print_success "Found GSC credentials - sharing with Google Analytics MCP"
-			print_info "Project: $project_id"
+			print_info "Project: $project_id" >&2
+		else
+			print_info "Set GOOGLE_PROJECT_ID in opencode.json, then enable Google Analytics MCP" >&2
 		fi
 	fi
 
@@ -992,6 +1136,26 @@ _setup_google_analytics_mcp_update_existing() {
 			print_warning "Failed to update Google Analytics MCP config"
 		fi
 	else
+		# Refresh a stale credential path without changing other settings.
+		if [[ -n "$creds_path" ]]; then
+			local current_creds
+			current_creds=$(jq -r --arg mcp_key "$_SETUP_GOOGLE_ANALYTICS_MCP_KEY" \
+				'.mcp[$mcp_key].environment.GOOGLE_APPLICATION_CREDENTIALS // empty' "$opencode_config" 2>/dev/null)
+			if [[ "$current_creds" != "$creds_path" ]]; then
+				local tmp_config
+				tmp_config=$(mktemp)
+				trap 'rm -f "${tmp_config:-}"' RETURN
+				if jq --arg creds "$creds_path" --arg mcp_key "$_SETUP_GOOGLE_ANALYTICS_MCP_KEY" \
+					'.mcp[$mcp_key].environment.GOOGLE_APPLICATION_CREDENTIALS = $creds' \
+					"$opencode_config" >"$tmp_config" 2>/dev/null; then
+					mv "$tmp_config" "$opencode_config"
+					print_success "Updated Google Analytics MCP credential path to detected ADC"
+					return 0
+				fi
+				rm -f "$tmp_config"
+				print_warning "Failed to refresh Google Analytics MCP credential path"
+			fi
+		fi
 		print_info "Google Analytics MCP already configured in OpenCode"
 	fi
 	return 0
@@ -1023,9 +1187,12 @@ _setup_google_analytics_mcp_add_new() {
 		mv "$tmp_config" "$opencode_config"
 		if [[ "$enable_mcp" == "true" ]]; then
 			print_success "Added Google Analytics MCP to OpenCode (enabled with GSC credentials)"
+		elif [[ -n "$creds_path" ]]; then
+			print_success "Added Google Analytics MCP to OpenCode (disabled - set GOOGLE_PROJECT_ID to enable)"
 		else
 			print_success "Added Google Analytics MCP to OpenCode (disabled - no credentials found)"
-			print_info "To enable: Create service account JSON at $gsc_creds"
+			print_info "To enable: gcloud auth application-default login --impersonate-service-account=SERVICE_ACCOUNT_EMAIL"
+			print_info "Or provide service account JSON at ${gsc_creds:-$HOME/.config/aidevops/gsc-credentials.json}"
 		fi
 		print_info "Or use the google-analytics subagent which enables it automatically"
 	else
@@ -1055,7 +1222,10 @@ _setup_google_analytics_mcp_write_config() {
 }
 
 setup_google_analytics_mcp() {
-	local gsc_creds="$HOME/.config/aidevops/gsc-credentials.json"
+	# shellcheck source=../../gsc-auth-lib.sh
+	source "${INSTALL_DIR}/.agents/scripts/gsc-auth-lib.sh"
+	local gsc_creds
+	gsc_creds=$(gsc_adc_credential_file)
 
 	# Check prerequisites before announcing setup (GH#5240)
 	local opencode_config
@@ -1080,7 +1250,7 @@ setup_google_analytics_mcp() {
 	# Prerequisites met — proceed with setup
 	print_info "Setting up Google Analytics MCP..."
 
-	# Auto-detect credentials from shared GSC service account
+	# Auto-detect shared GSC credentials, including gcloud keyless ADC
 	local creds_output
 	creds_output=$(_setup_google_analytics_mcp_detect_creds "$gsc_creds")
 	local creds_path project_id enable_mcp
@@ -1094,7 +1264,7 @@ setup_google_analytics_mcp() {
 	# Show setup instructions
 	print_info "Google Analytics MCP setup:"
 	print_info "  1. Enable Google Analytics Admin & Data APIs in Google Cloud Console"
-	print_info "  2. Configure ADC: gcloud auth application-default login --scopes https://www.googleapis.com/auth/analytics.readonly,https://www.googleapis.com/auth/cloud-platform"
+	print_info "  2. Configure keyless ADC: gcloud auth application-default login --impersonate-service-account=SERVICE_ACCOUNT_EMAIL --scopes https://www.googleapis.com/auth/analytics.readonly,https://www.googleapis.com/auth/cloud-platform"
 	print_info "  3. Update GOOGLE_APPLICATION_CREDENTIALS path in opencode.json"
 	print_info "  4. Set GOOGLE_PROJECT_ID in opencode.json"
 	print_info "Documentation: ~/.aidevops/agents/services/analytics/google-analytics.md"

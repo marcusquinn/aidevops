@@ -48,7 +48,7 @@ _classify_canary_failure_reason() {
 	local reason
 	reason=$(classify_failure_reason "$output_file")
 	case "$reason" in
-		access_denied | auth_error | quota_exceeded | rate_limit | provider_error)
+		access_denied | auth_error | quota_exceeded | rate_limit | provider_error | model_unavailable)
 			printf '%s' "$reason"
 			return 0
 			;;
@@ -80,7 +80,9 @@ _record_canary_provider_backoff() {
 	local canary_reason="$2"
 	local canary_output="$3"
 	case "$canary_reason" in
-	access_denied | auth_error | quota_exceeded | rate_limit | provider_error)
+	# GH#36698: model_unavailable (entitlement rejection) backs off only the
+	# probed model; record_provider_backoff keys it by model, not provider.
+	access_denied | auth_error | quota_exceeded | rate_limit | provider_error | model_unavailable)
 		local canary_provider
 		canary_provider=$(extract_provider "$canary_model" 2>/dev/null || printf '%s' "")
 		if [[ -n "$canary_provider" ]]; then

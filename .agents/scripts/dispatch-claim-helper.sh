@@ -43,8 +43,16 @@ _DCH_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 source "${_DCH_SCRIPT_DIR}/pr-checkpoint-target-lib.sh"
 # shellcheck source=dispatch-claim-checkpoint.sh
 source "${_DCH_SCRIPT_DIR}/dispatch-claim-checkpoint.sh"
+# shellcheck source=dispatch-claim-automatic-checkpoint.sh
+source "${_DCH_SCRIPT_DIR}/dispatch-claim-automatic-checkpoint.sh"
 # shellcheck source=dispatch-claim-trust.sh
 source "${_DCH_SCRIPT_DIR}/dispatch-claim-trust.sh"
+# shellcheck source=./dispatch-claim-runtime.sh
+# shellcheck disable=SC1091 # Sibling library resolved at runtime
+source "${_DCH_SCRIPT_DIR}/dispatch-claim-runtime.sh"
+# shellcheck source=./dispatch-claim-filters.sh
+# shellcheck disable=SC1091 # Sibling library resolved at runtime
+source "${_DCH_SCRIPT_DIR}/dispatch-claim-filters.sh"
 unset _DCH_SCRIPT_DIR
 
 # Consensus window — how long to wait after posting a claim before checking
@@ -163,131 +171,6 @@ fi
 : "${AIDEVOPS_UNKNOWN_VERSION:=unknown}"
 
 #######################################
-# Generate a unique nonce for this claim attempt.
-# Uses /dev/urandom for uniqueness; falls back to date+PID.
-# Returns: nonce string on stdout
-#######################################
-_generate_nonce() {
-	if [[ -r /dev/urandom ]]; then
-		head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'
-	else
-		printf '%s-%s' "$(date -u '+%s%N' 2>/dev/null || date -u '+%s')" "$$"
-	fi
-	return 0
-}
-
-#######################################
-# Get current UTC timestamp in ISO 8601 format
-#######################################
-_now_utc() {
-	date -u '+%Y-%m-%dT%H:%M:%SZ'
-	return 0
-}
-
-#######################################
-# Get current epoch seconds
-#######################################
-_now_epoch() {
-	date -u '+%s'
-	return 0
-}
-
-# Emit per-call latency to runner diagnostics without exposing response bodies.
-_dch_timed() {
-	local stage="$1" started="$SECONDS" rc=0
-	shift
-	"$@" || rc=$?
-	if [[ -n "${AIDEVOPS_DISPATCH_CLAIM_CALL_LOG:-}" ]]; then
-		printf '[dispatch-claim] stage=%s elapsed_s=%s rc=%s\n' \
-			"$stage" "$((SECONDS - started))" "$rc" >>"$AIDEVOPS_DISPATCH_CLAIM_CALL_LOG"
-	else
-		printf '[dispatch-claim] stage=%s elapsed_s=%s rc=%s\n' \
-			"$stage" "$((SECONDS - started))" "$rc" >&2
-	fi
-	return "$rc"
-}
-
-_dch_snapshot_valid() {
-	local path="${DISPATCH_CLAIM_SNAPSHOT_FILE:-}"
-	[[ -n "$path" && "$path" == "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-claim."* && -f "$path" && ! -L "$path" && -O "$path" ]]
-}
-
-_resolve_device_id() {
-	local device_id="${AIDEVOPS_DEVICE_ID:-}"
-	if [[ -n "$device_id" && ! "$device_id" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$ ]]; then
-		printf 'Warning: invalid AIDEVOPS_DEVICE_ID ignored\n' >&2
-		device_id=""
-	fi
-	if [[ -z "$device_id" && -r "$AIDEVOPS_DEVICE_ID_FILE" ]]; then
-		device_id=$(tr -d '[:space:]' <"$AIDEVOPS_DEVICE_ID_FILE" 2>/dev/null || true)
-		[[ "$device_id" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$ ]] || device_id=""
-	fi
-	if [[ -z "$device_id" ]]; then
-		device_id="device-$(_now_epoch)-$$-${RANDOM:-0}"
-		mkdir -p "${AIDEVOPS_DEVICE_ID_FILE%/*}" 2>/dev/null || true
-		(umask 077; printf '%s\n' "$device_id" >"$AIDEVOPS_DEVICE_ID_FILE") 2>/dev/null || true
-	fi
-	printf '%s' "$device_id"
-	return 0
-}
-
-#######################################
-# Parse ISO 8601 timestamp to epoch seconds
-# Args: $1 = ISO timestamp (YYYY-MM-DDTHH:MM:SSZ)
-# Returns: epoch seconds via stdout
-#######################################
-_iso_to_epoch() {
-	local ts="$1"
-	# Try GNU date first (Linux), then BSD date (macOS)
-	date -u -d "$ts" '+%s' 2>/dev/null ||
-		TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$ts" '+%s' 2>/dev/null ||
-		printf '%s' "0"
-	return 0
-}
-
-#######################################
-# Resolve the current runner's GitHub login.
-# Args: $1 = optional override login
-# Returns: login string on stdout
-#######################################
-_resolve_runner() {
-	local override="${1:-}"
-	if [[ -n "$override" ]]; then
-		printf '%s' "$override"
-		return 0
-	fi
-	# Try gh API, fall back to whoami
-	gh api user --jq '.login' 2>/dev/null || whoami
-	return 0
-}
-
-#######################################
-# t2401: Resolve the framework version from AIDEVOPS_VERSION_FILE.
-# Returns: semver string on stdout, "unknown" when file is missing/empty.
-# Always exit 0 — claim emission must never fail on a missing VERSION file.
-#######################################
-_resolve_version() {
-	if declare -F aidevops_find_version >/dev/null 2>&1; then
-		local detected
-		detected=$(aidevops_find_version 2>/dev/null || printf '%s' "$AIDEVOPS_UNKNOWN_VERSION")
-		if [[ -n "$detected" && "$detected" != "$AIDEVOPS_UNKNOWN_VERSION" ]]; then
-			printf '%s' "$detected"
-			return 0
-		fi
-	fi
-	if [[ -r "$AIDEVOPS_VERSION_FILE" ]]; then
-		local ver
-		ver=$(head -n1 "$AIDEVOPS_VERSION_FILE" 2>/dev/null | tr -d '[:space:]')
-		if [[ -n "$ver" ]]; then
-			printf '%s' "$ver"
-			return 0
-		fi
-	fi
-	printf '%s' "$AIDEVOPS_UNKNOWN_VERSION"
-	return 0
-}
-
-#######################################
 # Return a secure fallback file path for claim POST stderr capture.
 # Used only when mktemp is unavailable; never falls back to world-writable /tmp.
 # Returns:
@@ -372,7 +255,8 @@ ${machine_readable_part}
 		retry_delay=2
 	fi
 
-	local comment_id="" attempt=1 post_err_file="" post_error_summary="" post_started=0
+	local comment_id="" attempt=1 post_err_file="" post_error_summary="" post_started=0 post_context=""
+	_dch_stage_context post_context "$issue_number" "$repo_slug"
 	post_err_file=$(mktemp 2>/dev/null || _claim_post_error_fallback_path) || return 1
 	while [[ "$attempt" -le "$attempts" ]]; do
 		post_started=$SECONDS
@@ -380,10 +264,10 @@ ${machine_readable_part}
 			--method POST \
 			--field body="$body" \
 			--jq '.id' 2>"$post_err_file"); then
-			printf '[dispatch-claim] stage=claim_post elapsed_s=%s rc=0 attempt=%s\n' "$((SECONDS - post_started))" "$attempt" >&2
+			printf '[dispatch-claim] stage=claim_post elapsed_s=%s rc=0 attempt=%s%s\n' "$((SECONDS - post_started))" "$attempt" "$post_context" >&2
 			break
 		fi
-		printf '[dispatch-claim] stage=claim_post elapsed_s=%s rc=1 attempt=%s\n' "$((SECONDS - post_started))" "$attempt" >&2
+		printf '[dispatch-claim] stage=claim_post elapsed_s=%s rc=1 attempt=%s%s\n' "$((SECONDS - post_started))" "$attempt" "$post_context" >&2
 
 		post_error_summary=$(tr '\n' ' ' <"$post_err_file" | cut -c1-240 2>/dev/null || printf '%s' "unknown")
 		if [[ "$attempt" -lt "$attempts" ]]; then
@@ -780,6 +664,7 @@ CLAIM_RELEASED reason=claim_only_no_worker runner=${runner} ts=$(_now_utc) claim
 <!-- ops:end -->"
 		gh api "$(_issue_comments_endpoint "$repo_slug" "$issue_number")" \
 			--method POST --field body="$body" >/dev/null 2>&1 || return 1
+		_dch_ledger_remove_nonce "$nonce"
 	done < <(printf '%s' "$orphaned_claims" | jq -r '.[] | [.id, .nonce, .claim_author] | @tsv' 2>/dev/null)
 	return 0
 }
@@ -812,318 +697,6 @@ _dch_orphan_release_valid() {
 						and ((.expires_at | tonumber) < $now)))))
 	' <<<"${snapshot}
 ${live}" >/dev/null 2>&1 || return 1
-	return 0
-}
-
-#######################################
-# t2401: Semver comparison — is $1 strictly less than $2?
-# Args: $1 = version (e.g., "3.8.78"), $2 = floor (e.g., "3.9.0")
-# Returns: exit 0 = version < floor (below), exit 1 = version >= floor
-# "unknown" or empty version is always below floor.
-#######################################
-_version_below() {
-	local version="${1:-}"
-	local floor="${2:-}"
-
-	# Treat missing/unknown as below any configured floor
-	if [[ -z "$version" || "$version" == "unknown" ]]; then
-		return 0
-	fi
-
-	# Equal versions are not strictly below
-	if [[ "$version" == "$floor" ]]; then
-		return 1
-	fi
-
-	# sort -V puts smaller semver first. If $version is first, it's below $floor.
-	local first
-	first=$(printf '%s\n%s\n' "$version" "$floor" | sort -V | head -n1)
-	if [[ "$first" == "$version" ]]; then
-		return 0
-	fi
-	return 1
-}
-
-#######################################
-# t2401: Filter out claim entries whose version is below DISPATCH_CLAIM_MIN_VERSION.
-# Legacy claims parsed as "unknown" are always filtered out when a floor is set.
-#
-# Args:
-#   $1 = parsed claims JSON array
-#   $2 = min version floor (semver)
-# Returns:
-#   Filtered JSON on stdout. Fails safe — returns input unchanged on jq error.
-#######################################
-_filter_below_version() {
-	local parsed="$1"
-	local floor="$2"
-	local self_runner="${3:-}"
-
-	# Collect IDs of claims strictly below the floor.
-	local below_ids=""
-	local claim_rows
-	claim_rows=$(printf '%s' "$parsed" | jq -r '.[] | [.id, (.runner // ""), (.version // "unknown")] | @tsv' 2>/dev/null) || return 0
-
-	local id runner version
-	while IFS=$'\t' read -r id runner version; do
-		[[ -z "$id" ]] && continue
-		if [[ -n "$self_runner" && "$runner" == "$self_runner" ]]; then
-			continue
-		fi
-		if _version_below "$version" "$floor"; then
-			below_ids+="${id}"$'\n'
-		fi
-	done <<<"$claim_rows"
-
-	if [[ -z "$below_ids" ]]; then
-		printf '%s' "$parsed"
-		return 0
-	fi
-
-	local below_json
-	below_json=$(printf '%s' "$below_ids" | jq -Rsc 'split("\n") | map(select(length > 0)) | map(tonumber)' 2>/dev/null) || {
-		printf '%s' "$parsed"
-		return 0
-	}
-
-	local filtered
-	filtered=$(printf '%s' "$parsed" | jq -c --argjson below "$below_json" '
-		map(select((.id as $i | $below | index($i)) | not))
-	' 2>/dev/null) || {
-		printf '%s' "$parsed"
-		return 0
-	}
-	printf '%s' "$filtered"
-	return 0
-}
-
-#######################################
-# t2422: Apply the structured per-runner override filter.
-#
-# For each claim, consults _override_resolve (from dispatch-override-resolve.sh)
-# and strips claims whose action is "ignore". "warn" claims are kept but logged.
-# "honour" claims pass through unchanged.
-#
-# No-op fast paths:
-#   - DISPATCH_OVERRIDE_ENABLED != "true"
-#   - _override_resolve not sourced (partial deploy of helpers)
-#   - No DISPATCH_OVERRIDE_* structured vars set AND no DISPATCH_OVERRIDE_DEFAULT
-#
-# Args:
-#   $1 = parsed claims JSON array
-#   $2 = issue number (log context)
-#   $3 = repo slug (log context)
-# Returns:
-#   Filtered claims JSON on stdout. Fails safe — returns input unchanged on
-#   any jq error or when resolver is missing.
-#######################################
-#######################################
-# Detect whether any structured override config is currently active.
-# Uses compgen -v (in-shell variable enumeration) rather than `env` so both
-# exported and non-exported shell variables are detected — callers often set
-# overrides via `VAR=value cmd` inline syntax which does NOT export.
-# Returns: exit 0 if structured config found (or default set), exit 1 otherwise.
-#######################################
-_structured_filter_has_config() {
-	local var
-	for var in $(compgen -v 2>/dev/null | grep '^DISPATCH_OVERRIDE_' 2>/dev/null || true); do
-		case "$var" in
-		DISPATCH_OVERRIDE_CONF | DISPATCH_OVERRIDE_ENABLED | DISPATCH_OVERRIDE_DEFAULT) continue ;;
-		DISPATCH_OVERRIDE_*) return 0 ;;
-		esac
-	done
-	[[ -n "${DISPATCH_OVERRIDE_DEFAULT:-}" ]]
-}
-
-#######################################
-# Classify claims against the resolver and return a newline-delimited list of
-# IDs whose action is `ignore`. Logs `warn` actions once per unique runner.
-# Args:
-#   $1 = claim rows (TSV: id\trunner\tversion per line, from jq output)
-#   $2 = issue number (log context)
-#   $3 = repo slug (log context)
-# Returns: newline-delimited IDs on stdout, exit 0 always.
-#######################################
-_structured_filter_classify_claims() {
-	local rows="$1"
-	local issue_number="$2"
-	local repo_slug="$3"
-	local self_runner="${4:-}"
-
-	# Iterate via IFS=newline `for` rather than `while read <<<"$rows"` — the
-	# complexity-regression scanner's nesting-depth heuristic treats
-	# `done <<<"X"` as an unmatched close, inflating the global depth counter
-	# (every such pattern permanently bumps the max-depth report by 1).
-	local id runner version action warned_runners=""
-	local line
-	local saved_ifs="${IFS-}"
-	IFS=$'\n'
-	for line in $rows; do
-		IFS="$saved_ifs"
-		[[ -z "$line" ]] && { IFS=$'\n'; continue; }
-		IFS=$'\t' read -r id runner version <<<"$line"
-		[[ -z "$id" ]] && { IFS=$'\n'; continue; }
-		if [[ -n "$self_runner" && "$runner" == "$self_runner" ]]; then
-			IFS=$'\n'
-			continue
-		fi
-		action=$(_override_resolve "$runner" "$version" 2>/dev/null) || action="honour"
-		case "$action" in
-		ignore) printf '%s\n' "$id" ;;
-		warn)
-			if [[ "$warned_runners" != *"|${runner}|"* ]]; then
-				printf '[dispatch-claim-helper] structured override: warn action on runner=%s version=%s on #%s in %s (claim kept, audit logged)\n' \
-					"$runner" "$version" "$issue_number" "$repo_slug" >&2
-				warned_runners+="|${runner}|"
-			fi
-			;;
-		*) ;; # honour or unknown — keep
-		esac
-		IFS=$'\n'
-	done
-	IFS="$saved_ifs"
-	return 0
-}
-
-_apply_structured_filter() {
-	local parsed="$1"
-	local issue_number="$2"
-	local repo_slug="$3"
-	local self_runner="${4:-}"
-
-	# No-op fast paths: master switch off, resolver missing, or no config.
-	if [[ "${DISPATCH_OVERRIDE_ENABLED:-true}" != "true" ]] \
-		|| ! declare -F _override_resolve >/dev/null 2>&1 \
-		|| ! _structured_filter_has_config; then
-		printf '%s' "$parsed"
-		return 0
-	fi
-
-	# Walk claims via resolver — "ignore" IDs are collected, "warn" is logged.
-	local rows to_strip_newline
-	rows=$(printf '%s' "$parsed" | jq -r '.[] | [.id, .runner, .version] | @tsv' 2>/dev/null) || {
-		printf '%s' "$parsed"
-		return 0
-	}
-	to_strip_newline=$(_structured_filter_classify_claims "$rows" "$issue_number" "$repo_slug" "$self_runner")
-
-	if [[ -z "$to_strip_newline" ]]; then
-		printf '%s' "$parsed"
-		return 0
-	fi
-
-	local strip_json filtered
-	strip_json=$(printf '%s' "$to_strip_newline" | jq -Rsc 'split("\n") | map(select(length > 0)) | map(tonumber)' 2>/dev/null) || {
-		printf '%s' "$parsed"
-		return 0
-	}
-	filtered=$(printf '%s' "$parsed" | jq -c --argjson strip "$strip_json" 'map(select((.id as $i | $strip | index($i)) | not))' 2>/dev/null) || {
-		printf '%s' "$parsed"
-		return 0
-	}
-
-	local pre_count post_count
-	pre_count=$(printf '%s' "$parsed" | jq 'length' 2>/dev/null || echo 0)
-	post_count=$(printf '%s' "$filtered" | jq 'length' 2>/dev/null || echo 0)
-	if [[ "$pre_count" -gt "$post_count" ]]; then
-		printf '[dispatch-claim-helper] structured override stripped %d claim(s) on #%s in %s\n' \
-			"$((pre_count - post_count))" "$issue_number" "$repo_slug" >&2
-	fi
-
-	printf '%s' "$filtered"
-	return 0
-}
-
-#######################################
-# t2400/t2401/t2422: Apply runtime override filters to parsed claims.
-#
-# Composable filters, applied in order:
-#   1. Login filter (t2400): DISPATCH_CLAIM_IGNORE_RUNNERS strips named logins.
-#      DEPRECATED — use per-runner DISPATCH_OVERRIDE_<SLUG>="ignore" instead.
-#   2. Version filter (t2401): DISPATCH_CLAIM_MIN_VERSION strips claims whose
-#      version field is below the semver floor (including legacy "unknown").
-#      DEPRECATED — use DISPATCH_OVERRIDE_<SLUG>="honour-only-above:V" to scope
-#      the floor per runner rather than globally.
-#   3. Structured filter (t2422): per-runner DISPATCH_OVERRIDE_<SLUG> vars
-#      decide honour/ignore/warn per claim. Auto-sunsets via version gating.
-#
-# All filters respect DISPATCH_OVERRIDE_ENABLED=false as a global kill switch.
-# Emits a stderr summary line when any claims are stripped, for operator audit.
-#
-# Args:
-#   $1 = parsed claims JSON array (from _fetch_claims parse step)
-#   $2 = issue number (for log context)
-#   $3 = repo slug (for log context)
-# Returns:
-#   Filtered claims JSON on stdout. Fails safe — returns input unchanged
-#   on any jq error.
-#######################################
-_apply_ignore_filter() {
-	local parsed="$1"
-	local issue_number="$2"
-	local repo_slug="$3"
-	local self_runner="${4:-}"
-
-	if [[ "$DISPATCH_OVERRIDE_ENABLED" != "true" ]]; then
-		printf '%s' "$parsed"
-		return 0
-	fi
-
-	# All three filter inputs empty → no-op fast path.
-	# Use compgen -v (in-shell variable enumeration) so we see non-exported
-	# vars set via the inline `VAR=value cmd` syntax.
-	local has_structured=0 var
-	for var in $(compgen -v 2>/dev/null | grep '^DISPATCH_OVERRIDE_' 2>/dev/null || true); do
-		case "$var" in
-		DISPATCH_OVERRIDE_CONF | DISPATCH_OVERRIDE_ENABLED | DISPATCH_OVERRIDE_DEFAULT) continue ;;
-		DISPATCH_OVERRIDE_*)
-			has_structured=1
-			break
-			;;
-		esac
-	done
-
-	if [[ -z "$DISPATCH_CLAIM_IGNORE_RUNNERS" && -z "$DISPATCH_CLAIM_MIN_VERSION" && $has_structured -eq 0 && -z "${DISPATCH_OVERRIDE_DEFAULT:-}" ]]; then
-		printf '%s' "$parsed"
-		return 0
-	fi
-
-	local pre_count
-	pre_count=$(printf '%s' "$parsed" | jq 'length' 2>/dev/null || echo 0)
-
-	# Login filter (t2400, deprecated — still supported for backward compat)
-	if [[ -n "$DISPATCH_CLAIM_IGNORE_RUNNERS" ]]; then
-		local ignored_json
-		# Normalise the ignore list (accept space OR comma separators) → JSON array
-		ignored_json=$(printf '%s' "$DISPATCH_CLAIM_IGNORE_RUNNERS" | tr ',' ' ' | tr -s ' ' '\n' | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || ignored_json="[]"
-		if [[ "$ignored_json" != "[]" ]]; then
-			local filtered_login
-			filtered_login=$(printf '%s' "$parsed" | jq -c --argjson ignored "$ignored_json" --arg self_runner "$self_runner" '
-				map(select((.runner == $self_runner and $self_runner != "") or (.runner as $r | $ignored | index($r) | not)))
-			' 2>/dev/null)
-			if [[ -n "$filtered_login" ]]; then
-				parsed="$filtered_login"
-			fi
-		fi
-	fi
-
-	# Version filter (t2401, deprecated — still supported for backward compat)
-	if [[ -n "$DISPATCH_CLAIM_MIN_VERSION" ]]; then
-		parsed=$(_filter_below_version "$parsed" "$DISPATCH_CLAIM_MIN_VERSION" "$self_runner")
-	fi
-
-	# Structured per-runner filter (t2422)
-	parsed=$(_apply_structured_filter "$parsed" "$issue_number" "$repo_slug" "$self_runner")
-
-	local post_count
-	post_count=$(printf '%s' "$parsed" | jq 'length' 2>/dev/null || echo 0)
-	if [[ "$pre_count" -gt "$post_count" ]]; then
-		printf '[dispatch-claim-helper] filtered %d claim(s) on #%s in %s (legacy_ignore=%s legacy_min_version=%s structured=%d)\n' \
-			"$((pre_count - post_count))" "$issue_number" "$repo_slug" \
-			"${DISPATCH_CLAIM_IGNORE_RUNNERS:-none}" "${DISPATCH_CLAIM_MIN_VERSION:-none}" "$has_structured" >&2
-	fi
-
-	printf '%s' "$parsed"
 	return 0
 }
 
@@ -1168,6 +741,23 @@ _delete_losing_claim_comment() {
 }
 
 #######################################
+# GH#38352: pre-claim assignment check with is-assigned's exit contract
+# (0 = blocked, 1 = free, other = error). A validated layer-6 free verdict for
+# this launch answers "free" without a second is-assigned run; any mismatch
+# runs the full recovery-enabled check. Only this pre-consensus guard may
+# reuse evidence: _guard_no_active_assignment_read_only stays a fresh read.
+# Args: dedup helper path, issue number, repo slug, runner login
+#######################################
+_dch_pre_claim_assignment_check() {
+	local dedup_helper="$1" issue_number="$2" repo_slug="$3" runner="$4"
+	if _dch_assignment_verdict_reusable "$issue_number" "$repo_slug" "$runner"; then
+		return 1
+	fi
+	"$dedup_helper" is-assigned "$issue_number" "$repo_slug" "$runner"
+	return $?
+}
+
+#######################################
 # Fail-closed guard before posting a DISPATCH_CLAIM.
 # Args:
 #   $1 = issue number
@@ -1197,7 +787,7 @@ _guard_no_active_assignment_before_claim() {
 	fi
 
 	local guard_output="" guard_rc=0
-	guard_output=$(_dch_timed assignment_guard "$dedup_helper" is-assigned "$issue_number" "$repo_slug" "$runner" 2>&1) || guard_rc=$?
+	guard_output=$(_dch_timed assignment_guard _dch_pre_claim_assignment_check "$dedup_helper" "$issue_number" "$repo_slug" "$runner" 2>&1) || guard_rc=$?
 	case "$guard_rc" in
 	0)
 		printf 'CLAIM_BLOCKED: active_assignment issue=#%s repo=%s runner=%s signal=%s\n' \
@@ -1219,6 +809,7 @@ _guard_no_active_assignment_read_only() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local runner="$3"
+	local skip_cost_budget="${4:-0}"
 	if declare -F _interactive_claim_fence_blocks_dispatch >/dev/null 2>&1 &&
 		_interactive_claim_fence_blocks_dispatch "$issue_number" "$repo_slug"; then
 		printf 'CLAIM_BLOCKED: live_interactive_owner issue=#%s repo=%s\n' \
@@ -1234,7 +825,9 @@ _guard_no_active_assignment_read_only() {
 
 	local guard_output=""
 	local guard_rc=0
-	guard_output=$(_dch_timed final_assignment_guard "$dedup_helper" is-assigned-read-only "$issue_number" "$repo_slug" "$runner" 2>&1) || guard_rc=$?
+	# Only the post-consensus claim call may skip its already-passed cost gate;
+	# launch-time ownership checks keep the budget guard enabled by default.
+	guard_output=$(_dch_timed final_assignment_guard env AIDEVOPS_DDH_SKIP_COST_BUDGET="$skip_cost_budget" "$dedup_helper" is-assigned-read-only "$issue_number" "$repo_slug" "$runner" 2>&1) || guard_rc=$?
 	case "$guard_rc" in
 	0)
 		printf 'CLAIM_BLOCKED: active_assignment issue=#%s repo=%s runner=%s signal=%s\n' \
@@ -1354,6 +947,8 @@ _fetch_claims_until_own_visible() {
 #   4. If this runner's claim is the oldest active claim → won
 #   5. If another runner's claim is older → remove our losing claim and back off;
 #      record close-window contention only in runner logs.
+#   6. A winner whose lease was mostly consumed by slow consensus renews it
+#      once before handoff (GH#36771); an expired lease fails closed.
 #
 # Args:
 #   $1 = issue number
@@ -1419,21 +1014,74 @@ cmd_claim() {
 		return 2
 	}
 
-	local race_rc=0
-	_resolve_claim_race_result "$issue_number" "$repo_slug" "$runner" "$nonce" "$comment_id" "$claims" || race_rc=$?
-	[[ "$race_rc" -eq 0 ]] || return "$race_rc"
+	local race_rc=0 race_output=""
+	# Publish the win only once the live assignment and lease checks pass.
+	race_output=$(_resolve_claim_race_result "$issue_number" "$repo_slug" "$runner" "$nonce" "$comment_id" "$claims") || race_rc=$?
+	if [[ "$race_rc" -ne 0 ]]; then
+		[[ -z "$race_output" ]] || printf '%s\n' "$race_output"
+		return "$race_rc"
+	fi
 
 	# The interactive owner can arrive during the consensus window after the
 	# pre-claim assignment guard. Revalidate the live assignment before handing
 	# the winning lease back to the dispatcher, and delete the lease on loss.
 	if [[ "${AIDEVOPS_TEST_MODE:-}" != "1" || -n "${AIDEVOPS_FORCE_CLAIM_ASSIGNMENT_GUARD:-}" ]]; then
-		if ! _guard_no_active_assignment_read_only "$issue_number" "$repo_slug" "$runner"; then
+		if ! _guard_no_active_assignment_read_only "$issue_number" "$repo_slug" "$runner" 1; then
 			_delete_losing_claim_comment "$repo_slug" "$comment_id"
 			printf 'CLAIM_REVOKED: interactive_or_active_assignment_after_consensus issue=#%s repo=%s runner=%s comment_id=%s\n' \
 				"$issue_number" "$repo_slug" "$runner" "$comment_id"
 			return 1
 		fi
 	fi
+	local won_expires_at=""
+	won_expires_at=$(printf '%s' "$claims" | jq -r '.[0].lease_expires_at // 0' 2>/dev/null) || won_expires_at=""
+	if ! _dch_timed handoff_lease _ensure_claim_handoff_lease "$issue_number" "$repo_slug" "$nonce" "$won_expires_at"; then
+		echo "CLAIM_ERROR: winning lease cannot cover the launch handoff — blocking dispatch (fail-closed)" >&2
+		return 2
+	fi
+	printf '%s\n' "$race_output"
+	return 0
+}
+
+#######################################
+# GH#36771: keep a won prelaunch lease valid across the dispatcher handoff.
+# The initial lease starts at claim POST, but the consensus window, visibility
+# re-reads and the post-consensus assignment guard all consume it before the
+# dispatcher's first renewal. Observed slow guards left about 12s of a 120s
+# lease at CLAIM_WON, so the first renewal ~19s later saw an expired lease.
+# When less than half the grace remains, renew once through cmd_transition
+# (owner, device, session, token and expiry checks unchanged). An expired
+# lease is never renewed or revived; any failure fails closed.
+# Args: $1 issue number, $2 repo slug, $3 lease token (our nonce),
+#       $4 persisted lease expiry epoch (must be positive for a new claim)
+# Returns: 0 when the lease covers the handoff, 1 otherwise
+#######################################
+_ensure_claim_handoff_lease() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local lease_token="$3"
+	local lease_expires_at="$4"
+	local grace="$DISPATCH_CLAIM_ORPHAN_GRACE" now_epoch="" remaining=0
+	[[ "$lease_expires_at" =~ ^[0-9]+$ ]] || return 1
+	[[ "$lease_expires_at" -gt 0 ]] || return 1
+	[[ "$grace" =~ ^[0-9]+$ ]] || grace=120
+	now_epoch=$(_now_epoch)
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || return 1
+	remaining=$((lease_expires_at - now_epoch))
+	if [[ "$remaining" -lt 0 ]]; then
+		printf 'CLAIM_ERROR: lease_expired_before_handoff issue=#%s expired_s=%s\n' \
+			"$issue_number" "$((0 - remaining))" >&2
+		return 1
+	fi
+	[[ "$remaining" -lt "$((grace / 2))" ]] || return 0
+	if ! cmd_transition "$LEASE_PHASE_PRELAUNCH" "$issue_number" "$repo_slug" \
+		"$lease_token" "issue-${issue_number}" "$grace"; then
+		printf 'CLAIM_ERROR: handoff_lease_renewal_failed issue=#%s remaining_s=%s\n' \
+			"$issue_number" "$remaining" >&2
+		return 1
+	fi
+	printf 'CLAIM_LEASE_RENEWED: issue=#%s remaining_s=%s ttl_s=%s\n' \
+		"$issue_number" "$remaining" "$grace" >&2
 	return 0
 }
 
@@ -1620,6 +1268,34 @@ cmd_verify_pr_checkpoint_target() {
 			"$pr_number" "$repo_slug" "$linked_issue"
 		return 2
 	fi
+	# Compensation alone may encounter an unchanged or partially applied transfer.
+	# Validate that live metadata is within this exact transfer before checking the
+	# original claim against the intended owner state. All other metadata, history,
+	# head and prelaunch fences below remain intact.
+	if [[ $# -eq 9 ]]; then
+		local previous_owner="$8" previous_status="$9"
+		[[ "${AIDEVOPS_PR_CHECKPOINT_REQUIRE_PRELAUNCH:-0}" == 1 &&
+			"${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" == revision &&
+			"$previous_owner" =~ ^([A-Za-z0-9._-]+(\[bot\])?)?$ && -n "$previous_status" ]] || return 1
+		issue_json=$(jq -e --arg previous "$previous_owner" --arg runner "$expected_assignee" \
+			--arg status "$previous_status" '
+			[.assignees[].login] as $owners |
+			[.labels[].name | select(startswith("status:"))] as $statuses |
+			select(($owners | length) <= 2 and ($owners | unique | length) == ($owners | length) and
+				all($owners[]; . == $runner or ($previous != "" and . == $previous)) and
+				($statuses == ["status:" + $status] or $statuses == ["status:in-progress"])) |
+			.assignees = [{login:$runner}]
+		' <<<"$issue_json") || return 1
+	fi
+	if [[ "${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" == automatic ]]; then
+		_dch_verify_automatic_checkpoint "$repo_slug" "$pr_json" "$issue_json" "$pr_number" \
+			"$linked_issue" "$expected_head_sha" "$expected_head_ref" "$expected_assignee" "$checkpoint_author"
+		return $?
+	fi
+	case "${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-revision}" in revision | "") ;; *) return 1 ;; esac
+	if [[ "${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" == revision ]]; then
+		[[ -n "${AIDEVOPS_PR_CHECKPOINT_SESSION:-}" && -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" ]] || return 1
+	fi
 	if [[ -n "${AIDEVOPS_PR_CHECKPOINT_SESSION:-}" ]]; then
 		[[ -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" ]] || return 1
 		checkpoint_comments=$(gh api "repos/${repo_slug}/issues/${linked_issue}/comments?per_page=100" --paginate --slurp) || return 2
@@ -1670,6 +1346,88 @@ _transition_deny() {
 	return 0
 }
 
+# Best-effort presentation hygiene only: never delete or edit parser evidence.
+# The claim predates attempt allocation, so its exact lease/device/session is
+# the binding; later leases and dispatches must also match the finished attempt.
+# Bound the entire operation to five seconds, with no retries or pagination.
+_minimize_finished_attempt_comments() {
+	local issue_number="$1" repo_slug="$2" runner="$3" lease_token="$4"
+	local device="$5" session="$6" attempt_id="$7"
+	local phase="${8:-terminal}"
+	[[ "$phase" == terminal ]] || return 0
+	local limiter="" deadline=$((SECONDS + 5)) remaining="" response="" ids="" id=""
+	if command -v timeout >/dev/null 2>&1; then
+		limiter="timeout"
+	elif command -v gtimeout >/dev/null 2>&1; then
+		limiter="gtimeout"
+	else
+		printf 'DISPATCH_COMMENT_HYGIENE deferred=timeout_unavailable\n' >&2
+		return 0
+	fi
+	# A REST budget probe avoids spending any GraphQL points when scarce.
+	remaining=$("$limiter" 2 gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null) || remaining=""
+	if [[ ! "$remaining" =~ ^[0-9]+$ || "$remaining" -lt 100 ]]; then
+		printf 'DISPATCH_COMMENT_HYGIENE deferred=graphql_budget\n' >&2
+		return 0
+	fi
+	remaining=$((deadline - SECONDS))
+	[[ "$remaining" -gt 0 ]] || return 0
+	response=$("$limiter" "$remaining" gh api graphql \
+		-f owner="${repo_slug%/*}" -f name="${repo_slug#*/}" -F number="$issue_number" \
+		-f query="query(\$owner: String!, \$name: String!, \$number: Int!) {
+			rateLimit { remaining }
+			repository(owner: \$owner, name: \$name) {
+				issue(number: \$number) {
+					comments(last: 100) { nodes { id body isMinimized author { login } } }
+				}
+			}
+		}" 2>/dev/null) || {
+		printf 'DISPATCH_COMMENT_HYGIENE deferred=query_failed\n' >&2
+		return 0
+	}
+	ids=$(printf '%s' "$response" | jq -er --arg runner "$runner" --arg token "$lease_token" \
+		--arg device "$device" --arg session "$session" --arg attempt "$attempt_id" '
+		def fields: split("\n") | map(split(" ")[] | select(test("^[a-z_]+="))
+			| capture("^(?<key>[a-z_]+)=(?<value>[^ ]+)$")) | from_entries;
+		def identity:
+			fields | .lease_token == $token and .device == $device and .session == $session;
+		select((.errors // [] | length) == 0 and .data.rateLimit.remaining >= 100)
+		| [.data.repository.issue.comments.nodes[]
+			| select(.author.login == $runner) ] as $comments
+		# Require the terminal marker to be visible in this bounded window.
+		| select(any($comments[]; .body | identity and
+			(test("(^|\n)DISPATCH_LEASE phase=terminal ")) and
+			(fields | .attempt_id == $attempt)))
+		| $comments[] | select(.isMinimized == false)
+		| select(.body | identity)
+		| select(.body | test("(^|\n)(CLAIM_RELEASED|.*TERMINAL_BLOCKER|Terminal blocker)"; "i") | not)
+		| select(.body | test("(^|\n)DISPATCH_CLAIM ") or
+			((fields | .attempt_id == $attempt) and
+			 test("(^|\n)(DISPATCH_LEASE phase=(prelaunch|ready|terminal) |Dispatching worker)")) or
+			# Early prelaunch renewal can precede attempt allocation too.
+			(test("(^|\n)DISPATCH_LEASE phase=prelaunch ") and
+			 (fields | .attempt_id == "unknown")))
+		| .id' 2>/dev/null) || {
+		printf 'DISPATCH_COMMENT_HYGIENE deferred=no_candidates\n' >&2
+		return 0
+	}
+	while IFS= read -r id; do
+		[[ -n "$id" ]] || continue
+		remaining=$((deadline - SECONDS))
+		if [[ "$remaining" -le 0 ]]; then
+			printf 'DISPATCH_COMMENT_HYGIENE deferred=deadline\n' >&2
+			return 0
+		fi
+		if ! "$limiter" "$remaining" gh api graphql -f id="$id" -f query="mutation(\$id: ID!) {
+			minimizeComment(input: {subjectId: \$id, classifier: OUTDATED}) { clientMutationId }
+		}" >/dev/null 2>&1; then
+			printf 'DISPATCH_COMMENT_HYGIENE deferred=minimize_failed\n' >&2
+			return 0
+		fi
+	done <<<"$ids"
+	return 0
+}
+
 cmd_transition() {
 	local phase="${1:-}" issue_number="${2:-}" repo_slug="${3:-}" lease_token="${4:-}" session_key="${5:-}"
 	local ttl="${6:-}"
@@ -1691,11 +1449,9 @@ cmd_transition() {
 		fi
 	fi
 	local active_claims="" current_phase="" current_expires_at="" claim_record="" claim_author="" claim_device="" claim_session="" current_login="" current_device=""
-	# Runtime overrides quarantine peer claims only. Resolve and pass this runner
-	# before filtering so a stale self-ignore entry cannot hide the lease that
-	# this same authenticated runner is authorized to transition.
-	# GH#34057: each deny below emits one allowlisted reason on stderr via
-	# _transition_deny; exit codes and decisions are unchanged.
+	# Runtime overrides quarantine peer claims only: resolve this runner before
+	# filtering so a stale self-ignore entry cannot hide its own lease.
+	# GH#34057: each deny emits one allowlisted reason via _transition_deny.
 	if ! current_login=$(_resolve_runner "") || [[ -z "$current_login" ]]; then
 		_transition_deny identity_unavailable
 		return 1
@@ -1767,6 +1523,9 @@ DISPATCH_LEASE phase=${phase} lease_token=${lease_token} device=$(_resolve_devic
 		_transition_deny mutation_failed
 		return 1
 	fi
+	_dch_ledger_sync_transition "$phase" "$lease_token" "$expires_at"
+	_minimize_finished_attempt_comments "$issue_number" "$repo_slug" "$current_login" \
+		"$lease_token" "$current_device" "${session_key:-issue-${issue_number}}" "$attempt_id" "$phase" || true
 	return 0
 }
 
@@ -1939,13 +1698,25 @@ Usage:
     Exit 1 = draft, linkage, labels, issue state, assignment, or head changed
     Exit 2 = contract or metadata unavailable/invalid (fail closed)
 
+  dispatch-claim-helper.sh close-expired-pr-checkpoint-lease <issue-number> <repo-slug> <claim-comment-id> <session> [--complete-released]
+    Close your own checkpoint attempt whose ready lease expired with no release
+    or terminal lease (GH#36544). Same account, device and session only; refuses
+    a live lease, unknown expiry, later coordination or a live local executor.
+    --complete-released explicitly completes one fully identity-bound blocked,
+    clean or worker_complete release by appending only its missing terminal lease.
+    Default behavior and automatic outbox recovery do not accept those releases.
+    Exit 0 = missing release/terminal events appended; no existing event changed
+    Exit 1 = denied (PR_CHECKPOINT_LEASE_CLOSE_DENIED reason=...)
+    Exit 2 = invalid arguments
+
   dispatch-claim-helper.sh help
     Show this help.
 
 Environment:
   DISPATCH_CLAIM_WINDOW    Consensus window in seconds (default: 8)
   DISPATCH_CLAIM_MAX_AGE   Max age of claim comments in seconds (default: 1800 = 30 min)
-  DISPATCH_CLAIM_ORPHAN_GRACE  Claim-only pre-launch grace in seconds (default: 120)
+  DISPATCH_CLAIM_ORPHAN_GRACE  Claim-only pre-launch grace and initial lease in seconds
+                           (default: 120); a winner with under half left renews once
   DISPATCH_CLAIM_POST_ATTEMPTS  Claim comment POST attempts (default: 3)
   DISPATCH_CLAIM_POST_RETRY_DELAY  Seconds between claim POST attempts (default: 2)
 
@@ -2001,8 +1772,20 @@ main() {
 	claim-pr-checkpoint)
 		cmd_claim_pr_checkpoint "$@"
 		;;
+	claim-automatic-pr-checkpoint)
+		cmd_claim_automatic_pr_checkpoint "$@"
+		;;
 	abort-pr-checkpoint-claim)
 		cmd_abort_pr_checkpoint_claim "$@"
+		;;
+	sweep-pr-checkpoint-claim)
+		cmd_sweep_pr_checkpoint_claim "$@"
+		;;
+	sweep-checkpoint-ledger)
+		cmd_sweep_checkpoint_ledger "$@"
+		;;
+	close-expired-pr-checkpoint-lease)
+		cmd_close_expired_pr_checkpoint_lease "$@"
 		;;
 	transition)
 		cmd_transition "$@"
@@ -2021,7 +1804,19 @@ main() {
 # Include all library/config sourcing in startup attribution without spawning
 # another timer process under host load.
 if [[ -n "${AIDEVOPS_DISPATCH_CLAIM_CALL_LOG:-}" ]]; then
-	printf '[dispatch-claim] stage=startup elapsed_s=%s rc=0\n' \
-		"$((SECONDS - _DCH_STARTUP_SECONDS))" >>"$AIDEVOPS_DISPATCH_CLAIM_CALL_LOG"
+	# GH#37883: tag issue-keyed commands; PR-keyed commands stay untagged.
+	_dch_startup_context=""
+	case "${1:-}" in
+	check-and-claim | claim | check | guard-ownership | verify-worker-ownership)
+		_dch_stage_context _dch_startup_context "${2:-}" "${3:-}"
+		;;
+	transition)
+		_dch_stage_context _dch_startup_context "${3:-}" "${4:-}"
+		;;
+	esac
+	printf '[dispatch-claim] stage=startup elapsed_s=%s rc=0%s\n' \
+		"$((SECONDS - _DCH_STARTUP_SECONDS))" "$_dch_startup_context" >>"$AIDEVOPS_DISPATCH_CLAIM_CALL_LOG"
 fi
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi

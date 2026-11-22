@@ -11,8 +11,22 @@ from pathlib import Path
 
 from session_time_common import path_matches, safe_int
 
-SESSION_QUERY = """
-    SELECT s.id, s.title, s.directory, m.time_created, m.data
+# Project only the message fields the interval engine reads. Selecting the raw
+# m.data column made SQLite copy every message JSON blob (some over 60 MB) into
+# the ORDER BY temp B-tree; on a 69 GB OpenCode DB that took hours and held a
+# read snapshot that stopped WAL checkpoints (t19024). The multi-path
+# json_extract returns a JSON array so Python keeps JSON typing (booleans stay
+# booleans for safe_int). CASE keeps json_type/json_extract off invalid JSON;
+# empty or NULL data reads as "{}" as before.
+_MESSAGE_DATA = "coalesce(nullif(m.data, ''), '{}')"
+MESSAGE_FIELDS = f"""
+    CASE WHEN json_valid({_MESSAGE_DATA}) THEN json_type({_MESSAGE_DATA}) END,
+    CASE WHEN json_valid({_MESSAGE_DATA}) THEN json_type({_MESSAGE_DATA}, '$.time') END,
+    CASE WHEN json_valid({_MESSAGE_DATA})
+         THEN json_extract({_MESSAGE_DATA}, '$.role', '$.time.completed') END
+"""
+SESSION_QUERY = f"""
+    SELECT s.id, s.title, s.directory, m.time_created, {MESSAGE_FIELDS}
     FROM session s JOIN message m ON m.session_id=s.id
     WHERE s.parent_id IS NULL AND m.time_created >= ?
     ORDER BY s.id, m.time_created
@@ -75,14 +89,19 @@ def note_scan(db_path):
             handle.write(str(db_path) + "\n")
 
 
-def parse_message(data):
+def parse_message(data_type, time_type, fields):
+    """Return (role, completed) from MESSAGE_FIELDS, or None when malformed.
+
+    Same rules as the former full-JSON parse: the root must be an object and
+    `time`, when present, must be an object.
+    """
+    if data_type != "object" or time_type not in (None, "object"):
+        return None
     try:
-        payload = json.loads(data or "{}")
+        role, completed = json.loads(fields)
     except (json.JSONDecodeError, TypeError, ValueError):
         return None
-    if not isinstance(payload, dict) or not isinstance(payload.get("time", {}), dict):
-        return None
-    return payload.get("role"), safe_int(payload.get("time", {}).get("completed"))
+    return role, safe_int(completed)
 
 
 def session_row(sessions, values):
@@ -114,9 +133,9 @@ def apply_message(row, role, created, completed):
 
 
 def consume_session_record(sessions, record, root):
-    session_id, title, directory, raw_created, data = record
+    session_id, title, directory, raw_created, data_type, time_type, fields = record
     created = safe_int(raw_created)
-    parsed = parse_message(data)
+    parsed = parse_message(data_type, time_type, fields)
     if not path_matches(directory, root) or not session_id or created is None or parsed is None:
         return 1 if path_matches(directory, root) else 0
     row = session_row(sessions, (session_id, title, directory, created))

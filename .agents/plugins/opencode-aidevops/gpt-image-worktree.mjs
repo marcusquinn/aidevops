@@ -84,16 +84,14 @@ async function verifyRepositoryRelation(startupRoot, requestedIdentity, subject)
   } catch {
     // A parent directory containing repositories is a valid session root.
   }
-  if (startupIdentity) {
-    if (startupIdentity.commonDir !== requestedIdentity.commonDir) {
-      throw new Error(`${subject} workdir belongs to an unrelated Git repository.`);
-    }
-    return;
-  }
+  if (startupIdentity?.commonDir === requestedIdentity.commonDir) return;
   const canonicalRoot = dirname(requestedIdentity.commonDir);
-  if (!pathIsWithin(startupRoot, canonicalRoot) && !await registeredCanonicalRoot(canonicalRoot)) {
-    throw new Error(`${subject} workdir belongs to an unrelated Git repository; start inside the repo or use a registered repo worktree.`);
-  }
+  if (!startupIdentity && pathIsWithin(startupRoot, canonicalRoot)) return;
+  // GH#38577: a session rooted in one repository may orchestrate session-owned
+  // worktrees of other repositories registered in repos.json, exactly like a
+  // non-Git parent session. Ownership verification still runs afterwards.
+  if (await registeredCanonicalRoot(canonicalRoot)) return;
+  throw new Error(`${subject} workdir belongs to an unrelated Git repository; start inside the repo or use a registered repo worktree.`);
 }
 
 export async function resolveSessionOwnedWorktreeRoot(requestedWorkdir, projectRoot, context, options = {}) {

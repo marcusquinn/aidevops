@@ -4,11 +4,19 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="${SCRIPT_DIR}/../review-evidence-helper.sh"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/private-review-evidence-fixture.XXXXXX")"
 TEST_ROOT_BASENAME="$(basename "$TEST_ROOT")"
-GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
+GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-${TEST_NATIVE_GIT}}"
 
 git() {
 	"$GIT_BIN" "$@"
@@ -283,6 +291,27 @@ assert_contains "${TEST_ROOT}/blind-commit.md" 'acceptance is unverified' 'missi
 blind validate "${TEST_ROOT}/blind1.md" >/dev/null || fail 'valid packet rejected'
 [[ "$(grep '^acceptance_identity:' "${TEST_ROOT}/blind1.md")" == "$(grep '^acceptance_identity:' "${TEST_ROOT}/blind2.md")" ]] || fail 'unchanged evidence changed identity'
 if blind build pr 1 >/dev/null 2>&1; then fail 'blind packet accepted PR discussion target'; fi
+
+# --stage writes under research-staging; names are validated; --output outside staging advises.
+STAGE_ROOT="${TEST_ROOT}/tmp/research-staging"
+STAGED_PATH=$(cd "$BLIND_REPO" && AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp" "$HELPER" bundle local --stage gh-test)
+[[ "$STAGED_PATH" == "${STAGE_ROOT}/gh-test/bundle.md" ]] || fail "stage path printed: ${STAGED_PATH}"
+assert_contains "$STAGED_PATH" 'schema: aidevops.review-evidence/v1' 'staged bundle schema'
+[[ "$(stat -c %a "${STAGE_ROOT}/gh-test" 2>/dev/null || stat -f %Lp "${STAGE_ROOT}/gh-test")" == "700" ]] || fail 'stage dir not mode 700'
+blind "${BLIND_ARGS[@]}" --stage gh-test >/dev/null
+blind validate "${STAGE_ROOT}/gh-test/packet.md" >/dev/null || fail 'staged packet rejected'
+for bad_stage in ../x .x a/b . ..; do
+	if (cd "$BLIND_REPO" && AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp" "$HELPER" bundle local --stage "$bad_stage" >/dev/null 2>&1); then fail "bad stage accepted: ${bad_stage}"; fi
+done
+[[ ! -e "${STAGE_ROOT}/x" && ! -e "${STAGE_ROOT}/.x" ]] || fail 'bad stage wrote files'
+if (cd "$BLIND_REPO" && AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp" "$HELPER" bundle local --stage x --output "${TEST_ROOT}/y.md" >/dev/null 2>&1); then fail '--stage with --output accepted'; fi
+OUTSIDE_ERR="${TEST_ROOT}/outside.err"
+(cd "$BLIND_REPO" && AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp" "$HELPER" bundle local --output "${TEST_ROOT}/outside.md" >/dev/null 2>"$OUTSIDE_ERR") || fail 'outside --output failed'
+[[ -s "${TEST_ROOT}/outside.md" ]] || fail 'outside --output not written'
+assert_contains "$OUTSIDE_ERR" '--stage' 'outside-staging advisory'
+INSIDE_ERR="${TEST_ROOT}/inside.err"
+(cd "$BLIND_REPO" && AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp" "$HELPER" bundle local --output "${STAGE_ROOT}/gh-test/other.md" >/dev/null 2>"$INSIDE_ERR") || fail 'inside --output failed'
+[[ ! -s "$INSIDE_ERR" ]] || fail 'advisory printed inside staging'
 
 # Requirement, verification and artifact changes each change identity.
 BLIND_ID=$(grep '^acceptance_identity:' "${TEST_ROOT}/blind1.md")

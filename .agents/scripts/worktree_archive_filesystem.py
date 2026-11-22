@@ -3,6 +3,7 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Filesystem evidence: Git owns tracked state, tar owns untracked files."""
 
+from contextlib import suppress
 import hashlib
 import os
 from pathlib import Path
@@ -15,13 +16,31 @@ def unreadable_directory(error):
     raise error
 
 
+def process_umask():
+    """Current umask when it keeps owner rwx and denies world writes, else 022.
+
+    GH#36543: user-private-group hosts (umask 002) create 0775 directories and
+    0664 files; restore recreates them under the same umask, so they round-trip.
+    """
+    mask = os.umask(0o022)  # Portable read; restore immediately.
+    os.umask(mask)
+    return mask if (mask & 0o702) == 0o002 else 0o022
+
+
 def supported_metadata(observed, attributes, tar_metadata=False):
     if observed.st_uid != os.geteuid() or observed.st_gid != os.getegid() or attributes:
         raise ValueError("ownership, ACLs or extended attributes require separate preservation")
     if tar_metadata and stat.S_ISREG(observed.st_mode):
         return  # PAX retains permissions; external inode relationships are not archived.
+    if stat.S_ISLNK(observed.st_mode):
+        # Git preserves link targets; tar additionally restores and verifies mode.
+        # Ordinary mode bits vary with umask on macOS.
+        if stat.S_IMODE(observed.st_mode) & 0o7000 or observed.st_nlink != 1:
+            raise ValueError("special permissions or hard links require separate preservation")
+        return
     directory = stat.S_ISDIR(observed.st_mode)
-    allowed = (0o755,) if directory else ((0o777,) if stat.S_ISLNK(observed.st_mode) else (0o644, 0o755))
+    mask = process_umask()
+    allowed = {0o755, 0o777 & ~mask} if directory else {0o644, 0o755, 0o666 & ~mask, 0o777 & ~mask}
     if stat.S_IMODE(observed.st_mode) not in allowed or (not directory and observed.st_nlink != 1):
         raise ValueError("special permissions or hard links require separate preservation")
 
@@ -56,10 +75,14 @@ def regular_fingerprint(path, parent, tar_metadata=False, git_metadata=False):
     return ["file", mode, before.st_size, digest.hexdigest()]
 
 
-def open_parent(root, parts):
+def open_parent(root, parts, *, create=False):
     descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         for name in parts:
+            if create:
+                # The no-follow open below still checks the entry type.
+                with suppress(FileExistsError):
+                    os.mkdir(name, dir_fd=descriptor)
             child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
             os.close(descriptor)
             descriptor = child
@@ -83,8 +106,11 @@ def fingerprint(root, raw, tar_metadata=False, git_metadata=False):
         except FileNotFoundError:
             return ["missing"]
         if stat.S_ISLNK(observed.st_mode):
-            supported_metadata(observed, list_xattrs(root / relative))
-            return ["symlink", os.readlink(relative.name, dir_fd=parent)]
+            supported_metadata(observed, list_xattrs(root / relative), tar_metadata)
+            link = os.readlink(relative.name, dir_fd=parent)
+            if tar_metadata:
+                return ["symlink", stat.S_IMODE(observed.st_mode), link]
+            return ["symlink", link]
         if not stat.S_ISREG(observed.st_mode):
             raise ValueError("unsupported recovery file type")
         return regular_fingerprint(relative.name, parent, tar_metadata, git_metadata)

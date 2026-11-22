@@ -89,11 +89,12 @@ function applyMaintenance(config, archive) {
   let stopReason = "max_partitions";
 
   while (totals.partitions_archived < config.maxPartitions) {
-    if ((config.clock() - startedAt) >= config.maxDurationSeconds * 1000) {
+    const remainingMs = config.maxDurationSeconds * 1000 - (config.clock() - startedAt);
+    if (remainingMs <= 0) {
       stopReason = "max_duration";
       break;
     }
-    const result = archive({ ...config.archiveOptions, apply: true });
+    const result = archive({ ...config.archiveOptions, apply: true, sqliteBudgetMs: Math.ceil(remainingMs) });
     lastResult = result;
     if (result.status === "database_missing" || result.status === "no_candidates") {
       stopReason = result.status;

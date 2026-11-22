@@ -39,6 +39,8 @@ Target: `https://the-internet.herokuapp.com`. 3 runs per tool, report median. Ne
 
 ## Tool Coverage
 
+Stagehand is not recommended; it is available only when the user explicitly asks to try it. These benchmark results are historical evidence, not routing guidance (maintainer decision 2026-11-11; #32446).
+
 | Tool | Scope | Setup |
 |------|-------|-------|
 | Playwright | Full | `npm init -y && npm i playwright` in `~/.aidevops/playwright-bench/` |
@@ -89,8 +91,7 @@ wraps, so it is about 4% slower here with identical output.
 
 Keep Playwright as the default for exhaustive deterministic extraction (for
 example winner and finalist lists), where the AI probes above also showed
-latency and accuracy risk. Reserve Stagehand for adaptive navigation of
-unknown structures. Single environment (one macOS workstation and network),
+latency and accuracy risk. Stagehand is not recommended; only use it when the user explicitly asks to try it. Single environment (one macOS workstation and network),
 public pages only; the v3 table is not comparable.
 
 ### Stagehand v4 public-page probe (2026-09-26; not a full benchmark)
@@ -180,7 +181,7 @@ This single stable public page tests heading extraction only. OpenCode's
 ambient prompt and caching affect measured model cost and latency; no v4
 act/observe, multi-step workflow, alternate model, or authenticated existing
 tab was compared. The `h1` locator remains much faster for known structure.
-Keep Playwright as the default, retain Stagehand as opt-in for adaptive tasks,
+Keep Playwright as the default; Stagehand is not recommended and is available only when the user explicitly asks to try it,
 and do not promote Playwriter beyond explicit legacy compatibility. A
 selected existing tab plus consent-safe profile isolation is still needed to
 evaluate the *existing-tab* lane; the isolated authenticated case is below.
@@ -215,8 +216,7 @@ versus ~3,078 on each mismatch. This suggests snapshot/timing differences,
 but does not establish a root cause. Extract timing excludes login/navigation;
 the three catalog-price estimates total **$0.000419**, not an independently
 verified provider bill. Together with the public-page result, this supports
-keeping deterministic Playwright as default and Stagehand as a bounded opt-in
-for adaptive tasks, not promoting a success-rate or broad v4 benchmark claim.
+keeping deterministic Playwright as default, not promoting a success-rate or broad v4 benchmark claim. Stagehand is not recommended and is available only when the user explicitly asks to try it.
 
 ```bash
 cd ~/.aidevops/.agent-workspace/work/browser-bench/

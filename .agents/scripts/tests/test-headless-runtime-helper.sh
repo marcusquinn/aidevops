@@ -43,14 +43,35 @@ print_result() {
 	return 0
 }
 
+# Finish-path fixtures model a run whose runtime launched (GH#37669). Spawn
+# intent alone is not launch proof (GH#37708): _hrw_runtime_launch_confirmed
+# also needs this invocation's result session ID, so supply a fixture one.
+# Not-launched cases set _WORKER_RUNTIME_LAUNCH_STARTED=0 explicitly.
+mark_fixture_runtime_launched() {
+	_WORKER_RUNTIME_LAUNCH_STARTED=1
+	_run_metric_session_id="ses_fixture"
+	return 0
+}
+
 setup_test_env() {
-	TEST_ROOT=$(mktemp -d)
+	local raw_root=""
+	raw_root=$(mktemp -d)
+	# macOS mktemp returns /var/... (a symlink to /private/var/...); worker
+	# lifecycle admission requires a canonical state parent
+	# (state-parent-must-be-canonical), so resolve the root physically.
+	TEST_ROOT=$(cd "$raw_root" && pwd -P)
 	export HOME="${TEST_ROOT}/home"
+	# A headless worker running this suite exports its real workspace,
+	# lifecycle session and prewarm state; keep fixtures independent of them.
+	unset AIDEVOPS_WORKSPACE_DIR AIDEVOPS_TEMP_DIR AIDEVOPS_WORKER_PREWARM_DIR \
+		AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID \
+		AIDEVOPS_LIFECYCLE_WORKTREE AIDEVOPS_MANAGED_WORKTREE
 	mkdir -p "${HOME}/.aidevops/logs"
 	set +e
 	# shellcheck source=/dev/null
 	source "$HELPER_SCRIPT" >/dev/null 2>&1
 	set -e
+	mark_fixture_runtime_launched
 	return 0
 }
 
@@ -171,6 +192,7 @@ run_worker_finish_tests() {
 	test_rate_limit_fast_reconciles_session_blockers
 	test_cmd_run_finish_emits_noop_for_zero_output
 	test_cmd_run_finish_preserves_terminal_blocked_outcome
+	test_blocked_signal_accepts_labelled_outcome_lines
 	test_cmd_run_finish_emits_complete_for_real_output
 	test_cmd_run_finish_appends_reconciled_attempt_outcome
 	test_cmd_run_finish_rejects_unverified_post_pr_handoff
@@ -393,14 +415,81 @@ test_detached_worker_log_uses_managed_root() {
 	[[ -n "$escape_path" && "${escape_path%/*}" == "$root" ]] || failures+=" path-escape"
 	sleep 0.3
 	rm -f "${TEST_ROOT}/stub-spawned"
-	for bad_root in "" "relative/root" "${TEST_ROOT}/linked-root" "${TEST_ROOT}/unwritable" "${TEST_ROOT}/missing"; do
+	for bad_root in "relative/root" "${TEST_ROOT}/linked-root" "${TEST_ROOT}/unwritable" "${TEST_ROOT}/missing"; do
 		second=$(_detach_with_stub "$bad_root" "gh34556-refused")
-		[[ "$second" == rc=1* && "$second" == *"log root is unusable"* && "$second" != *"Dispatched PID"* ]] || failures+=" refuse:${bad_root:-unset}"
+		[[ "$second" == rc=1* && "$second" == *"log root is unusable"* && "$second" != *"Dispatched PID"* ]] || failures+=" refuse:${bad_root}"
 	done
 	[[ ! -e "${TEST_ROOT}/stub-spawned" ]] || failures+=" spawned-after-refusal"
+	# GH#37718: pulse-side callers have no root yet, so an unset root is
+	# initialised from the managed workspace contract instead of refused.
+	second=$(_detach_with_stub "" "gh37718-unset")
+	path2=$(printf '%s\n' "$second" | sed -n 's/^\[INFO\] Detaching worker (log: \(.*\))$/\1/p')
+	[[ "$second" == rc=0* && "${path2%/*}" == "${HOME}/.aidevops/.agent-workspace/tmp" ]] || failures+=" unset-root-init"
+	sleep 0.3
 	chmod 700 "${TEST_ROOT}/unwritable"
 	print_result "detached worker log uses approved managed root, unique private files, and fails before spawn" \
 		"$([[ -z "$failures" ]] && printf 0 || printf 1)" "failed:${failures}"
+	return 0
+}
+
+# _signing_probe_case <name> <gpgsign:true|unset> <signer:ok|fail>
+# Prints "<status>:<signer-invoked yes|no>" for one real-git probe run.
+_signing_probe_case() {
+	local case_name="$1"
+	local gpgsign="$2"
+	local signer_mode="$3"
+	local case_root="${TEST_ROOT}/signing-probe-${case_name}"
+	local repo_dir="${case_root}/repo"
+	local signer="${case_root}/fake-gpg.sh"
+	local marker="${case_root}/signer-invoked"
+	local status=0 tree_id="" commit_id=""
+	mkdir -p "$repo_dir"
+	# Stub OpenPGP signer: records the call, then signs or refuses (an
+	# unusable key that cannot sign without a prompt).
+	{
+		printf '%s\n' '#!/usr/bin/env bash'
+		printf ': >%q\n' "$marker"
+		if [[ "$signer_mode" == "ok" ]]; then
+			printf '%s\n' "printf '\\n[GNUPG:] SIG_CREATED D 1 8 00 0 FIXTURE\\n' >&2" \
+				"printf '%s\\n' '-----BEGIN PGP SIGNATURE-----' 'fixture' '-----END PGP SIGNATURE-----'" \
+				'exit 0'
+		else
+			printf '%s\n' 'exit 1'
+		fi
+	} >"$signer"
+	chmod 700 "$signer"
+	(
+		unset GIT_CONFIG_COUNT
+		export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+		git -C "$repo_dir" init -q || exit 2
+		git -C "$repo_dir" config user.name "aidevops-test"
+		git -C "$repo_dir" config user.email "aidevops-test@example.invalid"
+		tree_id=$(git -C "$repo_dir" hash-object -w -t tree --stdin </dev/null) || exit 2
+		commit_id=$(git -C "$repo_dir" commit-tree "$tree_id" -m initial </dev/null) || exit 2
+		git -C "$repo_dir" update-ref HEAD "$commit_id" || exit 2
+		git -C "$repo_dir" config gpg.format openpgp
+		git -C "$repo_dir" config gpg.program "$signer"
+		git -C "$repo_dir" config user.signingkey FIXTURE
+		[[ "$gpgsign" == "true" ]] && git -C "$repo_dir" config commit.gpgsign true
+		headless_signing_commit_probe "$repo_dir" 1
+	) >/dev/null 2>&1 || status=$?
+	printf '%s:%s\n' "$status" "$([[ -f "$marker" ]] && printf yes || printf no)"
+	return 0
+}
+
+# GH#36515: commit-tree ignores commit.gpgsign, so the worker probe must pass
+# -S to prove signing; repositories without required signing stay unsigned.
+test_worker_signing_probe_signs_with_real_git() {
+	local unusable="" usable="" unsigned=""
+	unusable=$(_signing_probe_case unusable true fail)
+	usable=$(_signing_probe_case usable true ok)
+	unsigned=$(_signing_probe_case unsigned unset fail)
+	if [[ "$unusable" == "1:yes" && "$usable" == "0:yes" && "$unsigned" == "0:no" ]]; then
+		print_result "worker signing probe signs when required and fails on an unusable key" 0
+	else
+		print_result "worker signing probe signs when required and fails on an unusable key" 1 \
+			"unusable=${unusable} usable=${usable} unsigned=${unsigned}"
+	fi
 	return 0
 }
 
@@ -412,6 +501,23 @@ run_failure_evidence_tests() {
 	test_terminal_attempt_evidence_preserves_classification
 	test_failure_classifier_distinguishes_quota_exhaustion
 	test_failure_classifier_distinguishes_anthropic_credit_exhaustion
+	return 0
+}
+
+run_post_pr_handoff_signal_tests() {
+	test_post_pr_handoff_completion_signal_is_exact
+	test_post_pr_handoff_accepts_labelled_line_forms
+	test_private_task_complete_requires_exact_model_text_line
+	test_post_pr_handoff_records_distinct_result_label
+	return 0
+}
+
+run_provider_session_tests() {
+	test_provider_sessions_scope_issue_keys_by_repo_slug
+	test_provider_sessions_keep_pulse_unscoped
+	test_terminal_delivery_release_clears_persisted_session
+	test_prepare_attempt_skips_resume_for_merged_recorded_head
+	test_routine_session_keys_start_fresh_every_run
 	return 0
 }
 
@@ -431,6 +537,7 @@ main() {
 	test_execute_run_attempt_preserves_file_creation_status
 	test_run_attempt_command_reports_cwd_recovery_failure
 	run_worker_signing_contract_tests
+	test_worker_signing_probe_signs_with_real_git
 	test_repository_bound_git_auth_contract
 	run_private_workload_attempt_identity_tests
 	test_startup_no_activity_timeout_returns_watchdog_continue
@@ -454,17 +561,17 @@ main() {
 	test_clean_prelaunch_exit_is_precise_nonzero_failure
 	test_deleted_cwd_recovery_uses_worker_worktree
 	run_cmd_run_orchestration_tests
+	# Prelaunch and cmd_run cases above reset the launch flag; the finish-path
+	# fixtures below model launched runtimes (GH#37669, GH#37708).
+	mark_fixture_runtime_launched
 	test_does_not_double_append
 	test_extract_session_id_from_output_returns_latest_session_id
 	test_stale_session_retry_clears_continuation_state
 	test_db_seed_failure_starts_fresh_opencode_session
-	test_provider_sessions_scope_issue_keys_by_repo_slug
-	test_provider_sessions_keep_pulse_unscoped
+	run_provider_session_tests
 	run_blocked_completion_tests
 	test_capability_escalation_ladder_is_bounded_and_exact
-	test_post_pr_handoff_completion_signal_is_exact
-	test_private_task_complete_requires_exact_model_text_line
-	test_post_pr_handoff_records_distinct_result_label
+	run_post_pr_handoff_signal_tests
 	test_missing_context_blocked_requests_brief_recovery
 	test_headless_activity_timeout_default_matches_watchdog
 	test_headless_sandbox_timeout_budget

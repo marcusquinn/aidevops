@@ -105,6 +105,11 @@ if [[ "${1:-}" == "issue" && "${2:-}" == "create" ]]; then
 	exit 0
 fi
 
+if [[ "${1:-}" == "api" && "$*" == *"--jq"* && "$*" == *".private"* ]]; then
+	printf 'false\n'
+	exit 0
+fi
+
 if [[ "${1:-}" == "api" ]]; then
 	printf '{}\n'
 	exit 0

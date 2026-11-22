@@ -17,10 +17,12 @@ Config file: `~/.config/aidevops/repos.json`. Structure: `{"initialized_repos": 
 | `badges` | bool | Missing/`true` = README badge block managed by `aidevops badges`. `false` = README is hand-maintained; `badges check` reports `OPTED-OUT` and `badges sync` never writes. Repos with a string `mirror_upstream` (`owner/repo`) are always treated as opted out (`MIRROR`); boolean `mirror_upstream` is a privacy marker only. |
 | `priority` | string | `"tooling"` (infrastructure), `"product"` (user-facing), `"profile"` (docs-only) |
 | `maintainer` | string | GitHub username. Auto-detected from `gh api user`; falls back to slug owner |
+| `macos_maintainer` | string | Optional GitHub login for native macOS verification; overrides `maintainer` for `needs-macos-verification` review/assignment routing. |
 | `role` | string | `"maintainer"` or `"contributor"`. Controls which pulse scanners run |
 | `init_scope` | string | `"minimal"`, `"standard"` (default), or `"public"`. Controls `aidevops init` scaffolding |
 | `has_interface` | bool | Explicit GUI/interface flag. `true` forces DESIGN.md scaffolding/backfill; `false` suppresses heuristic interface detection. |
 | `agent_source` | bool | `true` = repo is a managed private agent source pack; `aidevops init` seeds core-style agent structure and `aidevops update` refreshes framework-owned organization templates |
+| `purpose` | string | Optional purpose-built repository marker. `"routines"` = created by `init-routines`; like `priority: "profile"`, it needs no `.aidevops.json`, so the onboarding audit skips the Missing-config gap and `project-config restore` refuses it. |
 | `features` | array | Enabled registration capabilities. `"code-quality"` activates lint policy migration and repo-verify hook rollout unless `.aidevops.json` explicitly opts out. |
 
 ### GitHub Actions availability
@@ -159,6 +161,31 @@ aidevops repos pulse on owner/repo          # refused while maintenance is pause
 aidevops repos pulse off owner/repo
 ```
 
+### Sync-only registration
+
+Use `aidevops repos add <path> --sync-only` to register a third-party upstream
+without opting into automation. Omit `<path>` for the current checkout. This
+writes `pulse: false` and `maintenance: false` atomically with registration,
+including when updating an existing entry, and preserves an existing `role` or
+the normally detected role. Plain `repos add` keeps its existing defaults;
+re-registering without the flag does not resume paused maintenance or Pulse.
+
+Sync-only registration retains canonical path resolution for
+`canonical-recovery-helper.sh fast-forward-current` and explicit
+`worktree-helper.sh remove` (with the registered explicit-remove support from
+child B of #36561). Their normal cleanliness, ownership, preservation and
+permission guards still apply. It disables Pulse task/issue automation,
+recurring scanners, and workflow/badge rollout; it does not disable the
+registration-scoped safety hygiene described above or explicitly requested
+one-repository operations.
+
+The flag does not scaffold `.aidevops.json` or bypass bootstrap verification.
+For a config-free canonical checkout, use the existing confirmed bootstrap form:
+
+```bash
+aidevops repos add <path> --sync-only --slug OWNER/REPO --confirm REGISTER_CANONICAL_REPOSITORY
+```
+
 Repository layout migration treats every explicit `initialized_repos[].path` as
 authoritative. `aidevops repos migrate-layout plan` reports such entries as
 excluded unless `--include-registered-paths` is supplied. That flag approves
@@ -174,12 +201,13 @@ the receipt-owned before-state only when no later config drift is present.
 | `github_auth` | object | `{"pulse":{"read":{"provider":"github-app","profile":"team-agent-operator","installation_id":"987654"},"write":{"provider":"inherit"}}}` | Explicit per-consumer read/write identities. This stage supports App reads and inherited writes only. Manage with `aidevops github auth`; see [setup and migration](github-auth.md). |
 | `pulse_auth` | object | Legacy flat App binding | Compatibility input only. Stop old Pulse processes and run `aidevops github auth migrate --confirm-stopped`; simultaneous old/new Pulse bindings are rejected. |
 | `dependabot_alert_monitor` | bool | `true` | For `pulse: true` maintainer repos, pulse checks open GitHub Dependabot alerts and creates grouped, neutral, worker-ready remediation issues. Set `false` to opt out for repos that handle dependency alerts elsewhere. |
+| `trusted_dependency_bots` | array of strings | `["acme-renovate"]` | GitHub App slugs (as in `app/<slug>` or `<slug>[bot]`) of non-Dependabot dependency bots such as Renovate. Pulse re-proves exact-head Bot identity, same-repository head, and that every commit is authored by `<slug>[bot]`, then routes terminal required-check failures and merge conflicts to scoped worker intake instead of skipping the PR. This is routing only: the bot stays external and merges only with current-head maintainer crypto-approval. Maintainer-local trust root; repository content never adds entries. Unlisted bots keep the skip, logged once per PR head (GH#39280). |
 
 ## PR Throughput Preferences
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `pr_base_branch` | string | GitHub default branch | Branch workers should target when creating or recovering PRs. Use for repos whose integration branch differs from the GitHub default branch, e.g. `"develop"`. Aliases accepted by orphan recovery: `pr_target_branch`, `base_branch`, `default_branch`. |
+| `pr_base_branch` | string | GitHub default branch | Branch PRs target when `full-loop-helper.sh commit-and-pr` creates them (always passed as an explicit `--base`) and when orphan recovery recreates them. Use for repos whose integration branch differs from the GitHub default branch, e.g. `"develop"`. Resolved by `shared-pr-base.sh`: dispatch env (`WORKER_PR_BASE_BRANCH`) → `.aidevops.json` → `repos.json` → GitHub default → `origin/HEAD`; never a hard-coded `main`. Aliases: `pr_target_branch`, `base_branch`; legacy `default_branch` is a last resort only. The pulse merge pass retargets or holds worker PRs whose base is neither this branch nor an open parent PR head (GH#39167). |
 | `interactive_pr_auto_merge` | bool | unset → global config/default | Per-repo preference for `origin:interactive` PR merge throughput. `true` allows pulse to merge maintainer-authored interactive PRs after normal gates pass and the PR is ready/non-draft. `false` keeps this repo manual even if global config is true. PR-specific `allow-auto-merge` still opts in one PR; `hold-for-review` or draft state still blocks. |
 
 | `dispatch_open_pr_threshold` | integer | unset → `PULSE_DISPATCH_GUARDRAIL_OPEN_PR_THRESHOLD` → `12` | Repository PR backlog guardrail. When this many open PRs are ready worker merge backlog, pulse suppresses ordinary dispatch for the repo (review/CI/conflict repair candidates stay exempt). Only non-draft PRs labelled `origin:worker`/`origin:worker-takeover` without `hold-for-review`/`needs-maintainer-review` count; interactive PRs and drafts never block dispatch. `0` disables the guardrail for this repo. Logs report `open_prs_total` and `open_prs_counted`. |
@@ -309,7 +337,7 @@ mutate package source. See `tools/deployment/cloudron-app-packaging.md`.
 
 Resolution order (per field independently): per-tool > per-repo > env var (`REVIEW_GATE_RATE_LIMIT_BEHAVIOR`, `REVIEW_GATE_COMPLETION_BEHAVIOR`, or `REVIEW_BOT_MIN_EDIT_LAG_SECONDS`) > hard default.
 
-The reusable workflow exposes matching `rate_limit_behavior` and `completion_behavior` inputs for CI callers. Their defaults are `pass` and `fast`. The canonical caller maps the repository Actions variable `AIDEVOPS_REVIEW_GATE_COMPLETION_BEHAVIOR` to the completion input and falls back to `fast` when unset. `fast` never waits for add-on completion on trusted maintainer-controlled PRs; late findings are swept into follow-up issues. Set both the local `review_gate.completion_behavior` and the CI variable to `strict` only when a repository explicitly accepts the added delay of review-before-merge. External/unknown authors retain the GH#17671 defence-in-depth boundary, and per-tool `wait`/`strict` overrides remain fail-closed when provider identity cannot be evaluated.
+The reusable workflow exposes matching `rate_limit_behavior` and `completion_behavior` inputs for CI callers. Their defaults are `pass` and `fast`. The canonical caller maps the repository Actions variable `AIDEVOPS_REVIEW_GATE_COMPLETION_BEHAVIOR` to the completion input and falls back to `fast` when unset. `fast` never waits for add-on completion on trusted maintainer-controlled PRs; late findings are swept into follow-up issues. Set both the local `review_gate.completion_behavior` and the CI variable to `strict` only when a repository explicitly accepts the added delay of review-before-merge. External/unknown authors follow the same advisory default (GH#36931); their merge authority is exact-head maintainer crypto approval (GH#17671). Per-tool `wait`/`strict` overrides remain fail-closed when provider identity cannot be evaluated.
 
 CLI: `aidevops review-gate --help` — configure rate-limit/completion policy and add or remove exact advisory check contexts without hand-editing JSON.
 

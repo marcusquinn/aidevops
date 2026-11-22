@@ -23,7 +23,7 @@ tools:
 |---|---|
 | **Access** | MCP `gsc_*` tools (primary), curl + OAuth2 (fallback) |
 | **API** | `https://searchconsole.googleapis.com/v1/` |
-| **Auth** | `~/.config/aidevops/gsc-credentials.json` (service account, `chmod 600`) |
+| **Auth** | Keyless gcloud ADC (service-account impersonation, preferred) or `~/.config/aidevops/gsc-credentials.json` (JSON key, `chmod 600`) |
 | **Metrics** | clicks, impressions, ctr, position |
 | **Dimensions** | query, page, country, device, searchAppearance |
 
@@ -31,9 +31,14 @@ tools:
 
 Cloud project access, gcloud auth and OAuth consent/verification: `services/hosting/google-cloud.md`.
 
-1. Google Cloud Console → enable **Search Console API** → Service Account → JSON key → `~/.config/aidevops/gsc-credentials.json` (`chmod 600`)
-2. GSC → Property → Settings → Users → add service account email (or bulk-add via Playwright script below)
-3. Verify: `python3 -c "import json; d=json.load(open('$HOME/.config/aidevops/gsc-credentials.json')); print(d['client_email'])"`
+1. Google Cloud Console → enable **Search Console API** → create a service account.
+2. GSC → Property → Settings → Users → add the service account email (or bulk-add via Playwright script below).
+3. Credentials (aidevops helpers check `GSC_ACCESS_TOKEN`, then `GOOGLE_APPLICATION_CREDENTIALS`, then `gsc-credentials.json`, then gcloud's default ADC):
+   - **Keyless (preferred)**: grant your user `roles/iam.serviceAccountTokenCreator` on the service account, then `gcloud auth application-default login --impersonate-service-account=SA_EMAIL`. No key file is stored.
+   - **JSON key (fallback)**: download a key to `~/.config/aidevops/gsc-credentials.json` (`chmod 600`).
+4. Verify: `gcloud auth application-default print-access-token --scopes=https://www.googleapis.com/auth/webmasters.readonly >/dev/null && echo ok`
+
+Google Workspace "Google Cloud session control" can expire ADC and return "Reauthentication is needed". Re-run the login, or trust the Google Auth Library OAuth client in Admin console API controls and enable "Exempt Trusted apps".
 
 ## MCP Tools (`gsc_*`)
 
@@ -109,6 +114,27 @@ curl -s -X POST "https://searchconsole.googleapis.com/v1/urlInspection/index:ins
   -d '{"inspectionUrl": "https://example.com/page", "siteUrl": "https://example.com"}'
 ```
 
+## New Property Setup
+
+Create, verify and sitemap-submit a domain property without a browser. Needs two scopes beyond read-only: `https://www.googleapis.com/auth/siteverification` and `https://www.googleapis.com/auth/webmasters`. The Site Verification API must be enabled on the Cloud project.
+
+1. Request the TXT value: `POST https://www.googleapis.com/siteVerification/v1/token` with `{"site":{"type":"INET_DOMAIN","identifier":"example.com"},"verificationMethod":"DNS_TXT"}`.
+2. Add that TXT record at the DNS host (registrar, Cloudflare API, etc.).
+3. Verify: `POST .../siteVerification/v1/webResource?verificationMethod=DNS_TXT` with the same `site` body. The caller becomes owner.
+4. Add the property: `PUT https://searchconsole.googleapis.com/webmasters/v3/sites/sc-domain%3Aexample.com` (204).
+5. Submit the sitemap: `PUT .../sites/sc-domain%3Aexample.com/sitemaps/<url-encoded sitemap URL>` (204).
+
+Helper (steps 1, 3, 4, 5; step 2 stays yours):
+
+```bash
+gsc-property-setup-helper.sh txt example.com            # prints the TXT value
+gsc-property-setup-helper.sh complete example.com --sitemap https://example.com/sitemap.xml --owner you@example.com
+```
+
+Add `--dry-run` to print the planned calls without sending them. Tokens come from `gsc_adc_access_token <cred-file> <scopes>` in `gsc-auth-lib.sh`; read-only remains the default.
+
+Add a human owner afterwards by re-posting the `webResource` verification (or `PUT .../siteVerification/v1/webResource/<id>`) with `"owners": ["you@example.com", "<service-account-email>"]`. Check with `GET .../webmasters/v3/sites`: expect `permissionLevel: siteOwner`.
+
 ## Bulk Property Setup
 
 Adds service account to all GSC properties via Playwright. Requires `npm install playwright`, Chrome logged into Google, Owner access.
@@ -152,6 +178,7 @@ main().catch(console.error);
 
 - **Empty results `{}`**: Service account not added to any GSC properties — use Playwright script above
 - **"No access to property"**: Service account needs Full or Owner role; domain must be verified in GSC
+- **"credentials found … token request failed"**: ADC exists but cannot refresh; re-run `gcloud auth application-default login` (see session-control note in Setup)
 - **Connection issues**: `ls -la ~/.config/aidevops/gsc-credentials.json` · `opencode mcp list`
 
 <!-- AI-CONTEXT-END -->

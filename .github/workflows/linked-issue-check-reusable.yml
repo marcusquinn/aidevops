@@ -41,7 +41,7 @@ jobs:
             const repo = context.repo;
 
             // A positive policy result must not become a failed workflow just
-            // because the installation's shared REST quota was exhausted while
+            // because quota exhaustion or transient server/network errors prevent
             // publishing the compatibility StatusContext. The workflow check is
             // itself authoritative; negative policy results still fail closed.
             const publishStatus = async (state, description) => {
@@ -59,6 +59,10 @@ jobs:
                 const exhausted = error.status === 403 && remaining === '0';
                 if (state === 'success' && exhausted) {
                   core.warning('Linked-issue policy passed, but the compatibility status could not be posted because GitHub API quota is exhausted.');
+                  return;
+                }
+                if (state === 'success' && (error.status == null || error.status >= 500)) {
+                  core.warning(`Linked-issue policy passed, but the compatibility status could not be posted (status: ${error.status ?? 'network error'}).`);
                   return;
                 }
                 throw error;

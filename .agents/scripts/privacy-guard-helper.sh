@@ -38,6 +38,12 @@ set -u
 PRIVACY_REPOS_CONFIG="${PRIVACY_REPOS_CONFIG:-${HOME:-}/.config/aidevops/repos.json}"
 PRIVACY_CACHE_FILE="${PRIVACY_CACHE_FILE:-${HOME:-}/.aidevops/cache/repo-privacy.json}"
 PRIVACY_CACHE_TTL="${PRIVACY_CACHE_TTL:-600}" # 10 minutes
+# GitHub's private=false response is the only affirmative public visibility.
+PRIVACY_PUBLIC_VISIBILITY="false"
+# Private-slug enumeration needs last-known visibility, not push-time
+# freshness: nothing on the enumeration path refreshes the cache, so a short
+# TTL turns every known-public repo "private" minutes after its last probe.
+PRIVACY_ENUM_PUBLIC_TTL="${PRIVACY_ENUM_PUBLIC_TTL:-604800}" # 7 days
 # Optional local-only inventory. One `person: value`, `client: value`, or
 # `repo: owner/repo` entry per line; tabs are also accepted after the class.
 PRIVACY_ENTITY_CONFIG="${PRIVACY_ENTITY_CONFIG:-${HOME:-}/.aidevops/configs/privacy-guard-private-entities.txt}"
@@ -109,7 +115,7 @@ privacy_is_target_public() {
 		if [[ -n "$cached_ts" && "$cached_private" != "null" ]]; then
 			local age=$((now - cached_ts))
 			if [[ "$age" -lt "$PRIVACY_CACHE_TTL" ]]; then
-				if [[ "$cached_private" == "false" ]]; then
+				if [[ "$cached_private" == "$PRIVACY_PUBLIC_VISIBILITY" ]]; then
 					return 0
 				else
 					return 1
@@ -151,7 +157,7 @@ privacy_is_target_public() {
 		return 1
 		;;
 	false)
-		_privacy_cache_write "$slug" "false"
+		_privacy_cache_write "$slug" "$PRIVACY_PUBLIC_VISIBILITY"
 		return 0
 		;;
 	*)
@@ -170,19 +176,32 @@ privacy_is_target_public() {
 _privacy_cache_write() {
 	local slug="$1"
 	local private="$2"
-	local now
+	local now tmp
 	now=$(date +%s)
 
 	mkdir -p "$(dirname "$PRIVACY_CACHE_FILE")" 2>/dev/null || true
-	if [[ ! -f "$PRIVACY_CACHE_FILE" ]]; then
-		printf '{}\n' >"$PRIVACY_CACHE_FILE"
+	tmp=$(mktemp "${PRIVACY_CACHE_FILE}.XXXXXX" 2>/dev/null) || return 0
+	# shellcheck disable=SC2016 # jq variables must reach jq literally.
+	local -a jq_args=(--arg slug "$slug" --arg private "$private" --argjson now "$now"
+		'.[$slug] = {private: ($private == "true"), checked_at: $now}')
+	# t18917: a sudo-run caller can leave the cache root-owned (unreadable) or
+	# it can be corrupt; either way the merge fails and the cache would never
+	# recover. Rebuild from an empty object instead. The mv below replaces an
+	# unreadable file because the cache directory is user-owned.
+	if ! { [[ -r "$PRIVACY_CACHE_FILE" ]] && jq "${jq_args[@]}" "$PRIVACY_CACHE_FILE" >"$tmp" 2>/dev/null; }; then
+		if ! printf '{}\n' | jq "${jq_args[@]}" >"$tmp" 2>/dev/null; then
+			rm -f "$tmp"
+			return 0
+		fi
 	fi
-
-	local tmp
-	tmp=$(mktemp "${PRIVACY_CACHE_FILE}.XXXXXX")
-	jq --arg slug "$slug" --arg private "$private" --argjson now "$now" \
-		'.[$slug] = {private: ($private == "true"), checked_at: $now}' \
-		"$PRIVACY_CACHE_FILE" >"$tmp" 2>/dev/null && mv "$tmp" "$PRIVACY_CACHE_FILE" || rm -f "$tmp"
+	if ! mv -f "$tmp" "$PRIVACY_CACHE_FILE" 2>/dev/null; then
+		rm -f "$tmp"
+		return 0
+	fi
+	# Hand a sudo-written cache back to the real user (approval-helper.sh pattern).
+	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
+		chown "$SUDO_USER" "$PRIVACY_CACHE_FILE" 2>/dev/null || true
+	fi
 	return 0
 }
 
@@ -197,7 +216,8 @@ _privacy_cache_write() {
 #   - local_only: true (no remote, definitionally not public)
 #   - the slug's owner is the current gh user AND the repo is private on GH
 #
-# For speed, we use structural markers only (mirror_upstream, local_only).
+# Also: cached private visibility (repo-privacy.json) or `private: true`;
+# unknown visibility on pulse-enabled repos fails closed.
 # We do NOT probe every slug with gh api — that would cost N network calls
 # on every push. Users who want additional slugs covered can add them to
 # ~/.aidevops/configs/privacy-guard-extra-slugs.txt (one per line).
@@ -222,6 +242,46 @@ privacy_enumerate_private_slugs() {
 		)
 		| .slug // empty
 	' "$PRIVACY_REPOS_CONFIG" 2>/dev/null)
+
+	# Ordinary private repos: cached GitHub visibility (never a live API call).
+	# A repos.json `private: true` field always counts, whatever the cache says.
+	# Unknown visibility (no cache entry, or a public entry older than
+	# PRIVACY_ENUM_PUBLIC_TTL) fails closed only for pulse-enabled repos;
+	# known-public entries stay out so self-references and the public site name
+	# in signature footers remain allowed. Cached private entries remain
+	# protected even after expiry.
+	# A non-numeric TTL would make jq reject --argjson and silently drop this
+	# whole class of slugs, so fall back to the documented default instead.
+	local enum_ttl="$PRIVACY_ENUM_PUBLIC_TTL"
+	if [[ ! "$enum_ttl" =~ ^[0-9]{1,10}$ ]]; then
+		privacy_log WARN "PRIVACY_ENUM_PUBLIC_TTL must be whole seconds; using 604800"
+		enum_ttl=604800
+	fi
+	local cache_json='{}'
+	if [[ -r "$PRIVACY_CACHE_FILE" ]]; then
+		cache_json=$(jq -c 'if type == "object" then . else {} end' "$PRIVACY_CACHE_FILE" 2>/dev/null) || cache_json='{}'
+		[[ -n "$cache_json" ]] || cache_json='{}'
+	fi
+	local vis_slugs
+	# shellcheck disable=SC2016 # jq variables must reach jq literally.
+	vis_slugs=$(jq -r --argjson cache "$cache_json" \
+		--argjson now "$(date +%s)" --argjson ttl "$enum_ttl" '
+		.initialized_repos[]?
+		| select((.slug // "") != "")
+		| . as $r
+		| (($cache[$r.slug] // null)
+			| if .private == false and ($now - (.checked_at // 0)) >= $ttl
+			  then null else . end) as $c
+		| select(
+			($r.private // false) == true
+			or ($c != null and ($c.private // false) == true)
+			or ($c == null and ($r.pulse // false) == true)
+		)
+		| .slug
+	' "$PRIVACY_REPOS_CONFIG" 2>/dev/null || true)
+	if [[ -n "$vis_slugs" ]]; then
+		slugs=$(printf '%s\n%s\n' "$slugs" "$vis_slugs")
+	fi
 
 	# Also include extra user-configured slugs
 	local extra_file="$HOME/.aidevops/configs/privacy-guard-extra-slugs.txt"
@@ -298,6 +358,7 @@ privacy_enumerate_private_entities() {
 #   $1 - text content
 #   $2 - entity file from privacy_enumerate_private_entities
 #   $3 - optional precomputed aidevops script basename allowlist
+#   $4 - optional target slug; $5 - verified public tree; $6 - tree repository
 # Output: generic hit classes only
 #######################################
 privacy_scan_public_text() {
@@ -305,11 +366,14 @@ privacy_scan_public_text() {
 	local entities_file="$2"
 	local aidevops_script_basenames_provided="${3+x}"
 	local aidevops_script_basenames="${3:-}"
-	local hits=0 class value secret_hits path_hits
+	local target_repo="${4:-}"
+	local public_tree="${5:-}"
+	local tree_repo="${6:-.}"
+	local hits=0 class value secret_hits path_hits basename escaped scan_text
 
 	[[ -f "$entities_file" ]] || return 2
 	[[ -z "$text" ]] && return 0
-	path_hits=$(privacy_scan_local_paths "$text")
+	path_hits=$(privacy_scan_local_paths "$text" "$target_repo")
 	case $? in
 	1) printf '%s\n' '[local-path]'; hits=$((hits + 1)) ;;
 	2) return 2 ;;
@@ -326,8 +390,28 @@ privacy_scan_public_text() {
 	while IFS=$'\t' read -r class value || [[ -n "$class" ]]; do
 		[[ -z "$class" || -z "$value" ]] && continue
 		if [[ "$text" == *"$value"* ]]; then
+			if [[ -n "$public_tree" ]] && git -C "$tree_repo" grep -Iq -F -e "$value" "$public_tree" -- 2>/dev/null; then
+				continue
+			fi
 			printf '[private-%s]\n' "$class"
 			hits=$((hits + 1))
+		elif [[ "$class" == "repo" ]]; then
+			basename="${value##*/}"
+			if [[ ${#basename} -ge "$PRIVACY_BARE_BASENAME_MIN_LEN" ]]; then
+				scan_text="$text"
+				if [[ "$basename" == "aidevops" ]]; then
+					scan_text="${scan_text//<!-- aidevops:sig -->/ }"
+					scan_text="${scan_text//<!-- aidevops:skipped-check:qlty-out-of-credits -->/ }"
+				fi
+				escaped=$(printf '%s' "$basename" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g')
+				if printf '%s' "$scan_text" | grep -qE "(^|[^a-zA-Z0-9-])${escaped}([^a-zA-Z0-9-]|$)"; then
+					if [[ -n "$public_tree" ]] && git -C "$tree_repo" grep -Iq -E -e "(^|[^a-zA-Z0-9-])${escaped}([^a-zA-Z0-9-]|$)" "$public_tree" -- 2>/dev/null; then
+						continue
+					fi
+					printf '[private-repo]\n'
+					hits=$((hits + 1))
+				fi
+			fi
 		fi
 	done <"$entities_file"
 	[[ "$hits" -gt 0 ]] && return 1
@@ -335,15 +419,96 @@ privacy_scan_public_text() {
 }
 
 #######################################
+# Resolve the API-verified current default commit; never trust local branch refs.
+# Reuse matching clone objects or fetch into a separate bare object cache.
+# Output is a tab-separated repository path and commit, or nothing on failure.
+#######################################
+privacy_resolve_public_tree() {
+	local repo="$1"
+	local path="." remote_url commit top cache registered=""
+	local gh_bin="${PRIVACY_GH_BIN:-gh}"
+	local live_private=""
+	[[ "$repo" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]] || return 1
+	# The commits endpoint defaults to the repository's current default branch,
+	# including after a rename. Failure must not fall back to stale local refs.
+	commit=$("$gh_bin" api "repos/${repo}/commits?per_page=1" --jq '.[0].sha' 2>/dev/null) || return 1
+	[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || return 1
+	# Authenticated commit reads can succeed after a public-to-private change.
+	# Do not exempt content based on the visibility probe's potentially stale cache.
+	live_private=$("$gh_bin" api "repos/${repo}" --jq '.private | tostring' 2>/dev/null) || return 1
+	[[ "$live_private" == "$PRIVACY_PUBLIC_VISIBILITY" ]] || return 1
+	if [[ -f "$PRIVACY_REPOS_CONFIG" ]]; then
+		registered=$(jq -r --arg slug "$repo" 'first(.initialized_repos[]? | select(.slug == $slug) | .path) // empty' "$PRIVACY_REPOS_CONFIG" 2>/dev/null) || registered=""
+	fi
+	for path in "." "$registered"; do
+		[[ -n "$path" ]] || continue
+		[[ "$path" == \~/* ]] && path="$HOME/${path#\~/}"
+		remote_url=$(git -C "$path" remote get-url origin 2>/dev/null) || continue
+		if [[ "$remote_url" =~ ^(https://github\.com/|ssh://git@github\.com/|git@github\.com:)([^/]+/[^/]+)$ ]] && [[ "${BASH_REMATCH[2]%.git}" == "$repo" ]]; then
+			git -C "$path" cat-file -e "${commit}^{commit}" 2>/dev/null || continue
+			top=$(git -C "$path" rev-parse --show-toplevel 2>/dev/null) || continue
+			printf '%s\t%s\n' "$top" "$commit"
+			return 0
+		fi
+	done
+	# No usable clone is required. Keep network-fetched objects out of user
+	# worktrees and fetch the exact verified SHA, not a possibly renamed branch.
+	cache="$(dirname "$PRIVACY_CACHE_FILE")/public-trees/${repo}.git"
+	mkdir -p "$cache" 2>/dev/null || return 1
+	git init --bare -q "$cache" 2>/dev/null || return 1
+	if ! git -C "$cache" cat-file -e "${commit}^{commit}" 2>/dev/null; then
+		GIT_TERMINAL_PROMPT=0 git -C "$cache" -c credential.helper= fetch --quiet --depth=1 \
+			"https://github.com/${repo}.git" "$commit" 2>/dev/null || return 1
+	fi
+	git -C "$cache" cat-file -e "${commit}^{commit}" 2>/dev/null || return 1
+	printf '%s\t%s\n' "$cache" "$commit"
+	return 0
+}
+
+#######################################
+# Drop legacy slug-scan hits already tracked in the target repo's verified
+# default-branch tree. Local-path labels and unmatched hits are always kept.
+# Arguments: $1=hit lines from privacy_scan_text $2=target owner/repo
+# Output: remaining hits. Returns 1 if any remain, else 0.
+#######################################
+privacy_filter_slug_hits_by_public_tree() {
+	local hits="$1"
+	local repo="$2"
+	local tree_result tree_repo="" public_tree="" line token escaped boundary_re remaining=0
+
+	tree_result=$(privacy_resolve_public_tree "$repo") || tree_result=""
+	[[ -n "$tree_result" ]] && IFS=$'\t' read -r tree_repo public_tree <<<"$tree_result"
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		[[ -z "$line" ]] && continue
+		if [[ -n "$public_tree" && "$line" != \[* ]]; then
+			if [[ "$line" == *" (basename of "* || "$line" != */* ]]; then
+				token="${line%% (basename of *}"
+				escaped=$(printf '%s' "$token" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g')
+				boundary_re="(^|[^a-zA-Z0-9-])${escaped}([^a-zA-Z0-9-]|\$)"
+				if git -C "$tree_repo" grep -Iq -E -e "$boundary_re" "$public_tree" -- 2>/dev/null; then
+					continue
+				fi
+			elif git -C "$tree_repo" grep -Iq -F -e "$line" "$public_tree" -- 2>/dev/null; then
+				continue
+			fi
+		fi
+		printf '%s\n' "$line"
+		remaining=1
+	done <<<"$hits"
+	[[ "$remaining" -eq 1 ]] && return 1
+	return 0
+}
+
+#######################################
 # Redact tagged private entities in locally previewed text.
-# Arguments: $1=text $2=entity inventory
+# Arguments: $1=text $2=entity inventory $3=optional public target slug
 #######################################
 privacy_redact_public_text() {
 	local text="$1"
 	local entities_file="$2"
 	local class value redacted="$text"
 	[[ -f "$entities_file" ]] || return 1
-	redacted=$(privacy_redact_local_paths "$redacted") || return 1
+	redacted=$(privacy_redact_local_paths "$redacted" "${3:-}") || return 1
 	while IFS=$'\t' read -r class value || [[ -n "$class" ]]; do
 		[[ -z "$class" || -z "$value" ]] && continue
 		redacted="${redacted//"$value"/[private-${class}]}"
@@ -378,15 +543,21 @@ privacy_redact_public_text_from_inventory() {
 # Replace local filesystem paths before rendering text for a public surface.
 # Mirrors privacy_scan_local_paths() so callers can preserve useful dashboard
 # data without bypassing the public-write privacy guard.
-# Arguments: $1=text
+# Arguments: $1=text $2=optional public target slug
 #######################################
 privacy_redact_local_paths() {
 	local text="$1"
+	local target_repo="${2:-}"
+	local folders='Git|Projects|Code|src|work|dev'
+	if [[ -n "$target_repo" ]]; then
+		text=$(_privacy_transform_git_paths "$text" "$target_repo" redact) || return 1
+		folders='Projects|Code|src|work|dev'
+	fi
 	# shellcheck disable=SC2016  # sed expressions intentionally use single quotes
 	printf '%s' "$text" | sed -E \
 		-e 's%(^|[[:space:]`"(:=])/Users/[^[:space:]`")]*%\1[local-path]%g' \
 		-e 's%(^|[[:space:]`"(:=])/home/[^[:space:]`")]*%\1[local-path]%g' \
-		-e 's%(^|[[:space:]`"(:=])~/(Git|Projects|Code|src|work|dev)/[^[:space:]`")]*%\1[local-path]%g' \
+		-e "s%(^|[[:space:]\`\"(:=])~/(${folders})/[^[:space:]\`\")]*%\\1[local-path]%g" \
 		-e 's%(^|[[:space:]`"(:=])file:///(Users|home)/[^[:space:]`")]*%\1[local-path]%g'
 	return 0
 }
@@ -398,10 +569,11 @@ privacy_redact_local_paths() {
 privacy_guard_public_write() {
 	local repo="$1"
 	local text="$2"
-	local target_status entities_file hits scan_rc
+	local target_status entities_file hits scan_rc public_tree="" tree_repo="" tree_result=""
 
 	if [[ -z "$repo" || ! "$repo" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]]; then
-		printf '[privacy-guard][BLOCK] Public-write target privacy could not be established.\n' >&2
+		# GH#39801: a missing target is a caller error, not a visibility failure.
+		printf '[privacy-guard][BLOCK] Public-write target repository is missing or malformed (expected OWNER/REPO; pass --repo).\n' >&2
 		return 1
 	fi
 	if privacy_is_target_public "https://github.com/${repo}.git"; then
@@ -422,7 +594,11 @@ privacy_guard_public_write() {
 		printf '[privacy-guard][BLOCK] Private entity inventory could not be loaded.\n' >&2
 		return 1
 	fi
-	hits=$(privacy_scan_public_text "$text" "$entities_file")
+	tree_result=$(privacy_resolve_public_tree "$repo") || tree_result=""
+	if [[ -n "$tree_result" ]]; then
+		IFS=$'\t' read -r tree_repo public_tree <<<"$tree_result"
+	fi
+	hits=$(privacy_scan_public_text "$text" "$entities_file" "$(_privacy_aidevops_script_reference_basenames)" "$repo" "$public_tree" "${tree_repo:-.}")
 	scan_rc=$?
 	rm -f "$entities_file"
 	if [[ "$scan_rc" -eq 1 ]]; then
@@ -520,6 +696,14 @@ privacy_scan_bare_basenames() {
 	local matched_full_slugs="$3"
 	local slug owner basename escaped_basename
 	local hits=0
+	local framework_text="$text"
+	local scan_text
+	# Only these literal metadata tokens identify the framework, not a private
+	# repository. Do not exempt arbitrary aidevops comments or their payloads.
+	# Full-slug, local-path and secret scans continue to inspect the original.
+	# Preserve word boundaries for prose immediately beside either marker.
+	framework_text="${framework_text//<!-- aidevops:sig -->/ }"
+	framework_text="${framework_text//<!-- aidevops:skipped-check:qlty-out-of-credits -->/ }"
 
 	while IFS= read -r slug || [[ -n "$slug" ]]; do
 		# Skip blanks and comment lines.
@@ -543,8 +727,12 @@ privacy_scan_bare_basenames() {
 		fi
 
 		if [[ ${#basename} -ge "$PRIVACY_BARE_BASENAME_MIN_LEN" ]]; then
+			scan_text="$text"
+			if [[ "$basename" == "aidevops" ]]; then
+				scan_text="$framework_text"
+			fi
 			escaped_basename=$(printf '%s' "$basename" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g')
-			if printf '%s' "$text" | grep -qE "(^|[^a-zA-Z0-9_-])${escaped_basename}([^a-zA-Z0-9_-]|$)" 2>/dev/null; then
+			if printf '%s' "$scan_text" | grep -qE "(^|[^a-zA-Z0-9-])${escaped_basename}([^a-zA-Z0-9-]|$)" 2>/dev/null; then
 				if [[ -n "$owner" ]]; then
 					printf '%s (basename of %s)\n' "$basename" "$slug"
 				else
@@ -660,9 +848,36 @@ privacy_scan_text() {
 # Returns:
 #   0 if no hits, 1 if at least one hit, 2 on setup error.
 #######################################
+_privacy_transform_git_paths() {
+	local text="$1" target_repo="$2" mode="$3"
+	printf '%s' "$text" | awk -v slug="$target_repo" -v mode="$mode" '
+	BEGIN { split(slug, parts, "/"); repo=parts[2]; valid=(length(parts[1]) && length(repo) && !parts[3]) }
+	{
+		line=$0; out=""
+		while (match(line, /(^|[[:space:]`"\047(:=])~\/Git\/[^[:space:]`"\047)]*/)) {
+			prefix=substr(line, 1, RSTART-1); token=substr(line, RSTART, RLENGTH)
+			boundary=""; if (substr(token,1,1)!="~") { boundary=substr(token,1,1); token=substr(token,2) }
+			path=substr(token,7); n=split(path, p, "/")
+			allowed=valid && (p[1]==repo || (n>=2 && p[2]==repo))
+			for (i=1; i<=n; i++) if (p[i]==".." || p[i]==".") allowed=0
+			if (allowed) {
+				if (mode=="scan") { token="[public-repo-path]"; print "[privacy-scan][ALLOW] public repository path" > "/dev/stderr" }
+			} else if (mode=="redact") token="[local-path]"
+			out=out prefix boundary token; line=substr(line,RSTART+RLENGTH)
+		}
+		printf "%s%s", out line, (NR ? ORS : "")
+	}' || return 1
+	return 0
+}
+
 privacy_scan_local_paths() {
 	local text="$1"
+	local target_repo="${2:-}"
 	[[ -z "$text" ]] && return 0
+	local builtin_text="$text"
+	if [[ -n "$target_repo" ]]; then
+		builtin_text=$(_privacy_transform_git_paths "$text" "$target_repo" scan) || return 2
+	fi
 
 	local hits=0
 	local emitted_builtin=0
@@ -674,7 +889,7 @@ privacy_scan_local_paths() {
 	)
 	local pattern
 	for pattern in "${builtin_patterns[@]}"; do
-		if printf '%s' "$text" | grep -qE "$pattern" 2>/dev/null; then
+		if printf '%s' "$builtin_text" | grep -qE "$pattern" 2>/dev/null; then
 			if [[ "$emitted_builtin" -eq 0 ]]; then
 				printf '[local-path]\n'
 				emitted_builtin=1
@@ -798,11 +1013,15 @@ privacy_scan_secret_material_text() {
 	if [[ -z "$text" ]]; then
 		return 0
 	fi
+	# Command substitution strips trailing newlines, and gh-shim bodies always end
+	# with one. The sentinel keeps them, so the advisory below reports only an
+	# actual script-reference redaction (GH#38082).
 	if [[ -n "$basenames_provided" ]]; then
-		scan_text=$(_privacy_redact_aidevops_script_references "$text" "$basenames_text")
+		scan_text=$(_privacy_redact_aidevops_script_references "$text" "$basenames_text" && printf '.')
 	else
-		scan_text=$(_privacy_redact_aidevops_script_references "$text")
+		scan_text=$(_privacy_redact_aidevops_script_references "$text" && printf '.')
 	fi
+	scan_text="${scan_text%.}"
 	if [[ "$scan_text" != "$text" ]]; then
 		printf '%s\n' '[privacy-scan][ALLOW] aidevops script file reference' >&2
 	fi
@@ -895,6 +1114,9 @@ _privacy_custom_candidate_ordinals() {
 	while IFS=$'\t' read -r class value || [[ -n "$class" ]]; do
 		[[ -z "$class" || -z "$value" ]] && continue
 		printf '%s\n' "$value" >>"$values"
+		if [[ "$class" == "repo" && ${#value} -ge "$PRIVACY_BARE_BASENAME_MIN_LEN" ]]; then
+			printf '%s\n' "${value##*/}" >>"$values"
+		fi
 	done <"$entities_file"
 	if [[ -f "$patterns_file" ]]; then
 		while IFS= read -r pattern || [[ -n "$pattern" ]]; do
@@ -1208,6 +1430,7 @@ privacy_scan_public_diff() {
 	local head_sha="$2"
 	local entities_file="$3"
 	local public_head="${4:-}"
+	local target_repo="${5:-}"
 	local diff_base="$base_sha" diff_output
 	local current_file="" line_num=0 hits=0 line added matching_hits scan_rc hit
 	local aidevops_script_basenames
@@ -1270,7 +1493,7 @@ privacy_scan_public_diff() {
 		"+"*)
 			[[ "$line" == "+""++ " ]] && continue
 			added="${line:1}"
-			matching_hits=$(privacy_scan_public_text "$added" "$entities_file" "$aidevops_script_basenames")
+			matching_hits=$(privacy_scan_public_text "$added" "$entities_file" "$aidevops_script_basenames" "$target_repo" "$public_head")
 			scan_rc=$?
 			if [[ "$scan_rc" -eq 1 ]]; then
 				while IFS= read -r hit; do

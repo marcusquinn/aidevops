@@ -4,10 +4,18 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="$SCRIPT_DIR/../storage-inventory-helper.sh"
 AUDIT_HELPER="$SCRIPT_DIR/../audit-worktree-removal-helper.sh"
-GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
+GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-${TEST_NATIVE_GIT}}"
 TEST_ROOT="$(mktemp -d -t aidevops-storage-inventory.XXXXXX)"
 HOME="$TEST_ROOT/home"
 export HOME
@@ -110,7 +118,7 @@ after_checksum=$(fixture_checksum)
 
 [[ "$(printf '%s' "$report" | jq -r '.schema_version')" == "2" ]] || fail "schema version missing"
 [[ "$(printf '%s' "$report" | jq -r '.read_only')" == "true" ]] || fail "read-only marker missing"
-[[ "$(printf '%s' "$report" | jq '.stores | length')" == "25" ]] || fail "expected explicit producer, metrics retention and split OpenCode stores"
+[[ "$(printf '%s' "$report" | jq '.stores | length')" == "27" ]] || fail "expected explicit producer, metrics retention and split OpenCode stores"
 printf '%s' "$report" | jq -e '
 	[.stores[] | select(.store_id == "repo-layout-migrations" or .store_id == "opencode-interactive" or
 	 .store_id == "workspace-tmp" or .store_id == "worktree-base" or .store_id == "opencode-db-backups") |
@@ -121,8 +129,9 @@ printf '%s' "$report" | jq -e '
 [[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "opencode-db-backups") | .owner')" == "none" ]] || fail "backup retention owner was invented"
 [[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "worktree-base") | .next_action | contains("worktree-artefact-reclaim.sh")')" == "true" ]] || fail "worktree artefact reclaim producer was not reported"
 printf '%s' "$report" | jq -e '
-	[.stores[] | select(.store_id == "headless-runtime-metrics" or .store_id == "resource-metrics" or .store_id == "pulse-cycle-index" or .store_id == "metrics-archive")]
-	| length == 4
+	[.stores[] | select(.store_id == "headless-runtime-metrics" or .store_id == "resource-metrics" or .store_id == "pulse-cycle-index" or .store_id == "metrics-archive" or
+	 .store_id == "worktree-recovery-timings" or .store_id == "worker-progress-blockers")]
+	| length == 6 and all(.[]; (.policy | contains("rotation") or contains("cap")))
 ' >/dev/null || fail "metrics retention stores missing"
 [[ "$(printf '%s' "$report" | jq '[.stores[].reclaimable_bytes] | add')" == "0" ]] || fail "foundation report suggested reclaimable bytes"
 [[ "$(printf '%s' "$report" | jq '[.stores[] | select(.total_bytes != null) | (.total_bytes == (.protected_bytes + .reclaimable_bytes + .unknown_bytes))] | all')" == "true" ]] || fail "storage categories did not reconcile with totals"
@@ -141,7 +150,7 @@ printf '%s' "$report" | jq -e '
 [[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "worktree-recovery") | .reclaimable_bytes')" == "0" ]] || fail "worktree recovery inventory granted deletion authority"
 
 home_unset_report=$(env -u HOME -u SUDO_USER -u AIDEVOPS_OPENCODE_DATA_DIR -u AIDEVOPS_OPENCODE_DB_PATH -u OPENCODE_DB_PATH -u OPENCODE_DB -u AIDEVOPS_NPM_CACHE_DIR bash "$HELPER" json)
-[[ "$(printf '%s' "$home_unset_report" | jq '.stores | length')" == "25" ]] || fail "HOME-unset inventory did not return every store"
+[[ "$(printf '%s' "$home_unset_report" | jq '.stores | length')" == "27" ]] || fail "HOME-unset inventory did not return every store"
 [[ "$(printf '%s' "$home_unset_report" | jq -r '[.stores[] | .error == "home-unavailable"] | all')" == "true" ]] || fail "HOME-unset stores did not fail closed"
 
 report=$(BACKUP_KEEP_COUNT=1 AIDEVOPS_WORKER_EXCERPT_KEEP_COUNT=1 bash "$HELPER" json)

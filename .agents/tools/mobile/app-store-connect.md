@@ -27,9 +27,9 @@ tools:
 - **Project pin**: `asc init --app-id <id>` (saves `.asc/project.json`, auto-used by all commands)
 - **Verify**: `asc auth check` | **Multi-account**: `asc auth use <name>`
 - **Context resolution**: explicit `--app-id` > `.asc/project.json` > prompt user to `asc init` (CI must use `--app-id` or pre-run `asc init`)
-- **GitHub**: https://github.com/tddworks/asc-cli (MIT, Swift, 130+ commands; v0.18.2 adds Resolution Center rejection details and attachment downloads through cookie-authenticated iris APIs; reviewed through `030c463` — the post-release change only stabilizes upstream affordance-registry tests and does not alter CLI behavior)
+- **GitHub**: https://github.com/tddworks/asc-cli (Apache-2.0, Swift; reviewed through v0.18.9). Recent releases add individual API keys, product-version submission, pricing, experiments and asset-library workflows. Verify installed command help before use.
 - **Website**: https://asccli.app | **Web apps**: [Command Center](https://asccli.app/command-center), [Console](https://asccli.app/console), [Screenshot Studio](https://asccli.app/editor)
-- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (Product Page Optimization plus first-time product submission and app pricing/availability guidance; reviewed through `debe0d23f1fd`) | [Community](https://github.com/rorkai/app-store-connect-cli-skills) (23 workflow skills for the separate community CLI, checked at `3b567352099e`)
+- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (Product Page Optimization, first-time product submission, app pricing/availability, and iris App Compliance guidance; reviewed through `5accb0357b7f`) | [Community](https://github.com/rorkai/app-store-connect-cli-skills) (23 workflow skills for the separate community CLI, checked at `3b567352099e`)
 - **Requirements**: macOS 13+, App Store Connect API key, `jq` (workflow scripts use `jq -r`)
 
 **Dependency check**: Before any `asc` command:
@@ -76,6 +76,20 @@ The upstream skills reviewed at `debe0d23f1fd` document `asc versions submit --w
 For a CLI that explicitly exposes `--with-products`, keep the first submission safe: run `asc versions check-readiness --version-id VERSION_ID`, then `asc versions submit --version-id VERSION_ID --with-products --dry-run` and inspect the included products. A real submit is an external App Store action and requires explicit authorization; do not run it as part of discovery or validation. If the flag is unavailable, do not substitute an unverified review-submission workflow—use the installed CLI's affordances/help or App Store Connect instead.
 
 Similarly, verify price and availability command support before suggesting changes. These are account mutations, not routine release steps; confirm the intended price, territories, content-rights declaration, and App Privacy prerequisites with the authorized operator.
+
+### Version-gated iris App Compliance (China mainland)
+
+Official skills reviewed at `5accb0357b7f` add `asc iris app-compliance` for the Security Assessment and AI Generated or Synthetic Content requirements. This uses Apple ID cookie authentication through the private iris API, not the public API key. No installed `asc` version is verified here: first check `asc --version`, `asc iris status`, `asc iris app-compliance --help`, and `asc iris app-compliance declare --help`. If the group or flags are absent, use App Store Connect rather than guessing an alternative command.
+
+Start read-only with `asc iris app-compliance list --app-id APP_ID --output table`. Inspect each requirement's ID, state, and `declare` affordance. Upstream documents declarations for Missing Info, Active, and Verification Failed rows; `PENDING_VERIFICATION` rows are read-only. Follow the installed CLI's affordances rather than forcing a declaration.
+
+Declarations are external compliance mutations and require explicit operator authorization and accurate app-specific facts. Do not infer an answer from missing information or choose `no` merely to clear a warning:
+
+- `--answer no` means the feature is not offered in China mainland, including when it is disabled or geoblocked there.
+- Security Assessment `--answer yes` requires genuine `--proof` and `--report` files. Upstream accepts `.doc`, `.docx`, `.jpeg`, `.jpg`, `.pdf`, and `.png`; check installed help before preparing evidence.
+- AI generated content `--answer yes` requires `--filing-type` (`llm` or `algorithm`), `--filing-name`, and `--filing-number`, plus `--third-party-authorization` when third-party technology powers the feature. Never invent filing details or evidence.
+
+A Yes declaration enters `PENDING_VERIFICATION` with `requiredActions: APP_BINARY_SUBMISSION`; Apple verifies it at the next app submission. Do not submit a binary just to validate this workflow. Keep filing evidence, agreements, and cookie/session data out of source control and logs.
 
 ## Key Workflows
 
@@ -180,7 +194,7 @@ Run `asc web-server` to start the local API bridge (ports 8420 HTTP, 8421 HTTPS)
 
 ## Agent Skills
 
-Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per-command reference) | **Community** `asc install-skills` or `npx skills add rorkai/app-store-connect-cli-skills` (workflow orchestration: releases, ASO, localization, RevenueCat, crash triage, Apple Ads). The community pack targets the separate [rorkai/App-Store-Connect-CLI](https://github.com/rorkai/App-Store-Connect-CLI), not the primary `tddworks/asc-cli` documented above, so verify its CLI version before following its commands. These upstream skill packs remain on-demand rather than being imported into aidevops. Latest reviewed official skill change adds build export-compliance handling. Latest community refresh (`3b567352099e`) targets community CLI 3.5.0 and adds Wallet pass signing through Pass Type IDs. It also documents the Xcode version command's `--xcodebuild-settings-lookup auto` fallback and recommends `never` for automation that must not launch Xcode implicitly. Existing safeguards remain: file-driven batch mutations require explicit confirmation, release workflows stage and dry-run changes, and submission-health workflows reuse matching review drafts instead of creating duplicates. The pack contains 23 Claude Code and Codex skills and remains on-demand.
+Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per-command reference) | **Community** `asc install-skills` or `npx skills add rorkai/app-store-connect-cli-skills` (workflow orchestration: releases, ASO, localization, RevenueCat, crash triage, Apple Ads). The community pack targets the separate [rorkai/App-Store-Connect-CLI](https://github.com/rorkai/App-Store-Connect-CLI), not the primary `tddworks/asc-cli` documented above, so verify its CLI version before following its commands. These upstream skill packs remain on-demand rather than being imported into aidevops. Latest reviewed official skill change (`5accb0357b7f`) adds iris App Compliance declarations, corrects bundle registration to `asc bundle-ids create` (already used above), and fixes its Resolution Center documentation link. Earlier build export-compliance guidance remains applicable. Latest community refresh (`3b567352099e`) targets community CLI 3.5.0 and adds Wallet pass signing through Pass Type IDs. It also documents the Xcode version command's `--xcodebuild-settings-lookup auto` fallback and recommends `never` for automation that must not launch Xcode implicitly. Existing safeguards remain: file-driven batch mutations require explicit confirmation, release workflows stage and dry-run changes, and submission-health workflows reuse matching review drafts instead of creating duplicates. The pack contains 23 Claude Code and Codex skills and remains on-demand.
 
 ## Blitz MCP Server (Optional)
 

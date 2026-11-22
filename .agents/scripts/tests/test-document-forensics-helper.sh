@@ -276,6 +276,10 @@ assert_unverifiable_lock_owner_is_live() {
 create_fixture searchable searchable 1
 create_fixture mirrored mirrored 1
 create_fixture rotated rotated 1
+create_fixture flipped flipped 1
+create_fixture upright-strong upright-strong 1
+create_fixture fractional fractional 1
+printf 'DIMENSIONS=2327x1642\n' >>"${FIXTURE_DIR}/fractional.pdf"
 create_fixture mixed mixed 3
 create_fixture sparse sparse 1
 create_fixture normal-scan normal-scan 1
@@ -372,7 +376,7 @@ mirrored_hash=$(file_hash "$mirrored_fixture")
 run_forensics mirrored "$mirrored_fixture" "$mirrored_output" 0 --write-readable
 mirrored_manifest="${mirrored_output}/mirrored.manifest.json"
 assert_jq "mirrored: horizontal repair selected" "$mirrored_manifest" '.pages[0].classification == "mirrored" and .pages[0].selected_transform == "flip-horizontal" and .pages[0].improvement >= 15'
-assert_jq "mirrored: all bounded candidates recorded" "$mirrored_manifest" '.pages[0].candidates | length == 5'
+assert_jq "mirrored: all bounded candidates recorded" "$mirrored_manifest" '.pages[0].candidates | length == 6'
 assert_jq "mirrored: dimensions are preserved" "$mirrored_manifest" '.pages[0].source_dimensions_points == {"width":612,"height":792} and .pages[0].derived_dimensions_points == .pages[0].source_dimensions_points'
 assert_jq "mirrored: portable manifest paths" "$mirrored_manifest" '[.. | strings | select(startswith("/"))] | length == 0'
 assert_file_exists "mirrored: searchable readable PDF emitted" "${mirrored_output}/readable/mirrored.pdf"
@@ -395,6 +399,20 @@ assert_source_unchanged "rotated: source hash unchanged" "$rotated_fixture" "$ro
 run_forensics "rotated no-readable rerun" "$rotated_fixture" "$rotated_output" 0
 assert_file_absent "rotated: mode change removes stale readable PDF" "${rotated_output}/readable/rotated.pdf"
 assert_jq "rotated: mode change reports no readable PDF" "$rotated_manifest" '.outputs.readable_pdf == null'
+
+flipped_output="${OUTPUT_DIR}/flipped"
+run_forensics flipped "${FIXTURE_DIR}/flipped.pdf" "$flipped_output" 0 --write-readable
+assert_jq "flipped: vertical flip repaired" "${flipped_output}/flipped.manifest.json" '.pages[0].classification == "mirrored" and .pages[0].selected_transform == "flip-vertical"'
+
+upright_output="${OUTPUT_DIR}/upright-strong"
+run_forensics "upright strong" "${FIXTURE_DIR}/upright-strong.pdf" "$upright_output" 0
+assert_jq "upright strong: marginal rotation does not override" "${upright_output}/upright-strong.manifest.json" '.pages[0].classification == "normal" and .pages[0].selected_transform == "original"'
+
+fractional_output="${OUTPUT_DIR}/fractional"
+export DOCUMENT_FORENSICS_PDF_DIMENSIONS="2327.04x1642.08"
+run_forensics "fractional drift" "${FIXTURE_DIR}/fractional.pdf" "$fractional_output" 0 --write-readable
+unset DOCUMENT_FORENSICS_PDF_DIMENSIONS
+assert_jq "fractional drift: not partial and readable PDF published" "${fractional_output}/fractional.manifest.json" '.status != "partial" and .outputs.readable_pdf != null and (.failures | length) == 0'
 
 dimension_output="${OUTPUT_DIR}/dimension-mismatch"
 export DOCUMENT_FORENSICS_PDF_DIMENSIONS="700x792"

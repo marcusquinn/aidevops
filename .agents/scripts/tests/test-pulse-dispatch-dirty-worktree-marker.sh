@@ -6,6 +6,14 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 LIB_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-lib.sh"
 WORKER_LAUNCH_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-worker-launch.sh"
@@ -138,13 +146,23 @@ test_marker_without_runner_key_stays_blocked() {
 }
 
 test_dirty_worktree_reuse_preserves_edits() {
-	git() { /usr/bin/git "$@"; }
+	git() { "$TEST_NATIVE_GIT" "$@"; }
 	local fixture_root=""
 	fixture_root=$(mktemp -d)
 	fixture_root=$(cd "$fixture_root" && pwd -P)
 	local origin_dir="${fixture_root}/origin.git"
 	local repo_dir="${fixture_root}/repo"
 	local worktree_dir="${fixture_root}/dirty-worktree"
+	# A fresh HOME (CI) has no managed-worktree registry; without a registry
+	# file the reuse gate reports "evidence unavailable" and refuses reuse. An
+	# initialised registry with no ownership/enrolment row means "not owned",
+	# which is the case under test.
+	local saved_registry_db="${WORKTREE_REGISTRY_DB-}" had_registry_db=0
+	local saved_registry_dir="${WORKTREE_REGISTRY_DIR-}"
+	[[ -z "${WORKTREE_REGISTRY_DB+x}" ]] || had_registry_db=1
+	export WORKTREE_REGISTRY_DIR="${fixture_root}/registry"
+	export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
+	_init_registry_db
 	git init --bare "$origin_dir" >/dev/null 2>&1
 	git clone "$origin_dir" "$repo_dir" >/dev/null 2>&1
 	git -C "$repo_dir" config user.email "worker@example.invalid"
@@ -173,6 +191,13 @@ test_dirty_worktree_reuse_preserves_edits() {
 	[[ "$_DLW_WORKTREE_REUSED" == "1" && "$_DLW_WORKTREE_PATH" == "$worktree_dir" && "$status_after" == "$status_before" ]] || result=1
 	print_result "same-runner worktree reuse preserves staged, unstaged, and untracked edits" "$result" "before='${status_before}' after='${status_after}' reused=${_DLW_WORKTREE_REUSED}"
 	rm -rf "$fixture_root"
+	if [[ "$had_registry_db" -eq 1 ]]; then
+		export WORKTREE_REGISTRY_DB="$saved_registry_db"
+		export WORKTREE_REGISTRY_DIR="$saved_registry_dir"
+	else
+		unset WORKTREE_REGISTRY_DIR
+		unset WORKTREE_REGISTRY_DB
+	fi
 	unset -f git
 	return 0
 }

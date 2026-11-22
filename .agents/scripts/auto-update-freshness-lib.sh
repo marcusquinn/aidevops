@@ -46,8 +46,9 @@ run_freshness_checks() {
 	check_tool_freshness
 	check_upstream_watch
 	check_venv_health
-	# t2119: closes the deployment gap where .agents/scripts/setup/modules/schedulers.sh
-	# gets updated in-place (via git pull) without a VERSION bump, so the
+	# t2119: closes the deployment gap where scheduler templates
+	# (.agents/scripts/setup/modules/schedulers*.sh) get updated in-place
+	# (via git pull) without a VERSION bump, so the
 	# "up to date" branch of cmd_check never re-runs setup.sh and the
 	# installed launchd plists stay stale. PR #19079 was invisible to
 	# users for hours for exactly this reason.
@@ -187,77 +188,73 @@ _check_tool_idle_gate() {
 # =============================================================================
 
 #######################################
-# t2119: Detect drift between the installed launchd plists and the
-# current .agents/scripts/setup/modules/schedulers.sh template, then auto-repair by
-# re-running setup.sh --non-interactive.
+# t2119: Detect drift between the installed launchd plists and the current
+# scheduler templates, then auto-repair by re-running
+# setup.sh --non-interactive.
 #
-# Strategy: hash .agents/scripts/setup/modules/schedulers.sh itself and compare against
-# the hash recorded by the last setup.sh run. Whole-file hash is the
-# simplest signal that any plist-generating change has occurred (FD
-# limits, env vars, StartInterval, labels) — no per-plist hashing or
-# subshell sourcing needed, and it naturally covers every LaunchAgent
-# that schedulers.sh installs (supervisor-pulse, process-guard,
-# memory-pressure, etc.).
+# Strategy (t19030): hash every scheduler template with the shared
+# scheduler_template_hash function from the source checkout
+# (setup/modules/schedulers-template-hash.sh) and compare it with the hash
+# the last full scheduler pass recorded from the same function. One shared
+# definition keeps both sides hashing the same files; before t19030 they
+# hashed different files and every check ran a full setup.
 #
-# Bootstrap case: when no stored hash exists, we treat the state as
-# drifted on first run. This self-heals existing installs that pre-date
-# t2119 without requiring a user action.
+# Bootstrap case: when no stored hash exists, we treat the state as drifted
+# on first run. This self-heals installs that pre-date the contract.
 #
-# Rate-limited to once per 6 hours so auto-update cycles don't
-# repeatedly run setup.sh — setup.sh is idempotent but does ~20
-# scheduler operations per run and isn't free.
+# Hashing a few files is cheap, so the comparison runs every cycle and a new
+# template revision is repaired at once. Only repeated repairs of the same
+# revision are rate-limited (6 hours by default), so a setup that cannot
+# converge does not rerun every cycle. The attempt is recorded before setup
+# starts, so a repair killed by the update timeout is not retried every cycle.
 #
-# macOS only — systemd-user and cron paths don't have the same
-# deployment gap (setup.sh regenerates unit files on every run and
-# users typically restart them explicitly).
+# macOS only — systemd auto-update units are compared and refreshed by
+# idempotent enable during setup; cron has no unit templates to refresh.
 #######################################
 check_launchd_plist_drift() {
 	[[ "$(uname -s)" == "Darwin" ]] || return 0
 
 	local state_dir="$HOME/.aidevops/.agent-workspace/tmp"
 	local check_stamp="$state_dir/plist-drift-check.stamp"
+	local attempt_state="$state_dir/plist-drift-attempt.state"
+	local hash_state="$state_dir/schedulers-template-hash.state"
+	local modules_dir="$INSTALL_DIR/.agents/scripts/setup/modules"
+	local hash_lib="$modules_dir/schedulers-template-hash.sh"
+	local current_hash="" stored_hash="" attempted_hash="" last_attempt="" now=0
 	mkdir -p "$state_dir" 2>/dev/null || return 0
 
-	# Rate-limit to once per 6 hours. Overridable via env for tests and
-	# opt-out scenarios.
+	# A checkout without the shared contract records an incompatible hash.
+	[[ -f "$hash_lib" ]] || return 0
+	# shellcheck source=setup/modules/schedulers-template-hash.sh
+	source "$hash_lib" || return 0
+	current_hash=$(scheduler_template_hash "$modules_dir" 2>/dev/null) || current_hash=""
+	if [[ -z "$current_hash" ]]; then
+		log_warn "Plist drift check: failed to hash scheduler templates in $modules_dir — skipping"
+		return 0
+	fi
+
+	if [[ -f "$hash_state" ]]; then
+		IFS= read -r stored_hash <"$hash_state" 2>/dev/null || true
+	fi
+	[[ "$current_hash" != "$stored_hash" ]] || return 0
+
+	# Rate-limit repeated repairs of the same template revision only.
+	# Overridable via env for tests and opt-out scenarios.
 	local drift_check_interval="${AIDEVOPS_PLIST_DRIFT_CHECK_INTERVAL:-21600}"
-	if [[ -f "$check_stamp" ]]; then
-		local last_check now
-		last_check=$(cat "$check_stamp" 2>/dev/null || echo 0)
+	[[ "$drift_check_interval" =~ ^[0-9]+$ ]] || drift_check_interval=21600
+	if [[ -f "$attempt_state" && -f "$check_stamp" ]]; then
+		IFS= read -r attempted_hash <"$attempt_state" 2>/dev/null || true
+		IFS= read -r last_attempt <"$check_stamp" 2>/dev/null || true
+		[[ "$last_attempt" =~ ^[0-9]+$ ]] || last_attempt=0
 		now=$(date +%s)
-		if ((now - last_check < drift_check_interval)); then
+		if [[ "$attempted_hash" == "$current_hash" ]] && ((now - last_attempt < drift_check_interval)); then
 			return 0
 		fi
 	fi
 
-	local schedulers_src="$INSTALL_DIR/.agents/scripts/setup/modules/schedulers.sh"
-	local hash_state="$state_dir/schedulers-template-hash.state"
-
-	if [[ ! -f "$schedulers_src" ]]; then
-		date +%s >"$check_stamp"
-		return 0
-	fi
-
-	local current_hash
-	current_hash=$(shasum -a 256 "$schedulers_src" 2>/dev/null | awk '{print $1}')
-	if [[ -z "$current_hash" ]]; then
-		log_warn "Plist drift check: failed to hash $schedulers_src — skipping"
-		date +%s >"$check_stamp"
-		return 0
-	fi
-
-	local stored_hash=""
-	if [[ -f "$hash_state" ]]; then
-		stored_hash=$(cat "$hash_state" 2>/dev/null || echo "")
-	fi
-
-	if [[ -n "$stored_hash" && "$current_hash" == "$stored_hash" ]]; then
-		log_info "Plist drift check: template hash unchanged (${current_hash:0:12}) — no drift"
-		date +%s >"$check_stamp"
-		return 0
-	fi
-
 	log_info "Plist drift detected: stored='${stored_hash:-<none>}' current='${current_hash:0:12}' — running setup.sh --non-interactive to regenerate (t2119)"
+	printf '%s\n' "$current_hash" >"$attempt_state" 2>/dev/null || true
+	date +%s >"$check_stamp" 2>/dev/null || true
 	local _setup_exit=0
 	bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1 || _setup_exit=$?
 	if [[ "$_setup_exit" -eq 0 ]]; then
@@ -265,7 +262,6 @@ check_launchd_plist_drift() {
 	else
 		log_warn "Plist drift repair: setup.sh --non-interactive exited $_setup_exit"
 	fi
-	date +%s >"$check_stamp"
 	return 0
 }
 
@@ -326,6 +322,21 @@ check_skill_freshness() {
 	if [[ ! -f "$skill_sources" ]]; then
 		log_info "No imported skills found — skipping skill freshness check"
 		update_skill_check_timestamp
+		return 0
+	fi
+
+	# Attempt backoff: last_skill_check is only written after completion, so a
+	# run killed by the scheduler (systemd TimeoutStartSec) left no record and
+	# every 10-minute tick retried the full re-import — a repeating timeout loop
+	# whose start time drifted later each day. Persist the attempt first, like
+	# check_upstream_watch, so interrupted runs back off for an hour.
+	local attempt_field="last_skill_check_attempt"
+	gate_result=$(_check_freshness_time_gate "$attempt_field" 3600 "Skills attempt")
+	if [[ "$gate_result" == "skip" ]]; then
+		return 0
+	fi
+	if ! update_upstream_watch_timestamp "$attempt_field"; then
+		log_warn "Could not record skill freshness attempt — skipping"
 		return 0
 	fi
 
@@ -759,10 +770,43 @@ _locate_upstream_watch() {
 	return 0
 }
 
-check_upstream_watch() {
+check_upstream_watch() (
+	# A subshell confines EXIT/signal cleanup to this check, not its caller.
 	# Opt-out via config (env var or config file)
 	if ! is_feature_enabled upstream_watch; then
 		log_info "Upstream watch disabled via config"
+		return 0
+	fi
+
+	local lock_dir="${STATE_FILE}.upstream-watch.lock"
+	local owner_file owner_pid
+	if ! mkdir "$lock_dir" 2>/dev/null; then
+		# Removing the dead owner's directory elects exactly one recoverer.
+		# Losers must not remove a newly acquired, not-yet-stamped lock.
+		for owner_file in "$lock_dir"/[0-9]*; do
+			[[ -d "$owner_file" ]] || continue
+			owner_pid="${owner_file##*/}"
+			if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
+				if rmdir "$owner_file" 2>/dev/null; then
+					rmdir "$lock_dir" 2>/dev/null || true
+				fi
+			fi
+		done
+		if ! mkdir "$lock_dir" 2>/dev/null; then
+			log_info "Upstream watch check already running — skipping"
+			return 0
+		fi
+	fi
+	local watch_pid="${BASHPID:-}"
+	# Bash 3.2 has no BASHPID, and $$ still identifies the parent shell here.
+	# exec makes the command-substitution child report this subshell's PID.
+	if [[ -z "$watch_pid" ]]; then
+		watch_pid=$(exec sh -c 'printf "%s" "$PPID"')
+	fi
+	trap 'rmdir "$lock_dir/$watch_pid" 2>/dev/null || true; rmdir "$lock_dir" 2>/dev/null || true' EXIT
+	trap 'exit 1' HUP INT TERM
+	if ! mkdir "$lock_dir/$watch_pid"; then
+		log_warn "Could not acquire upstream watch lock — skipping"
 		return 0
 	fi
 
@@ -773,6 +817,13 @@ check_upstream_watch() {
 	# Time gate: skip if checked recently
 	local gate_result
 	gate_result=$(_check_freshness_time_gate "last_upstream_watch_check" "$freshness_seconds" "Upstream watch")
+	if [[ "$gate_result" == "skip" ]]; then
+		return 0
+	fi
+
+	# Recheck under the lock so simultaneous ticks cannot both pass the gate.
+	local attempt_field="last_upstream_watch_attempt"
+	gate_result=$(_check_freshness_time_gate "$attempt_field" 3600 "Upstream watch attempt")
 	if [[ "$gate_result" == "skip" ]]; then
 		return 0
 	fi
@@ -788,20 +839,31 @@ check_upstream_watch() {
 	local repo_count
 	repo_count=$(jq '.repos | length' "$watch_config" 2>/dev/null || echo "0")
 
+	# Persist before execution: failures and interrupted runs must back off too.
+	if ! update_upstream_watch_timestamp "$attempt_field"; then
+		log_warn "Could not record upstream watch attempt — skipping"
+		return 0
+	fi
 	log_info "Running daily upstream watch check (${repo_count} repos)..."
 	if "$upstream_watch_script" check >>"$LOG_FILE" 2>&1; then
 		log_info "Upstream watch check complete"
-		update_upstream_watch_timestamp
+		update_upstream_watch_timestamp ||
+			log_warn "Could not record upstream watch completion"
 	else
-		log_warn "Upstream watch check had errors (exit code: $?) — will retry next run"
+		log_warn "Upstream watch check had errors (exit code: $?) — retry in at least 1 hour"
+		# A long failed check still needs a full hour after it finishes.
+		update_upstream_watch_timestamp "$attempt_field" ||
+			log_warn "Could not record upstream watch retry backoff"
 	fi
 	return 0
-}
+)
 
 #######################################
-# Record last_upstream_watch_check timestamp in state file
+# Record a successful check (default) or attempt timestamp in state file.
+# Args: $1 = timestamp field (optional)
 #######################################
 update_upstream_watch_timestamp() {
+	local field="${1:-last_upstream_watch_check}"
 	local timestamp
 	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -811,17 +873,19 @@ update_upstream_watch_timestamp() {
 		trap 'rm -f "${tmp_state:-}"' RETURN
 
 		if [[ -f "$STATE_FILE" ]]; then
-			if ! jq --arg ts "$timestamp" \
-				'. + {last_upstream_watch_check: $ts}' \
+			if ! jq --arg ts "$timestamp" --arg field "$field" \
+				'. + {($field): $ts}' \
 				"$STATE_FILE" >"$tmp_state" 2>&1; then
 				log_warn "Failed to update upstream watch timestamp (jq error on state file)"
 				return 1
 			fi
-			mv "$tmp_state" "$STATE_FILE"
+			mv "$tmp_state" "$STATE_FILE" || return 1
 		else
-			jq -n --arg ts "$timestamp" \
-				'{last_upstream_watch_check: $ts}' >"$STATE_FILE"
+			jq -n --arg ts "$timestamp" --arg field "$field" \
+				'{($field): $ts}' >"$STATE_FILE" || return 1
 		fi
+	else
+		return 1
 	fi
 	return 0
 }

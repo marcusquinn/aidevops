@@ -39,6 +39,35 @@ _PULSE_EFFICIENCY_CONTRACT_VERSION=2
 _PULSE_EFFICIENCY_COVERAGE_GENERATION=2
 _PULSE_LEGACY_CYCLE_OUTCOME_PENDING=0
 
+# Local observation runs even when dispatch is idle or backing off. It never
+# initializes state, touches legacy ownership, or authorizes cleanup.
+_pulse_reconcile_worker_lifecycle() {
+	if [[ "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" == "1" || "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" == "1" ||
+		"${PULSE_DRY_RUN:-0}" == "1" || "${PULSE_CANARY_MODE:-0}" == "1" ]]; then
+		return 0
+	fi
+	# shellcheck source=worker-lifecycle-state.sh
+	source "${SCRIPT_DIR}/worker-lifecycle-state.sh"
+	local state_dir=""
+	state_dir=$(worker_lifecycle_state_dir)
+	[[ -e "$state_dir" || -L "$state_dir" ]] || return 0
+	local package_dir="${SCRIPT_DIR}/../worker-lifecycle"
+	local reconcile_rc=0
+	if [[ "$state_dir" != /* || ! -f "${package_dir}/worker_lifecycle/registry.py" ]] ||
+		! command -v python3 >/dev/null 2>&1 || ! declare -F timeout_sec >/dev/null 2>&1; then
+		printf '[worker-lifecycle] reconcile-gap reason=path-or-runtime-unavailable\n' >>"$WRAPPER_LOGFILE" || true
+		return 0
+	fi
+	(
+		cd "$package_dir" || exit 1
+		timeout_sec 10 python3 -E -s -B -m worker_lifecycle.registry --state-dir "$state_dir" reconcile --limit 100
+	) >>"$WRAPPER_LOGFILE" 2>/dev/null || reconcile_rc=$?
+	if [[ "$reconcile_rc" -ne 0 ]]; then
+		printf '[worker-lifecycle] reconcile-gap exit=%s\n' "$reconcile_rc" >>"$WRAPPER_LOGFILE" || true
+	fi
+	return 0
+}
+
 _pulse_efficiency_record() {
 	local name="$1"
 	local value="${2:-1}"
@@ -172,6 +201,10 @@ _pulse_efficiency_cycle_finish() {
 	fi
 	if declare -F gh_trim_log >/dev/null 2>&1; then
 		gh_trim_log 2>/dev/null || true
+	fi
+	# GH#35935: bound dispatch-stages.tsv the same way; nothing else trims it.
+	if declare -F _ds_trim_log >/dev/null 2>&1; then
+		_ds_trim_log 2>/dev/null || true
 	fi
 	_PULSE_EFFICIENCY_CYCLE_STARTED=0
 	unset AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID

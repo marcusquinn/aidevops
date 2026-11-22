@@ -3,6 +3,14 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 set -u
+
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 INSTALL_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit 1
 source "${INSTALL_DIR}/.agents/scripts/setup/_repo_verify_guard.sh"
@@ -33,9 +41,9 @@ assert_equal() {
 make_repo() {
 	local repo_root="$1"
 	mkdir -p "$repo_root"
-	/usr/bin/git -C "$repo_root" init -q
-	/usr/bin/git -C "$repo_root" config user.email test@example.com
-	/usr/bin/git -C "$repo_root" config user.name Test
+	"$TEST_NATIVE_GIT" -C "$repo_root" init -q
+	"$TEST_NATIVE_GIT" -C "$repo_root" config user.email test@example.com
+	"$TEST_NATIVE_GIT" -C "$repo_root" config user.name Test
 	return 0
 }
 
@@ -50,13 +58,13 @@ main() {
 	make_repo "$disabled"
 	make_repo "$canonical"
 	printf '%s\n' '{"scripts":{"lint":"eslint ."}}' >"$eligible/package.json"
-	/usr/bin/git -C "$eligible" add package.json
+	"$TEST_NATIVE_GIT" -C "$eligible" add package.json
 	printf '%s\n' '{"version":"old","features":{"planning":true}}' >"$eligible/.aidevops.json"
 	printf '%s\n' '{"verify":{"enabled":false}}' >"$disabled/.aidevops.json"
 	printf '%s\n' '{"features":{"planning":true}}' >"$canonical/.aidevops.json"
 	printf '%s\n' '{"scripts":{"lint":"eslint ."}}' >"$canonical/package.json"
-	/usr/bin/git -C "$canonical" add .aidevops.json package.json
-	/usr/bin/git -C "$canonical" commit -q -m fixture
+	"$TEST_NATIVE_GIT" -C "$canonical" add .aidevops.json package.json
+	"$TEST_NATIVE_GIT" -C "$canonical" commit -q -m fixture
 	mkdir -p "${fake_home}/.config/aidevops"
 	jq -n --arg eligible "$eligible" --arg disabled "$disabled" --arg canonical "$canonical" \
 		'{initialized_repos:[{path:$eligible,features:["code-quality"]},{path:$disabled,features:["code-quality"]},{path:$canonical,features:["code-quality"]}]}' >"${fake_home}/.config/aidevops/repos.json"
@@ -65,10 +73,10 @@ main() {
 	assert_equal "true" "$(jq -r --arg path "$eligible" '.initialized_repos[] | select(.path == $path) | (.features | index("code-quality") != null)' "${fake_home}/.config/aidevops/repos.json")" "setup seeds code-quality registration"
 	assert_equal "true" "$(jq -r '.features.code_quality' "$eligible/.aidevops.json")" "setup migrates legacy code-quality feature"
 	local common_dir
-	common_dir=$(/usr/bin/git -C "$eligible" rev-parse --git-common-dir)
+	common_dir=$("$TEST_NATIVE_GIT" -C "$eligible" rev-parse --git-common-dir)
 	assert_equal "1" "$(grep -c '# guard:repo-verify' "${eligible}/${common_dir}/hooks/pre-push" 2>/dev/null || printf 0)" "setup installs repo-verify in eligible repo"
 	assert_equal "0" "$(bash -n "${eligible}/${common_dir}/hooks/pre-push" 2>/dev/null; printf '%s' "$?")" "generated repo-verify dispatcher has valid shell identifiers"
-	common_dir=$(/usr/bin/git -C "$disabled" rev-parse --git-common-dir)
+	common_dir=$("$TEST_NATIVE_GIT" -C "$disabled" rev-parse --git-common-dir)
 	if [[ -f "${disabled}/${common_dir}/hooks/pre-push" ]]; then
 		assert_equal "0" "$(grep -c '# guard:repo-verify' "${disabled}/${common_dir}/hooks/pre-push" 2>/dev/null || printf 0)" "setup preserves explicit opt-out"
 	else

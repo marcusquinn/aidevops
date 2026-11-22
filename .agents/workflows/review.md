@@ -62,6 +62,9 @@ When the read-only preflight reports missing targets, provide its one mixed
 Regenerate the command after any PR head, body, linkage, or metadata change;
 the final merge-time guard independently rechecks the live snapshot. Do not
 request approval when the preflight reports that no authority is required.
+The preflight also reports a live PR `needs-maintainer-review` label as `pr:N`.
+If it reports a hold but prints no command, fix the preflight; never compose a
+partial approval command by hand from earlier verification.
 
 ## Local, branch, and commit targets
 

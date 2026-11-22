@@ -7,6 +7,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+from gh_transport_schema import live_binding_credentials
+
 LIVE_WINDOWS = "live-windows.json"
 
 
@@ -28,8 +30,9 @@ def _read_root(db, scope: str) -> str:
 
 
 def _scope_diagnostics(db, requested_scope: str, scope: str, attributed: bool) -> tuple[int, dict]:
-    bindings = sum(_read_root(db, binding[0]) == scope for binding in
-                   db.execute("SELECT scope FROM binding").fetchall())
+    # Retired bindings cannot own live quota evidence (GH#38619).
+    bindings = len(live_binding_credentials(db, scope, lambda bound: _read_root(db, bound),
+                                            time.time()))
     ambiguity = None
     if attributed and requested_scope != scope:
         ambiguity = "configured_owner_requires_reconciliation"

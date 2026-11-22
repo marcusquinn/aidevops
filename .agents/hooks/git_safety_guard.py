@@ -8,7 +8,8 @@ mutations are delegated to canonical-write-policy-helper.py so every canonical
 checkout is read-only regardless of branch name or target path.
 
 This hook runs before Bash/Edit/Write tool calls execute. It is registered under
-both the Bash and direct-file-tool PreToolUse matchers.
+both the Bash and direct-file-tool PreToolUse matchers, and under the
+WebFetch/MCP matcher so URL-bearing tools never open redirect links (GH#35655).
 
 Installed by: aidevops setup (setup.sh) or install-hooks-helper.sh
 Location: ~/.aidevops/hooks/git_safety_guard.py
@@ -27,6 +28,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
+from git_safety_lifecycle import check_session_owner
 
 # Git discovery is owned by native_git.py inside the shared policy helpers,
 # not by this adapter. Keeping an unused binary fallback here hid divergence.
@@ -81,11 +84,14 @@ def _resolve_policy_helper(environment_key: str, filename: str) -> str:
     return next((path for path in candidates if path and os.path.isfile(path)), "")
 
 
-def _run_policy_helper(helper: str, arguments: list, input_text=None):
+def _run_policy_helper(
+    helper: str, arguments: list, input_text=None, *, isolate_python=False,
+):
     """Execute a validated Python policy helper and require an object payload."""
     # nosec B603 -- fixed interpreter and policy argv, no shell
     result = subprocess.run(  # nosec B603
-        [sys.executable, helper, *arguments],
+        [sys.executable, *(["-E", "-s", "-B"] if isolate_python else []),
+         helper, *arguments],
         input=input_text,
         capture_output=True,
         text=True,
@@ -117,8 +123,24 @@ def _process_identity(pid: int) -> str:
     return " ".join(result.stdout.split())
 
 
-def _direct_write_deny(reason: str) -> dict:
+_DEFAULT_WRITE_ACTION = "create_or_use_linked_worktree"
+# Only known policy actions are echoed; GH#39582 adds the Git-metadata remedy.
+# GH#39739: workspace-boundary denials keep their specific remedy, because an
+# existing linked worktree makes the default action misleading.
+_KNOWN_WRITE_ACTIONS = frozenset(
+    {
+        _DEFAULT_WRITE_ACTION,
+        "use_git_commands_for_git_metadata",
+        "run_session_inside_git_workspace",
+        "include_worktree_in_git_workspace",
+    }
+)
+
+
+def _direct_write_deny(reason: str, action: str = _DEFAULT_WRITE_ACTION) -> dict:
     """Build the Claude Code deny payload for a direct file mutation."""
+    if action not in _KNOWN_WRITE_ACTIONS:
+        action = _DEFAULT_WRITE_ACTION
     return {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -126,14 +148,14 @@ def _direct_write_deny(reason: str) -> dict:
             "permissionDecisionReason": (
                 "BLOCKED by canonical write policy\n\n"
                 f"Reason: {reason}\n\n"
-                "ACTION_REQUIRED=create_or_use_linked_worktree"
+                f"ACTION_REQUIRED={action}"
             ),
         }
     }
 
 
 def _check_canonical_write(
-    file_path: str, patch_text: "str | None" = None
+    file_path: str, patch_text: "str | None" = None, session_id: str = "",
 ) -> "dict | None":
     """Delegate a direct file mutation to the shared structural policy."""
     helper = _resolve_policy_helper(
@@ -161,9 +183,13 @@ def _check_canonical_write(
     ) as exc:
         return _direct_write_deny(f"canonical-write policy failed closed: {exc}")
     if returncode == 0 and payload.get("decision") == "allow":
-        return None
+        paths = (
+            payload.get("patch_paths", []) if patch_text is not None else [file_path]
+        )
+        return _check_session_owner(paths, session_id)
     return _direct_write_deny(
-        payload.get("reason", "canonical-write policy returned an invalid response")
+        payload.get("reason", "canonical-write policy returned an invalid response"),
+        str(payload.get("action", _DEFAULT_WRITE_ACTION)),
     )
 
 
@@ -232,6 +258,70 @@ def _check_command_policy(command: str) -> "dict | None":
     }
 
 
+def _check_session_owner(
+    paths: list, session_id: str, command: str = "",
+) -> "dict | None":
+    return check_session_owner(
+        _resolve_policy_helper, _run_policy_helper, paths, session_id, command,
+    )
+
+
+REDIRECT_EXEMPT_TOOLS = {
+    "bash", "read", "grep", "glob", "task", "todowrite", "notebookread",
+}
+
+
+def _check_redirect_links(tool_name: str, tool_input) -> "dict | None":
+    """Deny URL-bearing tools that would resolve a redirect link (GH#35655).
+
+    Decision lives in scripts/redirect_link_tool_check.py (lexical only, no
+    network). Bash is covered by the shared command policy; file tools are
+    exempt. Any helper failure fails closed.
+    """
+    if (_normalise_tool_name(tool_name) in REDIRECT_EXEMPT_TOOLS
+            or _is_direct_file_tool(tool_name)):
+        return None
+    helper = _resolve_policy_helper(
+        "AIDEVOPS_REDIRECT_TOOL_CHECK", "redirect_link_tool_check.py"
+    )
+    reason = "redirect-link policy helper is unavailable"
+    if helper:
+        try:
+            payload_text = json.dumps(
+                {"tool_name": tool_name, "tool_input": tool_input}
+            )
+            _, payload = _run_policy_helper(helper, [], payload_text)
+            if payload.get("decision") == "allow":
+                return None
+            reason = str(payload.get("reason") or "redirect link detected")
+        except (OSError, subprocess.SubprocessError, ValueError, TypeError) as exc:
+            reason = f"redirect-link policy helper failed: {exc}"
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": (
+                f"BLOCKED by redirect-link policy\n\nReason: {reason}"
+            ),
+        }
+    }
+
+
+def docker_owner_advisory(command: str, session_id: str):
+    """Delegate optional Docker context without affecting safety decisions."""
+    helper = _resolve_policy_helper(
+        "AIDEVOPS_DOCKER_OWNER_ADVISORY_HELPER", "docker_owner_advisory.py"
+    )
+    if not helper:
+        return None
+    try:
+        _, payload = _run_policy_helper(helper, [command, session_id])
+        return payload or None
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+        # Advisory failures must never block commands or override policy.
+        return None
+
+
 def main():
     """Delegate Bash policy and enforce direct-file worktree isolation."""
     try:
@@ -241,6 +331,11 @@ def main():
 
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input") or {}
+
+    redirect_deny = _check_redirect_links(tool_name, tool_input)
+    if redirect_deny:
+        print(json.dumps(redirect_deny))
+        sys.exit(0)
 
     if _is_direct_file_tool(tool_name):
         file_path = (
@@ -253,7 +348,9 @@ def main():
             patch_text = tool_input.get("patchText", "") or tool_input.get(
                 "patch_text", ""
             )
-        deny = _check_canonical_write(file_path, patch_text)
+        deny = _check_canonical_write(
+            file_path, patch_text, input_data.get("session_id", ""),
+        )
         if deny:
             print(json.dumps(deny))
         sys.exit(0)
@@ -262,8 +359,14 @@ def main():
     if tool_name != "Bash" or not isinstance(command, str) or not command:
         sys.exit(0)
     deny = _check_command_policy(command)
+    if not deny:
+        deny = _check_session_owner([], input_data.get("session_id", ""), command)
     if deny:
         print(json.dumps(deny))
+    else:
+        advisory = docker_owner_advisory(command, input_data.get("session_id", ""))
+        if advisory:
+            print(json.dumps(advisory))
     sys.exit(0)
 
 

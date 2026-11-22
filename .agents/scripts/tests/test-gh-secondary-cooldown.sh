@@ -89,6 +89,9 @@ gh() {
 # shellcheck source=../shared-gh-wrappers.sh
 source "${SCRIPT_DIR}/shared-gh-wrappers.sh"
 
+# reset_case stubs the boot probe; keep the real one for the GH#39187 cases.
+eval "_test_real_system_boot_ts() $(declare -f _gh_secondary_system_boot_ts | sed '1d')"
+
 reset_case() {
 	: >"$CALL_LOG"
 	: >"$ERR_LOG"
@@ -553,6 +556,13 @@ test_all_primary_resources_remain_isolated() {
 		code_search) _gh_transport_preflight search code fixture >/dev/null 2>&1 || rc=$? ;;
 		esac
 		[[ "$rc" == 75 ]] || return 1
+		if [[ "$resource" == core ]]; then
+			# GH#36288: REST-backed release reads defer, never "release not found".
+			local err=""
+			rc=0
+			err=$(_gh_transport_preflight release view v1.0.0 --repo owner/repo 2>&1 >/dev/null) || rc=$?
+			[[ "$rc" == 75 && "$err" == *"error_kind=github-api-read-deferred"* && "$err" == *"retry_at="* ]] || return 1
+		fi
 	done
 	printf 'PASS core, GraphQL and code-search primary limits leave other pools and recovery diagnostics usable\n'
 	return 0
@@ -596,6 +606,77 @@ test_remaining_header_survives_diagnostics() {
 	return 0
 }
 
+# GH#39187: the old greedy sed returned kern.boottime usec, so the boot ramp
+# could never engage on macOS. The parser is platform-neutral; the host probe
+# check catches the regression natively on macOS (usec is always < 10^6).
+test_boot_ts_parses_kern_boottime_sec_not_usec() {
+	reset_case
+	local parsed="" host_boot="" now=""
+	parsed="$(_gh_secondary_kern_boottime_sec '{ sec = 1794166500, usec = 274703 } Thu Nov 12 22:15:00 2026')"
+	if [[ "$parsed" != "1794166500" ]]; then
+		printf 'FAIL kern.boottime parse returned %s, expected 1794166500\n' "${parsed:-<empty>}"
+		return 1
+	fi
+	if _gh_secondary_kern_boottime_sec 'kern.boottime: unavailable' >/dev/null; then
+		printf 'FAIL kern.boottime parse accepted malformed input\n'
+		return 1
+	fi
+	now="$(_gh_secondary_cooldown_now)"
+	if host_boot="$(_test_real_system_boot_ts)"; then
+		if [[ ! "$host_boot" =~ ^[0-9]+$ ]] || [[ "$host_boot" -lt 1000000000 || "$host_boot" -gt "$now" ]]; then
+			printf 'FAIL host boot epoch %s is implausible (now=%s)\n' "$host_boot" "$now"
+			return 1
+		fi
+	fi
+	printf 'PASS boot time parses kern.boottime sec, not usec, and host probe is plausible\n'
+	return 0
+}
+
+# GH#39187: the jq-free expiry fast path must agree with jq for every writer
+# shape; unrecognised shapes must still resolve through the jq fallback.
+test_cooldown_expiry_fast_path_matches_writer_shapes() {
+	reset_case
+	local dir="${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE%/*}"
+	local got="" case_name="" doc="" expected=""
+	mkdir -p "$dir"
+	while IFS='|' read -r case_name expected doc; do
+		printf '%b\n' "$doc" >"$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE"
+		got="$(_gh_secondary_cooldown_expires_at)"
+		if [[ "$got" != "$expected" ]]; then
+			printf 'FAIL cooldown expiry %s: got %s, expected %s\n' "$case_name" "${got:-<empty>}" "$expected"
+			return 1
+		fi
+	done <<'EOF'
+compact|1794170000|{"reason":"secondary-rate-limit","first_seen":1794166000,"expires_at":1794170000,"last_request_id":"A1"}
+pretty|1794170001|{\n  "reason": "secondary-rate-limit",\n  "first_seen": 1794166000,\n  "expires_at": 1794170001,\n  "last_request_id": ""\n}
+escaped-reason|1794170002|{"reason":"say \\"expires_at\\":5","first_seen":1794166000,"expires_at":1794170002}
+reordered|1794170003|{"expires_at":1794170003,"reason":"x","first_seen":1794166000}
+EOF
+	printf 'PASS cooldown expiry fast path matches compact, pretty, escaped and reordered documents\n'
+	return 0
+}
+
+# GH#39187: a zero or unset boot window must skip the boot-time probe (and its
+# sysctl exec) on every read preflight.
+test_zero_boot_window_skips_boot_probe() {
+	reset_case
+	local probe_log="${TMP_HOME}/boot-probe.log"
+	: >"$probe_log"
+	_gh_secondary_system_boot_ts() { printf 'probe\n' >>"$probe_log"; return 1; }
+	export AIDEVOPS_GH_READ_RAMP_BOOT_SECS=0
+	_gh_secondary_read_ramp_phase >/dev/null || true
+	unset AIDEVOPS_GH_READ_RAMP_BOOT_SECS
+	_gh_secondary_read_ramp_phase >/dev/null || true
+	export AIDEVOPS_GH_READ_RAMP_BOOT_SECS=120
+	_gh_secondary_read_ramp_phase >/dev/null || true
+	if [[ "$(wc -l <"$probe_log" | tr -d ' ')" -eq 1 ]]; then
+		printf 'PASS zero or unset boot window skips the boot-time probe\n'
+		return 0
+	fi
+	printf 'FAIL boot probe ran %s times, expected 1 (only the 120s window)\n' "$(wc -l <"$probe_log" | tr -d ' ')"
+	return 1
+}
+
 test_secondary_response_writes_cooldown
 test_header_response_writes_retry_after_cooldown
 test_generic_403_diagnostic_distinguishes_forbidden
@@ -621,3 +702,6 @@ test_search_expiry_and_secondary_precedence
 test_all_primary_resources_remain_isolated
 test_transport_preserves_sanitized_caller_context
 test_remaining_header_survives_diagnostics
+test_boot_ts_parses_kern_boottime_sec_not_usec
+test_cooldown_expiry_fast_path_matches_writer_shapes
+test_zero_boot_window_skips_boot_probe

@@ -8,6 +8,7 @@ import {
   selectConnectedRoutingCandidate,
 } from "./model-routing.mjs";
 import { ON_DEMAND_TOOL } from "./on-demand-tools.mjs";
+import { failoverTask as entitlementFailover } from "./subagent-entitlement-failover.mjs";
 import { SubagentLifecycleTracker } from "./subagent-lifecycle-tracker.mjs";
 import {
   ESCALATION_PROMPT,
@@ -138,10 +139,10 @@ class InteractiveSubagentEscalator {
     policy.createdAt = Date.now();
   }
 
-  async promptNextTier(childID, childSession, model) {
+  async promptNextTier(childID, childSession, model, prompt = ESCALATION_PROMPT) {
     const body = {
       model: routingModelIdentity(model),
-      parts: [{ type: "text", text: ESCALATION_PROMPT, synthetic: true }],
+      parts: [{ type: "text", text: prompt, synthetic: true }],
     };
     if (childSession?.agent) body.agent = childSession.agent;
     return this.context.client.session.prompt({ path: { id: childID }, body });
@@ -190,6 +191,8 @@ class InteractiveSubagentEscalator {
       routing,
       tier,
       providerState,
+      undefined,
+      this.availability(),
     );
     return model ? { model, tier } : null;
   }
@@ -253,6 +256,15 @@ class InteractiveSubagentEscalator {
     return this.completeEscalation(output, state);
   }
 
+  availability() {
+    return this.context.resolveAvailability?.() || {};
+  }
+
+  /** GH#36698: same-tier entitlement failover; see subagent-entitlement-failover.mjs. */
+  failoverTask(output, childID) {
+    return entitlementFailover(this, output, childID);
+  }
+
   async afterTool(input, output) {
     if (!TASK_TOOLS.has(safeToolName(input?.tool)) || !this.trackingEnabled()) return null;
     const identity = this.lifecycle.takeChildIdentity(input, output);
@@ -276,7 +288,9 @@ class InteractiveSubagentEscalator {
       };
     }
     try {
-      return this.enabled() ? await this.escalateTask(output, identity.childID) : null;
+      if (!this.enabled()) return null;
+      const failover = await this.failoverTask(output, identity.childID);
+      return failover || await this.escalateTask(output, identity.childID);
     } finally {
       this.recordHostOutcome(input, output, identity);
       if (identity.childID) this.sideEffects.delete(identity.childID);

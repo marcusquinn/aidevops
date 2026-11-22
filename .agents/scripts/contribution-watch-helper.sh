@@ -81,6 +81,18 @@ BACKFILL_FRESHNESS_HOURS="${CONTRIB_BACKFILL_HOURS:-24}"
 # Excludes low-signal reasons such as ci_activity and state_change.
 SIGNAL_REASONS="author|comment|mention|review_requested|subscribed"
 
+# jq filter over `.items | to_entries[]`: threads awaiting the owner's reply.
+# A non-bot human other than the owner posted last (last_any_comment is
+# maintained from non-bot comments only) and the thread is open, or a human
+# replied after it closed. Keep in sync with aidevops-update-check.sh.
+NEEDS_REPLY_JQ='select((.value.last_any_comment // "") != "")
+	| select(.value.last_any_comment > (.value.last_our_comment // ""))
+	| select((.value.state // "") != "closed" or .value.last_any_comment > (.value.closed_at // ""))'
+
+# Max legacy items refreshed from the API per `status` run, and rows displayed.
+STATUS_REFRESH_CAP=40
+STATUS_DISPLAY_CAP=20
+
 # =============================================================================
 # Logging
 # =============================================================================
@@ -604,11 +616,30 @@ _scan_alert_item() {
 		--arg updated "$updated" \
 		--arg hot "$hot_until" \
 		'.items[$key].last_notified = $updated | .items[$key].hot_until = $hot')
+	# last_notified records only that a background scan saw the item. Visibility to
+	# the owner is tracked separately by last_seen, advanced by interactive surfaces.
 
 	_SCAN_ALERTED_KEYS+="${item_key}"$'\n'
 	_SCAN_NEEDS_ATTENTION=$((_SCAN_NEEDS_ATTENTION + 1))
 	_SCAN_ATTENTION_ITEMS="${_SCAN_ATTENTION_ITEMS}  ${item_key} (${item_type}): ${title} — reason: ${reason}\n"
 	_SCAN_ITEMS_CHECKED=$((_SCAN_ITEMS_CHECKED + 1))
+	return 0
+}
+
+# Record open/closed state of an item in _SCAN_STATE (.state, .closed_at).
+# A merged PR reports state "closed". Failure leaves the item unchanged.
+_scan_set_item_state() {
+	local item_key="$1"
+	local repo_slug="${item_key%#*}"
+	local number="${item_key##*#}"
+	[[ "$number" =~ ^[0-9]+$ ]] || return 0
+
+	local meta
+	meta=$(gh api "repos/${repo_slug}/issues/${number}" \
+		--jq '{state: (.state // ""), closed_at: (.closed_at // "")}' 2>/dev/null) || return 0
+	[[ -n "$meta" ]] || return 0
+	_SCAN_STATE=$(echo "$_SCAN_STATE" | jq --arg key "$item_key" --argjson m "$meta" \
+		'if .items[$key] then .items[$key].state = $m.state | .items[$key].closed_at = $m.closed_at else . end' 2>/dev/null) || true
 	return 0
 }
 
@@ -658,8 +689,19 @@ _scan_process_notifications() {
 				fi
 			fi
 
-			if [[ -n "$latest_time" && "$latest_time" > "$updated" ]]; then
+			# Use the latest non-bot comment time: a bot comment bumps the
+			# notification's updated_at but is not a human reply.
+			if [[ -n "$latest_time" ]]; then
 				updated="$latest_time"
+			elif [[ "$reason" == "comment" && "$number" =~ ^[0-9]+$ ]]; then
+				continue
+			elif [[ "$reason" == "mention" ]]; then
+				# Issue-body mention without a human comment: keep it visible on first
+				# sight, but never advance last_any_comment from notification updated_at
+				# (later bot comments bump it and are not human replies).
+				local known_any
+				known_any=$(echo "$_SCAN_STATE" | jq -r --arg key "$item_key" '.items[$key].last_any_comment // ""')
+				[[ -n "$known_any" ]] && continue
 			fi
 
 			if [[ "$latest_author" == "$username" || "$latest_is_aidevops" == "true" ]]; then
@@ -689,6 +731,7 @@ _scan_process_notifications() {
 				| .last_any_comment = (if .last_any_comment == "" or $updated > .last_any_comment then $updated else .last_any_comment end)
 			)')
 
+		_scan_set_item_state "$item_key"
 		_scan_alert_item "$item_key" "$item_type" "$title" "$updated" "$reason" || true
 	done < <(echo "$notifications" | jq -c '.[]?')
 	return 0
@@ -705,7 +748,8 @@ _scan_backfill_fetch_latest_comment() {
 	if ! issue_comments=$(gh api --paginate "repos/${repo_slug}/issues/${number}/comments" \
 		--jq '[.[] | {author: .user.login, created: .created_at, body: (.body // "")}]' 2>/dev/null); then
 		_log_warn "Backfill issue comments API failed for ${repo_slug}#${number}"
-		issue_comments="[]"
+		# Required request failed: print nothing so callers keep cached data.
+		return 0
 	fi
 
 	local pr_review_comments="[]"
@@ -715,11 +759,13 @@ _scan_backfill_fetch_latest_comment() {
 		tracked_type=$(echo "$_SCAN_STATE" | jq -r --arg key "$key" '.items[$key].type // "issue"')
 		if [[ "$tracked_type" == "pr" ]]; then
 			_log_warn "Backfill PR review comments API failed for ${repo_slug}#${number}"
+			return 0
 		fi
 		pr_review_comments="[]"
 	fi
 
-	jq -s 'add | sort_by(.created) | reverse | .[0] | {
+	# Bot comments (github-actions, "[bot]" suffix) never count as replies.
+	jq -s 'add | map(select((.author // "") | (endswith("[bot]") or . == "github-actions") | not)) | sort_by(.created) | reverse | .[0] | {
 		author: (.author // ""),
 		created: (.created // ""),
 		is_aidevops: ((.body // "") | test("aidevops\\.sh"))
@@ -767,6 +813,7 @@ _scan_backfill_process_item() {
 	title=$(echo "$_SCAN_STATE" | jq -r --arg key "$key" '.items[$key].title // "unknown"')
 	item_type=$(echo "$_SCAN_STATE" | jq -r --arg key "$key" '.items[$key].type // "issue"')
 
+	_scan_set_item_state "$key"
 	_scan_alert_item "$key" "$item_type" "$title" "$latest_comment_time" "backfill" || true
 	return 0
 }
@@ -1131,13 +1178,117 @@ _status_classify_item() {
 		fi
 	fi
 
-	# Check if needs reply (someone else has last word)
-	if [[ -n "$last_any" && ("$last_our" < "$last_any" || -z "$last_our") ]]; then
-		_STATUS_NEEDS_REPLY=$((_STATUS_NEEDS_REPLY + 1))
-		_STATUS_FOUND_NEEDING=true
+	return 0
+}
+
+# Refresh one legacy item (no recorded open/closed state) from the API so bot
+# noise and closed threads drop out: last_any_comment becomes the latest
+# non-bot comment, last_our_comment is backfilled when the owner (or an
+# aidevops-signed comment) posted it, and state/closed_at are recorded.
+_status_refresh_item() {
+	local key="$1"
+	local username="$2"
+	local repo_slug="${key%#*}"
+	local number="${key##*#}"
+	[[ "$number" =~ ^[0-9]+$ ]] || return 0
+
+	local meta author created is_aidevops
+	meta=$(_scan_backfill_fetch_latest_comment "$repo_slug" "$number" "$key")
+	# Request failure is not an empty result: keep cached data and stay eligible.
+	[[ -n "$meta" ]] || return 0
+	if [[ -n "$meta" ]]; then
+		author=$(echo "$meta" | jq -r '.author // ""')
+		created=$(echo "$meta" | jq -r '.created // ""')
+		is_aidevops=$(echo "$meta" | jq -r '.is_aidevops // false')
+		if [[ -z "$created" ]]; then
+			# Only bot comments (or none): nothing awaits a human reply.
+			_SCAN_STATE=$(echo "$_SCAN_STATE" | jq --arg k "$key" '.items[$k].last_any_comment = (.items[$k].last_our_comment // "")')
+		else
+			_SCAN_STATE=$(echo "$_SCAN_STATE" | jq --arg k "$key" --arg t "$created" '.items[$k].last_any_comment = $t')
+			if [[ "$author" == "$username" || "$is_aidevops" == "true" ]]; then
+				_SCAN_STATE=$(echo "$_SCAN_STATE" | jq --arg k "$key" --arg t "$created" '.items[$k].last_our_comment = $t')
+			fi
+		fi
+	fi
+	# Record the activity level refreshed so unchanged items yield to others.
+	_SCAN_STATE=$(echo "$_SCAN_STATE" | jq --arg k "$key" '.items[$k].refreshed_at = (.items[$k].last_any_comment // "")')
+	_scan_set_item_state "$key"
+	return 0
+}
+
+# Refresh up to STATUS_REFRESH_CAP candidate items that lack recorded state, or
+# that have state but no owner-comment data and new activity since last refresh.
+# Operates on and persists _SCAN_STATE.
+_status_refresh_legacy() {
+	local username="$1"
+	command -v gh &>/dev/null || return 0
+	[[ -n "$username" ]] || return 0
+
+	local keys
+	keys=$(echo "$_SCAN_STATE" | jq -r "[.items | to_entries[] | select((.value.state // \"\") == \"\" or ((.value.last_our_comment // \"\") == \"\" and (.value.refreshed_at // \"\") < (.value.last_any_comment // \"\"))) | ${NEEDS_REPLY_JQ} | .key] | .[0:${STATUS_REFRESH_CAP}][]" 2>/dev/null) || keys=""
+	[[ -n "$keys" ]] || return 0
+
+	local key
+	while IFS= read -r key; do
+		[[ -z "$key" ]] && continue
+		_status_refresh_item "$key" "$username"
+	done <<<"$keys"
+	_write_state "$_SCAN_STATE" || true
+	return 0
+}
+
+# Print the newest open needs-reply threads (capped) and mark them seen.
+# Sets _STATUS_NEEDS_REPLY (total) and _STATUS_FOUND_NEEDING.
+_status_print_inbox() {
+	local rows
+	rows=$(echo "$_SCAN_STATE" | jq -r "[.items | to_entries[] | ${NEEDS_REPLY_JQ}] | sort_by(.value.last_any_comment) | reverse
+		| [length, (.[0:${STATUS_DISPLAY_CAP}] | map([.key, (.value.type // \"issue\"), (.value.role // \"commenter\"), (.value.title // \"unknown\"), .value.last_any_comment] | @tsv))] | .[0], .[1][]" 2>/dev/null) || rows=""
+
+	_STATUS_NEEDS_REPLY="${rows%%$'\n'*}"
+	_STATUS_NEEDS_REPLY="${_STATUS_NEEDS_REPLY:-0}"
+	_STATUS_FOUND_NEEDING=false
+	[[ "$_STATUS_NEEDS_REPLY" -gt 0 ]] && _STATUS_FOUND_NEEDING=true
+
+	local shown=0 key item_type role title last_any
+	while IFS=$'\t' read -r key item_type role title last_any; do
+		[[ -z "$key" ]] && continue
 		echo "  ${key} (${item_type}, ${role}): ${title}"
 		echo "    Last activity: ${last_any}"
+		shown=$((shown + 1))
+		_SCAN_STATE=$(echo "$_SCAN_STATE" | jq --arg k "$key" --arg t "$last_any" '.items[$k].last_seen = $t')
+	done < <(echo "$rows" | tail -n +2)
+
+	if [[ "$_STATUS_NEEDS_REPLY" -gt "$shown" ]]; then
+		echo "  … showing newest ${shown} of ${_STATUS_NEEDS_REPLY}. Run 'dismiss --all' to clear the rest."
 	fi
+	_write_state "$_SCAN_STATE" || true
+	return 0
+}
+
+# =============================================================================
+# Dismiss: mark needs-reply threads as seen without replying
+# =============================================================================
+
+cmd_dismiss() {
+	local target="${1:-}"
+	if [[ -z "$target" ]]; then
+		echo "Usage: contribution-watch-helper.sh dismiss <owner/repo#N>|--all" >&2
+		return 1
+	fi
+	_ensure_state_file
+	local state
+	state=$(_read_state)
+	if [[ "$target" == "--all" ]]; then
+		state=$(echo "$state" | jq '.items |= with_entries(.value.last_seen = (.value.last_any_comment // ""))')
+	else
+		if ! echo "$state" | jq -e --arg k "$target" '.items[$k]' >/dev/null 2>&1; then
+			echo "Not tracked: ${target}" >&2
+			return 1
+		fi
+		state=$(echo "$state" | jq --arg k "$target" '.items[$k].last_seen = (.items[$k].last_any_comment // "")')
+	fi
+	_write_state "$state" || return 1
+	echo "Dismissed: ${target}"
 	return 0
 }
 
@@ -1220,8 +1371,14 @@ cmd_status() {
 		return 0
 	fi
 
-	echo -e "${CYAN}Items needing reply:${NC}"
 	_status_collect_items "$state"
+	_SCAN_STATE="$state"
+	local status_user=""
+	status_user=$(_get_username 2>/dev/null) || status_user=""
+	_status_refresh_legacy "$status_user"
+
+	echo -e "${CYAN}Items needing reply (open threads, newest first):${NC}"
+	_status_print_inbox
 	_status_print_summary "$_STATUS_HOT" "$_STATUS_ACTIVE" "$_STATUS_DORMANT" \
 		"$_STATUS_NEEDS_REPLY" "$_STATUS_FOUND_NEEDING"
 
@@ -1351,6 +1508,7 @@ cmd_help() {
 	echo "  contribution-watch-helper.sh stop                          Stop a running scan (via PID file)"
 	echo "  contribution-watch-helper.sh restart                       Stop existing scan and start a new one"
 	echo "  contribution-watch-helper.sh status                        Show watched items and their state"
+	echo "  contribution-watch-helper.sh dismiss <owner/repo#N>|--all  Mark replies as seen without replying"
 	echo "  contribution-watch-helper.sh install                       Install launchd plist"
 	echo "  contribution-watch-helper.sh uninstall                     Remove launchd plist"
 	echo "  contribution-watch-helper.sh help                          Show this help"
@@ -1393,6 +1551,7 @@ main() {
 	stop) cmd_stop "$@" ;;
 	restart) cmd_restart "$@" ;;
 	status) cmd_status "$@" ;;
+	dismiss) cmd_dismiss "$@" ;;
 	install) cmd_install "$@" ;;
 	uninstall) cmd_uninstall "$@" ;;
 	help | --help | -h) cmd_help ;;

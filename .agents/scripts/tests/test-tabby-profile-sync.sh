@@ -225,9 +225,13 @@ assert count == 0, count
 assert repaired == config, repaired
 "
 
+have_yaml=1
+python3 -c 'import yaml' >/dev/null 2>&1 || have_yaml=0
+
 _info "Test 10: sync repairs existing profiles even when no new profile is needed"
 tmp_root="$(mktemp -d)"
 trap 'rm -rf "${tmp_root}"' EXIT
+export AIDEVOPS_GIT_WORKSPACE_ROOT="${tmp_root}"
 repo_path="${tmp_root}/aidevops"
 mkdir -p "${repo_path}"
 repos_json="${tmp_root}/repos.json"
@@ -257,8 +261,10 @@ with open(tabby_config, "w") as handle:
       cwd: {repo_path}
 """)
 PY
-sync_output=$(PYTHONPATH="${REPO_ROOT}/.agents/scripts" python3 "${HELPER}" --repos-json "${repos_json}" --tabby-config "${tabby_config}")
-if [[ "${sync_output}" == *"Repaired 1 existing Tabby profile(s)."* ]] && grep -q -- "exec aidevops opencode --tabby-shell" "${tabby_config}" && ! grep -q -- "TABBY_AUTORUN: opencode" "${tabby_config}"; then
+sync_output=""
+if ((have_yaml == 0)); then
+	_info "SKIP: host python3 has no PyYAML module; sync repair check skipped"
+elif sync_output=$(PYTHONPATH="${REPO_ROOT}/.agents/scripts" python3 "${HELPER}" --repos-json "${repos_json}" --tabby-config "${tabby_config}") && [[ "${sync_output}" == *"Repaired 1 existing Tabby profile(s)."* ]] && grep -q -- "exec aidevops opencode --tabby-shell" "${tabby_config}" && ! grep -q -- "TABBY_AUTORUN: opencode" "${tabby_config}"; then
 	_pass "sync repairs existing broken profile"
 else
 	_fail "sync did not repair existing profile: ${sync_output}"
@@ -284,7 +290,9 @@ resolved=$(HOME="${tmp_root}" TABBY_CONFIG='' TABBY_CONFIG_DIRECTORY='' bash "${
 _info "Test 12: sync converts inline empty profiles and keeps valid YAML"
 inline_config="${tmp_root}/inline-empty.yaml"
 printf 'version: 8\nprofiles: []\ngroups: []\n' >"${inline_config}"
-if PYTHONPATH="${REPO_ROOT}/.agents/scripts" python3 "${HELPER}" --repos-json "${repos_json}" --tabby-config "${inline_config}" >/dev/null &&
+if ((have_yaml == 0)); then
+	_info "SKIP: host python3 has no PyYAML module; YAML validation skipped"
+elif PYTHONPATH="${REPO_ROOT}/.agents/scripts" python3 "${HELPER}" --repos-json "${repos_json}" --tabby-config "${inline_config}" >/dev/null &&
 	python3 -c 'import sys, yaml; value = yaml.safe_load(open(sys.argv[1])); assert isinstance(value["profiles"], list) and value["profiles"]' "${inline_config}" &&
 	! grep -qF 'profiles: []' "${inline_config}"; then
 	_pass "inline empty profiles converted to valid block list"
@@ -295,6 +303,10 @@ fi
 _info "Test 13: missing and block-empty profiles shapes remain valid"
 for shape in missing block_empty; do
 	shape_config="${tmp_root}/${shape}.yaml"
+	if ((have_yaml == 0)); then
+		_info "SKIP: ${shape} shape check needs host PyYAML (not installed)"
+		continue
+	fi
 	if [[ "${shape}" == "missing" ]]; then
 		printf 'version: 8\ngroups: []\n' >"${shape_config}"
 	else
@@ -312,7 +324,9 @@ _info "Test 14: malformed source is rejected without modification"
 malformed_config="${tmp_root}/malformed.yaml"
 printf 'version: 8\nprofiles: []\n  - name: broken\ngroups: []\n' >"${malformed_config}"
 malformed_before=$(shasum -a 256 "${malformed_config}" | cut -d ' ' -f 1)
-if PYTHONPATH="${REPO_ROOT}/.agents/scripts" python3 "${HELPER}" --repos-json "${repos_json}" --tabby-config "${malformed_config}" --status-only >/dev/null 2>&1; then
+if ((have_yaml == 0)); then
+	_info "SKIP: malformed-source check needs host PyYAML (not installed)"
+elif PYTHONPATH="${REPO_ROOT}/.agents/scripts" python3 "${HELPER}" --repos-json "${repos_json}" --tabby-config "${malformed_config}" --status-only >/dev/null 2>&1; then
 	_fail "malformed status unexpectedly succeeded"
 else
 	malformed_after=$(shasum -a 256 "${malformed_config}" | cut -d ' ' -f 1)
@@ -394,7 +408,9 @@ bootstrap_env="${bootstrap_home}/tabby-python"
 bootstrap_receipt="${tmp_root}/bootstrap-receipt"
 bootstrap_config="${tmp_root}/bootstrap-config.yaml"
 real_python=$(command -v python3)
-mkdir -p "${bootstrap_home}/.config/aidevops" "${bootstrap_bin}"
+mkdir -p "${bootstrap_home}/.config/aidevops" "${bootstrap_bin}" "${bootstrap_env}/bin"
+printf '#!/bin/sh\nexit 1\n' >"${bootstrap_env}/bin/python3"
+chmod +x "${bootstrap_env}/bin/python3"
 cp "${repos_json}" "${bootstrap_home}/.config/aidevops/repos.json"
 printf 'version: 8\nprofiles: []\n  - name: broken\ngroups: []\n' >"${bootstrap_config}"
 cat >"${tmp_root}/venv-python" <<'SH'
@@ -411,6 +427,7 @@ if [[ "${1:-}" == "-c" && "${2:-}" == "import yaml" ]]; then
 	exit 1
 fi
 if [[ "${1:-}" == "-m" && "${2:-}" == "venv" ]]; then
+	[[ " $* " == *" --clear "* ]] || exit 1
 	env_path="${@: -1}"
 	mkdir -p "${env_path}/bin"
 	cp "${TABBY_TEST_VENV_PYTHON_STUB}" "${env_path}/bin/python3"

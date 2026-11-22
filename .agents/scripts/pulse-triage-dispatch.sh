@@ -61,17 +61,29 @@ fi
 # t1982: Compose the "What to do" instructions and "Constraints" sections
 # for the consolidation-task child body. Called by _compose_consolidation_child_body.
 #
-# Args: $1=parent_num $2=repo_slug $3=authors_line
+# Args: $1=parent_num $2=repo_slug $3=authors_line $4=parent_labels (CSV, optional)
+#
+# GH#37809: status:blocked records an unresolved dependency or hold, not
+# ownership, so a blocked parent hands its successor status:blocked. Ownership
+# states (queued/claimed/in-progress/in-review) are never copied.
 #######################################
 _compose_consolidation_worker_instructions() {
 	local parent_num="$1"
 	local repo_slug="$2"
 	local authors_line="$3"
+	local parent_labels="${4:-}"
+
+	local successor_status="status:available"
+	local status_rationale="never the parent's ownership status (\`status:queued\`, \`status:claimed\`, \`status:in-progress\`, \`status:in-review\`). Immediately before creating the successor, re-read the parent's labels; if it now carries \`status:blocked\`, use \`status:blocked\` instead, because that label records an unresolved dependency or hold rather than ownership."
+	if [[ ",${parent_labels}," == *",status:blocked,"* ]]; then
+		successor_status="status:blocked"
+		status_rationale="the parent carries \`status:blocked\`, which records an unresolved dependency or hold rather than ownership, so the successor keeps it and stays held until that blocker is resolved. Keep the blocker text in the merged body. Never copy the parent's ownership status (\`status:queued\`, \`status:claimed\`, \`status:in-progress\`, \`status:in-review\`)."
+	fi
 
 	cat <<EOF
 ## What to do
 
-1. **Read the parent body and substantive comments inlined below.** Identify:
+1. **Read the parent body and substantive comments inlined below, fetching any explicitly omitted sources first.** Identify:
    - The original problem statement
    - Scope modifications added by commenters (additions, corrections, clarifications)
    - Resolved questions, rejected ideas, or superseded decisions
@@ -86,36 +98,40 @@ _compose_consolidation_worker_instructions() {
      Preserve every wildcard scope entry verbatim from every superseded issue, including tool-generated paths such as \`- NEW: todo/<area>/log/*/*/<slug>-*.jsonl\`. Never invent a concrete machine, date, timestamp or filename in place of a pattern. Never change an existing \`EDIT:\` entry to \`NEW:\`.
      Check each path against the current default branch before copying its scope marker: use \`git ls-files\` in an up-to-date default-branch checkout or \`gh api\` for that branch's contents. Use \`EDIT:\` when the path already exists on the default branch; use \`NEW:\` only after confirming it is absent. A stale checkout or failed API lookup is not proof of absence.
    - **Runner prerequisites** — copy verbatim every line matching \`^requires-secrets:\` and its runner-prerequisite paragraph from every superseded issue. Keep all source lines (do not replace them with a summary): the runner capability gate unions comma/space-separated names across these lines. Never drop a prerequisite because this consolidation runner lacks the named secret; consolidation itself does not need those credentials.
-   - \`## Context & Decisions\` — which commenter contributed which insight (attribution matters)
+       - **Quoted directives (GH#38827):** in the inlined sources below, every line-start \`requires-secrets:\`, \`requires-ssh:\`, \`requires-tools:\`, \`requires-loopback-health:\` and \`requires-device:\` line is quoted with a \`> \` prefix, and every \`<!-- aidevops:needs-secrets ... -->\` marker is renamed \`<!-- quoted-parent-directive aidevops:needs-secrets ... -->\`, so this GitHub-only task is not gated on them. Restore each one in the merged spec unquoted (no \`> \` prefix, original marker name) at the start of a line, so the successor keeps its runner gate.
+    - \`## Context & Decisions\` — which commenter contributed which insight (attribution matters)
    - \`## Contributors\` — a cc line @-mentioning every author from the list below
 
    Start the merged body with: \`_Supersedes #${parent_num} — this issue is the consolidated spec._\`
+   That marker must be a line by itself, exactly as shown (no extra text, no trailing whitespace); the dispatch gate refuses consolidated successors without it. Put any further lineage (for example "#${parent_num} itself superseded #M") on a separate line, and add one exact marker line per additional superseded issue.
 
-3. **Validate before filing the new consolidated issue.** Save the inlined parent body verbatim to a local file, plus a separate body file for each additional superseded issue. Validate the merged body against ALL sources; a failed check stops publication and parent closure until the merged body is repaired:
+3. **Validate before filing the new consolidated issue.** Save the parent body (inlined or explicitly fetched) verbatim to a local file, plus a separate body file for each additional superseded issue. Validate the merged body against ALL sources; a failed check stops publication and parent closure until the merged body is repaired:
 
 \`\`\`bash
 python3 ~/.aidevops/agents/scripts/consolidation-contract-validator.py \\
+  --parent ${parent_num} \\
   --source "<file containing the verbatim parent body>" \\
   --successor "<file containing the merged body from step 2>"
 # Repeat --source for each additional superseded issue body.
+# Repeat --parent for each additional superseded issue number.
 \`\`\`
 
-The validator must pass before running the signed creation command below. It checks verbatim secret lines and prerequisite paragraphs, wildcard scope preservation, and EDIT-to-NEW regressions. Also run \`pre-dispatch-validator-helper.sh scope-check\` on the merged body for ordinary scope syntax validation.
+The validator must pass before running the signed creation command below. It checks the exact marker line for every \`--parent\`, verbatim secret lines and prerequisite paragraphs, wildcard scope preservation, and EDIT-to-NEW regressions. Also run \`pre-dispatch-validator-helper.sh scope-check\` on the merged body for ordinary scope syntax validation.
 
 \`\`\`bash
 ~/.aidevops/agents/scripts/gh-write-helper.sh issue create --repo "${repo_slug}" \\
   --title "consolidated: <concise description derived from the merged spec>" \\
-  --label "consolidated,origin:worker,auto-dispatch,status:available,<copy relevant labels from parent, excluding all status:* labels, needs-consolidation, consolidation-task, and origin:interactive>" \\
+  --label "consolidated,origin:worker,auto-dispatch,${successor_status},<copy relevant labels from parent, excluding all status:* labels, needs-consolidation, consolidation-task, and origin:interactive>" \\
   --body-file "<file containing the merged body from step 2>"
 \`\`\`
 
 **Note (GH#18670):** \`origin:worker\` is mandatory on this label list — consolidated issues are pulse-generated artifacts, not interactive maintainer work. Use the signed wrapper above rather than the raw GitHub CLI so the successor retains the managed signature and origin metadata.
 
-**Dispatch handoff:** \`auto-dispatch\` and \`status:available\` are also mandatory. Keep exactly one \`status:*\` label on the successor: \`status:available\`, never the parent's lifecycle status. The consolidated successor marker and this explicit handoff must both be present before \`_has_consolidated_label\` permits implementation dispatch; the fill-floor enumerator also needs the available status.
+**Dispatch handoff:** \`auto-dispatch\` and \`${successor_status}\` are also mandatory. Keep exactly one \`status:*\` label on the successor: \`${successor_status}\` — ${status_rationale} The consolidated successor marker and this explicit handoff must both be present before \`_has_consolidated_label\` permits implementation dispatch; the fill-floor enumerator also needs the available status, and the pre-claim gate holds a \`status:blocked\` successor until its blocker is released.
 
    Capture the new issue number as \$NEW_NUM.
 
-4. **Close the parent #${parent_num}:**
+4. **Close every superseded parent and verify each handoff.** Run all five commands below for #${parent_num}, then repeat them for every additional issue passed as \`--parent\` in step 3, substituting that issue number in every command (including dependency repointing and the state check). Every command must succeed:
 
 \`\`\`bash
 gh issue comment ${parent_num} --repo "${repo_slug}" \\
@@ -125,9 +141,13 @@ gh issue edit ${parent_num} --repo "${repo_slug}" \\
 gh issue close ${parent_num} --repo "${repo_slug}" --reason "not planned"
 # Repoint open dependants' blockedBy edges and Blocked-by lines at the successor (GH#35130):
 ~/.aidevops/agents/scripts/dependency-supersession-repoint-helper.sh repoint "${repo_slug}" ${parent_num} \$NEW_NUM
+# Re-read the parent (GH#37600); this must print exactly: closed not_planned
+gh api "repos/${repo_slug}/issues/${parent_num}" --jq '.state + " " + (.state_reason // "")'
 \`\`\`
 
-5. **Close this consolidation-task issue** with a summary comment:
+   **Handoff verification (GH#37600):** a parent that still reads \`open\` keeps the \`consolidated\` label while the dispatch gate rejects it, so it consumes dispatch attempts every cycle. If any command above fails or refuses the write (for example a worker target-scope guard on a non-target issue), or any parent re-read is not \`closed not_planned\`, this task has FAILED: do not run step 5 and do not report success. Leave this consolidation task open, record the parent number, the failing command and its output in one comment here, and exit \`BLOCKED\`. Report a reopen observed after your close as evidence, with its event time; do not guess its cause.
+
+5. **Close this consolidation-task issue** only after every parent passed the step 4 verification, with a summary comment:
 
 \`\`\`bash
 gh issue comment \$THIS_ISSUE --repo "${repo_slug}" \\
@@ -137,8 +157,9 @@ gh issue close \$THIS_ISSUE --repo "${repo_slug}" --reason "completed"
 
 ## Constraints
 
-- **Do NOT read #${parent_num}** — it is inlined below. Reading it wastes the token budget.
+- Read only explicitly omitted source references when the packet size limit prevents inlining them; otherwise do NOT re-read #${parent_num}.
 - **Preserve all substantive content.** Merging is not summarising. If a comment adds a constraint, that constraint must appear in the merged body.
+- **Checkpoint recovery is never an unconditional requirement** (GH#35871). Name a checkpoint commit or branch as binding only after verifying it is reachable from a remote ref (\`gh api repos/${repo_slug}/commits/<sha>\`), recording the full SHA and ref. Otherwise write: "Best-effort recovery: reuse if reachable; the functional spec is the source of truth; re-implement if unrecoverable." Never forbid re-implementing work that exists only as local commits on one runner.
 - **Preserve author attribution** for specific contributions: "per @user1: …".
 - **No PR is required.** This is an operational task. The completion signal is the new issue number + parent closure + self-close.
 - **Contributors to @-mention** on the new issue: ${authors_line}
@@ -146,11 +167,17 @@ EOF
 	return 0
 }
 
+# GH#38827: jq filter that neutralises runner-capability directives inside
+# inlined parent text, so a GitHub-only consolidation task is not gated on the
+# parent's product prerequisites. Quotes line-start requires-* lines and
+# renames the needs-secrets marker; the worker restores both in the merged spec.
+_CONSOLIDATION_NEUTRALISE_JQ='gsub("(?<d>^|\\n)(?<w>[ \\t]*)(?<r>requires-(secrets|ssh|tools|loopback-health|device):)"; "\(.d)\(.w)> \(.r)") | gsub("<!-- aidevops:needs-secrets"; "<!-- quoted-parent-directive aidevops:needs-secrets")'
+
 #######################################
 # t1982: Compose a self-contained consolidation-task child issue body.
 #
-# The worker reading this body must NOT need to read the parent — all
-# required content is inlined here. Includes:
+# Inline sources where size permits; explicitly reference omitted sources.
+# Includes:
 #   - Consolidation target marker (for dedup lookup)
 #   - Explicit worker instructions (gh commands)
 #   - Parent body verbatim
@@ -168,25 +195,29 @@ _compose_consolidation_child_body() {
 	local authors_csv="$6"
 	local parent_labels="$7"
 
-	local comments_section
-	comments_section=$(_format_consolidation_comments_section "$substantive_json")
-
 	local authors_line="${authors_csv:-_no substantive authors detected_}"
 	local parent_body_section="${parent_body:-_(parent body was empty)_}"
+	# GH#38827: inlined directives must not gate this GitHub-only task.
+	parent_body_section=$(printf '%s' "$parent_body_section" | jq -Rs -r "$_CONSOLIDATION_NEUTRALISE_JQ") || return 1
+	substantive_json=$(printf '%s' "$substantive_json" | jq -c "map(.body |= (${_CONSOLIDATION_NEUTRALISE_JQ}))") || return 1
+	if [[ ${#authors_line} -gt 4000 ]]; then
+		authors_line="_Contributor list omitted (size limit): fetch parent comments and @mention every substantive author._"
+	fi
 
 	local instructions_block
 	instructions_block=$(_compose_consolidation_worker_instructions \
-		"$parent_num" "$repo_slug" "$authors_line")
+		"$parent_num" "$repo_slug" "$authors_line" "$parent_labels")
 
-	cat <<EOF
+	local packet
+	packet=$(
+		cat <<EOF
 ## Consolidation target: #${parent_num}
 
 **Parent issue:** #${parent_num} in \`${repo_slug}\`
 **Parent title:** ${parent_title}
 **Parent labels:** \`${parent_labels}\`
 
-> You do **NOT** need to read #${parent_num}. Everything required is inlined below.
-> Reading the parent wastes the token budget and is explicitly disallowed for this task.
+> Sources are inlined below unless explicitly listed as omitted. Fetch omitted references before consolidating.
 
 ${instructions_block}
 
@@ -196,12 +227,48 @@ ${parent_body_section}
 
 ## Substantive comments (verbatim, in chronological order)
 
-${comments_section}
+__CONSOLIDATION_COMMENTS__
 
 ---
 
-_Self-contained dispatch packet generated by \`_dispatch_issue_consolidation()\` in \`pulse-triage.sh\` (t1982). Everything above is sufficient — do not read #${parent_num}._
+_Dispatch packet generated by \`_dispatch_issue_consolidation()\` in \`pulse-triage.sh\` (t1982)._
 EOF
+	)
+	# Reserve room for the signed wrapper footer. Remove whole longest comments,
+	# never silently discard constraints from the middle of an inlined comment.
+	# Stream large UTF-8 bodies rather than hitting execs per-argument byte limit.
+	local packet_json="" parent_json=""
+	packet_json=$(printf '%s' "$packet" | jq -Rs '.') || return 1
+	parent_json=$(printf '%s' "$parent_body_section" | jq -Rs '.') || return 1
+	printf '%s\n%s\n%s' "$packet_json" "$parent_json" "$substantive_json" | jq -rs \
+		--arg num "$parent_num" --arg repo "$repo_slug" '
+		def fill($comments):
+			"__CONSOLIDATION_COMMENTS__" as $marker | split($marker) as $parts |
+			($parts[0:-1] | join($marker)) + $comments + $parts[-1];
+		def reference: "- Comment ID " + (.id | tostring) + ": " + (.url // "(fetch parent comments via API)");
+		def render:
+			([.kept[] | "### Comment — @" + .login + " at " + .created_at + "\n\n" + .body] | join("\n\n---\n\n")) +
+			(if (.omitted | length) > 0 then "\n\n### Omitted comments — fetch before consolidating\n" +
+			([.omitted[] | reference] | join("\n")) else "" end);
+		.[0] as $packet | .[1] as $parent | .[2] |
+		# A near-limit parent cannot coexist with instructions. Preserve it by
+		# reference only in that exceptional case rather than silently slicing it.
+		($packet | if length > 63000 then
+			split($parent) | join("Parent body omitted (size limit): fetch issue #" + $num + " in " + $repo + " verbatim before consolidating.")
+		else . end) as $bounded_packet |
+		{kept: ., omitted: []} |
+		until((($bounded_packet | length) + (render | length)) <= 64000 or (.kept | length) == 0;
+			(.kept | max_by(.body | length)) as $largest |
+			(.kept | index($largest)) as $index |
+			.omitted += [$largest] | .kept |= del(.[$index])) |
+		(render) as $comments |
+		($bounded_packet | fill($comments)) |
+		# Pathological comment counts can exceed the budget with references alone.
+		if length > 64000 then
+			$bounded_packet | fill("Comments omitted (reference list exceeds size limit): fetch all pages of repos/" + $repo + "/issues/" + $num + "/comments before consolidating.")
+		else . end
+	'
+	return 0
 }
 
 #######################################
@@ -378,6 +445,10 @@ _consolidation_lock_acquire() {
 
 	[[ -n "$parent_num" && -n "$repo_slug" ]] || return 1
 
+	# This read precedes all lock writes, so every runner skips an unchanged
+	# deterministic failure without cycling the advisory label or marker.
+	_consolidation_creation_retry_allowed "$parent_num" "$repo_slug" || return 1
+
 	local self_login
 	self_login=$(_consolidation_lock_self_login)
 	if [[ -z "$self_login" ]]; then
@@ -457,6 +528,28 @@ _consolidation_lock_acquire() {
 	return 1
 }
 
+_consolidation_creation_retry_allowed() {
+	local parent_num="$1"
+	local repo_slug="$2"
+	local body="" comments="" content="" digest=""
+	body=$(gh issue view "$parent_num" --repo "$repo_slug" --json body --jq '.body // ""' 2>/dev/null) || return 1
+	comments=$(gh api "repos/${repo_slug}/issues/${parent_num}/comments" --paginate 2>/dev/null) || return 1
+	# Exclude our own lock/failure receipts, including their wrapper footers.
+	content=$(printf '%s' "$comments" | jq -sc '
+		add | map(select((.body // "" | test("^<!-- consolidation-lock:|^<!-- consolidation-create-failure:")) | not))') || return 1
+	# Routine bot/ops chatter must not restart the same deterministic failure.
+	# Hash exactly the substantive sources used by the packet composer.
+	content=$(_consolidation_filter_substantive_comments "$content") || return 1
+	content=$(printf '%s' "$content" | jq -c 'map({id, body}) | sort_by(.id)') || return 1
+	digest=$(printf '%s\n%s' "$body" "$content" | shasum -a 256) || return 1
+	_CONSOLIDATION_SOURCE_FINGERPRINT="${digest%% *}"
+	if printf '%s' "$comments" | jq -se --arg marker "<!-- consolidation-create-failure:${_CONSOLIDATION_SOURCE_FINGERPRINT} -->" \
+		'add | any(.[]; (.body // "" | startswith($marker)))' >/dev/null; then
+		return 1
+	fi
+	return 0
+}
+
 #######################################
 # t1982: File the consolidation child issue via a temp body file (avoids
 # argv length limits on long parent bodies with many comments).
@@ -477,14 +570,34 @@ _create_consolidation_child_issue() {
 	}
 	printf '%s\n' "$child_body" >"$body_file"
 
-	local child_url
+	local child_url error_file error_line failure_kind=""
+	error_file="${body_file}.stderr"
 	# t2115: Use gh_create_issue wrapper for origin label + signature auto-append.
 	# origin:worker is kept in --label for explicitness (wrapper deduplicates).
 	child_url=$(gh_create_issue --repo "$repo_slug" \
 		--title "consolidation-task: merge thread on #${issue_number} into single spec" \
 		--label "consolidation-task,auto-dispatch,origin:worker,tier:standard" \
-		--body-file "$body_file" 2>/dev/null) || child_url=""
-	rm -f "$body_file"
+		--body-file "$body_file" 2>"$error_file") || child_url=""
+	# Log only an allowlisted diagnostic from the first line, never arbitrary
+	# provider text that may contain tokens, private URLs or terminal escapes.
+	IFS= read -r error_line <"$error_file" || true
+	error_line=$(printf '%s' "$error_line" | LC_ALL=C tr '[:upper:]' '[:lower:]')
+	case "$error_line" in
+	*"body is too long"* | *"body is too large"* | *"maximum is 65536"*) failure_kind="body is too long" ;;
+	*"validation failed"* | *"validation error"* | *"http 422"*) failure_kind="validation error" ;;
+	esac
+	if [[ -z "$child_url" ]]; then
+		printf '[pulse-wrapper] ERROR: consolidation child creation failed for #%s: %s\n' \
+			"$issue_number" "${failure_kind:-creation request failed (provider detail redacted)}" >>"$LOGFILE"
+		if [[ -n "$failure_kind" && -n "${_CONSOLIDATION_SOURCE_FINGERPRINT:-}" ]]; then
+			local marker="<!-- consolidation-create-failure:${_CONSOLIDATION_SOURCE_FINGERPRINT} -->"
+			_gh_idempotent_comment "$issue_number" "$repo_slug" "$marker" \
+				"${marker}
+<!-- aidevops:ops -->
+Consolidation child creation stopped: ${failure_kind}. Automatic retry resumes only after the parent body or source comments change." >/dev/null || true
+		fi
+	fi
+	rm -f "$body_file" "$error_file"
 
 	# gh issue create prints the URL on success; extract the number.
 	if [[ -n "$child_url" ]]; then
@@ -511,7 +624,7 @@ _post_consolidation_dispatch_comment() {
 
 	local parent_comment_body="## Issue Consolidation Dispatched
 
-A consolidation task has been filed as **#${child_num}**. It contains the full body and substantive comments of this issue inline, plus instructions for a worker to produce a merged spec, file it as a new issue, @mention all contributors, and close this issue as superseded.
+A consolidation task has been filed as **#${child_num}**. It contains this issue body and substantive comments inline where size permits, with explicit references for omitted sources, plus instructions for a worker to produce a merged spec, file it as a new issue, @mention all contributors, and close this issue as superseded.
 
 **What happens next:**
 
@@ -825,6 +938,37 @@ _consolidation_load_reopen_helper() {
 	return 0
 }
 
+#######################################
+# GH#39503: load the large-file gate library on demand (it owns the measured
+# resolved-debt close). Returns 0 when the close function is available.
+#######################################
+_consolidation_load_large_file_gate() {
+	local lib_dir="${BASH_SOURCE[0]%/*}"
+	declare -F _large_file_gate_close_resolved_debt_issues >/dev/null 2>&1 && return 0
+	[[ "$lib_dir" == "${BASH_SOURCE[0]}" ]] && lib_dir="."
+	[[ -f "${lib_dir}/pulse-dispatch-large-file-gate.sh" ]] || return 1
+	# shellcheck source=pulse-dispatch-large-file-gate.sh
+	source "${lib_dir}/pulse-dispatch-large-file-gate.sh" || return 1
+	declare -F _large_file_gate_close_resolved_debt_issues >/dev/null 2>&1 || return 1
+	return 0
+}
+
+#######################################
+# GH#39503: close a generated file-size-debt issue whose cited file is measured
+# below threshold on the remote default branch, before any consolidation lock.
+# Args: issue_number repo_slug labels_csv body
+# Returns: 0 when closed (skip), 1 otherwise (fail open on any error).
+#######################################
+_consolidation_skip_for_resolved_file_size_debt() {
+	local issue_number="$1" repo_slug="$2" labels="$3" body="$4"
+	printf ',%s,' "$labels" | grep -F ",file-size-debt," >/dev/null || return 1
+	[[ "$body" == *"generator=large-file-simplification-gate cited_file="* ]] || return 1
+	_consolidation_load_large_file_gate || return 1
+	_large_file_gate_close_resolved_debt_issues "$issue_number" "$repo_slug" "$body" || return 1
+	echo "[pulse-wrapper] _consolidation_skip_if_resolved: file-size debt #${issue_number} ${repo_slug} measured below threshold on remote default branch — closed (GH#39503)" >>"$LOGFILE"
+	return 0
+}
+
 # Gate 3: a structural closing PR only resolves the current lifecycle if it
 # merged after the latest reopen. Keep the timeline lookup in dispatch-dedup-pr.
 _consolidation_skip_for_closing_pr() {
@@ -899,7 +1043,7 @@ _consolidation_skip_if_resolved() {
 	labels=$(printf '%s' "$parent_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || labels=""
 	body=$(printf '%s' "$parent_json" | jq -r '.body // ""' 2>/dev/null) || body=""
 	# Gate 1: dispatch-blocked:committed-to-main label (t2955 cache).
-	if printf ',%s,' "$labels" | grep -qF ",dispatch-blocked:committed-to-main,"; then
+	if printf ',%s,' "$labels" | grep -F ",dispatch-blocked:committed-to-main," >/dev/null; then
 		_consolidation_emit_skip "$issue_number" "$repo_slug" \
 			"parent work already committed to main (t2955 cache label)." \
 			"dispatch-blocked:committed-to-main"
@@ -907,10 +1051,15 @@ _consolidation_skip_if_resolved() {
 	fi
 	# Gate 2: completion labels survive accidental reopen/normalization paths and
 	# are sufficient to prevent a solved issue becoming a consolidation task.
-	if printf ',%s,' "$labels" | grep -Eq ',(status:done|solved:[^,]+),'; then
+	if printf ',%s,' "$labels" | grep -E ',(status:done|solved:[^,]+),' >/dev/null; then
 		_consolidation_emit_skip "$issue_number" "$repo_slug" \
 			"parent carries terminal completion evidence." \
 			"terminal completion label"
+		return 0
+	fi
+	# Gate 2b (GH#39503): measured-resolved file-size debt (open issues only).
+	if [[ "$state" != "CLOSED" ]] &&
+		_consolidation_skip_for_resolved_file_size_debt "$issue_number" "$repo_slug" "$labels" "$body"; then
 		return 0
 	fi
 	# Gate 3: GitHub retains structural closing links across reopen cycles.

@@ -43,6 +43,8 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=oauth-pool-usable-lib.sh
+source "${SCRIPT_DIR}/oauth-pool-usable-lib.sh"
 
 set -euo pipefail
 
@@ -113,7 +115,7 @@ get_provider_key_vars() {
 is_known_provider() {
 	local provider="$1"
 	case "$provider" in
-	anthropic | openai | google | openrouter | groq | deepseek | zai-coding-plan | local | ollama) return 0 ;;
+	anthropic | openai | google | openrouter | groq | deepseek | zai-coding-plan | opencode-go | local | ollama) return 0 ;;
 	*) return 1 ;;
 	esac
 }
@@ -307,11 +309,14 @@ sql_escape() {
 # =============================================================================
 # API Key Resolution
 # =============================================================================
-# Resolves API keys/tokens from four sources (in priority order):
+# Resolves API keys/tokens from five sources (in priority order):
 # 1. Environment variables (e.g., ANTHROPIC_API_KEY, OPENAI_API_KEY)
 # 2. gopass encrypted secrets
 # 3. credentials.sh plaintext fallback
 # 4. OpenCode OAuth auth.json (~/.local/share/opencode/auth.json)
+# 5. aidevops OAuth pool (~/.aidevops/oauth-pool.json). OpenCode 2.x keeps
+#    credentials in its own database and writes no auth.json, so this is the
+#    OAuth signal on current installs (GH#39095).
 #
 # Source 4 is critical for headless dispatch: the OpenCode runtime authenticates
 # via OAuth tokens stored in auth.json, NOT env vars. Without this source, the
@@ -361,16 +366,23 @@ resolve_api_key() {
 			fi
 		done
 
-		# Source 3: credentials.sh (plaintext fallback)
+		# Source 3: credentials.sh (plaintext fallback). Reuse the shared
+		# non-executing parser, including its active-tenant lookup. Never source
+		# configuration: unrelated commands/redirections must not run in a probe.
+		# Bound each read to five seconds with the shared portable timeout.
+		# Failure/timeout discards partial output and leaves OAuth fallback intact.
 		local creds_file="${HOME}/.config/aidevops/credentials.sh"
 		if [[ -f "$creds_file" ]]; then
-			# Source the file to get variables (safe: we control this file)
-			# shellcheck disable=SC1090
-			source "$creds_file"
 			for var_name in "${var_names[@]}"; do
-				if [[ -n "${!var_name:-}" ]]; then
+				local key_val=""
+				key_val=$(timeout_sec 5 node --input-type=module -e '
+import { pathToFileURL } from "node:url";
+const { credentialFileSecret } = await import(pathToFileURL(process.argv[1]).href);
+process.stdout.write(credentialFileSecret(process.argv[2]));
+' "${SCRIPT_DIR}/secret-resolver.mjs" "$var_name" 2>/dev/null) || key_val=""
+				if [[ -n "$key_val" ]]; then
 					RESOLVED_API_KEY_SOURCE="credentials:${var_name}"
-					echo "${!var_name}"
+					echo "$key_val"
 					return 0
 				fi
 			done
@@ -390,28 +402,61 @@ resolve_api_key() {
 	# live OAuth session. The marker makes the probe record healthy and
 	# skip HTTP; workers authenticate via the opencode runtime's own
 	# OAuth flow, which handles refresh at session start.
-	local auth_file="${HOME}/.local/share/opencode/auth.json"
-	if [[ -f "$auth_file" ]]; then
-		local auth_type
-		auth_type=$(jq -r --arg p "$provider" '.[$p].type // empty' "$auth_file" 2>/dev/null) || auth_type=""
-		if [[ "$auth_type" == "oauth" ]]; then
-			# OAuth entry: presence of the entry means the runtime can
-			# authenticate. Probe records healthy and skips HTTP.
-			RESOLVED_API_KEY_SOURCE="auth-json-oauth:${provider}"
-			echo "oauth-refresh-available"
-			return 0
-		fi
-		# API-key type entries (e.g., opencode, claudecli providers)
-		local api_key_entry
-		api_key_entry=$(jq -r --arg p "$provider" '.[$p].key // empty' "$auth_file" 2>/dev/null) || api_key_entry=""
-		if [[ -n "$api_key_entry" ]]; then
-			RESOLVED_API_KEY_SOURCE="auth-json-key:${provider}"
-			echo "$api_key_entry"
-			return 0
-		fi
+	if _resolve_auth_json_key "$provider"; then
+		return 0
+	fi
+
+	# Source 5: aidevops OAuth pool (GH#39095)
+	# Without auth.json, every provider reported no-key and Pulse could not
+	# resolve any tier. The pool is the credential set headless workers rotate
+	# through; one usable account means the runtime can authenticate. Return
+	# the same marker as Source 4 OAuth entries (healthy, skip HTTP probe).
+	# Only when auth.json is absent, matching headless selection.
+	if [[ ! -f "${HOME}/.local/share/opencode/auth.json" ]] && _resolve_oauth_pool_available "$provider"; then
+		RESOLVED_API_KEY_SOURCE="oauth-pool:${provider}"
+		echo "oauth-refresh-available"
+		return 0
 	fi
 
 	return 1
+}
+
+# _resolve_auth_json_key: Source 4 of resolve_api_key (see the comment there).
+# Echoes the OAuth marker or the stored API key for the provider from OpenCode
+# auth.json and sets RESOLVED_API_KEY_SOURCE. Returns 1 when there is no entry.
+_resolve_auth_json_key() {
+	local provider="$1"
+	local auth_file="${HOME}/.local/share/opencode/auth.json"
+	[[ -f "$auth_file" ]] || return 1
+
+	local auth_type
+	auth_type=$(jq -r --arg p "$provider" '.[$p].type // empty' "$auth_file" 2>/dev/null) || auth_type=""
+	if [[ "$auth_type" == "oauth" ]]; then
+		# OAuth entry: presence of the entry means the runtime can
+		# authenticate. Probe records healthy and skips HTTP.
+		RESOLVED_API_KEY_SOURCE="auth-json-oauth:${provider}"
+		echo "oauth-refresh-available"
+		return 0
+	fi
+	# API-key type entries (e.g., opencode, claudecli providers)
+	local api_key_entry
+	api_key_entry=$(jq -r --arg p "$provider" '.[$p].key // empty' "$auth_file" 2>/dev/null) || api_key_entry=""
+	if [[ -n "$api_key_entry" ]]; then
+		RESOLVED_API_KEY_SOURCE="auth-json-key:${provider}"
+		echo "$api_key_entry"
+		return 0
+	fi
+	return 1
+}
+
+# _resolve_oauth_pool_available: exit 0 when the aidevops OAuth pool holds at
+# least one usable account for the provider (not auth-error, not inside an
+# active rate-limit cooldown). Read-only; never prints credential material.
+_resolve_oauth_pool_available() {
+	local provider="$1"
+	local pool_file="${MODEL_AVAILABILITY_OAUTH_POOL_FILE:-$(oauth_pool_runtime_file)}"
+	oauth_pool_has_usable_account "$provider" "$pool_file"
+	return $?
 }
 
 # _get_key_value: deprecated shim — resolve_api_key now echoes the value directly.

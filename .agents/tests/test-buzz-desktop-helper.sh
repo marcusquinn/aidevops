@@ -152,6 +152,7 @@ run_helper() {
 	HOME="$TEST_HOME" \
 		AIDEVOPS_BUZZ_PLATFORM_OVERRIDE="${TEST_PLATFORM:-Darwin}" \
 		AIDEVOPS_BUZZ_VERSION_OVERRIDE="${TEST_VERSION:-0.5.4}" \
+		AIDEVOPS_BUZZ_IDENTIFIER_OVERRIDE="${TEST_IDENTIFIER:-xyz.block.buzz.app}" \
 		AIDEVOPS_BUZZ_RUNNING_OVERRIDE="${TEST_RUNNING:-false}" \
 		AIDEVOPS_BUZZ_APP_PATH="$TEST_APP" \
 		AIDEVOPS_BUZZ_STORE_PATH="$TEST_STORE" \
@@ -425,7 +426,64 @@ test_cli_and_setup_wiring() {
 	return 0
 }
 
+test_new_desktop_is_noop() {
+	local new_id="xyz.block.buzz.desktop"
+	reset_fixture
+	local before=""
+	before=$(file_hash "$TEST_STORE")
+	local rc=0
+	TEST_IDENTIFIER="$new_id" TEST_VERSION=0.7.0 run_helper apply >/dev/null || rc=$?
+	assert_eq "new Desktop apply exits 0" "$rc" "0"
+	assert_eq "new Desktop apply leaves legacy store byte-identical" "$(file_hash "$TEST_STORE")" "$before"
+	assert_file_absent "new Desktop apply writes no state" "$TEST_STATE_FILE"
+	rc=0
+	TEST_IDENTIFIER="$new_id" TEST_VERSION=0.7.0 run_helper reconcile >/dev/null || rc=$?
+	assert_eq "new Desktop reconcile without state exits 0" "$rc" "0"
+	assert_eq "new Desktop reconcile without state keeps store identical" "$(file_hash "$TEST_STORE")" "$before"
+
+	# Existing legacy state: apply under legacy, restore drift, then switch to new Desktop.
+	run_helper apply --quiet
+	local edited="${TEST_STORE}.edited"
+	jq 'map(if .pubkey == "pub-empty-path" then .agent_args = [] else . end)' "$TEST_STORE" >"$edited"
+	chmod 600 "$edited"
+	mv "$edited" "$TEST_STORE"
+	before=$(file_hash "$TEST_STORE")
+	rc=0
+	TEST_IDENTIFIER="$new_id" TEST_VERSION=0.7.0 run_helper reconcile >/dev/null || rc=$?
+	assert_eq "new Desktop reconcile with state exits 0" "$rc" "0"
+	assert_eq "new Desktop reconcile with state keeps store identical" "$(file_hash "$TEST_STORE")" "$before"
+
+	local output=""
+	output=$(TEST_IDENTIFIER="$new_id" TEST_VERSION=0.7.0 run_helper status)
+	assert_contains "status names the new Desktop generation" "$output" "Buzz Desktop 0.7.0 (block/buzz-app): legacy remediation not applicable"
+	if [[ "$output" == *"record(s)"* ]]; then
+		fail "status omits legacy counts for new Desktop" "$output"
+	else
+		pass "status omits legacy counts for new Desktop"
+	fi
+
+	TEST_IDENTIFIER="$new_id" TEST_VERSION=0.7.0 run_helper rollback --quiet
+	assert_eq "rollback still restores legacy records with new Desktop installed" \
+		"$(jq -c '.[] | select(.pubkey == "pub-missing-args") | .agent_args' "$TEST_STORE")" 'null'
+	assert_file_absent "rollback removes state with new Desktop installed" "$TEST_STATE_FILE"
+	return 0
+}
+
+test_unknown_identifier_is_noop() {
+	reset_fixture
+	local before=""
+	before=$(file_hash "$TEST_STORE")
+	TEST_IDENTIFIER="example.other.app" run_helper apply --quiet
+	assert_eq "unknown identifier leaves store untouched" "$(file_hash "$TEST_STORE")" "$before"
+	local output=""
+	output=$(TEST_IDENTIFIER="example.other.app" run_helper status)
+	assert_contains "status reports unrecognised identifier" "$output" "unrecognised Buzz Desktop identifier"
+	return 0
+}
+
 main() {
+	test_new_desktop_is_noop
+	test_unknown_identifier_is_noop
 	test_status_reports_eligible_records
 	test_apply_is_bounded_and_private
 	test_reconcile_is_idempotent

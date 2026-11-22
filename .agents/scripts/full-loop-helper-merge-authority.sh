@@ -213,8 +213,10 @@ _merge_is_trusted_issue_sync_pr() {
 _merge_author_has_write_authority() {
 	local author="$1"
 	local repo="$2"
-	local permission=""
-	local AIDEVOPS_GH_READ_TIMEOUT="${AIDEVOPS_GH_READ_TIMEOUT:-60}"
+	local permission="" merge_read_timeout=""
+	# GH#38535: resolve before the local shadows the sourced generic default.
+	merge_read_timeout=$(_flm_merge_read_timeout)
+	local AIDEVOPS_GH_READ_TIMEOUT="$merge_read_timeout"
 	export AIDEVOPS_GH_READ_TIMEOUT
 	local permission_rc=0
 
@@ -311,9 +313,22 @@ _merge_report_author_lookup_failure() {
 _merge_pr_label_holds_clear() {
 	local pr_number="$1"
 	local labels_padded="$2"
+	local repo="${3:-}" head="${4:-}" diagnostic_only="${5:-0}" advisory="${6:-0}"
+	#aidevops:trust-boundary — a release hold survives removal of the ordinary
+	# PR hold, and an unlabelled Cloudron manifest version bump (GH#37955) is a
+	# release too. Every merge caller must prove authorization for this head.
+	# Diagnostic preflights evaluate the same gate without applying holds.
+	if ! CLOUDRON_RELEASE_GUARD_READ_ONLY="$diagnostic_only" \
+		cloudron_release_merge_guard "$repo" "$pr_number" "$head" "$labels_padded"; then
+		print_error "Merge blocked: no verified exact-head Cloudron release approval"
+		return 1
+	fi
 	#aidevops:trust-boundary GH#17671/GH#28622 -- a live PR NMR label is an
 	# explicit hold. Marker text is never merge authority at this boundary.
-	if [[ "$labels_padded" == *",needs-maintainer-review,"* ]]; then
+	# GH#38007: only the read-only preflight (advisory=1) continues, so it can
+	# report the PR as an approval target; the caller records the hold and the
+	# merge transports (which never pass advisory) stay blocked.
+	if [[ "$labels_padded" == *",needs-maintainer-review,"* && "$advisory" != "1" ]]; then
 		print_error "Merge blocked: PR #${pr_number} still requires maintainer review"
 		return 1
 	fi
@@ -347,11 +362,59 @@ _merge_authority_metadata_valid() {
 	return 0
 }
 
+# Reuse Pulse's preference resolution rather than letting a supervisor bypass
+# the deterministic pass through another merge transport (GH#36847).
+_merge_interactive_preference_clear() {
+	local pr_number="$1"
+	local repo="$2"
+	local labels_csv="$3"
+	[[ ",${labels_csv}," == *",origin:interactive,"* ]] || return 0
+	if ! _merge_is_headless_session; then
+		if ! declare -F detect_session_origin >/dev/null 2>&1 ||
+			[[ "$(detect_session_origin)" != "worker" ]]; then
+			return 0
+		fi
+	fi
+
+	#aidevops:trust-boundary -- headless callers have no human merge authority.
+	# Pulse's logging destination may not exist in standalone full-loop sessions.
+	local LOGFILE="/dev/null"
+	# shellcheck source=./pulse-merge-author-checks.sh
+	source "${SCRIPT_DIR}/pulse-merge-author-checks.sh" || return 1
+	if ! _interactive_pr_auto_merge_allowed "$pr_number" "$repo" "$labels_csv"; then
+		print_error "Merge blocked by GH#23238 interactive manual-merge preference: PR #${pr_number} requires allow-auto-merge or a repository/global opt-in"
+		return 1
+	fi
+	return 0
+}
+
+# GH#33374: a native sidebar/development closing link must not override a
+# For/Ref checkpoint. Fail closed before any merge write; do not silently
+# unlink issues or infer completion from GitHub's closing metadata alone.
+_merge_closing_link_consistent() {
+	local pr_number="$1"
+	local repo="$2"
+	local pr_json="$3"
+
+	if ! printf '%s' "$pr_json" | jq -e --arg repo "$repo" '
+		(.body // "") as $body
+		| all(.closingIssuesReferences[]
+			| select(((.repository.owner.login // "") + "/" + (.repository.name // "")) | ascii_downcase == ($repo | ascii_downcase)); .number as $num
+			| if ($body | test("\\b(for|ref)[[:space:]]+#" + ($num | tostring) + "\\b"; "i"))
+			then ($body | test("\\b(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#" + ($num | tostring) + "\\b"; "i"))
+			else true end)' >/dev/null 2>&1; then
+		print_error "Merge blocked: PR #${pr_number} has a closing link contradicting its For/Ref-only issue reference"
+		return 1
+	fi
+	return 0
+}
+
 _merge_collect_external_authority_gaps() {
 	local pr_number="$1"
 	local repo="$2"
 	local expected_head_sha="${3:-}"
 	local diagnostic_only="${4:-0}"
+	local advisory="${5:-0}" pr_nmr_hold=0
 	local pr_json="" pr_author="" current_head_sha="" labels_csv="" labels_padded="" is_fork="false"
 	local issue_numbers="" cross_repo_refs=""
 	local author_rc=0 treat_as_external=0 trusted_dependabot=0 trusted_issue_sync=0
@@ -374,21 +437,13 @@ _merge_collect_external_authority_gaps() {
 		print_error "Merge blocked: PR #${pr_number} head changed before the final authority check"
 		return 1
 	fi
-	# GH#33374: a native sidebar/development closing link must not override a
-	# For/Ref checkpoint. Fail closed before any merge write; do not silently
-	# unlink issues or infer completion from GitHub's closing metadata alone.
-	if ! printf '%s' "$pr_json" | jq -e --arg repo "$repo" '
-		(.body // "") as $body
-		| all(.closingIssuesReferences[]
-			| select(((.repository.owner.login // "") + "/" + (.repository.name // "")) | ascii_downcase == ($repo | ascii_downcase)); .number as $num
-			| if ($body | test("\\b(for|ref)[[:space:]]+#" + ($num | tostring) + "\\b"; "i"))
-			then ($body | test("\\b(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#" + ($num | tostring) + "\\b"; "i"))
-			else true end)' >/dev/null 2>&1; then
-		print_error "Merge blocked: PR #${pr_number} has a closing link contradicting its For/Ref-only issue reference"
-		return 1
-	fi
+	_merge_closing_link_consistent "$pr_number" "$repo" "$pr_json" || return 1
 
-	_merge_pr_label_holds_clear "$pr_number" "$labels_padded" || return 1
+	_merge_pr_label_holds_clear "$pr_number" "$labels_padded" "$repo" "$current_head_sha" "$diagnostic_only" "$advisory" || return 1
+	if [[ "$advisory" == "1" && "$labels_padded" == *",needs-maintainer-review,"* ]]; then
+		pr_nmr_hold=1
+	fi
+	_merge_interactive_preference_clear "$pr_number" "$repo" "$labels_csv" || return 1
 
 	#aidevops:trust-boundary -- repository-generated Issue Sync and Dependabot
 	# PRs may lack collaborator permission. Both narrow predicates bind immutable
@@ -425,6 +480,11 @@ _merge_collect_external_authority_gaps() {
 	_merge_parent_task_open_children_clear "$issue_numbers" "$repo" || return 1
 	_merge_collect_linked_issue_authority_gaps "$issue_numbers" "$repo" "$treat_as_external" "$cross_repo_refs" "$diagnostic_only" || return 1
 	if [[ "$trusted_dependabot" -eq 1 || "$trusted_issue_sync" -eq 1 || "$treat_as_external" -eq 0 ]]; then
+		# A PR hold that no external approval target can clear stays a hard stop.
+		if [[ "$pr_nmr_hold" -eq 1 ]]; then
+			print_error "Merge blocked: PR #${pr_number} still requires maintainer review"
+			return 1
+		fi
 		return 0
 	fi
 	if [[ -z "$issue_numbers" ]]; then
@@ -432,7 +492,9 @@ _merge_collect_external_authority_gaps() {
 		return 1
 	fi
 	FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS+=("pr:${pr_number}")
-	if ! _merge_target_crypto_approved pr "$pr_number" "$repo" "$current_head_sha"; then
+	# GH#38007: `approve pr` clears the live label, so a held PR is always a target.
+	if [[ "$pr_nmr_hold" -eq 1 ]] ||
+		! _merge_target_crypto_approved pr "$pr_number" "$repo" "$current_head_sha"; then
 		FULL_LOOP_EXTERNAL_AUTHORITY_TARGETS+=("pr:${pr_number}")
 	fi
 

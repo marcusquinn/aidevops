@@ -140,21 +140,38 @@ permission_blocker_capability_json() {
 	return $?
 }
 
-# GH#35128: True when every captured request is an external_directory write to a
-# scratch/temp path (not a repo, credential, or secret location). Such requests
+# GH#35128: True when every captured request is an external_directory access to
+# a scratch/temp path (not a repo, credential, or secret location). Such requests
 # are redirected to AIDEVOPS_TEMP_DIR instead of a maintainer hold.
+# GH#35676: bash and read on tmp/temp paths are included. Such paths are
+# ephemeral and a grant binds to one expired session/worktree, so a hold could
+# never be usefully approved; owned recovery grants nothing and redispatches.
+# Caches are excluded for bash/read: they hold real dependency content and keep
+# the node_modules provisioning route and maintainer hold.
+# GH#38567: bash/read on OS-owned binary directories (/bin, /sbin, /usr/bin,
+# /usr/sbin) are owned recovery too. They come from an inline restricted PATH
+# in a bash command (GH#38523); those binaries already run via PATH, so the
+# worker is told to set PATH inside a worktree script. Nothing is granted.
 permission_capture_is_temp_write_recovery() {
 	local capture_file="$1"
 	jq -e --arg perm "$PERMISSION_EXTERNAL_DIRECTORY" '
+		def unsafe:
+			test("(^|/)([.]ssh|[.]gnupg|[.]aws|[.]git|[.]env[^/]*|credentials[^/]*|secrets?)(/|$)|[.][.]");
 		def scratch:
-			test("(^|/)(tmp|temp|[.]cache)(/|$)")
-			and (test("(^|/)([.]ssh|[.]gnupg|[.]aws|[.]git|[.]env[^/]*|credentials[^/]*|secrets?)(/|$)|[.][.]") | not);
+			test("(^|/)(tmp|temp|[.]cache)(/|$)") and (unsafe | not);
+		def system_bin:
+			test("^/(usr/)?s?bin(/[*]{1,2})?$");
+		def ephemeral:
+			(test("(^|/)(tmp|temp)(/|$)") and (test("/node_modules(/|$)") | not) and (unsafe | not))
+			or system_bin;
 		(.requests | length > 0)
 		and all(.requests[];
 			.permission == $perm
-			and (.tool == "write" or .tool == "edit")
 			and (.patterns | length > 0)
-			and all(.patterns[]; scratch)
+			and (
+				((.tool // "" | test("^(write|edit)$")) and all(.patterns[]; scratch))
+				or ((.tool // "" | test("^(bash|read)$")) and all(.patterns[]; ephemeral))
+			)
 		)
 	' "$capture_file" >/dev/null 2>&1
 	return $?
@@ -319,18 +336,24 @@ permission_approval_text() {
 	local capture_file="$1"
 	local issue_number="$2"
 	local repo_slug="$3"
+	local approve_cli
+	approve_cli=$(approval_cli_prefix)
 	if [[ "$(permission_blocker_capability_json "$capture_file" | jq -r '.grantable')" == "$PERMISSION_BLOCKER_TRUE" ]]; then
 		printf '%s\n' "Review the exact scope above, then run:
 
-    sudo aidevops approve permissions issue ${issue_number} ${repo_slug} --request REQUEST_ID
+    ${approve_cli} approve permissions issue ${issue_number} ${repo_slug} --request REQUEST_ID
 
 This signs only the listed capabilities for this issue. It does not approve the issue scope, clear needs-maintainer-review, or authorize merge/release.
 
 To decline instead (for example, the requesting session has ended), sign a withdrawal that grants nothing and lets dispatch resume without this capability:
 
-    sudo aidevops approve permissions issue ${issue_number} ${repo_slug} --request REQUEST_ID --withdraw"
+    ${approve_cli} approve permissions issue ${issue_number} ${repo_slug} --request REQUEST_ID --withdraw"
 	else
-		printf '%s\n' "permission_non_grantable: this request cannot be represented as a scoped maintainer grant. For task denials, the owning agent's static subagent allowlist/routing must be corrected; signing a permission grant cannot override it. Other non-grantable capabilities require an authorized alternative, not a signature."
+		printf '%s\n' "permission_non_grantable: this request cannot be represented as a scoped maintainer grant. For task denials, the owning agent's static subagent allowlist/routing must be corrected; signing a permission grant cannot override it. Other non-grantable capabilities require an authorized alternative, not a signature.
+
+If this request holds dispatch, release it with a signed withdrawal that grants nothing:
+
+    ${approve_cli} approve permissions issue ${issue_number} ${repo_slug} --request REQUEST_ID --withdraw"
 	fi
 	return 0
 }
@@ -555,10 +578,11 @@ cmd_request() {
 	if permission_capture_is_temp_write_recovery "$capture_file"; then
 		permission_record_blocker "permission_temp_dir_recovery" "recovering" \
 			"use_aidevops_temp_dir" "false" "$issue_number" "$repo_slug" "$session_key" "" \
-			"Temp/scratch write redirected to AIDEVOPS_TEMP_DIR; no maintainer approval requested" \
-			"$PERMISSION_EXTERNAL_DIRECTORY" "write" "$(jq -r '.risk_level' <<<"$capability_json")" "false"
+			"Temp/scratch access redirected to AIDEVOPS_TEMP_DIR; no maintainer approval requested" \
+			"$PERMISSION_EXTERNAL_DIRECTORY" "$(jq -r '.tool' <<<"$capability_json")" \
+			"$(jq -r '.risk_level' <<<"$capability_json")" "false"
 		# shellcheck disable=SC2016 # Markdown backticks are intentional literals.
-		printf '%s\n' 'Recovery: use `AIDEVOPS_TEMP_DIR` (default `$HOME/.aidevops/.agent-workspace/tmp`) for temp artifacts. The requested path is not granted; no needs-maintainer-permissions hold applied.'
+		printf '%s\n' 'Recovery: use `AIDEVOPS_TEMP_DIR` (default `$HOME/.aidevops/.agent-workspace/tmp`) for temp artifacts, and set PATH or stub directories inside a worktree script instead of naming absolute paths in bash commands. The requested path is not granted; no needs-maintainer-permissions hold applied.'
 		return "$PERMISSION_OWNED_RECOVERY_RC"
 	fi
 	permission="$(jq -r '.permission' <<<"$capability_json")"

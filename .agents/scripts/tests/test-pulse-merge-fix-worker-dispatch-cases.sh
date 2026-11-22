@@ -5,10 +5,8 @@
 # Tests for _dispatch_pr_fix_worker() and _build_review_feedback_section()
 # (t2093).
 #
-# When a review bot posts CHANGES_REQUESTED on an open worker-authored PR,
-# the pulse merge pass must route the feedback to the linked issue and close
-# the PR so the dispatch queue can re-pick the task. Before t2093, such PRs
-# accumulated indefinitely.
+# Trusted human change requests retain the t2093 route. Bot-only requests must
+# leave the PR and linked issue intact and use trust-gated advisory dismissal.
 #
 # These tests exercise the helpers in isolation with a mock `gh` stub. No
 # real repository is touched.
@@ -16,6 +14,11 @@
 # Sourced by test-pulse-merge-fix-worker-dispatch.sh; defines cases and assertions.
 [[ -n "${_PULSE_MERGE_FIX_DISPATCH_CASES_LOADED:-}" ]] && return 0
 _PULSE_MERGE_FIX_DISPATCH_CASES_LOADED=1
+
+# This is also the issue's documented verification entry point, not a no-op.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	exec bash "${BASH_SOURCE[0]%/*}/test-pulse-merge-fix-worker-dispatch.sh" test_advisory_review_gate
+fi
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -205,6 +208,8 @@ define_helpers_under_test() {
 	# leaking the host shell's real status-label wrapper into this isolated test.
 	unset -f set_issue_status 2>/dev/null || true
 	_interactive_claim_fence_blocks_dispatch() { return 1; }
+	# No live worker dispatch lease on the linked issue (GH#35939).
+	_feedback_route_worker_lease_allows() { return 0; }
 	_classify_ci_failures_by_pattern() { return 0; }
 	return 0
 }
@@ -571,6 +576,69 @@ test_dispatch_defers_when_worker_origin_disappears() {
 		return 0
 	fi
 	print_result "lost worker origin defers before reviewer mutation" 0
+	return 0
+}
+
+test_dispatch_preserves_nonclosing_replacement_linkage() {
+	reset_mock_state
+	local source_body=""
+	for source_body in 'For #42' 'Ref #42' 'Resolves #42'; do
+		reset_mock_state
+		TEST_SOURCE_PR_BODY=$'## Summary\n\nPartial delivery\n\n'"$source_body" _dispatch_pr_fix_worker "100" "owner/repo" "42"
+		# Exercise the consumer after redispatch using the persisted issue body,
+		# not state inherited from the routing process.
+		if (
+			local helper_src="" keyword="" generated="" expected="Resolves"
+			helper_src=$(awk '
+				/^[[:alnum:]_]+\(\) \{/ {
+					emit = ($0 ~ /^(_review_repair_closing_keyword|_build_pr_body|_format_files_changed_for_body|_read_pr_metadata_json|_ensure_worker_pr_linkage)\(\) \{/)
+				}
+				emit { print }
+			' "${SCRIPT_DIR}/../full-loop-helper-commit.sh")
+			eval "$helper_src"
+			# GH#39558: _build_pr_body rejects inputs carrying their own Runtime
+			# Testing heading; load the real guard from the risk library.
+			helper_src=$(sed -n '/^_pr_body_inputs_reserve_runtime_section() {/,/^}/p' \
+				"${SCRIPT_DIR}/../full-loop-helper-risk.sh")
+			[[ -n "$helper_src" ]] || exit 1
+			eval "$helper_src"
+			_gh_with_timeout() {
+				if [[ "$*" == *"issue view"* ]]; then
+					cat "${TEST_ROOT}/issue-body.txt"
+				else
+					# PR metadata reads use the REST pulls object (title + body).
+					jq -n --rawfile body "${TEST_ROOT}/replacement-body.txt" \
+						'{title: "Replacement", body: $body}'
+				fi
+				return 0
+			}
+			gh_pr_edit_safe() {
+				local body_file="${5:-}"
+				cp "$body_file" "${TEST_ROOT}/replacement-body.txt"
+				return $?
+			}
+			_derive_runtime_risk() { printf '%s' Low; return 0; }
+			_resolve_runtime_testing_level() { printf '%s' runtime-verified; return 0; }
+			print_info() { return 0; }
+			print_error() { return 0; }
+			print_success() { return 0; }
+			[[ "$source_body" == 'Resolves #42' ]] || expected="For"
+			keyword=$(_review_repair_closing_keyword 42 owner/repo) || exit 1
+			[[ "$keyword" == "$expected" ]] || exit 1
+			generated=$(_build_pr_body 42 repair verified script.sh "" "$keyword") || exit 1
+			[[ "$generated" == *"${expected} #42"* ]] || exit 1
+			printf '%s' 'Curated replacement summary' >"${TEST_ROOT}/replacement-body.txt"
+			_ensure_worker_pr_linkage 101 owner/repo 42 "$generated" || exit 1
+			grep -qFx "${expected} #42" "${TEST_ROOT}/replacement-body.txt" || exit 1
+			if [[ "$expected" == For ]]; then
+				! grep -qF 'Resolves #42' "${TEST_ROOT}/replacement-body.txt" || exit 1
+			fi
+		); then
+			print_result "redispatch preserves ${source_body} through body generation and linkage repair" 0
+		else
+			print_result "redispatch preserves ${source_body} through body generation and linkage repair" 1
+		fi
+	done
 	return 0
 }
 
@@ -1622,5 +1690,89 @@ EOF
 		return 0
 	fi
 	print_result "feedback release converges cross-runner duplicate comments" 0
+	return 0
+}
+
+# Exercise the production gate and real shared dismissal command. Keep its gh
+# boundary isolated; route attempts and dismissal writes are observable files.
+test_advisory_review_gate() {
+	local gate_rc=0
+	(
+		reset_mock_state
+		local helper_dir="${SCRIPT_DIR}/.."
+		local _PULSE_MERGE_DIR="$helper_dir"
+		export TEST_GATE_ASSOCIATION=MEMBER TEST_GATE_DRIFT=0 TEST_GATE_FAIL=0
+		export TEST_GATE_LABELS=origin:worker TEST_GATE_SNAPSHOT=valid TEST_GATE_POST=valid
+		# shellcheck disable=SC1090
+		source <(sed -n '/^_handle_changes_requested_review_gate() {/,/^}/p' "${helper_dir}/pulse-merge.sh")
+		_pmf_gh_read() { "$@"; return $?; }
+		_pulse_merge_changes_requested_thread_remediation_first_enabled() { return 1; }
+		_route_pr_to_fix_worker() { touch "${TEST_ROOT}/routed"; return 0; }
+		cat >"${TEST_ROOT}/bin/gh" <<'GATE_GH'
+#!/usr/bin/env bash
+case "$*" in
+*dismissals*) touch "${TEST_ROOT}/dismissed"; printf '[]\n' >"${TEST_ROOT}/reviews.json" ;;
+*reviews*)
+	[[ "$TEST_GATE_FAIL" == 0 ]] || exit 1
+	cat "${TEST_ROOT}/reviews.json" ;;
+*'pr view'*)
+	jq -n --arg head "$TEST_READY_SHA" --arg mode "$TEST_GATE_POST" \
+		'{headRefOid:$head,reviewDecision:"APPROVED"} | if $mode == "missing" then del(.reviewDecision) else . end' ;;
+*pulls/100*)
+	if [[ "$TEST_GATE_DRIFT" == 1 && -f "${TEST_ROOT}/snapshot" ]]; then
+		TEST_READY_SHA=3333333333333333333333333333333333333333
+	fi
+	if [[ "$TEST_GATE_SNAPSHOT" == racing && -f "${TEST_ROOT}/snapshot" ]]; then
+		TEST_GATE_LABELS=external-contributor
+	fi
+	touch "${TEST_ROOT}/snapshot"
+	jq -n --arg head "$TEST_READY_SHA" --arg association "$TEST_GATE_ASSOCIATION" --arg labels "$TEST_GATE_LABELS" --arg mode "$TEST_GATE_SNAPSHOT" \
+		'{head:{sha:$head},state:"open",author_association:$association,labels:($labels|split(",")|map({name:.}))}
+		| if $mode == "missing" then del(.labels) else . end' ;;
+*) exit 1 ;;
+esac
+GATE_GH
+		export TEST_READY_SHA
+		local scenario="" rc=0 expected=0 dismissed=0
+		for scenario in bot human external unknown unavailable malformed approval comment drift lookalike labels racing post; do
+			rm -f "${TEST_ROOT}/routed" "${TEST_ROOT}/dismissed" "${TEST_ROOT}/snapshot"
+			TEST_GATE_ASSOCIATION=MEMBER TEST_GATE_DRIFT=0 TEST_GATE_FAIL=0
+			TEST_GATE_LABELS=origin:worker TEST_GATE_SNAPSHOT=valid TEST_GATE_POST=valid
+			jq -n --arg head "$TEST_READY_SHA" '[{id:1,state:"CHANGES_REQUESTED",submitted_at:"2026-10-29T00:00:00Z",commit_id:$head,user:{login:"coderabbitai[bot]",type:"Bot"},author_association:"NONE"}]' >"${TEST_ROOT}/reviews.json"
+			expected=75
+			case "$scenario" in
+			bot) expected=0 ;;
+			human|approval|comment)
+				jq --arg state "$( [[ "$scenario" == approval ]] && printf APPROVED || printf COMMENTED )" \
+					'. + [.[0] | .id=2 | .user={login:"maintainer",type:"User"} | .author_association="OWNER"]
+					| . + [.[1] | .id=3 | .state=$state]' \
+					"${TEST_ROOT}/reviews.json" >"${TEST_ROOT}/updated.json"
+				mv "${TEST_ROOT}/updated.json" "${TEST_ROOT}/reviews.json"
+				[[ "$scenario" == approval ]] && expected=0 || expected=1 ;;
+			external) TEST_GATE_LABELS=origin:worker,external-contributor; expected=1 ;;
+			unknown) TEST_GATE_ASSOCIATION=NONE ;;
+			unavailable) TEST_GATE_FAIL=1 ;;
+			malformed) printf '{}\n' >"${TEST_ROOT}/reviews.json" ;;
+			drift) TEST_GATE_DRIFT=1 ;;
+			labels) TEST_GATE_SNAPSHOT=missing ;;
+			racing) TEST_GATE_SNAPSHOT=racing ;;
+			post) TEST_GATE_POST=missing ;;
+			lookalike) jq '.[0].user.type="User"' "${TEST_ROOT}/reviews.json" >"${TEST_ROOT}/updated.json"; mv "${TEST_ROOT}/updated.json" "${TEST_ROOT}/reviews.json" ;;
+			esac
+			rc=0
+			_handle_changes_requested_review_gate 100 owner/repo CHANGES_REQUESTED 42 "$TEST_GATE_LABELS" dismissed || rc=$?
+			if [[ "$rc" != "$expected" ]] \
+				|| { [[ "$scenario" != human && "$scenario" != comment ]] && [[ -f "${TEST_ROOT}/routed" ]]; } \
+				|| { [[ "$expected" == 0 ]] && [[ ! -f "${TEST_ROOT}/dismissed" || "$dismissed" != 1 ]]; } \
+				|| { [[ "$expected" != 0 && "$scenario" != post ]] && [[ -f "${TEST_ROOT}/dismissed" ]]; } \
+				|| { [[ "$scenario" == human || "$scenario" == comment ]] && [[ ! -f "${TEST_ROOT}/routed" ]]; }; then
+				print_result "advisory review gate: ${scenario}" 1 "expected rc=${expected}, got ${rc}"
+			else
+				print_result "advisory review gate: ${scenario}" 0
+			fi
+		done
+		[[ "$TESTS_FAILED" == 0 ]]
+	) || gate_rc=$?
+	print_result "advisory review gate matrix" "$gate_rc"
 	return 0
 }

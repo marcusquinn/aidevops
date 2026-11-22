@@ -41,6 +41,7 @@ api.beehiiv.com
 api.blocklist.de
 api.builtwith.com
 api.capsolver.com
+api.cloro.dev
 api.cloudflare.com
 api.codacy.com
 api.coderabbit.ai
@@ -82,6 +83,7 @@ api.partner.com
 api.perplexity.ai
 api-beta.quickfile.co.uk
 api.quickfile.co.uk
+api.render.com
 api.replicate.com
 api.runpod.ai
 api.sandbox.namecheap.com
@@ -183,6 +185,7 @@ cdn.jsdelivr.net
 challenges.cloudflare.com
 chat.googleapis.com
 chat.whatsapp.com
+chatgpt.com
 checklistdesign.com
 chrome.google.com
 chromedevtools.github.io
@@ -196,6 +199,7 @@ cli.coderabbit.ai
 cli.github.com
 client-mainwp.yourdomain.com
 clifford.io
+cloro.dev
 cloud-api.near.ai
 cloud.browser-use.com
 cloud.digitalocean.com
@@ -253,6 +257,8 @@ cwe.mitre.org
 darkmodedesign.com
 dash.cloudflare.com
 dashboard.capsolver.com
+dashboard.cloro.dev
+dashboard.oxylabs.io
 dashboard.stripe.com
 dashboard.vendor.com
 dataforseo.com
@@ -278,6 +284,7 @@ developers.cloudflare.com
 developers.facebook.com
 developers.google.com
 developers.hostinger.com
+developers.oxylabs.io
 developers.urbit.org
 developers.virustotal.com
 disablebloat.com
@@ -348,6 +355,7 @@ docs.perplexity.ai
 docs.pipecat.ai
 docs.pydantic.dev
 docs.runpod.io
+docs.salad.com
 docs.sentry.io
 docs.skyvern.com
 docs.snyk.io
@@ -507,12 +515,15 @@ mainwp.yourdomain.com
 marketplace.cloudron.io
 martinfowler.com
 matrix.org
+mcp.cloro.dev
 mcp.cloudflare.com
 mcp.context7.com
 mcp.grep.app
 mcp.linear.app
 mcp.linkup.so
+mcp.oxylabs.io
 mcp.provider.com
+mcp.runpod.io
 mcp.sentry.dev
 mcp.socket.dev
 mcporter.dev
@@ -787,6 +798,7 @@ wavespeed.ai
 weaviate.io
 web.dev
 webaim.org
+webapi.oxylabs.io
 webframe.xyz
 wezfurlong.org
 whiskeysockets.github.io

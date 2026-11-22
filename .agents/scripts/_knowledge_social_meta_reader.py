@@ -5,12 +5,10 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Protocol
 
 from _knowledge_social_collect_cli import guarded_reader_environment
-from _knowledge_social_fixture import FixtureSequence
 from _knowledge_social_meta import (
     MetaAdapterError,
     MetaProviderUnavailableError,
@@ -19,6 +17,7 @@ from _knowledge_social_meta import (
     product_spec,
 )
 from _knowledge_social_oauth_reader import GuardedOAuthPolicy, GuardedOAuthReader
+from _knowledge_social_reader_contract import FixtureReader, ReaderContract
 from knowledge_social_import import reject_credentials
 
 READ_TIMEOUT_SECONDS = 120
@@ -39,23 +38,19 @@ class MetaReader(Protocol):
     def page(self, request: PageRequest) -> dict[str, Any]: ...
 
 
-def _decode_output(output: str) -> dict[str, Any]:
-    if len(output.encode("utf-8")) > MAX_RESPONSE_BYTES:
-        raise MetaAdapterError("Meta read response exceeds the safety limit")
-    try:
-        payload = json.loads(output)
-    except json.JSONDecodeError as error:
-        raise MetaAdapterError("Meta read provider returned no valid JSON") from error
-    if not isinstance(payload, dict):
-        raise MetaAdapterError("Meta read response root must be an object")
-    return payload
-
-
-def _provider_failure(stderr: str) -> MetaProviderUnavailableError:
-    for message in SAFE_PROVIDER_FAILURES:
-        if f"ERROR: {message}" in stderr:
-            return MetaProviderUnavailableError(message)
-    return MetaProviderUnavailableError("Meta read provider is unavailable")
+CONTRACT = ReaderContract(
+    adapter_error=MetaAdapterError,
+    unavailable_error=MetaProviderUnavailableError,
+    max_response_bytes=MAX_RESPONSE_BYTES,
+    safe_failures=SAFE_PROVIDER_FAILURES,
+    unavailable_message="Meta read provider is unavailable",
+    oversize_message="Meta read response exceeds the safety limit",
+    invalid_json_message="Meta read provider returned no valid JSON",
+    root_message="Meta read response root must be an object",
+    expectation_message="Meta fixture request expectation must be an object",
+    checkpoint_message="Meta request did not resume at the expected checkpoint",
+    response_message="Meta fixture page response must be an object",
+)
 
 
 META_OAUTH_POLICY = GuardedOAuthPolicy(
@@ -63,8 +58,8 @@ META_OAUTH_POLICY = GuardedOAuthPolicy(
     "META",
     "META_READ_LOG",
     READ_TIMEOUT_SECONDS,
-    _decode_output,
-    _provider_failure,
+    CONTRACT.decode_output,
+    CONTRACT.provider_failure,
     MetaProviderUnavailableError,
 )
 
@@ -87,34 +82,17 @@ class GuardedMetaOAuth(GuardedOAuthReader):
         )
 
 
-def _fixture_page(entry: dict[str, Any], request: PageRequest) -> dict[str, Any]:
-    expectation = entry.get("expect_request", {})
-    if not isinstance(expectation, dict):
-        raise MetaAdapterError("Meta fixture request expectation must be an object")
-    actual = request.payload()
-    if any(actual.get(key) != value for key, value in expectation.items()):
-        raise MetaAdapterError("Meta request did not resume at the expected checkpoint")
-    response = entry.get("response", entry)
-    if not isinstance(response, dict):
-        raise MetaAdapterError("Meta fixture page response must be an object")
-    return response
-
-
-class FixtureMeta:
+class FixtureMeta(FixtureReader):
     """Deterministic OAuth substitute for product pagination and failures."""
 
     def __init__(self, path: Path, product: str) -> None:
         self.product = product
-        self.fixture = FixtureSequence(path, f"Meta {product}", MetaAdapterError)
-
-    def identity(self, expected_id: str) -> dict[str, Any]:
-        del expected_id
-        return self.fixture.identity()
+        super().__init__(path, f"Meta {product}", CONTRACT)
 
     def page(self, request: PageRequest) -> dict[str, Any]:
         if request.product != self.product:
             raise MetaAdapterError("Meta fixture product does not match the request")
-        return _fixture_page(self.fixture.next_page(), request)
+        return super().page(request)
 
 
 def verified_identity(

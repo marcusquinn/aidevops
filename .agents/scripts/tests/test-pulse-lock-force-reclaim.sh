@@ -115,6 +115,9 @@ FAKEOF
 
 	# Force re-source by clearing include guard
 	unset _PULSE_INSTANCE_LOCK_LOADED 2>/dev/null || true
+	# _file_mtime_epoch comes from shared-constants.sh in production
+	# shellcheck source=/dev/null
+	source "${PULSE_SCRIPTS_DIR}/portable-stat.sh"
 	# shellcheck source=/dev/null
 	source "${PULSE_SCRIPTS_DIR}/pulse-instance-lock.sh"
 	return 0
@@ -514,6 +517,8 @@ test_llm_lock_alive_above_ceiling() {
 
 	mkdir -p "$llm_lockdir"
 	echo "$fake_pid" >"${llm_lockdir}/pid"
+	# LLM lock held far longer than the ceiling (pid file mtime is the hold age)
+	touch -t 200001010000 "${llm_lockdir}/pid"
 
 	STUB_PROCESS_AGE=2000
 	PULSE_LOCK_MAX_AGE_S=1800
@@ -530,6 +535,48 @@ test_llm_lock_alive_above_ceiling() {
 	else
 		print_result "LLM alive-above-ceiling: force-reclaim logged" 1 "no force-reclaim log line found"
 	fi
+	rm -rf "$llm_lockdir" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Test 13: LLM lock — old wrapper process, fresh LLM lock → blocked, not killed
+#######################################
+test_llm_lock_old_process_fresh_lock() {
+	reset_state
+
+	local llm_lockdir="${LOCKDIR}.llm"
+
+	"${TEST_ROOT}/pulse-wrapper.sh" &
+	local fake_pid=$!
+	BG_PIDS="$BG_PIDS $fake_pid"
+
+	mkdir -p "$llm_lockdir"
+	echo "$fake_pid" >"${llm_lockdir}/pid"
+
+	# Wrapper ran a long deterministic phase before taking the LLM lock
+	STUB_PROCESS_AGE=4000
+	PULSE_LOCK_MAX_AGE_S=1800
+
+	local result=0
+	_handle_stale_llm_lock "$llm_lockdir" || result=$?
+
+	assert_equals "LLM old-process/fresh-lock: returns 1 (blocked)" "1" "$result"
+	assert_equals "LLM old-process/fresh-lock: _kill_tree NOT called" "0" "$KILL_TREE_CALLED"
+
+	# Pid file older than the process start (PID reuse/rewrite) → process-age fallback
+	reset_state
+	"${TEST_ROOT}/pulse-wrapper.sh" &
+	fake_pid=$!
+	BG_PIDS="$BG_PIDS $fake_pid"
+	mkdir -p "$llm_lockdir"
+	echo "$fake_pid" >"${llm_lockdir}/pid"
+	touch -t 200001010000 "${llm_lockdir}/pid"
+	STUB_PROCESS_AGE=100
+	result=0
+	_handle_stale_llm_lock "$llm_lockdir" || result=$?
+	assert_equals "LLM pid-file-predates-process: falls back to process age (blocked)" "1" "$result"
+	assert_equals "LLM pid-file-predates-process: _kill_tree NOT called" "0" "$KILL_TREE_CALLED"
 	rm -rf "$llm_lockdir" 2>/dev/null || true
 	return 0
 }
@@ -561,6 +608,7 @@ main() {
 	test_llm_lock_pid_reuse
 	test_llm_lock_alive_within_ceiling
 	test_llm_lock_alive_above_ceiling
+	test_llm_lock_old_process_fresh_lock
 
 	teardown_sandbox
 

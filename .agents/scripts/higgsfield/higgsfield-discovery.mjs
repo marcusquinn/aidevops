@@ -169,9 +169,10 @@ async function waitForLoginRedirect(page, options) {
     if (errorText) console.log('Error message:', errorText);
 
     if (options.headed) {
-      console.log('Waiting 60s for manual login completion...');
+      // Higgsfield can require an emailed verification code; allow time to fetch and enter it.
+      console.log('Waiting up to 5 min for manual completion (enter any emailed verification code in the browser window)...');
       try {
-        await page.waitForURL(isNonAuthUrl, { timeout: 60000 });
+        await page.waitForURL(isNonAuthUrl, { timeout: 300000 });
         console.log('Login completed manually! URL:', page.url());
       } catch {
         console.log('Timeout. Saving current state anyway...');
@@ -243,7 +244,9 @@ async function performLoginSteps(page, user, pass) {
 
 export async function login(options = {}) {
   const { user, pass } = loadCredentials();
-  const { browser, context, page } = await launchBrowser({ ...options, headed: true });
+  // Login is always headed so a person can finish verification; downstream waits must see that.
+  const loginOptions = { ...options, headed: true };
+  const { browser, context, page } = await launchBrowser(loginOptions);
 
   const loginUrl = `${BASE_URL}/auth/email/sign-in?rp=%2F`;
   console.log(`Navigating to ${loginUrl}...`);
@@ -269,7 +272,7 @@ export async function login(options = {}) {
   await performLoginSteps(page, user, pass);
 
   console.log('Waiting for login to complete...');
-  await waitForLoginRedirect(page, options);
+  await waitForLoginRedirect(page, loginOptions);
 
   await context.storageState({ path: STATE_FILE });
   console.log(`Auth state saved to ${STATE_FILE}`);

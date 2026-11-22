@@ -104,6 +104,9 @@ _generate_defaults() {
   "ui": {
     "color_output": true,
     "verbose": false
+  },
+  "browser": {
+    "playwright_executable": ""
   }
 }
 DEFAULTS
@@ -134,6 +137,7 @@ _env_var_for_key() {
 	supervisor.peak_hours_tz) echo "AIDEVOPS_PEAK_HOURS_TZ" ;;
 	supervisor.peak_hours_worker_fraction) echo "AIDEVOPS_PEAK_HOURS_WORKER_FRACTION" ;;
 	repo_sync.enabled) echo "AIDEVOPS_REPO_SYNC" ;;
+	browser.playwright_executable) echo "AIDEVOPS_PLAYWRIGHT_EXECUTABLE" ;;
 	*) echo "" ;;
 	esac
 	return 0
@@ -209,10 +213,11 @@ cmd_get() {
 		fi
 	fi
 
-	# Precedence 3: Built-in default
+	# Precedence 3: Built-in default. A known key may default to "" (GH#36357);
+	# only a missing path is unknown — same existence rule as cmd_set.
 	local default_value
-	default_value=$(_generate_defaults | jq -r "$(_jq_path "$key") | if . == null then empty else . end" 2>/dev/null || echo "")
-	if [[ -n "$default_value" ]]; then
+	default_value=$(_generate_defaults | jq -r --arg k "$key" 'getpath($k | split(".")) | if . == null then "__MISSING__" else . end' 2>/dev/null || echo "__MISSING__")
+	if [[ "$default_value" != "__MISSING__" ]]; then
 		echo "$default_value"
 		return 0
 	fi
@@ -562,6 +567,7 @@ SETTINGS KEYS (dot-notation):
     onboarding.familiarity               Concepts user is familiar with
     ui.color_output                      Color terminal output (default: true)
     ui.verbose                           Verbose output (default: false)
+    browser.playwright_executable        System browser for Playwright (default: unset; bundled Chromium)
 
 PRECEDENCE:
     Environment variable > settings.json > built-in default

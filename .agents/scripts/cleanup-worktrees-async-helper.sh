@@ -25,11 +25,15 @@
 #
 # Environment:
 #   CLEANUP_WORKTREES_ASYNC_CADENCE_MIN — min minutes between runs (default 10)
+#   CLEANUP_WORKTREES_PRESSURE_BUDGET — cleanup_worktrees seconds under capacity pressure (default 900; routine 120)
+#   AIDEVOPS_WORKTREE_CLEANUP_FREE_PERCENT — soft free-space percentage (default 15)
+#   AIDEVOPS_WORKTREE_CLEANUP_FREE_KB — soft free-space floor (default 4x creation floor)
 #   DIRTY_WORKTREE_BACKUP_RETENTION_DAYS — stale dirty-backup retention (default 30)
 #   AIDEVOPS_WORKTREE_RECOVERY_MAINTENANCE_ENABLED — automatic terminal-archive maintenance (default 1)
 #   AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE — off|dry-run|apply (default dry-run)
 #   AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_DAYS — compact archive age (default 14)
 #   AIDEVOPS_WORKTREE_ARCHIVE_MAX_TOTAL_SIZE — eligible archive cap (default 20G)
+#   AIDEVOPS_WORKTREE_PRODUCER_ARCHIVE_TTL_DAYS — producer archive age from capture, once its source is gone (default 30)
 #   AIDEVOPS_LOG_DIR — explicit log directory override (required if HOME unset)
 #
 # Observability (for pulse-diagnose-helper.sh):
@@ -64,6 +68,17 @@ CLEANUP_WORKTREES_ASYNC_CADENCE_MIN="${CLEANUP_WORKTREES_ASYNC_CADENCE_MIN:-10}"
 # Validate: strip non-digits, fall back to default on empty
 CLEANUP_WORKTREES_ASYNC_CADENCE_MIN="${CLEANUP_WORKTREES_ASYNC_CADENCE_MIN//[!0-9]/}"
 [[ -n "$CLEANUP_WORKTREES_ASYNC_CADENCE_MIN" ]] || CLEANUP_WORKTREES_ASYNC_CADENCE_MIN=10
+
+# GH#37330: cleanup_worktrees splits its budget between the observation-era and
+# registry passes. One archive-first retirement takes about 50 s, so the routine
+# 120 s retires roughly one tree per run, too slow to drain a capacity backlog
+# while dispatch stays fail-closed. Under pressure this detached helper may
+# spend longer; budgets are checked between operations, never mid-retirement.
+readonly _CLEANUP_WORKTREES_ROUTINE_BUDGET=120
+readonly _CLEANUP_WORKTREES_PRESSURE_BUDGET_DEFAULT=900
+CLEANUP_WORKTREES_PRESSURE_BUDGET="${CLEANUP_WORKTREES_PRESSURE_BUDGET:-$_CLEANUP_WORKTREES_PRESSURE_BUDGET_DEFAULT}"
+[[ "$CLEANUP_WORKTREES_PRESSURE_BUDGET" =~ ^[1-9][0-9]{0,4}$ ]] ||
+	CLEANUP_WORKTREES_PRESSURE_BUDGET="$_CLEANUP_WORKTREES_PRESSURE_BUDGET_DEFAULT"
 
 # Keep a single previous generation so routine cleanup diagnostics cannot grow
 # without bound. Operators may lower this cap for constrained hosts.
@@ -108,6 +123,10 @@ fi
 
 # shellcheck source=cleanup-worktrees-lock.sh
 source "${SCRIPT_DIR}/cleanup-worktrees-lock.sh"
+if [[ -f "${SCRIPT_DIR}/disk-capacity-lib.sh" ]]; then
+	# shellcheck source=disk-capacity-lib.sh
+	source "${SCRIPT_DIR}/disk-capacity-lib.sh"
+fi
 
 # ============================================================
 # CADENCE GATE
@@ -158,26 +177,71 @@ _rotate_log_if_oversize() {
 	return 0
 }
 
+# Summarise refusals logged during this pass (GH#39034). A refused worktree is
+# one with a worktree-skipped or worktree-degraded event and no removal event;
+# its reason is the last final skip, else its degraded reason (some callers
+# return a degraded guard result without logging a final skip).
+# Args: $1 = log line count before the pass
+# Output: "<refused-count> <reason:count,... top 5 | none>"
 _skip_reason_summary() {
 	local first_line="$1"
-	local owned_skip=0
-	local parent_runtime_active=0
+	local summary=""
 
 	[[ "$first_line" =~ ^[0-9]+$ ]] || first_line=0
-	read -r owned_skip parent_runtime_active < <(
+	summary=$(
 		awk -v first_line="$first_line" '
-			NR > first_line && /worktree-skipped:.*— owned-skip —/ { owned_skip++ }
-			NR > first_line && /worktree-skipped:.*— parent-runtime-active —/ { parent_runtime_active++ }
-			END { printf "%d %d\\n", owned_skip, parent_runtime_active }
+			NR > first_line {
+				pos = index($0, "] worktree-")
+				if (pos == 0) next
+				rest = substr($0, pos + 11)
+				colon = index(rest, ": ")
+				if (colon == 0) next
+				event = substr(rest, 1, colon - 1)
+				rest = substr(rest, colon + 2)
+				sep = index(rest, " — ")
+				if (sep == 0) next
+				path = substr(rest, 1, sep - 1)
+				rest = substr(rest, sep + length(" — "))
+				sep = index(rest, " — ")
+				reason = sep ? substr(rest, 1, sep - 1) : rest
+				if (event == "removed" || event == "fixture-removed") {
+					removed[path] = 1
+				} else if (event == "skipped") {
+					final[path] = reason
+					seen[path] = 1
+				} else if (event == "degraded") {
+					if (!(path in degraded)) degraded[path] = reason
+					seen[path] = 1
+				}
+			}
+			END {
+				refused = 0
+				for (path in seen) {
+					if (path in removed) continue
+					r = (path in final) ? final[path] : degraded[path]
+					counts[r]++
+					refused++
+				}
+				out = ""
+				for (i = 0; i < 5; i++) {
+					best = ""
+					bestn = 0
+					for (r in counts) {
+						if (counts[r] > bestn || (counts[r] == bestn && r < best)) {
+							best = r
+							bestn = counts[r]
+						}
+					}
+					if (bestn == 0) break
+					out = out (out == "" ? "" : ",") best ":" bestn
+					delete counts[best]
+				}
+				printf "%d %s\n", refused, (out == "" ? "none" : out)
+			}
 		' "$LOGFILE" 2>/dev/null
-	)
-	[[ "$owned_skip" =~ ^[0-9]+$ ]] || owned_skip=0
-	[[ "$parent_runtime_active" =~ ^[0-9]+$ ]] || parent_runtime_active=0
-	if [[ "$owned_skip" -eq 0 && "$parent_runtime_active" -eq 0 ]]; then
-		printf '%s\n' "none"
-	else
-		printf 'owned-skip:%s,parent-runtime-active:%s\n' "$owned_skip" "$parent_runtime_active"
-	fi
+	) || summary=""
+	[[ "$summary" =~ ^[0-9]+\ [^[:space:]]+$ ]] || summary="0 unavailable"
+	printf '%s\n' "$summary"
 	return 0
 }
 
@@ -233,16 +297,29 @@ _maintain_compact_archives() {
 	local mode="${AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE:-}"
 	local days="${AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_DAYS:-14}"
 	local maximum="${AIDEVOPS_WORKTREE_ARCHIVE_MAX_TOTAL_SIZE:-20G}"
+	# Producer archives may be the only copy: longer than the compact default.
+	local producer_ttl="${AIDEVOPS_WORKTREE_PRODUCER_ARCHIVE_TTL_DAYS:-30}"
+	# prune stops itself inside this budget; the outer timeout is only a
+	# backstop. Each verification may import a base graph (GH#36468).
+	local budget="${AIDEVOPS_WORKTREE_ARCHIVE_PRUNE_BUDGET:-540}"
 	local helper="${SCRIPT_DIR}/worktree-archive-helper.sh"
 	local rc=0
 
+	[[ "$budget" =~ ^[1-9][0-9]*$ ]] || budget=540
+	# Dead verification scratch is derived data, not a recovery copy: reclaim
+	# it in every retention mode, including off.
+	if [[ -f "$helper" ]] && declare -F timeout_sec >/dev/null 2>&1; then
+		timeout_sec 60 bash "$helper" sweep-scratch >>"$LOGFILE" 2>&1 ||
+			echo "[cleanup-worktrees-async] verify-scratch sweep failed; retrying next pass" >>"$LOGFILE"
+	fi
 	if [[ -z "$mode" ]] && declare -F config_get >/dev/null 2>&1; then
 		mode=$(config_get "storage.worktree_archive_retention_mode" "dry-run")
 	fi
 	mode="${mode:-dry-run}"
 	[[ "$mode" != "off" ]] || return 0
 	if [[ "$mode" != "dry-run" && "$mode" != "apply" ]] ||
-		[[ ! "$days" =~ ^[1-9][0-9]*$ || ! "$maximum" =~ ^[1-9][0-9]*([KMGTP])?$ ]]; then
+		[[ ! "$days" =~ ^[1-9][0-9]*$ || ! "$producer_ttl" =~ ^[1-9][0-9]*$ ||
+			! "$maximum" =~ ^[1-9][0-9]*([KMGTP])?$ ]]; then
 		echo "[cleanup-worktrees-async] compact-retention invalid policy; preserving archives" >>"$LOGFILE"
 		return 0
 	fi
@@ -250,28 +327,54 @@ _maintain_compact_archives() {
 		echo "[cleanup-worktrees-async] compact-retention helper or bounded runner unavailable; skipping" >>"$LOGFILE"
 		return 0
 	fi
-	timeout_sec 120 bash "$helper" prune --older-than "${days}d" \
-		--max-total-size "$maximum" "--${mode}" >>"$LOGFILE" 2>&1 || rc=$?
+	timeout_sec $((budget + 60)) bash "$helper" prune --older-than "${days}d" \
+		--max-total-size "$maximum" "--${mode}" --budget-seconds "$budget" \
+		--producer-ttl-days "$producer_ttl" >>"$LOGFILE" 2>&1 || rc=$?
 	printf '[cleanup-worktrees-async] compact-retention mode=%s rc=%s\n' "$mode" "$rc" >>"$LOGFILE"
 	return 0
 }
 
 # Print the current repo plus every repos.json repository path, once each.
+# Arg: "true" = bounded git lookup, skip local_only repos (capacity); "bounded" = bounded lookup, include local_only.
 _missing_metadata_repo_paths() {
+	local capacity_only="${1:-false}"
 	local repos_json="${HOME:+${HOME}/.config/aidevops/repos.json}"
 	local repo_path=""
 	local seen=$'\n'
 
 	{
-		git rev-parse --show-toplevel 2>/dev/null || true
+		if [[ "$capacity_only" == true || "$capacity_only" == bounded ]]; then
+			timeout_sec 5 git rev-parse --show-toplevel 2>/dev/null || true
+		else
+			git rev-parse --show-toplevel 2>/dev/null || true
+		fi
 		if [[ -n "$repos_json" && -f "$repos_json" ]] && command -v jq >/dev/null 2>&1; then
 			jq -r '.initialized_repos[]? | .path // empty' "$repos_json" 2>/dev/null || true
 		fi
 	} | while IFS= read -r repo_path; do
 		[[ -n "$repo_path" && "$seen" != *$'\n'"${repo_path}"$'\n'* ]] || continue
 		seen="${seen}${repo_path}"$'\n'
+		if [[ "$capacity_only" == true && -f "$repos_json" ]] &&
+			jq -e --arg path "$repo_path" '.initialized_repos[]? | select(.path == $path and .local_only == true)' "$repos_json" >/dev/null 2>&1; then
+			continue
+		fi
 		printf '%s\n' "$repo_path"
 	done
+	return 0
+}
+
+# Bound the whole repository sweep, not just each individual repository.
+_prune_turbo_caches() {
+	local helper="${SCRIPT_DIR}/worktree-artefact-reclaim.sh"
+	local repo="" deadline=$((SECONDS + 60)) remaining=0 rc=0
+	[[ -f "$helper" ]] && declare -F timeout_sec >/dev/null 2>&1 || return 0
+	while IFS= read -r repo; do
+		remaining=$((deadline - SECONDS))
+		[[ "$remaining" -gt 0 ]] || break
+		rc=0
+		timeout_sec "$remaining" bash "$helper" --turbo-cache "$repo" >>"$LOGFILE" 2>&1 || rc=$?
+		[[ "$rc" -eq 0 ]] || printf '[cleanup-worktrees-async] turbo-cache-prune failed rc=%s\n' "$rc" >>"$LOGFILE"
+	done < <(_missing_metadata_repo_paths bounded)
 	return 0
 }
 
@@ -384,26 +487,207 @@ _reconcile_lifecycle_receipts() {
 	return 0
 }
 
+# GH#39702: release retained aidevops-worker-* user units whose invocation has
+# drained, after committing a release receipt. Linux/systemd only; the helper
+# reports unsupported-platform elsewhere. Never stops units with processes.
+_release_retained_worker_units() {
+	local helper="${SCRIPT_DIR}/worktree_lifetime_release.py"
+	local limit="${AIDEVOPS_WORKER_UNIT_RELEASE_LIMIT:-200}"
+	local grace="${AIDEVOPS_WORKER_UNIT_RELEASE_GRACE_SECONDS:-3600}"
+	local rc=0
+	[[ "$(uname -s)" == "Linux" ]] || return 0
+	if [[ ! -f "$helper" ]] || ! declare -F timeout_sec >/dev/null 2>&1; then
+		echo "[cleanup-worktrees-async] worker unit release unavailable; retaining units" >>"$LOGFILE"
+		return 0
+	fi
+	[[ "$limit" =~ ^[1-9][0-9]{0,4}$ ]] || limit=200
+	[[ "$grace" =~ ^[0-9]{1,7}$ ]] || grace=3600
+	timeout_sec 90 python3 "$helper" sweep --limit "$limit" --budget-seconds 75 \
+		--grace-seconds "$grace" >>"$LOGFILE" 2>&1 || rc=$?
+	printf '[cleanup-worktrees-async] worker-unit-release rc=%s\n' "$rc" >>"$LOGFILE"
+	return 0
+}
+
+# Print "<cap> <cleanup-threshold>"; the shared lib owns the defaults.
+_worktree_cap_and_threshold() {
+	local cap="${AIDEVOPS_MAX_WORKTREES:-1000}"
+	local threshold=""
+	if declare -F aidevops_worktree_count_cap >/dev/null 2>&1; then
+		cap=$(aidevops_worktree_count_cap)
+		threshold=$(aidevops_worktree_cleanup_threshold "$cap")
+	else
+		[[ "$cap" =~ ^[1-9][0-9]*$ ]] || cap=1000
+		threshold=$(((cap * 80 + 99) / 100))
+	fi
+	printf '%s %s\n' "$cap" "$threshold"
+	return 0
+}
+
+_worktree_pressure_present() {
+	local max_count="" threshold=""
+	local repo_context="" listing="" count=0 line=""
+	WORKTREE_PRESSURE_REASON="capacity-pressure"
+	# HOME may be unset when AIDEVOPS_LOG_DIR is explicit; skip that probe then.
+	local worktree_base="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME:+${HOME}/Git/_worktrees}}"
+	read -r max_count threshold < <(_worktree_cap_and_threshold)
+	if [[ -n "$worktree_base" ]] && declare -F aidevops_worktree_capacity_check >/dev/null 2>&1; then
+		aidevops_worktree_capacity_check "$worktree_base" || return 0
+		if declare -F aidevops_worktree_cleanup_headroom_low >/dev/null 2>&1 && aidevops_worktree_cleanup_headroom_low; then
+			WORKTREE_PRESSURE_REASON="disk-headroom"
+			return 0
+		fi
+	fi
+	while IFS= read -r repo_context; do
+		listing=$(git -C "$repo_context" worktree list --porcelain 2>/dev/null) || continue
+		count=0
+		while IFS= read -r line; do
+			case "$line" in
+			"worktree "*) count=$((count + 1)) ;;
+			prunable | "prunable "*) count=$((count - 1)) ;;
+			esac
+		done <<<"$listing"
+		[[ "$count" -lt "$threshold" ]] || return 0
+	done < <(_missing_metadata_repo_paths)
+	return 1
+}
+
+# The lifecycle registry does not inventory old interactive sessions. Reuse the
+# clean proof/lease path under this same async lock, never in dispatch admission.
+# The cursor and hard shared budget bound slow archive/removal work across runs.
+_recover_interactive_capacity() {
+	local helper="${SCRIPT_DIR}/worktree-helper.sh"
+	local cursor="${LOG_DIR}/cleanup_worktrees.capacity-repo"
+	local max_count="" threshold=""
+	local repo="" saved="" start=0 offset=0 index=0 count=0 after=0 rc=0 listing=""
+	local deadline=$((SECONDS + 120)) remaining=0 clean_deadline=0
+	local grace="${AIDEVOPS_WORKTREE_CLEAN_REMOVAL_GRACE_S:-90}"
+	local repos=()
+	[[ "$grace" =~ ^[0-9]{1,4}$ ]] || grace=90
+	[[ -x "$helper" ]] && declare -F timeout_sec >/dev/null 2>&1 || return 0
+	[[ "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" != 1 ]] || return 0
+	read -r max_count threshold < <(_worktree_cap_and_threshold)
+	[[ ! -f "$cursor" ]] || IFS= read -r saved <"$cursor" || true
+	while IFS= read -r repo; do
+		[[ -d "$repo" ]] || continue
+		repos+=("$repo")
+		[[ "$repo" != "$saved" ]] || start=${#repos[@]}
+	done < <(_missing_metadata_repo_paths true)
+	for ((offset = 0; offset < ${#repos[@]}; offset++)); do
+		remaining=$((deadline - SECONDS))
+		[[ "$remaining" -gt 0 ]] || break
+		index=$(((start + offset) % ${#repos[@]}))
+		repo="${repos[$index]}"
+		printf '%s\n' "$repo" >"$cursor" || return 1
+		listing=$(timeout_sec "$remaining" git -C "$repo" worktree list --porcelain) || continue
+		count=$(awk '/^worktree / {n++} END {print n+0}' <<<"$listing")
+		[[ "$count" -ge "$threshold" ]] || continue
+		remaining=$((deadline - SECONDS))
+		[[ "$remaining" -gt 0 ]] || break
+		rc=0
+		# --capacity never forces dirty trees or admits closed-issue-only proof.
+		# t19076 (GH#38818): the clean pass stops starting removals at the
+		# deadline; the hard timeout is only a backstop after a grace period,
+		# because killing git inside `worktree remove` leaves a registered,
+		# half-deleted tree that dispatch later handed to workers.
+		clean_deadline=$(($(date +%s) + remaining))
+		(cd "$repo" && timeout_sec "$((remaining + grace))" \
+			env AIDEVOPS_WORKTREE_CLEAN_DEADLINE_EPOCH="$clean_deadline" \
+			bash "$helper" clean --auto --capacity) >>"$LOGFILE" 2>&1 || rc=$?
+		remaining=$((deadline - SECONDS))
+		if [[ "$remaining" -le 0 ]]; then
+			printf '[cleanup-worktrees-async] interactive-capacity budget exhausted; progress unverified repo=%s rc=%s\n' "$repo" "$rc" >>"$LOGFILE"
+			break
+		fi
+		listing=$(timeout_sec "$remaining" git -C "$repo" worktree list --porcelain) || continue
+		after=$(awk '/^worktree / {n++} END {print n+0}' <<<"$listing")
+		printf '[cleanup-worktrees-async] interactive-capacity before=%s after=%s cap=%s rc=%s repo=%s\n' \
+			"$count" "$after" "$max_count" "$rc" "$repo" >>"$LOGFILE"
+		if [[ "$after" -ge "$max_count" && "$after" -ge "$count" ]]; then
+			printf '[cleanup-worktrees-async] capacity-stuck: gate closed, zero safe removals (no candidates, guarded or budget exhausted); repo=%s count=%s cap=%s rc=%s\n' \
+				"$repo" "$after" "$max_count" "$rc" >>"$LOGFILE"
+		fi
+	done
+	return 0
+}
+
 main() {
 	local mode="${1:-normal}"
+	local repo="${2:-}"
+	local budget="${3:-60}"
+	local capacity_mode="--capacity"
+	local lifecycle_only_mode="--lifecycle-only"
 	case "$mode" in
 	normal | --lifecycle-only) ;;
-	*) printf '%s\n' 'Usage: cleanup-worktrees-async-helper.sh [--lifecycle-only]' >&2; return 1 ;;
+	--capacity)
+		[[ "$repo" == /* && "$budget" =~ ^[1-9][0-9]{0,4}$ ]] || return 1
+		git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || return 1
+		;;
+	*) printf '%s\n' 'Usage: cleanup-worktrees-async-helper.sh [--lifecycle-only | --capacity REPO SECONDS]' >&2; return 1 ;;
 	esac
-	if ! _lock_acquire; then
+	local lock_started="$SECONDS"
+	local lock_wait=0
+	if [[ "$mode" == "$capacity_mode" ]]; then
+		# Spend at most a third of this admission budget (capped at 15s)
+		# waiting for the background holder; never steal a live cleanup lock.
+		lock_wait=$((budget / 3))
+		[[ "$lock_wait" -le 15 ]] || lock_wait=15
+	fi
+	while ! _lock_acquire; do
+		if [[ "$mode" == "$capacity_mode" && $((SECONDS - lock_started)) -lt "$lock_wait" ]]; then
+			sleep 1
+			continue
+		fi
 		echo "[cleanup-worktrees-async] ${_LOCK_SKIP_REASON:-Lock unavailable} — skipping this invocation" >>"$LOGFILE"
+		[[ "$mode" != "$capacity_mode" ]] || return 75
 		return 0
+	done
+	if [[ "$mode" == "$capacity_mode" ]]; then
+		budget=$((budget - (SECONDS - lock_started)))
+		[[ "$budget" -gt 0 ]] || return 124
 	fi
 	_rotate_log_if_oversize
 	echo "[cleanup-worktrees-async] PID=$$ starting at $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$LOGFILE"
 
-	if ! _cadence_ok; then
-		return 0
+	if [[ "$mode" == "$capacity_mode" ]]; then
+		# Admission shares the async lock, but not its cadence or unrelated
+		# maintenance/deletion scope. A timeout leaves the next job checkpointed.
+		# shellcheck source=pulse-cleanup-progress.sh
+		source "${SCRIPT_DIR}/pulse-cleanup-progress.sh" || return 1
+		_pc_cleanup_resumable_unlocked "$budget" "$repo"
+		return $?
 	fi
 
+	# Pressure kicks bypass routine cadence, never the single-runner lock. The
+	# lifecycle pass has its own cursor/budget and is not in dispatch's 60s stage.
+	local pressure=0
+	if _worktree_pressure_present; then
+		pressure=1
+	fi
+	if [[ "$pressure" -eq 0 ]] && ! _cadence_ok; then
+		return 0
+	fi
+	local lifecycle_only=0
+	[[ "$mode" != "$lifecycle_only_mode" ]] || lifecycle_only=1
+	# --lifecycle-only keeps the routine budget: worktree-lifecycle-helper.sh
+	# runs that mode under an 840 s timeout, and a kill mid-removal strands it.
+	local cleanup_budget="$_CLEANUP_WORKTREES_ROUTINE_BUDGET"
+	if [[ "$pressure" -eq 1 && "$lifecycle_only" -eq 0 ]]; then
+		cleanup_budget="$CLEANUP_WORKTREES_PRESSURE_BUDGET"
+		echo "[cleanup-worktrees-async] cleanup budget=${cleanup_budget} reason=${WORKTREE_PRESSURE_REASON}" >>"$LOGFILE"
+	fi
+	_run_cleanup_pass "$cleanup_budget" "$lifecycle_only"
+	return 0
+}
+
+# Run the guarded cleanup pass under the held async lock and log its outcome.
+# $1: cleanup_worktrees budget in seconds; $2: 1 for --lifecycle-only scope.
+_run_cleanup_pass() {
+	local cleanup_budget="$1"
+	local lifecycle_only="$2"
 	echo "[cleanup-worktrees-async] Starting cleanup_worktrees (cadence OK)" >>"$LOGFILE"
 	_reconcile_worktree_registry
 	_reconcile_lifecycle_receipts
+	_release_retained_worker_units
 	_prune_missing_worktree_metadata_all_repos
 	_reclaim_branch_cleanup_transports_all_repos
 
@@ -415,16 +699,18 @@ main() {
 	local log_first_line=0
 	local skip_reasons="none"
 	log_first_line=$(wc -l <"$LOGFILE" | tr -d '[:space:]') || log_first_line=0
-	cleanup_worktrees || rc=$?
-	if [[ "$mode" != "--lifecycle-only" ]]; then
+	cleanup_worktrees "$cleanup_budget" || rc=$?
+	if [[ "$lifecycle_only" -eq 0 ]]; then
+		_recover_interactive_capacity
 		_prune_dirty_worktree_backups
+		_prune_turbo_caches
 	fi
 
 	if [[ "${CLEANUP_WORKTREES_SKIPPED:-0}" == "1" ]]; then
 		outcome="safety-skip"
 		echo "[cleanup-worktrees-async] cleanup_worktrees skipped by safety gate — last-run NOT updated" >>"$LOGFILE"
 	elif [[ "$rc" -eq 0 ]]; then
-		if [[ "$mode" != "--lifecycle-only" ]]; then
+		if [[ "$lifecycle_only" -eq 0 ]]; then
 			_maintain_worktree_recovery
 			_maintain_compact_archives
 		fi
@@ -440,8 +726,16 @@ main() {
 	[[ "$removed_count" =~ ^[0-9]+$ ]] || removed_count=0
 	[[ "$archived_count" =~ ^[0-9]+$ ]] || archived_count=0
 	[[ "$archive_failed_count" =~ ^[0-9]+$ ]] || archive_failed_count=0
-	skip_reasons=$(_skip_reason_summary "$log_first_line") || skip_reasons="unavailable"
-	printf '%s\n' "[cleanup-worktrees-async] outcome=${outcome} removed=${removed_count} archived=${archived_count} archive_failed=${archive_failed_count} skip_reasons=${skip_reasons}" >>"$LOGFILE"
+	local refusal_summary="" refused_count=0
+	refusal_summary=$(_skip_reason_summary "$log_first_line") || refusal_summary="0 unavailable"
+	refused_count="${refusal_summary%% *}"
+	skip_reasons="${refusal_summary#* }"
+	[[ "$refused_count" =~ ^[0-9]+$ ]] || refused_count=0
+	# A pass that refused candidates and removed nothing is not plain success.
+	if [[ "$outcome" == "success" && "$refused_count" -gt 0 && "$removed_count" -eq 0 && "$archived_count" -eq 0 ]]; then
+		outcome="no-progress"
+	fi
+	printf '%s\n' "[cleanup-worktrees-async] outcome=${outcome} removed=${removed_count} archived=${archived_count} archive_failed=${archive_failed_count} refused=${refused_count} skip_reasons=${skip_reasons}" >>"$LOGFILE"
 
 	return 0
 }

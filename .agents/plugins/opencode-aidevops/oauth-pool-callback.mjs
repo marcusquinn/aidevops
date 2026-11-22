@@ -11,7 +11,7 @@
 
 import { createHash, randomBytes } from "crypto";
 import {
-  getAccounts, upsertAccount, savePendingToken,
+  getAccounts, upsertAccount, savePendingToken, poolAccountLabel,
 } from "./oauth-pool-storage.mjs";
 import { startOAuthCallbackServer } from "./oauth-pool-callback-server.mjs";
 
@@ -96,7 +96,8 @@ export function makeEmailPrompt(provider, placeholder = "you@example.com") {
     get message() {
       const accounts = getAccounts(provider);
       if (accounts.length === 0) return "Account email (required to match tokens to accounts)";
-      return `Existing accounts:\n${accounts.map((a, i) => `  ${i + 1}. ${a.email}`).join("\n")}\nEnter email (existing to re-auth, or new to add)`;
+      const seatHint = provider === "anthropic" ? "; the same email under another organization adds a separate seat" : "";
+      return `Existing accounts:\n${accounts.map((a, i) => `  ${i + 1}. ${poolAccountLabel(a)}`).join("\n")}\nEnter email (existing to re-auth, or new to add${seatHint})`;
     },
     placeholder,
     validate: (v) => (!v || !v.includes("@")) ? "Please enter a valid email address" : undefined,
@@ -108,11 +109,13 @@ export function makeEmailPrompt(provider, placeholder = "you@example.com") {
 // ---------------------------------------------------------------------------
 
 export async function saveAccountAndInject(opts) {
-  const { provider, client, email, tokenData, extras = {}, envKey, authId, injectFn, successExtras = {} } = opts;
+  const {
+    provider, client, email, tokenData, extras = {}, upsertOptions = {},
+    envKey, authId, injectFn, successExtras = {},
+  } = opts;
   const now = new Date().toISOString();
-  const saved = upsertAccount(provider, {
-    email, ...tokenData, ...extras, added: now, lastUsed: now, status: "active", cooldownUntil: null,
-  });
+  const entry = { email, ...tokenData, ...extras, added: now, lastUsed: now, status: "active", cooldownUntil: null };
+  const saved = upsertAccount(provider, entry, upsertOptions);
   if (!saved) {
     savePendingToken(provider, { ...tokenData, ...extras, added: now });
     if (envKey && tokenData.access) process.env[envKey] = tokenData.access;
@@ -123,7 +126,7 @@ export async function saveAccountAndInject(opts) {
     return { type: "success", ...tokenData, ...successExtras };
   }
   const total = getAccounts(provider).length;
-  console.error(`[aidevops] OAuth pool: added ${email} (${total} account${total === 1 ? "" : "s"} total)`);
+  console.error(`[aidevops] OAuth pool: added ${poolAccountLabel(entry)} (${total} account${total === 1 ? "" : "s"} total)`);
   const INSTR = {
     anthropic: 'Switch to "Anthropic" provider for models.',
     openai: 'Switch to "OpenAI" provider for models.',
@@ -131,7 +134,11 @@ export async function saveAccountAndInject(opts) {
     google: "Token injected as GOOGLE_OAUTH_ACCESS_TOKEN.",
   };
   console.error(`[aidevops] OAuth pool: Account added successfully. ${INSTR[provider] || ""}`);
-  await injectFn(client);
+  const injected = await injectFn(client);
+  if (provider === "openai" && injected === false) {
+    console.error("[aidevops] OAuth pool: account saved but provider auth adoption failed");
+    return { type: "failed" };
+  }
   return { type: "success", ...tokenData, ...successExtras };
 }
 

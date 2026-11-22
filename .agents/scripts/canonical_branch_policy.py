@@ -8,8 +8,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
 from typing import Any, Callable
+
+from native_git import real_git
 
 
 BRANCH_CONFIG_KEYS = (
@@ -69,11 +72,55 @@ def _origin_slug(repo_root: str, git_output: GitOutput) -> str:
     return match.group(1) if match else ""
 
 
+def _refresh_remote_default(repo_root: str, git_output: GitOutput) -> str:
+    """Read the advertised default and require a successful tracking-ref refresh."""
+    remote_name = os.environ.get("AIDEVOPS_CANONICAL_REMOTE", "origin")
+
+    def run(*args: str) -> str:
+        try:
+            # Validated native Git; fixed callers use argv and --, never a shell.
+            result = subprocess.run(  # nosec B603
+                [real_git(), "-C", repo_root, *args],
+                capture_output=True, text=True, timeout=30, check=True,
+                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError("remote-default metadata refresh failed") from exc
+        return result.stdout.strip()
+
+    advertised = run("ls-remote", "--symref", "--", remote_name, "HEAD")
+    match = re.search(r"^ref: refs/heads/(.+)\tHEAD$", advertised, re.MULTILINE)
+    if not match or not _valid_branch(repo_root, match.group(1), git_output):
+        raise RuntimeError("remote default branch cannot be resolved")
+    branch = match.group(1)
+    run("fetch", "--no-tags", "--", remote_name,
+        f"+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
+    return branch
+
+
 def _project_branch(repo_root: str, git_output: GitOutput) -> tuple[str, str]:
     payload = git_output(Path(repo_root), "show", "HEAD:.aidevops.json")
     if not payload:
         return "", ""
-    branch = _branch_from_mapping(_load_json_text(payload, "HEAD:.aidevops.json"))
+    try:
+        mapping = _load_json_text(payload, "HEAD:.aidevops.json")
+    except RuntimeError as head_error:
+        # Sync may be the operation that replaces this stale, malformed HEAD.
+        # Trust only committed metadata at the remote default, never local dirt.
+        default_branch = _refresh_remote_default(repo_root, git_output)
+        remote_name = os.environ.get("AIDEVOPS_CANONICAL_REMOTE", "origin")
+        remote_source = f"refs/remotes/{remote_name}/{default_branch}:.aidevops.json"
+        remote_payload = git_output(Path(repo_root), "show", remote_source)
+        if not remote_payload:
+            return default_branch, f"{remote_name}-head"
+        try:
+            mapping = _load_json_text(remote_payload, remote_source)
+        except RuntimeError:
+            raise head_error from None
+        branch = _branch_from_mapping(mapping)
+        return ((branch, "project-config-at-remote-default") if branch
+                else (default_branch, f"{remote_name}-head"))
+    branch = _branch_from_mapping(mapping)
     return (branch, "project-config-at-head") if branch else ("", "")
 
 

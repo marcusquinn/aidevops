@@ -20,7 +20,10 @@
 #
 #   file-size            — non-README Markdown over 1000 lines at root, 500 elsewhere.
 #                          Key: (file, 'SIZE'); value: line count.
-#                          (t2171)
+#                          Per-repo exemptions for synced/record Markdown:
+#                          .aidevops.json {"complexity":{"file_size_exclude":
+#                          ["clients/*"]}} (root-relative shell-case globs).
+#                          (t2171, GH#39490)
 #
 #   bash32-compat        — bash 4+ constructs in .sh files that break on macOS 3.2.
 #                          Patterns: \t/\n escapes, associative arrays, namerefs,
@@ -64,6 +67,10 @@ BASE_WORKTREE=""
 HEAD_WORKTREE=""
 COMPLEXITY_APPLICABLE_EXTENSIONS="sh py rb md"
 COMPLEXITY_APPLICABLE_EXTENSION_REGEX="\\.(${COMPLEXITY_APPLICABLE_EXTENSIONS// /|})$"
+# Newline-separated shell-case globs from .aidevops.json
+# complexity.file_size_exclude (GH#39490); file-size metric only.
+FILE_SIZE_EXCLUDES=""
+FILE_SIZE_METRIC="file-size"
 
 # Base/head snapshots are plain directories inside TMP_DIR with no Git
 # worktree registration (GH#34905), so removing TMP_DIR is the whole cleanup.
@@ -100,7 +107,7 @@ die() {
 }
 
 usage() {
-	sed -n '4,49p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '4,55p' "$0" | sed 's/^# \{0,1\}//'
 	return 0
 }
 
@@ -394,9 +401,78 @@ scan_dir_nesting_depth() {
 }
 
 # ---------------------------------------------------------------------------
+# _load_file_size_excludes <root> [<base_sha>] [<head_sha>]
+#
+# Load .aidevops.json complexity.file_size_exclude into FILE_SIZE_EXCLUDES
+# (GH#39490) so repos of synced records (email archives, transcripts, data
+# snapshots) can exempt those paths from the Markdown file-size ratchet
+# without bypassing the whole guard. Missing jq, file, key or valid JSON
+# leaves the list empty, so the gate stays fail-closed.
+#
+# #aidevops:trust-boundary — with a base, a config tracked at that base is
+# read from the base commit, and a config newly tracked by the change is
+# ignored, so a push or PR cannot exempt its own new files; exclusions take
+# effect only after they merge. An untracked config (the `aidevops init`
+# default: gitignored) is operator-local and read from the working tree.
+# ---------------------------------------------------------------------------
+_load_file_size_excludes() {
+	local _root="$1"
+	local _base_sha="${2:-}"
+	local _head_sha="${3:-}"
+	local _json=""
+	FILE_SIZE_EXCLUDES=""
+	[ -n "$_root" ] && [ -d "$_root" ] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+
+	if [ -n "$_base_sha" ] && git -C "$_root" cat-file -e "${_base_sha}:.aidevops.json" 2>/dev/null; then
+		_json=$(git -C "$_root" show "${_base_sha}:.aidevops.json" 2>/dev/null) || _json=""
+	elif [ -n "$_base_sha" ] && {
+		git -C "$_root" ls-files --error-unmatch -- .aidevops.json >/dev/null 2>&1 ||
+			{ [ -n "$_head_sha" ] && [ "$_head_sha" != "WORKTREE" ] &&
+				git -C "$_root" cat-file -e "${_head_sha}:.aidevops.json" 2>/dev/null; }
+	}; then
+		log "file-size: .aidevops.json is newly tracked in this change; complexity.file_size_exclude applies after it merges"
+		return 0
+	elif [ -f "$_root/.aidevops.json" ]; then
+		_json=$(<"$_root/.aidevops.json")
+	fi
+	[ -n "$_json" ] || return 0
+
+	FILE_SIZE_EXCLUDES=$(printf '%s\n' "$_json" | jq -r '
+		.complexity? | objects | .file_size_exclude? | arrays | .[] |
+		strings | ltrimstr("./") | select(length > 0)' 2>/dev/null) || FILE_SIZE_EXCLUDES=""
+	if [ -n "$FILE_SIZE_EXCLUDES" ]; then
+		log "file-size: $(printf '%s\n' "$FILE_SIZE_EXCLUDES" | wc -l | tr -d ' ') exclude pattern(s) from .aidevops.json complexity.file_size_exclude"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _file_size_excluded <rel-path>
+#
+# Return 0 when <rel-path> (root-relative) matches a FILE_SIZE_EXCLUDES glob.
+# Patterns use shell `case` semantics, where `*` also crosses `/`, so
+# `clients/*` and `clients/**` both cover every nested path under clients/.
+# ---------------------------------------------------------------------------
+_file_size_excluded() {
+	local _rel="$1"
+	local _pattern
+	[ -n "$FILE_SIZE_EXCLUDES" ] || return 1
+	while IFS= read -r _pattern; do
+		[ -n "$_pattern" ] || continue
+		# shellcheck disable=SC2254 # unquoted on purpose: the value is a glob
+		case "$_rel" in
+		$_pattern) return 0 ;;
+		esac
+	done <<<"$FILE_SIZE_EXCLUDES"
+	return 1
+}
+
+# ---------------------------------------------------------------------------
 # scan_dir_file_size <dir> [<out-file>] [<files-filter>]
 #
-# Markdown over 1000 lines at repository root, 500 elsewhere; README.md exempt. Code file
+# Markdown over 1000 lines at repository root, 500 elsewhere; README.md exempt;
+# paths matching .aidevops.json complexity.file_size_exclude exempt. Code file
 # length is intentionally not gated here; code scalability is covered by
 # function-complexity and nesting-depth gates, which produce more actionable
 # work than whole-file line counts for cohesive helper modules. Output:
@@ -433,6 +509,7 @@ scan_dir_file_size() {
 		case "$_rel_file" in
 		README.md | */README.md) continue ;;
 		esac
+		_file_size_excluded "$_rel_file" && continue
 		case "$_rel_file" in
 		*/*) _limit=500 ;;
 		*) _limit=1000 ;;
@@ -818,8 +895,10 @@ write_report() {
 				printf '\n</details>\n\n'
 			fi
 
-			if [ "$_metric" = "file-size" ]; then
+			if [ "$_metric" = "$FILE_SIZE_METRIC" ]; then
 				printf '> First make the whole document more concise without losing detail; split or bypass only if that is not enough.\n'
+				printf '> Synced records (email archives, transcripts, data snapshots): exempt their paths with %s %s; a tracked config applies after it merges.\n' \
+					"\`.aidevops.json\`" "\`complexity.file_size_exclude\`"
 			fi
 			# shellcheck disable=SC2016
 			printf '> To override (with justification), add the `complexity-bump-ok` label to this PR\n'
@@ -872,6 +951,9 @@ cmd_scan() {
 	[ -n "$_dir" ] || die "scan: <dir> argument required"
 	[ -d "$_dir" ] || die "scan: directory not found: $_dir"
 
+	if [ "$_metric" = "$FILE_SIZE_METRIC" ]; then
+		_load_file_size_excludes "$_dir"
+	fi
 	scan_dir "$_dir" "$_out" "$_metric"
 	return 0
 }
@@ -992,8 +1074,9 @@ _check_dry_run() {
 # ---------------------------------------------------------------------------
 _log_file_size_remediation() {
 	local _metric="$1"
-	if [ "$_metric" = "file-size" ]; then
+	if [ "$_metric" = "$FILE_SIZE_METRIC" ]; then
 		log "Markdown limits: root 1000 / elsewhere 500; README.md exempt. First make the whole document more concise without losing detail; split or bypass only if that is not enough."
+		log "Synced records (email archives, transcripts, data snapshots): exempt their paths with .aidevops.json {\"complexity\":{\"file_size_exclude\":[\"clients/*\"]}} instead of bypassing every push; a tracked config takes effect after it merges."
 	fi
 	return 0
 }
@@ -1020,6 +1103,104 @@ _changed_applicable_paths() {
 		git diff --name-only -z "$_base_sha" "$_head_sha" 2>/dev/null | _nul_paths_to_lines |
 			grep -E "$COMPLEXITY_APPLICABLE_EXTENSION_REGEX" || true
 	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _renamed_applicable_pairs <base_sha> <head_sha> <working_tree>
+#
+# Print "old<TAB>new" for each rename between base and head (or base and the
+# working tree when <working_tree>=1) whose destination is applicable. Git's
+# default -M similarity (50%) applies, so renamed-and-edited files keep their
+# identity exactly like in-place edits. `git diff --name-only` reports only the
+# destination of a rename; without this map the base snapshot has no file at
+# that path and every existing violation in a moved file looks new (GH#36897).
+# Paths containing a tab or newline cannot be represented in the TSV scan
+# output and are skipped. An unstaged plain `mv` appears as delete+untracked
+# and is not detected; `git mv` and committed renames are.
+# ---------------------------------------------------------------------------
+_renamed_applicable_pairs() {
+	local _base_sha="$1"
+	local _head_sha="$2"
+	local _working_tree="$3"
+	local _status _old _new
+	local _nl='
+'
+	local _tab
+	_tab=$(printf '\t')
+	local -a _range=("$_base_sha")
+	[ "$_working_tree" -eq 1 ] || _range+=("$_head_sha")
+
+	while IFS= read -r -d '' _status; do
+		IFS= read -r -d '' _old || break
+		IFS= read -r -d '' _new || break
+		case "$_status" in
+		R*) ;;
+		*) continue ;;
+		esac
+		case "${_old}${_new}" in
+		*"$_nl"* | *"$_tab"*) continue ;;
+		esac
+		[[ "$_new" =~ $COMPLEXITY_APPLICABLE_EXTENSION_REGEX ]] || continue
+		printf '%s\t%s\n' "$_old" "$_new"
+	done < <(git diff -z -M --name-status --diff-filter=R "${_range[@]}" -- 2>/dev/null || true)
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _remap_scan_paths <scan-file> <rename-map-file>
+#
+# Rewrite column 1 of <scan-file> from rename sources to destinations using
+# <rename-map-file> ("old<TAB>new" rows) so base violations keep their identity
+# after a move. Rename sources are deleted at head, so no path collides.
+# ---------------------------------------------------------------------------
+_remap_scan_paths() {
+	local _scan="$1"
+	local _map="$2"
+	[ -s "$_scan" ] && [ -s "$_map" ] || return 0
+	local _tmp="${_scan}.remap"
+	awk -F '\t' -v OFS='\t' 'NR==FNR { m[$1]=$2; next } ($1 in m) { $1=m[$1] } { print }' \
+		"$_map" "$_scan" >"$_tmp" || return 1
+	mv "$_tmp" "$_scan" || return 1
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _scan_base_with_renames <base_sha> <head_sha> <working_tree> <metric>
+#                         <changed_source> <base_scan>
+#
+# Materialize and scan the base snapshot into <base_scan>, sets BASE_WORKTREE.
+# Renamed files are scanned at their base path and remapped to the head path,
+# so a move carries existing violations over instead of making them look new
+# (GH#36897). Requires _init_tmp_dir.
+# ---------------------------------------------------------------------------
+_scan_base_with_renames() {
+	local _base_sha="$1"
+	local _head_sha="$2"
+	local _working_tree="$3"
+	local _metric="$4"
+	local _changed_source="$5"
+	local _base_scan="$6"
+	local _rename_map="$TMP_DIR/renames.tsv"
+	local _base_paths="$_changed_source"
+
+	_renamed_applicable_pairs "$_base_sha" "$_head_sha" "$_working_tree" >"$_rename_map"
+	if [ -s "$_rename_map" ]; then
+		_base_paths=$({
+			printf '%s\n' "$_changed_source"
+			cut -f1 "$_rename_map"
+		} | sort -u)
+		log "[$_metric] $(wc -l <"$_rename_map" | tr -d ' ') renamed file(s) compared against their base path"
+	fi
+
+	BASE_WORKTREE="$TMP_DIR/base-snapshot"
+	log "[$_metric] materializing changed files at base ${_base_sha:0:7}"
+	if ! _materialize_ref_paths "$_base_sha" "$BASE_WORKTREE" "$_base_paths" 2>/dev/null; then
+		die "failed to materialize base snapshot for $_base_sha"
+	fi
+	log "[$_metric] scanning base (${_base_sha:0:7})"
+	scan_dir "$BASE_WORKTREE" "$_base_scan" "$_metric" "$_base_paths"
+	_remap_scan_paths "$_base_scan" "$_rename_map" || die "failed to remap renamed base paths"
 	return 0
 }
 
@@ -1071,13 +1252,8 @@ _check_regression() {
 	local _head_scan="$TMP_DIR/head.tsv"
 	local _new_file="$TMP_DIR/new-violations.tsv"
 
-	BASE_WORKTREE="$TMP_DIR/base-snapshot"
-	log "[$_metric] materializing changed files at base ${_base_sha:0:7}"
-	if ! _materialize_ref_paths "$_base_sha" "$BASE_WORKTREE" "$_changed_source" 2>/dev/null; then
-		die "failed to materialize base snapshot for $_base_sha"
-	fi
-	log "[$_metric] scanning base (${_base_sha:0:7})"
-	scan_dir "$BASE_WORKTREE" "$_base_scan" "$_metric" "$_changed_source"
+	_scan_base_with_renames "$_base_sha" "$_head_sha" "$_working_tree" \
+		"$_metric" "$_changed_source" "$_base_scan"
 
 	if [ "$_working_tree" -eq 1 ]; then
 		log "[$_metric] scanning current working tree"
@@ -1181,7 +1357,14 @@ cmd_check() {
 		esac
 	done
 
-	[ "$_dry_run" -eq 1 ] && _check_dry_run "$_metric"
+	local _root=""
+	if [ "$_metric" = "$FILE_SIZE_METRIC" ]; then
+		_root=$(git rev-parse --show-toplevel 2>/dev/null) || _root=""
+	fi
+	if [ "$_dry_run" -eq 1 ]; then
+		[ -n "$_root" ] && _load_file_size_excludes "$_root"
+		_check_dry_run "$_metric"
+	fi
 
 	[ -n "$_base" ] || die "check: --base <sha> is required (use --dry-run to scan current tree)"
 
@@ -1200,6 +1383,9 @@ cmd_check() {
 		_head_sha=$(git rev-parse "$_head")
 	fi
 
+	if [ -n "$_root" ]; then
+		_load_file_size_excludes "$_root" "$_base_sha" "$_head_sha"
+	fi
 	_check_regression "$_base_sha" "$_head_sha" "$_output_md" "$_allow_increase" "$_metric" "$_working_tree"
 }
 

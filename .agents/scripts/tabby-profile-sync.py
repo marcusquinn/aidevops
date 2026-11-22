@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """
-Sync Tabby terminal profiles from aidevops repos.json and detected workspaces.
+Sync Tabby terminal profiles from repos.json inside the Git workspace.
 
-Creates a profile for each registered repo and an optional Buzz workspace with:
+Creates a profile for each eligible registered repo with:
 - Unique bright tab colour (dark-mode friendly)
 - Matching built-in Tabby colour scheme (closest hue)
 - Direct OpenCode launch that leaves a shell open after exit
@@ -23,7 +23,7 @@ import re
 import sys
 import uuid
 from pathlib import Path
-from typing import NamedTuple, Optional
+from typing import NamedTuple
 
 from tabby_appearance_css import apply_managed_css_for_sync
 from tabby_colour_utils import generate_tab_colour, find_closest_scheme
@@ -45,6 +45,18 @@ from tabby_profile_validation import (
     report_profile_command_issues,
 )
 from tabby_shell_resolver import ShellResolutionError, resolve_login_shell
+from tabby_workspace_scope import (
+    eligible_path,
+    is_buzz_path,
+    inside_root_category,
+    is_preserved_outside,
+    normalize_cwd,
+    outside_summary,
+    report_outside_workspace_repos,
+    workspace_root,
+)
+from tabby_managed_profile import is_aidevops_managed_profile
+from tabby_cwd_retarget import retarget_profile_cwds  # noqa: F401 (re-exported)
 from tabby_yaml_recovery import load_yaml_for_sync
 from tabby_yaml_helpers import (
     _parse_block_scalar,
@@ -264,142 +276,6 @@ def get_registered_paths(repos_json_path: str) -> set[str]:
     }
 
 
-def normalize_cwd(path: str) -> str:
-    """Normalize a profile cwd for conservative equality checks."""
-    return os.path.normcase(os.path.realpath(os.path.expanduser(path)))
-
-
-def _has_managed_profile_id(profile: dict) -> bool:
-    """Return True only for IDs emitted by :func:`build_profile_yaml`."""
-    profile_id = profile.get("id")
-    if not isinstance(profile_id, str):
-        return False
-    try:
-        uuid.UUID(profile_id.rsplit(":", 1)[1])
-    except (ValueError, IndexError):
-        return False
-    return profile_id.startswith("local:custom:")
-
-
-def _has_managed_launch(options: dict) -> bool:
-    """Return True for current and historical aidevops OpenCode launch forms."""
-    args = options.get("args")
-    managed_args = (
-        ["-l", "-c", TABBY_OPENCODE_LAUNCH],
-        ["-l", "-c", "aidevops opencode; exec zsh"],
-        ["-l", "-c", LEGACY_TABBY_OPENCODE_LAUNCH],
-        ["-l", "-i", "-c", "opencode"],
-    )
-    command = options.get("command")
-    managed_commands = (
-        TABBY_COMMAND_FIELD_OPENCODE,
-        LEGACY_TABBY_COMMAND_FIELD_OPENCODE,
-        "/bin/zsh -l -c 'aidevops opencode; exec zsh'",
-    )
-    return any((args in managed_args, command in managed_commands))
-
-
-def is_aidevops_managed_profile(profile: dict, projects_group_id: str | None) -> bool:
-    """Identify a generated profile without claiming custom OpenCode profiles."""
-    options = profile.get("options")
-    if not isinstance(options, dict):
-        return False
-    return all(
-        (
-            projects_group_id,
-            profile.get("group") == projects_group_id,
-            profile.get("type") == "local",
-            isinstance(options.get("cwd"), str),
-            _has_managed_profile_id(profile),
-            _has_managed_launch(options),
-        )
-    )
-
-
-def _retarget_block_cwd(
-    lines: list[str],
-    index: int,
-    match: re.Match[str],
-    raw_value: str,
-    path_mappings: dict[str, str],
-) -> tuple[int, bool]:
-    """Retarget one block-scalar cwd and return the next line index."""
-    parent_indent = len(match.group("indent"))
-    value, next_index = _parse_block_scalar(
-        [line.rstrip("\r\n") for line in lines],
-        index + 1,
-        parent_indent,
-        raw_value[0],
-    )
-    replacement = path_mappings.get(value)
-    if not replacement:
-        return next_index, False
-
-    lines[index] = (
-        f"{match.group('indent')}cwd: {replacement}"
-        f"{match.group('newline') or ''}"
-    )
-    del lines[index + 1 : next_index]
-    return index + 1, True
-
-
-def _retarget_inline_cwd(
-    match: re.Match[str], raw_value: str, path_mappings: dict[str, str]
-) -> str | None:
-    """Render a retargeted inline cwd line, preserving matching quotes."""
-    quoted_value = re.fullmatch(r"(?P<quote>['\"])(?P<value>.*)(?P=quote)", raw_value)
-    quote = quoted_value.group("quote") if quoted_value else ""
-    value = quoted_value.group("value") if quoted_value else raw_value
-    replacement = path_mappings.get(value)
-    if not replacement:
-        return None
-
-    rendered = f"{quote}{replacement}{quote}" if quote else replacement
-    return (
-        f"{match.group('indent')}cwd: {rendered}"
-        f"{match.group('newline') or ''}"
-    )
-
-
-def _retarget_cwd_line(
-    lines: list[str],
-    index: int,
-    cwd_pattern: re.Pattern[str],
-    path_mappings: dict[str, str],
-) -> tuple[int, bool]:
-    """Retarget the cwd at one line and return the next index and change flag."""
-    match = cwd_pattern.match(lines[index])
-    if not match:
-        return index + 1, False
-    raw_value = match.group("value").strip()
-    if raw_value.startswith((">", "|")):
-        return _retarget_block_cwd(lines, index, match, raw_value, path_mappings)
-    retargeted_line = _retarget_inline_cwd(match, raw_value, path_mappings)
-    if not retargeted_line:
-        return index + 1, False
-    lines[index] = retargeted_line
-    return index + 1, True
-
-
-def retarget_profile_cwds(
-    config_text: str, path_mappings: dict[str, str]
-) -> tuple[str, int]:
-    """Retarget exact profile cwd scalars without changing unrelated bytes."""
-    validate_yaml_document(config_text)
-    lines = config_text.splitlines(keepends=True)
-    changed = 0
-    index = 0
-    cwd_pattern = re.compile(r"^(?P<indent>\s+)cwd:\s*(?P<value>.*?)(?P<newline>\r?\n)?$")
-    while index < len(lines):
-        index, was_retargeted = _retarget_cwd_line(
-            lines, index, cwd_pattern, path_mappings
-        )
-        changed += was_retargeted
-    updated = "".join(lines)
-    validate_yaml_document(updated)
-    return updated, changed
-
-
 def _reconciliation_category(
     block, projects_group_id: str | None, registered_paths: set[str], seen_cwds: set[str]
 ) -> str | None:
@@ -410,14 +286,10 @@ def _reconciliation_category(
 
     cwd = profile["options"]["cwd"]
     normalized = normalize_cwd(cwd)
-    cwd_is_known = any(
-        (os.path.isdir(os.path.expanduser(cwd)), normalized in registered_paths)
-    )
-    if not cwd_is_known:
+    if is_buzz_path(cwd):
         return "stale"
-    if normalized in seen_cwds:
-        return "duplicate"
-    seen_cwds.add(normalized)
+    if eligible_path(cwd, workspace_root()):
+        return inside_root_category(cwd, normalized, registered_paths, seen_cwds)
     return None
 
 
@@ -439,35 +311,38 @@ def plan_profile_reconciliation(
     return ProfileReconciliation(stale, duplicates)
 
 
-def get_profile_targets(
-    repos_json_path: str, home: Optional[str] = None
-) -> list[dict]:
-    """Return registered repositories plus detected special workspaces.
-
-    Buzz-backed OpenCode sessions are scoped to ``~/.buzz``. Include that
-    workspace only when it exists, preserving the normal no-unused-profile
-    behavior for users who do not have Buzz installed.
-    """
-    targets = get_repos(repos_json_path)
-    home_path = (
-        os.path.expanduser(home) if home is not None else os.path.expanduser("~")
-    )
-    buzz_path = os.path.join(home_path, ".buzz")
-    should_add_buzz = all(
-        (
-            os.path.isdir(buzz_path),
-            all(target["path"] != buzz_path for target in targets),
-        )
-    )
-    if should_add_buzz:
-        targets.append(
-            {
-                "path": buzz_path,
-                "name": "Buzz",
-                "repo": {"path": buzz_path, "profile_kind": "buzz-workspace"},
-            }
-        )
+def get_profile_targets(repos_json_path: str) -> list[dict]:
+    """Return unique available repositories inside the trusted workspace."""
+    root = workspace_root()
+    seen: set[str] = set()
+    targets = []
+    for repo in get_repos(repos_json_path):
+        normalized = normalize_cwd(repo["path"])
+        if (
+            eligible_path(repo["path"], root)
+            and not is_buzz_path(repo["path"])
+            and normalized not in seen
+        ):
+            seen.add(normalized)
+            targets.append(repo)
     return targets
+
+
+def outside_workspace_summary(
+    repos_json_path: str, config_text: str
+) -> tuple[int, tuple[str, ...]]:
+    """Count registered repos outside the root and list user-owned profile cwds."""
+    root = workspace_root()
+    group_id = extract_group_id(config_text)
+    cwds = []
+    for block in extract_profile_blocks(config_text):
+        options = block.data.get("options")
+        cwd = options.get("cwd") if isinstance(options, dict) else None
+        if not is_aidevops_managed_profile(block.data, group_id) or (
+            isinstance(cwd, str) and is_preserved_outside(cwd, root)
+        ):
+            cwds.append(cwd)
+    return outside_summary(get_registered_paths(repos_json_path), cwds)
 
 
 def _optional_line(value: object, line: str) -> str:
@@ -476,17 +351,14 @@ def _optional_line(value: object, line: str) -> str:
 
 
 def show_status(
-    repos: list[dict], existing_cwds: set[str], reconciliation: ProfileReconciliation
+    repos: list[dict], existing_cwds: set[str], reconciliation: ProfileReconciliation,
+    outside_count: int = 0, outside_profiles: tuple[str, ...] = (),
 ) -> None:
     """Print status of profile targets vs existing Tabby profiles."""
-    workspace_count = sum(
-        repo["repo"].get("profile_kind") == "buzz-workspace" for repo in repos
-    )
-    print(f"Repos in repos.json: {len(repos) - workspace_count}")
-    print(
-        _optional_line(workspace_count, f"Detected workspaces: {workspace_count}"),
-        end="",
-    )
+    print(f"Repos in repos.json: {len(repos)}")
+    print(f"Registered repos outside Git workspace: {outside_count}")
+    for cwd in outside_profiles:
+        print(f"  {cwd}: outside Git workspace (user-owned, preserved)")
     has_profile = sum(repo["path"] in existing_cwds for repo in repos)
     for repo in repos:
         labels = ("new]   ", "exists]")
@@ -567,6 +439,7 @@ def sync_profiles(args: argparse.Namespace) -> None:
     """Perform the profile sync: discover new repos and insert their profiles."""
     shell_path = resolve_login_shell()
     repos = get_profile_targets(args.repos_json)
+    report_outside_workspace_repos(get_registered_paths(args.repos_json))
     config_text, repaired_legacy_yaml = load_yaml_for_sync(args.tabby_config)
     if repaired_legacy_yaml:
         print("Repaired legacy Tabby profiles YAML corruption.")
@@ -610,7 +483,7 @@ def sync_profiles(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Sync Tabby profiles from repos.json and detected workspaces"
+        description="Sync Tabby profiles from repos.json inside the Git workspace"
     )
     parser.add_argument("--repos-json", required=True, help="Path to repos.json")
     parser.add_argument("--tabby-config", required=True, help="Path to Tabby config.yaml")
@@ -624,7 +497,8 @@ def main() -> None:
         reconciliation = plan_profile_reconciliation(
             config_text, get_registered_paths(args.repos_json)
         )
-        show_status(repos, existing_cwds, reconciliation)
+        outside = outside_workspace_summary(args.repos_json, config_text)
+        show_status(repos, existing_cwds, reconciliation, *outside)
         has_validation_issues = (
             report_profile_arg_type_issues(config_text)
             or report_profile_command_issues(config_text)

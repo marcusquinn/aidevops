@@ -32,7 +32,7 @@ Interactive PRs default to human-controlled merge. `pulse-merge.sh` only merges 
 2. PR author has `admin` or `maintain` permission on the repo (OWNER or org MEMBER — write-only COLLABORATORs go through the normal review gate instead).
 3. All required status checks PASS or SKIPPED.
 4. No `CHANGES_REQUESTED` review from a human reviewer.
-5. PR is **not a draft** — `/pr-loop` or an explicit finalise/ready request may convert it with `gh pr ready <PR>`.
+5. PR is **not a draft** — after verification, implementation intent in a maintainer repository (`workflows/full-loop.md` Step 4.2), `/pr-loop`, or an explicit finalise/ready request converts it with `gh pr ready <PR>`.
 6. PR does **not** carry the `hold-for-review` label.
 7. Merge throughput is explicitly opted in by one of:
    - PR label: `allow-auto-merge` (specific PR)
@@ -65,6 +65,15 @@ This is bypassing stale/redundant automation state, not bypassing maintainer pol
 
 `full-loop-helper.sh merge --auto` applies the same rule for interactive sessions: if native auto-merge is already blocked only by review-required branch policy or GitHub self-approval rules, the helper verifies the PR is non-draft, has no `CHANGES_REQUESTED`, has no pending/failing checks, and has no linked issue still carrying `needs-maintainer-review`; then it falls through to `--admin` automatically. Headless workers do not take this fallback.
 
+**Stuck review-bot-gate override (GH#36901).** Since GH#36931 the review add-on gate is advisory for every author, so a missing or rate-limited bot review no longer blocks. The override remains only for an explicit strict/wait repository whose gate is stuck, and the maintainer may explicitly authorise `full-loop-helper.sh merge <PR> <repo> --override-review-bot-gate="<reason, 20+ chars>"`. GitHub still rejects the `--admin` merge when branch protection sets `enforce_admins`, as `marcusquinn/aidevops` does. The override:
+
+- is refused in headless sessions, and is never set from the environment;
+- accepts only terminal `review-bot-gate` failures, so every other required check must pass;
+- re-runs `approval-helper.sh verify pr` immediately before the merge, and the transport still enforces exact-head external authority;
+- merges with `--admin --match-head-commit`, then posts the audit comment, writes a `security.event` audit entry and adds `admin-merge`.
+
+Do not comment on the PR between approval and merge: any non-bot comment stales the PR approval snapshot. Direct `gh pr merge` stays forbidden by command policy.
+
 ### Interactive PR-Drain Mode
 
 Use `pr-drain-helper.sh <owner/repo>` when the goal is maintainer-directed backlog clearing rather than broad baseline cleanup. The helper is read-only by default: it lists open PRs, checks same-repo/non-draft metadata, asks `review-bot-gate-helper.sh status-json` for a machine-readable bot-gate result, inspects merge/conflict state, separates configured baseline-red checks from PR-specific failures, and prints the next command for each PR.
@@ -79,7 +88,7 @@ Recommended loop:
 Admin-merge safety checklist for PR drains:
 
 - PR is same-repo and non-draft.
-- Review-bot result is `PASS`, `PASS_ADVISORY`, `PASS_RATE_LIMITED`, or `SKIP`; `WAITING` occurs only under explicit strict/wait policy or the external-contributor trust boundary.
+- Review-bot result is `PASS`, `PASS_ADVISORY`, `PASS_RATE_LIMITED`, or `SKIP`; `WAITING` occurs only under explicit strict/wait policy.
 - No human `CHANGES_REQUESTED` review exists.
 - Any failing check is known baseline/unrelated and matched by `PR_DRAIN_BASELINE_CHECK_REGEX`; unknown failures block.
 - The scoped diff matches the linked issue/task and conflict fixes do not broaden scope.
@@ -120,6 +129,21 @@ The allowlist allows peer runners (separate machine/account, `COLLABORATOR` asso
 
 **Security posture:** Allowlist entries are local-trust grants from the maintainer of the runner machine. They cannot bypass CI, a live NMR gate, or PR-specific external merge authority; they only relax the GitHub author-association proxy.
 
+### Scheduled-Workflow Issues (GH#37882)
+
+An issue opened by a workflow's default `GITHUB_TOKEN` is authored by `github-actions[bot]` (`author_association` `NONE`), so its worker PRs stop at criterion 2: `Merge blocked by t2449: linked issue #N author_association=NONE ... no cryptographic approval signature found`. Pulse and `full-loop-helper.sh merge` share this verdict (`worker_briefed_trust_verdict`).
+
+**Supported route: give the workflow maintainer authority.** Have the workflow open and edit its issues with a token that carries maintainer identity. A `github.token` fallback (secret unset) keeps the workflow running, but those issues are `github-actions[bot]` again and fail criterion 2 as above:
+
+- **Maintainer fine-grained PAT** (repository or organization secret; `Issues: Read and write` on the target repositories only). The issue author becomes the maintainer, `OWNER`/`MEMBER`, and criterion 2 passes with no config change.
+- **GitHub App installation token** (minted in the job with `actions/create-github-app-token`). The issue author is `<app-slug>[bot]`; add that exact login, including `[bot]`, to `trusted-issue-authors.conf` on each runner.
+
+Use such a token only in workflows that run trusted code on trusted input: `schedule`/`workflow_dispatch` on the default branch, with no `pull_request_target`, `issue_comment`, or other untrusted triggers that write issues, and an issue body built only from data the maintainer controls (the repository, a maintainer-owned upstream). Never copy issue, comment, PR, or other externally supplied text into the brief: the token would make that request maintainer-briefed. A maintainer-authored brief is maintainer-briefed for every file it names, so the workflow, not the PR diff, bounds the scope. Criteria 3-9 still apply.
+
+**Never** add `github-actions[bot]` to the allowlist: login matching is global, so it would trust every Actions-filed issue in every Pulse repository, including workflows on untrusted triggers.
+
+**Scoped exceptions without a token.** Two fixed issue shapes pass as `github-actions[bot]` when the PR diff stays in scope: the OpenCode pin canary (`_is_trusted_opencode_canary_issue_pr`, GH#35752) and WP Plugin Starter `starter-sync` issues (`_is_trusted_starter_sync_issue_pr`, GH#37289). The starter-sync scope is `scripts/core-files.txt` at the PR base plus bare `` - `path` `` items under the issue's `### Files Scope`. A changed path covered by neither (common for core files the starter just added, older issue bodies without `### Files Scope`, and plugin-own edits such as `README.md` listed with an annotation) fails the check and still needs the token route or `sudo aidevops approve issue N`. The token route changes only issues it opens: editing an existing `github-actions[bot]` issue keeps that author. For such an issue, either approve it with `sudo aidevops approve issue N`, or close it so the next run opens a maintainer-authored one, and link the open PR to the new issue.
+
 ### Security Gate: External-Author NMR Authority
 
 `auto_approve_maintainer_issues` uses live issue-author authority as the invariant. A verified write-authorized author never self-approves: unreasoned residue is removed, explicit durable human-decision or security evidence becomes `hold-for-review`, and machine-breaker evidence becomes `status:blocked`, without posting an approval marker. A live security label takes precedence over temporary or breaker recovery. Label actor, elapsed time, and missing automation provenance cannot manufacture human intent; incomplete timeline, comment, or current-label evidence leaves NMR unchanged for retry.
@@ -145,10 +169,13 @@ Symmetric extension of t3052 to the **deterministic merge cascade** — the `_ch
 
 `sudo aidevops approve issue|pr N [N...] OWNER/REPO` and mixed `sudo aidevops approve batch issue:N pr:N... OWNER/REPO` sign a separate `aidevops-approval/v2` payload for each target after listing the complete batch and receiving one exact `APPROVE` confirmation. Each payload contains a SHA-256 digest of a canonical read-only GitHub snapshot. The snapshot binds object IDs, title/body, non-bot human comments and reviews, linked-reference timeline events, and—for PRs—the head SHA/ref/repository and base ref/repository. Verification excludes the exact signed comment being checked and the trusted deterministic NMR lifecycle audit written after verification. Marker text in any other external human comment remains content-bound, so copied unsigned markers cannot hide drift. A repeated approval binds prior approval comments and leaves only the newest matching snapshot authoritative.
 
+**Linux launcher path (GH#39027):** sudo's `secure_path` omits user-local directories such as `~/.local/bin`, so `sudo aidevops` can fail with `command not found` on Linux. Printed approval commands use `approval_cli_prefix` (`shared-approval-cli.sh`): `sudo aidevops` on macOS or when sudo finds the CLI, otherwise the launcher path, for example `sudo ~/.local/bin/aidevops approve issue N OWNER/REPO`. For a hand-typed command, use `sudo "$(command -v aidevops)" approve ...`. Content matchers accept only these prefix forms.
+
 - Issue V2 authority permits development of that exact issue snapshot. It never authorizes a future or changed external PR.
 - A continuously locked issue retains that authority across write-authorized assignment changes and the complete core workflow state machine (`available`, `queued`, `claimed`, `in-progress`, `in-review`, `done`, and `blocked`). These labels carry execution state, not development scope. Unsupported labels, untrusted actors, content drift, state changes, or any unlock/relock gap still invalidate continuity; live safety and review labels continue to block action independently.
 - Comments created after the approval comment by a user whose live repository permission is `admin`, `maintain`, or `write` are authority-equivalent on a continuously locked issue (the author could file the same text as a maintainer issue) and do not stale it (GH#33089). Pre-approval comments and their edits, lower-permission or unverifiable authors, and linked references stay bound; permission API failure returns `API_ERROR`.
 - Issue payloads signed after GH#33097 also carry `issue.content_digests` (`title`, `body`, and `frame` = everything else). On a continuously locked issue, a title/body edit keeps the approval when the frame digest still matches and every post-approval edit is write-authorized: each title change needs a `renamed` timeline event by an `admin`/`maintain`/`write` actor; each body edit at or after the approval comment needs a GraphQL `userContentEdits` editor with that live permission. A missing or `ghost` editor, missing post-approval edit history, a second history page, or a GraphQL error returns `API_ERROR`. Older payloads without component digests, unlocked issues, and PR approvals keep exact title/body binding.
+- A content-bound linked source (an external issue/PR) keeps binding its title and body, but on a continuously locked issue a body edit after signing keeps the approval when restoring each changed body to its GraphQL `userContentEdits` revision at `issued_at` reproduces the signed digest/frame and every later edit is by a live `admin`/`maintain`/`write` User, or by a review bot listed in `configs/review-bot-body-blocks.conf` that changed bytes only inside its marker block (GH#38006). External-author, unlisted-bot or out-of-block edits stay `STALE_APPROVAL`. Payloads signed after GH#38006 carry `linked_frame`/`linked_bodies` digests, so unreadable or unexplained history for a named changed source returns `API_ERROR`; older payloads keep `STALE_APPROVAL` in that case.
 - External/fork merge requires both the existing approved linked-issue chain and PR-specific V2 merge authority for the exact current head. The final trust gate re-fetches this immediately before every native, admin, direct, and retry merge call; it also checks live author permission so missing external labels cannot bypass the rule.
 - Issue continuity starts from the newest REST timeline `locked` event with no later `unlock`. Signing refuses (after a few bounded re-reads) when GitHub reports the issue locked but exposes no such anchor, so nothing is signed and `needs-maintainer-review` stays. GitHub can stop returning an issue's lifecycle events (observed at 310); when the count is at or above 300, re-signing cannot succeed. Open a replacement issue with the same reviewed body and `Ref #N`, close the original as superseded, and approve the replacement. Older signatures over `locked: true` with a null anchor verify as `STALE_APPROVAL` with `APPROVAL_REASON: unanchored-lock-signature` (GH#34554).
 - Body/comment/link/linked-reference/base/head drift returns `STALE_APPROVAL`; malformed payloads, API uncertainty, and missing keys fail closed.

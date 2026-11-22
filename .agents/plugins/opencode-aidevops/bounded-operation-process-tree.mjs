@@ -102,7 +102,11 @@ export function createProcessTreeTracker(rootPid, snapshotProcesses = processSna
   return {
     track,
     nestedTargets: (snapshot) => (snapshot ? verifiedNestedTargets(snapshot.entries, owned, rootPid) : []),
-    ownGroupMembers: (snapshot) => snapshot.entries.filter((entry) => entry.pgid === rootPid).length,
+    // Group membership alone does not establish ownership after PID reuse.
+    ownGroupTargets: (snapshot) => snapshot.entries
+      .filter((entry) => entry.pgid === rootPid && isOwned(owned, entry))
+      .map((entry) => entry.pid),
+    ownGroupMembers: (snapshot) => snapshot.entries.filter((entry) => entry.pgid === rootPid && entry.pid !== snapshot.psPid).length,
     containment: () => ({ nestedProcessGroups: nestedGroups.size, attributionComplete }),
   };
 }

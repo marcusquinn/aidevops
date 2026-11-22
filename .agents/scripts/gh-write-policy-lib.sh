@@ -24,6 +24,19 @@ if [[ -z "${_SHIM_DIR:-}" ]]; then
 	_SHIM_DIR="$(cd "$_gh_write_policy_path" && pwd)"
 	unset _gh_write_policy_path
 fi
+# shellcheck source=./gh-closing-reference-lib.sh
+source "${_SHIM_DIR}/gh-closing-reference-lib.sh"
+
+_shim_validate_pr_closing_keywords() {
+	case "${_modified_args[0]:-}:${_modified_args[1]:-}" in
+	pr:create | pr:edit | pr:merge)
+		_gh_validate_pr_closing_keywords "${_modified_args[@]:2}"
+		return $?
+		;;
+	esac
+	return 0
+}
+
 _shim_is_headless_automation() {
 	case ":${HEADLESS:-}:${FULL_LOOP_HEADLESS:-}:${AIDEVOPS_HEADLESS:-}:${OPENCODE_HEADLESS:-}:${GITHUB_ACTIONS:-}:${AIDEVOPS_SESSION_ORIGIN:-}:" in
 	*:1:* | *:true:* | *:worker:* | *:pulse:* | *:routine:* | *:headless:*) return 0 ;;

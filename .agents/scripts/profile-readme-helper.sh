@@ -17,6 +17,17 @@
 # The profile repo README must contain marker comments:
 #   <!-- STATS-START --> ... <!-- STATS-END -->
 #   <!-- UPDATED-START --> ... <!-- UPDATED-END -->
+# Optional auto-managed blocks:
+#   <!-- PROJECTS-START --> ... <!-- PROJECTS-END -->            (every update)
+#   <!-- CONTRIBUTIONS-START --> ... <!-- CONTRIBUTIONS-END -->  (daily)
+#
+# Thin orchestrator: shared globals, README helpers, init/update commands and
+# dispatch live here; cohesive function groups live in sourced sub-libraries:
+#   profile-readme-data-lib.sh          (stats data collection and formatting)
+#   profile-readme-render-lib.sh        (stats section rendering)
+#   profile-readme-publication-lib.sh   (update lock, isolated publication worktree)
+#   profile-readme-contributions-lib.sh (Contributions block generation and refresh)
+#   profile-readme-projects-lib.sh      (Projects block generation and refresh)
 
 set -euo pipefail
 
@@ -31,6 +42,8 @@ OPENCODE_DB_FILE="${HOME}/.local/share/opencode/opencode.db"
 OPENCODE_ARCHIVE_DB_FILE="${HOME}/.local/share/opencode/opencode-archive.db"
 CONTRIBUTIONS_START_MARKER='<!-- CONTRIBUTIONS-START -->'
 CONTRIBUTIONS_END_MARKER='<!-- CONTRIBUTIONS-END -->'
+PROJECTS_START_MARKER='<!-- PROJECTS-START -->'
+PROJECTS_END_MARKER='<!-- PROJECTS-END -->'
 PROFILE_UPDATE_LOCK_TOKEN=""
 PROFILE_UPDATE_LOCK_GRACE_SECONDS="${AIDEVOPS_PROFILE_LOCK_GRACE_SECONDS:-30}"
 PROFILE_PUBLICATION_WORKTREE=""
@@ -40,378 +53,8 @@ PROFILE_PUBLICATION_CANONICAL_HEAD=""
 PROFILE_PUBLICATION_CANONICAL_STATUS=""
 PROFILE_PUBLICATION_INTENT_PATH=""
 PROFILE_PUBLICATION_REGISTRY_TASK="profile-readme"
+PROFILE_PUBLICATION_INTENT_SCHEMA="aidevops-profile-publication-intent/v1"
 PROFILE_CONTRIBUTIONS_REFRESHED=false
-
-# --- Serialize profile refreshes so scheduler overlap cannot duplicate scans/writes ---
-_profile_update_lock_dir() {
-	printf '%s\n' "${HOME}/.aidevops/cache/profile-readme-update.lock"
-	return 0
-}
-
-_profile_lock_mtime() {
-	local lock_dir="$1"
-	local modified=""
-	modified=$(_file_mtime_epoch "$lock_dir" 2>/dev/null || true)
-	[[ "$modified" =~ ^[0-9]+$ ]] || modified=0
-	printf '%s\n' "$modified"
-	return 0
-}
-
-_profile_lock_owner() {
-	local lock_dir="$1"
-	local owner_line=""
-	if [[ -f "${lock_dir}/owner" ]]; then
-		IFS= read -r owner_line <"${lock_dir}/owner" || true
-		printf '%s\n' "$owner_line"
-	fi
-	return 0
-}
-
-_acquire_profile_update_lock() {
-	local lock_dir token now
-	lock_dir=$(_profile_update_lock_dir)
-	now=$(date +%s)
-	token="$$.${RANDOM}.${now}.${RANDOM}"
-	mkdir -p "${lock_dir%/*}" || return 1
-	if mkdir "$lock_dir" 2>/dev/null; then
-		local owner_tmp="${lock_dir}/owner.${token}"
-		printf '%s|%s|%s\n' "$token" "$$" "$now" >"$owner_tmp" || return 1
-		mv "$owner_tmp" "${lock_dir}/owner" || return 1
-		PROFILE_UPDATE_LOCK_TOKEN="$token"
-		return 0
-	fi
-
-	local owner_before owner_after lock_pid lock_created mtime_before mtime_after age
-	owner_before=$(_profile_lock_owner "$lock_dir")
-	mtime_before=$(_profile_lock_mtime "$lock_dir")
-	IFS='|' read -r _ lock_pid lock_created <<<"$owner_before"
-	age=$((now - mtime_before))
-	if [[ "$lock_pid" =~ ^[0-9]+$ ]] && kill -0 "$lock_pid" 2>/dev/null; then
-		echo "Profile README update already running; skipping overlapping refresh" >&2
-		return 2
-	fi
-	if [[ -z "$owner_before" || ! "$lock_created" =~ ^[0-9]+$ ]] && [[ "$age" -lt "$PROFILE_UPDATE_LOCK_GRACE_SECONDS" ]]; then
-		echo "Profile README lock is being initialized; skipping overlapping refresh" >&2
-		return 2
-	fi
-
-	# Revalidate immediately before the atomic rename. A changed owner/mtime means
-	# another process repaired or replaced the lock while this process inspected it.
-	owner_after=$(_profile_lock_owner "$lock_dir")
-	mtime_after=$(_profile_lock_mtime "$lock_dir")
-	if [[ "$owner_before" != "$owner_after" || "$mtime_before" != "$mtime_after" ]]; then
-		echo "Profile README lock changed during stale-owner validation" >&2
-		return 2
-	fi
-	local stale_dir="${lock_dir}.stale.${token}"
-	if ! mv "$lock_dir" "$stale_dir" 2>/dev/null; then
-		echo "Profile README lock was claimed by another process" >&2
-		return 1
-	fi
-	rm -rf "$stale_dir"
-	if ! mkdir "$lock_dir" 2>/dev/null; then
-		[[ -d "$lock_dir" ]] || return 1
-		echo "Profile README update already running; skipping overlapping refresh" >&2
-		return 2
-	fi
-	local owner_tmp="${lock_dir}/owner.${token}"
-	printf '%s|%s|%s\n' "$token" "$$" "$now" >"$owner_tmp" || return 1
-	mv "$owner_tmp" "${lock_dir}/owner" || return 1
-	PROFILE_UPDATE_LOCK_TOKEN="$token"
-	return 0
-}
-
-_release_profile_update_lock() {
-	local lock_dir
-	lock_dir=$(_profile_update_lock_dir)
-	if [[ -z "$PROFILE_UPDATE_LOCK_TOKEN" ]]; then
-		return 0
-	fi
-	local owner token
-	owner=$(_profile_lock_owner "$lock_dir")
-	token="${owner%%|*}"
-	if [[ "$token" != "$PROFILE_UPDATE_LOCK_TOKEN" ]]; then
-		echo "Profile README lock owner changed; refusing non-owner release" >&2
-		return 1
-	fi
-	rm -rf "$lock_dir"
-	PROFILE_UPDATE_LOCK_TOKEN=""
-	return 0
-}
-
-_profile_publication_worktree_helper() {
-	printf '%s\n' "${AIDEVOPS_PROFILE_WORKTREE_HELPER:-${SCRIPT_DIR}/worktree-helper.sh}"
-	return 0
-}
-
-_profile_publication_registry_update() {
-	local operation="$1"
-	local worktree_path="$2"
-	local owner_pid="${3:-}"
-	local owner_session="${4:-}"
-
-	(
-		# shellcheck source=shared-constants.sh
-		source "${SCRIPT_DIR}/shared-constants.sh" || exit 1
-		case "$operation" in
-		register)
-			register_worktree "$worktree_path" "" --task "$PROFILE_PUBLICATION_REGISTRY_TASK" \
-				--session "$owner_session" --owner-pid "$owner_pid"
-			;;
-		unregister) unregister_worktree "$worktree_path" ;;
-		*) exit 1 ;;
-		esac
-	)
-}
-
-_profile_publication_intent_path() {
-	local canonical_repo="$1"
-	local worktree_path="$2"
-	local common_dir=""
-	local worktree_name=""
-
-	common_dir=$(git -C "$canonical_repo" rev-parse --path-format=absolute --git-common-dir) || return 1
-	worktree_name=$(basename "$worktree_path")
-	[[ "$worktree_name" == "$(basename "$canonical_repo")-profile-readme-"* ]] || return 1
-	printf '%s/aidevops-profile-publication-intents/%s.json\n' "$common_dir" "$worktree_name"
-	return 0
-}
-
-_profile_write_publication_intent() {
-	local worktree_path="$1"
-	local canonical_repo="$2"
-	local resolved_parent=""
-	local resolved_worktree_path=""
-	local common_dir=""
-	local canonical_head=""
-	local intent_path=""
-	local intent_dir=""
-	local intent_tmp=""
-	local worktree_name=""
-
-	resolved_parent=$(cd "${worktree_path%/*}" 2>/dev/null && pwd -P) || return 1
-	worktree_name=$(basename "$worktree_path")
-	resolved_worktree_path="${resolved_parent}/${worktree_name}"
-	common_dir=$(git -C "$canonical_repo" rev-parse --path-format=absolute --git-common-dir) || return 1
-	canonical_head=$(git -C "$canonical_repo" rev-parse HEAD) || return 1
-	intent_path=$(_profile_publication_intent_path "$canonical_repo" "$resolved_worktree_path") || return 1
-	intent_dir=${intent_path%/*}
-	if [[ -e "$intent_dir" ]]; then
-		[[ -d "$intent_dir" && ! -L "$intent_dir" ]] || return 1
-	else
-		mkdir -p "$intent_dir" || return 1
-	fi
-	chmod 700 "$intent_dir" || return 1
-	[[ ! -e "$intent_path" && ! -L "$intent_path" ]] || return 1
-	intent_tmp=$(mktemp "${intent_path}.XXXXXX") || return 1
-	if ! jq -n \
-		--arg schema "aidevops-profile-publication-intent/v1" \
-		--arg producer "$PROFILE_PUBLICATION_REGISTRY_TASK" \
-		--arg intent_id "$worktree_name" \
-		--arg worktree_path "$resolved_worktree_path" \
-		--arg canonical_common_dir "$common_dir" \
-		--arg canonical_head "$canonical_head" \
-		--arg canonical_status "${PROFILE_PUBLICATION_CANONICAL_STATUS:-}" \
-		--argjson created_epoch "$(date +%s)" \
-		'{schema:$schema,producer:$producer,intent_id:$intent_id,worktree_path:$worktree_path,canonical_common_dir:$canonical_common_dir,canonical_head:$canonical_head,canonical_status:$canonical_status,created_epoch:$created_epoch}' \
-		>"$intent_tmp" || ! chmod 600 "$intent_tmp" || ! mv "$intent_tmp" "$intent_path"; then
-		rm -f "$intent_tmp"
-		return 1
-	fi
-	PROFILE_PUBLICATION_INTENT_PATH="$intent_path"
-	return 0
-}
-
-_profile_remove_publication_intent() {
-	local intent_path="${PROFILE_PUBLICATION_INTENT_PATH:-}"
-	[[ -n "$intent_path" ]] || return 0
-	if [[ -e "$intent_path" || -L "$intent_path" ]]; then
-		[[ -f "$intent_path" && ! -L "$intent_path" ]] || return 1
-		rm -f "$intent_path" || return 1
-	fi
-	PROFILE_PUBLICATION_INTENT_PATH=""
-	return 0
-}
-
-_profile_clear_publication_state() {
-	PROFILE_PUBLICATION_WORKTREE=""
-	PROFILE_PUBLICATION_CANONICAL_REPO=""
-	PROFILE_PUBLICATION_WORKTREE_BASE=""
-	PROFILE_PUBLICATION_CANONICAL_HEAD=""
-	PROFILE_PUBLICATION_CANONICAL_STATUS=""
-	PROFILE_PUBLICATION_INTENT_PATH=""
-	return 0
-}
-
-_profile_write_publication_marker() {
-	local worktree_path="$1"
-	local canonical_repo="$2"
-	local resolved_worktree_path=""
-	local git_dir=""
-	local common_dir=""
-	local canonical_head=""
-	local marker_path=""
-	local marker_tmp=""
-
-	resolved_worktree_path=$(cd "$worktree_path" 2>/dev/null && pwd -P) || return 1
-	git_dir=$(git -C "$resolved_worktree_path" rev-parse --path-format=absolute --git-dir) || return 1
-	common_dir=$(git -C "$canonical_repo" rev-parse --path-format=absolute --git-common-dir) || return 1
-	canonical_head=$(git -C "$canonical_repo" rev-parse HEAD) || return 1
-	marker_path="${git_dir}/aidevops-profile-publication.json"
-	marker_tmp="${marker_path}.$$"
-	jq -n \
-		--arg schema "aidevops-profile-publication/v1" \
-		--arg producer "$PROFILE_PUBLICATION_REGISTRY_TASK" \
-		--arg worktree_path "$resolved_worktree_path" \
-		--arg canonical_common_dir "$common_dir" \
-		--arg canonical_head "$canonical_head" \
-		--argjson created_epoch "$(date +%s)" \
-		'{schema:$schema,producer:$producer,worktree_path:$worktree_path,canonical_common_dir:$canonical_common_dir,canonical_head:$canonical_head,created_epoch:$created_epoch}' \
-		>"$marker_tmp" || {
-		rm -f "$marker_tmp"
-		return 1
-	}
-	chmod 600 "$marker_tmp" || {
-		rm -f "$marker_tmp"
-		return 1
-	}
-	mv "$marker_tmp" "$marker_path" || {
-		rm -f "$marker_tmp"
-		return 1
-	}
-	return 0
-}
-
-_profile_publication_worktree_has_no_active_owner() {
-	local worktree_path="$1"
-	local cleanup_owner_pid="$$"
-	local owner_state=""
-
-	# Source the registry in a subprocess so its shared command helpers cannot
-	# alter this long-running publication helper's globals.
-	owner_state=$( (
-		# shellcheck source=shared-constants.sh
-		source "${SCRIPT_DIR}/shared-constants.sh" || exit 1
-		if is_worktree_owned_by_others_for_pid "$worktree_path" "$cleanup_owner_pid"; then
-			printf '%s\n' "owned"
-		else
-			printf '%s\n' "clear"
-		fi
-	) ) || return 1
-	[[ "$owner_state" == "clear" ]] || return 1
-	return 0
-}
-
-_profile_publication_worktree_recovery_is_safe() {
-	local worktree_path="$1"
-	local canonical_head=""
-	local canonical_status=""
-	local canonical_common_dir=""
-	local worktree_common_dir=""
-	local worktree_parent=""
-	local worktree_basename=""
-
-	[[ -n "$worktree_path" && "$worktree_path" == "${PROFILE_PUBLICATION_WORKTREE:-}" ]] || return 1
-	[[ -n "${PROFILE_PUBLICATION_CANONICAL_REPO:-}" && -n "${PROFILE_PUBLICATION_WORKTREE_BASE:-}" &&
-		-n "${PROFILE_PUBLICATION_CANONICAL_HEAD:-}" && -d "$worktree_path" ]] || return 1
-	worktree_parent=$(cd "${worktree_path%/*}" 2>/dev/null && pwd -P) || return 1
-	[[ "$worktree_parent" == "$PROFILE_PUBLICATION_WORKTREE_BASE" ]] || return 1
-	worktree_basename="${worktree_path##*/}"
-	[[ "$worktree_basename" == "$(basename "$PROFILE_PUBLICATION_CANONICAL_REPO")-profile-readme-"* ]] || return 1
-	git -C "$worktree_path" symbolic-ref -q HEAD >/dev/null 2>&1 && return 1
-	canonical_common_dir=$(git -C "$PROFILE_PUBLICATION_CANONICAL_REPO" rev-parse --git-common-dir 2>/dev/null) || return 1
-	worktree_common_dir=$(git -C "$worktree_path" rev-parse --git-common-dir 2>/dev/null) || return 1
-	case "$canonical_common_dir" in
-	/*) ;;
-	*) canonical_common_dir=$(cd "$PROFILE_PUBLICATION_CANONICAL_REPO/$canonical_common_dir" 2>/dev/null && pwd -P) || return 1 ;;
-	esac
-	case "$worktree_common_dir" in
-	/*) ;;
-	*) worktree_common_dir=$(cd "$worktree_path/$worktree_common_dir" 2>/dev/null && pwd -P) || return 1 ;;
-	esac
-	[[ "$canonical_common_dir" == "$worktree_common_dir" ]] || return 1
-	canonical_head=$(git -C "$PROFILE_PUBLICATION_CANONICAL_REPO" rev-parse HEAD 2>/dev/null) || return 1
-	[[ "$canonical_head" == "$PROFILE_PUBLICATION_CANONICAL_HEAD" ]] || return 1
-	canonical_status=$(git -C "$PROFILE_PUBLICATION_CANONICAL_REPO" status --porcelain --untracked-files=all) || return 1
-	# Publication already permits pre-existing untracked files in the canonical
-	# mirror. Preserve its captured state instead of requiring unrelated cleanup.
-	[[ "$canonical_status" == "$PROFILE_PUBLICATION_CANONICAL_STATUS" ]] || return 1
-	_profile_publication_worktree_has_no_active_owner "$worktree_path" || return 1
-	return 0
-}
-
-_archive_and_remove_profile_publication_worktree() {
-	local worktree_path="$1"
-	local archive_path=""
-	local caller="profile-readme-helper.sh"
-	local context="recovery_path=profile-publication-archive profile_scratch=true"
-
-	_profile_publication_worktree_recovery_is_safe "$worktree_path" || return 1
-	printf '%s\n' 'Profile publication recovery: capturing completed worktree' >&2
-	archive_worktree_path_recoverably "$worktree_path" "$caller" "$context" || return 1
-	archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
-	[[ -n "$archive_path" ]] || return 1
-	printf '%s\n' 'Profile publication recovery: checking guarded removal' >&2
-	# Recheck after compact verification so a changed canonical checkout or newly claimed
-	# worktree remains recoverable instead of being removed.
-	_profile_publication_worktree_recovery_is_safe "$worktree_path" || return 1
-	remove_archived_worktree_path "$worktree_path" "$archive_path" "$caller" \
-		"profile-publication" "$context" "true" "true" || return 1
-	log_worktree_removal_event "$_WTAR_REMOVED" "$caller" "$worktree_path" \
-		"profile-publication" "recoverable" "$context"
-	return 0
-}
-
-_cleanup_profile_publication_worktree() {
-	if [[ -z "$PROFILE_PUBLICATION_WORKTREE" ]]; then
-		return 0
-	fi
-	# The producer and all its descendants must finish before archival/removal.
-	# The common runner seals the invocation and calls cleanup-managed outside it.
-	if [[ "${AIDEVOPS_MANAGED_WORKTREE_RUN:-0}" == "1" ]]; then
-		return 0
-	fi
-	local worktree_path="$PROFILE_PUBLICATION_WORKTREE"
-	local canonical_repo="$PROFILE_PUBLICATION_CANONICAL_REPO"
-	local worktree_helper=""
-	worktree_helper=$(_profile_publication_worktree_helper)
-	if [[ -z "$canonical_repo" || ! -d "$canonical_repo" || ! -x "$worktree_helper" ]]; then
-		echo "Warning: profile publication worktree cleanup is unavailable: $worktree_path" >&2
-		return 1
-	fi
-	if (cd "$canonical_repo" && "$worktree_helper" remove "$worktree_path" >/dev/null); then
-		_profile_publication_registry_update unregister "$worktree_path" || true
-		_profile_remove_publication_intent || true
-		_profile_clear_publication_state
-		return 0
-	fi
-	if [[ -e "$worktree_path" ]] &&
-		! _archive_and_remove_profile_publication_worktree "$worktree_path"; then
-		echo "Warning: profile publication worktree cleanup failed: $worktree_path" >&2
-		return 1
-	fi
-	_profile_publication_registry_update unregister "$worktree_path" || true
-	_profile_remove_publication_intent || true
-	_profile_clear_publication_state
-	return 0
-}
-
-_profile_update_exit_cleanup() {
-	_cleanup_profile_publication_worktree || true
-	_release_profile_update_lock || true
-	return 0
-}
-
-_ensure_profile_update_lock() {
-	if [[ "${AIDEVOPS_PROFILE_UPDATE_LOCK_HELD:-0}" == "1" ]]; then
-		return 0
-	fi
-	# 2 means benign contention, 1 remains an actual lock/setup error.
-	_acquire_profile_update_lock || return $?
-	export AIDEVOPS_PROFILE_UPDATE_LOCK_HELD=1
-	trap _profile_update_exit_cleanup EXIT
-	return 0
-}
 
 # --- Resolve profile repo path from repos.json ---
 _resolve_profile_repo() {
@@ -520,6 +163,15 @@ source "${SCRIPT_DIR}/profile-readme-data-lib.sh"
 # shellcheck source=profile-readme-render-lib.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/profile-readme-render-lib.sh"
+# shellcheck source=profile-readme-publication-lib.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/profile-readme-publication-lib.sh"
+# shellcheck source=profile-readme-contributions-lib.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/profile-readme-contributions-lib.sh"
+# shellcheck source=profile-readme-projects-lib.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/profile-readme-projects-lib.sh"
 
 # =============================================================================
 # Profile README Management — Badges, README Generation, Clone/Init, Update
@@ -633,169 +285,6 @@ _normalize_readme_for_compare() {
 		/<!-- CONTRIBUTIONS-END -->/ { skip = 0; print; next }
 		!skip { print }
 	' "$file"
-	return 0
-}
-
-# --- Fetch and validate one contribution record ---
-# Prints a sanitized tab-separated name, description, and URL. API failures and
-# malformed responses fail closed so error payloads can never become Markdown.
-_fetch_contribution_record() {
-	local endpoint="$1"
-	local jq_filter="$2"
-	local context="$3"
-	local record=""
-	local malformed_warning="Warning: malformed GitHub API response for ${context}"
-
-	if ! record=$(gh api "$endpoint" --jq "$jq_filter" 2>/dev/null); then
-		echo "Warning: GitHub API failed for ${context}" >&2
-		return 1
-	fi
-	if [[ -z "$record" || "$record" == *$'\n'* ]]; then
-		echo "$malformed_warning" >&2
-		return 1
-	fi
-
-	local name="${record%%$'\t'*}"
-	local remainder="${record#*$'\t'}"
-	if [[ "$remainder" == "$record" ]]; then
-		echo "$malformed_warning" >&2
-		return 1
-	fi
-	local description="${remainder%%$'\t'*}"
-	local url="${remainder#*$'\t'}"
-	if [[ "$url" == "$remainder" || "$url" == *$'\t'* ]]; then
-		echo "$malformed_warning" >&2
-		return 1
-	fi
-	name=$(_sanitize_md "$name")
-	description=$(_sanitize_md "$description")
-	url=$(_sanitize_url "$url")
-	if [[ "$name" == *'<'* || "$name" == *'>'* || "$description" == *'<'* || "$description" == *'>'* ]]; then
-		echo "Warning: unsafe GitHub API record for ${context}" >&2
-		return 1
-	fi
-	if [[ -z "$name" || -z "$url" ]]; then
-		echo "Warning: invalid GitHub API record for ${context}" >&2
-		return 1
-	fi
-	[[ -n "$description" ]] || description="No description"
-	printf '%s\t%s\t%s\n' "$name" "$description" "$url"
-	return 0
-}
-
-# --- List and validate fork names for the profile user ---
-_list_profile_fork_names() {
-	local gh_user="$1"
-	local repos_json=""
-	if ! repos_json=$(gh api "users/${gh_user}/repos?per_page=100&sort=updated" --paginate 2>/dev/null); then
-		echo "Warning: GitHub API failed while listing profile repositories" >&2
-		return 1
-	fi
-	if ! printf '%s\n' "$repos_json" | jq -e -s '
-		length > 0 and all(.[];
-			type == "array" and all(.[];
-				type == "object"
-				and (.fork | type) == "boolean"
-				and (.name | type) == "string"
-			)
-		)
-	' >/dev/null 2>&1; then
-		echo "Warning: malformed GitHub API repository list" >&2
-		return 1
-	fi
-	if ! printf '%s\n' "$repos_json" | jq -r '.[] | select(.fork == true) | .name'; then
-		echo "Warning: could not parse GitHub API repository list" >&2
-		return 1
-	fi
-	return 0
-}
-
-# --- Generate contributions list from forks + repos.json contributed entries ---
-# Outputs markdown lines (one per contributed repo), or empty string if none.
-# Uses core API only (no search API) — ~11 sequential calls per run. Sequential
-# collection prevents concurrent gh output streams from interleaving.
-# Deduplicates across all sources using a newline-delimited "seen" list with
-# exact matching (bash 3.2 compatible — no associative arrays).
-_generate_contributions() {
-	local gh_user="$1"
-	local contrib_repos=""
-	# Newline-delimited list of repo names already added (for O(1)-ish dedup).
-	# Each entry is stored as a full line for exact grep -x matching, avoiding
-	# false positives from partial name matches (e.g., "app" vs "webapp").
-	local seen_repos=""
-
-	# Source 1: forks — resolve parent URLs
-	local fork_names
-	fork_names=$(_list_profile_fork_names "$gh_user") || return 1
-	if [[ -n "$fork_names" ]]; then
-		local fork_filter
-		fork_filter='"\(.name // "")\t\((.description // "No description") | gsub("[\\t\\n\\r]"; " "))\t\(.parent.html_url // "")"'
-		while IFS= read -r fork_name; do
-			[[ -z "$fork_name" ]] && continue
-			local fork_record
-			fork_record=$(_fetch_contribution_record "repos/${gh_user}/${fork_name}" "$fork_filter" "fork ${fork_name}") || return 1
-			local rname rdesc rurl
-			IFS=$'\t' read -r rname rdesc rurl <<<"$fork_record"
-			if [[ -n "$seen_repos" ]] && grep -qxF -- "$rname" <<<"$seen_repos" 2>/dev/null; then
-				continue
-			fi
-			seen_repos="${seen_repos}${rname}"$'\n'
-			contrib_repos="${contrib_repos}- **[${rname}](${rurl})** -- ${rdesc}"$'\n'
-		done <<<"$fork_names"
-	fi
-
-	# Source 2: repos.json "contributed: true" entries (non-fork contributions)
-	local repos_config="${HOME}/.config/aidevops/repos.json"
-	if [[ -f "$repos_config" ]] && command -v jq &>/dev/null; then
-		local contributed_slugs
-		if ! contributed_slugs=$(jq -r '
-			(.initialized_repos // (to_entries | map(.value)))[]
-			| select(.contributed == true)
-			| .slug // empty
-		' "$repos_config" 2>/dev/null); then
-			echo "Warning: could not parse contributed repositories config" >&2
-			return 1
-		fi
-
-		local repo_filter
-		repo_filter='"\(.name // "")\t\((.description // "No description") | gsub("[\\t\\n\\r]"; " "))\t\(.html_url // "")"'
-		while IFS= read -r slug; do
-			[[ -z "$slug" ]] && continue
-			local repo_name
-			repo_name="${slug##*/}"
-			# Deduplicate against all previously seen repos (forks + earlier entries)
-			if [[ -n "$seen_repos" ]] && grep -qxF -- "$repo_name" <<<"$seen_repos" 2>/dev/null; then
-				continue
-			fi
-			local repo_record desc url
-			repo_record=$(_fetch_contribution_record "repos/${slug}" "$repo_filter" "repository ${slug}") || return 1
-			IFS=$'\t' read -r repo_name desc url <<<"$repo_record"
-			seen_repos="${seen_repos}${repo_name}"$'\n'
-			contrib_repos="${contrib_repos}- **[${repo_name}](${url})** -- ${desc}"$'\n'
-		done <<<"$contributed_slugs"
-	fi
-
-	# Sort alphabetically for deterministic output (prevents unnecessary commits
-	# when the API returns results in a different order)
-	if [[ -n "$contrib_repos" ]]; then
-		contrib_repos=$(printf '%s' "$contrib_repos" | sort -f)
-		# Ensure trailing newline
-		contrib_repos="${contrib_repos}"$'\n'
-	fi
-
-	printf '%s' "$contrib_repos"
-	return 0
-}
-
-# --- Generate contributions for a new rich README without blocking init ---
-_generate_initial_contributions() {
-	local gh_user="$1"
-	local contributions=""
-	if ! contributions=$(_generate_contributions "$gh_user"); then
-		echo "Warning: initial Contributions block omitted because GitHub data was unavailable" >&2
-		return 0
-	fi
-	printf '%s' "$contributions"
 	return 0
 }
 
@@ -1118,13 +607,9 @@ _generate_rich_readme() {
 	local badges
 	badges=$(_build_readme_badges "$repos_json")
 
-	# Build own repos section — single jq pass (no loop)
-	local own_repos
-	own_repos=$(echo "$repos_json" | jq -r --arg user "$gh_user" '
-		[.[] | select(.fork == false and .name != $user)] |
-		map("- **[\(.name | gsub("[\\[\\]()`]"; ""))](\(.html_url))** -- \((.description // "No description") | gsub("[\\[\\]()`]"; ""))") |
-		.[]
-	')
+	# Own repos use the same generator as the hourly refresh between markers.
+	local own_repos=""
+	own_repos=$(_generate_projects "$gh_user") || own_repos=""
 
 	# Build contributions section using shared helper
 	local contrib_repos
@@ -1155,13 +640,15 @@ _generate_rich_readme() {
 		echo "<!-- Stats will be populated on first update -->"
 		echo "<!-- STATS-END -->"
 		echo ""
-		# Own repos
+		# Own repos (auto-updated on every refresh)
+		echo "$PROJECTS_START_MARKER"
 		if [[ -n "$own_repos" ]]; then
 			echo "## Projects"
 			echo ""
-			printf '%s' "$own_repos"
-			echo ""
+			printf '%s\n' "$own_repos"
 		fi
+		echo "$PROJECTS_END_MARKER"
+		echo ""
 		# Contributions (auto-updated daily)
 		echo "<!-- CONTRIBUTIONS-START -->"
 		if [[ -n "$contrib_repos" ]]; then
@@ -1519,6 +1006,9 @@ _update_push_with_recovery() {
 	return 0
 }
 
+# Refresh contributions for README $1 when due, honoring dry-run flag $2.
+# Defer publication to the caller and set PROFILE_CONTRIBUTIONS_REFRESHED on
+# success; failures warn without blocking the surrounding stats refresh.
 _profile_refresh_daily_contributions() {
 	local readme_path="$1"
 	local dry_run="$2"
@@ -1602,6 +1092,7 @@ _cmd_update_in_repo() {
 		rm -f "$tmp_file"
 		return 1
 	fi
+	_refresh_projects_block "$tmp_file" "$gh_user"
 
 	# Check if content changed, ignoring UPDATED marker block
 	local old_normalized new_normalized
@@ -1644,505 +1135,16 @@ _cmd_update_in_repo() {
 	return 0
 }
 
-# --- Classify contribution marker topology ---
-_contribution_marker_state() {
+# --- Count lines mentioning one marker token as a whole word ---
+# Prefixed families such as TOTAL-CONTRIBUTIONS-START must not count as
+# CONTRIBUTIONS-START; that collision silently disabled the daily refresh.
+_count_marker_mentions() {
 	local readme_path="$1"
-	if [[ ! -r "$readme_path" ]]; then
-		printf '%s\n' invalid
-		return 0
-	fi
-	local start_exact end_exact start_any end_any
-	start_exact=$(grep -cFx "$CONTRIBUTIONS_START_MARKER" "$readme_path" 2>/dev/null || true)
-	end_exact=$(grep -cFx "$CONTRIBUTIONS_END_MARKER" "$readme_path" 2>/dev/null || true)
-	start_any=$(grep -cF 'CONTRIBUTIONS-START' "$readme_path" 2>/dev/null || true)
-	end_any=$(grep -cF 'CONTRIBUTIONS-END' "$readme_path" 2>/dev/null || true)
-
-	if [[ "$start_exact" -eq 1 && "$end_exact" -eq 1 && "$start_any" -eq 1 && "$end_any" -eq 1 ]]; then
-		local start_line end_line
-		start_line=$(grep -nFx "$CONTRIBUTIONS_START_MARKER" "$readme_path" | cut -d: -f1)
-		end_line=$(grep -nFx "$CONTRIBUTIONS_END_MARKER" "$readme_path" | cut -d: -f1)
-		[[ "$start_line" -lt "$end_line" ]] && printf '%s\n' valid || printf '%s\n' invalid
-		return 0
-	fi
-	if [[ "$start_any" -eq 0 && "$end_any" -eq 0 ]]; then
-		printf '%s\n' absent
-		return 0
-	fi
-	if [[ "$start_exact" -eq 1 && "$start_any" -eq 1 && "$end_exact" -eq 0 && "$end_any" -eq 1 ]] &&
-		awk -v marker="$CONTRIBUTIONS_END_MARKER" '
-			index($0, marker) > 1 && index($0, marker) + length(marker) - 1 == length($0) { found = 1 }
-			END { exit(found ? 0 : 1) }
-		' "$readme_path"; then
-		printf '%s\n' legacy-joined-end
-		return 0
-	fi
-	printf '%s\n' invalid
+	local token="$2"
+	local count=""
+	count=$(grep -cE "(^|[^A-Za-z0-9_-])${token}([^A-Za-z0-9_-]|$)" "$readme_path" 2>/dev/null || true)
+	printf '%s\n' "${count:-0}"
 	return 0
-}
-
-# --- Normalize the legacy generated form with END joined to the last item ---
-_normalize_legacy_contribution_end() {
-	local readme_path="$1"
-	local output_path="$2"
-	awk -v marker="$CONTRIBUTIONS_END_MARKER" '
-		{
-			position = index($0, marker)
-			if (position > 1 && position + length(marker) - 1 == length($0)) {
-				print substr($0, 1, position - 1)
-				print marker
-				next
-			}
-			print
-		}
-	' "$readme_path" >"$output_path"
-	return $?
-}
-
-# --- Migrate static Contributions section to auto-updated markers ---
-# Usage: _update_contributions_migrate_markers <readme_path> <dry_run>
-_update_contributions_migrate_markers() {
-	local readme_path="$1"
-	local dry_run="$2"
-	local marker_state
-	marker_state=$(_contribution_marker_state "$readme_path")
-
-	case "$marker_state" in
-	valid)
-		return 0
-		;;
-	invalid)
-		echo "Error: Contributions markers must be one standalone, ordered pair" >&2
-		return 1
-		;;
-	legacy-joined-end)
-		if [[ "$dry_run" == true ]]; then
-			echo "Note: legacy joined Contributions marker would be normalized"
-			return 1
-		fi
-		local normalize_tmp
-		normalize_tmp=$(mktemp)
-		if ! _normalize_legacy_contribution_end "$readme_path" "$normalize_tmp"; then
-			rm -f "$normalize_tmp"
-			return 1
-		fi
-		if [[ "$(_contribution_marker_state "$normalize_tmp")" != valid ]]; then
-			rm -f "$normalize_tmp"
-			return 1
-		fi
-		_profile_replace_readme "$normalize_tmp" "$readme_path" || return 1
-		return 0
-		;;
-	absent) ;;
-	esac
-
-	if [[ "$dry_run" == true ]]; then
-		echo "Note: CONTRIBUTIONS markers not found — would migrate static section"
-		return 1
-	fi
-
-	echo "Migrating static Contributions section to auto-updated markers..."
-	local inject_tmp
-	inject_tmp=$(mktemp)
-	if ! awk -v start_marker="$CONTRIBUTIONS_START_MARKER" -v end_marker="$CONTRIBUTIONS_END_MARKER" '
-		/^## Contributions/ { in_old_contrib = 1; next }
-		in_old_contrib && /^## / {
-			in_old_contrib = 0
-			print start_marker
-			print end_marker
-			print ""
-			print $0
-			next
-		}
-		in_old_contrib { next }
-		{ print }
-	' "$readme_path" >"$inject_tmp"; then
-		rm -f "$inject_tmp"
-		return 1
-	fi
-	# If EOF reached while still in old section, append markers
-	if ! grep -qxF "$CONTRIBUTIONS_START_MARKER" "$inject_tmp"; then
-		{
-			echo "$CONTRIBUTIONS_START_MARKER"
-			echo "$CONTRIBUTIONS_END_MARKER"
-		} >>"$inject_tmp"
-	fi
-	if [[ "$(_contribution_marker_state "$inject_tmp")" != valid ]]; then
-		echo "Error: valid Contributions markers not found after migration" >&2
-		rm -f "$inject_tmp"
-		return 1
-	fi
-	_profile_replace_readme "$inject_tmp" "$readme_path" || return 1
-	return 0
-}
-
-# --- Record the daily contributions throttle after a complete refresh ---
-_record_contributions_update() {
-	local cache_dir="${HOME}/.aidevops/cache"
-	if ! mkdir -p "$cache_dir"; then
-		echo "Warning: could not create contributions throttle cache" >&2
-		return 1
-	fi
-	if ! date -u +"%Y-%m-%d" >"${cache_dir}/contributions-last-update"; then
-		echo "Warning: could not record contributions refresh timestamp" >&2
-		return 1
-	fi
-	return 0
-}
-
-_contributions_pending_push_file() {
-	printf '%s\n' "${HOME}/.aidevops/cache/contributions-pending-push"
-	return 0
-}
-
-_record_pending_contributions_push() {
-	local profile_repo="$1"
-	local pending_file
-	pending_file=$(_contributions_pending_push_file)
-	mkdir -p "${pending_file%/*}" || return 1
-	git -C "$profile_repo" rev-parse HEAD >"$pending_file"
-	return $?
-}
-
-_clear_pending_contributions_push() {
-	local pending_file
-	pending_file=$(_contributions_pending_push_file)
-	rm -f "$pending_file"
-	return 0
-}
-
-# --- Resolve the profile repository's push branch ---
-_profile_default_branch() {
-	local profile_repo="$1"
-	local default_branch=""
-	default_branch=$(git -C "$profile_repo" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || true)
-	if [[ -z "$default_branch" ]]; then
-		default_branch=$(git -C "$profile_repo" branch --show-current 2>/dev/null || true)
-	fi
-	printf '%s\n' "${default_branch:-main}"
-	return 0
-}
-
-# --- Commit and push contributions update, recording daily throttle timestamp ---
-# Usage: _update_contributions_push <profile_repo>
-_update_contributions_push() {
-	local profile_repo="$1"
-	local readme_path="${profile_repo}/README.md"
-
-	# Update timestamp
-	_update_inject_timestamp "$readme_path"
-
-	local commit_msg
-	commit_msg="chore: update profile contributions ($(date -u +%Y-%m-%d))"
-	git -C "$profile_repo" add README.md
-	if ! git -C "$profile_repo" commit -m "$commit_msg" --no-verify -- README.md 2>/dev/null; then
-		echo "Warning: contributions commit failed" >&2
-		return 1
-	fi
-	_record_pending_contributions_push "$profile_repo" || return 1
-
-	local default_branch
-	default_branch=$(_profile_default_branch "$profile_repo")
-	if ! git -C "$profile_repo" push origin "HEAD:refs/heads/${default_branch}" 2>/dev/null; then
-		echo "Warning: push failed — contributions committed locally" >&2
-		return 1
-	fi
-	_clear_pending_contributions_push
-	_record_contributions_update || return 1
-
-	echo "Profile contributions updated and pushed"
-	return 0
-}
-
-# --- Verify a profile write cannot publish unrelated local work ---
-_ensure_profile_write_ready() {
-	local profile_repo="$1"
-	local readme_status=""
-	if ! readme_status=$(git -C "$profile_repo" status --porcelain -- README.md 2>/dev/null); then
-		echo "Warning: could not verify local profile README state" >&2
-		return 1
-	fi
-	if [[ -n "$readme_status" ]]; then
-		echo "Warning: local profile README has uncommitted changes; refusing automated commit" >&2
-		return 1
-	fi
-	if ! git -C "$profile_repo" diff --cached --quiet; then
-		echo "Warning: profile repository has unrelated staged changes" >&2
-		return 1
-	fi
-
-	local default_branch ahead_count pending_file pending_sha head_sha
-	default_branch=$(_profile_default_branch "$profile_repo")
-	if ! ahead_count=$(git -C "$profile_repo" rev-list --count "origin/${default_branch}..HEAD" 2>/dev/null); then
-		echo "Warning: could not verify whether profile contributions were pushed" >&2
-		return 1
-	fi
-	if [[ "$ahead_count" -gt 0 ]] 2>/dev/null; then
-		pending_file=$(_contributions_pending_push_file)
-		if [[ ! -f "$pending_file" ]]; then
-			echo "Warning: local profile branch has unrelated unpushed commits" >&2
-			return 1
-		fi
-		pending_sha=$(<"$pending_file")
-		head_sha=$(git -C "$profile_repo" rev-parse HEAD 2>/dev/null || true)
-		if [[ -z "$pending_sha" || "$pending_sha" != "$head_sha" ]]; then
-			echo "Warning: pending contributions marker does not match local profile HEAD" >&2
-			return 1
-		fi
-		if ! git -C "$profile_repo" push origin "$default_branch" 2>/dev/null; then
-			echo "Warning: pending profile contributions push failed" >&2
-			return 1
-		fi
-	fi
-	_clear_pending_contributions_push
-	return 0
-}
-
-# --- Complete a local no-op without suppressing pending push retries ---
-_finalize_unchanged_contributions() {
-	local profile_repo="$1"
-	_ensure_profile_write_ready "$profile_repo" || return 1
-	_record_contributions_update || return 1
-	return 0
-}
-
-# --- Render a validated contributions block into a candidate README ---
-_render_contributions_candidate() {
-	local readme_path="$1"
-	local new_contribs="$2"
-	local contribs_block=""
-	if [[ -n "$new_contribs" ]]; then
-		contribs_block="## Contributions"$'\n'$'\n'"${new_contribs}"$'\n'
-	fi
-	if ! CONTRIBS_BLOCK="$contribs_block" awk \
-		-v start_marker="$CONTRIBUTIONS_START_MARKER" \
-		-v end_marker="$CONTRIBUTIONS_END_MARKER" '
-		$0 == start_marker {
-			print
-			skip = 1
-			next
-		}
-		$0 == end_marker {
-			skip = 0
-			block = ENVIRON["CONTRIBS_BLOCK"]
-			if (block != "") {
-				printf "%s", block
-			}
-			print
-			next
-		}
-		!skip { print }
-	' "$readme_path"; then
-		return 1
-	fi
-	return 0
-}
-
-# --- Update contributions section between markers ---
-# Can be called standalone or from cmd_update with daily throttle.
-# Uses _generate_contributions() to fetch fork parent URLs + repos.json entries.
-_cmd_update_contributions_in_repo() {
-	local dry_run=false
-	if [[ "${1:-}" == "--dry-run" ]]; then
-		dry_run=true
-	fi
-
-	# Resolve profile repo and user
-	local profile_repo
-	profile_repo=$(_resolve_profile_repo) || return 1
-	local readme_path="${profile_repo}/README.md"
-
-	if [[ ! -f "$readme_path" ]]; then
-		echo "Error: README.md not found at $readme_path" >&2
-		return 1
-	fi
-
-	# Resolve GitHub username
-	local gh_user
-	gh_user=$(_resolve_profile_user "$profile_repo")
-	if [[ -z "$gh_user" ]]; then
-		echo "Error: could not resolve GitHub username for profile repo" >&2
-		return 1
-	fi
-
-	# Generate new contributions content
-	local new_contribs
-	if ! new_contribs=$(_generate_contributions "$gh_user"); then
-		echo "Warning: contributions refresh aborted; existing Contributions block was preserved" >&2
-		return 1
-	fi
-	if [[ "$dry_run" != true ]]; then
-		_ensure_profile_write_ready "$profile_repo" || return 1
-	fi
-
-	# Build every migration and render in temporary files. README.md is replaced
-	# only after all remote reads, marker transforms, and rendering succeed.
-	local migration_source
-	migration_source=$(mktemp)
-	if ! cp "$readme_path" "$migration_source"; then
-		rm -f "$migration_source"
-		return 1
-	fi
-	if ! _update_contributions_migrate_markers "$migration_source" "$dry_run"; then
-		rm -f "$migration_source"
-		if [[ "$dry_run" == true ]] && [[ "$(_contribution_marker_state "$readme_path")" == absent ]]; then
-			return 0
-		fi
-		return 1
-	fi
-
-	# Replace content between markers
-	local tmp_file
-	tmp_file=$(mktemp)
-	if ! _render_contributions_candidate "$migration_source" "$new_contribs" >"$tmp_file"; then
-		rm -f "$migration_source" "$tmp_file"
-		return 1
-	fi
-	rm -f "$migration_source"
-
-	# Check if content actually changed
-	if diff -q "$readme_path" "$tmp_file" >/dev/null 2>&1; then
-		echo "Contributions unchanged — skipping"
-		rm -f "$tmp_file"
-		if [[ "$dry_run" != true ]]; then
-			_finalize_unchanged_contributions "$profile_repo" || return 1
-		fi
-		return 0
-	fi
-
-	if [[ "$dry_run" == true ]]; then
-		echo "--- DRY RUN: contributions changes ---"
-		diff "$readme_path" "$tmp_file" || true
-		rm -f "$tmp_file"
-		return 0
-	fi
-
-	# Apply changes and push
-	if ! _profile_replace_readme "$tmp_file" "$readme_path"; then
-		rm -f "$tmp_file"
-		return 1
-	fi
-	if [[ "${AIDEVOPS_PROFILE_DEFER_PUBLICATION:-0}" == "1" ]]; then
-		echo "Profile contributions staged for the combined README publication"
-		return 0
-	fi
-	_update_contributions_push "$profile_repo" || return 1
-	return 0
-}
-
-_profile_assert_canonical_clean() {
-	local canonical_repo="$1"
-	local status_output=""
-	if ! status_output=$(git -C "$canonical_repo" status --porcelain --untracked-files=no); then
-		echo "Error: could not verify canonical profile checkout state" >&2
-		return 1
-	fi
-	if [[ -n "$status_output" ]]; then
-		echo "Error: canonical profile checkout has tracked changes; refusing automated publication" >&2
-		return 1
-	fi
-	local default_branch=""
-	local ahead_count=""
-	default_branch=$(_profile_default_branch "$canonical_repo")
-	if ! ahead_count=$(git -C "$canonical_repo" rev-list --count "origin/${default_branch}..HEAD" 2>/dev/null); then
-		echo "Error: could not verify canonical profile branch state" >&2
-		return 1
-	fi
-	if [[ "$ahead_count" -gt 0 ]]; then
-		echo "Error: canonical profile checkout has unpushed commits; refusing automated publication" >&2
-		return 1
-	fi
-	return 0
-}
-
-_profile_run_in_worktree() {
-	local publication_command="$1"
-	shift
-	local canonical_repo=""
-	canonical_repo=$(_resolve_profile_repo) || return 1
-	_profile_assert_canonical_clean "$canonical_repo" || return 1
-
-	local worktree_helper=""
-	worktree_helper=$(_profile_publication_worktree_helper)
-	if [[ ! -x "$worktree_helper" ]]; then
-		echo "Error: worktree-helper.sh is required for canonical-safe profile publication" >&2
-		return 1
-	fi
-
-	local canonical_head_before=""
-	local canonical_status_before=""
-	canonical_head_before=$(git -C "$canonical_repo" rev-parse HEAD) || return 1
-	canonical_status_before=$(git -C "$canonical_repo" status --porcelain --untracked-files=all) || return 1
-
-	local worktree_base="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"
-	local worktree_name=""
-	worktree_name="$(basename "$canonical_repo")-profile-readme-$(date -u +%Y%m%d%H%M%S)-$$-${RANDOM}"
-	mkdir -p "$worktree_base" || return 1
-	PROFILE_PUBLICATION_WORKTREE_BASE=$(cd "$worktree_base" 2>/dev/null && pwd -P) || return 1
-	local worktree_path="${PROFILE_PUBLICATION_WORKTREE_BASE}/${worktree_name}"
-	PROFILE_PUBLICATION_WORKTREE="$worktree_path"
-	PROFILE_PUBLICATION_CANONICAL_REPO="$canonical_repo"
-	PROFILE_PUBLICATION_CANONICAL_HEAD="$canonical_head_before"
-	PROFILE_PUBLICATION_CANONICAL_STATUS="$canonical_status_before"
-	if ! _profile_write_publication_intent "$worktree_path" "$canonical_repo"; then
-		echo "Error: could not write profile publication intent" >&2
-		_profile_clear_publication_state
-		return 1
-	fi
-	local owner_session="profile-readme-${PROFILE_UPDATE_LOCK_TOKEN:-$$}"
-	# shellcheck source=shared-worktree-create.sh
-	source "${SCRIPT_DIR}/shared-worktree-create.sh" || return 1
-	if ! AIDEVOPS_WORKTREE_CREATE_OWNER_PID="$$" \
-		AIDEVOPS_WORKTREE_CREATE_SESSION="$owner_session" \
-		AIDEVOPS_WORKTREE_CREATE_TASK="$PROFILE_PUBLICATION_REGISTRY_TASK" \
-		worktree_create_registered "$canonical_repo" "$worktree_path" "$canonical_head_before" --detach >/dev/null; then
-		echo "Error: could not create profile publication worktree" >&2
-		# A failed registration may leave a tree. Keep its intent for recovery.
-		if [[ ! -e "$worktree_path" ]]; then
-			_profile_remove_publication_intent || true
-			_profile_clear_publication_state
-		fi
-		return 1
-	fi
-	if ! _profile_write_publication_marker "$worktree_path" "$canonical_repo"; then
-		echo "Error: could not write profile publication provenance marker" >&2
-		_cleanup_profile_publication_worktree || true
-		return 1
-	fi
-	local default_branch=""
-	default_branch=$(_profile_default_branch "$canonical_repo")
-	if ! git -C "$worktree_path" fetch --quiet origin "$default_branch" ||
-		! git -C "$worktree_path" reset --hard FETCH_HEAD >/dev/null; then
-		echo "Error: could not prepare profile publication worktree from origin/${default_branch}" >&2
-		_cleanup_profile_publication_worktree || true
-		return 1
-	fi
-
-	local inner_status=0
-	if AIDEVOPS_PROFILE_PUBLICATION_WORKTREE=1 \
-		AIDEVOPS_PROFILE_REPO_OVERRIDE="$worktree_path" \
-		AIDEVOPS_PROFILE_CANONICAL_REPO="$canonical_repo" \
-		AIDEVOPS_PROFILE_UPDATE_LOCK_HELD=1 \
-		bash "${SCRIPT_DIR}/profile-readme-helper.sh" "$publication_command" "$@"; then
-		inner_status=0
-	else
-		inner_status=$?
-	fi
-
-	if ! _cleanup_profile_publication_worktree; then
-		echo "Error: profile publication worktree remains for guarded recovery: $worktree_path" >&2
-		return 1
-	fi
-
-	local canonical_head_after=""
-	local canonical_status_after=""
-	canonical_head_after=$(git -C "$canonical_repo" rev-parse HEAD) || return 1
-	canonical_status_after=$(git -C "$canonical_repo" status --porcelain --untracked-files=all) || return 1
-	if [[ "$canonical_head_after" != "$canonical_head_before" ||
-		"$canonical_status_after" != "$canonical_status_before" ]]; then
-		echo "Error: canonical profile checkout changed during isolated publication" >&2
-		return 1
-	fi
-	return "$inner_status"
 }
 
 # --- Update the profile README without mutating its configured canonical checkout ---
@@ -2187,8 +1189,8 @@ cmd_cleanup_managed() {
 	[[ -f "$PROFILE_PUBLICATION_INTENT_PATH" && ! -L "$PROFILE_PUBLICATION_INTENT_PATH" ]] || return 1
 	common=$(git -C "$PROFILE_PUBLICATION_CANONICAL_REPO" rev-parse --path-format=absolute --git-common-dir) || return 1
 	jq -e --arg path "$PROFILE_PUBLICATION_WORKTREE" --arg common "$common" \
-		--arg producer "$PROFILE_PUBLICATION_REGISTRY_TASK" \
-		'.schema == "aidevops-profile-publication-intent/v1" and .producer == $producer and
+		--arg producer "$PROFILE_PUBLICATION_REGISTRY_TASK" --arg schema "$PROFILE_PUBLICATION_INTENT_SCHEMA" \
+		'.schema == $schema and .producer == $producer and
 		 .worktree_path == $path and .canonical_common_dir == $common and
 		 (.canonical_status | type == "string")' "$PROFILE_PUBLICATION_INTENT_PATH" >/dev/null || return 1
 	PROFILE_PUBLICATION_CANONICAL_HEAD=$(jq -er '.canonical_head' "$PROFILE_PUBLICATION_INTENT_PATH") || return 1

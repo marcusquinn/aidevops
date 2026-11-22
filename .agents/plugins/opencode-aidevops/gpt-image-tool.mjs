@@ -13,6 +13,7 @@ import {
   DEFAULT_API_IMAGE_MODEL,
   requestApiImage,
   requestOAuthImage,
+  requestOpenRouterImage,
 } from "./gpt-image-request.mjs";
 import { resolveGptImageProjectRoot } from "./gpt-image-worktree.mjs";
 import { assertLocalOnlyToolDestination } from "./local-only-policy.mjs";
@@ -38,7 +39,12 @@ function validateReferenceArgs(args) {
 }
 
 function validateAuthArgs(args) {
-  if (args.auth !== undefined && !["oauth", "api"].includes(args.auth)) throw new Error("Image auth must be oauth or api.");
+  if (args.auth !== undefined && !["oauth", "api", "openrouter"].includes(args.auth)) {
+    throw new Error("Image auth must be oauth, api, or openrouter.");
+  }
+  if (args.auth === "openrouter" && Array.isArray(args.images) && args.images.length > 0) {
+    throw new Error("auth=openrouter does not support reference images; use auth=oauth or auth=api.");
+  }
   if (args.account !== undefined && typeof args.account !== "string") throw new Error("Image account must be a string.");
   if (args.model !== undefined && (typeof args.model !== "string" || !API_IMAGE_MODEL_SET.has(args.model))) {
     throw new Error("Unsupported API image model.");
@@ -77,7 +83,7 @@ function validateSize(value) {
   const boundedEdges = longEdge <= 3840 && longEdge / shortEdge <= 3;
   const boundedPixels = pixels >= 655_360 && pixels <= 8_294_400;
   if (!aligned || !boundedEdges || !boundedPixels) {
-    throw new Error("Image size violates GPT Image 2 dimension constraints.");
+    throw new Error("Image size violates GPT Image 2 dimension constraints: width and height must be multiples of 16, the longest edge at most 3840, aspect ratio at most 3:1, and pixel count 655360-8294400.");
   }
   return size;
 }
@@ -99,7 +105,22 @@ async function requestWithOAuth(auth, args, images, options) {
 }
 
 function billingLabel(mode) {
-  return mode === "oauth" ? "ChatGPT subscription OAuth" : "OpenAI Platform API";
+  if (mode === "oauth") return "ChatGPT subscription OAuth";
+  return mode === "openrouter" ? "OpenRouter API" : "OpenAI Platform API";
+}
+
+function imageGenerationReceipt({ saved, project, args, result, auth }) {
+  const versionNote = saved.versioned ? " Existing output was preserved with a versioned filename." : "";
+  const cleanupNote = saved.cleanupWarning ? " Temporary-file cleanup reported a filesystem warning." : "";
+  const rootNote = project.linked ? " in the validated session-owned linked worktree" : "";
+  const dimensions = `${saved.width}x${saved.height}`;
+  const requestedModel = result.requestedModel || "provider-managed";
+  const providerModel = result.providerModel || "unknown";
+  const routerNote = result.routerModel ? ` OAuth router model: ${result.routerModel}.` : "";
+  const sizeNote = auth.mode === "oauth" && args.size !== "auto" && args.size !== dimensions
+    ? ` Warning: OAuth size is best-effort; the provider returned ${dimensions} rather than ${args.size}. Saved native output without resizing.`
+    : "";
+  return `Generated image saved to ${saved.projectPath}${rootNote}. Requested size: ${args.size}; native dimensions: ${dimensions}. Billing route: ${billingLabel(auth.mode)}.${routerNote} Requested image model: ${requestedModel}; provider-confirmed image model: ${providerModel}.${sizeNote}${versionNote}${cleanupNote}`;
 }
 
 async function executeImageGeneration(rawArgs, options, context) {
@@ -120,25 +141,23 @@ async function executeImageGeneration(rawArgs, options, context) {
 
   if (auth.mode === "oauth") {
     ({ auth, result } = await requestWithOAuth(auth, args, images, options));
+  } else if (auth.mode === "openrouter") {
+    result = await requestOpenRouterImage(auth, args, options.fetchImpl);
   } else {
     args.model ||= DEFAULT_API_IMAGE_MODEL;
     result = await requestApiImage(auth, args, images, options.fetchImpl);
   }
-  if (!result.response.ok) throw result.error;
+  if (result.error || !result.response.ok) throw result.error;
 
   const saved = await saveGeneratedImage(args.out, project.root, result.base64, args.format, {
-    requestedSize: args.size,
+    // Codex size is best-effort; keep native raster validation and secure writes.
+    // Platform API requests retain exact-size enforcement before publication.
+    requestedSize: auth.mode === "oauth" ? "auto" : args.size,
     scriptsDir: options.scriptsDir,
     spawnImpl: options.imageWriterSpawn,
   });
   if (auth.mode === "oauth") (options.markOAuthSuccess || markOAuthImageSuccess)(auth);
-  const versionNote = saved.versioned ? " Existing output was preserved with a versioned filename." : "";
-  const cleanupNote = saved.cleanupWarning ? " Temporary-file cleanup reported a filesystem warning." : "";
-  const rootNote = project.linked ? " in the validated session-owned linked worktree" : "";
-  const dimensions = `${saved.width}x${saved.height}`;
-  const requestedModel = result.requestedModel || "provider-managed";
-  const providerModel = result.providerModel || "unknown";
-  return `Generated image saved to ${saved.projectPath}${rootNote}. Requested size: ${args.size}; native dimensions: ${dimensions}. Billing route: ${billingLabel(auth.mode)}. Requested image model: ${requestedModel}; provider-confirmed image model: ${providerModel}.${versionNote}${cleanupNote}`;
+  return imageGenerationReceipt({ saved, project, args, result, auth });
 }
 
 export function createGptImageTool(tool, z, options = {}) {
@@ -153,10 +172,10 @@ export function createGptImageTool(tool, z, options = {}) {
       out: z.string().describe("Project-relative output path with an extension matching format."),
       format: z.enum(["png", "jpeg", "webp"]).optional().describe("Native output format; defaults to png."),
       quality: z.enum(["low", "medium", "high", "auto"]).optional().describe("OpenAI image quality; defaults to auto."),
-      size: z.string().optional().describe("auto or WIDTHxHEIGHT satisfying supported OpenAI image constraints."),
+      size: z.string().optional().describe("auto or WIDTHxHEIGHT satisfying OpenAI image constraints. OAuth size is best-effort: native output is saved without resizing and any mismatch is reported. API sizes are enforced exactly."),
       workdir: z.string().optional().describe("Optional absolute path to the current session-owned linked worktree."),
       images: z.array(z.string()).optional().describe("Optional project-relative PNG, JPEG, or WebP reference image paths."),
-      auth: z.enum(["oauth", "api"]).optional().describe("Billing route; defaults to ChatGPT OAuth. API must be explicit."),
+      auth: z.enum(["oauth", "api", "openrouter"]).optional().describe("Billing route; defaults to ChatGPT OAuth. API and OpenRouter (OPENROUTER_API_KEY, no reference images) must be explicit."),
       account: z.string().optional().describe("OAuth pool email when auth=oauth, or named API-key alias when auth=api."),
       model: z.enum(API_IMAGE_MODELS).optional().describe("API-only image model; defaults to gpt-image-2 when auth=api."),
     },

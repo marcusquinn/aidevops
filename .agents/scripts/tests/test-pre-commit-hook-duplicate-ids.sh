@@ -318,6 +318,49 @@ assert_fail \
 	"$FIXTURE_ROUTINE_DUPE" \
 	"r099"
 
+# Case 12 (GH#35755): template format examples inside an HTML comment are
+# documentation. A real t1 row added beside them is not a collision.
+FIXTURE_COMMENTED_TEMPLATE='<!-- GH#17804: Format examples wrapped in HTML comment
+- [ ] t1 Task description @owner #tag ~30m
+- [ ] t1.1 Subtask of t1 ~10m
+- [x] t3 Completed task ~30m
+-->
+## Ready
+'
+FIXTURE_COMMENTED_TEMPLATE_PLUS_REAL="${FIXTURE_COMMENTED_TEMPLATE}- [x] t1 Real task @owner
+- [ ] t3 Another real task <!-- inline note -->
+"
+assert_pass \
+	"HTML-commented template examples do not collide with real t1/t3" \
+	"$FIXTURE_COMMENTED_TEMPLATE" \
+	"$FIXTURE_COMMENTED_TEMPLATE_PLUS_REAL"
+
+# Case 13 (GH#35755): normalizing a historical padded duplicate (two t034
+# rows -> two t34 rows) is the same historical duplicate, not a new one.
+FIXTURE_PADDED_HISTORICAL='## Ready
+- [x] t034 Original historical task
+- [x] t034 Reused padded ID
+'
+FIXTURE_NORMALIZED_HISTORICAL='## Ready
+- [x] t34 Original historical task
+- [x] t34 Reused padded ID
+'
+assert_pass \
+	"normalized historical duplicate (t034 x2 -> t34 x2) passes" \
+	"$FIXTURE_PADDED_HISTORICAL" \
+	"$FIXTURE_NORMALIZED_HISTORICAL"
+
+# Case 14 (GH#35755): padded and unpadded forms of one ID are the same task.
+FIXTURE_PADDED_COLLISION='## Ready
+- [ ] t034 Padded legacy task
+- [ ] t34 New task reusing the normalized ID
+'
+assert_fail \
+	"new t34 colliding with padded t034 fails" \
+	"" \
+	"$FIXTURE_PADDED_COLLISION" \
+	"t34"
+
 # =============================================================================
 # Summary
 # =============================================================================

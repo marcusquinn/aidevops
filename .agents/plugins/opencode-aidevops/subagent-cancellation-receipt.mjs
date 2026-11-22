@@ -4,6 +4,12 @@
 import { SubagentCancellationLedger, shortSessionHash } from "./subagent-cancellation-ledger.mjs";
 import { SubagentLifecycleTracker, scalarSessionID } from "./subagent-lifecycle-tracker.mjs";
 import { classifySideEffect, safeToolName } from "./subagent-side-effect-classifier.mjs";
+import {
+  CANCELLATION_RECEIPT_MARKER,
+  InterruptedTaskReceipts,
+  interruptedReceiptText,
+  isTaskTool,
+} from "./subagent-interrupted-task-receipts.mjs";
 
 export { classifySideEffect };
 export const MAX_CANCELLATION_LEDGER_ENTRIES = 24;
@@ -47,6 +53,18 @@ class SubagentCancellationReceipt {
       options.qualityLog,
       this.lifecycle,
     );
+    // Interrupted Tasks awaiting their parent-facing receipt (GH#35529).
+    this.interrupted = new InterruptedTaskReceipts((entry) => this.finalizeInterrupted(entry));
+  }
+
+  async waitForTerminal(childID) {
+    const deadline = Date.now() + this.maxWaitMs;
+    let evidence = this.lifecycle.terminalEvidence(childID);
+    while (!evidence && Date.now() < deadline) {
+      await this.sleep(this.pollMs);
+      evidence = this.lifecycle.terminalEvidence(childID);
+    }
+    return evidence;
   }
 
   async terminateAndConfirm(childID) {
@@ -58,12 +76,7 @@ class SubagentCancellationReceipt {
         if (!responseError(response)) {
           result.abortRequested = true;
           result.reason = "termination_unconfirmed";
-          const deadline = Date.now() + this.maxWaitMs;
-          result.evidence = this.lifecycle.terminalEvidence(childID);
-          while (!result.evidence && Date.now() < deadline) {
-            await this.sleep(this.pollMs);
-            result.evidence = this.lifecycle.terminalEvidence(childID);
-          }
+          result.evidence = await this.waitForTerminal(childID);
           if (result.evidence) result.reason = "";
         }
       } catch (error) {
@@ -139,14 +152,18 @@ class SubagentCancellationReceipt {
     }
   }
 
+  logReceipt(receipt, source) {
+    this.ledger.safeLog(
+      receipt.complete ? "INFO" : "WARN",
+      `[subagent-cancellation] child ${receipt.child} source=${source} termination=${receipt.termination} receipt=${receipt.complete ? "complete" : "incomplete"}`,
+    );
+  }
+
   appendReceipt(output, receipt) {
     const bounded = boundedReceipt(receipt);
-    output.output = `${String(output.output || "").trim()}\n\n[AIDevOps cancellation receipt]\n${bounded.json}`.trim();
+    output.output = `${String(output.output || "").trim()}\n\n${CANCELLATION_RECEIPT_MARKER}\n${bounded.json}`.trim();
     output.metadata = { ...output.metadata, aidevopsCancellationReceipt: bounded.receipt };
-    this.ledger.safeLog(
-      bounded.receipt.complete ? "INFO" : "WARN",
-      `[subagent-cancellation] child ${bounded.receipt.child} termination=${bounded.receipt.termination} receipt=${bounded.receipt.complete ? "complete" : "incomplete"}`,
-    );
+    this.logReceipt(bounded.receipt, "task_result");
     return bounded.receipt;
   }
 
@@ -161,13 +178,57 @@ class SubagentCancellationReceipt {
   async afterTool(input, output) {
     const tool = safeToolName(input?.tool);
     let receipt = null;
-    if (tool === "task" || tool === "mcp_task") {
-      if (taskWasCancelled(output)) receipt = await this.cancelledTaskReceipt(input, output);
-      else this.lifecycle.takeChildIdentity(input, output);
+    if (isTaskTool(tool) && taskWasCancelled(output)) {
+      // The stored Task result carries this receipt; never inject a second.
+      this.interrupted.markResultReceipt(String(input?.callID || ""));
+      receipt = await this.cancelledTaskReceipt(input, output);
+    } else if (isTaskTool(tool)) {
+      this.lifecycle.takeChildIdentity(input, output);
     } else {
       this.ledger.afterSideEffect(input, output);
     }
     return receipt;
+  }
+
+  handleEvent(input) {
+    this.ledger.handleEvent(input);
+    try {
+      this.interrupted.observe(
+        input?.event || input || {},
+        (identityInput, identityOutput) => this.lifecycle.takeChildIdentity(identityInput, identityOutput),
+      );
+    } catch (error) {
+      this.ledger.trackingFailed = true;
+      this.ledger.safeLog("WARN", `[subagent-cancellation] interrupted Task tracking failed: ${error?.name || "Error"}`);
+    }
+  }
+
+  // OpenCode has already aborted the child; prefer its lifecycle evidence and
+  // request an abort only when termination is still unconfirmed.
+  async interruptedTermination(identity) {
+    if (!identity.childID) return { abortRequested: false, evidence: "", reason: identity.reason || "child_identity_missing" };
+    const evidence = await this.waitForTerminal(identity.childID);
+    if (evidence) return { abortRequested: true, evidence, reason: "" };
+    return this.terminateAndConfirm(identity.childID);
+  }
+
+  async finalizeInterrupted(entry) {
+    const termination = await this.interruptedTermination(entry.identity);
+    const receipt = this.buildReceipt(entry.identity, termination);
+    this.persistReceipt(receipt, { sessionID: entry.parentID }, entry.identity.childID);
+    const bounded = boundedReceipt(receipt);
+    this.logReceipt(bounded.receipt, "interrupted_part");
+    return interruptedReceiptText(bounded.json, entry.identity.childID);
+  }
+
+  // Fail-open: an injection failure must never block the model request.
+  async injectReceipts(_input, output) {
+    try {
+      return await this.interrupted.inject(output);
+    } catch (error) {
+      this.ledger.safeLog("WARN", `[subagent-cancellation] interrupted receipt injection failed: ${error?.name || "Error"}`);
+      return 0;
+    }
   }
 }
 
@@ -177,6 +238,7 @@ export function createSubagentCancellationReceipt(client, options = {}) {
   return {
     afterTool: handler.afterTool.bind(handler),
     beforeTool: handler.ledger.beforeTool.bind(handler.ledger),
-    handleEvent: handler.ledger.handleEvent.bind(handler.ledger),
+    handleEvent: handler.handleEvent.bind(handler),
+    injectReceipts: handler.injectReceipts.bind(handler),
   };
 }

@@ -15,7 +15,8 @@ from github_auth_policy import policy
 from github_auth_profiles import manage_profile
 from github_auth_routing import APP, decide, valid_slug
 from github_auth_runtime import execute
-from github_auth_usage import usage
+from github_auth_setup import add_app_parser, manage_app
+from github_auth_usage import advise, usage
 
 
 def parser():
@@ -34,6 +35,9 @@ def parser():
     command = actions.add_parser("usage")
     command.add_argument("--since", default="1h")
     command.add_argument("--consumer", choices=("pulse",))
+    command = actions.add_parser("advise")
+    command.add_argument("--since", default="24h")
+    command.add_argument("--write-advisory", action="store_true")
     command = actions.add_parser("migrate")
     command.add_argument("--confirm-stopped", action="store_true")
     profiles = actions.add_parser("profile").add_subparsers(dest="profile_action", required=True)
@@ -45,6 +49,7 @@ def parser():
     command.add_argument("--client-id")
     command.add_argument("--private-key-path", required=True)
     command.add_argument("--replace", action="store_true")
+    add_app_parser(actions)
     return root
 
 
@@ -75,15 +80,24 @@ def describe(args, registry_path, config_path):
     return 0
 
 
+def repo_free_action(args, registry_path, config_path):
+    """Return the handler for actions that take no OWNER/REPO, or None."""
+    handlers = {
+        "profile": lambda: manage_profile(args, config_path),
+        "app": lambda: manage_app(args, registry_path, config_path),
+        "migrate": lambda: migrate(registry_path, config_path, args.confirm_stopped),
+        "usage": lambda: usage(args.since, registry(registry_path), args.consumer),
+        "advise": lambda: advise(args.since, registry(registry_path), args.write_advisory),
+    }
+    return handlers.get(args.action)
+
+
 def main():
     args = parser().parse_args()
     registry_path, config_path = paths()
-    if args.action == "profile":
-        return manage_profile(args, config_path)
-    if args.action == "migrate":
-        return migrate(registry_path, config_path, args.confirm_stopped)
-    if args.action == "usage":
-        return usage(args.since, registry(registry_path), args.consumer)
+    handler = repo_free_action(args, registry_path, config_path)
+    if handler:
+        return handler()
     if not valid_slug(args.repo):
         raise AuthError("Repository must be owner/repo")
     if args.action == "set" and args.inherit and args.installation_id:

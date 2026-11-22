@@ -13,24 +13,14 @@
 # and having defined all PULSE_* / FAST_FAIL_* / etc. configuration
 # constants in the bootstrap section.
 #
-# Functions in this module (in source order):
-#   - _ever_nmr_cache_key
-#   - _ever_nmr_cache_load
-#   - _ever_nmr_cache_with_lock
-#   - _ever_nmr_cache_get
-#   - _ever_nmr_cache_set_locked
-#   - _ever_nmr_cache_set
-#   - issue_was_ever_nmr
-#   - _nmr_issue_author_has_repo_write_authority
-#   - issue_has_required_approval
-#   - _nmr_applied_by_maintainer
-#   - _nmr_application_is_security_sensitive
-#   - notify_ever_nmr_without_approval
-#   - _find_qualifying_pr_for_stale_recovery
-#   - _notify_stale_recovery_resolved_by_pr
-#   - _nmr_current_actor_can_post_maintainer_approval
-#   - _nmr_apply_auto_approval_transition
-#   - auto_approve_maintainer_issues
+# Companion modules (loaded through this entry point only):
+#   pulse-nmr-approval-cache.sh — ever-NMR provenance cache and timeline lookup
+#   pulse-nmr-approval-revalidation.sh — reason metadata and durable state pruning
+# Approval checks, trusted-author classification, recovery notifications and
+# lifecycle transitions remain here. Functions over the complexity threshold
+# retain their original file identity (reference/large-file-split.md).
+# NMR_SCRIPT_DIR is derived from this file, not the caller's SCRIPT_DIR, so tests
+# and other callers can source this entry point from any working directory.
 #
 # Changes in this module must preserve the external-author trust boundary:
 # unknown authority fails closed, while write-authorized authors never
@@ -40,6 +30,13 @@
 [[ -n "${_PULSE_NMR_APPROVAL_LOADED:-}" ]] && return 0
 _PULSE_NMR_APPROVAL_LOADED=1
 NMR_SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)" || return 1
+
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "${NMR_SCRIPT_DIR}/shared-approval-cli.sh"
+fi
 
 if ! declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
 	_PULSE_NMR_APPROVAL_DIR="${BASH_SOURCE[0]%/*}"
@@ -120,182 +117,9 @@ _nmr_issue_api_path() {
 	return 0
 }
 
-#######################################
-# Cached ever-NMR provenance helpers (GH#17458)
-#
-# Positive results are immutable and can be cached indefinitely.
-# Negative results are cached for a short TTL to avoid a timeline API call
-# on every dispatch candidate while still noticing new NMR labels promptly.
-#######################################
-_ever_nmr_cache_key() {
-	local issue_num="$1"
-	local slug="$2"
-	printf '%s\n' "${slug}#${issue_num}"
-	return 0
-}
-
-_ever_nmr_cache_load() {
-	if [[ ! -f "$EVER_NMR_CACHE_FILE" ]]; then
-		printf '{}\n'
-		return 0
-	fi
-
-	local content
-	content=$(cat "$EVER_NMR_CACHE_FILE" 2>/dev/null) || content="{}"
-	if ! printf '%s' "$content" | jq empty >/dev/null 2>&1; then
-		content="{}"
-	fi
-
-	printf '%s\n' "$content"
-	return 0
-}
-
-_ever_nmr_cache_with_lock() {
-	local lock_dir="${EVER_NMR_CACHE_FILE}.lockdir"
-	local retries=0
-	while ! mkdir "$lock_dir" 2>/dev/null; do
-		retries=$((retries + 1))
-		if [[ "$retries" -ge 50 ]]; then
-			echo "[pulse-wrapper] _ever_nmr_cache_with_lock: lock acquisition timed out" >>"$LOGFILE"
-			return 1
-		fi
-		# Stale lock detection: read the owner PID stored in the lock directory.
-		# If that process is no longer running, the lock is orphaned — clear it.
-		local _nmr_owner_pid
-		_nmr_owner_pid=$(cat "${lock_dir}/owner.pid" 2>/dev/null || true)
-		if [[ -n "$_nmr_owner_pid" ]] && ! kill -0 "$_nmr_owner_pid" 2>/dev/null; then
-			echo "[pulse-wrapper] _ever_nmr_cache_with_lock: clearing stale lock (owner PID ${_nmr_owner_pid} gone)" >>"$LOGFILE"
-			rm -f "${lock_dir}/owner.pid" 2>/dev/null || true
-			rmdir "$lock_dir" 2>/dev/null || true
-			continue
-		fi
-		sleep 0.1
-	done
-
-	# Record owner PID inside lock directory so retrying callers can detect staleness.
-	printf '%s\n' "$$" >"${lock_dir}/owner.pid" 2>/dev/null || true
-	local rc=0
-	"$@" || rc=$?
-	rm -f "${lock_dir}/owner.pid" 2>/dev/null || true
-	rmdir "$lock_dir" 2>/dev/null || true
-	return "$rc"
-}
-
-_ever_nmr_cache_get() {
-	local issue_num="$1"
-	local slug="$2"
-	local key now_epoch cache_json cache_value checked_at age
-
-	key=$(_ever_nmr_cache_key "$issue_num" "$slug")
-	now_epoch=$(date +%s)
-	cache_json=$(_ever_nmr_cache_load)
-	cache_value=$(printf '%s' "$cache_json" | jq -r --arg key "$key" 'if .[$key] == null then "unknown" elif .[$key].ever_nmr == true then "true" elif .[$key].ever_nmr == false then "false" else "unknown" end' 2>/dev/null) || cache_value="unknown"
-	checked_at=$(printf '%s' "$cache_json" | jq -r --arg key "$key" '.[$key].checked_at // 0' 2>/dev/null) || checked_at=0
-	[[ "$checked_at" =~ ^[0-9]+$ ]] || checked_at=0
-
-	if [[ "$cache_value" == "true" ]]; then
-		printf 'true\n'
-		return 0
-	fi
-
-	if [[ "$cache_value" == "false" ]]; then
-		age=$((now_epoch - checked_at))
-		if [[ "$age" -lt "$EVER_NMR_NEGATIVE_CACHE_TTL_SECS" ]]; then
-			printf 'false\n'
-			return 0
-		fi
-	fi
-
-	printf 'unknown\n'
-	return 0
-}
-
-_ever_nmr_cache_set_locked() {
-	local issue_num="$1"
-	local slug="$2"
-	local cache_value="$3"
-	local state_dir cache_json key now_epoch tmp_file
-
-	[[ "$cache_value" == "true" || "$cache_value" == "false" ]] || return 1
-
-	state_dir=$(dirname "$EVER_NMR_CACHE_FILE")
-	mkdir -p "$state_dir" 2>/dev/null || true
-	cache_json=$(_ever_nmr_cache_load)
-	key=$(_ever_nmr_cache_key "$issue_num" "$slug")
-	now_epoch=$(date +%s)
-	tmp_file=$(mktemp "${state_dir}/.ever-nmr-cache.XXXXXX" 2>/dev/null) || return 0
-
-	if printf '%s' "$cache_json" | jq --arg key "$key" --argjson checked_at "$now_epoch" --argjson ever_nmr "$cache_value" '.[$key] = {ever_nmr: $ever_nmr, checked_at: $checked_at}' >"$tmp_file" 2>/dev/null; then
-		mv "$tmp_file" "$EVER_NMR_CACHE_FILE" || {
-			rm -f "$tmp_file"
-			echo "[pulse-wrapper] _ever_nmr_cache_set_locked: failed to move cache file" >>"$LOGFILE"
-		}
-	else
-		rm -f "$tmp_file"
-		echo "[pulse-wrapper] _ever_nmr_cache_set_locked: failed to write cache entry" >>"$LOGFILE"
-	fi
-
-	return 0
-}
-
-_ever_nmr_cache_set() {
-	_ever_nmr_cache_with_lock _ever_nmr_cache_set_locked "$@" || return 0
-	return 0
-}
-
-#######################################
-# Check if an issue was ever labeled needs-maintainer-review (t1894).
-# Uses the immutable GitHub timeline API — label removal does not erase
-# the history. This provenance remains relevant for external-author issues;
-# write-authorized authors are independently trusted and must not self-approve.
-#
-# Arguments:
-#   $1 - issue number
-#   $2 - repo slug (owner/repo)
-#   $3 - optional precomputed status: true|false|unknown
-# Returns: 0 if the issue was ever NMR-labeled, 1 otherwise
-#######################################
-issue_was_ever_nmr() {
-	local issue_num="$1"
-	local slug="$2"
-	local known_status="${3:-unknown}"
-
-	[[ -n "$issue_num" && -n "$slug" ]] || return 1
-
-	case "$known_status" in
-	true)
-		return 0
-		;;
-	false)
-		return 1
-		;;
-	esac
-
-	local cache_status
-	cache_status=$(_ever_nmr_cache_get "$issue_num" "$slug")
-	case "$cache_status" in
-	true)
-		return 0
-		;;
-	false)
-		return 1
-		;;
-	esac
-
-	local ever_count
-	ever_count=$(gh api "repos/${slug}/issues/${issue_num}/timeline" --paginate \
-		--jq '[.[] | select(.event == "labeled" and .label.name == "needs-maintainer-review")] | length' \
-		2>/dev/null) || ever_count=0
-	[[ "$ever_count" =~ ^[0-9]+$ ]] || ever_count=0
-
-	if [[ "$ever_count" -gt 0 ]]; then
-		_ever_nmr_cache_set "$issue_num" "$slug" "true"
-		return 0
-	fi
-
-	_ever_nmr_cache_set "$issue_num" "$slug" "false"
-	return 1
-}
+# shellcheck source=./pulse-nmr-approval-cache.sh
+# shellcheck disable=SC1091 # sibling module resolved independently of caller SCRIPT_DIR
+source "${NMR_SCRIPT_DIR}/pulse-nmr-approval-cache.sh"
 
 #######################################
 # Verify the live issue author's repository authority.
@@ -753,7 +577,7 @@ _nmr_application_is_security_sensitive() {
 _nmr_version_sort_key() {
 	local version_raw="$1"
 	local version=""
-	version=$(printf '%s' "$version_raw" | grep -oE '[0-9]+(\.[0-9]+){0,3}' | head -1) || version=""
+	version=$(printf '%s' "$version_raw" | grep -oE '[0-9]+(\.[0-9]+){0,3}' | sed -n '1p') || version=""
 	[[ -n "$version" ]] || { printf '\n'; return 0; }
 
 	local major=0 minor=0 patch=0 build=0
@@ -959,7 +783,7 @@ _nmr_breaker_release_retry_reason() {
 	[[ -n "$breaker_at" ]] || return 1
 	[[ -n "$breaker_body" ]] || return 1
 
-	if printf '%s' "$breaker_body" | grep -q 'dispatch-backoff:rate_limit_nmr'; then
+	if printf '%s' "$breaker_body" | grep 'dispatch-backoff:rate_limit_nmr' >/dev/null; then
 		local now_epoch="" label_epoch="" age_s="" cooldown_s="${AIDEVOPS_RATE_LIMIT_NMR_AUTO_RETRY_SECONDS:-1800}"
 		now_epoch=$(date +%s 2>/dev/null || true)
 		label_epoch=$(date -u -d "$label_at" '+%s' 2>/dev/null || TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$label_at" '+%s' 2>/dev/null || true)
@@ -974,7 +798,7 @@ _nmr_breaker_release_retry_reason() {
 	fi
 
 	local breaker_version=""
-	breaker_version=$(printf '%s' "$breaker_body" | grep -oE 'aidevops(_version)?[ =]v?[0-9]+(\.[0-9]+){1,3}|aidevops\.sh[^0-9]*v[0-9]+(\.[0-9]+){1,3}|version=[0-9]+(\.[0-9]+){1,3}' | tail -1 | grep -oE '[0-9]+(\.[0-9]+){1,3}' | head -1) || breaker_version=""
+	breaker_version=$(printf '%s' "$breaker_body" | grep -oE 'aidevops(_version)?[ =]v?[0-9]+(\.[0-9]+){1,3}|aidevops\.sh[^0-9]*v[0-9]+(\.[0-9]+){1,3}|version=[0-9]+(\.[0-9]+){1,3}' | tail -1 | grep -oE '[0-9]+(\.[0-9]+){1,3}' | sed -n '1p') || breaker_version=""
 	[[ -n "$breaker_version" ]] || return 1
 
 	local current_version=""
@@ -999,205 +823,9 @@ _nmr_breaker_release_retry_reason() {
 	return 1
 }
 
-#######################################
-# Classify an NMR episode into a stable reason code. Explicit structured
-# markers win; legacy breaker text is mapped without copying prose or paths.
-# Stdout: {code,class,source,revalidate_after_seconds,requires_crypto}
-#######################################
-_nmr_reason_metadata_from_comments() {
-	local comments_json="$1"
-	local revalidate_seconds="$NMR_TEMPORARY_REVALIDATE_SECONDS"
-	local metadata_json=""
-	[[ "$revalidate_seconds" =~ ^[0-9]+$ ]] || revalidate_seconds=3600
-	metadata_json=$(printf '%s' "$comments_json" | jq -c --argjson revalidate "$revalidate_seconds" \
-		-f "$NMR_REASON_FILTER" 2>/dev/null) || return 1
-	[[ -n "$metadata_json" ]] || return 1
-	printf '%s\n' "$metadata_json"
-	return 0
-}
-
-_nmr_reason_metadata() {
-	local issue_num="$1"
-	local slug="$2"
-	local comments_json="[]"
-	local comments_path=""
-	comments_path=$(_nmr_issue_api_path "$issue_num" "$slug" "$NMR_API_COMMENTS_SUFFIX")
-	comments_json=$(gh api "$comments_path" --paginate --slurp 2>/dev/null) || return 1
-	printf '%s' "$comments_json" | jq -e 'arrays' >/dev/null 2>&1 || return 1
-	_nmr_reason_metadata_from_comments "$comments_json"
-	return $?
-}
-
-_nmr_revalidation_due() {
-	local metadata_json="$1"
-	local label_at="$2"
-	local now_epoch=""
-	local label_epoch=""
-	local after_seconds=""
-	now_epoch=$(date +%s 2>/dev/null || true)
-	label_epoch=$(date -u -d "$label_at" '+%s' 2>/dev/null || TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$label_at" '+%s' 2>/dev/null || true)
-	after_seconds=$(printf '%s' "$metadata_json" | jq -r '.revalidate_after_seconds // 0' 2>/dev/null) || after_seconds=0
-	[[ "$now_epoch" =~ ^[0-9]+$ && "$label_epoch" =~ ^[0-9]+$ && "$after_seconds" =~ ^[0-9]+$ ]] || return 1
-	[[ $((now_epoch - label_epoch)) -ge "$after_seconds" ]]
-	return $?
-}
-
-_nmr_temporary_assumption_resolved() {
-	local issue_num="$1"
-	local slug="$2"
-	local code="$3"
-	local label_at="$4"
-	# Recovery-loop markers classify as diagnostic ambiguity, while rate-limit
-	# and zero-session markers classify as transient infrastructure. Both may use
-	# the existing one-retry-per-breaker-release gate; stale/manual diagnostics
-	# remain preserved because _nmr_breaker_release_retry_reason rejects them.
-	if [[ "$code" == "transient_infrastructure" || "$code" == "diagnostic_ambiguity" ]]; then
-		local retry_reason=""
-		retry_reason=$(_nmr_breaker_release_retry_reason "$issue_num" "$slug" "$label_at") || retry_reason=""
-		if [[ -n "$retry_reason" ]]; then
-			printf '%s\n' "$retry_reason"
-			return 0
-		fi
-	fi
-
-	local issue_json="{}"
-	local issue_path=""
-	issue_path=$(_nmr_issue_api_path "$issue_num" "$slug")
-	issue_json=$(gh api "$issue_path" 2>/dev/null) || issue_json="{}"
-	if [[ "$code" == "missing_context" ]] && printf '%s' "$issue_json" | jq -e '
-		((.body // "") | contains("## Worker Guidance")) and
-		((.body // "") | contains("### Verification"))
-	' >/dev/null 2>&1; then
-		printf 'worker guidance and verification are now present\n'
-		return 0
-	fi
-
-	local comments_json="[]"
-	local comments_path=""
-	comments_path=$(_nmr_issue_api_path "$issue_num" "$slug" "$NMR_API_COMMENTS_SUFFIX")
-	comments_json=$(gh api "$comments_path" --paginate --slurp 2>/dev/null) || comments_json="[]"
-	if printf '%s' "$comments_json" | jq -e -f "$NMR_TRUSTED_RESOLUTION_FILTER" >/dev/null 2>&1; then
-		printf 'trusted revalidation evidence resolved the temporary assumption\n'
-		return 0
-	fi
-	return 1
-}
-
-_nmr_record_revalidation_state() {
-	local issue_num="$1"
-	local slug="$2"
-	local metadata_json="$3"
-	local label_at="$4"
-	local status="$5"
-	local state_dir="${NMR_REVALIDATION_STATE_FILE%/*}"
-	[[ "$state_dir" != "$NMR_REVALIDATION_STATE_FILE" ]] || return 0
-	mkdir -p "$state_dir" 2>/dev/null || return 0
-	local current="{}"
-	if [[ -f "$NMR_REVALIDATION_STATE_FILE" ]]; then
-		current=$(cat "$NMR_REVALIDATION_STATE_FILE" 2>/dev/null) || current="{}"
-	fi
-	printf '%s' "$current" | jq empty >/dev/null 2>&1 || current="{}"
-	local key="${slug}#${issue_num}"
-	local tmp_file=""
-	tmp_file=$(mktemp "${state_dir}/.nmr-revalidation.XXXXXX") || return 0
-	printf '%s' "$current" | jq --arg key "$key" --arg label_at "$label_at" --arg status "$status" \
-		--argjson metadata "$metadata_json" -f "$NMR_STATE_RECORD_FILTER" \
-		>"$tmp_file" 2>/dev/null || { rm -f "$tmp_file"; return 0; }
-	mv "$tmp_file" "$NMR_REVALIDATION_STATE_FILE" 2>/dev/null || rm -f "$tmp_file"
-	return 0
-}
-
-_nmr_prune_closed_revalidation_state() {
-	[[ -f "$NMR_REVALIDATION_STATE_FILE" ]] || return 0
-	local limit="$NMR_STATE_PRUNE_LIMIT"
-	[[ "$limit" =~ ^[1-9][0-9]*$ ]] || limit=25
-	local current=""
-	current=$(<"$NMR_REVALIDATION_STATE_FILE") || return 0
-	printf '%s' "$current" | jq -e '.entries | type == "object"' >/dev/null 2>&1 || return 0
-	local cursor=""
-	cursor=$(printf '%s' "$current" | jq -r '.prune_cursor // empty' 2>/dev/null) || cursor=""
-
-	local key=""
-	local slug=""
-	local issue_num=""
-	local issue_json=""
-	local state=""
-	local gate_live=""
-	local checked=0
-	while IFS= read -r key; do
-		[[ "$checked" -lt "$limit" ]] || break
-		checked=$((checked + 1))
-		cursor="$key"
-		[[ "$key" == *#* ]] || continue
-		slug="${key%#*}"
-		issue_num="${key##*#}"
-		[[ -n "$slug" && "$issue_num" =~ ^[0-9]+$ ]] || continue
-		issue_json=$(gh api "$(_nmr_issue_api_path "$issue_num" "$slug")" 2>/dev/null) || continue
-		state=$(printf '%s' "$issue_json" | jq -r '.state // empty' 2>/dev/null) || continue
-		[[ -n "$state" ]] || continue
-		if [[ "$state" != "closed" && "$state" != "CLOSED" ]]; then
-			# Open issues stay tracked only while a gate label the entry describes
-			# still exists; missing/unparseable labels fail closed (keep entry).
-			gate_live=$(printf '%s' "$issue_json" | jq -r --argjson gates "$NMR_STATE_LIVE_GATE_LABELS" '
-				if (.labels | type) != "array" then "unknown"
-				else [.labels[] | (.name? // .)] | any(.[]; . as $l | $gates | index($l)) | tostring end
-			' 2>/dev/null) || continue
-			[[ "$gate_live" == "false" ]] || continue
-		fi
-		current=$(printf '%s' "$current" | jq --arg key "$key" 'del(.entries[$key])' 2>/dev/null) || return 0
-	done < <(printf '%s' "$current" | jq -r --arg cursor "$cursor" '
-		.entries | keys as $keys | (($keys | map(select(. > $cursor))) + ($keys | map(select(. <= $cursor))))[]
-	' 2>/dev/null)
-
-	[[ "$checked" -gt 0 ]] || return 0
-	current=$(printf '%s' "$current" | jq --arg cursor "$cursor" '.prune_cursor = $cursor' 2>/dev/null) || return 0
-	local state_dir="${NMR_REVALIDATION_STATE_FILE%/*}"
-	[[ "$state_dir" != "$NMR_REVALIDATION_STATE_FILE" ]] || return 0
-	local tmp_file=""
-	tmp_file=$(mktemp "${state_dir}/.nmr-prune.XXXXXX") || return 0
-	printf '%s\n' "$current" >"$tmp_file" || { rm -f "$tmp_file"; return 0; }
-	mv "$tmp_file" "$NMR_REVALIDATION_STATE_FILE" 2>/dev/null || rm -f "$tmp_file"
-	return 0
-}
-
-_nmr_emit_decision_packet() {
-	local issue_num="$1"
-	local slug="$2"
-	local reason_code="$3"
-	local marker="nmr-decision-packet reason=${reason_code}"
-	local prior_count="0"
-	local comments_path=""
-	local comments_json="[]"
-	comments_path=$(_nmr_issue_api_path "$issue_num" "$slug" "$NMR_API_COMMENTS_SUFFIX")
-	comments_json=$(gh api "$comments_path" --paginate --slurp 2>/dev/null) || return 0
-	prior_count=$(printf '%s' "$comments_json" | jq -r --arg marker "$marker" '
-		(if type == "array" and (.[0]? | type) == "array" then [.[][]]
-		elif type == "array" then . else [] end)
-		| [.[] | select((.body // "") | contains($marker))] | length
-	' 2>/dev/null) || return 0
-	[[ "$prior_count" =~ ^[0-9]+$ ]] || return 0
-	[[ "$prior_count" -eq 0 ]] || return 0
-	gh_issue_comment "$issue_num" --repo "$slug" --body "<!-- ${marker} -->
-## Maintainer decision required
-
-- Reason: ${reason_code}
-- Evidence: explicit durable reason metadata requires a human content, policy, security, billing, or authority decision.
-- Options: resolve the decision and remove \`hold-for-review\`, or document the rejected/alternative direction.
-
-Trusted-author normalization will replace NMR with \`hold-for-review\`; elapsed time is never approval." 2>/dev/null || true
-	return 0
-}
-
-_nmr_latest_event_json() {
-	local issue_num="$1"
-	local slug="$2"
-	local timeline_path=""
-	local timeline_json=""
-	timeline_path=$(_nmr_issue_api_path "$issue_num" "$slug" "/timeline")
-	timeline_json=$(gh api "$timeline_path" --paginate --slurp 2>/dev/null) || return 1
-	printf '%s' "$timeline_json" | jq -c -f "$NMR_LATEST_EVENT_FILTER" 2>/dev/null
-	return $?
-}
+# shellcheck source=./pulse-nmr-approval-revalidation.sh
+# shellcheck disable=SC1091 # sibling module resolved independently of caller SCRIPT_DIR
+source "${NMR_SCRIPT_DIR}/pulse-nmr-approval-revalidation.sh"
 
 _nmr_evaluate_reason_metadata() {
 	local issue_num="$1"
@@ -1507,9 +1135,11 @@ notify_ever_nmr_without_approval() {
 	local already_notified
 	# Check all pages together. A signature published since verification also
 	# suppresses notification; presence alone never grants dispatch authority.
-	already_notified=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate --slurp \
-		--jq '[.[][] | select((.body // "") | test("ever-nmr-remediation|aidevops-signed-approval"))] | length' \
-		2>/dev/null) || return 0
+	# GH#38185: gh rejects --slurp with --jq, so filter with standalone jq.
+	already_notified=$(set -o pipefail
+		gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" --paginate --slurp 2>/dev/null |
+			jq '[.[][] | select((.body // "") | test("ever-nmr-remediation|aidevops-signed-approval"))] | length' \
+				2>/dev/null) || return 0
 	[[ "$already_notified" =~ ^[0-9]+$ ]] || return 0
 	if [[ "$already_notified" -gt 0 ]]; then
 		echo "[pulse-wrapper] notify_ever_nmr_without_approval: #${issue_number} in ${repo_slug} — remediation comment already posted, skipping" >>"$LOGFILE"
@@ -1524,7 +1154,7 @@ notify_ever_nmr_without_approval() {
 > Label \`needs-maintainer-review\` was removed, but the \`ever-NMR\` history flag is still set. Pulse will continue to skip dispatch until cryptographic approval lands:
 >
 > \`\`\`
-> sudo aidevops approve issue ${issue_number} ${repo_slug}
+> $(approval_cli_prefix) approve issue ${issue_number} ${repo_slug}
 > \`\`\`
 >
 > This gate cannot be bypassed by label manipulation (security design — see \`reference/auto-merge.md\` NMR section)." \
@@ -1848,7 +1478,7 @@ _notify_stale_recovery_resolved_by_pr() {
 PR #${matching_pr} is APPROVED with all quality/security gates green. To merge, run:
 
 \`\`\`
-sudo aidevops approve issue ${issue_num} ${slug}
+$(approval_cli_prefix) approve issue ${issue_num} ${slug}
 \`\`\`
 
 This issue's NMR was applied by stale-recovery (t2008) — the cryptographic approval clears it and the merge gate flips to PASS." \
@@ -1901,7 +1531,7 @@ _handle_knowledge_review_promotion() {
 	local source_id
 	source_id=$(printf '%s' "$issue_body" \
 		| grep -oE 'source_id:[a-zA-Z0-9_.-]+' \
-		| head -1 \
+		| sed -n '1p' \
 		| cut -d: -f2 2>/dev/null) || source_id=""
 
 	if [[ -z "$source_id" ]]; then
@@ -1939,11 +1569,10 @@ _nmr_edit_issue_labels() {
 	local issue_num="$1"
 	local slug="$2"
 	shift 2
-	if declare -F gh_issue_edit_safe >/dev/null 2>&1; then
-		gh_issue_edit_safe "$issue_num" --repo "$slug" "$@" >/dev/null 2>&1
-		return $?
-	fi
-	gh issue edit "$issue_num" --repo "$slug" "$@" >/dev/null 2>&1
+	# shellcheck source=protected-label-guard.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/protected-label-guard.sh"
+	protected_label_edit "$issue_num" "$slug" \
+		"normalization; association=${author_association:-unknown}; authority=${AIDEVOPS_GH_ACTOR_AUTHORITY_REASON:-unknown}" "$@" >/dev/null
 	return $?
 }
 
@@ -1961,7 +1590,7 @@ _nmr_issue_label_state() {
 			($statuses[0] // $no_status),
 			(any($labels[];
 				. == "hold-for-review" or . == "no-auto-dispatch" or
-				. == "needs-credentials" or . == "needs-maintainer-permissions")),
+				. == "needs-credentials" or . == "needs-source-access" or . == "needs-maintainer-permissions")),
 			(any($labels[];
 				. == "parent-task" or . == "meta" or . == "persistent" or
 				. == "supervisor" or . == "contributor" or . == "quality-review" or
@@ -1970,6 +1599,17 @@ _nmr_issue_label_state() {
 		] | @tsv end
 	' 2>/dev/null
 	return $?
+}
+
+# Check containment before any lifecycle change, not just before NMR removal.
+# The final label edit checks again against live evidence.
+_nmr_flap_allows_transition() {
+	local issue_num="$1" slug="$2"
+	# shellcheck source=protected-label-guard.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/protected-label-guard.sh"
+	_protected_label_check "$issue_num" "$slug" "needs-maintainer-review" "--remove-label" \
+		"normalization; authority=${AIDEVOPS_GH_ACTOR_AUTHORITY_REASON:-unknown}" || return 1
+	return 0
 }
 
 _nmr_set_transition_status() {
@@ -2014,6 +1654,7 @@ _nmr_restore_dispatchable_state() {
 	local current_status=""
 	local manual_suppress=""
 	local terminal_suppress=""
+	_nmr_flap_allows_transition "$issue_num" "$slug" || return 1
 	label_state=$(_nmr_issue_label_state "$issue_num" "$slug") || return 1
 	IFS=$'\t' read -r current_status manual_suppress terminal_suppress <<<"$label_state"
 	[[ "$current_status" == "$NMR_STATUS_NONE" || "$current_status" == status:* ]] || return 1
@@ -2064,6 +1705,7 @@ _nmr_translate_trusted_author_blocked() {
 	local current_status=""
 	local manual_suppress=""
 	local terminal_suppress=""
+	_nmr_flap_allows_transition "$issue_num" "$slug" || return 1
 	label_state=$(_nmr_issue_label_state "$issue_num" "$slug") || return 1
 	IFS=$'\t' read -r current_status manual_suppress terminal_suppress <<<"$label_state"
 	[[ "$current_status" == "$NMR_STATUS_NONE" || "$current_status" == status:* ]] || return 1
@@ -2128,6 +1770,10 @@ _nmr_apply_auto_approval_transition() {
 		_nmr_application_is_security_sensitive "$issue_num" "$slug" || approved_security_rc=$?
 		if [[ "$approved_security_rc" -gt 1 ]]; then
 			echo "[pulse-wrapper] Auto-approve deferred for #${issue_num} in ${slug} — live security labels unavailable; NMR unchanged" >>"$LOGFILE"
+			return 0
+		fi
+		if ! _nmr_flap_allows_transition "$issue_num" "$slug"; then
+			printf '[pulse-wrapper] Auto-approve deferred for #%s in %s — flap guard held or containment unverified; no approval lock or marker posted\n' "$issue_num" "$slug" >>"$LOGFILE"
 			return 0
 		fi
 		# Lock before posting the trusted marker so untrusted comments cannot race

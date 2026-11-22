@@ -27,6 +27,9 @@ source "${BASH_SOURCE[0]%/*}/project-node-runtime.sh"
 # GH#33993: shared systemd user-manager probe for detached worker isolation.
 # shellcheck source=./pulse-dispatch-worker-systemd.sh
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-worker-systemd.sh"
+# Shared transient-scope launcher, also used by detached routines (GH#35760).
+# shellcheck source=./systemd-scope-launch.sh
+source "${BASH_SOURCE[0]%/*}/systemd-scope-launch.sh"
 : "${_HRW_ROLE_WORKER:=worker}"
 _HRW_PR_REPAIR_OWNERSHIP_LINKED_ISSUE="linked-issue"
 
@@ -49,8 +52,28 @@ _hrw_permission_pending_path() {
 _hrw_mark_runtime_launch_started() {
 	local session_key="$1"
 	local runtime="$2"
+	# This records intent before spawn, not proof that a runtime session exists.
 	_WORKER_RUNTIME_LAUNCH_STARTED=1
 	print_info "[lifecycle] pre_runtime_launch session=${session_key} runtime=${runtime} pid=$$"
+	return 0
+}
+
+# A spawn intent (or a persisted continuation ID) cannot consume an approval.
+# The result session ID comes from this invocation's output; activity snapshots
+# survive isolated OpenCode DB finalization and cover failed invocations too.
+_hrw_runtime_launch_confirmed() {
+	local activity_count="0"
+	[[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" == 1 ]] || return 1
+	[[ -n "${_run_metric_session_id:-}" ]] && return 0
+	# Isolated runs must not borrow shared-DB activity from other workers when
+	# isolation failed before spawn: require this attempt's live DB or snapshot.
+	if [[ "${AIDEVOPS_HEADLESS_AUTH_ISOLATION:-1}" == "1" &&
+		"${_WORKER_ATTEMPT_ACTIVITY_START_MS:-}" != "${_WORKER_START_EPOCH_MS:-0}" &&
+		! -f "${_WORKER_ISOLATED_DB_PATH:-}" ]]; then
+		return 1
+	fi
+	activity_count=$(_hrff_worker_session_count)
+	[[ "$activity_count" =~ ^[0-9]+$ && "$activity_count" -gt 0 ]] || return 1
 	return 0
 }
 
@@ -120,6 +143,11 @@ _hrw_verify_dispatch_ownership() {
 		local target_rc=0
 		if [[ -n "$repair_linked_issue" ]]; then
 			local expected_assignee="${AIDEVOPS_PR_REPAIR_ISSUE_ASSIGNEE:-}"
+			if [[ ! "${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" =~ ^(automatic|revision)$ ||
+				-z "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" || -z "${AIDEVOPS_PR_CHECKPOINT_SESSION:-}" ]]; then
+				_hrw_ownership_log error "incomplete claimed checkpoint admission contract"
+				return 1
+			fi
 			if [[ -n "$repair_ownership_mode" ]]; then
 				_hrw_ownership_log error "conflicting PR checkpoint ownership mode issue=${issue_number} pr=${repair_pr_number} mode=${repair_ownership_mode}"
 				return 1
@@ -279,7 +307,7 @@ _hrw_prepare_role_context() {
 		unset WORKER_ISSUE_NUMBER WORKER_REPO_SLUG WORKER_WORKTREE_PATH \
 			WORKER_GITHUB_LOGIN WORKER_SESSION_KEY AIDEVOPS_WORKER_GITHUB_LOGIN \
 			DISPATCH_REPO_SLUG AIDEVOPS_DISPATCH_LEASE_TOKEN \
-			AIDEVOPS_PR_CHECKPOINT_SESSION AIDEVOPS_PR_CHECKPOINT_AUTHOR \
+			AIDEVOPS_PR_CHECKPOINT_SESSION AIDEVOPS_PR_CHECKPOINT_AUTHOR AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE \
 			AIDEVOPS_DISPATCH_LEASE_DEVICE AIDEVOPS_DISPATCH_LEASE_SESSION AIDEVOPS_ATTEMPT_ID \
 			AIDEVOPS_PARENT_WORKER_ID AIDEVOPS_ROOT_WORKER_ID AIDEVOPS_WORKER_ID \
 			AIDEVOPS_PERMISSION_GRANT_FILE AIDEVOPS_PERMISSION_REQUEST_ID \
@@ -431,6 +459,11 @@ _cmd_run_prepare() {
 				_WORKER_PRELAUNCH_FAILURE_REASON="worker_claim_ready_transition_failed"
 				return 1
 			fi
+			# GH#36646: checkpoint-only, non-fatal; ordinary workers are a no-op.
+			# shellcheck source=./terminal-lease-recovery.sh
+			source "${SCRIPT_DIR}/terminal-lease-recovery.sh"
+			_terminal_lease_record_ready "$WORKER_ISSUE_NUMBER" "$DISPATCH_REPO_SLUG" \
+				"${AIDEVOPS_DISPATCH_LEASE_SESSION:-$session_key}"
 		fi
 	fi
 	return 0
@@ -462,8 +495,11 @@ _cmd_run_prepare_retry() {
 		return 0
 	fi
 
+	# GH#36698: model_unavailable was backed off for this model only, so the
+	# exact-tier reselection below picks the next same-tier candidate.
 	if [[ "$_run_failure_reason" != "access_denied" && "$_run_failure_reason" != "auth_error" && "$_run_failure_reason" != "rate_limit" && \
-		"$_run_failure_reason" != "provider_error" && "$_run_failure_reason" != "startup_no_model_activity" ]]; then
+		"$_run_failure_reason" != "provider_error" && "$_run_failure_reason" != "model_unavailable" && \
+		"$_run_failure_reason" != "startup_no_model_activity" ]]; then
 		_cmd_run_finish "$session_key" "$_HRW_STATUS_FAIL"
 		return "$attempt_exit"
 	fi
@@ -480,25 +516,12 @@ _cmd_run_prepare_retry() {
 }
 
 #######################################
-# Return 0 when a PID's cgroup is the named transient scope (Linux only).
-# Args: $1 = pid, $2 = scope unit name without the .scope suffix
-#######################################
-_hrw_detach_pid_in_scope() {
-	local pid="$1"
-	local scope_name="$2"
-	local cgroup_file="/proc/${pid}/cgroup"
-	[[ -r "$cgroup_file" ]] || return 1
-	grep -Fq "/${scope_name}.scope" "$cgroup_file" 2>/dev/null && return 0
-	return 1
-}
-
-#######################################
 # Launch a detached worker in its own systemd user scope (GH#33993).
 # A plain background subshell stays in the caller's cgroup, so a pulse unit
 # with KillMode=control-group kills manually dispatched and CI-repair workers
-# when it stops or hits TimeoutStartSec. A scope (unlike a transient service)
-# keeps the caller's exported environment and working directory, and
-# systemd-run execs the worker, so $! is the worker PID itself.
+# when it stops or hits TimeoutStartSec. The shared launcher never starts a
+# second copy: an early exit is reported through the caller's readiness check
+# with systemd-run's error preserved in the worker log.
 # Args: $1 = session key, $2 = log file, $3.. = worker command
 # Output: worker PID
 # Returns: 0 always once launched; isolation evidence is logged
@@ -507,33 +530,16 @@ _hrw_detach_systemd_scope() {
 	local session_key="$1"
 	local log_file="$2"
 	shift 2
-	local scope_name="" worker_pid="" attempts=0
+	local scope_name="" launch_result="" worker_pid="" isolation=""
 	scope_name="aidevops-worker-$(printf '%s' "$session_key" | tr -c 'A-Za-z0-9_.-' '-')-$$-${RANDOM:-0}"
-	local -a scope_command=(
-		systemd-run --user --scope --collect --quiet
-		--unit="$scope_name" --description="aidevops worker ${session_key}"
-		"$@"
-	)
-	if command -v setsid >/dev/null 2>&1; then
-		setsid "${scope_command[@]}" </dev/null >>"$log_file" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	launch_result=$(systemd_scope_launch "$scope_name" "aidevops worker ${session_key}" "$log_file" "$@")
+	worker_pid="${launch_result%% *}"
+	isolation="${launch_result#* }"
+	if [[ "$isolation" == "systemd_scope" ]]; then
+		print_info "[lifecycle] worker_detached session=${session_key} pid=${worker_pid} isolation=systemd_scope unit=${scope_name}.scope" >&2
 	else
-		"${scope_command[@]}" </dev/null >>"$log_file" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+		print_warning "[lifecycle] worker_detach_unconfirmed session=${session_key} pid=${worker_pid} unit=${scope_name}.scope log=${log_file}" >&2
 	fi
-	worker_pid=$!
-	# Confirm the worker left the caller's cgroup. Never start a second
-	# launcher here: an early exit is reported through the caller's readiness
-	# check with systemd-run's error preserved in the worker log.
-	while [[ "$attempts" -lt 25 ]]; do
-		if _hrw_detach_pid_in_scope "$worker_pid" "$scope_name"; then
-			print_info "[lifecycle] worker_detached session=${session_key} pid=${worker_pid} isolation=systemd_scope unit=${scope_name}.scope" >&2
-			printf '%s\n' "$worker_pid"
-			return 0
-		fi
-		kill -0 "$worker_pid" 2>/dev/null || break
-		sleep 0.2
-		attempts=$((attempts + 1))
-	done
-	print_warning "[lifecycle] worker_detach_unconfirmed session=${session_key} pid=${worker_pid} unit=${scope_name}.scope log=${log_file}" >&2
 	printf '%s\n' "$worker_pid"
 	return 0
 }
@@ -545,6 +551,9 @@ _hrw_detach_systemd_scope() {
 # fallback. Logs stay flat in the root so system-cleanup.sh ages each file.
 # mktemp creates the file exclusively with mode 600: a planted symlink is never
 # followed and repeated attempts for one session key never truncate each other.
+# Pulse-side callers (revised checkpoint dispatch, PR review launch) are not
+# managed session entry points, so an unset root is initialised here from the
+# same contract. An explicitly set but unusable root still fails closed.
 # Args: $1 = session key
 # Output: absolute log path
 # Returns: 0 created, 1 unusable root (caller must not spawn)
@@ -553,6 +562,14 @@ _hrw_create_detached_log() {
 	local session_key="$1"
 	local root="${AIDEVOPS_TEMP_DIR:-}"
 	local safe_key="" log_file=""
+	if [[ -z "$root" ]]; then
+		if ! declare -F aidevops_init_temp_workspace >/dev/null 2>&1; then
+			# shellcheck source=./shared-temp-workspace.sh
+			source "${BASH_SOURCE[0]%/*}/shared-temp-workspace.sh" || return 1
+		fi
+		aidevops_init_temp_workspace || return 1
+		root="${AIDEVOPS_TEMP_DIR:-}"
+	fi
 	if [[ "$root" != /* || -L "$root" || ! -d "$root" || ! -O "$root" || ! -w "$root" ]]; then
 		print_error "Detached worker log root is unusable: ${root:-<unset>} (must be an owned, writable, non-symlink directory; set AIDEVOPS_WORKSPACE_DIR to an approved location)"
 		return 1

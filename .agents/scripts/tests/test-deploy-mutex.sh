@@ -60,6 +60,8 @@ _make_setup_sourceable_copy() {
 	local target_file="$1"
 	local line=""
 	local in_lock_block="false"
+	# The excerpt references shared OS constants defined earlier in setup.sh.
+	printf 'SETUP_OS_DARWIN="Darwin"\n' >>"$target_file"
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		if [[ "$line" == "SETUP_NONINTERACTIVE_LOCK_HELD=false" ]]; then
 			in_lock_block="true"
@@ -155,19 +157,34 @@ _make_agent_tree() {
 
 test_failed_deploy_verification_restores_backup() {
 	local test_name="failed deploy verification restores newest agents backup"
-	local src="${TEST_ROOT}/repo/.agents"
-	local target="${TEST_ROOT}/.aidevops/agents"
-	local backup="${TEST_ROOT}/.aidevops/agents-backups/20260501_120000/agents"
+	# Runtime-bundle deploys stage and activate a bundle before verification, so
+	# exercise the verification-failure restore step directly: a plain (non-
+	# symlink) target with too few files fails _verify_deployed_agents_tree and
+	# must be replaced by the newest backup.
+	local src="${TEST_ROOT}/verify/repo/.agents"
+	local target="${TEST_ROOT}/verify/.aidevops/agents"
+	local backup="${TEST_ROOT}/verify/.aidevops/agents-backups/20260501_120000/agents"
 	mkdir -p "$(dirname "$backup")"
 	_make_agent_tree "$src" 1
+	_make_agent_tree "$target" 1
 	_make_agent_tree "$backup" 120
 
 	# shellcheck source=/dev/null
 	source "$AGENT_DEPLOY"
 
 	local rc=0
-	HOME="$TEST_ROOT" AIDEVOPS_AGENT_DEPLOY_MIN_FILES=100 INSTALL_DIR="${TEST_ROOT}/repo" \
-		deploy_aidevops_agents || rc=$?
+	(
+		HOME="${TEST_ROOT}/verify"
+		export HOME
+		AIDEVOPS_AGENT_DEPLOY_MIN_FILES=100
+		export AIDEVOPS_AGENT_DEPLOY_MIN_FILES
+		# Transition lock is covered by the lock case; stub it here.
+		aidevops_runtime_transition_lock_acquire() { return 0; }
+		aidevops_runtime_transition_lock_release() { return 0; }
+		_AIDEVOPS_ACTIVE_BUNDLE_ROOT=""
+		_AIDEVOPS_PREVIOUS_BUNDLE_ROOT=""
+		_verify_agents_deploy_or_restore "$src" "$target"
+	) || rc=$?
 
 	if [[ "$rc" -ne 0 && -f "$target/file-120.md" ]]; then
 		print_result "$test_name" 0

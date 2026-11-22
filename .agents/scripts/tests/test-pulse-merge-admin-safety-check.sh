@@ -24,6 +24,8 @@
 #   I — unlabeled non-collaborator, no current PR authority                 → return 1
 #   J — cached positive review evidence, live outcome no longer permitted  → return 1
 #   K — stale cached evidence, refreshed exact-head positive evidence      → return 0
+#   V — verified same-repo Dependabot PR, no linked issue, current-head V2 → return 0;
+#       missing approval, unverified provenance, or fork                   → return 1
 #   M-Q — metadata and linked-issue lookup failures are logged              → return 1
 
 set -euo pipefail
@@ -34,6 +36,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # _pulse_merge_admin_safety_check) were moved to pulse-merge-gates.sh by
 # GH#21595, t3030.
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+# shellcheck source=../gh-closing-reference-lib.sh
+source "${SCRIPT_DIR}/../gh-closing-reference-lib.sh"
 GATES_SCRIPT="${SCRIPT_DIR}/../pulse-merge-gates.sh"
 # shellcheck source=../pulse-merge-required-checks.sh
 source "${SCRIPT_DIR}/../pulse-merge-required-checks.sh"
@@ -75,7 +79,8 @@ set_fixture() {
 	local issue_approval_result="$4"
 	local pr_approval_result="${5:-$issue_approval_result}"
 	local pr_author="${6:-}"
-	rm -f "${TEST_ROOT}/issue-sync-trusted"
+	local pr_state="${7:-OPEN}" is_draft="${8:-false}" review_decision="${9:-null}" head_sha="${10:-head-current}"
+	rm -f "${TEST_ROOT}/issue-sync-trusted" "${TEST_ROOT}/dependabot-trusted"
 	if [[ -z "$pr_author" ]]; then
 		if [[ "$labels_json" == *"external-contributor"* || "$is_cross_repo" == "true" ]]; then
 			pr_author="external-contributor"
@@ -85,7 +90,7 @@ set_fixture() {
 	fi
 
 	cat >"${TEST_ROOT}/labels.json" <<EOF
-{"author":{"login":"${pr_author}"},"labels": ${labels_json}, "isCrossRepository": ${is_cross_repo}, "headRefOid": "head-current"}
+{"author":{"login":"${pr_author}"},"labels": ${labels_json}, "isCrossRepository": ${is_cross_repo}, "headRefOid": "${head_sha}", "state":"${pr_state}", "isDraft":${is_draft}, "reviewDecision":${review_decision}}
 EOF
 
 	# PR title / body fixtures used by _extract_linked_issue.
@@ -135,7 +140,10 @@ if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
 				author: .author,
 				labels: {nodes: .labels, pageInfo: {hasNextPage: $has_next_page}},
 				isCrossRepository: .isCrossRepository,
-				headRefOid: .headRefOid
+				headRefOid: .headRefOid,
+				state: .state,
+				isDraft: .isDraft,
+				reviewDecision: .reviewDecision
 			}},
 			rateLimit: {cost: 1}
 		}}
@@ -230,9 +238,12 @@ define_helpers_under_test() {
 		/^_pulse_is_trusted_issue_sync_pr\(\) \{/,/^}$/ { print }
 		/^_pulse_merge_classify_final_authority\(\) \{/,/^}$/ { print }
 		/^_pulse_merge_admin_pr_json_graphql\(\) \{/,/^}$/ { print }
+		/^_pulse_merge_live_state_gate\(\) \{/,/^}$/ { print }
+		/^_pulse_merge_trusted_dependabot_final_authority\(\) \{/,/^}$/ { print }
 		/^_external_pr_has_linked_issue\(\) \{/,/^}$/ { print }
 		/^_external_pr_linked_issue_crypto_approved\(\) \{/,/^}$/ { print }
 		/^_external_pr_current_head_crypto_approved\(\) \{/,/^}$/ { print }
+		/^_pulse_merge_admin_meta_fields\(\) \{/,/^}$/ { print }
 		/^_pulse_merge_admin_safety_check\(\) \{/,/^}$/ { print }
 	' "$GATES_SCRIPT")
 	final_src=$(awk '
@@ -255,11 +266,13 @@ define_helpers_under_test() {
 		local author="$1"
 		local repo_slug="$2"
 		[[ -n "$repo_slug" ]] || return 2
-		[[ "$author" == "external-contributor" || "$author" == "$ISSUE_SYNC_GRAPHQL_AUTHOR" ]] && return 1
+		[[ "$author" == "external-contributor" || "$author" == "$ISSUE_SYNC_GRAPHQL_AUTHOR" || "$author" == "dependabot" ]] && return 1
 		return 0
 	}
 	_is_trusted_dependabot_update_pr() {
-		return 1
+		printf '%s\n' "trusted-dependabot $*" >>"${GH_LOG:-/dev/null}"
+		[[ -f "${TEST_ROOT}/dependabot-trusted" && "${3:-}" == "dependabot[bot]" && "${4:-}" == "head-current" ]]
+		return $?
 	}
 	# shellcheck disable=SC1090
 	eval "$merge_src"
@@ -277,6 +290,12 @@ define_helpers_under_test() {
 		_PULSE_PREFLIGHT_CALLS=$((_PULSE_PREFLIGHT_CALLS + 1))
 		_pmrc_review_evidence_permits_advisory "${_PULSE_REVIEW_GATE_EVIDENCE:-}" "$repo_slug" "$pr_number" "$expected_head_sha"
 		return $?
+	}
+	# GH#38703: the real gate shells out to full-loop-helper.sh; record calls.
+	_PULSE_PROSPECTIVE_CALLS=""
+	_pulse_merge_prospective_todo_gate() {
+		_PULSE_PROSPECTIVE_CALLS="${_PULSE_PROSPECTIVE_CALLS}$1 $2 $3;"
+		return "${_PULSE_PROSPECTIVE_RC:-0}"
 	}
 	return 0
 }
@@ -637,6 +656,41 @@ test_case_u_unverified_issue_sync_candidate_fails_closed() {
 	return 0
 }
 
+run_dependabot_case() {
+	local name="$1" is_fork="$2" trusted="$3" pr_approval="$4" expected_rc="$5" expected_log="$6"
+	: >"$LOGFILE"
+	: >"$GH_LOG"
+	set_fixture '[{"name":"dependencies"}]' "$is_fork" \
+		'Bumps hono from 4.13.13 to 4.13.14.' 'NOT_VERIFIED' "$pr_approval" dependabot
+	[[ "$trusted" == "trusted" ]] && touch "${TEST_ROOT}/dependabot-trusted"
+	local result=0
+	_pulse_merge_admin_safety_check "970" "owner/repo" "head-current" || result=$?
+	if [[ "$result" -eq "$expected_rc" ]] && grep -qF "$expected_log" "$LOGFILE"; then
+		print_result "$name" 0
+		return 0
+	fi
+	print_result "$name" 1 "rc=${result}; calls=$(cat "$GH_LOG"); log=$(cat "$LOGFILE")"
+	return 0
+}
+
+test_case_v_dependabot_without_linked_issue() {
+	run_dependabot_case "Case V: approved verified Dependabot PR passes without linked issue" \
+		false trusted VERIFIED 0 "Verified Dependabot update with current-head maintainer V2 authority for PR #970"
+	if grep -qF 'approval-helper verify pr 970 owner/repo --expect-head head-current' "$GH_LOG" &&
+		! grep -qE 'approval-helper verify [0-9]+ ' "$GH_LOG"; then
+		print_result "Case V: Dependabot authority checks the exact PR head, not an issue" 0
+	else
+		print_result "Case V: Dependabot authority checks the exact PR head, not an issue" 1 "calls=$(cat "$GH_LOG")"
+	fi
+	run_dependabot_case "Case V2: verified Dependabot PR without current-head approval is refused" \
+		false trusted NO_APPROVAL 1 "verified Dependabot PR lacks V2 authority for current head"
+	run_dependabot_case "Case V3: approved but unverified Dependabot PR still needs a linked issue" \
+		false untrusted VERIFIED 1 "external/fork PR has no linked issue"
+	run_dependabot_case "Case V4: approved fork PR authored as dependabot still needs a linked issue" \
+		true trusted VERIFIED 1 "external/fork PR has no linked issue"
+	return 0
+}
+
 test_case_j_final_gate_rejects_stale_cached_review_evidence() {
 	: >"$LOGFILE"
 	set_fixture '[{"name":"bug"}]' 'false' \
@@ -670,6 +724,65 @@ test_case_k_final_gate_refreshes_current_review_evidence() {
 		return 0
 	fi
 	print_result "Case K: current timestamped review evidence reaches preflight" 1 "rc=${result}; preflight_calls=${_PULSE_PREFLIGHT_CALLS}; observed_at=${evidence_observed_at:-missing}"
+	return 0
+}
+
+# GH#38703: a duplicate TODO mapping against the live base tip blocks the
+# Pulse merge after every other gate passed, with a distinct blocker kind.
+test_case_k2_final_gate_blocks_prospective_todo_duplicate() {
+	: >"$LOGFILE"
+	set_fixture '[{"name":"bug"}]' 'false' \
+		'## Summary\n\nResolves #930' 'VERIFIED' 'VERIFIED' 'trusted-contributor'
+	_PULSE_REVIEW_GATE_EVIDENCE=""
+	_PULSE_PREFLIGHT_CALLS=0
+	_PULSE_PROSPECTIVE_CALLS=""
+	local result=0
+	_PULSE_PROSPECTIVE_RC=1 _pulse_merge_final_trust_gate "930" "owner/repo" "head-current" || result=$?
+	if [[ "$result" -eq 1 && "$_PULSE_PREFLIGHT_CALLS" -eq 1 &&
+		"$_PULSE_PROSPECTIVE_CALLS" == "930 owner/repo head-current;" &&
+		"${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:-}" == "$PMRC_BLOCKER_PROSPECTIVE_TODO" ]]; then
+		print_result "Case K2: final gate blocks a prospective TODO duplicate" 0
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
+		return 0
+	fi
+	print_result "Case K2: prospective TODO duplicate blocks the final gate" 1 \
+		"rc=${result}; preflight_calls=${_PULSE_PREFLIGHT_CALLS}; calls=${_PULSE_PROSPECTIVE_CALLS}; kind=${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:-}"
+	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
+	return 0
+}
+
+# The real gate invokes the helper subcommand with the pinned head and fails
+# closed on helper failure (stub helper under a temporary _PULSE_MERGE_DIR).
+test_case_k3_prospective_gate_invokes_full_loop_helper() {
+	local helper_dir="${TEST_ROOT}/prospective-helper" gate_src="" result=0 args=""
+	mkdir -p "$helper_dir"
+	# shellcheck disable=SC2016  # The generated stub expands these at execution time.
+	printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >"%s/args"\nexit "${PROSPECTIVE_STUB_RC:-0}"\n' "$helper_dir" \
+		>"${helper_dir}/full-loop-helper.sh"
+	gate_src=$(awk '/^_pulse_merge_prospective_todo_gate\(\) \{/,/^}$/ { print }' "$MERGE_SCRIPT")
+	if [[ -z "$gate_src" ]]; then
+		print_result "Case K3: prospective gate source is extractable" 1
+		return 0
+	fi
+	(
+		eval "$gate_src"
+		# Production loads timeout_sec from shared-constants.sh; this file does not.
+		declare -F timeout_sec >/dev/null 2>&1 || timeout_sec() {
+			shift
+			"$@"
+			return $?
+		}
+		_PULSE_MERGE_DIR="$helper_dir"
+		PROSPECTIVE_STUB_RC=0 _pulse_merge_prospective_todo_gate 940 owner/repo head-current || exit 1
+		[[ "$(<"${helper_dir}/args")" == "prospective-todo-guard 940 owner/repo head-current" ]] || exit 2
+		export PROSPECTIVE_STUB_RC=1
+		! _pulse_merge_prospective_todo_gate 940 owner/repo head-current || exit 3
+		grep -q "prospective TODO guard failed" "$LOGFILE" || exit 4
+		rm -f "${helper_dir}/full-loop-helper.sh"
+		! _pulse_merge_prospective_todo_gate 940 owner/repo head-current || exit 5
+		exit 0
+	) || result=$?
+	print_result "Case K3: prospective gate runs the helper and fails closed" "$result" "step=${result}"
 	return 0
 }
 
@@ -837,6 +950,96 @@ test_partial_worker_extraction_failure_is_logged() {
 	return 0
 }
 
+test_review_repair_admission() {
+	local scenario="" labels="" state="" draft="" head="" result=0
+	for scenario in rejected hold nmr closed draft head-drift external linked-nmr invalid-mode; do
+		labels='[]' state=OPEN draft=false head=head-current result=0
+		case "$scenario" in
+		hold) labels='[{"name":"hold-for-review"}]' ;;
+		nmr) labels='[{"name":"needs-maintainer-review"}]' ;;
+		closed) state=CLOSED ;;
+		draft) draft=true ;;
+		head-drift) head=changed-head ;;
+		external) labels='[{"name":"external-contributor"}]' ;;
+		esac
+		set_fixture "$labels" false 'Resolves #960' NOT_VERIFIED NO_APPROVAL trusted-contributor "$state" "$draft" '"CHANGES_REQUESTED"' "$head"
+		if [[ "$scenario" == linked-nmr ]]; then
+			printf '%s' needs-maintainer-review >"${TEST_ROOT}/linked-labels.txt"
+		fi
+		local mode=review-repair
+		[[ "$scenario" != invalid-mode ]] || mode=unknown
+		_pulse_merge_admin_safety_check 960 owner/repo head-current "$mode" || result=$?
+		if [[ "$scenario" == rejected && "$result" -eq 0 ]]; then
+			print_result "review-repair permits rejected head for update only" 0
+		elif [[ "$scenario" != rejected && "$result" -eq 1 ]]; then
+			print_result "review-repair preserves ${scenario} refusal" 0
+		else
+			print_result "review-repair admission: ${scenario}" 1 "rc=${result}"
+		fi
+	done
+	return 0
+}
+
+test_live_merge_state_matrix() {
+	local scenario="" labels="" state="" draft="" review="" head="" result=0
+	for scenario in hold late-hold changes-requested head-drift failed malformed closed merged draft invalid-draft invalid-review rejected-newline approved-newline invalid-state malformed-label cleared-hold no-review; do
+		labels='[{"name":"origin:worker-takeover"}]'
+		state=OPEN draft=false review='"APPROVED"' head=head-current result=0
+		case "$scenario" in
+		hold | late-hold) labels='[{"name":"origin:worker-takeover"},{"name":"hold-for-review"}]' ;;
+		changes-requested) review='"CHANGES_REQUESTED"' ;;
+		head-drift) head=changed-head ;;
+		closed) state=CLOSED ;;
+		merged) state=MERGED ;;
+		draft) draft=true ;;
+		invalid-draft) draft=null ;;
+		invalid-review) review='"unreadable"' ;;
+		rejected-newline) review='"CHANGES_REQUESTED\n"' ;;
+		approved-newline) review='"APPROVED\n"' ;;
+		invalid-state) state=unknown ;;
+		malformed-label) labels='[{"name":null}]' ;;
+		no-review) review=null ;;
+		esac
+		if [[ "$scenario" == late-hold ]]; then
+			set_fixture '[{"name":"origin:worker-takeover"}]' false 'Resolves #960' VERIFIED
+			if ! _pulse_merge_final_trust_gate 960 owner/repo head-current; then
+				print_result "late hold initially passes selection evidence" 1
+			fi
+		elif [[ "$scenario" == cleared-hold ]]; then
+			set_fixture '[{"name":"hold-for-review"}]' false 'Resolves #960' VERIFIED
+			if _pulse_merge_final_trust_gate 960 owner/repo head-current; then
+				print_result "uncleared hold initially blocks" 1
+			fi
+		fi
+		set_fixture "$labels" false 'Resolves #960' VERIFIED VERIFIED trusted-contributor "$state" "$draft" "$review" "$head"
+		: >"$GH_LOG"
+		: >"$LOGFILE"
+		case "$scenario" in
+		failed) touch "${TEST_ROOT}/pr-meta-fail" ;;
+		malformed) printf '{not-json' >"${TEST_ROOT}/labels.json" ;;
+		esac
+		# Reuse the real final gate, including any earlier permitted evidence.
+		if _pulse_merge_final_trust_gate 960 owner/repo head-current; then
+			gh pr merge 960 --repo owner/repo --squash --match-head-commit head-current
+		else
+			result=$?
+		fi
+		rm -f "${TEST_ROOT}/pr-meta-fail"
+		if [[ "$scenario" == cleared-hold || "$scenario" == no-review ]]; then
+			if [[ "$result" -eq 0 ]] && grep -q '^gh pr merge ' "$GH_LOG"; then
+				print_result "fresh final state: ${scenario} permits merge" 0
+			else
+				print_result "fresh final state: ${scenario} permits merge" 1
+			fi
+		elif [[ "$result" -eq 1 ]] && ! grep -q '^gh pr merge ' "$GH_LOG"; then
+			print_result "fresh final state: ${scenario} blocks without merge" 0
+		else
+			print_result "fresh final state: ${scenario} blocks without merge" 1
+		fi
+	done
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -859,8 +1062,11 @@ main() {
 	test_case_t_trusted_issue_sync_is_internal
 	test_case_t2_trusted_account_issue_sync_is_internal
 	test_case_u_unverified_issue_sync_candidate_fails_closed
+	test_case_v_dependabot_without_linked_issue
 	test_case_j_final_gate_rejects_stale_cached_review_evidence
 	test_case_k_final_gate_refreshes_current_review_evidence
+	test_case_k2_final_gate_blocks_prospective_todo_duplicate
+	test_case_k3_prospective_gate_invokes_full_loop_helper
 	test_case_l_collaborator_linked_issue_nmr_blocks_final_gate
 	test_case_m_pr_metadata_command_failure_is_logged
 	test_case_n_empty_pr_metadata_is_logged
@@ -872,6 +1078,8 @@ main() {
 	test_partial_worker_final_nmr_gate
 	test_partial_worker_external_approval
 	test_partial_worker_extraction_failure_is_logged
+	test_review_repair_admission
+	test_live_merge_state_matrix
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

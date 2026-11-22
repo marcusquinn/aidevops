@@ -156,6 +156,16 @@ assert_count "PR approval creates only the review label" 1 'gh label create need
 assert_count "PR approval does not create dispatch label" 0 'gh label create auto-dispatch '
 assert_count "PR approval does not create dispatch mutex label" 0 'gh label create no-auto-dispatch '
 
+# GH#36292: release requests provision their hold and approval-only labels.
+: >"$CALL_LOG"
+TEST_LABEL_SNAPSHOT='release-approval-required'
+managed_labels_ensure_release_approval_set owner/repo \
+	_gh_managed_label_names_snapshot _gh_managed_label_create_runner
+assert_count "release approval creates missing hold label" 1 'gh label create hold-for-review '
+assert_count "release approval creates missing dispatch mutex label" 1 'gh label create no-auto-dispatch '
+assert_count "release approval reuses present request label" 0 'gh label create release-approval-required '
+assert_count "release approval never creates the dispatch label" 0 'gh label create auto-dispatch '
+
 # Failed inventory is fail-closed: do not fan out speculative writes or cache.
 : >"$CALL_LOG"
 _ORIGIN_LABELS_ENSURED=""

@@ -6,7 +6,7 @@
 # =============================================================================
 # Runs wp-change-plan.php on a configured site. LocalWP sites run locally.
 # SSH sites reuse the auth that execute_wp_via_ssh() resolves (identity file,
-# password env, password file, port, wp_path). The script and plan go to a
+# password env, password file, port, wp_path). The scripts and plan go to a
 # private temporary directory on the server, `wp eval-file` runs from wp_path,
 # the run output and the backup are downloaded into the agent workspace, and
 # the uploaded copies are deleted. Backups stay on the server.
@@ -30,6 +30,8 @@ WPCP_SCP_OPTS=()
 WPCP_AUTH=()
 WPCP_TARGET=""
 WPCP_MODE_RESTORE="restore"
+# The entrypoint first, then the siblings it loads from its own directory.
+WPCP_PHP_FILES=(wp-change-plan.php wp-change-plan-values.php wp-change-plan-term-usage.php wp-change-plan-writer.php wp-change-plan-reader.php)
 WPCP_USAGE="Usage: wp-helper.sh --change-plan <site> PLAN.json [apply | restore BACKUP.json] [--user=<id>]"
 
 # Private output directory for one run: run.log and the backup copy.
@@ -77,7 +79,7 @@ _wpcp_prepare_ssh() {
 		;;
 	esac
 	if [[ -z "$ssh_host" || -z "$ssh_user" ]]; then
-		print_error "Site needs ssh_host and ssh_user for --change-plan"
+		print_error "Site needs ssh_host and ssh_user for the SSH WP-CLI transport"
 		return 1
 	fi
 	WPCP_TARGET="${ssh_user}@${ssh_host}"
@@ -133,6 +135,30 @@ _wpcp_scp() {
 	local dest_path="$2"
 	${WPCP_AUTH[@]+"${WPCP_AUTH[@]}"} scp "${WPCP_SCP_OPTS[@]}" "$source_path" "$dest_path"
 	return $?
+}
+
+# Upload the change-plan PHP files side by side into the remote directory.
+_wpcp_upload_scripts() {
+	local remote_tmp="$1"
+	local php_file
+	for php_file in "${WPCP_PHP_FILES[@]}"; do
+		_wpcp_scp "${SCRIPT_DIR}/${php_file}" "${WPCP_TARGET}:${remote_tmp}/${php_file}" || return 1
+	done
+	return 0
+}
+
+# Create a private (0700) temporary directory on the server, outside the
+# webroot, and print its path. Shared with wp-helper-fluent-boards.sh.
+_wpcp_remote_mktemp() {
+	local prefix="$1"
+	local remote_tmp
+	remote_tmp=$(_wpcp_ssh "umask 077 && mktemp -d \"\${TMPDIR:-/tmp}/${prefix}.XXXXXX\"") || remote_tmp=""
+	if [[ ! "$remote_tmp" =~ ^/[A-Za-z0-9._/-]+/${prefix}\.[A-Za-z0-9]+$ ]]; then
+		print_error "Could not create a private temporary directory on the server"
+		return 1
+	fi
+	printf '%s\n' "$remote_tmp"
+	return 0
 }
 
 # Delete the remote temporary directory and confirm nothing is left.
@@ -213,17 +239,12 @@ _wpcp_run_remote() {
 	fi
 
 	local remote_tmp
-	# shellcheck disable=SC2016 # ${TMPDIR:-/tmp} expands on the server.
-	remote_tmp=$(_wpcp_ssh 'umask 077 && mktemp -d "${TMPDIR:-/tmp}/wp-change-plan.XXXXXX"') || remote_tmp=""
-	if [[ ! "$remote_tmp" =~ ^/[A-Za-z0-9._/-]+/wp-change-plan\.[A-Za-z0-9]+$ ]]; then
-		print_error "Could not create a private temporary directory on the server"
-		return 1
-	fi
+	remote_tmp=$(_wpcp_remote_mktemp wp-change-plan) || return 1
 	trap '_wpcp_cleanup_remote "$remote_tmp"; trap - INT TERM; exit 130' INT TERM
 
 	local rc=0
 	local remote_backup="$backup_arg"
-	if ! _wpcp_scp "${SCRIPT_DIR}/wp-change-plan.php" "${WPCP_TARGET}:${remote_tmp}/wp-change-plan.php" ||
+	if ! _wpcp_upload_scripts "$remote_tmp" ||
 		! _wpcp_scp "$plan_file" "${WPCP_TARGET}:${remote_tmp}/plan.json"; then
 		print_error "Upload to the server failed"
 		rc=1

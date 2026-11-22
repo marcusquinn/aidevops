@@ -17,6 +17,7 @@ import {
   applySupervisorMessage,
   disposeOperations,
   operationReceipt,
+  runOperationRestoration,
   signalSupervisor,
   trimTerminalOperations,
 } from "./bounded-operation-runtime.mjs";
@@ -26,14 +27,20 @@ import {
   clearOperationStatusWaiters,
   notifyOperationStatusWaiters,
   operationOutput,
+  operationSettle,
   operationStatus,
   operationStatusVersion,
 } from "./bounded-operation-access.mjs";
 import { resolveSessionOwnedWorktreeRoot } from "./gpt-image-worktree.mjs";
 import { liveSupervisorRoots, processStartIdentity } from "./process-start-identity.mjs";
 import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
+import { runtimeOwner } from "./runtime-owner.mjs";
 
 const MAX_OPERATIONS = 24;
+// GH#38704: "always" (default) restores after every terminal path, success
+// included; "unsuccessful" skips restoration after success so abort-only
+// cleanup cannot destroy a good result.
+const RESTORATION_MODES = new Set(["always", "unsuccessful"]);
 const SUPERVISOR_PATH = fileURLToPath(new URL("./bounded-operation-supervisor.mjs", import.meta.url));
 const SUPERVISOR_RUNTIME = "node";
 
@@ -57,7 +64,7 @@ export class BoundedInteractiveOperationManager {
       throw new Error("stored output retrieval is unavailable");
     });
     this.kill = options.kill || signalSupervisor;
-    this.killGraceMs = options.killGraceMs ?? 500;
+    this.killGraceMs = boundedInteger(options.killGraceMs ?? 500, 500, 10, 300 * 1000);
     this.setTimer = options.setTimer || setTimeout;
     this.clearTimer = options.clearTimer || clearTimeout;
     this.supervisorRuntime = options.supervisorRuntime || SUPERVISOR_RUNTIME;
@@ -103,18 +110,29 @@ export class BoundedInteractiveOperationManager {
 
   spawnOwned(operation, command, stage) {
     const childBudgetMs = command === operation.command ? operation.budgetMs : operation.restorationBudgetMs;
+    const owner = runtimeOwner(operation.owner);
     const child = this.spawn(this.supervisorRuntime, [SUPERVISOR_PATH], {
       cwd: operation.cwd,
       detached: true,
       // Lifecycle helpers must inherit the authenticated caller, not a stale host session.
-      env: { ...process.env, OPENCODE_SESSION_ID: operation.owner },
+      env: {
+        ...process.env,
+        OPENCODE_SESSION_ID: operation.owner,
+        OPENCODE_PID: owner.pid,
+        OPENCODE_PID_START_IDENTITY: owner.identity,
+        AIDEVOPS_LIFECYCLE_RUNTIME_PID: owner.identity ? owner.pid : "",
+        AIDEVOPS_LIFECYCLE_SESSION_ID: owner.identity ? operation.owner : "",
+      },
       stdio: ["pipe", "pipe", "pipe", "ipc"],
     });
-    child.on("message", (message) => applySupervisorMessage(operation, stage, message));
+    child.on("message", (message) => {
+      applySupervisorMessage(operation, stage, message);
+      if (message?.event === "termination") this.notifyStatusWaiters(operation);
+    });
     child.stdin.end(JSON.stringify({
       budgetMs: childBudgetMs,
       command,
-      killGraceMs: this.killGraceMs,
+      killGraceMs: operation.killGraceMs,
       operationID: operation.id,
     }));
     this.attachOutput(operation, child);
@@ -126,6 +144,8 @@ export class BoundedInteractiveOperationManager {
     if (!owner) throw new Error("runtime session identity is required");
     const invalid = commandError(args.command) || (args.restorationCommand ? commandError(args.restorationCommand) : "");
     if (invalid) throw new Error(invalid);
+    const restorationOn = args.restorationOn ?? "always";
+    if (!RESTORATION_MODES.has(restorationOn)) throw new Error("restoration_on must be \"always\" or \"unsuccessful\"");
     this.trimTerminalOperations();
 
     const startedAt = this.now();
@@ -135,14 +155,17 @@ export class BoundedInteractiveOperationManager {
       cwd: await this.resolveCwd(args.cwd, context),
       command: [...args.command],
       restorationCommand: args.restorationCommand ? [...args.restorationCommand] : null,
+      restorationOn,
       budgetMs: boundedInteger(args.budgetMs, 15 * 60 * 1000, 10, 24 * 60 * 60 * 1000),
       progressIntervalMs: boundedInteger(args.progressIntervalMs, 15 * 60 * 1000, 10, 60 * 60 * 1000),
       restorationBudgetMs: boundedInteger(args.restorationBudgetMs, 60 * 1000, 10, 10 * 60 * 1000),
+      killGraceMs: boundedInteger(args.killGraceMs, this.killGraceMs, 10, 300 * 1000),
       startedAt,
       state: "starting",
       disposition: "running",
       processExit: null,
       processSignal: "",
+      terminationCause: "",
       commandStarted: false,
       supervisorRuntime: "",
       nestedProcessGroups: 0,
@@ -150,6 +173,9 @@ export class BoundedInteractiveOperationManager {
       postExitDescendantsTerminated: false,
       restorationState: args.restorationCommand ? "pending" : "not_required",
       restorationExit: null,
+      restorationTerminationCause: "",
+      restorationDisposition: "running",
+      restorationSignal: "",
       restorationCommandStarted: false,
       lastMeaningfulProgressAt: null,
       progressEvents: 0,
@@ -184,6 +210,7 @@ export class BoundedInteractiveOperationManager {
       });
       child.once("error", async () => {
         operation.spawnFailed = true;
+        operation.terminationCause ||= "spawn_error";
         operation.disposition = "failed";
         operation.child = null;
         if (operation.restorationCommand) await this.runRestoration(operation);
@@ -197,13 +224,13 @@ export class BoundedInteractiveOperationManager {
     return this.receipt(operation);
   }
 
-  requestTermination(operation, disposition) {
+  requestTermination(operation, disposition, cause = disposition === "cancelled" ? "cancel" : "budget") {
     if (!canTerminate(operation)) return false;
     operation.disposition = disposition;
     operation.state = disposition === "cancelled" ? "cancelling" : "timing_out";
     this.notifyStatusWaiters(operation);
-    operation.processSignal = "SIGTERM";
-    const signalled = this.kill(operation.child, "SIGTERM");
+    operation.terminationCause ||= cause;
+    const signalled = this.kill(operation.child, "SIGTERM", operation.terminationCause);
     return signalled;
   }
 
@@ -212,47 +239,21 @@ export class BoundedInteractiveOperationManager {
     if (operation.killTimer) this.clearTimer(operation.killTimer);
     operation.child = null;
     operation.processExit = Number.isInteger(code) ? code : null;
-    operation.processSignal = scalar(signal) || operation.processSignal;
+    operation.processSignal = scalar(signal);
+    if (signal || !operation.commandStarted) operation.terminationCause ||= "supervisor_exit";
     if (operation.disposition === "running") {
       operation.disposition = code === 0 && operation.commandStarted ? "succeeded" : "failed";
     }
-    if (operation.restorationCommand) await this.runRestoration(operation);
+    if (operation.restorationCommand && operation.restorationOn === "unsuccessful" && operation.disposition === "succeeded") {
+      operation.restorationState = "not_required";
+    } else if (operation.restorationCommand) {
+      await this.runRestoration(operation);
+    }
     await this.finalize(operation);
   }
 
   async runRestoration(operation) {
-    operation.state = "restoring";
-    operation.restorationState = "running";
-    this.notifyStatusWaiters(operation);
-    await new Promise((resolve) => {
-      let settled = false;
-      const finish = (state, code = null) => {
-        if (settled) return;
-        settled = true;
-        if (operation.restorationTimer) this.clearTimer(operation.restorationTimer);
-        operation.restorationChild = null;
-        operation.restorationExit = Number.isInteger(code) ? code : null;
-        operation.restorationState = state;
-        this.notifyStatusWaiters(operation);
-        resolve();
-      };
-      const child = this.spawnOwned(operation, operation.restorationCommand, "restoration");
-      operation.restorationChild = child;
-      operation.restorationChildExited = false;
-      child.once("exit", () => { operation.restorationChildExited = true; });
-      operation.restorationTimer = this.setTimer(() => {
-        operation.restorationState = "timing_out";
-        this.notifyStatusWaiters(operation);
-        if (!operation.restorationChildExited && child.exitCode === null && child.signalCode === null) {
-          this.kill(child, "SIGTERM");
-        }
-      }, operation.restorationBudgetMs);
-      child.once("error", () => finish("failed"));
-      child.once("close", (code, signal) => {
-        const timedOut = operation.restorationState === "timing_out";
-        finish(timedOut ? "timed_out" : (code === 0 && operation.restorationCommandStarted ? "succeeded" : "failed"), code);
-      });
-    });
+    await runOperationRestoration(this, operation);
   }
 
   async finalize(operation) {
@@ -269,6 +270,7 @@ export class BoundedInteractiveOperationManager {
       operation.outputID = await this.recordOutput(this.secretRedactor.redactText(captured).text, {
         exitCode: operation.processExit,
         state: finalState,
+        terminationCause: operation.terminationCause || null,
       });
     } catch {
       operation.outputID = "";
@@ -296,6 +298,11 @@ export class BoundedInteractiveOperationManager {
     return operationOutput(this, id, context, requested);
   }
 
+  /** t18953: wait for a terminal state, bounded like a status wait. */
+  async settle(id, context = {}, requested = {}) {
+    return operationSettle(this, id, context, requested);
+  }
+
   cancel(id, context = {}) {
     return cancelOperation(this, id, context);
   }
@@ -308,7 +315,7 @@ export class BoundedInteractiveOperationManager {
     for (const operation of this.operations.values()) {
       if (operation.owner !== owner) continue;
       operation.ownerDeleted = true;
-      this.requestTermination(operation, "cancelled");
+      this.requestTermination(operation, "cancelled", "session_deleted");
       if (!operation.child && !operation.restorationChild) this.operations.delete(operation.id);
     }
   }

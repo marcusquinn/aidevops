@@ -35,6 +35,7 @@ HOOK_SCRIPT="$HOOKS_DIR/git_safety_guard.py"
 POST_HOOK_SCRIPT="$HOOKS_DIR/mcp_task_post_hook.py"
 CREDENTIAL_SCRUB_SCRIPT="$HOOKS_DIR/credential-transcript-scrub.py"
 STRUCTURED_TEXT_PARSER_SCRIPT="$HOOKS_DIR/structured_text_parser.py"
+DISPLAY_REDACTION_SCRIPT="$HOOKS_DIR/display_redaction.py"
 SECRET_READ_GUARD_SCRIPT="$HOOKS_DIR/secret_file_read_guard.py"
 COMPLEXITY_ADVISORY_SCRIPT="$HOOKS_DIR/complexity_advisory_pre_edit.py"
 STOP_HOOK_SCRIPT="$HOOKS_DIR/session_continuation_stop.py"
@@ -42,7 +43,7 @@ STOP_HOOK_CAPTURE_SCRIPT="$HOOKS_DIR/session_capture_check.py"
 REPLAY_HOOK_SCRIPT="$HOOKS_DIR/compaction_user_input_replay.py"
 REPLAY_HOOK_TRANSCRIPT_SCRIPT="$HOOKS_DIR/compaction_replay_transcript.py"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
-HOOK_COMMAND="\$HOME/.aidevops/hooks/git_safety_guard.py"
+HOOK_COMMAND="exec \$HOME/.aidevops/hooks/git_safety_guard.py"
 POST_HOOK_COMMAND="\$HOME/.aidevops/hooks/mcp_task_post_hook.py"
 CREDENTIAL_SCRUB_COMMAND="\$HOME/.aidevops/hooks/credential-transcript-scrub.py"
 SECRET_READ_GUARD_COMMAND="\$HOME/.aidevops/hooks/secret_file_read_guard.py"
@@ -730,6 +731,9 @@ _runtime_policy_helper_path() {
 	AIDEVOPS_CANONICAL_WRITE_POLICY_HELPER)
 		configured_path="${AIDEVOPS_CANONICAL_WRITE_POLICY_HELPER:-}"
 		;;
+	AIDEVOPS_LIFECYCLE_SESSION_HELPER)
+		configured_path="${AIDEVOPS_LIFECYCLE_SESSION_HELPER:-}"
+		;;
 	*)
 		print_error "Unknown runtime policy helper key: $environment_key"
 		return 1
@@ -745,16 +749,20 @@ _runtime_policy_helper_path() {
 }
 
 _check_runtime_policy_dependencies() {
+	local install_guidance="Run 'aidevops update' or './setup.sh --stage agents' before installing hooks"
 	local command_helper
 	command_helper=$(_runtime_policy_helper_path \
 		"AIDEVOPS_COMMAND_POLICY_HELPER" "command-policy-helper.py")
 	local write_helper
 	write_helper=$(_runtime_policy_helper_path \
 		"AIDEVOPS_CANONICAL_WRITE_POLICY_HELPER" "canonical-write-policy-helper.py")
+	local lifecycle_helper
+	lifecycle_helper=$(_runtime_policy_helper_path \
+		"AIDEVOPS_LIFECYCLE_SESSION_HELPER" "worker-lifecycle-session-helper.py")
 
 	if [[ ! -f "$command_helper" ]]; then
 		print_error "Command policy helper is unavailable: $command_helper"
-		print_info "Run 'aidevops update' or './setup.sh --stage agents' before installing hooks"
+		print_info "$install_guidance"
 		return 1
 	fi
 	if ! python3 "$command_helper" validate >/dev/null 2>&1; then
@@ -764,12 +772,43 @@ _check_runtime_policy_dependencies() {
 	fi
 	if [[ ! -f "$write_helper" ]]; then
 		print_error "Canonical-write policy helper is unavailable: $write_helper"
-		print_info "Run 'aidevops update' or './setup.sh --stage agents' before installing hooks"
+		print_info "$install_guidance"
 		return 1
 	fi
 	if ! python3 "$write_helper" classify --cwd "$PWD" >/dev/null 2>&1; then
 		print_error "Canonical-write policy helper failed its validation: $write_helper"
 		print_info "Run 'aidevops update' or './setup.sh --stage agents' to repair the deployed agents tree"
+		return 1
+	fi
+	# Exercise the admission API, not --help, without enrolling this installer.
+	# Match the standalone installer's private, non-Git preflight context.
+	if ! python3 -E -s -B - "$lifecycle_helper" <<'PY'
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+try:
+    with tempfile.TemporaryDirectory(prefix="hook-admission-probe-") as directory:
+        environment = dict(os.environ, AIDEVOPS_LIFECYCLE_DISABLED="1",
+                           AIDEVOPS_LIFECYCLE_STATE_DIR=directory + "/state")
+        result = subprocess.run(
+            [sys.executable, "-E", "-s", "-B", sys.argv[1], "--cwd", directory,
+             "--path", directory + "/probe", "--runtime-pid", str(os.getpid()),
+             "--session-id", "hook-install-preflight", "--command", "true"],
+            cwd=directory, env=environment, capture_output=True, text=True, timeout=10)
+        payload = json.loads(result.stdout)
+        if (result.returncode != 0 or not isinstance(payload, dict)
+                or payload.get("status") != "not-applicable"
+                or payload.get("cleanup_authorized") is not False):
+            raise ValueError("incompatible admission response")
+except (OSError, ValueError, subprocess.SubprocessError):
+    sys.exit(1)
+PY
+	then
+		print_error "Lifecycle admission helper is unavailable or incompatible: $lifecycle_helper"
+		print_info "$install_guidance"
 		return 1
 	fi
 
@@ -785,10 +824,17 @@ _probe_hook_runtime() {
 		print_error "Installed hook is unavailable or not executable: $hook_script"
 		return 1
 	fi
-	output=$(python3 "$hook_script" <<<"$hook_input" 2>&1) || {
+	# Readiness is not a tool invocation: do not enroll the installer's worktree
+	# or manufacture a runtime session. A fresh non-Git cwd exercises the hook.
+	local probe_dir=""
+	local probe_status=0
+	probe_dir=$(mktemp -d) || return 1
+	output=$(cd "$probe_dir" && python3 "$hook_script" <<<"$hook_input" 2>&1) || probe_status=$?
+	rmdir "$probe_dir" || return 1
+	if [[ "$probe_status" -ne 0 ]]; then
 		print_error "Installed hook runtime probe failed: $hook_script"
 		return 1
-	}
+	fi
 	if [[ -n "$output" ]]; then
 		print_error "Installed hook denied a benign Bash probe"
 		if [[ "$output" == *"policy.helper-unavailable"* ]]; then
@@ -847,12 +893,16 @@ install_hook() {
 	# Find source hook
 	local source_hook
 	source_hook=$(find_source_hook) || return 1
+	local source_lifecycle_adapter
+	source_lifecycle_adapter=$(find_source_hook "git_safety_lifecycle.py") || return 1
 	local source_post_hook
 	source_post_hook=$(find_source_hook "mcp_task_post_hook.py") || return 1
 	local source_credential_scrub_hook
 	source_credential_scrub_hook=$(find_source_hook "credential-transcript-scrub.py") || return 1
 	local source_structured_text_parser
 	source_structured_text_parser=$(find_source_hook "structured_text_parser.py") || return 1
+	local source_display_redaction
+	source_display_redaction=$(find_source_hook "display_redaction.py") || return 1
 	local source_secret_read_guard_hook
 	source_secret_read_guard_hook=$(find_source_hook "secret_file_read_guard.py") || return 1
 	local source_complexity_advisory_hook
@@ -869,6 +919,7 @@ install_hook() {
 	mkdir -p "$HOOKS_DIR"
 
 	# Copy hook script
+	cp "$source_lifecycle_adapter" "$HOOKS_DIR/git_safety_lifecycle.py"
 	cp "$source_hook" "$HOOK_SCRIPT"
 	chmod +x "$HOOK_SCRIPT"
 	print_success "Installed $HOOK_SCRIPT"
@@ -880,6 +931,8 @@ install_hook() {
 	print_success "Installed $CREDENTIAL_SCRUB_SCRIPT"
 	cp "$source_structured_text_parser" "$STRUCTURED_TEXT_PARSER_SCRIPT"
 	print_success "Installed $STRUCTURED_TEXT_PARSER_SCRIPT"
+	cp "$source_display_redaction" "$DISPLAY_REDACTION_SCRIPT"
+	print_success "Installed $DISPLAY_REDACTION_SCRIPT"
 	cp "$source_secret_read_guard_hook" "$SECRET_READ_GUARD_SCRIPT"
 	chmod +x "$SECRET_READ_GUARD_SCRIPT"
 	print_success "Installed $SECRET_READ_GUARD_SCRIPT"
@@ -892,8 +945,14 @@ install_hook() {
 	# Configure Claude Code settings.json
 	configure_claude_settings || return 1
 
-	# Run self-test
-	test_hook || return 1
+	# Run self-test. Repository git hooks do not depend on the Claude PreToolUse
+	# guard, so a failed self-test still installs them and then reports failure
+	# instead of silently leaving repositories without them (GH#38323).
+	if ! test_hook; then
+		print_error "Hook self-test failed; installing repository git hooks anyway"
+		_install_repository_git_hooks
+		return 1
+	fi
 
 	echo ""
 	print_success "Safety hooks installed successfully"
@@ -906,16 +965,21 @@ install_hook() {
 	echo ""
 	print_warning "Restart Claude Code for the hook to take effect"
 
-	# Also install the gh-wrapper-guard pre-push hook (t2113)
+	_install_repository_git_hooks
+	return 0
+}
+
+_install_repository_git_hooks() {
+	# gh-wrapper-guard pre-push hook (t2113)
 	install_gh_wrapper_guard_hook
 
-	# Also install the pre-commit quality-validation hook (t2191)
+	# pre-commit quality-validation hook (t2191)
 	install_pre_commit_hook
 
-	# Also install the pre-push quality-validation hook (t2207)
+	# pre-push quality-validation hook (t2207)
 	install_pre_push_quality_hook
 
-	# Also install the markdoc-validate pre-commit hook (t2968, opt-in)
+	# markdoc-validate pre-commit hook (t2968, opt-in)
 	install_markdoc_validate_hook
 
 	return 0
@@ -1030,17 +1094,20 @@ with open('$CLAUDE_SETTINGS') as f:
 hooks = d.get('hooks', {})
 has_guard_bash = False
 has_guard_edit_write = False
+has_guard_url_tools = False
 has_complexity = False
 has_secret_read_guard = False
 for h in hooks.get('PreToolUse', []):
     matcher = h.get('matcher', '')
     for sub in h.get('hooks', []):
         cmd = sub.get('command', '')
-        if 'git_safety_guard' in cmd:
+        if 'git_safety_guard' in cmd and cmd.startswith('exec '):
             if matcher == 'Bash':
                 has_guard_bash = True
             if 'Edit' in matcher or 'Write' in matcher:
                 has_guard_edit_write = True
+            if matcher == 'WebFetch|mcp__.*':
+                has_guard_url_tools = True
         if 'complexity_advisory' in cmd:
             has_complexity = True
         if 'secret_file_read_guard' in cmd:
@@ -1060,7 +1127,7 @@ has_stop = any('session_continuation_stop' in sub.get('command', '')
 has_replay = any('compaction_user_input_replay' in sub.get('command', '')
                  for h in hooks.get('SessionStart', []) for sub in h.get('hooks', []))
 
-if has_guard_bash and has_guard_edit_write and has_complexity and has_secret_read_guard and has_post and has_scrub and has_stop and has_replay:
+if has_guard_bash and has_guard_edit_write and has_guard_url_tools and has_complexity and has_secret_read_guard and has_post and has_scrub and has_stop and has_replay:
     sys.exit(0)
 sys.exit(1)
 " 2>/dev/null; then
@@ -1077,6 +1144,12 @@ with open('$CLAUDE_SETTINGS') as f:
 
 if 'hooks' not in settings:
     settings['hooks'] = {}
+
+# Replace only the framework-owned command, preserving custom wrappers.
+for entry in settings['hooks'].get('PreToolUse', []):
+    for sub in entry.get('hooks', []):
+        if sub.get('command') == '$HOOK_COMMAND'.removeprefix('exec '):
+            sub['command'] = '$HOOK_COMMAND'
 
 def has_hook(entries, needle):
     for entry in entries:
@@ -1172,6 +1245,9 @@ else:
         settings['hooks']['PreToolUse'].append(complexity_advisory_entry)
     if not has_hook(settings['hooks']['PreToolUse'], 'secret_file_read_guard'):
         settings['hooks']['PreToolUse'].append(secret_read_guard_entry)
+
+# GH#35655: URL-bearing tools (WebFetch, MCP browsers) never open redirect links.
+ensure_hook_in_matcher(settings['hooks']['PreToolUse'], 'WebFetch|mcp__.*', '$HOOK_COMMAND')
 
 if 'PostToolUse' not in settings['hooks']:
     settings['hooks']['PostToolUse'] = [post_hook_entry, credential_scrub_entry]
@@ -1673,7 +1749,9 @@ _test_hook_run() {
 	local cmd="$3"
 	local result
 	local policy_guard="${SCRIPT_DIR}/canonical-git-command-guard.py"
-	local hook_input="{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"$cmd\"}}"
+	# Real runtimes always send a session id; lifecycle admission rejects an
+	# empty one for linked-worktree targets (invalid-session-identity, GH#38323).
+	local hook_input="{\"session_id\": \"aidevops-hook-self-test\", \"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"$cmd\"}}"
 	result=$(cd "$cwd" && AIDEVOPS_CANONICAL_GIT_GUARD="$policy_guard" python3 "$test_script" 2>/dev/null <<<"$hook_input")
 	printf '%s\n' "$result"
 	return 0
@@ -1811,6 +1889,11 @@ test_hook() {
 	export AIDEVOPS_REPOS_FILE
 	python3 -c 'import json, sys; print(json.dumps({"initialized_repos": [{"path": sys.argv[1]}]}))' \
 		"$test_root" >"$AIDEVOPS_REPOS_FILE" || return 1
+	# Admit the linked-worktree probes into a throwaway lifecycle store, never the
+	# operator's registry. Leave the directory for the store to create: admission
+	# fails closed on a pre-created empty state directory (GH#38323).
+	local AIDEVOPS_LIFECYCLE_STATE_DIR="${test_root}/hook-test-lifecycle-state"
+	export AIDEVOPS_LIFECYCLE_STATE_DIR
 
 	local linked_worktree="${test_root}/linked-wt"
 	local real_git="${AIDEVOPS_REAL_GIT_BIN:-aidevops-native-git-not-found}"

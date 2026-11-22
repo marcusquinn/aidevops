@@ -123,8 +123,24 @@ compute_runtime_source_hash() {
 	return 0
 }
 
+# GH#38922: the profile that agent-discovery.py used for the shared config
+# (explicit non-isolated override, then the installed global binary, then the
+# document default). The verifier must check that profile's keys.
+_opencode_shared_profile_id() {
+	local helper="$AGENTS_DIR/scripts/opencode-runtime-profile.py"
+	local profile=""
+	[[ -f "$helper" ]] && profile=$(python3 "$helper" shared 2>/dev/null)
+	case "$profile" in
+	v2) printf 'v2\n' ;;
+	*) printf 'v1\n' ;;
+	esac
+	return 0
+}
+
 _opencode_managed_config_matches_source() {
-	python3 - <<'PY'
+	local profile=""
+	profile=$(_opencode_shared_profile_id)
+	python3 - "$profile" <<'PY'
 import json
 import os
 import sys
@@ -137,13 +153,17 @@ try:
 except Exception:
     sys.exit(1)
 
+if sys.argv[1] == "v2":
+    sys.exit(0 if config.get("update") == "disable" else 1)
 sys.exit(0 if config.get("autoupdate") is False else 1)
 PY
 	return $?
 }
 
 _opencode_agent_output_matches_source() {
-	python3 - <<'PY'
+	local agent_key="agent"
+	[[ "$(_opencode_shared_profile_id)" == "v2" ]] && agent_key="agents"
+	python3 - "$agent_key" <<'PY'
 import json
 import os
 import sys
@@ -170,7 +190,7 @@ try:
 except Exception:
     sys.exit(1)
 
-configured = config.get("agent", {})
+configured = config.get(sys.argv[1], {})
 if not isinstance(configured, dict):
     sys.exit(1)
 

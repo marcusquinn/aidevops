@@ -331,7 +331,8 @@ _verify_publication_pending_label() {
 	[[ -n "$issue_num" && -n "$repo" ]] || return 1
 	gh issue view "$issue_num" --repo "$repo" --json labels \
 		--jq 'any(.labels[]?; .name == "publication:pending")' 2>/dev/null |
-		grep -qx true
+		grep -x true >/dev/null
+	return $?
 }
 
 # Try delegating issue creation to issue-sync-helper.sh for rich bodies,
@@ -366,11 +367,11 @@ _try_issue_sync_delegation() {
 	push_output=$("$issue_sync_helper" push "$task_id" 2>&1 || echo "")
 
 	local issue_num
-	issue_num=$(printf '%s' "$push_output" | grep -oE 'Created #[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "")
+	issue_num=$(printf '%s' "$push_output" | grep -oE 'Created #[0-9]+' | grep -oE '[0-9]+' | sed -n '1p' || echo "")
 
 	# Also check if it found an existing issue (already has ref)
 	if [[ -z "$issue_num" ]]; then
-		issue_num=$(printf '%s' "$push_output" | grep -oE 'already has issue #[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "")
+		issue_num=$(printf '%s' "$push_output" | grep -oE 'already has issue #[0-9]+' | grep -oE '[0-9]+' | sed -n '1p' || echo "")
 	fi
 
 	if [[ -n "$issue_num" ]]; then
@@ -438,7 +439,7 @@ _check_duplicate_issue() {
 		--json number,title --limit 10 |
 		jq -r --arg prefix "${task_id_prefix}: " \
 			'[.[] | select(.title | startswith($prefix))][0] // empty | "\(.number)\t\(.title)"' |
-		head -1)
+		sed -n '1p')
 	existing_issue="${match%%$'\t'*}"
 	existing_title="${match#*$'\t'}"
 
@@ -657,7 +658,7 @@ _insert_todo_line() {
 
 	local backlog_start
 	backlog_start=$(grep -nE '^## Backlog[[:space:]]*$' "$todo_file" 2>/dev/null \
-		| head -1 | cut -d: -f1 || true)
+		| sed -n '1p' | cut -d: -f1 || true)
 
 	local tmp
 	tmp=$(mktemp)
@@ -954,7 +955,7 @@ create_gitlab_issue() {
 	fi
 
 	local issue_num
-	issue_num=$(echo "$issue_output" | grep -oE '#[0-9]+' | head -1 | tr -d '#')
+	issue_num=$(echo "$issue_output" | grep -oE '#[0-9]+' | sed -n '1p' | tr -d '#')
 
 	if [[ -z "$issue_num" ]]; then
 		log_warn "Failed to extract issue number from: $issue_output"

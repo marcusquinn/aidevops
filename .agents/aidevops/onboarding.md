@@ -85,10 +85,11 @@ The two workflows compose: `/onboarding` first (you need `gh` to be authenticate
 | SEO | Outscraper | `OUTSCRAPER_API_KEY` | https://outscraper.com/dashboard |
 | Data | GetAnyAPI | `ANYAPI_API_KEY` | https://getanyapi.com/dashboard |
 | Data | Linkup (web search/fetch) | `LINKUP_<ACCOUNT>_API_KEY` | https://app.linkup.so |
+| Data | Oxylabs Web API (search, scrape, dedicated scrapers) | `OXYLABS_<ACCOUNT>_WEB_API_KEY` (inject as `OXYLABS_WEB_API_KEY`) | https://dashboard.oxylabs.io |
+| SEO | cloro (AI answers and sources: ChatGPT, Gemini, AI Mode, AI Overview, Bing AI Mode) | `CLORO_<ACCOUNT>_API_KEY` (inject as `CLORO_API_KEY`, which the SDK reads) | https://dashboard.cloro.dev |
 | SEO | Google Search Console | OAuth via MCP | https://search.google.com/search-console |
 | Context | Context7 | MCP config only | — |
 | Browser | Playwright | `npx playwright install` | — |
-| Browser | Stagehand v4 (opt-in adaptive flows) | Explicit model API key; NanoGPT is an optional provider via a bounded client callback, not OAuth-pool auth | `tools/browser/stagehand.md` |
 | Browser | Chrome DevTools | `--remote-debugging-port=9222` | — |
 | Containers | OrbStack | `brew install orbstack` — docs: `@orbstack` | — |
 | Containers | Tailscale | `brew install tailscale` — docs: `@tailscale` | — |

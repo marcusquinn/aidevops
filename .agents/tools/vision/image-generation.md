@@ -89,7 +89,7 @@ from a subscription to API credits. Never paste an API key into chat.
 |-----------|---------|-------|
 | `format` | png, jpeg, webp | `png` is the default; output extension must match |
 | `quality` | low, medium, high, auto | `auto` is the default; use low for drafts |
-| `size` | auto or WIDTHxHEIGHT | Edges must be multiples of 16, max 3840px, ratio ≤3:1, total 655,360-8,294,400px; explicit requests fail before publication if native dimensions differ |
+| `size` | auto or WIDTHxHEIGHT | Requested edges must be multiples of 16, max 3840px, ratio ≤3:1, total 655,360-8,294,400px; OAuth is best-effort with a mismatch warning, while API explicit sizes are enforced before publication |
 | `workdir` | absolute linked-worktree path | Optional; must be registered to the current OpenCode session and belong to the startup repository |
 | `images` | 0-8 project-relative paths | Reference-guided generation/editing; PNG, JPEG, or WebP, 20 MiB each |
 | `auth` | oauth, api | OAuth is the default; API billing must be explicit |
@@ -112,12 +112,16 @@ remain rejected. Every success receipt reports the native raster dimensions.
 The public Platform API documents `size` as the requested output geometry and
 supports constrained flexible dimensions for GPT Image 2 generation. The
 ChatGPT OAuth route uses a private hosted-tool endpoint without the same stable
-contract and may return different native geometry. The tool therefore decodes
-PNG, JPEG, and WebP dimensions before writing: an explicit-size mismatch fails
-without creating a file, while `auto` accepts the provider-selected size. Every
-successful result reports the requested size, observed native dimensions,
-requested image model, and separately any provider-confirmed image model. A
-missing provider response field is reported as `unknown`, never inferred.
+contract and may return different native geometry. OAuth `size` is therefore
+best-effort: the tool still sends it upstream, validates the native PNG, JPEG,
+or WebP, and saves the provider's bytes without resizing. A size mismatch produces
+an explicit warning with requested and actual dimensions; never describe such an
+output as exact-size. If exact dimensions are required, use an explicitly billed
+API request or a separate, deliberate resize step. API explicit-size mismatches
+still fail without creating a file; `auto` accepts the provider-selected size on
+either route. Every successful result reports the requested size, observed native
+dimensions, requested image model, and separately any provider-confirmed image
+model. A missing provider response field is reported as `unknown`, never inferred.
 
 ### Midjourney
 

@@ -200,7 +200,7 @@ assert_eq "S9: dedup across sources — union returns 3 unique children" \
 # code, not the pre-GH#20872 first-wins chain.
 # ============================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET="$SCRIPT_DIR/pulse-issue-reconcile-actions.sh"
+TARGET="$("$SCRIPT_DIR/tests/pira-combined-source.sh")"
 
 assert_grep_fixed() {
 	local label="$1" pattern="$2" file="$3"

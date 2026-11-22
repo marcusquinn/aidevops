@@ -229,11 +229,13 @@ Full field reference: [manifest-ref.md](cloudron-app-packaging-skill/manifest-re
 | `ldap` / `oidc` | LDAP v3 / OpenID Connect auth | `CLOUDRON_LDAP_URL` / `CLOUDRON_OIDC_DISCOVERY_URL` |
 | `sendmail` / `recvmail` | Outgoing SMTP / Incoming IMAP | `CLOUDRON_MAIL_SMTP_SERVER` / `CLOUDRON_MAIL_IMAP_SERVER` |
 | `email` | Full SMTP + IMAP + ManageSieve | multiple |
-| `proxyauth` | Auth wall | -- |
+| `proxyAuth` | Auth wall | -- |
 | `scheduler` | Cron tasks | -- |
 | `tls` | App certificate files | `/etc/certs/tls_cert.pem` |
 | `turn` | STUN/TURN service | `CLOUDRON_TURN_SERVER` |
 | `docker` | Create containers (restricted) | `CLOUDRON_DOCKER_HOST` |
+
+Adding `oidc`, `ldap` or `proxyAuth` in an update does not enable SSO for existing installs whose `sso` flag is `false` (the flag is fixed at install). Installs with `sso: true` receive the new addon's variables. See [Adding an auth addon in an update](cloudron-app-packaging-skill/manifest-ref/05-behavior.md#adding-an-auth-addon-in-an-update).
 
 Full env var lists and options: [addons-ref.md](cloudron-app-packaging-skill/addons-ref.md).
 
@@ -258,10 +260,9 @@ cloudron debug --disable # exit debug mode
 ## Build Methods
 
 - **On-server (default)**: `cloudron install` and `cloudron update` upload source and build on the server. No local Docker required; simplest workflow, but it uses server CPU/RAM.
-- **Local Docker**: `cloudron build` builds/tags/pushes locally, then `cloudron install` / `cloudron update` detects the built image. Requires Docker and registry auth.
-- **Build service**: `cloudron build login` sends source to a remote builder, normally a [Container registry](https://docs.cloudron.io/packages/container-registry/) app; legacy Docker Builder installations remain supported. Use `cloudron build logs --id <id>`, `cloudron build status --id <id>`, and `cloudron build push --id <id>` for remote builds.
+- **Registry builder**: `cloudron builder login` and `cloudron builder build` build and push via a [Container registry](https://docs.cloudron.io/packages/container-registry/) app (requires a Cloudron 10 host); install or update using the resulting image. Without a Cloudron 10 registry (e.g. Cloudron 9.1), build and push with Docker (`docker build` / `docker push`) to a registry you control, then install or update with that image.
 
-Use `cloudron build reset` to clear saved repository/image info.
+Use `cloudron builder reset` to clear the remembered repository. The old `cloudron build` commands no longer exist in the current CLI; check the installed builder's help for supported flags.
 
 ## Examples
 

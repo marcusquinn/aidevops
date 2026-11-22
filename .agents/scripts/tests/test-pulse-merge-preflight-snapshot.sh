@@ -211,6 +211,15 @@ stub_pull_head() {
 	return 0
 }
 
+stub_forge_run() {
+	if [[ "$1" == repos/owner/repo/actions/runs/101 ]]; then
+		printf '{"workflow_id":9,"created_at":"2026-01-01T00:00:00Z"}\n'
+	else
+		printf '%s\n' "${FORGE_SUPERSEDED:-1}"
+	fi
+	return 0
+}
+
 stub_qlty_credit_metadata() {
 	case "$SNAPSHOT_MODE" in
 	qlty_credits_public) printf '%s\n' '{"private":false,"owner":{"type":"User"}}' ;;
@@ -240,6 +249,7 @@ gh() {
 	repos/owner/repo/actions/runs/707)
 		printf '{"head_sha":"%s","status":"completed","conclusion":"%s","run_attempt":%s}\n' "$CANCELLED_RUN_SHA" "${CANCELLED_RUN_CONCLUSION:-cancelled}" "$CANCELLED_RUN_ATTEMPT"
 		;;
+	repos/owner/repo/actions/runs/101 | repos/owner/repo/actions/workflows/9/runs*) stub_forge_run "$endpoint"; return $? ;;
 	repos/owner/repo/pulls/7)
 		stub_pull_head
 		return $?
@@ -273,8 +283,8 @@ gh() {
 		[[ "$SNAPSHOT_MODE" == "recent" ]] && broad_completed_at="2026-01-01T00:09:50Z"
 		if [[ "$SNAPSHOT_MODE" == "unclassified_fail" ]]; then
 			extra_check=',{"name":"CodeFactor","status":"completed","conclusion":"failure","details_url":"https://github.com/owner/repo/runs/99","completed_at":"2026-01-01T00:01:00Z"}'
-		elif [[ "$SNAPSHOT_MODE" == "infra_fail" ]]; then
-			extra_check=',{"name":"sync / Record ordered forge event","status":"completed","conclusion":"failure","details_url":"https://github.com/owner/repo/actions/runs/101/job/202","completed_at":"2026-01-01T00:01:00Z"}'
+		elif [[ "$SNAPSHOT_MODE" == "infra_fail" || "$SNAPSHOT_MODE" == "forge_cancelled" ]]; then
+			extra_check=',{"name":"sync / Record ordered forge event","status":"completed","conclusion":"'"$([[ "$SNAPSHOT_MODE" == infra_fail ]] && printf failure || printf cancelled)"'","details_url":"https://github.com/owner/repo/actions/runs/101/job/202","completed_at":"2026-01-01T00:01:00Z"}'
 		elif [[ "$SNAPSHOT_MODE" == "cancelled_workflow" ]]; then
 			extra_check=',{"name":"Cancelled scan","status":"completed","conclusion":"cancelled","details_url":"https://github.com/owner/repo/actions/runs/707/job/808","completed_at":"2026-01-01T00:01:00Z"},{"name":"Cancelled lint","status":"completed","conclusion":"cancelled","details_url":"https://github.com/owner/repo/actions/runs/707/job/809","completed_at":"2026-01-01T00:01:00Z"}'
 		elif [[ "$SNAPSHOT_MODE" == "configured_fail" ]]; then
@@ -346,6 +356,7 @@ assert_gate() {
 assert_cancelled_workflow_recovery() {
 	local before="$RERUN_CALLS" rc=0
 	local url="https://github.com/owner/repo/actions/runs/707/job/808"
+	FORGE_SUPERSEDED=0 assert_gate "unsuperseded cancelled forge-event recorder still blocks merge" forge_cancelled 1
 	assert_gate "cancelled jobs keep merge blocked and rerun their shared workflow once" cancelled_workflow 1
 	assert_gate "unchanged cancelled snapshot cannot rerun again" cancelled_workflow 1
 	TESTS_RUN=$((TESTS_RUN + 1))
@@ -787,7 +798,29 @@ test_qlty_credit_snapshot() {
 	return 0
 }
 
+assert_stale_pending_checks() {
+	local checks='[{"name":"required-a","family":"required-a","source":"check_run","status":"completed","conclusion":"success"},{"name":"CodeFactor","family":"CodeFactor","source":"check_run","status":"in_progress","conclusion":"","observed_at":"2026-01-01T00:00:00Z"}]'
+	local pending_required='[{"name":"required-a","family":"required-a","source":"check_run","status":"in_progress","conclusion":"","observed_at":"2026-01-01T00:00:00Z"}]'
+	# GH#39166: a path-filtered (skipped) required context still counts as passing.
+	local skipped_required='[{"name":"required-a","family":"required-a","source":"check_run","status":"completed","conclusion":"skipped"},{"name":"CodeFactor","family":"CodeFactor","source":"check_run","status":"in_progress","conclusion":"","observed_at":"2026-01-01T00:00:00Z"}]'
+	local result=0
+	PULSE_MERGE_STALE_NONREQUIRED_PENDING_SECONDS=300
+	_pmrc_snapshot_checks_acceptable owner/repo 7 "$checks" required-a '' sha-reviewed || result=1
+	_pmrc_snapshot_checks_acceptable owner/repo 7 "$skipped_required" required-a '' sha-reviewed || result=1
+	if [[ "$result" -eq 0 ]] && grep -q "IGNORED stale non-required pending check 'CodeFactor' (age=600s)" "$LOGFILE" &&
+		! _pmrc_snapshot_checks_acceptable owner/repo 7 "$pending_required" required-a '' sha-reviewed; then
+		printf 'PASS stale non-required run ignored only when required checks pass\n'
+	else
+		printf 'FAIL stale pending classification\n'
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	TESTS_RUN=$((TESTS_RUN + 1))
+	unset PULSE_MERGE_STALE_NONREQUIRED_PENDING_SECONDS
+	return 0
+}
+
 main() {
+	assert_stale_pending_checks
 	assert_infrastructure_rerun_unset_defaults_safe
 	assert_infrastructure_rerun_unset_logfile_safe
 	assert_actions_incident_suppresses_infrastructure_rerun
@@ -867,6 +900,7 @@ main() {
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 	fi
 	TESTS_RUN=$((TESTS_RUN + 1))
+	assert_gate "concurrency-cancelled forge-event recorder does not block merge (GH#39664)" forge_cancelled 0
 	assert_gate "later accepted snapshot resets prior blocker evidence" happy_advisory 0
 	if [[ "$_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON" == "[]" ]]; then
 		printf 'PASS accepted snapshot clears prior blocker evidence\n'

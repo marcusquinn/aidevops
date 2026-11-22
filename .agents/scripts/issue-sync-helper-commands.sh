@@ -75,6 +75,10 @@ cmd_pull() {
 				existing_ref=$(sed -n "${task_line_num}p" "$todo_file" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 			fi
 			if [[ "$existing_ref" != "$num" ]]; then
+				if [[ -n "$existing_ref" ]]; then
+					print_warning "DUPLICATE TASK ID: $tid already references #$existing_ref; refusing to replace it with #$num"
+					continue
+				fi
 				if [[ -z "$task_line_num" ]]; then
 					if [[ "$state" == "open" ]]; then
 						local labels_json
@@ -110,18 +114,10 @@ cmd_pull() {
 					continue
 				fi
 				if [[ "$DRY_RUN" == "true" ]]; then
-					if [[ -n "$existing_ref" ]]; then
-						print_info "[DRY-RUN] Would fix ref:GH#$existing_ref -> ref:GH#$num on $tid"
-					else
-						print_info "[DRY-RUN] Would add ref:GH#$num to $tid"
-					fi
+					print_info "[DRY-RUN] Would add ref:GH#$num to $tid"
 					synced=$((synced + 1))
 				else
-					if [[ -n "$existing_ref" ]]; then
-						fix_gh_ref_in_todo "$tid" "$existing_ref" "$num" "$todo_file"
-					else
-						add_gh_ref_to_todo "$tid" "$num" "$todo_file"
-					fi
+					add_gh_ref_to_todo "$tid" "$num" "$todo_file"
 					local updated_ref=""
 					updated_ref=$(resolve_task_gh_number "$tid" "$todo_file" "$repo" || true)
 					if [[ "$updated_ref" == "$num" ]]; then
@@ -346,7 +342,8 @@ cmd_help() {
 	cat <<'EOF'
 Issue Sync Helper — stateless TODO.md <-> GitHub Issues sync via gh CLI.
 Usage: issue-sync-helper.sh [command] [options]
-Commands: push [tNNN] | enrich [tNNN] | sync-body tNNN | pull | close [tNNN] | reopen
+Commands: push [tNNN] | enrich [tNNN] | sync-body tNNN | rebind-task tNEW --from tOLD
+          pull | close [tNNN] | reopen
           reconcile | relationships [tNNN] | backfill-sub-issues [--issue N]
           backfill-cross-phase-blocked-by --issue N
           status | help
@@ -364,6 +361,15 @@ Held body synchronization:
                    the remote body hash and writes tamper-evident audit receipts.
                    Ordinary enrich, --force, bulk, pulse, and dispatch semantics
                    are unchanged. Closed issues require --allow-closed.
+
+Renamed task rebind (GH#37294):
+  rebind-task tNEW --from tOLD — admin/maintain-authorized. When a TODO.md
+                   row was renamed after its issue was bound, point tNEW at
+                   the coordinator task that owns the issue. Requires exactly
+                   one live tNEW row with ref:GH#NNN, no live tOLD row, and
+                   tOLD's coordinator mapping to be that issue. Supports
+                   --dry-run. Then run `enrich tNEW` (or `sync-body tNEW` for
+                   held issues) to regenerate title, Task ID, and Blocked by.
 
 Drift detection:
   status    — reports forward drift (open issue, done TODO) and reverse drift

@@ -103,6 +103,12 @@ gh() {
 	command "${STUB_DIR}/gh" "$@"
 	return $?
 }
+# GH#39584: the bare-unassign branch uses the audited wrapper. Audit snapshots
+# and privacy guards are covered by their own suites; forward to the gh stub.
+gh_issue_edit_safe() {
+	gh issue edit "$@"
+	return $?
+}
 gh_issue_list() {
 	gh issue list "$@"
 	return $?
@@ -236,6 +242,30 @@ if [[ -f "$GH_EDIT_ARGS_FILE" ]] && grep -q -- "--add-label status:available" "$
 	print_result "stampless release resets in-progress issue to status:available" 0
 else
 	print_result "stampless release resets in-progress issue to status:available" 1 \
+		"(edit args: $(cat "$GH_EDIT_ARGS_FILE" 2>/dev/null || echo 'file missing'))"
+fi
+
+# Stampless aged release of a claimed issue resets it to available (GH#39584).
+cat >"${STUB_DIR}/gh" <<STUB
+#!/usr/bin/env bash
+if [[ "\$1" == "issue" && "\$2" == "list" ]]; then
+    echo '[{"number":44,"updatedAt":"2020-01-01T00:00:00Z","labels":[{"name":"origin:interactive"},{"name":"status:claimed"}]}]'
+    exit 0
+fi
+if [[ "\$1" == "issue" && "\$2" == "edit" ]]; then
+    echo "\$*" >> "${GH_EDIT_ARGS_FILE}"
+    exit 0
+fi
+exit 1
+STUB
+rm -f "$GH_EDIT_ARGS_FILE"
+_normalize_unassign_stampless_interactive "testrunner" "$REPOS_JSON" "$(date +%s)" "86400"
+if [[ -f "$GH_EDIT_ARGS_FILE" ]] && grep -q -- "--add-label status:available" "$GH_EDIT_ARGS_FILE" &&
+	grep -q -- "--remove-label status:claimed" "$GH_EDIT_ARGS_FILE" &&
+	grep -q -- "--remove-assignee testrunner" "$GH_EDIT_ARGS_FILE"; then
+	print_result "stampless release resets claimed issue to status:available (GH#39584)" 0
+else
+	print_result "stampless release resets claimed issue to status:available (GH#39584)" 1 \
 		"(edit args: $(cat "$GH_EDIT_ARGS_FILE" 2>/dev/null || echo 'file missing'))"
 fi
 
@@ -716,6 +746,7 @@ run_normalize_with_kill_in() {
 		}
 		_normalize_reassign_self() { record_pass reassign_self; return 0; }
 		_normalize_unassign_stale() { record_pass unassign_stale; return 0; }
+		_normalize_unassign_available_stale() { record_pass unassign_available_stale; return 0; }
 		_normalize_unassign_stampless_interactive() { record_pass unassign_stampless_interactive; return 0; }
 		_normalize_label_invariants() { record_pass label_invariants; return 0; }
 		normalize_active_issue_assignments
@@ -726,7 +757,7 @@ run_normalize_with_kill_in() {
 run_normalize_with_kill_in reassign_self
 run_normalize_with_kill_in unassign_stale
 run_normalize_with_kill_in none
-EXPECTED_PASS_LOG="reassign_self | unassign_stale | unassign_stampless_interactive label_invariants reassign_self unassign_stale | "
+EXPECTED_PASS_LOG="reassign_self | unassign_stale | unassign_available_stale unassign_stampless_interactive label_invariants reassign_self unassign_stale | "
 if [[ "$(cat "$PASS_LOG" 2>/dev/null)" == "$EXPECTED_PASS_LOG" ]]; then
 	print_result "normalize passes rotate after a stage timeout instead of starving later passes" 0
 else

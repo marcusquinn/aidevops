@@ -39,6 +39,18 @@ assert_contains() {
 	return 0
 }
 
+assert_not_contains() {
+	local name="$1"
+	local needle="$2"
+	local haystack="$3"
+	if [[ "$haystack" == *"$needle"* ]]; then
+		fail "$name" "unexpected ${needle}"
+	else
+		pass "$name"
+	fi
+	return 0
+}
+
 assert_eq() {
 	local name="$1" expected="$2" actual="$3"
 	if [[ "$actual" == "$expected" ]]; then
@@ -68,6 +80,7 @@ run_fixture_wait() {
 		AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS="$required_contexts" \
 		AIDEVOPS_GH_CHECKS_TEST_HEAD="${AIDEVOPS_GH_CHECKS_TEST_HEAD_OVERRIDE-fixture-head}" \
 		AIDEVOPS_GH_CHECKS_TEST_DRAFT="${AIDEVOPS_GH_CHECKS_TEST_DRAFT_OVERRIDE-false}" \
+		AIDEVOPS_GH_CHECKS_TEST_PR_STATE="${AIDEVOPS_GH_CHECKS_TEST_PR_STATE_OVERRIDE-OPEN}" \
 		"$HELPER" wait 123 --repo example/repo --initial-interval 1 --max-interval 4 "$@"
 	return $?
 }
@@ -104,6 +117,32 @@ assert_contains "configured but unreported required checks time out as pending" 
 assert_contains "initial state names every unreported context" "CI wait started: none=0 missing=Format, Lint" "$configured_missing_output"
 assert_contains "timeout names every unreported context" "(none=0 missing=Format, Lint)" "$configured_missing_output"
 
+draft_skipped_dir="${TMPDIR_TEST}/draft-skipped"
+write_fixture "$draft_skipped_dir" 1 '[{"name":"Format","workflow":"CI","state":"SKIPPED","bucket":"skipping","link":""}]'
+set +e
+draft_missing_output=$(AIDEVOPS_GH_CHECKS_TEST_DRAFT_OVERRIDE=true AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS=$'Format\nLint' run_fixture_wait "$draft_skipped_dir" --timeout 5 --heartbeat 1 2>&1)
+draft_missing_rc=$?
+draft_skipped_output=$(AIDEVOPS_GH_CHECKS_TEST_DRAFT_OVERRIDE=true AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS=Format run_fixture_wait "$draft_skipped_dir" --timeout 5 --heartbeat 1 2>&1)
+draft_skipped_rc=$?
+ready_missing_output=$(AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS=$'Format\nLint' run_fixture_wait "$draft_skipped_dir" --timeout 1 --heartbeat 1 2>&1)
+ready_missing_rc=$?
+set -e
+assert_eq "draft missing and skipped checks return 9" "9" "$draft_missing_rc"
+assert_contains "draft result identifies action" "WAIT_CHECKS=draft-required-missing: run gh pr ready 123 --repo example/repo, then wait again" "$draft_missing_output"
+assert_eq "draft skipped required checks return 9" "9" "$draft_skipped_rc"
+assert_eq "ready missing checks remain pending" "8" "$ready_missing_rc"
+assert_contains "ready missing checks report timeout" "TIMEOUT:" "$ready_missing_output"
+
+set +e
+conflict_output=$(AIDEVOPS_GH_CHECKS_TEST_MERGEABLE=CONFLICTING AIDEVOPS_GH_CHECKS_EMPTY_SETTLE_SECONDS=0 AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS=$'Format\nLint' run_fixture_wait "$draft_skipped_dir" --timeout 5 --heartbeat 1 2>&1)
+conflict_rc=$?
+unknown_output=$(AIDEVOPS_GH_CHECKS_TEST_MERGEABLE=UNKNOWN AIDEVOPS_GH_CHECKS_EMPTY_SETTLE_SECONDS=0 AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS=$'Format\nLint' run_fixture_wait "$draft_skipped_dir" --timeout 1 --heartbeat 1 2>&1)
+unknown_rc=$?
+set -e
+assert_eq "conflicting PR with missing checks returns 10" "10" "$conflict_rc"
+assert_contains "conflict result identifies rebase" "WAIT_CHECKS=conflict-required-missing: PR 123 conflicts with main; rebase onto origin/main, push, then wait again" "$conflict_output"
+assert_eq "unknown mergeability stays pending" "8" "$unknown_rc"
+
 partial_dir="${TMPDIR_TEST}/partial"
 write_fixture "$partial_dir" 1 '[{"name":"Format","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
 set +e
@@ -126,8 +165,40 @@ assert_contains "all-check mode observes pending optional checks" "Preview: pend
 assert_contains "all-check mode waits for the transition" "+ Preview: pending -> pass" "$all_checks_output"
 assert_contains "all-check mode reports scoped terminal success" "PASS: all checks completed" "$all_checks_output"
 
+# GH#39075: a PR merged by native auto-merge stops the wait even while an
+# optional context is still pending (no timeout wait).
+merged_dir="${TMPDIR_TEST}/merged-pending"
+write_fixture "$merged_dir" 1 '[{"name":"Complexity Analysis","workflow":"CI","state":"PENDING","bucket":"pending","link":""}]'
+set +e
+merged_output=$(AIDEVOPS_GH_CHECKS_TEST_PR_STATE_OVERRIDE=$'MERGED\t2026-11-18T21:03:39Z' run_fixture_wait "$merged_dir" --all --timeout 1800 2>&1)
+merged_rc=$?
+closed_output=$(AIDEVOPS_GH_CHECKS_TEST_PR_STATE_OVERRIDE=$'CLOSED\t' run_fixture_wait "$merged_dir" --all --timeout 1800 2>&1)
+closed_rc=$?
+set -e
+assert_eq "merged PR with pending optional check exits 0" "0" "$merged_rc"
+assert_contains "merged PR prints terminal line" "MERGED: PR #123 merged at 2026-11-18T21:03:39Z; check wait not required" "$merged_output"
+assert_eq "closed unmerged PR exits non-zero" "1" "$closed_rc"
+assert_contains "closed PR prints clear message" "CLOSED: PR #123 was closed without merging" "$closed_output"
+
 all_empty_output=$(run_fixture_wait "$empty_dir" --all)
 assert_contains "empty all-check selection is explicit terminal success" "PASS: verified no checks reported" "$all_empty_output"
+
+# t18926: --all must not succeed while a configured required context is absent,
+# and zero-job workflow runs are named as a distinct terminal failure.
+zero_job_dir="${TMPDIR_TEST}/zero-job"
+write_fixture "$zero_job_dir" 1 '[{"name":"Format","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
+printf '%s\n' '{"workflow_runs":[{"id":111,"name":"Complexity","workflow_id":1,"run_number":2,"head_sha":"fixture-head","status":"completed","conclusion":"failure","total_jobs":0},{"id":112,"name":"Format","workflow_id":2,"run_number":1,"head_sha":"fixture-head","status":"completed","conclusion":"success","total_jobs":3}]}' >"${zero_job_dir}/runs.json"
+set +e
+all_pending_output=$(AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS=$'Format\nComplexity' run_fixture_wait "$empty_dir" --all --timeout 0 2>&1)
+all_pending_rc=$?
+zero_job_output=$(AIDEVOPS_GH_CHECKS_EMPTY_SETTLE_SECONDS=0 AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS=$'Format\nComplexity' run_fixture_wait "$zero_job_dir" --all --timeout 0 2>&1)
+zero_job_rc=$?
+set -e
+assert_eq "--all with an absent required context does not exit 0" "8" "$all_pending_rc"
+assert_eq "zero-job runs are a terminal failure" "1" "$zero_job_rc"
+assert_contains "zero-job failure names workflow and run ID" "Complexity (run 111)" "$zero_job_output"
+assert_contains "zero-job failure gives rerun hint" "gh run rerun <id> --repo example/repo" "$zero_job_output"
+[[ "$zero_job_output" != *'(run 112)'* ]] && pass "healthy run is not reported as zero-job" || fail "healthy run is not reported as zero-job"
 
 live_bin="${TMPDIR_TEST}/live-bin"
 mkdir -p "$live_bin"
@@ -408,6 +479,134 @@ assert_contains "unknown bucket is reported" "Unexpected: mystery" "$other_failu
 skipping_detail_count=$(printf '%s\n' "$other_failure_output" | grep -c '^  Optional: skipping$' || true)
 [[ "$skipping_detail_count" -eq 1 ]] && pass "skipped check is omitted from failure details" || fail "skipped check is omitted from failure details" "count ${skipping_detail_count}"
 
+# GH#35830: a concurrency-cancelled check is pending until superseded or grace ends.
+cancel_super_dir="${TMPDIR_TEST}/cancel-superseded"
+write_fixture "$cancel_super_dir" 1 '[{"name":"Build","workflow":"CI","state":"CANCELLED","bucket":"cancel","link":""}]'
+write_fixture "$cancel_super_dir" 2 '[{"name":"Build","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
+set +e
+cancel_super_output=$(AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS=180 run_fixture_wait "$cancel_super_dir" 2>&1)
+cancel_super_rc=$?
+set -e
+[[ "$cancel_super_rc" -eq 0 ]] && pass "superseded cancel is not terminal" || fail "superseded cancel is not terminal" "got ${cancel_super_rc}"
+assert_contains "superseded cancel ends with pass" "PASS: required checks completed" "$cancel_super_output"
+
+# Exercise the real fetch -> canonicalize -> grace path with timestamp-only
+# attempt changes. One second per epoch read makes the first window expire
+# exactly when the second cancellation arrives, without wall-clock sleeps.
+cancel_attempt_dir="${TMPDIR_TEST}/cancel-attempts"
+write_fixture "$cancel_attempt_dir" 1 '[{"name":"Build","workflow":"CI","state":"CANCELLED","bucket":"cancel","link":"","startedAt":"2026-10-28T12:00:00Z","completedAt":"2026-10-28T12:01:00Z"}]'
+write_fixture "$cancel_attempt_dir" 2 '[{"name":"Build","workflow":"CI","state":"CANCELLED","bucket":"cancel","link":"","startedAt":"2026-10-28T12:02:00Z","completedAt":"2026-10-28T12:03:00Z"}]'
+write_fixture "$cancel_attempt_dir" 3 '[{"name":"Build","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
+set +e
+cancel_attempt_output=$(
+	export CANCEL_CLOCK_FILE="${TMPDIR_TEST}/cancel-clock"
+	date() {
+		local format="${1:-}" epoch=100
+		if [[ "$format" == '+%s' ]]; then
+			[[ ! -s "$CANCEL_CLOCK_FILE" ]] || epoch=$(<"$CANCEL_CLOCK_FILE")
+			printf '%s\n' "$((epoch + 1))" >"$CANCEL_CLOCK_FILE"
+			printf '%s\n' "$epoch"
+		else
+			command date "$@"
+		fi
+		return 0
+	}
+	export -f date
+	AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS=1 run_fixture_wait "$cancel_attempt_dir" --timeout 10 --heartbeat 1
+)
+cancel_attempt_rc=$?
+set -e
+assert_eq "timestamp-only cancelled attempt receives a fresh grace window" "0" "$cancel_attempt_rc"
+assert_contains "timestamp-only attempt can reach its passing replacement" "PASS: required checks completed" "$cancel_attempt_output"
+assert_contains "attempt metadata does not postpone unchanged-state heartbeat" "heartbeat: required checks unchanged" "$cancel_attempt_output"
+cancel_attempt_transitions=$(printf '%s\n' "$cancel_attempt_output" | grep '^+' || true)
+assert_eq "attempt timestamps do not emit spurious state transitions" "+ Build: cancel -> pass" "$cancel_attempt_transitions"
+
+cancel_final_dir="${TMPDIR_TEST}/cancel-final"
+write_fixture "$cancel_final_dir" 1 '[{"name":"Build","workflow":"CI","state":"CANCELLED","bucket":"cancel","link":""}]'
+set +e
+cancel_final_output=$(AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS=0 run_fixture_wait "$cancel_final_dir" 2>&1)
+cancel_final_rc=$?
+set -e
+[[ "$cancel_final_rc" -eq 1 ]] && pass "unsuperseded cancel is terminal after grace" || fail "unsuperseded cancel is terminal after grace" "got ${cancel_final_rc}"
+
+# GH#38537: with other checks still pending, the replacement run may be queued;
+# even a zero grace must not turn the cancellation terminal before they settle.
+cancel_queued_dir="${TMPDIR_TEST}/cancel-queued"
+write_fixture "$cancel_queued_dir" 1 '[{"name":"Gate","workflow":"CI","state":"CANCELLED","bucket":"cancel","link":"run-old"},{"name":"Lint","workflow":"CI","state":"IN_PROGRESS","bucket":"pending","link":""}]'
+write_fixture "$cancel_queued_dir" 2 '[{"name":"Gate","workflow":"CI","state":"SUCCESS","bucket":"pass","link":"run-new"},{"name":"Lint","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
+set +e
+cancel_queued_output=$(AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS=0 run_fixture_wait "$cancel_queued_dir" 2>&1)
+cancel_queued_rc=$?
+set -e
+assert_eq "cancel beside pending checks waits for its queued replacement" "0" "$cancel_queued_rc"
+assert_contains "queued replacement reaches pass" "PASS: required checks completed" "$cancel_queued_output"
+
+cancel_mixed_dir="${TMPDIR_TEST}/cancel-mixed-pending"
+write_fixture "$cancel_mixed_dir" 1 '[{"name":"Gate","workflow":"CI","state":"CANCELLED","bucket":"cancel","link":""},{"name":"Test","workflow":"CI","state":"FAILURE","bucket":"fail","link":""},{"name":"Lint","workflow":"CI","state":"IN_PROGRESS","bucket":"pending","link":""}]'
+set +e
+cancel_mixed_output=$(AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS=180 run_fixture_wait "$cancel_mixed_dir" 2>&1)
+cancel_mixed_rc=$?
+set -e
+assert_eq "real failure beside cancel and pending stays terminal" "1" "$cancel_mixed_rc"
+assert_contains "real failure is reported" "Test: fail" "$cancel_mixed_output"
+
+# Exercise timer transitions deterministically without adding a test clock.
+cancel_timer_output=$(
+	# shellcheck source=../gh-checks-wait-helper.sh
+	source "$HELPER" help >/dev/null
+	_GCW_CANCEL_GRACE_SECONDS=180
+	cancel_a='[{"name":"A","workflow":"CI","bucket":"cancel","link":"run-a"}]'
+	cancel_b='[{"name":"B","workflow":"CI","bucket":"cancel","link":"run-b"}]'
+	apply_cancel_grace failure "$cancel_a" 100
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+	apply_cancel_grace failure "$cancel_a" 280
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+	apply_cancel_grace failure "$cancel_b" 281
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+	apply_cancel_grace failure "$cancel_b" 400
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+	apply_cancel_grace failure "$cancel_b" 461
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+	apply_cancel_grace pending '[]' 462
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+	# Same check, null link, different attempt (distinct timestamps): new window.
+	cancel_c1='[{"name":"C","workflow":"CI","bucket":"cancel","link":"","startedAt":"t1","completedAt":"t2"}]'
+	cancel_c2='[{"name":"C","workflow":"CI","bucket":"cancel","link":"","startedAt":"t3","completedAt":"t4"}]'
+	apply_cancel_grace failure "$cancel_c1" 500
+	apply_cancel_grace failure "$cancel_c2" 700
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+	# GH#38537: an elapsed window is cleared while another check is pending;
+	# the next window starts when nothing else is pending.
+	cancel_d_pending='[{"name":"D","workflow":"CI","bucket":"cancel","link":"run-d"},{"name":"E","workflow":"CI","bucket":"pending","link":""}]'
+	cancel_d_settled='[{"name":"D","workflow":"CI","bucket":"cancel","link":"run-d"},{"name":"E","workflow":"CI","bucket":"pass","link":""}]'
+	apply_cancel_grace failure "$cancel_d_pending" 1000
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+	apply_cancel_grace failure "$cancel_d_settled" 1500
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+	apply_cancel_grace failure "$cancel_d_settled" 1680
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+)
+assert_eq "grace follows the cancelled set without extending unchanged cancellations" \
+	$'pending:100\nfailure:100\npending:281\npending:281\nfailure:281\npending:\npending:700\npending:\npending:1500\nfailure:1500' "$cancel_timer_output"
+
+for invalid_grace in '' 08 180s -1 86401 999999999999999999999999; do
+	set +e
+	invalid_grace_output=$(AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS="$invalid_grace" run_fixture_wait "$cancel_final_dir" --timeout 0 2>&1)
+	invalid_grace_rc=$?
+	set -e
+	assert_eq "invalid cancellation grace ${invalid_grace} is rejected" "1" "$invalid_grace_rc"
+	assert_contains "invalid cancellation grace ${invalid_grace} has configuration diagnostic" \
+		"AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS must be a decimal integer" "$invalid_grace_output"
+done
+
+set +e
+cancel_pending_output=$(AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS=86400 run_fixture_wait "$cancel_final_dir" --timeout 0 2>&1)
+cancel_pending_rc=$?
+set -e
+assert_eq "valid grace keeps cancellation pending" "8" "$cancel_pending_rc"
+assert_contains "valid grace times out rather than failing" "TIMEOUT:" "$cancel_pending_output"
+
 recovery_dir="${TMPDIR_TEST}/recovery"
 write_fixture "$recovery_dir" 1 'not-json'
 write_fixture "$recovery_dir" 2 '[{"name":"Recovered","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
@@ -431,6 +630,27 @@ mkdir -p "$(dirname "$heartbeat_file")"
 write_fixture "$heartbeat_dir" 1 '[{"name":"Immediate","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
 AIDEVOPS_FULL_LOOP_HEARTBEAT_FILE="$heartbeat_file" run_fixture_wait "$heartbeat_dir" >/dev/null
 [[ -s "$heartbeat_file" ]] && pass "wait updates out-of-context runtime heartbeat" || fail "wait updates out-of-context runtime heartbeat"
+
+# t19045: a headless worker that omits --timeout gets the bounded worker chunk.
+headless_note="NOTE: headless worker default --timeout"
+set +e
+headless_default_output=$(unset AIDEVOPS_GH_CHECKS_TIMEOUT_SECONDS
+	FULL_LOOP_HEADLESS=true AIDEVOPS_GH_CHECKS_HEADLESS_TIMEOUT_SECONDS=0 \
+		run_fixture_wait "$timeout_dir" 2>&1)
+headless_default_rc=$?
+headless_explicit_output=$(unset AIDEVOPS_GH_CHECKS_TIMEOUT_SECONDS
+	AIDEVOPS_HEADLESS=1 AIDEVOPS_GH_CHECKS_HEADLESS_TIMEOUT_SECONDS=0 \
+		run_fixture_wait "$timeout_dir" --timeout 0 2>&1)
+headless_explicit_rc=$?
+set -e
+assert_eq "headless default timeout bounds a pending wait" "8" "$headless_default_rc"
+assert_contains "headless default timeout is announced" "${headless_note} 0s" "$headless_default_output"
+assert_eq "explicit timeout still applies under headless" "8" "$headless_explicit_rc"
+assert_not_contains "explicit timeout is not replaced under headless" "$headless_note" "$headless_explicit_output"
+interactive_default_output=$(unset FULL_LOOP_HEADLESS AIDEVOPS_HEADLESS OPENCODE_HEADLESS \
+	AIDEVOPS_GH_CHECKS_TIMEOUT_SECONDS
+	run_fixture_wait "$heartbeat_dir" 2>&1)
+assert_not_contains "interactive wait keeps the long default" "$headless_note" "$interactive_default_output"
 
 printf '%s passed, %s failed\n' "$pass_count" "$fail_count"
 if [[ "$fail_count" -ne 0 ]]; then

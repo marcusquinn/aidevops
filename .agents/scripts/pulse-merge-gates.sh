@@ -46,8 +46,53 @@ _PULSE_MERGE_GATES_LOADED=1
 # shellcheck source=./trusted-dependabot-lib.sh
 # shellcheck disable=SC1091
 source "${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/trusted-dependabot-lib.sh"
+# shellcheck source=./shared-gh-commit-cache.sh
+source "${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/shared-gh-commit-cache.sh"
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/shared-approval-cli.sh"
+fi
 
 # --- Functions ---
+
+_pulse_recover_external_review() {
+	local pr_number="$1" repo_slug="$2" pr_author="$3" expected_head_sha="$4"
+	local evidence="$5" review_helper="$6" live_pr="" retry_result=""
+	# Called only after independent author, issue, and approval gates. Never
+	# convert an unavailable/malformed review decision into permission to write.
+	#aidevops:trust-boundary -- retries cannot relax external review requirements.
+	[[ -n "$expected_head_sha" && -n "$pr_author" ]] || return 1
+	jq -e --arg schema "$PULSE_REVIEW_EVIDENCE_SCHEMA" --arg repo "$repo_slug" \
+		--arg pr "$pr_number" --arg head "$expected_head_sha" --arg author "$pr_author" '
+		.schema == $schema and .repo == $repo and (.pr | tostring) == $pr
+		and .head_sha == $head and .author.login == $author
+		and .author.class == "external"
+		and (.author.association == "CONTRIBUTOR" or .author.association == "FIRST_TIME_CONTRIBUTOR"
+			or .author.association == "FIRST_TIMER" or .author.association == "NONE")
+		and .status == "WAITING" and .exit_code == 1
+		and .permitted == false and .state == "waiting" and .merge_gate == "blocked"
+		and .reason == "outcome_not_permitted"
+	' <<<"$evidence" >/dev/null 2>&1 || return 1
+	_pulse_repo_allows_pr_gate_writes "$repo_slug" "review-limit recovery" || return 1
+	live_pr=$(_pmg_gh_read gh api "repos/${repo_slug}/pulls/${pr_number}") || return 1
+	jq -e --arg head "$expected_head_sha" --arg author "$pr_author" '
+		.state == "open" and .draft == false and .head.sha == $head and .user.login == $author
+		and all(.labels[]?; .name != "hold-for-review")
+	' <<<"$live_pr" >/dev/null 2>&1 || return 1
+	# The shared command owns bot-notice detection and retry idempotency. No
+	# branch push, label exception, status override, or approval mutation here.
+	retry_result=$(bash "$review_helper" request-retry "$pr_number" "$repo_slug" 2>/dev/null) || return 1
+	case "$retry_result" in
+	REQUESTED)
+		echo "[pulse-wrapper] Review limit recovery: requested review for external PR #${pr_number} in ${repo_slug}; merge remains blocked" >>"$LOGFILE"
+		;;
+	ALREADY_REQUESTED | NO_ACTION | HAS_REVIEWS) ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
 
 _pmg_gh_read() {
 	local rc=0
@@ -192,6 +237,9 @@ _pulse_merge_admin_pr_json_graphql() {
 					}
 					isCrossRepository
 					headRefOid
+					state
+					isDraft
+					reviewDecision
 				}
 			}
 			rateLimit { cost }
@@ -202,18 +250,28 @@ _pulse_merge_admin_pr_json_graphql() {
 		| select(((.errors // []) | length) == 0)
 		| select((.data.rateLimit.cost | type) == "number")
 		| select(.data.rateLimit.cost > 0 and (.data.rateLimit.cost | floor) == .data.rateLimit.cost)
+		| "string" as $string_type
 		| .data.repository.pullRequest as $pr
 		| select($pr != null)
-		| select(($pr.author.login | type) == "string")
+		| select(($pr.author.login | type) == $string_type)
 		| select(($pr.isCrossRepository | type) == "boolean")
-		| select(($pr.headRefOid | type) == "string")
+		| select(($pr.headRefOid | type) == $string_type)
+		| select(["OPEN", "CLOSED", "MERGED"] | index($pr.state))
+		| select(($pr.isDraft | type) == "boolean")
+		| select($pr | has("reviewDecision"))
+		| select($pr.reviewDecision == null or
+			($pr.reviewDecision | strings | test("\\A(APPROVED|CHANGES_REQUESTED|REVIEW_REQUIRED)\\z")))
 		| select(($pr.labels.nodes | type) == "array")
+		| select(all($pr.labels.nodes[]; (.name | type) == $string_type and (.name | length) > 0))
 		| select($pr.labels.pageInfo.hasNextPage == false)
 		| {
 			author: $pr.author,
 			labels: $pr.labels.nodes,
 			isCrossRepository: $pr.isCrossRepository,
-			headRefOid: $pr.headRefOid
+			headRefOid: $pr.headRefOid,
+			state: $pr.state,
+			isDraft: $pr.isDraft,
+			reviewDecision: $pr.reviewDecision
 		}
 	' 2>/dev/null) || return 1
 	printf '%s\n' "$pr_json"
@@ -266,7 +324,7 @@ check_external_contributor_pr() {
 	local label_exit=$?
 
 	local has_label=false
-	if [[ $label_exit -eq 0 ]] && echo "$label_output" | grep -q '^external-contributor$'; then
+	if [[ $label_exit -eq 0 ]] && grep -q -- '^external-contributor$' <<<"$label_output"; then
 		has_label=true
 	fi
 
@@ -276,7 +334,10 @@ check_external_contributor_pr() {
 	local comment_exit=$?
 
 	local has_comment=false
-	if [[ $comment_exit -eq 0 ]] && echo "$comment_output" | grep -qiF 'external contributor'; then
+	# Here-strings, not pipes, for every dedup probe in this file: under the
+	# caller's pipefail an early grep -q exit on a large comment list reported
+	# "not found" and re-posted the same comment (GH#36235).
+	if [[ $comment_exit -eq 0 ]] && grep -qiF -- 'external contributor' <<<"$comment_output"; then
 		has_comment=true
 	fi
 
@@ -305,7 +366,7 @@ check_external_contributor_pr() {
 
 External contributor PRs have two requirements before they can merge:
 1. A linked issue (\`Resolves #NNN\` in the PR body, or \`GH#NNN:\` prefix in the title)
-2. Cryptographic approval on that linked issue (\`sudo aidevops approve issue NNN ${repo_slug}\`)
+2. Cryptographic approval on that linked issue (\`$(approval_cli_prefix) approve issue NNN ${repo_slug}\`)
 
 ---
 **To approve or decline**, comment on this PR:
@@ -321,7 +382,7 @@ External contributor PRs have two requirements before they can merge:
 		linked_for_check=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_for_check=""
 		if [[ -z "$linked_for_check" ]]; then
 		gh_pr_comment "$pr_number" --repo "$repo_slug" \
-				--body "**Missing linked issue.** This PR has no linked issue. External contributor PRs require a linked issue before they can be considered for merge. Add \`Resolves #NNN\` to the PR body (or use \`GH#NNN:\` in the title), then ensure that issue has been cryptographically approved by a maintainer (\`sudo aidevops approve issue NNN ${repo_slug}\`)." || true
+				--body "**Missing linked issue.** This PR has no linked issue. External contributor PRs require a linked issue before they can be considered for merge. Add \`Resolves #NNN\` to the PR body (or use \`GH#NNN:\` in the title), then ensure that issue has been cryptographically approved by a maintainer (\`$(approval_cli_prefix) approve issue NNN ${repo_slug}\`)." || true
 			echo "[pulse-wrapper] check_external_contributor_pr: PR #$pr_number in $repo_slug has no linked issue — posted missing-linked-issue comment" >>"$LOGFILE"
 		fi
 	fi
@@ -478,10 +539,92 @@ _has_maintainer_crypto_approval() {
 #       linked-issue development authority and PR-specific merge authority)
 #   1 - REFUSE: external/fork PR without crypto approval
 #######################################
+_pulse_merge_live_state_gate() {
+	local pr_number="$1" repo_slug="$2" pr_meta_json="$3" labels_str="$4"
+	local admission_mode="${5:-merge}"
+	[[ "$admission_mode" == merge || "$admission_mode" == review-repair ]] || return 1
+	# #aidevops:trust-boundary — lifecycle, review and holds share one fresh read.
+	# Repair may update a rejected head, but never authorizes its merge.
+	if ! printf '%s' "$pr_meta_json" | jq -e --arg mode "$admission_mode" '.state == "OPEN" and .isDraft == false and ($mode == "review-repair" or .reviewDecision != "CHANGES_REQUESTED")' >/dev/null; then
+		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — PR is not open, is draft or has CHANGES_REQUESTED" >>"$LOGFILE"
+		return 1
+	fi
+	local blocking_label=""
+	for blocking_label in hold-for-review needs-maintainer-review; do
+		if [[ ",${labels_str}," == *",${blocking_label},"* ]]; then
+			echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — PR carries ${blocking_label}" >>"$LOGFILE"
+			return 1
+		fi
+	done
+	return 0
+}
+
+#######################################
+# Final-boundary merge authority for an authenticated Dependabot update.
+#
+# Dependabot PRs never carry a linked issue, so the generic external-PR rule
+# (linked-issue approval + PR approval) refused every maintainer-approved
+# Dependabot PR at the last gate. Exact-head bot identity, repository
+# ownership, commit authorship and dependency allowlisting establish the
+# update's provenance; current-head V2 maintainer merge authority replaces
+# issue-level development authority. Forks and other authors stay refused.
+#
+# Args: $1=PR number, $2=repo slug, $3=GraphQL author login,
+#       $4=current head SHA, $5=isCrossRepository
+# Returns: 0 when both checks pass for the exact head; 1 otherwise
+#######################################
+_pulse_merge_trusted_dependabot_final_authority() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_author="$3"
+	local current_head_sha="$4"
+	local is_fork="$5"
+
+	#aidevops:trust-boundary -- GH#17671 defence-in-depth: same-repository
+	# GitHub Bot provenance plus exact-head V2 merge authority, never either alone.
+	# The GraphQL metadata read already proved isCrossRepository is a boolean, and
+	# the trusted-Dependabot check independently re-verifies head ownership.
+	[[ "$is_fork" != "true" && "$pr_author" == "dependabot" && -n "$current_head_sha" ]] || return 1
+	declare -F _is_trusted_dependabot_update_pr >/dev/null 2>&1 || return 1
+	_is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "dependabot[bot]" "$current_head_sha" || return 1
+	if ! _external_pr_current_head_crypto_approved "$pr_number" "$repo_slug" "$current_head_sha"; then
+		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — verified Dependabot PR lacks V2 authority for current head ${current_head_sha:0:12}" >>"$LOGFILE"
+		return 1
+	fi
+	echo "[pulse-merge] Verified Dependabot update with current-head maintainer V2 authority for PR #${pr_number} at ${current_head_sha:0:12}" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Parse labels, fork flag, head SHA and author from PR metadata in one jq pass
+# (was four forks). Each field keeps its own fail-safe default so a malformed
+# sibling cannot change another value. Sets _PMG_META_{LABELS,IS_FORK,HEAD_SHA,
+# AUTHOR}. Args: $1=pr_meta_json
+#######################################
+_pulse_merge_admin_meta_fields() {
+	local pr_meta_json="$1"
+	local meta_fields=""
+	_PMG_META_LABELS="" _PMG_META_IS_FORK="" _PMG_META_HEAD_SHA="" _PMG_META_AUTHOR=""
+	meta_fields=$(printf '%s' "$pr_meta_json" | jq -r '
+		(try ([.labels[].name] | join(",")) catch ""),
+		(try (.isCrossRepository // false | tostring) catch "false"),
+		(try (.headRefOid // "" | tostring) catch ""),
+		(try (.author.login // "" | tostring) catch "")' 2>/dev/null) || meta_fields=""
+	{
+		IFS= read -r _PMG_META_LABELS
+		IFS= read -r _PMG_META_IS_FORK
+		IFS= read -r _PMG_META_HEAD_SHA
+		IFS= read -r _PMG_META_AUTHOR
+	} <<<"$meta_fields" || true
+	_PMG_META_IS_FORK="${_PMG_META_IS_FORK:-false}"
+	return 0
+}
+
 _pulse_merge_admin_safety_check() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local expected_head_sha="${3:-}"
+	local admission_mode="${4:-merge}"
 
 	# t2863: initialise multi-var locals at declaration time so set -u
 	# is safe even on a partial-failure path through the assignments.
@@ -498,14 +641,11 @@ _pulse_merge_admin_safety_check() {
 		echo "[pulse-merge] _pulse_merge_admin_safety_check: exact GraphQL metadata read returned malformed metadata for PR #${pr_number} in ${repo_slug} — failing closed" >>"$LOGFILE"
 		return 1
 	fi
-	labels_str=$(printf '%s' "$pr_meta_json" \
-		| jq -r '[.labels[].name] | join(",")' 2>/dev/null) || labels_str=""
-	is_fork=$(printf '%s' "$pr_meta_json" \
-		| jq -r '.isCrossRepository // false' 2>/dev/null) || is_fork="false"
-	current_head_sha=$(printf '%s' "$pr_meta_json" \
-		| jq -r '.headRefOid // ""' 2>/dev/null) || current_head_sha=""
-	pr_author=$(printf '%s' "$pr_meta_json" \
-		| jq -r '.author.login // ""' 2>/dev/null) || pr_author=""
+	_pulse_merge_admin_meta_fields "$pr_meta_json"
+	labels_str="${_PMG_META_LABELS}"
+	is_fork="${_PMG_META_IS_FORK}"
+	current_head_sha="${_PMG_META_HEAD_SHA}"
+	pr_author="${_PMG_META_AUTHOR}"
 	if [[ -z "$current_head_sha" || -z "$pr_author" ]]; then
 		echo "[pulse-merge] _pulse_merge_admin_safety_check: missing head SHA or author for PR #${pr_number} in ${repo_slug} — failing closed" >>"$LOGFILE"
 		return 1
@@ -515,12 +655,7 @@ _pulse_merge_admin_safety_check() {
 		return 1
 	fi
 
-	# #aidevops:trust-boundary — a live NMR label is an explicit hold. Signed
-	# marker presence never overrides it at the final merge call.
-	if [[ ",${labels_str}," == *",needs-maintainer-review,"* ]]; then
-		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — PR carries needs-maintainer-review" >>"$LOGFILE"
-		return 1
-	fi
+	_pulse_merge_live_state_gate "$pr_number" "$repo_slug" "$pr_meta_json" "$labels_str" "$admission_mode" || return 1
 
 	local treat_as_external=0 trusted_issue_sync=0 authority_rc=0
 	#aidevops:trust-boundary -- classify live collaborator, external, or exact
@@ -565,6 +700,10 @@ _pulse_merge_admin_safety_check() {
 
 	# External / fork PR — require linked issue + crypto approval.
 	if [[ -z "$linked" ]]; then
+		if _pulse_merge_trusted_dependabot_final_authority "$pr_number" "$repo_slug" \
+			"$pr_author" "$current_head_sha" "$is_fork"; then
+			return 0
+		fi
 		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING --admin merge of PR #${pr_number} in ${repo_slug} — external/fork PR has no linked issue (t2934)" >>"$LOGFILE"
 		return 1
 	fi
@@ -638,7 +777,7 @@ check_permission_failure_pr() {
 		return 2
 	fi
 
-	if echo "$perm_comments" | grep -qF 'Permission check failed'; then
+	if grep -qF -- 'Permission check failed' <<<"$perm_comments"; then
 		# Already posted — nothing to do
 		return 0
 	fi
@@ -727,13 +866,20 @@ _pulse_approve_pr_at_head() {
 		return $?
 	fi
 
+	# Parse stdout only. stderr (gh errors, privacy-shim advisories) passes to the
+	# caller's log capture; merging it here made valid review JSON unparsable
+	# and logged successful approvals as failures (GH#38082).
 	approval_response=$(gh api -X POST "repos/${repo_slug}/pulls/${pr_number}/reviews" \
 		-f 'event=APPROVE' -f "body=${approval_body}" \
-		-f "commit_id=${expected_head_sha}" 2>&1) || return 1
+		-f "commit_id=${expected_head_sha}") || return 1
 	approval_state=$(printf '%s' "$approval_response" | jq -r '.state // ""' 2>/dev/null) || return 1
 	approval_head_sha=$(printf '%s' "$approval_response" | jq -r '.commit_id // ""' 2>/dev/null) || return 1
-	[[ "$approval_state" == "APPROVED" && "$approval_head_sha" == "$expected_head_sha" ]]
-	return $?
+	if [[ "$approval_state" == "APPROVED" && "$approval_head_sha" == "$expected_head_sha" ]]; then
+		return 0
+	fi
+	printf 'approval response state=%s commit_id=%s (expected APPROVED at %s)\n' \
+		"${approval_state:-none}" "${approval_head_sha:-none}" "$expected_head_sha" >&2
+	return 1
 }
 
 #######################################
@@ -789,7 +935,7 @@ approve_collaborator_pr() {
 	# No trusted approval exists, so resolve and validate the pulse identity before
 	# creating one.
 	local current_user
-	current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+	gh_authenticated_login_cached current_user || current_user=""
 
 	if [[ -n "$current_user" ]]; then
 		# Skip self-approval — GitHub rejects it and the failed review state
@@ -893,7 +1039,7 @@ check_pr_modifies_workflows() {
 		return 2
 	fi
 
-	if echo "$files_output" | grep -qE '^\.github/workflows/'; then
+	if grep -qE -- '^\.github/workflows/' <<<"$files_output"; then
 		echo "[pulse-wrapper] check_pr_modifies_workflows: PR #$pr_number in $repo_slug modifies workflow files" >>"$LOGFILE"
 		return 0
 	fi
@@ -923,12 +1069,12 @@ check_gh_workflow_scope() {
 		return 2
 	fi
 
-	if echo "$auth_output" | grep -q "'workflow'"; then
+	if grep -q -- "'workflow'" <<<"$auth_output"; then
 		return 0
 	fi
 
 	# Also check for the scope without quotes (format varies by gh version)
-	if echo "$auth_output" | grep -qiE 'Token scopes:.*workflow'; then
+	if grep -qiE -- 'Token scopes:.*workflow' <<<"$auth_output"; then
 		return 0
 	fi
 
@@ -1000,7 +1146,7 @@ check_workflow_merge_guard() {
 		return 2
 	fi
 
-	if echo "$comments_output" | grep -qF 'workflow scope'; then
+	if grep -qF -- 'workflow scope' <<<"$comments_output"; then
 		# Already commented — still blocked
 		echo "[pulse-wrapper] check_workflow_merge_guard: PR #$pr_number already has workflow scope comment — skipping merge" >>"$LOGFILE"
 		return 1

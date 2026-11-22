@@ -100,7 +100,7 @@ fix_gh_ref_in_todo() {
 		log_verbose "$task_id not found outside code fences/comments"
 		return 0
 	}
-	if ! sed -n "${line_num}p" "$todo_file" | grep -qE "ref:GH#${old_number}([[:space:]]|$)"; then
+	if ! sed -n "${line_num}p" "$todo_file" | grep -E "ref:GH#${old_number}([[:space:]]|$)" >/dev/null; then
 		log_verbose "$task_id with ref:GH#$old_number not found on real task line"
 		return 0
 	fi
@@ -130,19 +130,19 @@ add_gh_ref_to_todo() {
 	local target_line
 	target_line=$(sed -n "${line_num}p" "$todo_file")
 	# Check if ref already exists on the real task line.
-	if printf '%s\n' "$target_line" | grep -qE "ref:GH#${issue_number}([[:space:]]|$)"; then
+	if printf '%s\n' "$target_line" | grep -E "ref:GH#${issue_number}([[:space:]]|$)" >/dev/null; then
 		return 0
 	fi
 
 	# Check if any GH ref exists on the real task line (might be different number).
-	if printf '%s\n' "$target_line" | grep -qE 'ref:GH#[0-9]+'; then
+	if printf '%s\n' "$target_line" | grep -E 'ref:GH#[0-9]+' >/dev/null; then
 		log_verbose "$task_id already has a GH ref, skipping"
 		return 0
 	fi
 	local new_line
-	if printf '%s\n' "$target_line" | grep -qE '(^|[[:space:]])ref:none([[:space:]]|$)'; then
+	if printf '%s\n' "$target_line" | grep -E '(^|[[:space:]])ref:none([[:space:]]|$)' >/dev/null; then
 		new_line=$(printf '%s\n' "$target_line" | sed -E "s/(^|[[:space:]])ref:none([[:space:]]|$)/\\1ref:GH#${issue_number}\\2/")
-	elif echo "$target_line" | grep -qE 'logged:'; then
+	elif echo "$target_line" | grep -E 'logged:' >/dev/null; then
 		new_line=$(echo "$target_line" | sed -E "s/( logged:)/ ref:GH#${issue_number}\1/")
 	else
 		new_line="${target_line} ref:GH#${issue_number}"
@@ -197,9 +197,9 @@ add_pr_ref_to_todo() {
 	local target_line
 	target_line=$(sed -n "${line_num}p" "$todo_file")
 	local new_line
-	if echo "$target_line" | grep -qE ' logged:'; then
+	if echo "$target_line" | grep -E ' logged:' >/dev/null; then
 		new_line=$(echo "$target_line" | sed -E "s/( logged:)/ pr:#${pr_number}\1/")
-	elif echo "$target_line" | grep -qE ' completed:'; then
+	elif echo "$target_line" | grep -E ' completed:' >/dev/null; then
 		new_line=$(echo "$target_line" | sed -E "s/( completed:)/ pr:#${pr_number}\1/")
 	else
 		new_line="${target_line} pr:#${pr_number}"
@@ -421,7 +421,54 @@ require_task_issue_mapping() {
 	resolved=$(resolve_task_gh_number "$task_id" "$todo_file" "$repo" || true)
 	if [[ ! "$issue_number" =~ ^[1-9][0-9]*$ || "$resolved" != "$issue_number" ]]; then
 		print_error "Refusing issue write for ${task_id}: #${issue_number} is not validated for ${repo}"
+		describe_task_issue_mapping "$task_id" "$todo_file" "$repo"
 		return 1
+	fi
+	return 0
+}
+
+# GH#37294: explain a refused task/ref mapping. Diagnostic only: it never
+# changes the coordinator mapping and never selects a write target. The
+# coordinator stays authoritative; a TODO ref:GH# cannot override it.
+# Arguments: $1 task_id, $2 todo_file, $3 repo slug
+# Output: one detail line on stderr. Returns 0.
+describe_task_issue_mapping() {
+	local task_id="$1" todo_file="$2" repo="$3"
+	local task_line="" ref="" issue_json="" issue_id="" issue_title="" issue_body=""
+	local repository_id="" owner_json="" owner_task="" title_task="" body_task=""
+	local coordinator="${SCRIPT_DIR}/task-coordinator.mjs"
+	task_line=$(_first_todo_task_line_or_empty "$task_id" "$todo_file" 2>/dev/null) || task_line=""
+	[[ -n "$task_line" ]] || {
+		print_error "Mapping detail for ${task_id}: no live TODO.md row"
+		return 0
+	}
+	[[ "$task_line" =~ ref:GH#([0-9]+) ]] && ref="${BASH_REMATCH[1]}"
+	[[ "$ref" =~ ^[1-9][0-9]*$ ]] || {
+		print_error "Mapping detail for ${task_id}: TODO.md row has no ref:GH# and the coordinator has no mapping"
+		return 0
+	}
+	issue_json=$(_gh_with_timeout read gh issue view "$ref" --repo "$repo" --json id,title,body 2>/dev/null || true)
+	issue_id=$(printf '%s' "$issue_json" | jq -r '.id // ""' 2>/dev/null || true)
+	[[ -n "$issue_id" ]] || {
+		print_error "Mapping detail for ${task_id}: TODO ref:GH#${ref}, but #${ref} could not be read in ${repo}"
+		return 0
+	}
+	issue_title=$(printf '%s' "$issue_json" | jq -r '.title // ""' 2>/dev/null || true)
+	issue_body=$(printf '%s' "$issue_json" | jq -r '.body // ""' 2>/dev/null || true)
+	# shellcheck disable=SC2016  # Literal backticks match the composed Task ID header.
+	local title_re='^(t[0-9]+(\.[0-9]+)*):' body_re='\*\*Task ID:\*\* `(t[0-9]+(\.[0-9]+)*)`'
+	[[ "$issue_title" =~ $title_re ]] && title_task="${BASH_REMATCH[1]}"
+	[[ "$issue_body" =~ $body_re ]] && body_task="${BASH_REMATCH[1]}"
+	repository_id=$(resolve_repository_node_id "$repo" 2>/dev/null || true)
+	if [[ -n "$repository_id" && -f "$coordinator" ]]; then
+		owner_json=$(node "$coordinator" resolve-issue-owner --forge github \
+			--repository-id "$repository_id" --issue-id "$issue_id" 2>/dev/null || true)
+		owner_task=$(printf '%s' "$owner_json" | jq -r '.taskId // ""' 2>/dev/null || true)
+	fi
+	local detail="TODO ref:GH#${ref}; coordinator owner of #${ref}: ${owner_task:-none}; issue title task: ${title_task:-none}; issue body Task ID: ${body_task:-none}"
+	print_error "Mapping detail for ${task_id}: ${detail}"
+	if [[ -n "$owner_task" && "$owner_task" != "$task_id" ]]; then
+		print_error "If ${task_id} replaced ${owner_task} in TODO.md, a maintainer can run: issue-sync-helper.sh rebind-task ${task_id} --from ${owner_task} --repo ${repo} --dry-run"
 	fi
 	return 0
 }
@@ -555,7 +602,7 @@ _extract_tier_from_brief() {
 	selected_line=$(grep -m1 -E '^\*\*Selected tier:\*\*' "$brief_path" 2>/dev/null || true)
 	if [[ -n "$selected_line" ]]; then
 		local tier
-		tier=$(printf '%s' "$selected_line" | grep -oE 'tier:(simple|standard|thinking)' | head -1 || true)
+		tier=$(printf '%s' "$selected_line" | grep -oE 'tier:(simple|standard|thinking)' | sed -n '1p' || true)
 		if [[ -n "$tier" ]]; then
 			printf '%s' "$tier"
 			return 0
@@ -565,7 +612,7 @@ _extract_tier_from_brief() {
 	# FALLBACK: grep-anywhere for briefs that don't follow the template.
 	# Logged as a warning to stderr so we can chase non-conforming briefs.
 	local fallback
-	fallback=$(grep -oE 'tier:(simple|standard|thinking)' "$brief_path" 2>/dev/null | head -1 || true)
+	fallback=$(grep -oE 'tier:(simple|standard|thinking)' "$brief_path" 2>/dev/null | sed -n '1p' || true)
 	if [[ -n "$fallback" ]]; then
 		echo "[WARN] _extract_tier_from_brief: brief at $brief_path missing **Selected tier:** line, falling back to first tier mention ($fallback)" >&2
 		printf '%s' "$fallback"

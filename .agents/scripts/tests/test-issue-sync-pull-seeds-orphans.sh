@@ -424,6 +424,14 @@ result=$(_labels_json_to_tags "[]" || true)
 [[ -z "${result// /}" ]] && ok=1 || ok=0
 check "$ok" "labels_json_to_tags: empty array → empty output" "got: '$result'"
 
+# A duplicate title must not change an existing declined task's issue mapping.
+todo_duplicate=$(make_todo)
+printf '%s\n' '- [-] t4321 declined ref:GH#111' >>"$todo_duplicate"
+duplicate_output=$(run_pull_with_issues "$todo_duplicate" '[{"number":222,"title":"t4321: duplicate","assignees":[],"labels":[]}]' 2>&1)
+if grep -q 't4321 declined ref:GH#111' "$todo_duplicate" && [[ "$duplicate_output" == *'DUPLICATE TASK ID'* ]]; then ok=1; else ok=0; fi
+check "$ok" "duplicate task preserves original ref and reports conflict" "$duplicate_output"
+rm -f "$todo_duplicate"
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 
 echo ""

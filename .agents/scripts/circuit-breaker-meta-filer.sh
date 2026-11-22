@@ -134,8 +134,11 @@ _cb_meta_repo_is_private_or_unknown() {
 	local repo_slug="$1"
 	local is_private=""
 
-	is_private=$(gh api "repos/${repo_slug}" --jq '.private // true' 2>/dev/null) || return 0
-	if [[ "$is_private" == "true" ]]; then
+	# GH#39642: `tostring`, not `.private // true`. jq's `//` treats false as
+	# absent, so that form read every public repository as private.
+	is_private=$(gh api "repos/${repo_slug}" --jq '.private | tostring' 2>/dev/null) || return 0
+	# Only an explicit false is public; null, empty or anything else fails closed.
+	if [[ "$is_private" != "false" ]]; then
 		return 0
 	fi
 	return 1
@@ -337,7 +340,7 @@ _cb_meta_body_hypothesis() {
 
 	if [[ "$breaker_type" == "$_CB_BREAKER_NO_WORK" ]]; then
 		cat <<'EOF'
-- **Worker exit classifier defect** — workers killed by SIGTERM/SIGKILL before producing a session may be misclassified as `reason=clean` (see #21818 / #21754). Check `headless-runtime-failure.sh::classify_worker_exit` and the wait_status sentinel propagation.
+- **Worker exit classifier defect** — workers killed by SIGTERM/SIGKILL before producing a session may be misclassified as `reason=clean` (see #21818 / #21754). Check `headless-runtime-failure-classify.sh::classify_worker_exit` and the wait_status sentinel propagation (still in `headless-runtime-failure.sh`).
 - **Stale-recovery false positive** — assignment recovery may mark active work as stale and record `stale_timeout` / `no_work` fast-fails. Check `dispatch-dedup-stale.sh::_is_stale_assignment`, especially comment pagination/slurping and last-activity aggregation on long issue threads.
 - **Plugin init crash** — opencode plugin (`opencode-aidevops`) failing during boot due to FD exhaustion, env pollution, or a stale cache. Check the worker's stderr in `~/.aidevops/logs/worker-*-stderr.log`.
 - **Branch naming race** — worker tries to checkout a branch that another concurrent worker just consumed.
@@ -376,7 +379,7 @@ Treat the original (${original_display}) as evidence, not as the work to do. The
 - \`EDIT: .agents/scripts/dispatch-dedup-cost.sh\` — t2007 cost breaker definition and trip site.
 - \`EDIT: .agents/scripts/worker-lifecycle-common.sh\` — t2769 no_work breaker definition and trip site (around the \`no_work_loop\` marker).
 - \`EDIT: .agents/scripts/dispatch-dedup-stale.sh::_is_stale_assignment\` — stale assignment recovery path; for \`no_work\` trips, verify comment pagination/slurping and last-activity aggregation before changing exit classification.
-- \`EDIT: .agents/scripts/headless-runtime-failure.sh\` — worker exit classifier (the prime suspect for misclassification).
+- \`EDIT: .agents/scripts/headless-runtime-failure-classify.sh::classify_worker_exit\` — worker exit classifier (the prime suspect for misclassification); wait_status sentinel propagation stays in \`headless-runtime-failure.sh\`.
 - \`EDIT: .agents/scripts/circuit-breaker-meta-filer.sh\` — this filer; if it filed too eagerly, fix the trip-detection upstream rather than the filer.
 - \`EDIT: .agents/scripts/pulse-merge.sh::_handle_post_merge_actions\` — meta-PR merge cleanup that unblocks the original.
 
@@ -433,6 +436,7 @@ _cb_meta_body_tail() {
 - `.agents/scripts/dispatch-dedup-stale.sh`
 - `.agents/scripts/worker-lifecycle-common.sh`
 - `.agents/scripts/headless-runtime-failure.sh`
+- `.agents/scripts/headless-runtime-failure-classify.sh`
 - `.agents/scripts/headless-runtime-helper.sh`
 - `.agents/scripts/circuit-breaker-meta-filer.sh`
 - `.agents/scripts/pulse-merge.sh`
@@ -536,8 +540,10 @@ _cb_meta_link_original() {
 	# unblock independently (matches t2442 parent-task linkage style).
 	local blocked_label
 	blocked_label=$(_cb_meta_blocked_label "$repo_slug" "$meta_repo" "$meta_number")
+	# GH#38360: the per-meta blocked-by label is a dependency; name it so the
+	# hold explains itself and leaves with status:blocked.
 	if ! set_issue_status "$original_issue" "$repo_slug" "blocked" \
-		--add-label "$blocked_label" >/dev/null 2>&1; then
+		--add-label "$blocked_label" --add-label "needs-dependency" >/dev/null 2>&1; then
 		gh issue edit "$original_issue" --repo "$repo_slug" \
 			--remove-label "status:available" \
 			--remove-label "status:queued" \
@@ -723,13 +729,19 @@ cmd_file() {
 # Stdout: original issue ref (owner/repo#number), or empty
 # Returns: 0 always (best-effort)
 #######################################
+# Shared issue read for body and lineage metadata checks.
+_cb_meta_read_issue() {
+	local meta_number="$1" repo_slug="$2" query="${3:-.body // \"\"}"
+	gh api "repos/${repo_slug}/issues/${meta_number}" --jq "$query" 2>/dev/null || return 1
+	return 0
+}
+
 _cb_meta_extract_original() {
 	local meta_number="$1"
 	local repo_slug="$2"
 
 	local body
-	body=$(gh api "repos/${repo_slug}/issues/${meta_number}" \
-		--jq '.body // ""' 2>/dev/null) || body=""
+	body=$(_cb_meta_read_issue "$meta_number" "$repo_slug") || body=""
 	[[ -z "$body" || "$body" == "null" ]] && return 0
 
 	# Match "- Original: owner/repo#NNN" — slug-aware so cross-repo metas
@@ -796,6 +808,64 @@ cmd_unblock_on_merge() {
 		return 1
 	fi
 
+	local meta_numbers="" number=""
+	meta_numbers=$(_cb_meta_unblock_lineage "$meta_number" "$repo_slug") || return 2
+	while IFS= read -r number; do
+		_cb_meta_unblock_one "$number" "$repo_slug" || return 2
+	done <<<"$meta_numbers"
+	return 0
+}
+
+# Resolve the consolidated meta's exact same-repo predecessor chain before any
+# mutations. Bound traversal and reject cycles; arbitrary prose references are
+# not authority to release blockers. Legacy metas without a header are unchanged.
+# Args: $1=meta number, $2=repo; output: validated meta numbers, newest first
+_cb_meta_unblock_lineage() {
+	local meta_number="$1" repo_slug="$2"
+	local current="$meta_number" body="" predecessor="" trusted=""
+	local numbers="$meta_number" seen=" $meta_number " depth=0
+	while [[ "$depth" -lt 20 ]]; do
+		body=$(_cb_meta_read_issue "$current" "$repo_slug") || return 1
+		predecessor=$(printf '%s' "$body" | jq -Rrs '
+			[split("\n")[] | capture("^_Supersedes #(?<n>[1-9][0-9]*)[ —].*_$")? | .n]
+			| if length == 0 then "" elif length == 1 then .[0] else error("ambiguous lineage") end
+		' 2>/dev/null) || return 1
+		if [[ -z "$predecessor" ]]; then
+			printf '%s\n' "$numbers"
+			return 0
+		fi
+		[[ "$seen" != *" $predecessor "* ]] || return 1
+		#aidevops:trust-boundary — only collaborator-authored breaker metas may
+		# authorize predecessor cleanup, and predecessors must already be closed.
+		# Validate the actual issue metadata, never body-supplied association text.
+		trusted=$(_cb_meta_trusted_state "$current" "$repo_slug") || return 1
+		[[ "$trusted" == "open" || "$trusted" == "closed" ]] || return 1
+		trusted=$(_cb_meta_trusted_state "$predecessor" "$repo_slug") || return 1
+		[[ "$trusted" == "closed" ]] || return 1
+		numbers+=$'\n'"$predecessor"
+		seen+="$predecessor "
+		current="$predecessor"
+		depth=$((depth + 1))
+	done
+	return 1
+}
+
+# Output the state only for a trusted breaker meta; missing/invalid metadata is
+# never authorization to release another issue's blocker.
+_cb_meta_trusted_state() {
+	local meta_number="$1" repo_slug="$2" state=""
+	state=$(_cb_meta_read_issue "$meta_number" "$repo_slug" '
+		select((.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
+			and any(.labels[]?; .name == "circuit-breaker-meta")) | .state
+	') || return 1
+	printf '%s' "$state"
+	return 0
+}
+
+# Apply the existing unblock path separately to each validated meta number so
+# withheld originals are discovered by their actual (possibly predecessor) label.
+_cb_meta_unblock_one() {
+	local meta_number="$1" repo_slug="$2"
 	local original_ref
 	original_ref=$(_cb_meta_extract_original "$meta_number" "$repo_slug")
 	if [[ -z "$original_ref" ]]; then
@@ -828,8 +898,7 @@ _cb_meta_body_is_withheld() {
 	local repo_slug="$2"
 	local body=""
 
-	body=$(gh api "repos/${repo_slug}/issues/${meta_number}" \
-		--jq '.body // ""' 2>/dev/null) || return 1
+	body=$(_cb_meta_read_issue "$meta_number" "$repo_slug") || return 1
 	[[ "$body" == *"<!-- ${_CB_META_WITHHELD_MARKER} -->"* ]] && return 0
 	return 1
 }

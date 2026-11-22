@@ -22,7 +22,7 @@ SRO (Selection Rate Optimization): whether a source gets selected into grounded 
 
 ## SRO Workflow
 
-1. **Baseline** — collect snippets for representative intents; tag type; identify what wins vs never survives
+1. **Baseline** — collect snippets for representative intents; tag type; identify what wins vs never survives. Prefer observed retrieved snippets when available (`query-fanout-research.md` "Observed Fan-Out Capture") — they are the literal text the model read
 2. **Improve snippet fitness** — rewrite critical statements as standalone factual sentences; move essential facts to top-of-page
 3. **Reduce structural noise** — minimize boilerplate near top content; keep heading hierarchy clean
 4. **Cover fan-out angles** — map sub-questions retrieval systems dispatch per intent; ensure concise answers per angle; add internal links to deeper evidence

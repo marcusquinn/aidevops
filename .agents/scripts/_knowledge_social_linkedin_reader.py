@@ -5,11 +5,9 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Protocol
 
-from _knowledge_social_fixture import FixtureSequence
 from _knowledge_social_linkedin import (
     LinkedInAdapterError,
     LinkedInProviderUnavailableError,
@@ -20,6 +18,7 @@ from _knowledge_social_oauth_reader import (
     GuardedOAuthPolicy,
     GuardedOAuthReader,
 )
+from _knowledge_social_reader_contract import FixtureReader, ReaderContract
 from knowledge_social_import import reject_credentials
 
 READ_TIMEOUT_SECONDS = 120
@@ -40,25 +39,19 @@ class LinkedInReader(Protocol):
     def page(self, request: PageRequest) -> dict[str, Any]: ...
 
 
-def _decode_output(output: str) -> dict[str, Any]:
-    if len(output.encode("utf-8")) > MAX_RESPONSE_BYTES:
-        raise LinkedInAdapterError("LinkedIn read response exceeds the safety limit")
-    try:
-        payload = json.loads(output)
-    except json.JSONDecodeError as error:
-        raise LinkedInAdapterError(
-            "LinkedIn read provider returned no valid JSON"
-        ) from error
-    if not isinstance(payload, dict):
-        raise LinkedInAdapterError("LinkedIn read response root must be an object")
-    return payload
-
-
-def _provider_failure(stderr: str) -> LinkedInProviderUnavailableError:
-    for message in SAFE_PROVIDER_FAILURES:
-        if f"ERROR: {message}" in stderr:
-            return LinkedInProviderUnavailableError(message)
-    return LinkedInProviderUnavailableError("LinkedIn read provider is unavailable")
+CONTRACT = ReaderContract(
+    adapter_error=LinkedInAdapterError,
+    unavailable_error=LinkedInProviderUnavailableError,
+    max_response_bytes=MAX_RESPONSE_BYTES,
+    safe_failures=SAFE_PROVIDER_FAILURES,
+    unavailable_message="LinkedIn read provider is unavailable",
+    oversize_message="LinkedIn read response exceeds the safety limit",
+    invalid_json_message="LinkedIn read provider returned no valid JSON",
+    root_message="LinkedIn read response root must be an object",
+    expectation_message="LinkedIn fixture request expectation must be an object",
+    checkpoint_message="LinkedIn request did not resume at the expected checkpoint",
+    response_message="LinkedIn fixture page response must be an object",
+)
 
 
 LINKEDIN_OAUTH_POLICY = GuardedOAuthPolicy(
@@ -66,8 +59,8 @@ LINKEDIN_OAUTH_POLICY = GuardedOAuthPolicy(
     "LINKEDIN",
     "LINKEDIN_READ_LOG",
     READ_TIMEOUT_SECONDS,
-    _decode_output,
-    _provider_failure,
+    CONTRACT.decode_output,
+    CONTRACT.provider_failure,
     LinkedInProviderUnavailableError,
 )
 
@@ -79,35 +72,11 @@ class GuardedLinkedInOAuth(GuardedOAuthReader):
         super().__init__(helper, profile, LINKEDIN_OAUTH_POLICY)
 
 
-def _fixture_page(entry: dict[str, Any], request: PageRequest) -> dict[str, Any]:
-    expectation = entry.get("expect_request", {})
-    if not isinstance(expectation, dict):
-        raise LinkedInAdapterError(
-            "LinkedIn fixture request expectation must be an object"
-        )
-    actual = request.payload()
-    if any(actual.get(key) != value for key, value in expectation.items()):
-        raise LinkedInAdapterError(
-            "LinkedIn request did not resume at the expected checkpoint"
-        )
-    response = entry.get("response", entry)
-    if not isinstance(response, dict):
-        raise LinkedInAdapterError("LinkedIn fixture page response must be an object")
-    return response
-
-
-class FixtureLinkedIn:
+class FixtureLinkedIn(FixtureReader):
     """Deterministic OAuth substitute for pagination and failure fixtures."""
 
     def __init__(self, path: Path) -> None:
-        self.fixture = FixtureSequence(path, "LinkedIn", LinkedInAdapterError)
-
-    def identity(self, expected_id: str) -> dict[str, Any]:
-        del expected_id
-        return self.fixture.identity()
-
-    def page(self, request: PageRequest) -> dict[str, Any]:
-        return _fixture_page(self.fixture.next_page(), request)
+        super().__init__(path, "LinkedIn", CONTRACT)
 
 
 def verified_identity(payload: dict[str, Any], expected_id: str) -> dict[str, str]:

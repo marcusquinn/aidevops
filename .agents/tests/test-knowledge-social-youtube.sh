@@ -244,9 +244,13 @@ for quota_reason in (
     assert quota_result.retry_after is not None
 assert error_result("insufficientPermissions").status == 403
 
+# The GET-only guard covers the read collector. The outbound upload provider
+# (_knowledge_social_youtube_outbound_*.py) is a separate, intentionally
+# write-capable path with its own suite (test-social-linkedin-youtube-outbound.py).
 sources = [
     path.read_text(encoding="utf-8")
     for path in sorted(scripts.glob("_knowledge_social_youtube*.py"))
+    if not path.name.startswith("_knowledge_social_youtube_outbound")
 ]
 calls = [
     node

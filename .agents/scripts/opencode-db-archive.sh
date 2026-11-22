@@ -12,6 +12,7 @@
 # Usage:
 #   opencode-db-archive.sh archive [--worker-retention-days N] [--interactive-retention-days N]
 #                                  [--retention-days N] [--keep-sessions N] [--dry-run] [--max-duration-seconds N]
+#                                  [--worker-event-expiry-minutes N] [--worker-events-only]
 #   opencode-db-archive.sh restore --session ID [--dry-run]
 #   opencode-db-archive.sh prune --older-than-days N [--dry-run|--apply] [--max-duration-seconds N]
 #   opencode-db-archive.sh prune-all --older-than-days N [--dry-run|--apply]
@@ -44,6 +45,8 @@ fi
 
 # shellcheck source=opencode-db-inventory-lib.sh
 source "${_oda_dir}/opencode-db-inventory-lib.sh"
+# shellcheck source=opencode-db-idle-gate-lib.sh
+source "${_oda_dir}/opencode-db-idle-gate-lib.sh"
 
 readonly SCRIPT_NAME="opencode-db-archive"
 if [[ -n "${XDG_DATA_HOME:-}" ]]; then
@@ -56,11 +59,16 @@ fi
 readonly DEFAULT_DB="${DEFAULT_DATA_DIR}/opencode.db"
 # Split retention (GH#35492): headless worker sessions are bulky and rarely
 # reopened, so they leave the active DB after 7 days; interactive sessions stay
-# visible in the OpenCode session list for 90 days. Archived history remains
-# queryable and is restored automatically when a worker resumes its session.
+# visible in the OpenCode session list for 30 days (GH#38431; was 90). Archived
+# history remains queryable and is restored automatically when a worker resumes
+# its session or an interactive session is resumed through
+# opencode-session-restart-helper.sh (resume / open).
 readonly DEFAULT_WORKER_RETENTION_DAYS=7
-readonly DEFAULT_INTERACTIVE_RETENTION_DAYS=90
+readonly DEFAULT_INTERACTIVE_RETENTION_DAYS=30
 readonly DEFAULT_BATCH_SIZE=500
+# Held mode (GH#35517): small batches keep each write lock brief while idle
+# OpenCode processes hold the DB open.
+readonly DEFAULT_HELD_BATCH_SIZE=10
 readonly DEFAULT_MAX_DURATION=60
 readonly EVENT_TABLE_NAME="event"
 readonly SESSION_TABLE_NAME="session"
@@ -71,6 +79,10 @@ readonly SQL_QUICK_CHECK="PRAGMA quick_check;"
 
 ARCHIVE_BATCH_SIZE="${OPENCODE_DB_ARCHIVE_BATCH_SIZE:-$DEFAULT_BATCH_SIZE}"
 ARCHIVE_BATCH_DELAY_SECONDS="${OPENCODE_DB_ARCHIVE_BATCH_DELAY_SECONDS:-0}"
+ARCHIVE_HELD_BATCH_SIZE="${OPENCODE_DB_ARCHIVE_HELD_BATCH_SIZE:-$DEFAULT_HELD_BATCH_SIZE}"
+# Set by _archive_enter_held_mode when idle OpenCode processes hold the DB.
+_ARCHIVE_HELD_MODE=0
+_ARCHIVE_HELD_SESSIONS=""
 DB_HOLDER_COMMAND="${OPENCODE_DB_HOLDER_COMMAND:-lsof}"
 WAL_STABILITY_DELAY_SECONDS="${OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS:-1}"
 
@@ -245,8 +257,7 @@ _archive_mutation_preflight() {
 		print_warning "Archive deferred — active DB holder state is unavailable."
 		return 2
 	fi
-	if [[ "$holder_count" -gt 0 ]]; then
-		print_warning "Archive deferred — ${holder_count} process(es) hold the active DB open."
+	if [[ "$holder_count" -gt 0 ]] && ! _archive_enter_held_mode "$holder_count"; then
 		return 2
 	fi
 	if ! _wal_is_stable "$ACTIVE_DB"; then
@@ -259,6 +270,79 @@ _archive_mutation_preflight() {
 	return 0
 }
 
+# GH#35517: a DB held only by idle OpenCode processes may be archived in small
+# batches. Any busy, recently active, unknown or heartbeat-less holder defers.
+_archive_enter_held_mode() {
+	local holder_count="$1"
+	local deferred="Archive deferred — ${holder_count} process(es) hold the active DB open"
+
+	if [[ "${OPENCODE_DB_ARCHIVE_IDLE_GATE:-1}" != 1 ]]; then
+		print_warning "${deferred}."
+		return 1
+	fi
+	if [[ ! "$ARCHIVE_HELD_BATCH_SIZE" =~ ^[0-9]+$ ]] || ((ARCHIVE_HELD_BATCH_SIZE == 0)); then
+		print_warning "${deferred} (OPENCODE_DB_ARCHIVE_HELD_BATCH_SIZE must be a positive integer)."
+		return 1
+	fi
+	if ! opencode_db_idle_gate "$ACTIVE_DB" "$DB_HOLDER_COMMAND"; then
+		print_warning "${deferred} (${OPENCODE_DB_IDLE_GATE_REASON})."
+		return 1
+	fi
+	_ARCHIVE_HELD_MODE=1
+	_ARCHIVE_HELD_SESSIONS="$OPENCODE_DB_IDLE_GATE_SESSIONS"
+	if ((ARCHIVE_BATCH_SIZE > ARCHIVE_HELD_BATCH_SIZE)); then
+		ARCHIVE_BATCH_SIZE="$ARCHIVE_HELD_BATCH_SIZE"
+	fi
+	print_info "Idle gate passed — ${holder_count} idle OpenCode holder(s); archiving in batches of ${ARCHIVE_BATCH_SIZE}, no VACUUM while held."
+	return 0
+}
+
+# Re-check between held-mode batches; stop as soon as a holder wakes up.
+_archive_held_gate_recheck() {
+	((_ARCHIVE_HELD_MODE)) || return 0
+	if opencode_db_idle_gate "$ACTIVE_DB" "$DB_HOLDER_COMMAND"; then
+		# A holder may have claimed a session since the exclusions were built;
+		# the candidate filter is stale, so pause rather than risk archiving it.
+		local sid=""
+		while IFS= read -r sid; do
+			[[ -n "$sid" ]] || continue
+			if ! grep -qxF -- "$sid" <<<"$_ARCHIVE_HELD_SESSIONS"; then
+				OPENCODE_DB_IDLE_GATE_REASON="holder claimed new session ${sid}"
+				print_warning "Archive paused — ${OPENCODE_DB_IDLE_GATE_REASON}. Committed batches preserved; the rest resumes next cycle."
+				return 1
+			fi
+		done <<<"$OPENCODE_DB_IDLE_GATE_SESSIONS"
+		return 0
+	fi
+	print_warning "Archive paused — ${OPENCODE_DB_IDLE_GATE_REASON}. Committed batches preserved; the rest resumes next cycle."
+	return 1
+}
+
+# Never archive sessions (or their subagent children) that a holder has open.
+_archive_held_exclude_clause() {
+	local list=""
+	local sid=""
+	((_ARCHIVE_HELD_MODE)) || return 0
+	while IFS= read -r sid; do
+		[[ "$sid" =~ ^[A-Za-z0-9_-]{1,128}$ ]] || continue
+		list="${list}${list:+,}'${sid}'"
+	done <<<"$_ARCHIVE_HELD_SESSIONS"
+	[[ -n "$list" ]] || return 0
+	printf " AND id NOT IN (%s) AND COALESCE(parent_id, '') NOT IN (%s)" "$list" "$list"
+	return 0
+}
+
+# VACUUM needs exclusive access; while idle OpenCode holds the DB, skip it.
+# Freed pages are reused by new writes, so the file stops growing.
+_archive_compact_unless_held() {
+	if ((_ARCHIVE_HELD_MODE)); then
+		print_info "VACUUM skipped — idle OpenCode process(es) hold the active DB; freed pages are reused by new writes."
+		return 0
+	fi
+	_archive_compact_active_db
+	return $?
+}
+
 # Checkpoint the archive WAL — called on normal exit and via trap on early return.
 # Uses a global flag to prevent double-run when the fast-path calls it explicitly.
 _ARCHIVE_CHECKPOINT_DONE=0
@@ -267,7 +351,8 @@ _checkpoint_archive_db() {
 	local archive_db="$1"
 	if ((_ARCHIVE_CHECKPOINT_DONE)); then return 0; fi
 	_ARCHIVE_CHECKPOINT_DONE=1
-	sqlite3 "$archive_db" "$SQL_CHECKPOINT_TRUNCATE" 2>/dev/null || true
+	# Discard the busy|log|checkpointed result row; it is not user output.
+	sqlite3 "$archive_db" "$SQL_CHECKPOINT_TRUNCATE" >/dev/null 2>&1 || true
 	return 0
 }
 
@@ -285,386 +370,199 @@ _archive_interrupt() {
 	return 1
 }
 
-# --- Schema creation in archive DB -------------------------------------------
+# --- Persisted batch adaptation (GH#38590) -------------------------------------
+# A batch killed by the per-DB deadline, SIGTERM or SIGKILL rolls back and the
+# next run used to retry the identical batch forever. State lives beside the
+# deferral counter (not beside the DB), keyed by a hash of the active DB path:
+#   <base>.<kind>.limits    "<row limit> <byte limit>" last committed/halved size
+#   <base>.<kind>.inflight  "<row limit> <byte limit> <csv ids>" written before a
+#                           write; still present on the next start => no commit
+#   <base>.sessions.oversized  one session ID per line, skipped by later runs
+# kind is "sessions" (session move) or "events" (worker-event expiry).
+readonly ARCHIVE_MIN_BATCH_BYTES=1048576
+_ARCHIVE_ADAPT_LIMIT=0
+_ARCHIVE_ADAPT_BYTES=0
+_ARCHIVE_ADAPT_IDS=""
+# Per-phase seconds for the one-line per-DB timing report.
+_ARCHIVE_T_EVENT=0
+_ARCHIVE_T_WORKER=0
+_ARCHIVE_T_PREP=0
+_ARCHIVE_T_SIZING=0
+_ARCHIVE_T_WRITE=0
+_ARCHIVE_OCTET_SUPPORTED=""
 
-_archive_column_list_has() {
-	local column_list="$1"
-	local column_name="$2"
-
-	[[ ",${column_list}," == *",${column_name},"* ]]
-	return $?
+# Print the state file prefix for this DB; return 1 when no state dir exists.
+_archive_state_base() {
+	local kind="$1" dir key
+	dir="${OPENCODE_DB_ARCHIVE_STATE_DIR:-}"
+	if [[ -z "$dir" ]]; then
+		[[ -n "${HOME:-}" ]] || return 1
+		dir="${HOME}/.aidevops/logs"
+	fi
+	key=$(printf '%s' "$ACTIVE_DB" | cksum | awk '{print $1}')
+	printf '%s/opencode-db-archive.%s.%s\n' "$dir" "$key" "$kind"
+	return 0
 }
 
-_archive_migrate_schema_columns() {
-	local archive_db="$1"
-	local project_columns=""
-	local session_columns=""
-	local table_name=""
-	local column_name=""
-	local column_definition=""
-	local table_columns=""
-	local migration_sql=""
-	local migrated_columns=""
+# _archive_adapt_write <kind> <suffix> <content>
+_archive_adapt_write() {
+	local kind="$1" suffix="$2" content="$3" base
+	base=$(_archive_state_base "$kind") || return 0
+	mkdir -p "${base%/*}" 2>/dev/null || return 0
+	printf '%s\n' "$content" >"${base}.${suffix}" 2>/dev/null || true
+	return 0
+}
 
-	project_columns=$(opencode_db_table_columns "$archive_db" project) || return 1
-	session_columns=$(opencode_db_table_columns "$archive_db" "$SESSION_TABLE_NAME") || return 1
-	while IFS='|' read -r table_name column_name column_definition; do
-		[[ -n "$table_name" && -n "$column_name" && -n "$column_definition" ]] || continue
-		case "$table_name" in
-		project) table_columns="$project_columns" ;;
-		"$SESSION_TABLE_NAME") table_columns="$session_columns" ;;
-		*) return 1 ;;
-		esac
-		if ! _archive_column_list_has "$table_columns" "$column_name"; then
-			migration_sql="${migration_sql}ALTER TABLE ${table_name} ADD COLUMN ${column_name} ${column_definition};"
-			migrated_columns="${migrated_columns}${migrated_columns:+,}${table_name}.${column_name}"
+# _archive_adapt_recover <kind> <floor_rows>
+# Sets _ARCHIVE_ADAPT_LIMIT/_BYTES (0 = no persisted limit). A leftover
+# in-flight marker means the previous write never committed: halve and clear it,
+# and print the marker's IDs so callers can detect a still-failing 1-row batch.
+_archive_adapt_recover() {
+	local kind="$1" floor_rows="$2" base limit=0 bytes=0 m_limit m_bytes m_pid="" m_ids="" m_floor=0
+	_ARCHIVE_ADAPT_LIMIT=0
+	_ARCHIVE_ADAPT_BYTES=0
+	_ARCHIVE_ADAPT_IDS=""
+	base=$(_archive_state_base "$kind") || return 0
+	if [[ -f "${base}.limits" ]]; then
+		read -r limit bytes <"${base}.limits" || true
+	fi
+	[[ "$limit" =~ ^[0-9]+$ && "$bytes" =~ ^[0-9]+$ ]] || {
+		limit=0
+		bytes=0
+	}
+	if [[ -f "${base}.inflight" ]]; then
+		m_limit=0
+		m_bytes=0
+		read -r m_limit m_bytes m_pid m_ids <"${base}.inflight" || true
+		# A marker owned by a live run is not an interruption: leave it be.
+		if [[ "$m_pid" =~ ^[0-9]+$ && "$m_pid" != "$$" ]] && kill -0 "$m_pid" 2>/dev/null; then
+			_ARCHIVE_ADAPT_LIMIT="$limit"
+			_ARCHIVE_ADAPT_BYTES="$bytes"
+			return 0
 		fi
-	done <<MIGRATION_COLUMNS
-project|icon_url_override|${ARCHIVE_TEXT_COLUMN_DEFINITION}
-${SESSION_TABLE_NAME}|path|${ARCHIVE_TEXT_COLUMN_DEFINITION}
-${SESSION_TABLE_NAME}|agent|${ARCHIVE_TEXT_COLUMN_DEFINITION}
-${SESSION_TABLE_NAME}|model|${ARCHIVE_TEXT_COLUMN_DEFINITION}
-${SESSION_TABLE_NAME}|cost|real DEFAULT 0 NOT NULL
-${SESSION_TABLE_NAME}|tokens_input|${ARCHIVE_INTEGER_COLUMN_DEFINITION}
-${SESSION_TABLE_NAME}|tokens_output|${ARCHIVE_INTEGER_COLUMN_DEFINITION}
-${SESSION_TABLE_NAME}|tokens_reasoning|${ARCHIVE_INTEGER_COLUMN_DEFINITION}
-${SESSION_TABLE_NAME}|tokens_cache_read|${ARCHIVE_INTEGER_COLUMN_DEFINITION}
-${SESSION_TABLE_NAME}|tokens_cache_write|${ARCHIVE_INTEGER_COLUMN_DEFINITION}
-${SESSION_TABLE_NAME}|metadata|${ARCHIVE_TEXT_COLUMN_DEFINITION}
-MIGRATION_COLUMNS
-
-	[[ -n "$migration_sql" ]] || return 0
-	sqlite3 "$archive_db" <<MIGRATION_SQL
-.bail on
-BEGIN IMMEDIATE;
-${migration_sql}
-COMMIT;
-MIGRATION_SQL
-	print_info "Migrated archive schema columns: ${migrated_columns}"
+		if [[ "$m_limit" =~ ^[0-9]+$ && "$m_bytes" =~ ^[0-9]+$ ]] && ((m_limit > 0 && m_bytes > 0)); then
+			# Only a batch that was already at the 1-row floor is "still interrupted".
+			((m_limit > 1)) || [[ "$kind" != sessions ]] || m_floor=1
+			limit=$((m_limit / 2))
+			bytes=$((m_bytes / 2))
+			((limit >= floor_rows)) || limit="$floor_rows"
+			((bytes >= ARCHIVE_MIN_BATCH_BYTES)) || bytes="$ARCHIVE_MIN_BATCH_BYTES"
+			_archive_adapt_write "$kind" limits "$limit $bytes"
+			print_warning "Previous ${kind} batch never committed; halving limits to ${limit} row(s) / $(format_bytes "$bytes")."
+		fi
+		rm -f "${base}.inflight" 2>/dev/null || true
+	fi
+	_ARCHIVE_ADAPT_LIMIT="$limit"
+	_ARCHIVE_ADAPT_BYTES="$bytes"
+	((m_floor)) && _ARCHIVE_ADAPT_IDS="$m_ids"
 	return 0
 }
 
-create_archive_schema() {
-	local archive_db="$1"
-
-	sqlite3 "$archive_db" <<'SCHEMA_SQL'
-.bail on
-PRAGMA journal_mode=WAL;
-BEGIN IMMEDIATE;
-
--- Mirror the active DB schema for archived data
-CREATE TABLE IF NOT EXISTS `project` (
-	`id` text PRIMARY KEY,
-	`worktree` text NOT NULL,
-	`vcs` text,
-	`name` text,
-	`icon_url` text,
-	`icon_color` text,
-	`time_created` integer NOT NULL,
-	`time_updated` integer NOT NULL,
-	`time_initialized` integer,
-	`sandboxes` text NOT NULL,
-	`commands` text,
-	`icon_url_override` text
-);
-
-CREATE TABLE IF NOT EXISTS `session` (
-	`id` text PRIMARY KEY,
-	`project_id` text NOT NULL,
-	`parent_id` text,
-	`slug` text NOT NULL,
-	`directory` text NOT NULL,
-	`title` text NOT NULL,
-	`version` text NOT NULL,
-	`share_url` text,
-	`summary_additions` integer,
-	`summary_deletions` integer,
-	`summary_files` integer,
-	`summary_diffs` text,
-	`revert` text,
-	`permission` text,
-	`time_created` integer NOT NULL,
-	`time_updated` integer NOT NULL,
-	`time_compacting` integer,
-	`time_archived` integer,
-	`workspace_id` text,
-	`path` text,
-	`agent` text,
-	`model` text,
-	`cost` real DEFAULT 0 NOT NULL,
-	`tokens_input` integer DEFAULT 0 NOT NULL,
-	`tokens_output` integer DEFAULT 0 NOT NULL,
-	`tokens_reasoning` integer DEFAULT 0 NOT NULL,
-	`tokens_cache_read` integer DEFAULT 0 NOT NULL,
-	`tokens_cache_write` integer DEFAULT 0 NOT NULL,
-	`metadata` text,
-	CONSTRAINT `fk_session_project_id_project_id_fk` FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS `session_project_idx` ON `session` (`project_id`);
-CREATE INDEX IF NOT EXISTS `session_parent_idx` ON `session` (`parent_id`);
-CREATE INDEX IF NOT EXISTS `session_workspace_idx` ON `session` (`workspace_id`);
-
-CREATE TABLE IF NOT EXISTS `message` (
-	`id` text PRIMARY KEY,
-	`session_id` text NOT NULL,
-	`time_created` integer NOT NULL,
-	`time_updated` integer NOT NULL,
-	`data` text NOT NULL,
-	CONSTRAINT `fk_message_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS `message_session_time_created_id_idx` ON `message` (`session_id`,`time_created`,`id`);
-
-CREATE TABLE IF NOT EXISTS `part` (
-	`id` text PRIMARY KEY,
-	`message_id` text NOT NULL,
-	`session_id` text NOT NULL,
-	`time_created` integer NOT NULL,
-	`time_updated` integer NOT NULL,
-	`data` text NOT NULL,
-	CONSTRAINT `fk_part_message_id_message_id_fk` FOREIGN KEY (`message_id`) REFERENCES `message`(`id`) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS `part_session_idx` ON `part` (`session_id`);
-CREATE INDEX IF NOT EXISTS `part_message_id_id_idx` ON `part` (`message_id`,`id`);
-
-CREATE TABLE IF NOT EXISTS `todo` (
-	`session_id` text NOT NULL,
-	`content` text NOT NULL,
-	`status` text NOT NULL,
-	`priority` text NOT NULL,
-	`position` integer NOT NULL,
-	`time_created` integer NOT NULL,
-	`time_updated` integer NOT NULL,
-	CONSTRAINT `todo_pk` PRIMARY KEY(`session_id`, `position`),
-	CONSTRAINT `fk_todo_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS `todo_session_idx` ON `todo` (`session_id`);
-
-CREATE TABLE IF NOT EXISTS `session_share` (
-	`session_id` text PRIMARY KEY,
-	`id` text NOT NULL,
-	`secret` text NOT NULL,
-	`url` text NOT NULL,
-	`time_created` integer NOT NULL,
-	`time_updated` integer NOT NULL,
-	CONSTRAINT `fk_session_share_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS `session_message` (
-	`id` text PRIMARY KEY,
-	`session_id` text NOT NULL,
-	`type` text NOT NULL,
-	`time_created` integer NOT NULL,
-	`time_updated` integer NOT NULL,
-	`data` text NOT NULL,
-	`seq` integer NOT NULL,
-	CONSTRAINT `fk_session_message_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE
-);
-CREATE UNIQUE INDEX IF NOT EXISTS `session_message_session_seq_idx` ON `session_message` (`session_id`,`seq`);
-CREATE INDEX IF NOT EXISTS `session_message_session_time_created_id_idx` ON `session_message` (`session_id`,`time_created`,`id`);
-CREATE INDEX IF NOT EXISTS `session_message_session_type_seq_idx` ON `session_message` (`session_id`,`type`,`seq`);
-CREATE INDEX IF NOT EXISTS `session_message_time_created_idx` ON `session_message` (`time_created`);
-
-CREATE TABLE IF NOT EXISTS `session_input` (
-	`id` text PRIMARY KEY,
-	`session_id` text NOT NULL,
-	`prompt` text NOT NULL,
-	`delivery` text NOT NULL,
-	`admitted_seq` integer NOT NULL,
-	`promoted_seq` integer,
-	`time_created` integer NOT NULL,
-	CONSTRAINT `fk_session_input_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE
-);
-CREATE UNIQUE INDEX IF NOT EXISTS `session_input_session_admitted_seq_idx` ON `session_input` (`session_id`,`admitted_seq`);
-CREATE INDEX IF NOT EXISTS `session_input_session_pending_delivery_seq_idx` ON `session_input` (`session_id`,`promoted_seq`,`delivery`,`admitted_seq`);
-CREATE UNIQUE INDEX IF NOT EXISTS `session_input_session_promoted_seq_idx` ON `session_input` (`session_id`,`promoted_seq`);
-
-CREATE TABLE IF NOT EXISTS `session_context_epoch` (
-	`session_id` text PRIMARY KEY,
-	`baseline` text NOT NULL,
-	`snapshot` text NOT NULL,
-	`baseline_seq` integer NOT NULL,
-	CONSTRAINT `fk_session_context_epoch_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS `event_sequence` (
-	`aggregate_id` text PRIMARY KEY,
-	`seq` integer NOT NULL,
-	`owner_id` text
-);
-
-CREATE TABLE IF NOT EXISTS `event` (
-	`id` text PRIMARY KEY,
-	`aggregate_id` text NOT NULL,
-	`seq` integer NOT NULL,
-	`type` text NOT NULL,
-	`data` text NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS `event_aggregate_seq_idx` ON `event` (`aggregate_id`,`seq`);
-CREATE INDEX IF NOT EXISTS `event_aggregate_type_seq_idx` ON `event` (`aggregate_id`,`type`,`seq`);
-
-COMMIT;
-SCHEMA_SQL
-
-	# CREATE TABLE IF NOT EXISTS does not evolve persisted archives. Add columns
-	# in canonical order so legacy archives converge on the OpenCode 1.18.3
-	# contract without rebuilding or discarding archived rows.
-	_archive_migrate_schema_columns "$archive_db" || return 1
-
+# _archive_adapt_mark <kind> <rows> <bytes> [csv_ids]
+# The marker records this run's PID so a concurrent run never treats a live
+# run's marker as an interruption.
+_archive_adapt_mark() {
+	local kind="$1" rows="$2" bytes="$3" ids="${4:-}"
+	_archive_adapt_write "$kind" inflight "$rows $bytes $$ $ids"
 	return 0
 }
 
-_sqlite_has_column() {
-	local db="$1"
-	local table_name="$2"
-	local column_name="$3"
-	local count
-
-	count=$(sqlite3 "$db" \
-		"SELECT COUNT(*) FROM pragma_table_info('${table_name}') WHERE name='${column_name}';" 2>/dev/null || true)
-	[[ "$count" == "1" ]]
-	return $?
+_archive_adapt_clear() {
+	local kind="$1" base
+	base=$(_archive_state_base "$kind") || return 0
+	rm -f "${base}.inflight" 2>/dev/null || true
+	return 0
 }
 
-_sqlite_has_table() {
-	local db="$1"
-	local table_name="$2"
-	local count
-
-	count=$(sqlite3 "$db" \
-		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='${table_name}';" 2>/dev/null || true)
-	[[ "$count" == "1" ]]
-	return $?
+# _archive_adapt_commit <kind> <rows> <bytes> <default_rows> <default_bytes>
+# Clear the marker and double the limits back toward the defaults.
+_archive_adapt_commit() {
+	local kind="$1" rows="$2" bytes="$3" max_rows="$4" max_bytes="$5"
+	_archive_adapt_clear "$kind"
+	rows=$((rows * 2))
+	bytes=$((bytes * 2))
+	((rows <= max_rows)) || rows="$max_rows"
+	((bytes <= max_bytes)) || bytes="$max_bytes"
+	_archive_adapt_write "$kind" limits "$rows $bytes"
+	return 0
 }
 
-_archive_event_count_sql() {
-	local candidate_filter="$1"
-	local has_event_table="${2:-}"
-	if (($# < 2)); then
-		if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
-			has_event_table=1
+# Persist halved limits after an observed timeout (no marker involved).
+_archive_adapt_halve() {
+	local kind="$1" rows="$2" bytes="$3" floor_rows="$4"
+	rows=$((rows / 2))
+	bytes=$((bytes / 2))
+	((rows >= floor_rows)) || rows="$floor_rows"
+	((bytes >= ARCHIVE_MIN_BATCH_BYTES)) || bytes="$ARCHIVE_MIN_BATCH_BYTES"
+	_archive_adapt_clear "$kind"
+	_archive_adapt_write "$kind" limits "$rows $bytes"
+	_ARCHIVE_ADAPT_LIMIT="$rows"
+	_ARCHIVE_ADAPT_BYTES="$bytes"
+	return 0
+}
+
+# Print SQL "AND id NOT IN (...)" for sessions whose 1-session batch was
+# interrupted; empty when none (or when the run has a larger budget).
+_archive_oversized_exclude_clause() {
+	local base sid list=""
+	base=$(_archive_state_base sessions) || return 0
+	[[ -f "${base}.oversized" ]] || return 0
+	if ((max_duration > DEFAULT_MAX_DURATION)); then
+		# Manual long run: retry deferred sessions; failures are re-recorded.
+		# A dry run only previews, so it must not drop the persisted list.
+		((dry_run)) || rm -f "${base}.oversized" 2>/dev/null || true
+		return 0
+	fi
+	while IFS= read -r sid; do
+		[[ "$sid" =~ ^[A-Za-z0-9_-]{1,128}$ ]] || continue
+		list="${list}${list:+,}'${sid}'"
+	done <"${base}.oversized"
+	[[ -z "$list" ]] || printf ' AND id NOT IN (%s)\n' "$list"
+	return 0
+}
+
+# _archive_oversized_record <session_id>
+_archive_oversized_record() {
+	local sid="$1" base
+	[[ "$sid" =~ ^[A-Za-z0-9_-]{1,128}$ ]] || return 0
+	base=$(_archive_state_base sessions) || return 0
+	mkdir -p "${base%/*}" 2>/dev/null || return 0
+	if ! grep -qxF -- "$sid" "${base}.oversized" 2>/dev/null; then
+		printf '%s\n' "$sid" >>"${base}.oversized" 2>/dev/null || true
+	fi
+	print_warning "Session ${sid} still interrupted a 1-session batch; deferring it as oversized. Remedy: run the archive manually with a larger --max-duration-seconds while the host is idle."
+	return 0
+}
+
+# Cached probe: octet_length() (SQLite 3.43+) reads only the record header.
+_archive_octet_supported() {
+	if [[ -z "$_ARCHIVE_OCTET_SUPPORTED" ]]; then
+		if [[ "$(sqlite3 :memory: "SELECT octet_length('ab');" 2>/dev/null)" == "2" ]]; then
+			_ARCHIVE_OCTET_SUPPORTED=1
 		else
-			has_event_table=0
+			_ARCHIVE_OCTET_SUPPORTED=0
 		fi
 	fi
+	((_ARCHIVE_OCTET_SUPPORTED))
+	return $?
+}
 
-	if ((has_event_table)); then
-		printf 'SELECT COUNT(*) FROM event WHERE aggregate_id IN (SELECT id FROM session WHERE %s);\n' "$candidate_filter"
+# _archive_len_expr <column> — byte length expression for a payload column.
+_archive_len_expr() {
+	local column="$1"
+	if _archive_octet_supported; then
+		printf 'octet_length(%s)\n' "$column"
 	else
-		printf 'SELECT 0;\n'
+		printf 'LENGTH(CAST(%s AS BLOB))\n' "$column"
 	fi
 	return 0
 }
 
-_archive_event_bytes_sql() {
-	local candidate_filter="$1"
-	local has_event_table="${2:-}"
-	if (($# < 2)); then
-		if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
-			has_event_table=1
-		else
-			has_event_table=0
-		fi
-	fi
+# --- Schema creation in archive DB (extracted module) -------------------------
+# shellcheck source=./opencode-db-archive-schema.sh
+# shellcheck disable=SC1091 # sibling module resolved via the entry point directory
+source "${_oda_dir}/opencode-db-archive-schema.sh"
 
-	if ((has_event_table)); then
-		printf 'SELECT COALESCE(SUM(LENGTH(data)), 0) FROM event WHERE aggregate_id IN (SELECT id FROM session WHERE %s);\n' "$candidate_filter"
-	else
-		printf 'SELECT 0;\n'
-	fi
-	return 0
-}
-
-# Both databases have passed schema validation before this is called. Use the
-# archive's column names for both sides, never either database's physical order.
-_archive_copy_sql() {
-	local table_name="$1"
-	local row_filter="$2"
-	local columns=""
-	columns=$(opencode_db_table_columns "$ARCHIVE_DB" "$table_name") || return 1
-	[[ -n "$columns" ]] || return 1
-	printf 'INSERT OR IGNORE INTO archive.%s (%s) SELECT %s FROM %s WHERE %s;\n' \
-		"$table_name" "$columns" "$columns" "$table_name" "$row_filter"
-	return 0
-}
-
-_archive_project_insert_columns() {
-	printf '%s\n' "id, worktree, vcs, name, icon_url, icon_color, time_created, time_updated, time_initialized, sandboxes, commands, icon_url_override"
-	return 0
-}
-
-_archive_project_select_columns() {
-	if _sqlite_has_column "$ACTIVE_DB" "project" "icon_url_override"; then
-		printf '%s\n' "p.id, p.worktree, p.vcs, p.name, p.icon_url, p.icon_color, p.time_created, p.time_updated, p.time_initialized, p.sandboxes, p.commands, p.icon_url_override"
-	else
-		printf '%s\n' "p.id, p.worktree, p.vcs, p.name, p.icon_url, p.icon_color, p.time_created, p.time_updated, p.time_initialized, p.sandboxes, p.commands, NULL AS icon_url_override"
-	fi
-	return 0
-}
-
-_archive_session_insert_columns() {
-	printf '%s\n' "id, project_id, parent_id, slug, directory, title, version, share_url, summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission, time_created, time_updated, time_compacting, time_archived, workspace_id, path, agent, model, cost, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, metadata"
-	return 0
-}
-
-_archive_session_select_columns() {
-	local base_columns="id, project_id, parent_id, slug, directory, title, version, share_url, summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission, time_created, time_updated, time_compacting, time_archived, workspace_id"
-	local select_columns="$base_columns"
-	local session_columns=""
-
-	session_columns=$(opencode_db_table_columns "$ACTIVE_DB" "$SESSION_TABLE_NAME") || return 1
-	if _archive_column_list_has "$session_columns" path; then
-		select_columns="${select_columns}, path"
-	else
-		select_columns="${select_columns}, NULL AS path"
-	fi
-	if _archive_column_list_has "$session_columns" agent; then
-		select_columns="${select_columns}, agent"
-	else
-		select_columns="${select_columns}, NULL AS agent"
-	fi
-	if _archive_column_list_has "$session_columns" model; then
-		select_columns="${select_columns}, model"
-	else
-		select_columns="${select_columns}, NULL AS model"
-	fi
-	if _archive_column_list_has "$session_columns" cost; then
-		select_columns="${select_columns}, cost"
-	else
-		select_columns="${select_columns}, 0 AS cost"
-	fi
-	if _archive_column_list_has "$session_columns" tokens_input; then
-		select_columns="${select_columns}, tokens_input"
-	else
-		select_columns="${select_columns}, 0 AS tokens_input"
-	fi
-	if _archive_column_list_has "$session_columns" tokens_output; then
-		select_columns="${select_columns}, tokens_output"
-	else
-		select_columns="${select_columns}, 0 AS tokens_output"
-	fi
-	if _archive_column_list_has "$session_columns" tokens_reasoning; then
-		select_columns="${select_columns}, tokens_reasoning"
-	else
-		select_columns="${select_columns}, 0 AS tokens_reasoning"
-	fi
-	if _archive_column_list_has "$session_columns" tokens_cache_read; then
-		select_columns="${select_columns}, tokens_cache_read"
-	else
-		select_columns="${select_columns}, 0 AS tokens_cache_read"
-	fi
-	if _archive_column_list_has "$session_columns" tokens_cache_write; then
-		select_columns="${select_columns}, tokens_cache_write"
-	else
-		select_columns="${select_columns}, 0 AS tokens_cache_write"
-	fi
-	if _archive_column_list_has "$session_columns" metadata; then
-		select_columns="${select_columns}, metadata"
-	else
-		select_columns="${select_columns}, NULL AS metadata"
-	fi
-	printf '%s\n' "$select_columns"
-	return 0
-}
 
 _validate_nonnegative_integer() {
 	local value="$1"
@@ -902,16 +800,81 @@ _archive_candidate_filter() {
 # --- Archive command ----------------------------------------------------------
 
 cmd_archive_all() {
-	local db rc=0 result=0
+	local db rc=0 result=0 archive_pid=""
+	# Wait asynchronously so Bash handles signals immediately, and forward them
+	# to the per-DB supervisor before releasing the async runner's lock.
+	trap 'kill -TERM "$archive_pid" 2>/dev/null || true; wait "$archive_pid" 2>/dev/null || true; exit 143' TERM
+	trap 'kill -INT "$archive_pid" 2>/dev/null || true; wait "$archive_pid" 2>/dev/null || true; exit 130' INT
 	while IFS= read -r -d '' db; do
 		print_info "Archive inventory: $db"
 		rc=0
 		OPENCODE_DB_PATH="$db" OPENCODE_ARCHIVE_DB="${db%/*}/opencode-archive.db" \
-			bash "${BASH_SOURCE[0]}" archive "$@" || rc=$?
-		# A protected skip is not a failure and must not prevent other DBs running.
-		if [[ "$rc" -ne 0 && "$rc" -ne 2 ]]; then result="$rc"; fi
+			bash "${BASH_SOURCE[0]}" archive "$@" &
+		archive_pid=$!
+		wait "$archive_pid" || rc=$?
+		archive_pid=""
+		print_info "Archive inventory outcome: db=$db rc=$rc (0=complete, 2=protected/deferred, 3=unsupported)"
+		# Continue the fleet, but never record a partial fleet as fully successful.
+		if [[ "$rc" -ne 0 && ("$result" -eq 0 || "$result" -eq 2) ]]; then result="$rc"; fi
 	done < <(opencode_db_inventory "$ACTIVE_DB")
+	trap - INT TERM
 	return "$result"
+}
+
+# Bound the entire per-DB invocation, including candidate scans, integrity
+# checks and compaction. A shell-loop deadline alone cannot interrupt SQLite.
+# Use a private process group so cancellation also reaches SQLite grandchildren;
+# SQLite rolls back an interrupted transaction and retains committed batches.
+_archive_with_deadline() {
+	local duration="$1"
+	shift
+	command -v python3 >/dev/null 2>&1 || {
+		print_error "python3 is required to enforce the archive per-DB deadline"
+		return 1
+	}
+	exec python3 - "$duration" "${BASH_SOURCE[0]}" "$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+duration = int(sys.argv[1])
+env = dict(os.environ, OPENCODE_ARCHIVE_BUDGET_CHILD="1")
+child = subprocess.Popen(["bash", sys.argv[2], "archive", *sys.argv[3:]],
+                         env=env, start_new_session=True)
+
+def stop(signum, _frame=None):
+    # Ignore repeated signals while draining the owned process group.
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        os.killpg(child.pid, signal.SIGTERM)
+        child.wait(timeout=2)
+    except ProcessLookupError:
+        pass
+    except subprocess.TimeoutExpired:
+        pass
+    finally:
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        child.wait()
+    if signum:
+        print(f"Archive interrupted: rc={128 + signum}", flush=True)
+        sys.exit(128 + signum)
+    print(f"Archive deferred/partial: per-DB time budget exhausted ({duration}s); "
+          "committed batches preserved; unfinished work resumes next cycle. rc=2", flush=True)
+    sys.exit(2)
+
+signal.signal(signal.SIGTERM, stop)
+signal.signal(signal.SIGINT, stop)
+try:
+    rc = child.wait(timeout=duration)
+except subprocess.TimeoutExpired:
+    stop(0)
+sys.exit(rc if rc >= 0 else 128 - rc)
+PY
 }
 
 # Expire only archived event payloads, never the saved transcript graph. Freed
@@ -923,33 +886,51 @@ _archive_expire_events() {
 		print_error "Archive event expiry refused — active and archive DB are the same file"
 		return 1
 	fi
-	local holders cutoff count start now
+	local holders cutoff count start now total=0 bytes=0 remaining rc
+	local expiry_batch_size="${OPENCODE_ARCHIVE_EVENT_EXPIRY_BATCH_SIZE:-$DEFAULT_BATCH_SIZE}"
+	_validate_nonnegative_integer "$expiry_batch_size" "OPENCODE_ARCHIVE_EVENT_EXPIRY_BATCH_SIZE" || return 1
+	if ((expiry_batch_size == 0)); then return 1; fi
 	holders=$(_db_holder_count "$ARCHIVE_DB")
 	if [[ "$holders" == "$OPENCODE_DB_STATE_UNKNOWN" || "$holders" -gt 0 ]]; then
 		print_warning "Archive event expiry deferred — archive holder state is active or unknown"
 		return 2
 	fi
 	_wal_is_stable "$ARCHIVE_DB" || return 2
-	opencode_archive_schema_supported "$ARCHIVE_DB" required || return 3
 	_sqlite_has_table "$ARCHIVE_DB" event || return 0
+	opencode_archive_schema_supported "$ARCHIVE_DB" required || return 3
 	cutoff=$(($(date +%s) * 1000 - days * 86400000))
 	if ((dry_run)); then
 		count=$(sqlite3 -readonly "$ARCHIVE_DB" "SELECT COUNT(*) FROM event WHERE aggregate_id IN (SELECT id FROM session WHERE time_updated < $cutoff);") || return 1
-		print_info "DRY RUN — would expire $count archived events (inactive ${days}+ days)"
+		bytes=$(sqlite3 -readonly "$ARCHIVE_DB" "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM event WHERE aggregate_id IN (SELECT id FROM session WHERE time_updated < $cutoff);") || return 1
+		print_info "DRY RUN — would expire $count archived events (inactive ${days}+ days), $(format_bytes "$bytes") payload"
+		print_info "Freed pages are reused; file size falls only after VACUUM."
 		return 0
 	fi
 	start=$(date +%s)
 	while true; do
-		count=$(sqlite3 -cmd '.timeout 5000' "$ARCHIVE_DB" "DELETE FROM event WHERE rowid IN (SELECT e.rowid FROM event e JOIN session s ON s.id=e.aggregate_id WHERE s.time_updated < $cutoff LIMIT $ARCHIVE_BATCH_SIZE); SELECT changes();") || return 1
+		now=$(date +%s)
+		remaining=$((max_duration - (now - start)))
+		((remaining > 0)) || break
+		rc=0
+		count=$(python3 -c 'import subprocess, sys
+try:
+    result = subprocess.run(["sqlite3", "-cmd", ".timeout 5000", sys.argv[2], sys.argv[3]], timeout=int(sys.argv[1]), check=False)
+    sys.exit(result.returncode)
+except subprocess.TimeoutExpired:
+    sys.exit(124)' "$remaining" "$ARCHIVE_DB" "DELETE FROM event WHERE rowid IN (SELECT e.rowid FROM event e JOIN session s ON s.id=e.aggregate_id WHERE s.time_updated < $cutoff LIMIT $expiry_batch_size); SELECT changes();") || rc=$?
+		if ((rc == 124)); then break; fi
+		((rc == 0)) || return 1
+		total=$((total + count))
 		[[ "$count" -gt 0 ]] || break
 		now=$(date +%s)
 		if ((max_duration > 0 && now - start >= max_duration)); then break; fi
 	done
-	print_info "Archived event expiry pass complete (inactive ${days}+ days); transcripts preserved"
+	print_info "Archived event expiry pass complete: expired $total events (inactive ${days}+ days); transcripts preserved; freed pages are reused until VACUUM"
 	return 0
 }
 
 cmd_archive() {
+	local original_args=("$@")
 	# retention_days is the interactive cutoff; worker_retention_days applies to
 	# headless sessions. --retention-days sets both (uniform legacy behaviour).
 	local retention_days="${OPENCODE_DB_ARCHIVE_INTERACTIVE_RETENTION_DAYS:-$DEFAULT_INTERACTIVE_RETENTION_DAYS}"
@@ -960,19 +941,110 @@ cmd_archive() {
 	local keep_enabled=0
 	local dry_run=0
 	local max_duration="$DEFAULT_MAX_DURATION"
-	local event_retention_days="${OPENCODE_ARCHIVE_EVENT_RETENTION_DAYS:-0}"
+	local event_retention_days="${OPENCODE_ARCHIVE_EVENT_RETENTION_DAYS:-$DEFAULT_WORKER_RETENTION_DAYS}"
+	local events_only=0
+	local worker_event_minutes="${OPENCODE_DB_ARCHIVE_EVENT_IDLE_MINUTES:-${OPENCODE_DB_ARCHIVE_WORKER_EVENT_MINUTES:-$DEFAULT_WORKER_EVENT_EXPIRY_MINUTES}}"
+	local worker_events_only=0
 
+	# Phase helpers share only these command-local settings/results via Bash's
+	# dynamic scope. Batch SQL and counters have their own narrower owner below.
+	local candidate_filter total_eligible
+	local has_session_message_table=0 has_session_input_table=0
+	local has_session_context_epoch_table=0 has_event_sequence_table=0 has_event_table=0
+	_archive_parse_options "$@" || return 1
+	_archive_validate_options || return 1
+	if [[ "${OPENCODE_ARCHIVE_BUDGET_CHILD:-0}" != 1 ]]; then
+		_archive_with_deadline "$max_duration" "${original_args[@]}"
+		return $?
+	fi
+	if ((worker_events_only)); then
+		_archive_worker_event_phase "$max_duration"
+		return $?
+	fi
+	local expiry_budget="$max_duration"
+	((events_only)) || expiry_budget=$((max_duration / 4))
+	local expiry_rc=0
+	if ((expiry_budget > 0)); then
+		local event_t0
+		event_t0=$(date +%s)
+		_archive_expire_events "$event_retention_days" "$dry_run" "$expiry_budget" || expiry_rc=$?
+		_ARCHIVE_T_EVENT=$(($(date +%s) - event_t0))
+		# Only a deferral (2) must not block the session move; errors stop here.
+		if [[ "$expiry_rc" -ne 0 && "$expiry_rc" -ne 2 ]]; then
+			return "$expiry_rc"
+		fi
+	fi
+	((events_only)) && return "$expiry_rc"
+	local move_rc=0
+	_archive_move_phase || move_rc=$?
+	print_info "Phase seconds: event_expiry=${_ARCHIVE_T_EVENT} worker_event_expiry=${_ARCHIVE_T_WORKER} candidate_prep=${_ARCHIVE_T_PREP} sizing=${_ARCHIVE_T_SIZING} batch_write=${_ARCHIVE_T_WRITE} (rc=${move_rc})"
+	# Keep rc 2 after a successful move so the scheduler retries the expiry.
+	if [[ "$move_rc" -eq 0 && "$expiry_rc" -eq 2 ]]; then
+		return 2
+	fi
+	return "$move_rc"
+}
+
+# Session-move phase of cmd_archive; shares its dynamic-scope settings.
+_archive_move_phase() {
+	local preflight_rc=0
+	# GH#38630: idle-session event expiry no longer runs inside the move; the
+	# async runner and --worker-events-only run it independently of holders, so a
+	# deferred move cannot starve it. Sessions moved here carry their events.
+	local now
+	_archive_mutation_preflight || preflight_rc=$?
+	if [[ "$preflight_rc" -ne 0 ]]; then
+		return "$preflight_rc"
+	fi
+	now=$(date +%s)
+	_archive_prepare_candidates || return $?
+	_ARCHIVE_T_PREP=$(($(date +%s) - now))
+	if ((total_eligible == 0)); then
+		print_success "No sessions match the archive retention target."
+		((dry_run)) && return 0
+		_archive_compact_unless_held
+		return $?
+	fi
+	print_info "Found $total_eligible sessions eligible for archiving"
+	_archive_detect_tables
+	if ((dry_run)); then
+		_archive_report_dry_run
+		return $?
+	fi
+	_archive_move_candidates
+	return $?
+}
+
+# Light hourly pass (--worker-events-only): expire events of idle sessions
+# without moving sessions; shares cmd_archive's dynamic-scope settings. It never
+# waits for idle holders: each delete is a short write transaction (GH#38630).
+_archive_worker_event_phase() {
+	local budget="$1"
+	_archive_expire_worker_events "$worker_event_minutes" "$dry_run" "$budget"
+	return $?
+}
+
+# Updates settings owned by cmd_archive, not process-global configuration.
+_archive_parse_options() {
 	# Parse arguments
 	while [[ $# -gt 0 ]]; do
 		local option="$1"
 		local option_value="${2:-}"
+		case "$option" in
+		--retention-days | --interactive-retention-days | --worker-retention-days | --keep-sessions | --archive-event-retention-days | --worker-event-expiry-minutes | --max-duration-seconds)
+			if [[ $# -lt 2 ]]; then
+				print_error "Option requires a value: $option"
+				return 1
+			fi
+			;;
+		esac
 		case "$option" in
 		--retention-days)
 			retention_days="$option_value"
 			worker_retention_days="$option_value"
 			retention_enabled=1
 			retention_explicit=1
-			shift 2
+			shift 2 || return 1
 			;;
 		--interactive-retention-days | --worker-retention-days)
 			if [[ "$option" == "--worker-retention-days" ]]; then
@@ -982,7 +1054,7 @@ cmd_archive() {
 			fi
 			retention_enabled=1
 			retention_explicit=1
-			shift 2
+			shift 2 || return 1
 			;;
 		--keep-sessions)
 			keep_sessions="$option_value"
@@ -990,7 +1062,7 @@ cmd_archive() {
 			if ((retention_explicit == 0)); then
 				retention_enabled=0
 			fi
-			shift 2
+			shift 2 || return 1
 			;;
 		--dry-run)
 			dry_run=1
@@ -1000,6 +1072,18 @@ cmd_archive() {
 			dry_run=0
 			shift
 			;;
+		--events-only)
+			events_only=1
+			shift
+			;;
+		--worker-events-only)
+			worker_events_only=1
+			shift
+			;;
+		--worker-event-expiry-minutes)
+			worker_event_minutes="$option_value"
+			shift 2 || return 1
+			;;
 		--archive-event-retention-days)
 			event_retention_days="$option_value"
 			[[ $# -ge 2 ]] || return 1
@@ -1007,7 +1091,7 @@ cmd_archive() {
 			;;
 		--max-duration-seconds)
 			max_duration="$option_value"
-			shift 2
+			shift 2 || return 1
 			;;
 		*)
 			print_error "Unknown option: $option"
@@ -1016,7 +1100,10 @@ cmd_archive() {
 			;;
 		esac
 	done
+	return 0
+}
 
+_archive_validate_options() {
 	check_sqlite3 || return 1
 	check_active_db || return 1
 	_validate_nonnegative_integer "$retention_days" "--retention-days/--interactive-retention-days" || return 1
@@ -1024,6 +1111,7 @@ cmd_archive() {
 	_validate_nonnegative_integer "$keep_sessions" "--keep-sessions" || return 1
 	_validate_nonnegative_integer "$max_duration" "--max-duration-seconds" || return 1
 	_validate_nonnegative_integer "$event_retention_days" "--archive-event-retention-days" || return 1
+	_validate_nonnegative_integer "$worker_event_minutes" "--worker-event-expiry-minutes" || return 1
 	_validate_nonnegative_integer "$ARCHIVE_BATCH_SIZE" "OPENCODE_DB_ARCHIVE_BATCH_SIZE" || return 1
 	if [[ "$ARCHIVE_BATCH_SIZE" -eq 0 ]]; then
 		print_error "OPENCODE_DB_ARCHIVE_BATCH_SIZE must be greater than zero."
@@ -1037,13 +1125,10 @@ cmd_archive() {
 		print_error "OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS must be a non-negative number."
 		return 1
 	fi
+	return 0
+}
 
-	local preflight_rc=0
-	_archive_mutation_preflight || preflight_rc=$?
-	if [[ "$preflight_rc" -ne 0 ]]; then
-		return "$preflight_rc"
-	fi
-
+_archive_prepare_candidates() {
 	local cutoff_ms worker_cutoff_ms headless_predicate="" ledger_tables=""
 	cutoff_ms=$(($(date +%s) * 1000 - retention_days * 86400 * 1000))
 	worker_cutoff_ms=$(($(date +%s) * 1000 - worker_retention_days * 86400 * 1000))
@@ -1066,8 +1151,6 @@ cmd_archive() {
 	fi
 	print_info "Active DB: $ACTIVE_DB"
 	print_info "Archive DB: $ARCHIVE_DB"
-	_archive_expire_events "$event_retention_days" "$dry_run" "$max_duration" || return $?
-
 	# Get active worker sessions to exclude
 	local active_sessions
 	active_sessions=$(get_active_worker_sessions)
@@ -1087,27 +1170,29 @@ cmd_archive() {
 		done <<<"$active_sessions"
 		exclude_clause="AND id NOT IN ($exclude_list)"
 	fi
+	exclude_clause="${exclude_clause}$(_archive_held_exclude_clause)"
 
-	local candidate_filter
+	# GH#38590: a leftover in-flight marker means the previous batch never
+	# committed. Halve the persisted limits; a still-failing 1-session batch is
+	# deferred as oversized so it cannot block the queue head forever.
+	_ARCHIVE_ADAPT_LIMIT=0
+	_ARCHIVE_ADAPT_BYTES=0
+	if ! ((dry_run)); then
+		_archive_adapt_recover sessions 1
+		if [[ -n "$_ARCHIVE_ADAPT_IDS" && "$_ARCHIVE_ADAPT_IDS" != *,* ]]; then
+			_archive_oversized_record "$_ARCHIVE_ADAPT_IDS"
+		fi
+	fi
+	exclude_clause="${exclude_clause}$(_archive_oversized_exclude_clause)"
+
 	candidate_filter=$(_archive_candidate_filter "$retention_enabled" "$cutoff_ms" "$keep_enabled" "$keep_sessions" "$exclude_clause" "$worker_cutoff_ms" "$headless_predicate")
 
 	# Count eligible sessions
-	local total_eligible
 	total_eligible=$(_archive_active_query "SELECT COUNT(*) FROM session WHERE $candidate_filter;")
+	return 0
+}
 
-	if ((total_eligible == 0)); then
-		print_success "No sessions match the archive retention target."
-		((dry_run)) && return 0
-		_archive_compact_active_db
-		return $?
-	fi
-
-	print_info "Found $total_eligible sessions eligible for archiving"
-	local has_session_message_table=0
-	local has_session_input_table=0
-	local has_session_context_epoch_table=0
-	local has_event_sequence_table=0
-	local has_event_table=0
+_archive_detect_tables() {
 	if _sqlite_has_table "$ACTIVE_DB" session_message; then
 		has_session_message_table=1
 	fi
@@ -1123,48 +1208,53 @@ cmd_archive() {
 	if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
 		has_event_table=1
 	fi
+	return 0
+}
 
-	if ((dry_run)); then
-		# Show what would be archived
-		local msg_count part_count todo_count share_count event_count event_bytes
-		local session_message_count=0 session_input_count=0 context_epoch_count=0 event_sequence_count=0
-		msg_count=$(_archive_active_query "SELECT COUNT(*) FROM message WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
-		part_count=$(_archive_active_query "SELECT COUNT(*) FROM part WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
-		todo_count=$(_archive_active_query "SELECT COUNT(*) FROM todo WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
-		share_count=$(_archive_active_query "SELECT COUNT(*) FROM session_share WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
-		if ((has_session_message_table)); then
-			session_message_count=$(_archive_active_query "SELECT COUNT(*) FROM session_message WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
-		fi
-		if ((has_session_input_table)); then
-			session_input_count=$(_archive_active_query "SELECT COUNT(*) FROM session_input WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
-		fi
-		if ((has_session_context_epoch_table)); then
-			context_epoch_count=$(_archive_active_query "SELECT COUNT(*) FROM session_context_epoch WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
-		fi
-		if ((has_event_sequence_table)); then
-			event_sequence_count=$(_archive_active_query "SELECT COUNT(*) FROM event_sequence WHERE aggregate_id IN (SELECT id FROM session WHERE $candidate_filter);")
-		fi
-		event_count=$(_archive_active_query "$(_archive_event_count_sql "$candidate_filter" "$has_event_table")")
-		event_bytes=$(_archive_active_query "$(_archive_event_bytes_sql "$candidate_filter" "$has_event_table")")
-
-		echo ""
-		echo "=== DRY RUN — would archive: ==="
-		echo "  Sessions:       $total_eligible"
-		echo "  Messages:       $msg_count"
-		echo "  Parts:          $part_count"
-		echo "  Todos:          $todo_count"
-		echo "  Session shares: $share_count"
-		echo "  Session msgs:   $session_message_count"
-		echo "  Session inputs: $session_input_count"
-		echo "  Context epochs: $context_epoch_count"
-		echo "  Event sequences: $event_sequence_count"
-		echo "  Events:         $event_count ($(format_bytes "$event_bytes"))"
-		echo ""
-		print_info "Run without --dry-run to proceed."
-		return 0
+_archive_report_dry_run() {
+	# Show what would be archived
+	local msg_count part_count todo_count share_count event_count event_bytes
+	local session_message_count=0 session_input_count=0 context_epoch_count=0 event_sequence_count=0
+	msg_count=$(_archive_active_query "SELECT COUNT(*) FROM message WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+	part_count=$(_archive_active_query "SELECT COUNT(*) FROM part WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+	todo_count=$(_archive_active_query "SELECT COUNT(*) FROM todo WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+	share_count=$(_archive_active_query "SELECT COUNT(*) FROM session_share WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+	if ((has_session_message_table)); then
+		session_message_count=$(_archive_active_query "SELECT COUNT(*) FROM session_message WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
 	fi
+	if ((has_session_input_table)); then
+		session_input_count=$(_archive_active_query "SELECT COUNT(*) FROM session_input WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+	fi
+	if ((has_session_context_epoch_table)); then
+		context_epoch_count=$(_archive_active_query "SELECT COUNT(*) FROM session_context_epoch WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+	fi
+	if ((has_event_sequence_table)); then
+		event_sequence_count=$(_archive_active_query "SELECT COUNT(*) FROM event_sequence WHERE aggregate_id IN (SELECT id FROM session WHERE $candidate_filter);")
+	fi
+	event_count=$(_archive_active_query "$(_archive_event_count_sql "$candidate_filter" "$has_event_table")")
+	event_bytes=$(_archive_active_query "$(_archive_event_bytes_sql "$candidate_filter" "$has_event_table")")
 
+	echo ""
+	echo "=== DRY RUN — would archive: ==="
+	echo "  Sessions:       $total_eligible"
+	echo "  Messages:       $msg_count"
+	echo "  Parts:          $part_count"
+	echo "  Todos:          $todo_count"
+	echo "  Session shares: $share_count"
+	echo "  Session msgs:   $session_message_count"
+	echo "  Session inputs: $session_input_count"
+	echo "  Context epochs: $context_epoch_count"
+	echo "  Event sequences: $event_sequence_count"
+	echo "  Events:         $event_count ($(format_bytes "$event_bytes"))"
+	echo ""
+	print_info "Run without --dry-run to proceed."
+	return 0
+}
+
+_archive_move_candidates() {
 	# Create archive DB and schema
+	local archive_created=0
+	[[ -f "$ARCHIVE_DB" ]] || archive_created=1
 	create_archive_schema "$ARCHIVE_DB"
 	if ! opencode_archive_schema_supported "$ARCHIVE_DB" required; then
 		local archive_schema_diagnostic=""
@@ -1182,6 +1272,7 @@ cmd_archive() {
 
 	local size_before
 	size_before=$(file_size_bytes "$ACTIVE_DB")
+	local archived_total=0
 
 	# Cleanup scope: checkpoint the archive WAL on every process exit. SQLite rolls
 	# back an interrupted in-flight batch; already committed batches stay queryable.
@@ -1190,12 +1281,60 @@ cmd_archive() {
 	trap '_archive_cleanup' EXIT
 	trap '_archive_interrupt 130' INT
 	trap '_archive_interrupt 143' TERM
+	# main captures command status with ||, so do not rely on errexit here.
+	_archive_run_batches || return $?
+	_archive_finish
+	return $?
+}
 
+_archive_select_batch() {
+	local batch_limit="$1" byte_limit="$2" deadline="$3"
+	local selected size_sql data_len extra_bytes_sql=""
+	data_len=$(_archive_len_expr data)
+	if ((has_session_message_table)); then
+		extra_bytes_sql=" + COALESCE((SELECT SUM(${data_len}) FROM session_message WHERE session_id=c.id),0)"
+	fi
+	if ((has_event_table)); then
+		extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM(${data_len}) FROM event WHERE aggregate_id=c.id),0)"
+	fi
+	if ((has_session_input_table)); then
+		extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM($(_archive_len_expr prompt)) FROM session_input WHERE session_id=c.id),0)"
+	fi
+	if ((has_session_context_epoch_table)); then
+		extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM($(_archive_len_expr baseline) + $(_archive_len_expr snapshot)) FROM session_context_epoch WHERE session_id=c.id),0)"
+	fi
+	# Never begin sizing or a write after the remaining budget is used.
+	if (($(date +%s) >= deadline)); then return 2; fi
+	# Without octet_length() every sized row reads its overflow pages, so keep
+	# the sized window small; later batches take the rest.
+	if ! _archive_octet_supported && ((batch_limit > 25)); then batch_limit=25; fi
+	# One query sizes the whole candidate window with a cumulative window sum
+	# and returns the prefix that fits the byte bound. The first session is
+	# always kept so an oversized single session can still move on its own.
+	size_sql="WITH cand AS (SELECT c.id AS id, ROW_NUMBER() OVER (ORDER BY c.time_updated, c.time_created, c.id) AS rn, COALESCE((SELECT SUM(${data_len}) FROM part WHERE session_id=c.id),0) + COALESCE((SELECT SUM(${data_len}) FROM message WHERE session_id=c.id),0)${extra_bytes_sql} AS b FROM (SELECT id, time_updated, time_created FROM session WHERE $candidate_filter ORDER BY time_updated, time_created, id LIMIT $batch_limit) c), cum AS (SELECT id, rn, SUM(b) OVER (ORDER BY rn) AS total FROM cand) SELECT id FROM cum WHERE rn = 1 OR total <= $byte_limit ORDER BY rn;"
+	selected=$(_archive_active_query "$size_sql") || return 1
+	if (($(date +%s) >= deadline)); then return 2; fi
+	[[ -z "$selected" ]] || printf '%s\n' "$selected"
+	return 0
+}
+
+_archive_run_batches() {
 	local start_time
 	start_time=$(date +%s)
-	local archived_total=0
 	local batch_num=0
 	local first_batch=1
+	local next_limit="$ARCHIVE_BATCH_SIZE" last_seconds=0
+	local byte_limit="${OPENCODE_DB_ARCHIVE_BATCH_BYTES:-67108864}"
+	_validate_nonnegative_integer "$byte_limit" "OPENCODE_DB_ARCHIVE_BATCH_BYTES" || return 1
+	if ((byte_limit == 0)); then return 1; fi
+	local default_limit="$next_limit" default_bytes="$byte_limit" t0
+	# GH#38590: start from the persisted (halved or regrown) limits.
+	if ((_ARCHIVE_ADAPT_LIMIT > 0 && _ARCHIVE_ADAPT_LIMIT < next_limit)); then
+		next_limit="$_ARCHIVE_ADAPT_LIMIT"
+	fi
+	if ((_ARCHIVE_ADAPT_BYTES > 0 && _ARCHIVE_ADAPT_BYTES < byte_limit)); then
+		byte_limit="$_ARCHIVE_ADAPT_BYTES"
+	fi
 
 	while ((archived_total < total_eligible)); do
 		# Check time budget
@@ -1203,19 +1342,29 @@ cmd_archive() {
 		elapsed=$(($(date +%s) - start_time))
 		if ((elapsed >= max_duration)); then
 			print_warning "Time budget exhausted (${elapsed}s >= ${max_duration}s). Archived $archived_total/$total_eligible sessions. Will resume next cycle."
-			break
+			return 2
+		fi
+		if ((batch_num > 0 && last_seconds >= max_duration - elapsed)); then
+			print_warning "Remaining budget is shorter than the previous batch; resuming next cycle."
+			return 2
+		fi
+		if ((batch_num > 0)) && ! _archive_held_gate_recheck; then
+			return 2
 		fi
 
 		batch_num=$((batch_num + 1))
-		local batch_limit="$ARCHIVE_BATCH_SIZE"
+		local batch_limit="$next_limit"
 		local remaining=$((total_eligible - archived_total))
 		if ((remaining < batch_limit)); then
 			batch_limit=$remaining
 		fi
 
 		# Collect batch session IDs
-		local session_ids
-		session_ids=$(_archive_active_query "SELECT id FROM session WHERE $candidate_filter ORDER BY time_updated ASC, time_created ASC, id ASC LIMIT $batch_limit;")
+		local session_ids batch_start
+		# Start the timer before sizing so selection cost counts toward adaptation.
+		batch_start=$(date +%s)
+		session_ids=$(_archive_select_batch "$batch_limit" "$byte_limit" "$((start_time + max_duration))") || return $?
+		_ARCHIVE_T_SIZING=$((_ARCHIVE_T_SIZING + $(date +%s) - batch_start))
 
 		if [[ -z "$session_ids" ]]; then
 			break
@@ -1231,48 +1380,101 @@ cmd_archive() {
 		# archival and bloating the DB to multi-GB (3232+ sessions).
 		local in_clause=""
 		in_clause=$(printf '%s\n' "$session_ids" | sed "s/.*/'&'/" | tr '\n' ',' | sed 's/,$//')
+		# The marker survives a deadline/SIGTERM/SIGKILL kill, so the next run
+		# knows this write never committed. An ordinary failure is not a kill.
+		_archive_adapt_mark sessions "$next_limit" "$byte_limit" "$(printf '%s' "$session_ids" | tr '\n' ',')"
+		t0=$(date +%s)
+		_archive_write_batch "$in_clause" || {
+			_archive_adapt_clear sessions
+			return 1
+		}
+		_ARCHIVE_T_WRITE=$((_ARCHIVE_T_WRITE + $(date +%s) - t0))
+		last_seconds=$(($(date +%s) - batch_start))
+		elapsed=$(($(date +%s) - start_time))
+		if ((last_seconds * 3 > max_duration - elapsed && next_limit > 1)); then
+			next_limit=$(((batch_count + 1) / 2))
+			# Persist the reduced limits as-is; growth is only for fast batches.
+			_archive_adapt_clear sessions
+			_archive_adapt_write sessions limits "$next_limit $byte_limit"
+		else
+			_archive_adapt_commit sessions "$next_limit" "$byte_limit" "$default_limit" "$default_bytes"
+		fi
+		archived_total=$((archived_total + batch_count))
+		_archive_report_batch || return 1
+	done
+	return 0
+}
 
-		local session_message_copy_sql="" session_message_delete_sql=""
-		local session_input_copy_sql="" session_input_delete_sql=""
-		local context_epoch_copy_sql="" context_epoch_delete_sql=""
-		local event_sequence_copy_sql="" event_sequence_delete_sql=""
-		local event_copy_sql="" event_delete_sql=""
-		local session_row_filter="session_id IN ($in_clause)"
-		if ((has_session_message_table)); then
-			session_message_copy_sql=$(_archive_copy_sql session_message "$session_row_filter") || return 1
-			session_message_delete_sql="DELETE FROM session_message WHERE session_id IN ($in_clause);"
-		fi
-		if ((has_session_input_table)); then
-			session_input_copy_sql=$(_archive_copy_sql session_input "$session_row_filter") || return 1
-			session_input_delete_sql="DELETE FROM session_input WHERE session_id IN ($in_clause);"
-		fi
-		if ((has_session_context_epoch_table)); then
-			context_epoch_copy_sql=$(_archive_copy_sql session_context_epoch "$session_row_filter") || return 1
-			context_epoch_delete_sql="DELETE FROM session_context_epoch WHERE session_id IN ($in_clause);"
-		fi
-		if ((has_event_sequence_table)); then
-			event_sequence_copy_sql=$(_archive_copy_sql event_sequence "aggregate_id IN ($in_clause)") || return 1
-			event_sequence_delete_sql="DELETE FROM event_sequence WHERE aggregate_id IN ($in_clause);"
-		fi
-		if ((has_event_table)); then
-			event_copy_sql=$(_archive_copy_sql event "aggregate_id IN ($in_clause)") || return 1
-			event_delete_sql="DELETE FROM event WHERE aggregate_id IN ($in_clause);"
-		fi
+_archive_write_batch() {
+	local in_clause="$1"
+	local session_message_copy_sql="" session_message_delete_sql=""
+	local session_input_copy_sql="" session_input_delete_sql=""
+	local context_epoch_copy_sql="" context_epoch_delete_sql=""
+	local event_sequence_copy_sql="" event_sequence_delete_sql=""
+	local event_copy_sql="" event_delete_sql=""
+	local session_row_filter="session_id IN ($in_clause)"
+	local aggregate_row_filter="aggregate_id IN ($in_clause)"
+	if ((has_session_message_table)); then
+		session_message_copy_sql=$(_archive_copy_sql session_message "$session_row_filter") || return 1
+		session_message_delete_sql="DELETE FROM session_message WHERE session_id IN ($in_clause);"
+	fi
+	if ((has_session_input_table)); then
+		session_input_copy_sql=$(_archive_copy_sql session_input "$session_row_filter") || return 1
+		session_input_delete_sql="DELETE FROM session_input WHERE session_id IN ($in_clause);"
+	fi
+	if ((has_session_context_epoch_table)); then
+		context_epoch_copy_sql=$(_archive_copy_sql session_context_epoch "$session_row_filter") || return 1
+		context_epoch_delete_sql="DELETE FROM session_context_epoch WHERE session_id IN ($in_clause);"
+	fi
+	if ((has_event_sequence_table)); then
+		event_sequence_copy_sql=$(_archive_copy_sql event_sequence "$aggregate_row_filter") || return 1
+		event_sequence_delete_sql="DELETE FROM event_sequence WHERE aggregate_id IN ($in_clause);"
+	fi
+	if ((has_event_table)); then
+		event_copy_sql=$(_archive_copy_sql event "$aggregate_row_filter") || return 1
+		event_delete_sql="DELETE FROM event WHERE aggregate_id IN ($in_clause);"
+	fi
 
-		local message_copy_sql part_copy_sql todo_copy_sql share_copy_sql
-		message_copy_sql=$(_archive_copy_sql message "$session_row_filter") || return 1
-		part_copy_sql=$(_archive_copy_sql part "$session_row_filter") || return 1
-		todo_copy_sql=$(_archive_copy_sql todo "$session_row_filter") || return 1
-		share_copy_sql=$(_archive_copy_sql session_share "$session_row_filter") || return 1
+	local message_copy_sql part_copy_sql todo_copy_sql share_copy_sql
+	message_copy_sql=$(_archive_copy_sql message "$session_row_filter") || return 1
+	part_copy_sql=$(_archive_copy_sql part "$session_row_filter") || return 1
+	todo_copy_sql=$(_archive_copy_sql todo "$session_row_filter") || return 1
+	share_copy_sql=$(_archive_copy_sql session_share "$session_row_filter") || return 1
 
-		# Single transaction: copy to archive then delete from active.
-		# ATTACH and DETACH are within the same sqlite3 invocation — the attachment
-		# is released automatically when the process exits. The trap above ensures
-		# the archive WAL is checkpointed on any exit path between batches.
-		# Foreign-key mode is connection-local. Enable it explicitly and still use
-		# dependency-safe manual deletes so behavior never depends on OpenCode's
-		# separate connection configuration.
-		sqlite3 "$ACTIVE_DB" <<BATCH_SQL
+	# A deadline may interrupt COMMIT. WAL commits are NOT atomic across
+	# attached DBs: first commit the archive alone, then verify the durable
+	# copy under a fresh write lock before deleting anything from active.
+	# An interruption between commits leaves safe, retryable duplicates.
+	local verify_sql table_name row_filter comparisons column
+	local session_columns_array=()
+	IFS=',' read -r -a session_columns_array <<<"$session_insert_columns"
+	comparisons=""
+	for column in "${session_columns_array[@]}"; do
+		column="${column// /}"
+		comparisons="${comparisons}${comparisons:+ AND }a.\"${column}\" IS s.\"${column}\""
+	done
+	verify_sql="INSERT INTO archive_copy_guard SELECT NOT EXISTS (SELECT 1 FROM (SELECT ${session_select_columns} FROM session WHERE id IN ($in_clause)) s WHERE NOT EXISTS (SELECT 1 FROM archive.session a WHERE a.id IS s.id AND $comparisons));"
+	for table_name in message part todo session_share session_message session_input session_context_epoch event_sequence event; do
+		_sqlite_has_table "$ACTIVE_DB" "$table_name" || continue
+		row_filter="$session_row_filter"
+		case "$table_name" in event_sequence | event) row_filter="$aggregate_row_filter" ;; esac
+		comparisons=$(sqlite3 "$ACTIVE_DB" "SELECT group_concat('a.' || quote(name) || ' IS s.' || quote(name), ' AND ') FROM pragma_table_info('$table_name');") || return 1
+		verify_sql="${verify_sql}INSERT INTO archive_copy_guard SELECT NOT EXISTS (SELECT 1 FROM ${table_name} s WHERE ${row_filter} AND NOT EXISTS (SELECT 1 FROM archive.${table_name} a WHERE $comparisons));"
+	done
+	_archive_execute_batch
+	return $?
+}
+
+_archive_execute_batch() {
+	# ATTACH and DETACH are within the same sqlite3 invocation — the attachment
+	# is released automatically when the process exits. The trap above ensures
+	# the archive WAL is checkpointed on any exit path between batches.
+	# Foreign-key mode is connection-local. Enable it explicitly and still use
+	# dependency-safe manual deletes so behavior never depends on OpenCode's
+	# separate connection configuration.
+	if ! sqlite3 "$ACTIVE_DB" <<BATCH_SQL; then
+.bail on
+.timeout 5000
 PRAGMA foreign_keys = ON;
 ATTACH DATABASE '$ARCHIVE_DB' AS archive;
 
@@ -1313,6 +1515,11 @@ ${event_sequence_copy_sql}
 -- defeats archiving.
 ${event_copy_sql}
 
+COMMIT;
+BEGIN IMMEDIATE;
+CREATE TEMP TABLE archive_copy_guard (ok INTEGER CHECK (ok = 1));
+${verify_sql}
+
 -- Delete from active (child tables first since FK CASCADE is not enforced)
 DELETE FROM part WHERE session_id IN ($in_clause);
 DELETE FROM todo WHERE session_id IN ($in_clause);
@@ -1329,39 +1536,45 @@ COMMIT;
 
 DETACH DATABASE archive;
 BATCH_SQL
+		print_error "Archive batch failed or durable copy differs; active rows were not deleted. Retry requires matching archived values."
+		return 1
+	fi
+	return 0
+}
 
-		archived_total=$((archived_total + batch_count))
+_archive_report_batch() {
+	# Verify archive integrity after first batch
+	if ((first_batch && archive_created)); then
+		local integrity
+		integrity=$(sqlite3 "$ARCHIVE_DB" "PRAGMA integrity_check;" 2>&1)
+		[[ "$integrity" == "ok" ]] || {
+			print_error "Archive integrity check FAILED after first batch: $integrity"
+			print_error "Aborting. Data was already copied — manual review needed."
+			return 1
+		}
+		first_batch=0
+	fi
 
-		# Verify archive integrity after first batch
-		if ((first_batch)); then
-			local integrity
-			integrity=$(sqlite3 "$ARCHIVE_DB" "PRAGMA integrity_check;" 2>&1)
-			[[ "$integrity" == "ok" ]] || {
-				print_error "Archive integrity check FAILED after first batch: $integrity"
-				print_error "Aborting. Data was already copied — manual review needed."
-				return 1
-			}
-			first_batch=0
-		fi
+	local size_current
+	size_current=$(file_size_bytes "$ACTIVE_DB")
+	local freed=$((size_before - size_current))
+	# freed can be negative before vacuum; show 0 in that case
+	if ((freed < 0)); then freed=0; fi
 
-		local size_current
-		size_current=$(file_size_bytes "$ACTIVE_DB")
-		local freed=$((size_before - size_current))
-		# freed can be negative before vacuum; show 0 in that case
-		if ((freed < 0)); then freed=0; fi
+	print_info "Archived $archived_total/$total_eligible sessions [batch $batch_num] ($(format_bytes "$freed") freed)"
+	if [[ "$ARCHIVE_BATCH_DELAY_SECONDS" != "0" ]]; then
+		sleep "$ARCHIVE_BATCH_DELAY_SECONDS"
+	fi
+	return 0
+}
 
-		print_info "Archived $archived_total/$total_eligible sessions [batch $batch_num] ($(format_bytes "$freed") freed)"
-		if [[ "$ARCHIVE_BATCH_DELAY_SECONDS" != "0" ]]; then
-			sleep "$ARCHIVE_BATCH_DELAY_SECONDS"
-		fi
-	done
-
+_archive_finish() {
 	# Fast-path explicit cleanup: checkpoint archive WAL before vacuum.
 	# Marks done so the RETURN trap does not double-run.
 	_checkpoint_archive_db "$ARCHIVE_DB"
 
 	local compact_rc=0
-	_archive_compact_active_db || compact_rc=$?
+	_archive_compact_unless_held || compact_rc=$?
 	local archive_quick_check=""
 	archive_quick_check=$(sqlite3 "$ARCHIVE_DB" "$SQL_QUICK_CHECK" 2>/dev/null || true)
 	if [[ "$archive_quick_check" != "ok" ]]; then
@@ -1388,321 +1601,13 @@ BATCH_SQL
 	return 0
 }
 
-# --- Prune command (opt-in permanent deletion) ---------------------------------
-
-# Resolve storage.opencode_session_retention_days (env override first). Prints a
-# non-negative integer; 0 means keep everything. Invalid values never delete.
-_prune_resolve_retention_days() {
-	local raw="${AIDEVOPS_OPENCODE_SESSION_RETENTION_DAYS:-}"
-
-	if [[ -z "$raw" ]]; then
-		if ! declare -F config_get >/dev/null 2>&1 && [[ -f "${_oda_dir}/config-helper.sh" ]]; then
-			# shellcheck source=config-helper.sh
-			source "${_oda_dir}/config-helper.sh" >/dev/null 2>&1 || true
-		fi
-		if declare -F config_get >/dev/null 2>&1; then
-			raw=$(config_get "storage.opencode_session_retention_days" "0" 2>/dev/null) || raw=""
-		fi
-	fi
-	raw="${raw:-0}"
-	if [[ ! "$raw" =~ ^[0-9]{1,5}$ ]]; then
-		printf '[WARN] Invalid storage.opencode_session_retention_days=%q; treating as 0 (keep all sessions)\n' "$raw" >&2
-		raw=0
-	fi
-	printf '%s\n' "$((10#$raw))"
-	return 0
-}
-
-cmd_retention_days() {
-	_prune_resolve_retention_days
-	return 0
-}
-
-# Exclusion clause for sessions with an active worker (empty when none).
-_prune_exclude_clause() {
-	local active_sessions="" exclude_list="" sid=""
-
-	active_sessions=$(get_active_worker_sessions)
-	[[ -n "$active_sessions" ]] || return 0
-	while IFS= read -r sid; do
-		exclude_list="${exclude_list}${exclude_list:+,}'${sid}'"
-	done <<<"$active_sessions"
-	printf 'AND id NOT IN (%s)\n' "$exclude_list"
-	return 0
-}
-
-# Sum of payload bytes owned by sessions matching the filter in a DB.
-_prune_bytes_sql() {
-	local db="$1"
-	local filter="$2"
-	local sql="SELECT (SELECT COALESCE(SUM(LENGTH(data)), 0) FROM message WHERE session_id IN (SELECT id FROM session WHERE ${filter}))"
-
-	sql="${sql} + (SELECT COALESCE(SUM(LENGTH(data)), 0) FROM part WHERE session_id IN (SELECT id FROM session WHERE ${filter}))"
-	if _sqlite_has_table "$db" session_message; then
-		sql="${sql} + (SELECT COALESCE(SUM(LENGTH(data)), 0) FROM session_message WHERE session_id IN (SELECT id FROM session WHERE ${filter}))"
-	fi
-	if _sqlite_has_table "$db" "$EVENT_TABLE_NAME"; then
-		sql="${sql} + (SELECT COALESCE(SUM(LENGTH(data)), 0) FROM event WHERE aggregate_id IN (SELECT id FROM session WHERE ${filter}))"
-	fi
-	printf '%s;\n' "$sql"
-	return 0
-}
-
-# Positive evidence the DB is idle: no holders, stable WAL, supported schema.
-# Returns 0 ready, 2 protected skip, 3 unsupported schema.
-_prune_preflight() {
-	local db="$1"
-	local schema_mode="$2"
-	local label="$3"
-	local holder_count=""
-
-	holder_count=$(_db_holder_count "$db")
-	if [[ "$holder_count" == "$OPENCODE_DB_STATE_UNKNOWN" ]]; then
-		print_warning "Prune deferred (${label}) — DB holder state is unavailable."
-		return 2
-	fi
-	if [[ "$holder_count" -gt 0 ]]; then
-		print_warning "Prune deferred (${label}) — ${holder_count} process(es) hold the DB open."
-		return 2
-	fi
-	if ! _wal_is_stable "$db"; then
-		print_warning "Prune deferred (${label}) — WAL changed during the safety observation window."
-		return 2
-	fi
-	if ! opencode_archive_schema_supported "$db" "$schema_mode"; then
-		print_error "Unsupported or unavailable OpenCode session schema in ${label} DB: $(opencode_archive_schema_diagnostic); data was left untouched."
-		return 3
-	fi
-	return 0
-}
-
-# VACUUM needs room for a compacted copy; defer rather than fill the disk.
-_prune_vacuum_headroom_ok() {
-	local db="$1"
-	local page_count="" free_count="" page_size="" avail_kb="" live_kb=0
-
-	page_count=$(sqlite3 "$db" "PRAGMA page_count;" 2>/dev/null || true)
-	free_count=$(sqlite3 "$db" "PRAGMA freelist_count;" 2>/dev/null || true)
-	page_size=$(sqlite3 "$db" "PRAGMA page_size;" 2>/dev/null || true)
-	[[ "$page_count" =~ ^[0-9]+$ && "$free_count" =~ ^[0-9]+$ && "$page_size" =~ ^[0-9]+$ ]] || return 1
-	live_kb=$(((page_count - free_count) * page_size / 1024 + 1))
-	avail_kb=$(df -Pk "${db%/*}" 2>/dev/null | awk 'NR==2 {print $4}')
-	[[ "$avail_kb" =~ ^[0-9]+$ ]] || return 1
-	((avail_kb > live_kb))
-	return $?
-}
-
-# Compact the archive DB (nothing reads it live) after rows were deleted.
-_prune_vacuum_archive_db() {
-	local holder_count=""
-
-	if ! _prune_vacuum_headroom_ok "$ARCHIVE_DB"; then
-		print_warning "Archive VACUUM deferred — not enough free disk space for a compacted copy."
-		return 2
-	fi
-	holder_count=$(_db_holder_count "$ARCHIVE_DB")
-	if [[ "$holder_count" == "$OPENCODE_DB_STATE_UNKNOWN" || "$holder_count" -gt 0 ]]; then
-		print_warning "Archive VACUUM deferred — archive DB holder is active or unknown."
-		return 2
-	fi
-	sqlite3 "$ARCHIVE_DB" "$SQL_CHECKPOINT_TRUNCATE" >/dev/null 2>&1 || true
-	print_info "Running VACUUM on archive DB..."
-	if ! sqlite3 "$ARCHIVE_DB" "VACUUM;" 2>/dev/null; then
-		print_warning "Archive VACUUM deferred — exclusive access was lost. Will retry next cycle."
-		return 2
-	fi
-	sqlite3 "$ARCHIVE_DB" "$SQL_CHECKPOINT_TRUNCATE" >/dev/null 2>&1 || true
-	if [[ "$(sqlite3 "$ARCHIVE_DB" "$SQL_QUICK_CHECK" 2>/dev/null || true)" != "ok" ]]; then
-		print_error "Archive DB quick_check failed after VACUUM."
-		return 1
-	fi
-	return 0
-}
-
-# Delete one batch of sessions (and every dependent row) in one transaction.
-_prune_delete_batch() {
-	local db="$1"
-	local in_clause="$2"
-	local session_message_sql="" session_input_sql="" context_epoch_sql=""
-	local event_sequence_sql="" event_sql=""
-
-	_sqlite_has_table "$db" session_message && session_message_sql="DELETE FROM session_message WHERE session_id IN ($in_clause);"
-	_sqlite_has_table "$db" session_input && session_input_sql="DELETE FROM session_input WHERE session_id IN ($in_clause);"
-	_sqlite_has_table "$db" session_context_epoch && context_epoch_sql="DELETE FROM session_context_epoch WHERE session_id IN ($in_clause);"
-	_sqlite_has_table "$db" event_sequence && event_sequence_sql="DELETE FROM event_sequence WHERE aggregate_id IN ($in_clause);"
-	_sqlite_has_table "$db" "$EVENT_TABLE_NAME" && event_sql="DELETE FROM event WHERE aggregate_id IN ($in_clause);"
-
-	# Dependency-safe order (children first); mirrors the archive delete path.
-	sqlite3 -cmd '.timeout 5000' "$db" <<PRUNE_SQL >/dev/null
-PRAGMA foreign_keys = ON;
-BEGIN IMMEDIATE;
-DELETE FROM part WHERE session_id IN ($in_clause);
-DELETE FROM todo WHERE session_id IN ($in_clause);
-DELETE FROM session_share WHERE session_id IN ($in_clause);
-${session_message_sql}
-${session_input_sql}
-${context_epoch_sql}
-DELETE FROM message WHERE session_id IN ($in_clause);
-${event_sql}
-${event_sequence_sql}
-DELETE FROM session WHERE id IN ($in_clause);
-COMMIT;
-PRUNE_SQL
-	return $?
-}
-
-# Prune one DB. Prints a summary; returns 0, 1 failure, 2 protected skip, 3 schema.
-_prune_one_db() {
-	local db="$1"
-	local label="$2"
-	local schema_mode="$3"
-	local filter="$4"
-	local dry_run="$5"
-	local max_duration="$6"
-	local eligible="" bytes="" rc=0
-
-	if [[ ! -f "$db" ]]; then
-		return 0
-	fi
-	if ((dry_run)); then
-		if ! opencode_archive_schema_supported "$db" "$schema_mode"; then
-			print_error "Unsupported or unavailable OpenCode session schema in ${label} DB: $(opencode_archive_schema_diagnostic)"
-			return 3
-		fi
-		eligible=$(sqlite3 -readonly "$db" "SELECT COUNT(*) FROM session WHERE ${filter};") || return 1
-		bytes=$(sqlite3 -readonly "$db" "$(_prune_bytes_sql "$db" "$filter")") || return 1
-		print_info "DRY RUN — would permanently delete ${eligible} session(s) from ${label} DB (~$(format_bytes "$bytes") of payload): ${db}"
-		return 0
-	fi
-
-	_prune_preflight "$db" "$schema_mode" "$label" || {
-		rc=$?
-		return "$rc"
-	}
-
-	local size_before size_after start_time deleted=0 session_ids="" in_clause="" batch_count=0
-	size_before=$(file_size_bytes "$db")
-	start_time=$(date +%s)
-	while true; do
-		if (($(date +%s) - start_time >= max_duration)); then
-			print_warning "Prune time budget exhausted (${max_duration}s) for ${label} DB after ${deleted} session(s). Will resume next cycle."
-			break
-		fi
-		session_ids=$(sqlite3 "$db" "SELECT id FROM session WHERE ${filter} ORDER BY time_updated ASC, id ASC LIMIT ${ARCHIVE_BATCH_SIZE};") || return 1
-		[[ -n "$session_ids" ]] || break
-		batch_count=$(printf '%s\n' "$session_ids" | wc -l | tr -d ' ')
-		in_clause=$(printf '%s\n' "$session_ids" | sed "s/.*/'&'/" | tr '\n' ',' | sed 's/,$//')
-		if ! _prune_delete_batch "$db" "$in_clause"; then
-			print_error "Prune batch failed on ${label} DB; committed batches remain deleted."
-			return 1
-		fi
-		deleted=$((deleted + batch_count))
-		print_info "Pruned ${deleted} session(s) from ${label} DB"
-		if [[ "$ARCHIVE_BATCH_DELAY_SECONDS" != "0" ]]; then
-			sleep "$ARCHIVE_BATCH_DELAY_SECONDS"
-		fi
-	done
-
-	if ((deleted == 0)); then
-		print_success "No ${label} sessions older than the retention cutoff."
-		return 0
-	fi
-
-	local compact_rc=0
-	if [[ "$label" == "archive" ]]; then
-		_prune_vacuum_archive_db || compact_rc=$?
-	elif ! _prune_vacuum_headroom_ok "$db"; then
-		print_warning "Active VACUUM deferred — not enough free disk space for a compacted copy."
-		compact_rc=2
-	else
-		_archive_compact_active_db || compact_rc=$?
-	fi
-	size_after=$(file_size_bytes "$db")
-	print_success "Pruned ${deleted} session(s) from ${label} DB: $(format_bytes "$size_before") → $(format_bytes "$size_after")"
-	return "$compact_rc"
-}
-
-cmd_prune() {
-	local older_than_days=""
-	local dry_run=1
-	local max_duration="$DEFAULT_MAX_DURATION"
-
-	while [[ $# -gt 0 ]]; do
-		local option="$1"
-		local option_value="${2:-}"
-		case "$option" in
-		--older-than-days)
-			[[ $# -ge 2 ]] || {
-				print_error "--older-than-days requires a value"
-				return 1
-			}
-			older_than_days="$option_value"
-			shift 2
-			;;
-		--max-duration-seconds)
-			[[ $# -ge 2 ]] || {
-				print_error "--max-duration-seconds requires a value"
-				return 1
-			}
-			max_duration="$option_value"
-			shift 2
-			;;
-		--dry-run)
-			dry_run=1
-			shift
-			;;
-		--apply)
-			dry_run=0
-			shift
-			;;
-		*)
-			print_error "Unknown option: $option"
-			cmd_help
-			return 1
-			;;
-		esac
-	done
-
-	check_sqlite3 || return 1
-	check_active_db || return 1
-	if [[ -z "$older_than_days" ]]; then
-		print_error "prune requires --older-than-days N (N >= 1); nothing was deleted."
-		return 1
-	fi
-	_validate_nonnegative_integer "$older_than_days" "--older-than-days" || return 1
-	if [[ ! "$older_than_days" =~ ^[0-9]{1,5}$ || "$((10#$older_than_days))" -lt 1 ]]; then
-		print_error "--older-than-days must be between 1 and 99999; nothing was deleted."
-		return 1
-	fi
-	older_than_days=$((10#$older_than_days))
-	_validate_nonnegative_integer "$max_duration" "--max-duration-seconds" || return 1
-	_validate_nonnegative_integer "$ARCHIVE_BATCH_SIZE" "OPENCODE_DB_ARCHIVE_BATCH_SIZE" || return 1
-	if [[ "$ARCHIVE_BATCH_SIZE" -eq 0 ]]; then
-		print_error "OPENCODE_DB_ARCHIVE_BATCH_SIZE must be greater than zero."
-		return 1
-	fi
-	if [[ -f "$ARCHIVE_DB" && "$ARCHIVE_DB" -ef "$ACTIVE_DB" ]]; then
-		print_error "Prune refused — active and archive DB are the same file"
-		return 1
-	fi
-
-	local cutoff_ms exclude_clause filter
-	cutoff_ms=$(($(date +%s) * 1000 - older_than_days * 86400 * 1000))
-	exclude_clause=$(_prune_exclude_clause)
-	filter="time_updated < ${cutoff_ms}${exclude_clause:+ }${exclude_clause}"
-	print_info "Session retention: delete sessions last updated more than ${older_than_days} days ago (cutoff: $(_format_cutoff_time "$cutoff_ms"))"
-	print_info "Active DB: $ACTIVE_DB"
-	print_info "Archive DB: $ARCHIVE_DB"
-
-	local result=0 rc=0
-	_prune_one_db "$ARCHIVE_DB" archive required "$filter" "$dry_run" "$max_duration" || rc=$?
-	if [[ "$rc" -ne 0 ]]; then result="$rc"; fi
-	rc=0
-	_prune_one_db "$ACTIVE_DB" active optional "$filter" "$dry_run" "$max_duration" || rc=$?
-	# Failure (1) outranks schema (3), which outranks a protected skip (2).
-	if [[ "$rc" -eq 1 || ("$rc" -ne 0 && "$result" -eq 0) || ("$rc" -eq 3 && "$result" -eq 2) ]]; then result="$rc"; fi
-	return "$result"
-}
+# --- Retention and pruning ----------------------------------------------------
+# shellcheck source=./opencode-db-archive-retention.sh
+# shellcheck disable=SC1091 # sibling module resolved via the entry point directory
+source "${_oda_dir}/opencode-db-archive-retention.sh"
+# shellcheck source=./opencode-db-archive-worker-events.sh
+# shellcheck disable=SC1091 # sibling module resolved via the entry point directory
+source "${_oda_dir}/opencode-db-archive-worker-events.sh"
 
 cmd_prune_all() {
 	local db rc=0 result=0
@@ -1802,128 +1707,9 @@ cmd_stats() {
 }
 
 # --- Restore command (GH#35492) -------------------------------------------------
-
-# _archive_restore_column_list <table>
-# Prints active-DB-ordered quoted columns shared by active and archive tables.
-# Fails when the active table needs a NOT NULL/PK column the archive lacks.
-_archive_restore_column_list() {
-	local table_name="$1"
-	local result columns missing
-	result=$(sqlite3 -cmd '.timeout 5000' "$ACTIVE_DB" "
-ATTACH DATABASE $(_archive_sql_quote "$ARCHIVE_DB") AS archive;
-SELECT COALESCE((SELECT group_concat(quoted, ',') FROM (
-  SELECT '\"' || a.name || '\"' AS quoted FROM pragma_table_info('${table_name}') a
-  JOIN pragma_table_info('${table_name}', 'archive') b ON b.name = a.name ORDER BY a.cid)), '')
-  || '|' || COALESCE((SELECT group_concat(a.name, ',') FROM pragma_table_info('${table_name}') a
-  LEFT JOIN pragma_table_info('${table_name}', 'archive') b ON b.name = a.name
-  WHERE b.name IS NULL AND (a.pk > 0 OR (a.\"notnull\" = 1 AND a.dflt_value IS NULL))), '');" 2>/dev/null) || return 1
-	columns="${result%%|*}"
-	missing="${result#*|}"
-	[[ -n "$columns" && -z "$missing" ]] || return 1
-	printf '%s\n' "$columns"
-	return 0
-}
-
-# _archive_restore_tables
-# Session-owned tables present in both DBs, in dependency-safe copy order.
-_archive_restore_tables() {
-	local table_name
-	for table_name in message part todo session_share session_message session_input session_context_epoch; do
-		_sqlite_has_table "$ACTIVE_DB" "$table_name" || continue
-		_sqlite_has_table "$ARCHIVE_DB" "$table_name" || continue
-		printf '%s\n' "$table_name"
-	done
-	return 0
-}
-
-# _archive_restore_sql <session_id_sql>
-# Builds the copy-then-delete SQL for one archived session and its subagent
-# children. Copies use INSERT OR IGNORE so rows already active win.
-_archive_restore_sql() {
-	local sid="$1"
-	local ids="SELECT id FROM archive.session WHERE id = ${sid} OR parent_id = ${sid}"
-	local copy_sql="" delete_sql="" table_name columns
-	columns=$(_archive_restore_column_list project) || return 1
-	copy_sql="INSERT OR IGNORE INTO main.project (${columns}) SELECT ${columns} FROM archive.project WHERE id IN (SELECT project_id FROM archive.session WHERE id = ${sid});"$'\n'
-	columns=$(_archive_restore_column_list "$SESSION_TABLE_NAME") || return 1
-	copy_sql="${copy_sql}INSERT OR IGNORE INTO main.session (${columns}) SELECT ${columns} FROM archive.session WHERE id IN (${ids}) ORDER BY parent_id IS NOT NULL;"$'\n'
-	while IFS= read -r table_name; do
-		[[ -n "$table_name" ]] || continue
-		columns=$(_archive_restore_column_list "$table_name") || return 1
-		copy_sql="${copy_sql}INSERT OR IGNORE INTO main.${table_name} (${columns}) SELECT ${columns} FROM archive.${table_name} WHERE session_id IN (${ids});"$'\n'
-		delete_sql="DELETE FROM archive.${table_name} WHERE session_id IN (${ids});"$'\n'"${delete_sql}"
-	done <<<"$(_archive_restore_tables)"
-	for table_name in event_sequence "$EVENT_TABLE_NAME"; do
-		_sqlite_has_table "$ACTIVE_DB" "$table_name" || continue
-		_sqlite_has_table "$ARCHIVE_DB" "$table_name" || continue
-		columns=$(_archive_restore_column_list "$table_name") || return 1
-		copy_sql="${copy_sql}INSERT OR IGNORE INTO main.${table_name} (${columns}) SELECT ${columns} FROM archive.${table_name} WHERE aggregate_id IN (${ids});"$'\n'
-		delete_sql="DELETE FROM archive.${table_name} WHERE aggregate_id IN (${ids});"$'\n'"${delete_sql}"
-	done
-	printf '%s%sDELETE FROM archive.session WHERE id IN (%s);\n' "$copy_sql" "$delete_sql" "$ids"
-	return 0
-}
-
-# cmd_restore --session ID [--dry-run]
-# Move one archived session (plus subagent children) back into the active DB so
-# OpenCode can resume it. Safe with live holders: it is a short write
-# transaction, like the headless worker merge. Exit 0 restored/already active,
-# 4 not found in the archive, 3 incompatible schema, 1 other failure.
-cmd_restore() {
-	local session_id="" dry_run=0 sid active_count archived_count restore_sql archive_sql
-	while [[ $# -gt 0 ]]; do
-		local option="$1"
-		case "$option" in
-		--session) session_id="${2:-}"; shift 2 ;;
-		--dry-run) dry_run=1; shift ;;
-		*) print_error "Unknown restore option: $option"; return 1 ;;
-		esac
-	done
-	if [[ ! "$session_id" =~ ^[A-Za-z0-9_-]+$ ]]; then
-		print_error "restore requires --session <id> (letters, digits, '_' or '-')"
-		return 1
-	fi
-	check_sqlite3 || return 1
-	check_active_db || return 1
-	sid=$(_archive_sql_quote "$session_id")
-	active_count=$(sqlite3 -cmd '.timeout 5000' "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE id = ${sid};") || return 1
-	if [[ "$active_count" == "1" ]]; then
-		print_info "Session ${session_id} is already in the active DB"
-		return 0
-	fi
-	if [[ ! -f "$ARCHIVE_DB" ]] || [[ "$ARCHIVE_DB" -ef "$ACTIVE_DB" ]]; then
-		print_warning "No archive DB for ${ACTIVE_DB}; session ${session_id} not found"
-		return 4
-	fi
-	archived_count=$(sqlite3 -readonly -cmd '.timeout 5000' "$ARCHIVE_DB" "SELECT COUNT(*) FROM session WHERE id = ${sid} OR parent_id = ${sid};") || return 1
-	if [[ "$archived_count" == "0" ]] || [[ -z "$archived_count" ]]; then
-		print_warning "Session ${session_id} not found in archive ${ARCHIVE_DB}"
-		return 4
-	fi
-	if ! restore_sql=$(_archive_restore_sql "$sid"); then
-		print_error "Archive and active schemas are incompatible for restore; nothing changed"
-		return 3
-	fi
-	if ((dry_run)); then
-		print_info "DRY RUN — would restore ${archived_count} session(s) (${session_id} and subagent children) from ${ARCHIVE_DB}"
-		return 0
-	fi
-	archive_sql=$(_archive_sql_quote "$ARCHIVE_DB")
-	if ! sqlite3 "$ACTIVE_DB" <<RESTORE_SQL >/dev/null; then
-.bail on
-.timeout 5000
-ATTACH DATABASE ${archive_sql} AS archive;
-BEGIN IMMEDIATE;
-${restore_sql}
-COMMIT;
-DETACH DATABASE archive;
-RESTORE_SQL
-		print_error "Restore of ${session_id} failed; the archive copy was left in place"
-		return 1
-	fi
-	print_success "Restored ${archived_count} session(s) (${session_id} and subagent children) to ${ACTIVE_DB}"
-	return 0
-}
+# shellcheck source=./opencode-db-archive-restore.sh
+# shellcheck disable=SC1091 # sibling module resolved via the entry point directory
+source "${_oda_dir}/opencode-db-archive-restore.sh"
 
 # --- Help command -------------------------------------------------------------
 
@@ -1945,14 +1731,20 @@ ARCHIVE OPTIONS (split retention by session origin):
   --worker-retention-days N       Headless sessions inactive N days are archived (default: 7)
                                   Headless = headless-runtime ledger worker sessions and their
                                   subagents, temp-dir one-shot runs, supervisor pulse sessions.
-  --interactive-retention-days N  All other sessions inactive N days are archived (default: 90)
+  --interactive-retention-days N  All other sessions inactive N days are archived (default: 30)
   --retention-days N        One cutoff for every session (sets both values above)
   --keep-sessions N         Keep newest N active sessions by last update; archive older sessions beyond the budget
   --dry-run                 Show what would be archived without doing it
   --apply                   Explicitly apply changes (also the legacy default)
   --archive-event-retention-days N  Expire archived event rows for sessions inactive N days
-                            (default 0: disabled). Keeps session/message/part.
+                            (default 7; 0 disables). Keeps session/message/part/todo.
                             Runs before moving sessions; freed pages are reused.
+  --events-only             Expire archive events without moving active sessions
+  --worker-event-expiry-minutes N  Expire active-DB event rows of ANY session (interactive,
+                             worker, subagent) idle N minutes (default 60; 0 disables).
+                             Keeps session/message/part/todo, so transcripts stay
+                             resumable. Runs even while TUIs hold the DB.
+  --worker-events-only      Run only the active-DB event expiry (hourly pass)
   --max-duration-seconds N  Stop after N seconds even when not done (default: 60)
 
 RESTORE OPTIONS:
@@ -1976,9 +1768,14 @@ ENVIRONMENT:
   OPENCODE_ARCHIVE_DB       Archive DB path (default: next to active opencode.db)
   OPENCODE_INTERACTIVE_ROOT  Isolated DB root (default: aidevops work/opencode-interactive)
   OPENCODE_DB_ARCHIVE_WORKER_RETENTION_DAYS       Default for --worker-retention-days (7)
-  OPENCODE_DB_ARCHIVE_INTERACTIVE_RETENTION_DAYS  Default for --interactive-retention-days (90)
+  OPENCODE_DB_ARCHIVE_INTERACTIVE_RETENTION_DAYS  Default for --interactive-retention-days (30)
   OPENCODE_DB_HEADLESS_LEDGER  Headless ledger DB (default: headless-runtime/state.db)
-  OPENCODE_ARCHIVE_EVENT_RETENTION_DAYS  Optional archived event expiry, default 0
+  OPENCODE_ARCHIVE_EVENT_RETENTION_DAYS  Archived event expiry, default 7; 0 disables
+  OPENCODE_DB_ARCHIVE_EVENT_IDLE_MINUTES  Default for --worker-event-expiry-minutes (60);
+                             legacy OPENCODE_DB_ARCHIVE_WORKER_EVENT_MINUTES still honoured
+  OPENCODE_DB_EVENT_MAX_BYTES  Event payload ceiling for report/notice/expiry (2 GiB)
+  OPENCODE_DB_ARCHIVE_WORKER_EVENT_BATCH_SIZE   Max events per worker-expiry transaction (500)
+  OPENCODE_DB_ARCHIVE_WORKER_EVENT_BATCH_BYTES  Max event payload bytes per transaction (64 MiB)
                             archive-all always uses an archive beside each active DB;
                             max-duration-seconds applies per DB, not to the inventory.
 
@@ -1992,7 +1789,7 @@ EXAMPLES:
   # Keep the 500 most recently updated active sessions, archive older sessions
   opencode-db-archive.sh archive --keep-sessions 500
 
-  # Archive with defaults (workers 7 days, interactive 90 days, 60s budget)
+  # Archive with defaults (workers 7 days, interactive 30 days, 60s budget)
   opencode-db-archive.sh archive
 
   # Bring an archived session back so OpenCode can resume it

@@ -304,7 +304,9 @@ if [[ "${1:-}" == "api" ]]; then
 			: >"${TEST_ROOT}/pr-snapshot-failure-consumed"
 			exit 1
 		fi
-		if [[ "$_jq_filter" == *"requested_reviewers"* ]]; then
+		if [[ "$_jq_filter" == '.body // ""' ]]; then
+			printf '%s\n' "${TEST_SOURCE_PR_BODY:-Resolves #42}"
+		elif [[ "$_jq_filter" == *"requested_reviewers"* ]]; then
 			printf '%s\037false\037%s\037%s\037%s\n' "$(<"${TEST_ROOT}/pr-state.txt")" \
 				"$(<"${TEST_ROOT}/pr-head.txt")" "$(<"${TEST_ROOT}/requested-reviewers.txt")" \
 				"$(<"${TEST_ROOT}/pr-labels.txt")"

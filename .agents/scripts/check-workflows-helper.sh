@@ -13,6 +13,7 @@
 #   - loc-badge.yml          (template: loc-badge-caller.yml)
 #   - linked-issue-check.yml (template: linked-issue-check-caller.yml, GH#28844)
 #   - release-verify.yml     (template: release-verify-caller.yml)
+#   - issue-triage-gate.yml  (template: issue-triage-gate-caller.yml, GH#36905)
 #
 # Classifies each (repo × workflow) as:
 #
@@ -84,13 +85,16 @@ fi
 # GH#20727: review-bot-gate added.
 # GH#21154: maintainer-gate added (layer-1 defense-in-depth propagation).
 # GH#28844: linked-issue-check added (external contribution visibility).
+# GH#36905: issue-triage-gate added (creation-time external issue trust labels).
 readonly _KNOWN_WORKFLOWS=(
 	"issue-sync.yml:issue-sync-reusable.yml:issue-sync-caller.yml"
 	"review-bot-gate.yml:review-bot-gate-reusable.yml:review-bot-gate-caller.yml"
+	"review-bot-gate-fork-review.yml:review-bot-gate-fork-review-reusable.yml:review-bot-gate-fork-review-caller.yml"
 	"maintainer-gate.yml:maintainer-gate-reusable.yml:maintainer-gate-caller.yml"
 	"loc-badge.yml:loc-badge-reusable.yml:loc-badge-caller.yml"
 	"linked-issue-check.yml:linked-issue-check-reusable.yml:linked-issue-check-caller.yml"
 	"release-verify.yml:release-verify-reusable.yml:release-verify-caller.yml"
+	"issue-triage-gate.yml:issue-triage-gate-reusable.yml:issue-triage-gate-caller.yml"
 )
 
 # Versioned inventory of framework-owned paths superseded by reusable callers.
@@ -411,7 +415,7 @@ _pin_lag_note() {
 # _normalize_wf_for_compare <file> <target_escaped>
 # Normalise a workflow file for byte-comparison:
 #   - Replaces the @<ref> suffix on reusable `uses:` lines with @REF so that
-#     `@main` vs `@v3.9.0` doesn't count as drift.
+#     `@main` vs `@v3.9.0` doesn't count as drift; ignores display comments.
 #   - Replaces `branches: [<name>]` with `branches: [BRANCH]` so repos that
 #     default to `develop` aren't flagged as drifted from a main-defaulting template.
 #   - Strips injected `runner:` keys from `with:` blocks (GH#21877) and removes
@@ -436,6 +440,7 @@ _normalize_wf_for_compare() {
 	#         where a `with:` followed by no children should survive normalisation.
 	sed -E "s|(${_target_escaped})@[^[:space:]]+|\1@REF|g" "$_file" |
 		sed -E 's|(uses:[[:space:]]*[^[:space:]]+/\.github/workflows/[^@[:space:]]+)@[^[:space:]]+|\1@REF|g' |
+		sed -E 's|^([[:space:]]*uses:[[:space:]]*[^[:space:]]+/\.github/workflows/[^@[:space:]]+@REF)[[:space:]]+#.*$|\1|' |
 		sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|' |
 		sed -E 's|^      aidevops_ref: .+$|      aidevops_ref: REF|' |
 		sed -E '/^      aidevops_repository: /d' |
@@ -464,6 +469,7 @@ _normalize_wf_text_for_compare() {
 	printf '%s\n' "$_content" |
 		sed -E "s|(${_target_escaped})@[^[:space:]]+|\1@REF|g" |
 		sed -E 's|(uses:[[:space:]]*[^[:space:]]+/\.github/workflows/[^@[:space:]]+)@[^[:space:]]+|\1@REF|g' |
+		sed -E 's|^([[:space:]]*uses:[[:space:]]*[^[:space:]]+/\.github/workflows/[^@[:space:]]+@REF)[[:space:]]+#.*$|\1|' |
 		sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|' |
 		sed -E 's|^      aidevops_ref: .+$|      aidevops_ref: REF|' |
 		sed -E '/^      aidevops_repository: /d' |

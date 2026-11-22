@@ -63,6 +63,7 @@ When a hook self-blocks or any process reports a Markdown size violation:
 
 1. Review the **whole document** for concision **without losing any detail**: repetition, wordiness, duplicated sections and tables instead of prose. Apply that pass wherever possible; preserve facts, constraints and discoverability.
 2. Only if that is insufficient, split/index while preserving all detail and navigation.
+   - **Verbatim historical records** whose prose must not change (step 1 does not apply): `historical-markdown-archive.py archive SOURCE NEW_DIR` writes LF-bounded parts (default 400 lines), a SHA-256 manifest and a noncanonical README, verifying the staged output against SOURCE before publishing; `verify NEW_DIR [--original SOURCE]` re-checks it. Run `--help` for limits; never use it for active guidance.
 3. Only then consider a justified `complexity-bump-ok` / `COMPLEXITY_GUARD_DISABLE=1` bypass under the existing authorization rules. Record why concision and splitting cannot solve it (for example an exact upstream copy); never silently bypass a gate.
 
 Use this playbook when:
@@ -83,6 +84,13 @@ Two in-repo precedents demonstrate the pattern end-to-end:
 |-----------|-------------|---------------|
 | Simple | `issue-sync-helper.sh` | `issue-sync-lib.sh` |
 | Complex | `headless-runtime-lib.sh` | `headless-runtime-provider.sh`, `headless-runtime-failure.sh`, `headless-runtime-model.sh` |
+
+### Headroom target
+
+Split to 60% of `LARGE_FILE_LINE_THRESHOLD` or less (1200 of 2000 lines; tune with `LARGE_FILE_SPLIT_TARGET_PERCENT`). The original file and every new module must meet it.
+Hot files regrow: `pulse-dispatch-engine.sh` was split to 1766 and then just under 2000 lines, and both times passed 2000 again within days (#36027).
+Split by change axis: put function groups that recent commits touch most (`git log --since=30.days -- <file>`) in their own modules, so later fixes land there.
+The target is the brief's acceptance criterion; the gate still closes the debt issue once the file is below the threshold.
 
 ### 2.1 Orchestrator file
 
@@ -307,6 +315,8 @@ cannot be statically followed without `-x`).
 
 ## Testing
 
+- `file-split-verify.py --base origin/main --head HEAD` (section 7.5):
+  `<paste the summary line, e.g. removed=N added=N removed-only=0 review=0 gated=0 warn=0 ...>`
 - `shellcheck <all-files>` -- clean at warning+error severity
 - Smoke test via the real caller path (`SCRIPT_DIR=... source <orchestrator>`):
   all expected functions resolve; behaviour is identical
@@ -389,6 +399,43 @@ COMPLEXITY_GUARD_DISABLE=1 git push --dry-run
 
 If the dry run passes with the complexity guard disabled, the only remaining
 gate is the CI `complexity-bump-ok` label (section 4.1).
+
+### 7.5 Pure-move verification
+
+Prove the split is a pure move instead of self-assessing "behaviour unchanged":
+
+```bash
+python3 ~/.aidevops/agents/scripts/file-split-verify.py --base origin/main --head HEAD
+# Merged squash PR: --base <merge-sha>^ --head <merge-sha>
+```
+
+It reads only local git (`git diff -U0 --no-renames BASE...HEAD`), so workers,
+reviewers and pulse can run it on any range without GitHub API cost. The first
+line is the summary to paste into the PR body's `## Testing` section:
+
+```text
+removed=N added=N removed-only=N review=N gated=N warn=N residue=N moved-functions=N result=PASS|FAIL
+```
+
+- **removed-only** -- a removed line with no identical added line: logic was
+  deleted or edited. FAIL.
+- **review** -- an added line that is not split scaffolding (blank, comments,
+  include guards, `source` lines with their directory resolution, `unset`,
+  `fi`, `return 0 2>/dev/null || exit 0`). FAIL. The script docstring holds the
+  exact allowlist; scaffolding lines are counted as `residue`.
+- **gated** -- a shell function moved from file A to file B while a trust gate
+  pins `caller_function == "<fn>"` together with A's file identity
+  (`framework_script("A")`, `caller_script == */.agents/scripts/A`).
+  `caller_script` is `BASH_SOURCE[1]` at the wrapper call, the file that
+  *defines* the calling function, so the move silently breaks the allowlist.
+  FAIL: keep the function in A, or update the gate and its tests in the same PR.
+- **warn** -- stale `A::<fn>` pointers (and related `EDIT:` lines) in tracked
+  text, listed as `file:line`. Fix them in the split PR; warnings do not change
+  the exit code.
+
+Exit 0 = pure move, 1 = FAIL, 2 = usage or git error. An intentional
+non-move edit fails by design: list each reported line in the PR body or move
+the edit to a separate PR.
 
 ---
 

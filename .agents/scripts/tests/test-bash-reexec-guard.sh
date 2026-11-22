@@ -211,12 +211,49 @@ else
 fi
 
 # -----------------------------------------------------------------------
+# Test 8b (GH#38197): a first source from inside a subshell must not
+# re-exec. Exec there replaces only the subshell with a second full run of
+# the caller, so top-level side effects repeat and the subshell reports the
+# nested run's status. The top level appends one line per run.
+# -----------------------------------------------------------------------
+if [[ -n "$modern_path" ]] && [[ "$current_major" -lt 4 ]]; then
+	SUBSHELL_SCRIPT="$(mktemp -t "aidevops-test-bash-reexec-sub.XXXXXX")" || SUBSHELL_SCRIPT=""
+	RUNS_FILE="$(mktemp -t "aidevops-test-bash-reexec-runs.XXXXXX")" || RUNS_FILE=""
+	if [[ -n "$SUBSHELL_SCRIPT" && -n "$RUNS_FILE" ]]; then
+		cat >"$SUBSHELL_SCRIPT" <<EOF
+#!/usr/bin/env bash
+echo run >>"$RUNS_FILE"
+(
+	# shellcheck source=/dev/null
+	source "$SHARED" >/dev/null 2>&1
+	echo "subshell_bash=\${BASH_VERSINFO[0]}"
+)
+EOF
+		subshell_output="$(/bin/bash "$SUBSHELL_SCRIPT" 2>&1 || true)"
+		top_level_runs=$(grep -c '^run$' "$RUNS_FILE" 2>/dev/null || true)
+		if [[ "$top_level_runs" == "1" && "$subshell_output" == *"subshell_bash=${current_major}"* ]]; then
+			_pass "subshell source on bash ${current_major} does not re-run the caller"
+		else
+			_fail "subshell source re-executed the caller" \
+				"top_level_runs=${top_level_runs} output: ${subshell_output}"
+		fi
+	else
+		_fail "mktemp failed for subshell re-exec test"
+	fi
+	rm -f "$SUBSHELL_SCRIPT" "$RUNS_FILE"
+else
+	printf 'SKIP: subshell re-exec test (needs /bin/bash < 4 and a modern bash)\n'
+fi
+
+# -----------------------------------------------------------------------
 # Test 9: GH#18830 regression — no $'\0' inside ${...} anywhere in scripts.
 # (Duplicated from test-pulse-dep-graph-bash32-nul-crash.sh as a sanity
-# check, since this task reinforces the same class of fix.)
+# check, since this task reinforces the same class of fix.) The closing
+# quote is required, as in the sibling test: without it `$'\033'` and
+# `$'\036'` (ESC, RS) matched as NUL (GH#38197).
 # -----------------------------------------------------------------------
 nul_in_expansion=$(
-	grep -rn -E '\$\{[^}]*\$'"'"'\\0' "$SCRIPTS_DIR/" \
+	grep -rn -E '\$\{[^}]*\$'"'"'\\0'"'" "$SCRIPTS_DIR/" \
 		--include='*.sh' \
 		--exclude='test-pulse-dep-graph-bash32-nul-crash.sh' \
 		--exclude='test-bash-reexec-guard.sh' 2>/dev/null |

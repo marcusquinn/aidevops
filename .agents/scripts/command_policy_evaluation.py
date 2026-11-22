@@ -27,6 +27,7 @@ from command_policy_process_termination import (
     _evaluate_process_termination,
     _process_termination_guard_path,
 )
+from command_policy_redirect import evaluate_redirect_links
 from trusted_executable import require_trusted_executable
 
 DECISION_RANK = {"allow": 0, "forbid": 1}
@@ -321,6 +322,8 @@ def evaluate_invocations(
             options.runtime_process_identity,
             options.process_table_fixture,
         ),
+        # GH#35655: redirect links are never opened in any session.
+        evaluate_redirect_links(invocations),
     ]
     if options.worker:
         decisions.append(evaluate_worker_signing(invocations))

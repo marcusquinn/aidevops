@@ -18,6 +18,16 @@ tools:
 
 # Release Workflow
 
+## Cloudron release approval handoff
+
+For managed Cloudron packages, follow the [signed publication boundary](../tools/deployment/cloudron-app-publishing-skill.md#publication-boundary-signed-managed-releases).
+After `cloudron-release-approval-helper.sh request` succeeds, include both the
+issue URL and the exact command from its `APPROVAL_COMMAND=` output in the
+completion message. Show the command verbatim in a code block, with the real
+issue number and repository, not just an issue link or a placeholder. Do not
+offer a signing command when request finalization fails: approval signatures
+bind the final issue body, which must be saved before signing.
+
 ## Standard-tier release handoff
 
 Routine aidevops release execution defaults to a **standard-tier local child**
@@ -25,8 +35,9 @@ where the host supports the handoff, rather than the thinking-tier implementatio
 parent. Scripts and CI own deterministic work; the child invokes the canonical
 entry point below and interprets its evidence.
 This is a release-only exception to interactive advisory-only delegation, activated
-after verified merge and explicit trusted publication intent. The primary remains
-responsible for the full-loop outcome. No release intent means no release child.
+after verified merge, the primary's [Release-Scope Sweep](../reference/release-scope-sweep.md),
+and explicit trusted publication intent. The primary remains responsible for the
+full-loop outcome. No release intent means no release child.
 
 **OpenCode fallback (GH#33488):** Keep release execution in the primary session
 that owns the linked worktree. Do not launch a Task child to attempt publication
@@ -99,10 +110,11 @@ finalizes its own lifecycle. Reuse existing routing/outcome telemetry for actual
 model, attempts, escalation and cost per verified release; include parent
 integration and repair cost, and label unavailable cost data rather than guessing.
 When publication succeeds but `terminal_receipt` is null, report **published;
-deployment deferred**, never "Release complete". A validated runtime containing
-the exact tag can be finalised by `aidevops release reconcile <source-PR>` after
-auto-update or `aidevops update`. Explicit reconciliation is lower risk than
-triggering publication-state mutations during a runtime bundle swap.
+deployment deferred**, never "Release complete". Do not hand convergence to the
+user or wait for auto-update: in the same session the primary runs
+`aidevops update` as a bounded operation, then `aidevops release reconcile
+<source-PR>`, and reports the terminal receipt. Explicit reconciliation is lower
+risk than triggering publication-state mutations during a runtime bundle swap.
 
 ## Canonical release entry point
 
@@ -123,6 +135,13 @@ When `main` is protected, the helper reports `release:queued protected-pr=<N>` a
 Before version mutation, the helper reserves the repository's remote release lane. The lane records the active source PR, reviewed source set, phase, tag when known, and terminal receipt without command arguments or secrets. A different source receives the active lane plus exact status/reconcile commands and cannot bump a competing version. The same source resumes through `status` or `reconcile`; process exit does not release queued publication. A same-source lane that remained in the side-effect-free `reserved` phase for at least five minutes, with no tag or terminal receipt, can be recovered through compare-and-swap and a rotated fencing token. Once preparation begins, or a tag or receipt exists, recovery is reconcile-only because the original process may still publish or has crossed a publication boundary. Verified terminal receipt evidence advances the lane to inactive so the next source can reserve it atomically. API/authentication uncertainty fails closed; only a verified missing lane ref uses legacy compatibility.
 
 The underlying version manager verifies the source PR is merged and its merge SHA is reachable, then atomically checks the tree → bumps and validates version files → commits → signs and pushes the tag. The tag workflow verifies immutable provenance before reconciling GitHub, npm OIDC, and Homebrew. A later trusted reconciliation verifies all three channels, runs local deploy sync from a detached tag worktree, and persists receipts. Direct `version-manager.sh release` execution is not a full-loop release because it cannot persist terminal per-PR lifecycle evidence.
+
+Reconciliation requires npm audit signatures JSON with verified attestation bundles
+from `--include-attestations`. Legacy or malformed output is a tooling error, not
+proof of publication or a propagation wait. Use an independently provisioned npm
+with that capability in the reconciliation process's PATH, without changing the
+global npm installation; npm 11.21.2 has been observed working, not established
+as the minimum version. Never skip provenance verification to work around it.
 
 When the release range contains a conventional `perf:` commit (optionally
 scoped or prefixed with `GH#NNN:`), the signed tag includes
@@ -225,6 +244,43 @@ exact reviewed `main` workflow commit while package contents stay pinned to the
 immutable tag. Full contract: `reference/release-publication-controls.md`
 "Intervening-main recovery".
 
+### Local convergence after publication on another host
+
+When the shared lane is already inactive, terminal and published but this host
+has no local receipt, `reconcile` reports `RELEASE_LOCAL_ADOPTION_REQUIRED=1`
+and exits **10** with the exact command:
+
+```bash
+aidevops release adopt-published <SOURCE_PR> --tag vX.Y.Z
+```
+
+Run this explicitly in an interactive maintainer terminal. The command itself
+is local-adoption intent, **not publication consent**. Workers, CI and headless
+sessions cannot invoke it. It requires maintainer-equivalent repository access,
+an exact terminal source/tag lane, independently verified signed provenance and
+merged source membership, all publication channels, a successful exact-tag
+postflight run, and an already materialized exact-tag runtime bundle (version,
+manifest, deployment stamp and sentinel hashes). It does not deploy: on local
+deployment mismatch, run `aidevops update` then retry. A newer deployed descendant
+is not an exact-tag deployment for adoption.
+
+Adoption makes no remote writes: no lane update, publication, tag, version bump,
+workflow dispatch, label or comment. It refuses active competitors and names a
+different terminal tag rather than adopting a superseded one. Before local
+persistence it re-reads and fences the lane by head and canonical JSON digest.
+Distinct `cross-host-adoption/v1` authorization and evidence files preserve the
+operator, timestamp, signed source manifest, tag object/commit, publication and
+postflight runs, verified channel summary and lane revision. Publication
+authorization is never reused or overwritten. Local receipt writers share a
+per-receipt lock. Identical replay and interrupted identical writes are safe;
+conflicting existing receipts/evidence fail closed without replacement. A lock
+left by an interrupted process needs inspection before retry, not blind removal.
+
+An adopted successor can satisfy the predecessor's local receipt dependency only
+after its adoption evidence, current channels, deployment and lane fence verify
+again. The predecessor remains `superseded`, never `published`. Adoption does not
+repair historical receipts automatically or authorize recovery publication.
+
 If an older signed tag already completed GitHub, npm, and Homebrew publication
 but failed only while queuing postflight, do not recover it after a later release
 becomes current. `aidevops release reconcile <older-source-pr>` can instead write
@@ -243,7 +299,7 @@ than rewriting history after publication. Before publication, a new explicitly
 authorized release may transition `release:not-requested` to `release:published`
 or `release:superseded`; other terminal receipts remain immutable.
 
-**DO NOT** run separate bump/tag/push commands. **Prerequisites**: terminal-success PR checks/reviews, observed merged state/SHA, authenticated `gh`, an accessible aidevops repository, and unreleased changelog content (or changelog-only `--force`). The helper fetches `origin/main` and creates its own detached release worktree; it does not require or mutate a clean canonical checkout.
+**DO NOT** run separate bump/tag/push commands. **Prerequisites**: a completed interactive [Release-Scope Sweep](../reference/release-scope-sweep.md) (same-repo issues this session filed are merged or left with reasons), terminal-success PR checks/reviews, observed merged state/SHA, authenticated `gh`, an accessible aidevops repository, and unreleased changelog content (or changelog-only `--force`). The helper fetches `origin/main` and creates its own detached release worktree; it does not require or mutate a clean canonical checkout.
 
 **Related**: `workflows/version-bump.md` · `workflows/changelog.md` · `workflows/postflight.md` · `reference/release-artifact-provenance.md` · `.agents/scripts/validate-version-consistency.sh`
 
@@ -282,6 +338,24 @@ process in `RELEASING.md`, `CONTRIBUTING.md` (Releasing) or `package.json` relea
 scripts, and follow it: bump versions in a linked worktree and PR, merge with
 `full-loop-helper.sh merge`, then tag. With no `VERSION` file, the latest tag
 (`git describe --tags --abbrev=0`) is the baseline for the commit range and bump type.
+Interactive sessions finish the [Release-Scope Sweep](../reference/release-scope-sweep.md) before the version-bump PR.
+
+Concurrent merges make release PRs conflict on the changelog. Coordinate with the
+advisory manual release hold (`manual-release-hold-helper.sh`; stored as a remote
+branch, 60-minute default expiry, fails open on API errors):
+
+1. Open the version-bump PR, then `aidevops release hold OWNER/REPO --pr N --version vX.Y.Z`.
+   It refuses when another hold is active or another open PR already carries that
+   release version (the duplicate guard; also `aidevops release duplicate-check OWNER/REPO vX.Y.Z`).
+2. While held, `full-loop-helper.sh merge` and pulse merges for every other PR in
+   that repo refuse with `MANUAL_RELEASE_HOLD`; the release PR is exempt.
+3. If the release PR needs a rebase, every PR merged before the release merge
+   commit is included in the release; rebase onto the new default branch and re-run CI.
+4. After the release merge, `aidevops release unhold OWNER/REPO` (an unreleased hold
+   expires on its own).
+5. When another session owns the fleet roll-out, record it with
+   `aidevops release owner OWNER/REPO TAG --session ID`; when the Release run and update
+   test finish, `aidevops release owner-notify OWNER/REPO TAG` sends the session-bus notice.
 
 Publication still requires explicit release authority and follows the repository's
 own process. For GitHub repos with Actions enabled, opt into read-only evidence
@@ -355,6 +429,26 @@ gates, publication, and deployment health. It does not rerun source lint/securit
 scans already owned by development, CI, and release preflight. See
 `workflows/postflight.md`.
 
+**Metrics caller pins**: on the installation that owns the maintainer repository
+registry, preview a release pin bump after each aidevops release. Resolve the
+published release SHA and tag together; never substitute a floating branch:
+
+```bash
+source ~/.aidevops/agents/scripts/workflow-release-ref.sh
+release_ref=$(workflow_release_ref marcusquinn/aidevops) || exit 1
+~/.aidevops/agents/scripts/sync-workflows-helper.sh --workflow loc-badge --force-ref --ref "$release_ref"
+# Review the dry-run, including intentional pins, then repeat with --apply.
+```
+
+This uses the normal per-repository PR path, not direct default-branch pushes.
+For the initial legacy migration, use `--workflow loc-badge --pin-floating`
+instead: it selects only existing `@main` callers without registry ref overrides,
+preserving tags and SHA pins. Local-only, contributed, opted-out (`badges: false`)
+and upstream mirror repositories are excluded from that migration. Run the
+default-branch floating-ref audit again after the rollout PRs merge. These are
+explicit release-owner operations rather than automatic release fan-out: preview
+intentional pins and registry overrides before any `--force-ref` application.
+
 Verify deployed helpers by absolute path (`~/.aidevops/agents/scripts/<helper>.sh`); the current session's `PATH` stays pinned to its start-time runtime bundle until a new session starts. Never verify a side-effect fix through `PATH`.
 
 **Postflight quota deferral**: the queue step tries `SYNC_PAT` first, then the job
@@ -393,11 +487,14 @@ git commit -m "fix: resolve critical issue"
 |-------|----------|
 | Signed tag already exists | Do not delete or retag it. Run `aidevops release status <source-pr>` and then `aidevops release reconcile <source-pr>`. |
 | Publication queued/interrupted | Exit `8` is durable pending state. Reconcile the same source PR; never bump again for the same tag. |
-| Another source owns the release lane | Run the printed `aidevops release status <active-pr>` command. Reconcile that source when its remote work is ready; aggregate later sources only through a reviewed exact-tip PR. |
-| Lane `reconcile-required` with `tag=pending`; `reconcile` exits 2 (tag not found) | Version-manager failed before tagging, so there is nothing to reconcile and `recover-reservation` (reserved phase only) does not apply. Re-run the lane's own source: `aidevops release <type> <lane-source-pr> incremental`. It recovers the failed pre-publication lane, keeps the reviewed authorization, and continues from a fresh pinned snapshot; then follow the normal exit-`8` reconcile flow. |
-| Expected/observed source mismatch | Stop before mutation. Correct the reviewed aggregation integrity manifest and verify each source is a PR merged to the default branch; bare ancestry without merged-PR provenance is insufficient. |
+| Reconcile exit `8` after workflow success; output has `CHANNEL_PENDING=<channel>` and `RELEASE_WAIT=channel-propagation retry_after=<time>` | The named channel (`github-release`, `npm-metadata`, `npm-provenance`, `homebrew-formula`, `homebrew-sha`) is not yet verifiable, usually registry/attestation propagation. Wait until `retry_after`, then re-run reconcile; do not bump or dispatch manually. Exit codes are unchanged. |
+| Another source owns the release lane | Run the printed `aidevops release status <active-pr>` command. Reconcile that source when its remote work is ready; aggregate later sources only through a reviewed exact-tip PR. A `RELEASE_OWNER_SESSION` line names the advisory owner session and a ready `aidevops sessions ask` command; `aidevops sessions watch-release <owner/repo>` sends finalize and dead-executor notices. Details: `reference/session-bus.md` "Release notices". |
+| Lane `reconcile-required` with `tag=pending`; `reconcile` exits 2 (tag not found) | Version-manager failed before tagging, so there is nothing to reconcile and `recover-reservation` (reserved phase only) does not apply. Re-run the lane's own source: `aidevops release <type> <lane-source-pr> incremental`. It recovers the failed pre-publication lane, keeps the reviewed authorization, and continues from a fresh pinned snapshot; then follow the normal exit-`8` reconcile flow. Run it on the executor host (`executor.host_id` in the lane state): the reviewed authorization file lives only there, so from any other host the command exits `8` and prints that `host_id` with the command to run. |
+| Expected/observed source mismatch | Stop before mutation. The exiting executor releases its own untouched reservation by CAS (`abandoned-prepublication`); refresh the reviewed source set and retry the authorized command immediately. Correct the reviewed aggregation integrity manifest and verify each source is a PR merged to the default branch; bare ancestry without merged-PR provenance is insufficient. |
+| Dead executor with a tagless `reserved` lane | If owner cleanup did not run, wait for the configured grace (at least five minutes) since the timestamp printed by status, then run `aidevops release recover-reservation <source-pr>`. Status is read-only; retrying `patch` before recovery cannot resume this lane. Live, foreign, legacy, recovery, or concurrently preparing owners remain protected. |
 | Historical immutable tag omitted authorized PRs | Preserve pending receipts and write detached `authorization-gap` evidence. Do not retag or create terminal cleanup evidence. |
 | Published tag is older than the latest release | Never republish or deploy the older tag. Reconcile it only through verified post-publication supersession; uncertain evidence remains `release:failed`. |
+| `GITHUB_RELEASE=deferred reason=installation-rate-limit` | The run created npm/Homebrew but deferred the GitHub Release on Actions installation quota (`Record deferred GitHub release` step). Re-run `aidevops release reconcile <PR>` after the printed `GITHUB_RELEASE_RETRY_AFTER`: it dispatches one same-tag recovery, and retries recoveries that also deferred, up to 4 correlated recovery runs. On `GITHUB_RELEASE_RECOVERY=exhausted`, wait for quota to reset and dispatch `publish-packages.yml` from `main` with the same `tag` and `correlation` inputs once. |
 | GitHub CLI not authenticated | `gh auth login` (token needs `repo` scope) |
 | Version mismatch | `./.agents/scripts/version-manager.sh validate` — see `version-bump.md` |
-| `fatal: No tags can describe` / `RELEASE_SHALLOW_STORE` | The release control worktree's shared object store is shallow. `aidevops release` self-heals with a bounded `git fetch --unshallow --tags origin` in that disposable control worktree before reserving the lane; a `RELEASE_SHALLOW_STORE action=disabled|failed` error means auto-unshallow is off (`AIDEVOPS_SHALLOW_UNSHALLOW=0`) or the fetch failed. Run `git fetch --unshallow --tags origin` from a linked worktree, never the canonical checkout, then retry. |
+| `fatal: No tags can describe` / `RELEASE_SHALLOW_STORE` | The release control worktree's shared object store is shallow. `aidevops release` self-heals with a bounded `git fetch --unshallow --tags origin` in that disposable control worktree before reserving the lane; a `RELEASE_SHALLOW_STORE action=disabled\|failed` error means auto-unshallow is off (`AIDEVOPS_SHALLOW_UNSHALLOW=0`) or the fetch failed. Run `git fetch --unshallow --tags origin` from a linked worktree, never the canonical checkout, then retry. |

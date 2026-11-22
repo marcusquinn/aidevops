@@ -17,32 +17,41 @@
  * lifetime cooldown bookkeeping that all callers share.
  */
 
-import { ensureValidToken, getAccounts } from "./oauth-pool.mjs";
+import {
+  ensureValidToken, getAccounts, patchAccount, poolAccountKey, poolAccountLabel,
+} from "./oauth-pool.mjs";
+import { compareByReset, shouldReplaceUsage, usagePatchFromRateLimitInfo } from "./oauth-pool-ordering.mjs";
 
 /** Default cooldown (ms) before retrying a rate-limited account. */
 const RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
-/** Map<email, expiryTimestamp> — accounts known to be rate-limited. */
+/**
+ * Map<seatKey, expiryTimestamp> — seats known to be rate-limited. Keyed by
+ * poolAccountKey (email + optional orgId, GH#38959) so a limited Team seat
+ * does not also bench the same-email Personal seat.
+ */
 const rateLimitedAccounts = new Map();
 
 /**
- * Sort accounts by descending priority then ascending email for stable order.
+ * Sort accounts by descending priority then ascending seat key for stable order.
  */
 function sortAccountsByPriority(accounts) {
   return [...accounts].sort((a, b) => {
     const pa = Number(a?.priority || 0);
     const pb = Number(b?.priority || 0);
     if (pa !== pb) return pb - pa;
-    return (a?.email || "").localeCompare(b?.email || "");
+    const byReset = compareByReset(a, b);
+    if (byReset !== 0) return byReset;
+    return poolAccountKey(a).localeCompare(poolAccountKey(b));
   });
 }
 
 /**
- * Mark an account as rate-limited so subsequent requests skip it.
- * @param {string} email
+ * Mark a seat as rate-limited so subsequent requests skip it.
+ * @param {{key: string, label?: string}} account - entry from getAvailableAccounts()
  * @param {string} [resetsAt] - optional ISO/epoch from Claude's rate_limit_event
  */
-export function markAccountRateLimited(email, resetsAt) {
+export function markAccountRateLimited(account, resetsAt) {
   let expiry = Date.now() + RATE_LIMIT_COOLDOWN_MS;
   if (resetsAt) {
     const parsed = Number(resetsAt) > 1e9 ? Number(resetsAt) * 1000 : Date.parse(resetsAt);
@@ -50,17 +59,18 @@ export function markAccountRateLimited(email, resetsAt) {
       expiry = parsed;
     }
   }
-  rateLimitedAccounts.set(email, expiry);
+  rateLimitedAccounts.set(account.key, expiry);
   console.error(
-    `[aidevops] Claude proxy: account ${email} rate-limited until ${new Date(expiry).toISOString()}`,
+    `[aidevops] Claude proxy: account ${account.label || account.key} rate-limited until ${new Date(expiry).toISOString()}`,
   );
 }
 
-export function isAccountRateLimited(email) {
-  const expiry = rateLimitedAccounts.get(email);
+/** @param {string} seatKey */
+export function isAccountRateLimited(seatKey) {
+  const expiry = rateLimitedAccounts.get(seatKey);
   if (!expiry) return false;
   if (Date.now() >= expiry) {
-    rateLimitedAccounts.delete(email);
+    rateLimitedAccounts.delete(seatKey);
     return false;
   }
   return true;
@@ -68,17 +78,17 @@ export function isAccountRateLimited(email) {
 
 /**
  * Get all available accounts with valid tokens, skipping rate-limited ones.
- * Returns array of `{ email, token }` in priority order.
+ * Returns array of `{ email, key, label, token }` in priority order.
  */
 export async function getAvailableAccounts() {
   const accounts = sortAccountsByPriority(getAccounts("anthropic"));
   const available = [];
   for (const account of accounts) {
-    const email = account?.email || "unknown";
-    if (isAccountRateLimited(email)) continue;
+    const key = poolAccountKey(account) || "unknown";
+    if (isAccountRateLimited(key)) continue;
     const token = await ensureValidToken("anthropic", account);
     if (token) {
-      available.push({ email, token });
+      available.push({ email: account?.email || "unknown", key, label: poolAccountLabel(account), token });
     }
   }
   return available;
@@ -114,7 +124,26 @@ export function buildChildEnvWithToken(token) {
  * to clear injected credentials so the CLI uses its native auth.
  */
 export function getNativeCliFallback() {
-  return { email: "native-cli-auth", token: null };
+  return { email: "native-cli-auth", key: "native-cli-auth", label: "native-cli-auth", token: null };
+}
+
+/**
+ * Persist the usage window carried by a stream `rate_limit_event` onto the
+ * seat (t19125) so rotation can prefer the soonest-resetting seat. Best-effort:
+ * never throws, never logs tokens or headers.
+ * @param {{key: string}|null|undefined} account - entry from getAvailableAccounts()
+ * @param {object} event - parsed stream event
+ */
+export function recordAccountUsage(account, event) {
+  if (!account?.key || event?.type !== "rate_limit_event") return;
+  try {
+    const patch = usagePatchFromRateLimitInfo(event.rate_limit_info);
+    if (!patch) return;
+    const current = getAccounts("anthropic").find((a) => poolAccountKey(a) === account.key);
+    if (current && shouldReplaceUsage(current, patch)) patchAccount("anthropic", account.key, patch);
+  } catch {
+    /* usage capture must never block the request path */
+  }
 }
 
 /**

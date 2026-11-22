@@ -18,10 +18,35 @@
 #   _normalize_stale_get_dispatch_info — Read PID, timestamp, runner from dispatch comment
 #   _normalize_stale_should_skip_reset — Gate reset decision (t1933 + t2375 cross-runner)
 #   _normalize_unassign_stale          — Detect and reset stale runner assignments
+#   _normalize_unassign_available_stale — Release stale assignees on status:available issues (GH#39327)
 
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_ISSUE_RECONCILE_STALE_LOADED:-}" ]] && return 0
 _PULSE_ISSUE_RECONCILE_STALE_LOADED=1
+# GH#36186: extra audit tokens for the next stale release (set per candidate).
+_NORMALIZE_STALE_RELEASE_DETAIL=""
+
+# GH#36553: local-first recovery; the existing close command owns all GH guards.
+_normalize_stale_close_pending_checkpoint_leases() {
+	local module="${BASH_SOURCE[0]%/*}/terminal_lease_recovery.py"
+	local summary=""
+	summary=$(python3 "$module" drain) || return 1
+	printf '[pulse-wrapper] Pending checkpoint leases: %s\n' "$summary" >>"$LOGFILE"
+	return 0
+}
+
+# GH#37344: replay terminal claim releases that GitHub admission deferred. The
+# consumer revalidates authority, claim, owner and worker liveness per row and
+# is bounded per cycle; deferral keeps the private retry row for a later pass.
+_normalize_deferred_claim_releases() {
+	local helper="${BASH_SOURCE[0]%/*}/headless-runtime-release-retry.sh"
+	local summary=""
+	[[ -x "$helper" ]] || return 0
+	summary=$(timeout 120 "$helper" drain 2>/dev/null) || return 0
+	[[ "$summary" == "candidates=0 resolved=0 retained=0" ]] ||
+		printf '[pulse-wrapper] Deferred claim releases: %s\n' "$summary" >>"$LOGFILE"
+	return 0
+}
 
 #######################################
 # (Phase 12 helper) Reset a single stale issue's labels and assignee.
@@ -191,16 +216,168 @@ _normalize_stale_find_open_pr() {
 	return 0
 }
 
+#######################################
+# GH#36186: trusted issue comments (all pages, slurped) for lease liveness.
+# Thin wrapper so tests can substitute evidence without a gh stub.
+# Args: $1 slug, $2 issue number
+#######################################
+_normalize_stale_issue_comments() {
+	local slug="$1"
+	local issue_num="$2"
+	gh api "repos/${slug}/issues/${issue_num}/comments?per_page=100" --paginate --slurp 2>/dev/null || return 1
+	return 0
+}
+
+#######################################
+# GH#36186: newest activity epoch of a PR: the later of its updatedAt and its
+# head commit date. Prints nothing and returns 1 when it cannot be read.
+# Args: $1 slug, $2 PR number
+#######################################
+_normalize_stale_pr_activity_epoch() {
+	local slug="$1"
+	local pr_number="$2"
+	local pr_json=""
+	pr_json=$(gh pr view "$pr_number" --repo "$slug" --json updatedAt,commits 2>/dev/null) || return 1
+	printf '%s' "$pr_json" | jq -er '
+		[.updatedAt, ((.commits // []) | last | .committedDate?)] |
+		map(select(type == "string" and length > 0) | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) |
+		max | select(. != null) | floor
+	' 2>/dev/null || return 1
+	return 0
+}
+
+#######################################
+# GH#36186: true when a local exact-head continuation for the draft (session
+# key built by _prrts_safe_slug) or an issue worker session is still running.
+# Args: $1 slug, $2 PR number, $3 issue number
+#######################################
+_normalize_stale_continuation_process_live() {
+	local slug="$1"
+	local pr_number="$2"
+	local issue_num="$3"
+	local safe_slug=""
+	safe_slug=$(printf '%s' "$slug" | tr '/:' '--' | sed 's/[][\.*^$+?(){}|]/\\&/g')
+	if pgrep -f "session-key[[:space:]]+pr-checkpoint-continuation-${safe_slug}-${pr_number}([^0-9]|$)" >/dev/null 2>&1 ||
+		pgrep -f "session-key[[:space:]]+issue-${issue_num}([^0-9]|$)" >/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# GH#36186: decide whether a trusted claim or lease still owns the issue: the
+# newest DISPATCH_CLAIM/DISPATCH_LEASE line per lease token is non-terminal and
+# its expires_at is in the future. Comments by OWNER/MEMBER/COLLABORATOR or by
+# this runner count; other authors cannot extend a claim.
+# Args: $1 comments JSON (slurped pages or flat), $2 now epoch, $3 self login
+# Returns: 0 live lease, 1 none, 2 unreadable evidence
+#######################################
+_normalize_stale_has_live_lease() {
+	local comments="$1"
+	local now_epoch="$2"
+	local self_login="${3:-}"
+	local live=""
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || return 2
+	live=$(printf '%s' "$comments" | jq -r --argjson now "$now_epoch" --arg self "$self_login" '
+		def field($k): (capture("(^| )" + $k + "=(?<v>[^ ]+)") | .v) // "";
+		def trusted_author: ((.author_association // "") as $a |
+			$a == "OWNER" or $a == "MEMBER" or $a == "COLLABORATOR") or
+			($self != "" and (.user.login // "") == $self);
+		[if type == "array" then flatten[] else empty end | objects | select(trusted_author)]
+		| sort_by((.created_at // ""), (.id // 0))
+		| [.[] | (.body // "") | split("\n")[] | sub("\r$"; "") |
+			select(test("^DISPATCH_(CLAIM|LEASE) "))]
+		| to_entries
+		| reduce .[] as $e ({}; ($e.value | field("lease_token")) as $t |
+			.[(if $t == "" then "line-\($e.key)" else $t end)] = $e.value)
+		| [.[] | select(field("phase") != "terminal") | field("expires_at")] as $exp
+		| if any($exp[]; . != "" and (test("^[0-9]+$") | not)) then "unreadable"
+		  else ([$exp[] | (tonumber? // 0) | select(. > $now)] | length > 0)
+		  end
+	' 2>/dev/null) || return 2
+	[[ "$live" == true ]] && return 0
+	[[ "$live" == false ]] && return 1
+	return 2
+}
+
+#######################################
+# GH#36186: a worker draft blocks stale reset only while it shows liveness.
+# Returns 0 when the draft is provably abandoned (no local continuation
+# process, no live lease, no PR activity within max_runtime), 1 otherwise.
+# Unreadable evidence fails closed (returns 1).
+# Args: $1 issue, $2 slug, $3 PR number, $4 now epoch, $5 max runtime seconds,
+#       $6 self login
+#######################################
+_normalize_stale_draft_is_abandoned() {
+	local stale_num="$1"
+	local slug="$2"
+	local pr_number="$3"
+	local now_epoch="$4"
+	local max_runtime="$5"
+	local self_login="${6:-}"
+	local comments="" lease_rc=0 activity_epoch=""
+	[[ "$pr_number" =~ ^[1-9][0-9]*$ && "$now_epoch" =~ ^[0-9]+$ && "$max_runtime" =~ ^[0-9]+$ ]] || return 1
+	if _normalize_stale_continuation_process_live "$slug" "$pr_number" "$stale_num"; then
+		echo "[pulse-wrapper] Stale assignment skip (draft PR #${pr_number} continuation running): #${stale_num} in ${slug}" >>"$LOGFILE"
+		return 1
+	fi
+	if ! comments=$(_normalize_stale_issue_comments "$slug" "$stale_num"); then
+		echo "[pulse-wrapper] Stale assignment skip (draft PR #${pr_number} lease lookup fail-closed): #${stale_num} in ${slug}" >>"$LOGFILE"
+		return 1
+	fi
+	_normalize_stale_has_live_lease "$comments" "$now_epoch" "$self_login" || lease_rc=$?
+	if [[ "$lease_rc" -ne 1 ]]; then
+		echo "[pulse-wrapper] Stale assignment skip (draft PR #${pr_number} lease live or unreadable rc=${lease_rc}): #${stale_num} in ${slug}" >>"$LOGFILE"
+		return 1
+	fi
+	if ! activity_epoch=$(_normalize_stale_pr_activity_epoch "$slug" "$pr_number") ||
+		[[ ! "$activity_epoch" =~ ^[0-9]+$ ]]; then
+		echo "[pulse-wrapper] Stale assignment skip (draft PR #${pr_number} activity lookup fail-closed): #${stale_num} in ${slug}" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ $((now_epoch - activity_epoch)) -lt "$max_runtime" ]]; then
+		echo "[pulse-wrapper] Stale assignment skip (draft PR #${pr_number} active $((now_epoch - activity_epoch))s ago < max_runtime ${max_runtime}s): #${stale_num} in ${slug}" >>"$LOGFILE"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Decide whether open-PR linkage blocks a stale reset. Ready PRs, protected
+# drafts and ambiguous linkage always block. GH#36186: an unprotected worker
+# draft (draft_checkpoint) blocks only while it shows liveness; an abandoned
+# draft falls through to the remaining checks and the audited release, after
+# which dispatch-stalled continues the exact head (its per-head/per-PR fuses
+# bound retries).
+# Args: $1 issue, $2 slug, $3 now epoch, $4 max runtime, $5 self login
+#       ($3-$5 optional; without them every open PR blocks)
+# Sets: _NORMALIZE_STALE_RELEASE_DETAIL (extra audit tokens for the release)
+# Returns: 0 = block reset, 1 = continue stale evaluation
+#######################################
 _normalize_stale_open_pr_blocks_reset() {
 	local stale_num="$1"
 	local slug="$2"
-	local open_pr=""
+	local now_epoch="${3:-}"
+	local max_runtime="${4:-}"
+	local self_login="${5:-}"
+	local open_pr="" open_pr_number="" open_pr_kind=""
+	_NORMALIZE_STALE_RELEASE_DETAIL=""
 	if ! open_pr=$(_normalize_stale_find_open_pr "$stale_num" "$slug"); then
 		echo "[pulse-wrapper] Stale assignment skip (open-PR lookup fail-closed): #${stale_num} in ${slug} — authoritative linkage unavailable" >>"$LOGFILE"
 		return 0
 	fi
 	if [[ -n "$open_pr" ]]; then
-		echo "[pulse-wrapper] Stale assignment skip (open PR #${open_pr%%|*}): #${stale_num} in ${slug} — durable implementation handoff exists" >>"$LOGFILE"
+		open_pr_number="${open_pr%%|*}"
+		open_pr_kind=""
+		[[ "$open_pr" == *"|"* ]] && open_pr_kind="${open_pr#*|}"
+		if [[ "$open_pr_kind" == "draft_checkpoint" && -n "$now_epoch" && -n "$max_runtime" ]] &&
+			_normalize_stale_draft_is_abandoned "$stale_num" "$slug" "$open_pr_number" \
+				"$now_epoch" "$max_runtime" "$self_login"; then
+			echo "[pulse-wrapper] Stale assignment candidate (abandoned worker draft PR #${open_pr_number}): #${stale_num} in ${slug} — no live process, lease or PR activity within ${max_runtime}s" >>"$LOGFILE"
+			_NORMALIZE_STALE_RELEASE_DETAIL="abandoned_draft_pr=${open_pr_number}"
+			return 1
+		fi
+		echo "[pulse-wrapper] Stale assignment skip (open PR #${open_pr_number}): #${stale_num} in ${slug} — durable implementation handoff exists" >>"$LOGFILE"
 		return 0
 	fi
 	return 1
@@ -211,7 +388,8 @@ _normalize_stale_open_pr_blocks_reset() {
 # (worker still active) or reset (worker gone).
 #
 # Applies checks in order:
-#   1. Authoritative open-PR linkage — durable handoff evidence blocks reset.
+#   1. Authoritative open-PR linkage — durable handoff evidence blocks reset,
+#      except an abandoned unprotected worker draft (GH#36186).
 #   2. Local pgrep — is any process referencing this issue number still running?
 #   3. Dispatch-comment ownership gate (t1933 + t2375):
 #        - gh-api failure to fetch dispatch info → fail-CLOSED (skip).
@@ -243,8 +421,8 @@ _normalize_stale_should_skip_reset() {
 	# An open PR linked by GitHub's authoritative closing metadata is durable
 	# ownership evidence even after the worker process and dispatch lease expire.
 	# Indeterminate linkage fails closed so transient API faults cannot launch a
-	# competing implementation.
-	if _normalize_stale_open_pr_blocks_reset "$stale_num" "$slug"; then
+	# competing implementation. GH#36186: abandoned worker drafts do not block.
+	if _normalize_stale_open_pr_blocks_reset "$stale_num" "$slug" "$now_epoch" "$cross_runner_max_runtime" "$self_login"; then
 		return 0
 	fi
 
@@ -393,17 +571,37 @@ _normalize_unassign_stale() {
 	local total_reset=0
 	local total_candidates=0
 
+	# GH#37568: resume after the repo this pass last started (when the
+	# normalization driver supplies the cursor; standalone use keeps order).
+	local stale_slugs=""
+	stale_slugs=$(jq -r '.initialized_repos[] | select((.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
+	if declare -F _normalize_rotated_slugs >/dev/null 2>&1; then
+		stale_slugs=$(_normalize_rotated_slugs unassign_stale "$stale_slugs")
+	fi
+
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
+		if declare -F _normalize_mark_repo_started >/dev/null 2>&1; then
+			_normalize_mark_repo_started unassign_stale "$slug"
+		fi
 		if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
 			|| ! repo_allows_pulse_write_actions "$slug"; then
 			continue
 		fi
 
 		# Find issues assigned to runner_user with active-dispatch labels
-		local stale_json
-		stale_json=$(gh_issue_list --repo "$slug" --assignee "$runner_user" --state open \
-			--json number,labels,updatedAt --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || stale_json=""
+		local stale_json="" _listing_rc=0
+		stale_json=$(_normalize_repo_listing "$slug") || _listing_rc=$?
+		if [[ "$_listing_rc" -eq 2 ]]; then
+			stale_json=$(gh_issue_list --repo "$slug" --assignee "$runner_user" --state open \
+				--json number,labels,updatedAt --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || stale_json=""
+		elif [[ "$_listing_rc" -eq 0 ]]; then
+			# Shared listing is unfiltered: keep only issues assigned to this runner.
+			stale_json=$(printf '%s' "$stale_json" | jq -c --arg u "$runner_user" --argjson n "$PULSE_QUEUED_SCAN_LIMIT" \
+				'[.[] | select(.assignees // [] | map(.login) | index($u))] | .[0:$n]' 2>/dev/null) || stale_json=""
+		else
+			stale_json=""
+		fi
 		[[ -n "$stale_json" && "$stale_json" != "null" ]] || continue
 
 		# Filter: has status:queued or status:in-progress, updatedAt older than _stale_threshold
@@ -431,7 +629,7 @@ _normalize_unassign_stale() {
 			local release_device
 			release_device=$(_normalize_stale_local_device_id)
 			if ! _normalize_stale_post_release "$stale_num" "$slug" "$runner_user" \
-				"device=${release_device:-unknown} stale_threshold_s=${_stale_threshold}"; then
+				"device=${release_device:-unknown} stale_threshold_s=${_stale_threshold}${_NORMALIZE_STALE_RELEASE_DETAIL:+ ${_NORMALIZE_STALE_RELEASE_DETAIL}}"; then
 				echo "[pulse-wrapper] Stale assignment skip (CLAIM_RELEASED not persisted): #${stale_num} in ${slug}" >>"$LOGFILE"
 				continue
 			fi
@@ -439,11 +637,117 @@ _normalize_unassign_stale() {
 			_normalize_clear_status_labels "$stale_num" "$slug" "$runner_user" || true
 			total_reset=$((total_reset + 1))
 		done <<<"$stale_issues"
-	done < <(jq -r '.initialized_repos[] | select((.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
+	done <<<"$stale_slugs"
 
 	# t2372: always log scan summary so silent runs are visible in pulse log
 	# and operators can confirm the sweep is firing per-cycle.
 	echo "[pulse-wrapper] Stale assignment scan: threshold=${_stale_threshold}s candidates=${total_candidates} reset=${total_reset}" >>"$LOGFILE"
 
+	return 0
+}
+
+#######################################
+# Pass 2c (GH#39327): release stale assignees from open status:available +
+# auto-dispatch issues. _normalize_unassign_stale only sees active-status
+# issues and _action_rsd_single only heals status:done, so a reopened issue
+# kept a closed lifecycle's assignee, which demotes it behind all fresh work
+# on every other runner (GH#38333 ordering).
+#
+# Fast path: _pir_prior_lifecycle_assignees names assignees added before the
+# latest reopen; exactly those logins are removed. Otherwise the existing
+# `dispatch-dedup-helper.sh is-assigned` guard decides: its stale recovery is
+# positive-proof, fail-closed and writes the audit comment. No staleness rule
+# is reimplemented here. Any read failure makes no mutation.
+#
+# Args:
+#   $1 runner_user  — GH login of the current runner
+#   $2 repos_json   — path to repos.json
+#   $3 now_epoch    — current Unix timestamp
+#   $4 dedup_helper — path to dispatch-dedup-helper.sh
+# Env: AIDEVOPS_AVAILABLE_STALE_ASSIGNEE_CAP (default 5) issues per cycle,
+#      STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS (default 600)
+# Returns: 0 always (best-effort)
+#######################################
+_normalize_unassign_available_stale() {
+	local runner_user="$1"
+	local repos_json="$2"
+	local now_epoch="$3"
+	local dedup_helper="$4"
+
+	local cap="${AIDEVOPS_AVAILABLE_STALE_ASSIGNEE_CAP:-5}"
+	[[ "$cap" =~ ^[0-9]+$ ]] || cap=5
+	local threshold="${STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS:-600}"
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=600
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || return 0
+
+	local processed=0 released=0 slugs=""
+	slugs=$(jq -r '.initialized_repos[] | select((.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" 2>/dev/null) || slugs=""
+	if declare -F _normalize_rotated_slugs >/dev/null 2>&1; then
+		slugs=$(_normalize_rotated_slugs unassign_available_stale "$slugs")
+	fi
+
+	local slug
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+		[[ "$processed" -lt "$cap" ]] || break
+		if declare -F _normalize_mark_repo_started >/dev/null 2>&1; then
+			_normalize_mark_repo_started unassign_available_stale "$slug"
+		fi
+		if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
+			|| ! repo_allows_pulse_write_actions "$slug"; then
+			continue
+		fi
+
+		local listing="" listing_rc=0
+		listing=$(_normalize_repo_listing "$slug") || listing_rc=$?
+		if [[ "$listing_rc" -eq 2 ]]; then
+			listing=$(gh_issue_list --repo "$slug" --state open \
+				--json number,assignees,labels,createdAt,updatedAt \
+				--limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || listing=""
+		elif [[ "$listing_rc" -ne 0 ]]; then
+			listing=""
+		fi
+		[[ -n "$listing" && "$listing" != "null" ]] || continue
+
+		local candidates=""
+		local frac_re='\.[0-9]+Z$'
+		candidates=$(printf '%s' "$listing" | jq -r --arg cutoff "$((now_epoch - threshold))" --arg frac "$frac_re" '
+			[.[] | select(
+				(.labels | map(.name)) as $l
+				| ($l | index("status:available")) and ($l | index("auto-dispatch"))
+				and ((.assignees // []) | length > 0)
+				and ([$l[] | select(. == "status:queued" or . == "status:in-progress"
+					or . == "status:in-review" or . == "status:claimed"
+					or . == "hold-for-review" or . == "needs-maintainer-review"
+					or . == "parent-task" or . == "persistent" or . == "no-auto-dispatch")] | length == 0)
+				and ((.updatedAt | sub($frac; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < ($cutoff | tonumber))
+			) | .number] | .[]' 2>/dev/null) || candidates=""
+		[[ -n "$candidates" ]] || continue
+
+		local num
+		while IFS= read -r num; do
+			[[ "$num" =~ ^[0-9]+$ ]] || continue
+			[[ "$processed" -lt "$cap" ]] || break
+			processed=$((processed + 1))
+
+			local issue_json="" stale=""
+			issue_json=$(printf '%s' "$listing" | jq -c --argjson n "$num" '.[] | select(.number == $n)' 2>/dev/null) || issue_json=""
+			[[ -n "$issue_json" ]] || continue
+			stale=$(_pir_prior_lifecycle_assignees "$slug" "$num" "$issue_json") || stale=""
+			if [[ -n "$stale" ]]; then
+				if gh issue edit "$num" --repo "$slug" --remove-assignee "$stale" >/dev/null 2>&1; then
+					released=$((released + 1))
+					echo "[pulse-wrapper] Available stale assignment: released prior-lifecycle assignees (${stale}) on #${num} in ${slug}" >>"$LOGFILE"
+				fi
+				continue
+			fi
+			if [[ -x "$dedup_helper" ]]; then
+				# Stale recovery (and its audit comment) lives inside is-assigned.
+				"$dedup_helper" is-assigned "$num" "$slug" "$runner_user" >/dev/null 2>&1 || true
+			fi
+		done <<<"$candidates"
+	done <<<"$slugs"
+
+	echo "[pulse-wrapper] Available stale assignment scan: cap=${cap} processed=${processed} prior_lifecycle_released=${released}" >>"$LOGFILE"
 	return 0
 }

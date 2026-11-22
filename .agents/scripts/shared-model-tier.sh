@@ -145,6 +145,41 @@ model_routing_custom_table_validation_findings() {
 }
 
 #######################################
+# Print custom-table entries using providers unavailable to headless workers.
+# Google is excluded because it is also a native API-key provider.
+#######################################
+model_routing_custom_table_interactive_only_findings() {
+	local custom_table="$1"
+	local framework_table="$2"
+	[[ -n "$custom_table" && "$custom_table" != "$framework_table" ]] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+	jq -r '
+		(.tiers // {}) | to_entries[]
+		| select((.value | type) == "object" and (.value.models | type) == "array")
+		| .key as $tier
+		| .value.models[] | strings
+		| select(test("^(claudecli|cursor)/"))
+		| "\($tier): \(.)"
+	' "$custom_table" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Warn once about interactive-only providers in custom routing tables.
+#######################################
+model_routing_warn_interactive_only_providers() {
+	local custom_table="$1"
+	local framework_table="$2"
+	local findings=""
+	[[ "${_MODEL_ROUTING_INTERACTIVE_ONLY_WARNING_EMITTED:-0}" != "1" ]] || return 0
+	findings=$(model_routing_custom_table_interactive_only_findings "$custom_table" "$framework_table") || return 0
+	[[ -n "$findings" ]] || return 0
+	_MODEL_ROUTING_INTERACTIVE_ONLY_WARNING_EMITTED=1
+	printf 'WARNING: custom model routing table lists interactive-only providers; headless workers cannot use them and fall through to the next candidate (use anthropic/* via the OAuth pool for Claude subscriptions): %s\n' "${findings//$'\n'/; }" >&2
+	return 0
+}
+
+#######################################
 # Warn once when a custom routing-table tier cannot supply candidates.
 #######################################
 model_routing_warn_invalid_custom_table() {
@@ -180,6 +215,7 @@ model_tier_candidates() {
 	framework_table=$(model_routing_framework_table_path 2>/dev/null) || framework_table=""
 	if command -v jq >/dev/null 2>&1; then
 		model_routing_warn_invalid_custom_table "$routing_table" "$framework_table"
+		model_routing_warn_interactive_only_providers "$routing_table" "$framework_table"
 		local table=""
 		local previous_table=""
 		for table in "$routing_table" "$framework_table"; do
@@ -203,8 +239,8 @@ model_tier_candidates() {
 
 	case "$tier" in
 	simple) printf '%s\n' "openai/gpt-6-luna" "anthropic/claude-haiku-5-5" ;;
-	standard) printf '%s\n' "openai/gpt-6.1-sol" "openai/gpt-5.6-terra" "zai-coding-plan/glm-5.2" "anthropic/claude-sonnet-5-5" ;;
-	thinking) printf '%s\n' "openai/gpt-6.1-sol" "anthropic/claude-opus-5-5" ;;
+	standard) printf '%s\n' "anthropic/claude-sonnet-5-5" "openai/gpt-6.1-sol" "openai/gpt-6.1-terra" "opencode-go/deepseek-v4.1-flash" ;;
+	thinking) printf '%s\n' "anthropic/claude-opus-5-5" "openai/gpt-6.1-sol" ;;
 	*) return 1 ;;
 	esac
 	return 0
@@ -603,7 +639,7 @@ get_model_pricing() {
 			.models | to_entries[] |
 			select(.key as $k | $ms | contains($k)) |
 			"\(.value.input)|\(.value.output)|\(.value.cache_read)|\(.value.cache_write)"
-		' 2>/dev/null | head -1)
+		' 2>/dev/null | sed -n '1p')
 		if [[ -n "$result" ]]; then
 			echo "$result"
 			return 0
@@ -625,11 +661,16 @@ get_model_pricing() {
 	*gpt-5.6-sol-pro*) echo "$fallback_default_pricing" ;;
 	*gpt-6-astra*) echo "10.0|50.0|1.0|12.50" ;;
 	*gpt-6.1-sol*) echo "2.0|10.0|0.10|2.50" ;;
+	*gpt-6.1-terra*) echo "1.0|5.0|0.05|1.25" ;;
 	*gpt-6-sol*) echo "2.0|10.0|0.20|2.50" ;;
 	*gpt-6-luna*) echo "0.10|0.50|0.01|0.125" ;;
 	*gpt-5.6-sol*) echo "4.0|20.0|0.40|5.0" ;;
 	*gpt-5.6-terra*) echo "2.0|12.0|0.20|2.50" ;;
 	*gpt-5.6-luna*) echo "0.20|1.20|0.02|0.25" ;;
+	*fable-5-2-fast*) echo "16.0|80.0|0.40|20.0" ;;
+	*fable-5-2*) echo "8.0|40.0|0.20|10.0" ;;
+	*fable-5-1*) echo "10.0|50.0|0.25|12.50" ;;
+	*fable-5*) echo "10.0|50.0|1.0|12.50" ;;
 	*opus-4* | *claude-opus*) echo "15.0|75.0|1.50|18.75" ;;
 	*sonnet-4* | *claude-sonnet*) echo "$fallback_default_pricing" ;;
 	*haiku-5-5*) echo "0.10|0.50|0.01|0.125" ;;
@@ -644,6 +685,7 @@ get_model_pricing() {
 	*gemini-2.5-flash*) echo "0.15|0.60|0.0375|0.15" ;;
 	*gemini-3-pro*) echo "1.25|10.0|0.3125|2.50" ;;
 	*gemini-3-flash*) echo "0.10|0.40|0.025|0.10" ;;
+	*deepseek-v4.1-flash*) echo "0.15|0.60|0.003|0" ;;
 	*deepseek-r1*) echo "0.55|2.19|0.14|0.55" ;;
 	*deepseek-v3*) echo "0.27|1.10|0.07|0.27" ;;
 	*) echo "$fallback_default_pricing" ;;
@@ -658,6 +700,7 @@ get_provider_from_model() {
 	gpt-* | openai/*) echo "openai" ;;
 	gemini-* | google/*) echo "google" ;;
 	deepseek-* | deepseek/*) echo "deepseek" ;;
+	opencode-go/*) echo "opencode-go" ;;
 	grok-* | xai/*) echo "xai" ;;
 	*) echo "unknown" ;;
 	esac

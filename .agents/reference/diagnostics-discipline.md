@@ -12,6 +12,8 @@ When to load:
 - Answering productivity questions ("is the pulse working?", "are workers running?", "did we ship anything today?").
 - Drafting any public comment that blames a specific task ID, issue number, PR, or commit.
 
+- Answering status questions about PRs, issues, CI, releases, tags, deployments or branch heads (GH#35839).
+
 For prompt-economy reasons these rules live here rather than in always-on AGENTS.md context. The pointer in AGENTS.md (`### Diagnostics discipline`) names all four task IDs so a `grep` for any of them in AGENTS.md still hits a forwarding address.
 
 ## Stale-symptom investigations (runtime debugging, t2036)
@@ -77,6 +79,18 @@ For provider/model/account questions, use `worker-activity-helper.sh providers -
 - Listing aggregate failure-mode counts ("66 circuit-breaker trips in 48h") without checking whether they fired in the last 10 min.
 
 This rule sits alongside t3215 (canonical sources) and t2204 (attribution before verification) — all three fire at the diagnosis-publish step, all three demand evidence-then-claim.
+
+## Remote state is a current-state query (GH#35839 — MANDATORY)
+
+PR/issue status, CI runs, releases, tags, deployments and branch heads change between turns, and the session shows the date but no per-message time. Before answering about any of them, or basing a repair, rebase or new code on them:
+
+- **Query in this turn.** Never repeat an earlier turn's result as current; when citing one, state when it was observed.
+- **Timestamp it.** Run `date -u` first and give observation times in the answer. Label point-in-time results (for example "not merged as of 14:02 UTC").
+- **Tags before releases.** A tag can exist while its release is still a draft. Check `git ls-remote --tags <remote>` (or `git fetch --tags`) as well as `gh release list`.
+- **Deploys need the right run class.** List several runs with valid event filters (`--event push` covers both branch and tag pushes; query `--event workflow_dispatch` separately), then inspect each run's ref (`headBranch`) or SHA instead of generalising from `--limit 1`; a manual or skipped run says nothing about a tag-triggered deploy.
+- **Newer evidence invalidates the old picture.** An unseen SHA, tag or newer run means re-fetch and re-check before concluding.
+
+Related: `reference/session.md` "Context Compaction Resilience" (revalidate after rollover) and t3222 above.
 
 ## Actionable productivity measurements
 

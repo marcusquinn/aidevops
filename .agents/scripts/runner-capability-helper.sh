@@ -42,8 +42,9 @@ _runner_capability_check_fresh_logged() {
 # GH#33743: keep the operator-facing "deferred:" text, and append a structured
 # reason with the repo slug so candidate-scoped log matching classifies it as
 # runner_capability_unmet instead of no_recent_log_evidence. cooldown=eligible
-# marks deterministic runner-local gaps (missing secret, failing probe, invalid
-# requirement map); transient store/API/timeout signals are always re-checked.
+# marks deterministic runner-local gaps (missing secret, failing probe, missing
+# PATH tool, invalid requirement map); transient store/API/timeout signals are
+# always re-checked.
 _runner_capability_log_deferral() {
 	local issue_number="$1" repo_slug="$2" reason="$3" signal="$4"
 	local cooldown="none"
@@ -63,7 +64,7 @@ _runner_capability_log_deferral() {
 		fi
 	fi
 	case "$signal" in
-	secret_missing | probe_failed | invalid_requirements) cooldown="eligible" ;;
+	secret_missing | probe_failed | tool_missing | service_unhealthy | invalid_requirements | device_mismatch) cooldown="eligible" ;;
 	esac
 	printf '[dispatch_with_dedup] #%s deferred: %s — DISPATCH_BLOCK_REASON reason=runner_capability_unmet signal=%s cooldown=%s issue=#%s repo=%s\n' \
 		"$issue_number" "$reason" "$signal" "$cooldown" "$issue_number" "$repo_slug" >&3
@@ -79,7 +80,11 @@ runner_capability_check() {
 	python3 - "$repo_path" "$issue_meta_json" "$source" "$cycle" "${BASH_SOURCE[0]%/*}/network-tier-helper.sh" < <(
 		_runner_capability_python_runtime
 		_runner_capability_python_cycle
+		_runner_capability_python_secrets
 		_runner_capability_python_classes
+		_runner_capability_python_tools
+		_runner_capability_python_services
+		_runner_capability_python_device
 		_runner_capability_python_requirements
 	)
 	local rc=$?
@@ -96,6 +101,7 @@ import json
 import os
 import re
 import runpy
+import shutil
 import signal
 import stat
 import subprocess
@@ -107,18 +113,44 @@ def unmet(reason=''):
     print('runner_capability_unmet' + (f' reason={reason}' if reason else ''))
     raise SystemExit(1)
 
+def unmet_exception(error):
+    # GH#39779: runner environment failures are re-checked next cycle
+    # (signal=check_error), never cooled down as invalid requirements.
+    # Parse errors in issue-declared requirements stay invalid_requirements.
+    unmet('check_error' if isinstance(error, (OSError, RuntimeError)) else '')
+
+def resolve_root(path):
+    # GH#38825: name a missing repo root instead of a generic invalid map.
+    if not Path(path).is_dir():
+        unmet('repo_path_missing')
+    return Path(path).resolve(strict=True)
+
 def check_rejections(names):
-    rejection = runpy.run_path(str(Path(sys.argv[5]).parent / 'runner-secret-rejection.py'))
-    rejected_name = rejection['process_names']('check', sorted(names))
+    # GH#39779: a busy or unreadable host-wide rejection state is transient,
+    # not an invalid requirement; name it as the standalone helper CLI does.
+    try:
+        rejection = runpy.run_path(str(Path(sys.argv[5]).parent / 'runner-secret-rejection.py'))
+        rejected_name = rejection['process_names']('check', sorted(names))
+    except (OSError, ValueError):
+        unmet('rejection_state_unreadable')
     if rejected_name:
         unmet(f'secret_rejected name={rejected_name}')
 
 def run_check(argv, target, secret=False, cwd=None, timeout=5):
     # Bound descendants too: a locked pinentry or probe child must not survive.
+    env = os.environ.copy()
+    if secret:
+        # The inner supervisor must time out first so it can kill its gopass
+        # group before this watchdog SIGKILLs the supervisor.
+        try:
+            inner = int(env.get('AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS', '12'))
+        except ValueError:
+            inner = 12
+        env['AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS'] = str(max(1, min(inner, timeout - 1)))
     try:
         process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                   start_new_session=True)
+                                   start_new_session=True, env=env)
     except OSError:
         return f'check_failed {target}' if secret else f'probe_failed {target}'
     try:
@@ -130,6 +162,8 @@ def run_check(argv, target, secret=False, cwd=None, timeout=5):
     if not status:
         return ''
     if secret:
+        if status == 5:
+            return f'check_timeout {target}'
         if status == 3:
             return f'secret_unreadable {target} store=gopass fallback=disabled'
         return f'{"secret_missing" if status == 1 else "check_failed"} {target}'
@@ -177,7 +211,8 @@ def unreadable(name, handle, state, cached=False):
     count = state.get('deferred', 0) + 1
     if handle is not None:
         handle.seek(0)
-        json.dump({'name': name, 'deferred': count}, handle)
+        json.dump({'name': name, 'deferred': count,
+                   'at': state.get('at', time.time()) if cached else time.time()}, handle)
         handle.truncate()
         handle.flush()
     if sys.argv[3] == 'fresh' and not cached:
@@ -188,6 +223,85 @@ def unreadable(name, handle, state, cached=False):
         print(f'runner_capability_health secret_gated_deferred={count}', file=sys.stderr)
     unmet(f'secret_unreadable name={name} store=gopass fallback=disabled' +
           (' source=cycle_cache' if cached else ''))
+
+def check_cached_unreadable(handle, state):
+    name = state.get('name', '')
+    try:
+        ttl = max(0, int(os.environ.get('AIDEVOPS_RUNNER_CAPABILITY_UNREADABLE_TTL_SECONDS', '120')))
+    except ValueError:
+        ttl = 120
+    if (re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', name) and
+            time.time() - float(state.get('at', 0)) < ttl):
+        unreadable(name, handle, state, cached=True)
+    if handle is not None and name:
+        handle.seek(0)
+        handle.truncate()
+        handle.flush()
+
+PY
+	return 0
+}
+
+_runner_capability_python_secrets() {
+	cat <<'PY'
+def readable_ttl():
+    # GH#39815: every candidate re-decrypted the same names at both gates;
+    # under gpg-agent contention those checks hit check_timeout in bursts.
+    try:
+        ttl = int(os.environ.get('AIDEVOPS_RUNNER_CAPABILITY_READABLE_TTL_SECONDS', '300'))
+    except ValueError:
+        ttl = 300
+    return min(1800, max(0, ttl))
+
+def fresh_readable(readable, ttl, now):
+    if not isinstance(readable, dict) or not ttl:
+        return {}
+    return {name: at for name, at in readable.items()
+            if isinstance(at, (int, float)) and not isinstance(at, bool) and 0 <= now - at < ttl}
+
+def cached_readable(state, name):
+    return name in fresh_readable(state.get('readable'), readable_ttl(), time.time())
+
+def remember_readable(handle, state, name):
+    # Names and timestamps only. Any unreadable record is expired by now, and
+    # unreadable() rewrites state without this map, so a lock clears it.
+    ttl = readable_ttl()
+    if handle is None or not ttl:
+        return
+    now = time.time()
+    readable = fresh_readable(state.get('readable'), ttl, now)
+    readable[name] = now
+    state['readable'] = readable
+    handle.seek(0)
+    json.dump({'readable': readable}, handle)
+    handle.truncate()
+    handle.flush()
+
+def check_secrets(secrets, cycle):
+    # Loaded runners can exceed 5s; default 15s, clamped 1-60, invalid -> default.
+    try:
+        secret_timeout = int(os.environ.get('AIDEVOPS_RUNNER_CAPABILITY_SECRET_TIMEOUT_SECONDS', '15'))
+    except ValueError:
+        secret_timeout = 15
+    secret_timeout = min(60, max(1, secret_timeout))
+    check_rejections(secrets)
+    with cycle_state(cycle) as (handle, state):
+        check_cached_unreadable(handle, state)
+        reused = 0
+        for name in sorted(secrets):
+            # Only readability is reused; requirements stay fresh (GH#33399).
+            if cached_readable(state, name):
+                reused += 1
+                continue
+            reason = run_check(['aidevops', 'secret', 'check', name], f'name={name}', timeout=secret_timeout, secret=True)
+            if reason.startswith('secret_unreadable '):
+                unreadable(name, handle, state)
+            if reason:
+                unmet(reason)
+            remember_readable(handle, state, name)
+        if reused:
+            print(f'runner_capability_secret_cache reused={reused} checked={len(secrets) - reused}',
+                  file=sys.stderr)
 
 PY
 	return 0
@@ -226,13 +340,147 @@ PY
 	return 0
 }
 
+# GH#37587: requires-tools names are bare commands resolved on PATH only; the
+# dispatcher never executes them.
+_runner_capability_python_tools() {
+	cat <<'PY'
+def requirement_tools(requirements, body):
+    tools = set()
+    declared = [requirement for requirement in requirements if 'tools' in requirement]
+    for line in body.splitlines():
+        if line.startswith('requires-tools:'):
+            declared.append({'tools': re.split(r'[,\s]+', line.partition(':')[2].strip())})
+    for requirement in declared:
+        names = requirement.get('tools', [])
+        if not isinstance(names, list) or len(names) > 8:
+            unmet('invalid_requirements')
+        for name in names:
+            # A bare command name only: no path, argument or shell text.
+            if not isinstance(name, str) or not re.fullmatch(r'[a-z][a-z0-9._-]{0,63}', name):
+                unmet('invalid_requirements')
+            tools.add(name)
+    if len(tools) > 8:
+        unmet('invalid_requirements')
+    return tools
+
+def check_tools(tools):
+    # Cheapest deterministic gate first: PATH lookup only, nothing is run.
+    for name in sorted(tools):
+        if not shutil.which(name):
+            unmet(f'tool_missing name={name}')
+
+PY
+	return 0
+}
+
+# GH#37638: requires-loopback-health gates on a healthy local service. Only a
+# port and a safe path come from the issue; host, method and headers are fixed.
+_runner_capability_python_services() {
+	cat <<'PY'
+def requirement_services(requirements, body):
+    services = set()
+    declared = [requirement for requirement in requirements if 'loopback_health' in requirement]
+    for line in body.splitlines():
+        if line.startswith('requires-loopback-health:'):
+            declared.append({'loopback_health': re.split(r'[,\s]+', line.partition(':')[2].strip())})
+    for requirement in declared:
+        entries = requirement.get('loopback_health', [])
+        if not isinstance(entries, list) or len(entries) > 4:
+            unmet('invalid_requirements')
+        for entry in entries:
+            # <port>[/<path>] only: no scheme, host, query, fragment or '..'.
+            match = re.fullmatch(r'([0-9]{1,5})(?:/([A-Za-z0-9_./-]{0,64}))?', entry) if isinstance(entry, str) else None
+            if not match:
+                unmet('invalid_requirements')
+            port, path = int(match.group(1)), match.group(2) or ''
+            if not 1024 <= port <= 65535 or '..' in path:
+                unmet('invalid_requirements')
+            services.add((port, path))
+    if len(services) > 4:
+        unmet('invalid_requirements')
+    return services
+
+def probe_service(port, path):
+    import http.client
+    connection = http.client.HTTPConnection('127.0.0.1', port, timeout=2)
+    try:
+        connection.request('GET', '/' + path)
+        response = connection.getresponse()
+        response.read(4096)
+        return 200 <= response.status < 300
+    except (OSError, http.client.HTTPException):
+        return False
+    finally:
+        connection.close()
+
+def check_services(services, cycle):
+    # Per-cycle cache keyed by port and path so many issues probe a service once.
+    for port, path in sorted(services):
+        cache = None
+        if cycle:
+            base = Path(os.environ.get('AIDEVOPS_TEMP_DIR') or
+                        str(Path.home() / '.aidevops/.agent-workspace/tmp'))
+            directory = base / 'runner-capability'
+            digest = hashlib.sha256(f'{cycle}\0{port}\0{path}'.encode()).hexdigest()
+            cache = directory / f'health-{digest}.json'
+        healthy = None
+        if cache is not None:
+            try:
+                if not cache.is_symlink():
+                    healthy = bool(json.loads(cache.read_text()).get('healthy'))
+            except (OSError, ValueError, AttributeError):
+                healthy = None
+        if healthy is None:
+            healthy = probe_service(port, path)
+            if cache is not None:
+                try:
+                    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+                    if not directory.is_symlink():
+                        cache.write_text(json.dumps({'healthy': healthy}))
+                except OSError:
+                    pass
+        if not healthy:
+            unmet(f'service_unhealthy port={port}')
+
+PY
+	return 0
+}
+
+# GH#38547: requires-device: only the runner whose local device id matches may
+# claim. Device ids are public in claim comments; checked before any secret read.
+_runner_capability_python_device() {
+	cat <<'PY'
+def check_device(body):
+    wanted = []
+    for line in body.splitlines():
+        if line.startswith('requires-device:'):
+            wanted.extend(re.split(r'[,\s]+', line.partition(':')[2].strip()))
+    if not wanted:
+        return
+    if len(wanted) > 4 or not all(re.fullmatch(r'device-[0-9]+-[0-9]+-[0-9]+', item) for item in wanted):
+        unmet('invalid_requirements')
+    device_file = os.environ.get('AIDEVOPS_DEVICE_ID_FILE') or str(Path.home() / '.aidevops/state/device-id')
+    try:
+        local = Path(device_file).read_text().strip()
+    except (OSError, UnicodeError):
+        local = ''
+    if not local:
+        unmet('device_unknown')
+    if local not in wanted:
+        unmet('device_mismatch')
+
+PY
+	return 0
+}
+
 _runner_capability_python_requirements() {
 	cat <<'PY'
 try:
-    root = Path(sys.argv[1]).resolve(strict=True)
+    root = resolve_root(sys.argv[1])
     issue = json.loads(sys.argv[2])
+    check_device(issue.get('body', ''))
     requirements = class_requirements(root, issue)
-    # Issue text can name secrets, never executable commands.
+    # Issue text can name secrets and PATH tools, never executable commands.
     for label in issue.get('labels', []):
         name = label.get('name', '') if isinstance(label, dict) else label
         if name.startswith('needs-secret:'):
@@ -248,6 +496,7 @@ try:
         elif line.startswith('requires-ssh:'):
             requirements.append({'ssh_commands': [json.loads(line.partition(':')[2])]})
     secrets, probes, ssh_commands = set(), [], []
+    tools = requirement_tools(requirements, issue.get('body', ''))
     for requirement in requirements:
         commands = requirement.get('ssh_commands', [])
         if not isinstance(commands, list) or len(commands) > 8:
@@ -282,6 +531,8 @@ try:
             probes.append((str(executable), probe))
     if len(secrets) > 32 or len(probes) > 8 or len(ssh_commands) > 8:
         unmet()
+    check_tools(tools)
+    check_services(requirement_services(requirements, issue.get('body', '')), sys.argv[4] if sys.argv[3] == 'fresh' else '')
     # Only analyze exact argv; never execute SSH or issue-provided shell text.
     # The same tier gate used inside the worker is authoritative before claim.
     network_timeout = int(os.environ.get('AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS', '30'))
@@ -293,34 +544,17 @@ try:
                            'ssh', cwd=root, timeout=network_timeout)
         if reason:
             unmet('ssh_network_requirement_unmet recovery=reference/ssh-bindings.md')
-    # Loaded runners can exceed 5s; default 15s, clamped 1-60, invalid -> default.
-    try:
-        secret_timeout = int(os.environ.get('AIDEVOPS_RUNNER_CAPABILITY_SECRET_TIMEOUT_SECONDS', '15'))
-    except ValueError:
-        secret_timeout = 15
-    secret_timeout = min(60, max(1, secret_timeout))
     if sys.argv[3] == 'fresh':
-        print(f'runner_capability_check source=fresh requirements={len(secrets) + len(probes) + len(ssh_commands)}',
+        print(f'runner_capability_check source=fresh requirements={len(secrets) + len(probes) + len(ssh_commands) + len(tools)}',
               file=sys.stderr)
     if secrets:
-        check_rejections(secrets)
-        cycle = sys.argv[4] if sys.argv[3] == 'fresh' else ''
-        with cycle_state(cycle) as (handle, state):
-            cached_name = state.get('name', '')
-            if re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', cached_name):
-                unreadable(cached_name, handle, state, cached=True)
-            for name in sorted(secrets):
-                reason = run_check(['aidevops', 'secret', 'check', name], f'name={name}', timeout=secret_timeout, secret=True)
-                if reason.startswith('secret_unreadable '):
-                    unreadable(name, handle, state)
-                if reason:
-                    unmet(reason)
+        check_secrets(secrets, sys.argv[4] if sys.argv[3] == 'fresh' else '')
     for executable, probe in probes:
         reason = run_check([executable], f'path={probe}', cwd=root)
         if reason:
             unmet(reason)
-except (OSError, ValueError, TypeError, AttributeError, RuntimeError):
-    unmet()
+except (OSError, ValueError, TypeError, AttributeError, RuntimeError) as error:
+    unmet_exception(error)
 PY
 	return 0
 }

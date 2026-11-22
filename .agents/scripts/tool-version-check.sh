@@ -25,6 +25,7 @@ AUTO_UPDATE=false
 CATEGORY="all"
 JSON_OUTPUT=false
 QUIET=false
+INVENTORY=false
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -48,6 +49,10 @@ while [[ $# -gt 0 ]]; do
 		QUIET=true
 		shift
 		;;
+	--inventory)
+		INVENTORY=true
+		shift
+		;;
 	--help | -h)
 		echo "Usage: tool-version-check.sh [OPTIONS]"
 		echo ""
@@ -56,6 +61,8 @@ while [[ $# -gt 0 ]]; do
 		echo "  --category, -c     Check only specific category (npm, brew, pip, custom, all)"
 		echo "  --json, -j         Output results as JSON"
 		echo "  --quiet, -q        Only show outdated tools"
+		echo "  --inventory        List managed tools (name, category, command, package; tab-separated)"
+		echo "                     without version or network calls"
 		echo "  --help, -h         Show this help"
 		exit 0
 		;;
@@ -110,6 +117,23 @@ if [[ "$(aidevops_opencode_install_owner 2>/dev/null || true)" == brew ]]; then
 	_oc_npm_tool_spec=""
 fi
 
+# GH#35942: Claude Code follows the same owner-decides-channel rule. Casks are
+# checked against the cask catalogue; the native installer self-updates.
+_cc_npm_tool_spec="npm|Claude Code CLI|claude|--version|@anthropic-ai/claude-code|npm install -g @anthropic-ai/claude-code@latest"
+_cc_brew_tool_spec=""
+_cc_self_tool_spec=""
+_cc_owner=$(aidevops_claude_code_install_owner 2>/dev/null || true)
+case "$_cc_owner" in
+brew-cask:?*)
+	_cc_brew_tool_spec="brew|Claude Code CLI|claude|--version|cask:${_cc_owner#brew-cask:}|brew upgrade --cask ${_cc_owner#brew-cask:}"
+	_cc_npm_tool_spec=""
+	;;
+native)
+	_cc_self_tool_spec="self|Claude Code CLI|claude|--version|claude-code|claude update"
+	_cc_npm_tool_spec=""
+	;;
+esac
+
 # Platform-aware brew package upgrade command.
 # On macOS (or any system with brew), upgrade installed formulas and install
 # selected formulas supplied by another package manager.
@@ -131,28 +155,83 @@ _brew_upgrade_cmd() {
 # PEP 668-safe pip upgrade command.
 # Ubuntu 24.04+, Fedora 38+, and modern Debian mark the system Python as
 # "externally managed" — bare `pip install` is blocked with an error.
-# Safe upgrade order: pipx (isolated venv) → pip --user (user site-packages).
+# Safe upgrade order: pipx (isolated venv) → uv tool (isolated venv).
+# Never user-scope (--user) or system-scope pip installs.
 # $1 = pip package name (e.g. "analytics-mcp")
 # shellcheck disable=SC2016  # Single quotes intentional: bash -c payload
 _pip_upgrade_cmd() {
 	local pkg="$1"
-	printf '%s' 'if command -v pipx >/dev/null 2>&1 && pipx list --short 2>/dev/null | grep -qi '"^${pkg}"'; then pipx upgrade '"${pkg}"'; else pip install --user --upgrade '"${pkg}"' 2>/dev/null || pip install --upgrade '"${pkg}"'; fi'
+	printf '%s' 'if command -v pipx >/dev/null 2>&1 && pipx list --short 2>/dev/null | grep -i '"^${pkg}"' >/dev/null; then pipx upgrade '"${pkg}"'; elif command -v uv >/dev/null 2>&1; then uv tool install --upgrade '"${pkg}"'; else echo "Neither pipx nor uv found. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2; exit 1; fi'
 }
+
+# GH#35515: the reviewed Playwriter pin has one source of truth, the MCP
+# generator policy. Prints the approved version, or "unknown" (fail closed:
+# classification then reports unknown instead of queueing an unreviewed pin).
+_playwriter_approved_version() {
+	local policy_file="${SCRIPT_DIR}/lib/mcp_config.py"
+	local version=""
+	if [[ -f "$policy_file" ]]; then
+		# sed quits at the first match itself; no early-exit pipe reader under pipefail.
+		version=$(sed -nE "/^PLAYWRITER_MCP_PACKAGE = 'playwriter@[0-9]+\.[0-9]+\.[0-9]+'$/{s/^PLAYWRITER_MCP_PACKAGE = 'playwriter@([0-9]+\.[0-9]+\.[0-9]+)'$/\1/p;q;}" "$policy_file")
+	fi
+	printf '%s\n' "${version:-unknown}"
+	return 0
+}
+
+# GH#35515: report the aidevops-generated package-runner Playwriter entry
+# (npx/bun x playwriter@X.Y.Z, usually disabled for on-demand activation).
+# Reads configuration only — never launches the runner or a relay — and
+# prints the configured package version. Returns 1 when no generated entry
+# exists. Custom commands are not recognised here and keep PATH semantics.
+_playwriter_managed_mcp_version() {
+	local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+	python3 - "${SCRIPT_DIR}/lib" \
+		"${config_home}/opencode/opencode.json" \
+		"$HOME/.claude.json" \
+		"${config_home}/Claude/Claude.json" \
+		"$HOME/Library/Application Support/Claude/claude_desktop_config.json" <<'PYEOF' 2>/dev/null
+import json
+import re
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from mcp_config import _is_generated_playwriter_command
+
+for path in sys.argv[2:]:
+    try:
+        with open(path) as stream:
+            config = json.load(stream)
+        servers = config.get('mcp') or config.get('mcpServers') or {}
+        command = servers.get('playwriter', {}).get('command')
+        if not isinstance(command, list) or not command or not isinstance(command[-1], str):
+            continue
+        match = re.fullmatch(r'playwriter@([0-9]+\.[0-9]+\.[0-9]+)', command[-1])
+        if match and _is_generated_playwriter_command(command, (command[-1],)):
+            print(match.group(1))
+            sys.exit(0)
+    except (OSError, ValueError, AttributeError):
+        continue
+sys.exit(1)
+PYEOF
+	return $?
+}
+
+PLAYWRITER_APPROVED_VERSION=$(_playwriter_approved_version)
 
 # Tool definitions
 # Format: category|display_name|cli_command|version_flag|package_name|update_command
 
 NPM_TOOLS=(
-	"npm|Claude Code CLI|claude|--version|@anthropic-ai/claude-code|npm install -g @anthropic-ai/claude-code@latest"
 	"npm|Codex CLI|codex|--version|@openai/codex|npm install -g @openai/codex@latest"
 	"npm|LocalWP MCP|mcp-local-wp|--version|@verygoodplugins/mcp-local-wp|npm install -g @verygoodplugins/mcp-local-wp@latest"
 	"npm|Chrome DevTools MCP|chrome-devtools-mcp|--version|chrome-devtools-mcp|npm install -g chrome-devtools-mcp@latest"
 	"npm|GSC MCP|mcp-server-gsc|--version|mcp-server-gsc|npm install -g mcp-server-gsc@latest"
-	"npm|Playwriter MCP|playwriter|--version|playwriter|npm install -g playwriter@0.8.0"
+	"npm|Playwriter MCP|playwriter|--version|playwriter|npm install -g playwriter@${PLAYWRITER_APPROVED_VERSION}"
 	"npm|macOS Automator MCP|macos-automator-mcp|--version|@steipete/macos-automator-mcp|npm install -g @steipete/macos-automator-mcp@latest"
 	"npm|Claude Code MCP|claude-code-mcp|--version|@steipete/claude-code-mcp|npm install -g @steipete/claude-code-mcp@latest"
 	"npm|Google Workspace CLI|gws|--version|@googleworkspace/cli|npm install -g @googleworkspace/cli@latest"
 	"npm|Cloudflare cf CLI|cf|--version|cf|npm install -g cf@latest"
+	"npm|Cloudron CLI|cloudron|--version|cloudron|npm install -g cloudron@latest"
 )
 
 BREW_TOOLS=(
@@ -164,7 +243,13 @@ BREW_TOOLS=(
 	"brew|ShellCheck|shellcheck|--version|shellcheck|$(_brew_upgrade_cmd shellcheck)"
 )
 
-# OpenCode is listed first in whichever category owns it.
+# OpenCode, then Claude Code, lead whichever category owns them.
+if [[ -n "$_cc_npm_tool_spec" ]]; then
+	NPM_TOOLS=("$_cc_npm_tool_spec" "${NPM_TOOLS[@]}")
+fi
+if [[ -n "$_cc_brew_tool_spec" ]]; then
+	BREW_TOOLS=("$_cc_brew_tool_spec" "${BREW_TOOLS[@]}")
+fi
 if [[ -n "$_oc_npm_tool_spec" ]]; then
 	NPM_TOOLS=("$_oc_npm_tool_spec" "${NPM_TOOLS[@]}")
 fi
@@ -199,13 +284,17 @@ _tool_package_supported_on_platform() {
 # which skips latest-version lookup and just reports installed version
 CUSTOM_TOOLS=(
 	"self|Cursor CLI|agent|--version|cursor-agent|agent update"
-	"self|Droid CLI|droid|--version|droid|curl -fsSL https://app.factory.ai/install.sh | bash"
+	"self|Droid CLI|droid|--version|droid|curl -fsSL https://app.factory.ai/cli | sh"
 )
+if [[ -n "$_cc_self_tool_spec" ]]; then
+	CUSTOM_TOOLS=("$_cc_self_tool_spec" "${CUSTOM_TOOLS[@]}")
+fi
 
 # Counters
 OUTDATED_COUNT=0
 INSTALLED_COUNT=0
 EXTERNALLY_MANAGED_COUNT=0
+HELD_MAJOR_COUNT=0
 NOT_INSTALLED_COUNT=0
 TIMEOUT_COUNT=0
 UNKNOWN_COUNT=0
@@ -309,6 +398,18 @@ get_npm_pkg_version() {
 	return 1
 }
 
+# Report (never delete) a Bun-global copy that duplicates an npm-managed package.
+_warn_bun_global_duplicate() {
+	local pkg="$1"
+	local bun_dir="${HOME:-}/.bun/install/global/node_modules/${pkg}"
+	[[ -n "${HOME:-}" && -d "$bun_dir" ]] || return 0
+	local npm_root
+	npm_root="$(npm root -g 2>/dev/null)" || return 0
+	[[ -f "${npm_root}/${pkg}/package.json" ]] || return 0
+	printf '  ⚠ %s is installed by both npm and Bun; reading the npm copy. Remove the Bun copy: bun remove -g %s\n' "$pkg" "$pkg" >&2
+	return 0
+}
+
 # Get installed version
 get_installed_version() {
 	local cmd="$1"
@@ -347,8 +448,11 @@ get_installed_version() {
 			return 0
 		fi
 
-		local ver_output
+		local ver_output ver_rest
 		ver_output=$(head -1 "$_ver_log")
+		# GH#38587: some tools (ShellCheck: "version: 0.11.0") print the
+		# version after a banner line; consulted only when line 1 has none.
+		ver_rest=$(tail -n +2 "$_ver_log")
 		rm -f "$_ver_log"
 		if [[ -n "$pkg" ]]; then
 			version=$(echo "$ver_output" | grep -oE "$_NPM_SEMVER_PATTERN" | head -1)
@@ -367,6 +471,14 @@ get_installed_version() {
 				echo "$pkg_version"
 				return 0
 			fi
+		fi
+
+		if [[ -z "$version" && -n "$ver_rest" ]]; then
+			# Here-string + first-line expansion: no early-exit reader under pipefail.
+			local rest_matches
+			rest_matches=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' <<<"$ver_rest") ||
+				rest_matches=$(grep -oE '[0-9]+\.[0-9]+' <<<"$ver_rest") || rest_matches=""
+			version="${rest_matches%%$'\n'*}"
 		fi
 
 		echo "${version:-unknown}"
@@ -410,7 +522,13 @@ get_brew_latest() {
 	local pkg="$1"
 	local brew_bin=""
 	brew_bin=$(command -v brew 2>/dev/null || true)
-	if [[ -n "$brew_bin" && -x "$brew_bin" ]]; then
+	if [[ -n "$brew_bin" && -x "$brew_bin" && "$pkg" == cask:?* ]]; then
+		# GH#35942: casks (cask:<name>) publish .casks[0].version, not formulae.
+		local cask_version=""
+		cask_version=$(timeout_sec "$PKG_QUERY_TIMEOUT" "$brew_bin" info --cask --json=v2 "${pkg#cask:}" 2>/dev/null |
+			jq -r '.casks[0].version // empty' 2>/dev/null) || cask_version=""
+		printf '%s\n' "${cask_version:-unknown}"
+	elif [[ -n "$brew_bin" && -x "$brew_bin" ]]; then
 		local stable=""
 		stable=$(timeout_sec "$PKG_QUERY_TIMEOUT" "$brew_bin" info --json=v2 "$pkg" 2>/dev/null |
 			jq -r '.formulae[0].versions.stable // empty' 2>/dev/null) || stable=""
@@ -551,6 +669,23 @@ _tool_installed_version() {
 			echo "not installed"
 			return 0
 		fi
+		# Read the npm copy that `npm install -g` updates, not whichever binary
+		# is first on PATH (a stale Bun-global copy can shadow it).
+		# GH#38605: OpenCode is the exception. Users run it through the managed
+		# launcher, its upgrade channel follows the selected binary
+		# (_opencode_upgrade_cmd), and a current npm copy behind a stale launcher
+		# must stay visible so the GH#35461 launcher repair runs.
+		if [[ "$pkg" == opencode-ai ]]; then
+			get_installed_version "$cmd" "$ver_flag" "$pkg"
+			return 0
+		fi
+		local npm_version=""
+		_warn_bun_global_duplicate "$pkg"
+		npm_version=$(get_npm_pkg_version "$pkg" 2>/dev/null || true)
+		if [[ -n "$npm_version" ]]; then
+			echo "$npm_version"
+			return 0
+		fi
 		get_installed_version "$cmd" "$ver_flag" "$pkg"
 		;;
 	*)
@@ -568,9 +703,10 @@ _tool_latest_version() {
 
 	case "$category" in
 	npm)
-		if [[ "$pkg" == playwriter ]]; then printf '%s\n' 0.8.0; else get_npm_latest "$pkg"; fi ;;
+		# Playwriter updates target the reviewed pin, not the registry head.
+		if [[ "$pkg" == playwriter ]]; then _playwriter_approved_version; else get_npm_latest "$pkg"; fi ;;
 	brew)
-		if ! command -v brew >/dev/null 2>&1 && [[ "$pkg" == */* ]]; then
+		if ! command -v brew >/dev/null 2>&1 && [[ "$pkg" == */* || "$pkg" == cask:* ]]; then
 			# Tap-qualified formulas (owner/tap/formula) exist only in Homebrew.
 			# apt/dnf/yum cannot upgrade them, and a same-named distro package
 			# can be an unrelated tool (e.g. apt "bd" is not Beads), so report
@@ -657,12 +793,68 @@ _append_tool_json_result() {
 	local latest="$4"
 	local status="$5"
 	local update_cmd="$6"
+	# Optional pre-built, internally generated JSON members (no user input).
+	local extra_members="${7:-}"
 
 	local json_name="${name//\\/\\\\}"
 	json_name="${json_name//\"/\\\"}"
 	local json_update="${update_cmd//\\/\\\\}"
 	json_update="${json_update//\"/\\\"}"
-	JSON_RESULTS+=("{\"name\": \"$json_name\", \"category\": \"$category\", \"installed\": \"$installed\", \"latest\": \"$latest\", \"status\": \"$status\", \"update_cmd\": \"$json_update\"}")
+	JSON_RESULTS+=("{\"name\": \"$json_name\", \"category\": \"$category\", \"installed\": \"$installed\", \"latest\": \"$latest\", \"status\": \"$status\", \"update_cmd\": \"$json_update\"${extra_members}}")
+	return 0
+}
+
+# GH#35515: Playwriter's "latest" is the reviewed pin. Expose the registry
+# head separately so the pin is never presented as the newest upstream.
+# Sets _PW_EXTRA_JSON and prints an indented console note (unless quiet/json).
+# Args: approved_version
+_playwriter_version_policy_note() {
+	local approved="$1"
+	local upstream=""
+	upstream=$(get_npm_latest playwriter 2>/dev/null || true)
+	[[ "$upstream" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || upstream="unknown"
+	_PW_EXTRA_JSON=", \"version_policy\": \"approved_pin\", \"approved\": \"${approved}\", \"upstream_latest\": \"${upstream}\""
+	if [[ "$JSON_OUTPUT" != "true" && "$QUIET" != "true" ]]; then
+		echo "   Approved pin: ${approved} (registry latest: ${upstream}; adoption requires review)"
+	fi
+	return 0
+}
+
+# GH#35515: a generated package-runner Playwriter entry is the supported
+# install path; a missing global CLI does not mean the MCP is absent.
+# Config presence is not live health, so point to the live diagnostic.
+# Args: name, category, configured_version, approved_version
+_report_managed_playwriter() {
+	local name="$1"
+	local category="$2"
+	local configured="$3"
+	local approved="$4"
+	local status="managed_mcp" icon="✓" color="$GREEN"
+	if [[ "$configured" == "$approved" ]]; then
+		((++INSTALLED_COUNT))
+	else
+		status="managed_mcp_mismatch"
+		icon="!"
+		color="$YELLOW"
+		((++UNKNOWN_COUNT))
+	fi
+	if [[ "$JSON_OUTPUT" == "true" ]]; then
+		_playwriter_version_policy_note "$approved"
+		_append_tool_json_result "$category" "$name" "$configured" "$approved" "$status" "" \
+			", \"install\": \"managed_package_runner\", \"global_cli\": \"absent\", \"live_health\": \"not_checked\"${_PW_EXTRA_JSON}"
+		return 0
+	fi
+	if [[ "$QUIET" == "true" && "$status" == managed_mcp ]]; then
+		return 0
+	fi
+	echo -e "${color}${icon}  $name: $configured (aidevops-managed on-demand MCP; no global CLI needed)${NC}"
+	if [[ "$status" == managed_mcp_mismatch ]]; then
+		echo "   Generated entry pins $configured; approved is $approved. Re-run setup (aidevops update) to migrate it."
+	fi
+	if [[ "$QUIET" != "true" ]]; then
+		_playwriter_version_policy_note "$approved"
+		echo "   Live health is not checked here: mcp-diagnose.sh playwriter"
+	fi
 	return 0
 }
 
@@ -675,7 +867,7 @@ _print_tool_status() {
 	local icon="$5"
 	local color="$6"
 
-	if [[ "$QUIET" == "true" && "$status" != "outdated" && "$status" != "timeout" && "$status" != "externally_managed" ]]; then
+	if [[ "$QUIET" == "true" && "$status" != "outdated" && "$status" != "timeout" && "$status" != "externally_managed" && "$status" != "held_major" ]]; then
 		return 0
 	fi
 
@@ -683,6 +875,10 @@ _print_tool_status() {
 	externally_managed)
 		echo -e "${color}${icon}  $name: $installed (Nix-managed; automatic update skipped)${NC}"
 		echo "   Update through the Nix configuration or profile that owns this tool (NixOS, Home Manager, or nix profile)."
+		;;
+	held_major)
+		echo -e "${color}${icon}  $name: $installed (held: Homebrew now ships OpenCode 2 (preview in aidevops); formula latest $latest)${NC}"
+		echo "   Move to the stable npm channel: ${AIDEVOPS_OPENCODE_BREW_MIGRATION_CMD}"
 		;;
 	not_installed)
 		echo -e "${color}${icon}  $name: not installed${NC}"
@@ -732,6 +928,42 @@ _tool_is_nix_managed() {
 	return 1
 }
 
+# GH#39271: Homebrew-core OpenCode now ships major 2. Return 0 (held) when
+# the selected profile is v1, both versions parse, and their majors differ.
+# Never queue a cross-major brew upgrade.
+# Args: installed latest
+_opencode_brew_major_held() {
+	local installed="$1"
+	local latest="$2"
+	local installed_semver="" latest_semver=""
+	[[ "$(aidevops_opencode_profile_id 2>/dev/null || true)" == v1 ]] || return 1
+	installed_semver=$(aidevops_parse_semver "$installed" 2>/dev/null) || return 1
+	latest_semver=$(aidevops_parse_semver "$latest" 2>/dev/null) || return 1
+	[[ "${installed_semver%%.*}" != "${latest_semver%%.*}" ]] || return 1
+	return 0
+}
+
+# Classify Homebrew OpenCode as held when its formula crosses the profile major.
+# Held is neither outdated nor failed: never queued, so auto-update never retries.
+# Sets _HOLD_JSON and the status/icon/color namerefs. Args: category cmd installed latest status_ref icon_ref color_ref
+_opencode_hold_major() {
+	local category="$1"
+	local cmd="$2"
+	local installed="$3"
+	local latest="$4"
+	local status_ref="$5"
+	local icon_ref="$6"
+	local color_ref="$7"
+	[[ "$category" == brew && "$cmd" == opencode && "$installed" != "not installed" ]] || return 1
+	_opencode_brew_major_held "$installed" "$latest" || return 1
+	((++HELD_MAJOR_COUNT))
+	_HOLD_JSON=", \"hold_reason\": \"Homebrew now ships OpenCode 2 (preview in aidevops); run: ${AIDEVOPS_OPENCODE_BREW_MIGRATION_CMD}\""
+	printf -v "$status_ref" '%s' "held_major"
+	printf -v "$icon_ref" '%s' "⏸"
+	printf -v "$color_ref" '%s' "$YELLOW"
+	return 0
+}
+
 # Check a single tool
 check_tool() {
 	local category="$1"
@@ -761,6 +993,13 @@ check_tool() {
 		return 0
 	fi
 
+	local managed_version=""
+	if [[ "$category" == npm && "$pkg" == playwriter && "$installed" == "not installed" ]] &&
+		managed_version=$(_playwriter_managed_mcp_version); then
+		_report_managed_playwriter "$name" "$category" "$managed_version" "$(_playwriter_approved_version)"
+		return 0
+	fi
+
 	local latest="unknown"
 	latest=$(_tool_latest_version "$category" "$pkg" "$installed")
 	local channel_current=false
@@ -785,7 +1024,12 @@ check_tool() {
 			installed=$(_tool_installed_version "$category" "$cmd" "$ver_flag" "$pkg")
 		fi
 	fi
-	_classify_tool_status "$cmd" "$installed" "$latest" "$update_cmd" status icon color latest
+	_HOLD_JSON=""
+	if _opencode_hold_major "$category" "$cmd" "$installed" "$latest" status icon color; then
+		update_cmd=""
+	else
+		_classify_tool_status "$cmd" "$installed" "$latest" "$update_cmd" status icon color latest
+	fi
 	if [[ "$channel_current" == true && "$status" == up_to_date ]]; then status=channel_current; fi
 	# A package already at the approved target with a stale CLI --version is
 	# a mismatch, not a reason to reinstall the same package on every pass.
@@ -811,7 +1055,12 @@ check_tool() {
 
 	# JSON output (escape special characters for valid JSON)
 	if [[ "$JSON_OUTPUT" == "true" ]]; then
-		_append_tool_json_result "$category" "$name" "$installed" "$latest" "$status" "$update_cmd"
+		_PW_EXTRA_JSON="$_HOLD_JSON"
+		[[ "$pkg" == playwriter ]] && _playwriter_version_policy_note "$(_playwriter_approved_version)"
+		_append_tool_json_result "$category" "$name" "$installed" "$latest" "$status" "$update_cmd" "$_PW_EXTRA_JSON"
+	elif [[ "$pkg" == playwriter ]]; then
+		_print_tool_status "$name" "$installed" "$latest (approved pin)" "$status" "$icon" "$color"
+		[[ "$QUIET" == "true" ]] || _playwriter_version_policy_note "$(_playwriter_approved_version)"
 	else
 		_print_tool_status "$name" "$installed" "$latest" "$status" "$icon" "$color"
 	fi
@@ -880,7 +1129,8 @@ _output_json_results() {
 	echo "    \"not_installed\": $NOT_INSTALLED_COUNT,"
 	echo "    \"timeout\": $TIMEOUT_COUNT,"
 	echo "    \"unknown\": $UNKNOWN_COUNT,"
-	echo "    \"externally_managed\": $EXTERNALLY_MANAGED_COUNT"
+	echo "    \"externally_managed\": $EXTERNALLY_MANAGED_COUNT,"
+	echo "    \"held_major\": $HELD_MAJOR_COUNT"
 	echo "  },"
 	echo "  \"tools\": ["
 	local first=true
@@ -1007,6 +1257,9 @@ _output_summary_and_updates() {
 		if [[ $EXTERNALLY_MANAGED_COUNT -gt 0 ]]; then
 			echo "  Externally managed (Nix; skipped): $EXTERNALLY_MANAGED_COUNT"
 		fi
+		if [[ $HELD_MAJOR_COUNT -gt 0 ]]; then
+			echo "  Held (major version change; not upgraded): $HELD_MAJOR_COUNT"
+		fi
 		if [[ $TIMEOUT_COUNT -gt 0 ]]; then
 			echo "  Timeout (version check hung): $TIMEOUT_COUNT"
 		fi
@@ -1053,8 +1306,25 @@ _output_summary_and_updates() {
 	return 0
 }
 
+# GH#38587: one source of truth for "managed by aidevops update" consumers
+# (install-record-helper.sh report). Reads the tool rows only: no version
+# probes, registry lookups or network calls.
+_output_inventory() {
+	local tool_spec category name cmd ver_flag pkg update_cmd
+	for tool_spec in "${NPM_TOOLS[@]}" "${BREW_TOOLS[@]}" "${PIP_TOOLS[@]}" "${CUSTOM_TOOLS[@]}"; do
+		IFS='|' read -r category name cmd ver_flag pkg update_cmd <<<"$tool_spec"
+		_tool_package_supported_on_platform "$pkg" || continue
+		printf '%s\t%s\t%s\t%s\n' "$name" "$category" "$cmd" "$pkg"
+	done
+	return 0
+}
+
 # Main
 main() {
+	if [[ "$INVENTORY" == "true" ]]; then
+		_output_inventory
+		return 0
+	fi
 	if [[ "$JSON_OUTPUT" != "true" && "$QUIET" != "true" ]]; then
 		echo -e "${BOLD}${BLUE}Tool Version Check${NC}"
 		echo "=================="

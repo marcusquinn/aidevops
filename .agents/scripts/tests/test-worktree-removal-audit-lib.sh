@@ -20,7 +20,7 @@ COMMANDS_HELPER="${SCRIPT_DIR}/../worktree-helper-cmds.sh"
 CLEAN_HELPER="${SCRIPT_DIR}/../worktree-clean-lib.sh"
 REGISTRY_HELPER="${SCRIPT_DIR}/../shared-worktree-registry.sh"
 SKILL_PR_HELPER="${SCRIPT_DIR}/../skill-update-pr-lib.sh"
-GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
+GIT_BIN=$(python3 -E -s -B -c 'import sys; sys.path.insert(0, sys.argv[1]); from native_git import real_git; print(real_git(sys.argv[2]))' "${SCRIPT_DIR}/.." "${AIDEVOPS_TEST_GIT_BIN:-}") || exit 1
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -61,6 +61,8 @@ setup() {
 	# that need a different registry still override these per subshell.
 	export WORKTREE_REGISTRY_DIR="${TEST_DIR}/registry"
 	export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
+	# Legacy fixtures must never consult the operator's new lifecycle database.
+	export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_DIR}/uninitialized-lifecycle"
 	(
 		# shellcheck source=../shared-worktree-registry.sh
 		source "$REGISTRY_HELPER" && _init_registry_db
@@ -174,27 +176,27 @@ test_should_skip_cleanup_owned_skip_logs
 test_idempotent_sourcing
 test_guard_refuses_current_cwd
 test_guard_refuses_other_process_cwd
-test_permanent_helper_removes_and_logs
+test_permanent_helper_requires_registry
 test_guard_fails_closed_on_inaccessible_candidate
 test_git_lock_parser_handles_unusual_paths_and_adjacent_blocks
 test_git_lock_parser_rejects_malformed_blocks
 test_missing_worktree_physical_parent_alias
-test_permanent_helper_preserves_lock_acquired_after_guard
+test_permanent_helper_refuses_before_legacy_git_injection
 test_recovery_store_selects_platform_semantics
 test_archive_copy_filters_before_io_and_bounds_retries
 test_recovery_store_permission_preflight
 test_recovery_inventory_reports_legacy_buckets_fail_closed
-test_recoverable_archive_then_native_remove
-test_recoverable_archive_preserves_late_lock
-test_compact_archive_native_removal
+test_recoverable_archive_does_not_authorize_removal
+test_recoverable_archive_refuses_legacy_git_injection
+test_compact_archive_retains_source_and_restores_git_only
 test_compact_removal_refusals
 test_recovery_archive_preserves_index_and_dirty_files
 test_recovery_archive_preserves_detached_head_identity
 test_recoverable_archive_refuses_replacement_worktree
-test_recoverable_archive_refuses_late_unarchived_write_without_force
+test_recoverable_archive_does_not_execute_legacy_remove_wrapper
 test_removal_helpers_refuse_direct_symlink_alias
-test_manual_cleanup_archives_removes_and_prunes
-test_manual_cleanup_recovers_degraded_visibility_exact_head
+test_manual_cleanup_refusal_preserves_receipt_and_registration
+test_manual_cleanup_rejects_legacy_exact_head_proof
 test_manual_degraded_recheck_requires_live_exact_lease
 test_manual_degraded_recovery_rejects_unsafe_candidates
 test_local_only_degraded_recovery_uses_ancestry
@@ -212,9 +214,15 @@ test_snapshot_backend_requires_visible_target
 test_lsof_snapshot_visibility_states
 test_proc_snapshot_preserves_degraded_visibility
 test_proc_snapshot_skips_foreign_uid_unreadable_entry
+test_proc_snapshot_single_pass_map_matches_shell_loop
 test_proc_snapshot_skips_foreign_uid_when_status_unreadable
 test_proc_snapshot_marks_same_uid_unreadable_entry_degraded
 test_proc_snapshot_recovers_protected_same_uid_cwd
+test_privileged_batch_parser_requires_complete_ordered_response
+test_proc_snapshot_uses_one_batched_inspector_call
+test_proc_snapshot_batch_timeout_degrades_without_per_pid_calls
+test_proc_snapshot_refused_batch_uses_per_pid_fallback
+test_privileged_cwd_links_are_chunked_at_inspector_limit
 test_privileged_inspector_rejects_untrusted_proc_root
 test_privileged_inspector_uses_bounded_execution
 test_process_platform_policy

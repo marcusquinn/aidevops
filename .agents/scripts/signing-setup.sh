@@ -16,6 +16,10 @@ readonly SSH_KEY_HEADLESS_PUB="$HOME/.ssh/id_ed25519_signing.pub"
 readonly ALLOWED_SIGNERS_FILE="$HOME/.ssh/allowed_signers"
 readonly SSH_AGENT_ENV="$HOME/.ssh/agent.env"
 
+_SIGNING_SETUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./headless-ssh-agent-lib.sh
+source "${_SIGNING_SETUP_DIR}/headless-ssh-agent-lib.sh"
+
 # Trusted maintainer key for aidevops framework supply chain verification.
 # This fingerprint is checked during `aidevops update` to verify that pulled
 # code was signed by the framework maintainer. Good stuff for provenance.
@@ -71,6 +75,18 @@ _headless_signing_key_loaded() {
 	[[ -n "$expected_key" ]] || return 1
 	ssh-add -L 2>/dev/null | grep -qxF "$expected_key"
 	return $?
+}
+
+# Stop an agent started by this invocation and drop its staged environment so
+# the previous agent.env, and its failure state, stays authoritative. A reused
+# agent (empty staged path) is never touched.
+_discard_new_signing_agent() {
+	local staged_env="$1"
+	[[ -n "$staged_env" ]] || return 0
+	ssh-agent -k >/dev/null 2>&1 || true
+	rm -f "$staged_env"
+	unset SSH_AUTH_SOCK SSH_AGENT_PID
+	return 0
 }
 
 # GH#33066: read one global key. Exit 1 from `git config --get` means unset;
@@ -141,6 +157,11 @@ cmd_check() {
 			_print_headless_signing_remediation
 		fi
 		_source_signing_agent_env
+		# GH#36493: a plain ssh-agent dies on reboot while agent.env survives.
+		if [[ -r "$SSH_AGENT_ENV" ]] && ! headless_ssh_agent_reachable; then
+			_print_warn "$SSH_AGENT_ENV names an unreachable ssh-agent (stale after reboot?)"
+			echo "Pulse restarts it on its next cycle; to fix now run: aidevops signing agent-start"
+		fi
 		# Check if key is loaded in ssh-agent
 		if _headless_signing_key_loaded; then
 			_print_ok "Key is loaded in ssh-agent"
@@ -191,15 +212,15 @@ cmd_setup() {
 	# Create allowed_signers file for verification
 	local key_content
 	key_content=$(cat "$ssh_key")
-	if [[ ! -f "$ALLOWED_SIGNERS_FILE" ]] || ! grep -q "$git_email" "$ALLOWED_SIGNERS_FILE" 2>/dev/null; then
-		echo "$git_email $key_content" >>"$ALLOWED_SIGNERS_FILE"
-		_print_ok "Added $git_email to $ALLOWED_SIGNERS_FILE"
+	if [[ ! -f "$ALLOWED_SIGNERS_FILE" ]] || ! grep -qxF -- "$git_email $key_content" "$ALLOWED_SIGNERS_FILE" 2>/dev/null; then
+		echo "$git_email $key_content" >>"$ALLOWED_SIGNERS_FILE" || return 1
+		_print_ok "Added $git_email interactive signing key to $ALLOWED_SIGNERS_FILE"
 	else
-		_print_info "Email already in allowed_signers file"
+		_print_info "Interactive signing key already in allowed_signers file"
 	fi
 
 	# Also add the aidevops trusted key so users can verify framework updates
-	if ! grep -q "$TRUSTED_EMAIL" "$ALLOWED_SIGNERS_FILE" 2>/dev/null; then
+	if ! grep -qF "$TRUSTED_EMAIL" "$ALLOWED_SIGNERS_FILE" 2>/dev/null; then
 		echo "$TRUSTED_EMAIL $TRUSTED_KEY" >>"$ALLOWED_SIGNERS_FILE"
 		_print_ok "Added aidevops maintainer key to allowed_signers"
 	fi
@@ -269,22 +290,13 @@ cmd_headless_setup() {
 	# Add to allowed_signers
 	local key_content
 	key_content=$(cat "$SSH_KEY_HEADLESS_PUB")
-	if [[ ! -f "$ALLOWED_SIGNERS_FILE" ]] || ! grep -qF "$git_email" "$ALLOWED_SIGNERS_FILE" 2>/dev/null; then
-		echo "$git_email $key_content" >>"$ALLOWED_SIGNERS_FILE"
-		_print_ok "Added $git_email to $ALLOWED_SIGNERS_FILE"
+	if [[ ! -f "$ALLOWED_SIGNERS_FILE" ]] || ! grep -qxF -- "$git_email $key_content" "$ALLOWED_SIGNERS_FILE" 2>/dev/null; then
+		# Preserve all existing keys: a comment cannot safely identify ownership of
+		# an older key, and old signatures may still need verification after rotation.
+		echo "$git_email $key_content" >>"$ALLOWED_SIGNERS_FILE" || return 1
+		_print_ok "Updated $git_email entry in $ALLOWED_SIGNERS_FILE"
 	else
-		# Update entry if key changed (replace old line for this email)
-		if ! grep -qF "$key_content" "$ALLOWED_SIGNERS_FILE" 2>/dev/null; then
-			# Remove old entry and add new one
-			local tmp_file
-			tmp_file=$(mktemp)
-			grep -vF "$git_email" "$ALLOWED_SIGNERS_FILE" >"$tmp_file" 2>/dev/null || true
-			echo "$git_email $key_content" >>"$tmp_file"
-			mv "$tmp_file" "$ALLOWED_SIGNERS_FILE"
-			_print_ok "Updated $git_email entry in $ALLOWED_SIGNERS_FILE"
-		else
-			_print_info "Email already in allowed_signers with correct key"
-		fi
+		_print_info "Email already in allowed_signers with correct key"
 	fi
 
 	# Also add the aidevops trusted key so users can verify framework updates
@@ -306,8 +318,8 @@ cmd_headless_setup() {
 	echo "  1. Upload the signing key to GitHub (as a SIGNING key, not auth key):"
 	echo "     Settings > SSH and GPG keys > New SSH signing key"
 	echo "     Key: $(cat "$SSH_KEY_HEADLESS_PUB")"
-	echo "  2. Add agent-start to your shell profile or cron environment:"
-	echo "     aidevops signing agent-start"
+	echo "  2. Pulse and the headless runtime restore stale agents automatically; no shell hook is required."
+	echo "     To restore immediately: aidevops signing agent-start"
 	echo "  3. Verify both key roles: aidevops signing check"
 	echo "  4. Guide: ~/.aidevops/agents/reference/git-signing.md"
 	return 0
@@ -327,23 +339,37 @@ cmd_agent_start() {
 		return 1
 	fi
 
-	# Check if a valid agent is already running
+	# Check if a valid agent is already running. A live agent with no
+	# identities (`ssh-add -l` exit 1) is reused; only an unreachable agent
+	# (exit 2) is replaced, so an empty agent is never orphaned (GH#36493).
 	local agent_running=false
 	if [[ -f "$SSH_AGENT_ENV" ]]; then
 		# shellcheck source=/dev/null
 		. "$SSH_AGENT_ENV" >/dev/null 2>&1 || true
-		if [[ -n "${SSH_AUTH_SOCK:-}" ]] && ssh-add -l >/dev/null 2>&1; then
+		if headless_ssh_agent_reachable; then
 			agent_running=true
 		fi
 	fi
 
+	# A new agent's environment is staged in a temporary file and published as
+	# agent.env only after the headless key is confirmed loaded. Otherwise an
+	# empty agent would be persisted and later reported live (GH#36550).
+	local new_agent_env=""
 	if [[ "$agent_running" == "false" ]]; then
 		_print_info "Starting new ssh-agent..."
-		# Start agent and capture env vars
-		ssh-agent -s >"$SSH_AGENT_ENV"
-		chmod 600 "$SSH_AGENT_ENV"
+		mkdir -p "$(dirname "$SSH_AGENT_ENV")"
+		new_agent_env=$(mktemp "${SSH_AGENT_ENV}.XXXXXX") || {
+			_print_error "Could not create a temporary ssh-agent environment file"
+			return 1
+		}
+		chmod 600 "$new_agent_env"
+		if ! ssh-agent -s >"$new_agent_env"; then
+			rm -f "$new_agent_env"
+			_print_error "Could not start ssh-agent"
+			return 1
+		fi
 		# shellcheck source=/dev/null
-		. "$SSH_AGENT_ENV" >/dev/null 2>&1 || true
+		. "$new_agent_env" >/dev/null 2>&1 || true
 		_print_ok "ssh-agent started (PID: ${SSH_AGENT_PID:-unknown})"
 	else
 		_print_info "Reusing existing ssh-agent (PID: ${SSH_AGENT_PID:-unknown})"
@@ -353,11 +379,13 @@ cmd_agent_start() {
 	# fingerprint/comment, not the source path, so compare the exported public key.
 	if ! _headless_signing_key_loaded; then
 		if ! ssh-add "$SSH_KEY_HEADLESS" 2>/dev/null; then
+			_discard_new_signing_agent "$new_agent_env"
 			_print_error "Could not load headless signing key into ssh-agent (it may be encrypted or unreadable)"
 			_print_headless_signing_remediation
 			return 1
 		fi
 		if ! _headless_signing_key_loaded; then
+			_discard_new_signing_agent "$new_agent_env"
 			_print_error "Headless signing key is not present in ssh-agent after ssh-add"
 			_print_headless_signing_remediation
 			return 1
@@ -365,6 +393,12 @@ cmd_agent_start() {
 		_print_ok "Loaded signing key into ssh-agent: $SSH_KEY_HEADLESS"
 	else
 		_print_info "Signing key already loaded in ssh-agent"
+	fi
+
+	if [[ -n "$new_agent_env" ]] && ! mv -f "$new_agent_env" "$SSH_AGENT_ENV"; then
+		_discard_new_signing_agent "$new_agent_env"
+		_print_error "Could not persist ssh-agent environment to $SSH_AGENT_ENV"
+		return 1
 	fi
 
 	echo ""

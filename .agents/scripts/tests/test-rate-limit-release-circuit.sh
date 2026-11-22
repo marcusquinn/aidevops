@@ -113,6 +113,14 @@ gh() {
 # shellcheck source=../headless-runtime-failure.sh
 source "${SCRIPT_DIR}/headless-runtime-failure.sh"
 
+# Claim authority is covered by test-headless-runtime-release-unlock.sh. Each
+# circuit observation here represents a separately owned dispatch attempt.
+_hrff_check_release_claim() {
+	_HRFF_RELEASE_CLAIM_OWNED=1
+	_HRFF_RELEASE_CLAIM_ID=100
+	return 0
+}
+
 # This focused test exercises release-circuit behavior, not repository
 # authority discovery. Keep the managed-repository precondition deterministic.
 aidevops_can_manage_repo_issue_state() {

@@ -178,6 +178,39 @@ _counter_context_is_isolated() {
 	return 0
 }
 
+# Fetch arguments for the isolated bare context only: one commit, no tags and
+# no blobs (commits and trees only), so a large tip does not exceed
+# CAS_HTTPS_TIMEOUT_S. Never use these against a shared object store: depth
+# writes a shallow file and --filter registers the remote as a promisor.
+_counter_isolated_fetch_args() {
+	printf '%s\n' '--depth=1 --no-tags --filter=blob:none'
+	return 0
+}
+
+# Read a blob/object spec. In the isolated (blob-less) context this lazily
+# fetches one blob over the network, so bound it with the transport timeout.
+_counter_show() {
+	local spec="$1"
+
+	if _counter_context_is_isolated; then
+		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" show "$spec" 2>/dev/null
+		return $?
+	fi
+	_counter_git show "$spec"
+	return $?
+}
+
+# git mktree from stdin. Isolated blob-less trees lack unchanged blobs that
+# mktree would otherwise verify; entries come from ls-tree of a real tip.
+_counter_mktree() {
+	if _counter_context_is_isolated; then
+		_counter_git mktree --missing
+		return $?
+	fi
+	_counter_git mktree
+	return $?
+}
+
 _counter_source_git() {
 	if [[ -n "${CAS_SOURCE_REPO_PATH:-}" ]]; then
 		git -C "$CAS_SOURCE_REPO_PATH" "$@"
@@ -340,6 +373,23 @@ _derive_ssh_url_from_https() {
 	return 1
 }
 
+# Detect `ls-remote ... --exit-code ...`, whose rc=2 is a definitive remote
+# answer ("no matching refs"), not a transport failure (GH#38493).
+# Args: git subcommand and arguments, as passed to _run_git_with_ssh_fallback.
+# Returns: 0 when the subcommand is ls-remote with --exit-code before any `--`,
+#          1 otherwise.
+_git_args_is_ls_remote_exit_code() {
+	local subcommand="${1:-}"
+	local arg=""
+	[[ "$subcommand" == "ls-remote" ]] || return 1
+	shift
+	for arg in "$@"; do
+		[[ "$arg" == "--" ]] && return 1
+		[[ "$arg" == "--exit-code" ]] && return 0
+	done
+	return 1
+}
+
 # Run a git command with a wall-clock timeout and HTTPS→SSH fallback.
 # Args: $1 — timeout in seconds, $2..$N — git subcommand and its arguments
 #       (do NOT include the leading `git`; this helper adds it).
@@ -350,6 +400,8 @@ _derive_ssh_url_from_https() {
 #
 # Behaviour matrix:
 #   HTTPS succeeds within timeout              → return 0
+#   ls-remote --exit-code returns 2 (remote
+#     answered: no matching refs)              → return 2 (no fallback, GH#38493)
 #   HTTPS fails non-timeout + fallback succeeds → return 0
 #   HTTPS fails non-timeout + fallback fails    → return fallback rc
 #   HTTPS times out, remote NOT https-github    → return 124 (no fallback)
@@ -369,6 +421,12 @@ _run_git_with_ssh_fallback() {
 		timeout_sec "$timeout_s" git "$@" || rc=$?
 	fi
 	if [[ $rc -eq 0 ]]; then
+		return $rc
+	fi
+	# The remote answered over HTTPS. Retrying over SSH can only replace that
+	# answer with an unrelated transport/auth failure (e.g. rc=128 where no SSH
+	# key is available), misreporting an absent branch as a discovery error.
+	if [[ $rc -eq 2 ]] && _git_args_is_ls_remote_exit_code "$@"; then
 		return $rc
 	fi
 
@@ -568,7 +626,7 @@ sync_counter_branch() {
 	local todo_seed="0"
 	local sync_target=""
 
-	_counter_context_is_isolated && depth_args=(--depth=1 --no-tags)
+	_counter_context_is_isolated && read -r -a depth_args <<<"$(_counter_isolated_fetch_args)"
 
 	if ! _run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
 		fetch -q "${depth_args[@]}" "$REMOTE_NAME" \
@@ -583,9 +641,9 @@ sync_counter_branch() {
 		return 1
 	fi
 
-	target_counter=$(_counter_git show "${REMOTE_NAME}/${target_branch}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
+	target_counter=$(_counter_show "${REMOTE_NAME}/${target_branch}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
 	[[ "$target_counter" =~ ^[0-9]+$ ]] || target_counter="0"
-	default_counter=$(_counter_git show "${REMOTE_NAME}/${default_branch}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
+	default_counter=$(_counter_show "${REMOTE_NAME}/${default_branch}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
 	[[ "$default_counter" =~ ^[0-9]+$ ]] || default_counter="0"
 	todo_seed=$(_compute_counter_seed "$repo_path")
 
@@ -606,8 +664,8 @@ sync_counter_branch() {
 		return 1
 	}
 	existing_tree=$(_counter_git ls-tree "${REMOTE_NAME}/${target_branch}" 2>/dev/null || true)
-	if echo "$existing_tree" | grep -q "${COUNTER_FILE}$"; then
-		tree_sha=$(echo "$existing_tree" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | _counter_git mktree 2>/dev/null) || {
+	if grep -q "${COUNTER_FILE}$" <<<"$existing_tree"; then
+		tree_sha=$(echo "$existing_tree" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | _counter_mktree 2>/dev/null) || {
 			log_error "COUNTER_BRANCH_SYNC_ERROR: failed to build replacement tree"
 			return 1
 		}
@@ -616,7 +674,7 @@ sync_counter_branch() {
 			{
 				echo "$existing_tree"
 				printf '100644 blob %s\t%s\n' "$blob_sha" "$COUNTER_FILE"
-			} | _counter_git mktree 2>/dev/null
+			} | _counter_mktree 2>/dev/null
 		) || {
 			log_error "COUNTER_BRANCH_SYNC_ERROR: failed to build tree"
 			return 1
@@ -677,14 +735,14 @@ _counter_redirect_missing_default_counter() {
 		log_info "Dedicated counter branch ${candidate} not present; using ${default_branch} (AIDEVOPS_COUNTER_BOOTSTRAP_DEFAULT_BRANCH=1)"
 		return 0
 	fi
-	_counter_context_is_isolated && depth_args=(--depth=1)
+	_counter_context_is_isolated && read -r -a depth_args <<<"$(_counter_isolated_fetch_args)"
 	if ! _run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
 		fetch -q "${depth_args[@]}" --no-tags "$REMOTE_NAME" \
 		"+refs/heads/${default_branch}:refs/remotes/${REMOTE_NAME}/${default_branch}" >/dev/null; then
 		log_info "Dedicated counter branch ${candidate} not present; using ${default_branch}"
 		return 0
 	fi
-	default_counter=$(_counter_git show "${REMOTE_NAME}/${default_branch}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
+	default_counter=$(_counter_show "${REMOTE_NAME}/${default_branch}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
 	if [[ "$default_counter" =~ ^[0-9]+$ ]]; then
 		log_info "Dedicated counter branch ${candidate} not present; using ${default_branch}"
 		return 0
@@ -718,7 +776,7 @@ resolve_implicit_counter_branch() {
 	# Limit depth to the isolated bare context: a shallow file in the shared
 	# object store truncates history for the canonical checkout and all worktrees.
 	# The explicit refspec retains the remote-tracking ref used below.
-	_counter_context_is_isolated && depth_args=(--depth=1)
+	_counter_context_is_isolated && read -r -a depth_args <<<"$(_counter_isolated_fetch_args)"
 	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
 		fetch -q "${depth_args[@]}" --no-tags "$REMOTE_NAME" \
 		"+refs/heads/${candidate}:refs/remotes/${REMOTE_NAME}/${candidate}" >/dev/null || fetch_rc=$?
@@ -734,7 +792,7 @@ resolve_implicit_counter_branch() {
 		_task_counter_status "$TASK_COUNTER_SETUP_STATUS" "counter_branch_discovery_failed"
 		return "$CAS_PROTECTED_BRANCH_RC"
 	fi
-	candidate_counter=$(_counter_git show "${REMOTE_NAME}/${candidate}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
+	candidate_counter=$(_counter_show "${REMOTE_NAME}/${candidate}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
 	if ! [[ "$candidate_counter" =~ ^[0-9]+$ ]]; then
 		log_warn "Dedicated counter branch ${REMOTE_NAME}/${candidate} has an invalid or missing ${COUNTER_FILE}; refusing implicit migration"
 		return 0
@@ -747,12 +805,16 @@ resolve_implicit_counter_branch() {
 		_task_counter_status "$TASK_COUNTER_SETUP_STATUS" "counter_branch_discovery_failed"
 		return "$CAS_PROTECTED_BRANCH_RC"
 	fi
-	default_counter=$(_counter_git show "${REMOTE_NAME}/${DEFAULT_BRANCH:-main}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
+	default_counter=$(_counter_show "${REMOTE_NAME}/${DEFAULT_BRANCH:-main}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
 	[[ "$default_counter" =~ ^[0-9]+$ ]] || default_counter="0"
 	todo_seed=$(_compute_counter_seed "$repo_path")
 
 	if ((10#$candidate_counter < 10#$default_counter || 10#$candidate_counter < 10#$todo_seed)); then
 		log_warn "COUNTER_BRANCH_STALE: dedicated counter branch ${REMOTE_NAME}/${candidate} is behind canonical task state; refusing implicit migration"
+		if ((10#$candidate_counter > 10#$default_counter)); then
+			log_error "Refusing to allocate from the lower default counter; run --sync-counter-branch first"
+			return "$CAS_PROTECTED_BRANCH_RC"
+		fi
 		return 0
 	fi
 
@@ -878,15 +940,15 @@ _cas_push_rejection_is_protected_branch() {
 # transport, authentication, hook, and provider-policy failures are hard errors.
 _cas_push_rejection_is_non_fast_forward() {
 	local push_stderr="$1"
-	printf '%s\n' "$push_stderr" | grep -Eiq \
-		'non-fast-forward|\(fetch first\)|stale info|remote ref updated since checkout'
+	grep -Eiq \
+		'non-fast-forward|\(fetch first\)|stale info|remote ref updated since checkout' <<<"$push_stderr"
 	return $?
 }
 
 _cas_push_rejection_is_auth_failure() {
 	local push_stderr="$1"
-	printf '%s\n' "$push_stderr" | grep -Eiq \
-		'authentication failed|could not read Username|permission denied \(publickey\)|http[^[:space:]]* 40[13]|repository not found'
+	grep -Eiq \
+		'authentication failed|could not read Username|permission denied \(publickey\)|http[^[:space:]]* 40[13]|repository not found' <<<"$push_stderr"
 	return $?
 }
 
@@ -921,7 +983,7 @@ _cas_fetch_counter_branch() {
 	local -a git_opts=("$@")
 	local -a depth_args=()
 
-	_counter_context_is_isolated && depth_args=(--depth=1 --no-tags)
+	_counter_context_is_isolated && read -r -a depth_args <<<"$(_counter_isolated_fetch_args)"
 	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
 		${git_opts[@]+"${git_opts[@]}"} \
 		fetch -q ${depth_args[@]+"${depth_args[@]}"} "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null
@@ -955,7 +1017,7 @@ _cas_read_counter_file_from_ref() {
 	local repo_path="$2"
 	local counter_value=""
 
-	counter_value=$(_counter_git show "${ref_sha}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
+	counter_value=$(_counter_show "${ref_sha}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
 	if [[ -z "$counter_value" ]] || ! [[ "$counter_value" =~ ^[0-9]+$ ]]; then
 		counter_value=$(_compute_counter_seed "$repo_path")
 	fi
@@ -972,11 +1034,11 @@ _cas_read_default_counter_for_reconcile() {
 	if [[ -n "$default_branch" && "$default_branch" != "$COUNTER_BRANCH" ]]; then
 		# Only the tip's counter file is read. Never shallow a shared object store:
 		# its shallow boundary would also affect the checkout and other worktrees.
-		_counter_context_is_isolated && depth_args=(--depth=1)
+		_counter_context_is_isolated && read -r -a depth_args <<<"$(_counter_isolated_fetch_args)"
 		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
 			fetch -q "${depth_args[@]}" "$REMOTE_NAME" "$default_branch" >/dev/null || true
 		default_ref="${REMOTE_NAME}/${default_branch}"
-		default_counter=$(_counter_git show "${default_ref}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
+		default_counter=$(_counter_show "${default_ref}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
 		if [[ -z "$default_counter" ]] || ! [[ "$default_counter" =~ ^[0-9]+$ ]]; then
 			default_counter="0"
 		fi
@@ -992,7 +1054,7 @@ _cas_todo_seed_from_ref() {
 	local todo_content=""
 	local highest="0"
 
-	todo_content=$(_counter_git show "${ref}:TODO.md" 2>/dev/null || true)
+	todo_content=$(_counter_show "${ref}:TODO.md" 2>/dev/null || true)
 	if [[ -n "$todo_content" ]]; then
 		highest=$(get_highest_task_id "$todo_content")
 		if [[ "$highest" =~ ^[0-9]+$ ]] && ((10#$highest > 0)); then
@@ -1054,8 +1116,8 @@ _cas_build_reconciled_counter_tree() {
 		_task_counter_status "unrecoverable_desync" "tree_read_failed"
 		return 1
 	}
-	if printf '%s\n' "$existing_tree" | grep -q "${COUNTER_FILE}$"; then
-		tree_sha=$(printf '%s\n' "$existing_tree" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | _counter_git mktree) || {
+	if grep -q "${COUNTER_FILE}$" <<<"$existing_tree"; then
+		tree_sha=$(printf '%s\n' "$existing_tree" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | _counter_mktree) || {
 			log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to replace reconciled counter tree entry"
 			_task_counter_status "unrecoverable_desync" "tree_replace_failed"
 			return 1
@@ -1065,7 +1127,7 @@ _cas_build_reconciled_counter_tree() {
 			{
 				[[ -n "$existing_tree" ]] && printf '%s\n' "$existing_tree"
 				printf '100644 blob %s\t%s\n' "$blob_sha" "$COUNTER_FILE"
-			} | _counter_git mktree
+			} | _counter_mktree
 		) || {
 			log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to add reconciled counter tree entry"
 			_task_counter_status "unrecoverable_desync" "tree_add_failed"
@@ -1285,10 +1347,37 @@ _id_exists_in_todo() {
 
 	[[ -f "$todo_file" ]] || return 1
 
-	# Match "- [ ] tNNN" or "- [x] tNNN" (zero-padded variant included via 0*)
-	if grep -qE "^[[:space:]]*-[[:space:]]\[[[:space:]xX]\][[:space:]]t0*${id_num}([[:space:]]|$)" "$todo_file"; then
+	# Match "- [?] tNNN" for any single checkbox state (space, x, -, ~, !, ...);
+	# zero-padded variant included via 0*
+	if grep -qE "^[[:space:]]*-[[:space:]]\[.\][[:space:]]t0*${id_num}([[:space:]]|$)" "$todo_file"; then
 		return 0
 	fi
+
+	return 1
+}
+
+# Check whether "t<id>:" is already used as a PR or issue title prefix on
+# GitHub (GH#39657). Worker PRs use t<issue-number>, which can collide with
+# counter-allocated IDs once issue numbers pass the counter. Fail-open: no gh,
+# no GitHub slug, API failure, or CLAIM_TASK_ID_SKIP_TITLE_CHECK=1 -> not found.
+# Args: $1 numeric id, $2 repo path. Returns 0 if a title prefix match exists.
+_id_used_as_title_prefix() {
+	local id_num="$1"
+	local repo_path="${2:-$PWD}"
+	local slug="" kind="" titles=""
+
+	[[ "${CLAIM_TASK_ID_SKIP_TITLE_CHECK:-0}" == "1" ]] && return 1
+	command -v gh >/dev/null 2>&1 || return 1
+	slug=$(_cas_extract_github_slug "$repo_path" 2>/dev/null) || return 1
+
+	for kind in pr issue; do
+		# Bounded by timeout_sec (fail-open) and a wide limit so matches are not truncated.
+		titles=$(timeout_sec "${CAS_HTTPS_TIMEOUT_S:-30}" gh "$kind" list --repo "$slug" --state all --limit "${CAS_TITLE_SEARCH_LIMIT:-300}" \
+			--search "t${id_num}: in:title" --json title --jq '.[].title' 2>/dev/null) || continue
+		if grep -qE "^t0*${id_num}([^0-9.]|$)" <<<"$titles"; then
+			return 0
+		fi
+	done
 
 	return 1
 }
@@ -1373,13 +1462,13 @@ bootstrap_remote_counter() {
 
 	local tree_sha
 	if [[ -z "$parent_sha" ]]; then
-		tree_sha=$(printf '100644 blob %s\t%s\n' "$blob_sha" "$COUNTER_FILE" | _counter_git mktree 2>/dev/null) || {
+		tree_sha=$(printf '100644 blob %s\t%s\n' "$blob_sha" "$COUNTER_FILE" | _counter_mktree 2>/dev/null) || {
 			log_warn "BOOTSTRAP_COUNTER: failed to create tree (orphan)"
 			return 1
 		}
-	elif echo "$existing_tree" | grep -q "${COUNTER_FILE}$"; then
+	elif grep -q "${COUNTER_FILE}$" <<<"$existing_tree"; then
 		# Replace existing (invalid) entry
-		tree_sha=$(echo "$existing_tree" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | _counter_git mktree 2>/dev/null) || {
+		tree_sha=$(echo "$existing_tree" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | _counter_mktree 2>/dev/null) || {
 			log_warn "BOOTSTRAP_COUNTER: failed to create tree (replace)"
 			return 1
 		}
@@ -1389,7 +1478,7 @@ bootstrap_remote_counter() {
 			{
 				echo "$existing_tree"
 				printf '100644 blob %s\t%s\n' "$blob_sha" "$COUNTER_FILE"
-			} | _counter_git mktree 2>/dev/null
+			} | _counter_mktree 2>/dev/null
 		) || {
 			log_warn "BOOTSTRAP_COUNTER: failed to create tree (add)"
 			return 1
@@ -1432,7 +1521,7 @@ read_remote_counter() {
 	[[ -n "$repo_path" ]] || return 1
 
 	# GH#21904: wrap with timeout + SSH fallback for credential-helper hangs.
-	_counter_context_is_isolated && depth_args=(--depth=1)
+	_counter_context_is_isolated && read -r -a depth_args <<<"$(_counter_isolated_fetch_args)"
 	if ! _run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
 		fetch "${depth_args[@]}" "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null; then
 		log_warn "Failed to fetch ${REMOTE_NAME}/${COUNTER_BRANCH}; CAS_HTTPS_TIMEOUT_S=${CAS_HTTPS_TIMEOUT_S:-30}"
@@ -1440,7 +1529,7 @@ read_remote_counter() {
 	fi
 
 	local counter_value
-	counter_value=$(_counter_git show "${REMOTE_NAME}/${COUNTER_BRANCH}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]')
+	counter_value=$(_counter_show "${REMOTE_NAME}/${COUNTER_BRANCH}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]')
 
 	if [[ -z "$counter_value" ]] || ! [[ "$counter_value" =~ ^[0-9]+$ ]]; then
 		log_warn "Invalid or missing ${COUNTER_FILE} on ${REMOTE_NAME}/${COUNTER_BRANCH}"
@@ -1513,7 +1602,7 @@ _cas_fetch_and_pin() {
 	fi
 
 	local current_value=""
-	[[ -z "$pinned_sha" ]] || current_value=$(_counter_git show "${pinned_sha}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]')
+	[[ -z "$pinned_sha" ]] || current_value=$(_counter_show "${pinned_sha}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]')
 
 	if [[ -z "$current_value" ]] || ! [[ "$current_value" =~ ^[0-9]+$ ]]; then
 		log_info "Counter missing/invalid — attempting auto-bootstrap (GH#6569)"
@@ -1525,7 +1614,7 @@ _cas_fetch_and_pin() {
 			log_error "BOOTSTRAP_COUNTER_FAILED: cannot resolve ref after bootstrap"
 			return 1
 		}
-		current_value=$(_counter_git show "${pinned_sha}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]')
+		current_value=$(_counter_show "${pinned_sha}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]')
 		if [[ -z "$current_value" ]] || ! [[ "$current_value" =~ ^[0-9]+$ ]]; then
 			log_error "BOOTSTRAP_COUNTER_FAILED: counter unavailable after bootstrap attempt"
 			return 1
@@ -1554,7 +1643,7 @@ _cas_build_and_push() {
 	}
 
 	local tree_sha
-	tree_sha=$(_counter_git ls-tree "${pinned_sha}" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | _counter_git mktree 2>/dev/null) || {
+	tree_sha=$(_counter_git ls-tree "${pinned_sha}" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | _counter_mktree 2>/dev/null) || {
 		log_warn "Failed to create tree"
 		return 1
 	}
@@ -1647,7 +1736,7 @@ _cas_validate_explicit_counter_branch() {
 	local depth_args=()
 
 	[[ "${_COUNTER_BRANCH_SET:-false}" == "true" ]] || return 0
-	_counter_context_is_isolated && depth_args=(--depth=1)
+	_counter_context_is_isolated && read -r -a depth_args <<<"$(_counter_isolated_fetch_args)"
 	for branch in "$default_branch" "$dedicated"; do
 		[[ -n "$branch" ]] || continue
 		ref="$pinned_sha"
@@ -1671,7 +1760,7 @@ _cas_validate_explicit_counter_branch() {
 			fi
 			ref="${REMOTE_NAME}/${branch}"
 		fi
-		value=$(_counter_git show "${ref}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
+		value=$(_counter_show "${ref}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
 		if [[ "$branch" == "$dedicated" && "$value" =~ ^[0-9]+$ ]] && ((10#$value > 10#$leading_value)); then
 			leading_value="$value"
 			leading_branch="$branch"
@@ -1705,8 +1794,8 @@ repair_counter_branch_config() {
 	fi
 	resolve_implicit_counter_branch "$repo_path" || return $?
 	candidate="$COUNTER_BRANCH"
-	selected=$(_counter_git show "${REMOTE_NAME}/${DEFAULT_BRANCH}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
-	value=$(_counter_git show "${REMOTE_NAME}/${candidate}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
+	selected=$(_counter_show "${REMOTE_NAME}/${DEFAULT_BRANCH}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
+	value=$(_counter_show "${REMOTE_NAME}/${candidate}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
 	if [[ "$candidate" == "$DEFAULT_BRANCH" || ! "$selected" =~ ^[0-9]+$ || ! "$value" =~ ^[0-9]+$ ]]; then
 		log_info "COUNTER_BRANCH_REPAIR_NOOP: no validated leading dedicated counter"
 		return 0
@@ -1763,6 +1852,11 @@ allocate_counter_cas() {
 
 	_cas_validate_explicit_counter_branch "$pinned_sha" "$current_value" || return $?
 
+	local todo_seed remote_seed
+	todo_seed=$(_compute_counter_seed "$repo_path")
+	remote_seed=$(_cas_todo_seed_from_remote_refs "${DEFAULT_BRANCH:-main}")
+	((10#$remote_seed > 10#$todo_seed)) && todo_seed="$remote_seed"
+	((10#$todo_seed > 10#$current_value)) && current_value="$todo_seed"
 	local first_id="$current_value"
 	local last_id=$((current_value + count - 1))
 	local new_counter=$((current_value + count))
@@ -1791,6 +1885,26 @@ allocate_counter_cas() {
 
 	# Success — output the claimed IDs
 	echo "$first_id"
+	return 0
+}
+
+# Refresh the caller repository's remote-tracking ref for the counter branch
+# after a successful CAS. The CAS runs in an isolated Git context, so its push
+# leaves the caller's refs/remotes/<remote>/<counter-branch> stale and the
+# task-id commit-msg guard then misses the fresh claim. Best-effort and bounded:
+# failure never changes the claim result.
+# Args: $1 — caller repo_path
+_cas_refresh_caller_tracking_ref() {
+	local repo_path="$1"
+	[[ -n "$repo_path" && -d "$repo_path" ]] || return 0
+	local refspec="+refs/heads/${COUNTER_BRANCH}:refs/remotes/${REMOTE_NAME}/${COUNTER_BRANCH}"
+	if timeout_sec "${CAS_HTTPS_TIMEOUT_S:-30}" git -C "$repo_path" \
+		-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="${CAS_GIT_CMD_TIMEOUT_S:-10}" \
+		fetch --quiet "$REMOTE_NAME" "$refspec" >/dev/null 2>&1; then
+		log_info "Refreshed ${REMOTE_NAME}/${COUNTER_BRANCH} in caller repo"
+	else
+		log_info "Could not refresh ${REMOTE_NAME}/${COUNTER_BRANCH} in caller repo (non-fatal)"
+	fi
 	return 0
 }
 
@@ -1857,6 +1971,7 @@ allocate_online() {
 		0)
 			# go for it — CAS succeeded on this attempt
 			log_success "Claimed $(_format_legacy_task_id "$first_id") (attempt ${attempt}, ${elapsed}s)"
+			_cas_refresh_caller_tracking_ref "$repo_path"
 			# Phase 3 (t2569 / GH#20001): structured audit log.
 			_append_claim_audit_log "$first_id" "$attempt" "$elapsed"
 			_task_coordinator_shadow_legacy "$first_id" "$count"
@@ -1923,13 +2038,26 @@ _allocate_online_with_collision_check() {
 			fi
 		done
 
+		# Also check GitHub PR/issue title prefixes (GH#39657): headless workers
+		# title PRs "t<issue-number>: ..." so a counter value can already be
+		# in use as a prefix even though TODO.md has no entry for it.
+		if [[ -z "$collision_id" ]]; then
+			for ((i = 0; i < count; i++)); do
+				local check_id=$((first_id + i))
+				if _id_used_as_title_prefix "$check_id" "$repo_path"; then
+					collision_id="$check_id"
+					break
+				fi
+			done
+		fi
+
 		if [[ -z "$collision_id" ]]; then
 			echo "$first_id"
 			return 0
 		fi
 
 		total_skips=$((total_skips + 1))
-		log_info "TODO.md collision: $(_format_legacy_task_id "$collision_id") already exists — skipping (${total_skips}/${max_skips})"
+		log_info "Task ID collision: $(_format_legacy_task_id "$collision_id") already in use (TODO.md or PR/issue title prefix) — skipping (${total_skips}/${max_skips})"
 
 		if [[ $total_skips -ge $max_skips ]]; then
 			log_error "TODO.md collision guard: exhausted ${max_skips} skip attempts"
@@ -1960,6 +2088,9 @@ allocate_offline() {
 		log_info "BOOTSTRAP_COUNTER_OK: local counter initialized to ${seed}"
 	fi
 
+	local todo_seed
+	todo_seed=$(_compute_counter_seed "$repo_path")
+	((10#$todo_seed > 10#$current_value)) && current_value="$todo_seed"
 	local first_id=$((current_value + OFFLINE_OFFSET))
 	local last_id=$((first_id + count - 1))
 	local new_counter=$((first_id + count))

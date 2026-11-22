@@ -21,6 +21,13 @@ export function reasoningFloor(value) {
   return ["high", "xhigh", "max"].includes(value) ? value : "medium";
 }
 
+/** Compaction summaries default to `high`; only medium..max are accepted (GH#36169). */
+export const COMPACTION_REASONING_DEFAULT = "high";
+
+export function compactionReasoning(value) {
+  return ["medium", "high", "xhigh", "max"].includes(value) ? value : COMPACTION_REASONING_DEFAULT;
+}
+
 export function floorReasoning(variant, minimum = "medium") {
   if (!variant) return ""; // Unknown variants retain the provider default.
   const levels = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];

@@ -203,7 +203,7 @@ pulse_runtime_recover_if_safe() {
 		return 0
 	fi
 	if ! git -C "$repo_path" diff --name-only "$deployed_sha" "$canonical_sha" -- \
-		.agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ setup.sh aidevops.sh 2>/dev/null | grep -q .; then
+		.agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ setup.sh aidevops.sh 2>/dev/null | grep . >/dev/null; then
 		return 0
 	fi
 

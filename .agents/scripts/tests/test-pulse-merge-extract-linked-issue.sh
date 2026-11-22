@@ -29,6 +29,7 @@
 #   4. "Ref #NNN" body (no closing keyword) + tNNN title → empty
 #      (tNNN: title format has no GH# — both gates fail)
 #   5. Multiple distinct closing identities → empty
+#   5b-d. Closing references to pull requests are ignored (GH#36704)
 #   6. Cross-repository closing reference → empty
 #   7. Failed body metadata read → empty; unavailable title metadata is irrelevant
 
@@ -36,6 +37,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+# shellcheck source=../gh-closing-reference-lib.sh
+source "${SCRIPT_DIR}/../gh-closing-reference-lib.sh"
 
 readonly TEST_RED=$'\033[0;31m'
 readonly TEST_GREEN=$'\033[0;32m'
@@ -97,6 +100,18 @@ if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"--json body"* ]]; then
 	exit 0
 fi
 
+# gh api repos/SLUG/issues/NNN — numbers listed in TEST_PULL_NUMBERS are PRs.
+if [[ "$1" == "api" && "$2" =~ ^repos/[^/]+/[^/]+/issues/([0-9]+)$ ]]; then
+	number="${BASH_REMATCH[1]}"
+	[[ "${TEST_FAIL_METADATA:-}" == "issue-api" ]] && exit 1
+	if [[ " ${TEST_PULL_NUMBERS:-} " == *" ${number} "* ]]; then
+		printf '{"number":%s,"pull_request":{"url":"x"}}\n' "$number"
+	elif [[ -n "${TEST_PULL_NUMBERS:-}" ]]; then
+		printf '{"number":%s}\n' "$number"
+	fi
+	exit 0
+fi
+
 # Everything else — silent success
 exit 0
 EOF
@@ -106,6 +121,12 @@ EOF
 
 gh_pr_view() {
 	gh pr view "$@"
+	return $?
+}
+
+_gh_with_timeout() {
+	shift
+	"$@"
 	return $?
 }
 
@@ -127,6 +148,9 @@ define_function_under_test() {
 		return 1
 	fi
 	# shellcheck disable=SC1090  # dynamic source from extracted helper
+	eval "$fn_src"
+	fn_src=$(awk '/^_drop_closing_pull_request_refs\(\) \{/,/^}$/ { print }' "$MERGE_SCRIPT")
+	[[ -n "$fn_src" ]] || return 1
 	eval "$fn_src"
 	fn_src=$(awk '/^_extract_pr_work_issue\(\) \{/,/^}$/ { print }' "$MERGE_SCRIPT")
 	[[ -n "$fn_src" ]] || return 1
@@ -198,6 +222,26 @@ test_multiple_closing_issues_return_empty() {
 	return 0
 }
 
+# GH#36704: a closing keyword before a pull-request number links nothing on
+# GitHub, so it must not make the real issue target ambiguous.
+test_pull_request_closing_reference_is_ignored() {
+	export TEST_PR_TITLE="GH#36583: bump types"
+	export TEST_PR_BODY=$'Resolves #36583\n\nThen close #36582 as superseded.'
+	export TEST_PULL_NUMBERS="36582"
+	assert_returns "36583" \
+		"scenario5b: closing reference to a pull request is ignored"
+	export TEST_PULL_NUMBERS="36582 36583"
+	assert_returns "" \
+		"scenario5c: only pull-request closing references leave no target"
+	export TEST_PULL_NUMBERS="36582"
+	export TEST_FAIL_METADATA="issue-api"
+	assert_returns "" \
+		"scenario5d: issue lookup failure keeps the ambiguity (fail closed)"
+	export TEST_FAIL_METADATA=""
+	export TEST_PULL_NUMBERS=""
+	return 0
+}
+
 test_cross_repo_closing_reference_returns_empty() {
 	export TEST_PR_TITLE="GH#19042: external tracker identity"
 	export TEST_PR_BODY="Resolves other/repo#19042"
@@ -252,23 +296,23 @@ test_explicit_merge_association() {
 	export TEST_PR_BODY=$'For #42\nRef #42'
 	assert_association "42" 0 "repeated identical declarations are unambiguous"
 	export TEST_PR_BODY=$'For #42\nRef #43'
-	assert_association "" 1 "distinct explicit declarations fail closed"
+	assert_association "" 2 "distinct explicit declarations fail closed"
 	export TEST_PR_BODY='For #42 and Ref #43'
-	assert_association "" 1 "multiple references on one declaration fail closed"
+	assert_association "" 2 "multiple references on one declaration fail closed"
 	export TEST_PR_BODY='For #101. Continuing the merged checkpoint from PR #99. Scope: data files only.'
 	assert_association "101" 0 "context sentences after the declaration are not a second task"
 	export TEST_PR_BODY='For #101. **Ready partial delivery; do not close the issue or tracker #90.**'
 	assert_association "101" 0 "an emphasised tracker reference after the declaration is context"
 	export TEST_PR_BODY='For #42, #43'
-	assert_association "" 1 "a comma-separated target list fails closed"
+	assert_association "" 2 "a comma-separated target list fails closed"
 	export TEST_PR_BODY='For #42 and #43. Partial delivery.'
-	assert_association "" 1 "a conjunctive target list fails closed"
+	assert_association "" 2 "a conjunctive target list fails closed"
 	export TEST_PR_BODY='For #42 (parent gate #41 / t018).'
-	assert_association "" 1 "a parenthetical reference inside the declaration clause fails closed"
+	assert_association "" 2 "a parenthetical reference inside the declaration clause fails closed"
 	export TEST_PR_BODY='For #42. Ref #43.'
-	assert_association "" 1 "a second same-line declaration sentence fails closed"
+	assert_association "" 2 "a second same-line declaration sentence fails closed"
 	export TEST_PR_BODY='For #42; ref: #43'
-	assert_association "" 1 "a declaration after a clause terminator fails closed"
+	assert_association "" 2 "a declaration after a clause terminator fails closed"
 	export TEST_PR_BODY='No issue declaration.'
 	assert_association "" 0 "title-only task ID cannot supply merge association"
 	export TEST_PR_BODY='For other/repo#42'
@@ -305,6 +349,8 @@ test_merge_gate_association_is_not_closure() {
 	local fn_src="" result=0 linked_issue="" gate_issue="" gate_repo="" author_rc=0 review_rc=0
 	fn_src=$(awk '/^_check_pr_merge_gates\(\) \{/,/^}$/ { print }' "$MERGE_SCRIPT")
 	eval "$fn_src"
+	# Closure validation has its own merge-contradiction harness.
+	_gh_pr_merge_closure_check() { return 0; }
 	_interactive_claim_fence_blocks_merge() { return 1; }
 	_pm_gate_review_mode() { return 0; }
 	_pm_gate_author_trust() { return "$author_rc"; }
@@ -337,6 +383,99 @@ test_merge_gate_association_is_not_closure() {
 	return 0
 }
 
+test_worker_write_identity() {
+	local _GH_PR_IDENTITY_ORIGIN="origin:worker" body="" rc=0
+	local _GH_EDIT_REJECTION_REASON=""
+	for body in $'For #42\nFor #43' 'For #42. For #43.' 'For #42. Ref #43 and #44.' 'Checkpoint For #42; do not close the issue.' 'No linked issue.'; do
+		rc=0
+		_gh_validate_pr_closing_keywords --body "$body" 2>"${TEST_ROOT}/rejection" || rc=$?
+		# shellcheck disable=SC2016 # Match literal Markdown code spans.
+		if [[ "$rc" == 1 ]] && grep -Fq 'keep one standalone `For #N` line; move other references under `## Related`' "${TEST_ROOT}/rejection"; then
+			print_result "worker write rejects ${body}" 0
+		else
+			print_result "worker write rejects ${body}" 1
+		fi
+	done
+	for body in $'For #42\n\n## Related\nRef #43\nRef #44' $'Ref: #42\n## Remaining work\nFor #43'; do
+		rc=0
+		_gh_validate_pr_closing_keywords --body "$body" || rc=$?
+		print_result "worker write accepts secondary references" "$rc"
+		export TEST_PR_BODY="$body"
+		assert_association "42" 0 "accepted worker body has exactly one explicit merge identity"
+	done
+	rc=0
+	_gh_validate_pr_closing_keywords --body 'Resolves #42' || rc=$?
+	print_result "worker write preserves native closing declarations" "$rc"
+	_GH_PR_IDENTITY_ORIGIN="origin:interactive"
+	rc=0
+	_gh_validate_pr_closing_keywords --body $'For #42\nFor #43' || rc=$?
+	print_result "interactive bodies retain existing behavior" "$rc"
+	return 0
+}
+
+test_worker_write_wrappers() {
+	local result=0
+	# Isolate the real write entrypoints and their normal body-file processing.
+	# Only external metadata, signatures, audit storage and transport are stubbed.
+	(
+		# shellcheck source=../shared-constants.sh
+		source "${SCRIPT_DIR}/../shared-constants.sh"
+		gh_record_call() { return 0; }
+		_gh_edit_audit_rejection() { return 0; }
+		_ensure_origin_labels_for_args() { return 0; }
+		_gh_guard_public_write_args() { return 0; }
+		_gh_wrapper_auto_sig() { _GH_WRAPPER_SIG_MODIFIED_ARGS=("$@"); return 0; }
+		_gh_create_pr_enforce_origin_postcondition() { return 0; }
+		_gh_audit_fetch_pr_state_json() { return 0; }
+		_gh_audit_record_op() { return 0; }
+		session_origin_label() { printf 'origin:worker'; return 0; }
+		local fixture_labels='["origin:worker"]' fail_labels=0 writes=0 body="" rc=0
+		gh_pr_view() {
+			[[ "$fail_labels" -eq 0 ]] || return 1
+			printf '%s' "$fixture_labels"
+			return 0
+		}
+		gh() {
+			local resource="$1" operation="$2"
+			if [[ "$resource" == "pr" && ( "$operation" == "create" || "$operation" == "edit" ) ]]; then
+				printf '%s\n' "$operation" >>"${TEST_ROOT}/writes"
+			fi
+			return 0
+		}
+		: >"${TEST_ROOT}/writes"
+		for body in $'For #42\nFor #43' 'For #42. For #43.' 'For #42. Ref #43 and #44.' 'Checkpoint For #42; do not close the issue.'; do
+			printf '%s\n' "$body" >"${TEST_ROOT}/worker-body"
+			rc=0
+			gh_create_pr --repo owner/repo --title 'Checkpoint identity' --body-file "${TEST_ROOT}/worker-body" >/dev/null 2>&1 || rc=$?
+			[[ "$rc" -eq 1 ]] || exit 1
+			rc=0
+			gh_pr_edit_safe --repo owner/repo 1 --body-file "${TEST_ROOT}/worker-body" >/dev/null 2>&1 || rc=$?
+			[[ "$rc" -eq 1 ]] || exit 1
+		done
+		[[ ! -s "${TEST_ROOT}/writes" ]] || exit 1
+		printf '%s\n' 'For #42' '' '## Related' 'Ref #43' >"${TEST_ROOT}/worker-body"
+		gh_create_pr --repo owner/repo --title 'Checkpoint identity' --body-file "${TEST_ROOT}/worker-body" >/dev/null || exit 1
+		gh_pr_edit_safe 1 --repo owner/repo --body-file "${TEST_ROOT}/worker-body" || exit 1
+		writes=$(wc -l <"${TEST_ROOT}/writes")
+		[[ "$writes" -eq 2 ]] || exit 1
+		fail_labels=1
+		rc=0
+		gh_pr_edit_safe 1 --repo owner/repo --body 'For #42' >/dev/null 2>&1 || rc=$?
+		[[ "$rc" -eq 1 ]] || exit 1
+		# Metadata-only edits do not need body identity or a new label read.
+		gh_pr_edit_safe 1 --repo owner/repo --title 'Updated checkpoint' || exit 1
+		fail_labels=0
+		fixture_labels='["origin:interactive"]'
+		gh_pr_edit_safe 1 --repo owner/repo --body 'Checkpoint For #42' || exit 1
+		rc=0
+		gh_pr_edit_safe 1 --repo owner/repo --add-label origin:worker --body 'Checkpoint For #42' >/dev/null 2>&1 || rc=$?
+		[[ "$rc" -eq 1 ]] || exit 1
+		exit 0
+	) || result=$?
+	print_result "real create/edit wrappers enforce worker identity before writes and preserve metadata/interactive edits" "$result"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -352,9 +491,12 @@ main() {
 	test_unrelated_title_keeps_body_target
 	test_ref_body_tnnn_title_returns_empty
 	test_multiple_closing_issues_return_empty
+	test_pull_request_closing_reference_is_ignored
 	test_cross_repo_closing_reference_returns_empty
 	test_metadata_failure_returns_empty
 	test_explicit_merge_association
+	test_worker_write_identity
+	test_worker_write_wrappers
 	test_merge_gate_association_is_not_closure
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

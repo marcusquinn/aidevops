@@ -34,6 +34,10 @@ _DF_DPI=300
 _DF_MIN_TEXT_CHARS=50
 _DF_MIN_IMPROVEMENT=15
 _DF_MIN_WORDS=4
+_DF_STRONG_ORIGINAL_CONFIDENCE=80
+_DF_STRONG_ORIGINAL_WORDS=50
+_DF_STRONG_ORIGINAL_GAIN_PERCENT=25
+_DF_DIMENSION_TOLERANCE=0.5
 _DF_WRITE_READABLE=false
 _DF_PAGE_COUNT=0
 _DF_PAGE_SUCCESS_COUNT=0
@@ -365,6 +369,13 @@ _df_transform_image() {
 			convert "$input" -flop -units PixelsPerInch -density "$dpi" "$output" >/dev/null 2>&1 && return 0
 		fi
 		;;
+	flip-vertical)
+		if has_cmd magick; then
+			magick "$input" -flip -units PixelsPerInch -density "$dpi" "$output" >/dev/null 2>&1 && return 0
+		elif has_cmd convert; then
+			convert "$input" -flip -units PixelsPerInch -density "$dpi" "$output" >/dev/null 2>&1 && return 0
+		fi
+		;;
 	rotate-90) degrees="90" ;;
 	rotate-180) degrees="180" ;;
 	rotate-270) degrees="270" ;;
@@ -636,7 +647,7 @@ _df_collect_page_candidates() {
 	local summary_file="${candidate_dir}/${page_id}.summary.json"
 	local -a candidate_files=()
 
-	for transform in original flip-horizontal rotate-90 rotate-180 rotate-270; do
+	for transform in original flip-horizontal flip-vertical rotate-90 rotate-180 rotate-270; do
 		candidate_prefix="${candidate_dir}/${page_id}.${transform}"
 		candidate_image="${candidate_prefix}.png"
 		candidate_json="${candidate_prefix}.json"
@@ -711,6 +722,48 @@ _df_write_suspect_page_result() {
 	return 0
 }
 
+# A strong upright original (high confidence and plenty of words) must not be
+# overridden by a marginal score gain: require the gain to also be at least
+# _DF_STRONG_ORIGINAL_GAIN_PERCENT of the original score.
+_df_original_is_strong() {
+	local original_json="$1"
+	local confidence=""
+	local words=0
+
+	confidence=$(jq -r '.confidence // 0' "$original_json" 2>/dev/null) || return 1
+	words=$(jq -r '.word_count // 0' "$original_json" 2>/dev/null) || return 1
+	awk -v c="$confidence" -v w="$words" -v cmin="$_DF_STRONG_ORIGINAL_CONFIDENCE" \
+		-v wmin="$_DF_STRONG_ORIGINAL_WORDS" 'BEGIN { exit !(c >= cmin && w >= wmin) }'
+	return $?
+}
+
+_df_gain_clears_strong_original() {
+	local improvement="$1"
+	local original_score="$2"
+	local original_json="$3"
+
+	if _df_original_is_strong "$original_json"; then
+		# Intentionally not capped at the score ceiling: a strong original
+		# (high confidence, many words) near the ceiling is not overridden by score alone.
+		[[ $((improvement * 100)) -ge $((original_score * _DF_STRONG_ORIGINAL_GAIN_PERCENT)) ]] || return 1
+	fi
+	return 0
+}
+
+# Compare "WxH" point dimensions numerically within _DF_DIMENSION_TOLERANCE points.
+_df_dimensions_match() {
+	local first="$1"
+	local second="$2"
+
+	awk -v a="$first" -v b="$second" -v tol="$_DF_DIMENSION_TOLERANCE" '
+		function abs(v) { return v < 0 ? -v : v }
+		BEGIN {
+			if (split(a, x, "x") != 2 || split(b, y, "x") != 2) { exit 1 }
+			exit !(abs(x[1] - y[1]) <= tol && abs(x[2] - y[2]) <= tol)
+		}'
+	return $?
+}
+
 _df_process_suspect_page() {
 	local page="$1"
 	local page_id="$2"
@@ -762,13 +815,19 @@ _df_process_suspect_page() {
 		if [[ "$best_sufficient" == true ]]; then
 			classification="normal"
 		fi
-	elif [[ "$best_sufficient" == true ]] && [[ "$improvement" -ge "$_DF_MIN_IMPROVEMENT" ]]; then
+	elif [[ "$best_sufficient" == true ]] && [[ "$improvement" -ge "$_DF_MIN_IMPROVEMENT" ]] && \
+		_df_gain_clears_strong_original "$improvement" "$original_score" "${_DF_TMP_DIR}/candidates/${page_id}.original.json"; then
 		selected_transform="$best_transform"
 		selected_prefix="$best_prefix"
 		case "$best_transform" in
-		flip-horizontal) classification="mirrored" ;;
+		flip-horizontal | flip-vertical) classification="mirrored" ;;
 		rotate-*) classification="rotated" ;;
 		esac
+	elif _df_original_is_strong "${_DF_TMP_DIR}/candidates/${page_id}.original.json" && \
+		[[ "$(jq -r '.evidence_sufficient' "${_DF_TMP_DIR}/candidates/${page_id}.original.json")" == true ]]; then
+		# Strong upright original with only a marginal alternative score: keep it.
+		selected_prefix="${_DF_TMP_DIR}/candidates/${page_id}.original"
+		classification="normal"
 	fi
 
 	_df_write_suspect_page_result "$page" "$page_id" "$classification" \
@@ -803,7 +862,7 @@ _df_annotate_page_dimensions() {
 				derived_height="${derived_dimensions#*x}"
 				derived_json=$(jq -n --arg width "$derived_width" --arg height "$derived_height" \
 					'{width: ($width | tonumber), height: ($height | tonumber)}')
-				if [[ "$derived_dimensions" != "$source_dimensions" ]]; then
+				if ! _df_dimensions_match "$derived_dimensions" "$source_dimensions"; then
 					_df_record_failure "$page" "" "Readable page dimensions differ from the source"
 				fi
 			else
@@ -857,7 +916,7 @@ _df_verify_readable_pdf() {
 	while [[ "$page" -le "$_DF_PAGE_COUNT" ]]; do
 		if ! source_dimensions=$(pdf_page_dimensions "$_DF_INPUT" "$page") || \
 			! derived_dimensions=$(pdf_page_dimensions "$output" "$page") || \
-			[[ "$source_dimensions" != "$derived_dimensions" ]]; then
+			! _df_dimensions_match "$source_dimensions" "$derived_dimensions"; then
 			_df_record_failure "$page" "" "Readable PDF page dimensions differ from the source"
 			return 1
 		fi

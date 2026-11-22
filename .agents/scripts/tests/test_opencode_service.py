@@ -203,6 +203,10 @@ class ServiceTests(unittest.TestCase):
         self.assertIn('%%n/$HOME/\\"quote\\"', definition)
         self.assertNotIn('$$HOME', definition)
         self.assertIn("Restart=on-failure", definition)
+        # systemd keeps quotes literally in WorkingDirectory= (GH#38295).
+        self.assertIn(f"WorkingDirectory={self.home}\n", definition)
+        self.assertNotIn('WorkingDirectory="', definition)
+        self.assertEqual(state_module.systemd_path("/a%b"), "/a%%b")
         self.assertEqual(state_module.systemd_quote("$HOME", True), '"$$HOME"')
         with self.assertRaises(RuntimeError):
             state_module.systemd_quote("bad\nunit")

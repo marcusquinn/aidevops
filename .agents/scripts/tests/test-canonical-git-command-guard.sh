@@ -26,6 +26,7 @@ FAILURES=0
 # The resolver skips aidevops Git shims that may lead the caller's PATH.
 # shellcheck disable=SC2016 # Expanded by the child shell.
 NATIVE_GIT=$(bash -c 'source "$1/runtime-env.sh" && aidevops_resolve_native_git' _ "$SCRIPT_DIR") || exit 1
+NATIVE_BASH=$(type -P bash) || exit 1
 # Keep the selected native Git ahead of env/bash directories, which can also
 # contain a different Git (Apple Git versus Homebrew Git on macOS).
 TEST_SYS_PATH="${NATIVE_GIT%/*}"
@@ -394,6 +395,84 @@ fi
 git init --bare -q "$SNAPSHOT_REPO"
 assert_allowed "allows an isolated snapshot repository to index a linked worktree" "$REPO" \
 	"git --git-dir='$SNAPSHOT_REPO' --work-tree='$LINKED' add --all --sparse"
+
+# GH#36442: OpenCode snapshots write private metadata, not the canonical index.
+export XDG_DATA_HOME="${TEST_ROOT}/data"
+OPENCODE_SNAPSHOT="${XDG_DATA_HOME}/opencode/snapshot/project"
+mkdir -p "$OPENCODE_SNAPSHOT"
+git init --bare -q "$OPENCODE_SNAPSHOT"
+for SNAPSHOT_COMMAND in "add ." "add --all --sparse" "write-tree" "gc --prune=7.days" "prune"; do
+	assert_allowed "allows private OpenCode snapshot $SNAPSHOT_COMMAND" "$REPO" \
+		"git --git-dir '$OPENCODE_SNAPSHOT' --work-tree '$REPO' $SNAPSHOT_COMMAND"
+done
+assert_allowed "allows OpenCode snapshot equals options and safe config" "$REPO" \
+	"git -c core.autocrlf=false --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+assert_blocked "blocks snapshot outside OpenCode storage" \
+	"git --git-dir='$SNAPSHOT_REPO' --work-tree='$REPO' add ."
+assert_blocked "blocks canonical git-dir snapshot impersonation" \
+	"git --git-dir='$REPO/.git' --work-tree='$REPO' add ."
+assert_blocked "blocks snapshot checkout mutation" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' read-tree -mu HEAD"
+assert_blocked "blocks snapshot add renormalization" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add --renormalize ."
+assert_blocked "blocks snapshot config redirection" \
+	"git -c core.worktree='$REPO' --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+ln -s "$REPO/.git" "${XDG_DATA_HOME}/opencode/snapshot/canonical-alias"
+assert_blocked "blocks snapshot symlink to canonical metadata" \
+	"git --git-dir='${XDG_DATA_HOME}/opencode/snapshot/canonical-alias' --work-tree='$REPO' add ."
+LINKED_SNAPSHOT_GIT_DIR=$(git -C "$LINKED" rev-parse --path-format=absolute --git-dir)
+ln -s "$LINKED_SNAPSHOT_GIT_DIR" "${XDG_DATA_HOME}/opencode/snapshot/linked-alias"
+assert_blocked "blocks snapshot symlink to linked metadata" \
+	"git --git-dir='${XDG_DATA_HOME}/opencode/snapshot/linked-alias' --work-tree='$REPO' add ."
+ln -s "$REPO/.git/index" "$OPENCODE_SNAPSHOT/index"
+assert_blocked "blocks snapshot index symlink to canonical index" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+rm "$OPENCODE_SNAPSHOT/index"
+ln "$REPO/.git/index" "$OPENCODE_SNAPSHOT/index"
+assert_blocked "blocks snapshot hardlink to canonical index" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+rm "$OPENCODE_SNAPSHOT/index"
+ln -s "$REPO/.git/objects" "$OPENCODE_SNAPSHOT/objects/00"
+assert_blocked "blocks nested snapshot object fanout symlink" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+rm "$OPENCODE_SNAPSHOT/objects/00"
+rmdir "$OPENCODE_SNAPSHOT/objects/pack"
+ln -s "$REPO/.git/objects/pack" "$OPENCODE_SNAPSHOT/objects/pack"
+assert_blocked "blocks nested snapshot pack symlink" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' gc"
+rm "$OPENCODE_SNAPSHOT/objects/pack"
+mkdir "$OPENCODE_SNAPSHOT/objects/pack"
+mkdir -p "$TEST_ROOT/redirected/opencode"
+ln -s "${XDG_DATA_HOME}/opencode/snapshot" "$TEST_ROOT/redirected/opencode/snapshot"
+XDG_DATA_HOME="$TEST_ROOT/redirected" assert_blocked "blocks redirected snapshot root" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+OTHER_SNAPSHOT_COMMON="${XDG_DATA_HOME}/opencode/snapshot/other-canonical"
+git init -q --separate-git-dir "$OTHER_SNAPSHOT_COMMON" "$TEST_ROOT/other-canonical"
+printf '{"initialized_repos":[{"path":"%s"},{"path":"%s"},{"path":"%s"},{"path":"%s"}]}\n' \
+	"$REPO" "$SEPARATE_REPO" "$MARKED_REPO" "$TEST_ROOT/other-canonical" >"$REPOS_FILE"
+assert_blocked "blocks another registered canonical common dir inside snapshot root" \
+	"git --git-dir='$OTHER_SNAPSHOT_COMMON' --work-tree='$REPO' add ."
+GIT_INDEX_FILE="$REPO/.git/index" assert_blocked "blocks inherited snapshot index override" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' add ."
+git --git-dir "$OPENCODE_SNAPSHOT" config gc.repackFilter blob:none
+git --git-dir "$OPENCODE_SNAPSHOT" config gc.repackFilterTo "$REPO/.git/objects/pack/export"
+assert_blocked "blocks snapshot GC configured to export packs outside private storage" \
+	"git --git-dir='$OPENCODE_SNAPSHOT' --work-tree='$REPO' gc"
+git --git-dir "$OPENCODE_SNAPSHOT" config --unset gc.repackFilter
+git --git-dir "$OPENCODE_SNAPSHOT" config --unset gc.repackFilterTo
+CANONICAL_INDEX_BEFORE=$(git hash-object "$REPO/.git/index")
+SNAPSHOT_README_BLOB=$(git hash-object "$REPO/README.md")
+SNAPSHOT_TREE_FILE="${TEST_ROOT}/snapshot-tree"
+if (cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" --git-dir "$OPENCODE_SNAPSHOT" --work-tree "$REPO" add .) &&
+	(cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" --git-dir "$OPENCODE_SNAPSHOT" --work-tree "$REPO" write-tree >"$SNAPSHOT_TREE_FILE") &&
+	(cd "$REPO" && PATH="${SCRIPT_DIR}:${TEST_SYS_PATH}" "$SHIM" --git-dir "$OPENCODE_SNAPSHOT" --work-tree "$REPO" gc --prune=7.days) &&
+	[[ "$(git --git-dir "$OPENCODE_SNAPSHOT" ls-files --stage -- README.md | awk '{print $2}')" == "$SNAPSHOT_README_BLOB" ]] &&
+	git --git-dir "$OPENCODE_SNAPSHOT" cat-file -e "$(<"$SNAPSHOT_TREE_FILE")^{tree}" &&
+	[[ "$(git hash-object "$REPO/.git/index")" == "$CANONICAL_INDEX_BEFORE" && "$(git -C "$REPO" rev-parse HEAD)" == "$INITIAL_HEAD" ]]; then
+	pass "PATH shim executes snapshot lifecycle without touching canonical index or HEAD"
+else
+	fail "PATH shim executes snapshot lifecycle without touching canonical index or HEAD"
+fi
 assert_allowed "allows canonical linked worktree removal" "$REPO" "git worktree remove --force '$LINKED'"
 assert_allowed "allows canonical linked worktree removal with option terminator" "$REPO" "git worktree remove -f -- '$LINKED'"
 assert_blocked "blocks canonical worktree removal of canonical root" "git worktree remove --force '$REPO'"
@@ -403,6 +482,40 @@ assert_allowed "allows rev-list query in linked worktree" "$LINKED" "git rev-lis
 LINKED_GIT_DIR=$(git -C "$LINKED" rev-parse --path-format=absolute --git-dir)
 assert_blocked "blocks linked-worktree metadata from mutating the canonical worktree" \
 	"git --git-dir='$LINKED_GIT_DIR' --work-tree='$REPO' reset --hard"
+assert_allowed "allows canonical git archive to stdout" "$REPO" "git archive --format=tar HEAD -- README.md"
+assert_blocked "blocks canonical git archive --output" "git archive --output='$REPO/out.tar' HEAD"
+assert_blocked "blocks canonical git archive -o" "git archive -o '$REPO/out.tar' HEAD"
+assert_blocked "blocks canonical git archive --exec option-value bypass" "git archive --exec -- --output=README.md HEAD"
+assert_blocked "blocks canonical git archive abbreviated --out" "git archive --out=README.md HEAD"
+assert_blocked "blocks canonical git stash show --output" "git stash show --output=README.md"
+assert_allowed "allows canonical git stash list" "$REPO" "git stash list"
+assert_allowed "allows canonical git stash show" "$REPO" "git stash show"
+assert_blocked "blocks canonical git stash push" "git stash push -m x"
+assert_blocked "blocks canonical bare git stash" "git stash"
+assert_blocked "blocks canonical git stash drop" "git stash drop"
+assert_blocked "blocks canonical git worktree repair" "git worktree repair"
+REPAIR_OUTPUT=$(python3 "$GUARD" --cwd "$REPO" --command "git worktree repair" 2>&1 || true)
+if [[ "$REPAIR_OUTPUT" == *"canonical-recovery-helper.sh"*" repair-worktrees"* ]]; then
+	pass "worktree repair block message names the recovery helper"
+else
+	fail "worktree repair block message names the recovery helper (output=$REPAIR_OUTPUT)"
+fi
+# GH#39722: direct canonical gc stays blocked and points to the audited helper.
+assert_blocked "blocks canonical git gc" "git gc --auto"
+assert_blocked "blocks canonical git maintenance run" "git maintenance run --task=gc"
+GC_OUTPUT=$(python3 "$GUARD" --cwd "$REPO" --command "git gc --auto" 2>&1 || true)
+if [[ "$GC_OUTPUT" == *"canonical-recovery-helper.sh"*" maintenance-gc"* ]]; then
+	pass "canonical gc block message names the maintenance-gc helper"
+else
+	fail "canonical gc block message names the maintenance-gc helper (output=$GC_OUTPUT)"
+fi
+if [[ "$REPAIR_OUTPUT" != *"maintenance-gc"* ]]; then
+	pass "non-maintenance block message omits maintenance-gc guidance"
+else
+	fail "non-maintenance block message omits maintenance-gc guidance"
+fi
+assert_allowed "allows the maintenance-gc recovery helper path" "$REPO" \
+	"'${RECOVERY_HELPER}' maintenance-gc --repo '$REPO' --apply"
 
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
 DEFAULT_BRANCH=$(
@@ -508,6 +621,8 @@ ln -s "$GUARD" "${OLD_BUNDLE}/canonical-git-command-guard.py"
 ln -s "$GUARD" "${NEW_BUNDLE}/canonical-git-command-guard.py"
 ln -s "${SCRIPT_DIR}/canonical_git_policy.py" "${OLD_BUNDLE}/canonical_git_policy.py"
 ln -s "${SCRIPT_DIR}/canonical_git_policy.py" "${NEW_BUNDLE}/canonical_git_policy.py"
+ln -s "${SCRIPT_DIR}/canonical_git_snapshot.py" "${OLD_BUNDLE}/canonical_git_snapshot.py"
+ln -s "${SCRIPT_DIR}/canonical_git_snapshot.py" "${NEW_BUNDLE}/canonical_git_snapshot.py"
 ln -s "${SCRIPT_DIR}/canonical_git_invocation.py" "${OLD_BUNDLE}/canonical_git_invocation.py"
 ln -s "${SCRIPT_DIR}/canonical_git_invocation.py" "${NEW_BUNDLE}/canonical_git_invocation.py"
 ln -s "${SCRIPT_DIR}/canonical_git_readonly.py" "${OLD_BUNDLE}/canonical_git_readonly.py"
@@ -543,12 +658,50 @@ fi
 SLOW_GIT="${TEST_ROOT}/slow-git"
 printf '#!/usr/bin/env bash\nsleep 6\n' >"$SLOW_GIT"
 chmod +x "$SLOW_GIT"
-TIMEOUT_OUTPUT=$(python3 "$GUARD" --cwd "$REPO" --argv-json '["status"]' --real-git "$SLOW_GIT" 2>&1)
+TIMEOUT_OUTPUT=$(python3 "$GUARD" --cwd "$REPO" --argv-json '["add","x"]' --real-git "$SLOW_GIT" 2>&1)
 TIMEOUT_RC=$?
 if [[ "$TIMEOUT_RC" -eq 42 && "$TIMEOUT_OUTPUT" == *"native Git repository probe timed out"* && "$TIMEOUT_OUTPUT" != *"Traceback"* ]]; then
 	pass "native Git probe timeout fails closed without traceback"
 else
 	fail "native Git probe timeout is bounded (rc=$TIMEOUT_RC output=$TIMEOUT_OUTPUT)"
+fi
+
+# Read-only subcommands are allowed in every repository, so they skip the probe.
+READONLY_RC=0
+python3 "$GUARD" --cwd "$REPO" --argv-json '["status"]' --real-git "$SLOW_GIT" >/dev/null 2>&1 || READONLY_RC=$?
+if [[ "$READONLY_RC" -eq 0 ]]; then
+	pass "read-only subcommand is allowed without a repository probe"
+else
+	fail "read-only subcommand skips the repository probe (rc=$READONLY_RC)"
+fi
+
+POSITIONAL_RC=0
+python3 "$GUARD" --cwd "$REPO" --real-git "$NATIVE_GIT" -- status --short >/dev/null 2>&1 || POSITIONAL_RC=$?
+if [[ "$POSITIONAL_RC" -eq 0 ]]; then
+	pass "guard accepts positional argv after -- (allowed)"
+else
+	fail "guard accepts positional argv after -- (rc=$POSITIONAL_RC)"
+fi
+POSITIONAL_RC=0
+python3 "$GUARD" --cwd "$REPO" --real-git "$NATIVE_GIT" -- switch --detach main >/dev/null 2>&1 || POSITIONAL_RC=$?
+if [[ "$POSITIONAL_RC" -eq 42 ]]; then
+	pass "guard blocks canonical mutation via positional argv"
+else
+	fail "guard blocks canonical mutation via positional argv (rc=$POSITIONAL_RC)"
+fi
+
+BARE_REPO="${TEST_ROOT}/bare-probe.git"
+"$NATIVE_GIT" init -q --bare "$BARE_REPO"
+NONREPO_DIR="${TEST_ROOT}/not-a-repo"
+mkdir -p "$NONREPO_DIR"
+BARE_RC=0
+python3 "$GUARD" --cwd "$BARE_REPO" --real-git "$NATIVE_GIT" -- status >/dev/null 2>&1 || BARE_RC=$?
+NONREPO_RC=0
+python3 "$GUARD" --cwd "$NONREPO_DIR" --real-git "$NATIVE_GIT" -- status >/dev/null 2>&1 || NONREPO_RC=$?
+if [[ "$BARE_RC" -eq 0 && "$NONREPO_RC" -eq 0 ]]; then
+	pass "rev-parse fallback handles bare repo and non-repository cwd"
+else
+	fail "rev-parse fallback (bare rc=$BARE_RC non-repo rc=$NONREPO_RC)"
 fi
 
 LITERAL_REPO="${TEST_ROOT}/repo[1]"
@@ -560,14 +713,13 @@ else
 	fail "shim accepts already-expanded literal metacharacter path"
 fi
 
-if python3 - "$SCRIPT_DIR" "$TEST_ROOT" "$NATIVE_GIT" "$OLD_BUNDLE" "$NEW_BUNDLE" <<'PY'; then
+if python3 - "$SCRIPT_DIR" "$TEST_ROOT" "$NATIVE_GIT" "$OLD_BUNDLE" "$NEW_BUNDLE" "$NATIVE_BASH" <<'PY'; then
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-scripts, root, native, old, new = sys.argv[1:]
+scripts, root, native, old, new, native_shell = sys.argv[1:]
 sys.path.insert(0, scripts)
 from native_git import NativeGitUnavailable, is_git_shim, real_git
 from trusted_executable import trusted_executable
@@ -597,9 +749,10 @@ except NativeGitUnavailable:
 else:
     raise AssertionError("all-shim PATH accepted")
 
-# Invoke the existing shell via the standard utility path, not the all-shim PATH.
+# Invoke the captured native shell, not the constrained PATH or shim directory.
+assert Path(native_shell).is_absolute() and Path(native_shell).is_file()
 environment = {**os.environ, "PATH": os.defpath, "AIDEVOPS_RUNTIME_ENV_LIBRARY_ONLY": "1"}
-shell = [shutil.which("bash", path=os.defpath), "-uc", 'source "$1/runtime-env.sh"; aidevops_resolve_trusted_tool "$2" "$3"', "_", scripts]
+shell = [native_shell, "-uc", 'source "$1/runtime-env.sh"; aidevops_resolve_trusted_tool "$2" "$3"', "_", scripts]
 # Trusted Git lookup must also work without a Python interpreter on PATH.
 for path in (os.defpath, str(native_dir)):
     for name, search in (("git", os.defpath), ("git", str(native_dir)), ("git", ""), ("../git", os.defpath), (".", os.defpath), ("..", os.defpath)):

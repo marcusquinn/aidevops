@@ -25,7 +25,7 @@ tools:
 - **Source Code**: [git.cloudron.io/packages](https://git.cloudron.io/packages) (200+ official app packages) | [By Technology](https://git.cloudron.io/explore/projects/topics)
 - **Forum**: [forum.cloudron.io/category/96](https://forum.cloudron.io/category/96/app-packaging-development)
 - **Base Image Tags**: https://hub.docker.com/r/cloudron/base/tags
-- **Sub-docs**: [addons-ref.md](cloudron-app-packaging-skill/addons-ref.md) | [manifest-ref.md](cloudron-app-packaging-skill/manifest-ref.md) | [cloudron-git-reference.md](cloudron-git-reference.md)
+- **Sub-docs**: [addons-ref.md](cloudron-app-packaging-skill/addons-ref.md) | [manifest-ref.md](cloudron-app-packaging-skill/manifest-ref.md) | [cloudron-git-reference.md](cloudron-git-reference.md) | [cloudron-package-onboarding.md](cloudron-package-onboarding.md) (new package repos)
 
 **Golden Rules** (violations cause package failure):
 
@@ -39,13 +39,13 @@ tools:
 
 **File Structure**: `CloudronManifest.json`, `Dockerfile`, `start.sh`, `logo.png` (256×256). Independently distributed packages also keep `CloudronVersions.json`, a Cloudron-format changelog, a publishing runbook, keyless image/catalog provenance, and at least one privacy-reviewed screenshot or 3:1 hero; follow `cloudron-app-publishing-skill.md`.
 
-**CLI Workflow**:
+**CLI Workflow**: For registry builds, use `cloudron builder login` and `cloudron builder build` before install or update. The current CLI no longer provides `cloudron build`; inspect the installed builder's help before use.
 
 ```bash
-npm install -g cloudron
+npm install -g cloudron   # once installed, aidevops update-tools and auto-update keep it current
 cloudron login my.cloudron.example && cloudron init
-cloudron build && cloudron install --location testapp
-cloudron build && cloudron update --app testapp  # iterate
+cloudron install --location testapp  # on-server build
+cloudron update --app testapp        # iterate; a previously built image may be reused instead of edited source, so select an on-server build or rebuild and pass the new image explicitly
 cloudron logs -f --app testapp
 cloudron exec --app testapp   # shell into container
 cloudron debug --app testapp  # pause app, writable fs
@@ -314,6 +314,7 @@ listener may terminate addon TLS inside the app when required by its protocol;
 document the trust boundary and verify the actual native transport. This is not
 permission to replace Cloudron nginx or claim native VPN-provider support.
 
+New package repositories: complete `cloudron-package-onboarding.md`.
 `aidevops init` detects `CloudronManifest.json`, records
 `app_type: cloudron-package` in local `repos.json`, and installs the thin
 `.github/workflows/cloudron-package-release.yml` caller when no file already
@@ -357,6 +358,14 @@ Core routines provide ongoing reporting:
 Both routines deduplicate package-local issues, require maintainer-equivalent
 issue authority, and fail closed on GitHub/API errors. They never execute
 upstream instructions or modify package source.
+After filing a newer upstream release or commit finding, the applied monitor
+supersedes older trusted monitor findings in the same package repository. It
+closes only unassigned findings without `status:in-progress` or `status:claimed`
+labels and without an open linked PR, posting a signed comment linking the new
+issue. Active findings remain open and receive one consolidated note on the new
+issue instead. Release findings are compared by version; commit findings use
+issue creation order. Failed API reads never authorize closure, and subsequent
+deduplicated runs retry cleanup. Compatibility findings are not superseded.
 Applied upstream findings read the package manifest from the target repository's
 remote default branch at a captured commit SHA. The generated schema-v2 brief
 includes a canonical Files Scope; a detected upstream release is only a finding,
@@ -375,10 +384,43 @@ next package registration and records a reset-aware deferred attempt. Pulse
 retries after the shared cooldown boundary plus bounded jitter instead of using
 the generic 15-minute failure retry.
 
-**Publication boundary:** pushing a `vX.Y.Z` tag is the explicit trigger for the
-managed caller to validate and create a GitHub release. Tag creation, image
-pushes, Cloudron catalog publication, and deployment remain separate operator
-actions and require explicit authorization.
+**Publication boundary:** managed catalog packages follow **upstream detected →
+release PR ready → release approval requested → approved → published**. A worker
+updates the manifest and both changelogs, runs package tests and
+`preflight-release`, and waits for green PR preflight (including its no-push image
+build). It then runs `cloudron-release-approval-helper.sh request <repo> <pr>`
+instead of merging. This places a PR hold and creates a deduplicated
+`Release <package> v<version>` issue with `release-approval-required` and
+`no-auto-dispatch`. The issue records the exact head, package/upstream versions,
+changelog and check evidence. New requests supersede older unsigned requests.
+If the request fails, leave **both** `release-approval-required` and
+`hold-for-review` on the PR, never a bare `hold-for-review`. Exit code 4 means
+the API failed before the helper could establish that state; after API recovery,
+apply exactly those two labels using the command in its error message. Do not
+remove an unrelated bare hold to force a request through. Routine `r924` retries
+labelled interrupted requests without an open approval issue, including PRs
+without `origin:worker`, once checks pass. An existing request for a different
+head is retained for explicit re-approval, never silently rewritten.
+
+The maintainer's single action is `sudo aidevops approve issue <N> <repo>`.
+Routine `r924` runs `cloudron-release-approval-helper.sh process --apply` every
+30 minutes. Only `approval-helper.sh verify issue <N> <repo> --require-authority`
+returning `VERIFIED` can release this helper's PR hold and merge the approved
+head through the normal full-loop gates. Head drift requests re-approval;
+verification/API errors fail closed. The helper waits boundedly for the main
+catalog run, resumes on subsequent invocations, and closes the release issue
+only after the catalog version, `v<version>` tag and GitHub release are verified.
+Catalog race recovery/reconciliation remains owned by the publishing workflow
+and upstream monitor (GH#35649). Optionally, one signed `release-standing-policy`
+issue (`policy-request <repo>`) lets `r924` publish unsigned requests that
+`cloudron_routine_bump.py` proves are routine upstream-only bumps; every other
+change keeps per-release signing (see `cloudron-app-publishing-skill.md`).
+
+This dedicated label does not change `needs-maintainer-review` semantics and
+trusted authors alone cannot satisfy it. Signing authorizes only this release's
+merge and already-configured catalog publication, not deployment, changing
+publication credentials/settings, or unrelated external publication. Legacy
+tag-only packages still require separate explicit operator publication authority.
 
 ## Troubleshooting
 
@@ -389,6 +431,7 @@ actions and require explicit authorization.
 | DB connection fails | Verify addon in manifest; `cloudron exec --app testapp` → `env \| grep CLOUDRON` |
 | Health check fails | `curl -v http://localhost:8000/health` — verify app listens on httpPort |
 | Memory exceeded | Increase `memoryLimit`; check for leaks; optimize worker counts |
+| 502 instead of 413 on an oversized upload | nginx with `proxy_request_buffering off` hits `writev() failed (32: Broken pipe)` when the app rejects the body early and closes the connection. `proxy_request_buffering on` only reduces it (live test: 413 twice, 502 once in three tries) and adds disk I/O. Accept 502 for streamed uploads and document it; probe with `cloudron-app-qa-helper.sh upload-probe --allow-502` |
 
 ## Validation Checklist
 
@@ -422,6 +465,27 @@ and DERP, exiting non-zero on failure. Containers and the `qa` user's nodes are
 removed on exit. Override the server CLI with
 `--server-cmd 'ssh host headscale'` for non-Cloudron servers. Needs `docker`
 and `jq`. Attach the output to release evidence for each package update.
+
+### Qualifying a package on a live install
+
+`cloudron-app-qa-helper.sh help` lists every subcommand. Each takes
+`--server <cloudron-host>` (the CLI default server is never used); locations
+must look disposable (`*-test`, `*-qa`, `*-clone`) unless `--force-location`.
+
+```bash
+H=cloudron-app-qa-helper.sh; S="--server my.example.com"
+$H install myapp-test $S --image REGISTRY/IMAGE:TAG   # or --versions-url / --build
+$H health myapp-test $S; $H mailbox create qa@example.com $S; $H memory myapp-test $S
+$H upload-probe --url https://myapp-test.example.com/upload --sizes 20M,30M --limit 25M
+$H oauth-probe --url https://myapp-test.example.com --resource-path /mcp --adapter a.mjs $S
+$H realtime --url https://myapp-test.example.com --adapter a.mjs --idle 330 $S
+$H restart-persist myapp-test $S; $H backup-clone myapp-test $S; $H update myapp-test $S; $H cleanup myapp-test $S   # `run` = core checks + cleanup on exit
+```
+
+Output is `PASS:`/`FAIL:` lines; exit is non-zero on failure. Tokens, setup links,
+mail bodies and query strings are never printed. `cleanup` removes apps, clone,
+QA mailbox, 0700 profiles and scratch. Adapter (ES module): `login(page, role)`,
+`realtime(pageA, pageB)` (required for realtime); optional `coedit`, `consent(page)`.
 
 ## Publishing
 

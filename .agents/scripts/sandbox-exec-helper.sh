@@ -343,6 +343,163 @@ PY
 # Sandbox Execution
 # =============================================================================
 
+# Identities already appended to the current snapshot file
+# (" pid:pgid:start "), so each descendant is written once per process group
+# it is observed in instead of once per poll tick.
+_SANDBOX_SNAPSHOT_SEEN=" "
+_SANDBOX_SNAPSHOT_SEEN_FILE=""
+# Fields set by _sandbox_read_proc_stat and _sandbox_child_state.
+_SANDBOX_STAT_STATE=""
+_SANDBOX_STAT_PGID=""
+_SANDBOX_STAT_START=""
+_SANDBOX_CHILD_STATE=""
+
+# Read /proc/<pid>/stat with shell builtins only (no fork). Sets
+# _SANDBOX_STAT_STATE, _SANDBOX_STAT_PGID and _SANDBOX_STAT_START (field 22,
+# the same identity value _sandbox_get_proc_starttime returns on Linux).
+# Returns 1 when the process is gone or its stat is unreadable.
+# Arguments: $1 - PID
+_sandbox_read_proc_stat() {
+	local rps_pid="${1:-}"
+	local rps_line=""
+	local -a rps_fields=()
+
+	_SANDBOX_STAT_STATE=""
+	_SANDBOX_STAT_PGID=""
+	_SANDBOX_STAT_START=""
+	{ IFS= read -r rps_line <"/proc/${rps_pid}/stat"; } 2>/dev/null || return 1
+	# comm (field 2) may contain spaces and parentheses; drop through the last ") ".
+	read -r -a rps_fields <<<"${rps_line##*) }"
+	_SANDBOX_STAT_STATE="${rps_fields[0]:-}"
+	_SANDBOX_STAT_PGID="${rps_fields[2]:-}"
+	_SANDBOX_STAT_START="${rps_fields[19]:-}"
+	[[ -n "$_SANDBOX_STAT_STATE" ]] || return 1
+	return 0
+}
+
+# Set _SANDBOX_CHILD_STATE to the process state, or empty when it is gone.
+# Linux reads /proc without forking; other platforms use ps.
+# Arguments: $1 - PID
+_sandbox_child_state() {
+	local cs_pid="${1:-}"
+
+	_SANDBOX_CHILD_STATE=""
+	if [[ -d /proc/self ]]; then
+		_sandbox_read_proc_stat "$cs_pid" && _SANDBOX_CHILD_STATE="$_SANDBOX_STAT_STATE"
+		return 0
+	fi
+	# Strip whitespace with an expansion: a `tr` fork per poll per worker is
+	# measurable on a saturated macOS runner (GH#38858).
+	_SANDBOX_CHILD_STATE="$(ps -o stat= -p "$cs_pid" 2>/dev/null)" || true
+	_SANDBOX_CHILD_STATE="${_SANDBOX_CHILD_STATE//[[:space:]]/}"
+	return 0
+}
+
+# Append one descendant identity unless it is already in the snapshot.
+# The PGID is part of the key: a descendant first seen between fork() and its
+# own setsid()/setpgid() must get a second row once it has escaped, or cleanup
+# only holds the stale PGID, fails revalidation and leaves the escaped group
+# running (GH#38858). Cleanup skips rows whose PGID no longer matches.
+# Arguments: $1 - snapshot file, $2 - PID, $3 - PGID, $4 - start identity
+_sandbox_snapshot_record() {
+	local rec_file="$1"
+	local rec_pid="$2"
+	local rec_pgid="$3"
+	local rec_start="$4"
+
+	[[ -n "$rec_start" ]] || return 0
+	case "$_SANDBOX_SNAPSHOT_SEEN" in
+	*" ${rec_pid}:${rec_pgid}:${rec_start} "*) return 0 ;;
+	esac
+	_SANDBOX_SNAPSHOT_SEEN="${_SANDBOX_SNAPSHOT_SEEN}${rec_pid}:${rec_pgid}:${rec_start} "
+	printf '%s\t%s\t%s\n' "$rec_pid" "$rec_pgid" "$rec_start" >>"$rec_file"
+	return 0
+}
+
+# Linux: walk only the root's subtree through /proc/<pid>/task/<tid>/children
+# (CONFIG_PROC_CHILDREN) using builtins. The cost depends on the subtree, not
+# on how many processes run on the host (GH#36843).
+# Arguments: $1 - root PID, $2 - snapshot file
+_sandbox_snapshot_descendants_proc() {
+	local sp_file="$2"
+	local sp_queue="$1"
+	local sp_next=""
+	local sp_pid=""
+	local sp_child=""
+	local sp_children_file=""
+	local sp_line=""
+	local sp_depth=0
+
+	while [[ -n "$sp_queue" && "$sp_depth" -lt 64 ]]; do
+		sp_next=""
+		for sp_pid in $sp_queue; do
+			for sp_children_file in "/proc/${sp_pid}/task/"*/children; do
+				sp_line=""
+				{ IFS= read -r sp_line <"$sp_children_file"; } 2>/dev/null || true
+				[[ -n "$sp_line" ]] && sp_next="${sp_next} ${sp_line}"
+			done
+		done
+		sp_queue=""
+		for sp_child in $sp_next; do
+			[[ "$sp_child" =~ ^[0-9]+$ ]] || continue
+			_sandbox_read_proc_stat "$sp_child" || continue
+			[[ "$_SANDBOX_STAT_STATE" == "Z" ]] && continue
+			_sandbox_snapshot_record "$sp_file" "$sp_child" "$_SANDBOX_STAT_PGID" "$_SANDBOX_STAT_START"
+			sp_queue="${sp_queue} ${sp_child}"
+		done
+		sp_depth=$((sp_depth + 1))
+	done
+	return 0
+}
+
+# Fallback (macOS, or no CONFIG_PROC_CHILDREN): one process-table read and one
+# awk pass per snapshot (GH#38858). The previous bash walk re-scanned every row
+# once per tree level and forked `ps -o stat=`/`ps -o lstart=` (plus `tr`) for
+# every descendant on every 0.5 s poll, which saturated macOS runners. Start
+# identities now come from the same read as the parent links, joined with
+# single spaces so they stay byte-identical to _sandbox_get_proc_starttime's
+# `ps -o lstart= | tr -s ' '` + trim, which cleanup revalidates against.
+# Zombies and rows without a start time are skipped, as before.
+# Arguments: $1 - root PID, $2 - snapshot file
+_sandbox_snapshot_descendants_ps() {
+	local ps_root_pid="$1"
+	local ps_file="$2"
+	local ps_rows=""
+	local ps_pid=""
+	local ps_pgid=""
+	local ps_start=""
+
+	ps_rows="$(ps -axo pid=,ppid=,pgid=,stat=,lstart= 2>/dev/null | awk -v root="$ps_root_pid" '
+		{
+			# Columns: pid ppid pgid stat lstart(weekday month day time year).
+			nf = split($0, col)
+			if (col[1] !~ /^[0-9]+$/ || col[2] !~ /^[0-9]+$/) next
+			n++; pid[n] = col[1]; ppid[n] = col[2]; pgid[n] = col[3]; state[n] = col[4]
+			start = ""
+			for (i = 5; i <= nf; i++) start = (start == "" ? col[i] : start " " col[i])
+			started[n] = start
+		}
+		END {
+			wanted[root] = 1
+			changed = 1
+			while (changed) {
+				changed = 0
+				for (i = 1; i <= n; i++) {
+					if ((ppid[i] in wanted) && !(pid[i] in wanted)) { wanted[pid[i]] = 1; changed = 1 }
+				}
+			}
+			for (i = 1; i <= n; i++) {
+				if (pid[i] != root && (pid[i] in wanted) && state[i] !~ /Z/ && started[i] != "")
+					printf "%s\t%s\t%s\n", pid[i], pgid[i], started[i]
+			}
+		}')" || return 0
+	[[ -n "$ps_rows" ]] || return 0
+	while IFS=$'\t' read -r ps_pid ps_pgid ps_start; do
+		_sandbox_snapshot_record "$ps_file" "$ps_pid" "$ps_pgid" "$ps_start"
+	done <<<"$ps_rows"
+	return 0
+}
+
 # Record descendant identities while the original parent still owns them.
 # Entries are append-only because a detached descendant may be reparented before
 # the next sample. Cleanup revalidates every PID against its start token.
@@ -350,43 +507,17 @@ PY
 _sandbox_snapshot_descendants() {
 	local snapshot_root_pid="${1:-}"
 	local snapshot_file="${2:-}"
-	local snapshot_rows=""
-	local snapshot_wanted=" ${snapshot_root_pid} "
-	local snapshot_changed=true
-	local snapshot_pid=""
-	local snapshot_ppid=""
-	local snapshot_pgid=""
-	local snapshot_token=""
 
 	[[ "$snapshot_root_pid" =~ ^[0-9]+$ && -n "$snapshot_file" ]] || return 0
-	snapshot_rows="$(ps -axo pid=,ppid=,pgid= 2>/dev/null)" || return 0
-	while [[ "$snapshot_changed" == true ]]; do
-		snapshot_changed=false
-		while read -r snapshot_pid snapshot_ppid snapshot_pgid; do
-			[[ "$snapshot_pid" =~ ^[0-9]+$ && "$snapshot_ppid" =~ ^[0-9]+$ ]] || continue
-			case "$snapshot_wanted" in
-			*" ${snapshot_ppid} "*)
-				case "$snapshot_wanted" in
-				*" ${snapshot_pid} "*) ;;
-				*)
-					snapshot_wanted="${snapshot_wanted}${snapshot_pid} "
-					snapshot_changed=true
-					;;
-				esac
-				;;
-			esac
-		done <<<"$snapshot_rows"
-	done
-
-	while read -r snapshot_pid snapshot_ppid snapshot_pgid; do
-		[[ "$snapshot_pid" =~ ^[0-9]+$ && "$snapshot_pid" != "$snapshot_root_pid" ]] || continue
-		case "$snapshot_wanted" in
-		*" ${snapshot_pid} "*)
-			snapshot_token="$(_sandbox_get_proc_starttime "$snapshot_pid")"
-			[[ -n "$snapshot_token" ]] && printf '%s\t%s\t%s\n' "$snapshot_pid" "$snapshot_pgid" "$snapshot_token" >>"$snapshot_file"
-			;;
-		esac
-	done <<<"$snapshot_rows"
+	if [[ "$_SANDBOX_SNAPSHOT_SEEN_FILE" != "$snapshot_file" ]]; then
+		_SANDBOX_SNAPSHOT_SEEN=" "
+		_SANDBOX_SNAPSHOT_SEEN_FILE="$snapshot_file"
+	fi
+	if [[ -r "/proc/$$/task/$$/children" ]]; then
+		_sandbox_snapshot_descendants_proc "$snapshot_root_pid" "$snapshot_file"
+		return 0
+	fi
+	_sandbox_snapshot_descendants_ps "$snapshot_root_pid" "$snapshot_file"
 	return 0
 }
 
@@ -446,6 +577,15 @@ _sandbox_pgkill_cleanup() {
 			sleep 1
 		done
 		wait "$cleanup_watchdog_pid" 2>/dev/null || true
+	fi
+
+	# Final descendant snapshot BEFORE any signal (GH#38861). Without setsid(1)
+	# (macOS) there is no child PGID, so cleanup depends on snapshots that the
+	# poll loop only refreshes every 0.5s. A cancellation inside that window
+	# would kill the direct child first, orphan the tree to init/launchd, and
+	# leave descendants the snapshot never saw.
+	if [[ -n "$cleanup_snapshot_file" && -f "$cleanup_snapshot_file" ]]; then
+		_sandbox_snapshot_descendants "$cleanup_child_pid" "$cleanup_snapshot_file"
 	fi
 
 	local cleanup_self_pgid=""
@@ -515,6 +655,38 @@ _sandbox_pgkill_cleanup() {
 	return 0
 }
 
+# Set caller-scoped child_pgid to the sandbox child's PGID after its setsid().
+# `setsid cmd &` forks first and calls setsid() only after exec'ing setsid,
+# so an immediate read races the syscall and returns this wrapper's own PGID.
+# Cleanup then (safely) refuses the group kill and the tree depends on
+# descendant snapshots alone (GH#38858). setsid() makes the child its own
+# group leader, so re-read briefly until PGID == PID or the child is gone; a
+# persistent mismatch keeps the last read and the self-PGID guard applies.
+# Arguments: $1 - child PID
+_sandbox_await_child_pgid() {
+	local ap_pid="$1"
+	local ap_attempt=0
+
+	child_pgid=""
+	while ((ap_attempt < 25)); do
+		if [[ -d /proc/self ]]; then
+			_sandbox_read_proc_stat "$ap_pid" || {
+				child_pgid=""
+				return 0
+			}
+			child_pgid="$_SANDBOX_STAT_PGID"
+		else
+			child_pgid="$(ps -o pgid= -p "$ap_pid" 2>/dev/null)" || child_pgid=""
+			child_pgid="${child_pgid//[[:space:]]/}"
+			[[ -n "$child_pgid" ]] || return 0
+		fi
+		[[ "$child_pgid" == "$ap_pid" ]] && return 0
+		sleep 0.02
+		ap_attempt=$((ap_attempt + 1))
+	done
+	return 0
+}
+
 # Start a command in a new process group via setsid.
 # Sets caller-scoped variables: child_pid, child_pgid, child_start_token
 # (uses bash dynamic scoping — caller must declare these as local).
@@ -550,11 +722,10 @@ _sandbox_spawn_child() {
 			setsid "$@" >"$sc_stdout_file" 2>"$sc_stderr_file" &
 		fi
 		child_pid=$!
-		# Retrieve the process group ID of the child.
-		# On Linux: ps -o pgid= returns the PGID. On macOS: same flag works.
-		# If ps fails (race: child already exited), clear pgid to fall back
-		# to killing child_pid directly in _sandbox_pgkill_cleanup.
-		child_pgid="$(ps -o pgid= -p "$child_pid" 2>/dev/null | tr -d ' ')" || true
+		# Retrieve the process group ID of the child once setsid() has run.
+		# If the child is already gone, clear pgid to fall back to killing
+		# child_pid directly in _sandbox_pgkill_cleanup.
+		_sandbox_await_child_pgid "$child_pid"
 		if [[ -z "$child_pgid" ]] || [[ "$child_pgid" == "0" ]]; then
 			child_pgid=""
 		fi
@@ -599,8 +770,9 @@ _sandbox_poll_child() {
 	local poll_state=""
 
 	while kill -0 "$poll_child_pid" 2>/dev/null; do
-		poll_state="$(ps -o stat= -p "$poll_child_pid" 2>/dev/null | tr -d '[:space:]')" || true
-		# The child can disappear between kill -0 and ps (GH#33671).
+		_sandbox_child_state "$poll_child_pid"
+		poll_state="$_SANDBOX_CHILD_STATE"
+		# The child can disappear between kill -0 and the state read (GH#33671).
 		if [[ -z "$poll_state" || "$poll_state" == *Z* ]]; then
 			return 0
 		fi
@@ -938,6 +1110,56 @@ _sandbox_spawn_watchdog_bg() {
 	return 0
 }
 
+# Maximum child TMPDIR length: Chrome's ProcessSingleton appends ~46 chars
+# (/.org.chromium.Chromium.XXXXXX/SingletonSocket) and macOS sun_path is 103.
+readonly SANDBOX_TMPDIR_MAX_LEN=53
+
+# Create a short, private (0700, owner-checked) per-exec TMPDIR for the child.
+# Prints the path on success; returns 1 when no short base is usable.
+_sandbox_make_short_tmpdir() {
+	local base candidate
+	local uid
+	uid="$(id -u)"
+	for base in "${XDG_RUNTIME_DIR:-}" "/tmp"; do
+		[[ -n "$base" && -d "$base" && -w "$base" ]] || continue
+		candidate="${base%/}/aidevops-sbx-${uid}"
+		mkdir -p "$candidate" 2>/dev/null || continue
+		chmod 700 "$candidate" 2>/dev/null || continue
+		[[ -O "$candidate" && ! -L "$candidate" ]] || continue
+		candidate="$(mktemp -d "${candidate}/x.XXXXXX" 2>/dev/null)" || continue
+		if ((${#candidate} <= SANDBOX_TMPDIR_MAX_LEN)); then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+		rm -rf "$candidate"
+	done
+	return 1
+}
+
+# Print the child TMPDIR: short dir when available, else the long exec dir.
+_sandbox_resolve_child_tmpdir() {
+	local exec_tmpdir="$1"
+	local short_dir
+	if short_dir="$(_sandbox_make_short_tmpdir)" && [[ -n "$short_dir" ]]; then
+		printf '%s\n' "$short_dir"
+		return 0
+	fi
+	log_sandbox "WARN" "No short TMPDIR available; using ${exec_tmpdir} (Unix sockets may exceed sun_path)" >&2
+	printf '%s\n' "$exec_tmpdir"
+	return 0
+}
+
+# Remove the short child TMPDIR (no-op when it is the long fallback dir).
+# Arguments: $1 - child tmpdir, $2 - exec tmpdir
+_sandbox_cleanup_short_tmpdir() {
+	local child_tmpdir="$1"
+	local exec_tmpdir="$2"
+	if [[ -n "$child_tmpdir" && "$child_tmpdir" != "$exec_tmpdir" ]]; then
+		rm -rf "$child_tmpdir"
+	fi
+	return 0
+}
+
 # Build the env -i argument list for sandboxed execution.
 # Appends to the caller's env_args array (visible via bash dynamic scoping).
 # Arguments:
@@ -988,7 +1210,7 @@ _sandbox_build_env_args() {
 # Output: absolute executable path. Returns 1 when no usable backend is set.
 _sandbox_resolve_egress_backend() {
 	local configured_backend="${AIDEVOPS_WORKER_EGRESS_BACKEND:-}"
-	[[ -n "$configured_backend" && "$configured_backend" == /* && -x "$configured_backend" ]] || return 1
+	[[ -n "$configured_backend" && "$configured_backend" == /* && -f "$configured_backend" && -x "$configured_backend" ]] || return 1
 	printf '%s' "$configured_backend"
 	return 0
 }
@@ -1147,6 +1369,20 @@ _sandbox_run_dispatch() {
 			d_cmd_args+=("$arg")
 		fi
 	done
+
+	# Original argv has already passed command/secret/egress admission. Keep
+	# the observer INSIDE env clearing, egress containment and seatbelt below.
+	# Do not rewrite policy input to the Python wrapper or widen passthrough.
+	# Private workloads must not emit lifecycle metadata to the observer store.
+	local lifecycle_entry="${SCRIPT_DIR}/../worker-lifecycle/worker-launch.py"
+	# shellcheck source=worker-lifecycle-state.sh
+	source "${SCRIPT_DIR}/worker-lifecycle-state.sh"
+	local lifecycle_status=0
+	worker_lifecycle_prepare_launch "${AIDEVOPS_LIFECYCLE_WORKTREE:-}" "$lifecycle_entry" "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" || lifecycle_status=$?
+	if [[ "$lifecycle_status" -ne 0 ]]; then
+		return "$lifecycle_status"
+	fi
+	d_cmd_args=(${WORKER_LIFECYCLE_PREFIX[@]+"${WORKER_LIFECYCLE_PREFIX[@]}"} "${d_cmd_args[@]}")
 
 	local -a d_exec_args=()
 	if [[ -n "$egress_backend_path" ]]; then
@@ -1448,17 +1684,19 @@ sandbox_run() {
 	fi
 
 	# Create isolated temp directory
-	local exec_id
-	exec_id="$(date +%s)-$$"
-	local exec_tmpdir="${SANDBOX_TMP_BASE}/${exec_id}"
+	local exec_tmpdir child_tmpdir
+	exec_tmpdir="${SANDBOX_TMP_BASE}/$(date +%s)-$$"
 	mkdir -p "$exec_tmpdir"
+	# Short child TMPDIR so Unix socket paths fit sun_path (GH#35571).
+	child_tmpdir="$(_sandbox_resolve_child_tmpdir "$exec_tmpdir")"
 
 	local -a env_args=()
-	_sandbox_build_env_args "$exec_tmpdir" "$extra_passthrough" "$home_override"
+	_sandbox_build_env_args "$child_tmpdir" "$extra_passthrough" "$home_override"
 	local egress_policy_file="${exec_tmpdir}/egress-policy.json"
 	if ! _sandbox_prepare_worker_egress "$egress_mode" "$egress_policy_file" "$worker_id" "$egress_policy_profile"; then
 		log_execution "$audit_cmd_str" 126 0 "$timeout_secs" "$block_network" "$extra_passthrough" "unavailable" "none"
 		rm -rf "$exec_tmpdir"
+		_sandbox_cleanup_short_tmpdir "$child_tmpdir" "$exec_tmpdir"
 		return 126
 	fi
 
@@ -1477,6 +1715,7 @@ sandbox_run() {
 		"$egress_backend" "$egress_policy_file" "$worker_id" \
 		"${env_args[@]}" "--" "${cmd_args[@]}" || exit_code=$?
 	rm -f "$egress_policy_file"
+	_sandbox_cleanup_short_tmpdir "$child_tmpdir" "$exec_tmpdir"
 
 	local end_time duration
 	end_time="$(date +%s)"

@@ -122,9 +122,10 @@ _clean_legacy_marker_matches_process_generation() {
 }
 
 # GH#32528: Decide whether a live deferred owner's post-merge lease has expired
-# because it aged out or its session registered a newer worktree. On expiry,
-# release only the exact post-merge registry contract written by
-# full-loop-helper.sh merge; any other live registry owner still blocks.
+# because its session relinquished the tree at `complete` (GH#37448), it aged
+# out, or its session registered a newer worktree. On expiry, release only the
+# exact post-merge registry contract written by full-loop-helper.sh merge; any
+# other live registry owner, and every registry retirement check, still blocks.
 # Returns 0 when expired, 1 when the owner keeps the worktree.
 _clean_deferred_owner_lease_expired() {
 	local wt_path="$1"
@@ -140,7 +141,10 @@ _clean_deferred_owner_lease_expired() {
 	IFS=$'\t' read -r owner_pid owner_session deferred_at <<<"$owner_record"
 	[[ "$owner_pid" =~ ^[0-9]+$ ]] || return 1
 
-	if declare -F full_loop_cleanup_owner_lease_aged >/dev/null 2>&1 &&
+	if declare -F full_loop_cleanup_owner_relinquished >/dev/null 2>&1 &&
+		full_loop_cleanup_owner_relinquished "$receipt_path"; then
+		reason="session-relinquished"
+	elif declare -F full_loop_cleanup_owner_lease_aged >/dev/null 2>&1 &&
 		full_loop_cleanup_owner_lease_aged "$receipt_path"; then
 		reason="lease-aged"
 	elif [[ -n "$owner_session" && "$owner_session" != "${_FULL_LOOP_OWNER_SESSION_FALLBACK:-full-loop-lifecycle}" ]] &&
@@ -193,22 +197,46 @@ _clean_deferred_parent_alive() {
 	return 2
 }
 
+# The census refusal from a seal's stderr, printable and bounded, for the skip
+# line. Only the census summary (counts and classes) passes; other stderr, such
+# as a traceback naming a path, yields nothing so the caller's fixed text is used.
+_clean_lease_refusal_text() {
+	local text="$1"
+	# Whole seal line: "managed-worktree: <Error>: <census summary of key=value tokens>".
+	local census_line='^managed-worktree: [A-Za-z]+: (same-boot process census active or unavailable: [A-Za-z0-9_=(),. -]+)$'
+	local line=""
+	local last=""
+	while IFS= read -r line; do
+		[[ "$line" =~ $census_line ]] && last="${BASH_REMATCH[1]}"
+	done <<<"$text"
+	# The skip line uses echo -e, so drop backslashes along with controls.
+	printf '%s' "$last" | LC_ALL=C tr -cd '[:print:]' | tr -d "\\\\" | cut -c1-400
+	return 0
+}
+
+# Sets _WT_CLEAN_LAST_LEASE_REFUSAL so skips name the cause (GH#38428).
 _clean_acquire_removal_lease() {
 	local wt_path="$1"
 	local wt_branch="$2"
+	_WT_CLEAN_LAST_LEASE_REFUSAL="ownership claim refused"
 	declare -F claim_worktree_ownership >/dev/null 2>&1 || return 1
 	claim_worktree_ownership "$wt_path" "$wt_branch" \
 		--owner-pid "$$" --session "$_WT_CLEAN_REMOVAL_LEASE_SESSION" \
 		--task "$_WT_CLEAN_REMOVAL_LEASE_TASK" >/dev/null 2>&1 || return 1
 	local lifetime_helper="${BASH_SOURCE[0]%/*}/worktree-managed-lifetime.py"
 	local managed_status=0
+	local seal_error=""
 	WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$lifetime_helper" status "$wt_path" >/dev/null 2>&1 || managed_status=$?
 	if [[ "$managed_status" -eq 0 ]]; then
-		if ! WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$lifetime_helper" seal "$wt_path"; then
+		# Capture only stderr: the seal refusal names the census class.
+		if ! seal_error=$(WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$lifetime_helper" seal "$wt_path" 2>&1 >/dev/null); then
+			_WT_CLEAN_LAST_LEASE_REFUSAL=$(_clean_lease_refusal_text "$seal_error")
+			[[ -n "$_WT_CLEAN_LAST_LEASE_REFUSAL" ]] || _WT_CLEAN_LAST_LEASE_REFUSAL="managed-worktree seal refused"
 			_clean_release_removal_lease "$wt_path" || true
 			return 1
 		fi
 	elif [[ "$managed_status" -ne 3 ]]; then
+		_WT_CLEAN_LAST_LEASE_REFUSAL="managed-worktree status unavailable (exit $managed_status)"
 		_clean_release_removal_lease "$wt_path" || true
 		return 1
 	fi
@@ -217,9 +245,11 @@ _clean_acquire_removal_lease() {
 		receipt_path=$(full_loop_cleanup_receipt_for_worktree "$wt_path" 2>/dev/null || true)
 	fi
 	if [[ -n "$receipt_path" ]] && ! full_loop_transition_cleanup_receipt "$receipt_path" "$_FULL_LOOP_CLEANUP_LEASED" "$$"; then
+		_WT_CLEAN_LAST_LEASE_REFUSAL="cleanup receipt transition refused"
 		_clean_release_removal_lease "$wt_path" || true
 		return 1
 	fi
+	_WT_CLEAN_LAST_LEASE_REFUSAL=""
 	return 0
 }
 
@@ -560,6 +590,7 @@ should_skip_cleanup() {
 _clean_fetch_remotes() {
 	local state_unknown=false
 	local remote
+	local real_git=""
 	# GH#18979: Apply a 10-second timeout per remote fetch. In pulse cleanup
 	# context, git fetch --prune can hang indefinitely on network I/O or
 	# slow remote negotiation with many branches, stalling the entire pulse
@@ -571,15 +602,25 @@ _clean_fetch_remotes() {
 	elif command -v timeout &>/dev/null; then
 		fetch_timeout_cmd="timeout 10"
 	fi
+	# GH#37342: the pulse PATH leads with the canonical Git shim, which refuses
+	# `fetch` in a canonical checkout, so every pass reported remote state as
+	# unknown. Refreshing remote-tracking refs is framework maintenance: use the
+	# audited native-Git resolver, and fail closed when it is unavailable.
+	if declare -F _worktree_cleanup_real_git >/dev/null 2>&1; then
+		real_git=$(_worktree_cleanup_real_git) || real_git=""
+	fi
 	for remote in $(git remote 2>/dev/null); do
-		if [[ -n "$fetch_timeout_cmd" ]]; then
-			if ! $fetch_timeout_cmd git fetch --prune "$remote" 2>/dev/null; then
+		if [[ -z "$real_git" ]]; then
+			echo -e "${YELLOW}Warning: native Git unavailable; cannot refresh $remote; skipping remote-deleted cleanup checks${NC}" >&2
+			state_unknown=true
+		elif [[ -n "$fetch_timeout_cmd" ]]; then
+			if ! $fetch_timeout_cmd "$real_git" fetch --prune "$remote" 2>/dev/null; then
 				echo -e "${YELLOW}Warning: failed to refresh $remote; skipping remote-deleted cleanup checks${NC}" >&2
 				state_unknown=true
 			fi
 		else
 			# No timeout command available — run unguarded but with a background kill
-			git fetch --prune "$remote" 2>/dev/null &
+			"$real_git" fetch --prune "$remote" 2>/dev/null &
 			local _fetch_pid=$!
 			local _fetch_waited=0
 			while kill -0 "$_fetch_pid" 2>/dev/null && [[ "$_fetch_waited" -lt 10 ]]; do
@@ -628,12 +669,22 @@ _clean_list_worktree_branches() {
 	local porcelain=""
 	local line=""
 	local branch=""
+	local count=0
 
-	porcelain=$(git worktree list --porcelain 2>/dev/null) || return 1
+	if [[ "${_WT_CLEAN_CAPACITY_MODE:-false}" == true ]]; then
+		# Prefetch only this rotating batch, not every historical branch before
+		# the first removal. This leaves the bounded pass time to make progress.
+		porcelain=$(_clean_removal_inventory) || return 1
+	else
+		porcelain=$(git worktree list --porcelain 2>/dev/null) || return 1
+	fi
 	while IFS= read -r line; do
 		if [[ "$line" =~ ^branch\ refs/heads/(.+)$ ]]; then
 			branch="${BASH_REMATCH[1]}"
-			[[ "$branch" == "$default_br" ]] || printf '%s\n' "$branch"
+			[[ "$branch" != "$default_br" ]] || continue
+			printf '%s\n' "$branch"
+			count=$((count + 1))
+			if [[ "${_WT_CLEAN_CAPACITY_MODE:-false}" == true && "$count" -ge 20 ]]; then break; fi
 		fi
 	done <<<"$porcelain"
 	return 0
@@ -743,6 +794,16 @@ _clean_prepare_git_branch_caches() {
 		_WT_CLEAN_PUSHED_BRANCHES="$pushed_branches"
 		_WT_CLEAN_REMOTE_BRANCHES="$remote_branches"
 		_WT_CLEAN_REMOTE_BRANCH_CACHE_READY=true
+	fi
+	return 0
+}
+
+# Refresh only the remote-existence cache after a prune fetch. The pushed-branch
+# cache keeps its pre-fetch evidence. Returns 1 when the refresh fails.
+_clean_refresh_remote_branch_cache() {
+	[[ "$_WT_CLEAN_REMOTE_BRANCH_CACHE_READY" == "true" ]] || return 0
+	if ! _WT_CLEAN_REMOTE_BRANCHES=$(git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/ 2>/dev/null); then
+		return 1
 	fi
 	return 0
 }
@@ -1007,6 +1068,7 @@ _WT_CLEAN_LAST_REMOVAL_OUTCOME="$_WT_CLEAN_OUTCOME_SKIPPED"
 _WT_CLEAN_ARCHIVE_OPERATION_ID="worktree-cleanup"
 _WT_CLEAN_LAST_ARCHIVE_ID=""
 _WT_CLEAN_LAST_PRESERVE_BRANCH="${_WT_CLEAN_LAST_PRESERVE_BRANCH:-$_WT_CLEAN_BOOL_FALSE}"
+_WT_CLEAN_LAST_LEASE_REFUSAL=""
 
 _clean_protected_mark() {
 	local wt_path="$1"
@@ -1327,6 +1389,94 @@ _clean_select_merge_type() {
 	return 1
 }
 
+# Do not let an old merged PR authorize deletion of new commits on a reused
+# branch. The pressure path requires the exact PR head or default containment.
+_clean_capacity_merged_head_matches() {
+	local wt_branch="$1" repo_slug="$2" head_sha="" merged_head=""
+	head_sha=$(_clean_branch_head "$wt_branch") || return 1
+	merged_head=$(gh_pr_list --repo "$repo_slug" --head "$wt_branch" --state merged --limit 1 --json headRefOid --jq '.[0].headRefOid // empty' 2>/dev/null) || return 1
+	[[ -n "$merged_head" && "$merged_head" == "$head_sha" ]] || return 1
+	return 0
+}
+
+# Capacity recovery is narrower than routine/manual cleanup: no abandoned
+# dirty WIP, closed-issue archival, or remote-deleted-only inference.
+_clean_capacity_candidate_allowed() {
+	local wt_path="$1" wt_branch="$2" default_br="$3" merged_prs="$4" open_prs="$5"
+	[[ "${_WT_CLEAN_CAPACITY_MODE:-false}" == true ]] || return 0
+	[[ -z "${_WT_CLEAN_PR_PROOF_UNKNOWN_REASONS:-}" ]] || return 1
+	_clean_branch_list_contains_exact "$wt_branch" "$open_prs" && return 1
+	# The summary list is capped. An exact query also protects branches with
+	# open PRs beyond that page, and fails closed when GitHub is unavailable.
+	# Local guards and merge proof run first so the scarce REST read below is
+	# spent only on candidates that could actually be reclaimed (GH#37500).
+	_clean_worktree_index_is_readable "$wt_path" "$wt_branch" "capacity-recovery" || return 1
+	worktree_has_changes "$wt_path" && return 1
+	_clean_terminal_owner_blocks_cleanup "$wt_path" && return 1
+	_skip_cleanup_for_current_worktree "$wt_path" "$wt_branch" && return 1
+	_branch_has_active_interactive_claim "$wt_path" "$wt_branch" && return 1
+	local local_proof=false needs_head_match=false
+	if git merge-base --is-ancestor "refs/heads/$wt_branch" "origin/$default_br" 2>/dev/null ||
+		_clean_capacity_patches_upstream "$wt_branch" "$default_br"; then
+		local_proof=true
+	fi
+	if ! _clean_branch_list_contains_exact "$wt_branch" "$merged_prs"; then
+		_skip_cleanup_for_grace_period "$wt_path" "$wt_branch" && return 1
+		[[ "$local_proof" == true ]] || return 1
+	elif [[ "$local_proof" != true ]]; then
+		needs_head_match=true
+	fi
+	local repo_slug="" open_count=""
+	repo_slug=$(_clean_repo_slug) || return 1
+	if ! open_count=$(gh_pr_list --repo "$repo_slug" --head "$wt_branch" --state open --limit 1 --json number --jq 'length' 2>/dev/null); then
+		_WT_CLEAN_CAPACITY_OPEN_QUERY_FAILURES=$((${_WT_CLEAN_CAPACITY_OPEN_QUERY_FAILURES:-0} + 1))
+		return 1
+	fi
+	[[ "$open_count" == 0 ]] || return 1
+	if [[ "$needs_head_match" == true ]]; then
+		_clean_capacity_merged_head_matches "$wt_branch" "$repo_slug" || return 1
+	fi
+	return 0
+}
+
+# Local patch-id proof: every commit on the branch has an equivalent patch in
+# origin/<default> (rebase/cherry-pick merges). `git cherry` prints "-" for
+# upstream-present patches and "+" for missing ones; no API read is needed.
+_clean_capacity_patches_upstream() {
+	local wt_branch="$1" default_br="$2" lines="" ahead="" merges=""
+	ahead=$(git rev-list --count "origin/$default_br..refs/heads/$wt_branch" 2>/dev/null) || return 1
+	[[ "$ahead" =~ ^[0-9]+$ && "$ahead" -gt 0 ]] || return 1
+	# Identical trees prove all content is upstream, even with ahead merges.
+	local branch_tree="" upstream_tree=""
+	branch_tree=$(git rev-parse "refs/heads/$wt_branch^{tree}" 2>/dev/null) || return 1
+	upstream_tree=$(git rev-parse "origin/$default_br^{tree}" 2>/dev/null) || return 1
+	[[ -n "$branch_tree" && "$branch_tree" == "$upstream_tree" ]] && return 0
+	# Patch IDs cannot prove changes introduced by merges: git cherry omits them.
+	merges=$(git rev-list --count --merges "origin/$default_br..refs/heads/$wt_branch" 2>/dev/null) || return 1
+	[[ "$merges" =~ ^[0-9]+$ && "$merges" -eq 0 ]] || return 1
+	lines=$(git cherry "origin/$default_br" "refs/heads/$wt_branch" 2>/dev/null) || return 1
+	[[ -n "$lines" ]] || return 1
+	[[ "$lines" != *"+ "* ]] || return 1
+	return 0
+}
+
+# Containment is sufficient for this pressure-only path, unlike the manual
+# zero-ahead heuristic. All owner, clean-tree, open-PR and removal guards remain.
+_clean_classify_capacity_worktree() {
+	local wt_path="$1" wt_branch="$2" default_br="$3" merged_prs="$4" open_prs="$5"
+	_clean_capacity_candidate_allowed "$wt_path" "$wt_branch" "$default_br" "$merged_prs" "$open_prs" || return 1
+	_WT_CLEAN_CAPACITY_CANDIDATES=$((${_WT_CLEAN_CAPACITY_CANDIDATES:-0} + 1))
+	local proof="$_WT_CLEAN_PROOF_REMOTE_TRACKING_RESULT"
+	_WT_CLEAN_LAST_MERGE_TYPE="$_WT_CLEAN_TYPE_REMOTE_TRACKING_MERGED"
+	if _clean_branch_list_contains_exact "$wt_branch" "$merged_prs"; then
+		_WT_CLEAN_LAST_MERGE_TYPE="$_WT_CLEAN_TYPE_SQUASH_MERGED_PR"
+		proof="$_WT_CLEAN_PROOF_GH_MERGED_PR"
+	fi
+	_WT_CLEAN_LAST_AUDIT_CONTEXT=$(_clean_branch_merge_proof_context "$wt_branch" "$default_br" "$(_clean_branch_head "$wt_branch")" "$proof")
+	printf '%s\t%s\n' "$_WT_CLEAN_LAST_MERGE_TYPE" "$_WT_CLEAN_LAST_AUDIT_CONTEXT"
+	return 0
+}
+
 # Determine if a worktree entry is merged, and print it if so.
 # Args: $1=wt_path, $2=wt_branch, $3=default_branch, $4=remote_state_unknown,
 #       $5=merged_pr_branches, $6=open_pr_branches, $7=force_merged,
@@ -1349,6 +1499,11 @@ _clean_classify_worktree() {
 	_WT_CLEAN_LAST_MERGE_TYPE=""
 	_WT_CLEAN_LAST_AUDIT_CONTEXT=""
 	_WT_CLEAN_LAST_PRESERVE_BRANCH="$_WT_CLEAN_BOOL_FALSE"
+
+	if [[ "${_WT_CLEAN_CAPACITY_MODE:-false}" == true ]]; then
+		_clean_classify_capacity_worktree "$wt_path" "$wt_branch" "$default_br" "$merged_prs" "$open_prs" || true
+		return 0
+	fi
 
 	if _clean_protected_contains "$wt_path" &&
 		! _clean_branch_has_terminal_pr_proof "$wt_branch" "$merged_prs" "$closed_prs"; then
@@ -1588,6 +1743,11 @@ _clean_worktree_index_is_readable() {
 	local worktree_branch="$2"
 	local audit_context="$3"
 
+	# An absent source has no index to protect; the archive step reports
+	# path-already-gone and only stale metadata remains to be pruned.
+	if [[ ! -e "$worktree_path" && ! -L "$worktree_path" ]]; then
+		return 0
+	fi
 	if GIT_OPTIONAL_LOCKS=0 git -C "$worktree_path" status --porcelain >/dev/null 2>&1; then
 		return 0
 	fi
@@ -1744,9 +1904,78 @@ _clean_remove_candidate_after_lease() {
 }
 
 # Remove worktrees that are eligible for cleanup (second pass after user confirmation).
+
+# Rotate a capacity pass after the last attempted worktree. The cursor affects
+# ordering only; classification, leases and physical-removal guards still run.
+_clean_removal_inventory() {
+	local record="" line="" saved="" start=0 index=0 offset=0
+	local records=()
+	if [[ "${_WT_CLEAN_CAPACITY_MODE:-false}" != true ]]; then
+		git worktree list --porcelain
+		printf '\n'
+		return 0
+	fi
+	[[ ! -f "$_WT_CLEAN_CAPACITY_CURSOR" ]] || IFS= read -r saved <"$_WT_CLEAN_CAPACITY_CURSOR" || true
+	while IFS= read -r line; do
+		record="${record}${line}"$'\n'
+		if [[ -z "$line" ]]; then
+			records+=("$record")
+			[[ "$record" != "worktree ${saved}"$'\n'* ]] || start=${#records[@]}
+			record=""
+		fi
+	done < <(
+		git worktree list --porcelain
+		printf '\n'
+	)
+	for ((offset = 0; offset < ${#records[@]}; offset++)); do
+		index=$(((start + offset) % ${#records[@]}))
+		printf '%s' "${records[$index]}"
+	done
+	return 0
+}
+
+# t19076 (GH#38818): read-only. Returns 0 (stop) when a capacity pass has a
+# valid deadline that has passed, so the pass ends before the caller's hard
+# timeout can kill git inside `git worktree remove` and leave a half-deleted
+# tree. Touches neither the cursor nor the attempt count.
+_clean_capacity_deadline_stop() {
+	local candidate="$1"
+	local deadline="${AIDEVOPS_WORKTREE_CLEAN_DEADLINE_EPOCH:-}"
+	[[ "${_WT_CLEAN_CAPACITY_MODE:-false}" == true ]] || return 1
+	[[ "$deadline" =~ ^[0-9]{9,11}$ ]] || return 1
+	[[ "$(date +%s)" -ge "$deadline" ]] || return 1
+	echo "Capacity pass: deadline reached before ${candidate}; no further removals this pass" >&2
+	return 0
+}
+
 # Args: $1=default_branch, $2=main_worktree_path, $3=remote_state_unknown,
 #       $4=merged_pr_branches, $5=open_pr_branches, $6=force_merged,
 #       $7=closed_pr_branches
+_clean_capacity_checkpoint() {
+	local wt_path="$1"
+	[[ "${_WT_CLEAN_CAPACITY_MODE:-false}" == true ]] || return 0
+	[[ "$capacity_attempted" -lt 20 ]] || return 1
+	! _clean_capacity_deadline_stop "$wt_path" || return 1
+	# Write ahead so a slow/interrupted removal cannot starve later trees.
+	printf '%s\n' "$wt_path" >"$_WT_CLEAN_CAPACITY_CURSOR" || return 1
+	capacity_attempted=$((capacity_attempted + 1))
+	return 0
+}
+
+# GH#37342: capacity vetoes are fail-closed and were silent, so a pass that
+# examined trees but removed nothing was indistinguishable from "no candidates".
+# Print one summary per capacity pass (stderr reaches cleanup_worktrees.log).
+_clean_capacity_report() {
+	local attempted="$1"
+	local unknown_reasons="none"
+	[[ "${_WT_CLEAN_CAPACITY_MODE:-false}" == true ]] || return 0
+	unknown_reasons=$(_clean_pr_proof_unknown_context) || unknown_reasons="none"
+	printf 'Capacity pass: attempted=%s candidates=%s pr_proof_unknown=%s open_query_failures=%s\n' \
+		"$attempted" "${_WT_CLEAN_CAPACITY_CANDIDATES:-0}" "$unknown_reasons" \
+		"${_WT_CLEAN_CAPACITY_OPEN_QUERY_FAILURES:-0}" >&2
+	return 0
+}
+
 _clean_remove_merged() {
 	local default_br="$1"
 	local main_wt_path="$2"
@@ -1759,6 +1988,9 @@ _clean_remove_merged() {
 	local worktree_path=""
 	local worktree_branch=""
 	local removal_failures=0
+	local capacity_attempted=0
+	_WT_CLEAN_CAPACITY_CANDIDATES=0
+	_WT_CLEAN_CAPACITY_OPEN_QUERY_FAILURES=0
 
 	while IFS= read -r line; do
 		if [[ "$line" =~ ^worktree\ (.+)$ ]]; then
@@ -1767,6 +1999,7 @@ _clean_remove_merged() {
 			worktree_branch="${BASH_REMATCH[1]}"
 		elif [[ -z "$line" ]]; then
 			if [[ -n "$worktree_branch" ]] && [[ "$worktree_branch" != "$default_br" ]] && [[ "$worktree_path" != "$main_wt_path" ]]; then
+				_clean_capacity_checkpoint "$worktree_path" || break
 				if _clean_protected_contains "$worktree_path" &&
 					! _clean_branch_has_terminal_pr_proof "$worktree_branch" "$merged_prs" "$closed_prs"; then
 					log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "$_WT_CLEAN_REASON_PROTECTED_PASS" "$_WT_CLEAN_MODE_SKIPPED" \
@@ -1782,6 +2015,8 @@ _clean_remove_merged() {
 				audit_context="$_WT_CLEAN_LAST_AUDIT_CONTEXT"
 				local preserve_branch="$_WT_CLEAN_LAST_PRESERVE_BRANCH"
 				if [[ -n "$merge_type" ]]; then
+					# Classification can outlast the deadline; re-check before any lease.
+					_clean_capacity_deadline_stop "$worktree_path" && break
 					echo -e "${BLUE}Removing $worktree_branch...${NC}" >&2
 					if _clean_protected_contains "$worktree_path" &&
 						! _clean_branch_has_terminal_pr_proof "$worktree_branch" "$merged_prs" "$closed_prs"; then
@@ -1801,7 +2036,7 @@ _clean_remove_merged() {
 					fi
 					if ! _clean_acquire_removal_lease "$worktree_path" "$worktree_branch"; then
 						log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "cleanup-lease-skip" "$_WT_CLEAN_MODE_SKIPPED"
-						echo -e "${YELLOW}Skipped $worktree_branch - cleanup lease was not acquired${NC}" >&2
+						echo -e "${YELLOW}Skipped $worktree_branch - cleanup lease was not acquired${_WT_CLEAN_LAST_LEASE_REFUSAL:+: $_WT_CLEAN_LAST_LEASE_REFUSAL}${NC}" >&2
 						worktree_path=""
 						worktree_branch=""
 						continue
@@ -1818,10 +2053,10 @@ _clean_remove_merged() {
 			worktree_branch=""
 		fi
 	done < <(
-		git worktree list --porcelain
-		echo ""
+		_clean_removal_inventory
 	)
 
+	_clean_capacity_report "$capacity_attempted"
 	[[ "$removal_failures" -eq 0 ]] || return 1
 	return 0
 }
@@ -1901,17 +2136,29 @@ _clean_reclaim_branch_cleanup_transports() {
 	return 0
 }
 
-cmd_clean() {
-	local auto_mode=false
-	local force_merged=false
+_clean_parse_options() {
 	while [[ $# -gt 0 ]]; do
 		case "${1:-}" in
 		--auto) auto_mode=true ;;
+		--capacity) _WT_CLEAN_CAPACITY_MODE=true ;;
 		--force-merged) force_merged=true ;;
 		*) break ;;
 		esac
 		shift
 	done
+	if [[ "$_WT_CLEAN_CAPACITY_MODE" == true ]]; then
+		[[ "$auto_mode" == true && "$force_merged" == false ]] || return 1
+		_WT_CLEAN_CAPACITY_CURSOR="$(git rev-parse --git-common-dir)/aidevops-capacity-clean.cursor"
+	fi
+	return 0
+}
+
+cmd_clean() {
+	local auto_mode=false
+	local force_merged=false
+	local _WT_CLEAN_CAPACITY_MODE=false
+	local _WT_CLEAN_CAPACITY_CURSOR=""
+	_clean_parse_options "$@" || return 1
 
 	# t2559: run the combined L1+L2+L3 preflight. On any refusal, bail before
 	# touching filesystem state. This is the primary defence against the
@@ -1920,10 +2167,12 @@ cmd_clean() {
 	if ! main_worktree_path=$(_clean_preflight_main_worktree); then
 		return 1
 	fi
-	if declare -F full_loop_reconcile_cleanup_receipts >/dev/null 2>&1; then
+	if [[ "$_WT_CLEAN_CAPACITY_MODE" != true ]] && declare -F full_loop_reconcile_cleanup_receipts >/dev/null 2>&1; then
 		full_loop_reconcile_cleanup_receipts
 	fi
-	_clean_reclaim_branch_cleanup_transports "$main_worktree_path"
+	if [[ "$_WT_CLEAN_CAPACITY_MODE" != true ]]; then
+		_clean_reclaim_branch_cleanup_transports "$main_worktree_path"
+	fi
 
 	echo -e "${BOLD}Checking for worktrees with merged branches...${NC}" >&2
 	echo "" >&2
@@ -1936,6 +2185,9 @@ cmd_clean() {
 	# Prune all remotes, not just origin (GH#3797)
 	local remote_state_unknown
 	remote_state_unknown=$(_clean_fetch_remotes)
+	if ! _clean_refresh_remote_branch_cache; then
+		remote_state_unknown=true
+	fi
 
 	# Build PR branch lists for squash-merge detection and open-PR safety check.
 	# NOTE: bash 3.2 (macOS default) lacks declare -A — do NOT use associative arrays.
@@ -1960,10 +2212,10 @@ cmd_clean() {
 		_clean_pr_proof_unknown_add "unknown:open-pr-list-unavailable"
 	fi
 
-	# Closed (abandoned) PRs: closed without merging. Remote branch may linger
-	# because auto-delete only fires on merge.
-	local closed_pr_branches
-	if ! closed_pr_branches=$(_clean_build_closed_pr_branches); then
+	# Capacity classification never uses closed-PR proof. Avoid a needless API
+	# request and do not let its failure veto otherwise proven candidates.
+	local closed_pr_branches=""
+	if [[ "$_WT_CLEAN_CAPACITY_MODE" != true ]] && ! closed_pr_branches=$(_clean_build_closed_pr_branches); then
 		_clean_pr_proof_unknown_add "unknown:closed-pr-list-unavailable"
 	fi
 
@@ -1987,7 +2239,7 @@ cmd_clean() {
 		# Second pass: remove merged worktrees
 		local cleanup_status=0
 		_clean_remove_merged "$default_branch" "$main_worktree_path" "$remote_state_unknown" "$merged_pr_branches" "$open_pr_branches" "$force_merged" "$closed_pr_branches" || cleanup_status=$?
-		if declare -F full_loop_reconcile_cleanup_receipts >/dev/null 2>&1; then
+		if [[ "$_WT_CLEAN_CAPACITY_MODE" != true ]] && declare -F full_loop_reconcile_cleanup_receipts >/dev/null 2>&1; then
 			full_loop_reconcile_cleanup_receipts
 		fi
 		if [[ "$cleanup_status" -ne 0 ]]; then

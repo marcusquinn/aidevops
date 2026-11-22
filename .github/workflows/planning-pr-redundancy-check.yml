@@ -15,6 +15,10 @@ on:
     paths:
       - 'todo/tasks/*-brief.md'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check-redundancy:
     name: Brief Redundancy Advisory

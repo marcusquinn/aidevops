@@ -863,6 +863,79 @@ if [[ "$rc" -eq 0 && "$output" == *"budget=100K"* ]]; then assertion_rc=0; fi
 print_result "override below the minimum is clamped to 100K" "$assertion_rc" "(rc=$rc output='$output')"
 printf '{"initialized_repos":[]}\n' >"${HOME}/.config/aidevops/repos.json"
 
+# =============================================================================
+# GH#38272 — updatedAt-keyed spend cache and final-guard skip
+# =============================================================================
+export AIDEVOPS_STATE_DIR="${TEST_ROOT}/state"
+CACHE_TS="2026-11-14T10:00:00Z"
+CACHE_META="{\"state\":\"OPEN\",\"assignees\":[],\"labels\":[{\"name\":\"tier:standard\"}],\"updatedAt\":\"${CACHE_TS}\"}"
+
+# Run _check_cost_budget with issue metadata (the is_assigned path) in a fresh
+# process, like each is-assigned subprocess.
+run_cached_check() {
+	local issue="$1" meta="$2"
+	output=$(bash -c '
+		SCRIPT_DIR="$1"
+		source "${SCRIPT_DIR}/shared-constants.sh"
+		source "${SCRIPT_DIR}/dispatch-dedup-cost.sh"
+		_check_cost_budget "$2" "owner/repo" "standard" "$3"
+	' _ "$TEST_SCRIPTS_DIR" "$issue" "$meta" 2>/dev/null)
+	rc=$?
+	return 0
+}
+count_comment_calls() {
+	local issue="$1"
+	grep -c "issues/${issue}/comments" "$STUB_LOG" 2>/dev/null || true
+	return 0
+}
+
+write_fixture_issue '[{"name":"tier:standard"}]'
+write_fixture_comments "30000"
+run_cached_check 18201 "$CACHE_META"
+calls_first=$(count_comment_calls 18201)
+run_cached_check 18201 "$CACHE_META"
+calls_second=$(count_comment_calls 18201)
+assertion_rc=1
+if [[ "$rc" -eq 1 && "$calls_first" -ge 1 && "$calls_second" -eq "$calls_first" ]]; then assertion_rc=0; fi
+print_result "unchanged updatedAt reuses cached spend (no second comments call)" "$assertion_rc" "(first=$calls_first second=$calls_second rc=$rc)"
+
+# A cache hit returns the same budget decision (over-budget stays blocked).
+write_fixture_comments "500000,400000"
+run_cached_check 18202 "$CACHE_META"
+rc_first=$rc
+run_cached_check 18202 "$CACHE_META"
+assertion_rc=1
+if [[ "$rc_first" -eq 0 && "$rc" -eq 0 && "$output" == *"COST_BUDGET_EXCEEDED"* ]]; then assertion_rc=0; fi
+print_result "cache hit keeps the over-budget decision" "$assertion_rc" "(rc=$rc output='$output')"
+
+# Changed updatedAt recomputes.
+calls_before=$(count_comment_calls 18201)
+run_cached_check 18201 "${CACHE_META/10:00:00Z/10:05:00Z}"
+calls_after=$(count_comment_calls 18201)
+assertion_rc=1
+if [[ "$calls_after" -gt "$calls_before" ]]; then assertion_rc=0; fi
+print_result "changed updatedAt recomputes spend" "$assertion_rc" "(before=$calls_before after=$calls_after)"
+
+# Entries older than the TTL recompute.
+AIDEVOPS_DISPATCH_COST_CACHE_TTL_SECONDS=1 run_cached_check 18201 "${CACHE_META/10:00:00Z/10:05:00Z}"
+calls_before=$(count_comment_calls 18201)
+sleep 2
+AIDEVOPS_DISPATCH_COST_CACHE_TTL_SECONDS=1 run_cached_check 18201 "${CACHE_META/10:00:00Z/10:05:00Z}"
+calls_after=$(count_comment_calls 18201)
+assertion_rc=1
+if [[ "$calls_after" -gt "$calls_before" ]]; then assertion_rc=0; fi
+print_result "expired cache entry recomputes spend" "$assertion_rc" "(before=$calls_before after=$calls_after)"
+
+# Final claim guard skips the cost gate via AIDEVOPS_DDH_SKIP_COST_BUDGET=1.
+write_fixture_issue '[{"name":"tier:standard"}]'
+write_fixture_comments "500000,400000"
+guard_out=$("$DEDUP_HELPER" is-assigned 18203 "owner/repo" "test-runner" 2>/dev/null)
+guard_out_skip=$(AIDEVOPS_DDH_SKIP_COST_BUDGET=1 "$DEDUP_HELPER" is-assigned-read-only 18203 "owner/repo" "test-runner" 2>/dev/null)
+assertion_rc=1
+if [[ "$guard_out" == *"COST_BUDGET_EXCEEDED"* && "$guard_out_skip" != *"COST_BUDGET_EXCEEDED"* ]]; then assertion_rc=0; fi
+print_result "skip env bypasses cost gate only for the final guard" "$assertion_rc" "(normal='$guard_out' skip='$guard_out_skip')"
+unset AIDEVOPS_STATE_DIR
+
 export PATH="$OLD_PATH"
 
 # =============================================================================

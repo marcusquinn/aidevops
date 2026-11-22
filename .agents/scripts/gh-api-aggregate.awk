@@ -100,6 +100,7 @@ function emit_group(title, group,    pair, parts, values, n, i, value) {
 		printf "      \"pages\": %d,\n", metric_get(group, value, "pages")
 		printf "      \"additional_pages\": %d,\n", metric_get(group, value, "additional_pages")
 		printf "      \"successful_attempts\": %d,\n", metric_get(group, value, "successful_attempts")
+		printf "      \"not_modified_attempts\": %d,\n", metric_get(group, value, "not_modified_attempts")
 		printf "      \"failed_attempts\": %d,\n", metric_get(group, value, "failed_attempts")
 		printf "      \"elapsed_ms\": %d,\n", metric_get(group, value, "elapsed_ms")
 		printf "      \"unknown_elapsed_attempts\": %d,\n", metric_get(group, value, "unknown_elapsed_attempts")
@@ -132,6 +133,162 @@ function emit_budgets(    pool, values, n, i) {
 		printf "    \"%s\": {\"min_remaining\": %d, \"last_remaining\": %d}", pool, budget_min[pool] + 0, budget_last[pool] + 0
 	}
 	if (n > 0) print ""
+	print "  }"
+}
+
+# A credential digest identifies an auth source, not necessarily a unique user
+# quota: multiple tokens may share one upstream pool. Never merge them by guess.
+# Old rows remain readable but cannot prove a pool/reset series.
+function collect_quota(    series, row, minute) {
+	if (pool != "rest-core") return
+	if (length($20) != 64 || $20 !~ /^[a-f0-9]+$/ || $21 !~ /^[1-9][0-9]*$/) {
+		unattributed_missing_metadata_attempts++
+		# Native commands without response headers (for example writes) know
+		# their credential and cost but not the reset series. Keep that cost
+		# visible beside the same credential's residuals; never subtract it.
+		if (length($20) == 64 && $20 ~ /^[a-f0-9]+$/ && quota_cost ~ /^[0-9]+$/) {
+			minute = int(ts / 60) * 60
+			quota_reset_unknown_cost[$20 SUBSEP minute] += quota_cost
+			quota_reset_unknown_total[$20] += quota_cost
+		}
+		return
+	}
+	series = pool ":" $20 ":" $21
+	quota_series[series] = 1
+	row = ++quota_rows
+	quota_order[row] = row
+	quota_key[row] = series
+	quota_ts[row] = ts
+	quota_budget[row] = budget
+	quota_logged[row] = quota_cost
+	quota_used[row] = $22
+}
+
+# Keep used-counter evidence independent of remaining-based residuals. Missing
+# samples accumulate local costs until the next response-owned used counter.
+# This is an attribution upper bound, not proof of a particular remote device.
+function replay_external(row, series, cost,    delta, external, key) {
+	if (cost ~ /^[0-9]+$/) external_pending[series] += cost
+	if (quota_used[row] !~ /^[0-9]+$/) return
+	if (series in external_previous) {
+		delta = quota_used[row] - external_previous[series]
+		if (delta >= 0) {
+			key = series SUBSEP (int(quota_ts[row] / 60) * 60)
+			quota_minutes[key] = 1
+			external = delta - external_pending[series]
+			if (external < 0) external = 0
+			external_cost[series] += external
+			external_minute_cost[key] += external
+		}
+	}
+	external_previous[series] = quota_used[row] + 0
+	external_pending[series] = 0
+}
+
+# Concurrent processes append on completion; sort by captured sample time and,
+# within a second, decreasing remaining. Ignore counter increases rather than
+# creating negative drain. The first sample is a baseline, not an interval.
+function replay_quota(    i, j, row, prev, series, drop, cost, minute, key, residual) {
+	for (i = 2; i <= quota_rows; i++) {
+		row = quota_order[i]
+		j = i
+		while (j > 1) {
+			prev = quota_order[j - 1]
+			if (quota_ts[prev] < quota_ts[row] || (quota_ts[prev] == quota_ts[row] && quota_budget[prev] + 0 >= quota_budget[row] + 0)) break
+			quota_order[j] = prev
+			j--
+		}
+		quota_order[j] = row
+	}
+	for (i = 1; i <= quota_rows; i++) {
+		row = quota_order[i]
+		series = quota_key[row]
+		cost = quota_logged[row]
+		replay_external(row, series, cost)
+		if (cost ~ /^[0-9]+$/) quota_pending[series] += cost
+		else quota_unknown[series]++
+		if (quota_budget[row] !~ /^[0-9]+$/) continue
+		if (series in quota_previous) {
+			drop = quota_previous[series] - quota_budget[row]
+			if (drop >= 0) {
+				minute = int(quota_ts[row] / 60) * 60
+				key = series SUBSEP minute
+				quota_minutes[key] = 1
+				quota_drops[series] += drop
+				quota_costs[series] += quota_pending[series]
+				quota_minute_drop[key] += drop
+				quota_minute_cost[key] += quota_pending[series]
+			} else quota_increases[series]++
+		}
+		quota_previous[series] = quota_budget[row] + 0
+		quota_pending[series] = 0
+	}
+	for (key in quota_minutes) {
+		residual = quota_minute_drop[key] - quota_minute_cost[key]
+		quota_residual[key] = (residual > 0) ? residual : 0
+		split(key, quota_parts, SUBSEP)
+		quota_unattributed[quota_parts[1]] += quota_residual[key]
+	}
+}
+
+function emit_quota_minutes(series, top,    key, parts, minutes, n, i, j, swap, a, b, fingerprint) {
+	split(series, parts, ":")
+	fingerprint = parts[2]
+	n = 0
+	for (key in quota_minutes) {
+		split(key, parts, SUBSEP)
+		if (parts[1] == series) minutes[++n] = parts[2] + 0
+	}
+	sort_values(minutes, n)
+	if (top) {
+		for (i = 2; i <= n; i++) {
+			for (j = i; j > 1; j--) {
+				a = quota_residual[series SUBSEP minutes[j - 1]]
+				b = quota_residual[series SUBSEP minutes[j]]
+				if (a >= b) break
+				swap = minutes[j]; minutes[j] = minutes[j - 1]; minutes[j - 1] = swap
+			}
+		}
+		if (n > 10) n = 10
+	}
+	printf "["
+	for (i = 1; i <= n; i++) {
+		key = series SUBSEP minutes[i]
+		if (i > 1) printf ", "
+		printf "{\"minute_ts\": %d, \"remaining_drop\": %d, \"logged_quota_cost\": %d, \"unattributed_cost\": %d, \"same_credential_reset_unknown_cost\": %d, \"same_login_external_cost\": %d}", minutes[i], quota_minute_drop[key], quota_minute_cost[key], quota_residual[key], quota_reset_unknown_cost[fingerprint SUBSEP minutes[i]] + 0, external_minute_cost[key]
+	}
+	printf "]"
+}
+
+function emit_quota(    series, values, n, i, parts) {
+	replay_quota()
+	print "  \"rest_core_attribution\": {"
+	print "    \"minute_assignment\": \"interval-ending-sample\","
+	print "    \"sample_time_basis\": \"command-completion-under-credential-lock\","
+	print "    \"unattributed_is_upper_bound\": true,"
+	print "    \"same_login_external_cost_is_upper_bound\": true,"
+	printf "    \"foreign_device_hint\": \"%s\",\n", (foreign_hint == "same_login_foreign_device" || foreign_hint == "none") ? foreign_hint : "unknown"
+	printf "    \"missing_metadata_attempts\": %d,\n", unattributed_missing_metadata_attempts + 0
+	print "    \"series\": ["
+	for (series in quota_series) values[++n] = series
+	sort_values(values, n)
+	for (i = 1; i <= n; i++) {
+		series = values[i]
+		split(series, parts, ":")
+		if (i > 1) print ","
+		printf "      {\"pool\": \"%s\", \"auth_fingerprint\": \"%s\", \"reset_epoch\": %s, ", parts[1], parts[2], parts[3]
+		printf "\"remaining_drop\": %d, \"logged_quota_cost\": %d, \"unattributed_cost\": %d, ", quota_drops[series], quota_costs[series], quota_unattributed[series]
+		printf "\"same_login_external_cost\": %d, \"other_devices\": \"unknown\", ", external_cost[series]
+		printf "\"unknown_cost_attempts\": %d, \"counter_increases\": %d, ", quota_unknown[series], quota_increases[series]
+		# Credential-wide, not series-owned: a credential may span several resets.
+		printf "\"same_credential_reset_unknown_cost\": %d, \"minutes\": ", quota_reset_unknown_total[parts[2]] + 0
+		emit_quota_minutes(series, 0)
+		printf ", \"top_unattributed_minutes\": "
+		emit_quota_minutes(series, 1)
+		printf "}"
+	}
+	if (n > 0) print ""
+	print "    ]"
 	print "  }"
 }
 
@@ -272,6 +429,7 @@ $1 !~ /^[0-9]+$/ || NF < 3 {
 	if (first_window_attempt_ts == 0 || ts < first_window_attempt_ts) first_window_attempt_ts = ts
 	if (ts > last_window_attempt_ts) last_window_attempt_ts = ts
 	if (attempt_page_unknown) unknown_page_attempts++
+	collect_quota()
 
 	attempted_requests++
 	minute = int(ts / 60)
@@ -298,7 +456,13 @@ $1 !~ /^[0-9]+$/ || NF < 3 {
 			metric_add_dimensions(caller, path, auth, pool, decision, "additional_pages", 1)
 		}
 	}
-	if (outcome == "success") {
+	if (http_status == "304") {
+		# 304 Not Modified is a free successful revalidation; native gh exits
+		# non-zero on it, so the logged outcome may be "error".
+		not_modified_attempts++
+		metric_add_dimensions(caller, path, auth, pool, decision, "not_modified_attempts", 1)
+	}
+	if (outcome == "success" || http_status == "304") {
 		successful_attempts++
 		metric_add_dimensions(caller, path, auth, pool, decision, "successful_attempts", 1)
 	} else {
@@ -365,6 +529,7 @@ END {
 	printf "    \"pages\": %d,\n", pages + 0
 	printf "    \"additional_pages\": %d,\n", additional_pages + 0
 	printf "    \"successful_attempts\": %d,\n", successful_attempts + 0
+	printf "    \"not_modified_attempts\": %d,\n", not_modified_attempts + 0
 	printf "    \"failed_attempts\": %d,\n", failed_attempts + 0
 	printf "    \"elapsed_ms\": %d,\n", elapsed_ms_total + 0
 	printf "    \"unknown_elapsed_attempts\": %d,\n", unknown_elapsed_attempts + 0
@@ -403,5 +568,7 @@ END {
 	emit_group("attempts_by_http_status", "http_status")
 	print ","
 	emit_budgets()
+	print ","
+	emit_quota()
 	print "}"
 }

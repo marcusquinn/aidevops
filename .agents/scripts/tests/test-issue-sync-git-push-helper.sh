@@ -456,6 +456,10 @@ test_protected_branch_uses_one_rebased_pr() {
 		fail "issue-sync PR title preserves merge-loop prevention"
 	elif [[ "$(<"${title_file}.body")" != *"Ref #9001"* ]]; then
 		fail "issue-sync PR body preserves changed-task linkage"
+	elif [[ "$(grep -cE '^(For|Ref) #[0-9]+$' "${title_file}.body" || true)" != "1" ]] ||
+		! grep -qx 'For #9001' "${title_file}.body"; then
+		# GH#39217: the origin:worker identity guard needs one primary identity.
+		fail "issue-sync PR body declares exactly one standalone primary issue identity"
 	elif [[ "$(<"$output_a")" == *"GH006: Protected branch update failed"* ]]; then
 		fail "typed protected-branch result survives captured provider output"
 	elif [[ "$(<"$output_a")" != *"repository-scoped CI privacy and write-policy inventory"* ]]; then

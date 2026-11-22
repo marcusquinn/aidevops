@@ -73,6 +73,17 @@ _dispatch_graphql_budget_allows_next() {
 	return 0
 }
 
+# t19116: every production launch passes _dlw_claim_slot_and_lock before its
+# first claim write. Stubs that simulate a launch model that point here.
+# Args: candidate JSON. Returns: 0 slot held, 75 deferred (all slots held).
+_test_claim_launch_slot() {
+	local candidate_json="$1" issue="" repo=""
+	issue=$(jq -r '.number // 0' <<<"$candidate_json")
+	repo=$(jq -r '.repo_slug // ""' <<<"$candidate_json")
+	_dispatch_launch_slot_acquire "$issue" "$repo" && return 0
+	return 75
+}
+
 # =============================================================================
 # Test 1: _dispatch_max_compute_parallel honours DISPATCH_MAX_PARALLEL
 # =============================================================================
@@ -94,14 +105,20 @@ test_compute_max_parallel_default() {
 }
 
 test_compute_max_parallel_default_caps_at_slots() {
+	# t19116: evaluations oversubscribe slots (2 x 3 = 6); the legacy opt-out
+	# restores the slot clamp.
 	unset DISPATCH_MAX_PARALLEL || true
 	rm -f "$_DISPATCH_THROTTLE_FILE"
-	local result
-	result=$(_dispatch_max_compute_parallel 3)
-	if [[ "$result" == "3" ]]; then
-		print_result "compute_max_parallel: default caps at effective_slots (3)" 0
+	local gated legacy one_slot
+	gated=$(_dispatch_max_compute_parallel 1)
+	one_slot="$gated"
+	gated=$(_dispatch_max_compute_parallel 2)
+	legacy=$(DISPATCH_LAUNCH_SLOT_GATE=0 _dispatch_max_compute_parallel 3)
+	if [[ "$one_slot" == "3" && "$gated" == "6" && "$legacy" == "3" ]]; then
+		print_result "compute_max_parallel: default oversubscribes slots x3, legacy caps at slots" 0
 	else
-		print_result "compute_max_parallel: default caps at effective_slots (3)" 1 "got=${result}"
+		print_result "compute_max_parallel: default oversubscribes slots x3, legacy caps at slots" 1 \
+			"one_slot=${one_slot} gated=${gated} legacy=${legacy}"
 	fi
 	return 0
 }
@@ -122,12 +139,16 @@ test_compute_max_parallel_override() {
 test_compute_max_parallel_caps_at_slots() {
 	export DISPATCH_MAX_PARALLEL=10
 	rm -f "$_DISPATCH_THROTTLE_FILE"
-	local result
-	result=$(_dispatch_max_compute_parallel 3)
-	if [[ "$result" == "3" ]]; then
-		print_result "compute_max_parallel: caps at effective_slots (3)" 0
+	local gated legacy forced factor
+	gated=$(_dispatch_max_compute_parallel 3)
+	factor=$(DISPATCH_EVAL_OVERSUBSCRIBE=2 _dispatch_max_compute_parallel 3)
+	legacy=$(DISPATCH_LAUNCH_SLOT_GATE=0 _dispatch_max_compute_parallel 3)
+	forced=$(_DISPATCH_FORCE_FLOOR=1 _dispatch_max_compute_parallel 1)
+	if [[ "$gated" == "9" && "$factor" == "6" && "$legacy" == "3" && "$forced" == "1" ]]; then
+		print_result "compute_max_parallel: caps at slots x oversubscribe; legacy and forced floor keep slot cap" 0
 	else
-		print_result "compute_max_parallel: caps at effective_slots (3)" 1 "got=${result}"
+		print_result "compute_max_parallel: caps at slots x oversubscribe; legacy and forced floor keep slot cap" 1 \
+			"gated=${gated} factor=${factor} legacy=${legacy} forced=${forced}"
 	fi
 	return 0
 }
@@ -251,6 +272,61 @@ test_wait_tracked_pids_suppresses_stale_child() {
 	else
 		print_result "wait_tracked_pids: suppresses stale child stderr" 1 "rc=${rc} stderr=${stderr_output}"
 	fi
+	return 0
+}
+
+# GH#35698: output/status must retain command-substitution semantics, including
+# budget deferral and candidate timeout; only the calling supervisor heartbeats.
+test_owner_capture_contract() {
+	local rc=0
+	(
+		local owner="$BASHPID" captured="" status=0 expected
+		local calls="${TEST_ROOT}/owner-heartbeats"
+		_pulse_cycle_state_stage_heartbeat() {
+			[[ "$BASHPID" == "$owner" ]] || return 1
+			printf '%s\n' "$BASHPID" >>"$calls"
+			return 1 # Rejected health writes must not change dispatch status.
+		}
+		capture_candidate() {
+			local result="$1" argument="$2" input=""
+			[[ "$BASHPID" != "$owner" && "$argument" == skip ]] || return 99
+			read -r input
+			[[ "$input" == capture-input ]] || return 98
+			printf '2\n\n'
+			return "$result"
+		}
+		for expected in 0 1 3 124 127; do
+			status=0
+			_dispatch_capture_with_owner_liveness captured capture_candidate "$expected" skip <<<capture-input || status=$?
+			[[ "$captured" == 2 && "$status" == "$expected" ]] || exit 1
+		done
+		[[ -s "$calls" ]] || exit 1
+	) || rc=1
+	print_result "owner_capture: child execution, output, wait/deadline statuses and rejected heartbeats preserved" "$rc"
+	return 0
+}
+
+test_parallel_wait_failure_contract() {
+	local rc=0
+	(
+		local pids=(99999999) live
+		# Stale non-child PID is dropped without blocking (GH#21729).
+		_dispatch_max_wait_for_capacity pids 1
+		[[ "${#pids[@]}" == 0 ]] || exit 1
+		pids=(99999999)
+		_dispatch_max_wait_for_reservation pids
+		_dispatch_max_wait_tracked_pids 99999999 || exit 1
+		# Live children are retained and bound the cap (no wait -n needed).
+		sleep 2 &
+		live=$!
+		pids=("$live")
+		_dispatch_max_refresh_pids pids
+		[[ "${#pids[@]}" == 1 ]] || exit 1
+		kill "$live" 2>/dev/null
+		_dispatch_max_wait_for_capacity pids 1
+		[[ "${#pids[@]}" == 0 ]] || exit 1
+	) || rc=1
+	print_result "parallel_waits: stale PIDs dropped, live children retained, capacity wait polls without wait -n" "$rc"
 	return 0
 }
 
@@ -398,10 +474,12 @@ EOF
 }
 
 test_parallel_loop_respects_budget() {
-	# Stub: every candidate succeeds
+	local gate="${1:-1}"
+	# Stub: every candidate succeeds after passing the claim point.
 	# shellcheck disable=SC2317  # called via name resolution from loop
 	_dispatch_process_candidate() {
 		sleep 0.02
+		_test_claim_launch_slot "$1" || return $?
 		return 0
 	}
 
@@ -418,17 +496,17 @@ test_parallel_loop_respects_budget() {
 	rm -f "$STOP_FLAG"
 	# effective_slots=4, max_parallel=4 — should stop after 4 successes
 	local result
-	result=$(_dispatch_max_loop "$candidate_file" 4 4 "test_user" 4 "$outcomes_file")
+	result=$(DISPATCH_LAUNCH_SLOT_GATE="$gate" _dispatch_max_loop "$candidate_file" 4 4 "test_user" 4 "$outcomes_file")
 	local s
 	s=$(_dispatch_max_count_outcomes "$outcomes_file" "success")
 	rm -f "$candidate_file" "$outcomes_file"
 
-	# Pending ceremonies reserve capacity, so a successful four-slot wave launches
-	# exactly four workers rather than overshooting while outcomes are in flight.
+	# Legacy pending ceremonies reserve capacity; the t19116 gate bounds the
+	# claim point instead. Either way a four-slot wave launches exactly four.
 	if [[ "$s" == "4" ]]; then
-		print_result "parallel_loop: respects effective_slots=4 budget (got s=${s})" 0
+		print_result "parallel_loop: respects effective_slots=4 budget gate=${gate} (got s=${s})" 0
 	else
-		print_result "parallel_loop: respects effective_slots=4 budget" 1 "got s=${s}"
+		print_result "parallel_loop: respects effective_slots=4 budget gate=${gate}" 1 "got s=${s}"
 	fi
 	# Result first field should match s
 	local result_dispatched
@@ -514,6 +592,332 @@ EOF
 		print_result "parallel_loop: all rejected candidates finish without spinning" 1 \
 			"result=${result} failures=${failures}"
 	fi
+	return 0
+}
+
+# t19116: a one-slot round evaluates candidates concurrently, launches exactly
+# one, and defers the rest at the claim point without failure evidence.
+test_parallel_loop_launch_slot_gate_one_slot() {
+	local activity="${TEST_ROOT}/launch-slot-gate.activity"
+	: >"$activity"
+	# shellcheck disable=SC2317  # called via name resolution from loop
+	_dispatch_process_candidate() {
+		local waited=0
+		printf 'start\n' >>"$activity"
+		# Hold until a second candidate has started (bounded) so overlap is
+		# observed deterministically rather than by a fixed sleep window.
+		while (($(grep -c '^start$' "$activity") < 2)) && ((waited < 250)); do
+			sleep 0.02
+			waited=$((waited + 1))
+		done
+		printf 'end\n' >>"$activity"
+		_test_claim_launch_slot "$1" || return $?
+		return 0
+	}
+
+	local candidate_file outcomes_file result successes failures slot_defers peak
+	candidate_file=$(mktemp)
+	outcomes_file=$(mktemp)
+	for i in 820 821 822 823 824; do
+		printf '{"number":%d,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","labels":[]}\n' "$i"
+	done >"$candidate_file"
+	: >"$outcomes_file"
+	rm -f "$STOP_FLAG"
+	result=$(_dispatch_max_loop "$candidate_file" 1 1 "test_user" 3 "$outcomes_file")
+	successes=$(_dispatch_max_count_outcomes "$outcomes_file" "success")
+	failures=$(_dispatch_max_count_outcomes "$outcomes_file" "fail")
+	slot_defers=$(grep -c '^defer|.*|rc=75|reason=launch_slot_full|' "$outcomes_file" || true)
+	peak=$(awk '$0=="start" { n++; if(n>peak) peak=n } $0=="end" { n-- } END { print peak+0 }' "$activity")
+	rm -f "$candidate_file" "$outcomes_file" "$activity"
+
+	if [[ "${result%% *}" == "1" && "$successes" == "1" && "$failures" == "0" && "$slot_defers" -ge 1 && "$peak" -ge 2 ]]; then
+		print_result "launch_slot_gate: one slot evaluates concurrently, launches one, defers the rest" 0
+	else
+		print_result "launch_slot_gate: one slot evaluates concurrently, launches one, defers the rest" 1 \
+			"result=${result} successes=${successes} failures=${failures} slot_defers=${slot_defers} peak=${peak}"
+	fi
+	return 0
+}
+
+# t19116: a holder whose claim fails after taking the slot releases it, so a
+# later candidate in the same round can still launch.
+test_parallel_loop_launch_slot_failed_holder_releases() {
+	# Ordering is signalled, not timed: 831 waits for 830's claim marker, then
+	# retries its claim (bounded) until 830's failed claim releases the slot.
+	local holder_marker="${TEST_ROOT}/launch-slot-holder-830.marker"
+	rm -f "$holder_marker"
+	# shellcheck disable=SC2317  # called via name resolution from loop
+	_dispatch_process_candidate() {
+		local issue_num waited=0 claim_rc=75
+		issue_num=$(jq -r '.number // 0' <<<"$1")
+		if [[ "$issue_num" == "830" ]]; then
+			_test_claim_launch_slot "$1" || return $?
+			: >"$holder_marker"
+			return 2
+		fi
+		while [[ ! -e "$holder_marker" ]] && ((waited < 500)); do
+			sleep 0.02
+			waited=$((waited + 1))
+		done
+		waited=0
+		while ((waited < 500)); do
+			claim_rc=0
+			_test_claim_launch_slot "$1" || claim_rc=$?
+			[[ "$claim_rc" -eq 75 ]] || break
+			sleep 0.02
+			waited=$((waited + 1))
+		done
+		[[ "$claim_rc" -eq 0 ]] || return "$claim_rc"
+		return 0
+	}
+
+	local candidate_file outcomes_file successes failures
+	candidate_file=$(mktemp)
+	outcomes_file=$(mktemp)
+	for i in 830 831; do
+		printf '{"number":%d,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","labels":[]}\n' "$i"
+	done >"$candidate_file"
+	: >"$outcomes_file"
+	rm -f "$STOP_FLAG"
+	_dispatch_max_loop "$candidate_file" 1 1 "test_user" 3 "$outcomes_file" >/dev/null
+	successes=$(grep -c '^success|831|' "$outcomes_file" || true)
+	failures=$(grep -c '^fail|830|rc=2|' "$outcomes_file" || true)
+	rm -f "$candidate_file" "$outcomes_file"
+
+	if [[ "$successes" == "1" && "$failures" == "1" ]]; then
+		print_result "launch_slot_gate: failed holder releases its slot to a later candidate" 0
+	else
+		print_result "launch_slot_gate: failed holder releases its slot to a later candidate" 1 \
+			"successes=${successes} failures=${failures}"
+	fi
+	return 0
+}
+
+# t19122: write a worker-exit trigger newer than any capacity read in a test.
+# Args: trigger path
+_test_round_topup_trigger() {
+	local trigger="$1"
+	printf 'issue=1 worker_pid=1 ts=x\n' >"$trigger"
+	touch -t 209901010000 "$trigger"
+	return 0
+}
+
+# t19122: a spent round absorbs worker slots freed since its capacity read.
+# The capacity stub models the worker count: the round's two free slots, plus
+# three worker exits that land once the round has launched two workers.
+# Args: mode (topup|no_trigger|disabled|not_allowed), launch-slot gate (1|0)
+test_parallel_loop_round_topup() {
+	local mode="$1" gate="$2" rc=0
+	(
+		local candidate_file="" outcomes_file="" result="" successes=0 reads=0 i=0
+		local trigger="${TEST_ROOT}/topup-${mode}-${gate}.trigger" calls="${TEST_ROOT}/topup-${mode}-${gate}.calls"
+		candidate_file=$(mktemp)
+		outcomes_file=$(mktemp)
+		: >"$calls"
+		: >"$LOGFILE"
+		export PULSE_EVENT_REFILL_TRIGGER_FILE="$trigger"
+		rm -f "$trigger" "$STOP_FLAG"
+		[[ "$mode" == no_trigger ]] || _test_round_topup_trigger "$trigger"
+		local _DISPATCH_ROUND_TOPUP_ALLOWED=1
+		[[ "$mode" != not_allowed ]] || _DISPATCH_ROUND_TOPUP_ALLOWED=0
+		[[ "$mode" != disabled ]] || export DISPATCH_ROUND_TOPUP=0
+		# shellcheck disable=SC2317 # called via name resolution from the loop
+		_dispatch_compute_capacity() {
+			local launched=0 exited=0
+			printf 'read\n' >>"$calls"
+			launched=$(_dispatch_max_count_outcomes "$outcomes_file")
+			((launched < 2)) || exited=3
+			printf '20 %d %d\n' "$((18 + launched - exited))" "$((2 - launched + exited))"
+			return 0
+		}
+		# shellcheck disable=SC2317 # called via name resolution from the loop
+		_dispatch_process_candidate() {
+			sleep 0.05
+			_test_claim_launch_slot "$1" || return $?
+			return 0
+		}
+		for i in 840 841 842 843 844 845 846 847; do
+			printf '{"number":%d,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","labels":[]}\n' "$i"
+		done >"$candidate_file"
+		: >"$outcomes_file"
+		result=$(DISPATCH_LAUNCH_SLOT_GATE="$gate" _dispatch_max_loop "$candidate_file" 2 2 "test_user" 2 "$outcomes_file")
+		successes=$(_dispatch_max_count_outcomes "$outcomes_file")
+		reads=$(wc -l <"$calls" | tr -d ' ')
+		rm -f "$candidate_file" "$outcomes_file" "$trigger" "$calls"
+		if [[ "$mode" == topup ]]; then
+			[[ "$successes" == 5 && "${result%% *}" == 5 ]] || exit 1
+			# The stub counts outcomes at its own read time, so a worker that
+			# finishes between the loop's count and the stub's read yields an
+			# intermediate grant (2 -> 4) before the final 5. Assert the budget
+			# starts at 2 and reaches 5 rather than one exact grant step.
+			grep -q 'in-round top-up (parallel) — budget 2 -> [0-9]' "$LOGFILE" || exit 1
+			grep -Eq 'in-round top-up \(parallel\) — budget [0-9]+ -> 5 ' "$LOGFILE" || exit 1
+		else
+			[[ "$successes" == 2 && "${result%% *}" == 2 && "$reads" == 0 ]] || exit 1
+		fi
+		exit 0
+	) || rc=1
+	print_result "round_topup: ${mode} gate=${gate} (budget 2, 3 slots freed mid-round)" "$rc"
+	return 0
+}
+
+# t19122: under a product reservation the unreserved pool and the phase
+# transitions absorb freed slots, but never the held product slots.
+# Args: mode (topup|no_trigger)
+test_priority_round_topup_keeps_hold() {
+	local mode="$1" rc=0
+	(
+		local candidate_file="" outcomes="" result="" total=0 i=0
+		local trigger="${TEST_ROOT}/priority-topup-${mode}.trigger" launches="${TEST_ROOT}/priority-topup-${mode}.launches"
+		candidate_file=$(mktemp)
+		outcomes=$(mktemp)
+		: >"$launches"
+		: >"$LOGFILE"
+		export PULSE_EVENT_REFILL_TRIGGER_FILE="$trigger"
+		rm -f "$trigger" "$STOP_FLAG"
+		[[ "$mode" == no_trigger ]] || _test_round_topup_trigger "$trigger"
+		local _DISPATCH_ROUND_TOPUP_ALLOWED=1
+		# The four-slot round budget, plus two worker exits that land once the
+		# unreserved pool has spent its two slots.
+		# shellcheck disable=SC2317 # called via name resolution from the loops
+		_dispatch_compute_capacity() {
+			local launched=0 exited=0
+			launched=$(wc -l <"$launches" | tr -d ' ')
+			((launched < 2)) || exited=2
+			printf '20 %d %d\n' "$((16 + launched - exited))" "$((4 - launched + exited))"
+			return 0
+		}
+		# shellcheck disable=SC2317 # called via name resolution from the loops
+		_dispatch_process_candidate() {
+			_DISPATCH_CANDIDATE_ELIGIBILITY=eligible
+			sleep 0.02
+			_test_claim_launch_slot "$1" || return $?
+			printf 'launch\n' >>"$launches"
+			return 0
+		}
+		for i in 1 2 3 4 5 6 7 8; do
+			printf '{"number":%d,"repo_slug":"o/tooling","repo_priority":"tooling","labels":[]}\n' "$i"
+		done >"$candidate_file"
+		: >"$outcomes"
+		# Two product slots stay held: product discovery is incomplete.
+		result=$(_dispatch_priority_loop "$candidate_file" 4 test_user 2 "$outcomes" 2 false)
+		total=$(_dispatch_max_count_outcomes "$outcomes")
+		rm -f "$candidate_file" "$outcomes" "$trigger" "$launches"
+		local expected=2
+		[[ "$mode" == no_trigger ]] || expected=4
+		[[ "$total" == "$expected" && "${result%% *}" == "$expected" ]] || exit 1
+		grep -q "PRIORITY_RESERVATION requested=2 product_launched=0 held=2 discovery_complete=false launched=${expected}" "$LOGFILE" || exit 1
+		exit 0
+	) || rc=1
+	print_result "round_topup: priority ${mode} launches only past the held product slots" "$rc"
+	return 0
+}
+
+# t19116: the production claim point defers without a claim when every slot is
+# held, claims when one is free, and returns 2 when the claim itself fails.
+test_claim_slot_and_lock_contract() {
+	local rc=0
+	(
+		local _DISPATCH_LAUNCH_SLOT_DIR="" claims=0 result=0
+		# shellcheck source=../pulse-dispatch-worker-gates.sh
+		source "${SCRIPT_DIR}/pulse-dispatch-worker-gates.sh" || exit 1
+		# shellcheck disable=SC2317  # stage timing used by _dlw_pre_runtime_failure
+		_ds_now_ns() { printf '0\n'; }
+		# shellcheck disable=SC2317  # stage timing used by _dlw_pre_runtime_failure
+		_ds_record() { return 0; }
+		_DISPATCH_LAUNCH_SLOT_DIR=$(_dispatch_launch_slots_init 1) || exit 1
+		# shellcheck disable=SC2317  # called by _dlw_claim_slot_and_lock
+		_dlw_claim_lock_after_canary() { claims=$((claims + 1)); return 0; }
+		_dlw_claim_slot_and_lock 1 o/r me || exit 1
+		_dlw_claim_slot_and_lock 2 o/r me || result=$?
+		[[ "$result" -eq 75 && "$claims" -eq 1 ]] || exit 1
+		_dispatch_launch_slot_deferred 2 o/r || exit 1
+		grep -q 'deferring #2 (o/r) — every launch slot this round is held' "$LOGFILE" || exit 1
+		_dispatch_launch_slot_settle 1 o/r 2
+		_dlw_claim_slot_and_lock 3 o/r me || exit 1
+		[[ "$claims" -eq 2 && "$(_dispatch_launch_slots_taken)" == 1 ]] || exit 1
+		rm -rf "$_DISPATCH_LAUNCH_SLOT_DIR"
+		_DISPATCH_LAUNCH_SLOT_DIR=$(_dispatch_launch_slots_init 1) || exit 1
+		# shellcheck disable=SC2317  # called by _dlw_claim_slot_and_lock
+		_dlw_claim_lock_after_canary() { return 1; }
+		result=0
+		_dlw_claim_slot_and_lock 4 o/r me || result=$?
+		[[ "$result" -eq 2 ]] || exit 1
+		_dispatch_launch_slot_settle 4 o/r "$result"
+		[[ "$(_dispatch_launch_slots_taken)" == 0 ]] || exit 1
+		rm -rf "$_DISPATCH_LAUNCH_SLOT_DIR"
+		# A launch that bypassed the claim point consumes budget as overflow.
+		_DISPATCH_LAUNCH_SLOT_DIR=$(_dispatch_launch_slots_init 2) || exit 1
+		_dispatch_launch_slot_settle 9 o/r 0
+		_dispatch_launch_slot_acquire 10 o/r || exit 1
+		_dispatch_launch_slot_acquire 11 o/r && exit 1
+		[[ "$(_dispatch_launch_slots_taken)" == 2 ]] || exit 1
+		rm -rf "$_DISPATCH_LAUNCH_SLOT_DIR"
+		# Without a loop-owned directory, acquire never blocks (serial/direct).
+		_DISPATCH_LAUNCH_SLOT_DIR=""
+		_dlw_claim_lock_after_canary() { return 0; }
+		_dlw_claim_slot_and_lock 5 o/r me || exit 1
+		exit 0
+	) || rc=1
+	print_result "claim_slot_and_lock: defers without claim, claims free slot, claim failure returns 2" "$rc"
+	return 0
+}
+
+# t19116: through the real _dispatch_process_candidate and block reporting
+# (which returns 1 for every non-deferral), a timeout or a failed launch
+# validation leaves the launch state unknown and keeps the slot held; a
+# confirmed pre-spawn failure releases it.
+test_spawn_candidate_unknown_launch_state_keeps_slot() {
+	local rc=0
+	(
+		unset _PULSE_DISPATCH_FILL_FLOOR_LIB_LOADED
+		# shellcheck source=../pulse-dispatch-lib.sh
+		source "${SCRIPT_DIR}/pulse-dispatch-lib.sh" || exit 1
+		TEST_DISPATCH_RC=0
+		TEST_LAUNCH_RC=0
+		# shellcheck disable=SC2317  # stubs called by the real candidate path
+		{
+			_dispatch_prefilter_owned_candidate() { return 1; }
+			_dispatch_skip_for_sealed_generation() { return 1; }
+			_dispatch_skip_for_capability_cooldown() { return 1; }
+			_dispatch_skip_for_footprint_defer() { return 1; }
+			_dispatch_should_skip_candidate() { return 1; }
+			pulse_dispatch_debug_log() { return 0; }
+			resolve_dispatch_model_for_labels() { return 0; }
+			_dispatch_concurrency_caps_allow() { return 0; }
+			_pulse_refresh_repo() { return 0; }
+			_dispatch_attempt_recency_stamp() { return 0; }
+			_dispatch_attempt_recency_clear() { return 0; }
+			_dispatch_release_attempt_reservations() { return 0; }
+			_dispatch_record_nonzero_dispatch_result() { return 0; }
+			_dispatch_cache_confirmed_block() { return 0; }
+			_dispatch_stats_increment() { return 0; }
+			_dispatch_record_launch_failure() { return 0; }
+			_dispatch_with_timeout() {
+				_dispatch_launch_slot_acquire "$1" "$2" || return 75
+				return "$TEST_DISPATCH_RC"
+			}
+			check_worker_launch() { return "$TEST_LAUNCH_RC"; }
+		}
+		local outcomes candidate case_spec dispatch_rc launch_rc expected_taken
+		outcomes=$(mktemp) || exit 1
+		candidate='{"number":840,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","labels":[]}'
+		for case_spec in "124 0 1" "0 1 1" "2 0 0" "0 0 1"; do
+			read -r dispatch_rc launch_rc expected_taken <<<"$case_spec"
+			TEST_DISPATCH_RC="$dispatch_rc"
+			TEST_LAUNCH_RC="$launch_rc"
+			_DISPATCH_LAUNCH_SLOT_DIR=$(_dispatch_launch_slots_init 1) || exit 1
+			_dispatch_max_spawn_candidate "$candidate" me 1 "$outcomes" >/dev/null 2>&1
+			[[ "$(_dispatch_launch_slots_taken)" == "$expected_taken" ]] || {
+				printf 'case=%s taken=%s\n' "$case_spec" "$(_dispatch_launch_slots_taken)" >&2
+				exit 1
+			}
+			rm -rf "$_DISPATCH_LAUNCH_SLOT_DIR"
+		done
+		rm -f "$outcomes"
+		exit 0
+	) || rc=1
+	print_result "spawn_candidate: timeout or failed launch validation keeps the slot; pre-spawn failure releases it" "$rc"
 	return 0
 }
 
@@ -777,6 +1181,8 @@ test_dispatch_cycle_floor_clock_fallback() {
 		_pulse_cycle_remaining_seconds() { printf '600\n'; return 0; }
 		_dispatch_cycle_budget_defers_candidate 340 o/r && exit 1
 		DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR=601
+		_dispatch_cycle_budget_defers_candidate 340 o/r && exit 1
+		_pulse_cycle_remaining_seconds() { printf '599\n'; return 0; }
 		_dispatch_cycle_budget_defers_candidate 340 o/r || exit 1
 		return 0
 	) || rc=1
@@ -911,6 +1317,267 @@ test_serial_loop_allows_unset_stop_flag() {
 	return 0
 }
 
+# GH#37907: a deploy drain request that appears while candidate 1 runs stops
+# the serial loop before candidate 2, and skips the next dispatch_max census.
+# A marker naming another owner is ignored. Grace 0 pins the pre-t19064 stop.
+test_serial_loop_cooperative_drain() {
+	local LOCKDIR="${TEST_ROOT}/drain-lock"
+	local AIDEVOPS_PULSE_DRAIN_ROUND_GRACE_S=0
+	rm -rf "$LOCKDIR"
+	mkdir -p "$LOCKDIR"
+	# shellcheck disable=SC2317  # called via name resolution from loop
+	_dispatch_process_candidate() {
+		printf 'owner=%s\nbundle=bundle-next\n' "$$" >"${LOCKDIR}/drain_requested"
+		return 0
+	}
+
+	local candidate_file result capacity_rc=0
+	candidate_file=$(mktemp)
+	for i in 710 711 712; do
+		printf '{"number":%d,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","labels":[]}\n' "$i"
+	done >"$candidate_file"
+	rm -f "$STOP_FLAG"
+	_DISPATCH_THROTTLE_CLEARED=0
+	result=$(_dispatch_floor_loop "$candidate_file" 10 10 "test_user")
+	_dispatch_compute_capacity >/dev/null || capacity_rc=$?
+	if [[ "$result" == "1 2" && "$capacity_rc" -ne 0 ]] &&
+		grep -q 'cooperative drain requested for activated bundle bundle-next during serial loop' "$LOGFILE" &&
+		grep -q 'Dispatch_max skipped: cooperative drain requested' "$LOGFILE"; then
+		print_result "serial_loop: cooperative drain stops within one candidate and skips the next census" 0
+	else
+		print_result "serial_loop: cooperative drain stops within one candidate and skips the next census" 1 \
+			"got=${result} capacity_rc=${capacity_rc}"
+	fi
+
+	printf 'owner=1\nbundle=bundle-next\n' >"${LOCKDIR}/drain_requested"
+	_dispatch_process_candidate() {
+		return 0
+	}
+	result=$(_dispatch_floor_loop "$candidate_file" 10 10 "test_user")
+	if [[ "$result" == "3 3" ]]; then
+		print_result "serial_loop: drain marker for another lock owner is ignored" 0
+	else
+		print_result "serial_loop: drain marker for another lock owner is ignored" 1 "got=${result}"
+	fi
+	rm -rf "$LOCKDIR" "$candidate_file"
+	return 0
+}
+
+# t19064 (GH#38633): an admitted round keeps dispatching under a fresh drain
+# marker until the grace expires; the next census is still skipped. An aged
+# marker, or one rewritten after this process first saw the drain, stops it.
+test_serial_loop_drain_round_grace() {
+	local LOCKDIR="${TEST_ROOT}/drain-grace-lock"
+	local AIDEVOPS_PULSE_DRAIN_ROUND_GRACE_S=600
+	rm -rf "$LOCKDIR"
+	mkdir -p "$LOCKDIR"
+	# shellcheck disable=SC2317  # called via name resolution from loop
+	_dispatch_process_candidate() {
+		printf 'owner=%s\nbundle=bundle-next\n' "$$" >"${LOCKDIR}/drain_requested"
+		return 0
+	}
+
+	local candidate_file result capacity_rc=0
+	candidate_file=$(mktemp)
+	for i in 720 721 722; do
+		printf '{"number":%d,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","labels":[]}\n' "$i"
+	done >"$candidate_file"
+	rm -f "$STOP_FLAG"
+	: >"$LOGFILE"
+	_DISPATCH_THROTTLE_CLEARED=0
+	result=$(_dispatch_floor_loop "$candidate_file" 10 10 "test_user")
+	_dispatch_compute_capacity >/dev/null || capacity_rc=$?
+	if [[ "$result" == "3 3" && "$capacity_rc" -ne 0 ]] &&
+		[[ "$(grep -c 'continuing admitted round under cooperative drain grace' "$LOGFILE")" -eq 1 ]] &&
+		! grep -q 'stopping early: cooperative drain' "$LOGFILE" &&
+		grep -q 'Dispatch_max skipped: cooperative drain requested' "$LOGFILE"; then
+		print_result "serial_loop: fresh drain marker lets the admitted round finish and skips the next census" 0
+	else
+		print_result "serial_loop: fresh drain marker lets the admitted round finish and skips the next census" 1 \
+			"got=${result} capacity_rc=${capacity_rc}"
+	fi
+
+	_dispatch_process_candidate() {
+		return 0
+	}
+	printf 'owner=%s\nbundle=bundle-next\n' "$$" >"${LOCKDIR}/drain_requested"
+	touch -t 200001010000 "${LOCKDIR}/drain_requested"
+	: >"$LOGFILE"
+	result=$(_dispatch_floor_loop "$candidate_file" 10 10 "test_user")
+	if [[ "$result" == "0 1" ]] &&
+		grep -q 'cooperative drain requested for activated bundle bundle-next during serial loop' "$LOGFILE"; then
+		print_result "serial_loop: drain marker older than the grace stops the round" 0
+	else
+		print_result "serial_loop: drain marker older than the grace stops the round" 1 "got=${result}"
+	fi
+
+	printf 'owner=%s\nbundle=bundle-next\n' "$$" >"${LOCKDIR}/drain_requested"
+	result=$(_PULSE_DRAIN_GRACE_START=$(($(date +%s) - 1200)) _dispatch_floor_loop "$candidate_file" 10 10 "test_user")
+	if [[ "$result" == "0 1" ]]; then
+		print_result "serial_loop: rewritten drain marker does not extend the grace" 0
+	else
+		print_result "serial_loop: rewritten drain marker does not extend the grace" 1 "got=${result}"
+	fi
+
+	# A marker already old at first sighting anchors the grace at its mtime,
+	# not at the sighting, so a later rewrite cannot stretch it.
+	local first_rc=0 rewrite_rc=0 old_mtime="" anchored_grace=0
+	printf 'owner=%s\nbundle=bundle-next\n' "$$" >"${LOCKDIR}/drain_requested"
+	touch -t 200001010000 "${LOCKDIR}/drain_requested"
+	old_mtime=$(_file_mtime_epoch "${LOCKDIR}/drain_requested")
+	unset _PULSE_DRAIN_GRACE_START
+	AIDEVOPS_PULSE_DRAIN_ROUND_GRACE_S=4000000000 _pulse_drain_stops_admitted_round || first_rc=$?
+	anchored_grace=$(($(date +%s) - old_mtime - 60))
+	printf 'owner=%s\nbundle=bundle-next\n' "$$" >"${LOCKDIR}/drain_requested"
+	AIDEVOPS_PULSE_DRAIN_ROUND_GRACE_S="$anchored_grace" _pulse_drain_stops_admitted_round || rewrite_rc=$?
+	if [[ "$first_rc" -eq 1 && "${_PULSE_DRAIN_GRACE_START:-}" == "$old_mtime" && "$rewrite_rc" -eq 0 ]]; then
+		print_result "drain grace anchors at the earliest observed marker mtime" 0
+	else
+		print_result "drain grace anchors at the earliest observed marker mtime" 1 \
+			"first_rc=${first_rc} start=${_PULSE_DRAIN_GRACE_START:-} old=${old_mtime} rewrite_rc=${rewrite_rc}"
+	fi
+	unset _PULSE_DRAIN_GRACE_START
+	rm -rf "$LOCKDIR" "$candidate_file"
+	return 0
+}
+
+# GH#38033: a serial round caused only by the REST-core reserve resumes the
+# bounded parallel loop once the reserve clears; throttle-file and persistent
+# reserve rounds stay serial. Arguments: scenario (recover|throttle|persistent)
+test_serial_loop_rest_reserve_recovery() {
+	local scenario="$1"
+	local ACTIVE_DIR="${TEST_ROOT}/rest-recovery-active-${scenario}"
+	local PROCESSED_FILE="${TEST_ROOT}/rest-recovery-processed-${scenario}"
+	local MAX_FILE="${TEST_ROOT}/rest-recovery-max-${scenario}"
+	local candidate_file="" result="" rc=0 max_seen=0 i=0
+	rm -rf "$ACTIVE_DIR"
+	mkdir -p "$ACTIVE_DIR"
+	: >"$PROCESSED_FILE"
+	printf '0\n' >"$MAX_FILE"
+	candidate_file=$(mktemp)
+	for i in 800 801 802 803 804 805 806 807; do
+		printf '{"number":%d,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","labels":[]}\n' "$i"
+	done >"$candidate_file"
+	# shellcheck disable=SC2317 # called via name resolution from the loops
+	_dispatch_process_candidate() {
+		local issue="" active=0 seen=0
+		issue=$(jq -r '.number' <<<"$1")
+		: >"${ACTIVE_DIR}/${issue}"
+		active=$(find "$ACTIVE_DIR" -type f | wc -l | tr -d ' ')
+		seen=$(<"$MAX_FILE")
+		[[ "$seen" =~ ^[0-9]+$ ]] || seen=0
+		((active > seen)) && printf '%s\n' "$active" >"$MAX_FILE"
+		# Recover scenario: once parallel handoff has started (3 serial
+		# candidates done), hold until overlap is observed (bounded) instead
+		# of relying on a fixed sleep window.
+		if [[ "$scenario" == recover ]] && (($(wc -l <"$PROCESSED_FILE") >= 3)); then
+			local waited=0
+			while (($(<"$MAX_FILE") < 2)) && ((waited < 250)); do
+				sleep 0.02
+				seen=$(find "$ACTIVE_DIR" -type f | wc -l | tr -d ' ')
+				((seen > 1)) && printf '%s\n' "$seen" >"$MAX_FILE"
+				waited=$((waited + 1))
+			done
+		fi
+		sleep 0.05
+		printf '%s\n' "$issue" >>"$PROCESSED_FILE"
+		rm -f "${ACTIVE_DIR}/${issue}"
+		return 0
+	}
+	# Reserve-adjacent until two candidates have run (recover); always
+	# reserve-adjacent (persistent). The throttle case is healthy throughout.
+	# shellcheck disable=SC2317 # called via _dispatch_rest_core_requires_serial
+	pulse_rest_core_priority_snapshot() {
+		local done_count=0
+		done_count=$(wc -l <"$PROCESSED_FILE" | tr -d ' ')
+		if [[ "$scenario" == persistent ]] || { [[ "$scenario" == recover ]] && ((done_count < 2)); }; then
+			printf 'reserve 300 5000 200 500 100 9999999999\n'
+		else
+			printf 'normal 4790 5000 200 500 100 9999999999\n'
+		fi
+		return 0
+	}
+	export DISPATCH_MAX_PARALLEL=4 DISPATCH_REST_SERIAL_RECHECK_ITERATIONS=3 DISPATCH_REST_SERIAL_RECHECK_SECONDS=0
+	_DISPATCH_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
+	rm -f "$_DISPATCH_THROTTLE_FILE" "$STOP_FLAG"
+	[[ "$scenario" == throttle ]] && : >"$_DISPATCH_THROTTLE_FILE"
+	_DISPATCH_THROTTLE_CLEARED=0
+	: >"$LOGFILE"
+	result=$(_dispatch_floor_loop "$candidate_file" 10 10 "test_user")
+	max_seen=$(<"$MAX_FILE")
+	[[ "$result" == "8 8" ]] || rc=1
+	case "$scenario" in
+	recover)
+		# Entry check plus iterations 1-3 run serially; the recheck before
+		# iteration 4 sees the healthy budget and hands off candidates 4-8.
+		grep -q 'REST-core recovered; resuming parallel launch ceremony at iter=4 ' "$LOGFILE" || rc=1
+		[[ "$(grep -c 'Dispatch_max: loop iter=.*_dispatch_process_candidate rc=0' "$LOGFILE")" == 3 ]] || rc=1
+		[[ "$(grep -c 'Dispatch_max: parallel iter=.*entering body' "$LOGFILE")" == 5 ]] || rc=1
+		((max_seen > 1)) || rc=1
+		;;
+	throttle | persistent)
+		grep -q 'resuming parallel launch ceremony' "$LOGFILE" && rc=1
+		((max_seen == 1)) || rc=1
+		;;
+	esac
+	rm -f "$candidate_file" "$PROCESSED_FILE" "$MAX_FILE" "$_DISPATCH_THROTTLE_FILE"
+	rm -rf "$ACTIVE_DIR"
+	unset DISPATCH_MAX_PARALLEL DISPATCH_REST_SERIAL_RECHECK_ITERATIONS DISPATCH_REST_SERIAL_RECHECK_SECONDS
+	pulse_rest_core_priority_snapshot() {
+		printf 'disabled ? ? 0 0 0 ?\n'
+		return 0
+	}
+	print_result "serial_loop: REST-reserve serial round recovery (${scenario})" "$rc" \
+		"result=${result} max_concurrent=${max_seen}"
+	return 0
+}
+
+# GH#38033: a priority round that started serial on the REST reserve runs a
+# later phase in parallel once the reserve has cleared before that phase.
+test_priority_phase_rest_reserve_recovery() {
+	local candidate_file="" outcomes="" result="" rc=0 i=0
+	candidate_file=$(mktemp)
+	outcomes=$(mktemp)
+	for i in 1 2 3 4; do
+		printf '{"number":%d,"repo_slug":"o/r","repo_priority":"tooling","labels":[]}\n' "$i"
+	done >"$candidate_file"
+	# shellcheck disable=SC2317 # called via name resolution from the loops
+	_dispatch_process_candidate() {
+		_DISPATCH_CANDIDATE_ELIGIBILITY=eligible
+		return 0
+	}
+	# shellcheck disable=SC2317 # called via _dispatch_rest_core_requires_serial
+	pulse_rest_core_priority_snapshot() {
+		printf 'normal 4790 5000 200 500 100 9999999999\n'
+		return 0
+	}
+	export DISPATCH_MAX_PARALLEL=4
+	rm -f "$_DISPATCH_THROTTLE_FILE" "$STOP_FLAG"
+	: >"$LOGFILE"
+	(
+		local _DISPATCH_REST_SERIAL_ROUND=1
+		_dispatch_run_priority_phase "$candidate_file" 4 test_user 1 "$outcomes"
+	) >"${TEST_ROOT}/priority-rest-phase.result"
+	result=$(<"${TEST_ROOT}/priority-rest-phase.result")
+	[[ "$result" == "4 4" ]] || rc=1
+	grep -q 'resuming parallel launch ceremony at phase start (max_parallel=4' "$LOGFILE" || rc=1
+	grep -q 'Dispatch_max: parallel iter=1' "$LOGFILE" || rc=1
+	# Without the round marker (ordinary serial caller), the phase stays serial.
+	: >"$LOGFILE"
+	: >"$outcomes"
+	result=$(_dispatch_run_priority_phase "$candidate_file" 4 test_user 1 "$outcomes")
+	[[ "$result" == "4 4" ]] || rc=1
+	grep -q 'resuming parallel launch ceremony' "$LOGFILE" && rc=1
+	rm -f "$candidate_file" "$outcomes" "${TEST_ROOT}/priority-rest-phase.result"
+	unset DISPATCH_MAX_PARALLEL
+	pulse_rest_core_priority_snapshot() {
+		printf 'disabled ? ? 0 0 0 ?\n'
+		return 0
+	}
+	print_result "priority_phase: REST-reserve serial round resumes parallel at phase start" "$rc" "result=${result}"
+	return 0
+}
+
 # Exercise reservation admission through the real serial and parallel loops.
 test_priority_reservations() {
 	local mode="$1" parallel="$2" expected_product="$3" expected_total="$4"
@@ -947,7 +1614,10 @@ test_priority_reservations() {
 		fi
 		_DISPATCH_CANDIDATE_ELIGIBILITY="$outcome"
 		printf 'end\n' >>"$ACTIVITY"
-		[[ "$outcome" == success ]] && return 0
+		if [[ "$outcome" == success ]]; then
+			_test_claim_launch_slot "$candidate_json" || return $?
+			return 0
+		fi
 		return 1
 	}
 	[[ "$mode" != incomplete ]] || complete=false
@@ -970,6 +1640,57 @@ test_priority_reservations() {
 	peak=$(awk '$0=="start" { n++; if(n>peak) peak=n } $0=="end" { n-- } END { print peak+0 }' "$ACTIVITY")
 	((peak <= parallel)) && print_result "priority_loop: ${mode} combined concurrency is bounded" 0 ||
 		print_result "priority_loop: ${mode} exceeded shared parallelism" 1 "peak=${peak} cap=${parallel}"
+	rm -f "$candidate_file" "$outcomes"
+	return 0
+}
+
+# GH#36722: under product reservations, fresh urgent work leads, then urgent
+# retries share the unreserved pool with fresh ordinary work; held product
+# slots are never lent to the retry backlog.
+test_priority_urgent_retry_backlog() {
+	local parallel="$1"
+	local candidate_file="" outcomes="" result="" products=0 total=0 n=""
+	# Keep the 60-second-old retry fixtures recent regardless of runner config.
+	local _DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS=86400
+	local stamp_dir="${HOME}/.aidevops/cache/dispatch-attempt-recency"
+	candidate_file=$(mktemp)
+	outcomes=$(mktemp)
+	mkdir -p "$stamp_dir"
+	for n in 1 2 3 4; do
+		printf '%s\n' "$(($(date +%s) - 60))" >"${stamp_dir}/o--tooling--${n}"
+	done
+	# GH#37103: a nonurgent product retry must not take a reserved slot
+	# ahead of fresh product work, even when it ranks first in that stream.
+	printf '%s\n' "$(($(date +%s) - 60))" >"${stamp_dir}/o--product--3"
+	jq -nc '
+		[range(1;5) | {number:., repo_slug:"o/tooling", repo_priority:"tooling", labels:["priority:high"]}] +
+		[range(5;7) | {number:., repo_slug:"o/tooling", repo_priority:"tooling", labels:[]}] +
+		[{number:7, repo_slug:"o/tooling", repo_priority:"tooling", labels:["priority:critical"]}] +
+		[{number:3, repo_slug:"o/product", repo_priority:"product", labels:[]}] +
+		[range(1;3) | {number:., repo_slug:"o/product", repo_priority:"product", labels:[]}] | .[]
+	' >"$candidate_file"
+	# shellcheck disable=SC2317 # called through the real phase/dispatch loops
+	_dispatch_process_candidate() {
+		_DISPATCH_THROTTLE_CLEARED=0
+		_DISPATCH_CANDIDATE_ELIGIBILITY=success
+		return 0
+	}
+	result=$(_dispatch_priority_loop "$candidate_file" 5 test_user "$parallel" "$outcomes" 2 true)
+	read -r products _ < <(_dispatch_priority_product_outcomes "$outcomes")
+	total=$(_dispatch_max_count_outcomes "$outcomes")
+	local launched_ids="" retries=0 duplicate=0
+	launched_ids=$(awk -F'|' '$1 == "success" { repo=""; for(i=3;i<=NF;i++) if($i ~ /^repo=/) repo=substr($i,6); print repo "#" $2 }' "$outcomes" | sort | tr '\n' ' ')
+	retries=$(awk -F'|' '$1 == "success" && $3 == "repo=o/tooling" && $2 <= 4 { n++ } END { print n+0 }' "$outcomes")
+	duplicate=$(awk -F'|' '{ repo=""; for(i=3;i<=NF;i++) if($i ~ /^repo=/) repo=$i; if(seen[repo "|" $2]++) n++ } END { print n+0 }' "$outcomes")
+	if [[ "$products" == 2 && "$total" == 5 && "${result%% *}" == 5 && "$retries" == 1 && "$duplicate" == 0 &&
+		"$launched_ids" != *"o/product#3 "* &&
+		"$launched_ids" == *"o/tooling#7 "* && "$launched_ids" == *"o/tooling#5 "* ]]; then
+		print_result "priority_loop: urgent retry backlog parallel=${parallel} shares unreserved slots, holds product" 0
+	else
+		print_result "priority_loop: urgent retry backlog parallel=${parallel}" 1 \
+			"result=${result} product=${products} total=${total} retries=${retries} dup=${duplicate} launched=${launched_ids}"
+	fi
+	rm -rf "$stamp_dir"
 	rm -f "$candidate_file" "$outcomes"
 	return 0
 }
@@ -1092,26 +1813,104 @@ test_parallel_loop_skips_cached_blocks_before_wave() {
 }
 
 # GH#33560: isolate clocks and cache writes in subshells, without live API calls.
+# GH#36603: admission needs floor (600) + pre-stage margin (60) [+ enumeration].
+test_elastic_dispatch_lease() {
+	local rc=0
+	(
+		set -e
+		source "${SCRIPT_DIR}/pulse-watchdog.sh"
+		source "${SCRIPT_DIR}/pulse-instance-lock.sh"
+		local LOCKDIR="${TEST_ROOT}/elastic-lock" WRAPPER_LOGFILE="$LOGFILE"
+		local PULSE_LOCK_MAX_AGE_S=1800 PULSE_STALE_THRESHOLD=3600 PULSE_START_EPOCH=1
+		local _PULSE_ELASTIC_DISPATCH=1 killed=0
+		mkdir "$LOCKDIR"
+		printf '%s\n' "$$" >"${LOCKDIR}/pid"
+		date +%s >"${LOCKDIR}/supervisor_heartbeat_epoch"
+		_get_process_age() { printf '7200\n'; return 0; }
+		ps() { printf 'bash pulse-wrapper.sh\n'; return 0; }
+		_kill_tree() { killed=$((killed + 1)); return 0; }
+		_force_kill_tree() { return 0; }
+		sleep() { return 0; }
+		_pulse_dispatch_lease_active
+		[[ "$(_dispatch_round_budget_plan before)" == 'full 0' ]] || exit 1
+		_pulse_cycle_remaining_seconds 0 && exit 1
+		_handle_existing_lock && exit 1
+		[[ "$killed" == 0 ]] || exit 1
+		unset _PULSE_DISPATCH_CANDIDATES_LIB_LOADED
+		source "${SCRIPT_DIR}/pulse-dispatch-lib-candidates.sh"
+		is_graphql_budget_sufficient() { return 0; }
+		_dispatch_process_candidate() { return 0; }
+		local candidates="${TEST_ROOT}/elastic-candidates" outcomes="${TEST_ROOT}/elastic-outcomes" i=0 result=""
+		for ((i=1; i<=50; i++)); do
+			printf '{"number":%s,"repo_slug":"o/r"}\n' "$i"
+		done >"$candidates"
+		: >"$outcomes"
+		result=$(_dispatch_max_loop "$candidates" 10 10 test_user 6 "$outcomes")
+		[[ "${result%% *}" == 10 ]] || exit 1
+		# A dead heartbeat retains the old hung-owner reclaim ceiling.
+		printf '1\n' >"${LOCKDIR}/supervisor_heartbeat_epoch"
+		_pulse_dispatch_lease_active && exit 1
+		_handle_existing_lock || exit 1
+		[[ "$killed" == 1 ]] || exit 1
+		rm -rf "$LOCKDIR"
+	) || rc=1
+	print_result "elastic lease: old fresh owner preserved, stale heartbeat reclaimed" "$rc"
+	return 0
+}
+
+test_observed_ceremony_reserve() {
+	local rc=0
+	(
+		set -e
+		local AIDEVOPS_DISPATCH_STAGES_LOG="${TEST_ROOT}/ceremony.tsv" i=0 DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR=600
+		for ((i=1; i<=10; i++)); do
+			printf 'now\t#1\to/r\tdedup.ceremony_total\t%s\tcomplete\n' "$((i * 10000))"
+		done >"$AIDEVOPS_DISPATCH_STAGES_LOG"
+		printf 'now\t#1\to/r\tdedup.ceremony_total\t0\tstart\n' >>"$AIDEVOPS_DISPATCH_STAGES_LOG"
+		[[ "$(_dispatch_ceremony_reserve_seconds)" == 90 ]] || exit 1
+		_pulse_cycle_remaining_seconds() { printf '150\n'; return 0; }
+		[[ "$(_dispatch_round_budget_plan after)" == 'full 0 150 90 60 0 0' ]] || exit 1
+		_dispatch_cycle_budget_defers_candidate 1 o/r && exit 1
+		[[ "$DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR" == 600 ]] || exit 1
+	) || rc=1
+	print_result "observed reserve: p90 excludes starts and leaves execution timeout unchanged" "$rc"
+	return 0
+}
+
 test_enumeration_budget_admission() {
 	local rc=0
 	(
-		local test_remaining=899
+		local test_remaining=959
 		_pulse_cycle_remaining_seconds() { printf '%s\n' "$test_remaining"; return 0; }
 		_DISPATCH_TEST_CACHE="${HOME}/.aidevops/cache/pulse-dispatch-enumeration-seconds"
 		mkdir -p "${HOME}/.aidevops/cache"
 		rm -f "$_DISPATCH_TEST_CACHE"
 		[[ "$(_dispatch_enumeration_expected_seconds)" == 300 ]] || exit 1
-		_dispatch_cycle_budget_admits_round test before && exit 1
-		test_remaining=900
+		# GH#37623: below the full-census reserve, 120s+ of slack beyond
+		# floor + margin admits a bounded census (half the slack, <=180s).
+		[[ "$(_dispatch_round_budget_plan before)" == "bounded 149 959 600 60 300 1" ]] || exit 1
 		_dispatch_cycle_budget_admits_round test before || exit 1
+		AIDEVOPS_PULSE_BOUNDED_ENUMERATION_MIN_S=0 _dispatch_cycle_budget_admits_round test before && exit 1
+		test_remaining=779
+		_dispatch_cycle_budget_admits_round test before && exit 1
+		test_remaining=780
+		[[ "$(_dispatch_round_budget_plan before)" == "bounded 60 780 600 60 300 1" ]] || exit 1
+		test_remaining=960
+		[[ "$(_dispatch_round_budget_plan before)" == "full 0 960 600 60 300 1" ]] || exit 1
 		printf '400\n' >"$_DISPATCH_TEST_CACHE"
-		_dispatch_cycle_budget_admits_round test before && exit 1
-		test_remaining=1000
+		[[ "$(_dispatch_round_budget_plan before)" == "bounded 150 960 600 60 400 1" ]] || exit 1
+		test_remaining=1060
 		_dispatch_cycle_budget_admits_round test before || exit 1
-		test_remaining=600
+		[[ "$(_dispatch_round_budget_plan before)" == "full 0 1060 600 60 400 1" ]] || exit 1
+		test_remaining=1500
+		[[ "$(_dispatch_bounded_enumeration_budget_seconds 1500 600 60)" == 180 ]] || exit 1
+		test_remaining=660
 		_dispatch_cycle_budget_admits_round test after || exit 1
-		test_remaining=599
+		test_remaining=659
 		_dispatch_cycle_budget_admits_round test after && exit 1
+		# Rollback knob restores the bare floor; invalid values keep the default.
+		DISPATCH_PRESTAGE_MARGIN_SECONDS=0 _dispatch_cycle_budget_admits_round test after || exit 1
+		[[ "$(DISPATCH_PRESTAGE_MARGIN_SECONDS=bogus _dispatch_prestage_margin_seconds)" == 60 ]] || exit 1
 		printf 'corrupt\n' >"$_DISPATCH_TEST_CACHE"
 		[[ "$(_dispatch_enumeration_expected_seconds)" == 300 ]] || exit 1
 		unset -f _pulse_cycle_remaining_seconds
@@ -1157,10 +1956,12 @@ test_enumeration_overrun_retains_refill() {
 		: >"$trigger"
 		rm -f "$enumerated" "${HOME}/.aidevops/cache/pulse-dispatch-enumeration-seconds"
 		printf '1000000\n' >"$clock_file"
+		# GH#36603: before-enumeration admission needs 600 floor + 60 margin + 300;
+		# GH#37623: a bounded census needs 120s of slack beyond floor + margin.
 		if [[ "$stage" == before ]]; then
-			printf '899\n' >"$remaining_file"
+			printf '779\n' >"$remaining_file"
 		else
-			printf '950\n' >"$remaining_file"
+			printf '1010\n' >"$remaining_file"
 		fi
 		_pulse_cycle_remaining_seconds() { read -r value <"$remaining_file"; printf '%s\n' "$value"; return 0; }
 		_dispatch_now_ms() { read -r value <"$clock_file"; printf '%s\n' "$value"; return 0; }
@@ -1222,6 +2023,8 @@ test_enumeration_overrun_retains_refill() {
 # =============================================================================
 # Run all tests
 # =============================================================================
+test_elastic_dispatch_lease
+test_observed_ceremony_reserve
 test_enumeration_budget_admission
 test_enumeration_timing_persists_average
 test_enumeration_overrun_retains_refill before
@@ -1237,13 +2040,27 @@ test_compute_max_parallel_rest_reserve_forces_serial
 test_count_outcomes_success_and_fail
 test_count_outcomes_empty_file
 test_wait_tracked_pids_suppresses_stale_child
+test_owner_capture_contract
+test_parallel_wait_failure_contract
 test_aggregate_outcomes_basic
 test_aggregate_outcomes_invalidates_canary_cache
 test_aggregate_outcomes_clears_throttle_on_success
 test_parallel_loop_end_to_end
-test_parallel_loop_respects_budget
+test_parallel_loop_respects_budget 1
+test_parallel_loop_respects_budget 0
 test_parallel_loop_refills_rejected_reservation
 test_parallel_loop_all_rejections_finish
+test_parallel_loop_launch_slot_gate_one_slot
+test_parallel_loop_launch_slot_failed_holder_releases
+test_parallel_loop_round_topup topup 1
+test_parallel_loop_round_topup topup 0
+test_parallel_loop_round_topup no_trigger 1
+test_parallel_loop_round_topup disabled 1
+test_parallel_loop_round_topup not_allowed 1
+test_priority_round_topup_keeps_hold topup
+test_priority_round_topup_keeps_hold no_trigger
+test_claim_slot_and_lock_contract
+test_spawn_candidate_unknown_launch_state_keeps_slot
 test_parallel_loop_stop_flag_aborts
 test_parallel_loop_graphql_budget_aborts
 test_parallel_loop_rest_budget_aborts
@@ -1256,6 +2073,12 @@ test_serial_loop_basic
 test_serial_loop_isolates_candidate_stdout
 test_serial_loop_budget_cap
 test_serial_loop_allows_unset_stop_flag
+test_serial_loop_cooperative_drain
+test_serial_loop_drain_round_grace
+test_serial_loop_rest_reserve_recovery recover
+test_serial_loop_rest_reserve_recovery throttle
+test_serial_loop_rest_reserve_recovery persistent
+test_priority_phase_rest_reserve_recovery
 test_priority_reservations normal 1 2 4
 test_priority_reservations normal 3 2 4
 test_priority_reservations concurrent 3 2 4
@@ -1265,6 +2088,8 @@ test_priority_reservations unknown 3 0 2
 test_priority_reservations empty 3 0 4
 test_priority_reservations incomplete 3 0 2
 test_priority_reservations urgent 3 0 4
+test_priority_urgent_retry_backlog 1
+test_priority_urgent_retry_backlog 3
 test_priority_verified_occupancy
 test_maintainer_gate_cache_records_only_deterministic_evidence
 test_parallel_loop_skips_cached_blocks_before_wave

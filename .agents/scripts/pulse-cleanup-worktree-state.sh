@@ -444,6 +444,7 @@ _pc_recent_worker_metric_exists() {
 #   $3 - repository slug
 #   $4 - target type: issue or pr
 #   $5 - optional branch issue whose retention policy must also pass for a PR
+#   $6 - explicit blocked-task archival policy (default false; not permanent deletion)
 # Outputs: a short skip reason when blocked
 # Returns: 0 when archival may proceed, 1 otherwise
 #######################################
@@ -453,6 +454,7 @@ _pc_compact_archive_policy_clear() {
 	local repo_slug="$3"
 	local target_type="$4"
 	local branch_issue="${5:-}"
+	local archive_blocked="${6:-false}"
 	local labels=""
 	local label=""
 	local normalized_label=""
@@ -489,7 +491,13 @@ _pc_compact_archive_policy_clear() {
 		[[ -n "$label" ]] || continue
 		normalized_label=$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')
 		case "$normalized_label" in
-		preserve-forensics | security | security-incident | incident:security | status:blocked)
+		status:blocked)
+			if [[ "$archive_blocked" != true ]]; then
+				printf '%s\n' "protected-status-blocked"
+				return 1
+			fi
+			;;
+		preserve-forensics | security | security-incident | incident:security)
 			printf '%s\n' "protected-${normalized_label//:/-}"
 			return 1
 			;;
@@ -502,7 +510,7 @@ _pc_compact_archive_policy_clear() {
 	fi
 
 	if [[ "$target_type" == "pr" && "$branch_issue" =~ ^[1-9][0-9]*$ ]]; then
-		_pc_compact_archive_policy_clear "$wt_path" "$branch_issue" "$repo_slug" "issue" || return 1
+		_pc_compact_archive_policy_clear "$wt_path" "$branch_issue" "$repo_slug" "issue" "" "$archive_blocked" || return 1
 	fi
 	return 0
 }
@@ -1240,11 +1248,15 @@ _record_orphan_crash_classification() {
 	if [[ "${AIDEVOPS_SKIP_INFRA_FAILURE_ESCALATION:-0}" != "1" ]] \
 		&& _consecutive_zero_session_failures "$orphan_issue_num" "$repo_slug_age" 2; then
 		echo "[pulse-wrapper] Orphan cleanup: dispatch-infrastructure-failure detected for #${orphan_issue_num} (${repo_slug_age}) — applying status:blocked" >>"$LOGFILE"
+		# GH#38360: a setup-side failure is runner infrastructure that AI
+		# recovery diagnoses first; the companion names that owner.
+		local _infra_companion="${BLOCKED_NEEDS_AI_RECOVERY:-needs-ai-recovery}"
 		if declare -F set_issue_status >/dev/null 2>&1; then
-			set_issue_status "$orphan_issue_num" "$repo_slug_age" "blocked" >/dev/null 2>&1 || true
+			set_issue_status "$orphan_issue_num" "$repo_slug_age" "blocked" \
+				--add-label "$_infra_companion" >/dev/null 2>&1 || true
 		else
-			gh issue edit "$orphan_issue_num" --repo "$repo_slug_age" \
-				--add-label "status:blocked" >/dev/null 2>&1 || true
+			gh issue edit "$orphan_issue_num" --repo "$repo_slug_age" --add-label "status:blocked" \
+				--add-label "$_infra_companion" >/dev/null 2>&1 || true
 		fi
 		# Post the worker-mentoring advisory comment carrying the marker.
 		local _advisory_body

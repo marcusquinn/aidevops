@@ -232,6 +232,7 @@ _SHIM_SCRIPT="${SCRIPTS_DIR}/gh-api-guards-lib.sh"
 _SHIM_FUNCS=$(awk '
 	/^_shim_api_is_write_endpoint\(\)/ { printing=1; depth=0 }
 	/^_shim_body_is_ops_audit\(\)/      { printing=1; depth=0 }
+	/^_shim_sig_helper_footer\(\)/      { printing=1; depth=0 }
 	/^_shim_sig_footer_for_body\(\)/    { printing=1; depth=0 }
 	/^_shim_api_inject_body_sig\(\)/   { printing=1; depth=0 }
 	printing {

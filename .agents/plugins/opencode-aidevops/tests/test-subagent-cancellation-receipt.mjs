@@ -20,6 +20,39 @@ function receiptFrom(output) {
   return JSON.parse(output.output.slice(output.output.indexOf(marker) + marker.length));
 }
 
+// OpenCode abort cleanup shape for an in-flight Task part (GH#35529).
+function interruptedTaskPart(parentID, callID, childID) {
+  return {
+    id: `part-${callID}`,
+    messageID: `msg-${callID}`,
+    sessionID: parentID,
+    type: "tool",
+    tool: "task",
+    callID,
+    state: {
+      status: "error",
+      error: "Tool execution aborted",
+      input: { prompt: "private operational prompt" },
+      metadata: { parentSessionId: parentID, sessionId: childID, interrupted: true },
+      time: { start: 1, end: 2 },
+    },
+  };
+}
+
+function parentMessages(part) {
+  return [
+    { info: { id: part.messageID, sessionID: part.sessionID, role: "assistant" }, parts: [{ ...part }] },
+    { info: { id: "msg-user", sessionID: part.sessionID, role: "user" }, parts: [{ type: "text", text: "next" }] },
+  ];
+}
+
+function injectedReceipt(messages) {
+  const text = messages[0].parts[0].state.error;
+  const marker = "[AIDevOps cancellation receipt]\n";
+  const body = text.slice(text.indexOf(marker) + marker.length);
+  return { text, receipt: JSON.parse(body.slice(0, body.indexOf("\n"))) };
+}
+
 describe("side-effect classification", () => {
   const fixtures = [
     ["Write", { filePath: "/private/file" }, "file", "write"],
@@ -34,6 +67,9 @@ describe("side-effect classification", () => {
     ["bash", { command: "gh pr create --title private" }, "github", "pull_request"],
     ["bash", { command: "gh repo create private" }, "github", "repository"],
     ["bash", { command: "curl --request POST https://private.invalid" }, "external", "write"],
+    ["macos-automator_execute_script", { kb_script_id: "private_script" }, "desktop", "native_ui"],
+    ["macos-automator_accessibility_query", { command: "perform", action_to_perform: "AXPress" }, "desktop", "native_ui"],
+    ["bash", { command: "osascript -e 'tell application \"Finder\" to activate'" }, "desktop", "native_ui"],
   ];
 
   for (const [tool, args, kind, operation] of fixtures) {
@@ -51,6 +87,7 @@ describe("side-effect classification", () => {
     assert.equal(classifySideEffect("TodoWrite", { todos: [] }), null);
     assert.equal(classifySideEffect("bash", { command: "git status --short" }), null);
     assert.equal(classifySideEffect("bash", { command: "gh issue view 1" }), null);
+    assert.equal(classifySideEffect("macos-automator_accessibility_query", { command: "query" }), null);
   });
 });
 
@@ -306,4 +343,106 @@ test("the parent-facing receipt remains entry- and byte-bounded", async () => {
   assert.equal(receipt.complete, false);
   assert.ok(Buffer.byteLength(JSON.stringify(receipt), "utf8") <= MAX_CANCELLATION_RECEIPT_BYTES);
   assert.deepEqual(receiptFrom(output), receipt);
+});
+
+describe("interrupted Task parts (GH#35529)", () => {
+  test("an interrupted Task part gets one bounded receipt with native UI outcomes in the next request", async () => {
+    let abortCalls = 0;
+    let recordCalls = 0;
+    const lifecycle = createSubagentCancellationReceipt({
+      session: { abort: async () => { abortCalls += 1; return { data: true }; } },
+    }, {
+      maxWaitMs: 0,
+      recordReceipt: () => { recordCalls += 1; return true; },
+    });
+    lifecycle.beforeTool({ tool: "task", sessionID: "parent-int", callID: "task-int" }, { args: {} });
+    lifecycle.handleEvent(event("session.created", { info: { id: "child-int", parentID: "parent-int" } }));
+    // Verified unit: a completed native action.
+    lifecycle.beforeTool(
+      { tool: "macos-automator_execute_script", sessionID: "child-int", callID: "ui-done" },
+      { args: { script_content: "tell application \"PrivateApp\" to activate" } },
+    );
+    await lifecycle.afterTool(
+      { tool: "macos-automator_execute_script", sessionID: "child-int", callID: "ui-done" },
+      { output: "ok" },
+    );
+    // Pending unit: an in-flight native action cut off by the interrupt.
+    lifecycle.handleEvent(event("message.part.updated", {
+      part: {
+        sessionID: "child-int", type: "tool", tool: "macos-automator_accessibility_query", callID: "ui-pending",
+        state: { status: "running", input: { command: "perform", action_to_perform: "AXPress" } },
+      },
+    }));
+    lifecycle.handleEvent(event("message.part.updated", {
+      part: {
+        sessionID: "child-int", type: "tool", tool: "macos-automator_accessibility_query", callID: "ui-pending",
+        state: { status: "error", error: "Tool execution aborted", metadata: { interrupted: true } },
+      },
+    }));
+    lifecycle.handleEvent(event("session.status", { sessionID: "child-int", status: { type: "idle" } }));
+    const stored = interruptedTaskPart("parent-int", "task-int", "child-int");
+    lifecycle.handleEvent(event("message.part.updated", { part: stored }));
+
+    const messages = parentMessages(stored);
+    assert.equal(await lifecycle.injectReceipts({}, { messages }), 1);
+    const { text, receipt } = injectedReceipt(messages);
+
+    assert.equal(abortCalls, 0);
+    assert.equal(recordCalls, 1);
+    assert.equal(stored.state.error, "Tool execution aborted");
+    assert.equal(receipt.termination, "confirmed");
+    assert.equal(receipt.complete, false);
+    assert.ok(receipt.incomplete_reasons.includes("side_effect_outcome_unknown"));
+    assert.deepEqual(
+      receipt.ledger.filter((entry) => entry.kind === "desktop").map((entry) => `${entry.operation}:${entry.status}`).sort(),
+      ["native_ui:attempted", "native_ui:attempted", "native_ui:completed", "native_ui:unknown"],
+    );
+    assert.ok(Buffer.byteLength(JSON.stringify(receipt), "utf8") <= MAX_CANCELLATION_RECEIPT_BYTES);
+    assert.match(text, /Child session: child-int\./);
+    assert.match(text, /never replay a side effect/);
+    assert.doesNotMatch(JSON.stringify(receipt), /private|PrivateApp|AXPress|child-int/i);
+
+    // Re-applied once per request, never duplicated, never re-persisted.
+    assert.equal(await lifecycle.injectReceipts({}, { messages }), 0);
+    const next = parentMessages(stored);
+    assert.equal(await lifecycle.injectReceipts({}, { messages: next }), 1);
+    assert.equal(next[0].parts[0].state.error, text);
+    assert.equal(text.split("[AIDevOps cancellation receipt]").length, 2);
+    assert.equal(recordCalls, 1);
+  });
+
+  test("a Task result receipt suppresses the interrupted-part receipt for the same call", async () => {
+    const lifecycle = createSubagentCancellationReceipt({ session: { abort: async () => ({ data: true }) } }, {
+      maxWaitMs: 0,
+      recordReceipt: () => true,
+    });
+    lifecycle.beforeTool({ tool: "task", sessionID: "parent-dup", callID: "task-dup" }, { args: {} });
+    await lifecycle.afterTool(
+      { tool: "task", sessionID: "parent-dup", callID: "task-dup" },
+      { output: "Task aborted", metadata: { sessionId: "child-dup", status: "aborted" } },
+    );
+    const stored = interruptedTaskPart("parent-dup", "task-dup", "child-dup");
+    lifecycle.handleEvent(event("message.part.updated", { part: stored }));
+    assert.equal(await lifecycle.injectReceipts({}, { messages: parentMessages(stored) }), 0);
+  });
+
+  test("unconfirmed child termination after an interrupt requests one abort and stays incomplete", async () => {
+    let abortCalls = 0;
+    const lifecycle = createSubagentCancellationReceipt({
+      session: { abort: async ({ path }) => { abortCalls += 1; assert.equal(path.id, "child-live"); return { data: true }; } },
+    }, {
+      maxWaitMs: 0,
+      recordReceipt: () => true,
+    });
+    lifecycle.beforeTool({ tool: "task", sessionID: "parent-live", callID: "task-live" }, { args: {} });
+    lifecycle.handleEvent(event("session.created", { info: { id: "child-live", parentID: "parent-live" } }));
+    const stored = interruptedTaskPart("parent-live", "task-live", "child-live");
+    lifecycle.handleEvent(event("message.part.updated", { part: stored }));
+    const messages = parentMessages(stored);
+    assert.equal(await lifecycle.injectReceipts({}, { messages }), 1);
+    const { receipt } = injectedReceipt(messages);
+    assert.equal(abortCalls, 1);
+    assert.equal(receipt.termination, "unconfirmed");
+    assert.ok(receipt.incomplete_reasons.includes("termination_unconfirmed"));
+  });
 });

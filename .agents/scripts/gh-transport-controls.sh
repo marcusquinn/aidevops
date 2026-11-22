@@ -13,10 +13,94 @@ fi
 # shellcheck source=./shared-gh-secondary-cooldown.sh
 source "${_GHGT_DIR}/shared-gh-secondary-cooldown.sh"
 
+# Scratch paths this process created and has not yet removed (t19021). The shim
+# EXIT trap removes them when a timeout signal lands between mktemp and rm;
+# before this, TERM left one error/meta pair per interrupted REST read.
+_GHGT_LIVE_TEMPS=()
+
+_gh_transport_track_temp() {
+	_GHGT_LIVE_TEMPS+=("$@")
+	return 0
+}
+
+# Remove the given paths and forget them, so the EXIT trap never deletes a
+# later process's file that reused a freed mktemp name.
+_gh_transport_remove_temps() {
+	local temp_path="" tracked=""
+	local -a kept=()
+	for temp_path in "$@"; do
+		[[ -z "$temp_path" ]] || rm -rf -- "$temp_path" 2>/dev/null || true
+	done
+	for tracked in ${_GHGT_LIVE_TEMPS[@]+"${_GHGT_LIVE_TEMPS[@]}"}; do
+		for temp_path in "$@"; do
+			[[ "$tracked" != "$temp_path" ]] || continue 2
+		done
+		kept+=("$tracked")
+	done
+	_GHGT_LIVE_TEMPS=(${kept[@]+"${kept[@]}"})
+	return 0
+}
+
+_gh_transport_cleanup_live_temps() {
+	_gh_transport_remove_temps ${_GHGT_LIVE_TEMPS[@]+"${_GHGT_LIVE_TEMPS[@]}"}
+	return 0
+}
+
 _gh_transport_preflight() {
 	local op_class="read"
 	local arg=""
-	case "${1:-}:${2:-}" in
+	# gh also accepts repository flags before the command name.
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		-R | --repo) [[ $# -ge 2 ]] || return 2; shift 2 ;;
+		--repo=* | -R?*) shift ;;
+		*) break ;;
+		esac
+	done
+	# Cobra permits watcher flags before either command word. Skip flags and
+	# their values when deriving the dispatch key, not just repository flags.
+	# Keep argv intact for the downstream quota/cooldown checks.
+	local command="" subcommand="" flag_value=0
+	for arg in "$@"; do
+		if [[ "$flag_value" -eq 1 ]]; then
+			flag_value=0
+			continue
+		fi
+		case "$arg" in
+		-R | --repo | -i | --interval | -q | --jq | --json | -t | --template) flag_value=1 ;;
+		--) break ;;
+		-*) ;;
+		*)
+			if [[ -z "$command" ]]; then
+				command="$arg"
+			else
+				subcommand="$arg"
+				break
+			fi
+			;;
+		esac
+	done
+	# Native watchers make an opaque number of requests after a single preflight.
+	# Refuse them before dispatch, including on a TTY or with the REST governor
+	# disabled. One-shot `--watch=false` reads retain their native semantics.
+	case "${command}:${subcommand}" in
+	run:watch)
+		printf 'Opaque gh run watch is not governed; use one-shot gh api reads with bounded backoff instead\n' >&2
+		return 2
+		;;
+	pr:checks)
+		for arg in "$@"; do
+			case "$arg" in
+			--watch | --watch=true | --watch=True | --watch=TRUE | --watch=t | --watch=T | --watch=1)
+				printf 'Opaque gh pr checks --watch is not governed; use gh-checks-wait-helper.sh wait PR --repo OWNER/REPO --all instead\n' >&2
+				return 2
+				;;
+			esac
+		done
+		;;
+	esac
+	case "${command}:${subcommand}" in
 	*:create | *:edit | *:comment | *:close | *:reopen | *:lock | *:unlock | *:merge | *:review | *:delete | *:ready | *:rerun) op_class="write" ;;
 	esac
 	for arg in "$@"; do
@@ -26,7 +110,19 @@ _gh_transport_preflight() {
 	# the actual cooldown at dispatch; skip only a duplicate ramp reservation.
 	local AIDEVOPS_GH_READ_RAMP_OVERRIDE="${AIDEVOPS_GH_READ_RAMP_OVERRIDE:-0}"
 	[[ "${AIDEVOPS_GH_WRAPPER_PREFLIGHT:-0}" != 1 ]] || AIDEVOPS_GH_READ_RAMP_OVERRIDE=1
-	_gh_search_cooldown_preflight "$@" || return $?
+	_GH_IDENTITY_FALLBACK_ALLOWED=0
+	local preflight_rc=0
+	_gh_search_cooldown_preflight "$@" || preflight_rc=$?
+	if [[ "$preflight_rc" -ne 0 ]]; then
+		# Only a resource-specific core cooldown qualifies, never a global stop.
+		local resource=""
+		resource=$(_gh_primary_request_resource "$@") || resource=""
+		local AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE="${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE}.primary-core"
+		if [[ "$preflight_rc" -eq 75 && "$resource" == core ]] && _gh_secondary_cooldown_active; then
+			_GH_IDENTITY_FALLBACK_ALLOWED=1
+		fi
+		return "$preflight_rc"
+	fi
 	_gh_secondary_cooldown_preflight "$op_class"
 	return $?
 }
@@ -77,13 +173,14 @@ _gh_transport_capture_errors() {
 	fi
 	mkdir -p "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}" || return 75
 	error_file=$(mktemp "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/gh-transport-error.XXXXXX") || return 75
+	_gh_transport_track_temp "$error_file"
 	"$@" 2>"$error_file" || rc=$?
 	command cat "$error_file" >&2
 	if [[ "$rc" -ne 0 ]]; then
 		_GH_TRANSPORT_ERROR_HTTP_STATUS=$(_gh_transport_error_http_status "$error_file")
 	fi
 	_gh_transport_record_error "$rc" "$error_file"
-	rm -f -- "$error_file"
+	_gh_transport_remove_temps "$error_file"
 	return "$rc"
 }
 
@@ -106,10 +203,27 @@ print(f"{delay:.6f}" if 0 <= delay <= 5 else "-1")
 
 _gh_transport_emit_local_deferral() {
 	local metadata="$1"
-	jq -r 'select(.attempted == false and .deferred_by == "local_admission") |
+	jq -er 'select(.attempted == false and .deferred_by == "local_admission") |
 		"[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission retry_at=\(if (.retry_at | type) == "number" then .retry_at else "unknown" end) reason=\((.reason // "unknown") | tojson)"' \
-		"$metadata" >&2
-	return $?
+		"$metadata" >&2 || return $?
+	_GH_IDENTITY_FALLBACK_ALLOWED=1
+	return 0
+}
+
+# Create a REST read's tracked metadata/error pair in globals, not $(...), so
+# the registry lives in the shim process that owns the EXIT trap.
+_gh_transport_rest_temps() {
+	local temp_dir="$1"
+	_GHGT_REST_META="" _GHGT_REST_ERROR=""
+	mkdir -p "$temp_dir" || return 1
+	_GHGT_REST_META=$(mktemp "${temp_dir}/gh-transport-meta.XXXXXX") || return 1
+	_gh_transport_track_temp "$_GHGT_REST_META"
+	_GHGT_REST_ERROR=$(mktemp "${temp_dir}/gh-transport-error.XXXXXX") || {
+		_gh_transport_remove_temps "$_GHGT_REST_META"
+		return 1
+	}
+	_gh_transport_track_temp "$_GHGT_REST_ERROR"
+	return 0
 }
 
 # _GHGT_HANDLED distinguishes unsupported-before-execution from native exit125.
@@ -125,20 +239,18 @@ _gh_transport_run_rest() {
 	local temp_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 	local metadata="" error_file="" start_ms="" end_ms="" elapsed="" rc=0
 	local status="" resource="" remaining="" reset="" retry_after="" cost="" attempted="" deferred_by="" pool="" response="" outcome=success
-	mkdir -p "$temp_dir" || return 75
-	metadata=$(mktemp "${temp_dir}/gh-transport-meta.XXXXXX") || return 75
-	error_file=$(mktemp "${temp_dir}/gh-transport-error.XXXXXX") || {
-		rm -f "$metadata"
-		return 75
-	}
+	local used="" fingerprint="" sampled_at=""
+	local request_method="" endpoint_class="" endpoint_family=""
+	_gh_transport_rest_temps "$temp_dir" || return 75
+	metadata="$_GHGT_REST_META" error_file="$_GHGT_REST_ERROR"
 	_shim_timing rest_tempfiles
-	start_ms=$(_gh_now_ms)
+	_gh_now_ms_into start_ms || start_ms=""
 	_shim_timing rest_clock
 	python3 "${_GHGT_DIR}/gh-transport-governor.py" "$metadata" "$executable" "$@" 2>"$error_file" || rc=$?
 	_shim_timing governor_total
 	# Parse only the bounded governor metadata; reuse it for the final log.
-	IFS='|' read -r attempted deferred_by status resource remaining reset retry_after cost < <(jq -r \
-		'[.attempted,.deferred_by,.status,.resource,.remaining,.reset,.retry_after,.cost] |
+	IFS='|' read -r attempted deferred_by status resource remaining reset retry_after cost used fingerprint sampled_at request_method endpoint_class endpoint_family < <(jq -r \
+		'[.attempted,.deferred_by,.status,.resource,.remaining,.reset,.retry_after,.cost,.used,.auth_fingerprint,.sampled_at,.request_method,.endpoint_class,.endpoint_family] |
 		map(if . == null then "x" else tostring end) | join("|")' "$metadata" 2>/dev/null)
 	[[ "$attempted" == true || "$attempted" == false ]] || attempted=false
 	# The governor has not executed the native request when durable quota state is
@@ -146,7 +258,7 @@ _gh_transport_run_rest() {
 	# that case; writes never reach this GET-only transport path. Do not treat the
 	# local-state failure as an HTTP failure or invent quota telemetry.
 	if [[ "$rc" -eq 75 && "$attempted" != true && "$deferred_by" == "local_state" ]]; then
-		rm -f -- "$metadata" "$error_file"
+		_gh_transport_remove_temps "$metadata" "$error_file"
 		_gh_transport_capture_errors "$executable" "$@"
 		return $?
 	fi
@@ -159,19 +271,22 @@ _gh_transport_run_rest() {
 			: >"$error_file"
 			rc=0
 			python3 "${_GHGT_DIR}/gh-transport-governor.py" "$metadata" "$executable" "$@" 2>"$error_file" || rc=$?
-			IFS='|' read -r attempted deferred_by status resource remaining reset retry_after cost < <(jq -r \
-				'[.attempted,.deferred_by,.status,.resource,.remaining,.reset,.retry_after,.cost] |
+			IFS='|' read -r attempted deferred_by status resource remaining reset retry_after cost used fingerprint sampled_at request_method endpoint_class endpoint_family < <(jq -r \
+				'[.attempted,.deferred_by,.status,.resource,.remaining,.reset,.retry_after,.cost,.used,.auth_fingerprint,.sampled_at,.request_method,.endpoint_class,.endpoint_family] |
 				map(if . == null then "x" else tostring end) | join("|")' "$metadata" 2>/dev/null)
 			[[ "$attempted" == true || "$attempted" == false ]] || attempted=false
 		fi
 	fi
-	end_ms=$(_gh_now_ms)
-	command cat "$error_file" >&2
+	_gh_now_ms_into end_ms || end_ms=""
+	# An empty error file is the common case; skip the cat exec (GH#39187).
+	if [[ -s "$error_file" ]]; then
+		command cat "$error_file" >&2
+	fi
 	if [[ "$rc" -eq 75 ]]; then
 		_gh_transport_emit_local_deferral "$metadata" || true
 	fi
 	if [[ "$rc" -eq 125 && "$attempted" != true ]]; then
-		rm -f -- "$metadata" "$error_file"
+		_gh_transport_remove_temps "$metadata" "$error_file"
 		return 125
 	fi
 	_GHGT_HANDLED=1
@@ -182,10 +297,20 @@ _gh_transport_run_rest() {
 		[[ "$pool" != unknown ]] || pool=rest-core
 		[[ "$rc" -eq 0 ]] || outcome=error
 		elapsed=$((end_ms - start_ms))
+		# Response-owned series metadata (t18804): credential digest, reset epoch,
+		# response sample time and cumulative used. Without these the quota replay
+		# cannot form independent (pool, credential, reset) series.
+		local series_reset=""
+		[[ "$fingerprint" =~ ^[a-f0-9]{64}$ ]] || fingerprint=""
+		[[ "$reset" =~ ^[1-9][0-9]*$ ]] && series_reset="$reset"
+		[[ "$sampled_at" =~ ^[1-9][0-9]*$ ]] || sampled_at=""
+		[[ "$used" =~ ^[0-9]+$ ]] || used=""
 		AIDEVOPS_GH_NATIVE_EXECUTION_OUTCOME="$outcome" \
 			gh_record_attempt "$path" "$caller" "$AIDEVOPS_GH_LOGICAL_ID" "" \
 			"$(_shim_transport_page "$@")" "$retry" "$outcome" "$status" "$elapsed" "$cost" \
-			"${AIDEVOPS_GH_AUTH_MODE:-}" "$pool" "${AIDEVOPS_GH_ROUTE_DECISION:-rest-response-owned}" "$remaining"
+			"${AIDEVOPS_GH_AUTH_MODE:-}" "$pool" "${AIDEVOPS_GH_ROUTE_DECISION:-rest-response-owned}" "$remaining" \
+			"$fingerprint" "$series_reset" "$sampled_at" "$used" \
+			"${request_method:-unknown}" "${endpoint_class:-unknown}" "${endpoint_family:-unknown}"
 		_shim_timing rest_attempt_log
 		[[ "$status" == x ]] || response="HTTP/1.1 ${status}"$'\n'
 		[[ "$resource" == x ]] || response="${response}x-ratelimit-resource: ${resource}"$'\n'
@@ -200,8 +325,60 @@ _gh_transport_run_rest() {
 	if [[ "$attempted" == true && ("$rc" -ne 0 || "$remaining" == 0 || "$retry_after" != x || "$status" =~ ^[45]) ]]; then
 		_gh_transport_record_error "$rc" "$error_file" "$response"
 	fi
-	rm -f -- "$metadata" "$error_file"
+	_gh_transport_remove_temps "$metadata" "$error_file"
 	_shim_timing rest_metadata_and_log
+	return "$rc"
+}
+
+# Live identity recovery is deliberately limited to the three viewer fields.
+# Accept a conservative selector grammar: dynamic paths and other REST fields
+# must preserve the original failure rather than silently project invented data.
+_gh_transport_identity_viewer() {
+	local executable="$1" caller="$2" selector="$3"
+	local selector_pattern='^\.(login|id|name)([[:space:]]*//[[:space:]]*(empty|null))?[[:space:]]*$'
+	[[ -z "$selector" || "$selector" =~ $selector_pattern ]] || return 1
+	local viewer="" identity="" projected=""
+	gh_record_call graphql "$caller" "" "" identity-graphql-fallback 2>/dev/null || true
+	viewer=$(AIDEVOPS_GH_ROUTE_DECISION=identity-graphql-fallback \
+		_shim_run_transport "$executable" graphql "$caller" 0 api graphql \
+		-f 'query=query{viewer{login databaseId name}}') || return 1
+	# aidevops:trust-boundary — same credential, live read, never cached. Reject
+	# errors, missing fields and malformed logins before exposing identity data.
+	identity=$(jq -ce 'select((.errors // [] | length) == 0) | .data.viewer |
+		select((.login | type) == "string") |
+		select(.login | test("^[A-Za-z0-9][A-Za-z0-9-]*(\\[bot\\])?$")) |
+		select((.databaseId | type) == "number") |
+		select(.name == null or (.name | type) == "string") |
+		{login, id: .databaseId, name}' <<<"$viewer") || return 1
+	if [[ -n "$selector" ]]; then
+		projected=$(jq -r "$selector" <<<"$identity") || return 1
+		[[ -z "$projected" ]] || printf '%s\n' "$projected"
+	else
+		printf '%s\n' "$identity"
+	fi
+	return 0
+}
+
+_gh_transport_identity_read() {
+	local executable="$1" caller="$2"
+	shift 2
+	local temp_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	local capture="" rc=0
+	mkdir -p "$temp_dir" || return 75
+	capture=$(mktemp -d "${temp_dir}/gh-identity.XXXXXX") || return 75
+	_gh_transport_track_temp "$capture"
+	_GH_IDENTITY_FALLBACK_ALLOWED=0
+	_shim_run_transport "$executable" rest "$caller" 0 "$@" >"$capture/out" 2>"$capture/err" || rc=$?
+	if [[ "$rc" -eq 75 && "$_GH_IDENTITY_FALLBACK_ALLOWED" -eq 1 ]] &&
+		[[ "$#" -eq 2 || -n "${4:-}" ]] &&
+		_gh_transport_identity_viewer "$executable" "$caller" "${4:-}" >"$capture/viewer" 2>/dev/null; then
+		command cat "$capture/viewer"
+		rc=0
+	else
+		command cat "$capture/out"
+		command cat "$capture/err" >&2
+	fi
+	_gh_transport_remove_temps "$capture"
 	return "$rc"
 }
 

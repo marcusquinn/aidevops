@@ -17,6 +17,7 @@ import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import { homedir } from "node:os";
 import { createVersionReader, formatVersionLabel } from "../v2-plugin/tui.mjs";
 import { extractPromptRows, isPromptsEnabled, openPromptsTimeline } from "../tui-prompts.mjs";
+import { isMessagesEnabled, MESSAGES_POLL_MS, messageRows, openMessageDialog, rootSessionID } from "../tui-messages.mjs";
 
 export const AIDEVOPS_V1_TUI_PLUGIN_ID = "aidevops-tui";
 const VERSION_POLL_MS = 5000;
@@ -31,6 +32,8 @@ function PromptsView(props: { api: TuiPluginApi; sessionID: string }) {
       (id: string) => props.api.state.part(id),
     ),
   );
+  // Open on mouse-up: OpenCode's Dialog backdrop closes on mouse-up, so opening
+  // on mouse-down lets the same click's release dismiss the new dialog.
   const timeline = () => openPromptsTimeline(props.api.keymap);
   return (
     <Show when={rows().length > 0}>
@@ -40,12 +43,52 @@ function PromptsView(props: { api: TuiPluginApi; sessionID: string }) {
             <b>{open() ? "▼ Prompts" : "▶ Prompts"}</b>
           </text>
           <Show when={!open()}>
-            <text fg={theme().textMuted} onMouseDown={timeline}> ({rows().length})</text>
+            <text fg={theme().textMuted} onMouseUp={timeline}> ({rows().length})</text>
           </Show>
         </box>
         <Show when={open()}>
           <For each={rows()}>
-            {(row) => <text fg={theme().text} wrapMode="none" onMouseDown={timeline}>{row.text}</text>}
+            {(row) => <text fg={theme().text} wrapMode="none" onMouseUp={timeline}>{row.text}</text>}
+          </For>
+        </Show>
+      </box>
+    </Show>
+  );
+}
+
+// t18886: session-bus traffic for the root session, refreshed by `tick`.
+function MessagesView(props: { api: TuiPluginApi; sessionID: string; tick: () => number }) {
+  const [open, setOpen] = createSignal(true);
+  const theme = () => props.api.theme.current;
+  const rows = createMemo(() => {
+    props.tick();
+    const root = rootSessionID((id: string) => props.api.state.session.get(id), props.sessionID);
+    return messageRows(root);
+  });
+  // Full message in the native alert dialog; opened on mouse-up (see PromptsView).
+  const DialogAlert = props.api.ui.DialogAlert;
+  const alert = (input: { title: string; message: string }) =>
+    props.api.ui.dialog.replace(() => <DialogAlert title={input.title} message={input.message} />);
+  const showDetail = (row: ReturnType<typeof messageRows>[number]) => () =>
+    openMessageDialog(props.api.ui.dialog, row.detail, { alert });
+  return (
+    <Show when={rows().length > 0}>
+      <box>
+        <box flexDirection="row">
+          <text fg={theme().text} onMouseDown={() => setOpen((value) => !value)}>
+            <b>{open() ? "▼ Messages" : "▶ Messages"}</b>
+          </text>
+          <Show when={!open()}>
+            <text fg={theme().textMuted}> ({rows().length})</text>
+          </Show>
+        </box>
+        <Show when={open()}>
+          <For each={rows()}>
+            {(row) => (
+              <text fg={row.pending ? theme().text : theme().textMuted} wrapMode="none" onMouseUp={showDetail(row)}>
+                {row.text}
+              </text>
+            )}
           </For>
         </Show>
       </box>
@@ -217,6 +260,22 @@ const tui: TuiPlugin = async (api) => {
       slots: {
         sidebar_content(_ctx, props) {
           return <PromptsView api={api} sessionID={props.session_id} />;
+        },
+      },
+    });
+  }
+
+  if (isMessagesEnabled()) {
+    const [tick, setTick] = createSignal(0);
+    const messagesTimer = setInterval(() => setTick((value) => value + 1), MESSAGES_POLL_MS);
+    messagesTimer.unref?.();
+    api.lifecycle.onDispose(() => clearInterval(messagesTimer));
+    // Under Prompts (50), ahead of the built-in sections (100-500).
+    api.slots.register({
+      order: 60,
+      slots: {
+        sidebar_content(_ctx, props) {
+          return <MessagesView api={api} sessionID={props.session_id} tick={tick} />;
         },
       },
     });

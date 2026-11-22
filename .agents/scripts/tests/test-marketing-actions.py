@@ -8,8 +8,7 @@ from __future__ import annotations
 import copy
 import fcntl
 import getpass
-import hashlib
-import hmac
+import io
 import os
 import shutil
 import subprocess
@@ -25,6 +24,7 @@ import sys
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
+import marketing_action_approval as records  # noqa: E402
 import marketing_actions as actions  # noqa: E402
 
 GIT = shutil.which("git")
@@ -42,6 +42,14 @@ class MarketingActionTests(unittest.TestCase):
         self.canonical = self.root / "canonical"
         self.worktree = self.root / "worktree"
         self.receipts = self.root / "receipts"
+        # The sudo ceremony writes root-owned records under the operator home;
+        # tests redirect that home and trust the test user instead of root.
+        home = self.root / "home"
+        (home / ".aidevops").mkdir(parents=True)
+        for patcher in (patch.object(records, "_home", return_value=home),
+                        patch.object(records, "TRUSTED_APPROVAL_UID", os.getuid())):
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.canonical.mkdir()
         self.git("init", "-b", "main", cwd=self.canonical)
         self.git("config", "user.email", "test@example.invalid", cwd=self.canonical)
@@ -88,46 +96,25 @@ class MarketingActionTests(unittest.TestCase):
 
     @contextmanager
     def approval(self, plan: dict, operation: str = "apply", **options):
+        """Store a v2 record as the (patched) trusted approver, as the sudo ceremony would."""
         receipt: dict | None = options.get("receipt")
         stale: bool = options.get("stale", False)
         mutate: Callable[[dict], None] | None = options.get("mutate")
-        key = b"runtime-owned-test-key-material-32-bytes"
         now = datetime.now(timezone.utc)
         issued = now - timedelta(hours=1) if stale else now - timedelta(seconds=1)
-        nonce = "approval-test"
-        document = {
-            "schema": actions.APPROVAL_SCHEMA,
-            "operation": operation,
-            "plan_digest": plan["plan_digest"],
-            "project_root": plan["project_root"],
-            "worktree_identity": plan["worktree_identity"],
-            "action_set": plan["action_set"],
-            "owner": plan["owner"],
-            "issued_at": issued.isoformat().replace("+00:00", "Z"),
-            "expires_at": (issued + timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
-            "nonce": nonce,
-            "cancellation_path": str(self.cancellation(nonce)),
-            "receipt_digest": actions.digest(receipt) if receipt is not None else None,
-        }
-        document["signature"] = hmac.new(key, actions.canonical_json(document), hashlib.sha256).hexdigest()
+        nonce = "approvaltest"
+        record = records.build_record(
+            plan, operation, actions.PLAN_SCHEMA, issued_at=issued, ttl_seconds=300, nonce=nonce,
+            receipt_digest=actions.digest(receipt) if receipt is not None else None,
+            cancellation_path=str(self.cancellation(nonce)),
+        )
         if mutate:
-            mutate(document)
-        approval_read, approval_write = os.pipe()
-        key_read, key_write = os.pipe()
-        os.write(approval_write, actions.canonical_json(document))
-        os.write(key_write, key)
-        os.close(approval_write)
-        os.close(key_write)
-        environment = {
-            "AIDEVOPS_MARKETING_APPROVAL_FD": str(approval_read),
-            "AIDEVOPS_MARKETING_APPROVAL_KEY_FD": str(key_read),
-        }
+            mutate(record)
+        path = records.store_record(record)
         try:
-            with patch.dict(os.environ, environment):
-                yield
+            yield path
         finally:
-            os.close(approval_read)
-            os.close(key_read)
+            path.unlink(missing_ok=True)
 
     def test_plan_has_exact_diff_hashes_and_excluded_handoff(self):
         plan = actions.build_plan(self.input)
@@ -137,22 +124,74 @@ class MarketingActionTests(unittest.TestCase):
         self.assertEqual(plan["actions"][2]["status"], "handoff_only")
         self.assertEqual(actions.validate_plan(copy.deepcopy(plan)), plan)
 
-    def test_missing_forged_stale_mismatched_and_cancelled_approval_deny(self):
-        plan = actions.build_plan(self.input)
+    def assert_denied_unchanged(self, plan: dict) -> None:
         with self.assertRaises(actions.ActionError):
             actions.apply_plan(plan, self.receipts)
+        self.assertIn("<title>Old</title>", (self.worktree / "page.html").read_text(encoding="utf-8"))
+
+    def test_missing_stale_mismatched_and_cancelled_approval_deny(self):
+        plan = actions.build_plan(self.input)
+        self.assert_denied_unchanged(plan)
         for mutation in (
-            lambda item: item.update(signature="0" * 64),
             lambda item: item.update(action_set=["other"]),
+            lambda item: item.update(plan_digest="sha256:" + "0" * 64),
+            lambda item: item.update(binding={**item["binding"], "worktree_identity": "other"}),
+            lambda item: item.update(schema="aidevops.marketing-action-approval/v1"),
         ):
-            with self.approval(plan, mutate=mutation), self.assertRaises(actions.ActionError):
-                actions.apply_plan(plan, self.receipts)
-        with self.approval(plan, stale=True), self.assertRaises(actions.ActionError):
-            actions.apply_plan(plan, self.receipts)
-        with self.approval(plan) as _:
-            (self.root / "cancel-approval-test").write_text("cancelled\n", encoding="utf-8")
-            with self.assertRaises(actions.ActionError):
-                actions.apply_plan(plan, self.receipts)
+            with self.approval(plan, mutate=mutation):
+                self.assert_denied_unchanged(plan)
+        with self.approval(plan, stale=True):
+            self.assert_denied_unchanged(plan)
+        with self.approval(plan, operation="rollback", receipt={"wrong": "operation"}) as path:
+            path.rename(records.record_path(plan["owner"], "apply", plan["plan_digest"]))
+            self.assert_denied_unchanged(plan)
+        with self.approval(plan):
+            (self.root / "cancel-approvaltest").write_text("cancelled\n", encoding="utf-8")
+            self.assert_denied_unchanged(plan)
+
+    def test_untrusted_owner_symlinked_record_and_inherited_pipes_grant_nothing(self):
+        plan = actions.build_plan(self.input)
+        with self.approval(plan), patch.object(records, "TRUSTED_APPROVAL_UID", os.getuid() + 1):
+            self.assert_denied_unchanged(plan)  # a user-owned record is not an operator decision
+        with self.approval(plan) as path:
+            moved = path.with_name("elsewhere.json")
+            path.rename(moved)
+            path.symlink_to(moved)
+            self.assert_denied_unchanged(plan)
+            moved.unlink()
+        approval_read, approval_write = os.pipe()
+        os.close(approval_write)
+        environment = {"AIDEVOPS_MARKETING_APPROVAL_FD": str(approval_read),
+                       "AIDEVOPS_MARKETING_APPROVAL_KEY_FD": str(approval_read)}
+        try:
+            with patch.dict(os.environ, environment):
+                self.assert_denied_unchanged(plan)
+        finally:
+            os.close(approval_read)
+
+    def test_mint_requires_root_sudo_user_tty_and_typed_confirmation(self):
+        plan = actions.build_plan(self.input)
+        plan_path = self.root / "plan.json"
+        plan_path.write_bytes(actions.canonical_json(plan))
+        tty = patch.object(sys.stdin, "isatty", return_value=True)
+        sudo = patch.dict(os.environ, {"SUDO_USER": getpass.getuser()})
+        with self.assertRaises(records.ApprovalError):
+            records.mint(plan_path=str(plan_path), prompt=lambda _: "APPROVE")
+        with patch.object(records.os, "geteuid", return_value=0):
+            with patch.dict(os.environ, {"SUDO_USER": ""}), tty, self.assertRaises(records.ApprovalError):
+                records.mint(plan_path=str(plan_path), prompt=lambda _: "APPROVE")
+            with sudo, patch.object(sys.stdin, "isatty", return_value=False), self.assertRaises(records.ApprovalError):
+                records.mint(plan_path=str(plan_path), prompt=lambda _: "APPROVE")
+            with sudo, tty, self.assertRaises(records.ApprovalError):
+                records.mint(plan_path=str(plan_path), stream=io.StringIO(), prompt=lambda _: "yes")
+            self.assertFalse(records.record_path(plan["owner"], "apply", plan["plan_digest"]).exists())
+            summary = io.StringIO()
+            with sudo, tty:
+                result = records.mint(plan_path=str(plan_path), stream=summary, prompt=lambda _: "APPROVE")
+        self.assertIn("APPLY title [title] page.html", summary.getvalue())
+        self.assertEqual(result["operation"], "apply")
+        receipt, _ = actions.apply_plan(plan, self.receipts)
+        self.assertEqual(receipt["status"], "applied")
 
     def test_apply_replay_changed_content_and_guarded_rollback(self):
         plan = actions.build_plan(self.input)

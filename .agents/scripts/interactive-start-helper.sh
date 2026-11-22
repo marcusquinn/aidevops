@@ -287,11 +287,35 @@ _interactive_start_reclaim_dead_owner() {
 	return 1
 }
 
+# Refuse before claiming or creating a worktree when this session's project
+# directory is outside the trusted Git workspace: the later direct writes into
+# a cross-repository linked worktree would be denied by the write policy.
+_interactive_start_probe_session_location() {
+	local repo_slug="$1"
+	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	local policy_helper="${SCRIPT_DIR}/canonical-write-policy-helper.py"
+	local target_repo=""
+	[[ -f "$repos_json" && -f "$policy_helper" ]] || return 0
+	target_repo=$(jq -r --arg slug "$repo_slug" '.initialized_repos[]? | select(.slug == $slug) | .path // ""' "$repos_json" 2>/dev/null | sed -n '1p') || target_repo=""
+	target_repo="${target_repo/#\~/$HOME}"
+	[[ -n "$target_repo" && -d "$target_repo" ]] || return 0
+	local decision=""
+	decision=$(python3 "$policy_helper" check-session --cwd "$PWD" --target "$target_repo" --field decision 2>/dev/null) || return 0
+	if [[ "$decision" == "deny" ]]; then
+		printf 'ERROR: this session runs outside the trusted Git workspace; direct writes to a linked worktree of %s would be denied.\n' "$repo_slug" >&2
+		printf 'ACTION_REQUIRED=run_session_inside_git_workspace\n' >&2
+		printf 'HINT: no claim or worktree was created. Restart the session from inside the Git workspace (the repo or its worktree), then re-run.\n' >&2
+		return 1
+	fi
+	return 0
+}
+
 main() {
 	_interactive_start_parse_args "$@" || return $?
 	if [[ "$_INTERACTIVE_START_HELP_REQUESTED" -eq 1 ]]; then
 		return 0
 	fi
+	_interactive_start_probe_session_location "$_INTERACTIVE_START_REPO" || return 1
 	if [[ -n "${_INTERACTIVE_START_SOURCE_PATHS[*]:-}" ]]; then
 		_interactive_start_prepare_sources
 		return $?
@@ -312,7 +336,11 @@ main() {
 	if [[ -n "$replacement_pr" || -n "$replacement_reason" ]]; then
 		initial_claim_args+=(--replace-pr "$replacement_pr" --replacement-reason "$replacement_reason")
 	fi
-	if ! interactive-session-helper.sh "${initial_claim_args[@]}"; then
+	local claim_rc=0
+	interactive-session-helper.sh "${initial_claim_args[@]}" || claim_rc=$?
+	if [[ "$claim_rc" -eq 75 ]]; then
+		printf 'WARNING: claim NOT applied for #%s in %s; a worker may pick it up. Continuing offline; retrying after worktree setup.\n' "$issue" "$repo" >&2
+	elif [[ "$claim_rc" -ne 0 ]]; then
 		printf 'ERROR: initial interactive claim failed for #%s in %s\n' "$issue" "$repo" >&2
 		return 1
 	fi
@@ -331,7 +359,11 @@ main() {
 	if [[ -n "$replacement_pr" || -n "$replacement_reason" ]]; then
 		refresh_claim_args+=(--replace-pr "$replacement_pr" --replacement-reason "$replacement_reason")
 	fi
-	if ! interactive-session-helper.sh "${refresh_claim_args[@]}"; then
+	claim_rc=0
+	interactive-session-helper.sh "${refresh_claim_args[@]}" || claim_rc=$?
+	if [[ "$claim_rc" -eq 75 ]]; then
+		printf 'WARNING: claim NOT applied for #%s in %s; a worker may pick it up. Continuing offline. Re-run: interactive-session-helper.sh claim %s %s --implementing --worktree "%s"\n' "$issue" "$repo" "$issue" "$repo" "$worktree_path" >&2
+	elif [[ "$claim_rc" -ne 0 ]]; then
 		printf 'ERROR: interactive claim refresh failed; recoverable worktree: %s\n' "$worktree_path" >&2
 		return 1
 	fi

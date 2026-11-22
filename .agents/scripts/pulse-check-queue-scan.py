@@ -18,6 +18,7 @@ from functools import lru_cache
 from typing import Any, Optional
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import pulse_check_checkpoints as checkpoint_scan
 import pulse_check_dependencies as dependency_scan
 import pulse_check_progress as progress_scan
 
@@ -87,6 +88,9 @@ def _empty_aggregate() -> dict[str, int]:
         "assigned_in_flight": 0,
         "blocked_labels": 0,
         "blocked_explicit_hold": 0,
+        "unknown_checkpoint_triage": 0,
+        "oldest_unknown_checkpoint_triage_age_min": 0,
+        "unknown_checkpoint_triage_unreadable": 0,
         "dependency_inconsistent_available": 0,
         "needs_tier": 0,
         "needs_status": 0,
@@ -301,6 +305,16 @@ def _scan_repo(
     aggregate["repos_with_available"] += int(repo_available > 0)
 
 
+def _enrich_repo_history(aggregate: dict[str, int], slug: str,
+                         max_issues: int, now: dt.datetime) -> None:
+    """Collect durable progress before spending budget on advisory checkpoints."""
+    for issue in (_fetch_repo_issues(slug, max_issues) or [])[:max_issues]:
+        if time.monotonic() < dependency_scan.QUERY_DEADLINE:
+            _count_durable_progress(aggregate, slug, issue, now)
+        else:
+            aggregate["durable_progress_unknown"] += 1
+
+
 def main() -> int:
     repos_json = pathlib.Path(os.environ.get("PULSE_CHECK_REPOS_JSON", ""))
     skip_gh = os.environ.get("PULSE_CHECK_SKIP_GH", "") in {"1", "true", "TRUE", "yes", "YES"}
@@ -336,12 +350,15 @@ def main() -> int:
 
     # Optional history must not consume the dependency inventory's budget.
     for repo in repos:
+        _enrich_repo_history(aggregate, str(repo.get("slug") or ""), max_issues, now)
+
+    # Advisory checkpoint reads must not starve durable progress in any repository.
+    for repo in repos:
         slug = str(repo.get("slug") or "")
-        for issue in (_fetch_repo_issues(slug, max_issues) or [])[:max_issues]:
-            if time.monotonic() < dependency_scan.QUERY_DEADLINE:
-                _count_durable_progress(aggregate, slug, issue, now)
-            else:
-                aggregate["durable_progress_unknown"] += 1
+        context = checkpoint_scan.CheckpointContext(slug, _run_gh_json)
+        checkpoint_scan.enrich_repo(
+            aggregate, (_fetch_repo_issues(slug, max_issues) or [])[:max_issues],
+            now, context, dependency_scan.QUERY_DEADLINE)
 
     error = "queue_budget_exhausted" if time.monotonic() >= dependency_scan.QUERY_DEADLINE else ""
     if not error and aggregate["repos_truncated"]:

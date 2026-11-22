@@ -106,11 +106,13 @@ readonly MAINTENANCE_WINDOW_MODE="maintenance-window"
 readonly SQLITE_QUICK_CHECK="PRAGMA quick_check;"
 readonly PRAGMA_PAGE_COUNT="page_count"
 readonly PRAGMA_FREELIST_COUNT="freelist_count"
+readonly PRAGMA_PAGE_SIZE="page_size"
 readonly SESSION_PARENT_ID_COLUMN="parent_id"
 readonly SESSION_PROJECT_ID_COLUMN="project_id"
 
 readonly STATE_DIR="${OPENCODE_MAINTENANCE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/work/opencode-maintenance}"
 readonly STATE_FILE="${STATE_DIR}/last-run.json"
+readonly AUTO_SKIPS_FILE="${STATE_DIR}/auto-skips.json"
 readonly LOG_FILE="${STATE_DIR}/maintenance.log"
 
 # Thresholds — overrideable via env for advanced users.
@@ -121,6 +123,10 @@ readonly LOG_FILE="${STATE_DIR}/maintenance.log"
 : "${FORCE_VACUUM_SIZE_MB:=500}"
 : "${AUTO_MIN_SECONDS_BETWEEN:=518400}"
 : "${WAL_LARGE_THRESHOLD_MB:=500}"
+# AUTO_SKIP_ESCALATION_COUNT: consecutive holder-blocked `auto` skips before
+# notice/cleanup advise maintenance-window (default 3).
+: "${AUTO_SKIP_ESCALATION_COUNT:=3}"
+[[ "$AUTO_SKIP_ESCALATION_COUNT" =~ ^[0-9]+$ ]] && AUTO_SKIP_ESCALATION_COUNT=$((10#$AUTO_SKIP_ESCALATION_COUNT)) || AUTO_SKIP_ESCALATION_COUNT=3
 [[ "$FORCE_VACUUM_SIZE_MB" =~ ^[0-9]+$ ]] && FORCE_VACUUM_SIZE_MB=$((10#$FORCE_VACUUM_SIZE_MB)) || FORCE_VACUUM_SIZE_MB=500
 [[ "$AUTO_MIN_SECONDS_BETWEEN" =~ ^[0-9]+$ ]] && AUTO_MIN_SECONDS_BETWEEN=$((10#$AUTO_MIN_SECONDS_BETWEEN)) || AUTO_MIN_SECONDS_BETWEEN=518400
 [[ "$WAL_LARGE_THRESHOLD_MB" =~ ^[0-9]+$ ]] && WAL_LARGE_THRESHOLD_MB=$((10#$WAL_LARGE_THRESHOLD_MB)) || WAL_LARGE_THRESHOLD_MB=500
@@ -157,6 +163,12 @@ if [[ -z "${PULSE_LIFECYCLE_HELPER:-}" ]]; then
 	fi
 fi
 : "${OPENCODE_DB_ARCHIVE_HELPER:=${SCRIPT_DIR}/opencode-db-archive.sh}"
+# GH#37663: interrupt → maintain → resume for interactive TUI holders.
+: "${OPENCODE_SESSION_RESTART_HELPER:=${SCRIPT_DIR}/opencode-session-restart-helper.sh}"
+: "${OPENCODE_ARCHIVE_LAST_RUN_FILE:=${HOME}/.aidevops/logs/opencode-db-archive.last-run}"
+# Name interactive TUI holders once archive/maintenance has not succeeded for this long (72h).
+: "${INTERACTIVE_HOLDER_NOTICE_SECONDS:=259200}"
+[[ "$INTERACTIVE_HOLDER_NOTICE_SECONDS" =~ ^[0-9]+$ ]] || INTERACTIVE_HOLDER_NOTICE_SECONDS=259200
 : "${SQLITE3_BIN:=sqlite3}"
 
 # -----------------------------------------------------------------------------
@@ -302,6 +314,71 @@ _pragma() {
 	return 0
 }
 
+# GH#38630: the `event` table re-serialises payloads on every update and once
+# grew to ~64 GB of a 72 GB DB. Ceiling for the payload shown/warned on.
+readonly EVENT_MAX_BYTES_DEFAULT=2147483648
+readonly DB_GROWTH_WARN_BYTES=5368709120
+readonly DB_SIZE_LAST_FILE="${STATE_DIR}/last-report-db-bytes"
+
+# _event_stats <db> — print "<rows> <payload_bytes>", or nothing when the DB has
+# no event table. octet_length() (SQLite 3.43+) avoids reading overflow pages.
+_event_stats() {
+	local db="$1" expr="LENGTH(CAST(data AS BLOB))" out
+	[[ -f "$db" ]] || return 0
+	if [[ "$(sqlite3 :memory: "SELECT octet_length('ab');" 2>/dev/null)" == "2" ]]; then
+		expr="octet_length(data)"
+	fi
+	out=$(sqlite3 -readonly -cmd '.timeout 5000' "$db" \
+		"SELECT COUNT(*) || ' ' || COALESCE(SUM(${expr}), 0) FROM event;" 2>/dev/null) || return 0
+	[[ "$out" =~ ^[0-9]+\ [0-9]+$ ]] && printf '%s\n' "$out"
+	return 0
+}
+
+# _event_max_bytes — validated ceiling (OPENCODE_DB_EVENT_MAX_BYTES, default 2 GiB).
+_event_max_bytes() {
+	local max="${OPENCODE_DB_EVENT_MAX_BYTES:-$EVENT_MAX_BYTES_DEFAULT}"
+	[[ "$max" =~ ^[0-9]+$ ]] || max="$EVENT_MAX_BYTES_DEFAULT"
+	printf '%s\n' "$max"
+	return 0
+}
+
+# _db_growth_since_last_report <db_bytes> — print growth in bytes (0 if none or
+# unknown) and record the current size when <record> is 1.
+_db_growth_since_last_report() {
+	local db_bytes="$1" record="${2:-0}" previous=0
+	if [[ -f "$DB_SIZE_LAST_FILE" ]]; then
+		previous=$(<"$DB_SIZE_LAST_FILE")
+		[[ "$previous" =~ ^[0-9]+$ ]] || previous=0
+	fi
+	if [[ "$record" == 1 ]] && mkdir -p "$STATE_DIR" 2>/dev/null; then
+		printf '%s\n' "$db_bytes" >"$DB_SIZE_LAST_FILE" 2>/dev/null || true
+	fi
+	if ((previous > 0 && db_bytes > previous)); then
+		printf '%s\n' "$((db_bytes - previous))"
+	else
+		printf '0\n'
+	fi
+	return 0
+}
+
+# _report_print_event_stats <db_bytes> — event rows/bytes and growth lines.
+_report_print_event_stats() {
+	local db_bytes="$1" stats rows bytes max growth
+	stats=$(_event_stats "$OPENCODE_DB")
+	[[ -n "$stats" ]] || return 0
+	read -r rows bytes <<<"$stats"
+	max=$(_event_max_bytes)
+	printf '  Event table:   %s rows, %s payload (cap %s)\n' "$rows" "$(_db_size_human "$bytes")" "$(_db_size_human "$max")"
+	if ((max > 0 && bytes > max)); then
+		printf '                 WARNING: above cap; run aidevops opencode-db archive (expires events of idle sessions)\n'
+	fi
+	growth=$(_db_growth_since_last_report "$db_bytes" 1)
+	if ((growth > DB_GROWTH_WARN_BYTES)); then
+		printf '  DB growth:     +%s since the previous report\n' "$(_db_size_human "$growth")"
+	fi
+	return 0
+}
+
 _state_json_field() {
 	local field="$1"
 	[[ -f "$STATE_FILE" ]] || {
@@ -329,6 +406,144 @@ _freelist_exceeds_threshold() {
 		return 0
 	fi
 	return 1
+}
+
+# _auto_skip_count — consecutive holder-blocked auto skips (missing file = 0)
+_auto_skip_count() {
+	local value=""
+	if [[ -f "$AUTO_SKIPS_FILE" ]]; then
+		if command -v jq >/dev/null 2>&1; then
+			value=$(jq -r '.consecutive // empty' "$AUTO_SKIPS_FILE" 2>/dev/null || true)
+		else
+			value=$(sed -n 's/^[[:space:]]*"consecutive"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' "$AUTO_SKIPS_FILE" 2>/dev/null | awk 'NR == 1 {print; exit}' || true)
+		fi
+	fi
+	[[ "$value" =~ ^[0-9]+$ ]] || value=0
+	printf '%s\n' "$((10#$value))"
+	return 0
+}
+
+# _auto_skip_record <holders> — append one holder-blocked skip (best-effort).
+# Atomic temp+mv; an unwritable STATE_DIR logs and never fails the scheduled run.
+_auto_skip_record() {
+	local holders="$1"
+	local count page_count="" freelist_count="" page_size="" tmp
+	[[ "$holders" =~ ^[0-9]+$ ]] || holders=0
+	count=$(($(_auto_skip_count) + 1))
+	if _sqlite_available && [[ -f "$OPENCODE_DB" ]]; then
+		page_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_COUNT")
+		freelist_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_FREELIST_COUNT")
+		page_size=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_SIZE")
+	fi
+	[[ "$page_count" =~ ^[0-9]+$ ]] || page_count=0
+	[[ "$freelist_count" =~ ^[0-9]+$ ]] || freelist_count=0
+	[[ "$page_size" =~ ^[0-9]+$ ]] || page_size=0
+	if ! mkdir -p "$STATE_DIR" 2>/dev/null || ! tmp=$(mktemp "${STATE_DIR}/auto-skips.XXXXXX" 2>/dev/null); then
+		_log WARN "auto: cannot record skip (state dir unwritable)"
+		return 0
+	fi
+	{
+		cat >"$tmp" <<EOF
+{
+  "consecutive": $count,
+  "recorded_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "holders": $holders,
+  "page_count": $page_count,
+  "freelist_count": $freelist_count,
+  "page_size": $page_size
+}
+EOF
+	} 2>/dev/null &&
+		mv -f "$tmp" "$AUTO_SKIPS_FILE" 2>/dev/null || {
+		rm -f "$tmp" 2>/dev/null || true
+		_log WARN "auto: cannot record skip (write failed)"
+	}
+	return 0
+}
+
+# _auto_skip_advisory — print one advisory line and return 0 when consecutive
+# holder-blocked skips reached AUTO_SKIP_ESCALATION_COUNT and free pages exceed
+# VACUUM_FREELIST_THRESHOLD; return 1 (silent) otherwise, including no state.
+_auto_skip_advisory() {
+	local skips page_count freelist_count page_size reclaim_bytes
+	skips=$(_auto_skip_count)
+	[[ "$skips" -ge "$AUTO_SKIP_ESCALATION_COUNT" && "$skips" -gt 0 ]] || return 1
+	_sqlite_available && [[ -f "$OPENCODE_DB" ]] || return 1
+	page_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_COUNT")
+	freelist_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_FREELIST_COUNT")
+	page_size=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_SIZE")
+	[[ "$page_size" =~ ^[0-9]+$ ]] || return 1
+	_freelist_exceeds_threshold "$freelist_count" "$page_count" || return 1
+	reclaim_bytes=$((10#$freelist_count * 10#$page_size))
+	printf '[OPENCODE MAINTENANCE] %s consecutive scheduled runs skipped (opencode running); ~%s MB reclaimable free pages in %s. Run aidevops opencode-db maintenance-window --force-opencode to reclaim.\n' \
+		"$skips" "$((reclaim_bytes / 1048576))" "$OPENCODE_DB"
+	return 0
+}
+
+# _last_success_epoch — newest successful maintenance or archive run (0 = none).
+_last_success_epoch() {
+	local maintained archived
+	maintained=$(_state_mtime_epoch "$STATE_FILE")
+	archived=$(tr -cd '0-9' <"$OPENCODE_ARCHIVE_LAST_RUN_FILE" 2>/dev/null || true)
+	[[ "$maintained" =~ ^[0-9]+$ ]] || maintained=0
+	[[ "$archived" =~ ^[0-9]+$ ]] || archived=0
+	if [[ "$archived" -gt "$maintained" ]]; then printf '%s\n' "$archived"; else printf '%s\n' "$maintained"; fi
+	return 0
+}
+
+# _interactive_holder_advisory — GH#37663: when archive/maintenance has not
+# succeeded for INTERACTIVE_HOLDER_NOTICE_SECONDS and interactive TUIs hold the
+# DB, print one line naming the oldest holder's PID, session and age.
+_interactive_holder_advisory() {
+	local last now holders line
+	[[ -x "$OPENCODE_SESSION_RESTART_HELPER" ]] && command -v jq >/dev/null 2>&1 || return 1
+	last=$(_last_success_epoch)
+	now=$(date +%s)
+	[[ "$last" -gt 0 && $((now - last)) -ge "$INTERACTIVE_HOLDER_NOTICE_SECONDS" ]] || return 1
+	holders=$(OPENCODE_DB_PATH="$OPENCODE_DB" "$OPENCODE_SESSION_RESTART_HELPER" inventory --json 2>/dev/null || true)
+	line=$(jq -r 'if (type == "array" and length > 0) then (sort_by(-.age_seconds) | .[0]) as $h
+		| "\(length)\t\($h.pid)\t\($h.session_id)\t\(($h.age_seconds / 86400) | floor)" else empty end' <<<"$holders" 2>/dev/null || true)
+	[[ -n "$line" ]] || return 1
+	local count pid sid days
+	IFS=$'\t' read -r count pid sid days <<<"$line"
+	printf '[OPENCODE MAINTENANCE] Archive/maintenance deferred %sh by %s interactive TUI holder(s), oldest PID %s session %s up %sd. Run aidevops opencode-db maintenance-window --restart-interactive to checkpoint, stop and resume idle sessions.\n' \
+		"$(((now - last) / 3600))" "$count" "$pid" "$sid" "$days"
+	return 0
+}
+
+# _interactive_holder_notify <reason> — scheduled path: notify holders over the
+# session bus (throttled by the restart helper); never stops a session.
+_interactive_holder_notify() {
+	local reason="$1"
+	[[ -x "$OPENCODE_SESSION_RESTART_HELPER" ]] || return 0
+	OPENCODE_DB_PATH="$OPENCODE_DB" "$OPENCODE_SESSION_RESTART_HELPER" notify --reason "$reason" >/dev/null 2>&1 ||
+		_log WARN "interactive holder notify failed"
+	return 0
+}
+
+# Subcommand: reclaimable — per-DB free-page estimate (consumed by aidevops cleanup).
+cmd_reclaimable() {
+	if [[ "${OPENCODE_MAINTENANCE_SINGLE_DB:-0}" != 1 ]]; then
+		local db state_dir
+		while IFS= read -r -d '' db; do
+			state_dir="$STATE_DIR"
+			if [[ ! "$db" -ef "$OPENCODE_DB" ]]; then state_dir="${db%/*}/aidevops-maintenance"; fi
+			OPENCODE_DB_PATH="$db" OPENCODE_MAINTENANCE_SINGLE_DB=1 \
+				OPENCODE_MAINTENANCE_STATE_DIR="$state_dir" \
+				bash "${BASH_SOURCE[0]}" reclaimable || true
+		done < <(opencode_db_inventory "$OPENCODE_DB")
+		return 0
+	fi
+	_opencode_installed && _sqlite_available && [[ -f "$OPENCODE_DB" ]] || return 0
+	local page_count freelist_count page_size
+	page_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_COUNT")
+	freelist_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_FREELIST_COUNT")
+	page_size=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_SIZE")
+	[[ "$page_count" =~ ^[0-9]+$ && "$freelist_count" =~ ^[0-9]+$ && "$page_size" =~ ^[0-9]+$ ]] || return 0
+	printf 'Reclaimable free pages: %s MB of %s MB in %s\n' \
+		"$((10#$freelist_count * 10#$page_size / 1048576))" "$((10#$page_count * 10#$page_size / 1048576))" "$OPENCODE_DB"
+	_auto_skip_advisory || true
+	return 0
 }
 
 # _wal_checkpoint_probe <db>
@@ -743,6 +958,15 @@ _report_print_wal_status() {
 	return 0
 }
 
+# _report_print_page_stats <pages> <page_size> <free> <free_pct> <db_bytes>
+_report_print_page_stats() {
+	local pages="$1" page_size="$2" free="$3" free_pct="$4" db_bytes="$5"
+	printf '  Pages:         %s (page_size=%sB)\n' "$pages" "$page_size"
+	printf '  Free pages:    %s (%s%% of total)\n' "$free" "$free_pct"
+	_report_print_event_stats "$db_bytes"
+	return 0
+}
+
 cmd_report() {
 	local inventory_db
 	printf '\nOpenCode DB inventory (active / WAL / archive bytes):\n'
@@ -768,7 +992,7 @@ cmd_report() {
 
 	local page_count page_size freelist_count
 	page_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_COUNT")
-	page_size=$(_pragma "$OPENCODE_DB" "page_size")
+	page_size=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_SIZE")
 	freelist_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_FREELIST_COUNT")
 	if [[ ! "$page_count" =~ ^[0-9]+$ || ! "$freelist_count" =~ ^[0-9]+$ || ! "$page_size" =~ ^[0-9]+$ ]]; then
 		print_error "Unable to read SQLite page counts or page size from $OPENCODE_DB"; return 1
@@ -792,8 +1016,7 @@ cmd_report() {
 	# WAL status: distinguish active-DB table size from WAL size; show checkpoint state
 	# when WAL is large so users understand why it hasn't shrunk after archiving.
 	_report_print_wal_status "$wal_bytes"
-	printf '  Pages:         %s (page_size=%sB)\n' "$page_count" "$page_size"
-	printf '  Free pages:    %s (%s%% of total)\n' "$freelist_count" "$freelist_pct"
+	_report_print_page_stats "$page_count" "$page_size" "$freelist_count" "$freelist_pct" "$db_bytes"
 	local compact_large=false
 	if [[ $((db_bytes / 1048576)) -ge "$FORCE_VACUUM_SIZE_MB" ]] && \
 		[[ $((wal_bytes / 1048576)) -lt "$WAL_LARGE_THRESHOLD_MB" ]] && \
@@ -835,6 +1058,10 @@ cmd_report() {
 		fi
 	else
 		printf '\n  No previous maintenance runs recorded.\n'
+	fi
+	local holder_line
+	if holder_line=$(_interactive_holder_advisory); then
+		printf '\n  %s\n' "$holder_line"
 	fi
 
 	echo
@@ -1024,6 +1251,10 @@ _maintain_write_state() {
 	fi
 
 	mkdir -p "$STATE_DIR"
+	# A completed maintain ends any run of holder-blocked auto skips.
+	if [[ "$step_failures" -eq 0 && "$vacuum_deferred" != true ]]; then
+		rm -f "$AUTO_SKIPS_FILE" 2>/dev/null || true
+	fi
 	cat >"$STATE_FILE" <<EOF
 {
   "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
@@ -1108,7 +1339,9 @@ cmd_maintain() {
 # as `auto` (default DB plus isolated per-project DBs). Each DB is gated on its
 # exact lsof holders, so a TUI open on one project skips only that DB instead of
 # aborting the whole run. Pulse restarts even when a step fails. Interactive
-# TUIs are never stopped; --force-opencode maintains held DBs anyway.
+# TUIs are never stopped by default; --force-opencode maintains held DBs anyway,
+# and --restart-interactive (GH#37663) checkpoints, stops and later resumes
+# idle TUIs through opencode-session-restart-helper.sh (busy ones are skipped).
 
 # _headless_worker_count — in-flight headless `opencode run` workers.
 _headless_worker_count() {
@@ -1210,12 +1443,20 @@ cmd_maintenance_window() {
 	local interactive_days="$MAINTENANCE_WINDOW_INTERACTIVE_RETENTION_DAYS"
 	local drain_timeout="$MAINTENANCE_WINDOW_DRAIN_TIMEOUT"
 	local skip_archive=false
+	local restart_interactive=false
+	local assume_yes=false
 
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
 		case "$arg" in
 		--force-opencode)
 			force_opencode=true; shift
+			;;
+		--restart-interactive)
+			restart_interactive=true; shift
+			;;
+		--yes | -y)
+			assume_yes=true; shift
 			;;
 		--keep-sessions)
 			keep_sessions="${2:-}"; shift 2
@@ -1255,11 +1496,36 @@ cmd_maintenance_window() {
 		_maintenance_window_db "$force_opencode" "$keep_sessions" "$worker_days" "$interactive_days" "$skip_archive"
 		return $?
 	fi
-	_maintenance_window_inventory "$force_opencode" "$keep_sessions" "$worker_days" "$interactive_days" "$skip_archive" "$drain_timeout"
+	_maintenance_window_inventory "$force_opencode" "$keep_sessions" "$worker_days" "$interactive_days" "$skip_archive" "$drain_timeout" \
+		"$restart_interactive" "$assume_yes"
 	return $?
 }
 
-# _maintenance_window_inventory <force> <keep_sessions> <worker_days> <interactive_days> <skip_archive> <drain_timeout>
+# _restart_interactive_stop <assume_yes> — GH#37663: checkpoint and stop idle
+# interactive TUIs (never busy ones) and queue their resume as a cleanup, so
+# sessions relaunch even when a maintenance step fails. Without terminal
+# confirmation or host opt-in, the restart helper only notifies owners.
+_restart_interactive_stop() {
+	local assume_yes="$1"
+	local args=(stop --all --reason "maintenance-window")
+	local rc=0
+	if [[ ! -x "$OPENCODE_SESSION_RESTART_HELPER" ]]; then
+		print_warning "opencode-session-restart-helper.sh not found; interactive TUIs are left running"
+		return 0
+	fi
+	[[ "$assume_yes" != true ]] || args+=(--yes)
+	push_cleanup "$(printf '%q resume' "$OPENCODE_SESSION_RESTART_HELPER")"
+	"$OPENCODE_SESSION_RESTART_HELPER" "${args[@]}" || rc=$?
+	case "$rc" in
+	0) _log INFO "maintenance-window: interactive TUIs stopped for restart" ;;
+	2) print_warning "Some interactive sessions stayed busy or running; DBs they hold are skipped" ;;
+	3) print_info "Interactive TUIs were notified only (no stop authority)" ;;
+	*) print_warning "Interactive restart returned ${rc}; continuing with DB holder checks" ;;
+	esac
+	return 0
+}
+
+# _maintenance_window_inventory <force> <keep_sessions> <worker_days> <interactive_days> <skip_archive> <drain_timeout> [restart_interactive] [assume_yes]
 # Parent run: stop pulse once, drain workers, then visit each inventory DB in a
 # single-DB child. Returns 1 on any failure, 2 when only holder skips occurred.
 _maintenance_window_inventory() {
@@ -1269,6 +1535,8 @@ _maintenance_window_inventory() {
 	local interactive_days="$4"
 	local skip_archive="$5"
 	local drain_timeout="$6"
+	local restart_interactive="${7:-false}"
+	local assume_yes="${8:-false}"
 
 	local dbs=()
 	local db
@@ -1294,6 +1562,7 @@ _maintenance_window_inventory() {
 	fi
 
 	_drain_headless_workers "$drain_timeout"
+	[[ "$restart_interactive" != true ]] || _restart_interactive_stop "$assume_yes"
 
 	local child_args=(--keep-sessions "$keep_sessions" --worker-retention-days "$worker_days" --interactive-retention-days "$interactive_days")
 	[[ "$force_opencode" != true ]] || child_args+=(--force-opencode)
@@ -1425,6 +1694,10 @@ cmd_auto() {
 	cmd_maintain --auto || rc=$?
 	if [[ "$rc" -eq 2 ]]; then
 		_log INFO "auto: skipped — opencode active"
+		_auto_skip_record "$(_opencode_process_count)"
+		if [[ "$(_auto_skip_count)" -ge "$AUTO_SKIP_ESCALATION_COUNT" ]]; then
+			_interactive_holder_notify "scheduled maintenance"
+		fi
 		return 0
 	fi
 	return "$rc"
@@ -1627,6 +1900,29 @@ cmd_status() {
 	return 0
 }
 
+# _event_growth_notice — GH#38630: print one warning and return 0 when event
+# payload exceeds the cap or the DB grew > 5 GB since the previous report.
+_event_growth_notice() {
+	local stats rows bytes max growth
+	[[ -f "$OPENCODE_DB" ]] && _sqlite_available || return 1
+	stats=$(_event_stats "$OPENCODE_DB")
+	[[ -n "$stats" ]] || return 1
+	read -r rows bytes <<<"$stats"
+	max=$(_event_max_bytes)
+	if ((max > 0 && bytes > max)); then
+		printf '[OPENCODE MAINTENANCE] event table holds %s payload (%s rows), above the %s cap. Expiry of idle-session events runs hourly; run aidevops opencode-db report for details.\n' \
+			"$(_db_size_human "$bytes")" "$rows" "$(_db_size_human "$max")"
+		return 0
+	fi
+	growth=$(_db_growth_since_last_report "$(_db_size_bytes "$OPENCODE_DB")" 0)
+	if ((growth > DB_GROWTH_WARN_BYTES)); then
+		printf '[OPENCODE MAINTENANCE] opencode.db grew %s since the previous report (event payload %s). Run aidevops opencode-db report for details.\n' \
+			"$(_db_size_human "$growth")" "$(_db_size_human "$bytes")"
+		return 0
+	fi
+	return 1
+}
+
 # Subcommand: notice
 # Emits at most one warning line for OpenCode's session-start toast.
 cmd_notice() {
@@ -1634,9 +1930,31 @@ cmd_notice() {
 		return 0
 	fi
 
+	# GH#37663: sessions stopped for maintenance that await a manual resume,
+	# then long-deferred maintenance caused by interactive TUI holders.
+	local restart_notice=""
+	if [[ -x "$OPENCODE_SESSION_RESTART_HELPER" ]]; then
+		restart_notice=$("$OPENCODE_SESSION_RESTART_HELPER" notice 2>/dev/null || true)
+	fi
+	if [[ -n "$restart_notice" ]]; then
+		printf '%s\n' "$restart_notice"
+		return 0
+	fi
+	if _interactive_holder_advisory; then
+		return 0
+	fi
+	if _event_growth_notice; then
+		return 0
+	fi
+
 	if [[ "$OPENCODE_DB_MAINTENANCE_MODE" == "$MAINTENANCE_WINDOW_MODE" ]]; then
 		printf '[OPENCODE MAINTENANCE] Scheduled weekly Sun %02d:%02d local: maintenance-window pauses pulse/headless workers while compacting opencode.db.\n' \
 			"$OPENCODE_DB_MAINTENANCE_HOUR" "$OPENCODE_DB_MAINTENANCE_MINUTE"
+		return 0
+	fi
+
+	# Repeated holder-blocked auto skips with reclaimable free pages: actionable.
+	if _auto_skip_advisory; then
 		return 0
 	fi
 
@@ -1721,7 +2039,13 @@ Subcommands:
                          --worker-retention-days N (default 7),
                          --interactive-retention-days N (default 90),
                          --retention-days N (one cutoff for both), --keep-sessions N
-                         (protects interactive sessions only), --skip-archive.
+                         (protects interactive sessions only), --skip-archive,
+                         --restart-interactive [--yes]: ask busy TUIs to checkpoint,
+                         stop idle TUIs (never busy ones), maintain, then relaunch
+                         `opencode -s <id>` in the original tmux/screen pane. Needs
+                         terminal confirmation (or --yes); non-terminal runs only
+                         notify owners unless the host allows unattended restarts
+                         (opencode-session-restart-helper.sh help).
   auto                   Safe mode for scheduled use (r913). Silent no-op when
                          opencode not installed; throttles rapid re-runs.
                          Visits isolated project DBs too, skipping each live DB.
@@ -1802,6 +2126,7 @@ main() {
 	uninstall) cmd_uninstall "$@" ;;
 	status) cmd_status "$@" ;;
 	notice) cmd_notice "$@" ;;
+	reclaimable) cmd_reclaimable "$@" ;;
 	sessions | find-session | find-sessions) cmd_sessions "$@" ;;
 	help | -h | --help) cmd_help ;;
 	*)

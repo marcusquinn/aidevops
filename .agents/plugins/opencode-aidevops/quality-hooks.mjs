@@ -37,6 +37,7 @@ import {
   finishObservedSourceAccess,
 } from "./source-access-request.mjs";
 import { checkResearchStagingAccess } from "./research-staging-guard.mjs";
+import { checkRedirectLinkToolGate } from "./quality-hooks-redirect-link.mjs";
 import { checkGrepPathScope } from "./grep-path-guard.mjs";
 import { checkRedactedEdit } from "./redacted-edit-guard.mjs";
 import {
@@ -49,12 +50,19 @@ import {
 } from "./quality-hooks-git-safety.mjs";
 import { validateBashWorkingDirectory } from "./quality-hooks-workdir.mjs";
 import {
+  appendDisplayRedactionNote,
+  PEM_REDACTION_TOKEN,
+  REDACTION_TOKEN,
   scrubCredentials,
   scrubToolOutput,
 } from "./quality-hooks-output-scrub.mjs";
 import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
 import { assertPrivateProcessingRead, loadPrivateProcessingPolicy } from "./private-processing-policy.mjs";
 import { assertBrowserTaskTransport } from "./browser-task-transport.mjs";
+import { adviseDockerCreation, appendDockerAdvisory } from "./docker-owner-advisory.mjs";
+import { admitToolOwner } from "./lifecycle-admission.mjs";
+
+export { needsDockerOwnerAdvisory } from "./docker-owner-advisory.mjs";
 
 export { scrubCredentials } from "./quality-hooks-output-scrub.mjs";
 
@@ -233,11 +241,18 @@ function enforceBashToolSafety(ctx, log, input, output, sessionId) {
       ownedListenerRoots: ctx.ownedListenerRoots(sessionId),
     },
   );
+  // Admit the policy-checked command before trusted signature repair adds
+  // multiline content (or writes its body file); neither changes Git targets.
+  admitToolOwner({
+    scriptsDir: ctx.scriptsDir, repositoryDir: ctx.repositoryDir, input, output,
+    bash: true, bounded: false, client: ctx.client,
+  });
   const signatureModel = ctx.resolveSessionModel(sessionId);
   checkSignatureFooterGate(bashArgs.command || "", log, ctx.scriptsDir, output, {
     model: signatureModel,
     useProcessModelFallback: false,
   });
+  adviseDockerCreation(log, input, bashArgs.command || "", sessionId);
 }
 
 // GH#33969: bounded-operation starts get the same worker command policy as
@@ -301,6 +316,8 @@ async function handleToolBefore(ctx, log, input, output) {
     repositoryDir: ctx.repositoryDir, sessionID: input.sessionID || input.sessionId || "",
     classification: ctx.privateProcessingPolicy });
   ctx.continuationGuard?.beforeTool(input, output);
+  // GH#35655: never resolve/fetch/open redirect links via URL-bearing tools.
+  checkRedirectLinkToolGate(input.tool, output.args || {}, ctx.scriptsDir);
   enforceDirectFileMutationSafety(ctx, input, output);
 
   const { callID, intent } = prepareToolIntent(log, input, output);
@@ -334,6 +351,10 @@ async function handleToolBefore(ctx, log, input, output) {
   enforceBoundedOperationSafety(ctx, input, output, sessionId);
   if (isBashTool(input.tool)) rememberBashOutputPolicy(callID, output.args);
   enforceReadAndFileQuality(ctx, log, input, output, { sessionId, sourceContextForPath });
+  admitToolOwner({
+    scriptsDir: ctx.scriptsDir, repositoryDir: ctx.repositoryDir, input, output,
+    bash: false, bounded: isBoundedOperationTool(input.tool), client: ctx.client,
+  });
 }
 
 function scrubObservedToolOutput(ctx, log, toolName, output) {
@@ -351,18 +372,21 @@ function scrubObservedToolOutput(ctx, log, toolName, output) {
     }
     log("WARN", `[credential-scrub] redacted registered secret value(s) from ${toolName} output`);
   }
-  const rawOutput = output.output;
-  if (rawOutput === undefined) return;
-  const { output: scrubbedOutput, redacted } = scrubToolOutput(rawOutput);
-  if (!redacted) return;
-  output.output = scrubbedOutput;
+  const rawOutput = Object.fromEntries(
+    ["output", "title", "metadata"].filter((field) => output[field] !== undefined)
+      .map((field) => [field, output[field]]),
+  );
+  const { output: scrubbedOutput, redacted, count } = scrubToolOutput(rawOutput);
+  if (!redacted) return registered.count;
+  for (const field of Object.keys(rawOutput)) output[field] = scrubbedOutput[field];
   log("WARN", `[credential-scrub] redacted credential token(s) from ${toolName} output`);
+  return registered.count + count;
 }
 
 function trackObservedToolEffects(ctx, log, toolName, input, output) {
   const continuationResult = ctx.continuationGuard?.afterTool(input, output);
   if (continuationResult?.replan) {
-    log("WARN", `[session-continuation] repeated ${toolName} failure requires replanning`);
+    log("WARN", `[session-continuation] repeated ${continuationResult.loop.description} ${toolName} cycle requires replanning`);
   }
   if (isBashTool(toolName)) trackBashOperation(ctx, output.title || "", output.output || "");
   if (!isWriteOrEditTool(toolName)) return;
@@ -396,7 +420,7 @@ async function handleToolAfter(ctx, log, scriptsDir, input, output) {
   // CLIs, or runtime error backtraces, not just framework helpers.
   const rawOutput = output.output;
   const bashOutputWasVerbose = isBashTool(toolName) && isVerboseBashOutput(rawOutput);
-  scrubObservedToolOutput(ctx, log, toolName, output);
+  const redactionCount = scrubObservedToolOutput(ctx, log, toolName, output);
   trackObservedToolEffects(ctx, log, toolName, input, output);
 
   // Consume timing before output compaction so the receipt can report runtime.
@@ -413,6 +437,9 @@ async function handleToolAfter(ctx, log, scriptsDir, input, output) {
   }
 
   const intentRecord = consumeIntentRecord(input.callID || "");
+  appendDockerAdvisory(input, output);
+  // GH#37382: tell the model that visible placeholders are display redactions.
+  appendDisplayRedactionNote(output, redactionCount, [REDACTION_TOKEN, PEM_REDACTION_TOKEN]);
   // t2184: durationMs is null when the callID wasn't paired (for example,
   // a hook race on plugin reload); recordToolCall emits SQL NULL.
   recordToolCall(input, output, intentRecord?.intent, durationMs, intentRecord?.source);
@@ -449,6 +476,7 @@ export function createQualityHooks(deps) {
   const ctx = {
     privateProcessingPolicy: loadPrivateProcessingPolicy(),
     scriptsDir,
+    client: deps.client,
     activeScriptsDir,
     activeScriptsDirBinding,
     logsDir,

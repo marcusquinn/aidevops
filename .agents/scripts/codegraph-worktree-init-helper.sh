@@ -13,6 +13,8 @@ _SCRIPT_PATH="${SCRIPT_DIR}/$(basename "$_SCRIPT_PATH")"
 source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=disk-capacity-lib.sh
 source "${SCRIPT_DIR}/disk-capacity-lib.sh"
+# shellcheck source=worker-lifecycle-state.sh
+source "${SCRIPT_DIR}/worker-lifecycle-state.sh"
 
 : "${AIDEVOPS_CODEGRAPH_WORKTREE_INIT_ENABLED:=1}"
 : "${AIDEVOPS_CODEGRAPH_INIT_TIMEOUT_SECONDS:=180}"
@@ -171,11 +173,34 @@ _codegraph_wait_for_global_lock() {
 	return 0
 }
 
+# Bind the queued job to this generation, not a future occupant of the pathname.
+# Enrollment is not controlled-creation provenance or cleanup authority.
+_codegraph_new_lifecycle_context() {
+	local worktree_path="$1"
+	local python="" state_dir="" enrollment="" context=""
+	[[ "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" != 1 && "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" != 1 ]] || return 1
+	python=$(type -P python3) || return 1
+	state_dir=$(worker_lifecycle_state_dir) || return 1
+	[[ -n "$state_dir" ]] || return 1
+	enrollment=$("$python" -E -s -B "${SCRIPT_DIR}/../worker-lifecycle/worker-registry.py" \
+		--state-dir "$state_dir" enroll --initialize --path "$worktree_path") || return 1
+	context=$("$python" -E -s -B -c 'import json,sys,uuid; print(uuid.UUID(json.loads(sys.argv[1])["generation_id"]), uuid.uuid4())' "$enrollment") || return 1
+	read -r AIDEVOPS_CODEGRAPH_GENERATION_ID AIDEVOPS_CODEGRAPH_RUN_ID <<<"$context" || return 1
+	AIDEVOPS_LIFECYCLE_STATE_DIR="$state_dir"
+	return 0
+}
+
 _codegraph_run_init() {
 	local codegraph_bin="$1"
 	local worktree_path="$2"
 	local timeout_seconds="$3"
-	local -a init_command=("$codegraph_bin" init "$worktree_path")
+	local -a WORKER_LIFECYCLE_PREFIX=()
+	[[ -n "${AIDEVOPS_CODEGRAPH_GENERATION_ID:-}" && -n "${AIDEVOPS_CODEGRAPH_RUN_ID:-}" ]] || return 1
+	AIDEVOPS_LIFECYCLE_GENERATION_ID="${AIDEVOPS_CODEGRAPH_GENERATION_ID:-}" \
+		AIDEVOPS_LIFECYCLE_RUN_ID="${AIDEVOPS_CODEGRAPH_RUN_ID:-}" \
+		worker_lifecycle_prepare_launch "$worktree_path" \
+		"${SCRIPT_DIR}/../worker-lifecycle/worker-launch.py" "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" || return 1
+	local -a init_command=("${WORKER_LIFECYCLE_PREFIX[@]}" "$codegraph_bin" init "$worktree_path")
 	if command -v ionice >/dev/null 2>&1; then
 		init_command=(ionice -c 3 "${init_command[@]}")
 	fi
@@ -203,6 +228,12 @@ _codegraph_run() {
 		_codegraph_log "status=skipped reason=invalid-linked-worktree issue=${issue_number}"
 		return 0
 	}
+	if [[ -z "${AIDEVOPS_CODEGRAPH_GENERATION_ID:-}" && -z "${AIDEVOPS_CODEGRAPH_RUN_ID:-}" ]]; then
+		_codegraph_new_lifecycle_context "$worktree_path" || {
+			_codegraph_log "status=skipped reason=lifecycle-context-unavailable issue=${issue_number}"
+			return 0
+		}
+	fi
 	worktree_key=$(_codegraph_worktree_key "$worktree_path")
 	init_timeout=$(_codegraph_validate_positive_integer "$AIDEVOPS_CODEGRAPH_INIT_TIMEOUT_SECONDS" 180)
 	queue_timeout=$(_codegraph_validate_positive_integer "$AIDEVOPS_CODEGRAPH_INIT_QUEUE_TIMEOUT_SECONDS" 300)
@@ -261,6 +292,10 @@ _codegraph_launch() {
 	[[ "$AIDEVOPS_CODEGRAPH_WORKTREE_INIT_ENABLED" == "1" ]] || return 0
 	codegraph_bin=$(_codegraph_resolve_bin) || return 0
 	worktree_path=$(_codegraph_resolve_worktree "$requested_path") || return 0
+	_codegraph_new_lifecycle_context "$worktree_path" || {
+		_codegraph_log "status=skipped reason=lifecycle-context-unavailable issue=${issue_number}"
+		return 0
+	}
 	worktree_key=$(_codegraph_worktree_key "$worktree_path")
 	init_timeout=$(_codegraph_validate_positive_integer "$AIDEVOPS_CODEGRAPH_INIT_TIMEOUT_SECONDS" 180)
 	queue_timeout=$(_codegraph_validate_positive_integer "$AIDEVOPS_CODEGRAPH_INIT_QUEUE_TIMEOUT_SECONDS" 300)
@@ -268,6 +303,9 @@ _codegraph_launch() {
 	mkdir -p "$_CODEGRAPH_LOG_DIR" "$_CODEGRAPH_STATE_DIR" || return 0
 
 	child_env=(
+		"AIDEVOPS_LIFECYCLE_STATE_DIR=${AIDEVOPS_LIFECYCLE_STATE_DIR}"
+		"AIDEVOPS_CODEGRAPH_GENERATION_ID=${AIDEVOPS_CODEGRAPH_GENERATION_ID}"
+		"AIDEVOPS_CODEGRAPH_RUN_ID=${AIDEVOPS_CODEGRAPH_RUN_ID}"
 		"AIDEVOPS_CODEGRAPH_BIN=${codegraph_bin}"
 		"AIDEVOPS_CODEGRAPH_WORKTREE_INIT_ENABLED=1"
 		"AIDEVOPS_CODEGRAPH_INIT_TIMEOUT_SECONDS=${init_timeout}"

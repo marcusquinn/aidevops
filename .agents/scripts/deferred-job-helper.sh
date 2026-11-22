@@ -23,6 +23,7 @@ source "${SCRIPT_DIR}/deferred-job-maintenance.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/deferred-job-scheduler.sh"
 
+_DJ_KIND_ISSUE_MANUAL="issue-manual"
 _DJ_ARG_AT=""
 _DJ_ARG_AFTER=""
 _DJ_ARG_NAME=""
@@ -36,6 +37,12 @@ _DJ_ARG_AGENT="Build+"
 _DJ_ARG_TIER=""
 _DJ_ARG_MODEL=""
 _DJ_ARG_TITLE=""
+_DJ_ARG_RECHECK_EVERY=""
+_DJ_ARG_MAX_CHECKS=""
+_DJ_ARG_UNTIL=""
+_DJ_RECHECK_EVERY_SECONDS=0
+_DJ_RECHECK_MAX=0
+_DJ_RECHECK_UNTIL_EPOCH=0
 
 print_usage() {
 	cat <<'EOF'
@@ -46,6 +53,7 @@ Usage:
       (--prompt-file PATH | --issue N --repo OWNER/REPO) [options]
   aidevops schedule status [JOB_ID] [--json]
   aidevops schedule cancel JOB_ID
+  aidevops schedule snooze JOB_ID [--after DURATION] --reason TEXT
 
 Options for once:
   --at ISO-UTC       Exact UTC timestamp, for example 2026-07-22T08:30:00Z
@@ -62,6 +70,19 @@ Options for once:
   --tier TIER        simple, standard, or thinking
   --model MODEL      Optional exact model override
   --title TITLE      Session title
+
+Rechecks (prompt and --worktree jobs; follow-up checks that may need to wait):
+  --recheck-every DURATION  Run again after this interval while the worker
+                     snoozes or the run fails (minimum 5m)
+  --max-checks N     Total runs including the first (default 6, max 100)
+  --until ISO-UTC    Deadline; no run is scheduled after it
+
+  aidevops schedule snooze JOB_ID [--after DURATION] --reason TEXT
+                     Called by the running worker when its criteria are not
+                     met yet. The job is queued again when the run ends.
+                     A run that ends without snoozing closes the job.
+                     Failures and exhausted checks leave a session-start
+                     advisory: deferred-job-<JOB_ID>.
 
 Runner and maintenance commands:
   deferred-job-helper.sh run-due
@@ -90,6 +111,12 @@ _dj_reset_once_args() {
 	_DJ_ARG_TIER=""
 	_DJ_ARG_MODEL=""
 	_DJ_ARG_TITLE=""
+	_DJ_ARG_RECHECK_EVERY=""
+	_DJ_ARG_MAX_CHECKS=""
+	_DJ_ARG_UNTIL=""
+	_DJ_RECHECK_EVERY_SECONDS=0
+	_DJ_RECHECK_MAX=0
+	_DJ_RECHECK_UNTIL_EPOCH=0
 	return 0
 }
 
@@ -101,7 +128,7 @@ _dj_parse_once_args() {
 		arg="$1"
 		shift
 		case "$arg" in
-		--at | --after | --name | --dir | --prompt-file | --issue | --repo | --worktree | --branch | --agent | --tier | --model | --title)
+		--at | --after | --name | --dir | --prompt-file | --issue | --repo | --worktree | --branch | --agent | --tier | --model | --title | --recheck-every | --max-checks | --until)
 			if [[ $# -eq 0 || -z "${1:-}" ]]; then
 				printf 'ERROR: %s requires a value\n' "$arg" >&2
 				return 2
@@ -122,6 +149,9 @@ _dj_parse_once_args() {
 			--tier) _DJ_ARG_TIER="$value" ;;
 			--model) _DJ_ARG_MODEL="$value" ;;
 			--title) _DJ_ARG_TITLE="$value" ;;
+			--recheck-every) _DJ_ARG_RECHECK_EVERY="$value" ;;
+			--max-checks) _DJ_ARG_MAX_CHECKS="$value" ;;
+			--until) _DJ_ARG_UNTIL="$value" ;;
 			esac
 			;;
 		--help | -h)
@@ -146,7 +176,7 @@ _dj_validate_once_common() {
 		return 2
 	fi
 	if [[ ! "$_DJ_ARG_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._[:space:]-]{0,79}$ || "$_DJ_ARG_NAME" == *$'\n'* ]]; then
-		printf 'ERROR: --name must be 1-80 safe printable characters\n' >&2
+		printf 'ERROR: --name must be 1-80 characters: letters, digits, spaces, ".", "_" or "-", starting with a letter or digit\n' >&2
 		return 2
 	fi
 	canonical_dir=$(_dj_canonical_dir "$_DJ_ARG_DIR" 2>/dev/null || true)
@@ -266,12 +296,55 @@ _dj_resolve_due_time() {
 	return 0
 }
 
+# Validate the optional recheck policy once the first due time is known.
+# Rechecks need a runner-observed outcome, so fire-and-forget manual issue
+# dispatch is refused: use --prompt-file (or --worktree) for follow-up checks.
+_dj_validate_recheck() {
+	local dispatch_kind="$1"
+	local due_epoch="$2"
+	if [[ -z "$_DJ_ARG_RECHECK_EVERY" ]]; then
+		if [[ -n "$_DJ_ARG_MAX_CHECKS" || -n "$_DJ_ARG_UNTIL" ]]; then
+			printf 'ERROR: --max-checks and --until require --recheck-every\n' >&2
+			return 2
+		fi
+		return 0
+	fi
+	if [[ "$dispatch_kind" == "$_DJ_KIND_ISSUE_MANUAL" ]]; then
+		printf 'ERROR: --recheck-every needs --prompt-file or --worktree; manual issue dispatch cannot report a snooze\n' >&2
+		return 2
+	fi
+	_DJ_RECHECK_EVERY_SECONDS=$(_dj_parse_duration "$_DJ_ARG_RECHECK_EVERY" 2>/dev/null || true)
+	if [[ -z "$_DJ_RECHECK_EVERY_SECONDS" || "$_DJ_RECHECK_EVERY_SECONDS" -lt "$_DJ_MIN_RECHECK_SECONDS" ]]; then
+		printf 'ERROR: --recheck-every must be a duration of at least 5m\n' >&2
+		return 2
+	fi
+	if [[ -n "$_DJ_ARG_MAX_CHECKS" ]]; then
+		if [[ ! "$_DJ_ARG_MAX_CHECKS" =~ ^[1-9][0-9]{0,2}$ || "$_DJ_ARG_MAX_CHECKS" -gt "$_DJ_MAX_CHECKS" ]]; then
+			printf 'ERROR: --max-checks must be 1 to %s\n' "$_DJ_MAX_CHECKS" >&2
+			return 2
+		fi
+		_DJ_RECHECK_MAX="$_DJ_ARG_MAX_CHECKS"
+	elif [[ -n "$_DJ_ARG_UNTIL" ]]; then
+		_DJ_RECHECK_MAX="$_DJ_MAX_CHECKS"
+	else
+		_DJ_RECHECK_MAX="$_DJ_DEFAULT_MAX_CHECKS"
+	fi
+	if [[ -n "$_DJ_ARG_UNTIL" ]]; then
+		_DJ_RECHECK_UNTIL_EPOCH=$(_dj_iso_to_epoch "$_DJ_ARG_UNTIL" 2>/dev/null || true)
+		if [[ -z "$_DJ_RECHECK_UNTIL_EPOCH" || "$_DJ_RECHECK_UNTIL_EPOCH" -le "$due_epoch" ]]; then
+			printf 'ERROR: --until must be an exact UTC timestamp after the first due time\n' >&2
+			return 2
+		fi
+	fi
+	return 0
+}
+
 _dj_prepare_private_prompt() {
 	local job_id="$1"
 	local dispatch_kind="$2"
 	local prompt_path=""
 	prompt_path=$(_dj_prompt_file "$job_id")
-	if [[ "$dispatch_kind" == "issue-manual" ]]; then
+	if [[ "$dispatch_kind" == "$_DJ_KIND_ISSUE_MANUAL" ]]; then
 		printf '%s\n' ""
 		return 0
 	fi
@@ -323,6 +396,10 @@ _dj_build_job_json() {
 		--arg tier "$_DJ_ARG_TIER" \
 		--arg model "$_DJ_ARG_MODEL" \
 		--arg title "$title" \
+		--argjson recheck_every "$_DJ_RECHECK_EVERY_SECONDS" \
+		--argjson recheck_max "$_DJ_RECHECK_MAX" \
+		--argjson recheck_until "$_DJ_RECHECK_UNTIL_EPOCH" \
+		--arg recheck_until_at "$_DJ_ARG_UNTIL" \
 		'{schema_version:$schema_version,producer_version:$producer_version,id:$id,name:$name,
 		  created_at:$created_at,created_epoch:$created_epoch,due_at:$due_at,due_epoch:$due_epoch,
 		  status:"queued",claimed_at:null,started_at:null,finished_at:null,finished_epoch:null,
@@ -334,7 +411,12 @@ _dj_build_job_json() {
 		    repo:(if $repo == "" then null else $repo end),
 		    worktree:(if $worktree == "" then null else $worktree end),
 		    branch:(if $branch == "" then null else $branch end),agent:$agent,
-		    tier:(if $tier == "" then null else $tier end),model:(if $model == "" then null else $model end),title:$title}}'
+		    tier:(if $tier == "" then null else $tier end),model:(if $model == "" then null else $model end),title:$title},
+		  recheck:(if $recheck_every == 0 then null else
+		    {every_seconds:$recheck_every,max_checks:$recheck_max,
+		     until_epoch:(if $recheck_until == 0 then null else $recheck_until end),
+		     until_at:(if $recheck_until_at == "" then null else $recheck_until_at end),
+		     checks_done:0,last_reason:null,snooze_requested:null} end)}'
 	return $?
 }
 
@@ -360,9 +442,10 @@ cmd_once() {
 		if [[ -n "$_DJ_ARG_WORKTREE" ]]; then
 			dispatch_kind="issue-worktree"
 		else
-			dispatch_kind="issue-manual"
+			dispatch_kind="$_DJ_KIND_ISSUE_MANUAL"
 		fi
 	fi
+	_dj_validate_recheck "$dispatch_kind" "$due_epoch" || return $?
 	_dj_init_storage || return 1
 	_dj_acquire_lock || return 1
 	job_id="dj-$(date -u '+%Y%m%dT%H%M%SZ')-$$-${RANDOM}"
@@ -396,7 +479,109 @@ cmd_once() {
 	fi
 	_dj_append_event "$job_id" "queued" "created" || true
 	_dj_release_lock
-	printf 'Queued %s | %s | due %s\n' "$job_id" "$_DJ_ARG_NAME" "$(_dj_epoch_to_iso "$due_epoch")"
+	if [[ "$_DJ_RECHECK_MAX" -gt 0 ]]; then
+		printf 'Queued %s | %s | due %s | recheck every %s, up to %s checks%s\n' "$job_id" "$_DJ_ARG_NAME" \
+			"$(_dj_epoch_to_iso "$due_epoch")" "$_DJ_ARG_RECHECK_EVERY" "$_DJ_RECHECK_MAX" \
+			"${_DJ_ARG_UNTIL:+, until $_DJ_ARG_UNTIL}"
+	else
+		printf 'Queued %s | %s | due %s\n' "$job_id" "$_DJ_ARG_NAME" "$(_dj_epoch_to_iso "$due_epoch")"
+	fi
+	return 0
+}
+
+_dj_parse_snooze_args() {
+	local -a snooze_args=("$@")
+	local arg=""
+	local value=""
+	local index=0
+	_DJ_SNOOZE_AFTER=""
+	_DJ_SNOOZE_REASON=""
+	while [[ "$index" -lt "${#snooze_args[@]}" ]]; do
+		arg="${snooze_args[$index]}"
+		value="${snooze_args[$((index + 1))]:-}"
+		index=$((index + 1))
+		case "$arg" in
+		--after | --reason)
+			if [[ -z "$value" ]]; then
+				printf 'ERROR: %s requires a value\n' "$arg" >&2
+				return 2
+			fi
+			if [[ "$arg" == "--after" ]]; then
+				_DJ_SNOOZE_AFTER="$value"
+			else
+				_DJ_SNOOZE_REASON="$value"
+			fi
+			index=$((index + 1))
+			;;
+		*)
+			printf 'ERROR: unknown snooze option: %s\n' "$arg" >&2
+			return 2
+			;;
+		esac
+	done
+	if [[ -z "$_DJ_SNOOZE_REASON" ]]; then
+		printf 'ERROR: snooze requires --reason TEXT (what is still unmet)\n' >&2
+		return 2
+	fi
+	return 0
+}
+
+# Record that the running check's criteria are not met yet. The runner applies
+# it when the run ends: queued again, or exhausted with an advisory.
+cmd_snooze() {
+	local job_id="${1:-}"
+	local after_seconds=0
+	local reason=""
+	local job_file=""
+	local job_json=""
+	local updated=""
+	local status=""
+	shift || true
+	_dj_valid_job_id "$job_id" || {
+		printf 'ERROR: snooze requires a valid JOB_ID\n' >&2
+		return 2
+	}
+	_dj_parse_snooze_args "$@" || return $?
+	if [[ -n "$_DJ_SNOOZE_AFTER" ]]; then
+		after_seconds=$(_dj_parse_duration "$_DJ_SNOOZE_AFTER" 2>/dev/null || true)
+		if [[ -z "$after_seconds" || "$after_seconds" -lt "$_DJ_MIN_RECHECK_SECONDS" ]]; then
+			printf 'ERROR: --after must be a duration of at least 5m\n' >&2
+			return 2
+		fi
+	fi
+	reason=$(_dj_sanitize_reason "$_DJ_SNOOZE_REASON")
+	_dj_init_storage || return 1
+	job_file=$(_dj_job_file "$job_id")
+	_dj_acquire_lock || return 1
+	job_json=$(_dj_read_job "$job_file" 2>/dev/null || true)
+	if [[ -z "$job_json" ]] || ! _dj_schema_supported "$job_json"; then
+		_dj_release_lock
+		printf 'ERROR: deferred job not found or unsupported: %s\n' "$job_id" >&2
+		return 1
+	fi
+	status=$(printf '%s\n' "$job_json" | jq -r '.status // ""')
+	if [[ "$(printf '%s\n' "$job_json" | jq -r '.recheck == null')" == "true" ]]; then
+		_dj_release_lock
+		printf 'ERROR: deferred job %s has no recheck policy; report the result instead\n' "$job_id" >&2
+		return 1
+	fi
+	if [[ "$status" != "running" ]]; then
+		_dj_release_lock
+		printf 'ERROR: deferred job %s is %s; only a running check can snooze\n' "$job_id" "$status" >&2
+		return 1
+	fi
+	updated=$(printf '%s\n' "$job_json" | jq --argjson after "$after_seconds" --arg reason "$reason" \
+		'.recheck.snooze_requested = {after_seconds:(if $after == 0 then null else $after end),reason:$reason}') || {
+		_dj_release_lock
+		return 1
+	}
+	_dj_atomic_write_json "$job_file" "$updated" || {
+		_dj_release_lock
+		return 1
+	}
+	_dj_append_event "$job_id" "running" "snooze_requested" || true
+	_dj_release_lock
+	printf 'Snooze recorded for %s; it is queued again when this run ends\n' "$job_id"
 	return 0
 }
 
@@ -407,13 +592,17 @@ _dj_public_job_json() {
 		return 0
 	fi
 	printf '%s\n' "$job_json" | jq -c \
-		'{id,name,due_at,status,created_at,claimed_at,started_at,finished_at,attempt,recovery_count,duration_seconds,outcome,error}'
+		'{id,name,due_at,status,created_at,claimed_at,started_at,finished_at,attempt,recovery_count,duration_seconds,outcome,error,
+		  recheck:(if .recheck == null then null else
+		    {every_seconds:.recheck.every_seconds,max_checks:.recheck.max_checks,until_at:.recheck.until_at,
+		     checks_done:(.recheck.checks_done // 0),last_reason:.recheck.last_reason} end)}'
 	return 0
 }
 
 _dj_print_public_job() {
 	local public_json="$1"
-	printf '%s\n' "$public_json" | jq -r '[.id,.name,.due_at,.status,(.outcome // "-")] | @tsv'
+	printf '%s\n' "$public_json" | jq -r '[.id,.name,.due_at,.status,(.outcome // "-"),
+		(if .recheck == null then "-" else "\(.recheck.checks_done)/\(.recheck.max_checks)" end)] | @tsv'
 	return 0
 }
 
@@ -459,7 +648,7 @@ cmd_status() {
 		if [[ "$json_output" -eq 1 ]]; then
 			printf '%s\n' "$public_json"
 		else
-			printf 'ID\tNAME\tDUE (UTC)\tSTATUS\tOUTCOME\n'
+			printf 'ID\tNAME\tDUE (UTC)\tSTATUS\tOUTCOME\tCHECKS\n'
 			_dj_print_public_job "$public_json"
 		fi
 		return 0
@@ -478,7 +667,7 @@ cmd_status() {
 			first=0
 		else
 			if [[ "$first" -eq 1 ]]; then
-				printf 'ID\tNAME\tDUE (UTC)\tSTATUS\tOUTCOME\n'
+				printf 'ID\tNAME\tDUE (UTC)\tSTATUS\tOUTCOME\tCHECKS\n'
 			fi
 			_dj_print_public_job "$public_json"
 			first=0
@@ -499,6 +688,7 @@ main() {
 	once | create) cmd_once "$@" ;;
 	status | list) cmd_status "$@" ;;
 	cancel) cmd_cancel "$@" ;;
+	snooze) cmd_snooze "$@" ;;
 	run-due) cmd_run_due "$@" ;;
 	install) cmd_install_scheduler "$@" ;;
 	uninstall) cmd_uninstall_scheduler "$@" ;;

@@ -27,12 +27,15 @@ import sqlite3
 import subprocess
 import sys
 import time
+import types
 import uuid
 
 import worktree_lifetime_idle as idle_policy
 import worktree_lifetime_launch as launch_contract
+import worktree_lifetime_observe as observe
 import worktree_lifetime_proof as lifetime_proof
 import worktree_lifetime_owner as owner_lifetime
+import worktree_lifetime_reconcile as process_reconciliation
 
 
 TABLE = "worktree_managed_lifetimes"
@@ -170,8 +173,10 @@ def seal(record: dict) -> None:
     if record.get("manager") == owner_lifetime.MANAGER:
         require(bool(record["launches"]), "missing owner admission evidence")
         owner_lifetime.require_admission_observed(record)
+        process_reconciliation.reconcile(record)
+        census_cache = {}
         for launch in record["launches"]:
-            owner_lifetime.drain(launch)
+            owner_lifetime.drain(launch, record["identity"], census_cache)
         record.update(state="sealed", sealed_at=time.time())
         return
     if record["state"] == "sealed":
@@ -218,23 +223,8 @@ READERS = {"status": print_status, "proof": print_proof, "match": print_match}
 
 
 def inspect_record(record: dict, path: Path, operation: str, extra: list[str], connection=None) -> None:
-    reader = READERS.get(operation)
-    if reader:
-        reader(record, path, extra, connection)
-        return
-    verify_identity(record, path)
-    if operation in ("cleanup-ready", "idle-ready"):
-        # Dry-run only: do not persist a seal before policy and owner checks.
-        if operation == "idle-ready":
-            require(len(extra) <= 1, "at most one idle window is accepted")
-            idle_policy.owner_clear(connection, str(path))
-            idle_policy.require_elapsed(record, boot_id(), int(extra[0]) if extra else idle_policy.IDLE_SECONDS)
-            idle_quiescence(record)
-        seal(record)
-        return
-    require(record["state"] in ("created", "running"), "worktree cannot be reused")
-    if record["launches"]:
-        drain(record["launches"][-1])
+    ops = types.SimpleNamespace(**globals(), connection=connection)
+    observe.inspect_record(ops, record, path, operation, extra)
 
 
 def observe_idle(connection, record: dict) -> None:
@@ -259,6 +249,8 @@ def mutate_record(record: dict, path: Path, operation: str, extra: list[str], co
         bind(record)
     elif operation == "observe-idle":
         observe_idle(connection, record)
+    elif operation == "reconcile-processes":
+        print(json.dumps(process_reconciliation.reconcile(record), sort_keys=True))
     else:
         if operation == "seal-idle":
             require(len(extra) <= 1, "at most one idle window is accepted")
@@ -268,10 +260,15 @@ def mutate_record(record: dict, path: Path, operation: str, extra: list[str], co
         seal(record)
 
 
+def seal_observed(connection, path: Path, operation: str, extra: list[str]) -> None:
+    # Resolve ops at call time so module-level patches stay effective.
+    observe.seal_observed(types.SimpleNamespace(**globals()), connection, path, operation, extra)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=("enroll", "reserve", "bind-exec", "seal", "proof", "status", "ready", "cleanup-ready",
-                                             "observe-idle", "idle-ready", "seal-idle", "match"))
+                                             "observe-idle", "idle-ready", "seal-idle", "match", "reconcile-processes"))
     parser.add_argument("path")
     parser.add_argument("extra", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -284,6 +281,9 @@ def main() -> int:
         readonly = args.operation in ("proof", "status", "ready", "cleanup-ready", "idle-ready", "match")
         uri = Path(db).resolve().as_uri() + ("?mode=ro" if readonly else "?mode=rw")
         with closing(sqlite3.connect(uri, uri=True, timeout=10, isolation_level=None)) as connection:
+            if args.operation in ("seal", "seal-idle"):
+                seal_observed(connection, path, args.operation, args.extra)
+                return 0
             connection.execute("BEGIN" if readonly else "BEGIN IMMEDIATE")
             if not readonly:
                 initialize(connection)
@@ -297,8 +297,9 @@ def main() -> int:
                     mutate_record(record, path, args.operation, args.extra, connection)
                     save(connection, record)
             connection.execute("COMMIT")
-        # Do not stop units by name after sampling: systemd has no atomic
-        # invocation-conditional StopUnit, so a replacement could be targeted.
+        # Do not stop units by name here: systemd has no atomic
+        # invocation-conditional StopUnit. Drained units are released only by
+        # worktree_lifetime_release.py after a durable unit_release receipt.
         if args.operation == "bind-exec":
             os.environ["AIDEVOPS_MANAGED_WORKTREE"] = "pulse-cgroup-v1"
             # Intentional dispatcher-command execution, only after committed admission.

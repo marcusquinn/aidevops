@@ -30,6 +30,7 @@ REVISION_FILES = (
     "worktree_recovery_retry.py", "worktree_recovery_diagnostics.py", "worktree_recovery_retry_identity.py",
     "worktree_recovery_compact.py", "worktree_recovery_migrate.py",
     "worktree_recovery_retire.py", "worktree_recovery_retirement_transaction.py",
+    "worktree_retirement_filesystem.py",
     "worktree_recovery_legacy_policy.py", "worktree_recovery_migration_state.py",
     "worktree_archive_restore.py", "worktree_archive_snapshot.py", "worktree-archive-helper.sh",
     "worktree-recovery-migrate-helper.sh", "worktree-recovery-retire-helper.sh",

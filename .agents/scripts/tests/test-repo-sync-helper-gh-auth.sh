@@ -4,6 +4,14 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="${SCRIPT_DIR}/../repo-sync-helper.sh"
 
@@ -81,30 +89,30 @@ run_canonical_guard_case() {
 	ln -s "${SCRIPT_DIR}/../git" "${tmp_dir}/bin/git"
 	ln -s "${SCRIPT_DIR}/fixtures/repo-sync-fake-gh.sh" "${tmp_dir}/bin/gh"
 
-	/usr/bin/git init -q --bare "$remote"
-	/usr/bin/git init -q -b main "$repo" 2>/dev/null || {
-		/usr/bin/git init -q "$repo"
-		/usr/bin/git -C "$repo" checkout -q -b main
+	"$TEST_NATIVE_GIT" init -q --bare "$remote"
+	"$TEST_NATIVE_GIT" init -q -b main "$repo" 2>/dev/null || {
+		"$TEST_NATIVE_GIT" init -q "$repo"
+		"$TEST_NATIVE_GIT" -C "$repo" checkout -q -b main
 	}
-	/usr/bin/git -C "$repo" config user.name Test
-	/usr/bin/git -C "$repo" config user.email test@example.invalid
+	"$TEST_NATIVE_GIT" -C "$repo" config user.name Test
+	"$TEST_NATIVE_GIT" -C "$repo" config user.email test@example.invalid
 	printf 'seed\n' >"${repo}/README.md"
-	/usr/bin/git -C "$repo" add README.md
-	/usr/bin/git -C "$repo" commit -q -m seed
-	/usr/bin/git -C "$repo" remote add origin "$remote"
-	/usr/bin/git -C "$repo" push -q -u origin main
-	/usr/bin/git clone -q -b main "$remote" "${tmp_dir}/writer"
-	/usr/bin/git -C "${tmp_dir}/writer" config user.name Test
-	/usr/bin/git -C "${tmp_dir}/writer" config user.email test@example.invalid
+	"$TEST_NATIVE_GIT" -C "$repo" add README.md
+	"$TEST_NATIVE_GIT" -C "$repo" commit -q -m seed
+	"$TEST_NATIVE_GIT" -C "$repo" remote add origin "$remote"
+	"$TEST_NATIVE_GIT" -C "$repo" push -q -u origin main
+	"$TEST_NATIVE_GIT" clone -q -b main "$remote" "${tmp_dir}/writer"
+	"$TEST_NATIVE_GIT" -C "${tmp_dir}/writer" config user.name Test
+	"$TEST_NATIVE_GIT" -C "${tmp_dir}/writer" config user.email test@example.invalid
 	printf 'second\n' >"${tmp_dir}/writer/second.txt"
-	/usr/bin/git -C "${tmp_dir}/writer" add second.txt
-	/usr/bin/git -C "${tmp_dir}/writer" commit -q -m second
-	/usr/bin/git -C "${tmp_dir}/writer" push -q origin main
-	/usr/bin/git -C "$repo" fetch -q origin main
+	"$TEST_NATIVE_GIT" -C "${tmp_dir}/writer" add second.txt
+	"$TEST_NATIVE_GIT" -C "${tmp_dir}/writer" commit -q -m second
+	"$TEST_NATIVE_GIT" -C "${tmp_dir}/writer" push -q origin main
+	"$TEST_NATIVE_GIT" -C "$repo" fetch -q origin main
 	printf '{"git_parent_dirs":["%s"]}\n' "${tmp_dir}/parent" >"${tmp_dir}/home/.config/aidevops/repos.json"
 
 	local before
-	before=$(/usr/bin/git -C "$repo" show-ref)
+	before=$("$TEST_NATIVE_GIT" -C "$repo" show-ref)
 	local rc=0
 	env \
 		HOME="${tmp_dir}/home" \
@@ -112,7 +120,7 @@ run_canonical_guard_case() {
 		FAKE_GH_LOG="${tmp_dir}/gh.log" \
 		"$HELPER" check >"${tmp_dir}/stdout.log" 2>"${tmp_dir}/stderr.log" || rc=$?
 	local after
-	after=$(/usr/bin/git -C "$repo" show-ref)
+	after=$("$TEST_NATIVE_GIT" -C "$repo" show-ref)
 
 	LAST_CASE_DIR="$tmp_dir"
 	LAST_CASE_RC="$rc"
@@ -121,10 +129,10 @@ run_canonical_guard_case() {
 
 	# Exercise actual unpushed and dirty state, not just fake Git responses.
 	printf 'local-only\n' >"${repo}/local.txt"
-	/usr/bin/git -C "$repo" add local.txt
-	/usr/bin/git -C "$repo" commit -q -m local-only
+	"$TEST_NATIVE_GIT" -C "$repo" add local.txt
+	"$TEST_NATIVE_GIT" -C "$repo" commit -q -m local-only
 	printf 'staged\n' >>"${repo}/README.md"
-	/usr/bin/git -C "$repo" add README.md
+	"$TEST_NATIVE_GIT" -C "$repo" add README.md
 	printf 'unstaged\n' >>"${repo}/README.md"
 	printf 'untracked\n' >"${repo}/untracked.txt"
 	before=$(canonical_snapshot "$repo")
@@ -141,11 +149,11 @@ run_canonical_guard_case() {
 
 canonical_snapshot() {
 	local repo="$1"
-	/usr/bin/git -C "$repo" show-ref
-	/usr/bin/git -C "$repo" rev-parse HEAD
-	/usr/bin/git -C "$repo" write-tree
-	/usr/bin/git -C "$repo" diff --binary
-	/usr/bin/git -C "$repo" diff --cached --binary
+	"$TEST_NATIVE_GIT" -C "$repo" show-ref
+	"$TEST_NATIVE_GIT" -C "$repo" rev-parse HEAD
+	"$TEST_NATIVE_GIT" -C "$repo" write-tree
+	"$TEST_NATIVE_GIT" -C "$repo" diff --binary
+	"$TEST_NATIVE_GIT" -C "$repo" diff --cached --binary
 	cksum "${repo}/README.md" "${repo}/local.txt" "${repo}/untracked.txt"
 	return 0
 }

@@ -51,6 +51,19 @@ that file on startup and retry agent startup once when the dedicated key exists.
 The setup helper compares `ssh-add -L` public-key material rather than filenames;
 `ssh-add -l` reports fingerprints/comments and cannot prove which file was loaded.
 
+A plain `ssh-agent` does not survive a reboot, but `agent.env` does. Pulse and the
+headless runtime use `scripts/headless-ssh-agent-lib.sh`: when `agent.env` names an
+unreachable agent (`ssh-add -l` exit 2), they rerun `agent-start` without prompting
+and re-source the file, so script routines and workers inherit a live
+`SSH_AUTH_SOCK`. A live agent with no identities (exit 1) is reused, not replaced.
+`aidevops signing check` warns while `agent.env` is stale.
+
+`agent.env` exists for the dedicated headless signing key only; `agent-start` loads
+nothing else and never loads passphrase-protected keys. Any other key added to that
+agent by hand disappears at the next reboot. A routine that needs SSH access to
+another host should use its own scoped, passphrase-less key referenced with
+`IdentityFile` in `~/.ssh/config` (or `ssh -i`), not the interactive key in an agent.
+
 ## Verification
 
 `aidevops signing check` must report both a separate default signing key and a loaded

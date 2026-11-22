@@ -27,8 +27,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   detect-changed-sh:
@@ -38,6 +38,7 @@ jobs:
       has_sh_changes: ${{ steps.detect.outputs.has_sh_changes }}
       changed_files: ${{ steps.detect.outputs.changed_files }}
       is_pr: ${{ steps.detect.outputs.is_pr }}
+      scan_all: ${{ steps.detect.outputs.scan_all }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -52,16 +53,26 @@ jobs:
           IS_PUSH: ${{ github.event_name == 'push' }}
         run: |
           set -euo pipefail
-          is_pr="false"
           if [[ "${IS_PUSH}" == "false" ]]; then
-            is_pr="true"
             echo "is_pr=true" >> "$GITHUB_OUTPUT"
             # PR: scan only files changed in this PR
             changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" 2>/dev/null | grep '\.sh$' || true)
           else
             echo "is_pr=false" >> "$GITHUB_OUTPUT"
-            # Main push: scan all tracked .sh files (advisory mode)
+            # Main push: scan all tracked .sh files (advisory mode). The full
+            # list exceeds Linux's 128 KiB single env-string limit
+            # (MAX_ARG_STRLEN), so the scan job resolves it from its own
+            # checkout instead of receiving it through CHANGED_FILES (t19025).
             changed=$(git ls-files '*.sh' 2>/dev/null || true)
+            if [[ -n "$changed" ]]; then
+              printf 'Main push: advisory scan of %s tracked shell files.\n' "$(printf '%s\n' "$changed" | wc -l)"
+              {
+                echo "has_sh_changes=true"
+                echo "scan_all=true"
+                echo "changed_files="
+              } >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
 
           if [[ -z "$changed" ]]; then
@@ -72,10 +83,11 @@ jobs:
           fi
 
           printf 'Shell files to scan:\n%s\n' "$changed"
-          echo "has_sh_changes=true" >> "$GITHUB_OUTPUT"
           # Store newline-delimited list (used in next step)
           printf '%s' "$changed" > /tmp/changed_sh_files.txt
           {
+            echo "has_sh_changes=true"
+            echo "scan_all=false"
             printf 'changed_files='
             printf '%s' "$changed" | tr '\n' ' '
             printf '\n'
@@ -94,14 +106,20 @@ jobs:
         id: scan
         env:
           IS_PR: ${{ needs.detect-changed-sh.outputs.is_pr }}
+          SCAN_ALL: ${{ needs.detect-changed-sh.outputs.scan_all }}
           CHANGED_FILES: ${{ needs.detect-changed-sh.outputs.changed_files }}
         run: |
           set -euo pipefail
           chmod +x .agents/scripts/lint-shell-portability.sh
 
-          # Run scanner on changed files
-          # shellcheck disable=SC2086
-          output=$(bash .agents/scripts/lint-shell-portability.sh $CHANGED_FILES 2>&1) || scan_rc=$?
+          if [[ "$SCAN_ALL" == "true" ]]; then
+            # No FILES: the scanner reads every tracked .sh file itself.
+            output=$(bash .agents/scripts/lint-shell-portability.sh 2>&1) || scan_rc=$?
+          else
+            # Run scanner on changed files
+            # shellcheck disable=SC2086
+            output=$(bash .agents/scripts/lint-shell-portability.sh $CHANGED_FILES 2>&1) || scan_rc=$?
+          fi
           scan_rc=${scan_rc:-0}
 
           printf '%s\n' "$output"

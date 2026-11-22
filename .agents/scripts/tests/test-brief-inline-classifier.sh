@@ -508,7 +508,12 @@ if [[ "\$*" == *"issue view"* && "\$*" == *"--json body"* ]]; then
 	cat "$TMP/current-body.txt" 2>/dev/null || echo ""
 	exit 0
 fi
-# issue edit → success
+# issue edit → record the written body (GH#36118 assertions), then succeed
+prev=""
+for arg in "\$@"; do
+	[[ "\$prev" == "--body" ]] && printf '%s' "\$arg" >"$TMP/written-body.txt"
+	prev="\$arg"
+done
 exit 0
 EOF
 chmod +x "$STUB_BIN/gh"
@@ -613,6 +618,71 @@ if [[ "$(_count_body_edits)" -ge 1 ]]; then
 else
 	fail "D5 force enrich" \
 		"expected --body call, none found"
+fi
+
+# GH#36118: issue-sync owns only the head before the signature footer.
+_signed_body() {
+	local head="$1" version="$2"
+	printf '%s\n\n---\n*Synced from TODO.md by issue-sync-helper.sh*\n\n<!-- aidevops:origin:worker -->\n<!-- aidevops:sig -->\n---\n[aidevops.sh](https://aidevops.sh) %s automated scan.' "$head" "$version"
+	return 0
+}
+D_TAIL=$'### Files Scope\n- `a.sh`\n\n### Worker Guidance\nKeep holds.\n\n<!-- feedback-route:start:conflict:PR1:SHAabc -->\n## Merge Conflict Feedback\n### Files Scope\n- `b.sh`\n<!-- feedback-route:complete:conflict:PR1:SHAabc -->'
+rm -f "$D_REPO_ROOT/todo/tasks/t9024-brief.md"
+
+# Test D6: footer-only difference (version bump) with an appended tail → no write
+_reset_calls
+printf '%s\n\n%s\n' "$(_signed_body "## Outcome
+Same." v1.0.0)" "$D_TAIL" >"$TMP/current-body.txt"
+FORCE_ENRICH=false _enrich_update_issue "owner/repo" 9024 "t9024" "t9024: title" "$(_signed_body "## Outcome
+Same." v2.0.0)" >/dev/null 2>&1 || true
+if [[ "$(_count_body_edits)" -eq 0 ]]; then
+	pass "D6 footer-only change with appended tail → no-op skip"
+else
+	fail "D6 footer-only no-op" "expected no --body call, found: $(cat "$GH_CALLS_LOG" 2>/dev/null)"
+fi
+
+# Test D7: synced head changed → composed body + carried tail, one signature
+_reset_calls
+rm -f "$TMP/written-body.txt"
+FORCE_ENRICH=false _enrich_update_issue "owner/repo" 9024 "t9024" "t9024: title" "$(_signed_body "## Outcome
+Changed." v2.0.0)" >/dev/null 2>&1 || true
+d7_body=$(cat "$TMP/written-body.txt" 2>/dev/null || true)
+if [[ "$d7_body" == *"Changed."* && "$d7_body" == *"v2.0.0"* && "$d7_body" != *"v1.0.0"* &&
+	"$d7_body" == *"### Worker Guidance"* && "$d7_body" == *"feedback-route:complete:conflict:PR1"* &&
+	"$(grep -c '^<!-- aidevops:sig -->' <<<"$d7_body")" -eq 1 &&
+	"$(grep -c '^### Files Scope' <<<"$d7_body")" -eq 2 ]]; then
+	pass "D7 head change → composed body + appended tail preserved"
+else
+	fail "D7 tail preservation" "written body: $d7_body"
+fi
+
+# Test D8: composed head now owns Files Scope → appended duplicate dropped,
+# feedback-route block (with its own inner heading) carried verbatim
+_reset_calls
+rm -f "$TMP/written-body.txt"
+FORCE_ENRICH=false _enrich_update_issue "owner/repo" 9024 "t9024" "t9024: title" "$(_signed_body "## Outcome
+Changed.
+
+### Files Scope
+- \`c.sh\`" v2.0.0)" >/dev/null 2>&1 || true
+d8_body=$(cat "$TMP/written-body.txt" 2>/dev/null || true)
+if [[ "$d8_body" == *"- \`c.sh\`"* && "$d8_body" != *"- \`a.sh\`"* && "$d8_body" == *"- \`b.sh\`"* &&
+	"$d8_body" == *"### Worker Guidance"* ]]; then
+	pass "D8 composed scope supersedes appended duplicate; feedback block kept"
+else
+	fail "D8 scope dedupe" "written body: $d8_body"
+fi
+
+# Test D9: FORCE_ENRICH still carries the appended tail
+_reset_calls
+rm -f "$TMP/written-body.txt"
+FORCE_ENRICH=true _enrich_update_issue "owner/repo" 9024 "t9024" "t9024: title" "$(_signed_body "## Outcome
+Forced." v2.0.0)" >/dev/null 2>&1 || true
+d9_body=$(cat "$TMP/written-body.txt" 2>/dev/null || true)
+if [[ "$d9_body" == *"Forced."* && "$d9_body" == *"### Worker Guidance"* ]]; then
+	pass "D9 FORCE_ENRICH rewrite keeps appended tail"
+else
+	fail "D9 force tail" "written body: $d9_body"
 fi
 
 # =============================================================================

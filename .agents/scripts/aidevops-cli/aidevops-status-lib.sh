@@ -277,7 +277,38 @@ _status_runtime_bundle_integrity() {
 }
 
 # Status command
+_status_quick() {
+	local current_version
+	current_version=$(_status_active_bundle_version)
+	print_header "AI DevOps Framework Status (quick)"
+	echo "  Installed: $current_version"
+	echo "  Latest:    not checked (quick mode); run 'aidevops status' for the update check"
+	_status_runtime_bundle_integrity
+	echo ""
+	print_header "Required Dependencies"
+	local cmd
+	for cmd in git curl jq ssh; do check_cmd "$cmd" && print_success "$cmd" || print_error "$cmd - not installed"; done
+	echo ""
+	print_info "Full report (storage inventory, pulse stats, network update check): aidevops status --full"
+	return 0
+}
+
+# Status command. Flags: --quick/--brief (offline, seconds), --full (default).
 cmd_status() {
+	local arg
+	for arg in "$@"; do
+		case "$arg" in
+		--quick | --brief | -q)
+			_status_quick
+			return 0
+			;;
+		--full) ;;
+		*)
+			print_error "Unknown status option: $arg (use --quick or --full)"
+			return 1
+			;;
+		esac
+	done
 	print_header "AI DevOps Framework Status"
 	echo "=========================="
 	echo ""

@@ -1,0 +1,61 @@
+name: Post-merge Quality Advisory
+
+# GH#37499: consolidate non-blocking full-tree reports on the merged tree.
+# PR regression/portability/security gates stay in code-quality.yml unchanged.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.agents/scripts/**'
+      - '.agents/configs/complexity-thresholds.conf'
+      - '**/*.py'
+      - '**/*.sh'
+      - '**/*.md'
+      - '.github/workflows/code-quality*.yml'
+      - '!TODO.md'
+      - '!todo/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  advisory:
+    name: Full-tree quality reports (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Install report tools
+        run: |
+          pip install lizard pyflakes
+          sudo apt-get update -qq
+          sudo apt-get install -y shfmt
+      - name: Full-tree complexity totals
+        run: |
+          set -euo pipefail
+          for metric in function-complexity nesting-depth file-size; do
+            printf '\nAdvisory metric: %s\n' "$metric"
+            .agents/scripts/complexity-regression-helper.sh check --dry-run --metric "$metric"
+          done
+      - name: Python advisory reports
+        run: |
+          set -euo pipefail
+          source .agents/scripts/lint-file-discovery.sh
+          lint_python_files
+          if [ -z "$LINT_PY_FILES" ]; then
+            echo "No Python files found"
+            exit 0
+          fi
+          # These tools already reported warnings, not PR-blocking verdicts.
+          printf '%s\n' "$LINT_PY_FILES" | xargs lizard --CCN 8 --warnings_only || echo "::warning::Python complexity findings (advisory)"
+          printf '%s\n' "$LINT_PY_FILES" | xargs pyflakes || echo "::warning::Python import/usage findings (advisory)"

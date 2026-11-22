@@ -72,12 +72,33 @@ def _migrate_outscraper_locked(path, scripts):
     return True
 
 
+# GH#39412: same remedy wording as setup's Codex migration (setup/modules/config.sh).
+TOML_PARSER_REMEDY = 'needs Python 3.11+ or tomli (python3 -m pip install --user tomli, or install Python 3.11+)'
+
+
+class TomlParserMissing(Exception):
+    """The source is readable, but this interpreter has neither tomllib nor tomli."""
+
+
+def toml_loads():
+    # Codex CLI uses TOML; tomllib is stdlib from Python 3.11. Stock macOS
+    # python3 is 3.9, so accept tomli like lib/codex_mcp_toml.py does.
+    try:
+        import tomllib
+    except ImportError:
+        try:
+            import tomli as tomllib
+        except ImportError:
+            return None
+    return tomllib.loads
+
+
 def parse_config(path, original):
     if str(path).endswith('.toml'):
-        # Codex CLI uses TOML; tomllib is stdlib from Python 3.11. Older
-        # interpreters raise ImportError and stay fail-closed as unreadable.
-        import tomllib
-        return tomllib.loads(original)
+        loads = toml_loads()
+        if loads is None:
+            raise TomlParserMissing(str(path))
+        return loads(original)  # TOMLDecodeError subclasses ValueError.
     return json.loads(original)
 
 
@@ -88,6 +109,9 @@ def mcp_findings(path):
         # OpenCode: mcp; Claude/Cursor: mcpServers; Codex: mcp_servers.
         for key in ('mcp', 'mcpServers', 'mcp_servers'):
             yield from mcp_servers(path, config.get(key, {}))
+    except TomlParserMissing:
+        # Distinct from mcp-unreadable: the cause is the interpreter, not the file.
+        yield finding(path, 0, '', 'mcp-toml-parser-missing')
     except (OSError, ValueError, UnicodeError, AttributeError, ImportError):
         yield finding(path, 0, '', 'mcp-unreadable')
 

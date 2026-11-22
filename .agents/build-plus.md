@@ -22,7 +22,6 @@ subagents:
   # Code quality
   - code-standards
   - code-simplifier
-  - best-practices
   - auditing
   - secretlint
   - content-provenance
@@ -55,6 +54,7 @@ subagents:
   - vercel
   - cloudflare-mcp
   - idrive-e2
+  - runpod
   # Analytics / monitoring
   - posthog
   - sentry
@@ -89,13 +89,15 @@ subagents:
 
 Build+: keep going until fully resolved. Make announced tool calls. Solve autonomously. Greenfield = ambitious. Existing codebase = surgical.
 
-Research-only discovery uses `research-only`, never `general` or `explore`. For
+Research-only discovery inside the session root or staged artifacts uses
+`research-only`, never `general` or `explore`; for other repositories follow
+`reference/research-staging.md` "Cross-repository research". For
 inference over supplied evidence, the bounded canonical domain roles follow
 `reference/agent-routing.md` "Focused domain delegation" when available.
 
 ## Intent Detection
 
-- "What do you think..." / "How should we..." → **Deliberation**: launch at most 2 focused Explore agents, keep investigating locally, then synthesize their results. Don't code until approach confirmed.
+- "What do you think..." / "How should we..." → **Deliberation**: launch at most 2 focused `research-only` agents, keep investigating locally, then synthesize their results. Don't code until approach confirmed.
 - "Implement X" / "Fix Y" / "Add Z" → **Execution**: follow Build Workflow, iterate. Apply the shared pre-edit rule in `.agents/AGENTS.md` (including dispatcher exceptions).
 - "Review this" / "Analyze..." → **Analysis**: investigate and report.
 - Ambiguous → ask: "Implement now or discuss approach first?"
@@ -153,7 +155,7 @@ with supplied evidence; selection, exclusions and envelope: `reference/agent-rou
 | WordPress | `tools/wordpress/wp-dev.md` |
 | UI/layout/design/CSS | `tools/design/design-md.md` + `workflows/ui-verification.md` + `tools/ui/frontend-debugging.md`; load Playwright emulation only for an explicit or risk-justified browser matrix |
 | Design system/brand/style | `tools/design/design-md.md` + `tools/design/design-inspiration.md` + `tools/design/ui-ux-inspiration.md` + `tools/design/ui-ux-catalogue.toon` + `tools/design/brand-identity.md` |
-| Browser automation | `tools/browser/browser-automation.md` |
+| Browser automation | `tools/browser/browser-automation.md`; default **Playwright** (headless, headed-hidden, headed). **Playwriter** is a different tool: only when the user names it |
 | Accessibility | `tools/accessibility/accessibility-audit.md` |
 | Local dev / .local / ports / proxy / HTTPS / LocalWP | `services/hosting/local-hosting.md` |
 | Backblaze B2 / B2 cloud storage | `services/hosting/backblaze-b2.md` |

@@ -21,7 +21,9 @@ and fork PRs on public repos can never reach the host. Public repos keep free
 GitHub-hosted minutes.
 
 `runs-on` guidance: private repos use `[self-hosted, linux, <POOL_LABEL>]`;
-public repos stay on GitHub-hosted runners.
+public repos stay on GitHub-hosted runners. In particular, issue #37499 does not
+authorize a public aidevops pool: reduce CI demand without exposing private
+infrastructure through public runner or machine names in job logs.
 
 Shared or template workflows (starters synced into public and private repos)
 should keep one file for both: `runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}`,
@@ -39,6 +41,34 @@ fork pull-request workflows are off:
 
 The server-side pool (systemd, rootless or DinD containers, JIT registration) is
 operator-owned. `github-runner-org-helper.sh` prepares and verifies its inputs.
+
+### New private plugin repositories
+
+`wp-plugin-new-helper.sh create` calls `github-runner-org-helper.sh repo-ensure
+--repo <ORG>/<REPO>` immediately after repository creation, before the first
+identity-branch push/PR. The `quality` command also runs this check for existing
+repositories. Public repositories and personal accounts are skipped.
+
+The command discovers one private-only, selected-repository group and one custom
+label common to its registered runners. It refuses ambiguous groups/labels,
+inherited groups, workflow-restricted groups, or fork PR workflows that are not
+explicitly disabled. It never disables fork workflows or changes group policy.
+An org without selected-repository groups retains the GitHub-hosted fallback. For ambiguous
+pools, rerun with `--group <GROUP> --label <POOL_LABEL>`; `--dry-run` performs
+reads only and prints the commands without applying them. An empty ephemeral
+pool must first register a runner so the label can be verified.
+
+Enrollment uses the single-repository `PUT` endpoint, preserving all other group
+members (do **not** use `group-ensure --repos <NEW_REPO>`, which reconciles the
+entire membership list). It then sets the repository `CI_RUNNER` variable and
+reads back both settings. A permission failure stops plugin creation before the
+first PR, preserves the generated repository, and prints an admin retry command;
+once discovery succeeds it also prints the exact membership and variable commands.
+Run the retry with an authorized token (`admin:org` for classic tokens, or the
+equivalent fine-grained runner-group and repository Actions-variable permissions).
+After recovery, clone the preserved repository and resume customization/quality;
+do not rerun `create` against an existing repository. The final runtime check is
+still the first PR's job `runner_name` inspection above, not just variable presence.
 
 One-time onboarding per org:
 
@@ -184,7 +214,6 @@ runner containers, restart loops, or later container-name conflicts.
 ## Registry mirror
 
 Ephemeral inner `dockerd` instances start empty and can hit Docker Hub anonymous pull limits (`429 Too Many Requests`, Docker exit code 125). A private pull-through cache passed to the inner daemon with `--registry-mirror` avoids this. Setup, secrets, verification and the `github-runner-org-helper.sh status` mirror check: `reference/github-runner-registry-mirror.md`.
-
 
 ## Health checks
 

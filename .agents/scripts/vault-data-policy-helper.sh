@@ -12,23 +12,83 @@ source "${VAULT_POLICY_SCRIPT_DIR}/shared-constants.sh"
 # Shared with plugins/opencode-aidevops/local-only-policy.mjs (GH#34125).
 # Not overridable from the environment: the list defines what "local" means.
 VAULT_POLICY_LOCAL_PROVIDERS_FILE="${VAULT_POLICY_SCRIPT_DIR}/../configs/local-ai-providers.conf"
+# Same pattern as LOCAL_PROVIDER_ID_PATTERN in local-only-policy.mjs.
+VAULT_POLICY_LOCAL_PROVIDER_ID_RE='^[A-Za-z0-9._-]{1,64}$'
+
+# Operator-owned replacement list (GH#35723), resolved like the plugin:
+# ${XDG_CONFIG_HOME:-$HOME/.config}/aidevops/local-ai-providers.conf.
+# It is a trusted operator file, not an environment override of the list.
+_vault_policy_providers_override_file() {
+	local config_home="${XDG_CONFIG_HOME:-}"
+	if [[ -z "$config_home" ]]; then
+		[[ -n "${HOME:-}" ]] || return 1
+		config_home="${HOME}/.config"
+	fi
+	printf '%s/aidevops/local-ai-providers.conf' "$config_home"
+	return 0
+}
+
+# Mirrors assertOperatorConfigStat in local-only-policy.mjs: regular file, not
+# a symlink, mode exactly 600, current-user owned, at most 64 KiB.
+_vault_policy_operator_file_trusted() {
+	local config_file="$1"
+	[[ ! -L "$config_file" && -f "$config_file" ]] || return 1
+	local stat_fields=""
+	# GNU first: BSD stat rejects -c without output, while GNU stat treats -f
+	# as file-system mode and would print unrelated fields before failing.
+	stat_fields=$(stat -c '%a %u %s' "$config_file" 2>/dev/null) \
+		|| stat_fields=$(stat -f '%Lp %u %z' "$config_file" 2>/dev/null) \
+		|| return 1
+	local file_mode="" file_owner="" file_size=""
+	read -r file_mode file_owner file_size <<<"$stat_fields"
+	[[ "$file_mode" == "600" ]] || return 1
+	[[ -n "$file_owner" && "$file_owner" == "$(id -u)" ]] || return 1
+	[[ "$file_size" =~ ^[0-9]+$ ]] && [[ "$file_size" -le 65536 ]] || return 1
+	return 0
+}
+
+# Prints the provider list path to use. Returns 1 when nothing is local: a
+# present but untrusted override fails closed instead of using the shared list.
+_vault_policy_local_providers_file() {
+	local override_file=""
+	if override_file=$(_vault_policy_providers_override_file); then
+		local override_dir="${override_file%/*}"
+		local config_home="${override_dir%/*}"
+		if [[ -e "$override_file" || -L "$override_file" ]] \
+			|| { [[ -d "$override_dir" ]] && [[ ! -x "$override_dir" ]]; } \
+			|| { [[ -d "$config_home" ]] && [[ ! -x "$config_home" ]]; }; then
+			_vault_policy_operator_file_trusted "$override_file" || return 1
+			printf '%s' "$override_file"
+			return 0
+		fi
+	fi
+	printf '%s' "$VAULT_POLICY_LOCAL_PROVIDERS_FILE"
+	return 0
+}
 
 _vault_policy_is_local_model() {
 	local model_spec="$1"
 	local provider="${model_spec%%/*}"
 	[[ -n "$provider" ]] || return 1
+	local providers_file=""
+	providers_file=$(_vault_policy_local_providers_file) || return 1
 	# Missing list: nothing is local, so local-only work fails closed.
-	[[ -r "$VAULT_POLICY_LOCAL_PROVIDERS_FILE" ]] || return 1
+	[[ -r "$providers_file" ]] || return 1
 	local line=""
+	local matched=1
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		line="${line%%#*}"
-		line="${line//[[:space:]]/}"
+		# Trim only the edges: internal whitespace is an invalid provider ID.
+		line="${line#"${line%%[![:space:]]*}"}"
+		line="${line%"${line##*[![:space:]]}"}"
 		[[ -n "$line" ]] || continue
+		# Any invalid entry invalidates the whole list: nothing is local.
+		[[ "$line" =~ $VAULT_POLICY_LOCAL_PROVIDER_ID_RE ]] || return 1
 		if [[ "$line" == "$provider" ]]; then
-			return 0
+			matched=0
 		fi
-	done <"$VAULT_POLICY_LOCAL_PROVIDERS_FILE"
-	return 1
+	done <"$providers_file"
+	return "$matched"
 }
 
 _vault_policy_extract_metadata() {

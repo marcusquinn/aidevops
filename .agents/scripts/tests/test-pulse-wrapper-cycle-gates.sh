@@ -517,6 +517,93 @@ else
 	fail "supervisor prompt prevents external-workdir permission stalls"
 fi
 
+test_worker_lifecycle_reconciliation() {
+	local SCRIPT_DIR="${SOURCE_SCRIPT%/*}"
+	local canonical_tmp=""
+	canonical_tmp=$(cd "$TMP" && pwd -P) || return 1
+	local HOME="$canonical_tmp"
+	local AIDEVOPS_WORKSPACE_DIR="${canonical_tmp}/lifecycle-workspace"
+	local AIDEVOPS_LIFECYCLE_STATE_DIR=""
+	local AIDEVOPS_LIFECYCLE_DISABLED=0 AIDEVOPS_PRIVATE_WORKLOAD=0 PULSE_DRY_RUN=0 PULSE_CANARY_MODE=0
+	local state_dir="${AIDEVOPS_WORKSPACE_DIR}/worker-lifecycle"
+	local flag="" result=""
+	mkdir -p "$AIDEVOPS_WORKSPACE_DIR"
+	TIMEOUT_MODE="pass"
+	: >"$TIMEOUT_CALL_FILE"
+	_pulse_reconcile_worker_lifecycle
+	if [[ ! -e "$state_dir" && ! -s "$TIMEOUT_CALL_FILE" ]]; then
+		pass "lifecycle tick does not initialize absent state"
+	else
+		fail "lifecycle tick does not initialize absent state"
+	fi
+	if ! python3 -E -s -B "${SCRIPT_DIR}/../worker-lifecycle/worker-launch.py" --initialize \
+		--state-dir "$state_dir" --worktree "$canonical_tmp" -- python3 -c 'pass' >/dev/null 2>&1; then
+		fail "lifecycle native attempt fixture"
+		return 1
+	fi
+	local home_marker="~"
+	AIDEVOPS_WORKSPACE_DIR="${home_marker}/lifecycle-workspace"
+	for flag in AIDEVOPS_LIFECYCLE_DISABLED AIDEVOPS_PRIVATE_WORKLOAD PULSE_DRY_RUN PULSE_CANARY_MODE; do
+		printf -v "$flag" '%s' 1
+		_pulse_reconcile_worker_lifecycle
+		if [[ ! -s "$TIMEOUT_CALL_FILE" ]]; then
+			pass "lifecycle tick respects ${flag}"
+		else
+			fail "lifecycle tick respects ${flag}"
+		fi
+		printf -v "$flag" '%s' 0
+	done
+	TIMEOUT_MODE="timeout"
+	if _pulse_reconcile_worker_lifecycle && grep -q 'reconcile-gap exit=124' "$WRAPPER_LOGFILE" &&
+		[[ "$(<"$TIMEOUT_CALL_FILE")" == 10 ]]; then
+		pass "lifecycle timeout is bounded and cannot block the cycle"
+	else
+		fail "lifecycle timeout is bounded and cannot block the cycle"
+	fi
+	TIMEOUT_MODE="pass"
+	_pulse_reconcile_worker_lifecycle
+	result=$(PYTHONPATH="${SCRIPT_DIR}/../worker-lifecycle" python3 -B -m worker_lifecycle.registry --state-dir "$state_dir" status)
+	if jq -e '.runs == {"ended":1} and .events == 3 and .cleanup_authorized == false' <<<"$result" >/dev/null; then
+		pass "lifecycle cycle hook marks the exited native worker ended"
+	else
+		fail "lifecycle cycle hook marks the exited native worker ended" "$result"
+	fi
+	AIDEVOPS_LIFECYCLE_STATE_DIR="${home_marker}/lifecycle-workspace/worker-lifecycle"
+	: >"$TIMEOUT_CALL_FILE"
+	_pulse_reconcile_worker_lifecycle
+	result=$(PYTHONPATH="${SCRIPT_DIR}/../worker-lifecycle" python3 -B -m worker_lifecycle.registry --state-dir "$state_dir" status)
+	if [[ "$(<"$TIMEOUT_CALL_FILE")" == 10 ]] && jq -e '.events == 3' <<<"$result" >/dev/null; then
+		pass "lifecycle repeated ticks do not duplicate terminal observations"
+	else
+		fail "lifecycle repeated ticks do not duplicate terminal observations" "$result"
+	fi
+	AIDEVOPS_LIFECYCLE_STATE_DIR="${canonical_tmp}/unknown-state"
+	mkdir -m 700 "$AIDEVOPS_LIFECYCLE_STATE_DIR"
+	if _pulse_reconcile_worker_lifecycle && grep -q 'reconcile-gap exit=2' "$WRAPPER_LOGFILE" &&
+		[[ ! -e "${AIDEVOPS_LIFECYCLE_STATE_DIR}/registry.sqlite3" ]]; then
+		pass "lifecycle invalid state is reported without initialization or cycle failure"
+	else
+		fail "lifecycle invalid state is reported without initialization or cycle failure"
+	fi
+	return 0
+}
+
+test_worker_lifecycle_reconciliation
+if python3 - "${SOURCE_SCRIPT%/*}/pulse-wrapper.sh" <<'PY'
+from pathlib import Path
+import sys
+main = Path(sys.argv[1]).read_text().split('main() {', 1)[1]
+hook = main.index('_pulse_reconcile_worker_lifecycle || true')
+assert main.index('_pulse_setup_canary_mode "$@"') < hook
+for boundary in ('_pulse_setup_refill_only_mode', '_PULSE_BUSY_AT_BOOTSTRAP', '_pulse_check_idle_backoff_gate', 'local _rl_ts_file='):
+    assert hook < main.index(boundary), boundary
+PY
+then
+	pass "lifecycle hook precedes refill, busy, idle and cooldown exits after diagnostic mode setup"
+else
+	fail "lifecycle hook precedes refill, busy, idle and cooldown exits after diagnostic mode setup"
+fi
+
 printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1
 exit 0

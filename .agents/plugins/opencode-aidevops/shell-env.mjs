@@ -8,7 +8,7 @@
 
 import { existsSync, readFileSync } from "fs";
 import { isAbsolute, join } from "path";
-import { runtimePath } from "./runtime-path.mjs";
+import { managedCliPath, runtimePath } from "./runtime-path.mjs";
 import { projectLocalOnlyShellEnvironment } from "./local-only-shell-policy.mjs";
 
 /**
@@ -205,7 +205,9 @@ function prependFrameworkPaths(env, scriptsDir, agentsDir) {
   const pathParts = currentPath
     .split(":")
     .filter((part) => part && !preferredPaths.includes(part));
-  env.PATH = [...preferredPaths, ...pathParts].join(":");
+  const toolPath = [...preferredPaths, ...pathParts].join(":");
+  const cliPath = shellSessionOrigin(env) === "worker" ? managedCliPath(toolPath) : "";
+  env.PATH = [toolPath, cliPath].filter(Boolean).join(":");
 }
 
 function projectWorkerLineage(env) {
@@ -245,6 +247,9 @@ function projectFrameworkEnvironment(env, config) {
 
 function projectSessionIdentity(input, env, onSessionIdentity) {
   const { sessionId, modelId } = sessionModelIdentity(input);
+  // Stamp this runtime, never an inherited creator from another invocation.
+  env.AIDEVOPS_LIFECYCLE_RUNTIME_PID = sessionId ? String(process.pid) : "";
+  env.AIDEVOPS_LIFECYCLE_SESSION_ID = sessionId || "";
   if (sessionId) {
     env.OPENCODE_SESSION_ID = sessionId;
     env.AIDEVOPS_OPENCODE_SESSION_ID = sessionId;

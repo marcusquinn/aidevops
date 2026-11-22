@@ -96,6 +96,18 @@ The publisher must enter preparing successfully before invoking publication.
 Competing release starts use the same bounded recovery for eligible reservations;
 ordinary merge guards do not read or mutate publisher ownership. Status remains read-only.
 
+If release preparation refuses before entering `preparing` (including an
+expected/observed source mismatch), the exiting executor releases its own untouched
+reservation immediately with the same `abandoned-prepublication` receipt. This
+owner-only path re-reads the lane, requires the operation token and exact local
+host/PID/start identity, and uses CAS; it cannot release another live executor,
+foreign/legacy ownership, recovery state, or a concurrent `preparing` transition.
+It performs no publication or tag mutation. After successful cleanup, refresh the
+reviewed source set and retry the authorized release command without waiting.
+If an executor dies without this cleanup, the ordinary dead-owner grace still
+applies; status prints the reservation timestamp and guarded recovery command,
+not a `patch` retry that cannot resume the reserved lane.
+
 Age alone never unlocks a lane. Live/recent reservations, legacy/foreign owners,
 publication phases and aggregation recovery are not automatically released. A
 competing authorized release may instead finalize a `remote-publication` or
@@ -201,6 +213,26 @@ fetched protected `main`, reconciliation records a forward-only `stale-runtime/v
 deferral for the exact `exact-tag-deployment` lane revision. The reservation and
 all provenance checks remain intact; generic failures, conflicting identity, or
 an intervening lane revision cannot create the deferral.
+
+## Terminal cross-host local adoption
+
+An inactive terminal published lane cannot be reactivated just to fill another
+host's local state. Use the separate interactive-maintainer command
+`aidevops release adopt-published <SOURCE_PR> --tag vX.Y.Z`; the active-lane
+publication intent validator remains unchanged. A public tag or copied publisher
+receipt is never authorization. See `workflows/release.md` "Local convergence
+after publication on another host" for preconditions and exit code **10**.
+
+Adoption verifies the signed manifest, source membership, all channels, actual
+exact-tag postflight and materialized local deployment without dispatching or
+deploying. It reads the lane before verification and immediately before writing,
+binding evidence to both ref head and canonical JSON digest. A final read checks
+for drift after detached evidence persistence, before committing the consumable
+terminal receipt; successor consumption independently re-verifies the
+same fence. This is optimistic fencing, not an atomic cross-host transaction;
+drift fails closed and never rewrites terminal history. An active competitor or
+different terminal tag requires status/reconciliation of that lane, not a local
+override. Distinct local adoption intent/evidence cannot become publication intent.
 
 ## Verification
 

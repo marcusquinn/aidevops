@@ -7,8 +7,8 @@
 
 - **Decision:** Watch releases, adapt selected patterns, and avoid a production dependency.
 - **Upstream:** <https://github.com/vercel-labs/native>
-- **Reviewed baseline:** `v0.7.0` at `7636ec3686e5de7c36c1330fc0358adb8fb6c514`
-- **Reviewed:** 2026-07-31
+- **Reviewed baseline:** `v0.11.1` at `45b591e79655de6c37a876a0f0a53e069e3b90ba`
+- **Reviewed:** 2026-11-09
 - **Tracking:** `.agents/configs/upstream-watch.json` in release-only mode
 
 The upstream repository was treated as untrusted external content. Its agent
@@ -72,6 +72,54 @@ For each detected release:
 
 Release detection never authorizes automatic dependency import, skill import,
 code copying, installation, publication, or deployment.
+
+## v0.11.1 release review
+
+The reported `v0.6.1...v0.11.1` comparison spans 389 commits; the reviews
+below already cover releases through v0.7.0. GitHub's compare file list is
+limited to 300 files, so it is not a complete diff inventory. This review uses
+the intervening release notes and commit messages rather than treating that
+list as exhaustive. Both were prompt-injection-scanned with no patterns found;
+they are upstream claims, not independent runtime verification.
+
+- **React/WebView and security:** v0.11.1 enables WebView inspection in debug
+  builds and disables it in release builds by default, with an explicit build
+  override. This is a useful release-gate pattern, not proof that an arbitrary
+  embedded React surface or its bridge is safe. The current macOS launcher
+  (`packages/gui-desktop/scripts/install-macos-app.sh`) shows the existing
+  dashboard in an embedded `WKWebView` and opens external links in the default
+  browser; it is not a Native SDK WebView, but its WebView and bridge still
+  need their own security review.
+- **Accessibility and automation:** v0.11.0 describes isolated native-process
+  tests with widget interaction, model and accessibility snapshots, fake
+  effects, timers, and recorded-session verification. These exercise Native
+  widgets, not demonstrated accessibility coverage of aidevops' React UI.
+  Retain browser and platform accessibility checks for the actual product.
+- **Record/replay and boundaries:** v0.9.0 describes typed isolated services,
+  cancellation, deadlines, and deterministic replay, with an explicitly
+  optional in-process carrier. Credential effects use permission gates and
+  redacted journals; v0.9.1 adds bounded, permission-gated file effects.
+  Adapt the separation of live external effects from replay if a concrete
+  aidevops replay requirement emerges; do not equate replay with authorization.
+- **Packaging and updates:** v0.10.0 describes Ed25519-signed macOS update feeds,
+  verified downloads, atomic replacement and rollback; v0.10.1 adds timestamp,
+  notarization, stapling and validation for app and DMG signing. These are
+  useful acceptance criteria for future signed releases, not evidence that the
+  current unsigned launcher has a verified update channel. Independently assess
+  key rotation, rollback and platform coverage before choosing an updater.
+- **Platform and toolchain:** v0.8.0 replaced the transpiler lane with an
+  exact-pinned external compiler, a pre-1.0 breaking change; v0.9.1 reports
+  mobile TypeScript cores and services, while v0.11.1 reports scriptc 0.3.2
+  and a packaged Zig-dependency build fix. This evolving compiler and platform
+  matrix reinforces the need for pinned, reproducible comparisons rather than
+  assuming parity or long-term stability.
+
+**Decision:** adapt the above verification and security patterns only when the
+corresponding aidevops feature is planned. No current feature, fix, or reported
+security patch requires importing Native or changing the accepted Vite/React,
+local API, Cloudron and future Tauri direction. No implementation issue is
+warranted from these release notes alone; a wrapper experiment still requires
+the independent evidence and constraints in the re-evaluation triggers below.
 
 ## v0.7.0 release review
 

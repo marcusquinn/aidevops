@@ -40,6 +40,8 @@ imported_from: external
 
 **Canonicalization:** All pages have canonical tags; self-referencing on unique pages; HTTP→HTTPS; www/non-www consistent; trailing slash consistent.
 
+**Site hygiene (required on every audit):** Run [Site Hygiene Sweep](site-hygiene-sweep.md) for published sample/duplicate pages, plugin settings pointing at duplicates, internal links through redirects, indexed utility pages, and schema-default regressions.
+
 ### Site Speed & Core Web Vitals
 
 | Metric | Target |
@@ -59,6 +61,8 @@ Tools: PageSpeed Insights (`tools/browser/pagespeed.md`), Search Console Core We
 **HTTPS:** Valid SSL; no mixed content; HTTP→HTTPS redirects; HSTS header (bonus).
 
 **URLs:** Readable; keywords where natural; lowercase, hyphen-separated; no unnecessary parameters; consistent structure.
+
+**Email exposure:** Use [Email Exposure Audit](email-exposure-audit.md) to check raw HTML for readable addresses (including schema and plugin settings), then verify decoded links in a JS-enabled browser. Settings changes need owner approval and private backups.
 
 ## On-Page SEO Audit
 

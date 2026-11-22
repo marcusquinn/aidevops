@@ -25,8 +25,9 @@ Distribute Cloudron apps independently using a `CloudronVersions.json` version c
 - **Prerequisite**: Each version needs a registry-hosted image, normally built with `cloudron builder login` → `cloudron builder build`; on-server builds cannot be published
 - **Last upstream review**: `74e455bd03f5`; adopted registry builder and explicit version-image selection guidance
 - **Key file**: `CloudronVersions.json` — version catalog hosted at a public URL
+- **New package repos**: complete `cloudron-package-onboarding.md` (init, Pulse, upstream monitoring, labels, workflows, listing URLs)
 - **Listing**: [Cloudron Community Apps](https://ca.cloudron.io) accepts a public versions URL after the catalog contains a tested release; listing is optional
-- **Forum**: announce published community packages in [Community Apps (220)](https://forum.cloudron.io/category/220/community-apps); ask packaging questions in [App Packaging & Development (96)](https://forum.cloudron.io/category/96/app-packaging-development)
+- **Forum**: announce published community packages in [Community Packages (220)](https://forum.cloudron.io/category/220/community-packages); ask packaging questions in [App Packaging & Development (96)](https://forum.cloudron.io/category/96/app-packaging-development)
 
 ## Workflow
 
@@ -35,6 +36,101 @@ Keep these states distinct: **upstream detected** (a monitor finding),
 (immutable Docker sources resolve and a no-push build succeeds), and **catalog
 published** (a reviewed image is present in `CloudronVersions.json`). Detection
 does not authorize any later state.
+
+### Publication boundary: signed managed releases
+
+For managed catalog packages, use **upstream detected → release PR ready →
+release approval requested → approved → published**. After package tests,
+`preflight-release` and green PR preflight (including the no-push image build),
+run `cloudron-release-approval-helper.sh request <repo> <pr>`; do not merge.
+The helper holds the PR and creates a version-deduplicated release issue with
+the exact PR head, versions, changelog and evidence. `release-approval-required`
+is a dedicated signed gate, not `needs-maintainer-review`. The approval-only
+issue carries `no-auto-dispatch`; older unsigned requests are superseded.
+
+The maintainer runs only `sudo aidevops approve issue <N> <repo>`. Routine `r924`
+processes these issues every 30 minutes, requiring `VERIFIED` from
+`approval-helper.sh verify issue <N> <repo> --require-authority`, the unchanged
+head and green checks. It removes only its release hold and uses the normal
+full-loop merge gates. A changed head requires an updated issue and new signed
+approval. API/verification failures never authorize a merge.
+
+**Merge-time release gate (GH#37955).** Pulse and full-loop merges run
+`cloudron_release_merge_guard` (`cloudron-release-merge-guard-lib.sh`) for
+registered maintained packages. A PR whose `CloudronManifest.json` `version`
+differs from its base branch tip is a release even without a request: it merges
+only with exact-head authority (signed approval or the standing policy).
+Otherwise the guard adds `release-approval-required` + `hold-for-review` so `r924`
+requests approval or applies the policy. Unknown evidence blocks the merge.
+
+**Standing release policy (GH#37697, optional).** To stop routine upstream
+bumps queuing behind per-release signatures, a maintainer may sign one policy
+per repository: run `cloudron-release-approval-helper.sh policy-request <repo>`,
+then `sudo aidevops approve issue <policy-issue> <repo>`. While that
+`release-standing-policy` issue is open with a `VERIFIED` signature, `r924`
+publishes an **unsigned** request without another signature only when
+`cloudron_routine_bump.py` proves, at the exact PR head and merge-base diff:
+one open, trusted linked monitor finding equal to `upstreamVersion` (same
+major, and same minor under 0.x); a patch-only package bump with no other
+manifest change; additions-only changelogs; pinned files changed only by
+whole-token old→new upstream-version substitution; check files without hidden
+line-break characters whose existing lines change only by package/upstream
+version substitution, with inserted lines (never after a continued line) fully
+matching the signed
+`check_insertion_pattern` (default: expansion-free changelog assertions); no
+other, added, removed or renamed files; an OWNER/MEMBER request and
+same-repository PR with green checks and preflight, its release hold, no
+auto-merge and no `needs-maintainer-review` (the per-PR brake). The policy is
+re-proved immediately before merge, and the closing comment records
+`authority: standing policy #N`. Anything else, and any stale or unverifiable
+per-release signature, keeps the per-release path. Under an active policy, an
+unsigned request whose head moved is closed so a fresh exact-head request
+follows. Any edit or comment makes its signature stale.
+
+**0.x minor opt-in.** Run `cloudron-release-approval-helper.sh policy-request
+<repo> --zero-minor-routine --dry-run` to preview locally without GitHub writes;
+omit `--dry-run` to request the policy. This adds signed `"zero_minor":"routine"`
+and states that 0.x minor upstream releases are routine. Adding it requires a
+new policy signature; an existing signed policy is never silently rewritten.
+Absent the field, the same-minor restriction under 0.x is unchanged. With it,
+0.3.0 → 0.4.1 may qualify, but strictly increasing versions, the same-major
+boundary (including rejection of 0.x → 1.x), and all other rules remain binding.
+Unknown values fail closed. This semver-only flag also works with the
+`release-identity` and `pins` modes, not commit tracking. **Risk:** 0.x minors
+may contain breaking changes or destructive migrations. Use
+`needs-maintainer-review` as the per-PR brake before merge/publication.
+
+**Upgrading a signed policy.** Without `--supersede`, `policy-request` refuses
+to rewrite a signed policy. Re-run it with `--supersede` (add `--dry-run` to
+preview) to remove `persistent` from the old policy, comment, close it as not
+planned, and create the replacement. Sign the new issue with the printed
+`APPROVAL_COMMAND`; until then no standing policy applies.
+
+The policy issue is a long-lived non-task record (GH#37993): `policy-request`
+creates it with `persistent` + `no-auto-dispatch`, and issue creation adds no
+`status:*` label or assignee to `persistent`, dashboard, `release-approval-required`
+or `release-standing-policy` issues. Adding `persistent` to an already-signed
+policy keeps its signature valid; removing it does not. To revoke, remove
+`persistent` and close the issue. Closing alone also revokes: the persistent
+reopen guard reopens the issue with a comment, which stales the signature.
+
+For an interactive continuation authorized for one release, use
+`cloudron-release-approval-helper.sh process --repo <slug> --issue <N> --apply`.
+Omit `--apply` to preview the same scope without merging or publishing. `--repo`
+still requires a registered, maintained Cloudron package and admin/maintain
+permission; `--issue` selects only that approval issue number. Issue numbers are
+repository-local, so use both filters for a single release. Unscoped `process`
+(or `process --apply`) retains the routine default: all approval issues in all
+registered maintained Cloudron package repositories. Keep the full repos registry;
+no temporary `AIDEVOPS_REPOS_FILE` override is needed for scoping.
+
+After merge, the existing main catalog workflow owns publication. The routine
+waits boundedly and resumes verification later, then closes with evidence only
+when the catalog version, version tag and non-draft GitHub release all exist.
+GH#35649's workflow and upstream monitor own catalog-race recovery. Approval
+never enables publication, changes credentials/protection, deploys an app, or
+authorizes unrelated publication. See `cloudron-app-packaging.md` **Managed
+Package Lifecycle** for the complete operator contract.
 
 ```bash
 cloudron versions init  # creates CloudronVersions.json + DESCRIPTION.md, CHANGELOG, POSTINSTALL.md (edit all placeholders)
@@ -52,13 +148,15 @@ cloudron versions update --version=1.0.0 --state=published
 Commit these before the first registry build:
 
 - `CloudronVersions.json` initialized as `{ "stable": true, "versions": {} }`; never fabricate an entry before a real registry image exists.
-- `CloudronManifest.json` publishing metadata: `id`, `title`, `author`, `description`, `tagline`, `version`, `website`, `contactEmail`, `iconUrl`, `packagerName`, `packagerUrl`, non-empty `tags`, non-empty `mediaLinks`, `changelog`, and `minBoxVersion` of at least `9.1.0`. Add `packageUrl` when the listing must link to the package source repository; this requires `minBoxVersion` 10.0.0.
+- `CloudronManifest.json` publishing metadata: `id`, `title`, `author`, `description`, `tagline`, `version`, `website`, `contactEmail`, `iconUrl`, `packagerName`, `packagerUrl`, non-empty `tags`, non-empty `mediaLinks`, `changelog`, and `minBoxVersion` of at least `9.1.0`. `packageUrl` (package source repository) is optional; it requires `minBoxVersion` 10.0.0 and drops Cloudron 9.x for the whole catalog (see below).
 - A local square 256×256 PNG icon (`icon` normally points to it) and at least one privacy-reviewed product screenshot or hero. `mediaLinks` must use public HTTPS URLs; Cloudron recommends a 3:1 layout such as 1200×400, rendered at 2× (2400×800) for high-density screens.
 - A Cloudron-format changelog file when using `file://`: each release heading must be exactly `[X.Y.Z]`, because `cloudron versions add` does not parse Keep a Changelog headings such as `## [X.Y.Z]`. One file is enough: the aidevops release validator and preparation helper read the repository-relative `file://` path from the manifest's `changelog` field and preserve its heading format. Without a `file://` value, they fall back to `CHANGELOG.md`.
 - A short publishing runbook that records the canonical catalog URL, registry/repository ownership, asset provenance, test install, rollback, and Community Apps listing steps without storing credentials.
 - A managed GitHub Actions release workflow that creates and verifies keyless provenance for the immutable image digest and exact generated `CloudronVersions.json`; use `templates/workflows/cloudron-catalog-publish-caller.yml` and review `reference/release-artifact-provenance.md` before the first publication.
 
-`packageUrl` controls the package-source link in Community Apps and should point to the package repository. It requires `minBoxVersion` 10.0.0. Keep `packagerUrl` pointed at the package maintainer; do not repurpose it as the repository link. Packages that need Cloudron 9.1 compatibility should omit `packageUrl`, while packages that require a repository link should raise the minimum explicitly. `author` and `contactEmail` are deprecated in the manifest reference but are still required by the current CLI version-catalog validator.
+`packageUrl` is the Cloudron 10 manifest field for the package source repository and requires `minBoxVersion` 10.0.0. On the ca.cloudron.io listing, the "Package" link uses `packageUrl` when it is set and falls back to `packagerUrl`; the "By `packagerName`" link always uses `packagerUrl` (Cloudron added the fallback on 2026-11-11 after aidevops#36428; verified in the live listing bundle). Set `packagerUrl` to the maintainer's profile and, once the package requires Cloudron 10, `packageUrl` to the package repository. Do not point `packagerUrl` at the repository; that was a workaround from before Cloudron added the fallback. Packages that must stay on Cloudron 9.x omit `packageUrl`, so their Package link uses `packagerUrl`. The listing shows the newest published catalog entry, so metadata changes appear after the next published version.
+
+Adding `packageUrl` drops Cloudron 9.x for the whole catalog, not just the new version: Cloudron 9.x rejects `packageUrl` while parsing `CloudronVersions.json`, so one entry containing `packageUrl` stops 9.x servers resolving any version from that catalog, and `minBoxVersion` gating does not prevent it (aidevops-cloudron-app#66, cloudron-netbird-app#62). Packages that need Cloudron 9.x compatibility must omit `packageUrl` from every catalog entry. To adopt it, release a new package version with `minBoxVersion` 10.0.0, invert any package test that rejects `packageUrl`, update documented Cloudron requirements, and note the dropped 9.x support in the changelog. Never add `packageUrl` to an existing catalog entry. `author` and `contactEmail` are deprecated in the manifest reference but are still required by the current CLI version-catalog validator.
 
 Use package-controlled, stable asset URLs where possible. The CLI copies the manifest into each catalog entry, freezing `iconUrl` and `mediaLinks` per published version; pin assets to `raw.githubusercontent.com/<owner>/<repo>/<full commit SHA>/<path>`, not a branch.
 Keep the pinned commit reachable from the default branch: use a merge commit, not a squash merge, or re-pin to the merged `main` SHA before publishing. Squashing does not retain the original pinned commit in default-branch history; after the PR branch is deleted, that commit may eventually be garbage-collected.
@@ -170,8 +268,31 @@ New `aidevops init` Cloudron projects receive both the legacy tag-release caller
 and the pinned catalog caller. Existing packages opt in by copying
 `templates/workflows/cloudron-catalog-publish-caller.yml` to
 `.github/workflows/cloudron-catalog-publish.yml`, or running
-`cloudron-package-helper.sh scaffold catalog`. Existing callers are never
-overwritten. The caller pins the reusable workflow by immutable commit SHA;
+`cloudron-package-helper.sh scaffold catalog`. Existing workflows are never
+overwritten by default. To replace an inline publisher, run
+`cloudron-package-helper.sh scaffold catalog --migrate [package-directory]`
+(requires Ruby with its standard YAML library). Migration uses the managed
+template's immutable pin, which includes GH#35649 push-race recovery and GH#35650
+no-push PR builds. It moves unconditional package shell-script checks into
+`package_checks` and preserves literal image and paired CLI inputs. Unmapped
+jobs, steps or configuration are listed and block migration without modifying
+the original. In particular, integrate Nostr Relay's `runtime-smoke` explicitly;
+do not remove it to make migration pass. Already-reusable callers require manual
+pin/input review rather than being reset. Review every generated diff, including
+the standard publisher steps replaced by the reusable workflow.
+
+Roll out one migration PR per package after the helper lands. Keep
+`CloudronManifest.json` version unchanged, confirm it is already published and
+its existing tag/release are complete, and verify the PR preflight's no-push
+image build before merge. Do not modify catalog entries, tags or releases as
+part of migration. Only after reviewing the existing publication prerequisites,
+set the repository variable `CLOUDRON_PUBLICATION_ENABLED=true`; this is required
+for **both publication and upstream monitor reconcile**, including packages whose
+old inline workflow published without the variable. Enabling it with an
+unpublished manifest version or incomplete release can publish/reconcile that
+version, so an unchanged manifest alone is not proof of a no-publication rollout.
+
+The caller pins the reusable workflow by immutable commit SHA;
 `aidevops_ref` must match that pin and constrains attestation signer verification.
 Keep the original pin available when reconciling catalogs signed by that revision;
 updating a caller does not authorize an older signer automatically.
@@ -180,8 +301,14 @@ The caller grants the permission ceiling (`contents`, `packages`, `attestations`
 write and OIDC); each reusable job narrows its permissions. Only preflight runs
 on PRs: static manifest/Dockerfile checks, ShellCheck, optional `package_checks`
 (set this input to the package's static checks and pinned-upstream patch check),
-and the real CLI catalog dry run above. No publication credential is exposed to
-those commands. The CLI version and npm sha512 integrity are pinned together;
+the real CLI catalog dry run above, and a no-push `linux/amd64` image build at
+the validated SHA. Preflight proves the image builds before merge: a failing
+Dockerfile fails that same check, even when publication is disabled or the version
+already exists in the catalog. Its 45-minute job timeout bounds the build, and its
+read-only token has no GHCR write permission. No registry login or publication
+credential is exposed to those commands. The PR and main builds share the platform
+setting, image tag, metadata output and build context; only main may push.
+The CLI version and npm sha512 integrity are pinned together;
 the registry metadata and installed lockfile integrity must both match, and
 lifecycle scripts are disabled. Override both CLI inputs together after review.
 This pins the CLI package, not its entire transitive npm dependency graph; it is
@@ -191,13 +318,50 @@ with an explicit image, which a stateless runner needs even for `versions update
 Publication is disabled until the repository **variable**
 `CLOUDRON_PUBLICATION_ENABLED` equals `true`. Even then, only `push` or
 `workflow_dispatch` runs on `refs/heads/main` may publish (including no
-`pull_request_target` exception). Add the explicitly passed repository **secret**
-`CLOUDRON_RELEASE_PAT`: a fine-grained PAT restricted to this package repository,
-with Contents write access for its catalog commit and tag. Grant only any
-additional access required by the repository's existing branch policy; this
-workflow never changes or bypasses that policy. The normal job token pushes to
-GHCR. Review protection, Actions permissions, package checks and credentials
-before enabling the variable. Do not test publication against a real catalog.
+`pull_request_target` exception). No personal token is needed under the
+protection baseline below: the per-run job token (scoped to this repository,
+expiring with the job) pushes to GHCR and, in the final publish step only,
+pushes the catalog commit and tag. That is narrower than any PAT and needs no
+rotation. The caller still forwards the optional repository **secret**
+`CLOUDRON_RELEASE_PAT`; set it only when rules on `main` block a direct
+job-token push (required pull requests, status checks or deployments, or
+restricted updates). The approval, scaffold and monitor helpers check
+`gh api repos/<owner/repo>/rules/branches/main` and require the secret only in
+that case; classic branch protection is not inspected. This workflow never
+changes or bypasses branch policy. Review protection, Actions permissions and
+package checks before enabling the variable. Do not test publication against a
+real catalog.
+
+**When a publication PAT is needed:** reuse one purpose-scoped fine-grained
+`CLOUDRON_RELEASE_PAT` per owner, separate from `SYNC_PAT`. Select **Only select
+repositories** and include every package repository that needs it (for example,
+the owner's `cloudron-*-app` repositories). Grant repository **Contents:
+read/write** and the automatically included **Metadata: read** only; no workflow
+or user permissions. Store the value once in gopass, not once per repository.
+
+**Add a new package repo:** open GitHub **Settings → Developer settings →
+Fine-grained tokens → CLOUDRON_RELEASE_PAT → Edit** and add the repository to
+the existing token's access list if absent. Editing access leaves the value
+unchanged. Set the repository's Actions secret from gopass without displaying it:
+
+```bash
+aidevops secret CLOUDRON_RELEASE_PAT -- sh -c 'printf %s "$CLOUDRON_RELEASE_PAT" | gh secret set CLOUDRON_RELEASE_PAT --repo OWNER/REPO'
+```
+
+GitHub user accounts have no account-level Actions secrets: set the same value
+in each repository that needs it. **First time / value lost:** create the token
+only if none exists; if its value is lost, **Regenerate** the existing token
+(permissions and repository list are retained). Run
+`aidevops secret set CLOUDRON_RELEASE_PAT` in a terminal to save the value in
+gopass. Then set the secret from gopass in **every repository listed on the
+token**: regeneration revokes the old value and invalidates every existing copy.
+Never paste values into chat or logs.
+
+**Verify distribution without reading values:** run
+`gh secret list --repo OWNER/REPO --app actions` for each repository updated and
+confirm `CLOUDRON_RELEASE_PAT` is listed. Presence alone does not prove the
+token's repository access, permissions or branch-policy bypass; review those
+separately. Do not trigger a real publication to test token distribution.
 
 **Repository protection:** before enabling publication, a maintainer should
 deliberately apply these two repository rulesets with `enforcement: active` and
@@ -228,7 +392,13 @@ Requiring pull requests and required checks is a separate, optional policy, not
 part of this baseline. It blocks these workflows' direct pushes to `main` unless
 the owner is an authorized bypass actor and the pushes authenticate with owner
 PATs (`CLOUDRON_RELEASE_PAT` for catalog publication, `SYNC_PAT` for sync
-workflows). This bypass path is **untested with fine-grained PATs**; do not
+workflows). If you adopt it, one fine-grained PAT covering all affected package
+repositories per owner and purpose is enough: Contents write for publication;
+see `reference/sync-pat-platforms.md` for sync permissions. Keep release and sync
+tokens separate; extend each token's selected repository list rather than
+creating a token per repository.
+This bypass path is
+**untested with fine-grained PATs**; do not
 recommend or enable it without separately verifying the token permissions,
 bypass configuration and affected workflows.
 
@@ -243,11 +413,31 @@ publication. A tag with absent or mismatched provenance fails closed; investigat
 it rather than deleting or overwriting it automatically.
 
 The generated catalog is attested and its exact bundle verified before a
-catalog-only commit and tag are pushed atomically. Concurrent changes to `main`
-reject the push; rerun against the new revision after review. Caller concurrency
+catalog-only commit and tag are pushed atomically. If `main` advances, publication
+fetches it and retries once after rebasing only the catalog commit. Every
+intervening change must be allowlisted documentation or metrics/Star History
+assets (`README.md`, `docs/`, `metrics/`, `.github/metrics/`,
+`.github/star-history/`, or root `star-history.svg`/`star-history-dark.svg`).
+Package inputs, catalog changes, rewritten ancestry, conflicts, or a second race
+fail closed. Catalog bytes remain unchanged, and the commit records the original
+validated SHA for both catalog and image attestation verification. The publish
+commit is created through the Git Database API so GitHub signs it, then rebuilt
+locally and pushed atomically with the tag; if signing is unavailable, the
+workflow warns and pushes the unsigned commit. Check with `gh api
+repos/OWNER/REPO/commits/vX.Y.Z --jq .commit.verification` (`verified: true` for
+signed releases; tags published earlier stay unsigned). Caller concurrency
 serializes main runs and never cancels an in-flight publication. Existing
 catalogs without this workflow's attestations require an owner-reviewed
 provenance adoption before release reconciliation; it never fabricates evidence.
+
+The daily `cloudron-package-monitor-helper.sh upstream` check reports a remote
+main manifest version missing from the catalog when publication is enabled and
+no catalog run is active. With `--apply` and ADMIN/MAINTAIN authority it dispatches
+the existing main workflow once per version, with a local persistent receipt
+under `~/.aidevops/cache/cloudron-catalog-reconcile/`. Failed dispatches may retry;
+a successfully dispatched but failed workflow requires investigation before
+removing that version's receipt. This resumes already-authorized publication;
+it does not enable publication, alter caller pins, or bypass workflow gates.
 
 The catalog workflow creates the GitHub release itself, from the tagged
 catalog's embedded version changelog, after checking tag ancestry, public image
@@ -275,11 +465,26 @@ beside the catalog does not close this gap because the same compromised host can
 replace both. Full workflow and verification pattern:
 `reference/release-artifact-provenance.md`.
 
+Operators verifying an image published through the reusable workflow must name
+that workflow as signer. The certificate's signer workflow lives in the aidevops
+repository, not the package repository, so bare `--repo` (which assumes a
+same-repo signer) fails with `verifying with issuer "sigstore.dev"`:
+
+```bash
+gh attestation verify oci://<image@digest> --repo <owner>/<package-repo> \
+  --signer-workflow marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml \
+  --source-ref refs/heads/main [--source-digest <merge sha>] [--signer-digest <pinned aidevops sha>]
+```
+
 ## Distribution
 
 - **Dashboard**: add `CloudronVersions.json` URL under Community apps in dashboard settings — updates appear automatically
 - **CLI**: `cloudron install --versions-url <url>`
-- **Community listing**: sign in to [Cloudron Community Apps](https://ca.cloudron.io), open the publisher's apps, add the same versions URL, and confirm the imported title, icon, screenshot, changelog, and install URL. The listing is optional and does not host the catalog. Both the listing and forum announcement are publication actions that require explicit authorization. Then announce it in the forum's [Community Apps category](https://forum.cloudron.io/category/220/community-apps).
+- **Community listing**: sign in to [Cloudron Community Apps](https://ca.cloudron.io), open the publisher's apps, add the same versions URL, and confirm the imported title, icon, screenshot, changelog, and install URL. The listing is optional and does not host the catalog. Its header shows the manifest `upstreamVersion`, not the package `version`; that is expected (observed 2026-11-07). Both the listing and forum announcement are publication actions that require explicit authorization. Then announce it in the forum's [Community Packages category](https://forum.cloudron.io/category/220/community-packages).
+- **Forum post drafts**: the forum is NodeBB, and its composer needs raw Markdown. Never hand over rendered chat output for pasting: rendered text loses the Markdown, so images become headings, code blocks become inline text, and lists merge into headings (observed 2026-11-07). Write the post as a raw, body-only `.md` file in the temp workspace, with no title, category, tag or signature lines (NodeBB adds the user's signature). Give the title separately. Keep claims short and specific, and state known limits first, such as no Cloudron SSO or unfinished upstream features. Agents draft only; the user posts.
+  - **Remote handoff**: without a shared filesystem, transfer the raw `.md` file to the user's computer through an approved authenticated channel, such as SCP/SFTP over the existing SSH connection or an authenticated file download. Provide the exact remote source and an absolute local destination path (not `~`-relative, which quoting stops the shell expanding, and preferably free of quotes and `$`) for that transfer; do not publish the draft at a public URL. The remote host's clipboard is not the browser computer's clipboard.
+  - **Local clipboard**: on the computer running the browser, copy the same local file that the transfer wrote, using `pbcopy < '<local-destination>'` (macOS), `wl-copy < '<local-destination>'` (Linux Wayland), or `xclip -selection clipboard < '<local-destination>'` (Linux X11). Substitute an absolute path; a quoted `~/` path does not expand. Single quotes keep `$`, backticks and spaces literal; replace any embedded single quote in the path with `'\''`. If the relevant tool is unavailable, open that local file in a plain-text editor and copy its raw Markdown, not a rendered preview.
+  - **Post verification**: after the user posts or edits, re-fetch the topic, identify the specific post by its post ID, and verify its intended content, images, code blocks and links. For an edit, check that post's own edited timestamp against the expected edit time as well as its content; the topic's modified timestamp alone does not confirm that the post edit landed.
 
 ## Community Packages (9.1+)
 

@@ -88,14 +88,75 @@ def blocker_value_line:
         end
     end;
 
+def possible_line_marker($pattern):
+  # A marker either exists literally or is joined by same-line comments.
+  # Multiline comments preserve line boundaries in both production parsers.
+  # This is only a conservative prefilter: fences, prefixes and real comment
+  # state remain the responsibility of the unchanged line parsers below.
+  if test($pattern; "i") then true
+  elif contains("<!--") then gsub("<!--[^\n]*?-->"; "") | test($pattern; "i")
+  else false end;
+
 def blocker_text:
-  visible_text | gsub("\r"; "") | split("\n")
-  | map(select(test("^[[:space:]]*([-*+][[:space:]]+)?(\\*\\*)?blocked[- ]by(\\*\\*)?[[:space:]]*:"; "i"))
-    | sub("^[[:space:]]*([-*+][[:space:]]+)?"; "") | blocker_value_line)
-  | join("\n");
+  if (gsub("\r"; "") | possible_line_marker("blocked[- ]by")) then
+    visible_text | gsub("\r"; "") | split("\n")
+    | map(select(test("^[[:space:]]*([-*+][[:space:]]+)?(\\*\\*)?blocked[- ]by(\\*\\*)?[[:space:]]*:"; "i"))
+      | sub("^[[:space:]]*([-*+][[:space:]]+)?"; "") | blocker_value_line)
+    | join("\n")
+  else "" end;
+
+# Twins of issue-hold-marker-lib.sh: do not reuse dependency visible_text,
+# whose fence/comment ordering and Markdown handling have different semantics.
+def hold_normalized_line:
+  def strip_prefix($remaining):
+    if $remaining == 0 then .
+    else . as $before
+      | sub("^([[:space:]]+|>[[:space:]]*|([-+*]|[0-9]+[.)])[[:space:]]+|\\[[ xX]\\][[:space:]]+|#{1,6}[[:space:]]+|\\*\\*|__|\\*|_)"; "")
+      | if . == $before then . else strip_prefix($remaining - 1) end
+    end;
+  strip_prefix(8);
+
+def hold_fence:
+  (try capture("^(?<marker>`{3,}|~{3,})(?<rest>.*)$") catch null) // null;
+
+# Consume comments left to right, retaining text on either side on this line.
+def hold_strip_comments:
+  if .comment then
+    (.line | index("-->")) as $end
+    | if $end == null then .line = ""
+      else .line = .line[$end + 3:] | .comment = false | hold_strip_comments end
+  else
+    (.line | index("<!--")) as $start
+    | if $start == null then .out += .line | .line = ""
+      else .out += .line[:$start] | .line = .line[$start + 4:]
+        | .comment = true | hold_strip_comments end
+  end;
+
+def operational_hold:
+  if possible_line_marker("defer[[:space:]]+until|do[-[:space:]]+not[-[:space:]]+dispatch|on[-[:space:]]+hold|hold[[:space:]]+for|paused") then
+  reduce (split("\n")[]) as $line (
+    {fence: "", comment: false, held: false};
+    if .held then .
+      elif .fence != "" then
+        ($line | hold_normalized_line | hold_fence) as $candidate
+        |
+        if $candidate != null and $candidate.marker[0:1] == .fence[0:1]
+          and ($candidate.marker | length) >= (.fence | length)
+          and ($candidate.rest | test("^[[:space:]]*$")) then .fence = "" else . end
+      else
+        ({line: $line, out: "", comment: .comment} | hold_strip_comments) as $visible
+        | .comment = $visible.comment
+        | ($visible.out | hold_normalized_line) as $normalized
+        | ($normalized | hold_fence) as $opener
+        | if $opener != null then .fence = $opener.marker
+          elif ($normalized | startswith("|") or endswith("|") or ([scan("\\|")] | length) >= 2) then .
+          else .held = ($normalized | test("^(defer[[:space:]]+until|do[-[:space:]]+not[-[:space:]]+dispatch|on[-[:space:]]+hold|hold[[:space:]]+for|paused)([[:space:]:]|$)"; "i")) end
+      end
+  ) | .held
+  else false end;
 
 def defer_marker:
-  test("defer until|do[-[:space:]]not[-[:space:]]dispatch|on[-[:space:]]hold|HUMAN_UNBLOCK_REQUIRED|hold for |paused[[:space:]:]"; "i");
+  contains("HUMAN_UNBLOCK_REQUIRED") or operational_hold;
 
 def issue_number:
   if type == "number" and . >= 0 and floor == . then .

@@ -34,6 +34,7 @@ cp "$SHIM_SOURCE" "$TMP_ROOT/shim/gh"
 cp "${REPO_ROOT}/.agents/scripts/gh-native-transport-lib.sh" "$TMP_ROOT/shim/gh-native-transport-lib.sh"
 cp "${REPO_ROOT}/.agents/scripts/gh-api-guards-lib.sh" "$TMP_ROOT/shim/gh-api-guards-lib.sh"
 cp "${REPO_ROOT}/.agents/scripts/gh-write-policy-lib.sh" "$TMP_ROOT/shim/gh-write-policy-lib.sh"
+cp "${REPO_ROOT}/.agents/scripts/gh-closing-reference-lib.sh" "$TMP_ROOT/shim/gh-closing-reference-lib.sh"
 chmod +x "$TMP_ROOT/shim/gh"
 export GH_CALL_LOG="$TMP_ROOT/gh-calls.log"
 export PATH="$TMP_ROOT/bin:$PATH"
@@ -197,13 +198,17 @@ guarded_graphql_sources=(
 	"${REPO_ROOT}/.agents/scripts/full-loop-helper-merge-authority.sh"
 	"${REPO_ROOT}/.agents/scripts/full-loop-helper-merge-prospective.sh"
 	"${REPO_ROOT}/.agents/scripts/full-loop-helper-merge-cleanup.sh"
+	"${REPO_ROOT}/.agents/scripts/full-loop-helper-merge-transport.sh"
 	"${REPO_ROOT}/.agents/scripts/post-merge-review-scanner.sh"
 	"${REPO_ROOT}/.agents/scripts/pulse-nmr-approval.sh"
 )
 guard_failed=0
+# GH#38129: the adapter may delegate through one `_<module>_attempt "$var"`
+# wrapper (GH#35888's commit-permission read); anything else stays unbounded.
+bounded_graphql_pattern='_[a-z0-9_]+_gh_(read|call)([[:space:]]+(read|write))?([[:space:]]+_[a-z0-9_]+_attempt[[:space:]]+"\$[a-z_]+")?[[:space:]]+gh[[:space:]]+api[[:space:]]+graphql'
 for guarded_source in "${guarded_graphql_sources[@]}"; do
 	while IFS= read -r graphql_line; do
-		if [[ ! "$graphql_line" =~ _[a-z0-9_]+_gh_(read|call)([[:space:]]+(read|write))?[[:space:]]+gh[[:space:]]+api[[:space:]]+graphql ]]; then
+		if [[ ! "$graphql_line" =~ $bounded_graphql_pattern ]]; then
 			fail "hot-path GraphQL calls use bounded adapters" "${guarded_source}: ${graphql_line}"
 			guard_failed=1
 		fi

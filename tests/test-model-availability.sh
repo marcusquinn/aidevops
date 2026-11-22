@@ -109,6 +109,122 @@ mkdir -p "$NO_GOPASS_BIN"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$NO_GOPASS_BIN/gopass"
 chmod +x "$NO_GOPASS_BIN/gopass"
 
+# Direct resolver regressions use only synthetic files and no HTTP probes.
+test_static_credential_resolution() {
+	local mode="$1"
+	local fixture_home="$TEST_DB_DIR/credential-home-$mode"
+	mkdir -p "$fixture_home/.config/aidevops" "$fixture_home/.local/share/opencode"
+	HOME="$fixture_home" PATH="$NO_GOPASS_BIN:$PATH" run_with_timeout 30 bash -s "$HELPER" "$mode" <<'BASH'
+set -euo pipefail
+source "$1" help >/dev/null
+unset ANTHROPIC_API_KEY OPENAI_API_KEY GOOGLE_API_KEY GEMINI_API_KEY
+UNRELATED_VARIABLE=preserved
+cat >"$HOME/.config/aidevops/credentials.sh" <<'CONFIG'
+export OPENAI_API_KEY='fixture-file-openai'
+export GEMINI_API_KEY="fixture-file-gemini"
+UNRELATED_VARIABLE=changed
+printf 'unexpected configuration output'
+touch "$HOME/command-ran"
+UNRELATED_KEY=fixture >"$HOME/redirection-ran"
+export ANTHROPIC_API_KEY="$(touch "$HOME/substitution-ran")"
+CONFIG
+cp "$HOME/.config/aidevops/credentials.sh" "$HOME/original-credentials"
+
+assert_key() {
+	local provider="$1"
+	local expected="$2"
+	local source_name="$3"
+	resolve_api_key "$provider" >"$HOME/result"
+	if [[ "$(<"$HOME/result")" != "$expected" || "$RESOLVED_API_KEY_SOURCE" != "$source_name" ]]; then
+		printf 'Unexpected resolver outcome: %s\n' "$source_name" >&2
+		return 1
+	fi
+	return 0
+}
+
+if [[ "$2" == parser ]]; then
+assert_key openai fixture-file-openai credentials:OPENAI_API_KEY
+assert_key google fixture-file-gemini credentials:GEMINI_API_KEY
+
+# All gopass aliases precede all file aliases; environment precedes both.
+aidevops_gopass_secret() {
+	local name="$1"
+	[[ "$name" == GEMINI_API_KEY ]] || return 1
+	printf '%s' fixture-gopass-gemini
+	return 0
+}
+printf '%s\n' 'GOOGLE_API_KEY=fixture-file-google' >>"$HOME/.config/aidevops/credentials.sh"
+assert_key google fixture-gopass-gemini gopass:GEMINI_API_KEY
+GOOGLE_API_KEY=fixture-env-google
+assert_key google fixture-env-google env:GOOGLE_API_KEY
+unset GOOGLE_API_KEY
+aidevops_gopass_secret() { return 1; }
+
+# Preserve the existing parser's quoting, last-assignment and tenant behavior.
+printf '%s\n' 'OPENAI_API_KEY=fixture-bare' 'export OPENAI_API_KEY="fixture-last"' >>"$HOME/.config/aidevops/credentials.sh"
+assert_key openai fixture-last credentials:OPENAI_API_KEY
+printf '%s\n' 'export AIDEVOPS_ACTIVE_TENANT="fixture"' >>"$HOME/.config/aidevops/credentials.sh"
+mkdir -p "$HOME/.config/aidevops/tenants/fixture"
+printf '%s\n' "export OPENAI_API_KEY='fixture-tenant'" >"$HOME/.config/aidevops/tenants/fixture/credentials.sh"
+assert_key openai fixture-tenant credentials:OPENAI_API_KEY
+fi
+
+[[ "$UNRELATED_VARIABLE" == preserved ]]
+[[ ! -e "$HOME/command-ran" && ! -e "$HOME/redirection-ran" && ! -e "$HOME/substitution-ran" ]]
+
+# Missing keys and parser failures retain the read-only OAuth fallback.
+printf '%s\n' '{"openai":{"type":"oauth"}}' >"$HOME/.local/share/opencode/auth.json"
+printf '%s\n' 'OPENAI_API_KEY=""' >"$HOME/.config/aidevops/credentials.sh"
+assert_key openai oauth-refresh-available auth-json-oauth:openai
+mkdir -p "$HOME/node-bin"
+node_double="$HOME/node-bin/node"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 127' >"$node_double"
+chmod +x "$node_double"
+export PATH="$HOME/node-bin:$PATH"
+cp "$HOME/original-credentials" "$HOME/.config/aidevops/credentials.sh"
+assert_key openai oauth-refresh-available auth-json-oauth:openai
+[[ "$UNRELATED_VARIABLE" == preserved ]]
+[[ ! -e "$HOME/command-ran" && ! -e "$HOME/redirection-ran" && ! -e "$HOME/substitution-ran" ]]
+rm "$HOME/.local/share/opencode/auth.json"
+if resolve_api_key openai >"$HOME/result"; then
+	exit 1
+fi
+[[ -f "$HOME/.config/aidevops/credentials.sh" && ! -s "$HOME/result" && -z "$RESOLVED_API_KEY_SOURCE" ]]
+[[ "$UNRELATED_VARIABLE" == preserved ]]
+[[ ! -e "$HOME/command-ran" && ! -e "$HOME/redirection-ran" && ! -e "$HOME/substitution-ran" ]]
+if [[ "$2" == no-runtime ]]; then
+printf '%s\n' '{"openai":{"type":"oauth"}}' >"$HOME/.local/share/opencode/auth.json"
+printf '%s\n' '#!/usr/bin/env bash' 'printf partial-output' 'exec sleep 30' >"$node_double"
+assert_key openai oauth-refresh-available auth-json-oauth:openai
+[[ "$UNRELATED_VARIABLE" == preserved ]]
+[[ ! -e "$HOME/command-ran" && ! -e "$HOME/redirection-ran" && ! -e "$HOME/substitution-ran" ]]
+rm "$HOME/.local/share/opencode/auth.json"
+fi
+rm "$HOME/.config/aidevops/credentials.sh"
+if resolve_api_key openai >"$HOME/result"; then
+	exit 1
+fi
+[[ ! -s "$HOME/result" && -z "$RESOLVED_API_KEY_SOURCE" ]]
+BASH
+	return $?
+}
+
+section "Non-executing Credential Resolution"
+if command -v node >/dev/null 2>&1; then
+	if test_static_credential_resolution parser; then
+		pass "static selected-key lookup preserves precedence and OAuth without executing configuration"
+	else
+		fail "static selected-key lookup preserves precedence and OAuth without executing configuration"
+	fi
+else
+	skip "static plaintext parser success assertions (Node unavailable)"
+fi
+if test_static_credential_resolution no-runtime; then
+	pass "missing-runtime OAuth fallback and unresolved outcomes run independently of Node availability"
+else
+	fail "missing-runtime OAuth fallback and unresolved outcomes run independently of Node availability"
+fi
+
 # ============================================================
 # SECTION 1: Basic validation
 # ============================================================

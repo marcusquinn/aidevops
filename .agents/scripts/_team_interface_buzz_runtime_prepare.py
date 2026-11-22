@@ -68,11 +68,8 @@ def require_buzz_environment():
     return display_name, managed_instance, start_nonce, relay_url
 
 
-def prepare_runtime(agents_dir, output_dir):
-    """Create private roster/context inputs for one trusted ACP process."""
-    if output_dir.is_symlink() or not output_dir.is_dir():
-        raise RuntimeError("runtime output directory must be a non-symlink directory")
-    display_name, managed_instance, start_nonce, relay_url = require_buzz_environment()
+def load_roster_and_snapshot(agents_dir):
+    """Load the canonical roster and the snapshot naming module."""
     roster_module = load_module(
         "aidevops_agent_roster",
         ROSTER_SCRIPT,
@@ -83,7 +80,20 @@ def prepare_runtime(agents_dir, output_dir):
         SNAPSHOT_SCRIPT,
         "canonical Buzz snapshot generator is unavailable",
     )
-    roster = roster_module.build_roster(agents_dir)
+    return roster_module.build_roster(agents_dir), snapshot_module
+
+
+def require_output_dir(output_dir):
+    """Reject a missing or redirected private output directory."""
+    if output_dir.is_symlink() or not output_dir.is_dir():
+        raise RuntimeError("runtime output directory must be a non-symlink directory")
+
+
+def prepare_runtime(agents_dir, output_dir):
+    """Create private roster/context inputs for one trusted ACP process."""
+    require_output_dir(output_dir)
+    display_name, managed_instance, start_nonce, relay_url = require_buzz_environment()
+    roster, snapshot_module = load_roster_and_snapshot(agents_dir)
     host_slug = snapshot_module.resolve_host_slug()
     agent = select_agent(roster, display_name, snapshot_module, host_slug)
     if os.environ.get("BUZZ_ACP_SYSTEM_PROMPT") != snapshot_module.member_system_prompt(agent):
@@ -96,7 +106,38 @@ def prepare_runtime(agents_dir, output_dir):
         secrets.token_hex(16),
     )
     owner = os.environ.get("BUZZ_ACP_AGENT_OWNER", "buzz-owner")
-    context = {
+    write_runtime_inputs(
+        output_dir, roster, (agent, host_slug), runtime_context(owner, scope, relay_url)
+    )
+
+
+def prepare_desktop_runtime(agents_dir, output_dir, display_name):
+    """Prepare inputs for an agent the Buzz 0.7+ aidevops plugin launches.
+
+    The plugin's harness kit admits only the owner's own or attested messages
+    before a turn reaches the process, so no Buzz environment evidence is
+    required here: the member is selected by its host-qualified display name,
+    which also refuses a name made for another computer.
+    """
+    require_output_dir(output_dir)
+    display_name = (display_name or "").strip()
+    if not display_name or len(display_name) > 100:
+        raise RuntimeError("aidevops member name is missing or invalid")
+    roster, snapshot_module = load_roster_and_snapshot(agents_dir)
+    host_slug = snapshot_module.resolve_host_slug()
+    agent = select_agent(roster, display_name, snapshot_module, host_slug)
+    scope = hash_ref("buzz-desktop-plugin", display_name, secrets.token_hex(16))
+    write_runtime_inputs(
+        output_dir,
+        roster,
+        (agent, host_slug),
+        runtime_context("buzz-owner", scope, "buzz-desktop"),
+    )
+
+
+def runtime_context(owner, scope, relay_url):
+    """Return the bounded, non-reversible context one launch reads."""
+    return {
         "actor_ref": f"actor:{hash_ref(owner, scope)}",
         "app_team_ref": "app-team:ai-devops",
         "community_ref": f"community:{hash_ref(relay_url)}",
@@ -105,6 +146,14 @@ def prepare_runtime(agents_dir, output_dir):
         "provider_ref": "provider:buzz",
         "trust_ref": "trust:buzz-owner-only",
     }
+
+
+def write_runtime_inputs(output_dir, roster, selection, context):
+    """Write the private roster, context and selection files one launch reads.
+
+    ``selection`` is the ``(agent, host_slug)`` pair from ``select_agent``.
+    """
+    agent, host_slug = selection
     atomic_write(output_dir / "roster.json", canonical_payload(roster))
     atomic_write(output_dir / "context.json", canonical_payload(context))
     atomic_write(output_dir / "agent-id.txt", f"{agent['agent_id']}\n".encode("utf-8"))

@@ -17,8 +17,8 @@ python3 .agents/scripts/marketing-account-snapshot-helper.py collect \
 ```
 
 Live collection requires `--live`, a new absolute `--output` path, and provider credentials injected
-through the approved secret tooling. Google requires `GOOGLE_ADS_ACCESS_TOKEN` and
-`GOOGLE_ADS_DEVELOPER_TOKEN`; Meta requires `META_ACCESS_TOKEN`. Credentials are never accepted as
+through the approved secret tooling. Google requires `GOOGLE_ADS_ACCESS_TOKEN`; `GOOGLE_ADS_DEVELOPER_TOKEN` is
+optional and legacy (Google sunset developer tokens on 2026-09-09), sent only when set. Meta requires `META_ACCESS_TOKEN`. Credentials are never accepted as
 arguments or included in output.
 
 ## Coverage limits

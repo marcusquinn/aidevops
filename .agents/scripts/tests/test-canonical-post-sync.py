@@ -12,6 +12,18 @@ import tempfile
 import unittest
 
 
+def _resolve_native_git():
+    """Resolve native Git from the system default PATH (portable to non-FHS hosts)."""
+    result = subprocess.run(  # nosec B603 -- fixed shell and constant command
+        ["/bin/sh", "-c", "command -p -v git"],
+        capture_output=True, text=True, check=False, shell=False)
+    path = result.stdout.strip()
+    if result.returncode != 0 or not path:
+        raise SystemExit("Native Git is unavailable on the system PATH")
+    return path
+
+
+NATIVE_GIT = _resolve_native_git()
 SCRIPTS = Path(__file__).resolve().parents[1]
 WORKER_KEYS = ("WORKER_WORKTREE_PATH", "WORKER_ISSUE_NUMBER", "WORKER_REPO_SLUG",
                "FULL_LOOP_HEADLESS", "AIDEVOPS_HEADLESS", "Claude_HEADLESS",
@@ -34,7 +46,7 @@ class PostSyncTest(unittest.TestCase):
         self.env = {key: value for key, value in os.environ.items()
                     if key not in WORKER_KEYS and not key.startswith("GIT_")
                     and not key.startswith("AIDEVOPS_")}
-        self.env.update(HOME=str(self.home), AIDEVOPS_REAL_GIT_BIN="/usr/bin/git")
+        self.env.update(HOME=str(self.home), AIDEVOPS_REAL_GIT_BIN=NATIVE_GIT)
         self.git("init", "--bare", str(self.remote))
         self.git("init", "-b", "main", str(self.repo))
         self.identity(self.repo)
@@ -52,7 +64,7 @@ class PostSyncTest(unittest.TestCase):
 
     def git(self, *args):
         return subprocess.run(  # nosec B603 -- fixed Git executable and test-owned fixture arguments
-            ["/usr/bin/git", *args], env=self.env, check=True,
+            [NATIVE_GIT, *args], env=self.env, check=True,
             capture_output=True, text=True, shell=False).stdout.strip()
 
     def identity(self, repo):

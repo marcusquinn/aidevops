@@ -144,7 +144,7 @@ _dsi_find_live_dispatch() {
 		worktree_path=$(_dsi_extract_worktree_from_cmd "$cmd")
 		if [[ -n "$target_worktree" && "$worktree_path" == "$target_worktree" ]]; then
 			log_path=$(_dsi_find_log_for_pid "$issue_number" "$pid")
-			session_key=$(printf '%s' "$cmd" | sed -n 's/.*--session-key[[:space:]]\([^[:space:]]*\).*/\1/p' | head -1)
+			session_key=$(printf '%s' "$cmd" | sed -n 's/.*--session-key[[:space:]]\([^[:space:]]*\).*/\1/p' | sed -n '1p')
 			printf 'process\t%s\t%s\t%s\t%s\n' "$pid" "$log_path" "$worktree_path" "${session_key:-$_DSI_UNKNOWN_VALUE}"
 			return 0
 		fi
@@ -153,7 +153,7 @@ _dsi_find_live_dispatch() {
 		worker_repo=$(_dsi_repo_slug_for_worktree "$worktree_path")
 		[[ "$worker_repo" == "$repo_slug" ]] || continue
 		log_path=$(_dsi_find_log_for_pid "$issue_number" "$pid")
-		session_key=$(printf '%s' "$cmd" | sed -n 's/.*--session-key[[:space:]]\([^[:space:]]*\).*/\1/p' | head -1)
+		session_key=$(printf '%s' "$cmd" | sed -n 's/.*--session-key[[:space:]]\([^[:space:]]*\).*/\1/p' | sed -n '1p')
 		printf 'process\t%s\t%s\t%s\t%s\n' "$pid" "$log_path" "${worktree_path:-$_DSI_UNKNOWN_VALUE}" "${session_key:-$_DSI_UNKNOWN_VALUE}"
 		return 0
 	done < <(_dsi_ps_worker_lines)
@@ -298,7 +298,7 @@ _dsi_resolve_worker_pid() {
 	while [[ $attempts -lt 30 ]]; do
 		if [[ -s "$worker_log" ]]; then
 			local pid
-			pid=$(grep -oE 'Dispatched PID: [0-9]+' "$worker_log" 2>/dev/null | awk '{print $3}' | head -1)
+			pid=$(grep -oE 'Dispatched PID: [0-9]+' "$worker_log" 2>/dev/null | awk 'NR == 1 {print $3}')
 			if [[ -n "$pid" ]]; then
 				echo "$pid"
 				return 0

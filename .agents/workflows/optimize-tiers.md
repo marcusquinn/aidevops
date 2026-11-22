@@ -111,7 +111,7 @@ The standard-only preset generates this shape:
   "enrollment": {"mode": "new-standard-issues"},
   "arms": [
     {"name": "luna-max", "model": "openai/gpt-6-luna", "variant": "max"},
-    {"name": "terra-medium", "model": "openai/gpt-5.6-terra", "variant": "medium"}
+    {"name": "terra-medium", "model": "openai/gpt-6.1-terra", "variant": "medium"}
   ]
 }
 ```

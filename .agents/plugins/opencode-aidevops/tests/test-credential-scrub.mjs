@@ -12,11 +12,17 @@
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHmac } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { createQualityHooks, scrubCredentials } from "../quality-hooks.mjs";
+import { DISPLAY_REDACTION_NOTE_PREFIX } from "../quality-hooks-output-scrub.mjs";
+import { createSecretValueRedactor } from "../registered-value-redaction.mjs";
+import { RegisteredValueSources } from "../registered-value-sources.mjs";
 
 const REDACTION_TOKEN = "[redacted-credential]";
 const PEM_REDACTION_TOKEN = "[redacted-private-key]";
@@ -26,6 +32,83 @@ function assertScrub(input, expected, expectedCount) {
   assert.equal(scrubbed, expected);
   assert.equal(count, expectedCount);
 }
+
+/** Hook output must carry the GH#37382 display-filter note; return the content before it. */
+function withoutDisplayNote(text) {
+  const index = text.indexOf(`\n\n${DISPLAY_REDACTION_NOTE_PREFIX}`);
+  assert.ok(index >= 0, "redacted hook output carries the display-filter note");
+  return text.slice(0, index);
+}
+
+describe("code and prose after sensitive labels (GH#37382)", () => {
+  const unchanged = [
+    "The secret: keep the originals of anything legally important",
+    "Tip - password: keep the originals",
+    "if token == expected: return",
+    "if (token === expected) return",
+    "password != expected",
+    "password: str = field(default=None)",
+    "secret: Optional[str] = None",
+    "token: string;",
+    "const namedSecret = registeredNames.has(name) || fallback;",
+    "const SECRET_VALUE_REDACTION_TOKEN = REDACTION_TOKEN;",
+    "const token = process.env.GITHUB_TOKEN;",
+    "const token = await fetchToken();",
+    "const getToken = () => cached;",
+    "redacted_credential: True,",
+    "**Password:** keep the originals",
+  ];
+  for (const input of unchanged) {
+    test(`keeps ${JSON.stringify(input)}`, () => assertScrub(input, input, 0));
+  }
+
+  test("literal values under sensitive names remain redacted", () => {
+    assertScrub("password: hunter2value", `password: ${REDACTION_TOKEN}`, 1);
+    assertScrub("export SECRET=plainword", `export SECRET=${REDACTION_TOKEN}`, 1);
+    assertScrub("password=hunter2value # note", `password=${REDACTION_TOKEN} # note`, 1);
+    assertScrub("PASSWORD=PROD_PASSWORD_2024", `PASSWORD=${REDACTION_TOKEN}`, 1);
+    assertScrub("Password: Hunter2value", `Password: ${REDACTION_TOKEN}`, 1);
+    assertScrub("token: abcdefgh expires soon", `token: ${REDACTION_TOKEN} expires soon`, 1);
+    assertScrub("secret: abcd efgh ijkl mnop", `secret: ${REDACTION_TOKEN} efgh ijkl mnop`, 1);
+  });
+
+  test("unspaced dotenv/shell values and commented labels are never exempt", () => {
+    const cases = [
+      "PASSWORD=Secret(123)",
+      "export API_KEY=ABCD_1234_EFGH;",
+      "token=process.env.X",
+      "password: hunter # the dev one",
+      "password: hunter // for the box",
+    ];
+    for (const text of cases) {
+      const { scrubbed, count } = scrubCredentials(text);
+      assert.equal(count, 1, text);
+      assert.ok(scrubbed.includes(REDACTION_TOKEN), text);
+    }
+  });
+
+  test("walrus and hash-arrow assignments redact the literal, not the operator", () => {
+    assertScrub('password := "hunter2value"', `password := "${REDACTION_TOKEN}"`, 1);
+    assertScrub('{ token => "hunter2value" }', `{ token => "${REDACTION_TOKEN}" }`, 1);
+  });
+
+  test("toolExecuteAfter marks display redactions and leaves clean prose alone", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aidevops-display-note-"));
+    try {
+      const redactor = createSecretValueRedactor({ configDir: join(root, "none"), registryDir: join(root, "none"), env: {} });
+      const hooks = createQualityHooks({ scriptsDir: root, logsDir: root, secretRedactor: redactor });
+      const prose = { output: "The secret: keep the originals of anything legally important\n" };
+      await hooks.toolExecuteAfter({ tool: "read", callID: "" }, prose);
+      assert.equal(prose.output, "The secret: keep the originals of anything legally important\n");
+      const assigned = { output: "API_KEY=abcdefgh" };
+      await hooks.toolExecuteAfter({ tool: "bash", callID: "" }, assigned);
+      assert.equal(withoutDisplayNote(assigned.output), `API_KEY=${REDACTION_TOKEN}`);
+      assert.ok(!assigned.output.slice(assigned.output.indexOf(DISPLAY_REDACTION_NOTE_PREFIX)).includes(REDACTION_TOKEN));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("Cloudron addon log shapes", () => {
   test("redacts non-http URL userinfo passwords and keeps host", () => {
@@ -46,6 +129,106 @@ describe("Cloudron addon log shapes", () => {
 });
 
 describe("credential transcript scrub boundary", () => {
+  test("registered repo identifiers survive bare output and stale digests, not sensitive assignments (GH#36456)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aidevops-repo-identifiers-"));
+    const configDir = join(root, ".config", "aidevops");
+    const registryDir = join(root, "registry");
+    const identifiers = ["example-owner", "examplerepo", "example-owner/examplerepo", "checkout-alias", "12345678"];
+    try {
+      mkdirSync(configDir, { recursive: true });
+      mkdirSync(registryDir);
+      writeFileSync(join(configDir, "repos.json"), JSON.stringify({
+        initialized_repos: [
+          { slug: identifiers[2], path: "/synthetic/checkout-alias/" },
+          { path: "/synthetic/dot-path-secret/." },
+          { slug: `example-owner/${identifiers[4]}` },
+        ],
+      }));
+      writeFileSync(join(configDir, "credentials.sh"), identifiers.map((value, index) =>
+        `export FOO_DB_NAME_${index}="${value}"`).join("\n"));
+      const key = Buffer.alloc(32, 1);
+      writeFileSync(join(registryDir, "key"), key.toString("hex"));
+      writeFileSync(join(registryDir, "digests"), identifiers.map((value) =>
+        `${value.length} ${createHmac("sha256", key).update(value).digest("hex")}`).join("\n"));
+      const redactor = createSecretValueRedactor({ configDir, registryDir, env: { SYNTHETIC_TOKEN: identifiers[0] } });
+      const hooks = createQualityHooks({ scriptsDir: root, logsDir: root, secretRedactor: redactor });
+      for (const tool of ["read", "bash"]) {
+        for (const value of identifiers) {
+          const output = {
+            output: `bare ${value} FOO_TOKEN=${value} FOO_SECRET=${value} FOO_PASSWORD=${value}`,
+            metadata: { ordinary: value, pair: { name: "FOO_TOKEN", value } },
+          };
+          await hooks.toolExecuteAfter({ tool, callID: "" }, output);
+          assert.equal(withoutDisplayNote(output.output), `bare ${value} FOO_TOKEN=${REDACTION_TOKEN} FOO_SECRET=${REDACTION_TOKEN} FOO_PASSWORD=${REDACTION_TOKEN}`);
+          assert.deepEqual(output.metadata, { ordinary: value, pair: { name: "FOO_TOKEN", value: REDACTION_TOKEN } });
+          const escaped = { output: String.raw`{\"password\":\"${value}\",\"repo\":\"${value}\"}` };
+          await hooks.toolExecuteAfter({ tool, callID: "" }, escaped);
+          assert.equal(withoutDisplayNote(escaped.output), String.raw`{\"password\":\"${REDACTION_TOKEN}\",\"repo\":\"${value}\"}`);
+          for (const sensitiveValue of [
+            String.raw`[\"${value}\"]`,
+            String.raw`[\"${value}\",{\"nested\":[\"${value}\",\"bracket ] comma ,\"]}]`,
+            String.raw`{\"nested\":[\"${value}\"]}`,
+            ...(value === identifiers[4] ? [value] : []),
+          ]) {
+            const record = { output: String.raw`log {\"credentials\":${sensitiveValue},\"repo\":${sensitiveValue}} done` };
+            await hooks.toolExecuteAfter({ tool, callID: "" }, record);
+            assert.equal(withoutDisplayNote(record.output), String.raw`log {\"credentials\":\"${REDACTION_TOKEN}\",\"repo\":${sensitiveValue}} done`);
+          }
+        }
+      }
+      const helper = new URL("../../../scripts/redaction-digest-registry.py", import.meta.url);
+      const writerDir = join(root, "writer-registry");
+      const longer = `${identifiers[1]}-synthetic-credential`;
+      execFileSync("python3", [fileURLToPath(helper), "register"], {
+        input: [...identifiers, longer, "dot-path-secret"].map((value) => `FOO_DB_NAME=${value}\0`).join(""),
+        env: { ...process.env, HOME: root, AIDEVOPS_SECRET_REDACTION_DIR: writerDir },
+      });
+      assert.equal(readFileSync(join(writerDir, "digests"), "utf8").trim().split("\n").length, 2);
+      const digestRedactor = createSecretValueRedactor({ configDir, registryDir: writerDir, env: {} });
+      assert.equal(digestRedactor.redactText(`${identifiers.join(" ")} ${longer} dot-path-secret`).text,
+        `${identifiers.join(" ")} ${REDACTION_TOKEN} ${REDACTION_TOKEN}`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("escaped container scan caches malformed suffixes without skipping complete values", () => {
+    const prefix = String.raw`\"password\":[`.repeat(6000);
+    const suffix = String.raw`\"credentials\":{\"nested\":[123]},\"token\":456`;
+    const expected = String.raw`\"credentials\":\"${REDACTION_TOKEN}\",\"token\":\"${REDACTION_TOKEN}\"`;
+    const start = performance.now();
+    assertScrub(prefix + suffix, prefix + expected, 2);
+    assert.ok(performance.now() - start < 1000, "84 KB malformed suffix scan exceeded one second");
+    assertScrub(
+      String.raw`\"password\":[\"credentials\":{\"nested\":[123]}},\"token\":[456]`,
+      String.raw`\"password\":[\"credentials\":\"${REDACTION_TOKEN}\"},\"token\":\"${REDACTION_TOKEN}\"`,
+      2,
+    );
+  });
+
+  test("repo identifier cache follows configuration changes and fails closed on invalid config", () => {
+    const root = mkdtempSync(join(tmpdir(), "aidevops-repo-identifier-cache-"));
+    try {
+      const path = join(root, "repos.json");
+      const sources = new RegisteredValueSources({ configDir: root, env: { SYNTHETIC_TOKEN: "examplerepo" } });
+      assert.deepEqual(sources.plaintextValues(), ["examplerepo"]);
+      writeFileSync(path, JSON.stringify({ initialized_repos: [null, {}, { slug: "example-owner/examplerepo" }] }));
+      const cached = sources.publicIdentifiers();
+      assert.equal(sources.publicIdentifiers(), cached);
+      assert.deepEqual(sources.plaintextValues(), []);
+      writeFileSync(path, JSON.stringify({ initialized_repos: [{ slug: "another-owner/another-repository" }] }));
+      assert.deepEqual(sources.plaintextValues(), ["examplerepo"]);
+      for (const invalid of ["{", "null", '{"initialized_repos":{}}', '{"initialized_repos":[{"slug":"bad/slug/extra"}]}']) {
+        writeFileSync(path, invalid);
+        assert.deepEqual(sources.plaintextValues(), ["examplerepo"]);
+      }
+      rmSync(path);
+      assert.equal(sources.publicIdentifiers().size, 0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("does not redact credential prefix embedded mid-word", () => {
     assertScrub("module task-syntheticfixture", "module task-syntheticfixture", 0);
   });
@@ -289,6 +472,20 @@ describe("credential transcript scrub boundary", () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  test("shell env-var references are preserved but literal defaults are redacted", async () => {
+    const { scrubCredentials } = await import("../quality-hooks-output-scrub.mjs");
+    for (const line of [
+      'local api_key="${GOOGLE_API_KEY:-}"',
+      "local api_key=${GOOGLE_API_KEY}",
+      "API_KEY=$GOOGLE_API_KEY",
+    ]) {
+      assert.equal(scrubCredentials(line).scrubbed, line);
+    }
+    const literal = scrubCredentials('local api_key="${GOOGLE_API_KEY:-hunter2value}"');
+    assert.ok(!literal.scrubbed.includes("hunter2value"));
+    assert.ok(!scrubCredentials('api_key="hunter2value"').scrubbed.includes("hunter2value"));
   });
 
   test("structured output preserves sensitive placeholders", async () => {

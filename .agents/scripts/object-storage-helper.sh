@@ -15,6 +15,9 @@ RCLONE_BIN="${AIDEVOPS_RCLONE_BIN:-rclone}"
 MAX_LIST_LIMIT=1000
 ERROR_ARGUMENTS_INVALID="arguments_invalid"
 ERROR_RCLONE_FAILED="rclone_failed"
+ERROR_BUCKET_NOT_ALLOWED="bucket_not_allowed"
+MANUAL_REVIEW="manual_provider_review_required"
+STATE_VERIFIED="VERIFIED"
 
 usage() {
 	cat <<'USAGE'
@@ -29,6 +32,9 @@ Commands:
   audit-protection <account> <bucket>
   copy <account> <bucket> <source> <destination> [--confirm preview:<account>:<bucket>]
   download <account> <bucket> <object> <destination> [--confirm preview:<account>:<bucket>]
+  migrate-plan <src-account> <dst-account> [--bucket <b>]... [--remote-host <alias>]
+  migrate-run <src-account> <dst-account> [--bucket <b>]... [--lane large|small] [--remote-host <alias>] [--confirm migrate:<src>:<dst>]
+  migrate-retire-source <src-account> <dst-account> --bucket <b> [--confirm retire:<src>:<dst>:<b>]
 
 Configuration only stores named rclone remotes and bucket allowlists. It never
 writes rclone configuration or accepts arbitrary rclone flags.
@@ -151,7 +157,7 @@ validate_bucket() {
 		return 1
 	}
 	jq -e --arg bucket "$bucket" '.buckets | index($bucket) != null' <<<"$ACCOUNT_JSON" >/dev/null || {
-		fail_json "bucket_not_allowed"
+		fail_json "$ERROR_BUCKET_NOT_ALLOWED"
 		return 1
 	}
 	return 0
@@ -220,7 +226,7 @@ run_verify_backups() {
 run_audit_protection() {
 	local account="$1"
 	local bucket="$2"
-	emit_result "audit-protection" "$account" "$(jq -cn --arg bucket "$bucket" '{bucket:$bucket,mutation_supported:false,status:"manual_provider_review_required"}')"
+	emit_result "audit-protection" "$account" "$(jq -cn --arg bucket "$bucket" --arg review "$MANUAL_REVIEW" '{bucket:$bucket,mutation_supported:false,status:$review}')"
 }
 
 run_transfer() {
@@ -235,12 +241,318 @@ run_transfer() {
 	emit_result "$command" "$account" "$(jq -cn '{dry_run:true,executed:false}')"
 }
 
+# ---------------------------------------------------------------------------
+# Bucket migration (copy, verify, retire source). Credentials are never passed:
+# both accounts must reference rclone remotes that already exist on the machine
+# that runs rclone (local, or --remote-host alias reached over SSH).
+# ---------------------------------------------------------------------------
+
+MIGRATE_MIN_RCLONE_MINOR=70
+MIGRATE_LIST_CUTOFF=200000
+MIGRATE_STATE_DIR="${AIDEVOPS_OBJECT_STORAGE_STATE_DIR:-$HOME/.aidevops/.agent-workspace/work/object-storage-migrations}"
+M_BUCKETS=()
+M_LANE="small"
+M_REMOTE_HOST=""
+M_CONFIRM=""
+M_DST_REMOTE=""
+M_SRC_REMOTE=""
+M_SRC_JSON=""
+M_DST_JSON=""
+M_SRC_PROVIDER=""
+M_DST_PROVIDER=""
+
+# Run rclone locally, or on the transfer host over SSH (arguments shell-quoted).
+mrc() {
+	if [[ -n "$M_REMOTE_HOST" ]]; then
+		ssh -o BatchMode=yes -- "$M_REMOTE_HOST" "$(printf '%q ' "$RCLONE_BIN" "$@")"
+		return $?
+	fi
+	"$RCLONE_BIN" "$@"
+}
+
+migrate_parse_options() {
+	local -a args=("$@")
+	local flag flag_value
+	M_BUCKETS=()
+	M_LANE="small"
+	M_REMOTE_HOST=""
+	M_CONFIRM=""
+	while [[ "${#args[@]}" -gt 0 ]]; do
+		flag="${args[0]}"
+		flag_value="${args[1]:-}"
+		[[ "${#args[@]}" -ge 2 ]] || {
+			fail_json "$ERROR_ARGUMENTS_INVALID"
+			return 1
+		}
+		case "$flag" in
+		--bucket) M_BUCKETS+=("$flag_value") ;;
+		--lane) M_LANE="$flag_value" ;;
+		--remote-host) M_REMOTE_HOST="$flag_value" ;;
+		--confirm) M_CONFIRM="$flag_value" ;;
+		*)
+			fail_json "$ERROR_ARGUMENTS_INVALID"
+			return 1
+			;;
+		esac
+		args=("${args[@]:2}")
+	done
+	case "$M_LANE" in large | small) ;; *)
+		fail_json "lane_invalid"
+		return 1
+		;;
+	esac
+	if [[ -n "$M_REMOTE_HOST" && ! "$M_REMOTE_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+		fail_json "remote_host_invalid"
+		return 1
+	fi
+	return 0
+}
+
+migrate_load_accounts() {
+	local src="$1" dst="$2"
+	[[ "$src" != "$dst" ]] || {
+		fail_json "accounts_identical"
+		return 1
+	}
+	get_account_config "$src" || return 1
+	M_SRC_JSON="$ACCOUNT_JSON"
+	M_SRC_REMOTE="$ACCOUNT_REMOTE"
+	M_SRC_PROVIDER="$ACCOUNT_PROVIDER"
+	get_account_config "$dst" || return 1
+	M_DST_JSON="$ACCOUNT_JSON"
+	M_DST_REMOTE="$ACCOUNT_REMOTE"
+	M_DST_PROVIDER="$ACCOUNT_PROVIDER"
+	[[ "$M_SRC_REMOTE" != "$M_DST_REMOTE" ]] || {
+		fail_json "accounts_identical"
+		return 1
+	}
+	return 0
+}
+
+# Select buckets: explicit --bucket values or the whole source allowlist. Every
+# bucket must be allowlisted on both accounts and be a plain DNS-style name.
+migrate_select_buckets() {
+	local bucket
+	if [[ "${#M_BUCKETS[@]}" -eq 0 ]]; then
+		while IFS= read -r bucket; do
+			[[ -n "$bucket" ]] && M_BUCKETS+=("$bucket")
+		done < <(jq -r '.buckets[]?' <<<"$M_SRC_JSON")
+	fi
+	[[ "${#M_BUCKETS[@]}" -gt 0 ]] || {
+		fail_json "$ERROR_BUCKET_NOT_ALLOWED"
+		return 1
+	}
+	for bucket in "${M_BUCKETS[@]}"; do
+		safe_value "$bucket" && [[ "$bucket" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || {
+			fail_json "bucket_invalid"
+			return 1
+		}
+		jq -e --arg bucket "$bucket" '.buckets | index($bucket) != null' <<<"$M_SRC_JSON" >/dev/null &&
+			jq -e --arg bucket "$bucket" '.buckets | index($bucket) != null' <<<"$M_DST_JSON" >/dev/null || {
+			fail_json "$ERROR_BUCKET_NOT_ALLOWED"
+			return 1
+		}
+	done
+	return 0
+}
+
+# rclone >= 1.70 is required: older releases hold whole directory listings in
+# memory, which exhausts small transfer hosts on very large flat prefixes.
+migrate_check_rclone_version() {
+	local version major minor
+	version=$(mrc version 2>/dev/null | awk 'NR == 1 { print $2 }') || version=""
+	if [[ "$version" =~ ^v?([0-9]+)\.([0-9]+) ]]; then
+		major="${BASH_REMATCH[1]}"
+		minor="${BASH_REMATCH[2]}"
+		if [[ "$major" -gt 1 || ( "$major" -eq 1 && "$minor" -ge "$MIGRATE_MIN_RCLONE_MINOR" ) ]]; then
+			return 0
+		fi
+	fi
+	fail_json "rclone_version_too_old"
+	return 1
+}
+
+migrate_status_file() {
+	local src="$1" dst="$2" bucket="$3"
+	printf '%s/%s__%s/%s.status' "$MIGRATE_STATE_DIR" "$src" "$dst" "$bucket"
+	return 0
+}
+
+migrate_read_status() {
+	local file="$1" state=""
+	if [[ -f "$file" ]]; then
+		read -r state _ <"$file" || true
+	fi
+	printf '%s' "${state:-NONE}"
+	return 0
+}
+
+migrate_write_status() {
+	local file="$1" state="$2" tmp
+	mkdir -p "$(dirname "$file")" || return 1
+	tmp="${file}.tmp.$$"
+	printf '%s %s\n' "$state" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$tmp" && mv "$tmp" "$file" || return 1
+	return 0
+}
+
+# One-way size/hash check: every source object must exist unchanged on the destination.
+migrate_check_bucket() {
+	local bucket="$1"
+	mrc check --one-way --list-cutoff "$MIGRATE_LIST_CUTOFF" "${M_SRC_REMOTE}:${bucket}" "${M_DST_REMOTE}:${bucket}" >/dev/null 2>&1
+	return $?
+}
+
+migrate_plan_bucket() {
+	local bucket="$1" size_json="" versioning="" newest="" count=0 bytes=0
+	size_json=$(mrc size --json --list-cutoff "$MIGRATE_LIST_CUTOFF" "${M_SRC_REMOTE}:${bucket}" 2>/dev/null) || size_json=""
+	count=$(jq -r '.count // 0' <<<"$size_json" 2>/dev/null) || count=0
+	bytes=$(jq -r '.bytes // 0' <<<"$size_json" 2>/dev/null) || bytes=0
+	versioning=$(mrc backend versioning "${M_SRC_REMOTE}:${bucket}" 2>/dev/null) || versioning=""
+	versioning="${versioning%%$'\n'*}"
+	versioning="${versioning//\"/}"
+	newest=$(mrc lsf -R --files-only --format t --list-cutoff "$MIGRATE_LIST_CUTOFF" "${M_SRC_REMOTE}:${bucket}" 2>/dev/null | sort | tail -n 1) || newest=""
+	jq -cn --arg review "$MANUAL_REVIEW" --arg bucket "$bucket" --arg region "$(jq -r '.region // "unknown"' <<<"$M_SRC_JSON")" \
+		--arg versioning "${versioning:-unknown}" --arg newest "$newest" \
+		--argjson count "${count:-0}" --argjson bytes "${bytes:-0}" '{
+			bucket:$bucket, region:$region, region_source:"configured_account",
+			versioning:$versioning, object_lock:$review,
+			public_acl:$review, bucket_policy:$review,
+			policies_and_acls_copied:false, objects:$count, bytes:$bytes,
+			newest_upload:(if $newest == "" then null else $newest end)
+		}'
+	return 0
+}
+
+run_migrate_plan() {
+	local src="$1" dst="$2" bucket rows=""
+	migrate_check_rclone_version || return 1
+	for bucket in "${M_BUCKETS[@]}"; do
+		rows+="$(migrate_plan_bucket "$bucket")"$'\n'
+	done
+	emit_result "migrate-plan" "$src" "$(printf '%s' "$rows" | jq -s --arg dst "$dst" --arg lane "$M_LANE" '{destination:$dst,read_only:true,buckets:.}')"
+	return 0
+}
+
+migrate_copy_bucket() {
+	local bucket="$1"
+	local -a lane_flags
+	if [[ "$M_LANE" == "large" ]]; then
+		# memory ~ transfers x s3-upload-concurrency x s3-chunk-size (4 x 4 x 64M = 1 GiB)
+		lane_flags=(--transfers 4 --checkers 8 --s3-upload-concurrency 4 --s3-chunk-size 64M)
+	else
+		lane_flags=(--transfers 64 --checkers 32 --buffer-size 1M)
+	fi
+	mrc copy --list-cutoff "$MIGRATE_LIST_CUTOFF" "${lane_flags[@]}" "${M_SRC_REMOTE}:${bucket}" "${M_DST_REMOTE}:${bucket}" >/dev/null 2>&1
+	return $?
+}
+
+run_migrate_run() {
+	local src="$1" dst="$2" bucket file state rows="" result failed=0
+	local expected="migrate:${src}:${dst}"
+	if [[ "$M_CONFIRM" != "$expected" ]]; then
+		emit_result "migrate-run" "$src" "$(printf '%s\n' "${M_BUCKETS[@]}" | jq -R . | jq -s --arg c "$expected" --arg dst "$dst" '{dry_run:true,confirmation_required:$c,destination:$dst,buckets:.}')"
+		return 0
+	fi
+	migrate_check_rclone_version || return 1
+	for bucket in "${M_BUCKETS[@]}"; do
+		file=$(migrate_status_file "$src" "$dst" "$bucket")
+		state=$(migrate_read_status "$file")
+		if [[ "$state" == "$STATE_VERIFIED" ]]; then
+			result="$STATE_VERIFIED"
+			rows+="$(jq -cn --arg b "$bucket" --arg s "$result" '{bucket:$b,status:$s,skipped:true}')"$'\n'
+			continue
+		fi
+		migrate_write_status "$file" COPYING || {
+			fail_json "state_unwritable"
+			return 1
+		}
+		if migrate_copy_bucket "$bucket"; then
+			migrate_write_status "$file" COPIED || true
+			# Reclaim stale in-flight multipart uploads left by earlier interrupted runs.
+			mrc backend cleanup "${M_DST_REMOTE}:${bucket}" >/dev/null 2>&1 || true
+			if migrate_check_bucket "$bucket"; then
+				result="$STATE_VERIFIED"
+			else
+				result="CHECK_FAIL"
+			fi
+		else
+			result="COPY_FAIL"
+		fi
+		migrate_write_status "$file" "$result" || true
+		[[ "$result" == "$STATE_VERIFIED" ]] || failed=1
+		rows+="$(jq -cn --arg b "$bucket" --arg s "$result" '{bucket:$b,status:$s,skipped:false}')"$'\n'
+	done
+	emit_result "migrate-run" "$src" "$(printf '%s' "$rows" | jq -s --arg dst "$dst" --arg lane "$M_LANE" '{destination:$dst,lane:$lane,dry_run:false,buckets:.}')"
+	return "$failed"
+}
+
+# Gated source delete: exactly one bucket, VERIFIED status, exact token, and a
+# fresh verification immediately before purge.
+run_migrate_retire() {
+	local src="$1" dst="$2" bucket file state
+	[[ "${#M_BUCKETS[@]}" -eq 1 ]] || {
+		fail_json "retire_requires_single_bucket"
+		return 1
+	}
+	bucket="${M_BUCKETS[0]}"
+	file=$(migrate_status_file "$src" "$dst" "$bucket")
+	state=$(migrate_read_status "$file")
+	[[ "$state" == "$STATE_VERIFIED" ]] || {
+		fail_json "bucket_not_verified"
+		return 1
+	}
+	local expected="retire:${src}:${dst}:${bucket}"
+	if [[ -z "$M_CONFIRM" ]]; then
+		emit_result "migrate-retire-source" "$src" "$(jq -cn --arg c "$expected" --arg b "$bucket" '{dry_run:true,bucket:$b,confirmation_required:$c}')"
+		return 0
+	fi
+	[[ "$M_CONFIRM" == "$expected" ]] || {
+		fail_json "confirmation_invalid"
+		return 1
+	}
+	migrate_check_rclone_version || return 1
+	if ! migrate_check_bucket "$bucket"; then
+		migrate_write_status "$file" CHECK_FAIL || true
+		fail_json "recheck_failed"
+		return 1
+	fi
+	mrc purge "${M_SRC_REMOTE}:${bucket}" >/dev/null 2>&1 || {
+		fail_json "$ERROR_RCLONE_FAILED"
+		return 1
+	}
+	migrate_write_status "$file" RETIRED || true
+	emit_result "migrate-retire-source" "$src" "$(jq -cn --arg b "$bucket" '{bucket:$b,retired:true}')"
+	return 0
+}
+
+run_migrate_command() {
+	local command="$1" src="${2:-}" dst="${3:-}"
+	[[ "$#" -ge 3 ]] || {
+		fail_json "$ERROR_ARGUMENTS_INVALID"
+		return 1
+	}
+	shift 3
+	check_dependencies && load_config || return 1
+	migrate_parse_options "$@" || return 1
+	migrate_load_accounts "$src" "$dst" || return 1
+	migrate_select_buckets || return 1
+	case "$command" in
+	migrate-plan) run_migrate_plan "$src" "$dst" ;;
+	migrate-run) run_migrate_run "$src" "$dst" ;;
+	migrate-retire-source) run_migrate_retire "$src" "$dst" ;;
+	esac
+}
+
 main() {
 	local command="${1:-}" account="${2:-}" bucket="${3:-}" argument="${4:-}" option="${5:-}" value="${6:-}"
 	local confirmation=""
 	case "$command" in help | -h | --help | '')
 		usage
 		return 0
+		;;
+	migrate-plan | migrate-run | migrate-retire-source)
+		run_migrate_command "$@"
+		return $?
 		;;
 	esac
 	check_dependencies && load_config && get_account_config "$account" || return 1

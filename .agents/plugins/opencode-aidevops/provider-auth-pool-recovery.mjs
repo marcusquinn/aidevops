@@ -3,8 +3,12 @@
  * Extracted to keep per-file complexity below the threshold.
  */
 
-import { ensureValidToken, getAccounts, patchAccount, normalizeExpiredCooldowns } from "./oauth-pool.mjs";
-import { injectAccountToken, activateAccount, isOnCooldown, tokenResult } from "./provider-auth-pool.mjs";
+import {
+  ensureValidToken, getAccounts, patchAccount, normalizeExpiredCooldowns, poolAccountLabel,
+} from "./oauth-pool.mjs";
+import {
+  injectAccountToken, activateAccount, isOnCooldown, tokenResult, findSeat, seatResult,
+} from "./provider-auth-pool.mjs";
 
 /** Default cooldown when rate limited mid-session (ms) */
 export const RATE_LIMIT_COOLDOWN_MS = 5_000;
@@ -44,15 +48,15 @@ export async function tryRecoverAccount(client, account, waitStart, logPrefix) {
   if (!altToken) return null;
   try { await injectAccountToken(client, account); } catch { /* best-effort */ }
   const elapsed = Math.ceil((Date.now() - waitStart) / 1000);
-  console.error(`[aidevops] provider-auth: ${logPrefix} recovered via ${account.email} after ${elapsed}s wait`);
-  return { token: altToken, email: account.email };
+  console.error(`[aidevops] provider-auth: ${logPrefix} recovered via ${poolAccountLabel(account)} after ${elapsed}s wait`);
+  return seatResult(altToken, account);
 }
 
 /** @param {object[]} accounts @param {string} currentEmail @param {string} logPrefix @param {number} now */
 export function logExhaustionOnce(accounts, currentEmail, logPrefix, now) {
   const accountSummary = accounts.map((a) => {
     const cd = a.cooldownUntil && a.cooldownUntil > now ? ` (${Math.ceil((a.cooldownUntil - now) / 1000)}s)` : "";
-    return `${a.email}[${a.status}${cd}]`;
+    return `${poolAccountLabel(a)}[${a.status}${cd}]`;
   }).join(", ");
   console.error(`[aidevops] provider-auth: ${logPrefix} for ${currentEmail} — all accounts on cooldown, waiting... ${accountSummary}`);
 }
@@ -96,37 +100,38 @@ export async function waitForCooldownRecovery(client, currentEmail, logPrefix) {
 /** @param {string} logPrefix */
 export function forceClearAllCooldowns(logPrefix) {
   const accounts = getAccounts("anthropic");
-  for (const acc of accounts) patchAccount("anthropic", acc.email, { status: "idle", cooldownUntil: 0 });
+  for (const acc of accounts) patchAccount("anthropic", acc, { status: "idle", cooldownUntil: 0 });
   console.error(`[aidevops] provider-auth: ${logPrefix} — force-cleared all cooldowns after ${MAX_EXHAUSTION_WAIT_MS / 1000}s. Returning response for opencode retry.`);
 }
 
-/** @param {object[]} accounts @param {string} sessionAccountEmail */
-export function findSessionAccount(accounts, sessionAccountEmail) {
-  const account = accounts.find((a) => a.email === sessionAccountEmail);
+/** @param {object[]} accounts @param {string} sessionAccountKey */
+export function findSessionAccount(accounts, sessionAccountKey) {
+  const account = findSeat(accounts, sessionAccountKey);
   if (!account || isOnCooldown(account)) return null;
   return account;
 }
 
-/** @param {any} client @param {object[]} accounts @param {string} sessionAccountEmail */
-export async function refreshSessionOwnAccount(client, accounts, sessionAccountEmail) {
-  const myAccount = findSessionAccount(accounts, sessionAccountEmail);
+/** @param {any} client @param {object[]} accounts @param {string} sessionAccountKey */
+export async function refreshSessionOwnAccount(client, accounts, sessionAccountKey) {
+  const myAccount = findSessionAccount(accounts, sessionAccountKey);
   if (!myAccount) return null;
   const token = await ensureValidToken("anthropic", myAccount);
   if (!token) return null;
   try { await injectAccountToken(client, myAccount); } catch { /* best-effort */ }
-  activateAccount(myAccount.email);
-  console.error(`[aidevops] provider-auth: refreshed session account ${myAccount.email}`);
-  return { token, email: myAccount.email };
+  activateAccount(myAccount);
+  console.error(`[aidevops] provider-auth: refreshed session account ${poolAccountLabel(myAccount)}`);
+  return seatResult(token, myAccount);
 }
 
-/** @param {any} client @param {object} auth @param {string|null} sessionAccountEmail */
-export async function recoverFromExhaustion(client, auth, sessionAccountEmail) {
+/** @param {any} client @param {object} auth @param {string|null} sessionAccountKey */
+export async function recoverFromExhaustion(client, auth, sessionAccountKey) {
   const recovered = await waitForCooldownRecovery(client, "all", "exhaustion");
   if (recovered) {
     process.env.ANTHROPIC_API_KEY = recovered.token;
-    activateAccount(recovered.email);
+    process.env.AIDEVOPS_ANTHROPIC_API_KEY_SOURCE = "oauth-pool"; // GH#36707
+    activateAccount(recovered.key);
     return tokenResult(recovered);
   }
   forceClearAllCooldowns("exhaustion");
-  return { accessToken: auth.access, sessionAccountEmail };
+  return { accessToken: auth.access, sessionAccountKey };
 }

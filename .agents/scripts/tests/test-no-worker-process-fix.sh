@@ -38,7 +38,8 @@ AGENT_SCRIPT_DIR="${SCRIPT_DIR}/.."
 PULSE_CLEANUP="${AGENT_SCRIPT_DIR}/pulse-cleanup.sh"
 WORKER_LAUNCH="${AGENT_SCRIPT_DIR}/pulse-dispatch-worker-launch.sh"
 HEADLESS_LIB="${AGENT_SCRIPT_DIR}/headless-runtime-lib.sh"
-PULSE_ENGINE="${AGENT_SCRIPT_DIR}/pulse-dispatch-engine.sh"
+CANARY_LIB="${AGENT_SCRIPT_DIR}/headless-runtime-canary.sh"
+PULSE_ENGINE="${AGENT_SCRIPT_DIR}/pulse-dispatch-engine-launch.sh"
 WORKER_LIFECYCLE="${AGENT_SCRIPT_DIR}/worker-lifecycle-common.sh"
 DEDUP_LAYERS="${AGENT_SCRIPT_DIR}/pulse-dispatch-dedup-layers.sh"
 
@@ -100,8 +101,9 @@ test_claim_released_bounds_tail() {
 	local shared_lifecycle="${AGENT_SCRIPT_DIR}/shared-claim-lifecycle.sh"
 	# tail -20 lines AND head -c 4096 byte cap (may be on adjacent lines
 	# joined with `|`, so use a windowed grep instead of a single-line regex).
+	# The 4KB cap is now applied with printf '%.4096s' (no head -c pipe).
 	if grep -q 'tail -20' "$shared_lifecycle" \
-		&& grep -q 'head -c 4096' "$shared_lifecycle"; then
+		&& { grep -q 'head -c 4096' "$shared_lifecycle" || grep -q '%\.4096s' "$shared_lifecycle"; }; then
 		print_result "fix #1: log tail bounded to 20 lines / 4KB" 0
 		return 0
 	fi
@@ -386,13 +388,13 @@ test_negative_cache_constant_present() {
 
 test_negative_cache_short_circuit_present() {
 	# Match the short-circuit branch: reads canary-last-fail, returns 1 fast.
-	if grep -q 'canary-last-fail' "$HEADLESS_LIB" \
-		&& grep -q 'Canary negative cache active' "$HEADLESS_LIB"; then
+	if grep -q 'canary-last-fail' "$CANARY_LIB" \
+		&& grep -q 'Canary negative cache active' "$CANARY_LIB"; then
 		print_result "fix #4: negative cache short-circuit branch present" 0
 		return 0
 	fi
 	print_result "fix #4: negative cache short-circuit branch present" 1 \
-		"Expected 'canary-last-fail' read + 'Canary negative cache active' message in $HEADLESS_LIB"
+		"Expected 'canary-last-fail' read + 'Canary negative cache active' message in $CANARY_LIB"
 	return 0
 }
 
@@ -400,7 +402,7 @@ test_negative_cache_writeback_present() {
 	# On canary failure, the timestamp must be written to canary-last-fail.
 	# On canary success, the file must be removed.
 	local lib_text
-	lib_text=$(cat "$HEADLESS_LIB")
+	lib_text=$(cat "$CANARY_LIB")
 	# Look for both the writeback (after FAIL log) and the cleanup-on-success
 	# shellcheck disable=SC2016  # matching literal source text — no expansion intended
 	if [[ "$lib_text" == *'date +%s >"$fail_cache_file"'* ]] \
@@ -409,7 +411,7 @@ test_negative_cache_writeback_present() {
 		return 0
 	fi
 	print_result "fix #4: success clears + failure stamps the negative cache" 1 \
-		"Expected both 'date +%s >\"\$fail_cache_file\"' (failure) and 'rm -f \"\$fail_cache_file\"' (success) in $HEADLESS_LIB"
+		"Expected both 'date +%s >\"\$fail_cache_file\"' (failure) and 'rm -f \"\$fail_cache_file\"' (success) in $CANARY_LIB"
 	return 0
 }
 
@@ -490,13 +492,13 @@ test_overload_constants_present() {
 }
 
 test_overload_helper_present() {
-	if grep -q '^_check_system_overload()' "$HEADLESS_LIB" \
-		&& grep -q 'CPU/load/saturation must never gate dispatch' "$HEADLESS_LIB"; then
+	if grep -q '^_check_system_overload()' "$CANARY_LIB" \
+		&& grep -q 'CPU/load/saturation must never gate dispatch' "$CANARY_LIB"; then
 		print_result "t3558: _check_system_overload compatibility stub defined" 0
 		return 0
 	fi
 	print_result "t3558: _check_system_overload compatibility stub defined" 1 \
-		"Expected _check_system_overload compatibility stub in $HEADLESS_LIB"
+		"Expected _check_system_overload compatibility stub in $CANARY_LIB"
 	return 0
 }
 
@@ -504,7 +506,7 @@ test_overload_check_wired_into_canary() {
 	# t3558: overload/load checks must not run before binary validation or stamp
 	# overload negative-cache reasons. Runtime/model health is still checked below.
 	local lib_text
-	lib_text=$(cat "$HEADLESS_LIB")
+	lib_text=$(cat "$CANARY_LIB")
 	# shellcheck disable=SC2016  # matching literal source text
 	if [[ "$lib_text" == *'no CPU/load/saturation preflight'* ]] \
 		&& [[ "$lib_text" != *"printf 'overload"* ]]; then
@@ -512,14 +514,14 @@ test_overload_check_wired_into_canary() {
 		return 0
 	fi
 	print_result "t3558: overload check is not wired into _run_canary_test" 1 \
-		"Expected no overload negative-cache write in $HEADLESS_LIB"
+		"Expected no overload negative-cache write in $CANARY_LIB"
 	return 0
 }
 
 test_overload_ttl_in_case_selector() {
 	# t3558: overload is no longer a distinct TTL class; keep config_error only.
 	local lib_text
-	lib_text=$(cat "$HEADLESS_LIB")
+	lib_text=$(cat "$CANARY_LIB")
 	# shellcheck disable=SC2016  # matching literal source text
 	if [[ "$lib_text" == *'config_error) active_ttl="$CANARY_CONFIG_ERROR_TTL_SECONDS"'* ]] \
 		&& [[ "$lib_text" != *'overload) active_ttl="$CANARY_OVERLOAD_TTL_SECONDS"'* ]]; then
@@ -527,7 +529,7 @@ test_overload_ttl_in_case_selector() {
 		return 0
 	fi
 	print_result "t3558: TTL case selector excludes overload branch" 1 \
-		"Expected config_error TTL branch and no overload TTL branch in $HEADLESS_LIB"
+		"Expected config_error TTL branch and no overload TTL branch in $CANARY_LIB"
 	return 0
 }
 
@@ -542,10 +544,10 @@ test_overload_helper_behavioural() {
 
 	# Extract the helper function block (start at the def line, end at the
 	# first lone closing brace).
-	awk '/^_check_system_overload\(\) \{/,/^\}/' "$HEADLESS_LIB" >"$helper_extract"
+	awk '/^_check_system_overload\(\) \{/,/^\}/' "$CANARY_LIB" >"$helper_extract"
 	if [[ ! -s "$helper_extract" ]]; then
 		print_result "t3210: helper behavioural — extraction" 1 \
-			"Failed to extract _check_system_overload from $HEADLESS_LIB"
+			"Failed to extract _check_system_overload from $CANARY_LIB"
 		return 0
 	fi
 
@@ -594,7 +596,7 @@ test_failure_classification_distinct() {
 	# - "cli_usage_output" — spawned but invoked wrong (config bug)
 	# - "worker_worktree_live_owner" / continuation subreasons — exited during
 	#   the prelaunch ownership guard
-	# These are wired in pulse-dispatch-engine.sh check_worker_launch.
+	# These are wired in pulse-dispatch-engine-launch.sh check_worker_launch.
 	if grep -q '"no_worker_process"' "$PULSE_ENGINE" \
 		&& grep -q '"cli_usage_output"' "$PULSE_ENGINE" \
 		&& grep -q 'worker_worktree_live_owner' "$PULSE_ENGINE" \
@@ -712,7 +714,8 @@ test_nohup_launch_passes_repo_slug_contract() {
 }
 
 test_claim_lock_errors_fail_closed() {
-	if grep -q 'claim pre-check error.*fail-closed' "$DEDUP_LAYERS" \
+	# Claim helper unavailable and claim exit=2 both block dispatch (fail-closed).
+	if grep -q 'claim helper unavailable.*fail-closed' "$DEDUP_LAYERS" \
 		&& grep -q 'claim error.*fail-closed' "$DEDUP_LAYERS" \
 		&& ! grep -q 'proceeding (fail-open)' "$DEDUP_LAYERS"; then
 		print_result "invariant: claim API errors block dispatch instead of launching duplicate workers" 0

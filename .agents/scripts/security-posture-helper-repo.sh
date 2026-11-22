@@ -235,6 +235,27 @@ check_workflow_security() {
 		add_finding "$SEVERITY_PASS" "$CAT_WORKFLOWS" "No critical issues"
 	fi
 
+	_check_pull_request_target_policy "$repo_path"
+
+	return 0
+}
+
+# GitHub blocks pull_request_target by default in public repositories from
+# 2026-12-02 unless an Actions event policy allows it. Warn (read-only) when
+# actions-event-policy-helper.sh reports uncovered workflows (exit 1 only;
+# API/permission errors stay silent so the posture check never false-alarms).
+_check_pull_request_target_policy() {
+	local repo_path="$1"
+	local slug="" helper="" rc=0
+	command -v gh >/dev/null 2>&1 || return 0
+	slug=$(resolve_slug "$repo_path") || return 0
+	helper="${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")}/actions-event-policy-helper.sh"
+	[[ -x "$helper" ]] || return 0
+	"$helper" status --repo "$slug" >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		print_warn "pull_request_target workflows lack an Actions event policy (blocked by default from 2026-12-02; brownouts 2026-11-09/16). Fix: actions-event-policy-helper.sh apply --repo $slug"
+		add_finding "$SEVERITY_WARNING" "$CAT_WORKFLOWS" "pull_request_target not allowed by Actions event policy (blocked from 2026-12-02)"
+	fi
 	return 0
 }
 
@@ -452,6 +473,7 @@ check_branch_protection() {
 # Phase 3: Check review-bot-gate
 check_review_bot_gate() {
 	local repo_path="$1"
+	local ruleset_details="${2:-}"
 
 	print_header "Phase 3: Review Bot Gate"
 
@@ -476,14 +498,18 @@ check_review_bot_gate() {
 		return 0
 	fi
 
-	local default_branch
-	default_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || true
-	default_branch="${default_branch:-main}"
+	local default_branch protection_json check_contexts
+	default_branch=$(_default_branch_for_repo "$repo_path")
+	protection_json=$(_classic_branch_protection_json "$slug" "$default_branch") || true
+	check_contexts="$(_classic_required_check_contexts "$protection_json")"
+	check_contexts+=$'\n'
+	if [[ "$#" -ge 2 ]]; then
+		check_contexts+="$(_rulesets_required_check_contexts "$slug" "$default_branch" "$ruleset_details")"
+	else
+		check_contexts+="$(_rulesets_required_check_contexts "$slug" "$default_branch")"
+	fi
 
-	local check_contexts
-	check_contexts=$(gh api "repos/$slug/branches/$default_branch/protection/required_status_checks" 2>/dev/null | jq -r '.contexts[]? // empty' 2>/dev/null) || true
-
-	if echo "$check_contexts" | grep -q "review-bot-gate" 2>/dev/null; then
+	if _required_check_present "$check_contexts" "review-bot-gate"; then
 		print_pass "review-bot-gate is a required status check"
 		add_finding "$SEVERITY_PASS" "$CAT_REVIEW_BOT_GATE" "Required status check configured"
 	else
@@ -1165,10 +1191,32 @@ _emit_sync_pat_advisory() {
 	local slug_sanitised="$2"
 	local advisory_file="$3"
 	local protection_desc="$4"
+	local health_reason="${5:-}"
 
 	local advisory_dir
 	advisory_dir="$(dirname "$advisory_file")"
 	mkdir -p "$advisory_dir"
+
+	if [[ -n "$health_reason" ]]; then
+		cat >"$advisory_file" <<ADVISORY_EOF
+[ADVISORY] SYNC_PAT may expire or need rotation for ${slug}
+
+${health_reason}
+Secret age is only a heuristic: the token may use a different expiration period.
+The secret value is never read by this check.
+
+Regenerating a token preserves its permissions and selected repositories but
+revokes the old value everywhere. Update every repository secret using it.
+In a separate terminal (interactive prompt, never paste the value into AI chat):
+   gh secret set SYNC_PAT --repo ${slug}
+Then rerun the affected run:
+   gh run rerun <id> --repo ${slug} --failed
+
+See reference/sync-pat-platforms.md, Rotation / expired token.
+ADVISORY_EOF
+		print_info "  Rotation advisory written to: $advisory_file"
+		return 0
+	fi
 
 	cat >"$advisory_file" <<ADVISORY_EOF
 [ADVISORY] SYNC_PAT not set for ${slug}
@@ -1281,6 +1329,43 @@ _repo_uses_metrics_workflow() {
 	return 1
 }
 
+# Check metadata and the latest issue-sync failure without reading token values.
+_check_sync_pat_health() {
+	local slug="$1"
+	local advisory_file="$2"
+	local secret_check="$3"
+	local health_reason=""
+	if jq -e '(.updatedAt | fromdateiso8601) <= (now - 76 * 86400)' \
+		<<<"$secret_check" >/dev/null 2>&1; then
+		health_reason="SYNC_PAT was last updated at least 76 days ago and may expire soon (90-day default, 14-day warning)."
+	fi
+	local latest_run jobs
+	latest_run=$(gh api "repos/${slug}/actions/workflows/issue-sync.yml/runs?per_page=1" \
+		--jq '.workflow_runs[0] | select(.conclusion == "failure") | .id' 2>/dev/null) || true
+	if [[ "$latest_run" =~ ^[0-9]+$ ]]; then
+		jobs=$(gh api "repos/${slug}/actions/runs/${latest_run}/jobs?per_page=100" 2>/dev/null) || true
+		if jq -e 'any(.jobs[]?.steps[]?; .conclusion == "failure" and
+			(.name == "Checkout" or .name == "Checkout repo before closing-hygiene validation"))' \
+			<<<"$jobs" >/dev/null 2>&1; then
+			# Step names do not expose whether validation selected SYNC_PAT or
+			# GITHUB_TOKEN. Do not turn a checkout failure into rotation advice.
+			local checkout_reason="Latest issue-sync run ${latest_run} failed at checkout; the selected credential is unknown. Inspect the run logs for authentication, repository access, or network failures."
+			print_warn "$checkout_reason"
+			add_finding "$SEVERITY_WARNING" "$CAT_SYNC_PAT" "$checkout_reason"
+		fi
+	fi
+	if [[ -n "$health_reason" ]]; then
+		print_warn "SYNC_PAT may expire or need rotation for $slug"
+		add_finding "$SEVERITY_WARNING" "$CAT_SYNC_PAT" "$health_reason"
+		_emit_sync_pat_advisory "$slug" "${slug//\//-}" "$advisory_file" "" "$health_reason"
+	else
+		print_pass "SYNC_PAT is set for $slug"
+		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "SYNC_PAT set for $slug"
+		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
+	fi
+	return 0
+}
+
 # Check whether a repo requires SYNC_PAT based on workflow + branch protection.
 # Writes result to global SYNC_PAT_NEED_RESULT: "needed:<desc>" | "not_needed".
 # Side effect: prints findings and cleans stale advisories.
@@ -1306,6 +1391,17 @@ _check_sync_pat_need() {
 		print_pass "No issue-sync.yml or metrics caller — SYNC_PAT not needed for $slug"
 		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "No issue-sync.yml or metrics caller in $slug"
 		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
+		SYNC_PAT_NEED_RESULT="$SYNC_PAT_NEED_NOT_NEEDED"
+		return 0
+	fi
+
+	# Configured tokens need health checks even without branch protection or
+	# when Actions can create PRs. Secret metadata never contains the value.
+	local secret_check
+	secret_check=$(gh secret list --repo "$slug" --json name,updatedAt \
+		-q '.[] | select(.name == "SYNC_PAT")' 2>/dev/null) || true
+	if [[ -n "$secret_check" ]]; then
+		_check_sync_pat_health "$slug" "$advisory_file" "$secret_check"
 		SYNC_PAT_NEED_RESULT="$SYNC_PAT_NEED_NOT_NEEDED"
 		return 0
 	fi
@@ -1374,18 +1470,6 @@ _check_sync_pat_need() {
 		fi
 	else
 		protection_desc="${protection_desc} with Actions PR creation disabled"
-	fi
-
-	# Step 3: Is SYNC_PAT set?
-	local secret_check
-	secret_check=$(gh secret list --repo "$slug" --json name -q '.[] | select(.name == "SYNC_PAT") | .name' 2>/dev/null) || true
-
-	if [[ -n "$secret_check" ]]; then
-		print_pass "SYNC_PAT is set for $slug"
-		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "SYNC_PAT set for $slug"
-		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
-		SYNC_PAT_NEED_RESULT="$SYNC_PAT_NEED_NOT_NEEDED"
-		return 0
 	fi
 
 	# Needs SYNC_PAT — return the protection description for the advisory
@@ -1768,7 +1852,7 @@ run_all_checks() {
 
 	check_workflow_security "$repo_path"
 	check_branch_protection "$repo_path" "$ruleset_details"
-	check_review_bot_gate "$repo_path"
+	check_review_bot_gate "$repo_path" "$ruleset_details"
 	check_maintainer_gate "$repo_path" "$ruleset_details"
 	check_linked_issue_gate "$repo_path" "$ruleset_details"
 	check_dependencies "$repo_path"

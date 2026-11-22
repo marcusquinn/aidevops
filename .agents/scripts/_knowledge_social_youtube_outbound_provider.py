@@ -168,6 +168,15 @@ class YouTubePreparedProvider:
             return None, "validation"
         media, size = _verified_media(self.claimed)
         media_type = _media_type(media)
+        location, error = self._initiate_upload(size, media_type)
+        if location is None:
+            return None, error
+        if checkpoint is not None:
+            checkpoint(location)
+        return self._transfer_upload(media, size, media_type, location)
+
+    def _initiate_upload(self, size: int, media_type: str) -> tuple[str | None, str | None]:
+        """Create and validate a private resumable session before checkpointing it."""
         token = _access_token(_profile(self.claimed))
         metadata = json.dumps(
             {
@@ -201,8 +210,12 @@ class YouTubePreparedProvider:
             location = response.headers.get("Location")
         if not isinstance(location, str) or not location.startswith("https://www.googleapis.com/"):
             return None, "validation"
-        if checkpoint is not None:
-            checkpoint(location)
+        return location, None
+
+    def _transfer_upload(
+        self, media: Path, size: int, media_type: str, location: str
+    ) -> tuple[str | None, str | None]:
+        """Transfer media only after its approved session has been checkpointed."""
         with media.open("rb") as handle:
             upload = Request(
                 location,

@@ -1,0 +1,69 @@
+[SECURITY ADVISORY] nginx "NGINX2Root" (CVE-2026-123007 et al.) — disable HTTP/2 until nginx is patched, then update and restart
+
+  Published: 2026-11-18. Upstream fixes are in nginx 1.30.7 and 1.31.9.
+  The serious ones for most hosts are the HTTP/2 bugs: CVE-2026-123007
+  (memory corruption, remote code execution as the nginx worker) and
+  CVE-2026-123633 (use-after-free). The others only matter if the feature is
+  configured: CVE-2026-113425 (mail proxy), CVE-2026-123634 (resolver) and
+  CVE-2026-121810 (HTTP/3). The published chain then escalates to root
+  through the SCTP kernel module. Distro packages may lag: on 2026-11-18,
+  Ubuntu 26.04 nginx 1.28.3-2ubuntu1.12 was still listed as vulnerable.
+  Exploitation reportedly needs about 128 GB of HTTP/2 traffic, so it is
+  slow, but it is unauthenticated.
+
+  Check each nginx host (including app platforms such as Cloudron):
+
+    dpkg-query -W nginx; nginx -v
+    nginx -T 2>/dev/null | grep -cE 'http2 on|listen .*http2'          # >0 = HTTP/2 on
+    nginx -T 2>/dev/null | grep -E '^\s*mail\s*\{|quic|http3|resolver '
+    lsmod | grep '^sctp '                                              # loaded?
+
+  nginx is patched when EITHER check passes:
+
+    a. Distro packages (Ubuntu, Debian) backport the fix without changing
+       the upstream version, so the changelog must name the CVE:
+         zgrep -c CVE-2026-123007 /usr/share/doc/nginx*/changelog.Debian.gz  # >0 = patched
+    b. Vendor and nginx.org builds ship the fixed upstream release, but
+       their changelogs may never name the CVE (e.g. Cloudways
+       1:1.31.9-34~bookworm). Fixed upstream: 1.30.7+ on 1.30, or 1.31.9+
+       (1.31.0 to 1.31.8 are vulnerable):
+         v=$(nginx -v 2>&1 | sed -n 's|.*nginx/\([0-9.]*\).*|\1|p')
+         { dpkg --compare-versions "$v" ge 1.30.7 &&
+           dpkg --compare-versions "$v" lt 1.31.0; } ||
+           dpkg --compare-versions "$v" ge 1.31.9 && echo "patched: $v"
+
+  Until patched (interim; reduces exposure, not a fix):
+
+    1. Turn off HTTP/2 everywhere: change `http2 on;` to `http2 off;` AND
+       remove `http2` from `listen ... ssl http2;` lines. The older listen
+       form enables HTTP/2 for the whole address:port, so other vhosts on
+       that port stay exposed. Then `nginx -t && systemctl restart nginx`.
+    2. Verify from outside, not from the files. This should print HTTP/1.1:
+         curl -sI --http2 --resolve <host>:443:<ip> https://<host>/ | head -1
+    3. Block SCTP to remove the root-escalation step, then reboot (the module
+       cannot be unloaded while anything holds SCTP sockets, e.g. coturn):
+         printf 'install sctp /bin/false\ninstall sctp_diag /bin/false\n' \
+           > /etc/modprobe.d/disable-sctp.conf
+       Take a running-container baseline first; containers started with no
+       restart policy do not come back after the reboot.
+    4. Platforms that regenerate nginx configs (Cloudron rewrote some vhosts
+       after a reboot) silently turn HTTP/2 back on. Re-apply after every
+       regeneration, or schedule a guarded re-apply, until patched. Record
+       which files used the listen form so you can restore them exactly.
+       Back up the real directory: Cloudron's /etc/nginx is a symlink.
+
+  When the patched package arrives: confirm check a or b passes,
+  restart nginx (a reload keeps the old binary; check that
+  `readlink /proc/$(cat /run/nginx.pid)/exe` does not end in "(deleted)"),
+  then turn HTTP/2 back on, remove the SCTP block, and restart services
+  that used SCTP (e.g. the Cloudron `turn` container).
+
+  Cloudron playbook: services/hosting/cloudron.md "nginx security releases"
+  Advisories: https://nginx.org/en/security_advisories.html
+              https://ubuntu.com/security/CVE-2026-123007
+  Write-up:   https://xint.io/blog/nginx2root-remote-code-execution
+  Cloudron:   https://forum.cloudron.io/topic/16310/nginx-on-cloudron-and-the-nginx2root-cves-cve-2026-123007-et-al
+
+  Dismiss after every nginx host is patched and reverted:
+
+    aidevops security dismiss nginx2root-2026-11

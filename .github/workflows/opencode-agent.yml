@@ -19,13 +19,10 @@ on:
   pull_request_review_comment:
     types: [created]
 
-# Rate limiting: only one real AI agent run at a time, queue others.
-# The group is intentionally global because the OpenCode action can mutate the
-# repository; no-op comments are filtered at the job layer before they enter
-# this queue so ordinary discussion does not create noisy queued/cancelled runs.
-concurrency:
-  group: opencode-agent
-  cancel-in-progress: false
+# Rate limiting lives on the opencode-agent job, not the run (GH#39594). A
+# run-level group admits one running and one pending run, so every comment run
+# replaced the pending one before any job `if:` was evaluated, and a genuine
+# /oc request waiting there was cancelled by the next unrelated comment.
 
 jobs:
   # Security gate: validate request before running AI
@@ -36,8 +33,22 @@ jobs:
     # (including legacy Gemini activity) never contain /oc or /opencode triggers,
     # but GitHub requires manual approval for workflow runs triggered by bot
     # accounts, causing permanent action_required status on PRs.
+    # GH#39594: approximate the script rule /(^|\s)\/(oc|opencode)\b/m with
+    # line-start, space, tab or newline anchors. A bare contains('/opencode')
+    # matched the `//opencode.ai` link in every aidevops signature footer.
+    # fromJSON decodes the escapes; CRLF bodies still contain "\n/oc". The script
+    # stays authoritative. Bot accounts never issue commands; the user.type check
+    # covers `coderabbitai[bot]`, whose review text quotes ` /oc` snippets.
     if: >
-      (contains(github.event.comment.body, '/oc') || contains(github.event.comment.body, '/opencode')) &&
+      (startsWith(github.event.comment.body, '/oc') ||
+        startsWith(github.event.comment.body, '/opencode') ||
+        contains(github.event.comment.body, ' /oc') ||
+        contains(github.event.comment.body, ' /opencode') ||
+        contains(github.event.comment.body, fromJSON('"\n/oc"')) ||
+        contains(github.event.comment.body, fromJSON('"\n/opencode"')) ||
+        contains(github.event.comment.body, fromJSON('"\t/oc"')) ||
+        contains(github.event.comment.body, fromJSON('"\t/opencode"'))) &&
+      github.event.comment.user.type != 'Bot' &&
       github.actor != 'coderabbitai' &&
       github.actor != 'gemini-code-assist[bot]' &&
       github.actor != 'augment-code[bot]' &&
@@ -240,6 +251,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: [security-check, audit-log]
     if: needs.security-check.outputs.allowed == 'true'
+    # Only one repository-mutating agent run at a time; the group is global
+    # because the OpenCode action can push to the repository (GH#39594).
+    concurrency:
+      group: opencode-agent
+      cancel-in-progress: false
     
     # Minimal permissions - principle of least privilege
     permissions:
@@ -289,7 +305,7 @@ jobs:
             }
       
       - name: Run OpenCode Agent
-        uses: anomalyco/opencode/github@026b106bc5d41b679ffc413264229c340871e4d3 # v2.0.28
+        uses: anomalyco/opencode/github@fedc6f208aa2bd54c1019227214568083f6380ad # v2.2.7
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:

@@ -363,6 +363,8 @@ export interface BotConfig {
   useIntelligentThresholds?: boolean;
   /** Data directory for bot state (default: ~/.aidevops/.agent-workspace/simplex-bot) */
   dataDir?: string;
+  /** Optional session-bus integration, disabled by default. */
+  sessionBus?: { enabled: boolean };
 }
 
 /** Default bot configuration */

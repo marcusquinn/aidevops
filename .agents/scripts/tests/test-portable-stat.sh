@@ -266,6 +266,31 @@ else
 	_pass "_stat_batch nonexistent file: returns non-zero (correct)"
 fi
 
+# GH#39871: a BSD-first combined command substitution retains stdout from GNU
+# stat's failed filesystem query. Separate assignments (discarding failed output)
+# are safe; a direct BSD-to-GNU fallback in one output stream is not.
+if python3 - "$SCRIPT_DIR/.." <<'PY'
+from pathlib import Path
+import re
+import sys
+
+root = Path(sys.argv[1])
+pattern = re.compile(r"stat -f [^\n]*2>/dev/null" + r" \|\| stat -c")
+bad = []
+for path in sorted(root.rglob("*.sh")):
+    for number, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
+        if pattern.search(line):
+            bad.append(f"{path.relative_to(root)}:{number}")
+if bad:
+    print("Unsafe BSD-first stat output fallback: " + ", ".join(bad), file=sys.stderr)
+    sys.exit(1)
+PY
+then
+	_pass "no combined BSD-first stat fallback contaminates GNU output"
+else
+	_fail "combined BSD-first stat fallback found (GH#39871)"
+fi
+
 # --- Summary -----------------------------------------------------------------
 
 echo

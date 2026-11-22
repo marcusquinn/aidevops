@@ -56,6 +56,7 @@ def _git_worktree_matches(
     worktree: bool,
 ) -> dict[str, bool]:
     return {
+        "git_worktree_add": subcommand == "worktree" and git_args[:1] == ["add"],
         "git_checkout_worktree_path": subcommand == "checkout" and "--" in git_args,
         "git_restore_worktree": subcommand == "restore" and (worktree or not staged),
         "git_reset_destructive": subcommand == "reset"
@@ -76,4 +77,18 @@ def _git_history_matches(
         "git_stash_delete": subcommand == "stash"
         and bool(git_args)
         and git_args[0] in {"drop", "clear"},
+        "git_stash_unscoped_restore": subcommand == "stash"
+        and _is_unscoped_stash_restore(git_args),
     }
+
+
+def _is_unscoped_stash_restore(git_args: list[str]) -> bool:
+    """Return True for `stash pop|apply` without an explicit stash ref.
+
+    Every worktree of a repository shares one stash list, so an implicit
+    `stash@{0}` can belong to another session (GH#39787). A no-op `git stash`
+    also exits 0, so `stash && ... && stash pop` restores whatever is newest.
+    """
+    if not git_args or git_args[0] not in {"pop", "apply"}:
+        return False
+    return not any(arg and not arg.startswith("-") for arg in git_args[1:])

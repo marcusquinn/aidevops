@@ -110,9 +110,23 @@ def emit(reason, provider_type, status, pattern):
     print("\t".join([reason, provider_type, status, "trusted_provider", pattern]))
 
 
+CODEX_ENTITLEMENT_TEXT = "is not supported when using codex with a chatgpt account"
+MODEL_UNAVAILABLE_TOKENS = ("model_not_found", CODEX_ENTITLEMENT_TEXT)
+
+
+def structured_model_unavailable(record, details):
+    """GH#36698: a definite pre-generation entitlement rejection is model-scoped.
+
+    Only 400/404 qualify; a 403 stays access_denied even when it names the model.
+    """
+    return record["status"] in (400, 404) and any(token in details for token in MODEL_UNAVAILABLE_TOKENS)
+
+
 def classify_structured(record):
     status = record["status"]
     details = f"{record['message']}\n{record['body']}".lower()
+    if structured_model_unavailable(record, details):
+        return "model_unavailable", "model_unavailable", str(status), "structured_api_error|model_unavailable"
     gateway_denied = status == 403 and (
         record["body_kind"] == "html" or any(token in details for token in ("gateway", "proxy"))
     )
@@ -132,7 +146,9 @@ def classify_plaintext(text):
         "insufficient_quota", "insufficient quota", "quota_exceeded", "quota exceeded",
         "exceeded your current quota", "credit_exhausted", "credit exhausted", "exhausted your credit",
     )
-    if any(token in text for token in quota):
+    if CODEX_ENTITLEMENT_TEXT in text:
+        result = "model_unavailable", "model_unavailable", "400", "trusted_model_unavailable|codex_entitlement"
+    elif any(token in text for token in quota):
         result = "quota_exceeded", "quota_exceeded", "429", "trusted_quota|insufficient_quota|quota_exceeded|credit_exhausted"
     elif any(token in text for token in ("rate limit", "rate_limit", "too many requests")) or re.search(r"\b429\b", text):
         result = "rate_limit", "rate_limit", "429", "trusted_rate_limit|429|too_many_requests"

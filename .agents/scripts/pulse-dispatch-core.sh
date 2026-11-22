@@ -90,6 +90,9 @@ fi
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-locks.sh"
 # shellcheck source=pulse-dispatch-commit-gates.sh
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-commit-gates.sh"
+# GH#39856: not-before time gate (load-once guarded library).
+# shellcheck source=issue-hold-marker-lib.sh
+source "${BASH_SOURCE[0]%/*}/issue-hold-marker-lib.sh"
 
 _dispatch_has_interactive_hold() {
 	local issue_meta_json="$1"
@@ -164,54 +167,31 @@ _dispatch_registered_worktree_count() {
 	return 0
 }
 
-_dispatch_run_guarded_worktree_cleanup() {
-	local repo_path="$1"
-	local helper="$2"
-	(
-		cd -- "$repo_path" || exit 125
-		bash "$helper" clean --auto --force-merged
-	) >>"${LOGFILE:-/dev/null}" 2>&1
+_dispatch_launch_pressure_cleanup() {
+	local helper="${AIDEVOPS_WORKTREE_CAPACITY_HELPER:-${BASH_SOURCE[0]%/*}/cleanup-worktrees-async-helper.sh}"
+	[[ "${AIDEVOPS_DISPATCH_PRESSURE_CLEANUP_STARTED:-0}" != 1 ]] || return 0
+	[[ -x "$helper" ]] || return 1
+	if ! declare -F _preflight_launch_async_cleanup >/dev/null 2>&1; then
+		# shellcheck source=pulse-dispatch-preflight-lib.sh
+		source "${BASH_SOURCE[0]%/*}/pulse-dispatch-preflight-lib.sh" || return 1
+	fi
+	# This existing cadence setting is explicitly forwarded by the systemd
+	# launcher as well as inherited by the nohup fallback; no inline GC.
+	CLEANUP_WORKTREES_ASYNC_CADENCE_MIN=0 _preflight_launch_async_cleanup "$helper" \
+		"${AIDEVOPS_LOG_DIR:-${HOME}/.aidevops/logs}/cleanup_worktrees.log" "worktrees" || return 1
+	AIDEVOPS_DISPATCH_PRESSURE_CLEANUP_STARTED=1
+	return 0
 }
 
-# At the dispatch worktree cap, synchronously give the existing guarded cleanup
-# one bounded chance to recover capacity. The helper remains responsible for
-# preserving dirty, active, open-PR, unmerged, and externally-owned worktrees.
+# Compatibility entrypoint: recovery belongs to the isolated async executor.
 _dispatch_cleanup_worktree_capacity() {
 	local repo_path="$1"
 	local issue_number="$2"
 	local repo_slug="$3"
 	local before_count="$4"
 	local max_count="$5"
-	local helper="${AIDEVOPS_WORKTREE_HELPER:-${BASH_SOURCE[0]%/*}/worktree-helper.sh}"
-	local cleanup_timeout="${AIDEVOPS_DISPATCH_WORKTREE_CLEANUP_TIMEOUT:-60}"
-	local cleanup_rc=0
-	local after_count=""
-
-	[[ "$cleanup_timeout" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || cleanup_timeout=60
-	[[ "$cleanup_timeout" -ge 1 ]] || cleanup_timeout=1
-	if [[ ! -x "$helper" ]]; then
-		echo "[dispatch_with_dedup] Capacity cleanup unavailable for #${issue_number} in ${repo_slug}: guarded helper not executable (${helper}); count remains ${before_count}/${max_count}" >>"$LOGFILE"
-		return 1
-	fi
-	if ! declare -F run_stage_with_timeout >/dev/null 2>&1; then
-		echo "[dispatch_with_dedup] Capacity cleanup unavailable for #${issue_number} in ${repo_slug}: bounded stage runner missing; count remains ${before_count}/${max_count}" >>"$LOGFILE"
-		return 1
-	fi
-
-	echo "[dispatch_with_dedup] Live worktree count ${before_count} >= cap ${max_count} for #${issue_number} in ${repo_slug}; attempting guarded cleanup (timeout ${cleanup_timeout}s)" >>"$LOGFILE"
-	run_stage_with_timeout "dispatch_worktree_capacity_cleanup" "$cleanup_timeout" \
-		_dispatch_run_guarded_worktree_cleanup "$repo_path" "$helper" || cleanup_rc=$?
-	if ! after_count=$(_dispatch_registered_worktree_count "$repo_path"); then
-		echo "[dispatch_with_dedup] Guarded capacity cleanup could not verify the post-cleanup worktree count for #${issue_number} in ${repo_slug} (before ${before_count}, cap ${max_count}, cleanup_rc=${cleanup_rc}); dispatch remains fail-closed" >>"$LOGFILE"
-		return 1
-	fi
-	if [[ "$after_count" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] && [[ "$after_count" -lt "$max_count" ]]; then
-		echo "[dispatch_with_dedup] Guarded capacity cleanup recovered dispatch capacity for #${issue_number} in ${repo_slug}: ${before_count} -> ${after_count} worktrees (cap ${max_count}, cleanup_rc=${cleanup_rc})" >>"$LOGFILE"
-		return 0
-	fi
-
-	[[ "$after_count" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || after_count="$before_count"
-	echo "[dispatch_with_dedup] Guarded capacity cleanup could not recover dispatch capacity for #${issue_number} in ${repo_slug}: ${before_count} -> ${after_count} worktrees (cap ${max_count}, cleanup_rc=${cleanup_rc}); existing cleanup safety gates preserved remaining worktrees" >>"$LOGFILE"
+	_dispatch_launch_pressure_cleanup || true
+	echo "[dispatch_with_dedup] Async capacity cleanup requested for #${issue_number} in ${repo_slug} (${repo_path}): ${before_count}/${max_count}; dispatch remains fail-closed" >>"$LOGFILE"
 	return 1
 }
 
@@ -226,21 +206,17 @@ _dispatch_worktree_capacity_gate() {
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to verify registered worktree count; capacity gate remains fail-closed" >>"$LOGFILE"
 		return 1
 	fi
+	if [[ "$count" -ge "$(aidevops_worktree_cleanup_threshold "$max_count")" ]]; then
+		_dispatch_launch_pressure_cleanup || true
+	fi
 	if [[ "$count" -lt "$max_count" ]]; then
 		return 0
 	fi
-	_dispatch_cleanup_worktree_capacity "$repo_path" "$issue_number" "$repo_slug" "$count" "$max_count"
-	return $?
+	echo "[dispatch_with_dedup] Live worktree count ${count} >= cap ${max_count} for #${issue_number} in ${repo_slug}; async capacity cleanup requested; dispatch remains fail-closed" >>"$LOGFILE"
+	return 1
 }
 
-_dispatch_run_guarded_disk_cleanup() {
-	cleanup_worktrees "${1:-60}"
-	return $?
-}
-
-# At the global worktree-filesystem capacity gate, synchronously run the
-# existing all-repository guarded cleanup once per Pulse cycle, then recheck
-# both capacity thresholds. The cleanup owns all destructive safety guards.
+# Compatibility entrypoint; never wait for disk recovery inside admission.
 _dispatch_cleanup_disk_pressure() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -248,36 +224,19 @@ _dispatch_cleanup_disk_pressure() {
 	local before_reason="$4"
 	local before_kb="$5"
 	local before_percent="$6"
-	local cleanup_timeout="${AIDEVOPS_DISPATCH_DISK_CLEANUP_TIMEOUT:-60}"
-	local cleanup_rc=0
-	local after_rc=0
-
-	if [[ "${AIDEVOPS_DISPATCH_DISK_PRESSURE_CLEANUP_ATTEMPTED:-0}" == "1" ]]; then
-		echo "[dispatch_with_dedup] Disk-pressure cleanup already attempted this Pulse cycle; dispatch remains fail-closed for #${issue_number} in ${repo_slug} (reason=${before_reason}, available=${before_kb}KB/${before_percent}%)" >>"$LOGFILE"
-		return 1
+	_dispatch_launch_pressure_cleanup || true
+	echo "[dispatch_with_dedup] Async disk cleanup requested for #${issue_number} in ${repo_slug} (${target_path}): reason=${before_reason}, available=${before_kb}KB/${before_percent}%; dispatch remains fail-closed" >>"$LOGFILE"
+	# GH#38026: name space held outside aidevops ownership (Time Machine local
+	# snapshots) once per pulse process; read-only, never deletes backups.
+	# Only a free-space reason consumes the once-per-process probe, so an
+	# earlier quota/unknown failure cannot suppress a later applicable hint.
+	if [[ -z "${_DISPATCH_DISK_RECLAIM_HINT_EMITTED:-}" &&
+		("$before_reason" == below-minimum-kb || "$before_reason" == below-minimum-percent) ]]; then
+		_DISPATCH_DISK_RECLAIM_HINT_EMITTED=1
+		local hint=""
+		hint=$(aidevops_disk_capacity_reclaim_hint) || hint=""
+		[[ -z "$hint" ]] || echo "[dispatch_with_dedup] ${hint}" >>"$LOGFILE"
 	fi
-	AIDEVOPS_DISPATCH_DISK_PRESSURE_CLEANUP_ATTEMPTED=1
-	[[ "$cleanup_timeout" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || cleanup_timeout=60
-	[[ "$cleanup_timeout" -ge 1 ]] || cleanup_timeout=1
-	if ! declare -F cleanup_worktrees >/dev/null 2>&1; then
-		echo "[dispatch_with_dedup] Disk-pressure cleanup unavailable for #${issue_number} in ${repo_slug}: guarded all-repository cleanup missing (before reason=${before_reason}, available=${before_kb}KB/${before_percent}%); dispatch remains fail-closed" >>"$LOGFILE"
-		return 1
-	fi
-	if ! declare -F run_stage_with_timeout >/dev/null 2>&1; then
-		echo "[dispatch_with_dedup] Disk-pressure cleanup unavailable for #${issue_number} in ${repo_slug}: bounded stage runner missing (before reason=${before_reason}, available=${before_kb}KB/${before_percent}%); dispatch remains fail-closed" >>"$LOGFILE"
-		return 1
-	fi
-
-	echo "[dispatch_with_dedup] Disk pressure for #${issue_number} in ${repo_slug}: reason=${before_reason}, available=${before_kb}KB/${before_percent}%; attempting guarded all-repository cleanup once this Pulse cycle (timeout ${cleanup_timeout}s)" >>"$LOGFILE"
-	run_stage_with_timeout "dispatch_disk_pressure_cleanup" "$cleanup_timeout" \
-		_dispatch_run_guarded_disk_cleanup "$cleanup_timeout" || cleanup_rc=$?
-	aidevops_worktree_capacity_check "$target_path" || after_rc=$?
-	if [[ "$after_rc" -eq 0 ]]; then
-		echo "[dispatch_with_dedup] Guarded disk-pressure cleanup recovered dispatch capacity for #${issue_number} in ${repo_slug}: ${before_kb}KB/${before_percent}% -> ${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}KB/${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}% (cleanup_rc=${cleanup_rc})" >>"$LOGFILE"
-		return 0
-	fi
-
-	echo "[dispatch_with_dedup] Guarded disk-pressure cleanup could not recover dispatch capacity for #${issue_number} in ${repo_slug}: before reason=${before_reason}, available=${before_kb}KB/${before_percent}%; after reason=${AIDEVOPS_DISK_CAPACITY_REASON}, available=${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}KB/${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}% (cleanup_rc=${cleanup_rc}, capacity_rc=${after_rc}); existing cleanup safety gates preserved remaining worktrees" >>"$LOGFILE"
 	return 1
 }
 
@@ -307,36 +266,32 @@ _dispatch_dedup_capacity_gates() {
 	_ds_record "$issue_number" "$repo_slug" "dedup.interactive_hold" "$_dss_t0"
 
 	# GH#18987/GH#28543: refuse dispatch when the worktree filesystem has less
-	# than 5 GiB or 5% available. The same fail-closed policy runs at the actual
-	# worktree creation boundary, covering interactive and non-Pulse callers.
+	# than 5 GiB or 5% available (GH#38026: the 5% floor is capped at 50 GiB on
+	# large volumes). The same fail-closed policy runs at the actual worktree
+	# creation boundary, covering interactive and non-Pulse callers.
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "disk_space" "$_dss_t0" _ds_stage_attempt_id
 	local _capacity_rc=0
 	local _capacity_path="${AIDEVOPS_WORKTREE_BASE_DIR:-$HOME}"
 	aidevops_worktree_capacity_check "$_capacity_path" || _capacity_rc=$?
 	if [[ "$_capacity_rc" -ne 0 ]]; then
-		if _dispatch_cleanup_disk_pressure "$issue_number" "$repo_slug" "$_capacity_path" \
+		_dispatch_cleanup_disk_pressure "$issue_number" "$repo_slug" "$_capacity_path" \
 			"${AIDEVOPS_DISK_CAPACITY_REASON}" "${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}" \
-			"${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}"; then
-			:
-		else
-			echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: disk space critical (reason=${AIDEVOPS_DISK_CAPACITY_REASON}, available=${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}KB/${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}%, require at least ${AIDEVOPS_MIN_WORKTREE_FREE_KB:-5242880}KB and ${AIDEVOPS_MIN_WORKTREE_FREE_PERCENT:-5}%). Run: worktree-helper.sh clean --auto --force-merged" >>"$LOGFILE"
-			_ds_record "$issue_number" "$repo_slug" "dedup.disk_space" "$_dss_t0"
-			return 1
-		fi
+			"${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}" || true
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: disk space critical (reason=${AIDEVOPS_DISK_CAPACITY_REASON}, available=${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}KB/${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}%, require at least ${AIDEVOPS_MIN_WORKTREE_FREE_KB:-5242880}KB and ${AIDEVOPS_MIN_WORKTREE_FREE_PERCENT:-5}% = ${AIDEVOPS_DISK_PERCENT_FLOOR_KB}KB after the large-volume ceiling)" >>"$LOGFILE"
+		_ds_record "$issue_number" "$repo_slug" "dedup.disk_space" "$_dss_t0"
+		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.disk_space" "$_dss_t0"
 
-	# GH#18987: Worktree count cap — refuse dispatch when the repo has 200+
-	# registered git worktrees. At that scale, new worktrees risk consuming
-	# tens of GB; stale merged ones should be cleaned before adding more.
+	# GH#18987: runaway backstop on registered worktrees (default 1000; the disk
+	# gate above is the resource guard). Cleanup starts well below the cap.
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "worktree_cap" "$_dss_t0" _ds_stage_attempt_id
 	local _wt_max=""
-	_wt_max="${AIDEVOPS_MAX_WORKTREES:-200}"
-	[[ "$_wt_max" =~ ^[1-9][0-9]*$ ]] || _wt_max=200
+	_wt_max=$(aidevops_worktree_count_cap)
 	if ! _dispatch_worktree_capacity_gate "$repo_path" "$issue_number" "$repo_slug" "$_wt_max"; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: worktree capacity remains unavailable after bounded guarded cleanup" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: worktree capacity unavailable; recovery is asynchronous" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.worktree_cap" "$_dss_t0"
 		return 1
 	fi
@@ -461,6 +416,17 @@ _dispatch_dedup_dependency_gates() {
 		_ds_record "$issue_number" "$repo_slug" "dedup.blocked_by" "$_dss_t0"
 		return 1
 	fi
+	# GH#39856: an unexpired body aidevops:not-before time gate refuses dispatch
+	# even if another path advertised the issue as available. Body-only, so the
+	# gate costs no API call; comment markers keep status:blocked through the
+	# dependency passes, which own the release.
+	if declare -F issue_not_before_blocks >/dev/null 2>&1 &&
+		[[ "$_dispatch_issue_body" == *"aidevops:not-before"* ]] &&
+		issue_not_before_blocks '[]' "$_dispatch_issue_body" false; then
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=not_before_pending issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+		_ds_record "$issue_number" "$repo_slug" "dedup.not_before" "$_dss_t0"
+		return 1
+	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.blocked_by" "$_dss_t0"
 	return 0
 }
@@ -485,6 +451,7 @@ _dispatch_dedup_scope_gates() {
 	# `gh issue view --json labels` call (label CSV derived from JSON instead).
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "consolidation" "$_dss_t0" _ds_stage_attempt_id
+	local _consolidation_defer="" _consolidation_signal=""
 	if _issue_needs_consolidation "$issue_number" "$repo_slug" "$issue_meta_json"; then
 		_CONSOLIDATION_DISPATCH_OUTCOME=""
 		_dispatch_issue_consolidation "$issue_number" "$repo_slug" "$repo_path"
@@ -493,12 +460,24 @@ _dispatch_dedup_scope_gates() {
 		if [[ "${_CONSOLIDATION_DISPATCH_OUTCOME:-}" == "preflight_skipped" ]]; then
 			echo "[dispatch_with_dedup] Consolidation pre-flight skipped for #${issue_number} in ${repo_slug}; continuing dispatch gates (GH#33306)" >>"$LOGFILE"
 		else
-			echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: issue needs comment consolidation" >>"$LOGFILE"
-			_ds_record "$issue_number" "$repo_slug" "dedup.consolidation" "$_dss_t0"
-			return 1
+			_consolidation_defer="issue needs comment consolidation"
+			_consolidation_signal="consolidation_needed"
 		fi
+	elif [[ "${_CONSOLIDATION_CHILD_PENDING:-0}" == 1 ]]; then
+		# An in-flight consolidation child will supersede this parent. Without
+		# this, only the cycle that created the child deferred; the next cycle
+		# launched an implementation worker on the parent in parallel (#35605).
+		_consolidation_defer="consolidation child in flight"
+		_consolidation_signal="consolidation_child_in_flight"
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.consolidation" "$_dss_t0"
+	if [[ -n "$_consolidation_defer" ]]; then
+		echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: ${_consolidation_defer}" >>"$LOGFILE"
+		# GH#38181: structured reason so the deferral counts as the benign
+		# `consolidated` block instead of an unclassified candidate failure.
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=consolidated signal=${_consolidation_signal} issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+		return 1
+	fi
 
 	# Pre-dispatch: large-file simplification gate. If the issue body
 	# references files that exceed LARGE_FILE_LINE_THRESHOLD, create a
@@ -545,6 +524,13 @@ _dispatch_dedup_check_layers() {
 	[[ "$gate_rc" -eq 0 ]] || return "$gate_rc"
 	_dispatch_dedup_dependency_gates "$issue_number" "$repo_slug" "$repo_path" "$issue_meta_json" || gate_rc=$?
 	[[ "$gate_rc" -eq 0 ]] || return "$gate_rc"
+
+	# GH#36214: only eligible candidates fetch backoff evidence or post a notice.
+	# Held issues still return before check_dispatch_dedup can write a claim.
+	if declare -F _dlw_preclaim_zero_attempt_backoff >/dev/null 2>&1 &&
+		_dlw_preclaim_zero_attempt_backoff "$issue_number" "$repo_slug"; then
+		return 3
+	fi
 
 	# Read-only dedup layers — cannot be skipped.
 	# t2996: ISSUE_META_JSON forwards the canonical bundle to
@@ -763,7 +749,9 @@ _release_dispatch_claim_on_abort() {
 	esac
 
 	if [[ "$_is_pre_launch_abort" == "1" ]]; then
-		if [[ "$reason" == worker_launch_rc_* ]] &&
+		# Sealed refusal precedes queued ownership publication. No rollback is
+		# necessary (or safe to infer) for that deterministic no-worker outcome.
+		if [[ "$reason" == worker_launch_rc_* && "$reason" != worker_launch_rc_2:worktree_reuse_sealed_generation ]] &&
 			! _rollback_prelaunch_ownership "$issue_number" "$repo_slug" "$self_login" "$_claim_comment_id"; then
 			echo "[dispatch_with_dedup] Retaining dispatch claim ${_claim_comment_id} after uncertain pre-launch rollback for #${issue_number} (${reason})" >>"$LOGFILE"
 			return 1
@@ -960,6 +948,7 @@ _dispatch_load_and_validate_metadata() {
 	issue_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null | tr '[:lower:]' '[:upper:]') || issue_state=""
 	if [[ "$issue_state" == "CLOSED" ]]; then
 		echo "[dispatch] Skipping #${issue_number}: state=CLOSED" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=issue_closed signal=state-closed issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 		pulse-batch-prefetch-helper.sh evict-issue "$repo_slug" "$issue_number" 2>/dev/null || true
 		return 1
 	fi
@@ -1076,7 +1065,22 @@ _dispatch_preclaim_brief_scope_verdict() {
 	# implementation brief; untrusted authors must stay on the normal review path.
 	_brief_scope_block="untrusted_author"
 	author=$(printf '%s' "$issue_meta_json" | jq -r '.author.login // ""') || return 1
-	_brief_scope_author_trusted "$repo_slug" "$author" || return 1
+	body_hash=$(_dispatch_brief_hold_body_hash "$issue_body") || body_hash=""
+	if ! _brief_scope_author_trusted "$repo_slug" "$author"; then
+		# GH#37052: skip re-verification of an unchanged untrusted body.
+		if [[ -n "$body_hash" ]] && _brief_scope_untrusted_deferred "$repo_slug" "$issue_number" "$body_hash"; then
+			return 1
+		fi
+		# GH#37052: a verified signed approval bound to the current body digest
+		# authorises worker-owned scope discovery without rewriting the body.
+		# #aidevops:trust-boundary
+		if _brief_scope_worker_discovery_enabled && _brief_scope_signed_approval_valid "$repo_slug" "$issue_number"; then
+			echo "[dispatch_with_dedup] Brief #${issue_number} in ${repo_slug} has no canonical Files Scope; signed maintainer approval verified; dispatching with worker-owned scope discovery (GH#33243, GH#37052)" >>"${LOGFILE:-/dev/null}"
+			return 0
+		fi
+		[[ -z "$body_hash" ]] || _brief_scope_untrusted_record "$repo_slug" "$issue_number" "$body_hash"
+		return 1
+	fi
 	# GH#32689: explicit Files to Modify declarations normalize to the exact
 	# canonical scope; rewrite once and dispatch next cycle instead of holding.
 	_brief_scope_block="self_heal_rewritten"
@@ -1091,6 +1095,8 @@ _dispatch_preclaim_brief_scope_verdict() {
 		return 0
 	fi
 	_brief_scope_block="hold_marker_unavailable"
+	# GH#38360: a missing Files Scope is brief-owned and AI-resolvable.
+	local -a brief_hold_companion=(--add-label "${BLOCKED_NEEDS_AI_RECOVERY:-needs-ai-recovery}")
 	body_hash=$(_dispatch_brief_hold_body_hash "$issue_body") || return 1
 	hold_marker="<!-- aidevops:brief-hold reason=missing_files_scope body=${body_hash} -->"
 	_dispatch_brief_hold_recorded "$issue_number" "$repo_slug" "$hold_marker" || recorded_rc=$?
@@ -1099,7 +1105,7 @@ _dispatch_preclaim_brief_scope_verdict() {
 	[[ "$recorded_rc" -eq 2 ]] && return 1
 	if [[ "$recorded_rc" -eq 0 ]]; then
 		_brief_scope_block="hold_recorded"
-		set_issue_status "$issue_number" "$repo_slug" blocked >/dev/null || true
+		set_issue_status "$issue_number" "$repo_slug" blocked "${brief_hold_companion[@]}" >/dev/null || true
 		echo "[dispatch_with_dedup] Brief hold for #${issue_number} in ${repo_slug} already recorded for this body; relabelled without a new comment" >>"${LOGFILE:-/dev/null}"
 		return 1
 	fi
@@ -1108,7 +1114,7 @@ _dispatch_preclaim_brief_scope_verdict() {
 	aidevops_ops_marker brief-hold >"$comment_file" || return 1
 	# shellcheck disable=SC2016 # literal Markdown backticks, not expansions
 	printf '%s\nBrief hold: reason=missing_files_scope owner=brief-author.\nProjected state: status:blocked.\nNext action: Add a canonical ### Files Scope section with one `` - `repo/relative/path` `` line per permitted file (no prefix, nothing after the path) to the issue body, or explicit `` `EDIT: path` `` / `` `NEW: path` `` bullets under ### Files to Modify; verify with pre-dispatch-validator-helper.sh scope-check. The pulse releases this hold automatically once the edited body passes; no label change is needed. This body is not held again unless it changes.\n' "$hold_marker" >>"$comment_file"
-	if ! set_issue_status "$issue_number" "$repo_slug" blocked >/dev/null; then
+	if ! set_issue_status "$issue_number" "$repo_slug" blocked "${brief_hold_companion[@]}" >/dev/null; then
 		rm -f "$comment_file"
 		return 1
 	fi
@@ -1136,6 +1142,7 @@ dispatch_with_dedup() {
 	# scope first. Without this, set -u crashes the wrapper on every dispatch,
 	# SIGTERM-ing all active workers.
 	local _claim_comment_id=""
+	_dlw_sealed_hold_active "$repo_path" "$issue_number" "$repo_slug" && return 1
 
 	# GH#17503: Claim comments are NEVER deleted — they form the audit trail.
 	# The _cleanup_claim_comment function is retained as a no-op for backward
@@ -1170,6 +1177,9 @@ dispatch_with_dedup() {
 	source "${SCRIPT_DIR}/runner-capability-helper.sh"
 	runner_capability_check_fresh "$repo_path" "$issue_number" "$repo_slug" "$LOGFILE" || return 1
 	_dispatch_preclaim_brief_scope "$issue_number" "$repo_slug" "$issue_meta_json" || return 1
+	# GH#36214: the preclaim backoff in the dedup layers passes its metrics
+	# snapshot to prompt preparation via dynamic scope.
+	local _dispatch_zero_output_metrics=""
 
 	# Run all pre-dispatch validation and dedup check layers (10 gates total).
 	# Each gate logs its own blocked reason to LOGFILE before returning 1.
@@ -1622,7 +1632,7 @@ _match_terminal_blocker_pattern() {
 	local user_action=""
 
 	# Pattern 1: GitHub CLI too old for gh api --paginate --slurp
-	if echo "$all_bodies" | grep -qiE 'unknown flag: --slurp'; then
+	if echo "$all_bodies" | grep -iE 'unknown flag: --slurp' >/dev/null; then
 		local gh_slurp_message=""
 		if declare -F aidevops_gh_slurp_status_message >/dev/null 2>&1; then
 			gh_slurp_message=$(aidevops_gh_slurp_status_message)
@@ -1632,19 +1642,21 @@ _match_terminal_blocker_pattern() {
 		blocker_reason="GitHub CLI prerequisite failed — ${gh_slurp_message}"
 		user_action="Upgrade GitHub CLI to a version that supports \`gh api --paginate --slurp\` (minimum gh ${AIDEVOPS_GH_MIN_SLURP_VERSION:-2.51.0}), then remove the \`status:blocked\` label."
 	# Pattern 2: workflow scope missing
-	elif echo "$all_bodies" | grep -qiE 'workflow scope|refusing to allow an OAuth App to create or update workflow|token lacks.*workflow'; then
+	elif echo "$all_bodies" | grep -iE 'workflow scope|refusing to allow an OAuth App to create or update workflow|token lacks.*workflow' >/dev/null; then
 		blocker_reason="GitHub token lacks \`workflow\` scope — workers cannot push workflow file changes"
 		user_action="Run \`gh auth refresh -s workflow\` to add the workflow scope to your token, then remove the \`status:blocked\` label."
 	# Pattern 3: generic token/auth scope issues
-	elif echo "$all_bodies" | grep -qiE 'token lacks.*scope|missing.*scope.*token|token.*missing.*scope'; then
+	elif echo "$all_bodies" | grep -iE 'token lacks.*scope|missing.*scope.*token|token.*missing.*scope' >/dev/null; then
 		blocker_reason="GitHub token is missing a required scope — workers cannot complete this task"
 		user_action="Check the error details in the comments above, run \`gh auth refresh -s <missing-scope>\` to add the required scope, then remove the \`status:blocked\` label."
 	# Pattern 4: ACTION REQUIRED (supervisor-posted)
-	elif echo "$all_bodies" | grep -qF 'ACTION REQUIRED'; then
+	# GH#39452: only a line-anchored heading counts ("ACTION REQUIRED:",
+	# "**ACTION REQUIRED:**", "## ACTION REQUIRED:"), never the phrase quoted in prose/backticks.
+	elif echo "$all_bodies" | grep -E '^[[:space:]]*(#{1,6}[[:space:]]+)?(\*\*)?ACTION REQUIRED(:\*\*|\*\*:|:)' >/dev/null; then
 		blocker_reason="A previous supervisor comment flagged this issue as requiring user action"
-		user_action="Read the ACTION REQUIRED comment above, complete the requested action, then remove the \`status:blocked\` label."
+		user_action="Read the supervisor action request above, complete the requested action, then remove the \`status:blocked\` label."
 	# Pattern 5: persistent authentication/permission failures
-	elif echo "$all_bodies" | grep -qiE 'authentication required.*workflow|permission denied.*workflow|push declined.*workflow'; then
+	elif echo "$all_bodies" | grep -iE 'authentication required.*workflow|permission denied.*workflow|push declined.*workflow' >/dev/null; then
 		blocker_reason="Persistent authentication or permission failure for workflow files"
 		user_action="Check your GitHub token scopes with \`gh auth status\`, refresh if needed with \`gh auth refresh -s workflow\`, then remove the \`status:blocked\` label."
 	fi
@@ -1687,10 +1699,23 @@ _apply_terminal_blocker() {
 		already_blocked=1
 	fi
 
+	# GH#38360: every pattern here needs a human on the runner or account.
+	# Token and authentication failures need credentials; the rest (gh
+	# upgrade, ACTION REQUIRED) need one maintainer action named in the comment.
+	local companion="${BLOCKED_NEEDS_MAINTAINER_INPUT:-needs-maintainer-input}"
+	case "$blocker_reason" in
+	*[Tt]oken* | *[Aa]uthentication*) companion="${BLOCKED_NEEDS_CREDENTIALS:-needs-credentials}" ;;
+	esac
+
 	# Add label if not already present (t2033: use set_issue_status to atomically
 	# clear all sibling status:* labels, not just available/queued)
 	if [[ "$already_blocked" -eq 0 ]]; then
-		set_issue_status "$issue_number" "$repo_slug" "blocked" || true
+		set_issue_status "$issue_number" "$repo_slug" "blocked" --add-label "$companion" || true
+	elif [[ ",${existing_labels}," != *",${companion},"* ]]; then
+		# Already blocked but the classified companion is missing: add it only.
+		declare -F ensure_blocked_companion_label >/dev/null 2>&1 &&
+			ensure_blocked_companion_label "$repo_slug" "$companion"
+		gh issue edit "$issue_number" --repo "$repo_slug" --add-label "$companion" >/dev/null 2>&1 || true
 	fi
 
 	# Post comment if not already posted (idempotent — safe against concurrent pulses)
@@ -1701,7 +1726,7 @@ _apply_terminal_blocker() {
 **Action required:** ${user_action}
 
 ---
-*This issue will not be dispatched to workers until the blocker is resolved. Once you have completed the required action, remove the \`status:blocked\` label to re-enable dispatch.*"
+*This issue will not be dispatched to workers until the blocker is resolved. Once you have completed the required action, remove the \`status:blocked\` and \`${companion}\` labels to re-enable dispatch.*"
 
 	_gh_idempotent_comment "$issue_number" "$repo_slug" \
 		"Terminal blocker detected" "$blocker_body"
@@ -1727,7 +1752,7 @@ check_terminal_blockers() {
 	# Fetch the last N comments
 	local comments_json
 	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--jq "[ .[-${max_comments}:][] | {body: .body, created_at: .created_at} ]" 2>/dev/null)
+		--jq "[ .[-${max_comments}:][] | {body: .body, created_at: .created_at, author_association: .author_association} ]" 2>/dev/null)
 	local api_exit=$?
 
 	if [[ $api_exit -ne 0 ]]; then
@@ -1739,9 +1764,15 @@ check_terminal_blockers() {
 		return 1
 	fi
 
-	# Concatenate comment bodies for pattern matching
+	# GH#39452: drop the detector's own comments (they would re-match and
+	# re-hold forever) and comments from untrusted authors.
+	# #aidevops:trust-boundary
 	local all_bodies
-	all_bodies=$(echo "$comments_json" | jq -r '.[].body // ""' 2>/dev/null)
+	all_bodies=$(echo "$comments_json" | jq -r '
+		.[]
+		| select((.author_association // "") | test("^(OWNER|MEMBER|COLLABORATOR)$"))
+		| (.body // "")
+		| select(startswith("**Terminal blocker detected** (GH#5141)") | not)' 2>/dev/null)
 
 	if [[ -z "$all_bodies" ]]; then
 		return 1

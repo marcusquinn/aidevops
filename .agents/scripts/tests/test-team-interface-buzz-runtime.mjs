@@ -8,6 +8,11 @@ import path from "node:path";
 import {spawnSync} from "node:child_process";
 import {fileURLToPath} from "node:url";
 
+// Resolve native Git from the system default PATH (portable to non-FHS hosts).
+const nativeGitLookup = spawnSync("/bin/sh", ["-c", "command -p -v git"], {encoding: "utf8"});
+const NATIVE_GIT = nativeGitLookup.stdout.trim();
+assert.ok(nativeGitLookup.status === 0 && NATIVE_GIT, "Native Git is unavailable on the system PATH");
+
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(testDirectory, "../../..");
 const agentsDirectory = path.join(repositoryRoot, ".agents");
@@ -115,7 +120,7 @@ try {
   fs.symlinkSync(lmStudioRuntimeWrapper, stableLmStudioRuntimeCommand);
   fs.mkdirSync(projectRoot, {mode: 0o700});
   requireSuccess(
-    spawnSync("/usr/bin/git", ["-C", projectRoot, "init", "--quiet"], {encoding: "utf8"}),
+    spawnSync(NATIVE_GIT, ["-C", projectRoot, "init", "--quiet"], {encoding: "utf8"}),
     "fixture Git initialization",
   );
   fs.writeFileSync(reposPath, `${JSON.stringify({
@@ -195,6 +200,14 @@ try {
     deployedOpenCodeModules,
     path.join(deployedPluginDirectory, "node_modules"),
   );
+  // setup.sh links custom/ and draft/ to stable user state (GH#34088).
+  const userStateRoot = path.join(fixtureRoot, "user-agents");
+  const customRouting = path.join(userStateRoot, "custom/configs/model-routing-table.json");
+  fs.mkdirSync(path.dirname(customRouting), {recursive: true, mode: 0o700});
+  fs.mkdirSync(path.join(userStateRoot, "draft"), {recursive: true, mode: 0o700});
+  fs.writeFileSync(customRouting, "{\"tiers\":{}}\n");
+  fs.symlinkSync(path.join(userStateRoot, "custom"), path.join(deployedAgentsDirectory, "custom"));
+  fs.symlinkSync(path.join(userStateRoot, "draft"), path.join(deployedAgentsDirectory, "draft"));
   const deployedMaterialization = requireSuccess(spawnSync("python3", [
     "-c",
     [
@@ -224,6 +237,14 @@ try {
     false,
     "generated deployed dependency symlink was copied into the immutable anchor",
   );
+  const anchoredCustom = path.join(deployedRuntimeAnchor, "agents/custom");
+  assert.equal(fs.lstatSync(anchoredCustom).isSymbolicLink(), false, "custom/ link was copied as a link");
+  assert.equal(
+    fs.readFileSync(path.join(anchoredCustom, "configs/model-routing-table.json"), "utf8"),
+    "{\"tiers\":{}}\n",
+    "custom routing override was not snapshotted into the anchor",
+  );
+  assert.equal(fs.lstatSync(path.join(deployedRuntimeAnchor, "agents/draft")).isDirectory(), true);
   requireSuccess(
     runHelper(["verify-anchor", "--root", deployedRuntimeAnchor, "--runtime", "interactive"], {
       env: {...process.env, HOME: fixtureHome},
@@ -352,6 +373,7 @@ try {
 
   const installEnvironment = {
     ...process.env,
+    AIDEVOPS_BUZZ_HOST_SLUG: "test-host-01",
     AIDEVOPS_BUZZ_RUNNING_OVERRIDE: "false",
     AIDEVOPS_BUZZ_OPENCODE_NODE_MODULES_DIR: opencodeNodeModules,
     HOME: fixtureHome,
@@ -589,6 +611,56 @@ try {
     1,
     "replacement must retain one private rollback copy",
   );
+
+  const anchoredSnapshot = requireSuccess(spawnSync("python3", [
+    path.join(runtimeAnchor, "agents/scripts/team-interface-buzz-team-snapshot.py"),
+    "generate", "--agents-dir", path.join(runtimeAnchor, "agents"),
+  ], {encoding: "utf8", env: installEnvironment}), "anchored pointer snapshot");
+  const anchoredMembers = JSON.parse(anchoredSnapshot.stdout).members;
+  const canonicalPrompt = anchoredMembers.find(
+    ({definition}) => definition.name === "build-plus-test-host-01",
+  ).definition.systemPrompt;
+  const stalePrompt = canonicalPrompt.replace(/sha256:[a-f0-9]{64}/, `sha256:${"0".repeat(64)}`);
+  const storePath = path.join(appDataDirectory, "agents/managed-agents.json");
+  const originalStore = [
+    {name: "build-plus-test-host-01", system_prompt: stalePrompt,
+      pubkey: "identity-canary", private_key_nsec: "private-store-canary"},
+    {name: "build-plus-test-host-01", system_prompt: `${stalePrompt}\nLocal customization`},
+    {name: "unrelated", system_prompt: "Unrelated prompt", extra: {preserve: true}},
+    {name: "build-plus-other-host", system_prompt: stalePrompt},
+  ];
+  fs.mkdirSync(path.dirname(storePath), {recursive: true, mode: 0o700});
+  const originalStoreBytes = `${JSON.stringify(originalStore)}\n`;
+  fs.writeFileSync(storePath, originalStoreBytes, {mode: 0o600});
+  const reinstallArgs = ["install", "--runtime", "interactive", "--replace",
+    "--project-root", projectRoot, "--repos", reposPath, "--app-data-dir", appDataDirectory];
+  const whileRunning = runHelper(reinstallArgs, {
+    env: {...installEnvironment, AIDEVOPS_BUZZ_RUNNING_OVERRIDE: "true"},
+  });
+  assert.notEqual(whileRunning.status, 0);
+  assert.equal(fs.readFileSync(storePath, "utf8"), originalStoreBytes);
+  const refreshed = requireSuccess(runHelper(reinstallArgs, {env: installEnvironment}),
+    "interactive reinstall refreshes stale pointer digest");
+  assert.deepEqual(JSON.parse(fs.readFileSync(storePath, "utf8")), [
+    {...originalStore[0], system_prompt: canonicalPrompt}, ...originalStore.slice(1),
+  ]);
+  assert.equal(fs.statSync(storePath).mode & 0o777, 0o600);
+  assert.match(refreshed.stdout, /build-plus-test-host-01: 000000000000 -> [a-f0-9]{12}/);
+  assert.match(refreshed.stdout, /skipped \(non-digest prompt differs\)/);
+  assert.doesNotMatch(refreshed.stdout + refreshed.stderr,
+    /private-store-canary|identity-canary|Local customization|Unrelated prompt/);
+  const backupDirectory = path.join(fixtureHome, ".aidevops/buzz-backups");
+  const storeBackups = fs.readdirSync(backupDirectory).filter((name) => name.startsWith("managed-agents."));
+  assert.equal(storeBackups.length, 1);
+  const storeBackup = path.join(backupDirectory, storeBackups[0]);
+  assert.equal(fs.readFileSync(storeBackup, "utf8"), originalStoreBytes);
+  assert.equal(fs.statSync(storeBackup).mode & 0o777, 0o600);
+  const refreshedBytes = fs.readFileSync(storePath, "utf8");
+  const refreshedMtime = fs.statSync(storePath).mtimeMs;
+  requireSuccess(runHelper(reinstallArgs, {env: installEnvironment}), "idempotent pointer refresh");
+  assert.equal(fs.readFileSync(storePath, "utf8"), refreshedBytes);
+  assert.equal(fs.statSync(storePath).mtimeMs, refreshedMtime);
+  assert.equal(fs.readdirSync(backupDirectory).filter((name) => name.startsWith("managed-agents.")).length, 1);
 
   const symlinkPayload = path.join(fixtureRoot, "symlink-payload.json");
   fs.writeFileSync(symlinkPayload, fs.readFileSync(installedPath), {mode: 0o600});

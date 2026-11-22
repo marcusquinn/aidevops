@@ -383,9 +383,18 @@ export PULSE_QUEUED_SCAN_LIMIT=100
 #   #15: finite publication-backed task + persistent → remove persistent only
 #   #16: health dashboard with task-like residue → preserve persistent identity
 #   #17: persistent + dispatch labels without publication hold → preserve
+#   #18: bare status:blocked → add needs-ai-recovery (GH#38360)
+#   #19: status:available + blocked-owned needs-dependency → remove companion
+#   #20: status:blocked + needs-credentials → already explained, no edit
+#   #21: status:blocked + hold-for-review → needs-maintainer-input (GH#38821)
+#   #22: hold + needs-ai-recovery re-queued after the hold → heal to needs-maintainer-input
+#   #23: same, but a terminal-blocker comment followed the hold → left alone
 OLD_ISO=$(date -u -d '-1 hour' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null ||
 	TZ=UTC date -v-1H '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "2026-04-13T00:00:00Z")
 NEW_ISO=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+# t19179: listing updatedAt 48h ago (beyond the 24h orphan-status threshold).
+IDLE_ISO=$(date -u -d '-48 hours' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null ||
+	TZ=UTC date -v-48H '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "2026-04-13T00:00:00Z")
 
 ISSUES_JSON=$(
 	cat <<JSON
@@ -406,7 +415,19 @@ ISSUES_JSON=$(
 	{"number":14,"labels":[{"name":"auto-dispatch"},{"name":"no-auto-dispatch"}],"createdAt":"${OLD_ISO}"},
 	{"number":15,"labels":[{"name":"persistent"},{"name":"publication:pending"},{"name":"auto-dispatch"},{"name":"status:claimed"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
 	{"number":16,"labels":[{"name":"persistent"},{"name":"source:health-dashboard"},{"name":"publication:pending"},{"name":"auto-dispatch"},{"name":"status:available"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
-	{"number":17,"labels":[{"name":"persistent"},{"name":"auto-dispatch"},{"name":"status:available"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"}
+	{"number":17,"labels":[{"name":"persistent"},{"name":"auto-dispatch"},{"name":"status:available"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
+	{"number":18,"labels":[{"name":"status:blocked"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
+	{"number":19,"labels":[{"name":"status:available"},{"name":"needs-dependency"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
+	{"number":20,"labels":[{"name":"status:blocked"},{"name":"needs-credentials"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
+	{"number":21,"labels":[{"name":"status:blocked"},{"name":"hold-for-review"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
+	{"number":22,"labels":[{"name":"status:blocked"},{"name":"hold-for-review"},{"name":"needs-ai-recovery"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
+	{"number":23,"labels":[{"name":"status:blocked"},{"name":"hold-for-review"},{"name":"needs-ai-recovery"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
+	{"number":30,"labels":[{"name":"status:claimed"},{"name":"no-auto-dispatch"},{"name":"tier:standard"}],"assignees":[],"createdAt":"${IDLE_ISO}","updatedAt":"${IDLE_ISO}"},
+	{"number":31,"labels":[{"name":"status:claimed"},{"name":"tier:standard"}],"assignees":[{"login":"someone"}],"createdAt":"${IDLE_ISO}","updatedAt":"${IDLE_ISO}"},
+	{"number":32,"labels":[{"name":"status:in-progress"},{"name":"tier:standard"}],"assignees":[],"createdAt":"${IDLE_ISO}","updatedAt":"${IDLE_ISO}"},
+	{"number":33,"labels":[{"name":"status:queued"},{"name":"tier:standard"}],"assignees":[],"createdAt":"${IDLE_ISO}","updatedAt":"${IDLE_ISO}"},
+	{"number":34,"labels":[{"name":"status:in-review"},{"name":"tier:standard"}],"assignees":[],"createdAt":"${IDLE_ISO}","updatedAt":"${IDLE_ISO}"},
+	{"number":35,"labels":[{"name":"status:claimed"},{"name":"hold-for-review"},{"name":"tier:standard"}],"assignees":[],"createdAt":"${IDLE_ISO}","updatedAt":"${IDLE_ISO}"}
 ]
 JSON
 )
@@ -444,6 +465,33 @@ case "$1" in
 			exit $?
 		fi
 		[[ "$2" == /repos/*/issues/[0-9]* ]] && exit 1
+		# GH#38821: hold-heal timeline lookups (events, then comments).
+		case "$*" in
+			*repos/test/repo/issues/22/events*) printf 'hold-for-review\t2026-11-17T15:58:00Z\nneeds-ai-recovery\t2026-11-17T16:18:00Z\n'; exit 0 ;;
+			*repos/test/repo/issues/23/events*) printf 'hold-for-review\t2026-11-17T15:58:00Z\nneeds-ai-recovery\t2026-11-17T16:18:00Z\n'; exit 0 ;;
+			*repos/test/repo/issues/22/comments*) exit 0 ;;
+			*repos/test/repo/issues/23/comments*) echo 99; exit 0 ;;
+			*repos/test/repo/issues/35/comments*) exit 1 ;;
+			*repos/test/repo/issues/3[0-4]/comments*) exit 0 ;;
+		esac
+		# t19179: live orphan-status re-read: labels|assignee count|updated epoch.
+		case "$2" in
+			repos/test/repo/issues/30) echo "status:claimed,no-auto-dispatch,tier:standard|0|${ORPHAN_OLD_EPOCH}"; exit 0 ;;
+			repos/test/repo/issues/31) echo "status:claimed,tier:standard|1|${ORPHAN_OLD_EPOCH}"; exit 0 ;;
+			repos/test/repo/issues/32) echo "status:in-progress,tier:standard|1|${ORPHAN_OLD_EPOCH}"; exit 0 ;;
+			repos/test/repo/issues/33) echo "status:queued,tier:standard|0|${ORPHAN_OLD_EPOCH}"; exit 0 ;;
+			repos/test/repo/issues/34) echo "status:in-review,tier:standard|0|${ORPHAN_NEW_EPOCH}"; exit 0 ;;
+			repos/test/repo/issues/35) echo "status:claimed,hold-for-review,tier:standard|0|${ORPHAN_OLD_EPOCH}"; exit 0 ;;
+		esac
+		# GH#38360: live label re-read (the stub returns the --jq result).
+		case "$2" in
+			repos/test/repo/issues/21) echo "status:blocked,hold-for-review,tier:standard"; exit 0 ;;
+			repos/test/repo/issues/22) echo "status:blocked,hold-for-review,needs-ai-recovery,tier:standard"; exit 0 ;;
+			repos/test/repo/issues/23) echo "status:blocked,hold-for-review,needs-ai-recovery,tier:standard"; exit 0 ;;
+			repos/test/repo/issues/18) echo "status:blocked,tier:standard"; exit 0 ;;
+			repos/test/repo/issues/19) echo "status:available,needs-dependency,tier:standard"; exit 0 ;;
+			repos/*/issues/[0-9]*) exit 1 ;;
+		esac
 		;;
 	issue)
 		case "$2" in
@@ -473,6 +521,16 @@ gh_issue_list() {
 	gh issue list "$@"
 	return $?
 }
+
+# t19179: open linked PR evidence is stubbed per issue (rc 0 = PR blocks release).
+_normalize_stale_open_pr_blocks_reset() {
+	[[ "$1" == "33" ]] && return 0
+	return 1
+}
+ORPHAN_NOW_EPOCH=$(date +%s)
+ORPHAN_OLD_EPOCH=$((ORPHAN_NOW_EPOCH - 48 * 3600))
+ORPHAN_NEW_EPOCH=$((ORPHAN_NOW_EPOCH - 3600))
+export ORPHAN_OLD_EPOCH ORPHAN_NEW_EPOCH
 
 _normalize_label_invariants "test-user" "$REPOS_JSON_FILE" >/dev/null 2>&1
 
@@ -626,6 +684,88 @@ if [[ -f "$COUNTER_FILE" ]]; then
 	else
 		print_result "counter triage_missing=1 (only #6 matches all criteria; non-task labels ignored)" 1 "(got: $triage_missing)"
 	fi
+
+	# GH#38360: #18 bare hold and #19 orphan companion; #20 is explained.
+	blocked_companion_fixed=$(jq -r '.blocked_companion_fixed' "$COUNTER_FILE" 2>/dev/null || echo 0)
+	if [[ "$blocked_companion_fixed" -eq 4 ]]; then
+		print_result "counter blocked_companion_fixed=4 (issues #18, #19, #21, #22)" 0
+	else
+		print_result "counter blocked_companion_fixed=4 (issues #18, #19, #21, #22)" 1 "(got: $blocked_companion_fixed)"
+	fi
+fi
+
+# GH#38360: blocked companion invariant.
+edit18=$(grep "^issue edit 18 " "$GH_CALLS" | sed -n "1p")
+if [[ "$edit18" == *"--add-label needs-ai-recovery"* ]]; then
+	print_result "reconciler routes a bare status:blocked to needs-ai-recovery" 0
+else
+	print_result "reconciler routes a bare status:blocked to needs-ai-recovery" 1 "(line: '$edit18')"
+fi
+edit19=$(grep "^issue edit 19 " "$GH_CALLS" | sed -n "1p")
+if [[ "$edit19" == *"--remove-label needs-dependency"* && "$edit19" != *"status:"* ]]; then
+	print_result "reconciler removes a blocked-owned companion left after unblock" 0
+else
+	print_result "reconciler removes a blocked-owned companion left after unblock" 1 "(line: '$edit19')"
+fi
+edit21=$(grep "^issue edit 21 " "$GH_CALLS" | sed -n "1p")
+if [[ "$edit21" == *"--add-label needs-maintainer-input"* && "$edit21" != *"needs-ai-recovery"* ]]; then
+	print_result "reconciler routes a status:blocked hold-for-review to needs-maintainer-input" 0
+else
+	print_result "reconciler routes a status:blocked hold-for-review to needs-maintainer-input" 1 "(line: '$edit21')"
+fi
+edit22=$(grep "^issue edit 22 " "$GH_CALLS" | sed -n "1p")
+if [[ "$edit22" == *"--remove-label needs-ai-recovery"* && "$edit22" == *"--add-label needs-maintainer-input"* ]]; then
+	print_result "reconciler heals a hold re-queued as needs-ai-recovery" 0
+else
+	print_result "reconciler heals a hold re-queued as needs-ai-recovery" 1 "(line: '$edit22')"
+fi
+n23=$(count_edits_for 23)
+if [[ "$n23" -eq 0 ]]; then
+	print_result "reconciler keeps needs-ai-recovery after a post-hold worker blocker" 0
+else
+	print_result "reconciler keeps needs-ai-recovery after a post-hold worker blocker" 1 "(edit calls: #23=$n23)"
+fi
+# t19179: orphaned active status (no assignee, idle, no open PR) is released
+# only after the audit comment persists; holds are never touched.
+audit_calls_for() {
+	local num="$1" count
+	count=$(safe_grep_count "^api repos/test/repo/issues/${num}/comments --method POST" "$GH_CALLS")
+	count="${count//[^0-9]/}"
+	echo "${count:-0}"
+	return 0
+}
+edit30=$(grep "^issue edit 30 " "$GH_CALLS" | sed -n "1p")
+audit_line=$(grep -n "^api repos/test/repo/issues/30/comments --method POST" "$GH_CALLS" | sed -n "1p" | cut -d: -f1)
+edit_line=$(grep -n "^issue edit 30 " "$GH_CALLS" | sed -n "1p" | cut -d: -f1)
+if [[ "$edit30" == *"--add-label status:available"* && "$edit30" == *"--remove-label status:claimed"* &&
+	"$edit30" != *"no-auto-dispatch"* && "$(audit_calls_for 30)" -eq 1 &&
+	"$audit_line" =~ ^[0-9]+$ && "$edit_line" =~ ^[0-9]+$ && "$audit_line" -lt "$edit_line" ]] &&
+	grep -q "CLAIM_RELEASED reason=orphaned_status_no_assignee" "$GH_CALLS"; then
+	print_result "reconciler audits then releases orphaned status:claimed, keeping no-auto-dispatch" 0
+else
+	print_result "reconciler audits then releases orphaned status:claimed, keeping no-auto-dispatch" 1 "(line: '$edit30')"
+fi
+n31=$(count_edits_for 31)
+n32=$(count_edits_for 32)
+n33=$(count_edits_for 33)
+n34=$(count_edits_for 34)
+n35=$(count_edits_for 35)
+if [[ "$n31" -eq 0 && "$n32" -eq 0 && "$n33" -eq 0 && "$n34" -eq 0 && "$n35" -eq 0 &&
+	"$(audit_calls_for 31)" -eq 0 && "$(audit_calls_for 32)" -eq 0 && "$(audit_calls_for 33)" -eq 0 && "$(audit_calls_for 34)" -eq 0 ]]; then
+	print_result "reconciler never releases with assignee, open PR, recent activity or failed audit" 0
+else
+	print_result "reconciler never releases with assignee, open PR, recent activity or failed audit" 1 "(edits: #31=$n31 #32=$n32 #33=$n33 #34=$n34 #35=$n35)"
+fi
+if [[ "$(audit_calls_for 35)" -ge 1 ]]; then
+	print_result "reconciler attempted the audit for #35 before skipping on failure" 0
+else
+	print_result "reconciler attempted the audit for #35 before skipping on failure" 1
+fi
+n20=$(count_edits_for 20)
+if [[ "$n20" -eq 0 ]]; then
+	print_result "reconciler leaves an explained status:blocked untouched" 0
+else
+	print_result "reconciler leaves an explained status:blocked untouched" 1 "(edit calls: #20=$n20)"
 fi
 
 # =============================================================================

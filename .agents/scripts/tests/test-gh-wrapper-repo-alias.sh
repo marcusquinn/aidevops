@@ -7,7 +7,8 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)" || exit 1
 CALLS_FILE="$(mktemp -t gh-wrapper-repo-alias.XXXXXX)"
-trap 'rm -f "$CALLS_FILE"' EXIT
+TARGET_ROOT="$(mktemp -d -t gh-wrapper-repo-target.XXXXXX)"
+trap 'rm -f "$CALLS_FILE"; rm -rf "$TARGET_ROOT"' EXIT
 
 # shellcheck source=../shared-constants.sh
 source "${SCRIPTS_DIR}/shared-constants.sh"
@@ -23,6 +24,13 @@ privacy_guard_public_write() {
 	fi
 	return 1
 }
+
+# Keep rejection paths out of the operator's real audit log, and keep target
+# inference independent of the caller's environment.
+_gh_edit_audit_rejection() {
+	return 0
+}
+unset GH_REPO GH_HOST
 
 failures=0
 
@@ -48,6 +56,62 @@ if _gh_guard_public_write_args -R --title "Missing repository"; then
 	failures=$((failures + 1))
 else
 	printf 'PASS: missing -R value fails closed\n'
+fi
+
+# GH#39801: an omitted --repo resolves to the checkout's base repository and is
+# pinned once, so the privacy guard and the native/REST transport share it.
+mkdir -p "${TARGET_ROOT}/checkout" "${TARGET_ROOT}/plain"
+git -C "${TARGET_ROOT}/checkout" init -q
+git -C "${TARGET_ROOT}/checkout" remote add origin https://github.com/inferred/repo.git
+: >"$CALLS_FILE"
+pinned=""
+if (cd "${TARGET_ROOT}/checkout" &&
+	_gh_wrapper_pin_target_repo "gh pr create" --title "Inferred" --body "Body" &&
+	_gh_guard_public_write_args "${_GH_WRAPPER_TARGET_ARGS[@]}" &&
+	printf '%s|' "${_GH_WRAPPER_TARGET_ARGS[@]}" >"${TARGET_ROOT}/pinned"); then
+	pinned=$(<"${TARGET_ROOT}/pinned")
+fi
+if [[ "$pinned" == "--title|Inferred|--body|Body|--repo|inferred/repo|" ]] &&
+	grep -Fq '<inferred/repo>' "$CALLS_FILE"; then
+	printf 'PASS: omitted --repo pins the checkout repository for guard and transport\n'
+else
+	printf 'FAIL: omitted --repo pins the checkout repository for guard and transport (%s)\n' "$pinned"
+	failures=$((failures + 1))
+fi
+
+: >"$CALLS_FILE"
+unresolved_rc=0
+unresolved_err=$(cd "${TARGET_ROOT}/plain" &&
+	_gh_wrapper_pin_target_repo "gh issue create" --title "Nowhere" 2>&1 >/dev/null) || unresolved_rc=$?
+if [[ "$unresolved_rc" -ne 0 && "$unresolved_err" == *"no target repository"* && ! -s "$CALLS_FILE" ]]; then
+	printf 'PASS: unresolvable target blocks with a target diagnostic before the privacy guard\n'
+else
+	printf 'FAIL: unresolvable target blocks with a target diagnostic (rc=%s err=%s)\n' "$unresolved_rc" "$unresolved_err"
+	failures=$((failures + 1))
+fi
+
+: >"$CALLS_FILE"
+url_args=""
+if (cd "${TARGET_ROOT}/plain" &&
+	_gh_wrapper_pin_target_repo "gh issue comment" https://github.com/url/repo/issues/7 --body "Hi" &&
+	_gh_guard_public_write_args "${_GH_WRAPPER_TARGET_ARGS[@]}" &&
+	printf '%s|' "${_GH_WRAPPER_TARGET_ARGS[@]}" >"${TARGET_ROOT}/url-args"); then
+	url_args=$(<"${TARGET_ROOT}/url-args")
+fi
+if [[ "$url_args" == "https://github.com/url/repo/issues/7|--body|Hi|" ]] &&
+	grep -Fq '<url/repo>' "$CALLS_FILE"; then
+	printf 'PASS: URL target reaches the guard without an injected --repo\n'
+else
+	printf 'FAIL: URL target reaches the guard without an injected --repo (%s)\n' "$url_args"
+	failures=$((failures + 1))
+fi
+
+if _gh_wrapper_pin_target_repo "gh issue comment" https://github.com/url/repo/issues/7 \
+	--repo other/repo --body "Hi" 2>/dev/null; then
+	printf 'FAIL: URL and --repo naming different repositories fail closed\n'
+	failures=$((failures + 1))
+else
+	printf 'PASS: URL and --repo naming different repositories fail closed\n'
 fi
 
 ensure_origin_labels_exist() {

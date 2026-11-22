@@ -85,8 +85,28 @@ checkout whose only state is untracked files reinstated, byte-identical, from
 the same backup, and refuses if any backed-up path now differs, including a
 path the new tip ignores.
 
+### Incoming project-config untracking (GH#35659)
+
+When the pinned tip removes the index entry for `.aidevops.json` and adds an
+explicit, non-negated root ignore rule for it (the supported migration), a
+plain worktree update would silently delete the local file. Before any backup,
+clean or ref change, `sync-mirror`, `fast-forward-current`, `restore-default`
+and `fast-forward-local` copy the local file into a private directory under the
+recovery root (`PROJECT_CONFIG_PRESERVED_DIR=`), record it in the audit entry,
+and after the verified update reinstate its exact bytes, mode and mtime as
+ignored local state (`PROJECT_CONFIG_REINSTATED=.aidevops.json`). Reinstatement
+never overwrites or follows links; anything in the way leaves the copy in place
+(`PROJECT_CONFIG_LEFT_IN_BACKUP=`). A symlinked, non-regular or foreign-owned
+config is refused before anything changes. `fast-forward-local` also refuses a
+locally edited config, which its three-way re-apply cannot keep. A deletion
+without the ignore rule is intentional and is not reinstated; an already-absent
+config stays absent. Explicit restores still use
+`project-config-restore-helper.sh`.
+
 A clean canonical checkout whose resolved default branch is still unborn is a
-supported bootstrap input for `sync-mirror` only. The helper requires symbolic
+supported bootstrap input for `sync-mirror` and `fast-forward-current` (an
+unborn branch is an ancestor of every tip, so full-loop's post-merge
+fast-forward initializes it; GH#36289). The helper requires symbolic
 `HEAD` to name that exact branch, an absent local ref, and a completely empty
 index and worktree. It records `local_state=unborn`, creates the local ref with
 zero-object compare-and-swap semantics, and materializes only the pinned remote
@@ -317,3 +337,36 @@ worktree-helper.sh remove <worktree> --force   # reuses the existing archive
 The archive lives under the recovery root's `.producer-archives/`. Alternatively
 review the archive and retire the reservation through the recovery lifecycle
 helpers; never delete the archive by hand.
+
+Compact retention (`worktree-archive-helper.sh prune`) expires a producer
+archive only after its source and Git registration are gone: an empty delta
+at the next apply pass, any other archive 30 days after capture
+(`AIDEVOPS_WORKTREE_PRODUCER_ARCHIVE_TTL_DAYS`). It also retires the matching
+`.producer-transactions/<id>/` journal. Create `<archive>/.keep` to retain one
+indefinitely. Details: `scripts/worktree-archive-helper.md` "Retention".
+
+## Stale Git locks and canonical gc
+
+Crashed Git processes leave `*.lock` files in the shared Git directory; while a
+reflog lock remains, automatic gc fails with `failed to run reflog`. The guard
+blocks direct canonical `git gc`/`git maintenance`; use the audited path
+(GH#39722), dry run first:
+
+```bash
+.agents/scripts/canonical-recovery-helper.sh repair-stale-locks --repo /path/to/canonical-checkout
+.agents/scripts/canonical-recovery-helper.sh maintenance-gc --repo /path/to/canonical-checkout --apply
+```
+
+Scope is the common Git directory: `refs/**.lock`, `logs/refs/**.lock`,
+`packed-refs.lock`, the canonical `index.lock`, a `gc.pid` naming a dead local
+PID, and `objects/pack` `tmp_*`/`.tmp-*` files. A candidate must be a regular
+file owned by the current user whose real parent stays inside the common
+directory, older than `--min-age-minutes` (default 60; pack temporaries use
+`--tmp-min-age-days`, default 2), with no `lsof`/`fuser` holder and no live Git
+process for this repository that started before the file was written. A failed
+process listing or holder check keeps the file. `--apply` re-checks every gate
+under the canonical recovery lock, re-stats the file just before removal, and
+records one audit entry per file (relative path, size, mtime, hashed repository
+ID).
+`maintenance-gc --apply` then runs foreground `git gc --auto`. The r922
+`gitlocks` store runs `repair-stale-locks` for every registered canonical repo.

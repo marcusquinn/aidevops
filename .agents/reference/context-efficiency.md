@@ -127,7 +127,8 @@ merely to verify this arithmetic.
 
 ## GPT-6 Sol and Luna compaction
 
-`gpt-6.1-sol`, `gpt-6.1-sol-fast`, the superseded `gpt-6-sol` and
+`gpt-6.1-sol`, `gpt-6.1-sol-fast`, `gpt-6.1-terra`, `gpt-6.1-terra-fast`,
+the superseded `gpt-6-sol` and
 `gpt-6-sol-fast`, `gpt-6-luna`, and `gpt-6-luna-fast` default to a
 240,000-token usable-input target (below the 272K short-context pricing
 boundary). Explicit per-model context/input limits

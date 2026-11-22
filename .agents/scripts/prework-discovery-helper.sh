@@ -14,7 +14,9 @@ _usage() {
 	cat <<'EOF'
 Usage: prework-discovery-helper.sh [--keywords TEXT] [--blocker TEXT] [--files path[,path]] [--since WHEN] [--repo owner/repo]
 
-Runs recent git-log, open/merged PR, and open claimed issue searches.
+Runs recent git-log, open/merged PR, and open claimed issue searches, then
+lists live OpenCode sessions and pulse workers on the repo, #issue keywords or
+target files (advisory; AIDEVOPS_SESSION_BUS_HELPER overrides the bus helper).
 Provide --keywords or --blocker. Blocker mode also searches deploy, migration and CI titles.
 EOF
 	return 0
@@ -44,6 +46,84 @@ _claimed_issues() {
 	return 0
 }
 
+# t18895: live OpenCode sessions and pulse workers, from the local session bus
+# (`aidevops sessions who`). They may not have pushed or claimed anything yet,
+# so GitHub cannot show them. Advisory only: silent when node, the bus CLI or
+# its 5 s budget is unavailable.
+_origin_repo_slug() {
+	local url=""
+	url=$(git remote get-url origin 2>/dev/null) || return 1
+	url="${url%.git}"
+	url="${url#*github.com[:/]}"
+	[[ "$url" == */* && "$url" != *:* ]] || return 1
+	printf '%s\n' "$url"
+	return 0
+}
+
+# Prints one "- row" per matching session; nothing on no match or failure.
+_who_rows() {
+	local helper="${AIDEVOPS_SESSION_BUS_HELPER:-${SCRIPT_DIR}/session-bus-helper.sh}"
+	[[ -x "$helper" ]] || return 0
+	local out=""
+	out=$(mktemp) || return 0
+	timeout_sec 5 "$helper" who "$@" >"$out" 2>/dev/null || : >"$out"
+	sed 's/^/- /' "$out"
+	rm -f "$out"
+	return 0
+}
+
+_live_sessions() {
+	local repo="$1"
+	local keywords="$2"
+	shift 2
+	[[ -n "$repo" ]] || repo=$(_origin_repo_slug) || repo=""
+	local targets=() scope=() ref=""
+	while IFS= read -r ref; do
+		[[ -n "$ref" ]] && targets+=("$ref")
+	done < <(printf '%s\n' "$keywords" | grep -oE '#[0-9]+' || true)
+	targets+=("$@")
+	[[ -n "$repo" ]] && scope=(--repo "$repo")
+	local close="" wide=""
+	if [[ ${#targets[@]} -gt 0 ]]; then
+		close=$(_who_rows "${targets[@]}" ${scope[@]+"${scope[@]}"})
+	fi
+	if [[ -n "$repo" ]]; then
+		wide=$(_who_rows "$repo" | grep -vxF -f <(printf '%s\n' "$close") || true)
+	fi
+	[[ -n "$close" || -n "$wide" ]] || return 0
+	printf '\n### Live sessions\n\n'
+	if [[ -n "$close" ]]; then
+		printf 'Warning: live sessions on the same issue, worktree or files; compare approaches first (aidevops sessions show <handle>):\n%s\n' "$close"
+	fi
+	if [[ -n "$wide" ]]; then
+		printf 'Also live in %s:\n%s\n' "$repo" "$wide"
+	fi
+	return 0
+}
+
+# GH#39880: split --files on commas and newlines (read stops at the first
+# newline, so newlines become commas first), trim each entry and drop empty
+# ones, so "a, b", "a,,b" and one-path-per-line lists work. Warn on stderr for
+# an entry git does not track: a space-separated list otherwise prints an empty
+# section that reads as "no collisions". Untracked new targets are legitimate,
+# so this never fails.
+_target_files() {
+	local files_csv="$1"
+	local raw=() entry="" hint=""
+	IFS=',' read -r -a raw <<<"${files_csv//$'\n'/,}"
+	for entry in ${raw[@]+"${raw[@]}"}; do
+		entry="${entry#"${entry%%[![:space:]]*}"}"
+		entry="${entry%"${entry##*[![:space:]]}"}"
+		[[ -n "$entry" ]] || continue
+		printf '%s\n' "$entry"
+		git ls-files --error-unmatch -- "$entry" >/dev/null 2>&1 && continue
+		hint=""
+		[[ "$entry" != *[[:space:]]* ]] || hint=" (use a comma-separated list)"
+		printf "Warning: --files entry '%s' matches no tracked file%s\n" "$entry" "$hint" >&2
+	done
+	return 0
+}
+
 main() {
 	local keywords=""
 	local blocker=""
@@ -68,10 +148,15 @@ main() {
 		return 2
 	fi
 	printf '## Prework discovery\n\n'
+	local files=() entry=""
 	if [[ -n "$files_csv" ]]; then
-		IFS=',' read -r -a files <<<"$files_csv"
+		while IFS= read -r entry; do
+			files+=("$entry")
+		done < <(_target_files "$files_csv")
 		printf '### Recent commits on target files\n\n'
-		git log --since="$since" --oneline -- "${files[@]}" || true
+		if [[ ${#files[@]} -gt 0 ]]; then
+			git log --since="$since" --oneline -- "${files[@]}" || true
+		fi
 		printf '\n'
 	fi
 	local repo_args=()
@@ -88,6 +173,7 @@ main() {
 	else
 		printf 'gh unavailable; skipped PR and issue collision checks.\n'
 	fi
+	_live_sessions "$repo" "$keywords $blocker" ${files[@]+"${files[@]}"}
 	return 0
 }
 

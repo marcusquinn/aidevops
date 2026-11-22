@@ -14,6 +14,7 @@
 #   source .agents/scripts/lint-file-discovery.sh
 #   lint_shell_files      # populates LINT_SH_FILES (newline-separated)
 #   lint_python_files     # populates LINT_PY_FILES (newline-separated)
+#   lint_jq_files         # populates LINT_JQ_FILES (newline-separated)
 #
 # Usage (local — find-based, includes .agents/scripts/setup/modules/ and setup.sh):
 #   source .agents/scripts/lint-file-discovery.sh
@@ -39,6 +40,11 @@ readonly LINT_EXCLUDE_PATTERN='_archive/'
 
 LINT_SH_FILES=""
 LINT_PY_FILES=""
+LINT_JQ_FILES=""
+# Paths that can embed jq programs (GH#35920 binding-precedence gate): known
+# suffixes plus extensionless basenames, which the checker keeps only when
+# they carry a shell or Python shebang (bin/aidevops, .agents/scripts/gh).
+LINT_JQ_FILE_REGEX='\.(sh|bash|jq|py|ya?ml)$|(^|/)[^./]+$'
 LINT_CHANGED_FILES=""
 LINT_CHANGED_FILES_FINGERPRINT=""
 LINT_CHANGED_FILES_READY=false
@@ -52,6 +58,13 @@ lint_shell_files() {
 # Populate LINT_PY_FILES with all tracked .py files, excluding archived dirs.
 lint_python_files() {
 	LINT_PY_FILES=$(git ls-files '*.py' | grep -Ev "$LINT_EXCLUDE_PATTERN" || true)
+	return 0
+}
+
+# Populate LINT_JQ_FILES with tracked files that can embed jq programs,
+# excluding archived dirs.
+lint_jq_files() {
+	LINT_JQ_FILES=$(git ls-files | grep -E "$LINT_JQ_FILE_REGEX" | grep -Ev "$LINT_EXCLUDE_PATTERN" || true)
 	return 0
 }
 

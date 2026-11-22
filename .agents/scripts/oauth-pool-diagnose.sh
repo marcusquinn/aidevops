@@ -71,12 +71,14 @@ Commands:
   status [anthropic|openai|cursor|google|all]     Pool aggregate stats (counts, availability)
   refresh [anthropic|openai|google] [email|all]   Refresh expired tokens without re-auth (uses refresh_token)
   rotate [anthropic|openai|cursor|google]         Switch to next available account NOW (auto-refreshes expired tokens)
-  set-priority <provider> <email> <N>             Set rotation priority (higher N = preferred; 0 = default)
+  set-priority <provider> <email> <N> [--org O]   Set rotation priority (higher N = preferred; 0 = default)
   mark-failure <provider> <reason> [retry_secs]   Mark current account cooldown/status from runtime failures
   reset-cooldowns [provider|all]                  Clear rate-limit cooldowns so all accounts retry
-  assign-pending <provider> [email]               Assign a stranded pending token to an account
-  remove <provider> <email>                       Remove an account from the pool
+  assign-pending <provider> [email] [--org O]     Assign a stranded pending token to an account
+  remove <provider> <email> [--org O]             Remove an account from the pool
   import [claude-cli]                             Import account from Claude CLI auth
+  remote-sync <install|sync|status|enable|disable> --host H [--remote-user U] --provider P --email E [--org O]
+                                                  Keep one account in sync both ways with another host/user's pool
 
 Quickstart (if you see "Key Missing", "invalid request data", or auth errors):
   aidevops model-accounts-pool diagnose          # 0. Full pipeline check (start here)
@@ -101,6 +103,7 @@ Examples:
   oauth-pool-helper.sh reset-cooldowns                    # Clear all cooldowns
   oauth-pool-helper.sh status                             # Show pool statistics
   oauth-pool-helper.sh remove anthropic user@example.com
+  oauth-pool-helper.sh remove anthropic user@example.com --org Personal  # One of several seats
   oauth-pool-helper.sh assign-pending anthropic           # Show pending token info
   oauth-pool-helper.sh assign-pending anthropic user@example.com  # Assign pending token
 
@@ -118,6 +121,10 @@ Notes:
   - Google tokens are injected as GOOGLE_OAUTH_ACCESS_TOKEN (ADC bearer) for Gemini CLI / Vertex AI
   - Google requires AI Pro (~$25/mo), AI Ultra (~$65/mo), or Workspace with Gemini subscription
   - 'assign-pending' assigns tokens saved when email could not be identified during OAuth
+  - One email can hold several Anthropic seats (e.g. Team + Personal): each grant's
+    organization is stored, so adding the other org adds a seat instead of replacing it.
+    'list' shows seats as "email [Org name]"; pick one with --org <orgId-prefix|org name>.
+    Ambiguous commands without --org refuse rather than guess.
   - 'import claude-cli' detects your Claude CLI account and pre-fills the email
 HELP
 	return 0
@@ -150,11 +157,22 @@ _diag_check_pool() {
 		return 1
 	fi
 	local perms
-	perms=$(_file_perms "$POOL_FILE")
+	local permission_check="Pool file permissions"
+	# Load the owning library explicitly. Use its failure-preserving primitive:
+	# _file_perms substitutes "000" on failure, not an observed file mode.
+	# shellcheck source=./portable-stat.sh
+	source "${SCRIPT_DIR}/portable-stat.sh"
+	# Both GNU and BSD stat accept -L to inspect the file that jq will read.
+	if ! perms=$(_stat_batch '%a' -L "$POOL_FILE" 2>/dev/null) ||
+		[[ ! "$perms" =~ ^[0-7]{1,4}$ ]]; then
+		_diag_print "$permission_check" "FAIL" "Unable to inspect file mode (expected 600)"
+		return 1
+	fi
+	printf -v perms '%03o' "$((8#$perms))"
 	if [[ "$perms" != "600" ]]; then
-		_diag_print "Pool file permissions" "WARN" "$perms (expected 600)"
+		_diag_print "$permission_check" "WARN" "$perms (expected 600)"
 	else
-		_diag_print "Pool file permissions" "PASS" "600"
+		_diag_print "$permission_check" "PASS" "600"
 	fi
 	local count
 	count=$(jq '[.anthropic // [] | length] | add' "$POOL_FILE" 2>/dev/null || echo "0")

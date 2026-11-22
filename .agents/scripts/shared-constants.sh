@@ -50,7 +50,13 @@ source "${_SC_SELF%/*}/runtime-env.sh"
 #     OUTERMOST caller (the top-level script) rather than using [1],
 #     so the re-exec targets the correct entry point even when sourced
 #     via intermediate helpers (GH#19632 / t2176).
+#   - Only the top-level shell may re-exec (GH#38197). From a subshell
+#     ( `( ... )` or `$(...)` ), exec would replace just that subshell
+#     with a second full run of the caller: duplicated side effects, and
+#     the subshell's status/output become the nested run's. Subshells fall
+#     through to the no-modern-bash path instead.
 if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]] &&
+	[[ "${BASH_SUBSHELL:-0}" -eq 0 ]] &&
 	[[ -z "${AIDEVOPS_BASH_REEXECED:-}" ]] &&
 	[[ -n "${BASH_SOURCE[1]:-}" ]]; then
 	# Walk BASH_SOURCE[] to find the outermost caller, not just
@@ -179,6 +185,29 @@ aidevops_ensure_symlink_target() {
 	return 0
 }
 
+# GH#38587: session isolation repoints XDG_DATA_HOME at a per-project OpenCode
+# data root. uv derives its tool, tool-bin and managed-Python locations from
+# XDG_DATA_HOME, so tools installed in a session would land in (and be read
+# from) that disposable folder. Call this BEFORE exporting the isolated
+# XDG_DATA_HOME: it pins uv to the user's real locations, exporting each
+# variable only when unset so nested launches inherit the outer values.
+aidevops_export_user_tool_dirs() {
+	local data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+	# Already inside an isolated session (pre-fix parent): its XDG_DATA_HOME is
+	# the session root, never the user's; fall back to the XDG default.
+	[[ "${AIDEVOPS_OPENCODE_ISOLATED_DB:-0}" != 1 ]] || data_home="$HOME/.local/share"
+	local bin_dir="${XDG_BIN_HOME:-}"
+	if [[ -z "$bin_dir" ]]; then
+		bin_dir="${data_home%/}"
+		bin_dir="${bin_dir%/*}/bin"
+	fi
+	[[ -n "${UV_TOOL_DIR:-}" ]] || export UV_TOOL_DIR="${data_home%/}/uv/tools"
+	[[ -n "${UV_TOOL_BIN_DIR:-}" ]] || export UV_TOOL_BIN_DIR="$bin_dir"
+	[[ -n "${UV_PYTHON_INSTALL_DIR:-}" ]] || export UV_PYTHON_INSTALL_DIR="${data_home%/}/uv/python"
+	[[ -n "${UV_PYTHON_BIN_DIR:-}" ]] || export UV_PYTHON_BIN_DIR="$bin_dir"
+	return 0
+}
+
 # =============================================================================
 # Tool Version Pins
 # =============================================================================
@@ -194,24 +223,26 @@ aidevops_ensure_symlink_target() {
 # promoted 1.18.23 after the isolated baseline and candidate probes passed;
 # GH#30957 promoted 1.18.25, GH#31588 promoted 1.18.29, GH#31909 promoted
 # 1.18.31, GH#32210 promoted 1.18.32, GH#32761 promoted 1.18.33, and GH#33788
-# promoted 1.18.34, GH#34542 promoted 1.19.0 and GH#35180 promoted 1.19.3 after the same isolated comparison passed with required plugin
-# tools and an empty native-tool diff. Keep the compatibility decision machine-readable;
+# promoted 1.18.34, GH#34542 promoted 1.19.0, GH#35180 promoted 1.19.3,
+# GH#36563 promoted 1.19.5, and GH#38815 promoted 1.19.6 after the same isolated comparison passed with
+# required plugin tools and an empty native-tool diff; plugin packages unchanged.
+# Keep the compatibility decision machine-readable;
 # general installs track latest because the observed failure scope is Linux
 # headless.
-readonly OPENCODE_PINNED_VERSION="1.19.3"
+readonly OPENCODE_PINNED_VERSION="1.19.6"
 readonly OPENCODE_PIN_REASON="GH#28766 Linux headless bootstrap stalled with isolated XDG_DATA_HOME"
 readonly OPENCODE_PIN_PLATFORM="Linux"
 readonly OPENCODE_PIN_RUNTIME_MODE="headless"
 readonly OPENCODE_PIN_INTRODUCED_DATE="2026-07-30"
-readonly OPENCODE_PIN_LAST_CANARY_DATE="2026-10-20"
-readonly OPENCODE_PIN_LAST_CANARY_RESULT="pass:1.19.3"
-readonly OPENCODE_PIN_REVIEW_DEADLINE="2026-10-27"
-readonly OPENCODE_PLUGIN_TESTED_VERSION="1.19.3"
-# GH#32993: V2 promoted 2.1.0 (GH#35179, from 2.0.28) after the scheduled canary passed the isolated
-# Linux-headless baseline (2.0.3) and candidate comparison with an empty native
-# tool diff; @opencode/plugin stays at the tested 2.0.3 package.
-readonly OPENCODE_V2_PINNED_VERSION="2.1.0"
-readonly OPENCODE_V2_PLUGIN_TESTED_VERSION="2.1.0"
+readonly OPENCODE_PIN_LAST_CANARY_DATE="2026-11-17"
+readonly OPENCODE_PIN_LAST_CANARY_RESULT="pass:1.19.6"
+readonly OPENCODE_PIN_REVIEW_DEADLINE="2026-11-24"
+readonly OPENCODE_PLUGIN_TESTED_VERSION="1.19.6"
+# GH#38816: V2 promoted 2.3.0 from 2.2.7 after isolated Linux-headless
+# baseline and candidate probes passed with no provider-visible native-tool diff.
+# V2 exposes plugin tools through execute; both probes passed the plugin health check.
+readonly OPENCODE_V2_PINNED_VERSION="2.3.0"
+readonly OPENCODE_V2_PLUGIN_TESTED_VERSION="2.3.0"
 
 aidevops_opencode_profile_id() {
 	local requested="${AIDEVOPS_OPENCODE_PROFILE:-}"
@@ -243,9 +274,9 @@ aidevops_opencode_profile_value() {
 		v2:pinReason) printf 'Initial OpenCode V2 compatibility qualification\n' ;;
 		v2:pinPlatform) printf 'Linux\n' ;;
 		v2:pinRuntimeMode) printf 'headless\n' ;;
-		v2:lastCanaryDate) printf '2026-10-20\n' ;;
-		v2:lastCanaryResult) printf 'pass:2.1.0\n' ;;
-		v2:reviewDeadline) printf '2026-10-27\n' ;;
+		v2:lastCanaryDate) printf '2026-11-17\n' ;;
+		v2:lastCanaryResult) printf 'pass:2.3.0\n' ;;
+		v2:reviewDeadline) printf '2026-11-24\n' ;;
 		v1:package) printf 'opencode-ai\n' ;;
 		v1:binary) printf 'opencode\n' ;;
 		v1:pluginEntry) printf 'index.mjs\n' ;;
@@ -328,19 +359,76 @@ aidevops_opencode_install_owner() {
 	return $?
 }
 
+# GH#35942: print the owner of the resolved Claude Code CLI so routine tool
+# maintenance checks and upgrades through one channel (GH#34252 pattern):
+# brew-cask:<cask>, native (self-updating installer), npm, or none.
+aidevops_claude_code_install_owner() {
+	local path link dir home_real depth=0
+	path=$(command -v claude 2>/dev/null || true)
+	if [[ "$path" != /* ]]; then
+		printf 'none\n'
+		return 0
+	fi
+	while [[ -L "$path" && "$depth" -lt 16 ]]; do
+		link=$(readlink "$path" 2>/dev/null) || break
+		case "$link" in /*) path="$link" ;; *) path="$(dirname "$path")/$link" ;; esac
+		depth=$((depth + 1))
+	done
+	dir=$(cd "$(dirname "$path")" 2>/dev/null && pwd -P) || dir=$(dirname "$path")
+	path="${dir}/$(basename "$path")"
+	home_real=$(cd "$HOME" 2>/dev/null && pwd -P) || home_real="$HOME"
+	case "$path" in
+	*/Caskroom/claude-code*/*)
+		link="${path#*/Caskroom/}"
+		printf 'brew-cask:%s\n' "${link%%/*}"
+		;;
+	"$home_real"/.local/share/claude/* | "$home_real"/.claude/local/*) printf 'native\n' ;;
+	*) printf 'npm\n' ;;
+	esac
+	return 0
+}
+
+# GH#39271: Homebrew-core ships OpenCode 2; the aidevops v1 profile never
+# follows it automatically. One migration line, shared by every reporter.
+AIDEVOPS_OPENCODE_BREW_MIGRATION_CMD="command -v npm >/dev/null && brew uninstall opencode && npm install -g opencode-ai@latest"
+AIDEVOPS_OPENCODE_BREW_HOLD_MESSAGE="Held: Homebrew now ships OpenCode 2 (preview in aidevops). To stay on stable OpenCode 1, run: ${AIDEVOPS_OPENCODE_BREW_MIGRATION_CMD}"
+
+# Print the major version (digits) of a profile's tested OpenCode version.
+aidevops_opencode_profile_major() {
+	local profile="${1:-$(aidevops_opencode_profile_id)}"
+	local tested="" semver=""
+	tested=$(aidevops_opencode_profile_value testedVersion "$profile" 2>/dev/null) || tested=""
+	semver=$(aidevops_parse_semver "$tested" 2>/dev/null) || semver=""
+	if [[ -n "$semver" ]]; then
+		printf '%s\n' "${semver%%.*}"
+	elif [[ "$profile" == v2 ]]; then
+		printf '2\n'
+	else
+		printf '1\n'
+	fi
+	return 0
+}
+
 # Print the self-contained repair payload: brew upgrade for a verified
 # Homebrew-owned binary, otherwise bun/npm install of the requested version.
 aidevops_opencode_upgrade_command() {
 	local pkg_version="$1"
 	local profile="${2:-$(aidevops_opencode_profile_id)}"
-	local package owner_payload
+	local package owner_payload profile_major
 	package=$(aidevops_opencode_profile_value package "$profile") || return 1
 	owner_payload=$(aidevops_opencode_owner_payload "$profile") || return 1
+	profile_major=$(aidevops_opencode_profile_major "$profile") || profile_major=""
 
+	# GH#39271: a Homebrew upgrade must never cross the profile's major version.
+	# Unknown formula versions (brew info failed) fall through to today's path.
 	# shellcheck disable=SC2016  # Single quotes intentional: bash -c payload
 	printf '%s' "$owner_payload" \
 		'case "$r_owner" in ' \
-		'brew) brew upgrade opencode || brew reinstall opencode; exit $? ;; ' \
+		'brew) f_name=$(brew list --formula --full-name 2>/dev/null | grep -E "(^|/)opencode$" | sed -n 1p); [[ -n "$f_name" ]] || f_name=opencode; ' \
+		'f_stable=$(brew info --json=v2 "$f_name" 2>/dev/null | jq -r ".formulae[0].versions.stable // empty" 2>/dev/null); f_major="${f_stable%%.*}"; ' \
+		'if [[ -n "'"${profile_major}"'" && "$f_major" =~ ^[0-9]+$ && "$f_major" != "'"${profile_major}"'" ]]; then ' \
+		'printf "%s\\n" "'"${AIDEVOPS_OPENCODE_BREW_HOLD_MESSAGE}"'" >&2; exit 1; fi; ' \
+		'HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade opencode || HOMEBREW_NO_AUTO_UPDATE=1 brew reinstall opencode; exit $? ;; ' \
 		'bun) bun install -g '"${package}"'@'"${pkg_version}"' ;; ' \
 		'npm) npm install -g '"${package}"'@'"${pkg_version}"' ;; ' \
 		'*) printf "OpenCode binary not found for repair\\n" >&2; exit 1 ;; ' \
@@ -356,7 +444,7 @@ readonly AIDEVOPS_GH_MIN_SLURP_VERSION="2.51.0"
 aidevops_parse_semver() {
 	local input="$1"
 	local parsed=""
-	parsed=$(printf '%s\n' "$input" | grep -Eo '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)
+	parsed=$(printf '%s\n' "$input" | grep -Eo '[0-9]+\.[0-9]+(\.[0-9]+)?' | sed -n '1p' || true)
 	if [[ -z "$parsed" ]]; then
 		return 1
 	fi
@@ -1664,6 +1752,10 @@ _source_shared_module_with_retry "${_SC_SELF%/*}/shared-todo-commit.sh"
 # shellcheck source=./shared-temp-workspace.sh
 _source_shared_module_with_retry "${_SC_SELF%/*}/shared-temp-workspace.sh"
 
+# Pasteable `sudo aidevops approve` prefix for Linux secure_path (GH#39027).
+# shellcheck source=./shared-approval-cli.sh
+_source_shared_module_with_retry "${_SC_SELF%/*}/shared-approval-cli.sh"
+
 # =============================================================================
 # Worktree Ownership Registry (t189) — extracted module
 # =============================================================================
@@ -1795,7 +1887,7 @@ _is_process_alive_and_matches() {
 		local cmd
 		cmd=$(ps -p "$pid" -o command= 2>/dev/null) || return 1
 		[[ -z "$cmd" ]] && return 1
-		printf '%s' "$cmd" | grep -qE "$pattern" || return 1
+		grep -qE "$pattern" <<<"$cmd" || return 1
 	fi
 
 	# Step 3: if a stored hash was provided, verify it matches

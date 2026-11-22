@@ -13,13 +13,31 @@ import { readFileSync } from "fs";
 import { spawn } from "child_process";
 import * as store from "./session-store.mjs";
 import { normalizeMatrixIngress } from "../../agents/scripts/team-interface-matrix-ingress.mjs";
+import { parseBusCommand, busArgsFor, relayOutbox } from "../../agents/scripts/matrix-session-bus-bridge.mjs";
 
 const CONFIG_PATH = process.env.MATRIX_BOT_CONFIG || `${process.env.HOME}/.config/aidevops/matrix-bot.json`;
 const RUNNER_HELPER = `${process.env.HOME}/.aidevops/agents/scripts/runner-helper.sh`;
 const CONVERSATION_HELPER = `${process.env.HOME}/.aidevops/agents/scripts/conversation-helper.sh`;
 const ENTITY_HELPER = `${process.env.HOME}/.aidevops/agents/scripts/entity-helper.sh`;
+const SESSION_BUS_HELPER = `${process.env.HOME}/.aidevops/agents/scripts/session-bus-helper.sh`;
 const OPENCODE_HOST = process.env.OPENCODE_HOST || "127.0.0.1";
 const OPENCODE_PORT = process.env.OPENCODE_PORT || "4096";
+
+function runBusCli(args, input = "") {
+    return new Promise((resolve, reject) => {
+        const proc = spawn(SESSION_BUS_HELPER, args, { timeout: 10000 });
+        let stdout = "", stderr = "";
+        proc.stdout.on("data", (data) => { stdout += data; });
+        proc.stderr.on("data", (data) => { stderr += data; });
+        proc.stdin.on("error", () => {});
+        proc.on("error", reject);
+        proc.on("close", (code, signal) => {
+            if (code === 0) resolve(stdout.trim());
+            else reject(new Error((stdout + "\n" + stderr).trim() || `Session bus failed (${signal || code})`));
+        });
+        proc.stdin.end(input);
+    });
+}
 
 // Entity resolution cache (Matrix user ID -> entity info)
 // Avoids repeated entity-helper.sh calls for the same user within a session
@@ -380,10 +398,31 @@ async function main() {
         }
     }, 60000);
 
+    let relaying = false;
+    const relayInterval = config.sessionBus?.enabled === true ? setInterval(async () => {
+        if (relaying) return;
+        relaying = true;
+        try {
+            await relayOutbox({ runCli: runBusCli, sendText: (room, text) => client.sendText(room, text) });
+        } catch (err) {
+            console.error(`[MATRIX-BOT] Outbox sweep failed: ${err.message}`);
+        } finally {
+            relaying = false;
+        }
+    }, Math.max(1, Number(config.sessionBus.relayIntervalSeconds) || 5) * 1000) : null;
+
     client.on("room.message", async (roomId, event) => {
         let normalized;
+        const busEnabled = config.sessionBus?.enabled === true;
+        const command = busEnabled ? parseBusCommand(event?.content?.body, config.botPrefix || "!ai") : null;
+        if (command && event.sender === botUserId) return;
+        // The legacy normalizer requires the runner prefix; retain all its identity,
+        // allowlist, room and event checks for standalone bus commands too.
+        const ingressEvent = command && command.type !== "ai" ? {
+            ...event, content: { ...event.content, body: `${config.botPrefix || "!ai"} ${event.content.body}` },
+        } : event;
         try {
-            normalized = normalizeMatrixIngress({botUserId, config, event, roomId});
+            normalized = normalizeMatrixIngress({botUserId, config, event: ingressEvent, roomId});
         } catch {
             return;
         }
@@ -413,6 +452,28 @@ async function main() {
         }).catch(() => {});
 
         try {
+            if (command) {
+                let route = command.type !== "ai";
+                if (!route) {
+                    const bindings = JSON.parse(await runBusCli(["bindings", "--app", "matrix", "--json"]));
+                    route = bindings.some((binding) => binding.channel === roomId);
+                }
+                if (route) {
+                    // Bus operations are never exposed through the legacy open policy.
+                    if (!config.allowedUsers || !config.allowedUsers.split(",").map((user) => user.trim()).includes(event.sender)) {
+                        throw new Error("Session bus requires an explicit Matrix user allowlist");
+                    }
+                    const entity = resolveEntityCached(event.sender);
+                    let redact = true;
+                    if (command.type === "sessions") {
+                        try { redact = (await client.getJoinedRoomMembers(roomId)).length !== 2; } catch { /* fail closed */ }
+                    }
+                    const { args, input } = busArgsFor(command, { roomId, actorEntityId: entity.entityId, redact });
+                    const result = await runBusCli(args, input);
+                    await client.sendText(roomId, result || "Session bus command completed.");
+                    return;
+                }
+            }
             // Ensure session exists in store
             store.getSession(roomId, runnerName, actorId, conversationId);
 
@@ -464,9 +525,9 @@ async function main() {
                 },
             }).catch(() => {});
 
-        } catch {
-            console.error("[MATRIX-BOT] Dispatch failed");
-            await client.sendText(roomId, "Unable to dispatch this request. Check the local bot logs.");
+        } catch (err) {
+            console.error(`[MATRIX-BOT] Dispatch failed: ${err.message}`);
+            await client.sendText(roomId, command ? `Session bus error: ${err.message}` : "Unable to dispatch this request. Check the local bot logs.");
 
             // React with X
             await client.sendEvent(roomId, "m.reaction", {
@@ -501,6 +562,7 @@ async function main() {
     async function shutdown() {
         console.log("[MATRIX-BOT] Shutting down — compacting active sessions...");
         clearInterval(compactionInterval);
+        if (relayInterval) clearInterval(relayInterval);
 
         try {
             // Compact all sessions with messages (use 0 idle timeout to catch all)

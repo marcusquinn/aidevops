@@ -115,6 +115,11 @@ This covers command discovery, not full packaging compatibility: downloaded FHS
 binaries may still need native packages, and the model-replay `bwrap` sandbox
 still looks for `bwrap` in fixed locations.
 
+The separate opt-in [SRT egress prototype](worker-egress-srt.md) accepts explicit
+tool paths for Linux/NixOS and implements a stricter macOS Seatbelt path. It is
+synthetic qualification tooling, not a default backend or verified three-platform
+security boundary; that reference records AppArmor prerequisites and open gates.
+
 ## Native Windows Support Posture
 
 Native Windows remains outside full aidevops platform support. The only native Windows path currently documented is `/optimise-windows-indexing-backups`, a limited experimental local-ops command that audits Windows Search, File History/Windows Backup, OneDrive, and backup-client churn with dry-run recommendations by default.
@@ -257,4 +262,49 @@ echo -e "[boot]\nsystemd=true" | sudo tee /etc/wsl.conf
 
 ## CI/CD
 
-The GitHub Actions CI runs on both `ubuntu-latest` and `macos-latest` to catch platform regressions. See `.github/workflows/code-quality.yml`.
+Required CI runs on `ubuntu-latest`; macOS `/bin/bash` 3.2 parse coverage comes from a digest-pinned `bash:3.2` container in `.github/workflows/code-quality.yml` and from `pre-commit-hook.sh` on any Mac. Hosted macOS runners are not on the merge path (GH#36686); PATH portability CI also runs only on Ubuntu.
+
+`commit-and-pr` runs `.agents/scripts/macos-local-checks.sh` for macOS-sensitive
+changes, including sandbox/model replay, platform detection and PATH portability.
+On Darwin it runs native platform assertions, the model replay benchmark and the
+former macOS PATH suites, recording results in the PR's Runtime Testing section.
+On other hosts it adds `needs-macos-verification` and requests review from the
+registered `macos_maintainer` (falling back to `maintainer`); assignment is used
+when review cannot be requested, including self-review. No sensitive diff means
+no label or request. Missing/ambiguous registration is reported, never guessed.
+
+On a Darwin pulse host authenticated as that repository's registered macOS
+maintainer, `pulse-macos-verification.sh` automatically checks open, non-draft PRs
+labelled `needs-macos-verification` after early dispatch. It only executes
+same-repository heads whose authors have write, maintain or admin permission and
+whose required checks have passed. Unknown permissions, forks and pending or
+failed required checks fail closed. Other hosts do not query GitHub for this stage;
+other logins do not query PRs.
+
+The isolated background stage attempts at most one PR per cycle, in an owned,
+locked, clean detached scratch worktree at the exact head SHA. Its default total
+budget is 1,200 seconds (`AIDEVOPS_PULSE_MACOS_VERIFICATION_BUDGET_SECONDS`), so
+native suites never consume dispatch budget. Guarded non-force cleanup preserves
+unexpected dirty state. Attempts are keyed by repository, PR and head under
+`~/.aidevops/.agent-workspace/state/macos-verification/`; a failed or interrupted
+head is not executed again. A failure retains the label and posts one SHA-keyed
+comment naming the failing suite with at most 40 output lines. Failed comment
+delivery is retried without rerunning code; a new head gets a fresh attempt.
+
+For a manual run (including retrying a failed head), the maintainer checks out the
+exact clean PR head on a Mac and runs:
+
+```bash
+bash .agents/scripts/macos-local-checks.sh verify-pr PR_NUMBER OWNER/REPO
+```
+
+This records native results in Runtime Testing and clears the label only after
+successful checks and an unchanged remote head. Fetch the PR base first if its
+object is unavailable locally. `macos-verification-refresh.yml` restores the
+handoff label on every later push to a sensitive PR, without executing PR code.
+Previous SHA-scoped Runtime Testing results remain historical evidence, not
+verification of the new head. A delayed event can conservatively restore the
+label after verification; rerun `verify-pr` for the current head in that case.
+`AIDEVOPS_MACOS_CHECKS_HOST=Linux` forces the
+handoff path for testing; it cannot manufacture a native pass on Linux. The
+label is a verification handoff, not a hosted runner or approval bypass.

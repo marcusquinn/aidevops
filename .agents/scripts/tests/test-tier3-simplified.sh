@@ -241,8 +241,11 @@ test_fallback_chain_helper() {
 	# Test: resolve simple tier from the shipped routing table.
 	# Set a fake API key so the lightweight availability check passes
 	export OPENAI_API_KEY="test-key-for-testing"
+	# Anthropic is primary on the shipped standard/thinking tiers; give it a fake
+	# key too so the lightweight check does not depend on host credentials.
+	export ANTHROPIC_API_KEY="$OPENAI_API_KEY"
 	output=$("$helper" resolve simple --quiet 2>&1) || true
-	if echo "$output" | grep -q "gpt-6-luna"; then
+	if grep -q "gpt-6-luna" <<<"$output"; then
 		print_result "fallback: resolve simple -> gpt-6-luna" 0
 	else
 		print_result "fallback: resolve simple -> gpt-6-luna" 1 "Got: $output"
@@ -250,18 +253,18 @@ test_fallback_chain_helper() {
 
 	# Test: resolve standard tier
 	output=$("$helper" resolve standard --quiet 2>&1) || true
-	if echo "$output" | grep -q "gpt-6.1-sol"; then
-		print_result "fallback: resolve standard -> gpt-6.1-sol" 0
+	if grep -q "claude-sonnet-5-5" <<<"$output"; then
+		print_result "fallback: resolve standard -> claude-sonnet-5-5" 0
 	else
-		print_result "fallback: resolve standard -> gpt-6.1-sol" 1 "Got: $output"
+		print_result "fallback: resolve standard -> claude-sonnet-5-5" 1 "Got: $output"
 	fi
 
 	# Test: resolve thinking tier
 	output=$("$helper" resolve thinking --quiet 2>&1) || true
-	if echo "$output" | grep -q "gpt-6.1-sol"; then
-		print_result "fallback: resolve thinking -> gpt-6.1-sol" 0
+	if grep -q "claude-opus-5-5" <<<"$output"; then
+		print_result "fallback: resolve thinking -> claude-opus-5-5" 0
 	else
-		print_result "fallback: resolve thinking -> gpt-6.1-sol" 1 "Got: $output"
+		print_result "fallback: resolve thinking -> claude-opus-5-5" 1 "Got: $output"
 	fi
 
 	# Test: resolve with --json flag
@@ -273,7 +276,7 @@ test_fallback_chain_helper() {
 	fi
 
 	# Test: unknown tier — must fail AND produce an error message
-	unset OPENAI_API_KEY
+	unset OPENAI_API_KEY ANTHROPIC_API_KEY
 	local rc=0
 	output=$("$helper" resolve nonexistent --quiet 2>&1) || rc=$?
 	if [[ $rc -ne 0 ]] && echo "$output" | grep -qiE "unknown|unsupported|invalid|error|fail|no.*tier|not found"; then

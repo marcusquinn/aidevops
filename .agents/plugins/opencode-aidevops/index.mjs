@@ -37,6 +37,8 @@ import { createMcpSessionRuntime, getOnDemandMcpAgents } from "./mcp-registry.mj
 import { enforceManagedMcpArtifactPath } from "./mcp-activation-tool.mjs";
 import { normalizeMcpArtifactPaths } from "./mcp-artifact-paths.mjs";
 import { createQualityHooks } from "./quality-hooks.mjs";
+import { releasePreEditSessionOwnership } from "./pre-edit-check-process.mjs";
+import { createPlaywriterSelectionGuard } from "./playwriter-selection-guard.mjs";
 import { createInstructionReminderCompactor } from "./instruction-reminders.mjs";
 import { createSourceAccessRuntime } from "./source-access-runtime.mjs";
 import {
@@ -46,8 +48,10 @@ import {
 } from "./shell-env.mjs";
 import { compactingHook } from "./compaction.mjs";
 import { createCompactionAutoContinueGuard } from "./compaction-lifecycle.mjs";
+import { createCompactionLoopGuard } from "./compaction-loop-guard.mjs";
 import { createCompactionInputReplay } from "./compaction-pinned-input.mjs";
-import { capCompactionEffort } from "./compaction-routing.mjs";
+import { applyCompactionEffort } from "./compaction-effort.mjs";
+import { createCompactionResidencyWarning } from "./compaction-routing.mjs";
 import { INTENT_FIELD } from "./intent-tracing.mjs";
 import { createGreetingHandler } from "./greeting.mjs";
 import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
@@ -65,14 +69,20 @@ import { createSessionContinuationGuard } from "./session-continuation-guard.mjs
 import { createSessionRecoveryMarkerHandler } from "./session-recovery-marker.mjs";
 import { createSessionStallRecovery } from "./session-stall-recovery.mjs";
 import { createSessionTurnDiagnostics } from "./session-turn-diagnostics.mjs";
+import { createOutputLimitNotice } from "./session-turn-state.mjs";
+import { stampCommandPrompt } from "./tui-prompts.mjs";
+import { installDbActivityHeartbeat } from "./db-activity-heartbeat.mjs";
+import { createSessionBusHooks, remoteBusContext } from "./session-bus-plugin.mjs";
 import { createPermissionBroker } from "./permission-broker.mjs";
 import { createSubagentCancellationReceipt } from "./subagent-cancellation-receipt.mjs";
+import { createNativeDesktopFocusGuard } from "./native-desktop-focus-guard.mjs";
 import {
   BoundedInteractiveOperationManager,
 } from "./bounded-interactive-operation.mjs";
 import { createOutputSandboxReader, createOutputSandboxRecorder } from "./bounded-operation-output.mjs";
 import { createRoutingFeedbackHandler } from "./routing-feedback-handler.mjs";
 import { createSessionBoundaryAdvisory } from "./session-boundary-advisory.mjs";
+import { createVersionDriftNotice } from "./deployed-version.mjs";
 import { createProviderErrorHandler } from "./provider-error-diagnostics.mjs";
 import { createObjectiveReceiptTool } from "./objective-receipt-tool.mjs";
 import {
@@ -85,7 +95,7 @@ import {
   isRemoteInteractiveConversation,
 } from "./team-interface-context.mjs";
 import { enforceConversationPathAccess } from "./team-interface-path-guard.mjs";
-import { assertLocalOnlyEgress, initLocalOnlyPolicy } from "./local-only-policy.mjs";
+import { assertLocalOnlyEgress, formatLocalOnlyBinding, initLocalOnlyPolicy } from "./local-only-policy.mjs";
 
 // Existing modules
 import { createTools, tool } from "./tools.mjs";
@@ -117,8 +127,9 @@ import { installOpenAIProviderFetchRotation } from "./openai-provider-auth.mjs";
 import { startCursorProxy, ensureCursorProxyServer } from "./cursor-proxy.mjs";
 import { startGoogleProxy, ensureGoogleProxyServer } from "./google-proxy.mjs";
 import { startClaudeProxy } from "./claude-proxy.mjs";
-import { isHeadless } from "./proxy-lifecycle.mjs";
+import { isAcpServer, isHeadless } from "./proxy-lifecycle.mjs";
 import { pluginHealthProbeRequested, recordPluginHealthStage } from "./plugin-health.mjs";
+import { annotateTurnTimesSafely } from "./turn-time-annotation.mjs";
 
 // Preserve the runtime-native fetch before any plugin factory installs the
 // OpenAI OAuth rotation wrapper. API-key image requests need an isolated route.
@@ -268,7 +279,7 @@ function createConversationHooks({client, conversation, directory, localOnlyPoli
     "tool.definition": adaptToolDefinition,
     "chat.message": async () => 0,
     "chat.params": async (input, output) => {
-      assertLocalOnlyEgress(localOnlyPolicy, input, "chat");
+      assertLocalOnlyEgress(localOnlyPolicy, input, "chat", (line) => console.error(line));
       return applyConversationRootVariant(
         input,
         output,
@@ -350,6 +361,8 @@ export async function AidevopsPlugin({ directory, client }) {
   // GH#34125 #aidevops:trust-boundary: bind local-only policy from the launch
   // environment before any hook can run; later env mutation cannot change it.
   const localOnlyPolicy = initLocalOnlyPolicy(process.env);
+  // GH#38424: content-free binding state, so operators can confirm this process is bound.
+  console.error(formatLocalOnlyBinding(localOnlyPolicy));
   const conversation = loadTeamInterfaceConversation(process.env, AGENTS_DIR, {
     pluginEntryPath: PLUGIN_ENTRY_PATH,
     repositoryDir: directory,
@@ -431,9 +444,21 @@ export async function AidevopsPlugin({ directory, client }) {
     readOutput: createOutputSandboxReader(join(SCRIPTS_DIR, "output-sandbox-helper.sh")),
   });
   process.once("exit", () => boundedOperationManager.dispose());
+  // t18886: presence for every root session; the tool and wakes only in
+  // interactive TUI/serve/ACP processes. t18905: headless workers receive
+  // messages at tool results and turns. The loggers are bound lazily.
+  const sessionBus = createSessionBusHooks({
+    client,
+    directory,
+    headless: isHeadless(),
+    remote: remoteBusContext(conversation),
+    onError: (label, err) => debugEventError(label, err),
+    log: (level, message) => qualityLog(level, message),
+  });
   const baseTools = createSchemaGatedTools(tool, () => {
     const tools = createTools(SCRIPTS_DIR, run, {
       aidevopsRun: runChecked,
+      memoryRun: runChecked,
       sessionOrigin: process.env.AIDEVOPS_SESSION_ORIGIN,
       poolToolFactory: () => createPoolTool(client),
       imageFetch: IMAGE_FETCH,
@@ -447,6 +472,7 @@ export async function AidevopsPlugin({ directory, client }) {
       boundedOperationManager,
     });
     tools.aidevops_objective_receipt = createObjectiveReceiptTool(tool, recordObjectiveDecision);
+    sessionBus.addTool(tools, tool);
     // GH#32592: V1 sends every tool schema on every request, so rarely used
     // tools sit behind one compact dispatcher. V2's Code Mode already defers them.
     moveToolsOnDemand(tools, tool);
@@ -482,6 +508,7 @@ export async function AidevopsPlugin({ directory, client }) {
     tempDir: join(WORKSPACE_DIR, "tmp"), enabled: !isHeadless(),
   });
   const { toolExecuteBefore, toolExecuteAfter, qualityLog } = createQualityHooks({
+    client,
     activeScriptsDir: join(ACTIVE_AGENTS_DIR, "scripts"),
     scriptsDir: SCRIPTS_DIR,
     logsDir: LOGS_DIR,
@@ -519,19 +546,30 @@ export async function AidevopsPlugin({ directory, client }) {
   const shouldInjectGreeting = createRootSessionGreetingGate({
     getSession: openCodeV1SessionLookup(client),
     isHeadless,
+    isAcpServer,
     log: qualityLog,
   });
   const permissionBroker = createPermissionBroker({ client, isHeadless });
+  const playwriterSelectionGuard = createPlaywriterSelectionGuard({ client, isHeadless, log: qualityLog });
   const compactionContinuation = createCompactionAutoContinueGuard(client, { qualityLog });
+  // GH#37997: stop and rerun compaction summaries that loop on repeated text;
+  // a rerun continues under the same autocontinue policy as OpenCode's own.
+  // Its hooks are fail-open internally.
+  const compactionLoopGuard = createCompactionLoopGuard({ client, isHeadless, qualityLog, continuation: compactionContinuation });
   // GH#35186: replay verbatim user input and images hidden by compaction.
   const compactionInputReplay = createCompactionInputReplay(client, { qualityLog });
+  // GH#35893: flag a local session compacted on a non-local provider.
+  const compactionResidencyWarning = createCompactionResidencyWarning({ log: qualityLog });
   const cancellationReceipt = createSubagentCancellationReceipt(client, {
     qualityLog,
     recordReceipt: recordSubagentCancellationReceipt,
   });
+  // GH#35528: bound focus-changing native desktop calls per session turn.
+  const nativeFocusGuard = createNativeDesktopFocusGuard({ log: qualityLog });
 
   // Duplicate AGENTS.md Read reminders (GH#32444); OpenCode 1 only.
   const instructionReminders = createInstructionReminderCompactor();
+  const outputLimitNotice = createOutputLimitNotice();
 
   // TTSR hooks
   const {
@@ -576,6 +614,8 @@ export async function AidevopsPlugin({ directory, client }) {
   // if the proxy is genuinely unreachable.
   const systemTransformHook = async (input, output) => {
     instructionReminders.rememberSystem(input?.sessionID, output?.system);
+    // GH#39151: one-shot steering after a finish=length (output-limit) response.
+    outputLimitNotice.inject(input?.sessionID, output?.system);
     const providerID = input?.model?.providerID;
     if (providerID && !isHeadless()) {
       const starter = proxyStarters[providerID];
@@ -599,7 +639,12 @@ export async function AidevopsPlugin({ directory, client }) {
   // so corrections are applied to the final message list. Fail-open — errors
   // in any step must not block the message.
   const messagesTransformHook = async (input, output) => {
+    // GH#37997: first, so replay and later hooks see the repaired history.
+    compactionLoopGuard.transformMessages(input, output);
     await compactionInputReplay.inject(input, output);
+    await annotateTurnTimesSafely(input, output, { client, isHeadless }, qualityLog);
+    // GH#35529: attach receipts to interrupted Task results (fail-open).
+    await cancellationReceipt.injectReceipts(input, output);
     await ttsrMessagesTransformHook(input, output);
     continuationGuard.injectSteering(input, output);
     try {
@@ -611,8 +656,10 @@ export async function AidevopsPlugin({ directory, client }) {
 
   // Observe completed text for TTSR violations and continuation steering.
   // GH#34123: neither hook modifies the user-visible text; model corrections
-  // travel through messagesTransformHook as synthetic messages.
+  // travel through messagesTransformHook as synthetic messages. The only
+  // rewrite is GH#37997: repeated runs in a compaction summary are collapsed.
   const completionTextHook = async (input, output) => {
+    compactionLoopGuard.completeText(input, output);
     await textCompleteHook(input, output);
     continuationGuard.completeText(input, output);
   };
@@ -631,6 +678,7 @@ export async function AidevopsPlugin({ directory, client }) {
     activeAgentsDir: ACTIVE_AGENTS_DIR,
     agentsDir: AGENTS_DIR,
     client,
+    isHeadless,
   });
   const sessionTitleStatusHandler = createSessionTitleStatusHandler({ isHeadless });
   const routingFeedbackHandler = createRoutingFeedbackHandler({ client, isHeadless, getFeedback: getRoutingFeedback });
@@ -639,6 +687,7 @@ export async function AidevopsPlugin({ directory, client }) {
     isHeadless,
     hasCompetingToast: (sessionID) => routingFeedbackHandler.hasPending(sessionID),
   });
+  const versionDriftNotice = createVersionDriftNotice({ client, isHeadless });
   const providerErrorHandler = createProviderErrorHandler({
     client,
     isHeadless,
@@ -667,6 +716,8 @@ export async function AidevopsPlugin({ directory, client }) {
     schedule: !isHeadless(),
     log: qualityLog,
   });
+  // GH#35517: busy/idle heartbeat consumed by the OpenCode DB archive idle gate.
+  const dbActivityHeartbeat = installDbActivityHeartbeat();
 
   const debugEventError = (label, err) => {
     if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
@@ -704,14 +755,23 @@ export async function AidevopsPlugin({ directory, client }) {
     tool: baseTools,
     "tool.definition": adaptToolDefinition,
 
-    // Record routed request identity and select parent-safe child effort.
-    "chat.message": subagentEffortHooks.chatMessage,
+    // Record routed request identity and select parent-safe child effort,
+    // then deliver pending session-bus messages on the user turn (t18886).
+    "chat.message": async (input, output) => {
+      const result = await subagentEffortHooks.chatMessage(input, output);
+      await sessionBus.chatMessage(input, output);
+      return result;
+    },
     "chat.params": async (input, output) => {
       // GH#34125: first, so a bound session never reaches the provider stream
       // (parent turns, subagents, compaction and resumed sessions alike).
-      assertLocalOnlyEgress(localOnlyPolicy, input, "chat");
+      assertLocalOnlyEgress(localOnlyPolicy, input, "chat", (line) => console.error(line));
       contextBudget.apply(input);
       const { sessionId, modelId } = sessionModelIdentity(input);
+      // Before remember(): compare against the parent's model, not this request's.
+      compactionResidencyWarning(input, sessionModels.resolve(sessionId));
+      // GH#37997: remember the compaction's parent agent/model/variant for a rerun.
+      compactionLoopGuard.chatParams(input);
       sessionModels.remember(sessionId, modelId);
       await subagentEffortHooks.chatParams(input, output);
       const applied = await applyConversationRootVariant(
@@ -724,19 +784,25 @@ export async function AidevopsPlugin({ directory, client }) {
         tierReasoning,
         },
       );
-      // GH#32934: last, so no earlier hook can restore a max/xhigh summary.
-      capCompactionEffort(input, output, modelRouting, { log: qualityLog });
+      // GH#32934/GH#36169: last, so no earlier hook can change compaction effort.
+      applyCompactionEffort(input, output, modelRouting, { log: qualityLog });
       return applied;
     },
 
     // Quality hooks
     "tool.execute.before": async (input, output) => {
+      await versionDriftNotice();
+      await playwriterSelectionGuard(input, output);
       enforceManagedMcpArtifactPath(input, output, mcpRuntime.workspaces);
+      nativeFocusGuard.beforeTool(input, output);
       sessionStallRecovery.beforeTool(input, output);
       permissionBroker.recordToolCall(input, output);
       cancellationReceipt.beforeTool(input, output);
       subagentEffortHooks.beforeTool(input, output);
-      return toolExecuteBefore(input, output);
+      const result = await toolExecuteBefore(input, output);
+      // t18905: after the gates, so only tools that will run are published.
+      sessionBus.toolBefore(input);
+      return result;
     },
     "tool.execute.after": async (input, output) => {
       normalizeMcpArtifactPaths(input, output, mcpRuntime.workspaces);
@@ -749,11 +815,19 @@ export async function AidevopsPlugin({ directory, client }) {
       sessionStallRecovery.afterTool(input, output);
       await cancellationReceipt.afterTool(input, output);
       await subagentEffortHooks.afterTool(input, output);
+      // Before quality hooks, so output scrubbing also covers peer messages.
+      sessionBus.toolAfter(input, output);
       return toolExecuteAfter(input, output);
     },
 
     // Shell environment
     "shell.env": shellEnvHook,
+
+    // Record the typed slash command on its template part for the TUI
+    // Prompts sidebar; OpenCode persists only the expanded template.
+    "command.execute.before": async (input, output) => {
+      stampCommandPrompt(input, output);
+    },
 
     // Soft TTSR — rule enforcement
     "experimental.chat.system.transform": systemTransformHook,
@@ -763,13 +837,17 @@ export async function AidevopsPlugin({ directory, client }) {
     // LLM observability + session-start toast greeting (t2724).
     // Both run on every event; greeting self-gates to session.created.
     event: async (input) => {
+      outputLimitNotice.observeSafe(input?.event, (err) => debugEventError("output limit notice", err));
       // Fire both in parallel — neither depends on the other's result.
       await Promise.all([
         handleEvent(input, { resolveSessionModel: (sessionId) => sessionModels.resolve(sessionId) }),
         Promise.resolve(subagentEffortHooks.handleEvent(input)),
         compactionContinuation.handleEvent(input),
+        Promise.resolve(compactionLoopGuard.handleEvent(input)),
         Promise.resolve(cancellationReceipt.handleEvent(input)),
+        Promise.resolve(nativeFocusGuard.handleEvent(input)),
         Promise.resolve(boundedOperationManager.handleEvent(input)),
+        releasePreEditSessionOwnership(input).catch((err) => debugEventError("session ownership release", err)),
         Promise.resolve(sourceAccessRuntime.handleEvent(input)),
         permissionBroker.handleEvent(input).catch((err) => debugEventError("permission broker", err)),
         sessionTitleStatusHandler(input).catch((err) => debugEventError("title status handler", err)),
@@ -781,6 +859,8 @@ export async function AidevopsPlugin({ directory, client }) {
         sessionRecoveryMarkerHandler(input).catch((err) => debugEventError("session recovery marker", err)),
         Promise.resolve(sessionStallRecovery.handleEvent(input)),
         sessionTurnDiagnostics.handleEvent(input).catch((err) => debugEventError("turn diagnostics", err)),
+        Promise.resolve().then(() => dbActivityHeartbeat.handleEvent(input)).catch((err) => debugEventError("db activity heartbeat", err)),
+        sessionBus.handleEvent(input),
         greetingHandler(input).catch((err) => debugEventError("greeting handler", err)),
       ]);
     },

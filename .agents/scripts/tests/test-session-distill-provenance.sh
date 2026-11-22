@@ -4,6 +4,14 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="${SCRIPT_DIR}/../session-distill-helper.sh"
 
@@ -26,17 +34,17 @@ printf '{"mergeCommit":{"oid":"%s"},"headRefOid":"%s","headRefName":"bugfix/sess
 EOF
 chmod +x "$tmp_dir/bin/gh"
 
-/usr/bin/git init -q -b main "$repository"
-/usr/bin/git -C "$repository" remote add origin https://github.com/example/repository.git
+"$TEST_NATIVE_GIT" init -q -b main "$repository"
+"$TEST_NATIVE_GIT" -C "$repository" remote add origin https://github.com/example/repository.git
 printf 'base\n' >"$repository/file.txt"
-/usr/bin/git -C "$repository" add file.txt
+"$TEST_NATIVE_GIT" -C "$repository" add file.txt
 GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid \
-	/usr/bin/git -C "$repository" -c commit.gpgsign=false commit -q -m 'chore: base'
-/usr/bin/git -C "$repository" worktree add -q -b bugfix/session-owned "$worktree"
+	"$TEST_NATIVE_GIT" -C "$repository" -c commit.gpgsign=false commit -q -m 'chore: base'
+"$TEST_NATIVE_GIT" -C "$repository" worktree add -q -b bugfix/session-owned "$worktree"
 printf 'session\n' >>"$worktree/file.txt"
 GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid \
-	/usr/bin/git -C "$worktree" -c commit.gpgsign=false commit -q -am 'fix: session-owned provenance'
-session_commit=$(/usr/bin/git -C "$worktree" rev-parse HEAD)
+	"$TEST_NATIVE_GIT" -C "$worktree" -c commit.gpgsign=false commit -q -am 'fix: session-owned provenance'
+session_commit=$("$TEST_NATIVE_GIT" -C "$worktree" rev-parse HEAD)
 
 PATH="$tmp_dir/bin:$PATH" GH_PROVENANCE_MODE=fail AIDEVOPS_WORKSPACE="$workspace" AIDEVOPS_SESSION_ID='provenance-session' \
 	"$HELPER" provenance --commit "$session_commit" --branch bugfix/session-owned \
@@ -47,13 +55,13 @@ PATH="$tmp_dir/bin:$PATH" GH_PROVENANCE_MODE=success GH_MERGE_COMMIT="$session_c
 	--worktree "$worktree" --repo example/repository --pr 101 >/dev/null
 
 GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid \
-	/usr/bin/git -C "$repository" -c commit.gpgsign=false merge -q --no-ff bugfix/session-owned -m 'merge session work'
-/usr/bin/git -C "$repository" worktree remove "$worktree"
-/usr/bin/git -C "$repository" branch -D bugfix/session-owned >/dev/null
+	"$TEST_NATIVE_GIT" -C "$repository" -c commit.gpgsign=false merge -q --no-ff bugfix/session-owned -m 'merge session work'
+"$TEST_NATIVE_GIT" -C "$repository" worktree remove "$worktree"
+"$TEST_NATIVE_GIT" -C "$repository" branch -D bugfix/session-owned >/dev/null
 printf 'unrelated\n' >>"$repository/file.txt"
 GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid \
-	/usr/bin/git -C "$repository" -c commit.gpgsign=false commit -q -am 'fix: unrelated current main'
-unrelated_commit=$(/usr/bin/git -C "$repository" rev-parse HEAD)
+	"$TEST_NATIVE_GIT" -C "$repository" -c commit.gpgsign=false commit -q -am 'fix: unrelated current main'
+unrelated_commit=$("$TEST_NATIVE_GIT" -C "$repository" rev-parse HEAD)
 ledger="$workspace/sessions/provenance-session/git-provenance.json"
 jq --arg commit "$unrelated_commit" '.items += [{idempotency_key:"cross-repo",repository:"other/repository",pr_number:"202",commit:$commit,head_commit:$commit,merge_commit:"",branch:"main",worktree:"[local-path]",captured_at:"2026-01-01T00:00:00Z"}]' "$ledger" >"${ledger}.tmp"
 mv "${ledger}.tmp" "$ledger"

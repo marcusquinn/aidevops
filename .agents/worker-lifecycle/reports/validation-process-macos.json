@@ -1,0 +1,61 @@
+{
+  "checks": {
+    "after_reap_ended": "pass",
+    "child_alive": "pass",
+    "child_natural_exit": "pass",
+    "child_pid_matches": "pass",
+    "fresh_observer_matches": "pass",
+    "identity_round_trip": "pass",
+    "identity_stable": "pass",
+    "readiness": "pass",
+    "self_alive": "pass",
+    "zombie_state": "pass"
+  },
+  "code_sha256": "af2e5d8770b6fe4963cd5e647120086a78a1af6c7e22e7e07003440ccee236a7",
+  "coverage": {
+    "native-abi-against-installed-sdk": "not_run",
+    "zombie-state": "passed"
+  },
+  "elapsed_seconds": 0.3296,
+  "environment": {
+    "kernel_release": "21.6.0",
+    "os_version": "12.7.6",
+    "platform": "darwin",
+    "process_arch": "x86_64",
+    "python_version": "3.14.6",
+    "sqlite_version": "3.53.3",
+    "unprivileged": true
+  },
+  "forced_child_cleanup": false,
+  "limitations": [
+    "Process death does not prove descendant quiescence or cleanup safety.",
+    "Installation UUID is temporary; no real registry is read or changed.",
+    "No native build tool, dependency installation or SDK is required.",
+    "Matching metadata does not prove timestamp uniqueness."
+  ],
+  "next_steps": [
+    {
+      "description": "Show available checks and reasons for unavailable scenarios.",
+      "option": "--list-checks"
+    }
+  ],
+  "observed_at": "2026-10-28T06:45:33.592661+00:00",
+  "owned_children_reaped": true,
+  "performance": {
+    "initialization_excluded": true,
+    "median_us": 73.84549999999999,
+    "p95_us": 122.856,
+    "samples": 100,
+    "scope": "complete-adapter-observation-including-context-checks"
+  },
+  "schema": "worker-lifecycle.validation/v1",
+  "untested": [
+    "reboot",
+    "real-pid-reuse",
+    "timestamp-uniqueness",
+    "process-access-denial",
+    "native-abi-against-installed-sdk",
+    "other-os-builds"
+  ],
+  "verdict": "passed"
+}

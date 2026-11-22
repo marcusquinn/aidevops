@@ -658,6 +658,17 @@ PY
 			TESTS_FAILED=$((TESTS_FAILED + 1))
 			echo "${TEST_RED}FAIL${TEST_NC}: 24b. Network-active defer changed monitored output size (${network_initial_size} -> ${network_after_size})"
 		fi
+		# GH#36700: the per-attempt events file proves the watchdog ran and
+		# records why it deferred, for the wrapper's watchdog_summary.
+		if grep -q 'watchdog_monitoring' "${network_exit}.watchdog_events" 2>/dev/null &&
+			grep -q 'worker_stall_deferred.*reason=network_active.*hard_kill=0s' "${network_exit}.watchdog_events" 2>/dev/null; then
+			TESTS_RUN=$((TESTS_RUN + 1))
+			echo "${TEST_GREEN}PASS${TEST_NC}: 24c. Per-attempt events file records monitoring start and network_active deferral"
+		else
+			TESTS_RUN=$((TESTS_RUN + 1))
+			TESTS_FAILED=$((TESTS_FAILED + 1))
+			echo "${TEST_RED}FAIL${TEST_NC}: 24c. Per-attempt events file missing monitoring start or network_active deferral"
+		fi
 
 		kill "$network_watchdog_pid" 2>/dev/null || true
 		wait "$network_watchdog_pid" 2>/dev/null || true
@@ -822,19 +833,85 @@ cap_probe_results=$(
 	_MONITOR_START_EPOCH=1 _MONITOR_LAST_DEFER_EPOCH=0
 	_MONITOR_STALL_SECONDS=600 _MONITOR_DEFERRED_STALL_SECONDS=0 WORKER_PID=1
 	_output_has_ci_wait() { if [[ "$signal" == ci_wait ]]; then return 0; fi; return 1; }
+	_watchdog_db_part_activity() { if [[ "$signal" == tool_output_active ]]; then return 0; fi; return 1; }
 	_watchdog_tree_network_active() { if [[ "$signal" == network_active ]]; then return 0; fi; return 1; }
 	_watchdog_tree_cpu() { if [[ "$signal" == cpu_active ]]; then printf 5; else printf 0; fi; return 0; }
 	_kill_worker() { local reason="$1" kind="$2"; printf '%s:%s:%s\n' "$signal" "${reason%%:*}" "$kind"; return 0; }
-	for signal in ci_wait network_active cpu_active inactive; do
+	for signal in ci_wait tool_output_active network_active cpu_active inactive; do
 		_monitor_enforce_hard_kill 100 || true
 	done
 )
-for cap_signal in ci_wait network_active cpu_active; do
+for cap_signal in ci_wait tool_output_active network_active cpu_active; do
 	assert_contains "28. first cap window samples ${cap_signal} without deferring kill" \
 		"${cap_signal}:hard_kill_cap_active:stall_killed" "$cap_probe_results"
 done
 assert_contains "28. first cap window with no liveness remains a stall kill" \
 	"inactive:hard_kill:stall_killed" "$cap_probe_results"
+
+#######################################
+# Test 29: GH#39197 — a quiet worker whose isolated OpenCode DB shows a recent
+# part update (a running tool streaming output) is deferred, not killed; a DB
+# whose newest update is old does not defer.
+#######################################
+if command -v sqlite3 >/dev/null 2>&1; then
+	db_tmp_dir=$(mktemp -d 2>/dev/null || mktemp -d -t watchdog-db-live)
+	db_path="${db_tmp_dir}/opencode.db"
+	sqlite3 "$db_path" "CREATE TABLE part (id text PRIMARY KEY, time_updated integer NOT NULL);"
+	# Simulate OpenCode rewriting a running tool part as its output streams.
+	# shellcheck disable=SC2016 # Expanded by the inner bash on every write.
+	bash -c 'while :; do sqlite3 "$1" "INSERT OR REPLACE INTO part VALUES (1, $(date +%s)000);" 2>/dev/null; sleep 1; done' _ "$db_path" >/dev/null 2>&1 &
+	db_writer_pid=$!
+	for db_case in live stale; do
+		db_output="${db_tmp_dir}/${db_case}.out"
+		db_exit="${db_tmp_dir}/${db_case}.exit"
+		db_log="${db_tmp_dir}/${db_case}.log"
+		printf 'tool started\n' >"$db_output"
+		case_db="$db_path"
+		if [[ "$db_case" == stale ]]; then
+			case_db="${db_tmp_dir}/stale.db"
+			sqlite3 "$case_db" "CREATE TABLE part (id text PRIMARY KEY, time_updated integer NOT NULL); INSERT INTO part VALUES (1, 1000);"
+		fi
+		bash -c 'while :; do sleep 1; done' >/dev/null 2>&1 &
+		db_worker_pid=$!
+		WORKER_LIFECYCLE_LOG="$db_log" \
+			"${SCRIPT_DIR}/worker-activity-watchdog.sh" \
+			--output-file "$db_output" \
+			--worker-pid "$db_worker_pid" \
+			--exit-code-file "$db_exit" \
+			--worker-db "$case_db" \
+			--stall-timeout 1 \
+			--poll-interval 1 \
+			--hard-kill-seconds 0 >/dev/null 2>&1 &
+		db_watchdog_pid=$!
+		sleep 8
+		if [[ "$db_case" == live ]]; then
+			if kill -0 "$db_worker_pid" 2>/dev/null && [[ ! -f "${db_exit}.watchdog_killed" ]] && grep -q 'reason=tool_output_active' "$db_log" 2>/dev/null; then
+				TESTS_RUN=$((TESTS_RUN + 1))
+				echo "${TEST_GREEN}PASS${TEST_NC}: 29a. quiet worker with live isolated-DB part updates is deferred as tool_output_active"
+			else
+				TESTS_RUN=$((TESTS_RUN + 1))
+				TESTS_FAILED=$((TESTS_FAILED + 1))
+				echo "${TEST_RED}FAIL${TEST_NC}: 29a. quiet worker with live isolated-DB part updates was killed or not deferred"
+			fi
+		elif [[ -f "${db_exit}.watchdog_killed" ]] && ! grep -q 'reason=tool_output_active' "$db_log" 2>/dev/null; then
+			TESTS_RUN=$((TESTS_RUN + 1))
+			echo "${TEST_GREEN}PASS${TEST_NC}: 29b. stale isolated-DB part does not defer a quiet worker's stall kill"
+		else
+			TESTS_RUN=$((TESTS_RUN + 1))
+			TESTS_FAILED=$((TESTS_FAILED + 1))
+			echo "${TEST_RED}FAIL${TEST_NC}: 29b. stale isolated-DB part deferred or blocked the stall kill"
+		fi
+		pkill -P "$db_worker_pid" 2>/dev/null || true
+		kill "$db_worker_pid" "$db_watchdog_pid" 2>/dev/null || true
+		wait "$db_worker_pid" 2>/dev/null || true
+		wait "$db_watchdog_pid" 2>/dev/null || true
+	done
+	kill "$db_writer_pid" 2>/dev/null || true
+	wait "$db_writer_pid" 2>/dev/null || true
+	rm -rf "$db_tmp_dir"
+else
+	echo "SKIP: 29. sqlite3 unavailable"
+fi
 
 #######################################
 # Summary

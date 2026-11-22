@@ -271,12 +271,70 @@ _trusted_dependabot_pr_json_graphql() {
 	return 0
 }
 
+# Maintainer-local repos.json is the only trust root for non-Dependabot
+# dependency bots (GH#39280). Repository content, including a PR, never is.
+_trusted_dependency_bot_repos_json() {
+	printf '%s' "${AIDEVOPS_REPOS_JSON:-${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}}"
+	return 0
+}
+
+# Normalize `app/<slug>`, `<slug>[bot]`, or a bare configured slug to the
+# lowercase GitHub App slug. Anything outside the App slug charset fails.
+_trusted_dependency_bot_slug() {
+	local value="$1"
+	value="${value#app/}"
+	value="${value%\[bot\]}"
+	value=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')
+	[[ "$value" =~ ^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$ ]] || return 1
+	printf '%s\n' "$value"
+	return 0
+}
+
+# Print the configured dependency-bot slug for a PR author, or return 1.
+# Only GitHub App author forms qualify (human logins cannot contain `/` or
+# `[`), and the slug must be listed in the repo's `trusted_dependency_bots`.
+# Dependabot keeps its built-in lane and never resolves here. Identity is
+# re-proven against the exact-head GraphQL snapshot before any routing.
+_trusted_dependency_bot_for_author() {
+	local pr_author="$1"
+	local repo_slug="$2"
+	local author_slug=""
+	local repos_json=""
+	local configured=""
+	local entry=""
+
+	case "$pr_author" in
+	app/* | *\[bot\]) ;;
+	*) return 1 ;;
+	esac
+	author_slug=$(_trusted_dependency_bot_slug "$pr_author") || return 1
+	[[ "$author_slug" != "dependabot" && -n "$repo_slug" ]] || return 1
+	repos_json=$(_trusted_dependency_bot_repos_json)
+	[[ -f "$repos_json" ]] || return 1
+	configured=$(jq -r --arg slug "$repo_slug" '
+		.initialized_repos[]?
+		| select(((.slug // "") | ascii_downcase) == ($slug | ascii_downcase))
+		| .trusted_dependency_bots // []
+		| arrays | .[] | strings' "$repos_json" 2>/dev/null) || return 1
+	while IFS= read -r entry; do
+		[[ -n "$entry" ]] || continue
+		entry=$(_trusted_dependency_bot_slug "$entry") || continue
+		if [[ "$entry" == "$author_slug" ]]; then
+			printf '%s\n' "$author_slug"
+			return 0
+		fi
+	done <<<"$configured"
+	return 1
+}
+
 _trusted_dependabot_snapshot_is_authentic() {
 	local pr_json="$1"
 	local repo_slug="$2"
 	local pr_author="${3:-}"
 	local expected_head_sha="${4:-}"
+	local bot_slug="${5:-dependabot}"
 	local repo_owner="${repo_slug%%/*}"
+	local author_norm=""
 	local api_author=""
 	local api_author_type=""
 	local head_owner=""
@@ -286,13 +344,20 @@ _trusted_dependabot_snapshot_is_authentic() {
 
 	_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON="invalid-input"
 	[[ -n "$pr_json" && "$pr_json" != "null" && -n "$repo_slug" && -n "$expected_head_sha" ]] || return 1
-	case "$pr_author" in
-	dependabot\[bot\] | app/dependabot | "") ;;
-	*)
+	[[ "$bot_slug" =~ ^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$ ]] || return 1
+	author_norm=$(printf '%s' "$pr_author" | tr '[:upper:]' '[:lower:]')
+	if [[ "$bot_slug" == "dependabot" ]]; then
+		case "$author_norm" in
+		dependabot\[bot\] | app/dependabot | "") ;;
+		*)
+			_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON="unsupported-pr-author"
+			return 1
+			;;
+		esac
+	elif [[ "$author_norm" != "app/${bot_slug}" && "$author_norm" != "${bot_slug}[bot]" ]]; then
 		_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON="unsupported-pr-author"
 		return 1
-		;;
-	esac
+	fi
 
 	api_author=$(printf '%s' "$pr_json" | jq -r '.author.login // ""' 2>/dev/null) || return 1
 	api_author_type=$(printf '%s' "$pr_json" | jq -r '.author.__typename // ""' 2>/dev/null) || return 1
@@ -301,7 +366,9 @@ _trusted_dependabot_snapshot_is_authentic() {
 	snapshot_head=$(printf '%s' "$pr_json" | jq -r '.headRefOid // ""' 2>/dev/null) || return 1
 	#aidevops:trust-boundary — worker intake and merge trust share this exact-head
 	# GitHub Bot, repository ownership, and commit-authorship verification.
-	if [[ "$api_author_type" != "Bot" || "$api_author" != "dependabot" ]]; then
+	# GH#39280: configured bots use the same proof; authenticity never grants
+	# merge authority (only _is_trusted_dependabot_update_pr feeds that).
+	if [[ "$api_author_type" != "Bot" || "$api_author" != "$bot_slug" ]]; then
 		_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON="bot-identity-mismatch"
 		return 1
 	fi
@@ -313,7 +380,7 @@ _trusted_dependabot_snapshot_is_authentic() {
 		_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON="head-mismatch"
 		return 1
 	fi
-	bad_commits=$(printf '%s' "$pr_json" | jq '[.commits[]? | select([.authors[]?.login] | index("dependabot[bot]") | not)] | length' 2>/dev/null) || return 1
+	bad_commits=$(printf '%s' "$pr_json" | jq --arg commit_login "${bot_slug}[bot]" '[.commits[]? | select([.authors[]?.login] | index($commit_login) | not)] | length' 2>/dev/null) || return 1
 	if [[ "$bad_commits" != "0" ]]; then
 		_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON="commit-author-mismatch"
 		return 1
@@ -327,6 +394,19 @@ _is_authentic_dependabot_pr() {
 	local repo_slug="$2"
 	local pr_author="${3:-}"
 	local expected_head_sha="${4:-}"
+
+	_is_authentic_dependency_bot_pr "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha" dependabot
+	return $?
+}
+
+# Exact-head authenticity for Dependabot or a configured dependency bot.
+# Authenticity only: callers must never treat success as merge authority.
+_is_authentic_dependency_bot_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_author="${3:-}"
+	local expected_head_sha="${4:-}"
+	local bot_slug="${5:-dependabot}"
 	local pr_json=""
 
 	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
@@ -343,7 +423,7 @@ _is_authentic_dependabot_pr() {
 		_TRUSTED_DEPENDABOT_LAST_PR="$pr_number"
 		_TRUSTED_DEPENDABOT_LAST_HEAD="$expected_head_sha"
 	fi
-	_trusted_dependabot_snapshot_is_authentic "$pr_json" "$repo_slug" "$pr_author" "$expected_head_sha"
+	_trusted_dependabot_snapshot_is_authentic "$pr_json" "$repo_slug" "$pr_author" "$expected_head_sha" "$bot_slug"
 	return $?
 }
 

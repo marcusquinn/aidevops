@@ -11,6 +11,162 @@ fi
 # Ordinary no-match fixtures have no active remote lane.
 release_lane_read() { return 2; }
 
+# GH#37658: host A completed the terminal lane; host B must independently
+# verify its materialized runtime before writing local-only evidence.
+(
+	# shellcheck source=../full-loop-helper-state.sh
+	source "${SCRIPT_DIR}/full-loop-helper-state.sh"
+	# shellcheck source=../full-loop-release-adopt.sh
+	source "${SCRIPT_DIR}/full-loop-release-adopt.sh"
+	export HOME="${TEST_ROOT}/adoption-home"
+	export AIDEVOPS_FULL_LOOP_RECEIPT_DIR="${TEST_ROOT}/adoption-receipts"
+	STATE_DIR="${TEST_ROOT}/adoption-state"
+	REPO_ROOT="${TEST_ROOT}/adoption-source"
+	mkdir -p "$REPO_ROOT/.agents/scripts/setup/modules" "$HOME/.aidevops/runtime-bundles"
+	git init -q -b main "$REPO_ROOT"
+	printf '1.2.3\n' >"$REPO_ROOT/VERSION"
+	printf 'fixture sentinel\n' >"$REPO_ROOT/aidevops.sh"
+	for sentinel in version-manager-release.sh deploy-agents-on-merge.sh runtime-bundle-manifest.sh runtime-bundle-verifier.sh setup/modules/agent-deploy.sh; do
+		printf 'fixture sentinel\n' >"$REPO_ROOT/.agents/scripts/$sentinel"
+	done
+	git -C "$REPO_ROOT" add .
+	git -C "$REPO_ROOT" -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -qm source
+	adopt_commit=$(git -C "$REPO_ROOT" rev-parse HEAD)
+	ssh-keygen -q -t ed25519 -N '' -f "${TEST_ROOT}/adopt-key"
+	printf 'fixture@example.invalid %s\n' "$(<"${TEST_ROOT}/adopt-key.pub")" >"${TEST_ROOT}/adopt-signers"
+	git -C "$REPO_ROOT" -c user.name=Fixture -c user.email=fixture@example.invalid \
+		-c gpg.format=ssh -c user.signingkey="${TEST_ROOT}/adopt-key" \
+		tag -s v1.2.3 -m "Release adoption fixture"
+	git -C "$REPO_ROOT" config gpg.format ssh
+	git -C "$REPO_ROOT" config gpg.ssh.allowedSignersFile "${TEST_ROOT}/adopt-signers"
+	adopt_bundle="fixture-${adopt_commit:0:12}-runtime"
+	adopt_active="$HOME/.aidevops/runtime-bundles/$adopt_bundle/agents"
+	mkdir -p "$adopt_active/scripts/setup/modules"
+	cp "$REPO_ROOT/VERSION" "$REPO_ROOT/aidevops.sh" "$adopt_active/"
+	cp -R "$REPO_ROOT/.agents/scripts/." "$adopt_active/scripts/"
+	ln -s "runtime-bundles/$adopt_bundle/agents" "$HOME/.aidevops/agents"
+	printf '%s\n' "$adopt_commit" >"$HOME/.aidevops/.deployed-sha"
+	adopt_cli_hash=$(_full_loop_release_sha256_stream <"$REPO_ROOT/aidevops.sh")
+	printf 'schema=1\nstatus=validated\nbundle_id=%s\nframework_version=1.2.3\ngit_sha=%s\ncli_sha256=%s\n' \
+		"$adopt_bundle" "$adopt_commit" "${adopt_cli_hash%% *}" >"$adopt_active/.bundle-manifest"
+	_FULL_LOOP_RELEASE_PATH="$REPO_ROOT"
+	adopt_lane='{"active":false,"phase":"terminal","terminal_receipt":"published","source_pr":90,"tag":"v1.2.3"}'
+	adopt_mode=valid
+	adopt_reads=0
+	release_lane_read() {
+		adopt_reads=$((adopt_reads + 1))
+		_AIDEVOPS_RELEASE_LANE_JSON="$adopt_lane"
+		if [[ "$adopt_mode" == drift && "$adopt_reads" -ge 3 ]]; then
+			_AIDEVOPS_RELEASE_LANE_JSON=$(jq '.updated_at="drift"' <<<"$adopt_lane")
+		fi
+		_AIDEVOPS_RELEASE_LANE_HEAD="$adopt_commit"
+		return 0
+	}
+	_full_loop_release_bind_repo_context() { return 0; }
+	_full_loop_resolve_repo() { printf 'test/repo\n'; return 0; }
+	_full_loop_release_verify_tag_provenance() {
+		local repo="$1" tag="$2"
+		[[ "$repo" == test/repo ]] || return 1
+		if [[ "$adopt_mode" == signature ]]; then
+			git -C "$REPO_ROOT" -c gpg.ssh.allowedSignersFile=/dev/null verify-tag "$tag" >/dev/null 2>&1
+			return $?
+		fi
+		git -C "$REPO_ROOT" verify-tag "$tag" >/dev/null 2>&1 || return 1
+		return 0
+	}
+	_full_loop_release_source_json_from_tag() {
+		local pr=90
+		[[ "$adopt_mode" != source ]] || pr=91
+		jq -cn --argjson pr "$pr" --arg sha "$adopt_commit" '{source_pr:$pr,source_merge:$sha,aggregated_sources:[]}'
+		return 0
+	}
+	_full_loop_release_verify_channels() { [[ "$adopt_mode" != channels ]]; return $?; }
+	_full_loop_release_find_workflow_run() {
+		_FULL_LOOP_RELEASE_RUN_JSON='{"id":100,"status":"completed","conclusion":"success"}'
+		return 0
+	}
+	gh() {
+		local args="$*"
+		[[ "$args" == *'actions/workflows/postflight.yml/runs'* && "$args" != *'--method POST'* ]] || {
+			printf 'Unexpected remote operation: %s\n' "$args" >&2; return 1;
+		}
+		case "$adopt_mode" in
+		postflight) printf '{"workflow_runs":[]}\n' ;;
+		failed) printf '{"workflow_runs":[{"id":101,"event":"workflow_dispatch","head_branch":"main","display_title":"Postflight Verification v1.2.3","status":"completed","conclusion":"failure"}]}\n' ;;
+		*) printf '{"workflow_runs":[{"id":101,"event":"workflow_dispatch","head_branch":"main","display_title":"Postflight Verification v1.2.3","status":"completed","conclusion":"success"}]}\n' ;;
+		esac
+		return 0
+	}
+	# Real operator gate must refuse the worker before any writes. Positive
+	# command fixtures replace only this gate, not verification or persistence.
+	if FULL_LOOP_HEADLESS=true _full_loop_release_adoption_operator test/repo >/dev/null 2>&1; then exit 1; fi
+	_full_loop_release_adoption_operator() { _FULL_LOOP_RELEASE_ADOPTION_OPERATOR=fixture; return 0; }
+	adopt_receipt=$(_full_loop_release_receipt_path test/repo 90)
+	for adopt_mode in signature source channels postflight failed; do
+		if _full_loop_release_cmd_adopt_published 90 v1.2.3 >/dev/null 2>&1; then exit 1; fi
+		[[ ! -e "$adopt_receipt" ]] || exit 1
+	done
+	adopt_mode=valid
+	for bad_lane in '.active=true' '.source_pr=91' '.tag="v1.2.4"' '.phase="failed"'; do
+		original_lane="$adopt_lane"
+		adopt_lane=$(jq "$bad_lane" <<<"$adopt_lane")
+		if _full_loop_release_cmd_adopt_published 90 v1.2.3 >/dev/null 2>&1; then exit 1; fi
+		adopt_lane="$original_lane"
+	done
+	printf 'wrong sentinel\n' >"$adopt_active/scripts/deploy-agents-on-merge.sh"
+	if _full_loop_release_cmd_adopt_published 90 v1.2.3 >"${TEST_ROOT}/adopt-missing.log" 2>&1; then exit 1; fi
+	grep -q "aidevops update" "${TEST_ROOT}/adopt-missing.log"
+	cp "$REPO_ROOT/.agents/scripts/deploy-agents-on-merge.sh" "$adopt_active/scripts/deploy-agents-on-merge.sh"
+	_full_loop_release_adoption_verify test/repo 90 v1.2.3
+	adopt_lane=$(jq '.updated_at="changed"' <<<"$adopt_lane")
+	if _full_loop_release_adoption_fence test/repo 90 v1.2.3 >/dev/null 2>&1; then exit 1; fi
+	adopt_lane="$original_lane"
+	_full_loop_release_cmd_adopt_published 90 v1.2.3
+	adopt_evidence=$(_full_loop_release_evidence_path test/repo 90 adoption)
+	adopt_authorization=$(_full_loop_release_evidence_path test/repo 90 adoption-authorization)
+	adopt_before=$(git hash-object "$adopt_receipt" "$adopt_evidence" "$adopt_authorization")
+	_full_loop_release_cmd_adopt_published 90 v1.2.3
+	[[ "$adopt_before" == "$(git hash-object "$adopt_receipt" "$adopt_evidence" "$adopt_authorization")" ]]
+	[[ ! -e "$(_full_loop_release_authorization_path test/repo 90)" ]]
+	_full_loop_release_require_successor_receipt test/repo 90 v1.2.3
+	mv "$adopt_evidence" "${adopt_evidence}.saved"
+	mv "$adopt_authorization" "${adopt_authorization}.saved"
+	if _full_loop_release_require_successor_receipt test/repo 90 v1.2.3 >/dev/null 2>&1; then exit 1; fi
+	mv "${adopt_evidence}.saved" "$adopt_evidence"
+	mv "${adopt_authorization}.saved" "$adopt_authorization"
+	mkdir "${adopt_receipt}.lock"
+	if _full_loop_write_release_receipt test/repo 90 failed >/dev/null 2>&1; then exit 1; fi
+	rmdir "${adopt_receipt}.lock"
+	# Interrupted persistence can resume identical authorization/evidence.
+	rm "$adopt_receipt"
+	_full_loop_release_cmd_adopt_published 90 v1.2.3
+	# A normal writer cannot overwrite an adopted terminal receipt.
+	if _full_loop_write_release_receipt test/repo 90 failed; then exit 1; fi
+	# The competing tagless deployment writer must take the same receipt lock.
+	_full_loop_verify_deployment() { printf '{}\n'; return 0; }
+	_full_loop_acquire_transition_lock() { return 0; }
+	_full_loop_release_transition_lock() { return 0; }
+	print_error() { return 0; }
+	mkdir "${adopt_receipt}.lock"
+	if cmd_record_deployment 90 100 fixture.yml "$adopt_commit" test/repo >/dev/null 2>&1; then exit 1; fi
+	rmdir "${adopt_receipt}.lock"
+	[[ "$adopt_before" == "$(git hash-object "$adopt_receipt" "$adopt_evidence" "$adopt_authorization")" ]]
+	# Drift detected after detached evidence persistence cannot expose published.
+	rm "$adopt_receipt"
+	adopt_reads=0
+	adopt_mode=drift
+	if _full_loop_release_cmd_adopt_published 90 v1.2.3 >/dev/null 2>&1; then exit 1; fi
+	[[ ! -e "$adopt_receipt" ]]
+	adopt_mode=valid
+	_full_loop_release_cmd_adopt_published 90 v1.2.3
+	printf 'failed\n' >"$adopt_receipt"
+	if _full_loop_release_cmd_adopt_published 90 v1.2.3 >/dev/null 2>&1; then exit 1; fi
+	printf 'published\n' >"$adopt_receipt"
+	printf 'tampered\n' >"$adopt_authorization"
+	if _full_loop_release_require_successor_receipt test/repo 90 v1.2.3 >/dev/null 2>&1; then exit 1; fi
+)
+printf 'PASS local adoption independently verifies signed identity, channels, postflight, materialized deployment and lane fencing; replay and successor trust fail closed\n'
+
 # GH#34633: use a real remote and a second clone with no public/local tag.
 (
 	recovery_remote="${TEST_ROOT}/recovery-remote.git"
@@ -418,3 +574,58 @@ if (
 	exit 1
 fi
 printf 'PASS textual and reconstructed provenance disagreement remains fail closed\n'
+
+# t19089: the verifier comes from a detached origin/main control worktree, not
+# the deployed runtime copy, so a release fixing the verifier can reconcile itself.
+(
+	vp_source="${TEST_ROOT}/verifier-source"
+	vp_clone="${TEST_ROOT}/verifier-clone"
+	vp_deployed="${TEST_ROOT}/verifier-deployed"
+	vp_tagtree="${TEST_ROOT}/verifier-tagtree"
+	git init -q -b main "$vp_source"
+	git -C "$vp_source" config user.name Test
+	git -C "$vp_source" config user.email test@example.invalid
+	mkdir -p "$vp_source/.agents/scripts" "$vp_deployed" "$vp_tagtree" "${TEST_ROOT}/verifier-wt"
+	printf '#!/usr/bin/env bash\nprintf "origin-main\\n" >"%s/used"\nexit 0\n' "$TEST_ROOT" \
+		>"$vp_source/.agents/scripts/release-provenance-helper.sh"
+	chmod +x "$vp_source/.agents/scripts/release-provenance-helper.sh"
+	git -C "$vp_source" add .
+	git -C "$vp_source" -c commit.gpgsign=false commit -q -m verifier
+	# The fixture clone's origin/main is the reviewed control revision.
+	git clone -q "$vp_source" "$vp_clone"
+	printf '#!/usr/bin/env bash\nprintf "deployed\\n" >"%s/used"\nexit 1\n' "$TEST_ROOT" \
+		>"$vp_deployed/release-provenance-helper.sh"
+	chmod +x "$vp_deployed/release-provenance-helper.sh"
+
+	REPO_ROOT="$vp_clone"
+	SCRIPT_DIR="$vp_deployed"
+	AIDEVOPS_WORKTREE_BASE_DIR="${TEST_ROOT}/verifier-wt"
+	# Keep registry and lifecycle writes of the real creator inside the fixture.
+	export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/verifier-registry"
+	export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
+	export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_ROOT}/verifier-lifecycle"
+	export AIDEVOPS_LIFECYCLE_DISABLED=1
+	unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
+	mkdir -p "$WORKTREE_REGISTRY_DIR" "$AIDEVOPS_LIFECYCLE_STATE_DIR"
+	# A narrowed fetch mapping must not hide an advanced remote main.
+	git -C "$vp_clone" config remote.origin.fetch '+refs/heads/other:refs/remotes/origin/other'
+	git -C "$vp_source" -c commit.gpgsign=false commit -q --allow-empty -m advance
+	_FULL_LOOP_RELEASE_PATH="$vp_tagtree"
+	_full_loop_release_prepare_tag_worktree() { return 0; }
+	_full_loop_release_verify_tag_provenance test/repo v1.2.3 2>/dev/null || { echo 'FAIL origin/main verifier rejected' >&2; exit 1; }
+	[[ "$(<"${TEST_ROOT}/used")" == origin-main ]] || { echo 'FAIL deployed verifier was used' >&2; exit 1; }
+	[[ "$(git -C "$vp_clone" rev-parse refs/remotes/origin/main)" == "$(git -C "$vp_source" rev-parse HEAD)" ]] ||
+		{ echo 'FAIL origin/main was not refreshed under a narrowed fetch mapping' >&2; exit 1; }
+	# A second call reuses or recreates the control tree and still verifies.
+	rm -f "${TEST_ROOT}/used"
+	_full_loop_release_verify_tag_provenance test/repo v1.2.3 2>/dev/null || { echo 'FAIL repeat verification rejected' >&2; exit 1; }
+	[[ "$(<"${TEST_ROOT}/used")" == origin-main ]] || { echo 'FAIL repeat used deployed verifier' >&2; exit 1; }
+
+	# Without a reachable origin the deployed copy is the logged fallback.
+	rm -f "${TEST_ROOT}/used"
+	git -C "$vp_clone" remote set-url origin "${TEST_ROOT}/missing.git"
+	if _full_loop_release_verify_tag_provenance test/repo v1.2.3 2>"${TEST_ROOT}/verifier-fallback.log"; then echo 'FAIL failing fallback verifier passed' >&2; exit 1; fi
+	[[ "$(<"${TEST_ROOT}/used")" == deployed ]] || { echo 'FAIL fallback did not use deployed verifier' >&2; exit 1; }
+	grep -q 'source=deployed-runtime' "${TEST_ROOT}/verifier-fallback.log" || { echo 'FAIL fallback source not logged' >&2; exit 1; }
+)
+printf 'PASS reconcile verifies tag provenance with the origin/main verifier, falling back to the deployed copy only when unavailable\n'

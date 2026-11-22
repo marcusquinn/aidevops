@@ -409,7 +409,7 @@ Review issue #${prev_issue_num} for what the previous attempt accomplished and w
 
 1. Run \`~/.qlty/bin/qlty smells --all "${file_path}"\` to identify the specific remaining smells
 2. Address the flagged complexity — reduce function length, extract helpers, simplify control flow
-3. Verify: \`~/.qlty/bin/qlty smells --all 2>&1 | grep '${file_path}' | grep -c . | grep -q '^0$'\` (report \`SKIP\` if Qlty unavailable)${escalation_note}
+3. Verify: \`~/.qlty/bin/qlty smells --all 2>&1 | grep '${file_path}' | grep -c . | grep '^0$' >/dev/null\` (report \`SKIP\` if Qlty unavailable)${escalation_note}
 
 **Reference pattern:** \`.agents/reference/large-file-split.md\` (playbook for file splits — covers orchestrator pattern, identity-key preservation, and PR body template).
 
@@ -487,12 +487,11 @@ REQUEUE_BODY_EOF
 # The fix excludes open-paren too, so all three title forms extract cleanly.
 _simplification_backfill_extract_file_path() {
 	local title="$1"
-	# `|| true` swallows the pipefail that grep -o / head -1 raise when the
-	# regex does not match — the caller distinguishes "no path" via empty
-	# output, not exit code, so we must not propagate the failure.
+	# Drain all matches before selecting the first. The caller distinguishes
+	# "no path" via empty output, so suppress grep's no-match status.
 	# Character class excludes: space, comma, open-paren, close-paren.
 	# Open-paren exclusion is load-bearing — see GH#19370 rationale above.
-	printf '%s\n' "$title" | grep -oE '[^ ,()]+\.(md|sh)' | head -1 || true
+	printf '%s\n' "$title" | grep -oE '[^ ,()]+\.(md|sh)' | sed -n '1p' || true
 	return 0
 }
 

@@ -32,6 +32,18 @@ _prefetch_record_efficiency_population() { return 0; }
 check_repo_pulse_schedule() { return 0; }
 _prefetch_single_repo() {
 	local slug="$1" path="$2" output="$3"
+	# t19041: record how many shards run at once; a slow slug holds its slot
+	# and is killed before writing output.
+	if [[ -n "${TEST_CONCURRENCY_DIR:-}" ]]; then
+		local marker="$TEST_CONCURRENCY_DIR/run.${slug##*/}"
+		: >"$marker"
+		if [[ "$slug" == "${TEST_SLOW_SLUG:-}" ]]; then
+			sleep 300
+		fi
+		find "$TEST_CONCURRENCY_DIR" -name 'run.*' | wc -l | tr -d ' ' >>"$TEST_CONCURRENCY_DIR/observed"
+		sleep 0.3
+		rm -f "$marker"
+	fi
 	printf '## %s (%s)\n' "$slug" "$path" >"$output"
 	if [[ "${TEST_SLOW_PRIMARY:-0}" == 1 ]]; then
 		sleep 300
@@ -124,3 +136,68 @@ rc=0
 _wait_parallel_pids 2 "$!" || rc=$?
 [[ "$rc" == 1 ]]
 printf 'PASS completion boundary and failed primary worker classification\n'
+
+# t19041: shards wait for a free slot, and a shard killed before writing no
+# longer hides the shards after it.
+export TEST_SLOW_PRIMARY=0 TEST_CONCURRENCY_DIR="$TEST_ROOT/concurrency"
+export TEST_SLOW_SLUG=example/repo-0 PULSE_PREFETCH_MAX_PARALLEL=3
+mkdir -p "$TEST_CONCURRENCY_DIR" "$TEST_ROOT/fanout"
+entries=$(jq -r '.initialized_repos[] | .slug + "|" + .path' "$REPOS_JSON")
+rc=0
+_prefetch_fanout 15 "$TEST_ROOT/fanout" "$entries" || rc=$?
+[[ "$rc" == 124 && "$PREFETCH_FANOUT_LAUNCHED" == 24 ]]
+max_seen=$(sort -n "$TEST_CONCURRENCY_DIR/observed" | tail -n 1)
+[[ "$max_seen" -ge 2 && "$max_seen" -le 3 ]]
+grep -q 'Prefetch fan-out: launched=24 total=24 max_parallel=3 .* rc=124' "$LOGFILE"
+_assemble_state_file "$TEST_ROOT/fanout" "$PREFETCH_FANOUT_LAUNCHED"
+[[ "$(grep -c '^## example/repo-' "$STATE_FILE")" == 23 ]]
+unset TEST_CONCURRENCY_DIR TEST_SLOW_SLUG PULSE_PREFETCH_MAX_PARALLEL
+printf 'PASS bounded fan-out (max %s running) keeps shards after a killed one\n' "$max_seen"
+
+# Accelerate only the supervisor clock, retaining a real child and wait path.
+# More than 900 seconds of supervision must refresh at a bounded cadence.
+(
+	clock=1000
+	heartbeats=0
+	date() {
+		local format="${1:-}"
+		if [[ "$format" == +%s ]]; then
+			printf '%s\n' "$clock"
+		else
+			command date "$@"
+		fi
+		return 0
+	}
+	sleep() {
+		clock=$((clock + 30))
+		if [[ "$clock" -ge 1960 ]]; then
+			: >"$TEST_ROOT/stage-finished"
+		fi
+		command sleep 0.02
+		return 0
+	}
+	_pulse_cycle_state_stage_heartbeat() {
+		heartbeats=$((heartbeats + 1))
+		return 0
+	}
+	progressing_stage() {
+		while [[ ! -e "$TEST_ROOT/stage-finished" ]]; do command sleep 0.01; done
+		return 0
+	}
+	run_stage_with_timeout progressing_stage 1500 progressing_stage
+	[[ "$clock" -ge 1960 && "$heartbeats" -ge 16 && "$heartbeats" -le 18 ]]
+	printf 'PASS supervised stage spans 900s with bounded heartbeat cadence (%s writes)\n' "$heartbeats"
+)
+
+# Timeout handling remains authoritative and must not publish after expiry.
+(
+	heartbeats=0
+	_pulse_cycle_state_stage_heartbeat() {
+		heartbeats=$((heartbeats + 1))
+		return 0
+	}
+	rc=0
+	run_stage_with_timeout stalled_stage 1 command sleep 30 || rc=$?
+	[[ "$rc" == 124 && "$heartbeats" == 1 ]]
+	printf 'PASS timed-out live child retains failure and receives no expired heartbeat\n'
+)

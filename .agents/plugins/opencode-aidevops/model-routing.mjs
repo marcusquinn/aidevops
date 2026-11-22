@@ -6,8 +6,18 @@
 // capability failure moves down escalationOrder.
 
 import { existsSync, readFileSync } from "fs";
-import { floorReasoning, reasoningFloor, normalizeInteractiveDefault, normalizeSpecialistAdvisor } from "./model-routing-variant.mjs";
+import {
+  compactionReasoning,
+  floorReasoning,
+  normalizeInteractiveDefault,
+  normalizeSpecialistAdvisor,
+  reasoningFloor,
+} from "./model-routing-variant.mjs";
 import { activeLocalOnlyPolicy, isLocalProvider } from "./local-only-policy.mjs";
+import { providerHasUsableCredentials } from "./provider-credentials.mjs";
+import { isModelUnavailable } from "./model-unavailability.mjs";
+
+export { providerHasUsableCredentials };
 
 export const DEFAULT_ESCALATION_ORDER = ["simple", "standard", "thinking"];
 
@@ -42,9 +52,12 @@ export function normalizeModelRouting(value = {}) {
   return {
     tiers,
     escalationOrder,
+    chatgptOAuthUnsupported: (Array.isArray(value?.chatgpt_oauth_restrictions?.openai_unsupported)
+      ? value.chatgpt_oauth_restrictions.openai_unsupported : []).filter((model) => typeof model === "string"),
     specialistAdvisor: normalizeSpecialistAdvisor(value.specialist_advisor),
     interactiveDefault: normalizeInteractiveDefault(value.interactive_default),
     minimumReasoning: reasoningFloor(value?.settings?.minimum_reasoning),
+    compactionReasoning: compactionReasoning(value?.settings?.compaction_reasoning),
   };
 }
 
@@ -65,7 +78,13 @@ function mergeTier(baseTier, tierOverride) {
 
 export function mergeModelRouting(base, override = {}) {
   const merged = normalizeModelRouting();
+  merged.chatgptOAuthUnsupported = Object.hasOwn(override?.chatgpt_oauth_restrictions || {}, "openai_unsupported")
+    ? normalizeModelRouting(override).chatgptOAuthUnsupported
+    : [...(base?.chatgptOAuthUnsupported || [])];
   merged.minimumReasoning = reasoningFloor(override?.settings?.minimum_reasoning ?? base?.minimumReasoning);
+  merged.compactionReasoning = compactionReasoning(
+    override?.settings?.compaction_reasoning ?? base?.compactionReasoning,
+  );
   merged.interactiveDefault = Object.hasOwn(override, "interactive_default")
     ? normalizeInteractiveDefault(override.interactive_default)
     : base?.interactiveDefault || null;
@@ -114,26 +133,70 @@ export function routingModelIdentity(model) {
 // no local candidate yields "", which callers treat as no route (child
 // routing throws, escalation and browser delegation are skipped). The
 // chat.params egress gate still refuses any non-local current model.
-export function selectConnectedRoutingCandidate(routing, tier, providerState, policy = activeLocalOnlyPolicy()) {
-  const connected = new Set(Array.isArray(providerState?.connected) ? providerState.connected : []);
-  const providers = new Map(
-    (Array.isArray(providerState?.all) ? providerState.all : [])
-      .filter((provider) => provider?.id)
-      .map((provider) => [provider.id, provider]),
-  );
+function providerRegistersModel(provider, modelID) {
+  const models = provider.models && typeof provider.models === "object" ? provider.models : {};
+  return Object.entries(models).some(([key, value]) => key === modelID || value?.id === modelID);
+}
 
-  for (const candidate of routingCandidates(routing, tier)) {
-    const { providerID, modelID } = routingModelIdentity(candidate);
-    if (policy?.bound && !isLocalProvider(policy, providerID)) continue;
-    const provider = providers.get(providerID);
-    if (!provider || !connected.has(providerID)) continue;
-    const models = provider.models && typeof provider.models === "object" ? provider.models : {};
-    const registered = Object.entries(models).some(
-      ([key, value]) => key === modelID || value?.id === modelID,
-    );
-    if (registered) return candidate;
-  }
-  return "";
+/**
+ * GH#37649: live rate-limit reset for a candidate whose provider OAuth pool is
+ * exhausted (`availability.rateLimitedProviders`); 0 when routable. Expired
+ * resets are ignored, so recovery needs no configuration change.
+ */
+export function candidateRateLimitedUntil(candidate, availability = {}, now = Date.now()) {
+  const { providerID } = routingModelIdentity(candidate);
+  const until = Number(availability?.rateLimitedProviders?.[providerID]) || 0;
+  return until > now ? until : 0;
+}
+
+/**
+ * GH#36698/GH#37649: actionable detail naming same-tier models rejected for
+ * the current auth or rate limited (`rate_limited=model@reset`); "" if none.
+ */
+export function routingUnavailableDetail(routing, tier, availability = {}) {
+  const candidates = routingCandidates(routing, tier);
+  const rejected = candidates.filter((candidate) => isModelUnavailable(candidate, availability.authSignature));
+  const limited = candidates
+    .map((candidate) => [candidate, candidateRateLimitedUntil(candidate, availability)])
+    .filter(([, until]) => until)
+    .map(([candidate, until]) => `${candidate}@${new Date(until).toISOString()}`);
+  const parts = [];
+  if (rejected.length) parts.push(`rejected=${rejected.join(",")} (entitlement rejected for current auth; retried after expiry or re-login)`);
+  if (limited.length) parts.push(`rate_limited=${limited.join(",")} (provider rate limit; routable again after the listed reset)`);
+  return parts.length ? `: requested=${candidates[0]} ${parts.join(" ")}` : "";
+}
+
+function candidateRoutable(candidate, scope) {
+  // GH#36698/GH#37649: skip a model with a live entitlement rejection for this
+  // auth, or whose provider OAuth pool is exhausted until its reset.
+  if (isModelUnavailable(candidate, scope.authSignature)
+    || candidateRateLimitedUntil(candidate, scope.availability, scope.now)) return false;
+  const { providerID, modelID } = routingModelIdentity(candidate);
+  if (providerID === "openai" && scope.openAIAuthType === "oauth"
+    && scope.chatgptOAuthUnsupported.includes(modelID)) return false;
+  if (scope.policy?.bound && !isLocalProvider(scope.policy, providerID)) return false;
+  const provider = scope.providers.get(providerID);
+  // Connected is not authenticated: skip credential-less config providers (GH#35762).
+  if (!provider || !scope.connected.has(providerID) || !providerHasUsableCredentials(provider)) return false;
+  return providerRegistersModel(provider, modelID);
+}
+
+export function selectConnectedRoutingCandidate(routing, tier, providerState, policy = activeLocalOnlyPolicy(), availability = {}) {
+  const scope = {
+    authSignature: availability?.authSignature,
+    availability,
+    now: Date.now(),
+    openAIAuthType: availability?.openAIAuthType,
+    chatgptOAuthUnsupported: routing?.chatgptOAuthUnsupported || [],
+    connected: new Set(Array.isArray(providerState?.connected) ? providerState.connected : []),
+    policy,
+    providers: new Map(
+      (Array.isArray(providerState?.all) ? providerState.all : [])
+        .filter((provider) => provider?.id)
+        .map((provider) => [provider.id, provider]),
+    ),
+  };
+  return routingCandidates(routing, tier).find((candidate) => candidateRoutable(candidate, scope)) || "";
 }
 
 export function routingPrimary(routing, tier) {

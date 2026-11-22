@@ -25,6 +25,8 @@ BUZZ_JSON_TYPE_STRING="string"
 BUZZ_STATE_SCHEMA_V1="aidevops-buzz-opencode-acp-fix/v1"
 BUZZ_STATE_SCHEMA_V2="aidevops-buzz-opencode-acp-fix/v2"
 BUZZ_PLATFORM_DARWIN="Darwin"
+BUZZ_ID_LEGACY="xyz.block.buzz.app"
+BUZZ_ID_DESKTOP="xyz.block.buzz.desktop"
 BUZZ_LOCK_HELD=0
 BUZZ_QUIET=false
 BUZZ_LAST_BACKUP=""
@@ -68,6 +70,52 @@ _buzz_app_version() {
 		/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist" 2>/dev/null
 		return $?
 	fi
+	return 1
+}
+
+_buzz_app_identifier() {
+	if [[ -n "${AIDEVOPS_BUZZ_IDENTIFIER_OVERRIDE:-}" ]]; then
+		printf '%s\n' "$AIDEVOPS_BUZZ_IDENTIFIER_OVERRIDE"
+		return 0
+	fi
+	local plist="${BUZZ_APP_PATH}/Contents/Info.plist"
+	[[ -f "$plist" && ! -L "$plist" ]] || return 1
+	if command -v defaults >/dev/null 2>&1; then
+		defaults read "$plist" CFBundleIdentifier 2>/dev/null
+		return $?
+	fi
+	if [[ -x /usr/libexec/PlistBuddy ]]; then
+		/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist" 2>/dev/null
+		return $?
+	fi
+	return 1
+}
+
+# Prints "legacy", "desktop" or "unknown". Unreadable identifiers are unknown (fail closed: no writes).
+_buzz_generation() {
+	local id=""
+	id=$(_buzz_app_identifier) || {
+		printf 'unknown\n'
+		return 0
+	}
+	case "$id" in
+	"$BUZZ_ID_LEGACY") printf 'legacy\n' ;;
+	"$BUZZ_ID_DESKTOP") printf 'desktop\n' ;;
+	*) printf 'unknown\n' ;;
+	esac
+	return 0
+}
+
+# Returns 0 when legacy remediation may proceed; otherwise logs why and returns 1.
+_buzz_legacy_gate() {
+	local version="$1"
+	local generation=""
+	generation=$(_buzz_generation)
+	case "$generation" in
+	legacy) return 0 ;;
+	desktop) _buzz_info "Buzz Desktop ${version} (block/buzz-app): legacy remediation not applicable; no changes needed" ;;
+	*) _buzz_info "Unrecognised Buzz Desktop identifier; no changes needed" ;;
+	esac
 	return 1
 }
 
@@ -351,6 +399,7 @@ cmd_apply() {
 		_buzz_info "Buzz Desktop is not installed; no changes needed"
 		return 0
 	}
+	_buzz_legacy_gate "$version" || return 0
 	[[ -f "$BUZZ_STATE_FILE" ]] && {
 		_buzz_info "Buzz OpenCode ACP compatibility fix is already managed by aidevops"
 		return 0
@@ -623,7 +672,37 @@ cmd_rollback() {
 	return 0
 }
 
+_buzz_report_stale_interactive_overrides() {
+	local manifest="${BUZZ_STORE_PATH%/agents/managed-agents.json}/custom_harnesses/aidevops-interactive-v1.json"
+	local parent="${HOME}/.aidevops/buzz-runtimes/aidevops-interactive-v1/"
+	[[ -f "$BUZZ_STORE_PATH" && ! -L "$BUZZ_STORE_PATH" && -f "$manifest" && ! -L "$manifest" ]] || return 0
+	local live=""
+	live=$(jq -er --arg string_type "$BUZZ_JSON_TYPE_STRING" '.command | select(type == $string_type)' "$manifest") || return 1
+	local count=""
+	count=$(jq -er --arg parent "$parent" --arg live "$live" --arg string_type "$BUZZ_JSON_TYPE_STRING" '
+		[.[] | .agent_command_override | select(type == $string_type and . != $live)
+		 | select(startswith($parent)) | .[($parent | length):]
+		 | select(test("^(v2-)?[a-f0-9]{16}-[a-f0-9]{16}/agents/bin/aidevops-buzz-acp-interactive$"))] | length
+	' "$BUZZ_STORE_PATH") || return 1
+	printf 'Buzz interactive runtime: %s stale override(s)\n' "$count"
+	return 0
+}
+
 cmd_status() {
+	local plugin_file="${HOME}/.aidevops/plugins/buzz-aidevops/plugin.js"
+	local plugin_version="not deployed"
+	local line=""
+	local version_pattern='^const PLUGIN_VERSION = "([0-9]+\.[0-9]+\.[0-9]+)";$'
+	if [[ -f "$plugin_file" && -r "$plugin_file" ]]; then
+		plugin_version="unknown (no PLUGIN_VERSION)"
+		while IFS= read -r line; do
+			if [[ "$line" =~ $version_pattern ]]; then
+				plugin_version="${BASH_REMATCH[1]}"
+				break
+			fi
+		done <"$plugin_file"
+	fi
+	printf 'Buzz plugin deployed: %s\n' "$plugin_version"
 	if [[ "$(_buzz_platform)" != "$BUZZ_PLATFORM_DARWIN" ]]; then
 		printf 'Buzz Desktop compatibility: not applicable\n'
 		return 0
@@ -633,6 +712,18 @@ cmd_status() {
 		printf 'Buzz Desktop compatibility: Buzz not installed\n'
 		return 0
 	}
+	_buzz_report_stale_interactive_overrides || return 1
+	case "$(_buzz_generation)" in
+	legacy) ;;
+	desktop)
+		printf 'Buzz Desktop %s (block/buzz-app): legacy remediation not applicable\n' "$version"
+		return 0
+		;;
+	*)
+		printf 'Buzz Desktop %s: unrecognised Buzz Desktop identifier; legacy remediation not applicable\n' "$version"
+		return 0
+		;;
+	esac
 	if [[ -f "$BUZZ_STATE_FILE" ]]; then
 		_buzz_validate_store || return 1
 		_buzz_validate_state || return 1
@@ -669,6 +760,7 @@ cmd_reconcile() {
 		_buzz_info "Buzz Desktop is not installed; no changes needed"
 		return 0
 	}
+	_buzz_legacy_gate "$version" || return 0
 	_buzz_validate_store || return 1
 	_buzz_validate_wrapper || return 1
 	_buzz_validate_state || return 1
@@ -679,9 +771,164 @@ cmd_reconcile() {
 	return "$rc"
 }
 
+BUZZ_ACP_RUNTIME_DIR=""
+
+_buzz_acp_cleanup() {
+	if [[ -n "$BUZZ_ACP_RUNTIME_DIR" && -d "$BUZZ_ACP_RUNTIME_DIR" ]]; then
+		rm -rf "$BUZZ_ACP_RUNTIME_DIR"
+	fi
+	BUZZ_ACP_RUNTIME_DIR=""
+	return 0
+}
+
+_buzz_acp_fail() {
+	local message="$1"
+	printf 'aidevops buzz acp: %s\n' "$message" >&2
+	return 0
+}
+
+BUZZ_ACP_MEMBER=""
+BUZZ_ACP_PROJECT=""
+
+# Parses `acp` arguments into BUZZ_ACP_MEMBER and BUZZ_ACP_PROJECT. The plugin
+# passes a home-relative folder literally; it is expanded here. An empty
+# project means prepare-desktop uses the registered aidevops repository.
+_buzz_acp_parse_args() {
+	BUZZ_ACP_MEMBER=""
+	BUZZ_ACP_PROJECT=""
+	while [[ $# -gt 0 ]]; do
+		local option="$1"
+		local value="${2:-}"
+		case "$option" in
+		--member | --project)
+			[[ -n "$value" ]] || {
+				_buzz_acp_fail "$option requires a value"
+				return 1
+			}
+			if [[ "$option" == "--member" ]]; then BUZZ_ACP_MEMBER="$value"; else BUZZ_ACP_PROJECT="$value"; fi
+			shift 2
+			;;
+		*)
+			_buzz_acp_fail "unsupported argument"
+			return 1
+			;;
+		esac
+	done
+	[[ -n "$BUZZ_ACP_MEMBER" ]] || {
+		_buzz_acp_fail "--member is required (the agent's aidevops name, such as aidevops-<computer>)"
+		return 1
+	}
+	case "$BUZZ_ACP_PROJECT" in
+	\~/*) BUZZ_ACP_PROJECT="${HOME}/${BUZZ_ACP_PROJECT:2}" ;;
+	*) ;;
+	esac
+	if [[ -n "$BUZZ_ACP_PROJECT" && "$BUZZ_ACP_PROJECT" != /* ]]; then
+		_buzz_acp_fail "--project must be an absolute path to a repository registered in repos.json"
+		return 1
+	fi
+	return 0
+}
+
+# GH#38787: the plugin starts this runtime with whatever environment Buzz
+# Desktop inherited. An app first opened from an OpenCode shell (and kept by its
+# in-app updater) carries that session's lifecycle and OpenCode identity, whose
+# runtime PID is usually dead, so native worktree creation refuses with
+# process-identity-unavailable. Like worker_lifecycle/launch.py, an independent
+# launch drops inherited creator identity; children stamp their own. Lifecycle
+# configuration (AIDEVOPS_LIFECYCLE_STATE_DIR, _DISABLED, ...) is kept.
+_buzz_acp_clear_inherited_identity() {
+	unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID \
+		AIDEVOPS_LIFECYCLE_RUN_ID AIDEVOPS_LIFECYCLE_GENERATION_ID \
+		AIDEVOPS_LIFECYCLE_WORKTREE AIDEVOPS_MANAGED_WORKTREE_RUN_UNIT \
+		AIDEVOPS_OPENCODE_SESSION_ID AIDEVOPS_OPENCODE_ISOLATED_DB \
+		AIDEVOPS_OPENCODE_SERVER_OWNER AIDEVOPS_SOURCE_CONTEXT_SOCKET \
+		AIDEVOPS_SOURCE_CONTEXT_INSTANCE OPENCODE OPENCODE_SESSION_ID \
+		OPENCODE_PID OPENCODE_PID_START_IDENTITY OPENCODE_RUN_ID \
+		OPENCODE_PROCESS_ROLE OPENCODE_SERVER_PASSWORD
+	return 0
+}
+
+# Starts one aidevops OpenCode ACP process for an agent of the Buzz 0.7+
+# aidevops plugin's agent type. Stdout is the ACP channel: every step before
+# the proxy writes to stderr or a private file. The app's harness kit admits
+# only the owner's own or attested messages and posts replies itself, so the
+# proxy runs in --no-publish mode and only binds sessions to the worktree.
+cmd_acp() {
+	_buzz_acp_parse_args "$@" || return 64
+	_buzz_acp_clear_inherited_identity
+	local member="$BUZZ_ACP_MEMBER"
+	local -a project_args=()
+	[[ -z "$BUZZ_ACP_PROJECT" ]] || project_args=(--project-root "$BUZZ_ACP_PROJECT")
+
+	local agents_dir="${AIDEVOPS_BUZZ_AGENTS_DIR:-${HOME}/.aidevops/agents}"
+	local runtime_helper="${agents_dir}/scripts/team-interface-buzz-runtime.py"
+	local overlay_helper="${agents_dir}/scripts/team-interface-opencode-overlay.mjs"
+	local worktree_helper="${agents_dir}/scripts/team-interface-buzz-worktree.sh"
+	local launcher="${agents_dir}/scripts/opencode-launcher-helper.sh"
+	local cwd_proxy="${agents_dir}/scripts/team-interface-acp-cwd-proxy.mjs"
+	local temp_root="${AIDEVOPS_BUZZ_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	local required_file=""
+	for required_file in "$runtime_helper" "$overlay_helper" "$worktree_helper" "$launcher" "$cwd_proxy"; do
+		if [[ ! -f "$required_file" || -L "$required_file" ]]; then
+			_buzz_acp_fail "aidevops runtime component is unavailable; run: aidevops update"
+			return 78
+		fi
+	done
+	if [[ -L "$temp_root" ]]; then
+		_buzz_acp_fail "private temporary root is unsafe"
+		return 78
+	fi
+	mkdir -p "$temp_root" || return 78
+	chmod 700 "$temp_root" || return 78
+	BUZZ_ACP_RUNTIME_DIR=$(mktemp -d "${temp_root}/buzz-plugin.XXXXXX") || return 78
+	chmod 700 "$BUZZ_ACP_RUNTIME_DIR"
+	trap '_buzz_acp_cleanup; _buzz_cleanup' EXIT
+	trap '_buzz_acp_cleanup; exit 143' TERM
+	trap '_buzz_acp_cleanup; exit 130' INT
+	local runtime_dir="$BUZZ_ACP_RUNTIME_DIR"
+
+	python3 "$runtime_helper" prepare-desktop \
+		--agents-dir "$agents_dir" \
+		--output-dir "$runtime_dir" \
+		--member "$member" \
+		${project_args[@]+"${project_args[@]}"} >&2 || return 78
+
+	local agent_id=""
+	local host_slug=""
+	local project_root=""
+	IFS= read -r agent_id <"${runtime_dir}/agent-id.txt"
+	IFS= read -r host_slug <"${runtime_dir}/host-slug.txt"
+	IFS= read -r project_root <"${runtime_dir}/project-root.txt"
+	if [[ ! "$agent_id" =~ ^agent\.[a-z0-9][a-z0-9._-]*$ || ! "$host_slug" =~ ^[a-z0-9][a-z0-9-]{0,63}$ || "$project_root" != /* ]]; then
+		_buzz_acp_fail "aidevops agent selection failed"
+		return 78
+	fi
+	local agent_slug="${agent_id#agent.}"
+	export AIDEVOPS_BUZZ_HOST_SLUG="$host_slug"
+	local worktree_root=""
+	worktree_root=$("$worktree_helper" resolve "$project_root" "$agent_slug") || return 78
+
+	node "$overlay_helper" generate \
+		--roster "${runtime_dir}/roster.json" \
+		--agent-id "$agent_id" \
+		--context "${runtime_dir}/context.json" \
+		--permission-profile remote_interactive_v1 \
+		--output "${runtime_dir}/overlay.json" >&2 || return 78
+
+	unset BUZZ_ACP_CWD BUZZ_ACP_MODEL
+	local rc=0
+	node "$cwd_proxy" --cwd "$worktree_root" --no-publish -- \
+		"$launcher" remote-interactive \
+		--overlay "${runtime_dir}/overlay.json" \
+		--dir "$worktree_root" \
+		--session-id "${host_slug}-${agent_slug}-plugin" || rc=$?
+	return "$rc"
+}
+
 show_help() {
 	cat <<'EOF'
 Usage: aidevops buzz <status|apply|rollback|reconcile> [--quiet]
+       aidevops buzz acp --member NAME [--project ABSOLUTE_PATH]
 
 Manage a reversible, structurally validated Buzz Desktop OpenCode ACP compatibility fix.
 
@@ -690,6 +937,8 @@ Commands:
   apply       Route eligible OpenCode records through the stable ACP wrapper
   rollback    Restore only unchanged fields previously managed by aidevops
   reconcile   Idempotently repair structurally recognized managed drift
+  acp         Run one aidevops OpenCode ACP agent for the Buzz 0.7+ aidevops plugin
+              (stdout is the ACP channel; started by the plugin, not by hand)
 
 Buzz must be closed for apply, reconcile, or rollback. The helper never prints agent-store
 contents and keeps private rollback state and bounded backups with mode 600.
@@ -700,6 +949,10 @@ EOF
 main() {
 	local command="${1:-status}"
 	shift || true
+	if [[ "$command" == "acp" ]]; then
+		cmd_acp "$@"
+		return $?
+	fi
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--quiet) BUZZ_QUIET=true ;;

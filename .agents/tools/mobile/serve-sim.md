@@ -87,13 +87,17 @@ Do **not** use it for Android emulators, real iOS hardware, building/installing 
 | Type | `serve-sim type "text" [-d udid]` | Also supports `--stdin` and `--file <path>` |
 | Recent event log | `serve-sim event-log [-d udid] [-n count] [-j]` | Reads recent simulator actions from a running `serve-sim` server; use `-j` for structured agent output |
 | Toggle software keyboard | Press `Cmd+K` in the preview | Mirrors Simulator's software keyboard toggle without changing hardware-keyboard state |
-| Reload React Native/Expo bundle | Press `R` or use Reload in the preview | Sends plain `R`; do not use `Cmd+R`, which is not the registered native reload command |
+| Reload React Native/Expo bundle | Press `R`, `Cmd+R`, or use Reload in the preview | Current versions request a targeted Metro reload and fall back to an `R` tap; `R` still types in focused text fields. If Metro does not answer `getpeers`, upstream broadcasts the reload, so other connected apps without inspector sessions may also reload and lose in-memory state; targeting is not guaranteed |
 | Rotate | `serve-sim rotate landscape_left [-d udid]` | portrait, portrait_upside_down, landscape_left, landscape_right |
 | Memory warning | `serve-sim memory-warning [-d udid]` | Simulator memory-pressure test |
 | CoreAnimation | `serve-sim ca-debug slow-animations on [-d udid]` | blended, copies, misaligned, offscreen, slow-animations |
 | UI settings | `serve-sim ui --help` | Get or set simulator-wide UI options exposed by upstream |
 | Permissions | `serve-sim permissions` | Manage app permissions with the upstream parser |
 | Camera injection | `serve-sim camera <bundle-id> --file <path>` | Also supports placeholder/webcam sources, `camera switch`, `camera mirror`, `camera status`, `--list-webcams`, and `--stop-webcam` |
+| Diagnose streaming | `serve-sim doctor [-d udid]` | Collects redacted diagnostics from a running server |
+| Record screen | `serve-sim record [-d udid]` | Native-resolution MP4; recording stops at 30 minutes; rotation leaves later footage sideways and a screen-size change can freeze the rest of the video, so stop and start a new recording after either |
+
+Host shell execution and `.ipa` installation require explicit `--allow-exec` on current upstream. Keep it off by default: a raw TCP forward can make remote clients appear local, and app installation does not require the separate exec token. Only enable it on a port inaccessible to untrusted clients. Verify installed version and `--help` before relying on these newer controls.
 
 ## Agent Workflow
 

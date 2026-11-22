@@ -43,11 +43,16 @@ check_git_repo() {
 
 # Check if there are planning file changes
 has_planning_changes() {
-	# Check both staged and unstaged changes
-	if git diff --name-only HEAD 2>/dev/null | grep -qE "$PLANNING_PATTERNS"; then
+	# Check both staged and unstaged changes. --no-renames lists a rename's
+	# source as well as its destination (GH#37002). Capture before matching so
+	# an early-exiting grep cannot SIGPIPE the writer under pipefail.
+	local changed_paths=""
+	changed_paths=$(git diff --no-renames --name-only HEAD 2>/dev/null || true)
+	if grep -qE "$PLANNING_PATTERNS" <<<"$changed_paths"; then
 		return 0
 	fi
-	if git diff --name-only --cached 2>/dev/null | grep -qE "$PLANNING_PATTERNS"; then
+	changed_paths=$(git diff --no-renames --name-only --cached 2>/dev/null || true)
+	if grep -qE "$PLANNING_PATTERNS" <<<"$changed_paths"; then
 		return 0
 	fi
 	# Also check untracked files in todo/
@@ -63,11 +68,11 @@ list_planning_changes() {
 
 	# Staged changes
 	local staged
-	staged=$(git diff --name-only --cached 2>/dev/null | grep -E "$PLANNING_PATTERNS" || true)
+	staged=$(git diff --no-renames --name-only --cached 2>/dev/null | grep -E "$PLANNING_PATTERNS" || true)
 
 	# Unstaged changes
 	local unstaged
-	unstaged=$(git diff --name-only 2>/dev/null | grep -E "$PLANNING_PATTERNS" || true)
+	unstaged=$(git diff --no-renames --name-only 2>/dev/null | grep -E "$PLANNING_PATTERNS" || true)
 
 	# Untracked
 	local untracked
@@ -325,7 +330,8 @@ complete_task() {
 			log_success "Task completion committed and pushed"
 		fi
 	else
-		log_error "Task completion publication failed; no successful direct push or planning PR was created"
+		# GH#38586: failure can happen after a push or PR; never assert neither exists.
+		log_error "Task completion publication failed; see the [todo_commit_push] / AIDEVOPS_PLANNING_RECOVERY_* lines above for remote, PR and worktree state"
 		return 1
 	fi
 
@@ -567,6 +573,20 @@ next_task_id() {
 	return "$claim_rc"
 }
 
+# List planning paths committed on the current branch but absent from the
+# remote default branch (e.g. WIP-committed briefs), one per line.
+list_committed_unpublished_planning() {
+	local repo_root="$1"
+	local default_branch="$2"
+	local current_branch="" base=""
+	current_branch=$(git -C "$repo_root" symbolic-ref --short -q HEAD 2>/dev/null || true)
+	[[ "$current_branch" != "$default_branch" ]] || return 0
+	base=$(git -C "$repo_root" merge-base HEAD "origin/${default_branch}" 2>/dev/null || true)
+	[[ -n "$base" ]] || return 0
+	git -C "$repo_root" diff --no-renames --name-only "$base" HEAD -- TODO.md todo/ 2>/dev/null || true
+	return 0
+}
+
 # Main commit function
 # Publishes from a temporary index and retries bounded fast-forward contention.
 commit_planning_files() {
@@ -576,6 +596,18 @@ commit_planning_files() {
 
 	# Check for changes
 	if ! has_planning_changes; then
+		local ahead_root="" ahead_branch="" ahead_paths=""
+		ahead_root=$(git rev-parse --show-toplevel)
+		ahead_branch=$(_todo_default_branch "$ahead_root")
+		ahead_paths=$(list_committed_unpublished_planning "$ahead_root" "$ahead_branch")
+		if [[ -n "$ahead_paths" ]]; then
+			log_error "Planning files are committed on this branch but not on origin/${ahead_branch}; this helper only publishes uncommitted changes:"
+			while IFS= read -r ahead_file; do
+				printf '  - %s\n' "$ahead_file" >&2
+			done <<<"$ahead_paths"
+			log_error "Recover: git reset --soft \$(git merge-base HEAD origin/${ahead_branch}) then rerun this helper"
+			return 1
+		fi
 		log_info "No planning file changes to commit"
 		return 0
 	fi
@@ -631,7 +663,7 @@ commit_planning_files() {
 		if [[ "$PLANNING_PUBLISH_RESULT" == "published_receipt_failed" ]]; then
 			log_error "Planning files reached the remote branch, but receipt persistence failed; retry to reconstruct the safe handoff"
 		else
-			log_error "Planning file publication failed; no successful direct push or planning PR was created"
+			log_error "Planning file publication failed; see the publication output above for remote, PR and worktree state"
 		fi
 		return 1
 	fi

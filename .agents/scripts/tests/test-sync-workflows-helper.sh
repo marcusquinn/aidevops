@@ -13,11 +13,37 @@
 
 set -uo pipefail
 
+# Keep PR-identity validation independent of the host worker runtime: headless
+# sessions otherwise stamp origin:worker, which requires a `For #N` body line.
+export AIDEVOPS_SESSION_ORIGIN=interactive
+# An inherited runtime lifecycle identity routes worktree creation to the native
+# registry, which these Git fixtures do not provide (GH#39344).
+unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
+# Registry state parents must be canonical; macOS TMPDIR sits behind /var -> /private/var.
+mktemp() {
+	local created=""
+	created=$(command mktemp "$@") || return 1
+	if [[ -d "$created" ]]; then
+		(cd "$created" && pwd -P) || return 1
+	else
+		printf '%s\n' "$created"
+	fi
+	return 0
+}
+
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 # Fixture repositories are disposable. Export a test-local native Git boundary
 # so child helper shells cannot inherit the runtime's canonical-repo guard while
 # the normal PATH remains available for dependencies such as jq.
 git() {
-	local _git_bin="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
+	local _git_bin="${AIDEVOPS_TEST_GIT_BIN:-${TEST_NATIVE_GIT}}"
 	"$_git_bin" "$@"
 	return $?
 }
@@ -108,17 +134,82 @@ printf '%s\n' "$*" >>"${GH_CALL_LOG:?}"
 if [[ "${1:-}" == api && "${2:-}" == repos/* && "$*" == *'.private | tostring'* ]]; then
 	# Model a known public repository; keep the real privacy scanner enabled.
 	printf 'false\n'
+elif [[ "${1:-}" == api && "${2:-}" == repos/*/pulls\?state=open* ]]; then
+	[[ "${GH_SYNC_LIST_FAIL:-0}" == 0 ]] || exit 1
+	prs="${GH_SYNC_PRS_JSON:-[]}"
+	if [[ -n "${GH_SYNC_REFRESH_PRS_JSON:-}" ]] &&
+		[[ "$(grep -c '^api repos/.*/pulls?state=open' "$GH_CALL_LOG")" -gt 1 ]]; then
+		prs="$GH_SYNC_REFRESH_PRS_JSON"
+	fi
+	if [[ -s "$GH_CALL_LOG.new-pr" ]]; then
+		jq -cn --argjson prs "$prs" --slurpfile created "$GH_CALL_LOG.new-pr" '$prs + $created'
+	else
+		printf '%s\n' "$prs"
+	fi
+elif [[ "${1:-}" == api && "${2:-}" == repos/*/pulls/*/files\?* ]]; then
+	number="${2%/files*}"
+	number="${number##*/}"
+	if [[ -s "$GH_CALL_LOG.new-pr" ]] &&
+		[[ "$number" == "$(jq -r .number "$GH_CALL_LOG.new-pr")" ]]; then
+		printf '%s\n' '[{"filename":".github/workflows/issue-sync.yml","status":"modified","sha":"created"}]'
+		rm -f "$GH_CALL_LOG.new-pr"
+	else
+		printf '%s\n' "${GH_SYNC_FILES_JSON:-[]}"
+	fi
+elif [[ "${1:-}" == api && "${2:-}" == repos/marcusquinn/aidevops/compare/* ]]; then
+	# GH#39830: framework lineage for the shared exact-render decision.
+	printf '%s\n' "${GH_COMPARE_STATUS:-ahead}"
+elif [[ "${1:-}" == api && "${2:-}" == repos/marcusquinn/aidevops/contents/.agents/templates/workflows/* ]]; then
+	# Template at the pinned ref; defaults to the deployed template.
+	file="${2##*/}"
+	file="${GH_TEMPLATE_DIR:-$HOME/.aidevops/agents/templates/workflows}/${file%%\?*}"
+	[[ -f "$file" ]] || exit 1
+	jq -n --arg d "$(base64 <"$file" | tr -d '\n')" --argjson s "$(wc -c <"$file" | tr -d ' ')" \
+		'{encoding:"base64",content:$d,size:$s}'
+elif [[ "${1:-} ${2:-}" == "pr view" && "$*" == *"--json body"* ]]; then
+	printf '%s\n' "${GH_PR_VIEW_BODY:-}"
+elif [[ "${1:-} ${2:-}" == "pr view" && "$*" == *"--json labels"* && -n "${GH_PR_VIEW_LABELS:-}" ]]; then
+	# Already --jq-projected label names, as gh_pr_edit_safe's origin check reads them.
+	printf '%s\n' "$GH_PR_VIEW_LABELS"
+elif [[ "${1:-} ${2:-}" == "pr edit" ]]; then
+	while [[ $# -gt 0 ]]; do
+		[[ "$1" != --body-file ]] || cp "$2" "$GH_CALL_LOG.edit-body"
+		shift
+	done
+elif [[ "${1:-} ${2:-}" == "pr list" ]]; then
+	printf '%s\n' "${GH_EXACT_PRS_JSON:-[]}"
+elif [[ "${1:-} ${2:-}" == "issue list" ]]; then
+	# GH#39696: routine anchor lookup for headless (origin:worker) syncs.
+	[[ "${GH_ANCHOR_LIST_FAIL:-0}" == 0 ]] || exit 1
+	printf '%s\n' "${GH_ANCHOR_ISSUES_JSON:-[]}"
+elif [[ "${1:-} ${2:-}" == "pr close" ]]; then
+	[[ "${GH_SYNC_CLOSE_FAIL:-0}" == 0 ]] || exit 1
+elif [[ "${1:-} ${2:-}" == "pr comment" ]]; then
+	while [[ $# -gt 0 ]]; do
+		if [[ "$1" == --body-file ]]; then
+			cat "$2" >>"$GH_CALL_LOG.comments"
+			break
+		fi
+		shift
+	done
 elif [[ "${1:-} ${2:-}" == "pr create" ]]; then
-	repo=""
+	repo="" branch="" base=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--repo) repo="$2"; shift ;;
+		--head) branch="$2"; shift ;;
+		--base) base="$2"; shift ;;
+		--body-file) cp "$2" "$GH_CALL_LOG.body"; shift ;;
 		origin:*) printf '%s\n' "$1" >"$GH_CALL_LOG.origin" ;;
 		esac
 		shift
 	done
 	[[ -n "$repo" && -s "$GH_CALL_LOG.origin" ]] || exit 1
-	printf 'https://github.com/%s/pull/1\n' "$repo"
+	# The newly created PR appears in the next refreshed eligibility inspection.
+	jq -cn --arg repo "$repo" --arg branch "$branch" --arg base "$base" \
+		--argjson number "${GH_NEW_PR_NUMBER:-1}" \
+		'{number:$number,html_url:("https://github.com/" + $repo + "/pull/" + ($number|tostring)),base:{ref:$base},head:{ref:$branch,repo:{full_name:$repo}}}' >"$GH_CALL_LOG.new-pr"
+	printf 'https://github.com/%s/pull/%s\n' "$repo" "${GH_NEW_PR_NUMBER:-1}"
 elif [[ "${1:-}" == api && "${2:-}" == /repos/*/issues/* ]]; then
 	cat "$GH_CALL_LOG.origin"
 fi
@@ -305,6 +396,209 @@ else
 	printf '       got: %s\n' "$WF_BRANCHES_10"
 	((_FAIL++))
 fi
+
+# GH#38487: reuse yesterday's same-content PR before any new branch is pushed.
+SYNC_SHA_10=$(git -C "$REPO_10" rev-parse "${SYNC_BRANCH_10}:.github/workflows/issue-sync.yml")
+SYNC_PRS_10=$(jq -cn --arg branch "$SYNC_BRANCH_10" \
+	'[{number:1,html_url:"https://github.com/owner/repo-develop/pull/1",base:{ref:"develop"},head:{ref:$branch,repo:{full_name:"Owner/Repo-Develop"}}}]')
+SYNC_FILES_10=$(jq -cn --arg sha "$SYNC_SHA_10" \
+	'[{filename:".github/workflows/issue-sync.yml",status:"modified",sha:$sha}]')
+OUT_10_REUSE=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	GH_SYNC_PRS_JSON="$SYNC_PRS_10" GH_SYNC_FILES_JSON="$SYNC_FILES_10" \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990102 2>&1)
+_assert_exit "GH#38487 identical next-day sync succeeds" 0 "$?"
+_assert_contains "GH#38487 identical next-day sync reuses existing URL" "$OUT_10_REUSE" "PR: https://github.com/owner/repo-develop/pull/1"
+CREATE_COUNT_10=$(grep -c '^pr create ' "$TMPDIR_10/gh-calls.log")
+_assert_exit "GH#38487 next-day sync leaves one PR creation" 1 "$CREATE_COUNT_10"
+NEW_HEAD_10=$(git -C "$BARE_10" for-each-ref --format='%(refname)' refs/heads/chore/workflow-sync-20990102)
+_assert_exit "GH#38487 identical next-day sync does not push a branch" 0 "${#NEW_HEAD_10}"
+
+# An unavailable PR list must not result in another publication.
+OUT_10_FAIL=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	GH_SYNC_LIST_FAIL=1 bash "$HELPER" --apply --branch chore/workflow-sync-20990103 2>&1)
+_assert_exit "GH#38487 PR-list failure fails closed" 1 "$?"
+_assert_contains "GH#38487 PR-list failure is actionable" "$OUT_10_FAIL" "unable to inspect open sync PRs"
+
+# A different blob gets a replacement first, then the older PR is commented/closed.
+SYNC_FILES_10=$(jq -cn '[{filename:".github/workflows/issue-sync.yml",status:"modified",sha:"0000000000000000000000000000000000000000"}]')
+OUT_10_REPLACE=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	GH_SYNC_PRS_JSON="$SYNC_PRS_10" GH_SYNC_FILES_JSON="$SYNC_FILES_10" GH_NEW_PR_NUMBER=2 \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990104 2>&1)
+_assert_exit "GH#38487 changed-content replacement succeeds" 0 "$?"
+_assert_contains "GH#38487 changed-content replacement reports new PR" "$OUT_10_REPLACE" "PR: https://github.com/owner/repo-develop/pull/2"
+CALLS_10=$(cat "$TMPDIR_10/gh-calls.log")
+_assert_contains "GH#38487 older PR closes after replacement" "$CALLS_10" "pr close 1 --repo owner/repo-develop"
+COMMENTS_10=$(cat "$TMPDIR_10/gh-calls.log.comments" 2>/dev/null || true)
+_assert_contains "GH#38487 supersession comment links replacement" "$COMMENTS_10" "Superseded by https://github.com/owner/repo-develop/pull/2"
+
+# A PR for another publication base must neither be reused nor closed.
+OTHER_BASE_10=$(printf '%s\n' "$SYNC_PRS_10" | jq '.[0].base.ref = "release"')
+SYNC_FILES_10=$(jq -cn --arg sha "$SYNC_SHA_10" \
+	'[{filename:".github/workflows/issue-sync.yml",status:"modified",sha:$sha}]')
+: >"$TMPDIR_10/gh-calls.log"
+OUT_10_BASE=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	GH_SYNC_PRS_JSON="$OTHER_BASE_10" GH_SYNC_FILES_JSON="$SYNC_FILES_10" GH_NEW_PR_NUMBER=3 \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990105 2>&1)
+_assert_exit "review: other-base publication succeeds" 0 "$?"
+_assert_contains "review: other-base PR is not reused" "$OUT_10_BASE" "PR: https://github.com/owner/repo-develop/pull/3"
+_assert_exit "review: other-base PR is not closed" 0 "$(grep -c '^pr close ' "$TMPDIR_10/gh-calls.log")"
+
+# A rename also removes another workflow and is not workflow-only.
+RENAME_FILES_10=$(printf '%s\n' "$SYNC_FILES_10" | jq '.[0] += {status:"renamed",previous_filename:".github/workflows/legacy.yml"}')
+: >"$TMPDIR_10/gh-calls.log"
+OUT_10_RENAME=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	GH_SYNC_PRS_JSON="$SYNC_PRS_10" GH_SYNC_FILES_JSON="$RENAME_FILES_10" GH_NEW_PR_NUMBER=4 \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990106 2>&1)
+_assert_exit "review: rename publication succeeds" 0 "$?"
+_assert_contains "review: rename PR is not reused" "$OUT_10_RENAME" "PR: https://github.com/owner/repo-develop/pull/4"
+_assert_exit "review: rename PR is not closed" 0 "$(grep -c '^pr close ' "$TMPDIR_10/gh-calls.log")"
+
+# The checkout is now canonical on this exact branch. Failed supersession must
+# remain FAILED, and a retry must still attempt to close the duplicate.
+RETRY_PRS_10=$(printf '%s\n' "$SYNC_PRS_10" | jq '. + [.[0] | .number = 2 | .html_url = "https://github.com/owner/repo-develop/pull/2"]')
+OUT_10_RETRY_FAIL=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	GH_SYNC_PRS_JSON="$RETRY_PRS_10" GH_SYNC_FILES_JSON="$SYNC_FILES_10" GH_SYNC_CLOSE_FAIL=1 \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990106 2>&1)
+_assert_exit "review: canonical exact-branch reconciliation failure propagates" 1 "$?"
+_assert_contains "review: retry reports supersession failure" "$OUT_10_RETRY_FAIL" "unable to supersede older sync PRs"
+OUT_10_RETRY=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	GH_SYNC_PRS_JSON="$RETRY_PRS_10" GH_SYNC_FILES_JSON="$SYNC_FILES_10" \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990106 2>&1)
+_assert_exit "review: canonical exact-branch retry reconciles" 0 "$?"
+_assert_contains "review: canonical exact-branch retry reports canonical PR" "$OUT_10_RETRY" "PR: https://github.com/owner/repo-develop/pull/1"
+
+# A selected replacement disappearing between inspections must not retire the
+# remaining eligible PR or report the vanished replacement as applied.
+REMAINING_PRS_10=$(printf '%s\n' "$RETRY_PRS_10" | jq '[.[1]]')
+: >"$TMPDIR_10/gh-calls.log"
+OUT_10_VANISHED=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	GH_SYNC_PRS_JSON="$RETRY_PRS_10" GH_SYNC_REFRESH_PRS_JSON="$REMAINING_PRS_10" GH_SYNC_FILES_JSON="$SYNC_FILES_10" \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990108 2>&1)
+_assert_exit "review: vanished replacement fails closed" 1 "$?"
+_assert_contains "review: vanished replacement reports failure" "$OUT_10_VANISHED" "unable to supersede older sync PRs"
+_assert_exit "review: vanished replacement retires no candidates" 0 "$(grep -cE '^pr (close|comment) ' "$TMPDIR_10/gh-calls.log")"
+
+# Exact branch names may belong to a fork: ignore that result and publish the
+# pushed same-repository branch instead of treating the fork as a replacement.
+FORK_EXACT_10='[{"url":"https://github.com/owner/repo-develop/pull/99","headRepository":{"nameWithOwner":"fork/repo-develop"}}]'
+STALE_FILES_10=$(printf '%s\n' "$SYNC_FILES_10" | jq '.[0].sha = "stale"')
+: >"$TMPDIR_10/gh-calls.log"
+OUT_10_FORK=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	GH_SYNC_PRS_JSON="$SYNC_PRS_10" GH_SYNC_FILES_JSON="$STALE_FILES_10" GH_EXACT_PRS_JSON="$FORK_EXACT_10" GH_NEW_PR_NUMBER=5 \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990109 2>&1)
+_assert_exit "review: exact-branch fork does not prevent publication" 0 "$?"
+_assert_contains "review: exact-branch fork is not the applied replacement" "$OUT_10_FORK" "PR: https://github.com/owner/repo-develop/pull/5"
+_assert_exit "review: exact-branch fork triggers same-repository PR creation" 1 "$(grep -c '^pr create ' "$TMPDIR_10/gh-calls.log")"
+_assert_exit "GH#39696 interactive sync PR has no anchor line" 0 "$(grep -c '^Ref #' "$TMPDIR_10/gh-calls.log.body")"
+
+# GH#39696: a headless (origin:worker) sync PR needs exactly one explicit issue
+# identity. A failed anchor lookup publishes nothing; a found anchor is the
+# body's only Ref line.
+: >"$TMPDIR_10/gh-calls.log"
+OUT_10_ANCHOR_FAIL=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	AIDEVOPS_SESSION_ORIGIN=worker GH_ANCHOR_LIST_FAIL=1 \
+	GH_SYNC_PRS_JSON="$SYNC_PRS_10" GH_SYNC_FILES_JSON="$STALE_FILES_10" GH_NEW_PR_NUMBER=6 \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990110 2>&1)
+_assert_exit "GH#39696 unavailable anchor fails closed" 1 "$?"
+_assert_contains "GH#39696 unavailable anchor is actionable" "$OUT_10_ANCHOR_FAIL" "routine anchor unavailable"
+_assert_exit "GH#39696 unavailable anchor creates no PR" 0 "$(grep -c '^pr create ' "$TMPDIR_10/gh-calls.log")"
+_assert_exit "GH#39696 unavailable anchor creates no anchor" 0 "$(grep -c '^issue create ' "$TMPDIR_10/gh-calls.log")"
+_assert_exit "GH#39696 unavailable anchor pushes no branch" 0 \
+	"$(git -C "$BARE_10" for-each-ref --format='%(refname)' refs/heads/chore/workflow-sync-20990110 | wc -l | tr -d ' ')"
+ANCHOR_ISSUES_10='[{"number":42,"body":"<!-- aidevops:routine-anchor:sync-workflows -->"},{"number":7,"body":"other routine"}]'
+OUT_10_ANCHOR=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	AIDEVOPS_SESSION_ORIGIN=worker GH_ANCHOR_ISSUES_JSON="$ANCHOR_ISSUES_10" \
+	GH_SYNC_PRS_JSON="$SYNC_PRS_10" GH_SYNC_FILES_JSON="$STALE_FILES_10" GH_NEW_PR_NUMBER=6 \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990110 2>&1)
+_assert_exit "GH#39696 worker sync publishes with its anchor" 0 "$?"
+_assert_contains "GH#39696 worker sync reports new PR" "$OUT_10_ANCHOR" "PR: https://github.com/owner/repo-develop/pull/6"
+FIRST_BODY_LINE_10=$(head -n 1 "$TMPDIR_10/gh-calls.log.body")
+_assert_exit "GH#39696 worker PR body leads with the anchor Ref" 'Ref #42' "$FIRST_BODY_LINE_10"
+_assert_exit "GH#39696 worker PR body has one issue identity" 1 "$(grep -cE '^(Ref|For|Resolves) #' "$TMPDIR_10/gh-calls.log.body")"
+_assert_exit "GH#39696 existing anchor is reused, not recreated" 0 "$(grep -c '^issue create ' "$TMPDIR_10/gh-calls.log")"
+
+# GH#39830: a template rollout makes the deployed render differ from the
+# template at the pinned ref. The gate would reject a marker PR, so the
+# publisher keeps the anchor identity instead.
+OLD_TEMPLATES_10="$TMPDIR_10/old-templates"
+mkdir -p "$OLD_TEMPLATES_10"
+printf '%s\n# older template\n' "$CANONICAL_CALLER_CONTENT" >"$OLD_TEMPLATES_10/issue-sync-caller.yml"
+: >"$TMPDIR_10/gh-calls.log"
+OUT_10_DRIFT=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	AIDEVOPS_SESSION_ORIGIN=worker GH_ANCHOR_ISSUES_JSON="$ANCHOR_ISSUES_10" GH_TEMPLATE_DIR="$OLD_TEMPLATES_10" \
+	GH_SYNC_PRS_JSON="$SYNC_PRS_10" GH_SYNC_FILES_JSON="$STALE_FILES_10" GH_NEW_PR_NUMBER=7 \
+	bash "$HELPER" --apply --force-ref --ref 1111111111111111111111111111111111111111 --branch chore/workflow-sync-20990112 2>&1)
+_assert_exit "GH#39830 template-drift sync still publishes" 0 "$?"
+_assert_contains "GH#39830 template-drift sync explains the anchor fallback" "$OUT_10_DRIFT" "not gate-admissible as a routine marker PR"
+FIRST_BODY_LINE_10=$(head -n 1 "$TMPDIR_10/gh-calls.log.body")
+_assert_exit "GH#39830 template-drift PR keeps the anchor Ref" 'Ref #42' "$FIRST_BODY_LINE_10"
+_assert_exit "GH#39830 template-drift PR carries no routine marker" 0 \
+	"$(grep -c 'aidevops:routine-pr:sync-workflows' "$TMPDIR_10/gh-calls.log.body")"
+_assert_exit "GH#39830 gate decision read the template at the pinned ref" 1 \
+	"$(grep -c '^api repos/marcusquinn/aidevops/contents/.agents/templates/workflows/issue-sync-caller.yml?ref=1111111111111111111111111111111111111111' "$TMPDIR_10/gh-calls.log")"
+: >"$TMPDIR_10/gh-calls.log"
+OUT_10_UNREACHABLE=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	AIDEVOPS_SESSION_ORIGIN=worker GH_ANCHOR_ISSUES_JSON="$ANCHOR_ISSUES_10" GH_COMPARE_STATUS=diverged \
+	GH_SYNC_PRS_JSON="$SYNC_PRS_10" GH_SYNC_FILES_JSON="$STALE_FILES_10" GH_NEW_PR_NUMBER=9 \
+	bash "$HELPER" --apply --force-ref --ref 1111111111111111111111111111111111111111 --branch chore/workflow-sync-20990113 2>&1)
+_assert_exit "GH#39830 unreachable-pin sync still publishes" 0 "$?"
+_assert_exit "GH#39830 unreachable-pin PR keeps the anchor Ref" 'Ref #42' "$(head -n 1 "$TMPDIR_10/gh-calls.log.body")"
+
+# GH#39793: a 40-hex pin on the default sync branch is re-renderable by the merge
+# gate, so the PR carries the routine marker instead of an anchor. GH#39830:
+# the anchor is kept for runs that are not gate-admissible, never retired here.
+: >"$TMPDIR_10/gh-calls.log"
+OUT_10_MARKER=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	AIDEVOPS_SESSION_ORIGIN=worker GH_ANCHOR_ISSUES_JSON='[]' \
+	GH_SYNC_PRS_JSON="$SYNC_PRS_10" GH_SYNC_FILES_JSON="$STALE_FILES_10" GH_NEW_PR_NUMBER=8 \
+	bash "$HELPER" --apply --force-ref --ref 1111111111111111111111111111111111111111 --branch chore/workflow-sync-20990111 2>&1)
+_assert_exit "GH#39793 pinned worker sync publishes with the routine marker" 0 "$?"
+_assert_contains "GH#39793 marker sync reports new PR" "$OUT_10_MARKER" "PR: https://github.com/owner/repo-develop/pull/8"
+FIRST_BODY_LINE_10=$(head -n 1 "$TMPDIR_10/gh-calls.log.body")
+_assert_exit "GH#39793 PR body leads with the sync-workflows marker" '<!-- aidevops:routine-pr:sync-workflows -->' "$FIRST_BODY_LINE_10"
+_assert_exit "GH#39793 marker PR body has no issue identity" 0 "$(grep -cE '^(Ref|For|Resolves) #' "$TMPDIR_10/gh-calls.log.body")"
+_assert_exit "GH#39793 marker PR creates no anchor" 0 "$(grep -c '^issue create ' "$TMPDIR_10/gh-calls.log")"
+_assert_exit "GH#39830 marker PR does not retire the anchor" 0 \
+	"$(grep -cE '^issue (close|edit) |routine-anchor-retiring' "$TMPDIR_10/gh-calls.log")"
+
+# GH#39830 review: a second same-branch publication to the open marker PR
+# (new runner bytes) after the template at the pin stopped matching must swap
+# the marker for the anchor Ref; promotion alone skips marker bodies.
+MARKER_BODY_10=$(cat "$TMPDIR_10/gh-calls.log.body")
+EXACT_PR_10='[{"url":"https://github.com/owner/repo-develop/pull/8","headRepository":{"nameWithOwner":"owner/repo-develop"}}]'
+# The reused PR is the open replacement the supersession pass keeps.
+REUSE_PRS_10=$(printf '%s\n' "$SYNC_PRS_10" | jq -c '. + [{number:8,html_url:"https://github.com/owner/repo-develop/pull/8",base:{ref:"develop"},head:{ref:"chore/workflow-sync-20990111",repo:{full_name:"owner/repo-develop"}}}]')
+_write_repos_json "$TMPDIR_10" "{\"initialized_repos\":[{\"path\":\"$REPO_10\",\"slug\":\"owner/repo-develop\",\"runner\":\"ubuntu-24.04\"}]}"
+: >"$TMPDIR_10/gh-calls.log"
+rm -f "$TMPDIR_10/gh-calls.log.edit-body"
+OUT_10_REUSE_DRIFT=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	AIDEVOPS_SESSION_ORIGIN=worker GH_ANCHOR_ISSUES_JSON="$ANCHOR_ISSUES_10" GH_TEMPLATE_DIR="$OLD_TEMPLATES_10" \
+	GH_SYNC_PRS_JSON="$REUSE_PRS_10" GH_SYNC_FILES_JSON="$STALE_FILES_10" GH_EXACT_PRS_JSON="$EXACT_PR_10" \
+	GH_PR_VIEW_BODY="$MARKER_BODY_10" GH_PR_VIEW_LABELS='["origin:worker"]' \
+	bash "$HELPER" --apply --force-ref --ref 1111111111111111111111111111111111111111 --branch chore/workflow-sync-20990111 2>&1)
+_assert_exit "GH#39830 reused marker PR publication succeeds" 0 "$?"
+_assert_contains "GH#39830 reused marker PR is reported" "$OUT_10_REUSE_DRIFT" "PR: https://github.com/owner/repo-develop/pull/8"
+_assert_exit "GH#39830 reused PR body is edited once" 1 "$(grep -c '^pr edit 8 ' "$TMPDIR_10/gh-calls.log")"
+_assert_exit "GH#39830 reused PR body now leads with the anchor Ref" 'Ref #42' \
+	"$(head -n 1 "$TMPDIR_10/gh-calls.log.edit-body" 2>/dev/null)"
+_assert_exit "GH#39830 reused PR body drops the routine marker" 0 \
+	"$(grep -c 'aidevops:routine-pr:sync-workflows' "$TMPDIR_10/gh-calls.log.edit-body" 2>/dev/null || true)"
+_assert_exit "GH#39830 reused PR body keeps one issue identity" 1 \
+	"$(grep -cE '^(Ref|For|Resolves) #' "$TMPDIR_10/gh-calls.log.edit-body" 2>/dev/null || true)"
+
+# Different date suffixes share the installation-scoped lock; a held lock must
+# prevent inspection/publication, and all preceding failure paths released it.
+LOCK_KEY_10=$(printf '%s\n%s\n%s\n' owner/repo-develop .github/workflows/issue-sync.yml chore/workflow-sync- | git hash-object --stdin)
+LOCK_DIR_10="$TMPDIR_10/.aidevops/.agent-workspace/locks/sync-workflows/$LOCK_KEY_10.lock"
+mkdir "$LOCK_DIR_10"
+_assert_exit "review: failure paths release publication lock" 0 "$?"
+: >"$TMPDIR_10/gh-calls.log"
+OUT_10_LOCK=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990107 2>&1)
+_assert_exit "review: concurrent publication fails closed" 1 "$?"
+_assert_contains "review: lock contention is actionable" "$OUT_10_LOCK" "publication lock unavailable"
+_assert_exit "review: contending publisher never inspects PRs" 0 "$(grep -c '^api repos/.*/pulls?' "$TMPDIR_10/gh-calls.log")"
+rmdir "$LOCK_DIR_10"
 rm -rf "$TMPDIR_10"
 
 # ─── Test 11: GH#21897 — CURRENT/CALLER + repos.json runner field is actionable ───
@@ -548,8 +842,9 @@ _write_repos_json "$TMPDIR_14" \
 OUT_14=$(HOME="$TMPDIR_14" PATH="$TMPDIR_14/bin:$PATH" GH_CALL_LOG="$TMPDIR_14/gh-calls.log" \
 	bash "$HELPER" --apply --branch chore/test-stale-current 2>&1)
 EXIT_14=$?
+# Reconciliation may inspect open PRs, but an empty list must not publish or close.
 if [[ "$OUT_14" == *"refreshed checkout is CURRENT/CALLER; no changes"* ]] &&
-	[[ ! -s "$TMPDIR_14/gh-calls.log" ]] &&
+	! grep -qE '^pr (create|close|comment) ' "$TMPDIR_14/gh-calls.log" &&
 	! git --git-dir="$BARE_14" show-ref --verify --quiet refs/heads/chore/test-stale-current; then
 	printf '%sPASS%s GH#27726 stale local + canonical remote → no push or PR\n' "$GREEN" "$NC"
 	((_PASS++))
@@ -634,7 +929,7 @@ rm -rf "$TMPDIR_16"
 TMPDIR_17="$(mktemp -d)"
 _setup_fake_home "$TMPDIR_17"
 _setup_mock_gh "$TMPDIR_17"
-REAL_GIT_17="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
+REAL_GIT_17="${AIDEVOPS_TEST_GIT_BIN:-${TEST_NATIVE_GIT}}"
 cat >"$TMPDIR_17/bin/git" <<'EOF'
 #!/usr/bin/env bash
 for _arg in "$@"; do

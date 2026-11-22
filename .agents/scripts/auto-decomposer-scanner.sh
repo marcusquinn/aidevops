@@ -483,8 +483,8 @@ that existed when this issue was filed.
   steps above. Open any code PRs with \`Ref #${parent_num}\` or
   \`For #${parent_num}\` (parent stays open until children merge, per
   the t2046 parent-task PR keyword rule). For THIS follow-up issue
-  itself, use \`Resolves #<this-issue-number>\` so the merge pass
-  closes it cleanly.
+  itself, add a \`Resolves\` closing reference using THIS issue's actual
+  number so the merge pass closes it cleanly.
 - **Outcome C — genuine judgment call.** Only if the decomposition
   requires an architectural / policy / breaking-change decision you
   cannot resolve autonomously: post a decision comment with

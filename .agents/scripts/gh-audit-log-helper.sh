@@ -123,13 +123,13 @@ _gh_audit_ensure_log() {
 	log_dir="$(dirname "$log_file")"
 
 	if [[ ! -d "$log_dir" ]]; then
-		mkdir -p "$log_dir" || true
-		chmod 700 "$log_dir" || true
+		mkdir -p "$log_dir" || return 1
+		chmod 700 "$log_dir" || return 1
 	fi
 
 	if [[ ! -f "$log_file" ]]; then
-		: >"$log_file"
-		chmod 600 "$log_file" || true
+		: >"$log_file" || return 1
+		chmod 600 "$log_file" || return 1
 	fi
 
 	return 0
@@ -639,6 +639,41 @@ _cmd_record_build_event_json() {
 	return 0
 }
 
+# Append one NDJSON event to an already-locked log, repairing a torn predecessor.
+#
+# An interrupted or short write leaves the log without a trailing newline. A bare
+# append then concatenates this event onto the partial one, so both records become
+# unparsable and anomaly scanning cannot read them (GH#38229). Command
+# substitution strips trailing newlines, so a non-empty result proves the last
+# byte is not a newline and a separating newline is written first.
+# Args: log_file event_json
+_gh_audit_append_line() {
+	local log_file="$1" event="$2"
+	local separator=""
+	if [[ -s "$log_file" ]] && [[ -n "$(tail -c 1 "$log_file")" ]]; then
+		separator=$'\n'
+		_gh_audit_warn "Audit log had an unterminated final line — separated before appending"
+	fi
+	printf '%s%s\n' "$separator" "$event" >>"$log_file" || return 1
+	return 0
+}
+
+# Append one NDJSON event, serialised against concurrent audit writers.
+# flock is advisory and optional: without it the newline repair still applies.
+# Args: log_file event_json
+_gh_audit_append_event() {
+	local log_file="$1" event="$2"
+	if command -v flock &>/dev/null; then
+		(
+			flock -x -w 5 9 || true
+			_gh_audit_append_line "$log_file" "$event"
+		) 9>>"${log_file}.lock" && return 0
+		return 1
+	fi
+	_gh_audit_append_line "$log_file" "$event" || return 1
+	return 0
+}
+
 # Parse arguments and write one NDJSON event to gh-audit.log.
 #
 # Required args:
@@ -693,6 +728,14 @@ cmd_record() {
 		fi
 	fi
 
+	# A guard incident is an explicit anomaly even when no label was removed.
+	local flap_label=""
+	flap_label=$(printf '%s' "$_rr_flags_json" | jq -r '.protected_label_flap // empty' 2>/dev/null) || flap_label=""
+	if [[ -n "$flap_label" ]]; then
+		_rd_suspicious_json=$(printf '%s' "$_rd_suspicious_json" | jq -c \
+			--arg signal "protected_label_flap:${flap_label}" '. + [$signal]')
+	fi
+
 	local ts event
 	ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')"
 	event="$(_cmd_record_build_event_json \
@@ -701,7 +744,7 @@ cmd_record() {
 		"$_rr_flags_json" "$_rr_before_json" "$_rr_after_json" \
 		"$_rd_delta_json" "$_rd_suspicious_json")"
 
-	_gh_audit_ensure_log
+	_gh_audit_ensure_log || return 1
 
 	local log_file
 	log_file="$(_gh_audit_log_path)"
@@ -709,7 +752,7 @@ cmd_record() {
 	# Check if rotation is needed before appending (audit errors never block).
 	cmd_rotate --check-only 2>/dev/null || true
 
-	echo "$event" >>"$log_file"
+	_gh_audit_append_event "$log_file" "$event" || return 1
 
 	if [[ "$_rd_suspicious_json" != "[]" ]]; then
 		_gh_audit_warn "ANOMALY detected in ${_rr_op} on ${_rr_repo}#${_rr_number}: ${_rd_suspicious_json}"
@@ -873,6 +916,7 @@ Anomaly signals (appear in suspicious[]):
   title_delta_pct<-50    Title shrunk by more than 50%
   body_delta_pct=-100    Body completely wiped
   protected_label_removed:<label>  A protected label was removed
+  protected_label_flap:<label>     Repeated protected-label transitions held closed
 
 Environment:
   GH_AUDIT_LOG_FILE       Override log file path

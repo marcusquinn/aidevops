@@ -97,6 +97,12 @@ multipage)
 pending)
 	nodes='[{"__typename":"CheckRun","name":"pending","status":"IN_PROGRESS","conclusion":null,"startedAt":"2026-08-01T00:00:00Z","completedAt":null,"detailsUrl":"","isRequired":true,"checkSuite":{"workflowRun":{"event":"push","workflow":{"name":"CI"}}}}]'
 	;;
+queued-replacement)
+	nodes='[
+		{"__typename":"CheckRun","databaseId":101,"name":"build","status":"QUEUED","conclusion":null,"startedAt":null,"completedAt":null,"detailsUrl":"https://example.invalid/queued","isRequired":true,"checkSuite":{"workflowRun":{"event":"push","workflow":{"name":"CI"}}}},
+		{"__typename":"CheckRun","databaseId":100,"name":"build","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-08-01T00:00:00Z","completedAt":"2026-08-01T00:01:00Z","detailsUrl":"https://example.invalid/cancelled","isRequired":true,"checkSuite":{"workflowRun":{"event":"push","workflow":{"name":"CI"}}}}
+	]'
+	;;
 cancel)
 	nodes='[{"__typename":"CheckRun","name":"cancelled","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-08-01T00:00:00Z","completedAt":"2026-08-01T00:01:00Z","detailsUrl":"","isRequired":true,"checkSuite":{"workflowRun":{"event":"push","workflow":{"name":"CI"}}}}]'
 	;;
@@ -258,6 +264,12 @@ assert_json "all mode retains optional checks and only the newest duplicate" \
 run_case pending required
 assert_eq "pending checks return eight" "8" "$CASE_RC"
 assert_json "in-progress CheckRun maps to pending" 'length == 1 and .[0].state == "IN_PROGRESS" and .[0].bucket == "pending"' "$CASE_OUT"
+
+run_case queued-replacement required
+assert_eq "queued replacement returns pending rather than cancelled" "8" "$CASE_RC"
+assert_json "newer queued CheckRun supersedes timestamped cancellation" \
+	'length == 1 and .[0].state == "QUEUED" and .[0].bucket == "pending" and .[0].link == "https://example.invalid/queued" and (.[0] | has("_sort_id") | not)' "$CASE_OUT"
+assert_contains "GraphQL query requests CheckRun recency ID" "databaseId name status" "$(<"$CALL_LOG")"
 
 run_case cancel required
 assert_eq "cancel-only output preserves native zero exit" "0" "$CASE_RC"

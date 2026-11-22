@@ -47,24 +47,28 @@ reviews:
     # label that was inadvertently disabling internal PR reviews (positive-only
     # filters restrict to matching PRs only).
     #
-    # GH#19770: CodeRabbit treats negative-only label filters as "include nothing"
-    # rather than "include all" (observed on PR #19764: skipped with "only excluded
-    # labels are configured"). Schema description says ['!wip'] reviews all PRs
-    # except wip, but runtime behaviour contradicts this. Fix: add explicit wildcard
-    # positive include "*" + negative exclude "!no-review" — Option A from the
-    # t2246 brief. This restores "review everything unless tagged no-review" intent
-    # without GH#17904 regression (wildcard includes external-contributor PRs too).
-    # Do NOT remove the "*" entry — reverting to negative-only breaks auto-review.
+    # GH#35782: "*" is treated as a required literal label, not an include-all
+    # wildcard (PRs #35778 / #35761). The current schema.v2.json, checked
+    # 2026-10-28, explicitly supports negative-only exclusions when enabled: true;
+    # when enabled: false, negative-only labels do not opt PRs into review.
+    # Keep enabled: true above. Unlabeled, internal and external PRs are eligible
+    # only when they pass the existing draft/title exclusions and lack no-review.
+    # Do not add a positive label requirement.
+    # GH#18791 / GH#19770 previously observed negative-only skips: schema validity
+    # alone is not runtime proof. Verify a real automatic review and a no-review
+    # skip after deployment; do not restore the broken "*" workaround.
     labels:
-      - "*"           # include all PRs (positive include required — see GH#19770)
-      - "!no-review"  # except those explicitly opted out
+      - "!no-review"
 
-  # Request changes for critical issues — this is the setting that controls
-  # whether CodeRabbit submits formal APPROVED/CHANGES_REQUESTED reviews.
-  # Without this, CodeRabbit only posts comments (no formal review).
-  # GH#3932: Confirmed via schema that review_status only controls status
-  # messages in walkthrough comments, NOT formal review submission.
-  request_changes_workflow: true
+  # GH#35860: CodeRabbit is advisory (reference/review-bot-gate.md). Keep this
+  # false so findings arrive as COMMENTED reviews swept into post-merge
+  # follow-up issues. When true, CodeRabbit submits formal CHANGES_REQUESTED
+  # reviews, which set reviewDecision and make the pulse t2093 route close and
+  # redispatch every worker PR it comments on (15 PRs in one day, 2026-10-28).
+  # Review-gate evidence is state-agnostic (bot_has_real_review accepts any
+  # settled exact-head bot review), so the GH#17671 external-contributor gate
+  # keeps its evidence; commit_status below remains the fallback signal.
+  request_changes_workflow: false
 
   # GH#3932: Enable commit status checks so review-bot-gate-helper.sh can
   # detect CodeRabbit activity via status API when formal reviews are missing
@@ -86,6 +90,13 @@ reviews:
 
   # Path-specific instructions
   path_instructions:
+    - path: "CHANGELOG.md"
+      instructions: |
+        Version headings use bare [X.Y.Z] brackets by repository convention.
+        Do not flag these headings for missing Markdown reference definitions
+        or require adding reference links, including on release-provenance PRs.
+        Continue reviewing changelog content for other substantive issues.
+
     - path: "providers/*.sh"
       instructions: |
         Provider helper scripts - focus on:

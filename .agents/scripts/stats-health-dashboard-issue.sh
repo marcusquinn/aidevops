@@ -34,6 +34,7 @@ fi
 _ROLE_SUPERVISOR="supervisor"
 _ROLE_CONTRIBUTOR="contributor"
 _HEALTH_PERSISTENT_LABEL="persistent"
+_HEALTH_STANDING_COLOR="FFF59D"
 _HEALTH_OPERATOR_LABEL_PREFIX="operator:"
 
 # --- Functions ---
@@ -56,11 +57,11 @@ _ensure_health_dashboard_labels() {
 	local role_label role_label_color role_label_desc
 	if [[ "$runner_role" == "$_ROLE_SUPERVISOR" ]]; then
 		role_label="$_ROLE_SUPERVISOR"
-		role_label_color="1D76DB"
+		role_label_color="$_HEALTH_STANDING_COLOR"
 		role_label_desc="Supervisor health dashboard"
 	else
 		role_label="$_ROLE_CONTRIBUTOR"
-		role_label_color="A2EEEF"
+		role_label_color="$_HEALTH_STANDING_COLOR"
 		role_label_desc="Contributor health dashboard"
 	fi
 	local labels_json rc=0
@@ -85,7 +86,7 @@ _ensure_health_dashboard_labels() {
 			return 1
 		fi
 	done <<EOF
-${_HEALTH_PERSISTENT_LABEL}|FBCA04|Persistent issue — do not close
+${_HEALTH_PERSISTENT_LABEL}|${_HEALTH_STANDING_COLOR}|Persistent issue — do not close
 source:health-dashboard|C2E0C6|Auto-created by stats-functions.sh health dashboard
 ${role_label}|${role_label_color}|${role_label_desc}
 ${runner_user}|0E8A16|Health dashboard runner: ${runner_user}
@@ -585,7 +586,7 @@ _create_health_issue() {
 	# t1890: health dashboard issues are management issues that should never be
 	# closed or dispatched. Add the "persistent" label for consistency with the
 	# quality review issue, so the dispatch filter only needs one label check.
-	gh label create "$_HEALTH_PERSISTENT_LABEL" --repo "$repo_slug" --color "FBCA04" \
+	gh label create "$_HEALTH_PERSISTENT_LABEL" --repo "$repo_slug" --color "$_HEALTH_STANDING_COLOR" \
 		--description "Persistent issue — do not close" --force 2>/dev/null || true
 
 	# Aliases are dedup metadata and may include local OS account names; keep
@@ -827,13 +828,13 @@ _resolve_runner_role_config() {
 	if [[ "$runner_role" == "$_ROLE_SUPERVISOR" ]]; then
 		runner_prefix="[Supervisor:${runner_user}]"
 		role_label="$_ROLE_SUPERVISOR"
-		role_label_color="1D76DB"
+		role_label_color="$_HEALTH_STANDING_COLOR"
 		role_label_desc="Supervisor health dashboard"
 		role_display="Supervisor"
 	else
 		runner_prefix="[Contributor:${runner_user}]"
 		role_label="$_ROLE_CONTRIBUTOR"
-		role_label_color="A2EEEF"
+		role_label_color="$_HEALTH_STANDING_COLOR"
 		role_label_desc="Contributor health dashboard"
 		role_display="Contributor"
 	fi
@@ -1076,5 +1077,200 @@ _archive_stale_operator_dashboards() {
 
 	mkdir -p "${state_file%/*}" 2>/dev/null || true
 	touch "$state_file" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# One sanitized line naming the ask from the newest maintainer-side comment
+# that states one. GH#38311: besides "Recommended path" (worker-discipline.md
+# decision-ready comment), decision comments use "Decision needed",
+# "Specific question", "Owner/action", "Owner/next action" or "Next action"
+# lines, taken in that order within a comment; a comment that only points
+# elsewhere ("The decision and evidence are on #N") yields "Decision on #N".
+# Only OWNER/MEMBER/COLLABORATOR comments count; output keeps plain words and
+# punctuation only (no URLs, markup or pipes), at most 160 characters.
+# Args: $1=repo slug, $2=issue number
+# Output: one line (empty when no comment states an ask)
+#######################################
+_health_hold_recommendation() {
+	local repo_slug="$1" issue_number="$2" comments=""
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$issue_number" =~ ^[1-9][0-9]*$ ]] || return 0
+	comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" --paginate --slurp 2>/dev/null) || return 0
+	jq -r '
+		def order: ["recommended path", "decision needed", "specific question", "owner/action", "owner/next action", "next action"];
+		def asks: [(.body // "") | split("\n")[]
+			| capture("(?i)^[\\s>*_.0-9-]*(?<k>recommended path|decision needed|specific question|owner/next action|owner/action|next action)\\W*(?<t>.+)$")?
+			| .k |= ascii_downcase];
+		def ask: asks as $a | [order[] as $k | $a[] | select(.k == $k) | .t] | first // null;
+		def pointer: (.body // "") | capture("(?i)decision(?: and evidence)? (?:is|are|lives|live) on #(?<n>[0-9]+)")?
+			| "Decision on #\(.n)";
+		[.[][] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
+			| (ask // pointer) | select(. != null)] | last // ""
+		| gsub("https?://[^ ]*"; "") | gsub("[^A-Za-z0-9 .,;:()/_#-]"; "") | .[0:160]' <<<"$comments" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# t19179: age in whole days of the latest `labeled` event for any hold label
+# on one issue. Prints nothing when the timeline is unavailable (callers fall
+# back to the issue creation age).
+# Args: $1=repo slug, $2=issue number, $3=space-separated hold labels
+#######################################
+_health_hold_label_age_days() {
+	local repo_slug="$1" issue_number="$2" labels="$3" label="" names="" at=""
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ ]] || return 0
+	for label in $labels; do
+		[[ "$label" =~ ^[A-Za-z0-9:_-]+$ ]] || continue
+		names="${names:+${names}, }\"${label}\""
+	done
+	[[ -n "$names" ]] || return 0
+	at=$(gh api --paginate "repos/${repo_slug}/issues/${issue_number}/events?per_page=100" \
+		--jq "[.[] | select(.event == \"labeled\" and (.label.name | IN(${names}))) | .created_at] | max // empty" 2>/dev/null) || return 0
+	[[ "$at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$ ]] || return 0
+	jq -nr --arg at "$at" '((now - ($at | fromdateiso8601)) / 86400) | floor' 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# t19179: cheap reconsideration hint for an aged hold. Read-only: one native
+# sub-issue read per displayed row. Prints one plain-words line, or nothing.
+# Args: $1=repo slug, $2=issue number, $3=days since last update
+#######################################
+_health_hold_reconsider_hint() {
+	local repo_slug="$1" issue_number="$2" idle_days="$3" counts="" total="" open=""
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ ]] || return 0
+	counts=$(gh api "repos/${repo_slug}/issues/${issue_number}/sub_issues?per_page=100" \
+		--jq '[length, ([.[] | select(.state != "closed")] | length)] | @tsv' 2>/dev/null) || counts=""
+	IFS=$'\t' read -r total open <<<"$counts"
+	if [[ "$total" =~ ^[1-9][0-9]*$ && "$open" == "0" ]]; then
+		printf 'All native sub-issues closed'
+	elif [[ "$idle_days" =~ ^[0-9]+$ && "$idle_days" -ge "${HEALTH_HOLD_AGE_DAYS:-3}" ]]; then
+		printf 'No activity for %sd' "$idle_days"
+	fi
+	return 0
+}
+
+#######################################
+# Aged maintainer-decision holds for the supervisor health issue: every open
+# issue held by a label in HEALTH_HOLD_LABELS (default hold-for-review,
+# no-auto-dispatch, needs-maintainer-input) older than HEALTH_HOLD_AGE_DAYS
+# (default 3), oldest first, deduped by issue, bounded to 10 rows. Displayed
+# age counts from the latest hold-label event when the timeline is readable.
+# Read-only: never edits labels, approves or dispatches. Empty output (no
+# section) when nothing is aged.
+# Args: $1=repo slug
+# Output: markdown table (or nothing)
+#######################################
+_health_aged_hold_section() {
+	local repo_slug="$1"
+	local age_days="${HEALTH_HOLD_AGE_DAYS:-3}"
+	local hold_labels="${HEALTH_HOLD_LABELS:-hold-for-review no-auto-dispatch needs-maintainer-input}"
+	local max_rows=10 issues_json="[]" page="" label="" rows="" total=0 number age url title idle rec hint label_age
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 0
+	[[ "$age_days" =~ ^[0-9]+$ ]] || age_days=3
+	for label in $hold_labels; do
+		[[ "$label" =~ ^[A-Za-z0-9:_-]+$ ]] || continue
+		page=$(gh api "repos/${repo_slug}/issues?labels=${label}&state=open&per_page=100" \
+			--paginate --slurp 2>/dev/null) &&
+			issues_json=$(jq -c --argjson p "${page:-[]}" '. + $p' <<<"$issues_json" 2>/dev/null) || {
+			printf 'Maintainer decision holds are unavailable: the issue fetch failed this cycle. The next pulse will retry.\n'
+			return 0
+		}
+	done
+	rows=$(jq -r --argjson days "$age_days" '
+		[.[][] | select(has("pull_request") | not)
+			| {number, title, url: .html_url, createdAt: .created_at, updatedAt: (.updated_at // .created_at)}
+			| select(.url | test("^https://github\\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/issues/[0-9]+$"))
+			| .created_epoch = (.createdAt | fromdateiso8601)
+			| select((now - .created_epoch) > ($days * 86400))
+			| {number, url, title: ((.title // "") | gsub("[^A-Za-z0-9 .,:()/_#-]"; "") | .[0:70] | if . == "" then "untitled" else . end),
+				created_epoch, age: (((now - .created_epoch) / 86400) | floor),
+				idle: (((now - (.updatedAt | fromdateiso8601)) / 86400) | floor)}]
+		| unique_by(.number)
+		| sort_by(.created_epoch)
+		| ., length' <<<"${issues_json:-[]}" 2>/dev/null) || return 0
+	total=$(jq -s '.[1] // 0' <<<"$rows" 2>/dev/null) || return 0
+	[[ "$total" =~ ^[0-9]+$ && "$total" -gt 0 ]] || return 0
+	printf 'Maintainer decision holds older than %s days (%s). Surfacing grants nothing: the hold stays until a maintainer decides.\n\n' "$age_days" "$total"
+	# GH#38311: terminal-blocker-recovery-holds.sh queues a plain reply for the
+	# replying maintainer's own runner, so no interactive session is needed.
+	printf 'To decide, reply on the issue in plain words (no session needed): your runner'\''s recovery supervisor carries out the reply and posts a receipt.\n\n'
+	printf '| Age | Issue | Ask | Why reconsider | URL |\n| --- | --- | --- | --- | --- |\n'
+	while IFS=$'\t' read -r number age title idle url; do
+		[[ "$number" =~ ^[1-9][0-9]*$ ]] || continue
+		rec=$(_health_hold_recommendation "$repo_slug" "$number")
+		label_age=$(_health_hold_label_age_days "$repo_slug" "$number" "$hold_labels")
+		[[ "$label_age" =~ ^[0-9]+$ ]] && age="$label_age"
+		hint=$(_health_hold_reconsider_hint "$repo_slug" "$number" "$idle")
+		printf '| %sd | #%s %s | %s | %s | %s |\n' "$age" "$number" "$title" "${rec:-No ask stated in a maintainer comment yet}" "${hint:--}" "$url"
+	done < <(jq -rs '.[0][0:10][] | [.number, .age, .title, .idle, .url] | @tsv' <<<"$rows" 2>/dev/null)
+	[[ "$total" -le "$max_rows" ]] || printf '\n_%s more not shown._\n' "$((total - max_rows))"
+	return 0
+}
+
+#######################################
+# Read-only, budget-limited snapshot of aged blocked draft checkpoints.
+# Search bounds candidates to 100; only trusted attention and release comments
+# contribute metadata. Never execute the displayed recovery commands.
+#######################################
+_health_checkpoint_comments() {
+	local repo_slug="$1" number="$2" page=1 batch="" count=0 all='[]'
+	while [[ "$page" -le 10 ]]; do
+		_health_dashboard_optional_work_has_budget "${refresh_start_epoch:-0}" || return 1
+		batch=$(gh api "repos/${repo_slug}/issues/${number}/comments?per_page=100&page=${page}" 2>/dev/null) || return 1
+		count=$(jq -er 'if type == "array" then length else error("invalid comments") end' <<<"$batch") || return 1
+		all=$(jq -cn --argjson all "$all" --argjson batch "$batch" '$all + $batch') || return 1
+		if [[ "$count" -lt 100 ]]; then
+			printf '%s\n' "$all"
+			return 0
+		fi
+		page=$((page + 1))
+	done
+	# Do not infer the newest comment from an incomplete history.
+	return 1
+}
+
+_health_aged_checkpoint_section() {
+	local repo_slug="$1" age_hours="${HEALTH_CHECKPOINT_AGE_HOURS:-24}"
+	local candidates="" comments="" evidence="" pr_json="" rows="" number pr release attempt age reason owner created
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 0
+	[[ "$age_hours" =~ ^[0-9]{1,5}$ ]] || age_hours=24
+	_health_dashboard_optional_work_has_budget "${refresh_start_epoch:-0}" || return 0
+	candidates=$(gh api -X GET search/issues -f "q=repo:${repo_slug} is:issue is:open BLOCKED_CHECKPOINT_ATTENTION in:comments" \
+		-f per_page=100 -f sort=created -f order=asc 2>/dev/null) || return 0
+	while IFS= read -r number; do
+		[[ "$number" =~ ^[1-9][0-9]*$ ]] || continue
+		_health_dashboard_optional_work_has_budget "${refresh_start_epoch:-0}" || break
+		comments=$(_health_checkpoint_comments "$repo_slug" "$number") || continue
+		evidence=$(jq -r --arg hours "$age_hours" '
+			[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")]
+			| . as $comments
+			| [ .[] | select((.body // "") | test("(?m)^BLOCKED_CHECKPOINT_ATTENTION pr=")) ]
+			| sort_by(.created_at, .id) | last // empty
+			| . as $attention
+			| select((now - (.created_at | fromdateiso8601)) > (($hours | tonumber) * 3600))
+			| (.body | capture("(?m)^BLOCKED_CHECKPOINT_ATTENTION pr=(?<pr>[0-9]+) head=[0-9a-fA-F]+ release_comment=(?<release>[0-9]+) attempt=(?<attempt>[A-Za-z0-9:_-]+)")) as $marker
+			| [$comments[] | select((.id | tostring) == $marker.release) | .body
+				| capture("(?m)^Terminal blocker: reason=(?<reason>[A-Za-z0-9_-]+) owner=(?<owner>[A-Za-z0-9_-]+)")?] | last // empty
+			| [$marker.pr, $marker.release, $marker.attempt, $attention.created_at, .reason, .owner] | @tsv' <<<"$comments" 2>/dev/null) || continue
+		[[ -n "$evidence" ]] || continue
+		IFS=$'\t' read -r pr release attempt created reason owner <<<"$evidence"
+		[[ "$pr" =~ ^[1-9][0-9]*$ && "$release" =~ ^[1-9][0-9]*$ ]] || continue
+		_health_dashboard_optional_work_has_budget "${refresh_start_epoch:-0}" || break
+		pr_json=$(gh api "repos/${repo_slug}/pulls/${pr}" 2>/dev/null) || continue
+		jq -e '.state == "open" and .draft == true' <<<"$pr_json" >/dev/null 2>&1 || continue
+		age=$(jq -nr --arg date "$created" '((now - ($date | fromdateiso8601)) / 3600 | floor)') || continue
+		rows+="${created}"$'\t'"${age}"$'\t'"${number}"$'\t'"${pr}"$'\t'"${release}"$'\t'"${attempt}"$'\t'"${reason}"$'\t'"${owner}"$'\n'
+	done < <(jq -r '.items[]?.number' <<<"$candidates" 2>/dev/null)
+	[[ -n "$rows" ]] || return 0
+	printf 'Aged blocked checkpoints (read-only; surfacing grants nothing). Resolve the blocker before generating an approval; alternatively close the draft. Runner capability releases may instead resume on a capable runner. This snapshot scans at most 100 candidate issues.\n\n'
+	printf '| Age | Issue | Draft PR | Reason | Owner | Exits |\n| --- | --- | --- | --- | --- | --- |\n'
+	while IFS=$'\t' read -r created age number pr release attempt reason owner; do
+		[[ -n "$created" ]] || continue
+		# Literal backticks delimit a displayed command, never execute it.
+		# shellcheck disable=SC2016
+		printf '| %sh | [#%s](https://github.com/%s/issues/%s) | [#%s](https://github.com/%s/pull/%s) | %s | %s | `pr-checkpoint-continuation-helper.sh approval-template %s %s %s %s %s` or close draft |\n' \
+			"$age" "$number" "$repo_slug" "$number" "$pr" "$repo_slug" "$pr" "$reason" "$owner" "$repo_slug" "$pr" "$number" "$release" "$attempt"
+	done < <(printf '%s' "$rows" | LC_ALL=C sort | jq -Rsc 'split("\n") | map(select(length > 0)) | .[0:10][]' -r)
 	return 0
 }

@@ -506,11 +506,175 @@ test_health_dashboard_slow_cross_repo_rates_are_bounded_once() {
 		rc=0
 		_refresh_health_repo_bounded owner/slow "$HOME" '' '' '' || rc=$?
 		[[ "$rc" -eq 124 ]] || exit 16
-		grep -q 'owner/slow (rc=124 stage=data-gather)' "$LOGFILE" || exit 17
+		grep -q 'owner/slow (rc=124 stage=data-gather elapsed=[0-9]*s timeout=1s)' "$LOGFILE" || exit 17
+		# GH#38631: a budget stop escalates the next budget; success resets it.
+		[[ "$(<"$(_health_schedule_cache_file owner/slow tester).timeouts")" == 1 ]] || exit 23
+		_HEALTH_WORK_DEADLINE=$(($(date +%s) + 8))
+		rc=0
+		_refresh_health_repo_bounded owner/slow "$HOME" '' '' '' || rc=$?
+		grep -q 'owner/slow (rc=124 stage=data-gather elapsed=[0-9]*s timeout=2s)' "$LOGFILE" || exit 24
+		_update_health_issue_for_repo() { return 0; }
+		_refresh_health_repo_bounded owner/slow "$HOME" '' '' '' || exit 25
+		[[ ! -f "$(_health_schedule_cache_file owner/slow tester).timeouts" ]] || exit 26
 	); then
 		pass "slow cross-repo rate collection is bounded once and leaves truthful render/stage evidence"
 	else
 		fail "slow cross-repo rate collection is bounded once and leaves truthful render/stage evidence" "fixture exit=$?"
+	fi
+	rm -rf "$batch_home"
+	return 0
+}
+
+test_idle_dashboard_lookup() {
+	local batch_home
+	batch_home=$(mktemp -d "${TMPDIR:-/tmp}/stats-health-idle.XXXXXX") || return 1
+	if (
+		export HOME="$batch_home" LOGFILE="$batch_home/stats.log"
+		local scripts="${SCRIPT_DIR}/.."
+		local SCRIPT_DIR="$scripts"
+		source "$scripts/shared-constants.sh"
+		source "$scripts/worker-lifecycle-common.sh"
+		source "$scripts/stats-functions.sh"
+		_resolve_health_runner_user() { printf 'tester\n'; return 0; }
+		_get_runner_role() { printf 'supervisor\n'; return 0; }
+		_dashboard_identity_aliases() { printf 'tester\ntester\n'; return 0; }
+		_scan_active_workers() { printf 'x\0%s\0' 0; return 0; }
+		gh_pr_list() { printf '0\n'; return 0; }
+		gh_issue_list() { printf '0\n'; return 0; }
+		_find_health_issue() { printf '%s\n' "${LOOKUP_RESULT:-}"; return 0; }
+		_resolve_health_issue_number() { printf '42\n'; return 0; }
+		_assemble_health_issue_body() { printf 'body\n'; return 0; }
+		_update_health_issue_body_or_fail() { printf '%s\n' "$1" >"$HOME/published"; return 0; }
+		_refresh_health_issue_title_from_body() { return 0; }
+		_run_health_issue_maintenance() { return 0; }
+		local cache stage="$HOME/stage" LOOKUP_RESULT=42
+		cache=$(_health_schedule_cache_file owner/repo tester)
+		_update_health_issue_for_repo owner/repo "$HOME" '' '' '' "$stage" || exit 1
+		[[ "$(<"$cache")" == 42 && "$(<"$HOME/published")" == 42 ]] || exit 2
+		[[ "$(<"${cache}.refresh-state")" == idle\|* ]] || exit 3
+		LOOKUP_RESULT="$_HEALTH_QUERY_FAILED_SENTINEL"
+		_update_health_issue_for_repo owner/failed "$HOME" '' '' '' "$stage" || exit 4
+		[[ "$(<"$stage")" == deferred-issue-resolution\|* ]] || exit 5
+		LOOKUP_RESULT=''
+		_update_health_issue_for_repo owner/absent "$HOME" '' '' '' "$stage" || exit 6
+		[[ "$(<"$stage")" == skipped-no-dashboard\|* ]] || exit 7
+	); then
+		pass "idle lookup refreshes existing dashboards and distinguishes lookup failures"
+	else
+		fail "idle lookup refreshes existing dashboards and distinguishes lookup failures" "fixture exit=$?"
+	fi
+	rm -rf "$batch_home"
+	return 0
+}
+
+test_health_recovery_lane_candidates() {
+	local batch_home
+	batch_home=$(mktemp -d "${TMPDIR:-/tmp}/stats-health-recovery.XXXXXX") || return 1
+	if (
+		export HOME="$batch_home" LOGFILE="$batch_home/stats.log"
+		local scripts="${SCRIPT_DIR}/.."
+		local SCRIPT_DIR="$scripts"
+		# shellcheck source=../shared-constants.sh
+		source "$scripts/shared-constants.sh"
+		# shellcheck source=../worker-lifecycle-common.sh
+		source "$scripts/worker-lifecycle-common.sh"
+		# shellcheck source=../stats-functions.sh
+		source "$scripts/stats-functions.sh"
+		# Recovery lane: at most one stale+failed repo follows the priority repo.
+		local c t entries ordered
+		mkdir -p "$HOME/.aidevops/logs"
+		t=$(date +%s)
+		for c in owner/p:0:0 owner/a:$((t - 200000)):$((t - 100)) owner/b:$((t - 300000)):$((t - 50)) owner/c:$((t - 100)):$((t - 100)); do
+			local rs ep at f
+			IFS=: read -r rs ep at <<<"$c"
+			f=$(_health_schedule_cache_file "$rs" tester)
+			printf 'ok|%s\n' "$ep" >"${f}.refresh-state"
+			printf '%s\n' "$at" >"${f}.attempt"
+		done
+		entries=$'owner/p|/p\nowner/c|/c\nowner/a|/a\nowner/b|/b'
+		ordered=$(_apply_health_recovery_lane "$entries" tester | cut -d'|' -f1 | tr '\n' ' ')
+		[[ "$ordered" == 'owner/p owner/b owner/c owner/a ' ]] || exit 18
+		if _health_repo_needs_recovery owner/c tester >/dev/null; then exit 19; fi
+		local aged
+		aged=$(_health_schedule_cache_file owner/aged tester)
+		printf 'ok|%s\n' "$((t - 90000))" >"${aged}.refresh-state"
+		printf '%s\n' "$((t - 90000))" >"${aged}.attempt"
+		entries=$'owner/p|/p\nowner/c|/c\nowner/aged|/aged'
+		ordered=$(_apply_health_recovery_lane "$entries" tester)
+		[[ "$(_health_recovery_slug "$ordered" tester)" == owner/aged ]] || exit 22
+		# Attempted but never refreshed (no .refresh-state) is recovered first.
+		local nf
+		nf=$(_health_schedule_cache_file owner/n tester)
+		rm -f "${nf}.refresh-state"
+		printf '%s\n' "$((t - 10))" >"${nf}.attempt"
+		entries=$'owner/p|/p\nowner/c|/c\nowner/a|/a\nowner/n|/n'
+		ordered=$(_apply_health_recovery_lane "$entries" tester | cut -d'|' -f1 | tr '\n' ' ')
+		[[ "$ordered" == 'owner/p owner/n owner/c owner/a ' ]] || exit 20
+		[[ "$(_health_recovery_slug $'owner/p|/p\nowner/n|/n' tester)" == owner/n ]] || exit 21
+		# A genuinely skipped idle repo must not eclipse a three-day stale dashboard,
+		# including after another skipped attempt.
+		local idle stale
+		idle=$(_health_schedule_cache_file owner/idle tester)
+		stale=$(_health_schedule_cache_file owner/stale tester)
+		printf 'idle|%s\n' "$((t - 259200))" >"${stale}.refresh-state"
+		for c in 1 2; do
+			printf '%s\n' "$t" >"${idle}.attempt"
+			printf 'skipped-no-dashboard|%s\n' "$t" >"${idle}.stage"
+			if _health_repo_needs_recovery owner/idle tester >/dev/null; then exit 27; fi
+			entries=$'owner/p|/p\nowner/idle|/idle\nowner/stale|/stale'
+			ordered=$(_apply_health_recovery_lane "$entries" tester)
+			[[ "$(_health_recovery_slug "$ordered" tester)" == owner/stale ]] || exit 28
+		done
+		# Once lookup finds a dashboard, an old skipped stage must not hide it.
+		printf '42\n' >"$idle"
+		[[ "$(_health_repo_needs_recovery owner/idle tester)" == 0 ]] || exit 29
+		# An interval deferral (cache later lost) stays recovery-eligible once aged.
+		local lost
+		lost=$(_health_schedule_cache_file owner/lost tester)
+		printf 'idle|%s\n' "$((t - 259200))" >"${lost}.refresh-state"
+		printf 'skipped-idle|%s\n' "$t" >"${lost}.stage"
+		[[ "$(_health_repo_needs_recovery owner/lost tester)" == "$((t - 259200))" ]] || exit 30
+	); then
+		pass "recovery lane promotes stale-failed and never-refreshed repos, one per cycle"
+	else
+		fail "recovery lane promotes stale-failed and never-refreshed repos, one per cycle" "fixture exit=$?"
+	fi
+	rm -rf "$batch_home"
+	return 0
+}
+
+test_health_priority_backoff() {
+	local batch_home
+	batch_home=$(mktemp -d "${TMPDIR:-/tmp}/stats-health-priority.XXXXXX") || return 1
+	if (
+		export HOME="$batch_home" LOGFILE="$batch_home/stats.log"
+		local scripts="${SCRIPT_DIR}/.."
+		local SCRIPT_DIR="$scripts" _HEALTH_SCHEDULE_RUNNER=tester
+		source "$scripts/shared-constants.sh"
+		source "$scripts/worker-lifecycle-common.sh"
+		source "$scripts/stats-functions.sh"
+		_refresh_health_repo_bounded() { printf 'attempt\n' >>"$HOME/calls"; return 1; }
+		local i result slug
+		for i in 1 2 3; do
+			result=0
+			slug=$(_refresh_priority_health_issue 'owner/p|/p') || result=$?
+			[[ "$result" -eq 1 && "$slug" == owner/p ]] || exit 1
+		done
+		result=0
+		slug=$(_refresh_priority_health_issue 'owner/p|/p') || result=$?
+		[[ "$result" -eq 75 && "$slug" == owner/p ]] || exit 2
+		[[ "$(wc -l <"$HOME/calls" | tr -d ' ')" -eq 3 ]] || exit 3
+		result=0
+		_refresh_priority_health_issue 'owner/p|/p' >/dev/null || result=$?
+		[[ "$result" -eq 1 && "$(wc -l <"$HOME/calls" | tr -d ' ')" -eq 4 ]] || exit 4
+		_refresh_health_repo_bounded() { return 0; }
+		_refresh_priority_health_issue 'owner/p|/p' >/dev/null || [[ "$?" -eq 75 ]] || exit 5
+		_refresh_priority_health_issue 'owner/p|/p' >/dev/null || exit 6
+		[[ ! -f "$(_health_schedule_cache_file owner/p tester).priority-backoff" ]] || exit 7
+	); then
+		pass "priority failures back off alternate cycles until success"
+	else
+		fail "priority failures back off alternate cycles until success" "fixture exit=$?"
 	fi
 	rm -rf "$batch_home"
 	return 0
@@ -582,6 +746,9 @@ main_test() {
 	test_quality_sweep_publishes_completed_tools_after_timeout
 	test_quality_sweep_expired_budget_retries_and_publishes
 	test_health_dashboard_slow_cross_repo_rates_are_bounded_once
+	test_idle_dashboard_lookup
+	test_health_recovery_lane_candidates
+	test_health_priority_backoff
 	test_health_dashboard_reserves_publication_time_from_history
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]

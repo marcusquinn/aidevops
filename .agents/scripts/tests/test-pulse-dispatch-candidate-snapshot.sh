@@ -27,7 +27,7 @@ source "${SCRIPT_DIR}/pulse-dispatch-engine.sh"
 # the builder is stubbed below; the subshell contains the repo-fetch stubs.
 ranking_order=$(
 	REPOS_JSON="${TEST_ROOT}/repos.json"
-	printf '%s\n' '{"initialized_repos":[{"slug":"owner/repo","path":"/tmp/repo","pulse":true,"priority":"tooling"}]}' >"$REPOS_JSON"
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/repo","path":"/tmp","pulse":true,"priority":"tooling"}]}' >"$REPOS_JSON"
 	check_repo_pulse_schedule() { return 0; }
 	check_repo_pulse_interval() { return 0; }
 	update_repo_pulse_timestamp() { return 0; }
@@ -96,10 +96,10 @@ third=$(_dispatch_ranked_candidates_json 50)
 	exit 1
 }
 
-PULSE_RUNNABLE_ISSUE_LIMIT=50
+# Cleanup follows the census key, not the runnable-count sample size.
 triage_marker=$(_dispatch_cycle_cache_path "pulse-triage-prepass" ".done")
 printf 'done\n' >"$triage_marker"
-_dispatch_cleanup_cycle_cache
+PULSE_RUNNABLE_ISSUE_LIMIT=7 PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT=50 _dispatch_cleanup_cycle_cache
 [[ ! -e "$normalize_snapshot_file" && ! -e "$skip_snapshot_file" && ! -e "$triage_marker" ]] || {
 	printf 'FAIL cycle cache cleanup left candidate or triage artifacts behind\n' >&2
 	exit 1
@@ -120,6 +120,433 @@ fifth=$(_dispatch_ranked_candidates_json 50)
 # A small runnable-count diagnostic sample must not limit dispatch scanning.
 # Three benignly blocked candidates must not hide a later eligible candidate.
 unset PULSE_DISPATCH_CANDIDATE_SNAPSHOT_ENABLED
+(
+	_PULSE_CYCLE_ID="ranked-continuation"
+	PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT=50
+	dependency_normalization_mode=normalize
+	snapshot=$(_dispatch_candidate_snapshot_path 50)
+	now=$(date +%s)
+	jq -nc --argjson now "$now" '{captured_at:($now-180),census_seconds:300,candidates:[{number:1,repo_slug:"o/r"},{number:2,repo_slug:"o/r"},{number:3,repo_slug:"o/r"}]}' >"$snapshot"
+	_dispatch_ranked_candidate_consumed '{"number":1,"repo_slug":"o/r"}'
+	remaining=$(_dispatch_ranked_candidates_json 50)
+	[[ "$(jq -r '[.[].number]|join(",")' <<<"$remaining")" == '2,3' ]]
+	_dispatch_ranked_candidate_consumed '{"number":2,"repo_slug":"o/r"}'
+	_dispatch_ranked_candidate_consumed '{"number":3,"repo_slug":"o/r"}'
+	build_ranked_dispatch_candidates_json() {
+		printf '%s\n' '[{"number":1,"repo_slug":"o/r"},{"number":4,"repo_slug":"o/r"}]'
+		return 0
+	}
+	refreshed=$(_dispatch_ranked_candidates_json 50)
+	[[ "$(jq -r '[.[].number]|join(",")' <<<"$refreshed")" == 4 && -f "${snapshot}.consumed" ]]
+	_dispatch_cleanup_cycle_cache 50
+)
+printf 'PASS ranked refills continue beyond 120 seconds, consume once, and re-census on exhaustion\n'
+
+# GH#38876: later rounds of a cycle reuse the full census past its base window
+# while the unconsumed tail fills the free slots; a short tail or the 0 opt-out
+# re-censuses, an unavailable re-census keeps the known tail, and the GH#38211
+# runnable gate agrees with the dispatch path.
+(
+	_PULSE_CYCLE_ID="extended-reuse"
+	PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT=50
+	unset PULSE_DISPATCH_CANDIDATE_REUSE_MIN_S
+	_dispatch_enumeration_expected_seconds() { printf '300\n'; return 0; }
+	snapshot=$(_dispatch_candidate_snapshot_path 50)
+	census_calls="${TEST_ROOT}/extended-reuse-calls"
+	build_ranked_dispatch_candidates_json() {
+		printf 'call\n' >>"$census_calls"
+		printf '%s\n' '[{"number":9,"repo_slug":"o/r"}]'
+		return 0
+	}
+	write_aged_snapshot() {
+		local age="$1" now=""
+		now=$(date +%s)
+		jq -nc --argjson now "$now" --argjson age "$age" \
+			'{captured_at:($now-$age),census_seconds:180,candidates:[{number:1,repo_slug:"o/r"},{number:2,repo_slug:"o/r"},{number:3,repo_slug:"o/r"}]}' >"$snapshot"
+		rm -f "${snapshot}.consumed"
+		: >"$census_calls"
+		return 0
+	}
+	numbers() { jq -r '[.[].number]|join(",")' <<<"$1"; return 0; }
+	write_aged_snapshot 600
+	[[ "$(_dispatch_snapshot_runnable_count)" == "3 0:normalize" ]]
+	served=$(_PULSE_FIRST_WAVE_CANDIDATE_TARGET=3 _dispatch_ranked_candidates_json 50)
+	[[ "$(numbers "$served")" == '1,2,3' && ! -s "$census_calls" ]]
+	write_aged_snapshot 600
+	short=$(_PULSE_FIRST_WAVE_CANDIDATE_TARGET=4 _dispatch_ranked_candidates_json 50)
+	[[ "$(numbers "$short")" == 9 && -s "$census_calls" ]]
+	grep -q 'snapshot tail=3 below target=4' "$LOGFILE"
+	write_aged_snapshot 100
+	base=$(_PULSE_FIRST_WAVE_CANDIDATE_TARGET=4 _dispatch_ranked_candidates_json 50)
+	[[ "$(numbers "$base")" == '1,2,3' && ! -s "$census_calls" ]]
+	write_aged_snapshot 600
+	build_ranked_dispatch_candidates_json() { printf 'call\n' >>"$census_calls"; return 1; }
+	kept=$(_PULSE_FIRST_WAVE_CANDIDATE_TARGET=4 _dispatch_ranked_candidates_json 50)
+	[[ "$(numbers "$kept")" == '1,2,3' && -s "$census_calls" ]]
+	write_aged_snapshot 600
+	if PULSE_DISPATCH_CANDIDATE_REUSE_MIN_S=0 _dispatch_snapshot_runnable_count >/dev/null; then exit 1; fi
+	if PULSE_DISPATCH_CANDIDATE_REUSE_MIN_S=0 _PULSE_FIRST_WAVE_CANDIDATE_TARGET=3 _dispatch_ranked_candidates_json 50 >/dev/null; then exit 1; fi
+	[[ -s "$census_calls" ]]
+	_dispatch_cleanup_cycle_cache 50
+)
+printf 'PASS in-cycle census reuse extends past the base window only while its tail fills free slots (GH#38876)\n'
+
+(
+	_PULSE_FIRST_DISPATCH_WAVE=1
+	PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT=50
+	REPOS_JSON="${TEST_ROOT}/partial-repos.json"
+	printf '{"initialized_repos":[{"slug":"o/product","path":"/tmp","pulse":true}]}\n' >"$REPOS_JSON"
+	scheduled=1
+	check_repo_pulse_schedule() {
+		[[ "$scheduled" == 1 ]] && return 0
+		return 1
+	}
+	_dispatch_enumeration_expected_seconds() { printf '300\n'; return 0; }
+	build_ranked_dispatch_candidates_json() {
+		jq -nc '[range(1;3) | {number:.,repo_slug:"o/product",repo_path:"/tmp",product_discovery_complete:false}]'
+		return 0
+	}
+	initial=$(_dispatch_ranked_candidates_json 50 skip)
+	[[ "$(scheduled=0 _dispatch_filter_partial_snapshot_candidates "$initial")" == '[]' ]]
+	jq '.initialized_repos[0].maintenance = false' "$REPOS_JSON" >"${REPOS_JSON}.test"
+	[[ "$(REPOS_JSON="${REPOS_JSON}.test" _dispatch_filter_partial_snapshot_candidates "$initial")" == '[]' ]]
+	jq '.initialized_repos[0].path = "/moved"' "$REPOS_JSON" >"${REPOS_JSON}.test"
+	[[ "$(REPOS_JSON="${REPOS_JSON}.test" _dispatch_filter_partial_snapshot_candidates "$initial")" == '[]' ]]
+	partial=$(_dispatch_candidate_snapshot_path 50 skip)
+	_dispatch_ranked_candidate_consumed '{"number":1,"repo_slug":"o/product"}'
+	# Refill-only invalidation precedes dispatch admission. It must clear the
+	# ordinary cache without losing the durable queue or its attempt ledger.
+	for mode in normalize skip; do
+		normal=$(_PULSE_FIRST_DISPATCH_WAVE=0 _dispatch_candidate_snapshot_path 50 "$mode")
+		cp "$partial" "$normal"
+		cp "${partial}.consumed" "${normal}.consumed"
+	done
+	_dispatch_invalidate_candidate_snapshot event_refill 50
+	for mode in normalize skip; do
+		normal=$(_PULSE_FIRST_DISPATCH_WAVE=0 _dispatch_candidate_snapshot_path 50 "$mode")
+		[[ ! -f "$normal" && ! -f "${normal}.consumed" ]]
+	done
+	[[ -f "$partial" && -f "${partial}.consumed" ]]
+	remaining=$(_dispatch_ranked_candidates_json 50 skip)
+	jq -e 'length == 1 and .[0].number == 2' <<<"$remaining" >/dev/null
+	_dispatch_cleanup_cycle_cache 50
+	_PULSE_CYCLE_ID="partial-next-cycle"
+	remaining=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	jq -e 'length == 1 and .[0].number == 2 and .[0].product_discovery_complete == false' <<<"$remaining" >/dev/null
+	_dispatch_ranked_candidate_consumed '{"number":2,"repo_slug":"o/product"}'
+	# Rebuilding an exhausted queue retains its original attempt-ledger expiry.
+	jq '.captured_at -= 10' "$partial" >"${partial}.test"
+	mv "${partial}.test" "$partial"
+	captured=$(jq -r '.captured_at' "$partial")
+	[[ "$(_dispatch_ranked_candidates_json 50 skip)" == '[]' ]]
+	[[ "$(jq -r '.captured_at' "$partial")" == "$captured" ]]
+	# GH#38200: that rebuild was a scan; census timing must not log it as a
+	# snapshot read just because the ledger expiry kept the old capture time.
+	enumerated=$(jq -r '.enumerated_at' "$partial")
+	[[ "$enumerated" =~ ^[0-9]+$ ]]
+	((enumerated > captured))
+	if _dispatch_enumeration_served_snapshot 50 skip "$((enumerated * 1000))"; then exit 1; fi
+	_dispatch_enumeration_served_snapshot 50 skip "$(((enumerated + 1) * 1000))"
+	jq '.captured_at = 0' "$partial" >"${partial}.test"
+	mv "${partial}.test" "$partial"
+	refreshed=$(_dispatch_ranked_candidates_json 50 skip)
+	[[ "$refreshed" == "$initial" && ! -f "${partial}.consumed" ]]
+	_dispatch_ranked_candidate_consumed '{"number":1,"repo_slug":"o/product"}'
+	_dispatch_invalidate_candidate_snapshot partial_state_changed 50
+	[[ ! -f "$partial" && ! -f "${partial}.consumed" ]]
+)
+printf 'PASS durable partial snapshots preserve attempts across cycles, expire without renewing consumed work, and invalidate on mutation\n'
+
+# GH#38048: a cooperatively drained cycle hands its full census and attempt
+# ledger to the activated bundle's first wave instead of deleting them.
+(
+	PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT=50
+	LOCKDIR="${TEST_ROOT}/drain-lock"
+	REPOS_JSON="${TEST_ROOT}/handoff-repos.json"
+	builds="${TEST_ROOT}/handoff-builds"
+	stats="${TEST_ROOT}/handoff-stats"
+	printf '{"initialized_repos":[{"slug":"o/product","path":"/tmp","pulse":true}]}\n' >"$REPOS_JSON"
+	check_repo_pulse_schedule() { return 0; }
+	_dispatch_enumeration_expected_seconds() { printf '300\n'; return 0; }
+	pulse_stats_increment() {
+		local counter="$1"
+		printf '%s\n' "$counter" >>"$stats"
+		return 0
+	}
+	build_ranked_dispatch_candidates_json() {
+		printf 'scan\n' >>"$builds"
+		jq -nc '[range(1;4) | {number:.,repo_slug:"o/product",repo_path:"/tmp"}]'
+		return 0
+	}
+	request_drain() {
+		local owner="$1"
+		mkdir -p "$LOCKDIR"
+		printf 'owner=%s\nbundle=bundle-next\n' "$owner" >"${LOCKDIR}/drain_requested"
+		return 0
+	}
+	write_handoff() {
+		local target="$1" schema="$2" age="$3" issues="$4" now=""
+		now=$(date +%s)
+		jq -nc --arg schema "$schema" --argjson captured "$((now - age))" --arg issues "$issues" \
+			'{schema:$schema,captured_at:$captured,census_seconds:300,candidates:[$issues | split(",")[] | {number:tonumber,repo_slug:"o/product",repo_path:"/tmp"}]}' >"$target"
+		return 0
+	}
+	numbers() {
+		local candidates="$1"
+		jq -r '[.[].number] | join(",")' <<<"$candidates"
+		return 0
+	}
+	handoff=$(_dispatch_candidate_handoff_path 50)
+	skip_handoff=$(_dispatch_candidate_handoff_path 50 skip)
+	partial=$(_PULSE_FIRST_DISPATCH_WAVE=1 _dispatch_candidate_snapshot_path 50 skip)
+
+	# GH#38908: without a drain (a marker naming another lock owner is not
+	# this cycle's drain) a lock holder still hands its census to the next
+	# process, stamped with the full-cycle reuse window. An exhausted census
+	# is not handed on, and a process past lock release only deletes its own.
+	_PULSE_CYCLE_ID="unlocked-cycle"
+	_LOCK_OWNED=false
+	_dispatch_ranked_candidates_json 50 >/dev/null
+	full=$(_dispatch_candidate_snapshot_path 50)
+	_dispatch_cleanup_cycle_cache 50
+	[[ ! -e "$full" && ! -e "$handoff" ]]
+	_PULSE_CYCLE_ID="undrained-cycle"
+	_LOCK_OWNED=true
+	_dispatch_ranked_candidates_json 50 >/dev/null
+	full=$(_dispatch_candidate_snapshot_path 50)
+	request_drain 1
+	_dispatch_cleanup_cycle_cache 50
+	[[ ! -e "$full" && -f "$handoff" ]]
+	jq -e '.reuse_window == 1200 and (.handed_off_at | type) == "number"' "$handoff" >/dev/null
+	grep -q 'handed to next dispatch process: bundle=next-process mode=normalize transfer=move' "$LOGFILE"
+	_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
+	_PULSE_CYCLE_ID="exhausted-cycle"
+	_dispatch_ranked_candidates_json 50 >/dev/null
+	full=$(_dispatch_candidate_snapshot_path 50)
+	for issue in 1 2 3; do
+		_dispatch_ranked_candidate_consumed "{\"number\":$issue,\"repo_slug\":\"o/product\"}"
+	done
+	_dispatch_cleanup_cycle_cache 50
+	[[ ! -e "$full" && ! -e "${full}.consumed" && ! -e "$handoff" ]]
+	# A cycle that keeps dispatching after lock release (early-exit recycle)
+	# shares a copy with its ledger and keeps its own census and ledger.
+	_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
+	_PULSE_CYCLE_ID="sharing-cycle"
+	_dispatch_ranked_candidates_json 50 >/dev/null
+	full=$(_dispatch_candidate_snapshot_path 50)
+	_dispatch_ranked_candidate_consumed '{"number":1,"repo_slug":"o/product"}'
+	_dispatch_share_cycle_census 50
+	[[ -f "$full" && -f "${full}.consumed" && -f "$handoff" && -f "${handoff}.consumed" ]]
+	cmp -s "${full}.consumed" "${handoff}.consumed"
+	jq -e '.reuse_window == 1200' "$handoff" >/dev/null
+	grep -q 'mode=normalize transfer=copy' "$LOGFILE"
+	_LOCK_OWNED=false
+	_dispatch_cleanup_cycle_cache 50
+	[[ ! -e "$full" && ! -e "${full}.consumed" && -f "$handoff" && -f "${handoff}.consumed" ]]
+	_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
+
+	_PULSE_CYCLE_ID="drained-cycle"
+	_dispatch_ranked_candidates_json 50 >/dev/null
+	full=$(_dispatch_candidate_snapshot_path 50)
+	_dispatch_ranked_candidate_consumed '{"number":1,"repo_slug":"o/product"}'
+	request_drain "$$"
+	_dispatch_cleanup_cycle_cache 50
+	[[ ! -e "$full" && ! -e "${full}.consumed" && -f "$handoff" && -f "${handoff}.consumed" ]]
+	[[ "$(jq -r '.schema' "$handoff")" == "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" ]]
+	# GH#38210: the handoff records when it left the drained cycle.
+	jq -e '(.handed_off_at | type) == "number" and .handed_off_at >= .captured_at' "$handoff" >/dev/null
+	rm -rf "$LOCKDIR"
+
+	# A full round of the activated bundle scans for itself; a freed slot
+	# keeps the handoff for the first wave.
+	_PULSE_CYCLE_ID="activated-cycle"
+	: >"$builds"
+	_dispatch_ranked_candidates_json 50 >/dev/null
+	_dispatch_invalidate_candidate_snapshot event_refill 50
+	[[ -s "$builds" && -f "$handoff" ]]
+
+	# The first wave serves the unattempted remainder without a scan.
+	: >"$builds"
+	: >"$stats"
+	remainder=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	[[ "$(numbers "$remainder")" == '2,3' && ! -s "$builds" ]]
+	[[ ! -e "$handoff" && ! -e "${handoff}.consumed" && -f "$partial" && -f "${partial}.consumed" ]]
+	grep -qx 'dispatch_candidate_handoff_adopted' "$stats"
+	grep -qx 'dispatch_candidate_snapshot_hit' "$stats"
+	# GH#38226: the reported 107-candidate census survives activation intact;
+	# its next first wave serves all candidates without another repository scan.
+	_dispatch_invalidate_candidate_snapshot large_handoff_fixture 50
+	write_handoff "$handoff" "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" 0 "$(jq -nr '[range(1;108)] | join(",")')"
+	: >"$builds"
+	retained=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	jq -e 'length == 107 and .[0].number == 1 and .[106].number == 107' <<<"$retained" >/dev/null
+	[[ ! -s "$builds" ]]
+
+	# Past its reuse window, or in another snapshot format, a handoff is
+	# removed unserved and the wave scans.
+	for fixture in "${_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA}|301" 'other/v0|0'; do
+		_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
+		write_handoff "$handoff" "${fixture%%|*}" "${fixture##*|}" 9
+		: >"$builds"
+		scanned=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+		[[ "$(numbers "$scanned")" == '1,2,3' && -s "$builds" && ! -e "$handoff" ]]
+	done
+
+	# GH#38210: a census captured census_seconds + 1800s ago is adopted while
+	# its handoff is inside the reuse window and its capture is inside twice
+	# that window. A handoff past either bound is removed unserved.
+	write_handed_off() {
+		local target="$1" captured_age="$2" handed_age="$3" issues="$4" now=""
+		now=$(date +%s)
+		jq -nc --arg schema "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" --argjson captured "$((now - captured_age))" \
+			--argjson handed "$((now - handed_age))" --arg issues "$issues" \
+			'{schema:$schema,captured_at:$captured,handed_off_at:$handed,census_seconds:2000,candidates:[$issues | split(",")[] | {number:tonumber,repo_slug:"o/product",repo_path:"/tmp"}]}' >"$target"
+		return 0
+	}
+	_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
+	write_handed_off "$handoff" 3800 1000 5,6
+	: >"$builds"
+	: >"$stats"
+	adopted=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	[[ "$(numbers "$adopted")" == '5,6' && ! -s "$builds" && ! -e "$handoff" ]]
+	grep -qx 'dispatch_candidate_handoff_adopted' "$stats"
+	# The adopted census keeps serving later waves of the same window.
+	_dispatch_ranked_candidate_consumed '{"number":5,"repo_slug":"o/product"}'
+	later=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	[[ "$(numbers "$later")" == '6' && ! -s "$builds" ]]
+	# Exhaustion/refill keeps the original census duration and handoff window,
+	# even when the replacement enumeration is much faster than the census.
+	metadata=$(jq -c '{captured_at,handed_off_at,census_seconds}' "$partial")
+	_dispatch_ranked_candidate_consumed '{"number":6,"repo_slug":"o/product"}'
+	refilled=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	[[ "$(numbers "$refilled")" == '1,2,3' && "$(wc -l <"$builds" | tr -d ' ')" == 1 ]]
+	[[ "$(jq -c '{captured_at,handed_off_at,census_seconds}' "$partial")" == "$metadata" ]]
+	_dispatch_ranked_candidate_consumed '{"number":1,"repo_slug":"o/product"}'
+	later=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	[[ "$(numbers "$later")" == '2,3' && "$(wc -l <"$builds" | tr -d ' ')" == 1 ]]
+	jq -e 'length == 3' < <(jq -s . "${partial}.consumed") >/dev/null
+	for fixture in '4001|100' '2100|2001' '100|200'; do
+		_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
+		write_handed_off "$handoff" "${fixture%%|*}" "${fixture##*|}" 5,6
+		: >"$builds"
+		: >"$stats"
+		scanned=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+		[[ "$(numbers "$scanned")" == '1,2,3' && -s "$builds" && ! -e "$handoff" ]]
+		grep -qx 'dispatch_candidate_handoff_discarded' "$stats"
+	done
+
+	# GH#38908: a handoff stamped with its full-cycle reuse window (1200s) is
+	# adopted past the 300s base window, keeps serving later waves of that
+	# window, and is still discarded past it or with an out-of-range stamp.
+	write_reuse_handoff() {
+		local target="$1" captured_age="$2" handed_age="$3" window="$4" now=""
+		now=$(date +%s)
+		jq -nc --arg schema "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" --argjson captured "$((now - captured_age))" \
+			--argjson handed "$((now - handed_age))" --argjson window "$window" \
+			'{schema:$schema,captured_at:$captured,handed_off_at:$handed,census_seconds:200,reuse_window:$window,candidates:[{number:5,repo_slug:"o/product",repo_path:"/tmp"},{number:6,repo_slug:"o/product",repo_path:"/tmp"}]}' >"$target"
+		return 0
+	}
+	_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
+	write_reuse_handoff "$handoff" 1500 900 1200
+	: >"$builds"
+	: >"$stats"
+	adopted=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	[[ "$(numbers "$adopted")" == '5,6' && ! -s "$builds" && ! -e "$handoff" ]]
+	grep -qx 'dispatch_candidate_handoff_adopted' "$stats"
+	_dispatch_ranked_candidate_consumed '{"number":5,"repo_slug":"o/product"}'
+	later=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	[[ "$(numbers "$later")" == '6' && ! -s "$builds" ]]
+	for fixture in '1500|1300|1200' '2500|900|1200' '1500|900|7200'; do
+		IFS='|' read -r captured_age handed_age window <<<"$fixture"
+		_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
+		write_reuse_handoff "$handoff" "$captured_age" "$handed_age" "$window"
+		: >"$builds"
+		: >"$stats"
+		scanned=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+		[[ "$(numbers "$scanned")" == '1,2,3' && -s "$builds" && ! -e "$handoff" ]]
+		grep -qx 'dispatch_candidate_handoff_discarded' "$stats"
+	done
+
+	# A normalize round never takes a census that skipped dependency
+	# normalization; a skip round does. A mutation discards an unadopted one.
+	_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
+	write_handoff "$skip_handoff" "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" 0 7
+	normalized=$(_dispatch_bounded_ranked_candidates_json 50 normalize 180)
+	[[ "$(numbers "$normalized")" == '1,2,3' && -f "$skip_handoff" ]]
+	skipped=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	[[ "$(numbers "$skipped")" == '7' && ! -e "$skip_handoff" ]]
+	# Production callers pass no limit: the default is the census key.
+	write_handoff "$handoff" "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" 0 8
+	PULSE_RUNNABLE_ISSUE_LIMIT=7 _dispatch_invalidate_candidate_snapshot label_maintenance_complete
+	[[ ! -e "$handoff" && ! -e "$partial" ]]
+
+	# Attempts the drained cycle's first wave recorded in a still-fresh durable
+	# snapshot stay consumed after adoption; an expired snapshot's lapse.
+	for fixture in '0|8' '301|7,8'; do
+		_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
+		write_handoff "$partial" "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" "${fixture%%|*}" 7
+		_dispatch_ranked_candidate_consumed '{"number":7,"repo_slug":"o/product"}'
+		write_handoff "$handoff" "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" 0 7,8
+		: >"$builds"
+		merged=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+		[[ "$(numbers "$merged")" == "${fixture##*|}" && ! -s "$builds" && ! -e "$handoff" ]]
+	done
+
+	# A census whose attempt ledger cannot be installed is not adopted.
+	_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
+	write_handoff "$handoff" "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" 0 9
+	printf '["o/product",9]\n' >"${handoff}.consumed"
+	mv() {
+		local target="${!#}"
+		[[ "$target" != "${partial}.consumed" ]] || return 1
+		command mv "$@"
+		return $?
+	}
+	: >"$builds"
+	scanned=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	unset -f mv
+	[[ "$(numbers "$scanned")" == '1,2,3' && -s "$builds" && ! -e "$handoff" && ! -e "${handoff}.consumed" ]]
+	grep -q 'handoff discarded: reason=transfer_failed' "$LOGFILE"
+)
+printf 'PASS drained cycles hand a full census and its attempt ledger to the next first wave; stale, foreign-format, wrong-mode and untransferable handoffs are not served\n'
+
+(
+	claim_comments='[{"id":41,"author_association":"OWNER","created_at":"2026-11-12T05:00:00Z","updated_at":"2026-11-12T05:00:00Z","body":"Dispatching worker"}]'
+	gh() {
+		local query="" arg=""
+		while (($#)); do
+			arg="$1"; shift
+			if [[ "$arg" == --jq ]]; then query="$1"; shift; fi
+		done
+		jq -c "$query" <<<"$claim_comments"
+		return 0
+	}
+	_dispatch_claim_cache_record 41 o/r 'TTL: 100s remaining'
+	_dispatch_claim_cache_hit 41 o/r
+	# A different cycle can use the persisted evidence, not the cycle ledger.
+	_PULSE_CYCLE_ID="claim-cache-next-cycle"
+	_dispatch_claim_cache_hit 41 o/r
+	claim_comments=$(jq '.[0].updated_at="2026-11-12T05:01:00Z"' <<<"$claim_comments")
+	if _dispatch_claim_cache_hit 41 o/r; then exit 1; fi
+	claim_comments=$(jq '.[0].id=42' <<<"$claim_comments")
+	if _dispatch_claim_cache_hit 41 o/r; then exit 1; fi
+	_dispatch_claim_cache_record 41 o/r 'TTL: 100s remaining'
+	claim_comments=$(jq '. + [{id:43,author_association:"OWNER",created_at:"2026-11-12T05:02:00Z",body:"CLAIM_RELEASED"}]' <<<"$claim_comments")
+	if _dispatch_claim_cache_hit 41 o/r; then exit 1; fi
+	claim_comments='[{"id":44,"author_association":"NONE","body":"Dispatching worker"}]'
+	if _dispatch_claim_cache_hit 41 o/r; then exit 1; fi
+	claim_comments='[]'
+	if _dispatch_claim_cache_hit 41 o/r; then exit 1; fi
+	cache_path=$(_dispatch_negative_cache_path 41 o/r)
+	jq '.expires=1' "${cache_path}.claim" >"${cache_path}.test"
+	mv "${cache_path}.test" "${cache_path}.claim"
+	if _dispatch_claim_cache_hit 41 o/r; then exit 1; fi
+	_dispatch_claim_cache_record 42 o/r 'no verifiable expiry'
+	cache_path=$(_dispatch_negative_cache_path 42 o/r)
+	[[ ! -f "${cache_path}.claim" ]]
+)
+printf 'PASS durable claim cache expires and wakes on changed, released, missing or untrusted evidence\n'
+
 _PULSE_CYCLE_ID="test-cycle-stale-candidate-snapshot"
 fresh=$(_dispatch_ranked_candidates_json 50)
 snapshot=$(_dispatch_candidate_snapshot_path 50)

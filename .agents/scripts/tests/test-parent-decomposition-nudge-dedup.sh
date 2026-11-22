@@ -127,7 +127,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AGENTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$AGENTS_DIR/.." && pwd)"
 PARENT_RECONCILE="$SCRIPT_DIR/pulse-issue-reconcile-parent.sh"
-RECONCILE_ACTIONS="$SCRIPT_DIR/pulse-issue-reconcile-actions.sh"
+RECONCILE_ACTIONS="$("$SCRIPT_DIR/tests/pira-combined-source.sh")"
 SYNC_COMPOSE="$SCRIPT_DIR/issue-sync-lib-compose.sh"
 
 for f in "$PARENT_RECONCILE" "$RECONCILE_ACTIONS" "$SYNC_COMPOSE"; do
@@ -180,9 +180,11 @@ assert_grep_fixed \
 
 # --- _compute_parent_nudge_age_hours (actions module) ---
 
+# The first-match selector is `sed -n '1p'` (equivalent to head -n1 but
+# without SIGPIPE on early exit; GH#38185 refreshed this stale assertion).
 assert_grep_fixed \
-	"5: nudge-age helper uses streaming + head -n1" \
-	'| head -n1) || nudge_created_at=""' \
+	"5: nudge-age helper uses streaming + first-line select" \
+	"| sed -n '1p') || nudge_created_at=\"\"" \
 	"$RECONCILE_ACTIONS"
 
 assert_grep_fixed \

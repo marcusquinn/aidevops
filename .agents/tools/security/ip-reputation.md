@@ -161,7 +161,7 @@ Results cached in SQLite (`~/.cache/ip-reputation/cache.db`) with per-provider T
 ## Scoring Algorithm
 
 1. Each provider returns a score (0–100) and `is_listed` flag
-2. Unified score = weighted average across responding providers
+2. Unified score = mean of scores across responding providers
 3. Boost applied if 2+ providers agree on listing (+10) or 3+ agree (+15)
 4. Final risk level determined by unified score thresholds
 

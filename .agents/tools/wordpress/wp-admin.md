@@ -145,6 +145,8 @@ Premium plugins stuck on old versions (GPLVault, inactive plugins, vendor channe
 2. Transfer, extract, import database
 3. `wp search-replace` + update `wp-config.php`
 
+Multisite moving to its own domain (path and `COOKIE_DOMAIN` pitfalls): `wp-multisite-domain-move.md`.
+
 ## Security Checklist
 
 Before bulk operations:
@@ -163,6 +165,8 @@ Read-only audit method observed with WordPress 7.1.3 in October 2026; recheck in
    ```bash
    grep -rEn --include='*.php' 'wp_get_image_editor|wp_generate_attachment_metadata|wp_create_image_subsizes|media_handle_upload|media_handle_sideload|new \\?Imagick' wp-content/plugins/<slug>
    ```
+
+   **Ghostscript/PostScript advisories** (WordPress 7.1.4, observed 2026-10-30): `wp_check_filetype_and_ext()` rejected PostScript content named `.jpg` or `.pdf` (`ext=false`, `type=false`); `.ps`/`.eps` are not allowed upload types. Before Imagick reads a file, `WP_Image_Editor_Imagick::load()` in `wp-includes/class-wp-image-editor-imagick.php` rejects PostScript signatures/extensions and `.pdf`/`.ai` files without `%PDF-`. `wp_get_image_editor()` on PostScript named `.pdf` returned "File is not an image." Through core's editor API, genuine PDFs still reach Ghostscript for thumbnails, not disguised PostScript. ImageMagick detects format from content: direct `Imagick::readImage()` opened PostScript named `.jpg` as `PS` with the host's open policy. Direct `new Imagick($path)` / `readImage()` callers bypass core's check and need their own input checks; find constructors with the grep above, trace subsequent reads and judge each by where its file comes from. Recheck the installed core version and callers; do not add a WordPress PostScript mitigation that duplicates this core check. The host's library fix remains the remedy.
 
 2. **Account entry and capabilities**: read `users_can_register`, `default_role` and multisite network `registration`; check the resulting role's `upload_files`, not just whether registration is enabled.
    - **WooCommerce**: read `woocommerce_enable_myaccount_registration` and `woocommerce_enable_signup_and_login_from_checkout`. Users without `edit_posts`, `manage_woocommerce` or `view_admin_dashboard` are redirected away from wp-admin; uploads confined to its profile screen do not reach those customers. The redirect (`includes/admin/class-wc-admin.php` → `prevent_admin_access()`) exempts `admin-ajax.php` and `admin-post.php`, so other plugins' AJAX upload handlers and front-end paths still reach them.

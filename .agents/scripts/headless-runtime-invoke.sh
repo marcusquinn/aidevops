@@ -29,6 +29,11 @@ fi
 # Validate the invocation boundary and classify its trust mode.
 # Uses caller-scoped output_file, exit_code_file, runtime_role, and mode flags.
 _invoke_opencode_validate_context() {
+	if [[ -z "${_invoke_work_dir:-}" ]]; then
+		print_error "Worker launch requires an explicit work directory"
+		printf '%s' "75" >"$exit_code_file"
+		return 1
+	fi
 	if _headless_private_workload_enabled; then
 		private_workload=1
 		if [[ ! -f "$PRIVATE_OUTPUT_FILTER" ]] || ! command -v python3 >/dev/null 2>&1; then
@@ -147,6 +152,11 @@ _invoke_opencode_discard_failed_continuation() {
 
 _invoke_opencode_export_isolation() {
 	[[ -n "$isolated_data_dir" ]] || return 0
+	# GH#38587: trusted workers keep uv tools/Python in the user's locations;
+	# untrusted public triage stays fully inside its isolated data root.
+	if [[ "$public_triage" -ne 1 ]] && command -v aidevops_export_user_tool_dirs >/dev/null 2>&1; then
+		aidevops_export_user_tool_dirs
+	fi
 	export XDG_DATA_HOME="$isolated_data_dir"
 	if [[ "$public_triage" -eq 1 ]]; then
 		isolated_home_dir="${isolated_data_dir}/home"
@@ -201,6 +211,29 @@ _invoke_opencode_prepare_isolation() {
 	return 0
 }
 
+# GH#38491: OpenCode snapshot tracking stores full before/after file contents in
+# each message's summary.diffs and re-emits them on every message.updated
+# event. After a base merge one worker wrote 68 x 152 MiB events (10 GiB) to the
+# shared DB. Workers never use undo/revert, so merge snapshot=false into the
+# child's inline config (the private profile already sets it). Runs inside the
+# launch subshell, so only the worker child sees it.
+# Opt out with AIDEVOPS_WORKER_OPENCODE_SNAPSHOT=1.
+_invoke_opencode_disable_snapshots() {
+	local merged=""
+	[[ "$private_workload" -ne 1 ]] || return 0
+	[[ "${AIDEVOPS_WORKER_OPENCODE_SNAPSHOT:-0}" != "1" ]] || return 0
+	if [[ -z "${OPENCODE_CONFIG_CONTENT:-}" ]]; then
+		export OPENCODE_CONFIG_CONTENT='{"snapshot":false}'
+		return 0
+	fi
+	if merged=$(jq -c '. + {snapshot: false}' <<<"$OPENCODE_CONFIG_CONTENT" 2>/dev/null) && [[ -n "$merged" ]]; then
+		export OPENCODE_CONFIG_CONTENT="$merged"
+		return 0
+	fi
+	print_warning "[lifecycle] snapshot_disable_skipped reason=unparseable_inline_config pid=$$"
+	return 0
+}
+
 # Build the child command and public-triage egress policy inside the subprocess.
 _invoke_opencode_prepare_child_command() {
 	if [[ "$public_triage" -eq 1 ]]; then
@@ -228,6 +261,7 @@ _invoke_opencode_prepare_child_command() {
 		egress_policy_profile="provider:${_invoke_provider}"
 		sandbox_home_args=(--home-dir "$isolated_home_dir")
 	fi
+	_invoke_opencode_disable_snapshots
 	_oc_cmd=("${cmd[@]}")
 	if [[ "${HEADLESS:-}" == "1" && "$private_workload" -ne 1 ]]; then
 		local -a new_cmd=()
@@ -235,7 +269,9 @@ _invoke_opencode_prepare_child_command() {
 		local arg=""
 		# OpenCode V1 accepts only uppercase levels; V2 accepts only lowercase.
 		local log_level="WARN"
-		[[ "${AIDEVOPS_OPENCODE_PROFILE:-v1}" != "v2" ]] || log_level="warn"
+		if _headless_opencode_profile_is_v2; then
+			log_level="warn"
+		fi
 		for arg in "${_oc_cmd[@]}"; do
 			new_cmd+=("$arg")
 			if [[ "$arg" == "run" && "$inserted" -eq 0 ]]; then
@@ -251,6 +287,10 @@ _invoke_opencode_prepare_child_command() {
 # Execute one sandboxed command while preserving the child's pipeline status.
 _invoke_opencode_run_sandboxed() {
 	local passthrough_csv=""
+	# This launcher-only hint is NOT added to the child's environment allowlist.
+	# Protected workloads remain unobserved, but cannot bypass managed admission.
+	local AIDEVOPS_LIFECYCLE_WORKTREE="${_invoke_work_dir:-}"
+	export AIDEVOPS_LIFECYCLE_WORKTREE
 	if ! prepare_headless_signing_sandbox_env "$runtime_role"; then
 		print_error "Headless signing configuration could not be safely isolated for the sandbox"
 		printf '%s' "87" >"$exit_code_file"
@@ -308,6 +348,22 @@ _invoke_opencode_run_bare() {
 	if [[ "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" == "1" ]]; then
 		print_info "AIDEVOPS_HEADLESS_SANDBOX_DISABLED=1 — using bare timeout (no privilege isolation) (GH#20146 audit)"
 	fi
+	# Observe only AFTER existing sandbox policy permits bare
+	# execution. Never disable isolation to enable observation. The exec shim
+	# records its own identity, not worker_pid (which belongs to a shell).
+	# An absent worktree must not be interpreted as the current directory.
+	if [[ -n "${_invoke_work_dir:-}" || -n "${AIDEVOPS_LIFECYCLE_GENERATION_ID:-}" || -n "${AIDEVOPS_LIFECYCLE_RUN_ID:-}" ]]; then
+		local lifecycle_entry="${SCRIPT_DIR}/../worker-lifecycle/worker-launch.py"
+		# shellcheck source=worker-lifecycle-state.sh
+		source "${SCRIPT_DIR}/worker-lifecycle-state.sh"
+		local lifecycle_status=0
+		worker_lifecycle_prepare_launch "${_invoke_work_dir:-}" "$lifecycle_entry" "$private_workload" || lifecycle_status=$?
+		if [[ "$lifecycle_status" -ne 0 ]]; then
+			printf '%s' "$lifecycle_status" >"$exit_code_file"
+			return "$lifecycle_status"
+		fi
+		_oc_cmd=(${WORKER_LIFECYCLE_PREFIX[@]+"${WORKER_LIFECYCLE_PREFIX[@]}"} "${_oc_cmd[@]}")
+	fi
 	run_without_opencode_session_env timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
 	printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 	return 0
@@ -315,7 +371,7 @@ _invoke_opencode_run_bare() {
 
 # Start the runtime subprocess and publish its PID to the caller scope.
 _invoke_opencode_set_working_directory() {
-	[[ "${AIDEVOPS_OPENCODE_PROFILE:-v1}" == "v2" ]] || return 0
+	_headless_opencode_profile_is_v2 || return 0
 	if [[ -z "${_invoke_work_dir:-}" || ! -d "$_invoke_work_dir" ]]; then
 		print_error "OpenCode V2 launch directory is unavailable: ${_invoke_work_dir:-<unset>}"
 		printf '%s' "86" >"$exit_code_file"
@@ -362,15 +418,21 @@ _invoke_opencode_start_monitors() {
 	[[ "$stall_timeout" =~ ^[0-9]+$ ]] || stall_timeout=600
 	local phase1_timeout="${HEADLESS_PHASE1_TIMEOUT_SECONDS:-180}"
 	[[ "$phase1_timeout" =~ ^[0-9]+$ ]] || phase1_timeout=180
+	# GH#36700: report the effective backstop and where deferral decisions are
+	# recorded, so an external per-attempt timeout can be compared with it.
+	local hard_kill_seconds="${WORKER_STALL_HARD_KILL_SECONDS:-1500}"
+	[[ "$hard_kill_seconds" =~ ^[0-9]+$ ]] || hard_kill_seconds=1500
+	local lifecycle_log="${WORKER_LIFECYCLE_LOG:-${HOME}/.aidevops/logs/pulse-dispatch.log}"
 	if [[ -x "$watchdog_script" ]]; then
 		nohup "$watchdog_script" \
 			--output-file "$output_file" --worker-pid "$worker_pid" \
 			--exit-code-file "$exit_code_file" --session-key "${_invoke_session_key:-}" \
 			--repo-slug "${DISPATCH_REPO_SLUG:-}" --worktree-path "${_WORKER_WORKTREE_PATH:-}" \
 			--stall-timeout "$stall_timeout" --phase1-timeout "$phase1_timeout" \
+			--worker-db "${_WORKER_ISOLATED_DB_PATH:-}" \
 			</dev/null >/dev/null 2>&1 &
 		watchdog_pid=$!
-		print_info "[lifecycle] activity_watchdog_started pid=$watchdog_pid worker=$worker_pid stall_timeout=${stall_timeout}s"
+		print_info "[lifecycle] activity_watchdog_started pid=$watchdog_pid worker=$worker_pid stall_timeout=${stall_timeout}s phase1=${phase1_timeout}s hard_kill=${hard_kill_seconds}s events=${exit_code_file}.watchdog_events lifecycle_log=${lifecycle_log}"
 	else
 		print_warning "[lifecycle] standalone watchdog not found at $watchdog_script — falling back to inline"
 		_run_activity_watchdog "$output_file" "$worker_pid" "$exit_code_file" "$_invoke_session_key" &
@@ -403,10 +465,26 @@ _invoke_opencode_cleanup_monitors() {
 		wait "$watchdog_pid" 2>/dev/null || true
 	fi
 	print_info "[lifecycle] watchdog_cleaned pid=$watchdog_pid"
+	_invoke_opencode_report_watchdog_events "${exit_code_file:-}"
 	if [[ -n "${_rl_monitor_pid:-}" ]]; then
 		kill "$_rl_monitor_pid" 2>/dev/null || true
 		wait "$_rl_monitor_pid" 2>/dev/null || true
 	fi
+	return 0
+}
+
+# GH#36700: summarise the standalone watchdog's per-attempt decisions in the
+# wrapper log once the watchdog has been reaped. Deferral reasons otherwise
+# exist only in the shared lifecycle log. Reporting only; never changes the
+# worker result.
+_invoke_opencode_report_watchdog_events() {
+	local exit_file="$1"
+	local events_file="${exit_file}.watchdog_events"
+	[[ -n "$exit_file" && -f "$events_file" ]] || return 0
+	local deferrals="0" last_event=""
+	deferrals=$(grep -c 'worker_stall_deferred' "$events_file" 2>/dev/null) || deferrals="0"
+	last_event=$(tail -n 1 "$events_file" 2>/dev/null) || last_event=""
+	print_info "[lifecycle] watchdog_summary deferrals=${deferrals} last_event=${last_event:-none}"
 	return 0
 }
 

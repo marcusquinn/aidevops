@@ -28,7 +28,7 @@ mode: subagent
 - **Session:** {app}:{session-id}
 - **Created by:** {author} (human | ai-supervisor | ai-interactive)
 - **Parent task:** {parent_id} (if subtask)
-- **Blocked by:** {GitHub native relationship(s) + optional `blocked-by:tNNN/#NNN` marker; worker-ready ordered leaves keep `#auto-dispatch` plus `status:blocked` after the relationship is verified, while unverifiable edges stay blocked and out of the available queue}
+- **Blocked by:** {GitHub native relationship(s) + optional `blocked-by:tNNN/#NNN` marker; worker-ready ordered leaves keep `#auto-dispatch` plus `status:blocked` after the relationship is verified, while unverifiable edges stay blocked and out of the available queue; a wait on a third-party upstream release also carries an `aidevops:upstream-release-gate` body marker (`workflows/brief.md` "Waiting on an upstream release")}
 - **Conversation context:** {1-2 sentence summary of what was discussed that led to this task}
 
 ## What
@@ -450,7 +450,7 @@ from `_parse_phases_section` — then add new logic to the slimmed parent functi
 ### Scope Boundaries
 
 Initial implementation map. Directly necessary adjacent integration follows
-`reference/worker-discipline.md` "Integration scope recovery": document and verify
+`reference/worker-integration-recovery.md` "Integration scope recovery": document and verify
 the minimal corrected scope before editing. Explicit exclusions/hard boundaries
 remain binding and require a separate authorized brief-owner decision.
 

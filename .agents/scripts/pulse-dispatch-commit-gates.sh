@@ -168,6 +168,13 @@ _check_nmr_approval_gate() {
 	fi
 
 	if ! issue_has_required_approval "$issue_number" "$repo_slug" "$known_ever_nmr"; then
+		if [[ "${_NMR_APPROVAL_RESULT:-}" == UNVERIFIABLE_SIGNER ]]; then
+			echo "[pulse-wrapper] dispatch_with_dedup: BLOCKED #${issue_number} in ${repo_slug} — approval signer is not verifiable with the local key" >>"$LOGFILE"
+			echo "[pulse-wrapper] DISPATCH_BLOCK_REASON reason=approval_signer_unverifiable issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+			# The candidate failure recorder caches this reason for the exact issue
+			# revision. Do not post a misleading missing-approval remediation.
+			return 0
+		fi
 		echo "[pulse-wrapper] dispatch_with_dedup: BLOCKED #${issue_number} in ${repo_slug} — requires cryptographic approval (ever-NMR)" >>"$LOGFILE"
 		echo "[pulse-wrapper] DISPATCH_BLOCK_REASON reason=ever_nmr_without_approval issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 		# GH#20682: when the NMR label is absent (human removed it) but the
@@ -184,9 +191,12 @@ _check_nmr_approval_gate() {
 #######################################
 # GH#22399: Fail-closed external issue author gate.
 #
-# GitHub Actions issue-triage-gate.yml applies needs-maintainer-review to
-# non-collaborator issues, but Actions can sit queued while the pulse keeps
-# dispatching. This gate repeats the trust-boundary check in the dispatch path
+# Creation-time labels are best-effort: repos that installed the managed
+# issue-triage-gate.yml caller (GH#36905) get needs-maintainer-review +
+# external-contributor from Actions, other repos only from pulse reconcile
+# (stage 0b and the new-external-issue sweep), and Actions can sit queued or be
+# disabled while the pulse keeps dispatching. Labels may therefore be missing
+# at launch time. This gate repeats the trust-boundary check in the dispatch path
 # immediately before worker launch. OWNER/MEMBER, write-authorized collaborators,
 # and bot-created issues keep the fast path. External, read/triage collaborator,
 # or unknown authors must carry a valid cryptographic approval; otherwise the

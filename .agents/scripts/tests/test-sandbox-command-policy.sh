@@ -411,6 +411,86 @@ test_sandbox_required_policy() {
 	return 0
 }
 
+test_lifecycle_private_workload() {
+	local private_workload=""
+	local state_dir=""
+	local events=""
+	local status=0
+	local canonical_root=""
+	canonical_root=$(cd "$TEST_ROOT" && pwd -P) || return 1
+	for private_workload in 1 0; do
+		state_dir="${canonical_root}/lifecycle-${private_workload}"
+		if ! PYTHONPATH="${SCRIPT_DIR}/../worker-lifecycle" python3 -B -m worker_lifecycle.registry --state-dir "$state_dir" init >/dev/null; then
+			fail "sandbox lifecycle store initialization"
+			return 1
+		fi
+		status=0
+		HOME="$TEST_HOME" AIDEVOPS_PRIVATE_WORKLOAD="$private_workload" \
+			AIDEVOPS_LIFECYCLE_STATE_DIR="$state_dir" AIDEVOPS_LIFECYCLE_WORKTREE="$TEST_ROOT" \
+			"$SANDBOX_HELPER" run true >/dev/null 2>&1 || status=$?
+		events=$(python3 -c 'import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); print(db.execute("SELECT count(*) FROM events").fetchone()[0]); db.close()' "${state_dir}/registry.sqlite3")
+		if [[ "$status" -ne 0 ]]; then
+			fail "sandbox lifecycle private=${private_workload} preserves command success" "status=${status}"
+		elif [[ "$private_workload" == 1 && "$events" == 0 ]]; then
+			pass "sandbox private workload emits no lifecycle events"
+		elif [[ "$private_workload" == 0 && "$events" == 2 ]]; then
+			pass "sandbox non-private workload retains lifecycle observation"
+		else
+			fail "sandbox lifecycle private=${private_workload} store isolation" "events=${events}"
+		fi
+	done
+	return 0
+}
+
+test_lifecycle_defaults() {
+	local canonical_home=""
+	canonical_home=$(cd "$TEST_HOME" && pwd -P) || return 1
+	local state_dir="${canonical_home}/.aidevops/.agent-workspace/worker-lifecycle"
+	local status=0
+	local events=""
+	mkdir -p "${canonical_home}/.aidevops/.agent-workspace"
+	env -u AIDEVOPS_LIFECYCLE_STATE_DIR -u AIDEVOPS_LIFECYCLE_DISABLED -u AIDEVOPS_WORKSPACE_DIR \
+		HOME="$canonical_home" AIDEVOPS_PRIVATE_WORKLOAD=0 AIDEVOPS_LIFECYCLE_WORKTREE="$TEST_ROOT" \
+		"$SANDBOX_HELPER" run true >/dev/null 2>&1 || status=$?
+	if [[ "$status" -ne 0 || ! -f "${state_dir}/registry.sqlite3" ]]; then
+		fail "sandbox lifecycle initializes default state without opt-in" "status=${status}"
+		return 1
+	fi
+	events=$(python3 -c 'import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); print(db.execute("SELECT count(*) FROM events").fetchone()[0]); db.close()' "${state_dir}/registry.sqlite3")
+	if [[ "$events" == 2 ]]; then
+		pass "sandbox lifecycle initializes default state without opt-in"
+	else
+		fail "sandbox lifecycle initializes default state without opt-in" "events=${events}"
+	fi
+	env -u AIDEVOPS_LIFECYCLE_STATE_DIR -u AIDEVOPS_WORKSPACE_DIR HOME="$canonical_home" AIDEVOPS_LIFECYCLE_DISABLED=1 \
+		AIDEVOPS_PRIVATE_WORKLOAD=0 AIDEVOPS_LIFECYCLE_WORKTREE="$TEST_ROOT" \
+		"$SANDBOX_HELPER" run true >/dev/null 2>&1 || status=$?
+	events=$(python3 -c 'import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); print(db.execute("SELECT count(*) FROM events").fetchone()[0]); db.close()' "${state_dir}/registry.sqlite3")
+	if [[ "$status" == 0 && "$events" == 2 ]]; then
+		pass "sandbox lifecycle opt-out preserves native command without new events"
+	else
+		fail "sandbox lifecycle opt-out preserves native command without new events" "status=${status} events=${events}"
+	fi
+	local home_marker="~"
+	local setting="" expected_events=2
+	for setting in AIDEVOPS_WORKSPACE_DIR AIDEVOPS_LIFECYCLE_STATE_DIR; do
+		local configured_path="${home_marker}/.aidevops/.agent-workspace"
+		[[ "$setting" != AIDEVOPS_LIFECYCLE_STATE_DIR ]] || configured_path+="/worker-lifecycle"
+		status=0
+		env -u AIDEVOPS_LIFECYCLE_STATE_DIR -u AIDEVOPS_WORKSPACE_DIR -u AIDEVOPS_LIFECYCLE_DISABLED \
+			HOME="$canonical_home" AIDEVOPS_PRIVATE_WORKLOAD=0 AIDEVOPS_LIFECYCLE_WORKTREE="$TEST_ROOT" \
+			"${setting}=${configured_path}" "$SANDBOX_HELPER" run true >/dev/null 2>&1 || status=$?
+		expected_events=$((expected_events + 2))
+		events=$(python3 -c 'import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); print(db.execute("SELECT count(*) FROM events").fetchone()[0]); db.close()' "${state_dir}/registry.sqlite3")
+		if [[ "$status" == 0 && "$events" == "$expected_events" ]]; then
+			pass "sandbox expands literal home prefix in ${setting}"
+		else
+			fail "sandbox expands literal home prefix in ${setting}" "status=${status} events=${events}"
+		fi
+	done
+	return 0
+}
+
 main() {
 	write_fake_network_tools
 	test_network_check_command
@@ -420,6 +500,8 @@ main() {
 	test_network_helper_timeout
 	test_sandbox_enforcement
 	test_sandbox_required_policy
+	test_lifecycle_private_workload
+	test_lifecycle_defaults
 	printf '\nTests: %d, Failures: %d\n' "$TESTS" "$FAILURES"
 	[[ "$FAILURES" -eq 0 ]] || return 1
 	return 0

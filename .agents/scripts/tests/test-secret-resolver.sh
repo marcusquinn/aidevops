@@ -161,10 +161,12 @@ test_updown_uses_gopass() {
 	store_gopass UPDOWN_API_KEY "updown-gopass-value"
 	local rc=0
 	env -u UPDOWN_API_KEY HOME="$TEST_DIR/home" bash "$SCRIPTS/updown-helper.sh" json >/dev/null 2>&1 || rc=$?
-	if [[ "$rc" -eq 0 ]] && grep -Fxq 'X-API-KEY: updown-gopass-value' "$TEST_DIR/curl_args"; then
-		print_result "updown-helper.sh resolves UPDOWN_API_KEY from gopass" 0
+	# GH#39270: the key reaches curl on stdin (-H @-), never in its arguments.
+	if [[ "$rc" -eq 0 ]] && grep -Fxq 'X-API-KEY: updown-gopass-value' "$TEST_DIR/curl_stdin" &&
+		! grep -Fq 'updown-gopass-value' "$TEST_DIR/curl_args"; then
+		print_result "updown-helper.sh resolves UPDOWN_API_KEY from gopass and sends it on stdin, never argv" 0
 	else
-		print_result "updown-helper.sh resolves UPDOWN_API_KEY from gopass" 1 "rc=$rc"
+		print_result "updown-helper.sh resolves UPDOWN_API_KEY from gopass and sends it on stdin, never argv" 1 "rc=$rc"
 	fi
 	teardown
 	return 0
@@ -264,7 +266,7 @@ test_webmaster_gcloud_and_missing() {
 	setup
 	cat >"$TEST_DIR/bin/gcloud" <<'EOF'
 #!/usr/bin/env bash
-[[ "$*" == 'auth application-default print-access-token' ]] || exit 1
+[[ "$*" == 'auth application-default print-access-token --scopes=https://www.googleapis.com/auth/webmasters.readonly' ]] || exit 1
 printf '%s\n' 'gsc-gcloud-value'
 EOF
 	chmod +x "$TEST_DIR/bin/gcloud"

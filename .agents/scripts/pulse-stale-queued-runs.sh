@@ -15,13 +15,17 @@ _sq_api() {
 	local endpoint="$2"
 	local output="$3"
 	SQ_HTTP=""
+	SQ_DENIED=0
 	# Clear previous observations even when admission denies the next read.
 	: >"$output"
 	# Guard every request, not just admission of the outer Pulse stage.
-	[[ ! -f "${STOP_FLAG:-${HOME}/.aidevops/logs/pulse.stop}" ]] || return 1
-	[[ ! -f "${PULSE_RATE_LIMIT_FLAG:-${HOME}/.aidevops/logs/pulse-graphql-rate-limited.flag}" ]] || return 1
-	[[ ! -f "${_CIRCUIT_BREAKER_STATE_FILE:-${HOME}/.aidevops/logs/pulse-graphql-circuit-breaker.state}" ]] || return 1
-	pulse_rest_core_priority_allows_next deferrable stale-queued-runs || return 1
+	if [[ -f "${STOP_FLAG:-${HOME}/.aidevops/logs/pulse.stop}" ]] ||
+		[[ -f "${PULSE_RATE_LIMIT_FLAG:-${HOME}/.aidevops/logs/pulse-graphql-rate-limited.flag}" ]] ||
+		[[ -f "${_CIRCUIT_BREAKER_STATE_FILE:-${HOME}/.aidevops/logs/pulse-graphql-circuit-breaker.state}" ]] ||
+		! pulse_rest_core_priority_allows_next deferrable stale-queued-runs; then
+		SQ_DENIED=1
+		return 1
+	fi
 	if gh api --method "$method" "$endpoint" >"$output" 2>"${output}.err"; then
 		return 0
 	fi
@@ -32,7 +36,36 @@ _sq_api() {
 		SQ_HTTP=404
 	elif grep -q 'HTTP 410' "${output}.err"; then
 		SQ_HTTP=410
+	elif grep -q 'HTTP 403' "${output}.err"; then
+		SQ_HTTP=403
 	fi
+	return 1
+}
+
+# t19075 (GH#38810): GitHub answers DELETE on a still-queued ghost with 403
+# ("Could not delete the workflow run"), so every scan re-probed every known
+# ghost with ~10 REST calls and never reached later repositories. A refused
+# ghost is parked; later scans skip it without API calls until the re-probe
+# TTL expires, and only a few expired ghosts are re-probed per scan.
+_sq_ghost_park() {
+	local state="$1"
+	local id="$2"
+	printf '%s\n' "$SQ_NOW" >"${state}/${id}.undeletable" || return 1
+	return 0
+}
+
+# Returns 0 when the run is a parked ghost to skip in this scan.
+_sq_ghost_parked() {
+	local state="$1"
+	local id="$2"
+	local parked="" ttl="${AIDEVOPS_STALE_QUEUED_GHOST_REPROBE_HOURS:-24}"
+	[[ -f "${state}/${id}.undeletable" ]] || return 1
+	read -r parked <"${state}/${id}.undeletable" || parked=0
+	[[ "$parked" =~ ^[0-9]{1,12}$ ]] || parked=0
+	[[ "$ttl" =~ ^[0-9]{1,5}$ ]] || ttl=24
+	((SQ_NOW - 10#$parked < 10#$ttl * 3600)) && return 0
+	((SQ_GHOST_REPROBES < 5)) || return 0
+	SQ_GHOST_REPROBES=$((SQ_GHOST_REPROBES + 1))
 	return 1
 }
 
@@ -82,6 +115,7 @@ _sq_handle_run() {
 	id=$(printf '%s' "$run" | jq -r '.id')
 	run_ep="repos/${repo}/actions/runs/${id}"
 	[[ "$id" =~ ^[1-9][0-9]*$ ]] || return 1
+	! _sq_ghost_parked "$state" "$id" || return 0
 	# Listing is only a candidate set: revalidate immediately before writes.
 	_sq_still_stale "$repo" "$id" || return 0
 	if ! _sq_api POST "repos/${repo}/actions/runs/${id}/cancel" "${SQ_WORK}/cancel.json"; then
@@ -120,6 +154,7 @@ _sq_handle_run() {
 				_sq_log deleted-empty-ghost "$run"
 			else
 				_sq_log delete-failed "$run"
+				[[ "$SQ_HTTP" != 403 ]] || _sq_ghost_park "$state" "$id" || return 1
 			fi
 			return 0
 		fi
@@ -129,6 +164,7 @@ _sq_handle_run() {
 				_sq_log deleted-ghost "$run"
 			else
 				_sq_log delete-failed "$run"
+				[[ "$SQ_HTTP" != 403 ]] || _sq_ghost_park "$state" "$id" || return 1
 			fi
 		fi
 		return 0
@@ -152,10 +188,93 @@ _sq_scan_repo() {
 	fi
 	[[ "$last" =~ ^[0-9]+$ ]] || last=0
 	((SQ_NOW - last >= 3600)) || return 0
-	# Claim cadence before network I/O, including failed/permission-denied scans.
+	# Admission denial makes no request and must not consume the cadence.
+	_sq_api GET "repos/${repo}" "${SQ_WORK}/repo.json" || {
+		[[ "$SQ_DENIED" -eq 1 ]] && return 2
+		printf '%s\n' "$SQ_NOW" >"${state}/last-scan" || return 1
+		return 0
+	}
+	# Admitted failures still consume cadence to avoid hammering a failing repo.
 	printf '%s\n' "$SQ_NOW" >"${state}/last-scan" || return 1
-	_sq_api GET "repos/${repo}" "${SQ_WORK}/repo.json" || return 0
 	jq -e '.permissions | (.admin == true or .maintain == true or .push == true)' "${SQ_WORK}/repo.json" >/dev/null 2>&1 || return 0
+	_sq_scan_queued "$repo" "$state" || return 1
+	_sq_scan_orphans "$repo" "$state" || return 1
+	return 0
+}
+
+# Prove the orphaned job's runner no longer holds it (reads ${SQ_WORK}/job.json).
+# GitHub-hosted runners (group 0, "GitHub Actions") are ephemeral and never
+# appear in the repository runners API, which lists self-hosted runners only;
+# a hosted job whose run has concluded cannot still be executing (GH#36177).
+# Self-hosted runners must be listed online and idle.
+_sq_orphan_runner_released() {
+	local repo="$1"
+	local runner="$2"
+	if jq -e '.runner_group_id == 0 and .runner_group_name == "GitHub Actions"' "${SQ_WORK}/job.json" >/dev/null 2>&1; then
+		return 0
+	fi
+	_sq_api GET "repos/${repo}/actions/runners?per_page=100" "${SQ_WORK}/runners.json" || return 1
+	jq -e --arg name "$runner" '[.runners[]? | select(.name == $name and .status == "online" and .busy == false)] | length == 1' "${SQ_WORK}/runners.json" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# Orphaned jobs: the run is completed but a job (check run) is still in_progress
+# on a runner that no longer holds it. Rerun the run at most once per run ID;
+# never alter check conclusions. Fail closed on every unverifiable read.
+_sq_orphan_job_run() {
+	local repo="$1"
+	local state="$2"
+	local pr="$3"
+	local job_id="$4"
+	local run_id="" runner=""
+	[[ "$job_id" =~ ^[1-9][0-9]*$ ]] || return 1
+	_sq_api GET "repos/${repo}/actions/jobs/${job_id}" "${SQ_WORK}/job.json" || return 1
+	jq -e '.completed_at == null and ((.runner_name // "") != "") and ((.started_at | fromdateiso8601? // 9999999999) < '"$SQ_ORPHAN_CUTOFF"')' "${SQ_WORK}/job.json" >/dev/null 2>&1 || return 1
+	run_id=$(jq -r '.run_id // empty' "${SQ_WORK}/job.json")
+	runner=$(jq -r '.runner_name // empty' "${SQ_WORK}/job.json")
+	[[ "$run_id" =~ ^[1-9][0-9]*$ && -n "$runner" ]] || return 1
+	[[ ! -f "${state}/${run_id}.orphan-rerun" ]] || return 1
+	_sq_api GET "repos/${repo}/actions/runs/${run_id}" "${SQ_WORK}/orphan-run.json" || return 1
+	jq -e '.conclusion != null' "${SQ_WORK}/orphan-run.json" >/dev/null 2>&1 || return 1
+	_sq_orphan_runner_released "$repo" "$runner" || return 1
+	# Persist before the write so a failed or slow rerun is never repeated.
+	printf '%s\n' "$SQ_NOW" >"${state}/${run_id}.orphan-rerun" || return 1
+	if _sq_api POST "repos/${repo}/actions/runs/${run_id}/rerun" "${SQ_WORK}/rerun.json"; then
+		printf '[pulse-stale-queued-runs] orphaned-in-progress-job rerun run=%s pr=%s\n' "$run_id" "$pr"
+		return 0
+	fi
+	printf '[pulse-stale-queued-runs] orphaned-in-progress-job rerun-failed run=%s pr=%s\n' "$run_id" "$pr"
+	return 1
+}
+
+_sq_scan_orphans() {
+	local repo="$1"
+	local state="$2"
+	local pr sha job_id reruns=0
+	[[ "$SQ_ORPHAN_MAX_AGE" -ne 0 ]] || return 0
+	_sq_api GET "repos/${repo}/pulls?state=open&per_page=30" "${SQ_WORK}/pulls.json" || return 0
+	while IFS=$'\t' read -r pr sha; do
+		[[ "$pr" =~ ^[1-9][0-9]*$ && "$sha" =~ ^[0-9a-f]{40}$ ]] || continue
+		((reruns < 5)) || break
+		_sq_api GET "repos/${repo}/commits/${sha}/check-runs?per_page=100" "${SQ_WORK}/checks.json" || continue
+		while IFS= read -r job_id; do
+			((reruns < 5)) || break
+			if _sq_orphan_job_run "$repo" "$state" "$pr" "$job_id"; then
+				reruns=$((reruns + 1))
+			fi
+		done < <(jq -r --argjson cutoff "$SQ_ORPHAN_CUTOFF" '
+			.check_runs[]? | select(.conclusion == null and .app.slug == "github-actions") |
+			select((.started_at | fromdateiso8601? // 9999999999) < $cutoff) | .id
+		' "${SQ_WORK}/checks.json")
+	done < <(jq -r '.[]? | [.number, .head.sha] | @tsv' "${SQ_WORK}/pulls.json")
+	return 0
+}
+
+_sq_scan_queued() {
+	local repo="$1"
+	local state="$2"
+	local page=1 count run
+	SQ_GHOST_REPROBES=0
 	# One page per repo is intentional: bound both response size and write fanout.
 	if [[ -f "${state}/next-page" ]]; then
 		read -r page <"${state}/next-page" || page=1
@@ -189,7 +308,7 @@ _sq_cleanup() {
 pulse_stale_queued_runs_scan() (
 	local max_age="${AIDEVOPS_STALE_QUEUED_RUN_MAX_AGE_HOURS:-8}"
 	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
-	local helper_dir repo rc=0
+	local helper_dir repo status rc=0
 	[[ "$max_age" =~ ^[0-9]{1,5}$ ]] || {
 		printf '[pulse-stale-queued-runs] invalid max age\n'
 		return 1
@@ -205,8 +324,12 @@ pulse_stale_queued_runs_scan() (
 		# shellcheck source=./pulse-rate-limit-circuit-breaker.sh
 		source "${helper_dir}/pulse-rate-limit-circuit-breaker.sh"
 	fi
-	local SQ_NOW SQ_CUTOFF SQ_CUTOFF_ISO SQ_STATE SQ_WORK SQ_HTTP=""
+	local SQ_NOW SQ_CUTOFF SQ_CUTOFF_ISO SQ_STATE SQ_WORK SQ_HTTP="" SQ_DENIED=0 SQ_ORPHAN_MAX_AGE SQ_ORPHAN_CUTOFF SQ_GHOST_REPROBES=0
+	SQ_ORPHAN_MAX_AGE="${AIDEVOPS_ORPHAN_JOB_MAX_AGE_HOURS:-2}"
+	[[ "$SQ_ORPHAN_MAX_AGE" =~ ^[0-9]{1,5}$ ]] || SQ_ORPHAN_MAX_AGE=2
+	SQ_ORPHAN_MAX_AGE=$((10#$SQ_ORPHAN_MAX_AGE))
 	SQ_NOW=$(date -u +%s)
+	SQ_ORPHAN_CUTOFF=$((SQ_NOW - SQ_ORPHAN_MAX_AGE * 3600))
 	SQ_CUTOFF=$((SQ_NOW - max_age * 3600))
 	SQ_CUTOFF_ISO=$(jq -nr --argjson cutoff "$SQ_CUTOFF" '$cutoff | todateiso8601')
 	SQ_STATE="${HOME}/.aidevops/.agent-workspace/pulse/stale-queued-runs"
@@ -225,7 +348,10 @@ pulse_stale_queued_runs_scan() (
 	SQ_WORK=$(mktemp -d "${SQ_STATE}/work.XXXXXX") || return 1
 	_SQ_WORK_CLEANUP="$SQ_WORK"
 	while IFS= read -r repo; do
-		_sq_scan_repo "$repo" || rc=1
+		status=0
+		_sq_scan_repo "$repo" || status=$?
+		[[ "$status" -ne 2 ]] || break
+		[[ "$status" -eq 0 ]] || rc=1
 	done < <(jq -r '.initialized_repos[]? |
 		select(.maintenance != false and .pulse == true and (.local_only // false) == false) |
 		select((.role // "maintainer") != "contributor") | .slug // empty' "$repos_json")

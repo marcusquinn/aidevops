@@ -221,6 +221,16 @@ if _ff_with_lock _ff_reserve_enrichment_attempt 502 owner/repo; then
 	fail "fourth preparation attempt allowed"
 fi
 
+# Completion must retire either stored key form without creating missing entries.
+for stored_key in owner/repo/505 505:owner/repo; do
+	_ff_save "$(jq -nc --arg key "$stored_key" '{($key): {enrichment_needed: true}, unrelated: {enrichment_needed: true}}')"
+	_ff_with_lock _ff_mark_enrichment_done 505 owner/repo
+	_ff_load | jq -e --arg key "$stored_key" '
+		length == 2 and .[$key].enrichment_needed == false and
+		.[$key].enrichment_done == true and .unrelated.enrichment_needed == true
+	' >/dev/null || fail "enrichment completion did not retire stored key ${stored_key}"
+done
+
 ENRICHMENT_MAX_PER_CYCLE=5
 STOP_FLAG="${TEST_ROOT}/stop"
 ENRICHMENT_MODEL_CALLS="${TEST_ROOT}/enrichment-model-calls"
@@ -244,7 +254,7 @@ _enrichment_resolve_repo_path() {
 	return 0
 }
 _enrichment_fetch_issue_data() {
-	printf '%s\n' '{"title":"test","body":"brief","prior_attempt":{"effective_outcome":"failed"}}'
+	printf '%s\n' '{"title":"test","body":"brief","state":"OPEN","prior_attempt":{"effective_outcome":"failed"}}'
 	return 0
 }
 _enrichment_build_prompt() {

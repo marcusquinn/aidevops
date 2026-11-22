@@ -11,6 +11,7 @@
 #   secret-helper.sh set NAME              # Interactive hidden input -> gopass
 #   secret-helper.sh get NAME              # Get secret value (for scripts/piping)
 #   secret-helper.sh list                  # List secret names (never values)
+#   secret-helper.sh rm NAME... [--yes]    # Guarded removal (gopass + plaintext + read-back)
 #   secret-helper.sh inventory             # Deterministic names-only JSON inventory
 #   secret-helper.sh describe [NAME]       # Non-secret registry: account, reach, owner, expiry
 #   secret-helper.sh record|account|default|alias|resolve ...  # Registry maintenance (GH#34680)
@@ -41,6 +42,14 @@ readonly GOPASS_PREFIX="aidevops"
 readonly INVENTORY_MAX_NAMES=512
 readonly INVENTORY_MAX_NAME_LENGTH=128
 readonly REDACTION_INIT_ERROR="Unable to initialize secret output redaction"
+
+# shellcheck source=./secret-systemd-creds-lib.sh
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/secret-systemd-creds-lib.sh"
+
+# shellcheck source=./secret-redaction-lib.sh
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/secret-redaction-lib.sh"
 
 # Check if gopass is available and initialized
 has_gopass() {
@@ -126,11 +135,16 @@ stranded_loader_names() {
 # Whether gopass should own NAME. A listed entry stays gopass-only, so a locked
 # store fails closed instead of reading a stale plaintext value. An unreadable
 # listing also counts as owned, preserving the historical gopass-first result.
+# List the whole store, not the prefix: `gopass ls PREFIX/` fails once the
+# prefix folder is empty, which made every name look gopass-owned and broke
+# credentials.sh fallback after all secrets were moved out of gopass.
 gopass_owns_secret() {
 	local name="$1"
 	local listing=""
-	listing=$(gopass ls --flat "${GOPASS_PREFIX}/" 2>/dev/null) || return 0
-	if printf '%s\n' "$listing" | grep -Fxq -- "${GOPASS_PREFIX}/${name}"; then
+	listing=$(gopass ls --flat 2>/dev/null) || return 0
+	# Here-string, not a pipe: with pipefail, grep -q exiting early on a large
+	# whole-store listing could SIGPIPE printf and report a listed name as unowned.
+	if grep -Fxq -- "${GOPASS_PREFIX}/${name}" <<<"$listing"; then
 		return 0
 	fi
 	return 1
@@ -160,14 +174,20 @@ get_secret_value() {
 		rm -f "$err_file"
 		return 0
 	fi
+	if systemd_owns_secret "$name"; then
+		systemd_secret_read "$name" || return 3
+		return 0
+	fi
 	# Fallback to credential files (handles multi-tenant)
 	local cred_file
 	while IFS= read -r cred_file; do
 		[[ -z "$cred_file" ]] && continue
 		local value
 		# Strip 'export NAME=', strip surrounding double quotes, then unescape
-		# \" -> " and \\ -> \ (order matters: unescape \" before \\)
-		value=$(grep "^export ${name}=" "$cred_file" 2>/dev/null | head -1 | sed 's/^export [^=]*=//' | sed 's/^"//' | sed 's/"$//' | sed 's/\\"/"/g' | sed 's/\\\\/\\/g')
+		# \" -> " and \\ -> \ (order matters: unescape \" before \\).
+		# Trailing whitespace/CR after the closing quote is dropped first so the
+		# quote still matches, as the shell does when sourcing the line (GH#38844).
+		value=$(grep -m1 "^export ${name}=" "$cred_file" 2>/dev/null | sed 's/^export [^=]*=//' | sed 's/[[:space:]]*$//' | sed 's/^"//' | sed 's/"$//' | sed 's/\\"/"/g' | sed 's/\\\\/\\/g')
 		if [[ -n "$value" ]]; then
 			echo "$value"
 			return 0
@@ -195,334 +215,24 @@ get_injected_gopass_value() {
 		python3 -c '
 import os, signal, subprocess, sys
 
+try:
+    timeout = int(os.environ.get("AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS", "12"))
+except ValueError:
+    timeout = 12
+timeout = min(55, max(1, timeout))
 process = subprocess.Popen(["gopass", "show", "-n", sys.argv[1]],
                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                            start_new_session=True)
 try:
-    value, _ = process.communicate(timeout=4)
+    value, _ = process.communicate(timeout=timeout)
 except subprocess.TimeoutExpired:
     os.killpg(process.pid, signal.SIGKILL)
     process.communicate()
-    sys.exit(1)
+    sys.exit(5)
 if process.returncode:
     sys.exit(1)
 sys.stdout.buffer.write(value)
-' "$secret_path" || return 1
-	fi
-	return 0
-}
-
-# Collect all secret values for redaction as NUL-delimited literal data.
-redaction_value_usable() {
-	local value="$1"
-	[[ ${#value} -ge 8 ]] || return 1
-	case "$value" in
-	'***' | '[redacted]' | '[REDACTED]' | 'not set' | 'none' | 'null' | 'undefined' | 'changeme') return 1 ;;
-	esac
-	return 0
-}
-
-warn_short_redaction_value() {
-	local name="$1"
-	printf 'WARN: secret %s value too short to redact safely; not masked\n' "$name" >&2
-	return 0
-}
-
-collect_secret_values() {
-	local -a values=()
-	local -a warned_names=()
-
-	if has_gopass; then
-		local secrets
-		secrets=$(gopass ls --flat "${GOPASS_PREFIX}/" 2>/dev/null || true)
-		while IFS= read -r secret_path; do
-			[[ -z "$secret_path" ]] && continue
-			local scalar_val=""
-			local entry_val=""
-			scalar_val=$(gopass show -o "$secret_path" 2>/dev/null || true)
-			entry_val=$(get_gopass_entry_value "$secret_path")
-			local name="${secret_path#"${GOPASS_PREFIX}"/}"
-			if redaction_value_usable "$scalar_val"; then
-				values+=("$scalar_val")
-			elif [[ -n "$scalar_val" && ${#scalar_val} -lt 8 ]] && ! secret_env_name_emitted "$name" "${warned_names[@]}"; then
-				warn_short_redaction_value "$name"
-				warned_names+=("$name")
-			fi
-			if [[ "$entry_val" != "$scalar_val" ]] && redaction_value_usable "$entry_val"; then
-				values+=("$entry_val")
-			elif [[ -n "$entry_val" && ${#entry_val} -lt 8 ]] && ! secret_env_name_emitted "$name" "${warned_names[@]}"; then
-				warn_short_redaction_value "$name"
-				warned_names+=("$name")
-			fi
-		done <<<"$secrets"
-	fi
-
-	# Also collect from credential files as fallback (handles multi-tenant)
-	local cred_file
-	while IFS= read -r cred_file; do
-		[[ -z "$cred_file" ]] && continue
-		while IFS= read -r line; do
-			if [[ "$line" =~ ^export[[:space:]]+[A-Z_][A-Z0-9_]*= ]]; then
-				local val=""
-				val=$(decode_credential_value "${line#*=}")
-				val="${val#\'}"
-				val="${val%\'}"
-				local name="${line%%=*}"
-				name="${name##* }"
-				if redaction_value_usable "$val"; then
-					values+=("$val")
-				elif [[ -n "$val" && ${#val} -lt 8 ]] && ! secret_env_name_emitted "$name" "${warned_names[@]}"; then
-					warn_short_redaction_value "$name"
-					warned_names+=("$name")
-				fi
-			fi
-		done <"$cred_file"
-	done < <(resolve_credential_files)
-
-	if [[ ${#values[@]} -gt 0 ]]; then
-		printf '%s\0' "${values[@]}"
-	fi
-	return 0
-}
-
-# Redact secret values from a stream
-# Reads stdin, replaces any secret value with [REDACTED]
-redact_stream() {
-	local env_file="${1:-}"
-	local values_file
-	local previous_umask
-	previous_umask=$(umask)
-	umask 077
-	if ! values_file=$(mktemp); then
-		umask "$previous_umask"
-		print_error "$REDACTION_INIT_ERROR" >&2
-		return 1
-	fi
-	umask "$previous_umask"
-	trap 'rm -f "$values_file"' RETURN
-
-	if [[ -n "$env_file" ]]; then
-		local -a warned_names=()
-		while IFS='=' read -r -d '' _key value; do
-			if redaction_value_usable "$value"; then
-				printf '%s\0' "$value"
-			elif [[ -n "$value" && ${#value} -lt 8 ]] && ! secret_env_name_emitted "$_key" "${warned_names[@]}"; then
-				warn_short_redaction_value "$_key"
-				warned_names+=("$_key")
-			fi
-		done <"$env_file" >"$values_file"
-	else
-		if ! collect_secret_values >"$values_file"; then
-			print_error "$REDACTION_INIT_ERROR" >&2
-			return 1
-		fi
-	fi
-
-	if [[ ! -s "$values_file" ]]; then
-		# No secrets to redact, pass through
-		cat
-		return 0
-	fi
-
-	if ! command -v python3 >/dev/null 2>&1; then
-		print_error "$REDACTION_INIT_ERROR" >&2
-		return 1
-	fi
-
-	local exit_code=0
-	python3 -c '
-import sys
-
-with open(sys.argv[1], "rb") as values_handle:
-    secret_values = sorted(
-        {value for value in values_handle.read().split(b"\0") if len(value) >= 4},
-        key=len,
-        reverse=True,
-    )
-
-if not secret_values:
-    raise SystemExit("redaction values were empty")
-
-marker = b"[REDACTED]"
-output = sys.stdout.buffer
-pending = b""
-
-def redact_available(data, final=False):
-    pieces = []
-    while data:
-        match = next((value for value in secret_values if data.startswith(value)), None)
-        if match is not None:
-            if not final and any(
-                len(value) > len(match) and value.startswith(data)
-                for value in secret_values
-            ):
-                break
-            pieces.append(marker)
-            data = data[len(match):]
-        elif not final and any(value.startswith(data) for value in secret_values):
-            break
-        else:
-            pieces.append(data[:1])
-            data = data[1:]
-        if len(pieces) >= 8192:
-            output.write(b"".join(pieces))
-            output.flush()
-            pieces.clear()
-    if pieces:
-        output.write(b"".join(pieces))
-        output.flush()
-    return data
-
-while True:
-    chunk = sys.stdin.buffer.read1(65536)
-    if not chunk:
-        break
-    pending = redact_available(pending + chunk)
-
-redact_available(pending, final=True)
-' "$values_file" || exit_code=$?
-
-	return "$exit_code"
-}
-
-# Return success when a secret name was already emitted.
-secret_env_name_emitted() {
-	local expected_name="$1"
-	shift
-	local emitted_name=""
-	for emitted_name in "$@"; do
-		[[ "$emitted_name" == "$expected_name" ]] && return 0
-	done
-	return 1
-}
-
-# Emit one NUL-delimited environment record. Environment values cannot contain
-# NUL bytes, making NUL a safe record delimiter while preserving newlines.
-emit_secret_env_record() {
-	local name="$1"
-	local value="$2"
-	printf '%s=%s\0' "$name" "$value"
-	return 0
-}
-
-# Value of a fallback `export NAME=VALUE` right-hand side. Double-quoted values
-# undo the writer's \\ and \" escaping in one left-to-right pass, so injection
-# and redaction see the stored value, as `get` does (GH#34806).
-decode_credential_value() {
-	local raw="$1"
-	if [[ "$raw" != \"*\" || ${#raw} -lt 2 ]]; then
-		raw="${raw#\"}"
-		printf '%s' "${raw%\"}"
-		return 0
-	fi
-	raw="${raw:1:${#raw}-2}"
-	if [[ "$raw" != *\\* ]]; then
-		printf '%s' "$raw"
-		return 0
-	fi
-	local out="" char="" next="" i=0
-	while ((i < ${#raw})); do
-		char="${raw:i:1}"
-		next="${raw:i+1:1}"
-		if [[ "$char" == "\\" && ("$next" == "\\" || "$next" == '"') ]]; then
-			char="$next"
-			i=$((i + 1))
-		fi
-		out+="$char"
-		i=$((i + 1))
-	done
-	printf '%s' "$out"
-	return 0
-}
-
-# Build a NUL-delimited environment from gopass secrets.
-build_secret_env() {
-	local -a specific_names=("$@")
-	local -a emitted_names=()
-
-	if has_gopass; then
-		if [[ ${#specific_names[@]} -gt 0 ]]; then
-			# Inject only specific secrets
-			local available_secrets=""
-			if ! available_secrets=$(gopass ls --flat "${GOPASS_PREFIX}/" 2>/dev/null); then
-				print_error "Unable to list gopass secrets for injection" >&2
-				return 1
-			fi
-			for name in "${specific_names[@]}"; do
-				local secret_path=""
-				local found=false
-				while IFS= read -r secret_path; do
-					if [[ "$secret_path" == "${GOPASS_PREFIX}/${name}" ]]; then
-						found=true
-						break
-					fi
-				done <<<"$available_secrets"
-				# Names absent from gopass may still be in credentials.sh.
-				[[ "$found" == true ]] || continue
-				local val=""
-				if ! val=$(get_injected_gopass_value "${GOPASS_PREFIX}/${name}") || [[ -z "$val" ]]; then
-					print_error "secret $name unavailable: gopass/GPG locked or entry missing; unlock GPG in a terminal and retry" >&2
-					return 1
-				fi
-				emit_secret_env_record "$name" "$val"
-				emitted_names+=("$name")
-			done
-		else
-			# Inject all secrets
-			local secrets
-			secrets=$(gopass ls --flat "${GOPASS_PREFIX}/" 2>/dev/null || true)
-			while IFS= read -r secret_path; do
-				[[ -z "$secret_path" ]] && continue
-				local name="${secret_path#"${GOPASS_PREFIX}"/}"
-				# Other tools may store nested paths or non-environment names.
-				[[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-				local val
-				val=$(get_gopass_entry_value "$secret_path")
-				if [[ -n "$val" ]]; then
-					emit_secret_env_record "$name" "$val"
-					emitted_names+=("$name")
-				fi
-			done <<<"$secrets"
-		fi
-	fi
-
-	# Also load from credential files as fallback/supplement (handles multi-tenant)
-	local cred_file
-	while IFS= read -r cred_file; do
-		[[ -z "$cred_file" ]] && continue
-		while IFS= read -r line; do
-			if [[ "$line" =~ ^export[[:space:]]+([A-Z_][A-Z0-9_]*)=(.*) ]]; then
-				local name="${BASH_REMATCH[1]}"
-				local val=""
-				val=$(decode_credential_value "${BASH_REMATCH[2]}")
-				# Only add if not already set by gopass
-				if [[ -n "$val" ]] && ! secret_env_name_emitted "$name" "${emitted_names[@]}"; then
-					emit_secret_env_record "$name" "$val"
-					emitted_names+=("$name")
-				fi
-			fi
-		done <"$cred_file"
-	done < <(resolve_credential_files)
-	for name in "${specific_names[@]}"; do
-		if ! secret_env_name_emitted "$name" "${emitted_names[@]}"; then
-			print_error "secret $name unavailable: gopass/GPG locked or entry missing; unlock GPG in a terminal and retry" >&2
-			return 1
-		fi
-	done
-
-	return 0
-}
-
-# Register keyed digests of injected values so the OpenCode plugin can redact
-# them from tool output, such as provider argv in process listings (GH#32362).
-# Stores no plaintext; a registry failure never blocks the command.
-register_redaction_digests() {
-	local env_file="$1"
-	local registry_helper="${SCRIPT_DIR}/redaction-digest-registry.py"
-	[[ -s "$env_file" && -f "$registry_helper" ]] || return 0
-	command -v python3 >/dev/null 2>&1 || return 0
-	if ! python3 "$registry_helper" register <"$env_file" >/dev/null 2>&1; then
-		print_warning "Secret redaction registry update failed; exact-value tool-output redaction may be incomplete" >&2
+' "$secret_path" || return $?
 	fi
 	return 0
 }
@@ -872,6 +582,7 @@ has_credential_inventory() {
 # True when NAME is stored in gopass or a credential file (no decryption).
 secret_name_stored() {
 	local name="$1"
+	systemd_owns_secret "$name" && return 0
 	if has_gopass && gopass_owns_secret "$name"; then
 		return 0
 	fi
@@ -962,14 +673,18 @@ append_registry_aliases() {
 # SET_RECORD_ARGS (globals keep Bash 3.2 compatibility without namerefs).
 parse_set_options() {
 	SET_SOURCE_FILE=""
+	SET_BACKEND="auto"
 	SET_RECORD_ARGS=()
 	while [[ $# -gt 0 ]]; do
 		local flag="$1"
 		local flag_value="${2:-}"
 		case "$flag" in
-		--from-file | --provider | --account | --purpose | --zones | --resources | --expires | --kind)
+		--from-file | --backend | --provider | --account | --purpose | --zones | --resources | --expires | --kind)
 			[[ -n "$flag_value" ]] || return 1
-			if [[ "$flag" == "--from-file" ]]; then
+			if [[ "$flag" == "--backend" ]]; then
+				[[ "$flag_value" == systemd-creds || "$flag_value" == auto ]] || return 1
+				SET_BACKEND="$flag_value"
+			elif [[ "$flag" == "--from-file" ]]; then
 				SET_SOURCE_FILE="$flag_value"
 			else
 				SET_RECORD_ARGS+=("$flag" "$flag_value")
@@ -981,6 +696,36 @@ parse_set_options() {
 			;;
 		esac
 	done
+	return 0
+}
+
+print_secret_input_guidance() {
+	print_warning "WARNING: Never paste secret values into AI chat"
+	print_warning "Run this command in your terminal and enter the value at the hidden prompt"
+	echo ""
+	echo "  1) When prompted, paste ONLY a single-line secret value"
+	echo "  2) Do NOT paste the command, key name, or an export line"
+	echo "  3) Input is hidden; press Enter when done"
+	echo ""
+	return 0
+}
+
+# Validate a normalized secret name for `set`; systemd-creds names follow the
+# inventory/check/rm rule (must start with a letter).
+validate_set_name() {
+	local name="$1"
+	if [[ ! "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+		print_error "Secret name must be a valid environment variable name"
+		return 1
+	fi
+	if [[ "$SET_BACKEND" == systemd-creds && ! "$name" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+		print_error "systemd-creds secret names must start with a letter"
+		return 1
+	fi
+	if [[ "$name" == "AIDEVOPS_ACTIVE_TENANT" ]]; then
+		print_error "AIDEVOPS_ACTIVE_TENANT is reserved; use: credential-helper.sh switch TENANT"
+		return 1
+	fi
 	return 0
 }
 
@@ -1006,34 +751,27 @@ cmd_set() {
 
 	# Normalize to uppercase
 	name=$(echo "$name" | tr '[:lower:]-' '[:upper:]_')
-	if [[ ! "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
-		print_error "Secret name must be a valid environment variable name"
-		return 1
-	fi
-	if [[ "$name" == "AIDEVOPS_ACTIVE_TENANT" ]]; then
-		print_error "AIDEVOPS_ACTIVE_TENANT is reserved; use: credential-helper.sh switch TENANT"
-		return 1
-	fi
+	validate_set_name "$name" || return 1
 	if [[ ${#record_args[@]} -gt 0 ]] && ! run_credential_inventory record "$name" "${record_args[@]}" --check; then
 		print_error "Credential metadata rejected; nothing was stored"
 		return 1
 	fi
 
 	print_info "Setting secret: $name"
-	print_warning "WARNING: Never paste secret values into AI chat"
-	print_warning "Run this command in your terminal and enter the value at the hidden prompt"
-	echo ""
-	echo "  1) When prompted, paste ONLY a single-line secret value"
-	echo "  2) Do NOT paste the command, key name, or an export line"
-	echo "  3) Input is hidden; press Enter when done"
-	echo ""
+	print_secret_input_guidance
 
 	local value
 	if ! value=$(read_secret_input "$name" "$source_file"); then
 		return 1
 	fi
 
-	if has_gopass; then
+	if [[ "$SET_BACKEND" == systemd-creds ]] || { systemd_owns_secret "$name" && ! { has_gopass && gopass_owns_secret "$name"; }; }; then
+		if ! printf '%s' "$value" | systemd_secret_write "$name"; then
+			print_error "Encrypted storage failed; no plaintext fallback was written" >&2
+			return 1
+		fi
+		print_success "Stored $name in systemd-creds (decrypt-verified)"
+	elif has_gopass; then
 		local gopass_output
 		if ! gopass_output=$(printf '%s' "$value" | gopass insert --force "${GOPASS_PREFIX}/${name}" 2>&1); then
 			if [[ "$gopass_output" == *"BLOCKED by canonical Git guard"* ]]; then
@@ -1127,7 +865,7 @@ cmd_get() {
 
 	# Present but unreadable is not "not found": fail closed like cmd_check (GH#35265).
 	if [[ "$read_rc" -eq 3 ]]; then
-		print_error "Unable to read ${read_name} from gopass (decryption or store failure; check gpg-agent, pinentry and GNUPGHOME)" >&2
+		print_error "Unable to read ${read_name} from gopass or systemd-creds (decryption or store failure; check gpg-agent, pinentry, GNUPGHOME and ~/.config/aidevops/creds)" >&2
 		return 1
 	fi
 
@@ -1145,7 +883,7 @@ cmd_get() {
 }
 
 # Status-only resolution for dispatch: 0 readable, 1 missing/empty plaintext,
-# 3 gopass-owned but unreadable/empty. Decrypt once; never emit values/errors.
+# 3 gopass-owned but unreadable/empty, 5 timed out. Never emit values/errors.
 cmd_check() {
 	local name="${1:-}"
 	[[ "$name" =~ ^[A-Z][A-Z0-9_]*$ ]] || return 1
@@ -1156,19 +894,178 @@ cmd_check() {
 	fi
 	if has_gopass && gopass_owns_secret "$name"; then
 		local value=""
-		value=$(get_injected_gopass_value "${GOPASS_PREFIX}/${name}" </dev/null 2>/dev/null) || return 3
+		local read_status=0
+		value=$(get_injected_gopass_value "${GOPASS_PREFIX}/${name}" </dev/null 2>/dev/null) || read_status=$?
+		[[ "$read_status" -ne 5 ]] || return 5
+		[[ "$read_status" -eq 0 ]] || return 3
 		[[ -n "$value" ]] || return 3
 		return 0
 	fi
 	local plain_value=""
-	plain_value=$(get_secret_value "$name" 2>/dev/null) || return 1
+	plain_value=$(get_secret_value "$name" 2>/dev/null) || return $?
 	[[ -n "$plain_value" ]] || return 1
 	return 0
+}
+
+# Run one secret-removal.py step (plaintext loader / registry; names only).
+run_secret_removal() {
+	local removal_cli="${SCRIPT_DIR}/secret-removal.py"
+	if ! command -v python3 >/dev/null 2>&1 || [[ ! -f "$removal_cli" ]]; then
+		print_error "python3 and secret-removal.py are required for plaintext and registry removal" >&2
+		return 1
+	fi
+	local exit_code=0
+	python3 "$removal_cli" "$@" || exit_code=$?
+	return "$exit_code"
+}
+
+# Parse `rm` arguments into globals RM_YES and RM_NAMES (normalised, deduplicated).
+parse_rm_args() {
+	RM_YES=false
+	RM_SKIP_DEPENDENTS=false
+	RM_NAMES=()
+	local arg=""
+	local name=""
+	for arg in "$@"; do
+		case "$arg" in
+		--yes | -y)
+			RM_YES=true
+			continue
+			;;
+		--skip-dependents)
+			RM_SKIP_DEPENDENTS=true
+			continue
+			;;
+		-*)
+			print_error "Unknown option: $arg" >&2
+			return 1
+			;;
+		esac
+		name=$(printf '%s' "$arg" | tr '[:lower:]-' '[:upper:]_')
+		if [[ ! "$name" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+			print_error "Invalid secret name: $arg" >&2
+			return 1
+		fi
+		case " ${RM_NAMES[*]:-} " in
+		*" $name "*) ;;
+		*) RM_NAMES+=("$name") ;;
+		esac
+	done
+	if [[ ${#RM_NAMES[@]} -eq 0 ]]; then
+		print_error "Usage: aidevops secret rm NAME [NAME...] [--yes] [--skip-dependents]" >&2
+		return 1
+	fi
+	return 0
+}
+
+# Remove secrets from gopass and the active-tenant plaintext store (GH#35850).
+# Every name must resolve before anything is deleted; output is names only.
+cmd_rm() {
+	local -a RM_NAMES=()
+	local RM_YES=false
+	local RM_SKIP_DEPENDENTS=false
+	parse_rm_args "$@" || return 1
+
+	local name="" source_name="" missing=0
+	for name in "${RM_NAMES[@]}"; do
+		if secret_name_stored "$name"; then
+			continue
+		fi
+		missing=1
+		if source_name=$(resolve_injection_source "$name" 2>/dev/null); then
+			print_error "$name is an alias/default for $source_name; remove $source_name by name" >&2
+		else
+			print_error "Secret not found: $name" >&2
+		fi
+	done
+	[[ "$missing" -eq 0 ]] || return 1
+
+	local registry_names=() warning_line="" warning_output=""
+	local -a warning_options=()
+	if [[ "$RM_SKIP_DEPENDENTS" == true ]]; then
+		warning_options+=(--skip-dependents)
+		print_warning "Dependents scan skipped by request; references have not been checked"
+	fi
+	if ! warning_output=$(run_secret_removal warnings "${RM_NAMES[@]}" ${warning_options[@]+"${warning_options[@]}"}); then
+		print_error "Unable to check removal metadata; nothing removed" >&2
+		return 1
+	fi
+	while IFS= read -r warning_line; do
+		[[ -n "$warning_line" ]] || continue
+		print_warning "${warning_line#*: }"
+		if [[ "$warning_line" == registry:* ]]; then
+			name=${warning_line#registry: }
+			registry_names+=("${name%% *}")
+		fi
+	done <<<"$warning_output"
+
+	local answer=""
+	if [[ "$RM_YES" != true ]]; then
+		if [[ ! -t 0 ]]; then
+			print_error "Confirmation required: rerun with --yes in non-interactive use" >&2
+			return 1
+		fi
+		printf 'Remove %s? [y/N] ' "${RM_NAMES[*]}" >&2
+		read -r answer || answer=""
+		[[ "$answer" == y || "$answer" == Y ]] || {
+			print_info "Nothing removed"
+			return 1
+		}
+	fi
+
+	local rc=0
+	for name in "${RM_NAMES[@]}"; do
+		if systemd_owns_secret "$name"; then
+			rm -f -- "$CONFIG_DIR/creds/$name.cred" || rc=1
+		fi
+		if has_gopass && gopass_owns_secret "$name"; then
+			if ! gopass rm -f "${GOPASS_PREFIX}/${name}" </dev/null >/dev/null 2>&1; then
+				print_error "Failed to remove $name from gopass" >&2
+				rc=1
+			fi
+		fi
+	done
+	local store_file=""
+	store_file=$(credential_store_file)
+	if [[ -f "$store_file" ]]; then
+		run_secret_removal plaintext "$store_file" "${RM_NAMES[@]}" || rc=1
+	fi
+
+	if [[ ${#registry_names[@]} -gt 0 ]]; then
+		answer=y
+		if [[ "$RM_YES" != true ]]; then
+			printf 'Also remove the registry record for %s? [y/N] ' "${registry_names[*]}" >&2
+			read -r answer || answer=""
+		fi
+		if [[ "$answer" == y || "$answer" == Y ]]; then
+			run_secret_removal registry "${registry_names[@]}" || rc=1
+		fi
+	fi
+
+	local check_rc=0
+	for name in "${RM_NAMES[@]}"; do
+		check_rc=0
+		cmd_check "$name" || check_rc=$?
+		if [[ "$check_rc" -eq 1 ]]; then
+			print_success "Removed $name (check: absent)"
+		else
+			print_error "$name is still resolvable after removal (another tenant file or backend may hold it)" >&2
+			rc=1
+		fi
+	done
+	return "$rc"
 }
 
 # List secret names (NEVER values)
 cmd_list() {
 	local has_secrets=false
+	local encrypted_names=""
+	encrypted_names=$(systemd_secret_names)
+	if [[ -n "$encrypted_names" ]]; then
+		print_info "Secrets in systemd-creds:"
+		printf '%s\n' "$encrypted_names"
+		has_secrets=true
+	fi
 
 	if has_gopass; then
 		local secrets
@@ -1249,27 +1146,42 @@ cmd_inventory() (
 	local names_file=""
 	local sorted_file=""
 	local count=0
+	local encrypted_name=""
 
 	names_file=$(mktemp) || return 1
 	sorted_file="${names_file}.sorted"
 	trap 'rm -f "${names_file:-}" "${sorted_file:-}"' EXIT
+	while IFS= read -r encrypted_name; do
+		[[ -n "$encrypted_name" ]] || continue
+		inventory_add_name "$encrypted_name" "$names_file" || return 1
+	done < <(systemd_secret_names)
 
 	if command -v gopass &>/dev/null; then
 		gopass_status="error"
 		local listing=""
-		if listing=$(gopass ls --flat "${GOPASS_PREFIX}/" 2>/dev/null); then
+		# Whole-store listing: an empty prefix folder is "available", not an error.
+		if listing=$(gopass ls --flat 2>/dev/null); then
 			gopass_status="available"
 			local secret_path=""
+			local inventory_name=""
+			local skipped_nested=0
 			while IFS= read -r secret_path; do
 				[[ -z "$secret_path" ]] && continue
 				case "$secret_path" in
-				"${GOPASS_PREFIX}/"*) inventory_add_name "${secret_path#"${GOPASS_PREFIX}/"}" "$names_file" || return 1 ;;
-				*)
-					print_error "Invalid gopass inventory path" >&2
-					return 1
+				"${GOPASS_PREFIX}/"*)
+					inventory_name="${secret_path#"${GOPASS_PREFIX}/"}"
+					if [[ "$inventory_name" == */* ]]; then
+						skipped_nested=$((skipped_nested + 1))
+						continue
+					fi
+					inventory_add_name "$inventory_name" "$names_file" || return 1
 					;;
+				*) continue ;;
 				esac
 			done <<<"$listing"
+			if [[ "$skipped_nested" -gt 0 ]]; then
+				printf 'Skipped %s nested gopass inventory entries\n' "$skipped_nested" >&2
+			fi
 		fi
 	fi
 
@@ -1329,6 +1241,107 @@ inventory_add_name() {
 	return 0
 }
 
+# Run a command with the NUL-delimited secret records from ENV_FILE exported,
+# redacting stdout and stderr independently. The streams must stay separate:
+# merging stderr into stdout lets diagnostic lines land inside large stdout
+# writes (pipe writes above PIPE_BUF are not atomic), corrupting line-framed
+# protocols such as MCP stdio JSON-RPC (GH#35896). stdin is inherited.
+# Usage: run_with_redacted_streams ENV_FILE COMMAND [ARGS...]
+run_with_redacted_streams() {
+	local env_file="$1"
+	shift
+
+	# The bounded stderr sink needs Python even with no usable secret values.
+	# Fail before launching the child rather than breaking its stderr pipe.
+	if ! command -v python3 >/dev/null 2>&1; then
+		print_error "$REDACTION_INIT_ERROR" >&2
+		return 1
+	fi
+
+	local fifo_dir=""
+	local previous_umask
+	previous_umask=$(umask)
+	umask 077
+	if ! fifo_dir=$(mktemp -d) || ! mkfifo "$fifo_dir/stderr"; then
+		umask "$previous_umask"
+		[[ -n "$fifo_dir" ]] && rm -rf "$fifo_dir"
+		print_error "$REDACTION_INIT_ERROR" >&2
+		return 1
+	fi
+	umask "$previous_umask"
+	local stderr_fifo="$fifo_dir/stderr"
+
+	# A FIFO (not process substitution) so Bash 3.2 can wait for redaction.
+	# The final sink is best-effort: an unread parent stderr must not stall
+	# the child or stdout (GH#35975). Only already-redacted bytes enter its
+	# bounded queue. A daemon writer can block without blocking the reader;
+	# at EOF allow a short drain, then abandon pending diagnostics. Do not
+	# set O_NONBLOCK on inherited fd 2: that changes the parent descriptor too.
+	redact_stream "$env_file" quiet <"$stderr_fifo" | python3 -c '
+import os
+import queue
+import sys
+import threading
+
+chunks = queue.Queue(maxsize=16)  # At most 1 MiB, plus reader/writer chunks.
+finished = threading.Event()
+
+def write_stderr():
+    while True:
+        try:
+            chunk = chunks.get(timeout=0.05)
+        except queue.Empty:
+            if finished.is_set():
+                return
+            continue
+        try:
+            while chunk:
+                count = os.write(2, chunk)
+                if not count:
+                    return
+                chunk = chunk[count:]
+        except OSError:
+            # Closed or unavailable parent stderr: keep draining input.
+            return
+
+writer = threading.Thread(target=write_stderr, daemon=True)
+writer.start()
+while True:
+    chunk = sys.stdin.buffer.read1(65536)
+    if not chunk:
+        break
+    try:
+        chunks.put_nowait(chunk)
+    except queue.Full:
+        pass  # Drop diagnostics under backpressure, never stdout.
+finished.set()
+writer.join(timeout=0.25)
+' &
+	local stderr_relay_pid=$!
+
+	local exit_code=0
+	(
+		# Whole-record read; see collect_env_file_values for why IFS='=' is unsafe.
+		local record="" key=""
+		while IFS= read -r -d '' record; do
+			[[ "$record" == *=* ]] || continue
+			key="${record%%=*}"
+			[[ -z "$key" ]] && continue
+			export "$key=${record#*=}"
+		done <"$env_file"
+
+		"$@"
+	) 2>"$stderr_fifo" | redact_stream "$env_file" || exit_code=$?
+
+	local relay_code=0
+	wait "$stderr_relay_pid" || relay_code=$?
+	rm -rf "$fifo_dir"
+	if [[ "$exit_code" -eq 0 && "$relay_code" -ne 0 ]]; then
+		exit_code="$relay_code"
+	fi
+	return "$exit_code"
+}
+
 # Run a command with secrets injected and output redacted
 cmd_run() {
 	local -a cmd_args=("$@")
@@ -1340,26 +1353,17 @@ cmd_run() {
 
 	# Build environment in temp file with trap cleanup for security
 	local env_file
-	env_file=$(mktemp)
+	env_file=$(secret_env_tempfile) || return 1
 	# shellcheck disable=SC2064
 	trap "rm -f '$env_file'" EXIT
 
-	build_secret_env >"$env_file"
+	build_secret_env >"$env_file" || return 1
 	append_registry_aliases "$env_file"
 	register_redaction_digests "$env_file"
 
 	# Execute command with secrets in environment, redact output
 	local exit_code=0
-	(
-		# Load secrets into subprocess environment
-		while IFS='=' read -r -d '' key val; do
-			[[ -z "$key" ]] && continue
-			export "$key=$val"
-		done <"$env_file"
-
-		# Execute the command
-		"${cmd_args[@]}"
-	) 2>&1 | redact_stream "$env_file" || exit_code=$?
+	run_with_redacted_streams "$env_file" "${cmd_args[@]}" || exit_code=$?
 
 	# Clean up (also handled by trap on abnormal exit)
 	rm -f "$env_file"
@@ -1393,7 +1397,7 @@ cmd_run_specific() {
 
 	# Build environment with specific secrets only, trap cleanup for security
 	local env_file
-	env_file=$(mktemp)
+	env_file=$(secret_env_tempfile) || return 1
 	# shellcheck disable=SC2064
 	trap "rm -f '$env_file'" EXIT
 
@@ -1420,14 +1424,7 @@ cmd_run_specific() {
 
 	# Execute command with secrets in environment, redact output
 	local exit_code=0
-	(
-		while IFS='=' read -r -d '' key val; do
-			[[ -z "$key" ]] && continue
-			export "$key=$val"
-		done <"$env_file"
-
-		"${cmd_args[@]}"
-	) 2>&1 | redact_stream "$env_file" || exit_code=$?
+	run_with_redacted_streams "$env_file" "${cmd_args[@]}" || exit_code=$?
 
 	rm -f "$env_file"
 	trap - EXIT
@@ -1435,110 +1432,20 @@ cmd_run_specific() {
 	return "$exit_code"
 }
 
-# Explicit, read-only provider verification (GH#34722). Each token reaches
-# the verifier only through cmd_run_specific (environment, never argv; output
-# redacted); the verifier caches value-free observations in the registry.
-cmd_verify() {
-	local provider="${1:-}"
-	if [[ "$provider" != "cloudflare" ]]; then
-		print_error "Usage: aidevops secret verify cloudflare [NAME...]"
-		return 1
-	fi
-	shift
-	local targets=""
-	local targets_rc=0
-	targets=$(run_credential_inventory verify-targets "$provider" "$@") || targets_rc=$?
-	if [[ "$targets_rc" -ne 0 ]]; then
-		[[ "$targets_rc" -eq 1 ]] && print_error "No recorded $provider credentials; record them with: aidevops secret record NAME --provider $provider --account REF"
-		return 1
-	fi
-	local -a names=()
-	local name=""
-	while IFS= read -r name; do
-		[[ -n "$name" ]] && names+=("$name")
-	done <<<"$targets"
-	local verifier="${SCRIPT_DIR}/credential_inventory_${provider}.py"
-	local failures=0
-	for name in "${names[@]}"; do
-		cmd_run_specific "$name" -- python3 "$verifier" verify "$name" </dev/null || failures=$((failures + 1))
-	done
-	if [[ "$failures" -gt 0 ]]; then
-		print_warning "$failures of ${#names[@]} $provider credential(s) did not verify as active"
-		return 1
-	fi
-	return 0
-}
-
-# Migrate only the active plaintext store into the resolver's flat namespace.
-# Both operations share the writer lock and a conservative literal-only parser.
-credential_migration() (
-	local operation="$1"
-	local dry_run="${2:-false}"
-	if ! has_gopass; then
-		print_error "gopass not initialized. Run: aidevops secret init"
-		return 1
-	fi
-	local file="" lock_dir=""
-	file=$(credential_store_file)
-	if [[ ! -e "$file" && ! -L "$file" ]]; then
-		print_info "No active credentials file found"
-		return 0
-	fi
-	lock_dir=$(acquire_credentials_lock) || return 1
-	trap 'release_credentials_lock "$lock_dir"' EXIT
-	python3 "${SCRIPT_DIR}/credential_migration.py" "$file" "$operation" "$dry_run" "${SCRIPT_DIR}/secret-helper.sh"
-	return $?
-)
-
-# JSON Lines, names only. File resolution stays shared with the runtime resolver.
-cmd_audit_credentials() {
-	local loader="" file=""
-	local -a files=("$CREDENTIALS_FILE")
-	is_tenant_loader && loader="$CREDENTIALS_FILE"
-	while IFS= read -r file; do
-		[[ -n "$file" ]] && files+=("$file")
-	done < <(resolve_credential_files)
-	python3 "${SCRIPT_DIR}/credential_audit.py" audit "${SCRIPT_DIR}/secret-helper.sh" "$loader" "$(credential_store_file)" "${files[@]}" || return 1
-	return 0
-}
-
-cmd_import_credentials() {
-	credential_migration import || return 1
-	print_info "Env-only helpers must run via: aidevops secret NAME -- cmd"
-	print_info "Keep plaintext until callers use injection; preview with: aidevops secret prune-plaintext --dry-run"
-	return 0
-}
-
-cmd_prune_plaintext() {
-	local dry_run=false
-	local option="${1:-}"
-	if [[ $# -eq 1 && "$option" == "--dry-run" ]]; then
-		dry_run=true
-	elif [[ $# -ne 0 ]]; then
-		print_error "Usage: aidevops secret prune-plaintext [--dry-run]"
-		return 1
-	fi
-	print_info "Env-only helpers must run via: aidevops secret NAME -- cmd"
-	credential_migration prune "$dry_run" || return 1
-	return 0
-}
-
-# Names/permissions only: old copies remain plaintext even after pruning.
-warn_credential_backups() {
-	local backup="" permissions=""
-	for backup in "$CONFIG_DIR"/credentials.sh.bak-* "$TENANTS_DIR"/*/credentials.sh.bak-*; do
-		[[ -e "$backup" || -L "$backup" ]] || continue
-		permissions=$(_file_perms "$backup" 2>/dev/null) || permissions="unknown"
-		print_warning "Plaintext credentials.sh.bak-* backup remains (mode $permissions); review under your secure-deletion policy"
-		if [[ ! "$permissions" =~ ^[046]00$ ]]; then
-			print_warning "Credential backup may be group/world-readable or unsafe"
-		fi
-	done
-	return 0
-}
+# shellcheck source=./secret-verify-lib.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/secret-verify-lib.sh"
 
 # Show backend status
 cmd_status() {
+	if has_systemd_creds; then
+		print_info "systemd-creds: available (user scope, host key; explicit --backend systemd-creds)"
+	else
+		print_info "systemd-creds: unavailable (requires systemd 259+ with --refuse-null)"
+	fi
+	local encrypted_names=""
+	encrypted_names=$(systemd_secret_names)
+	[[ -z "$encrypted_names" ]] || printf 'systemd-creds configured names:\n%s\n' "$encrypted_names"
 	echo ""
 	print_info "Secret Management Status"
 	echo "========================="
@@ -1609,9 +1516,13 @@ cmd_help() {
 	echo "  init                              Initialize gopass store"
 	echo "  set <NAME>                        Store a secret (interactive hidden input)"
 	echo "  set <NAME> --from-file PATH       Store a private regular file (chmod 600)"
+	echo "  set <NAME> --backend systemd-creds Store host-bound encrypted credentials (systemd 259+)"
 	echo "                                    Piped stdin is read in full until EOF"
 	echo "  get <NAME>                        Get a secret value (for scripts/piping)"
 	echo "  check <NAME>                      Resolve by name; exit status only, no output"
+	echo "  rm <NAME> [NAME...] [--yes]       Remove from gopass + active plaintext store, then"
+	echo "                                    read back with check (alias: remove, delete)"
+	echo "    --skip-dependents                Skip reference scan only (after checking references)"
 	echo "  list                              List secret names (never values)"
 	echo "  inventory                         Names-only structured local inventory"
 	echo "  audit-credentials                 Names-only JSON Lines hygiene audit (offline)"
@@ -1629,14 +1540,18 @@ cmd_help() {
 	echo "  resolve PROVIDER                  Print default name (exit 3 none, 4 undeclared)"
 	echo "  validate                          Check the credential registry file"
 	echo "  dependents NAME [--json]          What uses NAME (+aliases) before rename/rotation"
+	echo "                                    Scan budget: 5s; timeout reports incomplete coverage"
 	echo "  verify cloudflare [NAME...]       Read-only provider check; caches accounts/zones"
+	echo "  verify aws [ACCESS_KEY_ID_NAME...] Read-only STS check; prints account and ARN only"
 	echo "  drift [--json]                    Offline expiry/overlap/ownership/freshness report"
 	echo "  owner RESOURCE [--json]           Which account/credentials hold a zone or resource"
 	echo "  organise [--json] [--apply-drafts] Plan cleanup; drafts only, never renames/deletes"
+	echo "  forget NAME... [--force]          Drop registry records whose secrets are gone"
 	echo ""
 	echo "  run CMD [ARGS...]                 Run command with all secrets injected"
 	echo "  NAME [NAME...] -- CMD [ARGS...]   Run command with specific secrets"
 	echo "  import-credentials                Import from credentials.sh to gopass"
+	echo "  import-credentials --to systemd-creds  Decrypt-verified import; retains plaintext source"
 	echo "  prune-plaintext [--dry-run]        Remove matching active-store secrets; keep config"
 	echo "  migrate-loader                    Move exports stranded in a tenant loader into the active tenant"
 	echo ""
@@ -1699,6 +1614,9 @@ main() {
 	check)
 		cmd_check "$@"
 		;;
+	rm | remove | delete)
+		cmd_rm "$@" || return $?
+		;;
 	list | ls)
 		cmd_list "$@"
 		;;
@@ -1712,7 +1630,7 @@ main() {
 		warn_credential_backups
 		run_credential_inventory "$command" "$@" || return $?
 		;;
-	describe | record | account | default | alias | resolve | validate | dependents | owner | organise | organize)
+	describe | record | account | default | alias | resolve | validate | dependents | owner | organise | organize | forget)
 		run_credential_inventory "$command" "$@" || return $?
 		;;
 	verify)
@@ -1722,7 +1640,12 @@ main() {
 		cmd_run "$@"
 		;;
 	import-credentials | import)
-		cmd_import_credentials "$@"
+		if [[ "${1:-}" == --to && "${2:-}" == systemd-creds && $# -eq 2 ]]; then
+			cmd_import_systemd_credentials || return 1
+		else
+			[[ $# -eq 0 ]] || return 1
+			cmd_import_credentials "$@"
+		fi
 		;;
 	prune-plaintext)
 		cmd_prune_plaintext "$@"

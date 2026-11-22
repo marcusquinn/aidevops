@@ -5,6 +5,7 @@ import {
   getAccounts,
   markRejectedTokenFailure,
   patchAccount,
+  poolAccountKey,
   selectRuntimePoolAccount,
 } from "./oauth-pool.mjs";
 import {
@@ -19,6 +20,7 @@ import {
   parseRetryAfterMs,
   transformOpenAIRequestBody,
 } from "./openai-provider-auth.mjs";
+import { usageUpdateFromHeaders } from "./oauth-pool-ordering.mjs";
 
 const SUPPORTED_PROVIDERS = new Set(["anthropic", "openai"]);
 const DEFAULT_COOLDOWN_MS = 300_000;
@@ -80,6 +82,7 @@ function openAIRequest(request, account, body) {
 function ensureProviderActivation(provider) {
   if (provider === "anthropic" && !process.env.ANTHROPIC_API_KEY) {
     process.env.ANTHROPIC_API_KEY = "aidevops-oauth-pool";
+    process.env.AIDEVOPS_ANTHROPIC_API_KEY_SOURCE = "oauth-pool"; // GH#36707
   }
   if (provider === "openai" && !process.env.OPENAI_API_KEY) {
     process.env.OPENAI_API_KEY = "aidevops-oauth-pool";
@@ -101,8 +104,10 @@ function createHttpRequestHook(runtime) {
     const provider = event.model?.providerID;
     if (!SUPPORTED_PROVIDERS.has(provider) || runtime.listAccounts(provider).length === 0) return;
     const key = affinityKey(event);
-    const skipEmail = runtime.retryState.get(key)?.email || "";
-    const account = await runtime.selectAccount(provider, skipEmail);
+    // Retry state holds the seat key (email + optional orgId, GH#38959), so a
+    // rate-limited Team seat does not also skip the same-email Personal seat.
+    const skipKey = runtime.retryState.get(key)?.seat || "";
+    const account = await runtime.selectAccount(provider, skipKey);
     if (!account?.access) return;
     runtime.activateProvider(provider);
     const body = await transformedBody(event.request, provider, event.sessionID);
@@ -111,11 +116,26 @@ function createHttpRequestHook(runtime) {
       : openAIRequest(event.request, account, body);
     runtime.requestAccounts.set(event.request, account);
     runtime.retryState.delete(key);
-    runtime.updateAccount(provider, account.email, {
+    runtime.updateAccount(provider, poolAccountKey(account), {
       lastUsed: new Date().toISOString(),
       status: "active",
     });
   };
+}
+
+/**
+ * Persist the Anthropic seat's usage window from response headers (t19127).
+ * Best-effort: never throws, never reads the body.
+ */
+function recordAnthropicUsage(runtime, account, response) {
+  try {
+    const key = poolAccountKey(account);
+    const stored = runtime.listAccounts("anthropic").find((a) => poolAccountKey(a) === key) || account;
+    const patch = usageUpdateFromHeaders(stored, response?.headers);
+    if (patch) runtime.updateAccount("anthropic", key, patch);
+  } catch {
+    /* usage capture must never block the response path */
+  }
 }
 
 function createHttpResponseHook(runtime) {
@@ -126,6 +146,7 @@ function createHttpResponseHook(runtime) {
     const account = runtime.requestAccounts.get(event.request);
     if (!account) return;
     runtime.requestAccounts.delete(event.request);
+    if (provider === "anthropic") recordAnthropicUsage(runtime, account, event.response);
     const usageLimited = provider === "openai"
       ? await isOpenAIUsageLimitResponse(event.response)
       : event.response.status === 429;
@@ -134,15 +155,15 @@ function createHttpResponseHook(runtime) {
       : [401, 403].includes(event.response.status);
     if (usageLimited) {
       const cooldown = provider === "openai" ? parseRetryAfterMs(event.response) : cooldownFromResponse(event.response);
-      runtime.updateAccount(provider, account.email, {
+      runtime.updateAccount(provider, poolAccountKey(account), {
         status: "rate-limited",
         cooldownUntil: Date.now() + cooldown,
         lastUsed: new Date().toISOString(),
       });
-      runtime.retryState.set(key, { email: account.email, delay: 0 });
+      runtime.retryState.set(key, { seat: poolAccountKey(account), delay: 0 });
     } else if (authFailed) {
       runtime.rejectAccount(provider, account);
-      runtime.retryState.set(key, { email: account.email, delay: 0 });
+      runtime.retryState.set(key, { seat: poolAccountKey(account), delay: 0 });
     }
     if (provider === "anthropic") event.response = transformResponseStream(event.response);
   };
@@ -153,7 +174,7 @@ function createRetryHook(runtime) {
     const provider = event.model?.providerID;
     const state = runtime.retryState.get(affinityKey(event));
     if (!state || !SUPPORTED_PROVIDERS.has(provider)) return;
-    const alternatives = runtime.listAccounts(provider).filter((account) => account.email !== state.email);
+    const alternatives = runtime.listAccounts(provider).filter((account) => poolAccountKey(account) !== state.seat);
     if (alternatives.length === 0 || event.attempt > alternatives.length) return;
     event.decision = { retry: true, delay: state.delay };
   };

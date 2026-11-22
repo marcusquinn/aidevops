@@ -20,6 +20,8 @@
 _PULSE_DISPATCH_WORKER_SYSTEMD_LOADED=1
 _DLW_SYSTEMD_MODULE_DIR="${BASH_SOURCE[0]%/*}"
 _DLW_MANAGED_WORKTREE_MANAGER="pulse-cgroup-v1"
+# shellcheck source=pulse-dispatch-sealed-worktree.sh
+source "${_DLW_SYSTEMD_MODULE_DIR}/pulse-dispatch-sealed-worktree.sh"
 
 # Shared managed-launch contract (GH#35295). Automatic Pulse and manual
 # dispatch both use these adapters; each caller keeps its own task selection,
@@ -61,19 +63,76 @@ _dlw_managed_creation_env() {
 	return 0
 }
 
+# Echo a lifecycle diagnostic field only when it is a short token. Anything
+# else (paths, spaces, free text) becomes "redacted"; absent becomes "none".
+_dlw_safe_diag_token() {
+	local value="$1"
+	if [[ -z "$value" ]]; then
+		printf 'none\n'
+	elif [[ ${#value} -le 80 && "$value" =~ ^[A-Za-z0-9_.:-]+$ ]]; then
+		printf '%s\n' "$value"
+	else
+		printf 'redacted\n'
+	fi
+	return 0
+}
+
+# Log why reuse-status could not classify a candidate without exposing paths.
+# Only controlled fields of the CLI error JSON are logged, never raw JSON or
+# stderr; a missing or unparsable payload (e.g. Python startup failure) logs
+# the caller's generic fallback reason.
+_dlw_log_reuse_status_failure() {
+	local issue_number="$1" rc="$2" payload="$3" fallback="$4"
+	local reason="" category="" detail="" fields=""
+	if [[ -n "$payload" ]] && fields=$(jq -er '[.reason // "", .category // "", .detail // ""] | map(tostring) | join("\u001f")' <<<"$payload" 2>/dev/null); then
+		IFS=$'\037' read -r reason category detail <<<"$fields"
+	fi
+	[[ -n "$reason" ]] || reason="$fallback"
+	reason=$(_dlw_safe_diag_token "$reason")
+	category=$(_dlw_safe_diag_token "$category")
+	detail=$(_dlw_safe_diag_token "$detail")
+	echo "[dispatch_worker_launch] reuse_status_unavailable issue=#${issue_number} rc=${rc} reason=${reason} category=${category} detail=${detail}" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
+
 # Classify one branch-nominated candidate. Echoes "managed <generation>",
 # "legacy", "sealed" or nothing (different enrolled task). Returns 1 when
 # evidence is unavailable: the caller must refuse, not guess.
 _dlw_classify_reuse_candidate() {
 	local wt_path="$1" issue_number="$2" repo_slug="$3"
-	local helper="" output="" rc=0
+	local helper="" output="" rc=0 state_dir="" lifecycle="" reuse=""
+	# GH#36920: managed/legacy matching uses a different registry. Preflight
+	# lifecycle admission before ownership transfer; launch must still recheck.
+	# shellcheck source=./worker-lifecycle-state.sh
+	if ! source "${_DLW_SYSTEMD_MODULE_DIR}/worker-lifecycle-state.sh" ||
+		! state_dir=$(worker_lifecycle_state_dir) || [[ -z "$state_dir" ]]; then
+		_dlw_log_reuse_status_failure "$issue_number" 1 "" "lifecycle_state_dir_unavailable"
+		return 1
+	fi
+	# GH#37028: on failure the CLI prints path-safe error JSON on stdout (exit
+	# 2); log its controlled fields. No JSON means Python itself failed.
+	lifecycle=$(python3 -E -s -B "${_DLW_SYSTEMD_MODULE_DIR}/../worker-lifecycle/worker-registry.py" \
+		--state-dir "$state_dir" reuse-status --path "$wt_path" 2>/dev/null) || rc=$?
+	if [[ "$rc" -ne 0 ]]; then
+		_dlw_log_reuse_status_failure "$issue_number" "$rc" "$lifecycle" "reuse_status_no_diagnostic"
+		return 1
+	fi
+	reuse=$(jq -er '.reuse' <<<"$lifecycle" 2>/dev/null) || reuse=""
+	case "$reuse" in
+	sealed) _dlw_classify_sealed_candidate "$wt_path" "$issue_number" "$repo_slug"; return $? ;;
+	eligible) ;;
+	*)
+		_dlw_log_reuse_status_failure "$issue_number" 0 "" "reuse_status_unrecognized"
+		return 1
+		;;
+	esac
 	helper=$(_dlw_lifetime_helper)
 	output=$(WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$helper" match "$wt_path" "$issue_number" ${repo_slug:+"$repo_slug"} 2>/dev/null) || rc=$?
 	case "$rc" in
 	0) printf 'managed %s\n' "${output%% *}" ;;
 	3) printf 'legacy\n' ;;
 	4) ;;
-	5) printf 'sealed\n' ;;
+	5) _dlw_classify_sealed_candidate "$wt_path" "$issue_number" "$repo_slug"; return $? ;;
 	*) return 1 ;;
 	esac
 	return 0
@@ -83,23 +142,43 @@ _dlw_classify_reuse_candidate() {
 # candidates; enrolled generations must match the exact task. Never first-match.
 # Sets _DLW_REUSE_PATH, _DLW_REUSE_BRANCH, _DLW_REUSE_GENERATION ("" = legacy)
 # and _DLW_REUSE_REFUSAL. Returns 0 unique, 1 none, 2 refuse (ambiguous/unknown).
+# GH#36132: parse porcelain with shell builtins. Forking awk/sed per listed
+# worktree cost ~2 s per dispatch on a repo with 116 linked worktrees and was
+# the largest dispatcher-side precreate_worktree residual under load.
 _dlw_select_issue_worktree() {
 	local repo_path="$1" issue_number="$2" repo_slug="${3:-}"
-	local line="" wt_path="" wt_branch="" class="" count=0 unknown=0 sealed=0
+	local line="" wt_path="" wt_branch="" class="" count=0 unknown=0 sealed=0 sealed_snapshot="" listing=""
 	_DLW_REUSE_PATH="" _DLW_REUSE_BRANCH="" _DLW_REUSE_GENERATION="" _DLW_REUSE_REFUSAL=""
+	if ! listing=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null); then
+		_DLW_REUSE_REFUSAL="worktree_reuse_evidence_unavailable"
+		return 2
+	fi
 	while IFS= read -r line; do
-		wt_path=$(printf '%s' "$line" | awk '{print $1}') || wt_path=""
-		wt_branch=$(printf '%s' "$line" | awk '{print $3}' | sed 's/^\[//;s/\]$//') || wt_branch=""
-		[[ "$wt_branch" =~ gh-?${issue_number}([^0-9]|$) && -d "$wt_path" ]] || continue
+		case "$line" in
+		"worktree "*) wt_path="${line#worktree }"; continue ;;
+		"branch refs/heads/"*) wt_branch="${line#branch refs/heads/}" ;;
+		*) continue ;;
+		esac
+		[[ "$wt_branch" =~ gh-?${issue_number}([^0-9]|$) && -n "$wt_path" && -d "$wt_path" ]] || continue
 		if ! class=$(_dlw_classify_reuse_candidate "$wt_path" "$issue_number" "$repo_slug"); then
 			unknown=$((unknown + 1))
 			continue
 		fi
 		[[ -n "$class" ]] || continue
 		if [[ "$class" == "sealed" ]]; then
-			# A closed generation may still hold unpublished work for this
-			# task; do not start a parallel generation beside it.
+			sealed_snapshot=$(_dlw_sealed_snapshot "$repo_path" "$issue_number" "$repo_slug") || sealed_snapshot=""
+			if _dlw_retire_empty_sealed "$wt_path" "$wt_branch" "$repo_slug"; then
+				continue
+			fi
+			_dlw_sealed_hold_record "$repo_path" "$issue_number" "$repo_slug" "$_DLW_SEALED_REASON" "$sealed_snapshot" || true
 			sealed=$((sealed + 1))
+			continue
+		fi
+		# GH#38355: never resume commits that a closed, unmerged PR rejected.
+		# Skip (preserve) the candidate so a fresh branch starts from the default.
+		if declare -F _dlw_reuse_head_rejected >/dev/null 2>&1 &&
+			_dlw_reuse_head_rejected "$wt_path" "$wt_branch" "$repo_slug"; then
+			echo "[dispatch_worker_launch] WORKTREE_REUSE_REJECTED_HEAD issue=#${issue_number} pr=#${_DLW_REJECTED_HEAD_PR} class=${class%% *} action=fresh_branch_from_default" >>"${LOGFILE:-/dev/null}"
 			continue
 		fi
 		count=$((count + 1))
@@ -107,7 +186,7 @@ _dlw_select_issue_worktree() {
 		_DLW_REUSE_BRANCH="$wt_branch"
 		_DLW_REUSE_GENERATION=""
 		[[ "$class" != managed\ * ]] || _DLW_REUSE_GENERATION="${class#managed }"
-	done < <(git -C "$repo_path" worktree list 2>/dev/null)
+	done <<<"$listing"
 	if [[ "$unknown" -gt 0 ]]; then
 		_DLW_REUSE_REFUSAL="worktree_reuse_evidence_unavailable"
 	elif [[ "$sealed" -gt 0 ]]; then
@@ -116,7 +195,9 @@ _dlw_select_issue_worktree() {
 		_DLW_REUSE_REFUSAL="worktree_reuse_ambiguous"
 	fi
 	if [[ -n "$_DLW_REUSE_REFUSAL" ]]; then
-		echo "[dispatch_worker_launch] ${_DLW_REUSE_REFUSAL} issue=#${issue_number} candidates=${count} sealed=${sealed} unavailable=${unknown}; refusing first-match reuse. Inspect: git -C <repo> worktree list; worktree-managed-lifetime.py status <path>" >>"${LOGFILE:-/dev/null}"
+		if [[ "$_DLW_REUSE_REFUSAL" != "worktree_reuse_sealed_generation" ]]; then
+			echo "[dispatch_worker_launch] ${_DLW_REUSE_REFUSAL} issue=#${issue_number} candidates=${count} sealed=${sealed} unavailable=${unknown}; refusing first-match reuse. Inspect: git -C <repo> worktree list; worktree-managed-lifetime.py status <path>" >>"${LOGFILE:-/dev/null}"
+		fi
 		_DLW_REUSE_PATH="" _DLW_REUSE_BRANCH="" _DLW_REUSE_GENERATION=""
 		return 2
 	fi
@@ -154,17 +235,93 @@ _dlw_select_worker_backend() {
 # timers, long-lived children therefore remain visible as leftovers after the
 # oneshot exits (GH#23073). A transient user service gives each worker an
 # intentional lifecycle owner outside aidevops-supervisor-pulse.service.
+#
+# On failure, _DLW_SYSTEMD_UNAVAILABLE_REASON names the probe that failed
+# (GH#37171) so the launch error line carries an actionable cause. Callers
+# running this in a subshell simply do not observe the value.
 _dlw_systemd_user_service_available() {
-	[[ "${AIDEVOPS_WORKER_BACKEND:-auto}" == "detached" ]] && return 1
-	if [[ "${AIDEVOPS_WORKER_BACKEND:-auto}" == "auto" && "${AIDEVOPS_SKIP_SYSTEMD_WORKER_SERVICE:-0}" == "1" ]]; then
+	_DLW_SYSTEMD_UNAVAILABLE_REASON=""
+	if [[ "${AIDEVOPS_WORKER_BACKEND:-auto}" == "detached" ]]; then
+		_DLW_SYSTEMD_UNAVAILABLE_REASON="env_detached"
 		return 1
 	fi
-	[[ "$(uname -s 2>/dev/null || printf '%s' unknown)" == "Linux" ]] || return 1
-	command -v systemd-run >/dev/null 2>&1 || return 1
-	command -v systemctl >/dev/null 2>&1 || return 1
+	if [[ "${AIDEVOPS_WORKER_BACKEND:-auto}" == "auto" && "${AIDEVOPS_SKIP_SYSTEMD_WORKER_SERVICE:-0}" == "1" ]]; then
+		_DLW_SYSTEMD_UNAVAILABLE_REASON="env_skip"
+		return 1
+	fi
+	if [[ "$(uname -s 2>/dev/null || printf '%s' unknown)" != "Linux" ]]; then
+		_DLW_SYSTEMD_UNAVAILABLE_REASON="not_linux"
+		return 1
+	fi
+	if ! command -v systemd-run >/dev/null 2>&1; then
+		_DLW_SYSTEMD_UNAVAILABLE_REASON="missing_systemd_run"
+		return 1
+	fi
+	if ! command -v systemctl >/dev/null 2>&1; then
+		_DLW_SYSTEMD_UNAVAILABLE_REASON="missing_systemctl"
+		return 1
+	fi
 	# A degraded manager can still launch services; status conflates unrelated
 	# failed units with bus availability. Query the manager itself instead.
-	systemctl --user show --property=Version --value >/dev/null 2>&1 || return 1
+	# Keep stderr (bus connection/timeout messages) for diagnostics only.
+	local probe_err="" probe_rc=0
+	probe_err=$(systemctl --user show --property=Version --value 2>&1 >/dev/null) || probe_rc=$?
+	if [[ "$probe_rc" -ne 0 ]]; then
+		_DLW_SYSTEMD_UNAVAILABLE_REASON="manager_probe_failed rc=${probe_rc} stderr=$(_dlw_systemd_sanitize_probe_text "$probe_err")"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Cycle-level dispatch gate (GH#39118). Return 1 when the selected worker
+# backend is systemd but its user manager is unreachable (for example a pulse
+# started without XDG_RUNTIME_DIR / DBUS_SESSION_BUS_ADDRESS), so callers skip
+# claiming issues this cycle instead of failing every launch. Detached
+# fallback stays suppressed on purpose. Return 0 otherwise (including
+# detached/launchd backends, which are unchanged). The skip line is logged
+# once per pulse process; the marker holds that pid because dispatch_max
+# runs in command-substitution subshells that cannot share variables.
+#######################################
+_dlw_cycle_dispatch_backend_gate() {
+	local backend=""
+	backend=$(_dlw_select_worker_backend 2>/dev/null) || return 0
+	[[ "$backend" == "systemd" ]] || return 0
+	_dlw_systemd_user_service_available && return 0
+	local marker="${PULSE_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}/.systemd-dispatch-skip-logged"
+	local logged_pid=""
+	[[ -f "$marker" ]] && logged_pid=$(<"$marker")
+	if [[ "$logged_pid" != "$$" ]]; then
+		echo "[pulse] dispatch skipped this cycle: systemd worker backend unavailable (reason=${_DLW_SYSTEMD_UNAVAILABLE_REASON:-unknown}); detached fallback suppressed" >>"${LOGFILE:-/dev/null}"
+		printf '%s\n' "$$" >"$marker" 2>/dev/null || true
+	fi
+	return 1
+}
+
+# Reduce probe stderr to one bounded, log-safe token: first line only, home
+# directory masked, characters outside a conservative set replaced, and at
+# most 160 characters. Empty input prints "none".
+_dlw_systemd_sanitize_probe_text() {
+	local text="${1:-}"
+	text="${text%%$'\n'*}"
+	text="${text%$'\r'}"
+	if [[ -n "${HOME:-}" ]]; then
+		text="${text//"$HOME"/'~'}"
+	fi
+	text="${text//[^A-Za-z0-9 ._:,~\/()=-]/_}"
+	text="${text// /_}"
+	text="${text:0:160}"
+	[[ -n "$text" ]] || text="none"
+	printf '%s' "$text"
+	return 0
+}
+
+# Print set/unset booleans for the session-bus environment; never values.
+_dlw_systemd_bus_env_summary() {
+	local xdg_set="no" dbus_set="no"
+	[[ -z "${XDG_RUNTIME_DIR+x}" ]] || xdg_set="yes"
+	[[ -z "${DBUS_SESSION_BUS_ADDRESS+x}" ]] || dbus_set="yes"
+	printf 'xdg_runtime_dir_set=%s dbus_session_bus_address_set=%s' "$xdg_set" "$dbus_set"
 	return 0
 }
 
@@ -312,7 +469,8 @@ _dlw_exec_systemd_user_service() {
 		generation_suffix=$(python3 -c 'import uuid; print(uuid.uuid4().hex)') || return 1
 		unit_name="${unit_name}-${generation_suffix}"
 		# Retain exited units until the cleanup reader durably records quiescence.
-		# A wrapper exit alone is not a descendant-lifetime receipt. The reserve
+		# A wrapper exit alone is not a descendant-lifetime receipt. Drained units
+		# are released later by worktree_lifetime_release.py (GH#39702). The reserve
 		# rechecks the selected generation and appends this attempt's provenance.
 		local lifetime_helper=""
 		lifetime_helper=$(_dlw_lifetime_helper)
@@ -348,6 +506,16 @@ _dlw_exec_systemd_user_service() {
 		/usr/bin/env bash -lc "$runner_script" _ "$pid_file" "$worker_log" "$@" \
 		>/dev/null 2>>"$LOGFILE"; then
 		rm -f "$pid_file" 2>/dev/null || true
+		# A failed call can also mean the manager's submission reply was lost.
+		# Only an explicit not-found response proves there is no unit to own;
+		# an unreachable manager is inconclusive and must retain ownership.
+		local load_state=""
+		load_state=$(systemctl --user show "$unit_name" --property=LoadState --value 2>>"$LOGFILE") || true
+		if [[ "$load_state" == "not-found" ]]; then
+			printf 'LaunchState=submission_failed\n' >>"$state_file"
+		else
+			printf 'LaunchState=submission_unconfirmed\n' >>"$state_file"
+		fi
 		return 1
 	fi
 
@@ -385,7 +553,13 @@ _dlw_launch_systemd_worker() {
 	shift 2
 	local state_file="${worker_log}.systemd-launch" worker_pid="" systemd_rc=0
 	if ! _dlw_systemd_user_service_available; then
-		echo "[dispatch_worker_launch] ERROR: selected systemd backend unavailable for #${issue_number}; detached fallback suppressed" >>"$LOGFILE"
+		# Mirror _dlw_handle_systemd_launch_failure's classification line for
+		# the pre-submission probe so the cause is visible (GH#37171).
+		local unavailable_reason="${_DLW_SYSTEMD_UNAVAILABLE_REASON:-unknown}" bus_env=""
+		bus_env=$(_dlw_systemd_bus_env_summary)
+		printf '[systemd-launch] classification=backend_unavailable reason=%s %s\n' \
+			"$unavailable_reason" "$bus_env" >>"$worker_log" 2>/dev/null || true
+		echo "[dispatch_worker_launch] ERROR: selected systemd backend unavailable for #${issue_number} (reason=${unavailable_reason} ${bus_env}); detached fallback suppressed" >>"$LOGFILE"
 		return 1
 	fi
 	if worker_pid=$(_DLW_SYSTEMD_STATE_FILE="$state_file" _dlw_exec_systemd_user_service "aidevops-worker" "$worker_log" "$issue_number" "$@"); then
@@ -407,7 +581,9 @@ _dlw_handle_systemd_launch_failure() {
 
 	if [[ -f "$systemd_state_file" ]]; then
 		{
-			if [[ "$systemd_rc" -eq 2 ]]; then
+			if grep -q '^LaunchState=submission_failed$' "$systemd_state_file"; then
+				printf '[systemd-launch] classification=submission_failed\n'
+			elif [[ "$systemd_rc" -eq 2 ]]; then
 				printf '[systemd-launch] classification=crash_during_startup\n'
 			else
 				printf '[systemd-launch] classification=readiness_unconfirmed\n'

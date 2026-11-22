@@ -69,7 +69,9 @@ required_functions = {
     ],
     ".agents/scripts/pulse-wrapper-cycle-gates.sh": ["_pulse_scope_repos_for_available_work_gate"],
     ".agents/scripts/pulse-wrapper-cycle.sh": [
-        "_pulse_reconcile_stale_blocked_if_due",
+        # GH#38680: the stale-blocked claim fallback, ready lane and rotation
+        # all select repos through this one function.
+        "_pulse_stale_blocked_pulse_repos",
         "sync_todo_refs_all_repos",
     ],
     ".agents/scripts/session-miner-pulse.sh": ["run_actuation"],
@@ -147,6 +149,9 @@ safety_functions = {
         "_normalize_unassign_stampless_interactive"
     ],
     ".agents/scripts/pulse-issue-reconcile-stale.sh": ["_normalize_unassign_stale"],
+    ".agents/scripts/redirect-link-guard-helper.sh": [
+        "redirect_spam_sweep_all_repos"
+    ],
     ".agents/scripts/repo-aidevops-health-helper.sh": [
         "_check_missing_folders",
         "_check_no_init_repos",

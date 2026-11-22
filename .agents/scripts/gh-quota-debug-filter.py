@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from gh_quota_debug_cache import (
-    CACHE_HOST as CACHE_HOST,
     CACHE_MIN_AGE_SECONDS as CACHE_MIN_AGE_SECONDS,
     CACHE_RESET_GRACE_SECONDS as CACHE_RESET_GRACE_SECONDS,
     CACHE_TTL_GRACE_SECONDS as CACHE_TTL_GRACE_SECONDS,
@@ -25,10 +24,17 @@ from gh_quota_debug_cache import (
     _request_header as _request_header,
     _request_time as _request_time,
 )
+from gh_quota_debug_request import (
+    UNKNOWN_METADATA,
+    _endpoint_class as _endpoint_class,
+    _endpoint_family as _endpoint_family,
+    _request_metadata,
+)
 from gh_quota_debug_response import REQUEST_END, response_metadata
 
 
 def _request_ranges(lines: List[bytes]) -> List[Tuple[int, int]]:
+    """Find half-open private request ranges, including unterminated frames."""
     starts = [index for index, line in enumerate(lines) if REQUEST_START.match(line)]
     ranges: List[Tuple[int, int]] = []
     for position, start in enumerate(starts):
@@ -46,6 +52,7 @@ def _request_ranges(lines: List[bytes]) -> List[Tuple[int, int]]:
 
 
 def _completion_ranges(lines: List[bytes]) -> List[Tuple[int, int]]:
+    """Find half-open completion ranges while tracking pending request starts."""
     ranges: List[Tuple[int, int]] = []
     start: Optional[int] = None
     pending_requests = 0
@@ -65,6 +72,7 @@ def _completion_ranges(lines: List[bytes]) -> List[Tuple[int, int]]:
 
 
 def _duration(frame: List[bytes]) -> Optional[Tuple[float, bytes]]:
+    """Return the last completion's duration value and unit, or None."""
     for line in reversed(frame):
         match = REQUEST_END.match(line.rstrip(b"\r\n"))
         if not match:
@@ -74,6 +82,7 @@ def _duration(frame: List[bytes]) -> Optional[Tuple[float, bytes]]:
 
 
 def _duration_ms(frame: List[bytes]) -> Optional[int]:
+    """Convert a supported completion duration to nonnegative milliseconds."""
     duration = _duration(frame)
     if duration is None:
         return None
@@ -85,6 +94,7 @@ def _duration_ms(frame: List[bytes]) -> Optional[int]:
 
 
 def _write_sanitized_stderr() -> None:
+    """Suppress all captured stderr until native diagnostics can be allowlisted."""
     # Exact-capture mode deliberately enables GH_DEBUG. Framing proves which
     # bytes belong to private request/response blocks, but it cannot prove that
     # bytes outside those blocks are diagnostics rather than malformed private
@@ -93,7 +103,59 @@ def _write_sanitized_stderr() -> None:
     return
 
 
+def _transport_frames(lines: List[bytes], request_ranges: List[Tuple[int, int]]) -> list:
+    """Build sanitized transport records, excluding proven local cache hits.
+
+    Use unknown request labels when frame ownership is ambiguous and append
+    placeholder records for requests without matching completions.
+    """
+    found = (_cache_request(lines[start:end]) for start, end in request_ranges)
+    cache_requests = [request for request in found if request is not None]
+    frames = []
+    completion_ranges = _completion_ranges(lines)
+    # Any overlapping or unterminated request makes stream ownership
+    # ambiguous, including a later start before an earlier response ends.
+    owned = request_ranges == completion_ranges
+    for start, end in completion_ranges:
+        frame = lines[start:end]
+        status_count, response, response_cost = response_metadata(frame)
+        duration = _duration_ms(frame)
+        if status_count == 1 and duration is not None and _consume_proven_cache_hit(
+            response, cache_requests
+        ):
+            continue
+        metadata = _request_metadata(frame) if owned else UNKNOWN_METADATA
+        frames.append((status_count, response, response_cost, duration, metadata))
+    for _ in range(max(0, len(request_ranges) - len(completion_ranges))):
+        frames.append((0, {}, None, None, UNKNOWN_METADATA))
+    return frames
+
+
+def _frame_row(frame_index: int, record: tuple) -> str:
+    """Format a sanitized frame as TSV, using x for absent field values."""
+    status_count, response, response_cost, duration, request_metadata = record
+    values = [
+        "frame",
+        str(frame_index),
+        str(status_count),
+        response.get("status", ""),
+        response.get("resource", ""),
+        response.get("used", ""),
+        response.get("remaining", ""),
+        response.get("reset", ""),
+        "" if duration is None else str(duration),
+        "" if response_cost is None else str(response_cost),
+        *request_metadata,
+    ]
+    return "\t".join(value or "x" for value in values)
+
+
 def main() -> int:
+    """Read one debug capture and emit sanitized frame rows or an invalid marker.
+
+    Return 2 for incorrect arguments, 1 for an unreadable capture, and 0 after
+    emitting the capture result. Captured stderr is never forwarded.
+    """
     if len(sys.argv) != 2:
         return 2
     try:
@@ -109,40 +171,10 @@ def main() -> int:
         # suppressed and mark capture invalid rather than claiming no request.
         print("v1\tinvalid")
         return 0
-    cache_requests = []
-    for start, end in request_ranges:
-        request = _cache_request(lines[start:end])
-        if request is not None:
-            cache_requests.append(request)
-    transport_frames = []
-    completion_ranges = _completion_ranges(lines)
-    for start, end in completion_ranges:
-        frame = lines[start:end]
-        status_count, response, response_cost = response_metadata(frame)
-        duration = _duration_ms(frame)
-        if status_count == 1 and duration is not None and _consume_proven_cache_hit(
-            response, cache_requests
-        ):
-            continue
-        transport_frames.append((status_count, response, response_cost, duration))
-    for _ in range(max(0, len(request_ranges) - len(completion_ranges))):
-        transport_frames.append((0, {}, None, None))
-    print(f"v1\t{len(transport_frames)}")
-    for frame_index, record in enumerate(transport_frames, start=1):
-        status_count, response, response_cost, duration = record
-        values = [
-            "frame",
-            str(frame_index),
-            str(status_count),
-            response.get("status", ""),
-            response.get("resource", ""),
-            response.get("used", ""),
-            response.get("remaining", ""),
-            response.get("reset", ""),
-            "" if duration is None else str(duration),
-            "" if response_cost is None else str(response_cost),
-        ]
-        print("\t".join(values))
+    frames = _transport_frames(lines, request_ranges)
+    print(f"v1\t{len(frames)}")
+    for frame_index, record in enumerate(frames, start=1):
+        print(_frame_row(frame_index, record))
     return 0
 
 

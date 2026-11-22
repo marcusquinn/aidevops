@@ -290,6 +290,7 @@ _handle_cmd_run_terminal_attempt() {
 	case "$attempt_exit" in
 	0)
 		clear_startup_no_model_feedback "$selected_model"
+		clear_model_unavailable_history "$selected_model"
 		_cmd_run_finish "$session_key" "$completion_state" "$work_dir" || finish_status=$?
 		_cmd_run_disposition="$_CMD_RUN_DISPOSITION_RETURN"
 		_cmd_run_return_status="$finish_status"
@@ -390,7 +391,7 @@ _handle_cmd_run_continuation_attempt() {
 		fi
 		integration_recovery_count=1
 		routing_reason="integration_recovery_retry"
-		prompt="Resume the existing owned session/worktree and PR. The runtime has durably queued the integration request with Pulse and permits one local recovery attempt for this unchanged brief/evidence. Apply reference/worker-discipline.md Integration scope recovery: independently verify trusted outcome, explicit exclusions, unchanged brief and live claim; inspect the actual caller and check collisions; correct only the minimal canonical Files Scope and matching local brief before editing, then re-read and verify the persisted revision. This continuation grants no authority to revise an explicit hard boundary, secrets, permissions, spending, destructive/external actions, trust exceptions or security guarantees. If local recovery is unsafe, emit the structured INTEGRATION_RECOVERY_REQUEST in the final BLOCKED message for the AI brief owner, preserving exact PR identity and proposed verification. Do not repeat an unchanged request or ask a human to perform ordinary analysis. Otherwise continue through local verification, push, ready PR, MERGE_SUMMARY and the guarded merge attempt; no release is authorized by recovery."
+		prompt="Resume the existing owned session/worktree and PR. The runtime has durably queued the integration request with Pulse and permits one local recovery attempt for this unchanged brief/evidence. Apply reference/worker-integration-recovery.md Integration scope recovery: independently verify trusted outcome, explicit exclusions, unchanged brief and live claim; inspect the actual caller and check collisions; correct only the minimal canonical Files Scope and matching local brief before editing, then re-read and verify the persisted revision. This continuation grants no authority to revise an explicit hard boundary, secrets, permissions, spending, destructive/external actions, trust exceptions or security guarantees. If local recovery is unsafe, emit the structured INTEGRATION_RECOVERY_REQUEST in the final BLOCKED message for the AI brief owner, preserving exact PR identity and proposed verification. Do not repeat an unchanged request or ask a human to perform ordinary analysis. Otherwise continue through local verification, push, ready PR, MERGE_SUMMARY and the guarded merge attempt; no release is authorized by recovery."
 		_cmd_run_disposition="$_CMD_RUN_DISPOSITION_CONTINUE"
 		return 0
 	fi
@@ -420,7 +421,15 @@ _handle_cmd_run_continuation_attempt() {
 		continuation_count=$((continuation_count + 1))
 		routing_reason="continuation_retry"
 		print_warning "Premature exit detected — sending continuation prompt (attempt ${continuation_count}/${max_continuation_retries})"
-		prompt="Continue through to completion. This is a headless session — no user is present and no user input is available to assist. You have set up the environment but have not yet completed the task. Check your todo list, implement the required code changes, commit, push, and create a PR. After PR creation, you MUST post the MERGE_SUMMARY comment (full-loop step 4.2.1) — the merge pass needs it for closing comments. Then continue through review, merge, and closing comments. Do not stop until the outcome is FULL_LOOP_COMPLETE or BLOCKED with evidence."
+		# GH#38596: name every valid terminal state and the handoff case; an
+		# unconditional "implement and create a PR" made handed-off workers
+		# repeat unchanged reports until the continuation budget ran out.
+		prompt="Continue through to completion. This is a headless session — no user is present and no user input is available to assist. Your previous turn ended without a recognised terminal state. Check git status, your todo list and your PR. If work remains, implement it, commit, push, and create or update the PR. After PR creation, you MUST post the MERGE_SUMMARY comment (full-loop step 4.2.1) — the merge pass needs it for closing comments. Then continue through review, merge, and closing comments. If your PR already exists (open or merged) and only CI, review, merge or work outside this attempt remains, that is a handoff, not unfinished work. End with exactly one terminal marker alone on its own line: FULL_LOOP_COMPLETE, POST_PR_HANDOFF, or BLOCKED: <reason> with evidence."
+		# GH#39151: a final finish=length is an output_clamp, not a generic stop.
+		if _session_hit_output_clamp "${_run_metric_session_id:-}"; then
+			print_warning "output_clamp detected (finish=length) — adding sectioned-write instruction"
+			prompt="${_HEADLESS_OUTPUT_CLAMP_INSTRUCTION} ${prompt}"
+		fi
 		_cmd_run_disposition="$_CMD_RUN_DISPOSITION_CONTINUE"
 		return 0
 	fi
@@ -533,6 +542,7 @@ _cmd_run_attempt_loop() {
 	local _run_metric_output_file="" _run_metric_session_id="" completion_state="complete"
 	local _cmd_run_disposition="" _cmd_run_return_status=1
 	local routing_attempt=0 routing_reason="headless_dispatch" routing_escalated=0 routing_candidate_index=-1
+	_HRW_PRIOR_ATTEMPT_ACTIVITY=0
 	while [[ "$attempt" -le "$max_attempts" ]]; do
 		routing_attempt=$((routing_attempt + 1))
 		routing_candidate_index=$(model_tier_candidate_index "$tier_override" "$selected_model" 2>/dev/null) || routing_candidate_index=-1
@@ -550,6 +560,11 @@ _cmd_run_attempt_loop() {
 			attempt_exit=0
 		else
 			attempt_exit=$?
+		fi
+		# GH#37597: process-scoped proof that a runtime attempt already ran with
+		# activity, read by the EXIT trap's runner-health attribution.
+		if [[ "${_run_activity_detected:-0}" == "1" ]]; then
+			_HRW_PRIOR_ATTEMPT_ACTIVITY=1
 		fi
 		_cmd_run_disposition=""
 		_handle_cmd_run_terminal_attempt

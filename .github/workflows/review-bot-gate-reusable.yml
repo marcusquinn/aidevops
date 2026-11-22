@@ -70,7 +70,14 @@ jobs:
     # actors remain event-compatible so historical/reinstalled activity rechecks.
     if: >
       (
-        github.event_name == 'pull_request' ||
+        (
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        ) ||
+        (
+          github.event_name == 'pull_request_target' &&
+          github.event.pull_request.head.repo.full_name != github.repository
+        ) ||
         (
           (
             github.event_name == 'pull_request_review' ||
@@ -206,8 +213,10 @@ jobs:
           # evidence, so API exhaustion cannot accidentally grant trust. The
           # normalized association is exported because the fetched helper
           # independently enforces the same external-author boundary.
-          # GH#17671: external-contributor PRs retain defence-in-depth review;
-          # advisory completion and rate-limit grace are both disabled.
+          # GH#36931: add-on review is advisory for every author. External-PR
+          # merge authority is exact-head maintainer crypto approval (GH#17671),
+          # enforced by pulse and full-loop, never by waiting on a review bot.
+          # IS_EXTERNAL_PR still denies the skip-review-gate label below.
           #aidevops:trust-boundary
           case "${REVIEW_GATE_AUTHOR_ASSOCIATION}" in
           OWNER|MEMBER|COLLABORATOR)
@@ -220,10 +229,7 @@ jobs:
               echo "Trusted repository automation PR detected — applying internal advisory policy"
             else
               IS_EXTERNAL_PR=true
-              echo "External contributor PR detected — advisory review bypass DISABLED"
-              #aidevops:trust-boundary
-              export REVIEW_GATE_RATE_LIMIT_BEHAVIOR=wait
-              export REVIEW_GATE_COMPLETION_BEHAVIOR=strict
+              echo "External contributor PR detected — review is advisory; merge requires exact-head maintainer approval"
             fi
             ;;
           esac
@@ -260,9 +266,9 @@ jobs:
 
           INFRA_DEFERRED=false
           # API exhaustion is an infrastructure condition, not evidence that a
-          # bot failed to review. Trusted default-advisory PRs defer late feedback to
-          # the post-merge scanner; external or explicit wait/strict policies
-          # remain fail-closed. The classifier uses event/config evidence only.
+          # bot failed to review. Default-advisory PRs defer late feedback to
+          # the post-merge scanner; explicit wait/strict policies remain
+          # fail-closed. The classifier uses event/config evidence only.
           if grep -qiE 'API rate limit exceeded|x-ratelimit-remaining[^0-9]*0' "${HELPER_STDERR}"; then
             RESULT=$(bash "${HELPER}" classify-infra-rate-limit \
               "${REVIEW_GATE_AUTHOR_ASSOCIATION}" "${REPO}")
@@ -279,18 +285,14 @@ jobs:
           echo ""
           echo "Helper result: ${RESULT:-<empty>} (exit: ${HELPER_EXIT})"
 
-          # GH#17671 post-mortem: external-contributor PRs cannot use advisory,
-          # rate-limit, or skip outcomes. The helper also enforces this; retain
-          # the workflow override as defence in depth around vendored drift.
-          if [[ "${IS_EXTERNAL_PR}" == "true" ]]; then
+          # GH#17671 post-mortem: external-contributor PRs cannot use the
+          # skip-review-gate label outcome. Advisory and rate-limit outcomes are
+          # permitted for every author (GH#36931).
+          if [[ "${IS_EXTERNAL_PR}" == "true" && "${RESULT}" == "SKIP" ]]; then
             #aidevops:trust-boundary
-            case "${RESULT}" in
-            SKIP|PASS_ADVISORY|PASS_RATE_LIMITED)
-              echo "${RESULT} overridden: external-contributor PRs require completed review evidence."
-              RESULT="WAITING"
-              HELPER_EXIT=1
-              ;;
-            esac
+            echo "SKIP overridden: external-contributor PRs cannot use the skip label."
+            RESULT="WAITING"
+            HELPER_EXIT=1
           fi
 
           # Fail closed on empty, malformed, or exit-code-inconsistent helper

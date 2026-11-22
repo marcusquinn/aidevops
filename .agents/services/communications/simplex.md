@@ -94,6 +94,25 @@ Bot sends: `{ "corrId": "1", "cmd": "/ad" }` — CLI responds with matching `cor
 
 **Error events** (`messageError`, `chatError`, `chatErrors`): Log but do not fail — common network/delivery errors.
 
+### Session bus gateway
+
+Set `"sessionBus": { "enabled": true }` in the bot config to enable `/sessions`,
+`/ask <target> <text>`, `/send <target> <text>`, `/bind <target>`, `/unbind`,
+and `/launch <title> :: <task>`. The default is disabled and retains the old
+`/ask` and `/sessions` scaffolds. Targets accept the session bus `channel:simplex:c42`
+binding syntax. `/sessions` is redacted unless the direct contact is a verified
+configured owner; group listings are always redacted.
+
+Link direct contacts in entity memory using channel `simplex` and the stable
+bot-profile-local ID `c<contactId>`, not a display name. A confirmed link and
+`AIDEVOPS_SESSION_BUS_OWNER_ENTITY_ID` are needed for owner trust. Group messages
+use `g<groupId>` and are unverified: the adapter does not infer an individual
+sender from a group ID. The CLI enforces launch ownership and chat scanning.
+Outgoing replies are retried until SimpleX acknowledges the send, then the
+outbox entry is acknowledged; a crash between those operations can duplicate a
+reply. Group replies are leak-scanned. A live SimpleX profile check remains a
+post-merge operational check.
+
 ### TypeScript SDK
 
 ```bash

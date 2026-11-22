@@ -22,6 +22,34 @@ sys.path.insert(0, str(HELPER.parent))
 SPEC = importlib.util.spec_from_file_location("managed_lifetime", HELPER)
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
+LIFECYCLE_REGISTRY = HELPER.parents[1] / "worker-lifecycle" / "worker-registry.py"
+
+
+def create_lifecycle_worktree(run, state_dir, repo, path, branch):
+    """GH#38667: create a tree the way production does, so retirement is authorised.
+
+    Registry-authorised retirement needs a generation created and admitted by the
+    worker-lifecycle registry whose runs have all ended. The creator is a
+    short-lived fixture process, and the state directory is fixture-owned, so the
+    real per-user registry is never read or written.
+    """
+    creator = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])  # nosec B603
+    try:
+        run([sys.executable, str(LIFECYCLE_REGISTRY), "--state-dir", str(state_dir), "create-worktree",
+             "--repo", str(repo), "--path", str(path), "--ref", "HEAD", "--pid", str(creator.pid),
+             "--session-id", "fixture-creator", "--initialize", "--", "-b", branch])
+    finally:
+        creator.kill()
+        creator.wait()
+
+
+def register_repository(home, repo):
+    """Write repos.json just before the archive step: registering the repository
+    earlier makes the canonical Git guard refuse the fixture's own commits."""
+    config = home / ".config" / "aidevops" / "repos.json"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(json.dumps({"initialized_repos": [{"slug": "owner/repo", "path": str(repo)}]}))
+    config.chmod(0o600)
 
 
 class LifetimeTests(unittest.TestCase):
@@ -55,15 +83,15 @@ class LifetimeTests(unittest.TestCase):
     def test_missing_receipt_and_wrong_inode_refuse(self):
         record = self.record()
         with self.assertRaises(ValueError):
-            MODULE.proof(record, "1:2")
+            MODULE.proof(record, "1:2", fresh=False)
         record["state"] = "sealed"
         record["sealed_at"] = time.time()
         with self.assertRaises(ValueError):
-            MODULE.proof(record, "1:2")
+            MODULE.proof(record, "1:2", fresh=False)
         record["launches"][0]["quiescence"] = self.snapshot()
-        MODULE.proof(record, "1:2")
+        MODULE.proof(record, "1:2", fresh=False)
         with self.assertRaises(ValueError):
-            MODULE.proof(record, "1:3")
+            MODULE.proof(record, "1:3", fresh=False)
 
     def test_live_descendants_and_reused_invocation_refuse(self):
         for values in ({"SubState": "running"}, {"MainPID": "123"},
@@ -80,7 +108,7 @@ class LifetimeTests(unittest.TestCase):
                 patch.object(MODULE, "unit_snapshot", return_value=self.snapshot()), \
                 patch.object(Path, "read_text", return_value="populated 0\nfrozen 0\n"):
             MODULE.seal(record)
-        MODULE.proof(record, "1:2")
+        MODULE.proof(record, "1:2", fresh=False)
         with self.assertRaises(ValueError):
             MODULE.reserve(record, "aidevops-worker-next")
 
@@ -114,7 +142,7 @@ class LifetimeTests(unittest.TestCase):
         self.assertEqual(len(record["launches"]), 2)
         self.assertIn("quiescence", record["launches"][0])
         MODULE.seal(record)
-        MODULE.proof(record, "1:2")
+        MODULE.proof(record, "1:2", fresh=False)
         self.assertTrue(record["launches"][-1]["admission_cancelled"])
         with self.assertRaises(ValueError):
             MODULE.bind(record)
@@ -123,7 +151,7 @@ class LifetimeTests(unittest.TestCase):
         record = self.record()
         record.update(state="created", launches=[])
         MODULE.seal(record)
-        MODULE.proof(record, "1:2")
+        MODULE.proof(record, "1:2", fresh=False)
         with self.assertRaises(ValueError):
             MODULE.reserve(record, "aidevops-worker-delayed")
 
@@ -192,13 +220,13 @@ class LifetimeTests(unittest.TestCase):
         base = Path(os.environ.get("AIDEVOPS_TEMP_DIR", str(Path.home() / ".aidevops/.agent-workspace/tmp")))
         self.assertTrue(base.is_dir())
         with tempfile.TemporaryDirectory(prefix="managed-lifetime-", dir=base) as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             repo, worktree = root / "repo", root / "worktree"
             db = root / "registry.db"
             home = root / "home"
             home.mkdir()
             env = dict(os.environ, HOME=str(home), WORKTREE_REGISTRY_DIR=str(root), WORKTREE_REGISTRY_DB=str(db),
-                       AIDEVOPS_WORKTREE_BASE_DIR=str(root),
+                       AIDEVOPS_WORKTREE_BASE_DIR=str(root), AIDEVOPS_LIFECYCLE_STATE_DIR=str(root / "lifecycle"),
                        AIDEVOPS_WORKTREE_TRASH_ROOT=str(root / "recovery"),
                        AIDEVOPS_CLEANUP_LOG=str(root / "cleanup.log"))
             git = os.environ.get("AIDEVOPS_TEST_GIT_BIN", "git")
@@ -214,7 +242,7 @@ class LifetimeTests(unittest.TestCase):
             run([git, "init", str(repo)])
             run([git, "-C", str(repo), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
                  "commit", "--allow-empty", "-m", "fixture"])
-            run([git, "-C", str(repo), "worktree", "add", "-b", "fixture", str(worktree)])
+            create_lifecycle_worktree(run, root / "lifecycle", repo, worktree, "fixture")
             run(["bash", "-c", 'source "$1/shared-worktree-registry.sh" && _init_registry_db',
                  "fixture", str(HELPER.parent)])
             helper = [sys.executable, str(HELPER)]
@@ -280,6 +308,7 @@ class LifetimeTests(unittest.TestCase):
                 (worktree / "saved.txt").write_text("preserve staged user work\n")
                 run([git, "-C", str(worktree), "add", "saved.txt"])
                 (worktree / "unsaved.txt").write_text("preserve this user change\n")
+                register_repository(home, repo)
                 archived = run(["bash", "-c", 'set -e; source "$1"; '
                                 'archive_worktree_path_recoverably "$2" fixture fixture; '
                                 'archive="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"; '
@@ -310,7 +339,7 @@ class LifetimeTests(unittest.TestCase):
             repo, db, home = root / "repo", root / "registry.db", root / "home"
             home.mkdir()
             env = dict(os.environ, HOME=str(home), WORKTREE_REGISTRY_DIR=str(root), WORKTREE_REGISTRY_DB=str(db),
-                       AIDEVOPS_WORKTREE_BASE_DIR=str(root), AIDEVOPS_WORKTREE_TRASH_ROOT=str(root / "recovery"),
+                       AIDEVOPS_WORKTREE_BASE_DIR=str(root), AIDEVOPS_LIFECYCLE_STATE_DIR=str(root / "lifecycle"), AIDEVOPS_WORKTREE_TRASH_ROOT=str(root / "recovery"),
                        AIDEVOPS_CLEANUP_LOG=str(root / "cleanup.log"), AIDEVOPS_TEMP_DIR=str(root / "tmp"),
                        AIDEVOPS_WORKER_BACKEND="systemd")
             (root / "tmp").mkdir()
@@ -328,9 +357,15 @@ class LifetimeTests(unittest.TestCase):
             def status(path):
                 return json.loads(run([*helper, "status", str(path)]).stdout)
 
-            def enroll(path, branch, issue, origin):
-                # Same enrollment worktree-helper-add.sh performs under AIDEVOPS_WORKTREE_MANAGER.
+            def plain_worktree(path, branch):
                 run(["git", "-C", str(repo), "worktree", "add", "-b", branch, str(path)])
+
+            def registry_worktree(path, branch):
+                create_lifecycle_worktree(run, root / "lifecycle", repo, path, branch)
+
+            def enroll(path, branch, issue, origin, create=plain_worktree):
+                # Same enrollment worktree-helper-add.sh performs under AIDEVOPS_WORKTREE_MANAGER.
+                create(path, branch)
                 keys = ("AIDEVOPS_LAUNCH_ENTRYPOINT", "AIDEVOPS_LAUNCH_TRIGGER", "AIDEVOPS_LAUNCH_TRIGGER_EVIDENCE")
                 run([*helper, "enroll", str(path)], extra=dict(zip(keys, origin), AIDEVOPS_LAUNCH_TASK=issue,
                                                              AIDEVOPS_LAUNCH_REPO="owner/repo"))
@@ -350,7 +385,8 @@ class LifetimeTests(unittest.TestCase):
             pulse_wt, manual_wt, duplicate = root / "pulse-wt", root / "manual-wt", root / "duplicate-wt"
             pulse_origin = ("pulse", "scheduled", "pulse-cycle")
             enroll(pulse_wt, "feature/auto-1-gh101", "101", pulse_origin)
-            enroll(manual_wt, "feature/auto-2-gh102", "102", ("dispatch-single-issue", "manual", "interactive-terminal"))
+            enroll(manual_wt, "feature/auto-2-gh102", "102", ("dispatch-single-issue", "manual", "interactive-terminal"),
+                   create=registry_worktree)  # retired later through the lifecycle registry
             pulse_select = ('SCRIPT_DIR="$1"; source "$1/pulse-dispatch-worker-systemd.sh"; LOGFILE="$3/pulse.log"; '
                             '_dlw_select_issue_worktree "$2" 101 owner/repo; rc=$?; '
                             'printf "%s|%s|%s|%s\\n" "$rc" "$_DLW_REUSE_PATH" "$_DLW_REUSE_GENERATION" "$_DLW_REUSE_REFUSAL"')
@@ -408,6 +444,7 @@ class LifetimeTests(unittest.TestCase):
                 guard = str(HELPER.parent / "audit-worktree-removal-helper.sh")
                 (manual_wt / "saved.txt").write_text("manual worker output\n")
                 run(["git", "-C", str(manual_wt), "add", "saved.txt"])
+                register_repository(home, repo)
                 archived = run(["bash", "-c", 'set -e; source "$1"; archive_worktree_path_recoverably "$2" fixture fixture; '
                                 'archive="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"; '
                                 'remove_archived_worktree_path "$2" "$archive" fixture fixture fixture false true; '

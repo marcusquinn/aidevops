@@ -31,7 +31,7 @@ wait
 [[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" 'SELECT COUNT(DISTINCT task_id) FROM tasks;')" == "24" ]]
 [[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" 'SELECT MAX(sequence) FROM tasks;')" == "24" ]]
 [[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" 'PRAGMA journal_mode;')" == "wal" ]]
-[[ "$(stat -f '%Lp' "$AIDEVOPS_TASK_COORDINATOR_DB" 2>/dev/null || stat -c '%a' "$AIDEVOPS_TASK_COORDINATOR_DB")" == "600" ]]
+[[ "$(stat -c '%a' "$AIDEVOPS_TASK_COORDINATOR_DB" 2>/dev/null || stat -f '%Lp' "$AIDEVOPS_TASK_COORDINATOR_DB")" == "600" ]]
 
 # Concurrent delivery of one operation returns one complete, identical result.
 for i in $(seq 1 12); do
@@ -165,6 +165,44 @@ AIDEVOPS_TASK_COORDINATOR_DB="$v7_db" node "$COORDINATOR" verify | jq -e '.ok an
 AIDEVOPS_TASK_COORDINATOR_DB="$v7_db" node "$COORDINATOR" bind-issue --task-id t100 \
 	--repository-id R_old --repository-slug owner/old --issue-id I_old --display-number 1 >/dev/null
 
+# GH#37294: a renamed TODO row is refused by legacy backfill, explained by the
+# reverse lookup, and repaired only by an explicit, idempotent alias.
+alias_db="${TEST_ROOT}/alias.db"
+alias_repo=(--repository-id R_alias --repository-slug owner/alias)
+AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" bind-issue --task-id t9414 "${alias_repo[@]}" \
+	--issue-id I_alias --display-number 42 >/dev/null
+if AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" bind-issue --task-id t1748 "${alias_repo[@]}" \
+	--issue-id I_alias --display-number 42 >/dev/null 2>&1; then
+	printf 'FAIL renamed task stole an existing issue mapping through backfill\n' >&2
+	exit 1
+fi
+[[ "$(AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" resolve-issue-owner --repository-id R_alias --issue-id I_alias | jq -r '.taskId')" == "t9414" ]]
+if AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" alias-task --task-id t1748 --from-task-id t9414 \
+	--repository-id R_alias --issue-id I_wrong --display-number 42 >/dev/null 2>&1; then
+	printf 'FAIL alias accepted a mismatched issue identity\n' >&2
+	exit 1
+fi
+alias_result=$(AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" alias-task --task-id t1748 --from-task-id t9414 \
+	--repository-id R_alias --issue-id I_alias --display-number 42)
+[[ "$(AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" alias-task --task-id t1748 --from-task-id t9414 \
+	--repository-id R_alias --issue-id I_alias --display-number 42)" == "$alias_result" ]]
+[[ "$(AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" resolve-issue --task-id t1748 --repository-id R_alias | jq -r '.displayNumber')" == "42" ]]
+AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" bind-issue --task-id t1748 "${alias_repo[@]}" \
+	--issue-id I_alias --display-number 42 >/dev/null
+if AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" bind-issue --task-id t1748 "${alias_repo[@]}" \
+	--issue-id I_alias_moved --display-number 44 >/dev/null 2>&1; then
+	printf 'FAIL rebind alias let backfill move the issue identity\n' >&2
+	exit 1
+fi
+AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" bind-issue --task-id t9415 "${alias_repo[@]}" \
+	--issue-id I_alias_two --display-number 43 >/dev/null
+if AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" alias-task --task-id t1748 --from-task-id t9415 \
+	--repository-id R_alias --issue-id I_alias_two --display-number 43 >/dev/null 2>&1; then
+	printf 'FAIL alias moved an already mapped task ID\n' >&2
+	exit 1
+fi
+AIDEVOPS_TASK_COORDINATOR_DB="$alias_db" node "$COORDINATOR" verify | jq -e '.ok' >/dev/null
+
 # Independent reinstall/clone state creates a new CSPRNG origin at the same sequence.
 origin_one=$(node "$COORDINATOR" status | jq -r '.origin_id')
 AIDEVOPS_TASK_COORDINATOR_DB="${TEST_ROOT}/clone.db" node "$COORDINATOR" allocate --operation-id clone >/dev/null
@@ -183,7 +221,7 @@ node "$COORDINATOR" attempt --intent-id "$intent" --status published --evidence 
 # Backups are integrity-checked; restore requires a newer fenced ownership epoch.
 backup="${TEST_ROOT}/verified-backup.db"
 sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" ".backup '$backup'"
-inode_before=$(stat -f '%i' "$AIDEVOPS_TASK_COORDINATOR_DB" 2>/dev/null || stat -c '%i' "$AIDEVOPS_TASK_COORDINATOR_DB")
+inode_before=$(stat -c '%i' "$AIDEVOPS_TASK_COORDINATOR_DB" 2>/dev/null || stat -f '%i' "$AIDEVOPS_TASK_COORDINATOR_DB")
 fence=$(node "$COORDINATOR" status | jq -r '.fencing_token')
 node "$COORDINATOR" transition --state read-only --fencing-token "$fence" --evidence '{"reason":"restore-test"}' >/dev/null
 if node "$COORDINATOR" restore --backup "$backup" --registry-evidence '{}' --prior-epoch 1 --new-epoch 1 --fencing-token stale >/dev/null 2>&1; then
@@ -196,7 +234,7 @@ if node "$COORDINATOR" restore --backup "$backup" --registry-evidence '{"cas":"w
 fi
 node "$COORDINATOR" restore --backup "$backup" --registry-evidence '{"cas":"winner","prior_revoked":true,"fencing_token":"restore-fence","transfer_record_id":"transfer-1"}' --prior-epoch 1 --new-epoch 2 --fencing-token restore-fence --published-high-water 100 >/dev/null
 [[ "$(node "$COORDINATOR" status | jq -r '.sequence')" == "100" ]]
-inode_after=$(stat -f '%i' "$AIDEVOPS_TASK_COORDINATOR_DB" 2>/dev/null || stat -c '%i' "$AIDEVOPS_TASK_COORDINATOR_DB")
+inode_after=$(stat -c '%i' "$AIDEVOPS_TASK_COORDINATOR_DB" 2>/dev/null || stat -f '%i' "$AIDEVOPS_TASK_COORDINATOR_DB")
 [[ "$inode_after" == "$inode_before" ]]
 [[ -n "$(ls "${TEST_ROOT}"/coordinator.db-backup-*-pre-restore.db)" ]]
 

@@ -17,6 +17,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENTS_SCRIPTS="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REAL_GIT=$(python3 -E -s -B -c 'import sys; sys.path.insert(0, sys.argv[1]); from native_git import real_git; print(real_git())' "$AGENTS_SCRIPTS")
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -234,6 +235,83 @@ test_clean_exit_fresh_session_with_assistant_part() {
 	return 0
 }
 
+# GH#37527: finalization discards an ephemeral isolated DB (or a failed merge
+# keeps its rows out of the shared DB) and clears _WORKER_ISOLATED_DB_PATH
+# before the EXIT trap runs. The pre-finalization snapshot must prevail over a
+# shared DB that lacks this attempt's activity; zero snapshots stay no-op.
+test_clean_exit_discarded_isolated_db_uses_snapshot() {
+	local home_dir="${TMPDIR_TEST}/discarded-home"
+	local iso_dir="${TMPDIR_TEST}/discarded-iso/opencode"
+	mkdir -p "${home_dir}/.local/share/opencode" "$iso_dir"
+	_make_db "${home_dir}/.local/share/opencode/opencode.db"
+	_make_db "${iso_dir}/opencode.db"
+	local start_ms
+	start_ms=$(_now_ms)
+	_insert_session "${iso_dir}/opencode.db" "$start_ms" "discarded-session"
+	_insert_assistant_message "${iso_dir}/opencode.db" "discarded-session" "$start_ms"
+
+	local result count zero_result stale_result
+	result=$(
+		HOME="$home_dir"
+		_WORKER_START_EPOCH_MS="$start_ms"
+		_hrff_snapshot_attempt_activity "${iso_dir}/opencode.db"
+		rm -rf "${TMPDIR_TEST}/discarded-iso"
+		_WORKER_ISOLATED_DB_PATH=""
+		printf '%s|%s' "$(classify_worker_exit 0 "$start_ms")" "$(_hrff_worker_session_count)"
+	)
+	count="${result#*|}"
+	result="${result%%|*}"
+	zero_result=$(
+		HOME="$home_dir"
+		_WORKER_START_EPOCH_MS="$start_ms"
+		_WORKER_ATTEMPT_ACTIVITY_START_MS="$start_ms"
+		_WORKER_ATTEMPT_ACTIVITY_COUNT=0
+		_WORKER_ISOLATED_DB_PATH=""
+		classify_worker_exit 0 "$start_ms"
+	)
+	stale_result=$(
+		HOME="$home_dir"
+		_WORKER_ATTEMPT_ACTIVITY_START_MS=1
+		_WORKER_ATTEMPT_ACTIVITY_COUNT=5
+		_WORKER_ISOLATED_DB_PATH=""
+		classify_worker_exit 0 "$start_ms"
+	)
+
+	assert_eq "clean (discarded isolated DB snapshot had activity)" "$result" "clean"
+	assert_eq "discarded isolated DB snapshot activity count" "$count" "1"
+	assert_eq "worker_noop_zero_output (discarded isolated DB snapshot was zero)" "$zero_result" "worker_noop_zero_output"
+	assert_eq "worker_noop_zero_output (stale snapshot from another attempt ignored)" "$stale_result" "worker_noop_zero_output"
+	return 0
+}
+
+test_nonzero_exit_uses_matching_positive_snapshot() {
+	local home_dir="${TMPDIR_TEST}/nonzero-snapshot-home"
+	mkdir -p "${home_dir}/.local/share/opencode"
+	local result
+	result=$(
+		HOME="$home_dir"
+		_WORKER_ISOLATED_DB_PATH=""
+		_WORKER_ATTEMPT_ACTIVITY_START_MS=1000
+		_WORKER_ATTEMPT_ACTIVITY_COUNT=1
+		# Positive evidence survives even when neither DB remains.
+		assert_eq "nonzero snapshot without DB" "$(classify_worker_exit 1 1000)" "crash_during_execution"
+		assert_eq "signal retains precedence over snapshot" "$(classify_worker_exit 143 1000)" "signal_killed:15"
+		_make_db "${home_dir}/.local/share/opencode/opencode.db"
+		assert_eq "nonzero snapshot with empty shared DB" "$(classify_worker_exit 1 1000)" "crash_during_execution"
+		assert_eq "stale positive snapshot ignored" "$(classify_worker_exit 1 2000)" "crash_during_startup"
+		assert_eq "unknown start ignores snapshot" "$(classify_worker_exit 1 0)" "crash_during_startup"
+		_WORKER_ATTEMPT_ACTIVITY_COUNT=0
+		assert_eq "zero snapshot with empty DB" "$(classify_worker_exit 1 1000)" "crash_during_startup"
+		_insert_session "${home_dir}/.local/share/opencode/opencode.db" 1000 "boot-only"
+		assert_eq "zero snapshot preserves boot session query" "$(classify_worker_exit 1 1000)" "crash_during_execution"
+		unset _WORKER_ATTEMPT_ACTIVITY_COUNT _WORKER_ATTEMPT_ACTIVITY_START_MS
+		assert_eq "missing snapshot preserves boot session query" "$(classify_worker_exit 1 1000)" "crash_during_execution"
+		printf 'snapshot_failures=%s' "$TESTS_FAILED"
+	)
+	assert_eq "nonzero snapshot classification cases" "${result##*snapshot_failures=}" "$TESTS_FAILED"
+	return 0
+}
+
 test_clean_retry_class_requires_typed_terminal_outcome() {
 	local clean_class=""
 	local complete_class=""
@@ -242,6 +320,124 @@ test_clean_retry_class_requires_typed_terminal_outcome() {
 
 	assert_eq "bare clean outcome is not remediation proof" "$clean_class" "$_HRFF_RETRY_CLASS_UNKNOWN"
 	assert_eq "typed worker completion remains remediation proof" "$complete_class" "$_HRFF_RETRY_CLASS_REMEDIATION"
+	return 0
+}
+
+# Keep the heredoc outside command substitution for the Bash 3.2 parser.
+_summarize_exit_trap_accounting() {
+	local metrics_file="$1"
+	local outcome_file="$2"
+	local mode="$3"
+	python3 - "$metrics_file" "$outcome_file" "$mode" <<'PY' || return 1
+import json
+import pathlib
+import sys
+
+metrics, outcome, mode = sys.argv[1:]
+rows = [json.loads(line) for line in pathlib.Path(metrics).read_text().splitlines()] if pathlib.Path(metrics).is_file() else []
+if rows:
+    last = rows[-1]
+    assert last["attempt_id"] == "exit-accounting-attempt"
+    assert last["model"] == "openai/test-model"
+    assert last["provider"] == "openai"
+    assert last["duration_ms"] == 0
+    if mode != "normal":
+        assert last["classification_source"] == "exit_trap"
+    if mode == "new-run":
+        assert last["run_id"] == "second-run"
+    print(f'metric={last["result"]}|reason={last["failure_reason"]}|exit={last["exit_code"]}|rows={len(rows)}')
+else:
+    print("metric=missing")
+receipt = dict(line.split("=", 1) for line in pathlib.Path(outcome).read_text().splitlines())
+print(f'receipt={receipt["reason"]}')
+PY
+	return 0
+}
+
+# Exercise the real metric writer and external receipt against disposable paths.
+# All preservation/release operations are stubbed: never touch a live worker.
+_check_exit_trap_accounting() {
+	local reason="$1"
+	local exit_status="$2"
+	local expected_reason="$3"
+	local expected_result="$4"
+	local mode="${5:-trap}"
+	local fixture_reason="$reason"
+	local result=""
+	result=$(
+		(
+			SCRIPT_DIR="$AGENTS_SCRIPTS"
+			# shellcheck source=../headless-runtime-lib.sh
+			source "${AGENTS_SCRIPTS}/headless-runtime-lib.sh"
+			METRICS_DIR=$(mktemp -d "${TMPDIR_TEST}/exit-metrics.XXXXXX")
+			METRICS_FILE="${METRICS_DIR}/metrics.jsonl"
+			HOME="$METRICS_DIR"
+			AIDEVOPS_RUN_ID="exit-accounting-run"
+			AIDEVOPS_ATTEMPT_ID="exit-accounting-attempt"
+			AIDEVOPS_ROUTING_MODEL="openai/test-model"
+			_WORKER_START_EPOCH_MS=0
+			_WORKER_RUNTIME_LAUNCH_STARTED=1
+			_WORKER_DIRTY_WORK_PRESERVED=0
+			_WORKER_EXTERNAL_OUTCOME_FILE="${METRICS_DIR}/outcome"
+			_WORKER_EXTERNAL_OUTCOME_ID="exit-accounting"
+			unset _HEADLESS_RUNTIME_LAST_METRIC_KEY
+			_push_wip_commits_on_exit() { return 0; }
+			_recover_dirty_worker_pr() { return 0; }
+			_escalate_worker_pr_checkpoint() {
+				_HRW_RECOVERY_CLASSIFICATION="worker_draft_checkpoint"
+				return 0
+			}
+			_release_dispatch_claim() { printf 'release=%s\n' "$2"; return 0; }
+			_release_session_lock() { return 0; }
+			_update_dispatch_ledger() { return 0; }
+			aidevops_runtime_bundle_lease_release() { return 0; }
+			cleanup_headless_git_auth() { return 0; }
+			if [[ "$mode" == "dirty" ]]; then
+				_WORKER_DIRTY_WORK_PRESERVED=1
+			elif [[ "$mode" == "normal" || "$mode" == "new-run" ]]; then
+				append_runtime_metric worker fixture openai/test-model openai success 0 "" 1 0
+				[[ "$mode" != "new-run" ]] || AIDEVOPS_RUN_ID="second-run"
+			elif [[ "$mode" == "write-failure" ]]; then
+				METRICS_FILE="${METRICS_DIR}/missing/metrics.jsonl"
+			fi
+			if [[ "$mode" == "trap" ]]; then
+				# The classifier itself is covered above; drive the full real EXIT trap
+				# with a deterministic reason, including a zero-status process exit.
+				classify_worker_exit() { printf '%s' "$fixture_reason"; return 0; }
+				(trap '_exit_trap_handler fixture' EXIT; exit "$exit_status") || true
+			else
+				_hrff_finalize_exit_trap fixture "$reason" "$exit_status" 1 0
+				# Re-entry must not append a second terminal metric for the same run.
+				_hrff_record_exit_metric fixture "$expected_reason" "$exit_status" 1
+			fi
+			_summarize_exit_trap_accounting "$METRICS_FILE" "$_WORKER_EXTERNAL_OUTCOME_FILE" "$mode"
+		)
+	)
+	local expected_metric="metric=${expected_result}|reason=${expected_reason}|exit=${exit_status}|rows=1"
+	case "$mode" in
+	normal) expected_metric="metric=success|reason=|exit=0|rows=1" ;;
+	new-run) expected_metric="metric=${expected_result}|reason=${expected_reason}|exit=${exit_status}|rows=2" ;;
+	write-failure) expected_metric="metric=missing" ;;
+	esac
+	if [[ "$mode" == "dirty" ]]; then
+		assert_eq "exit accounting: ${reason}/${mode}" "$result" \
+			"${expected_metric}"$'\n'"receipt=${expected_reason}"
+	else
+		assert_eq "exit accounting: ${reason}/${mode}" "$result" \
+			"release=${expected_reason}"$'\n'"${expected_metric}"$'\n'"receipt=${expected_reason}"
+	fi
+	return 0
+}
+
+test_exit_trap_terminal_accounting() {
+	_check_exit_trap_accounting clean 0 worker_incomplete_exit failed
+	_check_exit_trap_accounting signal_killed:15 143 signal_killed:15 failed
+	_check_exit_trap_accounting worker_complete 0 worker_complete success
+	_check_exit_trap_accounting worker_draft_checkpoint 0 worker_draft_checkpoint deferred
+	_check_exit_trap_accounting clean 0 worker_draft_checkpoint deferred dirty
+	_check_exit_trap_accounting clean 0 worker_incomplete_exit failed normal
+	_check_exit_trap_accounting clean 0 worker_incomplete_exit failed new-run
+	_check_exit_trap_accounting clean 0 worker_incomplete_exit failed write-failure
 	return 0
 }
 
@@ -481,9 +677,68 @@ test_no_start_time_with_sessions() {
 	return 0
 }
 
+test_exit_push_skips_canonical_and_default_branch() {
+	# Exercise the actual predicate, not a mocked canonical/linked classification.
+	git() { "$REAL_GIT" "$@" || return 1; return 0; }
+	local case_dir="${TMPDIR_TEST}/canonical-develop"
+	local origin_dir="${case_dir}/origin.git"
+	local repo_dir="${case_dir}/repo"
+	mkdir -p "$case_dir"
+	git init --bare "$origin_dir" >/dev/null 2>&1
+	git clone "$origin_dir" "$repo_dir" >/dev/null 2>&1
+	git -C "$repo_dir" config user.email "worker@example.invalid"
+	git -C "$repo_dir" config user.name "Worker Test"
+	git -C "$repo_dir" config commit.gpgsign false
+	git -C "$repo_dir" checkout -b develop >/dev/null 2>&1
+	printf 'base\n' >"${repo_dir}/tracked.txt"
+	git -C "$repo_dir" add tracked.txt
+	git -C "$repo_dir" commit -m "test: seed develop" >/dev/null 2>&1
+	git -C "$repo_dir" push -u origin develop >/dev/null 2>&1
+	git -C "$repo_dir" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
+	local seed_head="" before_status="" after_status="" after_head="" remote_head=""
+	seed_head=$(git -C "$repo_dir" rev-parse HEAD)
+	printf 'dirty\n' >>"${repo_dir}/tracked.txt"
+	git -C "$repo_dir" add tracked.txt
+	printf 'untracked\n' >"${repo_dir}/new-file.txt"
+	before_status=$(git -C "$repo_dir" status --porcelain)
+	_WORKER_WORKTREE_PATH="$repo_dir"
+	_push_wip_commits_on_exit
+	after_head=$(git -C "$repo_dir" rev-parse HEAD)
+	after_status=$(git -C "$repo_dir" status --porcelain)
+	remote_head=$(git --git-dir="$origin_dir" rev-parse refs/heads/develop)
+	assert_eq "canonical develop keeps HEAD" "$after_head" "$seed_head"
+	assert_eq "canonical develop keeps staged and untracked changes" "$after_status" "$before_status"
+	assert_eq "canonical develop keeps remote head" "$remote_head" "$seed_head"
+
+	# A canonical checkout on a non-default branch is still never worker-owned.
+	git -C "$repo_dir" checkout -b feature/canonical >/dev/null 2>&1
+	_push_wip_commits_on_exit
+	after_head=$(git -C "$repo_dir" rev-parse HEAD)
+	after_status=$(git -C "$repo_dir" status --porcelain)
+	assert_eq "canonical feature keeps HEAD" "$after_head" "$seed_head"
+	assert_eq "canonical feature keeps dirty index" "$after_status" "$before_status"
+	local remote_branch=""
+	remote_branch=$(git --git-dir="$origin_dir" for-each-ref --format='%(refname)' refs/heads/feature/canonical)
+	assert_eq "canonical feature is not pushed" "$remote_branch" ""
+
+	# The default branch is protected even when it is in a linked worktree.
+	git -C "$repo_dir" worktree add "${case_dir}/linked" develop >/dev/null 2>&1
+	_WORKER_WORKTREE_PATH="${case_dir}/linked"
+	printf 'dirty\n' >>"${_WORKER_WORKTREE_PATH}/tracked.txt"
+	before_status=$(git -C "$_WORKER_WORKTREE_PATH" status --porcelain)
+	_push_wip_commits_on_exit
+	after_head=$(git -C "$_WORKER_WORKTREE_PATH" rev-parse HEAD)
+	after_status=$(git -C "$_WORKER_WORKTREE_PATH" status --porcelain)
+	assert_eq "linked develop keeps HEAD" "$after_head" "$seed_head"
+	assert_eq "linked develop keeps dirty state" "$after_status" "$before_status"
+	unset _WORKER_WORKTREE_PATH _WORKER_DIRTY_WORK_PRESERVED
+	unset -f git
+	return 0
+}
+
 test_exit_push_preserves_dirty_worktree() {
 	# Bypass the production canonical-repository guard for this disposable fixture.
-	git() { /usr/bin/git "$@"; }
+	git() { "$REAL_GIT" "$@" || return 1; return 0; }
 	local case_dir="${TMPDIR_TEST}/dirty-preserve"
 	local origin_dir="${case_dir}/origin.git"
 	local repo_dir="${case_dir}/repo"
@@ -493,12 +748,14 @@ test_exit_push_preserves_dirty_worktree() {
 	git -C "$repo_dir" config user.email "worker@example.invalid"
 	git -C "$repo_dir" config user.name "Worker Test"
 	git -C "$repo_dir" config commit.gpgsign false
-	git -C "$repo_dir" checkout -b main >/dev/null 2>&1
+	git -C "$repo_dir" checkout -b develop >/dev/null 2>&1
 	printf 'base\n' >"${repo_dir}/tracked.txt"
 	git -C "$repo_dir" add tracked.txt >/dev/null 2>&1
 	git -C "$repo_dir" commit -m "test: seed repository" >/dev/null 2>&1
-	git -C "$repo_dir" push -u origin main >/dev/null 2>&1
-	git -C "$repo_dir" checkout -b feature/dirty-preserve >/dev/null 2>&1
+	git -C "$repo_dir" push -u origin develop >/dev/null 2>&1
+	git -C "$repo_dir" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
+	git -C "$repo_dir" worktree add -b feature/dirty-preserve "${case_dir}/worker" develop >/dev/null 2>&1
+	repo_dir="${case_dir}/worker"
 	printf 'base\nchanged\n' >"${repo_dir}/tracked.txt"
 	git -C "$repo_dir" add tracked.txt >/dev/null 2>&1
 	printf 'changed after staging\n' >>"${repo_dir}/tracked.txt"
@@ -514,7 +771,7 @@ test_exit_push_preserves_dirty_worktree() {
 	local status=""
 	status=$(git -C "$repo_dir" status --porcelain 2>/dev/null || true)
 	local pushed_count=""
-	pushed_count=$(git -C "$repo_dir" rev-list --count origin/main..origin/feature/dirty-preserve 2>/dev/null || printf '0')
+	pushed_count=$(git -C "$repo_dir" rev-list --count origin/develop..origin/feature/dirty-preserve 2>/dev/null || printf '0')
 	local tracked_content=""
 	tracked_content=$(git -C "$repo_dir" show "origin/feature/dirty-preserve:tracked.txt" 2>/dev/null || true)
 	if [[ "$preserved" == "1" && -z "$status" && "$pushed_count" == "1" && "$tracked_content" == *"changed after staging"* ]]; then
@@ -523,13 +780,49 @@ test_exit_push_preserves_dirty_worktree() {
 		print_result "exit push preserves staged, unstaged, and untracked work" 1 \
 			"preserved=${preserved} status='${status}' pushed_count=${pushed_count} tracked='${tracked_content}'"
 	fi
+
+	# A missing default ref still preserves locally, without publishing the commit.
+	git -C "$repo_dir" symbolic-ref --delete refs/remotes/origin/HEAD
+	local remote_before="" remote_after="" local_after=""
+	remote_before=$(git --git-dir="$origin_dir" rev-parse refs/heads/feature/dirty-preserve)
+	printf 'missing default ref\n' >>"${repo_dir}/tracked.txt"
+	_WORKER_WORKTREE_PATH="$repo_dir"
+	_push_wip_commits_on_exit
+	assert_eq "missing default ref marks dirty work preserved" "${_WORKER_DIRTY_WORK_PRESERVED:-0}" "1"
+	status=$(git -C "$repo_dir" status --porcelain)
+	assert_eq "missing default ref commits local dirty work" "$status" ""
+	local_after=$(git -C "$repo_dir" rev-list --count "${remote_before}..HEAD")
+	assert_eq "missing default ref creates one preservation commit" "$local_after" "1"
+	remote_after=$(git --git-dir="$origin_dir" rev-parse refs/heads/feature/dirty-preserve)
+	assert_eq "missing default ref does not push" "$remote_after" "$remote_before"
+	# Observe the recovery boundary before it can reuse a stale remote or push HEAD.
+	local DISPATCH_REPO_SLUG="owner/repo"
+	local recovery_calls=0 recovery_rc=0
+	_attempt_orphan_recovery_pr() { recovery_calls=$((recovery_calls + 1)); return 0; }
+	_recover_dirty_worker_pr "issue-42" || recovery_rc=$?
+	assert_eq "missing base rejects stale-remote recovery" "$recovery_rc" "1"
+	assert_eq "missing base never enters remote recovery" "$recovery_calls" "0"
+	git -C "$repo_dir" checkout -b feature/issue-42-local-only >/dev/null 2>&1
+	recovery_rc=0
+	_recover_dirty_worker_pr "issue-42" || recovery_rc=$?
+	assert_eq "missing base rejects local-only recovery" "$recovery_rc" "1"
+	assert_eq "local-only branch never enters remote recovery" "$recovery_calls" "0"
+	git -C "$repo_dir" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
+	_push_wip_commits_on_exit
+	assert_eq "resolved base clears recovery block" "${_WORKER_BASE_UNRESOLVED:-1}" "0"
+	recovery_rc=0
+	_recover_dirty_worker_pr "issue-42" || recovery_rc=$?
+	assert_eq "resolved base allows recovery" "$recovery_rc" "0"
+	assert_eq "resolved base reaches remote recovery" "$recovery_calls" "1"
+	unset -f _attempt_orphan_recovery_pr
+	unset _WORKER_WORKTREE_PATH _WORKER_DIRTY_WORK_PRESERVED _WORKER_BASE_UNRESOLVED
 	unset -f git
 	return 0
 }
 
 test_exit_push_excludes_deferred_cleanup_marker() {
 	# Bypass the production canonical-repository guard for this disposable fixture.
-	git() { /usr/bin/git "$@"; }
+	git() { "$REAL_GIT" "$@" || return 1; return 0; }
 	local case_dir="${TMPDIR_TEST}/marker-and-work"
 	local origin_dir="${case_dir}/origin.git"
 	local repo_dir="${case_dir}/repo"
@@ -545,7 +838,8 @@ test_exit_push_excludes_deferred_cleanup_marker() {
 	git -C "$repo_dir" add tracked.txt >/dev/null 2>&1
 	git -C "$repo_dir" commit -m "test: seed repository" >/dev/null 2>&1
 	git -C "$repo_dir" push -u origin main >/dev/null 2>&1
-	git -C "$repo_dir" checkout -b feature/marker-and-work >/dev/null 2>&1
+	git -C "$repo_dir" worktree add -b feature/marker-and-work "${case_dir}/worker" main >/dev/null 2>&1
+	repo_dir="${case_dir}/worker"
 	mkdir -p "${repo_dir}/.agents"
 	printf 'base\nworker change\n' >"${repo_dir}/tracked.txt"
 	printf '12345\n' >"${repo_dir}/${marker_path}"
@@ -580,9 +874,65 @@ test_exit_push_excludes_deferred_cleanup_marker() {
 	return 0
 }
 
+# GH#36608: a repository cloned inside the worktree must not become a gitlink
+# in the preservation commit; ordinary worker files are still preserved.
+test_exit_push_excludes_new_embedded_repository() {
+	# Bypass the production canonical-repository guard for this disposable fixture.
+	git() { "$REAL_GIT" "$@" || return 1; return 0; }
+	local case_dir="${TMPDIR_TEST}/embedded-repo"
+	local origin_dir="${case_dir}/origin.git"
+	local other_dir="${case_dir}/other.git"
+	local repo_dir="${case_dir}/repo"
+	mkdir -p "$case_dir"
+	git init --bare "$origin_dir" >/dev/null 2>&1
+	git init --bare "$other_dir" >/dev/null 2>&1
+	git clone "$origin_dir" "$repo_dir" >/dev/null 2>&1
+	git -C "$repo_dir" config user.email "worker@example.invalid"
+	git -C "$repo_dir" config user.name "Worker Test"
+	git -C "$repo_dir" config commit.gpgsign false
+	git -C "$repo_dir" checkout -b main >/dev/null 2>&1
+	printf 'base\n' >"${repo_dir}/tracked.txt"
+	git -C "$repo_dir" add tracked.txt >/dev/null 2>&1
+	git -C "$repo_dir" commit -m "test: seed repository" >/dev/null 2>&1
+	git -C "$repo_dir" push -u origin main >/dev/null 2>&1
+	git -C "$repo_dir" worktree add -b feature/embedded-repo "${case_dir}/worker" main >/dev/null 2>&1
+	repo_dir="${case_dir}/worker"
+	git clone "$other_dir" "${repo_dir}/other-repo" >/dev/null 2>&1
+	git -C "${repo_dir}/other-repo" config user.email "worker@example.invalid"
+	git -C "${repo_dir}/other-repo" config user.name "Worker Test"
+	git -C "${repo_dir}/other-repo" config commit.gpgsign false
+	printf 'other\n' >"${repo_dir}/other-repo/file.txt"
+	git -C "${repo_dir}/other-repo" add file.txt >/dev/null 2>&1
+	git -C "${repo_dir}/other-repo" commit -m "test: other repository" >/dev/null 2>&1
+	mkdir -p "${repo_dir}/.other-stage"
+	printf 'staged copy\n' >"${repo_dir}/.other-stage/file.txt"
+
+	_WORKER_WORKTREE_PATH="$repo_dir"
+	_WORKER_DIRTY_WORK_PRESERVED=0
+	_push_wip_commits_on_exit
+	local preserved="${_WORKER_DIRTY_WORK_PRESERVED:-0}"
+	unset _WORKER_WORKTREE_PATH _WORKER_DIRTY_WORK_PRESERVED
+
+	git -C "$repo_dir" fetch origin feature/embedded-repo >/dev/null 2>&1
+	local gitlink_in_commit="" stage_in_commit="" gitlink_in_index="" clone_present=0
+	gitlink_in_commit=$(git -C "$repo_dir" ls-tree origin/feature/embedded-repo -- other-repo 2>/dev/null || true)
+	stage_in_commit=$(git -C "$repo_dir" ls-tree -r --name-only origin/feature/embedded-repo -- .other-stage 2>/dev/null || true)
+	gitlink_in_index=$(git -C "$repo_dir" ls-files -s -- other-repo 2>/dev/null || true)
+	[[ -f "${repo_dir}/other-repo/file.txt" ]] && clone_present=1
+	if [[ "$preserved" == "1" && -z "$gitlink_in_commit" && -z "$gitlink_in_index" && \
+		"$stage_in_commit" == ".other-stage/file.txt" && "$clone_present" == "1" ]]; then
+		print_result "exit push excludes new embedded repository gitlinks" 0
+	else
+		print_result "exit push excludes new embedded repository gitlinks" 1 \
+			"preserved=${preserved} gitlink='${gitlink_in_commit}' index='${gitlink_in_index}' stage='${stage_in_commit}' clone=${clone_present}"
+	fi
+	unset -f git
+	return 0
+}
+
 test_exit_push_ignores_marker_only_dirty_state() {
 	# Bypass the production canonical-repository guard for this disposable fixture.
-	git() { /usr/bin/git "$@"; }
+	git() { "$REAL_GIT" "$@" || return 1; return 0; }
 	local case_dir="${TMPDIR_TEST}/marker-only"
 	local origin_dir="${case_dir}/origin.git"
 	local repo_dir="${case_dir}/repo"
@@ -598,7 +948,8 @@ test_exit_push_ignores_marker_only_dirty_state() {
 	git -C "$repo_dir" add tracked.txt >/dev/null 2>&1
 	git -C "$repo_dir" commit -m "test: seed repository" >/dev/null 2>&1
 	git -C "$repo_dir" push -u origin main >/dev/null 2>&1
-	git -C "$repo_dir" checkout -b feature/marker-only >/dev/null 2>&1
+	git -C "$repo_dir" worktree add -b feature/marker-only "${case_dir}/worker" main >/dev/null 2>&1
+	repo_dir="${case_dir}/worker"
 	mkdir -p "${repo_dir}/.agents"
 	printf '12345\n' >"${repo_dir}/${marker_path}"
 	git -C "$repo_dir" add "$marker_path" >/dev/null 2>&1
@@ -630,7 +981,7 @@ test_exit_push_ignores_marker_only_dirty_state() {
 # branch, a verified recovery bundle, or else an explicit work_lost result.
 test_secure_branch_commits_proves_durability() {
 	# Bypass the production canonical-repository guard for this disposable fixture.
-	git() { /usr/bin/git "$@"; }
+	git() { "$REAL_GIT" "$@" || return 1; return 0; }
 	local case_dir="${TMPDIR_TEST}/durability"
 	local origin_dir="${case_dir}/origin.git"
 	local repo_dir="${case_dir}/repo"
@@ -697,7 +1048,10 @@ main() {
 	test_clean_exit_with_boot_session_only
 	test_clean_exit_fresh_session_with_assistant_message
 	test_clean_exit_fresh_session_with_assistant_part
+	test_clean_exit_discarded_isolated_db_uses_snapshot
+	test_nonzero_exit_uses_matching_positive_snapshot
 	test_clean_retry_class_requires_typed_terminal_outcome
+	test_exit_trap_terminal_accounting
 	test_clean_exit_session_before_start
 	test_clean_exit_continued_session_with_assistant_activity
 	test_clean_exit_continued_session_placeholder_only
@@ -711,8 +1065,10 @@ main() {
 	test_classifier_failure_corrupt_db
 	test_no_start_time_empty_db
 	test_no_start_time_with_sessions
+	test_exit_push_skips_canonical_and_default_branch
 	test_exit_push_preserves_dirty_worktree
 	test_exit_push_excludes_deferred_cleanup_marker
+	test_exit_push_excludes_new_embedded_repository
 	test_exit_push_ignores_marker_only_dirty_state
 	test_secure_branch_commits_proves_durability
 

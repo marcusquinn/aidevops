@@ -24,6 +24,7 @@ parser = argparse.ArgumentParser(description="Normalize padded legacy task IDs (
 mode = parser.add_mutually_exclusive_group()
 boolean_action = "store_true"
 brief_suffix = "-brief.md"
+plans_relative = "todo/PLANS.md"
 mode.add_argument("--apply", action=boolean_action)
 mode.add_argument("--dry-run", action=boolean_action)
 mode.add_argument("--advisory", action=boolean_action, help="Only advise when TODO.md has padded IDs")
@@ -54,7 +55,14 @@ def comment_continues(line, start=0):
     opens = [m.start() for m in html_open.finditer(line, start)]
     return bool(opens) and opens[-1] > line.rfind("-->")
 
-def active_lines(text, plans=False):
+# Line states: DOC (fenced block or HTML comment: examples, never rewritten),
+# ARCHIVED (under an archive heading), TASK (task row, TOON block or PLANS.md
+# body: task IDs and brief paths are rewritten) and LIVE (any other line, such
+# as an indented "BRIEF:" continuation: only brief paths are rewritten, because
+# the brief file is renamed regardless and a path is unambiguous; GH#37003).
+DOC, ARCHIVED, TASK, LIVE = "doc", "archived", "task", "live"
+
+def line_states(text, plans=False):
     toon = False
     paired_toon = False
     archived = False
@@ -67,11 +75,11 @@ def active_lines(text, plans=False):
         if comment:
             close = line.find("-->")
             comment = close < 0 or comment_continues(line, close)
-            yield line, False
+            yield line, DOC
             continue
         if not toon and not fence and comment_continues(line):
             comment = True
-            yield line, False
+            yield line, DOC
             continue
         marker = re.match(r"^\s*(`{3,}|~{3,})", line)
         if marker:
@@ -79,10 +87,10 @@ def active_lines(text, plans=False):
                 fence = marker[1]
             elif marker[1][0] == fence[0] and len(marker[1]) >= len(fence):
                 fence = ""
-            yield line, False
+            yield line, DOC
             continue
         if fence:
-            yield line, False
+            yield line, DOC
             continue
         heading = re.match(r"^(#{1,6})\s+(.+)", line)
         if heading:
@@ -94,7 +102,12 @@ def active_lines(text, plans=False):
         if "<!--TOON:" in line:
             toon = True
             paired_toon = bool(re.search(r"<!--TOON:[\w-]+-->", line))
-        yield line, not archived and (plans or toon or bool(task_line.match(line)))
+        if archived:
+            yield line, ARCHIVED
+        elif plans or toon or task_line.match(line):
+            yield line, TASK
+        else:
+            yield line, LIVE
         if "<!--/TOON:" in line or ("-->" in line and not paired_toon):
             toon = False
             paired_toon = False
@@ -106,20 +119,32 @@ def members(text):
 def normalize_compound(match):
     return task_member.sub(lambda member: unpad(member[0]), match[0])
 
-def ids(line):
-    return members(line) + [m[1] for m in brief_ref.finditer(line)]
+def ids(line, state):
+    # Task IDs only on TASK lines; brief paths on every TASK or LIVE line.
+    briefs = [m[1] for m in brief_ref.finditer(line)] if state in (TASK, LIVE) else []
+    return (members(line) if state == TASK else []) + briefs
+
+# Padded IDs with an alpha segment (t038.36a) have no canonical form: report
+# them for a manual decision and never rewrite them (GH#37003).
+alpha_candidate = re.compile(r"(?<![\w./-])t[0-9][0-9a-z]*(?:\.[0-9][0-9a-z]*)*(?![\w/-]|\.\w)")
+
+def manual_alpha_ids(line):
+    return [m[0] for m in alpha_candidate.finditer(line)
+            if re.search(r"[a-z]", m[0][1:]) and re.search(r"(?:^t|\.)0[0-9]", m[0])]
 
 todo = root / "TODO.md"
 if args.advisory:
     if todo.is_file() and not todo.is_symlink():
-        if any(unpad(value) != value for line, active in active_lines(todo.read_text()) if active for value in ids(line)):
+        if any(unpad(value) != value for line, state in line_states(todo.read_text()) for value in ids(line, state)):
             print("warning: TODO.md contains padded legacy IDs; dry-run: bash ~/.aidevops/agents/scripts/task-id-normalize-helper.sh --repo " + repr(str(root)) + " --dry-run")
     sys.exit(0)
 
 originals = {}
 rewrites = {}
+relatives = {}
 seen = set()
-for relative in ("TODO.md", "todo/PLANS.md"):
+manual = []
+for relative in ("TODO.md", plans_relative):
     path = root / relative
     if path.is_symlink() or path.parent.is_symlink():
         sys.exit("Refusing symlink: " + relative)
@@ -127,17 +152,22 @@ for relative in ("TODO.md", "todo/PLANS.md"):
         continue
     text = path.read_bytes().decode("utf-8")
     originals[path] = text
+    relatives[path] = relative
     output = []
-    for line, active in active_lines(text, relative == "todo/PLANS.md"):
-        if active:
-            seen.update(ids(line))
-            new = task_pattern.sub(normalize_compound, line)
+    for line, state in line_states(text, relative == plans_relative):
+        if state in (TASK, LIVE):
+            seen.update(ids(line, state))
+            new = task_pattern.sub(normalize_compound, line) if state == TASK else line
             new = brief_ref.sub(lambda m: "todo/tasks/" + unpad(m[1]) + brief_suffix, new)
             if new != line:
                 print(relative + ": " + line.rstrip() + " -> " + new.rstrip())
+            if state == TASK:
+                manual.extend(relative + ": " + value for value in manual_alpha_ids(line))
             line = new
         output.append(line)
     rewrites[path] = "".join(output)
+for item in manual:
+    print("MANUAL: " + item + " is a padded ID with an alpha suffix and no canonical form; rename it by hand")
 
 renames = []
 brief_dir = root / "todo/tasks"
@@ -170,6 +200,17 @@ for source, target in renames:
     tracked = subprocess.run(["git", "-C", str(root), "ls-files", "--error-unmatch", "--", str(source.relative_to(root))], capture_output=True)
     if tracked.returncode:
         conflicts.append("brief must be Git-tracked for git mv: " + str(source.relative_to(root)))
+# A rewritten file must not keep pointing at a brief this run renames (GH#37003).
+# Fenced and commented examples are documentation; archived rows are checked.
+renamed_from = {source.name[:-len(brief_suffix)]: target for source, target in renames}
+for path, text in rewrites.items():
+    for line, state in line_states(text, relatives[path] == plans_relative):
+        if state == DOC:
+            continue
+        for match in brief_ref.finditer(line):
+            if match[1] in renamed_from:
+                conflicts.append("dangling brief reference in " + relatives[path] + ": todo/tasks/" + match[1] + brief_suffix
+                                 + " would be renamed to " + str(renamed_from[match[1]].relative_to(root)) + "; update the reference: " + line.strip())
 if conflicts:
     for conflict in conflicts:
         print("CONFLICT: " + conflict, file=sys.stderr)

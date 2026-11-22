@@ -23,13 +23,13 @@ tools:
 - **Setup**: Browser DevTools + `curl` (built into macOS/Linux)
 - **Best for**: Dashboards, gated content, private APIs, admin panels, one-off debugging
 - **Use when**: one-off extraction from an authenticated page or internal API
-- **Don't use when**: repeated jobs → `sweet-cookie`; interaction required → Playwright/Stagehand; bulk crawling → Crawl4AI
+- **Don't use when**: repeated jobs → `sweet-cookie`; interaction required → Playwright; bulk crawling → Crawl4AI
 
 ```text
 Need data from an authenticated page?
     +-> One-off extraction? --> Curl-Copy
     +-> Repeated/scheduled? --> sweet-cookie + cron
-    +-> Need interaction first? --> Playwright or Stagehand
+    +-> Need interaction first? --> Playwright
     +-> Bulk pages? --> Crawl4AI with exported cookies
 ```
 

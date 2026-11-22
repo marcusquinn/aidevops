@@ -8,17 +8,29 @@
 
 set -uo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 TESTS_RUN=0
 TESTS_FAILED=0
 TEST_ROOT=""
+FIXTURE_CASE_SEQ=0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PULSE_CLEANUP="${SCRIPT_DIR}/../pulse-cleanup.sh"
 
-GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
+GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-${TEST_NATIVE_GIT}}"
 export GIT_BIN
+# Exported to child bash processes (the lifecycle registry runs archive helpers).
+# The registry strips every GIT_* variable, so this function must not depend on
+# GIT_BIN or it silently fails there and breaks `git check-ref-format`.
 git() {
-	"$GIT_BIN" "$@"
+	"${AIDEVOPS_TEST_GIT_BIN:-${TEST_NATIVE_GIT}}" "$@"
 	return $?
 }
 export -f git
@@ -58,6 +70,46 @@ backdate_worktree_activity() {
 	return 0
 }
 
+# Create a linked worktree the way production does: through the worker-lifecycle
+# registry. Registry-authorised retirement (GH#38667) refuses trees that were
+# never enrolled, so a plain `git worktree add` fixture can no longer be removed.
+# The creator is a short-lived fixture process and the state directory is
+# fixture-owned, so the host registry is never read or written.
+# Args: repo_dir, wt_path, then either a branch name or --detach.
+create_lifecycle_worktree() {
+	local repo_dir="$1"
+	local wt_path="$2"
+	local branch_arg="$3"
+	local registry="${SCRIPT_DIR}/../../worker-lifecycle/worker-registry.py"
+	local creator_pid="" rc=0
+	local mode_args=(-b "$branch_arg")
+	[[ "$branch_arg" == "--detach" ]] && mode_args=(--detach)
+	sleep 120 &
+	creator_pid=$!
+	python3 "$registry" --state-dir "${AIDEVOPS_LIFECYCLE_STATE_DIR:?}" create-worktree \
+		--repo "$repo_dir" --path "$wt_path" --ref HEAD --pid "$creator_pid" \
+		--session-id fixture-creator --initialize -- "${mode_args[@]}" >/dev/null || rc=$?
+	kill "$creator_pid" 2>/dev/null || true
+	wait "$creator_pid" 2>/dev/null || true
+	return "$rc"
+}
+
+# Register fixture repositories so registry retirement may archive their trees.
+# Written after the fixture's own commits: a registered canonical checkout makes
+# the Git mutation guard refuse them.
+register_fixture_repo() {
+	local repo_dir="$1"
+	local config="${HOME}/.config/aidevops/repos.json"
+	local current='{"initialized_repos":[]}'
+	mkdir -p "${config%/*}"
+	[[ -f "$config" ]] && current=$(<"$config")
+	jq --arg path "$repo_dir" '.initialized_repos += [{"slug":"testowner/testrepo","path":$path}]' \
+		<<<"$current" >"${config}.tmp" || return 1
+	chmod 600 "${config}.tmp"
+	mv "${config}.tmp" "$config"
+	return 0
+}
+
 setup_repo_with_worker_worktree() {
 	local repo_dir="$1"
 	local wt_path="$2"
@@ -73,8 +125,8 @@ setup_repo_with_worker_worktree() {
 		printf 'base\n' >README.md
 		git add README.md
 		git commit -q -m "init"
-		git worktree add -q -b "$branch_name" "$wt_path" main
 	)
+	create_lifecycle_worktree "$repo_dir" "$wt_path" "$branch_name" || return 1
 	(
 		cd "$wt_path" || exit 1
 		printf 'worker change\n' >worker.txt
@@ -91,6 +143,7 @@ setup_repo_with_worker_worktree() {
 			|| printf '202601010000\n')
 	fi
 	backdate_worktree_activity "$wt_path" "$old_ts"
+	register_fixture_repo "$repo_dir" || return 1
 	return 0
 }
 
@@ -126,8 +179,13 @@ setup_repo_with_detached_review_worktree() {
 source_pulse_cleanup_with_stubs() {
 	LOGFILE="${TEST_ROOT}/pulse.log"
 	export LOGFILE
-	AIDEVOPS_CLEANUP_LOG="${TEST_ROOT}/cleanup.log"
+	# Each case owns its audit log and metrics file. A shared log lets one case's
+	# entries satisfy or confuse another's assertions, and an exported metrics
+	# file from an earlier case would make later worktrees look recently active.
+	FIXTURE_CASE_SEQ=$((FIXTURE_CASE_SEQ + 1))
+	AIDEVOPS_CLEANUP_LOG="${TEST_ROOT}/cleanup-${FIXTURE_CASE_SEQ}.log"
 	export AIDEVOPS_CLEANUP_LOG
+	unset AIDEVOPS_HEADLESS_METRICS_FILE
 	ORPHAN_WORKTREE_GRACE_SECS=1800
 	export ORPHAN_WORKTREE_GRACE_SECS
 
@@ -157,13 +215,16 @@ source_pulse_cleanup_with_stubs() {
 	# Real degraded visibility and managed descendants are exercised by the native
 	# managed-lifetime test. Never require sudo to reach the policy under test.
 	capture_worktree_process_cwds() { return 0; }
+	# Fully initialise the fixture registry: a hand-built one with only
+	# worktree_owners lacks the creation tables that archive restore verification
+	# needs to enrol its verification copy.
 	export WORKTREE_REGISTRY_DB="${TEST_ROOT}/registry.db"
-	python3 - "$WORKTREE_REGISTRY_DB" <<'PY'
-import sqlite3
-import sys
-with sqlite3.connect(sys.argv[1]) as connection:
-    connection.execute("CREATE TABLE IF NOT EXISTS worktree_owners (worktree_path TEXT PRIMARY KEY, owner_pid INTEGER, task_id TEXT, owner_session TEXT)")
-PY
+	if [[ ! -s "$WORKTREE_REGISTRY_DB" ]]; then
+		(
+			# shellcheck source=../shared-worktree-registry.sh
+			source "${SCRIPT_DIR}/../shared-worktree-registry.sh" && _init_registry_db
+		) || return 1
+	fi
 	return 0
 }
 
@@ -387,50 +448,12 @@ test_closed_issue_dirty_worktree_compacts_and_preserves_branch() {
 	return 0
 }
 
-# GH#34943: a late owner that writes after the compact archive was verified
-# must keep its worktree. The managed-lifetime probe override simulates that
-# write landing inside native removal, after its lock and common-dir probes
-# (the probe only runs there, so the archive itself is unaffected).
-test_late_write_after_compact_archive_preserves_worktree() {
-	local repo_dir="${TEST_ROOT}/repo-late-writer"
-	local wt_path="${TEST_ROOT}/worker-wt-late-writer"
-	local branch_name="feature/auto-20260507-190809-gh23089"
-	setup_repo_with_worker_worktree "$repo_dir" "$wt_path" "$branch_name" || return 1
-	printf 'dirty edit\n' >>"${wt_path}/worker.txt"
-	source_pulse_cleanup_with_stubs || return 1
-	gh() {
-		if [[ "${1:-}" == "issue" && "${2:-}" == "view" && "${3:-}" == "23089" ]]; then
-			printf '%s\n' "CLOSED"
-			return 0
-		fi
-		return 1
-	}
-	worktree_managed_require_removal_proof() {
-		local guarded_path="$1"
-		printf 'late owner write\n' >>"${guarded_path}/late-owner.txt"
-		return 0
-	}
-
-	local now_epoch
-	now_epoch=$(date +%s)
-	AIDEVOPS_HEADLESS_METRICS_FILE="${TEST_ROOT}/missing-late-writer-metrics.jsonl"
-	export AIDEVOPS_HEADLESS_METRICS_FILE
-
-	_cleanup_single_worktree "$repo_dir" "$wt_path" "$branch_name" "$now_epoch" "testowner/testrepo" "main" >/dev/null 2>&1
-	local cleanup_rc=$?
-
-	local branch_exists=1 rc=0
-	git -C "$repo_dir" rev-parse --verify "refs/heads/${branch_name}" >/dev/null 2>&1 && branch_exists=0
-	[[ "$cleanup_rc" -ne 0 ]] || rc=1
-	[[ -d "$wt_path" ]] || rc=1
-	[[ "$branch_exists" -eq 0 ]] || rc=1
-	grep -q 'late owner write' "${wt_path}/late-owner.txt" 2>/dev/null || rc=1
-	grep -q 'dirty edit' "${wt_path}/worker.txt" 2>/dev/null || rc=1
-	grep -q 'worktree-skipped.*compact-archive-source-changed' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	print_result "late write after compact archive preserves worktree" "$rc" \
-		"cleanup_rc=$cleanup_rc worktree_exists=$([[ -d "$wt_path" ]] && printf yes || printf no) branch_exists=$branch_exists pulse=$(cat "$LOGFILE" 2>/dev/null) log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
-	return 0
-}
+# The late-owner-write guard (GH#34943) no longer lives in this layer: removal is
+# delegated to the worker-lifecycle registry, which archives the tree itself and
+# refuses removal when the source fingerprint changes after that archive. The
+# shell-level override of worktree_managed_require_removal_proof this case used
+# is never reached on that path, so its assertion could not fire. Coverage lives
+# in worker-lifecycle/tests (test_retirement.py, test_reclaim.py).
 
 test_failed_compact_archive_preserves_dirty_worktree() {
 	local repo_dir="${TEST_ROOT}/repo-compact-failure"
@@ -667,7 +690,9 @@ test_local_only_repo_worktree_logs_explicit_skip() {
 {"initialized_repos":[{"slug":"testowner/local-only","path":"${repo_dir}","local_only":true}]}
 JSON
 
-	cleanup_worktrees >/dev/null 2>&1
+	# Local-only skip rows are emitted by the resumable pass, not by
+	# cleanup_worktrees (which excludes local_only repos), so exercise that audit.
+	_pc_log_local_only_worktree_skips "${HOME}/.config/aidevops/repos.json" >/dev/null 2>&1
 	local cleanup_rc=$?
 
 	local rc=0
@@ -925,14 +950,19 @@ test_old_unattributed_worktree_is_archived_and_removed() {
 	AIDEVOPS_HEADLESS_METRICS_FILE="${TEST_ROOT}/missing-old-unattributed-metrics.jsonl"
 	export AIDEVOPS_HEADLESS_METRICS_FILE
 
+	# Earlier cases share this archive root, so only a manifest created by this
+	# case counts as evidence that age alone authorized archival.
+	local archive_manifest="" manifests_before=0 manifests_after=0
+	for archive_manifest in "$HOME"/.aidevops/recovery/archives/testowner__testrepo/unattributed/*/manifest.json; do
+		[[ -f "$archive_manifest" ]] && manifests_before=$((manifests_before + 1))
+	done
 	_cleanup_single_worktree "$repo_dir" "$wt_path" "$branch_name" "$now_epoch" "testowner/testrepo" "main" >/dev/null 2>&1
 	local cleanup_rc=$?
-	local archive_manifest=""
 	for archive_manifest in "$HOME"/.aidevops/recovery/archives/testowner__testrepo/unattributed/*/manifest.json; do
-		[[ -f "$archive_manifest" ]] || archive_manifest=""
+		[[ -f "$archive_manifest" ]] && manifests_after=$((manifests_after + 1))
 	done
 	local rc=0
-	[[ "$cleanup_rc" -ne 0 && -d "$wt_path" && -z "$archive_manifest" ]] || rc=1
+	[[ "$cleanup_rc" -ne 0 && -d "$wt_path" && "$manifests_after" -eq "$manifests_before" ]] || rc=1
 	grep -q "${wt_path}.*idle-unverified-or-pending" "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
 	print_result "thirty-day age alone does not authorize archival" "$rc" \
 		"cleanup_rc=$cleanup_rc archive=$archive_manifest"
@@ -1154,7 +1184,7 @@ test_abandoned_profile_publication_is_archived_recoverably() {
 	printf 'base\n' >"${repo_dir}/README.md"
 	git -C "$repo_dir" add README.md
 	git -C "$repo_dir" commit -q -m init
-	git -C "$repo_dir" worktree add -q --detach "$wt_path" main
+	create_lifecycle_worktree "$repo_dir" "$wt_path" --detach || return 1
 	printf 'recoverable generated state\n' >"${wt_path}/profile.tmp"
 	git_dir=$(git -C "$wt_path" rev-parse --path-format=absolute --git-dir)
 	resolved_wt_path=$(cd "$wt_path" && pwd -P)
@@ -1165,10 +1195,12 @@ test_abandoned_profile_publication_is_archived_recoverably() {
 	' >"${git_dir}/aidevops-profile-publication.json"
 	old_ts=$(date -u -v-3H +%Y%m%d%H%M 2>/dev/null || date -u -d '3 hours ago' +%Y%m%d%H%M)
 	backdate_worktree_activity "$wt_path" "$old_ts"
+	register_fixture_repo "$repo_dir" || return 1
 
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root"
+	AIDEVOPS_WORKTREE_ARCHIVE_ROOT="$recovery_root"
 	ORPHAN_PROFILE_PUBLICATION_ARCHIVE_SECS=7200
-	export AIDEVOPS_WORKTREE_TRASH_ROOT ORPHAN_PROFILE_PUBLICATION_ARCHIVE_SECS
+	export AIDEVOPS_WORKTREE_TRASH_ROOT AIDEVOPS_WORKTREE_ARCHIVE_ROOT ORPHAN_PROFILE_PUBLICATION_ARCHIVE_SECS
 	source_pulse_cleanup_with_stubs || return 1
 	local now_epoch=""
 	now_epoch=$(date +%s)
@@ -1219,10 +1251,11 @@ setup_profile_publication_worktree() {
 	printf 'base\n' >"${repo_dir}/README.md"
 	git -C "$repo_dir" add README.md
 	git -C "$repo_dir" commit -q -m init
-	git -C "$repo_dir" worktree add -q --detach "$wt_path" main
+	create_lifecycle_worktree "$repo_dir" "$wt_path" --detach || return 1
 	local old_ts=""
 	old_ts=$(date -u -v-3H +%Y%m%d%H%M 2>/dev/null || date -u -d '3 hours ago' +%Y%m%d%H%M)
 	backdate_worktree_activity "$wt_path" "$old_ts"
+	register_fixture_repo "$repo_dir" || return 1
 	return 0
 }
 
@@ -1234,8 +1267,9 @@ test_markerless_profile_publication_intent_is_archived_recoverably() {
 	write_profile_publication_intent "$repo_dir" "$wt_path" || return 1
 	printf 'recoverable generated state\n' >"${wt_path}/profile.tmp"
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root"
+	AIDEVOPS_WORKTREE_ARCHIVE_ROOT="$recovery_root"
 	ORPHAN_PROFILE_PUBLICATION_ARCHIVE_SECS=7200
-	export AIDEVOPS_WORKTREE_TRASH_ROOT ORPHAN_PROFILE_PUBLICATION_ARCHIVE_SECS
+	export AIDEVOPS_WORKTREE_TRASH_ROOT AIDEVOPS_WORKTREE_ARCHIVE_ROOT ORPHAN_PROFILE_PUBLICATION_ARCHIVE_SECS
 	source_pulse_cleanup_with_stubs || return 1
 	_PC_PROFILE_PUBLICATION_LEGACY_RECOVERIES=0
 	local now_epoch=""
@@ -1262,7 +1296,8 @@ test_malformed_profile_publication_intent_fails_closed() {
 	write_profile_publication_intent "$repo_dir" "$wt_path" "${wt_path}-wrong" || return 1
 	printf 'must remain in place\n' >"${wt_path}/profile.tmp"
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root"
-	export AIDEVOPS_WORKTREE_TRASH_ROOT
+	AIDEVOPS_WORKTREE_ARCHIVE_ROOT="$recovery_root"
+	export AIDEVOPS_WORKTREE_TRASH_ROOT AIDEVOPS_WORKTREE_ARCHIVE_ROOT
 	source_pulse_cleanup_with_stubs || return 1
 	_PC_PROFILE_PUBLICATION_LEGACY_RECOVERIES=0
 	local now_epoch=""
@@ -1283,6 +1318,8 @@ test_legacy_markerless_profile_publication_is_archived_recoverably() {
 	setup_profile_publication_worktree "$repo_dir" "$wt_path" || return 1
 	printf 'legacy recoverable state\n' >"${wt_path}/profile.tmp"
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root"
+	AIDEVOPS_WORKTREE_ARCHIVE_ROOT="$recovery_root"
+	export AIDEVOPS_WORKTREE_ARCHIVE_ROOT
 	ORPHAN_PROFILE_PUBLICATION_LEGACY_RECOVERY_CAP=10
 	export AIDEVOPS_WORKTREE_TRASH_ROOT ORPHAN_PROFILE_PUBLICATION_LEGACY_RECOVERY_CAP
 	source_pulse_cleanup_with_stubs || return 1
@@ -1329,6 +1366,7 @@ trap teardown EXIT
 # any other form, so resolve macOS /var -> /private/var like production does.
 TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P) || exit 1
 export HOME="${TEST_ROOT}/home"
+export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_ROOT}/lifecycle-state"
 mkdir -p "${HOME}/.aidevops/logs"
 # Production always has an ownership registry; without one the managed
 # lifetime fence fails closed before any archive is attempted. A subshell
@@ -1349,7 +1387,6 @@ test_open_ci_repair_dirty_worktree_is_preserved
 test_open_head_pr_outranks_embedded_terminal_reference
 test_merged_branch_pr_removes_before_age_threshold
 test_closed_issue_dirty_worktree_compacts_and_preserves_branch
-test_late_write_after_compact_archive_preserves_worktree
 test_failed_compact_archive_preserves_dirty_worktree
 test_terminal_worktree_respects_live_owner_signal
 test_terminal_worktree_respects_recent_worker_metric

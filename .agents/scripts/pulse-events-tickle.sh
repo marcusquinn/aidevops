@@ -134,7 +134,7 @@ _events_tickle_parse_status() {
 	local raw="$1"
 	# gh 2.102 reports non-2xx statuses on stderr without response headers.
 	printf '%s' "$raw" | sed -E 's/^gh: HTTP ([0-9]{3})([[:space:]].*)?$/HTTP\/2 \1/' | \
-		grep -m1 '^HTTP/' | awk '{print $2}' | tr -d '\r' 2>/dev/null || printf ''
+		grep '^HTTP/' | sed -n '1p' | awk '{print $2}' | tr -d '\r' 2>/dev/null || printf ''
 	return 0
 }
 
@@ -145,7 +145,7 @@ _events_tickle_parse_status() {
 _events_tickle_parse_etag() {
 	local raw="$1"
 	printf '%s' "$raw" | grep -i "^[Ee][Tt][Aa][Gg]:" | \
-		awk '{print $2}' | tr -d '\r"' | head -1 2>/dev/null || printf ''
+		awk '{print $2}' | tr -d '\r"' | sed -n '1p' 2>/dev/null || printf ''
 	return 0
 }
 

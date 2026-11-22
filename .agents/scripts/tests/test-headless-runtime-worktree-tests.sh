@@ -1393,13 +1393,21 @@ EOF
 
 	local output=""
 	local status=0
+	if _hrw_verify_dispatch_ownership >/dev/null 2>&1; then
+		print_result "checkpoint runtime rejects missing admission claim context" 1
+	else
+		print_result "checkpoint runtime rejects missing admission claim context" 0
+	fi
+	export AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE=automatic
+	export AIDEVOPS_DISPATCH_LEASE_TOKEN=checkpoint-fixture-lease AIDEVOPS_PR_CHECKPOINT_SESSION=checkpoint-fixture
 	output=$(_hrw_verify_dispatch_ownership 2>&1) || status=$?
 	local calls=""
 	calls=$(<"$calls_file")
 	unset HEADLESS_RUNTIME_OWNERSHIP_HELPER LINKED_ISSUE_OWNERSHIP_CALLS \
 		WORKER_ISSUE_NUMBER WORKER_REPO_SLUG WORKER_GITHUB_LOGIN \
 		AIDEVOPS_PR_REPAIR_NUMBER AIDEVOPS_PR_REPAIR_LINKED_ISSUE AIDEVOPS_PR_REPAIR_ISSUE_ASSIGNEE AIDEVOPS_PR_REPAIR_HEAD_SHA \
-		AIDEVOPS_PR_REPAIR_HEAD_REF 2>/dev/null || true
+		AIDEVOPS_PR_REPAIR_HEAD_REF AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE \
+		AIDEVOPS_DISPATCH_LEASE_TOKEN AIDEVOPS_PR_CHECKPOINT_SESSION 2>/dev/null || true
 
 	if [[ "$status" -eq 0 ]] &&
 		grep -Fxq 'verify-pr-checkpoint-target 77 owner/repo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa feature/review 42 expected-runner' "$calls_file" &&

@@ -21,7 +21,8 @@ TEST_PARENT_LABELS=""
 TEST_COMMIT_SUBJECT="t3571: merged equivalent fix (#9001)"
 TEST_LINKED_ISSUE="23105"
 TEST_GRAPHQL_COST="1"
-TEST_GRAPHQL_HAS_NEXT_PAGE="false"
+TEST_GRAPHQL_EVENT_TYPE="ClosedEvent"
+TEST_GRAPHQL_CLOSER_TYPE="PullRequest"
 TEST_GRAPHQL_REPOSITORY="exampleorg/examplerepo"
 TEST_GRAPHQL_ISSUE_STATE="CLOSED"
 TEST_GRAPHQL_CLOSER_NUMBER="6130"
@@ -48,14 +49,15 @@ fail() {
 }
 
 _print_supersession_graphql_response() {
-	printf '{"data":{"repository":{"nameWithOwner":"%s","issue":{"state":"%s","closedByPullRequestsReferences":{"nodes":[{"number":%s,"state":"%s","mergedAt":"%s","repository":{"nameWithOwner":"%s"}}],"pageInfo":{"hasNextPage":%s}}}},"rateLimit":{"cost":%s}}}\n' \
+	printf '{"data":{"repository":{"nameWithOwner":"%s","issue":{"state":"%s","timelineItems":{"nodes":[{"__typename":"%s","closer":{"__typename":"%s","number":%s,"state":"%s","mergedAt":"%s","repository":{"nameWithOwner":"%s"}}}]}}},"rateLimit":{"cost":%s}}}\n' \
 		"$TEST_GRAPHQL_REPOSITORY" \
 		"$TEST_GRAPHQL_ISSUE_STATE" \
+		"$TEST_GRAPHQL_EVENT_TYPE" \
+		"$TEST_GRAPHQL_CLOSER_TYPE" \
 		"$TEST_GRAPHQL_CLOSER_NUMBER" \
 		"$TEST_GRAPHQL_CLOSER_STATE" \
 		"$TEST_GRAPHQL_CLOSER_MERGED_AT" \
 		"$TEST_GRAPHQL_REPOSITORY" \
-		"$TEST_GRAPHQL_HAS_NEXT_PAGE" \
 		"$TEST_GRAPHQL_COST"
 	return 0
 }
@@ -104,6 +106,7 @@ define_functions_under_test() {
 	' "$MERGE_CONFLICT_FILE")
 	fn_src="${fn_src}
 $(awk '
+		/^_psh_gh_read\(\) \{/,/^}$/ { print }
 		/^_psh_find_merged_closer_for_closed_issue\(\) \{/,/^}$/ { print }
 	' "$SUPERSESSION_FILE")
 $(awk '
@@ -225,7 +228,8 @@ reset_case() {
 	export TEST_COMMIT_SUBJECT="t3571: merged equivalent fix (#9001)"
 	export TEST_LINKED_ISSUE="23105"
 	export TEST_GRAPHQL_COST="1"
-	export TEST_GRAPHQL_HAS_NEXT_PAGE="false"
+	export TEST_GRAPHQL_EVENT_TYPE="ClosedEvent"
+	export TEST_GRAPHQL_CLOSER_TYPE="PullRequest"
 	export TEST_GRAPHQL_REPOSITORY="exampleorg/examplerepo"
 	export TEST_GRAPHQL_ISSUE_STATE="CLOSED"
 	export TEST_GRAPHQL_CLOSER_NUMBER="6130"
@@ -374,12 +378,13 @@ test_supersession_graphql_fail_closed_guards() {
 	fi
 
 	reset_case
-	TEST_GRAPHQL_HAS_NEXT_PAGE="true"
-	if _psh_find_merged_closer_for_closed_issue "exampleorg/examplerepo" "6125" "6131" >/dev/null; then
-		fail "supersession rejects truncated closer connection" "Expected hasNextPage=true to fail closed"
+	TEST_GRAPHQL_CLOSER_TYPE="Commit"
+	if _pm_close_superseded_duplicate_pr_if_issue_solved "6131" "exampleorg/examplerepo" "6125" "origin:worker"; then
+		fail "manual closure preserves worker PR" "Expected non-PR closure to fail closed"
 	else
-		pass "supersession rejects truncated closer connection"
+		pass "manual closure preserves worker PR"
 	fi
+	assert_log_not_contains "$GH_CALL_LOG" "pr close 6131" "manual closure causes no PR close write"
 
 	reset_case
 	TEST_GRAPHQL_REPOSITORY="untrusted/example"

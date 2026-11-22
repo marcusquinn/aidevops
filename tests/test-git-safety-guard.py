@@ -21,6 +21,7 @@ POLICY_PATH = ROOT / ".agents" / "scripts" / "canonical-write-policy-helper.py"
 REAL_GIT = "/usr/bin/git"
 SCRIPTS_DIR = POLICY_PATH.parent
 
+sys.path.insert(0, str(HOOK_PATH.parent))
 spec = importlib.util.spec_from_file_location("git_safety_guard", HOOK_PATH)
 git_safety_guard = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(git_safety_guard)
@@ -40,6 +41,12 @@ class CanonicalWritePolicyTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
         self.root = Path(self.temp_dir.name)
+        env_patch = mock.patch.dict(
+            "os.environ",
+            {"AIDEVOPS_LIFECYCLE_STATE_DIR": str(self.root / "lifecycle-state")},
+        )
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
         self.repo = self.root / "repo"
         self.linked = self.root / "linked"
         self.repo.mkdir()
@@ -78,7 +85,7 @@ class CanonicalWritePolicyTests(unittest.TestCase):
     ):
         with mock.patch.object(git_safety_guard.os, "getcwd", return_value=str(cwd)):
             return git_safety_guard._check_canonical_write(
-                str(target), patch_text
+                str(target), patch_text, "test-session"
             )
 
     def _create_repo_with_linked_worktree(

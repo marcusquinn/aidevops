@@ -13,6 +13,8 @@ MAX_UNTRACKED_FILES="${AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_FILES:-10000}"
 MAX_UNTRACKED_BYTES="${AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES:-1073741824}"
 ARCHIVE_SCHEMA="aidevops-worktree-archive-v1"
 FINGERPRINT_UNAVAILABLE="worktree fingerprint unavailable"
+# GH#36607 head already on origin: no bundle unless --bundle-commits (GH#38394).
+REMOTE_STATE_PUBLISHED="published"
 
 usage() {
 	cat <<'USAGE'
@@ -22,17 +24,37 @@ Commands:
   archive WORKTREE --repo OWNER/REPO (--issue N|--unattributed)
 	  --reason failed-worker|post-pr-cleanup|unattributed-worktree --base-branch BRANCH
       [--base-sha SHA] [--output-root DIR] [--failure-log FILE]
+      [--bundle-commits]                Always bundle commits since the base, even
+                                        when already on origin (records "bundled")
   restore ARCHIVE_DIR --target NEW_WORKTREE_PATH
   list [--repo OWNER/REPO] [--issue N] [--output-root DIR]
   verify ARCHIVE_DIR
+  verify-local ARCHIVE_DIR              Verify deltas against the retained local base
+  verify-structure ARCHIVE_DIR          Check schema, inventory and artifact hashes
+                                        only (no Git import, no restore)
   source-matches ARCHIVE_DIR WORKTREE   Exit 0 only if WORKTREE is unchanged since capture
   prune --older-than 14d --max-total-size 20G [--dry-run|--apply]
-      [--output-root DIR]
+      [--output-root DIR] [--budget-seconds N] [--producer-ttl-days 30]
+                                        Producer archives expire only once their
+                                        source is gone: empty deltas at once,
+                                        others after the TTL; .keep retains.
+                                        Structure-checks only selected archives;
+                                        stops cleanly within N seconds (0 =
+                                        unbounded) and reclaims dead verification scratch
+  sweep-scratch                         Reclaim only dead verification scratch
+                                        under the archive root
+  sweep-partials --dry-run|--apply [--output-root DIR]
+                                        One-time removal of manifest-less,
+                                        unpinned producer partial captures whose
+                                        reservation is reserved/capturing and
+                                        whose source is intact
 
 Environment:
   AIDEVOPS_WORKTREE_ARCHIVE_ROOT                Override the archive root.
   AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_FILES Maximum untracked paths (10000).
   AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES Maximum untracked bytes (1 GiB).
+  AIDEVOPS_WORKTREE_ARCHIVE_RESERVE_BYTES       Free space kept beyond the
+                                                estimated archive (512 MiB).
 USAGE
 	return 0
 }
@@ -402,29 +424,56 @@ if sys.argv[20] == '1':
 if manifest['source_fingerprint'].get('schema') == 4:
     manifest['merge_policy'] = 'structured-v1'
     manifest['self_contained'] = True
+if (archive / 'deletions-v1.json').is_file():
+    manifest['deletion_policy'] = 'compact-v1'
 (archive / 'manifest.json').write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding='utf-8')
 PY
 	return $?
 }
 
+# GH#36607: classify whether HEAD's commits since the base already live on a
+# origin remote-tracking ref. "published" archives omit the HEAD bundle and record the
+# pushed head as their restore dependency; merge captures always keep their own
+# bundle, so they stay "unknown". Prints published|unpublished|unknown.
+archive_remote_state() {
+	local worktree="$1" head_sha="$2" base_sha="$3" admin_dir="${4:-}"
+	local unpublished=""
+	# Callers pass the admin dir resolved earlier in this invocation.
+	[[ -n "$admin_dir" ]] || admin_dir=$(git -C "$worktree" rev-parse --absolute-git-dir) || return 1
+	if [[ "$head_sha" == "$base_sha" || -e "$admin_dir/MERGE_HEAD" ]]; then
+		printf 'unknown\n'
+		return 0
+	fi
+	unpublished=$(git -C "$worktree" rev-list --count "$head_sha" --not --remotes=origin 2>/dev/null) || unpublished=""
+	if [[ "$unpublished" == "0" ]]; then
+		printf 'published\n'
+	else
+		printf 'unpublished\n'
+	fi
+	return 0
+}
+
 capture_archive_payload() {
 	local worktree="$1" archive_dir="$2" head_sha="$3" base_sha="$4"
-	local failure_log="$5"
+	local failure_log="$5" remote_state="${6:-unknown}" admin_dir="${7:-}"
 	local commit_count
-	if [[ -e "$(git -C "$worktree" rev-parse --absolute-git-dir)/MERGE_HEAD" ]]; then
+	[[ -n "$admin_dir" ]] || admin_dir=$(git -C "$worktree" rev-parse --absolute-git-dir) || return 1
+	if [[ -e "$admin_dir/MERGE_HEAD" ]]; then
 		: >"$archive_dir/diff.patch"
 		: >"$archive_dir/staged.patch"
 		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" merge-capture "$worktree" "$archive_dir" || return 1
 	else
 		# diff must not refresh the source index while capturing it.
-		local -a patch_options=(--binary --full-index --no-ext-diff --no-textconv --no-color --src-prefix=a/ --dst-prefix=b/ --submodule=short)
-		git -c diff.autoRefreshIndex=false -C "$worktree" diff "${patch_options[@]}" >"$archive_dir/diff.patch" || return 1
-		git -c diff.autoRefreshIndex=false -C "$worktree" diff --cached "${patch_options[@]}" >"$archive_dir/staged.patch" || return 1
+		python3 "${SCRIPT_DIR}/worktree_archive_deletions.py" capture "$worktree" "$archive_dir" || return 1
 		commit_count=$(git -C "$worktree" rev-list --count "${base_sha}..${head_sha}") || return 1
-		if [[ "$commit_count" -gt 0 ]]; then
+		# A published head is already reachable from origin: no bundle.
+		if [[ "$commit_count" -gt 0 && "$remote_state" != "$REMOTE_STATE_PUBLISHED" ]]; then
 			git -C "$worktree" bundle create "$archive_dir/commits.bundle" HEAD "^${base_sha}" || return 1
 		fi
-		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-capture "$worktree" "$archive_dir" "$base_sha" || return 1
+		# Both reuse the admin dir resolved above instead of another rev-parse.
+		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-capture "$worktree" "$archive_dir" "$base_sha" "$admin_dir" || return 1
+		# GH#36883: runtime-local config.worktree bytes are kept, never restored.
+		python3 "${SCRIPT_DIR}/worktree_archive_runtime_config.py" capture "$worktree" "$archive_dir" "$admin_dir" || return 1
 	fi
 	capture_untracked "$worktree" "$archive_dir" || return 1
 	if [[ -n "$failure_log" ]]; then
@@ -442,12 +491,74 @@ PY
 	return 0
 }
 
+# GH#36564: reserve the maximum untracked payload, tracked patches and estimated
+# Git payload before allocating. Commit estimation failure (old Git) is not a refusal.
+# Python decimal integers avoid Bash octal parsing and signed overflow.
+archive_capacity_check() {
+	local worktree="$1" output_root="$2" head_sha="$3" base_sha="$4" remote_state="${5:-unknown}"
+	local reserve="${AIDEVOPS_WORKTREE_ARCHIVE_RESERVE_BYTES:-536870912}"
+	local estimate=""
+	if [[ "$remote_state" == "$REMOTE_STATE_PUBLISHED" ]]; then
+		estimate=0 # GH#36607: published commits are not bundled.
+	else
+		estimate=$(git -C "$worktree" rev-list --objects --disk-usage "$head_sha" "^${base_sha}" 2>/dev/null) || estimate=0
+	fi
+	python3 - "$output_root" "$estimate" "$reserve" "$MAX_UNTRACKED_BYTES" "$worktree" "$SCRIPT_DIR" <<'PY'
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+
+sys.path.insert(0, sys.argv[6])
+from worktree_archive_deletions import OPTIONS
+
+def decimal(value):
+    if not re.fullmatch(r"[0-9]+", value):
+        raise ValueError("invalid capacity operand")
+    return int(value, 10)
+
+try:
+    estimate, reserve, untracked = map(decimal, sys.argv[2:5])
+    path = pathlib.Path(sys.argv[1]).absolute()
+    while not path.exists():
+        path = path.parent
+    free = decimal(str(shutil.disk_usage(path).free))
+    for flags in (("--cached",), ()):
+        # Sizing must not refresh the source's cached index stats.
+        command = ("git", "-c", "diff.autoRefreshIndex=false", "-C", sys.argv[5], "diff", *flags, *OPTIONS, "--diff-filter=d")
+        with subprocess.Popen(command, stdout=subprocess.PIPE) as process:
+            for chunk in iter(lambda: process.stdout.read(65536), b""):
+                estimate += len(chunk)
+            if process.wait() != 0:
+                raise ValueError("patch estimate failed")
+except (OSError, ValueError):
+    raise SystemExit("Error: archive capacity unavailable") from None
+estimate += untracked
+if estimate + reserve > free:
+    raise SystemExit(
+        f"Error: producer:insufficient-capacity; estimate={estimate}; reserve={reserve}; "
+        f"free={free}; no archive written; source retained")
+PY
+	return $?
+}
+
+# GH#36564: this invocation created archive_dir (mkdir without -p), so a
+# failed capture owns it outright. It has no manifest or pin and can never be
+# restored; keeping it only leaks disk on every refused cleanup attempt.
+discard_failed_archive() {
+	local archive_dir="$1"
+	[[ -n "$archive_dir" && -d "$archive_dir" && ! -L "$archive_dir" ]] || return 0
+	rm -rf -- "$archive_dir"
+	return 0
+}
+
 archive_worktree() {
 	local worktree="${1:-}"
 	shift || true
 	local repo="" issue="" unattributed="false" reason="" base_branch="" base_sha="" output_root="$ARCHIVE_ROOT" failure_log=""
 	local created_at timestamp repo_path archive_dir branch head_sha default_branch remote_state dirty_state git_common_dir
-	local fingerprint_before="" fingerprint_after=""
+	local fingerprint_before="" fingerprint_after="" bundle_commits=0
 	local -x GIT_OPTIONAL_LOCKS=0
 	[[ -n "$worktree" ]] || { usage >&2; return 1; }
 	while [[ $# -gt 0 ]]; do
@@ -460,6 +571,7 @@ archive_worktree() {
 		--base-sha) require_value "$1" "${2:-}" || return 1; base_sha="$2"; shift 2 ;;
 		--output-root) require_value "$1" "${2:-}" || return 1; output_root="$2"; shift 2 ;;
 		--failure-log) require_value "$1" "${2:-}" || return 1; failure_log="$2"; shift 2 ;;
+		--bundle-commits) bundle_commits=1; shift ;;
 		--git-only) shift ;; # Compatibility alias; all new archives use the same path.
 		*) die "unknown archive option: $1"; return 1 ;;
 		esac
@@ -474,7 +586,22 @@ archive_worktree() {
 	fi
 	validate_branch "$base_branch" || return 1
 	[[ -d "$worktree" ]] || { die "worktree does not exist: $worktree"; return 1; }
-	git -C "$worktree" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { die "not a Git worktree: $worktree"; return 1; }
+	# One spawn answers the work-tree check, the admin dir (whose MERGE_HEAD is
+	# still tested live where needed) and the common dir (used once, for the manifest).
+	# --absolute-git-dir is absolute before the --path-format switch.
+	local inside_probe="" inside_state="" admin_dir="" probe_rest=""
+	inside_probe=$(git -C "$worktree" rev-parse --is-inside-work-tree --absolute-git-dir --path-format=absolute --git-common-dir 2>/dev/null) || inside_probe=""
+	inside_state=${inside_probe%%$'\n'*}
+	[[ "$inside_state" =~ ^true$ ]] || { die "not a Git worktree: $worktree"; return 1; }
+	probe_rest=${inside_probe#*$'\n'}
+	admin_dir=${probe_rest%%$'\n'*}
+	git_common_dir=${probe_rest#*$'\n'}
+	# Exactly three lines: a newline inside either path must not shift the fields.
+	[[ "$probe_rest" != "$inside_probe" && "$admin_dir" == /* && "$git_common_dir" == /* &&
+		"$git_common_dir" != "$probe_rest" && "$git_common_dir" != *$'\n'* ]] || {
+		die "cannot resolve git common dir: $worktree"
+		return 1
+	}
 	worktree=$(cd "$worktree" && pwd -P) || return 1
 	fingerprint_before=$(source_fingerprint "$worktree" 0 0 1) || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
 	base_sha=$(resolve_base_sha "$worktree" "$base_branch" "$base_sha") || { die "cannot resolve base SHA"; return 1; }
@@ -483,36 +610,56 @@ archive_worktree() {
 	default_branch=$(git -C "$worktree" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
 	default_branch=${default_branch#origin/}
 	[[ -n "$default_branch" ]] || default_branch="$base_branch"
-	remote_state="unknown"
+	remote_state=$(archive_remote_state "$worktree" "$head_sha" "$base_sha" "$admin_dir") || return 1
+	# GH#38394: a published head's remote branch is deleted by the merge flow, so
+	# --bundle-commits carries the commits and depends only on the base.
+	if [[ "$bundle_commits" -eq 1 && "$remote_state" == "$REMOTE_STATE_PUBLISHED" ]]; then
+		remote_state="bundled"
+	fi
 	dirty_state="clean"
-	git_common_dir=$(git -C "$worktree" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || git -C "$worktree" rev-parse --git-common-dir) || return 1
 	timestamp=$(timestamp_utc)
 	created_at=$(iso_utc)
 	repo_path="${repo//\//__}"
 	archive_dir="${output_root%/}/${repo_path}/${issue}/${timestamp}"
 	if [[ -e "$archive_dir" ]]; then archive_dir="${archive_dir}-$$"; fi
+	archive_capacity_check "$worktree" "$output_root" "$head_sha" "$base_sha" "$remote_state" || return 1
 	mkdir -p "${archive_dir%/*}" || return 1
 	mkdir -m 700 "$archive_dir" || return 1
-	capture_archive_payload "$worktree" "$archive_dir" "$head_sha" "$base_sha" "$failure_log" || return 1
-	if [[ -s "$archive_dir/staged.patch" || -s "$archive_dir/diff.patch" || -s "$archive_dir/untracked-files.txt" || -f "$archive_dir/merge-state-v1.json" ]]; then
+	capture_archive_payload "$worktree" "$archive_dir" "$head_sha" "$base_sha" "$failure_log" "$remote_state" "$admin_dir" || {
+		discard_failed_archive "$archive_dir"
+		return 1
+	}
+	if [[ -s "$archive_dir/staged.patch" || -s "$archive_dir/diff.patch" || -s "$archive_dir/untracked-files.txt" || -f "$archive_dir/merge-state-v1.json" || -f "$archive_dir/deletions-v1.json" ]]; then
 		dirty_state="dirty"
 	fi
 	# GH#34943: a capture that raced a late writer is not a faithful copy.
 	# Compare live diffs, not the saved patches: a late tracked write must fail.
-	fingerprint_after=$(source_fingerprint "$worktree" 0 0 1) || return 1
+	fingerprint_after=$(source_fingerprint "$worktree" 0 0 1) || {
+		discard_failed_archive "$archive_dir"
+		return 1
+	}
 	if [[ "$fingerprint_before" != "$fingerprint_after" ]]; then
+		discard_failed_archive "$archive_dir"
 		die "worktree changed during archive capture: $worktree"
 		return 1
 	fi
-	write_manifest "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$fingerprint_after" 0 0 0 1 || return 1
+	python3 "${SCRIPT_DIR}/worktree_archive_runtime_config.py" bind "$archive_dir" "$fingerprint_after" || {
+		discard_failed_archive "$archive_dir"
+		return 1
+	}
+	write_manifest "$archive_dir" "$repo" "$issue" "$reason" "$created_at" "$worktree" "$branch" "$head_sha" "$base_branch" "$base_sha" "$default_branch" "$remote_state" "$dirty_state" "$git_common_dir" "$fingerprint_after" 0 0 0 1 || {
+		discard_failed_archive "$archive_dir"
+		return 1
+	}
 	printf '%s\n' "$archive_dir"
 	return 0
 }
 
 verify_archive() {
 	local archive_dir="$1"
+	local verification_mode="${2:-full}"
 	validate_archive_dir "$archive_dir" || return 1
-	python3 - "$archive_dir" "$ARCHIVE_SCHEMA" "$SCRIPT_DIR" <<'PY'
+	python3 - "$archive_dir" "$ARCHIVE_SCHEMA" "$SCRIPT_DIR" "$verification_mode" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -539,6 +686,12 @@ if not isinstance(artifacts, list) or not all(isinstance(item, dict) for item in
 names = [item.get('name') for item in artifacts]
 mandatory = {'diff.patch', 'staged.patch', 'untracked-files.txt'}
 allowed = mandatory | {'commits.bundle', 'untracked.tar.gz', 'failure.log'}
+if 'deletion_policy' in manifest:
+    if (manifest['deletion_policy'] != 'compact-v1' or capture_policy != 'git-only'
+            or manifest.get('merge_policy') or policy is not None):
+        raise SystemExit('unsupported deletion policy')
+    mandatory.add('deletions-v1.json')
+    allowed.add('deletions-v1.json')
 if manifest.get('merge_policy') == 'structured-v1':
     mandatory.update({'merge-state-v1.json', 'commits.bundle'})
     allowed.update({'merge-state-v1.json', 'commits.bundle'})
@@ -547,6 +700,8 @@ if manifest.get('merge_policy') == 'structured-v1':
 if manifest.get('source_fingerprint', {}).get('auto_merge') is not None:
     mandatory.add('auto-merge-v1.json')
     allowed.add('auto-merge-v1.json')
+from worktree_archive_runtime_config import inventory as runtime_config  # GH#36883
+mandatory |= runtime_config(archive, manifest, capture_policy); allowed |= mandatory
 if capture_policy == 'git-only' and manifest.get('source_fingerprint', {}).get('schema') == 2:
     allowed.discard('untracked.tar.gz')
     if (archive / 'untracked-files.txt').stat().st_size:
@@ -568,8 +723,20 @@ for artifact in manifest['artifacts']:
         raise SystemExit("missing or unsafe artifact: " + artifact['name'])
     if path.stat().st_size != artifact["size"] or hashlib.sha256(path.read_bytes()).hexdigest() != artifact["sha256"]:
         raise SystemExit("artifact integrity mismatch: " + artifact['name'])
-from worktree_archive_snapshot import verify_git_objects
-verify_git_objects(archive, manifest)
+if sys.argv[4] == 'structural':
+    # Retention identity check: proves a compact archive (never a full recovery
+    # copy) without importing base objects; restorability is irrelevant to expiry.
+    print(f"structure-verified {archive}")
+    raise SystemExit(0)
+if sys.argv[4] == 'local':
+    from worktree_archive_local_verify import verify_local
+    verify_local(archive, manifest)
+else:
+    from worktree_archive_snapshot import verify_git_objects
+    verify_git_objects(archive, manifest)
+if manifest.get('deletion_policy'):
+    from worktree_archive_deletions import load
+    load(archive)
 payload = archive / "untracked.tar.gz"
 if payload.exists():
     with tarfile.open(payload, "r:gz") as source:
@@ -588,11 +755,16 @@ PY
 	return $?
 }
 
+# Set by prepare_restore_repository: "--preserved" only when preparation imported
+# this archive's complete bundle into the new target (GH#39560).
+RESTORE_PRESERVED_OPTION=""
+
 prepare_restore_repository() {
 	local archive_dir="$1"
 	local target="$2"
 	local verification_copy="${3:-0}"
-	local common_dir head_sha self_contained git_only restore_branch
+	local common_dir head_sha self_contained git_only restore_branch prepared=""
+	RESTORE_PRESERVED_OPTION=""
 	IFS=$'\t' read -r common_dir head_sha self_contained git_only < <(python3 - "$archive_dir/manifest.json" <<'PY'
 import json, sys
 m = json.load(open(sys.argv[1], encoding='utf-8'))
@@ -600,20 +772,22 @@ print(m.get('source_git_common_dir', ""), m["head_sha"],
       int(m.get('self_contained') is True), int(m.get('capture_policy') == 'git-only'), sep=chr(9))
 PY
 	)
+	# `exec` keeps each preparation step a direct child of this shell, so the
+	# creation receipt's owner (its getppid) stays this live helper process.
 	if [[ "$git_only" -eq 1 && "$verification_copy" -eq 2 ]]; then
 		# Same registered creation primitive as ordinary recovery, with an explicit
 		# purpose and detached HEAD; no issue claim or dependency bootstrap.
-		python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target" --verification-copy || return 1
+		prepared=$(exec python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target" --verification-copy) || return 1
 	elif [[ "$git_only" -eq 1 && ( "$self_contained" -eq 1 || "$verification_copy" -eq 1 ) ]]; then
-		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target" || return 1
+		prepared=$(exec python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target") || return 1
 	elif [[ "$git_only" -eq 1 ]]; then
-		python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target" || return 1
+		prepared=$(exec python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target") || return 1
 	elif [[ "$self_contained" -eq 1 ]]; then
 		git -c gc.auto=0 -c maintenance.auto=false -c core.hooksPath=/dev/null \
 			clone --quiet --no-checkout -- "$archive_dir/commits.bundle" "$target" || return 1
 		git -C "$target" -c core.hooksPath=/dev/null checkout --quiet --detach "$head_sha" || return 1
 	elif [[ -f "$archive_dir/git-admin.json" ]]; then
-		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target" || return 1
+		prepared=$(exec python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target") || return 1
 	else
 		[[ -d "$common_dir" ]] || { die "source Git repository is unavailable: $common_dir"; return 1; }
 		if [[ -f "$archive_dir/commits.bundle" ]]; then
@@ -626,6 +800,11 @@ PY
 			worktree_create_registered "$common_dir" "$target" "$head_sha" -b "$restore_branch"
 		) >/dev/null || return 1
 	fi
+	# Later steps skip only the repeat import into this same new target; their
+	# object-closure checks still run. Anything else keeps the full import.
+	if [[ "$prepared" == "aidevops-archive-preservation-imported" ]]; then
+		RESTORE_PRESERVED_OPTION="--preserved"
+	fi
 	return 0
 }
 
@@ -633,7 +812,7 @@ restore_untracked_payload() {
 	local archive_dir="$1"
 	local target="$2"
 	if [[ -f "$archive_dir/untracked.tar.gz" ]]; then
-		python3 - "$archive_dir/untracked.tar.gz" "$target" <<'PY' || return 1
+		python3 - "$archive_dir/untracked.tar.gz" "$target" "$SCRIPT_DIR" <<'PY' || return 1
 import pathlib
 import os
 import posixpath
@@ -643,6 +822,8 @@ import sys
 import tarfile
 source = pathlib.Path(sys.argv[1])
 target = pathlib.Path(sys.argv[2]).resolve()
+sys.path.insert(0, sys.argv[3])
+from worktree_archive_untracked import restore_symlink
 
 def open_parent(parts):
     descriptor = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -678,7 +859,7 @@ with tarfile.open(source, "r:gz") as payload:
             if member.isdir():
                 os.mkdir(name, dir_fd=parent)
             elif member.issym():
-                os.symlink(member.linkname, name, dir_fd=parent)
+                restore_symlink(member, parent, name)
             elif member.islnk():
                 if member.linkname not in created_regular:
                     raise SystemExit("hard link target is not a restored payload file")
@@ -729,15 +910,21 @@ restore_archive() {
 	verify_archive "$archive_dir" >/dev/null || return 1
 	prepare_restore_repository "$archive_dir" "$target" "$verification_copy" || return 1
 	if [[ -f "$archive_dir/merge-state-v1.json" ]]; then
-		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" merge-restore "$target" "$archive_dir" || return 1
+		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" merge-restore "$target" "$archive_dir" \
+			${RESTORE_PRESERVED_OPTION:+"$RESTORE_PRESERVED_OPTION"} || return 1
 	fi
+	python3 "${SCRIPT_DIR}/worktree_archive_deletions.py" restore "$target" "$archive_dir" staged || return 1
 	if [[ -s "$archive_dir/staged.patch" ]]; then git -C "$target" apply --index "$archive_dir/staged.patch" || return 1; fi
+	python3 "${SCRIPT_DIR}/worktree_archive_deletions.py" restore "$target" "$archive_dir" unstaged || return 1
 	if [[ -s "$archive_dir/diff.patch" ]]; then git -C "$target" apply "$archive_dir/diff.patch" || return 1; fi
 	restore_untracked_payload "$archive_dir" "$target" || return 1
 	if [[ -f "$archive_dir/git-admin.json" ]]; then
-		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-restore "$target" "$archive_dir" || return 1
+		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-restore "$target" "$archive_dir" \
+			${RESTORE_PRESERVED_OPTION:+"$RESTORE_PRESERVED_OPTION"} || return 1
 	fi
-	python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-restore "$target" "$archive_dir" || return 1
+	python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-restore "$target" "$archive_dir" \
+		${RESTORE_PRESERVED_OPTION:+"$RESTORE_PRESERVED_OPTION"} || return 1
+	python3 "${SCRIPT_DIR}/worktree_archive_runtime_config.py" restore-note "$archive_dir" || return 1
 	printf '%s\n' "$target"
 	return 0
 }
@@ -801,10 +988,12 @@ PY
 }
 
 prune_archives() {
-	local older_than="" max_total="" mode="" output_root="$ARCHIVE_ROOT"
+	local older_than="" max_total="" mode="" output_root="$ARCHIVE_ROOT" budget="0" producer_ttl="30"
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--older-than) require_value "$1" "${2:-}" || return 1; older_than="$2"; shift 2 ;;
+		--producer-ttl-days) producer_ttl="${2:-}"; shift; shift || true ;;
+		--budget-seconds) budget="${2:-}"; shift; shift || true ;;
 		--max-total-size) require_value "$1" "${2:-}" || return 1; max_total="$2"; shift 2 ;;
 		--dry-run) [[ -z "$mode" ]] || { die "choose only one prune mode"; return 1; }; mode="dry-run"; shift ;;
 		--apply) [[ -z "$mode" ]] || { die "choose only one prune mode"; return 1; }; mode="apply"; shift ;;
@@ -815,8 +1004,45 @@ prune_archives() {
 	[[ "$older_than" =~ ^[1-9][0-9]*d$ ]] || { die "--older-than must use positive day syntax such as 14d"; return 1; }
 	[[ "$max_total" =~ ^[1-9][0-9]*([KMGTP])?$ ]] || { die "invalid --max-total-size"; return 1; }
 	[[ -n "$mode" ]] || { die "prune requires --dry-run or --apply"; return 1; }
+	[[ "$budget" =~ ^[0-9]+$ ]] || { die "--budget-seconds must be a non-negative integer"; return 1; }
+	[[ "$producer_ttl" =~ ^[1-9][0-9]*$ ]] || { die "--producer-ttl-days must be a positive integer"; return 1; }
 	python3 "${SCRIPT_DIR}/worktree_archive_prune.py" "$output_root" "${older_than%d}" \
-		"$max_total" "$mode" "${SCRIPT_DIR}/worktree-archive-helper.sh"
+		"$max_total" "$mode" "${SCRIPT_DIR}/worktree-archive-helper.sh" "$budget" "$producer_ttl"
+	return $?
+}
+
+# GH#36607: one-time cleanup of partial producer captures leaked by earlier
+# versions. Removes only manifest-less, unpinned <repo>/<issue>/<stamp>
+# directories of reserved/capturing reservations whose source is intact,
+# rechecked under each producer operation lock. Dry-run lists candidates.
+sweep_partials() {
+	local mode="" output_root="$ARCHIVE_ROOT" option="" expect_root=0
+	for option in "$@"; do
+		if [[ "$expect_root" -eq 1 ]]; then
+			output_root="$option"
+			expect_root=0
+			continue
+		fi
+		case "$option" in
+		--dry-run | --apply)
+			[[ -z "$mode" ]] || { die "choose only one sweep mode"; return 1; }
+			mode="${option#--}"
+			;;
+		--output-root) expect_root=1 ;;
+		*) die "unknown sweep-partials option: $option"; return 1 ;;
+		esac
+	done
+	[[ "$expect_root" -eq 0 && -n "$output_root" ]] || { die "--output-root requires a value"; return 1; }
+	[[ -n "$mode" ]] || { die "sweep-partials requires --dry-run or --apply"; return 1; }
+	[[ "$output_root" == /* ]] || { die "--output-root must be absolute"; return 1; }
+	python3 "${SCRIPT_DIR}/worktree_recovery_producer.py" sweep-partials "$output_root" "$mode"
+	return $?
+}
+
+# Verification scratch is derived data: reclaim dead copies regardless of the
+# archive retention mode. Live (flock-held) scratch is never touched.
+sweep_scratch() {
+	python3 "${SCRIPT_DIR}/worktree_archive_scratch.py" sweep "$ARCHIVE_ROOT"
 	return $?
 }
 
@@ -828,8 +1054,12 @@ main() {
 	restore) restore_archive "$@" ;;
 	list) list_archives "$@" ;;
 	verify) [[ $# -eq 1 ]] || { usage >&2; return 1; }; verify_archive "$1" ;;
+	verify-local) [[ $# -eq 1 ]] || { usage >&2; return 1; }; verify_archive "$@" local ;;
+	verify-structure) [[ $# -eq 1 ]] || { usage >&2; return 1; }; verify_archive "$@" structural ;;
 	source-matches) [[ $# -eq 2 ]] || { usage >&2; return 1; }; source_matches "$@" ;;
 	prune) prune_archives "$@" ;;
+	sweep-scratch) [[ $# -eq 0 ]] || { usage >&2; return 1; }; sweep_scratch ;;
+	sweep-partials) sweep_partials "$@" ;;
 	help|-h|--help) usage ;;
 	*) usage >&2; return 1 ;;
 	esac

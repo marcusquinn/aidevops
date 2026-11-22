@@ -97,6 +97,10 @@ teardown_test_env() {
 	return 0
 }
 
+# Write the gh fixture's logging, merge-write, and merge-state response handlers.
+# Args: mode (fixture scenario). Uses TEST_ROOT for the generated executable and
+# logs; completed timeout merges become visible only after the admin write.
+# Returns the status of writing the fixture header; later helpers append handlers.
 write_gh_stub_header() {
 	local mode="$1"
 
@@ -146,6 +150,7 @@ if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "merge" ]]; then
 		"$mode" == "fallback-timeout-merged" || "$mode" == "fallback-timeout-open" ]]; then
 		if [[ "\$_gh_has_admin" -eq 1 ]]; then
 			if [[ "$mode" == "fallback-timeout-merged" || "$mode" == "fallback-timeout-open" ]]; then
+				touch "${TEST_ROOT}/logs/admin-write-attempted.txt"
 				exit 124
 			fi
 			if [[ "$mode" == "fallback-native-review" || "$mode" == "auto-review-required-admin-block" ]]; then
@@ -167,6 +172,15 @@ if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "merge" ]]; then
 	elif [[ "$mode" == "other-error" ]]; then
 		echo "Something completely different went wrong" >&2
 		exit 1
+	elif [[ "$mode" == server-* ]]; then
+		touch "${TEST_ROOT}/logs/merge-attempted.txt"
+		case "$mode" in
+		server-503) echo 'HTTP 503: Service Unavailable' >&2 ;;
+		server-504) echo 'HTTP 504: Gateway Timeout' >&2 ;;
+		server-graphql) echo 'GraphQL: Something went wrong while executing your query' >&2 ;;
+		*) echo 'non-200 OK status code: 502 Bad Gateway' >&2 ;;
+		esac
+		exit 1
 	elif [[ "$mode" == "graphql-rate-limit" || "$mode" == "graphql-rate-limit-rest-fail" ]]; then
 		echo "GraphQL: API rate limit already exceeded for user ID 12345. (rateLimitExceeded)" >&2
 		exit 1
@@ -175,7 +189,13 @@ fi
 
 if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "view" && "\$*" == *"--json state,mergedAt,mergeCommit"* ]]; then
 	case "$mode" in
-	fallback-timeout-merged) echo '{"state":"MERGED","mergedAt":"2026-08-24T00:00:00Z","mergeCommit":{"oid":"merged123sha"},"headRefOid":"abc123headsha"}'; exit 0 ;;
+	fallback-timeout-merged)
+		# GH#36966: do not expose a completed admin merge before its write.
+		if [[ -f "${TEST_ROOT}/logs/admin-write-attempted.txt" ]]; then
+			echo '{"state":"MERGED","mergedAt":"2026-08-24T00:00:00Z","mergeCommit":{"oid":"merged123sha"},"headRefOid":"abc123headsha"}'
+			exit 0
+		fi
+		echo '{"state":"OPEN","mergedAt":null,"mergeCommit":null,"headRefOid":"abc123headsha"}'; exit 0 ;;
 	fallback-timeout-open | primary-timeout-policy-open) echo '{"state":"OPEN","mergedAt":null,"mergeCommit":null,"headRefOid":"abc123headsha"}'; exit 0 ;;
 	esac
 fi
@@ -207,7 +227,7 @@ write_gh_stub_pr_issue_views() {
 	fi
 	if [[ "\$*" == *"--json state,isDraft,reviewDecision,headRefOid"* ]]; then
 		_review_decision=""
-		[[ "$mode" == "late-review-block" ]] && _review_decision="CHANGES_REQUESTED"
+		[[ "$mode" == "late-review-block" || ( "$mode" == "server-late-review" && -f "${TEST_ROOT}/logs/merge-attempted.txt" ) ]] && _review_decision="CHANGES_REQUESTED"
 		printf '{"state":"OPEN","isDraft":false,"reviewDecision":"%s","headRefOid":"abc123headsha"}\n' "\$_review_decision"
 		exit 0
 	fi
@@ -248,8 +268,9 @@ write_gh_stub_pr_issue_views() {
 		fi
 		exit 0
 	fi
-	if [[ "\$*" == *"--json closingIssuesReferences,body"* ]]; then
-		if [[ "$mode" == "fallback-nmr" ]]; then
+	if [[ "\$*" == *"--json body,closingIssuesReferences"* || "\$*" == *"--json closingIssuesReferences,body"* ]]; then
+		if [[ "\$*" == *"--json body,closingIssuesReferences"* ]]; then echo '{"body":"","closingIssuesReferences":[]}'
+		elif [[ "$mode" == "fallback-nmr" ]]; then
 			echo '{"closingIssuesReferences":[{"number":24354}],"body":"Resolves #22621"}'
 		else
 			echo '{"closingIssuesReferences":[],"body":"Resolves #22621"}'
@@ -329,7 +350,7 @@ if [[ "\$_gh_cmd" == "api" ]]; then
 		exit 0
 	fi
 	if [[ "\$*" == *"repos/testorg/testrepo/pulls/42/merge"* ]]; then
-		if [[ "$mode" == "graphql-rate-limit-rest-fail" ]]; then
+		if [[ "$mode" == "graphql-rate-limit-rest-fail" || "$mode" == "server-rest-fail" ]]; then
 			echo "REST merge failed" >&2
 			exit 1
 		fi
@@ -337,6 +358,18 @@ if [[ "\$_gh_cmd" == "api" ]]; then
 		exit 0
 	fi
 	if [[ "\$*" == *"repos/testorg/testrepo/pulls/42"* ]]; then
+		if [[ "$mode" == server-* && "\$*" != *"--jq"* ]]; then
+			case "$mode" in
+			server-read-fail) echo 'HTTP 503' >&2; exit 1 ;;
+			server-malformed) echo 'not JSON'; exit 0 ;;
+			server-merged) echo '{"merged":true,"state":"closed","head":{"sha":"abc123headsha"}}' ;;
+			server-wrong-merged) echo '{"merged":true,"state":"closed","head":{"sha":"different"}}' ;;
+			server-drift) echo '{"merged":false,"state":"open","head":{"sha":"different"}}' ;;
+			server-closed) echo '{"merged":false,"state":"closed","head":{"sha":"abc123headsha"}}' ;;
+			*) echo '{"merged":false,"state":"open","head":{"sha":"abc123headsha"}}' ;;
+			esac
+			exit 0
+		fi
 		if [[ "$mode" == "head-fetch-failure" ]]; then
 			echo 'transient pull lookup failure' >&2
 			exit 1
@@ -456,6 +489,7 @@ set -euo pipefail
 SCRIPT_DIR='${scripts_dir}'
 source '${scripts_dir}/shared-constants.sh'
 source '${scripts_dir}/full-loop-helper-merge.sh'
+_merge_worker_briefed_gate_pinned() { return 0; }
 cmd_pre_merge_gate() {
 	FULL_LOOP_PRE_MERGE_BLOCKER_KIND='${gate_kind}'
 	FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL='${gate_detail}'
@@ -493,6 +527,7 @@ set -euo pipefail
 SCRIPT_DIR='${scripts_dir}'
 source '${scripts_dir}/shared-constants.sh'
 source '${scripts_dir}/full-loop-helper-merge.sh'
+_merge_worker_briefed_gate_pinned() { return 0; }
 cmd_pre_merge_gate() { return 0; }
 _merge_guard_prospective_todo() { return 0; }
 _retarget_stacked_children_interactive() { return 0; }
@@ -765,6 +800,54 @@ test_graphql_rate_limit_rest_fallback() {
 	return 0
 }
 
+# GH#36074: reconcile unknown outcomes and retry only once with fresh authority.
+test_transient_server_error_recovery() {
+	local mode="" auto="" exit_code=0 rest_calls=0 output="" metadata_rc=0
+	local classifier_rc=0
+	bash -c '
+		source "$1/shared-constants.sh"
+		source "$1/full-loop-helper-merge.sh"
+		for status in 502 503 504; do
+			for message in "HTTP $status: server error" "HTTP/2 $status" "non-200 OK status code: $status Bad Gateway"; do
+				_merge_output_is_transient_server_error "$message" || exit 1
+			done
+			for message in "review required for PR #$status" "review required (https://github.com/testorg/testrepo/pull/$status)" "HTTP ${status}0"; do
+				if _merge_output_is_transient_server_error "$message"; then exit 1; fi
+			done
+		done
+		_merge_output_is_transient_server_error "GraphQL: Something went wrong while executing your query"
+	' _ "${SCRIPT_DIR}/.." || classifier_rc=$?
+	print_result "server error classifier: explicit HTTP statuses, not PR numbers or URLs" "$classifier_rc"
+
+	for mode in server-502 server-503 server-504 server-graphql server-merged server-wrong-merged server-drift server-closed server-read-fail server-malformed server-rest-fail server-late-review; do
+		for auto in 0 1; do
+			rm -f "${TEST_ROOT}/logs/"*.txt
+			create_gh_stub "$mode"
+			exit_code=0
+			output=$(run_merge_execute "42" "testorg/testrepo" "--squash" "0" "$auto") || exit_code=$?
+			rest_calls=$(grep -c 'api -X PUT repos/testorg/testrepo/pulls/42/merge' "${TEST_ROOT}/logs/gh-api-calls.txt" || true)
+			if [[ "$auto" -eq 0 && "$mode" =~ ^server-(502|503|504|graphql)$ ]]; then
+				print_result "$mode: REST recovery succeeds" "$exit_code" "$output"
+				print_result "$mode: exactly one REST write" "$((rest_calls == 1 ? 0 : 1))"
+				metadata_rc=0
+				grep -q 'sha=abc123headsha.*merge_method=squash.*commit_title=GH#28721: fix: preserve reviewed squash subject' "${TEST_ROOT}/logs/gh-api-calls.txt" || metadata_rc=$?
+				print_result "$mode: retry preserves verified SHA and subject" "$metadata_rc"
+			elif [[ "$auto" -eq 0 && "$mode" == server-merged ]]; then
+				print_result "$mode: remote success reconciled" "$exit_code" "$output"
+				print_result "$mode: no duplicate write" "$rest_calls"
+			else
+				print_result "$mode auto=$auto: fails closed" "$((exit_code == 0 ? 1 : 0))" "$output"
+				if [[ "$auto" -eq 0 && "$mode" == server-rest-fail ]]; then
+					print_result "$mode: failed REST write is not retried" "$((rest_calls == 1 ? 0 : 1))"
+				else
+					print_result "$mode auto=$auto: no REST mutation" "$rest_calls"
+				fi
+			fi
+		done
+	done
+	return 0
+}
+
 # Test 5: GraphQL REST fallback through cmd_merge triggers sequential phase auto-filing.
 test_graphql_rate_limit_cmd_merge_phase_autofile() {
 	rm -f "${TEST_ROOT}/logs/"*.txt
@@ -884,18 +967,22 @@ test_local_admission_gate_failure_reports_retry_deadline() {
 test_post_verification_read_admission_window() {
 	local scripts_dir="" result=0
 	scripts_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
-	bash -c '
+	# GH#38535: keep the production source state. shared-gh-wrappers.sh assigns
+	# the generic 15s read default while sourcing, which shadowed the merge 60s
+	# fallback; unsetting it here previously hid that production failure.
+	(
+		unset AIDEVOPS_GH_READ_TIMEOUT AIDEVOPS_MERGE_GH_READ_TIMEOUT
+		bash -c '
 		source "$1/shared-constants.sh"
 		source "$1/full-loop-helper-merge.sh"
-		unset AIDEVOPS_GH_READ_TIMEOUT
+		[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 15 ]] || exit 3
 		_gh_with_timeout() {
-			# Temporary-file setup consumes part of the shared wall-clock budget.
-			[[ "$AIDEVOPS_GH_READ_TIMEOUT" -gt 0 && "$AIDEVOPS_GH_READ_TIMEOUT" -le 60 && "$1" == read ]] || return 1
+			[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 60 && "$1" == read ]] || return 1
 			printf "base\tbase-sha\thead-sha\ttestorg/testrepo\tclone-url\n"
 			return 0
 		}
 		_merge_fetch_pr_refs_rest 42 testorg/testrepo >/dev/null || exit 1
-		[[ -z "${AIDEVOPS_GH_READ_TIMEOUT+x}" ]] || exit 1
+		[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 15 ]] || exit 4
 		_gh_collaborator_permission_lookup() {
 			[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 60 ]] || return 2
 			printf -v "$3" "%s" write
@@ -903,12 +990,18 @@ test_post_verification_read_admission_window() {
 		}
 		_merge_author_has_write_authority owner testorg/testrepo || exit 1
 		_gh_with_timeout() {
-			[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 7 ]] || return 1
+			[[ "$AIDEVOPS_GH_READ_TIMEOUT" == "$expected_timeout" ]] || return 1
 			return 0
 		}
-		AIDEVOPS_GH_READ_TIMEOUT=7 _flm_gh_read gh api repos/testorg/testrepo
-	' _ "$scripts_dir" || result=$?
-	print_result "post-verification reads: bounded admission window and caller override" "$result"
+		expected_timeout=7
+		AIDEVOPS_MERGE_GH_READ_TIMEOUT=7 _flm_gh_read gh api repos/testorg/testrepo || exit 5
+		expected_timeout=90
+		AIDEVOPS_GH_READ_TIMEOUT=90 _flm_gh_read gh api repos/testorg/testrepo || exit 6
+		expected_timeout=60
+		AIDEVOPS_MERGE_GH_READ_TIMEOUT=08 _flm_gh_read gh api repos/testorg/testrepo || exit 7
+	' _ "$scripts_dir"
+	) || result=$?
+	print_result "post-verification reads: 60s merge budget over sourced 15s default, overrides" "$result"
 	return 0
 }
 
@@ -1021,6 +1114,11 @@ test_shared_merge_read_admission_recovery() {
 			}
 			if [[ "$scenario" == release ]]; then
 				export AIDEVOPS_RELEASE_LANE_COORDINATED_REPO=testorg/testrepo
+				# This case exercises the open-PR release-lane read, not the
+				# preliminary already-merged provenance probe (GH#34839).
+				_merge_handle_already_merged_provenance() { return 2; }
+				_merge_check_closing_guards() { return 0; }
+				_merge_worker_briefed_gate_pinned() { return 0; }
 				_merge_pre_merge_gate_with_admission_retry() { return 0; }
 				release_lane_merge_guard() { [[ "$3" == main && "$4" == base-sha ]] || exit 2; return 1; }
 				out=$(cmd_merge 42 testorg/testrepo 2>&1) || rc=$?
@@ -1541,6 +1639,7 @@ test_local_deferral_survives_context_resolution() {
 	local result=0
 	(
 		local scripts_dir="${SCRIPT_DIR}/.." attempt="" rc=0
+		SCRIPT_DIR="$scripts_dir"
 		# shellcheck source=/dev/null
 		source "$scripts_dir/shared-constants.sh"
 		# shellcheck source=/dev/null
@@ -1608,5 +1707,47 @@ test_exact_check_deferral_preserves_retry_deadline() {
 	[[ "$output" == *'Merge deferred by GitHub read admission; retry_at=1893456000.'* ]] || result=1
 	[[ "$output" == *'operation=required-check-rollup-read'* ]] || result=1
 	print_result "exact-check deferral preserves its deadline through merge reporting" "$result" "output=$output"
+	return 0
+}
+
+# GH#39227: the full-loop gate mirrors the pulse (GH#27137) handling of
+# non-required terminal failures after required checks pass.
+test_nonrequired_check_failure_parity() {
+	local scenario="" expected="" rc=0
+	for scenario in unclassified-failure classified-advisory pending-nonrequired snapshot-unavailable; do
+		rc=0
+		(
+			local scripts_dir="${SCRIPT_DIR}/.." fixture=""
+			SCRIPT_DIR="$scripts_dir"
+			# shellcheck source=/dev/null
+			source "$scripts_dir/shared-constants.sh"
+			# shellcheck source=/dev/null
+			source "$scripts_dir/full-loop-helper-commit.sh"
+			aidevops_log_line() { return 0; }
+			_full_loop_persist_pr_check_evidence() { return 0; }
+			_pmrc_configured_advisory_contexts_json() { printf '[]\n'; return 0; }
+			_ci_check_url_has_infra_failure_log() { return 1; }
+			case "$scenario" in
+			unclassified-failure) fixture='[{"name":"required-ci","status":"completed","conclusion":"success"},{"name":"Pulse Unbound-Var Lint","status":"completed","conclusion":"failure"}]' ;;
+			classified-advisory) fixture='[{"name":"required-ci","status":"completed","conclusion":"success"},{"name":"qlty check","status":"completed","conclusion":"failure"},{"name":"Qlty Regression Gate","status":"completed","conclusion":"success"}]' ;;
+			pending-nonrequired) fixture='[{"name":"required-ci","status":"completed","conclusion":"success"},{"name":"slow-lint","status":"in_progress","conclusion":""}]' ;;
+			*) fixture='[]' ;;
+			esac
+			_pmrc_snapshot_checks_with_retry() {
+				[[ "$scenario" != snapshot-unavailable ]] || return 75
+				printf '%s\n' "$fixture"
+				return 0
+			}
+			export LOGFILE="$TEST_ROOT/logs/nonrequired-parity.log"
+			_full_loop_enforce_nonrequired_check_gate 42 testorg/testrepo \
+				0123456789abcdef0123456789abcdef01234567 \
+				'[{"name":"required-ci","state":"SUCCESS","bucket":"pass"}]' >/dev/null 2>&1
+		) || rc=$?
+		case "$scenario" in
+		classified-advisory | pending-nonrequired) expected=0 ;;
+		*) expected=1 ;;
+		esac
+		print_result "non-required check parity: $scenario" "$((rc == expected ? 0 : 1))"
+	done
 	return 0
 }

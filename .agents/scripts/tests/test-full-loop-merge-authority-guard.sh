@@ -13,6 +13,8 @@ MERGE_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-merge.sh"
 source "${SCRIPT_DIR}/../full-loop-helper-subject.sh"
 # Authority gates moved from full-loop-helper-merge.sh to this module (GH#30748).
 MERGE_AUTHORITY_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-merge-authority.sh"
+# REST fallback and transport revalidation moved to this module (GH#36968).
+MERGE_TRANSPORT_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-merge-transport.sh"
 READINESS_SCRIPT="${SCRIPT_DIR}/../full-loop-helper-readiness.sh"
 TEST_ROOT="$(mktemp -d -t full-loop-merge-authority.XXXXXX)"
 EXTRACTED="${TEST_ROOT}/functions.sh"
@@ -64,7 +66,7 @@ extract_function() {
       index($0, fn "() {") == 1 { capture = 1 }
       capture { print }
       capture && $0 == "}" { exit }
-    ' "$MERGE_SCRIPT" "$MERGE_AUTHORITY_SCRIPT" "${SCRIPT_DIR}/../full-loop-helper.sh" "${SCRIPT_DIR}/../full-loop-helper-commit.sh" >>"$EXTRACTED"
+    ' "$MERGE_SCRIPT" "$MERGE_AUTHORITY_SCRIPT" "$MERGE_TRANSPORT_SCRIPT" "${SCRIPT_DIR}/../full-loop-helper.sh" "${SCRIPT_DIR}/../full-loop-helper-commit.sh" >>"$EXTRACTED"
 	return 0
 }
 
@@ -85,6 +87,7 @@ load_functions() {
 	extract_function _merge_linked_cross_repo_references
 	extract_function _merge_issue_requires_maintainer_review
 	extract_function _merge_author_has_write_authority
+	extract_function _flm_merge_read_timeout
 	extract_function _merge_is_trusted_issue_sync_pr
 	extract_function _merge_collect_linked_issue_authority_gaps
 	extract_function _merge_report_author_lookup_failure
@@ -95,6 +98,9 @@ load_functions() {
 	extract_function _merge_parent_task_open_children_clear
 	extract_function _apply_pr_only_hold
 	extract_function _merge_authority_metadata_valid
+	extract_function _merge_is_headless_session
+	extract_function _merge_interactive_preference_clear
+	extract_function _merge_closing_link_consistent
 	extract_function _merge_collect_external_authority_gaps
 	extract_function _merge_linked_issue_authority_clear
 	extract_function _merge_guard_admin_merge_maintainer_review
@@ -103,16 +109,31 @@ load_functions() {
 	extract_function _merge_resolve_subject_for_method
 	extract_function _merge_describe_flags
 	extract_function _merge_rest_fallback
+	extract_function _merge_pr_merged_at_head
+	extract_function _merge_report_already_merged_at_head
 	extract_function _merge_revalidate_transport_authority
+	extract_function _merge_verify_rbg_override_approval
 	extract_function _merge_execute
 	extract_function cmd_commit_and_pr
+	extract_function _require_commit_and_pr_inputs
+	extract_function _commit_and_pr_validate_title
 	extract_function _parse_commit_and_pr_args
+	extract_function _validate_keep_issue_open_request
 	extract_function _compose_pr_title
 	extract_function _derive_pr_title_prefix
+	extract_readiness_function _full_loop_rbg_override_active
+	extract_readiness_function _full_loop_enforce_review_thread_gate
 	extract_readiness_function cmd_pre_merge_gate
 	extract_readiness_function _full_loop_report_external_authority_preflight
 	# shellcheck source=/dev/null
 	source "$EXTRACTED"
+	# GH#39027: extracted readiness output renders its prefix via approval_cli_prefix.
+	# shellcheck source=../shared-approval-cli.sh
+	source "${SCRIPT_DIR}/../shared-approval-cli.sh"
+	# Unregistered fixture repos: the Cloudron release gate makes no API calls.
+	export AIDEVOPS_REPOS_FILE="${TEST_ROOT}/no-repos.json"
+	# shellcheck source=../cloudron-release-merge-guard-lib.sh
+	source "${MERGE_AUTHORITY_SCRIPT%/*}/cloudron-release-merge-guard-lib.sh"
 	return 0
 }
 
@@ -181,6 +202,14 @@ _merge_with_admission_retry() {
 _flm_gh_read() {
 	"$@"
 	return $?
+}
+
+# GH#27137 thread count is covered by the lib; fixtures set the stubbed count.
+FIXTURE_BOT_THREADS=0
+_FULL_LOOP_BLOCKER_REVIEW_BOT="review-bot"
+review_thread_gate_unresolved_bot_count() {
+	printf '%s\n' "$FIXTURE_BOT_THREADS"
+	return 0
 }
 
 # Actions-unavailable admin capability has separate coverage; these fixtures
@@ -463,6 +492,40 @@ test_trusted_dependabot_authority() {
 	fi
 	return 0
 }
+
+test_interactive_merge_preference() (
+	local SCRIPT_DIR
+	SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}/.." && pwd)"
+	reset_fixture
+	unset WORKER_SESSION_KEY Claude_HEADLESS GITHUB_ACTIONS
+	# Isolate preferences from the runner while exercising the real Pulse policy.
+	local REPOS_JSON="${TEST_ROOT}/absent-repos.json"
+	local AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE=false
+	set_pr_fixture maintainer '[{"name":"origin:interactive"}]' false '[]' ''
+	expect_guard_result "human-owned interactive merge remains unchanged" 0
+	FULL_LOOP_HEADLESS=true
+	expect_guard_result "headless interactive PR requires manual merge" 1
+	local output=""
+	output=$(_merge_guard_admin_merge_maintainer_review 900 owner/repo head-current 2>&1) || true
+	if [[ "$output" == *"Merge blocked by GH#23238 interactive manual-merge preference"* ]]; then
+		print_result "manual preference refusal names GH#23238" 0
+	else
+		print_result "manual preference refusal names GH#23238" 1 "$output"
+	fi
+	unset FULL_LOOP_HEADLESS
+	WORKER_SESSION_KEY=supervisor-pulse
+	expect_guard_result "supervisor cannot bypass interactive preference" 1
+	set_pr_fixture maintainer '[{"name":"origin:interactive"},{"name":"allow-auto-merge"}]' false '[]' ''
+	expect_guard_result "explicit auto-merge label permits headless merge" 0
+	set_pr_fixture maintainer '[{"name":"origin:interactive"}]' false '[]' ''
+	AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE=true
+	expect_guard_result "configured opt-in permits headless merge" 0
+	AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE=false
+	set_pr_fixture maintainer '[]' false '[]' ''
+	expect_guard_result "worker-origin merge remains unchanged" 0
+	[[ "$TESTS_FAILED" -eq 0 ]] || return 1
+	return 0
+)
 
 test_authority_guard() {
 	reset_fixture
@@ -799,6 +862,19 @@ test_pre_merge_authority_preflight() {
 	local actual_rc=0
 
 	reset_fixture
+	FIXTURE_BOT_THREADS=2
+	output=$(cmd_pre_merge_gate 900 owner/repo 2>&1) || actual_rc=$?
+	if [[ "$actual_rc" -eq 1 ]] &&
+		grep -qF 'Merge blocked: 2 unresolved review-bot thread(s) (GH#27137)' <<<"$output"; then
+		print_result "unresolved review-bot threads block the pre-merge gate" 0
+	else
+		print_result "unresolved review-bot threads block the pre-merge gate" 1 \
+			"rc=$actual_rc output=$output"
+	fi
+	FIXTURE_BOT_THREADS=0
+	actual_rc=0
+
+	reset_fixture
 	set_pr_fixture external '[]' false '[{"number":42},{"number":43}]' 'Resolves #42\nResolves #43'
 	FIXTURE_PERMISSION="none"
 	output=$(cmd_pre_merge_gate 900 owner/repo 2>&1) || actual_rc=$?
@@ -808,6 +884,23 @@ test_pre_merge_authority_preflight() {
 	else
 		print_result "preflight reports all missing issue and exact-head PR authorities in one command" 1 \
 			"rc=$actual_rc output=$output"
+	fi
+
+	# GH#38007: a live PR needs-maintainer-review label is an approval target in
+	# the preflight, while the merge transport guard stays blocked.
+	reset_fixture
+	set_pr_fixture external '[{"name":"needs-maintainer-review"}]' false '[{"number":42}]' 'Resolves #42'
+	FIXTURE_PERMISSION="none"
+	actual_rc=0
+	output=$(cmd_pre_merge_gate 900 owner/repo 2>&1) || actual_rc=$?
+	local merge_rc=0
+	_merge_guard_admin_merge_maintainer_review 900 owner/repo >/dev/null 2>&1 || merge_rc=$?
+	if [[ "$actual_rc" -eq 1 && "$merge_rc" -eq 1 ]] &&
+		grep -qF 'sudo aidevops approve batch issue:42 pr:900 owner/repo' <<<"$output"; then
+		print_result "PR NMR label preflight prints one batch command; merge stays blocked" 0
+	else
+		print_result "PR NMR label preflight prints one batch command; merge stays blocked" 1 \
+			"rc=$actual_rc merge_rc=$merge_rc output=$output"
 	fi
 
 	reset_fixture
@@ -886,10 +979,29 @@ test_pre_merge_authority_check_failure() {
 			"rc=$actual_rc output=$output"
 	fi
 
+	# GH#39064: branch protection reports the gate as its commit-status context.
 	local failure_evidence=""
+	for failure_evidence in \
+		'[{"name":"maintainer-gate","state":"FAILURE","bucket":"fail"}]' \
+		'[{"name":"Maintainer Review & Assignee Gate","state":"FAILURE","bucket":"fail"}]' \
+		'[{"name":"maintainer-gate"},{"name":"gate / Maintainer Review & Assignee Gate"}]'; do
+		FIXTURE_FAILURE_EVIDENCE="$failure_evidence"
+		actual_rc=0
+		output=$(cmd_pre_merge_gate 900 owner/repo 2>&1) || actual_rc=$?
+		if [[ "$actual_rc" -eq 1 ]] &&
+			grep -qF 'sudo aidevops approve batch issue:42 pr:900 owner/repo' <<<"$output"; then
+			print_result "maintainer-gate alias failure reports approval: $failure_evidence" 0
+		else
+			print_result "maintainer-gate alias failure reports approval: $failure_evidence" 1 \
+				"rc=$actual_rc output=$output"
+		fi
+	done
+
 	for failure_evidence in \
 		'[{"name":"lint","state":"FAILURE","bucket":"fail"}]' \
 		'[{"name":"gate / Maintainer Review & Assignee Gate"},{"name":"lint"}]' \
+		'[{"name":"maintainer-gate"},{"name":"lint"}]' \
+		'[{"name":null}]' \
 		'[]' 'not-json'; do
 		FIXTURE_FAILURE_EVIDENCE="$failure_evidence"
 		actual_rc=0
@@ -1018,6 +1130,97 @@ test_secondary_merge_transports_refresh_authority() {
 	return 0
 }
 
+# GH#36966: the write lands but its transport reports failure, while the review
+# snapshot remains OPEN and the closed issue would fail the next authority check.
+test_completed_merge_before_stale_authority() (
+	local scenario="" actual_rc=0 output="" expected_rc=0
+	extract_function _merge_run_bounded_write
+	extract_function _merge_reconcile_timed_out_write
+	extract_function _merge_try_review_only_admin_fallback
+	extract_function _merge_try_interactive_admin_auto_fallback
+	# shellcheck source=/dev/null
+	source "$EXTRACTED"
+	_merge_guard_admin_merge_maintainer_review() {
+		_merge_guard_admin_merge_maintainer_review_for_mode_test "$@"
+		return $?
+	}
+	# Simulate an accepted write followed by a transport error and stale PR reads.
+	# Args: gh command arguments. Records merge writes in MERGE_CALLS and emits
+	# scenario-specific REST evidence; returns 1 for failed writes or unknown reads.
+	gh() {
+		local command="${1:-}" subcommand="${2:-}"
+		if [[ "$command" == pr && "$subcommand" == merge ]]; then
+			printf '%s\n' "$*" >>"$MERGE_CALLS"
+			printf 'HTTP 401: Bad credentials after accepted mutation\n'
+			return 1
+		fi
+		if [[ "$command" == pr && "$subcommand" == view ]]; then
+			if [[ "$*" == *'--json title'* ]]; then
+				printf '%s\n' '{"title":"fix: reconcile accepted merge"}'
+			else
+				printf '%s\n' '{"state":"OPEN","headRefOid":"head-current"}'
+			fi
+			return 0
+		fi
+		if [[ "$command" == api && "$subcommand" == *'/commits?per_page=100' ]]; then
+			printf '%s\n' '[[{"sha":"head-current","commit":{"message":"fix: reconcile accepted merge"}}]]'
+			return 0
+		fi
+		if [[ "$command" == api && "$subcommand" == repos/owner/repo/pulls/900 && -s "$MERGE_CALLS" ]]; then
+			case "$scenario" in
+			unreadable) return 1 ;;
+			other-head) printf '%s\n' '{"merged":true,"merged_at":"2026-11-06","merge_commit_sha":"merged-oid","head":{"sha":"other"}}' ;;
+			open | closed) printf '{"merged":false,"state":"%s","head":{"sha":"head-current"}}\n' "$scenario" ;;
+			*) printf '%s\n' '{"merged":true,"merged_at":"2026-11-06","merge_commit_sha":"merged-oid","head":{"sha":"head-current"}}' ;;
+			esac
+			return 0
+		fi
+		return 1
+	}
+	gh_merge_remediate_stale_auth_cache() {
+		return 0
+	}
+	AUTHORITY_GUARD_PASS=1
+	AUTHORITY_GUARD_FAIL_ON_CALL=2
+	for scenario in merged other-head open closed unreadable; do
+		: >"$MERGE_CALLS"
+		: >"$GUARD_CALLS"
+		actual_rc=0
+		output=$(_merge_execute 900 owner/repo --squash 0 0 2>&1) || actual_rc=$?
+		expected_rc=1
+		[[ "$scenario" != merged ]] || expected_rc=0
+		if [[ "$actual_rc" -eq "$expected_rc" && "$(wc -l <"$MERGE_CALLS")" -eq 1 ]] &&
+			{ [[ "$scenario" != merged ]] ||
+				[[ "$(wc -l <"$GUARD_CALLS")" -eq 1 && "$output" == *'already merged at verified head'* ]]; }; then
+			print_result "accepted write with stale OPEN review and stale linked authority: $scenario" 0
+		else
+			print_result "accepted write with stale OPEN review and stale linked authority: $scenario" 1 "$output"
+		fi
+	done
+	# Exercise each secondary entry directly: a previous write has completed,
+	# so even a now-revoked authority must never be consulted or replayed.
+	scenario=merged
+	local fallback=""
+	for fallback in rest review-admin interactive-admin; do
+		: >"$GUARD_CALLS"
+		AUTHORITY_GUARD_PASS=0
+		actual_rc=0
+		case "$fallback" in
+		rest) output=$(_merge_rest_fallback 900 owner/repo --squash head-current 2>&1) || actual_rc=$? ;;
+		review-admin) output=$(_merge_try_review_only_admin_fallback 900 owner/repo --squash head-current '' '' 'At least 1 approving review' 2>&1) || actual_rc=$? ;;
+		interactive-admin) output=$(_merge_try_interactive_admin_auto_fallback 900 owner/repo --squash 'review required' head-current 2>&1) || actual_rc=$? ;;
+		esac
+		if [[ "$actual_rc" -eq 0 && ! -s "$GUARD_CALLS" && "$(wc -l <"$MERGE_CALLS")" -eq 1 &&
+			"$output" == *'already merged at verified head'* ]]; then
+			print_result "completed exact-head merge before $fallback authority revalidation" 0
+		else
+			print_result "completed exact-head merge before $fallback authority revalidation" 1 "$output"
+		fi
+	done
+	[[ "$TESTS_FAILED" -eq 0 ]] || return 1
+	return 0
+)
+
 # Load the real shared read path in a subshell so authority fixtures retain their
 # local stubs. Advance SECONDS rather than sleeping through a healthy slow gate.
 test_slow_gate_admission_reads() {
@@ -1026,12 +1229,15 @@ test_slow_gate_admission_reads() {
 		result=0
 		(
 			extract_function _flm_gh_read
+			extract_function _flm_merge_read_timeout
 			extract_function _flm_gh_read_once
 			extract_function _merge_with_admission_retry
 			# shellcheck source=/dev/null
 			source "$EXTRACTED"
 			local calls=0 reads=0 waits=0 elapsed=0 rc=0
-			unset AIDEVOPS_GH_READ_TIMEOUT
+			# GH#38535: the sourced generic default stays present in production.
+			AIDEVOPS_GH_READ_TIMEOUT=15
+			unset AIDEVOPS_MERGE_GH_READ_TIMEOUT
 			AIDEVOPS_MERGE_ADMISSION_BUDGET_SECONDS=60
 			date() {
 				printf '%s\n' "$((1000 + elapsed))"
@@ -1168,12 +1374,53 @@ test_squash_subject_contract() (
 	return 0
 )
 
+# GH#36874: commit pages travel on stdin, never through an argv-sized argument.
+test_squash_subject_commit_pages() (
+	local pages="" actual="" actual_rc=0
+	local title='GH#36874: preserve large commit histories'
+	_flm_gh_read() {
+		if [[ "$*" == *'--json title'* ]]; then
+			jq -n --arg title "$title" '{title: $title}'
+		else
+			printf '%s\n' "$pages"
+		fi
+		return 0
+	}
+	pages=$(jq -cn '
+		[range(3) | [range(100) |
+			{sha: (tostring), commit: {message: ("fix: large history\n" + ("x" * 8192))}}]]')
+	[[ "${#pages}" -gt 2097152 ]] || return 1
+	actual=$(_merge_resolve_squash_subject 900 owner/repo) || actual_rc=$?
+	if [[ "$actual_rc" -eq 0 && "$actual" == 'GH#36874: fix: preserve large commit histories' ]]; then
+		print_result "squash subject accepts >2 MB paginated metadata and infers type" 0
+	else
+		print_result "squash subject accepts >2 MB paginated metadata and infers type" 1
+	fi
+	for pages in '[]' '[[]]' '[{}]' 'null' \
+		'[[{"commit":{"message":"fix: missing sha"}}]]' \
+		'[[{"sha":"abc","commit":{}}]]' \
+		'[[{"sha":"","commit":{"message":"fix: empty sha"}}]]' \
+		'[[{"sha":"abc","commit":{"message":42}}]]'; do
+		actual_rc=0
+		actual=$(_merge_resolve_squash_subject 900 owner/repo 2>&1) || actual_rc=$?
+		if [[ "$actual_rc" -eq 1 && "$actual" == *'Invalid PR #900 commit metadata for squash-subject validation'* ]]; then
+			print_result "squash subject rejects malformed commit evidence: ${pages}" 0
+		else
+			print_result "squash subject rejects malformed commit evidence: ${pages}" 1
+		fi
+	done
+	[[ "$TESTS_FAILED" -eq 0 ]] || return 1
+	return 0
+)
+
 main() {
 	load_functions
+	test_squash_subject_commit_pages || return 1
 	test_squash_subject_contract || return 1
 	test_slow_gate_admission_reads
 	test_trusted_issue_sync_authority
 	test_trusted_dependabot_authority
+	test_interactive_merge_preference || return 1
 	test_authority_guard
 	test_cross_repo_closing_references
 	test_hold_for_review_guard
@@ -1184,6 +1431,7 @@ main() {
 	test_pre_merge_authority_check_failure
 	test_all_merge_modes_use_guard
 	test_secondary_merge_transports_refresh_authority
+	test_completed_merge_before_stale_authority || return 1
 	printf '\nTests run: %d\nTests failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
 	return $?
