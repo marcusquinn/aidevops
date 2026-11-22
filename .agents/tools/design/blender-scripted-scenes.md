@@ -99,7 +99,12 @@ creative work while the primary owns the pipeline, budget and render.
    contract) from creative freedom. Set a scratch working directory, no network,
    installs, git or secrets, a time budget, and deliverables: build script,
    `.blend`, one full-quality frame, `NOTES.md` with warm seconds per frame,
-   triangle count and known issues.
+   triangle count and known issues. Say that the scratch directory is not a Git
+   repository, so the delegate edits in place without pre-edit checks and records
+   judgement calls instead of stopping to ask, and that shell commands must be one
+   line (helper scripts go in a file). Without this, a delegate on 2026-11-22
+   stopped after a context compaction to ask whether the failed pre-edit check
+   blocked it.
 2. **Run** under `aidevops_bounded_operation` with a budget:
 
    ```bash
@@ -110,7 +115,8 @@ creative work while the primary owns the pipeline, budget and render.
 
    Put the message before `-f`, which takes an array. `--auto` approves every
    permission that is not denied; aidevops command policy still applies, but the
-   brief's boundaries are instructions, not a sandbox.
+   brief's boundaries are instructions, not a sandbox. Leave the operation's `cwd`
+   unset (it must be a Git worktree root) and point `--dir` at the scratch directory.
 3. **Output clamp.** OpenCode clamps each response to 32,000 output tokens by
    default, and thinking counts. Writing a whole build script in one tool call ends
    with finish reason `length` and `Tool execution aborted`, and nothing is saved.
