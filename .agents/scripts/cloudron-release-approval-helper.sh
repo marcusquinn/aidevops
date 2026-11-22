@@ -817,12 +817,47 @@ release_ensure_policy_labels() {
 	return 0
 }
 
+# Create the standing policy issue awaiting finalization; prints its URL.
+release_policy_create() {
+	local repo="$1" mode="$2" upstream="$3" zero_minor="$4"
+	release_ensure_policy_labels "$repo" || return 1
+	release_policy_body "$repo" 'Policy finalization pending. Do not sign until the maintainer command appears.' "$mode" "$upstream" "$zero_minor" |
+		gh_create_issue --repo "$repo" --title "Standing release policy: ${repo##*/} routine upstream bumps" --body-file - \
+			--label "$RELEASE_POLICY_LABEL" --label persistent --label no-auto-dispatch || return 1
+	return 0
+}
+
+# Replace a signed or unverifiable standing policy (explicit --supersede only).
+# `persistent` is removed first so the reopen guard cannot undo the closure.
+release_policy_supersede() {
+	local repo="$1" old_issue="$2" old_url="$3" mode="$4" upstream="$5" zero_minor="$6" dry_run="$7"
+	local new_url='' new_issue='' command='' note='' fields="mode=${mode}"
+	[[ -z "$upstream" ]] || fields="${fields} upstream=${upstream}"
+	[[ "$zero_minor" != true ]] || fields="${fields} zero_minor=routine"
+	if [[ "$dry_run" == true ]]; then
+		printf 'Dry run: would remove persistent from and close policy %s as not planned, then create a replacement policy (%s) for signing.\n' "$old_url" "$fields"
+		return 0
+	fi
+	gh_issue_edit_safe "$old_issue" --repo "$repo" --remove-label persistent >/dev/null || return 1
+	printf -v note 'Superseded by a new standing release policy (%s). This policy no longer authorizes releases; sign the replacement to continue.' "$fields"
+	release_comment "$repo" "$old_issue" "$note" || return 1
+	gh issue close "$old_issue" --repo "$repo" --reason 'not planned' >/dev/null || return 1
+	new_url=$(release_policy_create "$repo" "$mode" "$upstream" "$zero_minor") || return 1
+	new_issue="${new_url##*/}"
+	[[ "$new_url" == https://* && "$new_issue" =~ ^[1-9][0-9]*$ ]] || release_error 'Created issue URL has no valid issue number.' || return 1
+	printf -v command '%s approve issue %s %s' "$(approval_cli_prefix)" "$new_issue" "$repo"
+	release_policy_body "$repo" "Maintainer command: \`${command}\`" "$mode" "$upstream" "$zero_minor" |
+		gh_issue_edit_safe "$new_issue" --repo "$repo" --body-file - >/dev/null || return 1
+	printf '%s\nAPPROVAL_COMMAND=%s\nSUPERSEDED=%s\n' "$new_url" "$command" "$old_url"
+	return 0
+}
+
 # Create (or finalize) the repository's standing policy issue. A signed or
-# unverifiable policy is never rewritten.
+# unverifiable policy is never rewritten unless supersede=true replaces it.
 release_policy_request() {
 	local repo="$1" existing='' rc=0 url='' issue='' command='' body='' verdict='' verify_rc=0 expected=''
 	local mode="${2:-semver}" upstream="${3:-}" existing_command='' existing_expected=''
-	local zero_minor="${4:-false}"
+	local zero_minor="${4:-false}" supersede="${5:-false}" dry_run="${6:-false}"
 	local maintainer_prefix='Maintainer command:'
 	release_authority "$repo" || return 1
 	# Validate the requested signed schema before creating any issue.
@@ -833,10 +868,11 @@ release_policy_request() {
 		url=$(jq -r '.html_url' <<<"$existing") || return 1
 		body=$(jq -r '.body // ""' <<<"$existing") || return 1
 	else
-		release_ensure_policy_labels "$repo" || return 1
-		url=$(release_policy_body "$repo" 'Policy finalization pending. Do not sign until the maintainer command appears.' "$mode" "$upstream" "$zero_minor" |
-			gh_create_issue --repo "$repo" --title "Standing release policy: ${repo##*/} routine upstream bumps" --body-file - \
-				--label "$RELEASE_POLICY_LABEL" --label persistent --label no-auto-dispatch) || return 1
+		if [[ "$dry_run" == true ]]; then
+			printf 'Dry run: no standing policy exists; would create one for signing.\n'
+			return 0
+		fi
+		url=$(release_policy_create "$repo" "$mode" "$upstream" "$zero_minor") || return 1
 	fi
 	issue="${url##*/}"
 	[[ "$url" == https://* && "$issue" =~ ^[1-9][0-9]*$ ]] || release_error 'Created issue URL has no valid issue number.' || return 1
@@ -856,7 +892,18 @@ release_policy_request() {
 			return 0
 		fi
 		verdict=$(release_verify "$repo" "$issue") || verify_rc=$?
-		[[ "$verify_rc" -ne 0 && "$verdict" == NO_APPROVAL ]] || release_error 'Existing policy body needs finalization; signed or unverifiable policies must not be rewritten.' || return 1
+		if [[ "$verify_rc" -ne 0 && "$verdict" == NO_APPROVAL ]]; then
+			:
+		elif [[ "$supersede" == true ]]; then
+			release_policy_supersede "$repo" "$issue" "$url" "$mode" "$upstream" "$zero_minor" "$dry_run" || return 1
+			return 0
+		else
+			release_error 'Existing policy body needs finalization; signed or unverifiable policies must not be rewritten. To replace it, re-run policy-request with --supersede (closes the old policy and creates a replacement to sign).' || return 1
+		fi
+	fi
+	if [[ "$dry_run" == true ]]; then
+		printf 'Dry run: unsigned policy %s would be finalized in place.\n' "$url"
+		return 0
 	fi
 	printf '%s\n' "$expected" |
 		gh_issue_edit_safe "$issue" --repo "$repo" --body-file - >/dev/null || return 1
@@ -1625,11 +1672,12 @@ main() {
 		;;
 	policy-request)
 		[[ $# -ge 2 && "$arg2" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
-		local policy_mode=semver policy_upstream='' zero_minor=false dry_run=false
+		local policy_mode=semver policy_upstream='' zero_minor=false dry_run=false supersede=false
 		shift 2
 		while [[ $# -gt 0 ]]; do
 			local policy_option="$1" policy_value="${2:-}"
 			case "$policy_option" in
+			--supersede) [[ "$supersede" == false ]] || return 1; supersede=true; shift ;;
 			--zero-minor-routine) [[ "$zero_minor" == false ]] || return 1; zero_minor=true; shift ;;
 			--dry-run) [[ "$dry_run" == false ]] || return 1; dry_run=true; shift ;;
 			commits | commits-license-url | release-identity | pins)
@@ -1638,7 +1686,7 @@ main() {
 			*) return 1 ;;
 			esac
 		done
-		if [[ "$dry_run" == true ]]; then
+		if [[ "$dry_run" == true && "$supersede" == false ]]; then
 			release_policy_body "$arg2" 'Dry run only. Create or finalize the policy before signing.' "$policy_mode" "$policy_upstream" "$zero_minor" || return 1
 		else
 			release_policy_request "$arg2" "$policy_mode" "$policy_upstream" "$zero_minor" || return 1
@@ -1672,7 +1720,7 @@ main() {
 		release_process "$apply" "$repo_filter" "$issue_filter" || return 1
 		;;
 	help | --help | -h)
-		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | policy-request <repo> [--zero-minor-routine] [--dry-run] [commits <upstream-owner/repo> | commits-license-url <upstream-owner/repo> | release-identity <upstream-owner/repo:COMMIT_ARG:images-asset> | pins <json: upstream_repository, registry_images, release_checksum, license_version_url, release_identity>] | merge-guard <repo> <pr> <head> | process [--repo owner/repo] [--issue N] [--apply]\n'
+		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | policy-request <repo> [--zero-minor-routine] [--supersede] [--dry-run] [commits <upstream-owner/repo> | commits-license-url <upstream-owner/repo> | release-identity <upstream-owner/repo:COMMIT_ARG:images-asset> | pins <json: upstream_repository, registry_images, release_checksum, license_version_url, release_identity>] | merge-guard <repo> <pr> <head> | process [--repo owner/repo] [--issue N] [--apply]\n'
 		;;
 	*) return 1 ;;
 	esac
