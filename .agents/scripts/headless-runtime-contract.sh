@@ -222,10 +222,17 @@ approval, authorization or sign-off), also emit TERMINAL_BLOCKER_INPUT_OWNER and
 TERMINAL_BLOCKER_QUESTION as for input_required; the hold then publishes that
 ask. A hold with no public ask leaves nobody able to act (GH#38951).
 Only when a specific value, target, credential or decision is required, absent
-from the brief, repository, linked issues and your tools, and cannot be derived
-or safely chosen within delegated authority, use both lines:
+from the brief, repository (runbooks included), linked issues, trusted
+decisions on same-repo issues and your tools, and cannot be derived or safely
+chosen within delegated authority, use both lines:
 TERMINAL_BLOCKER_REASON=input_required
 TERMINAL_BLOCKER_INPUT_OWNER=maintainer
+Before asking, look for a precedent (GH#39901): search the repository for the
+flag or term, and same-repo issues for the question
+(gh search issues --repo <slug> "<term>" --state all), reading only
+OWNER/MEMBER comments. A precedent that decides the same question at the same
+scope is your answer: cite it and continue. It never extends credentials,
+spend, permissions or publication beyond what it explicitly covers.
 Owner is one of user, contributor, maintainer or admin: whoever alone can
 supply it. Reversible implementation choices, naming, defaults and scope
 interpretation are yours to decide, never this class. Name the exact input and
