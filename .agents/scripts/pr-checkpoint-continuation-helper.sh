@@ -1944,6 +1944,26 @@ _pcc_dispatch_interactive_handover_draft() {
 }
 
 #######################################
+# Admission routes for a draft with no current stall release: an expired
+# orphan-recovery claim (GH#34008), then a pulse interactive handover
+# (GH#39908). Same arguments as _pcc_dispatch_interactive_handover_draft.
+# Returns: 0 dispatched/deduplicated, 1 not applicable or failed
+#######################################
+_pcc_dispatch_without_stall_release() {
+	local repo="$1" path="$2" issue="$3" pr="$4" login="$5" runner="$6"
+	local pr_json="$7" comments="$8" head_date="$9" trusted_logins="${10:-[]}" route_rc=0
+	_pcc_dispatch_expired_recovery_draft "$repo" "$path" "$issue" "$pr" "$login" \
+		"$runner" "$pr_json" "$comments" "$head_date" "$trusted_logins" || route_rc=$?
+	[[ "$route_rc" -eq 3 ]] || return "$route_rc"
+	route_rc=0
+	_pcc_dispatch_interactive_handover_draft "$repo" "$path" "$issue" "$pr" "$login" \
+		"$runner" "$pr_json" "$comments" "$head_date" "$trusted_logins" || route_rc=$?
+	[[ "$route_rc" -eq 3 ]] || return "$route_rc"
+	printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #%s in %s has no current stall release issue=#%s\n' "$pr" "$repo" "$issue"
+	return 1
+}
+
+#######################################
 # Read a PR's commits through REST, which supplies parent counts that the
 # gh pr view commit projection omits. Callers treat failure as no metadata,
 # so no release is credited as progress.
@@ -2015,16 +2035,9 @@ _pcc_dispatch_stalled() {
 	evidence=$(_pcc_stall_release_evidence "$comments" "$head_date" "$key" "$trusted_logins" \
 		"$pr_created" "${_PCC_ATTENTION_MARKER} pr=${pr} head=${head}" \
 		"${_PCC_STALL_FUSE_MARKER} pr=${pr} -->" "$commits" "$(_pcc_session_key "$repo" "$pr")") || {
-		local expired_rc=0
-		_pcc_dispatch_expired_recovery_draft "$repo" "$path" "$issue" "$pr" "$login" \
-			"$runner" "$pr_json" "$comments" "$head_date" "$trusted_logins" || expired_rc=$?
-		[[ "$expired_rc" -eq 3 ]] || return "$expired_rc"
-		expired_rc=0
-		_pcc_dispatch_interactive_handover_draft "$repo" "$path" "$issue" "$pr" "$login" \
-			"$runner" "$pr_json" "$comments" "$head_date" "$trusted_logins" || expired_rc=$?
-		[[ "$expired_rc" -eq 3 ]] || return "$expired_rc"
-		printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #%s in %s has no current stall release issue=#%s\n' "$pr" "$repo" "$issue"
-		return 1
+		_pcc_dispatch_without_stall_release "$repo" "$path" "$issue" "$pr" "$login" \
+			"$runner" "$pr_json" "$comments" "$head_date" "$trusted_logins"
+		return $?
 	}
 	IFS=$'\t' read -r release_id reason stalls posted pr_releases fuse_posted attention_epoch \
 		release_epoch attempt progress nonprogress approval_release <<<"$evidence"
