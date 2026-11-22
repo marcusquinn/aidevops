@@ -351,6 +351,32 @@ _interactive_pr_auto_merge_allowed() {
 	return 1
 }
 
+# Refusal diagnostics are scheduling hints only, never handover authority.
+# Persist per PR/gate so command substitutions and later passes share the limit.
+_interactive_draft_handover_refused() {
+	local pr_number="$1" repo_slug="$2" gate="$3"
+	local state_file="" previous=0 now=0 temporary=""
+	local ttl="${AIDEVOPS_MERGE_VERDICT_TTL_S:-1800}"
+	if [[ "$pr_number" =~ ^[0-9]+$ && "$repo_slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$gate" =~ ^[a-z0-9_-]+$ ]]; then
+		state_file="${AIDEVOPS_MERGE_VERDICT_DIR:-${HOME}/.aidevops/.agent-workspace/state/merge-verdicts}/${repo_slug}/${pr_number}.handover-${gate}"
+		now=$(date +%s)
+		[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=1800
+		if [[ -f "$state_file" ]]; then
+			read -r previous <"$state_file" || previous=0
+		fi
+		[[ "$previous" =~ ^[0-9]+$ ]] || previous=0
+		if [[ "$previous" -gt 0 && "$now" -ge "$previous" && $((now - previous)) -lt "$ttl" ]]; then
+			return 1
+		fi
+		if mkdir -p "${state_file%/*}" && temporary=$(mktemp "${state_file}.XXXXXX"); then
+			printf '%s\n' "$now" >"$temporary"
+			mv -f "$temporary" "$state_file" || rm -f "$temporary"
+		fi
+	fi
+	printf '[pulse-wrapper] interactive-draft-handover: PR #%s refused: %s (repo %s)\n' "$pr_number" "$gate" "$repo_slug" >>"$LOGFILE"
+	return 1
+}
+
 #######################################
 # GH#39158: Hand a stale origin:interactive DRAFT PR to the worker pipeline.
 # Mirrors the non-draft stale path (GH#23425): orphan drafts get a tracking
@@ -371,19 +397,22 @@ _interactive_draft_pr_try_handover() {
 	local wrapped=","
 	wrapped+="${labels_str},"
 	case "$wrapped" in
-	*,hold-for-review,* | *,no-takeover,* | *,origin:worker-takeover,*) return 1 ;;
+	*,hold-for-review,*) _interactive_draft_handover_refused "$pr_number" "$repo_slug" hold-for-review; return 1 ;;
+	*,no-takeover,*) _interactive_draft_handover_refused "$pr_number" "$repo_slug" no-takeover; return 1 ;;
+	*,origin:worker-takeover,*) return 1 ;;
 	esac
-	declare -F _interactive_pr_is_stale >/dev/null 2>&1 || return 1
-	declare -F _interactive_pr_trigger_handover >/dev/null 2>&1 || return 1
+	declare -F _interactive_pr_is_stale >/dev/null 2>&1 || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" stale-helper-unavailable; return 1; }
+	declare -F _interactive_pr_trigger_handover >/dev/null 2>&1 || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" handover-helper-unavailable; return 1; }
 
 	if ! _interactive_pr_is_stale "$pr_number" "$repo_slug"; then
 		# Orphan drafts (no closing issue link) need a tracking issue first.
-		declare -F _recover_interactive_pr_work_issue >/dev/null 2>&1 || return 1
+		declare -F _recover_interactive_pr_work_issue >/dev/null 2>&1 || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" recovery-helper-unavailable; return 1; }
+		# Recovery emits its own precise refusal; do not mask it with a second gate.
 		_recover_interactive_pr_work_issue "$pr_number" "$repo_slug" >/dev/null || return 1
-		_interactive_pr_is_stale "$pr_number" "$repo_slug" || return 1
+		_interactive_pr_is_stale "$pr_number" "$repo_slug" || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" linked-issue-staleness-or-claim; return 1; }
 	fi
 
-	_interactive_pr_trigger_handover "$pr_number" "$repo_slug" "stale interactive draft PR (GH#39158)" || return 1
+	_interactive_pr_trigger_handover "$pr_number" "$repo_slug" "stale interactive draft PR (GH#39158)" || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" takeover-not-confirmed; return 1; }
 	return 0
 }
 
