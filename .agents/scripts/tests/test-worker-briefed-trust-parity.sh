@@ -262,7 +262,7 @@ printf 'PASS existing exact-head Issue Sync exception retained; stale head denie
 bash -s -- "$SCRIPT_DIR" "$TEST_ROOT" <<'ANCHOR_TEST'
 set -euo pipefail
 source "$1/routine-log-helper.sh"
-FIXTURE_ROOT="$2"
+export FIXTURE_ROOT="$2"
 CRON_BASE="$FIXTURE_ROOT/cron"
 gh() {
 	local command="$1" endpoint="${2:-}"
@@ -273,6 +273,9 @@ gh() {
 	esac
 	return 0
 }
+# Missing labels are created by a label-sync-helper.sh subprocess; export the
+# fixture so that child cannot reach the real gh CLI.
+export -f gh
 gh_create_issue() {
 	local args="$*" arg="" previous="" body_file=""
 	for arg in "$@"; do
@@ -290,6 +293,7 @@ cmd_create_issue r004 --repo owner/repo --title 'r004: Content update' >/dev/nul
 [[ "$(wc -l <"$FIXTURE_ROOT/labels")" -eq 4 ]]
 printf 'PASS routine setup provisions labels and creates a persistent non-dispatchable anchor\n'
 gh() { return 1; }
+export -f gh
 if _create_github_issue owner/repo 'r004: Content update' body >/dev/null 2>&1; then
 	printf 'FAIL label provisioning failure allowed issue creation\n' >&2
 	exit 1
