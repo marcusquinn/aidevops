@@ -874,29 +874,35 @@ _process_rows() {
 			_print_result_row "$_json_out" "$_apply_result"
 			continue
 		fi
-
-		# GH#39808: evaluate the remote default branch (what --apply uses),
-		# not the possibly stale canonical working tree.
-		local _eval_path="$_rpath" _unverified="" _snap=""
-		if _snap=$(_remote_snapshot "$_slug" "$_rpath"); then
-			_eval_path="$_snap"
-		else
-			_unverified=" (unverified: remote default branch unavailable; local checkout may be behind)"
-		fi
-
-		# Sync README badge block (skip when --workflow-only)
-		if [[ "$_workflow_only_arg" -eq 0 ]]; then
-			_tally_result_row "$_json_out" "$(_sync_readme "$_slug" "$_eval_path" 0 | _mark_unverified "$_unverified")" || _any_failed=1
-		fi
-
-		# Install repo metrics workflow if not suppressed
-		if [[ "$_no_workflow" -eq 0 ]]; then
-			_tally_result_row "$_json_out" "$(_install_workflow "$_slug" "$_eval_path" 0 | _mark_unverified "$_unverified")" || _any_failed=1
-		fi
-		[[ -z "$_snap" ]] || rm -rf "$_snap"
+		_dry_run_repo "$_slug" "$_rpath" "$_no_workflow" "$_workflow_only_arg" "$_json_out" || _any_failed=1
 	done
 
 	return "$_any_failed"
+}
+
+# _dry_run_repo <slug> <rpath> <no_workflow> <workflow_only> <json_out>
+# GH#39808: evaluate the remote default branch (what --apply uses), not the
+# possibly stale canonical working tree. Returns 1 when any row failed.
+_dry_run_repo() {
+	local _slug="$1" _rpath="$2" _no_workflow="$3" _workflow_only_arg="$4" _json_out="$5"
+	local _eval_path="$_rpath" _unverified="" _snap="" _failed=0
+	if _snap=$(_remote_snapshot "$_slug" "$_rpath"); then
+		_eval_path="$_snap"
+	else
+		_unverified=" (unverified: remote default branch unavailable; local checkout may be behind)"
+	fi
+
+	# Sync README badge block (skip when --workflow-only)
+	if [[ "$_workflow_only_arg" -eq 0 ]]; then
+		_tally_result_row "$_json_out" "$(_sync_readme "$_slug" "$_eval_path" 0 | _mark_unverified "$_unverified")" || _failed=1
+	fi
+
+	# Install repo metrics workflow if not suppressed
+	if [[ "$_no_workflow" -eq 0 ]]; then
+		_tally_result_row "$_json_out" "$(_install_workflow "$_slug" "$_eval_path" 0 | _mark_unverified "$_unverified")" || _failed=1
+	fi
+	[[ -z "$_snap" ]] || rm -rf "$_snap"
+	return "$_failed"
 }
 
 # _tally_result_row <json_out> <result_tsv>
