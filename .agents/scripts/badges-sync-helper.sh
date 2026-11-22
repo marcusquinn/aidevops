@@ -780,13 +780,28 @@ _list_actionable_repos() {
 	return 0
 }
 
+# _snapshot_extract <bare> <dest>
+# Extracts README.md, docs/metrics and .github/workflows from FETCH_HEAD.
+_snapshot_extract() {
+	local _bare="$1"
+	local _dest="$2"
+	local _paths=() _file
+	while IFS= read -r _file; do
+		[[ -n "$_file" ]] && _paths+=("$_file")
+	done < <(git --git-dir="$_bare" ls-tree -r --name-only FETCH_HEAD -- \
+		README.md docs/metrics .github/workflows 2>/dev/null)
+	[[ ${#_paths[@]} -gt 0 ]] || return 0
+	git --git-dir="$_bare" archive FETCH_HEAD -- "${_paths[@]}" | tar -x -C "$_dest" || return 1
+	return 0
+}
+
 # _remote_snapshot <slug> <canonical>
 # Prints a temp dir holding README.md, docs/metrics and .github/workflows from
 # the remote default branch (GH#39808). Returns 1 when unavailable.
 _remote_snapshot() {
 	local _slug="$1"
 	local _canonical="$2"
-	local _default _url _snap _bare _file
+	local _default _url _snap _bare
 	_default=$(gh api "repos/$_slug" --jq '.default_branch' 2>/dev/null) || return 1
 	[[ -n "$_default" && "$_default" != "null" ]] || return 1
 	_url=$(git -C "$_canonical" config --get remote.origin.url 2>/dev/null) || return 1
@@ -795,24 +810,15 @@ _remote_snapshot() {
 	# working tree) is never written, and the canonical Git guard forbids fetch.
 	_snap=$(mktemp -d) || return 1
 	_bare="$_snap.git"
-	if ! git init -q --bare "$_bare" >/dev/null 2>&1 ||
-		! git --git-dir="$_bare" fetch -q --depth 1 "$_url" "$_default" >/dev/null 2>&1; then
-		rm -rf "$_snap" "$_bare"
-		return 1
+	if git init -q --bare "$_bare" >/dev/null 2>&1 &&
+		git --git-dir="$_bare" fetch -q --depth 1 "$_url" "$_default" >/dev/null 2>&1 &&
+		_snapshot_extract "$_bare" "$_snap"; then
+		rm -rf "$_bare"
+		printf '%s\n' "$_snap"
+		return 0
 	fi
-	local _paths=()
-	while IFS= read -r _file; do
-		[[ -n "$_file" ]] && _paths+=("$_file")
-	done < <(git --git-dir="$_bare" ls-tree -r --name-only FETCH_HEAD -- \
-		README.md docs/metrics .github/workflows 2>/dev/null)
-	if [[ ${#_paths[@]} -gt 0 ]] &&
-		! git --git-dir="$_bare" archive FETCH_HEAD -- "${_paths[@]}" | tar -x -C "$_snap"; then
-		rm -rf "$_snap" "$_bare"
-		return 1
-	fi
-	rm -rf "$_bare"
-	printf '%s\n' "$_snap"
-	return 0
+	rm -rf "$_snap" "$_bare"
+	return 1
 }
 
 # _mark_unverified <suffix>
