@@ -454,7 +454,8 @@ _PULSE_DEP_GRAPH_NON_DEP_BLOCK_MARKERS='\*\*BLOCKED\*\*.*cannot proceed|Worker W
 #
 # Output (stdout):
 #   A short machine-readable reason token when the refresh should defer
-#   ("brief-hold", "body-defer", "comment-marker" or "comments-unavailable").
+#   ("brief-hold", "body-defer", "comment-marker", "not-before",
+#   "comments-unavailable" or "issue-unavailable").
 #   Empty string when safe to unblock.
 #
 # Exit codes:
@@ -491,6 +492,18 @@ _should_defer_auto_unblock() {
 		printf 'comments-unavailable\n'
 		return 0
 	}
+	# GH#39856: an unexpired or malformed aidevops:not-before time gate is a
+	# strong hold. The body is author-editable, so it may hold but not release;
+	# the dependency reconciler owns the one-shot release after `at`.
+	local issue_body=""
+	issue_body=$(gh api "repos/${repo_slug}/issues/${issue_num}" --jq 'objects | .body // ""' 2>/dev/null) || {
+		printf 'issue-unavailable\n'
+		return 0
+	}
+	if issue_not_before_blocks "$comments_json" "$issue_body" false; then
+		printf 'not-before\n'
+		return 0
+	fi
 	if terminal_blocker_has_current_hold "$comments_json"; then
 		printf 'comment-marker\n'
 		return 0

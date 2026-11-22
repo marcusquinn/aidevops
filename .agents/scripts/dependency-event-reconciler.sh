@@ -122,6 +122,8 @@ DER_WORKER_BLOCKED_RE='worker[_ -]blocked'
 DER_TERMINAL_BLOCKER_RE='Terminal[_ -]blocker([_ -]detected)?|^CLAIM_RELEASED reason=blocked([[:space:]]|$)'
 # jq (Oniguruma) twin of DER_TERMINAL_BLOCKER_RE; ^ is line-anchored via \n.
 DER_TERMINAL_BLOCKER_RE_JQ='Terminal[_ -]blocker|^CLAIM_RELEASED reason=blocked(\s|$)'
+# aidevops:trust-boundary — jq predicate for collaborator-authored evidence.
+DER_TRUSTED_AUTHOR_JQ='def trusted_author: (.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR"); '
 
 # $1: issue body plus trusted comments; $2: trusted comments only.
 _der_text_has_strong_hold() {
@@ -534,12 +536,45 @@ _der_route_abandoned_blocker_to_recovery() {
 	return 0
 }
 
+# GH#39856: once a trusted aidevops:not-before gate has expired, the
+# terminal-blocker and worker-blocked lines of trusted comments posted before
+# `at` describe the wait it already scheduled; later observations still hold,
+# as does every other hold marker in the same comment.
+_der_comments_before_not_before() {
+	local comments_json="$1"
+	local at="$2"
+	printf '%s' "$comments_json" | jq -r --arg at "$at" --arg tb "$DER_TERMINAL_BLOCKER_RE_JQ" --arg wb "$DER_WORKER_BLOCKED_RE" "${DER_TRUSTED_AUTHOR_JQ}"'
+		.[][] | select(trusted_author)
+		| (.body // "") as $body
+		| if (.created_at // "9999") < $at then
+			($body | split("\n") | map(select((test($tb; "i") or test($wb; "i")) | not)) | join("\n"))
+		  else $body end' 2>/dev/null
+	return $?
+}
+
+# GH#39856: one release receipt per expired gate; issue_not_before_state reads
+# it back as "released", so the expiry cannot release the issue twice.
+_der_post_not_before_receipt() {
+	local repo="$1"
+	local issue_number="$2"
+	local at="$3"
+	local ops="" body=""
+	ops=$(aidevops_ops_marker not-before-release 2>/dev/null) || ops='<!-- aidevops:ops kind=not-before-release -->'
+	body="${ops}
+<!-- ${ISSUE_NOT_BEFORE_RELEASED_MARKER} at=${at} -->
+Time gate elapsed: the \`${ISSUE_NOT_BEFORE_MARKER}\` hold expired at ${at}. The dependency pass removed \`status:blocked\` (and a \`needs-dependency\` label without linked blockers), so this issue now dispatches normally."
+	gh api "repos/${repo}/issues/${issue_number}/comments" --method POST --field body="$body" >/dev/null 2>&1 || return 1
+	return 0
+}
+
 _der_try_unblock() {
 	local repo="$1"
 	local issue_number="$2"
 	local candidate_json="$3"
 	local labels="" body="" comments_json="" comments="" upstream_gated=false
+	local body_trusted=false nb_state="" nb_kind="" nb_at="" nb_release=false
 	_DER_RESULT=not_ready
+	_DER_NOT_BEFORE_SEEN=0
 	labels=$(printf '%s' "$candidate_json" | jq -r '[.labels.nodes[].name] | join(",")') || return 1
 	body=$(printf '%s' "$candidate_json" | jq -r '.body // ""') || return 1
 	_der_labels_has "$labels" status:blocked || return 0
@@ -547,7 +582,7 @@ _der_try_unblock() {
 	comments_json=$(gh api --paginate --slurp "repos/${repo}/issues/${issue_number}/comments?per_page=100" 2>/dev/null) || return 1
 	_der_json_pages_valid "$comments_json" || return 1
 	# aidevops:trust-boundary — external comments cannot assert a hold.
-	comments=$(printf '%s' "$comments_json" | jq -r '.[][] | select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR")) | .body // ""' 2>/dev/null) || return 1
+	comments=$(printf '%s' "$comments_json" | jq -r "${DER_TRUSTED_AUTHOR_JQ}"'.[][] | select(trusted_author) | .body // ""' 2>/dev/null) || return 1
 	if _der_labels_has "$labels" needs-dependency; then
 		local filtered=""
 		# Unreadable label history keeps every observation (fail closed).
@@ -555,6 +590,25 @@ _der_try_unblock() {
 			comments="$filtered"
 		fi
 	fi
+	# GH#39856: time gate. aidevops:trust-boundary — a body marker releases only
+	# when the issue author is trusted (the stale sweep supplies the association).
+	printf '%s' "$candidate_json" | jq -e "${DER_TRUSTED_AUTHOR_JQ}"'trusted_author' >/dev/null 2>&1 && body_trusted=true
+	nb_state=$(issue_not_before_state "$comments_json" "$body" "$body_trusted") || nb_state="invalid 0 -"
+	read -r nb_kind _ nb_at <<<"$nb_state"
+	case "$nb_kind" in
+	none) ;;
+	active | invalid)
+		_DER_NOT_BEFORE_SEEN=1
+		_DER_RESULT=held
+		return 0
+		;;
+	expired)
+		_DER_NOT_BEFORE_SEEN=1
+		comments=$(_der_comments_before_not_before "$comments_json" "$nb_at") || return 1
+		nb_release=true
+		;;
+	*) _DER_NOT_BEFORE_SEEN=1 ;;
+	esac
 	if _der_has_hold "$body" "$comments" "$labels" "$comments_json"; then
 		_DER_RESULT=held
 		return 0
@@ -572,9 +626,13 @@ _der_try_unblock() {
 		elif [[ "$_DER_NATIVE_BLOCKERS_PRESENT" != true ]]; then
 			# No native edge and no declared blocker: status:blocked came from another
 			# mechanism (cost breaker, infrastructure failure, sync retry hold) that
-			# owns its own release.
-			_der_declares_blockers "$candidate_json" || return 0
-			_der_all_declared_blockers_closed "$repo" "$candidate_json" "${repo}#${issue_number}" || gate_status=$?
+			# owns its own release. GH#39856: an expired trusted time gate is that
+			# mechanism, so it releases the issue here once.
+			if _der_declares_blockers "$candidate_json"; then
+				_der_all_declared_blockers_closed "$repo" "$candidate_json" "${repo}#${issue_number}" || gate_status=$?
+			elif [[ "$nb_release" != true ]]; then
+				return 0
+			fi
 		fi
 	fi
 	if [[ "$gate_status" -eq "$DER_NOT_READY" && "$DEP_SUPERSESSION_ABANDONED" -eq 1 ]]; then
@@ -598,6 +656,15 @@ _der_try_unblock() {
 	_der_labels_has "$labels" needs-dependency && unblock_args+=(--remove-label needs-dependency)
 	gh issue edit "$issue_number" --repo "$repo" "${unblock_args[@]}" >/dev/null 2>&1 || return 1
 	_DER_RESULT=unblocked
+	if [[ "$nb_release" == true ]]; then
+		# Labels first: a lost receipt leaves later observations to hold the
+		# issue, while a receipt without the release would strand it blocked.
+		if _der_post_not_before_receipt "$repo" "$issue_number" "$nb_at"; then
+			printf '[dependency-reconciler] not-before released repo=%s issue=#%s at=%s\n' "$repo" "$issue_number" "$nb_at" >&2
+		else
+			printf '[dependency-reconciler] not-before receipt failed repo=%s issue=#%s at=%s\n' "$repo" "$issue_number" "$nb_at" >&2
+		fi
+	fi
 	return 0
 }
 
@@ -851,8 +918,10 @@ _der_stale_memo_record() {
 	number=$(printf '%s' "$candidate" | jq -r '.number') || return 1
 	updated=$(printf '%s' "$candidate" | jq -r '.updated_at // ""') || return 1
 	body=$(printf '%s' "$candidate" | jq -r '.body // ""') || return 1
+	# GH#39856: a time gate expires without updating the issue, so never memoize
+	# an issue whose last visit saw a not-before marker.
 	if [[ -n "$updated" ]] && [[ "$status" -eq 0 || "$status" -eq "$DER_NOT_READY" ]] &&
-		! upstream_release_gate_declared "$body"; then
+		[[ "${_DER_NOT_BEFORE_SEEN:-0}" != 1 ]] && ! upstream_release_gate_declared "$body"; then
 		# Success also means "held" in _der_try_unblock. Only memoize a
 		# confirmed still-blocked issue, not a release or an ambiguous read.
 		if [[ "$status" -eq 0 ]]; then
@@ -1024,7 +1093,7 @@ reconcile_stale_blocked_issues() {
 		fi
 		[[ "$issue_number" =~ ^[1-9][0-9]*$ ]] || { failed=$((failed + 1)); continue; }
 		if ! body=$(gh api "repos/${repo}/issues/${issue_number}" 2>/dev/null) ||
-			! body=$(printf '%s' "$body" | jq -ce --argjson candidate "$candidate" 'select(has("body") and ((.body == null) or (.body | type == ("" | type)))) | $candidate + {body:(.body // "")}'); then
+			! body=$(printf '%s' "$body" | jq -ce --argjson candidate "$candidate" 'select(has("body") and ((.body == null) or (.body | type == ("" | type)))) | $candidate + {body:(.body // ""), author_association:(.author_association // "")}'); then
 			_der_stale_read_failed && continue
 			break
 		fi
