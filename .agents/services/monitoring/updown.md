@@ -22,11 +22,12 @@ tools:
 ## Quick Reference
 
 - **Purpose**: uptime and TLS-certificate monitoring for every site, with a public status page per site.
-- **Policy**: one updown.io account monitors every site. Each site gets its own status page on a subdomain of its live domain, `status.<domain>`, a `CNAME` to `page.updown.io`. Do not create an updown account per site.
-- **Helper**: `updown-helper.sh` — `list`, `json`, `add`, `update`, `delete`, `metrics`, `recipients`, `status-page list|add|update|delete`. Full flags: `updown-helper.sh help`.
+- **Policy**: one updown.io account monitors every site. Each site gets its own status page on a subdomain of its live domain, `status.<domain>`. Do not create an updown account per site.
+- **Custom domain = two DNS records, no updown.io screen**: `status.<domain>` `CNAME page.updown.io` and `_updown.status.<domain>` `TXT "updown-page=p/<page-token>"`. The TXT record attaches the domain to the page; the whole setup is automatable.
+- **Helper**: `updown-helper.sh` — `list`, `json`, `add`, `update`, `delete`, `metrics`, `recipients`, `status-page list|add|update|delete|domain`. Full flags: `updown-helper.sh help`.
 - **Credentials**: `aidevops secret set UPDOWN_API_KEY` (the read-write key from updown.io settings). The helper sends it as an `X-API-KEY` header on curl's stdin, never in arguments or URLs.
 - **Defaults**: new checks are private and hourly. Public visibility comes from the site's status page, which lists private checks too.
-- **Not in the API**: a status page's custom domain and account settings, including domain-expiration reminders (off by default). Set them in the updown.io UI; the helper cannot.
+- **Not in the API**: account settings, including domain-expiration reminders (off by default). Set them in the updown.io UI. When a step seems UI-only, read the screen first in the user's signed-in browser (`tools/browser/opencode-browse.md`): that is how the custom-domain screen turned out to list only DNS records.
 - **Use instead**: error tracking → `services/monitoring/sentry.md`; LLM traces → `services/monitoring/langwatch.md`.
 
 <!-- AI-CONTEXT-END -->
@@ -49,10 +50,16 @@ updown-helper.sh status-page add --name "Example status" --check <check-token>
 
 Then:
 
-1. On updown.io, open the status page's settings and enter `status.example.com` as its custom domain.
-2. At the site's DNS host, add every record the custom-domain screen lists: `status` `CNAME` `page.updown.io` (DNS only; see [DNS](#dns)), plus any TXT record shown there. The helper creates no DNS records. updown issues the page's TLS certificate (Let's Encrypt or ZeroSSL) once the records resolve. After changing an existing record, wait out its TTL.
-3. Verify: `dig +short CNAME status.example.com` returns `page.updown.io.`, and `curl -sSI https://status.example.com/` returns `200` with a valid certificate.
-4. Link the status page from the site, for example in the footer.
+1. At the site's DNS host (its API, for example Cloudflare's, or panel) add both records. The helper creates no DNS records.
+
+   | Name | Type | Value |
+   |------|------|-------|
+   | `status.example.com` | `CNAME` | `page.updown.io` (DNS only; see [DNS](#dns)) |
+   | `_updown.status.example.com` | `TXT` | `"updown-page=p/<page-token>"` |
+
+   There is nothing to enter on updown.io. The page's **Setup a custom domain** link (`https://updown.io/public-status?page=p%2F<page-token>`) only shows these records. The page must be `public` or `protected`. A check's own page uses the check token instead (`updown-page=<check-token>`).
+2. Verify: `updown-helper.sh status-page domain <page-token> status.example.com` prints both records and checks the CNAME, the TXT record and `https://status.example.com/` (200 with a valid certificate). updown issues the certificate (Let's Encrypt or ZeroSSL) on the first HTTPS request after the records resolve, so the first TLS handshake can fail; the command retries for a minute. After changing an existing record, wait out its TTL.
+3. Link the status page from the site, for example in the footer.
 
 Several checks for one site (homepage, login, API) belong on the same page: repeat `--check`, or pass a comma-separated list, in display order. `status-page update <token> --check ...` replaces the list.
 
@@ -62,7 +69,7 @@ The status page shows each check's alias; with an alias set, the check URL is no
 
 | Situation | Record |
 |-----------|--------|
-| Default | `status` `CNAME` `page.updown.io`, DNS only (Cloudflare grey cloud) |
+| Default | `status` `CNAME` `page.updown.io`, DNS only (Cloudflare grey cloud), plus `_updown.status` `TXT "updown-page=p/<page-token>"` |
 | Cloudflare proxied (orange cloud) | Avoid. If required, add CAA records on `status.<domain>`: `0 issue "letsencrypt.org"` and `0 issue "sectigo.com"`, because proxying hides updown's own CAA and certificate issuance fails (Cloudflare error 525). Never use Flexible TLS: it loops redirects. |
 | Site on a subdomain (`app.example.com`) | `status.app.example.com` must be DNS only: Cloudflare's free certificate covers one subdomain level. |
 | Multisite network with wildcard subdomain sites | The explicit `status` record shadows the `*` wildcard, so no subsite may be named `status`. |
@@ -98,12 +105,13 @@ A status page lists its checks whether or not they are published, so keep checks
 | `delete <token>` / `metrics <token>` | Delete a check / last month's metrics |
 | `recipients` | Alert recipient ids for `--recipient` |
 | `status-page list\|add\|update\|delete` | Manage status pages (`/api/status_pages`) |
+| `status-page domain <page-token> <host>` | Read-only: print the page's two DNS records for `host`, then check them and `https://host/` |
 
 Invalid flag values exit 1 before any API call.
 
 ## Handover
 
-When a site changes hands, remove its monitoring from this account instead of creating an account for it: `updown-helper.sh status-page delete <page-token>`, then `updown-helper.sh delete <check-token>`. Delete the page first so the custom domain is no longer attached to this account. The new owner can keep the `status` `CNAME` to `page.updown.io` for their own updown page, or repoint it to another provider.
+When a site changes hands, remove its monitoring from this account instead of creating an account for it: `updown-helper.sh status-page delete <page-token>`, then `updown-helper.sh delete <check-token>`. Delete the page first so the custom domain is no longer attached to this account. The new owner can keep the `status` `CNAME` to `page.updown.io` and change the `_updown.status` TXT record to their own page's token, or repoint both to another provider.
 
 ## Related
 
