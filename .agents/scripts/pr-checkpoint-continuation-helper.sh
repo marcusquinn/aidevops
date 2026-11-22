@@ -1429,6 +1429,10 @@ _PCC_JQ_STALL_DEFS='
 # fleet re-arm (_pcc_fleet_rearm_allowed, GH#37514). The same-episode ready
 # attempt and optional earlier checkpoint release prefill the command only
 # after approval-template validates the complete successor history.
+# GH#39913: a failed continuation launch describes the runner, not the head.
+# Runners whose continuation never launched after the release count once
+# each, except the first, so only a second failing runner reaches attention;
+# repeated failures of one runner fence only it (_pcc_runner_launch_fenced).
 # Args: $1=comments JSON (paginated or flat), $2=head commit ISO date,
 #       $3=attention dedup key, $4=trusted logins JSON,
 #       $5=PR creation ISO date (optional; empty disables the per-PR count),
@@ -1523,11 +1527,7 @@ _pcc_stall_release_evidence() {
 				((.commit.committer.date // "") | (try epoch catch 0)) <= $end))] | length) as $progress
 		| ([$c[] | select(ownership($c) and (unlaunched_episode($c) | not))] | last) as $release
 		| select($release != null and ($release | unedited and stall_release))
-		# GH#39913: a launch failure describes the runner, not the head. Each
-		# runner whose continuation never launched after the release counts
-		# once, except the first: a second failing runner reaches attention.
-		# Repeated failures of one runner fence only that runner
-		# (_pcc_runner_launch_fenced).
+		# Never-launched episodes count once per runner, minus one (GH#39913).
 		| ([$c[] | select(.id > $release.id and unlaunched_episode($c) and
 			any(body_lines; claim_event)) | login] | unique | length) as $failed_runners
 		| ([$failed_runners - 1, 0] | max) as $extra_stalls
