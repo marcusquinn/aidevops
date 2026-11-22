@@ -738,6 +738,7 @@ _pm_gate_repository_and_issue() {
 _pm_gate_origin_authority() {
 	local pr_number="$1" repo_slug="$2" linked_issue="$3" pr_author="$4"
 	local trusted_issue_sync="$5" author_permission="$6" info_json="" labels_str="" is_draft="false"
+	local hold_issue="$3" pr_body=""
 	info_json=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" --json labels,isDraft,autoMergeRequest,headRefName,body 2>/dev/null) || info_json=""
 	# #aidevops:trust-boundary — holds apply to every origin, including takeover.
 	if ! printf '%s' "$info_json" | jq -e '(.isDraft | type) == "boolean" and (.labels | type) == "array"' >/dev/null 2>&1; then
@@ -747,10 +748,15 @@ _pm_gate_origin_authority() {
 	is_draft=$(printf '%s' "$info_json" | jq -r '.isDraft // false' 2>/dev/null) || is_draft="false"
 	if [[ "$is_draft" == false ]] && _feedback_route_labels_include "$labels_str" hold-for-review; then
 		# t19286: a closed-issue hold whose issue another merged PR closed is
-		# superseded work, not a maintainer question.
-		if declare -F _feedback_route_close_superseded_closed_issue_hold >/dev/null 2>&1 \
-			&& _feedback_route_close_superseded_closed_issue_hold "$pr_number" "$repo_slug" "$linked_issue"; then
-			return 1
+		# superseded work, not a maintainer question. t19288: For #N recovery
+		# and takeover PRs have no closing target; their one explicit work
+		# issue is the proof target only, and the hold receipt must name it.
+		if declare -F _feedback_route_close_superseded_closed_issue_hold >/dev/null 2>&1; then
+			if [[ -z "$hold_issue" ]]; then
+				pr_body=$(printf '%s' "$info_json" | jq -r '.body // ""' 2>/dev/null) || pr_body=""
+				hold_issue=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit "$pr_body" 2>/dev/null) || hold_issue=""
+			fi
+			_feedback_route_close_superseded_closed_issue_hold "$pr_number" "$repo_slug" "$hold_issue" && return 1
 		fi
 		# Recheck on the next merge pass after any verified recovery.
 		_feedback_route_release_projection_hold "$pr_number" "$repo_slug" || true
