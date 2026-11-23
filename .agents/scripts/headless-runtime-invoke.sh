@@ -615,18 +615,25 @@ _capture_worker_usage_tokens() {
 	[[ "${runtime_role:-}" == "${HEADLESS_ROLE_WORKER:-worker}" ]] || return 0
 	[[ -f "$runtime_db" && ! -L "$runtime_db" ]] || return 0
 	command -v sqlite3 >/dev/null 2>&1 || return 0
-	local total
+	local total sessions since_ms session_id
+	# shellcheck source=gh-signature-helper-session.sh
+	source "${SCRIPT_DIR}/gh-signature-helper-session.sh"
+	since_ms=$(_worker_attempt_start_ms)
+	if ! sessions=$(sqlite3 "$runtime_db" 'SELECT DISTINCT session_id FROM message;' 2>/dev/null); then
+		print_warning "Worker usage capture failed: sqlite3 query error (attempt_start_ms=${since_ms:-unknown})"
+		return 0
+	fi
 	total=$(
-		# shellcheck source=gh-signature-helper-session.sh
-		source "${SCRIPT_DIR}/gh-signature-helper-session.sh"
-		local since_ms session_id
-		since_ms=$(_worker_attempt_start_ms)
-		sqlite3 "$runtime_db" 'SELECT DISTINCT session_id FROM message;' |
-			while IFS= read -r session_id; do
-				_sum_session_tokens_for_session "$runtime_db" "$session_id" "$since_ms"
-			done | jq -s 'add // 0'
-	) 2>/dev/null || total=0
-	[[ "$total" =~ ^[0-9]+$ ]] && _WORKER_USAGE_TOKENS_TOTAL="$total"
+		while IFS= read -r session_id; do
+			[[ -n "$session_id" ]] || continue
+			_sum_session_tokens_for_session "$runtime_db" "$session_id" "$since_ms"
+		done <<<"$sessions" | jq -s 'add // 0' 2>/dev/null
+	) || total=""
+	if [[ "$total" =~ ^[0-9]+$ ]]; then
+		_WORKER_USAGE_TOKENS_TOTAL="$total"
+	else
+		print_warning "Worker usage capture failed: non-numeric total (attempt_start_ms=${since_ms:-unknown})"
+	fi
 	return 0
 }
 
