@@ -20,7 +20,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, NamedTuple
 
 from repo_layout_common import (
     MigrationError as MigrationError,
@@ -45,6 +45,12 @@ from repo_layout_repository import (
     status_records as status_records,
     working_tree_digest as working_tree_digest,
     worktree_records as worktree_records,
+)
+from repo_layout_selection import (
+    nested_first_order as nested_first_order,
+    nested_relative_paths as nested_relative_paths,
+    validate_disjoint_destinations as validate_disjoint_destinations,
+    validate_registered_source as validate_registered_source,
 )
 
 
@@ -156,6 +162,17 @@ def plan_consumers(args: argparse.Namespace, mappings: dict[str, str]) -> dict[s
     return consumers
 
 
+def registration_destination(item: Any, mappings: dict[str, str]) -> str | None:
+    """Return a registration's planned destination, if any.
+
+    Registration paths are expanded the same way planning matches them, so a
+    ``~``-relative spelling that admitted a move is also retargeted.
+    """
+    if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+        return None
+    return mappings.get(str(expand_path(item["path"])))
+
+
 def repos_json_consumer(path: Path, mappings: dict[str, str]) -> dict[str, Any] | None:
     """Describe exact repository registration matches when config exists."""
     if not path.exists():
@@ -164,7 +181,7 @@ def repos_json_consumer(path: Path, mappings: dict[str, str]) -> dict[str, Any] 
     matches = [
         {"index": index, "path": item["path"]}
         for index, item in enumerate(config.get("initialized_repos", []))
-        if isinstance(item, dict) and item.get("path") in mappings
+        if registration_destination(item, mappings) is not None
     ]
     return {"path": str(path), "sha256": file_sha256(path), "matches": matches}
 
@@ -228,9 +245,16 @@ def recovery_marker_consumers(
 
 
 def select_plan_sources(
-    discovered: list[Path], workspace: Path, requested: list[str] | None
+    discovered: list[Path],
+    workspace: Path,
+    requested: list[str] | None,
+    registrations: list[dict[str, Any]] | None = None,
 ) -> list[Path]:
-    """Validate exact fleet selection without bypassing native discovery."""
+    """Validate exact fleet selection without bypassing native discovery.
+
+    ``registrations`` is supplied only when registered paths are approved; it
+    admits exact registered canonical roots that discovery does not report.
+    """
     if requested is None:
         return discovered
     if not requested or any(not value for value in requested):
@@ -242,11 +266,36 @@ def select_plan_sources(
             raise MigrationError("Selected source must be an existing non-symlink directory")
         source = source.resolve()
         if not path_is_inside(workspace, source) or source not in discovered:
-            raise MigrationError("Selected source is not a discovered workspace repository")
+            if registrations is None:
+                raise MigrationError("Selected source is not a discovered workspace repository")
+            validate_registered_source(source, workspace, registrations)
         if source in selected:
             raise MigrationError("Duplicate selected source")
         selected.append(source)
-    return sorted(selected)
+    return nested_first_order(sorted(selected))
+
+
+def validate_nested_moves(repositories: list[dict[str, Any]]) -> None:
+    """Require each nested selection to move out of its parent before it."""
+    planned = {item["source"]: index for index, item in enumerate(repositories)}
+    for index, item in enumerate(repositories):
+        parent = Path(item["source"])
+        for relative in item.get("nested_sources", []):
+            child_index = planned.get(str(parent / relative))
+            if child_index is None:
+                raise MigrationError(
+                    f"Nested selected repository has no planned move: {parent / relative}"
+                )
+            child = repositories[child_index]
+            if child_index > index or path_is_inside(parent, Path(child["destination"])):
+                raise MigrationError(
+                    f"Nested repository cannot move out before its parent: {child['source']}"
+                )
+
+
+def nested_exclusions(item: dict[str, Any]) -> tuple[str, ...]:
+    """Return the nested selections omitted from one repository's fingerprint."""
+    return tuple(item.get("nested_sources", ()))
 
 
 def plan_command(args: argparse.Namespace) -> int:
@@ -263,13 +312,23 @@ def plan_command(args: argparse.Namespace) -> int:
     exclusions: list[dict[str, str]] = []
     discovered = list(discover_repositories(workspace, discovery_lib))
     requested_sources = getattr(args, "source", None)
-    discovered = select_plan_sources(discovered, workspace, requested_sources)
+    discovered = select_plan_sources(
+        discovered,
+        workspace,
+        requested_sources,
+        registrations if args.include_registered_paths else None,
+    )
+    inputs = PlanInputs(workspace, repos_json, registrations, args)
     for source in discovered:
-        repository, exclusion = plan_repository(source, workspace, repos_json, registrations, args)
+        repository, exclusion = plan_repository(
+            source, inputs, nested_relative_paths(source, discovered)
+        )
         if repository:
             repositories.append(repository)
         if exclusion:
             exclusions.append(exclusion)
+    validate_nested_moves(repositories)
+    validate_disjoint_destinations([Path(item["destination"]) for item in repositories])
 
     mappings = migration_mappings(repositories)
     consumers = plan_consumers(args, mappings)
@@ -339,14 +398,22 @@ def load_registrations(repos_json: Path) -> list[dict[str, Any]]:
     return [item for item in entries if isinstance(item, dict)]
 
 
+class PlanInputs(NamedTuple):
+    """Plan-wide inputs shared by every per-repository planning call."""
+
+    workspace: Path
+    repos_json: Path
+    registrations: list[dict[str, Any]]
+    args: argparse.Namespace
+
+
 def plan_repository(
     source: Path,
-    workspace: Path,
-    repos_json: Path,
-    registrations: list[dict[str, Any]],
-    args: argparse.Namespace,
+    inputs: PlanInputs,
+    nested: tuple[str, ...] = (),
 ) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
-    """Plan one discovered repository or return its exclusion reason."""
+    """Plan one selected repository or return its exclusion reason."""
+    workspace, repos_json, registrations, args = inputs
     try:
         remote = git(source, "remote", "get-url", "origin").strip()
     except MigrationError:
@@ -379,13 +446,13 @@ def plan_repository(
     if exclusion_reason:
         return None, {"path": str(source), "reason": exclusion_reason}
     destination_parent = safe_destination_parent(workspace, destination)
-    worktrees = worktree_records(source)
-    return {
+    worktrees = worktree_records(source, nested)
+    item: dict[str, Any] = {
         "source": str(source),
         "destination": str(destination),
         "stage": str(workspace / f".aidevops-layout-stage-{uuid.uuid4().hex[:12]}"),
         "remote": {"host": host, "owner": owner, "repository": repository},
-        "fingerprint": repository_fingerprint(source),
+        "fingerprint": repository_fingerprint(source, nested),
         "linked_pointers": linked_pointer_records(source, worktrees),
         # GH#40058: dead registrations stay recorded, not repaired; apply
         # refuses if any path reappears. Prune them with
@@ -397,7 +464,10 @@ def plan_repository(
         "destination_device": destination_parent.stat().st_dev,
         "destination_collision": destination.exists()
         and not same_existing_path(source, destination),
-    }, None
+    }
+    if nested:
+        item["nested_sources"] = list(nested)
+    return item, None
 
 
 def validate_protected_paths(
@@ -670,7 +740,9 @@ def validate_repository_plan(
     for prunable in item.get("prunable_worktrees", []):
         if os.path.lexists(prunable):
             raise MigrationError(f"Repository drift detected: prunable worktree reappeared: {prunable}")
-    if not (started and location == stage) and repository_fingerprint(location) != item["fingerprint"]:
+    if not (started and location == stage) and repository_fingerprint(
+        location, nested_exclusions(item)
+    ) != item["fingerprint"]:
         raise MigrationError(f"Repository drift detected: {source}")
     if source.exists() and destination.exists() and not same_existing_path(source, destination):
         raise MigrationError(f"Source and destination both exist: {source}")
@@ -874,7 +946,7 @@ def move_repository(
     else:
         raise MigrationError(f"Ambiguous move state: {source}")
     repair_linked_pointers(item, destination)
-    observed = repository_fingerprint(destination)
+    observed = repository_fingerprint(destination, nested_exclusions(item))
     if observed != item["fingerprint"]:
         changed_fields = sorted(
             key
@@ -943,8 +1015,9 @@ def prepare_repos_json(
         raise MigrationError(f"Malformed JSON backup: {backup}") from exc
     changed = 0
     for item in payload.get("initialized_repos", []):
-        if isinstance(item, dict) and item.get("path") in mappings:
-            item["path"] = mappings[item["path"]]
+        target = registration_destination(item, mappings)
+        if target is not None:
+            item["path"] = target
             changed += 1
     encoded = json.dumps(payload, indent=2, ensure_ascii=False).encode() + b"\n"
     return (
@@ -1405,30 +1478,27 @@ def restore_linked_pointers(details: dict[str, Any]) -> None:
 def rollback_repository(item: dict[str, Any], details: dict[str, Any]) -> None:
     """Idempotently return an unchanged repository and pointers to its source."""
     source = Path(item["source"])
-    destination = Path(item["destination"])
     stage = Path(item["stage"])
     self_nested = bool(details.get("self_nested"))
-    prepare_repository_rollback(source, destination, stage, self_nested, details)
+    prepare_repository_rollback(item, details)
     if self_nested and stage.exists():
         remove_created_directories(details, strict=True)
         if source.exists():
             raise MigrationError(f"Nested rollback source remains occupied: {source}")
         os.rename(stage, source)
     restore_linked_pointers(details)
-    if repository_fingerprint(source) != item["fingerprint"]:
+    if repository_fingerprint(source, nested_exclusions(item)) != item["fingerprint"]:
         raise MigrationError(f"Repository rollback verification failed: {source}")
     if not self_nested:
         remove_created_directories(details, strict=False)
 
 
-def prepare_repository_rollback(
-    source: Path,
-    destination: Path,
-    stage: Path,
-    self_nested: bool,
-    details: dict[str, Any],
-) -> None:
+def prepare_repository_rollback(item: dict[str, Any], details: dict[str, Any]) -> None:
     """Restore or stage the repository according to its durable move state."""
+    source = Path(item["source"])
+    destination = Path(item["destination"])
+    stage = Path(item["stage"])
+    self_nested = bool(details.get("self_nested"))
     case_only_same = (
         source != destination
         and str(source).lower() == str(destination).lower()
@@ -1442,7 +1512,7 @@ def prepare_repository_rollback(
     elif destination.is_dir() and (
         not source.exists() or self_nested or case_only_same
     ):
-        if repository_fingerprint(destination) != details["post_fingerprint"]:
+        if repository_fingerprint(destination, nested_exclusions(item)) != details["post_fingerprint"]:
             raise MigrationError(f"Post-plan repository drift blocks rollback: {destination}")
         validate_rollback_pointers(details)
         if self_nested:

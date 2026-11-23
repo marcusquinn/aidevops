@@ -97,7 +97,18 @@ Explicit `initialized_repos[].path` entries remain excluded unless planning uses
 `--include-registered-paths`; that approval is recorded in the content-hashed
 plan. Repeat `--source <path>` to limit a plan to exact repositories, such as one
 hosting fleet. Native consumer inventory and every apply guard still apply, and an
-empty selection is refused. Apply rechecks the complete before-state, rejects cross-device moves and
+empty selection is refused. With `--include-registered-paths`, `--source` may
+also name a repository that discovery does not report: one outside the
+workspace (such as `~/Project`) or nested inside another repository. It must
+match an `initialized_repos[].path` entry exactly and be a canonical root with
+its own `.git` directory. It must not be local-only, a linked worktree, a
+submodule or other path tracked by an enclosing repository, or a directory that
+contains the workspace. A `~` spelling of the registration is accepted and is
+retargeted after the move. When one selected source
+is inside another, the plan moves the nested repository first, omits it from
+the parent's fingerprint, and refuses a nested destination inside the parent.
+Planned destinations that are equal or contain one another are refused.
+Rollback reverses that order. Apply rechecks the complete before-state, rejects cross-device moves and
 active-path ambiguity, moves one repository at a time, and writes owner-private
 append-only receipts. Replaying apply resumes verified steps. Rollback requires
 the latest receipt hash and stops rather than overwriting post-plan changes.
