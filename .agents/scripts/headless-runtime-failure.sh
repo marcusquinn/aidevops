@@ -765,18 +765,18 @@ ${machine_readable_part}${terminal_blocker_fragment}
 }
 
 # GH#40018: the release claim check found no claim to publish. When this runner
-# already persisted the bound release and retry evidence says that attempt did
-# not finish (publication succeeded, then the re-read or projection failed),
-# project lifecycle state from the persisted receipt, not from this retry.
-# Without retry evidence a released claim was already projected: no writes.
+# already persisted the bound release and retry evidence recorded under this
+# lease says that attempt did not finish (publication succeeded, then the
+# re-read or projection failed), project lifecycle state from the persisted
+# receipt, not from this retry. Without retry evidence for this lease a
+# released claim was already projected: no writes.
 # Returns non-zero only when that projection fails, so the evidence is kept.
 _hrff_finish_persisted_release() {
 	local issue_number="$1" repo_slug="$2" runner_name="$3" session_key="$4"
-	local reason="${_HRFF_RELEASED_CLAIM_REASON:-}" row=""
+	local reason="${_HRFF_RELEASED_CLAIM_REASON:-}"
 	[[ -n "$reason" && "${_HRFF_RELEASE_CLAIM_ID:-}" =~ ^[1-9][0-9]*$ ]] || return 0
-	declare -F _hrrr_path >/dev/null 2>&1 || return 0
-	row=$(_hrrr_path "$repo_slug" "$issue_number" "$session_key") || return 0
-	[[ -f "$row" ]] || return 0
+	declare -F _hrrr_row_binds_lease >/dev/null 2>&1 || return 0
+	_hrrr_row_binds_lease "$repo_slug" "$issue_number" "$session_key" || return 0
 	[[ "$reason" != blocked || "${_HRFF_RELEASED_CLAIM_EVIDENCE:-}" != unrecorded ]] ||
 		reason="$_HRFF_REASON_BLOCKED_UNRECORDED"
 	print_info "Finishing lifecycle projection for persisted release on #${issue_number} (reason: ${reason})"

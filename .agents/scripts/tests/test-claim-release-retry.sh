@@ -249,6 +249,26 @@ check "retried persisted projection row cleared" "$(rows)" "0"
 : >"${ROOT}/projection"
 RETRY_TEST_ROOT="$ROOT" TEST_RELEASED_REASON=worker_failed bash "$0" real-attempt
 check "released claim without evidence no projection" "$(wc -c <"${ROOT}/projection" | tr -d ' ')" "0"
+# A row recorded under another lease of this session, or a tampered row, is
+# not this attempt's unfinished projection.
+RETRY_TEST_ROOT="$ROOT" bash "$0" real-record-failed
+check "foreign lease row recorded" "$(rows)" "1"
+jq '.lease_token = "other-lease"' "$f" >"${f}.t" && mv "${f}.t" "$f" && _hrrr_binding "$f" >"${f}.binding"
+: >"${ROOT}/projection"
+RETRY_TEST_ROOT="$ROOT" TEST_RELEASED_REASON=worker_failed bash "$0" real-attempt
+check "foreign lease row no projection" "$(wc -c <"${ROOT}/projection" | tr -d ' ')" "0"
+rm -f "$f" "${f}.binding"
+RETRY_TEST_ROOT="$ROOT" bash "$0" real-record-failed
+jq '.reason = "worker_complete"' "$f" >"${f}.t" && mv "${f}.t" "$f"
+RETRY_TEST_ROOT="$ROOT" TEST_RELEASED_REASON=worker_failed bash "$0" real-attempt
+check "tampered row no projection" "$(wc -c <"${ROOT}/projection" | tr -d ' ')" "0"
+rm -f "$f" "${f}.binding"
+# The same lease's row finishes the live attempt's projection.
+RETRY_TEST_ROOT="$ROOT" bash "$0" real-record-failed
+RETRY_TEST_ROOT="$ROOT" TEST_RELEASED_REASON=worker_failed bash "$0" real-attempt
+check "same lease row projects live attempt" "$(<"${ROOT}/projection")" "available"
+rm -f "$f" "${f}.binding"
+: >"${ROOT}/projection"
 : >"${ROOT}/published"
 
 # GH#38021: a deferred draft-checkpoint release carries the recording run's
