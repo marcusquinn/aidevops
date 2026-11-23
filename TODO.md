@@ -2462,7 +2462,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19307 fix(pulse-dispatch): name the real cause when worktree pre-creation fails #bug #interactive tier:standard ref:GH#40000 -> [todo/tasks/t19307-brief.md] pr:#40001 completed:2026-11-23
 
-- [ ] t19309 fix(headless): release the dispatch claim before the exit-trap terminal lease so prelaunch failures stop pinning issues #bug #interactive tier:standard ref:GH#40008 -> [todo/tasks/t19309-brief.md]
+- [x] t19309 fix(headless): release the dispatch claim before the exit-trap terminal lease so prelaunch failures stop pinning issues #bug #interactive tier:standard ref:GH#40008 -> [todo/tasks/t19309-brief.md] pr:#40014 completed:2026-11-23
 
 - [x] t19310 fix(worktrees): same-boot owner launch reuse always refused — drain() drops worktree generation identity #bug ref:GH#40009 pr:#40010 completed:2026-11-23
 
