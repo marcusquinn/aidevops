@@ -119,6 +119,77 @@ if ! grep -qF 'credential.helper=!gh auth git-credential' "$GITHUB_AUTH_RETRY_LO
 fi
 printf 'PASS GitHub SSH askpass failure retries through transient gh HTTPS auth\n'
 
+# GH#40016: a configured gh helper can disappear after Nix store GC. Only a
+# GitHub HTTPS helper execution failure warrants one process-scoped retry.
+HTTPS_FETCH_LOG="${ROOT}/https-fetch.log"
+HTTPS_FETCH_STDERR="${ROOT}/https-fetch.stderr"
+# Args: remote URL, initial error, retry exit code, gh auth status
+https_helper_case() {
+	local fixture_remote_url="$1"
+	local message="$2"
+	local retry_rc="$3"
+	local auth_rc="$4"
+	local case_rc=0
+	: >"$HTTPS_FETCH_LOG"
+	(
+		SCRIPT_DIR="$(cd "$(dirname "$ADD_HELPER")" && pwd)"
+		# shellcheck source=../worktree-helper-add.sh
+		source "$ADD_HELPER"
+		git() {
+			local git_args="$*"
+			case "$git_args" in
+			*" remote get-url origin"*)
+				printf '%s\n' "$fixture_remote_url"
+				return 0
+				;;
+			*" fetch "*)
+				printf '%s\n' "$git_args" >>"$HTTPS_FETCH_LOG"
+				if [[ "$git_args" == *"-c credential.helper= -c credential.helper=!gh auth git-credential fetch"* ]]; then
+					return "$retry_rc"
+				fi
+				printf '%s\n' "$message" >&2
+				return 128
+				;;
+			esac
+			return 99
+		}
+		gh() { return "$auth_rc"; }
+		_worktree_fetch_origin_branch "$CANONICAL" main
+	) 2>"$HTTPS_FETCH_STDERR" || case_rc=$?
+	HTTPS_FETCH_ATTEMPTS=$(wc -l <"$HTTPS_FETCH_LOG" | tr -d ' ')
+	return "$case_rc"
+}
+STALE_HELPER_ERROR='/nix/store/old-gh/bin/.gh-wrapped auth git-credential get: line 1: /nix/store/x/.gh-wrapped: No such file or directory'
+if ! https_helper_case 'https://github.com/example/repository.git' "$STALE_HELPER_ERROR" 0 0 ||
+	[[ "$HTTPS_FETCH_ATTEMPTS" != 2 ]] ||
+	! grep -qF "$STALE_HELPER_ERROR" "$HTTPS_FETCH_STDERR" ||
+	! grep -qF 'Repair the stale credential.helper configuration' "$HTTPS_FETCH_STDERR" ||
+	grep -qF 'insteadOf' "$HTTPS_FETCH_LOG"; then
+	printf 'FAIL missing HTTPS helper did not retry once with a diagnostic and no URL rewrite\n'
+	exit 1
+fi
+if ! https_helper_case 'https://github.com/example/repository.git' 'credential helper old-gh not found' 0 0 ||
+	[[ "$HTTPS_FETCH_ATTEMPTS" != 2 ]]; then
+	printf 'FAIL generic missing credential helper did not retry\n'
+	exit 1
+fi
+HTTPS_FAILURE_RC=0
+https_helper_case 'https://github.com/example/repository.git' "$STALE_HELPER_ERROR" 42 0 || HTTPS_FAILURE_RC=$?
+if [[ "$HTTPS_FAILURE_RC" != 42 || "$HTTPS_FETCH_ATTEMPTS" != 2 ]]; then
+	printf 'FAIL HTTPS helper retry did not preserve failure status or retry bound\n'
+	exit 1
+fi
+if https_helper_case 'https://github.com.example.invalid/repository.git' "$STALE_HELPER_ERROR" 0 0 ||
+	[[ "$HTTPS_FETCH_ATTEMPTS" != 1 ]] ||
+	https_helper_case 'https://github.com/example/repository.git' 'fatal: Authentication failed' 0 0 ||
+	[[ "$HTTPS_FETCH_ATTEMPTS" != 1 ]] ||
+	https_helper_case 'https://github.com/example/repository.git' "$STALE_HELPER_ERROR" 0 1 ||
+	[[ "$HTTPS_FETCH_ATTEMPTS" != 1 ]]; then
+	printf 'FAIL unrelated remote, authentication failure, or unavailable gh auth triggered a retry\n'
+	exit 1
+fi
+printf 'PASS missing GitHub HTTPS helper retries once; unrelated failures remain closed\n'
+
 # GH#38060: concurrent fetches of one remote-tracking ref make Git reject all
 # but one ref update. That is not a stale base. The fetch is repeated a bounded
 # number of times; any other failure is still returned after one attempt.
