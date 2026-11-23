@@ -32,6 +32,9 @@ _GCW_GRACED_CLASSIFICATION=""
 _GCW_CONFIGURED_CACHED=0
 _GCW_CONFIGURED_RC=1
 _GCW_CONFIGURED_CONTEXTS=""
+# GH#40059: active-workflow evidence for empty --all reads (""=unread).
+readonly _GCW_WORKFLOWS_NONE="none" _GCW_WORKFLOWS_PRESENT="present"
+_GCW_WORKFLOWS_STATE=""
 
 usage() {
 	cat <<'EOF'
@@ -117,6 +120,20 @@ fixture_for_poll() {
 	return 0
 }
 
+# True when the exact reader's rc=1 diagnostic reports a valid empty selection
+# for this mode: required-only and --all each accept only their own wording, so
+# a required-mode message can never satisfy an --all wait or vice versa.
+is_empty_selection_diagnostic() {
+	local required_only="$1"
+	local diagnostic="$2"
+	if [[ "$required_only" -eq 1 ]]; then
+		[[ "$diagnostic" =~ ^no\ required\ checks\ reported\ on\ the\ \'[^\']+\'\ branch$ ]]
+		return $?
+	fi
+	[[ "$diagnostic" =~ ^no\ checks\ reported\ on\ the\ \'[^\']+\'\ branch$ ]]
+	return $?
+}
+
 fetch_checks() {
 	local pr_number="$1"
 	local repo="$2"
@@ -152,7 +169,7 @@ PY
 	fi
 	checks_stderr=$(<"$checks_stderr_file")
 	rm -f "$checks_stderr_file"
-	if [[ "$required_only" -eq 1 && "$rc" -eq 1 && -z "$checks" && "$checks_stderr" =~ ^no\ required\ checks\ reported\ on\ the\ \'[^\']+\'\ branch$ ]]; then
+	if [[ "$rc" -eq 1 && -z "$checks" ]] && is_empty_selection_diagnostic "$required_only" "$checks_stderr"; then
 		printf '[]\n'
 		return 0
 	fi
@@ -499,6 +516,39 @@ zero_job_runs() {
 	return 0
 }
 
+# GH#40059: decide once per wait whether an empty --all read may be final.
+# Sets _GCW_WORKFLOWS_STATE to "none" only on verified evidence of zero active
+# workflows; an unreadable or malformed response stays unresolved (treated as
+# present, so the settle window applies) and is retried on the next empty poll.
+# Fixture mode reads ${AIDEVOPS_GH_CHECKS_FIXTURE_DIR}/workflows.json; an absent
+# fixture file means the fixture repository has no workflows.
+resolve_active_workflows_once() {
+	local repo="$1"
+	local fixture_dir="${AIDEVOPS_GH_CHECKS_FIXTURE_DIR:-}"
+	local workflows_json="" active=""
+	[[ -z "$_GCW_WORKFLOWS_STATE" ]] || return 0
+	if [[ -n "$fixture_dir" ]]; then
+		if [[ ! -f "${fixture_dir}/workflows.json" ]]; then
+			_GCW_WORKFLOWS_STATE="$_GCW_WORKFLOWS_NONE"
+			return 0
+		fi
+		workflows_json=$(<"${fixture_dir}/workflows.json")
+	else
+		workflows_json=$(gh api -X GET "repos/${repo}/actions/workflows" -f per_page=100 2>/dev/null) || return 0
+	fi
+	active=$(printf '%s' "$workflows_json" | jq -er '
+		if ([.workflows | arrays] | length) == 0 or ([.total_count | numbers] | length) == 0 then error("malformed")
+		elif .total_count > (.workflows | length) then 1
+		else [.workflows[] | select(.state == "active")] | length end
+	' 2>/dev/null) || return 0
+	if [[ "$active" == "0" ]]; then
+		_GCW_WORKFLOWS_STATE="$_GCW_WORKFLOWS_NONE"
+	else
+		_GCW_WORKFLOWS_STATE="$_GCW_WORKFLOWS_PRESENT"
+	fi
+	return 0
+}
+
 classify_state() {
 	local checks="$1"
 	local required_only="$2"
@@ -511,6 +561,7 @@ classify_state() {
 	# substitution, so it cannot memoize them itself.
 	local passed_rc="${7:-}"
 	local passed_contexts="${8:-}"
+	local workflows_state="${9:-}"
 	local count=""
 	count=$(printf '%s' "$checks" | jq 'length')
 	# Absent configured required contexts are never success, in required-only
@@ -538,6 +589,12 @@ classify_state() {
 			printf 'pending\n'
 			return 0
 		fi
+	elif [[ "$count" -eq 0 && "$workflows_state" != "$_GCW_WORKFLOWS_NONE" && "$elapsed" -lt "$_GCW_EMPTY_REQUIRED_SETTLE_SECONDS" ]]; then
+		# GH#40059: an empty --all read can precede workflow registration on
+		# a fresh head; only a repo verified to have no active workflows skips
+		# the settle window.
+		printf 'pending\n'
+		return 0
 	fi
 	if [[ "$count" -eq 0 ]]; then
 		if [[ "$required_only" -eq 1 ]]; then
@@ -908,6 +965,7 @@ wait_for_checks() {
 	_GCW_CANCEL_SET=""
 	_GCW_CODACY_VERDICT=""
 	_GCW_CONFIGURED_CACHED=0
+	_GCW_WORKFLOWS_STATE=""
 	initial_head=$(verified_head_sha "$pr_number" "$repo" 'before required-check observation') || return 2
 	note_if_draft "$pr_number" "$repo"
 	_GCW_ACTIVE_DEFERRAL=""
@@ -949,7 +1007,10 @@ wait_for_checks() {
 		current="$_GCW_CODACY_CHECKS"
 		emit_codacy_stale_notes "$current" "$previous"
 		resolve_configured_contexts_once "$pr_number" "$repo"
-		IFS=$'\t' read -r classification missing_contexts zero_job_detail <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed" "$initial_head" "$_GCW_CONFIGURED_RC" "$_GCW_CONFIGURED_CONTEXTS")"
+		if [[ "$required_only" -eq 0 ]] && printf '%s' "$current" | jq -e 'length == 0' >/dev/null 2>&1; then
+			resolve_active_workflows_once "$repo"
+		fi
+		IFS=$'\t' read -r classification missing_contexts zero_job_detail <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed" "$initial_head" "$_GCW_CONFIGURED_RC" "$_GCW_CONFIGURED_CONTEXTS" "$_GCW_WORKFLOWS_STATE")"
 		apply_cancel_grace "$classification" "$current" "$now_epoch" "$raw"
 		classification="$_GCW_GRACED_CLASSIFICATION"
 		state_summary=$(state_counts "$current" "$missing_contexts")
