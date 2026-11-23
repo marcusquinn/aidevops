@@ -194,17 +194,39 @@ provider_static_auth_available() {
 	anthropic)
 		# GH#36707: OpenCode plugins export the selected pool token as
 		# ANTHROPIC_API_KEY; an inheriting child has no independent capacity.
-		[[ -n "${ANTHROPIC_API_KEY:-}" && "${AIDEVOPS_ANTHROPIC_API_KEY_SOURCE:-}" != "oauth-pool" ]]
-		return $?
+		if [[ -n "${ANTHROPIC_API_KEY:-}" && "${AIDEVOPS_ANTHROPIC_API_KEY_SOURCE:-}" != "oauth-pool" ]]; then
+			return 0
+		fi
 		;;
 	openai)
-		[[ -n "${OPENAI_API_KEY:-}" && "${AIDEVOPS_OPENAI_API_KEY_SOURCE:-}" != "oauth-pool" ]]
-		return $?
+		if [[ -n "${OPENAI_API_KEY:-}" && "${AIDEVOPS_OPENAI_API_KEY_SOURCE:-}" != "oauth-pool" ]]; then
+			return 0
+		fi
 		;;
 	*)
 		return 1
 		;;
 	esac
+
+	# GH#39947: OpenCode also stores independent API keys in auth.json.
+	# OAuth access/refresh entries must never bypass an exhausted pool.
+	local auth_file="${OPENCODE_AUTH_FILE:-${HOME}/.local/share/opencode/auth.json}"
+	[[ -f "$auth_file" ]] || return 1
+	python3 - "$auth_file" "$provider" <<'PY' >/dev/null 2>&1
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        data = json.load(fh)
+    entry = data.get(sys.argv[2])
+    key = entry.get("key") if isinstance(entry, dict) else None
+    valid = isinstance(entry, dict) and entry.get("type") == "api" and isinstance(key, str) and bool(key)
+except Exception:
+    sys.exit(1)
+sys.exit(0 if valid else 1)
+PY
+	return $?
 }
 
 # provider_oauth_pool_available: true when the OAuth pool has at least one

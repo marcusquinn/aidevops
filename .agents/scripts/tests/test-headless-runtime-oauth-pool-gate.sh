@@ -8,7 +8,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENTS_SCRIPTS="$(cd "${TEST_DIR}/.." && pwd)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/headless-oauth-pool-gate.XXXXXX")"
 HOME="$TMP_DIR/home"
-mkdir -p "$HOME/.aidevops"
+mkdir -p "$HOME/.aidevops" "$HOME/.local/share/opencode"
 
 cleanup() {
 	rm -rf "$TMP_DIR"
@@ -21,13 +21,14 @@ print_info() { printf 'INFO: %s\n' "$1" >&2; return 0; }
 print_warning() { printf 'WARN: %s\n' "$1" >&2; return 0; }
 timeout_sec() { return 1; }
 
-OPENCODE_AUTH_FILE="$TMP_DIR/auth.json"
+OPENCODE_AUTH_FILE="$HOME/.local/share/opencode/auth.json"
 OPENCODE_BIN_DEFAULT="opencode"
 OAUTH_POOL_HELPER="$TMP_DIR/oauth-pool-helper.sh"
 DEFAULT_HEADLESS_MODELS="openai/gpt-5.5"
 unset ANTHROPIC_API_KEY || true
 unset OPENAI_API_KEY || true
 unset AIDEVOPS_OPENAI_API_KEY_SOURCE || true
+unset AIDEVOPS_ANTHROPIC_API_KEY_SOURCE || true
 
 # shellcheck source=/dev/null
 source "${AGENTS_SCRIPTS}/headless-runtime-provider.sh"
@@ -148,6 +149,51 @@ unset AIDEVOPS_ANTHROPIC_API_KEY_SOURCE
 actual="$(_choose_model_auto "worker" "standard")"
 assert_equals "anthropic/claude-sonnet-5-5" "$actual" "independent Anthropic API key bypasses OAuth pool cooldown gate" || true
 unset ANTHROPIC_API_KEY
+TEST_MODELS=("openai/gpt-5.5" "anthropic/claude-sonnet-5-5")
+
+# GH#39947: stored API keys are independent of the OAuth pool, for both
+# providers. Reject OAuth, missing/empty/non-string keys and malformed stores.
+for provider in openai anthropic; do
+	write_pool "{\"${provider}\":[{\"status\":\"rate-limited\",\"cooldownUntil\":${cooldown}}]}"
+	for entry in '{"type":"api","key":"test-independent-key"}' \
+		'{"type":"oauth","access":"test-access","refresh":"test-refresh","key":"test-key"}' \
+		'{"type":"api","key":""}' '{"type":"api"}' \
+		'{"type":"api","key":false}' '{"type":"api","key":123}' \
+		'{"key":"test-key"}' 'null'; do
+		printf '{"%s":%s}\n' "$provider" "$entry" >"$OPENCODE_AUTH_FILE"
+		expected=1
+		[[ "$entry" == '{"type":"api","key":"test-independent-key"}' ]] && expected=0
+		rc=0
+		provider_static_auth_available "$provider" || rc=$?
+		assert_equals "$expected" "$rc" "$provider static auth validates stored entry $entry" || true
+		rc=0
+		provider_oauth_pool_available "$provider" || rc=$?
+		assert_equals "$expected" "$rc" "$provider pool gate validates stored entry $entry" || true
+	done
+	printf '%s\n' 'not-json' >"$OPENCODE_AUTH_FILE"
+	rc=0
+	provider_static_auth_available "$provider" || rc=$?
+	assert_equals "1" "$rc" "$provider malformed auth store is not static auth" || true
+	printf '[]\n' >"$OPENCODE_AUTH_FILE"
+	rc=0
+	provider_static_auth_available "$provider" || rc=$?
+	assert_equals "1" "$rc" "$provider non-object auth store is not static auth" || true
+
+	printf '{"%s":{"type":"api","key":"test-independent-key"}}\n' "$provider" >"$OPENCODE_AUTH_FILE"
+	model="openai/gpt-5.5"
+	[[ "$provider" == "anthropic" ]] && model="anthropic/claude-sonnet-5-5"
+	TEST_MODELS=("$model")
+	actual="$(_choose_model_auto "worker" "standard")" || actual=""
+	assert_equals "$model" "$actual" "$provider stored API key keeps auto selection available with exhausted pool" || true
+	rc=0
+	actual=$(HOME="$HOME" AIDEVOPS_OPENCODE_PROFILE=v1 \
+		AIDEVOPS_HEADLESS_RUNTIME_DIR="$TMP_DIR/runtime-$provider" \
+		AIDEVOPS_SKIP_CANARY_NEG_CACHE=1 \
+		bash "$AGENTS_SCRIPTS/headless-runtime-helper.sh" select --model "$model") || rc=$?
+	assert_equals "0" "$rc" "$provider CLI select succeeds with stored API key and exhausted pool" || true
+	assert_equals "$model" "$actual" "$provider CLI select returns requested model" || true
+done
+rm -f "$OPENCODE_AUTH_FILE"
 TEST_MODELS=("openai/gpt-5.5" "anthropic/claude-sonnet-5-5")
 
 rm -f "$HOME/.aidevops/oauth-pool.json"
