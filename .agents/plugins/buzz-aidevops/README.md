@@ -107,6 +107,10 @@ How a turn runs:
   turn and never wake it. Its sends carry a `chat:` origin and never wake local
   sessions.
 - **Stop** cancels the running turn.
+- A turn may run for up to 30 minutes. The plugin then cancels it and replies
+  that it was cancelled. If OpenCode has not ended the turn a minute later (for
+  example a stalled model request), the plugin restarts that agent's
+  `aidevops buzz acp` process, so later messages still run.
 - OpenCode permission prompts are declined. The aidevops remote-interactive
   profile already allows ordinary tools and asks only for actions that need a
   person at the computer, which nobody can approve from Buzz. (Buzz's bundled
