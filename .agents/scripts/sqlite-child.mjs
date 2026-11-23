@@ -35,7 +35,19 @@ export function flushTransportOnExit(transport) {
       try { proc.kill("SIGKILL"); } catch { /* already dead */ }
       pending.unshift(transport.inflightSql);
     } else {
+      // Handed-off query stays with the child. Queue pending writes behind it
+      // on the same stdin so execution order is preserved; a small write lands
+      // in the pipe synchronously and sqlite3 drains it on EOF.
+      const payload = pending.length > 0 ? `${pending.join("\n")}\n` : "";
+      let queued = false;
+      if (payload !== "" && Buffer.byteLength(payload) <= 16384) {
+        try {
+          proc.stdin.write(payload);
+          queued = proc.stdin.writableLength === 0 && !proc.stdin.destroyed && !proc.stdin.errored;
+        } catch { /* fall back to a separate process */ }
+      }
       try { proc.stdin.end(); } catch { /* already dead */ }
+      if (queued) pending.length = 0;
     }
   }
   transport.inflightSql = null;
