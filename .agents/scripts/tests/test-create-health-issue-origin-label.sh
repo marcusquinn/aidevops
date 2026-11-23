@@ -204,6 +204,12 @@ export -f _get_runner_role _validate_repo_slug
 # Source the module under test
 source "${SCRIPTS_DIR}/stats-health-dashboard.sh" >/dev/null 2>&1 || true
 
+# Public-write privacy scanning has dedicated coverage and fails closed when it
+# cannot look up the fake owner/repo slug. Define after all sourcing (the
+# modules re-source the privacy helper) to keep this suite on label behaviour.
+# shellcheck disable=SC2317
+privacy_guard_public_write() { return 0; }
+
 printf '%sRunning health-issue origin label tests (t2691 / GH#20311)%s\n' \
 	"$TEST_BLUE" "$TEST_NC"
 
