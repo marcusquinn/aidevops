@@ -503,7 +503,8 @@ class AuthenticationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.path = str(Path(self.temp.name) / "state")
+        # state_directory refuses symlink ancestors (macOS /var -> /private/var).
+        self.path = str(Path(self.temp.name).resolve() / "state")
         patch = mock.patch.object(authentication, "authentication_endpoint", return_value="listener")
         patch.start()
         self.addCleanup(patch.stop)
