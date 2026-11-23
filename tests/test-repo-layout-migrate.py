@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import shlex
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -486,6 +487,45 @@ class RepoLayoutMigrationTest(unittest.TestCase):
         self.assertEqual(refused.returncode, 2)
         self.assertTrue(self.source.is_dir())
         self.assertFalse(self.destination.exists())
+
+    def test_prunable_worktree_is_recorded_and_survives_apply_rollback(self) -> None:
+        # GH#40058: a registration whose path and parent were wiped (for
+        # example a runtime temp dir) is dead metadata, not a corrupt pointer.
+        wiped_parent = self.root / "runtime-tmp"
+        gone = wiped_parent / "session" / "Project-gone"
+        gone.parent.mkdir(parents=True)
+        self._git("worktree", "add", "-q", "-b", "feature/gone", str(gone))
+        shutil.rmtree(wiped_parent)
+        before_repository = self._repository_snapshot(self.source)
+
+        summary = self._plan()
+        repository = json.loads(self.plan.read_text(encoding="utf-8"))["repositories"][0]
+        self.assertEqual(repository["prunable_worktrees"], [str(gone)])
+        self.assertEqual(len(repository["linked_pointers"]), 1)
+
+        gone.mkdir(parents=True)
+        reappeared = self._run(
+            "apply", "--plan", str(self.plan), "--confirm", summary["plan_sha256"], check=False
+        )
+        self.assertEqual(reappeared.returncode, 2)
+        self.assertIn("prunable worktree reappeared", reappeared.stderr)
+        self.assertTrue(self.source.is_dir())
+        shutil.rmtree(wiped_parent)
+
+        applied = json.loads(
+            self._run("apply", "--plan", str(self.plan), "--confirm", summary["plan_sha256"]).stdout
+        )
+        self.assertEqual(applied["state"], "applied")
+        self.assertIn(f"worktree {gone}", self._git("worktree", "list", "--porcelain", cwd=self.destination))
+        status = self._receipt_status(applied["receipt_id"])
+        rolled_back = json.loads(
+            self._run(
+                "rollback", "--receipt", applied["receipt_id"], "--state-dir", str(self.state),
+                "--confirm", status["receipt_sha256"],
+            ).stdout
+        )
+        self.assertEqual(rolled_back["state"], "rolled-back")
+        self.assertEqual(before_repository, self._repository_snapshot(self.source))
 
     def test_refusal_for_malformed_config_and_database_schema_drift(self) -> None:
         original_tabby = self.tabby.read_text(encoding="utf-8")

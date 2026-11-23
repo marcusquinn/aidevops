@@ -32,6 +32,9 @@ _GCW_GRACED_CLASSIFICATION=""
 _GCW_CONFIGURED_CACHED=0
 _GCW_CONFIGURED_RC=1
 _GCW_CONFIGURED_CONTEXTS=""
+# GH#40059: active-workflow evidence for empty --all reads (""=unread).
+readonly _GCW_WORKFLOWS_NONE="none" _GCW_WORKFLOWS_PRESENT="present"
+_GCW_WORKFLOWS_STATE=""
 
 usage() {
 	cat <<'EOF'
@@ -117,6 +120,20 @@ fixture_for_poll() {
 	return 0
 }
 
+# True when the exact reader's rc=1 diagnostic reports a valid empty selection
+# for this mode: required-only and --all each accept only their own wording, so
+# a required-mode message can never satisfy an --all wait or vice versa.
+is_empty_selection_diagnostic() {
+	local required_only="$1"
+	local diagnostic="$2"
+	if [[ "$required_only" -eq 1 ]]; then
+		[[ "$diagnostic" =~ ^no\ required\ checks\ reported\ on\ the\ \'[^\']+\'\ branch$ ]]
+		return $?
+	fi
+	[[ "$diagnostic" =~ ^no\ checks\ reported\ on\ the\ \'[^\']+\'\ branch$ ]]
+	return $?
+}
+
 fetch_checks() {
 	local pr_number="$1"
 	local repo="$2"
@@ -152,7 +169,7 @@ PY
 	fi
 	checks_stderr=$(<"$checks_stderr_file")
 	rm -f "$checks_stderr_file"
-	if [[ "$required_only" -eq 1 && "$rc" -eq 1 && -z "$checks" && "$checks_stderr" =~ ^no\ required\ checks\ reported\ on\ the\ \'[^\']+\'\ branch$ ]]; then
+	if [[ "$rc" -eq 1 && -z "$checks" ]] && is_empty_selection_diagnostic "$required_only" "$checks_stderr"; then
 		printf '[]\n'
 		return 0
 	fi
@@ -499,6 +516,41 @@ zero_job_runs() {
 	return 0
 }
 
+# GH#40059: decide once per wait whether an empty --all read may be final.
+# Sets _GCW_WORKFLOWS_STATE to "none" only on verified evidence of zero active
+# workflows; an unreadable or malformed response stays unresolved (treated as
+# present, so the settle window applies) and is retried on the next empty poll.
+# Fixture mode reads ${AIDEVOPS_GH_CHECKS_FIXTURE_DIR}/workflows.json; an absent
+# fixture file means the fixture repository has no workflows.
+resolve_active_workflows_once() {
+	local repo="$1"
+	local fixture_dir="${AIDEVOPS_GH_CHECKS_FIXTURE_DIR:-}"
+	local workflows_json="" active=""
+	[[ -z "$_GCW_WORKFLOWS_STATE" ]] || return 0
+	if [[ -n "$fixture_dir" ]]; then
+		if [[ ! -f "${fixture_dir}/workflows.json" ]]; then
+			_GCW_WORKFLOWS_STATE="$_GCW_WORKFLOWS_NONE"
+			return 0
+		fi
+		workflows_json=$(<"${fixture_dir}/workflows.json")
+	else
+		workflows_json=$(gh api -X GET "repos/${repo}/actions/workflows" -f per_page=100 2>/dev/null) || return 0
+	fi
+	active=$(printf '%s' "$workflows_json" | jq -er '
+		if ([.workflows | arrays] | length) == 0 or ([.total_count | numbers] | length) == 0
+			or .total_count != (.total_count | floor) or .total_count < (.workflows | length)
+			or ([.workflows[] | .state | strings] | length) != (.workflows | length) then error("malformed")
+		elif .total_count > (.workflows | length) then 1
+		else [.workflows[] | select(.state == "active")] | length end
+	' 2>/dev/null) || return 0
+	if [[ "$active" == "0" ]]; then
+		_GCW_WORKFLOWS_STATE="$_GCW_WORKFLOWS_NONE"
+	else
+		_GCW_WORKFLOWS_STATE="$_GCW_WORKFLOWS_PRESENT"
+	fi
+	return 0
+}
+
 classify_state() {
 	local checks="$1"
 	local required_only="$2"
@@ -511,6 +563,7 @@ classify_state() {
 	# substitution, so it cannot memoize them itself.
 	local passed_rc="${7:-}"
 	local passed_contexts="${8:-}"
+	local workflows_state="${9:-}"
 	local count=""
 	count=$(printf '%s' "$checks" | jq 'length')
 	# Absent configured required contexts are never success, in required-only
@@ -538,6 +591,12 @@ classify_state() {
 			printf 'pending\n'
 			return 0
 		fi
+	elif [[ "$count" -eq 0 && "$workflows_state" != "$_GCW_WORKFLOWS_NONE" && "$elapsed" -lt "$_GCW_EMPTY_REQUIRED_SETTLE_SECONDS" ]]; then
+		# GH#40059: an empty --all read can precede workflow registration on
+		# a fresh head; only a repo verified to have no active workflows skips
+		# the settle window.
+		printf 'pending\n'
+		return 0
 	fi
 	if [[ "$count" -eq 0 ]]; then
 		if [[ "$required_only" -eq 1 ]]; then
@@ -801,7 +860,7 @@ classify_draft_stall() {
 		if [[ $((now_epoch - draft_since)) -ge "$draft_window" ]]; then
 			final_head=$(verified_head_sha "$pr_number" "$repo" 'before draft check result') || return 2
 			if [[ "$final_head" != "$initial_head" ]]; then
-				initial_head="$final_head"
+				restart_head_observation "$final_head"
 				previous="" draft_since=""
 				return 3
 			fi
@@ -812,6 +871,17 @@ classify_draft_stall() {
 	else
 		draft_since=""
 	fi
+	return 0
+}
+
+# Starts observing a new PR head (uses the waiter's dynamically scoped state).
+# Workflow evidence is cleared so the new head's empty polls re-read it and
+# keep their settle window instead of reusing the previous head's "none".
+restart_head_observation() {
+	local new_head="$1"
+	initial_head="$new_head"
+	head_epoch="$now_epoch"
+	_GCW_WORKFLOWS_STATE=""
 	return 0
 }
 
@@ -846,7 +916,7 @@ classify_conflict_stall() {
 	[[ "$mergeable" == "CONFLICTING" ]] || return 0
 	final_head=$(verified_head_sha "$pr_number" "$repo" 'before conflict check result') || return 2
 	if [[ "$final_head" != "$initial_head" ]]; then
-		initial_head="$final_head"
+		restart_head_observation "$final_head"
 		previous="" conflict_checked_at=""
 		return 3
 	fi
@@ -895,19 +965,38 @@ resolve_configured_contexts_once() {
 	return 0
 }
 
+# Clear evidence that is valid for one wait only.
+reset_wait_caches() {
+	_GCW_CANCEL_FIRST_EPOCH=""
+	_GCW_CANCEL_SET=""
+	_GCW_CODACY_VERDICT=""
+	_GCW_CONFIGURED_CACHED=0
+	_GCW_WORKFLOWS_STATE=""
+	return 0
+}
+
+# Resolve the once-per-wait evidence classify_state needs. Active workflows
+# are read only for an empty --all observation (GH#40059).
+resolve_classification_evidence() {
+	local pr_number="$1" repo="$2" required_only="$3" checks="$4"
+	resolve_configured_contexts_once "$pr_number" "$repo"
+	if [[ "$required_only" -eq 0 ]] && printf '%s' "$checks" | jq -e 'length == 0' >/dev/null 2>&1; then
+		resolve_active_workflows_once "$repo"
+	fi
+	return 0
+}
+
 wait_for_checks() {
 	local pr_number="$1" repo="$2" required_only="$3" timeout="$4"
 	local initial_interval="$5" max_interval="$6" heartbeat_interval="$7"
 	local start_epoch="" poll_number=0 valid_state_seen=0
 	start_epoch=$(current_epoch)
-	local next_heartbeat=$((start_epoch + heartbeat_interval))
+	# head_epoch: settle baseline for the current head; start_epoch bounds --timeout.
+	local next_heartbeat=$((start_epoch + heartbeat_interval)) head_epoch="$start_epoch"
 	local interval="$initial_interval" previous="" initial_head="" qlty_credit_policy=""
 	local draft_since="" draft_snapshot="" draft_window="$heartbeat_interval" conflict_checked_at=""
 	[[ "$draft_window" -gt 0 && "$draft_window" -le 120 ]] || draft_window=120
-	_GCW_CANCEL_FIRST_EPOCH=""
-	_GCW_CANCEL_SET=""
-	_GCW_CODACY_VERDICT=""
-	_GCW_CONFIGURED_CACHED=0
+	reset_wait_caches
 	initial_head=$(verified_head_sha "$pr_number" "$repo" 'before required-check observation') || return 2
 	note_if_draft "$pr_number" "$repo"
 	_GCW_ACTIVE_DEFERRAL=""
@@ -948,8 +1037,8 @@ wait_for_checks() {
 		apply_codacy_stale_policy "$current" "$pr_number" "$repo"
 		current="$_GCW_CODACY_CHECKS"
 		emit_codacy_stale_notes "$current" "$previous"
-		resolve_configured_contexts_once "$pr_number" "$repo"
-		IFS=$'\t' read -r classification missing_contexts zero_job_detail <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed" "$initial_head" "$_GCW_CONFIGURED_RC" "$_GCW_CONFIGURED_CONTEXTS")"
+		resolve_classification_evidence "$pr_number" "$repo" "$required_only" "$current"
+		IFS=$'\t' read -r classification missing_contexts zero_job_detail <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$((now_epoch - head_epoch))" "$initial_head" "$_GCW_CONFIGURED_RC" "$_GCW_CONFIGURED_CONTEXTS" "$_GCW_WORKFLOWS_STATE")"
 		apply_cancel_grace "$classification" "$current" "$now_epoch" "$raw"
 		classification="$_GCW_GRACED_CLASSIFICATION"
 		state_summary=$(state_counts "$current" "$missing_contexts")
@@ -970,7 +1059,7 @@ wait_for_checks() {
 			final_head=$(verified_head_sha "$pr_number" "$repo" 'after required checks completed') || return 2
 			if [[ -n "$initial_head" && -n "$final_head" && "$initial_head" != "$final_head" ]]; then
 				printf '+ PR head changed while waiting; restarting required-check observation\n'
-				initial_head="$final_head"
+				restart_head_observation "$final_head"
 				_GCW_CODACY_VERDICT=""
 				previous=""
 				interval="$initial_interval"

@@ -241,6 +241,12 @@ prune_missing_worktree_metadata() {
 	printf 'METADATA_PRUNE_RAN %s %s\\n' "\$repo_arg" "\$target_arg" >>"${metadata_prune_ran_file}"
 	return 0
 }
+missing_worktree_prune_targets() {
+	local repo_arg="\$1"
+	: "\$repo_arg"
+	[[ -z "${MOCK_PRUNABLE_TARGET:-}" ]] || printf '%s\\n' "${MOCK_PRUNABLE_TARGET:-}"
+	return 0
+}
 STUB
 	if [[ -n "${MOCK_PRUNABLE_TARGET:-}" ]]; then
 		cat >"${stub_dir}/git" <<STUB
