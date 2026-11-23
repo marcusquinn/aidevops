@@ -450,10 +450,11 @@ carry a `needs-*` label. For every table row:
    proof (`approval-helper.sh verify-permissions` / `verify`).
 3. Classify the entry: `expected` (cite the evidence), `reverted`, or `unexplained`.
 
-Outcome: all entries `expected` or `reverted` → post one verified evidence report,
-then prepend the self-bound report-only receipt to that same comment as described
-in `reference/worker-discipline.md` "Read-only reports", and close the alert as
-completed (`status:done`). Scanner bodies opt in with
+Outcome: all entries `expected` or `reverted` → write the verified evidence report
+to a file and finish with `pr-less-completion-helper.sh report-only` (see
+`reference/worker-discipline.md` "PR-less completion contracts"). It posts the
+report, binds the self-bound report-only receipt, closes the alert as completed
+(`status:done`) and verifies it, reopening on rejection. Scanner bodies opt in with
 `<!-- aidevops:completion-contract:report-only/v1 -->`. A `COLLABORATOR` may complete
 this path only when the issue author, closer and receipt author are the same login,
 the title starts with `GH Audit Anomaly Alert:` or `GH Audit Log Integrity Alert:`,

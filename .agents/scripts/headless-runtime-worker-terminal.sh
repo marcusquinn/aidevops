@@ -220,6 +220,8 @@ _hrw_pr_less_terminal_complete() {
 	local repo_slug="$4"
 	# Internal constant predicate names only: never retain API output or prose.
 	_HRW_PR_LESS_REJECTION="invalid_context"
+	# Set only by a contract the trusted issue explicitly opted into (GH#40048).
+	_HRW_PR_LESS_OPTED_REJECTION=""
 	_HRW_REVIEW_TRIAGE_VERIFIED=""
 	_HRW_REVIEW_TRIAGE_CANDIDATE=""
 	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" == */* ]] || return 1
@@ -268,6 +270,11 @@ _hrw_pr_less_terminal_complete() {
 		fi
 		_HRW_PR_LESS_REJECTION=""
 		return 0
+	fi
+	# An opted-in contract's own reason outranks later fallbacks' generic misses
+	# (for example already_satisfied_receipt_missing), which hid malformed receipts.
+	if [[ -n "${_HRW_PR_LESS_OPTED_REJECTION:-}" ]]; then
+		_HRW_PR_LESS_REJECTION="$_HRW_PR_LESS_OPTED_REJECTION"
 	fi
 	return 1
 }
@@ -601,6 +608,18 @@ _hrw_pr_less_worktree_clean() {
 	return 0
 }
 
+# True when any comment starts with the receipt marker line. Separates a
+# missing receipt from a malformed one in rejection reasons (GH#40048).
+# Args: comments_json receipt_marker
+_hrw_pr_less_receipt_present() {
+	local comments_json="$1" receipt_marker="$2"
+	local prefix=""
+	printf -v prefix '%s\n' "$receipt_marker"
+	jq -se --arg prefix "$prefix" 'any(.[][]; (.body // "") | startswith($prefix))' \
+		<<<"$comments_json" >/dev/null 2>&1 || return 1
+	return 0
+}
+
 # A PR-less terminal state is valid only for an explicitly authorized data-only
 # objective with a trusted, issue-bound publication receipt. This is evidence
 # classification, never authority to perform the publication itself.
@@ -619,9 +638,16 @@ _hrw_data_only_terminal_complete() {
 		issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
 	fi
 	jq -e --arg marker '<!-- aidevops:completion-contract:data-only/v1 -->' \
-		'.state == "closed" and (.author_association == "OWNER" or .author_association == "MEMBER") and ((.body // "") | contains($marker))' \
+		'(.body // "") | contains($marker)' <<<"$issue_json" >/dev/null 2>&1 || return 1
+	# Opted in: record constant reasons later fallbacks cannot mask (GH#40048).
+	_HRW_PR_LESS_OPTED_REJECTION="data_only_issue_untrusted"
+	jq -e '.state == "closed" and (.author_association == "OWNER" or .author_association == "MEMBER")' \
 		<<<"$issue_json" >/dev/null 2>&1 || return 1
+	_HRW_PR_LESS_OPTED_REJECTION="data_only_receipt_unavailable"
 	comments=$(gh api --paginate "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" 2>/dev/null) || return 1
+	_HRW_PR_LESS_OPTED_REJECTION="data_only_receipt_missing"
+	_hrw_pr_less_receipt_present "$comments" '<!-- aidevops:data-only-completion:v1 -->' || return 1
+	_HRW_PR_LESS_OPTED_REJECTION="data_only_receipt_invalid"
 	jq -se --arg repo "$repo_slug" --argjson issue "$issue_number" '
 		any(.[][];
 			(.author_association == "OWNER" or .author_association == "MEMBER")
@@ -631,7 +657,11 @@ _hrw_data_only_terminal_complete() {
 				| $r.repository == $repo and $r.issue == $issue and $r.status == "published" and $r.verified == true
 				and ($r.evidence_url | type == "string" and test("^https://[^/[:space:]]+/[^[:space:]]+$"))))
 	' <<<"$comments" >/dev/null 2>&1 || return 1
-	_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
+	if ! _hrw_pr_less_worktree_clean "$work_dir" "$repo_slug"; then
+		_HRW_PR_LESS_OPTED_REJECTION="$_HRW_PR_LESS_REJECTION"
+		return 1
+	fi
+	_HRW_PR_LESS_OPTED_REJECTION=""
 	print_info "[lifecycle] worker_data_only_terminal complete session=${session_key} issue=${issue_number}"
 	return 0
 }
@@ -644,6 +674,10 @@ _hrw_report_only_terminal_complete() {
 	local comments_endpoint=""
 	printf -v comments_endpoint 'repos/%s/issues/%s/comments?per_page=100' "$repo_slug" "$issue_number"
 	local trusted_def='def trusted: (.author_association // "") | test("^(OWNER|MEMBER)$");'
+	jq -e --arg marker '<!-- aidevops:completion-contract:report-only/v1 -->' \
+		'(.body // "") | contains($marker)' <<<"$issue_json" >/dev/null 2>&1 || return 1
+	# Opted in: record constant reasons later fallbacks cannot mask (GH#40048).
+	_HRW_PR_LESS_OPTED_REJECTION="report_only_issue_invalid"
 	# aidevops:trust-boundary — only scanner alerts may trust a COLLABORATOR,
 	# bound to the same issue author, closer and receipt author login.
 	local peer_login=""
@@ -661,7 +695,11 @@ _hrw_report_only_terminal_complete() {
 		.state == $closed and .state_reason == $completed and (trusted or scanner_peer)
 		and ((.body // "") | contains("<!-- aidevops:completion-contract:report-only/v1 -->"))' \
 		<<<"$issue_json" >/dev/null 2>&1 || return 1
+	_HRW_PR_LESS_OPTED_REJECTION="report_only_receipt_unavailable"
 	comments=$(gh api --paginate "$comments_endpoint" 2>/dev/null) || return 1
+	_HRW_PR_LESS_OPTED_REJECTION="report_only_receipt_missing"
+	_hrw_pr_less_receipt_present "$comments" '<!-- aidevops:report-only-completion:v1 -->' || return 1
+	_HRW_PR_LESS_OPTED_REJECTION="report_only_receipt_invalid"
 	jq -se --arg repo "$repo_slug" --argjson issue "$issue_number" --arg peer "$peer_login" \
 		--arg peer_association "$peer_association" \
 		--arg closer "$(jq -r '.closed_by.login // ""' <<<"$issue_json")" "${trusted_def}${peer_def}"'
@@ -680,7 +718,11 @@ _hrw_report_only_terminal_complete() {
 				and $url == ("https://github.com/" + $repo + "/issues/" + ($issue | tostring) + "#issuecomment-" + ($id | tostring))
 				and $r.evidence_url == $url))
 	' <<<"$comments" >/dev/null 2>&1 || return 1
-	_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
+	if ! _hrw_pr_less_worktree_clean "$work_dir" "$repo_slug"; then
+		_HRW_PR_LESS_OPTED_REJECTION="$_HRW_PR_LESS_REJECTION"
+		return 1
+	fi
+	_HRW_PR_LESS_OPTED_REJECTION=""
 	print_info "[lifecycle] worker_report_only_terminal complete session=${session_key} issue=${issue_number}"
 	return 0
 }
