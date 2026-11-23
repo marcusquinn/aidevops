@@ -387,10 +387,7 @@ _check_ignored_source_references() (
 		print_warning "Skipping ignored-file reference check (FULL_LOOP_ALLOW_IGNORED_REFERENCES=1)."
 		return 0
 	fi
-	local base_branch="" merge_base="" diff_text="" ignored_list=""
-	base_branch=$(_resolve_pr_base_branch origin) || return 1
-	merge_base=$(git merge-base "refs/remotes/origin/$base_branch" HEAD) || return 1
-	diff_text=$(git -c core.quotePath=false diff --cached --no-ext-diff --no-textconv --unified=0 "$merge_base" --) || return 1
+	local base_branch="" merge_base="" diff_text="" ignored_list="" diff_loaded=0
 	ignored_list=$(mktemp) || return 1
 	trap 'rm -f "$ignored_list"' EXIT
 	if ! git ls-files --others --ignored --exclude-standard -z >"$ignored_list"; then
@@ -410,6 +407,13 @@ _check_ignored_source_references() (
 			fi
 		done
 		[[ "$skip" == 1 || ! -f "$path" ]] && continue
+		# Avoid resolving history or building a diff for runtime-only worktrees.
+		if [[ "$diff_loaded" == 0 ]]; then
+			base_branch=$(_resolve_pr_base_branch origin) || return 1
+			merge_base=$(git merge-base "refs/remotes/origin/$base_branch" HEAD) || return 1
+			diff_text=$(git -c core.quotePath=false diff --cached --no-ext-diff --no-textconv --unified=0 "$merge_base" --) || return 1
+			diff_loaded=1
+		fi
 		basename="${path##*/}"
 		referencing_path=""
 		while IFS= read -r line; do

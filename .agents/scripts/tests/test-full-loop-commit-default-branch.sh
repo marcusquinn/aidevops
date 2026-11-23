@@ -83,6 +83,10 @@ git() {
 	add)
 		return 0
 		;;
+	ls-files)
+		# This synthetic repo has no ignored payloads; never inspect the caller's checkout.
+		return 0
+		;;
 	diff)
 		if [[ "$*" == "--cached --quiet" ]]; then
 			return 0
