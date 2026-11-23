@@ -378,6 +378,43 @@ _stage_product_changes() {
 	return 0
 }
 
+# Unstage TODO.md when its staged additions only name other tasks' IDs
+# (GH#39985): claim-task-id.sh appends follow-up task lines to the worktree
+# TODO.md, which must not ride along on an unrelated code PR. Fail-open: any
+# own-task line, unresolvable own task ID, or non-task added line keeps staging.
+# Uses caller-scoped $issue_number. The working-tree change is preserved.
+_unstage_foreign_todo_lines() {
+	local issue_number="${issue_number:-}"
+	[[ -n "$issue_number" ]] || return 0
+	git diff --cached --quiet -- TODO.md 2>/dev/null && return 0
+
+	local own_task=""
+	own_task=$(_derive_pr_title_prefix "$issue_number")
+	[[ "$own_task" =~ ^t[0-9]+$ ]] || return 0
+
+	local added="" line="" tid="" foreign=""
+	added=$(git diff --cached -U0 --no-color -- TODO.md 2>/dev/null | grep -E '^\+[^+]|^\+$' || true)
+	[[ -n "$added" ]] || return 0
+	while IFS= read -r line; do
+		if [[ "$line" =~ ^\+-\ \[[\ x]\]\ (t[0-9]+)([^0-9]|$) ]]; then
+			tid="${BASH_REMATCH[1]}"
+			[[ "$tid" == "$own_task" ]] && return 0
+			case " $foreign " in
+			*" $tid "*) ;;
+			*) foreign="${foreign:+$foreign }$tid" ;;
+			esac
+		else
+			return 0
+		fi
+	done <<<"$added"
+	[[ -n "$foreign" ]] || return 0
+
+	if git restore --staged -- TODO.md 2>/dev/null; then
+		print_warning "[commit-and-pr] Unstaged TODO.md: it only adds lines for other task(s) (${foreign}), not ${own_task}. Working-tree change kept."
+	fi
+	return 0
+}
+
 # Refuse references to payloads omitted by git add (GH#39939). The prospective
 # PR is the index against the PR merge base, including already-committed WIP.
 # FULL_LOOP_ALLOW_IGNORED_REFERENCES=1 explicitly permits intentional references;
@@ -459,6 +496,7 @@ _stage_and_commit() {
 
 	print_info "Staging and committing changes..."
 	_stage_product_changes || return 1
+	_unstage_foreign_todo_lines || return 1
 	_check_ignored_source_references || return 1
 
 	if git diff --cached --quiet 2>/dev/null; then
