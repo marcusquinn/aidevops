@@ -197,6 +197,10 @@ export function drainQueue(transport) {
     transport.proc.stdin.write(`${sql}\nSELECT '${SQLITE_SENTINEL}';\n`, () => {
       if (transport.inflightSql === sql) transport.inflightFlushed = true;
     });
+    // A small write can reach the pipe synchronously while its callback waits
+    // for nextTick. process.exit() skips that callback: record the handoff now
+    // so the exit hook leaves this query with the child instead of replaying it.
+    transport.inflightFlushed = transport.proc.stdin.writableLength === 0;
   } catch (error) {
     finishCurrent(transport, error, "");
     drainQueue(transport);
