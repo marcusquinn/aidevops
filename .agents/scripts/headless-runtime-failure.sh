@@ -861,13 +861,21 @@ _hrff_attempt_log_field() {
 }
 
 # GH#39936: a never-launched release names its cause class so GitHub shows why
-# (e.g. model_unavailable when every account is out of allowance). Only fixed
-# internal identifiers pass; anything else publishes the generic class.
+# (e.g. model_unavailable when every account is out of allowance). Only the
+# fixed prelaunch cause families pass (the _HRW_REASON_* worker_* constants and
+# the literals assigned to _WORKER_PRELAUNCH_FAILURE_REASON); anything else
+# publishes the generic class.
 _hrff_not_launched_cause_field() {
 	local reason="$1"
 	local cause="${_WORKER_PRELAUNCH_FAILURE_REASON:-}"
 	[[ "$reason" == "${_HRW_REASON_NOT_LAUNCHED:-worker_not_launched}" ]] || return 0
-	[[ "$cause" =~ ^[a-z][a-z0-9_]{0,63}$ ]] || cause="worker_runtime_not_invoked"
+	local in_set=0
+	case "$cause" in
+	model_unavailable | model_selection_failed | project_node_environment_failure | worker_*) in_set=1 ;;
+	esac
+	if [[ "$in_set" -ne 1 || ! "$cause" =~ ^[a-z][a-z0-9_]{0,63}$ ]]; then
+		cause="${_HRFF_PRELAUNCH_NOT_INVOKED:-worker_runtime_not_invoked}"
+	fi
 	printf ' cause=%s' "$cause"
 	return 0
 }

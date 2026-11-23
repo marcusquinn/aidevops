@@ -833,6 +833,10 @@ _pcc_model_selectable() {
 		args+=(--tier standard)
 	fi
 	"$helper" "${args[@]}" >/dev/null 2>&1 || rc=$?
+	# `select` returns choose_model's own contract: 75 = backed off/exhausted,
+	# 1 = no configured candidate (e.g. the provider allowlist excludes the
+	# tier) or an invalid pin. The canary maps 1 to 78; mirror that here.
+	[[ "$rc" -ne 1 ]] || rc=78
 	if [[ "$rc" -eq 75 || "$rc" -eq 78 ]]; then
 		return "$rc"
 	fi
