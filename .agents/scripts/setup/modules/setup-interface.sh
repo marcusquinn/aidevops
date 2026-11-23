@@ -7,6 +7,49 @@
 [[ -n "${_SETUP_INTERFACE_LOADED:-}" ]] && return 0
 _SETUP_INTERFACE_LOADED=1
 
+_setup_print_stage_help() {
+	printf '%s\n' "Supported setup stages/scopes:"
+	printf '  opencode | %s          Repair/install OpenCode CLI only\n' "$SETUP_STAGE_OPENCODE"
+	printf '  agents   | %s     Deploy .agents scripts/prompts only\n' "$SETUP_STAGE_AGENTS"
+	printf '  runtime-config | %s  Reconcile generated runtime commands/configuration\n' "$SETUP_STAGE_RUNTIME_CONFIG"
+	printf '  source-access | %s  Install/verify the signed root broker\n' "$SETUP_STAGE_SOURCE_ACCESS"
+	printf '  hooks    | %s          Install safety hooks only\n' "$SETUP_STAGE_HOOKS"
+	printf '  tabby    | %s                 Sync Tabby profiles only\n' "$SETUP_STAGE_TABBY"
+	printf '  pulse    | %s      Install/refresh pulse scheduler only\n' "$SETUP_STAGE_PULSE"
+	printf '  gui-desktop | gui | app | %s  Install native macOS %s only\n' "$SETUP_STAGE_GUI_DESKTOP" "$SETUP_GUI_APP_NAME"
+	printf '  ai-session | ai | %s  Run changed deploy stages, then full setup on failure\n' "$SETUP_STAGE_AI_SESSION"
+	printf '%s\n' "  full                                  Run the default full setup path"
+	return 0
+}
+
+_setup_canonical_stage() {
+	local stage="$1"
+	case "$stage" in
+	opencode | "$SETUP_STAGE_OPENCODE") printf '%s' "$SETUP_STAGE_OPENCODE" ;;
+	agents | "$SETUP_STAGE_AGENTS") printf '%s' "$SETUP_STAGE_AGENTS" ;;
+	runtime-config | runtime | "$SETUP_STAGE_RUNTIME_CONFIG") printf '%s' "$SETUP_STAGE_RUNTIME_CONFIG" ;;
+	source-access | "$SETUP_STAGE_SOURCE_ACCESS") printf '%s' "$SETUP_STAGE_SOURCE_ACCESS" ;;
+	hooks | "$SETUP_STAGE_HOOKS") printf '%s' "$SETUP_STAGE_HOOKS" ;;
+	tabby | "$SETUP_STAGE_TABBY") printf '%s' "$SETUP_STAGE_TABBY" ;;
+	pulse | "$SETUP_STAGE_PULSE") printf '%s' "$SETUP_STAGE_PULSE" ;;
+	gui-desktop | gui | app | "$SETUP_STAGE_GUI_DESKTOP") printf '%s' "$SETUP_STAGE_GUI_DESKTOP" ;;
+	ai-session | ai | "$SETUP_STAGE_AI_SESSION") printf '%s' "$SETUP_STAGE_AI_SESSION" ;;
+	full) printf '%s' "full" ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+_setup_validate_stage() {
+	local stage="$1"
+	if _setup_canonical_stage "$stage" >/dev/null; then
+		return 0
+	fi
+	print_error "Unknown setup stage/scope: $stage"
+	_setup_print_stage_help
+	return 1
+}
+
 _setup_gui_desktop_install_opted_in() {
 	local flag="${AIDEVOPS_GUI_DESKTOP_INSTALL:-false}"
 	case "$flag" in
