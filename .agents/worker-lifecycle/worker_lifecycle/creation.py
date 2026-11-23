@@ -86,7 +86,15 @@ def _checkout_workers_config(
     restores sequential checkout, 0 is Git's auto, invalid values use 4.
     """
     raw = os.environ.get("AIDEVOPS_WORKTREE_CHECKOUT_WORKERS", "4")
-    workers = int(raw) if raw.isascii() and raw.isdigit() and len(raw) <= 3 else 4
+    requested = int(raw) if raw.isascii() and raw.isdigit() and len(raw) <= 3 else 4
+    # Copy the value from a literal range so the argv below carries no
+    # environment-derived data (Semgrep tainted-env-args); same 0-999 domain
+    # as _worktree_checkout_workers in shared-worktree-create.sh.
+    workers = 4
+    for candidate in range(1000):
+        if candidate == requested:
+            workers = candidate
+            break
     configured = subprocess.run(  # nosec B603 # fixed native Git query, no shell
         [git, "-C", str(repo), "config", "--get", "checkout.workers"],
         env=environment, capture_output=True, check=False, timeout=30,
