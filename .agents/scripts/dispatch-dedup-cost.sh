@@ -111,10 +111,10 @@ _get_cost_budget_for_tier() {
 	local repo_slug="${2:-}"
 	local _conf="${SCRIPT_DIR}/../configs/dispatch-cost-budgets.conf"
 	# Defaults match the documented tier sizing (see dispatch-cost-budgets.conf)
-	local COST_BUDGET_SIMPLE=800000
-	local COST_BUDGET_STANDARD=800000
-	local COST_BUDGET_THINKING=800000
-	local COST_BUDGET_DEFAULT=800000
+	local COST_BUDGET_SIMPLE=20000000
+	local COST_BUDGET_STANDARD=20000000
+	local COST_BUDGET_THINKING=20000000
+	local COST_BUDGET_DEFAULT=20000000
 	if [[ -f "$_conf" ]]; then
 		# shellcheck source=/dev/null
 		source "$_conf"
@@ -320,7 +320,7 @@ _cost_cache_path() {
 	if [[ ! "$repo_dir" =~ ^[A-Za-z0-9_.-]+$ ]]; then
 		return 1
 	fi
-	printf '%s/dispatch-cost-cache/%s/%s\n' \
+	printf '%s/dispatch-cost-cache/full-v1/%s/%s\n' \
 		"${AIDEVOPS_STATE_DIR:-$HOME/.aidevops/state}" "$repo_dir" "$issue_number"
 	return 0
 }
@@ -469,12 +469,13 @@ _cost_spend_from_comments() {
 				 | any($checkpoint.closeouts[]; .pr as $pr
 					| ($prs | index($pr)) != null and $t >= .epoch and $t <= .epoch + $slack))))
 			| (.user.login // "") as $who
+			| ((.body // "") | contains("<!-- aidevops:usage:full-v1 -->")) as $full
 			| (.body // "")
 			| match("(spent|has used) (?:(.*) and )?([0-9,]+) tokens"; "g")
 			| (.captures[2].string | gsub(","; "")) as $raw
 			| select($raw | test("^[0-9]+$"))
 			| ((.captures[1].string // "") | duration) as $dur
-			| {t: $t, who: $who, tok: ($raw | tonumber),
+			| {t: $t, who: $who, full: $full, tok: ($raw | tonumber),
 			   inwin: ($receipt == false and (($reset_epoch == 0) or ($t > $reset_epoch))),
 			   session: (if $dur != null and $who != "" and $t > 0 then
 				{lo: ($t - $dur.secs - $dur.res - $slack), hi: ($t - $dur.secs + $slack)}
@@ -483,13 +484,13 @@ _cost_spend_from_comments() {
 		| reduce .[] as $f ({chains: [], total: 0, attempts: 0};
 			(if $f.session == null then null else
 				([.chains | to_entries[] | .value as $c
-					| select($c.who == $f.who and $c.last <= $f.tok
+					| select($c.who == $f.who and $c.full == $f.full and $c.last <= $f.tok
 						and $c.lo <= $f.session.hi and $f.session.lo <= $c.hi) | .key]
 				 | last) end) as $idx
 			| (if $idx == null then $f.tok else $f.tok - .chains[$idx].last end) as $inc
 			| (if $f.session == null then .
-				elif $idx == null then .chains += [$f.session + {who: $f.who, last: $f.tok}]
-				else .chains[$idx] = ($f.session + {who: $f.who, last: $f.tok}) end)
+				elif $idx == null then .chains += [$f.session + {who: $f.who, full: $f.full, last: $f.tok}]
+				else .chains[$idx] = ($f.session + {who: $f.who, full: $f.full, last: $f.tok}) end)
 			| if $f.inwin then .total += $inc | .attempts += 1 else . end)
 		| "\(.total)|\(.attempts)"
 	' 2>/dev/null) || return 1
@@ -585,6 +586,7 @@ _apply_cost_breaker_side_effects() {
 🛑 **Cost circuit breaker fired** (t2007)
 
 Cumulative spend **${_spent_k}K tokens** across **${attempts}** worker attempt(s) exceeds \`tier:${tier}\` budget of **${_budget_k}K tokens**.
+New full-usage footers include cache and reasoning; historical footers remain a lower bound. This is a token-volume fail-safe, not a USD cost limit.
 
 Further automated dispatch is suspended with \`status:blocked\` while a root-cause meta-issue is investigated.
 

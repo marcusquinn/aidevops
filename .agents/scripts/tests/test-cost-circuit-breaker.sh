@@ -51,7 +51,14 @@ export HOME="${TEST_ROOT}/home"
 mkdir -p "${HOME}/.aidevops/logs" "${HOME}/.aidevops/.agent-workspace/supervisor"
 mkdir -p "${HOME}/.config/aidevops"
 # Public-write privacy guard requires a readable inventory even with stub gh.
-printf '{"initialized_repos":[]}\n' >"${HOME}/.config/aidevops/repos.json"
+# Keep historical 800K scenarios deterministic via the supported repo override.
+# The framework default now measures full usage with a provisional 20M limit.
+LEGACY_BUDGET_REPO="${TEST_ROOT}/legacy-budget"
+mkdir -p "${LEGACY_BUDGET_REPO}/.aidevops"
+printf '%s\n' COST_BUDGET_SIMPLE=800000 COST_BUDGET_STANDARD=800000 COST_BUDGET_THINKING=800000 COST_BUDGET_DEFAULT=800000 \
+	>"${LEGACY_BUDGET_REPO}/.aidevops/dispatch-cost-budgets.conf"
+jq -n --arg path "$LEGACY_BUDGET_REPO" '{initialized_repos:[{slug:"owner/repo",path:$path}]}' \
+	>"${HOME}/.config/aidevops/repos.json"
 export LOGFILE="${TEST_ROOT}/pulse.log"
 
 # =============================================================================
@@ -829,8 +836,8 @@ printf '[]' >"$FIXTURE_TIMELINE_JSON"
 BUDGET_REPO="${TEST_ROOT}/repos/budgeted"
 BUDGET_MARKER="${TEST_ROOT}/sourced-marker"
 mkdir -p "${BUDGET_REPO}/.aidevops"
-jq -n --arg path "$BUDGET_REPO" \
-	'{initialized_repos: [{slug: "owner/budgeted", path: $path}]}' \
+jq -n --arg path "$BUDGET_REPO" --arg legacy "$LEGACY_BUDGET_REPO" \
+	'{initialized_repos: [{slug: "owner/budgeted", path: $path}, {slug:"owner/repo",path:$legacy}]}' \
 	>"${HOME}/.config/aidevops/repos.json"
 cat >"${BUDGET_REPO}/.aidevops/dispatch-cost-budgets.conf" <<CONF
 # Repository budget override
@@ -853,7 +860,7 @@ print_result "repository without override keeps 800K budget" "$assertion_rc" "(r
 
 run_check_cost_budget 18103 "owner/budgeted" "thinking"
 assertion_rc=1
-if [[ "$rc" -eq 0 && "$output" == *"budget=800K"* && ! -e "$BUDGET_MARKER" ]]; then assertion_rc=0; fi
+if [[ "$rc" -eq 1 && -z "$output" && ! -e "$BUDGET_MARKER" ]]; then assertion_rc=0; fi
 print_result "malformed override line is ignored and never executed" "$assertion_rc" "(rc=$rc output='$output' marker=$([[ -e "$BUDGET_MARKER" ]] && printf present || printf absent))"
 
 write_fixture_comments "150000"
@@ -861,7 +868,8 @@ run_check_cost_budget 18104 "owner/budgeted" "simple"
 assertion_rc=1
 if [[ "$rc" -eq 0 && "$output" == *"budget=100K"* ]]; then assertion_rc=0; fi
 print_result "override below the minimum is clamped to 100K" "$assertion_rc" "(rc=$rc output='$output')"
-printf '{"initialized_repos":[]}\n' >"${HOME}/.config/aidevops/repos.json"
+jq -n --arg path "$LEGACY_BUDGET_REPO" '{initialized_repos:[{slug:"owner/repo",path:$path}]}' \
+	>"${HOME}/.config/aidevops/repos.json"
 
 # =============================================================================
 # GH#38272 — updatedAt-keyed spend cache and final-guard skip
@@ -935,6 +943,44 @@ assertion_rc=1
 if [[ "$guard_out" == *"COST_BUDGET_EXCEEDED"* && "$guard_out_skip" != *"COST_BUDGET_EXCEEDED"* ]]; then assertion_rc=0; fi
 print_result "skip env bypasses cost gate only for the final guard" "$assertion_rc" "(normal='$guard_out' skip='$guard_out_skip')"
 unset AIDEVOPS_STATE_DIR
+
+# GH#39951: equivalent full-usage footers share a scale across providers.
+printf '[]' >"$FIXTURE_PR_JSON"
+cat >"$FIXTURE_COMMENTS_JSON" <<'JSON'
+[
+ {"body":"claude-sonnet-5-5 spent 1,507,013 tokens on this as a headless worker. <!-- aidevops:usage:full-v1 -->"},
+ {"body":"gpt-6.1-sol spent 1,507,013 tokens on this as a headless worker. <!-- aidevops:usage:full-v1 -->"}
+]
+JSON
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18301 "owner/repo" 2>/dev/null)
+assertion_rc=1
+if [[ "$sum_output" == "3014026|2" ]]; then assertion_rc=0; fi
+print_result "Anthropic and OpenAI full-usage footers aggregate on the same scale" "$assertion_rc" "(got: '$sum_output')"
+
+# A legacy baseline is never subtracted from a different accounting unit.
+cat >"$FIXTURE_COMMENTS_JSON" <<'JSON'
+[
+ {"created_at":"2026-11-20T10:05:00Z","user":{"login":"worker"},"body":"spent 5m and 20,000 tokens"},
+ {"created_at":"2026-11-20T10:10:00Z","user":{"login":"worker"},"body":"spent 10m and 1,500,000 tokens <!-- aidevops:usage:full-v1 -->"},
+ {"created_at":"2026-11-20T10:15:00Z","user":{"login":"worker"},"body":"spent 15m and 2,000,000 tokens <!-- aidevops:usage:full-v1 -->"}
+]
+JSON
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18302 "owner/repo" 2>/dev/null)
+assertion_rc=1
+if [[ "$sum_output" == "2020000|3" ]]; then assertion_rc=0; fi
+print_result "legacy and full counters remain separate while full continuations deduplicate" "$assertion_rc" "(got: '$sum_output')"
+
+# No override: full-usage default allows a typical 1.5M attempt but trips at 21M.
+write_fixture_comments "1507013"
+run_check_cost_budget 18303 "owner/defaults" standard
+assertion_rc=1
+if [[ "$rc" -eq 1 && -z "$output" ]]; then assertion_rc=0; fi
+print_result "full-usage default allows ordinary 1.5M attempt" "$assertion_rc"
+write_fixture_comments "21000000"
+run_check_cost_budget 18304 "owner/defaults" standard
+assertion_rc=1
+if [[ "$rc" -eq 0 && "$output" == *"budget=20000K"* ]]; then assertion_rc=0; fi
+print_result "full-usage default stops runaway above 20M" "$assertion_rc" "(rc=$rc output='$output')"
 
 export PATH="$OLD_PATH"
 
