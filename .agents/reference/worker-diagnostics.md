@@ -1159,6 +1159,8 @@ gh pr checks <PR> --repo <owner/repo> --watch=false
 | `TIMEOUT_NO_OUTPUT` | `*Timeout*`, `*Watchdog*`, `*Runner*communication*` | Add heartbeat output around the long-running command before rerunning silent failures; preserve exit codes and distinguish 124/137/143 from real diagnostics. |
 | `OTHER` | Everything else | Generic worker guidance only. |
 
+Shell Suite Main Health red rows (GH#40105): `suite-health-repro-helper.sh all --results <suite-results.tsv>` reruns the `regression` rows on the host, in a disposable HOME and in an `ubuntu:24.04` container (replaying the workflow staging steps), then classifies each suite (`maintainer-home-state`, `linux-specific`, `reproducible-drift`, ...). Single modes: `host|fakehome|linux`; bounded by `--jobs` (default 4) and `--timeout`.
+
 Add a pattern by editing `.agents/configs/ci-failure-patterns.conf`, adding a case to `.agents/scripts/tests/test-ci-failure-pattern-detection.sh`, then running that test plus `shellcheck .agents/scripts/pulse-merge-feedback.sh`.
 
 CI-only ESLint failures can differ from full local package lint when generated
