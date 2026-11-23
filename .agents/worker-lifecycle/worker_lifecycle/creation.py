@@ -76,6 +76,26 @@ def _created_directory(path: Path) -> Iterator[int]:
                 pass
 
 
+def _checkout_workers_config(
+    git: str, repo: Path, environment: dict[str, str],
+) -> tuple[str, ...]:
+    """GH#39974: parallel checkout unless repository/user Git config decides.
+
+    The creation environment strips GIT_*, so environment Git config cannot
+    reach `worktree add`; pass `-c` instead. AIDEVOPS_WORKTREE_CHECKOUT_WORKERS=1
+    restores sequential checkout, 0 is Git's auto, invalid values use 4.
+    """
+    raw = os.environ.get("AIDEVOPS_WORKTREE_CHECKOUT_WORKERS", "4")
+    workers = int(raw) if raw.isascii() and raw.isdigit() and len(raw) <= 3 else 4
+    configured = subprocess.run(  # nosec B603 # fixed native Git query, no shell
+        [git, "-C", str(repo), "config", "--get", "checkout.workers"],
+        env=environment, capture_output=True, check=False, timeout=30,
+    )
+    if configured.returncode == 0:
+        return ()
+    return ("-c", f"checkout.workers={workers}")
+
+
 def create_worktree(
     store: LifecycleRegistry, spec: WorktreeSpec, pid: int, session_id: str,
 ) -> dict[str, object]:
@@ -108,10 +128,11 @@ def create_worktree(
         if not key.startswith("GIT_")
     }
     environment["GIT_TERMINAL_PROMPT"] = "0"
+    checkout = _checkout_workers_config(git, repo, environment)
     with DirectoryHandle(repo) as repository, DirectoryHandle(path.parent) as parent:
         with _created_directory(path) as original, DirectoryHandle(path) as directory:
             subprocess.run(  # nosec B603 # caller's native Git options, no shell
-                [git, "-C", str(repo), "worktree", "add", *options,
+                [git, "-C", str(repo), *checkout, "worktree", "add", *options,
                  "--", str(path), ref],
                 env=environment, capture_output=True, check=True, timeout=120,
             )
