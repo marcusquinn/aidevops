@@ -2458,6 +2458,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19298 fix(headless): count an API-type auth.json credential as static auth for the OAuth pool gate #auto-dispatch #bug ref:GH#39947 -> [todo/tasks/t19298-brief.md]
 
+- [ ] t19300 perf(pulse): a drained cycle that runs its starved maintenance tail keeps dispatching instead of idling 20-35 min #feat #priority:high ref:GH#39960
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
