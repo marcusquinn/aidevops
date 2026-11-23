@@ -28,6 +28,7 @@ DEFAULT_HEADLESS_MODELS="openai/gpt-5.5"
 unset ANTHROPIC_API_KEY || true
 unset OPENAI_API_KEY || true
 unset AIDEVOPS_OPENAI_API_KEY_SOURCE || true
+unset AIDEVOPS_ANTHROPIC_API_KEY_SOURCE || true
 
 # shellcheck source=/dev/null
 source "${AGENTS_SCRIPTS}/headless-runtime-provider.sh"
@@ -149,6 +150,36 @@ actual="$(_choose_model_auto "worker" "standard")"
 assert_equals "anthropic/claude-sonnet-5-5" "$actual" "independent Anthropic API key bypasses OAuth pool cooldown gate" || true
 unset ANTHROPIC_API_KEY
 TEST_MODELS=("openai/gpt-5.5" "anthropic/claude-sonnet-5-5")
+
+# GH#39947: stored API keys are independent of the OAuth pool, for both
+# providers. Reject OAuth, missing/empty/non-string keys and malformed stores.
+for provider in openai anthropic; do
+	write_pool "{\"${provider}\":[{\"status\":\"rate-limited\",\"cooldownUntil\":${cooldown}}]}"
+	for entry in '{"type":"api","key":"test-independent-key"}' \
+		'{"type":"oauth","access":"test-access","refresh":"test-refresh","key":"test-key"}' \
+		'{"type":"api","key":""}' '{"type":"api"}' \
+		'{"type":"api","key":false}' '{"type":"api","key":123}' \
+		'{"key":"test-key"}' 'null'; do
+		printf '{"%s":%s}\n' "$provider" "$entry" >"$OPENCODE_AUTH_FILE"
+		expected=1
+		[[ "$entry" == '{"type":"api","key":"test-independent-key"}' ]] && expected=0
+		rc=0
+		provider_static_auth_available "$provider" || rc=$?
+		assert_equals "$expected" "$rc" "$provider static auth validates stored entry $entry" || true
+		rc=0
+		provider_oauth_pool_available "$provider" || rc=$?
+		assert_equals "$expected" "$rc" "$provider pool gate validates stored entry $entry" || true
+	done
+	printf '%s\n' 'not-json' >"$OPENCODE_AUTH_FILE"
+	rc=0
+	provider_static_auth_available "$provider" || rc=$?
+	assert_equals "1" "$rc" "$provider malformed auth store is not static auth" || true
+	printf '[]\n' >"$OPENCODE_AUTH_FILE"
+	rc=0
+	provider_static_auth_available "$provider" || rc=$?
+	assert_equals "1" "$rc" "$provider non-object auth store is not static auth" || true
+done
+rm -f "$OPENCODE_AUTH_FILE"
 
 rm -f "$HOME/.aidevops/oauth-pool.json"
 actual="$(_choose_model_auto "worker" "standard")"
