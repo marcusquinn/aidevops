@@ -398,6 +398,29 @@ for safe_body in "Ref #123. The parent issue remains open." "Resolves #123" \
 	fi
 done
 
+section "11b. GH#40026 — closing keywords in prose need a declaration"
+
+for undeclared_body in "Cancelling it would make the sync close #12 as not planned." \
+	"This would close #12." "> Resolves #12" $'Resolves #12\nIt would also close #13.'; do
+	_gh_validate_pr_closing_keywords --repo "test/repo" --body "$undeclared_body" 2>/dev/null
+	if [[ $? -eq 1 ]]; then
+		pass "rejects undeclared closing reference: '${undeclared_body%%$'\n'*}'"
+	else
+		fail "should reject undeclared closing reference: '${undeclared_body%%$'\n'*}'"
+	fi
+done
+
+for declared_body in "Resolves #12" "- Fixes #12" "Summary. Resolves #12" "Resolves #1, fixes #2 and closes #3" \
+	$'Resolves #12\n\nThis PR fixes #12 by tightening the guard.' $'Resolves test/repo#12\nThis fixes #12.' \
+	"Use \`close #12\` literally. Ref #12"; do
+	_gh_validate_pr_closing_keywords --repo "test/repo" --body "$declared_body" 2>/dev/null
+	if [[ $? -eq 0 ]]; then
+		pass "accepts declared closing reference: '${declared_body%%$'\n'*}'"
+	else
+		fail "should accept declared closing reference: '${declared_body%%$'\n'*}'"
+	fi
+done
+
 NEG_BODY_FILE="${TEST_ROOT}/negated-pr-body.md"
 printf '## Summary\n\nPartial work. Do not close #123 from this PR.\n' >"$NEG_BODY_FILE"
 for body_source_form in long equals short; do
