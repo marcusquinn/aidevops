@@ -1691,6 +1691,25 @@ _hrff_record_exit_metric() {
 }
 
 #######################################
+# Emit the EXIT-trap worker runtime event for a classified reason. With a
+# lease token in scope the event also posts this attempt's terminal lease.
+# Args: $1=reason, $2=draft checkpoint reason
+#######################################
+_hrff_emit_exit_trap_event() {
+	local reason="$1"
+	local checkpoint_reason="$2"
+	declare -F _emit_worker_runtime_event >/dev/null 2>&1 || return 0
+	if [[ "$reason" == "worker_complete" ]]; then
+		_emit_worker_runtime_event "worker.completed" "recovered" "$reason"
+	elif [[ "$reason" == "$checkpoint_reason" ]]; then
+		_emit_worker_runtime_event "worker.deferred" "checkpointed" "$reason"
+	else
+		_emit_worker_runtime_event "worker.failed" "failed" "$reason"
+	fi
+	return 0
+}
+
+#######################################
 # Finalize an EXIT-trap classification: preserve work, release the claim, emit
 # terminal evidence, release the lock, and force a non-zero process exit when preparation
 # ended cleanly before runtime invocation.
@@ -1747,15 +1766,13 @@ _hrff_finalize_exit_trap() {
 	if [[ "$claim_release_handled" -eq 0 ]] && \
 		! _release_dispatch_claim "$session_key" "$reason" "$exit_status" "$session_count"; then
 		print_warning "[exit-trap] claim release persistence remains retryable for session=${session_key} reason=${reason}"
-	fi
-	if declare -F _emit_worker_runtime_event >/dev/null 2>&1; then
-		if [[ "$reason" == "worker_complete" ]]; then
-			_emit_worker_runtime_event "worker.completed" "recovered" "$reason"
-		elif [[ "$reason" == "$checkpoint_reason" ]]; then
-			_emit_worker_runtime_event "worker.deferred" "checkpointed" "$reason"
-		else
-			_emit_worker_runtime_event "worker.failed" "failed" "$reason"
-		fi
+		# The retry row replays this release later. A terminal lease posted now
+		# would close the episode, the replay would read `terminal` and drop the
+		# row unpublished (GH#36593 forbids a release after a closed episode),
+		# so emit the event without the lease token and leave the claim open.
+		AIDEVOPS_DISPATCH_LEASE_TOKEN="" _hrff_emit_exit_trap_event "$reason" "$checkpoint_reason"
+	else
+		_hrff_emit_exit_trap_event "$reason" "$checkpoint_reason"
 	fi
 	if declare -F _hrw_record_terminal_outcome >/dev/null 2>&1; then
 		local terminal_outcome="failed"
