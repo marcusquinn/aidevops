@@ -124,7 +124,10 @@ It refuses the whole repository when an absent entry's parent is also missing
 outside a system temp root, because that may be an unmounted volume.
 
 Non-GitHub, local-only, unsupported, and already-conforming repositories are not
-moved. Case-only and destination-inside-source moves use private same-filesystem
+moved. The framework install checkout (`~/Git/aidevops`, or the checkout the CLI
+runs from) is never moved: `plan` lists it under exclusions with reason
+`framework-install-checkout`, and `apply` refuses an older plan that includes it,
+because the CLI, setup and update paths depend on that fixed location. Case-only and destination-inside-source moves use private same-filesystem
 staging; destination collisions always fail closed.
 
 ### Follow a GitHub transfer or rename

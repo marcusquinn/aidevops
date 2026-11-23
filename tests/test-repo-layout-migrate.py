@@ -1041,6 +1041,40 @@ class RepoLayoutMigrationTest(unittest.TestCase):
                 self.assertIn(message, result.stderr)
                 self.assertFalse(self.plan.exists())
 
+    def test_framework_install_checkout_is_never_moved(self) -> None:
+        # GH#40061: a third-party owner path would move the hardcoded install.
+        framework = self.workspace / "aidevops"
+        self._init_repository(framework, "marcusquinn/aidevops")
+        self._register({"path": str(framework)})
+        head = self._git("rev-parse", "HEAD", cwd=framework)
+        summary = self._plan()
+        payload = json.loads(self.plan.read_text(encoding="utf-8"))
+        self.assertEqual(summary["moves"], 1)
+        self.assertNotIn(str(framework), [item["source"] for item in payload["repositories"]])
+        self.assertIn(
+            {"path": str(framework), "reason": "framework-install-checkout"},
+            payload["exclusions"],
+        )
+
+        # A plan written where the checkout was not protected fails closed at apply.
+        unguarded = {**self.environment, "HOME": str(self.root / "elsewhere")}
+        result = self._run(
+            "plan", "--workspace", str(self.workspace), "--output", str(self.plan),
+            "--repos-json", str(self.repos_json), "--state-dir", str(self.state),
+            "--include-registered-paths", "--source", str(framework),
+            environment=unguarded,
+        )
+        unguarded_summary = json.loads(result.stdout)
+        self.assertEqual(unguarded_summary["moves"], 1)
+        result = self._run(
+            "apply", "--plan", str(self.plan), "--confirm", unguarded_summary["plan_sha256"],
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("framework install checkout", result.stderr)
+        self.assertEqual(head, self._git("rev-parse", "HEAD", cwd=framework))
+        self.assertFalse((self.workspace / "marcusquinn").exists())
+
     def _database_paths(self, path: Path) -> set[str]:
         with sqlite3.connect(path) as connection:
             project = connection.execute("SELECT worktree FROM project").fetchone()[0]
