@@ -1,0 +1,37 @@
+object b6ccc6b76a1e1541cdf73d7e5b9e0dd14fe13041
+type commit
+tag v3.39.269
+tagger marcusquinn <6428977+marcusquinn@users.noreply.github.com> 1795418413 +0000
+
+Release v3.39.269 - AI DevOps Framework
+
+Aidevops-Version: 3.39.269
+Aidevops-Source-PR: 39977
+Aidevops-Source-Merge: 189690e7d9987553a8124dc42b29c6cf5806c7ae
+Aidevops-Snapshot-Base: 5f656f10a0909cb8891b741f6cc835ce96318909
+Aidevops-Aggregated-Source: 39941@8d9e01a1fe75671c685e2b242d39549594f8077d
+Aidevops-Aggregated-Source: 39943@21b2c2acb9c8c4a352c5473352a0e51bd610ae37
+Aidevops-Aggregated-Source: 39944@2dc49584d359f48cbc2a12dab5cf62911197c842
+Aidevops-Aggregated-Source: 39945@b4f01558d9486f805aade3ea9e2fdd3d3582b566
+Aidevops-Aggregated-Source: 39946@839bbfc43d2465e67449e648c224f10db123772b
+Aidevops-Aggregated-Source: 39949@027a951856934a5b3b5eb0ff32bc8f6ffcbc991f
+Aidevops-Aggregated-Source: 39950@df777c8bfd96f009925e852180ff8bbc384681c2
+Aidevops-Aggregated-Source: 39954@998c4c053e912717ad822637cbde5c081b30da70
+Aidevops-Aggregated-Source: 39955@9fde4747268a4611dd06b78a7c8cab8546c114fe
+Aidevops-Aggregated-Source: 39957@852b135f646bae9a1878a3b9f53fd24e33076cdf
+Aidevops-Aggregated-Source: 39961@0f0151ddc22461e226427b99bfb4fc509e61a5fd
+Aidevops-Aggregated-Source: 39962@e29548ceef3431ab9d666214c54c6588e9b09af4
+Aidevops-Aggregated-Source: 39964@4a989ce0f6766dddff75a6a327df6568029c39d9
+Aidevops-Aggregated-Source: 39965@7f678addf5dd2a316b23dd43cd94ede31a136353
+Aidevops-Aggregated-Source: 39966@eb31aa77692caf86cea6ba8f1bf4a921093e0d9a
+Aidevops-Aggregated-Source: 39967@6174e8c9f31c15c9889a81823acc59e6b805186e
+Aidevops-Aggregated-Source: 39972@4b56262067b40772d93ae4eb2ff2564390e3570c
+Aidevops-Aggregated-Source: 39973@86888d9956a8de59c13797580e481791ac2eb013
+Aidevops-Aggregated-Source: 39975@88306935ef3745ef7caf20fa9491df889584c38d
+Aidevops-Aggregated-Source: 39977@189690e7d9987553a8124dc42b29c6cf5806c7ae
+-----BEGIN SSH SIGNATURE-----
+U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg5IliwL42sBxfqQz9UN/AwvOgBI
+tXO/S10O+PgxbPV78AAAADZ2l0AAAAAAAAAAZzaGE1MTIAAABTAAAAC3NzaC1lZDI1NTE5
+AAAAQIVJs6qK/KYbWaI5hc+vNQlrTbL2f7CmAMq+NgrWrkGZYUbgK1ns1GILeoolYqiLqs
+CXxxXNBZsHkAknq5HHmgU=
+-----END SSH SIGNATURE-----
