@@ -10,15 +10,18 @@ from typing import Any
 from repo_layout_common import MigrationError, expand_path, git
 
 
-def tracked_as_gitlink(source: Path) -> bool:
-    """Return whether an enclosing repository records source as a submodule."""
+def tracked_by_parent(source: Path) -> bool:
+    """Return whether an enclosing repository tracks source or any path below it.
+
+    This covers submodule gitlinks and ordinary files the parent indexes inside
+    the nested checkout; moving the source would delete either from the parent.
+    """
     try:
         parent_root = expand_path(git(source.parent, "rev-parse", "--show-toplevel").strip())
     except MigrationError:
         return False
     relative = source.relative_to(parent_root.resolve()).as_posix()
-    records = git(parent_root, "ls-files", "--stage", "--", f":(literal){relative}")
-    return any(line.startswith("160000 ") for line in records.splitlines())
+    return bool(git(parent_root, "ls-files", "--stage", "--", f":(literal){relative}").strip())
 
 
 def validate_registered_source(
@@ -48,8 +51,8 @@ def validate_registered_source(
     top_level = expand_path(git(source, "rev-parse", "--show-toplevel").strip())
     if top_level.resolve() != source:
         raise MigrationError("Selected source is not a canonical repository root")
-    if tracked_as_gitlink(source):
-        raise MigrationError("Selected source is a submodule of its parent repository")
+    if tracked_by_parent(source):
+        raise MigrationError("Selected source is tracked by its parent repository")
 
 
 def nested_first_order(sources: list[Path]) -> list[Path]:
@@ -62,6 +65,18 @@ def nested_first_order(sources: list[Path]) -> list[Path]:
         return sum(1 for other in sources if other != path and path.is_relative_to(other))
 
     return sorted(sources, key=lambda path: -containers(path))
+
+
+def validate_disjoint_destinations(destinations: list[Path]) -> None:
+    """Refuse planned destinations that are equal or contain one another.
+
+    Moving into a path below another planned destination would create that
+    destination first, leaving the later move ambiguous and unrollbackable.
+    """
+    for index, first in enumerate(destinations):
+        for second in destinations[index + 1 :]:
+            if first.is_relative_to(second) or second.is_relative_to(first):
+                raise MigrationError(f"Planned destinations overlap: {first} and {second}")
 
 
 def nested_relative_paths(parent: Path, sources: list[Path]) -> tuple[str, ...]:

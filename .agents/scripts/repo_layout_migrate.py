@@ -49,6 +49,7 @@ from repo_layout_repository import (
 from repo_layout_selection import (
     nested_first_order as nested_first_order,
     nested_relative_paths as nested_relative_paths,
+    validate_disjoint_destinations as validate_disjoint_destinations,
     validate_registered_source as validate_registered_source,
 )
 
@@ -161,6 +162,17 @@ def plan_consumers(args: argparse.Namespace, mappings: dict[str, str]) -> dict[s
     return consumers
 
 
+def registration_destination(item: Any, mappings: dict[str, str]) -> str | None:
+    """Return a registration's planned destination, if any.
+
+    Registration paths are expanded the same way planning matches them, so a
+    ``~``-relative spelling that admitted a move is also retargeted.
+    """
+    if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+        return None
+    return mappings.get(str(expand_path(item["path"])))
+
+
 def repos_json_consumer(path: Path, mappings: dict[str, str]) -> dict[str, Any] | None:
     """Describe exact repository registration matches when config exists."""
     if not path.exists():
@@ -169,7 +181,7 @@ def repos_json_consumer(path: Path, mappings: dict[str, str]) -> dict[str, Any] 
     matches = [
         {"index": index, "path": item["path"]}
         for index, item in enumerate(config.get("initialized_repos", []))
-        if isinstance(item, dict) and item.get("path") in mappings
+        if registration_destination(item, mappings) is not None
     ]
     return {"path": str(path), "sha256": file_sha256(path), "matches": matches}
 
@@ -316,6 +328,7 @@ def plan_command(args: argparse.Namespace) -> int:
         if exclusion:
             exclusions.append(exclusion)
     validate_nested_moves(repositories)
+    validate_disjoint_destinations([Path(item["destination"]) for item in repositories])
 
     mappings = migration_mappings(repositories)
     consumers = plan_consumers(args, mappings)
@@ -1002,8 +1015,9 @@ def prepare_repos_json(
         raise MigrationError(f"Malformed JSON backup: {backup}") from exc
     changed = 0
     for item in payload.get("initialized_repos", []):
-        if isinstance(item, dict) and item.get("path") in mappings:
-            item["path"] = mappings[item["path"]]
+        target = registration_destination(item, mappings)
+        if target is not None:
+            item["path"] = target
             changed += 1
     encoded = json.dumps(payload, indent=2, ensure_ascii=False).encode() + b"\n"
     return (

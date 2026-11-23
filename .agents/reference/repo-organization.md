@@ -102,9 +102,12 @@ also name a repository that discovery does not report: one outside the
 workspace (such as `~/Project`) or nested inside another repository. It must
 match an `initialized_repos[].path` entry exactly and be a canonical root with
 its own `.git` directory. It must not be local-only, a linked worktree, a
-submodule, or a directory that contains the workspace. When one selected source
+submodule or other path tracked by an enclosing repository, or a directory that
+contains the workspace. A `~` spelling of the registration is accepted and is
+retargeted after the move. When one selected source
 is inside another, the plan moves the nested repository first, omits it from
 the parent's fingerprint, and refuses a nested destination inside the parent.
+Planned destinations that are equal or contain one another are refused.
 Rollback reverses that order. Apply rechecks the complete before-state, rejects cross-device moves and
 active-path ambiguity, moves one repository at a time, and writes owner-private
 append-only receipts. Replaying apply resumes verified steps. Rollback requires
