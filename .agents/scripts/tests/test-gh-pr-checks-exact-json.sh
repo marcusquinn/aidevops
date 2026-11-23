@@ -67,6 +67,11 @@ if [[ "$mode" == "missing-rollup" ]]; then
 	printf '%s\n' '{"data":{"node":{"__typename":"PullRequest","statusCheckRollup":{"nodes":[]}},"rateLimit":{"cost":1}}}'
 	exit 0
 fi
+if [[ "$mode" == "empty" ]]; then
+	# GH#40059: GitHub's real shape for a head commit with no checks or statuses.
+	printf '%s\n' '{"data":{"node":{"__typename":"PullRequest","statusCheckRollup":{"nodes":[{"commit":{"statusCheckRollup":null}}]}},"rateLimit":{"cost":1}}}'
+	exit 0
+fi
 
 nodes='[]'
 has_next=false
@@ -108,9 +113,6 @@ cancel)
 	;;
 no-required)
 	nodes='[{"__typename":"StatusContext","context":"optional","state":"SUCCESS","targetUrl":"","createdAt":"2026-08-01T00:00:00Z","description":"","isRequired":false}]'
-	;;
-empty)
-	nodes='[]'
 	;;
 missing-cost)
 	nodes='[{"__typename":"StatusContext","context":"required","state":"SUCCESS","targetUrl":"","createdAt":"2026-08-01T00:00:00Z","description":"","isRequired":true}]'
@@ -284,6 +286,10 @@ run_case empty all
 assert_eq "no checks returns one" "1" "$CASE_RC"
 assert_eq "no checks never becomes empty-array success" "" "$CASE_OUT"
 assert_eq "no checks diagnostic names the immutable identity branch" "no checks reported on the 'feature/test' branch" "$CASE_ERR"
+
+run_case empty required
+assert_eq "null rollup in required mode is no-required, not malformed" "1" "$CASE_RC"
+assert_eq "null rollup required diagnostic matches native CLI" "no required checks reported on the 'feature/test' branch" "$CASE_ERR"
 
 for failure_mode in identity-error identity-malformed missing-cost zero-cost graphql-error missing-rollup repeated-cursor; do
 	run_case "$failure_mode" required
