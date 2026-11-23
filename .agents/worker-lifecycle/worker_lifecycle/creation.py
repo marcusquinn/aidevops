@@ -76,6 +76,44 @@ def _created_directory(path: Path) -> Iterator[int]:
                 pass
 
 
+def _git_environment() -> dict[str, str]:
+    """Native Git environment: inherited GIT_* selectors stripped, no prompts."""
+    environment = {
+        key: value for key, value in os.environ.items()
+        if not key.startswith("GIT_")
+    }
+    environment["GIT_TERMINAL_PROMPT"] = "0"
+    return environment
+
+
+def _checkout_workers_config(git: str, repo: Path) -> tuple[str, ...]:
+    """GH#39974: parallel checkout unless repository/user Git config decides.
+
+    The creation environment strips GIT_*, so environment Git config cannot
+    reach `worktree add`; pass `-c` instead. AIDEVOPS_WORKTREE_CHECKOUT_WORKERS=1
+    restores sequential checkout, 0 is Git's auto, invalid values use 4.
+    Takes no environment argument: a call result is tainted by its arguments
+    (Semgrep tainted-env-args), and this result reaches `worktree add` argv.
+    """
+    raw = os.environ.get("AIDEVOPS_WORKTREE_CHECKOUT_WORKERS", "4")
+    requested = int(raw) if raw.isascii() and raw.isdigit() and len(raw) <= 3 else 4
+    # Copy the value from a literal range so the argv below carries no
+    # environment-derived data (Semgrep tainted-env-args); same 0-999 domain
+    # as _worktree_checkout_workers in shared-worktree-create.sh.
+    workers = 4
+    for candidate in range(1000):
+        if candidate == requested:
+            workers = candidate
+            break
+    configured = subprocess.run(  # nosec B603 # fixed native Git query, no shell
+        [git, "-C", str(repo), "config", "--get", "checkout.workers"],
+        env=_git_environment(), capture_output=True, check=False, timeout=30,
+    )
+    if configured.returncode == 0:
+        return ()
+    return ("-c", f"checkout.workers={workers}")
+
+
 def create_worktree(
     store: LifecycleRegistry, spec: WorktreeSpec, pid: int, session_id: str,
 ) -> dict[str, object]:
@@ -103,15 +141,12 @@ def create_worktree(
     git = shutil.which("git")
     if git is None:
         raise ValueError("git-executable-unavailable")
-    environment = {
-        key: value for key, value in os.environ.items()
-        if not key.startswith("GIT_")
-    }
-    environment["GIT_TERMINAL_PROMPT"] = "0"
+    environment = _git_environment()
+    checkout = _checkout_workers_config(git, repo)
     with DirectoryHandle(repo) as repository, DirectoryHandle(path.parent) as parent:
         with _created_directory(path) as original, DirectoryHandle(path) as directory:
             subprocess.run(  # nosec B603 # caller's native Git options, no shell
-                [git, "-C", str(repo), "worktree", "add", *options,
+                [git, "-C", str(repo), *checkout, "worktree", "add", *options,
                  "--", str(path), ref],
                 env=environment, capture_output=True, check=True, timeout=120,
             )

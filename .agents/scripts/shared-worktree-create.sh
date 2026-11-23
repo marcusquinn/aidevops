@@ -164,6 +164,22 @@ _worktree_refusal_remediation() {
 	return 0
 }
 
+# GH#39974: print the parallel checkout worker count for a new worktree, or
+# nothing when repository/user Git config already sets checkout.workers.
+# Sequential checkout of a ~45,000-file tree took 8-10 s against ~5 s with four
+# workers; Git keeps trees below checkout.thresholdForParallelism sequential.
+# AIDEVOPS_WORKTREE_CHECKOUT_WORKERS=1 restores sequential checkout; 0 is auto.
+_worktree_checkout_workers() {
+	local repo="$1"
+	local workers="${AIDEVOPS_WORKTREE_CHECKOUT_WORKERS:-4}"
+	[[ "$workers" =~ ^[0-9]{1,3}$ ]] || workers=4
+	if git -C "$repo" config --get checkout.workers >/dev/null 2>&1; then
+		return 0
+	fi
+	printf '%s\n' "$((10#$workers))"
+	return 0
+}
+
 _worktree_create_native() {
 	local repo="$1"
 	local path="$2"
@@ -172,14 +188,19 @@ _worktree_create_native() {
 	local runtime_pid="${AIDEVOPS_LIFECYCLE_RUNTIME_PID:-}"
 	local session_id="${AIDEVOPS_LIFECYCLE_SESSION_ID:-}"
 	local helper_dir="${BASH_SOURCE[0]%/*}"
-	local state_dir="" python="" result="" parent=""
+	local state_dir="" python="" result="" parent="" workers=""
 	if [[ "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" == 1 || "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" == 1 ||
 		( -z "$runtime_pid" && -z "$session_id" ) ||
 		-e "$path" || -L "$path" ]]; then
 		# These callers do not gain controlled-creation provenance.
 		# An undeclared runtime must retain a coverage gap: the helper shell's
 		# exit does not establish that the user has finished with the tree.
-		git -C "$repo" worktree add "$@" -- "$path" "$ref" || return 1
+		workers=$(_worktree_checkout_workers "$repo")
+		if [[ -n "$workers" ]]; then
+			git -C "$repo" -c checkout.workers="$workers" worktree add "$@" -- "$path" "$ref" || return 1
+		else
+			git -C "$repo" worktree add "$@" -- "$path" "$ref" || return 1
+		fi
 		return 0
 	fi
 	[[ -n "$runtime_pid" && -n "$session_id" ]] || return 1
