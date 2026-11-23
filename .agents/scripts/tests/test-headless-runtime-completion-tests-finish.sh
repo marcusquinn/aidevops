@@ -4,7 +4,7 @@
 # Dispatch-claim, permission-finish and _cmd_run_finish tests.
 #
 # Sourced by test-headless-runtime-completion-tests.sh (itself sourced by
-# test-headless-runtime-helper.sh) after the shared test harness is initialized.
+# test-headless-runtime-harness.sh) after the shared test harness is initialized.
 
 [[ -n "${_TEST_HEADLESS_RUNTIME_COMPLETION_TESTS_FINISH_LOADED:-}" ]] && return 0
 _TEST_HEADLESS_RUNTIME_COMPLETION_TESTS_FINISH_LOADED=1

@@ -48,6 +48,41 @@ assert_order "retains excess debt for idle-capacity borrowing" 1 "4,5,6,1,2,3"
 QUALITY_DEBT_CAP_PCT=100
 assert_order "honours an explicit full debt share" 2 "1,2,4,5,6,3"
 
+# GH#39976: runner-salted tie-break separates runners inside equal
+# (priority_rank, score) groups without changing priority or score order.
+salted_order() {
+	local login="$1" rollback="${2:-1}"
+	_DISPATCH_SELF_LOGIN="$login" HOSTNAME=fixture-host AIDEVOPS_DISPATCH_RUNNER_SALTED_ORDER="$rollback" \
+		_dispatch_order_runner_salted_candidates "$SALTED" | jq -r '[.[].number] | join(",")'
+	return 0
+}
+assert_salted() {
+	local name="$1" condition="$2"
+	if [[ "$condition" == 1 ]]; then
+		printf 'PASS: %s\n' "$name"
+		return 0
+	fi
+	printf 'FAIL: %s\n' "$name" >&2
+	failures=$((failures + 1))
+	return 0
+}
+SALTED=$(jq -nc '[{number:50, repo_slug:"owner/a", priority_rank:1, score:11500},
+	{number:60, repo_slug:"owner/a", priority_rank:0, score:9000}]
+	+ [range(1;13) | {number:., repo_slug:"owner/a", priority_rank:0, score:5500}]')
+salted_a=$(salted_order runner-a)
+salted_b=$(salted_order runner-b)
+tied_sorted=$(tr ',' '\n' <<<"${salted_a#50,60,}" | sort -n | paste -sd, -)
+assert_salted "salted order keeps priority and score leaders" "$([[ "$salted_a" == 50,60,* && "$salted_b" == 50,60,* ]] && echo 1)"
+assert_salted "salted order permutes only the tied group" "$([[ "$tied_sorted" == "1,2,3,4,5,6,7,8,9,10,11,12" ]] && echo 1)"
+assert_salted "salted order is stable for one runner" "$([[ "$(salted_order runner-a)" == "$salted_a" ]] && echo 1)"
+assert_salted "different runners order tied candidates differently" "$([[ "$salted_a" != "$salted_b" ]] && echo 1)"
+assert_salted "empty login keeps the input byte-for-byte" \
+	"$([[ "$(_DISPATCH_SELF_LOGIN='' _dispatch_order_runner_salted_candidates "$SALTED")" == "$SALTED" ]] && echo 1)"
+assert_salted "rollback flag keeps the input byte-for-byte" \
+	"$([[ "$(_DISPATCH_SELF_LOGIN=runner-a AIDEVOPS_DISPATCH_RUNNER_SALTED_ORDER=0 _dispatch_order_runner_salted_candidates "$SALTED")" == "$SALTED" ]] && echo 1)"
+assert_salted "invalid JSON is returned unchanged" \
+	"$([[ "$(_DISPATCH_SELF_LOGIN=runner-a _dispatch_order_runner_salted_candidates 'not-json')" == 'not-json' ]] && echo 1)"
+
 assert_product_reservation_outcome() {
 	local mode="$1" expected_result="$2" expected_attempts="$3" expected_launches="$4" expected_log="$5"
 	local candidate_file="" outcomes_file="" attempts_file="" launches_file="" result="" budget=2

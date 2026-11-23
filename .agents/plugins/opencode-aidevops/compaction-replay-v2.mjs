@@ -18,8 +18,9 @@
 // whole user messages for those (compaction.ts retainUsers()).
 // ---------------------------------------------------------------------------
 
-import { buildReplayParts, PIN_METADATA_KEY, selectWithinBudget } from "./compaction-replay-budget.mjs";
+import { buildReplayParts, PIN_METADATA_KEY, planReplay } from "./compaction-replay-budget.mjs";
 import { resolveReplayLimits } from "./compaction-pinned-input.mjs";
+import { replayWindowTokens } from "./compaction-replay-sizing.mjs";
 import {
   messageMedia,
   promptEntry,
@@ -108,7 +109,7 @@ function persist(state, store) {
 }
 
 /** Record host-normalized media for recorded prompts still visible in context. */
-function captureMedia(state, store, messages, maxMedia) {
+function captureMedia(state, store, messages, limits) {
   const byID = new Map(store.prompts.map((entry) => [entry.id, entry]));
   const fresh = messages
     .map((message) => (message?.role === "user" ? [message, byID.get(message.id)] : []))
@@ -118,7 +119,7 @@ function captureMedia(state, store, messages, maxMedia) {
     entry.mediaCaptured = true;
   }
   if (fresh.length === 0) return;
-  pruneMedia(store.prompts, maxMedia);
+  pruneMedia(store.prompts, { maxMedia: limits.maxMedia, maxMediaTokens: limits.maxMediaTokens, replayPdfs: limits.replayPdfs });
   persist(state, store);
 }
 
@@ -134,17 +135,20 @@ function replayParts(state, store, request, limits) {
   const { sessionID, messages, index } = request;
   const checkpoint = messages[index];
   const anchorID = checkpoint.id || "checkpoint";
-  const key = `${anchorID}:${state.revision}`;
+  const windowTokens = replayWindowTokens(request.model?.limit);
+  const key = `${anchorID}:${state.revision}:${windowTokens}`;
   const cached = state.cache.get(sessionID);
   if (cached?.key === key) return cached.parts;
   const entries = hiddenEntries(store, messages, messageText(checkpoint));
-  const selection = selectWithinBudget(entries, limits.maxTextChars, limits.minExcerptChars);
+  // GH#39958: media in tokens, PDFs as labels, whole replay within a window share.
+  const { selection, maxMediaTokens } = planReplay(entries, limits, windowTokens);
+  const context = { sessionID, anchorID, overflow: false, maxMedia: limits.maxMedia, maxMediaTokens, replayPdfs: limits.replayPdfs };
   const built = selection.selected.length > 0
-    ? buildReplayParts(selection, { sessionID, anchorID, overflow: false, maxMedia: limits.maxMedia })
-    : { parts: [], messages: 0, media: 0 };
+    ? buildReplayParts(selection, context)
+    : { parts: [], messages: 0, media: 0, mediaTokens: 0 };
   const parts = built.parts.map((part) => toV2Part(part, state.media));
   boundedSet(state.cache, sessionID, { key, parts });
-  log(state, "INFO", `prepared ${built.messages} user turn(s), ${built.media} attachment(s), ${selection.excerpted} excerpted, ${selection.omitted} elided`);
+  log(state, "INFO", `prepared ${built.messages} user turn(s), ${built.media} attachment(s), ${selection.excerpted} excerpted, ${selection.omitted} elided, ~${built.mediaTokens} media tokens`);
   return parts;
 }
 
@@ -156,13 +160,13 @@ function injectionTarget(state, event, limits) {
   const messages = Array.isArray(event?.messages) ? event.messages : null;
   if (!limits.enabled || !sessionID || !messages) return { reason: limits.enabled ? "no_session" : "disabled" };
   const store = sessionStore(state, sessionID);
-  captureMedia(state, store, messages, limits.maxMedia);
+  captureMedia(state, store, messages, limits);
   updateMediaShape(state, messages);
   const index = findCheckpointIndex(messages);
   let reason = "";
   if (index < 0) reason = "no_compaction";
   else if (alreadyInjected(messages[index])) reason = "already_injected";
-  return reason ? { reason } : { target: { sessionID, messages, index, store } };
+  return reason ? { reason } : { target: { sessionID, messages, index, store, model: event.model } };
 }
 
 /**

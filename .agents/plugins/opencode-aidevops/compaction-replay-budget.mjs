@@ -9,14 +9,38 @@
 // longest messages (pasted logs, files) are excerpted, head and tail, to one
 // shared cap, so short aim-defining turns are never cut. Whole turns are
 // elided only when even minimum excerpts cannot fit, which keeps the replay
-// from pushing a session into a compaction loop.
+// from pushing a session into a compaction loop. Inline media is charged by
+// estimated tokens and PDFs become labels (GH#39958,
+// compaction-replay-sizing.mjs).
 // ---------------------------------------------------------------------------
 
 import { randomBytes } from "node:crypto";
-import { attachmentLabel } from "./compaction-replay-collect.mjs";
+import { attachmentLabel, attachmentPath, isPdf } from "./compaction-replay-collect.mjs";
+import { DEFAULT_MAX_MEDIA_TOKENS, fitMedia, mediaTokenBudget, replayTextBudget } from "./compaction-replay-sizing.mjs";
 
 export const DEFAULT_MIN_EXCERPT_CHARS = 1_500;
 export const PIN_METADATA_KEY = "aidevops_pinned_user_input";
+
+export const MEDIA_REASONS = Object.freeze({
+  pdfPath: "PDF not replayed after compaction; read the pages you need from the path shown",
+  pdf: "PDF not replayed after compaction; ask the user to attach it again if specific pages matter",
+  noCopy: "not replayed (no inline copy stored)",
+  overflow: "not replayed after an oversized-media compaction",
+  budget: "not replayed (only the most recent attachments within the replay token budget are replayed)",
+});
+
+/**
+ * Reason for media dropped by the compaction-loop backstop.
+ * @param {number} percent
+ * @returns {string}
+ */
+export const droppedMediaReason = (percent) =>
+  `not replayed (media dropped: the request after the previous compaction used ${percent}% of the context limit)`;
+
+// Charge every media label at its longest reason so the rendered text never
+// exceeds the budget whichever reason applies.
+const LONGEST_MEDIA_REASON = [...Object.values(MEDIA_REASONS), droppedMediaReason(1000)]
+  .reduce((longest, reason) => (reason.length > longest.length ? reason : longest), "");
 
 /**
  * Keep the head and tail of an over-long message; aims usually sit at one end
@@ -56,46 +80,64 @@ export function perMessageCap(lengths, budget, floor) {
   return low;
 }
 
+const REPLAY_RESERVED_CHARS = 1536;
+const sum = (values) => values.reduce((total, value) => total + value, 0);
+
 /**
  * Last resort: keep the first (initiating) turn and the newest that fit.
- * @returns {{ selected: Array<object>, omitted: number }}
+ * @returns {{ selected: Array<object>, omitted: number, chars: number }}
  */
 function elideMiddle(clipped, sizes, budget) {
-  if (sizes[0] > budget) return { selected: [], omitted: clipped.length };
+  if (sizes[0] > budget) return { selected: [], omitted: clipped.length, chars: 0 };
   let used = sizes[0];
   const tail = [];
   for (let i = clipped.length - 1; i >= 1 && used + sizes[i] <= budget; i--) {
     used += sizes[i];
     tail.unshift(clipped[i]);
   }
-  return { selected: [clipped[0], ...tail], omitted: clipped.length - 1 - tail.length };
+  return { selected: [clipped[0], ...tail], omitted: clipped.length - 1 - tail.length, chars: used + REPLAY_RESERVED_CHARS };
 }
 
 /**
- * Fit every turn into the text budget.
+ * Fit every turn into the text budget. `chars` bounds the rendered replay text.
  * @param {Array<{ text: string }>} entries
  * @param {number} maxTextChars
  * @param {number} [minExcerptChars]
- * @returns {{ selected: Array<object>, omitted: number, excerpted: number }}
+ * @returns {{ selected: Array<object>, omitted: number, excerpted: number, chars: number }}
  */
 export function selectWithinBudget(entries, maxTextChars, minExcerptChars = DEFAULT_MIN_EXCERPT_CHARS) {
   // Reserve the header, nonce declaration, end marker and elision notice.
   // Per-turn costs include headings, timestamps, notes, fallback attachment
-  // labels and 128 characters for the excerpt marker. Inline media bytes are
-  // separately limited by maxMedia, not charged as replay text.
-  const budget = Math.max(0, maxTextChars - 1536);
-  if (entries.length === 0 || budget === 0) return { selected: [], omitted: entries.length, excerpted: 0 };
+  // labels and 128 characters for the excerpt marker. Inline media is charged
+  // in tokens by buildReplayParts(), not as replay text.
+  const budget = Math.max(0, maxTextChars - REPLAY_RESERVED_CHARS);
+  if (entries.length === 0 || budget === 0) return { selected: [], omitted: entries.length, excerpted: 0, chars: 0 };
   const lengths = entries.map((entry) => entry.text.length);
   const overhead = entries.map((entry, index) => entryText({ ...entry, text: "" }, index, entries.length, "0".repeat(32)).length
-    + 128 + (entry.media || []).reduce((sum, part) => sum + attachmentLabel(part, "not replayed (only the most recent attachments are replayed)").length + 1, 0));
+    + 128 + sum((entry.media || []).map((part) => attachmentLabel(part, LONGEST_MEDIA_REASON).length + 1)));
   const floor = Math.min(minExcerptChars, Math.max(0, budget - overhead[0]));
-  const textBudget = budget - overhead.reduce((sum, size) => sum + size, 0);
+  const textBudget = budget - sum(overhead);
   const cap = perMessageCap(lengths, textBudget, floor) ?? floor;
   const clipped = entries.map((entry) => ({ ...entry, text: excerpt(entry.text, cap) }));
   const excerpted = lengths.filter((length) => length > cap).length;
   const sizes = lengths.map((length, index) => Math.min(length, cap) + overhead[index]);
-  if (sizes.reduce((sum, size) => sum + size, 0) <= budget) return { selected: clipped, omitted: 0, excerpted };
+  if (sum(sizes) <= budget) return { selected: clipped, omitted: 0, excerpted, chars: sum(sizes) + REPLAY_RESERVED_CHARS };
   return { ...elideMiddle(clipped, sizes, budget), excerpted };
+}
+
+/**
+ * Select turns and size the media budget for one replay. With a known input
+ * window, text and media together stay within `maxContextPercent` of it, so
+ * the replay alone cannot trigger the next compaction; text keeps priority.
+ * @param {Array<object>} entries
+ * @param {{ maxTextChars: number, minExcerptChars: number, maxMediaTokens: number, maxContextPercent: number }} limits
+ * @param {number} windowTokens - 0 when unknown
+ * @returns {{ selection: object, maxMediaTokens: number, totalTokens: number | null }}
+ */
+export function planReplay(entries, limits, windowTokens) {
+  const { maxTextChars, totalTokens } = replayTextBudget(limits, windowTokens);
+  const selection = selectWithinBudget(entries, maxTextChars, limits.minExcerptChars);
+  return { selection, maxMediaTokens: mediaTokenBudget(limits, totalTokens, selection.chars), totalTokens };
 }
 
 const REPLAY_HEADER = [
@@ -110,20 +152,28 @@ const REPLAY_HEADER = [
 const isInline = (part) => String(part.url || "").startsWith("data:");
 
 /**
- * Choose which media parts to replay inline: the newest `maxMedia` with an
- * inline copy, none after an oversized-media compaction.
- * @returns {Set<object>}
+ * Choose which media parts to replay inline: the newest that fit both
+ * `maxMedia` and `maxMediaTokens`; none after an oversized-media compaction
+ * or when the loop backstop dropped media.
+ * @returns {{ keep: Set<object>, tokens: number }}
  */
-function mediaToReplay(selected, overflow, maxMedia) {
-  if (overflow || maxMedia <= 0) return new Set();
-  const inline = selected.flatMap((entry) => entry.media).filter(isInline);
-  return new Set(inline.slice(Math.max(0, inline.length - maxMedia)));
+function mediaToReplay(selected, context) {
+  const maxMediaTokens = Number.isFinite(context.maxMediaTokens) ? context.maxMediaTokens : DEFAULT_MAX_MEDIA_TOKENS;
+  if (context.overflow || context.dropped) return { keep: new Set(), tokens: 0 };
+  return fitMedia(selected.flatMap((entry) => entry.media), { maxMedia: context.maxMedia, maxMediaTokens, replayPdfs: context.replayPdfs });
 }
 
-function mediaReason(part, overflow) {
-  if (overflow) return "not replayed after an oversized-media compaction";
-  if (!isInline(part)) return "not replayed (no inline copy stored)";
-  return "not replayed (only the most recent attachments are replayed)";
+/**
+ * Label reason for media that is not replayed inline.
+ * @param {object} part
+ * @param {{ overflow?: boolean, dropped?: string, replayPdfs?: boolean }} context
+ * @returns {string}
+ */
+export function mediaReason(part, context) {
+  if (isPdf(part) && !context.replayPdfs) return attachmentPath(part) ? MEDIA_REASONS.pdfPath : MEDIA_REASONS.pdf;
+  if (!isInline(part)) return MEDIA_REASONS.noCopy;
+  if (context.overflow) return MEDIA_REASONS.overflow;
+  return context.dropped || MEDIA_REASONS.budget;
 }
 
 function entryText(entry, index, total, nonce) {
@@ -132,17 +182,19 @@ function entryText(entry, index, total, nonce) {
 }
 
 /**
- * Build the parts to prepend to the compaction anchor message.
+ * Build the parts to prepend to the compaction anchor message. `dropped` is
+ * the label reason when the loop backstop withholds all media.
  * @param {{ selected: Array<object>, omitted: number }} selection
- * @param {{ sessionID: string, anchorID: string, overflow: boolean, maxMedia: number }} context
- * @returns {{ parts: Array<object>, media: number, messages: number }}
+ * @param {{ sessionID: string, anchorID: string, overflow: boolean, maxMedia: number,
+ *   maxMediaTokens?: number, replayPdfs?: boolean, dropped?: string }} context
+ * @returns {{ parts: Array<object>, media: number, mediaTokens: number, messages: number }}
  */
 export function buildReplayParts(selection, context) {
-  if (selection.selected.length === 0) return { parts: [], media: 0, messages: 0 };
+  if (selection.selected.length === 0) return { parts: [], media: 0, mediaTokens: 0, messages: 0 };
   const nonce = randomBytes(16).toString("hex");
-  const { sessionID, anchorID, overflow, maxMedia } = context;
+  const { sessionID, anchorID } = context;
   const total = selection.selected.length;
-  const keep = mediaToReplay(selection.selected, overflow, maxMedia);
+  const { keep, tokens } = mediaToReplay(selection.selected, context);
   let counter = 0;
   const mk = (fields) => ({
     id: `aidevops-replay-${anchorID}-${counter++}`,
@@ -160,10 +212,10 @@ export function buildReplayParts(selection, context) {
     for (const part of entry.media) {
       parts.push(keep.has(part)
         ? mk({ type: "file", mime: part.mime, url: part.url, filename: part.filename })
-         : mk({ type: "text", text: attachmentLabel(part, mediaReason(part, overflow)) }));
+        : mk({ type: "text", text: attachmentLabel(part, mediaReason(part, context)) }));
     }
     if (index === 0 && selection.omitted > 0) parts.push(mk({ type: "text", text: elision }));
   });
   parts.push(mk({ type: "text", text: `--- End of replayed user input [${nonce}]. ---` }));
-  return { parts, media: keep.size, messages: total };
+  return { parts, media: keep.size, mediaTokens: tokens, messages: total };
 }

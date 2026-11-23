@@ -419,9 +419,15 @@ run_blocked_completion_tests() {
 	test_manual_dispatch_blocked_completion_records_blocked_label
 	test_quoted_blocked_mention_continues
 	test_anchored_blocked_shapes_are_terminal
-	test_clean_exit_terminal_state_reconciliation
 	test_pr_less_terminal_proof_survives_finalization
 	test_own_merged_terminal_reconciliation
+	return 0
+}
+
+# GH#39968: run by a separate root suite from run_blocked_completion_tests so
+# each root stays under the affected-tests per-suite timeout.
+run_terminal_reconciliation_tests() {
+	test_clean_exit_terminal_state_reconciliation
 	test_scoped_delivery_terminal_reconciliation
 	return 0
 }
@@ -776,6 +782,9 @@ test_pr_less_terminal_proof_survives_finalization() {
 	local result=0
 	if ! (
 		local WORKER_ISSUE_NUMBER="456" DISPATCH_REPO_SLUG="owner/repo"
+		# Pin the attempt: the cached proof is bound to it, and without a pin the
+		# result and finish paths each mint their own identity (GH#39968).
+		local AIDEVOPS_ATTEMPT_ID="attempt:terminal-proof" AIDEVOPS_ATTEMPT_STARTED_AT=1792929600000000000
 		local work_dir="${TEST_ROOT}/terminal-proof-repo"
 		local output_file="${TEST_ROOT}/terminal-proof.jsonl" api_available=1
 		_setup_test_git_repo "$work_dir" 0

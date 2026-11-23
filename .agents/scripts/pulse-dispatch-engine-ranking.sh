@@ -274,12 +274,62 @@ _dispatch_order_claim_state_candidates() {
 }
 
 #######################################
-# Order one dispatch round: attempt-recency rotation (GH#34363) when the
-# candidate library is loaded, then fresh-first claim state (GH#38333), then
-# the trusted review-debt fairness share. The debt cap takes precedence even
-# for fresh rank-0 review-debt work; the recency share does not exempt
-# candidates from the established debt policy. All are order-only; every
-# candidate still passes its live gates.
+# GH#39976: runner-salted tie-break. Every runner ranks a shared backlog with
+# the same comparator (_dispatch_finish_ranked_census), so runners sharing a
+# repository reach for the same first candidates and all but one lose the claim
+# after minutes of pre-claim gates (68 claim_lock_failed ceremonies in 24 h on
+# one maintainer host; 54 of them lost to another runner). Ties are common:
+# one shared repo held 32 priority:high and 55 ordinary candidates at a single
+# score each. Within an equal (priority_rank, score) group, order by a
+# runner-keyed affine permutation of (repo, issue number) modulo a prime
+# instead of createdAt/updatedAt. Priority and score order are unchanged, one
+# runner's order is stable across rounds, and later partitions are stable
+# sorts, so they keep it. Floor-division reduction keeps every value below
+# 2^53, exact on all jq versions. Returns the input byte-for-byte when the
+# login is empty, AIDEVOPS_DISPATCH_RUNNER_SALTED_ORDER=0 (rollback), the
+# order is unchanged, or jq fails.
+#
+# Arguments:
+#   $1 - ranked candidate JSON array
+# Returns: reordered JSON array
+#######################################
+_dispatch_order_runner_salted_candidates() {
+	local candidates_json="$1" seed="${_DISPATCH_SELF_LOGIN:-}" result="" changed="" ordered=""
+	if [[ -z "$seed" || "${AIDEVOPS_DISPATCH_RUNNER_SALTED_ORDER:-1}" == "0" ]]; then
+		printf '%s\n' "$candidates_json"
+		return 0
+	fi
+	# Same-login runners on different hosts also need distinct orders.
+	seed="${seed}@${HOSTNAME:-}"
+	if ! result=$(jq -c --arg seed "$seed" '
+		def modp($p): (. - $p * ((. / $p) | floor)) | if . < 0 then . + $p elif . >= $p then . - $p else . end;
+		def hash($s; $m): $s | explode | reduce .[] as $c (7; (. * $m + $c) | modp(1000003));
+		1000003 as $p |
+		(1 + (hash($seed; 31) | modp($p - 1))) as $a |
+		hash($seed; 131) as $b |
+		. as $in |
+		($in | sort_by([-(.priority_rank // 0), -(.score // 0),
+			((((((.number // 0) | tonumber? // 0) + hash(.repo_slug // ""; 37)) | modp($p)) * $a + $b) | modp($p))])) as $out |
+		(if ($in | map([.repo_slug, .number])) == ($out | map([.repo_slug, .number])) then 0 else 1 end),
+		$out
+	' <<<"$candidates_json" 2>/dev/null) ||
+		! { IFS= read -r changed && IFS= read -r ordered; } <<<"$result" ||
+		[[ "$changed" != 1 || -z "$ordered" ]]; then
+		printf '%s\n' "$candidates_json"
+		return 0
+	fi
+	echo "[pulse-wrapper] Dispatch_max: runner-salted tie-break reordered equal-rank candidates for this runner (GH#39976)" >>"$LOGFILE"
+	printf '%s\n' "$ordered"
+	return 0
+}
+
+#######################################
+# Order one dispatch round: runner-salted tie-break (GH#39976), attempt-recency
+# rotation (GH#34363) when the candidate library is loaded, then fresh-first
+# claim state (GH#38333), then the trusted review-debt fairness share. The debt
+# cap takes precedence even for fresh rank-0 review-debt work; the recency
+# share does not exempt candidates from the established debt policy. All are
+# order-only; every candidate still passes its live gates.
 #
 # Arguments:
 #   $1 - ranked candidate JSON array
@@ -289,6 +339,7 @@ _dispatch_order_claim_state_candidates() {
 _dispatch_order_round_candidates() {
 	local candidates_json="$1"
 	local available_slots="$2"
+	candidates_json=$(_dispatch_order_runner_salted_candidates "$candidates_json")
 	if declare -F _dispatch_order_attempt_recency_candidates >/dev/null 2>&1; then
 		candidates_json=$(_dispatch_order_attempt_recency_candidates "$candidates_json")
 	fi

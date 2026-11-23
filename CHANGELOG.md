@@ -10,6 +10,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.269] - 2026-11-23
+
+### Changed
+
+- Tests: split test-headless-runtime-helper.sh into five root suites under the 240s affected-tests timeout
+- Maintenance: apply Haiku 5.5 100K context price tier to docs and cost estimates
+- Maintenance: mark t19295 complete (pr:#39943 completed:2026-11-23) (#39950)
+- Maintenance: mark t19296 complete (pr:#39938 completed:2026-11-23) (#39944)
+
+### Fixed
+
+- budget compaction replay by tokens and context share
+- recognize merged URL reports as cost checkpoints
+- stop manual-release-hold shadowing full-loop status and repair test-tier3-simplified
+- name macOS process-census refusal causes
+- refresh post-merge closing references (GH#39963)
+- bound ignored payload filename matches (GH#39956) (#39957)
+- account for full worker token usage in cost budgets (#39954)
+- partial-continuation demand lane and in-review snapshot recover stranded merged partials (GH#39948)
+- exhausted OAuth pools fail cleanly before a claim and recover when limits reset or accounts are added (GH#39936)
+- count stored API credentials as static auth (GH#39947)
+- finalize bounded operation when supervisor exits but stdio stays open
+
 ## [3.39.268] - 2026-11-23
 
 ### Changed
