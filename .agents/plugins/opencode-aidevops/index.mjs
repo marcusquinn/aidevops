@@ -767,6 +767,8 @@ export async function AidevopsPlugin({ directory, client }) {
       // (parent turns, subagents, compaction and resumed sessions alike).
       assertLocalOnlyEgress(localOnlyPolicy, input, "chat", (line) => console.error(line));
       contextBudget.apply(input);
+      // GH#39958: after the budget cap, so replay is sized to the effective window.
+      compactionInputReplay.chatParams(input);
       const { sessionId, modelId } = sessionModelIdentity(input);
       // Before remember(): compare against the parent's model, not this request's.
       compactionResidencyWarning(input, sessionModels.resolve(sessionId));

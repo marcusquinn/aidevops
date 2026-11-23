@@ -13,11 +13,12 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { mediaReason } from "./compaction-replay-budget.mjs";
 import { attachmentLabel, isMedia } from "./compaction-replay-collect.mjs";
+import { DEFAULT_MAX_MEDIA_TOKENS, fitMedia } from "./compaction-replay-sizing.mjs";
 
 const STORE_VERSION = 1;
 const STORE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
-const PRUNED_REASON = "not replayed (only the most recent attachments are replayed)";
 const STORE_ELISION = "[Earlier user input omitted for the session store budget; retained input is not the complete session history.]";
 // Bound serialized prompt metadata/text as well as turn count. Inline media is
 // governed separately by pruneMedia(). Keep the initiating turn and newest tail.
@@ -151,19 +152,19 @@ export function messageMedia(message) {
 }
 
 /**
- * Keep inline copies for only the newest `maxMedia` attachments; older ones
- * become labels so the store stays small.
+ * Keep inline copies for only the newest attachments that fit `maxMedia` and
+ * `maxMediaTokens`; PDFs (unless `replayPdfs`) and older or larger ones
+ * become labels so the store stays small (GH#39958).
  * @param {Array<object>} prompts
- * @param {number} maxMedia
+ * @param {{ maxMedia: number, maxMediaTokens?: number, replayPdfs?: boolean }} budget
  */
-export function pruneMedia(prompts, maxMedia) {
-  let budget = maxMedia;
-  for (const entry of [...prompts].reverse()) {
-    const keepCount = Math.min(entry.media.length, Math.max(0, budget));
-    const dropped = entry.media.slice(0, entry.media.length - keepCount);
-    entry.media = entry.media.slice(entry.media.length - keepCount);
-    entry.notes.push(...dropped.map((part) => attachmentLabel(part, PRUNED_REASON)));
-    budget -= keepCount;
+export function pruneMedia(prompts, budget) {
+  const maxMediaTokens = Number.isFinite(budget.maxMediaTokens) ? budget.maxMediaTokens : DEFAULT_MAX_MEDIA_TOKENS;
+  const { keep } = fitMedia(prompts.flatMap((entry) => entry.media), { ...budget, maxMediaTokens });
+  for (const entry of prompts) {
+    const dropped = entry.media.filter((part) => !keep.has(part));
+    entry.media = entry.media.filter((part) => keep.has(part));
+    entry.notes.push(...dropped.map((part) => attachmentLabel(part, mediaReason(part, budget))));
   }
 }
 
