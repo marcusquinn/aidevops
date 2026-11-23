@@ -130,6 +130,21 @@ assert_eq 'telemetry captures all attempt sessions before DB cleanup' 361130 "$_
 	_hrw_record_terminal_outcome usage-session success verified
 	assert_eq 'terminal telemetry persists captured tokens' 361130 "$(jq -r '.tokens' "$TEST_TMP/ledger/tier-telemetry.jsonl")"
 )
+# Missing/invalid boundaries must never charge the seeded historical rows.
+print_warning() {
+	local message="$1"
+	CAPTURE_WARNING="$message"
+	return 0
+}
+for marker in '' invalid 0 123 "$((NOW + 3600))000000000"; do
+	export AIDEVOPS_ATTEMPT_STARTED_AT="$marker"
+	CAPTURE_WARNING=''
+	_WORKER_USAGE_TOKENS_TOTAL=361130
+	_capture_worker_usage_tokens "$TEST_TMP"
+	assert_eq 'unavailable boundary records no worker usage' 0 "$_WORKER_USAGE_TOKENS_TOTAL"
+	assert_eq 'unavailable boundary emits a warning' \
+		'Worker usage capture skipped: attempt start boundary unavailable' "$CAPTURE_WARNING"
+done
 runtime_role=model-replay
 _capture_worker_usage_tokens "$TEST_TMP"
 assert_eq 'non-worker invocation clears stale worker telemetry' 0 "$_WORKER_USAGE_TOKENS_TOTAL"

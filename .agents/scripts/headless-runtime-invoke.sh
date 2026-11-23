@@ -619,6 +619,10 @@ _capture_worker_usage_tokens() {
 	# shellcheck source=gh-signature-helper-session.sh
 	source "${SCRIPT_DIR}/gh-signature-helper-session.sh"
 	since_ms=$(_worker_attempt_start_ms)
+	if [[ -z "$since_ms" ]]; then
+		print_warning "Worker usage capture skipped: attempt start boundary unavailable"
+		return 0
+	fi
 	if ! sessions=$(sqlite3 "$runtime_db" 'SELECT DISTINCT session_id FROM message;' 2>/dev/null); then
 		print_warning "Worker usage capture failed: sqlite3 query error (attempt_start_ms=${since_ms:-unknown})"
 		return 0
