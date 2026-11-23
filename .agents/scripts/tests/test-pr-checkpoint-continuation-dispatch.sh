@@ -992,6 +992,23 @@ else
 	print_result "dispatch binds continuation to exact PR branch and head" 1 "output=${output:-missing} args=${DISPATCH_ARGS:-missing}"
 fi
 
+# GH#39936: an exhausted runner (75) or one with no configured candidate
+# (select rc 1, reported as 78) writes no claim. Run in this shell so a
+# guarded dispatch would be visible in DISPATCH_ARGS.
+for select_case in 75:75 1:78; do
+	DISPATCH_ARGS=""
+	export STUB_MODEL_SELECT_RC="${select_case%%:*}"
+	gate_rc=0
+	_pcc_dispatch "owner/repo" "${TEST_ROOT}/repo" "42" "123" "worker-bot" >"${TEST_ROOT}/model-gate.out" || gate_rc=$?
+	output=$(<"${TEST_ROOT}/model-gate.out")
+	if [[ "$gate_rc" -ne 0 && "$output" == *"PR_CHECKPOINT_CONTINUATION_DEFERRED"*"reason=model_unavailable rc=${select_case##*:}"* && -z "$DISPATCH_ARGS" ]]; then
+		print_result "no selectable model (select rc ${STUB_MODEL_SELECT_RC}) defers the continuation before any claim" 0
+	else
+		print_result "no selectable model (select rc ${STUB_MODEL_SELECT_RC}) defers the continuation before any claim" 1 "rc=${gate_rc} output=${output:-missing} args=${DISPATCH_ARGS:-none}"
+	fi
+done
+unset STUB_MODEL_SELECT_RC
+
 DISPATCH_RESULT="$PRRTS_RC_DISPATCH_DEFERRED"
 if output=$(_pcc_dispatch "owner/repo" "${TEST_ROOT}/repo" "42" "123" "worker-bot") &&
 	[[ "$output" == *PR_CHECKPOINT_CONTINUATION_DEDUPLICATED* ]]; then

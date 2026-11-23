@@ -165,6 +165,10 @@ _select_cmd_run_model() {
 	local choose_exit=0
 	selected_model=$(choose_model "$role" "$model_override" "$tier_override" "adaptive" "$initial_model") || {
 		choose_exit=$?
+		# GH#39936: name the never-launched cause; 75 = every candidate backed
+		# off or its OAuth pool exhausted (recovers on reset or account add).
+		_WORKER_PRELAUNCH_FAILURE_REASON="model_selection_failed"
+		[[ "$choose_exit" -eq 75 ]] && _WORKER_PRELAUNCH_FAILURE_REASON="model_unavailable"
 		_hrff_write_external_outcome "$session_key" "model_selection_failed" "0" "$_HRFF_RETRY_CLASS_INFRASTRUCTURE" || true
 		_cmd_run_finish "$session_key" "$_HRW_STATUS_FAIL"
 		return "$choose_exit"

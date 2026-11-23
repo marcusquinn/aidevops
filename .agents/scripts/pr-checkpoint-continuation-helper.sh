@@ -810,6 +810,52 @@ _pcc_restore_transferred_ownership() {
 	return 1
 }
 
+#######################################
+# GH#39936: return 75/78 when the continuation worker could not select a model
+# on this runner (75 = every candidate backed off or its OAuth pool exhausted,
+# 78 = none configured), else 0. Mirrors _prrts_append_worker_model_args: an
+# escalation or operator model is selected explicitly, otherwise the worker's
+# default standard tier. Selection makes no model call. Any other helper
+# failure stays non-blocking; the worker's own selection remains authoritative.
+#######################################
+_pcc_model_selectable() {
+	local helper="${PCC_HEADLESS_RUNTIME_HELPER:-${SCRIPT_DIR}/headless-runtime-helper.sh}"
+	local model="${PR_REVIEW_THREAD_RESPONSE_MODEL:-}" rc=0
+	local -a args=(select --role worker)
+	[[ -x "$helper" ]] || return 0
+	if [[ -z "$model" && "${PCC_ESCALATION_TIER:-}" =~ ^(simple|standard|thinking)$ &&
+		-n "${PCC_ESCALATION_MODEL:-}" ]]; then
+		model="$PCC_ESCALATION_MODEL"
+	fi
+	if [[ -n "$model" ]]; then
+		args+=(--model "$model")
+	else
+		args+=(--tier standard)
+	fi
+	"$helper" "${args[@]}" >/dev/null 2>&1 || rc=$?
+	# `select` returns choose_model's own contract: 75 = backed off/exhausted,
+	# 1 = no configured candidate (e.g. the provider allowlist excludes the
+	# tier) or an invalid pin. The canary maps 1 to 78; mirror that here.
+	[[ "$rc" -ne 1 ]] || rc=78
+	if [[ "$rc" -eq 75 || "$rc" -eq 78 ]]; then
+		return "$rc"
+	fi
+	return 0
+}
+
+# GH#39936: like the issue path's canary gate (t3549/GH#38717), prove this
+# runner can select a model before any claim or ownership write. A runner
+# whose whole OAuth pool is exhausted otherwise claims, fails prelaunch and
+# releases worker_not_launched on every cycle until a fence stops it.
+_pcc_model_gate() {
+	local repo_slug="$1" pr_number="$2" linked_issue="$3" model_rc=0
+	_pcc_model_selectable || model_rc=$?
+	[[ "$model_rc" -ne 0 ]] || return 0
+	printf 'PR_CHECKPOINT_CONTINUATION_DEFERRED: PR #%s in %s reason=model_unavailable rc=%s issue=#%s; no claim written, retry next cycle\n' \
+		"$pr_number" "$repo_slug" "$model_rc" "$linked_issue"
+	return 1
+}
+
 _pcc_dispatch() {
 	local repo_slug="$1"
 	local repo_path="$2"
@@ -840,6 +886,7 @@ _pcc_dispatch() {
 	# Retry saved audit publication even if target/dispatch gates below keep the
 	# completed blocked continuation held. This does not start another worker.
 	_prrts_retry_continuation_blocker "$repo_slug" "$pr_number" "$linked_issue" || return 1
+	_pcc_model_gate "$repo_slug" "$pr_number" "$linked_issue" || return 1
 	# GH#36186: the checkpoint author is the live PR author, as in
 	# _pcc_dispatch_stalled. expected_assignee stays the claim being replaced:
 	# a draft continued by a different runner leaves them unequal.

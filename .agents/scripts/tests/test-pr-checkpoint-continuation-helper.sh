@@ -112,6 +112,13 @@ exit 1
 GH_STUB
 chmod +x "${TEST_ROOT}/bin/gh"
 export PATH="${TEST_ROOT}/bin:${PATH}"
+# GH#39936: model selection before a continuation claim; fixtures select by default.
+cat >"${TEST_ROOT}/bin/headless-runtime-helper.sh" <<'SELECT_STUB'
+#!/usr/bin/env bash
+exit "${STUB_MODEL_SELECT_RC:-0}"
+SELECT_STUB
+chmod +x "${TEST_ROOT}/bin/headless-runtime-helper.sh"
+export PCC_HEADLESS_RUNTIME_HELPER="${TEST_ROOT}/bin/headless-runtime-helper.sh"
 
 # shellcheck source=../pr-checkpoint-continuation-helper.sh
 source "$HELPER"

@@ -71,7 +71,8 @@ _pcc_retry_compensation() {
 _pcc_release_not_launched_claim() {
 	local repo="$1" pr="$2" release="" terminal="" ts="" pending="" tmp="" snapshot=""
 	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ) || return 1
-	release="CLAIM_RELEASED reason=worker_not_launched runner=${PCC_AUTHENTICATED_LOGIN} ts=${ts} claim_id=${AIDEVOPS_PR_CHECKPOINT_CLAIM_ID} nonce=${AIDEVOPS_DISPATCH_LEASE_TOKEN} lease_token=${AIDEVOPS_DISPATCH_LEASE_TOKEN} device=${AIDEVOPS_DISPATCH_LEASE_DEVICE} session=${AIDEVOPS_PR_CHECKPOINT_SESSION}"
+	# GH#39936: this path runs only when the dispatcher's own launch failed.
+	release="CLAIM_RELEASED reason=worker_not_launched runner=${PCC_AUTHENTICATED_LOGIN} ts=${ts} claim_id=${AIDEVOPS_PR_CHECKPOINT_CLAIM_ID} nonce=${AIDEVOPS_DISPATCH_LEASE_TOKEN} lease_token=${AIDEVOPS_DISPATCH_LEASE_TOKEN} device=${AIDEVOPS_DISPATCH_LEASE_DEVICE} session=${AIDEVOPS_PR_CHECKPOINT_SESSION} cause=dispatch_launch_failed"
 	terminal="DISPATCH_LEASE phase=terminal lease_token=${AIDEVOPS_DISPATCH_LEASE_TOKEN} device=${AIDEVOPS_DISPATCH_LEASE_DEVICE} session=${AIDEVOPS_PR_CHECKPOINT_SESSION} expires_at=0 ts=${ts}"
 	pending=$(_pcc_compensation_file "$repo" "$pr") || return 1
 	# Never overwrite an unresolved episode with another claim's proof.

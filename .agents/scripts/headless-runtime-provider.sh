@@ -130,6 +130,14 @@ get_auth_signature() {
 		auth_material="${auth_material}|unknown=true"
 		;;
 	esac
+	# GH#39936: a pool-authenticated provider's identity also changes when a
+	# pool account is added or removed; auth.json does not change then, so
+	# provider backoff recorded while the old accounts were exhausted cleared
+	# only by time.
+	if [[ "$provider" == "anthropic" || "$provider" == "openai" ]] &&
+		! provider_static_auth_available "$provider"; then
+		auth_material="${auth_material}|pool=$(oauth_pool_account_set_fingerprint "$provider")"
+	fi
 
 	sha256_text "$auth_material"
 	return 0
@@ -231,42 +239,50 @@ PY
 
 # provider_oauth_pool_available: true when the OAuth pool has at least one
 # immediately usable account for the provider. Static API keys bypass this gate;
-# a missing provider pool also stays non-blocking for legacy auth-only setups.
+# a missing or unreadable pool, or an empty provider list, stays non-blocking
+# for legacy auth-only setups.
+#
+# GH#39936: the per-account rule is the shared oauth_pool_has_usable_account.
+# A "rate-limited" account whose cooldown has expired is usable again. Only the
+# OpenCode plugin rewrites that status to "idle", and only inside a session, so
+# a runner whose whole pool was exhausted never recovered once limits reset.
 provider_oauth_pool_available() {
 	local provider="$1"
-	local pool_file="${HOME}/.aidevops/oauth-pool.json"
+	local pool_file="" account_count=""
 
 	if provider_static_auth_available "$provider"; then
 		return 0
 	fi
+	pool_file=$(oauth_pool_runtime_file)
 	[[ -f "$pool_file" ]] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+	account_count=$(jq -r --arg provider "$provider" \
+		'(.[$provider] // []) | if type == "array" then length else 0 end' \
+		"$pool_file" 2>/dev/null) || return 0
+	[[ "$account_count" =~ ^[0-9]+$ && "$account_count" -gt 0 ]] || return 0
 
-	POOL_FILE="$pool_file" PROVIDER="$provider" python3 <<'PY' >/dev/null 2>&1
-import json
-import os
-import sys
-import time
-
-try:
-    with open(os.environ["POOL_FILE"], encoding="utf-8") as fh:
-        pool = json.load(fh)
-except Exception:
-    sys.exit(0)
-
-accounts = pool.get(os.environ["PROVIDER"], [])
-if not accounts:
-    sys.exit(0)
-
-now_ms = int(time.time() * 1000)
-for account in accounts:
-    status = account.get("status", "active")
-    cooldown_until = int(account.get("cooldownUntil") or 0)
-    if status in ("active", "idle") and cooldown_until <= now_ms:
-        sys.exit(0)
-
-sys.exit(1)
-PY
+	oauth_pool_has_usable_account "$provider" "$pool_file"
 	return $?
+}
+
+# oauth_pool_account_set_fingerprint PROVIDER: print a digest of the provider's
+# pool account identities (not their status or tokens), or nothing when the
+# pool is absent. GH#39936: folded into get_auth_signature so adding or
+# removing a pool account invalidates provider-level backoff recorded while
+# the previous accounts were exhausted. Never prints credential material.
+oauth_pool_account_set_fingerprint() {
+	local provider="$1"
+	local pool_file="" identities=""
+	pool_file=$(oauth_pool_runtime_file)
+	[[ -f "$pool_file" ]] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+	identities=$(jq -r --arg provider "$provider" '
+		(.[$provider] // []) | if type == "array" then . else [] end
+		| map(select(type == "object") | (.email // .accountId // .id // "") | tostring)
+		| sort | join(",")' "$pool_file" 2>/dev/null) || return 0
+	[[ -n "$identities" ]] || return 0
+	sha256_text "pool=${identities}"
+	return 0
 }
 
 # opencode2_oauth_pool_auth_available: GH#39095. OpenCode 2.x keeps provider
