@@ -716,6 +716,7 @@ test_parallel_loop_round_topup() {
 		: >"$calls"
 		: >"$LOGFILE"
 		export PULSE_EVENT_REFILL_TRIGGER_FILE="$trigger"
+		export DISPATCH_MAX_PARALLEL=6
 		rm -f "$trigger" "$STOP_FLAG"
 		[[ "$mode" == no_trigger ]] || _test_round_topup_trigger "$trigger"
 		local _DISPATCH_ROUND_TOPUP_ALLOWED=1
@@ -752,12 +753,38 @@ test_parallel_loop_round_topup() {
 			# starts at 2 and reaches 5 rather than one exact grant step.
 			grep -q 'in-round top-up (parallel) — budget 2 -> [0-9]' "$LOGFILE" || exit 1
 			grep -Eq 'in-round top-up \(parallel\) — budget [0-9]+ -> 5 ' "$LOGFILE" || exit 1
+			# t19301: the round entered at ceiling 2 raises it with the budget
+			# (gate=1: eval cap 3x budget, capped at 6; gate=0: the budget).
+			grep -Eq 'raising ceremony ceiling 2 -> [3-6] ' "$LOGFILE" || exit 1
 		else
 			[[ "$successes" == 2 && "${result%% *}" == 2 && "$reads" == 0 ]] || exit 1
+			! grep -q 'raising ceremony ceiling' "$LOGFILE" || exit 1
 		fi
 		exit 0
 	) || rc=1
 	print_result "round_topup: ${mode} gate=${gate} (budget 2, 3 slots freed mid-round)" "$rc"
+	return 0
+}
+
+# t19301: a top-up raises the ceremony ceiling to the cap for the new budget,
+# never lowers it, and a REST-core serial reserve blocks the raise.
+test_topup_parallel_ceiling() {
+	local rc=0
+	(
+		: >"$LOGFILE"
+		export DISPATCH_MAX_PARALLEL=6 DISPATCH_LAUNCH_SLOT_GATE=1
+		_DISPATCH_THROTTLE_FILE="${TEST_ROOT}/no-throttle-file"
+		# shellcheck disable=SC2317 # called via name resolution
+		_dispatch_rest_core_requires_serial() { return 1; }
+		[[ "$(_dispatch_max_topup_parallel 3 13)" == 6 ]] || exit 1
+		grep -q 'raising ceremony ceiling 3 -> 6 (budget=13)' "$LOGFILE" || exit 1
+		[[ "$(_dispatch_max_topup_parallel 6 1)" == 6 ]] || exit 1
+		# shellcheck disable=SC2317 # called via name resolution
+		_dispatch_rest_core_requires_serial() { return 0; }
+		[[ "$(_dispatch_max_topup_parallel 3 13)" == 3 ]] || exit 1
+		exit 0
+	) || rc=1
+	print_result "topup_ceiling: raises 3 -> 6 for budget 13, never lowers, REST serial blocks" "$rc"
 	return 0
 }
 
@@ -2123,6 +2150,7 @@ test_parallel_loop_round_topup disabled 1
 test_parallel_loop_round_topup not_allowed 1
 test_priority_round_topup_keeps_hold topup
 test_priority_round_topup_keeps_hold no_trigger
+test_topup_parallel_ceiling
 test_claim_slot_and_lock_contract
 test_spawn_candidate_unknown_launch_state_keeps_slot
 test_parallel_loop_stop_flag_aborts
