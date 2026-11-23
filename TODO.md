@@ -2474,6 +2474,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19315 fix(planning): second publication from an unchanged worktree always reports retryable_conflict #auto-dispatch #bug ref:GH#40062
 
+- [ ] t19317 test-worktree-metadata-prune: degraded terminal-PR-proof case false-passes on unbound $8 #auto-dispatch #bug ref:GH#40071
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
