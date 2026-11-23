@@ -556,4 +556,107 @@ unset -f _pm_reconcile_partial_continuations
 	_file_mtime_epoch() { printf '0\n'; return 0; }
 	_pulse_reconcile_stale_blocked_if_due
 ) || exit 1
+
+# GH#39948: local partial-continuation demand (a due recheck hint, a
+# mid-traversal cursor or an open merged walk) grants a per-cycle lane reserve
+# that runs before the cadence gate, stamps complete passes and returns unused
+# time, which the rotation never inherits.
+(
+	PULSE_PARTIAL_RECONCILE_STATE_DIR="$ROOT/pc-state"
+	PCL="$PULSE_PARTIAL_RECONCILE_STATE_DIR"
+	mkdir -p "$PCL"
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/one","pulse":true},{"slug":"owner/two","pulse":true},{"slug":"owner/three","pulse":true}]}' >"$REPOS_JSON"
+	FAKE_NOW=2000
+	date() { printf '%s\n' "$FAKE_NOW"; return 0; }
+	demand() { _pulse_partial_continuation_repo_has_demand "$PCL/$1" "$FAKE_NOW"; }
+	demand owner__one && { printf 'FAIL: a repo with no partial state had demand\n'; exit 1; }
+	printf '1\n' >"$PCL/owner__one"
+	demand owner__one && { printf 'FAIL: a completed cursor had demand\n'; exit 1; }
+	printf '1\nphase=review\n42\n' >"$PCL/owner__one"
+	demand owner__one || { printf 'FAIL: a pending issue was not demand\n'; exit 1; }
+	printf 'a2\nphase=available\n' >"$PCL/owner__one"
+	demand owner__one || { printf 'FAIL: a mid-traversal token was not demand\n'; exit 1; }
+	printf '1\n' >"$PCL/owner__one"
+	for hint in 2001 junk; do
+		printf '%s\n' "$hint" >"$PCL/owner__one.recheck"
+		demand owner__one && { printf 'FAIL: recheck hint %s counted as due\n' "$hint"; exit 1; }
+	done
+	printf '2000\n' >"$PCL/owner__one.recheck"
+	demand owner__one || { printf 'FAIL: a due recheck hint was not demand\n'; exit 1; }
+	rm -f "$PCL/owner__one.recheck"
+	printf 'completed=1900\n' >"$PCL/owner__one.merged-walk"
+	demand owner__one && { printf 'FAIL: a completed merged walk had demand\n'; exit 1; }
+	printf 'start=1900\nfloor=100\n' >"$PCL/owner__one.merged-walk"
+	demand owner__one || { printf 'FAIL: an open merged walk was not demand\n'; exit 1; }
+	rm -f "$PCL/owner__one.merged-walk"
+
+	# No module, no demand or a disabled lane: no stage extension.
+	printf 'a2\n' >"$PCL/owner__two"
+	[[ "$(_pulse_partial_continuation_extension)" == 0 ]] || { printf 'FAIL: extension without the module\n'; exit 1; }
+	CALLS=""
+	_pm_reconcile_partial_continuations() {
+		CALLS="${CALLS}${1}:$((${2} - FAKE_NOW)) "
+		FAKE_NOW=$((FAKE_NOW + 5))
+		[[ "$1" == owner/two ]] && return 3
+		return 0
+	}
+	[[ "$(_pulse_partial_continuation_extension)" == 60 &&
+		"$(PULSE_PARTIAL_CONTINUATION_LANE_SECONDS=0 _pulse_partial_continuation_extension)" == 0 ]] || {
+		printf 'FAIL: demand did not extend the stage, or the lane was not disableable\n'
+		exit 1
+	}
+	rm -f "$PCL/owner__two"
+	[[ "$(_pulse_partial_continuation_extension)" == 0 ]] || { printf 'FAIL: extension without demand\n'; exit 1; }
+
+	# The lane splits its reserve fairly across demand repos only (40s over
+	# two: 20s, then the 35s left), stamps only the complete pass, and returns
+	# the unused 30s. A partial (rc 3) pass is not logged as a failure.
+	printf '1\nphase=review\n42\n' >"$PCL/owner__one"
+	printf 'a2\n' >"$PCL/owner__two"
+	rm -rf "$PC_STAMP_DIR"
+	: >"$LOGFILE"
+	CALLS=""
+	PULSE_PARTIAL_CONTINUATION_RESERVE_S=40 _pulse_partial_continuation_lane "$REPOS_JSON" >"$ROOT/pc-unused"
+	[[ "$CALLS" == "owner/one:20 owner/two:35 " && "$(cat "$ROOT/pc-unused")" == 30 ]] || {
+		printf 'FAIL: lane shares or unused reserve wrong: calls=%s unused=%s\n' "$CALLS" "$(cat "$ROOT/pc-unused")"
+		exit 1
+	}
+	[[ -f "$PC_STAMP_DIR/owner__one" && ! -f "$PC_STAMP_DIR/owner__two" && ! -f "$PC_STAMP_DIR/owner__three" ]] || {
+		printf 'FAIL: lane did not stamp only the complete pass\n'
+		exit 1
+	}
+	grep -q 'partial-continuation lane completed repos=2/2 complete=1 reserve=40s' "$LOGFILE" &&
+		! grep -q 'partial-continuation lane: owner/two rc=' "$LOGFILE" || {
+		printf 'FAIL: lane summary missing, or a partial pass was logged as a failure\n'
+		exit 1
+	}
+	# No reserve (the stage was not extended): no listing at all.
+	CALLS=""
+	_pulse_partial_continuation_lane "$REPOS_JSON" >/dev/null
+	[[ -z "$CALLS" ]] || { printf 'FAIL: lane ran without a reserve: %s\n' "$CALLS"; exit 1; }
+
+	# The lane deadline never passes the stage deadline less the sweep margin.
+	[[ "$(PULSE_STAGE_DEADLINE_EPOCH=$((FAKE_NOW + 30)) PULSE_STALE_BLOCKED_RECONCILE_MARGIN_SECONDS=15 \
+		_pulse_stale_blocked_lane_deadline "$FAKE_NOW" 40)" == $((FAKE_NOW + 15)) &&
+		"$(_pulse_stale_blocked_lane_deadline "$FAKE_NOW" 0)" == 0 ]] || {
+		printf 'FAIL: lane deadline exceeded the stage deadline, or ran with no reserve\n'
+		exit 1
+	}
+	# Unused lane time is held back from the rotation's sweep deadline.
+	[[ "$(PULSE_STAGE_DEADLINE_EPOCH=2100 PULSE_STALE_BLOCKED_RECONCILE_MARGIN_SECONDS=15 \
+		PULSE_STALE_BLOCKED_READY_RESERVE_S=10 PULSE_PARTIAL_CONTINUATION_RESERVE_S=20 \
+		_pulse_stale_blocked_sweep_deadline)" == 2055 ]] || {
+		printf 'FAIL: unused partial-continuation reserve lengthened the rotation\n'
+		exit 1
+	}
+
+	# Production wiring: demand extends the bounded stage by the lane seconds.
+	printf 'a2\n' >"$PCL/owner__two"
+	unset PULSE_STALE_BLOCKED_RECONCILE_TIMEOUT_SECONDS
+	run_reconcile_stage || { printf 'FAIL: demand stage blocked startup\n'; exit 1; }
+	[[ "$STAGE_CALL" == "stale_blocked_reconcile:120:120:_pulse_reconcile_stale_blocked_if_due" ]] || {
+		printf 'FAIL: partial-continuation demand did not extend the stage: %s\n' "$STAGE_CALL"
+		exit 1
+	}
+) || exit 1
 printf 'PASS: stale blocked reconciliation is cadence bounded and startup-timeout protected\n'
