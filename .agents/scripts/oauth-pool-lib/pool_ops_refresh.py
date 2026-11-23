@@ -28,6 +28,7 @@ from ._common import (
     atomic_write_json,
     build_auth_entry,
     call_token_endpoint,
+    pool_account_label,
     release_lock,
     token_refresh_error_label,
 )
@@ -115,10 +116,11 @@ def _refresh_one_account(
     """Refresh a single account.
 
     Returns ``(success, error_label)``. ``error_label`` is empty on success,
-    or ``"<email>"`` / ``"<email>(network)"`` on failure for the caller to
-    forward into the failed-list.
+    or ``"<seat label>"`` / ``"<seat label>(network)"`` on failure for the
+    caller to forward into the failed-list (labels keep same-email seats
+    distinct, GH#38959).
     """
-    email = account.get("email", "unknown")
+    email = pool_account_label(account)
     refresh_tok = account.get("refresh", "")
     rdata = call_token_endpoint(ctx.token_url, ctx.client_id, refresh_tok, ctx.ua_header)
     error_label = token_refresh_error_label(rdata)
@@ -147,7 +149,7 @@ def _refresh_all_eligible(
             continue
         ok, err_label = _refresh_one_account(acct, ctx, now_ms)
         if ok:
-            refreshed.append(acct.get("email", "unknown"))
+            refreshed.append(pool_account_label(acct))
         else:
             failed.append(err_label)
     return refreshed, failed
@@ -171,7 +173,7 @@ def _pick_heal_account(accounts: list[dict], refreshed_emails: list[str], now_ms
     non-empty access token that isn't expired.
     """
     for acct in accounts:
-        if acct.get("email") in refreshed_emails:
+        if pool_account_label(acct) in refreshed_emails:
             return acct
     for acct in accounts:
         if acct.get("access") and acct.get("expires", 0) > now_ms:
@@ -199,7 +201,7 @@ def _self_heal_auth_file(
         return
     auth[provider] = build_auth_entry(provider, heal_acct, provider_auth)
     atomic_write_json(auth_path, auth)
-    print(f'HEALED_AUTH:{provider}:{heal_acct.get("email", "")}', file=sys.stderr)
+    print(f'HEALED_AUTH:{provider}:{pool_account_label(heal_acct)}', file=sys.stderr)
 
 
 def _print_refresh_results(refreshed: list[str], failed: list[str]) -> None:

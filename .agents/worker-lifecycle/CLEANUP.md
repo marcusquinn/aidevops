@@ -79,9 +79,9 @@ Schema 2 supports this API; schema 1 requires the explicit transactional upgrade
 automatically resolved enrolled generations use it; unmanaged observe-only launches
 bypass it. It proves neither system-wide exclusion, physical generation nor cleanup
 authority. Production launcher coverage, run completion, restart recovery and
-closing-versus-exec integration remain unqualified. Retained Linux/macOS Intel reports
-cover their recorded admission, directory-handle and disposable archive/retirement
-source only, not production AI launchers, unregistered writers or rollout.
+closing-versus-exec integration remain unqualified; retained reports (see above)
+cover only recorded admission, directory-handle and disposable archive/retirement
+source, not production AI launchers, unregistered writers or rollout.
 
 ### Explicit admitted launch
 
@@ -124,11 +124,10 @@ into that store. Existing private/disabled observation without admission metadat
 retains its previous behavior.
 
 The shim preserves sandbox environment clearing, egress/seatbelt policy, native-command
-permissions and isolation. Bare launch still needs sandbox-policy permission. Its
-fixture stubs only upstream policy/runtime setup before executing the real launch
-boundary; the sandbox fixture exercises the command-line helper. Tests use disposable
-state and `touch`, not AI workers. Linux evidence covers these shell integrations;
-the portable Mac report does not cover shell hooks.
+permissions and isolation; bare launch still needs sandbox-policy permission. Fixtures
+stub only upstream policy/runtime setup (the sandbox fixture exercises the command-line
+helper), using disposable state and `touch`, not AI workers. Linux evidence covers these
+shell integrations; the portable Mac report does not cover shell hooks.
 
 Without explicit controller metadata, the shim checks the new admission table.
 A registered generation must pass enrollment validation and admission; a closed
@@ -206,16 +205,16 @@ OpenCode's shell environment, bounded-operation supervisor, native launcher, Pul
 runner and release executor declare their own `AIDEVOPS_LIFECYCLE_RUNTIME_PID` and `AIDEVOPS_LIFECYCLE_SESSION_ID`.
 The routine runner and release executor clear these when lifecycle is disabled, prerequisites fail
 or the workload is private; automatic retirement is not expected then. Otherwise their trees become
-eligible for registry retirement after the routine runner or release executor exits (GH#36494, GH#37365).
+eligible for registry retirement after they exit (GH#36494, GH#37365).
 For a new path, the shared helper invokes `create-worktree`: it exclusively creates the directory, runs native Git,
 captures the owner's start identity and binds it before returning the new tree.
-Only successful controlled creation records a `created-worktree` event; ordinary enrollment or
+Only successful controlled creation records a `created-worktree` event; enrollment or
 admission of an existing tree cannot mint it. `prepare-cleanup` exposes the validated receipt as
 `creation_verified`, not deletion authority, a PID-only liveness test or a legacy ownership lookup.
 Independent launches replace inherited creator identity; excluded launches clear it.
 Partial declarations fail without removal; missing declarations bind the creating shell for a fresh
-path, not later writers, who need their own admission. Coverage stops at that creator. Callers with
-pre-reserved directories retain their creation path without controlled-creation provenance.
+path, not later writers, who need their own admission. Callers with pre-reserved directories
+retain their creation path without controlled-creation provenance.
 Failed construction retains partial results; repeating it cannot adopt even an empty existing directory.
 
 Managed producers use `worker-lifecycle-state.sh` to enter the native launcher before execution.
@@ -223,8 +222,8 @@ Parent runtime/session identity is replaced; explicit generation/attempt require
 Post-completion callbacks run outside that identity; legacy receipts cannot replace registry creation, admission or retirement checks.
 
 Claude creator integration is outside this rollout; standalone creators and unknown pre-enrollment
-writers still prevent a claim of complete registered-owner coverage.
-Linux disposable-Git tests cover creation, enrollment and native launch; portable reports do not qualify enrollment.
+writers still prevent a claim of complete registered-owner coverage. Linux disposable-Git tests
+cover creation, enrollment and native launch; portable reports do not qualify enrollment.
 
 ### Remaining rollout boundaries
 
@@ -327,9 +326,8 @@ repositories; it does not qualify production scheduling or existing worktrees.
 ## Archive payload qualification
 
 `tests/test_preservation.py` tests `scripts/worktree-archive-helper.sh` and new registry orchestration, not legacy controllers.
-Private Git fixtures use an invalid legacy-state sentinel and unregistered `--verification-copy` restores.
-They touch no production data and grant no cleanup authority; the portable validator includes these Git/Bash tests and dependencies.
-
+Private Git fixtures use an invalid legacy-state sentinel and unregistered `--verification-copy` restores;
+they touch no production data, grant no cleanup authority, and the portable validator includes them.
 Linux checks cover unpublished commits, independent staged/unstaged changes, binary edits, unusual filenames,
 symlinks, corrupt payload rejection and late source changes. Round trips make the original path unavailable
 while retaining its contents and common Git repository.
@@ -339,11 +337,10 @@ without following links; unsupported restoration fails without changing targets,
 `untracked_symlink_modes` binds modes into verification; older fingerprints verify content only, not current preservation evidence.
 Portable tests cross creation/restoration masks `022`, `077`, `002`, including dangling links and ordinary untracked files.
 
-Ignored-file exclusion is deliberate; its test verifies policy, not a defect or need
-to expand capture. WIP archives are not full environment backups: they need retained
-base Git objects, and round-trip tests do not prove recovery after common-repository
-loss. Evidence must name the WIP payload and actual Git-object dependencies, never
-claim self-contained backup or preservation of excluded data.
+Ignored-file exclusion is deliberate; its test verifies policy, not a defect. WIP archives
+are not full environment backups: they need retained base Git objects, and round-trip tests
+do not prove recovery after common-repository loss. Evidence must name the WIP payload and
+actual Git-object dependencies, never claim self-contained backup or preservation of excluded data.
 
 ### Compact deletion payloads
 
@@ -367,10 +364,9 @@ state, unstaged modifications, deletions, non-ignored untracked files,
 symlinks and executable modes. Submodules, external dependencies and unsupported
 filesystem features must be handled explicitly or block the operation.
 
-Honor Git ignore policy, including local configuration/databases: no filename
-exceptions or content-based guesses may add ignored files and unexpectedly archive
-sensitive data. Exclusion is not a secret scanner; archives stay local/private,
-with no automatic public push, PR or upload.
+Honor Git ignore policy, including local configuration/databases: no filename exceptions
+or content-based guesses may add ignored files. Exclusion is not a secret scanner; archives
+stay local/private, with no automatic public push, PR or upload.
 
 The executor must:
 
@@ -385,27 +381,25 @@ The executor must:
   the retained common base, without a full checkout or common-repository `fsck`.
   Full restoration remains a format/recovery test; repository-wide integrity
   auditing is a separate operation, not a per-worktree cleanup prerequisite.
-- Revalidate generation and content before removal. Content changes, path reuse,
-  lost exclusion or incomplete evidence invalidate the plan.
-- Keep the original on archive, verification, I/O or disk-full failure. Never
-  delete the original to make room for its own unverified archive.
+- Revalidate generation and content before removal; content changes, path reuse, lost
+  exclusion or incomplete evidence invalidate the plan. Keep the original on archive,
+  verification, I/O or disk-full failure; never delete it to make room for its own unverified archive.
 - Resume idempotently after crashes: an interrupted archive is not a verified
   receipt; a verified archive with an existing source must be revalidated before
   removal; partial removal must be reconciled without touching a replacement
   generation. An archive must not depend on objects deleted with the source.
-- Record retirement only after verified removal. Archive retention and later
-  archive deletion are separate policies, not implicit consequences of `ended`.
+- Record retirement only after verified removal. Archive retention and deletion are
+  separate policies, not implicit consequences of `ended`.
 
 Keep slow filesystem/Git work outside SQLite write transactions; persistent exclusion
 and revalidation provide safety, not one long transaction. This is local-host, not distributed SQLite.
 
 ## Registry-driven cleanup pass
 
-`worker-registry.py cleanup` selects registered generations from the lifecycle
-database, not filesystem age or legacy ownership records. Required
-arguments are `--repos-config` and `--output-root`; `--budget-seconds` and `--limit`
-bound the pass. The time budget stops admission of further candidates, not an
-already-running filesystem operation; the caller retains its hard watchdog.
+`worker-registry.py cleanup` selects registered generations from the lifecycle database, not
+filesystem age or legacy ownership records. It requires `--repos-config` and `--output-root`;
+`--budget-seconds` and `--limit` bound the pass. The budget stops admitting candidates, not a
+running filesystem operation; the caller keeps its hard watchdog.
 
 Before a new retirement plan, the pass applies one fail-closed PR hold (GH#36851):
 a tree whose branch name or HEAD commit matches an open PR in the configured slug
@@ -415,29 +409,31 @@ quarantine. The lookup is one paginated call per slug per pass. A failed REST ca
 (including `gh` deferral, exit 75) falls back to complete GraphQL evidence: every
 page, the whole fork chain, the same validation (GH#37385); failure there holds.
 Checkouts without a remote have no pushed branch to protect and skip the lookup.
-Planned retirements always resume; operator-targeted `cleanup-worktree`,
-`retire-worktree` and `retire-enrolled-only` keep their explicit-intent semantics.
+Planned retirements always resume; operator-targeted `cleanup-worktree`, `retire-worktree`,
+`retire-enrolled-only` and `reclaim-unowned` keep their explicit-intent semantics.
 
-Repository configuration defines scope only. Entries with `maintenance: false`
-or `local_only: true` are excluded. Missing or detached canonical checkouts do not
-establish scope. The archive receives the canonical checkout's actual branch name,
-not a guessed default or a commit ID passed as a branch name.
+Repository configuration defines scope only: `maintenance: false` or `local_only: true`
+entries are excluded, and missing or detached canonical checkouts establish no scope. The
+archive receives the canonical checkout's actual branch name, never a guess or commit ID.
 
 Controlled-creation receipts use normal retirement. A missing creation receipt can
-use the explicit recovery-evidence path described above when all bound owners are
-admitted and ended. Enrollment alone remains a coverage gap; live or uncertain owners hold
-the source. Never-owned enrolled trees (no bound run or `created-worktree`) retire only via
-`retire-enrolled-only --path P --repos-config C --output-root R` (GH#36516): it previews;
-`--confirm` closes admission with `operator_confirmed` evidence in one registry transaction
-(a racing `admit-session` wins and refuses it, or finds admission closed), then archives and removes; the branch is kept. Retries use the recorded plan, including its archive root,
-and do not redirect an interrupted operation to a replacement at the public path.
-A private cursor rotates candidates across bounded passes; it is not deletion
-authority. A pass lock prevents overlapping collectors.
+use the explicit recovery-evidence path above when all bound owners are admitted and
+ended. Enrollment alone remains a coverage gap; live or uncertain owners hold the source.
+Never-owned enrolled trees (no bound run or `created-worktree`) retire via `reclaim-unowned
+--path P --repos-config C --output-root R` (GH#38405). Reclaim requires an idle process
+census, nothing to lose (clean, HEAD in a remote) and an unchanged evidence fingerprint, then
+journals `reclaim-unowned-authorized` (owner check, git state, references, fingerprint,
+time) and closes admission in one registry transaction; a racing `admit-session` wins or
+finds admission closed. A refused fact keeps the tree with admission open (exit 0, `status:
+reclaim-refused` plus reason); otherwise it archives and removes, keeping the branch. The
+legacy `retire-enrolled-only --confirm` path (GH#36516) stays until the legacy cleanup path
+is removed. Retries use the recorded plan, including its archive root, and never redirect an
+interrupted operation to a replacement at the public path. A private cursor rotates
+candidates across bounded passes (not deletion authority); a pass lock prevents overlap.
 
 Pulse's `cleanup_worktrees` calls this operation without initializing/migrating the
 registry. Missing state/configuration or invocation failure never falls back to old
-passes. Disposable tests exercise refusal and successful preservation/removal through
-the actual shell entrypoint.
+passes. Disposable tests exercise refusal and preservation/removal via the shell entrypoint.
 
 `cleanup-worktree --path PATH --repos-config CONFIG --output-root ROOT` selects only that path's
 validated generation, sharing the collector's policy/executor without adopting unknown trees or
@@ -454,6 +450,9 @@ remove`, and the central/temp Pulse removal primitives use this targeted command
 Legacy proof, archive and force arguments cannot authorize deletion or bypass a
 missing registry. Manual removal retains branches and external resources; their
 cleanup is a separate operation, not an unverified path-based post-removal step.
+
+Protected-reference refusals report path-free PID/TID and CWD/fd diagnostics.
+[Opt-in full-reference inspection](../reference/worktree-cwd-visibility.md#registry-full-reference-inspection-separate-opt-in) has its own privilege boundary; legacy CWD/lifetime evidence is not a substitute.
 
 Legacy candidate selectors still exist and may hold work before the registry gate;
 this is not their removal, a Git-invocation inventory, or rollout qualification.

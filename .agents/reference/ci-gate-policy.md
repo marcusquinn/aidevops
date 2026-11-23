@@ -121,7 +121,8 @@ run those directly too, without `-k` (they do not provide unittest filtering).
    signal.
 5. Convert advisory E2E, visual, performance, and flaky integration findings
    into follow-up tasks with worker-ready evidence instead of blocking unrelated
-   develop PRs or spawning duplicate worker attempts.
+   develop PRs or spawning duplicate worker attempts. To reproduce a flaky test,
+   run `test-load-repro-helper.sh run --runs N --concurrency P -- <cmd>`.
 6. If an E2E failure is required by branch protection, fix or explicitly
    quarantine the failing path before merge; do not bypass production/release
    gates silently.
@@ -168,6 +169,16 @@ run those directly too, without `-k` (they do not provide unittest filtering).
     minutes return monthly, so keep the app installed (it is not a reason to
     remove Qlty) and never make "qlty check" a required check on a limited
     repository. Setup guidance: `tools/code-review/qlty.md`.
+15. Codacy's PR aggregation can stay `ACTION_REQUIRED` after a later commit
+    removed the flagged code. `gh-checks-wait-helper.sh` runs
+    `codacy-stale-check-helper.sh classify` on a failing Codacy check: when the
+    head commit's `deltaIssues` is empty and every PR-level issue's `lineText`
+    is absent from the head file, it reports `STALE (codacy PR aggregation)`
+    with that evidence and treats the check like a skipped one (a recorded
+    note, not a pass). Any missing `CODACY_API_TOKEN`, API error, present line
+    or head-commit finding keeps the failure terminal. If the classifier cannot
+    run, recover with a clean single-commit replacement PR; never bypass the
+    gate, and `reanalyzeCommit` needs a token with write access (403 otherwise).
 
 ## Hosted CI demand and required contexts
 
@@ -199,7 +210,9 @@ runner and machine names; a guarded selector is not a runner admission boundary.
   docs/planning PR does not remain permanently `expected`. Code Quality scope
   excludes nested Markdown and planning files from shell work and heavy
   substantive analysis; workflow/source edits still run full validation, and
-  missing diff metadata still runs everything.
+  missing diff metadata still runs everything. Release version bumps get the
+  same scope when a strict zero-context parse shows only version-reference
+  lines changed in the version files (GH#39544); `main` push CI stays full.
 - Keep blocking regression, portability, lifecycle and security checks on PRs.
   `code-quality-advisory.yml` consolidates the three full-tree complexity totals
   and Python Lizard/Pyflakes reports into one post-merge job. They were already

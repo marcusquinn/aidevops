@@ -539,6 +539,56 @@ class RotateTests(PoolOpsTestCase):
         lines = result.stdout.strip().splitlines()
         self.assertEqual(lines[2], "b@example.com")  # priority 5 wins
 
+    def _rotate_with_usage(self, usage_b: dict, usage_c: dict) -> str:
+        now_ms = int(time.time() * 1000)
+        future = now_ms + 10 * 60_000
+
+        def seat(name: str, last_used: str, usage: dict) -> dict:
+            return {
+                "email": f"{name}@example.com",
+                "access": f"tok_{name}",
+                "refresh": f"ref_{name}",
+                "expires": future,
+                "status": "active",
+                "lastUsed": last_used,
+                **usage,
+            }
+
+        write_json(
+            self.pool_path,
+            {
+                "anthropic": [
+                    seat("a", "2026-04-04T00:00:00Z", {}),
+                    seat("b", "2026-04-02T00:00:00Z", usage_b),  # LRU-preferred
+                    seat("c", "2026-04-03T00:00:00Z", usage_c),
+                ]
+            },
+        )
+        write_json(self.auth_path, {"anthropic": {"type": "oauth", "access": "tok_a"}})
+        result = run_pool_ops(
+            "rotate",
+            {
+                "POOL_FILE_PATH": str(self.pool_path),
+                "AUTH_FILE_PATH": str(self.auth_path),
+                "PROVIDER": "anthropic",
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip().splitlines()[2]
+
+    def test_soonest_reset_wins_over_lru(self) -> None:
+        now_ms = int(time.time() * 1000)
+        soon = {"usageResetAt": now_ms + 2 * 86_400_000, "usageRemainingPct": 90}
+        late = {"usageResetAt": now_ms + 5 * 86_400_000, "usageRemainingPct": 100}
+        self.assertEqual(self._rotate_with_usage(late, soon), "c@example.com")
+
+    def test_low_quota_or_stale_reset_is_not_preferred(self) -> None:
+        now_ms = int(time.time() * 1000)
+        low = {"usageResetAt": now_ms + 86_400_000, "usageRemainingPct": 2}
+        stale = {"usageResetAt": now_ms - 1000, "usageRemainingPct": 90}
+        # Neither is "known good", so LRU applies: b is least recently used.
+        self.assertEqual(self._rotate_with_usage(stale, low), "b@example.com")
+
 
 # ---------------------------------------------------------------------------
 # cmd_refresh (cyclomatic 72) - filter branches only (no HTTP)

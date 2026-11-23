@@ -11,6 +11,7 @@ import * as vm from "node:vm";
 const script = fileURLToPath(import.meta.url);
 const realModules = new Set([
   "provider-auth.mjs", "provider-auth-pool.mjs", "provider-auth-pool-recovery.mjs",
+  "oauth-pool-ordering.mjs", // pure comparator, no I/O (t19125)
 ]);
 
 // Substitute specifiers BEFORE filesystem resolution. Neither the pool store
@@ -30,11 +31,21 @@ export async function ensureValidToken(provider, account) {
   if (provider !== 'anthropic' || !accounts.includes(account)) throw Error('Unexpected refresh');
   return account.access;
 }
-export function patchAccount(provider, email, patch) {
-  const account = getAccounts(provider).find(a => a.email === email);
-  if (!account) throw Error('Unknown dummy account');
-  patches.push({ email, patch });
-  Object.assign(account, patch);
+export function poolAccountKey(account) {
+  const email = account?.email || '';
+  return account?.orgId ? email + '#' + account.orgId : email;
+}
+export function poolAccountLabel(account) { return poolAccountKey(account) || 'unknown'; }
+export function findAccountIndex(list, ref) {
+  const key = typeof ref === 'string' ? ref : poolAccountKey(ref);
+  return list.findIndex(a => poolAccountKey(a) === key);
+}
+export function patchAccount(provider, ref, patch) {
+  const list = getAccounts(provider);
+  const index = findAccountIndex(list, ref);
+  if (index < 0) throw Error('Unknown dummy account');
+  patches.push({ key: poolAccountKey(list[index]), patch });
+  Object.assign(list[index], patch);
 }
 export function normalizeExpiredCooldowns() {}
 export function markAuthRefreshFailure() { throw Error('Unexpected auth refresh failure'); }
@@ -53,7 +64,7 @@ export function transformResponseStream(response) { return response; }
 
 const harness = `
 import { createProviderAuthHook } from './provider-auth.mjs';
-import { accounts, patches } from './oauth-pool.mjs';
+import { accounts, patches, poolAccountKey } from './oauth-pool.mjs';
 export const results = [];
 function check(name, condition) {
   results.push({ name, pass: Boolean(condition) });
@@ -94,7 +105,7 @@ async function scenario(name, initial, limited, cooling = false) {
       writes[0].body.type === 'oauth' : writes.length === 0);
     const expectedLimited = cooling ? [initial] : sequence.filter(i => limited.includes(i));
     check(name + ': Retry-After cooldown', expectedLimited.every(i =>
-      patches.some(p => p.email === accounts[i].email && p.patch.status === 'rate-limited' &&
+      patches.some(p => p.key === poolAccountKey(accounts[i]) && p.patch.status === 'rate-limited' &&
         p.patch.cooldownUntil === Date.now() + 17000)));
     if (!cooling && !limited.includes(alternate)) {
       calls.length = 0;
@@ -106,10 +117,16 @@ async function scenario(name, initial, limited, cooling = false) {
     results.push({ name: name + ': scenario', pass: false, error: String(error.message) });
   }
 }
-await scenario('first account limited', 0, [0]);
-await scenario('second account limited', 1, [1]);
-await scenario('both accounts limited (expected 429)', 0, [0, 1]);
-await scenario('alternate cooling (expected 429)', 0, [0], true);
+async function scenarios(prefix) {
+  await scenario(prefix + 'first account limited', 0, [0]);
+  await scenario(prefix + 'second account limited', 1, [1]);
+  await scenario(prefix + 'both accounts limited (expected 429)', 0, [0, 1]);
+  await scenario(prefix + 'alternate cooling (expected 429)', 0, [0], true);
+}
+await scenarios('');
+// GH#38959: one email with Team and Personal seats must rotate as two accounts.
+accounts.forEach((account, i) => Object.assign(account, { email: 'shared@example.invalid', orgId: 'org-' + i }));
+await scenarios('same-email seats: ');
 `;
 
 function createModuleLoader(root, context) {
@@ -167,7 +184,7 @@ async function runIsolated(pluginDir) {
   for (const result of results) {
     console.log(`${result.pass ? "PASS" : "FAIL"} ${result.name}${result.error ? `: ${result.error}` : ""}`);
   }
-  if (results.length !== 18 || results.some(result => !result.pass)) {
+  if (results.length !== 36 || results.some(result => !result.pass)) {
     throw new Error("Offline scenario contract failed");
   }
 }
@@ -192,7 +209,7 @@ try {
       if (child.stderr) process.stderr.write(child.stderr);
       throw new Error(child.error?.code === "ETIMEDOUT" ? "Offline probe timed out" : "Isolated probe failed (no live fallback)");
     }
-    console.log("PASS overall offline simulated rotation (18 assertions)");
+    console.log("PASS overall offline simulated rotation (36 assertions)");
   }
 } catch (error) {
   console.error(`FAIL offline probe: ${error.message}`);

@@ -312,8 +312,7 @@ _verify_deployed_core_plugin_freshness() {
 	local source_dir="$1"
 	local target_dir="$2"
 	local rel_path
-	local source_file
-	local target_file
+	local check_rc=0
 	local -a core_plugin_files=(
 		"configs/opencode-runtime-profiles.json"
 		"hooks/git_safety_guard.py"
@@ -368,26 +367,51 @@ _verify_deployed_core_plugin_freshness() {
 		"plugins/opencode-aidevops/v1-tui/tui.tsx"
 		"scripts/canonical_branch_policy.py"
 		"scripts/canonical-write-policy-helper.py"
+		"scripts/canonical_write_runtime_allow.py"
+		"scripts/canonical_write_worktree_base.py"
 	)
 
 	for rel_path in "${core_plugin_files[@]}"; do
-		source_file="$source_dir/$rel_path"
-		target_file="$target_dir/$rel_path"
+		check_rc=0
+		_core_plugin_file_check "$source_dir" "$rel_path" "$target_dir/$rel_path" || check_rc=$?
+		[[ "$check_rc" -eq 1 ]] && return 1
+	done
 
-		if [[ ! -f "$source_file" ]]; then
-			continue
-		fi
+	return 0
+}
+
+# _core_plugin_file_check source_dir rel_path target_file
+# Returns 0 when the deployed file matches its source, 1 when it is missing or
+# stale, and 2 when the source does not ship the file.
+_core_plugin_file_check() {
+	local source_dir="$1"
+	local rel_path="$2"
+	local target_file="$3"
+	local pinned_sha="${_AIDEVOPS_STAGED_SOURCE_SHA:-}"
+	local repo_dir="${source_dir%/.agents}"
+	local source_label="$source_dir/$rel_path"
+
+	# t19058: once a bundle stage pinned its commit, compare with that commit,
+	# not the live checkout, which may have fast-forwarded since the copy.
+	if [[ "$pinned_sha" =~ ^[0-9a-f]{40}$ && "$repo_dir" != "$source_dir" ]] &&
+		git -C "$repo_dir" cat-file -e "${pinned_sha}^{commit}" 2>/dev/null; then
+		git -C "$repo_dir" cat-file -e "${pinned_sha}:.agents/${rel_path}" 2>/dev/null || return 2
+		source_label="${pinned_sha:0:12}:.agents/${rel_path}"
 		if [[ ! -f "$target_file" ]]; then
 			print_error "Deploy verification failed: $target_file missing after swap"
 			return 1
 		fi
-		if ! cmp -s "$source_file" "$target_file"; then
-			print_error "Deploy verification failed: $target_file is stale versus $source_file"
+		git -C "$repo_dir" show "${pinned_sha}:.agents/${rel_path}" 2>/dev/null | cmp -s - "$target_file" && return 0
+	else
+		[[ -f "$source_dir/$rel_path" ]] || return 2
+		if [[ ! -f "$target_file" ]]; then
+			print_error "Deploy verification failed: $target_file missing after swap"
 			return 1
 		fi
-	done
-
-	return 0
+		cmp -s "$source_dir/$rel_path" "$target_file" && return 0
+	fi
+	print_error "Deploy verification failed: $target_file is stale versus $source_label"
+	return 1
 }
 
 # _verify_opencode_plugin_deps plugin_dir
@@ -763,7 +787,9 @@ _deploy_agents_post_copy() {
 	_set_script_permissions_and_report "$target_dir"
 	_install_agent_runtime_deps "$target_dir" || return 1
 	_install_opencode_plugin_deps "$target_dir" || return 1
-	_deploy_version_file "$target_dir" "$repo_dir"
+	# The bundle stage copies VERSION inside its pinned-commit window (t19058);
+	# re-reading the live checkout here could stamp a later release bump.
+	[[ -f "$target_dir/VERSION" ]] || _deploy_version_file "$target_dir" "$repo_dir"
 	_deploy_security_advisories_files "$source_dir"
 	_inject_plan_reminder "$target_dir"
 	_migrate_mailbox_if_needed "$target_dir"

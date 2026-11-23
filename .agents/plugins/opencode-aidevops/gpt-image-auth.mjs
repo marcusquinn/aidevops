@@ -87,11 +87,26 @@ function resolveApiAuth(args, options) {
   };
 }
 
+const OPENROUTER_SECRET = "OPENROUTER_API_KEY";
+
+function resolveOpenRouterAuth(args, options) {
+  if (args.account) throw new Error("auth=openrouter uses the OPENROUTER_API_KEY secret; do not pass account.");
+  const reader = options.readSecret || ((name) => readImageApiKey(name, options));
+  return {
+    mode: "openrouter",
+    accessToken: reader(OPENROUTER_SECRET),
+    accountId: "",
+    account: null,
+    pinned: true,
+  };
+}
+
 export async function resolveGptImageAuth(args, options = {}) {
   const mode = args.auth || "oauth";
   if (mode === "oauth") return resolveOAuthAuth(args, options);
   if (mode === "api") return resolveApiAuth(args, options);
-  throw new Error("Image auth must be oauth or api.");
+  if (mode === "openrouter") return resolveOpenRouterAuth(args, options);
+  throw new Error("Image auth must be oauth, api, or openrouter.");
 }
 
 function retryAfterMs(response) {

@@ -5,7 +5,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 3.39.172
+# Version: 3.39.267
 
 set -euo pipefail
 
@@ -227,6 +227,12 @@ source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-update-lib.sh"
 # shellcheck source=.agents/scripts/aidevops-cli/aidevops-upgrade-planning-lib.sh
 # shellcheck disable=SC1091
 source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-upgrade-planning-lib.sh"
+# shellcheck source=.agents/scripts/aidevops-cli/aidevops-help-lib.sh
+# shellcheck disable=SC1091
+source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-help-lib.sh"
+# shellcheck source=.agents/scripts/aidevops-cli/aidevops-launch-worker-lib.sh
+# shellcheck disable=SC1091
+source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-launch-worker-lib.sh"
 # shellcheck source=.agents/scripts/runtime-bundle-verifier.sh
 # shellcheck disable=SC1091
 source "$AIDEVOPS_RUNTIME_BUNDLE_VERIFIER"
@@ -558,6 +564,10 @@ _update_finish() {
 	# warnings in setup.sh-driven flows that already do their own check.
 	if [[ -t 0 ]] && [[ -z "${AIDEVOPS_AUTO_UPDATE:-}" ]] && [[ "${NON_INTERACTIVE:-false}" != "true" ]]; then
 		_update_check_daemon_health
+	else
+		# t19020: any update, including the daemon's own runs, clears a stale
+		# advisory once the daemon is healthy; only interactive runs write it.
+		_update_check_daemon_health --clear-only
 	fi
 
 	# t2946: one-shot idempotent migration from legacy supervisor.* to canonical
@@ -779,7 +789,7 @@ _repos_list() {
 	fi
 	local current_ver
 	current_ver=$(get_version)
-	jq -r '.initialized_repos[] | "\(.path)|\(.version)|\((.features // []) | join(","))|\(if .maintenance == false then false else true end)|\(.pulse // false)"' "$REPOS_FILE" 2>/dev/null | while IFS='|' read -r path version features maintenance pulse; do
+	jq -r '.initialized_repos[] | "\(.path)|\(.version)|\((.features // []) | join(","))|\(if .maintenance == false then false else true end)|\(.pulse // false)|\(.checkpoint_policy.auto_resolve_decisions == true)|\(.checkpoint_policy.auto_continue_unknown_pending_work == true)"' "$REPOS_FILE" 2>/dev/null | while IFS='|' read -r path version features maintenance pulse decisions pending; do
 		local name
 		name=$(basename "$path")
 		local status="✓" status_color="$GREEN"
@@ -800,6 +810,7 @@ _repos_list() {
 		else
 			echo "    Automation: dormant (Pulse: off)"
 		fi
+		echo "    Checkpoint policy: decisions=$decisions pending-work=$pending"
 		echo ""
 	done
 	echo "Legend: ✓ up-to-date  ↑ update available  ✗ not found"
@@ -1001,6 +1012,46 @@ _repos_pulse() {
 	return 0
 }
 
+_repos_checkpoint_policy() {
+	local state="${1:-}" selector="" owner="" arg="" owner_arg=""
+	case "$state" in
+	on | off) shift ;;
+	*) print_error "Usage: aidevops repos checkpoint-policy <on|off> [slug-or-path] [--owner OWNER]"; return 2 ;;
+	esac
+	while [[ $# -gt 0 ]]; do
+		arg="${1:-}"
+		owner_arg="${2:-}"
+		case "$arg" in
+		--owner)
+			[[ $# -ge 2 && -z "$owner" ]] || { print_error "--owner requires one owner"; return 2; }
+			owner="$owner_arg"
+			[[ -n "$owner" ]] || return 2
+			shift 2
+			;;
+		-*) print_error "Unknown checkpoint-policy option: $arg"; return 2 ;;
+		*)
+			[[ -z "$selector" ]] || { print_error "Specify only one repository"; return 2; }
+			selector="$arg"
+			shift
+			;;
+		esac
+	done
+	if [[ -n "$owner" ]]; then
+		[[ -z "$selector" ]] || { print_error "Use a repository selector or --owner, not both"; return 2; }
+		set_owner_checkpoint_policy "$owner" "$state"
+		return $?
+	fi
+	if [[ -z "$selector" ]]; then
+		selector=$(git rev-parse --show-toplevel 2>/dev/null) || {
+			print_error "Checkpoint policy needs a registered repo selector or a current Git worktree"
+			return 1
+		}
+	fi
+	set_repo_checkpoint_policy "$selector" "$state" || return $?
+	print_success "Checkpoint policy $state for $selector (decisions and pending work)"
+	return 0
+}
+
 _repos_actions() {
 	local state="${1:-}" selector="${2:-}" reason="${3:-}"
 	case "$state" in
@@ -1022,7 +1073,7 @@ _repos_actions() {
 cmd_github() {
 	local action="${1:-}"
 	if [[ "$action" != "auth" ]]; then
-		print_error "Usage: aidevops github auth <set|status|check|clear|profile|usage|migrate>"
+		print_error "Usage: aidevops github auth <app|set|status|check|clear|profile|usage|advise|migrate>"
 		return 1
 	fi
 	shift
@@ -1066,6 +1117,10 @@ cmd_repos() {
 		shift
 		_repos_pulse "$@"
 		;;
+	checkpoint-policy)
+		shift
+		_repos_checkpoint_policy "$@"
+		;;
 	actions)
 		shift
 		_repos_actions "$@"
@@ -1086,6 +1141,8 @@ cmd_repos() {
 		echo "           Include/exclude a registered repo from recurring automation"
 		echo "  pulse <on|off> [repo]"
 		echo "           Enable/disable Pulse task automation (on requires maintenance)"
+		echo "  checkpoint-policy <on|off> [slug-or-path] [--owner OWNER]"
+		echo "           Toggle AI decision/pending-work recovery; --owner selects Pulse-enabled repos"
 		echo "  pulse auth <set|status|check|clear> owner/repo [options]"
 		echo "           Configure repository GitHub App reads without changing write auth"
 		echo "  pulse auth usage [--since 1h]"
@@ -1248,329 +1305,6 @@ cmd_setup() {
 }
 
 
-# Help text helpers (extracted for complexity reduction)
-_help_commands() {
-	echo "Commands:"
-	echo "  init [features]    Initialize aidevops in current project"
-	echo "  project-config restore <slug> [--backup FILE] [--apply]  Restore missing ignored local config only"
-	echo "  project-config set validator_timeout_seconds <n>  Set an audited, ignored canonical timeout from any worktree"
-	echo "  setup --scope <s>  Run scoped setup/deploy (opencode, agents, source-access, hooks, tabby, pulse, gui-desktop, ai-session, full)"
-	echo "  init-routines      Scaffold private routines repo (--org <name> | --local)"
-	echo "  upgrade-planning   Upgrade TODO.md/PLANS.md to latest templates"
-	echo "  features           List available features for init"
-	echo "  skill <cmd>        Manage agent skills (add/list/check/update/remove)"
-	echo "  skills <cmd>       Discover skills (search/browse/describe/recommend)"
-	echo "  plugin <cmd>       Manage plugins (add/list/update/enable/disable/remove)"
-	echo "  status             Check installation status of all components"
-	echo "  doctor             Detect duplicate installs and PATH conflicts (--fix to resolve)"
-	echo "  update             Update aidevops to the latest version (alias: upgrade)"
-	echo "  upgrade            Alias for update"
-	echo "  runtime-bundle     Inspect retained bundles or run an explicit audited rollback"
-	echo "  release <cmd>      Publish/status/reconcile a provenance-bound aidevops release"
-	echo "  pulse <cmd>        Session-based pulse control (start/stop/status)"
-	echo "  schedule <cmd>     Durable one-shot jobs (once/status/cancel)"
-	echo "  launch-worker      Manually launch headless workers for GitHub issues"
-	echo "  worktree <cmd>     Manage safe linked worktrees (add/list/remove/status/switch/clean) (alias: wt)"
-	echo "  auto-update <cmd>  Manage automatic update polling (enable/disable/status)"
-	echo "  repo-sync <cmd>    Daily git pull for repos in parent dirs (enable/disable/status/dirs)"
-	echo "  update-tools       Check for outdated tools (--update to auto-update)"
-	echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
-	echo "  lint [cmd]         Audit/configure native repo lint, format, typecheck, and hooks"
-	echo "  design <cmd>       DESIGN.md detection, scaffolding, and brand guideline exports"
-	echo "  keywords <cmd>     context/keywords.md search targets: scaffold, brief, sync, track, budget"
-	echo "  cleanup [cmd]      Storage report/reclaim (all --apply) and branch cleanup"
-	echo "  model-accounts-pool OAuth account pool (list/check/diagnose/add/rotate/reset-cooldowns)"
-	echo "  gpt56-context <cmd> Manage the 300K GPT-5.6 OpenCode context cap (enable/disable/status)"
-	echo "  gpt6-context <cmd> Manage the default ~240K GPT-6 Sol/Luna compaction cap (enable/disable/status)"
-	echo "  astra-context <cmd> Manage the default ~240K Astra compaction target (enable/disable/status; disable = 400K)"
-	echo "  client-format      Client request format alignment (extract/check/canary/monitor)"
-	echo "  opencode-db <cmd>  OpenCode SQLite maintenance/session lookup (check/report/sessions/maintain/window/status/install)"
-	echo "  opencode [agent] [args]    Launch OpenCode with Build+ and per-session DB isolation"
-	echo "  codex|claude [agent] [args]  Launch with full permissions (default agent: build-plus)"
-	echo "  <runtime> [agent] [args]     Also cursor, droid, gemini, continue, kilo, kiro, aider, amp, kimi, qwen"
-	echo "                              Use <runtime> --help or --list-agents for launch options"
-	echo "  opencode-desktop   Launch/install OpenCode Desktop with aidevops DB isolation"
-	echo "  opencode-sandbox   Test OpenCode versions in isolation (install/run/check/clean)"
-	echo "  sessions [cmd]     Live OpenCode sessions: list/show/send/ask/inbox/outbox/prune (bare: list)"
-	echo "  approve <cmd>      Cryptographic issue/PR approval (setup/issue/pr/verify/status)"
-	echo "  circuit-breaker    Supervisor circuit breaker (status/reset/check/trip) (alias: cb)"
-	echo "  issue <cmd>        Interactive issue ownership (claim/release/status/scan-stale)"
-	echo "  security [cmd]     Full security assessment (posture + hygiene + supply chain)"
-	echo "  contributions      External contributions inbox (bare: status | seed/scan/stop/restart/install/uninstall)"
-	echo "  inbox [cmd]        Capture transit zone (bare: status | provision/add/find/digest/help)"
-	echo "  email [cmd]        Email mailbox management (mailbox add/list/test/remove)"
-	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
-	echo "  review-gate <cmd>  Configure review_gate merge policies (rate-limit/completion)"
-	echo "  github auth <cmd> Repository auth routes, App profiles, checks and local usage"
-	echo "  github-app-auth    GitHub App auth setup/status and API route decisions"
-	echo "  source-access <cmd> Session-bound, sudo-signed source-read approvals"
-	echo "  secret <cmd>       Manage secrets (set/rm/list/run/init/import/status)"
-	echo "  vault <cmd>        Local encrypted Vault broker (init/unlock/lock/status/read/update)"
-	echo "  config <cmd>       Feature toggles (list/get/set/reset/path/help)"
-	echo "  knowledge <cmd>    Knowledge plane management (init/status/provision)"
-	echo "  campaign <cmd>     Campaign plane: init/provision/ls (P1) + asset (P4) + new/list/status/archive (P2) + draft (P5) + launch/promote (P6) + grow (orchestration)"
-	echo "  stats <cmd>        LLM usage analytics (summary/models/projects/costs/trend)"
-	echo "  tabby <cmd>        Manage Tabby profiles (sync/status) and remote tmux tabs (sessions)"
-	echo "  buzz <cmd>         Manage Buzz Desktop OpenCode ACP compatibility"
-	echo "  opencode-browse [cmd] Drive your own browser via OpenCode browse (status/pair/install/doctor)"
-	echo "  parent-status <N>  Show decomposition state of parent-task issue #N (alias: ps)"
-	echo "  detect             Find and register aidevops projects"
-	echo "  uninstall          Remove aidevops from your system"
-	echo "  version            Show version information"
-	echo "  help               Show this help message"
-	return 0
-}
-
-_help_security_sections() {
-	echo "Security:"
-	echo "  aidevops security            # Run ALL checks (posture + hygiene + supply chain)"
-	echo "  aidevops security posture    # Interactive security posture setup (gopass, gh, SSH)"
-	echo "  aidevops security status     # Combined posture + hygiene summary"
-	echo "  aidevops security scan       # Secret hygiene & supply chain scan"
-	echo "  aidevops security fix        # Interactive credential hygiene remediation"
-	echo "  aidevops security scan-pth   # Python .pth file audit (supply chain IoC)"
-	echo "  aidevops security scan-secrets # Plaintext credential locations"
-	echo "  aidevops security scan-deps  # Unpinned dependency check"
-	echo "  aidevops security supply-chain scan [path] # npm supply-chain IOC scan"
-	echo "  aidevops security check      # Per-repo security posture assessment"
-	echo "  aidevops security dismiss <id> # Dismiss a security advisory"
-	echo ""
-	echo "Temporary source access:"
-	echo "  aidevops update                              # Install/verify broker during normal setup"
-	echo "  sudo -k /usr/bin/python3 -I -B /etc/aidevops/source-access/source-access-helper.py approve <id> --ttl 12h"
-	echo "  aidevops source-access status                    # List active/expired approvals"
-	echo "  sudo -k /usr/bin/python3 -I -B /etc/aidevops/source-access/source-access-helper.py revoke <approval-id>"
-	echo ""
-	echo "IP Reputation:"
-	echo "  aidevops ip-check check <ip> # Check IP reputation across providers"
-	echo "  aidevops ip-check batch <f>  # Batch check IPs from file"
-	echo "  aidevops ip-check report <ip># Generate markdown report"
-	echo "  aidevops ip-check providers  # List available providers"
-	echo "  aidevops ip-check cache-stats# Show cache statistics"
-	echo ""
-	echo "Model Accounts Pool (OAuth):"
-	echo "  aidevops model-accounts-pool status            # Pool health at a glance"
-	echo "  aidevops model-accounts-pool list              # Per-account detail"
-	echo "  aidevops model-accounts-pool check             # Live token validity test"
-	echo "  aidevops model-accounts-pool diagnose          # Full pipeline diagnostics (pool, plugin, CCH, runtime)"
-	echo "  aidevops model-accounts-pool rotate [provider] # Switch to next available account NOW (use when rate-limited)"
-	echo "  aidevops model-accounts-pool reset-cooldowns   # Clear rate-limit cooldowns"
-	echo "  aidevops model-accounts-pool add anthropic     # Add Claude Pro/Max account"
-	echo "  aidevops model-accounts-pool add openai        # Add ChatGPT Plus/Pro account"
-	echo "  aidevops model-accounts-pool add cursor        # Add Cursor Pro account"
-	echo "  aidevops model-accounts-pool add google        # Add Google AI Pro/Ultra/Workspace account"
-	echo "  aidevops model-accounts-pool import claude-cli # Import from Claude CLI auth"
-	echo "  aidevops model-accounts-pool assign-pending <provider># Assign stranded token"
-	echo "  aidevops model-accounts-pool remove <provider> <email># Remove an account"
-	echo ""
-	echo "  Auth troubleshooting (run diagnose first, then recovery if needed):"
-	echo "    aidevops model-accounts-pool diagnose        # 0. Full pipeline check (start here)"
-	echo "    aidevops model-accounts-pool status          # 1. Check pool health"
-	echo "    aidevops model-accounts-pool check           # 2. Test token validity"
-	echo "    aidevops model-accounts-pool rotate anthropic# 3. Switch account if rate-limited"
-	echo "    aidevops model-accounts-pool reset-cooldowns # 4. Clear cooldowns if all stuck"
-	echo "    aidevops model-accounts-pool add anthropic   # 5. Re-add if pool empty"
-	echo ""
-	echo "Client Format:"
-	echo "  aidevops client-format               # Show status + cached constants"
-	echo "  aidevops client-format extract        # Re-extract constants from installed CLI"
-	echo "  aidevops client-format check          # Verify cache matches installed CLI version"
-	echo "  aidevops client-format canary         # Run drift check against real CLI (uses tokens)"
-	echo "  aidevops client-format monitor [cmd]  # Traffic capture + diff (requires mitmproxy)"
-	echo "  aidevops client-format install-canary # Install daily drift check (launchd)"
-	echo ""
-	echo "  If requests stop working after a CLI update:"
-	echo "    aidevops client-format extract      # 1. Re-extract constants"
-	echo "    aidevops client-format canary       # 2. Verify against real CLI"
-	echo ""
-	return 0
-}
-
-_help_detailed_sections_content() {
-	_help_security_sections
-	echo "Secrets:"
-	echo "  aidevops secret set NAME     # Store a secret (hidden input)"
-	echo "  aidevops secret rm NAME      # Remove from gopass + plaintext (confirm or --yes)"
-	echo "  aidevops secret list         # List secret names (never values)"
-	echo "  aidevops secret run CMD      # Run with secrets injected + redacted"
-	echo "  aidevops secret init         # Initialize gopass encrypted store"
-	echo "  aidevops secret import       # Import from credentials.sh to gopass"
-	echo "  aidevops secret status       # Show backend status"
-	echo ""
-	_help_vault_and_config_sections
-	echo "Knowledge Plane:"
-	echo "  aidevops knowledge init repo           # Provision _knowledge/ in current repo"
-	echo "  aidevops knowledge init personal       # Provision at ~/.aidevops/.agent-workspace/knowledge/"
-	echo "  aidevops knowledge init off            # Disable knowledge plane"
-	echo "  aidevops knowledge status              # Show provisioning state"
-	echo "  aidevops knowledge provision [path]    # Re-provision (idempotent)"
-	echo "  aidevops knowledge add <file|url>      # Ingest file or URL into sources/"
-	echo "  aidevops knowledge list [--state s] [--kind k]  # List all known sources"
-	echo "  aidevops knowledge search <query>      # Search sources (grep fallback)"
-	echo ""
-	echo "Design Systems:"
-	echo "  aidevops design detect [path]          # Detect whether a repo has a GUI/interface"
-	echo "  aidevops design scaffold [path]        # Create DESIGN.md skeleton when missing"
-	echo "  aidevops design guidelines [path] --pdf # Generate brand guideline HTML/PDF exports"
-	echo "  aidevops design survey [--json]        # Audit owned initialized GUI repos"
-	echo "  aidevops design issues --apply         # File auto-dispatch issues for missing design artifacts"
-	echo ""
-	echo "Search Targets (context/keywords.md):"
-	echo "  aidevops keywords scaffold [path]      # Create strategy + registry, gitignore data for public repos"
-	echo "  aidevops keywords brief --asset image  # Slice targets/entities/rules for one job"
-	echo "  aidevops keywords sync                 # Merge registry with the private team hub"
-	echo "  aidevops keywords track --source github # Record rank observations (budget-gated paid sources)"
-	echo "  aidevops keywords survey | issues --apply # Backfill registered repos"
-	echo ""
-	echo "Campaign Plane:"
-	echo "  aidevops campaign init [<path>]          # Provision _campaigns/ directory contract (P1)"
-	echo "  aidevops campaign provision [<path>]     # Re-provision / repair (idempotent, P1)"
-	echo "  aidevops campaign ls [--active|--launched|--all] [<path>]  # Directory listing (P1)"
-	echo "  aidevops campaign new <name> --intake <file>   # Create validated active campaign (P2)"
-	echo "  aidevops campaign update <id> --intake <file>  # Atomically update campaign intake (P2)"
-	echo "  aidevops campaign migrate <id> --intake <file> # Explicitly upgrade a legacy brief (P2)"
-	echo "  aidevops campaign list                         # Show all campaigns (P2)"
-	echo "  aidevops campaign status <id>                  # Detailed dossier for a campaign (P2)"
-	echo "  aidevops campaign archive <id>                 # Move launched/<id> → archive/ (P2)"
-	echo "  aidevops campaign asset add <file> [--target lib-brand|lib-swipe|campaign]  # Ingest asset (P4)"
-	echo "  aidevops campaign asset list [--type image|video|audio|pdf|all]             # List assets (P4)"
-	echo "  aidevops campaign asset preview <file> [--size 640]                         # Generate preview PNG (P4)"
-	echo "  aidevops campaign asset manifest <asset-id>                                 # Show asset manifest entry (P4)"
-	echo "  aidevops campaign draft <id> --channel <ch>    # AI-generated content draft (P5)"
-	echo "  aidevops campaign launch <id>                  # Move active/<id> → launched/, create templates (P6)"
-	echo "  aidevops campaign promote <id> [--results|--learnings] # Cross-plane promotion (P6)"
-	echo "  aidevops campaign feedback [<id>]              # Surface _feedback/ insights for research (P6)"
-	echo "  aidevops campaign grow plan --intake <file>    # Non-mutating growth orchestration plan"
-	echo "  aidevops campaign grow <start|status|resume> <id> # Evidence-backed growth checkpoint"
-	echo ""
-	echo "Performance Plane:"
-	echo "  aidevops performance init                     # Provision _performance/marketing/"
-	echo "  aidevops performance validate --adapter normalized --input <file>"
-	echo "  aidevops performance ingest --adapter normalized --input <file> [--dry-run]"
-	echo "  aidevops performance backfill --input <phase1.jsonl> [--dry-run]"
-	echo "  aidevops performance list [--source <source>|--subjects|--results]"
-	echo "  aidevops performance status [--json]           # Coverage, freshness, quarantine"
-	echo "  aidevops performance reconcile --input <file>  # Append owner decisions"
-	echo "  aidevops performance rebuild                   # Rebuild campaign summaries"
-	echo "  aidevops performance export --purpose measurement|audience --output <file>"
-	echo ""
-	echo "LLM Stats:"
-	echo "  aidevops stats               # Show usage summary (last 30 days)"
-	echo "  aidevops stats summary       # Overall usage summary"
-	echo "  aidevops stats models        # Per-model breakdown"
-	echo "  aidevops stats projects      # Per-project breakdown"
-	echo "  aidevops stats costs         # Cost analysis with category breakdown"
-	echo "  aidevops stats trend         # Usage trends over time"
-	echo "  aidevops stats ingest        # Parse new Claude JSONL log entries"
-	echo "  aidevops stats sync-budget   # Sync to budget tracker (t1100)"
-	echo ""
-	echo "Supervisor Circuit Breaker (t1331):"
-	echo "  aidevops circuit-breaker             # Show breaker state (alias: cb)"
-	echo "  aidevops circuit-breaker status      # Show breaker state"
-	echo "  aidevops circuit-breaker reset       # Manually reset (resumes worker dispatch)"
-	echo "  aidevops circuit-breaker check       # Exit 0 if dispatch allowed, 1 if paused"
-	echo "  aidevops circuit-breaker trip        # Manually trip (testing)"
-	echo "  aidevops cb reset                    # Short alias for reset"
-	echo ""
-	echo "  When the breaker trips (auto-filed GH issue), copy/paste:"
-	echo "    aidevops circuit-breaker reset"
-	echo ""
-	_help_management_sections
-	return 0
-}
-
-_help_detailed_sections() {
-	_help_detailed_sections_content
-	return 0
-}
-
-_help_management_sections() {
-	echo "Auto-Update:"
-	echo "  aidevops auto-update enable  # Poll for updates every 10 min"
-	echo "  aidevops auto-update disable # Stop auto-updating"
-	echo "  aidevops auto-update status  # Show auto-update state"
-	echo "  aidevops auto-update check   # One-shot check and update now"
-	echo ""
-	echo "Repo Sync:"
-	echo "  aidevops repo-sync enable    # Enable daily git pull for repos"
-	echo "  aidevops repo-sync disable   # Disable daily sync"
-	echo "  aidevops repo-sync status    # Show sync state and last results"
-	echo "  aidevops repo-sync check     # One-shot sync all repos now"
-	echo "  aidevops repo-sync dirs list # List configured parent directories"
-	echo "  aidevops repo-sync dirs add  # Add a parent directory"
-	echo "  aidevops repo-sync dirs rm   # Remove a parent directory"
-	echo "  aidevops repo-sync config    # Show/edit configuration"
-	echo "  aidevops repo-sync logs      # View sync logs"
-	echo ""
-	echo "Agent Sources (private repos):"
-	echo "  aidevops sources add <path>  # Add a local repo as agent source"
-	echo "  aidevops sources add-remote <url> # Clone and add remote repo"
-	echo "  aidevops sources remove <n>  # Remove a source (keeps agents)"
-	echo "  aidevops sources list        # List configured sources"
-	echo "  aidevops sources status      # Show sync status"
-	echo "  aidevops sources sync        # Sync all sources to custom/"
-	echo ""
-	echo "Plugins:"
-	echo "  aidevops plugin add <url>    # Install a plugin from git repo"
-	echo "  aidevops plugin list         # List installed plugins"
-	echo "  aidevops plugin update       # Update all plugins"
-	echo "  aidevops plugin remove <n>   # Remove a plugin"
-	echo ""
-	echo "Skill Management:"
-	echo "  aidevops skill add <source>  # Import a skill from GitHub"
-	echo "  aidevops skill list          # List imported skills"
-	echo "  aidevops skill check         # Check for upstream updates"
-	echo "  aidevops skill update [name] # Update skills to latest"
-	echo "  aidevops skill remove <name> # Remove an imported skill"
-	echo ""
-	echo "Skill Discovery:"
-	echo "  aidevops skills search <q>   # Search skills by keyword"
-	echo "  aidevops skills browse       # Browse skills by category"
-	echo "  aidevops skills describe <n> # Show skill description"
-	echo "  aidevops skills recommend <t># Suggest skills for a task"
-	echo "  aidevops skills categories   # List all categories"
-	echo ""
-	echo "Installation:"
-	echo "  brew install marcusquinn/tap/aidevops && aidevops update  # macOS/Homebrew"
-	echo "  npm install -g aidevops && aidevops update                # Linux/cross-platform"
-	echo ""
-	echo "Documentation: https://github.com/marcusquinn/aidevops"
-	return 0
-}
-
-# Help command
-cmd_help() {
-	local version
-	version=$(get_version)
-	echo "AI DevOps Framework CLI v$version"
-	echo ""
-	echo "Usage: aidevops <command> [options]"
-	echo ""
-	_help_commands
-	echo ""
-	echo "Examples:"
-	echo "  aidevops init                # Initialize with all features"
-	echo "  aidevops init planning       # Initialize with planning only"
-	echo "  aidevops upgrade-planning    # Upgrade planning files to latest"
-	echo "  aidevops features            # List available features"
-	echo "  aidevops status              # Check what's installed"
-	echo "  aidevops doctor              # Find duplicate/conflicting installs"
-	echo "  aidevops doctor --fix        # Interactively remove duplicates"
-	echo "  aidevops update              # Update framework + check projects"
-	echo "  aidevops runtime-bundle list # List retained validated runtime bundle IDs"
-	echo "  aidevops gpt56-context       # Manage the 300K GPT-5.6 OpenCode context cap"
-	echo "  aidevops gpt6-context enable # Cap GPT-6 Sol/Luna usable input near 240K"
-	echo "  aidevops repos               # List registered projects"
-	echo "  aidevops launch-worker 22259 marcusquinn/aidevops --dry-run"
-	echo "  aidevops repos add           # Register current project"
-	echo "  aidevops detect              # Find unregistered projects"
-	echo "  aidevops update-tools        # Check for outdated tools"
-	echo "  aidevops update-tools -u     # Update all outdated tools"
-	echo "  aidevops uninstall           # Remove aidevops"
-	echo ""
-	_help_detailed_sections
-	return 0
-}
 
 # Version command
 cmd_version() {
@@ -1616,171 +1350,6 @@ _dispatch_config() {
 	return 0
 }
 
-_launch_worker_usage() {
-	cat <<'EOF'
-Usage: aidevops launch-worker <issue|issue,issue> [owner/repo] [options]
-       aidevops launch-worker --batch <issue,issue> [owner/repo] [options]
-       aidevops launch-worker status <issue> [owner/repo]
-
-Launch one or more headless workers manually without waiting for the pulse.
-If owner/repo is omitted, it defaults to the current git repository's origin.
-
-Options:
-  --model <id>      Override model (for example, anthropic/claude-opus-4-7).
-  --agent <name>    Worker agent name (default: Build+).
-  --batch <list>    Comma-separated issue numbers to launch.
-  --dry-run         Print the planned dispatch without launching.
-  --no-ceremony     Skip status/origin/assignee ceremony (debug only).
-  -h, --help        Show this help.
-
-Output includes the worker PID, worktree path, log path, session key, and a
-status command for each launched issue.
-EOF
-	return 0
-}
-
-_launch_worker_default_repo() {
-	local remote_url=""
-	remote_url=$(git remote get-url origin 2>/dev/null || true)
-	if [[ "$remote_url" =~ github\.com[:/]([^/]+/[^/.]+)(\.git)?$ ]]; then
-		printf '%s\n' "${BASH_REMATCH[1]}"
-		return 0
-	fi
-	return 1
-}
-
-_launch_worker_helper_path() {
-	local source_dir helper_path
-	source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-	helper_path="$source_dir/.agents/scripts/dispatch-single-issue-helper.sh"
-	[[ ! -f "$helper_path" ]] && helper_path="$INSTALL_DIR/.agents/scripts/dispatch-single-issue-helper.sh"
-	[[ ! -f "$helper_path" ]] && helper_path="$AGENTS_DIR/scripts/dispatch-single-issue-helper.sh"
-	if [[ ! -f "$helper_path" ]]; then
-		print_error "dispatch-single-issue-helper.sh not found. Run: aidevops update"
-		return 1
-	fi
-	printf '%s\n' "$helper_path"
-	return 0
-}
-
-_launch_worker_status() {
-	local status_issue="${1:-}"
-	local status_repo="${2:-}"
-	if [[ -z "$status_issue" ]]; then
-		print_error "launch-worker status requires <issue> [owner/repo]"
-		return 2
-	fi
-	if [[ -z "$status_repo" ]]; then
-		status_repo=$(_launch_worker_default_repo) || {
-			print_error "Could not infer owner/repo from git remote; pass it explicitly"
-			return 2
-		}
-	fi
-	local status_helper_path
-	status_helper_path=$(_launch_worker_helper_path) || return 1
-	bash "$status_helper_path" status "$status_issue" "$status_repo"
-	return 0
-}
-
-cmd_launch_worker() {
-	local sub_or_issue="${1:-}"
-	if [[ -z "$sub_or_issue" || "$sub_or_issue" == "help" || "$sub_or_issue" == "--help" || "$sub_or_issue" == "-h" ]]; then
-		_launch_worker_usage
-		return 0
-	fi
-
-	if [[ "$sub_or_issue" == "status" ]]; then
-		shift || true
-		_launch_worker_status "$@"
-		return $?
-	fi
-
-	local issue_spec=""
-	local repo_slug=""
-	local batch_spec=""
-	local -a helper_opts=()
-	while [[ $# -gt 0 ]]; do
-		local arg="$1"
-		case "$arg" in
-		--batch)
-			if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
-				print_error "--batch requires a comma-separated issue list"
-				return 2
-			fi
-			batch_spec="${2}"
-			shift 2
-			;;
-		--model | --agent)
-			if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
-				print_error "$arg requires a value"
-				return 2
-			fi
-			helper_opts+=("$arg" "${2}")
-			shift 2
-			;;
-		--dry-run | --no-ceremony)
-			helper_opts+=("$arg")
-			shift
-			;;
-		--help | -h)
-			_launch_worker_usage
-			return 0
-			;;
-		--*)
-			print_error "Unknown launch-worker flag: $arg"
-			return 2
-			;;
-		*)
-			if [[ -z "$issue_spec" ]]; then
-				issue_spec="$arg"
-			elif [[ -z "$repo_slug" ]]; then
-				repo_slug="$arg"
-			else
-				print_error "Unexpected launch-worker argument: $arg"
-				return 2
-			fi
-			shift
-			;;
-		esac
-	done
-
-	[[ -n "$batch_spec" ]] && issue_spec="$batch_spec"
-	if [[ -z "$issue_spec" ]]; then
-		print_error "launch-worker requires an issue number or --batch list"
-		return 2
-	fi
-	if [[ -z "$repo_slug" ]]; then
-		repo_slug=$(_launch_worker_default_repo) || {
-			print_error "Could not infer owner/repo from git remote; pass it explicitly"
-			return 2
-		}
-	fi
-	if [[ ! "$repo_slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
-		print_error "Repo slug must be owner/repo format: $repo_slug"
-		return 2
-	fi
-
-	local old_ifs="$IFS"
-	IFS=','
-	local -a issues=()
-	read -r -a issues <<<"$issue_spec"
-	IFS="$old_ifs"
-
-	local helper_path
-	helper_path=$(_launch_worker_helper_path) || return 1
-
-	local issue rc=0
-	for issue in "${issues[@]}"; do
-		if [[ ! "$issue" =~ ^[0-9]+$ ]]; then
-			print_error "Issue number must be numeric: $issue"
-			rc=2
-			continue
-		fi
-		bash "$helper_path" dispatch "$issue" "$repo_slug" "${helper_opts[@]}" || rc=$?
-		echo "Status: aidevops launch-worker status $issue $repo_slug"
-	done
-	return "$rc"
-}
 
 # Emit tip if the current directory has aidevops but isn't registered
 _main_check_unregistered() {
@@ -1882,11 +1451,9 @@ _cmd_security() {
 		_dispatch_helper "security-fix-helper.sh" "security-fix-helper.sh" || return $?
 		;;
 	dismiss)
-		if [[ "${2:-}" == "tanstack-minishaihulud-2026-05" ]]; then
-			_dispatch_helper "supply-chain-advisory-helper.sh" "supply-chain-advisory-helper.sh" dismiss
-		else
-			_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "$@"
-		fi
+		# Every advisory, including supply-chain ones, is dismissed by its exact
+		# ID through the generic path; never hardcode an ID-to-helper mapping (GH#39350).
+		_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "$@"
 		;;
 	hygiene)
 		shift
@@ -2118,12 +1685,13 @@ _main_dispatch_sync() {
 	return $?
 }
 
-# OpenCode database, desktop, sandbox and session-bus commands.
+# OpenCode database, desktop, sandbox, runtime-switch and session-bus commands.
 _main_dispatch_opencode_tools() {
 	local command="$1"
 	shift
 	case "$command" in
 	opencode-db | oc-db) _dispatch_helper "opencode-db-maintenance-helper.sh" "opencode-db-maintenance-helper.sh" "$@" ;;
+	opencode-runtime | oc-runtime) _dispatch_helper "opencode-runtime-switch-helper.sh" "opencode-runtime-switch-helper.sh" "$@" ;;
 	opencode-desktop | oc-desktop) _dispatch_helper "opencode-launcher-helper.sh" "opencode-launcher-helper.sh" desktop "$@" ;;
 	opencode-sandbox | oc-sandbox) _dispatch_helper "opencode-sandbox-helper.sh" "opencode-sandbox-helper.sh" "$@" ;;
 	sessions | session-bus) _dispatch_helper "session-bus-helper.sh" "session-bus-helper.sh" "$@" ;;
@@ -2141,6 +1709,7 @@ _main_dispatch() {
 	setup) cmd_setup "$@" ;;
 	features | f) cmd_features ;;
 	status | s) cmd_status "$@" ;;
+	installs) _dispatch_helper "install-record-helper.sh" "install-record-helper.sh" "$@" ;;
 	update | upgrade | u) cmd_update "$@" ;;
 	runtime-bundle | runtime_bundle) AIDEVOPS_INSTALL_DIR="$INSTALL_DIR" _dispatch_helper "runtime-bundle-rollback-helper.sh" "runtime-bundle-rollback-helper.sh" "$@" ;;
 	release) _dispatch_helper "full-loop-release-helper.sh" "full-loop-release-helper.sh" "$@" ;;
@@ -2175,7 +1744,7 @@ _main_dispatch() {
 	cleanup) _main_dispatch_cleanup "$@" ;;
 	client-format) _cmd_client_format "$@" ;;
 	github-app-auth | github-app | gh-auth) _dispatch_helper "github-app-auth-helper.sh" "github-app-auth-helper.sh" "$@" ;;
-	opencode-db | oc-db | opencode-desktop | oc-desktop | opencode-sandbox | oc-sandbox | sessions | session-bus) _main_dispatch_opencode_tools "$command" "$@" ;;
+	opencode-db | oc-db | opencode-runtime | oc-runtime | opencode-desktop | oc-desktop | opencode-sandbox | oc-sandbox | sessions | session-bus) _main_dispatch_opencode_tools "$command" "$@" ;;
 	opencode | oc | codex | claude | claude-code | cursor | cursor-agent | droid | gemini | gemini-cli | continue | cn | kilo | kiro | kiro-cli | aider | amp | kimi | qwen | windsurf)
 		_dispatch_helper "runtime-launcher-helper.sh" "runtime-launcher-helper.sh" "$command" "$@" ;;
 	review-gate | review_gate) _dispatch_helper "review-gate-config-helper.sh" "review-gate-config-helper.sh" "$@" ;;

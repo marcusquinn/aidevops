@@ -5,7 +5,9 @@ the legacy lifecycle. See [DESIGN.md](DESIGN.md) for the full architecture.
 
 ## Process observation
 
-Python 3.10+; standard library only. No installation, daemon, database or scheduler
+Python 3.9+ at runtime (the framework floor: macOS `/usr/bin/python3`; static checks
+target 3.10, so keep 3.10+ `typing` names under `TYPE_CHECKING`, GH#38706); standard
+library only. No installation, daemon, database or scheduler
 is needed for this slice. No command changes worktrees, ownership, legacy state,
 or processes. Python bytecode writes can be disabled with `-B` as below.
 
@@ -38,8 +40,8 @@ for qualifying additional environments.
 From the repository root:
 
 ```bash
-uvx --from ruff==0.11.13 ruff check --no-cache .agents/worker-lifecycle
-uvx --from mypy==1.15.0 mypy --config-file .agents/worker-lifecycle/mypy.ini
+uvx --from ruff==0.11.13 ruff check --no-cache
+uvx --from mypy==1.15.0 mypy --config-file mypy.ini
 ```
 
 Alternatively install `ruff==0.11.13` in a development virtual environment and run

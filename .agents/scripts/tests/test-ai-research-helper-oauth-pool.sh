@@ -276,9 +276,11 @@ write_detector_stubs() {
 	cat >"${TEST_ROOT}/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+# The detector lists title/body with candidates (GH#38673) and checks the
+# label directly (GH#36535).
 case "${1:-} ${2:-}" in
-"issue list") printf '[{"number":1,"labels":[{"name":"auto-dispatch"}]}]\n' ;;
-"label list") printf '[{"name":"fix-the-fixer"}]\n' ;;
+"issue list") printf '[{"number":1,"title":"fix dispatch path","body":"Touches pulse-wrapper.sh dispatch behaviour.","labels":[{"name":"auto-dispatch"}]}]\n' ;;
+"api repos/example/repo/labels/fix-the-fixer") printf '{"name":"fix-the-fixer"}\n' ;;
 "issue view") printf '{"title":"fix dispatch path","body":"Touches pulse-wrapper.sh dispatch behaviour.","labels":[{"name":"auto-dispatch"}],"state":"OPEN"}\n' ;;
 *) printf 'unexpected gh invocation: %s\n' "$*" >&2; exit 1 ;;
 esac

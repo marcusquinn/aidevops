@@ -37,6 +37,18 @@ _PULSE_ISSUE_RECONCILE_NORMALIZE_LOADED=1
 [[ -n "${_LI_BOOL_TRUE+x}" ]] || _LI_BOOL_TRUE="true"
 [[ -n "${_LI_BOOL_FALSE+x}" ]] || _LI_BOOL_FALSE="false"
 [[ -n "${_LI_PERSISTENT_LABEL+x}" ]] || _LI_PERSISTENT_LABEL="persistent"
+_LI_BLOCKED_STATUS="blocked"
+_LI_AVAILABLE_STATUS="available"
+_LI_BLOCKED_CSV=",status:${_LI_BLOCKED_STATUS},"
+_LI_AI_RECOVERY="needs-ai-recovery"
+# GH#38821: shared human-hold label list (also used by dependency-event-reconciler.sh).
+if ! declare -F issue_labels_csv_have_human_hold >/dev/null 2>&1; then
+	_li_lib_dir="${BASH_SOURCE[0]%/*}"
+	[[ "$_li_lib_dir" == "${BASH_SOURCE[0]}" ]] && _li_lib_dir="."
+	# shellcheck source=./issue-hold-marker-lib.sh
+	[[ -r "${_li_lib_dir}/issue-hold-marker-lib.sh" ]] && source "${_li_lib_dir}/issue-hold-marker-lib.sh"
+	unset _li_lib_dir
+fi
 
 #######################################
 # (t2040 Phase 3 helper) Enforce label invariants across all open issues.
@@ -58,6 +70,17 @@ _PULSE_ISSUE_RECONCILE_NORMALIZE_LOADED=1
 #   3. Finite publication-backed tasks cannot also be generic persistent
 #      trackers. Remove only `persistent` when publication and lifecycle
 #      evidence coexist, while preserving explicit dashboard/routine identities.
+#
+#   4. GH#38360: `status:blocked` carries a `needs-*` companion. A bare hold
+#      gets `needs-ai-recovery`; blocked-owned companions (`needs-ai-recovery`,
+#      `needs-dependency`, `needs-maintainer-input`) on a non-blocked issue
+#      are removed. Both repairs re-read live labels before writing.
+#      GH#38821: a bare hold carrying a human hold label (hold-for-review,
+#      no-auto-dispatch) gets `needs-maintainer-input` instead, and a hold
+#      re-queued as `needs-ai-recovery` after the hold is healed to it.
+#      GH#39710: an idle auto-dispatch issue with no status at all but a
+#      `needs-ai-recovery`/`needs-dependency` companion (an interrupted
+#      release) gets `status:blocked` back so the companion's owner re-decides.
 #
 # Also counts (but does not auto-fix) triage-missing issues — those with
 # `origin:interactive` label AND no `tier:*` AND no `auto-dispatch` AND no
@@ -110,9 +133,9 @@ _pick_status_survivor() {
 	local _has_available="" _has_blocked="" _has_active=""
 	local _blocked_status="blocked"
 	for _current in "$@"; do
-		[[ "$_current" == "available" ]] && _has_available="1"
+		[[ "$_current" == "$_LI_AVAILABLE_STATUS" ]] && _has_available="1"
 		[[ "$_current" == "$_blocked_status" ]] && _has_blocked="1"
-		[[ "$_current" != "available" && "$_current" != "$_blocked_status" ]] && _has_active="1"
+		[[ "$_current" != "$_LI_AVAILABLE_STATUS" && "$_current" != "$_blocked_status" ]] && _has_active="1"
 	done
 	# A dual blocked/available state is unsafe regardless of ordinary lifecycle
 	# precedence: queue readers may otherwise advertise the issue before the
@@ -197,6 +220,237 @@ _enforce_persistent_task_invariant_one_issue() {
 	return 1
 }
 
+# GH#38821 heal: succeeds (0) only when the latest needs-ai-recovery label event
+# postdates the latest human-hold label event and no CLAIM_RELEASED or
+# terminal-blocker comment followed that hold, i.e. the normalizer, not a worker
+# blocker, re-queued a maintainer hold. Any lookup failure returns 1 (leave as is).
+_blocked_companion_hold_requeue_is_stale() {
+	local issue_num="$1" slug="$2"
+	local hold_at="" ai_at="" blockers="" times=""
+	local hold_re="${ISSUE_HUMAN_HOLD_LABELS// /|}"
+	times=$(gh api --paginate "repos/${slug}/issues/${issue_num}/events?per_page=100" \
+		--jq '.[] | select(.event == "labeled") | select(.label.name | test("^('"${_LI_AI_RECOVERY}|${hold_re}"')$")) | "\(.label.name)\t\(.created_at)"' 2>/dev/null) || return 1
+	hold_at=$(printf '%s\n' "$times" | awk -F'\t' -v ai="$_LI_AI_RECOVERY" '$1 != ai && $2 > m {m = $2} END {print m}')
+	ai_at=$(printf '%s\n' "$times" | awk -F'\t' -v ai="$_LI_AI_RECOVERY" '$1 == ai && $2 > m {m = $2} END {print m}')
+	[[ -n "$hold_at" && -n "$ai_at" && "$ai_at" > "$hold_at" ]] || return 1
+	blockers=$(gh api --paginate "repos/${slug}/issues/${issue_num}/comments?per_page=100" \
+		--jq '.[] | select(.created_at >= "'"$hold_at"'") | select(.body | test("CLAIM_RELEASED|terminal[-_ ]blocker"; "i")) | .id' 2>/dev/null) || return 1
+	[[ -z "$blockers" ]] || return 1
+	return 0
+}
+
+# GH#38360: status:blocked always carries a needs-* companion that names what
+# unblocks it, and blocked-owned companions leave with status:blocked. The
+# listing row is a hint; both repairs re-read live labels first so a racing
+# lifecycle write is never undone. Returns 0 when a repair was applied.
+#
+# A bare status:blocked routes to needs-ai-recovery: the recovery supervisor
+# solves or releases it, or names the one human input with a specific label.
+_enforce_blocked_companion_one_issue() {
+	local issue_num="$1" slug="$2" mode="$3"
+	local live="" label=""
+	local -a edit_flags=()
+	live=$(gh api "repos/${slug}/issues/${issue_num}" \
+		--jq 'select(.state == "open") | [.labels[]?.name] | join(",")' 2>/dev/null) || return 1
+	[[ -n "$live" ]] || return 1
+	live=",${live},"
+	case "$mode" in
+	bare)
+		[[ "$live" == *"$_LI_BLOCKED_CSV"* && "$live" != *",needs-"* ]] || return 1
+		label="${BLOCKED_NEEDS_AI_RECOVERY:-$_LI_AI_RECOVERY}"
+		# GH#38821: a human-owned hold waits on a maintainer decision, not AI
+		# recovery, which would only rediscover the same hold.
+		if declare -F issue_labels_csv_have_human_hold >/dev/null 2>&1 &&
+			issue_labels_csv_have_human_hold "$live"; then
+			label="${BLOCKED_NEEDS_MAINTAINER_INPUT:-needs-maintainer-input}"
+		fi
+		# An open native blocker (rc 0) is a dependency hold, not recovery work;
+		# rc 1/2/3 (none, clear, unavailable) keep the recovery fallback.
+		local native_rc=1
+		if declare -F _blocked_by_check_native_relationships >/dev/null 2>&1; then
+			_blocked_by_check_native_relationships "$slug" "$issue_num" >/dev/null 2>&1 && native_rc=0 || native_rc=$?
+		fi
+		[[ "$native_rc" -ne 0 ]] || label="${BLOCKED_NEEDS_DEPENDENCY:-needs-dependency}"
+		if declare -F ensure_blocked_companion_label >/dev/null 2>&1; then
+			ensure_blocked_companion_label "$slug" "$label" || true
+		fi
+		edit_flags=(--add-label "$label")
+		;;
+	hold_heal)
+		[[ "$live" == *"$_LI_BLOCKED_CSV"* && "$live" == *",${_LI_AI_RECOVERY},"* ]] || return 1
+		declare -F issue_labels_csv_have_human_hold >/dev/null 2>&1 &&
+			issue_labels_csv_have_human_hold "$live" || return 1
+		_blocked_companion_hold_requeue_is_stale "$issue_num" "$slug" || return 1
+		label="${BLOCKED_NEEDS_MAINTAINER_INPUT:-needs-maintainer-input}"
+		if declare -F ensure_blocked_companion_label >/dev/null 2>&1; then
+			ensure_blocked_companion_label "$slug" "$label" || true
+		fi
+		edit_flags=(--remove-label "$_LI_AI_RECOVERY" --add-label "$label")
+		;;
+	orphan)
+		# Require a live core status other than blocked; a statusless hold keeps
+		# its human companion.
+		[[ "$live" != *"$_LI_BLOCKED_CSV"* && "$live" == *",status:"* ]] || return 1
+		for label in "$_LI_AI_RECOVERY" needs-dependency needs-maintainer-input; do
+			[[ "$live" == *",${label},"* ]] && edit_flags+=(--remove-label "$label")
+		done
+		;;
+	*) return 1 ;;
+	esac
+	[[ "${#edit_flags[@]}" -gt 0 ]] || return 1
+	gh issue edit "$issue_num" --repo "$slug" "${edit_flags[@]}" >/dev/null 2>&1 || return 1
+	echo "[pulse-wrapper] label_invariants: #${issue_num} in ${slug} blocked companion repair (${mode}): ${edit_flags[*]}" >>"$LOGFILE"
+	return 0
+}
+
+# t19179: active ownership statuses only mean something while an assignee
+# holds the claim. A missing assignee means half of the claim is already gone.
+_LI_ORPHAN_ACTIVE_RE=",status:(claimed|in-review|in-progress|queued),"
+
+# Post the CLAIM_RELEASED audit for an orphaned status. Returns non-zero when
+# the comment cannot be persisted; the caller then writes no label (GH#35218).
+_post_orphan_status_release_audit() {
+	local issue_num="$1" slug="$2" idle_hours="$3" status_name="$4"
+	local release_ts="" body=""
+	release_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+CLAIM_RELEASED reason=orphaned_status_no_assignee status=${status_name} idle_hours=${idle_hours} ts=${release_ts}
+<!-- ops:end -->"
+	gh api "repos/${slug}/issues/${issue_num}/comments" \
+		--method POST --field body="$body" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# Live re-read shared by the t19179 orphan-status release and the GH#39710
+# statusless-hold restore; listing rows are only hints for both.
+# Args: $1 issue, $2 slug
+# Prints: labels-csv|assignee-count|updated-epoch for an open issue
+# Returns: 0 on success, 1 on a closed issue or any read error
+_li_live_issue_snapshot() {
+	local issue_num="$1" slug="$2" snapshot=""
+	snapshot=$(gh api "repos/${slug}/issues/${issue_num}" \
+		--jq 'select(.state == "open") | [([.labels[]?.name] | join(",")), ((.assignees // []) | length | tostring), (.updated_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 | tostring)] | join("|")' 2>/dev/null) || return 1
+	[[ -n "$snapshot" ]] || return 1
+	printf '%s\n' "$snapshot"
+	return 0
+}
+
+# t19179: release an active status label that has no assignee, no recent
+# activity and no open linked PR. Re-reads the live issue first; the listing
+# row is only a hint. Fails closed on any indeterminate evidence and never
+# writes a label unless the audit comment was persisted. Only the core status
+# changes: holds, needs-* and tier labels are untouched.
+# Args: $1 issue, $2 slug, $3 now epoch, $4 idle threshold hours
+# Returns: 0 when released, 1 otherwise
+_enforce_orphan_active_status_one_issue() {
+	local issue_num="$1" slug="$2" now_epoch="$3" hours="$4"
+	local live="" labels="" assignees="" updated_epoch="" status_name="" idle_hours=0
+	live=$(_li_live_issue_snapshot "$issue_num" "$slug") || return 1
+	IFS='|' read -r labels assignees updated_epoch <<<"$live"
+	[[ "$assignees" == "0" && "$updated_epoch" =~ ^[0-9]+$ ]] || return 1
+	labels=",${labels},"
+	[[ "$labels" =~ $_LI_ORPHAN_ACTIVE_RE ]] || return 1
+	status_name="${BASH_REMATCH[1]}"
+	# Exactly one core status: multi-status issues belong to the status invariant.
+	[[ "$labels" != *",status:${_LI_AVAILABLE_STATUS},"* && "$labels" != *"$_LI_BLOCKED_CSV"* && "$labels" != *",status:done,"* ]] || return 1
+	[[ "$labels" != *",parent-task,"* ]] || return 1
+	idle_hours=$(((now_epoch - updated_epoch) / 3600))
+	[[ "$idle_hours" -ge "$hours" ]] || return 1
+	# Indeterminate PR evidence (or an unavailable helper) blocks the release.
+	declare -F _normalize_stale_open_pr_blocks_reset >/dev/null 2>&1 || return 1
+	declare -F set_issue_status >/dev/null 2>&1 || return 1
+	_normalize_stale_open_pr_blocks_reset "$issue_num" "$slug" && return 1
+	if ! _post_orphan_status_release_audit "$issue_num" "$slug" "$idle_hours" "$status_name"; then
+		echo "[pulse-wrapper] label_invariants: orphan status release skipped (audit comment failed): #${issue_num} in ${slug}" >>"$LOGFILE"
+		return 1
+	fi
+	set_issue_status "$issue_num" "$slug" "$_LI_AVAILABLE_STATUS" >/dev/null 2>&1 || return 1
+	echo "[pulse-wrapper] label_invariants: #${issue_num} in ${slug} released orphaned status:${status_name} (no assignee, idle ${idle_hours}h)" >>"$LOGFILE"
+	return 0
+}
+
+# GH#39710: set_issue_status removes the old status before it adds the new one,
+# so a release cut off between those writes leaves an auto-dispatch issue with
+# no status and an AI-owned companion. Dispatch skips it and its owner (the
+# recovery supervisor or the dependency reconciler) no longer sees a hold, so
+# restore status:blocked and let that owner re-decide. Re-reads the live issue
+# first; a recent update may be that transition still in flight, and a human
+# hold keeps a statusless issue exactly as it is.
+# Args: $1 issue, $2 slug, $3 now epoch, $4 minimum idle seconds
+# Returns: 0 when restored, 1 otherwise
+_enforce_statusless_ai_hold_one_issue() {
+	local issue_num="$1" slug="$2" now_epoch="$3" min_age="$4"
+	local live_row="" live_labels="" live_epoch=0
+	live_row=$(_li_live_issue_snapshot "$issue_num" "$slug") || return 1
+	IFS='|' read -r live_labels _ live_epoch <<<"$live_row"
+	[[ "$live_epoch" =~ ^[0-9]+$ && "$live_epoch" -le $((now_epoch - min_age)) ]] || return 1
+	live_labels=",${live_labels},"
+	[[ "$live_labels" != *",status:"* && "$live_labels" == *",auto-dispatch,"* ]] || return 1
+	[[ "$live_labels" == *",${_LI_AI_RECOVERY},"* || "$live_labels" == *",needs-dependency,"* ]] || return 1
+	[[ "$live_labels" != *",parent-task,"* && "$live_labels" != *",needs-maintainer-review,"* ]] || return 1
+	[[ "$live_labels" != *",hold-for-review,"* && "$live_labels" != *",no-auto-dispatch,"* ]] || return 1
+	# The listing row's non-task exclusion (_fetch_label_invariant_rows) is a
+	# hint too: a tracker label added after the listing must still block.
+	local non_task=""
+	for non_task in supervisor contributor quality-review routine-tracking "on hold" \
+		release-approval-required release-standing-policy "$_LI_PERSISTENT_LABEL"; do
+		[[ "$live_labels" != *",${non_task},"* ]] || return 1
+	done
+	if declare -F issue_labels_csv_have_human_hold >/dev/null 2>&1 &&
+		issue_labels_csv_have_human_hold "$live_labels"; then
+		return 1
+	fi
+	gh issue edit "$issue_num" --repo "$slug" --add-label "status:${_LI_BLOCKED_STATUS}" >/dev/null 2>&1 || return 1
+	echo "[pulse-wrapper] label_invariants: #${issue_num} in ${slug} restored status:blocked on a statusless AI-owned hold (interrupted release)" >>"$LOGFILE"
+	return 0
+}
+
+# GH#39710: listing-row gate for the statusless-hold restore. Cheap hint checks
+# only (AI-owned companion, idle past the minimum age); the live re-read in
+# _enforce_statusless_ai_hold_one_issue applies every gate again.
+# Args: $1 issue, $2 slug, $3 owned companions (space-separated), $4 updated epoch
+_statusless_ai_hold_row_restore() {
+	local issue_num="$1" slug="$2" owned="$3" row_epoch="$4"
+	local min_age="${PULSE_STATUSLESS_HOLD_MIN_AGE_S:-1800}" now_epoch=0
+	case " ${owned} " in
+	*" ${_LI_AI_RECOVERY} "* | *" needs-dependency "*) ;;
+	*) return 1 ;;
+	esac
+	[[ "$min_age" =~ ^[0-9]+$ ]] || min_age=1800
+	[[ "$row_epoch" =~ ^[0-9]+$ ]] || return 1
+	now_epoch=$(date +%s)
+	[[ "$row_epoch" -le $((now_epoch - min_age)) ]] || return 1
+	_enforce_statusless_ai_hold_one_issue "$issue_num" "$slug" "$now_epoch" "$min_age" || return 1
+	return 0
+}
+
+# An existing auto-dispatch label is the only authority needed for this
+# conservative metadata repair. Do not add auto-dispatch, clear holds, or
+# alter needs-maintainer-review; this only makes already-authorized work
+# routable with the framework's default tier before pickup.
+_backfill_auto_dispatch_tier_one_issue() {
+	local issue_num="$1" slug="$2"
+	gh issue edit "$issue_num" --repo "$slug" --add-label "tier:standard" >/dev/null 2>&1 || return 1
+	echo "[pulse-wrapper] label_invariants: backfilled tier:standard on auto-dispatch #${issue_num} in ${slug}" >>"$LOGFILE"
+	return 0
+}
+
+# t19179: listing-row gate for the orphan release. Cheap hint checks only
+# (active status, zero assignees, idle past ORPHAN_STATUS_RELEASE_HOURS), then
+# the live re-read in _enforce_orphan_active_status_one_issue.
+# Args: $1 issue, $2 slug, $3 status name, $4 assignee count, $5 updated epoch
+_orphan_status_row_release() {
+	local issue_num="$1" slug="$2" status_name="$3" assignee_count="$4" updated_epoch="$5"
+	local hours="${ORPHAN_STATUS_RELEASE_HOURS:-24}" now_epoch=""
+	[[ "$assignee_count" == "0" && "$updated_epoch" =~ ^[0-9]+$ ]] || return 1
+	[[ "$status_name" =~ ^(claimed|in-review|in-progress|queued)$ ]] || return 1
+	[[ "$hours" =~ ^[0-9]+$ && "$hours" -ge 1 ]] || hours=24
+	now_epoch=$(date +%s)
+	[[ "$updated_epoch" -lt $((now_epoch - hours * 3600)) ]] || return 1
+	_enforce_orphan_active_status_one_issue "$issue_num" "$slug" "$now_epoch" "$hours" || return 1
+	return 0
+}
+
 # Helper: fetch issues for a repo and emit '|'-delimited rows per issue.
 # See delimiter note in _normalize_label_invariants_for_repo.
 _fetch_label_invariant_rows() {
@@ -212,7 +466,7 @@ _fetch_label_invariant_rows() {
 	fi
 	if [[ "$_listing_rc" -eq 2 ]]; then
 		issues_json=$(gh_issue_list --repo "$slug" --state open \
-			--json number,labels,createdAt --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || issues_json=""
+			--json number,labels,createdAt,assignees,updatedAt --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || issues_json=""
 	elif [[ "$_listing_rc" -ne 0 ]]; then
 		issues_json=""
 	fi
@@ -226,21 +480,65 @@ _fetch_label_invariant_rows() {
 	# triage-missing counter correctly ignores issues that are actively
 	# managed via an exception label (needs-info, verify-failed, stale,
 	# needs-testing, orphaned). See CodeRabbit review on PR #18546.
-	printf '%s' "$issues_json" | jq -r --arg persistent "$_LI_PERSISTENT_LABEL" '
+	printf '%s' "$issues_json" | jq -r --arg persistent "$_LI_PERSISTENT_LABEL" --arg ai "$_LI_AI_RECOVERY" --arg holds "${ISSUE_HUMAN_HOLD_LABELS:-hold-for-review no-auto-dispatch}" '
 		.[] | (.labels // []) as $labels | [
 			(.number | tostring),
 			([$labels[].name | select(startswith("status:")) | sub("^status:"; "")] | join(" ")),
 			([$labels[].name | select(startswith("tier:"))   | sub("^tier:";   "")] | join(" ")),
 			(any($labels[].name; . == "origin:interactive") | tostring),
 			(any($labels[].name; . == "auto-dispatch")      | tostring),
-			(any($labels[].name; . == ("supervisor", "contributor", "quality-review", "needs-maintainer-review", "routine-tracking", "on hold") or . == $persistent) | tostring),
+			(any($labels[].name; . == ("supervisor", "contributor", "quality-review", "needs-maintainer-review", "routine-tracking", "on hold", "release-approval-required", "release-standing-policy") or . == $persistent) | tostring),
 			(.createdAt | sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring),
 			(([$labels[].name | select(startswith("status:"))] | length) | tostring),
 			(any($labels[].name; . == $persistent) | tostring),
 			(any($labels[].name; . == "publication:pending") | tostring),
-			(any($labels[].name; . == ("quality-review", "routine-tracking", "source:health-dashboard", "supervisor", "contributor")) | tostring)
+			(any($labels[].name; . == ("quality-review", "routine-tracking", "source:health-dashboard", "supervisor", "contributor")) | tostring),
+			(any($labels[].name; startswith("needs-")) | tostring),
+			([$labels[].name | select(. == ("needs-ai-recovery", "needs-dependency", "needs-maintainer-input"))] | join(" ")),
+			((any($labels[].name; IN($holds | split(" ")[])) and any($labels[].name; . == $ai)) | tostring),
+			(((.assignees // []) | length) | tostring),
+			((.updatedAt // .createdAt) | sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring)
 		] | join("|")
 	' 2>/dev/null
+	return 0
+}
+
+# Blocked-companion repairs for one listing row; increments
+# _LI_BLOCKED_COMPANION_FIXED per repair. Every write path re-reads live labels.
+# Args: $1 issue, $2 slug, $3 core status count, $4 sole core status (or empty),
+#   $5 status list, $6 has needs-*, $7 hold re-queued as AI recovery,
+#   $8 owned companions, $9 all status:* count, $10 has auto-dispatch,
+#   $11 non-task, $12 updated epoch
+_normalize_blocked_companion_row() {
+	local issue_num="$1" slug="$2" core_count="$3" sole_status="$4" status_list="$5"
+	local has_needs="$6" hold_recovery="$7" owned_companions="$8" all_status_count="$9"
+	local has_auto="${10}" is_non_task="${11}" row_epoch="${12}"
+	# GH#38360: single-status rows only; a multi-status row was just
+	# repaired by set_issue_status, which owns its companions.
+	local companion_mode=""
+	local only_blocked="$_LI_BOOL_FALSE"
+	[[ "$core_count" -eq 1 && "$sole_status" == "$_LI_BLOCKED_STATUS" ]] && only_blocked="$_LI_BOOL_TRUE"
+	if [[ "$only_blocked" == "$_LI_BOOL_TRUE" && "$has_needs" == "$_LI_BOOL_FALSE" ]]; then
+		companion_mode="bare"
+	elif [[ "$only_blocked" == "$_LI_BOOL_TRUE" && "$hold_recovery" == "$_LI_BOOL_TRUE" ]]; then
+		# GH#38821: heal maintainer holds the normalizer re-queued as AI recovery.
+		companion_mode="hold_heal"
+	elif [[ "$core_count" -eq 1 && " ${status_list} " != *" blocked "* && -n "$owned_companions" ]]; then
+		# Only an issue with another live lifecycle status left blocked; a
+		# status-less issue may carry the label as a deliberate human hold.
+		companion_mode="orphan"
+	fi
+	if [[ -n "$companion_mode" ]] &&
+		_enforce_blocked_companion_one_issue "$issue_num" "$slug" "$companion_mode"; then
+		_LI_BLOCKED_COMPANION_FIXED=$((_LI_BLOCKED_COMPANION_FIXED + 1))
+	fi
+	# GH#39710: an interrupted release left an auto-dispatch issue with no
+	# status at all but an AI-owned companion; restore the hold.
+	if [[ "$all_status_count" == "0" && "$has_auto" == "$_LI_BOOL_TRUE" &&
+		"$is_non_task" == "$_LI_BOOL_FALSE" && -n "$owned_companions" ]] &&
+		_statusless_ai_hold_row_restore "$issue_num" "$slug" "$owned_companions" "$row_epoch"; then
+		_LI_BLOCKED_COMPANION_FIXED=$((_LI_BLOCKED_COMPANION_FIXED + 1))
+	fi
 	return 0
 }
 
@@ -265,9 +563,11 @@ _normalize_label_invariants_for_repo() {
 	[[ -n "$rows" ]] || return 0
 
 	local issue_num="" status_list="" tier_list="" has_origin_i="" has_auto="" is_non_task="" created_epoch="" all_status_count=""
-	local has_persistent="" has_publication_pending="" has_tracker_identity=""
+	local has_persistent="" has_publication_pending="" has_tracker_identity="" has_needs="" owned_companions="" hold_recovery=""
+	local assignee_count="" updated_epoch=""
 	while IFS='|' read -r issue_num status_list tier_list has_origin_i has_auto is_non_task created_epoch all_status_count \
-		has_persistent has_publication_pending has_tracker_identity; do
+		has_persistent has_publication_pending has_tracker_identity has_needs owned_companions hold_recovery \
+		assignee_count updated_epoch; do
 		[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 		_LI_CHECKED=$((_LI_CHECKED + 1))
 
@@ -277,6 +577,17 @@ _normalize_label_invariants_for_repo() {
 		if [[ "$core_count" -gt 1 ]] &&
 			_enforce_status_invariant_one_issue "$issue_num" "$slug" "${_LI_FILTERED_STATUS[@]}"; then
 			_LI_STATUS_FIXED=$((_LI_STATUS_FIXED + 1))
+		fi
+
+		_normalize_blocked_companion_row "$issue_num" "$slug" "$core_count" "${_LI_FILTERED_STATUS[0]:-}" \
+			"$status_list" "$has_needs" "$hold_recovery" "$owned_companions" \
+			"$all_status_count" "$has_auto" "$is_non_task" "$updated_epoch"
+
+		# t19179: unassigned active status idle past the threshold. The listing
+		# row is a hint; the helper re-reads the live issue before any write.
+		if [[ "$core_count" -eq 1 && "$has_tracker_identity" == "$_LI_BOOL_FALSE" ]] &&
+			_orphan_status_row_release "$issue_num" "$slug" "${_LI_FILTERED_STATUS[0]}" "$assignee_count" "$updated_epoch"; then
+			_LI_ORPHAN_RELEASED=$((_LI_ORPHAN_RELEASED + 1))
 		fi
 
 		local -a tier_arr=()
@@ -292,15 +603,9 @@ _normalize_label_invariants_for_repo() {
 			_enforce_tier_invariant_one_issue "$issue_num" "$slug" "${tier_arr[@]}"; then
 			_LI_TIER_FIXED=$((_LI_TIER_FIXED + 1))
 		fi
-		# An existing auto-dispatch label is the only authority needed for this
-		# conservative metadata repair. Do not add auto-dispatch, clear holds, or
-		# alter needs-maintainer-review; this only makes already-authorized work
-		# routable with the framework's default tier before pickup.
-		if [[ "$has_auto" == "$_LI_BOOL_TRUE" && "$tier_count" -eq 0 ]]; then
-			if gh issue edit "$issue_num" --repo "$slug" --add-label "tier:standard" >/dev/null 2>&1; then
-				_LI_TIER_FIXED=$((_LI_TIER_FIXED + 1))
-				echo "[pulse-wrapper] label_invariants: backfilled tier:standard on auto-dispatch #${issue_num} in ${slug}" >>"$LOGFILE"
-			fi
+		if [[ "$has_auto" == "$_LI_BOOL_TRUE" && "$tier_count" -eq 0 ]] &&
+			_backfill_auto_dispatch_tier_one_issue "$issue_num" "$slug"; then
+			_LI_TIER_FIXED=$((_LI_TIER_FIXED + 1))
 		fi
 
 		# A publication-backed issue is finite, and lifecycle labels prove it is a
@@ -342,9 +647,10 @@ _write_label_invariants_counter_file() {
 	local counters_file="${counters_dir}/pulse-label-invariants.${hostname_short}.json"
 	mkdir -p "$counters_dir" 2>/dev/null || true
 	{
-		printf '{"timestamp": "%s", "checked": %d, "status_fixed": %d, "tier_fixed": %d, "persistent_fixed": %d, "triage_missing": %d}\n' \
+		printf '{"timestamp": "%s", "checked": %d, "status_fixed": %d, "tier_fixed": %d, "persistent_fixed": %d, "triage_missing": %d, "blocked_companion_fixed": %d, "orphan_released": %d}\n' \
 			"$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-			"$_LI_CHECKED" "$_LI_STATUS_FIXED" "$_LI_TIER_FIXED" "$_LI_PERSISTENT_FIXED" "$_LI_TRIAGE_MISSING"
+			"$_LI_CHECKED" "$_LI_STATUS_FIXED" "$_LI_TIER_FIXED" "$_LI_PERSISTENT_FIXED" "$_LI_TRIAGE_MISSING" \
+			"${_LI_BLOCKED_COMPANION_FIXED:-0}" "${_LI_ORPHAN_RELEASED:-0}"
 	} >"$counters_file" 2>/dev/null || true
 	return 0
 }
@@ -373,6 +679,8 @@ _normalize_label_invariants() {
 	_LI_TIER_FIXED=0
 	_LI_PERSISTENT_FIXED=0
 	_LI_TRIAGE_MISSING=0
+	_LI_BLOCKED_COMPANION_FIXED=0
+	_LI_ORPHAN_RELEASED=0
 
 	local now_epoch
 	now_epoch=$(date +%s)
@@ -393,7 +701,7 @@ _normalize_label_invariants() {
 		_normalize_label_invariants_for_repo "$slug" "$triage_cutoff"
 	done <<<"$li_slugs"
 
-	echo "[pulse-wrapper] label_invariants: checked=${_LI_CHECKED} status_fixed=${_LI_STATUS_FIXED} tier_fixed=${_LI_TIER_FIXED} persistent_fixed=${_LI_PERSISTENT_FIXED} triage_missing=${_LI_TRIAGE_MISSING}" >>"$LOGFILE"
+	echo "[pulse-wrapper] label_invariants: checked=${_LI_CHECKED} status_fixed=${_LI_STATUS_FIXED} tier_fixed=${_LI_TIER_FIXED} persistent_fixed=${_LI_PERSISTENT_FIXED} triage_missing=${_LI_TRIAGE_MISSING} blocked_companion_fixed=${_LI_BLOCKED_COMPANION_FIXED} orphan_released=${_LI_ORPHAN_RELEASED}" >>"$LOGFILE"
 
 	_write_label_invariants_counter_file
 	return 0

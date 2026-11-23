@@ -84,6 +84,23 @@ _full_loop_release_record_stale_deployment() {
 	[[ "$1" == "test/repo" && "$2" == "90" && "$3" == "v1.2.3" ]] || return 1
 	printf '%s %s %s\n' "$1" "$2" "$3" >>"${TEST_ROOT}/stale-deployment.log"
 }
+
+(
+	_full_loop_release_receipt_path() { printf '%s/adoption-diagnostic.status\n' "$TEST_ROOT"; return 0; }
+	_full_loop_release_reconcile_protected_state() { return 0; }
+	release_lane_read() {
+		_AIDEVOPS_RELEASE_LANE_JSON='{"active":false,"phase":"terminal","terminal_receipt":"published","source_pr":90,"tag":"v1.2.3"}'
+		return 0
+	}
+	INSPECT_RC=0
+	rc=0
+	_full_loop_release_existing_command reconcile 90 >"${TEST_ROOT}/adoption-diagnostic.log" || rc=$?
+	[[ "$rc" -eq 10 ]]
+	grep -qx 'RELEASE_LOCAL_ADOPTION_REQUIRED=1' "${TEST_ROOT}/adoption-diagnostic.log"
+	grep -qx 'aidevops release adopt-published 90 --tag v1.2.3' "${TEST_ROOT}/adoption-diagnostic.log"
+)
+printf 'PASS terminal cross-host reconciliation returns actionable local adoption diagnostic and exit 10\n'
+
 (
 	export HOME="${TEST_ROOT}/deployed-home"
 	export AIDEVOPS_FULL_LOOP_RECEIPT_DIR="${TEST_ROOT}/deployed-receipts"

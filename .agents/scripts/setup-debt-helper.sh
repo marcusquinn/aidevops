@@ -81,6 +81,7 @@ readonly ADVISORIES_DIR="${HOME}/.aidevops/advisories"
 readonly DISMISSED_FILE="${ADVISORIES_DIR}/dismissed.txt"
 readonly SYNC_PAT_PREFIX="sync-pat-"
 readonly CROSS_ACCOUNT_PREFIX="cross-account-inherit-"
+readonly ONBOARDING_PREFIX="repo-onboarding-"
 
 # -----------------------------------------------------------------------------
 # Internal helpers
@@ -174,6 +175,23 @@ _collect_cross_account_slugs() {
 	return 0
 }
 
+_collect_onboarding_slugs() {
+	[[ -d "$ADVISORIES_DIR" ]] || return 0
+	local file id slug
+	for file in "$ADVISORIES_DIR"/"${ONBOARDING_PREFIX}"*.advisory; do
+		[[ -f "$file" ]] || continue
+		id="${file##*/}"
+		id="${id%.advisory}"
+		_is_dismissed "$id" && continue
+		# The body preserves the exact slug, including hyphens in repo names.
+		IFS= read -r slug <"$file" || continue
+		slug="${slug#Repository: }"
+		[[ "$slug" == */* ]] || continue
+		printf '%s\n' "$slug"
+	done | sort -u
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Subcommand: summary
 # -----------------------------------------------------------------------------
@@ -194,8 +212,8 @@ _fmt_slug_list() {
 
 # _summary_human: emit human-readable lines for both debt classes.
 _summary_human() {
-	local slugs="$1" count="$2" ca_slugs="$3" ca_count="$4"
-	[[ "$count" -eq 0 && "$ca_count" -eq 0 ]] && return 0
+	local slugs="$1" count="$2" ca_slugs="$3" ca_count="$4" onboarding="$5" onboarding_count="$6"
+	[[ "$count" -eq 0 && "$ca_count" -eq 0 && "$onboarding_count" -eq 0 ]] && return 0
 	if [[ "$count" -gt 0 ]]; then
 		local slug_list
 		slug_list="$(_fmt_slug_list "$slugs" "$count")"
@@ -208,13 +226,16 @@ _summary_human() {
 		printf '%d cross-account-inherit advisor%s (%s)\n' \
 			"$ca_count" "$([[ "$ca_count" -eq 1 ]] && echo "y" || echo "ies")" "$ca_list"
 	fi
+	if [[ "$onboarding_count" -gt 0 ]]; then
+		printf '%d repo-onboarding advisories (%s)\n' "$onboarding_count" "$(_fmt_slug_list "$onboarding" "$onboarding_count")"
+	fi
 	return 0
 }
 
 # _summary_toast: emit [WARN] lines for both debt classes.
 _summary_toast() {
-	local count="$1" ca_count="$2"
-	[[ "$count" -eq 0 && "$ca_count" -eq 0 ]] && return 0
+	local count="$1" ca_count="$2" onboarding_count="$3"
+	[[ "$count" -eq 0 && "$ca_count" -eq 0 && "$onboarding_count" -eq 0 ]] && return 0
 	# Each non-zero class emits its own [WARN] line so greeting.mjs
 	# classifyLines buckets each into the warning tier independently.
 	if [[ "$count" -gt 0 ]]; then
@@ -231,17 +252,22 @@ _summary_toast() {
 			printf '[WARN] %d repos need workflow re-sync — run /setup-git in OpenCode or Claude Code\n' "$ca_count"
 		fi
 	fi
+	if [[ "$onboarding_count" -eq 1 ]]; then
+		printf '[WARN] 1 repo has incomplete aidevops setup — see reference/repo-onboarding.md\n'
+	elif [[ "$onboarding_count" -gt 1 ]]; then
+		printf '[WARN] %d repos have incomplete aidevops setup — see reference/repo-onboarding.md\n' "$onboarding_count"
+	fi
 	return 0
 }
 
 # _summary_json: emit JSON object covering both debt classes.
 _summary_json() {
-	local slugs="$1" count="$2" ca_slugs="$3" ca_count="$4"
+	local slugs="$1" count="$2" ca_slugs="$3" ca_count="$4" onboarding="$5" onboarding_count="$6"
 	if ! command -v jq >/dev/null 2>&1; then
 		print_error "--format=json requires jq"
 		return 1
 	fi
-	local slugs_json ca_slugs_json total_count
+	local slugs_json ca_slugs_json onboarding_json total_count
 	if [[ -n "$slugs" ]]; then
 		slugs_json="$(printf '%s\n' "$slugs" | jq -R . | jq -s .)"
 	else
@@ -252,14 +278,17 @@ _summary_json() {
 	else
 		ca_slugs_json="[]"
 	fi
-	total_count=$((count + ca_count))
+	if [[ -n "$onboarding" ]]; then onboarding_json="$(printf '%s\n' "$onboarding" | jq -R . | jq -s .)"; else onboarding_json="[]"; fi
+	total_count=$((count + ca_count + onboarding_count))
 	jq -n \
 		--argjson slugs "$slugs_json" \
 		--argjson count "$count" \
 		--argjson ca_slugs "$ca_slugs_json" \
 		--argjson ca_count "$ca_count" \
+		--argjson onboarding "$onboarding_json" \
+		--argjson onboarding_count "$onboarding_count" \
 		--argjson total "$total_count" \
-		'{sync_pat_missing: $slugs, count: $count, cross_account_inherit: $ca_slugs, cross_account_count: $ca_count, total_count: $total}'
+		'{sync_pat_missing: $slugs, count: $count, cross_account_inherit: $ca_slugs, cross_account_count: $ca_count, repo_onboarding: $onboarding, repo_onboarding_count: $onboarding_count, total_count: $total}'
 	return 0
 }
 
@@ -292,7 +321,7 @@ _cmd_summary() {
 		i=$((i + 1))
 	done
 
-	local slugs count ca_slugs ca_count
+	local slugs count ca_slugs ca_count onboarding onboarding_count
 	slugs="$(_collect_sync_pat_slugs)"
 	count=0
 	[[ -n "$slugs" ]] && count=$(printf '%s\n' "$slugs" | wc -l | tr -d ' ')
@@ -300,11 +329,14 @@ _cmd_summary() {
 	ca_slugs="$(_collect_cross_account_slugs)"
 	ca_count=0
 	[[ -n "$ca_slugs" ]] && ca_count=$(printf '%s\n' "$ca_slugs" | wc -l | tr -d ' ')
+	onboarding="$(_collect_onboarding_slugs)"
+	onboarding_count=0
+	[[ -n "$onboarding" ]] && onboarding_count=$(printf '%s\n' "$onboarding" | wc -l | tr -d ' ')
 
 	case "$format" in
-	human)   _summary_human "$slugs" "$count" "$ca_slugs" "$ca_count" ;;
-	toast)   _summary_toast "$count" "$ca_count" ;;
-	json)    _summary_json  "$slugs" "$count" "$ca_slugs" "$ca_count" ;;
+	human)   _summary_human "$slugs" "$count" "$ca_slugs" "$ca_count" "$onboarding" "$onboarding_count" ;;
+	toast)   _summary_toast "$count" "$ca_count" "$onboarding_count" ;;
+	json)    _summary_json "$slugs" "$count" "$ca_slugs" "$ca_count" "$onboarding" "$onboarding_count" ;;
 	*)
 		print_error "Unknown format: $format (expected: human, toast, json)"
 		return 1
@@ -382,6 +414,7 @@ Commands:
   summary [--format=human|toast|json]   Aggregate count + summary line (both classes)
   list-sync-pat-missing                 One slug per line, non-dismissed SYNC_PAT only
   list-cross-account-inherit            One slug per line, non-dismissed cross-account-inherit only
+  list-repo-onboarding                  One slug per line with incomplete onboarding
   verify-secret <slug> <secret_name>    Check if a secret exists on a repo
   help                                  Show this help
 
@@ -422,6 +455,9 @@ main() {
 		;;
 	list-cross-account-inherit)
 		_cmd_list_cross_account_inherit
+		;;
+	list-repo-onboarding)
+		_collect_onboarding_slugs
 		;;
 	verify-secret)
 		_cmd_verify_secret "$@"

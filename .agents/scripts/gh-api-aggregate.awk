@@ -100,6 +100,7 @@ function emit_group(title, group,    pair, parts, values, n, i, value) {
 		printf "      \"pages\": %d,\n", metric_get(group, value, "pages")
 		printf "      \"additional_pages\": %d,\n", metric_get(group, value, "additional_pages")
 		printf "      \"successful_attempts\": %d,\n", metric_get(group, value, "successful_attempts")
+		printf "      \"not_modified_attempts\": %d,\n", metric_get(group, value, "not_modified_attempts")
 		printf "      \"failed_attempts\": %d,\n", metric_get(group, value, "failed_attempts")
 		printf "      \"elapsed_ms\": %d,\n", metric_get(group, value, "elapsed_ms")
 		printf "      \"unknown_elapsed_attempts\": %d,\n", metric_get(group, value, "unknown_elapsed_attempts")
@@ -266,6 +267,7 @@ function emit_quota(    series, values, n, i, parts) {
 	print "    \"sample_time_basis\": \"command-completion-under-credential-lock\","
 	print "    \"unattributed_is_upper_bound\": true,"
 	print "    \"same_login_external_cost_is_upper_bound\": true,"
+	printf "    \"foreign_device_hint\": \"%s\",\n", (foreign_hint == "same_login_foreign_device" || foreign_hint == "none") ? foreign_hint : "unknown"
 	printf "    \"missing_metadata_attempts\": %d,\n", unattributed_missing_metadata_attempts + 0
 	print "    \"series\": ["
 	for (series in quota_series) values[++n] = series
@@ -454,7 +456,13 @@ $1 !~ /^[0-9]+$/ || NF < 3 {
 			metric_add_dimensions(caller, path, auth, pool, decision, "additional_pages", 1)
 		}
 	}
-	if (outcome == "success") {
+	if (http_status == "304") {
+		# 304 Not Modified is a free successful revalidation; native gh exits
+		# non-zero on it, so the logged outcome may be "error".
+		not_modified_attempts++
+		metric_add_dimensions(caller, path, auth, pool, decision, "not_modified_attempts", 1)
+	}
+	if (outcome == "success" || http_status == "304") {
 		successful_attempts++
 		metric_add_dimensions(caller, path, auth, pool, decision, "successful_attempts", 1)
 	} else {
@@ -521,6 +529,7 @@ END {
 	printf "    \"pages\": %d,\n", pages + 0
 	printf "    \"additional_pages\": %d,\n", additional_pages + 0
 	printf "    \"successful_attempts\": %d,\n", successful_attempts + 0
+	printf "    \"not_modified_attempts\": %d,\n", not_modified_attempts + 0
 	printf "    \"failed_attempts\": %d,\n", failed_attempts + 0
 	printf "    \"elapsed_ms\": %d,\n", elapsed_ms_total + 0
 	printf "    \"unknown_elapsed_attempts\": %d,\n", unknown_elapsed_attempts + 0

@@ -155,9 +155,22 @@ FIXTURE_HOME="${FIXTURE_ROOT}/home"
 FIXTURE_REPO="${FIXTURE_ROOT}/repo"
 mkdir -p "${FIXTURE_SHIM_DIR}" "${FIXTURE_HOME}"
 cp "${REPO_ROOT}/.agents/scripts/git" "${FIXTURE_SHIM_DIR}/aidevops-git-guard"
+# Stand-in for the runner's Git. Hosts differ (macOS/Linux, Nix): do not assume
+# /usr/bin/git. Pick the first non-guard git on PATH and expose it in its own dir.
+FIXTURE_RUNNER_BIN="${FIXTURE_ROOT}/runner-bin"
+mkdir -p "${FIXTURE_RUNNER_BIN}"
+while IFS= read -r candidate_git; do
+	case "${candidate_git}" in
+	*/.aidevops/* | "${REPO_ROOT}"/*) continue ;;
+	esac
+	ln -s "${candidate_git}" "${FIXTURE_RUNNER_BIN}/git"
+	# git-sh-setup needs coreutils (uname); on Nix hosts they are not in /usr/bin.
+	[[ -x "${candidate_git%/*}/uname" ]] && ln -s "${candidate_git%/*}/uname" "${FIXTURE_RUNNER_BIN}/uname"
+	break
+done < <(type -aP git)
 if (
 	export HOME="${FIXTURE_HOME}"
-	export PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin"
+	export PATH="${FIXTURE_SHIM_DIR}:${FIXTURE_RUNNER_BIN}:/usr/bin:/bin"
 	FIXTURE_GIT=$(command -v git) &&
 		[[ "${FIXTURE_GIT}" != "${FIXTURE_SHIM_DIR}/git" ]] &&
 		git config --global --add safe.directory "${FIXTURE_REPO}" &&
@@ -284,7 +297,7 @@ fi
 # Test 8: missing SYNC_PAT is informational because GH006 has a durable PR
 # fallback. The workflow must not advise weakening protection or PAT bypass.
 # ============================================================
-if grep -q 'GH006 will update one protected-branch PR' "$WORKFLOW_FILE" &&
+if grep -q 'protected publication still requires a PR' "$WORKFLOW_FILE" &&
 	! grep -qE 'gh secret set SYNC_PAT|will be rejected by branch protection|bypass(es)? branch protection' "$WORKFLOW_FILE"; then
 	check 1 "credential notices describe PR fallback without bypass guidance" ""
 else
@@ -296,7 +309,7 @@ fi
 # Test 9: every PR-safe publication step prefers the job token while exposing
 # SYNC_PAT only as the bounded API fallback for disabled Actions PR creation.
 # ============================================================
-PR_TOKEN_FALLBACK_COUNT=$(grep -cE 'AIDEVOPS_ISSUE_SYNC_PR_TOKEN:[[:space:]]+\$\{\{ secrets\.SYNC_PAT \}\}' "$WORKFLOW_FILE" || true)
+PR_TOKEN_FALLBACK_COUNT=$(grep -cE 'AIDEVOPS_ISSUE_SYNC_PR_TOKEN:.*secrets\.SYNC_PAT' "$WORKFLOW_FILE" || true)
 if [[ "$PR_TOKEN_FALLBACK_COUNT" -eq 4 ]]; then
 	check 1 "all four TODO publication paths expose the bounded PR token fallback" ""
 else

@@ -314,6 +314,71 @@ _pragma() {
 	return 0
 }
 
+# GH#38630: the `event` table re-serialises payloads on every update and once
+# grew to ~64 GB of a 72 GB DB. Ceiling for the payload shown/warned on.
+readonly EVENT_MAX_BYTES_DEFAULT=2147483648
+readonly DB_GROWTH_WARN_BYTES=5368709120
+readonly DB_SIZE_LAST_FILE="${STATE_DIR}/last-report-db-bytes"
+
+# _event_stats <db> — print "<rows> <payload_bytes>", or nothing when the DB has
+# no event table. octet_length() (SQLite 3.43+) avoids reading overflow pages.
+_event_stats() {
+	local db="$1" expr="LENGTH(CAST(data AS BLOB))" out
+	[[ -f "$db" ]] || return 0
+	if [[ "$(sqlite3 :memory: "SELECT octet_length('ab');" 2>/dev/null)" == "2" ]]; then
+		expr="octet_length(data)"
+	fi
+	out=$(sqlite3 -readonly -cmd '.timeout 5000' "$db" \
+		"SELECT COUNT(*) || ' ' || COALESCE(SUM(${expr}), 0) FROM event;" 2>/dev/null) || return 0
+	[[ "$out" =~ ^[0-9]+\ [0-9]+$ ]] && printf '%s\n' "$out"
+	return 0
+}
+
+# _event_max_bytes — validated ceiling (OPENCODE_DB_EVENT_MAX_BYTES, default 2 GiB).
+_event_max_bytes() {
+	local max="${OPENCODE_DB_EVENT_MAX_BYTES:-$EVENT_MAX_BYTES_DEFAULT}"
+	[[ "$max" =~ ^[0-9]+$ ]] || max="$EVENT_MAX_BYTES_DEFAULT"
+	printf '%s\n' "$max"
+	return 0
+}
+
+# _db_growth_since_last_report <db_bytes> — print growth in bytes (0 if none or
+# unknown) and record the current size when <record> is 1.
+_db_growth_since_last_report() {
+	local db_bytes="$1" record="${2:-0}" previous=0
+	if [[ -f "$DB_SIZE_LAST_FILE" ]]; then
+		previous=$(<"$DB_SIZE_LAST_FILE")
+		[[ "$previous" =~ ^[0-9]+$ ]] || previous=0
+	fi
+	if [[ "$record" == 1 ]] && mkdir -p "$STATE_DIR" 2>/dev/null; then
+		printf '%s\n' "$db_bytes" >"$DB_SIZE_LAST_FILE" 2>/dev/null || true
+	fi
+	if ((previous > 0 && db_bytes > previous)); then
+		printf '%s\n' "$((db_bytes - previous))"
+	else
+		printf '0\n'
+	fi
+	return 0
+}
+
+# _report_print_event_stats <db_bytes> — event rows/bytes and growth lines.
+_report_print_event_stats() {
+	local db_bytes="$1" stats rows bytes max growth
+	stats=$(_event_stats "$OPENCODE_DB")
+	[[ -n "$stats" ]] || return 0
+	read -r rows bytes <<<"$stats"
+	max=$(_event_max_bytes)
+	printf '  Event table:   %s rows, %s payload (cap %s)\n' "$rows" "$(_db_size_human "$bytes")" "$(_db_size_human "$max")"
+	if ((max > 0 && bytes > max)); then
+		printf '                 WARNING: above cap; run aidevops opencode-db archive (expires events of idle sessions)\n'
+	fi
+	growth=$(_db_growth_since_last_report "$db_bytes" 1)
+	if ((growth > DB_GROWTH_WARN_BYTES)); then
+		printf '  DB growth:     +%s since the previous report\n' "$(_db_size_human "$growth")"
+	fi
+	return 0
+}
+
 _state_json_field() {
 	local field="$1"
 	[[ -f "$STATE_FILE" ]] || {
@@ -893,6 +958,15 @@ _report_print_wal_status() {
 	return 0
 }
 
+# _report_print_page_stats <pages> <page_size> <free> <free_pct> <db_bytes>
+_report_print_page_stats() {
+	local pages="$1" page_size="$2" free="$3" free_pct="$4" db_bytes="$5"
+	printf '  Pages:         %s (page_size=%sB)\n' "$pages" "$page_size"
+	printf '  Free pages:    %s (%s%% of total)\n' "$free" "$free_pct"
+	_report_print_event_stats "$db_bytes"
+	return 0
+}
+
 cmd_report() {
 	local inventory_db
 	printf '\nOpenCode DB inventory (active / WAL / archive bytes):\n'
@@ -942,8 +1016,7 @@ cmd_report() {
 	# WAL status: distinguish active-DB table size from WAL size; show checkpoint state
 	# when WAL is large so users understand why it hasn't shrunk after archiving.
 	_report_print_wal_status "$wal_bytes"
-	printf '  Pages:         %s (page_size=%sB)\n' "$page_count" "$page_size"
-	printf '  Free pages:    %s (%s%% of total)\n' "$freelist_count" "$freelist_pct"
+	_report_print_page_stats "$page_count" "$page_size" "$freelist_count" "$freelist_pct" "$db_bytes"
 	local compact_large=false
 	if [[ $((db_bytes / 1048576)) -ge "$FORCE_VACUUM_SIZE_MB" ]] && \
 		[[ $((wal_bytes / 1048576)) -lt "$WAL_LARGE_THRESHOLD_MB" ]] && \
@@ -1827,6 +1900,29 @@ cmd_status() {
 	return 0
 }
 
+# _event_growth_notice — GH#38630: print one warning and return 0 when event
+# payload exceeds the cap or the DB grew > 5 GB since the previous report.
+_event_growth_notice() {
+	local stats rows bytes max growth
+	[[ -f "$OPENCODE_DB" ]] && _sqlite_available || return 1
+	stats=$(_event_stats "$OPENCODE_DB")
+	[[ -n "$stats" ]] || return 1
+	read -r rows bytes <<<"$stats"
+	max=$(_event_max_bytes)
+	if ((max > 0 && bytes > max)); then
+		printf '[OPENCODE MAINTENANCE] event table holds %s payload (%s rows), above the %s cap. Expiry of idle-session events runs hourly; run aidevops opencode-db report for details.\n' \
+			"$(_db_size_human "$bytes")" "$rows" "$(_db_size_human "$max")"
+		return 0
+	fi
+	growth=$(_db_growth_since_last_report "$(_db_size_bytes "$OPENCODE_DB")" 0)
+	if ((growth > DB_GROWTH_WARN_BYTES)); then
+		printf '[OPENCODE MAINTENANCE] opencode.db grew %s since the previous report (event payload %s). Run aidevops opencode-db report for details.\n' \
+			"$(_db_size_human "$growth")" "$(_db_size_human "$bytes")"
+		return 0
+	fi
+	return 1
+}
+
 # Subcommand: notice
 # Emits at most one warning line for OpenCode's session-start toast.
 cmd_notice() {
@@ -1845,6 +1941,9 @@ cmd_notice() {
 		return 0
 	fi
 	if _interactive_holder_advisory; then
+		return 0
+	fi
+	if _event_growth_notice; then
 		return 0
 	fi
 

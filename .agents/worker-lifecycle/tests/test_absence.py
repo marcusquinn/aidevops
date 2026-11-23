@@ -204,6 +204,13 @@ class AbsenceContract(unittest.TestCase):
         self.assertTrue((self.target / "work.txt").exists())
 
 class FailureDiagnostics(unittest.TestCase):
+    def test_two_element_git_failure_has_sanitized_diagnostics(self):
+        error = subprocess.CalledProcessError(1, ["git", "status"], stderr=b"fatal: Permission denied")
+        report = _failure_details(error)
+        self.assertEqual(report["operation"], "status")
+        self.assertEqual(report["command"], "git status")
+        self.assertEqual(report["stderr_class"], "permission-denied")
+
     def test_archive_validation_code_without_raw_arguments_or_stderr(self):
         error = subprocess.CalledProcessError(
             1, ["bash", "/helper/worktree-archive-helper.sh", "archive", "private-argument"],
@@ -233,6 +240,19 @@ class FailureDiagnostics(unittest.TestCase):
             report = _failure_details(error)
             self.assertNotIn("private", str(report))
             self.assertNotIn("archive_failure", report)
+
+    def test_retirement_git_failure_names_subcommand_without_arguments(self):
+        # GH#38997: `git worktree move` failures must not collapse to bare CalledProcessError.
+        from worker_lifecycle.cli_errors import error_details
+        error = subprocess.CalledProcessError(
+            128, ["git", "-C", "/private/repo", "worktree", "move", "/private/a", "/private/b"],
+            stderr=b"fatal: unable to access '/private/x': Permission denied\n",
+        )
+        report = error_details(error, "retire-worktree")
+        self.assertEqual(report["helper"], "git worktree move")
+        self.assertEqual(report["helper_returncode"], 128)
+        self.assertEqual(report["helper_stderr_class"], "permission-denied")
+        self.assertNotIn("private", str(report))
 
     def test_archive_timeout_is_classified_without_raw_command(self):
         error = subprocess.TimeoutExpired(

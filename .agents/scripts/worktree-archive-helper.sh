@@ -13,6 +13,8 @@ MAX_UNTRACKED_FILES="${AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_FILES:-10000}"
 MAX_UNTRACKED_BYTES="${AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES:-1073741824}"
 ARCHIVE_SCHEMA="aidevops-worktree-archive-v1"
 FINGERPRINT_UNAVAILABLE="worktree fingerprint unavailable"
+# GH#36607 head already on origin: no bundle unless --bundle-commits (GH#38394).
+REMOTE_STATE_PUBLISHED="published"
 
 usage() {
 	cat <<'USAGE'
@@ -22,6 +24,8 @@ Commands:
   archive WORKTREE --repo OWNER/REPO (--issue N|--unattributed)
 	  --reason failed-worker|post-pr-cleanup|unattributed-worktree --base-branch BRANCH
       [--base-sha SHA] [--output-root DIR] [--failure-log FILE]
+      [--bundle-commits]                Always bundle commits since the base, even
+                                        when already on origin (records "bundled")
   restore ARCHIVE_DIR --target NEW_WORKTREE_PATH
   list [--repo OWNER/REPO] [--issue N] [--output-root DIR]
   verify ARCHIVE_DIR
@@ -432,9 +436,11 @@ PY
 # pushed head as their restore dependency; merge captures always keep their own
 # bundle, so they stay "unknown". Prints published|unpublished|unknown.
 archive_remote_state() {
-	local worktree="$1" head_sha="$2" base_sha="$3"
+	local worktree="$1" head_sha="$2" base_sha="$3" admin_dir="${4:-}"
 	local unpublished=""
-	if [[ "$head_sha" == "$base_sha" || -e "$(git -C "$worktree" rev-parse --absolute-git-dir)/MERGE_HEAD" ]]; then
+	# Callers pass the admin dir resolved earlier in this invocation.
+	[[ -n "$admin_dir" ]] || admin_dir=$(git -C "$worktree" rev-parse --absolute-git-dir) || return 1
+	if [[ "$head_sha" == "$base_sha" || -e "$admin_dir/MERGE_HEAD" ]]; then
 		printf 'unknown\n'
 		return 0
 	fi
@@ -449,9 +455,10 @@ archive_remote_state() {
 
 capture_archive_payload() {
 	local worktree="$1" archive_dir="$2" head_sha="$3" base_sha="$4"
-	local failure_log="$5" remote_state="${6:-unknown}"
+	local failure_log="$5" remote_state="${6:-unknown}" admin_dir="${7:-}"
 	local commit_count
-	if [[ -e "$(git -C "$worktree" rev-parse --absolute-git-dir)/MERGE_HEAD" ]]; then
+	[[ -n "$admin_dir" ]] || admin_dir=$(git -C "$worktree" rev-parse --absolute-git-dir) || return 1
+	if [[ -e "$admin_dir/MERGE_HEAD" ]]; then
 		: >"$archive_dir/diff.patch"
 		: >"$archive_dir/staged.patch"
 		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" merge-capture "$worktree" "$archive_dir" || return 1
@@ -460,12 +467,13 @@ capture_archive_payload() {
 		python3 "${SCRIPT_DIR}/worktree_archive_deletions.py" capture "$worktree" "$archive_dir" || return 1
 		commit_count=$(git -C "$worktree" rev-list --count "${base_sha}..${head_sha}") || return 1
 		# A published head is already reachable from origin: no bundle.
-		if [[ "$commit_count" -gt 0 && "$remote_state" != "published" ]]; then
+		if [[ "$commit_count" -gt 0 && "$remote_state" != "$REMOTE_STATE_PUBLISHED" ]]; then
 			git -C "$worktree" bundle create "$archive_dir/commits.bundle" HEAD "^${base_sha}" || return 1
 		fi
-		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-capture "$worktree" "$archive_dir" "$base_sha" || return 1
+		# Both reuse the admin dir resolved above instead of another rev-parse.
+		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-capture "$worktree" "$archive_dir" "$base_sha" "$admin_dir" || return 1
 		# GH#36883: runtime-local config.worktree bytes are kept, never restored.
-		python3 "${SCRIPT_DIR}/worktree_archive_runtime_config.py" capture "$worktree" "$archive_dir" || return 1
+		python3 "${SCRIPT_DIR}/worktree_archive_runtime_config.py" capture "$worktree" "$archive_dir" "$admin_dir" || return 1
 	fi
 	capture_untracked "$worktree" "$archive_dir" || return 1
 	if [[ -n "$failure_log" ]]; then
@@ -490,7 +498,7 @@ archive_capacity_check() {
 	local worktree="$1" output_root="$2" head_sha="$3" base_sha="$4" remote_state="${5:-unknown}"
 	local reserve="${AIDEVOPS_WORKTREE_ARCHIVE_RESERVE_BYTES:-536870912}"
 	local estimate=""
-	if [[ "$remote_state" == "published" ]]; then
+	if [[ "$remote_state" == "$REMOTE_STATE_PUBLISHED" ]]; then
 		estimate=0 # GH#36607: published commits are not bundled.
 	else
 		estimate=$(git -C "$worktree" rev-list --objects --disk-usage "$head_sha" "^${base_sha}" 2>/dev/null) || estimate=0
@@ -517,7 +525,8 @@ try:
         path = path.parent
     free = decimal(str(shutil.disk_usage(path).free))
     for flags in (("--cached",), ()):
-        command = ("git", "-C", sys.argv[5], "diff", *flags, *OPTIONS, "--diff-filter=d")
+        # Sizing must not refresh the source's cached index stats.
+        command = ("git", "-c", "diff.autoRefreshIndex=false", "-C", sys.argv[5], "diff", *flags, *OPTIONS, "--diff-filter=d")
         with subprocess.Popen(command, stdout=subprocess.PIPE) as process:
             for chunk in iter(lambda: process.stdout.read(65536), b""):
                 estimate += len(chunk)
@@ -549,7 +558,7 @@ archive_worktree() {
 	shift || true
 	local repo="" issue="" unattributed="false" reason="" base_branch="" base_sha="" output_root="$ARCHIVE_ROOT" failure_log=""
 	local created_at timestamp repo_path archive_dir branch head_sha default_branch remote_state dirty_state git_common_dir
-	local fingerprint_before="" fingerprint_after=""
+	local fingerprint_before="" fingerprint_after="" bundle_commits=0
 	local -x GIT_OPTIONAL_LOCKS=0
 	[[ -n "$worktree" ]] || { usage >&2; return 1; }
 	while [[ $# -gt 0 ]]; do
@@ -562,6 +571,7 @@ archive_worktree() {
 		--base-sha) require_value "$1" "${2:-}" || return 1; base_sha="$2"; shift 2 ;;
 		--output-root) require_value "$1" "${2:-}" || return 1; output_root="$2"; shift 2 ;;
 		--failure-log) require_value "$1" "${2:-}" || return 1; failure_log="$2"; shift 2 ;;
+		--bundle-commits) bundle_commits=1; shift ;;
 		--git-only) shift ;; # Compatibility alias; all new archives use the same path.
 		*) die "unknown archive option: $1"; return 1 ;;
 		esac
@@ -576,7 +586,22 @@ archive_worktree() {
 	fi
 	validate_branch "$base_branch" || return 1
 	[[ -d "$worktree" ]] || { die "worktree does not exist: $worktree"; return 1; }
-	git -C "$worktree" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { die "not a Git worktree: $worktree"; return 1; }
+	# One spawn answers the work-tree check, the admin dir (whose MERGE_HEAD is
+	# still tested live where needed) and the common dir (used once, for the manifest).
+	# --absolute-git-dir is absolute before the --path-format switch.
+	local inside_probe="" inside_state="" admin_dir="" probe_rest=""
+	inside_probe=$(git -C "$worktree" rev-parse --is-inside-work-tree --absolute-git-dir --path-format=absolute --git-common-dir 2>/dev/null) || inside_probe=""
+	inside_state=${inside_probe%%$'\n'*}
+	[[ "$inside_state" =~ ^true$ ]] || { die "not a Git worktree: $worktree"; return 1; }
+	probe_rest=${inside_probe#*$'\n'}
+	admin_dir=${probe_rest%%$'\n'*}
+	git_common_dir=${probe_rest#*$'\n'}
+	# Exactly three lines: a newline inside either path must not shift the fields.
+	[[ "$probe_rest" != "$inside_probe" && "$admin_dir" == /* && "$git_common_dir" == /* &&
+		"$git_common_dir" != "$probe_rest" && "$git_common_dir" != *$'\n'* ]] || {
+		die "cannot resolve git common dir: $worktree"
+		return 1
+	}
 	worktree=$(cd "$worktree" && pwd -P) || return 1
 	fingerprint_before=$(source_fingerprint "$worktree" 0 0 1) || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
 	base_sha=$(resolve_base_sha "$worktree" "$base_branch" "$base_sha") || { die "cannot resolve base SHA"; return 1; }
@@ -585,9 +610,13 @@ archive_worktree() {
 	default_branch=$(git -C "$worktree" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
 	default_branch=${default_branch#origin/}
 	[[ -n "$default_branch" ]] || default_branch="$base_branch"
-	remote_state=$(archive_remote_state "$worktree" "$head_sha" "$base_sha") || return 1
+	remote_state=$(archive_remote_state "$worktree" "$head_sha" "$base_sha" "$admin_dir") || return 1
+	# GH#38394: a published head's remote branch is deleted by the merge flow, so
+	# --bundle-commits carries the commits and depends only on the base.
+	if [[ "$bundle_commits" -eq 1 && "$remote_state" == "$REMOTE_STATE_PUBLISHED" ]]; then
+		remote_state="bundled"
+	fi
 	dirty_state="clean"
-	git_common_dir=$(git -C "$worktree" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || git -C "$worktree" rev-parse --git-common-dir) || return 1
 	timestamp=$(timestamp_utc)
 	created_at=$(iso_utc)
 	repo_path="${repo//\//__}"
@@ -596,7 +625,7 @@ archive_worktree() {
 	archive_capacity_check "$worktree" "$output_root" "$head_sha" "$base_sha" "$remote_state" || return 1
 	mkdir -p "${archive_dir%/*}" || return 1
 	mkdir -m 700 "$archive_dir" || return 1
-	capture_archive_payload "$worktree" "$archive_dir" "$head_sha" "$base_sha" "$failure_log" "$remote_state" || {
+	capture_archive_payload "$worktree" "$archive_dir" "$head_sha" "$base_sha" "$failure_log" "$remote_state" "$admin_dir" || {
 		discard_failed_archive "$archive_dir"
 		return 1
 	}
@@ -726,11 +755,16 @@ PY
 	return $?
 }
 
+# Set by prepare_restore_repository: "--preserved" only when preparation imported
+# this archive's complete bundle into the new target (GH#39560).
+RESTORE_PRESERVED_OPTION=""
+
 prepare_restore_repository() {
 	local archive_dir="$1"
 	local target="$2"
 	local verification_copy="${3:-0}"
-	local common_dir head_sha self_contained git_only restore_branch
+	local common_dir head_sha self_contained git_only restore_branch prepared=""
+	RESTORE_PRESERVED_OPTION=""
 	IFS=$'\t' read -r common_dir head_sha self_contained git_only < <(python3 - "$archive_dir/manifest.json" <<'PY'
 import json, sys
 m = json.load(open(sys.argv[1], encoding='utf-8'))
@@ -738,20 +772,22 @@ print(m.get('source_git_common_dir', ""), m["head_sha"],
       int(m.get('self_contained') is True), int(m.get('capture_policy') == 'git-only'), sep=chr(9))
 PY
 	)
+	# `exec` keeps each preparation step a direct child of this shell, so the
+	# creation receipt's owner (its getppid) stays this live helper process.
 	if [[ "$git_only" -eq 1 && "$verification_copy" -eq 2 ]]; then
 		# Same registered creation primitive as ordinary recovery, with an explicit
 		# purpose and detached HEAD; no issue claim or dependency bootstrap.
-		python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target" --verification-copy || return 1
+		prepared=$(exec python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target" --verification-copy) || return 1
 	elif [[ "$git_only" -eq 1 && ( "$self_contained" -eq 1 || "$verification_copy" -eq 1 ) ]]; then
-		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target" || return 1
+		prepared=$(exec python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target") || return 1
 	elif [[ "$git_only" -eq 1 ]]; then
-		python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target" || return 1
+		prepared=$(exec python3 "${SCRIPT_DIR}/worktree_archive_restore.py" "$archive_dir" "$target") || return 1
 	elif [[ "$self_contained" -eq 1 ]]; then
 		git -c gc.auto=0 -c maintenance.auto=false -c core.hooksPath=/dev/null \
 			clone --quiet --no-checkout -- "$archive_dir/commits.bundle" "$target" || return 1
 		git -C "$target" -c core.hooksPath=/dev/null checkout --quiet --detach "$head_sha" || return 1
 	elif [[ -f "$archive_dir/git-admin.json" ]]; then
-		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target" || return 1
+		prepared=$(exec python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-prepare-restore "$archive_dir" "$target") || return 1
 	else
 		[[ -d "$common_dir" ]] || { die "source Git repository is unavailable: $common_dir"; return 1; }
 		if [[ -f "$archive_dir/commits.bundle" ]]; then
@@ -763,6 +799,11 @@ PY
 			source "${SCRIPT_DIR}/shared-worktree-create.sh" || exit 1
 			worktree_create_registered "$common_dir" "$target" "$head_sha" -b "$restore_branch"
 		) >/dev/null || return 1
+	fi
+	# Later steps skip only the repeat import into this same new target; their
+	# object-closure checks still run. Anything else keeps the full import.
+	if [[ "$prepared" == "aidevops-archive-preservation-imported" ]]; then
+		RESTORE_PRESERVED_OPTION="--preserved"
 	fi
 	return 0
 }
@@ -869,7 +910,8 @@ restore_archive() {
 	verify_archive "$archive_dir" >/dev/null || return 1
 	prepare_restore_repository "$archive_dir" "$target" "$verification_copy" || return 1
 	if [[ -f "$archive_dir/merge-state-v1.json" ]]; then
-		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" merge-restore "$target" "$archive_dir" || return 1
+		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" merge-restore "$target" "$archive_dir" \
+			${RESTORE_PRESERVED_OPTION:+"$RESTORE_PRESERVED_OPTION"} || return 1
 	fi
 	python3 "${SCRIPT_DIR}/worktree_archive_deletions.py" restore "$target" "$archive_dir" staged || return 1
 	if [[ -s "$archive_dir/staged.patch" ]]; then git -C "$target" apply --index "$archive_dir/staged.patch" || return 1; fi
@@ -877,9 +919,11 @@ restore_archive() {
 	if [[ -s "$archive_dir/diff.patch" ]]; then git -C "$target" apply "$archive_dir/diff.patch" || return 1; fi
 	restore_untracked_payload "$archive_dir" "$target" || return 1
 	if [[ -f "$archive_dir/git-admin.json" ]]; then
-		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-restore "$target" "$archive_dir" || return 1
+		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" admin-restore "$target" "$archive_dir" \
+			${RESTORE_PRESERVED_OPTION:+"$RESTORE_PRESERVED_OPTION"} || return 1
 	fi
-	python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-restore "$target" "$archive_dir" || return 1
+	python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-restore "$target" "$archive_dir" \
+		${RESTORE_PRESERVED_OPTION:+"$RESTORE_PRESERVED_OPTION"} || return 1
 	python3 "${SCRIPT_DIR}/worktree_archive_runtime_config.py" restore-note "$archive_dir" || return 1
 	printf '%s\n' "$target"
 	return 0

@@ -546,6 +546,62 @@ else
 fi
 
 # =============================================================================
+# Test 11: indented subtask completes in place under its parent (GH#37919)
+# =============================================================================
+printf '\nTest 11: indented subtask completes in place under its parent\n'
+
+FIXTURE="${FIXTURE_HEADER}- [ ] t1100 parent #parent-task ref:GH#1100
+  - [x] t1101 done child pr:#201 completed:2026-01-10
+  - [ ] t1102 open child ref:GH#1102
+      BRIEF: todo/tasks/t1102-brief.md
+  - [ ] t1103 sibling child
+${FIXTURE_SECTIONS}"
+
+setup_repo "$FIXTURE" "repo11-indented"
+"$HELPER" t1102 --verified 2026-01-15 --no-push --skip-merge-check \
+	--repo-path "$REPO_PATH" >/dev/null 2>&1
+
+if grep -qE "^  - \[x\] t1102 .*verified:2026-01-15 completed:" "$REPO_PATH/TODO.md"; then
+	pass "t1102 ticked in place with indentation and proof"
+else
+	fail "t1102 ticked in place with indentation and proof" "line not updated in place"
+fi
+
+if task_not_in_section "t1102" "Done" "$REPO_PATH/TODO.md"; then
+	pass "t1102 not moved to ## Done"
+else
+	fail "t1102 not moved to ## Done" "subtask was moved"
+fi
+
+if grep -qE "^- \[ \] t1100 " "$REPO_PATH/TODO.md" && grep -qE "^  - \[ \] t1103 sibling child$" "$REPO_PATH/TODO.md" \
+	&& grep -qE "^      BRIEF: todo/tasks/t1102-brief.md$" "$REPO_PATH/TODO.md"; then
+	pass "parent, sibling and BRIEF line unchanged"
+else
+	fail "parent, sibling and BRIEF line unchanged" "unexpected change"
+fi
+
+# =============================================================================
+# Test 12: task IDs match literally (t12.1 must not match t1201)
+# =============================================================================
+printf '\nTest 12: dotted task ID does not match look-alike ID\n'
+
+FIXTURE="${FIXTURE_HEADER}- [ ] t12 parent ref:GH#1200
+  - [ ] t1201 lookalike child ref:GH#1201
+  - [ ] t12.1 dotted child ref:GH#1202
+${FIXTURE_SECTIONS}"
+
+setup_repo "$FIXTURE" "repo12-literal-id"
+"$HELPER" t12.1 --verified 2026-01-15 --no-push --skip-merge-check \
+	--repo-path "$REPO_PATH" >/dev/null 2>&1 || true
+
+if grep -qE "^  - \[x\] t12\.1 .*verified:2026-01-15" "$REPO_PATH/TODO.md" \
+	&& grep -qE "^  - \[ \] t1201 lookalike child ref:GH#1201$" "$REPO_PATH/TODO.md"; then
+	pass "t12.1 completed; t1201 left open"
+else
+	fail "t12.1 completed; t1201 left open" "wrong task matched"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 printf '\n%s----%s\n' "$TEST_BLUE" "$TEST_NC"

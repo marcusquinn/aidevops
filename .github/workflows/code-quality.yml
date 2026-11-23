@@ -26,6 +26,40 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  affected-script-tests:
+    name: Affected script suites (advisory)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Compare affected suites with base
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          if git diff --quiet "origin/${BASE_REF}...HEAD" -- .agents/scripts/; then
+            echo "No script changes." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          set +e
+          links="${RUNNER_TEMP}/inherited-red-links.md"
+          AFFECTED_TESTS_LINKS_FILE="$links" .agents/scripts/affected-tests-helper.sh run --base "origin/${BASE_REF}" --compare-base 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          result=${PIPESTATUS[0]}
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          # Tracking links render as real Markdown outside the fenced report.
+          if [[ -s "$links" ]]; then
+            { echo; echo '**Inherited red (tracked):**'; cat "$links"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$result"
+
   # GH#33197: scope-gate heavy full-repository jobs so version/docs-only PRs
   # stop paying for a full ShellCheck / Framework Validation / Complexity
   # pass. Keep required matrix jobs ungated: a job-level `if:` prevents matrix
@@ -86,7 +120,71 @@ jobs:
             fail_open "No changed files detected; failing open to full scope."
             exit 0
           fi
+          # GH#39544: zero-context hunks of the release version-reference files,
+          # parsed by version_lines_only below. A failed diff (even one that
+          # printed earlier patches) leaves full scope via the empty check.
+          if ! version_diff=$(git diff -U0 --no-color --no-ext-diff --no-textconv --no-renames \
+            --src-prefix=a/ --dst-prefix=b/ "${MERGE_BASE}" "${HEAD_SHA}" -- \
+            VERSION package.json sonar-project.properties setup.sh aidevops.sh \
+            .claude-plugin/marketplace.json); then
+            version_diff=""
+          fi
           printf 'Changed files:\n%s\n' "$changed"
+
+          # GH#39544: a release version bump edits only version-reference lines.
+          # Accept header lines before each hunk and +/- lines matching the
+          # file's version pattern; mode changes, new/deleted files, binary
+          # diffs or any other line keep those files in scope. Per file, the
+          # removed and added lines must be identical once the version is
+          # masked, so punctuation edits and lone additions/deletions do too.
+          version_refs='^(VERSION|package\.json|sonar-project\.properties|setup\.sh|aidevops\.sh|\.claude-plugin/marketplace\.json)$'
+          semver='[0-9]+\.[0-9]+\.[0-9]+'
+          version_lines_only() {
+            local line="" file="" pattern="" in_hunk=0 masked="" removed="" added=""
+            [ -n "${version_diff:-}" ] || return 1
+            while IFS= read -r line; do
+              # A blank line carries no change (changed lines start with +/-).
+              [ -n "$line" ] || continue
+              case "$line" in
+                'diff --git a/'*)
+                  [ "$removed" = "$added" ] || return 1
+                  removed="" added=""
+                  file=${line#diff --git a/}
+                  file=${file%% b/*}
+                  in_hunk=0
+                  case "$file" in
+                    VERSION) pattern="^${semver}\$" ;;
+                    package.json|.claude-plugin/marketplace.json) pattern="^ *\"version\": \"${semver}\",?\$" ;;
+                    sonar-project.properties) pattern="^sonar\\.projectVersion=${semver}\$" ;;
+                    setup.sh|aidevops.sh) pattern="^# Version: ${semver}\$" ;;
+                    *) return 1 ;;
+                  esac
+                  ;;
+                '@@ '*) in_hunk=1 ;;
+                *)
+                  if [ "$in_hunk" = 0 ]; then
+                    case "$line" in
+                      'index '*|'--- a/'*|'+++ b/'*) continue ;;
+                    esac
+                    return 1
+                  fi
+                  grep -Eq "$pattern" <<<"${line#?}" || return 1
+                  masked=$(sed -E "s/${semver}/V/g" <<<"${line#?}")
+                  case "$line" in
+                    -*) removed="${removed}${masked}"$'\n' ;;
+                    +*) added="${added}${masked}"$'\n' ;;
+                    *) return 1 ;;
+                  esac
+                  ;;
+              esac
+            done <<<"$version_diff"
+            [ "$removed" = "$added" ] || return 1
+            return 0
+          }
+          if grep -Eq "$version_refs" <<<"$changed" && version_lines_only; then
+            echo "Release version-reference lines only in version files; not code scope."
+            changed=$(grep -Ev "$version_refs" <<<"$changed" || true)
+          fi
 
           # Documentation under scripts/ is not executable shell scope.
           code_changed=$(printf '%s\n' "$changed" | grep -Ev '\.md$|^todo/' || true)
@@ -223,17 +321,27 @@ jobs:
 
     - name: Install Bubblewrap
       timeout-minutes: 8
+      env:
+        # GH#37769: hosted runners repeatedly stalled in `apt-get update`
+        # (60s+ per attempt, every PR and main). Install the pinned jammy
+        # security build of Bubblewrap directly instead of refreshing every
+        # apt index; its dependencies (libc6, libcap2, libselinux1) ship in
+        # the runner image. The checksum fails closed on any byte change.
+        BWRAP_DEB: bubblewrap_0.6.1-1ubuntu0.3_amd64.deb
+        BWRAP_DEB_SHA256: 706763714e5d19fc7ab2572a6418506e3a4a5d5960e99309707b58117e6b40cb
       run: |
-        # Bubblewrap comes from Ubuntu, not the runner's browser/vendor repos.
-        # Keep unrelated mirror/signature failures out of boundary verification.
-        for source_file in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
-          [ -e "$source_file" ] || continue
-          if grep -qE 'packages[.]microsoft[.]com|dl[.]google[.]com/linux/chrome' "$source_file"; then
-            sudo mv "$source_file" "${source_file}.disabled"
-          fi
-        done
-        sudo apt-get update -qq
-        sudo apt-get install -y bubblewrap
+        deb="${RUNNER_TEMP}/${BWRAP_DEB}"
+        if curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 15 --max-time 60 \
+             -o "$deb" "http://archive.ubuntu.com/ubuntu/pool/main/b/bubblewrap/${BWRAP_DEB}" &&
+           echo "${BWRAP_DEB_SHA256}  ${deb}" | sha256sum -c - &&
+           sudo dpkg -i "$deb"; then
+          bwrap --version
+          exit 0
+        fi
+        echo "::warning::Pinned Bubblewrap package install failed; falling back to one bounded apt attempt"
+        timeout 180 sudo apt-get -o Acquire::Retries=1 update -qq
+        timeout 120 sudo apt-get -o Acquire::Retries=1 install -y bubblewrap
+        bwrap --version
 
     - name: Run model replay boundary suite
       run: node .agents/scripts/tests/test-model-replay-benchmark.mjs
@@ -355,8 +463,13 @@ jobs:
   # contracts and must remain a required main-branch status check. A reusable
   # workflow permission widening can otherwise break mutable @main callers
   # even though this job reports the incompatible ceiling after the PR lands.
-  framework-validation:
-    name: Framework Validation
+  # GH#38925: Framework Validation's independent step groups run as parallel
+  # shards; the `framework-validation` job below keeps the required context
+  # name and passes only when every shard passes. Serially the job took ~731s
+  # and was the last required check on most PRs. Shard names must never equal
+  # a required context.
+  framework-validation-core:
+    name: Framework Validation (core)
     needs: detect-scope
     if: needs.detect-scope.outputs.substantive == 'true'
     runs-on: ubuntu-latest
@@ -487,6 +600,9 @@ jobs:
     - name: MCP Helper Help Regression (GH#30473)
       run: bash .agents/scripts/tests/test-mcp-helper-help.sh
 
+    - name: Browser QA Helper Regression (GH#39173)
+      run: bash .agents/scripts/tests/test-browser-qa-helper.sh
+
     - name: Secret Safety Policy Check
       run: |
         echo "Running secret safety policy checks..."
@@ -501,42 +617,6 @@ jobs:
         echo "Running Vault security validation suite..."
         bash .agents/scripts/tests/test-vault-security-suite.sh
         echo "Vault security validation suite passed"
-
-    - name: Profile README Boundary Guard
-      run: |
-        echo "Running profile README boundary regression guard..."
-        bash .agents/scripts/tests/test-profile-readme-boundary.sh
-        echo "Profile README boundary guard passed"
-
-    - name: Profile README Contributions Fail-Closed Guard
-      run: |
-        echo "Running profile README contributions fail-closed regression guard..."
-        # The real /proc census fails closed on unreadable same-UID tasks, so
-        # run outside the runner UID (see Worker Lifecycle contract step).
-        sudo useradd --create-home --shell /bin/bash profile-contract
-        dir="$GITHUB_WORKSPACE"
-        while [ "$dir" != "/" ]; do sudo chmod o+x "$dir"; dir="$(dirname "$dir")"; done
-        # Fixture cleanup needs a registered managed-run owner, which needs the
-        # user's systemd manager AND the separate D-Bus user-session socket.
-        # Linger starts the manager but does not provide/activate the bus units.
-        sudo apt-get update -qq
-        sudo apt-get install -y dbus-user-session
-        sudo loginctl enable-linger profile-contract
-        uid="$(id -u profile-contract)"
-        sudo systemctl start "user@${uid}.service"
-        sudo -H -u profile-contract env XDG_RUNTIME_DIR="/run/user/$uid" \
-          systemctl --user start dbus.socket
-        for _ in $(seq 1 30); do
-          sudo test -S "/run/user/$uid/bus" && break
-          sleep 1
-        done
-        sudo test -S "/run/user/$uid/bus" || { echo "::error::user session bus unavailable for profile-contract"; exit 1; }
-        sudo -H -u profile-contract env PATH="$PATH" \
-          XDG_RUNTIME_DIR="/run/user/$uid" \
-          DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
-          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' \
-          bash "$GITHUB_WORKSPACE/.agents/scripts/tests/test-profile-readme-contributions-fail-closed.sh"
-        echo "Profile README contributions fail-closed guard passed"
 
     - name: Stats Functions Characterization (t2044)
       run: |
@@ -573,19 +653,127 @@ jobs:
         bash .agents/scripts/tests/test-pulse-merge-phantom-pending-checks.sh
         echo "Approve collaborator author guard test passed"
 
+    - name: Bash Expansion Pattern Guard (GH#19966)
+      run: |
+        # Guard against the ${N:-{}} expansion bug: bash reads "${2:-{}" as the
+        # expansion (default="{") and appends the trailing "}" as a literal,
+        # corrupting non-empty args with a spurious trailing }. Use the
+        # explicit-fallback idiom instead: "${2:-}" then [[ -n "$x" ]] || x="{}".
+        echo "Checking for buggy \${N:-{}} bash parameter expansion pattern..."
+        if rg -n '\$\{[0-9]+:-\{\}\}' .agents/scripts/ --type sh \
+             --glob '!.agents/scripts/tests/**' 2>/dev/null; then
+          echo ""
+          echo "ERROR: Found \${N:-{}} expansion(s) above. Replace with the"
+          echo "       explicit-fallback idiom (GH#19966):"
+          echo "         local x=\"\${N:-}\""
+          echo "         [[ -n \"\$x\" ]] || x=\"{}\""
+          exit 1
+        fi
+        echo "No \${N:-{}} expansion patterns found."
+        echo "Delta prefetch regression tests..."
+        bash .agents/scripts/tests/test-pulse-wrapper-delta-prefetch.sh
+        echo "Delta prefetch regression tests passed"
+
+    - name: Worker Count and Capacity Tests (GH#21873)
+      run: |
+        # Regression guard for list_dispatchable_issue_candidates,
+        # count_runnable_candidates, count_queued_without_worker, and
+        # related capacity/governor functions in pulse-capacity.sh.
+        # Catches the gh_issue_list/gh_pr_list mock bypass via timeout (GH#21873)
+        # and the statusCheckRollup → REST check-runs migration (GH#21799).
+        echo "Running pulse worker count / capacity regression tests..."
+        bash .agents/scripts/tests/test-pulse-wrapper-worker-count.sh
+        # GH#35537 owner directive: worker admission is RAM-only. Fails if
+        # admission reads CPU load, CPU idle or core counts.
+        bash .agents/scripts/tests/test-pulse-ram-admission.sh
+        echo "Worker count / capacity regression tests passed"
+
+  framework-validation-profile-boundary:
+    name: Framework Validation (profile boundary)
+    needs: detect-scope
+    if: needs.detect-scope.outputs.substantive == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        fetch-depth: 0
+
+    - name: Profile README Boundary Guard
+      run: |
+        echo "Running profile README boundary regression guard..."
+        bash .agents/scripts/tests/test-profile-readme-boundary.sh
+        echo "Profile README boundary guard passed"
+
+  framework-validation-profile-contributions:
+    name: Framework Validation (profile contributions)
+    needs: detect-scope
+    if: needs.detect-scope.outputs.substantive == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        fetch-depth: 0
+
+    - name: Profile README Contributions Fail-Closed Guard
+      run: |
+        echo "Running profile README contributions fail-closed regression guard..."
+        # The real /proc census fails closed on unreadable same-UID tasks, so
+        # run outside the runner UID (see Worker Lifecycle contract step).
+        sudo useradd --create-home --shell /bin/bash profile-contract
+        dir="$GITHUB_WORKSPACE"
+        while [ "$dir" != "/" ]; do sudo chmod o+x "$dir"; dir="$(dirname "$dir")"; done
+        # Fixture cleanup needs a registered managed-run owner, which needs the
+        # user's systemd manager AND the separate D-Bus user-session socket.
+        # Linger starts the manager but does not provide/activate the bus units.
+        sudo apt-get update -qq
+        sudo apt-get install -y dbus-user-session
+        sudo loginctl enable-linger profile-contract
+        uid="$(id -u profile-contract)"
+        sudo systemctl start "user@${uid}.service"
+        sudo -H -u profile-contract env XDG_RUNTIME_DIR="/run/user/$uid" \
+          systemctl --user start dbus.socket
+        for _ in $(seq 1 30); do
+          sudo test -S "/run/user/$uid/bus" && break
+          sleep 1
+        done
+        sudo test -S "/run/user/$uid/bus" || { echo "::error::user session bus unavailable for profile-contract"; exit 1; }
+        sudo -H -u profile-contract env PATH="$PATH" \
+          XDG_RUNTIME_DIR="/run/user/$uid" \
+          DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' \
+          bash "$GITHUB_WORKSPACE/.agents/scripts/tests/test-profile-readme-contributions-fail-closed.sh"
+        echo "Profile README contributions fail-closed guard passed"
+
+  framework-validation-pulse-merge:
+    name: Framework Validation (pulse-merge suites)
+    needs: detect-scope
+    if: needs.detect-scope.outputs.substantive == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        fetch-depth: 0
+
     - name: Pulse-merge Regression Suites (GH#35943)
       timeout-minutes: 20
       run: |
-        # GH#35943: CI ran only the three pulse-merge suites above, so the rest
-        # drifted behind merged production changes unseen. Run every suite
-        # (globbed, so new suites join automatically) in parallel; any failure
-        # fails this required job.
+        # GH#35943: CI ran only the three pulse-merge suites in the core shard,
+        # so the rest drifted behind merged production changes unseen. Run every
+        # suite (globbed, so new suites join automatically) in parallel; any
+        # failure fails the required Framework Validation aggregator.
         set -euo pipefail
         log_dir=$(mktemp -d "${RUNNER_TEMP:-/tmp}/pulse-merge-suites.XXXXXX")
         export LOG_DIR="$log_dir"
         # *-cases.sh / *-mocks.sh are fixtures sourced by a suite, not suites.
         git ls-files '.agents/scripts/tests/test-pulse-merge-*.sh' \
-          '.agents/scripts/tests/test-pulse-merge-*.py' |
+          '.agents/scripts/tests/test-pulse-merge-*.py' \
+          '.agents/scripts/tests/test-full-loop-merge.sh' |
           grep -Ev -- '-(cases|mocks)\.sh$' >"${log_dir}/suites.txt"
         run_suite() {
           local suite="$1"
@@ -644,40 +832,39 @@ jobs:
         fi
         [[ "$failed" -eq 0 && "$pipe_rc" -eq 0 ]]
 
-    - name: Bash Expansion Pattern Guard (GH#19966)
-      run: |
-        # Guard against the ${N:-{}} expansion bug: bash reads "${2:-{}" as the
-        # expansion (default="{") and appends the trailing "}" as a literal,
-        # corrupting non-empty args with a spurious trailing }. Use the
-        # explicit-fallback idiom instead: "${2:-}" then [[ -n "$x" ]] || x="{}".
-        echo "Checking for buggy \${N:-{}} bash parameter expansion pattern..."
-        if rg -n '\$\{[0-9]+:-\{\}\}' .agents/scripts/ --type sh \
-             --glob '!.agents/scripts/tests/**' 2>/dev/null; then
-          echo ""
-          echo "ERROR: Found \${N:-{}} expansion(s) above. Replace with the"
-          echo "       explicit-fallback idiom (GH#19966):"
-          echo "         local x=\"\${N:-}\""
-          echo "         [[ -n \"\$x\" ]] || x=\"{}\""
-          exit 1
-        fi
-        echo "No \${N:-{}} expansion patterns found."
-        echo "Delta prefetch regression tests..."
-        bash .agents/scripts/tests/test-pulse-wrapper-delta-prefetch.sh
-        echo "Delta prefetch regression tests passed"
+  # IMPORTANT: `Framework Validation` is a required status check on main.
+  # This aggregator owns that context: it passes only when every shard passed,
+  # and is skipped (like the former single job) on version/docs-only PRs.
+  # `!cancelled()` makes it report failure, not skip, when a shard fails.
+  framework-validation:
+    name: Framework Validation
+    needs:
+      - detect-scope
+      - framework-validation-core
+      - framework-validation-profile-boundary
+      - framework-validation-profile-contributions
+      - framework-validation-pulse-merge
+    if: ${{ !cancelled() && needs.detect-scope.outputs.substantive == 'true' }}
+    runs-on: ubuntu-latest
 
-    - name: Worker Count and Capacity Tests (GH#21873)
+    steps:
+    - name: Require every Framework Validation shard to pass
+      env:
+        CORE: ${{ needs.framework-validation-core.result }}
+        PROFILE_BOUNDARY: ${{ needs.framework-validation-profile-boundary.result }}
+        PROFILE_CONTRIBUTIONS: ${{ needs.framework-validation-profile-contributions.result }}
+        PULSE_MERGE: ${{ needs.framework-validation-pulse-merge.result }}
       run: |
-        # Regression guard for list_dispatchable_issue_candidates,
-        # count_runnable_candidates, count_queued_without_worker, and
-        # related capacity/governor functions in pulse-capacity.sh.
-        # Catches the gh_issue_list/gh_pr_list mock bypass via timeout (GH#21873)
-        # and the statusCheckRollup → REST check-runs migration (GH#21799).
-        echo "Running pulse worker count / capacity regression tests..."
-        bash .agents/scripts/tests/test-pulse-wrapper-worker-count.sh
-        # GH#35537 owner directive: worker admission is RAM-only. Fails if
-        # admission reads CPU load, CPU idle or core counts.
-        bash .agents/scripts/tests/test-pulse-ram-admission.sh
-        echo "Worker count / capacity regression tests passed"
+        failed=0
+        for shard in CORE PROFILE_BOUNDARY PROFILE_CONTRIBUTIONS PULSE_MERGE; do
+          result="${!shard}"
+          echo "${shard}: ${result}"
+          if [ "$result" != "success" ]; then
+            echo "::error title=Framework Validation shard::${shard} finished ${result}"
+            failed=1
+          fi
+        done
+        exit "$failed"
 
   complexity-check:
     # IMPORTANT: This job's `name:` is a required status check on main (GH#18393).
@@ -707,12 +894,12 @@ jobs:
         pip install ruff==0.11.13 mypy==1.15.0
 
     - name: Lint Worker Lifecycle Python
-      run: ruff check --no-cache .agents/worker-lifecycle
+      run: ruff check --no-cache
 
     - name: Typecheck Worker Lifecycle Python
       run: |
-        mypy --config-file .agents/worker-lifecycle/mypy.ini --platform linux
-        mypy --config-file .agents/worker-lifecycle/mypy.ini --platform darwin
+        mypy --config-file mypy.ini --platform linux
+        mypy --config-file mypy.ini --platform darwin
 
     - name: Verify Worker Lifecycle Linux contract
       env:
@@ -722,7 +909,9 @@ jobs:
         # The real /proc census fails closed on unreadable same-UID tasks.
         # Keep runner-owned non-dumpable services outside the fixture UID;
         # do not weaken the production guard or run the contracts as root.
-        sudo useradd --create-home --shell /bin/bash lifecycle-contract
+        # No --create-home: creating the home dir took 77 s on hosted runners vs 0 s
+        # without it (GH#39549); the fixtures set HOME to their own temp dir.
+        sudo useradd --no-log-init --no-create-home --shell /bin/bash lifecycle-contract
         # Runner home directories are not traversable by other users.
         dir="$GITHUB_WORKSPACE"
         while [ "$dir" != "/" ]; do sudo chmod o+x "$dir"; dir="$(dirname "$dir")"; done
@@ -740,53 +929,23 @@ jobs:
     - name: Install shfmt (for nesting-depth AST scanner, GH#20105)
       # scanners/nesting-depth.sh uses `shfmt --to-json` + jq to walk the bash
       # AST. Without shfmt it falls back to the legacy AWK scanner (which has
-      # the four false-positive classes the GH#20105 rewrite fixed). Ubuntu
-      # 22.04+ ships shfmt in the default apt repos; --to-json is stable since
-      # v3.0.0 so the packaged version is fine. Hosted runner images can carry
-      # third-party apt sources that fail independently of this repo; remove the
-      # unused Microsoft/Chrome package sources before apt update so shfmt install
-      # is not blocked by unrelated 403/signature/hash-mismatch errors.
+      # the four false-positive classes the GH#20105 rewrite fixed).
+      # GH#37759: this job is a required check, so it must not depend on Ubuntu
+      # apt mirrors (an azure.archive.ubuntu.com DNS outage blocked every PR).
+      # Install the pinned upstream release binary instead. v3.8.0 matches the
+      # apt package this step used before (shfmt_3.8.0-1), so the AST output
+      # is unchanged. The checksum fails closed on any byte change.
+      timeout-minutes: 5
+      env:
+        SHFMT_VERSION: v3.8.0
+        SHFMT_SHA256: 27b3c6f9d9592fc5b4856c341d1ff2c88856709b9e76469313642a1d7b558fe0
       run: |
-        # Keep each network-bound apt phase within a five-minute budget. The
-        # heartbeat makes a slow runner distinguishable from a silent stall.
-        run_with_heartbeat() {
-          local phase="$1"
-          local timeout_seconds="$2"
-          local heartbeat_pid
-          local status=0
-          shift 2
-
-          printf '::notice::Starting %s (timeout: %ss)\n' "$phase" "$timeout_seconds"
-          (
-            local elapsed=0
-            while true; do
-              sleep 30
-              elapsed=$((elapsed + 30))
-              printf '::notice::%s still running (%ss/%ss)\n' "$phase" "$elapsed" "$timeout_seconds"
-            done
-          ) &
-          heartbeat_pid=$!
-          trap 'kill "$heartbeat_pid" 2>/dev/null || true; wait "$heartbeat_pid" 2>/dev/null || true' EXIT INT TERM
-
-          timeout --kill-after=30s "${timeout_seconds}s" "$@" || status=$?
-
-          kill "$heartbeat_pid" 2>/dev/null || true
-          wait "$heartbeat_pid" 2>/dev/null || true
-          trap - EXIT INT TERM
-          if [ "$status" -ne 0 ]; then
-            printf '::error::%s exited with status %s (timeout: %ss)\n' "$phase" "$status" "$timeout_seconds"
-          fi
-          return "$status"
-        }
-
-        for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
-          [ -e "$source_file" ] || continue
-          if grep -qE 'packages[.]microsoft[.]com|dl[.]google[.]com/linux/chrome' "$source_file"; then
-            sudo mv "$source_file" "${source_file}.disabled"
-          fi
-        done
-        run_with_heartbeat "apt-get update" 300 sudo apt-get update -qq
-        run_with_heartbeat "apt-get install shfmt" 300 sudo apt-get install -y shfmt
+        shfmt_tmp="${RUNNER_TEMP}/shfmt"
+        curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 \
+          --connect-timeout 15 --max-time 45 -o "$shfmt_tmp" \
+          "https://github.com/mvdan/sh/releases/download/${SHFMT_VERSION}/shfmt_${SHFMT_VERSION}_linux_amd64"
+        printf '%s  %s\n' "$SHFMT_SHA256" "$shfmt_tmp" | sha256sum --check --strict -
+        sudo install -m 0755 "$shfmt_tmp" /usr/local/bin/shfmt
         shfmt --version
 
     - name: Shell function complexity
@@ -872,6 +1031,39 @@ jobs:
 
         echo "::error::New shell function complexity violations introduced in this PR. Add the 'complexity-bump-ok' label with a '## Complexity Bump Justification' section to override."
         exit 1
+
+    - name: Pulse set -u multi-var locals (t2863, GH#39224)
+      # pulse-unbound-var-check.yml is path-filtered, so it cannot be a
+      # required context; PR #39216 merged with it failing. Enforce the same
+      # diff-additions scan here (main still carries pre-existing debt, so a
+      # full-file scan cannot gate). That workflow keeps the remediation comment.
+      if: github.event_name == 'pull_request'
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        set -euo pipefail
+        MERGE_BASE=$(git merge-base "${HEAD_SHA}" "${BASE_SHA}" 2>/dev/null || echo "${BASE_SHA}")
+        added_dir="${RUNNER_TEMP}/pulse-unbound-added"
+        mkdir -p "$added_dir"
+        scan_files=()
+        # Keep each basename: the scanner only judges pulse-*.sh names.
+        while IFS= read -r file; do
+          added="${added_dir}/${file##*/}"
+          git diff "${MERGE_BASE}..${HEAD_SHA}" -- "$file" |
+            { grep '^+' || true; } | { grep -v '^+++' || true; } | sed 's/^+//' >"$added"
+          if [ -s "$added" ]; then
+            scan_files+=("$added")
+          fi
+        done < <(git diff --name-only --diff-filter=AMR "${MERGE_BASE}" "${HEAD_SHA}" -- '.agents/scripts/pulse-*.sh')
+        if [ "${#scan_files[@]}" -eq 0 ]; then
+          echo "No added lines in .agents/scripts/pulse-*.sh."
+          exit 0
+        fi
+        if ! bash .agents/scripts/pulse-unbound-var-check.sh --scan-files "${scan_files[@]}"; then
+          echo "::error title=Pulse set -u safety::new multi-var local without initialisation; use local a=\"\" b=\"\" (t2841, t2863)"
+          exit 1
+        fi
 
     - name: Shell nesting depth
       # t2171: per-file regression model replaces total-count-vs-threshold.
@@ -1027,7 +1219,8 @@ jobs:
     - name: Python 3.9 annotation compatibility (GH#34098)
       # Blocking: macOS /usr/bin/python3 is 3.9, which evaluates `X | None`
       # signature/module/class annotations at import time and crashes unless the
-      # module uses `from __future__ import annotations`. Static AST check.
+      # module uses `from __future__ import annotations`, and lacks 3.10+ typing
+      # names such as TypeGuard (GH#38706). Static AST check.
       run: |
         source .agents/scripts/lint-file-discovery.sh
         lint_python_files
@@ -1036,7 +1229,7 @@ jobs:
           exit 0
         fi
         if ! echo "$LINT_PY_FILES" | xargs python3 .agents/scripts/python-annotation-compat-check.py; then
-          echo "::error::Runtime PEP 604 union annotations break Python 3.9 imports; add 'from __future__ import annotations'"
+          echo "::error::Runtime PEP 604 unions or 3.10+ typing imports break Python 3.9 imports; follow the per-line fix hints above"
           exit 1
         fi
         echo "Python 3.9 annotations: compatible"

@@ -51,7 +51,8 @@ _fixture_content() {
 }
 
 # Fixture state: FIX_PUSH (true|false), FIX_CONFIG (JSON text or 404),
-# FIX_DOC (Markdown text or 404).
+# FIX_DOC (Markdown text or 404), FIX_CONVENTIONAL (Markdown text or 404).
+FIX_CONVENTIONAL=404
 gh() {
 	printf '%s\n' "$*" >>"$GH_LOG"
 	[[ "${1:-}" == api ]] || return 1
@@ -75,6 +76,13 @@ gh() {
 			return 1
 		}
 		_fixture_content "$FIX_DOC"
+		;;
+	"api -X GET repos/owner/repo/contents/.agents/recovery-policy.md -f ref=${FIX_SHA}")
+		[[ "$FIX_CONVENTIONAL" != 404 ]] || {
+			printf 'gh: Not Found (HTTP 404)\n' >&2
+			return 1
+		}
+		_fixture_content "$FIX_CONVENTIONAL"
 		;;
 	*) return 1 ;;
 	esac
@@ -125,6 +133,60 @@ test_no_policy_is_distinct_and_unchanged() {
 	return 0
 }
 
+# t19065 (GH#38636): the untrack migration removes .aidevops.json from the
+# default branch, so the conventional tracked document carries the policy.
+_conventional_doc() {
+	local actions_json="$1"
+	local fence='```'
+	printf '# Recovery policy\n\nDelegated queue recovery.\n\n%sjson\n{"actions": %s}\n%s\n' \
+		"$fence" "$actions_json" "$fence"
+	return 0
+}
+
+test_conventional_fallback() {
+	local status=1
+	FIX_PUSH=true FIX_CONFIG=404 FIX_DOC=404
+	FIX_CONVENTIONAL=$(_conventional_doc "{\"outlier_hold\": ${OUTLIER_ACTION}}")
+	_load
+	if [[ "$LOAD_RC" -eq 0 ]] &&
+		printf '%s' "$LOAD_OUT" | jq -e --arg sha "$FIX_SHA" '
+			.revision == $sha and .path == ".agents/recovery-policy.md" and
+			.heading == "Recovery policy" and (.actions | keys) == ["outlier_hold"]' >/dev/null &&
+		[[ "$(grep -c -- "ref=${FIX_SHA}" "$GH_LOG")" -eq 2 ]]; then
+		status=0
+	fi
+	print_result "untracked .aidevops.json falls back to pinned .agents/recovery-policy.md" "$status"
+
+	FIX_CONFIG='{"validator_timeout_seconds":600}'
+	_load
+	status=1
+	[[ "$LOAD_RC" -eq 0 ]] && printf '%s' "$LOAD_OUT" | jq -e '.path == ".agents/recovery-policy.md"' >/dev/null && status=0
+	print_result "config without recovery_policy uses the conventional document" "$status"
+
+	FIX_CONVENTIONAL=$(_conventional_doc "{\"auto_merge\": ${OUTLIER_ACTION}}")
+	_load
+	status=1
+	[[ "$LOAD_RC" -eq 1 && -z "$LOAD_OUT" ]] && status=0
+	print_result "fails closed: invalid conventional document" "$status"
+
+	FIX_CONFIG="$POLICY_CONFIG"
+	FIX_DOC=$(_policy_doc '{}')
+	FIX_CONVENTIONAL=$(_conventional_doc "{\"outlier_hold\": ${OUTLIER_ACTION}}")
+	_load
+	status=1
+	[[ "$LOAD_RC" -eq 0 ]] && printf '%s' "$LOAD_OUT" | jq -e '.path == "docs/ops.md" and .actions == {}' >/dev/null &&
+		! grep -q -- 'recovery-policy.md' "$GH_LOG" && status=0
+	print_result "declared .aidevops.json pointer takes precedence over the conventional document" "$status"
+
+	FIX_PUSH=false FIX_CONFIG=404
+	_load
+	status=1
+	[[ "$LOAD_RC" -eq 1 ]] && ! grep -q -- '/contents/' "$GH_LOG" && status=0
+	print_result "read-only access fails closed before reading the conventional document" "$status"
+	FIX_PUSH=true FIX_CONVENTIONAL=404
+	return 0
+}
+
 test_enabled_action_loads_pinned() {
 	FIX_PUSH=true FIX_CONFIG="$POLICY_CONFIG"
 	FIX_DOC=$(_policy_doc "{\"outlier_hold\": ${OUTLIER_ACTION}}")
@@ -149,6 +211,15 @@ test_enabled_action_loads_pinned() {
 	status=1
 	printf '%s' "$LOAD_OUT" | jq -e '.actions | has("session_cap_split") or has("brief_authority") | not' >/dev/null && status=0
 	print_result "actions not listed in the policy are not returned (not authorized)" "$status"
+
+	# t19120: scope_acceptance loads only with its own never-accept boundary.
+	FIX_DOC=$(_policy_doc '{"scope_acceptance": {"conditions":["paths exhausted, partial PR merged"],"excluded_asks":["publication","record merge"],"issue_template":"t","labels":["accepted-with-holds"]}}')
+	_load
+	status=1
+	[[ "$LOAD_RC" -eq 0 ]] &&
+		printf '%s' "$LOAD_OUT" | jq -e '(.actions | keys) == ["scope_acceptance"] and
+			.actions.scope_acceptance.excluded_asks == ["publication","record merge"]' >/dev/null && status=0
+	print_result "enabled scope_acceptance with excluded_asks loads" "$status"
 	return 0
 }
 
@@ -179,6 +250,11 @@ mixed-case protected label|{"brief_authority": {"conditions":["x"],"issue_templa
 mixed-case protected prefix|{"brief_authority": {"conditions":["x"],"issue_template":"t","labels":["Status:Available"]}}
 missing conditions|{"brief_authority": {"conditions":[],"issue_template":"t","labels":["auto-dispatch"]}}
 split without session budget|{"session_cap_split": {"conditions":["x"],"issue_template":"t","labels":["auto-dispatch"],"split_pattern":"p"}}
+scope_acceptance without excluded_asks|{"scope_acceptance": {"conditions":["x"],"issue_template":"t","labels":["accepted-with-holds"]}}
+scope_acceptance with empty excluded_asks|{"scope_acceptance": {"conditions":["x"],"excluded_asks":[],"issue_template":"t","labels":["accepted-with-holds"]}}
+scope_acceptance with blank excluded ask|{"scope_acceptance": {"conditions":["x"],"excluded_asks":[" "],"issue_template":"t","labels":["accepted-with-holds"]}}
+scope_acceptance with protected label|{"scope_acceptance": {"conditions":["x"],"excluded_asks":["publication"],"issue_template":"t","labels":["Status:Done"]}}
+scope_acceptance without template|{"scope_acceptance": {"conditions":["x"],"excluded_asks":["publication"],"labels":["accepted-with-holds"]}}
 invalid JSON|{"outlier_hold": 
 EOF
 
@@ -321,6 +397,7 @@ test_record_wake_values() {
 	if ! (
 		TBR_ROOT="${TEST_ROOT}/record"
 		export WORKER_GITHUB_LOGIN=runner-one
+		_tbr_policy_read() { return 3; }
 		printf '%s' '{"wake":"human_decision","next_action":"held outlier chain","evidence":"decision comment"}' |
 			tbr_record owner/repo 77 || exit 1
 		printf '%s' '{"wake":"dependency_change","next_action":"split task filed","evidence":"split link"}' |
@@ -334,11 +411,65 @@ test_record_wake_values() {
 	return 0
 }
 
+# t19068: a human_decision is stamped with the policy it was made under; a
+# restored, edited or newly readable-and-different policy ends its suppression,
+# while an unchanged or unreadable policy keeps it. Other wakes are unaffected.
+test_policy_change_ends_decision_suppression() {
+	local status=0
+	if ! (
+		TBR_ROOT="${TEST_ROOT}/policy-change"
+		export WORKER_GITHUB_LOGIN=runner-one
+		POLICY_RC=3 POLICY_EXTRA=""
+		_tbr_policy_read() {
+			[[ "$POLICY_RC" -ne 0 ]] || printf '{"actions":{"outlier_hold":%s%s}}\n' "$OUTLIER_ACTION" "$POLICY_EXTRA"
+			return "$POLICY_RC"
+		}
+		file="${TBR_ROOT}/decisions/owner--repo--80.json"
+		decision='{"wake":"human_decision","next_action":"maintainer picks a source","evidence":"packet"}'
+		printf '%s' "$decision" | tbr_record owner/repo 80 || exit 1
+		jq -e '.policy_fingerprint == "none"' "$file" >/dev/null || exit 1
+		_tbr_decision_active owner--repo--80 || exit 1
+		_tbr_policy_enabled owner/repo && exit 1
+		# Restored policy: the decision made without delegated authority wakes.
+		_TBR_POLICY_CACHE="" POLICY_RC=0
+		_tbr_policy_enabled owner/repo || exit 1
+		_tbr_decision_active owner--repo--80 && exit 1
+		# Re-recorded under the current policy: suppressed until TTL or reply.
+		printf '%s' "$decision" | tbr_record owner/repo 80 || exit 1
+		jq -e '.policy_fingerprint | test("^[a-f0-9]{24}$")' "$file" >/dev/null || exit 1
+		_tbr_decision_active owner--repo--80 || exit 1
+		# An edited policy wakes it again.
+		_TBR_POLICY_CACHE="" POLICY_EXTRA=',"session_cap_split":{"enabled":true}'
+		_tbr_decision_active owner--repo--80 && exit 1
+		# A legacy record without a stamp counts as "none".
+		jq -c 'del(.policy_fingerprint)' "$file" >"${file}.tmp" && mv "${file}.tmp" "$file"
+		_tbr_decision_active owner--repo--80 && exit 1
+		# Unreadable policy keeps the suppression (fail closed).
+		_TBR_POLICY_CACHE="" POLICY_RC=1
+		_tbr_decision_active owner--repo--80 || exit 1
+		rc=0
+		_tbr_policy_enabled owner/repo || rc=$?
+		[[ "$rc" -eq 2 ]] || exit 1
+		# Other wakes ignore policy changes.
+		printf '%s' '{"wake":"dependency_change","next_action":"split filed","evidence":"link"}' |
+			tbr_record owner/repo 80 || exit 1
+		jq -e 'has("policy_fingerprint") | not' "$file" >/dev/null || exit 1
+		_TBR_POLICY_CACHE="" POLICY_RC=0
+		_tbr_decision_active owner--repo--80 || exit 1
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "a changed recovery policy ends human_decision suppression; unchanged or unreadable keeps it" "$status"
+	return 0
+}
+
 test_supervisor_prompt_contract() {
 	local cycle="${SCRIPT_DIR}/pulse-wrapper-cycle.sh" status=0 needle=""
 	for needle in 'recovery-policy-helper.sh <repo>' 'reference/recovery-policy.md' \
-		'outlier_hold, session_cap_split, brief_authority' 'Exit 3 or 1 means no policy authority' \
-		'intake policy_remote' 'wake=human_decision' 'wake=dependency_change' 'wake=brief_revision'; do
+		'outlier_hold, session_cap_split, brief_authority, scope_acceptance' 'Exit 3 or 1 means no policy authority' \
+		'intake policy_remote' 'wake=human_decision' 'scope acceptances with wake=dependency_change' 'wake=brief_revision' \
+		'Policy never grants credentials, permissions, spending, data imports, record merges or publication.'; do
 		grep -qF -- "$needle" "$cycle" || status=1
 	done
 	print_result "supervisor prompt loads policy, limits authority to enabled actions, maps wakes" "$status"
@@ -346,11 +477,13 @@ test_supervisor_prompt_contract() {
 }
 
 test_no_policy_is_distinct_and_unchanged
+test_conventional_fallback
 test_enabled_action_loads_pinned
 test_fail_closed_cases
 test_cross_runner_seed_reason
 test_cross_runner_seed_and_pending
 test_record_wake_values
+test_policy_change_ends_decision_suppression
 test_supervisor_prompt_contract
 
 printf '\n%d run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"

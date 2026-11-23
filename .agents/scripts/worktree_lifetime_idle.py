@@ -68,14 +68,15 @@ def interval_valid(record, boot, wall, monotonic):
 
 def quiescence(record, boot_id, drain, seal):
     # Revalidate even a previously sealed record; old receipts alone must not
-    # establish a fresh idle interval after reboot or unit replacement.
+    # establish a fresh idle interval after reboot or unit replacement. The
+    # interval stays boot-bound (interval_valid), so it restarts after reboot,
+    # while drain() records ended-boot receipts for bound prior-boot launches.
+    del boot_id  # Kept for caller compatibility; drain() owns boot evidence.
     census_cache = {}
     for launch in record["launches"]:
         if launch.get("kind") == owner_lifetime.KIND:
             owner_lifetime.drain(launch, record["identity"], census_cache)
             continue
-        if launch["boot_id"] != boot_id():
-            raise ValueError("idle boot generation unavailable")
         if launch["invocation"] is not None:
             drain(launch)
         elif launch.get("admission_cancelled") is not True:

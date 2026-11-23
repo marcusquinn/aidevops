@@ -71,6 +71,36 @@ test_ignores_normal_renovate_update_issue() {
 	return 0
 }
 
+# GH#38544: gh GraphQL emits App authors as app/<slug>, REST as <slug>[bot];
+# self-hosted Renovate apps use their own slug (e.g. <org>-renovate).
+test_detects_dashboard_for_app_login_shapes() {
+	local login="" meta=""
+	for login in 'app/renovate' 'app/example-renovate' 'example-renovate[bot]' 'Example-Renovate[bot]'; do
+		meta=$(jq -cn --arg login "$login" '{number:38544,title:"Dependency Dashboard",author:{is_bot:true,login:$login}}')
+		if _is_renovate_dependency_dashboard_issue "$meta"; then
+			print_result "detects Dependency Dashboard authored by ${login}" 0
+		else
+			print_result "detects Dependency Dashboard authored by ${login}" 1 \
+				"Expected exit 0 for ${login} Dependency Dashboard metadata issue"
+		fi
+	done
+	return 0
+}
+
+test_ignores_dashboard_title_from_non_renovate_authors() {
+	local login="" meta=""
+	for login in 'renovate' 'renovate-fan' 'app/dependabot' 'dependabot[bot]'; do
+		meta=$(jq -cn --arg login "$login" '{number:38545,title:"Dependency Dashboard",author:{login:$login}}')
+		if _is_renovate_dependency_dashboard_issue "$meta"; then
+			print_result "ignores Dependency Dashboard title from ${login}" 1 \
+				"Expected exit 1 for non-Renovate-App author ${login}"
+		else
+			print_result "ignores Dependency Dashboard title from ${login}" 0
+		fi
+	done
+	return 0
+}
+
 main() {
 	if ! define_helper_under_test; then
 		printf 'FATAL: helper extraction failed\n' >&2
@@ -79,6 +109,8 @@ main() {
 
 	test_detects_renovate_dependency_dashboard
 	test_ignores_normal_renovate_update_issue
+	test_detects_dashboard_for_app_login_shapes
+	test_ignores_dashboard_title_from_non_renovate_authors
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

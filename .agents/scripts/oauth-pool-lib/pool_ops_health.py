@@ -17,6 +17,8 @@ from datetime import datetime
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from ._common import pool_account_label
+
 
 def cmd_check_accounts() -> None:
     """check-accounts: Print account details for health check.
@@ -28,7 +30,9 @@ def cmd_check_accounts() -> None:
     now = int(os.environ["NOW_MS"])
     for a in pool.get(prov, []):
         expires_in = a.get("expires", 0) - now
-        print(json.dumps({"email": a["email"], "expires_in": expires_in, "account": a}))
+        # "email" is the display heading: the seat label, so same-email
+        # Team and Personal seats are distinguishable (GH#38959).
+        print(json.dumps({"email": pool_account_label(a), "expires_in": expires_in, "account": a}))
 
 
 def _build_anthropic_validate_request(token: str, ua: str) -> Request:

@@ -525,7 +525,7 @@ pulse_apply_provider_load_capacity_cap() {
 	colocated_runners=$(_pulse_colocated_runner_count)
 	host_worker_cap=$(_pulse_shared_host_worker_cap "$colocated_runners")
 	if ((raw_max_workers == 0 || ram_slots == 0)); then
-		printf '[pulse-wrapper] Dispatch_capacity: admission=closed reason=ram ram_available_mb=%s ram_reserve_mb=%s ram_worker_growth_mb=%s ram_per_worker_mb=%s ram_slots=%s simultaneous_target_raw=%s active_workers=%s colocated_runners=%s\n' \
+		printf '[pulse-wrapper] Dispatch_capacity: admission=closed reason=ram ram_available_mb=%s ram_reserve_mb=%s ram_worker_growth_mb=%s ram_per_worker_mb=%s ram_slots=%s simultaneous_target_raw=%s active_workers=%s colocated_runners=%s tune=orchestration.ram_reserve_mb,orchestration.ram_per_worker_mb\n' \
 			"${ram_available_mb:-na}" "${RAM_RESERVE_MB:-6144}" "${ram_growth_mb:-na}" "${RAM_PER_WORKER_MB:-1536}" "$ram_slots" "$raw_max_workers" "$active_workers" "$colocated_runners" >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
 		printf '0 0\n'
 		return 0

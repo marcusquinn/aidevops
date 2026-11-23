@@ -2,7 +2,7 @@
 
 # Capability Registry
 
-Catalogued capabilities: **25**
+Catalogued capabilities: **27**
 
 | Capability | Owner | Runtimes | Mandatory readiness | Fallback |
 |---|---|---|---|---|
@@ -16,9 +16,11 @@ Catalogued capabilities: **25**
 | `resolve-operations` | Video | opencode | deployed, installed, configured, enabled, authorized, reachable, runtime_compatible, tool_visible, usable | `gated-creative-app-guidance` |
 | `code-development` | Build+ | opencode, claude-code | deployed, runtime_compatible, tool_visible | `manual-guidance` |
 | `github-operations` | Build+ | opencode, claude-code | installed, authenticated, authorized, reachable | `local-git-only` |
+| `render-service-readiness` | Build+ | opencode, claude-code | deployed, configured, authenticated, authorized, reachable, runtime_compatible, usable | `render-metadata-unavailable` |
 | `browser-automation` | Build+ | opencode, claude-code | deployed, enabled, runtime_compatible, tool_visible, reachable | `static-web-fetch` |
 | `cloudflare-management` | Aidevops | opencode | enabled, authenticated, authorized, reachable, runtime_compatible, tool_visible | `cloudflare-cli-guidance` |
 | `seo-data` | SEO | opencode, claude-code | configured, authenticated, authorized, reachable, tool_visible | `public-search-research` |
+| `seo-utils-data` | SEO | opencode, claude-code | deployed, enabled, reachable, tool_visible | `seo-data` |
 | `getanyapi-data` | Research | opencode, claude-code | deployed, configured, authenticated, authorized, reachable, runtime_compatible, tool_visible, usable | `native-data-provider-or-authorized-browser-extraction` |
 | `campaign-research-dossiers` | Research | opencode, claude-code | deployed, runtime_compatible, tool_visible | `research-unavailable` |
 | `jev-marketing-decisions` | Build+ | opencode, claude-code | deployed, configured, authenticated, authorized, reachable, runtime_compatible, tool_visible | `authorized-runtime-required` |

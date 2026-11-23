@@ -7,6 +7,9 @@
 
 set -euo pipefail
 
+# The suite exercises synthetic PRs, not the issue that dispatched the runner.
+unset WORKER_ISSUE_NUMBER
+
 # Resolve native Git once from the system default PATH (portable to non-FHS
 # hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
 TEST_NATIVE_GIT=$(command -p -v git) || {
@@ -226,6 +229,45 @@ test_protected_release_merge_reconciles_matching_lane() {
 	return 0
 }
 
+test_provenance_merge_during_readiness() {
+	local scenario="" rc=0
+	for scenario in merged ordinary closed verify_failure reconcile_failure; do
+		rc=0
+		(
+			SCRIPT_DIR="${SCRIPT_DIR}/.."
+			# shellcheck source=../full-loop-helper-merge.sh
+			builtin source "${SCRIPT_DIR}/shared-constants.sh"
+			builtin source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
+			local state_file="${TEST_ROOT}/race-state" log="${TEST_ROOT}/race-log" output="${TEST_ROOT}/race-output"
+			printf 'open' >"$state_file"
+			: >"$log"
+			_flm_gh_read() {
+				local merged=false ref='chore/release-v8.0.0-provenance'
+				[[ "$(<"$state_file")" == merged && "$scenario" != closed ]] && merged=true
+				[[ "$scenario" == ordinary ]] && ref='feature/ordinary'
+				printf '{"merged":%s,"head":{"ref":"%s","repo":{"full_name":"test/repo"}},"base":{"ref":"main","repo":{"full_name":"test/repo"}}}\n' "$merged" "$ref"
+				return 0
+			}
+			_merge_check_closing_guards() { return 0; }
+			source() { _merge_worker_briefed_gate_pinned() { return 0; }; return 0; }
+			_merge_pre_merge_gate_with_admission_retry() { printf 'merged' >"$state_file"; printf 'PR #77 is not open\n'; return 1; }
+			_merge_verify_completed_state() { FULL_LOOP_MERGE_SHA=abc123; [[ "$scenario" != verify_failure ]]; }
+			_merge_reconcile_provenance_release() { printf 'reconcile\n' >>"$log"; [[ "$scenario" != reconcile_failure ]]; }
+			_merge_execute() { printf 'merge write\n' >>"$log"; return 1; }
+			local result=0
+			cmd_merge 77 test/repo >"$output" 2>&1 || result=$?
+			case "$scenario" in
+			merged) [[ "$result" -eq 0 && "$(<"$output")" == *'already merged; no merge write'* && "$(<"$log")" == reconcile ]] ;;
+			ordinary|closed) [[ "$result" -eq 1 && "$(<"$output")" == *'is not open'* && ! -s "$log" ]] ;;
+			verify_failure) [[ "$result" -eq 1 && ! -s "$log" ]] ;;
+			reconcile_failure) [[ "$result" -eq 1 && "$(<"$log")" == reconcile ]] ;;
+			esac
+		) || rc=$?
+		print_result "mid-readiness provenance race: ${scenario}" "$rc"
+	done
+	return 0
+}
+
 test_qlty_billing_skip_note_is_idempotent() {
 	local rc=0
 	(
@@ -282,9 +324,79 @@ source "${SCRIPT_DIR}/test-full-loop-merge-cases.sh"
 # shellcheck disable=SC1091  # Sibling test module resolved at runtime.
 source "${SCRIPT_DIR}/test-full-loop-merge-planning.sh"
 
+test_parent_task_merge_guard() {
+	local scripts_dir="${SCRIPT_DIR}/.." rc=0 output=""
+	cat >"${TEST_ROOT}/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$1 $2" == "issue view" ]]; then
+	printf '%s\n' '{"labels":[{"name":"parent-task"}]}'
+	return_code=0
+else
+	return_code=1
+fi
+exit "$return_code"
+STUB
+	chmod +x "${TEST_ROOT}/bin/gh"
+	output=$(PATH="${TEST_ROOT}/bin:${PATH}" bash -c '
+		SCRIPT_DIR="$1"
+		source "$SCRIPT_DIR/shared-constants.sh"
+		source "$SCRIPT_DIR/full-loop-helper-merge.sh"
+		_flm_gh_read() { printf "%s\n" '\''{"body":"Resolves #123","closingIssuesReferences":[{"number":123,"repository":{"owner":{"login":"test"},"name":"repo"}}]}'\''; return 0; }
+		_merge_check_parent_task_keywords 42 test/repo 0
+	' _ "$scripts_dir" 2>&1) || rc=$?
+	print_result "parent-task closing keyword blocks merge guard with remedy" \
+		"$([[ "$rc" -ne 0 && "$output" == *'For #123'* ]] && printf '0' || printf '1')" "$output"
+	rc=0
+	output=$(PATH="${TEST_ROOT}/bin:${PATH}" bash -c '
+		SCRIPT_DIR="$1"
+		source "$SCRIPT_DIR/shared-constants.sh"
+		source "$SCRIPT_DIR/full-loop-helper-merge.sh"
+		_merge_handle_already_merged_provenance() { return 2; }
+		_merge_check_closure_metadata() { return 0; }
+		_flm_gh_read() { printf "%s\n" '\''{"body":"Resolves #123","closingIssuesReferences":[{"number":123,"repository":{"owner":{"login":"test"},"name":"repo"}}]}'\''; return 0; }
+		cmd_merge 42 test/repo
+	' _ "$scripts_dir" 2>&1) || rc=$?
+	print_result "cmd_merge rejects parent before merge transport" \
+		"$([[ "$rc" -ne 0 && "$output" == *'For #123'* ]] && printf '0' || printf '1')" "$output"
+	rc=0
+	PATH="${TEST_ROOT}/bin:${PATH}" bash -c '
+		SCRIPT_DIR="$1"
+		source "$SCRIPT_DIR/shared-constants.sh"
+		source "$SCRIPT_DIR/full-loop-helper-merge.sh"
+		_merge_parse_command_args test/repo --allow-parent-close || exit 1
+		_merge_check_parent_task_keywords 42 test/repo "$FULL_LOOP_MERGE_PARSED_ALLOW_PARENT_CLOSE"
+	' _ "$scripts_dir" || rc=$?
+	print_result "explicit parent close override passes merge guard" "$rc"
+	rc=0
+	output=$(PATH="${TEST_ROOT}/bin:${PATH}" bash -c '
+		SCRIPT_DIR="$1"
+		source "$SCRIPT_DIR/shared-constants.sh"
+		source "$SCRIPT_DIR/full-loop-helper-merge.sh"
+		_merge_handle_already_merged_provenance() { return 2; }
+		_merge_check_closure_metadata() { return 0; }
+		# GH#39558 runtime evidence recheck: test-full-loop-runtime-risk.sh.
+		_merge_check_runtime_evidence() { return 0; }
+		source() { _merge_worker_briefed_gate_pinned() { return 0; }; return 0; }
+		_merge_pre_merge_gate_with_admission_retry() { return 0; }
+		_merge_release_lane_check() { return 0; }
+		_merge_release_provenance_method() { printf "%s\n" "$3"; return 0; }
+		_merge_canonical_dir_for_sync() { return 1; }
+		_merge_fresh_worktree_cleanup_target() { return 1; }
+		_merge_prepare_verified_head_aggregation_body() { FULL_LOOP_MERGE_BODY_SNAPSHOT=""; FULL_LOOP_MERGE_PREPARED_BODY_FILE=""; return 0; }
+		_retarget_stacked_children_interactive() { return 0; }
+		_merge_execute() { printf "%s\n" "merge transport reached"; return 1; }
+		_merge_remove_body_snapshot() { return 0; }
+		cmd_merge 42 test/repo --allow-parent-close
+	' _ "$scripts_dir" 2>&1) || rc=$?
+	print_result "parent close override reaches merge transport" \
+		"$([[ "$rc" -ne 0 && "$output" == *'merge transport reached'* ]] && printf '0' || printf '1')" "$output"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
+	test_parent_task_merge_guard
 
 	echo "=== Admin merge fallback signaling tests (t2247) ==="
 	echo ""
@@ -300,6 +412,7 @@ main() {
 	test_graphql_rate_limit_rest_fallback
 	test_transient_server_error_recovery
 	test_protected_release_merge_reconciles_matching_lane
+	test_provenance_merge_during_readiness
 	test_qlty_billing_skip_note_is_idempotent
 	test_graphql_rate_limit_cmd_merge_phase_autofile
 	test_graphql_rate_limit_auto_no_rest_fallback
@@ -312,6 +425,7 @@ main() {
 	test_final_head_sha_read_admission_recovery
 	test_local_deferral_survives_context_resolution
 	test_exact_check_deferral_preserves_retry_deadline
+	test_nonrequired_check_failure_parity
 	test_auto_review_required_interactive_admin_fallback
 	test_auto_review_required_admin_rejection_handoff
 	test_auto_review_required_headless_no_admin_fallback
@@ -332,6 +446,8 @@ main() {
 	test_todo_duplicate_report_large_baseline
 	test_timeout_sec_fallback_preserves_stdin
 	test_prospective_todo_merge_guard
+	test_prospective_todo_stale_base_guard
+	test_prospective_todo_base_tip_reader
 	test_prospective_todo_requires_supported_native_git
 	test_prospective_todo_live_fetch_guard
 	test_prospective_todo_crisscross_fetch_guard

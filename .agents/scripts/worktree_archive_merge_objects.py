@@ -5,7 +5,7 @@
 
 import re
 
-from worktree_archive_git import auto_merge_oid, fetch_head_roots, git, validate_auto_merge
+from worktree_archive_git import auto_merge_oid, fetch_head_roots, git
 
 
 MERGE_FILES = {'MERGE_HEAD', 'MERGE_MSG', 'MERGE_MODE', 'ORIG_HEAD', 'AUTO_MERGE', 'FETCH_HEAD'}
@@ -46,18 +46,20 @@ def merge_roots(state):
 
 def verify_merge_objects(root, state):
     roots = merge_roots(state)
-    for oid in [state['head']] + [line.decode('ascii') for name in ('MERGE_HEAD', 'ORIG_HEAD')
-                               for line in bytes.fromhex(state['metadata'][name]).splitlines()]:
-        if git(root, 'cat-file', '-t', oid).strip() != b'commit':
-            raise ValueError('merge:parent_not_commit')
-    if 'AUTO_MERGE' in state['metadata']:
-        validate_auto_merge(root, bytes.fromhex(state['metadata']['AUTO_MERGE']).strip().decode('ascii'))
     closure = git(root, 'rev-list', '--objects', '--no-object-names', '--stdin',
                   data=('\n'.join(roots) + '\n').encode('ascii'))
     checked = git(root, 'cat-file', '--batch-check', data=closure)
     if len(checked.splitlines()) != len(closure.splitlines()) or any(line.endswith(b' missing') for line in checked.splitlines()):
         raise ValueError('merge:missing_object')
-    # The closure batch already includes every index/REUC root and its type.
+    # The closure batch already includes every root and its type: no per-object `cat-file -t`.
     kinds = {line.split()[0]: line.split()[1] for line in checked.splitlines()}
+    parents = [state['head']] + [line.decode('ascii') for name in ('MERGE_HEAD', 'ORIG_HEAD')
+                                 for line in bytes.fromhex(state['metadata'][name]).splitlines()]
+    if any(kinds.get(oid.encode('ascii')) != b'commit' for oid in parents):
+        raise ValueError('merge:parent_not_commit')
+    if 'AUTO_MERGE' in state['metadata']:
+        auto = bytes.fromhex(state['metadata']['AUTO_MERGE']).strip()
+        if kinds.get(auto) != b'tree':
+            raise ValueError('git_admin:AUTO_MERGE_not_tree')
     if any(kinds.get(oid.encode('ascii')) != b'blob' for _, _, oid, _ in state['index'] + state['undo']):
         raise ValueError('merge:index_not_blob')

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
+import importlib.util
 import json
 import os
 import sys
@@ -15,6 +16,7 @@ from agent_config import (
     managed_external_directories,
 )
 from opencode_operator_agents import extend_opencode_operator_subagents
+from subagent_validation import PLUGIN_ACTIVATION_SUBAGENTS
 from mcp_config import (
     apply_mcp_loading_policy, remove_deprecated_mcps,
     register_standard_mcps,
@@ -26,25 +28,22 @@ agents_dir = os.path.expanduser("~/.aidevops/agents")
 OPENCODE_SHARED_CONFIG_PATH = os.path.expanduser("~/.config/opencode/opencode.json")
 
 
-def _session_profile_override():
-    """Return the env profile override only when it governs the shared config.
+def _shared_profile_selector():
+    """Load the shared-config profile selector from opencode-runtime-profile.py.
 
-    The isolated opencode2 shim exports AIDEVOPS_OPENCODE_PROFILE=v2 together
-    with OPENCODE_CONFIG pointing at its private config. That override belongs
-    to the isolated runtime, so a setup/update run from inside such a session
-    must not rewrite the shared ~/.config/opencode file in V2 shape (V1 then
-    refuses to start).
+    The selector ignores an AIDEVOPS_OPENCODE_PROFILE exported by the isolated
+    opencode2 shim (its OPENCODE_CONFIG targets a private file), so a setup run
+    from such a session never rewrites the shared config in V2 shape. Without
+    an override it detects the installed global `opencode` (GH#38922).
     """
-    override = os.environ.get('AIDEVOPS_OPENCODE_PROFILE')
-    if not override:
-        return None
-    session_config = os.environ.get('OPENCODE_CONFIG')
-    if session_config and os.path.realpath(os.path.expanduser(session_config)) != os.path.realpath(
-            OPENCODE_SHARED_CONFIG_PATH):
-        print(f"  Ignoring AIDEVOPS_OPENCODE_PROFILE={override} from isolated runtime session "
-              f"(OPENCODE_CONFIG targets another file)", file=sys.stderr)
-        return None
-    return override
+    helper = Path(__file__).resolve().parent / 'opencode-runtime-profile.py'
+    try:
+        spec = importlib.util.spec_from_file_location('opencode_runtime_profile', helper)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.shared_config_profile
+    except (AttributeError, ImportError, OSError, SyntaxError):
+        return lambda document: document['default']
 
 
 def _load_opencode_profile():
@@ -54,12 +53,12 @@ def _load_opencode_profile():
         os.path.join(agents_dir, 'configs', 'opencode-runtime-profiles.json'),
         str(Path(__file__).resolve().parent.parent / 'configs' / 'opencode-runtime-profiles.json'),
     ]
-    session_override = _session_profile_override()
+    select_profile = _shared_profile_selector()
     for candidate in filter(None, candidates):
         try:
             with open(candidate, 'r', encoding='utf-8') as handle:
                 document = json.load(handle)
-            profile_id = session_override or document['default']
+            profile_id = select_profile(document)
             profile = document['profiles'][profile_id]
             return profile_id, profile
         except (FileNotFoundError, OSError, KeyError, json.JSONDecodeError):
@@ -81,6 +80,7 @@ OPENCODE_PROFILE_ID, OPENCODE_PROFILE = _load_opencode_profile()
 
 primary_agents, sorted_agents, subagent_filtered_count = discover_primary_agents(agents_dir)
 operator_subagents = (extend_opencode_operator_subagents(primary_agents)
+                      | PLUGIN_ACTIVATION_SUBAGENTS
                       if output_format == 'opencode-json' else set())
 
 # Validate subagent references

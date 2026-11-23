@@ -13,6 +13,8 @@ FAIL=0
 EDIT_COUNT=0
 REREAD_LABELS="status:blocked"
 COMMENTS='[[]]'
+EVENTS=""
+SEARCH_EXTRA_LABEL=""
 NATIVE_STATE="CLOSED"
 NATIVE_REPO="owner/repo"
 NATIVE_HAS_NEXT_PAGE=false
@@ -40,6 +42,8 @@ SUCCESSOR_REASON=""
 BLOCKER_RECONCILE_FAIL=false
 BLOCKER_RECONCILE_LOG=$(mktemp)
 DER_STALE_BLOCKED_CURSOR_DIR=$(mktemp -d)
+DER_RETRY_DIR="${DER_STALE_BLOCKED_CURSOR_DIR}/retries"
+HOME="${DER_STALE_BLOCKED_CURSOR_DIR}/home"
 trap 'rm -f "$BLOCKER_RECONCILE_LOG"; rm -rf "$DER_STALE_BLOCKED_CURSOR_DIR"' EXIT
 
 pass() {
@@ -162,6 +166,7 @@ _der_search_issues() {
 	local query="$2"
 	local labels="status:blocked"
 	[[ "$EXPLICIT_LABEL" == "true" ]] && labels=$'status:blocked\nblocked-by:#10'
+	[[ -n "$SEARCH_EXTRA_LABEL" ]] && labels+=$'\n'"$SEARCH_EXTRA_LABEL"
 	[[ "$repo" == "owner/repo" ]] || return 1
 	[[ "$SEARCH_AMBIGUOUS" == "false" ]] || return 1
 	if [[ "$query" == *"in:title"* ]]; then
@@ -185,6 +190,11 @@ supersession_fixture() {
 	for arg in "$@"; do
 		[[ "$arg" == number=* ]] && number="${arg#number=}"
 	done
+	if [[ "$number" == 10 && "${NO_SUCCESSOR:-false}" == "true" ]]; then
+		jq -cn '{data:{repository:{issueOrPullRequest:{__typename:"Issue",state:"CLOSED",stateReason:"NOT_PLANNED",
+			comments:{nodes:[{authorAssociation:"OWNER",body:"Publish nothing to this record."}]}}},rateLimit:{cost:1}}}'
+		return 0
+	fi
 	if [[ "$number" == 10 ]]; then
 		jq -cn '{data:{repository:{issueOrPullRequest:{__typename:"Issue",state:"CLOSED",stateReason:"NOT_PLANNED",
 			comments:{nodes:[{authorAssociation:"OWNER",body:"Superseded by #12. Continue there."}]}}},rateLimit:{cost:1}}}'
@@ -221,6 +231,13 @@ gh() {
 		return 0
 		;;
 	"api graphql")
+		if [[ "$*" == *'issues(states:OPEN'* ]]; then
+			jq -cn --arg dep "$STALE_DEP_LABEL" --arg hold "$STALE_HOLD_LABEL" '
+				[{data:{repository:{issues:{pageInfo:{hasNextPage:false},nodes:[{number:20,updatedAt:"v1",
+				labels:{pageInfo:{hasNextPage:false},nodes:([{name:"status:blocked"}] + (if $dep == "" then [] else [{name:$dep}] end) + (if $hold == "" then [] else [{name:$hold}] end))},
+				blockedBy:{totalCount:0,nodes:[]}}]}}}}]'
+			return 0
+		fi
 		if [[ "$*" == *issueOrPullRequest* ]]; then
 			supersession_fixture "$@"
 			return 0
@@ -249,9 +266,21 @@ gh() {
 	"api --paginate")
 		if [[ "$*" == *"/issues?state=open"* ]]; then
 			jq -cn --arg body "$BODY20" --arg dep "$STALE_DEP_LABEL" --arg hold "$STALE_HOLD_LABEL" '[[{number:20,state:"open",title:"t20: direct",body:$body,labels:([{name:"status:blocked"}] + (if $dep == "" then [] else [{name:$dep}] end) + (if $hold == "" then [] else [{name:$hold}] end))}]]'
+		elif [[ "$*" == *"/issues/20/events"* ]]; then
+			[[ -n "$EVENTS" ]] || return 1
+			printf '%s\n' "$EVENTS"
 		else
 			printf '%s\n' "$COMMENTS"
 		fi
+		return 0
+		;;
+	"api repos/owner/repo/issues/20")
+		jq -cn --arg body "$BODY20" --arg assoc "${ISSUE_ASSOC:-}" '{body:$body} + (if $assoc == "" then {} else {author_association:$assoc} end)'
+		return 0
+		;;
+	"api repos/owner/repo/issues/20/comments")
+		[[ "$*" == *"--method POST"* ]] || return 1
+		printf '%s\n' "$*" >>"${RECEIPT_LOG:-/dev/null}"
 		return 0
 		;;
 	esac
@@ -340,6 +369,8 @@ assert_hold 1 "" "Terminal blocker: reason=target_code_blocker owner=target-main
 assert_hold 1 "$TB_PROTOCOL" "TERMINAL_BLOCKER_CIRCUIT active=true observations=2" "status:blocked" "direct classifier preserves terminal-blocker circuit comments beside body protocol text"
 assert_hold 1 "HUMAN_UNBLOCK_REQUIRED" "" "status:blocked" "direct classifier preserves human-unblock markers in the body"
 assert_hold 1 "ACTION REQUIRED: rotate the deploy key" "" "status:blocked" "direct classifier preserves action-required markers in the body"
+assert_hold 0 $'## Complexity Impact\n- **Action required:** None.' "" "status:blocked" "brief-template Action required: None is not a hold (GH#39397)"
+assert_hold 1 "" "ACTION REQUIRED: refresh token" "status:blocked" "direct classifier preserves action-required supervisor comments"
 
 EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20=$'Blocked by #10\n\n| Outcome | Action |\n|---|---|\n| unknown_review | Hold for bounded review; no implementation issue |'
 assert_eq 1 "$(run_reconcile)" "classification table prose does not suppress close-event reconciliation"
@@ -349,6 +380,28 @@ assert_eq 1 "$(run_reconcile)" "explanatory prose does not suppress close-event 
 
 EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20=$'Blocked by #10\n\n'"$TB_PROTOCOL"
 assert_eq 1 "$(run_reconcile)" "terminal-blocker protocol in the body does not suppress close-event reconciliation"
+
+# GH#38866: a terminal-blocker observation older than the conversion to
+# needs-dependency is superseded; a newer one still holds.
+TB_OLD='[[{"author_association":"OWNER","created_at":"2026-11-10T10:00:00Z","body":"CLAIM_RELEASED reason=blocked runner=x\nTerminal blocker: reason=target_code_blocker"}]]'
+TB_NEW='[[{"author_association":"OWNER","created_at":"2026-11-12T10:00:00Z","body":"Terminal blocker: reason=target_code_blocker"}]]'
+CONVERT_EVENTS='[[{"event":"labeled","created_at":"2026-11-11T10:00:00Z","label":{"name":"needs-dependency"}}]]'
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" SEARCH_EXTRA_LABEL="needs-dependency" COMMENTS="$TB_OLD" EVENTS="$CONVERT_EVENTS"
+assert_eq 1 "$(run_reconcile)" "terminal blocker older than needs-dependency conversion does not hold"
+EDIT_COUNT=0 COMMENTS='[[{"author_association":"OWNER","created_at":"2026-11-10T10:00:00Z","body":"Terminal blocker: reason=target_code_blocker\nWorker result: **BLOCKED** and cannot proceed safely"}]]'
+assert_eq 0 "$(run_reconcile)" "superseded terminal blocker preserves an independent BLOCKED escalation"
+EDIT_COUNT=0 COMMENTS='[[{"author_association":"OWNER","created_at":"2026-11-10T10:00:00Z","body":"Terminal blocker: reason=target_code_blocker\nOn hold for maintainer"}]]'
+assert_eq 0 "$(run_reconcile)" "superseded terminal blocker preserves an operational hold in the same comment"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" COMMENTS="$TB_NEW" EVENTS="$CONVERT_EVENTS"
+assert_eq 0 "$(run_reconcile)" "terminal blocker newer than needs-dependency conversion still holds"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" COMMENTS="$TB_OLD" EVENTS=""
+assert_eq 0 "$(run_reconcile)" "unreadable label history keeps the terminal-blocker hold"
+# t19195: the release's own needs-dependency companion label must not supersede
+# an external_trigger_pending observation, even with closed native blockers.
+TB_ETP='[[{"author_association":"OWNER","created_at":"2026-11-10T10:00:00Z","body":"CLAIM_RELEASED reason=blocked runner=x\nTerminal blocker: reason=external_trigger_pending"}]]'
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" SEARCH_EXTRA_LABEL="needs-dependency" COMMENTS="$TB_ETP" EVENTS="$CONVERT_EVENTS"
+assert_eq 0 "$(run_reconcile)" "external_trigger_pending observation is not superseded by the companion needs-dependency label"
+SEARCH_EXTRA_LABEL="" COMMENTS='[[]]' EVENTS=""
 
 # t18662: a dependant still waiting on another open blocker must not stop the
 # close event from releasing the remaining dependants.
@@ -435,6 +488,9 @@ _der_completion_blockers_closed "owner/repo" 20 "- [ ] t20 delivered blocked-by:
 assert_eq 1 "$completion_status" "completion fails closed on null native blocker nodes"
 NATIVE_NULL_NODE=false
 
+# These independent scenarios change the mocked body and labels between passes.
+rm -rf "$DER_RETRY_DIR"
+DER_STALE_BLOCKED_SKIP_TTL_SECONDS=0
 EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10" COMMENTS='[[]]'
 reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || true
 assert_eq 1 "$EDIT_COUNT" "periodic stale sweep releases issue after missed close event"
@@ -516,7 +572,77 @@ assert_eq 0 "$(run_reconcile)" "declared superseded blocker with an open success
 LIVE_REASON="COMPLETED"
 EDIT_COUNT=0 REREAD_LABELS="status:blocked"
 assert_eq 1 "$(run_reconcile)" "declared completed blocker still releases the dependant"
+# GH#39500: a blocker closed not planned with no successor holds the dependant
+# and routes it to AI recovery instead of unblocking it.
+NATIVE_REASON="NOT_PLANNED" NO_SUCCESSOR=true NATIVE_EMPTY=false
+EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10"
+abandoned_summary=$(reconcile_dependants_after_verified_closure "owner/repo" 10 2>&1 >/dev/null || true)
+[[ "$abandoned_summary" == *"unblocked=0"* && "$abandoned_summary" == *"held=1"* ]] &&
+	pass "not-planned blocker without a successor is held, not unblocked" ||
+	fail "not-planned blocker without a successor is held, not unblocked ($abandoned_summary)"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked"
+assert_eq 1 "$(run_reconcile)" "held dependant receives only the AI-recovery label edit"
+NATIVE_EMPTY=true LIVE_REASON="NOT_PLANNED"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked"
+abandoned_summary=$(reconcile_dependants_after_verified_closure "owner/repo" 10 2>&1 >/dev/null || true)
+[[ "$abandoned_summary" == *"unblocked=0"* && "$abandoned_summary" == *"held=1"* ]] &&
+	pass "declared not-planned blocker without a successor is held" ||
+	fail "declared not-planned blocker without a successor is held ($abandoned_summary)"
+NO_SUCCESSOR=false
+unset DER_STALE_BLOCKED_SKIP_TTL_SECONDS
 NATIVE_EMPTY=false LIVE_REASON="" NATIVE_REASON=""
+
+# GH#39856: aidevops:not-before time gate. An unexpired marker holds through
+# both passes; an expired trusted marker releases a dependency-less
+# needs-dependency hold exactly once, with one receipt comment.
+NB_FUTURE='<!-- aidevops:not-before at=2999-01-01T00:00:00Z reason=external_event_date -->'
+NB_PAST='<!-- aidevops:not-before at=2026-11-12T07:00:00Z reason=external_event_date -->'
+NB_OBSERVATION='{"author_association":"OWNER","created_at":"2026-11-10T10:00:00Z","body":"CLAIM_RELEASED reason=blocked runner=x\nTerminal blocker: reason=external_trigger_pending owner=dependency-owner task=20"}'
+nb_comment() {
+	local association="$1" created="$2" body="$3"
+	jq -cn --arg a "$association" --arg c "$created" --arg b "$body" '{author_association:$a,created_at:$c,body:$b}'
+	return 0
+}
+nb_sweep() {
+	local before="$EDIT_COUNT"
+	reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || true
+	printf '%s\n' "$((EDIT_COUNT - before))"
+	return 0
+}
+RECEIPT_LOG=$(mktemp)
+DER_STALE_BLOCKED_SKIP_TTL_SECONDS=0
+EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10" COMMENTS="[[$(nb_comment MEMBER 2026-11-01T00:00:00Z "$NB_FUTURE")]]"
+assert_eq 0 "$(run_reconcile)" "unexpired trusted not-before keeps a resolved dependant blocked on close events"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20=$'Blocked by #10\n'"$NB_FUTURE" COMMENTS='[[]]'
+assert_eq 0 "$(nb_sweep)" "unexpired body not-before keeps the stale sweep from releasing"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10" COMMENTS="[[$(nb_comment NONE 2026-11-01T00:00:00Z "$NB_FUTURE")]]"
+assert_eq 1 "$(nb_sweep)" "untrusted not-before comments cannot hold"
+# The looping shape: external_trigger_pending release + needs-dependency, no
+# native edges and no declared blockers.
+NATIVE_EMPTY=true STALE_DEP_LABEL="" STALE_HOLD_LABEL="needs-dependency"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" BODY20="Results announced on the event date." COMMENTS="[[${NB_OBSERVATION}]]"
+assert_eq 0 "$(nb_sweep)" "external trigger hold without a time gate stays blocked"
+: >"$RECEIPT_LOG"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" COMMENTS="[[${NB_OBSERVATION},$(nb_comment OWNER 2026-11-10T10:05:00Z "$NB_PAST")]]"
+assert_eq 1 "$(nb_sweep)" "expired trusted not-before releases a dependency-less needs-dependency hold"
+assert_eq 1 "$(grep -c 'aidevops:not-before-released at=2026-11-12T07:00:00Z' "$RECEIPT_LOG")" "expired not-before release posts one receipt"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" \
+	COMMENTS="[[${NB_OBSERVATION},$(nb_comment OWNER 2026-11-10T10:05:00Z "$NB_PAST"),$(nb_comment COLLABORATOR 2026-11-12T08:00:00Z '<!-- aidevops:not-before-released at=2026-11-12T07:00:00Z -->')]]"
+assert_eq 0 "$(nb_sweep)" "a receipted expiry never releases the issue twice"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" \
+	COMMENTS="[[${NB_OBSERVATION},$(nb_comment OWNER 2026-11-10T10:05:00Z "$NB_PAST"),$(nb_comment OWNER 2026-11-13T09:00:00Z 'CLAIM_RELEASED reason=blocked runner=y')]]"
+assert_eq 0 "$(nb_sweep)" "a blocker observed after the gate expired still holds"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" \
+	COMMENTS="[[${NB_OBSERVATION},$(nb_comment OWNER 2026-11-10T10:05:00Z "$NB_PAST"$'\nHUMAN_UNBLOCK_REQUIRED')]]"
+assert_eq 0 "$(nb_sweep)" "an expired gate keeps independent strong hold markers"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" BODY20="$NB_PAST" COMMENTS="[[${NB_OBSERVATION}]]" ISSUE_ASSOC=NONE
+assert_eq 0 "$(nb_sweep)" "an expired body gate by an untrusted author never releases"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" ISSUE_ASSOC=MEMBER
+assert_eq 1 "$(nb_sweep)" "an expired body gate by a trusted author releases"
+NATIVE_EMPTY=false STALE_DEP_LABEL="blocked-by:#10" STALE_HOLD_LABEL="" ISSUE_ASSOC="" BODY20="Blocked by #10" COMMENTS='[[]]'
+unset DER_STALE_BLOCKED_SKIP_TTL_SECONDS
+rm -f "$RECEIPT_LOG"
+unset RECEIPT_LOG
 
 # GH#33957: bounded passes resume from a per-repo cursor in ascending issue
 # order until the whole blocked set is traversed. Unblock decisions are stubbed;
@@ -525,8 +651,24 @@ _run_stale_cursor_pass() (
 	local visited_log="$1"
 	shift
 	gh() {
-		[[ "$1 $2" == "api --paginate" ]] || return 1
-		jq -cn '[[{number:9},{number:3},{number:7},{number:5}] | map(. + {state:"open",title:"t",body:"",labels:[{name:"status:blocked"}]})]'
+		if [[ "$1 $2" != "api graphql" ]]; then
+			# all = every read fails; a number = only that issue's read fails.
+			case "${CURSOR_BODY_FETCH_FAIL:-}" in
+			'') ;;
+			all) return 1 ;;
+			*) [[ "$2" != */"${CURSOR_BODY_FETCH_FAIL}" ]] || return 1 ;;
+			esac
+			printf '%s\n' '{"body":""}'
+			return 0
+		fi
+		# CURSOR_OPEN / CURSOR_READY: issues with an open / closed native blocker.
+		jq -cn --arg open "${CURSOR_OPEN:-}" --arg ready "${CURSOR_READY:-}" '
+			($open | split(" ") | map(select(. != "") | tonumber)) as $o
+			| ($ready | split(" ") | map(select(. != "") | tonumber)) as $r
+			| [{data:{repository:{issues:{pageInfo:{hasNextPage:false},nodes:[9,3,7,5] | map(. as $n | {number:.,updatedAt:"v1",labels:{nodes:[{name:"status:blocked"}],pageInfo:{hasNextPage:false}},
+				blockedBy:(if ($o | index($n)) != null then {totalCount:1,nodes:[{number:99,state:"OPEN"}]}
+					elif ($r | index($n)) != null then {totalCount:1,nodes:[{number:98,state:"CLOSED"}]}
+					else {totalCount:0,nodes:[]} end)})}}}}]'
 		return 0
 	}
 	_der_try_unblock() {
@@ -553,6 +695,25 @@ _run_stale_cursor_pass "$visited_log" DER_STALE_BLOCKED_MAX_CANDIDATES=2 || pass
 assert_eq "7 9" "$(paste -sd' ' "$visited_log")" "next stale sweep resumes after the cursor"
 assert_eq 0 "$pass_rc" "stale sweep reports a finished traversal as complete"
 assert_eq 0 "$(cat "$cursor_file")" "finished traversal resets the cursor"
+# GH#38680: an unreadable issue is handed to the retry ledger (whose drain
+# re-reads it and still decides through _der_try_unblock) instead of ending
+# the pass; only consecutive failures stop it, past the issues handed off.
+retry_ledger="${DER_RETRY_DIR}/owner__cursor.txt"
+: >"$visited_log"
+pass_rc=0
+_run_stale_cursor_pass "$visited_log" CURSOR_BODY_FETCH_FAIL=7 || pass_rc=$?
+assert_eq "$DER_SWEEP_PARTIAL" "$pass_rc" "failed body fetch reports an incomplete traversal"
+assert_eq "3 5 9" "$(paste -sd' ' "$visited_log")" "failed body fetch does not end the pass"
+assert_eq "issue 7" "$(cat "$retry_ledger")" "failed body fetch queues the issue for retry"
+: >"$visited_log"
+pass_rc=0
+_run_stale_cursor_pass "$visited_log" CURSOR_BODY_FETCH_FAIL=all DER_STALE_BLOCKED_MAX_CONSECUTIVE_FAILURES=2 || pass_rc=$?
+assert_eq "$DER_SWEEP_PARTIAL" "$pass_rc" "consecutive read failures report partial"
+assert_eq "" "$(paste -sd' ' "$visited_log")" "consecutive read failures visit nothing"
+assert_eq 5 "$(_der_stale_cursor_read "$cursor_file")" "consecutive read failures stop after the issues handed off"
+assert_eq "issue 3 issue 5" "$(paste -sd' ' "$retry_ledger")" "consecutive read failures queue each handed-off issue"
+rm -rf "$DER_RETRY_DIR"
+_der_stale_cursor_write "$cursor_file" 0
 : >"$visited_log"
 pass_rc=0
 _run_stale_cursor_pass "$visited_log" DER_STALE_BLOCKED_DEADLINE_EPOCH=1 || pass_rc=$?
@@ -573,7 +734,140 @@ pass_rc=0
 _run_stale_cursor_pass "$visited_log" DER_STALE_BLOCKED_MAX_CANDIDATES=2 \
 	"DER_STALE_BLOCKED_CURSOR_DIR=${cursor_file}/unwritable" || pass_rc=$?
 assert_eq 1 "$pass_rc" "unpersistable cursor reports failure instead of partial progress"
+# GH#38680: open-blocker candidates are settled in the listing filter, so they
+# no longer spend the candidate budget; a ready-only pass (the Pulse ready
+# lane) visits only ready candidates and leaves the ordinary cursor alone.
+_der_stale_cursor_write "$cursor_file" 0
+: >"$visited_log"
+_run_stale_cursor_pass "$visited_log" "CURSOR_OPEN=3 5" DER_STALE_BLOCKED_MAX_CANDIDATES=1 || true
+assert_eq "7" "$(paste -sd' ' "$visited_log")" "prefiltered open-blocker candidates do not consume the candidate budget"
+: >"$visited_log"
+_run_stale_cursor_pass "$visited_log" CURSOR_READY=9 DER_STALE_BLOCKED_READY_ONLY=1 || true
+assert_eq "9" "$(paste -sd' ' "$visited_log")" "ready-only pass visits only ready candidates"
+assert_eq 7 "$(_der_stale_cursor_read "$cursor_file")" "ready-only pass leaves the ordinary cursor alone"
 rm -f "$visited_log"
+
+# GH#37965: exercise the production unblock path with thirty non-native held
+# candidates followed by three native-ready candidates. Log every per-issue API
+# call so a memo skip cannot accidentally hide a comments or labels request.
+SCHEDULE_LOG="${DER_STALE_BLOCKED_CURSOR_DIR}/schedule.calls"
+SCHEDULE_SUMMARY="${DER_STALE_BLOCKED_CURSOR_DIR}/schedule.summary"
+_run_ready_pass() (
+	local assignment="" rc=0
+	for assignment in "$@"; do export "${assignment?}"; done
+	dsr_repoint_if_superseded() { return 0; }
+	gh() {
+		local command="$1" arg="" number="" path=""
+		shift
+		if [[ "$command $1" == "api graphql" && "$*" == *'issues(states:OPEN'* ]]; then
+			[[ "${SCHEDULE_LISTING:-ok}" != fail ]] || return 1
+			jq -cn --arg mode "${SCHEDULE_LISTING:-ok}" --argjson ready "${SCHEDULE_READY:-true}" --arg updated "${SCHEDULE_UPDATED:-v1}" '
+				[{data:{repository:{issues:{pageInfo:{hasNextPage:($mode == "truncated"),endCursor:"next"},nodes:[range(1;34) | {number:.,updatedAt:(if . == 1 then $updated else "v1" end),labels:{nodes:[{name:"status:blocked"}],pageInfo:{hasNextPage:false}},blockedBy:{
+					totalCount:(if $mode == "partial" then 2 elif . > 30 and $ready then 1 else 0 end),
+					nodes:(if . > 30 and $ready then [{number:99,state:"CLOSED"}] else [] end)}}]}}}}]'
+			return 0
+		fi
+		if [[ "$command $1" == "api --paginate" && "$*" == *'issues?state=open'* ]]; then
+			jq -cn --arg updated "${SCHEDULE_UPDATED:-v1}" --arg gate "${SCHEDULE_GATE:-}" '
+				[[range(1;34) | {number:.,state:"open",title:"fixture",
+					body:(if . == 1 then $gate else "" end),
+					updated_at:(if . == 1 then $updated else "v1" end),labels:[{name:"status:blocked"}]}]]'
+			return 0
+		fi
+		for arg in "$@"; do
+			[[ "$arg" == repos/* ]] && path="$arg"
+			[[ "$arg" == n=* ]] && number="${arg#n=}"
+		done
+		printf '%s %s\n' "$command" "$*" >>"$SCHEDULE_LOG"
+		case "$command $1" in
+		'api repos/owner/schedule/issues/'*)
+			jq -cn --arg gate "${SCHEDULE_GATE:-}" --arg path "$path" '{body:(if ($path | endswith("/1")) then $gate else "" end)}'
+			;;
+		'api --paginate')
+			printf 'visit %s\n' "${path%/comments*}" >>"$SCHEDULE_LOG"
+			if [[ -n "${SCHEDULE_HOLD:-}" && "$path" == *"/${SCHEDULE_HOLD}/comments"* ]]; then
+				printf '%s\n' '[[{"author_association":"OWNER","body":"Hold for review"}]]'
+			else
+				printf '[[]]\n'
+			fi
+			;;
+		'api graphql')
+			jq -cn --argjson n "$number" --argjson ready "${SCHEDULE_READY:-true}" '
+				{data:{repository:{issue:{blockedBy:{pageInfo:{hasNextPage:false},nodes:
+					(if $n > 30 and $ready then [{number:99,state:"CLOSED",stateReason:"COMPLETED",
+						repository:{nameWithOwner:"owner/schedule"}}] else [] end)}}}}}'
+			;;
+		'issue view') printf 'status:blocked\n' ;;
+		'issue edit') printf 'release %s\n' "$2" >>"$SCHEDULE_LOG" ;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	reconcile_stale_blocked_issues owner/schedule 2>"$SCHEDULE_SUMMARY" || rc=$?
+	return "$rc"
+)
+_reset_ready_pass() {
+	_der_stale_cursor_write "${DER_STALE_BLOCKED_CURSOR_DIR}/owner__schedule.cursor" 0
+	_der_stale_cursor_write "${DER_STALE_BLOCKED_CURSOR_DIR}/owner__schedule.cursor.ready" 0
+	_der_stale_cursor_write "${DER_STALE_BLOCKED_CURSOR_DIR}/owner__schedule.cursor.skip.json" '{}'
+	: >"$SCHEDULE_LOG"
+	return 0
+}
+_reset_ready_pass
+_run_ready_pass DER_STALE_BLOCKED_DEADLINE_EPOCH=1 || true
+assert_eq '31 32 33' "$(awk '/^release / {print $2}' "$SCHEDULE_LOG" | paste -sd' ' -)" "ready issues release before thirty ordinary candidates despite expired share"
+assert_eq 3 "$(grep -c '^visit ' "$SCHEDULE_LOG")" "ready allowance does not spend expired share on ordinary candidates"
+assert_eq 1 "$(grep -c 'ready=3 ready_visited=3 skipped_unchanged=0' "$SCHEDULE_SUMMARY")" "summary preserves ready counters"
+_reset_ready_pass
+_run_ready_pass DER_STALE_BLOCKED_DEADLINE_EPOCH=1 DER_STALE_BLOCKED_READY_MAX=1 SCHEDULE_HOLD=31 || true
+assert_eq 0 "$(grep -c '^release ' "$SCHEDULE_LOG")" "recognized hold in ready queue never releases"
+: >"$SCHEDULE_LOG"
+_run_ready_pass DER_STALE_BLOCKED_DEADLINE_EPOCH=1 DER_STALE_BLOCKED_READY_MAX=1 SCHEDULE_HOLD=31 || true
+assert_eq '32' "$(awk '/^release / {print $2}' "$SCHEDULE_LOG")" "ready cursor moves past a held ready candidate"
+_reset_ready_pass
+_run_ready_pass DER_STALE_BLOCKED_STOP_EPOCH=1 || true
+assert_eq 1 "$(grep -c '^visit ' "$SCHEDULE_LOG")" "expired stop still permits one ready visit"
+_reset_ready_pass
+_run_ready_pass SCHEDULE_READY=false || true
+assert_eq 33 "$(grep -c '^visit ' "$SCHEDULE_LOG")" "first held pass visits every candidate"
+: >"$SCHEDULE_LOG"
+_run_ready_pass SCHEDULE_READY=false || true
+assert_eq 0 "$(wc -c <"$SCHEDULE_LOG" | tr -d ' ')" "unchanged held candidates make no per-issue API calls"
+assert_eq 1 "$(grep -c 'skipped_unchanged=33' "$SCHEDULE_SUMMARY")" "summary counts memo skips"
+_run_ready_pass SCHEDULE_READY=false SCHEDULE_UPDATED=v2 || true
+assert_eq 1 "$(grep -c '^visit ' "$SCHEDULE_LOG")" "updated timestamp invalidates only the changed memo entry"
+: >"$SCHEDULE_LOG"
+_run_ready_pass SCHEDULE_READY=false DER_STALE_BLOCKED_SKIP_TTL_SECONDS=0 || true
+assert_eq 33 "$(grep -c '^visit ' "$SCHEDULE_LOG")" "expired TTL visits held issues again"
+: >"$SCHEDULE_LOG"
+_run_ready_pass SCHEDULE_READY=false SCHEDULE_LISTING=fail || true
+assert_eq 0 "$(grep -c '^visit ' "$SCHEDULE_LOG")" "failed listing fails closed"
+_reset_ready_pass
+_run_ready_pass SCHEDULE_LISTING=partial DER_STALE_BLOCKED_DEADLINE_EPOCH=1 || true
+assert_eq 'visit repos/owner/schedule/issues/1' "$(grep '^visit ' "$SCHEDULE_LOG")" "incomplete native connection never asserts readiness"
+_reset_ready_pass
+_run_ready_pass SCHEDULE_READY=false 'SCHEDULE_GATE=<!-- aidevops:upstream-release-gate repo=owner/upstream commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->' || true
+assert_eq false "$(jq 'has("1")' "${DER_STALE_BLOCKED_CURSOR_DIR}/owner__schedule.cursor.skip.json")" "upstream release gate is never memoized"
+: >"$SCHEDULE_LOG"
+_run_ready_pass SCHEDULE_READY=false 'SCHEDULE_GATE=<!-- aidevops:upstream-release-gate repo=owner/upstream commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->' || true
+assert_eq 1 "$(grep -c '^visit ' "$SCHEDULE_LOG")" "upstream gate remains live while unchanged held neighbors skip"
+_reset_ready_pass
+_run_ready_pass DER_STALE_BLOCKED_READY_MAX=1 || true
+assert_eq 0 "$(_der_stale_cursor_read "${DER_STALE_BLOCKED_CURSOR_DIR}/owner__schedule.cursor")" "ordinary traversal wraps even with ready overflow"
+: >"$SCHEDULE_LOG"
+_run_ready_pass DER_STALE_BLOCKED_READY_MAX=1 SCHEDULE_UPDATED=v2 || true
+assert_eq 1 "$(grep -c '^visit repos/owner/schedule/issues/1$' "$SCHEDULE_LOG")" "ready overflow cannot starve changed ordinary candidates"
+_reset_ready_pass
+_run_ready_pass SCHEDULE_READY=false || true
+: >"$SCHEDULE_LOG"
+_run_ready_pass SCHEDULE_READY=false DER_STALE_BLOCKED_STOP_EPOCH=1 || true
+assert_eq 0 "$(_der_stale_cursor_read "${DER_STALE_BLOCKED_CURSOR_DIR}/owner__schedule.cursor")" "hard stop prevents memo-skip cursor advancement"
+_run_ready_pass SCHEDULE_READY=false DER_STALE_BLOCKED_MAX_CANDIDATES=2 || true
+assert_eq 2 "$(_der_stale_cursor_read "${DER_STALE_BLOCKED_CURSOR_DIR}/owner__schedule.cursor")" "candidate limit bounds memo-skip traversal work"
+_der_stale_cursor_write "${DER_STALE_BLOCKED_CURSOR_DIR}/owner__schedule.cursor" 0
+: >"$SCHEDULE_LOG"
+_run_ready_pass SCHEDULE_READY=false SCHEDULE_LISTING=truncated || true
+assert_eq 0 "$(grep -c '^visit ' "$SCHEDULE_LOG")" "truncated listing fails closed"
 
 # GH#35130: dependants of a superseded original are repointed at the successor.
 # Stub world: #10 closed NOT_PLANNED "Superseded by #12" (open). #30 is blocked

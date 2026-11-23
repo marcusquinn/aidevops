@@ -46,6 +46,14 @@ _PULSE_MERGE_GATES_LOADED=1
 # shellcheck source=./trusted-dependabot-lib.sh
 # shellcheck disable=SC1091
 source "${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/trusted-dependabot-lib.sh"
+# shellcheck source=./shared-gh-commit-cache.sh
+source "${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/shared-gh-commit-cache.sh"
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/shared-approval-cli.sh"
+fi
 
 # --- Functions ---
 
@@ -358,7 +366,7 @@ check_external_contributor_pr() {
 
 External contributor PRs have two requirements before they can merge:
 1. A linked issue (\`Resolves #NNN\` in the PR body, or \`GH#NNN:\` prefix in the title)
-2. Cryptographic approval on that linked issue (\`sudo aidevops approve issue NNN ${repo_slug}\`)
+2. Cryptographic approval on that linked issue (\`$(approval_cli_prefix) approve issue NNN ${repo_slug}\`)
 
 ---
 **To approve or decline**, comment on this PR:
@@ -374,7 +382,7 @@ External contributor PRs have two requirements before they can merge:
 		linked_for_check=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_for_check=""
 		if [[ -z "$linked_for_check" ]]; then
 		gh_pr_comment "$pr_number" --repo "$repo_slug" \
-				--body "**Missing linked issue.** This PR has no linked issue. External contributor PRs require a linked issue before they can be considered for merge. Add \`Resolves #NNN\` to the PR body (or use \`GH#NNN:\` in the title), then ensure that issue has been cryptographically approved by a maintainer (\`sudo aidevops approve issue NNN ${repo_slug}\`)." || true
+				--body "**Missing linked issue.** This PR has no linked issue. External contributor PRs require a linked issue before they can be considered for merge. Add \`Resolves #NNN\` to the PR body (or use \`GH#NNN:\` in the title), then ensure that issue has been cryptographically approved by a maintainer (\`$(approval_cli_prefix) approve issue NNN ${repo_slug}\`)." || true
 			echo "[pulse-wrapper] check_external_contributor_pr: PR #$pr_number in $repo_slug has no linked issue — posted missing-linked-issue comment" >>"$LOGFILE"
 		fi
 	fi
@@ -587,6 +595,31 @@ _pulse_merge_trusted_dependabot_final_authority() {
 	return 0
 }
 
+#######################################
+# Parse labels, fork flag, head SHA and author from PR metadata in one jq pass
+# (was four forks). Each field keeps its own fail-safe default so a malformed
+# sibling cannot change another value. Sets _PMG_META_{LABELS,IS_FORK,HEAD_SHA,
+# AUTHOR}. Args: $1=pr_meta_json
+#######################################
+_pulse_merge_admin_meta_fields() {
+	local pr_meta_json="$1"
+	local meta_fields=""
+	_PMG_META_LABELS="" _PMG_META_IS_FORK="" _PMG_META_HEAD_SHA="" _PMG_META_AUTHOR=""
+	meta_fields=$(printf '%s' "$pr_meta_json" | jq -r '
+		(try ([.labels[].name] | join(",")) catch ""),
+		(try (.isCrossRepository // false | tostring) catch "false"),
+		(try (.headRefOid // "" | tostring) catch ""),
+		(try (.author.login // "" | tostring) catch "")' 2>/dev/null) || meta_fields=""
+	{
+		IFS= read -r _PMG_META_LABELS
+		IFS= read -r _PMG_META_IS_FORK
+		IFS= read -r _PMG_META_HEAD_SHA
+		IFS= read -r _PMG_META_AUTHOR
+	} <<<"$meta_fields" || true
+	_PMG_META_IS_FORK="${_PMG_META_IS_FORK:-false}"
+	return 0
+}
+
 _pulse_merge_admin_safety_check() {
 	local pr_number="$1"
 	local repo_slug="$2"
@@ -608,14 +641,11 @@ _pulse_merge_admin_safety_check() {
 		echo "[pulse-merge] _pulse_merge_admin_safety_check: exact GraphQL metadata read returned malformed metadata for PR #${pr_number} in ${repo_slug} — failing closed" >>"$LOGFILE"
 		return 1
 	fi
-	labels_str=$(printf '%s' "$pr_meta_json" \
-		| jq -r '[.labels[].name] | join(",")' 2>/dev/null) || labels_str=""
-	is_fork=$(printf '%s' "$pr_meta_json" \
-		| jq -r '.isCrossRepository // false' 2>/dev/null) || is_fork="false"
-	current_head_sha=$(printf '%s' "$pr_meta_json" \
-		| jq -r '.headRefOid // ""' 2>/dev/null) || current_head_sha=""
-	pr_author=$(printf '%s' "$pr_meta_json" \
-		| jq -r '.author.login // ""' 2>/dev/null) || pr_author=""
+	_pulse_merge_admin_meta_fields "$pr_meta_json"
+	labels_str="${_PMG_META_LABELS}"
+	is_fork="${_PMG_META_IS_FORK}"
+	current_head_sha="${_PMG_META_HEAD_SHA}"
+	pr_author="${_PMG_META_AUTHOR}"
 	if [[ -z "$current_head_sha" || -z "$pr_author" ]]; then
 		echo "[pulse-merge] _pulse_merge_admin_safety_check: missing head SHA or author for PR #${pr_number} in ${repo_slug} — failing closed" >>"$LOGFILE"
 		return 1
@@ -836,13 +866,20 @@ _pulse_approve_pr_at_head() {
 		return $?
 	fi
 
+	# Parse stdout only. stderr (gh errors, privacy-shim advisories) passes to the
+	# caller's log capture; merging it here made valid review JSON unparsable
+	# and logged successful approvals as failures (GH#38082).
 	approval_response=$(gh api -X POST "repos/${repo_slug}/pulls/${pr_number}/reviews" \
 		-f 'event=APPROVE' -f "body=${approval_body}" \
-		-f "commit_id=${expected_head_sha}" 2>&1) || return 1
+		-f "commit_id=${expected_head_sha}") || return 1
 	approval_state=$(printf '%s' "$approval_response" | jq -r '.state // ""' 2>/dev/null) || return 1
 	approval_head_sha=$(printf '%s' "$approval_response" | jq -r '.commit_id // ""' 2>/dev/null) || return 1
-	[[ "$approval_state" == "APPROVED" && "$approval_head_sha" == "$expected_head_sha" ]]
-	return $?
+	if [[ "$approval_state" == "APPROVED" && "$approval_head_sha" == "$expected_head_sha" ]]; then
+		return 0
+	fi
+	printf 'approval response state=%s commit_id=%s (expected APPROVED at %s)\n' \
+		"${approval_state:-none}" "${approval_head_sha:-none}" "$expected_head_sha" >&2
+	return 1
 }
 
 #######################################
@@ -898,7 +935,7 @@ approve_collaborator_pr() {
 	# No trusted approval exists, so resolve and validate the pulse identity before
 	# creating one.
 	local current_user
-	current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+	gh_authenticated_login_cached current_user || current_user=""
 
 	if [[ -n "$current_user" ]]; then
 		# Skip self-approval — GitHub rejects it and the failed review state

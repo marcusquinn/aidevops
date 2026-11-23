@@ -37,6 +37,16 @@ class AccountSnapshotTests(unittest.TestCase):
         self.assertTrue(captured[0].full_url.endswith(":searchStream"))
         self.assertEqual(captured[0].method, "POST")
 
+    def test_google_developer_token_is_optional(self):
+        for token, expected in (("", False), ("legacy", True)):
+            captured = []
+            google.collect("123", "2026-01-01", "2026-01-02", ("access", token), lambda request: captured.append(request) or Response([]))
+            self.assertEqual(captured[0].has_header("Developer-token"), expected)
+        calls = []
+        with self.assertRaises(google.GoogleAccountError):
+            google.collect("123", "2026-01-01", "2026-01-02", ("", "legacy"), lambda request: calls.append(request) or Response([]))
+        self.assertEqual(calls, [])
+
     def test_meta_gets_fixed_insights_and_marks_partial_paging(self):
         result = meta.collect("act_123", "2026-01-01", "2026-01-02", "token", lambda request: Response({"data": [{"ad_id": "1"}], "paging": {"next": "ignored"}}))
         self.assertFalse(result["coverage"]["complete"])

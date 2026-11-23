@@ -121,6 +121,10 @@ Interactive `claim-task-id.sh --labels auto-dispatch` refuses a description
 without it, and the `gh_create_issue` PATH command refuses an unscoped
 `auto-dispatch` body, because the author can fix it on the spot; scripts that
 source the library only warn (GH#32880).
+A file the work creates must also appear as `` `NEW: path` `` under
+`### Files to Modify`: Files Scope lines carry no prefix, so interactive filing
+warns about each listed path missing from the default branch that is not
+declared new; a worker reads an unmarked missing path as an order to create it (GH#38978).
 Also list any test file a required CI gate will demand
 (for example platform/bash-compat fixes need a changed test). Planning-only
 issues start with `Planning-only:` instead.

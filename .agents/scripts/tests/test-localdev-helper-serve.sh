@@ -269,6 +269,36 @@ missing_curl_status=0
 assert_status "missing curl fails closed when health is required" 1 "$missing_curl_status"
 assert_true "missing curl diagnostic is explicit" file_contains "$missing_curl_output" "curl is required"
 
+# Private-interface --health-url validation (GH#38976).
+health_url_status() {
+	local url="$1"
+	local status=0
+	(
+		print_error() { return 0; }
+		print_info() { return 0; }
+		lsof() { return 0; }
+		# shellcheck source=/dev/null
+		source "$SERVE_LIB"
+		_serve_local_addrs() { printf '%s\n' 10.80.0.1 127.0.0.1; }
+		_serve_validate_args 3102 5 1 "$url"
+	) >/dev/null 2>&1 || status=$?
+	return "$status"
+}
+health_url_status "http://10.80.0.1:3102/api/health"
+assert_status "private local interface health URL accepted" 0 "$?"
+health_url_status "http://10.80.0.1:3102?ready=1"
+assert_status "private health URL with query and no path accepted" 0 "$?"
+health_url_status "http://10.80.0.2:3102/"
+assert_status "private non-local address health URL rejected" 1 "$?"
+health_url_status "http://10.80.0.1:3103/"
+assert_status "private health URL with wrong port rejected" 1 "$?"
+health_url_status "http://8.8.8.8:3102/"
+assert_status "public address health URL rejected" 1 "$?"
+health_url_status "http://0.0.0.0:3102/"
+assert_status "wildcard health URL rejected" 1 "$?"
+health_url_status "http://172.32.0.1:3102/"
+assert_status "non-RFC1918 172 address health URL rejected" 1 "$?"
+
 unknown_owner_output="$TEST_ROOT/unknown-owner.out"
 unknown_owner_status=0
 (

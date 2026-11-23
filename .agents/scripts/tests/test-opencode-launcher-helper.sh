@@ -401,6 +401,55 @@ else
     _fail "Tabby recovered command unexpected: ${tabby_output}"
 fi
 
+# A `Tabby profile <name>` launch starts in the project directory; a claim
+# written by `opencode-session-restart-helper.sh tabby-open` selects the marker.
+claims_dir="${work_dir}/opencode-tabby-recovery/launch-claims"
+mkdir -p "${claims_dir}"
+chmod 700 "${claims_dir}"
+claim_file="${claims_dir}/1-${tabby_session_id}.claim"
+printf 'session_id=%s\ndirectory=%s\ncreated=%s\n' "${tabby_session_id}" "${launch_dir}" "$(date +%s)" >"${claim_file}"
+claim_log="${tmp_root}/claim-opencode.log"
+(cd "${launch_dir}" && AIDEVOPS_TABBY_LOGIN_SHELL="${fake_login_shell}" FAKE_LOGIN_SHELL_LOG="${fake_login_shell_log}" \
+    FAKE_OPENCODE_LOG="${claim_log}" PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" \
+    "${HELPER}" --tabby-shell -- --auto >/dev/null 2>&1) || true
+if [[ ! -e "${claim_file}" ]] \
+    && grep -qF -- "${tabby_data_dir}|${launch_dir}|--session ${tabby_session_id} --auto" "${claim_log}"; then
+    _pass "Tabby profile launch consumes a launch claim and resumes its session"
+else
+    _fail "Tabby launch claim was not consumed: $(cat "${claim_log}" 2>/dev/null)"
+fi
+
+# Maintenance stop: the restart helper leaves a hold named after the launcher
+# PID; once released, the launcher reopens the same session in the same tab.
+hold_bin="${tmp_root}/hold-bin"
+hold_state="${tmp_root}/restart-state"
+hold_log="${tmp_root}/hold-opencode.log"
+mkdir -p "${hold_bin}"
+cat >"${hold_bin}/opencode" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${FAKE_OPENCODE_LOG:?}"
+if [[ "$*" != *--session* ]]; then
+    mkdir -p "${OPENCODE_RESTART_STATE_DIR:?}/tabby-holds"
+    printf 'session_id=ses_0123456789HoldResume\nstate=release\n' >"${OPENCODE_RESTART_STATE_DIR}/tabby-holds/${PPID}"
+fi
+exit 0
+SH
+chmod +x "${hold_bin}/opencode"
+rm -f "${fake_login_shell_log}"
+(cd "${launch_dir}" && AIDEVOPS_TABBY_LOGIN_SHELL="${fake_login_shell}" FAKE_LOGIN_SHELL_LOG="${fake_login_shell_log}" \
+    FAKE_OPENCODE_LOG="${hold_log}" OPENCODE_RESTART_STATE_DIR="${hold_state}" \
+    PATH="${hold_bin}:${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" \
+    "${HELPER}" --tabby-shell --session-id tabby-hold -- --auto --prompt hello >/dev/null 2>&1) || true
+# Ignore the data-dir prewarm probe (`opencode db path`).
+hold_runs=$(grep -v '^db path$' "${hold_log}" 2>/dev/null || true)
+if [[ "${hold_runs}" == $'--auto --prompt hello\n--session ses_0123456789HoldResume --auto' ]] \
+    && ! compgen -G "${hold_state}/tabby-holds/*" >/dev/null \
+    && grep -qF -- "-l|${launch_dir}" "${fake_login_shell_log}"; then
+    _pass "Tabby launcher reopens a maintenance-held session in the same tab"
+else
+    _fail "Tabby maintenance hold resume unexpected: $(cat "${hold_log}" 2>/dev/null)"
+fi
+
 output=$(TERM_PROGRAM=Tabby TABBY_CONFIG_DIRECTORY="${tmp_root}/tabby" \
     PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" \
     "${HELPER}" --shared-db --dir "${launch_dir}" --dry-run 2>&1)

@@ -17,13 +17,13 @@ create_mixed_cache_archive() {
 
 	mkdir -p "$recovery_root" || return 1
 	create_unarchived_fixture "$repo_path" "$worktree_path" \
-		"bugfix/gh31027-${fixture_name}" || return 1
+		"bugfix/gh31027-${fixture_name}" enrolled || return 1
 	printf '/.codegraph/\nlogs/\nnested/.codegraph/\nbackend/__pycache__/\n' \
 		>>"${repo_path}/.git/info/exclude" || return 1
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
 		create_legacy_worktree_recovery_fixture "$worktree_path" "test.sh" "cache-retrofit" || return 1
 	archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
-	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" remove_archived_worktree_path \
+	remove_enrolled_fixture "$repo_path" \
 		"$worktree_path" "$archive_path" "test.sh" "cache-retrofit" \
 		"recovery_path=archive-first" "false" "false" || return 1
 	mkdir -p "${archive_path}/.codegraph" "${archive_path}/logs" || return 1

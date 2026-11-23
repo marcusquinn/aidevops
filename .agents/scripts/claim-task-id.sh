@@ -467,6 +467,23 @@ _validate_and_normalize_args() {
 	return 0
 }
 
+# _warn_interactive_scope_missing_paths — GH#38978: warn (never fail) about
+# literal Files Scope paths missing from the default branch and not declared
+# `NEW: path`. The author can still correct a wrong path; a worker reads it as
+# an instruction to create the file (GH#38966).
+_warn_interactive_scope_missing_paths() {
+	local body="$1"
+	local missing_path="" missing_paths=""
+	declare -F _brief_files_scope_missing_paths >/dev/null 2>&1 || return 0
+	missing_paths=$(_brief_files_scope_missing_paths "$body" "$REPO_PATH") || missing_paths=""
+	while IFS= read -r missing_path; do
+		[[ -n "$missing_path" ]] || continue
+		log_warn "Files Scope path not on the default branch: ${missing_path}"
+		log_warn "  if intentionally new, declare \`NEW: ${missing_path}\` under ### Files to Modify; otherwise correct it"
+	done <<<"$missing_paths"
+	return 0
+}
+
 # _validate_interactive_dispatch_scope — fail before allocation when an
 # interactive session files auto-dispatch work without a canonical Files Scope.
 # An explicit pending hold withholds auto-dispatch from the created issue
@@ -495,7 +512,10 @@ _validate_interactive_dispatch_scope() {
 		normalized=$("$fmt_helper" normalize "$body" 2>/dev/null) && body="$normalized"
 	fi
 	_brief_requires_files_scope "$body" 1 || return 0
-	_brief_files_scope_has_path "$body" && return 0
+	if _brief_files_scope_has_path "$body"; then
+		_warn_interactive_scope_missing_paths "$body"
+		return 0
+	fi
 
 	log_error "auto-dispatch brief has no canonical Files Scope; add before claiming:"
 	log_error "  ### Files Scope"
@@ -1390,6 +1410,29 @@ _main_create_issues() {
 	return 0
 }
 
+# t19157: an interactive OpenCode session watches the issues it files, so a
+# worker on any runner picking them up, blocking or finishing reaches it over
+# the session bus (reference/session-bus.md "Issue watches"). Best effort: 5 s
+# per watch, silent; the bus CLI refuses headless and presence-less sessions.
+_main_watch_created_issues() {
+	local platform="$1"
+	local issue_nums_csv="$2"
+	local slug="" helper="${AIDEVOPS_SESSION_BUS_HELPER:-${SCRIPT_DIR}/session-bus-helper.sh}" num
+	case "$platform" in
+	github) ;;
+	*) return 0 ;;
+	esac
+	[[ -n "${AIDEVOPS_OPENCODE_SESSION_ID:-${OPENCODE_SESSION_ID:-}}" && -x "$helper" ]] || return 0
+	slug="${CLAIM_VERIFIED_TARGET:-$(_extract_github_slug "$REPO_PATH" "$REMOTE_NAME" 2>/dev/null || true)}"
+	[[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 0
+	local IFS=','
+	for num in $issue_nums_csv; do
+		[[ "$num" =~ ^[0-9]+$ ]] || continue
+		timeout_sec 5 "$helper" watch-issue "${slug}#${num}" --new >/dev/null 2>&1 || true
+	done
+	return 0
+}
+
 # Emit machine-readable output lines to stdout.
 _main_output_results() {
 	local first_id="$1"
@@ -2104,6 +2147,7 @@ main() {
 			_issue_nums_csv) _issue_nums_csv="$issue_value" ;;
 			esac
 		done <<<"$issue_output"
+		_main_watch_created_issues "$platform" "$_issue_nums_csv"
 	fi
 
 	# --- Output machine-readable results ---

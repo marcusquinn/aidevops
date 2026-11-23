@@ -47,7 +47,7 @@ import {
   loadTeamInterfaceConversation,
 } from "./team-interface-context.mjs";
 import { enforceConversationPathAccess } from "./team-interface-path-guard.mjs";
-import { assertLocalOnlyEgress, initLocalOnlyPolicy } from "./local-only-policy.mjs";
+import { assertLocalOnlyEgress, formatLocalOnlyBinding, initLocalOnlyPolicy } from "./local-only-policy.mjs";
 import { createProviderErrorHandler } from "./provider-error-diagnostics.mjs";
 import { adaptToolDefinition } from "./tool-definition.mjs";
 import { createTools, tool } from "./tools.mjs";
@@ -352,6 +352,9 @@ export async function setupAidevopsV2(ctx) {
 
   // GH#34125 #aidevops:trust-boundary: bind before any hook registers.
   const localOnlyPolicy = initLocalOnlyPolicy(process.env);
+  const logLocalOnly = (line) => console.error(line);
+  // GH#38424: content-free binding state, so operators can confirm this process is bound.
+  logLocalOnly(formatLocalOnlyBinding(localOnlyPolicy));
   const conversation = loadTeamInterfaceConversation(process.env, AGENTS_DIR, {
     pluginEntryPath: PLUGIN_ENTRY_PATH,
     repositoryDir: directory,
@@ -382,6 +385,7 @@ export async function setupAidevopsV2(ctx) {
     const baseTools = createSchemaGatedTools(tool, () => {
       const tools = createTools(SCRIPTS_DIR, run, {
         aidevopsRun: runChecked,
+        memoryRun: runChecked,
         sessionOrigin: process.env.AIDEVOPS_SESSION_ORIGIN,
         poolToolFactory: () => createPoolTool(client),
         ...v2ImageToolOptions(),
@@ -514,7 +518,7 @@ export async function setupAidevopsV2(ctx) {
     // Released 2.0.3 dispatches these hooks separately on the base transcript.
     // Keep framework transformations identical before adding compaction's tail.
     const transformContext = async (event) => {
-      assertLocalOnlyEgress(localOnlyPolicy, event, "context");
+      assertLocalOnlyEgress(localOnlyPolicy, event, "context", logLocalOnly);
       compactionReplay.inject(event);
       const input = v1HookInput(event);
       sessionModels.remember(event.sessionID, input.model.modelID);
@@ -548,9 +552,9 @@ export async function setupAidevopsV2(ctx) {
       // GH#34125: check the outgoing Request, and again after our own
       // provider-auth rewrite so no aidevops mutation can change the endpoint.
       // Other installed plugins are trusted in-process code (reference/vault.md).
-      assertLocalOnlyEgress(localOnlyPolicy, event, "http");
+      assertLocalOnlyEgress(localOnlyPolicy, event, "http", logLocalOnly);
       await providerAuth.httpRequest(event);
-      assertLocalOnlyEgress(localOnlyPolicy, event, "http");
+      assertLocalOnlyEgress(localOnlyPolicy, event, "http", logLocalOnly);
     }));
     await register(registrations, ctx.session.hook("http.response", providerAuth.httpResponse));
     // GH#37667: after account rotation, move a child whose provider OAuth pool

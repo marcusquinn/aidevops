@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# GH#39344: 140 assertions; 320-592s observed on a loaded macOS host.
+# aidevops:suite-timeout=900
 
 set -euo pipefail
 
@@ -8,6 +10,7 @@ TEST_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCANNER="$(cd "${TEST_SCRIPT_DIR}/.." && pwd)/pr-review-thread-response-scanner.sh"
 TEST_ROOT=""
 TESTS_RUN=0
+TESTS_SKIPPED=0
 TESTS_FAILED=0
 export TEST_HEAD_OID_1="1111111111111111111111111111111111111111"
 export TEST_HEAD_OID_2="2222222222222222222222222222222222222222"
@@ -25,6 +28,17 @@ source "${TEST_SCRIPT_DIR}/test-pr-review-thread-response-scanner-dispatch.sh"
 # shellcheck source=./test-pr-review-thread-response-scanner-lifecycle.sh
 # shellcheck disable=SC1091 # Sibling module resolved via TEST_SCRIPT_DIR at runtime
 source "${TEST_SCRIPT_DIR}/test-pr-review-thread-response-scanner-lifecycle.sh"
+
+print_skip() {
+	local test_name="$1"
+	local reason="${2:-}"
+	TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
+	printf 'SKIP %s\n' "$test_name"
+	if [[ -n "$reason" ]]; then
+		printf '     %s\n' "$reason"
+	fi
+	return 0
+}
 
 print_result() {
 	local test_name="$1"
@@ -126,6 +140,7 @@ main_mutations() {
 	test_reply_falls_back_when_thread_author_missing
 	test_reply_skips_duplicate_marker
 	printf '\nTests run: %d\n' "$TESTS_RUN"
+	printf 'Tests skipped: %d\n' "$TESTS_SKIPPED"
 	printf 'Tests failed: %d\n' "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
 		return 1
@@ -140,7 +155,11 @@ main_rereview() {
 	test_mark_complete_defers_rereview_until_all_threads_converge
 	test_mark_complete_preserves_incomplete_state_when_rereview_write_fails
 	test_mark_blocked_never_requests_rereview
+	test_mark_blocked_rejects_capacity_and_mark_progress_records
 	test_mark_blocked_publishes_continuation_finding
+	test_route_prerequisite_refuses_out_of_scope
+	test_route_prerequisite_creates_holds_and_reuses
+	test_mark_blocked_publishes_review_thread_finding
 	return 0
 }
 
@@ -154,6 +173,28 @@ main_scan() {
 	test_scan_fails_closed_without_graphql_cost
 	test_scan_pr_excludes_human_threads_by_default
 	test_scan_pr_can_include_human_threads_with_opt_in
+	return 0
+}
+
+main_worktrees() {
+	test_dispatch_uses_linked_pr_branch_worktree
+	test_dispatch_fetches_head_from_linked_worktree_context
+	test_dispatch_bootstraps_fetch_context_without_linked_worktree
+	test_dispatch_exports_worktree_ownership_context
+	test_dispatch_registers_created_worktree_as_transferable_precreate_owner
+	test_dispatch_preserves_reused_same_task_owner_snapshot
+	test_dispatch_rejects_reused_other_task_owner
+	test_dispatch_takeover_uses_worker_owned_branch_beside_idle_owner
+	test_dispatch_takeover_fails_closed_when_labels_unreadable
+	test_dispatch_rejects_reused_unverified_owner
+	test_dispatch_blocks_cross_repository_head
+	test_dispatch_blocks_remote_head_drift
+	test_dispatch_fast_forwards_clean_behind_existing_worktree
+	test_dispatch_preserves_and_recovers_dirty_existing_worktree_reconcile
+	test_dispatch_fails_closed_when_dirty_backup_no_longer_matches
+	test_dispatch_rejects_diverged_existing_worktree_reconcile
+	test_dispatch_rejects_live_owned_existing_worktree_reconcile
+	test_dispatch_cleans_up_failed_exact_head_worktree
 	return 0
 }
 
@@ -172,33 +213,23 @@ main() {
 	test_dispatch_detaches_worker_from_parent_process_group
 	test_dispatch_uses_scope_without_duplicate_fallback
 	test_dispatch_preserves_head_fields_when_labels_are_empty
-	test_dispatch_uses_linked_pr_branch_worktree
-	test_dispatch_fetches_head_from_linked_worktree_context
-	test_dispatch_bootstraps_fetch_context_without_linked_worktree
-	test_dispatch_exports_worktree_ownership_context
-	test_dispatch_registers_created_worktree_as_transferable_precreate_owner
-	test_dispatch_preserves_reused_same_task_owner_snapshot
-	test_dispatch_rejects_reused_other_task_owner
-	test_dispatch_rejects_reused_unverified_owner
-	test_dispatch_blocks_cross_repository_head
-	test_dispatch_blocks_remote_head_drift
-	test_dispatch_fast_forwards_clean_behind_existing_worktree
-	test_dispatch_preserves_and_recovers_dirty_existing_worktree_reconcile
-	test_dispatch_fails_closed_when_dirty_backup_no_longer_matches
-	test_dispatch_rejects_diverged_existing_worktree_reconcile
-	test_dispatch_rejects_live_owned_existing_worktree_reconcile
-	test_dispatch_cleans_up_failed_exact_head_worktree
+	main_worktrees
 	test_dispatch_prompt_includes_full_thread_command_signatures
 	test_dispatch_prompt_uses_stable_deployed_scanner_path
 	test_dispatch_prompt_mentions_graphql_only_thread_operations
 	test_dispatch_prompt_requires_machine_readable_completion_state
 	test_dispatch_prompt_requires_contract_v11_remediation_role_and_praise_only_resolution
 	test_dispatch_prompt_requires_exactly_one_terminal_call
+	test_route_upstream_refuses_untrusted_targets
+	test_route_upstream_creates_once_and_reuses
+	test_mark_blocked_refuses_upstream_reasons
 	test_dispatch_prompt_explains_shell_redirection_constraint
 	test_dispatch_prompt_declares_precreated_worktree_contract
 	test_dispatch_prompt_marks_dynamic_metadata_untrusted
 	test_dispatch_prompt_includes_change_request_reviewer_comments
 	test_dispatch_pr_launches_targeted_worker_with_human_opt_in
+	test_dispatch_pr_defers_session_owned_interactive_pr
+	test_dispatch_pr_launches_after_confirmed_worker_takeover
 	test_dispatch_pr_reports_no_match_as_converged
 	test_dispatch_pr_reports_fetch_failure_as_retryable
 	test_dispatch_is_idempotent_for_same_fingerprint
@@ -248,6 +279,7 @@ main() {
 	test_reply_skips_duplicate_marker
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"
+	printf 'Tests skipped: %d\n' "$TESTS_SKIPPED"
 	printf 'Tests failed: %d\n' "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
 		return 1

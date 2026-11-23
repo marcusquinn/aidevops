@@ -94,11 +94,20 @@ def _snapshot(path: Path) -> dict:
     ]))
 
 
-def _helper(*arguments: str) -> str:
+def run_helper(*arguments: str, timeout: float | None = None) -> str:
+    """Run ``worktree-archive-helper.sh`` under the git-only policy.
+
+    A timeout terminates the helper's whole process group (``_run``).
+    """
     bash = shutil.which("bash")
     if bash is None:
         raise ValueError("archive-bash-unavailable")
-    return _run([bash, str(SCRIPTS / "worktree-archive-helper.sh"), *arguments])
+    return _run([bash, str(SCRIPTS / "worktree-archive-helper.sh"), *arguments],
+                timeout=timeout)
+
+
+def _helper(*arguments: str) -> str:
+    return run_helper(*arguments)
 
 
 def _retain_base(path: Path, operation: str, base: str) -> str:

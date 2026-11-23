@@ -187,8 +187,8 @@ class SourceAccessHelperTests(unittest.TestCase):
         os.mkfifo(fifo, 0o600)
         real_open = os.open
         # Force the fixture nonblocking even before the fix, so the regression cannot hang.
-        with mock.patch.object(core.os, "open", side_effect=lambda path, flags: real_open(
-                path, flags | os.O_NONBLOCK)) as opened:
+        with mock.patch.object(core.os, "open", side_effect=lambda path, flags, *args, **kwargs: real_open(
+                path, flags | os.O_NONBLOCK, *args, **kwargs)) as opened:
             with self.assertRaisesRegex(HELPER.SourceAccessError, "non-regular"):
                 core.secure_source_content(str(fifo))
         self.assertTrue(opened.call_args.args[1] & os.O_NONBLOCK)
@@ -1534,7 +1534,7 @@ else: sys.exit(1)
                 encoding="utf-8",
             )
             bytecode_path = Path(importlib.util.cache_from_source(str(core_path)))
-            bytecode_path.parent.mkdir()
+            bytecode_path.parent.mkdir(parents=True, exist_ok=True)
             py_compile.compile(
                 str(malicious_source),
                 cfile=str(bytecode_path),

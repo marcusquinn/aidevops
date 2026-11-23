@@ -591,10 +591,16 @@ test_dispatch_preserves_nonclosing_replacement_linkage() {
 			local helper_src="" keyword="" generated="" expected="Resolves"
 			helper_src=$(awk '
 				/^[[:alnum:]_]+\(\) \{/ {
-					emit = ($0 ~ /^(_review_repair_closing_keyword|_build_pr_body|_read_pr_metadata_json|_ensure_worker_pr_linkage)\(\) \{/)
+					emit = ($0 ~ /^(_review_repair_closing_keyword|_build_pr_body|_format_files_changed_for_body|_read_pr_metadata_json|_ensure_worker_pr_linkage)\(\) \{/)
 				}
 				emit { print }
 			' "${SCRIPT_DIR}/../full-loop-helper-commit.sh")
+			eval "$helper_src"
+			# GH#39558: _build_pr_body rejects inputs carrying their own Runtime
+			# Testing heading; load the real guard from the risk library.
+			helper_src=$(sed -n '/^_pr_body_inputs_reserve_runtime_section() {/,/^}/p' \
+				"${SCRIPT_DIR}/../full-loop-helper-risk.sh")
+			[[ -n "$helper_src" ]] || exit 1
 			eval "$helper_src"
 			_gh_with_timeout() {
 				if [[ "$*" == *"issue view"* ]]; then

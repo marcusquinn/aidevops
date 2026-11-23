@@ -132,6 +132,30 @@ _should_setup_noninteractive_complexity_scan() {
 	return 1
 }
 
+# The systemic CI failure miner files the auto-dispatch issues that repair
+# broken default-branch workflows. setup_failure_miner uninstalls it whenever
+# PULSE_ENABLED is not "true", so one update with an unresolved pulse state
+# removed it, and the generic "already installed" gate never reinstalled it:
+# the maintainer runner went from 2026-04-08 to 2026-11-20 without a miner
+# while a broken review-bot-gate.yml blocked every merge for ~9.5 h (GH#39466).
+_should_setup_noninteractive_failure_miner() {
+	if _should_setup_noninteractive_scheduler \
+		"Failure miner" \
+		"sh.aidevops.routine-gh-failure-miner" \
+		"aidevops: gh-failure-miner" \
+		"aidevops-gh-failure-miner"; then
+		return 0
+	fi
+
+	# Pulse-dependency escape hatch, as for stats-wrapper and complexity scan:
+	# setup_failure_miner still installs only when PULSE_ENABLED is "true".
+	if _should_setup_noninteractive_supervisor_pulse; then
+		return 0
+	fi
+
+	return 1
+}
+
 # The profile README's input-activity rows are measured only by the
 # per-minute sampler that setup_screen_time_snapshot installs: on Linux it is
 # the screen-time row (no OS store), on macOS the "Input activity (Mac)" row
@@ -353,25 +377,49 @@ find_opencode_config() {
 # get_latest_homebrew_python_formula() and find_python3() are defined in
 # _common.sh (sourced above). Not duplicated here — see GH#5239 review.
 
+# Decide whether a global npm install needs sudo (Linux only).
+# Canonical definition in .agents/scripts/setup/_common.sh (GH#38399); this
+# identical fallback covers bootstrap when _common.sh was not sourced.
+# Returns: 0 when sudo is needed, 1 otherwise
+if ! type _npm_global_prefix_needs_sudo &>/dev/null; then
+	_npm_global_prefix_needs_sudo() {
+		[[ "$(uname)" == "Darwin" ]] && return 1
+		local prefix=""
+		prefix=$(npm config get prefix 2>/dev/null) || prefix=""
+		[[ "$prefix" == /* ]] || return 0
+		local dir="${prefix%/}/lib"
+		while [[ ! -e "$dir" ]]; do
+			dir="${dir%/*}"
+			[[ -n "$dir" ]] || dir="/"
+		done
+		[[ -d "$dir" && -w "$dir" ]] && return 1
+		return 0
+	}
+fi
+
 # Install a package globally via npm, with sudo when needed on Linux.
 # Usage: npm_global_install "package-name" OR npm_global_install "package@version"
-# On Linux with apt-installed npm, automatically prepends sudo.
+# On Linux, prepends sudo only when the npm prefix is not user-writable.
+# Canonical definition (npm-first for OpenCode with a bun fallback, bun-first
+# otherwise) lives in .agents/scripts/setup/_common.sh. This npm-only fallback
+# covers bootstrap and must not shadow it once _common.sh is sourced (GH#38409).
 # Returns: 0 on success, 1 on failure
-npm_global_install() {
-	local pkg="$1"
+if ! type npm_global_install &>/dev/null; then
+	npm_global_install() {
+		local pkg="$1"
 
-	if command -v npm >/dev/null 2>&1; then
-		# npm global installs need sudo on Linux when prefix dir isn't writable
-		if [[ "$(uname)" != "Darwin" ]] && [[ ! -w "$(npm config get prefix 2>/dev/null)/lib" ]]; then
-			sudo npm install -g "$pkg"
+		if command -v npm >/dev/null 2>&1; then
+			if _npm_global_prefix_needs_sudo; then
+				sudo npm install -g "$pkg"
+			else
+				npm install -g "$pkg"
+			fi
+			return $?
 		else
-			npm install -g "$pkg"
+			return 1
 		fi
-		return $?
-	else
-		return 1
-	fi
-}
+	}
+fi
 
 # Prompt the user for input, with non-interactive fallback.
 # Canonical definition in .agents/scripts/setup/_common.sh; this fallback

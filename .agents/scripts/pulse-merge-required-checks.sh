@@ -10,6 +10,8 @@ _PULSE_MERGE_REQUIRED_CHECKS_DIR="${BASH_SOURCE[0]%/*}"
 source "${_PULSE_MERGE_REQUIRED_CHECKS_DIR}/lib/descriptor-safe-log.sh"
 PMRC_CHECK_COMPLETED="completed"
 PMRC_CHECK_SUCCESS="success"
+PMRC_CHECK_NEUTRAL="neutral"
+PMRC_CHECK_SKIPPED="skipped"
 PMRC_CHECK_FAILURE="failure"
 PMRC_BOOL_TRUE="true"
 PMRC_JSON_ARRAY="array"
@@ -38,6 +40,7 @@ PMRC_BLOCKER_CHECKS_FAILED="checks-failed"
 PMRC_BLOCKER_QUIET_PERIOD="quiet-period"
 PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE="snapshot-unavailable"
 PMRC_BLOCKER_HEAD_CHANGED="head-changed"
+PMRC_BLOCKER_PROSPECTIVE_TODO="prospective-todo"
 : "${_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON:=[]}"
 : "${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:=}"
 
@@ -611,6 +614,9 @@ _pmrc_record_preflight_check_mismatch() {
 	return 0
 }
 
+# GH#38234: GitHub can leave a finished check run reporting status=in_progress
+# after an Actions incident. A conclusion is set only on completion, so a check
+# run with both conclusion and completed_at is normalized to completed.
 _pmrc_normalize_snapshot_checks_json() {
 	local repo_slug="$1"
 	local head_sha="$2"
@@ -619,8 +625,8 @@ _pmrc_normalize_snapshot_checks_json() {
 	checks_json=$(jq -s \
 		--arg completed "$PMRC_CHECK_COMPLETED" --arg success "$PMRC_CHECK_SUCCESS" --arg failure "$PMRC_CHECK_FAILURE" \
 		--arg array_type "$PMRC_JSON_ARRAY" --arg object_type "$PMRC_JSON_OBJECT" \
-		--arg skipped "skipped" --arg maintainer "$PMRC_MAINTAINER_GATE" --arg maintainer_display "$PMRC_MAINTAINER_GATE_DISPLAY" \
-		--arg maintainer_workflow "$PMRC_MAINTAINER_GATE_WORKFLOW" \
+		--arg skipped "$PMRC_CHECK_SKIPPED" --arg neutral "$PMRC_CHECK_NEUTRAL" --arg maintainer "$PMRC_MAINTAINER_GATE" \
+		--arg maintainer_display "$PMRC_MAINTAINER_GATE_DISPLAY" --arg maintainer_workflow "$PMRC_MAINTAINER_GATE_WORKFLOW" \
 		--arg review_gate "$PMRC_REVIEW_BOT_GATE" --arg review_gate_workflow "$PMRC_REVIEW_BOT_GATE_WORKFLOW" '
 		if length != 2 or (.[0] | type) != $array_type or (.[1] | type) != $object_type
 		then error("invalid check-runs or commit-status response")
@@ -628,12 +634,12 @@ _pmrc_normalize_snapshot_checks_json() {
 		.[0] as $pages | .[1] as $statuses |
 		"pending" as $pending | "in_progress" as $in_progress | "error" as $error |
 		[
-			$pages[]?.check_runs[]? | {
+			$pages[]?.check_runs[]? | ((.conclusion // "") | ascii_downcase) as $run_conclusion | {
 				source: "check_run",
 				name: (.name // ""),
 				app_slug: (.app.slug // ""),
-				status: ((.status // "") | ascii_downcase),
-				conclusion: ((.conclusion // "") | ascii_downcase),
+				status: (if $run_conclusion != "" and .completed_at != null then $completed else ((.status // "") | ascii_downcase) end),
+				conclusion: $run_conclusion,
 				link: (.details_url // .html_url // ""),
 				observed_at: (.completed_at // .started_at // "")
 			}
@@ -693,7 +699,7 @@ _pmrc_normalize_snapshot_checks_json() {
 					conclusion: (
 						if any($effective[]; (.conclusion == $failure or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required" or .conclusion == "startup_failure")) then $failure
 						elif ($family == $review_gate and all($effective[]; .conclusion == $success)) then $success
-						elif ($family == $maintainer and all($effective[]; (.conclusion == $success or .conclusion == "neutral" or .conclusion == $skipped))) then $success
+						elif ($family == $maintainer and all($effective[]; (.conclusion == $success or .conclusion == $neutral or .conclusion == $skipped))) then $success
 						else "" end
 					),
 					app_slug: ([$effective[]?.app_slug | select(. != "")] | first // ""),
@@ -1159,6 +1165,76 @@ _pmrc_is_configured_advisory_failure() {
 	return $?
 }
 
+# t19173 / GH#39310: an external static-analysis app can fail a PR only for
+# findings in files the PR never touched (CodeFactor reports every pre-existing
+# workflow finding as new once a PR edits any workflow). A worker cannot repair
+# those within scope, so the repair loop discarded finished PRs. Such a failure
+# is advisory only with complete evidence: one latest external (non-Actions)
+# run, every annotation fetched, none on a changed path. Actions runs are
+# excluded because cross-file analysers (type checkers) report real regressions
+# in untouched files. Any read, parse or completeness gap fails closed.
+_pmrc_off_diff_annotation_evidence() {
+	local repo_slug="$1" head_sha="$2" check_name="$3"
+	local max="${PULSE_MERGE_OFF_DIFF_MAX_ANNOTATIONS:-500}" encoded="" run_json="" run_id="" pages=""
+	[[ -n "$head_sha" && "$max" =~ ^[1-9][0-9]*$ ]] || return 1
+	encoded=$(jq -rn --arg value "$check_name" '$value | @uri') || return 1
+	run_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/commits/${head_sha}/check-runs?check_name=${encoded}&filter=latest&per_page=100" 2>/dev/null) || return 1
+	run_json=$(jq -ec --arg name "$check_name" --arg failure "$PMRC_CHECK_FAILURE" --argjson max "$max" \
+		--arg number_type "$PMRC_JSON_NUMBER" '
+		[.check_runs[]? | select(.name == $name)]
+		| if length == 1 then .[0] else error("ambiguous check run") end
+		| select((.id | type) == $number_type and .id > 0 and (.id | floor) == .id
+			and ((.app.slug // "") | length) > 0 and .app.slug != "github-actions"
+			and .conclusion == $failure
+			and (.output.annotations_count | type) == $number_type
+			and .output.annotations_count > 0 and .output.annotations_count <= $max)
+		| {id, app: .app.slug, count: .output.annotations_count}
+	' <<<"$run_json" 2>/dev/null) || return 1
+	run_id=$(jq -er '.id' <<<"$run_json") || return 1
+	pages=$(_pmrc_gh_read gh api "repos/${repo_slug}/check-runs/${run_id}/annotations?per_page=100" \
+		--paginate --slurp 2>/dev/null) || return 1
+	jq -ec --argjson run "$run_json" --arg string_type "$PMRC_JSON_STRING" --arg array_type "$PMRC_JSON_ARRAY" '
+		(if type == $array_type and all(.[]; type == $array_type) then (add // []) else error("invalid annotation pages") end) as $annotations
+		| if ($annotations | length) != $run.count then error("partial annotations")
+		elif any($annotations[]; (.path | type) != $string_type or .path == "") then error("annotation without path")
+		else {app: $run.app, count: $run.count, paths: ($annotations | map(.path) | unique)} end
+	' <<<"$pages" 2>/dev/null
+	return $?
+}
+
+_pmrc_pr_changed_paths_json() {
+	local repo_slug="$1" pr_number="$2" pages=""
+	pages=$(_pmrc_gh_read gh api "repos/${repo_slug}/pulls/${pr_number}/files?per_page=100" \
+		--paginate --slurp 2>/dev/null) || return 1
+	# GitHub lists at most 3000 files; a list at that cap may be truncated.
+	jq -ec --arg string_type "$PMRC_JSON_STRING" --arg array_type "$PMRC_JSON_ARRAY" '
+		(if type == $array_type and all(.[]; type == $array_type) then (add // []) else error("invalid file pages") end) as $files
+		| if ($files | length) == 0 or ($files | length) >= 3000 then error("empty or capped file list")
+		elif any($files[]; (.filename | type) != $string_type or .filename == "") then error("file without name")
+		else [$files[] | .filename, (.previous_filename // empty)] | unique end
+	' <<<"$pages" 2>/dev/null
+	return $?
+}
+
+_pmrc_is_off_diff_external_failure() {
+	local name="$1" members="$2" repo_slug="$3" pr_number="$4" head_sha="$5"
+	local evidence="" changed="" summary=""
+	[[ "$members" == "${name}@check_run" ]] || return 1
+	evidence=$(_pmrc_off_diff_annotation_evidence "$repo_slug" "$head_sha" "$name") || return 1
+	changed=$(_pmrc_pr_changed_paths_json "$repo_slug" "$pr_number") || return 1
+	# Stream both documents over stdin: up to 3000 paths can exceed the OS
+	# per-argument limit through --argjson (GH#28164).
+	summary=$(printf '%s\n%s\n' "$evidence" "$changed" | jq -ser '
+		if length != 2 then error("invalid off-diff evidence") else . end
+		| .[0] as $evidence | .[1] as $changed
+		| $evidence
+		| select(any(.paths[]; . as $path | ($changed | index($path)) != null) | not)
+		| "app=\(.app) annotations=\(.count) paths=\(.paths | length)"
+	' 2>/dev/null) || return 1
+	printf '%s\n' "$summary"
+	return 0
+}
+
 #######################################
 # Classify one terminal non-required failure. Logs the reason when advisory.
 # Args: $1=name $2=members $3=link $4=checks_json $5=configured_contexts_json
@@ -1175,7 +1251,7 @@ _pmrc_nonrequired_failure_is_advisory() {
 	local repo_slug="$7"
 	local pr_number="$8"
 	local head_sha="$9"
-	local subject="for PR #${pr_number} in ${repo_slug}"
+	local subject="for PR #${pr_number} in ${repo_slug}" off_diff=""
 
 	if declare -F _ci_check_url_has_infra_failure_log >/dev/null 2>&1 &&
 		_ci_check_url_has_infra_failure_log "$repo_slug" "$link"; then
@@ -1195,7 +1271,85 @@ _pmrc_nonrequired_failure_is_advisory() {
 		echo "[pulse-merge] pre-merge snapshot: IGNORED configured non-required review-provider failure '${name}' with typed current-head review evidence ${subject}" >>"$LOGFILE"
 		return 0
 	fi
+	if off_diff=$(_pmrc_is_off_diff_external_failure "$name" "$members" "$repo_slug" "$pr_number" "$head_sha"); then
+		echo "[pulse-merge] pre-merge snapshot: IGNORED non-required external check '${name}' whose annotation(s) all lie outside the PR diff (${off_diff}) ${subject} (t19173)" >>"$LOGFILE"
+		return 0
+	fi
 	return 1
+}
+
+# Ignore only aged individual check runs after proving every required context
+# has a passing terminal result. Missing or malformed evidence fails closed.
+# GH#39166: passing matches the snapshot loop and branch protection
+# (success, neutral, skipped), so path-filtered required workflows on
+# planning-only PRs do not leave a hung advisory run blocking forever.
+_pmrc_stale_pending_age() {
+	local repo_slug="$1" head_sha="$2" checks_json="$3" required_json="$4" name="$5"
+	local limit="${PULSE_MERGE_STALE_NONREQUIRED_PENDING_SECONDS:-3600}"
+	local now="${PULSE_MERGE_NOW_EPOCH:-$(date +%s)}" started="" epoch="" commit_json=""
+	[[ "$limit" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ ]] || return 1
+	jq -e --argjson required "$required_json" --arg completed "$PMRC_CHECK_COMPLETED" \
+		--arg success "$PMRC_CHECK_SUCCESS" --arg neutral "$PMRC_CHECK_NEUTRAL" --arg skipped "$PMRC_CHECK_SKIPPED" '
+		. as $checks | all($required[]; . as $context |
+			any($checks[]; (.name == $context or any(.members[]?; .name == $context))
+				and .status == $completed
+				and (.conclusion == $success or .conclusion == $neutral or .conclusion == $skipped)))
+	' <<<"$checks_json" >/dev/null 2>&1 || return 1
+	started=$(jq -er --arg name "$name" --arg maintainer "$PMRC_MAINTAINER_GATE" --arg review "$PMRC_REVIEW_BOT_GATE" '
+		[.[] | select(.name == $name and .source == "check_run" and .family != $maintainer and .family != $review)
+		| .observed_at // ""] | if length == 1 then .[0] else error("ambiguous check") end
+	' <<<"$checks_json") || return 1
+	if [[ -z "$started" ]]; then
+		[[ -n "$head_sha" ]] || return 1
+		commit_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/commits/${head_sha}" 2>/dev/null) || return 1
+		started=$(jq -r '.commit.committer.date // ""' <<<"$commit_json") || return 1
+	fi
+	epoch=$(_pmrc_iso_to_epoch "$started") || return 1
+	[[ "$epoch" =~ ^[0-9]+$ && "$now" -ge "$epoch" && $((now - epoch)) -gt "$limit" ]] || return 1
+	printf '%s\n' "$((now - epoch))"
+	return 0
+}
+
+_pmrc_pending_is_ignored() {
+	local name="$1" informational="$2" required="$3" repo_slug="$4" pr_number="$5"
+	local checks_json="$6" required_json="$7" head_sha="$8" stale_age=""
+	if [[ "$informational" == "$PMRC_BOOL_TRUE" ]]; then
+		echo "[pulse-merge] pre-merge snapshot: IGNORED non-required informational pending status '${name}' for PR #${pr_number} in ${repo_slug} — it never reaches a terminal state" >>"$LOGFILE"
+		return 0
+	fi
+	if [[ "$required" != "$PMRC_BOOL_TRUE" ]] &&
+		stale_age=$(_pmrc_stale_pending_age "$repo_slug" "$head_sha" "$checks_json" "$required_json" "$name"); then
+		echo "[pulse-merge] pre-merge snapshot: IGNORED stale non-required pending check '${name}' (age=${stale_age}s) for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+		return 0
+	fi
+	return 1
+}
+
+# GH#39664: the forge-event recorder is ordering bookkeeping in a concurrency
+# group where a newer request supersedes the older one. Reruns are cancelled
+# the same way, so a non-required cancellation can never clear; it must not block.
+# Supersession is proven from run data: a newer run of the same workflow must
+# exist; a manual cancellation with no replacement keeps the rerun/block path.
+# Args: $1=name $2=conclusion $3=required $4=repo_slug $5=pr_number $6=check_url
+# Returns: 0=benign superseded cancellation (logged), 1=otherwise
+_pmrc_is_superseded_forge_recorder() {
+	local name="$1" conclusion="$2" required="$3" repo_slug="$4" pr_number="$5" check_url="${6:-}"
+	local run_id="" fr_json="" workflow_id="" created_at="" newer="" url_prefix="https://github.com/${repo_slug}/actions/runs/"
+	[[ "$conclusion" == cancelled && "$required" != "$PMRC_BOOL_TRUE" ]] || return 1
+	[[ "$name" == "sync / Record ordered forge event" ]] || return 1
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
+	[[ "$check_url" == "${url_prefix}"* ]] || return 1
+	run_id="${check_url#*/actions/runs/}"
+	run_id="${run_id%%[/?#]*}"
+	[[ "$run_id" =~ ^[0-9]+$ ]] || return 1
+	fr_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/actions/runs/${run_id}" 2>/dev/null) || return 1
+	workflow_id=$(jq -er '.workflow_id | select(. != null)' <<<"$fr_json") || return 1
+	created_at=$(jq -er '.created_at | select(. != null)' <<<"$fr_json") || return 1
+	newer=$(_pmrc_gh_read gh api "repos/${repo_slug}/actions/workflows/${workflow_id}/runs?per_page=20" \
+		--jq "[.workflow_runs[] | select(.created_at > \"${created_at}\")] | length" 2>/dev/null) || return 1
+	[[ "$newer" =~ ^[1-9][0-9]*$ ]] || return 1
+	echo "[pulse-merge] pre-merge snapshot: IGNORED non-required concurrency-superseded forge-event recorder '${name}' for PR #${pr_number} in ${repo_slug} (GH#39664)" >>"$LOGFILE"
+	return 0
 }
 
 _pmrc_snapshot_checks_acceptable() {
@@ -1233,16 +1387,17 @@ _pmrc_snapshot_checks_acceptable() {
 			continue
 		fi
 		if [[ "$status" != "$PMRC_CHECK_COMPLETED" || -z "$conclusion" ]]; then
-			if [[ "$informational" == "$PMRC_BOOL_TRUE" ]]; then
-				echo "[pulse-merge] pre-merge snapshot: IGNORED non-required informational pending status '${name}' for PR #${pr_number} in ${repo_slug} — it never reaches a terminal state" >>"$LOGFILE"
-				continue
-			fi
+			_pmrc_pending_is_ignored "$name" "$informational" "$required" "$repo_slug" "$pr_number" "$checks_json" "$required_json" "$head_sha" && continue
 			pending=$((pending + 1))
 			continue
 		fi
 		case "$conclusion" in
 		success | neutral | skipped) continue ;;
 		esac
+		if _pmrc_is_superseded_forge_recorder "$name" "$conclusion" "$required" "$repo_slug" "$pr_number" "$link"; then
+			advisory=$((advisory + 1))
+			continue
+		fi
 		if [[ "$conclusion" == cancelled ]]; then
 			_pmrc_rerun_cancelled_check "$repo_slug" "$pr_number" "$head_sha" "$link" || true
 			# Never classify cancellation as advisory or dispatch code repair.

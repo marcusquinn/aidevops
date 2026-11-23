@@ -97,7 +97,8 @@ check_crawl4ai() {
 
 # Find working Python with dependencies
 find_python() {
-	local pythons=("python3.11" "python3.12" "python3.10" "python3")
+	local venv_py="${SITE_CRAWLER_VENV_DIR:-$HOME/.aidevops/site-crawler-venv}/bin/python"
+	local pythons=("$venv_py" "python3.11" "python3.12" "python3.10" "python3")
 	local user_site="${HOME}/Library/Python/3.11/lib/python/site-packages"
 
 	for py in "${pythons[@]}"; do
@@ -114,19 +115,29 @@ find_python() {
 
 # Install Python dependencies
 install_python_deps() {
-	local pythons=("python3.11" "python3.12" "python3.10" "python3")
+	local venv_dir="${SITE_CRAWLER_VENV_DIR:-$HOME/.aidevops/site-crawler-venv}"
+	local venv_py="${venv_dir}/bin/python"
 
-	for py in "${pythons[@]}"; do
-		if command -v "$py" &>/dev/null; then
-			print_info "Installing dependencies with $py..."
-			"$py" -m pip install --user aiohttp beautifulsoup4 openpyxl 2>/dev/null && {
-				PYTHON_CMD="$py"
-				export PYTHONPATH="${HOME}/Library/Python/3.11/lib/python/site-packages:${PYTHONPATH:-}"
-				return 0
-			}
+	if [[ ! -x "$venv_py" ]]; then
+		if command -v uv &>/dev/null; then
+			uv venv --quiet "$venv_dir" 2>/dev/null || true
+		elif command -v python3 &>/dev/null; then
+			python3 -m venv "$venv_dir" 2>/dev/null || true
 		fi
-	done
-	return 1
+	fi
+	if [[ ! -x "$venv_py" ]]; then
+		print_error "Cannot create venv. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
+		return 1
+	fi
+
+	print_info "Installing dependencies into ${venv_dir}..."
+	if command -v uv &>/dev/null; then
+		uv pip install --quiet --python "$venv_py" aiohttp beautifulsoup4 openpyxl 2>/dev/null || return 1
+	else
+		"$venv_py" -m pip install --quiet aiohttp beautifulsoup4 openpyxl 2>/dev/null || return 1
+	fi
+	PYTHON_CMD="$venv_py"
+	return 0
 }
 
 # Extract domain from URL

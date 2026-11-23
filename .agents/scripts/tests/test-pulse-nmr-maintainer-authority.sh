@@ -32,6 +32,9 @@ setup_test_env() {
 	TEST_ROOT="$(mktemp -d -t nmr-authority.XXXXXX)"
 	mkdir -p "${TEST_ROOT}/bin"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
+	# The permission lookup memoizes per process (GH#38242); each case sets its
+	# own ACTOR_PERMISSION, so clear the memo between cases.
+	_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
 	export LOGFILE="${TEST_ROOT}/pulse.log"
 	export REPOS_JSON="${TEST_ROOT}/repos.json"
 	export POSTED_COMMENT="${TEST_ROOT}/posted-comment.txt"

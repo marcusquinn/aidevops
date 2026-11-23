@@ -30,6 +30,7 @@ fail() {
 
 setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
+	export PULSE_T2449_BLOCK_STATE_DIR="${TEST_ROOT}/t2449-blocks"
 	export LOGFILE="${TEST_ROOT}/pulse.log"
 	export GH_CALL_LOG="${TEST_ROOT}/gh-calls.log"
 	: >"$LOGFILE"
@@ -71,7 +72,10 @@ define_functions_under_test() {
 	_PMP_ORIGIN_WORKER_PATTERN=',origin:worker,'
 	_PMP_ORIGIN_TAKEOVER_PATTERN=',origin:worker-takeover,'
 	eval "$fn_src"
-	fn_src=$(awk '/^_interactive_pr_auto_merge_allowed\(\) \{/,/^}$/ { print }' "${SCRIPT_DIR}/../pulse-merge-author-checks.sh")
+	fn_src=$(awk '
+		/^_interactive_pr_auto_merge_allowed\(\) \{/,/^}$/ { print }
+		/^_interactive_draft_handover_refused\(\) \{/,/^}$/ { print }
+	' "${SCRIPT_DIR}/../pulse-merge-author-checks.sh")
 	eval "$fn_src"
 	return 0
 }
@@ -263,6 +267,20 @@ test_route_uses_provided_labels() {
 		return 0
 	fi
 	pass "fix-worker route uses provided labels"
+	return 0
+}
+
+# t19244: the runtime-pending module routes a held worker PR here with
+# hold-for-review in its labels; CI repair must still reach dispatch.
+test_held_worker_pr_reaches_ci_dispatch() {
+	: >"$GH_CALL_LOG"
+	_route_pr_to_fix_worker "124" "owner/repo" "456" "ci" "origin:worker,hold-for-review,status:in-review" || true
+
+	if ! grep -q "dispatch-ci 124 owner/repo 456" "$GH_CALL_LOG"; then
+		fail "held worker PR reaches CI repair dispatch" "Expected CI dispatch: $(cat "$GH_CALL_LOG")"
+		return 0
+	fi
+	pass "held worker PR reaches CI repair dispatch"
 	return 0
 }
 
@@ -539,19 +557,65 @@ test_successful_finalizer_dispatch_retires_retry_hint() {
 	return 0
 }
 
+orphan_tracking_gh() {
+	local scenario="$1"
+	shift
+	local args="$*" label="origin:interactive" author="maintainer"
+	printf 'gh %s\n' "$args" >>"$GH_CALL_LOG"
+	case "$args" in
+	'pr view '*)
+		[[ "$scenario" != untrusted ]] || author=outsider
+		if [[ "$scenario" == concurrent-edit && "$(grep -c '^gh pr view' "$GH_CALL_LOG")" -gt 1 ]]; then author=changed; fi
+		case "$scenario" in no-takeover | hold-for-review | needs-maintainer-review | external-contributor) label="$scenario" ;; esac
+		jq -n --arg label "$label" --arg author "$author" '{state:"OPEN",author:{login:$author},labels:[{name:"origin:interactive"},{name:$label}],body:"Original body\nRef #987",url:"source-pr"}'
+		;;
+	*search/issues*)
+		[[ "$scenario" != search-failure ]] || return 1
+		if [[ "$scenario" == reuse || "$scenario" == closed ]]; then
+			printf '{"incomplete_results":false,"items":[{"title":"Track interactive PR #123","number":456}]}'
+		else
+			printf '{"incomplete_results":false,"items":[]}'
+		fi
+		;;
+	*issues/456*)
+		local state=open
+		[[ "$scenario" != closed ]] || state=closed
+		jq -n --arg state "$state" '{state:$state,body:"<!-- pulse-interactive-tracking:123 -->",user:{login:"maintainer"}}'
+		;;
+	*issues/987*)
+		case "$scenario" in
+		target-unavailable) return 1 ;;
+		merged-pr) printf '{"state":"closed","pull_request":{}}' ;;
+		open-pr) printf '{"state":"open","pull_request":{}}' ;;
+		closed-issue) printf '{"state":"closed"}' ;;
+		open-issue) printf '{"state":"open"}' ;;
+		esac
+		;;
+	*pulls/123/files*) printf 'src/existing.sh\n' ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
 test_orphan_tracking_recovery() {
 	local scenario="" rc=0
-	for scenario in create reuse edit-failure create-failure verify-failure untrusted fresh no-takeover hold-for-review needs-maintainer-review external-contributor off detect dry-run search-failure closed concurrent-edit; do
+	for scenario in create reuse merged-pr open-pr closed-issue open-issue target-unavailable edit-failure create-failure verify-failure untrusted fresh no-takeover hold-for-review needs-maintainer-review external-contributor off detect dry-run search-failure closed concurrent-edit; do
 		rc=0
 		(
 			install_stubs
 			: >"$GH_CALL_LOG"
 			: >"${TEST_ROOT}/linked-body"
+			: >"$LOGFILE"
+			export AIDEVOPS_MERGE_VERDICT_DIR="${TEST_ROOT}/verdicts"
+			export AIDEVOPS_MERGE_VERDICT_TTL_S=0
 			export AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce
 			export DRY_RUN=0
 			[[ "$scenario" != dry-run ]] || export DRY_RUN=1
 			[[ "$scenario" != off && "$scenario" != detect ]] || export AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE="$scenario"
-			_extract_pr_work_issue() { return 0; }
+			_extract_pr_work_issue() {
+				case "$scenario" in merged-pr | open-pr | closed-issue | open-issue | target-unavailable) printf '987' ;; esac
+				return 0
+			}
 			_extract_linked_issue() {
 				[[ "$scenario" != verify-failure ]] || return 1
 				[[ ! -s "${TEST_ROOT}/linked-body" ]] || printf '456'
@@ -559,32 +623,8 @@ test_orphan_tracking_recovery() {
 			}
 			_interactive_pr_is_stale() { [[ "$scenario" != fresh ]]; return $?; }
 			gh() {
-				local args="$*" label="origin:interactive" author="maintainer"
-				printf 'gh %s\n' "$args" >>"$GH_CALL_LOG"
-				case "$args" in
-				'pr view '*)
-					[[ "$scenario" != untrusted ]] || author=outsider
-					if [[ "$scenario" == concurrent-edit && "$(grep -c '^gh pr view' "$GH_CALL_LOG")" -gt 1 ]]; then author=changed; fi
-					case "$scenario" in no-takeover | hold-for-review | needs-maintainer-review | external-contributor) label="$scenario" ;; esac
-					jq -n --arg label "$label" --arg author "$author" '{state:"OPEN",author:{login:$author},labels:[{name:"origin:interactive"},{name:$label}],body:"Original body",url:"source-pr"}'
-					;;
-				*search/issues*)
-					[[ "$scenario" != search-failure ]] || return 1
-					if [[ "$scenario" == reuse || "$scenario" == closed ]]; then
-						printf '{"incomplete_results":false,"items":[{"title":"Track interactive PR #123","number":456}]}'
-					else
-						printf '{"incomplete_results":false,"items":[]}'
-					fi
-					;;
-				*issues/456*)
-					local state=open
-					[[ "$scenario" != closed ]] || state=closed
-					jq -n --arg state "$state" '{state:$state,body:"<!-- pulse-interactive-tracking:123 -->",user:{login:"maintainer"}}'
-					;;
-				*pulls/123/files*) printf 'src/existing.sh\n' ;;
-				*) return 1 ;;
-				esac
-				return 0
+				orphan_tracking_gh "$scenario" "$@"
+				return $?
 			}
 			gh_create_issue() {
 				local body_file="${10}"
@@ -603,17 +643,32 @@ test_orphan_tracking_recovery() {
 				cp "$body_file" "${TEST_ROOT}/linked-body"
 				return 0
 			}
+			if [[ "$scenario" == open-issue ]]; then
+				_extract_linked_issue() {
+					[[ ! -s "${TEST_ROOT}/linked-body" ]] || printf '987'
+					return 0
+				}
+			fi
 			local result="" result_rc=0
-			result=$(_route_pr_resolve_work_issue 123 owner/repo "" ci) || result_rc=$?
+			result=$(_recover_interactive_pr_work_issue 123 owner/repo) || result_rc=$?
 			case "$scenario" in
-			create | reuse)
+			create | reuse | merged-pr | open-pr | closed-issue)
 				[[ "$result_rc" -eq 0 && "$result" == 456 ]] || exit 1
 				grep -q 'Original body' "${TEST_ROOT}/linked-body" || exit 1
 				grep -q 'Resolves #456' "${TEST_ROOT}/linked-body" || exit 1
+				grep -q 'Ref #987' "${TEST_ROOT}/linked-body" || exit 1
 				[[ "$scenario" != reuse ]] || ! grep -q '^create ' "$GH_CALL_LOG" || exit 1
 				! grep -q 'auto-dispatch' "$GH_CALL_LOG" || exit 1
 				;;
-			*) [[ "$result_rc" -ne 0 && -z "$result" ]] || exit 1 ;;
+			open-issue)
+				[[ "$result_rc" -eq 0 && "$result" == 987 ]] || exit 1
+				grep -q 'Resolves #987' "${TEST_ROOT}/linked-body" || exit 1
+				! grep -qE '^create |search/issues' "$GH_CALL_LOG" || exit 1
+				;;
+			*)
+				[[ "$result_rc" -ne 0 && -z "$result" ]] || exit 1
+				grep -q 'interactive-draft-handover: PR #123 refused:' "$LOGFILE" || exit 1
+				;;
 			esac
 			case "$scenario" in
 			untrusted | fresh | no-takeover | hold-for-review | needs-maintainer-review | external-contributor | off | detect | dry-run | search-failure | closed)
@@ -667,10 +722,11 @@ test_final_gate_blocks_merge_transports() {
 		(
 			install_stubs
 			: >"$GH_CALL_LOG"
-			local fn_src="" pr_number=123 repo_slug=owner/repo pr_head_ref_oid=deadbeef
+			local fn_src="" pr_number=123 repo_slug=owner/repo pr_head_ref_oid=deadbeef timing_prefix=""
 			local _merge_exit=1 merge_output='Repository rule violations found' merge_failure_context=""
 			local _PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=0
 			fn_src=$(awk '
+				/^_pmp_admin_final_gate_or_route\(\) \{/,/^}$/ { print }
 				/^_pmp_stage_admin_merge\(\) \{/,/^}$/ { print }
 				/^_pmp_stage_ruleset_fallback\(\) \{/,/^}$/ { print }
 			' "${SCRIPT_DIR}/../pulse-merge.sh")
@@ -717,6 +773,8 @@ test_selection_holds_for_all_origins() {
 				: >"$GH_CALL_LOG"
 				: >"$LOGFILE"
 				fn_src=$(awk '/^_pm_gate_origin_authority\(\) \{/,/^}$/ { print }' "${SCRIPT_DIR}/../pulse-merge.sh")
+				eval "$fn_src"
+				fn_src=$(awk '/^_pm_gate_unlabeled_worker_branch\(\) \{/,/^}$/ { print }' "${SCRIPT_DIR}/../pulse-merge-partial-continuation.sh")
 				eval "$fn_src"
 				fn_src=$(awk '/^_stop_external_native_auto_merge\(\) \{/,/^}$/ { print }' "$PROCESS_SCRIPT")
 				eval "$fn_src"
@@ -768,6 +826,7 @@ main() {
 	test_review_repair_rebase_revalidates_live_pr_authority
 	test_review_repair_rebase_updates_when_strictly_eligible
 	test_route_uses_provided_labels
+	test_held_worker_pr_reaches_ci_dispatch
 	test_route_falls_back_to_linked_worker_issue_for_ci
 	test_route_falls_back_to_linked_worker_issue_for_conflict
 	test_issue_origin_fallback_requires_collaborator_pr_author

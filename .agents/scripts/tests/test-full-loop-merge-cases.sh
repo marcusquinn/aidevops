@@ -268,8 +268,9 @@ write_gh_stub_pr_issue_views() {
 		fi
 		exit 0
 	fi
-	if [[ "\$*" == *"--json closingIssuesReferences,body"* ]]; then
-		if [[ "$mode" == "fallback-nmr" ]]; then
+	if [[ "\$*" == *"--json body,closingIssuesReferences"* || "\$*" == *"--json closingIssuesReferences,body"* ]]; then
+		if [[ "\$*" == *"--json body,closingIssuesReferences"* ]]; then echo '{"body":"","closingIssuesReferences":[]}'
+		elif [[ "$mode" == "fallback-nmr" ]]; then
 			echo '{"closingIssuesReferences":[{"number":24354}],"body":"Resolves #22621"}'
 		else
 			echo '{"closingIssuesReferences":[],"body":"Resolves #22621"}'
@@ -488,6 +489,7 @@ set -euo pipefail
 SCRIPT_DIR='${scripts_dir}'
 source '${scripts_dir}/shared-constants.sh'
 source '${scripts_dir}/full-loop-helper-merge.sh'
+_merge_worker_briefed_gate_pinned() { return 0; }
 cmd_pre_merge_gate() {
 	FULL_LOOP_PRE_MERGE_BLOCKER_KIND='${gate_kind}'
 	FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL='${gate_detail}'
@@ -525,6 +527,7 @@ set -euo pipefail
 SCRIPT_DIR='${scripts_dir}'
 source '${scripts_dir}/shared-constants.sh'
 source '${scripts_dir}/full-loop-helper-merge.sh'
+_merge_worker_briefed_gate_pinned() { return 0; }
 cmd_pre_merge_gate() { return 0; }
 _merge_guard_prospective_todo() { return 0; }
 _retarget_stacked_children_interactive() { return 0; }
@@ -964,18 +967,22 @@ test_local_admission_gate_failure_reports_retry_deadline() {
 test_post_verification_read_admission_window() {
 	local scripts_dir="" result=0
 	scripts_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
-	bash -c '
+	# GH#38535: keep the production source state. shared-gh-wrappers.sh assigns
+	# the generic 15s read default while sourcing, which shadowed the merge 60s
+	# fallback; unsetting it here previously hid that production failure.
+	(
+		unset AIDEVOPS_GH_READ_TIMEOUT AIDEVOPS_MERGE_GH_READ_TIMEOUT
+		bash -c '
 		source "$1/shared-constants.sh"
 		source "$1/full-loop-helper-merge.sh"
-		unset AIDEVOPS_GH_READ_TIMEOUT
+		[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 15 ]] || exit 3
 		_gh_with_timeout() {
-			# Temporary-file setup consumes part of the shared wall-clock budget.
-			[[ "$AIDEVOPS_GH_READ_TIMEOUT" -gt 0 && "$AIDEVOPS_GH_READ_TIMEOUT" -le 60 && "$1" == read ]] || return 1
+			[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 60 && "$1" == read ]] || return 1
 			printf "base\tbase-sha\thead-sha\ttestorg/testrepo\tclone-url\n"
 			return 0
 		}
 		_merge_fetch_pr_refs_rest 42 testorg/testrepo >/dev/null || exit 1
-		[[ -z "${AIDEVOPS_GH_READ_TIMEOUT+x}" ]] || exit 1
+		[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 15 ]] || exit 4
 		_gh_collaborator_permission_lookup() {
 			[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 60 ]] || return 2
 			printf -v "$3" "%s" write
@@ -983,12 +990,18 @@ test_post_verification_read_admission_window() {
 		}
 		_merge_author_has_write_authority owner testorg/testrepo || exit 1
 		_gh_with_timeout() {
-			[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 7 ]] || return 1
+			[[ "$AIDEVOPS_GH_READ_TIMEOUT" == "$expected_timeout" ]] || return 1
 			return 0
 		}
-		AIDEVOPS_GH_READ_TIMEOUT=7 _flm_gh_read gh api repos/testorg/testrepo
-	' _ "$scripts_dir" || result=$?
-	print_result "post-verification reads: bounded admission window and caller override" "$result"
+		expected_timeout=7
+		AIDEVOPS_MERGE_GH_READ_TIMEOUT=7 _flm_gh_read gh api repos/testorg/testrepo || exit 5
+		expected_timeout=90
+		AIDEVOPS_GH_READ_TIMEOUT=90 _flm_gh_read gh api repos/testorg/testrepo || exit 6
+		expected_timeout=60
+		AIDEVOPS_MERGE_GH_READ_TIMEOUT=08 _flm_gh_read gh api repos/testorg/testrepo || exit 7
+	' _ "$scripts_dir"
+	) || result=$?
+	print_result "post-verification reads: 60s merge budget over sourced 15s default, overrides" "$result"
 	return 0
 }
 
@@ -1104,6 +1117,8 @@ test_shared_merge_read_admission_recovery() {
 				# This case exercises the open-PR release-lane read, not the
 				# preliminary already-merged provenance probe (GH#34839).
 				_merge_handle_already_merged_provenance() { return 2; }
+				_merge_check_closing_guards() { return 0; }
+				_merge_worker_briefed_gate_pinned() { return 0; }
 				_merge_pre_merge_gate_with_admission_retry() { return 0; }
 				release_lane_merge_guard() { [[ "$3" == main && "$4" == base-sha ]] || exit 2; return 1; }
 				out=$(cmd_merge 42 testorg/testrepo 2>&1) || rc=$?
@@ -1624,6 +1639,7 @@ test_local_deferral_survives_context_resolution() {
 	local result=0
 	(
 		local scripts_dir="${SCRIPT_DIR}/.." attempt="" rc=0
+		SCRIPT_DIR="$scripts_dir"
 		# shellcheck source=/dev/null
 		source "$scripts_dir/shared-constants.sh"
 		# shellcheck source=/dev/null
@@ -1691,5 +1707,47 @@ test_exact_check_deferral_preserves_retry_deadline() {
 	[[ "$output" == *'Merge deferred by GitHub read admission; retry_at=1893456000.'* ]] || result=1
 	[[ "$output" == *'operation=required-check-rollup-read'* ]] || result=1
 	print_result "exact-check deferral preserves its deadline through merge reporting" "$result" "output=$output"
+	return 0
+}
+
+# GH#39227: the full-loop gate mirrors the pulse (GH#27137) handling of
+# non-required terminal failures after required checks pass.
+test_nonrequired_check_failure_parity() {
+	local scenario="" expected="" rc=0
+	for scenario in unclassified-failure classified-advisory pending-nonrequired snapshot-unavailable; do
+		rc=0
+		(
+			local scripts_dir="${SCRIPT_DIR}/.." fixture=""
+			SCRIPT_DIR="$scripts_dir"
+			# shellcheck source=/dev/null
+			source "$scripts_dir/shared-constants.sh"
+			# shellcheck source=/dev/null
+			source "$scripts_dir/full-loop-helper-commit.sh"
+			aidevops_log_line() { return 0; }
+			_full_loop_persist_pr_check_evidence() { return 0; }
+			_pmrc_configured_advisory_contexts_json() { printf '[]\n'; return 0; }
+			_ci_check_url_has_infra_failure_log() { return 1; }
+			case "$scenario" in
+			unclassified-failure) fixture='[{"name":"required-ci","status":"completed","conclusion":"success"},{"name":"Pulse Unbound-Var Lint","status":"completed","conclusion":"failure"}]' ;;
+			classified-advisory) fixture='[{"name":"required-ci","status":"completed","conclusion":"success"},{"name":"qlty check","status":"completed","conclusion":"failure"},{"name":"Qlty Regression Gate","status":"completed","conclusion":"success"}]' ;;
+			pending-nonrequired) fixture='[{"name":"required-ci","status":"completed","conclusion":"success"},{"name":"slow-lint","status":"in_progress","conclusion":""}]' ;;
+			*) fixture='[]' ;;
+			esac
+			_pmrc_snapshot_checks_with_retry() {
+				[[ "$scenario" != snapshot-unavailable ]] || return 75
+				printf '%s\n' "$fixture"
+				return 0
+			}
+			export LOGFILE="$TEST_ROOT/logs/nonrequired-parity.log"
+			_full_loop_enforce_nonrequired_check_gate 42 testorg/testrepo \
+				0123456789abcdef0123456789abcdef01234567 \
+				'[{"name":"required-ci","state":"SUCCESS","bucket":"pass"}]' >/dev/null 2>&1
+		) || rc=$?
+		case "$scenario" in
+		classified-advisory | pending-nonrequired) expected=0 ;;
+		*) expected=1 ;;
+		esac
+		print_result "non-required check parity: $scenario" "$((rc == expected ? 0 : 1))"
+	done
 	return 0
 }

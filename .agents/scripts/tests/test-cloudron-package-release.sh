@@ -277,6 +277,17 @@ test_base_transition() {
 	make_fixture "$repo_dir"
 	write_fake_docker "$bin_dir"
 	PATH="${bin_dir}:$PATH" run_helper "$repo_dir" check-compatibility >/dev/null && pass "current base passes audit" || fail "current base passes audit"
+	local manifest_backup=""
+	manifest_backup=$(cat "${repo_dir}/CloudronManifest.json")
+	jq '.packageUrl = "https://example.com/org/pkg" | .packagerUrl = "https://example.com/org/pkg"' <<<"$manifest_backup" >"${repo_dir}/CloudronManifest.json"
+	if output=$(PATH="${bin_dir}:$PATH" run_helper "$repo_dir" check-compatibility 2>&1); then
+		fail "equal packagerUrl and packageUrl produce a finding"
+	else
+		[[ "$output" == *"packagerUrl equals packageUrl"* ]] && pass "equal packagerUrl and packageUrl produce a finding" || fail "equal packagerUrl and packageUrl produce a finding"
+	fi
+	jq '.packageUrl = "https://example.com/org/pkg" | .packagerUrl = "https://example.com/org"' <<<"$manifest_backup" >"${repo_dir}/CloudronManifest.json"
+	PATH="${bin_dir}:$PATH" run_helper "$repo_dir" check-compatibility >/dev/null && pass "distinct packagerUrl passes audit" || fail "distinct packagerUrl passes audit"
+	printf '%s\n' "$manifest_backup" >"${repo_dir}/CloudronManifest.json"
 	printf 'FROM %s\n' "$LEGACY_BASE" >"${repo_dir}/Dockerfile"
 	if output=$(PATH="${bin_dir}:$PATH" run_helper "$repo_dir" check-compatibility 2>&1); then
 		fail "legacy base produces audit finding"

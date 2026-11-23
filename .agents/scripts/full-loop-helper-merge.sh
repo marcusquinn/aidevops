@@ -48,6 +48,13 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/shared-approval-cli.sh"
+fi
+
 # Sequential phase auto-filing parity with pulse-merge.sh (t2740/GH#22629).
 # shellcheck source=./shared-phase-filing.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
@@ -67,6 +74,11 @@ source "${SCRIPT_DIR}/release-lane-helper.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
 source "${SCRIPT_DIR}/manual-release-hold-helper.sh"
 
+# GH#37955: Cloudron manifest version bumps require release authority.
+# shellcheck source=./cloudron-release-merge-guard-lib.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
+source "${SCRIPT_DIR}/cloudron-release-merge-guard-lib.sh"
+
 if [[ -f "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh" ]]; then
 	# shellcheck source=./full-loop-cleanup-receipt.sh
 	source "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh"
@@ -79,6 +91,11 @@ source "${SCRIPT_DIR}/full-loop-helper-evidence.sh"
 # shellcheck source=./full-loop-helper-subject.sh
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/full-loop-helper-subject.sh"
+
+# Runtime Testing parser and merge-readiness rules (GH#39558); load-guarded.
+# shellcheck source=./full-loop-helper-risk.sh
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/full-loop-helper-risk.sh"
 
 # Canonical TODO task/issue mapping parser shared with issue-sync and pre-push.
 # shellcheck source=./issue-sync-pr-task-resolver.sh
@@ -440,13 +457,16 @@ _merge_reconcile_closing_issues() {
 }
 
 # Fail closed unless the exact current PR head can be merged prospectively into
-# the fresh base without introducing duplicate TODO task IDs or issue mappings.
+# the live base-branch tip without introducing duplicate TODO task IDs or issue
+# mappings. The PR's recorded base.sha can lag the tip (GH#38703) and is kept
+# for diagnostics only.
 _merge_guard_prospective_todo() (
 	local pr_number="$1"
 	local repo="$2"
 	local refs=""
 	local base_ref=""
 	local base_sha=""
+	local recorded_base_sha=""
 	local head_sha=""
 	local target_repo=""
 	local normalized_repo=""
@@ -465,8 +485,8 @@ _merge_guard_prospective_todo() (
 		print_error "Merge blocked: unable to pin fresh PR base/head evidence for prospective TODO validation"
 		return 1
 	}
-	IFS=$'\t' read -r base_ref base_sha head_sha target_repo remote_url <<<"$refs"
-	if [[ -z "$base_ref" || -z "$base_sha" || -z "$head_sha" || -z "$target_repo" || -z "$remote_url" ]]; then
+	IFS=$'\t' read -r base_ref recorded_base_sha head_sha target_repo remote_url <<<"$refs"
+	if [[ -z "$base_ref" || -z "$recorded_base_sha" || -z "$head_sha" || -z "$target_repo" || -z "$remote_url" ]]; then
 		print_error "Merge blocked: incomplete PR base/head evidence for prospective TODO validation"
 		return 1
 	fi
@@ -483,6 +503,15 @@ _merge_guard_prospective_todo() (
 	if [[ -n "${FULL_LOOP_VERIFIED_PR_HEAD_SHA:-}" && "$head_sha" != "$FULL_LOOP_VERIFIED_PR_HEAD_SHA" ]]; then
 		print_error "Merge blocked: PR head changed before prospective TODO validation"
 		return 1
+	fi
+	# GH#38703: validate against the commit the merge will land on, not the
+	# base recorded on the PR, so rows the base gained later are visible.
+	base_sha=$(_merge_fetch_base_tip_rest "$target_repo" "$base_ref") || {
+		print_error "Merge blocked: unable to resolve the current ${base_ref} tip for prospective TODO validation"
+		return 1
+	}
+	if [[ "$base_sha" != "$recorded_base_sha" ]]; then
+		print_info "PR #${pr_number} recorded base ${recorded_base_sha} differs from current ${base_ref} tip ${base_sha}; validating against the tip" >&2
 	fi
 	if [[ -n "${AIDEVOPS_TEMP_DIR:-}" ]]; then
 		temp_root="$AIDEVOPS_TEMP_DIR"
@@ -586,6 +615,26 @@ _merge_guard_prospective_todo() (
 	[[ -n "$report" ]] && printf '%s\n' "$report" >&2
 	return 1
 )
+
+# Standalone entry point so Pulse's deterministic merge runs the same guard in
+# an isolated process (GH#38703). Optional EXPECTED_HEAD pins the reviewed head.
+# Usage: full-loop-helper.sh prospective-todo-guard <PR> <owner/repo> [EXPECTED_HEAD]
+# Returns: 0 = no duplicate TODO mappings, 1 = blocked or indeterminate
+cmd_prospective_todo_guard() {
+	local pr_number="${1:-}"
+	local repo="${2:-}"
+	local expected_head="${3:-}"
+	if [[ ! "$pr_number" =~ ^[1-9][0-9]*$ || ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+		print_error "Usage: full-loop-helper.sh prospective-todo-guard <PR> <owner/repo> [EXPECTED_HEAD]"
+		return 1
+	fi
+	if [[ -n "$expected_head" ]] && ! _merge_is_pinned_object_id "$expected_head"; then
+		print_error "Merge blocked: expected head must be a full commit SHA"
+		return 1
+	fi
+	FULL_LOOP_VERIFIED_PR_HEAD_SHA="$expected_head" _merge_guard_prospective_todo "$pr_number" "$repo" || return 1
+	return 0
+}
 
 # Resolve one authoritative Conventional Commit type from the reviewed PR's
 # commit metadata. Every commit must be conventional and use the same type;
@@ -1158,15 +1207,19 @@ _retarget_stacked_children_interactive() {
 		return 0
 	fi
 
-	local default_branch
-	default_branch=$(_flm_gh_read gh repo view "$repo" --json defaultBranchRef -q '.defaultBranchRef.name' || true)
-	default_branch="${default_branch:-main}"
+	# GH#39167: children follow the parent into its own base, never `main`.
+	local target_base=""
+	target_base=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json baseRefName -q '.baseRefName') || target_base=""
+	if [[ -z "$target_base" ]]; then
+		print_warning "Cannot resolve PR #${pr_number} base; stacked children of '${parent_head_ref}' not retargeted (GH#39167)"
+		return 0
+	fi
 
 	local child
 	while IFS= read -r child; do
 		[[ -z "$child" ]] && continue
-		print_info "Retargeting stacked PR #${child} from '${parent_head_ref}' to '${default_branch}' before merging PR #${pr_number} (t2412)"
-		gh pr edit "$child" --repo "$repo" --base "$default_branch" 2>&1 || true
+		print_info "Retargeting stacked PR #${child} from '${parent_head_ref}' to '${target_base}' before merging PR #${pr_number} (t2412)"
+		gh pr edit "$child" --repo "$repo" --base "$target_base" 2>&1 || true
 	done <<<"$children"
 	return 0
 }
@@ -1346,6 +1399,7 @@ _merge_parse_command_args() {
 	FULL_LOOP_MERGE_PARSED_METHOD="--squash"
 	FULL_LOOP_MERGE_PARSED_ADMIN=0
 	FULL_LOOP_MERGE_PARSED_AUTO=0
+	FULL_LOOP_MERGE_PARSED_ALLOW_PARENT_CLOSE=0
 	FULL_LOOP_MERGE_PARSED_BODY_FILE=""
 	FULL_LOOP_MERGE_PARSED_RBG_OVERRIDE_REASON=""
 	local arg=""
@@ -1372,6 +1426,9 @@ _merge_parse_command_args() {
 			;;
 		--auto)
 			FULL_LOOP_MERGE_PARSED_AUTO=1
+			;;
+		--allow-parent-close)
+			FULL_LOOP_MERGE_PARSED_ALLOW_PARENT_CLOSE=1
 			;;
 		"$FULL_LOOP_MERGE_BODY_FILE_FLAG")
 			if [[ $# -eq 0 || "$1" == -* || -n "$FULL_LOOP_MERGE_PARSED_BODY_FILE" ]]; then
@@ -1556,6 +1613,17 @@ _merge_handle_already_merged_provenance() {
 	return 0
 }
 
+# Return 2 when the release was reconciled, so the caller skips merge writes.
+_merge_gate_or_reconcile() {
+	local pr_number="$1" repo="$2" rc=0
+	_merge_pre_merge_gate_with_admission_retry "$pr_number" "$repo" && return 0
+	_merge_handle_already_merged_provenance "$pr_number" "$repo" || rc=$?
+	[[ "$rc" -eq 0 ]] && return 2
+	[[ "$rc" -eq 1 ]] && return 1
+	_merge_report_pre_merge_gate_failure
+	return 1
+}
+
 # Verify release-lane PR identity and guard; sets _release_lane_head_ref in the
 # caller (dynamic scope) for the provenance merge-method check.
 _merge_release_lane_check() {
@@ -1617,7 +1685,7 @@ _merge_verify_rbg_override_approval() {
 	[[ -n "${_FULL_LOOP_RBG_OVERRIDE_REASON:-}" ]] || return 0
 	verdict=$("${SCRIPT_DIR}/approval-helper.sh" verify pr "$pr_number" "$repo" 2>/dev/null | tail -1) || verdict=""
 	if [[ "$verdict" != "VERIFIED" ]]; then
-		print_error "Review-bot-gate override refused: PR #${pr_number} approval is ${verdict:-unverifiable}; run: sudo aidevops approve pr ${pr_number} ${repo}"
+		print_error "Review-bot-gate override refused: PR #${pr_number} approval is ${verdict:-unverifiable}; run: $(approval_cli_prefix) approve pr ${pr_number} ${repo}"
 		return 1
 	fi
 	print_info "Review-bot-gate override: PR #${pr_number} maintainer approval VERIFIED"
@@ -1660,8 +1728,9 @@ _merge_record_post_merge_audits() {
 	return 0
 }
 
-# GH#36922: a planning-checkpoint verdict is valid for one head only; pin it
-# via FULL_LOOP_EXPECTED_PR_HEAD_SHA so a later push is refused at merge.
+# GH#36922/GH#39785: planning-checkpoint and routine-scope verdicts are valid
+# for one head only; pin it via FULL_LOOP_EXPECTED_PR_HEAD_SHA so a later push
+# is refused at merge.
 _merge_worker_briefed_gate_pinned() {
 	local pr_number="$1" repo="$2" has_admin="$3"
 	local head_file="" pinned_head=""
@@ -1675,7 +1744,7 @@ _merge_worker_briefed_gate_pinned() {
 	rm -f "$head_file"
 	[[ -n "$pinned_head" ]] || return 0
 	if [[ -n "${FULL_LOOP_EXPECTED_PR_HEAD_SHA:-}" && "$FULL_LOOP_EXPECTED_PR_HEAD_SHA" != "$pinned_head" ]]; then
-		print_error "Merge blocked by GH#36922: PR head moved since planning-checkpoint check"
+		print_error "Merge blocked by GH#36922: PR head moved since head-pinned trust check"
 		return 1
 	fi
 	FULL_LOOP_EXPECTED_PR_HEAD_SHA="$pinned_head"
@@ -1695,13 +1764,95 @@ _merge_check_closure_metadata() {
 		print_error "Merge blocked for PR #${pr_number}: ${closure_reason}"
 		return 1
 	fi
+	FULL_LOOP_MERGE_CLOSURE_JSON="$closure_json"
+	return 0
+}
+
+# GH#37690: re-run the parent-task closing-keyword guard at merge time. PRs
+# opened outside create-pr/commit-and-pr (raw `gh pr create`, web UI, a later
+# body edit) otherwise merge and let GitHub auto-close a parent-task issue
+# before post-merge reconciliation can react. Checks the body and GitHub's
+# repository-qualified closingIssuesReferences; unverifiable labels refuse.
+_merge_check_parent_task_keywords() {
+	local pr_number="$1" repo="$2" allow="$3" metadata="${4:-}"
+	local refs="" ref_repo="" ref_number="" tmp="" rc=0
+	[[ "$allow" -eq 1 ]] && return 0
+	local guard="${SCRIPT_DIR}/parent-task-keyword-guard.sh"
+	if [[ ! -x "$guard" ]]; then
+		print_error "Merge blocked for PR #${pr_number}: parent-task keyword guard unavailable"
+		return 1
+	fi
+	if [[ -z "$metadata" ]]; then
+		metadata=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json body,closingIssuesReferences) || {
+			print_error "Merge blocked for PR #${pr_number}: closing-reference metadata unavailable"
+			return 1
+		}
+	fi
+	refs=$(printf '%s' "$metadata" | jq -r '
+		if ([.body // "" | strings] | length) != 1 or ([.closingIssuesReferences | arrays] | length) != 1 then error("invalid metadata") else
+		.closingIssuesReferences[] | select(.number != null and .repository.owner.login != null and .repository.name != null)
+		| "\(.repository.owner.login)/\(.repository.name) \(.number)" end') || {
+		print_error "Merge blocked for PR #${pr_number}: invalid closing-reference metadata"
+		return 1
+	}
+	_merge_closing_refs_have_repository "$metadata" || return 1
+	tmp=$(mktemp) || return 1
+	printf '%s' "$metadata" | jq -r '.body // ""' >"$tmp"
+	"$guard" check-body --body-file "$tmp" --repo "$repo" --strict --fail-on-uncertain || rc=$?
+	while read -r ref_repo ref_number; do
+		[[ -n "$ref_repo" && "$ref_number" =~ ^[0-9]+$ ]] || continue
+		printf 'Resolves #%s\n' "$ref_number" >"$tmp"
+		"$guard" check-body --body-file "$tmp" --repo "$ref_repo" --strict --fail-on-uncertain || rc=$?
+	done <<<"$refs"
+	rm -f "$tmp"
+	if [[ "$rc" -ne 0 ]]; then
+		print_error "Merge blocked for PR #${pr_number}: closing keyword targets a parent-task issue (edit the body to 'For #N'/'Ref #N', or pass --allow-parent-close for the verified final phase)"
+		return 1
+	fi
+	return 0
+}
+
+# GH#39558: re-run the creation-time runtime gate at merge time. A body edited
+# after commit-and-pr must not merge a declared Critical/High change without
+# runtime-verified evidence, and runtime-pending stays unmergeable until a
+# verifier records evidence. The hold-for-review label is checked separately.
+_merge_check_runtime_evidence() {
+	local pr_number="$1" repo="$2" metadata="${3:-}"
+	local runtime_metadata="" reason=""
+	if [[ -z "$metadata" ]]; then
+		metadata=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json body) || {
+			print_error "Merge blocked for PR #${pr_number}: runtime testing metadata unavailable"
+			return 1
+		}
+	fi
+	if ! runtime_metadata=$(printf '%s' "$metadata" | jq -er '.body // "" | strings' |
+		_runtime_testing_metadata_from_body); then
+		print_error "Merge blocked for PR #${pr_number}: runtime testing metadata unreadable"
+		return 1
+	fi
+	if ! reason=$(_runtime_testing_merge_refusal "$runtime_metadata"); then
+		print_error "Merge blocked for PR #${pr_number}: ${reason}"
+		return 1
+	fi
+	return 0
+}
+
+# Closure invariant (GH#36174), parent-task keyword guard (GH#37690) and
+# runtime evidence recheck (GH#39558), sharing one PR metadata read.
+_merge_check_closing_guards() {
+	local pr_number="$1" repo="$2"
+	FULL_LOOP_MERGE_CLOSURE_JSON=""
+	_merge_check_closure_metadata "$pr_number" "$repo" || return 1
+	_merge_check_parent_task_keywords "$pr_number" "$repo" \
+		"${FULL_LOOP_MERGE_PARSED_ALLOW_PARENT_CLOSE:-0}" "$FULL_LOOP_MERGE_CLOSURE_JSON" || return 1
+	_merge_check_runtime_evidence "$pr_number" "$repo" "$FULL_LOOP_MERGE_CLOSURE_JSON" || return 1
 	return 0
 }
 
 cmd_merge() {
 	local pr_number="${1:-}"
 	if [[ -z "$pr_number" ]]; then
-		print_error "Usage: full-loop-helper.sh merge <PR_NUMBER> [REPO] [--squash|--merge|--rebase] [--admin] [--auto] [--body-file PATH] [--override-review-bot-gate=REASON]"
+		print_error "Usage: full-loop-helper.sh merge <PR_NUMBER> [REPO] [--squash|--merge|--rebase] [--admin] [--auto] [--allow-parent-close] [--body-file PATH] [--override-review-bot-gate=REASON]"
 		return 1
 	fi
 	shift
@@ -1735,7 +1886,7 @@ cmd_merge() {
 		return "$_already_merged_rc"
 	fi
 
-	_merge_check_closure_metadata "$pr_number" "$repo" || return 1
+	_merge_check_closing_guards "$pr_number" "$repo" || return 1
 
 	# t2449: use the deterministic worker-briefed linked-issue trust verdict
 	# before pre-merge checks or any native/admin merge transport.
@@ -1744,10 +1895,10 @@ cmd_merge() {
 	_merge_worker_briefed_gate_pinned "$pr_number" "$repo" "$has_admin" || return 1
 
 	# Gate: enforce review-bot-gate before merge.
-	_merge_pre_merge_gate_with_admission_retry "$pr_number" "$repo" || {
-		_merge_report_pre_merge_gate_failure
-		return 1
-	}
+	local _gate_rc=0
+	_merge_gate_or_reconcile "$pr_number" "$repo" || _gate_rc=$?
+	[[ "$_gate_rc" -eq 2 ]] && return 0
+	[[ "$_gate_rc" -eq 0 ]] || return 1
 	local _release_lane_head_ref=""
 	_merge_release_lane_check "$pr_number" "$repo" || return 1
 	merge_method=$(_merge_release_provenance_method "$pr_number" "$repo" "$merge_method" "$_release_lane_head_ref") || return 1
@@ -1788,6 +1939,7 @@ cmd_merge() {
 		return 1
 	fi
 	print_success "LIFECYCLE_STATE=MERGED merge_sha=${FULL_LOOP_MERGE_SHA}"
+	_merge_restore_partial_continuation "$pr_number" "$repo" || print_warning "Partial continuation restore could not run for PR #${pr_number}"
 	_merge_record_post_merge_audits "$pr_number" "$repo" "$FULL_LOOP_MERGE_SHA"
 	_merge_sync_canonical_then_reconcile "$pr_number" "$repo" "$_canonical_dir"
 	if declare -F is_loop_active >/dev/null 2>&1 && is_loop_active; then
@@ -1797,3 +1949,20 @@ cmd_merge() {
 
 	return 0
 }
+
+# Isolate pulse globals; the restore itself checks worker origin, closing refs,
+# merged state and ownership before any writes. It is best-effort after merge.
+_merge_restore_partial_continuation() (
+	local pr_number="$1" repo="$2" LOGFILE="" line=""
+	LOGFILE=$(mktemp "${TMPDIR:-/tmp}/partial-restore.XXXXXX") || return 1
+	trap 'rm -f "$LOGFILE"' EXIT
+	# shellcheck disable=SC1091
+	source "${SCRIPT_DIR}/pulse-merge.sh" || return 1
+	_pm_restore_partial_continuation "$pr_number" "$repo" "" "" || return 1
+	if [[ -s "$LOGFILE" ]]; then
+		while IFS= read -r line; do print_info "$line"; done <"$LOGFILE"
+	else
+		print_info "Partial continuation restore checked for PR #${pr_number}"
+	fi
+	return 0
+)

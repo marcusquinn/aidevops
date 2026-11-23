@@ -9,6 +9,9 @@
 #   routine-log-helper.sh update <routine-id> --status queued|claimed|running|success|failure|deferred|cancelled [--duration SECONDS] [--tokens N] [--cost AMOUNT] [--job-id ID] [--session-key KEY]
 #   routine-log-helper.sh notable <routine-id> --event "description"
 #   routine-log-helper.sh create-issue <routine-id> --repo SLUG --title "rNNN: Title" [--schedule EXPR] [--type TYPE]
+#   routine-log-helper.sh ensure-anchor <key> --repo SLUG --title TITLE
+#   routine-log-helper.sh ensure-pr-anchor <key> --repo SLUG --pr N --title TITLE
+#   routine-log-helper.sh retire-anchor <badges-sync|sync-workflows> --repo SLUG
 #   routine-log-helper.sh status
 #   routine-log-helper.sh help
 #
@@ -43,6 +46,10 @@ source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
 CRON_BASE="${HOME}/.aidevops/.agent-workspace/cron"
 REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 PERIOD_DAYS=7
+# Set before an anchor is closed; cleared only once retirement or restoration
+# completes, so an interrupted step is retried in any issue state.
+ANCHOR_RETIRING_LABEL="routine-anchor-retiring"
+ANCHOR_OPEN_STATE="OPEN"
 
 # =============================================================================
 # Logging
@@ -106,7 +113,25 @@ _ensure_state_dir() {
 	local routine_id="$1"
 	local dir
 	dir="$(_state_dir "$routine_id")"
-	mkdir -p "$dir"
+	mkdir -p "$dir" || return 1
+	return 0
+}
+
+_is_valid_issue_number() {
+	local issue_number="$1"
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ ]] && return 0
+	return 1
+}
+
+# GH#39144: state written before this fix could hold wrapper diagnostics
+# merged into the issue number (e.g. "37993\n18"). The created issue's URL was
+# always the last captured line, so its number is the last line of the value.
+# Outputs the healed number; returns 1 when the value cannot be healed.
+_heal_issue_number() {
+	local raw="$1"
+	local last_line="${raw##*$'\n'}"
+	_is_valid_issue_number "$last_line" || return 1
+	printf '%s\n' "$last_line"
 	return 0
 }
 
@@ -114,11 +139,46 @@ _read_state() {
 	local routine_id="$1"
 	local state_file
 	state_file="$(_state_file "$routine_id")"
-	if [[ -f "$state_file" ]]; then
-		cat "$state_file"
-	else
+	if [[ ! -f "$state_file" ]]; then
 		echo '{}'
+		return 0
 	fi
+
+	local state raw_issue healed_issue healed_state
+	state=$(cat "$state_file")
+	raw_issue=$(printf '%s' "$state" | jq -r '.issue_number // empty | tostring' 2>/dev/null || true)
+	if [[ -n "$raw_issue" ]] && ! _is_valid_issue_number "$raw_issue"; then
+		if healed_issue=$(_heal_issue_number "$raw_issue") &&
+			healed_state=$(printf '%s' "$state" | jq --arg in "$healed_issue" '.issue_number = $in'); then
+			# Read-path repair stays in memory only: writing here would race
+			# with unlocked state writers and could clobber their newer data.
+			# The next full-state write persists the healed value.
+			state="$healed_state"
+			_log_warn "Healed malformed issue_number for ${routine_id} to #${healed_issue} in memory (GH#39144); persisted on next state write"
+		else
+			_log_warn "Malformed issue_number for ${routine_id} could not be healed; fix ${state_file} manually"
+		fi
+	fi
+	printf '%s\n' "$state"
+	return 0
+}
+
+# Write via temp file + rename so readers never see a truncated snapshot.
+_write_state_atomic() {
+	local routine_id="$1"
+	local state_json="$2"
+	local state_file tmp_file
+	state_file="$(_state_file "$routine_id")"
+	_ensure_state_dir "$routine_id" || return 1
+	tmp_file="${state_file}.tmp.$$"
+	if ! printf '%s\n' "$state_json" >"$tmp_file"; then
+		rm -f "$tmp_file"
+		return 1
+	fi
+	mv -f "$tmp_file" "$state_file" || {
+		rm -f "$tmp_file"
+		return 1
+	}
 	return 0
 }
 
@@ -127,8 +187,8 @@ _write_state() {
 	local state_json="$2"
 	local state_file
 	state_file="$(_state_file "$routine_id")"
-	_ensure_state_dir "$routine_id"
-	echo "$state_json" >"$state_file"
+	_ensure_state_dir "$routine_id" || return 1
+	echo "$state_json" >"$state_file" || return 1
 	return 0
 }
 
@@ -582,6 +642,10 @@ _load_routine_state() {
 		_log_error "No tracking issue found for ${routine_id}. Run 'create-issue' first."
 		return 1
 	fi
+	if ! _is_valid_issue_number "$issue_number"; then
+		_log_error "Invalid tracking issue number for ${routine_id}: ${issue_number}"
+		return 1
+	fi
 
 	echo "$state"
 	return 0
@@ -908,6 +972,10 @@ cmd_notable() {
 		_log_error "No tracking issue found for ${routine_id}. Run 'create-issue' first."
 		return 1
 	fi
+	if ! _is_valid_issue_number "$issue_number"; then
+		_log_error "Invalid tracking issue number for ${routine_id}: ${issue_number}"
+		return 1
+	fi
 
 	local timestamp
 	timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -999,14 +1067,23 @@ _parse_create_issue_args() {
 }
 
 # Provision tracking labels even in repositories that never ran routine logging.
-# Existing label metadata is left unchanged. API/creation failures fail closed.
+# Existing label metadata is left unchanged; missing labels use the canonical
+# catalog definition (colour/description) from label-sync-helper.sh.
+# API/creation failures fail closed.
 _ensure_tracking_labels() {
 	local repo_slug="$1"
+	_ensure_labels "$repo_slug" routines routine-tracking persistent no-auto-dispatch
+	return $?
+}
+
+# _ensure_labels <repo> <label>... — create any missing label; fail closed.
+_ensure_labels() {
+	local repo_slug="$1"
 	local label=""
-	for label in routines routine-tracking persistent no-auto-dispatch; do
+	shift
+	for label in "$@"; do
 		if ! gh api "repos/${repo_slug}/labels/${label}" --silent 2>/dev/null; then
-			if ! gh label create "$label" --repo "$repo_slug" --color BFD4F2 \
-				--description "Routine tracking lifecycle: ${label}" >/dev/null 2>&1; then
+			if ! "${SCRIPT_DIR}/label-sync-helper.sh" ensure "$repo_slug" "$label" >/dev/null 2>&1; then
 				# Another setup may have created it concurrently.
 				gh api "repos/${repo_slug}/labels/${label}" --silent 2>/dev/null || return 1
 			fi
@@ -1024,24 +1101,31 @@ _create_github_issue() {
 	local body="$3"
 
 	_ensure_tracking_labels "$repo_slug" || return 1
-	local issue_url body_file
+	local issue_output body_file
 	body_file=$(mktemp) || return 1
 	printf '%s\n' "$body" >"$body_file"
 	# t2115: Use gh_create_issue wrapper for origin label + signature auto-append.
-	if ! issue_url=$(gh_create_issue --repo "$repo_slug" --title "$title" --body-file "$body_file" \
+	# GH#39144: capture stdout only. Wrapper diagnostics stay on stderr; merging
+	# them corrupted the parsed issue number (e.g. "... per GH#37993").
+	if ! issue_output=$(gh_create_issue --repo "$repo_slug" --title "$title" --body-file "$body_file" \
 		--label "routines" --label "routine-tracking" \
-		--label "persistent" --label "no-auto-dispatch" 2>&1); then
+		--label "persistent" --label "no-auto-dispatch"); then
 		rm -f "$body_file"
-		_log_error "Failed to create issue: ${issue_url}"
+		_log_error "Failed to create issue in ${repo_slug}: ${issue_output}"
 		return 1
 	fi
 	rm -f "$body_file"
 
-	local issue_number
-	issue_number=$(echo "$issue_url" | grep -oE '[0-9]+$')
+	# Use the last canonical issue URL line (framework-issue-helper.sh pattern).
+	local issue_url="" line=""
+	local url_re='^https://[^[:space:]]+/issues/[0-9]+$'
+	while IFS= read -r line; do
+		[[ "$line" =~ $url_re ]] && issue_url="$line"
+	done <<<"$issue_output"
 
-	if [[ -z "$issue_number" ]]; then
-		_log_error "Could not extract issue number from: ${issue_url}"
+	local issue_number="${issue_url##*/}"
+	if [[ -z "$issue_url" ]] || ! _is_valid_issue_number "$issue_number"; then
+		_log_error "Could not extract issue number from: ${issue_output}"
 		return 1
 	fi
 
@@ -1059,9 +1143,14 @@ _save_initial_state() {
 	local schedule="$5"
 	local routine_type="$6"
 
+	if ! _is_valid_issue_number "$issue_number"; then
+		_log_error "Refusing to persist invalid issue number for ${routine_id}: ${issue_number}"
+		return 1
+	fi
+
 	local state
 	state=$(_read_state "$routine_id")
-	state=$(echo "$state" | jq \
+	if ! state=$(echo "$state" | jq \
 		--arg in "$issue_number" \
 		--arg rs "$repo_slug" \
 		--arg t "$title" \
@@ -1069,8 +1158,14 @@ _save_initial_state() {
 		--arg rt "$routine_type" \
 		--arg sl "active" \
 		--arg tc "0.00" \
-		'.issue_number = $in | .repo_slug = $rs | .title = $t | .schedule = $s | .routine_type = $rt | .status_label = $sl | .total_cost = $tc')
-	_write_state "$routine_id" "$state"
+		'.issue_number = $in | .repo_slug = $rs | .title = $t | .schedule = $s | .routine_type = $rt | .status_label = $sl | .total_cost = $tc'); then
+		_log_error "Could not build state for ${routine_id} (issue #${issue_number})"
+		return 1
+	fi
+	if ! _write_state "$routine_id" "$state"; then
+		_log_error "Could not persist state for ${routine_id}; issue #${issue_number} was created but is not recorded"
+		return 1
+	fi
 	return 0
 }
 
@@ -1094,6 +1189,11 @@ cmd_create_issue() {
 	local existing_issue
 	existing_issue=$(_get_state_field "$routine_id" "issue_number" "")
 	if [[ -n "$existing_issue" ]]; then
+		# Fail closed on an unhealable value rather than creating a duplicate.
+		if ! _is_valid_issue_number "$existing_issue"; then
+			_log_error "Invalid tracking issue number for ${routine_id}: ${existing_issue}"
+			return 1
+		fi
 		_log_warn "Issue #${existing_issue} already exists for ${routine_id}"
 		echo "$existing_issue"
 		return 0
@@ -1121,10 +1221,251 @@ cmd_create_issue() {
 	issue_number=$(_create_github_issue "$repo_slug" "$title" "$initial_body") || return 1
 
 	# Save state
-	_save_initial_state "$routine_id" "$issue_number" "$repo_slug" "$title" "$schedule" "$routine_type"
+	_save_initial_state "$routine_id" "$issue_number" "$repo_slug" "$title" "$schedule" "$routine_type" || return 1
 
 	_log_success "Created issue #${issue_number} for ${routine_id} in ${repo_slug}"
 	echo "$issue_number"
+	return 0
+}
+
+# =============================================================================
+# Subcommand: ensure-anchor (GH#39696)
+# =============================================================================
+
+# Parse the anchor subcommands' <key> --repo SLUG --title TITLE [--pr N]
+# arguments into _ANCHOR_KEY/_ANCHOR_REPO/_ANCHOR_TITLE/_ANCHOR_PR.
+# Returns 1 for an unknown option, a missing value or an invalid key/repo/title.
+_parse_anchor_args() {
+	_ANCHOR_KEY="${1:-}"
+	_ANCHOR_REPO=""
+	_ANCHOR_TITLE=""
+	_ANCHOR_PR=""
+	[[ $# -gt 0 ]] && shift
+	while [[ $# -gt 0 ]]; do
+		local opt="$1" val="${2:-}"
+		[[ $# -ge 2 ]] || return 1
+		case "$opt" in
+		--repo) _ANCHOR_REPO="$val" ;;
+		--title) _ANCHOR_TITLE="$val" ;;
+		--pr) _ANCHOR_PR="$val" ;;
+		*)
+			_log_error "Unknown anchor option: ${opt}"
+			return 1
+			;;
+		esac
+		shift 2
+	done
+	[[ "$_ANCHOR_KEY" =~ ^[a-z0-9][a-z0-9-]*$ ]] || return 1
+	[[ "$_ANCHOR_REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && -n "$_ANCHOR_TITLE" ]] || return 1
+	return 0
+}
+
+# Multi-repo framework routines (badge sync, workflow sync) publish PRs into
+# many repos, so their anchors are per target repo and located by a body
+# marker rather than local per-routine state. A failed lookup fails closed:
+# never create a second anchor when the first could not be read.
+# Args: key, --repo SLUG, --title TITLE. Outputs the open anchor issue number.
+cmd_ensure_anchor() {
+	if ! _parse_anchor_args "$@"; then
+		_log_error "Usage: routine-log-helper.sh ensure-anchor <key> --repo SLUG --title TITLE"
+		return 1
+	fi
+	local key="$_ANCHOR_KEY" repo_slug="$_ANCHOR_REPO" title="$_ANCHOR_TITLE"
+	_check_prerequisites || return 1
+
+	local marker="<!-- aidevops:routine-anchor:${key} -->"
+	local issues="" existing="" issue_count="" list_limit=1000
+	if ! issues=$(gh issue list --repo "$repo_slug" --state open --label routine-tracking \
+		--limit "$list_limit" --json number,body 2>/dev/null); then
+		_log_error "Cannot list routine anchors in ${repo_slug}; refusing to create a duplicate"
+		return 1
+	fi
+	# A full page may be truncated, so the anchor could sit beyond it: fail closed.
+	issue_count=$(printf '%s' "$issues" | jq -r 'length') || return 1
+	if [[ ! "$issue_count" =~ ^[0-9]+$ || "$issue_count" -ge "$list_limit" ]]; then
+		_log_error "Routine anchor list for ${repo_slug} is incomplete; refusing to create a duplicate"
+		return 1
+	fi
+	existing=$(printf '%s' "$issues" | jq -r --arg m "$marker" \
+		'[.[] | select((.body // "") | contains($m)) | .number] | min // empty') || return 1
+	if [[ -n "$existing" ]]; then
+		_is_valid_issue_number "$existing" || return 1
+		echo "$existing"
+		return 0
+	fi
+
+	local body issue_number
+	body=$(printf '%s\n' "$marker" \
+		"## ${title}" "" \
+		"Persistent tracking anchor for the aidevops \`${key}\` routine in this repository." \
+		"Keep it open. Routine PRs reference it with a standalone \`Ref #N\` line, never a" \
+		"closing keyword, so headless runs carry a verifiable issue identity (see" \
+		"\`.agents/reference/routines.md\` \"Routine PR trust and tracking anchors\").")
+	issue_number=$(_create_github_issue "$repo_slug" "$title" "$body") || return 1
+	_log_success "Created routine anchor #${issue_number} for ${key} in ${repo_slug}"
+	echo "$issue_number"
+	return 0
+}
+
+# _anchor_open_pr_reference <repo> <number> — read a fresh, complete open-PR
+# list. Returns 0 when any open PR body mentions #<number> in any form (Ref,
+# For, closing keywords, GH#, owner/repo#), 1 when none provably does, and 2
+# when the evidence is unavailable or incomplete. Over-matching only keeps an
+# anchor open; the numeric boundary stops #770 from matching #77.
+_anchor_open_pr_reference() {
+	local repo="$1" number="$2" prs="" rc=0
+	prs=$(gh pr list --repo "$repo" --state open --limit 1000 --json body) || return 2
+	jq -e 'type == "array" and length < 1000 and all(.[]; .body | type == "string")' <<<"$prs" >/dev/null || return 2
+	jq -e --arg n "$number" 'any(.[]; .body | test("#" + $n + "([^0-9]|$)"))' <<<"$prs" >/dev/null || rc=$?
+	case "$rc" in 0 | 1) return "$rc" ;; esac
+	return 2
+}
+
+# _anchor_restore <repo> <number> — reopen the anchor unless its fresh state is
+# open (never the run's snapshot, which another run may have made stale), then
+# restore `persistent`; only then clear the retiring marker, so any failed step
+# is retried by the next run.
+_anchor_restore() {
+	local repo="$1" number="$2" state=""
+	state=$(gh issue view "$number" --repo "$repo" --json state --jq .state) || return 1
+	if [[ "$state" != "$ANCHOR_OPEN_STATE" ]]; then
+		gh issue reopen "$number" --repo "$repo" || return 1
+	fi
+	gh issue edit "$number" --repo "$repo" --add-label persistent || return 1
+	gh issue edit "$number" --repo "$repo" --remove-label "$ANCHOR_RETIRING_LABEL" || return 1
+	_log_warn "Restored routine anchor #${number} in ${repo}: open PR reference not ruled out"
+	return 0
+}
+
+# _anchor_retire_one <repo> <number> <is_open> <marked> — advance one anchor.
+# References are read immediately before each close and re-read after it: a
+# legacy runner that adds `Ref #N` inside that window gets its anchor restored.
+_anchor_retire_one() {
+	local repo="$1" number="$2" is_open="$3" marked="$4" ref_rc=0
+	_anchor_open_pr_reference "$repo" "$number" || ref_rc=$?
+	case "$ref_rc" in
+	0)
+		# Referenced: keep it, finishing any interrupted retirement's restore.
+		[[ "$marked" == 1 ]] || return 0
+		_anchor_restore "$repo" "$number"
+		return $?
+		;;
+	1) ;;
+	*) return 1 ;;
+	esac
+	if [[ "$is_open" == 1 ]]; then
+		# Record pending restoration before the first destructive step.
+		if [[ "$marked" != 1 ]]; then
+			_ensure_labels "$repo" "$ANCHOR_RETIRING_LABEL" || return 1
+			gh issue edit "$number" --repo "$repo" --add-label "$ANCHOR_RETIRING_LABEL" || return 1
+		fi
+		printf '%s\n' 'Routine PRs are now admitted by verified diff scope; this anchor is no longer needed' |
+			gh_issue_comment "$number" --repo "$repo" --body-file - || return 1
+		gh issue edit "$number" --repo "$repo" --remove-label persistent || return 1
+		gh issue close "$number" --repo "$repo" --reason 'not planned' || return 1
+		ref_rc=0
+		_anchor_open_pr_reference "$repo" "$number" || ref_rc=$?
+		if [[ "$ref_rc" -ne 1 ]]; then
+			_anchor_restore "$repo" "$number"
+			return $?
+		fi
+	elif [[ "$marked" != 1 ]]; then
+		return 0
+	fi
+	# Closed and provably unreferenced: retirement is complete.
+	gh issue edit "$number" --repo "$repo" --remove-label "$ANCHOR_RETIRING_LABEL" || return 1
+	return 0
+}
+
+# Retire only the built-in routine covered by verified diff scope. Open anchors
+# and marked anchors in any state are advanced, so an anchor whose restoration
+# failed after closing is never stranded.
+cmd_retire_anchor() {
+	local key="${1:-}"
+	[[ "$key" == "badges-sync" || "$key" == "sync-workflows" ]] || return 1
+	_parse_anchor_args "$@" --title retirement || return 1
+	local repo="$_ANCHOR_REPO" open="" marked="" rows="" number="" is_open="" flag=""
+	local marker="<!-- aidevops:routine-anchor:${key} -->"
+	local complete='type == "array" and length < 1000 and all(.[]; (.number | type == "number") and ([.body, .state] | all(type == "string")))'
+	open=$(gh issue list --repo "$repo" --state open --label routine-tracking \
+		--limit 1000 --json number,body,state) || return 1
+	marked=$(gh issue list --repo "$repo" --state all --label routine-tracking \
+		--label "$ANCHOR_RETIRING_LABEL" --limit 1000 --json number,body,state) || return 1
+	jq -e "$complete" <<<"$open" >/dev/null || return 1
+	jq -e "$complete" <<<"$marked" >/dev/null || return 1
+	# Read both lists from stdin (not argv) so large bodies cannot hit ARG_MAX.
+	# unique_by keeps the first entry, so a marked anchor's own state wins.
+	rows=$(printf '%s\n%s\n' "$open" "$marked" | jq -rs --arg marker "$marker" --arg open "$ANCHOR_OPEN_STATE" '
+		(.[1] | map(.number)) as $marked |
+		(.[1] + .[0]) | unique_by(.number) | .[] | select(.body | contains($marker)) |
+		.number as $n | [$n, (if .state == $open then 1 else 0 end),
+		 (if any($marked[]; . == $n) then 1 else 0 end)] | @tsv') || return 1
+	[[ -n "$rows" ]] || return 0
+	if ! declare -F gh_issue_comment >/dev/null; then
+		# shellcheck source=shared-gh-wrappers.sh
+		source "$SCRIPT_DIR/shared-gh-wrappers.sh" || return 1
+	fi
+	while IFS=$'\t' read -r number is_open flag; do
+		_is_valid_issue_number "$number" || return 1
+		_anchor_retire_one "$repo" "$number" "$is_open" "$flag" || return 1
+	done <<<"$rows"
+	return 0
+}
+
+# Read an open origin:worker PR that lacks any issue identity and output its
+# current body. Returns 0 when a backfill is needed, 3 when the PR is closed,
+# not worker-origin or already identified, and 1 when it cannot be read.
+_pr_anchor_backfill_body() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local meta="" body=""
+	meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,labels,body 2>/dev/null) || return 1
+	printf '%s' "$meta" | jq -e '.state == "OPEN"' >/dev/null || return 3
+	printf '%s' "$meta" | jq -e '[.labels[].name] | index("origin:worker") != null' >/dev/null || return 3
+	body=$(printf '%s' "$meta" | jq -r '.body // ""') || return 1
+	# A verified-scope routine marker is its own identity (GH#39793).
+	[[ "$body" != *'<!-- aidevops:routine-pr:'* ]] || return 3
+	[[ -z "$(_gh_pr_body_closing_issues "$body")" && -z "$(_gh_pr_body_explicit_issues "$body")" ]] || return 3
+	printf '%s' "$body"
+	return 0
+}
+
+# A routine PR opened before the worker identity guard (GH#36877) carries
+# origin:worker but no issue identity, so the t2449 gate never admits it and
+# the routine skips the repo while it stays open. Prepend the anchor's
+# `Ref #N` line through the guarded edit wrapper. Other PRs are left alone.
+# The body is re-read after anchor resolution so an edit made meanwhile is
+# kept; the full-body replacement itself is still not conditional.
+# Args: key, --repo SLUG, --pr N, --title TITLE. Returns 1 on any failure.
+cmd_ensure_pr_anchor() {
+	if ! _parse_anchor_args "$@" || ! _is_valid_issue_number "$_ANCHOR_PR"; then
+		_log_error "Usage: routine-log-helper.sh ensure-pr-anchor <key> --repo SLUG --pr N --title TITLE"
+		return 1
+	fi
+	local key="$_ANCHOR_KEY" repo_slug="$_ANCHOR_REPO" title="$_ANCHOR_TITLE" pr_number="$_ANCHOR_PR"
+	_check_prerequisites || return 1
+	local fn
+	for fn in gh_pr_edit_safe _gh_pr_body_closing_issues _gh_pr_body_explicit_issues; do
+		declare -F "$fn" >/dev/null 2>&1 && continue
+		_log_error "ensure-pr-anchor: ${fn} unavailable (shared-gh-wrappers.sh not loaded)"
+		return 1
+	done
+	local body="" anchor="" read_rc=0
+	body=$(_pr_anchor_backfill_body "$pr_number" "$repo_slug") || read_rc=$?
+	[[ "$read_rc" -eq 3 ]] && return 0
+	[[ "$read_rc" -eq 0 ]] || return 1
+	anchor=$(cmd_ensure_anchor "$key" --repo "$repo_slug" --title "$title") || return 1
+	body=$(_pr_anchor_backfill_body "$pr_number" "$repo_slug") || read_rc=$?
+	[[ "$read_rc" -eq 3 ]] && return 0
+	[[ "$read_rc" -eq 0 ]] || return 1
+	local temp_root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}" body_file="" rc=0
+	mkdir -p "$temp_root" || return 1
+	body_file=$(mktemp "${temp_root%/}/routine-pr-anchor.XXXXXX") || return 1
+	printf 'Ref #%s\n\n%s\n' "$anchor" "$body" >"$body_file"
+	gh_pr_edit_safe "$pr_number" --repo "$repo_slug" --body-file "$body_file" >/dev/null || rc=$?
+	rm -f "$body_file"
+	[[ "$rc" -eq 0 ]] || return 1
+	_log_success "Linked PR #${pr_number} in ${repo_slug} to routine anchor #${anchor}"
 	return 0
 }
 
@@ -1153,7 +1494,7 @@ cmd_status() {
 			[[ -f "$state_file" ]] || continue
 
 			local state
-			state=$(cat "$state_file")
+			state=$(_read_state "$rid")
 			local issue_number
 			issue_number=$(echo "$state" | jq -r '.issue_number // "—"')
 			local last_run
@@ -1214,6 +1555,19 @@ Usage:
   routine-log-helper.sh create-issue <routine-id> --repo SLUG --title "rNNN: Title" [--schedule EXPR] [--type TYPE]
     Create the initial tracking issue with template description.
     Returns the issue number. Stores mapping in routine-state.json.
+
+  routine-log-helper.sh ensure-anchor <key> --repo SLUG --title TITLE
+    Print the open per-repo anchor for a multi-repo routine (found by body
+    marker), creating it once when absent. A failed lookup never creates one.
+
+  routine-log-helper.sh ensure-pr-anchor <key> --repo SLUG --pr N --title TITLE
+    Prepend the anchor's Ref #N line to an open origin:worker routine PR whose
+    body has no issue identity (pre-guard PRs). Other PRs are left unchanged.
+
+  routine-log-helper.sh retire-anchor <badges-sync|sync-workflows> --repo SLUG
+    Close legacy badge anchors as not planned after removing persistent, only
+    when a complete open-PR list read just before closing proves no Ref #N
+    remains; reopen if one appears by the post-close re-read. Other keys refused.
 
   routine-log-helper.sh refresh-description <routine-id>
     Rebuild and push the GitHub issue body using current state and stored
@@ -1290,6 +1644,15 @@ main() {
 		;;
 	create-issue)
 		cmd_create_issue "$@"
+		;;
+	ensure-anchor)
+		cmd_ensure_anchor "$@"
+		;;
+	ensure-pr-anchor)
+		cmd_ensure_pr_anchor "$@"
+		;;
+	retire-anchor)
+		cmd_retire_anchor "$@"
 		;;
 	status)
 		cmd_status "$@"

@@ -27,10 +27,17 @@ fi
 # shellcheck disable=SC2034  # Used by shared-constants.sh log_* functions
 LOG_PREFIX="comfy-cli"
 
+# Resolve uv's executable directory on every invocation, not only installation.
+if command -v uv >/dev/null 2>&1; then
+	if UV_BIN_DIR="$(uv tool dir --bin)" && [[ -n "$UV_BIN_DIR" ]]; then
+		export PATH="${UV_BIN_DIR}:$PATH"
+	fi
+fi
+
 check_comfy_cli() {
 	if ! command -v comfy >/dev/null 2>&1; then
 		log_error "comfy-cli is not installed."
-		log_info "Install with: pip install comfy-cli"
+		log_info "Install with: uv tool install comfy-cli"
 		log_info "Or: brew tap Comfy-Org/comfy-cli && brew install comfy-org/comfy-cli/comfy-cli"
 		return 1
 	fi
@@ -72,6 +79,7 @@ cmd_status() {
 }
 
 cmd_install() {
+	local install_method="" update_path=""
 	log_info "Installing comfy-cli..."
 
 	if command -v comfy >/dev/null 2>&1; then
@@ -80,24 +88,34 @@ cmd_install() {
 		return 0
 	fi
 
-	# Try pip first, then brew
-	if command -v pip >/dev/null 2>&1; then
-		log_info "Installing via pip..."
-		pip install comfy-cli
-	elif command -v pip3 >/dev/null 2>&1; then
-		log_info "Installing via pip3..."
-		pip3 install comfy-cli
+	# Isolated installs only (uv tool, pipx), then brew; never user/system pip
+	if command -v uv >/dev/null 2>&1; then
+		log_info "Installing via uv tool..."
+		uv tool install --upgrade comfy-cli
+		install_method="uv-tool"
+		update_path="uv tool upgrade comfy-cli"
+	elif command -v pipx >/dev/null 2>&1; then
+		log_info "Installing via pipx..."
+		pipx install comfy-cli
+		install_method="pipx"
+		update_path="pipx upgrade comfy-cli"
 	elif command -v brew >/dev/null 2>&1; then
 		log_info "Installing via Homebrew..."
 		brew tap Comfy-Org/comfy-cli
 		brew install comfy-org/comfy-cli/comfy-cli
+		install_method="brew"
+		update_path="brew upgrade comfy-org/comfy-cli/comfy-cli"
 	else
-		log_error "No package manager found. Install pip or Homebrew first."
+		log_error "No package manager found. Install uv (curl -LsSf https://astral.sh/uv/install.sh | sh), pipx or Homebrew first."
 		return 1
 	fi
 
 	if command -v comfy >/dev/null 2>&1; then
 		log_success "comfy-cli installed successfully"
+		# shellcheck source=install-record-helper.sh
+		source "$SCRIPT_DIR/install-record-helper.sh"
+		install_record "comfy-cli" "$install_method" "$(command -v comfy)" \
+			"ComfyUI management in an isolated environment" "$update_path" || log_warn "Could not record comfy-cli install"
 		cmd_status
 	else
 		log_error "Installation failed"

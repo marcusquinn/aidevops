@@ -575,6 +575,12 @@ Bash uses dynamic scoping: a variable read by a stub resolves to the innermost `
 
 GH#34846 / PR #34849: `.agents/scripts/tests/test-terminal-blocker-circuit.sh` test `test_first_observation_scope_hold_releases_on_revision` used `comments` for fixture state. `_tbr_check_entry` in `.agents/scripts/terminal-blocker-recovery-helper.sh` declares `local comments=""` before calling the stub, so the stub printed an empty string. The fix renamed the fixture to `tb_fixture_comments`.
 
+### Output-variable names passed to helpers
+
+Production code has the same hazard when it passes an output-variable name to a helper that writes the result with `printf -v "$var"` or `eval`. If that helper declares a `local` with the same name, the write goes to the helper's local and the caller's variable keeps its old value. Before passing a name, check the callee's `local` lines and choose a name it does not declare. Prefer prefixed or function-specific names (for example, `lane_resume_index`) over generic ones such as `start_index`, `result`, or `count`.
+
+GH#38248 / PR #38249: `_pmp_resume_cursor_with_priority_lane` passed `start_index` to `_pmp_prepare_merge_pr_cursor_resume`, which declares `local start_index=0`. Every resumed walk silently restarted at index 0, which showed up only as cursor-resume test failures.
+
 ## jq 1.7/1.8 portability (GH#35920)
 
 Hosts run different jq versions. Ubuntu runners and macOS `/usr/bin/jq` ship jq 1.7.1, and Homebrew installs jq 1.8.x. A Mac with Homebrew therefore has both, and `PATH` order decides which one runs. aidevops launchd jobs put `/opt/homebrew/bin` first, so a helper can pass CI on jq 1.7.1 and then run on jq 1.8.x in the pulse. Write jq that gives the same result on both versions. When jq output looks wrong, run the program under both binaries (`/usr/bin/jq` and `/opt/homebrew/bin/jq` on macOS) before debugging anything else.
@@ -611,6 +617,10 @@ Each row was checked under jq 1.7.1 and 1.8.2. The portable form gives the same 
 | A jq comment ending in `\` | ends at the newline | continues onto the next line | never end a jq comment with `\` |
 | `--indent 0` | compact | multi-line | `-c` |
 | `trim`, `ltrim`, `rtrim`, `trimstr`, `toboolean`, `skip`, `add/1`, `@urid` | not defined | defined | avoid them while any host runs jq 1.7 |
+
+### `//` treats false as absent (all versions)
+
+`A // B` returns `B` when `A` is `null` **or `false`**. Never use it to default a boolean field: `.private // true` returns `true` for a public repository, and `.isCrossRepository // "unknown"` returns `"unknown"` for every same-repo PR. Read booleans with `.field | tostring`, then branch on the exact string. Treat `"null"` (field missing) as unknown, and fail closed where the boolean guards trust or privacy. Incidents: GH#39642 (`circuit-breaker-meta-filer.sh` withheld context for public repos), PR #39641 (`verify-runtime` would have refused every same-repo PR). A stub that returns post-`--jq` text hides this class, so let the stub run the real filter over raw JSON.
 
 ### Enforcement
 

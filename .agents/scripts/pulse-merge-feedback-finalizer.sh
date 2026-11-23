@@ -21,6 +21,7 @@ PULSE_FEEDBACK_ROUTE_INTERACTIVE_ORIGIN_LABEL="origin:interactive"
 PULSE_FEEDBACK_ROUTE_MARKER_OPEN="<!--"
 PULSE_FEEDBACK_ROUTE_REVIEW_STATUS="status:in-review"
 PULSE_FEEDBACK_ROUTE_CONVERGE_DELETE_LIMIT=20
+PULSE_FEEDBACK_ROUTE_PREMATURE_REASON="prematurely completed with an open unmerged PR"
 
 _PULSE_FEEDBACK_ROUTE_CONTEXT_KIND=""
 _PULSE_FEEDBACK_ROUTE_CONTEXT_HEAD=""
@@ -889,13 +890,206 @@ _feedback_route_closed_issue_current_labels() {
 	return 0
 }
 
+#######################################
+# Prove that a PR's hold-for-review is the closed-issue guard's own receipt
+# for the current head: the latest hold-related comment is a trusted
+# closed-issue receipt for that head, and the latest hold label event was
+# applied by the same account within 300s of it.
+# Args: $1=pr_number $2=repo_slug $3=current head SHA from the caller's snapshot
+# Output: "<linked issue>\t<hold label event id>\t<hold label actor>"
+# Returns: 0 when proven; 1 otherwise, including any read failure.
+#######################################
+_feedback_route_closed_issue_hold_receipt() {
+	local pr_number="$1" repo_slug="$2" sha="$3"
+	local comments='' candidate='' trusted='' author='' linked_issue='' event='' event_id='' actor='' marker='' timeline='' comment_time=''
+	comments=$(gh api "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" --paginate --slurp 2>/dev/null) || return 1
+	marker="<!-- feedback-route:closed-issue:PR${pr_number}:ISSUE"
+	# aidevops:trust-boundary: never let an older receipt override a later hold comment.
+	candidate=$(printf '%s' "$comments" | jq -c --arg marker "$marker" --arg head "$sha" --arg array_type "$PULSE_FEEDBACK_ROUTE_JSON_ARRAY_TYPE" '
+		(if (.[0]? | type) == $array_type then add else . end)
+		| [ .[]? | select((.body // "") | test("hold|feedback-route:"; "i")) ]
+		| sort_by([.created_at, .id]) | last
+		| select(. != null and ((.body // "") | startswith($marker))
+			and ((.body // "") | contains(":SHA" + $head + ":RUNNER")))
+		| [{login: .user.login, association: .author_association, created_at,
+			issue: ((.body // "") | ltrimstr($marker) | capture("^(?<n>[0-9]+):SHA").n)}]' 2>/dev/null) || return 1
+	[[ -n "$candidate" ]] || return 1
+	trusted=$(_feedback_route_trusted_entries "$repo_slug" <<<"$candidate") || return 1
+	author=$(printf '%s' "$trusted" | jq -r 'if length == 1 then .[0].login else empty end') || return 1
+	[[ -n "$author" ]] || return 1
+	linked_issue=$(printf '%s' "$trusted" | jq -r '.[0].issue // empty') || return 1
+	[[ "$linked_issue" =~ ^[0-9]+$ ]] || return 1
+	event=$(_feedback_route_latest_hold_event "$pr_number" "$repo_slug") || return 1
+	IFS=$'\t' read -r event_id actor <<<"$event"
+	[[ "$event_id" =~ ^[0-9]+$ && "$actor" == "$author" ]] || return 1
+	comment_time=$(printf '%s' "$trusted" | jq -r '.[0].created_at // empty') || return 1
+	timeline=$(gh api "repos/${repo_slug}/issues/${pr_number}/timeline?per_page=100" --paginate --slurp 2>/dev/null) || return 1
+	# A later re-applied hold by the same account is not the original receipt.
+	printf '%s' "$timeline" | jq -e --arg id "$event_id" --arg time "$comment_time" --arg array_type "$PULSE_FEEDBACK_ROUTE_JSON_ARRAY_TYPE" '
+		(if (.[0]? | type) == $array_type then add else . end)
+		| any(.[]?; ((.id // 0) | tostring) == $id and
+			(((.created_at | fromdateiso8601) - ($time | fromdateiso8601)) as $age | $age >= 0 and $age <= 300))' >/dev/null 2>&1 || return 1
+	printf '%s\t%s\t%s\n' "$linked_issue" "$event_id" "$actor"
+	return 0
+}
+
+# Release only a hold whose latest hold-related comment and label event agree.
+_feedback_route_release_projection_hold() {
+	local pr_number="$1" repo_slug="$2"
+	local snapshot='' pr_status='' sha='' labels='' body='' receipt='' event_id='' actor=''
+	[[ "${DRY_RUN:-0}" != "1" ]] || return 1
+	snapshot=$(_feedback_route_pr_snapshot "$pr_number" "$repo_slug") || return 1
+	IFS=$'\t' read -r pr_status sha labels <<<"$snapshot"
+	[[ "$pr_status" == "OPEN" && "$sha" =~ ^[0-9a-f]{40}$ ]] || return 1
+	_feedback_route_labels_allow_worker_route "$labels" 1 || return 1
+	_feedback_route_labels_include "$labels" "$PULSE_FEEDBACK_ROUTE_HOLD_LABEL" || return 1
+	body=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || return 1
+	_pm_pr_body_is_todo_projection "$body" || return 1
+	receipt=$(_feedback_route_closed_issue_hold_receipt "$pr_number" "$repo_slug" "$sha") || return 1
+	IFS=$'\t' read -r _ event_id actor <<<"$receipt"
+	[[ "$(_feedback_route_pr_snapshot "$pr_number" "$repo_slug")" == "$snapshot" ]] || return 1
+	[[ "$(_feedback_route_latest_hold_event "$pr_number" "$repo_slug")" == "${event_id}"$'\t'"${actor}" ]] || return 1
+	_feedback_route_gh_write pr edit "$pr_number" --repo "$repo_slug" --remove-label "$PULSE_FEEDBACK_ROUTE_HOLD_LABEL" >/dev/null 2>&1 || return 1
+	echo "[pulse-wrapper] feedback finalizer: released stale closed-issue projection hold on PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+	return 0
+}
+
+# t19286: worker PRs whose linked issue another merged PR closed are
+# superseded work, not a maintainer question. Ownership labels that block
+# worker routing and the GH#24399 follow-up protections keep the PR open.
+_feedback_route_labels_allow_supersede() {
+	local labels="$1"
+	_feedback_route_labels_allow_worker_route "$labels" 1 || return 1
+	case ",${labels}," in
+	*,do-not-close,* | *,follow-up,* | *,intentional-follow-up,* | *,no-auto-dispatch,*) return 1 ;;
+	esac
+	return 0
+}
+
+# Print the merged PR whose closure is the linked issue's latest closed event,
+# when that PR is not this one. pr-supersession-helper.sh owns the proof
+# (GH#39018); without it nothing is superseded.
+# Args: $1=pr_number $2=repo_slug $3=linked_issue
+_feedback_route_superseding_closer() {
+	local pr_number="$1" repo_slug="$2" linked_issue="$3"
+	local closer=""
+	[[ "$linked_issue" =~ ^[0-9]+$ ]] || return 1
+	declare -F _psh_find_merged_closer_for_closed_issue >/dev/null 2>&1 || return 1
+	closer=$(_psh_find_merged_closer_for_closed_issue "$repo_slug" "$linked_issue" "$pr_number" 2>/dev/null) || return 1
+	[[ "$closer" =~ ^[0-9]+$ ]] || return 1
+	printf '%s' "$closer"
+	return 0
+}
+
+# Close a superseded PR after revalidating the caller's snapshot at the write
+# boundary. The branch is kept so unmerged changes stay recoverable.
+# Args: $1=pr_number $2=repo_slug $3=linked_issue $4=merged closer $5=snapshot
+_feedback_route_close_superseded() {
+	local pr_number="$1" repo_slug="$2" linked_issue="$3" closer="$4" snapshot="$5"
+	local body=""
+	[[ "${DRY_RUN:-0}" != "1" ]] || return 1
+	[[ "$(_feedback_route_pr_snapshot "$pr_number" "$repo_slug")" == "$snapshot" ]] || return 1
+	body="Closing as superseded: linked issue #${linked_issue} is already closed by merged PR #${closer}, so this PR is no longer needed for it. It is closed rather than held for maintainer review. The branch is kept; reopen this PR if any of its unmerged changes are still wanted.
+
+_Closed by deterministic merge pass (t19286)._"
+	_feedback_route_gh_write pr close "$pr_number" --repo "$repo_slug" --comment "$body" >/dev/null 2>&1 || return 1
+	if declare -F _pulse_merge_invalidate_pr_list_cache >/dev/null 2>&1; then
+		_pulse_merge_invalidate_pr_list_cache "$repo_slug" "closed superseded PR #${pr_number}"
+	fi
+	echo "[pulse-wrapper] feedback finalizer: closed superseded PR #${pr_number} in ${repo_slug} — issue #${linked_issue} already closed by merged PR #${closer} (t19286)" >>"$LOGFILE"
+	return 0
+}
+
+# Classify a closed linked issue. Not-planned and consolidated closures are
+# orphaned even when a merged PR closed them, so both the guard and the
+# held-PR path read this one rule.
+# Args: $1=issue metadata JSON
+_feedback_route_closed_issue_reason() {
+	local metadata="$1"
+	printf '%s' "$metadata" | jq -r --arg premature "$PULSE_FEEDBACK_ROUTE_PREMATURE_REASON" '
+		if .state_reason == "not_planned" or any(.labels[]?; .name == "consolidated" or .name == "not-planned")
+		then "orphaned (not planned or consolidated)"
+		elif .state_reason == "completed" then $premature
+		else "closed with an open unmerged PR" end'
+	return $?
+}
+
+# Returns 0 only when the linked issue is closed as completed and not orphaned.
+_feedback_route_closed_issue_is_premature() {
+	local repo_slug="$1" linked_issue="$2"
+	local endpoint='' metadata='' state='' reason=''
+	endpoint=$(_feedback_route_issue_endpoint "$repo_slug" "$linked_issue") || return 1
+	metadata=$(gh api "$endpoint" 2>/dev/null) || return 1
+	state=$(printf '%s' "$metadata" | jq -r '.state // empty') || return 1
+	reason=$(_feedback_route_closed_issue_reason "$metadata") || return 1
+	[[ "$state" == "closed" && "$reason" == "$PULSE_FEEDBACK_ROUTE_PREMATURE_REASON" ]]
+	return $?
+}
+
+# Merge-pass entry for an already-held PR: close it as superseded only when
+# its hold is the closed-issue guard's receipt for the current head, the
+# receipt names the issue the PR links now, that issue is completed rather
+# than orphaned, and its latest closure is another merged PR. A hold a
+# maintainer re-applied or commented on later, up to the last read, is kept.
+# Args: $1=pr_number $2=repo_slug $3=the PR's current linked issue
+# Returns: 0 when the PR was closed; 1 otherwise.
+_feedback_route_close_superseded_closed_issue_hold() {
+	local pr_number="$1" repo_slug="$2" expected_issue="${3:-}"
+	local snapshot='' pr_state='' head='' labels='' receipt='' linked_issue='' closer='' body=''
+	[[ "${DRY_RUN:-0}" != "1" ]] || return 1
+	[[ "$expected_issue" =~ ^[0-9]+$ ]] || return 1
+	declare -F _psh_find_merged_closer_for_closed_issue >/dev/null 2>&1 || return 1
+	declare -F _pm_pr_body_is_todo_projection >/dev/null 2>&1 || return 1
+	snapshot=$(_feedback_route_pr_snapshot "$pr_number" "$repo_slug") || return 1
+	IFS=$'\t' read -r pr_state head labels <<<"$snapshot"
+	[[ "$pr_state" == "$PULSE_FEEDBACK_ROUTE_OPEN_STATE" && "$head" =~ ^[0-9a-f]{40}$ ]] || return 1
+	_feedback_route_labels_include "$labels" "$PULSE_FEEDBACK_ROUTE_HOLD_LABEL" || return 1
+	_feedback_route_labels_allow_supersede "$labels" || return 1
+	receipt=$(_feedback_route_closed_issue_hold_receipt "$pr_number" "$repo_slug" "$head") || return 1
+	IFS=$'\t' read -r linked_issue _ _ <<<"$receipt"
+	# A PR relinked to another issue keeps its hold.
+	[[ "$linked_issue" == "$expected_issue" ]] || return 1
+	_feedback_route_closed_issue_is_premature "$repo_slug" "$linked_issue" || return 1
+	closer=$(_feedback_route_superseding_closer "$pr_number" "$repo_slug" "$linked_issue") || return 1
+	# TODO projections are regenerated by their publisher, never superseded here.
+	body=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || return 1
+	! _pm_pr_body_is_todo_projection "$body" || return 1
+	# Re-prove after the last read: a newer hold comment or label event wins.
+	# The close write itself has no precondition, so a small window remains;
+	# the kept branch makes a wrong close reversible.
+	[[ "$(_feedback_route_closed_issue_hold_receipt "$pr_number" "$repo_slug" "$head")" == "$receipt" ]] || return 1
+	_feedback_route_close_superseded "$pr_number" "$repo_slug" "$linked_issue" "$closer" "$snapshot"
+	return $?
+}
+
+# t19286: close a worker PR whose completed issue another merged PR closed.
+# A PR that already carries hold-for-review closes only through the held-PR
+# proof above, so a manual hold is never overridden.
+# Args: $1=pr_number $2=repo_slug $3=linked_issue $4=labels $5=snapshot
+# Returns: 0 when the PR was closed; 1 otherwise.
+_feedback_route_close_superseded_open_pr() {
+	local pr_number="$1" repo_slug="$2" linked_issue="$3" labels="$4" snapshot="$5"
+	local closer=''
+	if _feedback_route_labels_include "$labels" "$PULSE_FEEDBACK_ROUTE_HOLD_LABEL"; then
+		_feedback_route_close_superseded_closed_issue_hold "$pr_number" "$repo_slug" "$linked_issue"
+		return $?
+	fi
+	_feedback_route_labels_allow_supersede "$labels" || return 1
+	closer=$(_feedback_route_superseding_closer "$pr_number" "$repo_slug" "$linked_issue") || return 1
+	_feedback_route_close_superseded "$pr_number" "$repo_slug" "$linked_issue" "$closer" "$snapshot" && return 0
+	echo "[pulse-wrapper] feedback finalizer: could not close superseded PR #${pr_number} in ${repo_slug} (issue #${linked_issue} closed by merged PR #${closer}); holding instead (t19286)" >>"$LOGFILE"
+	return 1
+}
+
 # Closed issues have no redispatch executor. Hold only the PR, without creating
 # recoverable automation-hold provenance or changing the closed issue (GH#34531).
+# A worker PR whose issue another merged PR completed is closed as superseded
+# instead (t19286); the MAINTAINER rc then still means "stop routing this PR".
 _feedback_route_guard_closed_issue() {
 	local pr_number="$1" repo_slug="$2" linked_issue="$3" kind="$4"
 	local expected_head="${5:-}"
 	local metadata="" state="" reason="" snapshot="" pr_state="" head="" labels=""
-	local marker_core="" identity="" self_id="" actor="" body="" fuse_path="" receipt_rc=0
+	local marker_core="" identity="" self_id="" actor="" body="" fuse_path="" receipt_rc=0 pr_body=""
 
 	# Review evidence routing retains its existing lifecycle policy.
 	[[ "$kind" == "conflict" || "$kind" == "ci" ]] || return 0
@@ -903,6 +1097,10 @@ _feedback_route_guard_closed_issue() {
 	state=$(printf '%s' "$metadata" | jq -r '.state // empty') || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
 	[[ "$state" != "open" ]] || return 0
 	[[ "$state" == "closed" ]] || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	if _pm_pr_body_is_todo_projection "$pr_body"; then
+		return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	fi
 	[[ "${DRY_RUN:-0}" != "1" ]] || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
 	snapshot=$(_feedback_route_pr_snapshot "$pr_number" "$repo_slug") || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
 	IFS=$'\t' read -r pr_state head labels <<<"$snapshot"
@@ -910,11 +1108,11 @@ _feedback_route_guard_closed_issue() {
 	[[ "$head" =~ ^[0-9A-Za-z]{7,64}$ ]] || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
 	[[ -z "$expected_head" || "$head" == "$expected_head" ]] || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
 	_feedback_route_labels_allow_worker_route "$labels" 1 || return "$PULSE_FEEDBACK_ROUTE_MAINTAINER_RC"
-	reason=$(printf '%s' "$metadata" | jq -r '
-		if .state_reason == "not_planned" or any(.labels[]?; .name == "consolidated" or .name == "not-planned")
-		then "orphaned (not planned or consolidated)"
-		elif .state_reason == "completed" then "prematurely completed with an open unmerged PR"
-		else "closed with an open unmerged PR" end') || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	reason=$(_feedback_route_closed_issue_reason "$metadata") || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	if [[ "$reason" == "$PULSE_FEEDBACK_ROUTE_PREMATURE_REASON" ]] \
+		&& _feedback_route_close_superseded_open_pr "$pr_number" "$repo_slug" "$linked_issue" "$labels" "$snapshot"; then
+		return "$PULSE_FEEDBACK_ROUTE_MAINTAINER_RC"
+	fi
 	marker_core="<!-- feedback-route:closed-issue:PR${pr_number}:ISSUE${linked_issue}:SHA${head}"
 	identity=$(_feedback_route_authenticated_identity) || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
 	IFS=$'\t' read -r self_id actor <<<"$identity"

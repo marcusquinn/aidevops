@@ -28,6 +28,7 @@ export function createPoolTool(client) {
     args: {
       action: z.enum(["list", "remove", "status", "reset-cooldowns", "rotate", "assign-pending", "check", "set-priority"]).describe("Action to perform"),
       email: z.string().optional().describe("Account email (for remove/assign-pending/set-priority)"),
+      org: z.string().optional().describe("Seat selector when one email has several Anthropic seats (e.g. Team + Personal): organization name or UUID prefix, as shown by list"),
       provider: z.enum(["anthropic", "openai", "cursor", "google"]).optional().describe("Provider (default: anthropic)"),
       priority: z.number().optional().describe("Rotation priority for set-priority (higher = preferred; 0 = LRU)"),
     },
@@ -39,13 +40,13 @@ export function createPoolTool(client) {
       const hint = `To add an account, run \`${poolAccountAddCommand(provider)}\`.`;
       const actions = {
         "list": () => poolActionList(provider, accounts, hint, now),
-        "remove": () => poolActionRemove(provider, args.email),
+        "remove": () => poolActionRemove(provider, args.email, args.org),
         "status": () => poolActionStatus(provider, accounts, hint, now),
         "reset-cooldowns": () => poolActionResetCooldowns(provider),
         "rotate": () => poolActionRotate(client, provider, accounts, resolveInjectFn),
-        "assign-pending": () => poolActionAssignPending(provider, accounts, args.email),
+        "assign-pending": () => poolActionAssignPending(provider, accounts, args.email, args.org),
         "check": () => poolActionCheck(args.provider, now),
-        "set-priority": () => poolActionSetPriority(provider, args.email, args.priority),
+        "set-priority": () => poolActionSetPriority(provider, args.email, args.priority, args.org),
       };
       const handler = actions[args.action];
       return handler ? handler() : `Unknown action: ${args.action}. Available: ${Object.keys(actions).join(", ")}`;

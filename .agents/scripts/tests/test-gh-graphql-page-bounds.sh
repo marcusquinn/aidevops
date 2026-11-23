@@ -203,9 +203,12 @@ guarded_graphql_sources=(
 	"${REPO_ROOT}/.agents/scripts/pulse-nmr-approval.sh"
 )
 guard_failed=0
+# GH#38129: the adapter may delegate through one `_<module>_attempt "$var"`
+# wrapper (GH#35888's commit-permission read); anything else stays unbounded.
+bounded_graphql_pattern='_[a-z0-9_]+_gh_(read|call)([[:space:]]+(read|write))?([[:space:]]+_[a-z0-9_]+_attempt[[:space:]]+"\$[a-z_]+")?[[:space:]]+gh[[:space:]]+api[[:space:]]+graphql'
 for guarded_source in "${guarded_graphql_sources[@]}"; do
 	while IFS= read -r graphql_line; do
-		if [[ ! "$graphql_line" =~ _[a-z0-9_]+_gh_(read|call)([[:space:]]+(read|write))?[[:space:]]+gh[[:space:]]+api[[:space:]]+graphql ]]; then
+		if [[ ! "$graphql_line" =~ $bounded_graphql_pattern ]]; then
 			fail "hot-path GraphQL calls use bounded adapters" "${guarded_source}: ${graphql_line}"
 			guard_failed=1
 		fi

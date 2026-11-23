@@ -50,6 +50,26 @@ for script in "${admission_scripts[@]}"; do
 done
 printf 'PASS: admission scripts read no CPU load, idle or core-count telemetry\n'
 
+# GH#39157: RAM inputs resolve env > config.jsonc > default through the real
+# config chain, validated before the automatic cap uses them. Runs in a clean
+# child so the OS telemetry stubs below cannot leak in.
+resolve_ram_config() {
+	local reserve_value="$1" env_reserve="${2:-}"
+	local -a env_args=(-u RAM_RESERVE_MB -u RAM_PER_WORKER_MB)
+	[[ -n "$env_reserve" ]] && env_args+=("RAM_RESERVE_MB=$env_reserve")
+	printf '{"orchestration":{"ram_reserve_mb":%s,"ram_per_worker_mb":1024}}\n' "$reserve_value" >"${test_dir}/config.jsonc"
+	# shellcheck disable=SC2016 # expanded by the child shell
+	env "${env_args[@]}" JSONC_USER="${test_dir}/config.jsonc" \
+		JSONC_DEFAULTS="${SCRIPT_DIR}/../configs/aidevops.defaults.jsonc" SCRIPT_DIR="$SCRIPT_DIR" bash -c '
+		source "$SCRIPT_DIR/shared-constants.sh" && source "$SCRIPT_DIR/config-helper.sh" &&
+			source "$SCRIPT_DIR/worker-lifecycle-common.sh" && source "$SCRIPT_DIR/pulse-wrapper-config.sh" &&
+			printf "%s %s\n" "$RAM_RESERVE_MB" "$RAM_PER_WORKER_MB"' 2>/dev/null
+	return $?
+}
+assert_equal "$(resolve_ram_config 2048)" '2048 1024' 'config.jsonc sets RAM reserve and per-worker estimate'
+assert_equal "$(resolve_ram_config 2048 999)" '999 1024' 'RAM_RESERVE_MB env wins over config'
+assert_equal "$(resolve_ram_config '"6g"')" '6144 1024' 'invalid config reserve falls back to the default before cap arithmetic'
+
 # shellcheck source=../pulse-capacity.sh
 source "$SCRIPT_DIR/pulse-capacity.sh"
 # shellcheck source=../pulse-capacity-alloc.sh

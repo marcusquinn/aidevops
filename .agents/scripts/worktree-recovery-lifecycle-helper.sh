@@ -545,16 +545,30 @@ _worktree_recovery_plan_git_state() {
 _worktree_recovery_plan_worktree_reference_state() {
 	local identity_json="$1"
 	local archive_path="" source_path="" listing=""
-	local branch=""
-	local line=""
+	local branch="" git_bin=""
 
 	archive_path=$(printf '%s\n' "$identity_json" | jq -r '.archive_path') || return 1
 	source_path=$(printf '%s\n' "$identity_json" | jq -r '.source_path') || return 1
 	branch=$(printf '%s\n' "$identity_json" | jq -r '.branch') || return 1
-	if ! listing=$(GIT_OPTIONAL_LOCKS=0 git -C "$archive_path" worktree list --porcelain 2>/dev/null); then
+	# Read-only listing: native Git, as git-state above, skips the per-call
+	# shim launch (GH#39560). No native Git is unavailable evidence, not clear.
+	if ! git_bin=$(_worktree_cleanup_real_git) ||
+		! listing=$(GIT_OPTIONAL_LOCKS=0 "$git_bin" -C "$archive_path" worktree list --porcelain 2>/dev/null); then
 		printf '%s\n' "$WORKTREE_RECOVERY_UNAVAILABLE"
 		return 0
 	fi
+	_worktree_recovery_plan_worktree_listing_state "$listing" "$source_path" "$branch"
+	return $?
+}
+
+# Classify one source path and branch against an already captured
+# `git worktree list --porcelain` listing.
+_worktree_recovery_plan_worktree_listing_state() {
+	local listing="$1"
+	local source_path="$2"
+	local branch="$3"
+	local line=""
+
 	while IFS= read -r line; do
 		case "$line" in
 		"worktree $source_path" | "branch $branch")
@@ -631,13 +645,21 @@ _worktree_recovery_plan_claim_state() {
 _worktree_recovery_plan_process_state() {
 	local identity_json="$1"
 	local operation="${2:-}"
+	local given_snapshot="${3:-}"
+	local given_snapshot_rc="${4:-}"
 	local source_path="" archive_path="" bucket_path="" snapshot="" source_inode=""
 	local snapshot_rc=0
 
 	source_path=$(printf '%s\n' "$identity_json" | jq -r '.source_path') || return 1
 	archive_path=$(printf '%s\n' "$identity_json" | jq -r '.archive_path') || return 1
 	bucket_path=$(printf '%s\n' "$identity_json" | jq -r '.bucket_path') || return 1
-	if snapshot=$(capture_worktree_process_cwds); then
+	if [[ -n "$given_snapshot_rc" ]]; then
+		# Caller-captured snapshot and its exit status: one observation may
+		# answer several identities checked at the same point in a guard.
+		[[ "$given_snapshot_rc" =~ ^[0-9]+$ ]] || return 1
+		snapshot="$given_snapshot"
+		snapshot_rc="$given_snapshot_rc"
+	elif snapshot=$(capture_worktree_process_cwds); then
 		snapshot_rc=0
 	else
 		snapshot_rc=$?
@@ -670,9 +692,11 @@ _worktree_recovery_plan_process_state() {
 
 _worktree_recovery_plan_repo_slug() {
 	local archive_path="$1"
-	local remote_url="" repo_slug=""
+	local remote_url="" repo_slug="" git_bin=""
 
-	remote_url=$(GIT_OPTIONAL_LOCKS=0 git -C "$archive_path" remote get-url origin 2>/dev/null) || return 1
+	# Read-only config query through native Git (GH#39560); none fails closed.
+	git_bin=$(_worktree_cleanup_real_git) || return 1
+	remote_url=$(GIT_OPTIONAL_LOCKS=0 "$git_bin" -C "$archive_path" remote get-url origin 2>/dev/null) || return 1
 	case "$remote_url" in
 	https://github.com/*) repo_slug="${remote_url#https://github.com/}" ;;
 	git@github.com:*) repo_slug="${remote_url#git@github.com:}" ;;

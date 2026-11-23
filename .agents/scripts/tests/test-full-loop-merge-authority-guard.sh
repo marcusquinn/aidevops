@@ -87,6 +87,7 @@ load_functions() {
 	extract_function _merge_linked_cross_repo_references
 	extract_function _merge_issue_requires_maintainer_review
 	extract_function _merge_author_has_write_authority
+	extract_function _flm_merge_read_timeout
 	extract_function _merge_is_trusted_issue_sync_pr
 	extract_function _merge_collect_linked_issue_authority_gaps
 	extract_function _merge_report_author_lookup_failure
@@ -99,6 +100,7 @@ load_functions() {
 	extract_function _merge_authority_metadata_valid
 	extract_function _merge_is_headless_session
 	extract_function _merge_interactive_preference_clear
+	extract_function _merge_closing_link_consistent
 	extract_function _merge_collect_external_authority_gaps
 	extract_function _merge_linked_issue_authority_clear
 	extract_function _merge_guard_admin_merge_maintainer_review
@@ -113,6 +115,8 @@ load_functions() {
 	extract_function _merge_verify_rbg_override_approval
 	extract_function _merge_execute
 	extract_function cmd_commit_and_pr
+	extract_function _require_commit_and_pr_inputs
+	extract_function _commit_and_pr_validate_title
 	extract_function _parse_commit_and_pr_args
 	extract_function _validate_keep_issue_open_request
 	extract_function _compose_pr_title
@@ -123,6 +127,13 @@ load_functions() {
 	extract_readiness_function _full_loop_report_external_authority_preflight
 	# shellcheck source=/dev/null
 	source "$EXTRACTED"
+	# GH#39027: extracted readiness output renders its prefix via approval_cli_prefix.
+	# shellcheck source=../shared-approval-cli.sh
+	source "${SCRIPT_DIR}/../shared-approval-cli.sh"
+	# Unregistered fixture repos: the Cloudron release gate makes no API calls.
+	export AIDEVOPS_REPOS_FILE="${TEST_ROOT}/no-repos.json"
+	# shellcheck source=../cloudron-release-merge-guard-lib.sh
+	source "${MERGE_AUTHORITY_SCRIPT%/*}/cloudron-release-merge-guard-lib.sh"
 	return 0
 }
 
@@ -875,6 +886,23 @@ test_pre_merge_authority_preflight() {
 			"rc=$actual_rc output=$output"
 	fi
 
+	# GH#38007: a live PR needs-maintainer-review label is an approval target in
+	# the preflight, while the merge transport guard stays blocked.
+	reset_fixture
+	set_pr_fixture external '[{"name":"needs-maintainer-review"}]' false '[{"number":42}]' 'Resolves #42'
+	FIXTURE_PERMISSION="none"
+	actual_rc=0
+	output=$(cmd_pre_merge_gate 900 owner/repo 2>&1) || actual_rc=$?
+	local merge_rc=0
+	_merge_guard_admin_merge_maintainer_review 900 owner/repo >/dev/null 2>&1 || merge_rc=$?
+	if [[ "$actual_rc" -eq 1 && "$merge_rc" -eq 1 ]] &&
+		grep -qF 'sudo aidevops approve batch issue:42 pr:900 owner/repo' <<<"$output"; then
+		print_result "PR NMR label preflight prints one batch command; merge stays blocked" 0
+	else
+		print_result "PR NMR label preflight prints one batch command; merge stays blocked" 1 \
+			"rc=$actual_rc merge_rc=$merge_rc output=$output"
+	fi
+
 	reset_fixture
 	set_pr_fixture external '[]' false '[{"number":42},{"number":43}]' 'Resolves #42\nResolves #43'
 	FIXTURE_PERMISSION="none"
@@ -951,10 +979,29 @@ test_pre_merge_authority_check_failure() {
 			"rc=$actual_rc output=$output"
 	fi
 
+	# GH#39064: branch protection reports the gate as its commit-status context.
 	local failure_evidence=""
+	for failure_evidence in \
+		'[{"name":"maintainer-gate","state":"FAILURE","bucket":"fail"}]' \
+		'[{"name":"Maintainer Review & Assignee Gate","state":"FAILURE","bucket":"fail"}]' \
+		'[{"name":"maintainer-gate"},{"name":"gate / Maintainer Review & Assignee Gate"}]'; do
+		FIXTURE_FAILURE_EVIDENCE="$failure_evidence"
+		actual_rc=0
+		output=$(cmd_pre_merge_gate 900 owner/repo 2>&1) || actual_rc=$?
+		if [[ "$actual_rc" -eq 1 ]] &&
+			grep -qF 'sudo aidevops approve batch issue:42 pr:900 owner/repo' <<<"$output"; then
+			print_result "maintainer-gate alias failure reports approval: $failure_evidence" 0
+		else
+			print_result "maintainer-gate alias failure reports approval: $failure_evidence" 1 \
+				"rc=$actual_rc output=$output"
+		fi
+	done
+
 	for failure_evidence in \
 		'[{"name":"lint","state":"FAILURE","bucket":"fail"}]' \
 		'[{"name":"gate / Maintainer Review & Assignee Gate"},{"name":"lint"}]' \
+		'[{"name":"maintainer-gate"},{"name":"lint"}]' \
+		'[{"name":null}]' \
 		'[]' 'not-json'; do
 		FIXTURE_FAILURE_EVIDENCE="$failure_evidence"
 		actual_rc=0
@@ -1182,12 +1229,15 @@ test_slow_gate_admission_reads() {
 		result=0
 		(
 			extract_function _flm_gh_read
+			extract_function _flm_merge_read_timeout
 			extract_function _flm_gh_read_once
 			extract_function _merge_with_admission_retry
 			# shellcheck source=/dev/null
 			source "$EXTRACTED"
 			local calls=0 reads=0 waits=0 elapsed=0 rc=0
-			unset AIDEVOPS_GH_READ_TIMEOUT
+			# GH#38535: the sourced generic default stays present in production.
+			AIDEVOPS_GH_READ_TIMEOUT=15
+			unset AIDEVOPS_MERGE_GH_READ_TIMEOUT
 			AIDEVOPS_MERGE_ADMISSION_BUDGET_SECONDS=60
 			date() {
 				printf '%s\n' "$((1000 + elapsed))"

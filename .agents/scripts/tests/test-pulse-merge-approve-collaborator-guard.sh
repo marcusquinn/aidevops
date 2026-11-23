@@ -75,6 +75,9 @@ print_result() {
 reset_mock_state() {
 	: >"$GH_LOG"
 	: >"$LOGFILE"
+	# Each case models a fresh process: drop per-process memos (GH#38242).
+	_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
+	_AIDEVOPS_GH_AUTH_LOGIN_MEMO=""
 	# Default: collaborators set contains "pulse-runner" only.
 	cat >"${TEST_ROOT}/collaborators.txt" <<'EOF'
 pulse-runner
@@ -299,6 +302,9 @@ define_helpers_under_test() {
 
 	# shellcheck source=../pulse-merge-author-checks.sh
 	source "$AUTHOR_CHECKS_SCRIPT"
+	# approve_collaborator_pr resolves the runner login via the shared memo (GH#38242).
+	# shellcheck source=../shared-gh-commit-cache.sh
+	source "${SCRIPT_DIR}/../shared-gh-commit-cache.sh"
 	# shellcheck disable=SC1090
 	eval "$runner_src"
 	# shellcheck disable=SC1090

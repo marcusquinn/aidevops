@@ -80,9 +80,10 @@ def fingerprint_fields(root, admin):
     return described[0] if described else {}
 
 
-def capture(root, archive):
+def capture(root, archive, admin=None):
     root = Path(root).resolve(strict=True)
-    admin = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
+    # The archive helper passes the admin directory it resolved in this invocation.
+    admin = Path(admin) if admin else Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
     described = classify(root, admin)
     if described is None:
         return
@@ -129,8 +130,8 @@ def omitted_keys(manifest):
 
 
 def main(argv):
-    if len(argv) == 3 and argv[0] == "capture":
-        capture(Path(argv[1]), Path(argv[2]).resolve())
+    if len(argv) in (3, 4) and argv[0] == "capture":
+        capture(Path(argv[1]), Path(argv[2]).resolve(), *argv[3:])
         return 0
     if len(argv) == 3 and argv[0] == "bind":
         import json
@@ -146,7 +147,7 @@ def main(argv):
             print("restore: omitted runtime-local config.worktree keys (bytes kept in "
                   f"{NAME}): {', '.join(keys)}", file=sys.stderr)
         return 0
-    print("usage: worktree_archive_runtime_config.py capture WORKTREE ARCHIVE | bind ARCHIVE FINGERPRINT_JSON"
+    print("usage: worktree_archive_runtime_config.py capture WORKTREE ARCHIVE [ADMIN_DIR] | bind ARCHIVE FINGERPRINT_JSON"
           " | restore-note ARCHIVE", file=sys.stderr)
     return 2
 

@@ -298,6 +298,9 @@ routing_capture="${fixture_dir}/adaptive-routing.txt"
 	clear_startup_no_model_feedback() {
 		return 0
 	}
+	clear_model_unavailable_history() {
+		return 0
+	}
 	_cmd_run_finish() {
 		return 0
 	}

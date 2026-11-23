@@ -71,6 +71,25 @@ source "${SCRIPT_DIR}/schedulers-linux.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/schedulers-platform.sh"
 
+# shellcheck source=./schedulers-template-hash.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/schedulers-template-hash.sh"
+
+# t19030: hash the templates this run loaded, not the checkout at record time.
+# A fast-forward during a long setup must not be recorded as converged.
+# shellcheck disable=SC2034  # read by _schedulers_record_template_hash
+_SCHEDULERS_TEMPLATE_HASH_AT_LOAD=$(scheduler_template_hash "$SCRIPT_DIR" 2>/dev/null) ||
+	_SCHEDULERS_TEMPLATE_HASH_AT_LOAD=""
+# Set by _schedulers_defer_template_hash when a scheduler in this run was left
+# unregenerated (runtime pin, refused pin, failed install); blocks recording.
+_SCHEDULERS_TEMPLATE_HASH_DEFERRED=""
+# setup.sh runs some scheduler stages in a bounded background child
+# (_setup_run_noncritical_stage_bounded), where the variable above never
+# reaches the parent recorder. Deferrals are also written to this marker,
+# keyed by the setup shell's $$ (the same value in every subshell of the run).
+_SCHEDULERS_TEMPLATE_HASH_DEFER_FILE="${HOME:-}/.aidevops/.agent-workspace/tmp/schedulers-template-hash.defer.$$"
+rm -f "$_SCHEDULERS_TEMPLATE_HASH_DEFER_FILE" 2>/dev/null || true
+
 # Setup stats-wrapper scheduler — runs quality sweep and health issue updates
 # separately from the pulse (t1429). Only installed when the supervisor
 # pulse is enabled (stats are useless without it).

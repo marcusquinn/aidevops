@@ -335,6 +335,7 @@ _PARENT_CLOSE_CONTRACT_REASON=""
 _PARENT_CLOSE_CONTRACT_DECLARED=0
 _PARENT_CLOSE_CONTRACT_UNFILED=""
 _PARENT_CLOSE_CONTRACT_LIVE_BODY_UNAVAILABLE="live-body-unavailable"
+_PARENT_CLOSE_CONTRACT_UNFILED_PHASES="unfiled-phases"
 _PIR_JSON_TYPE_STRING=string
 _PIR_JSON_TYPE_ARRAY=array
 _PIR_JSON_TYPE_OBJECT=object
@@ -444,7 +445,7 @@ _parent_close_contract_incomplete() {
 			awk -F'\t' '$1 ~ /^[0-9]+$/ && $4 == "" { c++ } END { print c+0 }')
 		if [[ "$unfiled_count" -gt 0 ]] &&
 			[[ "$native_graph_complete" -eq 0 || "$known_child_count" -lt "$_PARENT_CLOSE_CONTRACT_DECLARED" ]]; then
-			_PARENT_CLOSE_CONTRACT_REASON="unfiled-phases"
+			_PARENT_CLOSE_CONTRACT_REASON="$_PARENT_CLOSE_CONTRACT_UNFILED_PHASES"
 			return 0
 		fi
 	fi
@@ -746,12 +747,33 @@ _pir_verify_parent_children_closed() {
 	return 0
 }
 
+#######################################
+# Progress an idle phased parent instead of holding it (GH#38349). Callers
+# reach the unfiled-phases contract only after verifying every known child is
+# closed, so filing the next declared phase is the only useful action and needs
+# no human decision. A requires-decision phase, a maintainer hold, a lost
+# authority check or a failed filing still falls back to nudge + hold.
+# Args: $1=slug, $2=parent_num
+# Returns: 0=next phase filed or linked, 1=caller should hold
+#######################################
+_pir_progress_idle_phased_parent() {
+	local slug="$1" parent_num="$2"
+	[[ "$_PARENT_CLOSE_CONTRACT_REASON" == "$_PARENT_CLOSE_CONTRACT_UNFILED_PHASES" ]] || return 1
+	declare -F auto_file_next_unfiled_parent_phase >/dev/null 2>&1 || return 1
+	_pir_parent_mutation_is_allowed "$slug" "$parent_num" open || return 1
+	auto_file_next_unfiled_parent_phase "$parent_num" "$slug" "${_PHASE_MODE_SEQUENTIAL:-sequential}" \
+		>>"${LOGFILE:-/dev/null}" 2>&1 || return 1
+	echo "[pulse-wrapper] Reconcile parent-task: filed next phase for idle parent #${parent_num} in ${slug} instead of holding (GH#38349)" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
+
 _hold_parent_for_incomplete_close_contract() {
 	local slug="$1"
 	local parent_num="$2"
 	local child_count="$3"
 	local evidence_source="${4:-cached}"
-	if [[ "$_PARENT_CLOSE_CONTRACT_REASON" == "unfiled-phases" ]]; then
+	_pir_progress_idle_phased_parent "$slug" "$parent_num" && return 0
+	if [[ "$_PARENT_CLOSE_CONTRACT_REASON" == "$_PARENT_CLOSE_CONTRACT_UNFILED_PHASES" ]]; then
 		_post_parent_phases_unfiled_nudge "$slug" "$parent_num" \
 			"$_PARENT_CLOSE_CONTRACT_DECLARED" "$child_count" \
 			"$_PARENT_CLOSE_CONTRACT_UNFILED" || true

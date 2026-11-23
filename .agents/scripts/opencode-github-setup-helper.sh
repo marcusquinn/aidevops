@@ -431,9 +431,18 @@ on:
 
 jobs:
   opencode:
+    # Anchor the command so `//opencode.ai` links do not trigger runs, and skip
+    # bot accounts, which never issue commands (GH#39594).
     if: |
-      contains(github.event.comment.body, '/oc') ||
-      contains(github.event.comment.body, '/opencode')
+      (startsWith(github.event.comment.body, '/oc') ||
+       startsWith(github.event.comment.body, '/opencode') ||
+       contains(github.event.comment.body, ' /oc') ||
+       contains(github.event.comment.body, ' /opencode') ||
+       contains(github.event.comment.body, fromJSON('"\n/oc"')) ||
+       contains(github.event.comment.body, fromJSON('"\n/opencode"')) ||
+       contains(github.event.comment.body, fromJSON('"\t/oc"')) ||
+       contains(github.event.comment.body, fromJSON('"\t/opencode"'))) &&
+      github.event.comment.user.type != 'Bot'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -518,7 +527,9 @@ cmd_create_secure_workflow() {
 	return 0
 }
 
-# Write the workflow file header (name, on:, concurrency: blocks)
+# Write the workflow file header (name, on: blocks). Concurrency lives on the
+# agent job: a run-level group lets each unrelated comment replace a pending
+# genuine request before job conditions run (GH#39594).
 # Arguments: None
 # Returns: 0
 _write_workflow_header() {
@@ -532,10 +543,6 @@ on:
     types: [created]
   pull_request_review_comment:
     types: [created]
-
-concurrency:
-  group: opencode-agent
-  cancel-in-progress: false
 
 jobs:
 WORKFLOW_EOF
@@ -551,6 +558,18 @@ _write_workflow_security_job() {
   security-check:
     name: Security Validation
     runs-on: ubuntu-latest
+    # Command prefilter (GH#39594): line-start, space, tab or newline anchors, so
+    # `//opencode.ai` links never start a run; bot accounts never issue commands.
+    if: >
+      (startsWith(github.event.comment.body, '/oc') ||
+        startsWith(github.event.comment.body, '/opencode') ||
+        contains(github.event.comment.body, ' /oc') ||
+        contains(github.event.comment.body, ' /opencode') ||
+        contains(github.event.comment.body, fromJSON('"\n/oc"')) ||
+        contains(github.event.comment.body, fromJSON('"\n/opencode"')) ||
+        contains(github.event.comment.body, fromJSON('"\t/oc"')) ||
+        contains(github.event.comment.body, fromJSON('"\t/opencode"'))) &&
+      github.event.comment.user.type != 'Bot'
     outputs:
       allowed: ${{ steps.check.outputs.allowed }}
       reason: ${{ steps.check.outputs.reason }}
@@ -564,7 +583,8 @@ _write_workflow_security_job() {
             const sender = context.payload.sender;
             const issue = context.payload.issue;
             
-            const hasTrigger = /\/(oc|opencode)\b/.test(comment.body);
+            // Authoritative trigger: command at line start or after whitespace.
+            const hasTrigger = /(^|\s)\/(oc|opencode)\b/m.test(comment.body);
             if (!hasTrigger) {
               core.setOutput('allowed', 'false');
               core.setOutput('reason', 'No trigger found');
@@ -641,6 +661,9 @@ _write_workflow_agent_job() {
     runs-on: ubuntu-latest
     needs: security-check
     if: needs.security-check.outputs.allowed == 'true'
+    concurrency:
+      group: opencode-agent
+      cancel-in-progress: false
     permissions:
       contents: write
       pull-requests: write

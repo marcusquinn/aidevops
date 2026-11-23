@@ -82,7 +82,7 @@ main() {
 	plan_path="${plan_path##*: }"
 	assert_equal "array" "$(printf '%s' "$plan_json" | jq -r 'type')" "write-pr-plan keeps JSON stdout machine-readable"
 	assert_equal "true" "$(jq -r 'length > 0' "$plan_path")" "all-repo mode writes worker-ready PR plans"
-	assert_equal "600" "$(stat -f '%Lp' "$plan_path" 2>/dev/null || stat -c '%a' "$plan_path")" "PR plan protects private repository paths"
+	assert_equal "600" "$(stat -c '%a' "$plan_path" 2>/dev/null || stat -f '%Lp' "$plan_path")" "PR plan protects private repository paths"
 	rm -f "$plan_stderr"
 	local repo_two_common
 	repo_two_common=$("$TEST_NATIVE_GIT" -C "$repo_two" rev-parse --git-common-dir)

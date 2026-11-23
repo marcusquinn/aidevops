@@ -143,7 +143,7 @@ write_routine_prompt_file() {
 	prompt_file=$(routine_prompt_file_path "$routine_name")
 	mkdir -p "${prompt_file%/*}"
 	chmod 700 "${prompt_file%/*}"
-	printf '%s\n' "$prompt" >"$prompt_file"
+	printf '%s\n\n%s\n' "$prompt" "End your final message with exactly one line: 'ROUTINE_OUTCOME: delivered <ref>' (a PR, issue, file or other artifact you produced) or 'ROUTINE_OUTCOME: noop <short reason>' (nothing needed doing, or nothing was produced)." >"$prompt_file"
 	chmod 600 "$prompt_file"
 	return 0
 }

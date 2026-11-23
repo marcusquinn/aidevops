@@ -123,6 +123,43 @@ run_stable_mkcert() {
 	return 1
 }
 
+record_mkcert_install() {
+	local install_method="$1"
+	[[ -z "$install_method" ]] && return 0
+	# shellcheck source=install-record-helper.sh
+	source "$SCRIPT_DIR/install-record-helper.sh"
+	local update_path="$install_method package manager"
+	[[ "$install_method" == "binary-download" ]] && update_path="none"
+	install_record "mkcert" "$install_method" "$(command -v mkcert)" \
+		"Local development TLS certificates" "$update_path" || print_warning "Could not record mkcert install"
+	return 0
+}
+
+# Print the first supported Linux package manager name, or nothing.
+mkcert_pkg_manager() {
+	local pm
+	for pm in apt-get apt dnf pacman apk; do
+		if command -v "$pm" >/dev/null 2>&1; then
+			printf '%s\n' "$pm"
+			return 0
+		fi
+	done
+	return 0
+}
+
+# Print the install command (without sudo) for a package manager name.
+mkcert_pkg_command() {
+	local pm="$1"
+	case "$pm" in
+	apt-get | apt) printf '%s install -y mkcert libnss3-tools\n' "$pm" ;;
+	dnf) printf 'dnf install -y mkcert\n' ;;
+	pacman) printf 'pacman -S --noconfirm mkcert\n' ;;
+	apk) printf 'apk add mkcert\n' ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
 # Install mkcert if not present. Supports macOS (brew) and Linux (apt, dnf,
 # pacman, apk). On Linux, the apt package name is "mkcert" (available in
 # Ubuntu 20.04+ and Debian 11+). libnss3-tools is required on Debian/Ubuntu
@@ -134,6 +171,7 @@ run_stable_mkcert() {
 # Returns: 0 if mkcert is available after this function, 1 if installation failed.
 ensure_mkcert() {
 	local installed=false
+	local install_method=""
 	if command -v mkcert >/dev/null 2>&1; then
 		installed=true
 	else
@@ -141,33 +179,32 @@ ensure_mkcert() {
 		if command -v brew >/dev/null 2>&1; then
 			if brew install mkcert 2>/dev/null; then
 				installed=true
+				install_method="brew"
 			fi
-		elif command -v apt-get >/dev/null 2>&1; then
-			if sudo apt-get update -qq && sudo apt-get install -y -qq mkcert libnss3-tools 2>/dev/null; then
-				installed=true
+		elif [[ -n "$(mkcert_pkg_manager)" ]]; then
+			# A package manager exists: install through it, or print the exact
+			# command. Never prompt for sudo or fall back to an unmanaged download.
+			local pm
+			pm=$(mkcert_pkg_manager)
+			local -a pkg_cmd=()
+			read -r -a pkg_cmd <<<"$(mkcert_pkg_command "$pm")"
+			if [[ "$(id -u)" -eq 0 ]]; then
+				"${pkg_cmd[@]}" 2>/dev/null && installed=true
+			elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+				sudo -n "${pkg_cmd[@]}" 2>/dev/null && installed=true
+			else
+				print_error "mkcert needs a system package install and sudo is unavailable"
+				echo "  Run this command, then re-run localdev-helper.sh init:"
+				echo "    sudo ${pkg_cmd[*]}"
+				return 1
 			fi
-		elif command -v apt >/dev/null 2>&1; then
-			if sudo apt update -qq && sudo apt install -y -qq mkcert libnss3-tools 2>/dev/null; then
-				installed=true
-			fi
-		elif command -v dnf >/dev/null 2>&1; then
-			if sudo dnf install -y mkcert 2>/dev/null; then
-				installed=true
-			fi
-		elif command -v pacman >/dev/null 2>&1; then
-			if sudo pacman -S --noconfirm mkcert 2>/dev/null; then
-				installed=true
-			fi
-		elif command -v apk >/dev/null 2>&1; then
-			if sudo apk add mkcert 2>/dev/null; then
-				installed=true
-			fi
+			install_method="$pm"
 		fi
 	fi
 
-	# Binary download fallback for distros without a supported package manager.
+	# Binary download fallback only where no supported package manager exists.
 	# Supports x86_64 (amd64), aarch64/arm64, and armv7l architectures.
-	if [[ "$installed" != "true" ]] && command -v curl >/dev/null 2>&1; then
+	if [[ "$installed" != "true" ]] && [[ -z "$(mkcert_pkg_manager)" ]] && ! command -v brew >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
 		local raw_arch
 		raw_arch=$(uname -m)
 		local arch=""
@@ -188,6 +225,7 @@ ensure_mkcert() {
 				export PATH="$bin_dir:$PATH"
 				if command -v mkcert >/dev/null 2>&1; then
 					installed=true
+					install_method="binary-download"
 					print_success "mkcert installed via binary download to $bin_dir/mkcert"
 				fi
 			fi
@@ -206,6 +244,7 @@ ensure_mkcert() {
 	fi
 
 	print_success "mkcert available"
+	record_mkcert_install "$install_method"
 
 	# Install the local CA into the system trust store (one-time setup).
 	# This makes mkcert-generated certs trusted by browsers and curl.

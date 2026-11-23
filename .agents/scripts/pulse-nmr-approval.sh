@@ -31,6 +31,13 @@
 _PULSE_NMR_APPROVAL_LOADED=1
 NMR_SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)" || return 1
 
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "${NMR_SCRIPT_DIR}/shared-approval-cli.sh"
+fi
+
 if ! declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
 	_PULSE_NMR_APPROVAL_DIR="${BASH_SOURCE[0]%/*}"
 	if [[ -f "${_PULSE_NMR_APPROVAL_DIR}/github-app-auth-helper.sh" ]]; then
@@ -1128,9 +1135,11 @@ notify_ever_nmr_without_approval() {
 	local already_notified
 	# Check all pages together. A signature published since verification also
 	# suppresses notification; presence alone never grants dispatch authority.
-	already_notified=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate --slurp \
-		--jq '[.[][] | select((.body // "") | test("ever-nmr-remediation|aidevops-signed-approval"))] | length' \
-		2>/dev/null) || return 0
+	# GH#38185: gh rejects --slurp with --jq, so filter with standalone jq.
+	already_notified=$(set -o pipefail
+		gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" --paginate --slurp 2>/dev/null |
+			jq '[.[][] | select((.body // "") | test("ever-nmr-remediation|aidevops-signed-approval"))] | length' \
+				2>/dev/null) || return 0
 	[[ "$already_notified" =~ ^[0-9]+$ ]] || return 0
 	if [[ "$already_notified" -gt 0 ]]; then
 		echo "[pulse-wrapper] notify_ever_nmr_without_approval: #${issue_number} in ${repo_slug} — remediation comment already posted, skipping" >>"$LOGFILE"
@@ -1145,7 +1154,7 @@ notify_ever_nmr_without_approval() {
 > Label \`needs-maintainer-review\` was removed, but the \`ever-NMR\` history flag is still set. Pulse will continue to skip dispatch until cryptographic approval lands:
 >
 > \`\`\`
-> sudo aidevops approve issue ${issue_number} ${repo_slug}
+> $(approval_cli_prefix) approve issue ${issue_number} ${repo_slug}
 > \`\`\`
 >
 > This gate cannot be bypassed by label manipulation (security design — see \`reference/auto-merge.md\` NMR section)." \
@@ -1469,7 +1478,7 @@ _notify_stale_recovery_resolved_by_pr() {
 PR #${matching_pr} is APPROVED with all quality/security gates green. To merge, run:
 
 \`\`\`
-sudo aidevops approve issue ${issue_num} ${slug}
+$(approval_cli_prefix) approve issue ${issue_num} ${slug}
 \`\`\`
 
 This issue's NMR was applied by stale-recovery (t2008) — the cryptographic approval clears it and the merge gate flips to PASS." \
@@ -1581,7 +1590,7 @@ _nmr_issue_label_state() {
 			($statuses[0] // $no_status),
 			(any($labels[];
 				. == "hold-for-review" or . == "no-auto-dispatch" or
-				. == "needs-credentials" or . == "needs-maintainer-permissions")),
+				. == "needs-credentials" or . == "needs-source-access" or . == "needs-maintainer-permissions")),
 			(any($labels[];
 				. == "parent-task" or . == "meta" or . == "persistent" or
 				. == "supervisor" or . == "contributor" or . == "quality-review" or

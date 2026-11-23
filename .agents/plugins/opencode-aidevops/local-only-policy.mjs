@@ -225,11 +225,44 @@ export function isLoopbackDestination(destination) {
 // destination is enforced at the later http.request boundary.
 const DESTINATION_SURFACES = new Set(["chat", "http"]);
 
-function deny(policy, detail) {
+function deny(policy, detail, notice) {
+  if (notice) notice();
   throw new LocalOnlyPolicyError(
     `${RUNTIME_POLICY_ENV}=${policy.policy} binds this session to local AI; ${detail} was blocked before sending. `
       + "Select a local model, or relaunch without the binding if this work may use a remote provider.",
   );
+}
+
+// Content-free field: only plain identifier shapes pass; anything else (a URL,
+// message text, a path) collapses to the fallback so it can never be logged.
+function safeField(value, fallback) {
+  const text = typeof value === "string" ? value.trim() : "";
+  return LOCAL_PROVIDER_ID_PATTERN.test(text) ? text : fallback;
+}
+
+/**
+ * One content-free diagnostic line for an egress denial (GH#38424). Never
+ * includes the endpoint, message content or credentials.
+ * @param {object} input hook input
+ * @param {string} surface chat|context|http
+ * @param {"non-local-provider"|"non-loopback-endpoint"} reason
+ * @returns {string}
+ */
+export function formatLocalOnlyDenial(input, surface, reason) {
+  const agent = typeof input?.agent === "object" ? input.agent?.name : input?.agent;
+  return `[aidevops] local-only: denied surface=${safeField(surface, "unknown")} agent=${safeField(agent, "unknown")} `
+    + `provider=${safeField(requestProviderID(input), "unknown")} session=${safeField(input?.sessionID, "none")} reason=${reason}`;
+}
+
+/**
+ * One content-free line stating the binding state of this process (GH#38424).
+ * @param {ReturnType<typeof loadLocalOnlyPolicy>} policy
+ * @returns {string}
+ */
+export function formatLocalOnlyBinding(policy) {
+  const state = policy?.bound ? "bound" : "unbound";
+  return `[aidevops] local-only: ${state} reason=${safeField(policy?.reason, "unknown")} `
+    + `localProvidersSource=${safeField(policy?.localProvidersSource, "unknown")} providers=${(policy?.localProviders || []).length}`;
 }
 
 /**
@@ -237,19 +270,25 @@ function deny(policy, detail) {
  * Two independent checks: the provider ID must be listed as local, and, where
  * the surface exposes it, the endpoint must be loopback, so a remote endpoint
  * configured under a local provider name is still refused. An unidentifiable
- * provider or endpoint is treated as non-local.
+ * provider or endpoint is treated as non-local. Pure unless the caller passes
+ * `log`, which receives one content-free line before the throw.
  * @param {ReturnType<typeof loadLocalOnlyPolicy>} policy
  * @param {object} input hook input carrying the target model/provider
  * @param {string} surface request boundary name, for the operator message only
+ * @param {(line: string) => void} [log] optional diagnostic sink
  */
-export function assertLocalOnlyEgress(policy, input, surface) {
+export function assertLocalOnlyEgress(policy, input, surface, log) {
   if (!policy?.bound) return;
+  const notice = (reason) => () => {
+    if (typeof log !== "function") return;
+    try { log(formatLocalOnlyDenial(input, surface, reason)); } catch { /* diagnostics never change the denial */ }
+  };
   const providerID = requestProviderID(input);
   if (!isLocalProvider(policy, providerID)) {
-    deny(policy, `${surface} request to provider "${providerID || "unknown"}"`);
+    deny(policy, `${surface} request to provider "${providerID || "unknown"}"`, notice("non-local-provider"));
   }
   if (DESTINATION_SURFACES.has(surface) && !isLoopbackDestination(requestDestination(input))) {
-    deny(policy, `${surface} request for local provider "${providerID}" to a non-loopback or unknown endpoint`);
+    deny(policy, `${surface} request for local provider "${providerID}" to a non-loopback or unknown endpoint`, notice("non-loopback-endpoint"));
   }
 }
 

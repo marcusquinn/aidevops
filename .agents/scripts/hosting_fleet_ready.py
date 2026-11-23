@@ -47,7 +47,7 @@ def repo_groups(plan: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """One readiness subject per repository slug, carrying every domain it serves."""
     groups: dict[str, dict[str, Any]] = {}
     for item in plan["sites"]:
-        slug = item.get("expected_slug") or item.get("registered_slug")
+        slug = item.get("registered_slug") or item.get("expected_slug")
         if not slug:
             continue
         group = groups.setdefault(slug, {"slug": slug, "domains": [], "plan_states": set(),
@@ -88,6 +88,9 @@ def check_repo(group: dict[str, Any], registry: dict[str, Any], evidence: bool) 
     }
     if "project-config-missing" in result["warnings"]:
         result["repair"] = REPAIR_HINT.format(slug=slug)
+    if "remote-transferred" in problems:
+        result["repair"] = ("Configure owner/site-repo overrides, then preview fleet move --site "
+                            + group["domains"][0] + " (uses audited follow-transfer)")
     if evidence:
         result["worker_evidence"] = worker_evidence(slug)
     return result

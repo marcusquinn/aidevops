@@ -13,11 +13,9 @@ from uuid import UUID, uuid5
 
 from .absence import reconcile_absence
 from .archive_path import create_archive_root, validate_archive_path
-from .admission import AdmissionRegistry
 from .cleanup_failure import failure_details as _failure_details
-from .cleanup_plan import enrolled_only_event_id
 from .cleanup_quarantine import CleanupQuarantine
-from .enrollment import GenerationEnrollment, _git_directory
+from .enrollment import GenerationEnrollment
 from .filesystem import validate_private_path as _private
 from .interrupted_removal import journaled_removals, resume_failed, resume_first
 from .permissions import FilePolicy, read_owned_file
@@ -31,7 +29,12 @@ REPOSITORY_CONFIG = FilePolicy("unsafe-repository-config", max_size=1048576, pri
 
 def _repository_entries(config: Path) -> list:
     """Read a bounded operator-owned configuration without following links."""
-    configuration = json.loads(read_owned_file(config, REPOSITORY_CONFIG).decode("utf-8"))
+    try:
+        raw = read_owned_file(config, REPOSITORY_CONFIG)
+    except (FileNotFoundError, PermissionError) as error:
+        # GH#38667: name missing/unreadable configuration instead of a bare OSError.
+        raise ValueError("repository-config-unavailable") from error
+    configuration = json.loads(raw.decode("utf-8"))
     if not isinstance(configuration, dict):
         raise ValueError("invalid-repository-config")
     entries = configuration.get("initialized_repos")
@@ -190,50 +193,6 @@ def cleanup_worktree(
     generation = GenerationEnrollment(store).inspect_retirement(path)
     create_archive_root(root)
     validate_archive_path(root)
-    return _candidate(store, repositories, root, generation, path)
-
-
-def retire_enrolled_only(
-    store: LifecycleRegistry, config: Path, root: Path, path: Path, confirm: bool,
-) -> dict[str, object]:
-    """Operator-confirmed, archive-first retirement of a never-owned generation.
-
-    Eligible: enrolled, zero bound runs, no `created-worktree` receipt. Without
-    `confirm` this only previews. Confirmation closes admission and records
-    `operator_confirmed` evidence atomically, then reuses `retire_worktree`
-    (archive, verify, private move, native removal); the branch is kept.
-    """
-    if not root.is_absolute() or root.resolve() != root:
-        raise ValueError("canonical-archive-root-required")
-    repositories = _repositories(config, explicit=True)
-    generation = GenerationEnrollment(store).inspect_retirement(path)
-    with store.connection() as connection:
-        admission = connection.execute(
-            "SELECT state FROM generation_admissions WHERE generation_id=?",
-            (generation,),
-        ).fetchone()
-        owned = connection.execute(
-            "SELECT 1 FROM bindings WHERE generation_id=?", (generation,),
-        ).fetchone() or _event(store, str(uuid5(UUID(generation), "created-worktree")))
-    result: dict[str, object] = {
-        "generation_id": generation, "cleanup_authorized": False,
-        "admission": admission["state"] if admission else "absent",
-    }
-    if admission is None or owned:
-        return dict(result, status="not-enrolled-only")
-    common = _git("-C", str(path), "rev-parse", "--path-format=absolute",
-                  "--git-common-dir")
-    if common not in repositories:
-        return dict(result, status="outside-maintenance-scope")
-    if not confirm:
-        return dict(result, status="enrolled-only-preview", confirm_required=True)
-    if root.is_relative_to(path) or root.is_relative_to(_git_directory(path)):
-        raise ValueError("archive-output-must-be-outside-worktree")
-    create_archive_root(root)
-    validate_archive_path(root)
-    AdmissionRegistry(store).authorize_enrolled_only(
-        enrolled_only_event_id(generation), generation,
-    )
     return _candidate(store, repositories, root, generation, path)
 
 

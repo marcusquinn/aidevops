@@ -66,12 +66,16 @@ try:
     conn.execute("PRAGMA busy_timeout=3000")
     cursor = conn.cursor()
     # Match provider-level backoff (auth_error) or model-level backoff
-    # where the model starts with this provider prefix
+    # where the model starts with this provider prefix. GH#38713: an
+    # entitlement rejection (model_unavailable) happens before generation,
+    # so a worker running past the grace period already had its model
+    # accepted; that row must not kill workers on other models.
     cursor.execute(
         """
         SELECT provider, reason, retry_after
         FROM provider_backoff
         WHERE (provider = ? OR provider LIKE ?)
+          AND reason <> 'model_unavailable'
           AND (
             retry_after IS NULL
             OR retry_after > strftime('%Y-%m-%dT%H:%M:%SZ', 'now')

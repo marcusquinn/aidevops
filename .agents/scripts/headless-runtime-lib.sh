@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS provider_sessions (
     session_id   TEXT NOT NULL,
     model        TEXT NOT NULL,
     updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    head_sha     TEXT NOT NULL DEFAULT '',
+    head_branch  TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (provider, session_key)
 );
 
@@ -103,6 +105,24 @@ CREATE TABLE IF NOT EXISTS private_workload_locks (
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 SQL
+	_migrate_provider_sessions_head_columns
+	return 0
+}
+
+# GH#38982: older state DBs predate the attempt-head columns that let a
+# continuation refuse to resume a session whose delivered head already merged.
+# Probe first so steady-state startup takes no write lock; a concurrent
+# migration losing the race to a duplicate-column error is harmless.
+# Args: [db_path] (defaults to STATE_DB)
+_migrate_provider_sessions_head_columns() {
+	local db_path="${1:-$STATE_DB}"
+	local column=""
+	for column in head_sha head_branch; do
+		if ! sqlite3_with_timeout "$db_path" "SELECT ${column} FROM provider_sessions LIMIT 0;" >/dev/null 2>&1; then
+			sqlite3_with_timeout "$db_path" \
+				"ALTER TABLE provider_sessions ADD COLUMN ${column} TEXT NOT NULL DEFAULT '';" >/dev/null 2>&1 || true
+		fi
+	done
 	return 0
 }
 
@@ -534,8 +554,19 @@ except (AttributeError, OSError):
     record["load_1min"] = None
     record["cpu_count"] = os.cpu_count() or 0
     record["load_per_cpu"] = None
-with open(os.environ["METRICS_PATH"], "a") as f:
-    f.write(json.dumps(record, separators=(",", ":")) + "\n")
+# GH#39185: one O_APPEND write per record under an advisory lock, so
+# concurrent producers cannot interleave records (O_APPEND alone is only
+# atomic below PIPE_BUF; records can reach 2 KB+).
+import fcntl
+line = (json.dumps(record, separators=(",", ":")) + "\n").encode("utf-8")
+fd = os.open(os.environ["METRICS_PATH"], os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    view = memoryview(line)
+    while view:
+        view = view[os.write(fd, view):]
+finally:
+    os.close(fd)
 PY
 	# A later EXIT trap must not duplicate an already persisted invocation metric.
 	_HEADLESS_RUNTIME_LAST_METRIC_KEY="${AIDEVOPS_RUN_ID:-${_WORKER_START_EPOCH_MS:-0}}:${session_key}"
@@ -925,6 +956,9 @@ build_sandbox_passthrough_csv() {
 		# Without this, opencode never initialises its OTLP exporter and
 		# all aidevops.* plugin span enrichment is silently dropped (t2186).
 		AIDEVOPS_* | PULSE_* | GH_* | GITHUB_* | OPENCODE_* | XDG_* | OTEL_* | REAL_HOME | TMPDIR | TMP | TEMP | RTK_* | VERIFY_*) ;;
+		# GH#38587: user uv tool/Python dirs exported for trusted workers;
+		# triage and private workloads return above and never receive them.
+		UV_TOOL_DIR | UV_TOOL_BIN_DIR | UV_PYTHON_INSTALL_DIR | UV_PYTHON_BIN_DIR) ;;
 		*) continue ;;
 		esac
 		if [[ "$seen_names" == *" ${name} "* ]]; then
@@ -966,7 +1000,7 @@ _activity_output_has_provider_rate_limit() {
 _activity_output_has_ci_wait() {
 	local output_file="$1"
 	[[ -f "$output_file" ]] || return 1
-	grep -Eqi 'gh pr checks|review-bot-gate|pre-merge-gate|CI check|checks? (are )?(still )?(running|pending)|waiting (for|on) (CI|checks|review|merge)|merge (is )?(slow|pending)' "$output_file" 2>/dev/null
+	grep -Eqi 'gh pr checks|wait-checks|review-bot-gate|pre-merge-gate|CI check|checks? (are )?(still )?(running|pending)|waiting (for|on) (CI|checks|review|merge)|merge (is )?(slow|pending)' "$output_file" 2>/dev/null
 }
 
 #######################################
@@ -1175,6 +1209,15 @@ _watchdog_kill() {
 
 	# Release the dispatch claim so the issue is immediately available
 	# for re-dispatch instead of waiting for the 30-min TTL.
+	# GH#37984: this inline watchdog is only the fallback when the standalone
+	# worker-activity-watchdog.sh is missing (headless-runtime-invoke.sh
+	# _invoke_opencode_start_monitors). The standalone _release_claim posts an
+	# unbound best-effort audit comment (no claim_id/lease, runner=whoami) that
+	# checkpoint approval cannot trust and that may not be posted at all. The
+	# authoritative lease-bound release for a hard-kill is
+	# headless-runtime-worker.sh _hrw_finish_failed_run, which releases
+	# watchdog_kill:hard_kill_stall. Keep both under the watchdog_kill: prefix so
+	# they stay stall-class (STALL_RELEASE_PATTERN); never use worker_failed here.
 	if [[ -n "$session_key" ]]; then
 		_release_dispatch_claim "$session_key" "watchdog_kill:${reason}"
 	fi
@@ -1388,7 +1431,20 @@ CANARY_SATURATION_PERCENT="${CANARY_SATURATION_PERCENT:-98}"
 CANARY_OVERLOAD_LOAD_MULTIPLIER="${CANARY_OVERLOAD_LOAD_MULTIPLIER:-4}"
 
 _headless_opencode_profile_is_v2() {
-	[[ "${AIDEVOPS_OPENCODE_PROFILE:-v1}" == "v2" ]]
+	# Explicit env wins; otherwise resolve through the profile document (same
+	# resolver as setup/Pulse). Cached per shell process, never exported.
+	if [[ -n "${AIDEVOPS_OPENCODE_PROFILE:-}" ]]; then
+		[[ "$AIDEVOPS_OPENCODE_PROFILE" == "v2" ]] && return 0
+		return 1
+	fi
+	if [[ -z "${_HEADLESS_OPENCODE_DEFAULT_PROFILE:-}" ]]; then
+		if declare -F aidevops_opencode_profile_id >/dev/null 2>&1; then
+			_HEADLESS_OPENCODE_DEFAULT_PROFILE=$(aidevops_opencode_profile_id 2>/dev/null) || _HEADLESS_OPENCODE_DEFAULT_PROFILE="v1"
+		fi
+		_HEADLESS_OPENCODE_DEFAULT_PROFILE="${_HEADLESS_OPENCODE_DEFAULT_PROFILE:-v1}"
+	fi
+	[[ "$_HEADLESS_OPENCODE_DEFAULT_PROFILE" == "v2" ]] && return 0
+	return 1
 }
 
 _headless_opencode_binary_name() {

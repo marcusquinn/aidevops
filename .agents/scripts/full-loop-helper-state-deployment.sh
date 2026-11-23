@@ -94,6 +94,7 @@ _full_loop_verify_deployment_receipt() {
 cmd_record_deployment() {
 	local pr_number="${1:-}" run_id="${2:-}" workflow="${3:-}" source_sha="${4:-}"
 	local repo="" evidence="" path="" existing="" status=0
+	local receipt_locked=false
 	[[ $# -ge 4 && $# -le 5 ]] || {
 		print_error "Usage: record-deployment <PR> <RUN_ID> <WORKFLOW.yml> <DEPLOYED_SHA> [REPO]"
 		return 1
@@ -105,6 +106,12 @@ cmd_record_deployment() {
 	}
 	_full_loop_acquire_transition_lock || return 1
 	path=$(_full_loop_release_receipt_path "$repo" "$pr_number") || status=1
+	if [[ "$status" -eq 0 ]]; then
+		mkdir -p "${path%/*}" || status=1
+	fi
+	if [[ "$status" -eq 0 ]]; then
+		if mkdir "${path}.lock"; then receipt_locked=true; else status=1; fi
+	fi
 	if [[ "$status" -eq 0 && -e "$path" ]]; then
 		# Re-attest only the same deployment identity with a newer verified run
 		# or attempt. Never replace versioned, malformed, or unrelated evidence.
@@ -134,6 +141,7 @@ cmd_record_deployment() {
 	if [[ "$status" -eq 0 ]]; then
 		full_loop_update_cleanup_release_status "$repo" "$pr_number" "$_FULL_LOOP_RELEASE_PUBLISHED" || status=1
 	fi
+	if [[ "$receipt_locked" == true ]]; then rmdir "${path}.lock" || status=1; fi
 	_full_loop_release_transition_lock
 	[[ "$status" -eq 0 ]] || {
 		print_error "Cannot record deployment: conflicting terminal receipt or cleanup evidence"

@@ -8,7 +8,9 @@ import json
 import os
 from pathlib import Path
 import shlex
+import re
 import shutil
+import subprocess  # nosec B404 -- only used for a fixed-argv version probe, no shell.
 import sys
 import tempfile
 
@@ -103,12 +105,32 @@ def kimi_args(prompt, dry_run):
     return ["--agent-file", config_path]
 
 
+OPENCODE_AGENT_NAMES = {"build-plus": "Build+", "framework": "AI-DevOps", "seo": "SEO"}
+
+
+def opencode_major():
+    """Return the OpenCode major version, or None when it cannot be determined."""
+    try:
+        result = subprocess.run(  # nosec B603 B607 -- fixed binary and argv, no shell.
+            ["opencode", "--version"], capture_output=True, text=True, timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.search(r"(\d+)\.\d+", result.stdout or "") if result.returncode == 0 else None
+    return int(match.group(1)) if match else None
+
+
+def opencode_agent_args(agent):
+    """OpenCode 2.x accepts --agent only on `opencode run`, not the TUI command."""
+    major = opencode_major()
+    name = OPENCODE_AGENT_NAMES.get(agent, agent.title())
+    return [] if major is not None and major >= 2 else ["--agent", name]
+
+
 def agent_args(runtime, agent, source, prompt, dry_run):
     adapters = {
         "codex": ["-c", "developer_instructions=" + json.dumps(prompt)],
         "claude-code": ["--append-system-prompt", prompt],
-        "opencode": ["--agent", "Build+" if agent == "build-plus" else
-                     "AI-DevOps" if agent == "framework" else "SEO" if agent == "seo" else agent.title()],
+        "opencode": opencode_agent_args(agent) if runtime == "opencode" else [],
         "cursor": [prompt], "droid": [prompt], "kiro": [prompt],
         "gemini-cli": ["--prompt-interactive", prompt],
         "qwen": ["--prompt-interactive", prompt],

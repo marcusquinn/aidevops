@@ -10,6 +10,7 @@ SYNC_MIRROR_CMD="sync-mirror"
 LOCAL_FAST_FORWARD_CMD="fast-forward-local"
 VERIFY_BOOTSTRAP_CMD="verify-bootstrap-registration"
 REPAIR_UPSTREAM_CMD="repair-upstream"
+REPAIR_WORKTREES_CMD="repair-worktrees"
 FOLLOW_TRANSFER_CMD="follow-transfer"
 CLEAR_STALE_REBASE_CMD="clear-stale-rebase"
 CLEAR_ABANDONED_REBASE_CMD="clear-abandoned-rebase"
@@ -26,1149 +27,25 @@ LOCAL_STATE_BORN="born"
 LOCAL_STATE_UNBORN="unborn"
 BOOLEAN_TRUE="true"
 
-local_ref_is_absent() {
-	local repo="$1"
-	local ref="$2"
-	local status=0
-	"$REAL_GIT" -C "$repo" show-ref --verify --quiet "$ref" || status=$?
-	[[ "$status" -eq 1 ]] || return 1
-	return 0
-}
+# shellcheck source=./canonical-recovery-state.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/canonical-recovery-state.sh"
+# shellcheck source=./canonical-recovery-rebase.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/canonical-recovery-rebase.sh"
+# shellcheck source=./canonical-recovery-ffl.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/canonical-recovery-ffl.sh"
+# shellcheck source=./canonical-recovery-lock.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/canonical-recovery-lock.sh"
+# shellcheck source=./canonical-recovery-hygiene.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/canonical-recovery-hygiene.sh"
+# shellcheck source=./worker-lifecycle-state.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/worker-lifecycle-state.sh"
 
-verify_initial_local_state() {
-	local repo="$1"
-	local ref="$2"
-	local state="$3"
-	local expected_sha="$4"
-	local current_sha=""
-	local head_ref=""
-	if [[ "$state" == "$LOCAL_STATE_UNBORN" ]]; then
-		if ! head_ref=$("$REAL_GIT" -C "$repo" symbolic-ref --quiet HEAD 2>&1); then
-			head_ref=""
-		fi
-		local_ref_is_absent "$repo" "$ref" || return 1
-		[[ "$head_ref" == "$ref" ]] || return 1
-		return 0
-	fi
-	if ! current_sha=$("$REAL_GIT" -C "$repo" rev-parse --verify "${ref}^{commit}" 2>&1); then
-		current_sha=""
-	fi
-	[[ -n "$current_sha" && "$current_sha" == "$expected_sha" ]] || return 1
-	return 0
-}
-
-verify_post_cas_state() {
-	local repo="$1"
-	local local_ref="$2"
-	local branch="$3"
-	local remote_ref="$4"
-	local target_sha="$5"
-	local current_branch=""
-	local current_local_sha=""
-	local current_remote_sha=""
-	if ! current_branch=$("$REAL_GIT" -C "$repo" symbolic-ref --quiet --short HEAD 2>&1); then
-		current_branch=""
-	fi
-	if ! current_local_sha=$("$REAL_GIT" -C "$repo" rev-parse --verify "${local_ref}^{commit}" 2>&1); then
-		current_local_sha=""
-	fi
-	if ! current_remote_sha=$("$REAL_GIT" -C "$repo" rev-parse --verify "${remote_ref}^{commit}" 2>&1); then
-		current_remote_sha=""
-	fi
-	[[ "$current_branch" == "$branch" && "$current_local_sha" == "$target_sha" &&
-		"$current_remote_sha" == "$target_sha" ]] || return 1
-	return 0
-}
-
-rollback_local_ref() {
-	local repo="$1"
-	local ref="$2"
-	local state="$3"
-	local initial_sha="$4"
-	local target_sha="$5"
-	local message="$6"
-	if [[ "$state" == "$LOCAL_STATE_UNBORN" ]]; then
-		"$REAL_GIT" -C "$repo" update-ref -m "$message" -d "$ref" "$target_sha" || return 1
-		return 0
-	fi
-	"$REAL_GIT" -C "$repo" update-ref -m "$message" "$ref" "$initial_sha" "$target_sha" || return 1
-	return 0
-}
-
-restore_unborn_worktree() {
-	local repo="$1"
-	local target_sha="$2"
-	local empty_tree="$3"
-	"$REAL_GIT" -C "$repo" read-tree --dry-run -u -m "$target_sha" "$empty_tree" || return 1
-	"$REAL_GIT" -C "$repo" read-tree -u -m "$target_sha" "$empty_tree" || return 1
-	return 0
-}
-
-github_slug_from_remote_url() {
-	local url="$1"
-	local slug=""
-	local remainder=""
-	local authority=""
-	local port=""
-	case "$url" in
-	git@github.com:*) slug="${url#git@github.com:}" ;;
-	ssh://* | https://* | http://* | git://*)
-		remainder="${url#*://}"
-		[[ "$remainder" == */* ]] || return 1
-		authority="${remainder%%/*}"
-		slug="${remainder#*/}"
-		case "$url" in
-		ssh://*)
-			case "$authority" in
-			git@github.com) ;;
-			git@github.com:*) port="${authority#git@github.com:}" ;;
-			*) return 1 ;;
-			esac
-			;;
-		*)
-			case "$authority" in
-			github.com) ;;
-			github.com:*) port="${authority#github.com:}" ;;
-			*) return 1 ;;
-			esac
-			;;
-		esac
-		[[ -z "$port" || "$port" =~ ^[0-9]+$ ]] || return 1
-		;;
-	*) return 1 ;;
-	esac
-	slug="${slug%%\?*}"
-	slug="${slug%%#*}"
-	slug="${slug%/}"
-	slug="${slug%.git}"
-	[[ -n "$slug" && "$slug" == */* && "${slug#*/}" != */* ]] || return 1
-	printf '%s\n' "$slug"
-	return 0
-}
-
-is_github_remote_url() {
-	local url="$1"
-	case "$url" in
-	git@github.com:* | ssh://git@github.com/* | ssh://git@github.com:*/* | \
-		https://github.com/* | https://github.com:*/* | http://github.com/* | \
-		http://github.com:*/* | git://github.com/* | git://github.com:*/*)
-		return 0
-		;;
-	*) return 1 ;;
-	esac
-}
-
-origin_is_local_mirror() {
-	local repo="$1"
-	local fetch_urls=""
-	local push_urls=""
-	local url=""
-	local fetch_count=0
-	local push_count=0
-	fetch_urls=$("$REAL_GIT" -C "$repo" config --get-all remote.origin.url 2>/dev/null || true)
-	push_urls=$("$REAL_GIT" -C "$repo" config --get-all remote.origin.pushurl 2>/dev/null || true)
-	[[ -n "$push_urls" ]] || push_urls="$fetch_urls"
-	while IFS= read -r url; do
-		[[ -n "$url" ]] || continue
-		fetch_count=$((fetch_count + 1))
-		case "$url" in
-		file://* | /* | ./* | ../*) ;;
-		*) return 1 ;;
-		esac
-	done <<<"$fetch_urls"
-	while IFS= read -r url; do
-		[[ -n "$url" ]] || continue
-		push_count=$((push_count + 1))
-		case "$url" in
-		file://* | /* | ./* | ../*) ;;
-		*) return 1 ;;
-		esac
-	done <<<"$push_urls"
-	[[ "$fetch_count" -gt 0 && "$push_count" -gt 0 ]] || return 1
-	return 0
-}
-
-registered_repo_slug() {
-	local repo="$1"
-	local config_path="${AIDEVOPS_REPOS_CONFIG:-${HOME}/.config/aidevops/repos.json}"
-	local rows=""
-	local entry_path=""
-	local entry_slug=""
-	local entry_real=""
-	local matched_slug=""
-	[[ -f "$config_path" ]] || {
-		printf '\n'
-		return 0
-	}
-	rows=$(jq -r '.initialized_repos[]? | [(.path // .repo_path // ""), (.slug // "")] | @tsv' \
-		"$config_path" 2>/dev/null) || return 1
-	while IFS=$'\t' read -r entry_path entry_slug; do
-		[[ -n "$entry_path" ]] || continue
-		case "$entry_path" in
-		~/*) entry_path="${HOME}/${entry_path#~/}" ;;
-		esac
-		entry_real=$(cd "$entry_path" 2>/dev/null && pwd -P) || continue
-		[[ "$entry_real" == "$repo" ]] || continue
-		[[ -n "$entry_slug" ]] || continue
-		[[ "$entry_slug" == */* && "${entry_slug#*/}" != */* ]] || return 1
-		if [[ -n "$matched_slug" && "$matched_slug" != "$entry_slug" ]]; then
-			return 1
-		fi
-		matched_slug="$entry_slug"
-	done <<<"$rows"
-	printf '%s\n' "$matched_slug"
-	return 0
-}
-
-GIT_CONFIG_CAPTURE_VALUES=""
-GIT_CONFIG_CAPTURE_STATUS=0
-GIT_CONFIG_CAPTURE_HAD_OUTPUT=false
-
-# Capture one complete git-config enumeration without hiding its exit status.
-# The suffix keeps command substitution from stripping record-separating newlines.
-capture_git_config_values() {
-	local repo="$1"
-	local key="$2"
-	local marker="__AIDEVOPS_GIT_CONFIG_CAPTURE_END_8F3D1A__"
-	local suffix=$'\n'"$marker"
-	local captured=""
-	local capture_status=0
-	captured=$(
-		set +e
-		"$REAL_GIT" -C "$repo" config --get-all "$key" 2>/dev/null
-		command_status=$?
-		printf '%s' "$marker"
-		exit "$command_status"
-	) || capture_status=$?
-	GIT_CONFIG_CAPTURE_VALUES=""
-	GIT_CONFIG_CAPTURE_STATUS="$capture_status"
-	GIT_CONFIG_CAPTURE_HAD_OUTPUT=false
-	case "$captured" in
-	"$marker") ;;
-	*"$suffix")
-		GIT_CONFIG_CAPTURE_VALUES="${captured%"$suffix"}"
-		GIT_CONFIG_CAPTURE_HAD_OUTPUT=true
-		;;
-	*) return 1 ;;
-	esac
-	return 0
-}
-
-GITHUB_REMOTE_URL_COUNT=0
-GITHUB_REMOTE_URLS_MATCH=0
-GITHUB_REMOTE_URL_SEEN=0
-
-validate_github_remote_url_set() {
-	local urls="$1"
-	local expected_lower="$2"
-	local remote_url=""
-	local remote_slug=""
-	local remote_lower=""
-	GITHUB_REMOTE_URL_COUNT=0
-	GITHUB_REMOTE_URLS_MATCH=1
-	GITHUB_REMOTE_URL_SEEN=0
-	while IFS= read -r remote_url; do
-		GITHUB_REMOTE_URL_COUNT=$((GITHUB_REMOTE_URL_COUNT + 1))
-		if [[ -z "$remote_url" ]]; then
-			GITHUB_REMOTE_URLS_MATCH=0
-			continue
-		fi
-		if is_github_remote_url "$remote_url"; then
-			GITHUB_REMOTE_URL_SEEN=1
-		fi
-		remote_slug=$(github_slug_from_remote_url "$remote_url" 2>/dev/null || true)
-		if [[ -z "$remote_slug" ]]; then
-			GITHUB_REMOTE_URLS_MATCH=0
-			continue
-		fi
-		GITHUB_REMOTE_URL_SEEN=1
-		remote_lower=$(printf '%s' "$remote_slug" | tr '[:upper:]' '[:lower:]') || return 1
-		[[ -n "$expected_lower" && "$remote_lower" == "$expected_lower" ]] || GITHUB_REMOTE_URLS_MATCH=0
-	done <<<"$urls"
-	return 0
-}
-
-# Resolve the remote that represents the registered GitHub repository. Exact
-# fetch+push identity is required. Callers may allow the origin fallback for
-# local mirrors where no configured remote can be parsed as GitHub at all. The
-# pinned framework updater may also accept equivalent aliases after every URL
-# independently resolves to its immutable expected repository identity.
-resolve_github_remote() {
-	local repo="$1"
-	local expected_slug="$2"
-	local allow_local_mirror="${3:-true}"
-	local allow_equivalent_aliases="${4:-false}"
-	local expected_lower=""
-	local remote_names=""
-	local remote=""
-	local fetch_key=""
-	local push_key=""
-	local fetch_urls=""
-	local push_urls=""
-	local fetch_status=0
-	local push_status=0
-	local push_had_output=false
-	local remote_matches=0
-	local fetch_count=0
-	local push_count=0
-	local candidate=""
-	local candidate_count=0
-	local github_seen=0
-	expected_lower=$(printf '%s' "$expected_slug" | tr '[:upper:]' '[:lower:]') || return 1
-	remote_names=$(LC_ALL=C "$REAL_GIT" -C "$repo" remote 2>/dev/null | LC_ALL=C sort) || return 1
-	while IFS= read -r remote; do
-		[[ -n "$remote" ]] || continue
-		fetch_key="remote.${remote}.url"
-		push_key="remote.${remote}.pushurl"
-		capture_git_config_values "$repo" "$fetch_key" || return 1
-		fetch_status="$GIT_CONFIG_CAPTURE_STATUS"
-		fetch_urls="$GIT_CONFIG_CAPTURE_VALUES"
-		[[ "$fetch_status" -eq 0 ]] || return 1
-		capture_git_config_values "$repo" "$push_key" || return 1
-		push_status="$GIT_CONFIG_CAPTURE_STATUS"
-		push_urls="$GIT_CONFIG_CAPTURE_VALUES"
-		push_had_output="$GIT_CONFIG_CAPTURE_HAD_OUTPUT"
-		case "$push_status" in
-		0) ;;
-		1)
-			[[ "$push_had_output" == "false" ]] || return 1
-			push_urls="$fetch_urls"
-			;;
-		*) return 1 ;;
-		esac
-		validate_github_remote_url_set "$fetch_urls" "$expected_lower" || return 1
-		fetch_count="$GITHUB_REMOTE_URL_COUNT"
-		remote_matches="$GITHUB_REMOTE_URLS_MATCH"
-		[[ "$GITHUB_REMOTE_URL_SEEN" -eq 0 ]] || github_seen=1
-		validate_github_remote_url_set "$push_urls" "$expected_lower" || return 1
-		push_count="$GITHUB_REMOTE_URL_COUNT"
-		[[ "$GITHUB_REMOTE_URLS_MATCH" -eq 1 ]] || remote_matches=0
-		[[ "$GITHUB_REMOTE_URL_SEEN" -eq 0 ]] || github_seen=1
-		[[ "$remote_matches" -eq 1 && "$fetch_count" -gt 0 && "$push_count" -gt 0 ]] || continue
-		if [[ -z "$candidate" || "$remote" == "origin" ]]; then
-			candidate="$remote"
-		fi
-		candidate_count=$((candidate_count + 1))
-	done <<<"$remote_names"
-	#aidevops:trust-boundary
-	# Multiple names are accepted only after every candidate's complete fetch and
-	# push URL sets independently matched the caller's immutable expected slug.
-	if [[ "$candidate_count" -eq 1 ||
-		("$allow_equivalent_aliases" == "$BOOLEAN_TRUE" && "$candidate_count" -gt 1) ]]; then
-		printf '%s\n' "$candidate"
-		return 0
-	fi
-	if [[ "$allow_local_mirror" == "$BOOLEAN_TRUE" && "$candidate_count" -eq 0 && "$github_seen" -eq 0 ]] &&
-		origin_is_local_mirror "$repo"; then
-		printf 'origin\n'
-		return 0
-	fi
-	return 1
-}
-
-rebase_state_fingerprint() {
-	local state_dir="$1"
-	local fingerprint=""
-	fingerprint=$(
-		python3 - "$state_dir" <<'PY'
-import hashlib
-import os
-import stat
-import sys
-
-state_dir = sys.argv[1]
-root_stat = os.lstat(state_dir)
-if not stat.S_ISDIR(root_stat.st_mode) or stat.S_ISLNK(root_stat.st_mode):
-    raise RuntimeError("rebase state root is not a plain directory")
-
-digest = hashlib.sha256()
-
-
-def add_field(value):
-    data = value.encode("utf-8", "surrogateescape")
-    digest.update(len(data).to_bytes(8, "big"))
-    digest.update(data)
-
-
-def walk(path, relative):
-    for entry in sorted(os.scandir(path), key=lambda item: item.name):
-        entry_relative = os.path.join(relative, entry.name) if relative else entry.name
-        entry_stat = entry.stat(follow_symlinks=False)
-        if stat.S_ISDIR(entry_stat.st_mode) and not stat.S_ISLNK(entry_stat.st_mode):
-            digest.update(b"D")
-            add_field(entry_relative)
-            walk(entry.path, entry_relative)
-        elif stat.S_ISREG(entry_stat.st_mode):
-            digest.update(b"F")
-            add_field(entry_relative)
-            digest.update(entry_stat.st_size.to_bytes(8, "big"))
-            with open(entry.path, "rb") as handle:
-                for chunk in iter(lambda: handle.read(65536), b""):
-                    digest.update(chunk)
-        else:
-            raise RuntimeError("rebase state contains a non-regular entry")
-
-
-walk(state_dir, "")
-print(digest.hexdigest())
-PY
-	) || return 1
-	printf '%s\n' "$fingerprint"
-	return 0
-}
-
-rebase_marker_fingerprint() {
-	local state_dir="$1"
-	local rebase_head_path="$2"
-	local state_hash=""
-	local rebase_head_hash="absent"
-	state_hash=$(rebase_state_fingerprint "$state_dir") || return 1
-	if [[ -f "$rebase_head_path" ]]; then
-		rebase_head_hash=$("$REAL_GIT" hash-object "$rebase_head_path") || return 1
-	elif [[ -e "$rebase_head_path" ]]; then
-		return 1
-	fi
-	printf '%s\n%s\n' "$state_hash" "$rebase_head_hash" | "$REAL_GIT" hash-object --stdin
-	return 0
-}
-
-rebase_state_latest_mtime() {
-	local state_dir="$1"
-	local rebase_head_path="$2"
-	local latest_mtime=""
-	latest_mtime=$(
-		python3 - "$state_dir" "$rebase_head_path" <<'PY'
-import os
-import sys
-
-state_dir, rebase_head_path = sys.argv[1:]
-paths = [state_dir]
-for root, dirs, files in os.walk(state_dir):
-    paths.extend(os.path.join(root, name) for name in dirs)
-    paths.extend(os.path.join(root, name) for name in files)
-if os.path.exists(rebase_head_path):
-    paths.append(rebase_head_path)
-print(int(max(os.lstat(path).st_mtime for path in paths)))
-PY
-	) || return 1
-	printf '%s\n' "$latest_mtime"
-	return 0
-}
-
-preserve_rebase_commit_ref() {
-	local repo="$1"
-	local issue="$2"
-	local namespace="$3"
-	local commitish="$4"
-	local commit=""
-	local existing_commit=""
-	local preservation_ref=""
-	[[ "$commitish" =~ ^[0-9a-fA-F]{4,40}$ ]] || return 1
-	commit=$("$REAL_GIT" -C "$repo" rev-parse --verify "${commitish}^{commit}" 2>/dev/null) || return 1
-	[[ "$commit" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
-	preservation_ref="refs/aidevops/canonical-recovery/issue-${issue}/${namespace}/${commit}"
-	existing_commit=$("$REAL_GIT" -C "$repo" rev-parse --verify "${preservation_ref}^{commit}" 2>/dev/null || true)
-	[[ -z "$existing_commit" || "$existing_commit" == "$commit" ]] || return 1
-	if [[ -z "$existing_commit" ]]; then
-		"$REAL_GIT" -C "$repo" update-ref "$preservation_ref" "$commit" \
-			"0000000000000000000000000000000000000000" || return 1
-	fi
-	[[ "$("$REAL_GIT" -C "$repo" rev-parse --verify "${preservation_ref}^{commit}")" == "$commit" ]] || return 1
-	return 0
-}
-
-preserve_rebase_sequence_refs() {
-	local repo="$1"
-	local issue="$2"
-	local namespace="$3"
-	local sequence_file="$4"
-	local sequence_action=""
-	local sequence_commit=""
-	local sequence_rest=""
-	[[ -f "$sequence_file" ]] || return 1
-	while read -r sequence_action sequence_commit sequence_rest ||
-		[[ -n "$sequence_action" || -n "$sequence_commit" || -n "$sequence_rest" ]]; do
-		case "$sequence_action" in
-		"" | \#* | exec | x | break | b | label | l | reset | t | update-ref | u | noop)
-			continue
-			;;
-		pick | p | reword | r | edit | e | squash | s | drop | d)
-			preserve_rebase_commit_ref "$repo" "$issue" "$namespace" "$sequence_commit" || return 1
-			;;
-		fixup | f)
-			if [[ "$sequence_commit" == "-C" || "$sequence_commit" == "-c" ]]; then
-				read -r sequence_commit _ <<<"$sequence_rest"
-			fi
-			preserve_rebase_commit_ref "$repo" "$issue" "$namespace" "$sequence_commit" || return 1
-			;;
-		merge | m)
-			if [[ "$sequence_commit" == "-C" || "$sequence_commit" == "-c" ]]; then
-				read -r sequence_commit _ <<<"$sequence_rest"
-				preserve_rebase_commit_ref "$repo" "$issue" "$namespace" "$sequence_commit" || return 1
-			fi
-			;;
-		*)
-			return 1
-			;;
-		esac
-	done <"$sequence_file"
-	return 0
-}
-
-preserve_rewritten_rebase_refs() {
-	local repo="$1"
-	local issue="$2"
-	local namespace="$3"
-	local state_dir="$4"
-	local extra=""
-	local new_commit=""
-	local old_commit=""
-	local pending_commit=""
-	if [[ -f "${state_dir}/rewritten-list" ]]; then
-		while read -r old_commit new_commit extra ||
-			[[ -n "$old_commit" || -n "$new_commit" || -n "$extra" ]]; do
-			[[ -n "$old_commit" && -n "$new_commit" && -z "$extra" ]] || return 1
-			preserve_rebase_commit_ref "$repo" "$issue" "$namespace" "$old_commit" || return 1
-			preserve_rebase_commit_ref "$repo" "$issue" "$namespace" "$new_commit" || return 1
-		done <"${state_dir}/rewritten-list"
-	fi
-	if [[ -f "${state_dir}/rewritten-pending" ]]; then
-		while read -r pending_commit extra || [[ -n "$pending_commit" || -n "$extra" ]]; do
-			[[ -n "$pending_commit" && -z "$extra" ]] || return 1
-			preserve_rebase_commit_ref "$repo" "$issue" "$namespace" "$pending_commit" || return 1
-		done <"${state_dir}/rewritten-pending"
-	fi
-	return 0
-}
-
-preserve_rebase_object_file_refs() {
-	local repo="$1"
-	local issue="$2"
-	local namespace="$3"
-	local object_file="$4"
-	local object_line=""
-	local object_token=""
-	local -a object_tokens=()
-	[[ -f "$object_file" ]] || return 0
-	while IFS= read -r object_line || [[ -n "$object_line" ]]; do
-		object_tokens=()
-		read -r -a object_tokens <<<"$object_line"
-		for object_token in "${object_tokens[@]}"; do
-			[[ "$object_token" =~ ^[0-9a-fA-F]{4,40}$ ]] || continue
-			[[ "$object_token" =~ ^0+$ ]] && continue
-			preserve_rebase_commit_ref "$repo" "$issue" "$namespace" "$object_token" || return 1
-		done
-	done <"$object_file"
-	return 0
-}
-
-restore_deleted_rebase_head() {
-	local repo="$1"
-	local rebase_head_path="$2"
-	local stopped_sha="$3"
-	local current_rebase_head=""
-	if [[ -e "$rebase_head_path" ]]; then
-		[[ -f "$rebase_head_path" ]] || return 1
-		current_rebase_head=$("$REAL_GIT" -C "$repo" rev-parse --verify 'REBASE_HEAD^{commit}' 2>/dev/null || true)
-		[[ -n "$current_rebase_head" ]] || return 1
-		return 0
-	fi
-	"$REAL_GIT" -C "$repo" update-ref REBASE_HEAD "$stopped_sha" "$NULL_SHA1" || return 1
-	[[ "$("$REAL_GIT" -C "$repo" rev-parse --verify 'REBASE_HEAD^{commit}')" == "$stopped_sha" ]] || return 1
-	return 0
-}
-
-restore_deleted_rebase_head_copy() {
-	local repo="$1"
-	local rebase_head_path="$2"
-	local stopped_sha="$3"
-	local quarantine_head_path="$4"
-	restore_deleted_rebase_head "$repo" "$rebase_head_path" "$stopped_sha" || return 1
-	rm -f "$quarantine_head_path" || return 1
-	return 0
-}
-
-restore_quarantined_rebase_state() {
-	local repo="$1"
-	local state_dir="$2"
-	local rebase_head_path="$3"
-	local quarantine_dir="$4"
-	local quarantine_head_path="$5"
-	local cleanup_kind="$6"
-	local stopped_sha="$7"
-	[[ -d "$quarantine_dir" && ! -e "$state_dir" ]] || return 1
-	if [[ "$cleanup_kind" == "$ABANDONED_REBASE_KIND" ]]; then
-		[[ -f "$quarantine_head_path" ]] || return 1
-	fi
-	mv "$quarantine_dir" "$state_dir" || return 1
-	if [[ "$cleanup_kind" == "$ABANDONED_REBASE_KIND" ]]; then
-		if ! restore_deleted_rebase_head "$repo" "$rebase_head_path" "$stopped_sha"; then
-			mv "$state_dir" "$quarantine_dir" >/dev/null 2>&1 || true
-			return 1
-		fi
-		rm -f "$quarantine_head_path" || return 1
-	fi
-	return 0
-}
-
-# Fetch only the release tag required by the post-update source-access stage.
-# The caller has already pinned and validated the canonical remote. Existing
-# refs are never rewritten; source-access owns signature and ancestry checks.
-fetch_aidevops_release_tag() {
-	local repo="$1"
-	local remote="$2"
-	local version=""
-	local tag_ref=""
-
-	[[ -r "$repo/VERSION" ]] || return 1
-	IFS= read -r version <"$repo/VERSION" || return 1
-	[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
-	tag_ref="refs/tags/v${version}"
-	if "$REAL_GIT" -C "$repo" show-ref --verify --quiet "$tag_ref"; then
-		return 0
-	fi
-	if ! "$REAL_GIT" -C "$repo" fetch --no-tags "$remote" \
-		"${tag_ref}:${tag_ref}" >/dev/null 2>&1; then
-		return 1
-	fi
-	"$REAL_GIT" -C "$repo" show-ref --verify --quiet "$tag_ref"
-	return $?
-}
-
-audit_bootstrap_identity() {
-	local repo="$1"
-	local expected_slug="$2"
-	local canonical_remote="$3"
-	local audit_helper="${SCRIPT_DIR}/audit-log-helper.sh"
-	local recovery_audit_file="${HOME}/.aidevops/logs/canonical-recovery-audit.jsonl"
-
-	[[ -x "$audit_helper" ]] || {
-		printf 'BLOCKED: tamper-evident audit helper is unavailable\n' >&2
-		return 1
-	}
-	AUDIT_LOG_FILE="$recovery_audit_file" "$audit_helper" verify --quiet || {
-		printf 'BLOCKED: audit chain verification failed\n' >&2
-		return 1
-	}
-	AUDIT_LOG_FILE="$recovery_audit_file" AUDIT_QUIET=true "$audit_helper" log \
-		operation.verify "Canonical bootstrap registration identity verified" \
-		--detail "repo=${repo}" --detail "operation=${VERIFY_BOOTSTRAP_CMD}" \
-		--detail "remote=${canonical_remote}" --detail "expected_slug=${expected_slug}" >/dev/null || {
-		printf 'BLOCKED: bootstrap verification audit record could not be written\n' >&2
-		return 1
-	}
-	return 0
-}
-
-ffl_block() {
-	local message="$1"
-	printf 'BLOCKED: %s\n' "$message" >&2
-	return 1
-}
-
-# Reinstate preserved untracked files after a verified fast-forward or mirror
-# synchronization without overwriting anything that now exists at the same
-# path. Paths that collide with the new tip or sit under a new non-directory
-# or symlink ancestor stay in the backup and are reported as
-# UNTRACKED_LEFT_IN_BACKUP= lines. Returns 0 when every path was reinstated,
-# 3 when at least one path was left in the backup, and 1 on error (GH#34770).
-restore_untracked_noclobber() {
-	local repo="$1"
-	local backup_dir="$2"
-	local list_file="${backup_dir}/untracked-files.nul"
-	[[ -f "$list_file" ]] || {
-		printf 'UNTRACKED_RESTORED=0\n'
-		return 0
-	}
-	python3 - "$repo" "${backup_dir}/untracked" "$list_file" <<'PY'
-import os
-import pathlib
-import shutil
-import stat
-import sys
-
-root = pathlib.Path(sys.argv[1]).resolve()
-source_root = pathlib.Path(sys.argv[2]).resolve()
-paths = pathlib.Path(sys.argv[3]).read_bytes().split(b"\0")
-
-
-def inside(base, candidate):
-    return os.path.commonpath((str(base), str(candidate))) == str(base)
-
-
-restored = 0
-left = []
-for raw in paths:
-    if not raw:
-        continue
-    relative = pathlib.Path(os.fsdecode(raw))
-    if relative.is_absolute() or ".." in relative.parts:
-        raise SystemExit("invalid restore inventory")
-    source_parent = (source_root / relative.parent).resolve(strict=False)
-    if not inside(source_root, source_parent):
-        raise SystemExit("untracked backup escaped payload root")
-    source = source_parent / relative.name
-    metadata = source.lstat()
-    if not (stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode)):
-        raise SystemExit("unsupported untracked backup file type")
-    # Walk parents without following symlinks: an incoming tracked symlink or
-    # file at any ancestor is a collision, never a destination to write through.
-    target_parent = root
-    collided = False
-    for part in relative.parent.parts:
-        target_parent = target_parent / part
-        try:
-            parent_meta = target_parent.lstat()
-        except FileNotFoundError:
-            try:
-                target_parent.mkdir()
-            except OSError:
-                collided = True
-                break
-            continue
-        if not stat.S_ISDIR(parent_meta.st_mode):
-            collided = True
-            break
-    if collided:
-        left.append(raw)
-        continue
-    target = target_parent / relative.name
-    try:
-        if stat.S_ISLNK(metadata.st_mode):
-            os.symlink(os.readlink(source), target)
-        else:
-            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-            descriptor = os.open(target, flags, 0o600)
-            with os.fdopen(descriptor, "wb") as destination, source.open("rb") as payload:
-                shutil.copyfileobj(payload, destination)
-            shutil.copystat(source, target, follow_symlinks=False)
-    except FileExistsError:
-        left.append(raw)
-        continue
-    restored += 1
-for raw in left:
-    print("UNTRACKED_LEFT_IN_BACKUP=" + raw.decode("utf-8", "backslashreplace"))
-print(f"UNTRACKED_RESTORED={restored}")
-sys.exit(3 if left else 0)
-PY
-	return $?
-}
-
-PROJECT_CONFIG_PATH=".aidevops.json"
-PROJECT_CONFIG_PAYLOAD="payload"
-PCU_DIR=""
-
-# GH#35659: the supported project-config migration commits an explicit root
-# ignore rule and removes only the index entry. `read-tree -u -m` then deletes
-# the clean local file from every other checkout, and status stays clean, so
-# nothing reports the loss. Returns 0 only for that exact incoming migration.
-project_config_untrack_incoming() {
-	local repo="$1"
-	local old_sha="$2"
-	local new_sha="$3"
-	local ignore_rules=""
-	"$REAL_GIT" -C "$repo" cat-file -e "${old_sha}:${PROJECT_CONFIG_PATH}" 2>/dev/null || return 1
-	! "$REAL_GIT" -C "$repo" cat-file -e "${new_sha}:${PROJECT_CONFIG_PATH}" 2>/dev/null || return 1
-	ignore_rules=$("$REAL_GIT" -C "$repo" cat-file blob "${new_sha}:.gitignore" 2>/dev/null) || return 1
-	# Same explicit-rule contract as project-config-restore-helper.sh; a plain
-	# deletion without the rule is an intentional removal, not a migration.
-	grep -Eq '^/?\.aidevops\.json$' <<<"$ignore_rules" || return 1
-	! grep -Eq '^!/?\.aidevops\.json$' <<<"$ignore_rules" || return 1
-	return 0
-}
-
-# Copy the local project config aside before a worktree update would delete it.
-# Sets PCU_DIR to the private preservation directory, or leaves it empty when no
-# untracking migration is incoming or the file is already absent. Returns 1 for
-# an unsafe file or, when allow_modified is false, local edits that a three-way
-# re-apply could not keep.
-project_config_untrack_preserve() {
-	local repo="$1"
-	local old_sha="$2"
-	local new_sha="$3"
-	local operation_key="$4"
-	local allow_modified="$5"
-	local recovery_root="${AIDEVOPS_CANONICAL_RECOVERY_ROOT:-${HOME}/.aidevops/.agent-workspace/recovery/canonical}"
-	local preserve_parent=""
-	local preserve_dir=""
-	local config_file="${repo}/${PROJECT_CONFIG_PATH}"
-	local committed_blob=""
-	local local_blob=""
-	PCU_DIR=""
-	project_config_untrack_incoming "$repo" "$old_sha" "$new_sha" || return 0
-	if [[ ! -e "$config_file" && ! -L "$config_file" ]]; then
-		return 0
-	fi
-	if [[ -L "$config_file" || ! -f "$config_file" || ! -O "$config_file" ]]; then
-		printf 'BLOCKED: incoming commit untracks %s but the local copy is a symlink, not a regular file, or not owned by the current user; nothing was changed\n' \
-			"$PROJECT_CONFIG_PATH" >&2
-		return 1
-	fi
-	if [[ "$allow_modified" != "$BOOLEAN_TRUE" ]]; then
-		committed_blob=$("$REAL_GIT" -C "$repo" rev-parse --verify "${old_sha}:${PROJECT_CONFIG_PATH}") || return 1
-		local_blob=$("$REAL_GIT" -C "$repo" hash-object --no-filters -- "$config_file") || return 1
-		if [[ "$committed_blob" != "$local_blob" ]]; then
-			printf 'BLOCKED: incoming commit untracks %s but the local copy has edits; nothing was changed. Use sync-mirror on a GitHub-backed repository, or keep the edits and fast-forward after the migration is resolved\n' \
-				"$PROJECT_CONFIG_PATH" >&2
-			return 1
-		fi
-	fi
-	preserve_parent="${recovery_root}/${operation_key}"
-	(umask 077 && mkdir -p "$preserve_parent") || {
-		printf 'BLOCKED: project config preservation directory cannot be created\n' >&2
-		return 1
-	}
-	preserve_dir=$(mktemp -d "${preserve_parent}/project-config-${new_sha:0:12}.XXXXXX") || {
-		printf 'BLOCKED: project config preservation directory cannot be created\n' >&2
-		return 1
-	}
-	chmod 700 "$preserve_dir" || return 1
-	python3 - "$config_file" "$preserve_dir" "$PROJECT_CONFIG_PATH" "$PROJECT_CONFIG_PAYLOAD" <<'PY' || {
-import hashlib
-import os
-import stat
-import sys
-
-source, target_dir, config_name, payload_name = sys.argv[1:5]
-no_follow = getattr(os, "O_NOFOLLOW", 0)
-payload_path = os.path.join(target_dir, payload_name)
-descriptor = os.open(source, os.O_RDONLY | no_follow)
-with os.fdopen(descriptor, "rb") as handle:
-    before = os.fstat(handle.fileno())
-    if not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid():
-        raise SystemExit("unsafe project config")
-    payload = handle.read()
-after = os.lstat(source)
-if (after.st_ino, after.st_size, after.st_mtime_ns) != (before.st_ino, before.st_size, before.st_mtime_ns):
-    raise SystemExit("project config changed during preservation")
-digest = hashlib.sha256(payload).hexdigest()
-flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | no_follow
-with os.fdopen(os.open(payload_path, flags, 0o600), "wb") as copy:
-    copy.write(payload)
-    copy.flush()
-    os.fsync(copy.fileno())
-with open(payload_path, "rb") as check:
-    if hashlib.sha256(check.read()).hexdigest() != digest:
-        raise SystemExit("project config copy could not be verified")
-with os.fdopen(os.open(os.path.join(target_dir, "manifest.tsv"), flags, 0o600), "w") as manifest:
-    manifest.write(f"path\t{config_name}\nsha256\t{digest}\n")
-    manifest.write(f"mode\t{stat.S_IMODE(before.st_mode):o}\nmtime_ns\t{before.st_mtime_ns}\n")
-PY
-		printf 'BLOCKED: local %s could not be preserved before synchronization; nothing was changed\n' \
-			"$PROJECT_CONFIG_PATH" >&2
-		return 1
-	}
-	PCU_DIR="$preserve_dir"
-	printf 'PROJECT_CONFIG_PRESERVED_DIR=%s\n' "$preserve_dir"
-	return 0
-}
-
-# Reinstate a preserved project config as ignored local state on the verified
-# new tip: exact bytes, mode and mtime, never overwriting or following links.
-# Returns 0 when reinstated or nothing was preserved (empty preserve_dir), 3
-# when left in the preservation directory, 1 on error.
-project_config_reinstate() {
-	local repo="$1"
-	local preserve_dir="$2"
-	local config_file="${repo}/${PROJECT_CONFIG_PATH}"
-	local rc=0
-	local ignored_status=""
-	[[ -n "$preserve_dir" ]] || return 0
-	python3 - "$repo" "$preserve_dir" "$PROJECT_CONFIG_PATH" "$PROJECT_CONFIG_PAYLOAD" <<'PY' || rc=$?
-import hashlib
-import os
-import sys
-import tempfile
-
-repo, preserve_dir, config_name, payload_name = sys.argv[1:5]
-fields = {}
-with open(os.path.join(preserve_dir, "manifest.tsv"), "rb") as manifest:
-    for line in manifest.read().decode().splitlines():
-        key, _, value = line.partition("\t")
-        fields[key] = value
-if fields.get("path") != config_name:
-    raise SystemExit("invalid project config manifest")
-with open(os.path.join(preserve_dir, payload_name), "rb") as handle:
-    payload = handle.read()
-if hashlib.sha256(payload).hexdigest() != fields.get("sha256"):
-    raise SystemExit("preserved project config does not match its manifest")
-target = os.path.join(repo, config_name)
-if os.path.lexists(target):
-    sys.exit(3)
-descriptor, temp_path = tempfile.mkstemp(prefix=config_name + ".reinstate.", dir=repo)
-try:
-    with os.fdopen(descriptor, "wb") as temp:
-        temp.write(payload)
-        temp.flush()
-        os.fchmod(temp.fileno(), int(fields["mode"], 8))
-        os.fsync(temp.fileno())
-    mtime_ns = int(fields["mtime_ns"])
-    os.utime(temp_path, ns=(mtime_ns, mtime_ns))
-    try:
-        # link() is the no-clobber publish step: it fails if anything,
-        # including a symlink, appeared at the destination meanwhile.
-        os.link(temp_path, target)
-    except FileExistsError:
-        sys.exit(3)
-finally:
-    os.unlink(temp_path)
-with open(target, "rb") as check:
-    if hashlib.sha256(check.read()).hexdigest() != fields["sha256"]:
-        raise SystemExit("reinstated project config could not be verified")
-PY
-	if [[ "$rc" -eq 0 ]]; then
-		ignored_status=$("$REAL_GIT" -C "$repo" status --porcelain=v1 --ignored -- "$PROJECT_CONFIG_PATH" 2>/dev/null || true)
-		if [[ "$ignored_status" != "!! ${PROJECT_CONFIG_PATH}" ]]; then
-			cmp -s "$config_file" "${preserve_dir}/${PROJECT_CONFIG_PAYLOAD}" && rm -f "$config_file"
-			rc=3
-		fi
-	fi
-	if [[ "$rc" -eq 0 ]]; then
-		printf 'PROJECT_CONFIG_REINSTATED=%s\n' "$PROJECT_CONFIG_PATH"
-		return 0
-	fi
-	printf 'PROJECT_CONFIG_LEFT_IN_BACKUP=%s\n' "$preserve_dir"
-	printf 'WARNING: local %s was not reinstated after synchronization; its exact bytes remain in %s\n' \
-		"$PROJECT_CONFIG_PATH" "$preserve_dir" >&2
-	[[ "$rc" -eq 3 ]] && return 3
-	return 1
-}
-
-# Three-way re-apply of preserved tracked edits onto the new tip. Prints
-# conflicting paths and returns 1 when the edits cannot be merged cleanly.
-ffl_reapply_edits() {
-	local repo="$1"
-	local base_sha="$2"
-	local new_sha="$3"
-	local edits_tree="$4"
-	local merge_one=""
-	local conflicts=""
-	merge_one="$("$REAL_GIT" --exec-path)/git-merge-one-file"
-	"$REAL_GIT" -C "$repo" read-tree -m -u "${base_sha}^{tree}" "${new_sha}^{tree}" "$edits_tree" || return 1
-	[[ -x "$merge_one" ]] || return 1
-	if ! "$REAL_GIT" -C "$repo" merge-index -o "$merge_one" -a >/dev/null 2>&1; then
-		conflicts=$("$REAL_GIT" -C "$repo" diff --name-only --diff-filter=U)
-		printf '%s\n' "$conflicts" | while IFS= read -r conflict_path; do
-			[[ -z "$conflict_path" ]] || printf 'CONFLICT_PATH=%s\n' "$conflict_path"
-		done
-		return 1
-	fi
-	"$REAL_GIT" -C "$repo" reset -q || return 1
-	return 0
-}
-
-FFL_DEFAULT_BRANCH=""
-FFL_OLD_SHA=""
-FFL_NEW_SHA=""
-FFL_BACKUP_ID=""
-FFL_BACKUP_DIR=""
-FFL_EDITS_TREE=""
-
-# Validate a local fast-forward request. Returns 0 when eligible, 1 when
-# blocked, 2 when the default branch already equals the source tip.
-ffl_validate() {
-	local repo="$1"
-	local from_branch="$2"
-	local local_ref=""
-	local from_ref="refs/heads/${from_branch}"
-	local default_branch=""
-	local configured_default=""
-	local old_sha=""
-	local new_sha=""
-	local remotes=""
-	local line=""
-	local occupied_path=""
-	local from_linked=false
-	local git_path=""
-
-	remotes=$("$REAL_GIT" -C "$repo" remote) || { ffl_block "remote list cannot be read"; return 1; }
-	if [[ -n "$remotes" ]]; then
-		ffl_block "repository has a remote; use ${SYNC_MIRROR_CMD} (GitHub-backed) instead of ${LOCAL_FAST_FORWARD_CMD}"
-		return 1
-	fi
-	"$REAL_GIT" check-ref-format "$from_ref" >/dev/null 2>&1 || { ffl_block "source branch name is invalid"; return 1; }
-	default_branch=$("$REAL_GIT" -C "$repo" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-	[[ -n "$default_branch" ]] || { ffl_block "canonical worktree is detached"; return 1; }
-	configured_default=$("$REAL_GIT" -C "$repo" config --get init.defaultBranch 2>/dev/null || true)
-	if [[ "$default_branch" != "main" && "$default_branch" != "master" &&
-		(-z "$configured_default" || "$default_branch" != "$configured_default") ]]; then
-		ffl_block "canonical branch ${default_branch} is not the default branch"
-		return 1
-	fi
-	[[ "$from_branch" != "$default_branch" ]] || { ffl_block "source branch is the canonical default branch"; return 1; }
-	local_ref="refs/heads/${default_branch}"
-	for git_path in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD REBASE_HEAD rebase-merge rebase-apply; do
-		[[ ! -e "$("$REAL_GIT" -C "$repo" rev-parse --path-format=absolute --git-path "$git_path")" ]] ||
-			{ ffl_block "canonical worktree has an operation in progress (${git_path})"; return 1; }
-	done
-	old_sha=$("$REAL_GIT" -C "$repo" rev-parse --verify "${local_ref}^{commit}" 2>/dev/null || true)
-	new_sha=$("$REAL_GIT" -C "$repo" rev-parse --verify "${from_ref}^{commit}" 2>/dev/null || true)
-	[[ -n "$old_sha" ]] || { ffl_block "local ${default_branch} tip cannot be resolved"; return 1; }
-	[[ -n "$new_sha" ]] || { ffl_block "source branch ${from_branch} cannot be resolved"; return 1; }
-	while IFS= read -r line; do
-		case "$line" in
-		worktree\ *) occupied_path="${line#worktree }" ;;
-		branch\ refs/heads/"$default_branch")
-			[[ "$occupied_path" == "$repo" ]] ||
-				{ ffl_block "default branch is active in another worktree: ${occupied_path}"; return 1; }
-			;;
-		branch\ "$from_ref")
-			[[ "$occupied_path" == "$repo" ]] || from_linked=true
-			;;
-		esac
-	done < <("$REAL_GIT" -C "$repo" worktree list --porcelain)
-	[[ "$from_linked" == "$BOOLEAN_TRUE" ]] ||
-		{ ffl_block "source branch ${from_branch} is not checked out in a linked worktree"; return 1; }
-	"$REAL_GIT" -C "$repo" merge-base --is-ancestor "$old_sha" "$new_sha" ||
-		{ ffl_block "source branch ${from_branch} is not a pure fast-forward of ${default_branch}"; return 1; }
-	FFL_DEFAULT_BRANCH="$default_branch"
-	FFL_OLD_SHA="$old_sha"
-	FFL_NEW_SHA="$new_sha"
-	[[ "$old_sha" != "$new_sha" ]] || return 2
-	return 0
-}
-
-# Back up, verify and clean dirty canonical state; sets FFL_BACKUP_* globals.
-ffl_preserve_and_clean() {
-	local repo="$1"
-	local task_id="$2"
-	local new_sha="$3"
-	local backup_helper="${SCRIPT_DIR}/dirty-worktree-backup-helper.sh"
-	local status_out=""
-	local backup_output=""
-	local backup_id=""
-	local backup_dir=""
-	local edits_tree=""
-
-	status_out=$("$REAL_GIT" -C "$repo" status --porcelain=v1) || { ffl_block "canonical status cannot be read"; return 1; }
-	[[ -n "$status_out" ]] || return 0
-	[[ -f "$backup_helper" ]] || { ffl_block "dirty-worktree backup helper is unavailable"; return 1; }
-	backup_output=$(AIDEVOPS_REAL_GIT_BIN="$REAL_GIT" bash "$backup_helper" backup \
-		--repo "$repo" --reason "canonical local fast-forward" \
-		--operation-id "canonical-local-ff-${task_id}-${new_sha}" --machine) ||
-		{ ffl_block "canonical dirty state could not be preserved"; return 1; }
-	IFS='|' read -r backup_id backup_dir <<<"${backup_output##*$'\n'}"
-	[[ -n "$backup_id" && -d "$backup_dir" ]] || { ffl_block "canonical backup evidence is incomplete"; return 1; }
-	AIDEVOPS_REAL_GIT_BIN="$REAL_GIT" bash "$backup_helper" verify --repo "$repo" --backup "$backup_id" >/dev/null ||
-		{ ffl_block "canonical backup verification failed"; return 1; }
-	AIDEVOPS_REAL_GIT_BIN="$REAL_GIT" bash "$backup_helper" matches --repo "$repo" --backup "$backup_id" >/dev/null ||
-		{ ffl_block "canonical state changed after backup"; return 1; }
-	printf 'PRESERVED_BACKUP_ID=%s\n' "$backup_id"
-	printf 'PRESERVED_BACKUP_DIR=%s\n' "$backup_dir"
-	printf 'RESTORE_COMMAND=%q restore --repo %q --backup %q --confirm RESTORE_DIRTY_WORKTREE_BACKUP\n' \
-		"$backup_helper" "$repo" "$backup_id"
-	edits_tree=$(awk -F'\t' '$1 == "worktree_tree" { print $2 }' "${backup_dir}/manifest.tsv")
-	[[ -n "$edits_tree" ]] || { ffl_block "backup worktree tree is missing"; return 1; }
-	AIDEVOPS_REAL_GIT_BIN="$REAL_GIT" bash "$backup_helper" clean --repo "$repo" --backup "$backup_id" \
-		--confirm CLEAN_VERIFIED_DIRTY_WORKTREE_BACKUP >/dev/null ||
-		{ ffl_block "canonical clean failed (backup ${backup_id})"; return 1; }
-	FFL_BACKUP_ID="$backup_id"
-	FFL_BACKUP_DIR="$backup_dir"
-	FFL_EDITS_TREE="$edits_tree"
-	return 0
-}
-
-# Fast-forward a remote-less (local_only) canonical default branch to a
-# linked-worktree branch tip. Dirty user state is backed up, verified, and
-# re-applied after the fast-forward.
-fast_forward_local() {
-	local repo="$1"
-	local from_branch="$2"
-	local task_id="$3"
-	local default_branch=""
-	local local_ref=""
-	local old_sha=""
-	local new_sha=""
-	local validate_status=0
-	local lock="${common_dir}/aidevops-canonical-recovery.lock"
-	local audit="${SCRIPT_DIR}/audit-log-helper.sh"
-	local audit_file="${HOME}/.aidevops/logs/canonical-recovery-audit.jsonl"
-	local backup_id=""
-	local backup_dir=""
-	local edits_tree=""
-	local config_preserve_dir=""
-
-	ffl_validate "$repo" "$from_branch" || validate_status=$?
-	if [[ "$validate_status" -eq 2 ]]; then
-		printf 'VERIFIED: %s already at %s\n' "$FFL_DEFAULT_BRANCH" "$from_branch"
-		return 0
-	fi
-	[[ "$validate_status" -eq 0 ]] || return 1
-	default_branch="$FFL_DEFAULT_BRANCH"
-	old_sha="$FFL_OLD_SHA"
-	new_sha="$FFL_NEW_SHA"
-	local_ref="refs/heads/${default_branch}"
-	[[ -x "$audit" ]] || { ffl_block "tamper-evident audit helper is unavailable"; return 1; }
-
-	mkdir "$lock" 2>/dev/null || { ffl_block "canonical recovery lock is already held"; return 1; }
-	# shellcheck disable=SC2064
-	trap "rmdir '${lock}' 2>/dev/null || true" EXIT
-
-	# GH#35659: three-way re-apply cannot keep edits to an untracked config.
-	project_config_untrack_preserve "$repo" "$old_sha" "$new_sha" "$task_id" false || return 1
-	config_preserve_dir="$PCU_DIR"
-
-	AUDIT_LOG_FILE="$audit_file" "$audit" verify --quiet || { ffl_block "audit chain verification failed"; return 1; }
-	AUDIT_LOG_FILE="$audit_file" AUDIT_QUIET=true "$audit" log operation.verify \
-		"Canonical local fast-forward authorized" \
-		--detail "task=${task_id}" --detail "repo=${repo}" --detail "operation=${LOCAL_FAST_FORWARD_CMD}" \
-		--detail "target=${default_branch}" --detail "from_branch=${from_branch}" \
-		--detail "old_sha=${old_sha}" --detail "new_sha=${new_sha}" \
-		--detail "project_config_preservation=${config_preserve_dir:-none}" >/dev/null ||
-		{ ffl_block "recovery audit record could not be written"; return 1; }
-
-	ffl_preserve_and_clean "$repo" "$task_id" "$new_sha" || return 1
-	backup_id="$FFL_BACKUP_ID"
-	backup_dir="$FFL_BACKUP_DIR"
-	edits_tree="$FFL_EDITS_TREE"
-
-	# shellcheck source=shared-constants.sh
-	source "${SCRIPT_DIR}/shared-constants.sh"
-	if declare -F remove_canonical_worktree_owner >/dev/null 2>&1; then
-		remove_canonical_worktree_owner "$repo" || { ffl_block "invalid canonical ownership could not be cleared safely"; return 1; }
-	fi
-	[[ -z "$("$REAL_GIT" -C "$repo" status --porcelain)" ]] || { ffl_block "canonical worktree remains dirty after preservation"; return 1; }
-	"$REAL_GIT" -C "$repo" read-tree --dry-run -u -m "$old_sha" "$new_sha" ||
-		{ ffl_block "canonical worktree cannot be updated"; return 1; }
-	"$REAL_GIT" -C "$repo" update-ref -m "aidevops canonical local fast-forward for task ${task_id}" \
-		"$local_ref" "$new_sha" "$old_sha" || { ffl_block "canonical local ref changed during fast-forward"; return 1; }
-	if ! "$REAL_GIT" -C "$repo" read-tree -u -m "$old_sha" "$new_sha"; then
-		rollback_local_ref "$repo" "$local_ref" "$LOCAL_STATE_BORN" "$old_sha" "$new_sha" \
-			"aidevops canonical local fast-forward rollback for task ${task_id}" || {
-			printf 'CRITICAL: local fast-forward failed and the local ref rollback failed\n' >&2
-			return 1
-		}
-		"$REAL_GIT" -C "$repo" read-tree --reset -u "$old_sha" || true
-		ffl_block "canonical worktree update failed; local ref rolled back"
-		return 1
-	fi
-	if [[ "$("$REAL_GIT" -C "$repo" rev-parse HEAD)" != "$new_sha" ||
-		"$("$REAL_GIT" -C "$repo" symbolic-ref --quiet --short HEAD)" != "$default_branch" ]]; then
-		printf 'CRITICAL: canonical branch or HEAD changed during local fast-forward\n' >&2
-		return 1
-	fi
-
-	if [[ -n "$backup_id" ]]; then
-		if ! ffl_reapply_edits "$repo" "$old_sha" "$new_sha" "$edits_tree"; then
-			"$REAL_GIT" -C "$repo" read-tree --reset -u "$new_sha" || true
-			project_config_reinstate "$repo" "$config_preserve_dir" || true
-			printf 'FAST_FORWARDED_LOCAL_CANONICAL=true\nNEW_SHA=%s\n' "$new_sha"
-			printf 'BLOCKED: preserved edits conflict with the new tip; they remain in backup %s\n' "$backup_id" >&2
-			return 1
-		fi
-		local restore_rc=0
-		restore_untracked_noclobber "$repo" "$backup_dir" || restore_rc=$?
-		[[ "$restore_rc" -eq 0 || "$restore_rc" -eq 3 ]] ||
-			{ ffl_block "preserved untracked files could not be restored (backup ${backup_id})"; return 1; }
-	fi
-	[[ "$("$REAL_GIT" -C "$repo" rev-parse --verify "${local_ref}^{commit}")" == "$new_sha" ]] ||
-		{ ffl_block "default ref does not match the source tip after fast-forward"; return 1; }
-	project_config_reinstate "$repo" "$config_preserve_dir" || true
-	AUDIT_LOG_FILE="$audit_file" "$audit" verify --quiet || { ffl_block "audit chain verification failed after fast-forward"; return 1; }
-	printf 'FAST_FORWARDED_LOCAL_CANONICAL=true\nOLD_SHA=%s\nNEW_SHA=%s\nCANONICAL_BRANCH=%s\nBACKUP_ID=%s\n' \
-		"$old_sha" "$new_sha" "$default_branch" "${backup_id:-none}"
-	return 0
-}
 
 usage() {
 	printf '%s\n' \
@@ -1182,13 +59,93 @@ usage() {
 		"  canonical-recovery-helper.sh ${SYNC_MIRROR_CMD} --repo PATH --issue N --confirm SYNCHRONIZE_CANONICAL_MIRROR" \
 		"  canonical-recovery-helper.sh ${SYNC_MIRROR_CMD} --repo PATH --reason ${AIDEVOPS_UPDATE_REASON} --confirm SYNCHRONIZE_CANONICAL_MIRROR" \
 		"  canonical-recovery-helper.sh ${REPAIR_UPSTREAM_CMD} --repo PATH --issue N --confirm REPAIR_CANONICAL_UPSTREAM" \
+		"  canonical-recovery-helper.sh ${REPAIR_WORKTREES_CMD} --repo PATH [--issue N] --confirm REPAIR_WORKTREE_POINTERS" \
 		"  canonical-recovery-helper.sh ${FOLLOW_TRANSFER_CMD} --repo PATH --slug OWNER/REPO --confirm FOLLOW_REPOSITORY_TRANSFER" \
-		"  canonical-recovery-helper.sh ${VERIFY_BOOTSTRAP_CMD} --repo PATH --slug OWNER/REPO --confirm REGISTER_CANONICAL_REPOSITORY"
+		"  canonical-recovery-helper.sh ${VERIFY_BOOTSTRAP_CMD} --repo PATH --slug OWNER/REPO --confirm REGISTER_CANONICAL_REPOSITORY" \
+		"  canonical-recovery-helper.sh ${CGH_REPAIR_CMD} --repo PATH [--min-age-minutes N] [--tmp-min-age-days N] [--apply]" \
+		"  canonical-recovery-helper.sh ${CGH_GC_CMD} --repo PATH [--min-age-minutes N] [--tmp-min-age-days N] [--apply]"
+	return 0
+}
+
+# Enrolled trees keep the old admin path in their generation marker; re-bind is
+# a separate, journaled step that proves inodes before accepting the move.
+_emit_rebind_followups() {
+	local registry_entry="${SCRIPT_DIR}/../worker-lifecycle/worker-registry.py"
+	local state_dir="" wt_path=""
+	state_dir=$(worker_lifecycle_state_dir) || state_dir=""
+	if [[ -z "$state_dir" || ! -d "$state_dir" ]]; then
+		printf 'REBIND_UNAVAILABLE: existing lifecycle registry unavailable; no registry created\n'
+		return 0
+	fi
+	for wt_path in "$@"; do
+		printf 'REBIND_FOLLOWUP: python3 %q --state-dir %q rebind-moved-worktree --path %q\n' \
+			"$registry_entry" "$state_dir" "$wt_path"
+	done
+	return 0
+}
+
+# Mend linked-worktree pointers after a canonical checkout was moved or renamed.
+# Runs `git worktree repair` with each worktree path recorded in the admin dir,
+# audits the operation and prints every worktree `.git` pointer it rewrote.
+repair_worktree_pointers() {
+	local repo="$1"
+	local common="$2"
+	local issue="$3"
+	local audit_file="${HOME}/.aidevops/logs/canonical-recovery-audit.jsonl"
+	local audit_tool="${SCRIPT_DIR}/audit-log-helper.sh"
+	local gitdir_file="" wt_git="" wt_path="" before="" after="" changed=0 i=0
+	local -a wt_paths=() wt_befores=()
+
+	[[ -x "$audit_tool" ]] || {
+		printf 'BLOCKED: tamper-evident audit helper is unavailable\n' >&2
+		return 1
+	}
+	AUDIT_LOG_FILE="$audit_file" "$audit_tool" verify --quiet || {
+		printf 'BLOCKED: audit chain verification failed\n' >&2
+		return 1
+	}
+	for gitdir_file in "${common}"/worktrees/*/gitdir; do
+		[[ -f "$gitdir_file" ]] || continue
+		wt_git=$(<"$gitdir_file")
+		wt_path="${wt_git%/.git}"
+		[[ -d "$wt_path" && -f "${wt_path}/.git" ]] || continue
+		wt_paths+=("$wt_path")
+		wt_befores+=("$(<"${wt_path}/.git")")
+	done
+	AUDIT_LOG_FILE="$audit_file" AUDIT_QUIET=true "$audit_tool" log \
+		operation.verify "Canonical worktree pointer repair authorized" \
+		--detail "issue=${issue}" --detail "repo=${repo}" \
+		--detail "operation=${REPAIR_WORKTREES_CMD}" \
+		--detail "worktrees=${#wt_paths[@]}" >/dev/null || {
+		printf 'BLOCKED: recovery audit record could not be written\n' >&2
+		return 1
+	}
+	"$REAL_GIT" -C "$repo" worktree repair "${wt_paths[@]+"${wt_paths[@]}"}" || {
+		printf 'BLOCKED: git worktree repair failed\n' >&2
+		return 1
+	}
+	for ((i = 0; i < ${#wt_paths[@]}; i++)); do
+		before="${wt_befores[$i]}"
+		after=$(<"${wt_paths[$i]}/.git")
+		if [[ "$before" != "$after" ]]; then
+			printf 'REWROTE: %s: %s -> %s\n' "${wt_paths[$i]}" "$before" "$after"
+			changed=$((changed + 1))
+		fi
+	done
+	printf 'REPAIRED_WORKTREE_POINTERS=%s\n' "$changed"
+	_emit_rebind_followups "${wt_paths[@]+"${wt_paths[@]}"}"
 	return 0
 }
 
 cmd="${1:-}"
 shift || true
+# GH#39722: stale Git lock/pack debris repair and sanctioned canonical gc use
+# their own dry-run-first argument contract.
+if [[ "$cmd" == "$CGH_REPAIR_CMD" || "$cmd" == "$CGH_GC_CMD" ]]; then
+	hygiene_rc=0
+	cgh_main "$cmd" "$@" || hygiene_rc=$?
+	exit "$hygiene_rc"
+fi
 repo_path=""
 issue_number=""
 maintenance_reason=""
@@ -1288,6 +245,13 @@ restore-default)
 		exit 2
 	}
 	;;
+"$REPAIR_WORKTREES_CMD")
+	expected_confirmation="REPAIR_WORKTREE_POINTERS"
+	[[ -z "$expected_branch" && -z "$maintenance_reason" ]] || {
+		usage
+		exit 2
+	}
+	;;
 "$FOLLOW_TRANSFER_CMD")
 	expected_confirmation="FOLLOW_REPOSITORY_TRANSFER"
 	[[ -z "$expected_branch" && "$bootstrap_slug" =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$ ]] || {
@@ -1329,6 +293,8 @@ elif [[ "$cmd" == "$VERIFY_BOOTSTRAP_CMD" && -z "$issue_number" && -z "$maintena
 	audit_reference="bootstrap registration"
 elif [[ "$cmd" == "$FOLLOW_TRANSFER_CMD" && -z "$issue_number" && -z "$maintenance_reason" ]]; then
 	audit_reference="repository transfer"
+elif [[ "$cmd" == "$REPAIR_WORKTREES_CMD" && -z "$issue_number" ]]; then
+	audit_reference="worktree pointer repair"
 elif [[ "$issue_number" =~ ^[0-9]+$ && -z "$maintenance_reason" ]]; then
 	audit_reference="issue ${issue_number}"
 elif [[ -z "$issue_number" && ("$cmd" == "$FAST_FORWARD_CMD" || "$cmd" == "$SYNC_MIRROR_CMD") &&
@@ -1353,6 +319,10 @@ common_dir=$("$REAL_GIT" -C "$repo_path" rev-parse --path-format=absolute --git-
 	printf 'BLOCKED: recovery target is not the canonical worktree\n' >&2
 	exit 1
 }
+if [[ "$cmd" == "$REPAIR_WORKTREES_CMD" ]]; then
+	repair_worktree_pointers "$repo_path" "$common_dir" "${issue_number:-none}"
+	exit $?
+fi
 if [[ "$cmd" == "$LOCAL_FAST_FORWARD_CMD" ]]; then
 	fast_forward_local "$repo_path" "$from_branch" "$task_id"
 	exit $?
@@ -1421,11 +391,12 @@ if [[ "$cmd" == "$FOLLOW_TRANSFER_CMD" ]]; then
 		exit 1
 	}
 	transfer_lock="${common_dir}/aidevops-canonical-recovery.lock"
-	mkdir "$transfer_lock" 2>/dev/null || {
+	crl_acquire "$transfer_lock" "$cmd" || {
 		printf 'BLOCKED: canonical recovery lock is already held\n' >&2
 		exit 1
 	}
-	trap 'rmdir "$transfer_lock" 2>/dev/null || true' EXIT
+	trap 'crl_release "$transfer_lock"' EXIT
+	trap 'exit 143' TERM
 	# The native Git entrypoint is restricted to this audited recovery operation.
 	# No fetch, ref update, checkout, transfer API write, or layout move occurs here.
 	python3 - "$repo_path" "$registered_slug" "$bootstrap_slug" \
@@ -1634,11 +605,12 @@ while IFS= read -r line; do
 done < <("$REAL_GIT" -C "$repo_path" worktree list --porcelain)
 
 lock_dir="${common_dir}/aidevops-canonical-recovery.lock"
-mkdir "$lock_dir" 2>/dev/null || {
+crl_acquire "$lock_dir" "$cmd" || {
 	printf 'BLOCKED: canonical recovery lock is already held\n' >&2
 	exit 1
 }
-trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
+trap 'crl_release "$lock_dir"' EXIT
+trap 'exit 143' TERM
 
 local_ref="refs/heads/${target_branch}"
 remote_ref="refs/remotes/${canonical_remote}/${target_branch}"

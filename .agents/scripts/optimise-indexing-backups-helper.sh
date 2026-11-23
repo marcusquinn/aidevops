@@ -18,11 +18,13 @@ LOG_FILE="${AIDEVOPS_OPTIMISE_LOG_FILE:-${LOG_DIR}/optimise-indexing-backups.log
 REMINDER_DAYS="${AIDEVOPS_OPTIMISE_REMINDER_DAYS:-30}"
 NOTIFY_INTERVAL_SECONDS="${AIDEVOPS_OPTIMISE_NOTIFY_INTERVAL_SECONDS:-86400}"
 BACKBLAZE_BZINFO="${AIDEVOPS_BACKBLAZE_BZINFO:-/Library/Backblaze.bzpkg/bzdata/bzinfo.xml}"
+BACKBLAZE_BZDATA="${AIDEVOPS_BACKBLAZE_BZDATA:-/Library/Backblaze.bzpkg/bzdata}"
+BACKBLAZE_STALE_HOURS="${AIDEVOPS_BACKBLAZE_STALE_HOURS:-48}"
 PLATFORM_WINDOWS="windows"
 
 usage() {
 cat <<'USAGE'
-Usage: optimise-indexing-backups-helper.sh <macos|linux|windows> <scan|apply|status|reminder> [flags]
+Usage: optimise-indexing-backups-helper.sh <macos|linux|windows> <scan|apply|status|reminder|health> [flags]
 
 Flags:
   --dry-run                 Recommend only (default for scan)
@@ -397,6 +399,126 @@ PY
     return 0
 }
 
+# Prints the last-upload epoch seconds from gmt_millis, or nothing when absent.
+# Reads only that attribute; account identifiers are never printed.
+_backblaze_last_upload_epoch() {
+    local file="$BACKBLAZE_BZDATA/bzreports_lastfilestransmitted/bzstat_lastfile_transmitted.xml"
+    [[ -r "$file" ]] || return 0
+    local millis
+    millis="$(grep -Eo 'gmt_millis="[0-9]+"' "$file" 2>/dev/null | sed -n '1p' | grep -Eo '[0-9]+' || true)"
+    [[ -n "$millis" ]] && printf '%s\n' "$((millis / 1000))"
+    return 0
+}
+
+# Prints the hint from the last "safety_frozen with hint: <hint>" line of the
+# newest bztransmit log only. Prints nothing when no freeze is logged.
+_backblaze_frozen_hint() {
+    local log_dir="$BACKBLAZE_BZDATA/bzlogs/bztransmit"
+    local newest="" candidate
+    for candidate in "$log_dir"/bztransmit*.log; do
+        [[ -f "$candidate" ]] || continue
+        if [[ -z "$newest" || "$candidate" -nt "$newest" ]]; then
+            newest="$candidate"
+        fi
+    done
+    [[ -n "$newest" && -r "$newest" ]] || return 0
+    local line
+    line="$(grep -E 'safety_frozen with hint: ' "$newest" 2>/dev/null | tail -n 1 || true)"
+    [[ -n "$line" ]] || return 0
+    line="${line##*safety_frozen with hint: }"
+    line="${line%%[^A-Za-z0-9_-]*}"
+    printf '%s\n' "${line:-unknown}"
+    return 0
+}
+
+# Prints ok | stale:<hours> | safety_frozen:<hint> | unknown | not-installed.
+# Read-only; threshold from AIDEVOPS_BACKBLAZE_STALE_HOURS (default 48).
+_backblaze_health() {
+    if [[ ! -d "${BACKBLAZE_BZDATA%/*}" ]]; then
+        printf 'not-installed\n'
+        return 0
+    fi
+    if [[ ! -d "$BACKBLAZE_BZDATA" || ! -r "$BACKBLAZE_BZDATA" ]]; then
+        printf 'unknown\n'
+        return 0
+    fi
+    local hint
+    hint="$(_backblaze_frozen_hint)"
+    if [[ -n "$hint" ]]; then
+        printf 'safety_frozen:%s\n' "$hint"
+        return 0
+    fi
+    local last
+    last="$(_backblaze_last_upload_epoch)"
+    if [[ -z "$last" ]]; then
+        printf 'unknown\n'
+        return 0
+    fi
+    local age=$(($(_now_epoch) - last))
+    if [[ "$age" -lt 0 ]]; then
+        printf 'unknown\n'
+        return 0
+    fi
+    local hours=$((age / 3600))
+    if [[ "$hours" -ge "$BACKBLAZE_STALE_HOURS" ]]; then
+        printf 'stale:%s\n' "$hours"
+    else
+        printf 'ok\n'
+    fi
+    return 0
+}
+
+# Prints a one-line user action for a non-ok health result; nothing otherwise.
+_backblaze_action_line() {
+    local health="$1"
+    local last since="its last upload"
+    last="$(_backblaze_last_upload_epoch)"
+    if [[ -n "$last" ]] && command -v python3 >/dev/null 2>&1; then
+        since="$(python3 -c 'import sys,time; print(time.strftime("%Y-%m-%d", time.gmtime(int(sys.argv[1]))))' "$last" 2>/dev/null || printf 'its last upload')"
+    fi
+    case "$health" in
+        safety_frozen:*) printf 'Backblaze backup frozen since %s; open Backblaze and resolve the safety freeze (needs your private encryption key)\n' "$since" ;;
+        stale:*) printf 'Backblaze has not uploaded for %s hours (last upload %s); open Backblaze and check its status\n' "${health#stale:}" "$since" ;;
+        unknown) printf 'Backblaze health could not be read; open Backblaze and confirm backups are uploading\n' ;;
+    esac
+    return 0
+}
+
+# Surfaces a non-ok Backblaze health result through the existing reminder
+# channel (stdout line plus desktop notification, throttled once per interval).
+_backblaze_surface() {
+    local format="$1"
+    local no_notify="$2"
+    local health action
+    health="$(_backblaze_health)"
+    action="$(_backblaze_action_line "$health")"
+    [[ -n "$action" ]] || return 0
+    case "$format" in
+        toast) printf '[WARN] %s\n' "$action" ;;
+        json) printf '{"backblaze_health":%s,"action":%s}\n' "$(_json_escape "$health")" "$(_json_escape "$action")" ;;
+        *) printf '%s.\n' "$action" ;;
+    esac
+    [[ "$no_notify" == "true" ]] && return 0
+    command -v osascript >/dev/null 2>&1 && [[ -z "${AIDEVOPS_HEADLESS:-}" ]] || return 0
+    local marker="${STATE_DIR}/backblaze-health-notified" now last=0
+    now="$(_now_epoch)"
+    [[ -r "$marker" ]] && last="$(<"$marker")"
+    [[ "$last" =~ ^[0-9]+$ ]] || last=0
+    if [[ "$last" -eq 0 || $((now - last)) -ge "$NOTIFY_INTERVAL_SECONDS" ]]; then
+        osascript -e "display notification \"${action//\"/}\" with title \"Backblaze backup needs attention\"" >/dev/null 2>&1 || true
+        _ensure_dirs
+        printf '%s\n' "$now" >"$marker"
+    fi
+    return 0
+}
+
+_cmd_health() {
+    local health
+    health="$(_backblaze_health)"
+    printf 'backblaze_health=%s\n' "$health"
+    return 0
+}
+
 _time_machine_status() {
     local path="$1"
     if ! command -v tmutil >/dev/null 2>&1; then
@@ -708,6 +830,9 @@ _cmd_reminder() {
         esac
         shift || true
     done
+    if [[ "$platform" == "macos" ]]; then
+        _backblaze_surface "$format" "$no_notify"
+    fi
     if ! _is_stale "$platform"; then
         [[ "$format" == "json" ]] && printf '{"stale":false,"platform":%s}\n' "$(_json_escape "$platform")"
         return 0
@@ -754,6 +879,7 @@ main() {
         apply) _cmd_scan "$platform" --apply "$@" ;;
         status) _cmd_status "$platform" "$@" ;;
         reminder) _cmd_reminder "$platform" "$@" ;;
+        health) _cmd_health ;;
         help|--help) usage ;;
         *) print_error "unknown command: $command_name"; return 2 ;;
     esac

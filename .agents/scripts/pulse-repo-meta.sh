@@ -31,6 +31,7 @@ _PULSE_REPO_META_LOADED=1
 
 _PULSE_REPO_ROLE_MAINTAINER="maintainer"
 _PULSE_REPO_ROLE_CONTRIBUTOR="contributor"
+_PULSE_CANDIDATE_NORMALIZATION_SKIP="skip"
 
 # shellcheck source=./infrastructure-advisory-lib.sh
 # shellcheck disable=SC1091  # sibling library resolved by the orchestrator
@@ -396,13 +397,21 @@ _pulse_candidate_snapshot_has_blocked_work() {
 _pulse_normalize_candidate_issue_snapshot_json() {
 	local repo_slug="$1" limit="$2" mode="$3" issue_json="$4"
 	local error_file="$5" source_file="$6"
-	if [[ "$mode" == "skip" ]] ||
+	if [[ "$mode" == "$_PULSE_CANDIDATE_NORMALIZATION_SKIP" ]] ||
 		! _pulse_candidate_snapshot_has_blocked_work "$issue_json" ||
 		! declare -F normalize_repo_dependency_readiness_if_due >/dev/null 2>&1; then
 		printf '%s\n' "$issue_json"
 		return 0
 	fi
+	DEP_NORMALIZE_LAST_STATUS="" DEP_GRAPH_REFRESH_CHANGED_COUNT=""
 	normalize_repo_dependency_readiness_if_due "$repo_slug" >/dev/null 2>&1 || true
+	# GH#38275: refetch only when normalization ran and changed labels. Unknown
+	# or failed status keeps the conservative refetch.
+	if [[ "${DEP_NORMALIZE_LAST_STATUS:-}" == "fresh" ]] ||
+		[[ "${DEP_NORMALIZE_LAST_STATUS:-}" == "ran" && "${DEP_GRAPH_REFRESH_CHANGED_COUNT:-}" == "0" ]]; then
+		printf '%s\n' "$issue_json"
+		return 0
+	fi
 	_pulse_fetch_candidate_issue_snapshot_json "$repo_slug" "$limit" "$error_file" "$source_file"
 	return $?
 }
@@ -427,13 +436,36 @@ _pulse_persist_candidate_snapshot_evidence() {
 	# A successful bounded read is not necessarily complete. Never lend a
 	# reserved class's slots based on a failed, malformed or truncated snapshot.
 	# Deferred blocked readiness cannot prove absence of newly eligible work.
-	if [[ "$normalization_mode" == "skip" ]] && _pulse_candidate_snapshot_has_blocked_work "$issue_json"; then
+	if [[ "$normalization_mode" == "$_PULSE_CANDIDATE_NORMALIZATION_SKIP" ]] && _pulse_candidate_snapshot_has_blocked_work "$issue_json"; then
 		return 0
 	fi
 	if [[ -n "$completeness_file" && "$snapshot_succeeded" == 1 ]] &&
 		jq -e --argjson limit "$limit" 'length < $limit' <<<"$issue_json" >/dev/null 2>&1; then
 		printf '1\n' >"$completeness_file"
 	fi
+	return 0
+}
+
+#######################################
+# GH#38720: a snapshot with blocked work that already yields candidates is read
+# in skip mode. The inline graph rebuild plus relabel batch took ~58s on the
+# largest backlog, timing out its census scan (zero candidates, idle slots),
+# while 399 such refreshes changed 4 labels. The dependency reconciler's stale
+# sweep and ready lane (GH#38680) release ready dependants of mixed repos, and
+# skip semantics keep the read from proving absence.
+# Args: repo slug, requested normalization mode, issue snapshot JSON.
+# Returns: 0 when a normalizing read has blocked work beside at least one
+# candidate (use skip mode), else 1.
+#######################################
+_pulse_candidate_runnable_beside_blocked() {
+	local repo_slug="$1" mode="$2" issue_json="$3" candidates_json="" count=""
+	[[ "$mode" != "$_PULSE_CANDIDATE_NORMALIZATION_SKIP" ]] || return 1
+	_pulse_candidate_snapshot_has_blocked_work "$issue_json" || return 1
+	candidates_json=$(_filter_dispatchable_issue_candidates_json "$issue_json") || return 1
+	count=$(jq -r 'arrays | length' <<<"$candidates_json" 2>/dev/null) || return 1
+	[[ "$count" =~ ^[1-9][0-9]*$ ]] || return 1
+	printf '[pulse-wrapper] list_dispatchable_issue_candidates: inline dependency normalization skipped for %s; %s candidate(s) already runnable (GH#38720)\n' \
+		"$repo_slug" "$count" >>"$LOGFILE"
 	return 0
 }
 
@@ -522,8 +554,11 @@ list_dispatchable_issue_candidates_json() {
 
 	# Dependency-blocked children are filtered before ranking, so they cannot
 	# reach the dispatch-time readiness guard. Normalize once per bounded TTL
-	# whenever the fetched snapshot contains blocked work; this also covers a
-	# roadmap alongside unrelated runnable candidates.
+	# when blocked work hides every candidate (GH#38720: all-blocked roadmap).
+	if [[ "$snapshot_available" -eq 1 ]] &&
+		_pulse_candidate_runnable_beside_blocked "$repo_slug" "$dependency_normalization_mode" "$issue_json"; then
+		dependency_normalization_mode="$_PULSE_CANDIDATE_NORMALIZATION_SKIP"
+	fi
 	if [[ "$snapshot_available" -eq 1 ]]; then
 		local normalized_issue_json=""
 		if normalized_issue_json=$(_pulse_normalize_candidate_issue_snapshot_json \

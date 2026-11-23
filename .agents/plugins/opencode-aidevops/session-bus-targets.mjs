@@ -161,6 +161,31 @@ export function matchSessions(records, target, { selfID = "", cwd = "", repo = "
   return records.filter((record) => record.session_id !== selfID && inScope(record) && matches(record));
 }
 
+/**
+ * t19157: the bus is local, so a `who` miss on #N or PR#n says nothing about
+ * workers on other runners. Returns a hint naming the GitHub read that shows
+ * their claim, or "" for non-issue targets.
+ */
+export function crossRunnerHint(targets, repo = "") {
+  const slug = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(String(repo || "")) ? ` --repo ${repo}` : "";
+  const reads = [];
+  for (const target of targets) {
+    const query = String(target || "").trim();
+    const issue = /^(?:issue\s*|gh)?#(\d+)$/i.exec(query);
+    const pr = /^pr\s*#?(\d+)$/i.exec(query);
+    if (issue) reads.push(`gh issue view ${issue[1]}${slug} --json assignees,labels`);
+    else if (pr) reads.push(`gh pr view ${pr[1]}${slug} --json author,assignees,labels`);
+  }
+  if (reads.length === 0) return "";
+  return `Workers on other runners are not on this bus; GitHub shows their claim: ${reads.slice(0, 3).join("; ")}`;
+}
+
+/** The `who` no-match line for the tool and CLI, with crossRunnerHint when it applies. */
+export function noLocalSessionText(targets, repo = "") {
+  const hint = crossRunnerHint(targets, repo);
+  return `No other live session is working on ${targets.join(", ")}.${hint ? ` ${hint}` : ""}`;
+}
+
 /** matchSessions for several targets: each live record once. */
 export function matchAnySessions(records, targets, options = {}) {
   if (targets.length === 0) throw new Error("who needs a target: #issue, PR#n, repo, worktree or file path");

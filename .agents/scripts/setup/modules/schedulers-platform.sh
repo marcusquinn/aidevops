@@ -322,6 +322,9 @@ setup_complexity_scan() {
 #   - Script: pulse-merge-routine.sh run
 #   - Interval: 60s (down from 120s) — targets <=90s PR-green-to-merged latency
 #   - Log: pulse-merge.log (isolated from main pulse log)
+#   - ProcessType: Interactive (GH#38455). With no ProcessType, launchd applies
+#     throttled "light resource limits". Background is never used: it left
+#     this agent stuck in xpcproxy (t3381).
 #
 # Args: $1=label $2=wrapper_script $3=log_dir
 _install_pulse_merge_routine_launchd() {
@@ -376,6 +379,8 @@ _install_pulse_merge_routine_launchd() {
 		<key>HOME</key>
 		<string>${_xml_pmr_home}</string>
 ${_env_overrides_xml}	</dict>
+	<key>ProcessType</key>
+	<string>Interactive</string>
 	<key>RunAtLoad</key>
 	<false/>
 	<key>KeepAlive</key>
@@ -471,9 +476,11 @@ setup_pulse_merge_routine() {
 	_pulse_runtime_pin_preserves_scheduler "$pmr_installed" || pin_scheduler_rc=$?
 	if [[ "$pin_scheduler_rc" -eq 0 ]]; then
 		print_info "Pulse merge scheduler preserved while its bounded runtime pin is active"
+		_schedulers_defer_template_hash "pulse merge scheduler preserved by runtime pin"
 		return 0
 	elif [[ "$pin_scheduler_rc" -ne 1 ]]; then
 		print_error "Pulse merge scheduler refused an invalid runtime pin"
+		_schedulers_defer_template_hash "pulse merge scheduler refused an invalid runtime pin"
 		return 1
 	fi
 
@@ -1172,7 +1179,7 @@ HYGIENE_PLIST
 }
 
 # Setup repo-sync scheduler if not already installed.
-# Keeps local git repos up to date with daily ff-only pulls.
+# Reports daily read-only remote drift; never pulls or changes checkouts.
 # Respects config: aidevops config set orchestration.repo_sync false
 setup_repo_sync() {
 	local repo_sync_script="$HOME/.aidevops/agents/scripts/repo-sync-helper.sh"

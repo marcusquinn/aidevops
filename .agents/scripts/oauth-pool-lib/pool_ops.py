@@ -71,6 +71,11 @@ from oauth_pool_lib.pool_ops_cooldowns import (  # noqa: E402
     cmd_normalize_cooldowns,
     cmd_reset_cooldowns,
 )
+from oauth_pool_lib.pool_ops_entry_sync import (  # noqa: E402
+    cmd_entry_fingerprint,
+    cmd_entry_get,
+    cmd_entry_put,
+)
 from oauth_pool_lib.pool_ops_health import (  # noqa: E402
     cmd_check_accounts,
     cmd_check_expiry,
@@ -83,9 +88,11 @@ from oauth_pool_lib.pool_ops_rotate import cmd_rotate  # noqa: E402
 from oauth_pool_lib.pool_ops_token_utils import (  # noqa: E402
     cmd_cursor_decode_jwt,
     cmd_cursor_read_auth,
+    cmd_anthropic_profile_org,
     cmd_extract_token_error,
     cmd_extract_token_fields,
     cmd_google_validate,
+    cmd_legacy_seat_org,
     cmd_openai_read_auth,
 )
 
@@ -111,11 +118,16 @@ COMMANDS = {
     "status-stats": cmd_status_stats,
     "list-accounts": cmd_list_accounts,
     "extract-token-fields": cmd_extract_token_fields,
+    "anthropic-profile-org": cmd_anthropic_profile_org,
+    "legacy-seat-org": cmd_legacy_seat_org,
     "extract-token-error": cmd_extract_token_error,
     "openai-read-auth": cmd_openai_read_auth,
     "cursor-read-auth": cmd_cursor_read_auth,
     "cursor-decode-jwt": cmd_cursor_decode_jwt,
     "google-validate": cmd_google_validate,
+    "entry-get": cmd_entry_get,
+    "entry-put": cmd_entry_put,
+    "entry-fingerprint": cmd_entry_fingerprint,
 }
 
 

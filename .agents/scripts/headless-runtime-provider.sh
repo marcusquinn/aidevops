@@ -31,6 +31,14 @@
 [[ -n "${_HEADLESS_RUNTIME_PROVIDER_LOADED:-}" ]] && return 0
 readonly _HEADLESS_RUNTIME_PROVIDER_LOADED=1
 
+# GH#38713: entitlement-rejection reason; its expired rows persist as history.
+_HRP_REASON_MODEL_UNAVAILABLE="model_unavailable"
+
+# GH#39475: shared OAuth pool resolver and usability rule (also used by
+# model-availability-helper.sh). SCRIPT_DIR is set by every sourcing caller.
+# shellcheck source=oauth-pool-usable-lib.sh
+source "${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/oauth-pool-usable-lib.sh"
+
 # --- Provider Auth ---
 
 extract_provider() {
@@ -138,6 +146,9 @@ provider_auth_available() {
 		if opencode_auth_has_provider "$provider"; then
 			return 0
 		fi
+		if opencode2_oauth_pool_auth_available "$provider"; then
+			return 0
+		fi
 		return 1
 		;;
 	openai)
@@ -146,6 +157,9 @@ provider_auth_available() {
 			return 0
 		fi
 		if opencode_auth_has_provider "$provider"; then
+			return 0
+		fi
+		if opencode2_oauth_pool_auth_available "$provider"; then
 			return 0
 		fi
 		return 1
@@ -230,6 +244,29 @@ for account in accounts:
 
 sys.exit(1)
 PY
+	return $?
+}
+
+# opencode2_oauth_pool_auth_available: GH#39095. OpenCode 2.x keeps provider
+# credentials in its own database and writes no auth.json, so
+# opencode_auth_has_provider is always false there and every OAuth-only
+# provider was filtered out of headless model selection (canary rc=75, "all
+# configured models are currently backed off"). When auth.json is absent, the
+# aidevops OAuth pool is the credential source the plugin authenticates
+# workers from; accept a provider only when the pool holds at least one usable
+# account for it. Unlike provider_oauth_pool_available, a missing pool or an
+# empty provider list is NOT treated as available. Read-only; never prints
+# credential material.
+opencode2_oauth_pool_auth_available() {
+	local provider="$1"
+	local auth_file="${OPENCODE_AUTH_FILE:-${HOME}/.local/share/opencode/auth.json}"
+
+	[[ -f "$auth_file" ]] && return 1
+
+	# Shared with model-availability-helper.sh Source 5 (oauth-pool-usable-lib.sh).
+	local pool_file
+	pool_file=$(oauth_pool_runtime_file)
+	oauth_pool_has_usable_account "$provider" "$pool_file"
 	return $?
 }
 
@@ -428,6 +465,52 @@ attempt_pool_recovery() {
 	return 1
 }
 
+# GH#38713: an entitlement rejection (model_unavailable) is definite and does
+# not clear by itself, so re-probing it every hour burned whole dispatches.
+# Print the backoff for a new rejection of $1 under auth $2: the $3 base for a
+# first rejection, double the previous duration (capped) when a same-auth
+# record has expired, or "keep" while a same-auth record is still active (a
+# concurrent launch from the same burst must not escalate it again).
+_model_unavailable_backoff_seconds() {
+	local backoff_key="$1"
+	local auth_signature="$2"
+	local base_seconds="$3"
+	local max_seconds="${AIDEVOPS_MODEL_UNAVAILABLE_BACKOFF_MAX_S:-86400}"
+	local row="" prev_reason="" prev_signature="" prev_retry="" prev_updated="" now="" next=0
+	[[ "$max_seconds" =~ ^[0-9]+$ ]] && ((max_seconds >= base_seconds)) || max_seconds="$base_seconds"
+	row=$(db_query "SELECT reason || '|' || auth_signature || '|' ||
+	COALESCE(CAST(strftime('%s', retry_after) AS INTEGER), 0) || '|' ||
+	COALESCE(CAST(strftime('%s', updated_at) AS INTEGER), 0) || '|' ||
+	CAST(strftime('%s', 'now') AS INTEGER)
+	FROM provider_backoff WHERE provider = '$(sql_escape "$backoff_key")';") || row=""
+	IFS='|' read -r prev_reason prev_signature prev_retry prev_updated now <<<"$row"
+	if [[ "$prev_reason" != "$_HRP_REASON_MODEL_UNAVAILABLE" || -z "$auth_signature" || "$prev_signature" != "$auth_signature" ]] ||
+		! [[ "$prev_retry" =~ ^[0-9]+$ && "$prev_updated" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ ]] ||
+		((prev_retry <= prev_updated || now - prev_updated > 2 * max_seconds)); then
+		printf '%s' "$base_seconds"
+		return 0
+	fi
+	if ((now < prev_retry)); then
+		printf '%s' "keep"
+		return 0
+	fi
+	next=$(((prev_retry - prev_updated) * 2))
+	((next > max_seconds)) && next="$max_seconds"
+	((next < base_seconds)) && next="$base_seconds"
+	printf '%s' "$next"
+	return 0
+}
+
+# GH#38713: a successful run proves the entitlement, so forget the model's
+# rejection history and let a later rejection start again at the base backoff.
+clear_model_unavailable_history() {
+	local model="$1"
+	[[ -n "$model" ]] || return 0
+	db_query "DELETE FROM provider_backoff WHERE reason = 'model_unavailable'
+	AND provider IN ('$(sql_escape "$model")', 'pulse/$(sql_escape "$model")');" >/dev/null || true
+	return 0
+}
+
 record_provider_backoff() {
 	local provider="$1"
 	local reason="$2"
@@ -467,11 +550,17 @@ PY
 	fi
 	auth_signature=$(get_auth_signature "$provider")
 	retry_seconds=$(parse_retry_after_seconds "$details_file" "$provider")
-	if [[ "$retry_seconds" -le 0 ]]; then
+	if [[ "$reason" == "${_HRP_REASON_MODEL_UNAVAILABLE:-model_unavailable}" ]]; then
+		# GH#38713: entitlement history governs even when the rejection text
+		# carries a retry hint; a hint may only lengthen the escalated backoff.
+		local policy_seconds=""
+		policy_seconds=$(_model_unavailable_backoff_seconds "$backoff_key" "$auth_signature" 3600)
+		[[ "$policy_seconds" == "keep" ]] && return 0
+		[[ "$retry_seconds" -gt "$policy_seconds" ]] || retry_seconds="$policy_seconds"
+	elif [[ "$retry_seconds" -le 0 ]]; then
 		# t1835: Reduced rate_limit fallback from 900s to 60s
 		case "$reason" in
 		rate_limit) retry_seconds=60 ;;
-		model_unavailable) retry_seconds=3600 ;;
 		auth_error) retry_seconds=3600 ;;
 		*) retry_seconds=300 ;;
 		esac
@@ -500,7 +589,7 @@ ON CONFLICT(provider) DO UPDATE SET
 backoff_active_for_key() {
 	local key="$1"
 	local provider="$2"
-	local row stored_retry_after stored_signature current_signature
+	local row stored_reason stored_retry_after stored_signature current_signature
 	row=$(db_query "SELECT reason || '|' || retry_after || '|' || auth_signature FROM provider_backoff WHERE provider = '$(sql_escape "$key")';")
 	if [[ -z "$row" ]]; then
 		return 1
@@ -518,7 +607,9 @@ backoff_active_for_key() {
 		now_epoch=$(date -u '+%s')
 		retry_epoch=$(TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$stored_retry_after" '+%s' 2>/dev/null || date -u -d "$stored_retry_after" '+%s' 2>/dev/null || printf '%s' "0")
 		if [[ "$retry_epoch" -le "$now_epoch" ]]; then
-			clear_provider_backoff "$key"
+			# GH#38713: an expired entitlement rejection stays as escalation
+			# history; readers already ignore rows whose retry_after has passed.
+			[[ "$stored_reason" == "$_HRP_REASON_MODEL_UNAVAILABLE" ]] || clear_provider_backoff "$key"
 			return 1
 		fi
 	fi

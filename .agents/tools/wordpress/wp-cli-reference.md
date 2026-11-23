@@ -305,7 +305,15 @@ wp search-replace 'https://old.com' 'https://new.com' [--dry-run]
 wp cache flush && wp rewrite flush
 ```
 
+Multisite host changes need per-host dry runs, a folder-path repair and a plugins-loaded second pass: see `wp-multisite-domain-move.md`.
+
 For reviewed field-level changes to posts and terms on live sites (titles, slugs, meta, ACF/SCF fields, terms, term deletions), use `wp-helper.sh --change-plan`. It does a dry run, a JSON backup, read-back and conditional restore: see `wp-change-plan.md`.
+
+For Fluent Boards cards (list, show, add, move, comment, tick checklist items, assign/unassign members) over SSH or LocalWP, use `wp-helper.sh --fluent-boards`: see `fluent-mcp.md` "Work a setup board".
+
+For FluentSMTP Amazon SES connections (list, move to a new sending domain or region with keys in `wp-config.php`, proof send, checksummed undo), use `wp-helper.sh --fluentsmtp`: see `services/email/ses.md` "FluentSMTP".
+
+To write any other stored secret into a `wp-config.php` constant (value on stdin, backup, fresh-process check, undo), use `wp-helper.sh --config-secret`, not `wp config set`: see `wp-dev.md` "Secrets in wp-config.php".
 
 ## Security
 
@@ -379,3 +387,99 @@ wp option update blogname "New Site Title"
 wp rewrite structure && wp rewrite flush
 wp option update rank_math_sitemap_last_modified $(date +%s)
 ```
+
+## Disposable Docker-free fixture
+
+Runtime-verify `wp-helper.sh` WP-CLI payloads (`wp-fluentsmtp.php`, `wp-config-secret.php`, `wp-fluent-boards*.php`, `wp-change-plan*.php`) without Docker or MySQL. The Docker + MariaDB stack in `wp-plugin-release.md` (`plugin-check`) does not exercise `wp-helper.sh` transports. Keep every file under one fixture directory and delete it afterwards.
+
+```bash
+T="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}"
+mkdir -p "$T"
+FX="$(mktemp -d "$T/wp-fixture.XXXXXX")" || { echo "fixture creation failed" >&2; exit 1; }   # unique per run; stop on failure
+export FX
+ORIG_DIR="$PWD"
+mkdir -p "$FX/site" "$FX/home" "$FX/bin" "$FX/tmp" "$FX/wpcache"
+export WP_CLI_CONFIG_PATH="$FX/wp-cli.yml"   # ignore ~/.wp-cli/config.yml (it could point at a real site)
+: > "$WP_CLI_CONFIG_PATH"
+export WP_CLI_CACHE_DIR="$FX/wpcache"   # keep the core download cache inside the fixture
+export TMPDIR="$FX/tmp"                 # simulated remote temp dirs stay inside the fixture
+```
+
+### 1. WP-CLI with enough memory
+
+Homebrew wp-cli on PHP 8.5 dies in `wp core download` at the 128 MB default `memory_limit`, and the Homebrew launcher ignores `WP_CLI_PHP_ARGS`. Put a `wp` shim first on `PATH`. Find the real script with `wp --info` (WP-CLI binary / PHP binary lines):
+
+```bash
+printf '#!/bin/sh\nexec php -d memory_limit=1G "%s" "$@"\n' "<real wp script or phar>" > "$FX/bin/wp"
+chmod +x "$FX/bin/wp"
+export PATH="$FX/bin:$PATH"
+```
+
+### 2. SQLite instead of MySQL
+
+`wp plugin install` cannot fetch the SQLite plugin before a database exists, and the default branch of `WordPress/sqlite-database-integration` no longer carries the plugin tree, so build the `db.php` drop-in from the latest release asset (the release zip already contains the driver files under `wp-includes/database`):
+
+```bash
+cd "$FX/site" && wp core download
+gh release download --repo WordPress/sqlite-database-integration \
+  --pattern plugin-sqlite-database-integration.zip --dir "$FX"
+mkdir "$FX/sqlite" && unzip -q "$FX/plugin-sqlite-database-integration.zip" -d "$FX/sqlite"
+P=wp-content/mu-plugins/sqlite-database-integration
+mkdir -p "$P" wp-content/database
+cp -R "$FX/sqlite/plugin-sqlite-database-integration/." "$P/"
+sed -e "s#{SQLITE_IMPLEMENTATION_FOLDER_PATH}#$PWD/$P#g" \
+    -e 's#{SQLITE_PLUGIN}#sqlite-database-integration/load.php#g' \
+    "$P/db.copy" > wp-content/db.php
+wp config create --skip-check --dbname=wp --dbuser=x --dbpass=x
+wp core install --url=http://localhost --title=Fixture --admin_user=admin \
+  --admin_email=a@example.com --skip-email
+wp plugin install fluent-smtp --activate   # any wordpress.org plugin
+```
+
+If the asset layout has moved, `ls "$FX/sqlite"` and locate `db.copy` and the driver directory (`database/version.php` must exist under `$P/wp-includes/`).
+
+SQLite-only plugin bug (Fluent Boards 2.3.0): on SQLite, WPFluent's `addUpdatedAtColumn` in `vendor/wpfluent/framework/src/WPFluent/Database/Orm/Builder.php` drops `updated_at` when it is the only dirty column. The result is `update ... set  where` (a parse error) on timestamp-only saves such as `TaskService::updateAssignee`. MySQL is not affected because there the column is table-qualified. To exercise `assign`/`unassign` on the fixture, change that method's trailing `unset($values[$column]);` so it runs only when `$qualifiedColumn !== $column`. Patch only the disposable fixture copy.
+
+### 3. Isolate the site registry
+
+`wp-helper.sh` derives every config and payload-backup path from `HOME`. Run it with `HOME="$FX/home"` so the real registry is untouched. Register the fixture in `$FX/home/.config/aidevops/wordpress-sites.json` (format: `configs/wordpress-sites.json.txt`; confirm the directory via `WP_CONFIG_DIR` in `scripts/wp-helper.sh`), then:
+
+```bash
+HOME="$FX/home" wp-helper.sh --fluentsmtp <fixture-site> list
+```
+
+### 4. SSH transport without sshd
+
+Register a second site of an SSH type (`hetzner`, `cloudways`) with `ssh_host: localhost`, `ssh_user: fixture` and `wp_path` set to `$FX/site`. Put `ssh` and `scp` shims in `$FX/bin` (already first on `PATH`). The argv shapes come from `_wpcp_prepare_ssh`, `_wpcp_ssh` and `_wpcp_scp` in `scripts/wp-helper-change-plan.sh`:
+
+- `ssh [-n] -p PORT [-i KEY] user@host "<command>"`: run the last argument as a local command, keeping stdin.
+- `scp -q -P PORT [-i KEY] SRC DEST`: skip flags and their values, strip a `host:` prefix from `SRC` or `DEST`, then `cp`.
+
+```bash
+printf '#!/bin/sh\nfor a; do c="$a"; done\nexec sh -c "$c"\n' > "$FX/bin/ssh"
+cat > "$FX/bin/scp" <<'SH'
+#!/bin/sh
+src=""; dest=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -P|-i|-o) shift 2 ;;
+    -*) shift ;;
+    *) [ -z "$src" ] && src="${1#*:}" || dest="${1#*:}"; shift ;;
+  esac
+done
+exec cp -p "$src" "$dest"
+SH
+chmod +x "$FX/bin/ssh" "$FX/bin/scp"
+```
+
+The `scp` shim strips `host:` from every path, so keep the fixture path free of `:`. Keep `AIDEVOPS_TEMP_DIR` free of spaces too: `_wpcp_remote_mktemp` rejects remote paths containing them. Re-run the same `wp-helper.sh` command through the SSH site and check upload, quoting and that the remote temp directory (`mktemp -d`, under `$TMPDIR`) is removed. `list` sends no keys on stdin; to check stdin key delivery, run a key-bearing operation of the payload under test with dummy keys only (never real credentials) and confirm the fixture site receives them.
+
+### 5. Destroy
+
+```bash
+cd "$ORIG_DIR" && rm -rf "$FX" && unset FX TMPDIR WP_CLI_CACHE_DIR WP_CLI_CONFIG_PATH
+```
+
+Restore `PATH` (or close the shell) to drop the shims.
+
+Confirm nothing remains outside `${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}`.

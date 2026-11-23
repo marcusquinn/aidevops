@@ -757,19 +757,37 @@ fi
 
 # Resolve structural worktree identity before branch handling or ownership.
 canonical_policy_helper="${SCRIPT_DIR}/canonical-write-policy-helper.py"
+policy_repair_action="ACTION_REQUIRED=repair_canonical_write_policy"
 if [[ ! -f "$canonical_policy_helper" ]]; then
 	echo -e "${RED}BLOCKED${NC}: canonical-write policy helper is unavailable"
-	echo "ACTION_REQUIRED=repair_canonical_write_policy"
+	echo "$policy_repair_action"
 	exit 1
 fi
 worktree_classification=""
 if ! worktree_classification=$(python3 "$canonical_policy_helper" classify --cwd "$PWD" --field classification 2>/dev/null); then
 	echo -e "${RED}BLOCKED${NC}: Git worktree identity could not be classified safely"
-	echo "ACTION_REQUIRED=repair_canonical_write_policy"
+	echo "$policy_repair_action"
 	exit 1
 fi
 
+# GH#39573: an explicit target the shared write policy allows as opted-in,
+# gitignored canonical runtime output needs no worktree. Any other result,
+# including a helper failure, keeps the canonical read-only path below.
+_canonical_runtime_target_allowed() {
+	local target_file="$1"
+	local runtime_allow=""
+	[[ -n "$target_file" ]] || return 1
+	runtime_allow=$(python3 "$canonical_policy_helper" check-write --cwd "$PWD" \
+		--path "$target_file" --field canonical_runtime_allow 2>/dev/null) || return 1
+	[[ "$runtime_allow" == "allowlisted-ignored-runtime-path" ]] || return 1
+	return 0
+}
+
 if [[ "$worktree_classification" == "canonical" ]]; then
+	if _canonical_runtime_target_allowed "$TARGET_FILE"; then
+		echo -e "${GREEN}OK${NC} - canonical gitignored runtime path allowlisted by .aidevops.json canonical_write_allow; no worktree needed"
+		exit 0
+	fi
 	current_branch=$(git branch --show-current 2>/dev/null || true)
 	[[ -n "$current_branch" ]] || current_branch="detached"
 	[[ "$LOOP_MODE" == "true" ]] && _handle_loop_mode_on_protected "$current_branch"
@@ -786,6 +804,27 @@ if [[ "$worktree_classification" != "linked" ]]; then
 	echo -e "${RED}BLOCKED${NC}: expected a linked Git worktree, got '$worktree_classification'"
 	echo "$ACTION_LINKED_WORKTREE_REQUIRED"
 	exit 1
+fi
+
+# Session-location gate: direct writes into a cross-repository linked worktree
+# are denied when the session project directory is outside the trusted Git
+# workspace. Report it now instead of at the first Edit/Write.
+session_project_dir="${AIDEVOPS_SESSION_PROJECT_DIR:-}"
+if [[ -n "$session_project_dir" ]]; then
+	if ! session_decision=$(python3 "$canonical_policy_helper" check-session --cwd "$session_project_dir" --target "$PWD" --field decision); then
+		session_decision="error"
+	fi
+	if [[ "$session_decision" == "error" ]]; then
+		echo -e "${RED}BLOCKED${NC}: session workspace policy check failed"
+		echo "$policy_repair_action"
+		exit 1
+	fi
+	if [[ "$session_decision" != "allow" ]]; then
+		echo -e "${RED}BLOCKED${NC}: this session's project directory is outside the trusted Git workspace; direct writes to this worktree will be denied"
+		echo "ACTION_REQUIRED=run_session_inside_git_workspace"
+		echo "HINT: the worktree already exists; restart the session from inside the Git workspace (the repository or its worktree)"
+		exit 1
+	fi
 fi
 
 # Detached HEAD is valid only inside a linked worktree (for isolated releases).

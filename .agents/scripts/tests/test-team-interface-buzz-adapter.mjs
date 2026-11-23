@@ -358,12 +358,14 @@ try {
   const statusController = new AbortController();
   const status = await adapter.status(adapterContext(statusController.signal));
   assert.deepEqual(status, detected, "detect and status must project equivalent read-only observations");
+  // Success-path upper bound only: the reads finish promptly on a healthy host,
+  // but real fixture reads exceeded 1000 ms at load average ~67 (GH#39068).
   const invoked = await invokeAdapterRead(
     "detect",
     {adapter, settings_ref: "settings:buzz-fixture"},
     {},
     validators,
-    {timeoutMs: 1000},
+    {timeoutMs: 10000},
   );
   assert.deepEqual(invoked, detected, "runtime invocation must accept the normalized inventory");
   assertSourcesUnchanged(sourceSnapshots);
@@ -620,16 +622,36 @@ try {
   abortedController.abort();
   await assert.rejects(adapter.detect(adapterContext(abortedController.signal)), /aborted/iu);
 
+  // The adapter's async path-safety checks run before its child read, so on a
+  // loaded host the 20 ms deadline can fire before any child starts. Assert the
+  // deadline outcome, not its timing: the runtime aborts the adapter signal,
+  // the in-flight read settles, and any child read that started was aborted
+  // (GH#39068).
+  let childReadStarted = false;
   let timeoutSignalAborted = false;
-  const hangingAdapter = makeAdapter(paths, async (_command, _argumentsList, executionOptions) => new Promise((_, reject) => {
-    executionOptions.signal.addEventListener("abort", () => {
+  const hangingInner = makeAdapter(paths, async (_command, _argumentsList, executionOptions) => new Promise((_, reject) => {
+    childReadStarted = true;
+    const abortChild = () => {
       timeoutSignalAborted = true;
       const error = new Error("synthetic child aborted");
       error.name = "AbortError";
       error.code = "ABORT_ERR";
       reject(error);
-    }, {once: true});
+    };
+    // Like child_process, an already-aborted signal aborts the child at once.
+    if (executionOptions.signal.aborted) abortChild();
+    else executionOptions.signal.addEventListener("abort", abortChild, {once: true});
   }));
+  let hangingSignal;
+  let hangingRead;
+  const hangingAdapter = {
+    ...hangingInner,
+    detect: (context) => {
+      hangingSignal = context.runtime.abort_signal;
+      hangingRead = hangingInner.detect(context);
+      return hangingRead;
+    },
+  };
   await assert.rejects(
     invokeAdapterRead(
       "detect",
@@ -640,7 +662,9 @@ try {
     ),
     (error) => error?.code === "adapter_timeout",
   );
-  assert.equal(timeoutSignalAborted, true, "runtime timeout must abort the adapter child read");
+  assert.equal(hangingSignal?.aborted, true, "runtime timeout must abort the adapter signal");
+  await assert.rejects(hangingRead, /abort/iu, "timed-out adapter read must settle after the abort");
+  assert.equal(!childReadStarted || timeoutSignalAborted, true, "runtime timeout must abort the adapter child read");
 
   console.log("team-interface Buzz adapter tests passed");
 } finally {

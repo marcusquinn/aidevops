@@ -30,6 +30,55 @@ cannot scope one token to an explicit repository set.
 
 ## Migrating plaintext credentials safely
 
+### Optional systemd-creds storage
+
+On Linux with systemd 259 or newer, opt in per secret using
+`aidevops secret set NAME --backend systemd-creds`. Input remains hidden or is
+read from stdin/`--from-file`; never supply a value in argv or AI chat.
+The backend requires both `--user` (introduced in 256) and `--refuse-null`
+(introduced in 259). Older versions and macOS retain existing behavior; an
+explicit request for an unavailable backend fails without writing plaintext.
+
+Credentials are user-scoped, host-key encrypted, authenticated and stored in
+`~/.config/aidevops/creds/NAME.cred` (directory 700, files 600). Writes encrypt
+from stdin, decrypt-compare in memory, and atomically replace only ciphertext.
+The first version deliberately uses `--with-key=host`, not automatic TPM
+selection or null-key encryption; TPM provisioning and NixOS packaging remain
+outside this feature. Host-key access may require administrator provisioning
+of systemd's host key and authorization. Operations disable password prompts
+and have timeouts; they never silently downgrade to plaintext.
+
+Reads prefer a listed gopass entry, then a present encrypted credential, then
+`credentials.sh`. An unreadable encrypted credential fails closed, including
+when systemd-creds is unavailable; `check` returns 3 without output. Existing
+encrypted names keep their backend on ordinary `set` unless gopass owns the
+same name. An explicit encrypted write does not remove a higher-priority
+gopass entry: reconcile that entry before expecting the new value to resolve.
+`list` and `inventory` discover names without decrypting; guarded `rm` removes
+the encrypted copy as well as the existing backends and performs read-back.
+
+The helper decrypts on demand rather than changing user unit configuration.
+Headless `systemd-run --user` workers use the same resolver as interactive
+commands. Subprocess injection uses an owned tmpfs runtime directory when
+encrypted entries exist and refuses persistent temporary storage. Values still
+exist in process memory, subprocess environments and the runtime tmpfs; disable
+unencrypted swap and restrict core dumps if the host policy requires protection
+against those copies. This is not protection against root or same-user process
+compromise. A copied credential alone is not portable: user-scoped encryption
+binds the host key, machine identity, username and numeric UID. Copying the host
+key and all identity material can defeat that protection. Host-key loss or
+identity changes can make secrets unrecoverable; retain an independently secured
+recovery source and protect host-key backups separately from ciphertext backups.
+
+`aidevops secret import-credentials --to systemd-creds` imports eligible unique
+literal secret exports from the active plaintext store, using the existing
+strict parser. It skips existing encrypted names, verifies each new encrypted
+value, and always retains the source. It does not automatically migrate gopass
+or prune plaintext. Existing `prune-plaintext` remains gopass-only; do not use
+it as verification of this backend. After migrating callers and checking names
+through the resolver, retire retained sources through the operator's normal
+secure secret-management process, accounting for backups and snapshots.
+
 `aidevops secret import-credentials` imports **only the active tenant's store**
 (or the single `credentials.sh`) into the flat `aidevops/NAME` namespace used
 by `check`, `get` and subprocess injection. Other tenants are not merged into
@@ -137,26 +186,37 @@ pasted into the shell or appears in scrollback/history, revoke and replace it.
 ## Headless runner GPG availability
 
 `aidevops secret check NAME` is status-only: exit 0 means readable, 1 means
-missing (or empty plaintext), and 3 means a gopass-owned entry is unreadable
-or empty. It never prints values or decryption errors. The runner capability
+missing (or empty plaintext), 3 means a gopass-owned entry is unreadable
+or empty, and 5 means the non-interactive read timed out. It never prints values or decryption errors. The runner capability
 log reports `reason=secret_missing name=NAME`, `secret_unreadable`,
 `check_timeout`, or `probe_failed path=...` without secret material.
 
 Gopass is authoritative for names it owns: failed decryption **does not** fall
 back to `credentials.sh`. Deferrals state `store=gopass fallback=disabled`.
 A locked agent is the common cause, but an unreadable entry can also mean
-corruption or missing decryption keys. Status-only decryption is bounded using
-the existing four-second headless resolver; an owned entry that times out
-returns 3. The outer capability watchdog reports `check_timeout` if the whole
-command (including store listing) exceeds five seconds.
+corruption or missing decryption keys. Headless decryption uses
+`AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS` (default 12, clamped 1–55 seconds).
+The outer capability watchdog defaults to 15 seconds and also reports
+`check_timeout` when the whole command, including store listing, exceeds its limit.
 Pulse emits one `runner_health: gpg store locked or entry unreadable` line
-per cycle and skips subsequent secret-gated checks for that cycle; ungated
+for each fresh unreadable result and skips subsequent secret-gated checks until
+the cache expires; ungated
 candidates can still run. `runner_capability_health secret_gated_deferred=N`
 records the running count of rejected gate calls, not a final candidate total.
-Cycle state contains only names/counts in a mode-600 file under the runner's
+`AIDEVOPS_RUNNER_CAPABILITY_UNREADABLE_TTL_SECONDS` sets the cache lifetime
+(default 120 seconds). An expired entry is rechecked under the exclusive lock;
+timeouts are not cached. Cycle state contains only names/counts/timestamps in a mode-600 file under the runner's
 workspace temp directory, with an exclusive lock shared across watchdog
 subshells and concurrent candidates. Old cycle metadata expires after a day.
-The next cycle retries, so unlocking does not require restarting pulse.
+An unlocked store is retried after expiry without restarting pulse.
+
+Within one pulse cycle, a name that passed `secret check` is reused by later
+candidates and gates for `AIDEVOPS_RUNNER_CAPABILITY_READABLE_TTL_SECONDS`
+(default 300, clamped 0–1800; 0 disables). Without this cache, parallel
+candidates re-decrypted the same names and timed out under gpg-agent contention.
+Only readability is reused: requirements, rejections and missing names are still
+checked every time, and a fresh unreadable result clears the readable cache.
+Reuse logs `runner_capability_secret_cache reused=N checked=M`.
 
 For unattended runners, provision the agent unlock outside AI chat. Set both
 `default-cache-ttl` and `max-cache-ttl` in the operator's `gpg-agent.conf` long

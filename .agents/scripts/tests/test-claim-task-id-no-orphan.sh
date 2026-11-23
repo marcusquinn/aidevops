@@ -656,7 +656,7 @@ test_reconcile_tip_fetch_depth() {
 		CAS_GIT_CONTEXT_PATH=""
 		_cas_read_default_counter_for_reconcile main >/dev/null
 	)
-	if [[ $(<"$tmpdir/fetches") == *$'fetch -q --depth=1 origin main\n'* ]] &&
+	if [[ $(<"$tmpdir/fetches") == *$'fetch -q --depth=1 --no-tags --filter=blob:none origin main\n'* ]] &&
 		[[ $(<"$tmpdir/fetches") == *'fetch -q origin main'* ]]; then
 		pass "$name"
 	else

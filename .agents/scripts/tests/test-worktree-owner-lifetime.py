@@ -21,6 +21,7 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import worktree_lifetime_owner as owner
 import worktree_lifetime_proof as proof
+import worktree_lifetime_release_receipt as release_receipt
 
 SPEC = importlib.util.spec_from_file_location("lifetime", SCRIPTS / "worktree-managed-lifetime.py")
 lifetime = importlib.util.module_from_spec(SPEC)
@@ -31,15 +32,23 @@ REG_SPEC.loader.exec_module(registry)
 
 
 class CreationProducerTests(unittest.TestCase):
+    def environment(self, root, home):
+        # Never admit fixture worktrees to the calling runner's lifecycle state.
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith("AIDEVOPS_LIFECYCLE_")}
+        env.update(HOME=str(home), AIDEVOPS_LIFECYCLE_STATE_DIR=str(root / "state"),
+                   AIDEVOPS_PRIVATE_WORKLOAD="0", WORKTREE_REGISTRY_DIR=str(root / "registry"),
+                   WORKTREE_REGISTRY_DB=str(root / "registry/owners.db"))
+        return env
+
     def test_persistent_producers_register_new_branches_and_reuse_worktrees(self):
         base = Path(os.environ.get("AIDEVOPS_TEMP_DIR") or Path.home() / ".aidevops/.agent-workspace/tmp")
         with tempfile.TemporaryDirectory(prefix="skill-creation-", dir=base) as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             repo, home = root / "repo", root / "home"
             home.mkdir()
             git = os.environ.get("AIDEVOPS_TEST_GIT_BIN", shutil.which("git"))
-            env = dict(os.environ, HOME=str(home), WORKTREE_REGISTRY_DIR=str(root / "registry"),
-                       WORKTREE_REGISTRY_DB=str(root / "registry/owners.db"))
+            env = self.environment(root, home)
             env["PATH"] = str(Path(git).parent) + os.pathsep + env["PATH"]
 
             def command(*args):
@@ -85,9 +94,9 @@ class CreationProducerTests(unittest.TestCase):
                                       'source "$1/shared-todo-commit.sh"; _todo_remove_temp_worktree "$2" "$3"',
                                       "fixture", str(SCRIPTS), str(repo), path], env=env,
                                      text=True, capture_output=True, timeout=15)
-            legacy = sys.platform == "darwin" or env.get("AIDEVOPS_WORKTREE_MANAGER") == "legacy-guards"
-            self.assertEqual(cleanup.returncode == 0, legacy, cleanup.stderr)
-            self.assertEqual(Path(path).exists(), not legacy)
+            # Planning publication explicitly owns a synchronous legacy tree.
+            self.assertEqual(cleanup.returncode, 0, cleanup.stderr)
+            self.assertFalse(Path(path).exists())
             # Source release functions from a fixture linked checkout, so their
             # bootstrap cannot create a control worktree in the real repository.
             source = root / "repo-new"
@@ -122,11 +131,10 @@ class CreationProducerTests(unittest.TestCase):
     def test_reserved_paths_and_registration_failure_preserve_sources(self):
         base = Path(os.environ.get("AIDEVOPS_TEMP_DIR") or Path.home() / ".aidevops/.agent-workspace/tmp")
         with tempfile.TemporaryDirectory(prefix="reserved-creation-", dir=base) as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             repo = root / "repo"
             git = os.environ.get("AIDEVOPS_TEST_GIT_BIN") or shutil.which("git")
-            env = dict(os.environ, HOME=str(root), WORKTREE_REGISTRY_DIR=str(root / "registry"),
-                       WORKTREE_REGISTRY_DB=str(root / "registry/owners.db"))
+            env = self.environment(root, root)
             env["PATH"] = str(Path(git).parent) + os.pathsep + env["PATH"]
             subprocess.run([git, "init", "-q", "-b", "main", str(repo)], env=env, check=True, timeout=10)
             subprocess.run([git, "-C", str(repo), "-c", "user.name=Fixture", "-c",
@@ -338,12 +346,125 @@ class OwnerEvidenceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 owner.register(db, "/fixture", 1, "first")
 
-    def test_reboot_and_changed_invocation_refuse(self):
+    def test_unverifiable_reboot_and_changed_invocation_refuse(self):
         launch = {"boot_id": "old", "unit": "aidevops-worker-fixture", "invocation": "first"}
         with self.assertRaises(ValueError):
             owner.drain_unit(launch, lambda: "new", lambda _: {})
         with self.assertRaises(ValueError):
             owner.drain_unit(launch, lambda: "old", lambda _: {"InvocationID": "second"})
+        self.assertNotIn("quiescence", launch)
+
+    OLD_BOOT = "1c11018b-6bde-48ad-b729-90b4b8d36b45"
+    NEW_BOOT = "04f36445-ad8c-48fd-a4c8-0bb20313fe18"
+
+    @staticmethod
+    def unreachable(_unit):
+        raise AssertionError("previous-boot unit evidence must not be sampled")
+
+    def ended_boot_launch(self, **changes):
+        launch = {"boot_id": self.OLD_BOOT, "unit": "aidevops-worker-fixture",
+                  "invocation": "a" * 32, "cgroup": "/stale.service"}
+        launch.update(changes)
+        return launch
+
+    @staticmethod
+    def sealed(launch):
+        return {"state": "sealed", "sealed_at": time.time(),
+                "identity": {"source_inode": "1:2"}, "launches": [launch]}
+
+    def test_ended_boot_drains_and_seals_without_unit_evidence(self):
+        launch = self.ended_boot_launch()
+        owner.drain_unit(launch, lambda: self.NEW_BOOT, self.unreachable)
+        receipt = launch["quiescence"]
+        self.assertEqual(receipt["group"], owner.PREVIOUS_BOOT_GROUP)
+        self.assertEqual(receipt["observed_boot"], self.NEW_BOOT)
+        self.assertEqual(receipt["InvocationID"], "a" * 32)
+        self.assertTrue(owner.previous_boot_receipt_valid(launch, receipt))
+        proof.proof(self.sealed(launch), "1:2", fresh=False)
+        # Idempotent: a repeated drain rewrites an equivalent receipt.
+        owner.drain_unit(launch, lambda: self.NEW_BOOT, self.unreachable)
+        self.assertEqual(launch["quiescence"]["observed_boot"], self.NEW_BOOT)
+
+    def test_forged_previous_boot_receipts_refuse(self):
+        launch = self.ended_boot_launch()
+        owner.drain_unit(launch, lambda: self.NEW_BOOT, self.unreachable)
+        receipt = launch["quiescence"]
+        forgeries = (dict(receipt, observed_boot=self.OLD_BOOT),
+                     dict(receipt, observed_boot="new"),
+                     dict(receipt, InvocationID="b" * 32),
+                     dict(receipt, observed_at=time.time() + 3600),
+                     dict(receipt, observed_at="now"))
+        for forged in forgeries:
+            with self.subTest(forged=forged), self.assertRaises(ValueError):
+                proof.proof(self.sealed(dict(launch, quiescence=forged)), "1:2",
+                            fresh=False)
+        invalid_launch = dict(launch, boot_id="old",
+                              quiescence=dict(receipt))
+        with self.assertRaises(ValueError):
+            proof.proof(self.sealed(invalid_launch), "1:2", fresh=False)
+
+    def test_unbound_or_invalid_prior_boot_launch_refuses(self):
+        for changes in ({"invocation": None}, {"invocation": ""},
+                        {"invocation": "first"}, {"boot_id": "old"}):
+            launch = self.ended_boot_launch(**changes)
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                owner.drain_unit(launch, lambda: self.NEW_BOOT, self.unreachable)
+            self.assertNotIn("quiescence", launch)
+        launch = self.ended_boot_launch()
+        with self.assertRaises(ValueError):
+            owner.drain_unit(launch, lambda: "new", self.unreachable)
+        self.assertNotIn("quiescence", launch)
+
+    def test_boot_change_during_previous_boot_observation_refuses(self):
+        boots = iter((self.NEW_BOOT, "2b5d6d0c-4f0e-4b5e-9a39-0c4f7c1f5d11"))
+        launch = self.ended_boot_launch()
+        with self.assertRaises(ValueError):
+            owner.drain_unit(launch, lambda: next(boots), self.unreachable)
+        self.assertNotIn("quiescence", launch)
+
+    def released_launch(self):
+        return {"boot_id": self.OLD_BOOT, "unit": "aidevops-worker-fixture",
+                "invocation": "a" * 32, "cgroup": "/released.service"}
+
+    def release_receipt(self, launch, **changes):
+        sample = {"InvocationID": launch["invocation"], "MainPID": "0", "Job": "",
+                  "ActiveState": "active", "SubState": "exited", "ExitType": "cgroup",
+                  "RemainAfterExit": "yes", "Restart": "no"}
+        receipt = {"schema": release_receipt.RELEASE_SCHEMA, "unit": "aidevops-worker-fixture.service",
+                   "InvocationID": launch["invocation"], "boot_id": launch["boot_id"],
+                   "requested_at": time.time(), "quiescence": sample}
+        receipt.update(changes)
+        return receipt
+
+    @staticmethod
+    def collected(_unit):
+        raise ValueError("unit evidence unavailable")
+
+    def test_released_unit_drains_from_its_receipt(self):
+        launch = self.released_launch()
+        receipt = self.release_receipt(launch)
+        owner.drain_unit(launch, lambda: self.OLD_BOOT, self.collected,
+                         lambda _: {"LoadState": "not-found"}, lambda unit, inv: receipt)
+        self.assertEqual(launch["quiescence"], receipt["quiescence"])
+        proof.proof(self.sealed(launch), "1:2", fresh=False)
+
+    def test_release_receipt_refuses_loaded_forged_or_missing(self):
+        launch = self.released_launch()
+        valid = self.release_receipt(launch)
+        cases = ((lambda _: {"LoadState": "loaded", "InvocationID": "a" * 32}, valid),
+                 (lambda _: {"LoadState": "not-found"}, None),
+                 (lambda _: {"LoadState": "not-found"}, dict(valid, InvocationID="b" * 32)),
+                 (lambda _: {"LoadState": "not-found"}, dict(valid, boot_id=self.NEW_BOOT)),
+                 (lambda _: {"LoadState": "not-found"}, dict(valid, schema="other")),
+                 (lambda _: {"LoadState": "not-found"}, dict(valid, requested_at=time.time() + 3600)),
+                 (lambda _: {"LoadState": "not-found"},
+                  dict(valid, quiescence=dict(valid["quiescence"], SubState="running"))))
+        for presence, receipt in cases:
+            candidate = dict(launch)
+            with self.subTest(receipt=receipt), self.assertRaises(ValueError):
+                owner.drain_unit(candidate, lambda: self.OLD_BOOT, self.collected, presence,
+                                 lambda unit, inv, receipt=receipt: receipt)
+            self.assertNotIn("quiescence", candidate)
 
     def test_live_descendants_refuse_even_after_parent_exit(self):
         launch = {"boot_id": "boot", "unit": "aidevops-worker-fixture", "invocation": "first"}
@@ -437,6 +558,7 @@ class ProcessReconciliationTests(unittest.TestCase):
             options = {"side_effect": value} if isinstance(value, Exception) else {"return_value": value}
             with self.subTest(expected=expected), patch.object(owner, "boot_id", return_value=launch["boot_id"]), \
                     patch.object(owner, "process_identity", **options), \
+                    patch.object(Path, "is_file", return_value=True), \
                     patch.object(os.path, "lexists", return_value=False):
                 self.assertEqual(owner.recorded_process_status(launch)["status"], expected)
 

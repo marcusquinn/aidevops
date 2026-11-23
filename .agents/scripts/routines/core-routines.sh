@@ -956,6 +956,11 @@ $(_scheduler_row_calendar "$os" "StartCalendarInterval: Hour=6, Minute=20" "sh.a
 - Uses wrapper-created issues with \`--body-file\` and dedupe markers.
 - Does not increase concurrency by itself; recommendations must cite evidence.
 - JSON output removes raw worker examples that may contain repo slugs or paths.
+- \`apply\` collects within 300s total, 60s per component and 210s for the
+  queue scan (interactive \`report\`/\`json\`: 45/10/20); override with
+  \`PULSE_CHECK_REPORT_BUDGET_SECONDS\`, \`PULSE_CHECK_COMPONENT_BUDGET_SECONDS\`
+  or \`PULSE_CHECK_QUEUE_BUDGET_SECONDS\`. The resolved values are reported
+  under \`inputs.collection_budget_seconds\` (GH#39206).
 
 ## What to check
 
@@ -1210,6 +1215,7 @@ having to remember a manual cleanup:
 | artefacts | \`worktree-artefact-reclaim.sh --force\` (ignored build output in idle worktrees, to Trash) |
 | opencode | \`opencode-db-maintenance-helper.sh auto\` (idle DBs, layout backups) |
 | observability | \`observability-helper.sh retention-maintenance --apply\` |
+| gitlocks | \`canonical-recovery-helper.sh repair-stale-locks --apply\` (unheld Git locks 60+ min old and pack temporaries 2+ days old in canonical repos; audited) |
 
 Run \`aidevops cleanup\` any time for a read-only size report, or
 \`aidevops cleanup <store>\` to preview one store.

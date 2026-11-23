@@ -60,7 +60,7 @@ JSON
   "initialized_repos": [
     {
       "slug": "marcusquinn/aidevops",
-      "path": "/tmp/aidevops"
+      "path": "/tmp"
     }
   ]
 }
@@ -383,11 +383,11 @@ test_repo_issue_detection_uses_filtered_worker_list() {
   "initialized_repos": [
     {
       "slug": "marcusquinn/aidevops",
-      "path": "/tmp/aidevops"
+      "path": "/tmp"
     },
     {
       "slug": "marcusquinn/aidevops-tools",
-      "path": "/tmp/aidevops-tools"
+      "path": "/tmp"
     }
   ]
 }
@@ -448,7 +448,7 @@ test_has_worker_for_repo_issue_session_key_fallback() {
   "initialized_repos": [
     {
       "slug": "marcusquinn/other-repo",
-      "path": "/tmp/other-repo"
+      "path": "/tmp"
     }
   ]
 }
@@ -1035,14 +1035,14 @@ test_build_ranked_dispatch_candidates_json_scores_candidates() {
   "initialized_repos": [
     {
       "slug": "marcusquinn/aidevops",
-      "path": "/tmp/aidevops",
+      "path": "/tmp",
       "pulse": true,
       "priority": "tooling",
       "maintainer": "marcusquinn"
     },
     {
       "slug": "webapp",
-      "path": "/tmp/webapp",
+      "path": "/tmp",
       "pulse": true,
       "priority": "product",
       "maintainer": "marcusquinn"
@@ -1094,7 +1094,7 @@ test_build_ranked_dispatch_candidates_json_respects_priority_labels() {
   "initialized_repos": [
     {
       "slug": "marcusquinn/aidevops",
-      "path": "/tmp/aidevops",
+      "path": "/tmp",
       "pulse": true,
       "priority": "tooling",
       "maintainer": "marcusquinn"
@@ -1142,7 +1142,7 @@ test_build_ranked_dispatch_candidates_json_prioritizes_security_quality_debt() {
   "initialized_repos": [
     {
       "slug": "marcusquinn/aidevops",
-      "path": "/tmp/aidevops",
+      "path": "/tmp",
       "pulse": true,
       "priority": "tooling",
       "maintainer": "marcusquinn"
@@ -1186,7 +1186,7 @@ test_build_ranked_dispatch_candidates_json_excludes_pull_requests() {
   "initialized_repos": [
     {
       "slug": "marcusquinn/aidevops",
-      "path": "/tmp/aidevops",
+      "path": "/tmp",
       "pulse": true,
       "priority": "tooling",
       "maintainer": "marcusquinn"
@@ -1232,7 +1232,7 @@ test_build_ranked_dispatch_candidates_json_applies_capped_age_bonus() {
   "initialized_repos": [
     {
       "slug": "marcusquinn/aidevops",
-      "path": "/tmp/aidevops",
+      "path": "/tmp",
       "pulse": true,
       "priority": "tooling",
       "maintainer": "marcusquinn"
@@ -1309,7 +1309,7 @@ test_dispatch_max_dispatches_up_to_capacity() {
 	original_rest_gate=$(capture_function_definitions _dispatch_rest_core_progress_allows_next)
 	_dispatch_rest_core_progress_allows_next() { return 0; }
 	jq -nc --arg mode "$reservation_mode" '{initialized_repos:
-		(if $mode == "product" then [{slug:"o/product",path:"/tmp/product",pulse:true,priority:"product"}] else [] end)}' >"$REPOS_JSON"
+		(if $mode == "product" then [{slug:"o/product",path:"/tmp",pulse:true,priority:"product"}] else [] end)}' >"$REPOS_JSON"
 	local dispatch_log="${TEST_ROOT}/deterministic-dispatch.log"
 	local original_function_definitions
 	original_function_definitions=$(capture_function_definitions gh resolve_dispatch_model_for_labels build_ranked_dispatch_candidates_json _dispatch_compute_capacity _dispatch_ranked_candidates_json _dispatch_run_prepasses _dispatch_order_idle_borrowing_candidates _dispatch_max_compute_parallel _dispatch_graphql_budget_allows_next _dispatch_should_skip_candidate _dispatch_check_model_concurrency_cap _pulse_refresh_repo _dispatch_with_timeout count_runnable_candidates count_queued_without_worker dispatch_with_dedup check_worker_launch _dispatch_maybe_engage_throttle)
@@ -1404,13 +1404,13 @@ test_build_ranked_dispatch_candidates_json_respects_schedule_gate() {
   "initialized_repos": [
     {
       "slug": "marcusquinn/aidevops",
-      "path": "/tmp/aidevops",
+      "path": "/tmp",
       "pulse": true,
       "priority": "tooling"
     },
     {
       "slug": "webapp",
-      "path": "/tmp/webapp",
+      "path": "/tmp",
       "pulse": true,
       "priority": "product"
     }
@@ -1461,7 +1461,7 @@ test_build_ranked_dispatch_candidates_json_accepts_array_pulse_hours() {
   "initialized_repos": [
     {
       "slug": "marcusquinn/aidevops",
-      "path": "/tmp/aidevops",
+      "path": "/tmp",
       "pulse": true,
       "priority": "tooling",
       "pulse_hours": [9, 17]
@@ -1665,7 +1665,7 @@ test_active_pulse_refill_dispatches_when_underfilled_and_idle() {
 	local action_log="${TEST_ROOT}/active-refill.log"
 	local original_function_definitions original_refill_interval="${PULSE_ACTIVE_REFILL_INTERVAL:-}"
 	local had_original_refill_interval=0
-	original_function_definitions=$(capture_function_definitions get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker run_underfill_worker_recycler dispatch_max _dispatch_min_worker_floor_refill)
+	original_function_definitions=$(capture_function_definitions get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker run_underfill_worker_recycler dispatch_max _dispatch_min_worker_floor_refill pulse_event_refill_wake_underfilled)
 	if [[ -n "${PULSE_ACTIVE_REFILL_INTERVAL+x}" ]]; then
 		had_original_refill_interval=1
 	fi
@@ -1687,26 +1687,32 @@ test_active_pulse_refill_dispatches_when_underfilled_and_idle() {
 	_dispatch_min_worker_floor_refill() {
 		return 0
 	}
+	# GH#38696: the supervisor-phase refill wakes a fresh-budget refill-only
+	# run; in-process dispatch_max is only the fallback when no wake starts.
+	pulse_event_refill_wake_underfilled() {
+		printf 'wake\n' >>"$action_log"
+		return 0
+	}
 
 	local first_refill second_refill actions
 	first_refill=$(maybe_refill_underfilled_pool_during_active_pulse 0 0 60 true)
 	second_refill=$(maybe_refill_underfilled_pool_during_active_pulse "$first_refill" 0 60 true)
 	actions=$(tr '\n' ',' <"$action_log" | sed 's/,$//')
 
-	restore_function_definitions "$original_function_definitions" get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker run_underfill_worker_recycler dispatch_max _dispatch_min_worker_floor_refill
+	restore_function_definitions "$original_function_definitions" get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker run_underfill_worker_recycler dispatch_max _dispatch_min_worker_floor_refill pulse_event_refill_wake_underfilled
 	if [[ "$had_original_refill_interval" -eq 1 ]]; then
 		export PULSE_ACTIVE_REFILL_INTERVAL="$original_refill_interval"
 	else
 		unset PULSE_ACTIVE_REFILL_INTERVAL
 	fi
 
-	if [[ "$first_refill" =~ ^[0-9]+$ && "$first_refill" -gt 0 && "$second_refill" == "$first_refill" && "$actions" == "recycler,dispatch" ]]; then
+	if [[ "$first_refill" =~ ^[0-9]+$ && "$first_refill" -gt 0 && "$second_refill" == "$first_refill" && "$actions" == "recycler,wake" ]]; then
 		print_result "maybe_refill_underfilled_pool_during_active_pulse refills once per interval when idle" 0
 		return 0
 	fi
 
 	print_result "maybe_refill_underfilled_pool_during_active_pulse refills once per interval when idle" 1 \
-		"Expected one recycler+dispatch pass with cooldown; got first=${first_refill}, second=${second_refill}, actions=${actions}"
+		"Expected one recycler+wake pass with cooldown; got first=${first_refill}, second=${second_refill}, actions=${actions}"
 	return 0
 }
 

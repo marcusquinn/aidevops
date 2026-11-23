@@ -67,6 +67,18 @@ else
 	print_result "Layer 4 allows dispatch after a subsequent valid empty lookup" 1
 fi
 
+# GH#38142: non-worker PR evidence is a named, cacheable block signal.
+export STUB_OPEN_PR_OUTPUT='open PR #241 is approved or mergeable for issue #123'
+export STUB_OPEN_PR_RC=0
+LAYER4_OUTPUT=""
+LAYER4_RC=0
+LAYER4_OUTPUT=$(_dedup_layer4_pr_evidence "123" "owner/repo" "Fixture") || LAYER4_RC=$?
+if [[ "$LAYER4_RC" -eq 0 && "$LAYER4_OUTPUT" == "pr_evidence_block: open PR #241 is approved or mergeable for issue #123" ]]; then
+	print_result "Layer 4 names non-worker PR evidence as pr_evidence_block" 0
+else
+	print_result "Layer 4 names non-worker PR evidence as pr_evidence_block" 1
+fi
+
 # Exercise the production router's event parsing/argument fence before replacing
 # it with a counter stub for the Layer 6 return-semantics tests below.
 ROUTE_ARGS_FILE="${TEST_ROOT}/route-args"
@@ -83,6 +95,9 @@ if [[ "\$1" == dispatch-stalled ]]; then
 	exit 0
 fi
 printf '%s\n' "\$*" >"${ROUTE_ARGS_FILE}"
+if [[ "\$1" == rearm-held ]]; then
+	exit "\${STUB_REARM_RESULT:-0}"
+fi
 exit 0
 ROUTE_STUB
 chmod +x "${SCRIPT_DIR}/pr-checkpoint-continuation-helper.sh"
@@ -251,6 +266,11 @@ gh() {
 	if [[ "$*" == *'/comments?per_page=100'* ]]; then
 		printf '[[]]\n'
 		return 0
+	fi
+	# GH#38261: record-time issue material reads are not exact-PR reads. Fail
+	# them so records keep metadata material, as before that change.
+	if [[ "$*" =~ ^api\ repos/[^/]+/[^/]+/issues/[0-9]+$ ]]; then
+		return 1
 	fi
 	printf '%s\n' "$*" >>"$GH_CALLS_FILE"
 	[[ -n "$STUB_PR_REST_JSON" ]] || return 1
@@ -475,7 +495,34 @@ if [[ "$LAYER4_RC" -eq 2 && "$LAYER4_OUTPUT" == WORKER_DRAFT_CHECKPOINT:* &&
 else
 	print_result "declined stall route falls back to blocked attention and still blocks" 1
 fi
-unset STUB_STALLED_RESULT self_login
+unset STUB_STALLED_RESULT
+
+# t19293 (GH#39919): a self-held worker draft asks only the rearm-held route,
+# then retries the approved-revision dispatch in the same cycle. A refusal
+# keeps the plain PR-evidence block and never reaches blocked attention.
+export STUB_OPEN_PR_OUTPUT='WORKER_DRAFT_SELF_HELD: draft PR #29519 is a durable checkpoint for issue #29507; ordinary redispatch is blocked'
+REVISED_CALLS_FILE="${TEST_ROOT}/revised-calls"
+_dispatch_revised_checkpoint() {
+	printf 'call\n' >>"$REVISED_CALLS_FILE"
+	[[ "$(wc -l <"$REVISED_CALLS_FILE")" -ge 2 ]]
+}
+for rearm_case in 0 1; do
+	export STUB_REARM_RESULT="$rearm_case"
+	rm -f "$ROUTE_ARGS_FILE" "$REVISED_CALLS_FILE"
+	LAYER4_RC=0
+	LAYER4_OUTPUT=$(_dedup_layer4_pr_evidence "29507" "owner/repo" "Fixture") || LAYER4_RC=$?
+	revised_calls=$(wc -l <"$REVISED_CALLS_FILE")
+	if [[ "$rearm_case" == 0 && "$LAYER4_RC" -eq 0 && -z "$LAYER4_OUTPUT" && "${revised_calls// /}" == 2 &&
+		"$(<"$ROUTE_ARGS_FILE")" == "rearm-held owner/repo 29507 29519" ]]; then
+		print_result "self-held draft re-arm retries the approved-revision dispatch in the same cycle" 0
+	elif [[ "$rearm_case" == 1 && "$LAYER4_RC" -eq 0 && "$LAYER4_OUTPUT" == "pr_evidence_block: WORKER_DRAFT_SELF_HELD:"* &&
+		"${revised_calls// /}" == 1 && "$(<"$ROUTE_ARGS_FILE")" == "rearm-held owner/repo 29507 29519" ]]; then
+		print_result "refused self-held re-arm keeps the plain PR-evidence block" 0
+	else
+		print_result "self-held draft re-arm case ${rearm_case}" 1 "rc=${LAYER4_RC} output=${LAYER4_OUTPUT} revised=${revised_calls} route=$(<"$ROUTE_ARGS_FILE")"
+	fi
+done
+unset STUB_REARM_RESULT self_login
 
 rm -f "$cache_file"
 _dispatch_negative_cache_record "$candidate" dedup_active_claim

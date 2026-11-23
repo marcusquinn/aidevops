@@ -164,6 +164,7 @@ _prrts_reset_worktree_transfer_context() {
 	PRRTS_WORKTREE_EXPECTED_OWNER_TASK=""
 	PRRTS_WORKTREE_EXPECTED_OWNER_CREATED_AT=""
 	PRRTS_WORKTREE_EXPECTED_OWNER_PROCESS_START=""
+	PRRTS_WORKTREE_TAKEOVER_BRANCH=""
 	return 0
 }
 
@@ -551,6 +552,29 @@ _prrts_preserve_dirty_existing_worktree() {
 	return 0
 }
 
+# t19114: a checkpoint continuation worker commits locally and pushes once at
+# the end. If it exits before that push, its clean worktree is the verified PR
+# head plus unpushed commits. Its prompt says to keep and verify those commits on
+# resume, and its non-force push still fast-forwards the unchanged remote head,
+# so resume in place instead of refusing as diverged. Ordinary review repair has
+# no resume contract (no linked issue) and keeps the refusal.
+_prrts_resume_ahead_continuation_worktree() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local worktree_path="$3"
+	local head_oid="$4"
+	local actual_head="$5"
+	local linked_issue="" ahead_count=""
+
+	linked_issue=$(_prrts_repair_linked_issue "$pr_number") || linked_issue=""
+	[[ -n "$linked_issue" && -n "$actual_head" && "$actual_head" != "$head_oid" ]] || return 1
+	git -C "$worktree_path" merge-base --is-ancestor "$head_oid" "$actual_head" >/dev/null 2>&1 || return 1
+	ahead_count=$(git -C "$worktree_path" rev-list --count "${head_oid}..${actual_head}" 2>/dev/null) || ahead_count=""
+	[[ "$ahead_count" =~ ^[1-9][0-9]*$ ]] || return 1
+	_prrts_log "dispatch: ${repo_slug}#${pr_number} resuming exclusively claimed checkpoint continuation worktree with ${ahead_count} unpushed commit(s) on verified PR head ${head_oid} (HEAD=${actual_head}, issue #${linked_issue})"
+	return 0
+}
+
 _prrts_reconcile_existing_worktree_head() {
 	local repo_slug="$1"
 	local repo_path="$2"
@@ -589,6 +613,9 @@ _prrts_reconcile_existing_worktree_head() {
 		PRRTS_WORKTREE_FAILURE_REASON="existing_review_worktree_changed_during_reconcile"
 		return 1
 	fi
+	if _prrts_resume_ahead_continuation_worktree "$repo_slug" "$pr_number" "$worktree_path" "$head_oid" "$actual_head"; then
+		return 0
+	fi
 	if ! git -C "$worktree_path" merge-base --is-ancestor "$actual_head" "$head_oid" >/dev/null 2>&1; then
 		PRRTS_WORKTREE_FAILURE_REASON="existing_review_worktree_diverged"
 		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — existing review worktree cannot fast-forward to verified PR head"
@@ -607,6 +634,118 @@ _prrts_reconcile_existing_worktree_head() {
 	return 0
 }
 
+# Create a worker-owned linked worktree on local_branch at the exact PR head.
+# local_branch is head_ref for ordinary review repair, or a distinct takeover
+# branch when the PR branch is checked out in an interactive owner's worktree.
+_prrts_create_worker_worktree() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local pr_number="$3"
+	local head_ref="$4"
+	local head_oid="$5"
+	local local_branch="$6"
+	local worktree_path="$7"
+	local output_var="$8"
+	local resolved_path="" actual_head="" worker_task=""
+	worker_task=$(_prrts_worker_task_id "$pr_number") || worker_task=""
+	[[ -n "$worker_task" ]] || return 1
+
+	if [[ ! -x "$PR_REVIEW_THREAD_RESPONSE_WORKTREE_HELPER" ]]; then
+		_prrts_log "dispatch: worktree-helper missing or not executable: ${PR_REVIEW_THREAD_RESPONSE_WORKTREE_HELPER}"
+		return 1
+	fi
+	mkdir -p "$PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR" 2>/dev/null || return 1
+	if [[ -e "$worktree_path" ]]; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — expected review worktree path already exists but is not registered (${worktree_path})"
+		return 1
+	fi
+	_prrts_fetch_exact_worker_head "$repo_slug" "$repo_path" "$pr_number" "$head_ref" "$head_oid" || return 1
+	if ! (cd "$repo_path" && AIDEVOPS_SKIP_AUTO_CLAIM=1 AIDEVOPS_WORKTREE_BASE_DIR="$PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR" \
+		"$PR_REVIEW_THREAD_RESPONSE_WORKTREE_HELPER" add "$local_branch" "$worktree_path" --base "$head_oid" --issue "$worker_task") >>"$LOGFILE" 2>&1; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — could not create linked worktree for ${local_branch}"
+		return 1
+	fi
+	resolved_path="$(_prrts_worktree_path_for_branch "$repo_path" "$local_branch")" || resolved_path="$worktree_path"
+	actual_head=$(git -C "$resolved_path" rev-parse HEAD 2>/dev/null) || actual_head=""
+	if [[ ! -d "$resolved_path" || "$actual_head" != "$head_oid" || "$(cd "$resolved_path" 2>/dev/null && pwd -P)" == "$(cd "$repo_path" 2>/dev/null && pwd -P)" ]]; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — linked worktree verification failed for ${local_branch}"
+		(cd "$repo_path" && "$PR_REVIEW_THREAD_RESPONSE_WORKTREE_HELPER" remove "$resolved_path" --force) >>"$LOGFILE" 2>&1 || true
+		PRRTS_WORKTREE_FAILURE_REASON="review_worktree_exact_head_verification_failed"
+		return 1
+	fi
+	_prrts_prepare_created_worktree_owner "$repo_slug" "$pr_number" "$resolved_path" "$local_branch" || return 1
+	printf -v "$output_var" '%s' "$resolved_path"
+	return 0
+}
+
+# GH#38291: decide whether the worktree holding the PR branch belongs to an
+# interactive owner that pulse has handed over from. Returns 0 when a takeover
+# worktree is required, 1 for the ordinary path (this worker's own prior review
+# worktree, or a PR without confirmed takeover), 2 when labels are unreadable.
+_prrts_takeover_worktree_required() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local existing_path="$3"
+	local owner_pid="" owner_session="" owner_batch="" owner_task="" owner_created_at="" owner_process_start=""
+	local worker_task="" labels=""
+	worker_task=$(_prrts_worker_task_id "$pr_number") || worker_task=""
+	if _prrts_read_worktree_owner_snapshot "$existing_path" owner_pid owner_session owner_batch owner_task owner_created_at owner_process_start &&
+		[[ -n "$worker_task" && "$owner_task" == "$worker_task" ]]; then
+		return 1
+	fi
+	# #aidevops:trust-boundary — a fresh label read, never the scan snapshot,
+	# authorizes working beside a live owner's worktree.
+	labels=$(_prrts_gh_call read gh pr view "$pr_number" --repo "$repo_slug" \
+		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 2
+	if [[ ",${labels}," == *,origin:interactive,* && ",${labels}," == *,origin:worker-takeover,* ]]; then
+		return 0
+	fi
+	return 1
+}
+
+# GH#38291: never transfer, reset or write the idle owner's worktree. Use a
+# worker-owned worktree on a distinct local branch at the exact PR head; the
+# worker pushes HEAD to the PR branch. The repair/...-pr-<N>- name lets cleanup
+# resolve the PR after merge (pulse-cleanup-worktree-state.sh _pc_pr_from_branch).
+_prrts_prepare_takeover_worktree() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local pr_number="$3"
+	local head_ref="$4"
+	local head_oid="$5"
+	local owner_path="$6"
+	local output_var="$7"
+	local takeover_branch="repair/review-pr-${pr_number}-${head_oid:0:12}"
+	# Callers pass output_var=prepared_path; never declare a local of that name
+	# here or printf -v writes this frame instead of the caller's.
+	local repo_name="" create_path="" takeover_path="" actual_head="" owner_real=""
+
+	owner_real=$(cd "$owner_path" 2>/dev/null && pwd -P) || owner_real="$owner_path"
+	if takeover_path="$(_prrts_worktree_path_for_branch "$repo_path" "$takeover_branch")" && [[ -d "$takeover_path" ]]; then
+		actual_head=$(git -C "$takeover_path" rev-parse HEAD 2>/dev/null) || actual_head=""
+		if [[ "$actual_head" != "$head_oid" ]]; then
+			PRRTS_WORKTREE_FAILURE_REASON="takeover_worktree_head_mismatch"
+			_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — takeover worktree ${takeover_path} is not at verified PR head ${head_oid}"
+			return 1
+		fi
+		_prrts_prepare_reused_worktree_owner "$repo_slug" "$pr_number" "$takeover_path" "$takeover_branch" || return 1
+	else
+		repo_name="$(basename "$repo_path")"
+		create_path="${PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR}/${repo_name}-pr${pr_number}-review-takeover-${head_oid:0:12}"
+		_prrts_create_worker_worktree "$repo_slug" "$repo_path" "$pr_number" "$head_ref" "$head_oid" \
+			"$takeover_branch" "$create_path" takeover_path || return 1
+	fi
+	if [[ -z "$takeover_path" || "$(cd "$takeover_path" 2>/dev/null && pwd -P)" == "$owner_real" ]]; then
+		PRRTS_WORKTREE_FAILURE_REASON="takeover_worktree_is_owner_worktree"
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — takeover worktree is unresolved or resolved to the owner's worktree"
+		return 1
+	fi
+	PRRTS_WORKTREE_TAKEOVER_BRANCH="$takeover_branch"
+	_prrts_log "dispatch: ${repo_slug}#${pr_number} prepared worker-owned takeover worktree ${takeover_path} on ${takeover_branch} at ${head_oid}; owner worktree ${owner_path} untouched (GH#38291)"
+	printf -v "$output_var" '%s' "$takeover_path"
+	return 0
+}
+
 _prrts_prepare_worker_worktree() {
 	local repo_slug="$1"
 	local repo_path="$2"
@@ -614,8 +753,8 @@ _prrts_prepare_worker_worktree() {
 	local head_ref="$4"
 	local head_oid="$5"
 	local output_var="$6"
-	local existing_path="" repo_name="" safe_ref="" worktree_path="" resolved_path=""
-	local actual_head=""
+	local existing_path="" repo_name="" safe_ref="" worktree_path="" prepared_path=""
+	local actual_head="" takeover_rc=0
 	local worker_task=""
 	worker_task=$(_prrts_worker_task_id "$pr_number") || worker_task=""
 	[[ -n "$worker_task" ]] || return 1
@@ -631,6 +770,18 @@ _prrts_prepare_worker_worktree() {
 			PRRTS_WORKTREE_FAILURE_REASON="pr_head_checked_out_in_canonical"
 			return 1
 		fi
+		_prrts_takeover_worktree_required "$repo_slug" "$pr_number" "$existing_path" || takeover_rc=$?
+		if [[ "$takeover_rc" -eq 0 ]]; then
+			_prrts_prepare_takeover_worktree "$repo_slug" "$repo_path" "$pr_number" "$head_ref" "$head_oid" \
+				"$existing_path" prepared_path || return 1
+			printf -v "$output_var" '%s' "$prepared_path"
+			return 0
+		fi
+		if [[ "$takeover_rc" -ne 1 ]]; then
+			PRRTS_WORKTREE_FAILURE_REASON="takeover_labels_unavailable"
+			_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — could not read PR labels to classify the worktree holding ${head_ref}"
+			return 1
+		fi
 		actual_head=$(git -C "$existing_path" rev-parse HEAD 2>/dev/null) || actual_head=""
 		if [[ "$actual_head" != "$head_oid" ]]; then
 			_prrts_reconcile_existing_worktree_head "$repo_slug" "$repo_path" "$pr_number" "$existing_path" "$head_ref" "$head_oid" "$actual_head" || return 1
@@ -642,33 +793,11 @@ _prrts_prepare_worker_worktree() {
 		return 0
 	fi
 
-	if [[ ! -x "$PR_REVIEW_THREAD_RESPONSE_WORKTREE_HELPER" ]]; then
-		_prrts_log "dispatch: worktree-helper missing or not executable: ${PR_REVIEW_THREAD_RESPONSE_WORKTREE_HELPER}"
-		return 1
-	fi
 	repo_name="$(basename "$repo_path")"
 	safe_ref="$(printf '%s' "$head_ref" | tr -c '[:alnum:].-' '-')"
 	worktree_path="${PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR}/${repo_name}-pr${pr_number}-review-${safe_ref}-${head_oid:0:12}"
-	mkdir -p "$PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR" 2>/dev/null || return 1
-	if [[ -e "$worktree_path" ]]; then
-		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — expected review worktree path already exists but is not registered (${worktree_path})"
-		return 1
-	fi
-	_prrts_fetch_exact_worker_head "$repo_slug" "$repo_path" "$pr_number" "$head_ref" "$head_oid" || return 1
-	if ! (cd "$repo_path" && AIDEVOPS_SKIP_AUTO_CLAIM=1 AIDEVOPS_WORKTREE_BASE_DIR="$PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR" \
-		"$PR_REVIEW_THREAD_RESPONSE_WORKTREE_HELPER" add "$head_ref" "$worktree_path" --base "$head_oid" --issue "$worker_task") >>"$LOGFILE" 2>&1; then
-		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — could not create linked worktree for ${head_ref}"
-		return 1
-	fi
-	resolved_path="$(_prrts_worktree_path_for_branch "$repo_path" "$head_ref")" || resolved_path="$worktree_path"
-	actual_head=$(git -C "$resolved_path" rev-parse HEAD 2>/dev/null) || actual_head=""
-	if [[ ! -d "$resolved_path" || "$actual_head" != "$head_oid" || "$(cd "$resolved_path" 2>/dev/null && pwd -P)" == "$(cd "$repo_path" 2>/dev/null && pwd -P)" ]]; then
-		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — linked worktree verification failed for ${head_ref}"
-		(cd "$repo_path" && "$PR_REVIEW_THREAD_RESPONSE_WORKTREE_HELPER" remove "$resolved_path" --force) >>"$LOGFILE" 2>&1 || true
-		PRRTS_WORKTREE_FAILURE_REASON="review_worktree_exact_head_verification_failed"
-		return 1
-	fi
-	_prrts_prepare_created_worktree_owner "$repo_slug" "$pr_number" "$resolved_path" "$head_ref" || return 1
-	printf -v "$output_var" '%s' "$resolved_path"
+	_prrts_create_worker_worktree "$repo_slug" "$repo_path" "$pr_number" "$head_ref" "$head_oid" \
+		"$head_ref" "$worktree_path" prepared_path || return 1
+	printf -v "$output_var" '%s' "$prepared_path"
 	return 0
 }

@@ -317,6 +317,25 @@ test_cross_account_dismissed_excluded() {
 	_assert_empty "$out" "dismissed cross-account advisory should be excluded"
 }
 
+test_onboarding_summary() {
+	_setup_sandbox
+	local dir="$HOME/.aidevops/advisories" out
+	printf 'Repository: org/my-repo\n' >"$dir/repo-onboarding-org-my-repo.advisory"
+	out=$("$HELPER" list-repo-onboarding)
+	_assert_eq 'org/my-repo' "$out" || return 1
+	out=$("$HELPER" summary --format=toast)
+	[[ "$out" == *'1 repo has incomplete aidevops setup'* ]] || return 1
+	printf 'Repository: org/other\n' >"$dir/repo-onboarding-org-other.advisory"
+	out=$("$HELPER" summary --format=toast)
+	[[ "$out" == *'2 repos have incomplete aidevops setup'* ]] || return 1
+	out=$("$HELPER" summary --format=json)
+	[[ $(jq -r '.repo_onboarding_count' <<<"$out") == 2 ]] || return 1
+	printf '%s\n' repo-onboarding-org-my-repo repo-onboarding-org-other >"$dir/dismissed.txt"
+	out=$("$HELPER" summary --format=toast)
+	_assert_empty "$out" || return 1
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Run
 # -----------------------------------------------------------------------------
@@ -341,6 +360,7 @@ _run_test "[t2880] no advisory (explicit mapping) produces empty list" test_expl
 _run_test "[t2880] missing workflow produces no false positive" test_missing_workflow_no_false_positive
 _run_test "[t2880] summary aggregates both sync-pat and cross-account classes" test_summary_aggregates_both_classes
 _run_test "[t2880] dismissed cross-account advisory excluded from list" test_cross_account_dismissed_excluded
+_run_test "onboarding toast, JSON, slug and dismissal" test_onboarding_summary
 
 echo ""
 echo "PASS: $PASS"

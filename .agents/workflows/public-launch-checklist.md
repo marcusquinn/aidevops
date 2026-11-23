@@ -122,6 +122,7 @@ LeadCapture|webhook|token|secret|api_key|apikey|auth|password|private|callback|a
 ## Related workflows
 
 - `workflows/preflight.md` — includes the public launch exposure review gate.
+- `workflows/retire-project.md` — the shutdown counterpart: archive, verify, then remove.
 - `workflows/ui-verification.md` — UI/browser checks.
 - `tools/app-stack/public-site-surfaces.md` — standard public pages, trust pages, schema, and launch verification.
 - `reference/pre-push-guards.md` — privacy and push guards.

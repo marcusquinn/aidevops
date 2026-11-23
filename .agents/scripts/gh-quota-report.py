@@ -4,10 +4,12 @@
 """Offline REST-core attribution for gh-checks-wait-helper.sh quota-report."""
 
 import json
+import os
 import sys
 import time
 
 from gh_quota_evidence import matching_ci, read_ci, read_local
+from gh_quota_foreign_device import hint
 
 
 def local_coverage(rows):
@@ -99,6 +101,8 @@ def main():
     except OSError:
         print("quota-report: CI evidence log unavailable", file=sys.stderr)
         return 2
+    foreign_hint = hint(os.environ.get("AIDEVOPS_QUOTA_CLAIM_EVIDENCE_FILE", ""),
+                        os.environ.get("AIDEVOPS_QUOTA_SELF_LOGIN", ""))
     for (fingerprint, reset), rows in sorted(series.items()):
         observed, local_ranges, metrics = local_coverage(rows)
         samples = matching_ci(ci_samples, identities, fingerprint, reset)
@@ -115,6 +119,7 @@ def main():
                                 if used_delta and not uncertain else None),
             unattributed_is_upper_bound=True, attributed_ci_cost=ci_cost,
             same_login_external_cost=used_delta - known, other_devices="unknown",
+            foreign_device_hint=foreign_hint,
             same_credential_reset_unknown_cost=reset_unknown[fingerprint],
             duplicate_attempt_ids=duplicates, missing_metadata_attempts=missing,
         )

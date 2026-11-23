@@ -1,7 +1,7 @@
 """Lifecycle registry CLI; writes only an opt-in private store, never legacy state."""
 
 import argparse
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import json
 from pathlib import Path
 import sqlite3
@@ -11,6 +11,7 @@ import time
 from typing import TypedDict
 from uuid import uuid4
 
+from .admission import wait_out_contention
 from .process import ObservationUnavailable, ProcessIdentity
 from .events import ingest
 from .enrollment import GenerationEnrollment
@@ -128,6 +129,17 @@ def argument_parser() -> argparse.ArgumentParser:
     retire.add_argument("--repo", required=True)
     retire.add_argument("--base-branch", required=True)
     retire.add_argument("--output-root", required=True, type=Path)
+    foreign = commands.add_parser(
+        "retire-foreign-worktree",
+        help="archive and remove a copied foreign-generation tree after rescue proof",
+    )
+    foreign.add_argument("--path", required=True, type=Path)
+    foreign.add_argument("--repo", required=True)
+    foreign.add_argument("--base-branch", required=True)
+    foreign.add_argument("--output-root", required=True, type=Path)
+    foreign.add_argument("--rescue-bundle", type=Path,
+                         help="verified rescue bundle; omit only for a clean, pushed tree")
+    foreign.add_argument("--generation-id", help="resume after relocation only")
     cleanup = commands.add_parser("cleanup", help="retire controlled registry candidates")
     cleanup.add_argument("--repos-config", required=True, type=Path)
     cleanup.add_argument("--output-root", required=True, type=Path)
@@ -147,6 +159,13 @@ def argument_parser() -> argparse.ArgumentParser:
     enrolled_only.add_argument("--repos-config", required=True, type=Path)
     enrolled_only.add_argument("--output-root", required=True, type=Path)
     enrolled_only.add_argument("--confirm", action="store_true")
+    unowned = commands.add_parser(
+        "reclaim-unowned",
+        help="archive-first retirement of a never-owned enrolled tree on checked evidence",
+    )
+    unowned.add_argument("--path", required=True, type=Path)
+    unowned.add_argument("--repos-config", required=True, type=Path)
+    unowned.add_argument("--output-root", required=True, type=Path)
     vacant = commands.add_parser(
         "release-vacant-path",
         help="release the stale reservation of an absent path before re-creating it; never deletes",
@@ -165,6 +184,11 @@ def argument_parser() -> argparse.ArgumentParser:
     proof.add_argument("--repo", required=True)
     proof.add_argument("--branch", required=True)
     proof.add_argument("--receipt-created-at", required=True)
+    rebind = commands.add_parser(
+        "rebind-moved-worktree",
+        help="re-bind a same-installation tree after its canonical checkout moved; never deletes",
+    )
+    rebind.add_argument("--path", required=True, type=Path)
     for name in ("enroll", "resolve-generation"):
         enrollment = commands.add_parser(name, help="enroll or resolve a linked worktree; schema 2 required")
         enrollment.add_argument("--path", required=True, type=Path)
@@ -178,6 +202,15 @@ def enrollment_result(store: LifecycleRegistry, args: argparse.Namespace) -> Map
     enrollment = GenerationEnrollment(store)
     generation = enrollment.resolve(args.path, create=args.operation == "enroll")
     return {"generation_id": generation, "cleanup_authorized": False}
+
+
+def _contended(operation: str, attempt: Callable[[], Mapping[str, object]]) -> Mapping[str, object]:
+    """Run one attempt; enroll and admit-session wait out writer contention.
+
+    GH#38086: both replay idempotently, so worktree pre-creation waits for a
+    busy cleanup writer instead of being refused after one busy timeout.
+    """
+    return wait_out_contention(attempt) if operation in {"enroll", "admit-session"} else attempt()
 
 
 def _worktree_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
@@ -195,32 +228,46 @@ def _worktree_operation(store: LifecycleRegistry, args: argparse.Namespace) -> M
         from .session import admit_session, relinquish_session
 
         session_operation = admit_session if args.operation == "admit-session" else relinquish_session
-        return session_operation(store, args.path, args.pid, args.session_id)
+        return _contended(args.operation, lambda: session_operation(
+            store, args.path, args.pid, args.session_id,
+        ))
     if args.operation == "preserve-wip":
         from .preservation import preserve_wip
 
         return preserve_wip(store, args.path, args.repo, args.base_branch, args.output_root)
     if args.operation == "prepare-cleanup":
         return prepare_cleanup(store, args.path)
-    if args.operation == "retire-worktree":
-        from .retirement import ArchiveTarget, retire_worktree
+    return _retirement_operation(store, args)
 
-        return retire_worktree(
-            store, args.path, args.generation_id,
-            ArchiveTarget(args.repo, args.base_branch, args.output_root),
+
+def _retirement_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
+    from .retirement import ArchiveTarget, retire_worktree
+
+    archive = ArchiveTarget(args.repo, args.base_branch, args.output_root)
+    if args.operation == "retire-foreign-worktree":
+        from .foreign_retirement import retire_foreign_worktree
+
+        return retire_foreign_worktree(
+            store, args.path, archive, args.rescue_bundle, args.generation_id,
         )
-    raise ValueError("unsupported-worktree-operation")
+    if args.operation != "retire-worktree":
+        raise ValueError("unsupported-worktree-operation")
+    return retire_worktree(store, args.path, args.generation_id, archive)
 
 
 def _cleanup_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
-    from . import cleanup, path_release
+    from . import cleanup, never_owned, path_release, rebind
 
     operations = {
+        "rebind-moved-worktree": lambda: rebind.rebind_moved_admin(store, args.path),
         "cleanup-worktree": lambda: cleanup.cleanup_worktree(
             store, args.repos_config, args.output_root, args.path,
         ),
-        "retire-enrolled-only": lambda: cleanup.retire_enrolled_only(
+        "retire-enrolled-only": lambda: never_owned.retire_enrolled_only(
             store, args.repos_config, args.output_root, args.path, args.confirm,
+        ),
+        "reclaim-unowned": lambda: never_owned.reclaim_unowned(
+            store, args.repos_config, args.output_root, args.path,
         ),
         "release-vacant-path": lambda: path_release.release_vacant_path(store, args.path),
         "release-replaced-path": lambda: path_release.release_replaced_path(
@@ -257,11 +304,12 @@ def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Map
     if args.operation in {"reconcile", "enroll", "create-worktree", "admit-session"}:
         upgrade_registry(store)
     if args.operation in {"cleanup", "cleanup-worktree", "retire-enrolled-only",
-                          "release-vacant-path", "release-replaced-path"}:
+                          "reclaim-unowned", "release-vacant-path", "release-replaced-path",
+                          "rebind-moved-worktree"}:
         return _cleanup_operation(store, args)
     if args.operation in {
         "create-worktree", "admit-session", "relinquish-session", "preserve-wip",
-        "prepare-cleanup", "retire-worktree",
+        "prepare-cleanup", "retire-worktree", "retire-foreign-worktree",
     }:
         return _worktree_operation(store, args)
     if args.operation == "register":
@@ -273,7 +321,7 @@ def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Map
     elif args.operation == "ingest":
         ingest(store, sys.stdin.read(MAX_EVENT_BYTES + 1))
     if args.operation in ("enroll", "resolve-generation"):
-        return enrollment_result(store, args)
+        return _contended(args.operation, lambda: enrollment_result(store, args))
     return reconcile(store, args.limit) if args.operation == "reconcile" else store.summary()
 
 

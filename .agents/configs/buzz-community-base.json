@@ -1,0 +1,36 @@
+{
+  "schema": "aidevops.buzz-community-template/v1",
+  "name": "aidevops business base",
+  "sections": [
+    {"name": "Teams", "icon": "🐝", "channels": [
+      {"name": "accounts", "visibility": "private", "description": "Private finance, bookkeeping, invoicing, expenses, and financial operations."},
+      {"name": "development", "visibility": "open", "description": "Software development, engineering, repositories, releases, and technical work."},
+      {"name": "management", "visibility": "private", "description": "Private leadership, strategy, decisions, priorities, and people operations."},
+      {"name": "marketing", "visibility": "open", "description": "Marketing strategy, campaigns, content, SEO, PR, and growth."},
+      {"name": "sales", "visibility": "open", "description": "Sales pipeline, opportunities, proposals, partnerships, and customer accounts."},
+      {"name": "systems-admin", "visibility": "private", "description": "Private administration, access, policies, compliance, and operational systems."}
+    ]},
+    {"name": "Git Repos", "icon": "📁", "channels": []},
+    {"name": "Projects", "icon": "📋", "channels": []}
+  ],
+  "unsectioned_channels": [
+    {"name": "announcements", "visibility": "open"},
+    {"name": "general", "visibility": "open"},
+    {"name": "onboarding", "visibility": "open"}
+  ],
+  "agents": {
+    "naming": "<role>-<host-slug>",
+    "project_default": "$HOME/Git/aidevops",
+    "repo_channels": {"aidevops": ["aidevops", "build-plus"]},
+    "channels": {
+      "aidevops": ["announcements", "general", "onboarding", "accounts", "development", "management", "marketing", "sales", "systems-admin"],
+      "3d-modelling": ["marketing"], "audio": ["marketing"],
+      "automate": ["development", "systems-admin"], "build-plus": ["development", "systems-admin"],
+      "business": ["management", "accounts", "sales"], "content": ["marketing"], "health": [],
+      "legal": ["management", "accounts"], "marketing-sales": ["marketing", "sales"], "pr": ["marketing"],
+      "private-local-ai": ["development"], "product": ["development", "management"],
+      "reports": ["management", "accounts"], "research": ["development", "marketing"],
+      "seo": ["marketing"], "vault": ["systems-admin"], "video": ["marketing"]
+    }
+  }
+}

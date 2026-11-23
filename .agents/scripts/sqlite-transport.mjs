@@ -6,14 +6,12 @@
  * Public callers use sqlite-process.mjs; this module owns child lifecycle.
  */
 
-import { spawn } from "node:child_process";
+import { flushTransportOnExit, SQLITE_TIMEOUT_MS, startChild } from "./sqlite-child.mjs";
+
+export { SQLITE_TIMEOUT_MS };
 
 const SQLITE_SENTINEL = "__AIDEVOPS_QUERY_DONE__";
 const SQLITE_BUSY_RE = /database is locked|SQLITE_BUSY|database table is locked/i;
-const SQLITE_TIMEOUT_MS_RAW = Number.parseInt(process.env.AIDEVOPS_SQLITE_TIMEOUT_MS || "15000", 10);
-export const SQLITE_TIMEOUT_MS = Number.isFinite(SQLITE_TIMEOUT_MS_RAW) && SQLITE_TIMEOUT_MS_RAW > 0
-  ? SQLITE_TIMEOUT_MS_RAW
-  : 15000;
 
 // Transport state lives in a process-wide registry keyed by the canonical
 // database path, so duplicate module instances (a host that imports a fresh
@@ -38,6 +36,8 @@ export function transportFor(path) {
       queue: [],
       processing: false,
       currentCallback: null,
+      inflightSql: null,
+      inflightFlushed: true,
       stdoutBuffer: "",
       owners: 0,
       closeWhenIdle: false,
@@ -56,7 +56,7 @@ function hookProcessExit() {
   if (registry.exitHooked) return;
   registry.exitHooked = true;
   process.once("exit", () => {
-    for (const transport of registry.transports.values()) stopTransport(transport);
+    for (const transport of registry.transports.values()) flushTransportOnExit(transport);
   });
 }
 
@@ -161,26 +161,6 @@ function onError(transport, proc, error) {
   failPending(transport, error);
 }
 
-function startChild(dbPath) {
-  let proc;
-  try {
-    proc = spawn("sqlite3", ["-cmd", `.timeout ${SQLITE_TIMEOUT_MS}`, dbPath], {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    // A write after the child dies raises EPIPE on stdin; the close handler
-    // owns recovery, so the stream error must not become an uncaught throw.
-    proc.stdin.on("error", () => {});
-    proc.stdin.write(
-      `PRAGMA busy_timeout=${SQLITE_TIMEOUT_MS};\nPRAGMA journal_mode=WAL;\nPRAGMA synchronous=NORMAL;\n`,
-    );
-    return proc;
-  } catch (error) {
-    console.error(`[aidevops] Failed to spawn sqlite3: ${error.message}`);
-    try { proc?.kill("SIGKILL"); } catch { /* not started */ }
-    return null;
-  }
-}
-
 function spawnSqlite(transport) {
   if (transport.proc) return;
   const proc = startChild(transport.dbPath);
@@ -211,8 +191,12 @@ export function drainQueue(transport) {
   transport.processing = true;
   const { sql, callback } = transport.queue.shift();
   transport.currentCallback = callback;
+  transport.inflightSql = sql;
+  transport.inflightFlushed = false;
   try {
-    transport.proc.stdin.write(`${sql}\nSELECT '${SQLITE_SENTINEL}';\n`);
+    transport.proc.stdin.write(`${sql}\nSELECT '${SQLITE_SENTINEL}';\n`, () => {
+      if (transport.inflightSql === sql) transport.inflightFlushed = true;
+    });
   } catch (error) {
     finishCurrent(transport, error, "");
     drainQueue(transport);

@@ -104,10 +104,17 @@ _probe_has_static_auth_for_provider() {
 
 	local creds_file="${HOME}/.config/aidevops/credentials.sh"
 	if [[ -f "$creds_file" ]]; then
-		# shellcheck disable=SC1090
-		source "$creds_file"
+		# Presence checks must use the same bounded, non-executing parser as
+		# resolve_api_key. Sourcing here executes unrelated configuration before
+		# the OAuth cooldown/cache checks, even when no API key is resolved.
 		for var_name in "${var_names[@]}"; do
-			if [[ -n "${!var_name:-}" ]]; then
+			local key_val=""
+			key_val=$(timeout_sec 5 node --input-type=module -e '
+import { pathToFileURL } from "node:url";
+const { credentialFileSecret } = await import(pathToFileURL(process.argv[1]).href);
+process.stdout.write(credentialFileSecret(process.argv[2]));
+' "${SCRIPT_DIR}/secret-resolver.mjs" "$var_name" 2>/dev/null) || key_val=""
+			if [[ -n "$key_val" ]]; then
 				return 0
 			fi
 		done
@@ -977,8 +984,36 @@ _CHATGPT_OAUTH_UNSUPPORTED_MODELS_CACHE=""
 _OPENAI_OAUTH_AUTH_FILE_CACHE=""
 _OPENAI_OAUTH_AUTH_TYPE_CACHE=""
 
-_model_routing_table_path() {
+# Shipped framework routing table (always the final fallback source).
+_model_routing_framework_table_path() {
 	printf '%s\n' "${SCRIPT_DIR}/../configs/model-routing-table.json"
+	return 0
+}
+
+# Active routing table: same precedence as shared-model-tier.sh
+# model_routing_table_path (explicit override, custom, framework). Falls back
+# to the framework table when that helper is unavailable or finds nothing.
+_model_routing_table_path() {
+	local active=""
+	if declare -F model_routing_table_path >/dev/null 2>&1; then
+		active=$(model_routing_table_path 2>/dev/null) || active=""
+	fi
+	if [[ -n "$active" && -r "$active" ]]; then
+		printf '%s\n' "$active"
+		return 0
+	fi
+	_model_routing_framework_table_path
+	return 0
+}
+
+# Print the routing tables to consult, active first, then the framework table
+# (deduplicated). Field-aware lookups use the first table defining the field.
+_model_routing_tables() {
+	local active framework
+	active=$(_model_routing_table_path)
+	framework=$(_model_routing_framework_table_path)
+	printf '%s\n' "$active"
+	[[ "$framework" == "$active" ]] || printf '%s\n' "$framework"
 	return 0
 }
 
@@ -1002,10 +1037,13 @@ _openai_oauth_auth_file() {
 	fi
 
 	local routing_table
-	routing_table=$(_model_routing_table_path)
 	local configured_path=""
-	if [[ -r "$routing_table" ]] && command -v jq >/dev/null 2>&1; then
-		configured_path=$(jq -r '.providers.openai.oauth_auth_file // empty' "$routing_table" 2>/dev/null || true)
+	if command -v jq >/dev/null 2>&1; then
+		while IFS= read -r routing_table; do
+			[[ -r "$routing_table" ]] || continue
+			configured_path=$(jq -r '.providers.openai.oauth_auth_file | strings | select(length > 0)' "$routing_table" 2>/dev/null || true)
+			[[ -z "$configured_path" ]] || break
+		done < <(_model_routing_tables)
 	fi
 	[[ -n "$configured_path" ]] || configured_path="${HOME}/.local/share/opencode/auth.json"
 	_OPENAI_OAUTH_AUTH_FILE_CACHE=$(_expand_config_path "$configured_path")
@@ -1019,10 +1057,18 @@ _chatgpt_oauth_unsupported_models() {
 		return 0
 	fi
 
+	# Mirrors headless-runtime-model.sh: the first table whose restriction field
+	# is a valid array wins (an empty array is an explicit narrower list). A
+	# missing or malformed field inherits the next table, never allow-all.
 	local routing_table
-	routing_table=$(_model_routing_table_path)
-	if [[ -r "$routing_table" ]] && command -v jq >/dev/null 2>&1; then
-		_CHATGPT_OAUTH_UNSUPPORTED_MODELS_CACHE=$(jq -r '.chatgpt_oauth_restrictions.openai_unsupported[]? // empty' "$routing_table" 2>/dev/null || true)
+	if command -v jq >/dev/null 2>&1; then
+		while IFS= read -r routing_table; do
+			[[ -r "$routing_table" ]] || continue
+			if jq -e '(.chatgpt_oauth_restrictions.openai_unsupported | type) == "array"' "$routing_table" >/dev/null 2>&1; then
+				_CHATGPT_OAUTH_UNSUPPORTED_MODELS_CACHE=$(jq -r '.chatgpt_oauth_restrictions.openai_unsupported[] | strings' "$routing_table" 2>/dev/null || true)
+				break
+			fi
+		done < <(_model_routing_tables)
 	fi
 	printf '%s\n' "$_CHATGPT_OAUTH_UNSUPPORTED_MODELS_CACHE"
 	return 0

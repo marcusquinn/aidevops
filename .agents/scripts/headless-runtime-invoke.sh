@@ -152,6 +152,11 @@ _invoke_opencode_discard_failed_continuation() {
 
 _invoke_opencode_export_isolation() {
 	[[ -n "$isolated_data_dir" ]] || return 0
+	# GH#38587: trusted workers keep uv tools/Python in the user's locations;
+	# untrusted public triage stays fully inside its isolated data root.
+	if [[ "$public_triage" -ne 1 ]] && command -v aidevops_export_user_tool_dirs >/dev/null 2>&1; then
+		aidevops_export_user_tool_dirs
+	fi
 	export XDG_DATA_HOME="$isolated_data_dir"
 	if [[ "$public_triage" -eq 1 ]]; then
 		isolated_home_dir="${isolated_data_dir}/home"
@@ -206,6 +211,29 @@ _invoke_opencode_prepare_isolation() {
 	return 0
 }
 
+# GH#38491: OpenCode snapshot tracking stores full before/after file contents in
+# each message's summary.diffs and re-emits them on every message.updated
+# event. After a base merge one worker wrote 68 x 152 MiB events (10 GiB) to the
+# shared DB. Workers never use undo/revert, so merge snapshot=false into the
+# child's inline config (the private profile already sets it). Runs inside the
+# launch subshell, so only the worker child sees it.
+# Opt out with AIDEVOPS_WORKER_OPENCODE_SNAPSHOT=1.
+_invoke_opencode_disable_snapshots() {
+	local merged=""
+	[[ "$private_workload" -ne 1 ]] || return 0
+	[[ "${AIDEVOPS_WORKER_OPENCODE_SNAPSHOT:-0}" != "1" ]] || return 0
+	if [[ -z "${OPENCODE_CONFIG_CONTENT:-}" ]]; then
+		export OPENCODE_CONFIG_CONTENT='{"snapshot":false}'
+		return 0
+	fi
+	if merged=$(jq -c '. + {snapshot: false}' <<<"$OPENCODE_CONFIG_CONTENT" 2>/dev/null) && [[ -n "$merged" ]]; then
+		export OPENCODE_CONFIG_CONTENT="$merged"
+		return 0
+	fi
+	print_warning "[lifecycle] snapshot_disable_skipped reason=unparseable_inline_config pid=$$"
+	return 0
+}
+
 # Build the child command and public-triage egress policy inside the subprocess.
 _invoke_opencode_prepare_child_command() {
 	if [[ "$public_triage" -eq 1 ]]; then
@@ -233,6 +261,7 @@ _invoke_opencode_prepare_child_command() {
 		egress_policy_profile="provider:${_invoke_provider}"
 		sandbox_home_args=(--home-dir "$isolated_home_dir")
 	fi
+	_invoke_opencode_disable_snapshots
 	_oc_cmd=("${cmd[@]}")
 	if [[ "${HEADLESS:-}" == "1" && "$private_workload" -ne 1 ]]; then
 		local -a new_cmd=()
@@ -240,7 +269,9 @@ _invoke_opencode_prepare_child_command() {
 		local arg=""
 		# OpenCode V1 accepts only uppercase levels; V2 accepts only lowercase.
 		local log_level="WARN"
-		[[ "${AIDEVOPS_OPENCODE_PROFILE:-v1}" != "v2" ]] || log_level="warn"
+		if _headless_opencode_profile_is_v2; then
+			log_level="warn"
+		fi
 		for arg in "${_oc_cmd[@]}"; do
 			new_cmd+=("$arg")
 			if [[ "$arg" == "run" && "$inserted" -eq 0 ]]; then
@@ -340,7 +371,7 @@ _invoke_opencode_run_bare() {
 
 # Start the runtime subprocess and publish its PID to the caller scope.
 _invoke_opencode_set_working_directory() {
-	[[ "${AIDEVOPS_OPENCODE_PROFILE:-v1}" == "v2" ]] || return 0
+	_headless_opencode_profile_is_v2 || return 0
 	if [[ -z "${_invoke_work_dir:-}" || ! -d "$_invoke_work_dir" ]]; then
 		print_error "OpenCode V2 launch directory is unavailable: ${_invoke_work_dir:-<unset>}"
 		printf '%s' "86" >"$exit_code_file"
@@ -398,6 +429,7 @@ _invoke_opencode_start_monitors() {
 			--exit-code-file "$exit_code_file" --session-key "${_invoke_session_key:-}" \
 			--repo-slug "${DISPATCH_REPO_SLUG:-}" --worktree-path "${_WORKER_WORKTREE_PATH:-}" \
 			--stall-timeout "$stall_timeout" --phase1-timeout "$phase1_timeout" \
+			--worker-db "${_WORKER_ISOLATED_DB_PATH:-}" \
 			</dev/null >/dev/null 2>&1 &
 		watchdog_pid=$!
 		print_info "[lifecycle] activity_watchdog_started pid=$watchdog_pid worker=$worker_pid stall_timeout=${stall_timeout}s phase1=${phase1_timeout}s hard_kill=${hard_kill_seconds}s events=${exit_code_file}.watchdog_events lifecycle_log=${lifecycle_log}"

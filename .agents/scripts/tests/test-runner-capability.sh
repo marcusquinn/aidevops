@@ -5,6 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 python3 - "$SCRIPT_DIR" <<'PY'
 import json
+import hashlib
 import os
 import re
 import socket
@@ -30,6 +31,7 @@ fi
 [[ "$1 $2" == 'secret check' ]] || exit 99
 [[ -z "${CHECK_CALLS:-}" ]] || printf '%s\\n' "$3" >>"$CHECK_CALLS"
 [[ "$3" != SLOW ]] || exec sleep 10
+[[ "$3" != TIMEDOUT ]] || exit 5
 [[ "$3" != LOCKED ]] || exit 3
 printf 'PRIVATE_VALUE\n'
 printf 'PRIVATE_ERROR\n' >&2
@@ -60,6 +62,7 @@ printf 'PRIVATE_ERROR\n' >&2
         assert not result.stderr, (label, result.stderr)
         passed += 1
         print('PASS', label)
+        return result.stdout
 
     issue = {'labels': [{'name': 'dispatch-class:publish'}], 'body': ''}
     check('no declarations preserves dispatch', issue)
@@ -141,6 +144,8 @@ _hrff_handle_terminal_blocker_release 1 owner/repo receipt
     print('PASS partial record privacy and tool-output rejection boundary')
     check('locked secret timeout defers', issue, {'publish': {'secrets': ['SLOW']}}, False,
           'check_timeout name=SLOW')
+    check('inner secret timeout defers', {'body': 'requires-secrets: TIMEDOUT'}, success=False,
+          reason='check_timeout name=TIMEDOUT')
     check('unreadable secret defers', {'body': 'requires-secrets: LOCKED'}, success=False,
           reason='secret_unreadable name=LOCKED store=gopass fallback=disabled')
     check('brief requirement defers', {'body': 'requires-secrets: MISSING'}, success=False,
@@ -202,6 +207,14 @@ _hrff_handle_terminal_blocker_release 1 owner/repo receipt
     check('class tools combine with brief tools', issue,
           {'publish': {'tools': ['definitely-not-installed-xyz']}}, False,
           'tool_missing name=definitely-not-installed-xyz')
+    # GH#38825: a missing repo root is named, not reported as invalid_requirements.
+    missing = subprocess.run(['bash', '-c',
+        'source "$1/runner-capability-helper.sh"; runner_capability_check "$2" "$3"',
+        'fixture', str(scripts), str(root / 'no-such-repo'), json.dumps(issue)],
+        env=env, capture_output=True, text=True)
+    assert missing.returncode != 0 and missing.stdout == 'runner_capability_unmet reason=repo_path_missing\n', missing
+    passed += 1
+    print('PASS missing repo root reports repo_path_missing')
     # GH#37638: requires-loopback-health probes a fixed 127.0.0.1 port only.
     import http.server
     import threading
@@ -240,6 +253,52 @@ _hrff_handle_terminal_blocker_release 1 owner/repo receipt
           success=False, reason='invalid_requirements')
     server.shutdown()
 
+    # requires-device: only the runner holding the matching device id proceeds.
+    device_file = root / 'device-id'
+    device_file.write_text('device-1783820013-77368-17015\n')
+    env['AIDEVOPS_DEVICE_ID_FILE'] = str(device_file)
+    check('matching device id proceeds', {'body': 'requires-device: device-1783820013-77368-17015'})
+    check('matching id in list proceeds',
+          {'body': 'requires-device: device-1-2-3, device-1783820013-77368-17015'})
+    check('non-matching device id defers', {'body': 'requires-device: device-1-2-3'},
+          success=False, reason='device_mismatch')
+    check('device check precedes secret reads',
+          {'body': 'requires-device: device-1-2-3\nrequires-secrets: MISSING'},
+          success=False, reason='device_mismatch')
+    for bad in ('not-a-device', 'device-1-2', 'device-1-2-3;x', ''):
+        check(f'malformed device id {bad!r} is rejected', {'body': f'requires-device: {bad}'},
+              success=False, reason='invalid_requirements')
+    check('more than four device ids is rejected',
+          {'body': 'requires-device: ' + ' '.join(f'device-1-2-{n}' for n in range(5))},
+          success=False, reason='invalid_requirements')
+    env['AIDEVOPS_DEVICE_ID_FILE'] = str(root / 'missing-device-id')
+    check('missing device file is unknown', {'body': 'requires-device: device-1-2-3'},
+          success=False, reason='device_unknown')
+    binary_device = root / 'binary-device-id'
+    binary_device.write_bytes(b'\xff\xfe\x80')
+    env['AIDEVOPS_DEVICE_ID_FILE'] = str(binary_device)
+    check('undecodable device file is unknown', {'body': 'requires-device: device-1-2-3'},
+          success=False, reason='device_unknown')
+    check('issue without device line is unaffected', {'body': ''})
+    env['AIDEVOPS_DEVICE_ID_FILE'] = str(device_file)
+    deferral = subprocess.run(['bash', '-c',
+        'source "$1/runner-capability-helper.sh"; '
+        '_runner_capability_log_deferral 42 owner/repo "runner_capability_unmet reason=$2" "" 3>&1',
+        'fixture', str(scripts), 'device_mismatch'], env=env, capture_output=True, text=True)
+    assert 'signal=device_mismatch cooldown=eligible' in deferral.stdout, deferral
+    device_file.write_bytes(b'\xff\xfe\n')
+    decoding_verdict = check('undecodable device file is unknown',
+                             {'body': 'requires-device: device-1-2-3'},
+                             success=False, reason='device_unknown')
+    unknown = subprocess.run(['bash', '-c',
+        'source "$1/runner-capability-helper.sh"; '
+        '_runner_capability_log_deferral 42 owner/repo "$2" "" 3>&1',
+        'fixture', str(scripts), decoding_verdict.strip()], env=env, capture_output=True, text=True)
+    assert 'signal=device_unknown cooldown=none' in unknown.stdout, unknown
+    device_file.write_text('device-1783820013-77368-17015\n')
+    check('repaired device file proceeds', {'body': 'requires-device: device-1783820013-77368-17015'})
+    print('PASS device_mismatch deferral is cooldown=eligible')
+
     # Exercise the actual dispatch entry function, stopping at the next gate.
     # A capability failure must never reach a scope write, dedup or claim.
     core = (scripts / 'pulse-dispatch-core.sh').read_text()
@@ -247,6 +306,7 @@ _hrff_handle_terminal_blocker_release 1 owner/repo receipt
     config.write_text(json.dumps({'dispatch_class_requirements': {'publish': {'secrets': ['MISSING']}}}))
     stub = '''
 _ds_now_ns() { printf 0; return 0; }
+_dlw_sealed_hold_active() { return 1; }
 _dispatch_load_and_validate_metadata() { issue_meta_json="$META"; return 0; }
 _dispatch_preclaim_brief_scope() { printf REACHED_NEXT_GATE; return 1; }
 gh() {
@@ -379,6 +439,9 @@ runner_capability_check_fresh "$2" 42 owner/repo "$3"
     timeout_function = re.search(r'(?ms)^run_stage_with_timeout\(\) \{.*?^}', watchdog).group()
     cycle_invocation = 'source "$1/runner-capability-helper.sh"; ' + stub + timeout_function + '''
 _pulse_stage_cycle_timeout() { printf '%s' "$2"; return 0; }
+_pulse_stage_fuse_claim() { return 1; }
+_pulse_stage_note_start() { return 0; }
+_pulse_stage_record_timing() { return 0; }
 LOGFILE="$3"
 _PULSE_CYCLE_ID=first
 run_stage_with_timeout first 20 runner_capability_check_fresh "$2" 42 owner/repo "$3" && exit 90
@@ -408,6 +471,25 @@ exit 0
     print('PASS cycle cache skips remaining checks, permits ungated candidates and resets next cycle')
     passed += 1
 
+    # Expiry retries once under the lock; timeouts do not retain stale metadata.
+    cycle_file = root / 'workspace-temp/runner-capability' / (hashlib.sha256(b'first').hexdigest() + '.json')
+    state = json.loads(cycle_file.read_text())
+    state['at'] = 0
+    cycle_file.write_text(json.dumps(state))
+    calls.write_text('')
+    def direct_cycle(name):
+        return subprocess.run(['bash', '-c', 'source "$1/runner-capability-helper.sh"; '
+                               '_PULSE_CYCLE_ID=first; runner_capability_check "$2" "$3" fresh',
+                               'fixture', str(scripts), str(repo),
+                               json.dumps({'body': 'requires-secrets: ' + name})],
+                              env=cycle_env, capture_output=True, text=True)
+    result = direct_cycle('TIMEDOUT')
+    assert result.returncode == 1 and 'check_timeout name=TIMEDOUT' in result.stdout, result
+    assert not cycle_file.read_text(), cycle_file.read_text()
+    assert direct_cycle('GOOD').returncode == 0
+    assert calls.read_text().splitlines() == ['TIMEDOUT', 'GOOD']
+    print('PASS expired cache rechecks and timeout does not cache')
+
     # The real status-only command suppresses values/errors and decrypts once.
     source = (scripts / 'secret-helper.sh').read_text()
     function = re.search(r'(?ms)^cmd_check\(\) \{.*?^}', source).group()
@@ -428,8 +510,10 @@ ls)
 show)
     printf 'decrypt\\n' >>"$CHECK_CALLS"
     [[ "$FIXTURE_STATUS" != hang ]] || exec sleep 10
+    [[ "$FIXTURE_STATUS" != slow ]] || sleep 5
     printf '%s' "$FIXTURE_VALUE"
     printf PRIVATE_ERROR >&2
+    [[ "$FIXTURE_STATUS" != slow ]] || exit 0
     exit "$FIXTURE_STATUS" ;;
 esac
 exit 1
@@ -442,13 +526,15 @@ exit 1
     credentials.chmod(0o600)
     for status, value, name, expected in ((0, 'PRIVATE_VALUE', 'GOOD', 0),
                                           (1, '', 'GOOD', 3), (0, '', 'GOOD', 3),
-                                          ('hang', '', 'GOOD', 3), (0, '', 'MISSING', 1),
+                                          ('hang', '', 'GOOD', 5), ('slow', 'PRIVATE_VALUE', 'GOOD', 0),
+                                          (0, '', 'MISSING', 1),
                                           (0, '', 'PLAINTEXT', 0)):
         calls.write_text('')
         result = subprocess.run(['bash', str(scripts / 'secret-helper.sh'), 'check', name],
                                 env=dict(env, HOME=str(home), CHECK_CALLS=str(calls),
-                                         FIXTURE_VALUE=value, FIXTURE_STATUS=str(status)),
-                                capture_output=True, timeout=7)
+                                         FIXTURE_VALUE=value, FIXTURE_STATUS=str(status),
+                                         AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS='6' if status == 'slow' else '1'),
+                                capture_output=True, timeout=9)
         assert result.returncode == expected and not result.stdout and not result.stderr, result
         assert calls.read_text().splitlines() == (['decrypt'] if name == 'GOOD' else []), calls.read_text()
     print('PASS gopass readable/unreadable/empty statuses decrypt once without plaintext fallback')

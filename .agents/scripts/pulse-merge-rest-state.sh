@@ -9,6 +9,8 @@ _PULSE_MERGE_REST_STATE_LOADED=1
 
 # shellcheck source=./shared-gh-collaborator-permission.sh
 source "${BASH_SOURCE[0]%/*}/shared-gh-collaborator-permission.sh"
+# shellcheck source=./shared-gh-commit-cache.sh
+source "${BASH_SOURCE[0]%/*}/shared-gh-commit-cache.sh"
 
 _pmrs_gh_call() {
 	local operation="$1"
@@ -218,7 +220,15 @@ _pmp_rest_review_decision_from_reviews() {
 	local reviews_json=""
 
 	reviews_json=$(_pmp_rest_reviews_json "$pr_number" "$repo_slug") || return 1
-	printf '%s' "$reviews_json" | jq -r '
+	printf '%s' "$reviews_json" | _pmp_reduce_reviews_json || return 1
+	return 0
+}
+
+#######################################
+# Reduce a REST-shaped review array (stdin) to the active review state.
+#######################################
+_pmp_reduce_reviews_json() {
+	jq -r '
 		def state_changing: .state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED";
 		if type != "array" then error("expected review array")
 		elif any(.[]?; state_changing and (
@@ -239,6 +249,46 @@ _pmp_rest_review_decision_from_reviews() {
 	return 0
 }
 
+#######################################
+# GraphQL fallback for the review state when REST is at the worker reserve.
+# One bounded history read (GraphQL budget is separate from REST core).
+# Preserve state-changing reviews even after later comments. Pagination metadata
+# makes incomplete history fail closed, independently of gh's internal limits.
+# Args: $1=PR number, $2=repo slug
+# Stdout: CHANGES_REQUESTED | OBSERVED_APPROVED | NONE
+#######################################
+_pmp_graphql_review_decision_from_reviews() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_json=""
+	local owner="${repo_slug%%/*}" name="${repo_slug#*/}"
+	local mapped=""
+
+	# GraphQL variables must remain literal, not shell-expanded.
+	# shellcheck disable=SC2016
+	pr_json=$(_pmrs_gh_call read gh api graphql -f query='
+		query($owner:String!,$name:String!,$number:Int!) {
+			repository(owner:$owner,name:$name) {
+				pullRequest(number:$number) {
+					reviews(first:100) {
+						pageInfo { hasNextPage }
+						nodes { databaseId author { login } state submittedAt }
+					}
+				}
+			}
+		}' -f owner="$owner" -f name="$name" -F number="$pr_number" 2>/dev/null) || return 1
+	mapped=$(printf '%s' "$pr_json" | jq -ce '
+		if .errors != null then error("GraphQL errors") else
+		.data.repository.pullRequest.reviews
+		| if .pageInfo.hasNextPage != false or (.nodes | type) != "array"
+		  then error("incomplete review history") else .nodes end
+		| map({user: {login: .author.login}, state: .state, submitted_at: .submittedAt, id: .databaseId})
+		end
+	' 2>/dev/null) || return 1
+	printf '%s' "$mapped" | _pmp_reduce_reviews_json || return 1
+	return 0
+}
+
 _pmp_refresh_unknown_review_decision_into() {
 	local dest_var="$1"
 	local pr_number="$2"
@@ -249,7 +299,9 @@ _pmp_refresh_unknown_review_decision_into() {
 	[[ "$dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
 	_pmp_normalize_review_decision_into refreshed_review "$current_review"
 	if [[ "$refreshed_review" == "UNKNOWN" ]]; then
-		refreshed_review=$(_pmp_rest_review_decision_from_reviews "$pr_number" "$repo_slug" 2>/dev/null) || refreshed_review="UNKNOWN"
+		refreshed_review=$(_pmp_rest_review_decision_from_reviews "$pr_number" "$repo_slug" 2>/dev/null) ||
+			refreshed_review=$(_pmp_graphql_review_decision_from_reviews "$pr_number" "$repo_slug" 2>/dev/null) ||
+			refreshed_review="UNKNOWN"
 		_pmp_normalize_review_decision_into refreshed_review "$refreshed_review"
 	fi
 	printf -v "$dest_var" '%s' "$refreshed_review"
@@ -483,8 +535,7 @@ _pmrs_head_commit_age_seconds() {
 	local committed_at="" committed_epoch="" now_epoch=""
 
 	committed_at=$(AIDEVOPS_GH_ROUTE_DECISION="pulse-missing-checks-head-age-rest" \
-		_pmrs_gh_call read gh api "repos/${repo_slug}/commits/${head_sha}" \
-		--jq '.commit.committer.date // empty' 2>/dev/null) || return 1
+		gh_commit_by_sha_cached "$repo_slug" "$head_sha" 2>/dev/null | jq -r '.commit.committer.date // empty') || return 1
 	[[ -n "$committed_at" ]] || return 1
 	committed_epoch=$(date -u -d "$committed_at" +%s 2>/dev/null \
 		|| TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$committed_at" +%s 2>/dev/null) || return 1
@@ -569,14 +620,16 @@ _pmrs_rerun_zero_job_run() {
 #######################################
 # Rerun zero-job workflow runs for the gated head before any update-branch.
 # Args: $1=repo slug, $2=PR number, $3=head SHA
-# Returns: 0=zero-job runs exist and were handled (caller must not
-#          update-branch), 1=none exist or reruns are not permitted
+# Returns: 0=at least one rerun was newly requested (caller must not
+#          update-branch), 1=none exist, reruns are not permitted, or every
+#          rerun failed or was already requested earlier (caller falls back
+#          to update-branch)
 #######################################
 _pmrs_remediate_zero_job_runs() {
 	local repo_slug="$1"
 	local pr_number="$2"
 	local head_sha="$3"
-	local runs="" run_id="" run_name=""
+	local runs="" run_id="" run_name="" rerun_rc=0 requested=0
 
 	if declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 &&
 		! repo_allows_pulse_write_actions "$repo_slug"; then
@@ -589,9 +642,71 @@ _pmrs_remediate_zero_job_runs() {
 	runs=$(_pmrs_zero_job_runs "$repo_slug" "$head_sha") || return 1
 	while IFS=$'\t' read -r run_id run_name; do
 		[[ -n "$run_id" ]] || continue
-		_pmrs_rerun_zero_job_run "$repo_slug" "$pr_number" "$head_sha" "$run_id" || true
+		rerun_rc=0
+		_pmrs_rerun_zero_job_run "$repo_slug" "$pr_number" "$head_sha" "$run_id" || rerun_rc=$?
+		[[ "$rerun_rc" -eq 0 ]] && requested=$((requested + 1))
 	done <<<"$runs"
-	return 0
+	# Only a rerun newly requested by this call suppresses update-branch. When
+	# every request failed (rc 1) or was already made on an earlier pass (rc 2),
+	# fall back to the bounded update-branch path (GH#39533).
+	[[ "$requested" -gt 0 ]] && return 0
+	return 1
+}
+
+#######################################
+# True when the head has no GitHub Actions check suite at all, i.e. GitHub
+# dropped the pull_request event for Actions. Fails closed (returns 1) when
+# the suite listing cannot be read.
+# Args: $1=repo slug, $2=head SHA
+# Returns: 0=no github-actions suite, 1=suite exists or unknown
+#######################################
+_pmrs_head_lacks_actions_suite() {
+	local repo_slug="$1"
+	local head_sha="$2"
+	local suites=""
+
+	suites=$(AIDEVOPS_GH_ROUTE_DECISION="pulse-missing-checks-suites-rest" \
+		_pmrs_gh_call read gh api -X GET "repos/${repo_slug}/commits/${head_sha}/check-suites" \
+		-f per_page=100 2>/dev/null) || return 1
+	printf '%s' "$suites" | jq -e '(.check_suites | type == "array")
+		and ([.check_suites[] | select(.app.slug == "github-actions")] | length == 0)' >/dev/null 2>&1
+}
+
+#######################################
+# One close/reopen of a trusted same-repo PR to re-fire pull_request when the
+# head has no Actions check suite (GH#38624). Never for fork or untrusted
+# authors. The caller records the per-head attempt before this runs.
+# Args: $1=repo slug, $2=PR number, $3=head SHA
+# Returns: 0=reopened, 1=not permitted or failed
+#######################################
+_pmrs_reopen_pr_for_missing_actions() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local head_sha="$3"
+	local meta="" trusted=""
+
+	if declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 &&
+		! repo_allows_pulse_write_actions "$repo_slug"; then
+		return 1
+	fi
+	meta=$(AIDEVOPS_GH_ROUTE_DECISION="pulse-missing-checks-pr-meta-rest" \
+		_pmrs_gh_call read gh api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || return 1
+	#aidevops:trust-boundary — same-repo head and collaborator-level author only.
+	trusted=$(printf '%s' "$meta" | jq -r --arg head "$head_sha" '
+		if (.state == "open" and .head.sha == $head
+			and .head.repo.full_name == .base.repo.full_name
+			and (.head.repo.fork | not)
+			and (.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR"))
+		then "yes" else "no" end' 2>/dev/null) || return 1
+	[[ "$trusted" == "yes" ]] || return 1
+	_pmrs_gh_call write gh pr close "$pr_number" --repo "$repo_slug" >/dev/null 2>&1 || return 1
+	if _pmrs_gh_call write gh pr reopen "$pr_number" --repo "$repo_slug" >/dev/null 2>&1; then
+		return 0
+	fi
+	# Never leave the PR closed: one retry, then report failure loudly.
+	_pmrs_gh_call write gh pr reopen "$pr_number" --repo "$repo_slug" >/dev/null 2>&1 && return 0
+	echo "[pulse-merge] ATTENTION: PR #${pr_number} in ${repo_slug} was closed for CI retrigger but reopen failed; reopen manually (GH#38624)" >>"$LOGFILE"
+	return 1
 }
 
 #######################################
@@ -641,9 +756,22 @@ _pmp_remediate_missing_required_checks() {
 	age=$(_pmrs_head_commit_age_seconds "$repo_slug" "$head_sha") || return 1
 	[[ "$age" =~ ^[0-9]+$ && "$age" -ge "$threshold" ]] || return 1
 
+	# GH#38624: no Actions check suite means the pull_request event was dropped;
+	# no run exists to re-run and update-branch may be a no-op. One close/reopen
+	# per head re-fires the event.
+	if ! awk -v sha="$head_sha" '$1 == sha && $3 == "reopen" { f = 1 } END { exit !f }' "$state_file" 2>/dev/null \
+		&& _pmrs_head_lacks_actions_suite "$repo_slug" "$head_sha"; then
+		printf '%s %s reopen\n' "$head_sha" "$now_epoch" >>"$state_file"
+		if _pmrs_reopen_pr_for_missing_actions "$repo_slug" "$pr_number" "$head_sha"; then
+			echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: head ${head_sha:0:12} has no GitHub Actions check suite (${age}s old, ${missing} required context(s) never reported); closed and reopened once to re-fire pull_request (GH#38624)" >>"$LOGFILE"
+			return 0
+		fi
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: head ${head_sha:0:12} has no GitHub Actions check suite but close/reopen was not permitted or failed; falling back to update-branch (GH#38624)" >>"$LOGFILE"
+	fi
+
 	if [[ "$attempts" -ge "$max_attempts" ]]; then
 		printf '%s %s exhausted\n' "$head_sha" "$now_epoch" >>"$state_file"
-		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: ${missing} required context(s) never reported on head ${head_sha:0:12} after ${attempts} update-branch attempt(s); native auto-merge not re-armed — check required workflow triggers/path filters or re-run CI (GH#32951)" >>"$LOGFILE"
+		echo "[pulse-merge] ATTENTION: PR #${pr_number} in ${repo_slug}: ${missing} required context(s) never reported on head ${head_sha:0:12} after ${attempts} update-branch attempt(s); native auto-merge not re-armed — check required workflow triggers/path filters or re-run CI (GH#32951)" >>"$LOGFILE"
 		return 0
 	fi
 

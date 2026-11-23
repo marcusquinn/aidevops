@@ -98,7 +98,7 @@ file_sha256() {
 
 file_mode() {
     local file="$1"
-    stat -f "%Lp" "$file" 2>/dev/null || stat -c "%a" "$file"
+    stat -c "%a" "$file" 2>/dev/null || stat -f "%Lp" "$file"
     return 0
 }
 

@@ -69,6 +69,10 @@ source "${SCRIPT_DIR}/issue-open-pr-guard.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
 
+# shellcheck source=./full-loop-helper-verify-runtime.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/full-loop-helper-verify-runtime.sh"
+
 # shellcheck source=./macos-local-checks.sh
 source "${SCRIPT_DIR}/macos-local-checks.sh"
 
@@ -80,9 +84,11 @@ source "${SCRIPT_DIR}/macos-local-checks.sh"
 # Collapses full-loop steps 4.1-4.2.1 into a single deterministic call.
 # Workers and interactive sessions both use this — no parallel logic.
 #
-# Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--risk-level <level>] [--testing-level <level>] [--decisions <notes>] [--label <label>...] [--completion-bookkeeping --proof-pr <N> --task-id <tNNN>] [--allow-parent-close] [--keep-issue-open] [--skip-hooks] [--no-rebase] [--base <branch>]
+# Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--risk-level <level>] [--testing-level <level>] [--decisions <notes>] [--regression-evidence <why>] [--label <label>...] [--completion-bookkeeping --proof-pr <N> --task-id <tNNN>] [--allow-parent-close] [--keep-issue-open] [--ready] [--skip-hooks] [--no-rebase] [--base <branch>]
+# --ready: create the PR non-draft (verified implementation intent); default interactive PRs are draft.
 # --base <branch>: stacked PR. Rebase onto origin/<branch> and open the PR against it
-#   (branch must exist on origin and differ from the current branch). Default: remote default branch.
+#   (branch must exist on origin, differ from the current branch, and be an open PR head;
+#   workers fail closed otherwise). Default: pr_base_branch config, else the remote default (GH#39167).
 # Exit codes: 0 = PR created (prints PR number to stdout), 1 = failure
 # --allow-parent-close: skip the parent-task keyword guard (final-phase PR only)
 # --keep-issue-open: interactive only; link with `For #N` (no closing keyword) and skip the
@@ -100,26 +106,19 @@ source "${SCRIPT_DIR}/macos-local-checks.sh"
 # can create the PR manually.
 cmd_commit_and_pr() {
 	local issue_number="" commit_message="" pr_title="" summary_what="" summary_testing="" summary_decisions=""
-	local runtime_risk="" testing_level="" pr_metadata_overrides=""
+	local runtime_risk="" testing_level="" pr_metadata_overrides="" summary_regression=""
 	local completion_bookkeeping=0 bookkeeping_proof_pr="" bookkeeping_task_id=""
 	local replacement_pr="" replacement_reason=""
 	local -a extra_labels=()
-	local allow_parent_close=0 keep_issue_open=0 skip_hooks=0 skip_rebase=0 stack_base_arg=""
+	local allow_parent_close=0 keep_issue_open=0 create_ready=0 skip_hooks=0 skip_rebase=0 stack_base_arg=""
 
 	_parse_commit_and_pr_args "$@" || return 1
 	_validate_keep_issue_open_request || return 1
 
-	# Reject the final title before staging, rebasing or publishing anything.
-	if [[ -z "$pr_title" ]]; then
-		pr_title="$(_compose_pr_title "$issue_number" "$commit_message")" || return 1
-	fi
-	if ! _full_loop_valid_squash_subject "$pr_title"; then
-		print_error "PR title is not a valid squash subject; refusing commit-and-pr"
-		print_error "Use GH#N: ..., tNNN: ..., or conventional type(scope): ...; extra issues belong in the body as Resolves #N."
-		return 1
-	fi
-
-	# Validate inputs and detect repo/branch (sets $repo and $branch in this scope)
+	# Missing inputs report usage (GH#39377); the title is then rejected before any
+	# repo read, staging, rebase or publication (GH#33949).
+	_require_commit_and_pr_inputs "$issue_number" "$commit_message" || return 1
+	_commit_and_pr_validate_title || return 1
 	local repo="" branch="" base_branch="" base_ref=""
 	_validate_commit_and_pr_inputs "$issue_number" "$commit_message" || return 1
 	if [[ -n "$replacement_pr" || -n "$replacement_reason" ]]; then
@@ -129,7 +128,7 @@ cmd_commit_and_pr() {
 		fi
 	fi
 	_validate_explicit_pr_metadata "$runtime_risk" "$testing_level" || return 1
-	_validate_stack_base "$stack_base_arg" "$branch" || return 1
+	_validate_stack_base "$stack_base_arg" "$branch" "$repo" || return 1
 	_validate_completion_bookkeeping_request "$completion_bookkeeping" "$bookkeeping_proof_pr" \
 		"$bookkeeping_task_id" "$allow_parent_close" "$repo" \
 		"${extra_labels[@]+"${extra_labels[@]}"}" || return 1
@@ -196,6 +195,21 @@ cmd_commit_and_pr() {
 
 	# Output PR number for caller to pass to `merge`
 	printf '%s\n' "$pr_number"
+	return 0
+}
+
+# Compose (when absent) and reject an invalid final title before staging,
+# rebasing or publishing anything (GH#33949). Uses caller-scoped $pr_title,
+# $issue_number and $commit_message from cmd_commit_and_pr.
+_commit_and_pr_validate_title() {
+	if [[ -z "$pr_title" ]]; then
+		pr_title="$(_compose_pr_title "$issue_number" "$commit_message")" || return 1
+	fi
+	if ! _full_loop_valid_squash_subject "$pr_title"; then
+		print_error "PR title is not a valid squash subject; refusing commit-and-pr"
+		print_error "Use GH#N: ..., tNNN: ..., or conventional type(scope): ...; extra issues belong in the body as Resolves #N."
+		return 1
+	fi
 	return 0
 }
 
@@ -291,10 +305,12 @@ _commit_and_pr_prepare_metadata() {
 	if [[ -x "$sig_helper" ]]; then
 		sig_footer=$("$sig_helper" footer 2>/dev/null || echo "")
 	fi
+	local worker_closing_check=0
 	if [[ "$allow_parent_close" -eq 1 ]]; then
 		closing_keyword="Resolves"
 	elif [[ "$origin_label" == "origin:worker" && "$completion_bookkeeping" -eq 0 ]]; then
 		closing_keyword=$(_review_repair_closing_keyword "$issue_number" "$repo") || return 1
+		worker_closing_check=1
 	fi
 	local parent_for_link=0
 	if [[ "$allow_parent_close" -eq 0 ]] && _issue_has_parent_task_label "$issue_number" "$repo"; then
@@ -317,12 +333,21 @@ _commit_and_pr_prepare_metadata() {
 		closing_keyword="For"
 		print_info "--keep-issue-open — using 'For' keyword; issue #${issue_number} stays open after merge"
 	fi
+	# GH#38823: evaluate the FINAL keyword (after planning/parent/keep-open
+	# overrides). A worker summary declaring `For/Ref #<this issue>` contradicts
+	# a closing PR; refuse instead of silently closing the issue.
+	if [[ "$worker_closing_check" -eq 1 && "$closing_keyword" != "For" && "$allow_parent_close" -eq 0 ]] &&
+		! _summary_declares_partial_self "$issue_number" "$summary_what" "$summary_testing" "${summary_decisions:-}"; then
+		print_error "Summary references 'For/Ref #${issue_number}' (partial PR) but commit-and-pr would emit a closing keyword and close the issue. Remove the self-reference if the work is complete (closure is intended), or finish the remaining criteria; unmet verification must not be lost on merge." >&2
+		return 1
+	fi
 	local replacement_note=""
 	if [[ -n "$replacement_pr" ]]; then
 		replacement_note="This explicitly justified replacement preserves open PR #${replacement_pr}. Rationale: ${replacement_reason}"
 		[[ -n "$replacement_pr_head_sha" ]] && replacement_note="${replacement_note} Verified ancestor before WIP finalization: ${replacement_pr_head_sha}."
 	fi
-	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer" "$closing_keyword" "$runtime_risk" "$testing_level" "$comparison_base" "$replacement_note" "$summary_decisions") || return 1
+	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer" "$closing_keyword" "$runtime_risk" "$testing_level" "$comparison_base" "$replacement_note" "$summary_decisions" "${summary_regression:-}") || return 1
+	_commit_and_pr_platform_evidence_gate "$pr_title" "$pr_body" "$comparison_base" || return 1
 
 	# Parent-task closing keywords are forbidden except for an explicit final phase.
 	local keyword_guard="${SCRIPT_DIR}/parent-task-keyword-guard.sh"
@@ -402,18 +427,25 @@ Worker aborted PR creation: issue #${issue_number} was already closed by the tim
 _apply_pr_only_hold() {
 	local pr_number="$1"
 	local repo="$2"
+	local hold_scope="${3:-trusted PR-only scope}"
+	local hold_tokens="${4:-}"
 	local labels=""
 	if ! gh_pr_edit_safe "$pr_number" --repo "$repo" --add-label "hold-for-review" >/dev/null; then
-		print_error "Could not apply hold-for-review to PR-only PR #${pr_number}; rerun commit-and-pr before any merge"
+		print_error "Could not apply hold-for-review to PR #${pr_number} (${hold_scope}); rerun commit-and-pr before any merge"
 		return 1
 	fi
 	labels=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" \
 		--json labels --jq '[.labels[].name] | join(",")') || labels=""
 	if [[ ",${labels}," != *",hold-for-review,"* ]]; then
-		print_error "PR-only PR #${pr_number} did not reach the hold-for-review postcondition; rerun commit-and-pr before any merge"
+		print_error "PR #${pr_number} (${hold_scope}) did not reach the hold-for-review postcondition; rerun commit-and-pr before any merge"
 		return 1
 	fi
-	print_info "PR #${pr_number} held for maintainer review (trusted PR-only scope); emit POST_PR_HANDOFF instead of merging"
+	# GH#39639: record the scope so verify-runtime lifts only runtime-only holds.
+	# The label stays the gate: a missing marker keeps the hold, never lifts it.
+	if [[ -n "$hold_tokens" ]] && ! _record_hold_scope_marker "$pr_number" "$repo" "$hold_tokens"; then
+		print_warning "PR #${pr_number} hold scope (${hold_tokens}) was not recorded; verify-runtime will keep the hold for a maintainer"
+	fi
+	print_info "PR #${pr_number} held for maintainer review (${hold_scope}); emit POST_PR_HANDOFF instead of merging"
 	return 0
 }
 
@@ -443,6 +475,17 @@ _commit_and_pr_publish() {
 			;;
 		esac
 	fi
+	# GH#39558: a runtime-pending PR takes the same verified hold as PR-only
+	# scope, applied after creation because continued PRs ignore create labels.
+	local hold_scope="" hold_tokens=""
+	if [[ "$pr_only_scope" -eq 1 ]]; then
+		hold_scope="trusted PR-only scope"
+		hold_tokens="pr-only"
+	fi
+	if _pr_body_declares_runtime_pending "$pr_body"; then
+		hold_scope="${hold_scope:+${hold_scope}; }runtime verification pending"
+		hold_tokens="${hold_tokens:+${hold_tokens},}runtime-pending"
+	fi
 	pr_number=$(_create_or_continue_pr "$continuation_pr" "$repo" "$pr_title" "$pr_body" \
 		"$origin_label" "${extra_labels[@]+"${extra_labels[@]}"}") || {
 		# GH#33381: the push already succeeded; the pushed branch is the durable
@@ -453,8 +496,8 @@ _commit_and_pr_publish() {
 			"$branch" "$issue_number" "$commit_message" >&2
 		return 1
 	}
-	if [[ "$pr_only_scope" -eq 1 ]]; then
-		_apply_pr_only_hold "$pr_number" "$repo" || return 1
+	if [[ -n "$hold_scope" ]]; then
+		_apply_pr_only_hold "$pr_number" "$repo" "$hold_scope" "$hold_tokens" || return 1
 	fi
 	local macos_base=""
 	macos_base=$(_pending_runtime_comparison_base "$base_ref") || return 1
@@ -503,18 +546,42 @@ Commands:
                 [--testing TEXT]          Fill the PR Runtime Testing evidence section
                 [--risk-level critical|high|medium|low]
                                           Set the runtime risk classification
-                [--testing-level runtime-verified|self-assessed]
-                                          Set the runtime testing evidence level
+                [--testing-level runtime-verified|runtime-pending|self-assessed]
+                                          Set the runtime testing evidence level;
+                                          runtime-pending (--testing gives the reason)
+                                          opens the PR under hold-for-review for a verifier
                 [--decisions TEXT]        Record notable decisions in the PR body
+                [--regression-evidence TEXT]
+                                          Add a ## Regression Evidence rationale (platform
+                                          fixes without a test change; checked before push)
                 [--label NAME]            Add a PR label (repeatable)
                 [--replace-pr N --replacement-reason TEXT]
                                           Audited replacement of an open PR (reason: 20+ characters)
                 [--completion-bookkeeping --proof-pr N --task-id tNNN]
                                           Allow audited metadata-only PR for a terminal issue
+                [--ready]                 Open the PR non-draft once verification passed
+                                          (interactive default is draft; readying later
+                                          re-runs every required check, GH#39210)
+                [--keep-issue-open]       Link with For #N so merge leaves a long-running
+                                          issue open (interactive only, GH#36598)
+                [--allow-parent-close]    Permit a closing keyword on a parent-task issue
+                                          (verified final phase only, GH#37690)
                 [--skip-hooks]             Pass --no-verify to git push (doc-only PRs, GH#20138)
                 [--no-rebase]              Explicit recovery mode after a failed/aborted rebase
   pre-merge-gate <PR> [REPO]    Check review bot gate before merge (GH#17541)
+  prospective-todo-guard <PR> <REPO> [EXPECTED_HEAD]
+                                 Fail closed if merging the PR head into the live base
+                                 tip duplicates TODO task IDs or issue refs (GH#38703).
   wait-checks <PR> [options]     Wait with transition-only required-check output
+  runtime-pending-notice <PR> [REPO]
+                                 Read-only: print JSON for a held runtime-pending PR a verifier
+                                 may lift (Pulse routing, GH#39645); exit 1 otherwise.
+  verify-runtime <PR> [REPO] --testing "<evidence>" [--dry-run]
+                                 Verifier route for a runtime-pending PR (GH#39639), any
+                                 author: from a clean checkout of the exact PR head, record
+                                 runtime-verified evidence and lift hold-for-review when the
+                                 scope recorded for the current hold is runtime-pending only.
+                                 A kept hold still records the evidence. Interactive, write+.
   merge <PR> [REPO] [--squash|--merge|--rebase] [--admin] [--auto] [--body-file PATH]
                                  Gate-enforced merge (runs pre-merge-gate first).
                                  --admin / --auto pass through to gh pr merge
@@ -524,6 +591,10 @@ Commands:
                                  --admin and --auto are mutually exclusive at the
                                  gh CLI level; if both are given, --admin wins and
                                   --auto is dropped (GH#19310).
+                [--allow-parent-close]
+                                 Refused by default when a closing keyword targets a
+                                 parent-task issue (GH#37690); pass only for the
+                                 verified final phase.
                 [--override-review-bot-gate="REASON"]
                                  Interactive maintainer only (GH#36901): admin-merge
                                  when review-bot-gate is the sole failing required
@@ -589,7 +660,10 @@ main() {
 	cancel) cmd_cancel ;; logs) cmd_logs "$@" ;; _run_foreground) _run_foreground "$@" ;;
 	commit-and-pr | create-pr) cmd_commit_and_pr "$@" ;;
 	pre-merge-gate) cmd_pre_merge_gate "$@" ;;
+	prospective-todo-guard) cmd_prospective_todo_guard "$@" ;;
 	wait-checks) cmd_wait_checks "$@" ;;
+	verify-runtime) cmd_verify_runtime "$@" ;;
+	runtime-pending-notice) cmd_runtime_pending_notice "$@" ;;
 	merge) cmd_merge "$@" ;;
 	record-no-release) cmd_record_no_release "$@" ;;
 	record-deployment) cmd_record_deployment "$@" ;;

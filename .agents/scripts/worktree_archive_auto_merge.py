@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess  # nosec B404 -- exception types only; Git runs through worktree_archive_git.git
 
 from worktree_archive_administration import validate_admin_entry
 from worktree_archive_git import (
@@ -14,8 +15,16 @@ from worktree_archive_git import (
 )
 
 
-def auto_merge(root):
-    path = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n"))) / "AUTO_MERGE"
+def auto_merge(root, admin=None, validated=None):
+    """Return the validated AUTO_MERGE tree, or None.
+
+    A caller may share the admin directory it resolved in the same pass, and the
+    AUTO_MERGE OID that pass already proved is a tree (`validated`). Only that
+    exact OID skips the repeat `cat-file -t`; a changed file is still validated.
+    """
+    if admin is None:
+        admin = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
+    path = Path(admin) / "AUTO_MERGE"
     if not os.path.lexists(path):
         return None
     validate_admin_entry(path, "AUTO_MERGE")
@@ -24,12 +33,14 @@ def auto_merge(root):
         if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
             raise ValueError('git_admin:AUTO_MERGE_not_regular')
         oid = auto_merge_oid(stream.read(66))
-    validate_auto_merge(root, oid)
+    if oid != validated:
+        validate_auto_merge(root, oid)
     return oid
 
 
-def capture_auto_merge(root, archive, base):
-    oid = auto_merge(root)
+def capture_auto_merge(root, archive, base, admin=None):
+    # The archive helper passes the admin directory it resolved in this invocation.
+    oid = auto_merge(root, Path(admin) if admin else None)
     if oid is None:
         return
     # Reuse the single bundle and exclude only objects durably covered by base.
@@ -52,21 +63,32 @@ def verify_auto_merge(root, archive, manifest):
     auto_merge_oid(oid.encode('ascii'))
     if json.loads(path.read_text(encoding='ascii')) != {'schema': 1, 'tree': oid}:
         raise ValueError('git_admin:AUTO_MERGE_metadata_mismatch')
-    validate_auto_merge(root, oid)
     # rev-list traverses trees; batch-check additionally proves every blob exists.
-    closure = git(root, 'rev-list', '--objects', '--no-object-names', oid)
+    try:
+        closure = git(root, 'rev-list', '--objects', '--no-object-names', oid)
+    except subprocess.SubprocessError:
+        # Keep the exact missing/not-tree diagnostics for an unreadable root.
+        validate_auto_merge(root, oid)
+        raise
     checked = git(root, 'cat-file', '--batch-check', data=closure)
-    if len(checked.splitlines()) != len(closure.splitlines()) or any(
-            line.endswith(b' missing') for line in checked.splitlines()):
+    lines = checked.splitlines()
+    if len(lines) != len(closure.splitlines()) or any(line.endswith(b' missing') for line in lines):
         raise ValueError('git_admin:missing_AUTO_MERGE_object')
+    # The batch already reports the root's type: no separate `cat-file -t` (GH#39560).
+    if not any(line.split(b' ')[:2] == [oid.encode('ascii'), b'tree'] for line in lines):
+        raise ValueError('git_admin:AUTO_MERGE_not_tree')
     return oid
 
 
-def restore_auto_merge(root, archive):
+def restore_auto_merge(root, archive, preserved=False):
     manifest = json.loads((archive / 'manifest.json').read_text(encoding='utf-8'))
     if manifest.get('source_fingerprint', {}).get('auto_merge') is None:
         return
-    fetch_preservation(root, archive)
+    # preserved: this restore's preparation already imported the same bundle
+    # into this new target; verify_auto_merge still proves the whole closure.
+    # Otherwise reuse the admin dir fetch_preservation resolved (None only without a bundle).
+    admin = None if preserved else fetch_preservation(root, archive)
     oid = verify_auto_merge(root, archive, manifest)
-    admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
+    if admin is None:
+        admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
     (admin / 'AUTO_MERGE').write_text(oid + '\n', encoding='ascii')

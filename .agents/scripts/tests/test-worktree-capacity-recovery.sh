@@ -8,6 +8,9 @@ set -euo pipefail
 
 SCRIPTS="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT=$(mktemp -d)
+# GH#37500: Git reports physical worktree paths (macOS /var -> /private/var);
+# path-keyed fixture seams such as the grace-period stub must match them.
+ROOT=$(cd "$ROOT" && pwd -P)
 trap 'rm -rf "$ROOT"' EXIT
 trap 'cat "$ROOT/home/.aidevops/logs/cleanup_worktrees.log" >&2' ERR
 export HOME="$ROOT/home" FIXTURE_ROOT="$ROOT" REAL_SCRIPTS="$SCRIPTS"
@@ -20,8 +23,14 @@ for branch in contained squash dirty open live unproven hidden-open unknown fres
 done
 printf 'preserve\n' >"$ROOT/dirty/wip"
 git -C "$ROOT/squash" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm squash --allow-empty
-git -C "$ROOT/unproven" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm unproven --allow-empty
-git -C "$ROOT/reused" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm reused --allow-empty
+# GH#38115: unproven/reused must carry unique content. Since GH#37500 an
+# identical-to-upstream tree is valid local merge proof, so empty commits would
+# make these "unmerged" fixtures provably reclaimable.
+for branch in unproven reused; do
+	printf '%s\n' "$branch" >"$ROOT/$branch/unique.txt"
+	git -C "$ROOT/$branch" add unique.txt
+	git -C "$ROOT/$branch" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm "$branch"
+done
 printf '{"owner":{"pid":%s,"session":"fixture"},"aged":true}\n' "$$" >"$ROOT/squash.receipt"
 printf '{"owner":{"pid":%s,"session":"fixture"},"aged":false}\n' "$$" >"$ROOT/live.receipt"
 jq -n --arg path "$ROOT/repo" '{initialized_repos:[{path:$path}]}' >"$HOME/.config/aidevops/repos.json"
@@ -56,7 +65,7 @@ _clean_fetch_remotes() { printf 'false\n'; return 0; }
 _clean_build_merged_pr_branches() { printf 'squash\nreused\n'; return 0; }
 _clean_build_exact_merged_pr_branches() { return 0; }
 _clean_build_open_pr_branches() { printf 'open\n'; return 0; }
-_clean_build_closed_pr_branches() { return 0; }
+_clean_build_closed_pr_branches() { printf 'unexpected closed-PR query\n' >&2; return 1; }
 _clean_repo_slug() { printf 'fixture/recovery\n'; return 0; }
 gh_pr_list() {
 	local head="${4:-}" state="${6:-}"
@@ -130,10 +139,11 @@ if _dispatch_worktree_capacity_gate "$ROOT/repo" 36948 fixture/recovery 10; then
 [[ ! -d "$ROOT/contained" && ! -d "$ROOT/squash" ]]
 [[ -f "$ROOT/dirty/wip" && -d "$ROOT/open" && -d "$ROOT/live" && -d "$ROOT/unproven" ]]
 [[ -s "$ROOT/expiry" ]]
-count=$(git -C "$ROOT/repo" worktree list --porcelain | rg -c '^worktree ')
+count=$(git -C "$ROOT/repo" worktree list --porcelain | grep -c '^worktree ')
 [[ "$count" -eq 9 ]]
 _dispatch_worktree_capacity_gate "$ROOT/repo" 36948 fixture/recovery 10
 [[ -d "$ROOT/hidden-open" && -d "$ROOT/unknown" && -d "$ROOT/fresh" && -d "$ROOT/reused" ]]
+if grep -q 'unexpected closed-PR query' "$HOME/.aidevops/logs/cleanup_worktrees.log"; then exit 1; fi
 printf 'PASS async pass reclaims contained and merged/expired trees; dirty/open/live/unproven preserved\n'
 printf 'PASS dispatch gate reopens; exact open-PR, unavailable proof and fresh pre-work remain protected\n'
 
@@ -143,7 +153,7 @@ printf 'PASS dispatch gate reopens; exact open-PR, unavailable proof and fresh p
 	env AIDEVOPS_MAX_WORKTREES=9 bash "$ROOT/scripts/cleanup-worktrees-async-helper.sh"
 )
 if _dispatch_worktree_capacity_gate "$ROOT/repo" 36948 fixture/recovery 9; then exit 1; fi
-rg -q 'capacity-stuck: gate closed, zero safe removals' "$HOME/.aidevops/logs/cleanup_worktrees.log"
+grep -q 'capacity-stuck: gate closed, zero safe removals' "$HOME/.aidevops/logs/cleanup_worktrees.log"
 printf 'PASS closed gate with zero safe candidates produces capacity-stuck diagnostic\n'
 
 # Twenty guarded early candidates must not starve a safe later candidate.

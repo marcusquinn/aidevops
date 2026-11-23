@@ -138,6 +138,7 @@ _stale_recovery_count_ticks_from_pages() {
 	local prior_ticks
 	prior_ticks=$(printf '%s' "$comments_pages" | jq \
 		--arg release_marker '<!-- stale-recovery-release:verified -->' \
+		--arg progress_marker '<!-- stale-recovery-progress:merged-pr -->' \
 		'([.[] | .[]?] | sort_by(.created_at, .id))
 		| reduce .[] as $comment (0;
 			if (($comment.body // "")
@@ -148,6 +149,10 @@ _stale_recovery_count_ticks_from_pages() {
 					"MEMBER"
 				)) then 0
 			elif (($comment.body // "")
+				| contains($progress_marker))
+				and (($comment.body // "")
+				| test("<!-- stale-recovery-tick:[1-9]")) then 1
+			elif (($comment.body // "")
 				| test("<!-- stale-recovery-tick:[1-9]"))
 				and ((($comment.body // "")
 				| contains("reset")) | not) then . + 1
@@ -155,6 +160,55 @@ _stale_recovery_count_ticks_from_pages() {
 		2>/dev/null) || prior_ticks=0
 	[[ "$prior_ticks" =~ ^[0-9]+$ ]] || prior_ticks=0
 	printf '%s' "$prior_ticks"
+	return 0
+}
+
+#######################################
+# Find the latest stale-recovery tick timestamp in slurped GitHub comments.
+# Args: $1 = slurped comments pages JSON
+# Output: ISO timestamp or empty
+#######################################
+_stale_recovery_latest_tick_ts_from_pages() {
+	local comments_pages="$1"
+	printf '%s' "$comments_pages" | jq -r '
+		[.[] | .[]? | select(.body // "" | test("<!-- stale-recovery-tick:[1-9]"))]
+		| sort_by(.created_at, .id) | last
+		| if . == null then empty else
+			(.body // "" | capture("<!-- stale-recovery-checked-through:(?<ts>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z) -->")?.ts) // .created_at // empty
+		end
+	' 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Find a merged PR referencing the issue (For/Ref/Resolves #N) merged after
+# a timestamp. A merged partial PR is productive progress, not a no-PR stall,
+# so it must break the consecutive stale-recovery count.
+# Args: $1 = issue number, $2 = repo slug, $3 = ISO timestamp lower bound
+# Output: merged PR number or empty
+# Returns: 1 when the lookup failed or hit the result cap (incomplete), so the
+#   caller must not escalate on it; 0 on a complete search (match or none).
+#######################################
+_stale_recovery_find_merged_pr_since() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local since_ts="$3"
+	# gh paginates the search results up to GitHub's 1000-result search bound.
+	local _limit=1000 _json="" _count="" _slug_lc="" _match=""
+	[[ -n "$since_ts" ]] || return 0
+	_slug_lc=$(printf '%s' "$repo_slug" | tr '[:upper:]' '[:lower:]')
+	_json=$(gh pr list --repo "$repo_slug" --state merged --limit "$_limit" \
+		--search "${issue_number} in:body merged:>=${since_ts}" \
+		--json number,body,mergedAt 2>/dev/null) || return 1
+	_count=$(printf '%s' "$_json" | jq -er 'length' 2>/dev/null) || return 1
+	_match=$(printf '%s' "$_json" | jq -r \
+		--arg n "$issue_number" --arg since "$since_ts" --arg slug "$_slug_lc" '
+		[.[]? | select((.mergedAt // "") >= $since)
+			| select(.body // "" | ascii_downcase | test("\\b(for|ref|refs|resolves|closes|fixes|close|fix|resolve):?\\s+(" + ($slug | gsub("[.]"; "[.]")) + ")?#" + $n + "\\b"))]
+		| sort_by(.mergedAt) | last | .number // empty
+	' 2>/dev/null) || return 1
+	[[ -n "$_match" || "$_count" -lt "$_limit" ]] || return 1
+	printf '%s' "$_match"
 	return 0
 }
 
@@ -298,7 +352,7 @@ _stale_recovery_find_open_pr() {
 	[[ "$_scan_limit" =~ ^[1-9][0-9]*$ ]] || _scan_limit=1000
 	_open_pr_json=$(gh pr list --repo "$repo_slug" --state open \
 		--limit "$_scan_limit" \
-		--json number,closingIssuesReferences,isDraft,isCrossRepository,labels,body,statusCheckRollup 2>/dev/null) || return 1
+		--json number,closingIssuesReferences,isDraft,isCrossRepository,headRefName,labels,body,statusCheckRollup 2>/dev/null) || return 1
 	_open_pr_count=$(printf '%s' "$_open_pr_json" | jq -er 'length' 2>/dev/null) || return 1
 	# Reaching the bound means authoritative linkage may exist outside this page.
 	[[ "$_open_pr_count" -lt "$_scan_limit" ]] || return 1
@@ -334,8 +388,18 @@ _stale_recovery_find_open_pr() {
 					select((
 						$review_pass and (.__typename // "") == "CheckRun" and
 						((.name // "") | ascii_downcase | contains("review-bot-gate"))
-					) | not) |
-					(.conclusion // .status // .state // empty) | ascii_upcase] |
+					) | not)] |
+				# Keep only the newest run per check identity so superseded
+				# CANCELLED/FAILURE runs do not mask a later SUCCESS (GH#39598).
+				group_by([(.__typename // ""), (.workflowName // ""), (.name // .context // "")]) |
+				# Order by completedAt, then startedAt, then createdAt. A run with no
+				# usable timestamp is still pending, so it ranks newest.
+				map(max_by(
+					[.completedAt, .startedAt, .createdAt] |
+					map(select(. != null and . != "" and (startswith("0001-") | not))) |
+					.[0] // "9999-12-31T23:59:59Z"
+				)) |
+				[.[] | (.conclusion // .status // .state // empty) | ascii_upcase] |
 				any(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or
 					. == "TIMED_OUT" or . == "ACTION_REQUIRED" or . == "STALE");
 			def kind:
@@ -520,8 +584,18 @@ _stale_recovery_escalate() {
 	local _threshold="$5"
 	local _prior_ticks="$6"
 	local expected_dispatch_ts="${7:-}"
+	local progress_since="${8:-}"
 	if ! _stale_recovery_final_evidence_recheck "$issue_number" "$repo_slug" "$expected_dispatch_ts"; then
 		printf 'STALE_RECHECK_BLOCKED: issue #%s in %s — evidence changed before escalation\n' "$issue_number" "$repo_slug"
+		return 0
+	fi
+	local merged_pr=""
+	if ! merged_pr=$(_stale_recovery_find_merged_pr_since "$issue_number" "$repo_slug" "$progress_since"); then
+		printf 'STALE_RECOVERY_UNCERTAIN: issue #%s in %s — final merged PR lookup incomplete; preserving assignment\n' "$issue_number" "$repo_slug"
+		return 1
+	fi
+	if [[ -n "$merged_pr" ]]; then
+		printf 'STALE_PROGRESS_PRESERVED: issue #%s in %s — merged PR #%s appeared before escalation\n' "$issue_number" "$repo_slug" "$merged_pr"
 		return 0
 	fi
 
@@ -561,7 +635,7 @@ Previously assigned to: ${stale_assignees}
 Reason for latest stale: ${reason}
 Recovery count: ${_prior_ticks} (threshold: ${_threshold})
 
-Marked \`status:blocked\`. Review worker logs, salvageable branches and linked PRs first. Once the root cause is addressed and no worker owns the issue, a maintainer can run \`dispatch-dedup-helper.sh release-stale-recovery ${issue_number} ${repo_slug} 'reviewed reason'\`. The command records an audit marker and restores dispatch eligibility; it does not clear independent security/review holds or replace cryptographic approval.
+Marked \`status:blocked\`. Review worker logs, salvageable branches and linked PRs first. Once the root cause is addressed and no worker owns the issue, a maintainer can run \`dispatch-dedup-helper.sh release-stale-recovery ${issue_number} ${repo_slug} 'reviewed reason'\`. The reason must be nonempty, at most 160 characters, and use only letters, digits, spaces, comma, period, underscore, colon, or hyphen. The command records an audit marker and restores dispatch eligibility; it does not clear independent security/review holds or replace cryptographic approval.
 
 _This escalation is the \"no-progress fail-safe\" from t2008 (paired with t1986 parent-task guard and t2007 cost circuit breaker)._
 <!-- ops:end -->" \
@@ -604,6 +678,33 @@ _stale_recovery_has_unresolved_blocked_by() {
 		return 0
 	fi
 	return 1
+}
+
+# Preserve the assignment and labels when an unresolved input circuit exists;
+# the recovery owner alone projects a revision/retry rearm with its receipt.
+_stale_recovery_has_input_circuit() {
+	local issue_number="$1" repo_slug="$2" pages="${3:-}" issue_json="" comments="" rc=0
+	# The recovery scan already fetched all comment pages. An explicit valid
+	# snapshot without any circuit needs no further circuit-specific reads.
+	if [[ -n "$pages" ]] && jq -e 'arrays | all(.[]; arrays | true) and
+		(all(.[][]; ((.body // "") | contains("aidevops:terminal-blocker-circuit revision=")) | not))' <<<"$pages" >/dev/null 2>&1; then
+		return 1
+	fi
+	# shellcheck source=terminal-blocker-circuit.sh
+	source "${SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 0
+	comments=$(terminal_blocker_fetch_trusted_comments "$issue_number" "$repo_slug") || return 0
+	if ! jq -e 'any(.[]; (.body // "") | contains("aidevops:terminal-blocker-circuit revision="))' <<<"$comments" >/dev/null 2>&1; then
+		return 1
+	fi
+	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" --jq '{title: (.title // ""), body: (.body // ""), labels: (.labels // [])}' 2>/dev/null) || return 0
+	# A blocked-to-available transition belongs to rearm, which records the
+	# receipt; stale recovery must not silently release even a rearmed hold.
+	if jq -e 'any(.labels[]?; .name == "status:blocked")' <<<"$issue_json" >/dev/null 2>&1; then
+		return 0
+	fi
+	terminal_blocker_input_circuit_active "$comments" "$issue_json" "$repo_slug" "$issue_number" "" || rc=$?
+	[[ "$rc" -eq 1 ]] && return 1
+	return 0
 }
 
 #######################################
@@ -708,6 +809,8 @@ _stale_recovery_apply() {
 	local expected_dispatch_ts="${5:-}"
 	local recovery_tick="${6:-}"
 	local recovery_threshold="${7:-}"
+	local recovery_pages="${8:-}"
+	local checked_through="${9:-}"
 
 	local saved_ifs="${IFS:-}"
 	local -a assignee_arr=()
@@ -719,6 +822,10 @@ _stale_recovery_apply() {
 	for assignee in "${assignee_arr[@]}"; do
 		[[ -n "$assignee" ]] && _recov_extra+=(--remove-assignee "$assignee")
 	done
+	if _stale_recovery_has_input_circuit "$issue_number" "$repo_slug" "$recovery_pages"; then
+		printf 'STALE_CIRCUIT_HOLD: issue #%s in %s — preserving status and assignment\n' "$issue_number" "$repo_slug"
+		return 0
+	fi
 	if _stale_recovery_has_unresolved_blocked_by "$issue_number" "$repo_slug"; then
 		_stale_recovery_apply_blocked_by_hold "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$expected_dispatch_ts" "${_recov_extra[@]}"
 		return 0
@@ -742,7 +849,10 @@ _stale_recovery_apply() {
 		--body "$(aidevops_ops_marker stale-recovery-tick)"$'\n'"<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- WORKER_SUPERSEDED runners=${stale_assignees} ts=${_now_ts} -->
 <!-- stale-recovery-tick:${recovery_tick:-1} -->
-**Stale assignment recovered** (GH#15060)
+<!-- stale-recovery-checked-through:${checked_through} -->
+${_STALE_RECOVERY_MERGED_PR:+<!-- stale-recovery-progress:merged-pr -->
+Merged PR #${_STALE_RECOVERY_MERGED_PR} since the previous tick counts as progress; consecutive count restarted.
+}**Stale assignment recovered** (GH#15060)
 
 Previously assigned to: ${stale_assignees}
 Reason: ${reason}
@@ -797,6 +907,8 @@ _recover_stale_assignment() {
 	# Counter is stored as structured comment markers for cross-runner correctness.
 	# Config: .agents/configs/dispatch-stale-recovery.conf
 	local _threshold _prior_ticks _open_pr _open_pr_number _open_pr_kind _comments_pages _latest_dispatch_ts _next_tick
+	local _last_tick_ts="" _checked_through=""
+	_checked_through=$(date -u +%Y-%m-%dT%H:%M:%SZ) || return 1
 	_threshold=$(_stale_recovery_load_threshold)
 	_comments_pages=$(_stale_recovery_fetch_comments_pages "$issue_number" "$repo_slug")
 	_prior_ticks=$(_stale_recovery_count_ticks_from_pages "$_comments_pages")
@@ -839,14 +951,26 @@ _recover_stale_assignment() {
 			"$issue_number" "$repo_slug" "$_open_pr_number"
 		return 0
 	fi
+	_STALE_RECOVERY_MERGED_PR=""
+	if [[ "$_prior_ticks" -gt 0 ]]; then
+		_last_tick_ts=$(_stale_recovery_latest_tick_ts_from_pages "$_comments_pages")
+		if ! _STALE_RECOVERY_MERGED_PR=$(_stale_recovery_find_merged_pr_since "$issue_number" "$repo_slug" "$_last_tick_ts"); then
+			printf 'STALE_RECOVERY_UNCERTAIN: issue #%s in %s — merged PR lookup incomplete; preserving assignment\n' \
+				"$issue_number" "$repo_slug"
+			return 1
+		fi
+		[[ "$_STALE_RECOVERY_MERGED_PR" =~ ^[0-9]+$ ]] || _STALE_RECOVERY_MERGED_PR=""
+		# Merged partial PR since the previous tick = progress: restart the count.
+		[[ -z "$_STALE_RECOVERY_MERGED_PR" ]] || _prior_ticks=0
+	fi
 	_next_tick=$((_prior_ticks + 1))
 	if [[ "$_next_tick" -ge "$_threshold" ]]; then
-		_stale_recovery_escalate "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$_threshold" "$_next_tick" "$_latest_dispatch_ts" || return 1
+		_stale_recovery_escalate "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$_threshold" "$_next_tick" "$_latest_dispatch_ts" "${_last_tick_ts:-$_checked_through}" || return 1
 		return 0
 	fi
 	# ── End stale-recovery escalation check ──────────────────────────────
 
-	_stale_recovery_apply "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$_latest_dispatch_ts" "$_next_tick" "$_threshold" || return 1
+	_stale_recovery_apply "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$_latest_dispatch_ts" "$_next_tick" "$_threshold" "$_comments_pages" "$_checked_through" || return 1
 	return 0
 }
 

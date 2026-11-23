@@ -114,6 +114,20 @@ except yaml.YAMLError as e:
 	return $?
 }
 
+# Reject a workflow whose on.workflow_run.workflows list names its own top-level
+# name:. GitHub rejects it ("Workflow 'X' cannot listen to itself") and the
+# workflow stops running for every event, yet actionlint and YAML parsers pass
+# it (GH#39461, root cause of the GH#39458 outage).
+# Dependency-free (python3 stdlib only, no PyYAML): indentation-aware line scan
+# of the top-level name: and the on: > workflow_run: > workflows: entries.
+# Silently passes when python3 is unavailable.
+_check_self_listen() {
+	local file="$1"
+	command -v python3 &>/dev/null || return 0
+	python3 "${SCRIPT_DIR}/workflow-self-listen.py" "$file" 2>&1
+	return $?
+}
+
 # ---------------------------------------------------------------------------
 # Core lint dispatcher
 # ---------------------------------------------------------------------------
@@ -144,9 +158,13 @@ _lint_file() {
 		# No tool available — warn and pass (degrade gracefully).
 		print_warning "No workflow linter available (actionlint/yamllint/python3-yaml)."
 		print_warning "Install actionlint for full validation: brew install actionlint"
-		return 0
 		;;
 	esac
+
+	# Structural check no linter covers (GH#39461); runs with every tool.
+	if ! _check_self_listen "$file"; then
+		exit_code=1
+	fi
 
 	return $exit_code
 }
@@ -158,15 +176,16 @@ _lint_file() {
 # Collect staged .github/workflows/*.yml files from git index.
 _get_staged_workflow_files() {
 	git diff --cached --name-only --diff-filter=ACM 2>/dev/null \
-		| grep -E '^\.github/workflows/[^/]+\.ya?ml$' \
+		| grep -E '^(\.github/workflows|\.agents/templates/workflows)/[^/]+\.ya?ml$' \
 		|| true
 	return 0
 }
 
 # Collect all .github/workflows/*.yml files in the repo.
 _get_all_workflow_files() {
-	git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml' 2>/dev/null \
-		|| find .github/workflows -maxdepth 1 -name '*.yml' -o -name '*.yaml' 2>/dev/null \
+	git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml' \
+		'.agents/templates/workflows/*.yml' '.agents/templates/workflows/*.yaml' 2>/dev/null \
+		|| find .github/workflows .agents/templates/workflows -maxdepth 1 \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null \
 		|| true
 	return 0
 }

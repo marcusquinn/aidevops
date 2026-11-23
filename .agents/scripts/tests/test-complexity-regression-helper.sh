@@ -20,6 +20,7 @@
 #   18. rename carry-over:           git mv keeps existing violations; new file blocks (GH#36897)
 #   19. working-tree git mv:         staged rename keeps existing file-size violation (GH#36897)
 #   20. edited bash32 rename:        existing count carries over; increased count blocks (GH#36928)
+#   21. file-size exclude config:    .aidevops.json glob exempts matching paths only (GH#39490)
 
 set -euo pipefail
 
@@ -827,6 +828,76 @@ test_working_tree_git_mv_carries_violation() {
 }
 
 # ---------------------------------------------------------------------------
+# Per-repo file-size exclusion (GH#39490): an untracked .aidevops.json
+# complexity.file_size_exclude exempts matching paths only, and a config the
+# change itself starts tracking cannot exempt that change's own files.
+# ---------------------------------------------------------------------------
+_init_exclude_repo() {
+	local _repo="$1"
+	local _gitignore="$2"
+	mkdir -p "$_repo/clients/acme" "$_repo/docs"
+	git -C "$_repo" init -q
+	git -C "$_repo" config user.email "test@test.local"
+	git -C "$_repo" config user.name "Test"
+	git -C "$_repo" config commit.gpgsign false
+	printf '%s\n' "$_gitignore" >"$_repo/.gitignore"
+	git -C "$_repo" add -A
+	git -C "$_repo" commit -q -m "base"
+	return 0
+}
+
+_write_md_lines() {
+	local _file="$1"
+	local _lines="$2"
+	local _i=0
+	: >"$_file"
+	while [ "$_i" -lt "$_lines" ]; do
+		printf 'record line %d\n' "$_i" >>"$_file"
+		_i=$((_i + 1))
+	done
+	return 0
+}
+
+test_file_size_exclude_config() {
+	setup
+	local _repo="$TEST_ROOT/repo" _self="$TEST_ROOT/self"
+	local _base_sha="" _rc_in=0 _rc_out=0 _rc_self=0
+	local _config='{"complexity":{"file_size_exclude":["clients/*"]}}'
+
+	_init_exclude_repo "$_repo" ".aidevops.json"
+	_base_sha=$(git -C "$_repo" rev-parse HEAD)
+	printf '%s\n' "$_config" >"$_repo/.aidevops.json"
+	_write_md_lines "$_repo/clients/acme/email.md" 1500
+	git -C "$_repo" add clients
+	git -C "$_repo" commit -q -m "head: synced record"
+	(cd "$_repo" && "$HELPER" check --base "$_base_sha" --metric file-size) \
+		>/dev/null 2>&1 || _rc_in=$?
+	cp "$_repo/clients/acme/email.md" "$_repo/docs/notes.md"
+	git -C "$_repo" add docs/notes.md
+	git -C "$_repo" commit -q -m "head: same size outside the glob"
+	(cd "$_repo" && "$HELPER" check --base "$_base_sha" --metric file-size) \
+		>/dev/null 2>&1 || _rc_out=$?
+
+	_init_exclude_repo "$_self" "# no ignores"
+	_base_sha=$(git -C "$_self" rev-parse HEAD)
+	printf '%s\n' "$_config" >"$_self/.aidevops.json"
+	_write_md_lines "$_self/clients/acme/email.md" 1500
+	git -C "$_self" add -A
+	git -C "$_self" commit -q -m "head: tracked config exempting its own record"
+	(cd "$_self" && "$HELPER" check --base "$_base_sha" --metric file-size) \
+		>/dev/null 2>&1 || _rc_self=$?
+
+	if [ "$_rc_in" -eq 0 ] && [ "$_rc_out" -eq 1 ] && [ "$_rc_self" -eq 1 ]; then
+		print_result "file-size exclude: glob exempts clients/*, not docs/ or a self-added tracked config" 0
+	else
+		print_result "file-size exclude: glob exempts clients/*, not docs/ or a self-added tracked config" 1 \
+			"expected 0, 1, 1; got $_rc_in, $_rc_out, $_rc_self"
+	fi
+	teardown
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -855,6 +926,7 @@ test_working_tree_101_line_function_blocks
 test_rename_carries_existing_violations
 test_edited_rename_carries_bash32_count
 test_working_tree_git_mv_carries_violation
+test_file_size_exclude_config
 
 printf '\n'
 if [ "$TESTS_FAILED" -eq 0 ]; then

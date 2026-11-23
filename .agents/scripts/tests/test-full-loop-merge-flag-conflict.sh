@@ -129,6 +129,11 @@ stub_gates() {
 	# evidence, canonical-sync, and lifecycle finalization contracts.
 	_retarget_stacked_children_interactive() { return 0; }
 	_merge_guard_admin_merge_maintainer_review() { return 0; }
+	# Closure/parent-task/runtime-evidence guards and the t2449 trust verdict
+	# read live PR metadata; test-full-loop-merge.sh and
+	# test-full-loop-runtime-risk.sh cover them.
+	_merge_check_closing_guards() { return 0; }
+	_merge_worker_briefed_gate_pinned() { return 0; }
 	_merge_resolve_match_head() {
 		printf '%s\n' "fixture-head-sha"
 		return 0

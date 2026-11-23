@@ -90,31 +90,94 @@ _full_loop_release_tag_body() {
 	return $?
 }
 
+_FULL_LOOP_RELEASE_VERIFIER=""
+_FULL_LOOP_RELEASE_VERIFIER_TREE=""
+
+# Create the verifier tree at the commit, or re-point a clean retained one.
+# Args: $1=tree path, $2=origin/main commit
+_full_loop_release_place_verifier_tree() {
+	local tree_path="$1"
+	local main_commit="$2"
+
+	if [[ -e "$tree_path" ]]; then
+		_full_loop_release_repoint_tag_worktree "$REPO_ROOT" "$tree_path" "$main_commit"
+		return $?
+	fi
+	worktree_create_registered "$REPO_ROOT" "$tree_path" "$main_commit" --detach >/dev/null 2>&1
+	return $?
+}
+
+#aidevops:trust-boundary
+# Select the provenance verifier from a detached worktree at exactly the freshly
+# fetched origin/main, as release-run-new does, so a release that fixes the
+# verifier can reconcile itself. The verifier is never taken from the tag being
+# verified (the artifact must not vouch for itself). Falls back to the deployed
+# runtime copy only when no control worktree can be prepared, and says so.
+# Sets _FULL_LOOP_RELEASE_VERIFIER; _FULL_LOOP_RELEASE_VERIFIER_TREE is set only
+# when a worktree needs removal afterwards.
+_full_loop_release_select_verifier() {
+	local worktree_base="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"
+	local tree_path="" main_commit="" checkout_commit=""
+
+	_FULL_LOOP_RELEASE_VERIFIER=""
+	_FULL_LOOP_RELEASE_VERIFIER_TREE=""
+	# The release-control name lets the existing stale-control reaper retire a
+	# tree that lifecycle ownership kept past this process.
+	tree_path="${worktree_base}/aidevops-release-control-verifier-$$"
+	if [[ -n "${REPO_ROOT:-}" && -d "$worktree_base" ]] &&
+		git -C "$REPO_ROOT" fetch origin '+refs/heads/main:refs/remotes/origin/main' --quiet 2>/dev/null &&
+		main_commit=$(git -C "$REPO_ROOT" rev-parse --verify "refs/remotes/origin/main^{commit}" 2>/dev/null) &&
+		[[ "$main_commit" =~ $_FULL_LOOP_RELEASE_SHA_REGEX ]] &&
+		_full_loop_release_place_verifier_tree "$tree_path" "$main_commit"; then
+		checkout_commit=$(git -C "$tree_path" rev-parse HEAD 2>/dev/null || true)
+		if [[ "$checkout_commit" == "$main_commit" && -f "$tree_path/.git" &&
+			-x "$tree_path/.agents/scripts/release-provenance-helper.sh" ]]; then
+			_FULL_LOOP_RELEASE_VERIFIER="$tree_path/.agents/scripts/release-provenance-helper.sh"
+			_FULL_LOOP_RELEASE_VERIFIER_TREE="$tree_path"
+			printf 'release:verifier source=origin/main commit=%s\n' "$main_commit" >&2
+			return 0
+		fi
+		_full_loop_release_remove_worktree "$tree_path" release-verifier-unverified >/dev/null 2>&1 || true
+	fi
+	printf 'release:verifier source=deployed-runtime (origin/main control worktree unavailable)\n' >&2
+	[[ -x "${SCRIPT_DIR}/release-provenance-helper.sh" ]] || return 1
+	_FULL_LOOP_RELEASE_VERIFIER="${SCRIPT_DIR}/release-provenance-helper.sh"
+	return 0
+}
+
+# Args: $1=verifier subcommand, $2=repo slug, $3=version tag
+_full_loop_release_run_verifier() {
+	local subcommand="$1"
+	local repo="$2"
+	local tag_name="$3"
+	local verify_rc=0
+
+	_full_loop_release_prepare_tag_worktree "$tag_name" || return 1
+	_full_loop_release_select_verifier || return 1
+	(
+		cd "$_FULL_LOOP_RELEASE_PATH" || exit 1
+		bash "$_FULL_LOOP_RELEASE_VERIFIER" "$subcommand" --tag "$tag_name" --repo "$repo" >/dev/null
+	) || verify_rc=$?
+	if [[ -n "$_FULL_LOOP_RELEASE_VERIFIER_TREE" ]]; then
+		_full_loop_release_remove_worktree "$_FULL_LOOP_RELEASE_VERIFIER_TREE" release-verifier-done >/dev/null 2>&1 || true
+	fi
+	_FULL_LOOP_RELEASE_VERIFIER_TREE=""
+	return "$verify_rc"
+}
+
 _full_loop_release_verify_tag_provenance() {
 	local repo="$1"
 	local tag_name="$2"
-	local verifier="${SCRIPT_DIR}/release-provenance-helper.sh"
 
-	[[ -x "$verifier" ]] || return 1
-	_full_loop_release_prepare_tag_worktree "$tag_name" || return 1
-	(
-		cd "$_FULL_LOOP_RELEASE_PATH" || exit 1
-		bash "$verifier" verify --tag "$tag_name" --repo "$repo" >/dev/null
-	)
+	_full_loop_release_run_verifier verify "$repo" "$tag_name"
 	return $?
 }
 
 _full_loop_release_verify_protected_source_provenance() {
 	local repo="$1"
 	local tag_name="$2"
-	local verifier="${SCRIPT_DIR}/release-provenance-helper.sh"
 
-	[[ -x "$verifier" ]] || return 1
-	_full_loop_release_prepare_tag_worktree "$tag_name" || return 1
-	(
-		cd "$_FULL_LOOP_RELEASE_PATH" || exit 1
-		bash "$verifier" verify-local-source --tag "$tag_name" --repo "$repo" >/dev/null
-	)
+	_full_loop_release_run_verifier verify-local-source "$repo" "$tag_name"
 	return $?
 }
 
@@ -909,6 +972,14 @@ _full_loop_release_sha256_stream() {
 	return 0
 }
 
+# Print which release channel is still pending so a silent reconcile exit 8
+# is diagnosable. Informational only; never changes exit codes.
+_full_loop_release_channel_pending() {
+	local channel="$1"
+	printf 'CHANNEL_PENDING=%s\n' "$channel"
+	return 0
+}
+
 _full_loop_release_verify_npm_provenance() {
 	local repo="$1"
 	local tag_name="$2"
@@ -925,36 +996,36 @@ _full_loop_release_verify_npm_provenance() {
 
 	_FULL_LOOP_RELEASE_NPM_VERSION=""
 	_FULL_LOOP_RELEASE_NPM_INTEGRITY=""
-	command -v npm >/dev/null 2>&1 || return 1
-	command -v node >/dev/null 2>&1 || return 1
-	npm_metadata=$(npm view "aidevops@${version}" version dist --json 2>/dev/null) || return 1
+	command -v npm >/dev/null 2>&1 || { _full_loop_release_channel_pending npm-metadata; return 1; }
+	command -v node >/dev/null 2>&1 || { _full_loop_release_channel_pending npm-metadata; return 1; }
+	npm_metadata=$(npm view "aidevops@${version}" version dist --json 2>/dev/null) || { _full_loop_release_channel_pending npm-metadata; return 1; }
 	npm_version=$(jq -er --arg string_type "$_FULL_LOOP_RELEASE_JSON_STRING_TYPE" \
-		'.version | select(type == $string_type)' <<<"$npm_metadata") || return 1
+		'.version | select(type == $string_type)' <<<"$npm_metadata") || { _full_loop_release_channel_pending npm-metadata; return 1; }
 	npm_integrity=$(jq -er --arg string_type "$_FULL_LOOP_RELEASE_JSON_STRING_TYPE" \
-		'.dist.integrity | select(type == $string_type)' <<<"$npm_metadata") || return 1
+		'.dist.integrity | select(type == $string_type)' <<<"$npm_metadata") || { _full_loop_release_channel_pending npm-metadata; return 1; }
 	npm_shasum=$(jq -er --arg string_type "$_FULL_LOOP_RELEASE_JSON_STRING_TYPE" \
-		'.dist.shasum | select(type == $string_type)' <<<"$npm_metadata") || return 1
-	[[ "$npm_version" == "$version" ]] || return 1
-	[[ "$npm_integrity" =~ ^sha512-[A-Za-z0-9+/]+={0,2}$ ]] || return 1
-	[[ "$npm_shasum" =~ ^[0-9a-f]{40}$ ]] || return 1
+		'.dist.shasum | select(type == $string_type)' <<<"$npm_metadata") || { _full_loop_release_channel_pending npm-metadata; return 1; }
+	[[ "$npm_version" == "$version" ]] || { _full_loop_release_channel_pending npm-metadata; return 1; }
+	[[ "$npm_integrity" =~ ^sha512-[A-Za-z0-9+/]+={0,2}$ ]] || { _full_loop_release_channel_pending npm-metadata; return 1; }
+	[[ "$npm_shasum" =~ ^[0-9a-f]{40}$ ]] || { _full_loop_release_channel_pending npm-metadata; return 1; }
 	jq -e --arg provenance_predicate "$_FULL_LOOP_RELEASE_PROVENANCE_PREDICATE" \
 		--arg string_type "$_FULL_LOOP_RELEASE_JSON_STRING_TYPE" '
 		.dist.attestations.provenance.predicateType == $provenance_predicate
 		and ((.dist.attestations.url // "") | type == $string_type and length > 0)
-	' <<<"$npm_metadata" >/dev/null || return 1
+	' <<<"$npm_metadata" >/dev/null || { _full_loop_release_channel_pending npm-provenance; return 1; }
 	expected_digest=$(node -e \
 		'process.stdout.write(Buffer.from(process.argv[1], "base64").toString("hex"))' \
-		"${npm_integrity#sha512-}") || return 1
-	[[ "$expected_digest" =~ ^[0-9a-f]{128}$ ]] || return 1
+		"${npm_integrity#sha512-}") || { _full_loop_release_channel_pending npm-metadata; return 1; }
+	[[ "$expected_digest" =~ ^[0-9a-f]{128}$ ]] || { _full_loop_release_channel_pending npm-metadata; return 1; }
 
-	audit_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-npm-provenance.XXXXXX") || return 1
+	audit_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-npm-provenance.XXXXXX") || { _full_loop_release_channel_pending npm-provenance; return 1; }
 	(
 		_FULL_LOOP_RELEASE_AUDIT_DIR="$audit_dir"
 		trap 'command rm -rf -- "$_FULL_LOOP_RELEASE_AUDIT_DIR"' EXIT
 		npm install --prefix "$audit_dir" --ignore-scripts --no-audit --no-fund --save-exact \
-			"aidevops@${version}" >/dev/null 2>&1 || exit 1
+			"aidevops@${version}" >/dev/null 2>&1 || { _full_loop_release_channel_pending npm-provenance; exit 1; }
 		audit_json=$(npm --prefix "$audit_dir" audit signatures \
-			--json --include-attestations 2>/dev/null) || exit 1
+			--json --include-attestations 2>/dev/null) || { _full_loop_release_channel_pending npm-provenance; exit 1; }
 		if ! jq -e --arg array_type "$_FULL_LOOP_RELEASE_JSON_ARRAY_TYPE" --arg object_type 'object' '
 			type == $object_type and (.invalid | type == $array_type)
 			and (.missing | type == $array_type) and (.verified | type == $array_type)
@@ -974,7 +1045,7 @@ _full_loop_release_verify_npm_provenance() {
 			| .attestationBundles[]
 			| select(.predicateType == $provenance_predicate)
 		] | length == 1)
-	' <<<"$audit_json" >/dev/null || exit 1
+	' <<<"$audit_json" >/dev/null || { _full_loop_release_channel_pending npm-provenance; exit 1; }
 		provenance_payload=$(jq -er --arg version "$version" \
 			--arg provenance_predicate "$_FULL_LOOP_RELEASE_PROVENANCE_PREDICATE" '
 		[.verified[]
@@ -983,7 +1054,7 @@ _full_loop_release_verify_npm_provenance() {
 			| select(.predicateType == $provenance_predicate)
 			| .bundle.dsseEnvelope.payload
 		] | if length == 1 then .[0] | @base64d else empty end
-	' <<<"$audit_json") || exit 1
+	' <<<"$audit_json") || { _full_loop_release_channel_pending npm-provenance; exit 1; }
 		jq -e --arg subject "pkg:npm/aidevops@${version}" \
 			--arg digest "$expected_digest" --arg repository "https://github.com/${repo}" \
 			--arg tag_ref "refs/tags/${tag_name}" --arg recovery_ref "refs/heads/main" \
@@ -1002,7 +1073,7 @@ _full_loop_release_verify_npm_provenance() {
 		and (.predicate.buildDefinition.externalParameters.workflow.ref == $tag_ref
 			or .predicate.buildDefinition.externalParameters.workflow.ref == $recovery_ref)
 		and .predicate.runDetails.builder.id == "https://github.com/actions/runner/github-hosted"
-	' <<<"$provenance_payload" >/dev/null || exit 1
+	' <<<"$provenance_payload" >/dev/null || { _full_loop_release_channel_pending npm-provenance; exit 1; }
 		exit 0
 	) || audit_rc=$?
 	[[ "$audit_rc" -eq 0 ]] || return "$audit_rc"
@@ -1050,21 +1121,21 @@ _full_loop_release_verify_channels() {
 	local expected_sha=""
 	local npm_rc=0
 
-	release_json=$(gh api "repos/${repo}/releases/tags/${tag_name}" 2>/dev/null) || return 1
+	release_json=$(gh api "repos/${repo}/releases/tags/${tag_name}" 2>/dev/null) || { _full_loop_release_channel_pending github-release; return 1; }
 	jq -e --arg tag "$tag_name" '
 		.tag_name == $tag and .draft == false and ((.published_at // "") | length > 0)
-	' <<<"$release_json" >/dev/null || return 1
+	' <<<"$release_json" >/dev/null || { _full_loop_release_channel_pending github-release; return 1; }
 	_full_loop_release_verify_npm_provenance "$repo" "$tag_name" "$version" || npm_rc=$?
 	[[ "$npm_rc" -eq 0 ]] || return "$npm_rc"
 	npm_version="$_FULL_LOOP_RELEASE_NPM_VERSION"
 	npm_integrity="$_FULL_LOOP_RELEASE_NPM_INTEGRITY"
 	formula=$(gh api "repos/${tap_owner}/homebrew-tap/contents/Formula/aidevops.rb" \
-		--jq '.content | @base64d' 2>/dev/null) || return 1
-	command -v curl >/dev/null 2>&1 || return 1
-	expected_sha=$(curl -fsSL "$tarball_url" | _full_loop_release_sha256_stream) || return 1
+		--jq '.content | @base64d' 2>/dev/null) || { _full_loop_release_channel_pending homebrew-formula; return 1; }
+	command -v curl >/dev/null 2>&1 || { _full_loop_release_channel_pending homebrew-sha; return 1; }
+	expected_sha=$(curl -fsSL "$tarball_url" | _full_loop_release_sha256_stream) || { _full_loop_release_channel_pending homebrew-sha; return 1; }
 	expected_formula=$(_full_loop_release_expected_homebrew_formula \
-		"$repo" "$tag_name" "$expected_sha") || return 1
-	[[ "$formula" == "$expected_formula" ]] || return 1
+		"$repo" "$tag_name" "$expected_sha") || { _full_loop_release_channel_pending homebrew-formula; return 1; }
+	[[ "$formula" == "$expected_formula" ]] || { _full_loop_release_channel_pending homebrew-formula; return 1; }
 	formula_sha="$expected_sha"
 	printf 'GITHUB_RELEASE=%s\n' "$tag_name"
 	printf 'NPM_VERSION=%s\n' "$npm_version"
@@ -1157,7 +1228,12 @@ _full_loop_release_unverified_channels_action() {
 			return 8
 		fi
 	fi
-	_full_loop_release_success_grace_expired "$_FULL_LOOP_RELEASE_RUN_JSON" || return 8
+	if ! _full_loop_release_success_grace_expired "$_FULL_LOOP_RELEASE_RUN_JSON"; then
+		retry_after=$(jq -r '.updated_at | try (fromdateiso8601 + 900 | todateiso8601) catch empty' \
+			<<<"$_FULL_LOOP_RELEASE_RUN_JSON" 2>/dev/null) || retry_after=""
+		[[ -z "$retry_after" ]] || printf 'RELEASE_WAIT=channel-propagation retry_after=%s\n' "$retry_after"
+		return 8
+	fi
 	return 5
 }
 
@@ -1480,7 +1556,10 @@ _full_loop_release_finalize_reconciliation() {
 	[[ "$requested_present" == "$_FULL_LOOP_RELEASE_TRUE" ]] || return 1
 	tag_commit=$(_full_loop_release_resolve_tag_commit "$tag_name") || return 1
 	_full_loop_release_validate_published_reconciliation_intent \
-		"$repo" "$requested_pr" "$tag_name" "$source_json" || return 1
+		"$repo" "$requested_pr" "$tag_name" "$source_json" || {
+		printf 'Published reconciliation refused: missing/invalid local explicit publication authorization or active matching lane for PR #%s (%s); inspect release status and the verified source manifest. Terminal cross-host publication requires interactive adopt-published, not replacement publication intent.\n' "$requested_pr" "$tag_name" >&2
+		return 1
+	}
 	_full_loop_validate_release_candidates "$repo" "$source_json" \
 		"$_FULL_LOOP_RELEASE_RECONCILE_AUTHORIZED" "$tag_name" "$tag_commit" || return 1
 	_full_loop_release_prepare_tag_worktree "$tag_name" || return 1
@@ -1540,6 +1619,7 @@ _full_loop_release_write_protected_successor_receipt() {
 	[[ "$source_merge" =~ $_FULL_LOOP_SHA40_REGEX && "$successor_merge" =~ $_FULL_LOOP_SHA40_REGEX ]] || return 1
 	[[ "$release_tag" =~ $_FULL_LOOP_RELEASE_VERSION_TAG_REGEX && "$release_commit" =~ $_FULL_LOOP_SHA40_REGEX ]] || return 1
 	[[ "$release_run" =~ ^[0-9]+$ && "$release_run" -gt 0 ]] || return 1
+	_full_loop_release_require_successor_receipt "$repo" "$successor_pr" "$release_tag" || return 1
 	source_tag=$(jq -er '.source_tag' <<<"$protected_json") || return 1
 	source_tag_object=$(jq -er '.source_tag_object' <<<"$protected_json") || return 1
 	source_commit=$(jq -er '.source_commit' <<<"$protected_json") || return 1
@@ -1604,6 +1684,26 @@ _full_loop_release_write_protected_successor_receipt() {
 	return $?
 }
 
+_full_loop_release_require_successor_receipt() {
+	local repo="$1" successor_pr="$2" release_tag="$3"
+	local receipt="" status="" adoption="" authorization=""
+	receipt=$(_full_loop_release_receipt_path "$repo" "$successor_pr") || return 1
+	[[ -f "$receipt" ]] || {
+		printf 'Cannot settle stale release: local published receipt for successor PR #%s (%s) is missing; reconcile the successor or run aidevops release adopt-published %s --tag %s in an interactive maintainer session.\n' \
+			"$successor_pr" "$release_tag" "$successor_pr" "$release_tag" >&2
+		return 1
+	}
+	IFS= read -r status <"$receipt" || return 1
+	[[ "$status" == "$_FULL_LOOP_RELEASE_PUBLISHED" ]] || return 1
+	adoption="${receipt%.status}.adoption.json"
+	authorization="${receipt%.status}.adoption-authorization.json"
+	if cmp -s "$receipt" <(printf 'published\ncross-host-adoption/v1\n') ||
+		[[ -e "$adoption" || -L "$adoption" || -e "$authorization" || -L "$authorization" ]]; then
+		_full_loop_release_verify_adoption_evidence "$repo" "$successor_pr" "$release_tag" || return 1
+	fi
+	return 0
+}
+
 _full_loop_release_finalize_stale_supersession() {
 	local repo="$1"
 	local requested_pr="$2"
@@ -1620,8 +1720,6 @@ _full_loop_release_finalize_stale_supersession() {
 	local successor_merge=""
 	local release_commit=""
 	local release_run=""
-	local release_receipt=""
-	local release_status=""
 
 	source_json=$(_full_loop_release_source_json_from_tag "$source_tag") || return 1
 	source_merge=$(jq -er --argjson requested "$requested_pr" '
@@ -1668,10 +1766,7 @@ _full_loop_release_finalize_stale_supersession() {
 		'.id | select(type == $number_type and . > 0 and floor == .)' \
 		<<<"$_FULL_LOOP_RELEASE_RUN_JSON") || return 1
 	[[ -z "$source_run" || "$source_run" != "$release_run" ]] || return 1
-	release_receipt=$(_full_loop_release_receipt_path "$repo" "$successor_pr") || return 1
-	[[ -f "$release_receipt" ]] || return 1
-	IFS= read -r release_status <"$release_receipt" || return 1
-	[[ "$release_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" ]] || return 1
+	_full_loop_release_require_successor_receipt "$repo" "$successor_pr" "$release_tag" || return 1
 
 	if [[ -n "$source_run" ]]; then
 		_full_loop_write_successor_release_receipt "$repo" "$requested_pr" "$source_merge" \
@@ -1833,6 +1928,17 @@ _full_loop_release_handle_inspect_rc() {
 	esac
 }
 
+_full_loop_release_local_adoption_required() {
+	local repo="$1" requested_pr="$2" tag_name="$3"
+	release_lane_read "$repo" || return 1
+	jq -e --argjson pr "$requested_pr" --arg tag "$tag_name" '
+		.active == false and .phase == "terminal" and .terminal_receipt == "published"
+		and .source_pr == $pr and .tag == $tag
+	' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null || return 1
+	printf 'RELEASE_LOCAL_ADOPTION_REQUIRED=1\naidevops release adopt-published %s --tag %s\n' "$requested_pr" "$tag_name"
+	return 0
+}
+
 _full_loop_release_existing_command() {
 	local mode="$1"
 	local requested_pr="$2"
@@ -1915,6 +2021,9 @@ _full_loop_release_existing_command() {
 				printf 'release:superseded already recorded for PR #%s\n' "$requested_pr"
 				;;
 			*)
+				if [[ -z "$receipt_status" ]] && _full_loop_release_local_adoption_required "$repo" "$requested_pr" "$tag_name"; then
+					return 10
+				fi
 				_full_loop_release_finalize_reconciliation "$repo" "$requested_pr" "$tag_name" || return 1
 				printf 'release:published tag=%s\n' "$tag_name"
 				;;

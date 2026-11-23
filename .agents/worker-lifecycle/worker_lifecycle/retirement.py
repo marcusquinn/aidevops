@@ -7,21 +7,19 @@ archive and remaining data retained.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-import fcntl
 import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
-import stat
 import tempfile
-from uuid import UUID, uuid5
+from uuid import UUID
 
 from .archive_path import validate_archive_path
-from .cleanup_plan import _runs, enrolled_only_authorized, prepare_cleanup
+from .cleanup_plan import _runs, never_owned_authorized, prepare_cleanup
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
 from .interrupted_removal import (
@@ -36,6 +34,7 @@ from .preservation import (
     SCRIPTS, _run, _snapshot, inherit_operation_lock, preserve_wip, verify_preservation,
 )
 from .recovery import prepare_retirement, recovery_evidence
+from .retirement_locks import event_id as _event_id, lock_exclusive_named
 from .storage import LifecycleRegistry, StoreConflict
 
 
@@ -50,10 +49,6 @@ class ArchiveTarget:
 def _id(path: Path) -> list[int]:
     info = path.lstat()
     return [info.st_dev, info.st_ino]
-
-
-def _event_id(generation: str, phase: str) -> str:
-    return str(uuid5(UUID(generation), f"retirement-{phase}"))
 
 
 def _event(store: LifecycleRegistry, key: str) -> dict | None:
@@ -80,11 +75,8 @@ def _lock(store: LifecycleRegistry, generation: str) -> Iterator[None]:
     )
     try:
         _private(path)
-        info = os.fstat(descriptor)
-        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
-                or info.st_size != 0 or _id(path) != [info.st_dev, info.st_ino]):
+        if not lock_exclusive_named(descriptor, path):
             raise StoreConflict("invalid-retirement-lock")
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         # Close our descriptor, never explicitly unlock the shared description:
         # an already-started helper may still own it after controller death.
         with inherit_operation_lock(descriptor):
@@ -193,10 +185,15 @@ def _require_private_identity(
         "directory": plan["directory_identity"],
         "git_directory": str(admin), "git_identity": plan["git_identity"],
     }
+    _require_inodes(plan, target, admin)
+    if _git_directory(target) != admin or _read_marker(admin / MARKER) != marker:
+        raise StoreConflict("private-worktree-changed")
+
+
+def _require_inodes(plan: dict, target: Path, admin: Path) -> None:
+    """Bind the private tree and its Git administration directory identities."""
     if (_directory_inode(target) != plan["directory_identity"]
-            or _git_directory(target) != admin
-            or _directory_inode(admin) != plan["git_identity"]
-            or _read_marker(admin / MARKER) != marker):
+            or _directory_inode(admin) != plan["git_identity"]):
         raise StoreConflict("private-worktree-changed")
 
 
@@ -209,15 +206,15 @@ def _removal_start(store: LifecycleRegistry, generation: str) -> int | None:
 
 def _restore_private_link(plan: dict, target: Path, admin: Path) -> None:
     """Bind tree and administration to the plan before restoring a deleted `.git`."""
-    if (_directory_inode(target) != plan["directory_identity"]
-            or _directory_inode(admin) != plan["git_identity"]):
-        raise StoreConflict("private-worktree-changed")
+    _require_inodes(plan, target, admin)
     restore_git_link(target, admin)
 
 
 def _remove_private(
     store: LifecycleRegistry, path: Path, plan: dict, receipt: dict,
+    identity: Callable[..., None] = _require_private_identity,
 ) -> None:
+    """Remove the private tree; `identity` binds it to its plan (foreign: marker bytes)."""
     target, admin = Path(plan["container"]) / "tree", Path(plan["git_directory"])
     generation = plan["generation_id"]
     # Never census a replacement at the public path after private relocation.
@@ -226,7 +223,7 @@ def _remove_private(
     with DirectoryHandle(target) as tree, DirectoryHandle(admin) as metadata:
         if started is not None:
             _restore_private_link(plan, target, admin)
-        _require_private_identity(store, path, plan, target, admin)
+        identity(store, path, plan, target, admin)
         # An interrupted delete resumes only if nothing but deletions followed.
         require_removable(target, started,
                           lambda: _snapshot(target) == receipt["snapshot"], _git)
@@ -242,14 +239,14 @@ def _remove_private(
 
 
 def _validate_owner_evidence(store: LifecycleRegistry, generation: str) -> None:
-    """Require closed admission and either ended owners or operator authorization."""
+    """Require closed admission and either ended owners or never-owned authorization."""
     with store.connection() as connection:
         admission = connection.execute(
             "SELECT state FROM generation_admissions WHERE generation_id=?",
             (generation,),
         ).fetchone()
     rows = _runs(store, generation)
-    enrolled_only = not rows and enrolled_only_authorized(store, generation)
+    enrolled_only = not rows and never_owned_authorized(store, generation)
     if not enrolled_only:
         if admission is None or admission["state"] != "closed":
             raise StoreConflict("retirement-owner-evidence-changed")

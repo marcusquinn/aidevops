@@ -31,7 +31,7 @@ wait
 [[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" 'SELECT COUNT(DISTINCT task_id) FROM tasks;')" == "24" ]]
 [[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" 'SELECT MAX(sequence) FROM tasks;')" == "24" ]]
 [[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" 'PRAGMA journal_mode;')" == "wal" ]]
-[[ "$(stat -f '%Lp' "$AIDEVOPS_TASK_COORDINATOR_DB" 2>/dev/null || stat -c '%a' "$AIDEVOPS_TASK_COORDINATOR_DB")" == "600" ]]
+[[ "$(stat -c '%a' "$AIDEVOPS_TASK_COORDINATOR_DB" 2>/dev/null || stat -f '%Lp' "$AIDEVOPS_TASK_COORDINATOR_DB")" == "600" ]]
 
 # Concurrent delivery of one operation returns one complete, identical result.
 for i in $(seq 1 12); do
@@ -221,7 +221,7 @@ node "$COORDINATOR" attempt --intent-id "$intent" --status published --evidence 
 # Backups are integrity-checked; restore requires a newer fenced ownership epoch.
 backup="${TEST_ROOT}/verified-backup.db"
 sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" ".backup '$backup'"
-inode_before=$(stat -f '%i' "$AIDEVOPS_TASK_COORDINATOR_DB" 2>/dev/null || stat -c '%i' "$AIDEVOPS_TASK_COORDINATOR_DB")
+inode_before=$(stat -c '%i' "$AIDEVOPS_TASK_COORDINATOR_DB" 2>/dev/null || stat -f '%i' "$AIDEVOPS_TASK_COORDINATOR_DB")
 fence=$(node "$COORDINATOR" status | jq -r '.fencing_token')
 node "$COORDINATOR" transition --state read-only --fencing-token "$fence" --evidence '{"reason":"restore-test"}' >/dev/null
 if node "$COORDINATOR" restore --backup "$backup" --registry-evidence '{}' --prior-epoch 1 --new-epoch 1 --fencing-token stale >/dev/null 2>&1; then
@@ -234,7 +234,7 @@ if node "$COORDINATOR" restore --backup "$backup" --registry-evidence '{"cas":"w
 fi
 node "$COORDINATOR" restore --backup "$backup" --registry-evidence '{"cas":"winner","prior_revoked":true,"fencing_token":"restore-fence","transfer_record_id":"transfer-1"}' --prior-epoch 1 --new-epoch 2 --fencing-token restore-fence --published-high-water 100 >/dev/null
 [[ "$(node "$COORDINATOR" status | jq -r '.sequence')" == "100" ]]
-inode_after=$(stat -f '%i' "$AIDEVOPS_TASK_COORDINATOR_DB" 2>/dev/null || stat -c '%i' "$AIDEVOPS_TASK_COORDINATOR_DB")
+inode_after=$(stat -c '%i' "$AIDEVOPS_TASK_COORDINATOR_DB" 2>/dev/null || stat -f '%i' "$AIDEVOPS_TASK_COORDINATOR_DB")
 [[ "$inode_after" == "$inode_before" ]]
 [[ -n "$(ls "${TEST_ROOT}"/coordinator.db-backup-*-pre-restore.db)" ]]
 

@@ -78,11 +78,15 @@ _worktree_release_vacant_path() {
 	result=$("$python" -E -s -B "${helper_dir}/../worker-lifecycle/worker-registry.py" \
 		--state-dir "$state_dir" release-vacant-path --path "$path" 2>/dev/null) || result=""
 	case "$result" in
-	*'"status": "no-reservation"'* | *'"status": "source-absent-reconciled"'*) ;;
 	'') printf 'Stale reservation check unavailable: %s\n' "$path" >&2 ;;
 	*)
-		[[ "$result" =~ \"status\":\ \"([a-z-]+)\" ]] &&
-			printf 'Stale path reservation retained (%s): %s\n' "${BASH_REMATCH[1]}" "$path" >&2
+		# Tolerate any JSON spacing around the colon.
+		if [[ "$result" =~ \"status\"[[:space:]]*:[[:space:]]*\"([a-z-]+)\" ]]; then
+			case "${BASH_REMATCH[1]}" in
+			no-reservation | source-absent-reconciled) ;;
+			*) printf 'Stale path reservation retained (%s): %s\n' "${BASH_REMATCH[1]}" "$path" >&2 ;;
+			esac
+		fi
 		;;
 	esac
 	return 0
@@ -106,13 +110,20 @@ _worktree_display_path() {
 }
 
 # Print one remediation line for a known lifecycle refusal code (GH#36370).
-# Input is the registry's JSON result; only the stable `detail` code is read.
+# Input is the registry's JSON result; only the stable `detail` code is read,
+# or a lowercase `reason` code when there is none (observation refusals such as
+# process-identity-unavailable carry only `reason`; GH#38787).
 _worktree_refusal_remediation() {
 	local result="$1"
 	local state_dir="$2"
 	local code="" registry_cli="" upgrade_cmd=""
-	[[ "$result" =~ \"detail\":\ \"([a-z0-9-]+)\" ]] || return 0
-	code="${BASH_REMATCH[1]}"
+	if [[ "$result" =~ \"detail\":\ \"([a-z0-9-]+)\" ]]; then
+		code="${BASH_REMATCH[1]}"
+	elif [[ "$result" =~ \"reason\":\ \"([a-z0-9-]+)\" ]]; then
+		code="${BASH_REMATCH[1]}"
+	else
+		return 0
+	fi
 	registry_cli=$(cd -- "${BASH_SOURCE[0]%/*}/../worker-lifecycle" 2>/dev/null && pwd -P)/worker-registry.py
 	upgrade_cmd="python3 $(_worktree_display_path "$registry_cli") --state-dir $(_worktree_display_path "$state_dir") upgrade"
 	case "$code" in
@@ -121,6 +132,16 @@ _worktree_refusal_remediation() {
 		;;
 	ref-already-checked-out)
 		printf 'Refusal cause: %s; the ref is checked out in another worktree. Create a new branch instead.\n' "$code" >&2
+		;;
+	process-identity-unavailable | process-already-ended)
+		# GH#38787: a common cause is lifecycle identity inherited from an earlier
+		# session; unavailable can also mean the live process could not be read.
+		printf 'Refusal cause: %s; the process in AIDEVOPS_LIFECYCLE_RUNTIME_PID could not be verified as live. If AIDEVOPS_LIFECYCLE_RUNTIME_PID and AIDEVOPS_LIFECYCLE_SESSION_ID were inherited from an earlier session, relaunch the parent app from a clean environment (not from an aidevops session shell) or unset both.\n' "$code" >&2
+		;;
+	disk-quota-exceeded | disk-full)
+		# GH#37922: retries cannot succeed until space is reclaimed; free files
+		# you own (caches, merged worktrees) rather than raising the quota.
+		printf 'Refusal cause: %s; Git could not write the worktree. Check quota -s and df -h, reclaim space, then retry.\n' "$code" >&2
 		;;
 	reserved-path-without-enrollment-marker | generation-path-reserved)
 		# GH#37706: an earlier generation still reserves this path. Preview first;

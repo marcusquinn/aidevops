@@ -55,7 +55,40 @@ if ! declare -F aidevops_pulse_worker_log_candidates >/dev/null 2>&1 && [[ -r "$
 	# shellcheck source=shared-constants.sh
 	source "${_scl_script_dir}/shared-constants.sh"
 fi
+if [[ -r "${_scl_script_dir}/shared-pr-base.sh" ]]; then
+	# shellcheck source=shared-pr-base.sh
+	source "${_scl_script_dir}/shared-pr-base.sh"
+fi
 unset _scl_script_dir
+
+#######################################
+# Print the lowest-numbered OPEN PR, other than the merged one, that GitHub
+# links as closing the issue. closedByPullRequestsReferences also lists merged
+# PRs, so state is read explicitly. Prints nothing when there is none or the
+# lookup fails.
+# Args: $1=issue_number, $2=repo_slug, $3=merged_pr_number
+#######################################
+_claim_lifecycle_other_open_closer() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local merged_pr="$3"
+	local owner="${repo_slug%%/*}" name="${repo_slug#*/}" result=""
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ && -n "$owner" && -n "$name" && "$name" != */* ]] || return 0
+	# shellcheck disable=SC2016  # $owner/$name/$number are GraphQL variables
+	result=$(gh api graphql -f query='
+query($owner:String!,$name:String!,$number:Int!) {
+  repository(owner:$owner,name:$name) {
+    issue(number:$number) {
+      closedByPullRequestsReferences(first:50) { nodes { number state } }
+    }
+  }
+}' -F owner="$owner" -F name="$name" -F number="$issue_number" 2>/dev/null) || return 0
+	printf '%s' "$result" | jq -r --arg merged "$merged_pr" '
+		[.data.repository.issue.closedByPullRequestsReferences.nodes[]?
+			| select(.state == "OPEN" and (.number | tostring) != $merged) | .number]
+		| min // empty' 2>/dev/null
+	return 0
+}
 
 #######################################
 # Release the interactive claim for a linked issue after a PR merge.
@@ -117,6 +150,17 @@ release_interactive_claim_on_merge() {
 	if ! jq -e --arg repo "$repo_slug" --argjson issue "$linked_issue" \
 		'.slug == $repo and .issue == $issue' "$_stamp_file" >/dev/null 2>&1; then
 		echo "[claim-lifecycle] Claim stamp mismatch for ${repo_slug}#${linked_issue}; skipping release (GH#28690)" >>"$_log"
+		return 0
+	fi
+
+	# Guard 4 (GH#39704): a merged planning/Ref PR is not the issue's work while
+	# another open PR still closes it; releasing would unassign the owner and
+	# mark the issue available mid-review. Only positive evidence skips: a
+	# failed lookup keeps the release so claims are never stranded.
+	local _open_closer=""
+	_open_closer=$(_claim_lifecycle_other_open_closer "$linked_issue" "$repo_slug" "$pr_number")
+	if [[ -n "$_open_closer" ]]; then
+		echo "[claim-lifecycle] Open PR #${_open_closer} still closes ${repo_slug}#${linked_issue}; keeping interactive claim after PR #${pr_number} merged (GH#39704)" >>"$_log"
 		return 0
 	fi
 
@@ -205,6 +249,11 @@ _pr_handoff_state_is_completion_candidate() {
 	[[ "$pr_state" == "ready" || "$pr_state" == "merged" ]]
 }
 
+# GH#39205: the deterministic merge closeout (pulse-merge-pr-closeout.sh,
+# _pm_upsert_pr_closing_comment) rewrites the worker's MERGE_SUMMARY singleton
+# in place under its own per-PR marker and strips the summary marker. That
+# closeout marker is the post-merge form of the same summary; without it every
+# pulse-merged worker PR read back as merged_missing_summary (a false failure).
 _pr_handoff_has_merge_summary() {
 	local repo_slug="$1"
 	local pr_number="$2"
@@ -214,7 +263,10 @@ _pr_handoff_has_merge_summary() {
 	comments_json=$(gh api --paginate --slurp \
 		"repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" 2>/dev/null) || return 1
 	summary_count=$(printf '%s' "$comments_json" | jq -r \
-		'[.[][] | select(.body | test("<!-- MERGE_SUMMARY -->"))] | length' 2>/dev/null) || return 1
+		--arg summary_marker '<!-- MERGE_SUMMARY -->' \
+		--arg closeout_marker "<!-- PULSE_MERGE_CLOSEOUT:PR#${pr_number} -->" \
+		'[.[][] | (.body // "") | select(contains($summary_marker) or contains($closeout_marker))] | length' \
+		2>/dev/null) || return 1
 	[[ "$summary_count" =~ ^[0-9]+$ && "$summary_count" -gt 0 ]]
 }
 
@@ -330,40 +382,24 @@ _pr_exists_for_branch_or_issue() {
 #######################################
 # _resolve_orphan_recovery_base_branch — PR base for orphan recovery.
 #
-# Prefers an explicit dispatch PR base, then repository configuration, over
-# GitHub's default branch. This covers managed repos whose integration branch
-# is `develop` while their default branch remains `main` (GH#80/GH#24800).
+# Delegates to the shared resolver (shared-pr-base.sh, GH#39167): explicit
+# dispatch PR base, then repository configuration, then GitHub's default
+# branch. This covers managed repos whose integration branch is `develop`
+# while their default branch remains `main` (GH#80/GH#24800).
 #
 # Args:
 #   $1 = repo_slug (owner/repo)
 #   $2 = work_dir   (path to git worktree; optional)
 # Outputs: branch name
-# Returns: 0 always (falls back to main)
+# Returns: 0 resolved, 1 unresolvable (never guesses `main`)
 #######################################
 _resolve_orphan_recovery_base_branch() {
 	local repo_slug="$1"
 	local work_dir="${2:-}"
-	local base_branch="${WORKER_PR_BASE_BRANCH:-${DISPATCH_REPO_PR_BASE_BRANCH:-${AIDEVOPS_PR_BASE_BRANCH:-}}}"
-
-	if [[ -z "$base_branch" && -n "$work_dir" && -f "${work_dir}/.aidevops.json" ]] && command -v jq >/dev/null 2>&1; then
-		base_branch=$(jq -r '.pr_base_branch // .pr_target_branch // .base_branch // .default_branch // empty' "${work_dir}/.aidevops.json" 2>/dev/null || true)
-	fi
-
-	local repos_json="${AIDEVOPS_REPOS_JSON:-${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}}"
-	if [[ -z "$base_branch" && -n "$repo_slug" && -f "$repos_json" ]] && command -v jq >/dev/null 2>&1; then
-		base_branch=$(jq -r --arg slug "$repo_slug" '
-			.initialized_repos[]?
-			| select(.slug == $slug)
-			| .pr_base_branch // .pr_target_branch // .base_branch // .default_branch // empty
-		' "$repos_json" 2>/dev/null | sed -n '1p') || base_branch=""
-	fi
-
-	if [[ -z "$base_branch" && -n "$repo_slug" ]]; then
-		base_branch=$(gh repo view "$repo_slug" \
-			--json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)
-	fi
-
-	printf '%s' "${base_branch:-main}"
+	local base_branch=""
+	declare -F aidevops_pr_base_branch >/dev/null 2>&1 || return 1
+	base_branch=$(aidevops_pr_base_branch "$repo_slug" "$work_dir") || return 1
+	printf '%s' "$base_branch"
 	return 0
 }
 
@@ -473,8 +509,45 @@ _create_orphan_recovery_pr() {
 	if [[ "$recovery_mode" == "draft" ]]; then
 		create_args+=(--draft)
 	fi
-	gh pr create "${create_args[@]}" >/dev/null 2>&1 # aidevops-allow: raw-gh-wrapper
-	return $?
+	local create_output=""
+	create_output=$(gh pr create "${create_args[@]}" 2>/dev/null) || return 1 # aidevops-allow: raw-gh-wrapper
+	local recovery_pr=""
+	recovery_pr=$(printf '%s\n' "$create_output" | grep -oE '/pull/[0-9]+' | tail -n 1 | grep -oE '[0-9]+' || true)
+	_reconcile_duplicate_recovery_pr "$repo_slug" "$branch_name" "$base_branch" "$recovery_pr"
+	return 0
+}
+
+#######################################
+# _reconcile_duplicate_recovery_pr — close a recovery PR that lost a create race
+#
+# The pre-create handoff probe is check-then-act: when the worker's own
+# `gh pr create` is in flight, the probe reports `absent` and both creates
+# succeed, doubling CI. After creating the recovery PR, list open PRs for the
+# same head/base; if another exists, close the recovery PR as a duplicate and
+# keep the branch. Best-effort: probe failures leave the recovery PR open.
+#
+# Args: $1=repo_slug $2=branch_name $3=base_branch $4=recovery PR number
+# Returns: 0 always
+#######################################
+_reconcile_duplicate_recovery_pr() {
+	local repo_slug="$1"
+	local branch_name="$2"
+	local base_branch="$3"
+	local recovery_pr="$4"
+	local other_pr=""
+
+	[[ "$recovery_pr" =~ ^[1-9][0-9]*$ ]] || return 0
+	other_pr=$(gh pr list --repo "$repo_slug" --head "$branch_name" --base "$base_branch" \
+		--state open --json number \
+		--jq "[.[].number | select(. != ${recovery_pr})] | first // empty" 2>/dev/null || true) # aidevops-allow: raw-gh-wrapper
+	[[ "$other_pr" =~ ^[1-9][0-9]*$ ]] || return 0
+
+	# No --delete-branch: the branch backs the surviving PR.
+	if gh pr close "$recovery_pr" --repo "$repo_slug" \
+		--comment "Duplicate of #${other_pr} (same head branch). Closing the orphan-recovery PR; the branch is kept." >/dev/null 2>&1; then # aidevops-allow: raw-gh-wrapper
+		echo "[orphan-recovery] closed duplicate recovery PR #${recovery_pr} in favour of #${other_pr} for ${branch_name}" >>"${LOGFILE:-/dev/null}"
+	fi
+	return 0
 }
 
 #######################################
@@ -499,6 +572,29 @@ _scl_worker_issue_number() {
 		return 0
 	fi
 
+	return 0
+}
+
+#######################################
+# _orphan_recovery_pr_title — validator-compliant recovery PR title (GH#38781)
+#
+# Titles must pass full-loop's squash-subject validator: `GH#N: ` task prefix
+# or a Conventional Commit type. Legacy `auto-recover:`/`checkpoint:` titles
+# are no longer generated.
+# Arguments: $1 issue number (may be empty), $2 recovery mode ("draft" or other)
+# Output: title on stdout
+#######################################
+_orphan_recovery_pr_title() {
+	local issue_number="$1"
+	local recovery_mode="$2"
+	local subject="chore: auto-recover orphaned worker branch"
+	if [[ "$recovery_mode" == "draft" ]]; then
+		subject="chore: recover dirty worker worktree checkpoint"
+	fi
+	if [[ -n "$issue_number" ]]; then
+		subject="GH#${issue_number}: ${subject}"
+	fi
+	printf '%s\n' "$subject"
 	return 0
 }
 
@@ -616,17 +712,17 @@ _attempt_orphan_recovery_pr() {
 	esac
 
 	local base_branch=""
-	base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
+	if ! base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir"); then
+		echo "[orphan-recovery] cannot resolve PR base for ${repo_slug}; not creating a recovery PR for ${branch_name} (GH#39167)" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
 
 	# Build PR metadata. Non-closing issue reference by design (GH#32933).
-	local pr_title="auto-recover: orphaned worker branch"
+	local pr_title=""
+	pr_title=$(_orphan_recovery_pr_title "$issue_number" "$recovery_mode")
 	local issue_reference_line=""
 	if [[ -n "$issue_number" ]]; then
-		pr_title="auto-recover: orphaned worker branch for #${issue_number}"
 		issue_reference_line="For #${issue_number}"
-	fi
-	if [[ "$recovery_mode" == "draft" ]]; then
-		pr_title="checkpoint: recover dirty worker worktree for #${issue_number}"
 	fi
 
 	local pr_body

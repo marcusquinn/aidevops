@@ -4,7 +4,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-import { parseImageSse, requestApiImage, requestOAuthImage } from "../gpt-image-request.mjs";
+import { parseImageSse, requestApiImage, requestOAuthImage, requestOpenRouterImage } from "../gpt-image-request.mjs";
 
 const IMAGE_RESULT = "aW1hZ2UtcmVzdWx0";
 
@@ -216,6 +216,103 @@ describe("GPT image provider requests", () => {
     assert.deepEqual(models, ["gpt-6-sol"]);
     assert.equal(result.error.code, "model_not_found");
     assert.equal(result.base64, "");
+  });
+
+  test("reports bounded compatibility failure when live models strip image_generation", async () => {
+    const models = [];
+    const result = await requestOAuthImage(
+      { accessToken: "oauth-test-token" },
+      { prompt: "draw a test", quality: "auto", size: "auto", format: "png" },
+      [],
+      async (_url, init) => {
+        if (init.method === "GET") return Response.json({ models: [{ slug: "gpt-reserve" }, { slug: "gpt-6-luna" }] });
+        models.push(JSON.parse(init.body).model);
+        if (models.length === 1) return Response.json({ error: { code: "model_not_found", message: "no" } }, { status: 400 });
+        return Response.json({ error: { message: "Tool choice 'image_generation' not found in 'tools' parameter" } }, { status: 400 });
+      },
+    );
+    assert.deepEqual(models, ["gpt-6-sol", "gpt-reserve", "gpt-6-luna"]);
+    assert.equal(result.error.code, "no_compatible_image_model");
+    assert.match(result.error.message, /among the attempted candidates/);
+    assert.match(result.error.message, /does not establish account-wide image entitlement/);
+  });
+
+  test("classifies streamed router failures and skips error-bearing HTTP 200 candidates", async () => {
+    const models = [];
+    const result = await requestOAuthImage(
+      { accessToken: "test" }, { prompt: "draw a test" }, [],
+      async (_url, init) => {
+        if (init.method === "GET") return Response.json({ models: ["missing-model", "stripped-model", "working-model"] });
+        const model = JSON.parse(init.body).model;
+        models.push(model);
+        const event = model === "working-model"
+          ? { type: "response.output_item.done", item: { type: "image_generation_call", result: IMAGE_RESULT } }
+          : { type: "response.failed", response: { error: model === "stripped-model"
+            ? { message: "Tool choice 'image_generation' not found in 'tools' parameter" }
+            : { code: "model_not_found", message: "unavailable" } } };
+        return new Response(`data: ${JSON.stringify(event)}\n\n`, { status: 200 });
+      },
+    );
+    assert.deepEqual(models, ["gpt-6-sol", "missing-model", "stripped-model", "working-model"]);
+    assert.equal(result.base64, IMAGE_RESULT);
+    assert.equal(result.routerModel, "working-model");
+    assert.equal(result.error, undefined);
+  });
+
+  test("does not claim account-wide entitlement after initial or capped stripped-tool probes", async () => {
+    for (const initialStripped of [true, false]) {
+      const models = [];
+      const result = await requestOAuthImage(
+        { accessToken: "test" }, { prompt: "draw a test" }, [],
+        async (_url, init) => {
+          if (init.method === "GET") return Response.json({ models: ["candidate-1", "candidate-2", "candidate-3", "untried-model"] });
+          models.push(JSON.parse(init.body).model);
+          const error = !initialStripped && models.length === 1
+            ? { code: "model_not_found", message: "unavailable" }
+            : { message: "Tool choice 'image_generation' not found in 'tools' parameter" };
+          return new Response(`data: ${JSON.stringify({ type: "response.failed", response: { error } })}\n\n`, { status: 200 });
+        },
+      );
+      assert.equal(models.length, initialStripped ? 1 : 4);
+      assert.equal(models.includes("untried-model"), false);
+      assert.equal(result.base64, "");
+      assert.equal(result.error.code, "no_compatible_image_model");
+      assert.match(result.error.message, /among the attempted candidates/);
+      assert.match(result.error.message, /does not establish account-wide image entitlement/);
+    }
+  });
+
+  test("retries a rejected router with an image-capable live model", async () => {
+    const event = `data: ${JSON.stringify({ type: "response.output_item.done", item: { type: "image_generation_call", result: IMAGE_RESULT } })}\n\n`;
+    const result = await requestOAuthImage(
+      { accessToken: "oauth-test-token" },
+      { prompt: "draw a test", quality: "auto", size: "auto", format: "png" },
+      [],
+      async (_url, init) => {
+        if (init.method === "GET") return Response.json({ models: [{ slug: "gpt-reserve" }] });
+        if (JSON.parse(init.body).model === "gpt-6-sol") {
+          return Response.json({ error: { code: "model_not_found", message: "no" } }, { status: 400 });
+        }
+        return new Response(event, { status: 200 });
+      },
+    );
+    assert.equal(result.routerModel, "gpt-reserve");
+    assert.equal(result.base64, IMAGE_RESULT);
+  });
+
+  test("sends OpenRouter image requests and reads data[0].b64_json", async () => {
+    let captured;
+    const result = await requestOpenRouterImage(
+      { accessToken: "or-test-token" },
+      { prompt: "draw a test", quality: "high", size: "1536x1024", format: "png" },
+      async (url, init) => {
+        captured = { url, body: JSON.parse(init.body) };
+        return Response.json({ data: [{ b64_json: "QUJD" }] });
+      },
+    );
+    assert.equal(captured.url, "https://openrouter.ai/api/v1/images");
+    assert.equal(captured.body.model, "openai/gpt-image-2.6-sunburst");
+    assert.equal(result.base64, "QUJD");
   });
 
   test("does not retry non-model OAuth errors", async () => {

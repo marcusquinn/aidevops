@@ -19,6 +19,53 @@ readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
 # not the caller's working directory.
 CONFIG_FILE="${HOSTINGER_CONFIG_FILE:-$SCRIPT_DIR/../configs/hostinger-config.json}"
 
+# Secret-store name holding the API token (GH#38589). The default name resolves
+# through `aidevops secret default hostinger NAME`; set another stored name to
+# use a second login for one call. Matches COOLIFY_SECRET_NAME.
+readonly HOSTINGER_DEFAULT_SECRET_NAME="HOSTINGER_API_TOKEN"
+HOSTINGER_SECRET_NAME="${HOSTINGER_SECRET_NAME:-$HOSTINGER_DEFAULT_SECRET_NAME}"
+
+# In the re-executed child, expose the selected secret under the variable the
+# API code and Python engines read, for this process tree only.
+if [[ -n "${HOSTINGER_API_REEXEC:-}" && "$HOSTINGER_SECRET_NAME" =~ ^[A-Z][A-Z0-9_]*$ &&
+    "$HOSTINGER_SECRET_NAME" != "$HOSTINGER_DEFAULT_SECRET_NAME" ]]; then
+    export HOSTINGER_API_TOKEN="${!HOSTINGER_SECRET_NAME:-}"
+    unset "$HOSTINGER_SECRET_NAME"
+fi
+
+# Decide how API commands obtain the token: 0 = re-exec under secret-store
+# injection, 1 = use the environment/config as before, 2 = refuse (invalid
+# selector, or an explicitly selected secret that is not stored).
+hostinger_secret_mode() {
+    local name="$HOSTINGER_SECRET_NAME"
+    if [[ ! "$name" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+        print_error "Invalid HOSTINGER_SECRET_NAME: use an UPPER_SNAKE secret name, e.g. HOSTINGER_<ACCOUNT>_API_TOKEN" >&2
+        return 2
+    fi
+    [[ -z "${HOSTINGER_API_REEXEC:-}" ]] || return 1
+    if [[ "$name" == "$HOSTINGER_DEFAULT_SECRET_NAME" ]]; then
+        [[ -z "${HOSTINGER_API_TOKEN:-}" ]] || return 1
+        command -v aidevops >/dev/null 2>&1 || return 1
+        aidevops secret check "$name" >/dev/null 2>&1 || return 1
+        return 0
+    fi
+    if command -v aidevops >/dev/null 2>&1 && aidevops secret check "$name" >/dev/null 2>&1; then
+        return 0
+    fi
+    print_error "Selected Hostinger secret is not stored: $name" >&2
+    print_info "Store it with: aidevops secret set $name --provider hostinger --account REF" >&2
+    return 2
+}
+
+# Re-run this helper with the selected secret injected. The value never
+# appears on argv; api_call passes it to curl on stdin.
+hostinger_secret_reexec() {
+    local status=0
+    HOSTINGER_API_REEXEC=1 aidevops secret "$HOSTINGER_SECRET_NAME" -- \
+        "$SCRIPT_DIR/hostinger-helper.sh" "$@" || status=$?
+    return "$status"
+}
+
 # Check if config file exists
 check_config() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -149,8 +196,10 @@ exec_on_site() {
 }
 
 # API operations: api [METHOD] ENDPOINT [JSON_BODY]
-# The token comes from HOSTINGER_API_TOKEN, else the aidevops secret store
-# (re-exec with injection, like fleet/cron), else the legacy config file.
+# The token comes from HOSTINGER_API_TOKEN, else the secret named by
+# HOSTINGER_SECRET_NAME (re-exec with injection, like fleet/cron), else the
+# legacy config file. A non-default HOSTINGER_SECRET_NAME wins over an exported
+# HOSTINGER_API_TOKEN; the default name keeps an exported token.
 # It is passed to curl on stdin, never on the command line.
 api_call() {
     local first="${1:-}"
@@ -174,19 +223,22 @@ api_call() {
         return 1
     fi
 
-    if [[ -z "$api_token" && -z "${HOSTINGER_API_REEXEC:-}" ]] &&
-        command -v aidevops >/dev/null 2>&1 &&
-        aidevops secret check HOSTINGER_API_TOKEN >/dev/null 2>&1; then
+    local mode=0
+    hostinger_secret_mode || mode=$?
+    if [[ "$mode" -eq 2 ]]; then
+        return 1
+    fi
+    if [[ "$mode" -eq 0 ]]; then
         local status=0
-        HOSTINGER_API_REEXEC=1 aidevops secret HOSTINGER_API_TOKEN -- \
-            "$SCRIPT_DIR/hostinger-helper.sh" api "$method" "$endpoint" "$body" || status=$?
+        hostinger_secret_reexec api "$method" "$endpoint" "$body" || status=$?
         return "$status"
     fi
 
     if [[ -z "$api_token" ]]; then
         if [[ ! -f "$CONFIG_FILE" ]]; then
             print_error "Hostinger API token not found"
-            print_info "Store it with: aidevops secret set HOSTINGER_API_TOKEN"
+            print_info "Store it with: aidevops secret set HOSTINGER_<ACCOUNT>_API_TOKEN --provider hostinger --account REF"
+            print_info "Then: aidevops secret default hostinger HOSTINGER_<ACCOUNT>_API_TOKEN"
             return 1
         fi
         check_config
@@ -301,14 +353,19 @@ fleet_command() {
     inventory)
         shift
         for argument in "$@"; do
-            [[ "$argument" == "--api-response" ]] && offline=1
+            case "$argument" in
+            --api-response | --api-response=*) offline=1 ;;
+            esac
         done
         # Inject the token from the secret store without exposing it.
-        if [[ "$offline" -eq 0 && -z "${HOSTINGER_API_TOKEN:-}" ]] &&
-            command -v aidevops >/dev/null 2>&1 &&
-            aidevops secret check HOSTINGER_API_TOKEN >/dev/null 2>&1; then
-            aidevops secret HOSTINGER_API_TOKEN -- python3 "$engine" inventory "$@" || status=$?
-            return "$status"
+        if [[ "$offline" -eq 0 ]]; then
+            local mode=0
+            hostinger_secret_mode || mode=$?
+            [[ "$mode" -ne 2 ]] || return 1
+            if [[ "$mode" -eq 0 ]]; then
+                hostinger_secret_reexec fleet inventory "$@" || status=$?
+                return "$status"
+            fi
         fi
         python3 "$engine" inventory "$@" || status=$?
         return "$status"
@@ -375,10 +432,11 @@ cron_command() {
 
     case "$subcommand" in
     list | create | delete | output)
-        if [[ -z "${HOSTINGER_API_TOKEN:-}" ]] &&
-            command -v aidevops >/dev/null 2>&1 &&
-            aidevops secret check HOSTINGER_API_TOKEN >/dev/null 2>&1; then
-            aidevops secret HOSTINGER_API_TOKEN -- python3 "$engine" "$@" || status=$?
+        local mode=0
+        hostinger_secret_mode || mode=$?
+        [[ "$mode" -ne 2 ]] || return 1
+        if [[ "$mode" -eq 0 ]]; then
+            hostinger_secret_reexec cron "$@" || status=$?
             return "$status"
         fi
         python3 "$engine" "$@" || status=$?
@@ -770,6 +828,479 @@ origin_block_command() {
     done
     return "$status"
 }
+# --- subdomain-ssl: onboard a multisite child behind Cloudflare (no wildcard) ---
+# Cloudflare token comes from the secret store by name; it is passed to curl on
+# stdin. The origin IP, hosting username and tokens are never printed.
+SDS_CF_SECRET=""
+SDS_WORK_DIR="${HOSTINGER_SDS_WORK_DIR:-$HOME/.aidevops/.agent-workspace/work/hostinger-subdomain-ssl}"
+
+_sds_valid_host() {
+    local host="${1:-}"
+    [[ "$host" =~ ^[[:alnum:]]([[:alnum:].-]*[[:alnum:]])?$ && "$host" != *..* ]] || return 1
+    return 0
+}
+
+# Cloudflare API call with the token injected by the secret store. Request
+# parts travel in SDS_* variables so the inline script uses no positionals.
+_sds_cf() {
+    local method="$1"
+    local path="$2"
+    local body="${3:-}"
+    # shellcheck disable=SC2016 # inline script must expand in the child shell, not here
+    SDS_METHOD="$method" SDS_PATH="$path" SDS_BODY="$body" SDS_TOKEN_NAME="$SDS_CF_SECRET" \
+        aidevops secret "$SDS_CF_SECRET" -- bash -c '
+        args=(-sS --max-time 30 -K - -X "$SDS_METHOD" -H "Content-Type: application/json")
+        [[ -z "$SDS_BODY" ]] || args+=(--data-binary "$SDS_BODY")
+        printf "header = \"Authorization: Bearer %s\"\n" "${!SDS_TOKEN_NAME}" |
+            curl "${args[@]}" "https://api.cloudflare.com/client/v4/$SDS_PATH"
+    '
+    return $?
+}
+
+# Run a Cloudflare call; succeed only when the API reports success.
+_sds_cf_checked() {
+    local response
+    response=$(_sds_cf "$@") || return 1
+    if ! printf '%s' "$response" | jq -e '.success == true' >/dev/null 2>&1; then
+        print_error "Cloudflare API request failed: $(printf '%s' "$response" | jq -r '[.errors[]?.message] | join("; ")' 2>/dev/null)" >&2
+        return 1
+    fi
+    printf '%s' "$response"
+    return 0
+}
+
+_sds_cf_record() {
+    local method="$1"
+    local zone="$2"
+    local record_id="$3"
+    local body="${4:-}"
+    _sds_cf_checked "$method" "zones/$zone/dns_records/$record_id" "$body"
+    return $?
+}
+
+# Restore a saved record state: PUT the original back over the temporary record,
+# or delete the temporary record when none existed.
+# Snapshot JSON: {zone, fqdn, temp_id, original: <record object or null>}.
+_sds_restore_snapshot() {
+    local snapshot="$1"
+    local zone temp_id body
+
+    zone=$(jq -er '.zone' "$snapshot") || return 1
+    temp_id=$(jq -er '.temp_id' "$snapshot") || return 1
+    if jq -e '.original == null' "$snapshot" >/dev/null; then
+        _sds_cf_record DELETE "$zone" "$temp_id" >/dev/null || return 1
+        print_info "Removed temporary record; the wildcard/other records apply again"
+        return 0
+    fi
+    body=$(jq -c '.original | {type, name, content, proxied, ttl, comment}' "$snapshot") || return 1
+    _sds_cf_record PUT "$zone" "$temp_id" "$body" >/dev/null || return 1
+    print_info "Restored the saved DNS record shape"
+    return 0
+}
+
+_sds_resolve_username() {
+    local apex="$1"
+    local encoded
+    encoded=$(jq -rn --arg d "$apex" '$d | @uri') || return 1
+    api_call GET "api/hosting/v1/websites?domain=$encoded" |
+        jq -er --arg d "$apex" '[.data[] | select(.domain == $d)] | .[0].username // empty' || {
+        print_error "Could not resolve hosting username for: $apex" >&2
+        return 1
+    }
+    return 0
+}
+
+_sds_subdomain_names() {
+    local username="$1"
+    local apex="$2"
+    local response
+    response=$(api_call GET "api/hosting/v1/accounts/$username/websites/$apex/subdomains") || return 1
+    printf '%s' "$response" | jq -r '
+        [(.data? // .)[]? | (.subdomain? // .domain? // .)] | .[]' || return 1
+    return 0
+}
+
+# Print the current SSL status (or "unknown" when unreadable).
+_sds_ssl_state() {
+    local username="$1"
+    local fqdn="$2"
+    local response state
+    response=$(api_call GET "api/hosting/v1/accounts/$username/websites/$fqdn/ssl/status") || response=""
+    state=$(printf '%s' "$response" | jq -r '.status // .data.status // "unknown"' 2>/dev/null) || state="unknown"
+    printf '%s\n' "$state"
+    return 0
+}
+
+# Print the restore command for a kept checkpoint.
+_sds_restore_hint() {
+    local snapshot="$1"
+    print_info "Restore: $0 subdomain-ssl --restore $snapshot --zone-token-secret $SDS_CF_SECRET" >&2
+    return 0
+}
+
+_sds_poll_ssl() {
+    local username="$1"
+    local fqdn="$2"
+    local attempts="${HOSTINGER_SDS_POLL_ATTEMPTS:-15}"
+    local interval="${HOSTINGER_SDS_POLL_INTERVAL:-60}"
+    local attempt state
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
+        state=$(_sds_ssl_state "$username" "$fqdn")
+        printf 'ssl-status %s (check %s/%s)\n' "$state" "$attempt" "$attempts"
+        if [[ "$state" == "active" ]]; then
+            return 0
+        fi
+        ((attempt == attempts)) || sleep "$interval"
+    done
+    return 1
+}
+
+_sds_verify_origin() {
+    local ip="$1"
+    local fqdn="$2"
+    local output
+    local timeout_cmd="timeout"
+    command -v timeout >/dev/null 2>&1 || timeout_cmd="gtimeout"
+    output=$("$timeout_cmd" 30 openssl s_client -connect "$ip:443" -servername "$fqdn" \
+        -verify_hostname "$fqdn" -verify_return_error </dev/null 2>&1) || return 1
+    [[ "$output" == *'Verification: OK'* ]] || return 1
+    return 0
+}
+
+_sds_check_cloudflare_https() {
+    local fqdn="$1"
+    local attempt code=""
+    for ((attempt = 1; attempt <= 6; attempt++)); do
+        code=$(curl -sS -o /dev/null --max-time 20 -w '%{http_code}' "https://$fqdn/" 2>/dev/null) || code=""
+        if [[ "$code" == "200" ]]; then
+            printf 'https via Cloudflare: 200\n'
+            return 0
+        fi
+        ((attempt == 6)) || sleep 10
+    done
+    printf 'https via Cloudflare: %s\n' "${code:-no response}" >&2
+    return 1
+}
+
+# Compare WordPress network domains with Hostinger subdomains; probe each for 525.
+_sds_audit() {
+    local apex="$1"
+    local alias="$2"
+    local username names domains domain name code
+    local findings=0
+
+    username=$(_sds_resolve_username "$apex") || return 1
+    names=$(_sds_subdomain_names "$username" "$apex") || return 1
+    domains=$(ssh -o BatchMode=yes "$alias" "cd domains/$apex/public_html && wp site list --field=domain") || return 1
+    while IFS= read -r domain; do
+        [[ -n "$domain" && "$domain" == *".$apex" ]] || continue
+        name="${domain%".$apex"}"
+        if ! grep -qxF -e "$name" -e "$domain" <<<"$names"; then
+            printf 'missing-subdomain %s\n' "$domain"
+            findings=$((findings + 1))
+        fi
+        code=$(curl -sS -o /dev/null --max-time 20 -w '%{http_code}' "https://$domain/" 2>/dev/null) || code="000"
+        if [[ "$code" == "525" ]]; then
+            printf '525 %s\n' "$domain"
+            findings=$((findings + 1))
+        fi
+        sleep 1
+    done <<<"$domains"
+    printf 'audit complete: %s finding(s)\n' "$findings"
+    ((findings == 0)) || return 1
+    return 0
+}
+
+_sds_usage() {
+    echo "Usage: $0 subdomain-ssl NAME.APEX --zone-token-secret SECRET [--origin-host HOST] [--apply]"
+    echo "       $0 subdomain-ssl --restore SNAPSHOT --zone-token-secret SECRET"
+    echo "       $0 subdomain-ssl --audit APEX --ssh ALIAS"
+    echo ""
+    echo "Preview unless --apply is given (read-only requests only). The origin IP is read"
+    echo "from the Cloudflare A record of --origin-host (default: the apex), never printed."
+    return 0
+}
+
+# Core preview/apply flow once arguments are validated.
+_sds_run() {
+    local fqdn="$1"
+    local origin_host="$2"
+    local apply="$3"
+    local name="${fqdn%%.*}"
+    local apex="${fqdn#*.}"
+    local username zone origin_ip existing count snapshot shape
+    local exists_sub=0 wildcard_count
+    # Bound every Hostinger request (adds --fail so HTTP errors are failures);
+    # exported so it survives secret-store re-execution.
+    local -x HOSTINGER_API_BOUNDED=1
+
+    if [[ "$apply" == "1" ]] && ! command -v timeout >/dev/null 2>&1 && ! command -v gtimeout >/dev/null 2>&1; then
+        print_error "Missing dependency: timeout (GNU coreutils; gtimeout on macOS via brew install coreutils)" >&2
+        return 1
+    fi
+    local ssl_help="" existing_names
+    [[ "$apply" == "1" ]] && ssl_help=$(openssl s_client -help 2>&1 || true)
+    if [[ "$apply" == "1" && "$ssl_help" != *'-verify_hostname'* ]]; then
+        print_error "Missing dependency: openssl with s_client -verify_hostname support (OpenSSL 1.1+; LibreSSL may lack it)" >&2
+        return 1
+    fi
+    username=$(_sds_resolve_username "$apex") || return 1
+    existing_names=$(_sds_subdomain_names "$username" "$apex") || return 1
+    if grep -qxF -e "$name" -e "$fqdn" <<<"$existing_names"; then
+        exists_sub=1
+    fi
+    zone=$(_sds_cf_checked GET "zones?name=$apex" | jq -er '.result[0].id') || {
+        print_error "Cloudflare zone not found for: $apex" >&2
+        return 1
+    }
+    origin_ip=$(_sds_cf_checked GET "zones/$zone/dns_records?type=A&name=$origin_host" | jq -er '.result[0].content') || {
+        print_error "No A record for origin host: $origin_host (use --origin-host)" >&2
+        return 1
+    }
+    existing=$(_sds_cf_checked GET "zones/$zone/dns_records?name=$fqdn") || return 1
+    count=$(printf '%s' "$existing" | jq '.result | length') || return 1
+    if ((count > 1)); then
+        print_error "More than one DNS record exists for $fqdn; resolve manually first" >&2
+        return 1
+    fi
+    shape="none (wildcard)"
+    if ((count == 0)); then
+        wildcard_count=$(_sds_cf_checked GET "zones/$zone/dns_records?name=%2A.$apex" | jq '.result | length') || return 1
+        if ((wildcard_count == 0)); then
+            print_error "No DNS record for $fqdn and no wildcard in $apex; create the proxied record first so it has a route after restore" >&2
+            return 1
+        fi
+    fi
+    if ((count == 1)); then
+        shape=$(printf '%s' "$existing" | jq -r '.result[0] | .type + (if .proxied then " proxied" else "" end)') || return 1
+    fi
+    printf 'plan for %s\n' "$fqdn"
+    printf '  1. hosting subdomain: %s\n' "$([[ "$exists_sub" -eq 1 ]] && echo present || echo 'add (public directory)')"
+    printf '  2. Cloudflare record (%s): save, then replace with DNS-only A to the origin\n' "$shape"
+    printf '  3. poll ssl-status until active\n'
+    printf '  4. verify origin certificate, restore saved record, check HTTPS via Cloudflare\n'
+    if [[ "$apply" != "1" ]]; then
+        printf 'Preview only; no changes made. Re-run with --apply.\n'
+        return 0
+    fi
+
+    if [[ "$exists_sub" -eq 0 ]]; then
+        api_call POST "api/hosting/v1/accounts/$username/websites/$apex/subdomains" \
+            "$(jq -cn --arg s "$name" '{subdomain: $s, is_using_public_directory: true}')" >/dev/null || return 1
+        printf 'subdomain added\n'
+    fi
+
+    snapshot=$(_sds_swap_record "$fqdn" "$zone" "$origin_ip" "$count" "$existing") || return 1
+    printf 'DNS-only record in place; snapshot: %s\n' "$snapshot"
+    _sds_finish "$username" "$fqdn" "$origin_ip" "$snapshot"
+    return $?
+}
+
+# Save the current record (0600 snapshot), then make it a DNS-only A record to the
+# origin. Prints only the snapshot path.
+_sds_swap_record() {
+    local fqdn="$1"
+    local zone="$2"
+    local origin_ip="$3"
+    local count="$4"
+    local existing="$5"
+    local comment="aidevops hostinger subdomain-ssl recovery"
+    local body temp_id snapshot
+
+    body=$(jq -cn --arg n "$fqdn" --arg ip "$origin_ip" --arg c "$comment" \
+        '{type: "A", name: $n, content: $ip, proxied: false, ttl: 60, comment: $c}') || return 1
+    umask 077
+    mkdir -p "$SDS_WORK_DIR" || return 1
+    if ((count == 1)) && [[ "$(printf '%s' "$existing" | jq -r '.result[0].comment // ""')" == "$comment" ]]; then
+        print_error "$fqdn already has an unfinished subdomain-ssl recovery record; run --restore with the original snapshot first" >&2
+        return 1
+    fi
+    snapshot="$SDS_WORK_DIR/${fqdn}-$(date -u +%Y%m%dT%H%M%SZ)-$$.json"
+    if ((count == 1)); then
+        temp_id=$(printf '%s' "$existing" | jq -er '.result[0].id') || return 1
+        # Journal first (noclobber = exclusive create), then mutate.
+        (set -C; printf '%s' "$existing" | jq --arg z "$zone" --arg f "$fqdn" --arg t "$temp_id" \
+            '{zone: $z, fqdn: $f, temp_id: $t, original: .result[0]}' >"$snapshot") || return 1
+        _sds_cf_record PUT "$zone" "$temp_id" "$body" >/dev/null || return 1
+    else
+        (set -C; jq -n --arg z "$zone" --arg f "$fqdn" \
+            '{zone: $z, fqdn: $f, temp_id: null, original: null, pending: true}' >"$snapshot") || return 1
+        temp_id=$(_sds_cf_checked POST "zones/$zone/dns_records" "$body" | jq -er '.result.id') || {
+            print_error "Record creation outcome unknown; check Cloudflare for a record named $fqdn with comment '$comment' and delete it. Journal: $snapshot" >&2
+            return 1
+        }
+        if ! jq --arg t "$temp_id" '.temp_id = $t | del(.pending)' "$snapshot" >"$snapshot.tmp" || ! mv "$snapshot.tmp" "$snapshot"; then
+            rm -f "$snapshot.tmp"
+            _sds_cf_record DELETE "$zone" "$temp_id" >/dev/null ||
+                print_error "Could not finalise journal; delete record id $temp_id in zone $zone manually" >&2
+            return 1
+        fi
+    fi
+    chmod 600 "$snapshot" || true
+    printf '%s\n' "$snapshot"
+    return 0
+}
+
+# Wait for the certificate, verify the origin, restore the record, check HTTPS.
+_sds_finish() {
+    local username="$1"
+    local fqdn="$2"
+    local origin_ip="$3"
+    local snapshot="$4"
+    local initial_state
+
+    # A `failed` installation has given up; only ssl/setup restarts it. Other
+    # states (installing, waiting_for_retry) make ssl/setup return 422, so skip.
+    initial_state=$(_sds_ssl_state "$username" "$fqdn")
+    if [[ "$initial_state" == "failed" ]]; then
+        printf 'ssl-status failed; requesting new SSL installation\n'
+        if ! api_call POST "api/hosting/v1/accounts/$username/websites/$fqdn/ssl/setup" >/dev/null; then
+            print_error "SSL setup request failed; checkpoint kept (record still DNS-only)" >&2
+            _sds_restore_hint "$snapshot"
+            return 1
+        fi
+    fi
+    if ! _sds_poll_ssl "$username" "$fqdn"; then
+        print_error "SSL not active in time; checkpoint kept (record still DNS-only)" >&2
+        _sds_restore_hint "$snapshot"
+        return 1
+    fi
+    if ! _sds_verify_origin "$origin_ip" "$fqdn"; then
+        print_error "Origin certificate did not verify for $fqdn; checkpoint kept" >&2
+        _sds_restore_hint "$snapshot"
+        return 1
+    fi
+    printf 'origin certificate verified\n'
+    _sds_restore_snapshot "$snapshot" || {
+        print_error "Restore failed; snapshot kept: $snapshot" >&2
+        return 1
+    }
+    _sds_check_cloudflare_https "$fqdn" || return 1
+    return 0
+}
+
+subdomain_ssl_command() {
+    local target="" apex_audit="" alias="" snapshot="" origin_host="" apply=0 status=0
+    local mode=0
+
+    while [[ $# -gt 0 ]]; do
+        local option="$1"
+        local value="${2:-}"
+        case "$option" in
+        --apply)
+            apply=1
+            shift
+            ;;
+        --zone-token-secret | --origin-host | --audit | --ssh | --restore)
+            if [[ $# -lt 2 ]]; then
+                _sds_usage >&2
+                return 1
+            fi
+            case "$option" in
+            --zone-token-secret) SDS_CF_SECRET="$value" ;;
+            --origin-host) origin_host="$value" ;;
+            --audit) apex_audit="$value" ;;
+            --ssh) alias="$value" ;;
+            --restore) snapshot="$value" ;;
+            esac
+            shift 2
+            ;;
+        -h | --help | help)
+            _sds_usage
+            return 0
+            ;;
+        -*)
+            _sds_usage >&2
+            return 1
+            ;;
+        *)
+            if [[ -n "$target" ]]; then
+                _sds_usage >&2
+                return 1
+            fi
+            target="$option"
+            shift
+            ;;
+        esac
+    done
+
+    hostinger_secret_mode || mode=$?
+    [[ "$mode" -ne 2 ]] || return 1
+
+    if [[ -n "$apex_audit" ]]; then
+        if ! _sds_valid_host "$apex_audit" || [[ ! "$alias" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$ ]]; then
+            _sds_usage >&2
+            return 1
+        fi
+        _sds_audit "$apex_audit" "$alias" || status=$?
+        return "$status"
+    fi
+
+    if [[ ! "$SDS_CF_SECRET" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+        print_error "--zone-token-secret must name an UPPER_SNAKE secret (aidevops secret set NAME)" >&2
+        return 1
+    fi
+    if ! aidevops secret check "$SDS_CF_SECRET" >/dev/null 2>&1; then
+        print_error "Cloudflare secret is not stored: $SDS_CF_SECRET" >&2
+        return 1
+    fi
+    if [[ -n "$snapshot" ]]; then
+        if [[ ! -f "$snapshot" ]]; then
+            print_error "Snapshot not found: $snapshot" >&2
+            return 1
+        fi
+        _sds_restore_snapshot "$snapshot" || status=$?
+        return "$status"
+    fi
+    if ! _sds_valid_host "$target" || [[ "$target" != *.*.* ]]; then
+        print_error "Target must be NAME.APEX, e.g. blog.example.com" >&2
+        return 1
+    fi
+    target=$(printf '%s' "$target" | tr '[:upper:]' '[:lower:]')
+    [[ -n "$origin_host" ]] || origin_host="${target#*.}"
+    if ! _sds_valid_host "$origin_host"; then
+        _sds_usage >&2
+        return 1
+    fi
+    _sds_run "$target" "$origin_host" "$apply" || status=$?
+    return "$status"
+}
+
+hostinger_help() {
+    echo "Hostinger Helper Script"
+    echo "Usage: $0 [command] [options]"
+    echo ""
+    echo "Commands:"
+    echo "  list              - List all configured sites"
+    echo "  connect [site]    - Connect to site directory via SSH"
+    echo "  exec [site] [cmd] - Execute command on site"
+    echo "  api [METHOD] ENDPOINT [JSON] - Hostinger API call (token from secret store)"
+    echo "  ssl-status DOMAIN - Read-only SSL status (resolves hosting username)"
+    echo "  wordpress-detect DOMAIN - Scan account for WordPress; bounded installation lookup"
+    echo "  fleet [cmd]       - Read-only fleet inventory, plan and drift ('fleet help')"
+    echo "  cron [cmd]        - hPanel cron list/create/delete/output via API ('cron help')"
+    echo "  subdomain-ssl NAME.APEX --zone-token-secret SECRET [--apply] - SSL for a new multisite child behind Cloudflare ('subdomain-ssl help')"
+    echo "  image-libs --ssh ALIAS [--vendor] - Read-only Ghostscript/ImageMagick releases, policy and workers"
+    echo "  origin-block HOST [--ssh ALIAS] [--wait SECONDS] [--interval SECONDS]"
+    echo "                    - Is LiteSpeed refusing this address (403/reCAPTCHA/408) or is the site down?"
+    echo "                      Exit 0 ok, 10 refused-client, 11 refused-origin, 12 site-error, 13 inconclusive"
+    echo "  help                 - $HELP_SHOW_MESSAGE"
+    echo ""
+    echo "API token (api, ssl-status, wordpress-detect, fleet inventory, cron):"
+    echo "  aidevops secret set HOSTINGER_<ACCOUNT>_API_TOKEN --provider hostinger --account REF"
+    echo "  aidevops secret default hostinger HOSTINGER_<ACCOUNT>_API_TOKEN"
+    echo "  HOSTINGER_SECRET_NAME=HOSTINGER_<OTHER>_API_TOKEN $0 api ...  # second login"
+    echo ""
+    echo "Examples:"
+    echo "  $0 list"
+    echo "  $0 connect example.com"
+    echo "  $0 exec example.com 'ls -la'"
+    echo "  $0 api api/hosting/v1/websites"
+    echo "  $0 origin-block www.example.com --ssh hostinger --wait 900"
+    echo "  $0 api PATCH api/hosting/v1/accounts/USER/websites/DOMAIN/php/version '{\"version\":\"8.5\"}'"
+    return 0
+}
+
 main() {
     # Assign positional parameters to local variables
     local command="${1:-help}"
@@ -818,6 +1349,11 @@ main() {
         cron_command "$@"
         return $?
         ;;
+    "subdomain-ssl")
+        shift
+        subdomain_ssl_command "$@"
+        return $?
+        ;;
     "image-libs")
         shift
         image_libs_command "$@"
@@ -829,31 +1365,7 @@ main() {
         return $?
         ;;
     "help"|"-h"|"--help"|"")
-        echo "Hostinger Helper Script"
-        echo "Usage: $0 [command] [options]"
-        echo ""
-        echo "Commands:"
-        echo "  list              - List all configured sites"
-        echo "  connect [site]    - Connect to site directory via SSH"
-        echo "  exec [site] [cmd] - Execute command on site"
-        echo "  api [METHOD] ENDPOINT [JSON] - Hostinger API call (token from secret store)"
-        echo "  ssl-status DOMAIN - Read-only SSL status (resolves hosting username)"
-        echo "  wordpress-detect DOMAIN - Scan account for WordPress; bounded installation lookup"
-        echo "  fleet [cmd]       - Read-only fleet inventory, plan and drift ('fleet help')"
-        echo "  cron [cmd]        - hPanel cron list/create/delete/output via API ('cron help')"
-        echo "  image-libs --ssh ALIAS [--vendor] - Read-only Ghostscript/ImageMagick releases, policy and workers"
-        echo "  origin-block HOST [--ssh ALIAS] [--wait SECONDS] [--interval SECONDS]"
-        echo "                    - Is LiteSpeed refusing this address (403/reCAPTCHA/408) or is the site down?"
-        echo "                      Exit 0 ok, 10 refused-client, 11 refused-origin, 12 site-error, 13 inconclusive"
-        echo "  help                 - $HELP_SHOW_MESSAGE"
-        echo ""
-        echo "Examples:"
-        echo "  $0 list"
-        echo "  $0 connect example.com"
-        echo "  $0 exec example.com 'ls -la'"
-        echo "  $0 api api/hosting/v1/websites"
-        echo "  $0 origin-block www.example.com --ssh hostinger --wait 900"
-        echo "  $0 api PATCH api/hosting/v1/accounts/USER/websites/DOMAIN/php/version '{\"version\":\"8.5\"}'"
+        hostinger_help
         ;;
     *)
         print_error "$ERROR_UNKNOWN_COMMAND $command"

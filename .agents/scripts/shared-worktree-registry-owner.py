@@ -243,6 +243,10 @@ def main(argv: list[str]) -> int:
         # Keep transaction failures distinct from a proven different live owner.
         print(f"WORKTREE_OWNERSHIP_ERROR_STAGE={stage}", file=sys.stderr)
         print(f"WORKTREE_OWNERSHIP_ERROR_TYPE={type(error).__name__}", file=sys.stderr)
+        if isinstance(error, owner_lifetime.StaleLifetime):
+            # Fixed, path-free text: safe to print, and names cause plus remedy.
+            print(f"WORKTREE_OWNERSHIP_ERROR_REASON={error.reason}", file=sys.stderr)
+            print(f"Remediation: {error.remediation}", file=sys.stderr)
         return 1
 
 

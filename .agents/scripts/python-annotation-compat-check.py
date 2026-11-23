@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-"""Reject PEP 604 union annotations that Python 3.9 evaluates at runtime.
+"""Reject annotation and typing constructs that break Python 3.9 at runtime.
 
-Python 3.9 (macOS ``/usr/bin/python3``) is the framework floor. ``X | None`` in
-a function signature, or at module or class level, raises ``TypeError`` at import
-time unless the module has ``from __future__ import annotations`` (GH#34098).
-Local variable annotations in function bodies are never evaluated, so they are
-ignored. Static AST analysis: runs on any Python 3.9+ and never imports targets.
+Python 3.9 (macOS ``/usr/bin/python3``) is the framework floor. Two checks:
+
+1. ``X | None`` in a function signature, or at module or class level, raises
+   ``TypeError`` at import time unless the module has
+   ``from __future__ import annotations`` (GH#34098). Local variable
+   annotations in function bodies are never evaluated, so they are ignored.
+2. Importing a ``typing`` name added after 3.9 (``TypeGuard``, ``ParamSpec``,
+   ...) raises ``ImportError`` (GH#38706). Imports under
+   ``if TYPE_CHECKING:`` or in a ``try`` that handles ``ImportError`` are safe.
+
+Static AST analysis: runs on any Python 3.9+ and never imports targets.
 
 Usage: python-annotation-compat-check.py FILE.py [FILE.py ...]
 Exit: 0 clean, 1 violations found.
@@ -20,6 +26,21 @@ import sys
 from pathlib import Path
 
 FIX_HINT = "add 'from __future__ import annotations' after the module docstring"
+TYPING_FIX_HINT = ("import it under 'if TYPE_CHECKING:' (annotations must be "
+                   "postponed) or fall back on ImportError")
+
+# Public typing names absent from Python 3.9's typing module.
+PY310_TYPING_NAMES = frozenset({
+    "Concatenate", "LiteralString", "Never", "NoDefault", "NotRequired",
+    "ParamSpec", "ParamSpecArgs", "ParamSpecKwargs", "ReadOnly", "Required",
+    "Self", "TypeAlias", "TypeAliasType", "TypeGuard", "TypeIs", "TypeVarTuple",
+    "Unpack", "assert_never", "assert_type", "clear_overloads",
+    "dataclass_transform", "evaluate_forward_ref", "get_overloads",
+    "get_protocol_members", "is_protocol", "is_typeddict", "override",
+    "reveal_type",
+})
+_IMPORT_ERRORS = frozenset({"ImportError", "ModuleNotFoundError", "Exception",
+                            "BaseException"})
 
 
 def _has_postponed_annotations(tree: ast.Module) -> bool:
@@ -82,6 +103,59 @@ class _RuntimeAnnotationFinder(ast.NodeVisitor):
             self._record(node.annotation)
 
 
+def _is_guard(test: ast.expr) -> bool:
+    """True for `TYPE_CHECKING`, `typing.TYPE_CHECKING` or `sys.version_info >= ...`."""
+    if isinstance(test, ast.Name):
+        return test.id == "TYPE_CHECKING"
+    if isinstance(test, ast.Attribute):
+        return test.attr == "TYPE_CHECKING"
+    if isinstance(test, ast.Compare) and len(test.ops) == 1:
+        left = test.left
+        return (isinstance(left, ast.Attribute) and left.attr == "version_info"
+                and isinstance(test.ops[0], (ast.Gt, ast.GtE)))
+    return False
+
+
+def _handles_import_error(node: ast.Try) -> bool:
+    """True when a handler is bare or names an ImportError-compatible type."""
+    for handler in node.handlers:
+        if handler.type is None:
+            return True
+        types = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+        if any(isinstance(item, ast.Name) and item.id in _IMPORT_ERRORS for item in types):
+            return True
+    return False
+
+
+class _RuntimeTypingImportFinder(ast.NodeVisitor):
+    """Collect `from typing import <3.10+ name>` statements executed at runtime."""
+
+    def __init__(self) -> None:
+        self.findings: list[tuple[int, str]] = []
+
+    def _visit_all(self, statements: list[ast.stmt]) -> None:
+        for statement in statements:
+            self.visit(statement)
+
+    def visit_If(self, node: ast.If) -> None:
+        if not _is_guard(node.test):
+            self._visit_all(node.body)
+        self._visit_all(node.orelse)
+
+    def visit_Try(self, node: ast.Try) -> None:
+        if not _handles_import_error(node):
+            self._visit_all(node.body)
+        for handler in node.handlers:
+            self._visit_all(handler.body)
+        self._visit_all(node.orelse)
+        self._visit_all(node.finalbody)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if node.module == "typing" and node.level == 0:
+            self.findings.extend((node.lineno, alias.name) for alias in node.names
+                                 if alias.name in PY310_TYPING_NAMES)
+
+
 def check_file(path: Path) -> list[str]:
     """Return violation messages for one file; unparsable files are skipped."""
     try:
@@ -89,12 +163,19 @@ def check_file(path: Path) -> list[str]:
     except (OSError, SyntaxError, UnicodeDecodeError, ValueError) as exc:
         print(f"{path}: skipped ({type(exc).__name__})", file=sys.stderr)
         return []
-    if _has_postponed_annotations(tree):
-        return []
-    finder = _RuntimeAnnotationFinder()
-    finder.visit(tree)
-    return [f"{path}:{line}: PEP 604 union annotation fails on Python 3.9; {FIX_HINT}"
-            for line in sorted(set(finder.lines))]
+    messages: list[str] = []
+    if not _has_postponed_annotations(tree):
+        finder = _RuntimeAnnotationFinder()
+        finder.visit(tree)
+        messages.extend(
+            f"{path}:{line}: PEP 604 union annotation fails on Python 3.9; {FIX_HINT}"
+            for line in sorted(set(finder.lines)))
+    typing_finder = _RuntimeTypingImportFinder()
+    typing_finder.visit(tree)
+    messages.extend(
+        f"{path}:{line}: typing.{name} does not exist on Python 3.9; {TYPING_FIX_HINT}"
+        for line, name in sorted(set(typing_finder.findings)))
+    return messages
 
 
 def main(argv: list[str]) -> int:

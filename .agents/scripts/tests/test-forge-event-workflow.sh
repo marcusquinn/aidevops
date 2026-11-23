@@ -428,6 +428,22 @@ fi
 if [[ "$*" == *"--method DELETE repos/owner/repo/actions/artifacts/10"* ]]; then
 	exit 0
 fi
+# Direct protected-ID lookups (GH#38492): 5 and 99 are gone, 40 is a live
+# exact-name upload the listing has not caught up with, 41 has another name.
+case "$*" in
+"api repos/owner/repo/actions/artifacts/5" | "api repos/owner/repo/actions/artifacts/99")
+	printf 'gh: Not Found (HTTP 404)\n' >&2
+	exit 1
+	;;
+"api repos/owner/repo/actions/artifacts/40")
+	printf '%s\n' '{"id":40,"name":"forge-coordinator-1","expired":false}'
+	exit 0
+	;;
+"api repos/owner/repo/actions/artifacts/41")
+	printf '%s\n' '{"id":41,"name":"forge-coordinator-other","expired":false}'
+	exit 0
+	;;
+esac
 exit 64
 GH
 chmod +x "${test_root}/cleanup-bin/gh"
@@ -452,6 +468,27 @@ if GH_CALL_LOG="${test_root}/cleanup-invalid.log" PATH="${test_root}/cleanup-bin
 	printf 'FAIL cleanup accepted a missing protected checkpoint\n' >&2
 	exit 1
 fi
+# A wrong-name protected ID that does exist is still an integrity failure.
+if GH_CALL_LOG="${test_root}/cleanup-wrong-name.log" PATH="${test_root}/cleanup-bin:${jq_dir}:/usr/bin:/bin" \
+	bash "$STATE_HELPER" cleanup-apply owner/repo 1 41 >/dev/null 2>&1; then
+	printf 'FAIL cleanup accepted a protected ID with another artifact name\n' >&2
+	exit 1
+fi
+# GH#38492: an older run's upload already pruned by a newer run, or a live
+# upload missing from the listing, is a no-op that deletes nothing.
+for missing_case in "5:superseded" "40:not_listed"; do
+	: >"${test_root}/cleanup-missing.log"
+	if ! GH_CALL_LOG="${test_root}/cleanup-missing.log" PATH="${test_root}/cleanup-bin:${jq_dir}:/usr/bin:/bin" \
+		bash "$STATE_HELPER" cleanup-apply owner/repo 1 "${missing_case%%:*}" >"${test_root}/cleanup-missing-output" 2>/dev/null; then
+		printf 'FAIL cleanup failed for benign missing protected checkpoint %s\n' "$missing_case" >&2
+		exit 1
+	fi
+	grep -q "deleted=0 stop=protected_${missing_case##*:}" "${test_root}/cleanup-missing-output"
+	if grep -q -- '--method DELETE' "${test_root}/cleanup-missing.log"; then
+		printf 'FAIL cleanup deleted artifacts without a verified protected checkpoint (%s)\n' "$missing_case" >&2
+		exit 1
+	fi
+done
 
 # A large backlog is pruned oldest page first, bounded by the per-run deletion
 # cap, and an isolated DELETE failure does not stop the run.

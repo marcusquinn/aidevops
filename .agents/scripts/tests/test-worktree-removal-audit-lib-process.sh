@@ -206,6 +206,41 @@ test_proc_snapshot_skips_foreign_uid_unreadable_entry() {
 }
 
 # =============================================================================
+# GH#38675: the single-pass cwd map must give the same verdicts as the per-entry
+# shell loop without a readlink fork per process: readable entries are final,
+# provably foreign ones are skipped, and unknown unreadable ones stay degraded.
+# =============================================================================
+test_proc_snapshot_single_pass_map_matches_shell_loop() {
+	local proc_root="${TEST_DIR}/fake-proc-map"
+	local foreign_uid=""
+	local map=""
+	local output=""
+	local capture_status=0
+	local rc=0
+	foreign_uid=$(($(id -u) + 1))
+	mkdir -p "${proc_root}/1" "${proc_root}/2" "${proc_root}/3"
+	ln -s /visible-cwd "${proc_root}/1/cwd"
+	printf 'Uid:\t%s\t%s\t%s\t%s\n' \
+		"$foreign_uid" "$foreign_uid" "$foreign_uid" "$foreign_uid" >"${proc_root}/2/status"
+
+	map=$(_worktree_proc_cwd_map "$proc_root") || rc=1
+	[[ "$map" == *$'R\t1\t/visible-cwd'* ]] || rc=1
+	[[ "$map" == *$'S\t2'* ]] || rc=1
+	[[ "$map" == *$'F\t3'* ]] || rc=1
+	if output=$(_capture_worktree_proc_cwds "$proc_root"); then
+		capture_status=0
+	else
+		capture_status=$?
+	fi
+	# Entry 3 has no cwd link at all (vanished): the shell loop re-checks and skips it.
+	[[ "$capture_status" -eq 0 ]] || rc=1
+	[[ "$output" == "/visible-cwd" ]] || rc=1
+	print_result "proc_snapshot_single_pass_map_matches_shell_loop" "$rc" \
+		"Expected one-pass map to capture readable, skip foreign, and hand unknown entries to the shell loop"
+	return 0
+}
+
+# =============================================================================
 # hidepid-style /proc mounts can deny both cwd and status reads for other users.
 # Directory ownership still proves those entries are foreign, so they must not
 # degrade the whole snapshot and force recoverable archival for every cleanup.
@@ -312,6 +347,273 @@ test_proc_snapshot_recovers_protected_same_uid_cwd() {
 	_worktree_cwd_snapshot_contains_path /protected-cwd /protected-cwd "$output" || rc=1
 	print_result "proc_snapshot_recovers_protected_same_uid_cwd" "$rc" \
 		"Expected inspected CWD to be captured and eligible for active-path blocking"
+	return 0
+}
+
+# GH#38918: a batched inspector response is used only when it is complete,
+# ordered and bounded by the versioned header and count trailer.
+test_privileged_batch_parser_requires_complete_ordered_response() {
+	local tab=$'\t'
+	local header="aidevops-cwd-inspect${tab}cwds${tab}1${tab}2"
+	local good="${header}"$'\n'"R${tab}5${tab}/wt/a"$'\n'"F${tab}9"$'\n'"end${tab}2"
+	local output=""
+	local bad=""
+	local rc=0
+
+	output=$(_worktree_parse_privileged_cwds "$good" 5 9) || rc=1
+	[[ "$output" == "R${tab}5${tab}/wt/a"$'\n'"F${tab}9" ]] || rc=1
+	for bad in \
+		"" \
+		"${header}"$'\n'"R${tab}5${tab}/wt/a"$'\n'"F${tab}9" \
+		"${header}"$'\n'"R${tab}5${tab}/wt/a"$'\n'"end${tab}2" \
+		"${header}"$'\n'"F${tab}9"$'\n'"R${tab}5${tab}/wt/a"$'\n'"end${tab}2" \
+		"${header}"$'\n'"R${tab}5${tab}/wt/a"$'\n'"F${tab}9"$'\n'"end${tab}2"$'\n'"R${tab}7${tab}/extra" \
+		"aidevops-cwd-inspect${tab}cwds${tab}1${tab}3"$'\n'"R${tab}5${tab}/wt/a"$'\n'"F${tab}9"$'\n'"end${tab}2" \
+		"${header}"$'\n'"R${tab}5${tab}relative"$'\n'"F${tab}9"$'\n'"end${tab}2" \
+		"${header}"$'\n'"R${tab}5"$'\n'"F${tab}9"$'\n'"end${tab}2" \
+		"${header}"$'\n'"X${tab}5"$'\n'"F${tab}9"$'\n'"end${tab}2"; do
+		if _worktree_parse_privileged_cwds "$bad" 5 9 >/dev/null; then
+			rc=1
+		fi
+	done
+	print_result "privileged_batch_parser_requires_complete_ordered_response" "$rc" \
+		"Expected truncated, reordered, extra or malformed batch output to be rejected"
+	return 0
+}
+
+# GH#38918: a supported batch answers every pending PID with no per-PID call;
+# an unresolved but present PID still degrades visibility.
+test_proc_snapshot_uses_one_batched_inspector_call() {
+	local proc_root="${TEST_DIR}/fake-proc-batched"
+	local calls_file="${TEST_DIR}/batched-calls.log"
+	local current_uid=""
+	local pid=""
+	local output=""
+	local capture_status=0
+	local rc=0
+	current_uid=$(id -u)
+	mkdir -p "${proc_root}/1" "${proc_root}/2" "${proc_root}/3"
+	ln -s /visible-cwd "${proc_root}/1/cwd"
+	ln -s /protected-cwd "${proc_root}/2/cwd"
+	ln -s /hidden-cwd "${proc_root}/3/cwd"
+	for pid in 2 3; do
+		printf 'Uid:\t%s\t%s\t%s\t%s\n' \
+			"$current_uid" "$current_uid" "$current_uid" "$current_uid" >"${proc_root}/${pid}/status"
+	done
+	: >"$calls_file"
+
+	if output=$(
+		readlink() {
+			[[ "$1" == */1/cwd ]] || return 1
+			printf '/visible-cwd\n'
+		}
+		_worktree_privileged_read_cwds() {
+			printf 'batch %s\n' "${*:2}" >>"$calls_file"
+			[[ "$1" == "$proc_root" && "$2" == 2 && "$3" == 3 && "$#" -eq 3 ]] || return 1
+			printf 'R\t2\t/protected-cwd\nF\t3\n'
+		}
+		_worktree_privileged_read_cwd() {
+			printf 'single %s\n' "$2" >>"$calls_file"
+			return 1
+		}
+		_capture_worktree_proc_cwds "$proc_root"
+	); then
+		capture_status=0
+	else
+		capture_status=$?
+	fi
+	[[ "$capture_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]] || rc=1
+	[[ "$output" == $'/visible-cwd\n/protected-cwd' ]] || rc=1
+	[[ "$(<"$calls_file")" == "batch 2 3" ]] || rc=1
+	print_result "proc_snapshot_uses_one_batched_inspector_call" "$rc" \
+		"Expected one batched call, no per-PID calls, and degraded visibility for an unresolved PID"
+	return 0
+}
+
+# Shared fixture: PID 1 readable, PIDs 2 and 3 protected same-UID entries.
+_make_protected_proc_fixture() {
+	local proc_root="$1"
+	local current_uid=""
+	local pid=""
+	current_uid=$(id -u)
+	mkdir -p "${proc_root}/1" "${proc_root}/2" "${proc_root}/3"
+	ln -s /visible-cwd "${proc_root}/1/cwd"
+	ln -s /protected-cwd "${proc_root}/2/cwd"
+	ln -s /hidden-cwd "${proc_root}/3/cwd"
+	for pid in 2 3; do
+		printf 'Uid:\t%s\t%s\t%s\t%s\n' \
+			"$current_uid" "$current_uid" "$current_uid" "$current_uid" >"${proc_root}/${pid}/status"
+	done
+	return 0
+}
+
+# GH#39335: a timed-out batch (slow sudo/PAM or the child's deadline) leaves
+# present links degraded and makes no per-PID sudo calls.
+test_proc_snapshot_batch_timeout_degrades_without_per_pid_calls() {
+	local proc_root="${TEST_DIR}/fake-proc-batch-timeout"
+	local calls_file="${TEST_DIR}/batch-timeout-calls.log"
+	local output=""
+	local capture_status=0
+	local rc=0
+	_make_protected_proc_fixture "$proc_root"
+	: >"$calls_file"
+
+	if output=$(
+		readlink() {
+			[[ "$1" == */1/cwd ]] || return 1
+			printf '/visible-cwd\n'
+		}
+		_worktree_privileged_read_cwds() {
+			printf 'batch %s\n' "${*:2}" >>"$calls_file"
+			return "$_WT_CWDS_TIMEOUT_RC"
+		}
+		_worktree_privileged_read_cwd() {
+			printf 'single %s\n' "$2" >>"$calls_file"
+			printf '/protected-cwd\n'
+		}
+		_capture_worktree_proc_cwds "$proc_root"
+	); then
+		capture_status=0
+	else
+		capture_status=$?
+	fi
+	[[ "$capture_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]] || rc=1
+	[[ "$output" == "/visible-cwd" ]] || rc=1
+	[[ "$(<"$calls_file")" == "batch 2 3" ]] || rc=1
+	print_result "proc_snapshot_batch_timeout_degrades_without_per_pid_calls" "$rc" \
+		"Expected a timed-out batch to degrade visibility without per-PID inspector calls"
+	return 0
+}
+
+# GH#39335: an installed inspector without `--cwds` (refused batch) keeps the
+# legacy per-PID path.
+test_proc_snapshot_refused_batch_uses_per_pid_fallback() {
+	local proc_root="${TEST_DIR}/fake-proc-batch-refused"
+	local calls_file="${TEST_DIR}/batch-refused-calls.log"
+	local output=""
+	local capture_status=0
+	local rc=0
+	_make_protected_proc_fixture "$proc_root"
+	: >"$calls_file"
+
+	if output=$(
+		readlink() {
+			[[ "$1" == */1/cwd ]] || return 1
+			printf '/visible-cwd\n'
+		}
+		_worktree_privileged_read_cwds() {
+			printf 'batch %s\n' "${*:2}" >>"$calls_file"
+			return 1
+		}
+		_worktree_privileged_read_cwd() {
+			printf 'single %s\n' "${2##*/}" >>"$calls_file"
+			[[ "$2" == "${proc_root}/2" ]] || return 1
+			printf '/protected-cwd\n'
+		}
+		_capture_worktree_proc_cwds "$proc_root"
+	); then
+		capture_status=0
+	else
+		capture_status=$?
+	fi
+	[[ "$capture_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]] || rc=1
+	[[ "$output" == $'/visible-cwd\n/protected-cwd' ]] || rc=1
+	[[ "$(<"$calls_file")" == $'batch 2 3\nsingle 2\nsingle 3' ]] || rc=1
+	print_result "proc_snapshot_refused_batch_uses_per_pid_fallback" "$rc" \
+		"Expected a refused batch to keep one legacy inspector call per pending PID"
+	return 0
+}
+
+# GH#39335: more than _WT_CWDS_MAX_PIDS pending links use ceil(N/limit) batch
+# calls and capture every path; a timeout stops further batch calls. The
+# helper itself still refuses an oversized request before sudo.
+test_privileged_cwd_links_are_chunked_at_inspector_limit() {
+	local proc_root="${TEST_DIR}/fake-proc-chunked"
+	local calls_file="${TEST_DIR}/chunked-calls.log"
+	local out_file="${TEST_DIR}/chunked-out.log"
+	local meta_file="${TEST_DIR}/chunked-meta.log"
+	local limit="$_WT_CWDS_MAX_PIDS"
+	local total=$((limit * 2 + 1))
+	local pid=0
+	local rc=0
+	local -a links=()
+	local -a pids=()
+
+	for ((pid = 1; pid <= total; pid++)); do
+		links+=("${proc_root}/${pid}/cwd")
+		pids+=("$pid")
+	done
+	: >"$calls_file"
+	(
+		_worktree_privileged_read_cwds() {
+			local arg=""
+			shift
+			printf 'batch %s %s %s\n' "$#" "$1" "${!#}" >>"$calls_file"
+			for arg in "$@"; do
+				printf 'R\t%s\t/cwd/%s\n' "$arg" "$arg"
+			done
+		}
+		_worktree_privileged_read_cwd() {
+			printf 'single %s\n' "$2" >>"$calls_file"
+			return 1
+		}
+		_worktree_resolve_privileged_cwd_links "$proc_root" "${links[@]}" >"$out_file" || exit 1
+		printf '%s\n' "$_WT_PRIV_CAPTURED" >"$meta_file"
+	) || rc=1
+	[[ "$(<"$calls_file")" == "batch ${limit} 1 ${limit}"$'\n'"batch ${limit} $((limit + 1)) $((limit * 2))"$'\n'"batch 1 ${total} ${total}" ]] || rc=1
+	[[ "$(<"$meta_file")" == "$total" ]] || rc=1
+	[[ "$(wc -l <"$out_file" | tr -d ' ')" == "$total" ]] || rc=1
+	[[ "$(sed -n "${total}p" "$out_file")" == "/cwd/${total}" ]] || rc=1
+
+	# Chunk 2 times out; the still-present link in chunk 3 must stay degraded
+	# although chunk 3 is never sent.
+	mkdir -p "${proc_root}/${total}"
+	ln -s /late-cwd "${proc_root}/${total}/cwd"
+	: >"$calls_file"
+	(
+		_worktree_privileged_read_cwds() {
+			local arg=""
+			shift
+			printf 'batch %s\n' "$1" >>"$calls_file"
+			[[ "$1" == 1 ]] || return "$_WT_CWDS_TIMEOUT_RC"
+			for arg in "$@"; do
+				printf 'R\t%s\t/cwd/%s\n' "$arg" "$arg"
+			done
+		}
+		_worktree_privileged_read_cwd() {
+			printf 'single %s\n' "$2" >>"$calls_file"
+			return 1
+		}
+		resolve_status=0
+		_worktree_resolve_privileged_cwd_links "$proc_root" "${links[@]}" >"$out_file" || resolve_status=$?
+		printf '%s %s\n' "$resolve_status" "$_WT_PRIV_CAPTURED" >"$meta_file"
+	) || rc=1
+	[[ "$(<"$calls_file")" == "batch 1"$'\n'"batch $((limit + 1))" ]] || rc=1
+	[[ "$(<"$meta_file")" == "2 ${limit}" ]] || rc=1
+
+	# The size guard is the refusing check: an oversized request never reaches
+	# the platform policy (or sudo), while a request at the limit does.
+	: >"$calls_file"
+	if (
+		worktree_process_inspector_allowed() {
+			printf 'policy\n' >>"$calls_file"
+			return 1
+		}
+		_worktree_privileged_read_cwds /proc "${pids[@]:0:$((limit + 1))}"
+	) >/dev/null; then
+		rc=1
+	fi
+	[[ ! -s "$calls_file" ]] || rc=1
+	(
+		worktree_process_inspector_allowed() {
+			printf 'policy\n' >>"$calls_file"
+			return 1
+		}
+		_worktree_privileged_read_cwds /proc "${pids[@]:0:$limit}"
+	) >/dev/null || true
+	[[ "$(<"$calls_file")" == policy ]] || rc=1
+	print_result "privileged_cwd_links_are_chunked_at_inspector_limit" "$rc" \
+		"Expected ceil(N/${limit}) batch calls capturing every path, degraded links after a timeout, and an enforced per-call limit"
 	return 0
 }
 
@@ -620,7 +922,8 @@ test_degraded_visibility_preserves_positive_candidate_match() {
 	fi
 	[[ "$guard_status" -eq 1 ]] || rc=1
 	[[ "${WORKTREE_REMOVAL_GUARD_REASON:-}" == "active-cwd" ]] || rc=1
-	assert_file_contains "$log_file" "worktree-skipped.*cwd-visibility-degraded.*mode=recoverable-required" || rc=1
+	assert_file_contains "$log_file" "worktree-degraded.*cwd-visibility-degraded.*mode=recoverable-required" || rc=1
+	assert_file_contains "$log_file" "worktree-skipped.*cwd-visibility-degraded" && rc=1
 	assert_file_contains "$log_file" "worktree-skipped.*active-cwd.*mode=skipped" || rc=1
 	print_result "degraded_visibility_preserves_positive_candidate_match" "$rc" \
 		"Expected unrelated denial to be recoverable-only and readable candidate CWD to hard-block"

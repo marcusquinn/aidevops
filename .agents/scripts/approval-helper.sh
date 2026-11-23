@@ -34,6 +34,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=shared-constants.sh
 [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+# GH#39027: printed approval commands need approval_cli_prefix even when
+# shared-constants.sh is missing on a partial install.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "${SCRIPT_DIR}/shared-approval-cli.sh"
+fi
 
 # Resolve the real user's home directory, handling sudo env_reset.
 # Under sudo, HOME may point at root's home while SUDO_USER holds the invoking
@@ -79,6 +85,9 @@ readonly _APPROVAL_AUTO_DISPATCH_LABEL="auto-dispatch"
 readonly _APPROVAL_AVAILABLE_LABEL="status:available"
 readonly _APPROVAL_QUEUED_LABEL="status:queued"
 readonly _APPROVAL_IN_PROGRESS_LABEL="status:in-progress"
+# GH#37956: approval-only records (Cloudron release requests and standing
+# release policies) are authority evidence, never worker tasks.
+readonly _APPROVAL_ONLY_LABELS="release-approval-required,release-standing-policy"
 readonly _APPROVAL_GITHUB_ACTIONS_BOT_ID="41898282"
 readonly _APPROVAL_MISSING_FIELD="__missing__"
 readonly _APPROVAL_GH_INVALID_TOKEN="invalid-token"
@@ -430,7 +439,7 @@ _require_gh_auth() {
 		fi
 	fi
 	_print_error "gh authentication failed under sudo; automatic recovery from the invoking user's gh auth failed"
-	_print_info "Check 'gh auth status' as your user, then retry sudo aidevops approve. If sudo strips auth, pass GH_TOKEN via sudo --preserve-env=GH_TOKEN."
+	_print_info "Check 'gh auth status' as your user, then retry $(approval_cli_prefix) approve. If sudo strips auth, pass GH_TOKEN via sudo --preserve-env=GH_TOKEN."
 	return 1
 }
 
@@ -490,7 +499,7 @@ _require_approval_key() {
 	local actual_key="$1"
 
 	if [[ ! -f "$actual_key" ]]; then
-		_print_error "No approval key found. Run: sudo aidevops approve setup"
+		_print_error "No approval key found. Run: $(approval_cli_prefix) approve setup"
 		return 1
 	fi
 
@@ -549,9 +558,9 @@ _validate_approval_target_kind() {
 	issue_json=$(_approval_fetch_issue_json "$target_number" "$slug") || {
 		_print_error "Could not resolve ${target_type} #${target_number} in ${slug}. Check the number, repo, and whether this is an issue or PR."
 		if [[ "$target_type" == "pr" ]]; then
-			_print_info "If this is an issue, use: sudo aidevops approve issue ${target_number} ${slug}"
+			_print_info "If this is an issue, use: $(approval_cli_prefix) approve issue ${target_number} ${slug}"
 		else
-			_print_info "If this is a PR, use: sudo aidevops approve pr ${target_number} ${slug}"
+			_print_info "If this is a PR, use: $(approval_cli_prefix) approve pr ${target_number} ${slug}"
 		fi
 		return 1
 	}
@@ -559,7 +568,7 @@ _validate_approval_target_kind() {
 	if [[ "$target_type" == "pr" ]]; then
 		if ! printf '%s' "$issue_json" | jq -e 'has("pull_request")' >/dev/null 2>&1; then
 			_print_error "#${target_number} in ${slug} is an issue, not a PR."
-			_print_info "Use: sudo aidevops approve issue ${target_number} ${slug}"
+			_print_info "Use: $(approval_cli_prefix) approve issue ${target_number} ${slug}"
 			return 1
 		fi
 		return 0
@@ -567,7 +576,7 @@ _validate_approval_target_kind() {
 
 	if printf '%s' "$issue_json" | jq -e 'has("pull_request")' >/dev/null 2>&1; then
 		_print_error "#${target_number} in ${slug} is a PR, not an issue."
-		_print_info "Use: sudo aidevops approve pr ${target_number} ${slug}"
+		_print_info "Use: $(approval_cli_prefix) approve pr ${target_number} ${slug}"
 		return 1
 	fi
 
@@ -785,6 +794,58 @@ _approval_verify_pr_state() {
 	return $?
 }
 
+# Return 0 when a comma-joined label list marks an approval-only issue.
+_approval_issue_is_approval_only() {
+	local labels_csv="$1"
+	local label=""
+	local -a approval_only_labels=()
+
+	IFS=',' read -r -a approval_only_labels <<<"$_APPROVAL_ONLY_LABELS"
+	for label in "${approval_only_labels[@]}"; do
+		[[ ",${labels_csv}," == *",${label},"* ]] && return 0
+	done
+	return 1
+}
+
+# GH#37956: signing an approval-only issue records authority; it must not turn
+# the record into dispatchable work. Clear only the NMR hold, never add status,
+# auto-dispatch or an assignee, then verify the final locked, unheld state.
+_approval_apply_approval_only_issue_updates() {
+	local target_number="$1"
+	local slug="$2"
+	local labels_csv="$3"
+	local edit_err=""
+	local restore_err=""
+	local issue_json=""
+
+	if [[ ",${labels_csv}," == *",${_APPROVAL_NMR_LABEL},"* ]]; then
+		edit_err=$(gh_issue_edit_safe "$target_number" --repo "$slug" \
+			--remove-label "$_APPROVAL_NMR_LABEL" 2>&1 >/dev/null) || {
+			_print_error "Failed to clear needs-maintainer-review on approval-only issue #$target_number"
+			[[ -n "$edit_err" ]] && _print_error "$edit_err"
+			restore_err=$(_approval_restore_nmr_hold issue "$target_number" "$slug" 2>&1 >/dev/null) || {
+				_print_error "Failed to restore needs-maintainer-review after uncertain update on issue #$target_number"
+				[[ -n "$restore_err" ]] && _print_error "$restore_err"
+			}
+			return 1
+		}
+	fi
+
+	issue_json=$(_approval_fetch_issue_json "$target_number" "$slug") || {
+		_print_error "Approval state verification failed: could not read issue #$target_number via REST"
+		_approval_restore_nmr_hold issue "$target_number" "$slug" >/dev/null 2>&1 || true
+		return 1
+	}
+	if ! printf '%s' "$issue_json" | jq -e --arg label "$_APPROVAL_NMR_LABEL" \
+		'((.labels // []) | any(.name == $label) | not) and .locked == true' >/dev/null 2>&1; then
+		_print_error "Approval state verification failed: approval-only issue #$target_number is not locked without needs-maintainer-review"
+		_approval_restore_nmr_hold issue "$target_number" "$slug" >/dev/null 2>&1 || true
+		return 1
+	fi
+	_print_info "Approval-only issue #$target_number: recorded authority without task lifecycle labels"
+	return 0
+}
+
 _approval_apply_issue_lifecycle_updates() {
 	local target_number="$1"
 	local slug="$2"
@@ -793,7 +854,7 @@ _approval_apply_issue_lifecycle_updates() {
 	local status_err=""
 	local restore_err=""
 	local _ah_labels_json=""
-	local _ah_stamp_file=""
+	local _ah_issue_json=""
 	local _ah_had_in_review=0
 
 	gh_user=$(_approval_current_github_login) || {
@@ -805,7 +866,23 @@ _approval_apply_issue_lifecycle_updates() {
 	# authoritative status transition removes status:in-review.
 	_ah_labels_json=$(gh_issue_view "$target_number" --repo "$slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+	# GH#37956: an empty result may be a failed read. Confirm it through REST
+	# before taking the dispatchable path, which would turn an approval-only
+	# record into worker work. An unreadable issue fails closed, unchanged.
+	if [[ -z "$_ah_labels_json" ]]; then
+		_ah_issue_json=$(_approval_fetch_issue_json "$target_number" "$slug") &&
+			_ah_labels_json=$(jq -er '[(.labels // [])[].name] | join(",")' <<<"$_ah_issue_json" 2>/dev/null) || {
+			_print_error "Could not read labels on issue #$target_number — approval state was not changed"
+			return 1
+		}
+	fi
 	[[ ",${_ah_labels_json}," == *",status:in-review,"* ]] && _ah_had_in_review=1
+
+	if _approval_issue_is_approval_only "$_ah_labels_json"; then
+		_approval_apply_approval_only_issue_updates "$target_number" "$slug" "$_ah_labels_json" || return 1
+		[[ "$_ah_had_in_review" -eq 0 ]] || _approval_release_claim_stamp "$target_number" "$slug"
+		return 0
+	fi
 
 	# Establish the final status while NMR still blocks dispatch. This prevents
 	# the default-status workflow from owning the normal handoff path.
@@ -850,11 +927,18 @@ _approval_apply_issue_lifecycle_updates() {
 	# verified. Invoking `release` here would perform a second remote status write
 	# that can overwrite a concurrent queued worker claim. On uncertainty, retain
 	# the stamp as a durable ownership/recovery marker.
-	if [[ "$_ah_had_in_review" -eq 1 ]]; then
-		_ah_stamp_file="${_APPROVAL_HOME}/.aidevops/.agent-workspace/interactive-claims/${slug//\//-}-${target_number}.json"
-		rm -f "$_ah_stamp_file" 2>/dev/null || true
-		_print_info "Released the local interactive claim after the verified remote lifecycle handoff"
-	fi
+	[[ "$_ah_had_in_review" -eq 0 ]] || _approval_release_claim_stamp "$target_number" "$slug"
+	return 0
+}
+
+# Remove only the local interactive claim stamp for a verified handoff.
+_approval_release_claim_stamp() {
+	local target_number="$1"
+	local slug="$2"
+	local stamp_file="${_APPROVAL_HOME}/.aidevops/.agent-workspace/interactive-claims/${slug//\//-}-${target_number}.json"
+
+	rm -f "$stamp_file" 2>/dev/null || true
+	_print_info "Released the local interactive claim after the verified remote lifecycle handoff"
 	return 0
 }
 
@@ -1018,26 +1102,82 @@ _kick_pulse_after_approval() {
 	local kick_log="${_APPROVAL_HOME}/.aidevops/logs/pulse-approve-kick.log"
 	mkdir -p "$(dirname "$kick_log")" 2>/dev/null || true
 
-	# Detach completely so this exits even if the child blocks. The double
-	# fork via subshell + disown matches the pattern in
-	# pulse-lifecycle-helper.sh::_start. Drop sudo (run as the real user)
-	# so the spawned pulse uses the same env/locks as the launchd-managed
-	# pulse — root-owned locks would corrupt the lockdir tree.
+	_approval_spawn_user_pulse "$pulse_wrapper" "$kick_log" --merge-only
+	return 0
+}
+
+#######################################
+# Emit the real user's session-bus env assignments (one per line) when running
+# under sudo on a host with a per-user runtime dir. `sudo -u` resets the env,
+# so without these a kicked pulse has no XDG_RUNTIME_DIR/DBUS_SESSION_BUS_ADDRESS
+# and every systemd worker launch fails with manager_probe_failed (GH#39028).
+#######################################
+_approval_user_session_env() {
+	local real_uid=""
+	[[ -n "${SUDO_USER:-}" ]] || return 0
+	real_uid=$(id -u "$SUDO_USER" 2>/dev/null || true)
+	[[ "$real_uid" =~ ^[0-9]+$ && -d "/run/user/${real_uid}" ]] || return 0
+	printf 'XDG_RUNTIME_DIR=/run/user/%s\n' "$real_uid"
+	if [[ -S "/run/user/${real_uid}/bus" ]]; then
+		printf 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus\n' "$real_uid"
+	fi
+	return 0
+}
+
+#######################################
+# Spawn a detached pulse-wrapper run as the real user. The double fork via
+# subshell + disown matches pulse-lifecycle-helper.sh::_start. Under sudo, drop
+# to the real user (root-owned locks would corrupt the lockdir tree) and carry
+# the user session bus so the spawned pulse can reach the systemd worker backend.
+# Args: $1=pulse wrapper, $2=kick log, remaining args=pulse-wrapper args
+#######################################
+_approval_spawn_user_pulse() {
+	local pulse_wrapper="$1"
+	local kick_log="$2"
+	shift 2
 	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]] && command -v sudo >/dev/null 2>&1; then
+		local -a user_env=()
+		local env_line=""
+		while IFS= read -r env_line; do
+			[[ -n "$env_line" ]] && user_env+=("$env_line")
+		done < <(_approval_user_session_env)
 		(
-			nohup sudo -u "$SUDO_USER" -H -- "$pulse_wrapper" --merge-only \
-				>>"$kick_log" 2>&1 </dev/null &
+			nohup sudo -u "$SUDO_USER" -H -- env ${user_env[@]+"${user_env[@]}"} \
+				"$pulse_wrapper" "$@" >>"$kick_log" 2>&1 </dev/null &
 			disown 2>/dev/null || true
 		) 2>/dev/null
 	else
 		(
-			nohup "$pulse_wrapper" --merge-only \
-				>>"$kick_log" 2>&1 </dev/null &
+			nohup "$pulse_wrapper" "$@" >>"$kick_log" 2>&1 </dev/null &
 			disown 2>/dev/null || true
 		) 2>/dev/null
 	fi
-
 	return 0
+}
+
+#######################################
+# Ask a loaded systemd user supervisor to run the managed pulse now instead of
+# spawning an unmanaged one (GH#39028). Linux only; macOS/launchd unchanged.
+# Returns: 0 when the managed start was accepted, 1 to use the spawn fallback.
+#######################################
+_approval_start_managed_pulse() {
+	[[ "$(uname -s 2>/dev/null || true)" == "Linux" ]] || return 1
+	command -v systemctl >/dev/null 2>&1 || return 1
+	local unit="aidevops-supervisor-pulse.service"
+	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
+		command -v sudo >/dev/null 2>&1 || return 1
+		local -a user_env=()
+		local env_line=""
+		while IFS= read -r env_line; do
+			[[ -n "$env_line" ]] && user_env+=("$env_line")
+		done < <(_approval_user_session_env)
+		[[ ${#user_env[@]} -gt 0 ]] || return 1
+		sudo -u "$SUDO_USER" -H -- env "${user_env[@]}" \
+			systemctl --user start --no-block "$unit" >/dev/null 2>&1
+		return $?
+	fi
+	systemctl --user start --no-block "$unit" >/dev/null 2>&1
+	return $?
 }
 
 _approve_target_after_confirmation() {
@@ -1212,9 +1352,11 @@ _execute_approval_batch() {
 _approve_targets() {
 	local approval_mode="$1"
 	shift
-	local usage="Usage: sudo aidevops approve ${approval_mode} <number> [number...] [owner/repo]"
+	local approve_cli
+	approve_cli=$(approval_cli_prefix)
+	local usage="Usage: ${approve_cli} approve ${approval_mode} <number> [number...] [owner/repo]"
 	if [[ "$approval_mode" == "$_APPROVAL_BATCH_MODE" ]]; then
-		usage="Usage: sudo aidevops approve batch issue:<number>|pr:<number> [...] [owner/repo]"
+		usage="Usage: ${approve_cli} approve batch issue:<number>|pr:<number> [...] [owner/repo]"
 	fi
 	local slug=""
 	local arg=""
@@ -1335,6 +1477,8 @@ _create_allowed_signers_file() {
 _verify_comment_signature() {
 	local body="$1"
 	local pub_key="$2"
+	local mode="${3:-verify}"
+	local verify_args=(-Y verify)
 	local payload signature payload_file sig_file allowed_signers_file
 
 	payload=$(_extract_fenced_block "$body" 1)
@@ -1354,9 +1498,11 @@ _verify_comment_signature() {
 	printf '%s\n' "$signature" >"$sig_file"
 	_create_allowed_signers_file "$pub_key" "$allowed_signers_file"
 
-	if ssh-keygen -Y verify \
-		-f "$allowed_signers_file" \
-		-I "approval@aidevops.sh" \
+	verify_args+=(-f "$allowed_signers_file" -I "approval@aidevops.sh")
+	if [[ "$mode" == integrity ]]; then
+		verify_args=(-Y check-novalidate)
+	fi
+	if ssh-keygen "${verify_args[@]}" \
 		-n "$APPROVAL_NAMESPACE" \
 		-s "$sig_file" <"$payload_file" >/dev/null 2>&1; then
 		rm -f "$payload_file" "$sig_file" "$allowed_signers_file"
@@ -1365,6 +1511,37 @@ _verify_comment_signature() {
 
 	rm -f "$payload_file" "$sig_file" "$allowed_signers_file"
 	return 1
+}
+
+_approval_classify_legacy_comment() {
+	local target_type="$1" target_number="$2" slug="$3" body="$4" pub_key="$5" payload="$6"
+	local legacy_payload_prefix=""
+	if ! _verify_comment_signature "$body" "$pub_key"; then
+		printf 'MALFORMED_APPROVAL\n'
+		return 0
+	fi
+	legacy_payload_prefix=$(printf 'APPROVE:%s:%s:%s:' "$target_type" "$slug" "$target_number" | tr '[:upper:]' '[:lower:]')
+	if [[ "$(printf '%s' "$payload" | tr '[:upper:]' '[:lower:]')" == "${legacy_payload_prefix}"* ]]; then
+		printf 'LEGACY_APPROVAL\n'
+	else
+		printf 'MALFORMED_APPROVAL\n'
+	fi
+	return 0
+}
+
+_approval_v2_payload_matches_target() {
+	local payload="$1" target_type="$2" normalized_slug="$3" target_number="$4"
+	jq -e --arg type "$target_type" --arg repo "$normalized_slug" --arg number "$target_number" \
+		--arg sha_pattern "$PERMISSION_SHA256_PATTERN" --arg string_type "$PERMISSION_JSON_STRING_TYPE" --arg object "$APPROVAL_JSON_OBJECT" '
+		.schema == "aidevops-approval/v2"
+		and .target.kind == $type
+		and .target.repository == $repo
+		and (.target.number | tostring) == $number
+		and (.snapshot_sha256 | type == $string_type and test($sha_pattern))
+		and (.issued_at | type == $string_type and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+		and (if $type == "pr" then (.authority == "merge" and (.pr | type == $object)) else (.authority == "development" and .pr == null and ((.issue // null) == null or (.issue.lifecycle | type == $object))) end)
+	' <<<"$payload" >/dev/null 2>&1 || return 1
+	return 0
 }
 
 _approval_classify_signed_comment() {
@@ -1379,33 +1556,29 @@ _approval_classify_signed_comment() {
 	normalized_slug=$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')
 
 	payload=$(_extract_fenced_block "$body" 1)
-	if [[ -z "$payload" ]] || ! _verify_comment_signature "$body" "$pub_key"; then
+	if [[ -z "$payload" ]]; then
 		printf 'MALFORMED_APPROVAL\n'
 		return 0
 	fi
 
 	if [[ "$payload" == APPROVE:* ]]; then
-		local legacy_payload_prefix=""
-		legacy_payload_prefix=$(printf 'APPROVE:%s:%s:%s:' "$target_type" "$slug" "$target_number" | tr '[:upper:]' '[:lower:]')
-		if [[ "$(printf '%s' "$payload" | tr '[:upper:]' '[:lower:]')" == "${legacy_payload_prefix}"* ]]; then
-			printf 'LEGACY_APPROVAL\n'
-		else
-			printf 'MALFORMED_APPROVAL\n'
-		fi
+		_approval_classify_legacy_comment "$target_type" "$target_number" "$slug" "$body" "$pub_key" "$payload"
 		return 0
 	fi
 
-	if ! jq -e --arg type "$target_type" --arg repo "$normalized_slug" --arg number "$target_number" \
-		--arg sha_pattern "$PERMISSION_SHA256_PATTERN" --arg string_type "$PERMISSION_JSON_STRING_TYPE" --arg object "$APPROVAL_JSON_OBJECT" '
-		.schema == "aidevops-approval/v2"
-		and .target.kind == $type
-		and .target.repository == $repo
-		and (.target.number | tostring) == $number
-		and (.snapshot_sha256 | type == $string_type and test($sha_pattern))
-		and (.issued_at | type == $string_type and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
-		and (if $type == "pr" then (.authority == "merge" and (.pr | type == $object)) else (.authority == "development" and .pr == null and ((.issue // null) == null or (.issue.lifecycle | type == $object))) end)
-	' <<<"$payload" >/dev/null 2>&1; then
+	if ! _approval_v2_payload_matches_target "$payload" "$target_type" "$normalized_slug" "$target_number"; then
 		printf 'MALFORMED_APPROVAL\n'
+		return 0
+	fi
+
+	if ! _verify_comment_signature "$body" "$pub_key"; then
+		# #aidevops:trust-boundary — embedded-key integrity is diagnostic only.
+		# It never grants signer trust or permits snapshot verification/dispatch.
+		if _verify_comment_signature "$body" "$pub_key" integrity; then
+			printf 'UNVERIFIABLE_SIGNER\n'
+		else
+			printf 'MALFORMED_APPROVAL\n'
+		fi
 		return 0
 	fi
 
@@ -1476,7 +1649,7 @@ cmd_setup() {
 	# Must be run as root (via sudo)
 	if [[ "$(id -u)" -ne 0 ]]; then
 		_print_error "This command must be run with sudo"
-		echo "Usage: sudo aidevops approve setup"
+		echo "Usage: $(approval_cli_prefix) approve setup"
 		return 1
 	fi
 
@@ -1533,11 +1706,13 @@ cmd_setup() {
 	echo "The private key is owned by root and only accessible via sudo."
 	echo "Workers cannot read it, even though they run as your user account."
 	echo ""
+	local approve_cli
+	approve_cli=$(approval_cli_prefix)
 	echo "You can now approve issues/PRs with:"
-	echo "  sudo aidevops approve issue <number> <owner/repo>"
-	echo "  sudo aidevops approve pr <number> <owner/repo>"
-	echo "  sudo aidevops approve issue <number> [number...] <owner/repo>"
-	echo "  sudo aidevops approve batch issue:<number> pr:<number> [...] <owner/repo>"
+	echo "  ${approve_cli} approve issue <number> <owner/repo>"
+	echo "  ${approve_cli} approve pr <number> <owner/repo>"
+	echo "  ${approve_cli} approve issue <number> [number...] <owner/repo>"
+	echo "  ${approve_cli} approve batch issue:<number> pr:<number> [...] <owner/repo>"
 	return 0
 }
 
@@ -1625,7 +1800,7 @@ _approval_classify_marked_comments() {
 	local expected_head_sha="${6:-}"
 	local comment_count="$7"
 	local required_actor="${8:-}"
-	local saw_api_error=0 saw_stale=0 saw_legacy=0 saw_untrusted=0 saw_malformed=0
+	local saw_api_error=0 saw_stale=0 saw_legacy=0 saw_untrusted=0 saw_malformed=0 saw_unverifiable=0
 	local comment_rows=""
 	local base64_decode_flag="-d"
 	[[ "$(uname -s)" == "Darwin" ]] && base64_decode_flag="-D"
@@ -1680,6 +1855,7 @@ _approval_classify_marked_comments() {
 		API_ERROR) saw_api_error=1 ;;
 		STALE_APPROVAL) saw_stale=1 ;;
 		LEGACY_APPROVAL) saw_legacy=1 ;;
+		UNVERIFIABLE_SIGNER) saw_unverifiable=1 ;;
 		*) saw_malformed=1 ;;
 		esac
 	done <<<"$comment_rows"
@@ -1699,6 +1875,10 @@ _approval_classify_marked_comments() {
 	[[ "$saw_untrusted" -eq 0 ]] || {
 		printf 'UNTRUSTED_APPROVAL\n'
 		return 7
+	}
+	[[ "$saw_unverifiable" -eq 0 ]] || {
+		printf 'UNVERIFIABLE_SIGNER\n'
+		return 8
 	}
 	[[ "$saw_malformed" -eq 1 ]] || saw_malformed=1
 	printf 'MALFORMED_APPROVAL\n'
@@ -1896,6 +2076,43 @@ cmd_reconcile() {
 	return 0
 }
 
+# ── Marketing action plans ───────────────────────────────────────────────────
+
+# Record an operator approval for one reviewed marketing action plan or receipt.
+# The Python ceremony re-checks root, SUDO_USER and TTY, shows the exact plan,
+# requires a typed APPROVE, and writes a root-owned, plan-bound record.
+#aidevops:trust-boundary -- only root+TTY can mint the record marketing_actions.py trusts.
+cmd_marketing_plan() {
+	local usage
+	usage="Usage: $(approval_cli_prefix) approve marketing-plan <plan.json> | --rollback <receipt.json>"
+	local subject_flag="--plan"
+	local subject_path="${1:-}"
+
+	_require_interactive_root "$usage" || return 1
+	if [[ -z "${SUDO_USER:-}" || "${SUDO_USER}" == "root" ]]; then
+		_print_error "Run via sudo from the operator account that owns the plan"
+		return 1
+	fi
+	if [[ "$subject_path" == "--rollback" ]]; then
+		subject_flag="--receipt"
+		subject_path="${2:-}"
+	fi
+	if [[ -z "$subject_path" || "$subject_path" == -* ]]; then
+		echo "$usage"
+		return 1
+	fi
+
+	# Prefer the system interpreter; the approval module stays Python 3.9-safe.
+	local python_bin="/usr/bin/python3"
+	[[ -x "$python_bin" ]] || python_bin=$(command -v python3 || true)
+	if [[ -z "$python_bin" ]]; then
+		_print_error "python3 is required for marketing-plan approval"
+		return 1
+	fi
+	"$python_bin" "$SCRIPT_DIR/marketing-action-helper.py" approve "$subject_flag" "$subject_path"
+	return $?
+}
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 main() {
@@ -1907,6 +2124,7 @@ main() {
 	issue | issue-approved) cmd_issue_approved "$@" ;;
 	pr | pr-approved) cmd_pr_approved "$@" ;;
 	batch) cmd_batch_approved "$@" ;;
+	marketing-plan) cmd_marketing_plan "$@" ;;
 	permissions) cmd_permissions "$@" ;;
 	verify-permissions) cmd_verify_permissions "$@" ;;
 	verify) cmd_verify "$@" ;;

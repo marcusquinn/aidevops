@@ -338,6 +338,8 @@ cp "$REPO_DIR/.agents/scripts/gh_quota_debug_response.py" "$TMP/scripts/gh_quota
 cp "$REPO_DIR/.agents/scripts/gh_quota_debug_cache.py" "$TMP/scripts/gh_quota_debug_cache.py"
 cp "$REPO_DIR/.agents/scripts/gh_quota_debug_request.py" "$TMP/scripts/gh_quota_debug_request.py"
 cp "$REPO_DIR/.agents/scripts/gh_native_response.py" "$TMP/scripts/gh_native_response.py"
+cp "$REPO_DIR/.agents/scripts/gh_conditional_cache.py" "$TMP/scripts/gh_conditional_cache.py"
+cp "$REPO_DIR/.agents/scripts/gh_conditional_request.py" "$TMP/scripts/gh_conditional_request.py"
 cp "$REPO_DIR/.agents/scripts/shared-gh-wrappers-rest-fallback.sh" "$TMP/scripts/shared-gh-wrappers-rest-fallback.sh"
 cp "$REPO_DIR/.agents/scripts/shared-gh-wrappers-rest-read-semantics.sh" "$TMP/scripts/shared-gh-wrappers-rest-read-semantics.sh"
 cp "$REPO_DIR/.agents/scripts/log-issue-helper.sh" "$TMP/scripts/log-issue-helper.sh"

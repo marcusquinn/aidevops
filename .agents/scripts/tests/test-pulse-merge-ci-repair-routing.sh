@@ -32,6 +32,9 @@ source "${SCRIPT_DIR}/test-pulse-merge-ci-repair-routing-mocks.sh"
 # shellcheck source=./test-pulse-merge-ci-repair-routing-cases.sh
 # shellcheck disable=SC1091 # Sibling module resolved at runtime via SCRIPT_DIR.
 source "${SCRIPT_DIR}/test-pulse-merge-ci-repair-routing-cases.sh"
+# GH#38259: extracted merge stages run through the timing wrapper.
+# shellcheck source=../pulse-merge-timing.sh
+source "${SCRIPT_DIR}/../pulse-merge-timing.sh"
 
 main() {
 	test_red_pr_passes_gates_before_repair_route
@@ -55,6 +58,9 @@ main() {
 	test_ci_repair_respects_live_legacy_lease
 	test_ci_repair_session_keys_are_repository_scoped
 	test_ci_repair_worktree_paths_are_repository_scoped
+	test_ci_repair_fetches_absent_head_through_scratch_context
+	test_ci_repair_fetches_absent_head_through_sibling_worktree
+	test_ci_repair_rejects_head_superseded_by_descendant
 	test_ci_feedback_skips_pending_only_checks
 	test_ci_feedback_skips_mixed_pending_pass_checks
 	test_ci_feedback_classifies_qlty_evidence_roles
@@ -65,6 +71,7 @@ main() {
 	test_ci_feedback_preserves_supplied_nonrequired_baseline_evidence
 	test_ci_feedback_defers_when_head_changes_during_collection
 	test_ci_feedback_defers_without_initial_head_snapshot
+	test_ci_feedback_refuses_ownership_label_added_before_launch
 	test_ci_feedback_skips_infra_timeout_checks
 	test_ci_feedback_skips_failed_check_with_exit_143_log
 	test_ci_feedback_skips_registry_rate_limit_failure

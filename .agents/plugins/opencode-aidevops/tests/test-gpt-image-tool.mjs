@@ -96,6 +96,26 @@ describe("GPT image OpenCode tool", () => {
     assert.doesNotMatch(output, new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   });
 
+  test("surfaces classified HTTP 200 SSE errors without saving or marking success", async () => {
+    const root = await projectRoot();
+    let successes = 0;
+    const tool = createTool({
+      projectRoot: root,
+      resolveOAuthAccount: async () => ({ email: "person@example.test", access: "test" }),
+      markOAuthSuccess: () => { successes += 1; },
+      fetchImpl: async () => new Response(`data: ${JSON.stringify({
+        type: "response.failed",
+        response: { error: { message: "Tool choice 'image_generation' not found in 'tools' parameter" } },
+      })}\n\n`),
+    });
+    await assert.rejects(
+      tool.execute({ prompt: "draw a test", out: "generated/test.png" }),
+      { code: "no_compatible_image_model" },
+    );
+    assert.equal(successes, 0);
+    await assert.rejects(access(join(root, "generated/test.png")), { code: "ENOENT" });
+  });
+
   test("routes outputs and references into a validated session-owned linked worktree", async () => {
     const { canonical, linked } = await gitProject();
     await mkdir(join(linked, "refs"));
@@ -191,6 +211,30 @@ describe("GPT image OpenCode tool", () => {
       /returned 1x1 PNG for requested 1024x1024; no artifact was written/,
     );
     await assert.rejects(access(join(root, "api.png")), /ENOENT/);
+  });
+
+  test("writes a PNG through the explicit OpenRouter route and rejects references", async () => {
+    const root = await projectRoot();
+    let captured;
+    const tool = createTool({
+      projectRoot: root,
+      readSecret: (name) => {
+        assert.equal(name, "OPENROUTER_API_KEY");
+        return "unit-test-credential-value";
+      },
+      fetchImpl: async (url, init) => {
+        captured = { url, auth: init.headers.Authorization };
+        return Response.json({ data: [{ b64_json: PNG_BASE64 }] });
+      },
+    });
+    const output = await tool.execute({ prompt: "draw", out: "or.png", auth: "openrouter" });
+    assert.match(output, /Billing route: OpenRouter API/);
+    assert.equal(captured.url, "https://openrouter.ai/api/v1/images");
+    assert.deepEqual(await readFile(join(root, "or.png")), Buffer.from(PNG_BASE64, "base64"));
+    await assert.rejects(
+      tool.execute({ prompt: "draw", out: "or2.png", auth: "openrouter", images: ["or.png"] }),
+      /does not support reference images/,
+    );
   });
 
   test("still rejects invalid native OAuth raster data with best-effort sizing", async () => {

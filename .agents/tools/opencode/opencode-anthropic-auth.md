@@ -60,6 +60,14 @@ opencode auth login
 
 Accounts stored in `~/.aidevops/oauth-pool.json` (0600). Repeat for additional accounts.
 
+**Two seats on one email (Team + Personal):** each Anthropic grant is scoped to
+one organization, and the pool stores it (`orgId`, `orgName`). Signing in again
+with the same email but choosing the other organization adds a second seat
+instead of replacing the first. Both seats rotate independently. Seats show as
+`email [Org name]`. When an email has several seats, pick one with an org
+selector (orgId prefix or exact org name); ambiguous actions refuse rather than
+guess. Older entries without an org keep working under the email alone.
+
 **Managing the pool:**
 
 ```text
@@ -68,6 +76,10 @@ Accounts stored in `~/.aidevops/oauth-pool.json` (0600). Repeat for additional a
 /model-accounts-pool remove user@example.com
 /model-accounts-pool reset-cooldowns   # Clear rate-limit cooldowns
 ```
+
+Shell equivalent for one of several seats:
+`aidevops model-accounts-pool remove anthropic user@example.com --org Personal`
+(also `set-priority ... --org`, `assign-pending ... --org`).
 
 **Pool models** (appear in model picker after adding accounts):
 - `anthropic-pool/claude-opus-4-6`

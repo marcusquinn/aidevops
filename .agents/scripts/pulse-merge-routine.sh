@@ -337,7 +337,41 @@ _pmr_require_gh_auth() {
 # any FD-inheritance gotchas. PID-based stale detection lets the next runner
 # reclaim the lock if the previous instance crashed.
 
+_pmr_init_collab_memo() {
+	local root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	# Never reuse an inherited file: every run starts fresh, including failures
+	# during scratch creation before the auth or quota probes.
+	unset AIDEVOPS_GH_COLLAB_MEMO_FILE AIDEVOPS_GH_COLLAB_STATS_FILE
+	PMR_COLLAB_SCRATCH_DIR=""
+	mkdir -p "$root" || return 1
+	PMR_COLLAB_SCRATCH_DIR=$(mktemp -d "${root}/collab-memo.XXXXXXXX") || return 1
+	AIDEVOPS_GH_COLLAB_MEMO_FILE=$(mktemp "${PMR_COLLAB_SCRATCH_DIR}/memo.XXXXXXXX") || return 1
+	AIDEVOPS_GH_COLLAB_STATS_FILE=$(mktemp "${PMR_COLLAB_SCRATCH_DIR}/stats.XXXXXXXX") || return 1
+	_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
+	export AIDEVOPS_GH_COLLAB_MEMO_FILE AIDEVOPS_GH_COLLAB_STATS_FILE
+	return 0
+}
+
 _pmr_release_lock() {
+	if [[ -n "${AIDEVOPS_GH_COLLAB_STATS_FILE:-}" && -f "$AIDEVOPS_GH_COLLAB_STATS_FILE" ]]; then
+		local hits=0 misses=0 line="" distinct=0
+		while IFS= read -r line; do
+			case "$line" in
+			hit) hits=$((hits + 1)) ;;
+			miss\ *) misses=$((misses + 1)) ;;
+			esac
+		done <"$AIDEVOPS_GH_COLLAB_STATS_FILE"
+		_pmr_log INFO "collab_memo hits=${hits} misses=${misses}"
+		distinct=$(sort -u "$AIDEVOPS_GH_COLLAB_STATS_FILE" | awk '/^miss / { n++ } END { print n+0 }')
+		_pmr_log INFO "collab_memo distinct_miss_keys=${distinct}"
+		rm -f "$AIDEVOPS_GH_COLLAB_STATS_FILE"
+	fi
+	if [[ -n "${PMR_COLLAB_SCRATCH_DIR:-}" ]]; then
+		rm -f "${AIDEVOPS_GH_COLLAB_MEMO_FILE:-}"
+		rmdir "$PMR_COLLAB_SCRATCH_DIR" 2>/dev/null || true
+		PMR_COLLAB_SCRATCH_DIR=""
+	fi
+	unset AIDEVOPS_GH_COLLAB_MEMO_FILE AIDEVOPS_GH_COLLAB_STATS_FILE
 	rm -rf "$LOCK_DIR" 2>/dev/null || true
 	return 0
 }
@@ -493,6 +527,7 @@ cmd_run() {
 	if ! _pmr_acquire_lock; then
 		exit 0
 	fi
+	_pmr_init_collab_memo || return 1
 	if ! _pmr_require_gh_auth; then
 		return 1
 	fi
@@ -570,6 +605,7 @@ cmd_dry_run() {
 	if ! _pmr_acquire_lock; then
 		exit 0
 	fi
+	_pmr_init_collab_memo || return 1
 	if ! _pmr_require_gh_auth; then
 		return 1
 	fi

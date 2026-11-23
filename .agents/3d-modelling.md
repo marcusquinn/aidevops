@@ -57,3 +57,6 @@ Content and Build+ can use these same specialists directly. An app specialist
 does not dispatch another specialist; the primary owns sequencing and validation.
 
 Rendering and independent desktops: `tools/design/creative-execution.md`.
+Remote render routes, costs and job contract: `tools/design/3d-render-backends.md`.
+Python-built Blender scenes, seamless loops, Blender 5.x API notes and briefing
+another model to do the modelling: `tools/design/blender-scripted-scenes.md`.

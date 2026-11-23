@@ -6,7 +6,9 @@
 Return 125 with attempted=false for unsupported shapes; an executed native125
 is distinguished by attempted=true. Never decide fallback from exit code alone.
 Explicit pagination invokes this once per page.
-No response is cached, and no automatic transport retry is performed.
+Eligible GETs revalidate their last stdout with If-None-Match, and GitHub
+confirms every replay with a 304 (gh_conditional_cache, GH#38566). No automatic
+transport retry is performed.
 """
 
 from __future__ import annotations
@@ -22,10 +24,10 @@ import tempfile
 import time
 from pathlib import Path
 
+from gh_conditional_cache import open_entry as open_conditional_entry
 from gh_native_response import (
     BOOL_FLAGS as BOOL_FLAGS,
     VALUE_FLAGS as VALUE_FLAGS,
-    _copy_response,
     _request_options as _request_options,
     _request_resource as _request_resource,
     _response_metadata,
@@ -52,9 +54,10 @@ def check_interrupted():
         raise SystemExit(128 + INTERRUPTED_SIGNAL)
 
 
-def execute(executable: str, args: list[str], output, environment: dict[str, str]) -> int:
+def execute(executable: str, args: list[str], output, environment: dict[str, str],
+            errors=None) -> int:
     check_interrupted()
-    child = subprocess.Popen([executable, *args], stdout=output, env=environment)
+    child = subprocess.Popen([executable, *args], stdout=output, stderr=errors, env=environment)
     deadline = time.monotonic() + 90
     try:
         while True:
@@ -151,12 +154,14 @@ def _exit_status(rc: int) -> int:
     return rc if rc >= 0 else 128 - rc
 
 
-def _finish_budget(budget, reservation: str, resource: str, headers: dict[str, str], started: float) -> None:
+def _finish_budget(budget, claim: tuple[str, str], headers: dict[str, str], started: float,
+                   free: bool = False) -> None:
+    reservation, resource = claim
     if budget is None:
         return
     if reservation:
         try:
-            budget.finish(reservation, resource, headers, started=started)
+            budget.finish(reservation, resource, headers, started=started, free=free)
         except (OSError, ValueError, sqlite3.Error):
             print("[gh-transport] quota observation remains uncertain", file=sys.stderr)
     budget.close()
@@ -211,6 +216,7 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
     started = time.time()
     headers: dict[str, str] = {}
     rc = None
+    status = 0
     try:
         metadata.write_text('{"attempted":false}', encoding="utf-8")
         private_directory(temp_dir)
@@ -231,15 +237,17 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
         phase("sqlite_open")
         reservation = phase_timer.admit(budget, resource)
         phase("sqlite_admission_and_pacing")
-        with tempfile.TemporaryFile(dir=temp_dir) as output:
+        conditional = open_conditional_entry(directory, credential, args, shape)
+        with tempfile.TemporaryFile(dir=temp_dir) as output, conditional.stderr_buffer(temp_dir) as errors:
             native_args = args if include else [*args, "--include"]
+            native_args = [*native_args, *conditional.validator_args()]
             metadata.write_text('{"attempted":true}', encoding="utf-8")
-            rc = execute(executable, native_args, output, environment)
+            rc = execute(executable, native_args, output, environment, errors)
             # Sample time belongs to the response, not to the later log append.
             sampled_at = int(time.time())
             phase("native_gh")
             status, headers, body_offset = included_headers(output)
-            rc = rc or _copy_response(output, include, silent, status, body_offset)
+            rc = conditional.deliver(output, errors, (include, silent, status, body_offset), rc)
             observed = _response_metadata(status, headers, authenticated)
             observed["auth_fingerprint"] = _attribution_fingerprint(host, environment.get("GH_TOKEN", ""))
             observed["sampled_at"] = sampled_at
@@ -252,7 +260,7 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
     except (OSError, ValueError, sqlite3.Error) as exc:
         return _report_state_failure(metadata, exc, rc)
     finally:
-        _finish_budget(budget, reservation, resource, headers, started)
+        _finish_budget(budget, (reservation, resource), headers, started, free=status == 304)
         phase("sqlite_finish")
 
 

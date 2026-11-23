@@ -95,6 +95,12 @@ _cross_review_models_for_tier() {
 	fi
 
 	models=$(jq -r --arg tier "$tier" '.tiers[$tier].models[]?' "$table_path" 2>/dev/null) || return 1
+	# Per-tier inheritance: a custom table omitting this tier falls back to the framework table.
+	# Only when the models key is absent (explicit empty arrays are kept); -ef matches equivalent paths.
+	if [[ -z "$models" && "$table_path" -ef "$custom_table" && -r "$default_table" ]] &&
+		! jq -e --arg tier "$tier" '.tiers[$tier] | has("models")' "$table_path" >/dev/null 2>&1; then
+		models=$(jq -r --arg tier "$tier" '.tiers[$tier].models[]?' "$default_table" 2>/dev/null) || return 1
+	fi
 	while IFS= read -r model; do
 		[[ -z "$model" ]] && continue
 		_cross_review_model_key "$model" >/dev/null || return 1
@@ -596,16 +602,63 @@ _cross_review_dispatch_one() {
 
 	# Extract text response from JSON
 	if [[ -f "${output_dir}/${model_key}.json" ]]; then
-		jq -r '.parts[]? | select(.type == "text") | .text' \
-			"${output_dir}/${model_key}.json" 2>>"$model_err_log" >"$result_file" || model_failed=1
+		_cross_review_extract_text "${output_dir}/${model_key}.json" \
+			2>>"$model_err_log" >"$result_file" || true
 	fi
 
 	# Clean up runner (always attempt cleanup, even on failure)
 	"$runner_helper" destroy "$runner_name" --force 2>>"$model_err_log" || true
 
-	# Fail if no usable output was produced
-	[[ -s "$result_file" ]] || model_failed=1
-	return "$model_failed"
+	# Fail if no usable output was produced; record a named reason
+	if [[ -s "$result_file" ]]; then
+		return 0
+	fi
+	_cross_review_failure_reason "${output_dir}/${model_key}.json" "$model_err_log" \
+		>"${output_dir}/${model_key}.reason" || true
+	return 1
+}
+
+# Extract answer text from runner output. Supports the OpenCode event stream
+# (one JSON event per line, text at .part.text where .type == "text") and the
+# legacy single-object shape (.parts[] with .type == "text").
+# Args: arg1=json_file. Prints text to stdout.
+_cross_review_extract_text() {
+	local json_file="$1"
+	local text
+	text=$(jq -R -r --arg t text 'fromjson? | objects | select(.type? == $t) | .part.text? // empty' "$json_file" 2>/dev/null) || text=""
+	if [[ -z "$text" ]]; then
+		text=$(jq -R -r --arg t text 'fromjson? | objects | .parts[]? | select(.type? == $t) | .text // empty' "$json_file" 2>/dev/null) || text=""
+	fi
+	[[ -n "$text" ]] && printf '%s\n' "$text"
+	return 0
+}
+
+# Name why a model produced no text.
+# Args: arg1=json_file arg2=err_log. Prints a one-line reason.
+_cross_review_failure_reason() {
+	local json_file="$1"
+	local err_log="$2"
+	local cred_re='api key|api_key|not configured|unauthorized|401'
+	local json_errors=""
+	if [[ -s "$json_file" ]]; then
+		json_errors=$(jq -R -r 'fromjson? | objects | select(.type? == "error" or has("error")) | tojson' "$json_file" 2>/dev/null) || json_errors=""
+	fi
+	# Known causes first, even when JSON output exists
+	if [[ -s "$err_log" ]] && grep -Eqi 'timed out|timeout' "$err_log" 2>/dev/null; then
+		echo "timeout (no output before deadline)"
+	elif { [[ -s "$err_log" ]] && grep -Eqi "$cred_re" "$err_log" 2>/dev/null; } ||
+		{ [[ -n "$json_errors" ]] && grep -Eqi "$cred_re" <<<"$json_errors"; }; then
+		echo "missing or rejected provider key"
+	elif [[ ! -s "$json_file" ]]; then
+		echo "runner error (no output produced)"
+	elif [[ -n "$json_errors" ]]; then
+		echo "runner error (error event in output)"
+	elif jq -R -e --arg t text 'fromjson? | objects | (select(.type? == $t), (.parts[]? | select(.type? == $t)))' "$json_file" >/dev/null 2>&1; then
+		echo "empty answer (text event had no content)"
+	else
+		echo "no text event (timeout or incomplete run)"
+	fi
+	return 0
 }
 
 # Wait for parallel pids and report per-model status.
@@ -623,7 +676,9 @@ _cross_review_wait_results() {
 			local model_key
 			model_key=$(_cross_review_model_key "$model_name") || model_key="invalid-model"
 			local err_log="${output_dir}/${model_key}-errors.log"
-			echo "  ${model_name}: failed (see ${err_log})"
+			local reason="unknown"
+			[[ -s "${output_dir}/${model_key}.reason" ]] && reason=$(head -1 "${output_dir}/${model_key}.reason")
+			echo "  ${model_name}: failed - ${reason} (see ${err_log})"
 			failed=$((failed + 1))
 		else
 			echo "  ${model_name}: done"

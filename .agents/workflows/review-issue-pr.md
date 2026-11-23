@@ -248,7 +248,7 @@ For interactive maintainer review, complete the full checklist and post the stru
 2. Complete duplicate, temporal, root-cause, safety, and dispatchability checks.
 3. For an issue, check approval first with `approval-helper.sh verify issue <number> <owner/repo>`. In `--report-only` mode, never change labels; list recommendations only, and for an unsigned issue withhold the approval command while recommended non-lifecycle labels remain unapplied. If already approved, list missing non-lifecycle labels without applying them. If verification is uncertain (e.g. `API_ERROR`), apply nothing and withhold the approval command until verification succeeds. Otherwise apply every recommended non-lifecycle label, including `bug` and `enhancement`, before presenting or running the approval command. After signing, apply only lifecycle/tier labels accepted by approval continuity. A later non-lifecycle label event can permanently stale approval even if removed.
 4. Post the review using the format below so the decision has durable evidence.
-5. End every review with `Maintainer approval`: include the ready-to-run command after an `Approve` recommendation; otherwise state why none is appropriate. Never wait for the user to request it.
+5. End every review with `Maintainer approval`: include the ready-to-run command after an `Approve` recommendation; otherwise state why none is appropriate. Never wait for the user to request it. After a PR approval is signed, post later review notes on the linked issue, not the PR: any non-bot PR comment stales it (`reference/auto-merge.md:75`); `gh-write-helper.sh pr comment` refuses without `--allow-approval-stale`.
 
 Before claiming approval is missing or asking the maintainer to approve again, query the authoritative current state with
 `approval-helper.sh verify issue <number> <owner/repo>`. Never infer approval
@@ -259,7 +259,7 @@ Do not expose an approval command as the next action merely because a dispatch h
 
 Assessment language describes a recommendation, not an exercised authority action. Use `Recommendation: Approve`, never `Approved`, until a trusted maintainer actually performs the approval step. Apply the same distinction in the task-tool result and user-facing summary.
 
-For an issue with an imperfect linked PR, recommend issue approval when the problem and root-cause direction are valid, then record a separate PR disposition: `merge`, `repair`, `replace`, or `close`. Do not downgrade the issue to `Request Changes` because implementation needs work.
+For an issue with an imperfect linked PR, recommend issue approval when the problem and root-cause direction are valid, then record a separate PR disposition: `merge`, `repair`, `replace`, or `close`. Do not downgrade the issue to `Request Changes` because implementation needs work. If the linked PR is external/fork and the disposition is `repair` or `replace` (or an approval-bound PR edit is planned), withhold the issue approval command, since the repair stales it; record the disposition and give the single post-repair `pre-merge-gate` batch command (`workflows/review.md` "External PR authority preflight"). Issue approval stays immediate for `merge`, `close`, or no linked PR.
 
 For batch reviews, group approved targets by repository and use the batch syntax
 in `reference/task-lifecycle.md`. One command must list all eligible targets and
@@ -337,7 +337,7 @@ accept one exact `APPROVE`; never mix repositories or include non-Approve target
 
 [`sudo aidevops approve issue|pr <numbers...> <owner/repo>` or mixed
 `sudo aidevops approve batch issue:<N> pr:<N>... <owner/repo>`; otherwise
-`No approval command — <reason>`.]
+`No approval command — <reason>` (external PR repair: use `pre-merge-gate` batch).]
 ```
 
 **Why this section exists**: Tier recommendations without brief verification led to issues being labelled `tier:simple` when no brief with code blocks existed — making them undispatchable at that tier. This section forces the reviewer to check prerequisites before recommending a tier, whether invoked via `/review-issue-pr` or encountered mid-session. See AGENTS.md "Briefs, Tiers, and Dispatchability" for the full prerequisite chain.

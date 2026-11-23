@@ -163,6 +163,44 @@ Do not treat null snapshot fields as proof that content or labels were removed.
 
 **Investigation:** Compare `before.labels` vs `after.labels`. Check `caller_script` and `caller_function` to identify the code path. Was this a legitimate state transition?
 
+### Verified lifecycle policy (GH#38135)
+
+Keep lifecycle labels protected alongside trust gates; do not demote unverified
+removals to a digest. New managed CLI edits (`issue edit` and `issue status`)
+can carry `flags.lifecycle_transition_verified: v1-owned-current-state` only
+after independent verification:
+
+- Comparable snapshots show exactly one core status replaced by one other core
+  status, no other label delta, unchanged title/body lengths and the same single
+  assignee. Issue snapshots capture assignee logins; missing ownership fails closed.
+- The authenticated actor has current write/maintain/admin permission, is that
+  assignee, and the live issue still matches the recorded labels and lengths.
+  `status:done` requires a closed issue; other targets require an open issue.
+- Removing `status:claimed` or `status:in-progress` additionally requires exactly
+  one live, trusted, unexpired ready dispatch lease matching the caller's lease
+  token and session. The existing dispatch lease parser checks authorship,
+  releases and renewals. A shared GitHub login alone cannot exempt claim theft.
+  Lease identifiers are verification inputs, never audit flags.
+
+The filter also checks the caller, exact version, pure status delta and absence
+of any other suspicious signal. Trust-gate removals (including
+`needs-maintainer-permissions`), content wipes, unknown statuses, missing proof,
+failed reads and different-runner claim removals remain alert-grade. Existing
+narrow approval/handoff exemptions are unchanged. Generic CLI edits are not
+redirected: only edits that independently meet the same proof contract qualify.
+
+`issue status` previously called `set_issue_status` through direct REST deltas
+without an audit record. The CLI now captures and records the entire operation,
+including partial writes on failure. Direct library callers of `set_issue_status`
+are not newly exempted by this policy.
+
+Historical records are immutable and must not gain flags retroactively. Therefore
+the old backlog's alert count cannot decrease from this new exemption alone.
+Measure the 70% noise-reduction target on newly verified representative records,
+and report historical scan counts separately; do not present a synthetic replay
+as proof of historical provenance. Reverting the filter restores alerting for
+the new records without changing the log.
+
 ## Forensics Workflow
 
 Use this workflow when a user reports "my issue was wiped" or when the anomaly scanner files an alert.
@@ -311,21 +349,59 @@ The daily routine `r-gh-audit-scan` runs `gh-audit-anomaly-helper.sh scan`:
 ```
 
 The scanner:
-1. Reads entries since the last scan (tracked in `~/.aidevops/logs/gh-audit-scanner.state`)
+1. Reads entries since the last scan (tracked in `~/.aidevops/logs/gh-audit-scanner.state`).
+   After a rotation it first reads the rotated file that held the checkpoint
+   (from the saved line onward) and any later rotated files, then the whole live
+   log; a live log shorter than the checkpoint with no rotated file is rescanned
+   from line 1 (GH#37904)
 2. Filters entries with `suspicious[] | length > 0`, excluding only exact,
    fully comparable expected transitions: verified issue/PR approval removal of
    `needs-maintainer-review`, independently revalidated trusted-author NMR
    normalization, verified PR-review handoffs that replace only
    `status:in-progress` with `status:in-review` without content-length changes,
    runtime-owned blocked exits replacing only `status:in-progress` with
-   `status:blocked` with `worker_blocked_exit_verified: v1-release-persisted`
+   `status:blocked` plus at most one `needs-*` companion from the canonical
+   blocked companion contract (GH#38360; the scanner reads the list from
+   `_blocked_companion_contract`, GH#39853), with
+   `worker_blocked_exit_verified: v1-release-persisted`
    (live blocked state and a trusted blocked release newer than the last claim),
+   signed worker-permission grants that remove `needs-maintainer-permissions`
+   (optionally with `status:blocked`, adding only `status:available` or
+   `auto-dispatch`) with `permission_approval_verified: v1-current-state`
+   (the signed grant re-verified against the latest live request, GH#37906),
    and worker permission blocking that replaces active lifecycle
    labels with `needs-maintainer-permissions` (the original audit entry remains
    unchanged)
 3. Redacts source repository names unless GitHub confirms they are public (or
    they match the destination repository), failing closed on lookup errors
-4. Files a GitHub issue on `marcusquinn/aidevops` with a summary table when anomalies are found
+4. Counts lines that are not parsable NDJSON objects, reports them under
+   **Malformed lines** and a `## Log Integrity` section, and keeps scanning the
+   rest of the window (GH#38229)
+5. Files a GitHub issue on `marcusquinn/aidevops` with a summary table when
+   anomalies or malformed lines are found
+
+### Malformed lines
+
+An interrupted append leaves the log without a trailing newline, so the next
+event concatenates onto the partial one and both records become unparsable.
+`gh-audit-log-helper.sh` now writes a separating newline when the last byte is
+not one and serialises appends with `flock`, so this cannot recur silently.
+
+Earlier the scanner aborted on any unparsable line and held its checkpoint,
+which turned one torn line into indefinite loss of detection for every later
+entry. Unparsable lines are therefore reported rather than treated as a reason
+to stop: they are excluded from signal matching, counted in the report, and the
+checkpoint still advances. The log is append-only — never edit it to "repair" a
+torn line. Locate reported lines with:
+
+```bash
+jq -nR '[inputs | input_line_number as $n | [fromjson?] | if length == 0 then $n else empty end]' \
+  ~/.aidevops/logs/gh-audit.log
+```
+
+A truncated prefix followed by a complete later event is a write fault. Edited or
+reordered content on such a line is a tampering finding: follow the Forensics
+Workflow above.
 
 The explicit handoff command is `gh-write-helper.sh issue review-handoff <issue>
 --repo <owner/repo> --pr <pr>`. Its `_issue_review_handoff` provenance requires
@@ -351,14 +427,58 @@ mismatches, and additional signals (including body loss or capture failures)
 retain the alert. Each exclusion logs `self_reversal`; the original log stays
 unchanged and the scan cursor still advances. Historical alerts are not rewritten.
 
-Alerts are labelled `monitoring` and `no-auto-dispatch` (GH#34499). The evidence
-is in the producing runner's local `gh-audit.log`, so the review owner is the
-runner that filed the alert (the issue author). Other runners' workers cannot read
-it: before this hold, #34495 used three worker launches that each ended blocked.
-Investigate on the producing runner with the Forensics Workflow above. Then close
-the alert with evidence, or file a separately scoped repair task. Do not remove
-`no-auto-dispatch` to "unstick" an alert; that removal is itself a
-protected-label audit signal.
+Alerts are labelled `monitoring`, `auto-dispatch` and `status:available`
+(GH#38770; previously a `no-auto-dispatch` hold, GH#34499). The evidence is in the
+producing runner's local `gh-audit.log`, so the triage owner is the runner that
+filed the alert (the issue author). Other runners' workers cannot read it: #34495
+used three worker launches that each ended blocked. Locality is enforced at dispatch
+time by `_dedup_audit_alert_locality` (`pulse-dispatch-dedup-layers.sh`,
+`# aidevops:trust-boundary`): for an alert titled `GH Audit Anomaly Alert:` /
+`GH Audit Log Integrity Alert:` that carries the `gh-audit-anomaly-scanner` marker and
+the `monitoring` label, every runner except the author skips it, failing closed when
+the issue or `self_login` is unreadable.
+
+### Alert Triage Contract
+
+The producing runner's worker triages each alert; a human only sees alerts that
+carry a `needs-*` label. For every table row:
+
+1. Find the local record in `gh-audit.log` by `ts` + `repo` + `number`; read `flags`,
+   `caller_*` and `delta`.
+2. Check live state: issue events and timeline, whether the protected label was
+   restored (label-protection Action or self-reversal), and approval or withdrawal
+   proof (`approval-helper.sh verify-permissions` / `verify`).
+3. Classify the entry: `expected` (cite the evidence), `reverted`, or `unexplained`.
+
+Outcome: all entries `expected` or `reverted` → post one verified evidence report,
+then prepend the self-bound report-only receipt to that same comment as described
+in `reference/worker-discipline.md` "Read-only reports", and close the alert as
+completed (`status:done`). Scanner bodies opt in with
+`<!-- aidevops:completion-contract:report-only/v1 -->`. A `COLLABORATOR` may complete
+this path only when the issue author, closer and receipt author are the same login,
+the title starts with `GH Audit Anomaly Alert:` or `GH Audit Log Integrity Alert:`,
+the body contains `<!-- gh-audit-anomaly-scanner:`, and `monitoring` is present.
+The receipt and clean-worktree checks still apply; OWNER/MEMBER behaviour is unchanged.
+Any `unexplained` → add `needs-maintainer-input` plus one
+decision-ready comment naming those entries, and leave the alert open (the label also
+blocks redispatch). A recurring expected shape gets a separately scoped filter-fix
+task, as #38764 did for withdrawals. An `expected` entry that already carries a
+verified provenance flag (`flags.*_verified`) but was still reported means the
+producer changed and its filter did not; for example GH#38360 added blocked
+companions, which caused daily alerts until GH#39853. File the filter-fix task on
+the first such entry. Do not treat the documented narrow shape as proof that the
+scanner was correct to report it.
+
+Never edit the audit log, never change labels on the target issues, and keep the
+`[private repository]` placeholder in public comments. A `state_capture_unavailable:*`
+signal is a failed read, not evidence of wiped content; the log stores lengths, not
+content.
+
+Stale fallback: when an alert stays unassigned past `AIDEVOPS_AUDIT_ALERT_STALE_HOURS`
+(default 72) because the producing runner never claims it (for example it was retired),
+the pulse on the maintainer runner (`self_login` equals the repo owner) adds
+`needs-maintainer-input` with a one-line comment. Alerts filed before GH#38770 keep
+their `no-auto-dispatch` hold and are not backfilled.
 
 To run the scanner manually:
 
@@ -366,7 +486,7 @@ To run the scanner manually:
 # Normal run (incremental, files issue)
 gh-audit-anomaly-helper.sh scan
 
-# Scan all entries without filing an issue (dry run)
+# Scan the whole live log (not rotated logs) without filing an issue (dry run)
 gh-audit-anomaly-helper.sh scan --all --dry-run
 
 # Check scanner state

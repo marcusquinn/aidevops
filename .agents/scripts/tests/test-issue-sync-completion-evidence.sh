@@ -341,6 +341,23 @@ if cmd_close && [[ "$BULK_CLOSED" == "t75|175" && "$BULK_SUMMARY" == *"1 closed,
 else
 	fail "bulk close mishandled historical IDs: closed=$BULK_CLOSED summary=$BULK_SUMMARY"
 fi
+
+# GH#38921: an open issue whose title starts with an old task ID as its topic
+# must not be closed (or the row repointed) when the completed row already
+# references a different issue. Live mode proves the TODO row is untouched.
+printf '%s\n' '- [x] t2449 historical row ref:GH#20164 pr:#20283' \
+	'- [x] t75 valid row ref:GH#175' >"$bulk_todo"
+gh_list_issues() { printf '%s\n' '[{"number":38909,"title":"t2449 merge verdict topic"},{"number":175,"title":"t75: valid"}]'; }
+DRY_RUN=false
+BULK_CLOSED=""
+BULK_SUMMARY=""
+if cmd_close && [[ "$BULK_CLOSED" == "t75|175" && "$BULK_SUMMARY" == *"1 closed, 1 skipped, 0 refs fixed"* ]] &&
+	grep -qx -- '- \[x\] t2449 historical row ref:GH#20164 pr:#20283' "$bulk_todo"; then
+	pass "bulk close leaves a task-ID title collision open and its row ref intact"
+else
+	fail "bulk close acted on a title collision: closed=$BULK_CLOSED summary=$BULK_SUMMARY row=$(head -n 1 "$bulk_todo")"
+fi
+DRY_RUN=true
 rm -f "$bulk_todo"
 
 if [[ "$FAIL" -eq 0 ]]; then

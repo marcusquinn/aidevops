@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import os
 import re
-import tempfile
 from pathlib import Path
 
 from canonical_git_clone import is_clone_outside_canonical
@@ -20,6 +19,7 @@ from canonical_git_readonly import CANONICAL_CHECKS
 from canonical_git_repository import git_output as _git_output
 from canonical_git_repository import is_canonical as _is_canonical
 from canonical_git_repository import real_git as real_git
+from canonical_git_repository import reset_probe_memo
 from canonical_git_snapshot import is_isolated_opencode_snapshot
 
 BLOCK_EXIT = 42
@@ -103,6 +103,8 @@ def _is_isolated_prospective_merge_tree(
     context_dir = os.path.dirname(os.path.realpath(git_dir))
     if not os.path.basename(context_dir).startswith("aidevops-prospective-todo."):
         return False
+    import tempfile  # deferred: only needed on this rare path
+
     return os.path.dirname(context_dir) == os.path.realpath(tempfile.gettempdir())
 
 
@@ -135,6 +137,8 @@ def _is_isolated_routines_publisher(
         return False
     repo_dir = os.path.realpath(repo_dir)
     context_dir = os.path.dirname(repo_dir)
+    import tempfile  # deferred: only needed on this rare path
+
     return bool(
         os.path.basename(repo_dir) == "repo"
         and re.fullmatch(r"routines-publisher\.[A-Za-z0-9]+", os.path.basename(context_dir))
@@ -287,6 +291,7 @@ def classify_git_argv(
     argv: list[str], cwd: str, real_git_path: str, check_unresolved: bool = False
 ) -> tuple[bool, str]:
     """Classify one Git argv vector against canonical-worktree policy."""
+    reset_probe_memo()  # probe results never span argv vectors
     prefix, effective_cwd, subcommand, args = split_invocation(argv, cwd)
     repo_values = repository_values(prefix)
     if check_unresolved and any(
@@ -298,6 +303,9 @@ def classify_git_argv(
         return True, "read-only Git version query"
     if not subcommand:
         return False, "unable to classify Git subcommand"
+    if subcommand in READ_ONLY:
+        # Allowed in canonical and linked worktrees alike; skip the 2-spawn probe.
+        return True, "read-only Git operation"
     try:
         is_canonical = _is_canonical(real_git_path, effective_cwd, prefix)
     except RuntimeError as error:

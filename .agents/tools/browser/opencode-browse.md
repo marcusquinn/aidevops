@@ -28,10 +28,12 @@ mcp:
 
 - **What**: [OpenCode browse](https://opencode.ai/browse/install) runs deterministic Playwright code in the user's everyday Chrome, Edge, Brave, Arc, Vivaldi or Chromium, with their real sign-ins, through the browse extension (Web Store id `mfnicocicmmlkpjnaffgihfjhdgjkdjg`) and a local relay on `127.0.0.1:19988`.
 - **When**: interactive sessions where the user asks to use *their* browser, open tabs or logged-in session, or must finish a passkey, 2FA, CAPTCHA or payment step in a page the agent drives.
+- **Before calling a step "manual, UI only"**: if a service's API lacks a setting and the user's browser is connected, read that settings screen here (read-only) before handing the step to the user. Such screens often only state records or values the agent can set elsewhere. Example: updown.io's custom-domain screen only lists a CNAME and a `_updown` TXT record, so the whole status-page setup became DNS API work (`services/monitoring/updown.md`). Record what you learn in the service's guide or helper, so the next run needs no browser.
 - **Not when**: anything isolated Playwright can do (`playwright.md`, the default), headless or worker runtimes (the helper and plugin refuse them), or a request naming Playwriter (`playwriter.md`).
 - **Command**: `aidevops opencode-browse [status|pair|install|doctor|detect|run -- <args>]`; no subcommand shows status. It dispatches to `~/.aidevops/agents/scripts/opencode-browse-helper.sh` (also `installed`, `mcp`).
 - **MCP**: lazy `browse` server, tools `browse_*`, connected only by the `@opencode-browse` agent via `aidevops_mcp connect browse`.
-- **Driver guide**: `aidevops opencode-browse run -- skill` prints the upstream guide for the installed version (sessions, `snapshot()`/`ref()`, handoffs, allowlists, secrets, network capture, recording). Read it before non-trivial flows.
+- **Driver guide**: `aidevops opencode-browse run -- execute --help` (the script globals: `page`, `snapshot()`/`ref()`, `handoff()`, `browse.<tool>`, `state`) and `run -- tools` (one line per tool) describe the installed version; `run -- <tool> --help` gives a tool's options. Read them before non-trivial flows. browse 0.1.5 has no `skill` command.
+- **Running code**: pass the script as one positional value, `--code=<js>` or `--json '{"code":"…"}'`; browse 0.1.5 rejects the spaced form `--code '<js>'` ("--code needs a value"). The result starts with `tab: <id>`; pass `--tab <id>` to continue in that tab. When a script navigates, wait for the load (`page.waitForLoadState("load")`) or read the page in the next call, as reading during the navigation fails ("The page navigated or re-rendered").
 
 ## Install and pairing
 
@@ -61,7 +63,7 @@ browse stores its relay token under `$XDG_DATA_HOME/browse`. aidevops OpenCode s
 
 ```bash
 aidevops opencode-browse status
-aidevops opencode-browse run -- execute --rm 'await page.goto("https://example.com"); return await page.title()'
+aidevops opencode-browse run -- execute 'await page.goto("https://example.com"); const t = await page.title(); await page.close(); return t'
 ```
 
 <!-- AI-CONTEXT-END -->

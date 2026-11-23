@@ -79,7 +79,7 @@ _wpcp_prepare_ssh() {
 		;;
 	esac
 	if [[ -z "$ssh_host" || -z "$ssh_user" ]]; then
-		print_error "Site needs ssh_host and ssh_user for --change-plan"
+		print_error "Site needs ssh_host and ssh_user for the SSH WP-CLI transport"
 		return 1
 	fi
 	WPCP_TARGET="${ssh_user}@${ssh_host}"
@@ -144,6 +144,20 @@ _wpcp_upload_scripts() {
 	for php_file in "${WPCP_PHP_FILES[@]}"; do
 		_wpcp_scp "${SCRIPT_DIR}/${php_file}" "${WPCP_TARGET}:${remote_tmp}/${php_file}" || return 1
 	done
+	return 0
+}
+
+# Create a private (0700) temporary directory on the server, outside the
+# webroot, and print its path. Shared with wp-helper-fluent-boards.sh.
+_wpcp_remote_mktemp() {
+	local prefix="$1"
+	local remote_tmp
+	remote_tmp=$(_wpcp_ssh "umask 077 && mktemp -d \"\${TMPDIR:-/tmp}/${prefix}.XXXXXX\"") || remote_tmp=""
+	if [[ ! "$remote_tmp" =~ ^/[A-Za-z0-9._/-]+/${prefix}\.[A-Za-z0-9]+$ ]]; then
+		print_error "Could not create a private temporary directory on the server"
+		return 1
+	fi
+	printf '%s\n' "$remote_tmp"
 	return 0
 }
 
@@ -225,12 +239,7 @@ _wpcp_run_remote() {
 	fi
 
 	local remote_tmp
-	# shellcheck disable=SC2016 # ${TMPDIR:-/tmp} expands on the server.
-	remote_tmp=$(_wpcp_ssh 'umask 077 && mktemp -d "${TMPDIR:-/tmp}/wp-change-plan.XXXXXX"') || remote_tmp=""
-	if [[ ! "$remote_tmp" =~ ^/[A-Za-z0-9._/-]+/wp-change-plan\.[A-Za-z0-9]+$ ]]; then
-		print_error "Could not create a private temporary directory on the server"
-		return 1
-	fi
+	remote_tmp=$(_wpcp_remote_mktemp wp-change-plan) || return 1
 	trap '_wpcp_cleanup_remote "$remote_tmp"; trap - INT TERM; exit 130' INT TERM
 
 	local rc=0

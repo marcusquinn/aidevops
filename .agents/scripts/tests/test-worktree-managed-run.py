@@ -43,6 +43,8 @@ class RunnerControlTests(unittest.TestCase):
         bash = shutil.which("bash")
         self.assertIsNotNone(bash, "Bash is required for the lifecycle entry test")
         with tempfile.TemporaryDirectory(prefix="managed-lifecycle-") as directory:
+            # Darwin's temporary directory may use the /var -> /private/var alias.
+            directory = str(Path(directory).resolve())
             environment = dict(os.environ, HOME=directory,
                                AIDEVOPS_LIFECYCLE_STATE_DIR=directory + "/state",
                                AIDEVOPS_LIFECYCLE_RUNTIME_PID="1",

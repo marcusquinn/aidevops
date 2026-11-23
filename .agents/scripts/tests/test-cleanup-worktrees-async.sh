@@ -133,6 +133,10 @@ aidevops_worktree_capacity_check() {
 	[[ "${MOCK_PRESSURE:-0}" == 1 ]] && return 1
 	return 0
 }
+aidevops_worktree_cleanup_headroom_low() {
+	[[ "${MOCK_HEADROOM_LOW:-0}" == 1 ]] && return 0
+	return 1
+}
 STUB
 
 	# Stub pulse-cleanup.sh — defines mock cleanup_worktrees.
@@ -172,6 +176,7 @@ cleanup_worktrees() {
 	printf 'CLEANUP\n' >>"${lifecycle_file}"
 	printf 'MOCK_RAN\n' >>"${mock_ran_file}"
 	printf '%s\n' "\${1:-unset}" >>"${TEST_DIR}/cleanup-budget"
+	[[ ! -f "${TEST_DIR}/mock-cleanup-events" ]] || cat "${TEST_DIR}/mock-cleanup-events" >>"\$LOGFILE"
 	return 0
 }
 STUB
@@ -691,11 +696,56 @@ test_archive_outcome_summary_is_logged() {
 
 	MOCK_CLEANUP_EXIT=0 MOCK_REMOVED_COUNT=3 MOCK_ARCHIVED_COUNT=2 \
 		MOCK_ARCHIVE_FAILED_COUNT=1 run_helper_in_isolation || true
-	if grep -q 'outcome=success removed=3 archived=2 archive_failed=1 skip_reasons=none' "$cleanup_log" 2>/dev/null; then
+	if grep -q 'outcome=success removed=3 archived=2 archive_failed=1 refused=0 skip_reasons=none' "$cleanup_log" 2>/dev/null; then
 		print_result "archive-summary: async cleanup reports archive/delete outcomes and skip reasons" 0
 	else
 		print_result "archive-summary: async cleanup reports archive/delete outcomes and skip reasons" 1 \
 			"structured archive outcome summary missing"
+	fi
+	return 0
+}
+
+# GH#39034: every refusal reason is counted once per worktree, a degraded event
+# without a final skip still counts, a later removal clears earlier skips, and
+# a pass that only refuses is no-progress rather than success.
+test_refusal_summary_counts_reasons_and_no_progress() {
+	local cleanup_log="${TEST_DIR}/.aidevops/logs/cleanup_worktrees.log"
+	local events="${TEST_DIR}/mock-cleanup-events"
+	local ts="[2026-11-18T00:00:00Z] [worktree-helper.sh]"
+	local summary=""
+	rm -f "$cleanup_log"
+	printf '%s\n' \
+		"${ts} worktree-degraded: /wt/a — cwd-visibility-degraded — mode=recoverable-required" \
+		"${ts} worktree-skipped: /wt/a — degraded-cwd-pr-proof-required — mode=skipped — branch=a" \
+		"${ts} worktree-degraded: /wt/b — cwd-visibility-degraded — mode=recoverable-required" \
+		"${ts} worktree-degraded: /wt/c — cwd-visibility-degraded — mode=recoverable-required" \
+		"${ts} worktree-skipped: /wt/d — open-pr — mode=skipped" \
+		"${ts} worktree-skipped: /wt/e — grace-period — mode=skipped" \
+		"${ts} worktree-skipped: /wt/e — grace-period — mode=skipped" \
+		>"$events"
+	MOCK_CLEANUP_EXIT=0 run_helper_in_isolation || true
+	summary=$(grep -F '[cleanup-worktrees-async] outcome=' "$cleanup_log" 2>/dev/null | tail -n 1) || summary=""
+	if [[ "$summary" == *"outcome=no-progress removed=0 archived=0 archive_failed=0 refused=5 skip_reasons=cwd-visibility-degraded:2,degraded-cwd-pr-proof-required:1,grace-period:1,open-pr:1" ]]; then
+		print_result "refusal-summary: counts reasons per worktree and reports no-progress" 0
+	else
+		print_result "refusal-summary: counts reasons per worktree and reports no-progress" 1 \
+			"unexpected summary: ${summary:-<missing>}"
+	fi
+
+	rm -f "$cleanup_log"
+	printf '%s\n' \
+		"${ts} worktree-skipped: /wt/a — open-pr — mode=skipped" \
+		"${ts} worktree-removed: /wt/a — branch-merged — mode=permanent" \
+		"${ts} worktree-skipped: /wt/b — owned-skip — mode=skipped" \
+		>"$events"
+	CLEANUP_WORKTREES_ASYNC_CADENCE_MIN=0 MOCK_CLEANUP_EXIT=0 MOCK_REMOVED_COUNT=1 run_helper_in_isolation || true
+	summary=$(grep -F '[cleanup-worktrees-async] outcome=' "$cleanup_log" 2>/dev/null | tail -n 1) || summary=""
+	rm -f "$events"
+	if [[ "$summary" == *"outcome=success removed=1 archived=0 archive_failed=0 refused=1 skip_reasons=owned-skip:1" ]]; then
+		print_result "refusal-summary: removal clears earlier skips and progress stays success" 0
+	else
+		print_result "refusal-summary: removal clears earlier skips and progress stays success" 1 \
+			"unexpected summary: ${summary:-<missing>}"
 	fi
 	return 0
 }
@@ -849,6 +899,33 @@ test_cleanup_budget_scales_under_pressure() {
 	return 0
 }
 
+test_headroom_bypasses_cadence() {
+	local logs="${TEST_DIR}/.aidevops/logs"
+	mkdir -p "$logs"
+	date +%s >"${logs}/cleanup_worktrees.last-run"
+	MOCK_HEADROOM_LOW=1 run_helper_in_isolation >/dev/null
+	if [[ "$(<"${TEST_DIR}/cleanup-budget")" == 900 ]] &&
+		grep -q 'cleanup budget=900 reason=disk-headroom' "${logs}/cleanup_worktrees.log"; then
+		print_result "headroom: pressure bypasses cadence with distinct reason" 0
+	else
+		print_result "headroom: pressure bypasses cadence with distinct reason" 1
+	fi
+	return 0
+}
+
+test_headroom_real_snapshot() {
+	# Exercise the real probe without running retirement on this host.
+	source "${SCRIPT_DIR}/../disk-capacity-lib.sh"
+	if aidevops_disk_capacity_snapshot "$TEST_DIR" &&
+		AIDEVOPS_WORKTREE_CLEANUP_FREE_KB=0 AIDEVOPS_WORKTREE_CLEANUP_FREE_PERCENT=100 aidevops_worktree_cleanup_headroom_low &&
+		! AIDEVOPS_WORKTREE_CLEANUP_FREE_KB=0 AIDEVOPS_WORKTREE_CLEANUP_FREE_PERCENT=0 aidevops_worktree_cleanup_headroom_low; then
+		print_result "headroom: real snapshot honors percentage overrides" 0
+	else
+		print_result "headroom: real snapshot honors percentage overrides" 1
+	fi
+	return 0
+}
+
 test_capacity_mode_is_scoped_and_locked() {
 	local logs="${TEST_DIR}/.aidevops/logs" rc=0
 	git init -q "${TEST_DIR}/repo"
@@ -875,6 +952,42 @@ test_capacity_mode_is_scoped_and_locked() {
 	return 0
 }
 
+test_turbo_cache_prune() {
+	local repo="${TEST_DIR}/turbo-repo"
+	local helper="${SCRIPT_DIR}/../worktree-artefact-reclaim.sh"
+	mkdir -p "$repo/.turbo/cache"
+	"$TEST_NATIVE_GIT" -C "$repo" init -q
+	printf '.turbo/\n' >"$repo/.gitignore"
+	printf '{}\n' >"$repo/turbo.json"
+	printf 'old' >"$repo/.turbo/cache/old"
+	printf 'new' >"$repo/.turbo/cache/new"
+	touch -t 202001010000 "$repo/.turbo/cache/old"
+	ln -s "$repo/turbo.json" "$repo/.turbo/cache/link"
+	AIDEVOPS_TURBO_CACHE_MAX_SIZE=20G bash "$helper" --turbo-cache "$repo" >"$TEST_DIR/turbo-log"
+	if [[ ! -e "$repo/.turbo/cache/old" && -f "$repo/.turbo/cache/new" && -L "$repo/.turbo/cache/link" ]] &&
+		grep -q 'removed_files=1' "$TEST_DIR/turbo-log"; then
+		print_result 'turbo: age pruning preserves new files and symlinks' 0
+	else
+		print_result 'turbo: age pruning preserves new files and symlinks' 1
+	fi
+	printf 'another' >"$repo/.turbo/cache/another"
+	AIDEVOPS_TURBO_CACHE_MAX_SIZE=1 bash "$helper" --turbo-cache "$repo" >"$TEST_DIR/turbo-log"
+	if [[ ! -e "$repo/.turbo/cache/new" && ! -e "$repo/.turbo/cache/another" && -L "$repo/.turbo/cache/link" ]]; then
+		print_result 'turbo: size cap removes oldest regular entries' 0
+	else
+		print_result 'turbo: size cap removes oldest regular entries' 1
+	fi
+	printf 'preserve' >"$repo/.turbo/cache/keep"
+	printf '' >"$repo/.gitignore"
+	AIDEVOPS_TURBO_CACHE_MAX_SIZE=1 bash "$helper" --turbo-cache "$repo"
+	if [[ -f "$repo/.turbo/cache/keep" ]]; then
+		print_result 'turbo: nonignored cache is untouched' 0
+	else
+		print_result 'turbo: nonignored cache is untouched' 1
+	fi
+	return 0
+}
+
 main() {
 	echo "Running cleanup-worktrees-async-helper.sh tests"
 	echo "================================================"
@@ -886,6 +999,9 @@ main() {
 
 	setup
 
+	test_turbo_cache_prune
+	teardown
+	setup
 	test_cold_start
 	teardown
 	setup
@@ -953,11 +1069,12 @@ main() {
 	test_archive_outcome_summary_is_logged
 
 	local test_case
-	for test_case in test_missing_metadata_prune_runs_after_success \
+	for test_case in test_refusal_summary_counts_reasons_and_no_progress \
+		test_missing_metadata_prune_runs_after_success \
 		test_missing_metadata_prune_runs_when_cleanup_skipped \
 		test_compact_retention_policy test_compact_retention_defaults_config_and_failure \
 		test_lifecycle_only_never_expires_recovery test_capacity_mode_is_scoped_and_locked \
-		test_cleanup_budget_scales_under_pressure; do
+		test_cleanup_budget_scales_under_pressure test_headroom_bypasses_cadence test_headroom_real_snapshot; do
 		teardown
 		setup
 		"$test_case"

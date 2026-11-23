@@ -671,6 +671,10 @@ test_managed_start_ignores_non_active_running_pids() {
 	result=$(
 		# shellcheck source=../pulse-lifecycle-helper.sh
 		source "$HELPER"
+		_PULSE_LAUNCHD_START_WAIT=3
+		sleep() {
+			return 0
+		}
 		_is_running() {
 			return 0
 		}
@@ -691,7 +695,7 @@ test_managed_start_ignores_non_active_running_pids() {
 			IFS= read -r find_calls <"$find_count_file" || find_calls=0
 			find_calls=$((find_calls + 1))
 			printf '%s\n' "$find_calls" >"$find_count_file"
-			if [[ "$find_calls" -lt 2 ]]; then
+			if [[ "$find_calls" -lt 4 ]]; then
 				return 1
 			fi
 			printf '303\n'
@@ -1598,6 +1602,7 @@ test_systemd_cycle_boundary_drain() {
 		_pulse_pids() { printf '123\n'; return 0; }
 		_pulse_pid_uses_active_runtime() { return 1; }
 		_pulse_process_age_seconds() { printf '%s\n' "$cycle_age"; return 0; }
+		_PULSE_LOCK_DIR="${TEST_ROOT}/systemd-drain-missing.lockdir"
 		cycle_age=60
 		_pulse_reconcile_defers_to_cycle_boundary || exit 1
 		timer_active=0
@@ -1611,6 +1616,119 @@ test_systemd_cycle_boundary_drain() {
 		_print_result "systemd drains young cycles only with an active timer and below the age ceiling" 1
 	else
 		_print_result "systemd drain boundaries (rc=$rc output=$output)" 0
+	fi
+	return 0
+}
+
+# GH#37907: past the drain ceiling, only the lock owner with a fresh heartbeat
+# lease keeps draining, below the hard cap, and gets a drain request.
+test_reconcile_owner_lease_drain() {
+	local output="" rc=0
+	output=$(
+		# shellcheck source=../pulse-lifecycle-helper.sh
+		source "$HELPER"
+		_pulse_launchd_supervisor_loaded() { return 0; }
+		_pulse_pids() { printf '123\n'; return 0; }
+		_pulse_pid_uses_active_runtime() { return 1; }
+		_pulse_process_age_seconds() { printf '%s\n' "$cycle_age"; return 0; }
+		_pulse_runtime_bundle_id() { printf 'bundle-next\n'; return 0; }
+		_PULSE_LOCK_DIR="${TEST_ROOT}/owner-lease.lockdir"
+		_PULSE_RECONCILE_DRAIN_MAX_AGE=3600
+		_PULSE_LOCK_MAX_AGE=1800
+		_PULSE_RECONCILE_DRAIN_HARD_CAP=7200
+		mkdir -p "$_PULSE_LOCK_DIR"
+		printf '123\n' >"${_PULSE_LOCK_DIR}/pid"
+		date +%s >"${_PULSE_LOCK_DIR}/supervisor_heartbeat_epoch"
+		cycle_age=5600
+		_pulse_reconcile_defers_to_cycle_boundary || exit 1
+		grep -qx 'owner=123' "${_PULSE_LOCK_DIR}/drain_requested" || exit 2
+		grep -qx 'bundle=bundle-next' "${_PULSE_LOCK_DIR}/drain_requested" || exit 2
+		rm -f "${_PULSE_LOCK_DIR}/drain_requested"
+		cycle_age=7200
+		if _pulse_reconcile_defers_to_cycle_boundary; then exit 3; fi
+		cycle_age=5600
+		printf '%s\n' "$(($(date +%s) - 1801))" >"${_PULSE_LOCK_DIR}/supervisor_heartbeat_epoch"
+		if _pulse_reconcile_defers_to_cycle_boundary; then exit 4; fi
+		date +%s >"${_PULSE_LOCK_DIR}/supervisor_heartbeat_epoch"
+		printf '456\n' >"${_PULSE_LOCK_DIR}/pid"
+		if _pulse_reconcile_defers_to_cycle_boundary; then exit 5; fi
+		# A young non-owner cycle still drains, but gets no drain request.
+		cycle_age=60
+		_pulse_reconcile_defers_to_cycle_boundary || exit 6
+		[[ ! -e "${_PULSE_LOCK_DIR}/drain_requested" ]] || exit 7
+		printf 'owner lease boundaries verified\n'
+	) || rc=$?
+	rm -rf "${TEST_ROOT}/owner-lease.lockdir"
+	if [[ "$rc" == 0 && "$output" == *"deferring: elastic owner lease fresh (age 5600s, heartbeat "* &&
+		"$output" == *"drain hard cap 7200s"* && "$output" == *"without a fresh owner heartbeat lease"* &&
+		"$output" == *"owner lease boundaries verified"* ]]; then
+		_print_result "reconcile defers past the ceiling only for a fresh owner lease below the hard cap" 1
+	else
+		_print_result "reconcile owner lease boundaries (rc=$rc output=$output)" 0
+	fi
+	return 0
+}
+
+# GH#39682: a supervising wrapper released the instance lock before its LLM
+# phase. Past the ceiling it still drains while it owns a fresh LLM lock, below
+# the hard cap, and its LLM lock gets the supervisor drain marker.
+test_reconcile_supervisor_lease_drain() {
+	local output="" rc=0
+	output=$(
+		# shellcheck source=../pulse-lifecycle-helper.sh
+		source "$HELPER"
+		_pulse_launchd_supervisor_loaded() { return 0; }
+		_pulse_pids() { printf '123\n'; return 0; }
+		_pulse_pid_uses_active_runtime() { return 1; }
+		_pulse_process_age_seconds() { printf '%s\n' "$cycle_age"; return 0; }
+		_pulse_runtime_bundle_id() { printf 'bundle-next\n'; return 0; }
+		_file_mtime_epoch() { printf '%s\n' "$llm_written"; return 0; }
+		_PULSE_LOCK_DIR="${TEST_ROOT}/supervisor-lease.lockdir"
+		_PULSE_RECONCILE_DRAIN_MAX_AGE=3600
+		_PULSE_LOCK_MAX_AGE=1800
+		_PULSE_RECONCILE_DRAIN_HARD_CAP=7200
+		llm_marker="${_PULSE_LOCK_DIR}.llm/drain_requested"
+		# The next cycle owns the instance lock; PID 123 owns only the LLM lock.
+		mkdir -p "$_PULSE_LOCK_DIR" "${_PULSE_LOCK_DIR}.llm"
+		printf '456\n' >"${_PULSE_LOCK_DIR}/pid"
+		date +%s >"${_PULSE_LOCK_DIR}/supervisor_heartbeat_epoch"
+		printf '123\n' >"${_PULSE_LOCK_DIR}.llm/pid"
+		llm_written=$(($(date +%s) - 900))
+		cycle_age=4293
+		_pulse_reconcile_defers_to_cycle_boundary || exit 1
+		grep -qx 'owner=123' "$llm_marker" || exit 2
+		grep -qx 'bundle=bundle-next' "$llm_marker" || exit 2
+		[[ ! -e "${_PULSE_LOCK_DIR}/drain_requested" ]] || exit 3
+		rm -f "$llm_marker"
+		cycle_age=7200
+		if _pulse_reconcile_defers_to_cycle_boundary; then exit 4; fi
+		cycle_age=4293
+		llm_written=$(($(date +%s) - 1801))
+		if _pulse_reconcile_defers_to_cycle_boundary; then exit 5; fi
+		llm_written=$(($(date +%s) + 60))
+		if _pulse_reconcile_defers_to_cycle_boundary; then exit 6; fi
+		llm_written=$(($(date +%s) - 900))
+		printf '789\n' >"${_PULSE_LOCK_DIR}.llm/pid"
+		if _pulse_reconcile_defers_to_cycle_boundary; then exit 7; fi
+		rm -f "${_PULSE_LOCK_DIR}.llm/pid"
+		if _pulse_reconcile_defers_to_cycle_boundary; then exit 8; fi
+		# A young supervising wrapper drains without a lease check and is
+		# still asked to skip its recycle fill.
+		printf '123\n' >"${_PULSE_LOCK_DIR}.llm/pid"
+		cycle_age=60
+		_pulse_reconcile_defers_to_cycle_boundary || exit 9
+		grep -qx 'owner=123' "$llm_marker" || exit 10
+		printf 'supervisor lease boundaries verified\n'
+	) || rc=$?
+	rm -rf "${TEST_ROOT}/supervisor-lease.lockdir" "${TEST_ROOT}/supervisor-lease.lockdir.llm"
+	if [[ "$rc" == 0 && "$output" == *"deferring: LLM supervisor lease fresh (age 4293s, llm_lock "* &&
+		"$output" == *"drain hard cap 7200s, llm_lock "* &&
+		"$output" == *"without a fresh owner heartbeat lease or LLM supervisor lease"* &&
+		"$output" == *"Requested supervisor drain: LLM lock owner PID 123"* &&
+		"$output" == *"supervisor lease boundaries verified"* ]]; then
+		_print_result "reconcile defers past the ceiling for a fresh LLM supervisor lease below the hard cap" 1
+	else
+		_print_result "reconcile supervisor lease boundaries (rc=$rc output=$output)" 0
 	fi
 	return 0
 }
@@ -1698,6 +1816,8 @@ main() {
 	test_default_pattern_uses_stable_link_when_active_link_unset
 	test_default_pattern_ignores_foreign_user_pulse
 	test_systemd_cycle_boundary_drain
+	test_reconcile_owner_lease_drain
+	test_reconcile_supervisor_lease_drain
 	test_systemd_managed_start
 
 	echo ""

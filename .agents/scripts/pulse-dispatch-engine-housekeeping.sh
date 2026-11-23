@@ -120,6 +120,8 @@ _pulse_blocker_refresh_starved() {
 	# Pending work survives failures and signals independently of that mtime.
 	[[ -f "$(_pulse_post_dispatch_housekeeping_statefile).blocker-refresh-pending" ]] && return 0
 	[[ -f "$cache_file" ]] || return 0
+	# Per-repository checkpoints update mtime without completing the rebuild.
+	jq -e '.rebuild_complete == false' "$cache_file" >/dev/null 2>&1 && return 0
 	local now="" mtime=""
 	now=$(date +%s 2>/dev/null) || return 1
 	mtime=$(date -r "$cache_file" +%s 2>/dev/null) || return 0
@@ -160,7 +162,7 @@ _pulse_run_blocker_refresh_catchup() {
 	if [[ -f "$progress_file" ]] &&
 		{ ! _pulse_housekeeping_stage_recently_done "$graph_stage" "$progress_file" >/dev/null || ! jq -e \
 			--argjson max_age "$((${DEP_GRAPH_CACHE_TTL_SECS:-300} * 2))" '
-		now as $now | (.repos | length) > 0 and all(.repos[];
+		now as $now | .rebuild_complete != false and (.repos | length) > 0 and all(.repos[];
 			(.built_at | type) == "number" and .built_at > 0
 			and .built_at <= $now and $now - .built_at < $max_age)
 	' "${DEP_GRAPH_CACHE_FILE:-}" >/dev/null 2>&1; }; then
@@ -170,8 +172,11 @@ _pulse_run_blocker_refresh_catchup() {
 	PULSE_DEP_GRAPH_FORCE_REBUILD=1 _pulse_run_resumable_housekeeping_stage "$graph_stage" "$progress_file" \
 		_pulse_run_budget_priority_stage_with_timeout "$graph_stage" "$graph_timeout" build_dependency_graph_cache || return 1
 	if declare -F refresh_blocked_status_from_graph >/dev/null 2>&1; then
+		# Refresh has its own 30s candidate budget before an in-flight safety
+		# check finishes. A cheap scanner slice (12s by default) kills the batch
+		# before it can checkpoint; retain the graph batch ceiling instead.
 		_pulse_run_resumable_housekeeping_stage "refresh_blocked_status_from_graph" "$progress_file" \
-			_pulse_run_budget_priority_stage_with_timeout "refresh_blocked_status_from_graph" "$stage_timeout" refresh_blocked_status_from_graph || return 1
+			_pulse_run_budget_priority_stage_with_timeout "refresh_blocked_status_from_graph" "$graph_timeout" refresh_blocked_status_from_graph || return 1
 	fi
 	if declare -F release_repaired_brief_holds >/dev/null 2>&1; then
 		_pulse_run_resumable_housekeeping_stage "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$progress_file" \
@@ -353,6 +358,43 @@ _pulse_housekeeping_on_signal() {
 }
 
 #######################################
+# GH#38353: revisit due external_trigger_pending holds on maintainer repos.
+# The helper owns its knobs (interval, per-cycle AI budget, wall-clock budget).
+# GH#38489: its wall-clock budget ends before the stage kill, so a long pass
+# exits cleanly with its per-issue records written; a smaller explicit budget
+# still wins.
+# Args: $1 - stage timeout seconds (optional; unbounded when absent)
+# Returns 0 always; a failed pass is retried by the next cycle.
+#######################################
+_run_terminal_blocker_trigger_revisit() {
+	local stage_timeout="${1:-}"
+	local helper="${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/terminal-blocker-trigger-revisit.sh"
+	local slugs="" slug="" maintained="" budget="${AIDEVOPS_TRIGGER_REVISIT_BUDGET_S:-240}"
+	[[ "$budget" =~ ^[1-9][0-9]*$ ]] || budget=240
+	if [[ "$stage_timeout" =~ ^[1-9][0-9]*$ ]] && ((budget > stage_timeout - 10)); then
+		budget=$((stage_timeout > 11 ? stage_timeout - 10 : 1))
+	fi
+	[[ -x "$helper" && -f "${REPOS_JSON:-}" ]] || return 0
+	declare -F _pulse_enabled_repo_slugs >/dev/null 2>&1 || return 0
+	declare -F get_repo_role_by_slug >/dev/null 2>&1 || return 0
+	slugs=$(_pulse_enabled_repo_slugs "$REPOS_JSON") || return 0
+	while IFS= read -r slug; do
+		[[ -n "$slug" && "$(get_repo_role_by_slug "$slug")" == "maintainer" ]] || continue
+		maintained+="${slug}"$'\n'
+	done <<<"$slugs"
+	[[ -n "$maintained" ]] || return 0
+	# The role loop above can be slow; the watchdog's absolute stage deadline
+	# bounds the helper from when it actually starts.
+	if [[ "${PULSE_STAGE_DEADLINE_EPOCH:-}" =~ ^[1-9][0-9]*$ ]]; then
+		local remaining=$((PULSE_STAGE_DEADLINE_EPOCH - $(date +%s) - 10))
+		((remaining >= 1)) || return 0
+		((budget <= remaining)) || budget="$remaining"
+	fi
+	printf '%s' "$maintained" | AIDEVOPS_TRIGGER_REVISIT_BUDGET_S="$budget" "$helper" pulse >>"$LOGFILE" 2>&1 || true
+	return 0
+}
+
+#######################################
 # Run non-dispatch post-dispatch housekeeping stages.
 #
 # These stages are intentionally after early dispatch and do not protect the
@@ -404,12 +446,19 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 		_pulse_run_resumable_housekeeping_stage "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$state_file" \
 			_pulse_run_budget_priority_stage_with_timeout "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$stage_timeout" release_repaired_brief_holds || incomplete=1
 	fi
+	# GH#38489: owner-scoped searches plus bounded AI decisions outlive the
+	# cheap slice, which killed every pass before its first record write.
+	_pulse_run_resumable_housekeeping_stage "trigger_revisit" "$state_file" \
+		_pulse_run_optional_stage_with_timeout "trigger_revisit" "$heavy_timeout" \
+		_run_terminal_blocker_trigger_revisit "$heavy_timeout" || incomplete=1
+	# GH#38204: per-repo setup (gate probe, merged-PR list, issue index) takes
+	# 6-28s before the first cursor write, so the cheap slice killed every run.
 	_pulse_run_resumable_housekeeping_stage "post_merge_scanner" "$state_file" \
-		_pulse_run_optional_stage_with_timeout "post_merge_scanner" "$stage_timeout" _run_post_merge_review_scanner || incomplete=1
+		_pulse_run_optional_stage_with_timeout "post_merge_scanner" "$heavy_timeout" _run_post_merge_review_scanner || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "pr_review_thread_response" "$state_file" \
 		_pulse_run_optional_stage_with_timeout "pr_review_thread_response" "$stage_timeout" _run_pr_review_thread_response_scanner || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "auto_decomposer_scanner" "$state_file" \
-		_pulse_run_optional_stage_with_timeout "auto_decomposer_scanner" "$stage_timeout" _run_auto_decomposer_scanner || incomplete=1
+		_pulse_run_optional_stage_with_timeout "auto_decomposer_scanner" "$heavy_timeout" _run_auto_decomposer_scanner || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "dedup_cleanup" "$state_file" \
 		_pulse_run_optional_stage_with_timeout "dedup_cleanup" "$stage_timeout" run_simplification_dedup_cleanup || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "fast_fail_prune_expired" "$state_file" \
@@ -469,10 +518,11 @@ _pulse_start_post_dispatch_housekeeping() {
 	[[ "$ownership_timeout" =~ ^[1-9][0-9]{0,3}$ ]] || ownership_timeout=600
 	[[ "$ownership_timeout" -le "$stage_timeout" ]] || ownership_timeout="$stage_timeout"
 	local lane_watchdog=$((lane_budget + ownership_timeout))
-	# Weight graph rebuild and cache prime at six shares each: unlike cheap
-	# scanners they must finish a batch before checkpointing. Eight other leaf
-	# calls (including catch-up and standalone brief release) get one each;
-	# four shares remain for watchdog teardown. Keep the caller's ceiling.
+	# Batch ceilings are six times the cheap scanner slice. Graph rebuild,
+	# blocked refresh, decomposition, post-merge review scan and cache prime
+	# need a full batch before checkpointing. These are per-call ceilings, not reserved time: the outer
+	# watchdog bounds the whole lane and successful checkpoints survive it.
+	# Keep the caller's ceiling, ownership allowance and total lane unchanged.
 	local stage_slice=$((lane_budget / 24))
 	[[ "$stage_slice" -ge 1 ]] || stage_slice=1
 	local heavy_timeout="$stage_timeout" heavy_slice=$((stage_slice * 6))

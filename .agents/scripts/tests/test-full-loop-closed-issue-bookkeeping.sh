@@ -44,6 +44,7 @@ extract_function() {
 }
 
 COMMIT_HELPER="${SCRIPTS_DIR}/full-loop-helper-commit.sh"
+BOOKKEEPING_HELPER="${SCRIPTS_DIR}/full-loop-helper-commit-bookkeeping.sh"
 MAIN_HELPER="${SCRIPTS_DIR}/full-loop-helper.sh"
 # cmd_commit_and_pr validates the squash subject before any mutation.
 # shellcheck source=../full-loop-helper-subject.sh
@@ -54,18 +55,21 @@ source "${SCRIPTS_DIR}/full-loop-helper-risk.sh"
 
 eval "$(extract_function "$COMMIT_HELPER" _parse_commit_and_pr_args)"
 eval "$(extract_function "$COMMIT_HELPER" _validate_keep_issue_open_request)"
-eval "$(extract_function "$COMMIT_HELPER" _validate_completion_bookkeeping_request)"
-eval "$(extract_function "$COMMIT_HELPER" _completion_bookkeeping_body_has_reference)"
-eval "$(extract_function "$COMMIT_HELPER" _completion_bookkeeping_body_has_closing_reference)"
-eval "$(extract_function "$COMMIT_HELPER" _verify_completion_bookkeeping_proof)"
-eval "$(extract_function "$COMMIT_HELPER" _validate_completion_bookkeeping_paths)"
-eval "$(extract_function "$COMMIT_HELPER" _validate_completion_bookkeeping_todo)"
-eval "$(extract_function "$COMMIT_HELPER" _validate_completion_bookkeeping_pr_body)"
-eval "$(extract_function "$COMMIT_HELPER" _validate_closed_issue_completion_bookkeeping)"
+eval "$(extract_function "$BOOKKEEPING_HELPER" _validate_completion_bookkeeping_request)"
+eval "$(extract_function "$BOOKKEEPING_HELPER" _completion_bookkeeping_body_has_reference)"
+eval "$(extract_function "$BOOKKEEPING_HELPER" _completion_bookkeeping_body_has_closing_reference)"
+eval "$(extract_function "$BOOKKEEPING_HELPER" _verify_completion_bookkeeping_proof)"
+eval "$(extract_function "$BOOKKEEPING_HELPER" _validate_completion_bookkeeping_paths)"
+eval "$(extract_function "$BOOKKEEPING_HELPER" _validate_completion_bookkeeping_todo)"
+eval "$(extract_function "$BOOKKEEPING_HELPER" _validate_completion_bookkeeping_pr_body)"
+eval "$(extract_function "$BOOKKEEPING_HELPER" _validate_closed_issue_completion_bookkeeping)"
 eval "$(extract_function "$COMMIT_HELPER" _create_or_continue_pr)"
 eval "$(extract_function "$MAIN_HELPER" cmd_commit_and_pr)"
+eval "$(extract_function "$COMMIT_HELPER" _require_commit_and_pr_inputs)"
+eval "$(extract_function "$MAIN_HELPER" _commit_and_pr_validate_title)"
 eval "$(extract_function "$MAIN_HELPER" _diff_is_planning_only)"
 eval "$(extract_function "$MAIN_HELPER" _commit_and_pr_prepare_metadata)"
+eval "$(extract_function "$COMMIT_HELPER" _commit_and_pr_platform_evidence_gate)"
 eval "$(extract_function "$MAIN_HELPER" _commit_and_pr_check_readiness)"
 eval "$(extract_function "$MAIN_HELPER" _commit_and_pr_publish)"
 

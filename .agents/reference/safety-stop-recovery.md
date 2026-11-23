@@ -71,7 +71,7 @@ exists. When no executor exists, the durable record must instead say that the ta
 is blocked or resumable and give its next executable action.
 
 For worker integration/scope blockers, use the final structured request and
-Pulse-owned queue in `reference/worker-discipline.md` "Coordinator intake". It
+Pulse-owned queue in `reference/worker-integration-recovery.md` "Coordinator intake". It
 preserves the exact checkpoint, one recovery budget per unchanged evidence, an
 AI owner and a relevant wake condition. Neither a queue entry nor a coordinator
 plan grants permission to revise explicit hard boundaries or security guarantees.

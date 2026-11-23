@@ -106,10 +106,12 @@ extract_functions
 
 extract_common_npm_global_install() {
 	awk '
+		/^_npm_global_prefix_needs_sudo\(\)/, /^}$/ { print; next }
 		/^_npm_global_install_via_npm\(\)/, /^}$/ { print; next }
 		/^npm_global_install\(\)/, /^}$/ { print; next }
 	' "$SETUP_COMMON" >"$SANDBOX/common-extract.sh"
-	if ! grep -q "^_npm_global_install_via_npm()" "$SANDBOX/common-extract.sh" || \
+	if ! grep -q "^_npm_global_prefix_needs_sudo()" "$SANDBOX/common-extract.sh" || \
+		! grep -q "^_npm_global_install_via_npm()" "$SANDBOX/common-extract.sh" || \
 		! grep -q "^npm_global_install()" "$SANDBOX/common-extract.sh"; then
 		echo "FAIL: extraction did not capture npm_global_install" >&2
 		exit 1
@@ -591,13 +593,24 @@ rm -f "$HOME/.bun/bin/opencode"
 cp "$SANDBOX/bin/opencode-claude" "$SANDBOX/bin/opencode"
 (
 	source_extracted
+	# Discovery probes /opt/homebrew/bin before PATH. Keep the whole sandbox,
+	# including HOME, persistent so host binaries stay ephemeral and are
+	# skipped; otherwise a host OpenCode wins and its load-dependent startup
+	# replaces the hanging installer this test bounds.
+	sandbox_physical=$(cd "$SANDBOX" && pwd -P)
 	_setup_opencode_binary_is_ephemeral() {
 		local bin="$1"
-		[[ "$bin" == "$SANDBOX/bin/"* ]] && return 1
+		[[ "$bin" == "$SANDBOX/"* || "$bin" == "$sandbox_physical/"* ]] && return 1
 		return 0
 	}
+	# Hang far beyond the bound below so an unbounded installer cannot pass;
+	# one-second steps leave at most a one-second orphan once timed out.
 	npm_global_install() {
-		sleep 5
+		local waited=0
+		while [[ "$waited" -lt 60 ]]; do
+			sleep 1
+			waited=$((waited + 1))
+		done
 		return 0
 	}
 	export -f npm_global_install 2>/dev/null || true
@@ -612,11 +625,14 @@ cp "$SANDBOX/bin/opencode-claude" "$SANDBOX/bin/opencode"
 rc7=$(grep '^rc=' "$SANDBOX/out7" | tail -1)
 elapsed7="${rc7##*elapsed=}"
 rc7="${rc7%% elapsed=*}"
+heal_warned7=$(grep -c "wrong package" "$SANDBOX/out7" || true)
 assert_eq "hanging auto-heal fail-opens" "rc=0" "$rc7"
-if [[ "$elapsed7" =~ ^[0-9]+$ ]] && [[ "$elapsed7" -le 12 ]]; then
+assert_eq "hanging auto-heal exercises the heal installer" "1" "$heal_warned7"
+# The installer hangs 60s; 30s leaves headroom for a heavily loaded host.
+if [[ "$elapsed7" =~ ^[0-9]+$ ]] && [[ "$elapsed7" -le 30 ]]; then
 	assert_eq "hanging auto-heal returns within bound" "bounded" "bounded"
 else
-	assert_eq "hanging auto-heal returns within bound" "elapsed<=12" "elapsed=${elapsed7}"
+	assert_eq "hanging auto-heal returns within bound" "elapsed<=30" "elapsed=${elapsed7}"
 fi
 
 # --- Test 7b: first install chooses npm when npm and bun are both present ----
@@ -792,7 +808,9 @@ assert_eq "homebrew remediation has no sudo npm hint" "0" "$sudo_hint9"
 
 # --- Test 11: shared installer policy uses npm first for OpenCode -----------
 echo "Test 10: npm_global_install prefers npm for opencode-ai when bun also exists"
-mkdir -p "$SANDBOX/install-policy/bin" "$SANDBOX/install-policy/prefix/lib"
+# The user prefix deliberately has no lib/ yet: npm creates it, so a writable
+# prefix must not fall back to sudo (GH#38399).
+mkdir -p "$SANDBOX/install-policy/bin" "$SANDBOX/install-policy/prefix"
 cat >"$SANDBOX/install-policy/bin/npm" <<EOF
 #!/usr/bin/env bash
 if [[ "\${1:-}" == "config" && "\${2:-}" == "get" && "\${3:-}" == "prefix" ]]; then

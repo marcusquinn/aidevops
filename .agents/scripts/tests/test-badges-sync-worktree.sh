@@ -9,14 +9,15 @@ ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT"' EXIT
 export HOME="$ROOT/home"
 export AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees"
-export PR_STATE="$ROOT/prs.json" CALLS="$ROOT/calls"
+export PR_STATE="$ROOT/prs.json" CALLS="$ROOT/calls" PR_BODY="$ROOT/pr-body"
 SCRIPTS="$HOME/.aidevops/agents/scripts"
 mkdir -p "$SCRIPTS" "$HOME/.config/aidevops" "$ROOT/bin" "$AIDEVOPS_WORKTREE_BASE_DIR"
 export PATH="$ROOT/bin:$PATH"
 printf '[]\n' >"$PR_STATE"
 touch "$CALLS"
 cp "$SCRIPT_DIR/../badges-sync-helper.sh" "$SCRIPT_DIR/../badges-check-helper.sh" \
-	"$SCRIPT_DIR/../workflow-release-ref.sh" "$SCRIPT_DIR/../headless-signing-lib.sh" "$SCRIPTS/"
+	"$SCRIPT_DIR/../workflow-release-ref.sh" "$SCRIPT_DIR/../headless-signing-lib.sh" \
+	"$SCRIPT_DIR/../routine-pr-scope-lib.sh" "$SCRIPTS/"
 chmod +x "$SCRIPTS/"*.sh
 
 # Production orchestration calls these public helper interfaces. Worktrees and
@@ -28,15 +29,25 @@ gh_create_pr() {
 		opt="$1"; shift
 		case "$opt" in
 		--head) head="$1"; shift ;;
-		--body-file) [[ "$1" == '-' ]]; shift; cat >/dev/null ;;
+		--body-file) [[ "$1" == '-' ]]; shift; cat >"$PR_BODY" ;;
 		*) shift ;;
 		esac
 	done
-	jq -n --arg head "$head" '[{headRefName:$head,title:"chore: aidevops badge sync",url:"test-pr"}]' >"$PR_STATE"
+	jq -n --arg head "$head" '[{headRefName:$head,title:"chore: aidevops badge sync",url:"https://example.invalid/o/r/pull/5"}]' >"$PR_STATE"
 	printf 'create\n' >>"$CALLS"
-	printf 'test-pr\n'
+	printf 'hint: if you need to wait for this pull request\n' >&2
+	printf 'https://example.invalid/o/r/pull/5\n'
 	return 0
 }
+session_origin_label() { printf 'origin:%s\n' "${TEST_ORIGIN:-interactive}"; return 0; }
+STUB
+# GH#39696: anchor lookups are served locally; FAIL_ANCHOR simulates a failed list.
+cat >"$SCRIPTS/routine-log-helper.sh" <<'STUB'
+#!/usr/bin/env bash
+set -eu
+printf 'anchor %s %s\n' "$1" "$2" >>"$CALLS"
+[[ "${FAIL_ANCHOR:-0}" != 1 ]]
+[[ "$1" != ensure-anchor ]] || printf '77\n'
 STUB
 cat >"$ROOT/bin/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -138,6 +149,7 @@ register_repo marcusquinn/test
 before="$(snapshot)"
 bash "$SCRIPTS/badges-sync-helper.sh" --apply --repo marcusquinn/test --json >"$ROOT/result"
 [[ "$(jq -r .outcome "$ROOT/result")" == APPLIED ]]
+[[ "$(jq -r .detail "$ROOT/result")" == 'PR: https://example.invalid/o/r/pull/5' ]]
 [[ "$(snapshot)" == "$before" ]]
 head="$(jq -r '.[0].headRefName' "$PR_STATE")"
 git -C "$CANONICAL" show "$head:README.md" | grep CURRENT >/dev/null
@@ -152,7 +164,9 @@ printf 'PASS dirty/off-default canonical preserved; README, metrics and workflow
 bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result"
 [[ "$(jq -r .outcome "$ROOT/result")" == SKIPPED ]]
 [[ "$(grep -c '^create$' "$CALLS")" == 1 ]]
-printf 'PASS rerun deduplicates existing sync PR\n'
+grep -qx 'anchor retire-anchor badges-sync' "$CALLS"
+grep -q '^anchor ensure-anchor' "$CALLS" && exit 1
+printf 'PASS rerun deduplicates existing sync PR and retires only unreferenced anchors\n'
 
 for extra in '{"local_only":true}' '{"contributed":true}' '{"role":"contributor"}' '{"maintenance":false}'; do
 	register_repo marcusquinn/test "$extra"
@@ -173,6 +187,15 @@ bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result"
 [[ "$(snapshot)" == "$before" ]]
 [[ "$(grep -c '^create$' "$CALLS")" == 1 ]]
 printf 'PASS stale dirty detector result revalidated against current remote default; no PR\n'
+
+# GH#39808: dry-run evaluates the remote default, not the stale local checkout.
+bash "$SCRIPTS/badges-sync-helper.sh" --repo marcusquinn/test --json >"$ROOT/result"
+if grep -q PLANNED "$ROOT/result"; then
+	exit 1
+fi
+grep -q SKIPPED "$ROOT/result"
+[[ "$(snapshot)" == "$before" ]]
+printf 'PASS dry-run reports SKIPPED when local checkout is stale but remote is current\n'
 
 FAIL_QUERY=1 bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result" && exit 1
 [[ "$(jq -r .outcome "$ROOT/result")" == FAILED ]]
@@ -328,6 +351,43 @@ git -C "$ROOT/remote.git" -c gpg.ssh.allowedSignersFile="$ROOT/allowed-signers" 
 [[ "$(grep -c '^add$' "$CALLS")" == "$adds_before" ]]
 printf 'PASS retained worktree published with a commit signed by the dedicated headless key\n'
 unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+
+# GH#39935: retirement failure is visible and fails the routine before publication.
+grep -qx '<!-- aidevops:routine-pr:badges-sync -->' "$PR_BODY"
+printf '[]\n' >"$PR_STATE"
+creates_before="$(grep -c '^create$' "$CALLS")"
+if TEST_ORIGIN=worker FAIL_ANCHOR=1 bash "$SCRIPTS/badges-sync-helper.sh" --apply --workflow-only --json >"$ROOT/result"; then exit 1; fi
+jq -e '.slug == "marcusquinn/test" and .outcome == "FAILED" and (.detail | contains("retire-anchor badges-sync (exit 1)"))' "$ROOT/result" >/dev/null
+[[ "$(grep -c '^create$' "$CALLS")" == "$creates_before" ]]
+printf 'PASS failed retirement names repository and command and prevents false routine success\n'
+# GH#39785: a healthy worker PR still uses the marker instead of anchor identity.
+TEST_ORIGIN=worker bash "$SCRIPTS/badges-sync-helper.sh" --apply --workflow-only --json >"$ROOT/result"
+[[ "$(jq -r .outcome "$ROOT/result")" == APPLIED ]]
+grep -qx '<!-- aidevops:routine-pr:badges-sync -->' "$PR_BODY"
+if grep -q '^Ref #' "$PR_BODY"; then exit 1; fi
+if grep -q 'anchor ensure-' "$CALLS"; then exit 1; fi
+[[ "$(snapshot)" == "$before" ]]
+printf 'PASS worker PR carries marker without Ref and never creates an anchor\n'
+
+# No-drift runs must still retry retirement after the old PR resolves.
+cat >"$SCRIPTS/badges-check-helper.sh" <<'STUB'
+#!/usr/bin/env bash
+jq -cn --arg path "$CANONICAL" '{slug:"marcusquinn/test",path:$path,classification:"CURRENT"}'
+STUB
+export CANONICAL
+retire_before="$(grep -c '^anchor retire-anchor badges-sync$' "$CALLS")"
+creates_before="$(grep -c '^create$' "$CALLS")"
+bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result"
+[[ "$(jq -r .outcome "$ROOT/result")" == SKIPPED ]]
+[[ "$(grep -c '^anchor retire-anchor badges-sync$' "$CALLS")" == "$((retire_before + 1))" ]]
+[[ "$(grep -c '^create$' "$CALLS")" == "$creates_before" ]]
+if FAIL_ANCHOR=1 bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result"; then exit 1; fi
+jq -e '.outcome == "FAILED" and (.detail | contains("anchor retirement failed"))' "$ROOT/result" >/dev/null
+[[ "$(grep -c '^create$' "$CALLS")" == "$creates_before" ]]
+bash "$SCRIPTS/badges-sync-helper.sh" --json >"$ROOT/result"
+[[ "$(grep -c '^anchor retire-anchor badges-sync$' "$CALLS")" == "$((retire_before + 2))" ]]
+[[ "$(snapshot)" == "$before" ]]
+printf 'PASS current repos retry retirement without publishing; dry runs never retire\n'
 
 # Routine wiring uses the same no-filter selector exercised above.
 # shellcheck source=../routines/core-routines.sh

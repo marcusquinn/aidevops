@@ -41,7 +41,7 @@ live=$("$HELPER" fetch owner/repo 45) || fail "live fetch failed"
 [[ "$live" == *'"body":"Implement focused tests."'* ]] || fail "live body was not returned"
 snapshot="${ISSUE_BODY_SNAPSHOT_DIR}/owner_repo-45.json"
 [[ -f "$snapshot" ]] || fail "snapshot was not written"
-mode=$(stat -f '%Lp' "$snapshot" 2>/dev/null || stat -c '%a' "$snapshot")
+mode=$(stat -c '%a' "$snapshot" 2>/dev/null || stat -f '%Lp' "$snapshot")
 [[ "$mode" == "600" ]] || fail "snapshot mode is ${mode}"
 jq -e '.repo == "owner/repo" and .issue == 45 and .title and .body and .sourceUpdatedAt and .capturedAt and .bodyHash' "$snapshot" >/dev/null || fail "snapshot schema is incomplete"
 

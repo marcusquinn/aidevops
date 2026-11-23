@@ -183,8 +183,8 @@ print_final_instructions() {
 	return 0
 }
 
-# Setup Tabby terminal profiles from repos.json and detected workspaces.
-# Creates a profile per registered repo plus a Buzz profile when ~/.buzz exists,
+# Setup Tabby terminal profiles for registered repos inside the Git workspace.
+# Creates profiles only for eligible registered repos,
 # with colour-matched themes and direct split-arg OpenCode launch settings.
 # Skipped if Tabby is not installed.
 setup_tabby() {
@@ -226,7 +226,7 @@ setup_tabby() {
 	bash "$tabby_helper" status || true
 	echo ""
 	local sync_tabby=""
-	setup_prompt sync_tabby "Sync Tabby profiles and detected workspaces? [Y/n]: " "Y"
+	setup_prompt sync_tabby "Sync Tabby profiles for Git workspace repos? [Y/n]: " "Y"
 	if [[ "$sync_tabby" =~ ^[Yy]?$ ]]; then
 		if bash "$tabby_helper" sync; then
 			# After macOS updates, Tabby can fall back to bash when this is unset.

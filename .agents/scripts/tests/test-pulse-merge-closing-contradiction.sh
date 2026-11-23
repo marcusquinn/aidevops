@@ -17,6 +17,9 @@ FIXTURE="" ROUTES=0 REVIEWS=0 READ_FAIL=0 LAST_ERROR=""
 # Match the existing merge-pass harness: load only the function under test.
 eval "$(awk '/^_check_pr_merge_gates\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/pulse-merge.sh")"
 eval "$(awk '/^_merge_check_closure_metadata\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/full-loop-helper-merge.sh")"
+eval "$(awk '/^_merge_check_closing_guards\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/full-loop-helper-merge.sh")"
+# GH#38318: cmd_merge reaches the pre-merge gate through this wrapper.
+eval "$(awk '/^_merge_gate_or_reconcile\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/full-loop-helper-merge.sh")"
 eval "$(awk '/^cmd_merge\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/full-loop-helper-merge.sh")"
 
 gh_pr_view() {
@@ -48,6 +51,10 @@ _merge_parse_command_args() {
 	return 0
 }
 _merge_resolve_repo() { printf '%s' 'test/repo'; return 0; }
+# GH#37690 parent-task guard is covered by test-full-loop-merge.sh merge cases.
+_merge_check_parent_task_keywords() { return 0; }
+# GH#39558 runtime evidence recheck is covered by test-full-loop-runtime-risk.sh.
+_merge_check_runtime_evidence() { return 0; }
 _merge_handle_already_merged_provenance() { return 2; }
 _flm_gh_read() { gh_pr_view "$@"; return $?; }
 # Trust behavior is covered by test-worker-briefed-trust-parity.sh, not closure cases.
@@ -86,6 +93,8 @@ check_case 'inline code between negation and keyword routed without looping' "Do
 check_case 'case-insensitive Ref/native contradiction held' 'rEf #123' "$LOCAL_REFS" 1
 check_case 'qualified same-repo contradiction held' 'For test/repo#123' "$LOCAL_REFS" 1
 check_case 'legitimate leaf closure allowed' 'Resolves #123' "$LOCAL_REFS" 0
+check_case 'prose for #N is not a For link (GH#38682)' $'Dates lane batch for #123: notes\nResolves #123' "$LOCAL_REFS" 0
+check_case 'indented For line with native closure still held' $'Summary\n  For #123\nResolves #123' "$LOCAL_REFS" 1
 check_case 'different For issue allowed' $'For #124\nResolves #123' "$LOCAL_REFS" 0
 check_case 'same number in other repo allowed' 'For other/repo#123' "$LOCAL_REFS" 0
 check_case 'native cross-repo identity preserved' 'For #123' '[{"number":123,"repository":{"nameWithOwner":"other/repo"}}]' 0

@@ -160,6 +160,9 @@ _pulse_set_rest_core_budget_priority() {
 	export AIDEVOPS_PULSE_REST_CORE_BUDGET_IN_FLIGHT_ALLOWANCE="$in_flight_allowance"
 	export AIDEVOPS_PULSE_REST_CORE_BUDGET_PROGRESS_START_FLOOR="$progress_start_floor"
 	[[ "$log_mode" == "quiet" ]] && return 0
+	# t19233: the transport governor paces before quota reaches a deferral, so
+	# refresh the App-read advisory from cycle start too (6h stamp, background).
+	_pulse_github_app_advise_maybe || true
 	case "$budget_class" in
 	reserve | emergency)
 		echo "[pulse-wrapper] REST-core budget ${budget_class} mode: remaining=${remaining}/${limit} adaptive=${adaptive} soft_cap=${soft_cap} hard_floor=${hard_floor} in_flight_allowance=${in_flight_allowance} progress_start_floor=${progress_start_floor} reset=${reset_epoch} (GH#29742)" >>"$LOGFILE"
@@ -177,17 +180,39 @@ _pulse_set_rest_core_budget_priority() {
 	return 0
 }
 
+_pulse_dependency_recovery_pending() {
+	local file="" count=""
+	for file in "${DER_RETRY_DIR:-${HOME}/.aidevops/cache/dep-unblock-retry}"/*.txt "${DER_RETRY_DIR:-${HOME}/.aidevops/cache/dep-unblock-retry}"/*.pending; do
+		[[ -s "$file" ]] && return 0
+	done
+	for file in "${HOME}/.aidevops/cache/stale-blocked-weight"/*.ready; do
+		[[ -f "$file" ]] || continue
+		IFS= read -r count <"$file" || continue
+		[[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]] && return 0
+	done
+	return 1
+}
+
 #######################################
 # Return the deterministic priority class for a Pulse stage.
 #######################################
 _pulse_stage_priority_class() {
 	local stage="$1"
 	case "$stage" in
-	evaluate_routines)
+	stale_blocked_reconcile)
+		if _pulse_dependency_recovery_pending; then
+			printf 'critical\n'
+		else
+			printf 'deferrable\n'
+		fi
+		;;
+	evaluate_routines | checkpoint_ledger_sweep)
 		# Local calendar evaluation spends no API quota; dispatch is gated inside.
+		# GH#38144: the own-claim ledger sweep reads GitHub only for expired
+		# entries, and a deferral strands claims that block continuation.
 		printf 'critical\n'
 		;;
-	cache_prime | fix_the_fixer_detector | coderabbit_review | post_merge_scanner | pr_review_thread_response | auto_decomposer_scanner | dedup_cleanup | fast_fail_prune_expired | dependabot_alert_monitor | worker_bus_relay | canonical_maintenance | dashboard_freshness_check | llm_supervisor | dirty_pr_sweep | stale_blocked_reconcile | sync_todo_refs_all_repos | build_dependency_graph_cache | refresh_blocked_status_from_graph | release_repaired_brief_holds | preflight_label_maintenance | preflight_trusted_nmr_reconcile | "$_PULSE_BUDGET_PREFETCH_STAGE")
+	cache_prime | fix_the_fixer_detector | coderabbit_review | post_merge_scanner | pr_review_thread_response | auto_decomposer_scanner | dedup_cleanup | fast_fail_prune_expired | dependabot_alert_monitor | worker_bus_relay | canonical_maintenance | dashboard_freshness_check | llm_supervisor | dirty_pr_sweep | sync_todo_refs_all_repos | build_dependency_graph_cache | refresh_blocked_status_from_graph | release_repaired_brief_holds | preflight_label_maintenance | preflight_trusted_nmr_reconcile | "$_PULSE_BUDGET_PREFETCH_STAGE")
 		printf 'deferrable\n'
 		;;
 	approval_merge_trigger | deterministic_merge_pass | dispatch_max | preflight_early_dispatch | preflight_post_label_refill)
@@ -268,6 +293,54 @@ _pulse_should_defer_budget_priority_stage() {
 }
 
 #######################################
+# GH#38273: refresh the offline App-read routing advisory at most once per
+# 6h, at cycle start (t19233) and when REST quota defers a progress stage.
+# Background, fail-open: it never blocks the stage or changes its return code.
+# A failed run frees the 6h stamp and leaves a .failed stamp, so the next
+# attempt waits only the retry interval (default 30 min) instead of 6h.
+#######################################
+_pulse_github_app_advise_maybe() {
+	local state_dir="${AIDEVOPS_STATE_DIR:-$HOME/.aidevops/state}"
+	local stamp="${state_dir}/github-app-advise.stamp"
+	local failed_stamp="${stamp}.failed"
+	local interval="${AIDEVOPS_GITHUB_APP_ADVISE_INTERVAL:-21600}"
+	local retry_interval="${AIDEVOPS_GITHUB_APP_ADVISE_RETRY_INTERVAL:-1800}"
+	local helper="${BASH_SOURCE[0]%/*}/github_auth_cli.py"
+	local repos_config="${AIDEVOPS_REPOS_CONFIG:-${REPOS_JSON:-$HOME/.config/aidevops/repos.json}}"
+	local now=0 last=0
+	[[ "$interval" =~ ^[0-9]+$ ]] || interval=21600
+	[[ "$retry_interval" =~ ^[0-9]+$ ]] || retry_interval=1800
+	[[ -f "$helper" ]] || return 0
+	command -v python3 >/dev/null 2>&1 || return 0
+	if ! declare -F _file_mtime_epoch >/dev/null 2>&1; then
+		# shellcheck source=./portable-stat.sh
+		source "${BASH_SOURCE[0]%/*}/portable-stat.sh" 2>/dev/null || return 0
+	fi
+	now=$(date +%s)
+	if [[ -f "$stamp" ]]; then
+		last=$(_file_mtime_epoch "$stamp" 2>/dev/null) || last=0
+		[[ "$last" =~ ^[0-9]+$ ]] || last=0
+		[[ $((now - last)) -ge "$interval" ]] || return 0
+	fi
+	if [[ -f "$failed_stamp" ]]; then
+		last=$(_file_mtime_epoch "$failed_stamp" 2>/dev/null) || last=0
+		[[ "$last" =~ ^[0-9]+$ ]] || last=0
+		[[ $((now - last)) -ge "$retry_interval" ]] || return 0
+	fi
+	mkdir -p "$state_dir" 2>/dev/null || return 0
+	touch "$stamp" 2>/dev/null || return 0
+	# Mark the failure before freeing the 6h stamp, so no window has neither.
+	(
+		if AIDEVOPS_REPOS_CONFIG="$repos_config" python3 "$helper" advise --write-advisory >/dev/null 2>&1 </dev/null; then
+			rm -f "$failed_stamp"
+		else
+			touch "$failed_stamp" && rm -f "$stamp"
+		fi
+	) >/dev/null 2>&1 </dev/null &
+	return 0
+}
+
+#######################################
 # Record a stage-boundary deferral with pool-specific counters.
 #######################################
 _pulse_defer_budget_priority_stage() {
@@ -281,6 +354,7 @@ _pulse_defer_budget_priority_stage() {
 	# Keep the identity stable as remaining quota changes within the same mode.
 	if [[ "$priority" == "progress" ]] && declare -F _pulse_cycle_state_note_blocker >/dev/null 2>&1; then
 		_pulse_cycle_state_note_blocker rest-core-quota pulse-budget "$rest_mode" || true
+		_pulse_github_app_advise_maybe || true
 	fi
 	echo "[pulse-wrapper] budget-priority: deferred ${priority} stage '${stage}' (graphql=${graphql_mode}:${AIDEVOPS_PULSE_GRAPHQL_BUDGET_REMAINING:-?}/${AIDEVOPS_PULSE_GRAPHQL_BUDGET_LIMIT:-?}@${AIDEVOPS_PULSE_GRAPHQL_BUDGET_THRESHOLD:-?}, rest=${rest_mode}:${AIDEVOPS_PULSE_REST_CORE_BUDGET_REMAINING:-?}/${AIDEVOPS_PULSE_REST_CORE_BUDGET_LIMIT:-?}@${AIDEVOPS_PULSE_REST_CORE_BUDGET_ADAPTIVE_THRESHOLD:-?}, hard_floor=${AIDEVOPS_PULSE_REST_CORE_BUDGET_HARD_FLOOR:-?}, progress_start_floor=${AIDEVOPS_PULSE_REST_CORE_BUDGET_PROGRESS_START_FLOOR:-?})" >>"$LOGFILE"
 	if ! declare -F pulse_stats_increment >/dev/null 2>&1; then

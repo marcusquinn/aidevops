@@ -29,10 +29,17 @@ Deploy GPU-intensive AI models (voice, vision, LLMs) when local hardware is insu
 
 | Provider | GPUs | Pricing | Best For |
 |----------|------|---------|----------|
-| [Runpod](https://www.runpod.io/) | B200, H200, H100, A100, L40S, RTX 4090 (30+ SKUs, 31 regions) | Per-second, $0.40-8.64/hr; Public Endpoints per output | General purpose, serverless, hosted media models (`content/video-runpod.md`) |
+| [Runpod](https://www.runpod.io/) | B200, H200, H100, A100, L40S, RTX 4090 (30+ SKUs, 31 regions) | Per-second, $0.40-8.64/hr; Public Endpoints per output | General purpose, serverless, hosted media models (`content/video-runpod.md`); `runpodctl` + `@runpod` MCP (`runpod.md`) |
 | [Vast.ai](https://vast.ai/) | Consumer+datacenter, 10k+ | Auction+fixed, 5-6x cheaper | Budget, experimentation |
 | [Lambda](https://lambdalabs.com/) | GB300, B200, H200, H100 | Per-hour, reserved discounts | Research, training, enterprise |
 | [NVIDIA Cloud](https://www.nvidia.com/en-us/gpu-cloud/) | A100, H100 (DGX) | Per-hour, enterprise | Official NVIDIA stack |
+| [SaladCloud](https://docs.salad.com/cli/explanation/overview) | Consumer RTX 3090/4090/5090 | Per-second, priority tiers, interruptible | Cheapest resumable batch jobs (frame renders); `saladcloud` CLI (`saladcloud.md`) |
+| TensorDock | Marketplace incl. RTX 4090, H100 | Per-hour from deposit, no egress fees | Full VMs (Linux/Windows) |
+| DigitalOcean GPU Droplets | L40S, RTX 6000 Ada, RTX 4000 Ada | Per-second, 5 min minimum, stopped Droplets bill | Simple managed VMs |
+| Hetzner GEX | RTX PRO 4000/6000 Blackwell | Monthly dedicated plus setup fee | Sustained EU workloads |
+
+Dated prices and sources for rendering-relevant GPUs:
+`todo/research/t19048-remote-3d-render-backends.md`.
 
 ## GPU Selection
 
@@ -47,6 +54,10 @@ VRAM: RTX 4090=24GB, L4=24GB, L40S=48GB, A100=80GB, H100=80GB, H200=141GB, B200=
 | 70B LLM (Llama 3.3 70B, Qwen 2.5 72B) | 40-80GB | A100 / H100 | 1.79-4.18 |
 | 96GB workloads | 96GB | RTX Pro 6000 | 1.50-2.00 |
 | 400B+ quantized (Llama 3.1 405B 4-bit) | 140-180GB | H200 / B200 | 3.35-8.64 |
+| 3D rendering (Blender Cycles OptiX) | 24-96GB | RTX 4090/5090, L40S, RTX Pro 6000 (RT cores) | 0.34-2.69 |
+
+Rendering needs RT cores: A100/H100/H200/B200 lack them and are poor Cycles
+value. Playbook: `tools/design/3d-render-backends.md`.
 
 ## Deployment
 
@@ -65,10 +76,13 @@ stop the mutation and diagnose within the approved configuration instead.
 ### 1. Provision
 
 ```bash
-# RunPod (install: brew install runpod/runpodctl/runpodctl OR wget -qO- cli.runpod.net | sudo bash)
-runpodctl config --apiKey "$RUNPOD_API_KEY"
-runpodctl create pod --name my-model --gpuType "NVIDIA GeForce RTX 4090" --gpuCount 1 \
-  --imageName pytorch/pytorch:2.4.0-cuda12.1-cudnn9-devel --volumeSize 50 --ports "8000/http,22/tcp"
+# Runpod (install: brew install runpod/runpodctl/runpodctl). Full guide: tools/infrastructure/runpod.md
+aidevops secret RUNPOD_API_KEY -- runpodctl doctor
+aidevops secret RUNPOD_API_KEY -- runpodctl pod create --name my-model --gpu-id "NVIDIA GeForce RTX 4090" \
+  --image pytorch/pytorch:2.4.0-cuda12.1-cudnn9-devel --wait   # check `pod create --help` for volume/port flags
+# SaladCloud (beta CLI). Full guide: tools/infrastructure/saladcloud.md
+SALAD_CLI_NO_PROMPT=1 aidevops secret SALAD_API_KEY -- saladcloud -o json container-groups create <unique-name> \
+  --org <org> --project <project> --image <image> --cpu 4 --memory 16384 --priority batch --wait -- <command...>
 # Vast.ai (install: pip install vastai && vastai set api-key <key>)
 vastai search offers 'gpu_name=RTX_4090 num_gpus=1 rentable=true' --order 'dph_total' --limit 10
 vastai create instance <offer-id> --image pytorch/pytorch:2.4.0-cuda12.1-cudnn9-devel --disk 50 --ssh
@@ -80,7 +94,7 @@ curl -s -X POST -H "Authorization: Bearer $LAMBDA_API_KEY" -H "Content-Type: app
   -d '{"region_name":"us-east-1","instance_type_name":"gpu_1x_h100_sxm5","ssh_key_names":["my-key"]}'
 ```
 
-Lifecycle: RunPod `runpodctl get|stop|remove pod <id>`, Vast.ai `vastai show instances|destroy instance <id>`, Lambda `POST .../terminate {"instance_ids":["<id>"]}`.
+Lifecycle: Runpod `runpodctl pod list|get|stop|delete <id>` (interactive inspection: `@runpod` MCP), SaladCloud `saladcloud container-groups get|stop|delete <name>`, Vast.ai `vastai show instances|destroy instance <id>`, Lambda `POST .../terminate {"instance_ids":["<id>"]}`.
 
 ### 2. SSH + Deploy
 
@@ -153,11 +167,14 @@ nvidia-smi --query-gpu=timestamp,utilization.gpu,memory.used,temperature.gpu --f
 
 ## Security
 
-Never expose model APIs without auth -- use SSH tunnels or VPN. Store keys: `aidevops secret set RUNPOD_API_KEY` / `VASTAI_API_KEY` / `LAMBDA_API_KEY`. Rotate SSH keys regularly; enable provider firewalls; production: HTTPS via nginx/caddy. Full setup: `tools/credentials/api-key-setup.md`.
+Never expose model APIs without auth -- use SSH tunnels or VPN. Store account-named keys (`<PROVIDER>_<ACCOUNT>_API_KEY`, see `tools/credentials/credential-inventory.md`), declare the provider default where supported (`aidevops secret default runpod|saladcloud NAME` makes `RUNPOD_API_KEY` / `SALAD_API_KEY` resolve), and inject them per command with `aidevops secret NAME -- <cli>`. Rotate SSH keys regularly; enable provider firewalls; production: HTTPS via nginx/caddy. Full setup: `tools/credentials/api-key-setup.md`.
 
 ## See Also
 
+- `tools/infrastructure/runpod.md` -- runpodctl CLI and on-demand `@runpod` MCP
+- `tools/infrastructure/saladcloud.md` -- saladcloud CLI, interruptible container groups and job queues
 - `content/video-runpod.md` -- Runpod Public Endpoints, Hub and bring-your-own media models
+- `tools/design/3d-render-backends.md` -- Blender render routes, farm comparison and job contract
 - `content/media-generation-providers.md` -- API vs rented-GPU media cost comparison (`media-gen-cost-helper.sh`)
 - `tools/infrastructure/fireworks.md` -- managed inference, fine-tuning, and model hosting (Fireworks AI)
 - `tools/infrastructure/nearai.md` -- TEE-backed private inference (NEAR AI Cloud)

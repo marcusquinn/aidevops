@@ -574,6 +574,34 @@ else
 		"status_count=$status_n line: $last"
 fi
 
+# B'7a (GH#37993): long-lived non-task records get no derived status and no
+# creator self-assignment, in separate-flag and comma-joined label forms.
+_gh_wrapper_auto_assignee() { printf 'maintainer'; return 0; }
+for non_task_labels in "persistent" "release-standing-policy" "release-approval-required,no-auto-dispatch"; do
+	reset_recorder
+	SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+		gh_create_issue --repo o/r --title "non-task record" --body "body" \
+		--label "$non_task_labels" >/dev/null 2>&1
+	status_n=$(count_status_labels_in_log)
+	if [[ "$status_n" == "0" ]] && ! grep -q -- "--add-assignee" "$GH_RECORD_FILE"; then
+		print_result "B'7a: gh_create_issue leaves non-task ${non_task_labels} without status or assignee" 0
+	else
+		print_result "B'7a: gh_create_issue leaves non-task ${non_task_labels} without status or assignee" 1 \
+			"status_count=$status_n log: $(tr '\n' ' ' <"$GH_RECORD_FILE")"
+	fi
+done
+# Control: an ordinary task still receives the creator assignment.
+reset_recorder
+SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+	gh_create_issue --repo o/r --title "task" --body "body" >/dev/null 2>&1
+if grep -q -- "--add-assignee maintainer" "$GH_RECORD_FILE"; then
+	print_result "B'7a: gh_create_issue still self-assigns ordinary tasks" 0
+else
+	print_result "B'7a: gh_create_issue still self-assigns ordinary tasks" 1 \
+		"log: $(tr '\n' ' ' <"$GH_RECORD_FILE")"
+fi
+_gh_wrapper_auto_assignee() { return 0; }
+
 # B'8: caller status wins — wrapper must not concatenate an extra status label.
 reset_recorder
 SESSION_ORIGIN_OVERRIDE="origin:interactive" \
@@ -720,6 +748,31 @@ if [[ -n "$last" && "$last" != *"origin:"* && "$last" != *"status:available"* &&
 	print_result "B'15: confirmed-absent derived origin label is dropped; caller label kept" 0
 else
 	print_result "B'15: confirmed-absent derived origin label is dropped; caller label kept" 1 "line: $last"
+fi
+
+# B'16 (GH#39054): gh_create_pr degrades like gh_create_issue. The exact-origin
+# readback is forced to fail, so success proves provenance was deferred.
+reset_recorder
+pr_rc=0
+pr_err=$(MOCK_LABEL_NAMES="bug" MOCK_ORIGIN_EXACT=0 SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+	gh_create_pr --repo o/r --title "t1: x" --body "Resolves #1" 2>&1 >/dev/null) || pr_rc=$?
+last=$(grep '^pr create ' "$GH_RECORD_FILE" | tail -1)
+if [[ "$pr_rc" -eq 0 && -n "$last" && "$last" != *"origin:"* && "$pr_err" == *"gh_create_pr: origin:interactive is absent"* ]]; then
+	print_result "B'16: gh_create_pr drops confirmed-absent derived origin and exits 0" 0
+else
+	print_result "B'16: gh_create_pr drops confirmed-absent derived origin and exits 0" 1 \
+		"rc=$pr_rc line: $last stderr: $(printf '%s' "$pr_err" | tr '\n' ' ')"
+fi
+
+# B'17: a caller-supplied origin is never dropped, even when provisioning failed.
+reset_recorder
+MOCK_LABEL_NAMES="bug" SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+	gh_create_pr --repo o/r --title "t1: x" --body "Resolves #1" --label origin:worker >/dev/null 2>&1
+last=$(grep '^pr create ' "$GH_RECORD_FILE" | tail -1)
+if [[ "$last" == *"origin:worker"* ]]; then
+	print_result "B'17: gh_create_pr keeps caller-supplied origin after provisioning failure" 0
+else
+	print_result "B'17: gh_create_pr keeps caller-supplied origin after provisioning failure" 1 "line: $last"
 fi
 _ORIGIN_LABELS_FAILED=""
 unset -f _status_labels_snapshot _gh_managed_label_names_snapshot

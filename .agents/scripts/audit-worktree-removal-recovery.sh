@@ -74,6 +74,9 @@ _worktree_capture_git_identity() {
 	local wt_path="$1"
 	local candidate_root=""
 	local branch_status=0
+	local probe=""
+	local admin_dir=""
+	local common_dir=""
 
 	_WT_ID_REAL_GIT=""
 	_WT_ID_SOURCE_REAL=""
@@ -87,14 +90,25 @@ _worktree_capture_git_identity() {
 	_WT_ID_SOURCE_REAL=$(cd "$wt_path" 2>/dev/null && pwd -P) || return 1
 	_WT_ID_SOURCE_INODE=$(_worktree_path_identity "$wt_path") || return 1
 	_WT_ID_REAL_GIT=$(_worktree_cleanup_real_git) || return 1
-	candidate_root=$("$_WT_ID_REAL_GIT" -C "$wt_path" rev-parse --show-toplevel 2>/dev/null) || return 1
+	# One spawn answers toplevel, admin dir, common dir and HEAD for this capture
+	# (GH#39560); output order follows the arguments. A newline inside any path
+	# changes the line count and refuses, as the per-field checks below did.
+	probe=$("$_WT_ID_REAL_GIT" -C "$wt_path" rev-parse --show-toplevel --absolute-git-dir \
+		--git-common-dir --verify HEAD 2>/dev/null) || return 1
+	[[ "$probe" == *$'\n'*$'\n'*$'\n'* && "$probe" != *$'\n'*$'\n'*$'\n'*$'\n'* ]] || return 1
+	candidate_root=${probe%%$'\n'*}
+	probe=${probe#*$'\n'}
+	admin_dir=${probe%%$'\n'*}
+	probe=${probe#*$'\n'}
+	common_dir=${probe%%$'\n'*}
+	_WT_ID_HEAD=${probe#*$'\n'}
 	candidate_root=$(cd "$candidate_root" 2>/dev/null && pwd -P) || return 1
 	[[ "$candidate_root" == "$_WT_ID_SOURCE_REAL" ]] || return 1
-	_WT_ID_ADMIN_REAL=$("$_WT_ID_REAL_GIT" -C "$wt_path" rev-parse --absolute-git-dir 2>/dev/null) || return 1
-	_WT_ID_ADMIN_REAL=$(cd "$_WT_ID_ADMIN_REAL" 2>/dev/null && pwd -P) || return 1
+	_WT_ID_ADMIN_REAL=$(cd "$admin_dir" 2>/dev/null && pwd -P) || return 1
 	_WT_ID_ADMIN_INODE=$(_worktree_path_identity "$_WT_ID_ADMIN_REAL") || return 1
-	_WT_ID_COMMON_REAL=$(_worktree_git_common_dir "$_WT_ID_REAL_GIT" "$wt_path") || return 1
-	_WT_ID_HEAD=$("$_WT_ID_REAL_GIT" -C "$wt_path" rev-parse --verify HEAD 2>/dev/null) || return 1
+	# Same resolution as _worktree_git_common_dir: relative output is from wt_path.
+	[[ "$common_dir" == /* ]] || common_dir="$wt_path/$common_dir"
+	_WT_ID_COMMON_REAL=$(cd "$common_dir" 2>/dev/null && pwd -P) || return 1
 	_worktree_git_head_payload_is_valid "$_WT_ID_HEAD" || return 1
 	if _WT_ID_BRANCH=$("$_WT_ID_REAL_GIT" -C "$wt_path" symbolic-ref -q HEAD 2>/dev/null); then
 		_worktree_git_branch_payload_is_valid "$_WT_ID_BRANCH" || return 1
@@ -272,6 +286,7 @@ _worktree_recovery_archive_is_valid() {
 	local actual_admin=""
 	local actual_head=""
 	local real_git=""
+	local probe=""
 
 	if _worktree_recovery_is_compact "$archive_path"; then
 		_worktree_recovery_producer_command "$deadline_epoch" verify "$archive_path" || return $?
@@ -294,12 +309,15 @@ _worktree_recovery_archive_is_valid() {
 	fi
 	real_git=$(_worktree_cleanup_real_git) || return 1
 	recovery_admin_real=$(cd "$recovery_admin" 2>/dev/null && pwd -P) || return 1
-	actual_admin=$(_worktree_recovery_run_before_epoch "$deadline_epoch" \
-		"$real_git" -C "$archive_path" rev-parse --absolute-git-dir 2>/dev/null) || return $?
+	# One spawn answers admin dir and HEAD (GH#39560); output order follows the
+	# arguments. A newline inside the admin path changes the line count and refuses.
+	probe=$(_worktree_recovery_run_before_epoch "$deadline_epoch" \
+		"$real_git" -C "$archive_path" rev-parse --absolute-git-dir --verify HEAD 2>/dev/null) || return $?
+	[[ "$probe" == *$'\n'* && "$probe" != *$'\n'*$'\n'* ]] || return 1
+	actual_admin=${probe%%$'\n'*}
+	actual_head=${probe#*$'\n'}
 	actual_admin=$(cd "$actual_admin" 2>/dev/null && pwd -P) || return 1
 	[[ "$actual_admin" == "$recovery_admin_real" ]] || return 1
-	actual_head=$(_worktree_recovery_run_before_epoch "$deadline_epoch" \
-		"$real_git" -C "$archive_path" rev-parse --verify HEAD 2>/dev/null) || return $?
 	[[ "$actual_head" == "$expected_head" ]] || return 1
 	_worktree_recovery_run_before_epoch "$deadline_epoch" \
 		"$real_git" -C "$archive_path" status --porcelain=v1 -z --untracked-files=all \

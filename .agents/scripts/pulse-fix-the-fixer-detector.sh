@@ -35,7 +35,15 @@
 #   - Idempotent: skips issues already carrying the label.
 #   - Fail-open: any internal error returns 0 — the deterministic
 #     t2819 detector remains the primary safety net.
-#   - Capped scope: --limit caps issues per run (default 10).
+#   - Relevant scope: only repositories whose local checkout contains the
+#     dispatch system (.agents/scripts/pulse-wrapper.sh) are scanned;
+#     an explicit --repo bypasses that gate.
+#   - Capped scope: --limit caps LLM classifications per run (default 10).
+#   - Bounded: each run stops taking work after a wall-clock budget below
+#     the Pulse stage timeout, writes its summary, and resumes from the
+#     next unscanned repository on the following run.
+#   - Remembered: completed YES/NO verdicts are cached per issue content
+#     hash; an edited title/body is classified again.
 #   - Cheap: defaults to the `simple` tier; env override.
 #
 # Usage:
@@ -49,8 +57,9 @@
 #   AIDEVOPS_FIX_THE_FIXER_DETECTOR_DRY_RUN=1   — classify, don't write
 #
 # Tunables:
-#   AIDEVOPS_FIX_THE_FIXER_DETECTOR_MODEL       (default: simple)
-#   AIDEVOPS_FIX_THE_FIXER_DETECTOR_LIMIT       (default: 10)
+#   AIDEVOPS_FIX_THE_FIXER_DETECTOR_MODEL           (default: simple)
+#   AIDEVOPS_FIX_THE_FIXER_DETECTOR_LIMIT           (default: 10)
+#   AIDEVOPS_FIX_THE_FIXER_DETECTOR_BUDGET_SECONDS  (default: 40)
 
 set -euo pipefail
 
@@ -71,6 +80,23 @@ readonly REPOS_JSON="${HOME}/.config/aidevops/repos.json"
 readonly AUTH_COOLDOWN_FILE="${HOME}/.aidevops/cache/fix-the-fixer-detector-auth.cooldown"
 readonly AUTH_COOLDOWN_SECONDS_DEFAULT=21600
 readonly AUTH_ERROR_REASON="AI research credentials invalid"
+# GH#38673: completed YES/NO verdicts keyed by slug, issue and content hash.
+# Without this, every cold run re-classified the same first issues and the
+# Pulse stage bound killed it before later issues (or the summary) were reached.
+readonly VERDICT_CACHE_FILE="${HOME}/.aidevops/cache/fix-the-fixer-verdicts.tsv"
+readonly VERDICT_CACHE_MAX_ROWS=2000
+# Next repository to scan; a run that stops early resumes there next time.
+readonly REPO_CURSOR_FILE="${HOME}/.aidevops/cache/fix-the-fixer-detector-cursor"
+# Must stay below the Pulse stage bound (PULSE_FIX_THE_FIXER_TIMEOUT_SECONDS=60)
+# with headroom for one in-flight classification plus the summary write.
+readonly RUN_BUDGET_SECONDS_DEFAULT=40
+# Only a repository that contains the worker dispatch system can host a
+# fix-the-fixer task. Product repositories were listed and classified every
+# run (69 of 70 on one runner) although they can never be YES.
+readonly DISPATCH_SYSTEM_MARKER=".agents/scripts/pulse-wrapper.sh"
+# One jq expression for the content key, so the list and view paths hash the
+# same bytes.
+readonly CONTENT_KEY_JQ='(((.title // "") + "\n" + (.body // "")) | @base64)'
 # Sentinels used by the GitHub issue API. Extracted as constants so the
 # literal strings appear once (codebase ratchet flags repeated literals).
 readonly ISSUE_STATE_OPEN="OPEN"
@@ -162,6 +188,26 @@ _is_auth_error() {
 	esac
 }
 
+_is_runtime_auth_error() {
+	local message="$1"
+	local normalized
+	normalized=$(printf '%s' "$message" | tr '[:upper:]' '[:lower:]')
+	case "$normalized" in
+		*"isolated opencode runtime cannot authenticate"*|*"does not load the provider-auth plugin"*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+# Only persist fixed diagnostics, never provider stderr or credential values.
+_auth_failure_reason() {
+	if [[ -f "$AUTH_COOLDOWN_FILE" ]] && grep -q '^reason=runtime_auth_unavailable$' "$AUTH_COOLDOWN_FILE"; then
+		printf 'runtime_auth_unavailable: isolated runtime cannot load provider-auth plugin; action: aidevops secret set ANTHROPIC_API_KEY\n'
+	else
+		printf 'auth_error: %s or missing; action: aidevops secret set ANTHROPIC_API_KEY\n' "$AUTH_ERROR_REASON"
+	fi
+	return 0
+}
+
 _record_auth_cooldown() {
 	local reason="$1"
 	local now
@@ -205,6 +251,87 @@ _auth_cooldown_active() {
 	fi
 	rm -f "$AUTH_COOLDOWN_FILE" 2>/dev/null || true
 	return 1
+}
+
+# Hash the CONTENT_KEY_JQ projection of one issue JSON object.
+_issue_content_hash() {
+	local issue_json="$1"
+	local content_key=""
+	content_key=$(jq -r "$CONTENT_KEY_JQ" <<<"$issue_json" 2>/dev/null) || return 1
+	[[ -n "$content_key" ]] || return 1
+	_hash_text "$content_key"
+	return 0
+}
+
+_verdict_cache_hit() {
+	local slug="$1"
+	local issue_num="$2"
+	local content_hash="$3"
+	[[ -f "$VERDICT_CACHE_FILE" && -n "$content_hash" ]] || return 1
+	awk -F'\t' -v s="$slug" -v n="$issue_num" -v h="$content_hash" \
+		'$1 == s && $2 == n && $3 == h { found = 1; exit } END { exit(found ? 0 : 1) }' \
+		"$VERDICT_CACHE_FILE" 2>/dev/null
+	return $?
+}
+
+# Only completed YES/NO verdicts are recorded; SKIP/SKIP_AUTH must retry.
+_record_verdict() {
+	local slug="$1"
+	local issue_num="$2"
+	local content_hash="$3"
+	local verdict="$4"
+	[[ "${AIDEVOPS_FIX_THE_FIXER_DETECTOR_DRY_RUN:-0}" == "1" ]] && return 0
+	[[ -n "$content_hash" ]] || return 0
+	mkdir -p "$(dirname "$VERDICT_CACHE_FILE")" 2>/dev/null || return 0
+	printf '%s\t%s\t%s\t%s\t%s\n' "$slug" "$issue_num" "$content_hash" "$verdict" "$(date +%s)" \
+		>>"$VERDICT_CACHE_FILE" 2>/dev/null || return 0
+	local rows=""
+	rows=$(wc -l <"$VERDICT_CACHE_FILE" 2>/dev/null | tr -d ' ') || rows=""
+	[[ "$rows" =~ ^[0-9]+$ && "$rows" -gt $((VERDICT_CACHE_MAX_ROWS + 500)) ]] || return 0
+	local temporary=""
+	temporary=$(mktemp "${VERDICT_CACHE_FILE}.XXXXXX" 2>/dev/null) || return 0
+	if tail -n "$VERDICT_CACHE_MAX_ROWS" "$VERDICT_CACHE_FILE" >"$temporary" 2>/dev/null; then
+		mv -f "$temporary" "$VERDICT_CACHE_FILE" 2>/dev/null || rm -f "$temporary"
+	else
+		rm -f "$temporary"
+	fi
+	return 0
+}
+
+# Print the index of the cursor slug among the arguments (0 when absent).
+_cursor_start_index() {
+	local cursor_slug=""
+	[[ -f "$REPO_CURSOR_FILE" ]] && cursor_slug=$(head -n 1 "$REPO_CURSOR_FILE" 2>/dev/null)
+	local index=0
+	local candidate=""
+	for candidate in "$@"; do
+		if [[ -n "$cursor_slug" && "$candidate" == "$cursor_slug" ]]; then
+			printf '%s\n' "$index"
+			return 0
+		fi
+		index=$((index + 1))
+	done
+	printf '0\n'
+	return 0
+}
+
+# Persist the slug to resume from; an empty slug means the pass completed.
+_write_cursor() {
+	local next_slug="$1"
+	[[ "${AIDEVOPS_FIX_THE_FIXER_DETECTOR_DRY_RUN:-0}" == "1" ]] && return 0
+	if [[ -z "$next_slug" ]]; then
+		rm -f "$REPO_CURSOR_FILE" 2>/dev/null || true
+		return 0
+	fi
+	mkdir -p "$(dirname "$REPO_CURSOR_FILE")" 2>/dev/null || return 0
+	local temporary=""
+	temporary=$(mktemp "${REPO_CURSOR_FILE}.XXXXXX" 2>/dev/null) || return 0
+	if printf '%s\n' "$next_slug" >"$temporary" 2>/dev/null; then
+		mv -f "$temporary" "$REPO_CURSOR_FILE" 2>/dev/null || rm -f "$temporary"
+	else
+		rm -f "$temporary"
+	fi
+	return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -258,12 +385,22 @@ EOF
 	return 0
 }
 
+# Print one "VERDICT<TAB>RATIONALE" line. Callers run the classifier in a
+# command substitution, so a RATIONALE global set there never reaches them
+# (GH#38673: advisories were posted with an empty rationale).
+_emit_verdict() {
+	local verdict="$1"
+	printf '%s\t%s\n' "$verdict" "${RATIONALE:-}"
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Call the LLM and parse the verdict.
 #
-# Output (stdout): "YES" or "NO" (verdict only)
-# Output (RATIONALE global): the rationale text from the verdict line.
-# Returns 0 on success, 1 on LLM failure (caller treats as NO).
+# Output (stdout): one "VERDICT<TAB>RATIONALE" line, where VERDICT is YES, NO,
+# SKIP (classifier unavailable or failed) or SKIP_AUTH (credential failure).
+# Always returns 0 so `set -e` cannot abort the caller before it accounts
+# for a SKIP.
 # ---------------------------------------------------------------------------
 _classify_via_llm() {
 	local issue_title="$1"
@@ -274,15 +411,17 @@ _classify_via_llm() {
 	prompt=$(_compose_classification_prompt "$issue_title" "$issue_body")
 
 	if _auth_cooldown_active; then
-		RATIONALE="auth_error: ${AUTH_ERROR_REASON}; cooldown active"
-		_log_auth_skip "fix-the-fixer detector skipped: ${AUTH_ERROR_REASON}"
-		printf 'SKIP_AUTH\n'
+		RATIONALE="$(_auth_failure_reason); cooldown active"
+		_log_auth_skip "fix-the-fixer detector skipped: ${RATIONALE}"
+		_emit_verdict SKIP_AUTH
 		return 0
 	fi
 
 	if [[ ! -x "$AI_RESEARCH_HELPER" ]]; then
-		_log_warn "ai-research-helper.sh not executable — cannot classify"
-		return 1
+		RATIONALE="ai-research-helper.sh not executable — cannot classify"
+		_log_warn "${RATIONALE}"
+		_emit_verdict SKIP
+		return 0
 	fi
 
 	# Capture stderr so we can attribute failures (missing API key,
@@ -301,27 +440,25 @@ _classify_via_llm() {
 		raw=$("$AI_RESEARCH_HELPER" --model "$model" --prompt "$prompt" --max-tokens 200 2>"$err_log") || {
 			local helper_rc=$?
 			local err_snippet=""
-			[[ -s "$err_log" ]] && err_snippet=$(head -c 200 "$err_log" | tr '\n' ' ')
+			[[ -s "$err_log" ]] && err_snippet=$(head -c 2000 "$err_log" | tr '\n' ' ')
 			rm -f "$err_log"
 			# GH#23594: rc=2 is ai-research-helper's documented exit code for
 			# "no API key resolved locally" — treat it as an auth class signal
 			# regardless of the error message, so the cooldown trips even when
 			# the prose message doesn't match _is_auth_error()'s API-response
 			# patterns (which are tuned for invalid x-api-key / 401 responses).
-			if [[ "$helper_rc" -eq 2 ]] || _is_auth_error "$err_snippet"; then
-				local cooldown_reason="$err_snippet"
-				if [[ "$helper_rc" -eq 2 && -z "$cooldown_reason" ]]; then
-					cooldown_reason="ai-research-helper rc=2: no Anthropic credentials resolvable"
-				fi
+			if _is_runtime_auth_error "$err_snippet" || [[ "$helper_rc" -eq 2 ]] || _is_auth_error "$err_snippet"; then
+				local cooldown_reason="auth_error"
+				_is_runtime_auth_error "$err_snippet" && cooldown_reason="runtime_auth_unavailable"
 				_record_auth_cooldown "$cooldown_reason"
-				RATIONALE="auth_error: ${AUTH_ERROR_REASON}"
-				_log_auth_skip "fix-the-fixer detector skipped: ${AUTH_ERROR_REASON}"
-				printf 'SKIP_AUTH\n'
+				RATIONALE="$(_auth_failure_reason)"
+				_log_auth_skip "fix-the-fixer detector skipped: ${RATIONALE}"
+				_emit_verdict SKIP_AUTH
 				return 0
 			fi
 			RATIONALE="LLM call failed (model=${model}, rc=${helper_rc}): ${err_snippet:-no stderr}"
 			_log_warn "${RATIONALE}"
-			printf 'SKIP\n'
+			_emit_verdict SKIP
 			return 0
 		}
 		rm -f "$err_log"
@@ -330,7 +467,7 @@ _classify_via_llm() {
 		raw=$("$AI_RESEARCH_HELPER" --model "$model" --prompt "$prompt" --max-tokens 200 2>/dev/null) || {
 			RATIONALE="LLM call failed (model=${model}) — stderr capture unavailable"
 			_log_warn "${RATIONALE}"
-			printf 'SKIP\n'
+			_emit_verdict SKIP
 			return 0
 		}
 	fi
@@ -341,7 +478,7 @@ _classify_via_llm() {
 	if [[ -z "$first_line" ]]; then
 		RATIONALE="empty LLM output (model=${model}) — cannot classify"
 		_log_warn "${RATIONALE}"
-		printf 'SKIP\n'
+		_emit_verdict SKIP
 		return 0
 	fi
 
@@ -353,12 +490,12 @@ _classify_via_llm() {
 
 	case "$verdict_token" in
 		YES|YES.|YES,)
-			printf 'YES\n'
+			_emit_verdict YES
 			;;
 		*)
 			# Anything not-YES is treated as NO (conservative — only
 			# annotate when confident).
-			printf 'NO\n'
+			_emit_verdict NO
 			;;
 	esac
 	return 0
@@ -515,11 +652,21 @@ cmd_check() {
 	#                            must surface this in run summary
 	#   exit 0 (other paths)  → skipped pre-classification (closed,
 	#                            already labeled, no body, no auto-dispatch)
+	# Completed verdicts (NO, and YES once the label is applied) are cached
+	# against the content hash so `run` does not classify them again.
+	local content_hash=""
+	content_hash=$(_issue_content_hash "$issue_json") || content_hash=""
 	RATIONALE=""
-	local verdict
-	verdict=$(_classify_via_llm "$title" "$body")
+	local classification="" verdict=""
+	classification=$(_classify_via_llm "$title" "$body") || classification=""
+	verdict="${classification%%$'\t'*}"
+	[[ "$classification" == *$'\t'* ]] && RATIONALE="${classification#*$'\t'}"
+	if [[ -z "$verdict" ]]; then
+		verdict="SKIP"
+		RATIONALE="classifier produced no verdict"
+	fi
 	if [[ "$verdict" == "SKIP_AUTH" ]]; then
-		[[ -n "$RATIONALE" ]] || RATIONALE="auth_error: ${AUTH_ERROR_REASON}"
+		[[ -n "$RATIONALE" ]] || RATIONALE="$(_auth_failure_reason)"
 		_log_auth_skip "${slug}#${issue_num} classification skipped — ${RATIONALE}"
 		return 3
 	fi
@@ -529,21 +676,59 @@ cmd_check() {
 	fi
 	if [[ "$verdict" != "YES" ]]; then
 		_log_info "${slug}#${issue_num} verdict=NO ${RATIONALE}"
+		_record_verdict "$slug" "$issue_num" "$content_hash" "NO"
 		return 0
 	fi
 
 	_log_info "${slug}#${issue_num} verdict=YES ${RATIONALE}"
 	_ensure_fix_the_fixer_label "$slug" || return 1
 	_apply_label_and_comment "$issue_num" "$slug" "$RATIONALE" || return 1
+	# A cached YES is never re-applied: if a maintainer later removes the
+	# label from unchanged content, that removal stands.
+	_record_verdict "$slug" "$issue_num" "$content_hash" "YES"
 	return 0
 }
 
+# Run accounting shared by cmd_run and _scan_repo (reset per run).
+_RUN_PROCESSED=0
+_RUN_CLASSIFIED=0
+_RUN_APPLY_FAILED=0
+_RUN_SKIPPED_LLM=0
+_RUN_SKIPPED_AUTH=0
+_RUN_CACHED=0
+_RUN_LIMIT=10
+_RUN_BUDGET="$RUN_BUDGET_SECONDS_DEFAULT"
+_RUN_STARTED_AT=0
+_RUN_STOP_REASON=""
+
 _log_run_summary() {
-	local processed="$1" classified="$2" apply_failed="$3"
-	local skipped_auth="$4" skipped_llm="$5" repo_count="$6"
-	local counts="processed ${processed} issue(s) across ${repo_count} repo(s) — classified=${classified}, apply-failed=${apply_failed}, skipped:auth-error=${skipped_auth}, skipped:LLM-failure=${skipped_llm}"
+	local repo_count="$1"
+	local repos_scanned="$2"
+	local processed="$_RUN_PROCESSED" classified="$_RUN_CLASSIFIED"
+	local apply_failed="$_RUN_APPLY_FAILED" skipped_auth="$_RUN_SKIPPED_AUTH"
+	local skipped_llm="$_RUN_SKIPPED_LLM" cached="$_RUN_CACHED"
+	local stop_reason="${_RUN_STOP_REASON:-complete}"
+	# Atomic, credential-free evidence for pulse-check; successful/empty runs
+	# replace prior degradation instead of leaving a stale alarm behind.
+	local status_file="${HOME}/.aidevops/cache/fix-the-fixer-detector-status.json"
+	local temporary=""
+	mkdir -p "$(dirname "$status_file")" 2>/dev/null || true
+	temporary=$(mktemp "${status_file}.XXXXXX") || temporary=""
+	if [[ -n "$temporary" ]]; then
+		if jq -n --argjson timestamp "$(date +%s)" --argjson processed "$processed" \
+			--argjson classified "$classified" --argjson skipped_auth "$skipped_auth" \
+			--argjson cached "$cached" --argjson repo_count "$repo_count" \
+			--argjson repos_scanned "$repos_scanned" --arg stop_reason "$stop_reason" \
+			--arg reason "$(_auth_failure_reason)" \
+			'{timestamp:$timestamp,processed:$processed,classified:$classified,skipped_auth:$skipped_auth,cached:$cached,repo_count:$repo_count,repos_scanned:$repos_scanned,stop_reason:$stop_reason,budget_exhausted:($stop_reason == "budget"),reason:(if $skipped_auth > 0 then $reason else "" end)}' >"$temporary"; then
+			mv -f "$temporary" "$status_file" 2>/dev/null || rm -f "$temporary"
+		else
+			rm -f "$temporary"
+		fi
+	fi
+	local counts="processed ${processed} issue(s) across ${repo_count} repo(s) — classified=${classified}, apply-failed=${apply_failed}, skipped:auth-error=${skipped_auth}, skipped:LLM-failure=${skipped_llm}, cached=${cached}, scanned=${repos_scanned}/${repo_count} repo(s), stop=${stop_reason}"
 	if [[ "$skipped_auth" -gt 0 ]]; then
-		_log_warn "${counts} (detector observability degraded; ${AUTH_ERROR_REASON})"
+		_log_warn "${counts} (DEGRADED capability: detector observability degraded; $(_auth_failure_reason))"
 	elif [[ "$skipped_llm" -gt 0 ]]; then
 		_log_warn "${counts} (detector observability degraded; check ai-research-helper.sh / API credentials)"
 	elif [[ "$apply_failed" -gt 0 ]]; then
@@ -554,8 +739,87 @@ _log_run_summary() {
 	return 0
 }
 
+_run_reset() {
+	local limit="$1"
+	local budget="$2"
+	_RUN_PROCESSED=0
+	_RUN_CLASSIFIED=0
+	_RUN_APPLY_FAILED=0
+	_RUN_SKIPPED_LLM=0
+	_RUN_SKIPPED_AUTH=0
+	_RUN_CACHED=0
+	_RUN_LIMIT="$limit"
+	_RUN_BUDGET="$budget"
+	_RUN_STARTED_AT="$SECONDS"
+	_RUN_STOP_REASON=""
+	return 0
+}
+
+# Return 0 (and record why) when the run must stop taking new work.
+_run_should_stop() {
+	if [[ "$_RUN_PROCESSED" -ge "$_RUN_LIMIT" ]]; then
+		_RUN_STOP_REASON="limit"
+		return 0
+	fi
+	if [[ $((SECONDS - _RUN_STARTED_AT)) -ge "$_RUN_BUDGET" ]]; then
+		_RUN_STOP_REASON="budget"
+		return 0
+	fi
+	return 1
+}
+
+# Classify one repository's uncached candidates. Returns 1 when the run
+# stopped mid-repository, so the cursor resumes here next time.
+_scan_repo() {
+	local slug="$1"
+	# Title and body come with the list, so cached issues need no per-issue
+	# view and no LLM call.
+	local issues_json=""
+	issues_json=$(gh issue list --repo "$slug" \
+		--label "auto-dispatch" \
+		--state open --limit 30 \
+		--json number,title,body,labels 2>/dev/null) || return 0
+	local rows=""
+	rows=$(jq -r --arg L "$FIX_THE_FIXER_LABEL" \
+		'.[] | select([.labels[].name] | any(. == $L) | not) | select((.body // "") != "") | [(.number | tostring), '"$CONTENT_KEY_JQ"'] | @tsv' \
+		<<<"$issues_json" 2>/dev/null) || rows=""
+	[[ -n "$rows" ]] || return 0
+
+	local -a pending=()
+	local issue_num="" content_key="" content_hash=""
+	while IFS=$'\t' read -r issue_num content_key; do
+		[[ "$issue_num" =~ ^[0-9]+$ && -n "$content_key" ]] || continue
+		content_hash=$(_hash_text "$content_key")
+		if _verdict_cache_hit "$slug" "$issue_num" "$content_hash"; then
+			_RUN_CACHED=$((_RUN_CACHED + 1))
+			continue
+		fi
+		pending+=("$issue_num")
+	done <<<"$rows"
+	[[ "${#pending[@]}" -gt 0 ]] || return 0
+	_ensure_fix_the_fixer_label "$slug" || return 0
+
+	for issue_num in "${pending[@]}"; do
+		_run_should_stop && return 1
+		# `set -e` is on; capture rc explicitly so cmd_check's
+		# exit 2 (LLM SKIP) doesn't kill the loop.
+		local rc=0
+		cmd_check "$issue_num" "$slug" || rc=$?
+		case "$rc" in
+			3) _RUN_SKIPPED_AUTH=$((_RUN_SKIPPED_AUTH + 1)) ;;
+			2) _RUN_SKIPPED_LLM=$((_RUN_SKIPPED_LLM + 1)) ;;
+			1) _RUN_APPLY_FAILED=$((_RUN_APPLY_FAILED + 1)) ;;
+			*) _RUN_CLASSIFIED=$((_RUN_CLASSIFIED + 1)) ;;
+		esac
+		_RUN_PROCESSED=$((_RUN_PROCESSED + 1))
+	done
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Iterate pulse-enabled repos, fetch unlabeled auto-dispatch issues, classify.
+# Cached verdicts, the run budget and the repo cursor keep every hourly run
+# inside the Pulse stage bound while still advancing through all repos.
 # ---------------------------------------------------------------------------
 cmd_run() {
 	local repo_filter=""
@@ -576,6 +840,8 @@ cmd_run() {
 	done
 
 	[[ "$limit" =~ ^[0-9]+$ ]] || limit=10
+	local budget="${AIDEVOPS_FIX_THE_FIXER_DETECTOR_BUDGET_SECONDS:-$RUN_BUDGET_SECONDS_DEFAULT}"
+	[[ "$budget" =~ ^[1-9][0-9]*$ ]] || budget="$RUN_BUDGET_SECONDS_DEFAULT"
 	export AIDEVOPS_FIX_THE_FIXER_DETECTOR_DRY_RUN="$dry_run"
 
 	if [[ "${AIDEVOPS_FIX_THE_FIXER_DETECTOR_DISABLE:-0}" == "1" ]]; then
@@ -588,11 +854,15 @@ cmd_run() {
 	if [[ -n "$repo_filter" ]]; then
 		target_repos=("$repo_filter")
 	elif [[ -f "$REPOS_JSON" ]]; then
-		# Iterate pulse-enabled, non-local-only repos.
+		# Iterate pulse-enabled, non-local-only repos whose local checkout
+		# contains the dispatch system.
 		local repos_str
-		repos_str=$(jq -r '.initialized_repos[]? | select(.maintenance != false) | select(.pulse == true) | select((.local_only // false) == false) | .slug' "$REPOS_JSON" 2>/dev/null) || repos_str=""
-		while IFS= read -r r; do
-			[[ -n "$r" ]] && target_repos+=("$r")
+		repos_str=$(jq -r '.initialized_repos[]? | select(.maintenance != false) | select(.pulse == true) | select((.local_only // false) == false) | [.slug, (.path // "")] | @tsv' "$REPOS_JSON" 2>/dev/null) || repos_str=""
+		local r="" repo_path=""
+		while IFS=$'\t' read -r r repo_path; do
+			[[ -n "$r" && -n "$repo_path" ]] || continue
+			repo_path="${repo_path/#\~/$HOME}"
+			[[ -f "${repo_path}/${DISPATCH_SYSTEM_MARKER}" ]] && target_repos+=("$r")
 		done <<<"$repos_str"
 	fi
 
@@ -604,50 +874,26 @@ cmd_run() {
 	# Track classified vs skipped separately so a 100% LLM outage doesn't
 	# masquerade as "processed N issues" — the failure mode this whole
 	# fix exists to surface (t3223).
-	local processed=0
-	local classified=0
-	local apply_failed=0
-	local skipped_llm=0
-	local skipped_auth=0
+	_run_reset "$limit" "$budget"
 	export AIDEVOPS_FIX_THE_FIXER_DETECTOR_SUPPRESS_AUTH_ITEM_LOGS=1
-	local slug
-	for slug in "${target_repos[@]}"; do
-		[[ "$processed" -ge "$limit" ]] && break
-
-		# Find auto-dispatch issues without fix-the-fixer label.
-		# -L 5 caps per-repo; outer loop caps overall.
-		local issues_json
-		issues_json=$(gh issue list --repo "$slug" \
-			--label "auto-dispatch" \
-			--state open --limit 30 \
-			--json number,labels 2>/dev/null) || continue
-
-		local nums
-		nums=$(printf '%s' "$issues_json" | \
-			jq -r --arg L "$FIX_THE_FIXER_LABEL" \
-			'.[] | select([.labels[].name] | any(. == $L) | not) | .number' 2>/dev/null) || nums=""
-		[[ -n "$nums" ]] || continue
-		_ensure_fix_the_fixer_label "$slug" || continue
-
-		while IFS= read -r issue_num; do
-			[[ -z "$issue_num" ]] && continue
-			[[ "$processed" -ge "$limit" ]] && break
-			# `set -e` is on; capture rc explicitly so cmd_check's
-			# exit 2 (LLM SKIP) doesn't kill the loop.
-			local rc=0
-			cmd_check "$issue_num" "$slug" || rc=$?
-			case "$rc" in
-				3) skipped_auth=$((skipped_auth + 1)) ;;
-				2) skipped_llm=$((skipped_llm + 1)) ;;
-				1) apply_failed=$((apply_failed + 1)) ;;
-				*) classified=$((classified + 1)) ;;
-			esac
-			processed=$((processed + 1))
-		done <<<"$nums"
+	local repo_total="${#target_repos[@]}"
+	local start_index=0
+	[[ -n "$repo_filter" ]] || start_index=$(_cursor_start_index "${target_repos[@]}")
+	local offset=0 repos_scanned=0 slug="" next_slug=""
+	while [[ "$offset" -lt "$repo_total" ]]; do
+		slug="${target_repos[$(((start_index + offset) % repo_total))]}"
+		if _run_should_stop || ! _scan_repo "$slug"; then
+			next_slug="$slug"
+			break
+		fi
+		repos_scanned=$((repos_scanned + 1))
+		offset=$((offset + 1))
 	done
+	if [[ -z "$repo_filter" ]]; then
+		_write_cursor "$next_slug"
+	fi
 
-	_log_run_summary "$processed" "$classified" "$apply_failed" \
-		"$skipped_auth" "$skipped_llm" "${#target_repos[@]}"
+	_log_run_summary "$repo_total" "$repos_scanned"
 	return 0
 }
 
@@ -667,9 +913,11 @@ Commands:
   help     Print this message.
 
 Flags:
-  --repo OWNER/REPO     Limit run to one repo (default: all pulse-enabled).
-  --limit N             Cap issues per run (default: 10).
-  --dry-run             Classify but do not apply labels or comments.
+  --repo OWNER/REPO     Limit run to one repo (default: pulse-enabled repos
+                        whose checkout contains the dispatch system).
+  --limit N             Cap LLM classifications per run (default: 10).
+  --dry-run             Classify but do not apply labels, comments or
+                        cache/cursor state.
 
 Exit codes:
   0   Always (non-blocking by design).
@@ -679,8 +927,10 @@ Bypass:
   AIDEVOPS_FIX_THE_FIXER_DETECTOR_DRY_RUN=1   — same as --dry-run
 
 Tunables:
-  AIDEVOPS_FIX_THE_FIXER_DETECTOR_MODEL       (default: simple)
-  AIDEVOPS_FIX_THE_FIXER_DETECTOR_LIMIT       (default: 10)
+  AIDEVOPS_FIX_THE_FIXER_DETECTOR_MODEL           (default: simple)
+  AIDEVOPS_FIX_THE_FIXER_DETECTOR_LIMIT           (default: 10)
+  AIDEVOPS_FIX_THE_FIXER_DETECTOR_BUDGET_SECONDS  (default: 40; keep below
+                                                   the 60s Pulse stage bound)
 EOF
 	return 0
 }

@@ -96,6 +96,9 @@ fi
 _WTAR_PC_CALLER="pulse-cleanup.sh"
 _PC_REASON_AGE_ELIGIBLE="age-eligible"
 _PC_ARCHIVE_REQUIRED_FAILURE_RC=2
+# aidevops:trust-boundary — the one jq predicate launch recovery uses to
+# trust durable dispatch markers; prefix it to filters that call trusted_author.
+_PC_TRUSTED_AUTHOR_JQ='def trusted_author: .author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR";'
 
 if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -f "$_PULSE_CLEANUP_SCRIPT_DIR/pulse-cleanup-worktree-state.sh" ]]; then
 	# shellcheck source=pulse-cleanup-worktree-state.sh
@@ -585,13 +588,15 @@ _launch_recovery_owns_registered_attempt() {
 	fi
 
 	local comments_endpoint="" latest_dispatch="" latest_dispatch_json=""
-	comments_endpoint=$(printf 'repos/%s/issues/%s/comments' "$repo_slug" "$issue_number")
-	latest_dispatch_json=$(gh api "$comments_endpoint" --paginate --slurp --jq \
-		'[.[][] | select(.body | contains("<!-- aidevops:dispatch "))] | last \
-		| {body:(.body // ""), author_association:(.author_association // ""), login:(.user.login // "")}' \
-		2>/dev/null) || return 1
-	latest_dispatch=$(printf '%s' "$latest_dispatch_json" | jq -r --arg runner "$self_login" '
-		select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
+	comments_endpoint=$(printf 'repos/%s/issues/%s/comments?per_page=100' "$repo_slug" "$issue_number")
+	# GH#38185: gh rejects --slurp with --jq, so filter all pages with jq.
+	latest_dispatch_json=$(set -o pipefail
+		gh api "$comments_endpoint" --paginate --slurp 2>/dev/null |
+			jq -c '[.[][] | select((.body // "") | contains("<!-- aidevops:dispatch "))] | last
+				| {body:(.body // ""), author_association:(.author_association // ""), login:(.user.login // "")}' \
+				2>/dev/null) || return 1
+	latest_dispatch=$(printf '%s' "$latest_dispatch_json" | jq -r --arg runner "$self_login" "${_PC_TRUSTED_AUTHOR_JQ}"'
+		select(trusted_author)
 		| select(.login == $runner)
 		| .body
 	' 2>/dev/null) || return 1
@@ -605,15 +610,67 @@ _launch_recovery_owns_registered_attempt() {
 	[[ "$claim_id" =~ ^[1-9][0-9]*$ ]] || return 1
 	claim_json=$(gh api "repos/${repo_slug}/issues/comments/${claim_id}" 2>/dev/null) || return 1
 	claim_nonce=$(printf '%s' "$claim_json" | jq -r --arg runner "$self_login" --arg repo "$repo_slug" \
-		--argjson issue "$issue_number" --argjson claim_id "$claim_id" '
+		--argjson issue "$issue_number" --argjson claim_id "$claim_id" "${_PC_TRUSTED_AUTHOR_JQ}"'
 		select(.id == $claim_id)
 		| select((.issue_url // "") | endswith("/repos/\($repo)/issues/\($issue)"))
-		| select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
+		| select(trusted_author)
 		| select((.user.login // "") == $runner)
 		| (.body // "")
 		| capture("(^|[[:space:]])DISPATCH_CLAIM[[:space:]]+nonce=(?<nonce>[A-Za-z0-9_-]+)").nonce
 	' 2>/dev/null) || return 1
 	[[ "$claim_nonce" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
+	_LAUNCH_RECOVERY_CLAIM_ID="$claim_id"
+	_LAUNCH_RECOVERY_CLAIM_NONCE="$claim_nonce"
+	return 0
+}
+
+#######################################
+# t19270: bind a queued-path launch-recovery release to this runner's exact
+# DISPATCH_CLAIM generation. A startup crash leaves status:queued, so the
+# in-progress ownership proof above never runs. An unbound release cannot
+# retire a lease-marked dispatch comment (dispatch-dedup-helper.sh trust
+# boundary), so every runner then waits out DISPATCH_ACTIVE_WORKER_MAX_AGE.
+# The failed attempt's unguessable ledger lease token, device and session
+# select the claim; no match keeps the legacy unbound release.
+# Args: issue number, repo slug, ledger entry JSON, current login
+# Returns: 0 with _LAUNCH_RECOVERY_CLAIM_ID/_NONCE set; 1 leaves them unset
+#######################################
+_launch_recovery_bind_ledger_claim() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local ledger_entry="$3"
+	local self_login="$4"
+	local fields=""
+	local binding=""
+	local lease_token=""
+	local runner_device=""
+	local session_key=""
+	local claim_id=""
+	local claim_nonce=""
+
+	fields=$(printf '%s' "$ledger_entry" | jq -r '[.lease_token // "", .runner_device // "", .session_key // ""] | @tsv' 2>/dev/null) || return 1
+	IFS=$'\t' read -r lease_token runner_device session_key <<<"$fields"
+	[[ -n "$lease_token" && -n "$runner_device" && -n "$session_key" && -n "$self_login" ]] || return 1
+	# aidevops:trust-boundary — only this login's trusted claim whose exact
+	# lease token, device and session match the failed ledger attempt.
+	binding=$(set -o pipefail
+		gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" --paginate --slurp 2>/dev/null |
+			jq -r --arg runner "$self_login" --arg token "$lease_token" \
+				--arg device "$runner_device" --arg session "$session_key" "${_PC_TRUSTED_AUTHOR_JQ}"'
+				def field($body; $name):
+					(try ($body | capture("(^|[[:space:]])" + $name + "=(?<v>[^[:space:]]+)").v) catch "") // "";
+				[.[][]
+				| select(trusted_author)
+				| select((.user.login // "") == $runner)
+				| (.body // "") as $body
+				| select($body | test("(^|\n)DISPATCH_CLAIM nonce="))
+				| select(field($body; "runner") == $runner and field($body; "lease_token") == $token
+					and field($body; "device") == $device and field($body; "session") == $session)
+				| {id, created_at, nonce: field($body; "nonce")}]
+				| sort_by([.created_at, .id]) | last // empty
+				| "\(.id)\t\(.nonce)"' 2>/dev/null) || return 1
+	IFS=$'\t' read -r claim_id claim_nonce <<<"$binding"
+	[[ "$claim_id" =~ ^[1-9][0-9]*$ && "$claim_nonce" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
 	_LAUNCH_RECOVERY_CLAIM_ID="$claim_id"
 	_LAUNCH_RECOVERY_CLAIM_NONCE="$claim_nonce"
 	return 0
@@ -710,6 +767,8 @@ recover_failed_launch_state() {
 		[[ -n "$attempt_id" ]] && fail_args+=(--attempt-id "$attempt_id")
 		"$ledger_helper" "${fail_args[@]}" >/dev/null 2>&1 || true
 	fi
+	[[ -n "$_LAUNCH_RECOVERY_CLAIM_ID" ]] ||
+		_launch_recovery_bind_ledger_claim "$issue_number" "$repo_slug" "$ledger_entry" "$self_login" || true
 
 	_record_released_launch_failure "$issue_number" "$repo_slug" "$self_login" "$failure_reason" "$crash_type" \
 		"$_LAUNCH_RECOVERY_CLAIM_ID" "$_LAUNCH_RECOVERY_CLAIM_NONCE"
@@ -1155,7 +1214,43 @@ prune_expired_gh_read_caches() {
 		fi
 		[[ "$_timed_out" -eq 0 ]] || break
 	done < <(_pulse_gh_read_cache_dirs)
+	if [[ "$_timed_out" -eq 0 ]]; then
+		_removed=$(_pulse_prune_gh_commit_cache "$_deadline") || _timed_out=1
+		_deleted=$((_deleted + _removed))
+	fi
 	echo "[pulse-wrapper] gh read-cache prune (GH#32957): dirs=${_dirs} deleted=${_deleted} max_age=${_PC_GH_READ_CACHE_MAX_AGE_DAYS}d elapsed=$((SECONDS - _start))s budget=${_budget}s timed_out=${_timed_out}" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
+
+#######################################
+# GH#38242: prune immutable commit responses (<root>/<owner>--<repo>/<sha>.json,
+# plus orphaned temp files) older than seven days. Two levels only: the
+# per-repository dirs sit one level below the root. Prints the deleted count.
+# Args: $1=SECONDS deadline.
+# Returns: 1 when the deadline is exhausted, 0 otherwise.
+#######################################
+_pulse_prune_gh_commit_cache() {
+	local _deadline="$1"
+	local _root="${HOME}/.aidevops/cache/gh-commit"
+	local _file="" _removed=0 _deleted=0
+	local -a _batch=()
+	[[ -d "$_root" && ! -L "$_root" ]] || { printf '0\n'; return 0; }
+	[[ "$SECONDS" -lt "$_deadline" ]] || { printf '0\n'; return 1; }
+	while IFS= read -r -d '' _file; do
+		_batch+=("$_file")
+		[[ "${#_batch[@]}" -ge "$_PC_GH_READ_CACHE_RM_BATCH" ]] || continue
+		[[ "$SECONDS" -lt "$_deadline" ]] || { printf '%s\n' "$_deleted"; return 1; }
+		_removed=$(_pulse_gh_read_cache_rm_batch "${_batch[@]}")
+		_deleted=$((_deleted + _removed))
+		_batch=()
+		[[ "$SECONDS" -lt "$_deadline" ]] || { printf '%s\n' "$_deleted"; return 1; }
+	done < <(find "$_root" -mindepth 2 -maxdepth 2 -type f -mmin "+10080" -print0 2>/dev/null)
+	if [[ "${#_batch[@]}" -gt 0 ]]; then
+		[[ "$SECONDS" -lt "$_deadline" ]] || { printf '%s\n' "$_deleted"; return 1; }
+		_removed=$(_pulse_gh_read_cache_rm_batch "${_batch[@]}")
+		_deleted=$((_deleted + _removed))
+	fi
+	printf '%s\n' "$_deleted"
 	return 0
 }
 

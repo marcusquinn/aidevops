@@ -13,7 +13,7 @@ import test from "node:test";
 
 const plugin = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const scripts = resolve(plugin, "../../scripts");
-const moduleNames = ["provider-auth.mjs", "provider-auth-pool.mjs", "provider-auth-pool-recovery.mjs"];
+const moduleNames = ["provider-auth.mjs", "provider-auth-pool.mjs", "provider-auth-pool-recovery.mjs", "oauth-pool-ordering.mjs"];
 
 function fixture(t) {
   const temp = process.env.AIDEVOPS_TEMP_DIR || join(homedir(), ".aidevops/.agent-workspace/tmp");
@@ -29,7 +29,7 @@ function fixture(t) {
   // The production probe always reads the actual sibling installation.
   for (const name of moduleNames) copyFileSync(join(plugin, name), join(runtime, name));
   symlinkSync(runtime, join(installed, "plugins/opencode-aidevops"), "dir");
-  for (const name of ["oauth-pool-rotation-probe.mjs", "oauth-pool-helper.sh", "oauth-pool-add.sh", "oauth-pool-manage.sh", "oauth-pool-diagnose.sh"]) {
+  for (const name of ["oauth-pool-rotation-probe.mjs", "oauth-pool-helper.sh", "oauth-pool-add.sh", "oauth-pool-manage.sh", "oauth-pool-diagnose.sh", "oauth-pool-remote-sync.sh"]) {
     copyFileSync(join(scripts, name), join(installed, "scripts", name));
   }
   const home = join(root, "home");
@@ -80,7 +80,8 @@ test("offline shell command passes through symlink deployment and preserves sent
   assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.match(result.stdout, /OFFLINE \/ SIMULATED/);
   assert.match(result.stdout, /not live end-to-end failover/);
-  assert.equal(result.stdout.match(/^PASS .*:/gm)?.length, 18);
+  // 18 distinct-email assertions plus the same 18 for same-email seats (GH#38959).
+  assert.equal(result.stdout.match(/^PASS .*:/gm)?.length, 36);
   assert.match(result.stdout, /PASS overall/);
   // Check metadata before reading again, so the assertion itself cannot hide access.
   for (const [index, path] of [f.pool, f.auth].entries()) {

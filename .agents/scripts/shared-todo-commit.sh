@@ -417,19 +417,121 @@ _todo_copy_planning_changes_to_worktree() {
 	local repo_path="$1"
 	local worktree_path="$2"
 	local changed_files="$3"
+	local log_target="${4:-/dev/null}"
 
-	local rel_path
+	# The worktree is discarded on failure, so a conflict never publishes a
+	# partial result. Returns 2 for a retryable conflict (GH#39120).
+	local rel_path rc
 	while IFS= read -r rel_path; do
 		[[ -n "$rel_path" ]] || continue
 		_todo_safe_planning_path "$rel_path" || continue
-		if [[ -e "${repo_path}/${rel_path}" ]]; then
+		rc=0
+		_todo_merge_planning_path "$repo_path" "$worktree_path" "$rel_path" "$log_target" || rc=$?
+		[[ "$rc" -eq 0 ]] || return "$rc"
+	done <<<"$changed_files"
+	return 0
+}
+
+# Blob id of <rev>:<path> in a checkout, or "-" when absent.
+_todo_blob_or_absent() {
+	local checkout="$1"
+	local rev_path="$2"
+	local blob=""
+	blob=$(git -C "$checkout" rev-parse "$rev_path" 2>/dev/null) || blob="-"
+	printf '%s' "$blob"
+	return 0
+}
+
+_todo_planning_conflict_message() {
+	local rel_path="$1"
+	local log_target="$2"
+	local msg="[todo_commit_push] Planning PR fallback conflict: ${rel_path} changed on the default branch since this checkout's HEAD. Retryable: refresh from the default branch and re-apply the planning edit."
+	printf '%s\n' "$msg" >&2
+	printf '%s\n' "$msg" >>"$log_target"
+	return 0
+}
+
+# Merge one caller planning file onto the worktree's origin/<default> copy.
+# base = caller HEAD blob, ours = caller working file, theirs = worktree file.
+# Mirrors the decision table in _planning_publish_build_index. Returns 2 for a
+# retryable conflict, 1 for a hard failure (GH#39120).
+_todo_merge_planning_path() {
+	local repo_path="$1"
+	local worktree_path="$2"
+	local rel_path="$3"
+	local log_target="$4"
+	local base_sha="" ours_sha="-" theirs_sha=""
+	local head_ref="HEAD:${rel_path}"
+	base_sha=$(_todo_blob_or_absent "$repo_path" "$head_ref")
+	theirs_sha=$(_todo_blob_or_absent "$worktree_path" "$head_ref")
+	if [[ -e "${repo_path}/${rel_path}" ]]; then
+		ours_sha=$(git -C "$repo_path" hash-object -- "$rel_path") || return 1
+	fi
+
+	if [[ "$theirs_sha" == "$base_sha" ]]; then
+		# Default branch did not move this file: take the caller's copy.
+		if [[ "$ours_sha" != "-" ]]; then
 			mkdir -p "${worktree_path}/$(dirname "$rel_path")" || return 1
 			cp -p "${repo_path}/${rel_path}" "${worktree_path}/${rel_path}" || return 1
 		else
 			rm -f "${worktree_path}/${rel_path}" || return 1
 		fi
-	done <<<"$changed_files"
+		return 0
+	fi
+	if [[ "$ours_sha" == "$base_sha" || "$ours_sha" == "$theirs_sha" ]]; then
+		return 0
+	fi
+	if [[ "$base_sha" == "-" || "$ours_sha" == "-" || "$theirs_sha" == "-" ]]; then
+		_todo_planning_conflict_message "$rel_path" "$log_target"
+		return 2
+	fi
+
+	local tmp_dir="" merge_rc=0
+	tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-planning-merge.XXXXXX") || return 1
+	if ! git -C "$repo_path" cat-file blob "$base_sha" >"${tmp_dir}/base" ||
+		! cp -p "${repo_path}/${rel_path}" "${tmp_dir}/ours" ||
+		! git -C "$worktree_path" cat-file blob "$theirs_sha" >"${tmp_dir}/theirs"; then
+		rm -rf "$tmp_dir"
+		return 1
+	fi
+	git merge-file -p --diff3 "${tmp_dir}/ours" "${tmp_dir}/base" "${tmp_dir}/theirs" >"${tmp_dir}/merged" 2>/dev/null || merge_rc=$?
+	if [[ "$merge_rc" -ne 0 ]]; then
+		rm -rf "$tmp_dir"
+		[[ "$merge_rc" -eq 1 ]] || return 1
+		_todo_planning_conflict_message "$rel_path" "$log_target"
+		return 2
+	fi
+	cp "${tmp_dir}/merged" "${worktree_path}/${rel_path}" || {
+		rm -rf "$tmp_dir"
+		return 1
+	}
+	rm -rf "$tmp_dir"
 	return 0
+}
+
+# Refuse to publish a TODO.md that deletes or un-completes task lines the
+# commit message does not name (GH#35062 guard, shared via planning-publisher).
+_todo_guard_planning_task_regression() {
+	local worktree_path="$1"
+	local changed_files="$2"
+	local commit_msg="$3"
+	if ! declare -F _planning_publish_guard_task_regression >/dev/null 2>&1; then
+		# shellcheck source=./planning-publisher.sh
+		source "${BASH_SOURCE[0]%/*}/planning-publisher.sh" || return 1
+	fi
+	local parent_sha="" resolved_file="" rel_path="" staged="" rc=0
+	parent_sha=$(git -C "$worktree_path" rev-parse HEAD) || return 1
+	resolved_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-planning-resolved.XXXXXX") || return 1
+	while IFS= read -r rel_path; do
+		[[ -n "$rel_path" ]] || continue
+		_todo_safe_planning_path "$rel_path" || continue
+		[[ "$(basename "$rel_path")" == "TODO.md" ]] || continue
+		staged=$(_todo_blob_or_absent "$worktree_path" ":${rel_path}")
+		printf 'file\t-\t-\t%s\t%s\n' "$staged" "$rel_path" >>"$resolved_file"
+	done <<<"$changed_files"
+	_planning_publish_guard_task_regression "$worktree_path" "$parent_sha" "$resolved_file" "$commit_msg" || rc=$?
+	rm -f "$resolved_file"
+	return "$rc"
 }
 
 _todo_clean_source_planning_changes() {
@@ -606,7 +708,14 @@ _todo_create_planning_worktree() {
 	(
 		# shellcheck source=shared-worktree-create.sh
 		source "${BASH_SOURCE[0]%/*}/shared-worktree-create.sh" || exit 1
-		worktree_create_registered "$repo_path" "$worktree_path" "origin/${default_branch}" --detach
+		# Synchronous, process-scoped publication tree: this helper creates,
+		# uses and removes it. Own it here, not by the calling runtime, so the
+		# managed-lifetime removal proof can pass while that runtime is alive
+		# (GH#38586; same pattern as remote-branch-cleanup-helper.sh GH#35490).
+		AIDEVOPS_WORKTREE_MANAGER=legacy-guards \
+			AIDEVOPS_WORKTREE_CREATE_OWNER_PID="$$" \
+			AIDEVOPS_WORKTREE_CREATE_TASK=planning-publication \
+			worktree_create_registered "$repo_path" "$worktree_path" "origin/${default_branch}" --detach
 	) >/dev/null 2>>"$log_target" || {
 		printf '%s\n' "[todo_commit_push] Planning PR fallback failed: cannot create linked worktree" >>"$log_target"
 		return 1
@@ -630,8 +739,11 @@ _todo_commit_planning_worktree() {
 		return 0
 	fi
 
-	if ! _todo_copy_planning_changes_to_worktree "$repo_path" "$worktree_path" "$changed_files"; then
-		printf '%s\n' "[todo_commit_push] Planning PR fallback failed: cannot copy planning changes" >>"$log_target"
+	local copy_rc=0
+	_todo_copy_planning_changes_to_worktree "$repo_path" "$worktree_path" "$changed_files" "$log_target" || copy_rc=$?
+	if [[ "$copy_rc" -ne 0 ]]; then
+		[[ "$copy_rc" -eq 2 ]] ||
+			printf '%s\n' "[todo_commit_push] Planning PR fallback failed: cannot copy planning changes" >>"$log_target"
 		return 1
 	fi
 
@@ -641,6 +753,11 @@ _todo_commit_planning_worktree() {
 		printf '%s\n' "[todo_commit_push] No changes staged in planning PR worktree" >>"$log_target"
 		TODO_COMMIT_PUSH_RESULT="$TODO_COMMIT_RESULT_NOOP"
 		return 0
+	fi
+
+	if ! _todo_guard_planning_task_regression "$worktree_path" "$changed_files" "$commit_msg" 2>>"$log_target"; then
+		printf '%s\n' "[todo_commit_push] Planning PR fallback refused: stale snapshot would delete or un-complete unnamed tasks" >>"$log_target"
+		return 1
 	fi
 
 	git -C "$worktree_path" commit -m "$commit_msg" \
@@ -680,6 +797,21 @@ _todo_commit_planning_worktree() {
 	return 0
 }
 
+# GH#38344: best-effort creation of the labels the planning PR applies, so a
+# newly initialised repo does not reject PR creation. A provisioning failure is
+# logged and PR creation still runs, which is never worse than the prior path.
+_todo_ensure_planning_pr_labels() {
+	local slug="$1"
+	local log_target="$2"
+	declare -F managed_labels_ensure_planning_pr_set >/dev/null 2>&1 || return 0
+	declare -F _gh_managed_label_names_snapshot >/dev/null 2>&1 || return 0
+	declare -F _gh_managed_label_create_runner >/dev/null 2>&1 || return 0
+	managed_labels_ensure_planning_pr_set "$slug" \
+		_gh_managed_label_names_snapshot _gh_managed_label_create_runner && return 0
+	printf '%s\n' "[todo_commit_push] Planning PR label provisioning failed; attempting PR creation anyway" >>"$log_target"
+	return 0
+}
+
 _todo_open_planning_pr() {
 	local slug="$1"
 	local default_branch="$2"
@@ -699,6 +831,7 @@ _todo_open_planning_pr() {
 		printf '[todo_commit_push] Planning PR fallback failed: cannot allocate diagnostic capture.\n' >&2
 		return 1
 	}
+	_todo_ensure_planning_pr_labels "$slug" "$log_target"
 	pr_url=$(AIDEVOPS_PR_CREATE_READY=1 gh_create_pr \
 		--repo "$slug" \
 		--base "$default_branch" \
@@ -739,14 +872,22 @@ _todo_finalize_planning_pr() {
 	local log_target="$7"
 	local cleanup_state="not-created"
 	local remote_state="not-pushed"
+	local report_recovery=0
 	if [[ -n "$worktree_path" ]]; then
 		if _todo_remove_temp_worktree "$repo_path" "$worktree_path"; then
 			cleanup_state="removed"
 		else
 			cleanup_state="retained"
-			terminal_rc=1
+			report_recovery=1
+			# GH#38586: once the PR is open and caller edits are cleaned, the
+			# publication succeeded; a retained disposable tree is a warning.
+			if [[ "$pr_state" != "open" && "$pr_state" != "open-reused" ||
+				"$source_state" != "cleaned" ]]; then
+				terminal_rc=1
+			fi
 		fi
 	fi
+	[[ "$terminal_rc" -eq 0 ]] || report_recovery=1
 	if [[ -n "${_TODO_PLANNING_PR_BRANCH:-}" ]] &&
 		git -C "$repo_path" ls-remote --exit-code --heads origin \
 			"refs/heads/${_TODO_PLANNING_PR_BRANCH}" >/dev/null 2>&1; then
@@ -755,9 +896,14 @@ _todo_finalize_planning_pr() {
 	elif [[ -n "${_TODO_PLANNING_PR_COMMIT:-}" ]]; then
 		remote_state="local-recovery-ref"
 	fi
-	if [[ "$terminal_rc" -ne 0 ]]; then
-		printf '[todo_commit_push] Planning publication stopped after %s; caller planning edits are %s and the disposable worktree is %s.\n' \
-			"$remote_state" "$source_state" "$cleanup_state" >&2
+	if [[ "$report_recovery" -eq 1 ]]; then
+		if [[ "$terminal_rc" -eq 0 ]]; then
+			printf '[todo_commit_push] Planning PR is %s, but the disposable worktree was retained (%s); routine worktree cleanup can reclaim it.\n' \
+				"$pr_state" "$worktree_path" >&2
+		else
+			printf '[todo_commit_push] Planning publication stopped after %s; caller planning edits are %s and the disposable worktree is %s.\n' \
+				"$remote_state" "$source_state" "$cleanup_state" >&2
+		fi
 		printf 'AIDEVOPS_PLANNING_RECOVERY_PUBLICATION_ID=%s\n' "$publication_id" >&2
 		printf 'AIDEVOPS_PLANNING_RECOVERY_BRANCH=%s\n' "${_TODO_PLANNING_PR_BRANCH:-}" >&2
 		printf 'AIDEVOPS_PLANNING_RECOVERY_COMMIT=%s\n' "${_TODO_PLANNING_PR_COMMIT:-}" >&2
@@ -765,9 +911,11 @@ _todo_finalize_planning_pr() {
 		printf 'AIDEVOPS_PLANNING_RECOVERY_PR_STATE=%s\n' "$pr_state" >&2
 		printf 'AIDEVOPS_PLANNING_RECOVERY_SOURCE_STATE=%s\n' "$source_state" >&2
 		printf 'AIDEVOPS_PLANNING_RECOVERY_WORKTREE_STATE=%s\n' "$cleanup_state" >&2
-		printf '[todo_commit_push] For transient failures, retry with the same planning snapshot; publication %s reuses branch %s instead of creating a duplicate.\n' \
-			"$publication_id" "${_TODO_PLANNING_PR_BRANCH:-unknown}" >&2
-		printf '[todo_commit_push] A pre-push content block requires fixing the reported content before retrying. A guard failure that is not a content block (for example, an inventory enumeration or scan failure) can be retried after the reported environment problem is resolved.\n' >&2
+		if [[ "$terminal_rc" -ne 0 ]]; then
+			printf '[todo_commit_push] For transient failures, retry with the same planning snapshot; publication %s reuses branch %s instead of creating a duplicate.\n' \
+				"$publication_id" "${_TODO_PLANNING_PR_BRANCH:-unknown}" >&2
+			printf '[todo_commit_push] A pre-push content block requires fixing the reported content before retrying. A guard failure that is not a content block (for example, an inventory enumeration or scan failure) can be retried after the reported environment problem is resolved.\n' >&2
+		fi
 		if [[ "$log_target" != "/dev/null" ]]; then
 			printf '%s\n' "[todo_commit_push] Recovery publication=${publication_id} branch=${_TODO_PLANNING_PR_BRANCH:-} commit=${_TODO_PLANNING_PR_COMMIT:-} remote=${remote_state} pr=${pr_state} source=${source_state} worktree=${cleanup_state}" >>"$log_target"
 		fi

@@ -14,6 +14,8 @@ _AGENT_DEPLOY_BUNDLE_LOADED=1
 # immutable directory. ~/.aidevops/agents is only the atomic activation link.
 _AIDEVOPS_STAGED_BUNDLE_DIR=""
 _AIDEVOPS_PREVIOUS_BUNDLE_ROOT=""
+# Commit the current stage copied from; post-copy checks compare against it.
+_AIDEVOPS_STAGED_SOURCE_SHA=""
 [[ -z "${_AIDEVOPS_BUNDLE_UNKNOWN+x}" ]] && _AIDEVOPS_BUNDLE_UNKNOWN="unknown"
 
 _runtime_bundle_sha256_file() {
@@ -220,10 +222,37 @@ _runtime_bundle_migrate_plist_env_overrides() {
 	return 0
 }
 
+# t19058: resolve the source commit once per stage. The bundle ID, the copied
+# tree and the manifest git_sha must describe one commit even when the
+# canonical checkout fast-forwards during the multi-minute post-copy steps.
+_runtime_bundle_source_sha() {
+	local repo_dir="$1"
+	local source_sha=""
+	source_sha=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null) || source_sha=""
+	[[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || source_sha="$_AIDEVOPS_BUNDLE_UNKNOWN"
+	printf '%s' "$source_sha"
+	return 0
+}
+
+# A checkout that moved while its tree was being copied may have produced a
+# mixed-commit bundle; refuse it rather than label it with either commit.
+_runtime_bundle_assert_source_unchanged() {
+	local repo_dir="$1"
+	local staged_sha="$2"
+	local current_sha=""
+	current_sha=$(_runtime_bundle_source_sha "$repo_dir")
+	if [[ "$current_sha" != "$staged_sha" ]]; then
+		print_error "Source checkout moved from ${staged_sha:0:12} to ${current_sha:0:12} during the runtime bundle copy; refusing a mixed-commit bundle"
+		return 1
+	fi
+	return 0
+}
+
 _runtime_bundle_write_manifest() {
 	local bundle_dir="$1"
 	local repo_dir="$2"
 	local plugins_file="$3"
+	local staged_sha="${4:-}"
 	local agents_root="$bundle_dir/agents"
 	local manifest_tmp="$bundle_dir/manifest.tmp"
 	local framework_version="$_AIDEVOPS_BUNDLE_UNKNOWN"
@@ -239,7 +268,11 @@ _runtime_bundle_write_manifest() {
 	manifest_bundle_id="${manifest_bundle_id#.staging.}"
 
 	[[ -r "$agents_root/VERSION" ]] && IFS= read -r framework_version <"$agents_root/VERSION"
-	git_sha=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || printf '%s' "$_AIDEVOPS_BUNDLE_UNKNOWN")
+	if [[ -n "$staged_sha" ]]; then
+		git_sha="$staged_sha"
+	else
+		git_sha=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || printf '%s' "$_AIDEVOPS_BUNDLE_UNKNOWN")
+	fi
 	file_count=$(_count_deployed_agent_files "$agents_root")
 	[[ -f "$agents_root/aidevops.sh" ]] && cli_sha=$(_runtime_bundle_sha256_file "$agents_root/aidevops.sh")
 	if [[ -f "$agents_root/plugins/opencode-aidevops/index.mjs" ]]; then
@@ -376,8 +409,10 @@ _runtime_bundle_stale_candidate_reason() {
 _runtime_bundle_validate() {
 	local bundle_dir="$1"
 	local source_dir="$2"
+	# The version read when the stage pinned its commit; the live checkout may
+	# carry a newer release bump by the time validation runs (t19058).
+	local repo_version="${3:-$_AIDEVOPS_BUNDLE_UNKNOWN}"
 	local agents_root="$bundle_dir/agents"
-	local repo_version=""
 	local bundle_version=""
 
 	_verify_deployed_agents_tree "$agents_root" || return 1
@@ -385,7 +420,9 @@ _runtime_bundle_validate() {
 	[[ -x "$agents_root/aidevops.sh" && -r "$bundle_dir/manifest" ]] || return 1
 	grep -q '^status=validated$' "$bundle_dir/manifest" || return 1
 	if [[ -r "${INSTALL_DIR:-}/VERSION" ]]; then
-		IFS= read -r repo_version <"${INSTALL_DIR}/VERSION" || repo_version=""
+		if [[ "$repo_version" == "$_AIDEVOPS_BUNDLE_UNKNOWN" ]]; then
+			IFS= read -r repo_version <"${INSTALL_DIR}/VERSION" || repo_version=""
+		fi
 		IFS= read -r bundle_version <"$agents_root/VERSION" || bundle_version=""
 		[[ -n "$repo_version" && "$repo_version" == "$bundle_version" ]] || return 1
 	fi
@@ -406,8 +443,9 @@ _runtime_bundle_stage() {
 	local bundle_id=""
 
 	mkdir -p "$bundles_dir" || return 1
+	_AIDEVOPS_STAGED_SOURCE_SHA=$(_runtime_bundle_source_sha "$repo_dir")
 	[[ -r "$repo_dir/VERSION" ]] && IFS= read -r version <"$repo_dir/VERSION"
-	git_sha=$(git -C "$repo_dir" rev-parse --short=12 HEAD 2>/dev/null || printf '%s' "$_AIDEVOPS_BUNDLE_UNKNOWN")
+	git_sha="${_AIDEVOPS_STAGED_SOURCE_SHA:0:12}"
 	bundle_id="${version//[^A-Za-z0-9._-]/_}-${git_sha}-$(date +%s)-$$"
 	bundle_dir=$(mktemp -d "$bundles_dir/.staging.${bundle_id}.XXXXXX") || return 1
 	mkdir -p "$bundle_dir/agents" || return 1
@@ -418,7 +456,12 @@ _runtime_bundle_stage() {
 		}
 	fi
 
-	if ! _deploy_agents_copy "$source_dir" "$bundle_dir/agents" "$@"; then
+	# t19058: read every live-checkout input in one short window, then prove
+	# the checkout did not move, so the bundle is one commit end to end.
+	if ! _deploy_agents_copy "$source_dir" "$bundle_dir/agents" "$@" ||
+		! install -m 0755 "$repo_dir/aidevops.sh" "$bundle_dir/agents/aidevops.sh" ||
+		! _deploy_version_file "$bundle_dir/agents" "$repo_dir" ||
+		! _runtime_bundle_assert_source_unchanged "$repo_dir" "$_AIDEVOPS_STAGED_SOURCE_SHA"; then
 		rm -rf "$bundle_dir"
 		return 1
 	fi
@@ -446,20 +489,16 @@ _runtime_bundle_stage() {
 		rm -rf "$bundle_dir"
 		return 1
 	}
-	install -m 0755 "$repo_dir/aidevops.sh" "$bundle_dir/agents/aidevops.sh" || {
-		rm -rf "$bundle_dir"
-		return 1
-	}
 	if [[ "${AIDEVOPS_BUNDLE_FAIL_AT:-}" == "after-plugin-generation" ]]; then
 		rm -rf "$bundle_dir"
 		return 1
 	fi
 
-	_runtime_bundle_write_manifest "$bundle_dir" "$repo_dir" "$plugins_file" || {
+	_runtime_bundle_write_manifest "$bundle_dir" "$repo_dir" "$plugins_file" "$_AIDEVOPS_STAGED_SOURCE_SHA" || {
 		rm -rf "$bundle_dir"
 		return 1
 	}
-	_runtime_bundle_validate "$bundle_dir" "$source_dir" || {
+	_runtime_bundle_validate "$bundle_dir" "$source_dir" "$version" || {
 		rm -rf "$bundle_dir"
 		return 1
 	}

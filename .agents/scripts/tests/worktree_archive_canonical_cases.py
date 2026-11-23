@@ -13,6 +13,24 @@ import sqlite3
 import sys
 from unittest.mock import patch
 
+import native_git
+
+
+def hermetic_helper_path(path, native_bin):
+    """Keep a host-installed aidevops Git policy shim off the helpers' PATH (GH#39560).
+
+    Whether the shim leads PATH depends on the host and launcher, not on the
+    case, so it was never a controlled test variable. Where it leads, each
+    product Git call adds the shim's bash and Python guard launches (about 8x a
+    native call); its verdict for these temporary repositories is always
+    "allowed". guarded_object_import_proof below still installs the production
+    shim explicitly to prove helper behaviour under it. Any other leading `git`
+    (for example the git-spawn-profile-helper.sh logger) is kept, so spawn
+    profiles still count every call.
+    """
+    shimmed = native_git.is_git_shim(shutil.which("git", path=path))
+    return os.pathsep.join((str(native_bin), path)) if shimmed else path
+
 
 class CanonicalCases:
     def guarded_object_import_proof(self, archive):

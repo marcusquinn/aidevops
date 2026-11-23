@@ -28,13 +28,39 @@ Applied to GitHub issues. The pulse checks these before spawning a worker.
 | `contributor` | `pulse-issue-reconcile.sh` | Contributor health dashboard — pulse-managed, not a dispatch target. |
 | `quality-review` | `pulse-issue-reconcile.sh` | Daily quality review tracker — pulse-managed. |
 | `routine-tracking` | `pulse-issue-reconcile.sh` | Routine execution tracking — pulse skips these unconditionally. |
-| `status:blocked` | `dispatch-dedup-helper.sh`, dependency and circuit-breaker recovery | Machine-recoverable structural block or stopped partial draft. Its structured evidence must state the minimal reason and next action. Restore `status:available` only after the blocker is verified resolved. |
+| `status:blocked` | `dispatch-dedup-helper.sh`, dependency and circuit-breaker recovery | Machine-recoverable structural block or stopped partial draft. It is never bare: it always travels with a `needs-*` companion (below) naming what unblocks it. Its structured evidence must state the minimal reason and next action. Restore `status:available` only after the blocker is verified resolved. |
+
+### Blocked Companion Labels (GH#38360)
+
+A bare `status:blocked` says nothing about who acts, so it is a false block.
+`set_issue_status ... blocked` adds the caller's `needs-*` label, keeps a live
+one, or falls back to `needs-ai-recovery` with a warning. Callers name the reason
+with `blocked_needs_label_for_reason <class>` (`shared-gh-wrappers-status.sh`).
+The label-invariant pass (`pulse-issue-reconcile-normalize.sh`) routes any
+remaining bare hold to `needs-ai-recovery`, and removes blocked-owned companions
+from issues that are no longer blocked.
+
+| Companion | Owner | Typical classes | Cleared by |
+|-----------|-------|-----------------|------------|
+| `needs-ai-recovery` | Recovery supervisor (no human) | `unknown`, `runner_capability_unmet`, policy timeouts, `missing_files_scope`, `files_scope_excluded`, `target_code_blocker`, cost breaker, infrastructure failures, any unrecognised reason | Leaving `status:blocked` (blocked-owned) |
+| `needs-dependency` | Whoever solves the linked issue | `blocked-by` edges, circuit-breaker meta issues, `external_trigger_pending` | Dependency release (blocked-owned) |
+| `needs-maintainer-input` | Maintainer | `input_required`, `permission_required` without a scoped request, `ACTION REQUIRED` | Leaving `status:blocked` (blocked-owned) |
+| `needs-credentials` | Maintainer | Missing or starved runner secrets, `source_access_blocked`, token scopes | Terminal re-arm; otherwise its own maintainer lifecycle |
+| `needs-maintainer-permissions` | Maintainer | Scoped grant requests only (`worker-permission-helper.sh`) | Signed permission decision |
+
+Blocked-owned companions are removed by `set_issue_status` on every exit from
+`status:blocked`. AI-resolvable classes never route to a human label: the
+supervisor solves or releases the hold, or names the one human input with a
+specific label and comment. Unclassified intake (`terminal-blocker-recovery-helper.sh`)
+skips holds whose companion already names a human or dependency owner.
 
 Permission grants are limited to exact-pattern `bash` and `external_directory` requests, bound to the issue, request digest, worker session, branch, and worktree hash, and expire after four hours. Action-only permissions and credential-bearing or unbounded paths remain non-grantable.
 
 Every request, grantable or not, can be released with a signed withdrawal (`--withdraw`). The withdrawal grants nothing and binds to one request digest; a newer request still blocks. A non-grantable latest request (for example a `task` denial) on an issue with label history blocks dispatch (`MALFORMED_REQUEST`) until it is withdrawn. To clear many stale holds with one sudo prompt and one `WITHDRAW` confirmation, run `sudo aidevops approve permissions batch --withdraw --all-blocked <owner/repo>`, or list explicit `issue:<n>:perm-<id>` targets instead of `--all-blocked`. Each request is preflighted (trusted, intact, still latest) and signed individually. Grants are never batched.
 
-Scratch `external_directory` requests are owned recovery, not holds: `write`/`edit` on `tmp`, `temp` or `.cache` paths, and `bash`/`read` on `tmp`/`temp` paths outside `node_modules`. The worker is pointed at `AIDEVOPS_TEMP_DIR` and the issue redispatches without a grant.
+Scratch `external_directory` requests are owned recovery, not holds: `write`/`edit` on `tmp`, `temp` or `.cache` paths, and `bash`/`read` on `tmp`/`temp` paths outside `node_modules` or on OS binary directories (`/bin`, `/sbin`, `/usr/bin`, `/usr/sbin`). The worker is pointed at `AIDEVOPS_TEMP_DIR` and the issue redispatches without a grant.
+
+Avoid the request entirely: any absolute path written into a bash tool command outside the worktree triggers `external_directory`. The common cause is an inline restricted `PATH` for test stubs (GH#38523). Build stubs under `AIDEVOPS_TEMP_DIR`, set `PATH` inside a worktree script from variables, and run the script with a worktree-relative command.
 
 The permission broker, approval flow, and grant verifier append blocker-state
 transitions to `~/.aidevops/logs/worker-progress-blockers.jsonl`. Diagnose the
@@ -79,7 +105,10 @@ gate require a request-specific signed decision. There is no unsigned supersessi
 or automatic expiry path, because unsigned expiry would let a worker abandon a
 permission wall and be relaunched under an implied grant. To decline a request,
 for example when its session has ended, the maintainer runs
-`sudo aidevops approve permissions issue <N> <slug> --request perm-<id> --withdraw`.
+`sudo aidevops approve permissions issue <N> <slug> --request perm-<id> --withdraw`
+(on a Linux user-local install, the printed form names the launcher, such as
+`sudo ~/.local/bin/aidevops ...`, because sudo's `secure_path` omits it; see
+`reference/auto-merge.md` "Linux launcher path").
 That signs a capability-free decision bound to the request digest, revokes any
 local grant for that request, and clears the label. `verify-permissions` then
 returns `WITHDRAWN`, which never counts as `VERIFIED`, and dispatch resumes
@@ -179,6 +208,17 @@ unhealthy service defers with `service_unhealthy port=<port>`
 (`cooldown=eligible`); an invalid value defers with `invalid_requirements`. This
 runs after the `PATH` tool check and before secret reads.
 
+A host-bound task (GH#38547) is a standalone issue-body line such as
+`requires-device: device-1783820013-77368-17015` (at most four comma/space
+separated ids, each `device-<digits>-<digits>-<digits>`). Only the runner whose
+local device id matches may claim; the id is read from `AIDEVOPS_DEVICE_ID_FILE`
+or `~/.aidevops/state/device-id`, the same source as dispatch claims. Every other
+runner defers locally with `device_mismatch` (`cooldown=eligible`); a missing or
+unreadable device file defers with `device_unknown` (no cooldown), and a
+malformed or oversized list with `invalid_requirements`. This is the first
+check, before tools, services and secret reads. Device ids are already public in
+claim comments and are not secrets.
+
 Unmet candidates log `runner_capability_unmet` locally and return before claim,
 scope writes or worker launch. No issue label or comment is posted, so a capable
 peer can dispatch normally. A worker discovering the same problem after claiming
@@ -187,6 +227,18 @@ This is a known runner-local class, never a global circuit or shared backoff;
 the next runner independently checks capabilities. It does not grant credentials
 or bypass permission/security guards. Repositories without declarations retain
 the existing behavior.
+
+Per-runner exclusion (GH#37752): the releasing runner's own
+`terminal-blocker-observation` is imported as a local cooldown with no TTL. It
+holds while the brief revision is unchanged and no OWNER/MEMBER retry follows.
+It is lifted by a brief edit, a trusted retry, a later trusted `DISPATCH_CLAIM`
+by another runner, or a change to this runner's capability inputs (repo
+registry, `.aidevops.json`, JS readiness), which discards earlier observations
+whether the observation import or a log-derived deferral sees the change first;
+a newer release re-arms it. Without a recorded capability anchor, only an
+observation under an hour old holds; an older one re-probes once. Other runners
+are unaffected. The 6h TTL (`AIDEVOPS_DISPATCH_CAPABILITY_COOLDOWN_SECONDS`)
+still bounds only log-derived records.
 
 Host binaries (GH#35576): the worker sandbox may not expose host tools such as
 `ip`, `xauth`, `Xtigervnc` or `docker`. A child using a sanitized PATH

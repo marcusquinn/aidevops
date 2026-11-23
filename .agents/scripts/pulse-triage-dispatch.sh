@@ -61,12 +61,24 @@ fi
 # t1982: Compose the "What to do" instructions and "Constraints" sections
 # for the consolidation-task child body. Called by _compose_consolidation_child_body.
 #
-# Args: $1=parent_num $2=repo_slug $3=authors_line
+# Args: $1=parent_num $2=repo_slug $3=authors_line $4=parent_labels (CSV, optional)
+#
+# GH#37809: status:blocked records an unresolved dependency or hold, not
+# ownership, so a blocked parent hands its successor status:blocked. Ownership
+# states (queued/claimed/in-progress/in-review) are never copied.
 #######################################
 _compose_consolidation_worker_instructions() {
 	local parent_num="$1"
 	local repo_slug="$2"
 	local authors_line="$3"
+	local parent_labels="${4:-}"
+
+	local successor_status="status:available"
+	local status_rationale="never the parent's ownership status (\`status:queued\`, \`status:claimed\`, \`status:in-progress\`, \`status:in-review\`). Immediately before creating the successor, re-read the parent's labels; if it now carries \`status:blocked\`, use \`status:blocked\` instead, because that label records an unresolved dependency or hold rather than ownership."
+	if [[ ",${parent_labels}," == *",status:blocked,"* ]]; then
+		successor_status="status:blocked"
+		status_rationale="the parent carries \`status:blocked\`, which records an unresolved dependency or hold rather than ownership, so the successor keeps it and stays held until that blocker is resolved. Keep the blocker text in the merged body. Never copy the parent's ownership status (\`status:queued\`, \`status:claimed\`, \`status:in-progress\`, \`status:in-review\`)."
+	fi
 
 	cat <<EOF
 ## What to do
@@ -86,7 +98,8 @@ _compose_consolidation_worker_instructions() {
      Preserve every wildcard scope entry verbatim from every superseded issue, including tool-generated paths such as \`- NEW: todo/<area>/log/*/*/<slug>-*.jsonl\`. Never invent a concrete machine, date, timestamp or filename in place of a pattern. Never change an existing \`EDIT:\` entry to \`NEW:\`.
      Check each path against the current default branch before copying its scope marker: use \`git ls-files\` in an up-to-date default-branch checkout or \`gh api\` for that branch's contents. Use \`EDIT:\` when the path already exists on the default branch; use \`NEW:\` only after confirming it is absent. A stale checkout or failed API lookup is not proof of absence.
    - **Runner prerequisites** — copy verbatim every line matching \`^requires-secrets:\` and its runner-prerequisite paragraph from every superseded issue. Keep all source lines (do not replace them with a summary): the runner capability gate unions comma/space-separated names across these lines. Never drop a prerequisite because this consolidation runner lacks the named secret; consolidation itself does not need those credentials.
-   - \`## Context & Decisions\` — which commenter contributed which insight (attribution matters)
+       - **Quoted directives (GH#38827):** in the inlined sources below, every line-start \`requires-secrets:\`, \`requires-ssh:\`, \`requires-tools:\`, \`requires-loopback-health:\` and \`requires-device:\` line is quoted with a \`> \` prefix, and every \`<!-- aidevops:needs-secrets ... -->\` marker is renamed \`<!-- quoted-parent-directive aidevops:needs-secrets ... -->\`, so this GitHub-only task is not gated on them. Restore each one in the merged spec unquoted (no \`> \` prefix, original marker name) at the start of a line, so the successor keeps its runner gate.
+    - \`## Context & Decisions\` — which commenter contributed which insight (attribution matters)
    - \`## Contributors\` — a cc line @-mentioning every author from the list below
 
    Start the merged body with: \`_Supersedes #${parent_num} — this issue is the consolidated spec._\`
@@ -108,13 +121,13 @@ The validator must pass before running the signed creation command below. It che
 \`\`\`bash
 ~/.aidevops/agents/scripts/gh-write-helper.sh issue create --repo "${repo_slug}" \\
   --title "consolidated: <concise description derived from the merged spec>" \\
-  --label "consolidated,origin:worker,auto-dispatch,status:available,<copy relevant labels from parent, excluding all status:* labels, needs-consolidation, consolidation-task, and origin:interactive>" \\
+  --label "consolidated,origin:worker,auto-dispatch,${successor_status},<copy relevant labels from parent, excluding all status:* labels, needs-consolidation, consolidation-task, and origin:interactive>" \\
   --body-file "<file containing the merged body from step 2>"
 \`\`\`
 
 **Note (GH#18670):** \`origin:worker\` is mandatory on this label list — consolidated issues are pulse-generated artifacts, not interactive maintainer work. Use the signed wrapper above rather than the raw GitHub CLI so the successor retains the managed signature and origin metadata.
 
-**Dispatch handoff:** \`auto-dispatch\` and \`status:available\` are also mandatory. Keep exactly one \`status:*\` label on the successor: \`status:available\`, never the parent's lifecycle status. The consolidated successor marker and this explicit handoff must both be present before \`_has_consolidated_label\` permits implementation dispatch; the fill-floor enumerator also needs the available status.
+**Dispatch handoff:** \`auto-dispatch\` and \`${successor_status}\` are also mandatory. Keep exactly one \`status:*\` label on the successor: \`${successor_status}\` — ${status_rationale} The consolidated successor marker and this explicit handoff must both be present before \`_has_consolidated_label\` permits implementation dispatch; the fill-floor enumerator also needs the available status, and the pre-claim gate holds a \`status:blocked\` successor until its blocker is released.
 
    Capture the new issue number as \$NEW_NUM.
 
@@ -154,6 +167,12 @@ EOF
 	return 0
 }
 
+# GH#38827: jq filter that neutralises runner-capability directives inside
+# inlined parent text, so a GitHub-only consolidation task is not gated on the
+# parent's product prerequisites. Quotes line-start requires-* lines and
+# renames the needs-secrets marker; the worker restores both in the merged spec.
+_CONSOLIDATION_NEUTRALISE_JQ='gsub("(?<d>^|\\n)(?<w>[ \\t]*)(?<r>requires-(secrets|ssh|tools|loopback-health|device):)"; "\(.d)\(.w)> \(.r)") | gsub("<!-- aidevops:needs-secrets"; "<!-- quoted-parent-directive aidevops:needs-secrets")'
+
 #######################################
 # t1982: Compose a self-contained consolidation-task child issue body.
 #
@@ -178,13 +197,16 @@ _compose_consolidation_child_body() {
 
 	local authors_line="${authors_csv:-_no substantive authors detected_}"
 	local parent_body_section="${parent_body:-_(parent body was empty)_}"
+	# GH#38827: inlined directives must not gate this GitHub-only task.
+	parent_body_section=$(printf '%s' "$parent_body_section" | jq -Rs -r "$_CONSOLIDATION_NEUTRALISE_JQ") || return 1
+	substantive_json=$(printf '%s' "$substantive_json" | jq -c "map(.body |= (${_CONSOLIDATION_NEUTRALISE_JQ}))") || return 1
 	if [[ ${#authors_line} -gt 4000 ]]; then
 		authors_line="_Contributor list omitted (size limit): fetch parent comments and @mention every substantive author._"
 	fi
 
 	local instructions_block
 	instructions_block=$(_compose_consolidation_worker_instructions \
-		"$parent_num" "$repo_slug" "$authors_line")
+		"$parent_num" "$repo_slug" "$authors_line" "$parent_labels")
 
 	local packet
 	packet=$(
@@ -916,6 +938,37 @@ _consolidation_load_reopen_helper() {
 	return 0
 }
 
+#######################################
+# GH#39503: load the large-file gate library on demand (it owns the measured
+# resolved-debt close). Returns 0 when the close function is available.
+#######################################
+_consolidation_load_large_file_gate() {
+	local lib_dir="${BASH_SOURCE[0]%/*}"
+	declare -F _large_file_gate_close_resolved_debt_issues >/dev/null 2>&1 && return 0
+	[[ "$lib_dir" == "${BASH_SOURCE[0]}" ]] && lib_dir="."
+	[[ -f "${lib_dir}/pulse-dispatch-large-file-gate.sh" ]] || return 1
+	# shellcheck source=pulse-dispatch-large-file-gate.sh
+	source "${lib_dir}/pulse-dispatch-large-file-gate.sh" || return 1
+	declare -F _large_file_gate_close_resolved_debt_issues >/dev/null 2>&1 || return 1
+	return 0
+}
+
+#######################################
+# GH#39503: close a generated file-size-debt issue whose cited file is measured
+# below threshold on the remote default branch, before any consolidation lock.
+# Args: issue_number repo_slug labels_csv body
+# Returns: 0 when closed (skip), 1 otherwise (fail open on any error).
+#######################################
+_consolidation_skip_for_resolved_file_size_debt() {
+	local issue_number="$1" repo_slug="$2" labels="$3" body="$4"
+	printf ',%s,' "$labels" | grep -F ",file-size-debt," >/dev/null || return 1
+	[[ "$body" == *"generator=large-file-simplification-gate cited_file="* ]] || return 1
+	_consolidation_load_large_file_gate || return 1
+	_large_file_gate_close_resolved_debt_issues "$issue_number" "$repo_slug" "$body" || return 1
+	echo "[pulse-wrapper] _consolidation_skip_if_resolved: file-size debt #${issue_number} ${repo_slug} measured below threshold on remote default branch — closed (GH#39503)" >>"$LOGFILE"
+	return 0
+}
+
 # Gate 3: a structural closing PR only resolves the current lifecycle if it
 # merged after the latest reopen. Keep the timeline lookup in dispatch-dedup-pr.
 _consolidation_skip_for_closing_pr() {
@@ -1002,6 +1055,11 @@ _consolidation_skip_if_resolved() {
 		_consolidation_emit_skip "$issue_number" "$repo_slug" \
 			"parent carries terminal completion evidence." \
 			"terminal completion label"
+		return 0
+	fi
+	# Gate 2b (GH#39503): measured-resolved file-size debt (open issues only).
+	if [[ "$state" != "CLOSED" ]] &&
+		_consolidation_skip_for_resolved_file_size_debt "$issue_number" "$repo_slug" "$labels" "$body"; then
 		return 0
 	fi
 	# Gate 3: GitHub retains structural closing links across reopen cycles.

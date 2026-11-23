@@ -15,7 +15,10 @@ _DJ_RUN_KIND=""
 _DJ_RUN_HELPER=""
 _DJ_RUN_PROMPT_FILE=""
 _DJ_CHILD_PID=""
-_DJ_SUCCESS_OUTCOME="completed"
+_DJ_OUTCOME_COMPLETED="completed"
+_DJ_OUTCOME_EXHAUSTED="recheck_exhausted"
+_DJ_SUCCESS_OUTCOME="$_DJ_OUTCOME_COMPLETED"
+_DJ_RUN_PROMPT_COPY=""
 _DJ_STATUS_QUEUED="queued"
 _DJ_STATUS_CLAIMED="claimed"
 _DJ_STATUS_RUNNING="running"
@@ -75,6 +78,7 @@ _dj_recover_stale_jobs_locked() {
 				 | .error = "runner_lost_before_terminal_write"') || return 1
 			_dj_atomic_write_json "$job_file" "$updated" || return 1
 			_dj_append_event "$job_id" "$_DJ_STATUS_FAILURE" "running_lease_expired" "not_replayed" || true
+			_dj_raise_attention "$updated" || true
 		fi
 	done
 	return 0
@@ -299,6 +303,101 @@ _dj_finish_job() {
 	}
 	_dj_append_event "$job_id" "$final_status" "terminal" "$outcome" || true
 	_dj_release_lock
+	if [[ "$final_status" == "$_DJ_STATUS_FAILURE" ]]; then
+		_dj_raise_attention "$updated" || true
+	fi
+	return 0
+}
+
+# End a run of a job that has a recheck policy. A snooze request or a failed
+# run queues the next check while checks and the deadline remain; otherwise
+# the job fails as recheck_exhausted (with an advisory). A clean run without
+# a snooze closes the job.
+_dj_finish_or_requeue() {
+	local job_id="$1"
+	local lease_id="$2"
+	local child_rc="$3"
+	local duration="$4"
+	local now_epoch=0
+	local now_iso=""
+	local job_file=""
+	local job_json=""
+	local updated=""
+	local decision=""
+	now_epoch=$(_dj_now_epoch)
+	now_iso=$(_dj_epoch_to_iso "$now_epoch") || return 1
+	job_file=$(_dj_job_file "$job_id")
+	_dj_acquire_lock || return 1
+	job_json=$(_dj_read_job "$job_file" 2>/dev/null || true)
+	if [[ "$(printf '%s\n' "$job_json" | jq -r '.status // ""' 2>/dev/null)" != "$_DJ_STATUS_RUNNING" ||
+	"$(printf '%s\n' "$job_json" | jq -r '.lease.id // ""' 2>/dev/null)" != "$lease_id" ]]; then
+		_dj_release_lock
+		return 1
+	fi
+	updated=$(printf '%s\n' "$job_json" | jq \
+		--argjson now "$now_epoch" --arg now_iso "$now_iso" \
+		--argjson rc "$child_rc" --argjson duration "$duration" \
+		--arg completed "$_DJ_OUTCOME_COMPLETED" --arg exhausted "$_DJ_OUTCOME_EXHAUSTED" '
+		.recheck.checks_done = ((.recheck.checks_done // 0) + 1)
+		| (.recheck.snooze_requested) as $snooze
+		| (if $snooze != null then ($snooze.reason // "")
+		   elif $rc != 0 then "run exited \($rc)" else null end) as $reason
+		| (if $snooze != null then ($snooze.after_seconds // .recheck.every_seconds)
+		   else .recheck.every_seconds end) as $delay
+		| ($now + $delay) as $next
+		| .recheck.snooze_requested = null
+		| .recheck.last_reason = (if $reason == null then .recheck.last_reason else $reason end)
+		| .lease = {id:null,expires_epoch:null} | .runner_pid = null | .pid = null
+		| .duration_seconds = $duration
+		| if $snooze == null and $rc == 0 then
+		    .status = "success" | .outcome = $completed | .error = null
+		    | .finished_at = $now_iso | .finished_epoch = $now
+		  elif .recheck.checks_done < .recheck.max_checks
+		       and (.recheck.until_epoch == null or $next <= .recheck.until_epoch) then
+		    .status = "queued" | .due_epoch = $next | .due_at = ($next | todate)
+		    | .outcome = (if $snooze != null then "snoozed" else "retry_after_failure" end)
+		    | .error = null | .claimed_at = null | .started_at = null
+		    | .finished_at = null | .finished_epoch = null
+		  else
+		    .status = "failure" | .outcome = $exhausted
+		    | .error = (if $snooze != null then "criteria_unmet" else "runtime_failed" end)
+		    | .finished_at = $now_iso | .finished_epoch = $now
+		  end') || {
+		_dj_release_lock
+		return 1
+	}
+	_dj_atomic_write_json "$job_file" "$updated" || {
+		_dj_release_lock
+		return 1
+	}
+	decision=$(printf '%s\n' "$updated" | jq -r '.outcome')
+	_dj_append_event "$job_id" "$(printf '%s\n' "$updated" | jq -r '.status')" "check_ended" "$decision" || true
+	_dj_release_lock
+	if [[ "$decision" == "$_DJ_OUTCOME_EXHAUSTED" ]]; then
+		_dj_raise_attention "$updated" || true
+	fi
+	printf '%s\n' "$decision"
+	return 0
+}
+
+# Prompt material for a run of a recheck job: the operator's prompt plus the
+# check contract naming this job, so the worker can snooze without relying on
+# environment inheritance through the runtime.
+_dj_write_run_prompt() {
+	local job_json="$1"
+	local source_prompt="$2"
+	local run_prompt="$3"
+	cp "$source_prompt" "$run_prompt" || return 1
+	chmod 600 "$run_prompt"
+	printf '%s\n' "$job_json" | jq -r '
+		((.recheck.checks_done // 0) + 1) as $n
+		| "\n---\nScheduled check contract (aidevops deferred job \(.id), check \($n) of \(.recheck.max_checks)"
+		  + (if .recheck.until_at != null then ", deadline \(.recheck.until_at)" else "" end) + "):"
+		, "- Criteria met: report the evidence where this prompt says, then end normally. The job closes."
+		, "- Not met yet: report progress if useful, run `aidevops schedule snooze \(.id) --reason \"<what is still unmet>\"` (add `--after 6h` to change the wait), then end normally. The next check runs this prompt again."
+		, "- If this is the last check, snoozing ends the job as recheck_exhausted and alerts the operator; still report what is unmet."
+		, "- Runs that fail are retried on the same schedule; do not snooze for tool or auth errors you could not work around."' \
+		>>"$run_prompt" || return 1
 	return 0
 }
 
@@ -445,7 +544,7 @@ _dj_launch_job() {
 	job_log="${_DJ_LOGS_DIR}/${job_id}.log"
 	: >>"$job_log"
 	chmod 600 "$job_log"
-	_DJ_SUCCESS_OUTCOME="completed"
+	_DJ_SUCCESS_OUTCOME="$_DJ_OUTCOME_COMPLETED"
 
 	if [[ "$_DJ_RUN_KIND" == "issue-manual" ]]; then
 		command_args=("$_DJ_RUN_HELPER" dispatch "$issue_number" "$repo_slug")
@@ -458,6 +557,14 @@ _dj_launch_job() {
 		return 0
 	fi
 
+	if [[ "$(printf '%s\n' "$job_json" | jq -r '.recheck != null')" == "true" ]]; then
+		_DJ_RUN_PROMPT_COPY="${_DJ_PROMPTS_DIR}/${job_id}.run.prompt"
+		_dj_write_run_prompt "$job_json" "$_DJ_RUN_PROMPT_FILE" "$_DJ_RUN_PROMPT_COPY" || return 1
+		_DJ_RUN_PROMPT_FILE="$_DJ_RUN_PROMPT_COPY"
+		export AIDEVOPS_DEFERRED_JOB_ID="$job_id"
+		AIDEVOPS_DEFERRED_CHECK="$(printf '%s\n' "$job_json" | jq -r '((.recheck.checks_done // 0) + 1 | tostring) + "/" + (.recheck.max_checks | tostring)')"
+		export AIDEVOPS_DEFERRED_CHECK
+	fi
 	command_args=("$_DJ_RUN_HELPER" run --role worker --session-key "$session_key" --dir "$dispatch_dir" --title "$title" --prompt-file "$_DJ_RUN_PROMPT_FILE")
 	[[ -z "$agent_name" ]] || command_args+=(--agent "$agent_name")
 	[[ -z "$tier" ]] || command_args+=(--tier "$tier")
@@ -489,6 +596,7 @@ cmd_run_due() {
 	local duration=0
 	local child_rc=0
 	local heartbeat_pid=""
+	local decision=""
 	local heartbeat_interval="${AIDEVOPS_DEFERRED_HEARTBEAT_SECONDS:-30}"
 	[[ "$heartbeat_interval" =~ ^[1-9][0-9]*$ ]] || heartbeat_interval=30
 	_dj_claim_next_due || return 1
@@ -527,6 +635,13 @@ cmd_run_due() {
 	ended_epoch=$(_dj_now_epoch)
 	duration=$((ended_epoch - started_epoch))
 	[[ "$duration" -ge 0 ]] || duration=0
+	[[ -z "$_DJ_RUN_PROMPT_COPY" ]] || rm -f "$_DJ_RUN_PROMPT_COPY"
+	if [[ "$(printf '%s\n' "$job_json" | jq -r '.recheck != null')" == "true" ]]; then
+		decision=$(_dj_finish_or_requeue "$job_id" "$lease_id" "$child_rc" "$duration") || return 1
+		printf 'Deferred job %s check ended: %s\n' "$job_id" "$decision"
+		[[ "$decision" != "$_DJ_OUTCOME_EXHAUSTED" ]] || return 1
+		return 0
+	fi
 	if [[ "$child_rc" -eq 0 ]]; then
 		_dj_finish_job "$job_id" "$lease_id" "$_DJ_STATUS_RUNNING" "$_DJ_STATUS_SUCCESS" "$_DJ_SUCCESS_OUTCOME" "" "$duration" || return 1
 		printf 'Deferred job %s completed\n' "$job_id"

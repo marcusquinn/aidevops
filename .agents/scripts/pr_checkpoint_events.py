@@ -103,14 +103,15 @@ def intervening_events_valid(between, runner, token, attempt, trusted_logins=())
                for comment, line, f in between)
 
 
-CHECKPOINT_RELEASE_REASONS = {"blocked", "clean", "worker_complete"}
+CHECKPOINT_RELEASE_REASONS = {"blocked", "clean", "worker_complete", "worker_draft_checkpoint"}
 # GH#37514: stall-class releases (pr-checkpoint-continuation-helper.sh
 # _PCC_STALL_RELEASE_PATTERN, minus worker decisions and the push/network policy
 # terminal-blocker classes) also leave the preserved draft without a recorded
 # decision, so a maintainer may approve resuming their exact head.
 STALL_RELEASE_REASONS = frozenset({
     "no_activity", "wall_clock_stale", "stale_assignment_reset", "worker_ownership_lost",
-    "worker_noop_zero_output", "worker_incomplete_exit"})
+    "worker_noop_zero_output", "worker_incomplete_exit", "worker_failed",
+    "worker_claim_ready_transition_failed", "temp_dir_recovery"})
 STALL_RELEASE_PATTERN = re.compile(
     r"(?!(?:push|network)_policy_timeout$)"
     r"(?:watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)")
@@ -177,6 +178,8 @@ def closes_released_attempt(released_lease, comment, line, f):
 
 
 def successors_valid(data, comments, release_id, approval_id, now):
+    """Fence events after the approval. ``diagnose_expired`` in data (GH#38145)
+    skips only the expiry test, so callers can name an expired own claim."""
     claim = None
     trusted_logins = data.get("trusted_logins", ())
     for comment, line, f in events(comments, release_id, float("inf"), trusted_logins):
@@ -192,4 +195,5 @@ def successors_valid(data, comments, release_id, approval_id, now):
             claim = {**claim, **f}
         else:
             return False
-    return not data.get("lease") or bool(claim and int(claim.get("expires_at", 0)) > now)
+    return not data.get("lease") or bool(claim and (data.get("diagnose_expired") or
+                                                   int(claim.get("expires_at", 0)) > now))

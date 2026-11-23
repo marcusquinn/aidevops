@@ -168,6 +168,13 @@ _check_nmr_approval_gate() {
 	fi
 
 	if ! issue_has_required_approval "$issue_number" "$repo_slug" "$known_ever_nmr"; then
+		if [[ "${_NMR_APPROVAL_RESULT:-}" == UNVERIFIABLE_SIGNER ]]; then
+			echo "[pulse-wrapper] dispatch_with_dedup: BLOCKED #${issue_number} in ${repo_slug} — approval signer is not verifiable with the local key" >>"$LOGFILE"
+			echo "[pulse-wrapper] DISPATCH_BLOCK_REASON reason=approval_signer_unverifiable issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+			# The candidate failure recorder caches this reason for the exact issue
+			# revision. Do not post a misleading missing-approval remediation.
+			return 0
+		fi
 		echo "[pulse-wrapper] dispatch_with_dedup: BLOCKED #${issue_number} in ${repo_slug} — requires cryptographic approval (ever-NMR)" >>"$LOGFILE"
 		echo "[pulse-wrapper] DISPATCH_BLOCK_REASON reason=ever_nmr_without_approval issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 		# GH#20682: when the NMR label is absent (human removed it) but the

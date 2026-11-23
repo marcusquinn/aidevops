@@ -53,6 +53,10 @@ source "$SELF_DIR/scratch-worktree-helper.sh"
 # shellcheck source=./workflow-release-ref.sh
 source "$SELF_DIR/workflow-release-ref.sh"
 
+# GH#39830: the publisher and the merge gate share one exact-render decision.
+# shellcheck source=./routine-pr-scope-lib.sh
+source "$SELF_DIR/routine-pr-scope-lib.sh"
+
 # shellcheck source=/dev/null
 # gh wrappers inject signature footers and route around GraphQL rate limits.
 # Mandatory — this script ships as part of aidevops so the wrappers are
@@ -79,6 +83,11 @@ readonly MANAGED_BLOCK_HELPER="$SELF_DIR/managed-markdown-block-helper.py"
 readonly CONTRIBUTING_POLICY_TEMPLATE_NAME="issue-first-pr-contributing.md"
 readonly LINKED_ISSUE_WORKFLOW_NAME="linked-issue-check"
 readonly METRICS_WORKFLOW_NAME="loc-badge"
+# Workflows whose floating @main callers --pin-floating may migrate to a
+# release SHA (uses: and aidevops_ref move together, GH#39416).
+readonly PIN_FLOATING_WORKFLOWS="loc-badge issue-triage-gate"
+# t19126: deterministic sync PRs opt into automated merge (GH#23238).
+readonly SYNC_AUTO_MERGE_LABEL="allow-auto-merge"
 
 # Known managed workflows — each entry is workflow_file:template_file.
 # Mirrors _KNOWN_WORKFLOWS in check-workflows-helper.sh.
@@ -90,6 +99,7 @@ readonly METRICS_WORKFLOW_NAME="loc-badge"
 readonly _SYNC_KNOWN_WORKFLOWS=(
 	"issue-sync.yml:issue-sync-caller.yml"
 	"review-bot-gate.yml:review-bot-gate-caller.yml"
+	"review-bot-gate-fork-review.yml:review-bot-gate-fork-review-caller.yml"
 	"maintainer-gate.yml:maintainer-gate-caller.yml"
 	"loc-badge.yml:loc-badge-caller.yml"
 	"linked-issue-check.yml:linked-issue-check-caller.yml"
@@ -102,6 +112,15 @@ readonly _STATUS_SKIPPED="SKIPPED"
 readonly _STATUS_PLANNED="PLANNED"
 readonly _STATUS_APPLIED="APPLIED"
 readonly _STATUS_FAILED="FAILED"
+
+# GH#39696: per-repo routine anchor giving headless sync PRs an issue identity.
+readonly _SYNC_ANCHOR_KEY="sync-workflows"
+readonly _SYNC_ANCHOR_TITLE="aidevops workflow sync (routine anchor)"
+# GH#39793: PRs the merge gate can re-render byte-exactly carry this marker
+# instead of an anchor reference (see routine-pr-scope-lib.sh).
+readonly _SYNC_ROUTINE_MARKER="<!-- aidevops:routine-pr:sync-workflows -->"
+readonly _SYNC_MARKER_IDENTITY="marker"
+readonly _SYNC_BRANCH_PREFIX="chore/workflow-sync-"
 
 # Classification labels (must match check-workflows-helper.sh).
 readonly _CLASS_DRIFTED='DRIFTED/CALLER'
@@ -455,9 +474,11 @@ Options:
                     CURRENT callers whose pin differs, e.g. to bump @v3.9.0
                     after an upgrade. Without this, existing pins (@v3.9.0,
                     @<sha>) are preserved.
-  --ref REF         Explicit @ref for new installs (default: @main).
-  --pin-floating    Migrate only existing loc-badge @main callers to the latest
-                    release SHA. Requires --workflow loc-badge. Preserves real
+  --ref REF         Explicit @ref for new installs (default: the latest release
+                    SHA with its tag as a comment, unless repos.json configures
+                    workflow_reusable_ref).
+  --pin-floating    Migrate only existing loc-badge / issue-triage-gate @main callers to the latest
+                    release SHA. Requires --workflow loc-badge or issue-triage-gate. Preserves real
                     pins and registry workflow_reusable_ref overrides.
   --branch NAME     Branch name prefix (default: chore/workflow-sync-YYYYMMDD).
   --json            Emit one JSON object per repo × workflow describing outcome.
@@ -551,7 +572,7 @@ _extract_ref_pin() {
 _workflow_fetches_framework_helpers() {
 	local _workflow_name="$1"
 	case "$_workflow_name" in
-	issue-sync | review-bot-gate | loc-badge | issue-triage-gate) return 0 ;;
+	issue-sync | review-bot-gate | review-bot-gate-fork-review | loc-badge | issue-triage-gate) return 0 ;;
 	*) return 1 ;;
 	esac
 }
@@ -690,14 +711,17 @@ _workflow_reusable_ref_for_slug() {
 
 # _sync_target_ref_for_slug <slug> — the "@ref" a sync writes for this repo:
 # an explicit --ref wins, otherwise the repos.json/default reusable ref.
+# Fresh installs of any managed caller (and --pin-floating loc-badge
+# migrations) without a configured ref pin the latest release SHA, so repos
+# enforcing hash-pinned actions do not fail on a new @main caller (GH#39085).
 _sync_target_ref_for_slug() {
 	local _slug="$1"
 	local _status="${2:-}" _workflow_name="${3:-}"
 	local _ref
 	if [[ -n "${_OPT_TARGET_REF:-}" ]]; then
 		_ref="${_OPT_TARGET_REF#@}"
-	elif [[ ( "$_status" == "NO-WORKFLOW" || "${_OPT_PIN_FLOATING:-0}" -eq 1 ) && "$_workflow_name" == "$METRICS_WORKFLOW_NAME" &&
-		-z "$(_read_workflow_reusable_field "$_slug" "workflow_reusable_ref")" ]]; then
+	elif [[ ( "$_status" == "NO-WORKFLOW" || ( "${_OPT_PIN_FLOATING:-0}" -eq 1 && -n "$_workflow_name" ) ) &&
+		-n "$_workflow_name" && -z "$(_read_workflow_reusable_field "$_slug" "workflow_reusable_ref")" ]]; then
 		local _repo
 		_repo=$(_workflow_reusable_repo_for_slug "$_slug") || return 1
 		_ref=$(workflow_release_ref "$_repo") || return 1
@@ -708,17 +732,28 @@ _sync_target_ref_for_slug() {
 	return 0
 }
 
-# Select only unconfigured legacy metrics callers, never intentional pins.
+# _is_pin_floating_workflow <name> — success when --pin-floating supports it.
+_is_pin_floating_workflow() {
+	local _name="$1"
+	local _w
+	for _w in $PIN_FLOATING_WORKFLOWS; do
+		[[ "$_name" == "$_w" ]] && return 0
+	done
+	return 1
+}
+
+# Select only unconfigured legacy floating callers, never intentional pins.
 _is_floating_caller() {
 	local _slug="$1"
 	local _workflow_file="$2"
-	local _repo _pin _helper_ref
-	[[ "$_workflow_file" == */loc-badge.yml ]] || return 1
+	local _repo _pin _helper_ref _wf_name
+	_wf_name=$(basename "$_workflow_file" .yml)
+	_is_pin_floating_workflow "$_wf_name" || return 1
 	[[ -z "$(_read_workflow_reusable_field "$_slug" "workflow_reusable_ref")" ]] || return 1
 	[[ -f "$_workflow_file" ]] || return 1
 	_repo=$(_workflow_reusable_repo_for_slug "$_slug") || return 1
 	# Match the configured reusable workflow, not an unrelated job's first ref.
-	_pin=$(awk -v target="${_repo}/.github/workflows/loc-badge-reusable.yml@" '
+	_pin=$(awk -v target="${_repo}/.github/workflows/${_wf_name}-reusable.yml@" '
 		$1 == "uses:" && index($2, target) == 1 {
 			print substr($2, length(target) + 1)
 		}
@@ -1031,6 +1066,10 @@ _list_actionable_repos() {
 		_needs_sync=0
 		_needs_runner_sync "$_row_slug" "$_wf_file" && _needs_sync=1
 		_needs_ref_bump "$_row_slug" "$_wf_file" && _needs_sync=1
+		# Apply must revisit workflow-only callers to repair partial supersession.
+		if [[ "${_OPT_APPLY:-0}" -eq 1 && "$_row_workflow" != "$LINKED_ISSUE_WORKFLOW_NAME" ]]; then
+			_needs_sync=1
+		fi
 		if [[ "$_row_workflow" == "$LINKED_ISSUE_WORKFLOW_NAME" ]]; then
 			_contributing_policy_needs_sync "$_row_path" && _needs_sync=1
 			[[ "$?" -eq 2 ]] && _needs_sync=1
@@ -1138,6 +1177,7 @@ _format_pr_body() {
 	printf 'If the workflow breaks, revert this PR. The previous workflow is preserved\n'
 	printf 'in git history at the parent commit.\n\n'
 	printf 'Generated by: `aidevops sync-workflows --apply` (see marcusquinn/aidevops#20649).\n'
+	[[ -n "${_OPT_ISSUE:-}" ]] && printf '\nResolves #%s\n' "$_OPT_ISSUE"
 	return 0
 }
 
@@ -1160,17 +1200,123 @@ _create_pr_body_file() {
 	local _ref="$2"
 	local _workflow_path="$3"
 	local _sync_contributing="$4"
+	local _anchor="${5:-}"
 	local _temp_root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 	mkdir -p "$_temp_root" || return 1
 	local _body_file
 	_body_file=$(mktemp "${_temp_root%/}/sync-workflows-pr.XXXXXX") || return 1
+	# GH#39793: a verified-scope routine marker replaces the anchor identity.
+	if [[ "$_anchor" == "$_SYNC_MARKER_IDENTITY" ]]; then
+		printf '%s\n\n' "$_SYNC_ROUTINE_MARKER" >"$_body_file" || {
+			rm -f "$_body_file"
+			return 1
+		}
+	# One standalone non-closing identity line: a run must not close the anchor.
+	elif [[ -n "$_anchor" ]] && ! printf 'Ref #%s\n\n' "$_anchor" >"$_body_file"; then
+		rm -f "$_body_file"
+		return 1
+	fi
 	if ! _format_pr_body "$_status" "$_ref" "$_workflow_path" \
-		"$_sync_contributing" >"$_body_file"; then
+		"$_sync_contributing" >>"$_body_file"; then
 		rm -f "$_body_file"
 		return 1
 	fi
 	printf '%s\n' "$_body_file"
 	return 0
+}
+
+# _sync_routine_anchor <slug> <status> — print the repo's open workflow-sync
+# routine anchor number (GH#39696). Headless runs stamp origin:worker, whose
+# PR body needs exactly one explicit issue identity; an explicit --issue
+# already provides one, and other origins need none (empty output). Prints a
+# FAILED row and returns 1 when a required anchor is unavailable.
+_sync_routine_anchor() {
+	local _slug="$1" _status="$2"
+	local _helper="${SELF_DIR}/routine-log-helper.sh" _number=""
+	[[ -z "${_OPT_ISSUE:-}" ]] || return 0
+	declare -F session_origin_label >/dev/null 2>&1 || return 0
+	[[ "$(session_origin_label)" == "origin:worker" ]] || return 0
+	if [[ ! -f "$_helper" ]] ||
+		! _number=$(bash "$_helper" ensure-anchor "$_SYNC_ANCHOR_KEY" --repo "$_slug" \
+			--title "$_SYNC_ANCHOR_TITLE") ||
+		[[ ! "$_number" =~ ^[1-9][0-9]*$ ]]; then
+		printf '%s\t%s\t%s\troutine anchor unavailable: ensure-anchor failed for %s\n' \
+			"$_slug" "$_status" "$_STATUS_FAILED" "$_SYNC_ANCHOR_KEY"
+		return 1
+	fi
+	printf '%s\n' "$_number"
+	return 0
+}
+
+# _sync_blob_json <file> — byte-exact Git blob API shape (base64, size) for a
+# local file, as the merge gate reads it from GitHub.
+_sync_blob_json() {
+	local _file="$1" _data="" _size=""
+	_data=$(base64 <"$_file" | tr -d '\n') || return 1
+	_size=$(wc -c <"$_file" | tr -d ' ') || return 1
+	jq -n --arg d "$_data" --argjson s "$_size" '{encoding:"base64",content:$d,size:$s}'
+	return $?
+}
+
+# _sync_marker_evidence <path> <base-ref> <relpath> <target-content> — print
+# {head,base} blob JSON: the exact bytes _sync_write_commit_push writes, and
+# the caller at the PR base the gate compares against (null when absent).
+_sync_marker_evidence() {
+	local _path="$1" _base_ref="$2" _relpath="$3" _target_content="$4"
+	local _scratch="" _head="" _base="null" _rc=1
+	git -C "$_path" rev-parse -q --verify "${_base_ref}^{commit}" >/dev/null || return 1
+	_scratch=$(mktemp "${TMPDIR:-/tmp}/sync-marker.XXXXXX") || return 1
+	if printf '%s\n' "$_target_content" >"$_scratch" && _head=$(_sync_blob_json "$_scratch"); then
+		_rc=0
+		if git -C "$_path" cat-file -e "${_base_ref}:${_relpath}" 2>/dev/null; then
+			git -C "$_path" cat-file blob "${_base_ref}:${_relpath}" >"$_scratch" &&
+				_base=$(_sync_blob_json "$_scratch") || _rc=1
+		fi
+	fi
+	rm -f "$_scratch"
+	[[ "$_rc" -eq 0 ]] || return 1
+	jq -nc --argjson head "$_head" --argjson base "$_base" '{head:$head,base:$base}'
+	return $?
+}
+
+# _sync_marker_eligible <slug> <path> <branch> <default_branch> <effective_ref>
+#   <workflow-relpath> <sync-contributing> <target-content> <remote> — succeed
+# only when the merge gate will admit this exact PR (GH#39793). Cheap
+# preconditions: a headless run without an explicit issue or CONTRIBUTING.md,
+# the default sync branch prefix and a 40-hex ref. Then (GH#39830) the gate's
+# own decision, _routine_sync_render_admits, must accept the bytes this run
+# will write against the default-branch caller: the deployed template differs
+# from the template at a preserved older pin whenever a template update rolls
+# out. Anything else keeps the anchor identity (linked-issue merge route).
+_sync_marker_eligible() {
+	local _slug="$1" _path="$2" _branch="$3" _default_branch="$4" _ref="${5#@}"
+	local _relpath="$6" _sync_contributing="$7" _target_content="$8" _remote="$9"
+	local _evidence="" _policy=""
+	[[ -z "${_OPT_ISSUE:-}" && "$_sync_contributing" -eq 0 ]] || return 1
+	declare -F session_origin_label >/dev/null 2>&1 || return 1
+	[[ "$(session_origin_label)" == "origin:worker" ]] || return 1
+	[[ "$_branch" == "$_SYNC_BRANCH_PREFIX"* ]] || return 1
+	[[ "$_ref" =~ ^[0-9a-f]{40}(\ #\ v[0-9]+\.[0-9]+\.[0-9]+)?$ ]] || return 1
+	[[ "$_default_branch" =~ ^[A-Za-z0-9._/-]+$ ]] || return 1
+	_is_sync_workflow_output "$_relpath" || return 1
+	# The gate compares against the PR merge base: the default ref the branch
+	# is reset to, or the fork point of an exact branch already checked out.
+	local _base_ref="" _rc=1
+	_base_ref=$(_remote_default_ref "$_remote" "$_default_branch")
+	if [[ "$(git -C "$_path" symbolic-ref --short HEAD 2>/dev/null)" == "$_branch" ]]; then
+		_base_ref=$(git -C "$_path" merge-base "$_base_ref" HEAD) || return 1
+	fi
+	if _evidence=$(_sync_marker_evidence "$_path" "$_base_ref" "$_relpath" "$_target_content") &&
+		_policy=$(_routine_sync_policy "$_slug" "$_default_branch") &&
+		_routine_sync_render_admits "$_relpath" "$(jq -c .head <<<"$_evidence")" \
+			"$(jq -c .base <<<"$_evidence")" "$_policy"; then
+		_rc=0
+	fi
+	if [[ "$_rc" -ne 0 ]]; then
+		printf '[%s] %s: %s is not gate-admissible as a routine marker PR; keeping the anchor identity\n' \
+			"$SCRIPT_NAME" "$_slug" "$_relpath" >&2
+	fi
+	return "$_rc"
 }
 
 # ─── Per-Repo Operation ─────────────────────────────────────────────────────
@@ -1190,7 +1336,8 @@ _resolve_effective_ref() {
 		local _existing_pin
 		_existing_pin=$(_extract_ref_pin "$_workflow")
 		# Floating mode has already verified the configured metrics caller ref.
-		if [[ "${_OPT_PIN_FLOATING:-0}" -eq 1 && "$_workflow" == */loc-badge.yml ]]; then
+		if [[ "${_OPT_PIN_FLOATING:-0}" -eq 1 ]] &&
+			[[ "$_workflow" == */loc-badge.yml || "$_workflow" == */issue-triage-gate.yml ]]; then
 			_effective_ref="$_target_ref"
 		elif [[ -n "$_existing_pin" ]]; then
 			_effective_ref="$_existing_pin"
@@ -1426,8 +1573,185 @@ _summarise_push_failure() {
 	return 0
 }
 
+# List helper-owned, same-repository PRs changing only the requested workflow.
+# Strip a generated date suffix, retaining the '-' boundary between prefixes.
+# API/JSON errors fail closed; unrelated paths, forks and policy PRs are untouched.
+_sync_workflow_prs() {
+	local _slug="$1" _branch="$2" _workflow="$3" _base="$4"
+	local _prefix="${_branch%????????}"
+	[[ "$_branch" =~ -[0-9]{8}$ ]] || _prefix="$_branch"
+	local _prs _rows _number _url _files _sha
+	_prs=$(gh api "repos/$_slug/pulls?state=open&per_page=100" --paginate) || return 1
+	[[ -n "$_prs" ]] || return 1
+	_rows=$(printf '%s\n' "$_prs" | jq -sr --arg prefix "$_prefix" --arg slug "$_slug" --arg base "$_base" \
+		'.[][] | select((.head.ref | startswith($prefix)) and ((.head.repo.full_name // "" | ascii_downcase) == ($slug | ascii_downcase)) and .base.ref == $base) | [.number, .html_url] | @tsv') || return 1
+	while IFS=$'\t' read -r _number _url; do
+		[[ -n "$_number" ]] || continue
+		_files=$(gh api "repos/$_slug/pulls/$_number/files?per_page=100" --paginate) || return 1
+		[[ -n "$_files" ]] || return 1
+		_sha=$(printf '%s\n' "$_files" | jq -sr --arg path "$_workflow" \
+			'[.[][]] | select(length == 1) | .[0] | select(.filename == $path and (.status == "added" or .status == "modified") and (.previous_filename // "") == "") | .sha // empty') || return 1
+		[[ -z "$_sha" ]] || printf '%s\t%s\t%s\n' "$_number" "$_url" "$_sha"
+	done <<<"$_rows"
+	return 0
+}
+
+# Find an existing same-content workflow PR before publishing a new branch.
+_sync_find_identical_pr() {
+	local _slug="$1" _branch="$2" _workflow="$3" _content="$4" _base="$5"
+	local _rows _number _url _sha _target_sha
+	_rows=$(_sync_workflow_prs "$_slug" "$_branch" "$_workflow" "$_base") || return 1
+	_target_sha=$(printf '%s\n' "$_content" | git hash-object --stdin) || return 1
+	while IFS=$'\t' read -r _number _url _sha; do
+		if [[ "$_sha" == "$_target_sha" ]]; then
+			printf '%s\n' "$_url"
+			return 0
+		fi
+	done <<<"$_rows"
+	return 0
+}
+
+# Create-and-supersede rather than force-updating someone else's open branch.
+# Close older workflow-only PRs only after a replacement has been confirmed.
+_sync_supersede_prs() {
+	local _slug="$1" _branch="$2" _workflow="$3" _replacement="$4" _base="$5"
+	local _rows _number _url _sha _body_file _rc=0
+	_rows=$(_sync_workflow_prs "$_slug" "$_branch" "$_workflow" "$_base") || return 1
+	# A maintainer may close or change the replacement after discovery. Do not
+	# retire anything unless it still passes the same fresh eligibility checks.
+	local _replacement_found=0
+	while IFS=$'\t' read -r _number _url _sha; do
+		[[ "$_url" != "$_replacement" ]] || _replacement_found=1
+	done <<<"$_rows"
+	[[ "$_replacement_found" -eq 1 ]] || return 1
+	local _temp_root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	mkdir -p "$_temp_root" || return 1
+	_body_file=$(mktemp "${_temp_root%/}/sync-workflows-superseded.XXXXXX") || return 1
+	printf 'Superseded by %s, which publishes the current canonical workflow.\n' "$_replacement" >"$_body_file"
+	while IFS=$'\t' read -r _number _url _sha; do
+		[[ -n "$_number" && "$_url" != "$_replacement" ]] || continue
+		if ! gh_pr_comment "$_number" --repo "$_slug" --body-file "$_body_file" >/dev/null ||
+			! gh pr close "$_number" --repo "$_slug" >/dev/null; then
+			_rc=1
+		fi
+	done <<<"$_rows"
+	rm -f "$_body_file"
+	return "$_rc"
+}
+
+# Emit an applied result for an identical workflow-only PR; return 2 if found.
+_sync_report_identical_pr() {
+	local _slug="$1" _status="$2" _branch="$3" _workflow="$4" _content="$5" _contributing="$6"
+	local _base="$7"
+	[[ "$_contributing" -eq 0 ]] || return 0
+	local _identical_pr
+	if ! _identical_pr=$(_sync_find_identical_pr "$_slug" "$_branch" "$_workflow" "$_content" "$_base"); then
+		printf '%s\t%s\t%s\tunable to inspect open sync PRs\n' "$_slug" "$_status" "$_STATUS_FAILED"
+		return 1
+	fi
+	[[ -n "$_identical_pr" ]] || return 0
+	if ! _sync_supersede_prs "$_slug" "$_branch" "$_workflow" "$_identical_pr" "$_base"; then
+		printf '%s\t%s\t%s\tPR: %s; unable to supersede older sync PRs\n' "$_slug" "$_status" "$_STATUS_FAILED" "$_identical_pr"
+		return 1
+	fi
+	_sync_promote_pr "$_slug" "$_identical_pr"
+	printf '%s\t%s\t%s\tPR: %s\n' "$_slug" "$_status" "$_STATUS_APPLIED" "$_identical_pr"
+	return 2
+}
+
+# t19126: sync PRs are deterministic framework output, yet gh_create_pr
+# defaults interactive-origin PRs to draft and the merge pass never merges
+# drafts or unopted origin:interactive PRs, so green syncs sat for weeks
+# waiting on the maintainer. Publish them ready with the automated-merge
+# opt-in, like the planning PR fallback; required checks and the review-bot
+# gate still decide the merge.
+_sync_ensure_auto_merge_label() {
+	local _slug="$1"
+	declare -F managed_labels_ensure_planning_pr_set >/dev/null 2>&1 || return 1
+	declare -F _gh_managed_label_names_snapshot >/dev/null 2>&1 || return 1
+	declare -F _gh_managed_label_create_runner >/dev/null 2>&1 || return 1
+	managed_labels_ensure_planning_pr_set "$_slug" \
+		_gh_managed_label_names_snapshot _gh_managed_label_create_runner >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# Promote a reused sync PR: mark it ready and add the automated-merge opt-in.
+# A hold-for-review label is a maintainer opt-out and is left untouched.
+# Best effort: the sync already applied, so failures only warn.
+_sync_promote_pr() {
+	local _slug="$1" _pr_ref="$2" _state="" _readiness="" _labels=""
+	[[ -n "$_pr_ref" ]] || return 0
+	if ! _state=$(gh pr view "$_pr_ref" --repo "$_slug" --json isDraft,labels \
+		--jq '[(if .isDraft then "draft" else "ready" end), ([.labels[].name] | join(","))] | @tsv' 2>/dev/null); then
+		printf '[%s] WARN: unable to read %s for ready promotion\n' "$SCRIPT_NAME" "$_pr_ref" >&2
+		return 0
+	fi
+	IFS=$'\t' read -r _readiness _labels <<<"$_state"
+	local _label_set=",${_labels},"
+	# GH#39696: an origin:worker PR from before the identity guard has no issue
+	# identity, so the merge gate never admits it; link it to the routine anchor.
+	local _anchor_helper="${SELF_DIR}/routine-log-helper.sh" _pr_number="${_pr_ref##*/}"
+	if [[ "$_label_set" == *",origin:worker,"* && -f "$_anchor_helper" && "$_pr_number" =~ ^[1-9][0-9]*$ ]] &&
+		! bash "$_anchor_helper" ensure-pr-anchor "$_SYNC_ANCHOR_KEY" --repo "$_slug" \
+			--pr "$_pr_number" --title "$_SYNC_ANCHOR_TITLE" >&2; then
+		printf '[%s] WARN: unable to link %s to its routine anchor\n' "$SCRIPT_NAME" "$_pr_ref" >&2
+	fi
+	[[ "$_label_set" != *",hold-for-review,"* ]] || return 0
+	if [[ "$_readiness" == draft ]] && ! gh pr ready "$_pr_ref" --repo "$_slug" >/dev/null 2>&1; then
+		printf '[%s] WARN: unable to mark %s ready for review\n' "$SCRIPT_NAME" "$_pr_ref" >&2
+	fi
+	[[ "$_label_set" != *",${SYNC_AUTO_MERGE_LABEL},"* ]] || return 0
+	if ! _sync_ensure_auto_merge_label "$_slug" ||
+		! gh pr edit "$_pr_ref" --repo "$_slug" --add-label "$SYNC_AUTO_MERGE_LABEL" >/dev/null 2>&1; then
+		printf '[%s] WARN: unable to add %s to %s\n' "$SCRIPT_NAME" "$SYNC_AUTO_MERGE_LABEL" "$_pr_ref" >&2
+	fi
+	return 0
+}
+
+# _sync_reconcile_pr_identity <slug> <pr-url> <anchor> — GH#39830: a reused
+# exact-branch PR must carry the identity chosen for the bytes just pushed.
+# When a later render on the same branch is no longer gate-admissible, swap
+# the routine marker for the anchor Ref; ensure-pr-anchor deliberately skips
+# marker bodies, so promotion alone would leave a PR the gate rejects. An
+# admitted render keeps its marker; a body that already has a Ref is kept.
+_sync_reconcile_pr_identity() {
+	local _slug="$1" _pr_ref="$2" _anchor="$3" _number="${2##*/}" _body="" _body_file="" _rc=0
+	[[ "$_anchor" =~ ^[1-9][0-9]*$ && "$_number" =~ ^[1-9][0-9]*$ ]] || return 0
+	_body=$(gh pr view "$_number" --repo "$_slug" --json body --jq '.body // ""') || return 1
+	[[ "$_body" == *"$_SYNC_ROUTINE_MARKER"* ]] || return 0
+	declare -F gh_pr_edit_safe >/dev/null 2>&1 || return 1
+	local _temp_root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	mkdir -p "$_temp_root" || return 1
+	_body_file=$(mktemp "${_temp_root%/}/sync-workflows-identity.XXXXXX") || return 1
+	# Drop the marker line and the blank line _create_pr_body_file adds after it.
+	{
+		printf 'Ref #%s\n\n' "$_anchor"
+		printf '%s\n' "$_body" | awk -v marker="$_SYNC_ROUTINE_MARKER" \
+			'$0 == marker { skip = 1; next } skip && $0 == "" { skip = 0; next } { skip = 0; print }'
+	} >"$_body_file" || _rc=1
+	if [[ "$_rc" -eq 0 ]] && ! gh_pr_edit_safe "$_number" --repo "$_slug" --body-file "$_body_file" >/dev/null; then
+		_rc=1
+	fi
+	rm -f "$_body_file"
+	return "$_rc"
+}
+
+# Branch names alone also match fork heads. Require the actual head repository
+# to match, case-insensitively, before accepting an exact-branch replacement.
+_sync_find_exact_pr() {
+	local _slug="$1" _branch="$2" _base="$3" _prs
+	_prs=$(gh pr list --repo "$_slug" --head "$_branch" --base "$_base" --state open \
+		--json url,headRepository) || return 1
+	printf '%s\n' "$_prs" | jq -r --arg slug "$_slug" \
+		'[.[] | select((.headRepository.nameWithOwner // "" | ascii_downcase) == ($slug | ascii_downcase))] | .[0].url // empty'
+	return $?
+}
+
 # _sync_open_pr <slug> <path> <status> <branch> <default_branch>
-#   <effective_ref> <workflow-relpath> <sync-contributing>
+#   <effective_ref> <workflow-relpath> <sync-contributing> [anchor]
+# Workflow-only updates reuse identical PRs before publication; differing content
+# creates a replacement, then comments on/closes older same-path sync PRs.
+# Combined CONTRIBUTING.md updates retain their existing exact-branch behavior.
 _sync_open_pr() {
 	local _slug="$1"
 	local _path="$2"
@@ -1437,6 +1761,7 @@ _sync_open_pr() {
 	local _effective_ref="$6"
 	local _workflow_relpath="${7:-.github/workflows/issue-sync.yml}"
 	local _sync_contributing="${8:-0}"
+	local _anchor="${9:-}"
 
 	if ! command -v gh_create_pr >/dev/null 2>&1; then
 		printf '%s\t%s\t%s\tgh_create_pr unavailable — source shared-gh-wrappers.sh\n' \
@@ -1444,17 +1769,32 @@ _sync_open_pr() {
 		return 1
 	fi
 	local _existing_pr
-	_existing_pr=$(gh pr list --repo "$_slug" --head "$_branch_name" --state open \
-		--json url --jq '.[0].url // empty' 2>/dev/null || true)
+	if ! _existing_pr=$(_sync_find_exact_pr "$_slug" "$_branch_name" "$_default_branch"); then
+		printf '%s\t%s\t%s\tunable to inspect exact-branch sync PRs\n' "$_slug" "$_status" "$_STATUS_FAILED"
+		return 1
+	fi
 	if [[ -n "$_existing_pr" ]]; then
+		if [[ "$_sync_contributing" -eq 0 ]] && ! _sync_supersede_prs "$_slug" "$_branch_name" "$_workflow_relpath" "$_existing_pr" "$_default_branch"; then
+			printf '%s\t%s\t%s\tPR: %s; unable to supersede older sync PRs\n' "$_slug" "$_status" "$_STATUS_FAILED" "$_existing_pr"
+			return 1
+		fi
+		if ! _sync_reconcile_pr_identity "$_slug" "$_existing_pr" "$_anchor"; then
+			printf '%s\t%s\t%s\tPR: %s; unable to replace the routine marker with the anchor identity\n' \
+				"$_slug" "$_status" "$_STATUS_FAILED" "$_existing_pr"
+			return 1
+		fi
+		_sync_promote_pr "$_slug" "$_existing_pr"
 		printf '%s\t%s\t%s\tPR: %s\n' "$_slug" "$_status" "$_STATUS_APPLIED" "$_existing_pr"
 		return 0
 	fi
+	# t19126: ready + automated-merge opt-in; a missing label never blocks creation.
+	local _label_args=()
+	_sync_ensure_auto_merge_label "$_slug" && _label_args=(--label "$SYNC_AUTO_MERGE_LABEL")
 	local _pr_title
 	_pr_title=$(_format_pr_title "$_sync_contributing")
 	local _body_file
 	_body_file=$(_create_pr_body_file \
-		"$_status" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing") || {
+		"$_status" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_anchor") || {
 		printf '%s\t%s\t%s\tPR body-file creation failed\n' \
 			"$_slug" "$_status" "$_STATUS_FAILED"
 		return 1
@@ -1467,12 +1807,12 @@ _sync_open_pr() {
 		return 1
 	}
 	local _pr_url _pr_stderr _failure_detail
-	if ! _pr_url=$(gh_create_pr \
+	if ! _pr_url=$(AIDEVOPS_PR_CREATE_READY=1 gh_create_pr \
 		--repo "$_slug" \
 		--title "$_pr_title" \
 		--body-file "$_body_file" \
 		--head "$_branch_name" \
-		--base "$_default_branch" 2>"$_stderr_file"); then
+		--base "$_default_branch" ${_label_args[@]+"${_label_args[@]}"} 2>"$_stderr_file"); then
 		_pr_stderr=$(<"$_stderr_file")
 		[[ -s "$_stderr_file" ]] && command cat "$_stderr_file" >&2
 		_failure_detail=$(printf '%s %s' "$_pr_url" "$_pr_stderr" |
@@ -1493,6 +1833,10 @@ _sync_open_pr() {
 	if [[ -z "$_pr_url" ]]; then
 		printf '%s\t%s\t%s\tgh_create_pr returned empty stdout\n' \
 			"$_slug" "$_status" "$_STATUS_FAILED"
+		return 1
+	fi
+	if [[ "$_sync_contributing" -eq 0 ]] && ! _sync_supersede_prs "$_slug" "$_branch_name" "$_workflow_relpath" "$_pr_url" "$_default_branch"; then
+		printf '%s\t%s\t%s\tPR: %s; unable to supersede older sync PRs\n' "$_slug" "$_status" "$_STATUS_FAILED" "$_pr_url"
 		return 1
 	fi
 	printf '%s\t%s\t%s\tPR: %s\n' "$_slug" "$_status" "$_STATUS_APPLIED" "$_pr_url"
@@ -1575,6 +1919,8 @@ _resolve_refreshed_sync_status() {
 		fi
 		printf '%s\t%s\t%s\trefreshed checkout is CURRENT/CALLER; no changes\n' \
 			"$_slug" "$_prior_status" "$_STATUS_SKIPPED"
+		# Defer this skip until workflow-only PR reconciliation has run.
+		[[ "$_sync_contributing" -eq 0 ]] && return 3
 		return 2
 		;;
 	*)
@@ -1585,10 +1931,26 @@ _resolve_refreshed_sync_status() {
 	esac
 }
 
+# Serialize publication across clones sharing this user's installation. Atomic
+# mkdir is portable to macOS; contention (including a stale lock after SIGKILL)
+# fails closed rather than risking two publishers closing each other's PRs.
+# The caller's subshell owns cleanup, including on ordinary failure and signals.
+_sync_acquire_publication_lock() {
+	local _slug="$1" _workflow="$2" _branch="$3"
+	local _prefix="${_branch%????????}" _key
+	[[ "$_branch" =~ -[0-9]{8}$ ]] || _prefix="$_branch"
+	_key=$(printf '%s\n%s\n%s\n' "$(printf '%s' "$_slug" | tr '[:upper:]' '[:lower:]')" "$_workflow" "$_prefix" | git hash-object --stdin) || return 1
+	local _root="${HOME}/.aidevops/.agent-workspace/locks/sync-workflows"
+	mkdir -p "$_root" || return 1
+	_sync_lock_dir="$_root/$_key.lock"
+	mkdir "$_sync_lock_dir" 2>/dev/null || return 1
+	return 0
+}
+
 # _sync_one_repo <slug> <path> <status> <template_path> <target_repo> <target_ref> <force_ref> <branch_name> <apply> <workflow_relpath>
 # Emits a single-line summary; returns 0 on success, 1 on failure.
 # workflow_relpath — path relative to repo root e.g. .github/workflows/review-bot-gate.yml
-_sync_one_repo() {
+_sync_one_repo() (
 	local _slug="$1"
 	local _path="$2"
 	local _status="$3"
@@ -1612,6 +1974,14 @@ _sync_one_repo() {
 			"$_slug" "$_status" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_workflow" "$_path"
 		return 0
 	fi
+
+	local _sync_lock_dir=""
+	if ! _sync_acquire_publication_lock "$_slug" "$_workflow_relpath" "$_branch_name"; then
+		printf '%s\t%s\t%s\tpublication lock unavailable; retry after the active sync exits (remove stale lock only after verifying no publisher remains)\n' "$_slug" "$_status" "$_STATUS_FAILED"
+		return 1
+	fi
+	trap 'rmdir "$_sync_lock_dir"' EXIT
+	trap 'exit 1' HUP INT TERM
 
 	_PREFLIGHT_DEFAULT_BRANCH="" _PREFLIGHT_REMOTE=""
 	local _pf_rc
@@ -1650,11 +2020,15 @@ _sync_one_repo() {
 		printf '%s\n' "$_status_resolution"
 		return 0
 	fi
-	if [[ "$_status_rc" -ne 0 ]]; then
+	if [[ "$_status_rc" -ne 0 && "$_status_rc" -ne 3 ]]; then
 		printf '%s\n' "$_status_resolution"
 		return 1
 	fi
-	_status="$_status_resolution"
+	if [[ "$_status_rc" -eq 0 ]]; then
+		_status="$_status_resolution"
+	else
+		_status="$_refreshed_status"
+	fi
 
 	local _effective_ref
 	_effective_ref=$(_resolve_effective_ref "$_status" "$_workflow" "$_target_ref" "$_force_ref")
@@ -1669,7 +2043,38 @@ _sync_one_repo() {
 		_target_content=$(_rewrite_content_branch_filter "$_target_content" "$_default_branch")
 	fi
 
+	local _identical_rc=0
+	_sync_report_identical_pr "$_slug" "$_status" "$_branch_name" "$_workflow_relpath" "$_target_content" "$_sync_contributing" "$_default_branch" || _identical_rc=$?
+	[[ "$_identical_rc" -eq 2 ]] && return 0
+	[[ "$_identical_rc" -eq 0 ]] || return 1
+	if [[ "$_status_rc" -eq 3 ]]; then
+		printf '%s\n' "$_status_resolution"
+		return 0
+	fi
+
+	_sync_publish_rendered "$_slug" "$_path" "$_status" "$_branch_name" "$_remote" \
+		"$_default_branch" "$_effective_ref" "$_target_content" "$_workflow_relpath" "$_sync_contributing"
+	return $?
+)
+
+# Publish a rendered target, treating a no-op as success.
+_sync_publish_rendered() {
+	local _slug="$1" _path="$2" _status="$3" _branch_name="$4" _remote="$5"
+	local _default_branch="$6" _effective_ref="$7" _target_content="$8"
+	local _workflow_relpath="$9" _sync_contributing="${10}"
 	local _write_output _write_rc
+	# GH#39696: resolve the PR identity before pushing; a pushed branch without
+	# a PR would read as already current on the next run.
+	local _anchor=""
+	if _sync_marker_eligible "$_slug" "$_path" "$_branch_name" "$_default_branch" \
+		"$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_target_content" "$_remote"; then
+		_anchor="$_SYNC_MARKER_IDENTITY"
+	else
+		_anchor=$(_sync_routine_anchor "$_slug" "$_status") || {
+			printf '%s\n' "$_anchor"
+			return 1
+		}
+	fi
 	_write_output=$(_sync_write_commit_push \
 		"$_slug" "$_path" "$_status" "$_branch_name" \
 		"$_remote" "$_default_branch" "$_effective_ref" "$_target_content" \
@@ -1684,14 +2089,19 @@ _sync_one_repo() {
 		return 1
 	fi
 
+	# GH#39830: the anchor is never retired here. Headless runs that are not
+	# gate-admissible still need it, and ensure-anchor only reuses an open
+	# anchor, so retiring per marker PR would create a new issue per cycle.
 	_sync_open_pr_and_warn \
 		"$_slug" "$_path" "$_status" "$_branch_name" \
-		"$_default_branch" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_target_content"
+		"$_default_branch" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_target_content" \
+		"$_anchor"
 	return $?
 }
 
 # Open the PR, then warn (never mutate) when the installed caller needs an
-# Actions event policy. Args match _sync_open_pr plus the rendered content.
+# Actions event policy. Args match _sync_open_pr plus the rendered content,
+# then the optional routine anchor.
 _sync_open_pr_and_warn() {
 	local _slug="$1"
 	local _path="$2"
@@ -1702,9 +2112,10 @@ _sync_open_pr_and_warn() {
 	local _workflow_relpath="$7"
 	local _sync_contributing="$8"
 	local _content="$9"
+	local _anchor="${10:-}"
 	local _open_rc=0
 	_sync_open_pr "$_slug" "$_path" "$_status" "$_branch_name" "$_default_branch" \
-		"$_effective_ref" "$_workflow_relpath" "$_sync_contributing" || _open_rc=$?
+		"$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_anchor" || _open_rc=$?
 	if [[ "$_open_rc" -eq 0 ]]; then
 		_warn_event_policy_uncovered "$_slug" "$_content"
 	fi
@@ -1777,7 +2188,7 @@ _parse_args() {
 		_die "--install-missing requires an explicit --workflow filter"
 	fi
 	if [[ "$_OPT_PIN_FLOATING" -eq 1 ]]; then
-		[[ "$_OPT_FILTER_WORKFLOW" == "$METRICS_WORKFLOW_NAME" ]] || _die "--pin-floating requires --workflow loc-badge"
+		_is_pin_floating_workflow "$_OPT_FILTER_WORKFLOW" || _die "--pin-floating requires --workflow loc-badge or issue-triage-gate"
 		[[ "$_OPT_FORCE_REF" -eq 0 && "$_OPT_INSTALL_MISSING" -eq 0 && -z "$_OPT_TARGET_REF" ]] ||
 			_die "--pin-floating cannot be combined with --force-ref, --install-missing or --ref"
 	fi

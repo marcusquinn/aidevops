@@ -40,14 +40,14 @@ class UnsealedRecovery:
         """Return the Git admin dir of a registry-less copy after Git proves identity."""
         from worktree_lifetime_archive import require
 
-        def resolved(*args):
-            return Path(os.fsdecode(git(target, *args)).rstrip("\n")).resolve(strict=True)
-
         try:
-            require(resolved("rev-parse", "--show-toplevel") == target.resolve(strict=True), unsealed)
-            require(resolved("rev-parse", "--path-format=absolute", "--git-common-dir") == common,
-                    "restore-proof:wrong-base")
-            admin = resolved("rev-parse", "--absolute-git-dir")
+            # One probe: Git prints toplevel, common dir and admin dir in order.
+            lines = os.fsdecode(git(target, "rev-parse", "--show-toplevel", "--path-format=absolute",
+                                    "--git-common-dir", "--absolute-git-dir")).split("\n")
+            require(len(lines) >= 3, unsealed)
+            top, git_common, admin = (Path(line).resolve(strict=True) for line in lines[:3])
+            require(top == target.resolve(strict=True), unsealed)
+            require(git_common == common, "restore-proof:wrong-base")
             require(admin.parent == common / "worktrees", unsealed)
         except (subprocess.SubprocessError, OSError):
             # Half-created copies remain protected with the same recovery text.

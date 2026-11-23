@@ -28,6 +28,8 @@ _PULSE_DEP_GRAPH_LOADED=1
 [[ -n "${DEP_FALSE+x}" ]] || DEP_FALSE="false"
 [[ -n "${DEP_CACHE_EMPTY_JSON+x}" ]] || DEP_CACHE_EMPTY_JSON='{"use_cache":false,"open_issues":[],"task_to_issue":{}}'
 [[ -n "${DEP_AVAILABLE_STATUS+x}" ]] || DEP_AVAILABLE_STATUS="status:available"
+# GH#38360: companion label that explains a dependency-owned status:blocked.
+[[ -n "${DEP_NEEDS_DEPENDENCY+x}" ]] || DEP_NEEDS_DEPENDENCY="needs-dependency"
 [[ -n "${DEP_JQ_NONEMPTY_LINES+x}" ]] || DEP_JQ_NONEMPTY_LINES='split("\n") | map(select(length > 0))'
 [[ -n "${_DEP_CACHED_REPO_SLUG+x}" ]] || _DEP_CACHED_REPO_SLUG=""
 [[ -n "${_DEP_CACHED_REPO_ID+x}" ]] || _DEP_CACHED_REPO_ID=""
@@ -42,6 +44,8 @@ source "${_pulse_dep_graph_dir}/issue-hold-marker-lib.sh"
 source "${_pulse_dep_graph_dir}/dependency-supersession-lib.sh"
 # shellcheck source=./terminal-blocker-circuit.sh
 source "${_pulse_dep_graph_dir}/terminal-blocker-circuit.sh"
+# shellcheck source=./pulse-dep-graph-checkpoint.sh
+source "${_pulse_dep_graph_dir}/pulse-dep-graph-checkpoint.sh"
 DEP_GRAPH_REDUCE_FILTER="${PULSE_DEP_GRAPH_REDUCE_FILTER:-${_pulse_dep_graph_dir}/pulse-dep-graph-reduce.jq}"
 DEP_GRAPH_BRIEF_PARSER_AWK="${_pulse_dep_graph_dir}/brief-readiness-parser.awk"
 DEP_GRAPH_BLOCKED_BY_VALUE_AWK="${_pulse_dep_graph_dir}/blocked-by-value.awk"
@@ -311,6 +315,9 @@ _dep_graph_build_repo_data() {
 # Cache format (DEP_GRAPH_CACHE_FILE):
 # {
 #   "built_at": "<ISO timestamp>",
+#   "rebuild_started_at": <epoch seconds of generation start>,
+#   "rebuild_complete": true|false,  # absent means complete for legacy caches
+#   "rebuild_pending": ["owner/repo", ...],  # unread/failed repos in this pass
 #   "repos": {
 #     "owner/repo": {
 #       "built_at": <epoch seconds of last successful repo build>,
@@ -330,7 +337,7 @@ _dep_graph_build_repo_data() {
 #   }
 # }
 #
-# Returns: 0 always (non-fatal — cache miss falls back to live API)
+# Returns: 0 complete/fresh, 124 resumable deadline yield, 1 build/write failure.
 #######################################
 build_dependency_graph_cache() {
 	local cache_file="$DEP_GRAPH_CACHE_FILE"
@@ -340,7 +347,8 @@ build_dependency_graph_cache() {
 	if [[ -f "$cache_file" && "${PULSE_DEP_GRAPH_FORCE_REBUILD:-0}" != "1" ]]; then
 		local cache_age
 		cache_age=$(($(date +%s) - $(date -r "$cache_file" +%s 2>/dev/null || echo 0)))
-		if [[ "$cache_age" -lt "$ttl_secs" ]]; then
+		if [[ "$cache_age" -lt "$ttl_secs" ]] &&
+			jq -e '.rebuild_complete != false' "$cache_file" >/dev/null 2>&1; then
 			echo "[pulse-wrapper] dep-graph-cache: cache fresh (${cache_age}s < ${ttl_secs}s TTL), skipping rebuild" >>"$LOGFILE"
 			return 0
 		fi
@@ -355,21 +363,24 @@ build_dependency_graph_cache() {
 
 	local repos_json
 	repos_json=$(jq -c '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only != true))' \
-		"${HOME}/.config/aidevops/repos.json" 2>/dev/null) || repos_json=""
-	if [[ -z "$repos_json" ]]; then
-		echo "[pulse-wrapper] dep-graph-cache: no pulse repos found, skipping" >>"$LOGFILE"
-		return 0
-	fi
+		"${HOME}/.config/aidevops/repos.json" 2>/dev/null) || return 1
 
 	# Build the graph JSON incrementally
 	local graph_json="" old_graph_json=""
-	graph_json=$(printf '{"built_at":"%s","repos":{}}' "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
 	if [[ -f "$cache_file" ]]; then
 		old_graph_json=$(<"$cache_file") || old_graph_json=""
 	fi
+	graph_json=$(_dep_graph_checkpoint_seed "$old_graph_json" "$repos_json" "$build_start") || return 1
+	repos_json=$(_dep_graph_checkpoint_order "$repos_json" "$graph_json") || return 1
+	_dep_graph_checkpoint_write "$cache_file" "$graph_json" false || return 1
+	local build_failed=0
 
 	while IFS= read -r repo_entry; do
 		[[ -n "$repo_entry" ]] || continue
+		if ! _dep_graph_checkpoint_budget_allows; then
+			echo "[pulse-wrapper] dep-graph-cache: deadline reached; checkpoint retained for resume" >>"$LOGFILE"
+			return 124
+		fi
 		local slug
 		slug=$(printf '%s' "$repo_entry" | jq -r '.slug // empty' 2>/dev/null)
 		[[ -n "$slug" ]] || continue
@@ -379,35 +390,21 @@ build_dependency_graph_cache() {
 		# 100-line complexity gate).
 		local repo_data
 		if ! repo_data=$(_dep_graph_build_repo_data "$slug") || [[ -z "$repo_data" ]]; then
-			# Legacy data has unknown freshness: never promote it to freshly built.
-			repo_data=$(printf '%s' "$old_graph_json" | jq -c --arg s "$slug" \
-				'.repos[$s] // empty | .built_at //= 0' 2>/dev/null) || repo_data=""
-			if [[ -z "$repo_data" ]]; then
-				echo "[pulse-wrapper] dep-graph-cache: no previous repo cache for ${slug}; omitting failed repo from this cache build" >>"$LOGFILE"
-				continue
-			fi
-			echo "[pulse-wrapper] dep-graph-cache: preserved previous repo cache for ${slug} after fetch/build failure" >>"$LOGFILE"
-		else
-			repo_data=$(printf '%s' "$repo_data" | jq -c --argjson now "$build_start" '.built_at = $now') || continue
+			# Seeded data retains its original age; only successful reads advance it.
+			build_failed=1
+			continue
 		fi
+		repo_data=$(printf '%s' "$repo_data" | jq -c --argjson now "$(date +%s)" '.built_at = $now') || return 1
 
 		# Merge repo data into graph
 		graph_json=$(printf '%s' "$graph_json" |
 			jq --arg slug "$slug" --argjson rd "$repo_data" \
-				'.repos[$slug] = $rd' 2>/dev/null) || true
+				'.repos[$slug] = $rd | .rebuild_pending -= [$slug]' 2>/dev/null) || return 1
+		_dep_graph_checkpoint_write "$cache_file" "$graph_json" false || return 1
 	done <<<"$repos_json"
 
-	# Atomically write cache (write to tmp then mv). GH#33246: the async
-	# housekeeping catch-up and the in-cycle stage share the pulse PID, so a
-	# `.tmp.$$` name could collide; mktemp gives each writer its own sibling.
-	local tmp_file=""
-	mkdir -p "$(dirname "$cache_file")" 2>/dev/null || true
-	tmp_file=$(mktemp "${cache_file}.tmp.XXXXXX" 2>/dev/null) || tmp_file="${cache_file}.tmp.${BASHPID:-$$}"
-	if printf '%s\n' "$graph_json" >"$tmp_file"; then
-		mv "$tmp_file" "$cache_file" || rm -f "$tmp_file"
-	else
-		rm -f "$tmp_file"
-	fi
+	[[ "$build_failed" -eq 0 ]] || return 1
+	_dep_graph_checkpoint_write "$cache_file" "$graph_json" true || return 1
 
 	local build_end="" build_dur=""
 	build_end=$(date +%s)
@@ -457,7 +454,8 @@ _PULSE_DEP_GRAPH_NON_DEP_BLOCK_MARKERS='\*\*BLOCKED\*\*.*cannot proceed|Worker W
 #
 # Output (stdout):
 #   A short machine-readable reason token when the refresh should defer
-#   ("brief-hold", "body-defer", "comment-marker" or "comments-unavailable").
+#   ("brief-hold", "body-defer", "comment-marker", "not-before",
+#   "comments-unavailable" or "issue-unavailable").
 #   Empty string when safe to unblock.
 #
 # Exit codes:
@@ -494,6 +492,18 @@ _should_defer_auto_unblock() {
 		printf 'comments-unavailable\n'
 		return 0
 	}
+	# GH#39856: an unexpired or malformed aidevops:not-before time gate is a
+	# strong hold. The body is author-editable, so it may hold but not release;
+	# the dependency reconciler owns the one-shot release after `at`.
+	local issue_body=""
+	issue_body=$(gh api "repos/${repo_slug}/issues/${issue_num}" --jq 'objects | .body // ""' 2>/dev/null) || {
+		printf 'issue-unavailable\n'
+		return 0
+	}
+	if issue_not_before_blocks "$comments_json" "$issue_body" false; then
+		printf 'not-before\n'
+		return 0
+	fi
 	if terminal_blocker_has_current_hold "$comments_json"; then
 		printf 'comment-marker\n'
 		return 0
@@ -703,10 +713,16 @@ _refresh_ensure_unresolved_is_blocked() {
 	if _dep_labels_has_active_status "$current_labels"; then
 		return 1
 	fi
+	# GH#38360: the dependency hold names what unblocks it.
+	if declare -F ensure_blocked_companion_label >/dev/null 2>&1; then
+		ensure_blocked_companion_label "$slug" "$DEP_NEEDS_DEPENDENCY" || true
+	fi
 	if ! gh issue edit "$issue_num" --repo "$slug" \
-		--remove-label "$DEP_AVAILABLE_STATUS" --add-label "status:blocked" >/dev/null 2>&1; then
+		--remove-label "$DEP_AVAILABLE_STATUS" --add-label "status:blocked" \
+		--add-label "$DEP_NEEDS_DEPENDENCY" >/dev/null 2>&1; then
 		return 1
 	fi
+	DEP_GRAPH_REFRESH_CHANGED_COUNT=$((${DEP_GRAPH_REFRESH_CHANGED_COUNT:-0} + 1))
 	# Preserve a lifecycle transition that raced the first label read. The direct
 	# edit above intentionally leaves active labels intact so this repair can
 	# remove only the dependency block instead of clobbering queued/in-progress.
@@ -714,7 +730,10 @@ _refresh_ensure_unresolved_is_blocked() {
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
 	if _dep_labels_has "$current_labels" "status:blocked" &&
 		_dep_labels_has_active_status "$current_labels"; then
-		gh issue edit "$issue_num" --repo "$slug" --remove-label "status:blocked" >/dev/null 2>&1 || true
+		if gh issue edit "$issue_num" --repo "$slug" --remove-label "status:blocked" \
+			--remove-label "$DEP_NEEDS_DEPENDENCY" >/dev/null 2>&1; then
+			DEP_GRAPH_REFRESH_CHANGED_COUNT=$((${DEP_GRAPH_REFRESH_CHANGED_COUNT:-0} + 1))
+		fi
 		return 1
 	fi
 	printf '[pulse-wrapper] dep-graph-cache: normalized #%s in %s available -> blocked DISPATCH_BLOCK_APPLIED reason=%s source=dependency_normalization native_rc=%s\n' \
@@ -752,6 +771,7 @@ _refresh_cleanup_resolved_blocker_labels() {
 			[[ ",${current_labels}," == *",${stale_label},"* ]] || continue
 			if gh issue edit "$issue_num" --repo "$slug" --remove-label "$stale_label" >/dev/null 2>&1; then
 				removed_count=$((removed_count + 1))
+				DEP_GRAPH_REFRESH_CHANGED_COUNT=$((${DEP_GRAPH_REFRESH_CHANGED_COUNT:-0} + 1))
 				echo "[pulse-wrapper] dep-graph-cache: removed stale ${stale_label} from #${issue_num} in ${slug} — blocker resolved (GH#25922)" >>"$LOGFILE"
 			fi
 		done
@@ -823,13 +843,18 @@ _refresh_try_unblock_issue() {
 	_dep_labels_has_active_status "$current_labels" && return 1
 	# Preserve any lifecycle transition that races this edit: mutate only the
 	# dependency statuses, then remove available if an active status appeared.
-	gh issue edit "$issue_num" --repo "$slug" \
-		--remove-label "status:blocked" --add-label "$DEP_AVAILABLE_STATUS" >/dev/null 2>&1 || return 1
+	# GH#38360: the dependency companion leaves with status:blocked.
+	local -a unblock_args=(--remove-label "status:blocked" --add-label "$DEP_AVAILABLE_STATUS")
+	_dep_labels_has "$current_labels" "$DEP_NEEDS_DEPENDENCY" && unblock_args+=(--remove-label "$DEP_NEEDS_DEPENDENCY")
+	gh issue edit "$issue_num" --repo "$slug" "${unblock_args[@]}" >/dev/null 2>&1 || return 1
+	DEP_GRAPH_REFRESH_CHANGED_COUNT=$((${DEP_GRAPH_REFRESH_CHANGED_COUNT:-0} + 1))
 	current_labels=$(gh issue view "$issue_num" --repo "$slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
 	if _dep_labels_has "$current_labels" "$DEP_AVAILABLE_STATUS" &&
 		_dep_labels_has_active_status "$current_labels"; then
-		gh issue edit "$issue_num" --repo "$slug" --remove-label "$DEP_AVAILABLE_STATUS" >/dev/null 2>&1 || true
+		if gh issue edit "$issue_num" --repo "$slug" --remove-label "$DEP_AVAILABLE_STATUS" >/dev/null 2>&1; then
+			DEP_GRAPH_REFRESH_CHANGED_COUNT=$((${DEP_GRAPH_REFRESH_CHANGED_COUNT:-0} + 1))
+		fi
 		return 1
 	fi
 	echo "[pulse-wrapper] dep-graph-cache: unblocked #${issue_num} in ${slug} — all blockers resolved, no non-dep markers (t1935/t2031)" >>"$LOGFILE"
@@ -955,6 +980,9 @@ _refresh_graph_repo() {
 #######################################
 refresh_blocked_status_from_graph() {
 	local cache_file="$DEP_GRAPH_CACHE_FILE"
+	# GH#38275: count successful writes at mutation sites, independently of later
+	# reads/repairs or helper return status (census refetch gate).
+	DEP_GRAPH_REFRESH_CHANGED_COUNT=0
 
 	if [[ ! -f "$cache_file" ]]; then
 		echo "[pulse-wrapper] dep-graph-cache: no cache file, skipping blocked-status refresh" >>"$LOGFILE"
@@ -1045,8 +1073,14 @@ normalize_repo_dependency_readiness() {
 	return 0
 }
 
+# Sets DEP_NORMALIZE_LAST_STATUS (GH#38275): fresh = skipped within TTL,
+# ran = normalization completed, failed = unavailable. When "ran",
+# DEP_GRAPH_REFRESH_CHANGED_COUNT is the number of labels changed.
+# The return contract is unchanged.
 normalize_repo_dependency_readiness_if_due() {
 	local slug="$1"
+	DEP_NORMALIZE_LAST_STATUS="failed"
+	DEP_GRAPH_REFRESH_CHANGED_COUNT=0
 	local ttl_secs="${PULSE_DEP_NORMALIZE_TTL_SECS:-60}"
 	local marker_dir="${HOME:+$HOME/.aidevops/cache/dependency-normalization}"
 	local marker_file=""
@@ -1058,11 +1092,15 @@ normalize_repo_dependency_readiness_if_due() {
 
 	if [[ -f "$marker_file" ]]; then
 		marker_age=$(($(date +%s) - $(date -r "$marker_file" +%s 2>/dev/null || echo 0)))
-		[[ "$marker_age" -lt "$ttl_secs" ]] && return 0
+		if [[ "$marker_age" -lt "$ttl_secs" ]]; then
+			DEP_NORMALIZE_LAST_STATUS="fresh"
+			return 0
+		fi
 	fi
 	mkdir -p "$marker_dir" 2>/dev/null || return 1
 	if normalize_repo_dependency_readiness "$slug"; then
 		: >"$marker_file"
+		DEP_NORMALIZE_LAST_STATUS="ran"
 		return 0
 	fi
 	return 1
@@ -1112,6 +1150,13 @@ _blocked_by_extract_tids() {
 	# `blocked-by:t001,t002,t003` are enforced consistently at dispatch time.
 	# Capture full subtask ID including decimal suffix (e.g. t325.1 → 325.1).
 	blocker_lines=$(_blocked_by_structured_lines "$body")
+	# Research-note paths are valid file paths, not dependency references. Because
+	# task extraction deliberately ignores their embedded IDs, keep path-only or
+	# mixed path values fail-closed instead of silently dropping the declaration.
+	if [[ "$blocker_lines" =~ $TASK_IDENTITY_RESEARCH_PATH_ERE ]]; then
+		printf '%s\n' '__malformed__'
+		return 0
+	fi
 	if task_identity_has_malformed_candidate "$blocker_lines"; then
 		printf '%s\n' '__malformed__'
 		return 0

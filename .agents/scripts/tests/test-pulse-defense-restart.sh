@@ -397,7 +397,7 @@ test_tick_systemd_dead_states_revive_via_systemctl() {
 			bash "$TICK_SH" || rc=$?
 		invocations=$(cat "$stub_home/.aidevops/logs/systemctl-invocations.log" 2>/dev/null || echo "")
 		helper_invocations=$(cat "$stub_home/.aidevops/logs/stub-helper-invocations.log" 2>/dev/null || echo "")
-		if [[ "$rc" -eq 0 ]] && [[ "$invocations" == *"start aidevops-supervisor-pulse.service"* ]] && [[ "$helper_invocations" == "stub:is-running" ]]; then
+		if [[ "$rc" -eq 0 ]] && [[ "$invocations" == *"start --no-block aidevops-supervisor-pulse.service"* ]] && [[ "$helper_invocations" == "stub:is-running" ]]; then
 			print_result "test_tick_systemd_${active_state}_revives_via_systemctl" 0
 			continue
 		fi
@@ -474,7 +474,7 @@ STUB
 	printf '%s\n' "$launcher" >"$stub_home/.aidevops/logs/pulse-wrapper.lockdir/pid"
 	PATH="$mock_bin:$PATH" HOME="$stub_home" AIDEVOPS_AGENTS_DIR="$stub_home/.aidevops/agents" \
 		bash "$TICK_SH"
-	if grep -q 'start aidevops-supervisor-pulse.service' "$stub_home/.aidevops/logs/systemctl-invocations.log"; then
+	if grep -q 'start --no-block aidevops-supervisor-pulse.service' "$stub_home/.aidevops/logs/systemctl-invocations.log"; then
 		print_result "test_${mode}_launcher_lock_pid_does_not_block_revival" 0
 	else
 		print_result "test_${mode}_launcher_lock_pid_does_not_block_revival" 1
@@ -484,7 +484,7 @@ STUB
 	printf '%s\n' "$$" >"$stub_home/.aidevops/logs/pulse-wrapper.lockdir/pid"
 	PATH="$mock_bin:$PATH" HOME="$stub_home" AIDEVOPS_AGENTS_DIR="$stub_home/.aidevops/agents" \
 		bash "$TICK_SH"
-	if grep -q 'start aidevops-supervisor-pulse.service' "$stub_home/.aidevops/logs/systemctl-invocations.log"; then
+	if grep -q 'start --no-block aidevops-supervisor-pulse.service' "$stub_home/.aidevops/logs/systemctl-invocations.log"; then
 		print_result "test_reused_lock_pid_does_not_block_revival" 0
 	else
 		print_result "test_reused_lock_pid_does_not_block_revival" 1

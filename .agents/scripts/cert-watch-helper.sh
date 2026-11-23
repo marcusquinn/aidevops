@@ -7,11 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
 
-cert_watch_file_issue() {
+cert_watch_verify_slug() {
 	local slug="$1"
-	local title="$2"
-	local body_file="$3"
-	local priority="$4"
 	local visibility=""
 	# aidevops:trust-boundary — independently recheck immediately before writes.
 	slug=$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')
@@ -19,6 +16,43 @@ cert_watch_file_issue() {
 	[[ "$slug" != marcusquinn/aidevops ]] || return 1
 	visibility=$(gh repo view "$slug" --json visibility --jq '.visibility') || return 1
 	[[ "$visibility" == PRIVATE ]] || return 1
+	CERT_WATCH_SLUG="$slug"
+	return 0
+}
+
+cert_watch_edit_issue() {
+	local slug="$1"
+	local number="$2"
+	local body_file="$3"
+	[[ "$number" =~ ^[0-9]+$ ]] || return 1
+	cert_watch_verify_slug "$slug" || return 1
+	slug="$CERT_WATCH_SLUG"
+	# shellcheck source=shared-gh-wrappers.sh
+	source "${SCRIPT_DIR}/shared-gh-wrappers.sh"
+	gh_issue_edit_safe "$number" --repo "$slug" --body-file "$body_file" >&2 || return 1
+	return 0
+}
+
+cert_watch_close_issue() {
+	local slug="$1"
+	local number="$2"
+	local comment="$3"
+	[[ "$number" =~ ^[0-9]+$ ]] || return 1
+	cert_watch_verify_slug "$slug" || return 1
+	slug="$CERT_WATCH_SLUG"
+	# shellcheck source=shared-gh-wrappers.sh
+	source "${SCRIPT_DIR}/shared-gh-wrappers.sh"
+	gh_issue_close_safe "$number" --repo "$slug" --comment "$comment" >&2 || return 1
+	return 0
+}
+
+cert_watch_file_issue() {
+	local slug="$1"
+	local title="$2"
+	local body_file="$3"
+	local priority="$4"
+	cert_watch_verify_slug "$slug" || return 1
+	slug="$CERT_WATCH_SLUG"
 	# shellcheck source=shared-gh-wrappers.sh
 	source "${SCRIPT_DIR}/shared-gh-wrappers.sh"
 	local label=""
@@ -33,11 +67,23 @@ cert_watch_file_issue() {
 	return 0
 }
 
-if [[ "${1:-}" == __file_issue ]]; then
+case "${1:-}" in
+__file_issue)
 	shift
 	cert_watch_file_issue "$@"
 	exit $?
-fi
+	;;
+__edit_issue)
+	shift
+	cert_watch_edit_issue "$@"
+	exit $?
+	;;
+__close_issue)
+	shift
+	cert_watch_close_issue "$@"
+	exit $?
+	;;
+esac
 
 exec python3 - "${BASH_SOURCE[0]}" "$@" <<'PY'
 import argparse
@@ -95,9 +141,16 @@ def hostname(value):
     return name
 
 
+# Providers hosting unrelated customers directly under one registrable domain.
+# libpsl returns the provider domain for them, so CT would watch every tenant.
+SHARED_PARENT_DOMAINS = ('hostingersite.com',)
+
+
 class ApexResolver:
     """Use the system PSL, or an operator-supplied PSL; never guess co.uk etc."""
     def __init__(self, config):
+        self.shared = {hostname(x) for x in SHARED_PARENT_DOMAINS}
+        self.shared.update(hostname(x) for x in config.get('shared_parent_domains', []))
         self.anchors = sorted({hostname(x) for x in config.get('extra_domains', [])}, key=len, reverse=True)
         self.rules = None
         self.lib = None
@@ -114,6 +167,15 @@ class ApexResolver:
                 self.lib.psl_registrable_domain.restype = ctypes.c_char_p
 
     def resolve(self, name):
+        """Registrable domain, or the exact host under a shared hosting parent."""
+        return name if self.is_shared(name) else self.registrable(name)
+
+    def is_shared(self, name):
+        # Independent of explicit anchors: a tenant host stays a tenant host.
+        return name in self.shared or any(name.endswith('.' + x) for x in self.shared) \
+            or self.registrable(name) in self.shared
+
+    def registrable(self, name):
         for apex in self.anchors:
             if name == apex or name.endswith('.' + apex):
                 return apex
@@ -154,6 +216,8 @@ def inventory(config):
             return
         apex = resolver.resolve(name)
         row = entries.setdefault(apex, {'apex': apex, 'hostnames': [], 'knowledge_repos': {}})
+        if resolver.is_shared(name):
+            row['shared_parent'] = True
         known = ('*.' if raw.startswith('*.') else '') + name
         if known not in row['hostnames']:
             row['hostnames'].append(known)
@@ -322,6 +386,8 @@ def ct_scan(row, state, path, config, policies, last_fetch):
     held += [san for san in row['hostnames'] if san.startswith('*.')]
     distrusted = [x.strip().lower() for x in (SCRIPT.parent.parent / 'configs/cert-watch-distrusted-issuers.conf').read_text().splitlines()
                   if x.strip() and not x.startswith('#')]
+    auto_known = dict((state or {}).get('auto_known_sans', {}))
+    plain_hosts = [h for h in row['hostnames'] if not h.startswith('*.')]
     findings = []
     unresolved = []
     observations = dict(certs)
@@ -355,13 +421,24 @@ def ct_scan(row, state, path, config, policies, last_fetch):
                                       'Issuer evaluation deferred until CAA observation recovers', cert))
         else:
             deferred.pop(ident, None)
-        unknown = [san for san in cert['sans'] if (san == row['apex'] or san.endswith('.' + row['apex']))
-                   and san not in row['hostnames'] and not any(matches(san, p) for p in held)]
+        benign_issuer = (cert['issuer'].lower() in issuer_expected
+                         and not any(x in cert['issuer_name'].lower() for x in distrusted))
+        unknown = []
+        for san in cert['sans']:
+            if not (san == row['apex'] or san.endswith('.' + row['apex'])):
+                continue
+            if san in row['hostnames'] or any(matches(san, p) for p in held):
+                continue
+            if benign_issuer and any(san == 'www.' + h or h == 'www.' + san for h in plain_hosts):
+                auto_known[san] = ident  # auditable: certificate that justified it
+                continue
+            unknown.append(san)
         if unknown and not retry:
             findings.append(finding(row, 'ct-unknown-hostname', 'medium', ident, 'Unrecognised SANs: ' + ', '.join(unknown), cert))
     # Retain unfiled CT findings so a dry run cannot consume an operator alert.
     pending = (state or {}).get('pending', []) + findings
-    state = {'certificates': dict(old, **certs), 'pending': pending, 'deferred_issuer_checks': deferred}
+    state = {'certificates': dict(old, **certs), 'pending': pending, 'deferred_issuer_checks': deferred,
+             'auto_known_sans': auto_known}
     private_save(path, state)
     info(('BASELINE CT: ' if baseline else 'OK CT: ') + row['apex'])
     return pending + unresolved, state
@@ -397,11 +474,12 @@ def caa_scan(row, state, config, policies):
                         findings.append(finding(row, 'caa-blocks-active-issuer', 'high', key,
                                                 'CAA on ' + name + ' blocks an active certificate issuer; review renewal requirements', cert,
                                                 [record.replace(apex + '. CAA', name + '. CAA', 1) for record in recommendations]))
-    if missing:
+    if missing and not row.get('shared_parent'):  # customers cannot set CAA on a provider zone
         key = hashlib.sha256((apex + ':caa-missing').encode()).hexdigest()[:20]
         findings.append(finding(row, 'caa-missing', 'low', key,
                                 'No CAA through apex for: ' + ', '.join(sorted(missing)) + '; review records and iodef address',
                                 records=recommendations))
+        findings[-1]['issuers'] = sorted({re.sub(r"[^A-Za-z0-9 .,'()&/-]", '', c['issuer'])[:80] for c in recent})
     return findings
 
 
@@ -433,19 +511,125 @@ def route(row, repos, fleet, config):
     return fallback if private_repo(fallback) else None
 
 
-def file_findings(row, findings, repos, fleet, config):
-    actionable = [f for f in findings if f['severity'] != 'unknown']
+def open_issues(slug):
+    # A failed/incomplete dedup read must never become permission to write.
+    pages = command(['gh', 'api', '--paginate', '--slurp', f'repos/{slug}/issues?state=open&per_page=100'])
+    return [issue for page in json.loads(pages) for issue in page if 'pull_request' not in issue]
+
+
+def marker_for(f):
+    return f'<!-- aidevops:generator=cert-watch apex={f["apex"]} finding={f["kind"]} key={f["key"]} -->'
+
+
+DIGEST_MARKER = '<!-- aidevops:generator=cert-watch digest=caa-missing -->'
+SECTION_END = '<!-- /aidevops:cert-watch-section -->'
+SECTION_RE = re.compile(r'<!-- aidevops:generator=cert-watch apex=(\S+) finding=caa-missing key=\S+ -->\n.*?\n'
+                        + re.escape(SECTION_END), re.S)
+
+
+def digest_section(f):
+    issuers = ', '.join(f.get('issuers') or []) or 'none observed in the last 180 days'
+    records = '\n'.join(f['recommended_records'])
+    return f'''{marker_for(f)}
+### {f['apex']}
+
+Hostnames: {', '.join(f['hostnames'])}
+Reason: {f['reason']}
+CAs seen in certificates from the last 180 days: {issuers}
+
+```text
+{records}
+```
+{SECTION_END}'''
+
+
+def digest_body(sections):
+    return DIGEST_MARKER + '''
+## Owner decision: add CAA records — no automatic remediation
+
+Each section lists a domain with no CAA record and the records cert-watch proposes,
+based on the CAs seen in Certificate Transparency over the last 180 days. Reply with
+one decision: **approve all**, **approve** a listed subset, or **decline**. Do not
+change DNS without that authorization; applying records is a separate step using
+`dns-helper.sh help` to select the provider workflow. Confirm the iodef mailbox
+before approving.
+
+''' + '\n\n'.join(sections[k] for k in sorted(sections)) + '''
+
+Repository source paths are unknown: this concerns live DNS configuration.
+Re-run `cert-watch-helper.sh run` after authorized changes; fixed domains drop out
+of this digest on the next full run. This is operator triage, not a worker brief.
+'''
+
+
+def private_write(args, text):
+    fd, path = tempfile.mkstemp(dir=WORK / 'cert-watch', prefix='.issue-')
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            stream.write(text)
+        command(['bash', str(SCRIPT)] + [path if a is None else a for a in args], timeout=180)
+    finally:
+        os.unlink(path)
+
+
+def file_digest(slug, entries, scanned_apexes, repos, fleet, config):
+    """File or update ONE owner-decision issue for every apex missing CAA."""
+    issues = open_issues(slug)
+    existing = next((i for i in issues if DIGEST_MARKER in (i.get('body') or '')), None)
+    sections = {}
+    if existing and scanned_apexes is not None:  # retain only unscanned apexes on a --domain run
+        sections.update({m.group(1): m.group(0) for m in SECTION_RE.finditer(existing.get('body') or '')
+                         if m.group(1) not in scanned_apexes})
+    sections.update({f['apex']: digest_section(f) for _, f in entries})
+    if not sections:
+        if existing:
+            command(['bash', str(SCRIPT), '__close_issue', slug, str(existing['number']),
+                     'No missing CAA findings remain after successful DNS reconciliation.'], timeout=180)
+        return
+    body = digest_body(sections)
+    title = 'Cert watch: caa-missing digest — owner decision'
+    if existing is None:
+        private_write(['__file_issue', slug, title, None, 'low'], body)
+        issues = open_issues(slug)
+        existing = next((i for i in issues if DIGEST_MARKER in (i.get('body') or '')), None)
+    elif (existing.get('body') or '') != body:
+        private_write(['__edit_issue', slug, str(existing['number']), None], body)
+    if existing is None or 'number' not in existing:
+        return
+    # Close legacy per-repo issues now represented in the digest (same trust boundary).
+    legacy = {f'{marker_for(f)}' for _, f in entries}
+    repo_slugs = {slug}
+    for row, _ in entries:
+        routed = route(row, repos, fleet, config)
+        if routed:
+            repo_slugs.add(routed)
+    for repo in sorted(repo_slugs):
+        try:
+            candidates = issues if repo == slug else open_issues(repo)
+        except (ValueError, OSError, subprocess.SubprocessError):
+            info('INFO: legacy caa-missing scan skipped for one repository')
+            continue
+        for issue in candidates:
+            text = issue.get('body') or ''
+            if (repo == slug and issue.get('number') == existing['number']) or DIGEST_MARKER in text:
+                continue
+            if any(marker in text for marker in legacy):
+                url = f'https://github.com/{slug}/issues/{existing["number"]}'
+                command(['bash', str(SCRIPT), '__close_issue', repo, str(issue['number']),
+                         'Superseded by the consolidated CAA owner-decision digest: ' + url], timeout=180)
+
+
+def file_findings(row, findings, repos, fleet, config, digest=False):
+    actionable = [f for f in findings if f['severity'] != 'unknown' and not (digest and f['kind'] == 'caa-missing')]
     if not actionable:
         return False
     slug = route(row, repos, fleet, config)
     if not slug:
         info('INFO: no verified private route; findings remain local')
         return False
-    # A failed/incomplete dedup read must never become permission to create issues.
-    pages = command(['gh', 'api', '--paginate', '--slurp', f'repos/{slug}/issues?state=open&per_page=100'])
-    bodies = [issue.get('body') or '' for page in json.loads(pages) for issue in page if 'pull_request' not in issue]
+    bodies = [issue.get('body') or '' for issue in open_issues(slug)]
     for f in actionable:
-        marker = f'<!-- aidevops:generator=cert-watch apex={f["apex"]} finding={f["kind"]} key={f["key"]} -->'
+        marker = marker_for(f)
         if any(marker in body for body in bodies):
             continue
         cert = f['certificate']
@@ -508,6 +692,11 @@ def main():
         rows = [r for r in rows if r['apex'] == name or name in r['hostnames']]
         if not rows:
             rows = [{'apex': name, 'hostnames': [name], 'knowledge_repos': {}}]
+            try:
+                if ApexResolver(config).is_shared(name):
+                    rows[0]['shared_parent'] = True
+            except ValueError:
+                pass  # no PSL: ad hoc names keep their own apex, as before
     if args.command == 'domains':
         output = rows
     else:
@@ -518,6 +707,11 @@ def main():
         output = []
         fleet = load(CONFIG / 'hosting-fleet.json', {}, private=True) if args.apply else {}
         last_fetch = [0]
+        digest_slug = None
+        digest_entries = []
+        uncertain = set()
+        if args.apply and config.get('fallback_repo') and private_repo(config['fallback_repo']):
+            digest_slug = config['fallback_repo']  # one consolidated caa-missing issue
         with open(directory / '.lock', 'a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             for row in rows:
@@ -539,10 +733,21 @@ def main():
                     found += caa_scan(row, state, config, policies)
                 output += found
                 if args.apply:
-                    filed = file_findings(row, found, repos, fleet, config)
+                    filed = file_findings(row, found, repos, fleet, config, bool(digest_slug))
                     if filed and state and not any(f['kind'] == 'ct-unknown' for f in found):
                         state['pending'] = []
                         private_save(path, state)
+                    if digest_slug:
+                        digest_entries += [(row, f) for f in found if f['kind'] == 'caa-missing']
+                        if any(f['kind'] == 'caa-unknown' for f in found):
+                            uncertain.add(row['apex'])  # DNS failure is not proof a finding disappeared
+            if digest_slug and args.command in ('caa', 'run'):
+                # Confirmed findings are always delivered; only uncertain apexes keep their prior section.
+                if args.domain:
+                    scanned_apexes = {row['apex'] for row in rows} - uncertain
+                else:
+                    scanned_apexes = ({row['apex'] for row in rows} - uncertain) if uncertain else None
+                file_digest(digest_slug, digest_entries, scanned_apexes, repos, fleet, config)
     if args.format == 'json':
         print(json.dumps(output, indent=2))
     else:

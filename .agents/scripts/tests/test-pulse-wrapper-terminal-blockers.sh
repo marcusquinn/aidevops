@@ -208,7 +208,7 @@ test_no_comments() {
 #######################################
 test_clean_comments() {
 	reset_mock_state
-	GH_API_OUTPUT='[{"body":"This looks good, working on it now.","created_at":"2026-03-16T00:00:00Z"},{"body":"Made progress on the implementation.","created_at":"2026-03-16T01:00:00Z"}]'
+	GH_API_OUTPUT='[{"body":"This looks good, working on it now.","created_at":"2026-03-16T00:00:00Z","author_association":"OWNER"},{"body":"Made progress on the implementation.","created_at":"2026-03-16T01:00:00Z","author_association":"OWNER"}]'
 	GH_ISSUE_VIEW_OUTPUT='none'
 	local exit_code=0
 	check_terminal_blockers "42" "owner/repo" 2>/dev/null || exit_code=$?
@@ -221,7 +221,7 @@ test_clean_comments() {
 #######################################
 test_workflow_scope_blocker() {
 	reset_mock_state
-	GH_API_OUTPUT='[{"body":"Error: refusing to allow an OAuth App to create or update workflow .github/workflows/ci.yml without workflow scope","created_at":"2026-03-16T00:03:00Z"}]'
+	GH_API_OUTPUT='[{"body":"Error: refusing to allow an OAuth App to create or update workflow .github/workflows/ci.yml without workflow scope","created_at":"2026-03-16T00:03:00Z","author_association":"OWNER"}]'
 	GH_ISSUE_VIEW_OUTPUT='none'
 	local exit_code=0
 	check_terminal_blockers "57" "owner/repo" 2>/dev/null || exit_code=$?
@@ -234,7 +234,7 @@ test_workflow_scope_blocker() {
 #######################################
 test_token_lacks_scope() {
 	reset_mock_state
-	GH_API_OUTPUT='[{"body":"The token lacks workflow scope. Run gh auth refresh -s workflow to fix.","created_at":"2026-03-16T00:03:00Z"}]'
+	GH_API_OUTPUT='[{"body":"The token lacks workflow scope. Run gh auth refresh -s workflow to fix.","created_at":"2026-03-16T00:03:00Z","author_association":"OWNER"}]'
 	GH_ISSUE_VIEW_OUTPUT='none'
 	local exit_code=0
 	check_terminal_blockers "57" "owner/repo" 2>/dev/null || exit_code=$?
@@ -247,7 +247,7 @@ test_token_lacks_scope() {
 #######################################
 test_action_required() {
 	reset_mock_state
-	GH_API_OUTPUT='[{"body":"ACTION REQUIRED: You need to add the workflow scope to your GitHub token.","created_at":"2026-03-16T00:03:00Z"}]'
+	GH_API_OUTPUT='[{"body":"ACTION REQUIRED: You need to add the workflow scope to your GitHub token.","created_at":"2026-03-16T00:03:00Z","author_association":"OWNER"}]'
 	GH_ISSUE_VIEW_OUTPUT='none'
 	local exit_code=0
 	check_terminal_blockers "57" "owner/repo" 2>/dev/null || exit_code=$?
@@ -260,7 +260,7 @@ test_action_required() {
 #######################################
 test_idempotent_no_double_post() {
 	reset_mock_state
-	GH_API_OUTPUT='[{"body":"Terminal blocker detected (GH#5141) — skipping dispatch.\n\nReason: workflow scope","created_at":"2026-03-16T00:03:00Z"},{"body":"Error: refusing to allow an OAuth App to create or update workflow","created_at":"2026-03-16T00:02:00Z"}]'
+	GH_API_OUTPUT='[{"body":"Terminal blocker detected (GH#5141) — skipping dispatch.\n\nReason: workflow scope","created_at":"2026-03-16T00:03:00Z","author_association":"OWNER"},{"body":"Error: refusing to allow an OAuth App to create or update workflow","created_at":"2026-03-16T00:02:00Z","author_association":"OWNER"}]'
 	GH_ISSUE_VIEW_OUTPUT='status:blocked'
 	local exit_code=0
 	check_terminal_blockers "57" "owner/repo" 2>/dev/null || exit_code=$?
@@ -280,7 +280,7 @@ test_idempotent_no_double_post() {
 #######################################
 test_missing_scope_variant() {
 	reset_mock_state
-	GH_API_OUTPUT='[{"body":"Push failed: token lacks the required scope for workflow files.","created_at":"2026-03-16T00:03:00Z"}]'
+	GH_API_OUTPUT='[{"body":"Push failed: token lacks the required scope for workflow files.","created_at":"2026-03-16T00:03:00Z","author_association":"OWNER"}]'
 	GH_ISSUE_VIEW_OUTPUT='none'
 	local exit_code=0
 	check_terminal_blockers "57" "owner/repo" 2>/dev/null || exit_code=$?
@@ -293,7 +293,7 @@ test_missing_scope_variant() {
 #######################################
 test_gh_slurp_prerequisite_blocker() {
 	reset_mock_state
-	GH_API_OUTPUT='[{"body":"gh: unknown flag: --slurp\nUsage: gh api <endpoint> [flags]","created_at":"2026-03-16T00:03:00Z"}]'
+	GH_API_OUTPUT='[{"body":"gh: unknown flag: --slurp\nUsage: gh api <endpoint> [flags]","created_at":"2026-03-16T00:03:00Z","author_association":"OWNER"}]'
 	GH_ISSUE_VIEW_OUTPUT='none'
 	local exit_code=0
 	check_terminal_blockers "57" "owner/repo" 2>/dev/null || exit_code=$?
@@ -303,6 +303,66 @@ test_gh_slurp_prerequisite_blocker() {
 		guidance_check=0
 	fi
 	print_result "gh --slurp blocker includes prerequisite guidance" "$guidance_check" "body: $GH_ISSUE_COMMENT_BODY"
+	return 0
+}
+
+#######################################
+# GH#39452: quoted ACTION REQUIRED must not block
+#######################################
+test_action_required_quoted_not_blocking() {
+	reset_mock_state
+	GH_API_OUTPUT='[{"body":"Unblocked: a reconciler wrongly matched an \u0060ACTION REQUIRED\u0060 hold marker.","created_at":"2026-03-16T00:03:00Z","author_association":"OWNER"}]'
+	GH_ISSUE_VIEW_OUTPUT='none'
+	local exit_code=0
+	check_terminal_blockers "57" "owner/repo" 2>/dev/null || exit_code=$?
+	print_result "quoted ACTION REQUIRED does not block (exit 1)" $((exit_code == 1 ? 0 : 1)) "got exit $exit_code"
+	return 0
+}
+
+#######################################
+# GH#39452: detector's own comment must not re-block
+#######################################
+test_detector_comment_alone_not_reblocking() {
+	reset_mock_state
+	GH_API_OUTPUT='[{"body":"**Terminal blocker detected** (GH#5141) — skipping dispatch.\n\n**Reason:** x\n\n**Action required:** Read the ACTION REQUIRED comment above","created_at":"2026-03-16T00:03:00Z","author_association":"OWNER"}]'
+	GH_ISSUE_VIEW_OUTPUT='none'
+	local exit_code=0
+	check_terminal_blockers "57" "owner/repo" 2>/dev/null || exit_code=$?
+	print_result "detector comment alone does not re-block (exit 1)" $((exit_code == 1 ? 0 : 1)) "got exit $exit_code"
+	return 0
+}
+
+#######################################
+# GH#39452: untrusted author comments are ignored
+#######################################
+test_untrusted_author_not_blocking() {
+	reset_mock_state
+	GH_API_OUTPUT='[{"body":"ACTION REQUIRED: do something","created_at":"2026-03-16T00:03:00Z","author_association":"NONE"}]'
+	GH_ISSUE_VIEW_OUTPUT='none'
+	local exit_code=0
+	check_terminal_blockers "57" "owner/repo" 2>/dev/null || exit_code=$?
+	print_result "untrusted-author ACTION REQUIRED ignored (exit 1)" $((exit_code == 1 ? 0 : 1)) "got exit $exit_code"
+	return 0
+}
+
+#######################################
+# GH#39452: structured heading variants still block; text has no trigger phrase
+#######################################
+test_action_required_heading_variants() {
+	local body exit_code
+	for body in '**ACTION REQUIRED:** rotate key' '## ACTION REQUIRED: rotate key' 'intro\n\nACTION REQUIRED: rotate key'; do
+		reset_mock_state
+		GH_API_OUTPUT='[{"body":"'"$body"'","created_at":"2026-03-16T00:03:00Z","author_association":"MEMBER"}]'
+		GH_ISSUE_VIEW_OUTPUT='none'
+		exit_code=0
+		check_terminal_blockers "57" "owner/repo" 2>/dev/null || exit_code=$?
+		print_result "ACTION REQUIRED heading variant blocks: ${body:0:24}" $((exit_code == 0 ? 0 : 1)) "got exit $exit_code"
+	done
+	local trigger_check=0
+	if [[ "$GH_ISSUE_COMMENT_BODY" == *"ACTION REQUIRED"* ]]; then
+		trigger_check=1
+	fi
+	print_result "hold comment omits literal trigger phrase" "$trigger_check" "body: $GH_ISSUE_COMMENT_BODY"
 	return 0
 }
 
@@ -325,6 +385,10 @@ main() {
 	test_idempotent_no_double_post
 	test_missing_scope_variant
 	test_gh_slurp_prerequisite_blocker
+	test_action_required_quoted_not_blocking
+	test_detector_comment_alone_not_reblocking
+	test_untrusted_author_not_blocking
+	test_action_required_heading_variants
 
 	teardown_test_env
 

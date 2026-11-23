@@ -17,7 +17,7 @@ fi
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.39.172
+# Version: 3.39.267
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -1007,6 +1007,8 @@ _setup_run_noncritical_stage_bounded() {
 	local start_s=$SECONDS
 	local pid=""
 	local rc=0
+	# Lets callers tell a timeout kill apart from a clean return (t19030).
+	_SETUP_NONCRITICAL_STAGE_TIMED_OUT=false
 	[[ "$timeout_s" =~ ^[0-9]+$ ]] || timeout_s=60
 	"$@" &
 	pid=$!
@@ -1017,6 +1019,7 @@ _setup_run_noncritical_stage_bounded() {
 			sleep "${AIDEVOPS_SETUP_CHILD_TERM_GRACE_S:-2}" 2>/dev/null || true
 			_setup_kill_pid_tree KILL "$pid"
 			wait "$pid" 2>/dev/null || true
+			_SETUP_NONCRITICAL_STAGE_TIMED_OUT=true
 			print_warning "${stage_label} exceeded ${timeout_s}s — skipping remaining non-critical work"
 			return 0
 		fi
@@ -1342,9 +1345,13 @@ _setup_ai_session_plan_file() {
 	.agents/scripts/setup/modules/schedulers-pulse.sh)
 		_SETUP_AI_SESSION_NEEDS_PULSE=1
 		;;
-	.agents/scripts/setup/modules/schedulers*.sh | .agents/scripts/setup/_scheduler_runtime.sh)
+	.agents/scripts/setup/modules/schedulers*.sh | .agents/scripts/setup/_scheduler_runtime.sh | \
+		.agents/scripts/runtime-env.sh | .agents/scripts/plist-env-overrides-lib.sh)
 		# Shared scheduler modules define non-pulse schedulers too (e.g. the
 		# Linux screen-activity sampler); refresh every installed one (GH#36709).
+		# runtime-env.sh renders every service PATH (aidevops_service_path), so
+		# its changes reach installed units only through this refresh (GH#37888);
+		# plist-env-overrides-lib.sh renders the plist env overrides (GH#38661).
 		_SETUP_AI_SESSION_NEEDS_SCHEDULERS=1
 		;;
 	.agents/scripts/setup/modules/agent-deploy.sh | .agents/scripts/setup/modules/plugins.sh)
@@ -1401,8 +1408,24 @@ _setup_git_checkout_available() {
 	return 0
 }
 
+# _setup_ai_session_verify_deploy <floor_sha>
+# floor_sha is the checkout commit when this setup began. Canonical main can
+# fast-forward during a multi-minute deploy (t19058: 36 logged convergence
+# failures, each rolling back a consistent bundle and repeating the deploy as a
+# full setup). Accept the activated bundle's commit when it lies between the
+# floor and the current HEAD; the verifier still pins manifest, stamp, VERSION
+# and sentinels to that commit. The next update cycle deploys the newer HEAD.
 _setup_ai_session_verify_deploy() {
-	local expected_sha="$1"
+	local floor_sha="$1"
+	local expected_sha="$floor_sha"
+	local stamp_sha=""
+	local _AIDEVOPS_RUNTIME_VERIFY_ALLOW_SOURCE_ADVANCE=1
+
+	stamp_sha=$(tr -d '[:space:]' <"$HOME/.aidevops/.deployed-sha" 2>/dev/null) || stamp_sha=""
+	if [[ -n "$stamp_sha" && "$stamp_sha" != "$floor_sha" ]] &&
+		git -C "$INSTALL_DIR" merge-base --is-ancestor "$floor_sha" "$stamp_sha" 2>/dev/null; then
+		expected_sha="$stamp_sha"
+	fi
 	verify_aidevops_runtime_bundle_convergence \
 		"$INSTALL_DIR" \
 		"$expected_sha" \
@@ -1412,6 +1435,9 @@ _setup_ai_session_verify_deploy() {
 			print_error "Failed to roll back the runtime bundle after convergence failure"
 		return 1
 	}
+	if [[ -n "${_AIDEVOPS_RUNTIME_VERIFY_SOURCE_ADVANCED_TO:-}" ]]; then
+		print_info "Checkout advanced to ${_AIDEVOPS_RUNTIME_VERIFY_SOURCE_ADVANCED_TO:0:12} during deploy; runtime ${expected_sha:0:12} is consistent and the next update deploys the newer commit"
+	fi
 	return 0
 }
 
@@ -1557,10 +1583,12 @@ _setup_run_scoped_stage() {
 	"$SETUP_STAGE_AI_SESSION")
 		if ! _setup_run_ai_session_incremental "$os"; then
 			print_warning "AI-session incremental setup unavailable or failed; falling back to full setup"
-			_setup_run_non_interactive || return $?
-			_setup_post_setup_steps "$os" || return $?
+			# Floor for verification: the deploy below reads HEAD at its own
+			# start, which may be later than this point but never earlier.
 			current_sha=$(git -C "$INSTALL_DIR" rev-parse HEAD 2>/dev/null) || current_sha=""
 			[[ -n "$current_sha" ]] || return 1
+			_setup_run_non_interactive || return $?
+			_setup_post_setup_steps "$os" || return $?
 			_setup_ai_session_verify_deploy "$current_sha" || return $?
 		fi
 		;;
@@ -1617,6 +1645,7 @@ _setup_run_noninteractive_migrations() {
 	_time_step "cleanup_stale_health_issue_caches" cleanup_stale_health_issue_caches
 	_time_step "cleanup_legacy_aidevops_temp_artifacts" cleanup_legacy_aidevops_temp_artifacts
 	_time_step "cleanup_worktree_entries_in_repos_json" cleanup_worktree_entries_in_repos_json
+	_time_step "migrate_routines_repo_purpose_marker" migrate_routines_repo_purpose_marker
 	_time_step "_cleanup_legacy_model_config" _cleanup_legacy_model_config
 	_time_step "cleanup_legacy_dashboard_launchagent" cleanup_legacy_dashboard_launchagent
 	_time_step "cleanup_legacy_agents_md_templates" cleanup_legacy_agents_md_templates
@@ -1691,7 +1720,7 @@ _setup_run_non_interactive() {
 	_time_step "deploy_agents_to_runtimes" _deploy_agents_to_runtimes_bounded || true
 	_time_step "update_opencode_config" _setup_run_noncritical_stage_bounded "OpenCode config update" "${AIDEVOPS_UPDATE_OPENCODE_CONFIG_TIMEOUT:-60}" update_opencode_config
 	_time_step "update_claude_config" update_claude_config
-	_time_step "update_codex_config" update_codex_config
+	_time_step "update_codex_config" update_codex_config_noncritical
 	_time_step "update_cursor_config" update_cursor_config
 	_time_step "disable_ondemand_mcps" disable_ondemand_mcps
 	_setup_run_noninteractive_optional_tools
@@ -1769,6 +1798,7 @@ _setup_run_interactive_silent_migrations() {
 	cleanup_stale_health_issue_caches
 	cleanup_legacy_aidevops_temp_artifacts
 	cleanup_worktree_entries_in_repos_json
+	migrate_routines_repo_purpose_marker
 	_cleanup_legacy_model_config
 	cleanup_legacy_dashboard_launchagent
 	cleanup_legacy_agents_md_templates
@@ -1867,7 +1897,7 @@ _setup_run_interactive() {
 	# Run AFTER OpenCode config so Claude Code gets equivalent setup
 	confirm_step "Update Claude Code configuration (slash commands, MCPs, settings)" && update_claude_config
 	# Run AFTER Claude Code config so Codex/Cursor get equivalent setup
-	confirm_step "Update Codex configuration (MCPs, instructions)" && update_codex_config
+	confirm_step "Update Codex configuration (MCPs, instructions)" && update_codex_config_noncritical
 	confirm_step "Update Cursor configuration (MCPs)" && update_cursor_config
 	# Deploy slash commands to the other installed runtimes (Codex, Cursor,
 	# Droid, Gemini CLI, Continue, Kiro, Kimi, Qwen) via the unified generator.
@@ -1909,7 +1939,7 @@ _setup_noninteractive_schedulers() {
 	if _should_setup_noninteractive_stats_wrapper; then
 		_time_step "setup_stats_wrapper" setup_stats_wrapper "${PULSE_ENABLED:-}"
 	fi
-	if _should_setup_noninteractive_scheduler "Failure miner" "sh.aidevops.routine-gh-failure-miner" "aidevops: gh-failure-miner" "aidevops-gh-failure-miner"; then
+	if _should_setup_noninteractive_failure_miner; then
 		_time_step "setup_failure_miner" setup_failure_miner "${PULSE_ENABLED:-}"
 	fi
 	if _should_setup_noninteractive_scheduler "Process guard" "sh.aidevops.process-guard" "aidevops: process-guard" "aidevops-process-guard"; then
@@ -1937,6 +1967,11 @@ _setup_noninteractive_schedulers() {
 	# whenever the supervisor pulse is consented.
 	if _should_setup_noninteractive_pulse_merge_routine; then
 		_time_step "setup_pulse_merge_routine" _setup_run_noncritical_stage_bounded "Pulse merge routine setup" "${AIDEVOPS_SETUP_PULSE_MERGE_ROUTINE_TIMEOUT:-30}" setup_pulse_merge_routine
+		# t19030: a timeout kill can leave the merge scheduler unregenerated
+		# before the child reaches its own deferral.
+		if [[ "${_SETUP_NONCRITICAL_STAGE_TIMED_OUT:-false}" == "true" ]]; then
+			_schedulers_defer_template_hash "pulse merge routine setup timed out"
+		fi
 	fi
 	# t2932 (GH#21125): peer productivity monitor — adaptive cross-runner
 	# dispatch coordination, runs every 30 min.
@@ -1964,6 +1999,8 @@ _setup_noninteractive_schedulers() {
 	_time_step "setup_storage_hygiene" setup_storage_hygiene
 	# Migrate cron entries to systemd after schedulers are installed (GH#17695 Finding D)
 	_time_step "migrate_cron_to_systemd" migrate_cron_to_systemd
+	# t19030: only a full scheduler pass records the plist drift template hash.
+	_schedulers_record_template_hash
 	_time_step "$SETUP_STAGE_TABBY" setup_tabby
 	return 0
 }
@@ -2021,6 +2058,8 @@ _setup_post_setup_steps() {
 	setup_storage_hygiene
 	# Migrate cron entries to systemd after schedulers are installed (GH#17695 Finding D)
 	migrate_cron_to_systemd
+	# t19030: only a full scheduler pass records the plist drift template hash.
+	_schedulers_record_template_hash
 	setup_tabby
 	print_final_instructions
 

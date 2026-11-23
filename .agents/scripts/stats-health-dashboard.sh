@@ -132,7 +132,7 @@ _resolve_health_runner_user() {
 }
 
 #######################################
-# Activity guard — returns 0 to proceed, 1 to skip.
+# Activity guard — returns 0 to proceed, 1 to skip, 2 on lookup failure.
 # Active repositories refresh on the hourly stats cadence. Idle repositories
 # publish their transition to idle immediately, then refresh every hour by
 # default. This keeps the dashboard closely aligned with the local heartbeat
@@ -143,6 +143,8 @@ _check_health_issue_activity_guard() {
 	local repo_path="$2"
 	local runner_user="$3"
 	local health_issue_file="$4"
+	local runner_role="${5:-}" runner_prefix="${6:-}" role_label="${7:-}"
+	local role_display="${8:-}" canonical_identity="${9:-$runner_user}" identity_aliases="${10:-$runner_user}"
 
 	local guard_pr_count guard_assigned_count guard_auto_dispatch_count guard_worker_count
 	local _guard_fields=()
@@ -178,9 +180,16 @@ _check_health_issue_activity_guard() {
 
 	_HEALTH_ISSUE_ACTIVITY_STATE="$_HEALTH_ACTIVITY_STATE_IDLE"
 	if [[ ! -f "$health_issue_file" ]]; then
-		echo "[stats] Health issue: skipping creation for ${repo_slug} — no active PRs, assigned issues, auto-dispatch work, or workers" \
-			>>"${LOGFILE:-/dev/null}"
-		return 1
+		local existing_issue
+		existing_issue=$(_find_health_issue "$repo_slug" "$runner_user" "$runner_role" "$runner_prefix" \
+			"$role_label" "$role_display" "$health_issue_file" "$canonical_identity" "$identity_aliases")
+		[[ "$existing_issue" != "$_HEALTH_QUERY_FAILED_SENTINEL" ]] || return 2
+		if [[ -z "$existing_issue" ]]; then
+			echo "[stats] Health issue: skipping creation for ${repo_slug} — no active PRs, assigned issues, auto-dispatch work, or workers" \
+				>>"${LOGFILE:-/dev/null}"
+			return 3
+		fi
+		_cache_health_issue_number "$existing_issue" "$health_issue_file"
 	fi
 
 	local refresh_state_file="${health_issue_file}.refresh-state"
@@ -214,6 +223,19 @@ _check_health_issue_activity_guard() {
 	echo "[stats] Health issue: deferring unchanged idle dashboard for ${repo_slug} (operator=${runner_user} issue=#${dashboard_issue} reason=idle-refresh-interval interval=${idle_interval}s)" \
 		>>"${LOGFILE:-/dev/null}"
 	return 1
+}
+
+_record_health_activity_guard_result() {
+	local result="$1" stage_file="$2"
+	if [[ "$result" -eq 2 ]]; then
+		_record_health_repo_stage "$stage_file" "deferred-issue-resolution"
+	elif [[ "$result" -eq 3 ]]; then
+		# Confirmed absence of a dashboard (distinct from interval deferral).
+		_record_health_repo_stage "$stage_file" "skipped-no-dashboard"
+	else
+		_record_health_repo_stage "$stage_file" "skipped-idle"
+	fi
+	return 0
 }
 
 #######################################
@@ -401,8 +423,7 @@ _update_health_issue_for_repo() {
 	IFS='|' read -r runner_prefix role_label role_label_color role_label_desc role_display \
 		<<<"$role_config"
 
-	local slug_safe="${repo_slug//\//-}"
-	local cache_dir="${HOME}/.aidevops/logs"
+	local slug_safe="${repo_slug//\//-}" cache_dir="${HOME}/.aidevops/logs"
 	local canonical_identity_cache_safe
 	canonical_identity_cache_safe=$(_sanitize_runner_identity_for_cache "$canonical_identity")
 	local health_issue_file="${cache_dir}/health-issue-${canonical_identity_cache_safe}-${slug_safe}"
@@ -410,9 +431,12 @@ _update_health_issue_for_repo() {
 
 	_record_health_repo_stage "$stage_file" "activity-guard"
 	_HEALTH_ISSUE_ACTIVITY_STATE="$_HEALTH_ACTIVITY_STATE_ACTIVE"
-	if ! _check_health_issue_activity_guard \
-		"$repo_slug" "$repo_path" "$runner_user" "$health_issue_file"; then
-		_record_health_repo_stage "$stage_file" "skipped-idle"
+	local guard_result=0
+	_check_health_issue_activity_guard \
+		"$repo_slug" "$repo_path" "$runner_user" "$health_issue_file" \
+		"$runner_role" "$runner_prefix" "$role_label" "$role_display" "$canonical_identity" "$identity_aliases" || guard_result=$?
+	if [[ "$guard_result" -ne 0 ]]; then
+		_record_health_activity_guard_result "$guard_result" "$stage_file"
 		return 0
 	fi
 	local activity_state="${_HEALTH_ISSUE_ACTIVITY_STATE:-$_HEALTH_ACTIVITY_STATE_ACTIVE}"
@@ -574,8 +598,13 @@ _health_repo_times() {
 # A repo attempted but never refreshed (epoch 0) qualifies at once.
 # Prints the refresh epoch on success.
 _health_repo_needs_recovery() {
-	local slug="$1" runner="$2" epoch attempted age times
+	local slug="$1" runner="$2" epoch attempted age times cache stage=""
 	[[ -n "$slug" ]] || return 1
+	cache=$(_health_schedule_cache_file "$slug" "$runner")
+	if [[ ! -f "$cache" && -f "${cache}.stage" ]]; then
+		IFS='|' read -r stage _ <"${cache}.stage" || true
+		[[ "$stage" != "skipped-no-dashboard" ]] || return 1
+	fi
 	age=$(_stats_seconds "${STATS_HEALTH_RECOVERY_AGE_SECONDS:-86400}" 86400)
 	times=$(_health_repo_times "$slug" "$runner")
 	read -r epoch attempted <<<"$times"
@@ -641,8 +670,37 @@ _refresh_health_repo_bounded() {
 		recovery_timeout=$(_stats_seconds "${STATS_HEALTH_RECOVERY_REPO_TIMEOUT:-120}" 120)
 		[[ "$recovery_timeout" -le "$repo_timeout" ]] || repo_timeout="$recovery_timeout"
 	fi
+	# GH#38122: the priority (framework) dashboard is the largest repository and
+	# the primary health surface. The recovery lane only ever covers the second
+	# entry, so a priority data-gather slower than the base cap (~95s measured
+	# against 60s) never completed and the dashboard stayed stale for days.
+	if [[ -n "${_HEALTH_PRIORITY_SLUG:-}" && "$slug" == "$_HEALTH_PRIORITY_SLUG" ]]; then
+		local priority_timeout
+		priority_timeout=$(_stats_seconds "${STATS_HEALTH_PRIORITY_REPO_TIMEOUT:-180}" 180)
+		[[ "$priority_timeout" -le "$repo_timeout" ]] || repo_timeout="$priority_timeout"
+	fi
+	# GH#38631: a large repository whose data-gather fills the whole budget on
+	# consecutive passes gets a size-aware budget (base x (stops + 1), capped)
+	# so it finishes in a bounded number of recovery passes instead of
+	# starving forever at a fixed cap. Reset on success.
+	local timeouts=0 max_timeout escalated
+	[[ -f "${cache}.timeouts" ]] && { read -r timeouts <"${cache}.timeouts" || true; }
+	[[ "$timeouts" =~ ^[0-9]{1,3}$ ]] || timeouts=0
+	timeouts=$((10#$timeouts))
+	if [[ "$timeouts" -gt 0 ]]; then
+		max_timeout=$(_stats_seconds "${STATS_HEALTH_MAX_REPO_TIMEOUT:-300}" 300)
+		escalated=$((repo_timeout * (timeouts + 1)))
+		[[ "$escalated" -le "$max_timeout" ]] || escalated="$max_timeout"
+		[[ "$escalated" -le "$repo_timeout" ]] || repo_timeout="$escalated"
+	fi
 	_stats_run_bounded "$repo_timeout" \
 		"$_HEALTH_WORK_DEADLINE" _update_health_issue_for_repo "$@" "${cache}.stage" || result=$?
+	if [[ "$result" -eq 0 ]]; then
+		rm -f "${cache}.timeouts"
+	elif [[ "$result" -eq 124 && "$(($(date +%s) - started))" -ge "$((repo_timeout - 1))" && "$timeouts" -lt 100 ]]; then
+		# Only genuine per-repository budget stops count, not aggregate-deadline stops.
+		printf '%s\n' "$((timeouts + 1))" >"${cache}.timeouts" || true
+	fi
 	if [[ "$result" -ne 0 && -f "${cache}.stage" ]]; then
 		IFS='|' read -r stage _ <"${cache}.stage" || stage="unknown"
 		echo "[stats] Health issue update stopped for ${slug} (rc=${result} stage=${stage:-unknown} elapsed=$(($(date +%s) - started))s timeout=${repo_timeout}s)" >>"$LOGFILE"
@@ -676,6 +734,18 @@ _refresh_priority_health_issue() {
 		printf '%s 0\n' "$failures" >"${cache}.priority-backoff"
 		echo "[stats] Health dashboard priority refresh backed off for ${priority_slug}" >>"$LOGFILE"
 		return 75
+	fi
+	local _HEALTH_PRIORITY_SLUG="$priority_slug"
+	# GH#39772: cap the priority refresh so a slow framework dashboard cannot
+	# consume the whole shared window and starve every other dashboard. Keep a
+	# minimum non-priority reserve; skip the cap when the window is too small to
+	# give the priority repo at least 60s after reserving it.
+	local nonpriority_reserve priority_floor_seconds=60 now_epoch
+	nonpriority_reserve=$(_stats_seconds "${STATS_HEALTH_NONPRIORITY_RESERVE_SECONDS:-90}" 90)
+	now_epoch=$(date +%s)
+	if [[ "${_HEALTH_WORK_DEADLINE:-}" =~ ^[0-9]+$ ]] &&
+		[[ "$((_HEALTH_WORK_DEADLINE - nonpriority_reserve - now_epoch))" -ge "$priority_floor_seconds" ]]; then
+		local _HEALTH_WORK_DEADLINE=$((_HEALTH_WORK_DEADLINE - nonpriority_reserve))
 	fi
 	_refresh_health_repo_bounded "$priority_slug" "$priority_path" "" "" "" || update_ec=$?
 	if [[ "$update_ec" -ne 0 ]]; then

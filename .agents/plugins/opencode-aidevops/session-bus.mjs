@@ -38,6 +38,7 @@ import {
   deliverToIdle,
   pollInboxes,
   sendIdleNotices,
+  settleKeepaliveTurn,
 } from "./session-bus-delivery.mjs";
 
 export { processKind, parseRepoSlug, workerContext } from "./session-bus-presence.mjs";
@@ -225,6 +226,8 @@ class SessionBus {
     if (!this.tree.isKnownRoot(input?.sessionID)) return;
     const state = this.state(input.sessionID);
     state.tool = { name: String(input.tool || "tool").slice(0, 80), sinceMs: this.now() };
+    // t19047: keepalive progress counts work, never the bus tool (a bare reply is not progress).
+    if (input.tool !== BUS_TOOL) state.toolCalls = (state.toolCalls || 0) + 1;
     this.schedulePresence(state, false);
   }
 
@@ -270,6 +273,7 @@ class SessionBus {
       this.writePresence(state);
     }
     sendIdleNotices(this, sessionID, state);
+    settleKeepaliveTurn(this, sessionID, state);
     if (this.wakeable) await this.deliverToIdle(sessionID, state);
   }
 

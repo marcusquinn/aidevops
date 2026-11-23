@@ -249,9 +249,75 @@ AIDEVOPS_REPO_HEALTH_HELPER_SOURCE_ONLY=1
 # shellcheck source=/dev/null
 source "$HELPER"
 PLIST_OUT=$(_generate_plist "/tmp/aidevops-health" "/usr/bin:/bin")
-assert_contains "plist legacy call keeps environment path" "$PLIST_OUT" "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>"
+PLIST_PATH=${PLIST_OUT#*<key>PATH</key>}
+PLIST_PATH=${PLIST_PATH#*<string>}
+PLIST_PATH=${PLIST_PATH%%</string>*}
+PATH_OK=1
+SEEN_PATH=":"
+IFS=: read -r -a PATH_ENTRIES <<<"${PLIST_PATH}:sentinel"
+unset 'PATH_ENTRIES[${#PATH_ENTRIES[@]}-1]'
+for entry in "${PATH_ENTRIES[@]}"; do
+	if [[ "$SEEN_PATH" == *":$entry:"* ]]; then PATH_OK=0; fi
+	SEEN_PATH="${SEEN_PATH}${entry}:"
+done
+for entry in /usr/local/bin /usr/bin /bin /usr/sbin /sbin; do
+	if [[ -d "$entry" && "$SEEN_PATH" != *":$entry:"* ]]; then PATH_OK=0; fi
+done
+assert_equal "plist legacy call keeps unique environment and fallback paths" "$PATH_OK" "1"
 assert_contains "plist generation uses calendar schedule" "$PLIST_OUT" "<key>StartCalendarInterval</key>"
 assert_equal "shared accessor reads canonical version" "$(_project_config_read_version "$STALE_REPO/.aidevops.json")" "9.9.9"
+
+# Exercise the actual audit with deterministic GitHub responses and isolated HOME.
+gh() {
+	local action="$1"
+	shift
+	if [[ "$action" == issue ]]; then
+		if [[ "$*" == *'org/blocked'* ]]; then printf '[{"number":1}]\n'; else printf '[]\n'; fi
+	elif [[ "$*" == *'org/unknown'* ]]; then
+		printf 'HTTP 500\n' >&2; return 1
+	elif [[ "$*" == *'org/clean'* ]]; then
+		printf '{}\n'
+	else
+		printf 'HTTP 404\n' >&2; return 1
+	fi
+	return 0
+}
+mkdir -p "$TEST_ROOT/onboard" "$HOME/.aidevops/advisories"
+printf '{}\n' >"$TEST_ROOT/onboard/.aidevops.json"
+jq -n --arg path "$TEST_ROOT/onboard" --arg recent "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+	'{initialized_repos: [
+	 {slug:"org/recent",path:$path,initialized:$recent,pulse:false},
+	 {slug:"org/old",path:$path,initialized:"2000-01-01T00:00:00Z",pulse:false},
+	 {slug:"org/blocked",path:$path,pulse:false},
+	 {slug:"org/clean",path:$path,initialized:$recent,pulse:true},
+	 {slug:"org/clean-routines",path:$path,initialized:$recent,pulse:true,purpose:"routines"},
+	 {slug:"org/clean-profile",path:$path,initialized:$recent,pulse:true,priority:"profile"},
+	 {slug:"org/clean-init",path:$path,initialized:$recent,pulse:true,features:["planning"]},
+	 {slug:"org/clean-saved",path:$path,initialized:$recent,pulse:true,features:["planning"]},
+	 {slug:"org/unknown",path:$path,initialized:$recent,pulse:true}]}' >"$CONFIG_FILE"
+rm "$TEST_ROOT/onboard/.aidevops.json"
+mkdir -p "$HOME/.config/aidevops/project-config-backups"
+printf '{}\n' >"$HOME/.config/aidevops/project-config-backups/org--clean-saved.json"
+printf 'previous\n' >"$HOME/.aidevops/advisories/repo-onboarding-org-unknown.advisory"
+_check_onboarding_gaps 1
+assert_equal "onboarding dry run writes nothing" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-recent.advisory" && printf yes || printf no)" "no"
+_check_onboarding_gaps 0
+assert_contains "recent repository records pulse gap" "$(<"$HOME/.aidevops/advisories/repo-onboarding-org-recent.advisory")" "Pulse off"
+assert_contains "recent repository records config gap" "$(<"$HOME/.aidevops/advisories/repo-onboarding-org-recent.advisory")" "Missing config"
+assert_contains "recent repository records label gap" "$(<"$HOME/.aidevops/advisories/repo-onboarding-org-recent.advisory")" "Missing label"
+assert_equal "old unblocked repository has no advisory" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-old.advisory" && printf yes || printf no)" "no"
+assert_equal "old blocked repository has advisory" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-blocked.advisory" && printf yes || printf no)" "yes"
+assert_equal "unknown GitHub state preserves advisory" "$(<"$HOME/.aidevops/advisories/repo-onboarding-org-unknown.advisory")" "previous"
+assert_equal "routines repository without config is clean" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-clean-routines.advisory" && printf yes || printf no)" "no"
+assert_equal "profile repository without config is clean" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-clean-profile.advisory" && printf yes || printf no)" "no"
+assert_equal "ordinary repository without config is flagged" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-clean.advisory" && printf yes || printf no)" "yes"
+assert_contains "initialized repository without config names restore, not init" "$(<"$HOME/.aidevops/advisories/repo-onboarding-org-clean-init.advisory")" "aidevops project-config restore org/clean-init"
+assert_contains "repository with a saved init copy names the pending restore" "$(<"$HOME/.aidevops/advisories/repo-onboarding-org-clean-saved.advisory")" "aidevops update then restores the saved copy"
+printf '{}\n' >"$TEST_ROOT/onboard/.aidevops.json"
+printf 'stale\n' >"$HOME/.aidevops/advisories/repo-onboarding-org-clean.advisory"
+_check_onboarding_gaps 0
+assert_equal "clean advisory removed" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-clean.advisory" && printf yes || printf no)" "no"
+assert_contains "all report includes old candidates" "$(cmd_onboarding --all)" "org/old"
 
 printf '\nRan %d tests, %d failed.\n' "$((PASS + FAIL))" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -482,6 +482,40 @@ assert_allowed "allows rev-list query in linked worktree" "$LINKED" "git rev-lis
 LINKED_GIT_DIR=$(git -C "$LINKED" rev-parse --path-format=absolute --git-dir)
 assert_blocked "blocks linked-worktree metadata from mutating the canonical worktree" \
 	"git --git-dir='$LINKED_GIT_DIR' --work-tree='$REPO' reset --hard"
+assert_allowed "allows canonical git archive to stdout" "$REPO" "git archive --format=tar HEAD -- README.md"
+assert_blocked "blocks canonical git archive --output" "git archive --output='$REPO/out.tar' HEAD"
+assert_blocked "blocks canonical git archive -o" "git archive -o '$REPO/out.tar' HEAD"
+assert_blocked "blocks canonical git archive --exec option-value bypass" "git archive --exec -- --output=README.md HEAD"
+assert_blocked "blocks canonical git archive abbreviated --out" "git archive --out=README.md HEAD"
+assert_blocked "blocks canonical git stash show --output" "git stash show --output=README.md"
+assert_allowed "allows canonical git stash list" "$REPO" "git stash list"
+assert_allowed "allows canonical git stash show" "$REPO" "git stash show"
+assert_blocked "blocks canonical git stash push" "git stash push -m x"
+assert_blocked "blocks canonical bare git stash" "git stash"
+assert_blocked "blocks canonical git stash drop" "git stash drop"
+assert_blocked "blocks canonical git worktree repair" "git worktree repair"
+REPAIR_OUTPUT=$(python3 "$GUARD" --cwd "$REPO" --command "git worktree repair" 2>&1 || true)
+if [[ "$REPAIR_OUTPUT" == *"canonical-recovery-helper.sh"*" repair-worktrees"* ]]; then
+	pass "worktree repair block message names the recovery helper"
+else
+	fail "worktree repair block message names the recovery helper (output=$REPAIR_OUTPUT)"
+fi
+# GH#39722: direct canonical gc stays blocked and points to the audited helper.
+assert_blocked "blocks canonical git gc" "git gc --auto"
+assert_blocked "blocks canonical git maintenance run" "git maintenance run --task=gc"
+GC_OUTPUT=$(python3 "$GUARD" --cwd "$REPO" --command "git gc --auto" 2>&1 || true)
+if [[ "$GC_OUTPUT" == *"canonical-recovery-helper.sh"*" maintenance-gc"* ]]; then
+	pass "canonical gc block message names the maintenance-gc helper"
+else
+	fail "canonical gc block message names the maintenance-gc helper (output=$GC_OUTPUT)"
+fi
+if [[ "$REPAIR_OUTPUT" != *"maintenance-gc"* ]]; then
+	pass "non-maintenance block message omits maintenance-gc guidance"
+else
+	fail "non-maintenance block message omits maintenance-gc guidance"
+fi
+assert_allowed "allows the maintenance-gc recovery helper path" "$REPO" \
+	"'${RECOVERY_HELPER}' maintenance-gc --repo '$REPO' --apply"
 
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
 DEFAULT_BRANCH=$(
@@ -624,12 +658,50 @@ fi
 SLOW_GIT="${TEST_ROOT}/slow-git"
 printf '#!/usr/bin/env bash\nsleep 6\n' >"$SLOW_GIT"
 chmod +x "$SLOW_GIT"
-TIMEOUT_OUTPUT=$(python3 "$GUARD" --cwd "$REPO" --argv-json '["status"]' --real-git "$SLOW_GIT" 2>&1)
+TIMEOUT_OUTPUT=$(python3 "$GUARD" --cwd "$REPO" --argv-json '["add","x"]' --real-git "$SLOW_GIT" 2>&1)
 TIMEOUT_RC=$?
 if [[ "$TIMEOUT_RC" -eq 42 && "$TIMEOUT_OUTPUT" == *"native Git repository probe timed out"* && "$TIMEOUT_OUTPUT" != *"Traceback"* ]]; then
 	pass "native Git probe timeout fails closed without traceback"
 else
 	fail "native Git probe timeout is bounded (rc=$TIMEOUT_RC output=$TIMEOUT_OUTPUT)"
+fi
+
+# Read-only subcommands are allowed in every repository, so they skip the probe.
+READONLY_RC=0
+python3 "$GUARD" --cwd "$REPO" --argv-json '["status"]' --real-git "$SLOW_GIT" >/dev/null 2>&1 || READONLY_RC=$?
+if [[ "$READONLY_RC" -eq 0 ]]; then
+	pass "read-only subcommand is allowed without a repository probe"
+else
+	fail "read-only subcommand skips the repository probe (rc=$READONLY_RC)"
+fi
+
+POSITIONAL_RC=0
+python3 "$GUARD" --cwd "$REPO" --real-git "$NATIVE_GIT" -- status --short >/dev/null 2>&1 || POSITIONAL_RC=$?
+if [[ "$POSITIONAL_RC" -eq 0 ]]; then
+	pass "guard accepts positional argv after -- (allowed)"
+else
+	fail "guard accepts positional argv after -- (rc=$POSITIONAL_RC)"
+fi
+POSITIONAL_RC=0
+python3 "$GUARD" --cwd "$REPO" --real-git "$NATIVE_GIT" -- switch --detach main >/dev/null 2>&1 || POSITIONAL_RC=$?
+if [[ "$POSITIONAL_RC" -eq 42 ]]; then
+	pass "guard blocks canonical mutation via positional argv"
+else
+	fail "guard blocks canonical mutation via positional argv (rc=$POSITIONAL_RC)"
+fi
+
+BARE_REPO="${TEST_ROOT}/bare-probe.git"
+"$NATIVE_GIT" init -q --bare "$BARE_REPO"
+NONREPO_DIR="${TEST_ROOT}/not-a-repo"
+mkdir -p "$NONREPO_DIR"
+BARE_RC=0
+python3 "$GUARD" --cwd "$BARE_REPO" --real-git "$NATIVE_GIT" -- status >/dev/null 2>&1 || BARE_RC=$?
+NONREPO_RC=0
+python3 "$GUARD" --cwd "$NONREPO_DIR" --real-git "$NATIVE_GIT" -- status >/dev/null 2>&1 || NONREPO_RC=$?
+if [[ "$BARE_RC" -eq 0 && "$NONREPO_RC" -eq 0 ]]; then
+	pass "rev-parse fallback handles bare repo and non-repository cwd"
+else
+	fail "rev-parse fallback (bare rc=$BARE_RC non-repo rc=$NONREPO_RC)"
 fi
 
 LITERAL_REPO="${TEST_ROOT}/repo[1]"

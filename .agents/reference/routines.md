@@ -19,6 +19,50 @@ success|failure|cancelled`. A single platform scheduler calls `run-due`, so
 queued jobs survive reboot without one service or sleeper per job. Prompt
 material, dispatch paths, and logs remain private with restrictive modes.
 
+## Follow-ups and later checks
+
+Use a one-shot recheck job when a session finishes what it can now but an
+outcome depends on time: a DNS/SSL change propagating, an upstream PR review,
+a quota reset, a 24-hour incident recheck. Do not leave it as "check back
+later" in prose, a sleeping process, or a user reminder.
+
+1. Record the check in Git first: a comment on the tracking issue (or a
+   `TODO.md` entry) naming the success criteria and where evidence goes. The
+   scheduled worker is a fresh session; it does not resume the current
+   conversation, so that record plus the prompt file is its only context.
+2. Write a private prompt file (outside Git, mode 600) that is self-contained:
+   target repo/issue/PR, exact commands to verify, success criteria, where
+   to report, and what to do when the criteria are met (comment, close, file
+   the follow-up). Never put secrets in it; name the secret, not its value.
+3. Schedule it with a bounded recheck policy:
+
+   ```bash
+   aidevops schedule once --after 24h --name "recheck-<repo>-<N>" \
+     --dir <repo-checkout> --prompt-file <private-prompt-file> \
+     --recheck-every 12h --max-checks 4 --until <YYYY-MM-DDTHH:MM:SSZ>
+   ```
+
+   Names allow letters, digits, spaces, `.`, `_` and `-` only (no `#` or `/`);
+   put the issue reference in the prompt and the tracking comment.
+
+4. Report the job ID on the tracking issue so the next session can find it
+   with `aidevops schedule status <JOB_ID>`.
+
+Each run receives the prompt plus a check contract naming its job. Criteria
+met: the worker reports evidence and ends; the job closes as `success`. Not
+met yet: the worker runs `aidevops schedule snooze <JOB_ID> --reason "<what is
+unmet>"` (optionally `--after 6h`) and ends; the runner queues the next check.
+Failed runs retry on the same interval. When checks or the deadline run out,
+the job ends as `failure`/`recheck_exhausted` and leaves a session-start
+advisory (`deferred-job-<JOB_ID>`) with the last unmet reason, so nothing
+fails silently. Rechecks require `--prompt-file` or `--worktree` (minimum
+interval 5m, default 6 checks, max 100); manual `--issue` dispatch cannot
+report a snooze.
+
+Prefer Pulse instead when the condition is queue state Pulse already watches
+(open PR checks, review gates, issue labels), and a recurring routine when
+the check never ends.
+
 ## Format
 
 ```markdown
@@ -181,6 +225,56 @@ owner/repo` before attempting the normal guarded merge. Existing routines can
 adopt this convention by creating/reusing a maintainer-authored anchor and
 updating their persisted SOP/prompt once; no new issue is required each run.
 
+Badge sync r921 uses `<!-- aidevops:routine-pr:badges-sync -->` instead of an
+anchor (GH#39785), retaining `origin:worker`. The marker selects a live diff-scope
+policy, not trust: the author needs write/maintain/admin permission, the head
+must be in the base repository on `chore/badges-sync-*`, and the complete diff
+must touch only declared outputs. README edits are confined byte-for-byte to
+the badge block; the metrics workflow must equal the canonical rendered caller
+and pin a framework commit reachable from main. Missing evidence, API errors
+and full/truncated file pages fail closed. CI, review and hold gates still apply.
+The verdict is bound to the head it checked: Pulse re-runs it pinned to the head
+it merges, and full-loop pins the admitted head for the merge transport.
+
+Each badge sync run calls `routine-log-helper.sh retire-anchor badges-sync
+--repo SLUG`. It marks an unreferenced legacy anchor `routine-anchor-retiring`,
+removes `persistent` and closes it as not planned. Any open PR body mentioning
+`#N` (`Ref`, `For`, closing keywords) keeps it open. A reference that appears
+during the close reopens it with `persistent`; the marker is cleared only after
+retirement or restoration completes, so a failed step is retried in any state.
+Legacy PRs still use the existing linked-issue trust route unchanged.
+
+Workflow sync PRs use `<!-- aidevops:routine-pr:sync-workflows -->`
+(GH#39793) when the run is headless, has no explicit `--issue`, touches one
+managed caller (`issue-sync`, `review-bot-gate`, `review-bot-gate-fork-review`,
+`maintainer-gate`, `loc-badge`, `issue-triage-gate`; never `linked-issue-check`
+or CONTRIBUTING.md), uses a `chore/workflow-sync-*` branch and pins a 40-hex
+ref. The gate keeps every badge-sync check (write permission, same-repo head,
+complete SHA-pinned file list, regular blobs, no hold, head pinning) and also
+requires the PR base to be the repository default branch. It then re-renders
+the caller byte-for-byte in `routine-pr-content.py` from the template at the
+pinned ref in `marcusquinn/aidevops` (reachable from main, and not older than
+the base caller's pin when it has one), the declared registry policy
+(`workflow_reusable_repo`, `runner`, mirror helper provenance and secret
+injection), the base file's runner and the default-branch filter. Nothing from
+the PR is executed; any mismatch, unknown workflow, unreachable ref, pin
+downgrade or missing evidence denies.
+
+The publisher and the gate share one decision, `_routine_sync_render_admits`
+in `routine-pr-scope-lib.sh` (GH#39830). Before choosing the marker, the
+publisher runs it over the exact bytes it will write and the caller at the PR
+merge base. The publisher renders from the deployed template, so a template
+change not yet in the pinned ref fails this check and the run keeps the anchor
+identity instead of opening a marker PR the gate would reject. When such a run
+pushes to an open exact-branch marker PR, the helper replaces the marker with
+the anchor `Ref` line, because `ensure-pr-anchor` skips marker bodies. Runs that cannot
+meet these conditions (for example a floating `@main` pin) keep
+`ensure-anchor` / `ensure-pr-anchor`. The sync helper never retires its anchor
+automatically: those runs still need it, and `ensure-anchor` reuses only an
+open anchor, so per-run retirement would create a new anchor each cycle.
+Maintainer-defined agent routines also retain their `create-issue` tracking
+anchors.
+
 ## Scheduler ownership
 
 Enabled `repeat:` routines in registered repositories are normally evaluated by
@@ -208,7 +302,8 @@ their own service logs rather than duplicate Pulse retries.
 
 r922 Storage hygiene is the scheduled form of `aidevops cleanup all --apply`
 (`scripts/storage-cleanup-helper.sh`); run `aidevops cleanup` for current store
-sizes and whether its scheduler is installed.
+sizes and whether its scheduler is installed. Its `gitlocks` store removes stale,
+unheld Git locks and pack temporaries in canonical repos (GH#39722).
 
 Platform wrappers retain per-routine tracking state under
 `~/.aidevops/.agent-workspace/cron/<id>/routine-state.json`. Successful updates

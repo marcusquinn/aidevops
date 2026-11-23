@@ -185,6 +185,30 @@ _has_live_checkpoint_continuation_for_issue() {
 }
 
 #######################################
+# Run one dedup layer as a timed dispatch sub-stage (GH#37883). The layer's
+# exit status is returned unchanged and its stdout (the block signal) passes
+# through untouched; recording writes only to the stage log. Callers that did
+# not load dispatch-stage-instrument.sh run the layer untimed. Locals use a
+# _dlt_ prefix so layers reading caller-scoped variables see no shadowing.
+# Args: issue number, repo slug, stage name, command and arguments
+#######################################
+_dedup_layer_timed() {
+	local _dlt_issue="$1" _dlt_repo="$2" _dlt_stage="$3"
+	shift 3
+	local _dlt_t0="" _dlt_rc=0 _ds_stage_attempt_id=""
+	if ! declare -F _ds_record >/dev/null 2>&1 || ! declare -F _ds_now_ns >/dev/null 2>&1 ||
+		! declare -F _ds_stage_start >/dev/null 2>&1; then
+		"$@" || _dlt_rc=$?
+		return "$_dlt_rc"
+	fi
+	_dlt_t0=$(_ds_now_ns)
+	_ds_stage_start "$_dlt_issue" "$_dlt_repo" "$_dlt_stage" "$_dlt_t0" _ds_stage_attempt_id
+	"$@" || _dlt_rc=$?
+	_ds_record "$_dlt_issue" "$_dlt_repo" "$_dlt_stage" "$_dlt_t0" "$_ds_stage_attempt_id"
+	return "$_dlt_rc"
+}
+
+#######################################
 # Thin orchestrator — runs read-only dedup layers in order.
 # Byte-for-byte behavioural equivalent of the pre-GH#18654 single-function
 # implementation. Layers return 0 to block or 1 to continue; Layer 4 returns 2
@@ -200,11 +224,18 @@ check_dispatch_dedup() {
 	local issue_title="${4:-}"
 	local self_login="${5:-}"
 
-	_dedup_layer1_ledger_check "$issue_number" "$repo_slug" && return 0
-	_dedup_layer2_process_match "$issue_number" "$repo_slug" && return 0
-	_dedup_layer3_title_match "$title" && return 0
+	# GH#37883: each layer is a dedup.layer* sub-stage of dedup.7_layers.
+	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer1_ledger" \
+		_dedup_layer1_ledger_check "$issue_number" "$repo_slug" && return 0
+	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer2_process" \
+		_dedup_layer2_process_match "$issue_number" "$repo_slug" && return 0
+	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer3_title" \
+		_dedup_layer3_title_match "$title" && return 0
+	# GH#38770: audit alerts are dispatchable only on the producing runner.
+	_dedup_audit_alert_locality "$issue_number" "$repo_slug" "$issue_title" "$self_login" && return 0
 	local _pr_evidence_rc=0
-	_dedup_layer4_pr_evidence "$issue_number" "$repo_slug" "$issue_title" || _pr_evidence_rc=$?
+	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer4_pr_evidence" \
+		_dedup_layer4_pr_evidence "$issue_number" "$repo_slug" "$issue_title" || _pr_evidence_rc=$?
 	if [[ "$_pr_evidence_rc" -eq 0 ]]; then
 		return 0
 	fi
@@ -219,8 +250,10 @@ check_dispatch_dedup() {
 	# dispatch_max a distinct benign rc so the stage wrapper suppresses generic
 	# "Stage failed" noise and refill loops can skip this candidate for the
 	# current pulse cycle (GH#23541).
-	_dedup_layer5_dispatch_comment "$issue_number" "$repo_slug" "$self_login" && return 3
-	_dedup_layer6_assignee_and_stale "$issue_number" "$repo_slug" "$self_login" && return 3
+	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer5_dispatch_comment" \
+		_dedup_layer5_dispatch_comment "$issue_number" "$repo_slug" "$self_login" && return 3
+	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer6_assignee" \
+		_dedup_layer6_assignee_and_stale "$issue_number" "$repo_slug" "$self_login" && return 3
 	[[ "$_pr_evidence_rc" -eq 2 ]] && return 0
 
 	return 1
@@ -583,32 +616,57 @@ _auto_dispatch_lock_required() {
 # Reconcile conversation locks for every visible auto-dispatch issue,
 # including blocked and queued work that cannot reach the launch path yet.
 # Only markers owned by this mechanism may trigger an unlock.
+#
+# GH#38274: one jq pass classifies every issue (policy as in
+# _auto_dispatch_lock_required). A per-issue jq/marker subshell cost 3.4s for
+# 505 auto-dispatch issues and pushed large repositories past their census
+# budget. Issues already locked with a recorded marker need no work, so they
+# no longer rewrite the marker or log a line every cycle.
+# Row policy column: 1 = lock required, x = no-auto-dispatch (never unlock),
+# 0 = neither (unlock only a marker this mechanism owns).
 #######################################
 reconcile_auto_dispatch_issue_locks() {
 	local slug="$1"
 	local issue_json="$2"
-	local issue_num="" marker="" labels="" labels_csv="" lock_snapshot="" lock_states="" locked_state=""
+	local issue_num="" marker="" marker_prefix="" policy="" lock_snapshot="" lock_states="" locked_state="" rows=""
 	[[ -n "$slug" && -n "$issue_json" ]] || return 1
 	lock_snapshot=$(_read_issue_conversation_locks_batch "$slug" "$issue_json") || return 1
 	lock_states=$(printf '%s' "$lock_snapshot" | jq -ce '
 		map({key: (.number | tostring), value: .locked}) | from_entries
 	' 2>/dev/null) || return 1
+	rows=$(printf '%s' "$issue_json" | jq -r --argjson states "$lock_states" \
+		--arg auto_dispatch_label "$_PULSE_DISPATCH_AUTO_LABEL" '
+		.[] | ([.labels[]? | .name? // .]) as $labels | (.number | tostring) as $issue |
+		(($labels | index("no-auto-dispatch")) != null) as $opted_out |
+		[$issue,
+			(if (($labels | index($auto_dispatch_label)) != null and ($opted_out | not)) then "1"
+			elif $opted_out then "x" else "0" end),
+			(if ($states | has($issue)) then ($states[$issue] | tostring) else "unknown" end)
+		] | @tsv
+	' 2>/dev/null) || return 1
+	marker_prefix=$(_auto_dispatch_lock_marker "" "$slug") || return 1
 
-	while IFS=$'\t' read -r issue_num labels; do
+	while IFS=$'\t' read -r issue_num policy locked_state; do
 		[[ "$issue_num" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || continue
-		marker=$(_auto_dispatch_lock_marker "$issue_num" "$slug") || continue
-		labels_csv=",${labels},"
-		if _auto_dispatch_lock_required "$labels"; then
-			locked_state=$(printf '%s' "$lock_states" | jq -r --arg issue_num "$issue_num" \
-				'if has($issue_num) then .[$issue_num] | tostring else "unknown" end' 2>/dev/null) || return 1
-			[[ "$locked_state" == "true" || "$locked_state" == "$_PULSE_DISPATCH_FALSE" ]] || return 1
+		marker="${marker_prefix}${issue_num}"
+		case "$policy" in
+		1)
+			case "$locked_state" in
+			true) [[ ! -f "$marker" ]] || continue ;;
+			"$_PULSE_DISPATCH_FALSE") ;;
+			*) return 1 ;;
+			esac
 			_apply_issue_conversation_lock_state "$issue_num" "$slug" resolved "$locked_state" || return 1
-		elif [[ -f "$marker" && "$labels_csv" != *,no-auto-dispatch,* ]]; then
+			;;
+		0)
+			[[ -f "$marker" ]] || continue
 			gh issue unlock "$issue_num" --repo "$slug" >/dev/null 2>&1 || return 1
 			rm -f "$marker" 2>/dev/null || return 1
 			echo "[pulse-wrapper] Unlocked #${issue_num} in ${slug} after auto-dispatch removal (GH#30180)" >>"$LOGFILE"
-		fi
-	done < <(printf '%s' "$issue_json" | jq -r '.[] | [(.number | tostring), ([.labels[]? | .name? // .] | join(","))] | @tsv' 2>/dev/null)
+			;;
+		*) ;;
+		esac
+	done <<<"$rows"
 
 	return 0
 }

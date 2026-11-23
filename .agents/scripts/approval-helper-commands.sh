@@ -11,7 +11,6 @@
 
 [[ -n "${_APPROVAL_HELPER_COMMANDS_LOADED:-}" ]] && return 0
 _APPROVAL_HELPER_COMMANDS_LOADED=1
-readonly _APPROVAL_COMMANDS_SETUP_HINT="  Run: sudo aidevops approve setup"
 
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	_approval_commands_lib_path="${BASH_SOURCE[0]%/*}"
@@ -20,8 +19,20 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _approval_commands_lib_path
 fi
 
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/shared-approval-cli.sh"
+fi
+
 _approval_commands_blank_line() {
 	printf '\n'
+	return 0
+}
+
+_approval_commands_setup_hint() {
+	printf '  Run: %s approve setup\n' "$(approval_cli_prefix)"
 	return 0
 }
 
@@ -38,7 +49,7 @@ cmd_status() {
 		echo "  Fingerprint: $(ssh-keygen -lf "$APPROVAL_PUB" 2>/dev/null || echo "unknown")"
 	else
 		_print_warn "No approval public key found"
-		echo "$_APPROVAL_COMMANDS_SETUP_HINT"
+		_approval_commands_setup_hint
 	fi
 
 	_approval_commands_blank_line
@@ -51,11 +62,11 @@ cmd_status() {
 		else
 			_print_warn "Private key directory permissions may be insecure (owner=$owner, mode=$perms)"
 			echo "  Expected: owner=root, mode=700"
-			echo "$_APPROVAL_COMMANDS_SETUP_HINT"
+			_approval_commands_setup_hint
 		fi
 	else
 		_print_warn "No private key directory found"
-		echo "$_APPROVAL_COMMANDS_SETUP_HINT"
+		_approval_commands_setup_hint
 	fi
 
 	_approval_commands_blank_line
@@ -65,6 +76,8 @@ cmd_status() {
 # ── Help ─────────────────────────────────────────────────────────────────────
 
 cmd_help() {
+	local approve_cli
+	approve_cli=$(approval_cli_prefix)
 	echo "approval-helper.sh — Cryptographic approval gate covering external issues/PRs"
 	_approval_commands_blank_line
 	echo "Commands (require sudo):"
@@ -76,6 +89,8 @@ cmd_help() {
 	echo "                             --withdraw signs a decline: grants nothing, releases the hold"
 	echo "  permissions batch --withdraw [--all-blocked] [kind:number:perm-<id>...] [slug]"
 	echo "                             Withdraw many requests with one confirmation (never grants)"
+	echo "  marketing-plan <plan.json> | --rollback <receipt.json>"
+	echo "                             Approve one reviewed marketing action plan for 15 minutes"
 	_approval_commands_blank_line
 	echo "Commands (no sudo needed):"
 	echo "  verify [issue|pr] <number> [slug] [--expect-head SHA] [--require-authority]"
@@ -85,13 +100,14 @@ cmd_help() {
 	echo "  help                       Show this help"
 	_approval_commands_blank_line
 	echo "Examples:"
-	echo "  sudo aidevops approve setup"
-	echo "  sudo aidevops approve issue 17438 <owner/repo>"
-	echo "  sudo aidevops approve issue 17438 17440 17442 <owner/repo>"
-	echo "  sudo aidevops approve pr 17439 17441 <owner/repo>"
-	echo "  sudo aidevops approve batch issue:17438 pr:17439 pr:17441 <owner/repo>"
-	echo "  sudo aidevops approve permissions issue 17438 <owner/repo> --request perm-0123456789abcdef"
-	echo "  sudo aidevops approve permissions batch --withdraw --all-blocked <owner/repo>"
+	echo "  ${approve_cli} approve setup"
+	echo "  ${approve_cli} approve issue 17438 <owner/repo>"
+	echo "  ${approve_cli} approve issue 17438 17440 17442 <owner/repo>"
+	echo "  ${approve_cli} approve pr 17439 17441 <owner/repo>"
+	echo "  ${approve_cli} approve batch issue:17438 pr:17439 pr:17441 <owner/repo>"
+	echo "  ${approve_cli} approve permissions issue 17438 <owner/repo> --request perm-0123456789abcdef"
+	echo "  ${approve_cli} approve permissions batch --withdraw --all-blocked <owner/repo>"
+	echo "  ${approve_cli} approve marketing-plan /path/to/reviewed-plan.json"
 	echo "  aidevops approve verify 17438"
 	echo "  aidevops approve verify pr 17439 <owner/repo> --expect-head <sha>"
 	_approval_commands_blank_line

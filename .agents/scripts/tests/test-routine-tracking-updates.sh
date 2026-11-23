@@ -164,6 +164,7 @@ test_linux_core_scheduler_commands_are_logged() {
 		return 0
 	}
 	_SCHEDULER_CAPTURED_COMMAND=""
+	_SCHEDULER_CAPTURED_SAMPLER_COMMAND=""
 	_install_scheduler_linux() {
 		local service_name="$1"
 		local cron_tag="$2"
@@ -177,6 +178,13 @@ test_linux_core_scheduler_commands_are_logged() {
 		local run_at_load="${10}"
 		local low_priority="${11}"
 		: "$service_name" "$cron_tag" "$cron_schedule" "$interval_sec" "$log_file" "$env_vars" "$success_message" "$failure_message" "$run_at_load" "$low_priority"
+		# t18860 added the per-minute screen-activity sampler after the r909
+		# snapshot in setup_screen_time_snapshot; keep it apart so it cannot
+		# overwrite the routine command under test (GH#38475).
+		if [[ "$service_name" == "aidevops-screen-activity-sampler" ]]; then
+			_SCHEDULER_CAPTURED_SAMPLER_COMMAND="$exec_command"
+			return 0
+		fi
 		_SCHEDULER_CAPTURED_COMMAND="$exec_command"
 		return 0
 	}
@@ -187,6 +195,7 @@ test_linux_core_scheduler_commands_are_logged() {
 	local profile_command="$_SCHEDULER_CAPTURED_COMMAND"
 	setup_screen_time_snapshot
 	local screen_command="$_SCHEDULER_CAPTURED_COMMAND"
+	local sampler_command="$_SCHEDULER_CAPTURED_SAMPLER_COMMAND"
 	HOME="$orig_home"
 	restore_scheduler_helper_mocks
 	unset -f uname
@@ -199,6 +208,11 @@ test_linux_core_scheduler_commands_are_logged() {
 	# shellcheck disable=SC2016 # the generated command must defer variable expansion to runtime.
 	if [[ "$screen_command" != *'update "r909" --status "$status" --duration "$duration"'* ]]; then
 		print_result "screen-time scheduler command updates r909 metrics" 1 "$screen_command"
+		return 0
+	fi
+	# The silent per-minute sampler must stay outside r909 routine metrics.
+	if [[ "$sampler_command" != *'screen-time-helper.sh" sample'* || "$sampler_command" == *'"r909"'* ]]; then
+		print_result "screen-activity sampler stays outside r909 metrics" 1 "$sampler_command"
 		return 0
 	fi
 	print_result "linux core scheduler commands update routine metrics" 0

@@ -48,6 +48,9 @@ test("caller context preserves its live runtime PID and fences other sessions", 
     OPENCODE_SESSION_ID: "ses_caller_fixture",
     AIDEVOPS_OPENCODE_SESSION_ID: "ses_caller_fixture",
     FULL_LOOP_HEADLESS: "false",
+    // Fixture repos live in tmp; the session must count as inside the Git workspace.
+    AIDEVOPS_GIT_WORKSPACE_ROOT: root,
+    AIDEVOPS_SESSION_PROJECT_DIR: root,
   };
   const saved = Object.fromEntries(Object.keys(overrides).map((key) => [key, process.env[key]]));
   Object.assign(process.env, overrides);
@@ -219,13 +222,16 @@ test("pre-edit tool validates the explicitly targeted Git worktree", async () =>
   const otherLinked = join(root, "other-linked");
   const nonGit = join(root, "not-git");
   const injectionMarker = join(root, "injected");
-  const keys = ["OPENCODE_PID", "OPENCODE_PID_START_IDENTITY", "OPENCODE_SESSION_ID"];
+  const keys = ["OPENCODE_PID", "OPENCODE_PID_START_IDENTITY", "OPENCODE_SESSION_ID",
+    "AIDEVOPS_GIT_WORKSPACE_ROOT", "AIDEVOPS_SESSION_PROJECT_DIR"];
   const saved = keys.map(key => process.env[key]);
 
   try {
     process.env.OPENCODE_PID = String(process.pid);
     process.env.OPENCODE_PID_START_IDENTITY = processStartIdentity(process.pid);
     process.env.OPENCODE_SESSION_ID = "ses_target_fixture";
+    process.env.AIDEVOPS_GIT_WORKSPACE_ROOT = root;
+    process.env.AIDEVOPS_SESSION_PROJECT_DIR = root;
     mkdirSync(repo);
     mkdirSync(nonGit);
     git(repo, ["init", "--initial-branch=main"]);

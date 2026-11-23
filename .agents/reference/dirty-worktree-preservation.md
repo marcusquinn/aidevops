@@ -344,3 +344,29 @@ at the next apply pass, any other archive 30 days after capture
 (`AIDEVOPS_WORKTREE_PRODUCER_ARCHIVE_TTL_DAYS`). It also retires the matching
 `.producer-transactions/<id>/` journal. Create `<archive>/.keep` to retain one
 indefinitely. Details: `scripts/worktree-archive-helper.md` "Retention".
+
+## Stale Git locks and canonical gc
+
+Crashed Git processes leave `*.lock` files in the shared Git directory; while a
+reflog lock remains, automatic gc fails with `failed to run reflog`. The guard
+blocks direct canonical `git gc`/`git maintenance`; use the audited path
+(GH#39722), dry run first:
+
+```bash
+.agents/scripts/canonical-recovery-helper.sh repair-stale-locks --repo /path/to/canonical-checkout
+.agents/scripts/canonical-recovery-helper.sh maintenance-gc --repo /path/to/canonical-checkout --apply
+```
+
+Scope is the common Git directory: `refs/**.lock`, `logs/refs/**.lock`,
+`packed-refs.lock`, the canonical `index.lock`, a `gc.pid` naming a dead local
+PID, and `objects/pack` `tmp_*`/`.tmp-*` files. A candidate must be a regular
+file owned by the current user whose real parent stays inside the common
+directory, older than `--min-age-minutes` (default 60; pack temporaries use
+`--tmp-min-age-days`, default 2), with no `lsof`/`fuser` holder and no live Git
+process for this repository that started before the file was written. A failed
+process listing or holder check keeps the file. `--apply` re-checks every gate
+under the canonical recovery lock, re-stats the file just before removal, and
+records one audit entry per file (relative path, size, mtime, hashed repository
+ID).
+`maintenance-gc --apply` then runs foreground `git gc --auto`. The r922
+`gitlocks` store runs `repair-stale-locks` for every registered canonical repo.

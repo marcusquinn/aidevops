@@ -48,6 +48,9 @@ detect_session_origin() { printf '%s' 'worker'; return 0; }
 _gh_audit_fetch_issue_state_json() { printf '%s\n' '{"capture_status":"ok"}'; return 0; }
 _gh_audit_fetch_pr_state_json() { printf '%s\n' '{"capture_status":"ok"}'; return 0; }
 _gh_audit_record_op() { return 0; }
+# Post-create origin provenance has its own coverage; this suite checks only
+# whether the privacy guard lets a write reach transport.
+_gh_create_pr_enforce_origin_postcondition() { return 0; }
 
 PASS=0
 FAIL=0
@@ -68,13 +71,15 @@ assert_blocked() {
 	return 0
 }
 
-assert_blocked 'public PR create blocks private person' gh_create_pr --repo public/repo --title 'Safe title' --body 'Synthetic Private Person'
+# Worker PR bodies need one explicit identity line, so the privacy guard (not
+# the identity rule) is what these PR-create cases exercise.
+assert_blocked 'public PR create blocks private person' gh_create_pr --repo public/repo --title 'Safe title' --body $'Synthetic Private Person\n\nFor #1'
 assert_blocked 'public issue comment blocks private client' gh_issue_comment 1 --repo public/repo --body 'Synthetic Private Client'
 assert_blocked 'public issue edit blocks private repository' gh_issue_edit_safe 1 --repo public/repo --body 'private/repo'
 assert_blocked 'unknown target fails closed' gh_pr_comment 1 --repo unknown/repo --body 'ordinary content'
 
 reset_calls
-if gh_create_pr --repo public/repo --title 'Safe title' --body 'ordinary content' >/dev/null 2>&1 && grep -q '^pr create' "$GH_CALLS_FILE"; then
+if gh_create_pr --repo public/repo --title 'Safe title' --body $'ordinary content\n\nFor #1' >/dev/null 2>&1 && grep -q '^pr create' "$GH_CALLS_FILE"; then
 	pass 'public allowlisted content reaches transport'
 else
 	fail 'public allowlisted content reaches transport'

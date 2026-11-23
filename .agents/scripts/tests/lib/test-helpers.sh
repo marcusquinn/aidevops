@@ -193,7 +193,10 @@ _test_copy_shared_deps() {
 
 	# Recursively discover sub-library deps. Split wrapper modules can source
 	# further shared-gh-wrappers-*.sh modules, so a single second pass leaves
-	# deeper dependencies absent from hermetic test sandboxes.
+	# deeper dependencies absent from hermetic test sandboxes. Unconditional
+	# file-scope `source "${<X>_DIR}/<name>.sh"` loads of any same-directory
+	# library (e.g. gh-closing-reference-lib.sh, GH#38342) are followed too;
+	# indented or `[[ -r ... ]] &&`-guarded optional loads stay excluded.
 	local dep_queue=()
 	while IFS= read -r sibling; do
 		[[ -n "$sibling" ]] && dep_queue+=("$sibling")
@@ -217,6 +220,14 @@ _test_copy_shared_deps() {
 				sub(/.*\//, "", line)
 				sub(/".*/, "", line)
 				if (line != "" && (line ~ /^shared-gh-wrappers-/ || line == "privacy-guard-helper.sh")) print line
+				next
+			}
+			/^source[[:space:]]+"\$\{?[A-Za-z_]*_DIR\}?\/[a-z0-9][a-z0-9-]*\.sh"/ {
+				line = $0
+				sub(/[[:space:]]*#.*/, "", line)
+				sub(/.*\//, "", line)
+				sub(/".*/, "", line)
+				if (line != "") print line
 			}
 		' "${dest_dir}/${sibling}" 2>/dev/null || true)
 	done

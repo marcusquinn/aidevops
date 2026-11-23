@@ -82,7 +82,7 @@ _fetch_issue() {
 
 	local json
 	if ! json=$(gh issue view "$num" --repo "$repo" \
-		--json number,title,body,state,stateReason,labels 2>/dev/null); then
+		--json number,title,body,state,stateReason,labels,url 2>/dev/null); then
 		echo "{}"
 		return 1
 	fi
@@ -278,6 +278,15 @@ _resolve_children_state() {
 		labels=$(printf '%s' "$issue_json" | jq -r '[.labels[]?.name] | join(",")' 2>/dev/null) || labels=""
 		title=$(printf '%s' "$issue_json" | jq -r '.title // ""' 2>/dev/null) || title=""
 		[[ "$state" == "$PARENT_STATUS_STATE_UNKNOWN" ]] && incomplete=1
+
+		# A pull request is not a child issue: `gh issue view` resolves PR numbers
+		# too (state MERGED/OPEN/CLOSED, url .../pull/N). Exclude them so a PR
+		# referenced in prose is never counted as open or as delivery (GH#39512).
+		local item_url
+		item_url=$(printf '%s' "$issue_json" | jq -r '.url // .html_url // ""' 2>/dev/null) || item_url=""
+		if [[ "$state" == "MERGED" || "$item_url" == */pull/* ]]; then
+			continue
+		fi
 
 		pr_json=$(_fetch_child_pr "$num" "$repo")
 		local pr_num pr_state pr_merged_at

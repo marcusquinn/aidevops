@@ -117,7 +117,7 @@ chmod +x "${STUB_DIR}/gh"
 # shellcheck source=/dev/null
 source "${TEST_SCRIPTS_DIR}/shared-constants.sh"
 # shellcheck source=/dev/null
-source "${TEST_SCRIPTS_DIR}/pulse-prefetch.sh" >/dev/null 2>&1
+source "${TEST_SCRIPTS_DIR}/pulse-prefetch.sh"
 set +e
 export PATH="${STUB_DIR}:${PATH}"
 
@@ -138,10 +138,13 @@ make_snapshot() {
 	else
 		projection="$_PREFETCH_PRS_PROJECTION"
 	fi
+	# Canonical issue snapshots require string body/authorAssociation per item
+	# (_canonical_snapshot_pair_complete); default them so fixtures stay terse.
 	jq -cn --arg schema "$_PREFETCH_SNAPSHOT_SCHEMA" --arg repo "test/repo" \
 		--arg kind "$kind" --arg projection "$projection" --arg generation "$generation" \
-		--argjson complete "$complete" --argjson items "$items" \
-		'{schema:$schema,repository:$repo,collection:$kind,projection:$projection,
+		--argjson complete "$complete" --argjson raw_items "$items" \
+		'(if $kind == "issues" then ($raw_items | map({body:"",authorAssociation:"NONE"} + .)) else $raw_items end) as $items |
+		{schema:$schema,repository:$repo,collection:$kind,projection:$projection,
 		  auth_scope:"github.com",generation:$generation,source:"fixture",
 		  fetched_at:"2026-04-13T10:00:00Z",
 		  complete:$complete,items:$items}'

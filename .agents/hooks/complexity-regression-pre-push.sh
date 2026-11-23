@@ -83,6 +83,56 @@ fi
 [[ "${COMPLEXITY_GUARD_DEBUG:-0}" == "1" ]] && _log INFO "helper: $COMPLEXITY_HELPER"
 
 # ---------------------------------------------------------------------------
+# Judge the pushed refs, not HEAD. Git passes one line per ref on stdin:
+#   <local_ref> <local_sha> <remote_ref> <remote_sha>
+# Deletions and the task-id counter branch (CAS pushes of .task-counter, no
+# source changes) are skipped. Each remaining distinct tip is checked in turn
+# by re-invoking this hook with COMPLEXITY_GUARD_TIP set.
+# ---------------------------------------------------------------------------
+_ZERO_SHA="0000000000000000000000000000000000000000"
+if [[ -z "${COMPLEXITY_GUARD_TIP:-}" ]]; then
+	_tips=()
+	_trefs=()
+	_stdin_seen=0
+	while read -r _lref _lsha _rref _rsha; do
+		_stdin_seen=1
+		[[ -z "${_lsha:-}" || "$_lsha" == "$_ZERO_SHA" ]] && continue
+		case "${_rref:-}" in
+		refs/heads/task-id-counter | refs/heads/task-id-counter/*)
+			[[ "${COMPLEXITY_GUARD_DEBUG:-0}" == "1" ]] && _log INFO "skipping counter ref $_rref"
+			continue
+			;;
+		esac
+		# Dedupe by SHA and ref: upstreams belong to branches, so equal SHAs
+		# on different branches may resolve different baselines.
+		case "|${_seen:-}|" in
+		*"|$_lsha $_lref|"*) ;;
+		*)
+			_seen="${_seen:-}|$_lsha $_lref"
+			_tips+=("$_lsha")
+			_trefs+=("${_lref:-}")
+			;;
+		esac
+	done
+	if [[ "$_stdin_seen" == "1" ]]; then
+		if [[ ${#_tips[@]} -eq 0 ]]; then
+			_log INFO "no source refs pushed (deletion/counter only) — complexity checks skipped"
+			exit 0
+		fi
+		if [[ ${#_tips[@]} -gt 1 ]]; then
+			_multi_rc=0
+			for _i in "${!_tips[@]}"; do
+				COMPLEXITY_GUARD_TIP="${_tips[$_i]}" COMPLEXITY_GUARD_REF="${_trefs[$_i]}" "${BASH_SOURCE[0]}" "$@" </dev/null || _multi_rc=1
+			done
+			exit "$_multi_rc"
+		fi
+		COMPLEXITY_GUARD_TIP="${_tips[0]}"
+		COMPLEXITY_GUARD_REF="${_trefs[0]}"
+	fi
+fi
+TIP_SHA="${COMPLEXITY_GUARD_TIP:-HEAD}"
+
+# ---------------------------------------------------------------------------
 # Determine the base SHA for the regression check (GH#20045).
 # Uses the default remote branch rather than @{u} to avoid false-positives
 # after a rebase. After rebase, @{u} points at the feature branch's own
@@ -112,11 +162,17 @@ _compute_baseline() {
 		# Last resort: old behaviour (warn)
 		printf '[%s] warning: no origin HEAD resolved; falling back to @{u}\n' \
 			"$GUARD_NAME" >&2
-		git merge-base HEAD '@{u}' 2>/dev/null
+		# Use the pushed branch's upstream, not the checked-out branch's.
+		local pushed_branch="${COMPLEXITY_GUARD_REF:-}"
+		case "$pushed_branch" in
+		refs/heads/?*) pushed_branch="${pushed_branch#refs/heads/}" ;;
+		*) pushed_branch="HEAD" ;;
+		esac
+		git merge-base "${TIP_SHA:-HEAD}" "${pushed_branch}@{u}" 2>/dev/null
 		return
 	fi
 	# Happy path: merge-base against default remote head
-	baseline=$(git merge-base HEAD "$default_remote_head" 2>/dev/null)
+	baseline=$(git merge-base "${TIP_SHA:-HEAD}" "$default_remote_head" 2>/dev/null)
 	if [[ -z "$baseline" ]]; then
 		printf '[%s] warning: no merge-base with %s; using %s as base\n' \
 			"$GUARD_NAME" "$default_remote_head" "$default_remote_head" >&2
@@ -138,7 +194,7 @@ fi
 # Fast-path: skip only when no shell, Python or Markdown files changed.
 # Markdown-only pushes still need the file-size ratchet.
 # ---------------------------------------------------------------------------
-_changed_source=$(git diff --name-only "$BASE_SHA" HEAD 2>/dev/null \
+_changed_source=$(git diff --name-only "$BASE_SHA" "$TIP_SHA" 2>/dev/null \
 	| grep -E '\.(sh|py|md)$' || true)
 if [[ -z "$_changed_source" ]]; then
 	_log INFO "no .sh/.py/.md files modified — complexity checks skipped"
@@ -174,7 +230,7 @@ for _i in "${!METRICS[@]}"; do
 	_metric="${METRICS[$_i]}"
 	[[ "${COMPLEXITY_GUARD_DEBUG:-0}" == "1" ]] && _log INFO "launching metric: $_metric (parallel)"
 	(
-		"$COMPLEXITY_HELPER" check --base "$BASE_SHA" --metric "$_metric" \
+		"$COMPLEXITY_HELPER" check --base "$BASE_SHA" --head "$TIP_SHA" --metric "$_metric" \
 			> "${_parallel_tmpdir}/${_i}.out" 2>&1
 		printf '%d' "$?" > "${_parallel_tmpdir}/${_i}.rc"
 	) &
@@ -213,6 +269,8 @@ for _i in "${!METRICS[@]}"; do
 		printf '\n' >&2
 		if [[ "$_metric" == "file-size" ]]; then
 			printf '  First make the whole document more concise without losing detail; split or bypass only if that is not enough.\n' >&2
+			printf '  Synced records (email archives, transcripts, data snapshots): exempt their paths in .aidevops.json:\n' >&2
+			printf '    {"complexity":{"file_size_exclude":["clients/*"]}}  (root-relative globs; a tracked config applies after it merges)\n' >&2
 		else
 			printf '  Remediation: extract logic into smaller functions or separate files.\n' >&2
 		fi

@@ -2,16 +2,19 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Focused admission invariants; no network or production state access."""
 
+import hashlib
 import importlib.util
 import io
 import json
 import os
 import select
+import shutil
 import signal
 import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -23,11 +26,14 @@ from gh_transport_budget import (
     Budget,
     Deferred,
     admission_status,
+    process_birth,
     quota_owner,
     reconcile_scope,
     scope_key,
 )
-from gh_transport_identity import resolve_owner_proof
+from gh_transport_identity import configure_owner, resolve_owner_proof
+from gh_transport_recovery import bound_credentials, note_live_window
+from gh_transport_schema import BINDING_RECENCY_SECONDS, BINDING_SEEN_TRIGGER
 
 SPEC = importlib.util.spec_from_file_location("governor", SCRIPTS / "gh-transport-governor.py")
 governor = importlib.util.module_from_spec(SPEC)
@@ -37,6 +43,59 @@ SPEC.loader.exec_module(governor)
 def headers(remaining=102, reset=2000, resource="core"):
     return {"x-ratelimit-remaining": str(remaining), "x-ratelimit-reset": str(reset),
             "x-ratelimit-resource": resource, "x-ratelimit-limit": "5000" if resource == "core" else "30"}
+
+
+class ProcessBirthTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux procfs")
+    def test_linux_preserves_legacy_identity_without_subprocess(self):
+        pid = os.getpid()
+        ps = shutil.which("ps")
+        self.assertIsNotNone(ps, "legacy identity comparison requires native ps")
+        output = subprocess.check_output(  # nosec B603 -- resolved native ps, fixed options and this process's numeric PID; no shell
+            [ps, "-p", str(pid), "-o", "lstart="], timeout=2, env={**os.environ, "LC_ALL": "C"},
+        )
+        legacy = hashlib.sha256(output.strip()).hexdigest()
+        with patch.dict(os.environ, {"LC_ALL": "C"}), \
+                patch("gh_process_birth.subprocess.check_output", side_effect=AssertionError("fork")):
+            self.assertEqual(process_birth(pid), legacy)
+            self.assertEqual(process_birth(-1), "")
+            self.assertEqual(process_birth(2147483647), "")
+
+    def test_linux_parses_binary_comm_after_final_parenthesis(self):
+        stat = b"123 (odd ) \xff name) " + b" ".join([b"S"] + [b"0"] * 18 + [b"12345"])
+        with patch("gh_process_birth.sys.platform", "linux"), \
+                patch.dict(os.environ, {"LC_ALL": "C.UTF-8"}), \
+                patch.object(Path, "read_bytes", return_value=stat), \
+                patch("gh_process_birth._linux_boot_time", return_value=1000), \
+                patch("gh_process_birth.os.sysconf", return_value=100):
+            self.assertEqual(process_birth(123), hashlib.sha256(time.ctime(1123).encode()).hexdigest())
+
+    def test_linux_malformed_or_unreadable_procfs_is_unknown(self):
+        with patch("gh_process_birth.sys.platform", "linux"), \
+                patch.dict(os.environ, {"LC_ALL": "C"}), \
+                patch.object(Path, "read_bytes", return_value=b"malformed"):
+            self.assertEqual(process_birth(123), "")
+        with patch("gh_process_birth.sys.platform", "linux"), \
+                patch.dict(os.environ, {"LC_ALL": "C"}), \
+                patch.object(Path, "read_bytes", side_effect=PermissionError):
+            self.assertEqual(process_birth(123), "")
+
+    def test_linux_non_english_time_locale_keeps_legacy_ps_identity(self):
+        # procps localizes lstart via LC_TIME; English-only ctime would diverge.
+        for environment in ({"LC_ALL": "fr_FR.UTF-8"}, {"LC_ALL": "", "LC_TIME": "de_DE.UTF-8"}):
+            with self.subTest(environment=environment), \
+                    patch("gh_process_birth.sys.platform", "linux"), \
+                    patch.dict(os.environ, environment), \
+                    patch.object(Path, "read_bytes", side_effect=AssertionError("procfs")), \
+                    patch("gh_process_birth.subprocess.check_output", return_value=b"sam. 14 nov.\n") as ps:
+                self.assertEqual(process_birth(123), hashlib.sha256(b"sam. 14 nov.").hexdigest())
+                self.assertEqual(ps.call_args.args[0], ["ps", "-p", "123", "-o", "lstart="])
+
+    def test_darwin_retains_ps_identity(self):
+        with patch("gh_process_birth.sys.platform", "darwin"), \
+                patch("gh_process_birth.subprocess.check_output", return_value=b"  legacy\n") as ps:
+            self.assertEqual(process_birth(123), hashlib.sha256(b"legacy").hexdigest())
+            self.assertEqual(ps.call_args.args[0], ["ps", "-p", "123", "-o", "lstart="])
 
 
 class AdmissionTests(unittest.TestCase):
@@ -286,6 +345,123 @@ class AdmissionTests(unittest.TestCase):
             self.assertIsNone(resolve_owner_proof(
                 ("gh", "github.com"), "cred", {"GH_TOKEN": "ghs_example"}, self.directory))  # nosec B105
             run.assert_not_called()
+
+    def retire_bindings(self, count, scope="owner-one"):
+        """Bind many credentials, then age them out of the recency window."""
+        retired = [f"retired-{index}" for index in range(count)]
+        self.budget.db.executemany("INSERT OR REPLACE INTO binding VALUES(?,?)",
+                                   [(credential, scope) for credential in retired])
+        self.budget.db.executemany(
+            "UPDATE binding_seen SET last_seen=? WHERE credential=?",
+            [(time.time() - 2 * BINDING_RECENCY_SECONDS, credential) for credential in retired])
+        return retired
+
+    def prove_logins(self, logins):
+        for credential, login in logins.items():
+            with patch("gh_transport_identity.subprocess.run") as run:
+                run.return_value = Mock(stdout=login)
+                self.assertTrue(resolve_owner_proof(
+                    ("gh", "github.com"), credential, {"GH_TOKEN": "ghp_example"},  # nosec B105
+                    self.directory))
+
+    def test_retired_bindings_do_not_pin_a_proven_owner_scope(self):
+        # GH#38619: hundreds of retired fingerprints must not block convergence.
+        self.seed(42, 2000)
+        self.retire_bindings(200)
+        other = Budget(self.directory, "owner-one", "different-credential")
+        try:
+            self.prove_logins({"owner-one": b"same-user\n", "different-credential": b"same-user\n"})
+            note_live_window(other, "core", 2200, 1001)
+            before = admission_status(self.directory, "owner-one")
+            self.assertEqual(before["bound_credentials"], 2)
+            request = other.acquire("core", now=1002)
+            other.finish(request, "core", headers(4999, 2200), started=1002, now=1003)
+            self.assertEqual(other.db.execute(
+                "SELECT remaining,reset FROM quota").fetchone(), (4999, 2200))
+            self.assertNotIn("stale_multi_credential_scope",
+                             admission_status(self.directory, "owner-one"))
+            # Retired rows are filtered, never deleted.
+            self.assertEqual(other.db.execute("SELECT COUNT(*) FROM binding").fetchone()[0], 202)
+        finally:
+            other.close()
+
+    def test_retired_bindings_never_merge_live_different_logins(self):
+        self.seed(540, 2000)
+        self.retire_bindings(20)
+        other = Budget(self.directory, "owner-one", "different-credential")
+        try:
+            self.prove_logins({"owner-one": b"user-a\n", "different-credential": b"user-b\n"})
+            request = other.acquire("core", now=1002)
+            other.finish(request, "core", headers(4999, 2200), started=1002, now=1003)
+            self.assertEqual(other.db.execute(
+                "SELECT remaining,reset FROM quota").fetchone(), (540, 2000))
+        finally:
+            other.close()
+
+    def test_unknown_recency_and_reserved_bindings_stay_bound(self):
+        retired = self.retire_bindings(2)
+        self.budget.db.execute(
+            "INSERT INTO reservation VALUES('debt','owner-one','core',1,?,?,?,1)",
+            (os.getpid(), self.budget.birth, retired[0]))
+        self.assertEqual(set(bound_credentials(self.budget)), {"owner-one", retired[0]})
+        # An older writer or failed migration leaves no recency: stay conservative.
+        self.budget.db.execute("DELETE FROM binding_seen WHERE credential=?", (retired[1],))
+        self.assertIn(retired[1], bound_credentials(self.budget))
+        self.budget.db.execute(f"DROP TRIGGER {BINDING_SEEN_TRIGGER}")
+        self.budget.db.execute("DROP TABLE binding_seen")
+        self.assertEqual(len(bound_credentials(self.budget)), 3)
+
+    def test_binding_recency_migration_backfills_and_keeps_legacy_writers(self):
+        self.budget.db.execute(f"DROP TRIGGER {BINDING_SEEN_TRIGGER}")
+        self.budget.db.execute("DROP TABLE binding_seen")
+        self.budget.db.execute("INSERT OR REPLACE INTO binding VALUES('legacy','owner-one')")
+        self.budget.close()
+        self.budget = Budget(self.directory, "owner-one")
+        seen = dict(self.budget.db.execute("SELECT credential,last_seen FROM binding_seen"))
+        self.assertEqual(set(seen), {"owner-one", "legacy"})
+        self.assertGreater(seen["legacy"], time.time() - 60)
+        self.assertEqual(self.budget.db.execute("PRAGMA user_version").fetchone()[0], 2)
+        # Older bundles keep their positional two-column binding write.
+        self.budget.db.execute("UPDATE binding_seen SET last_seen=0 WHERE credential='legacy'")
+        self.budget.db.execute("INSERT OR REPLACE INTO binding VALUES('legacy','owner-one')")
+        self.assertGreater(self.budget.db.execute(
+            "SELECT last_seen FROM binding_seen WHERE credential='legacy'").fetchone()[0], 1)
+
+    def test_configured_owner_file_reaches_callers_without_environment(self):
+        with patch.dict(os.environ, {"AIDEVOPS_GH_TRANSPORT_STATE_DIR": str(self.directory)}):
+            os.environ.pop("AIDEVOPS_GH_QUOTA_OWNER", None)
+            self.assertEqual(quota_owner(), ("unresolved", False))
+            self.assertEqual(configure_owner(self.directory, "a" * 64), "configured")
+            self.assertEqual(oct((self.directory / "quota-owner").stat().st_mode & 0o777), "0o600")
+            self.assertEqual(quota_owner(), ("a" * 64, True))
+            self.assertEqual(configure_owner(self.directory, "a" * 64), "unchanged")
+            with self.assertRaisesRegex(ValueError, "different GitHub quota owner"):
+                configure_owner(self.directory, "b" * 64)
+            with patch.dict(os.environ, {"AIDEVOPS_GH_QUOTA_OWNER": "unresolved"}):
+                self.assertEqual(quota_owner(), ("unresolved", False))
+
+    def test_set_owner_requires_every_live_binding_to_prove_the_same_login(self):
+        import gh_transport_budget_cli as cli
+        unresolved = scope_key("github.com", "unresolved")
+        for credential in ("pat-one", "app-token"):
+            Budget(self.directory, unresolved, credential).close()
+        identity = ("pat-one", True, {"GH_TOKEN": "ghp_example"})  # nosec B105
+        self.prove_logins({"pat-one": b"same-user\n"})
+        with patch.object(cli, "credential_identity", return_value=identity):
+            # A live unproven binding (for example a ghs_ token) is never merged.
+            with self.assertRaisesRegex(ValueError, "not all proven"):
+                cli.set_owner(self.directory)
+            self.assertFalse((self.directory / "quota-owner").exists())
+            self.budget.db.execute(
+                "UPDATE binding_seen SET last_seen=? WHERE credential='app-token'",
+                (time.time() - 2 * BINDING_RECENCY_SECONDS,))
+            self.assertEqual(cli.set_owner(self.directory)["state"], "configured")
+        with patch.dict(os.environ):
+            os.environ.pop("AIDEVOPS_GH_QUOTA_OWNER", None)
+            configured, attributed = quota_owner(self.directory)
+        self.assertTrue(attributed)
+        self.assertNotIn("same-user", configured)
+        self.assertEqual(len(configured), 64)
 
     def test_shared_scope_stale_balance_expires_at_its_own_reset(self):
         # GH#33701: a sliding later reset from another unresolved credential
@@ -636,7 +812,8 @@ class AdmissionTests(unittest.TestCase):
             self.assertEqual(first, scope_key("github.com"))
 
     def test_quota_owner_requires_explicit_valid_attribution(self):
-        with patch.dict(os.environ, {}, clear=True):
+        isolated = {"AIDEVOPS_GH_TRANSPORT_STATE_DIR": str(self.directory)}
+        with patch.dict(os.environ, isolated, clear=True):
             self.assertEqual(quota_owner(), ("unresolved", False))
         with patch.dict(os.environ, {"AIDEVOPS_GH_QUOTA_OWNER": "account-one"}):
             self.assertEqual(quota_owner(), ("account-one", True))
@@ -736,6 +913,49 @@ class AdmissionTests(unittest.TestCase):
         # The same available quota is sufficient when reset is imminent.
         self.budget.db.execute("UPDATE quota SET reset=1013")
         self.budget.acquire("core", now=1004)
+
+    def test_free_response_refunds_pacing_slot_but_paid_does_not(self):
+        self.seed(100, reset=2000)
+        pacing = "SELECT retry_at FROM pacing"
+        request = self.budget.acquire("core", now=1002)
+        charged = self.budget.db.execute(pacing).fetchone()[0]
+        self.assertGreater(charged, 1002)
+        history = self.budget.db.execute("SELECT COUNT(*) FROM admission_history").fetchone()[0]
+        self.budget.finish(request, "core", headers(99), started=1002, now=1002)
+        self.assertEqual(self.budget.db.execute(pacing).fetchone()[0], charged)
+        request = self.budget.acquire("core", now=1013)
+        charged = self.budget.db.execute(pacing).fetchone()[0]
+        # Free: the slot is returned, clamped to now; secondary history stays.
+        self.budget.finish(request, "core", headers(99), started=1013, now=1013, free=True)
+        refunded = self.budget.db.execute(pacing).fetchone()[0]
+        self.assertAlmostEqual(refunded, max(1013, charged - 987 / 99), delta=0.2)
+        self.assertGreaterEqual(refunded, 1013)
+        self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM admission_history").fetchone()[0],
+                         history + 1)
+        # Invalid headers never refund and never create a pacing row.
+        request = self.budget.acquire("core", now=1030)
+        charged = self.budget.db.execute(pacing).fetchone()[0]
+        self.budget.finish(request, "core", {}, started=1030, now=1030, free=True)
+        self.assertEqual(self.budget.db.execute(pacing).fetchone()[0], charged)
+
+    def test_free_refund_returns_only_charged_interval(self):
+        self.seed(5000, reset=4600)
+        pacing = "SELECT retry_at FROM pacing"
+        requests = [self.budget.acquire("core", now=1002) for _ in range(10)]
+        before = self.budget.db.execute(pacing).fetchone()[0]
+        self.budget.finish(requests[-1], "core", headers(100), started=1002, now=1003, free=True)
+        after = self.budget.db.execute(pacing).fetchone()[0]
+        self.assertLessEqual(after, before)
+        self.assertLess(before - after, 1)
+
+    def test_delivery_below_floor_refunds_charged_slot(self):
+        self.seed(3, reset=2000)
+        with patch.dict(os.environ, {"AIDEVOPS_GH_ADMISSION_CLASS": "delivery"}):
+            request = self.budget.acquire("core", now=1002)
+            charged = self.budget.db.execute("SELECT retry_at FROM pacing").fetchone()[0]
+            self.assertGreater(charged, 1003)
+            self.budget.finish(request, "core", headers(3), started=1002, now=1003, free=True)
+        self.assertLess(self.budget.db.execute("SELECT retry_at FROM pacing").fetchone()[0], charged)
 
     def test_delivery_class_skips_pacing_only_above_floor(self):
         # GH#37570: worker-bus relay reads must not starve behind bulk demand.

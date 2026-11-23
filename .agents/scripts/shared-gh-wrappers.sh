@@ -31,6 +31,43 @@
 #
 # Part of aidevops framework: https://aidevops.sh
 
+# Render a bounded marked section without changing bytes outside that section.
+# Both markers must be complete lines, immediately preceding the anchor.
+gh_issue_brief_section_render() {
+	local repo="$1" number="$2" anchor="$3" section="$4" output="$5"
+	gh api "repos/${repo}/issues/${number}" | jq -erj --arg anchor "$anchor" --rawfile section "$section" '
+		def fail: error("invalid brief section or ambiguous anchor");
+		.body as $body | if ($body | type) != "string" then fail else . end |
+		($section | split("\n")) as $s |
+		($s[0] // "") as $start |
+		"<!-- /aidevops:brief-owner-section -->" as $end |
+		if ($start | test("^<!-- aidevops:brief-owner-section id=[A-Za-z0-9._-]+ -->$")) | not then fail
+		elif ($s[-1] != "" or $s[-2] != $end or ([$s[] | select(. == $start)] | length) != 1 or ([$s[] | select(. == $end)] | length) != 1) then fail
+		else . end |
+		($body | split("\n")) as $lines |
+		[range(0; $lines | length) | select($lines[.] == $anchor)] as $anchors |
+		[range(0; $lines | length) | select($lines[.] == $start)] as $starts |
+		# Pair each start with its following end; reject malformed/nested sections.
+		(reduce range(0; $lines | length) as $i ({open: null, pairs: []};
+			if ($lines[$i] | test("^<!-- aidevops:brief-owner-section id=[A-Za-z0-9._-]+ -->$")) then
+				if .open != null then fail else .open = $i end
+			elif $lines[$i] == $end then
+				if .open == null then fail
+				else .pairs += [{start: .open, end: $i}] | .open = null end
+			else . end
+		) | if .open != null then fail else .pairs end) as $pairs |
+		[$pairs[] | select(.start == $starts[0])] as $matching |
+		if ($anchors | length) != 1 then fail
+		elif ($starts | length) == 0 and
+			([$pairs[] | select(.start <= $anchors[0] and $anchors[0] <= .end)] | length) == 0 then
+			($lines[:$anchors[0]] + ($section | split("\n") | .[:-1]) + $lines[$anchors[0]:] | join("\n"))
+		elif ($starts | length) == 1 and ($matching | length) == 1 and $matching[0].end == ($anchors[0] - 1) then
+			($lines[:$starts[0]] + ($section | split("\n") | .[:-1]) + $lines[$anchors[0]:] | join("\n"))
+		else fail end
+	' >"$output" || return 1
+	return 0
+}
+
 # Apply strict mode only when executed directly (not when sourced)
 [[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
 

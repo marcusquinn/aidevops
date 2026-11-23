@@ -268,11 +268,18 @@ _routine_platform_owned() {
 # Arguments:
 #   $1 - routine ID
 #   $2 - status (success|failure)
+#   $3 - deferred-until epoch (optional)
+#   $4 - outcome (delivered|noop|unknown; optional, success runs only)
+#   $5 - outcome reason (optional)
+# delivered resets consecutive_noops and the one-alert-per-streak flag; noop
+# extends the streak; unknown records the outcome but leaves the streak alone.
 #######################################
 _routine_update_state() {
 	local routine_id="$1"
 	local status="$2"
 	local deferred_until="${3:-0}"
+	local outcome="${4:-}"
+	local outcome_reason="${5:-}"
 	local now_epoch=0
 	local now_iso
 	now_epoch=$(_routine_now_epoch)
@@ -280,6 +287,26 @@ _routine_update_state() {
 	[[ "$deferred_until" =~ ^[0-9]+$ ]] || deferred_until=0
 
 	mkdir -p "$(dirname "$ROUTINE_STATE_FILE")" 2>/dev/null || true
+
+	# Serialize the entire read-modify-rename, including reads by detached runners.
+	local write_lock="${ROUTINE_STATE_FILE}.write.lock"
+	local lock_held=0 attempts=0 lock_mtime=0 lock_now=0
+	while [[ "$attempts" -lt 50 ]]; do
+		if mkdir "$write_lock" 2>/dev/null; then
+			lock_held=1
+			break
+		fi
+		lock_mtime=$(_file_mtime_epoch "$write_lock") || lock_mtime=0
+		lock_now=$(date +%s)
+		if [[ "$lock_mtime" =~ ^[0-9]+$ ]] && [[ "$lock_mtime" -gt 0 ]] && [[ $((lock_now - lock_mtime)) -gt 30 ]]; then
+			rmdir "$write_lock" 2>/dev/null || true
+		fi
+		attempts=$((attempts + 1))
+		sleep 0.1
+	done
+	if [[ "$lock_held" -eq 0 ]]; then
+		echo "[pulse-wrapper] _routine_update_state: lock timeout for ${routine_id}" >>"${LOGFILE:-/dev/null}"
+	fi
 
 	local existing="{}"
 	if [[ -f "$ROUTINE_STATE_FILE" ]]; then
@@ -291,8 +318,18 @@ _routine_update_state() {
 	tmp_file=$(mktemp "$(dirname "$ROUTINE_STATE_FILE")/.routine-state.XXXXXX")
 	if echo "$existing" | jq --arg id "$routine_id" --arg ts "$now_iso" --arg st "$status" \
 		--arg success "$_ROUTINE_STATUS_SUCCESS" --arg deferred "$_ROUTINE_STATUS_DEFERRED" \
+		--arg outcome "$outcome" --arg reason "$outcome_reason" \
 		--argjson deferred_until "$deferred_until" '
 		.[$id] = ((.[$id] // {}) + {"last_attempt": $ts, "last_status": $st})
+		| if $st == $success and $outcome != "" then
+			.[$id].last_outcome = $outcome
+			| .[$id].last_outcome_reason = $reason
+			| if $outcome == "delivered" then
+				.[$id].consecutive_noops = 0 | del(.[$id].noop_alerted)
+			  elif $outcome == "noop" then
+				.[$id].consecutive_noops = ((.[$id].consecutive_noops // 0) + 1)
+			  else . end
+		  else . end
 		| if $st == $success then .[$id].last_run = $ts else . end
 		| if $st == "failure" then .[$id].consecutive_failures = ((.[$id].consecutive_failures // 0) + 1)
 		  elif $st == $success then del(.[$id].consecutive_failures)
@@ -306,6 +343,9 @@ _routine_update_state() {
 	else
 		rm -f "$tmp_file"
 		echo "[pulse-wrapper] _routine_update_state: failed to write state for ${routine_id}" >>"$LOGFILE"
+	fi
+	if [[ "$lock_held" -eq 1 ]]; then
+		rmdir "$write_lock" 2>/dev/null || true
 	fi
 	return 0
 }
@@ -404,13 +444,87 @@ _routine_finalize_terminal() {
 	local started_epoch="$3"
 	local session_key="${4:-}"
 	local deferred_until="${5:-0}"
+	local outcome="${6:-}"
+	local outcome_reason="${7:-}"
+	local noop_threshold="${8:-}"
+	local alert_repo="${9:-}"
 	local ended_epoch=0
 	local duration=0
 	ended_epoch=$(date +%s)
 	duration=$((ended_epoch - started_epoch))
 	[[ "$duration" -ge 0 ]] || duration=0
-	_routine_update_state "$routine_id" "$status" "$deferred_until"
+	_routine_update_state "$routine_id" "$status" "$deferred_until" "$outcome" "$outcome_reason"
 	_routine_record_lifecycle "$routine_id" "$status" "$duration" "$session_key"
+	if [[ "$status" == "$_ROUTINE_STATUS_SUCCESS" && "$outcome" == "noop" ]]; then
+		_routine_noop_alert_check "$routine_id" "$noop_threshold" "$alert_repo"
+	fi
+	return 0
+}
+
+#######################################
+# Prompt contract asking a routine worker to report its outcome on one line.
+#######################################
+_routine_outcome_contract() {
+	printf '%s' "End your final message with exactly one line: 'ROUTINE_OUTCOME: delivered <ref>' (a PR, issue, file or other artifact you produced) or 'ROUTINE_OUTCOME: noop <short reason>' (nothing needed doing, or nothing was produced)."
+	return 0
+}
+
+#######################################
+# Parse the last ROUTINE_OUTCOME line from worker output.
+# Output: "<outcome>|<reason>"; outcome is delivered|noop|unknown.
+#######################################
+_routine_parse_outcome() {
+	local output_file="$1"
+	local line="" outcome="unknown" why=""
+	if [[ -f "$output_file" ]]; then
+		line=$(grep -E '^[[:space:]]*ROUTINE_OUTCOME:[[:space:]]+(delivered|noop)([[:space:]]|$)' "$output_file" 2>/dev/null | tail -n 1 || true)
+	fi
+	if [[ "$line" =~ ROUTINE_OUTCOME:[[:space:]]+(delivered|noop)([[:space:]]+(.*))?$ ]]; then
+		outcome="${BASH_REMATCH[1]}"
+		why="${BASH_REMATCH[3]:-}"
+		why="${why:0:200}"
+	fi
+	printf '%s|%s' "$outcome" "$why"
+	return 0
+}
+
+#######################################
+# Alert once per no-op streak. Marks noop_alerted in state so later no-ops of
+# the same streak stay quiet; a delivered run clears the mark.
+# Args: $1=routine_id $2=threshold (default 6) $3=repo slug (optional)
+#######################################
+_routine_noop_alert_check() {
+	local routine_id="$1"
+	local threshold="${2:-}"
+	local alert_repo="${3:-}"
+	[[ "$threshold" =~ ^[0-9]+$ && "$threshold" -ge 1 ]] || threshold="${AIDEVOPS_ROUTINE_NOOP_ALERT:-6}"
+	[[ "$threshold" =~ ^[0-9]+$ && "$threshold" -ge 1 ]] || threshold=6
+	[[ -f "$ROUTINE_STATE_FILE" ]] || return 0
+	local noops=0 alerted="" last_reason=""
+	noops=$(jq -r --arg id "$routine_id" '.[$id].consecutive_noops // 0' "$ROUTINE_STATE_FILE" 2>/dev/null || true)
+	alerted=$(jq -r --arg id "$routine_id" '.[$id].noop_alerted // empty' "$ROUTINE_STATE_FILE" 2>/dev/null || true)
+	last_reason=$(jq -r --arg id "$routine_id" '.[$id].last_outcome_reason // empty' "$ROUTINE_STATE_FILE" 2>/dev/null || true)
+	[[ "$noops" =~ ^[0-9]+$ && "$noops" -ge "$threshold" && -z "$alerted" ]] || return 0
+
+	# Mark first so a failed or missing issue write can never repeat the alert.
+	local tmp_file
+	tmp_file=$(mktemp "$(dirname "$ROUTINE_STATE_FILE")/.routine-state.XXXXXX") || return 0
+	if jq --arg id "$routine_id" '.[$id].noop_alerted = true' "$ROUTINE_STATE_FILE" >"$tmp_file" 2>/dev/null; then
+		mv "$tmp_file" "$ROUTINE_STATE_FILE"
+	else
+		rm -f "$tmp_file"
+	fi
+	echo "[pulse-wrapper] routine ${routine_id}: ${noops} consecutive no-op runs (threshold ${threshold}); last reason: ${last_reason:-none}" >>"${LOGFILE:-/dev/null}"
+	if [[ -n "$alert_repo" ]] && declare -F gh_create_issue >/dev/null 2>&1; then
+		local body_file=""
+		body_file=$(mktemp "${TMPDIR:-/tmp}/routine-noop-alert.XXXXXX") || return 0
+		# shellcheck disable=SC2016 # Backticks are literal Markdown.
+		printf 'Routine `%s` has exited successfully %s times in a row without delivering anything (alert threshold %s).\n\nLast no-op reason: %s\n\nVerify: inspect the routine runner log and confirm the prompt and tools still work. A `ROUTINE_OUTCOME: delivered` run resets the streak. Tune the threshold with `noop_alert:N` on the routine line.\n\n### Files Scope\n\n- the routine definition and its prompt or script\n' \
+			"$routine_id" "$noops" "$threshold" "${last_reason:-none}" >"$body_file"
+		gh_create_issue --repo "$alert_repo" --title "routine ${routine_id}: ${noops} consecutive no-op runs" \
+			--body-file "$body_file" >>"${LOGFILE:-/dev/null}" 2>&1 || true
+		rm -f "$body_file"
+	fi
 	return 0
 }
 
@@ -461,6 +575,7 @@ _routine_dispatch_agent() {
 	local routine_id="$1"
 	local module_path="${BASH_SOURCE[0]}"
 	local runner_log="${LOGFILE}.routine-${routine_id}.log"
+	# Args after $1: description, agent, dir, optional noop_alert threshold.
 	mkdir -p "$(dirname "$ROUTINE_STATE_FILE")" || return 1
 	export LOGFILE ROUTINE_STATE_FILE ROUTINE_LOG_HELPER HEADLESS_RUNTIME_HELPER
 	# shellcheck disable=SC2016 # Expand positional arguments in the child.
@@ -470,12 +585,28 @@ _routine_dispatch_agent() {
 	return 0
 }
 
+#######################################
+# Derive owner/repo from a directory's origin remote; empty when unknown.
+#######################################
+_routine_repo_slug() {
+	local dir="$1"
+	local url=""
+	url=$(git -C "$dir" remote get-url origin 2>/dev/null || true)
+	url="${url%.git}"
+	if [[ "$url" =~ github\.com[:/]([^/]+/[^/]+)$ ]]; then
+		printf '%s' "${BASH_REMATCH[1]}"
+	fi
+	return 0
+}
+
 _routine_run_detached_agent() {
 	local routine_id="$1"
 	local description="$2"
 	local agent_name="$3"
 	local dispatch_dir="$4"
+	local noop_threshold="${5:-}"
 	local session_key="routine-${routine_id}"
+	local output_file="" alert_repo="" outcome="" outcome_reason="" parsed=""
 	local started_epoch=0
 	local lock_dir="${ROUTINE_STATE_FILE}.${routine_id}.runner"
 	local pid_file="$lock_dir/pid-${BASHPID:-$$}"
@@ -495,24 +626,33 @@ _routine_run_detached_agent() {
 	fi
 	echo "[pulse-wrapper] routine ${routine_id}: dispatching agent '${agent_name}' for '${description}'" >>"$LOGFILE"
 	# Run in the background and wait so a TERM/INT/HUP trap fires immediately.
+	output_file=$(mktemp "${ROUTINE_STATE_FILE}.${routine_id}.output.XXXXXX" 2>/dev/null) || output_file=""
 	"$HEADLESS_RUNTIME_HELPER" run \
 		--role worker \
 		--session-key "$session_key" \
 		--dir "$dispatch_dir" \
 		--agent "$agent_name" \
 		--title "Routine ${routine_id}: ${description}" \
-		--prompt "Execute routine ${routine_id}: ${description}" >>"$LOGFILE" 2>&1 &
+		--prompt "Execute routine ${routine_id}: ${description}. $(_routine_outcome_contract)" >"${output_file:-/dev/null}" 2>&1 &
 	_ROUTINE_RUNNER_CHILD_PID=$!
 	wait "$_ROUTINE_RUNNER_CHILD_PID" || exit_code=$?
 	_ROUTINE_RUNNER_CHILD_PID=""
+	if [[ -n "$output_file" ]]; then
+		cat "$output_file" >>"$LOGFILE" 2>/dev/null || true
+	fi
 	if [[ "$exit_code" -ne 0 ]]; then
 		status="$_ROUTINE_STATUS_FAILURE"
 		echo "[pulse-wrapper] routine ${routine_id}: agent exited with code ${exit_code}" >>"$LOGFILE"
 	else
-		echo "[pulse-wrapper] routine ${routine_id}: agent completed successfully" >>"$LOGFILE"
+		parsed=$(_routine_parse_outcome "$output_file")
+		outcome="${parsed%%|*}"
+		outcome_reason="${parsed#*|}"
+		echo "[pulse-wrapper] routine ${routine_id}: agent completed successfully (outcome=${outcome})" >>"$LOGFILE"
+		alert_repo=$(_routine_repo_slug "$dispatch_dir")
 	fi
+	[[ -z "$output_file" ]] || rm -f -- "$output_file"
 	_ROUTINE_RUNNER_FINALIZED=true
-	_routine_finalize_terminal "$routine_id" "$status" "$started_epoch" "$session_key"
+	_routine_finalize_terminal "$routine_id" "$status" "$started_epoch" "$session_key" 0 "$outcome" "$outcome_reason" "$noop_threshold" "$alert_repo"
 	rm -f -- "$pid_file"
 	rmdir -- "$lock_dir" 2>/dev/null || true
 	trap - EXIT TERM INT HUP
@@ -743,6 +883,7 @@ _routine_execute() {
 	local repo_path="$5"
 	local schedule="${6:-}"
 	local timezone="${7:-}"
+	local noop_alert="${8:-}"
 	local agents_dir="${HOME}/.aidevops/agents"
 	local status="$_ROUTINE_STATUS_SUCCESS"
 	local started_epoch=0
@@ -805,7 +946,7 @@ _routine_execute() {
 
 	_routine_mark_dispatched "$routine_id"
 	[[ -z "$schedule" ]] || _routine_log_slot "$routine_id" "$schedule" "$timezone" dispatch
-	_routine_dispatch_agent "$routine_id" "$description" "${agent_name:-Build+}" "${repo_path:-$PULSE_DIR}"
+	_routine_dispatch_agent "$routine_id" "$description" "${agent_name:-Build+}" "${repo_path:-$PULSE_DIR}" "$noop_alert"
 	return $?
 }
 
@@ -831,6 +972,7 @@ _RPL_RUN=""
 _RPL_AGENT=""
 _RPL_DESC=""
 _RPL_TIMEZONE=""
+_RPL_NOOP_ALERT=""
 
 #######################################
 # Normalize one Markdown line before registry parsing.
@@ -1039,6 +1181,7 @@ _routine_parse_line() {
 	_RPL_AGENT=""
 	_RPL_DESC=""
 	_RPL_TIMEZONE=""
+	_RPL_NOOP_ALERT=""
 
 	# Live routine definitions are top-level Markdown list items. Four-space
 	# indentation is a code block and must not become scheduler input.
@@ -1110,9 +1253,14 @@ _routine_parse_line() {
 		fi
 	fi
 
+	# Optional per-routine no-op alert threshold (noop_alert:N, positive integer).
+	if [[ "$line" =~ (^|[[:space:]])noop_alert:([0-9]+)([[:space:]]|$) ]]; then
+		_RPL_NOOP_ALERT="${BASH_REMATCH[2]}"
+	fi
+
 	# Extract description (text between ID and first field tag).
 	local description_tail="${line#*"${_RPL_ID}"}"
-	_RPL_DESC=$(printf '%s' "$description_tail" | sed -E 's/^[[:space:]]*//' | sed -E 's/[[:space:]]*(repeat:|run:|agent:|timezone:|#|~|@|started:|blocked-by:).*//')
+	_RPL_DESC=$(printf '%s' "$description_tail" | sed -E 's/^[[:space:]]*//' | sed -E 's/[[:space:]]*(repeat:|run:|agent:|timezone:|noop_alert:|#|~|@|started:|blocked-by:).*//')
 
 	return 0
 }
@@ -1253,6 +1401,35 @@ _evaluate_issue_archive_routine() {
 }
 
 #######################################
+# Evaluate the opt-in Actions event policy maintenance routine.
+#######################################
+_evaluate_event_policy_routine() {
+	local routine_id="r-event-policy"
+	local schedule="${AIDEVOPS_EVENT_POLICY_SCHEDULE:-daily(@05:40)}"
+	local last_epoch=0
+	# Without a Pulse working directory there is nowhere to run the routine.
+	[[ -n "${PULSE_DIR:-}" ]] || return 0
+	if [[ "${AIDEVOPS_EVENT_POLICY_ENABLED:-1}" == "0" ]]; then
+		return 0
+	fi
+	if _routine_retry_blocked "$routine_id"; then
+		return 0
+	fi
+	last_epoch=$(_routine_last_run_epoch "$routine_id")
+	if ! _routine_schedule_is_due "$schedule" "$last_epoch" "" "$routine_id"; then
+		return 0
+	fi
+	if ! _routine_rest_core_allows_next "routine_execute:r-event-policy"; then
+		_routine_log_slot "$routine_id" "$schedule" "" deferred
+		return 0
+	fi
+	echo "[pulse-wrapper] event policy routine due (expr=${schedule}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
+	_routine_execute "$routine_id" "Check Actions event policies" \
+		"scripts/actions-event-policy-routine.sh" "" "$PULSE_DIR" "$schedule" ""
+	return $?
+}
+
+#######################################
 # Evaluate routines across all pulse-enabled repos
 #
 # Reads TODO.md from each pulse-enabled repo, extracts enabled routines
@@ -1282,6 +1459,7 @@ evaluate_routines() {
 	fi
 	_evaluate_session_miner_routine
 	_evaluate_issue_archive_routine
+	_evaluate_event_policy_routine
 
 	local routines_dispatched=0
 	local _routine_slug repo_path
@@ -1340,7 +1518,7 @@ evaluate_routines() {
 					continue
 				fi
 				echo "[pulse-wrapper] routine ${_RPL_ID} is due (expr=${_RPL_REPEAT}, timezone=${timezone_context}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
-				_routine_execute "$_RPL_ID" "$_RPL_DESC" "$_RPL_RUN" "$_RPL_AGENT" "$repo_path" "$_RPL_REPEAT" "$_RPL_TIMEZONE"
+				_routine_execute "$_RPL_ID" "$_RPL_DESC" "$_RPL_RUN" "$_RPL_AGENT" "$repo_path" "$_RPL_REPEAT" "$_RPL_TIMEZONE" "$_RPL_NOOP_ALERT"
 				routines_dispatched=$((routines_dispatched + 1))
 			fi
 		done <<<"$routine_section"

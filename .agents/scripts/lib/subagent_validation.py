@@ -19,6 +19,12 @@ BUILTIN_SUBAGENTS = {"general", "explore"}
 # Bounded roles supplied by the OpenCode plugin, not standalone prompt copies.
 # Other runtimes retain their existing research-only fallback.
 PLUGIN_SUBAGENTS = {"domain-focused", "domain-light", "specialist-advisor"}
+# MCP activation agents the OpenCode plugin registers under a name that differs
+# from their source file stem (mcp-registry.mjs `activationAgent`; e.g.
+# ios-simulator is built from tools/mobile/ios-simulator-mcp.md) (GH#38389).
+# Only OpenCode discovery passes these via operator_subagents; other runtimes
+# keep validating them against their own deployed files.
+PLUGIN_ACTIVATION_SUBAGENTS = frozenset({"ios-simulator"})
 
 # Files to skip during subagent scanning
 _SKIP_SUBAGENT_FILES = {"AGENTS.md", "README.md"}

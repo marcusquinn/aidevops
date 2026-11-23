@@ -430,6 +430,33 @@ _provision_worktree_owner_still_exact() {
 	return 0
 }
 
+# GH#38065: cheap bounded pre-check so a source that can never fit the byte
+# budget is refused without the full validator walk. Returns 0 only when the
+# apparent size clearly (>2x) exceeds the budget; any uncertainty (no timeout
+# tool, no apparent-size du, timeout, error) returns 1 and the validator decides.
+# GH#38525: BSD/macOS du rejects GNU --apparent-size; fall back to its -A flag.
+# Args: $1=source node_modules path, $2=max bytes
+_provision_source_clearly_over_budget() {
+	local source_dir="$1"
+	local max_bytes="$2"
+	local timeout_cmd="" size_kb=""
+	[[ -d "$source_dir" && "$max_bytes" =~ ^[0-9]+$ ]] || return 1
+	if command -v timeout >/dev/null 2>&1; then
+		timeout_cmd="timeout"
+	elif command -v gtimeout >/dev/null 2>&1; then
+		timeout_cmd="gtimeout"
+	else
+		return 1
+	fi
+	size_kb=$("$timeout_cmd" 5 du -sk --apparent-size -- "$source_dir" 2>/dev/null | cut -f1) || size_kb=""
+	if [[ ! "$size_kb" =~ ^[0-9]+$ ]]; then
+		size_kb=$("$timeout_cmd" 5 du -skA -- "$source_dir" 2>/dev/null | cut -f1) || return 1
+	fi
+	[[ "$size_kb" =~ ^[0-9]+$ ]] || return 1
+	((size_kb > (max_bytes / 1024) * 2)) || return 1
+	return 0
+}
+
 # Controller-only copy into a newly owned worktree. No resume or permission
 # mutation: a continuation owned by another process (even dead) is left intact.
 # Args: $1=worktree path, $2=canonical repo root, $3=relative package dir,
@@ -473,6 +500,10 @@ _provision_worktree_node_modules() (
 	fi
 	[[ ! -e "$destination" && ! -L "$destination" ]] || return 1
 	validator="$(dirname "${BASH_SOURCE[0]}")/worktree-dependency-provision.py"
+	if _provision_source_clearly_over_budget "${repo_root}/${relative}/node_modules" "$max_bytes"; then
+		printf 'dependency-provision-rejected reason=source-exceeds-budget\n' >&2
+		return 1
+	fi
 	before=$(python3 "$validator" "$repo_root" "$wt_path" "$relative" --max-bytes "$max_bytes") || return 1
 	stage=$(mktemp -d "${wt_path}/.aidevops-deps-XXXXXXXX") || return 1
 	trap 'rm -rf -- "$stage"' EXIT
@@ -691,6 +722,26 @@ _apply_worktree_exclusions() {
 	[[ -n "$helper" ]] || return 0
 
 	_ds_substage_run precreate.exclusions "$helper" apply "$wt_path" >/dev/null 2>&1 || true
+	return 0
+}
+
+# GH#39739: warn when sessions in other repositories will be unable to write
+# the new worktree, so the cause is named before the first denied edit.
+# Best-effort and silent when the policy helper is unavailable.
+_cmd_add_warn_untrusted_workspace_path() {
+	local wt_path="$1"
+	local policy_helper="${SCRIPT_DIR}/canonical-write-policy-helper.py"
+	[[ -n "$wt_path" && -f "$policy_helper" ]] || return 0
+	command -v python3 >/dev/null 2>&1 || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+	local payload="" verdict=""
+	payload=$(python3 "$policy_helper" check-worktree --path "$wt_path" 2>/dev/null) || return 0
+	verdict=$(printf '%s' "$payload" | jq -r '[.decision, .target.classification, (.git_workspace_root // "")] | join("|")' 2>/dev/null) || return 0
+	local decision="" classification="" workspace_root=""
+	IFS='|' read -r decision classification workspace_root <<<"$verdict"
+	[[ "$decision" == "untrusted" && "$classification" == "linked" ]] || return 0
+	print_warning "Worktree is outside the trusted Git workspace (${workspace_root:-unavailable}): sessions started in other repositories cannot edit it."
+	print_warning "Set AIDEVOPS_GIT_WORKSPACE_ROOT to a directory containing the worktree and its repository, or keep both under the workspace root and the worktree under the configured worktree base."
 	return 0
 }
 
@@ -1097,8 +1148,48 @@ _worktree_is_ssh_auth_failure() {
 }
 
 #######################################
-# Refresh one origin branch, retrying eligible GitHub SSH auth failures via gh.
-# The retry rewrites the URL only for this command and never mutates the remote.
+# Detect a rejected update of a remote-tracking ref that another process
+# changed while this fetch was running (GH#38060). Concurrent fetches of one
+# ref lose this way in all but one process; a repeat fetch then succeeds.
+# Both Git message forms are matched (GH#39663: "is at X but expected Y").
+# Arguments:
+#   $1 - captured git stderr
+# Returns: 0 for a concurrent ref-update rejection, 1 otherwise
+#######################################
+_worktree_is_ref_update_race() {
+	local stderr_text="$1"
+	case "$stderr_text" in
+	*"incorrect old value provided"*) return 0 ;;
+	# GH#39663: Git 2.43 form. Requires the remote-tracking prefix and
+	# "but expected"; a bare "cannot lock ref" may be a stale .lock file.
+	# The reason must follow the quoted ref immediately, so "but expected"
+	# inside a stale-lock path is not misclassified.
+	*"cannot lock ref 'refs/remotes/origin/"*"': is at "*" but expected "*) return 0 ;;
+	*"cannot lock ref 'refs/remotes/origin/"*"': reference is missing but expected "*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+#######################################
+# Run one plain fetch of an origin branch into its remote-tracking ref.
+# Arguments:
+#   $1 - clean linked/bootstrap worktree path
+#   $2 - target branch
+# Returns: git fetch exit code
+#######################################
+_worktree_fetch_origin_branch_once() {
+	local fetch_cwd="$1"
+	local target_branch="$2"
+	GIT_TERMINAL_PROMPT=0 git -C "$fetch_cwd" fetch --quiet --no-tags origin \
+		"+refs/heads/${target_branch}:refs/remotes/origin/${target_branch}"
+	return $?
+}
+
+#######################################
+# Refresh one origin branch. A fetch that lost a concurrent update of the ref
+# is repeated at most twice; only a fetch that succeeds proves a fresh base.
+# Eligible GitHub SSH auth failures are retried via gh: that retry rewrites the
+# URL only for this command and never mutates the remote.
 # Arguments:
 #   $1 - clean linked/bootstrap worktree path
 #   $2 - target branch
@@ -1111,14 +1202,30 @@ _worktree_fetch_origin_branch() {
 	local fetch_stderr=""
 	local fetch_rc=1
 	local rewrite_from=""
+	local race_retries=0
+	local retry_start=""
 
 	remote_url=$(git -C "$fetch_cwd" remote get-url origin 2>/dev/null || true)
-	if fetch_stderr=$(GIT_TERMINAL_PROMPT=0 git -C "$fetch_cwd" fetch --quiet --no-tags origin \
-		"+refs/heads/${target_branch}:refs/remotes/origin/${target_branch}" 2>&1); then
+	if fetch_stderr=$(_worktree_fetch_origin_branch_once "$fetch_cwd" "$target_branch" 2>&1); then
 		return 0
 	else
 		fetch_rc=$?
 	fi
+
+	# GH#38060: each repeat is recorded as precreate.base_fetch_retry under a
+	# dispatch context, so recovered races stay countable in the stage log.
+	while [[ "$race_retries" -lt 2 ]] && _worktree_is_ref_update_race "$fetch_stderr"; do
+		race_retries=$((race_retries + 1))
+		[[ "$race_retries" -eq 1 ]] || sleep 1
+		retry_start=$(_ds_substage_start)
+		if fetch_stderr=$(_worktree_fetch_origin_branch_once "$fetch_cwd" "$target_branch" 2>&1); then
+			fetch_rc=0
+		else
+			fetch_rc=$?
+		fi
+		_ds_substage_record precreate.base_fetch_retry "$retry_start"
+		[[ "$fetch_rc" -ne 0 ]] || return 0
+	done
 
 	if _worktree_is_github_ssh_remote "$remote_url" &&
 		_worktree_is_ssh_auth_failure "$fetch_stderr" &&
@@ -1292,6 +1399,24 @@ _cmd_add_create_worktree() {
 		echo -e "${BLUE}Creating worktree for existing branch '$_branch'...${NC}"
 		worktree_create_registered . "$_path" "$_branch" || return 1
 		return 0
+	fi
+
+	# Interactive callers may be checking out a PR head pushed elsewhere. Pulse
+	# creates new auto branches and must not incur an additional network fetch.
+	# A missing remote branch is normal for a new branch.
+	if [[ -z "$_explicit_base" && -z "${AIDEVOPS_WORKTREE_MANAGER:-}" && -z "${AIDEVOPS_WORKTREE_PULSE_CREATE:-}" ]] &&
+		git remote get-url origin >/dev/null 2>&1; then
+		if ! _worktree_refresh_origin_branch "$_branch" 2>/dev/null; then
+			local _remote_status=0
+			git ls-remote --exit-code origin "refs/heads/${_branch}" >/dev/null 2>&1 || _remote_status=$?
+			# Only status 2 confirms absence, independent of Git's locale. An
+			# existing or unreachable branch must not fall back to the default base.
+			if [[ "$_remote_status" -ne 2 ]]; then
+				echo "Error: could not refresh or confirm absence of origin/${_branch}; refusing default-base fallback" >&2
+				echo "Retry when origin is reachable, or pass --base with a known commit." >&2
+				return 1
+			fi
+		fi
 	fi
 
 	# Branch doesn't exist locally — check for stale remote ref (t1060)
@@ -1489,8 +1614,10 @@ _cmd_add_verify_created_generation() {
 	_ADD_PROVISION_OWNER_CONTRACT=""
 	_cmd_add_verify_collision_tip "$branch" "$path" || return 1
 	owner_pid=$(_resolve_worktree_owner_pid "") || return 1
-	register_worktree "$path" "$branch" --task "$explicit_issue" || registration_status=$?
-	registration_contract=$(_cmd_add_created_registration_contract \
+	# GH#38149: time each verification step so the dominant cost is visible.
+	_ds_substage_run precreate.verify.register \
+		register_worktree "$path" "$branch" --task "$explicit_issue" || registration_status=$?
+	registration_contract=$(_ds_substage_run precreate.verify.contract _cmd_add_created_registration_contract \
 		"$path" "$owner_pid" "$owner_session" "$explicit_issue" 2>/dev/null) || registration_contract=""
 	if [[ "$registration_status" -ne 0 ]] ||
 		[[ -z "$registration_contract" ]]; then
@@ -1502,7 +1629,8 @@ _cmd_add_verify_created_generation() {
 	IFS='|' read -r registered_owner_pid registered_owner_session registered_owner_batch \
 		registered_task registered_created_at <<<"$registration_contract"
 
-	if _cmd_add_reconcile_cleanup_generation "$branch" "$path" "$owner_pid" "$owner_session"; then
+	if _ds_substage_run precreate.verify.reconcile \
+		_cmd_add_reconcile_cleanup_generation "$branch" "$path" "$owner_pid" "$owner_session"; then
 		_ADD_PROVISION_OWNER_CONTRACT="${registered_owner_pid}|${registered_owner_session}|${registered_owner_batch}|${registered_task}|${registered_created_at}"
 		return 0
 	fi
@@ -1658,8 +1786,9 @@ cmd_add() {
 	_ds_substage_run precreate.capacity_check aidevops_worktree_capacity_check "$path" || capacity_rc=$?
 	if [[ "$capacity_rc" -ne 0 ]]; then
 		echo -e "${RED}Error: Refusing to create a worktree because filesystem capacity is unsafe.${NC}" >&2
-		echo "Capacity reason: ${AIDEVOPS_DISK_CAPACITY_REASON}; available=${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}KB (${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}%); minimum=${AIDEVOPS_MIN_WORKTREE_FREE_KB:-5242880}KB and ${AIDEVOPS_MIN_WORKTREE_FREE_PERCENT:-5}%." >&2
+		echo "Capacity reason: ${AIDEVOPS_DISK_CAPACITY_REASON}; available=${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}KB (${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}%); minimum=${AIDEVOPS_MIN_WORKTREE_FREE_KB:-5242880}KB and ${AIDEVOPS_MIN_WORKTREE_FREE_PERCENT:-5}% (percentage floor ${AIDEVOPS_DISK_PERCENT_FLOOR_KB:-0}KB after the large-volume ceiling)." >&2
 		echo "Free disk space before creating another worktree." >&2
+		aidevops_disk_capacity_reclaim_hint >&2 || true
 		return 1
 	fi
 
@@ -1687,6 +1816,7 @@ cmd_add() {
 	_interactive_session_auto_claim "$branch" "$path" "$explicit_issue" || true
 
 	_print_worktree_add_success "$path" "$branch"
+	_cmd_add_warn_untrusted_workspace_path "$path"
 	_ADD_COLLISION_PATH="$path"
 	_cmd_add_print_collision_provenance
 

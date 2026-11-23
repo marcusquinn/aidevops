@@ -450,7 +450,7 @@ from `_parse_phases_section` — then add new logic to the slimmed parent functi
 ### Scope Boundaries
 
 Initial implementation map. Directly necessary adjacent integration follows
-`reference/worker-discipline.md` "Integration scope recovery": document and verify
+`reference/worker-integration-recovery.md` "Integration scope recovery": document and verify
 the minimal corrected scope before editing. Explicit exclusions/hard boundaries
 remain binding and require a separate authorized brief-owner decision.
 

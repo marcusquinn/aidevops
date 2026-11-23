@@ -71,12 +71,14 @@ Commands:
   status [anthropic|openai|cursor|google|all]     Pool aggregate stats (counts, availability)
   refresh [anthropic|openai|google] [email|all]   Refresh expired tokens without re-auth (uses refresh_token)
   rotate [anthropic|openai|cursor|google]         Switch to next available account NOW (auto-refreshes expired tokens)
-  set-priority <provider> <email> <N>             Set rotation priority (higher N = preferred; 0 = default)
+  set-priority <provider> <email> <N> [--org O]   Set rotation priority (higher N = preferred; 0 = default)
   mark-failure <provider> <reason> [retry_secs]   Mark current account cooldown/status from runtime failures
   reset-cooldowns [provider|all]                  Clear rate-limit cooldowns so all accounts retry
-  assign-pending <provider> [email]               Assign a stranded pending token to an account
-  remove <provider> <email>                       Remove an account from the pool
+  assign-pending <provider> [email] [--org O]     Assign a stranded pending token to an account
+  remove <provider> <email> [--org O]             Remove an account from the pool
   import [claude-cli]                             Import account from Claude CLI auth
+  remote-sync <install|sync|status|enable|disable> --host H [--remote-user U] --provider P --email E [--org O]
+                                                  Keep one account in sync both ways with another host/user's pool
 
 Quickstart (if you see "Key Missing", "invalid request data", or auth errors):
   aidevops model-accounts-pool diagnose          # 0. Full pipeline check (start here)
@@ -101,6 +103,7 @@ Examples:
   oauth-pool-helper.sh reset-cooldowns                    # Clear all cooldowns
   oauth-pool-helper.sh status                             # Show pool statistics
   oauth-pool-helper.sh remove anthropic user@example.com
+  oauth-pool-helper.sh remove anthropic user@example.com --org Personal  # One of several seats
   oauth-pool-helper.sh assign-pending anthropic           # Show pending token info
   oauth-pool-helper.sh assign-pending anthropic user@example.com  # Assign pending token
 
@@ -118,6 +121,10 @@ Notes:
   - Google tokens are injected as GOOGLE_OAUTH_ACCESS_TOKEN (ADC bearer) for Gemini CLI / Vertex AI
   - Google requires AI Pro (~$25/mo), AI Ultra (~$65/mo), or Workspace with Gemini subscription
   - 'assign-pending' assigns tokens saved when email could not be identified during OAuth
+  - One email can hold several Anthropic seats (e.g. Team + Personal): each grant's
+    organization is stored, so adding the other org adds a seat instead of replacing it.
+    'list' shows seats as "email [Org name]"; pick one with --org <orgId-prefix|org name>.
+    Ambiguous commands without --org refuse rather than guess.
   - 'import claude-cli' detects your Claude CLI account and pre-fills the email
 HELP
 	return 0

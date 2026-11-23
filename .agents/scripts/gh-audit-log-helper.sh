@@ -639,6 +639,41 @@ _cmd_record_build_event_json() {
 	return 0
 }
 
+# Append one NDJSON event to an already-locked log, repairing a torn predecessor.
+#
+# An interrupted or short write leaves the log without a trailing newline. A bare
+# append then concatenates this event onto the partial one, so both records become
+# unparsable and anomaly scanning cannot read them (GH#38229). Command
+# substitution strips trailing newlines, so a non-empty result proves the last
+# byte is not a newline and a separating newline is written first.
+# Args: log_file event_json
+_gh_audit_append_line() {
+	local log_file="$1" event="$2"
+	local separator=""
+	if [[ -s "$log_file" ]] && [[ -n "$(tail -c 1 "$log_file")" ]]; then
+		separator=$'\n'
+		_gh_audit_warn "Audit log had an unterminated final line — separated before appending"
+	fi
+	printf '%s%s\n' "$separator" "$event" >>"$log_file" || return 1
+	return 0
+}
+
+# Append one NDJSON event, serialised against concurrent audit writers.
+# flock is advisory and optional: without it the newline repair still applies.
+# Args: log_file event_json
+_gh_audit_append_event() {
+	local log_file="$1" event="$2"
+	if command -v flock &>/dev/null; then
+		(
+			flock -x -w 5 9 || true
+			_gh_audit_append_line "$log_file" "$event"
+		) 9>>"${log_file}.lock" && return 0
+		return 1
+	fi
+	_gh_audit_append_line "$log_file" "$event" || return 1
+	return 0
+}
+
 # Parse arguments and write one NDJSON event to gh-audit.log.
 #
 # Required args:
@@ -717,7 +752,7 @@ cmd_record() {
 	# Check if rotation is needed before appending (audit errors never block).
 	cmd_rotate --check-only 2>/dev/null || true
 
-	printf '%s\n' "$event" >>"$log_file" || return 1
+	_gh_audit_append_event "$log_file" "$event" || return 1
 
 	if [[ "$_rd_suspicious_json" != "[]" ]]; then
 		_gh_audit_warn "ANOMALY detected in ${_rr_op} on ${_rr_repo}#${_rr_number}: ${_rd_suspicious_json}"

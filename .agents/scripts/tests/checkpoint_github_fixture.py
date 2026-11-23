@@ -33,12 +33,22 @@ def comments_request(args, data, state):
         print(json.dumps([data["comments"]] if "--slurp" in args else data["comments"]))
         return
     body = next(a[5:] for a in args if a.startswith("body="))
+    mode = os.environ.get("CHECKPOINT_TEST_DRIFT", "")
+    prefix = "CLAIM_RELEASED " if "release" in mode else "DISPATCH_LEASE phase=terminal "
+    fail = mode.startswith("fail-") and body.startswith(prefix) and not data.get("post_failed")
+    if fail:
+        data["post_failed"] = True
+        state.write_text(json.dumps(data))
+        if mode.endswith("before"):
+            sys.exit(1)
     number = max((c["id"] for c in data["comments"]), default=0) + 1
     added = comment(number, body, "next-worker")
     added["created_at"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data["comments"].append(added)
     data["issue"]["updated_at"] = added["created_at"]
     state.write_text(json.dumps(data))
+    if fail:
+        sys.exit(1)
     print(number)
 
 
@@ -63,12 +73,54 @@ def read_response(args, data):
     print(responses[key])
 
 
+def issue_update_request(args, data, state):
+    mode = os.environ.get("CHECKPOINT_TEST_DRIFT", "")
+    if args[3] == "in-progress" and mode.startswith("transfer-"):
+        labels = data["issue"]["labels"][:]
+        owners = data["issue"]["assignees"][:]
+        if mode != "transfer-before":
+            set_issue(args, data)
+            if mode == "transfer-status":
+                data["issue"]["assignees"] = owners
+            else:
+                data["issue"]["labels"] = labels
+        state.write_text(json.dumps(data))
+        sys.exit(1)
+    failure = data.pop("transfer_failure", None)
+    if failure:
+        if failure == "status":
+            data["issue"]["labels"] = [label for label in data["issue"]["labels"]
+                                       if not label["name"].startswith("status:")]
+            data["issue"]["labels"].append({"name": "status:in-progress"})
+        elif failure == "add":
+            data["issue"]["assignees"].append({"login": "next-worker"})
+        elif failure == "remove":
+            data["issue"]["assignees"] = []
+        state.write_text(json.dumps(data))
+        sys.exit(1)
+    set_issue(args, data)
+    state.write_text(json.dumps(data))
+
+
 def main(args):
     state = pathlib.Path(os.environ["CHECKPOINT_TEST_STATE"])
     data = json.loads(state.read_text())
-    if args[0] == "--set-issue":
-        set_issue(args, data)
+    if args[0] == "--drift":
+        mode = args[1]
+        if mode == "head":
+            data["pr"]["headRefOid"] = "2" * 40
+        elif mode == "owner":
+            data["issue"]["assignees"] = [{"login": "replacement-owner"}]
+        elif mode == "human":
+            number = max(c["id"] for c in data["comments"]) + 1
+            added = comment(number, "Interactive session claimed", "maintainer", "OWNER")
+            added["created_at"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            data["comments"].append(added)
+        elif mode not in {"none", "launched", "transfer-before", "transfer-status", "transfer-owner"} and not mode.startswith("fail-"):
+            raise ValueError("Unknown checkpoint drift")
         state.write_text(json.dumps(data))
+    elif args[0] == "--set-issue":
+        issue_update_request(args, data, state)
     elif args[0] == "api" and "/comments" in args[1]:
         comments_request(args, data, state)
     else:

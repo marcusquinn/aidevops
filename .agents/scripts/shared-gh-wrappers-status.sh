@@ -602,6 +602,289 @@ ensure_status_labels_exist() {
 }
 
 #######################################
+# GH#38360: status:blocked must carry a needs-* companion label that names
+# what unblocks it; a bare status:blocked is a false block.
+#
+# Companion label contract as name/color/description TSV rows. Definitions
+# match label-sync-helper.sh SYSTEM_LABELS so a sync never fights a lazy create.
+# The first three are owned by the blocked state: set_issue_status removes them
+# whenever an issue leaves status:blocked. needs-credentials keeps its own
+# maintainer-owned lifecycle (terminal re-arm also clears it).
+#######################################
+[[ -n "${BLOCKED_NEEDS_AI_RECOVERY+x}" ]] || BLOCKED_NEEDS_AI_RECOVERY="needs-ai-recovery"
+[[ -n "${BLOCKED_NEEDS_DEPENDENCY+x}" ]] || BLOCKED_NEEDS_DEPENDENCY="needs-dependency"
+[[ -n "${BLOCKED_NEEDS_SOURCE_ACCESS+x}" ]] || BLOCKED_NEEDS_SOURCE_ACCESS="needs-source-access"
+[[ -n "${BLOCKED_NEEDS_MAINTAINER_INPUT+x}" ]] || BLOCKED_NEEDS_MAINTAINER_INPUT="needs-maintainer-input"
+[[ -n "${BLOCKED_NEEDS_CREDENTIALS+x}" ]] || BLOCKED_NEEDS_CREDENTIALS="needs-credentials"
+_blocked_companion_contract() {
+	local attention="E4007C"
+	printf '%s\t%s\t%s\n' \
+		"$BLOCKED_NEEDS_AI_RECOVERY" "$attention" "Blocked: AI recovery pending; the recovery supervisor solves or releases it, no human action needed" \
+		"$BLOCKED_NEEDS_DEPENDENCY" "$attention" "Blocked: waits on a linked open issue; solve that first, unblocks when it closes" \
+		"$BLOCKED_NEEDS_SOURCE_ACCESS" "$attention" "Blocked: a required external source refuses access; needs a permitted capture, an alternative source, or host recovery" \
+		"$BLOCKED_NEEDS_MAINTAINER_INPUT" "$attention" "Blocked: owner decision or input that AI cannot supply; the issue names the exact ask" \
+		"$BLOCKED_NEEDS_CREDENTIALS" "$attention" "Opt-out: block auto-dispatch — requires credentials or account access"
+	return 0
+}
+
+# Companions owned by the blocked state (removed on every exit from blocked).
+BLOCKED_OWNED_COMPANION_LABELS=("$BLOCKED_NEEDS_AI_RECOVERY" "$BLOCKED_NEEDS_DEPENDENCY" "$BLOCKED_NEEDS_MAINTAINER_INPUT" "$BLOCKED_NEEDS_SOURCE_ACCESS")
+
+#######################################
+# Print the needs-* companion label for a blocker reason class.
+#
+# Human-owned classes name the exact human input. Runner- and brief-owned
+# classes (runner_capability_unmet, push/network policy timeouts, missing or
+# excluded Files Scope, target_code_blocker, unknown, and any unrecognised
+# reason) are AI-resolvable: they map to needs-ai-recovery, which routes the
+# hold to the recovery supervisor instead of a human.
+#
+# permission_required maps to needs-maintainer-input, not
+# needs-maintainer-permissions: that label is reserved for scoped grant
+# requests from worker-permission-helper.sh, whose approval flow clears it; a
+# terminal-only denial has no request envelope (headless-runtime-failure.sh
+# _hrff_apply_terminal_permission_hold).
+#
+# Args: $1 = reason class
+#######################################
+blocked_needs_label_for_reason() {
+	local reason="${1:-}"
+	case "$reason" in
+	input_required | permission_required | maintainer_input | spend_decision)
+		printf '%s\n' "$BLOCKED_NEEDS_MAINTAINER_INPUT"
+		;;
+	source_access_blocked)
+		printf '%s\n' "$BLOCKED_NEEDS_SOURCE_ACCESS"
+		;;
+	credentials | missing_secret)
+		printf '%s\n' "$BLOCKED_NEEDS_CREDENTIALS"
+		;;
+	external_trigger_pending | dependency)
+		printf '%s\n' "$BLOCKED_NEEDS_DEPENDENCY"
+		;;
+	*)
+		printf '%s\n' "$BLOCKED_NEEDS_AI_RECOVERY"
+		;;
+	esac
+	return 0
+}
+
+#######################################
+# Print a one-line public explanation for a companion label: what is needed,
+# who supplies it, the secure route, and what runs automatically afterwards.
+# Args: $1 = companion label, $2 = optional reason class (an
+#       external_trigger_pending hold has no linked blocking issue)
+#######################################
+blocked_companion_guidance() {
+	local label="${1:-}"
+	local reason="${2:-}"
+	if [[ "$label" == "needs-dependency" && "$reason" == "external_trigger_pending" ]]; then
+		printf '%s\n' 'Needed: the awaited trigger named above. Owner: the trigger-revisit pass (no human action) checks public evidence on a schedule and posts the retry directive when the trigger is met; an OWNER/MEMBER may post it sooner. Afterwards dispatch resumes automatically.'
+		return 0
+	fi
+	case "$label" in
+	needs-ai-recovery)
+		# shellcheck disable=SC2016 # literal Markdown backticks
+		printf '%s\n' 'Needed: AI recovery. Owner: the recovery supervisor (no human action). It solves or releases the hold, or names the one human input with a specific `needs-*` label and a comment. Afterwards dispatch resumes automatically.'
+		;;
+	needs-dependency)
+		printf '%s\n' 'Needed: the linked blocking issue must close. Owner: whoever solves that issue (usually a worker). Afterwards the dependency pass removes status:blocked and this label automatically.'
+		;;
+	needs-maintainer-input)
+		printf '%s\n' 'Needed: one owner decision or input that AI cannot supply (named in the brief or the latest blocker comment). Owner: maintainer. Route: answer in the issue brief, or post the retry directive; never paste secrets into issues. Afterwards the recovery pass removes status:blocked and this label and dispatch resumes.'
+		;;
+	needs-credentials)
+		# shellcheck disable=SC2016 # literal Markdown backticks
+		printf '%s\n' 'Needed: credentials or account access. Owner: maintainer. Route: provision on a runner with `aidevops secret set NAME` (never in issues or comments), then post the retry directive. Afterwards the recovery pass removes status:blocked and this label and dispatch resumes.'
+		;;
+	needs-source-access)
+		printf '%s\n' 'Needed: a permitted capture, an alternative official source, or the host recovering. Owner: access owner. Route: provide the source through an approved channel or confirm the canonical site in the issue; never paste secrets into issues. Afterwards the recovery pass removes status:blocked and this label and dispatch resumes.'
+		;;
+	needs-maintainer-permissions)
+		printf '%s\n' 'Needed: a scoped maintainer permission grant. Owner: maintainer. Route: approve the recorded permission request through the approval flow. Afterwards the grant verification removes status:blocked and this label.'
+		;;
+	*)
+		printf '%s\n' 'Needed: see the latest blocker comment for the exact input and owner.'
+		;;
+	esac
+	return 0
+}
+
+#######################################
+# Ensure one companion label exists (lazy, cached per process and repo).
+# Best-effort: REST label additions create a missing label anyway; this keeps
+# the native gh fallback and the catalogued colour/description working.
+# Args: $1 = repo slug, $2 = label
+#######################################
+_BLOCKED_COMPANIONS_ENSURED=""
+ensure_blocked_companion_label() {
+	local repo="$1"
+	local label="$2"
+	local name="" color="" description="" found=0 encoded=""
+	[[ -n "$repo" && -n "$label" ]] || return 1
+	case ",${_BLOCKED_COMPANIONS_ENSURED}," in
+	*",${repo}|${label},"*) return 0 ;;
+	esac
+	while IFS=$'\t' read -r name color description; do
+		if [[ "$name" == "$label" ]]; then
+			found=1
+			break
+		fi
+	done < <(_blocked_companion_contract)
+	if [[ "$found" -eq 1 ]]; then
+		encoded=$(printf '%s' "$label" | jq -sRr '@uri' 2>/dev/null) || encoded="$label"
+		if ! AIDEVOPS_GH_ROUTE_DECISION="blocked-companion-label-read-rest" \
+			_gh_with_timeout read gh api "repos/${repo}/labels/${encoded}" >/dev/null 2>&1; then
+			AIDEVOPS_GH_ROUTE_DECISION="blocked-companion-label-create-rest" \
+				_gh_with_timeout write gh label create "$label" --repo "$repo" \
+				--color "$color" --description "$description" >/dev/null 2>&1 || true
+		fi
+	fi
+	_BLOCKED_COMPANIONS_ENSURED="${_BLOCKED_COMPANIONS_ENSURED:+${_BLOCKED_COMPANIONS_ENSURED},}${repo}|${label}"
+	return 0
+}
+
+#######################################
+# Print every needs-* label the passthrough edit flags add, one per line.
+# Returns 0 when at least one is present.
+# Args: edit flags (as passed to set_issue_status after the status)
+#######################################
+_blocked_flags_add_needs_label() {
+	local arg="" value="" token="" expect_value=0 found=1
+	local -a tokens=()
+	for arg in "$@"; do
+		if [[ "$expect_value" -eq 1 ]]; then
+			value="$arg"
+			expect_value=0
+		elif [[ "$arg" == "--add-label" ]]; then
+			expect_value=1
+			continue
+		elif [[ "$arg" == --add-label=* ]]; then
+			value="${arg#--add-label=}"
+		else
+			continue
+		fi
+		IFS=',' read -r -a tokens <<<"$value"
+		for token in ${tokens[@]+"${tokens[@]}"}; do
+			token="${token#"${token%%[![:space:]]*}"}"
+			if [[ "$token" == needs-* ]]; then
+				printf '%s\n' "$token"
+				found=0
+			fi
+		done
+	done
+	return "$found"
+}
+
+#######################################
+# Print the companion label set_issue_status must add with status:blocked, or
+# nothing when the passthrough flags or the live issue already carry a needs-*
+# label. A caller that names no reason gets the AI-recovery route plus a
+# warning, so a new writer can never create an unexplained hold.
+# Args: $1 = issue number, $2 = repo slug, $@ = passthrough edit flags
+#######################################
+_blocked_status_companion_label() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	shift 2
+	local issue_json="" explicit="" label=""
+	if explicit=$(_blocked_flags_add_needs_label "$@"); then
+		# Caller named the reason: only make sure catalogued companions exist.
+		while IFS= read -r label; do
+			[[ -n "$label" ]] && ensure_blocked_companion_label "$repo_slug" "$label"
+		done <<<"$explicit"
+		return 0
+	fi
+	AIDEVOPS_GH_ROUTE_DECISION="blocked-companion-snapshot-rest" \
+		issue_json=$(_rest_api_call read gh api "/repos/${repo_slug}/issues/${issue_num}" 2>/dev/null) || issue_json=""
+	# Companions the same call removes do not count as remaining.
+	local arg="" removed="" expect_value=0
+	for arg in "$@"; do
+		if [[ "$expect_value" -eq 1 ]]; then
+			removed+=",${arg}"
+			expect_value=0
+		elif [[ "$arg" == "--remove-label" ]]; then
+			expect_value=1
+		elif [[ "$arg" == --remove-label=* ]]; then
+			removed+=",${arg#--remove-label=}"
+		fi
+	done
+	if [[ -n "$issue_json" ]] && printf '%s' "$issue_json" |
+		jq -e --arg removed "$removed" '($removed | split(",")) as $rm
+			| any(.labels[]?; (.name // "") as $n | ($n | startswith("needs-")) and (($rm | index($n)) == null))' >/dev/null 2>&1; then
+		return 0
+	fi
+	print_warning "gh-wrapper: status:blocked on #${issue_num} in ${repo_slug} named no needs-* reason; routing to ${BLOCKED_NEEDS_AI_RECOVERY} (GH#38360)"
+	printf '%s\n' "$BLOCKED_NEEDS_AI_RECOVERY"
+	return 0
+}
+
+#######################################
+# Print blocked-owned companion labels present on the live issue, one per
+# line, for native fallbacks. Prints nothing for a blocked target or when the
+# snapshot is unavailable, so an absent label is never named.
+# Args: $1 = target status, $2 = issue number, $3 = repo slug
+#######################################
+_blocked_companions_present_live() {
+	local new_status="$1"
+	local issue_num="$2"
+	local repo_slug="$3"
+	local issue_json="" label="" issue_path="/repos/${repo_slug}/issues"
+	[[ "$new_status" != blocked ]] || return 0
+	AIDEVOPS_GH_ROUTE_DECISION="blocked-companion-removal-snapshot-rest" \
+		issue_json=$(_rest_api_call read gh api "${issue_path}/${issue_num}" 2>/dev/null) || return 0
+	for label in "${BLOCKED_OWNED_COMPANION_LABELS[@]}"; do
+		if printf '%s' "$issue_json" | jq -e --arg l "$label" 'any(.labels[]?; .name == $l)' >/dev/null 2>&1; then
+			printf '%s\n' "$label"
+		fi
+	done
+	return 0
+}
+
+#######################################
+# Print set_issue_status companion deltas as "<add|remove>\t<label>" lines.
+# Target blocked adds its needs-* companion (on both edit paths). Any other
+# target removes the blocked-owned companions; the caller applies removals to
+# the REST delta path only, whose snapshot filters absent labels, so the
+# native fallback never names a label the repo may lack.
+# Args: $1 = target status, $2 = issue number, $3 = repo slug,
+#       $@ = passthrough edit flags
+#######################################
+_blocked_companion_status_deltas() {
+	local new_status="$1"
+	local issue_num="$2"
+	local repo_slug="$3"
+	shift 3
+	local label=""
+	if [[ "$new_status" != "blocked" ]]; then
+		for label in "${BLOCKED_OWNED_COMPANION_LABELS[@]}"; do
+			printf 'remove\t%s\n' "$label"
+		done
+		return 0
+	fi
+	label=$(_blocked_status_companion_label "$issue_num" "$repo_slug" "$@") || label=""
+	[[ -z "$label" ]] || printf 'add\t%s\n' "$label"
+	return 0
+}
+
+#######################################
+# Return 0 when the target status is empty (clear only) or a managed status;
+# otherwise print the set_issue_status usage error and return 1.
+# Args: $1 = target status (without the status: prefix)
+#######################################
+_issue_status_target_valid() {
+	local new_status="$1"
+	local status=""
+	[[ -n "$new_status" ]] || return 0
+	for status in "${ISSUE_STATUS_LABELS[@]}"; do
+		[[ "$status" == "$new_status" ]] && return 0
+	done
+	printf 'set_issue_status: invalid status "%s" (valid: %s)\n' \
+		"$new_status" "${ISSUE_STATUS_LABELS[*]}" >&2
+	return 1
+}
+
+#######################################
 # Pick the deterministic survivor from newline-separated managed status names.
 # The canonical precedence is shared with the issue invariant reconciler.
 _status_convergence_survivor() {
@@ -788,7 +1071,12 @@ _verify_issue_status_convergence() {
 #       --add-label "origin:worker"
 #
 #   set_issue_status 18444 owner/repo blocked \
-#       --add-label "hold-for-review"
+#       --add-label "$(blocked_needs_label_for_reason input_required)"
+#
+# Blocked companions (GH#38360): `blocked` always lands with a needs-* label.
+# Callers should name the reason via blocked_needs_label_for_reason; when the
+# flags and the live issue carry no needs-* label, needs-ai-recovery is added
+# with a warning. Any other target removes BLOCKED_OWNED_COMPANION_LABELS.
 #######################################
 set_issue_status() {
 	gh_record_call rest set_issue_status 2>/dev/null || true
@@ -804,21 +1092,7 @@ set_issue_status() {
 	fi
 
 	# Validate target status (empty is allowed = clear only)
-	if [[ -n "$new_status" ]]; then
-		local _valid=0
-		local _status
-		for _status in "${ISSUE_STATUS_LABELS[@]}"; do
-			[[ "$_status" == "$new_status" ]] && {
-				_valid=1
-				break
-			}
-		done
-		if [[ "$_valid" -eq 0 ]]; then
-			printf 'set_issue_status: invalid status "%s" (valid: %s)\n' \
-				"$new_status" "${ISSUE_STATUS_LABELS[*]}" >&2
-			return 2
-		fi
-	fi
+	_issue_status_target_valid "$new_status" || return 2
 
 	# Ensure labels exist (cached per-process per-repo so this is cheap).
 	# Fail closed: an unknown repository-label contract makes sibling removals
@@ -839,11 +1113,24 @@ set_issue_status() {
 		fi
 	done
 
+	# GH#38360: blocked adds a needs-* companion on both edit paths; other
+	# targets remove blocked-owned companions on the REST delta path only.
+	local -a _status_rest_flags=("${_status_flags[@]}")
+	local _companion_op="" _companion=""
+	while IFS=$'\t' read -r _companion_op _companion; do
+		[[ -n "$_companion" ]] || continue
+		_status_rest_flags+=("--${_companion_op}-label" "$_companion")
+		[[ "$_companion_op" == "add" ]] || continue
+		ensure_blocked_companion_label "$repo_slug" "$_companion" || true
+		_status_flags+=(--add-label "$_companion")
+	done < <(_blocked_companion_status_deltas "$new_status" "$issue_num" "$repo_slug" "$@")
+
 	# Complete passthrough deltas before touching status labels. If both REST and
 	# native handling reject an extra (for example, an invalid assignee), the
 	# existing status remains unchanged rather than becoming a dual-label state.
 	local -a _extra_flags=("$@")
 	local _rc=0
+	local _native_flags=() _present=""
 	if [[ ${#_extra_flags[@]} -gt 0 ]]; then
 		AIDEVOPS_GH_ROUTE_DECISION="status-extra-edit-rest-deltas" \
 			_rest_issue_edit_preserving_deltas "$issue_num" --repo "$repo_slug" "${_extra_flags[@]}"
@@ -852,9 +1139,13 @@ set_issue_status() {
 			if [[ "${_REST_ISSUE_DELTA_FAILURE_STAGE:-}" != "mutation" ]]; then
 				print_info "[INFO] gh-wrapper: REST status preflight unavailable, using combined native edit"
 				gh_record_call graphql set_issue_status_combined_native_fallback 2>/dev/null || true
+				_native_flags=("${_status_flags[@]}")
+				while IFS= read -r _present; do
+					[[ -n "$_present" ]] && _native_flags+=(--remove-label "$_present")
+				done < <(_blocked_companions_present_live "$new_status" "$issue_num" "$repo_slug")
 				AIDEVOPS_GH_ROUTE_DECISION="status-combined-native-fallback" \
 					_gh_with_timeout write gh issue edit "$issue_num" --repo "$repo_slug" \
-					"${_status_flags[@]}" "${_extra_flags[@]}" 2>/dev/null
+					"${_native_flags[@]}" "${_extra_flags[@]}" 2>/dev/null
 				_rc=$?
 				[[ $_rc -eq 0 ]] || return $_rc
 				_verify_issue_status_convergence "$issue_num" "$repo_slug" "$new_status"
@@ -871,13 +1162,17 @@ set_issue_status() {
 
 	AIDEVOPS_GH_ROUTE_DECISION="status-issue-edit-rest-deltas" \
 		_rest_issue_edit_preserving_deltas "$issue_num" --repo "$repo_slug" \
-		--delta-order remove-first "${_status_flags[@]}"
+		--delta-order remove-first "${_status_rest_flags[@]}"
 	_rc=$?
 	if [[ $_rc -ne 0 ]]; then
 		print_info "[INFO] gh-wrapper: REST status delta edit failed, falling back to native gh issue edit"
 		gh_record_call graphql set_issue_status_native_fallback 2>/dev/null || true
+		_native_flags=("${_status_flags[@]}")
+		while IFS= read -r _present; do
+			[[ -n "$_present" ]] && _native_flags+=(--remove-label "$_present")
+		done < <(_blocked_companions_present_live "$new_status" "$issue_num" "$repo_slug")
 		AIDEVOPS_GH_ROUTE_DECISION="status-issue-edit-native-fallback" \
-			_gh_with_timeout write gh issue edit "$issue_num" --repo "$repo_slug" "${_status_flags[@]}" 2>/dev/null
+			_gh_with_timeout write gh issue edit "$issue_num" --repo "$repo_slug" "${_native_flags[@]}" 2>/dev/null
 		_rc=$?
 	fi
 	[[ $_rc -eq 0 ]] || return $_rc

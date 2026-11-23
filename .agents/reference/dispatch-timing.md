@@ -78,7 +78,8 @@ parent (`create_worktree` contains the fetch, remote checks and `git worktree ad
 | `precreate.stale_remote_check` / `precreate.unmerged_remote_check` | Stale and unmerged remote-branch probes |
 | `precreate.sibling_status` | One `git status` health probe of a sibling fetch worktree |
 | `precreate.scratch_add` | Scratch fetch worktree when no healthy sibling exists |
-| `precreate.base_fetch` | `git fetch --no-tags origin <default>` fresh-base refresh |
+| `precreate.base_fetch` | `git fetch --no-tags origin <default>` fresh-base refresh, including any repeats |
+| `precreate.base_fetch_retry` | One repeat of that fetch after Git rejected the ref update because a concurrent fetch changed the ref (GH#38060) |
 | `precreate.registry_begin_create` | Registry `begin-create` transaction |
 | `precreate.git_worktree_add` | Native `git worktree add` checkout |
 | `precreate.registry_register` | Creation-metadata registration |

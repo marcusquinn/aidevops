@@ -303,6 +303,15 @@ jq -n '{number:31300,title:"Explicit hold",state:"OPEN",body:"## Children\n\n- #
 	>"$STUB_DIR/issue-31300.json"
 printf '%s\n' '[{"number":30601}]' >"$STUB_DIR/sub-issues-31300.json"
 
+# GH#39512: a pull request referenced in the parent body is not a child issue.
+jq -n '{number:31400,title:"Parent referencing PRs",state:"OPEN",body:"## Children\n\n- #30601\n- #31401\n- #31402\n\n<!-- parent-close-contract: complete -->",labels:[{name:"parent-task"}]}' \
+	>"$STUB_DIR/issue-31400.json"
+printf '%s\n' '[{"number":30601}]' >"$STUB_DIR/sub-issues-31400.json"
+printf '%s\n' '{"number":31401,"title":"Merged PR","state":"MERGED","url":"https://github.com/o/r/pull/31401","labels":[]}' \
+	>"$STUB_DIR/issue-31401.json"
+printf '%s\n' '{"number":31402,"title":"Open PR","state":"OPEN","url":"https://github.com/o/r/pull/31402","labels":[]}' \
+	>"$STUB_DIR/issue-31402.json"
+
 # =============================================================================
 # Test runner
 # =============================================================================
@@ -598,6 +607,13 @@ if printf '%s' "$keep_open_output" | grep -q 'keep-open' &&
 	pass "30: keep-open blocks closure after every child closes"
 else
 	fail "30: keep-open parent recommended closure"
+fi
+
+pr_ref_json=$(run_helper 31400 --repo marcusquinn/aidevops --json)
+if [[ "$(printf '%s' "$pr_ref_json" | jq -r '.children_open')" == "0" ]]; then
+	pass "31: PRs referenced in the parent body are not counted as open children"
+else
+	fail "31: PR reference counted as open child: $(printf '%s' "$pr_ref_json" | jq -c '{children_open,next_action}')"
 fi
 
 # =============================================================================

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from session_time_common import path_matches
 from session_time_db import (
+    MESSAGE_FIELDS,
     OBS_PLAN_QUERY,
     OBS_QUERY,
     SESSION_QUERY,
@@ -42,7 +43,7 @@ def session_query(roots, since):
         return SESSION_QUERY, (since,)
     predicate, root_params = root_filter("s.directory", roots)
     query = f"""
-        SELECT s.id, s.title, s.directory, m.time_created, m.data
+        SELECT s.id, s.title, s.directory, m.time_created, {MESSAGE_FIELDS}
         FROM session s JOIN message m ON m.session_id=s.id
         WHERE s.parent_id IS NULL AND m.time_created >= ?
           AND ({predicate})

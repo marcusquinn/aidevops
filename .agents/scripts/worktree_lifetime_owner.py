@@ -10,6 +10,7 @@ An empty, missing or replaced arbitrary cgroup is not descendant evidence.
 """
 
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -57,21 +58,106 @@ def unit_snapshot(unit):
     return snapshot
 
 
-def drain_unit(launch, boot_reader=boot_id, snapshot_reader=unit_snapshot):
-    require(launch["boot_id"] == boot_reader(), "boot generation unavailable")
-    snapshot = snapshot_reader(launch["unit"])
-    require(snapshot.get("InvocationID") == launch["invocation"], "invocation changed")
-    require(snapshot.get("MainPID") == "0" and not snapshot.get("Job"), "unit still has work")
-    require((snapshot.get("ActiveState"), snapshot.get("SubState")) in
-            (("active", "exited"), ("failed", "failed")), "descendants have not drained")
-    cgroup = launch["cgroup"]
-    require(cgroup.startswith("/") and ".." not in Path(cgroup).parts, "unsafe cgroup")
+BOOT_PATTERN = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+INVOCATION_PATTERN = r"[0-9a-f]{32}"
+PREVIOUS_BOOT_GROUP = "previous-boot-ended"
+
+
+def valid_boot_id(value):
+    """Return whether value is a kernel boot UUID."""
+    return isinstance(value, str) and re.fullmatch(BOOT_PATTERN, value) is not None
+
+
+def valid_invocation(value):
+    """Return whether value is a systemd invocation ID."""
+    return (isinstance(value, str) and
+            re.fullmatch(INVOCATION_PATTERN, value) is not None)
+
+
+def previous_boot_receipt_valid(launch, receipt):
+    """
+    Validate an ended-boot receipt for one bound unit launch.
+
+    A reboot ends every process of the recorded boot. For a bound invocation
+    that is stronger descendant evidence than a unit sample, but only when
+    both boot IDs are valid and differ and the invocation matches.
+    """
+    if not isinstance(receipt, dict):
+        return False
+    observed_at = receipt.get("observed_at")
+    return all((receipt.get("group") == PREVIOUS_BOOT_GROUP,
+                valid_boot_id(launch.get("boot_id")),
+                valid_boot_id(receipt.get("observed_boot")),
+                receipt.get("observed_boot") != launch.get("boot_id"),
+                valid_invocation(launch.get("invocation")),
+                receipt.get("InvocationID") == launch.get("invocation"),
+                type(observed_at) in (int, float)
+                and math.isfinite(observed_at)
+                and 0 < observed_at <= time.time()))
+
+
+def drain_previous_boot(launch, current_boot, boot_reader):
+    """
+    Record that the recorded boot of a bound launch has ended.
+
+    Unit names, invocations and cgroup paths can be reused across boots, so
+    this never samples unit or cgroup state. Unbound admissions still refuse.
+    """
+    require(valid_boot_id(current_boot) and valid_boot_id(launch.get("boot_id")),
+            "boot generation unavailable")
+    require(valid_invocation(launch.get("invocation")),
+            "unresolved previous-boot admission")
+    receipt = {"group": PREVIOUS_BOOT_GROUP, "observed_boot": current_boot,
+               "InvocationID": launch["invocation"], "observed_at": time.time()}
+    require(boot_reader() == current_boot, "boot changed during observation")
+    require(previous_boot_receipt_valid(launch, receipt),
+            "invalid previous-boot receipt")
+    launch["quiescence"] = receipt
+
+
+DRAINED_STATES = (("active", "exited"), ("failed", "failed"))
+
+
+def drained_snapshot_valid(snapshot, invocation):
+    """The same drained-unit fields that sealed receipts and proofs require."""
+    return isinstance(snapshot, dict) and all((
+        snapshot.get("InvocationID") == invocation,
+        snapshot.get("MainPID") == "0" and not snapshot.get("Job"),
+        snapshot.get("ExitType") == "cgroup" and snapshot.get("RemainAfterExit") == "yes"
+        and snapshot.get("Restart") == "no",
+        (snapshot.get("ActiveState"), snapshot.get("SubState")) in DRAINED_STATES))
+
+
+def require_cgroup_drained(cgroup):
+    require(isinstance(cgroup, str) and cgroup.startswith("/") and ".." not in Path(cgroup).parts,
+            "unsafe cgroup")
     directory = ROOT / cgroup.lstrip("/")
     try:
         events = dict(line.split() for line in (directory / "cgroup.events").read_text().splitlines())
         require(events.get("populated") == "0", "cgroup remains populated")
     except FileNotFoundError:
         require(not directory.exists(), "cgroup evidence unavailable")
+
+
+def drain_unit(launch, boot_reader=boot_id, snapshot_reader=unit_snapshot, presence_reader=None,
+               release_reader=None):
+    current_boot = boot_reader()
+    if launch["boot_id"] != current_boot:
+        drain_previous_boot(launch, current_boot, boot_reader)
+        return
+    try:
+        snapshot = snapshot_reader(launch["unit"])
+    except (ValueError, subprocess.SubprocessError):
+        # GH#39702: a unit released after a durable receipt is no longer loaded.
+        from worktree_lifetime_release_receipt import drain_released
+        if drain_released(launch, current_boot, boot_reader, presence_reader, release_reader):
+            return
+        raise
+    require(snapshot.get("InvocationID") == launch["invocation"], "invocation changed")
+    require(snapshot.get("MainPID") == "0" and not snapshot.get("Job"), "unit still has work")
+    require((snapshot.get("ActiveState"), snapshot.get("SubState")) in DRAINED_STATES,
+            "descendants have not drained")
+    require_cgroup_drained(launch["cgroup"])
     require(snapshot_reader(launch["unit"]) == snapshot, "unit changed while sampling")
     launch["quiescence"] = snapshot
 
@@ -80,12 +166,15 @@ def identity(path):
     """Same physical identity for every producer and lifetime manager."""
     require(path.is_absolute() and not path.is_symlink(), "unsafe worktree path")
     path = path.resolve(strict=True)
-    def git(*args):
-        return subprocess.check_output(
-            ["git", "-C", str(path), "rev-parse", *args],
-            stderr=subprocess.DEVNULL, text=True, timeout=10).strip()
-    admin = Path(git("--absolute-git-dir")).resolve(strict=True)
-    common = Path(git("--path-format=absolute", "--git-common-dir")).resolve(strict=True)
+    # One spawn reads both directories; --absolute-git-dir is absolute before
+    # the --path-format switch. A newline inside either path fails closed.
+    lines = subprocess.check_output(
+        ["git", "-C", str(path), "rev-parse", "--absolute-git-dir",
+         "--path-format=absolute", "--git-common-dir"],
+        stderr=subprocess.DEVNULL, text=True, timeout=10).rstrip("\n").split("\n")
+    require(len(lines) == 2, "unexpected Git directory resolution")
+    admin = Path(lines[0].strip()).resolve(strict=True)
+    common = Path(lines[1].strip()).resolve(strict=True)
     require(admin != common, "canonical repository cannot enroll")
     return {"path": str(path), "source_inode": inode(path), "admin": str(admin),
             "admin_inode": inode(admin), "common": str(common)}
@@ -109,12 +198,8 @@ def recorded_process_status(launch):
     try:
         saved_boot = launch.get("boot_id")
         current_boot = boot_id()
-        require(isinstance(saved_boot, str) and
-                re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", saved_boot) is not None,
-                "invalid saved boot identity")
-        require(isinstance(current_boot, str) and
-                re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", current_boot) is not None,
-                "boot identity unavailable")
+        require(valid_boot_id(saved_boot), "invalid saved boot identity")
+        require(valid_boot_id(current_boot), "boot identity unavailable")
         pid = launch.get("owner_pid")
         start = launch.get("owner_start")
         require(type(pid) is int and pid > 0 and isinstance(start, str) and start.isdecimal(),
@@ -191,6 +276,44 @@ def require_admission_observed(record):
             "ownership changed without process admission evidence")
 
 
+PULSE_MANAGER = "pulse"
+# Generations a replacement creation may supersede. Pulse rows qualify only once
+# their worktree is gone; live and unknown managers keep their fence.
+SUPERSEDABLE = (MANAGER, PULSE_MANAGER)
+
+
+class StaleLifetime(ValueError):
+    """An absent path's earlier generation cannot be proven complete now.
+
+    The message is fixed and path-free so callers may print it verbatim.
+    """
+
+    reason = "stale-lifetime-record"
+    remediation = ("stale lifetime record for retired path; no sealed generation and the previous "
+                   "owner's completion is unproven. Retry after the previous worker drains, or pass "
+                   "an explicit alternate path: worktree-helper.sh add <branch> <new-path>")
+
+    def __init__(self):
+        super().__init__(self.remediation)
+
+
+def retire_absent(connection, record, path):
+    """Seal an absent path's earlier generation from present-tense evidence only.
+
+    Workers retire worktrees without sealing, which leaves the row unsealed.
+    Sealing uses the same unit/process drain proof as Pulse cleanup, so a live
+    or unprovable owner still refuses. A recorded live owner lease refuses even
+    for an already sealed row: Pulse proofs never inspect owner leases.
+    """
+    import worktree_lifetime_idle as idle_policy
+    if connection.execute("SELECT 1 FROM sqlite_master WHERE name='worktree_owners'").fetchone():
+        idle_policy.owner_clear(connection, path)
+    if record.get("state") == "sealed":
+        return
+    from worktree_lifetime_archive import managed_module
+    managed_module().seal(record)
+
+
 def begin_creation(connection, path):
     """Fence old receipts durably BEFORE Git can recreate or reuse any inode."""
     if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='worktree_managed_lifetimes'").fetchone():
@@ -199,10 +322,18 @@ def begin_creation(connection, path):
     if row is None:
         return ""
     record = json.loads(row[0])
-    require(record.get("manager") == MANAGER, "different lifetime manager owns this path")
     record.pop("creation_pending", None)
     from worktree_lifetime_proof import proof
-    proof(record, record["identity"]["source_inode"], fresh=True)
+    if os.path.lexists(path):
+        require(record.get("manager") == MANAGER, "different lifetime manager owns this path")
+        proof(record, record["identity"]["source_inode"], fresh=True)
+    else:
+        try:
+            require(record.get("manager") in SUPERSEDABLE, "different lifetime manager owns this path")
+            retire_absent(connection, record, path)
+            proof(record, record["identity"]["source_inode"], fresh=True)
+        except (OSError, ValueError, KeyError, TypeError, IndexError, subprocess.SubprocessError) as error:
+            raise StaleLifetime() from error
     token = uuid.uuid4().hex
     record["creation_pending"] = token
     connection.execute("UPDATE worktree_managed_lifetimes SET record=? WHERE path=?",
@@ -218,7 +349,8 @@ def prepare_creation(connection, path):
     if row is None:
         return
     record = json.loads(row[0])
-    require(record.get("manager") == MANAGER, "different lifetime manager owns this path")
+    # begin_creation admitted Pulse rows only for absent paths and after proof.
+    require(record.get("manager") in SUPERSEDABLE, "different lifetime manager owns this path")
     token = record.pop("creation_pending", None)
     require(bool(token) and token == os.environ.get("AIDEVOPS_WORKTREE_CREATION_TOKEN"),
             "replacement has no matching pre-creation fence")

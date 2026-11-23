@@ -115,8 +115,22 @@ _is_parent_task() {
 # =============================================================================
 # check-body subcommand
 # =============================================================================
+_report_parent_violation() {
+	local viol="$1" strict="$2"
+	if [[ "$strict" -eq 1 ]]; then
+		printf 'parent-task-keyword-guard: ERROR: PR body uses Closes/Resolves/Fixes on parent-task issue #%s.\n' "$viol" >&2
+		printf 'parent-task-keyword-guard: Use "For #%s" or "Ref #%s" instead.\n' "$viol" "$viol" >&2
+		printf '%s\n' 'parent-task-keyword-guard: The parent issue must stay open until ALL phase children merge.' >&2
+		printf '%s\n' 'parent-task-keyword-guard: To override (final-phase PR only): pass --allow-parent-close' >&2
+	else
+		printf 'parent-task-keyword-guard: WARNING: PR body uses Closes/Resolves/Fixes on parent-task issue #%s.\n' "$viol" >&2
+		printf 'parent-task-keyword-guard: Consider using "For #%s" or "Ref #%s" to keep the parent open.\n' "$viol" "$viol" >&2
+	fi
+	return 0
+}
+
 cmd_check_body() {
-	local body_file="" repo="" strict=0 allow_parent_close=0
+	local body_file="" repo="" strict=0 allow_parent_close=0 fail_on_uncertain=0
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -130,6 +144,10 @@ cmd_check_body() {
 			;;
 		--strict)
 			strict=1
+			shift
+			;;
+		--fail-on-uncertain)
+			fail_on_uncertain=1
 			shift
 			;;
 		--allow-parent-close)
@@ -186,6 +204,10 @@ cmd_check_body() {
 		printf 'parent-task-keyword-guard: WARNING: could not check labels for #%s (gh API failure); skipping\n' \
 			"$unc" >&2
 	done
+	if [[ "$fail_on_uncertain" -eq 1 && "${#uncertain[@]}" -gt 0 ]]; then
+		printf '%s\n' 'parent-task-keyword-guard: refusing merge without verified issue labels' >&2
+		return 2
+	fi
 
 	if [[ "${#violations[@]}" -eq 0 ]]; then
 		return 0
@@ -194,19 +216,7 @@ cmd_check_body() {
 	# Violations found
 	local viol
 	for viol in "${violations[@]}"; do
-		if [[ "$strict" -eq 1 ]]; then
-			printf 'parent-task-keyword-guard: ERROR: PR body uses Closes/Resolves/Fixes on parent-task issue #%s.\n' \
-				"$viol" >&2
-			printf 'parent-task-keyword-guard: Use "For #%s" or "Ref #%s" instead.\n' \
-				"$viol" "$viol" >&2
-			printf 'parent-task-keyword-guard: The parent issue must stay open until ALL phase children merge.\n' >&2
-			printf 'parent-task-keyword-guard: To override (final-phase PR only): pass --allow-parent-close\n' >&2
-		else
-			printf 'parent-task-keyword-guard: WARNING: PR body uses Closes/Resolves/Fixes on parent-task issue #%s.\n' \
-				"$viol" >&2
-			printf 'parent-task-keyword-guard: Consider using "For #%s" or "Ref #%s" to keep the parent open.\n' \
-				"$viol" "$viol" >&2
-		fi
+		_report_parent_violation "$viol" "$strict"
 	done
 
 	if [[ "$strict" -eq 1 ]]; then

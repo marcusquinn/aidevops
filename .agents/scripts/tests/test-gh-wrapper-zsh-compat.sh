@@ -170,6 +170,11 @@ fi
 	printf '\n'
 	extract_function _gh_with_timeout "$WRAPPERS_FILE"
 	printf '\n'
+	printf '%s\n' '_gh_timeout_cooldown_preflight(){ return 0; }'
+	printf '%s\n' '_gh_timeout_budget_seconds(){ echo 30; return 0; }'
+	# shellcheck disable=SC2016 # Intentional: emit zsh function definitions literally.
+	printf '%s\n' '_gh_replay_transport_output(){ cat "$3"; return 0; }'
+	printf '%s\n' '_gh_record_transport_privacy_block(){ return 0; }'
 	printf '%s\n' '_gh_cooldown_context_from_args(){ return 0; }'
 	printf '%s\n' '_gh_record_cooldown_response_if_needed(){ return 0; }'
 	# shellcheck disable=SC2016 # Intentional: emit zsh function definitions literally.
@@ -179,7 +184,7 @@ fi
 	printf '%s\n' '_gh_with_timeout write fake_gh issue edit 123'
 } >"$TMPFILE"
 
-zsh_timeout_output=$(zsh "$TMPFILE" 2>&1)
+zsh_timeout_output=$(env -u AIDEVOPS_GH_DEADLINE_EPOCH zsh "$TMPFILE" 2>&1)
 
 msg_2="2: _gh_with_timeout calls zsh function stubs directly"
 if [[ "$zsh_timeout_output" == "fake-gh-called:issue edit 123" ]]; then

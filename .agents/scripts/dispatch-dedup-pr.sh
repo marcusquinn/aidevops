@@ -14,6 +14,17 @@
 #     Exit 0 = PR evidence exists or lookup is uncertain (do NOT dispatch).
 #     Exit 1 = complete lookup with no evidence.
 
+# GH#38124: worker draft checkpoints use the continuation linkage predicate.
+_DDPR_LIB_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_DDPR_LIB_DIR" == "${BASH_SOURCE[0]}" ]] && _DDPR_LIB_DIR="."
+# shellcheck source=pr-checkpoint-target-lib.sh
+source "${_DDPR_LIB_DIR}/pr-checkpoint-target-lib.sh"
+unset _DDPR_LIB_DIR
+_DDPR_UNLINKED_PREFIX="WORKER_DRAFT_CHECKPOINT_UNLINKED:"
+# t19293: deliberately not a WORKER_DRAFT_CHECKPOINT: prefix, so every
+# continuation and attention consumer still treats the held draft as protected.
+_DDPR_SELF_HELD_PREFIX="WORKER_DRAFT_SELF_HELD:"
+
 _ddpr_gh_read() {
 	local rc=0
 	if declare -F _gh_with_timeout >/dev/null 2>&1; then
@@ -354,6 +365,126 @@ _ddpr_closing_keyword_pattern() {
 	return 0
 }
 
+# One bounded rich read, shared by all three open-PR checks (GH#38163).
+# More than 20 open PRs stays live: never widen the body/sibling search bound.
+# Args: repository
+_ddpr_fetch_open_snapshot() {
+	local repo_slug="$1"
+	# shellcheck disable=SC2016
+	AIDEVOPS_GH_GRAPHQL_COST_FROM_RESPONSE=1 \
+		AIDEVOPS_GH_ROUTE_DECISION="dispatch-dedup-snapshot-exact-cost" \
+		_ddpr_bounded_gh_read _ddpr_commit_read_attempt "$repo_slug" gh api graphql \
+		-f owner="${repo_slug%%/*}" -f name="${repo_slug#*/}" -f query='
+		query($owner: String!, $name: String!) {
+			repository(owner: $owner, name: $name) {
+				pullRequests(first: 20, states: [OPEN], orderBy: {field: CREATED_AT, direction: DESC}) {
+					pageInfo { hasNextPage }
+					nodes {
+						number title body isDraft createdAt headRefOid updatedAt
+						reviewDecision mergeStateStatus mergeable changedFiles
+						isCrossRepository headRefName
+						closingIssuesReferences(first: 100) {
+							nodes { number repository { name owner { login } } }
+							pageInfo { hasNextPage }
+						}
+						files(first: 100) { nodes { path } pageInfo { hasNextPage } }
+						labels(first: 100) { nodes { name } pageInfo { hasNextPage } }
+						commits(first: 100) {
+							nodes { commit { messageHeadline } }
+							pageInfo { hasNextPage }
+						}
+					}
+				}
+			}
+			rateLimit { cost }
+		}' 2>/dev/null
+	return $?
+}
+
+# Enrich the canonical cycle snapshot once, not once per candidate.
+# The canonical reader has already checked repository, projection, auth scope
+# and invalidation generation. Never use partial/old snapshots as negative
+# evidence. The private derivative is keyed by the entire envelope, so a new
+# generation, invalidation, auth scope or PR fingerprint cannot reuse it.
+# Args: repository, private output directory
+_ddpr_prepare_open_snapshot() {
+	local repo_slug="$1" output_dir="$2"
+	local snapshot="${AIDEVOPS_DDPR_OPEN_SNAPSHOT_FILE:-}"
+	local key="" cache_dir="" cache_file="" response="" rich="" temporary="" cache_hit=0
+	_DDPR_OPEN_SNAPSHOT_JSON=""
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
+	[[ -f "$snapshot" && ! -L "$snapshot" ]] || return 1
+	jq -e --arg repo "$repo_slug" '
+		.repository == $repo and .collection == "prs" and .complete == true and
+		(.items | type) == "array" and (.items | length) <= 20 and
+		((now - (.timestamp | fromdateiso8601)) >= 0) and
+		((now - (.timestamp | fromdateiso8601)) < 900)
+	' "$snapshot" >/dev/null 2>&1 || return 1
+	key=$(shasum -a 256 "$snapshot") || return 1
+	key="${key%% *}"
+	[[ "$key" =~ ^[a-f0-9]{64}$ ]] || return 1
+	cache_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-pr-snapshots"
+	# One replaceable entry per repository; do not accumulate one body-rich
+	# artifact per pulse cycle. The embedded key fences concurrent generations.
+	cache_file="${cache_dir}/${repo_slug//\//--}.json"
+	if [[ -f "$cache_file" && ! -L "$cache_file" ]]; then
+		response=$(jq -ce --arg key "$key" 'select(._ddpr_snapshot_key == $key)' "$cache_file" 2>/dev/null) && cache_hit=1
+	fi
+	if [[ "$cache_hit" == 0 ]]; then
+		# The lightweight prefetch projection lacks body, commits and merge/draft
+		# classification. Fetch these together once for this exact snapshot. If
+		# any nested page is incomplete, the original paginated live readers win.
+		response=$(_ddpr_fetch_open_snapshot "$repo_slug") || return 1
+	fi
+	# Revalidate cached responses as strictly as fresh responses. Valid JSON
+	# alone is not proof of complete evidence (including a damaged empty array).
+	rich=$(printf '%s' "$response" | jq -ce --slurpfile snapshot "$snapshot" \
+			--arg bt "$_DDPR_JSON_BOOLEAN_TYPE" --arg st "$_DDPR_JSON_STRING_TYPE" \
+			--arg nt "$_DDPR_JSON_NUMBER_TYPE" --arg at "$_DDPR_JSON_ARRAY_TYPE" '
+			select((now - ($snapshot[0].timestamp | fromdateiso8601)) < 900) |
+			select(((.errors // []) | length) == 0) |
+			select((.data.rateLimit.cost | type) == $nt and .data.rateLimit.cost > 0) |
+			.data.repository.pullRequests |
+			select(.pageInfo.hasNextPage == false and (.nodes | type) == $at) |
+			.nodes |
+			select(all(.[];
+				(.number | type) == $nt and (.title | type) == $st and
+				(.body | type) == $st and (.isDraft | type) == $bt and
+				(.isCrossRepository | type) == $bt and (.headRefName | type) == $st and
+				(.changedFiles | type) == $nt and (.createdAt | type) == $st and
+				(.files.nodes | type) == $at and (.files.pageInfo.hasNextPage | type) == $bt and
+				(.labels.nodes | type) == $at and .labels.pageInfo.hasNextPage == false and
+				(.closingIssuesReferences.nodes | type) == $at and
+				.closingIssuesReferences.pageInfo.hasNextPage == false and
+				(.commits.nodes | type) == $at and .commits.pageInfo.hasNextPage == false and
+				all(.commits.nodes[]; (.commit.messageHeadline | type) == $st))) |
+			# Reject membership/head changes since prefetch rather than combining
+			# two generations. updatedAt also fences body/label/draft changes.
+			select((map({number, headRefOid, updatedAt}) | sort_by(.number)) ==
+				($snapshot[0].items | map({number, headRefOid, updatedAt}) | sort_by(.number))) |
+			map(.filesTruncated = .files.pageInfo.hasNextPage |
+				.files = .files.nodes | .labels = .labels.nodes |
+				.closingIssuesReferences = .closingIssuesReferences.nodes |
+				.commits = [.commits.nodes[].commit | {messageHeadline}])
+		' 2>/dev/null) || return 1
+	if [[ "$cache_hit" == 0 ]]; then
+		# Atomic, private, best-effort publication. Failure only loses reuse;
+		# the current invocation still has complete validated evidence.
+		mkdir -p "$cache_dir" 2>/dev/null || return 1
+		temporary=$(umask 077; mktemp "${cache_dir}/.snapshot.XXXXXX") || return 1
+		if ! printf '%s' "$response" | jq -c --arg key "$key" '._ddpr_snapshot_key = $key' >"$temporary" ||
+			! mv -f "$temporary" "$cache_file"; then
+			rm -f "$temporary"
+			return 1
+		fi
+	fi
+	# Keep large evidence off argv/environment; six forked checks share this
+	# attempt-local file. Existing per-check instrumentation remains unchanged.
+	printf '%s' "$rich" >"${output_dir}/open-snapshot.json" || return 1
+	_DDPR_OPEN_SNAPSHOT_JSON="${output_dir}/open-snapshot.json"
+	return 0
+}
+
 #######################################
 # Fetch open sibling PR candidates with response-owned GraphQL quota cost.
 #
@@ -379,6 +510,11 @@ _ddpr_graphql_open_siblings() {
 	local response=""
 	local pr_json=""
 
+	if [[ -n "${_DDPR_OPEN_SNAPSHOT_JSON:-}" ]]; then
+		jq -c '.' "$_DDPR_OPEN_SNAPSHOT_JSON"
+		return $?
+	fi
+
 	# shellcheck disable=SC2016
 	response=$(AIDEVOPS_GH_GRAPHQL_COST_FROM_RESPONSE=1 \
 		AIDEVOPS_GH_ROUTE_DECISION="dispatch-dedup-open-siblings-exact-cost" \
@@ -390,6 +526,10 @@ _ddpr_graphql_open_siblings() {
 					... on PullRequest {
 						number title body isDraft reviewDecision
 						mergeStateStatus mergeable changedFiles
+						isCrossRepository headRefName
+						closingIssuesReferences(first: 10) {
+							nodes { number repository { name owner { login } } }
+						}
 						files(first: 100) {
 							nodes { path }
 							pageInfo { hasNextPage }
@@ -408,7 +548,8 @@ _ddpr_graphql_open_siblings() {
 	pr_json=$(printf '%s' "$response" | jq -ce \
 		--arg array_type "$_DDPR_JSON_ARRAY_TYPE" \
 		--arg boolean_type "$_DDPR_JSON_BOOLEAN_TYPE" \
-		--arg number_type "$_DDPR_JSON_NUMBER_TYPE" '
+		--arg number_type "$_DDPR_JSON_NUMBER_TYPE" \
+		--arg string_type "$_DDPR_JSON_STRING_TYPE" '
 		select(((.errors // []) | type) == $array_type)
 		| select(((.errors // []) | length) == 0)
 		| select((.data.rateLimit.cost | type) == $number_type)
@@ -419,6 +560,9 @@ _ddpr_graphql_open_siblings() {
 			.__typename == "PullRequest" and
 			(.number | type) == $number_type and
 			(.isDraft | type) == $boolean_type and
+			(.isCrossRepository | type) == $boolean_type and
+			(.headRefName | type) == $string_type and
+			((.closingIssuesReferences.nodes // []) | type) == $array_type and
 			((.files.nodes // []) | type) == $array_type and
 			(.files.pageInfo.hasNextPage | type) == $boolean_type and
 			((.labels.nodes // []) | type) == $array_type and
@@ -433,6 +577,9 @@ _ddpr_graphql_open_siblings() {
 			mergeStateStatus,
 			mergeable,
 			changedFiles,
+			isCrossRepository,
+			headRefName,
+			closingIssuesReferences: (.closingIssuesReferences.nodes // []),
 			files: (.files.nodes // []),
 			filesTruncated: .files.pageInfo.hasNextPage,
 			labels: (.labels.nodes // [])
@@ -489,6 +636,12 @@ _ddpr_graphql_open_commit_page() {
 	return $?
 }
 
+# Match the live reader: slice the ten newest open PRs before excluding drafts.
+_ddpr_snapshot_open_commits() {
+	jq -c '.[:10]' "$_DDPR_OPEN_SNAPSHOT_JSON"
+	return $?
+}
+
 #######################################
 # Fetch the ten newest open PR commit headlines with response-owned quota cost.
 #
@@ -498,6 +651,10 @@ _ddpr_graphql_open_commit_page() {
 #######################################
 _ddpr_graphql_open_commits() {
 	local repo_slug="$1"
+	if [[ -n "${_DDPR_OPEN_SNAPSHOT_JSON:-}" ]]; then
+		_ddpr_snapshot_open_commits
+		return $?
+	fi
 	local owner="${repo_slug%%/*}"
 	local repo="${repo_slug#*/}"
 	local response=""
@@ -526,7 +683,7 @@ _ddpr_graphql_open_commits() {
 					orderBy: {field: CREATED_AT, direction: DESC}
 				) {
 					nodes {
-						number title isDraft
+						number title isDraft headRefName changedFiles files(first: 10) { nodes { path } pageInfo { hasNextPage } }
 						commits(first: 100) {
 							nodes { commit { messageHeadline } }
 							pageInfo { hasNextPage endCursor }
@@ -558,9 +715,9 @@ _ddpr_graphql_open_commits() {
 			all(.commits.nodes[]; (.commit.messageHeadline | type) == $string_type)
 		))
 		| map({
-			number,
-			title,
-			isDraft,
+			number, title, isDraft, headRefName: (.headRefName // ""), changedFiles: (.changedFiles // 0),
+			# Optional planning-exclusion evidence; absent or partial means "not exempt".
+			files: [(.files.nodes // [])[] | {path}], filesTruncated: (.files.pageInfo.hasNextPage != false),
 			commits: [.commits.nodes[].commit | {messageHeadline}],
 			hasNextPage: .commits.pageInfo.hasNextPage,
 			endCursor: .commits.pageInfo.endCursor
@@ -595,14 +752,90 @@ _ddpr_graphql_open_commits() {
 }
 
 #######################################
+# Classify reference-matched open drafts for has_open_pr Check 0.
+#
+#aidevops:trust-boundary — GH#38124: an unprotected same-repository worker
+# draft without closing references is this issue's WORKER_DRAFT_CHECKPOINT only
+# when the continuation predicate (checkpoint_draft_links) accepts it, so dedup
+# never blocks an issue that continuation will reject. A rejected draft is
+# context, not ownership: it no longer blocks ordinary dispatch, because a fresh
+# worker costs less than a permanent stall and the fuse/terminal actions retire
+# the orphaned draft. Closing-reference drafts keep the worker route; protected,
+# cross-repository and non-worker drafts keep the plain durable block.
+# t19293 (GH#39919): a linked worker draft whose only protection is
+# hold-for-review is `held`: still a plain block, but layer 4 may ask the
+# re-arm route whether a trusted receipt answered the runner's own hold.
+#
+# Args: $1 = issue number, $2 = sibling JSON, $3 = title pattern, $4 = body pattern
+# Output: `unlinked|PR|reason` rows, then at most one `block|PR|worker|held|protected`
+#######################################
+_ddpr_classify_sibling_drafts() {
+	local issue_number="$1"
+	local pr_json="$2"
+	local title_pattern="$3"
+	local body_pattern="$4"
+	printf '%s' "$pr_json" | jq -r \
+		--argjson issue "$issue_number" \
+		--arg title_pattern "$title_pattern" \
+		--arg body_pattern "$body_pattern" \
+		--arg seed_marker "<!-- aidevops:seed-pr issue=${issue_number} -->" \
+		--arg unlinked "unlinked" \
+		--arg hold "$_PCTL_HOLD_LABEL" \
+		"${_PR_CHECKPOINT_FOR_LINK_JQ_DEFS}"'
+		def names: [.labels[]?.name];
+		# GH#39908: a pulse-handed-over interactive draft (origin:worker-takeover)
+		# is a worker checkpoint, matching checkpoint_protected.
+		def dedup_protected: checkpoint_interactive_handed_over as $handed_over | names | any(
+			(. == "origin:interactive" and ($handed_over | not)) or . == "hold-for-review" or
+			. == "no-auto-dispatch" or . == "needs-maintainer-review"
+		);
+		def worker_owned: names | any(. == "origin:worker" or . == "origin:worker-takeover");
+		def worker_checkpoint:
+			worker_owned and (dedup_protected | not) and (checkpoint_protected | not) and
+			.isCrossRepository == false;
+		def linked_worker_checkpoint:
+			worker_checkpoint and (((.closingIssuesReferences // []) | length) > 0 or checkpoint_draft_links($issue));
+		# Only the hold is set aside; every other label still decides the kind.
+		def self_held_checkpoint:
+			(names | any(. == $hold)) and
+			(.labels |= map(select(.name != $hold)) | linked_worker_checkpoint);
+		def seed_for_issue: (names | any(. == "seed-pr")) and ((.body // "") | contains($seed_marker));
+		# A proven dispatch identity for another target makes this issue related.
+		def unlinked_reason:
+			checkpoint_reference_issues as $refs | checkpoint_dispatch_identity as $identity |
+			if ($refs | length) == 0 then "unrecognised_reference"
+			elif (any($refs[]; . == $issue) | not) or ($identity != null and any($refs[]; . == $identity))
+			then "related_reference"
+			else "ambiguous" end;
+		[
+			.[] | select(
+				(.isDraft == true) and (seed_for_issue | not) and
+				(((.title // "") | test($title_pattern; "i")) or ((.body // "") | test($body_pattern; "i")))
+			) |
+			if worker_checkpoint then
+				if linked_worker_checkpoint then
+					{number, kind: "worker"}
+				else {number, kind: $unlinked, reason: unlinked_reason} end
+			elif self_held_checkpoint then {number, kind: "held"}
+			else {number, kind: "protected"} end
+		] |
+		(.[] | select(.kind == $unlinked) | "\(.kind)|\(.number)|\(.reason)"),
+		(map(select(.kind != $unlinked)) | .[0] | select(. != null) | "block|\(.number)|\(.kind)")
+	' 2>/dev/null || return 1
+	return 0
+}
+
+#######################################
 # has_open_pr Check 0: healthy open sibling PRs for this issue.
 #
 # Redispatch should not create another worker when an existing sibling PR for
 # the same issue is already approved or mergeable. This catches PRs that are
 # ready for the merge path but do not use a closing keyword in the body (for
-# example parent/phase work using `For #NNN`). Drafts are durable checkpoints:
+# example parent/phase work using `For #NNN`), and ready orphan-recovery PRs
+# whose checks are still pending (_ddpr_match_ready_sibling). Drafts are durable checkpoints:
 # worker drafts must be continued/escalated, while interactive/held/NMR drafts
-# must remain untouched. Both kinds block competing ordinary dispatch.
+# must remain untouched. Both kinds block competing ordinary dispatch; a worker
+# draft the continuation predicate rejects does not (_ddpr_classify_sibling_drafts).
 #
 # Args: $1 = issue number, $2 = repo slug
 # Returns: exit 0 if a healthy sibling PR matches, exit 1 if none
@@ -630,25 +863,21 @@ _has_open_pr_check_healthy_sibling() {
 	# companion files the worker starts from; it is not an implementation
 	# checkpoint. Applying the label already requires triage access; the worker
 	# launch path re-checks author trust and same-repository heads.
-	draft_pr=$(printf '%s' "$pr_json" | jq -r \
-		--arg title_pattern "$title_ref_pattern" \
-		--arg body_pattern "$body_ref_pattern" \
-		--arg seed_marker "<!-- aidevops:seed-pr issue=${issue_number} -->" '
-		def names: [.labels[]?.name];
-		def protected: names | any(
-			. == "origin:interactive" or . == "hold-for-review" or
-			. == "no-auto-dispatch" or . == "needs-maintainer-review"
-		);
-		def worker_owned: names | any(. == "origin:worker" or . == "origin:worker-takeover");
-		def seed_for_issue: (names | any(. == "seed-pr")) and ((.body // "") | contains($seed_marker));
-		[
-			.[] | select(
-				(.isDraft == true) and (seed_for_issue | not) and
-				(((.title // "") | test($title_pattern; "i")) or ((.body // "") | test($body_pattern; "i")))
-			)
-		] | .[0] |
-		if . then "\(.number)|\(if worker_owned and (protected | not) then "worker" else "protected" end)"
-		else "" end' 2>/dev/null) || draft_pr=""
+	local draft_rows="" draft_row="" unlinked_reason=""
+	draft_rows=$(_ddpr_classify_sibling_drafts "$issue_number" "$pr_json" \
+		"$title_ref_pattern" "$body_ref_pattern") || draft_rows=""
+	draft_pr=""
+	while IFS= read -r draft_row; do
+		case "$draft_row" in
+		unlinked\|*)
+			draft_row="${draft_row#unlinked|}"
+			unlinked_reason="${draft_row#*|}"
+			printf '%s issue=#%s pr=#%s reason=%s; draft does not block ordinary dispatch\n' \
+				"$_DDPR_UNLINKED_PREFIX" "$issue_number" "${draft_row%%|*}" "$unlinked_reason" >&2
+			;;
+		block\|*) draft_pr="${draft_row#block|}" ;;
+		esac
+	done <<<"$draft_rows"
 	if [[ -n "$draft_pr" ]]; then
 		draft_pr_number="${draft_pr%%|*}"
 		draft_pr_kind="${draft_pr#*|}"
@@ -657,12 +886,57 @@ _has_open_pr_check_healthy_sibling() {
 				"$draft_pr_number" "$issue_number"
 			return 0
 		fi
+		if [[ "$draft_pr_kind" == "held" ]]; then
+			printf '%s draft PR #%s is a durable checkpoint for issue #%s; ordinary redispatch is blocked\n' \
+				"$_DDPR_SELF_HELD_PREFIX" "$draft_pr_number" "$issue_number"
+			return 0
+		fi
 		printf 'draft PR #%s is a durable checkpoint for issue #%s; ordinary redispatch is blocked\n' \
 			"$draft_pr_number" "$issue_number"
 		return 0
 	fi
 
-	match_pr=$(printf '%s' "$pr_json" | jq -r \
+	match_pr=$(_ddpr_match_ready_sibling "$issue_number" "$pr_json" "$title_ref_pattern" \
+		"$body_ref_pattern" "$healthy_state_pattern" "$blocked_state_pattern") || match_pr=""
+
+	case "$match_pr" in
+	*\|recovery)
+		printf 'open recovery PR #%s holds unmerged worker progress for issue #%s; redispatch waits for it to land\n' \
+			"${match_pr%%|*}" "$issue_number"
+		return 0
+		;;
+	?*)
+		printf 'open PR #%s is approved or mergeable for issue #%s\n' "${match_pr%%|*}" "$issue_number"
+		return 0
+		;;
+	esac
+	return 1
+}
+
+#######################################
+# Select the ready (non-draft) sibling PR that owns this issue for Check 0.
+#
+# A healthy sibling is approved or mergeable. An orphan-recovery PR
+# (_attempt_orphan_recovery_pr: label origin:worker-takeover, recovery marker,
+# standalone non-closing `For #N`) also owns the issue while checks or review
+# are pending (mergeStateStatus BLOCKED): it carries the worker's unmerged
+# progress, and a redispatched worker would restart from the base without it
+# (GH#39760). Check 1's title match misses it once more than ten newer PRs are
+# open. A conflicted recovery PR cannot land, so it releases the issue.
+#
+# Args: $1 issue number, $2 sibling JSON, $3 title pattern, $4 body pattern,
+#       $5 healthy merge-state pattern, $6 blocked merge-state pattern
+# Stdout: "<number>|healthy", "<number>|recovery", or empty
+#######################################
+_ddpr_match_ready_sibling() {
+	local issue_number="$1"
+	local pr_json="$2"
+	local title_ref_pattern="$3"
+	local body_ref_pattern="$4"
+	local healthy_state_pattern="$5"
+	local blocked_state_pattern="$6"
+	printf '%s' "$pr_json" | jq -r \
+		--arg issue "$issue_number" \
 		--arg title_pattern "$title_ref_pattern" \
 		--arg body_pattern "$body_ref_pattern" \
 		--arg healthy_pattern "$healthy_state_pattern" \
@@ -673,26 +947,31 @@ _has_open_pr_check_healthy_sibling() {
 			((.filesTruncated // false) | not) and
 			($changed > 0) and ($returned == $changed) and
 			([.files[]?.path] | all(.[]; test("^(TODO\\.md$|todo/)")));
+		def healthy_sibling:
+			(((.mergeStateStatus // "") | test($blocked_pattern) | not)) and
+			(
+				((.reviewDecision // "") == "APPROVED") or
+				((.mergeStateStatus // "") | test($healthy_pattern)) or
+				((.mergeable // "") == "MERGEABLE")
+			);
+		def recovery_checkpoint:
+			((.isCrossRepository // false) | not) and
+			([(.labels // [])[] | (.name? // .)] | index("origin:worker-takeover")) != null and
+			((.body // "") | contains("<!-- aidevops:orphan-recovery ")) and
+			((.body // "") | test("(^|\\n)For #" + $issue + "[ \\t]*(\\r?\\n|$)")) and
+			((((.mergeStateStatus // "") == "DIRTY") or ((.mergeable // "") == "CONFLICTING")) | not);
 		[
 			.[] | select(
 				(.isDraft // false | not) and
 				((.reviewDecision // "") != "CHANGES_REQUESTED") and
-				(((.mergeStateStatus // "") | test($blocked_pattern) | not)) and
-				(
-					((.reviewDecision // "") == "APPROVED") or
-					((.mergeStateStatus // "") | test($healthy_pattern)) or
-					((.mergeable // "") == "MERGEABLE")
-				) and
 				(((.title // "") | test($title_pattern; "i")) or ((.body // "") | test($body_pattern; "i"))) and
 				(complete_planning_only_scope | not)
 			)
-		] | .[0].number // empty' 2>/dev/null) || match_pr=""
-
-	if [[ -n "$match_pr" ]]; then
-		printf 'open PR #%s is approved or mergeable for issue #%s\n' "$match_pr" "$issue_number"
-		return 0
-	fi
-	return 1
+			| if healthy_sibling then "\(.number)|healthy"
+			elif recovery_checkpoint then "\(.number)|recovery"
+			else empty end
+		] | (map(select(endswith("|healthy"))) + map(select(endswith("|recovery")))) | .[0] // empty' 2>/dev/null
+	return $?
 }
 
 #######################################
@@ -725,14 +1004,25 @@ _has_open_pr_check_open_commits() {
 	[[ "$open_pr_count" =~ ^[0-9]+$ ]] || open_pr_count=0
 	[[ "$open_pr_count" -eq 0 ]] && return 1
 
-	# Match: closing keyword + #NNN in commit messages, or GH#NNN/#NNN in PR title
+	# Match: closing keyword + #NNN in commit messages, or GH#NNN/#NNN in PR title.
+	# A planning-publication PR (planning-publisher.sh: `planning/` head that only
+	# adds the TODO entry and brief, titled "<task-id>: plan: ... (GH#NNN)")
+	# references the issue it registers but never implements it; counting it
+	# blocked dispatch of every interactively created issue until the TODO PR
+	# merged (GH#38217). Exemption needs the complete file list, never the title:
+	# absent, partial or code-touching file evidence keeps the PR as evidence.
 	local close_pattern=""
 	close_pattern=$(_ddpr_closing_keyword_pattern "$issue_number")
 	local title_pattern="(GH#${issue_number}|#${issue_number})([^[:alnum:]_]|$)"
 
 	local match_pr
 	match_pr=$(printf '%s' "$open_pr_json" | jq -r --arg cp "$close_pattern" --arg tp "$title_pattern" \
-		'[.[] | select(((.isDraft // false) | not) and (
+		'def planning_publication:
+			((.headRefName // "") | startswith("planning/")) and
+			((.files | type) == "array") and (.filesTruncated == false) and
+			((.changedFiles // 0) > 0) and (([.files[]?.path] | length) == .changedFiles) and
+			([.files[]?.path] | all(.[]; type == "string" and test("^(TODO\\.md$|todo/)")));
+		[.[] | select(((.isDraft // false) | not) and (planning_publication | not) and (
 			((.title // "") | test($tp)) or
 			any((.commits // [])[]?; ((.messageHeadline // "") | test($cp; "i")))
 		))
@@ -779,9 +1069,13 @@ _has_open_pr_check_open_body_keyword() {
 	local lookup_rc=0
 	# Fetch up to 20 open PRs mentioning the issue in the body; body is
 	# included in this single request to avoid separate gh pr view calls.
-	pr_json=$(_ddpr_read_json_array gh pr list --repo "$repo_slug" --state open \
-		--search "#${issue_number} in:body" --limit 20 \
-		--json number,body,isDraft 2>/dev/null) || lookup_rc=$?
+	if [[ -n "${_DDPR_OPEN_SNAPSHOT_JSON:-}" ]]; then
+		pr_json=$(jq -c '.' "$_DDPR_OPEN_SNAPSHOT_JSON") || lookup_rc=$_DDPR_LOOKUP_RC_RESPONSE_INVALID
+	else
+		pr_json=$(_ddpr_read_json_array gh pr list --repo "$repo_slug" --state open \
+			--search "#${issue_number} in:body" --limit 20 \
+			--json number,body,isDraft 2>/dev/null) || lookup_rc=$?
+	fi
 	if [[ "$lookup_rc" -ne 0 ]]; then
 		_ddpr_emit_lookup_uncertain "open_body" "$issue_number" "$repo_slug" "$lookup_rc"
 		return 0
@@ -1024,7 +1318,7 @@ _has_open_pr_check_superseded_issue_pr() {
 					(($title | test($ref_pattern; "i")) or ($body | test($ref_pattern; "i"))) and
 					((($title + "\n" + $body) | test($planning_pattern; "i")) | not) and
 					((
-						(($author == "dependabot[bot]") or ($author == "renovate[bot]")) and
+						(($author | ascii_downcase) | IN("dependabot[bot]", "app/dependabot", "renovate[bot]", "app/renovate")) and
 						($title | test($bump_title_pattern; "i"))
 					) | not))
 			] | .[0].number // empty' 2>/dev/null) || {
@@ -1086,6 +1380,112 @@ _ddpr_denial_lookup_rc() {
 	return 1
 }
 
+#######################################
+# GH#38101: per-check sub-stage timing for has_open_pr. Records only when the
+# dispatcher hands over its stage context (AIDEVOPS_DISPATCH_STAGE_ISSUE and
+# AIDEVOPS_DISPATCH_STAGE_REPO); every other caller runs untimed and unchanged.
+# Returns: 0 when dispatch-stage-instrument.sh sub-stage recording is available
+#######################################
+_ddpr_load_stage_instrument() {
+	[[ "${AIDEVOPS_DISPATCH_STAGE_ISSUE:-}" =~ ^[0-9]+$ && -n "${AIDEVOPS_DISPATCH_STAGE_REPO:-}" ]] || return 1
+	declare -F _ds_substage_run >/dev/null 2>&1 && return 0
+	local ddpr_lib_dir="${BASH_SOURCE[0]%/*}"
+	[[ "$ddpr_lib_dir" != "${BASH_SOURCE[0]}" ]] || ddpr_lib_dir="."
+	[[ -f "${ddpr_lib_dir}/dispatch-stage-instrument.sh" ]] || return 1
+	# shellcheck source=./dispatch-stage-instrument.sh
+	source "${ddpr_lib_dir}/dispatch-stage-instrument.sh" || return 1
+	declare -F _ds_substage_run >/dev/null 2>&1 || return 1
+	return 0
+}
+
+#######################################
+# Run one has_open_pr check, timed as dedup.layer4.<name> when enabled.
+# Output and exit status pass through unchanged. Locals use a _ddpr_tc_
+# prefix so checks reading caller-scoped variables see no shadowing.
+# Args: check name, timing flag (1 = record), function and arguments
+#######################################
+_ddpr_timed_check() {
+	local _ddpr_tc_name="$1"
+	local _ddpr_tc_timed="$2"
+	shift 2
+	local _ddpr_tc_rc=0
+	if [[ "$_ddpr_tc_timed" == "1" ]]; then
+		_ds_substage_run "dedup.layer4.${_ddpr_tc_name}" "$@" || _ddpr_tc_rc=$?
+		return "$_ddpr_tc_rc"
+	fi
+	"$@" || _ddpr_tc_rc=$?
+	return "$_ddpr_tc_rc"
+}
+
+#######################################
+# Run one check and write its output to a file only when it succeeds.
+# Launched in the background by _has_open_pr_run_checks.
+# Args: output file, check name, timing flag, function and arguments
+#######################################
+_ddpr_spawn_check() {
+	local _ddpr_sc_out="$1" _ddpr_sc_name="$2" _ddpr_sc_timed="$3"
+	shift 3
+	local _result=""
+	# Stderr stays private to the temp dir; has_open_pr replays only known
+	# diagnostic prefixes, never raw gh error text (GH#38124).
+	_result=$(_ddpr_timed_check "$_ddpr_sc_name" "$_ddpr_sc_timed" "$@" 2>"${_ddpr_sc_out}.err") &&
+		printf '%s' "$_result" >"$_ddpr_sc_out" || true
+	return 0
+}
+
+# Replay only check-0 unlinked-draft diagnostics to the caller's stderr.
+# Args: $1 = has_open_pr temp dir
+_ddpr_replay_diagnostics() {
+	local _ddpr_rd_file="${1}/check0.out.err" _ddpr_rd_line=""
+	[[ -f "$_ddpr_rd_file" ]] || return 0
+	while IFS= read -r _ddpr_rd_line; do
+		if [[ "$_ddpr_rd_line" == "${_DDPR_UNLINKED_PREFIX}"* ]]; then
+			printf '%s\n' "$_ddpr_rd_line" >&2
+		fi
+	done <"$_ddpr_rd_file"
+	return 0
+}
+
+#######################################
+# Launch the six has_open_pr checks in parallel and wait for all of them.
+# Each successful check writes its output to <dir>/check*.out. GH#38101:
+# under a dispatch context each check and the whole block are timed
+# sub-stages, so the dominant layer-4 cost is measurable.
+# Args: output dir, issue number, repo slug, issue title
+#######################################
+_has_open_pr_run_checks() {
+	local _ddpr_rc_dir="$1" _ddpr_rc_issue="$2" _ddpr_rc_repo="$3" _ddpr_rc_title="$4"
+	local _ddpr_rc_timed=0 _ddpr_rc_t0="" _ddpr_rc_pid=""
+	local -a _ddpr_rc_pids=()
+	if _ddpr_load_stage_instrument; then
+		_ddpr_rc_timed=1
+		_ddpr_rc_t0=$(_ds_substage_start)
+	fi
+	_ddpr_spawn_check "${_ddpr_rc_dir}/check0.out" healthy_sibling "$_ddpr_rc_timed" \
+		_has_open_pr_check_healthy_sibling "$_ddpr_rc_issue" "$_ddpr_rc_repo" &
+	_ddpr_rc_pids+=("$!")
+	_ddpr_spawn_check "${_ddpr_rc_dir}/check1.out" open_commits "$_ddpr_rc_timed" \
+		_has_open_pr_check_open_commits "$_ddpr_rc_issue" "$_ddpr_rc_repo" &
+	_ddpr_rc_pids+=("$!")
+	_ddpr_spawn_check "${_ddpr_rc_dir}/check1b.out" open_body_keyword "$_ddpr_rc_timed" \
+		_has_open_pr_check_open_body_keyword "$_ddpr_rc_issue" "$_ddpr_rc_repo" &
+	_ddpr_rc_pids+=("$!")
+	_ddpr_spawn_check "${_ddpr_rc_dir}/check2.out" merged_keywords "$_ddpr_rc_timed" \
+		_has_open_pr_check_merged_keywords "$_ddpr_rc_issue" "$_ddpr_rc_repo" &
+	_ddpr_rc_pids+=("$!")
+	_ddpr_spawn_check "${_ddpr_rc_dir}/check3.out" task_id_title "$_ddpr_rc_timed" \
+		_has_open_pr_check_task_id_title "$_ddpr_rc_issue" "$_ddpr_rc_repo" "$_ddpr_rc_title" &
+	_ddpr_rc_pids+=("$!")
+	_ddpr_spawn_check "${_ddpr_rc_dir}/check4.out" superseded_issue_pr "$_ddpr_rc_timed" \
+		_has_open_pr_check_superseded_issue_pr "$_ddpr_rc_issue" "$_ddpr_rc_repo" &
+	_ddpr_rc_pids+=("$!")
+	for _ddpr_rc_pid in "${_ddpr_rc_pids[@]}"; do
+		wait "$_ddpr_rc_pid" 2>/dev/null || true
+	done
+	[[ "$_ddpr_rc_timed" != "1" ]] || _ds_substage_record dedup.layer4.parallel_checks "$_ddpr_rc_t0"
+	return 0
+}
+
 has_open_pr() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -1109,51 +1509,10 @@ has_open_pr() {
 	local _pr_tmpdir
 	_pr_tmpdir=$(mktemp -d 2>/dev/null) || _pr_tmpdir="/tmp/pr-dedup-$$"
 	mkdir -p "$_pr_tmpdir" 2>/dev/null || true
-
-	# Launch all checks in parallel, each writing exit code + output to a file
-	(
-		_result=$(_has_open_pr_check_healthy_sibling "$issue_number" "$repo_slug" 2>/dev/null) && \
-			printf '%s' "$_result" >"${_pr_tmpdir}/check0.out" || true
-	) &
-	local _pr_pid0=$!
-
-	(
-		_result=$(_has_open_pr_check_open_commits "$issue_number" "$repo_slug" 2>/dev/null) && \
-			printf '%s' "$_result" >"${_pr_tmpdir}/check1.out" || true
-	) &
-	local _pr_pid1=$!
-
-	(
-		_result=$(_has_open_pr_check_open_body_keyword "$issue_number" "$repo_slug" 2>/dev/null) && \
-			printf '%s' "$_result" >"${_pr_tmpdir}/check1b.out" || true
-	) &
-	local _pr_pid2=$!
-
-	(
-		_result=$(_has_open_pr_check_merged_keywords "$issue_number" "$repo_slug" 2>/dev/null) && \
-			printf '%s' "$_result" >"${_pr_tmpdir}/check2.out" || true
-	) &
-	local _pr_pid3=$!
-
-	(
-		_result=$(_has_open_pr_check_task_id_title "$issue_number" "$repo_slug" "$issue_title" 2>/dev/null) && \
-			printf '%s' "$_result" >"${_pr_tmpdir}/check3.out" || true
-	) &
-	local _pr_pid4=$!
-
-	(
-		_result=$(_has_open_pr_check_superseded_issue_pr "$issue_number" "$repo_slug" 2>/dev/null) && \
-			printf '%s' "$_result" >"${_pr_tmpdir}/check4.out" || true
-	) &
-	local _pr_pid5=$!
-
-	# Wait for all to complete
-	wait "$_pr_pid0" 2>/dev/null || true
-	wait "$_pr_pid1" 2>/dev/null || true
-	wait "$_pr_pid2" 2>/dev/null || true
-	wait "$_pr_pid3" 2>/dev/null || true
-	wait "$_pr_pid4" 2>/dev/null || true
-	wait "$_pr_pid5" 2>/dev/null || true
+	local _DDPR_OPEN_SNAPSHOT_JSON=""
+	_ddpr_prepare_open_snapshot "$repo_slug" "$_pr_tmpdir" || true
+	_has_open_pr_run_checks "$_pr_tmpdir" "$issue_number" "$repo_slug" "$issue_title"
+	_ddpr_replay_diagnostics "$_pr_tmpdir"
 
 	# Uncertainty takes precedence over positive evidence. A partial API view is
 	# not sufficient to classify the block as an active claim or known PR.

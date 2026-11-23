@@ -22,7 +22,11 @@ import { getSessionBusState } from "../compaction.mjs";
 import { messageRows, rootSessionID } from "../tui-messages.mjs";
 import { chatTrust, setChatWake, chatWakeEnabled } from "../session-bus-chat-trust.mjs";
 import * as releaseWatch from "../session-bus-release.mjs";
+import * as issueWatch from "../session-bus-issue-watch.mjs";
 import { listDir } from "../session-bus-files.mjs";
+import {
+  KEEPALIVE_TEXT, isKeepaliveMessage, keepaliveActive, keepalivePass, readKeepalive, setKeepalive,
+} from "../session-bus-keepalive.mjs";
 
 let root;
 beforeEach(() => {
@@ -922,4 +926,213 @@ test("release watches fan out one non-waking info notice per event and dead-exec
   releaseWatch.addReleaseWatch(root, "owner/repo", { session_id: "ses_goneR1", handle: "gone" });
   store.pruneBus(root);
   assert.deepEqual(listDir(join(root, "release-watch", "owner@repo")).filter((name) => name.endsWith(".json")), []);
+});
+
+// t19157/GH#39240: issue watches for interactive sessions, read by the pulse relay.
+test("issue watches are per interactive session, bounded, listed for the relay and end with presence (t19157)", async () => {
+  assert.deepEqual(issueWatch.parseIssueRef("Owner/Repo#12"), { repo: "Owner/Repo", number: 12, key: "owner@repo@12" });
+  assert.equal(issueWatch.parseIssueRef("#7", "owner/repo").key, "owner@repo@7");
+  for (const bad of ["../x#1", "owner/repo#0", "owner/repo#1/../2", "#3", "owner/..#4"]) {
+    assert.throws(() => issueWatch.parseIssueRef(bad), /owner\/repo#N|positive whole number/, bad);
+  }
+
+  livePresence("ses_watchI1", { handle: "repo-iw" });
+  livePresence("ses_workerI1", { kind: "headless", handle: "worker-iw" });
+  const output = [];
+  const out = { write: (text) => output.push(text) };
+  const env = { AIDEVOPS_OPENCODE_SESSION_ID: "ses_watchI1" };
+  cliMain(["watch-issue", "#5"], { env, out, root });
+  assert.match(output.join(""), /Watching owner\/repo#5 until/);
+  cliMain(["watch-issue", "other/repo#9", "--new"], { env, out, root });
+  assert.throws(() => cliMain(["watch-issue", "#5"], { env: { AIDEVOPS_OPENCODE_SESSION_ID: "ses_workerI1" }, out, root }), /interactive sessions/);
+  assert.throws(() => cliMain(["watch-issue", "#5"], { env: { AIDEVOPS_OPENCODE_SESSION_ID: "ses_nopres" }, out, root }), /no live presence/);
+
+  output.length = 0;
+  cliMain(["watches", "--all", "--json"], { env: {}, out, root });
+  const all = JSON.parse(output.join(""));
+  assert.deepEqual(all.map((watch) => [watch.subscriber, watch.repo, watch.number, watch.fresh]),
+    [["ses_watchI1", "owner/repo", 5, false], ["ses_watchI1", "other/repo", 9, true]]);
+  // Re-watching refreshes expiry and keeps the original start and fresh flag.
+  const again = issueWatch.addIssueWatch(root, "other/repo#9", store.readPresence(root).find((record) => record.session_id === "ses_watchI1"), { now: all[1].created_ms + 1000 });
+  assert.equal(again.created_ms, all[1].created_ms);
+  assert.equal(again.fresh, true);
+
+  const fakeTool = (definition) => definition;
+  fakeTool.schema = fakeSchema;
+  const bus = busFor(fakeClient({ ses_toolI1: { id: "ses_toolI1", title: "", directory: root } }));
+  await bus.handleEvent({ event: { type: "session.created", properties: { info: { id: "ses_toolI1", title: "", directory: root } } } });
+  const sessionsTool = createSessionBusTool(fakeTool, bus);
+  assert.match(await sessionsTool.execute({ action: "watch-issue", to: "owner/repo#11" }, { sessionID: "ses_toolI1" }), /Pointers never wake/);
+  assert.match(await sessionsTool.execute({ action: "watch-issue" }, { sessionID: "ses_toolI1" }), /owner\/repo#11 until/);
+  assert.match(await sessionsTool.execute({ action: "watch-issue", to: "owner/repo#11", text: "off" }, { sessionID: "ses_toolI1" }), /Stopped watching/);
+  assert.equal(await sessionsTool.execute({ action: "watch-issue" }, { sessionID: "ses_toolI1" }), "No issue watches.");
+
+  // A local `who` miss on an issue points at the GitHub read for other runners.
+  assert.match(await sessionsTool.execute({ action: "who", to: "#424242" }, { sessionID: "ses_toolI1" }), /other runners[\s\S]*gh issue view 424242/);
+  assert.equal(store.crossRunnerHint(["owner/repo"]), "");
+
+  // Per-session cap.
+  const watcher = store.readPresence(root).find((record) => record.session_id === "ses_watchI1");
+  for (let number = 100; issueWatch.sessionIssueWatches(root, "ses_watchI1").length < issueWatch.ISSUE_WATCH_LIMITS.perSession; number += 1) {
+    issueWatch.addIssueWatch(root, `owner/repo#${number}`, watcher);
+  }
+  assert.throws(() => issueWatch.addIssueWatch(root, "owner/repo#99999", watcher), /at most 50/);
+
+  output.length = 0;
+  cliMain(["watch-issue", "#5", "--off"], { env, out, root });
+  assert.match(output.join(""), /Stopped watching #5/);
+
+  // Watches end with their session's presence.
+  store.removePresence(root, "ses_watchI1");
+  store.pruneBus(root);
+  assert.deepEqual(listDir(join(root, "issue-watch")), []);
+});
+
+// t19047/GH#38552: opt-in mission keepalive.
+const keepaliveTool = (bus) => {
+  const fakeTool = (definition) => definition;
+  fakeTool.schema = fakeSchema;
+  return createSessionBusTool(fakeTool, bus);
+};
+const noOut = { write() {} };
+
+test("keepalive persists for the caller's root session only, defaults off, expires and rejects non-wakeable targets", async () => {
+  const id = "ses_keepA1";
+  const bus = busFor(fakeClient({ [id]: { id, title: "", directory: root } }));
+  await bus.handleEvent({ event: { type: "session.created", properties: { info: { id, directory: root } } } });
+  const tool = keepaliveTool(bus);
+  assert.equal(readKeepalive(root, id), null, "defaults to off");
+  await assert.rejects(tool.execute({ action: "keepalive", to: "ses_other1", text: "on" }, { sessionID: id }), /caller/);
+  await assert.rejects(tool.execute({ action: "keepalive", text: "maybe" }, { sessionID: id }), /on\|off/);
+  await assert.rejects(tool.execute({ action: "keepalive", text: "on", hours: 73 }, { sessionID: id }), /1 to 72/);
+  await tool.execute({ action: "keepalive", text: "on" }, { sessionID: id });
+  const setting = readKeepalive(root, id);
+  assert.equal(setting.on, true);
+  assert.equal(setting.expires_at - setting.set_at, 24 * 60 * 60 * 1000, "default 24 h");
+  assert.equal(setting.idle_threshold_s, 600);
+  cliMain(["keepalive", id, "on", "--hours", "72"], { root, env: {}, out: noOut });
+  const capped = readKeepalive(root, id);
+  assert.equal(capped.expires_at - capped.set_at, 72 * 60 * 60 * 1000, "hard cap 72 h");
+  assert.throws(() => cliMain(["keepalive", id, "on", "--hours", "100"], { root, env: {}, out: noOut }), /1 to 72/);
+  assert.equal(keepaliveActive(capped, capped.expires_at + 1), false, "expires");
+  await tool.execute({ action: "keepalive", text: "off" }, { sessionID: id });
+  assert.equal(readKeepalive(root, id).on, false);
+
+  livePresence("ses_keepW1", { kind: "headless", messageable: true, handle: "repo-worker" });
+  livePresence("ses_keepR1", { kind: "tui", messageable: false, handle: "repo-readonly" });
+  livePresence("ses_keepC1", { interface: "matrix", handle: "repo-chat" });
+  for (const target of ["repo-worker", "repo-readonly", "repo-chat"]) {
+    assert.throws(() => cliMain(["keepalive", target, "on"], { root, env: {}, out: noOut }), /keepalive needs a local interactive session/);
+  }
+  assert.equal(readKeepalive(root, "ses_keepW1"), null);
+  store.writeJsonAtomic(join(root, "keepalive", "ses_bad001.json"), { on: true });
+  assert.equal(readKeepalive(root, "ses_bad001"), null, "malformed settings fail closed");
+  store.writeJsonAtomic(join(root, "keepalive", "ses_gone01.json"), { on: true, expires_at: Date.now() - 1 });
+  store.pruneBus(root);
+  assert.equal(store.readJson(join(root, "keepalive", "ses_gone01.json")), null, "expired opt-in without a session is pruned");
+});
+
+test("keepalive relay pass wakes one idle session once and skips busy, expired, permission and over-budget sessions", () => {
+  const now = Date.now();
+  const optIn = (id, extra = {}, presence = {}) => {
+    livePresence(id, { status: "idle", last_activity_epoch: Math.floor((now - 700_000) / 1000), ...presence });
+    store.writeJsonAtomic(join(root, "keepalive", `${id}.json`), {
+      on: true, set_at: now, expires_at: now + 3_600_000, idle_threshold_s: 600, base_idle_threshold_s: 600, consecutive_no_progress: 0, ...extra,
+    });
+  };
+  optIn("ses_kpIdle1");
+  optIn("ses_kpBusy1", {}, { status: "busy" });
+  optIn("ses_kpPerm1", {}, { status: "permission" });
+  optIn("ses_kpExpd1", { expires_at: now - 1 });
+  optIn("ses_kpShort", {}, { last_activity_epoch: Math.floor((now - 100_000) / 1000) });
+  optIn("ses_kpBudg1", { wake_times: Array(store.LIMITS.wakesPerHour).fill(now - 1000) });
+
+  const dry = keepalivePass(root, { now, send: false });
+  assert.equal(store.pendingMessages(root, "ses_kpIdle1").length, 0, "dry run sends nothing");
+  assert.deepEqual(Object.fromEntries(dry.map((row) => [row.session_id, row.reason])), {
+    ses_kpBudg1: "wake-budget", ses_kpBusy1: "busy", ses_kpExpd1: "expired", ses_kpIdle1: "eligible",
+    ses_kpPerm1: "permission-pending", ses_kpShort: "below-threshold",
+  });
+  assert.ok(dry.find((row) => row.session_id === "ses_kpShort").next_wake_ms > now, "next eligible wake time is reported");
+
+  keepalivePass(root, { now });
+  const [{ message }] = store.pendingMessages(root, "ses_kpIdle1");
+  assert.equal(message.type, "ask");
+  assert.equal(message.from.origin, "cli:pulse");
+  assert.equal(message.text, KEEPALIVE_TEXT);
+  assert.equal(isKeepaliveMessage(message), true);
+  for (const id of ["ses_kpBusy1", "ses_kpPerm1", "ses_kpExpd1", "ses_kpShort", "ses_kpBudg1"]) {
+    assert.equal(store.pendingMessages(root, id).length, 0, `${id} gets no wake`);
+  }
+  keepalivePass(root, { now: now + 120_000 });
+  assert.equal(store.pendingMessages(root, "ses_kpIdle1").length, 1, "exactly one wake per idle period");
+
+  const out = [];
+  cliMain(["keepalive", "status"], { root, env: {}, out: { write: (text) => out.push(text) } });
+  assert.match(out.join(""), /threshold 10m next .* skip: wake-pending/);
+});
+
+test("queued keepalive asks cannot wake after opt-out or expiry, while peer asks still deliver", async () => {
+  for (const mode of ["off", "expired"]) {
+    const id = mode === "off" ? "ses_kpOff01" : "ses_kpExp01";
+    const client = fakeClient({ [id]: { id, title: "", directory: root } });
+    const bus = busFor(client);
+    await bus.handleEvent({ event: { type: "session.created", properties: { info: { id, directory: root } } } });
+    const record = bus.record(bus.state(id));
+    const now = bus.now();
+    setKeepalive(root, record, true, { now });
+    store.sendMessage(root, {
+      from: { session_id: "", handle: "pulse", origin: "cli:pulse" },
+      to: id, type: "ask", text: KEEPALIVE_TEXT,
+    });
+    const state = bus.state(id);
+    state.status = "idle";
+    state.wakeTimes = Array(store.LIMITS.wakesPerHour).fill(now);
+    assert.equal(await bus.deliverToIdle(id, state), false, "wake initially waits for budget");
+    if (mode === "off") setKeepalive(root, record, false);
+    else bus.now = () => now + 24 * 60 * 60 * 1000;
+    state.wakeTimes = [];
+    assert.equal(await bus.deliverToIdle(id, state), false, `${mode} keepalive cannot wake`);
+    assert.equal(client.calls.prompts.length, 0);
+    assert.equal(store.pendingMessages(root, id).length, 1, "inactive wake remains unclaimed");
+    store.sendMessage(root, { from: peer("ses_peer01"), to: id, type: "ask", text: "peer status?" });
+    assert.equal(await bus.deliverToIdle(id, state), true, "normal asks still wake");
+    const text = client.calls.prompts[0].body.parts[0].text;
+    assert.match(text, /peer status\?/);
+    assert.ok(!text.includes(KEEPALIVE_TEXT), "inactive wake is excluded from mixed batches");
+    assert.equal(state.keepaliveWake, undefined, "peer wake does not count as keepalive progress");
+  }
+});
+
+test("keepalive backoff doubles the threshold after a no-tool turn, resets on progress and stops after 3 with one notice", async () => {
+  const id = "ses_kpBack1";
+  const client = fakeClient({ [id]: { id, title: "", directory: root } });
+  const bus = busFor(client);
+  await bus.handleEvent({ event: { type: "session.created", properties: { info: { id, directory: root } } } });
+  setKeepalive(root, bus.record(bus.state(id)), true);
+  const pulse = { session_id: "", handle: "pulse", repo: "", branch: "", origin: "cli:pulse" };
+  const wakeTurn = async (calls) => {
+    store.sendMessage(root, { from: pulse, to: id, type: "ask", text: KEEPALIVE_TEXT });
+    await bus.tick();
+    await bus.chatMessage({ sessionID: id }, { message: { id: "msg_k" }, parts: [] });
+    for (let index = 0; index < calls; index += 1) bus.toolBefore({ sessionID: id, tool: "bash" });
+    bus.toolBefore({ sessionID: id, tool: "aidevops_sessions" });
+    await bus.handleEvent({ event: { type: "session.idle", properties: { sessionID: id } } });
+  };
+  await bus.handleEvent({ event: { type: "session.idle", properties: { sessionID: id } } });
+  await wakeTurn(0);
+  assert.equal(readKeepalive(root, id).idle_threshold_s, 1200, "bus tool calls are not progress");
+  assert.equal(readKeepalive(root, id).consecutive_no_progress, 1);
+  await wakeTurn(0);
+  assert.equal(readKeepalive(root, id).idle_threshold_s, 2400);
+  await wakeTurn(2);
+  assert.equal(readKeepalive(root, id).idle_threshold_s, 600, "a turn with tool calls resets the threshold");
+  assert.equal(readKeepalive(root, id).consecutive_no_progress, 0);
+  await wakeTurn(0);
+  await wakeTurn(0);
+  assert.equal(readKeepalive(root, id).on, true);
+  await wakeTurn(0);
+  assert.equal(readKeepalive(root, id).on, false, "3 consecutive no-progress wakes turn keepalive off");
+  const notices = store.pendingMessages(root, id).filter((entry) => /keepalive turned itself off/.test(entry.message.text));
+  assert.equal(notices.length, 1, "one notice");
 });

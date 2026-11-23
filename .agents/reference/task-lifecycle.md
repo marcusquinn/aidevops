@@ -41,7 +41,8 @@ sync it into GitHub's native issue relationship field. The native `blockedBy`
 relationship is the primary dispatch gate; body/TODO markers are fallback intent
 and repair signals. Worker-ready ordered leaves retain `#auto-dispatch`: the
 first ready leaf is `status:available`, while every unresolved dependent is
-`status:blocked` after its native edge is verified. If an edge cannot be created
+`status:blocked` + `needs-dependency` after its native edge is verified; the
+release removes both. If an edge cannot be created
 or verified, fail closed by retaining `status:blocked` and never exposing the
 dependent to the available queue. `issue-sync-relationships.sh` performs the
 normal TODO-to-GitHub relationship backfill and status normalization; Pulse
@@ -155,6 +156,13 @@ meet auto-dispatch readiness, repair it autonomously when possible; otherwise
 record the concrete blocker and missing irreplaceable input without converting
 routine uncertainty into `#no-auto-dispatch`.
 
+**Release-bound sessions:** when an interactive session holds release intent for a
+repository, or is working that repository's backlog, a fixable same-repo finding
+is still filed as above, but filing is its durable record, not a hand-off. Claim it
+at filing when eligible and solve it before the release through
+`reference/release-scope-sweep.md`; only ineligible issues wait for pulse.
+Headless workers keep the normal auto-dispatch hand-off.
+
 ## Auto-Dispatch and Completion
 
 - **Auto-dispatch default**: Worker-ready implementation issues/tasks created by interactive agents (user-facing sessions) or workers default to `#auto-dispatch`; issue creation is the implementation decision, so no second dispatch confirmation is allowed. Readiness is the gate, not an opt-in. Add the tag only when the brief/body has:
@@ -171,7 +179,9 @@ routine uncertainty into `#no-auto-dispatch`.
   compares names against `aidevops secret list` locally before claim and again
   at the claim boundary. Missing names yield without a worker attempt; after
   `AIDEVOPS_SECRET_STARVATION_SECONDS` (default 86400), a single marked notice
-  names the missing credentials and applies `status:blocked`. Never declare
+  names the missing credentials and applies `status:blocked` with
+  `needs-credentials` (every blocked hold carries a `needs-*` companion:
+  `reference/dispatch-blockers.md` "Blocked Companion Labels"). Never declare
   values or assume the body marker hides names in a public issue.
 
   If readiness is missing, improve the brief when practical, but do not suppress useful issue publication or ask the user to perform routine triage. Publish without `#auto-dispatch`, state the missing information, and leave the issue recorded for autonomous enrichment; use `#parent`/blocked only when those semantics are true. Do not add `#no-auto-dispatch` merely because readiness is incomplete—that label is reserved for explicit durable manual intent with its reason recorded on the issue. See `workflows/plans.md` "Auto-Dispatch Tagging".
@@ -213,7 +223,7 @@ routine uncertainty into `#no-auto-dispatch`.
 |---|---|---|
 | Interactive owner working | `status:claimed` | Preserve the claim; do not dispatch. |
 | Worker actively running | `status:in-progress` | Preserve the claim; do not dispatch. |
-| Exact draft checkpoint stopped on evidence | `status:blocked` | Read the structured blocker reason and next action. |
+| Exact draft checkpoint stopped on evidence | `status:blocked` + `needs-*` | The `needs-*` companion names the owner; read the structured blocker reason and next action. |
 | Trusted correction validated for the exact checkpoint | `status:available` | Dispatch the existing exact-head continuation. |
 | Open, non-draft linked PR | `status:in-review` | Review or merge the PR. |
 | Linked PR merged | `status:done` | No implementation action. |
@@ -242,7 +252,7 @@ Completion: NEVER mark `[x]` without merged PR (`pr:#NNN`) or `verified:YYYY-MM-
 
 **Issue-sync protected publication (t2029 → t2166, GH#29679):** `issue-sync.yml` attempts direct TODO publication, then converts terminal GH006 rejection into one deterministic PR. `GITHUB_TOKEN` is sufficient when the repository allows Actions to create pull requests. Otherwise configure a per-repo `SYNC_PAT` with Contents and Pull requests read/write as the bounded PR API fallback. **Guided fix:** run `/setup-git`; manual fix: create the fine-grained PAT, then use the interactive `gh secret set SYNC_PAT --repo <owner>/<repo>` prompt (never `--body`). Full setup: `reference/sync-pat-platforms.md`; operational detail: `reference/auto-dispatch.md`.
 
-Code changes need worktree + PR. Implementation workers do not edit `TODO.md` as part of code fixes; supervisor/routine/issue-sync bookkeeping may update planning files under the allowlist below.
+Code changes need worktree + PR. Implementation workers and interactive implementation PRs do not edit `TODO.md` as part of code fixes. Publish TODO rows and briefs with `planning-commit-helper.sh "plan: ..."` from a linked worktree; it opens a separate planning PR with `allow-auto-merge`, whereas a code PR editing `TODO.md` re-conflicts with concurrent planning PRs at the same anchor. Supervisor/routine/issue-sync bookkeeping may update planning files under the allowlist below.
 
 **Main-branch planning exception (headless bookkeeping only, t1990):** `TODO.md`, `todo/*`, and `README.md` may go direct to `main` only for headless supervisor/routine/issue-sync bookkeeping or an explicitly planning-only worker task. **Interactive sessions have NO such exception** — every edit, including planning files, goes through a linked worktree under `${AIDEVOPS_WORKTREE_BASE_DIR:-~/Git/_worktrees}`. Enforced by `pre-edit-check.sh` `is_main_allowlisted_path()`.
 
@@ -264,7 +274,7 @@ Use `/routine` to design, dry-run, and schedule these definitions. Reference: `.
 
 **Cross-repo awareness**: The supervisor manages tasks across all repos in `~/.config/aidevops/repos.json` where `pulse: true`. Each repo entry has a `slug` field (`owner/repo`) — ALWAYS use this for `gh` commands, never guess org names. Use `gh issue list --repo <slug>` and `gh pr list --repo <slug>` for each pulse-enabled repo to get the full picture. Repos with `"local_only": true` have no GitHub remote — skip `gh` operations on them. Repo paths may be nested (e.g., `~/Git/cloudron/netbird-app`), not just `~/Git/<name>`.
 
-**Repo registration**: When you create or clone a new repo (via `gh repo create`, `git clone`, `git init`, etc.), add it to `~/.config/aidevops/repos.json` immediately. Every repo the user works with should be registered — unregistered repos are invisible to cross-repo tools (pulse, health dashboard, session time, contributor stats). After registering, run `/setup-git` to apply per-repo platform secrets (currently `SYNC_PAT` for GitHub, with GitLab/Gitea/Bitbucket coming) — see `reference/sync-pat-platforms.md`.
+**Repo registration**: When you create or clone a new repo (via `gh repo create`, `git clone`, `git init`, etc.), add it to `~/.config/aidevops/repos.json` immediately. Every repo the user works with should be registered — unregistered repos are invisible to cross-repo tools (pulse, health dashboard, session time, contributor stats). After registering, run `/setup-git` to apply per-repo platform secrets (currently `SYNC_PAT` for GitHub, with GitLab/Gitea/Bitbucket coming) — see `reference/sync-pat-platforms.md`. Registration alone misses init, labels, workflows and branch protection; complete `reference/repo-onboarding.md`.
 
 **repos.json structure (CRITICAL):** The file is `{"initialized_repos": [...], "git_parent_dirs": [...]}`. New repo entries MUST be appended inside the `initialized_repos` array — NEVER as top-level keys. After ANY write, validate: `jq . ~/.config/aidevops/repos.json > /dev/null`. A malformed file silently breaks the pulse for ALL repos.
 

@@ -16,6 +16,9 @@
 
 set -euo pipefail
 
+# shellcheck source=portable-stat.sh
+source "${BASH_SOURCE[0]%/*}/portable-stat.sh"
+
 LOGFILE="${ROUTINE_COMMENT_LOGFILE:-${HOME}/.aidevops/.agent-workspace/cron/routine-comments/responder.log}"
 STATE_DIR="${ROUTINE_COMMENT_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/cron/routine-comments}"
 mkdir -p "$STATE_DIR"
@@ -31,6 +34,12 @@ _log() {
 }
 
 _get_self_login() {
+	# Caller-resolved login (same credential, same cycle) avoids a repeated identity read.
+	local env_login="${ROUTINE_COMMENT_SELF_LOGIN:-}"
+	if [[ "$env_login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]; then
+		printf '%s\n' "$env_login"
+		return 0
+	fi
 	gh api user --jq '.login' 2>/dev/null || echo ""
 	return 0
 }
@@ -140,16 +149,35 @@ cmd_scan() {
 		return 0
 	fi
 
-	# Get routine-tracking issues
+	# Skip repos whose last successful scan found no routine-tracking issues.
+	local empty_stamp="${STATE_DIR}/${repo_slug//\//_}_empty.stamp"
+	local empty_ttl="${ROUTINE_COMMENT_EMPTY_TTL_SECONDS:-3600}"
+	[[ "$empty_ttl" =~ ^[0-9]+$ ]] || empty_ttl=3600
+	if [[ -f "$empty_stamp" ]]; then
+		local stamp_mtime now_epoch
+		stamp_mtime=$(_file_mtime_epoch "$empty_stamp")
+		now_epoch=$(date +%s)
+		if [[ "$stamp_mtime" =~ ^[0-9]+$ ]] && ((now_epoch - stamp_mtime < empty_ttl)); then
+			_log "scan: ${repo_slug} had no routine-tracking issues within TTL — skipping"
+			return 0
+		fi
+	fi
+
+	# Get routine-tracking issues (a failed list writes no stamp)
 	local issues_json
-	issues_json=$(gh issue list --repo "$repo_slug" --label "routine-tracking" \
-		--state open --json number --jq '.[].number' 2>/dev/null) || issues_json=""
+	if ! issues_json=$(gh issue list --repo "$repo_slug" --label "routine-tracking" \
+		--state open --json number --jq '.[].number' 2>/dev/null); then
+		_log "scan: issue list failed for ${repo_slug}"
+		return 0
+	fi
 
 	if [[ -z "$issues_json" ]]; then
+		touch "$empty_stamp"
 		_log "scan: no routine-tracking issues found in ${repo_slug}"
 		return 0
 	fi
 
+	rm -f "$empty_stamp"
 	local responded_file
 	responded_file=$(_responded_file_for_repo "$repo_slug")
 	touch "$responded_file"

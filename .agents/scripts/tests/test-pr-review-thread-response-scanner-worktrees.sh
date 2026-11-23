@@ -213,6 +213,67 @@ test_dispatch_rejects_reused_other_task_owner() {
 	return 0
 }
 
+test_dispatch_takeover_uses_worker_owned_branch_beside_idle_owner() {
+	local owner_path="" owner_before="" owner_after="" takeover_path="" takeover_branch=""
+
+	setup_test_env
+	owner_path="${TEST_ROOT}/interactive-owner-worktree"
+	takeover_branch="repair/review-pr-1-${TEST_HEAD_OID_1:0:12}"
+	takeover_path="${TEST_ROOT}/worktrees/repo-pr1-review-takeover-${TEST_HEAD_OID_1:0:12}"
+	mkdir -p "$owner_path"
+	printf '%s\t%s\t%s\n' "$owner_path" 'feature/review' "$TEST_HEAD_OID_1" >"$GIT_WORKTREE_REGISTRY"
+	register_test_worktree_owner "$owner_path" 'feature/review' '999' 'ses_idleinteractive'
+	owner_before=$(read_test_worktree_owner_snapshot "$owner_path")
+	export STUB_PR_VIEW=$'Interactive PR\tfeature/review\t'"${TEST_HEAD_OID_1}"$'\tmaintainer\torigin:interactive,origin:worker-takeover'
+	export STUB_PR_LABELS='origin:interactive,origin:worker-takeover'
+	$SCANNER dispatch-pr owner/repo "${TEST_ROOT}/repo" 1 || true
+	wait_for_headless_log || true
+	owner_after=$(read_test_worktree_owner_snapshot "$owner_path")
+	# The prompt carries a literal $AIDEVOPS_PR_REPAIR_HEAD_REF for the worker.
+	# shellcheck disable=SC2016
+	if [[ -s "$HEADLESS_LOG" && "$owner_after" == "$owner_before" ]] &&
+		grep -Fq "add ${takeover_branch} ${takeover_path} --base ${TEST_HEAD_OID_1} --issue 1" "$WORKTREE_HELPER_LOG" 2>/dev/null &&
+		grep -Fxq "$takeover_path" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		! grep -Fq "$owner_path" "$HEADLESS_ARGS_CAPTURE" 2>/dev/null &&
+		grep -Fxq 'AIDEVOPS_PR_REPAIR_HEAD_REF=feature/review' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fq '## Takeover worktree' "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null &&
+		grep -Fq 'git push origin "HEAD:$AIDEVOPS_PR_REPAIR_HEAD_REF"' "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null &&
+		grep -Fq "owner worktree ${owner_path} untouched (GH#38291)" "$LOGFILE" 2>/dev/null; then
+		print_result "takeover dispatch uses a worker-owned branch beside the idle owner's untouched worktree" 0
+	else
+		print_result "takeover dispatch uses a worker-owned branch beside the idle owner's untouched worktree" 1 \
+			"before=${owner_before}, after=${owner_after}, helper=$(tr '\n' ';' <"$WORKTREE_HELPER_LOG" 2>/dev/null || printf ''), log=$(tr '\n' ';' <"$LOGFILE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_takeover_fails_closed_when_labels_unreadable() {
+	local owner_path="" owner_before="" owner_after="" state_file=""
+
+	setup_test_env
+	owner_path="${TEST_ROOT}/interactive-owner-worktree"
+	state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	mkdir -p "$owner_path"
+	printf '%s\t%s\t%s\n' "$owner_path" 'feature/review' "$TEST_HEAD_OID_1" >"$GIT_WORKTREE_REGISTRY"
+	register_test_worktree_owner "$owner_path" 'feature/review' '999' 'ses_idleinteractive'
+	owner_before=$(read_test_worktree_owner_snapshot "$owner_path")
+	export STUB_PR_VIEW=$'Interactive PR\tfeature/review\t'"${TEST_HEAD_OID_1}"$'\tmaintainer\torigin:interactive,origin:worker-takeover'
+	export STUB_PR_LABELS='__FAIL__'
+	$SCANNER dispatch-pr owner/repo "${TEST_ROOT}/repo" 1 || true
+	owner_after=$(read_test_worktree_owner_snapshot "$owner_path")
+	if [[ ! -s "$HEADLESS_LOG" && "$owner_after" == "$owner_before" ]] &&
+		! grep -q '^add ' "$WORKTREE_HELPER_LOG" 2>/dev/null &&
+		grep -q '^blocker_reason=takeover_labels_unavailable$' "$state_file" 2>/dev/null; then
+		print_result "takeover dispatch fails closed when the fresh label read fails" 0
+	else
+		print_result "takeover dispatch fails closed when the fresh label read fails" 1 \
+			"before=${owner_before}, after=${owner_after}, state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf ''), log=$(tr '\n' ';' <"$LOGFILE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_dispatch_rejects_reused_unverified_owner() {
 	local existing_path=""
 	local owner_before="" owner_after=""

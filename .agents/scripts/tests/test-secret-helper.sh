@@ -56,6 +56,18 @@ shift || true
 case "$cmd" in
 	ls)
 		if [[ "${1:-}" == "--flat" ]]; then
+			if [[ "${AIDEVOPS_TEST_EMPTY_NAMESPACE:-}" == "true" ]]; then
+				# Fully migrated store: the aidevops/ folder no longer exists,
+				# so a prefix listing fails while the store itself still lists
+				# unrelated entries. Resolution must treat that as "gopass owns
+				# nothing" and fall through to credentials.sh.
+				if [[ -n "${2:-}" ]]; then
+					printf '%s\n' 'Error: Entry "aidevops" not found' >&2
+					exit 1
+				fi
+				printf '%s\n' 'misc/UNRELATED_KEY'
+				exit 0
+			fi
 			printf '%s\n' 'aidevops/ZETA_KEY' 'aidevops/ALPHA_KEY' 'aidevops/ALPHA_KEY'
 			if [[ "${AIDEVOPS_TEST_STORED:-}" == "true" && -f "${AIDEVOPS_TEST_DIR}/stored_path" ]]; then
 				cat "${AIDEVOPS_TEST_DIR}/stored_path"
@@ -157,6 +169,35 @@ EOF
 	return 0
 }
 
+# After every secret is migrated out of gopass, `gopass ls --flat aidevops/`
+# fails with a not-found error while the store itself still lists. That must
+# mean "gopass owns nothing", not "store unreadable", or resolution and
+# injection break for the plaintext store that now holds the values.
+test_empty_gopass_namespace_uses_plaintext() {
+	setup
+	trap 'teardown' RETURN
+	local config_dir="$TEST_DIR/home/.config/aidevops"
+	mkdir -p "$config_dir"
+	printf '%s\n' 'export MIGRATED_KEY="migrated-placeholder-value"' >"$config_dir/credentials.sh"
+	chmod 600 "$config_dir/credentials.sh"
+	local check_rc=0 run_rc=0 injected=""
+	AIDEVOPS_TEST_EMPTY_NAMESPACE=true HOME="$TEST_DIR/home" bash "$HELPER" check MIGRATED_KEY || check_rc=$?
+	# Compare the exact value inside the child, printing only a marker: a
+	# nonempty-only assertion would also accept a wrong or truncated value.
+	injected=$(AIDEVOPS_TEST_EMPTY_NAMESPACE=true HOME="$TEST_DIR/home" bash "$HELPER" MIGRATED_KEY -- \
+		sh -c 'test "${MIGRATED_KEY:-}" = "migrated-placeholder-value" && echo injected-value-matches' 2>&1) || run_rc=$?
+	if [[ "$check_rc" -eq 0 && "$run_rc" -eq 0 &&
+		"$injected" == *"injected-value-matches"* &&
+		"$injected" != *"Unable to list gopass secrets"* &&
+		"$injected" != *"migrated-placeholder-value"* ]]; then
+		print_result "emptied gopass namespace resolves from the plaintext store" 0
+	else
+		print_result "emptied gopass namespace resolves from the plaintext store" 1 \
+			"check_rc=$check_rc run_rc=$run_rc output=$injected"
+	fi
+	return 0
+}
+
 test_list_preserves_direct_credentials() {
 	setup
 	trap 'teardown' RETURN
@@ -235,6 +276,30 @@ test_inventory_is_names_only_deterministic_json() {
 	return 0
 }
 
+test_inventory_skips_nested_gopass_names() {
+	setup
+	trap 'teardown' RETURN
+	cat >"$TEST_DIR/bin/gopass" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+	ls) printf '%s\n' 'aidevops/GOOD_NAME' 'aidevops/tool-state/abc' 'aidevops/other/private';;
+	*) exit 1 ;;
+esac
+EOF
+	chmod +x "$TEST_DIR/bin/gopass"
+	local output="" exit_code=0
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" inventory 2>"$TEST_DIR/inventory-stderr") || exit_code=$?
+	local diagnostic=""
+	diagnostic=$(<"$TEST_DIR/inventory-stderr")
+	if [[ "$exit_code" -eq 0 && "$output" == '{"version":1,"backends":{"gopass":"available","credentials":"missing"},"secrets":[{"name":"GOOD_NAME","status":"configured"}]}' &&
+		"$diagnostic" == 'Skipped 2 nested gopass inventory entries' ]]; then
+		print_result "inventory skips nested gopass entries without leaking names" 0
+	else
+		print_result "inventory skips nested gopass entries without leaking names" 1 "Unexpected inventory output or diagnostic"
+	fi
+	return 0
+}
+
 test_inventory_rejects_malformed_gopass_name() {
 	setup
 	trap 'teardown' RETURN
@@ -242,7 +307,7 @@ test_inventory_rejects_malformed_gopass_name() {
 #!/usr/bin/env bash
 printf '%s\n' "${1:-}" >>"${AIDEVOPS_TEST_DIR}/gopass_calls"
 case "${1:-}" in
-	ls) printf '%s\n' 'aidevops/../ESCAPE'; exit 0 ;;
+	ls) printf '%s\n' 'aidevops/bad-name'; exit 0 ;;
 	show) printf '%s' 'actual-secret-value'; exit 0 ;;
 	*) exit 1 ;;
 esac
@@ -302,6 +367,44 @@ test_inventory_requires_owner_only_credentials() {
 	else
 		print_result "inventory requires owner-only credentials fallback" 1 "Expected failure"
 	fi
+	return 0
+}
+
+test_systemd_creds_round_trip() {
+	local name="systemd-creds backend round trip"
+	local help=""
+	help=$(systemd-creds --help 2>/dev/null) || help=""
+	if [[ "$help" != *--refuse-null* ]] || ! systemd-creds --user --with-key=host encrypt - - </dev/null >/dev/null 2>&1; then
+		print_result "$name (skipped: unsupported systemd-creds)" 0
+		return 0
+	fi
+	setup
+	trap 'teardown' RETURN
+	mkdir -p "$TEST_DIR/home"
+	local home="$TEST_DIR/home" cred="$TEST_DIR/home/.config/aidevops/creds/ENC_TEST_KEY.cred"
+	local value="enc-test-value-0123456789"
+	printf '%s' "$value" | HOME="$home" bash "$HELPER" set ENC_TEST_KEY --backend systemd-creds >/dev/null 2>&1 || {
+		print_result "$name" 1 "set failed"
+		return 0
+	}
+	local got="" injected="" listed="" mode=""
+	got=$(HOME="$home" bash "$HELPER" get ENC_TEST_KEY 2>/dev/null) || got=""
+	injected=$(HOME="$home" bash "$HELPER" ENC_TEST_KEY -- bash -c 'printf %s "${#ENC_TEST_KEY}"' 2>/dev/null) || injected=""
+	listed=$(HOME="$home" bash "$HELPER" list 2>&1) || listed=""
+	mode=$(stat -c %a "$cred" 2>/dev/null) || mode=""
+	local ok=0 reason=""
+	[[ "$got" == "$value" ]] || { ok=1; reason="get mismatch"; }
+	[[ "$injected" == "${#value}" ]] || { ok=1; reason="$reason injection mismatch"; }
+	[[ "$listed" == *ENC_TEST_KEY* && "$listed" != *"$value"* ]] || { ok=1; reason="$reason list leak/missing"; }
+	[[ "$mode" == 600 ]] || { ok=1; reason="$reason mode=$mode"; }
+	if grep -q -F -- "$value" "$cred"; then
+		ok=1
+		reason="$reason plaintext on disk"
+	fi
+	HOME="$home" bash "$HELPER" check ENC_TEST_KEY || { ok=1; reason="$reason check failed"; }
+	HOME="$home" bash "$HELPER" rm ENC_TEST_KEY --yes --skip-dependents >/dev/null 2>&1 || { ok=1; reason="$reason rm failed"; }
+	[[ ! -e "$cred" ]] || { ok=1; reason="$reason rm left ciphertext"; }
+	print_result "$name" "$ok" "$reason"
 	return 0
 }
 
@@ -474,6 +577,9 @@ test_locked_injection_exits_bounded() {
 	setup
 	trap 'teardown' RETURN
 	export AIDEVOPS_TEST_LOCKED=true
+	# The 12s production default exceeds the outer 8s watchdog. Exercise the
+	# same bounded decrypt promptly using its supported timeout override.
+	local -x AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS=2
 	export AIDEVOPS_TEST_SECRET="fixture-${TEST_DIR##*/}"
 	local result=""
 	# shellcheck disable=SC2016 # The child shell expands the marker path.
@@ -1388,12 +1494,15 @@ main() {
 	test_empty_fallback_secret_fails_closed
 	test_locked_injection_exits_bounded
 	test_list_resolves_tenants_without_reading_values
+	test_empty_gopass_namespace_uses_plaintext
 	test_list_preserves_direct_credentials
 	test_list_rejects_unsafe_tenant_files
 	test_inventory_is_names_only_deterministic_json
+	test_inventory_skips_nested_gopass_names
 	test_inventory_rejects_malformed_gopass_name
 	test_inventory_cleans_up_after_gopass_listing_failure
 	test_inventory_requires_owner_only_credentials
+	test_systemd_creds_round_trip
 
 	echo ""
 	echo "Tests run: $TESTS_RUN"

@@ -268,7 +268,9 @@ Agent installation prepares the framework workspace before bundle activation and
 exports its canonical path to subsequent setup steps. It does not create the
 private registry. An explicit custom state path still requires an existing,
 canonical parent. Each machine uses its own local state: do not share or copy
-this database between hosts.
+this database between hosts. Linked worktrees copied by a machine migration or
+restore refuse with `generation-directory-mismatch`; rescue their uncommitted
+work with `worktree-rescue-helper.sh` per `../reference/machine-migration.md`.
 With lifecycle observation explicitly disabled, workspace preparation failures
 produce a warning without blocking bundle activation.
 Both hooks pass `--initialize`: after platform readiness, the first launch creates
@@ -313,7 +315,14 @@ reserved generation retries only writer contention (`database-locked`) for up to
 Each retry is the complete idempotent admission transaction: a closed generation
 still denies, and a committed earlier attempt replays without executing again.
 Each retry logs `admission-retry`; contention past the deadline exits 75 as before
-(GH#36921). No scheduler or persistent
+(GH#36921). The registry CLI's `enroll` and `admit-session`, and the admission
+and provenance write after `create-worktree`'s `git worktree add`, wait under the
+same bound and variable and log `contention-retry`; contention past it still
+refuses with `database-locked` (GH#38086). The detached bounded-operation
+supervisor waits under the same bound and variable, measured from its first
+attempt, retrying only `database-locked` with 0.5-4 second backoff before
+refusing with exit 75; the
+synchronous Bash/Edit/Write hook admission is unchanged (GH#38158). No scheduler or persistent
 global environment is installed. Set `AIDEVOPS_LIFECYCLE_DISABLED=1` to disable launch
 observation and Pulse reconciliation; preserve the store. This is not permission
 to run on enrolled worktrees without admission. Observation on unregistered paths

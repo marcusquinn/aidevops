@@ -112,26 +112,34 @@ assert "public repo without event exits 0" "$?"
 "$HELPER" apply --repo o/pub >/dev/null 2>&1
 assert "apply creates via POST" "$(grep -q '^POST repos/o/pub/actions/policies$' "$fx/writes.log" && echo 0 || echo 1)"
 
-jq -c --slurpfile b "$fx/last-body.json" '{total_count:1, policies:[($b[0] + {id:7})]}' <<<'null' >"$fx/repos__o__pub__actions__policies"
+jq -c '. + {id:7}' "$fx/last-body.json" >"$fx/repos__o__pub__actions__policies__7"
+printf '{"total_count":1,"policies":[{"id":7,"name":"aidevops-pull-request-target-gates","enforcement":"active","_links":{"self":{"href":"https://api.github.com/repos/o/pub/actions/policies/7"}}}]}' >"$fx/repos__o__pub__actions__policies"
 "$HELPER" status --repo o/pub >/dev/null 2>&1
 assert "status covered after apply exits 0" "$?"
 "$HELPER" apply --repo o/pub >/dev/null 2>&1
 assert "apply updates in place via PUT" "$(grep -q '^PUT repos/o/pub/actions/policies/7$' "$fx/writes.log" && echo 0 || echo 1)"
 
 # Narrow allowed_events (only the gate event) must not cover a multi-event workflow.
-printf '{"total_count":1,"policies":[{"id":9,"name":"x","enforcement":"active","conditions":{"workflow_path":{"include":[".github/workflows/*.yml"]}},"rules":[{"type":"restrict_action_events","parameters":{"allowed_events":["pull_request_target"]}}]}]}' >"$fx/repos__o__pub__actions__policies"
+printf '{"total_count":1,"policies":[{"id":9,"name":"x","enforcement":"active","_links":{"self":{"href":"https://api.github.com/orgs/o/actions/policies/9"}}}]}' >"$fx/repos__o__pub__actions__policies"
+printf '{"id":9,"name":"x","enforcement":"active","conditions":{"workflow_path":{"include":[".github/workflows/*.yml"]}},"rules":[{"type":"restrict_action_events","parameters":{"allowed_events":["pull_request_target"]}}]}' >"$fx/orgs__o__actions__policies__9"
 "$HELPER" status --repo o/pub >/dev/null 2>&1
 assert "narrow allowed_events exits 1" "$([[ $? -eq 1 ]] && echo 0 || echo 1)"
 
 # Positive control: full event union + glob include covers the workflow.
-printf '{"total_count":1,"policies":[{"id":9,"name":"x","enforcement":"active","conditions":{"workflow_path":{"include":[".github/workflows/*.yml"]}},"rules":[{"type":"restrict_action_events","parameters":{"allowed_events":["issues","pull_request_target","schedule","workflow_call","workflow_dispatch"]}}]}]}' >"$fx/repos__o__pub__actions__policies"
+printf '{"id":9,"name":"x","enforcement":"active","conditions":{"workflow_path":{"include":[".github/workflows/*.yml"]}},"rules":[{"type":"restrict_action_events","parameters":{"allowed_events":["issues","pull_request_target","schedule","workflow_call","workflow_dispatch"]}}]}' >"$fx/orgs__o__actions__policies__9"
 "$HELPER" status --repo o/pub >/dev/null 2>&1
 assert "full union + glob include exits 0" "$?"
 
 # Include naming a different path must not cover the workflow.
-printf '{"total_count":1,"policies":[{"id":9,"name":"x","enforcement":"active","conditions":{"workflow_path":{"include":[".github/workflows/other.yml"]}},"rules":[{"type":"restrict_action_events","parameters":{"allowed_events":["issues","pull_request_target","schedule","workflow_call","workflow_dispatch"]}}]}]}' >"$fx/repos__o__pub__actions__policies"
-"$HELPER" status --repo o/pub >/dev/null 2>&1
+printf '{"id":9,"name":"x","enforcement":"active","conditions":{"workflow_path":{"include":[".github/workflows/other.yml"]}},"rules":[{"type":"restrict_action_events","parameters":{"allowed_events":["issues","pull_request_target","schedule","workflow_call","workflow_dispatch"]}}]}' >"$fx/orgs__o__actions__policies__9"
+"$HELPER" status --repo o/pub >"$TMP/out" 2>&1
 assert "include of different path exits 1" "$([[ $? -eq 1 ]] && echo 0 || echo 1)"
+assert "different path reports uncovered gate" "$(grep -q 'UNCOVERED' "$TMP/out" && grep -q 'gate.yml' "$TMP/out" && echo 0 || echo 1)"
+
+rm "$fx/orgs__o__actions__policies__9"
+"$HELPER" status --repo o/pub >"$TMP/out" 2>&1
+assert "detail read failure exits 2" "$([[ $? -eq 2 ]] && echo 0 || echo 1)"
+assert "detail read failure reports error" "$(grep -q 'cannot read Actions policies' "$TMP/out" && echo 0 || echo 1)"
 
 # Non-404 listing failure is an error, not an empty list.
 : >"$fx/FORBIDDEN"
@@ -141,6 +149,16 @@ assert "listing 403 exits 2" "$([[ $? -eq 2 ]] && echo 0 || echo 1)"
 
 "$HELPER" status --repo 'bad slug' >/dev/null 2>&1
 assert "invalid slug exits 2" "$([[ $? -eq 2 ]] && echo 0 || echo 1)"
+
+# --all-managed must skip contributed repositories (no admin rights) but still check owned ones.
+rm -f "$fx/FORBIDDEN"
+printf '%s' '{"initialized_repos":[{"slug":"o/none"},{"slug":"o/priv","private":true},{"slug":"x/contrib","contributed":true}]}' >"$TMP/repos.json"
+AIDEVOPS_REPOS_JSON="$TMP/repos.json" "$HELPER" status --all-managed >"$TMP/out" 2>&1
+assert "all-managed skips contributed repo (exit 0)" "$?"
+assert "all-managed does not list contributed repo" "$(grep -q 'x/contrib' "$TMP/out" && echo 1 || echo 0)"
+printf '%s' '{"initialized_repos":[{"slug":"o/none"},{"slug":"o/missing"}]}' >"$TMP/repos2.json"
+AIDEVOPS_REPOS_JSON="$TMP/repos2.json" "$HELPER" status --all-managed >/dev/null 2>&1
+assert "all-managed still fails on owned repo API error" "$([[ $? -eq 2 ]] && echo 0 || echo 1)"
 
 if [[ "$FAILS" -ne 0 ]]; then
 	printf '%s failure(s)\n' "$FAILS"

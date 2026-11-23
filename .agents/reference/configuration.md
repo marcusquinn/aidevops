@@ -106,8 +106,10 @@ Supervisor, dispatch, and autonomous operation settings.
 | Key | Type | Default | Env Override | Description |
 |-----|------|---------|-------------|-------------|
 | `orchestration.supervisor_pulse` | boolean | `true` | `AIDEVOPS_SUPERVISOR_PULSE` | Enable the autonomous supervisor pulse. Dispatches workers, merges PRs, evaluates results every 3 minutes (configurable via `supervisor.pulse_interval_seconds`). |
-| `orchestration.repo_sync` | boolean | `true` | `AIDEVOPS_REPO_SYNC` | Daily `git pull --ff-only` on clean repos in `repos.json`. |
+| `orchestration.repo_sync` | boolean | `true` | `AIDEVOPS_REPO_SYNC` | Daily read-only drift report on clean repos in `repos.json`; never fetches or pulls canonical checkouts. |
 | `orchestration.max_workers_cap` | integer | `0` (auto: `(total RAM − RAM_RESERVE_MB) / RAM_PER_WORKER_MB`, clamped to 2–64 before host sharing) | `AIDEVOPS_MAX_WORKERS_CAP` | Hard ceiling for pulse worker pool size after RAM-based calculation. Auto divides this ceiling among detected co-located runner users (minimum 1 per user); a positive explicit cap is a per-runner override and is not divided. |
+| `orchestration.ram_per_worker_mb` | integer | `1536` | `RAM_PER_WORKER_MB` | Estimated RAM per headless worker process tree; divides reclaimable RAM into worker slots. See [Worker resource policy](#worker-resource-policy). |
+| `orchestration.ram_reserve_mb` | integer | `6144` | `RAM_RESERVE_MB` | Reclaimable RAM kept free for the OS and user apps before worker slots are counted. Lower it on small desktops whose reclaimable RAM rarely exceeds it. |
 | `orchestration.max_load_per_core` | — | — | — | **Deprecated, ignored** (GH#35537). CPU load never gates admission; see [Worker resource policy](#worker-resource-policy). Remove from config. |
 | `orchestration.cpu_idle_admit_percent` | — | — | — | **Deprecated, ignored** (GH#35537). Remove from config. |
 | `orchestration.min_worker_concurrency` | integer | `6` | `AIDEVOPS_MIN_WORKER_CONCURRENCY` | Minimum active implementation-worker floor while provider/account health and RAM headroom permit. Never exceeds RAM headroom. Set to `0` to disable. |
@@ -134,7 +136,9 @@ How admission is computed each preflight and refill pass:
   never exceeds RAM headroom. No RAM slots closes admission (running workers
   continue); a host running no workers keeps one slot while one worker fits.
 - Defaults: `RAM_PER_WORKER_MB=1536` (measured worker trees 0.7–1.6 GB),
-  `RAM_RESERVE_MB=6144`. Override per host with those environment variables.
+  `RAM_RESERVE_MB=6144`. Override per host with `orchestration.ram_per_worker_mb`
+  and `orchestration.ram_reserve_mb` in `config.jsonc`; the environment
+  variables of the same names win when set.
   Dispatch logs show `admission_policy=ram_only` with `ram_available_mb`,
   `ram_worker_growth_mb`, `ram_slots` and `ram_cap`.
 
@@ -143,6 +147,22 @@ Not admission throttles (allowed): launch-ceremony concurrency
 CPU-idle stall detection, and the full-loop validator's serial plugin-test mode
 (test determinism, GH#35499). CPU and `load_per_cpu` stay visible in runtime
 metrics for diagnosis only.
+
+Launch slots (t19116): a candidate takes one of the round's free slots just
+before its cross-runner claim, not when its ceremony starts. Read-only
+evaluation therefore runs up to `min(DISPATCH_MAX_PARALLEL, free slots ×
+DISPATCH_EVAL_OVERSUBSCRIBE)` candidates at once (default factor 3), while
+launches never exceed the free slots. A candidate that passes evaluation with
+every slot held defers (rc 75, no claim, no failure evidence) to the next
+round. `DISPATCH_LAUNCH_SLOT_GATE=0` restores ceremony-start reservations.
+
+In-round top-up (t19122): a parallel round that has spent its slot budget
+re-reads capacity when a worker-exit refill trigger is newer than its last
+capacity read, and raises its budget to launched plus newly free slots. Held
+product reservations and a concurrent pool's share stay excluded; floor,
+throttle and serial rounds never top up. `DISPATCH_ROUND_TOPUP=0` disables it;
+`DISPATCH_ROUND_TOPUP_MAX_ROUND_S` (default 1800) ends absorption in long
+rounds so a fresh census runs.
 
 Correcting regressions: if a change, issue or review proposes CPU- or
 load-based admission, worker caps from core counts, or "host overload"

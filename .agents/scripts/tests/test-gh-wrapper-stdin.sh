@@ -48,14 +48,14 @@ gh() {
 	printf '%s\n' "$*" >>"$GH_CALLS"
 	for argument in "$@"; do
 		if [[ "$previous" == "--body-file" ]]; then
-			(stat -f '%Lp' "$argument" 2>/dev/null || stat -c '%a' "$argument") >"$CAPTURED_MODE"
+			(stat -c '%a' "$argument" 2>/dev/null || stat -f '%Lp' "$argument") >"$CAPTURED_MODE"
 			cp "$argument" "$CAPTURED_BODY"
 			break
 		fi
 		case "$argument" in
 		--body-file=*)
 			body_file="${argument#--body-file=}"
-			(stat -f '%Lp' "$body_file" 2>/dev/null || stat -c '%a' "$body_file") >"$CAPTURED_MODE"
+			(stat -c '%a' "$body_file" 2>/dev/null || stat -f '%Lp' "$body_file") >"$CAPTURED_MODE"
 			cp "$body_file" "$CAPTURED_BODY"
 			break
 			;;

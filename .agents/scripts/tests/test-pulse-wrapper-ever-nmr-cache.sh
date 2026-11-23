@@ -38,6 +38,8 @@ setup_test_env() {
 	mkdir -p "${HOME}/.aidevops/.agent-workspace/supervisor" "${HOME}/.aidevops/logs"
 	EVER_NMR_CACHE_FILE="${HOME}/.aidevops/.agent-workspace/supervisor/ever-nmr-cache.json"
 	EVER_NMR_NEGATIVE_CACHE_TTL_SECS=300
+	# Keep lock-timeout cases fast; production defaults to 50 retries.
+	EVER_NMR_LOCK_RETRIES=3
 	LOGFILE="${HOME}/.aidevops/logs/pulse-wrapper.log"
 	GH_MARKER_FILE="${TEST_ROOT}/gh-called"
 	return 0
@@ -60,149 +62,45 @@ gh() {
 	return 1
 }
 
-_ever_nmr_cache_key() {
-	local issue_num="$1"
-	local slug="$2"
-	printf '%s\n' "${slug}#${issue_num}"
-	return 0
-}
+# Exercise the production module (GH#37869), not a private copy. It has no
+# top-level side effects; the gh stub above stands in for the transport.
+TEST_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../pulse-nmr-approval-cache.sh
+source "${TEST_SCRIPT_DIR}/../pulse-nmr-approval-cache.sh"
 
-_ever_nmr_cache_load() {
-	if [[ ! -f "$EVER_NMR_CACHE_FILE" ]]; then
-		printf '{}\n'
-		return 0
-	fi
-
-	local content
-	content=$(cat "$EVER_NMR_CACHE_FILE" 2>/dev/null) || content="{}"
-	if ! printf '%s' "$content" | jq empty >/dev/null 2>&1; then
-		content="{}"
-	fi
-
-	printf '%s\n' "$content"
-	return 0
-}
-
-_ever_nmr_cache_with_lock() {
+# Create the cache lock dir, optionally with an owner record, and backdate it.
+# Arguments: $1 - owner PID or empty, $2 - touch -t stamp or empty (now)
+make_lock_dir() {
+	local owner_pid="$1"
+	local stamp="$2"
 	local lock_dir="${EVER_NMR_CACHE_FILE}.lockdir"
-	local retries=0
-	while ! mkdir "$lock_dir" 2>/dev/null; do
-		retries=$((retries + 1))
-		if [[ "$retries" -ge 50 ]]; then
-			echo "[pulse-wrapper] _ever_nmr_cache_with_lock: lock acquisition timed out" >>"$LOGFILE"
-			return 1
-		fi
-		sleep 0.1
-	done
-
-	local rc=0
-	"$@" || rc=$?
-	rmdir "$lock_dir" 2>/dev/null || true
-	return "$rc"
-}
-
-_ever_nmr_cache_get() {
-	local issue_num="$1"
-	local slug="$2"
-	local key now_epoch cache_json cache_value checked_at age
-
-	key=$(_ever_nmr_cache_key "$issue_num" "$slug")
-	now_epoch=$(date +%s)
-	cache_json=$(_ever_nmr_cache_load)
-	cache_value=$(printf '%s' "$cache_json" | jq -r --arg key "$key" 'if .[$key] == null then "unknown" elif .[$key].ever_nmr == true then "true" elif .[$key].ever_nmr == false then "false" else "unknown" end' 2>/dev/null) || cache_value="unknown"
-	checked_at=$(printf '%s' "$cache_json" | jq -r --arg key "$key" '.[$key].checked_at // 0' 2>/dev/null) || checked_at=0
-	[[ "$checked_at" =~ ^[0-9]+$ ]] || checked_at=0
-
-	if [[ "$cache_value" == "true" ]]; then
-		printf 'true\n'
-		return 0
+	mkdir -p "$lock_dir"
+	if [[ -n "$owner_pid" ]]; then
+		printf '%s\n' "$owner_pid" >"${lock_dir}/owner.pid"
 	fi
-
-	if [[ "$cache_value" == "false" ]]; then
-		age=$((now_epoch - checked_at))
-		if [[ "$age" -lt "$EVER_NMR_NEGATIVE_CACHE_TTL_SECS" ]]; then
-			printf 'false\n'
-			return 0
-		fi
+	if [[ -n "$stamp" ]]; then
+		touch -t "$stamp" "$lock_dir"
 	fi
-
-	printf 'unknown\n'
 	return 0
 }
 
-_ever_nmr_cache_set_locked() {
+# Print the cached ever_nmr value for a key, or "missing".
+cached_value() {
 	local issue_num="$1"
-	local slug="$2"
-	local cache_value="$3"
-	local state_dir cache_json key now_epoch tmp_file
-
-	[[ "$cache_value" == "true" || "$cache_value" == "false" ]] || return 1
-
-	state_dir=$(dirname "$EVER_NMR_CACHE_FILE")
-	mkdir -p "$state_dir" 2>/dev/null || true
-	cache_json=$(_ever_nmr_cache_load)
-	key=$(_ever_nmr_cache_key "$issue_num" "$slug")
-	now_epoch=$(date +%s)
-	tmp_file=$(mktemp "${state_dir}/.ever-nmr-cache.XXXXXX" 2>/dev/null) || return 0
-
-	if printf '%s' "$cache_json" | jq --arg key "$key" --argjson checked_at "$now_epoch" --argjson ever_nmr "$cache_value" '.[$key] = {ever_nmr: $ever_nmr, checked_at: $checked_at}' >"$tmp_file" 2>/dev/null; then
-		mv "$tmp_file" "$EVER_NMR_CACHE_FILE" || {
-			rm -f "$tmp_file"
-			echo "[pulse-wrapper] _ever_nmr_cache_set_locked: failed to move cache file" >>"$LOGFILE"
-		}
-	else
-		rm -f "$tmp_file"
-		echo "[pulse-wrapper] _ever_nmr_cache_set_locked: failed to write cache entry" >>"$LOGFILE"
-	fi
-
+	local key=""
+	key=$(_ever_nmr_cache_key "$issue_num" "owner/repo")
+	[[ -f "$EVER_NMR_CACHE_FILE" ]] || {
+		printf 'missing\n'
+		return 0
+	}
+	jq -r --arg key "$key" 'if .[$key] == null then "missing" else (.[$key].ever_nmr | tostring) end' "$EVER_NMR_CACHE_FILE"
 	return 0
 }
 
-_ever_nmr_cache_set() {
-	_ever_nmr_cache_with_lock _ever_nmr_cache_set_locked "$@" || return 0
+reset_lock_state() {
+	rm -f "$GH_MARKER_FILE" "$EVER_NMR_CACHE_FILE" "$LOGFILE"
+	rm -rf "${EVER_NMR_CACHE_FILE}.lockdir"
 	return 0
-}
-
-issue_was_ever_nmr() {
-	local issue_num="$1"
-	local slug="$2"
-	local known_status="${3:-unknown}"
-
-	[[ -n "$issue_num" && -n "$slug" ]] || return 1
-
-	case "$known_status" in
-	true)
-		return 0
-		;;
-	false)
-		return 1
-		;;
-	esac
-
-	local cache_status
-	cache_status=$(_ever_nmr_cache_get "$issue_num" "$slug")
-	case "$cache_status" in
-	true)
-		return 0
-		;;
-	false)
-		return 1
-		;;
-	esac
-
-	local ever_count
-	ever_count=$(gh api "repos/${slug}/issues/${issue_num}/timeline" --paginate \
-		--jq '[.[] | select(.event == "labeled" and .label.name == "needs-maintainer-review")] | length' \
-		2>/dev/null) || ever_count=0
-	[[ "$ever_count" =~ ^[0-9]+$ ]] || ever_count=0
-
-	if [[ "$ever_count" -gt 0 ]]; then
-		_ever_nmr_cache_set "$issue_num" "$slug" "true"
-		return 0
-	fi
-
-	_ever_nmr_cache_set "$issue_num" "$slug" "false"
-	return 1
 }
 
 test_positive_cache_is_reused_without_api_call() {
@@ -269,12 +167,213 @@ test_known_status_short_circuits_cache_and_api() {
 	return 0
 }
 
+test_old_ownerless_lock_is_reclaimed() {
+	local name="old ownerless lockdir is reclaimed and the cache write lands (GH#37869)"
+	reset_lock_state
+	make_lock_dir "" "202001010000"
+	_ever_nmr_cache_set "17462" "owner/repo" "false"
+	local value=""
+	value=$(cached_value "17462")
+	if [[ "$value" == "false" && ! -d "${EVER_NMR_CACHE_FILE}.lockdir" ]] &&
+		grep -q 'clearing stale lock (ownerless' "$LOGFILE"; then
+		print_result "$name" 0
+		return 0
+	fi
+	print_result "$name" 1 "cached=${value} lockdir_exists=$([[ -d "${EVER_NMR_CACHE_FILE}.lockdir" ]] && echo yes || echo no)"
+	return 0
+}
+
+test_fresh_ownerless_lock_is_respected() {
+	local name="fresh ownerless lockdir is not reclaimed; set stays non-fatal"
+	reset_lock_state
+	make_lock_dir "" ""
+	local rc=0
+	_ever_nmr_cache_set "17463" "owner/repo" "false" || rc=$?
+	local value=""
+	value=$(cached_value "17463")
+	if [[ "$rc" -eq 0 && "$value" == "missing" && -d "${EVER_NMR_CACHE_FILE}.lockdir" ]] &&
+		grep -q 'lock acquisition timed out' "$LOGFILE"; then
+		print_result "$name" 0
+		return 0
+	fi
+	print_result "$name" 1 "rc=${rc} cached=${value}"
+	return 0
+}
+
+test_dead_owner_lock_is_reclaimed() {
+	local name="dead-owner lock is reclaimed by the production function"
+	reset_lock_state
+	local dead_pid=""
+	sh -c 'exit 0' &
+	dead_pid=$!
+	wait "$dead_pid" 2>/dev/null || true
+	make_lock_dir "$dead_pid" ""
+	_ever_nmr_cache_set "17464" "owner/repo" "true"
+	local value=""
+	value=$(cached_value "17464")
+	if [[ "$value" == "true" ]] && grep -q "owner PID ${dead_pid} gone" "$LOGFILE"; then
+		print_result "$name" 0
+		return 0
+	fi
+	print_result "$name" 1 "cached=${value}"
+	return 0
+}
+
+test_live_owner_is_never_reclaimed() {
+	local name="live owner is respected however old its lock is"
+	reset_lock_state
+	make_lock_dir "$$" "202001010000"
+	_ever_nmr_cache_set "17466" "owner/repo" "false"
+	local value=""
+	value=$(cached_value "17466")
+	if [[ "$value" == "missing" && -f "${EVER_NMR_CACHE_FILE}.lockdir/owner.pid" ]] &&
+		! grep -q 'clearing stale lock' "$LOGFILE"; then
+		print_result "$name" 0
+		return 0
+	fi
+	print_result "$name" 1 "cached=${value}"
+	return 0
+}
+
+test_leading_zero_settings_are_decimal() {
+	local name="leading-zero lock settings are read as decimal, not octal"
+	reset_lock_state
+	make_lock_dir "$$" ""
+	local rc=0
+	# 08 is invalid octal; without base-10 normalisation the timeout never fires.
+	EVER_NMR_LOCK_RETRIES=08 _ever_nmr_cache_set "17468" "owner/repo" "false" || rc=$?
+	if [[ "$rc" -eq 0 ]] && grep -q 'lock acquisition timed out' "$LOGFILE"; then
+		print_result "$name" 0
+		return 0
+	fi
+	print_result "$name" 1 "rc=${rc}"
+	return 0
+}
+
+test_release_skips_lock_owned_by_another_caller() {
+	local name="release leaves a lock that another caller re-acquired"
+	reset_lock_state
+	local lock_dir="${EVER_NMR_CACHE_FILE}.lockdir"
+	steal_lock() {
+		# Simulate reclamation plus re-acquisition by another caller mid-callback.
+		printf '%s\n' "999999" >"${EVER_NMR_CACHE_FILE}.lockdir/owner.pid"
+		return 0
+	}
+	_ever_nmr_cache_with_lock steal_lock || true
+	local recorded=""
+	recorded=$(cat "${lock_dir}/owner.pid" 2>/dev/null || true)
+	if [[ -d "$lock_dir" && "$recorded" == "999999" ]]; then
+		print_result "$name" 0
+		return 0
+	fi
+	print_result "$name" 1 "lockdir_exists=$([[ -d "$lock_dir" ]] && echo yes || echo no) recorded=${recorded}"
+	return 0
+}
+
+test_lost_lock_skips_callback() {
+	local name="lost lock before owner registration skips the callback"
+	reset_lock_state
+	local marker="${TEST_ROOT}/callback-ran"
+	rm -f "$marker"
+	mark_callback() {
+		printf 'ran\n' >"$marker"
+		return 0
+	}
+	# Make the owner write fail right after acquisition, as when the lock is
+	# reclaimed while its holder pauses: occupy owner.pid with a directory.
+	local lock_path="${EVER_NMR_CACHE_FILE}.lockdir"
+	mkdir() {
+		command mkdir "$@" || return 1
+		if [[ "${1:-}" == "$lock_path" ]]; then
+			command mkdir -p "${lock_path}/owner.pid"
+		fi
+		return 0
+	}
+	local rc=0
+	_ever_nmr_cache_with_lock mark_callback || rc=$?
+	unset -f mkdir
+	if [[ "$rc" -ne 0 && ! -f "$marker" ]] && grep -q 'lost lock before owner registration' "$LOGFILE"; then
+		print_result "$name" 0
+		return 0
+	fi
+	print_result "$name" 1 "rc=${rc} callback_ran=$([[ -f "$marker" ]] && echo yes || echo no)"
+	return 0
+}
+
+test_instance_token_tracks_replacement() {
+	local name="lock instance token changes when the lock is replaced"
+	reset_lock_state
+	local lock_dir="${EVER_NMR_CACHE_FILE}.lockdir"
+	make_lock_dir "" ""
+	local before="" after_owner=""
+	before=$(_ever_nmr_lock_instance "$lock_dir")
+	printf '%s\n' "$$" >"${lock_dir}/owner.pid"
+	after_owner=$(_ever_nmr_lock_instance "$lock_dir")
+	if [[ "$before" == *":none" && "$after_owner" == *":$$" && "$before" != "$after_owner" ]]; then
+		print_result "$name" 0
+		return 0
+	fi
+	print_result "$name" 1 "before=${before} after=${after_owner}"
+	return 0
+}
+
+test_abandoned_reclaim_marker_is_cleared() {
+	local name="abandoned .reclaim marker does not wedge reclamation"
+	reset_lock_state
+	make_lock_dir "" ""
+	mkdir "${EVER_NMR_CACHE_FILE}.lockdir/.reclaim"
+	touch -t "202001010000" "${EVER_NMR_CACHE_FILE}.lockdir/.reclaim" "${EVER_NMR_CACHE_FILE}.lockdir"
+	_ever_nmr_cache_set "17467" "owner/repo" "true"
+	local value=""
+	value=$(cached_value "17467")
+	if [[ "$value" == "true" && ! -d "${EVER_NMR_CACHE_FILE}.lockdir" ]]; then
+		print_result "$name" 0
+		return 0
+	fi
+	print_result "$name" 1 "cached=${value}"
+	return 0
+}
+
+test_owner_record_is_current_shell() {
+	local name="owner.pid records the holding subshell, not the parent \$\$"
+	reset_lock_state
+	local recorded="" expected=""
+	read_owner() {
+		cat "${EVER_NMR_CACHE_FILE}.lockdir/owner.pid"
+		return 0
+	}
+	# Run in a subshell, as parallel dispatch does; capture both PIDs there.
+	local pair=""
+	pair=$( (
+		_ever_nmr_cache_with_lock read_owner
+		printf '%s\n' "$(exec sh -c 'printf "%s" "$PPID"')"
+	))
+	recorded=$(printf '%s\n' "$pair" | sed -n '1p')
+	expected=$(printf '%s\n' "$pair" | sed -n '2p')
+	if [[ -n "$recorded" && "$recorded" == "$expected" && "$recorded" != "$$" ]]; then
+		print_result "$name" 0
+		return 0
+	fi
+	print_result "$name" 1 "recorded=${recorded} expected=${expected} parent=$$"
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_positive_cache_is_reused_without_api_call
 	test_negative_cache_is_reused_within_ttl
 	test_stale_negative_cache_refreshes_from_api
 	test_known_status_short_circuits_cache_and_api
+	test_old_ownerless_lock_is_reclaimed
+	test_fresh_ownerless_lock_is_respected
+	test_dead_owner_lock_is_reclaimed
+	test_live_owner_is_never_reclaimed
+	test_leading_zero_settings_are_decimal
+	test_release_skips_lock_owned_by_another_caller
+	test_lost_lock_skips_callback
+	test_instance_token_tracks_replacement
+	test_abandoned_reclaim_marker_is_cleared
+	test_owner_record_is_current_shell
 	teardown_test_env
 
 	echo ""

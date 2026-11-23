@@ -15,8 +15,10 @@ const advisedSessions = new Set();
 // Diagnostic evidence only: never changes admission policy or logs tool args.
 function recordAdmission(input, outcome, reason = "", status = "") {
   const session = input.sessionID || input.sessionId || input.session?.id || "";
-  // Interactive tools and plugin fixture sessions are not worker health probes.
-  if (!/^[1-9][0-9]*$/.test(process.env.WORKER_ISSUE_NUMBER || "")) return;
+  // Interactive passes are not worker health probes, but every refusal is
+  // recorded so a blocked interactive operation (for example database-locked,
+  // GH#37900) leaves a trace.
+  if (outcome !== "refused" && !/^[1-9][0-9]*$/.test(process.env.WORKER_ISSUE_NUMBER || "")) return;
   if (!/^[A-Za-z0-9_-]+$/.test(session)) return;
   try {
     const directory = join(homedir(), ".aidevops", "logs", "lifecycle-admission");
@@ -67,6 +69,8 @@ const REASON_GUIDANCE = {
   "explicit-absolute-context-required": "the working directory must be absolute. Recovery: pass an absolute workdir",
   "invalid-session-identity": "the runtime supplied no valid session identity. Recovery: run the tool from an OpenCode session or open a new tab",
   "session-owner-already-ended": "this session relinquished its ownership of the worktree for removal (GH#37432), so it cannot write there again. Recovery: work in a fresh worktree; canonical and other worktree targets remain available",
+  // GH#37827: copied/migrated worktrees keep a marker bound to the old host's inodes.
+  "generation-directory-mismatch": "this worktree's lifecycle marker belongs to another installation, path or directory, usually because the folder was copied from another machine or restored from backup. Its files and Git data are intact; no write is authorized here. Recovery: from a workdir outside it, inspect read-only with git -C <worktree> status, then run worktree-rescue-helper.sh export <worktree>, create a fresh worktree at the reported commit and import there (see reference/machine-migration.md). Do not delete markers, reset the registry or bypass the gate",
 };
 
 /** Accept only short protocol tokens from the helper, never free-form text. */

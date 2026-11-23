@@ -23,6 +23,9 @@
 #   - pulse-simplification-state.sh (_simplification_state_prune,
 #     _simplification_state_refresh, _simplification_state_backfill_closed,
 #     _simplification_state_push, _simplification_close_spurious_requeue_issues)
+#   - pulse-simplification-review.sh (_pulse_slug_list_contains,
+#     _pulse_scanner_mark_started, _pulse_scanner_effective_reserve,
+#     _pulse_scanner_deadline_reached)
 #   - worker-lifecycle-common.sh (get_repo_role_by_slug)
 #
 # Part of aidevops framework: https://aidevops.sh
@@ -43,6 +46,96 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 fi
 
 #######################################
+# Close one repo's duplicate function-complexity-debt issues.
+#
+# Uses jq to extract file paths from titles and find duplicates server-side:
+# fetch issues sorted by number ascending (oldest first), extract the file
+# path from the title, group by path, and close all but the newest per group.
+#
+# Args:
+#   $1 - repo slug
+#   $2 - maximum issues to close
+#   $3 - optional interval close-count file. Budget is reserved there before
+#        each remote close, so a watchdog kill at any point after GitHub
+#        closes the issue still leaves that close counted (GH#38171)
+#   $4 - close count already spent this interval (base for $3)
+# Stdout: close attempts charged to the interval budget. A failed close is
+#         uncertain (GitHub may have applied it), so it is charged too.
+# Returns 0, or 1 when a budget reservation could not be persisted; that
+#   close is not attempted, so a resumed slice cannot overspend the budget.
+#######################################
+_dedup_cleanup_close_repo_dupes() {
+	local slug="$1"
+	local limit="$2"
+	local count_file="${3:-}"
+	local count_base="${4:-0}"
+	[[ "$limit" =~ ^[0-9]+$ ]] || limit=0
+	[[ "$count_base" =~ ^[0-9]+$ ]] || count_base=0
+	local spent=0 dupe_numbers="" dupe_num="" reserve_failed=0
+	dupe_numbers=$(gh_issue_list --repo "$slug" \
+		--label "function-complexity-debt" --state open \
+		--limit 500 --json number,title \
+		--jq '
+			sort_by(.number) |
+			[.[] | {
+				number,
+				file: (
+					(.title | capture("\\((?<p>[^,)]+\\.(sh|md|py|ts|js))[,)]") // null | .p) //
+					(.title | capture("in (?<p>[^ ]+\\.(sh|md|py|ts|js))") // null | .p) //
+					null
+				)
+			}] |
+			[.[] | select(.file != null)] |
+			group_by(.file) |
+			[.[] | select(length > 1) | .[:-1][].number] |
+			.[]
+		' 2>/dev/null) || dupe_numbers=""
+
+	while IFS= read -r dupe_num; do
+		[[ -n "$dupe_num" ]] || continue
+		[[ "$spent" -lt "$limit" ]] || break
+		# Reserve before the remote close; never released, because a close
+		# that errored or was interrupted may still have been applied. An
+		# unpersisted reservation would let a resumed slice overspend, so a
+		# failed write stops the batch before closing anything else.
+		if [[ -n "$count_file" ]] && ! _dedup_cleanup_persist_count "$count_file" "$((count_base + spent + 1))"; then
+			echo "[pulse-wrapper] Dedup cleanup: budget reservation write failed (${count_file}); no close attempted in ${slug} (GH#38171)" >>"${LOGFILE:-/dev/null}"
+			reserve_failed=1
+			break
+		fi
+		spent=$((spent + 1))
+		gh issue close "$dupe_num" --repo "$slug" --reason "not planned" \
+			--comment "Auto-closing duplicate: another function-complexity-debt issue exists for this file. Keeping the newest." \
+			>/dev/null 2>&1 || true
+	done <<<"$dupe_numbers"
+	printf '%s\n' "$spent"
+	[[ "$reserve_failed" -eq 0 ]] || return 1
+	return 0
+}
+
+#######################################
+# GH#38171: replace the interval close count atomically. A plain `>` truncates
+# the file before writing, so a failed write would leave it empty and the
+# carried budget would restart at 0. The new count is written to a sibling
+# temp file and renamed only after the write succeeds, so any failure keeps
+# the previous count.
+# Args: $1 - count file, $2 - new count
+# Returns: 0 when persisted, 1 otherwise (previous count untouched)
+#######################################
+_dedup_cleanup_persist_count() {
+	local count_file="$1"
+	local value="$2"
+	local tmp_file="${count_file}.tmp.$$"
+	# mv onto a directory would move the temp file inside it and report success.
+	[[ -d "$count_file" ]] && return 1
+	if printf '%s\n' "$value" 2>/dev/null >"$tmp_file" && mv -f "$tmp_file" "$count_file" 2>/dev/null; then
+		return 0
+	fi
+	rm -f "$tmp_file" 2>/dev/null || true
+	return 1
+}
+
+#######################################
 # Close duplicate function-complexity-debt issues across pulse-enabled repos.
 #
 # For each repo, fetches open function-complexity-debt issues and groups by
@@ -52,11 +145,20 @@ fi
 # Rate-limited: closes at most DEDUP_CLEANUP_BATCH_SIZE issues per run
 # and runs at most once per DEDUP_CLEANUP_INTERVAL (default: daily).
 #
+# GH#38171: the housekeeping slice (12s) is shorter than one traversal, so a
+# repo cursor records the last started repo. A yield or watchdog kill resumes
+# after it, and last-run is written only when a traversal completes or the
+# close batch is exhausted; batch exhaustion keeps the cursor so the next
+# interval serves the remaining repos first. A budget reservation failure
+# closes nothing past the failed reservation, so it marks its repo for retry
+# and the next run starts at that repo rather than after it.
+#
 # Returns: 0 always (best-effort, never breaks the pulse)
 #######################################
 run_simplification_dedup_cleanup() {
 	local now_epoch
 	now_epoch=$(date +%s)
+	local cursor_file="${DEDUP_CLEANUP_CURSOR_FILE:-${DEDUP_CLEANUP_LAST_RUN}.cursor}"
 
 	# Interval guard
 	if [[ -f "$DEDUP_CLEANUP_LAST_RUN" ]]; then
@@ -80,57 +182,128 @@ run_simplification_dedup_cleanup() {
 
 	local total_closed=0
 	local batch_limit="$DEDUP_CLEANUP_BATCH_SIZE"
+	local resume_after="" outcome="complete" stage_reserve=""
+	local closed_file="${cursor_file}.closed"
+	# A reservation failure leaves its repo's slug here, so the next run
+	# retries that repo instead of resuming after it.
+	local retry_file="${cursor_file}.retry" retry_cursor=0
+	if [[ -f "$cursor_file" ]]; then
+		resume_after=$(sed -n '1p' "$cursor_file" 2>/dev/null || true)
+		if [[ -n "$resume_after" ]] && ! _pulse_slug_list_contains "$resume_after" "$repo_slugs"; then
+			resume_after=""
+		fi
+	fi
+	if [[ -n "$resume_after" && "$(sed -n '1p' "$retry_file" 2>/dev/null || true)" == "$resume_after" ]]; then
+		retry_cursor=1
+	fi
+	total_closed=$(_dedup_cleanup_carried_closed "$closed_file" "$resume_after")
+	stage_reserve=$(_pulse_scanner_effective_reserve "${AIDEVOPS_DEDUP_CLEANUP_STAGE_RESERVE_SECONDS:-5}" "$now_epoch")
 
 	while IFS= read -r slug; do
 		[[ -z "$slug" ]] && continue
-		[[ "$total_closed" -ge "$batch_limit" ]] && break
+		if [[ -n "$resume_after" ]]; then
+			[[ "$slug" == "$resume_after" ]] || continue
+			resume_after=""
+			# Normally resume after the cursor repo; a retry revisits it.
+			[[ "$retry_cursor" -eq 1 ]] || continue
+		fi
+		if [[ "$total_closed" -ge "$batch_limit" ]]; then
+			outcome="batch_exhausted"
+			break
+		fi
 		# t2145: skip repos where the user is a contributor — simplification
 		# dedup cleanup is a maintainer-only operation.
 		local _dedup_role
 		_dedup_role=$(get_repo_role_by_slug "$slug")
 		[[ "$_dedup_role" != "maintainer" ]] && continue
-
-		# Use jq to extract file paths from titles and find duplicates server-side.
-		# Strategy: fetch issues sorted by number ascending (oldest first), extract
-		# file path from title via jq regex, group by path, and collect all but the
-		# last (newest) issue number from each group as duplicates to close.
-		local dupe_numbers
-		dupe_numbers=$(gh_issue_list --repo "$slug" \
-			--label "function-complexity-debt" --state open \
-			--limit 500 --json number,title \
-			--jq '
-				sort_by(.number) |
-				[.[] | {
-					number,
-					file: (
-						(.title | capture("\\((?<p>[^,)]+\\.(sh|md|py|ts|js))[,)]") // null | .p) //
-						(.title | capture("in (?<p>[^ ]+\\.(sh|md|py|ts|js))") // null | .p) //
-						null
-					)
-				}] |
-				[.[] | select(.file != null)] |
-				group_by(.file) |
-				[.[] | select(length > 1) | .[:-1][].number] |
-				.[]
-			' 2>/dev/null) || dupe_numbers=""
-
-		[[ -z "$dupe_numbers" ]] && continue
-
-		while IFS= read -r dupe_num; do
-			[[ -z "$dupe_num" ]] && continue
-			[[ "$total_closed" -ge "$batch_limit" ]] && break
-			if gh issue close "$dupe_num" --repo "$slug" --reason "not planned" \
-				--comment "Auto-closing duplicate: another function-complexity-debt issue exists for this file. Keeping the newest." \
-				>/dev/null 2>&1; then
-				total_closed=$((total_closed + 1))
-			fi
-		done <<<"$dupe_numbers"
+		if _pulse_scanner_deadline_reached "$stage_reserve"; then
+			outcome="yielded"
+			break
+		fi
+		_pulse_scanner_mark_started "$cursor_file" "$slug"
+		rm -f "$retry_file" 2>/dev/null || true
+		local repo_closed=0 close_rc=0
+		# The helper reserves the interval budget before every close, so a
+		# yield or a watchdog kill mid-repo carries the spent budget forward.
+		repo_closed=$(_dedup_cleanup_close_repo_dupes "$slug" "$((batch_limit - total_closed))" "$closed_file" "$total_closed") || close_rc=$?
+		[[ "$repo_closed" =~ ^[0-9]+$ ]] || repo_closed=0
+		total_closed=$((total_closed + repo_closed))
+		if [[ "$close_rc" -ne 0 ]]; then
+			outcome="reserve_failed"
+			# No close ran past the failed reservation; retry this repo next.
+			printf '%s\n' "$slug" 2>/dev/null >"$retry_file" ||
+				echo "[pulse-wrapper] Dedup cleanup: retry marker write failed (${retry_file}); next run resumes after ${slug}" >>"$LOGFILE"
+			break
+		fi
 	done <<<"$repo_slugs"
 
-	echo "$now_epoch" >"$DEDUP_CLEANUP_LAST_RUN"
 	if [[ "$total_closed" -gt 0 ]]; then
-		echo "[pulse-wrapper] Dedup cleanup: closed ${total_closed} duplicate function-complexity-debt issue(s)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dedup cleanup: ${total_closed} duplicate function-complexity-debt close(s) charged this interval" >>"$LOGFILE"
 	fi
+	_dedup_cleanup_finish_run "$outcome" "$cursor_file" "$now_epoch" "$stage_reserve" "$batch_limit"
+	return 0
+}
+
+#######################################
+# GH#38171: record how one dedup cleanup run ended.
+# Args:
+#   $1 - outcome: reserve_failed | yielded | batch_exhausted | complete
+#   $2 - cursor file (.closed and .retry siblings derive from it)
+#   $3 - run epoch, $4 - stage reserve seconds, $5 - batch limit
+# Returns: 0 always
+#######################################
+_dedup_cleanup_finish_run() {
+	local outcome="$1"
+	local cursor_file="$2"
+	local now_epoch="$3"
+	local stage_reserve="$4"
+	local batch_limit="$5"
+	case "$outcome" in
+	reserve_failed)
+		# Without a persisted budget the interval cannot be accounted for:
+		# keep cursor, budget and last-run so a later run retries.
+		echo "[pulse-wrapper] Dedup cleanup: stopped on budget reservation failure; cursor kept, interval not recorded" >>"$LOGFILE"
+		return 0
+		;;
+	yielded)
+		echo "[pulse-wrapper] Dedup cleanup: yielded before the stage deadline (reserve ${stage_reserve}s); cursor kept for the next run" >>"$LOGFILE"
+		return 0
+		;;
+	batch_exhausted)
+		# Batch exhaustion honours the per-interval close budget (last-run is
+		# written) but keeps the cursor, so the next interval starts after the
+		# saturating repo instead of starving later repos behind earlier ones.
+		echo "[pulse-wrapper] Dedup cleanup: batch limit ${batch_limit} reached before traversal end; cursor kept for the next interval" >>"$LOGFILE"
+		;;
+	*)
+		rm -f "$cursor_file" 2>/dev/null || true
+		;;
+	esac
+	# The interval ends here, so the next one starts with a fresh close budget.
+	rm -f "${cursor_file}.closed" "${cursor_file}.retry" 2>/dev/null || true
+	echo "$now_epoch" >"$DEDUP_CLEANUP_LAST_RUN"
+	return 0
+}
+
+#######################################
+# GH#38171: close count already spent in this interval by earlier yielded
+# slices. Only a resumed traversal (valid cursor) carries it; a fresh
+# traversal discards any leftover count.
+# Args: $1 - closed-count file, $2 - validated resume cursor (may be empty)
+# Stdout: non-negative integer
+# Returns: 0 always
+#######################################
+_dedup_cleanup_carried_closed() {
+	local closed_file="$1"
+	local resume_after="$2"
+	local carried=""
+	if [[ -n "$resume_after" && -f "$closed_file" ]]; then
+		carried=$(sed -n '1p' "$closed_file" 2>/dev/null || true)
+	else
+		rm -f "$closed_file" 2>/dev/null || true
+	fi
+	[[ "$carried" =~ ^[0-9]+$ ]] || carried=0
+	printf '%s\n' "$carried"
 	return 0
 }
 

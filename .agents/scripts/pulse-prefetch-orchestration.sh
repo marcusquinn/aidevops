@@ -114,6 +114,96 @@ _wait_parallel_pids() {
 }
 
 #######################################
+# Wait until fewer than max_parallel of the given PIDs are alive (t19041).
+#
+# Arguments:
+#   $1 - max_parallel
+#   $2 - absolute deadline epoch
+#   $3..N - PIDs launched so far
+# Returns: 0 when a slot is free, 1 when the deadline passes first
+#######################################
+_prefetch_wait_for_slot() {
+	local max_parallel="$1"
+	local deadline="$2"
+	shift 2
+	local live=0 pid
+	while true; do
+		live=0
+		for pid in "$@"; do
+			if kill -0 "$pid" 2>/dev/null; then
+				live=$((live + 1))
+			fi
+		done
+		[[ "$live" -lt "$max_parallel" ]] && return 0
+		[[ "$(date +%s)" -lt "$deadline" ]] || return 1
+		sleep 0.5
+	done
+}
+
+#######################################
+# Launch one prefetch shard per repo with bounded concurrency (t19041).
+#
+# Launching every repo at once put 100+ GitHub reads in flight together:
+# dormancy proofs hit their 15s read timeout, woke dormant repos and the
+# fan-out hit its cap. Shards now wait for a free slot inside the same
+# deadline the unbounded launch used; repos not started by then are left
+# out and the run reports 124 (INCOMPLETE), as a timed-out shard did before.
+#
+# Arguments:
+#   $1 - timeout in seconds (already clamped to the stage deadline)
+#   $2 - tmpdir for numbered shard outputs
+#   $3 - newline-separated slug|path entries
+# Globals set: PREFETCH_FANOUT_LAUNCHED (shards launched, numbered 0..N-1)
+# Returns: 0 when complete, 124 at the deadline, 1 on a failed shard
+#######################################
+_prefetch_fanout() {
+	local timeout_secs="$1"
+	local tmpdir="$2"
+	local repo_entries="$3"
+	local max_parallel="${PULSE_PREFETCH_MAX_PARALLEL:-12}"
+	[[ "$max_parallel" =~ ^[1-9][0-9]*$ ]] || max_parallel=12
+
+	local started_at=0 deadline=0 remaining=0
+	started_at=$(date +%s)
+	deadline=$((started_at + timeout_secs))
+	local -a pids=()
+	local idx=0 total=0 rc=0 wait_rc=0 slug path
+	while IFS='|' read -r slug path; do
+		[[ -n "$slug" ]] || continue
+		total=$((total + 1))
+		# Keep counting after the deadline so the summary shows what was skipped.
+		[[ "$rc" -eq 0 ]] || continue
+		if [[ "${#pids[@]}" -ge "$max_parallel" ]] &&
+			! _prefetch_wait_for_slot "$max_parallel" "$deadline" "${pids[@]}"; then
+			rc=124
+			continue
+		fi
+		if [[ "$(date +%s)" -ge "$deadline" ]]; then
+			rc=124
+			continue
+		fi
+		(
+			_prefetch_single_repo "$slug" "$path" "${tmpdir}/${idx}.txt"
+		) &
+		pids+=($!)
+		idx=$((idx + 1))
+	done <<<"$repo_entries"
+	PREFETCH_FANOUT_LAUNCHED="$idx"
+
+	if [[ "${#pids[@]}" -gt 0 ]]; then
+		remaining=$((deadline - $(date +%s)))
+		[[ "$remaining" -gt 0 ]] || remaining=0
+		_wait_parallel_pids "$remaining" "${pids[@]}" || wait_rc=$?
+	fi
+	# A deadline stop outranks a failed shard; otherwise report the wait result.
+	if [[ "$rc" -eq 0 || "$wait_rc" -eq 124 ]]; then
+		rc="$wait_rc"
+	fi
+	echo "[pulse-wrapper] Prefetch fan-out: launched=${idx} total=${total} max_parallel=${max_parallel} elapsed=$(($(date +%s) - started_at))s rc=${rc}" >>"$LOGFILE"
+	return "$rc"
+}
+
+#######################################
 # Assemble state file from parallel fetch results (GH#5627)
 #
 # Concatenates numbered output files from tmpdir into STATE_FILE
@@ -121,9 +211,12 @@ _wait_parallel_pids() {
 #
 # Arguments:
 #   $1 - tmpdir containing numbered .txt files
+#   $2 - optional shard count; when given, a missing shard (killed before
+#        writing) is skipped instead of hiding every later shard (t19041)
 #######################################
 _assemble_state_file() {
 	local tmpdir="$1"
+	local shard_count="${2:-}"
 
 	{
 		echo "# Pre-fetched Repo State ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
@@ -133,10 +226,18 @@ _assemble_state_file() {
 		echo ""
 		local -a state_parts=()
 		local i=0
-		while [[ -f "${tmpdir}/${i}.txt" ]]; do
-			state_parts+=("${tmpdir}/${i}.txt")
-			i=$((i + 1))
-		done
+		if [[ "$shard_count" =~ ^[0-9]+$ ]]; then
+			for ((i = 0; i < shard_count; i++)); do
+				if [[ -f "${tmpdir}/${i}.txt" ]]; then
+					state_parts+=("${tmpdir}/${i}.txt")
+				fi
+			done
+		else
+			while [[ -f "${tmpdir}/${i}.txt" ]]; do
+				state_parts+=("${tmpdir}/${i}.txt")
+				i=$((i + 1))
+			done
+		fi
 		# GH#22289: concatenate numbered state shards with one awk process
 		# instead of one cat fork per shard. The common path has only a handful
 		# of files, but large repo sets can produce dozens of shards and this

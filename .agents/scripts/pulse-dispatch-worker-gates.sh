@@ -335,6 +335,31 @@ _dlw_claim_lock_after_canary() {
 	return 0
 }
 
+#######################################
+# t19116: take this round's launch slot immediately before the first
+# persistent claim write, then claim. With every slot held, defer with the
+# GH#34428 rc: no claim, fast-fail, backoff or negative cache is recorded, and
+# _release_dispatch_claim_on_abort is a no-op because no claim exists yet.
+# A failed claim returns 2 and the parallel loop releases the slot.
+# Args: issue number, repo slug, self login
+# Returns: 0 claimed, 75 deferred (slot full), 2 claim failed
+#######################################
+_dlw_claim_slot_and_lock() {
+	local issue_number="$1" repo_slug="$2" self_login="$3"
+	if declare -F _dispatch_launch_slot_acquire >/dev/null 2>&1 &&
+		! _dispatch_launch_slot_acquire "$issue_number" "$repo_slug"; then
+		echo "[pulse-wrapper] Dispatch_max: deferring #${issue_number} (${repo_slug}) — every launch slot this round is held; no claim written, retry next round (t19116)" >>"$LOGFILE"
+		if declare -F _dispatch_stats_increment >/dev/null 2>&1; then
+			_dispatch_stats_increment "dispatch_candidate_deferred_launch_slot"
+		fi
+		return "${_DISPATCH_CYCLE_BUDGET_DEFER_RC:-75}"
+	fi
+	if ! _dlw_claim_lock_after_canary "$issue_number" "$repo_slug" "$self_login"; then
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "claim_lock_failed" 2 || return $?
+	fi
+	return 0
+}
+
 _dlw_canary_preflight() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -345,7 +370,9 @@ _dlw_canary_preflight() {
 
 	local -a _canary_cmd=("$HEADLESS_RUNTIME_HELPER" canary --role worker --tier "$dispatch_model_tier")
 	if [[ -n "$selected_model" ]]; then
-		_canary_cmd+=(--model "$selected_model")
+		# GH#38717: the worker receives this pick as --initial-model, a
+		# same-tier preference; probe it with the same semantics.
+		_canary_cmd+=(--initial-model "$selected_model")
 	fi
 	local -a _canary_env=()
 	if _dlw_min_worker_floor_active; then
@@ -353,8 +380,21 @@ _dlw_canary_preflight() {
 		echo "[dispatch_with_dedup] #${issue_number} in ${repo_slug}: minimum worker floor active — canary still checks runtime/model health only" >>"$LOGFILE"
 	fi
 
-	if env "${_canary_env[@]}" "${_canary_cmd[@]}" >>"$worker_log" 2>&1; then
-		return 0
+	local canary_rc=0
+	env "${_canary_env[@]}" "${_canary_cmd[@]}" >>"$worker_log" 2>&1 || canary_rc=$?
+	[[ "$canary_rc" -ne 0 ]] || return 0
+
+	if [[ "$canary_rc" -eq 75 || "$canary_rc" -eq 78 ]]; then
+		# GH#38717: no model in the dispatch tier is selectable (75 = every
+		# candidate backed off, 78 = none configured). The worker would exit
+		# worker_not_launched after a claim and worktree, and the shared canary
+		# reason file is stale or absent, so this is never a soft failure, even
+		# under the minimum worker floor.
+		local selection_state="every candidate backed off or unavailable"
+		[[ "$canary_rc" -eq 75 ]] || selection_state="no candidate configured"
+		pulse_stats_increment "worker_canary_no_selectable_model_count" 2>/dev/null || true
+		echo "[dispatch_with_dedup] Skipping #${issue_number} in ${repo_slug} — no selectable model in tier ${dispatch_model_tier} (${selection_state}); will retry next cycle (GH#38717)" >>"$LOGFILE"
+		return 1
 	fi
 
 	local canary_reason

@@ -56,8 +56,9 @@ def restore_merge_working(root, archive, state):
         write_merge_working(root, path, value)
 
 
-def restore_merge_metadata(root, state):
-    admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
+def restore_merge_metadata(root, state, admin=None):
+    if admin is None:
+        admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
     for name in MERGE_FILES:
         target = admin / name
         if os.path.lexists(target):
@@ -68,11 +69,14 @@ def restore_merge_metadata(root, state):
             target.write_bytes(bytes.fromhex(state['metadata'][name]))
 
 
-def restore_merge(root, archive):
+def restore_merge(root, archive, preserved=False):
     manifest = json.loads((archive / 'manifest.json').read_text(encoding='ascii'))
     state = load_merge(archive, manifest)
-    fetch_preservation(root, archive)
+    # preserved: this restore's preparation already imported the same bundle
+    # into this new target; verify_merge_objects still proves every object.
+    # Index and working-file writes below never move the admin dir resolved here.
+    admin = None if preserved else fetch_preservation(root, archive)
     verify_merge_objects(root, state)
     restore_merge_index(root, state)
     restore_merge_working(root, archive, state)
-    restore_merge_metadata(root, state)
+    restore_merge_metadata(root, state, admin)

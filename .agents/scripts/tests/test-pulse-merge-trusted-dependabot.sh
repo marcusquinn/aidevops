@@ -204,6 +204,8 @@ define_helpers_under_test() {
 	source "$AUTHOR_CHECKS_SCRIPT"
 	# shellcheck source=../trusted-dependabot-lib.sh
 	source "$TRUSTED_DEPENDABOT_LIB"
+	# shellcheck source=../shared-gh-commit-cache.sh
+	source "${SCRIPT_DIR}/../shared-gh-commit-cache.sh"
 	# shellcheck disable=SC1090
 	eval "$runner_src"
 	# shellcheck disable=SC1090
@@ -404,6 +406,54 @@ test_human_commit_sets_actionable_auth_failure() {
 	fi
 	print_result "human-modified Dependabot branch exposes typed failure" 1 \
 		"reason=${_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON:-empty}"
+	return 0
+}
+
+# GH#39280: a configured Renovate App gets exact-head authenticity for repair
+# routing only. Config, author form, identity, and commits must all match, and
+# it never satisfies the Dependabot merge-authority predicate.
+test_configured_renovate_authenticity_without_merge_authority() {
+	local failures=""
+	local slug=""
+	local repos_json="${TEST_ROOT}/repos.json"
+
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/repo","trusted_dependency_bots":["acme-renovate"]}]}' >"$repos_json"
+	export AIDEVOPS_REPOS_JSON="$repos_json"
+	slug=$(_trusted_dependency_bot_for_author "app/acme-renovate" "owner/repo") || slug=""
+	[[ "$slug" == "acme-renovate" ]] || failures+=" configured-app-not-resolved"
+	_trusted_dependency_bot_for_author "acme-renovate[bot]" "owner/repo" >/dev/null || failures+=" bot-suffix-not-resolved"
+	! _trusted_dependency_bot_for_author "app/other-renovate" "owner/repo" >/dev/null || failures+=" unconfigured-app-resolved"
+	! _trusted_dependency_bot_for_author "acme-renovate" "owner/repo" >/dev/null || failures+=" human-login-resolved"
+	! _trusted_dependency_bot_for_author "app/acme-renovate" "owner/other" >/dev/null || failures+=" other-repo-resolved"
+	! _trusted_dependency_bot_for_author "app/dependabot" "owner/repo" >/dev/null || failures+=" dependabot-resolved"
+
+	write_pr_fixture "acme-renovate" "acme-renovate[bot]" "package.json" "SUCCESS"
+	_is_authentic_dependency_bot_pr "39281" "owner/repo" "app/acme-renovate" "head-current" "acme-renovate" ||
+		failures+=" authentic-renovate-rejected(${_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON:-})"
+	! _is_authentic_dependency_bot_pr "39282" "owner/repo" "app/acme-renovate" "head-stale" "acme-renovate" ||
+		failures+=" stale-head-accepted"
+	! _is_trusted_dependabot_update_pr "39283" "owner/repo" "app/acme-renovate" "head-current" ||
+		failures+=" renovate-gained-merge-authority"
+
+	write_pr_fixture "acme-renovate" "alex" "package.json" "SUCCESS"
+	if _is_authentic_dependency_bot_pr "39284" "owner/repo" "app/acme-renovate" "head-current" "acme-renovate" ||
+		[[ "${_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON:-}" != "commit-author-mismatch" ]]; then
+		failures+=" human-commit-accepted"
+	fi
+
+	write_pr_fixture "acme-renovate-evil" "acme-renovate-evil[bot]" "package.json" "SUCCESS"
+	if _is_authentic_dependency_bot_pr "39285" "owner/repo" "app/acme-renovate" "head-current" "acme-renovate" ||
+		[[ "${_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON:-}" != "bot-identity-mismatch" ]]; then
+		failures+=" lookalike-identity-accepted"
+	fi
+	unset AIDEVOPS_REPOS_JSON
+	write_pr_fixture "dependabot" "dependabot[bot]" "requirements-lock.txt" "SUCCESS"
+
+	if [[ -z "$failures" ]]; then
+		print_result "configured Renovate App is authentic for routing without merge authority" 0
+		return 0
+	fi
+	print_result "configured Renovate App is authentic for routing without merge authority" 1 "failures:${failures}"
 	return 0
 }
 
@@ -755,6 +805,7 @@ main() {
 	test_trusted_dependabot_rejects_incomplete_snapshot
 	test_spoofed_author_fails
 	test_human_commit_sets_actionable_auth_failure
+	test_configured_renovate_authenticity_without_merge_authority
 	test_dependabot_login_with_user_type_fails
 	test_security_failure_fails
 	test_non_dependency_file_fails

@@ -105,6 +105,26 @@ _pmu_should_skip_pr() {
 	return 0
 }
 
+# GH#39019: true when a prior authoritative evaluation of this PR was a no-op
+# (not merge-ready) and its state fingerprint is unchanged. Ordering signal
+# only: the PR is still evaluated, after PRs without a cached negative verdict,
+# so one blocked PR cannot consume the pass budget ahead of clean work.
+# Args: $1=repo slug, $2=enriched PR object
+_pmu_pr_has_negative_verdict() {
+	local repo_slug="$1" pr_obj="$2"
+	local evidence_key="" pr_array="" state_file="" streak=""
+	local current_fp="" stored_fp=""
+	evidence_key=$(_pmu_pr_evidence_key "$repo_slug" "$pr_obj") || return 1
+	state_file=$(_pmu_state_file "$evidence_key") || return 1
+	[[ -f "$state_file" && ! -L "$state_file" ]] || return 1
+	IFS=$'\t' read -r stored_fp streak _ <"$state_file" || return 1
+	[[ "$streak" =~ ^[1-9][0-9]*$ && -n "$stored_fp" ]] || return 1
+	pr_array=$(jq -cn --argjson pr "$pr_obj" '[$pr]') || return 1
+	current_fp=$(_pmu_fingerprint "$pr_array") || return 1
+	[[ "$current_fp" == "$stored_fp" ]] || return 1
+	return 0
+}
+
 _pmu_record_pr_evaluation() {
 	local repo_slug="$1" pr_obj="$2" result_code="$3" evidence_key="" pr_number=""
 	pr_number=$(printf '%s' "$pr_obj" | jq -r '.number // empty') || return 0
@@ -126,16 +146,15 @@ _pmu_record_pr_evaluation() {
 # evaluation is in progress and must resume instead of being skipped).
 _pmu_cursor_targets_repo() {
 	local repo_slug="$1"
-	local enrichment_cursor="" cursor_file="" cursor_repo="" cursor_rest=""
+	local enrichment_cursor="" cursor_file="" cursor_line=""
 	if declare -F _pmp_merge_enrichment_cursor_file >/dev/null 2>&1; then
-		enrichment_cursor=$(_pmp_merge_enrichment_cursor_file) || enrichment_cursor=""
+		enrichment_cursor=$(_pmp_merge_enrichment_cursor_file "$repo_slug") || enrichment_cursor=""
 	fi
 	for cursor_file in "${PULSE_MERGE_PR_CURSOR_FILE:-}" "$enrichment_cursor"; do
 		[[ -n "$cursor_file" && -f "$cursor_file" ]] || continue
-		cursor_repo=""
-		IFS='|' read -r cursor_repo cursor_rest <"$cursor_file" || true
-		: "$cursor_rest"
-		[[ "$cursor_repo" == "$repo_slug" ]] && return 0
+		# Cursor files hold one line per repo (GH#38213).
+		cursor_line=$(_pmp_merge_pr_cursor_line_for_repo "$cursor_file" "$repo_slug")
+		[[ -n "$cursor_line" ]] && return 0
 	done
 	return 1
 }

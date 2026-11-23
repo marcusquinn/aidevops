@@ -180,6 +180,83 @@ _test_preserved_repo_freshness() (
 )
 assert_true "per-repo freshness and reducer diagnostics" _test_preserved_repo_freshness
 
+# GH#37938: drive the production builder through deadline yield and resume.
+_test_checkpoint_resume() (
+	local initial_fail="$fail"
+	export HOME="${TMP_ROOT}/resume-home"
+	mkdir -p "${HOME}/.config/aidevops"
+	local DEP_GRAPH_CACHE_FILE="${TMP_ROOT}/resume-cache.json"
+	local DEP_GRAPH_CACHE_TTL_SECS=100
+	local PULSE_DEP_GRAPH_FORCE_REBUILD=0 PULSE_STAGE_DEADLINE_EPOCH=1002
+	local clock_file="${TMP_ROOT}/clock" reads="${TMP_ROOT}/reads" rc=0
+	printf '1000\n' >"$clock_file"
+	: >"$reads"
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/a","pulse":true},{"slug":"owner/b","pulse":true},{"slug":"owner/c","pulse":true}]}' >"${HOME}/.config/aidevops/repos.json"
+	date() {
+		local arg="${1:-}"
+		if [[ "$arg" == +%s ]]; then
+			command cat "$clock_file"
+		else
+			command date "$@"
+		fi
+		return 0
+	}
+	_dep_graph_build_repo_data() {
+		local slug="$1" now=""
+		printf '%s\n' "$slug" >>"$reads"
+		now=$(date +%s)
+		printf '%s\n' "$((now + 1))" >"$clock_file"
+		printf '%s\n' '{"open_issues":[],"blocked_by":{}}'
+		return 0
+	}
+	build_dependency_graph_cache || rc=$?
+	assert_eq "deadline yields resumably" 124 "$rc"
+	assert_eq "checkpoint is incomplete after two repositories" false "$(jq -r '.rebuild_complete' "$DEP_GRAPH_CACHE_FILE")"
+	assert_eq "completed repository data survives yield" 2 "$(jq '.repos | length' "$DEP_GRAPH_CACHE_FILE")"
+	# Expire per-repo TTL, remove a completed repo, disable another, add unread d.
+	printf '100000\n' >"$clock_file"
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/b","pulse":true},{"slug":"owner/c","pulse":false},{"slug":"owner/d","pulse":true}]}' >"${HOME}/.config/aidevops/repos.json"
+	PULSE_STAGE_DEADLINE_EPOCH=0
+	build_dependency_graph_cache || assert_eq "resume succeeds" 0 "$?"
+	assert_eq "resume skips completed reads even after TTL expires" 'owner/a owner/b owner/d ' "$(tr '\n' ' ' <"$reads")"
+	assert_eq "resume drops removed and disabled repositories" '["owner/b","owner/d"]' "$(jq -c '.repos | keys' "$DEP_GRAPH_CACHE_FILE")"
+	assert_eq "resume completes generation" true "$(jq -r '.rebuild_complete' "$DEP_GRAPH_CACHE_FILE")"
+	assert_eq "checkpoint preserves own repository timestamp" 1002 "$(jq '.repos["owner/b"].built_at' "$DEP_GRAPH_CACHE_FILE")"
+	# Missing field on a fresh legacy cache still short-circuits.
+	printf '%s\n' '{"repos":{}}' >"$DEP_GRAPH_CACHE_FILE"
+	build_dependency_graph_cache
+	assert_eq "legacy cache within TTL is unchanged" '{"repos":{}}' "$(<"$DEP_GRAPH_CACHE_FILE")"
+	# Explicit rebuilds must not mistake same-second prior data for this pass.
+	PULSE_DEP_GRAPH_FORCE_REBUILD=1
+	build_dependency_graph_cache
+	build_dependency_graph_cache
+	assert_eq "force rebuild rereads complete caches" 7 "$(wc -l <"$reads" | tr -d ' ')"
+	local ordered=""
+	ordered=$(_dep_graph_checkpoint_order $'{"slug":"new"}\n{"slug":"old"}\n{"slug":"older"}' '{"rebuild_pending":["new","old","older"],"repos":{"old":{"built_at":20},"older":{"built_at":10}}}')
+	assert_eq "oldest snapshots are processed first" 'new older old ' "$(printf '%s\n' "$ordered" | jq -r '.slug' | tr '\n' ' ')"
+	local before=""
+	before=$(<"$DEP_GRAPH_CACHE_FILE")
+	if _dep_graph_checkpoint_write "$DEP_GRAPH_CACHE_FILE" invalid false 2>/dev/null; then
+		assert_eq "invalid write fails" failure success
+	fi
+	assert_eq "failed atomic write preserves cache" "$before" "$(<"$DEP_GRAPH_CACHE_FILE")"
+	# Fail precisely the graph merge, after seed and timestamp jq calls succeed.
+	jq() {
+		local args="$*"
+		# shellcheck disable=SC2016 # Match literal jq variables, not shell variables.
+		[[ "$args" != *'.repos[$slug] = $rd'* ]] || return 1
+		command jq "$@" || return 1
+		return 0
+	}
+	rc=0
+	build_dependency_graph_cache 2>/dev/null || rc=$?
+	assert_eq "jq failure surfaces as failure" 1 "$rc"
+	assert_eq "jq failure cannot mark checkpoint complete" false "$(jq -r '.rebuild_complete' "$DEP_GRAPH_CACHE_FILE")"
+	[[ "$fail" -eq "$initial_fail" ]] || return 1
+	return 0
+)
+assert_true "checkpoint deadline resume and atomic failure safety" _test_checkpoint_resume
+
 entry='{"task_ids":["t10"],"issue_nums":["11"]}'
 assert_true "closed roadmap predecessors resolve" \
 	_refresh_all_blockers_resolved "$entry" '{"t10":10}' '[10,11]' '[10,11,20]'
@@ -224,7 +301,8 @@ gh() {
 }
 export -f gh
 _refresh_ensure_unresolved_is_blocked "owner/repo" "20"
-assert_eq "available issue normalized blocked" "issue edit 20 --repo owner/repo --remove-label status:available --add-label status:blocked" "$status_write"
+# GH#38360: the dependency hold names its unblocker with needs-dependency.
+assert_eq "available issue normalized blocked" "issue edit 20 --repo owner/repo --remove-label status:available --add-label status:blocked --add-label needs-dependency" "$status_write"
 
 status_write=""
 current_status="status:available,status:queued"
@@ -271,6 +349,63 @@ export -f gh
 _refresh_ensure_unresolved_is_blocked "owner/repo" "20" || true
 assert_true "post-read removes blocked after concurrent queue transition" \
 	grep -Fq -- "--remove-label status:blocked" <<<"$status_write"
+
+# Successful writes must survive later read/repair failures in either direction.
+_test_partial_mutation_accounting() (
+	local initial_fail="$fail"
+	local scenario="" view_count=0 edit_count=0 expected=0
+	local DEP_GRAPH_REFRESH_CURSOR_DIR="${TMP_ROOT}/mutation-cursors"
+	local repo_data='{"blocked_by":{"20":{"issue_nums":["10"]}}}'
+	_refresh_dependency_is_resolved() {
+		[[ "$scenario" != block-* ]] || return 1
+		return 0
+	}
+	_should_defer_auto_unblock() {
+		return 1
+	}
+	gh() {
+		local command="$1" target="${2:-}"
+		if [[ "$command" == api ]]; then
+			_test_dep_identity_api "$target"
+			return $?
+		elif [[ "$command $target" == "issue view" ]]; then
+			view_count=$(<"$view_counter_file")
+			view_count=$((view_count + 1))
+			printf '%s\n' "$view_count" >"$view_counter_file"
+			case "$scenario:$view_count" in
+			cleanup-read-failure:1) printf 'status:blocked,blocked-by:#10\n' ;;
+			cleanup-read-failure:*) return 1 ;;
+			block-*:1) printf 'status:available\n' ;;
+			block-*:*) printf 'status:queued,status:blocked\n' ;;
+			unblock-*:1 | unblock-*:2 | failed-edit:*) printf 'status:blocked\n' ;;
+			unblock-*:*) printf 'status:queued,status:available\n' ;;
+			esac
+		elif [[ "$command $target" == "issue edit" ]]; then
+			edit_count=$((edit_count + 1))
+			[[ "$scenario" != failed-edit ]] || return 1
+			if [[ "$scenario" == *repair-failure && "$edit_count" -eq 2 ]]; then
+				return 1
+			fi
+		fi
+		return 0
+	}
+	for scenario in cleanup-read-failure block-repair-success block-repair-failure \
+		unblock-repair-success unblock-repair-failure failed-edit; do
+		printf '0\n' >"$view_counter_file"
+		edit_count=0
+		DEP_GRAPH_REFRESH_CHANGED_COUNT=0
+		case "$scenario" in
+		*-repair-success) expected=2 ;;
+		failed-edit) expected=0 ;;
+		*) expected=1 ;;
+		esac
+		_refresh_graph_repo owner/repo "$repo_data" 10 30 || return 1
+		assert_eq "successful mutations counted for $scenario" "$expected" "$DEP_GRAPH_REFRESH_CHANGED_COUNT"
+	done
+	[[ "$fail" -eq "$initial_fail" ]] || return 1
+	return 0
+)
+assert_true "partial mutation accounting through repository refresh" _test_partial_mutation_accounting
 
 log_verbose() {
 	return 0
@@ -571,18 +706,21 @@ normalization_seconds_file="${TMP_ROOT}/normalization-seconds"
 printf '0\n' >"$candidate_fetch_file"
 printf '0\n' >"$normalization_file"
 printf '0\n' >"$normalization_seconds_file"
-export candidate_fetch_file normalization_file normalization_seconds_file
+# GH#38720: 1 adds one unrelated runnable issue to the first snapshot.
+snapshot_has_runnable=1
+export candidate_fetch_file normalization_file normalization_seconds_file snapshot_has_runnable
 gh_issue_list() {
 	local candidate_fetch_count=""
 	candidate_fetch_count=$(<"$candidate_fetch_file")
 	candidate_fetch_count=$((candidate_fetch_count + 1))
 	printf '%s\n' "$candidate_fetch_count" >"$candidate_fetch_file"
 	if [[ "$candidate_fetch_count" -eq 1 ]]; then
-		# A complete snapshot with 118 blocked issues and one runnable issue.
-		jq -cn '[20, range(100;217)] | map({number:., title:"blocked child",
+		# A complete snapshot with 118 blocked issues and optionally one
+		# runnable issue.
+		jq -cn --argjson runnable "$snapshot_has_runnable" '[20, range(100;217)] | map({number:., title:"blocked child",
 			url:"", assignees:[], labels:[{name:"auto-dispatch"},{name:"status:blocked"}]})
-			+ [{number:30,title:"unrelated work",url:"",assignees:[],
-			labels:[{name:"auto-dispatch"},{name:"status:available"}]}]'
+			+ (if $runnable == 1 then [{number:30,title:"unrelated work",url:"",assignees:[],
+			labels:[{name:"auto-dispatch"},{name:"status:available"}]}] else [] end)'
 	else
 		printf '%s\n' '[{"number":20,"title":"next child","url":"","updatedAt":"2026-07-11T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]},{"number":30,"title":"unrelated work","url":"","updatedAt":"2026-07-11T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}]'
 	fi
@@ -614,6 +752,18 @@ assert_eq "fast candidate mode keeps already-available work" "30" \
 fast_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 200 "" "" "skip" "$completeness_file")
 assert_eq "fast candidate mode with no blocked work retains completeness" "1" "$(<"$completeness_file")"
 
+# GH#38720: blocked work beside runnable work is read in skip mode, even when
+# the caller asks for normalization.
+printf '0\n' >"$candidate_fetch_file"
+mixed_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 200 "" "" "normalize" "$completeness_file")
+assert_eq "runnable snapshot fetches once" "1" "$(<"$candidate_fetch_file")"
+assert_eq "runnable snapshot skips inline normalization" "0" "$(<"$normalization_file")"
+assert_eq "runnable snapshot returns the runnable issue" "30" "$(jq -r 'map(.number) | join(",")' <<<"$mixed_candidates")"
+assert_eq "skipped normalization proves no absence" "0" "$(<"$completeness_file")"
+assert_true "skipped normalization is logged" grep -q 'inline dependency normalization skipped for owner/repo; 1 candidate(s) already runnable (GH#38720)' "$LOGFILE"
+
+snapshot_has_runnable=0
+export snapshot_has_runnable
 printf '0\n' >"$candidate_fetch_file"
 printf '0\n' >"$normalization_file"
 recovered_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 200 "" "" "normalize" "$completeness_file")
@@ -623,6 +773,25 @@ assert_eq "normal sweep retains the simulated slow normalization" "936" "$(<"$no
 assert_eq "next dependency-ready child reaches shared candidate stream" "20" \
 	"$(printf '%s' "$recovered_candidates" | jq -r 'map(select(.number == 20))[0].number')"
 assert_eq "successful normal readiness scan retains completeness" "1" "$(<"$completeness_file")"
+
+# GH#38275: skip the full refetch when normalization was fresh, or ran and
+# changed no labels; refetch only when it changed labels.
+normalization_stub_status="" normalization_stub_changed=""
+export normalization_stub_status normalization_stub_changed
+normalize_repo_dependency_readiness_if_due() {
+	DEP_NORMALIZE_LAST_STATUS="$normalization_stub_status"
+	DEP_GRAPH_REFRESH_CHANGED_COUNT="$normalization_stub_changed"
+	return 0
+}
+export -f normalize_repo_dependency_readiness_if_due
+for refetch_case in "fresh::1" "ran:0:1" "ran:2:2" "failed::2"; do
+	IFS=: read -r normalization_stub_status normalization_stub_changed expected_fetches <<<"$refetch_case"
+	export normalization_stub_status normalization_stub_changed
+	printf '0\n' >"$candidate_fetch_file"
+	list_dispatchable_issue_candidates_json "owner/repo" 200 "" "" "normalize" "$completeness_file" >/dev/null
+	assert_eq "normalization ${normalization_stub_status}/${normalization_stub_changed:-n/a} fetch count" \
+		"$expected_fetches" "$(<"$candidate_fetch_file")"
+done
 
 # A successful command that returns null after dependency normalization is not
 # a complete empty snapshot. Preserve failure provenance so campaign renewal

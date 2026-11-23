@@ -826,6 +826,116 @@ else
 fi
 
 # =============================================================================
+# Test 22: child-ref backfill covers numbered and bold forms (GH#38349)
+# =============================================================================
+printf '%s--- Test 22: child-ref backfill for every parser form ---%s\n' "$TEST_BLUE" "$TEST_NC"
+
+backfill_body=$'## Goal\n\n1. Unrelated numbered goal\n\n## Phases\n\n1. First phase #11\n2. Second phase\n**Phase 3 — Bold phase**\n- Phase 4 - List phase\n\n## Notes\n\n2. Unrelated numbered note'
+numbered_out=$(_phase_body_with_child_ref "$backfill_body" 2 22)
+bold_out=$(_phase_body_with_child_ref "$backfill_body" 3 33)
+list_out=$(_phase_body_with_child_ref "$backfill_body" 4 44)
+repeat_out=$(_phase_body_with_child_ref "$backfill_body" 1 11)
+
+if grep -qx '2. Second phase #22' <<<"$numbered_out" &&
+	grep -qx '2. Unrelated numbered note' <<<"$numbered_out"; then
+	pass "Numbered phase line gets the ref; numbered lines outside ## Phases do not"
+else
+	fail "Numbered-form backfill wrong" "$numbered_out"
+fi
+if grep -qx '\*\*Phase 3 — Bold phase\*\* #33' <<<"$bold_out" &&
+	grep -qx -- '- Phase 4 - List phase #44' <<<"$list_out"; then
+	pass "Bold and list phase lines get the ref"
+else
+	fail "Bold/list backfill wrong" "${bold_out}"$'\n'"${list_out}"
+fi
+if [[ "$repeat_out" == "$backfill_body" ]] &&
+	[[ "$(_parse_phases_section "$numbered_out" | awk -F'\t' '$1 == 2 { print $4 }')" == "22" ]]; then
+	pass "Existing ref is idempotent and the parser reads the backfilled ref"
+else
+	fail "Backfill idempotency or parser round-trip failed"
+fi
+# The parser reads "* Phase 2" as no phase, so backfill must skip it and
+# write the ref on the numbered Phase 2 the parser does select.
+star_body=$'## Phases\n* Phase 2 - Design notes\n2. Implement next phase\n- **Phase 3 - Bulleted bold**'
+star_out=$(_phase_body_with_child_ref "$star_body" 2 22)
+star_bold_out=$(_phase_body_with_child_ref "$star_body" 3 33)
+if grep -qx '\* Phase 2 - Design notes' <<<"$star_out" &&
+	grep -qx '2. Implement next phase #22' <<<"$star_out" &&
+	grep -qx -- '- \*\*Phase 3 - Bulleted bold\*\* #33' <<<"$star_bold_out" &&
+	[[ "$(_parse_phases_section "$star_out" | awk -F'\t' '$1 == 2 { print $4 }')" == "22" ]]; then
+	pass "Backfill matches only the list forms the parser accepts"
+else
+	fail "Backfill wrote to a line the parser does not select" "${star_out}"$'\n'"${star_bold_out}"
+fi
+
+# =============================================================================
+# Test 23: sequential mode stops at decisions and maintainer holds (GH#38349)
+# =============================================================================
+printf '%s--- Test 23: sequential idle-parent filing gates ---%s\n' "$TEST_BLUE" "$TEST_NC"
+
+seq_parent_body=""
+seq_parent_labels="parent-task"
+seq_filed_log="${TMP}/seq-filed.log"
+gh() {
+	local args="$*"
+	if [[ " $args " == *" api repos/owner/repo/issues/600 "* ]]; then
+		jq -n --arg body "$seq_parent_body" --arg labels "$seq_parent_labels" \
+			'{body: $body, title: "Parent", labels: ($labels | split(",") | map(select(. != "")))}'
+		return 0
+	fi
+	return 1
+}
+gh_issue_comment() { return 0; }
+seq_record_ok=1
+_update_parent_phases_section() {
+	_PHASE_SECTION_RECORDED="$seq_record_ok"
+	return 0
+}
+_create_or_reuse_phase_child_issue() {
+	local parent_issue="$1" parent_title="$2" phase_num="$3" phase_desc="$4" repo_slug="$5" trigger="${6:-}"
+	: "$parent_issue" "$parent_title" "$phase_desc" "$repo_slug"
+	printf '%s %s\n' "$phase_num" "$trigger" >>"$seq_filed_log"
+	printf 'https://github.com/owner/repo/issues/9%s' "$phase_num"
+	return 0
+}
+
+seq_parent_body=$'## Phases\n\n1. Done phase #601\n2. Decide first [requires-decision]\n3. Later phase'
+: >"$seq_filed_log"
+if ! auto_file_next_unfiled_parent_phase 600 owner/repo sequential && [[ ! -s "$seq_filed_log" ]]; then
+	pass "Sequential mode stops at a requires-decision phase"
+else
+	fail "Sequential mode must not skip a requires-decision phase" "$(cat "$seq_filed_log")"
+fi
+: >"$seq_filed_log"
+if auto_file_next_unfiled_parent_phase 600 owner/repo && grep -qx '3 bootstrap' "$seq_filed_log"; then
+	pass "Bootstrap mode keeps its existing skip-decision behaviour"
+else
+	fail "Bootstrap mode behaviour changed" "$(cat "$seq_filed_log")"
+fi
+
+seq_parent_body=$'## Phases\n\n1. Done phase #601\n2. Next phase'
+seq_parent_labels="parent-task,hold-for-review"
+: >"$seq_filed_log"
+if ! auto_file_next_unfiled_parent_phase 600 owner/repo sequential && [[ ! -s "$seq_filed_log" ]]; then
+	pass "Sequential mode honours an existing hold-for-review"
+else
+	fail "Sequential mode must not file around hold-for-review"
+fi
+seq_parent_labels="parent-task"
+: >"$seq_filed_log"
+if auto_file_next_unfiled_parent_phase 600 owner/repo sequential && grep -qx '2 sequential' "$seq_filed_log"; then
+	pass "Sequential mode files the next unfiled phase of an idle parent"
+else
+	fail "Sequential mode should file Phase 2" "$(cat "$seq_filed_log")"
+fi
+seq_record_ok=0
+if ! auto_file_next_unfiled_parent_phase 600 owner/repo sequential; then
+	pass "Sequential mode reports failure when the parent body cannot record the child"
+else
+	fail "Unrecorded sequential filing must fall back to the hold path"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 printf '\n%s=== Results: %d/%d passed ===%s\n' \

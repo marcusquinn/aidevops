@@ -30,6 +30,20 @@ higgsfield-helper.sh setup
 higgsfield-helper.sh login   # headed — handles 2FA/captcha; saves auth-state.json
 ```
 
+### Paired-browser session mode (opt-in, interactive only)
+
+Instead of the stored `auth-state.json` (its login needs an emailed code and a Cloudflare check), `video` can drive the user's already-logged-in everyday browser through OpenCode browse (`tools/browser/opencode-browse.md`; pair with `aidevops opencode-browse pair`):
+
+```bash
+HIGGSFIELD_SESSION_MODE=opencode-browse higgsfield-helper.sh video "Camera pans" --image-file photo.png -m kling-2.5 [--dry-run]
+```
+
+It stages the image in a temp root (browse uploads only from temp roots), runs the generated script via `aidevops opencode-browse run -- execute --file`, and prints only the Generate label and status, never signed media URLs. Rules: agent-opened tabs only, headless runs are refused by the helper, and generation uses the same Unlimited guard below. It submits the job only; fetch the result with the Playwright `download --model video` path or from History in the browser.
+
+## Video generator (`/ai/video`)
+
+`/create/video` now redirects to the `/ai-video` marketing page. The generator is `/ai/video?model=<slug>` (Kling 2.5 Turbo: `kling-v2-5-turbo`); other models are picked in the `Model` dialog's `Search...` box. Unlimited needs Quality = std (720p): the `Change to std for Unlimited` button, then the `Unlimited mode` switch. When unlimited is requested (`--prefer-unlimited` or an unlimited model) the helper clicks Generate only if it reads `Generate Unlimited`, otherwise it refuses so no credits are spent; `--dry-run` prints the label without clicking. Output download plays the history card (`Play video`) and takes the loaded CloudFront MP4 (1280x720), never the 600x801 `cdn.higgsfield.ai` preset thumbnail.
+
 ## Architecture
 
 ```text

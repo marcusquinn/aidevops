@@ -37,6 +37,7 @@ print_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
 REPOS_JSON="${HOME}/.config/aidevops/repos.json"
 GIT_PARENT="${HOME}/Git"
+ROUTINES_REPO_PURPOSE="routines"
 DRY_RUN=false
 ROUTINES_SCAFFOLD_COMMIT_MESSAGE="chore: scaffold aidevops-routines repo"
 # SCRIPT_DIR: resolve from BASH_SOURCE when available, fall back to deployed path
@@ -54,12 +55,17 @@ fi
 _write_todo_md() {
 	local repo_path="$1"
 	local existing_tail=""
+	local existing_states=""
 	if [[ -f "${repo_path}/TODO.md" ]]; then
 		# Preserve any existing "## User Routines" (and "## Tasks") content
 		# verbatim across re-scaffolds. Every scaffold run (setup.sh /
 		# aidevops update) used to always emit the hardcoded placeholder here,
 		# silently discarding user-added routines on every update.
 		existing_tail=$(awk "/^## User Routines$/{found=1} found{print}" "${repo_path}/TODO.md")
+		# Remember the user's enabled/disabled choice for core routines
+		# ("rid state" per line, Bash 3.2 safe). Only the core section (before
+		# "## User Routines") is read; no other field is carried over.
+		existing_states=$(awk '/^## User Routines$/{exit} /^- \[( |x)\] r[0-9]+ /{rest = substr($0, 7); split(rest, f, " "); print f[1] "|" substr($0, 4, 1)}' "${repo_path}/TODO.md")
 	fi
 
 	# Header
@@ -93,6 +99,17 @@ TODOEOF
 		while IFS='|' read -r rid enabled title schedule estimate script rtype timezone; do
 			[[ -z "$rid" ]] && continue
 			timezone_field="${timezone:+ timezone:${timezone}}"
+			local prior_state=""
+			if [[ -n "$existing_states" ]]; then
+				prior_state=$(printf '%s\n' "$existing_states" | awk -F'|' -v id="$rid" '$1 == id {print $2; exit}')
+			fi
+			if [[ "$prior_state" == "x" ]]; then
+				enabled="x"
+			elif [[ -z "$prior_state" ]]; then
+				:
+			else
+				enabled=" "
+			fi
 			printf '%s\n' "- [${enabled}] ${rid} ${title} ${schedule}${timezone_field} ${estimate} run:${script}" >>"${repo_path}/TODO.md"
 		done < <(get_core_routine_entries)
 	fi
@@ -473,6 +490,7 @@ register_repo() {
 		  "slug": $slug,
 		  "pulse": true,
 		  "priority": "tooling",
+		  "purpose": $purpose,
 		  "local_only": true,
 		  "maintainer": $maintainer,
 		  "initialized": (now | strftime("%Y-%m-%dT%H:%M:%SZ"))
@@ -483,14 +501,17 @@ register_repo() {
 		  "slug": $slug,
 		  "pulse": true,
 		  "priority": "tooling",
+		  "purpose": $purpose,
 		  "maintainer": $maintainer,
 		  "initialized": (now | strftime("%Y-%m-%dT%H:%M:%SZ"))
 		}]'
 	fi
 
+	# GH#39025: purpose marks the repo as config-less for the onboarding audit.
 	jq --arg path "$repo_path" \
 		--arg slug "$slug" \
 		--arg maintainer "$maintainer" \
+		--arg purpose "$ROUTINES_REPO_PURPOSE" \
 		"$jq_filter" "$REPOS_JSON" >"$tmp_json"
 
 	if jq empty "$tmp_json" 2>/dev/null; then
@@ -891,9 +912,9 @@ _create_core_routine_issues() {
 	fi
 
 	# Ensure labels exist on the repo
-	gh label create "routines" --repo "$slug" --description "Routine tracking" --color "0E8A16" 2>/dev/null || true
+	gh label create "routines" --repo "$slug" --description "Routine tracking anchor — not a task" --color "FFF59D" 2>/dev/null || true
 	gh label create "core" --repo "$slug" --description "Framework-managed routine" --color "1D76DB" 2>/dev/null || true
-	gh label create "routine-tracking" --repo "$slug" --description "Execution tracking issue — not a task (pulse skips these)" --color "BFDADC" 2>/dev/null || true
+	gh label create "routine-tracking" --repo "$slug" --description "Execution tracking issue — not a task (pulse skips these)" --color "FFF59D" 2>/dev/null || true
 
 	# shellcheck disable=SC1091  # sourced file path is dynamic but verified above
 	source "${SCRIPT_DIR}/routines/core-routines.sh"

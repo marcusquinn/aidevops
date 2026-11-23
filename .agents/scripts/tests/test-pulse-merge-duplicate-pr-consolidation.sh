@@ -97,6 +97,7 @@ install_stubs() {
 	_pr_required_checks_pass() {
 		local pr_number="$1"
 		local repo_slug="$2"
+		printf 'required-checks %s %s\n' "$pr_number" "$repo_slug" >>"$GH_CALL_LOG"
 		case ",$TEST_PASSING_CHECKS," in
 		*,"$pr_number",*) return 0 ;;
 		esac
@@ -325,6 +326,26 @@ test_group_parsing_vars_do_not_pollute_global_scope() {
 	return 0
 }
 
+test_singleton_groups_skip_required_check_scoring() {
+	reset_case
+	TEST_LINKED_ISSUES=$'901=908\n902=909\n903=910\n904=910'
+	TEST_PASSING_CHECKS="901,902,904"
+	local pr_json
+	pr_json='[
+		{"number":901,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"createdAt":"2026-05-08T10:00:00Z","labels":[{"name":"origin:worker"}]},
+		{"number":902,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"createdAt":"2026-05-08T11:00:00Z","labels":[{"name":"origin:worker"}]},
+		{"number":903,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"createdAt":"2026-05-08T12:00:00Z","labels":[{"name":"origin:worker"}]},
+		{"number":904,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"createdAt":"2026-05-08T13:00:00Z","labels":[{"name":"origin:worker"}]}
+	]'
+	_pmp_consolidate_duplicate_pr_groups "owner/repo" "$pr_json"
+	assert_log_not_contains "$GH_CALL_LOG" "required-checks 901 " "singleton PR 901 is not scored"
+	assert_log_not_contains "$GH_CALL_LOG" "required-checks 902 " "singleton PR 902 is not scored"
+	assert_log_contains "$GH_CALL_LOG" "required-checks 903 owner/repo" "duplicate member 903 is scored"
+	assert_log_contains "$GH_CALL_LOG" "required-checks 904 owner/repo" "duplicate member 904 is scored"
+	assert_log_contains "$GH_CALL_LOG" "pr close 903" "duplicate group still consolidates"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -339,6 +360,7 @@ main() {
 	test_noop_when_candidate_is_not_healthy_enough
 	test_close_is_comment_only_and_keeps_branch
 	test_group_parsing_vars_do_not_pollute_global_scope
+	test_singleton_groups_skip_required_check_scoring
 
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -eq 0 ]]; then

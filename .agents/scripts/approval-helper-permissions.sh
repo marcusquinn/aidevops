@@ -19,6 +19,13 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _permission_lib_path
 fi
 
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/shared-approval-cli.sh"
+fi
+
 readonly PERMISSION_REQUEST_MARKER="<!-- aidevops-permission-request -->"
 readonly PERMISSION_GRANT_MARKER="<!-- aidevops-signed-permission-grant -->"
 readonly PERMISSION_REQUEST_SCHEMA="aidevops-permission-request/v1"
@@ -403,17 +410,11 @@ _kick_pulse_after_permission_approval() {
 	local kick_log="${_APPROVAL_HOME}/.aidevops/logs/pulse-approve-kick.log"
 	[[ -x "$pulse_wrapper" ]] || return 0
 	mkdir -p "$(dirname "$kick_log")" 2>/dev/null || true
-	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]] && command -v sudo >/dev/null 2>&1; then
-		(
-			nohup sudo -u "$SUDO_USER" -H -- "$pulse_wrapper" >>"$kick_log" 2>&1 </dev/null &
-			disown 2>/dev/null || true
-		) 2>/dev/null
-	else
-		(
-			nohup "$pulse_wrapper" >>"$kick_log" 2>&1 </dev/null &
-			disown 2>/dev/null || true
-		) 2>/dev/null
-	fi
+	# GH#39028: a full pulse may dispatch workers, so prefer the scheduler-managed
+	# unit (correct session env, no competing lock holder); the fallback spawn
+	# still carries the real user's session bus under sudo.
+	_approval_start_managed_pulse && return 0
+	_approval_spawn_user_pulse "$pulse_wrapper" "$kick_log"
 	return 0
 }
 
@@ -677,7 +678,8 @@ cmd_permissions() {
 		*) _print_error "Unknown permissions option: $arg"; return 1 ;;
 		esac
 	done
-	local usage="Usage: sudo aidevops approve permissions issue|pr <number> [owner/repo] --request perm-<id> [--withdraw]"
+	local usage
+	usage="Usage: $(approval_cli_prefix) approve permissions issue|pr <number> [owner/repo] --request perm-<id> [--withdraw]"
 	[[ "$target_type" == "$_PERMISSION_TARGET_ISSUE" || "$target_type" == "pr" ]] || { _print_error "$usage"; return 1; }
 	_require_number_arg "$target_number" "$target_type" "$usage" || return 1
 	[[ "$request_id" =~ ^perm-[0-9a-f]{16}$ ]] || { _print_error "$usage"; return 1; }
@@ -742,7 +744,7 @@ cmd_permissions() {
 # =============================================================================
 
 _permissions_batch_usage() {
-	printf '%s\n' "Usage: sudo aidevops approve permissions batch --withdraw [--all-blocked] [issue|pr:<number>:perm-<id> ...] [owner/repo]"
+	printf 'Usage: %s approve permissions batch --withdraw [--all-blocked] [issue|pr:<number>:perm-<id> ...] [owner/repo]\n' "$(approval_cli_prefix)"
 	return 0
 }
 

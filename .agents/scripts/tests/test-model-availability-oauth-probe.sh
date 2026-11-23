@@ -646,6 +646,218 @@ else
 		"(got rc=$rc — expected 1; denylist only applies to openai provider)"
 fi
 
+# =============================================================================
+# Custom routing table restrictions (dispatch/worker parity)
+# =============================================================================
+# Dispatch-side resolution must follow the same field-aware precedence as
+# headless-runtime-model.sh: first table with a valid restriction array wins;
+# a missing or malformed field inherits the shipped framework list.
+
+_oauth_reset_caches() {
+	_CHATGPT_OAUTH_UNSUPPORTED_MODELS_CACHE=""
+	_OPENAI_OAUTH_AUTH_FILE_CACHE=""
+	_OPENAI_OAUTH_AUTH_TYPE_CACHE=""
+	return 0
+}
+
+# Prints "<model>=<denied|allowed>" for dispatch and worker side per table.
+_oauth_dispatch_verdict() {
+	local table="$1" model="$2"
+	_oauth_reset_caches
+	if AIDEVOPS_MODEL_ROUTING_TABLE="$table" _chatgpt_oauth_denylist_check openai "$model"; then
+		printf 'denied'
+	else
+		printf 'allowed'
+	fi
+	return 0
+}
+
+_oauth_worker_verdict() {
+	local table="$1" model="$2" verdict
+	verdict=$(
+		export AIDEVOPS_MODEL_ROUTING_TABLE="$table" OPENCODE_AUTH_FILE="$AUTH_FILE"
+		# shellcheck source=/dev/null
+		source "${TEST_SCRIPTS_DIR}/headless-runtime-model.sh" >/dev/null 2>&1
+		ids=$(_headless_chatgpt_oauth_unsupported_ids 2>/dev/null)
+		if _headless_model_id_denied "$model" "$ids"; then
+			printf 'denied'
+		else
+			printf 'allowed'
+		fi
+	)
+	printf '%s' "$verdict"
+	return 0
+}
+
+cat >"$AUTH_FILE" <<JSON
+{"openai": {"type": "oauth", "access": "fake", "refresh": "fake"}}
+JSON
+
+custom_dir="${TEST_ROOT}/custom-routing"
+mkdir -p "$custom_dir"
+printf '{"chatgpt_oauth_restrictions":{"openai_unsupported":["gpt-6.1-terra"]}}' >"${custom_dir}/narrow.json"
+printf '{"tiers":{"standard":["openai/gpt-6.1-sol"]}}' >"${custom_dir}/tiers-only.json"
+printf '{"chatgpt_oauth_restrictions":{"openai_unsupported":[]}}' >"${custom_dir}/empty.json"
+printf '{"chatgpt_oauth_restrictions":{"openai_unsupported":"gpt-6.1-sol"}}' >"${custom_dir}/malformed.json"
+printf '{"providers":{"openai":{"oauth_auth_file":"%s"}}}' "${custom_dir}/alt-auth.json" >"${custom_dir}/auth-file.json"
+
+# Narrow custom list: Sol permitted, Terra denied; dispatch == worker.
+for pair in "narrow.json gpt-6.1-sol allowed" "narrow.json gpt-6.1-terra denied" \
+	"narrow.json gpt-6.1-terra-2026-01-15 denied" "narrow.json gpt-6.1-terra-pro allowed" \
+	"empty.json gpt-6.1-terra allowed" "tiers-only.json gpt-6.1-sol denied" \
+	"tiers-only.json gpt-5.5-pro denied" "malformed.json gpt-6.1-sol denied"; do
+	read -r tbl mdl expected <<<"$pair"
+	dispatch=$(_oauth_dispatch_verdict "${custom_dir}/${tbl}" "$mdl")
+	worker=$(_oauth_worker_verdict "${custom_dir}/${tbl}" "$mdl")
+	if [[ "$dispatch" == "$expected" && "$worker" == "$expected" ]]; then
+		print_result "custom-restrictions: ${tbl} ${mdl} ${expected} (dispatch+worker agree)" 0
+	else
+		print_result "custom-restrictions: ${tbl} ${mdl} ${expected} (dispatch+worker agree)" 1 \
+			"(dispatch=$dispatch worker=$worker)"
+	fi
+done
+
+# Provider auth-file setting: custom value wins; omission inherits framework default.
+_oauth_reset_caches
+resolved=$(AIDEVOPS_MODEL_ROUTING_TABLE="${custom_dir}/auth-file.json" _openai_oauth_auth_file)
+if [[ "$resolved" == "${custom_dir}/alt-auth.json" ]]; then
+	print_result "custom-restrictions: custom provider auth file honoured" 0
+else
+	print_result "custom-restrictions: custom provider auth file honoured" 1 "(got '$resolved')"
+fi
+_oauth_reset_caches
+resolved=$(AIDEVOPS_MODEL_ROUTING_TABLE="${custom_dir}/tiers-only.json" _openai_oauth_auth_file)
+if [[ "$resolved" == "${HOME}/.local/share/opencode/auth.json" ]]; then
+	print_result "custom-restrictions: omitted auth file inherits framework default" 0
+else
+	print_result "custom-restrictions: omitted auth file inherits framework default" 1 "(got '$resolved')"
+fi
+
+# API-key auth stays unrestricted regardless of custom table.
+printf '{"openai": {"type": "api", "key": "fake"}}' >"$AUTH_FILE"
+_oauth_reset_caches
+if AIDEVOPS_MODEL_ROUTING_TABLE="${custom_dir}/tiers-only.json" _chatgpt_oauth_denylist_check openai gpt-6.1-sol; then
+	print_result "custom-restrictions: API-key auth not restricted" 1
+else
+	print_result "custom-restrictions: API-key auth not restricted" 0
+fi
+_oauth_reset_caches
+
+rm -f "$AUTH_FILE"
+
+# =============================================================================
+# Static-auth presence must never execute credential configuration.
+# All files and values below belong to this suite's synthetic HOME.
+# =============================================================================
+unset ANTHROPIC_API_KEY OPENAI_API_KEY GOOGLE_API_KEY GEMINI_API_KEY
+mkdir -p "${HOME}/.config/aidevops"
+static_auth_credentials="${HOME}/.config/aidevops/credentials.sh"
+static_auth_expected=1
+command -v node >/dev/null 2>&1 && static_auth_expected=0
+cat >"$static_auth_credentials" <<'SH'
+export OPENAI_API_KEY='synthetic-static-key'
+printf unsafe >"${HOME}/static-auth-command-marker"
+SH
+output=$(
+	gopass() { return 1; }
+	_probe_has_static_auth_for_provider openai 2>/dev/null
+)
+rc=$?
+if [[ "$rc" -eq "$static_auth_expected" && -z "$output" && ! -e "${HOME}/static-auth-command-marker" ]]; then
+	print_result "static-auth: parses a literal without executing commands or printing the value" 0
+else
+	print_result "static-auth: parses a literal without executing commands or printing the value" 1
+fi
+
+cat >"$static_auth_credentials" <<'SH'
+OPENAI_API_KEY=synthetic-static-key 2>"${HOME}/static-auth-redirection-marker"
+SH
+output=$(
+	gopass() { return 1; }
+	_probe_has_static_auth_for_provider openai 2>/dev/null
+)
+rc=$?
+if [[ "$rc" -eq "$static_auth_expected" && -z "$output" && ! -e "${HOME}/static-auth-redirection-marker" ]]; then
+	print_result "static-auth: treats redirections as data without executing them" 0
+else
+	print_result "static-auth: treats redirections as data without executing them" 1
+fi
+
+printf '%s\n' "OPENAI_API_KEY='synthetic-static-key'" >"$static_auth_credentials"
+output=$(
+	gopass() { return 1; }
+	timeout_sec() {
+		printf '%s' 'synthetic-partial-value'
+		return 124
+	}
+	_probe_has_static_auth_for_provider openai 2>/dev/null
+)
+rc=$?
+if [[ "$rc" -eq 1 && -z "$output" ]]; then
+	print_result "static-auth: discards partial parser output on timeout" 0
+else
+	print_result "static-auth: discards partial parser output on timeout" 1
+fi
+
+output=$(
+	export OPENAI_API_KEY=synthetic-env-key
+	gopass() { return 1; }
+	timeout_sec() { return 124; }
+	_probe_has_static_auth_for_provider openai 2>/dev/null
+)
+rc=$?
+if [[ "$rc" -eq 0 && -z "$output" ]]; then
+	print_result "static-auth: environment presence does not depend on the file parser" 0
+else
+	print_result "static-auth: environment presence does not depend on the file parser" 1
+fi
+
+# =============================================================================
+# GH#39475 — Source 5 shares the runtime pool resolver and usability allowlist
+# =============================================================================
+rm -f "$AUTH_FILE"
+POOL_DIR="${TEST_ROOT}/pool"
+mkdir -p "$POOL_DIR"
+future_pool_ms=$(($(date +%s) * 1000 + 3600000))
+
+printf '{"anthropic":[{"status":"active"}]}' >"${POOL_DIR}/active.json"
+printf '{"anthropic":[{"status":"billing-error","cooldownUntil":%s},{"status":"billing-error"}]}' \
+	"$future_pool_ms" >"${POOL_DIR}/billing.json"
+
+result=$(AIDEVOPS_OPENCODE_PROFILE=v1 AIDEVOPS_OAUTH_POOL_FILE="${POOL_DIR}/active.json" resolve_api_key anthropic 2>/dev/null)
+rc=$?
+if [[ "$rc" -eq 0 && "$result" == "oauth-refresh-available" ]]; then
+	print_result "pool: AIDEVOPS_OAUTH_POOL_FILE with active account is healthy" 0
+else
+	print_result "pool: AIDEVOPS_OAUTH_POOL_FILE with active account is healthy" 1 "(rc=$rc)"
+fi
+
+result=$(AIDEVOPS_OPENCODE_PROFILE=v1 AIDEVOPS_OAUTH_POOL_FILE="${POOL_DIR}/billing.json" resolve_api_key anthropic 2>/dev/null)
+rc=$?
+if [[ "$rc" -ne 0 && -z "$result" ]]; then
+	print_result "pool: billing-error-only pool is not healthy" 0
+else
+	print_result "pool: billing-error-only pool is not healthy" 1 "(rc=$rc)"
+fi
+
+mkdir -p "${POOL_DIR}/v2root/auth"
+cp "${POOL_DIR}/active.json" "${POOL_DIR}/v2root/auth/oauth-pool.json"
+resolved=$(AIDEVOPS_OPENCODE_PROFILE=v2 AIDEVOPS_OPENCODE_V2_ROOT="${POOL_DIR}/v2root" oauth_pool_runtime_file)
+if [[ "$resolved" == "${POOL_DIR}/v2root/auth/oauth-pool.json" ]]; then
+	print_result "pool: v2 profile resolves AIDEVOPS_OPENCODE_V2_ROOT pool" 0
+else
+	print_result "pool: v2 profile resolves AIDEVOPS_OPENCODE_V2_ROOT pool" 1 "(got '$resolved')"
+fi
+
+# Source 5 is never consulted when auth.json exists (even without a usable entry).
+printf '{}' >"$AUTH_FILE"
+result=$(AIDEVOPS_OPENCODE_PROFILE=v1 AIDEVOPS_OAUTH_POOL_FILE="${POOL_DIR}/active.json" resolve_api_key anthropic 2>/dev/null)
+rc=$?
+if [[ "$rc" -ne 0 && -z "$result" ]]; then
+	print_result "pool: Source 5 skipped when auth.json exists" 0
+else
+	print_result "pool: Source 5 skipped when auth.json exists" 1 "(rc=$rc)"
+fi
 rm -f "$AUTH_FILE"
 
 # =============================================================================

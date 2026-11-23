@@ -8,6 +8,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=cloudron-package-release-lib.sh
 source "${SCRIPT_DIR}/cloudron-package-release-lib.sh"
+# shellcheck source=review-thread-gate-lib.sh
+source "${SCRIPT_DIR}/review-thread-gate-lib.sh"
+# shellcheck source=full-loop-helper-risk.sh
+source "${SCRIPT_DIR}/full-loop-helper-risk.sh"
 REPOS_FILE="${AIDEVOPS_REPOS_FILE:-${HOME}/.config/aidevops/repos.json}"
 RELEASE_SHA_PATTERN='^[a-f0-9]{40}$'
 RELEASE_APPROVAL_LABEL='release-approval-required'
@@ -45,19 +49,101 @@ release_contents() {
 	return 0
 }
 
+# GH#39742: every check run and status on the PR head. `gh pr checks` keeps only
+# the newest run per name/workflow/event, so it can hide a pass behind a later
+# cancellation, or a failure behind a cancelled re-run.
+# shellcheck disable=SC2016 # GraphQL variables, not shell expansion.
+RELEASE_CHECKS_QUERY='query($owner:String!,$name:String!,$pr:Int!,$endCursor:String){repository(owner:$owner,name:$name){pullRequest(number:$pr){commits(last:1){nodes{commit{oid statusCheckRollup{contexts(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{__typename ... on CheckRun{name status conclusion startedAt detailsUrl checkSuite{workflowRun{event workflow{name}}}} ... on StatusContext{context state targetUrl createdAt}}}}}}}}}}'
+# Each name/workflow/event key takes its newest non-cancelled verdict (a run not
+# yet started counts as newest). A key with only cancellations, such as a
+# review-event re-run, is dropped only when a same-named key passed; otherwise
+# it refuses. Output keeps the {name,bucket,link} shape of `gh pr checks`.
+# shellcheck disable=SC2016 # jq program, not shell expansion.
+RELEASE_CHECKS_JQ='[.[] | .data.repository.pullRequest.commits.nodes[0].commit // empty] as $pages
+	| if ($pages | map(.oid) | unique | length) != 1 or ($head != "" and $pages[0].oid != $head)
+		then error("PR head moved or has no commit") else . end
+	| [$pages[] | .statusCheckRollup.contexts.nodes[]?
+		| (if .__typename == "StatusContext" then .state elif .status == "COMPLETED" then .conclusion else .status end) as $state
+		| {name: (.name // .context), link: (.detailsUrl // .targetUrl // ""),
+			key: [.__typename, (.name // .context), (.checkSuite.workflowRun.workflow.name // ""), (.checkSuite.workflowRun.event // "")],
+			started: (.startedAt // .createdAt // "9999"),
+			bucket: (if $state == "SUCCESS" then $pass
+				elif $state == "SKIPPED" or $state == "NEUTRAL" then "skipping"
+				elif $state == "ERROR" or $state == "FAILURE" or $state == "TIMED_OUT" or $state == "ACTION_REQUIRED" then "fail"
+				elif $state == "CANCELLED" then "cancel" else "pending" end)}]
+	| [group_by(.key)[] | (map(select(.bucket != "cancel")) | sort_by(.started) | last) // (.[0] + {cancel_only: true})]
+	| ([.[] | select(.bucket == $pass) | .name] | unique) as $passed
+	| [.[] | select((.cancel_only // false) == false or (.name as $n | any($passed[]; . == $n) | not)) | {name, bucket, link}]'
+
 release_checks() {
-	local repo="$1" pr="$2" checks=""
-	checks=$(gh pr checks "$pr" --repo "$repo" --json name,bucket,link) || return 1
+	local repo="$1" pr="$2" head="${3:-}" pages="" checks=""
+	pages=$(gh api graphql --paginate --slurp -f owner="${repo%%/*}" -f name="${repo#*/}" -F pr="$pr" -f query="$RELEASE_CHECKS_QUERY") || return 1
+	checks=$(jq -c --arg pass pass --arg head "$head" "$RELEASE_CHECKS_JQ" <<<"$pages") || return 1
 	# Main-only publication jobs are intentionally skipped on PRs. Preflight
 	# itself must run successfully; an empty or all-skipped suite is not evidence.
-	jq -e 'all(.[]; .bucket == "pass" or .bucket == "skipping") and any(.[]; .bucket == "pass" and (.name | test("(^| / )preflight$")))' <<<"$checks" >/dev/null || return 1
+	jq -e --arg pass pass 'all(.[]; .bucket == $pass or .bucket == "skipping") and any(.[]; .bucket == $pass and (.name | test("(^| / )preflight$")))' <<<"$checks" >/dev/null || return 1
 	printf '%s\n' "$checks"
+	return 0
+}
+
+# GH#39648: every merge transport refuses unresolved review-bot threads
+# (GH#27137). Returns 0 only for a verified zero count; an unreadable count
+# fails closed so neither a request nor a hold release proceeds on it.
+release_review_threads_clear() {
+	local repo="$1" pr="$2" count=''
+	count=$(review_thread_gate_unresolved_bot_count "$repo" "$pr" 2>/dev/null) || count=''
+	[[ "$count" == 0 ]] && return 0
+	printf '%s PR #%s: %s unresolved review-bot thread(s)\n' "$repo" "$pr" "${count:-unknown}" >&2
+	return 1
+}
+
+# GH#39648: the repo-wide thread scanner skips held PRs, so a held release PR
+# with open review-bot threads would wait for a human session forever. Queue the
+# targeted response worker (dispatch-pr ignores the hold; its state dedupes and
+# bounds attempts). Best effort: the caller keeps its hold and waits either way.
+release_dispatch_thread_remediation() {
+	local repo="$1" pr="$2" scanner="${SCRIPT_DIR}/pr-review-thread-response-scanner.sh" path='' rc=0
+	if [[ ! -x "$scanner" ]]; then
+		printf 'WARN: %s PR #%s: review-thread scanner unavailable; threads need a response before release\n' "$repo" "$pr" >&2
+		return 0
+	fi
+	path=$(jq -r --arg slug "$repo" '[.initialized_repos[]? | select(((.slug // "") | ascii_downcase) == ($slug | ascii_downcase)) | .path // empty] | first // empty' "$REPOS_FILE" 2>/dev/null) || path=''
+	path="${path/#\~/$HOME}"
+	if [[ -z "$path" || ! -d "$path" ]]; then
+		printf 'WARN: %s PR #%s: no local checkout registered; review-thread response not queued\n' "$repo" "$pr" >&2
+		return 0
+	fi
+	# Scanner contract: 0 queued, 10 deferred, 11 converged, 12 maintainer attention.
+	"$scanner" dispatch-pr "$repo" "$path" "$pr" >/dev/null 2>&1 || rc=$?
+	case "$rc" in
+	0) printf '%s PR #%s: review-thread response queued\n' "$repo" "$pr" ;;
+	10) printf '%s PR #%s: review-thread response already active or deduplicated\n' "$repo" "$pr" ;;
+	11) printf '%s PR #%s: no matching review thread remains; recheck next routine\n' "$repo" "$pr" ;;
+	12) printf 'WARN: %s PR #%s: review-thread response attempts exhausted; maintainer attention needed\n' "$repo" "$pr" >&2 ;;
+	*) printf 'WARN: %s PR #%s: review-thread response dispatch returned %s; retry next routine\n' "$repo" "$pr" "$rc" >&2 ;;
+	esac
+	return 0
+}
+
+# GH#39648: a signature on a head that review-bot threads block can never
+# merge; asking for one wastes the maintainer's approval. The request waits (3).
+release_request_threads_clear() {
+	local repo="$1" pr="$2"
+	release_review_threads_clear "$repo" "$pr" && return 0
+	release_error "PR #${pr} has unresolved review-bot threads; respond to them (pr-review-thread-response-scanner.sh scan-pr ${repo} ${pr}) before requesting approval. The release routine queues a response and requests approval once they are resolved." || true
+	return 1
+}
+
+# Raw REST PR snapshot; callers apply their own trust checks.
+release_pr_raw() {
+	local repo="$1" pr="$2"
+	gh api "repos/${repo}/pulls/${pr}" || return 1
 	return 0
 }
 
 release_pr() {
 	local repo="$1" pr="$2" snapshot=""
-	snapshot=$(gh api "repos/${repo}/pulls/${pr}") || release_error "Unable to read PR #${pr} in ${repo}." || return 1
+	snapshot=$(release_pr_raw "$repo" "$pr") || release_error "Unable to read PR #${pr} in ${repo}." || return 1
 	#aidevops:trust-boundary — only same-repository, non-draft main updates.
 	jq -e --arg repo "$repo" '.base.repo.full_name == $repo and .head.repo.full_name == $repo and .base.ref == "main"' <<<"$snapshot" >/dev/null || release_error "PR #${pr} must be a same-repository PR against main in ${repo}." || return 1
 	jq -e '.draft == false' <<<"$snapshot" >/dev/null || release_error "PR #${pr} is a draft or its draft status is unavailable. Run: gh pr ready ${pr} --repo ${repo}; then wait for re-triggered checks to pass." || return 1
@@ -133,24 +219,53 @@ release_request_body() {
 	return 0
 }
 
+# Print the last "Maintainer command" in a body when it signs exactly this
+# issue with a prefix approval_cli_prefix can render on some host (GH#39027).
+# Hosts render different prefixes, so finalized bodies from another host stay
+# valid instead of being treated as unfinished signed content.
+release_body_command() {
+	local body="$1" issue="$2" repo="$3" line="" command="" suffix=""
+	suffix=" approve issue ${issue} ${repo}"
+	# shellcheck disable=SC2016 # Markdown backticks are literal regex text.
+	line=$(printf '%s\n' "$body" | grep -E '^Maintainer command: `[^`]+`$' | tail -n 1) || line=""
+	command="${line#Maintainer command: \`}"
+	command="${command%\`}"
+	[[ -n "$line" && "$command" == *"$suffix" ]] || return 1
+	approval_cli_prefix_is_valid "${command%"$suffix"}" || return 1
+	printf '%s\n' "$command"
+	return 0
+}
+
 release_request_interrupted() {
 	local repo="$1" pr="$2"
 	printf 'ERROR: Release approval request interrupted; leave BOTH release-approval-required and hold-for-review on PR #%s. Retry after API recovery: gh pr edit %s --repo %s --add-label release-approval-required --add-label hold-for-review; cloudron-release-approval-helper.sh request %s %s\n' "$pr" "$pr" "$repo" "$repo" "$pr" >&2
 	return 4
 }
 
+# Run the merge-time Runtime Testing validation (full-loop-helper-risk.sh) before
+# asking for a signature, so a fixable PR-body defect cannot block a signed approval.
+release_runtime_testing_precheck() {
+	local pr="$1" snapshot="$2" metadata="" reason=""
+	metadata=$(jq -r '.body // "" | strings' <<<"$snapshot" | _runtime_testing_metadata_from_body) ||
+		release_error "Request blocked for PR #${pr}: runtime testing metadata unreadable" || return 1
+	reason=$(_runtime_testing_merge_refusal "$metadata") ||
+		release_error "Merge blocked for PR #${pr}: ${reason}; no approval request created." || return 1
+	return 0
+}
+
 release_request() {
 	local repo="$1" pr="$2"
 	local snapshot="" sha="" manifest="" version="" upstream="" notes="" checks="" issues="" existing="" url="" older="" rc=0
 	local issue="" metadata="" command="" existing_body="" maintainer_prefix='Maintainer command:'
-	local verdict="" publication_body=""
+	local verdict="" publication_body="" existing_command=""
 	[[ "$pr" =~ ^[1-9][0-9]*$ ]] || release_error 'PR number must be a positive integer.' || return 1
 	release_authority "$repo" || return 1
 	snapshot=$(release_pr "$repo" "$pr") || return 1
 	[[ "$(jq -r '.state' <<<"$snapshot")" == open ]] || release_error "PR #${pr} must be open before requesting approval." || return 1
+	release_runtime_testing_precheck "$pr" "$snapshot" || return 1
 	sha=$(jq -r '.head.sha' <<<"$snapshot")
 	release_publication_preflight "$repo" "$sha" || return 1
-	checks=$(release_checks "$repo" "$pr") || release_error 'PR checks must all pass before requesting approval.' || return 1
+	checks=$(release_checks "$repo" "$pr" "$sha") || release_error 'PR checks must all pass before requesting approval.' || return 1
 	manifest=$(release_contents "$repo" CloudronManifest.json "$sha") || return 1
 	version=$(jq -er '.version | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' <<<"$manifest") || return 1
 	upstream=$(jq -er '.upstreamVersion | select(type == "string" and length > 0)' <<<"$manifest") || return 1
@@ -166,23 +281,35 @@ release_request() {
 	[[ -n "${notes//[[:space:]]/}" ]] || release_error 'Release changelog entry is empty.' || return 1
 	#aidevops:trust-boundary — a bare hold belongs to another review workflow.
 	jq -e --arg label "$RELEASE_APPROVAL_LABEL" '(all(.labels[]; .name != "hold-for-review") or any(.labels[]; .name == $label)) and .auto_merge == null' <<<"$snapshot" >/dev/null || release_error 'Resolve existing PR hold/auto-merge before requesting a release.' || return 1
+	release_request_threads_clear "$repo" "$pr" || return 3
 	issues=$(release_issues "$repo") || { release_request_interrupted "$repo" "$pr"; return 4; }
 	existing=$(jq -c --arg marker "<!-- aidevops:cloudron-release-approval ${version} -->" '.[] | select(.body | contains($marker))' <<<"$issues") || return 1
 	if [[ -n "$existing" ]]; then
 		metadata=$(release_metadata "$(jq -r '.body' <<<"$existing")" "$repo") || return 1
 		if ! jq -e --arg sha "$sha" --argjson pr "$pr" '.head == $sha and .pr == $pr' <<<"$metadata" >/dev/null; then
-			release_error 'Existing version request has a different PR/head: refresh its signed body and obtain re-approval.'
-			return 1
+			# A same-version request bound to another PR/head is superseded only
+			# when unsigned. Signed or unverifiable requests fail closed, unedited.
+			issue=$(jq -r '.number' <<<"$existing") || return 1
+			[[ "$issue" =~ ^[1-9][0-9]*$ ]] || return 1
+			rc=0
+			verdict=$(release_verify "$repo" "$issue") || rc=$?
+			[[ "$rc" -ne 0 && "$verdict" == NO_APPROVAL ]] || release_error 'Existing version request has a different PR/head and is signed or unverifiable: refresh its signed body and obtain re-approval.' || return 1
+			release_comment "$repo" "$issue" "Superseded by a new request for PR #${pr} (head ${sha}) at version ${version}. No release was authorized by this unsigned request." || return 1
+			gh issue close "$issue" --repo "$repo" --reason 'not planned' || return 1
+			existing=""
 		fi
+	fi
+	if [[ -n "$existing" ]]; then
 		url=$(jq -r '.html_url' <<<"$existing") || return 1
 		issue="${url##*/}"
 		[[ "$url" == https://* && "$issue" =~ ^[1-9][0-9]*$ ]] || return 1
-		command="sudo aidevops approve issue ${issue} ${repo}"
+		command="$(approval_cli_prefix) approve issue ${issue} ${repo}"
 		existing_body=$(jq -r '.body' <<<"$existing") || return 1
 		publication_body="${existing_body##*$'\n### Publication boundary\n'}"
 		publication_body="${publication_body%%$'\n### Files Scope\n'*}"
-		if [[ "$existing_body" != *'Request finalization pending.'* &&
-			"$publication_body" == *$'\n\n'"${maintainer_prefix} \`${command}\`"$'\n' ]]; then
+		existing_command=$(release_body_command "$publication_body" "$issue" "$repo") || existing_command=""
+		if [[ "$existing_body" != *'Request finalization pending.'* && -n "$existing_command" &&
+			"$publication_body" == *$'\n\n'"${maintainer_prefix} \`${existing_command}\`"$'\n' ]]; then
 			printf '%s\nAPPROVAL_COMMAND=%s\n' "$url" "$command"
 			return 0
 		fi
@@ -207,7 +334,7 @@ release_request() {
 		gh_create_issue --repo "$repo" --title "Release ${repo##*/} v${version}" --body-file - --label release-approval-required --label no-auto-dispatch) || return 1
 	issue="${url##*/}"
 	[[ "$url" == https://* && "$issue" =~ ^[1-9][0-9]*$ ]] || release_error 'Created issue URL has no valid issue number.' || return 1
-	command="sudo aidevops approve issue ${issue} ${repo}"
+	command="$(approval_cli_prefix) approve issue ${issue} ${repo}"
 	# Finalize the digest-bound body before exposing a signable command.
 	release_request_body "$repo" "$pr" "$sha" "$version" "$upstream" "$notes" "$checks" "$metadata" "${maintainer_prefix} \`${command}\`" |
 		gh_issue_edit_safe "$issue" --repo "$repo" --body-file - >/dev/null || return 1
@@ -240,11 +367,67 @@ release_metadata() {
 
 release_policy_body() {
 	local repo="$1" command="$2" policy=""
+	local mode="${3:-semver}" upstream="${4:-}"
+	local zero_minor="${5:-false}"
+	[[ "$zero_minor" == false || ( "$zero_minor" == true && "$mode" != commits && "$mode" != commits-license-url ) ]] || return 1
 	# Inserted check lines: single-quoted or expansion-free double-quoted
 	# changelog assertions only (\x22 ", \x24 $, \x27 ', \x60 backtick).
 	local insertion='\t*assert_contains CHANGELOG(\.md)? (\x27[^\x27\x24\x60\\]*\x27|\x22([^\x22\x24\x60\\]|\\\x60)*\x22) \|\| return 1'
 	policy=$(jq -cn --arg repo "$repo" --arg kind "$RELEASE_POLICY_KIND" --arg insertion "$insertion" \
 		'{schema:1,kind:$kind,repository:$repo,changelog_files:["CHANGELOG","CHANGELOG.md"],pinned_files:["Dockerfile"],check_files:["test/package-test.sh"],check_insertion_pattern:$insertion}') || return 1
+	case "$mode" in
+	semver) [[ -z "$upstream" ]] || return 1 ;;
+	commits | commits-license-url)
+		[[ "$upstream" =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] || return 1
+		policy=$(jq -c --arg upstream "$upstream" '. + {upstream_mode:"commits",upstream_repository:$upstream}' <<<"$policy") || return 1
+		# This additional signed text replaces the semver boundary only for an
+		# explicit commit policy. Legacy semver bodies remain byte-for-byte stable.
+		# shellcheck disable=SC2016 # Markdown backticks are literal.
+		printf 'Commit policy: upstream `%s`; SHA prefixes of 7–40 hex characters must resolve to the exact open trusted finding commit in this upstream. GitHub compare must prove strict forward ancestry (ahead); commits have no major boundary. All other routine-bump rules below still apply; the same-major version clause is replaced by this ancestry rule. A new signature is required for this mode.\n\n' "$upstream"
+		if [[ "$mode" == commits-license-url ]]; then
+			policy=$(jq -c '. + {license_commit_url:true}' <<<"$policy") || return 1
+			# Conditional text keeps every pre-existing signed commit policy body stable.
+			# shellcheck disable=SC2016 # Markdown backticks are literal.
+			printf 'License commit URL: `upstreamLicense.url` may differ only by the proven full-SHA substitution (old upstream commit to new upstream commit); every other `upstreamLicense` field stays unchanged. A new signature is required for this mode.\n\n'
+		fi
+		;;
+	release-identity)
+		# upstream is "owner/repo:COMMIT_ARG:images-asset"; the signature covers all three.
+		local identity_repo='' identity_arg='' identity_asset=''
+		IFS=: read -r identity_repo identity_arg identity_asset <<<"$upstream"
+		[[ "$identity_repo" =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$ && "$identity_arg" =~ ^[A-Za-z_][A-Za-z0-9_]*$ \
+			&& "$identity_asset" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] || return 1
+		policy=$(jq -c --arg upstream "$identity_repo" --arg arg "$identity_arg" --arg asset "$identity_asset" \
+			'. + {upstream_repository:$upstream,release_identity:{commit_arg:$arg,images_json_asset:$asset}}' <<<"$policy") || return 1
+		# shellcheck disable=SC2016 # Markdown backticks are literal.
+		printf 'Release identity policy: upstream `%s`; semver rules below still apply, and additionally the pinned release commit (`ARG %s`, and the commit in `upstreamLicense.url`) may change only to the peeled commit of the new upstream release tag, strictly ahead of the old tag commit, and `FROM` image digests may change only to digests published in the new release asset `%s`. Any other manifest or pinned-file change is not routine. A new signature is required for this mode.\n\n' "$identity_repo" "$identity_arg" "$identity_asset"
+		;;
+	pins)
+		# upstream is one JSON object with only the opt-in pin fields; the signature covers all of it.
+		python3 "${SCRIPT_DIR}/cloudron_routine_bump.py" --repository "$repo" --validate-pins <<<"$upstream" >/dev/null || return 1
+		policy=$(jq -c --argjson pins "$upstream" '. + $pins' <<<"$policy") || return 1
+		# shellcheck disable=SC2016 # Markdown backticks are literal.
+		printf 'Upstream pin policy: semver rules below still apply, and additionally the signed JSON fields extend the routine class with proofs read from the signed upstream and registries, never from PR content. `registry_images`: a `FROM <image>:<tag>@<digest>` digest may change only when the tag is the whole-token new upstream version and the registry resolves that exact image tag to that digest. `release_checksum`: the named `ARG` may change only to the sha256 listed for the named file in the new release checksum asset. `license_version_url`: `upstreamLicense.url` may differ only by whole-token upstream version substitution. `release_identity` may omit `images_json_asset` when `registry_images` proves the digests. Any other change, unknown field or unresolvable proof is not routine. A new signature is required for this mode.\n\n'
+		if jq -e '.companion_image != null' <<<"$upstream" >/dev/null; then
+			# Conditional text preserves every pre-existing signed policy body.
+			# shellcheck disable=SC2016 # Markdown backticks are literal.
+			printf 'Companion image policy: stable v-prefixed upstream tags must prove strict forward ancestry. The signed image commit tag must be on the signed source branch and contain the release pin, every floor revision and the old image revision. The registry must prove the index, unique platform digest and full revision label, with cryptographically verified source-repository branch-workflow provenance. Only the proven FROM reference and listed readonly verifier constants may change; `image_ref` is the tagged image without its separately proven digest. All other verifier bytes, including floor constants, remain fixed. Catalog checksum changes remain non-routine.\n\n'
+		fi
+		if jq -e '.catalog_baseline != null' <<<"$upstream" >/dev/null; then
+			# shellcheck disable=SC2016 # Markdown backticks are literal.
+			printf 'Catalog baseline policy: as the sole exception to the default catalog checksum exclusion, the signed `catalog_baseline.file` may append exactly one `<base package version> <sha256>` line and newline, preserving all existing bytes. The digest must be independently computed from the published base-version manifest in the catalog at the PR merge base using `jq -cS` plus its terminating newline. No PR-provided checksum is trusted. An unchanged baseline requires no proof.\n\n'
+		fi
+		;;
+	*) return 1 ;;
+	esac
+	if [[ "$zero_minor" == true ]]; then
+		policy=$(jq -c '. + {zero_minor:"routine"}' <<<"$policy") || return 1
+		# Conditional text preserves existing signed policy bodies byte-for-byte.
+		# shellcheck disable=SC2016 # Markdown backticks are literal.
+		printf '0.x minor upstream releases are routine: the signed `zero_minor: "routine"` opt-in allows strictly increasing releases within major 0. Major changes, including 0.x to 1.x, still require a per-release signature. 0.x minors may contain breaking changes or destructive migrations; add `needs-maintainer-review` to stop an individual PR. All other rules still apply. Adding this opt-in requires a new policy signature.\n\n'
+	fi
+	# The `<request>` placeholder keeps `sudo aidevops`: signed policy text must
+	# render identically on every host. Only the final command line varies (GH#39027).
 	# shellcheck disable=SC2016 # Markdown backticks are literal, not expansions.
 	printf '%s\n## Standing release policy\n\n```json\n%s\n```\n\nSigning this issue authorizes routine `r924` to merge and publish **routine upstream bumps** of %s without a per-release signature. A routine bump, checked at its exact PR head:\n\n- links exactly one open, trusted upstream monitor finding, and `upstreamVersion` equals that finding within the same major version;\n- increments only the package patch version; no other `CloudronManifest.json` field changes;\n- modifies in place only the manifest, the changelog files above (additions only), the pinned files (whole-token old to new version substitution only) and the check files (version substitution of existing lines, plus inserted lines that fully match `check_insertion_pattern`);\n- comes from a same-repository OWNER/MEMBER PR against `main` with terminal-green checks, including preflight, no auto-merge and no `needs-maintainer-review`.\n\nEvery other release still needs `sudo aidevops approve issue <request> %s` on its release request. Close this issue to revoke the policy; any edit or comment makes the signature stale. Add `needs-maintainer-review` to a release PR to stop the policy for that PR.\n\n### Publication boundary\nThis is an approval-only issue, not a worker task. Do not auto-dispatch. The policy never deploys an app, changes credentials or branch protection, or authorizes unrelated publication.\n\n%s\n' \
 		"$RELEASE_POLICY_MARKER" "$policy" "$repo" "$repo" "$command"
@@ -306,9 +489,189 @@ release_policy_active() {
 # Exact bytes (base64) of a file at a commit; empty or non-base64 fails.
 release_raw_contents() {
 	local repo="$1" path="$2" sha="$3" content=""
-	content=$(gh api "repos/${repo}/contents/${path}?ref=${sha}" --jq 'select(.type == "file" and .encoding == "base64") | .content') || return 1
+	content=$(gh api "repos/${repo}/contents/${path}?ref=${sha}" --jq 'select(.type == "file" and .encoding == "base64") | .content | gsub("\\s"; "")') || return 1
 	[[ -n "$content" ]] || return 1
 	printf '%s\n' "$content"
+	return 0
+}
+
+# Print "<base upstreamVersion>\t<head upstreamVersion>" when both match $2.
+release_manifest_versions() {
+	local contents="$1" pattern="$2"
+	jq -er --arg pattern "$pattern" '."CloudronManifest.json" | [.base, .head] | map(@base64d | fromjson | .upstreamVersion | strings | select(test($pattern))) | select(length == 2) | @tsv' <<<"$contents" || return 1
+	return 0
+}
+
+# Fetch proof from the signed upstream, not a PR-controlled URL or repository.
+release_commit_proof() {
+	local repo="$1" policy="$2" finding="$3" contents="$4" issue="$5"
+	local upstream='' old='' new='' base='' head='' comparison='' snapshot='' versions=''
+	upstream=$(jq -er '.upstream_repository | strings | select(test("^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$"))' <<<"$policy") || return 1
+	versions=$(release_manifest_versions "$contents" '^[a-fA-F0-9]{7,40}$') || return 1
+	IFS=$'\t' read -r old new <<<"$versions"
+	# aidevops:trust-boundary — bind the trusted monitor's structured summary
+	# to the signed upstream and full finding SHA, not merely a copied fingerprint.
+	snapshot=$(release_issue_snapshot "$repo" "$issue") || return 1
+	jq -e --arg upstream "$upstream" --arg sha "$finding" --arg trusted "$RELEASE_TRUSTED_AUTHOR" --arg state open '
+		select(.state == $state and (.author_association | test($trusted)))
+		| .body | split("\n")
+		| any(. == ("<!-- aidevops:cloudron-package-monitor upstream-commit-" + $sha + " -->"))
+		  and (map(capture("^Upstream `(?<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)` branch `[^`]+` head is `(?<sha>[a-f0-9]{40})` ")?)
+		       | length == 1 and .[0].repo == $upstream and .[0].sha == $sha)' <<<"$snapshot" >/dev/null || return 1
+	base=$(gh api "repos/${upstream}/commits/${old}" --jq '.sha') || return 1
+	head=$(gh api "repos/${upstream}/commits/${new}" --jq '.sha') || return 1
+	[[ "$base" =~ $RELEASE_SHA_PATTERN && "$head" == "$finding" ]] || return 1
+	comparison=$(gh api "repos/${upstream}/compare/${base}...${head}") || return 1
+	# GH#39648: a large upstream compare exceeds argv limits; read it on stdin.
+	jq -c --arg repo "$upstream" --arg base "$base" --arg head "$head" \
+		'{repository:$repo,base:$base,head:$head,status:.status,merge_base:.merge_base_commit.sha}' <<<"$comparison" || return 1
+	return 0
+}
+
+# Proof for a semver policy with a signed release_identity: peeled old/new
+# release commits, their ancestry, and the new release's published image
+# digests, all read from the signed upstream (never a PR-controlled source).
+release_identity_proof() {
+	local policy="$1" contents="$2" upstream='' asset='' old='' new='' versions='' tag_old='' tag_new=''
+	local base='' head='' comparison='' release='' asset_id='' digests=''
+	upstream=$(jq -er '.upstream_repository | strings | select(test("^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$"))' <<<"$policy") || return 1
+	# The images asset is optional: registry digest proof may cover the images instead.
+	asset=$(jq -r '.release_identity.images_json_asset // empty | strings' <<<"$policy") || return 1
+	versions=$(release_manifest_versions "$contents" '^v?[0-9]+\.[0-9]+\.[0-9]+$') || return 1
+	IFS=$'\t' read -r old new <<<"$versions"
+	tag_old="v${old#v}"
+	tag_new="v${new#v}"
+	# The commits endpoint peels a tag (including annotated tags) to its commit.
+	base=$(gh api "repos/${upstream}/commits/${tag_old}" --jq '.sha') || return 1
+	head=$(gh api "repos/${upstream}/commits/${tag_new}" --jq '.sha') || return 1
+	[[ "$base" =~ $RELEASE_SHA_PATTERN && "$head" =~ $RELEASE_SHA_PATTERN ]] || return 1
+	comparison=$(gh api "repos/${upstream}/compare/${base}...${head}") || return 1
+	digests='[]'
+	if [[ -n "$asset" ]]; then
+		release=$(gh api "repos/${upstream}/releases/tags/${tag_new}") || return 1
+		asset_id=$(jq -er --arg name "$asset" '[.assets[] | select(.name == $name) | .id] | select(length == 1) | .[0]' <<<"$release") || return 1
+		[[ "$asset_id" =~ ^[1-9][0-9]*$ ]] || return 1
+		digests=$(gh api -H 'Accept: application/octet-stream' "repos/${upstream}/releases/assets/${asset_id}" | grep -Eo 'sha256:[a-f0-9]{64}' | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))') || return 1
+	fi
+	# GH#39648: the compare response is read on stdin, never argv.
+	jq -c --arg repo "$upstream" --arg asset "$asset" --arg base "$base" --arg head "$head" --argjson digests "$digests" \
+		'{repository:$repo,asset:(if $asset == "" then null else $asset end),old_commit:$base,new_commit:$head,status:.status,merge_base:.merge_base_commit.sha,digests:$digests}' <<<"$comparison" || return 1
+	return 0
+}
+
+# Resolve "<image>:<tag>" (image in the signed registry_images) to its manifest
+# or index digest through the registry's anonymous token flow.
+release_registry_digest() {
+	local image="$1" tag="$2" host='' name='' token='' digest='' token_url='' registry=''
+	[[ "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || return 1
+	host="${image%%/*}"
+	name="${image#*/}"
+	case "$host" in
+	ghcr.io)
+		registry="https://ghcr.io"
+		token_url="https://ghcr.io/token?scope=repository:${name}:pull"
+		;;
+	docker.io)
+		registry="https://registry-1.docker.io"
+		token_url="https://auth.docker.io/token?service=registry.docker.io&scope=repository:${name}:pull"
+		;;
+	*) return 1 ;;
+	esac
+	token=$(curl -fsS --max-time 30 "$token_url" | jq -er '.token | strings | select(length > 0)') || return 1
+	digest=$(curl -fsSI --max-time 30 -H "Authorization: Bearer ${token}" \
+		-H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+		"${registry}/v2/${name}/manifests/${tag}" | tr -d '\r' | awk 'tolower($1) == "docker-content-digest:" {print $2}') || return 1
+	[[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || return 1
+	printf '%s\n' "$digest"
+	return 0
+}
+
+# Registry proof: resolve every FROM ref in the changed pinned files whose
+# image the signed policy lists. Keys are the raw refs; the predicate matches them.
+release_registry_proof() {
+	local policy="$1" contents="$2" file='' text='' ref='' image='' tag='' digest='' proof='{}' normalized=''
+	while IFS= read -r file; do
+		text=$(jq -er --arg file "$file" '.[$file].head | @base64d' <<<"$contents") || continue
+		while IFS= read -r ref; do
+			[[ -n "$ref" ]] || continue
+			image="${ref%:*}"
+			tag="${ref##*:}"
+			[[ "$ref" == *:* && "$image" != "$ref" && "$tag" != */* ]] || continue
+			normalized="$image"
+			case "${normalized%%/*}" in
+			*.* | *:*) ;;
+			*) if [[ "$normalized" == */* ]]; then normalized="docker.io/${normalized}"; else normalized="docker.io/library/${normalized}"; fi ;;
+			esac
+			jq -e --arg image "$normalized" '.registry_images | index($image) != null' <<<"$policy" >/dev/null || continue
+			digest=$(release_registry_digest "$normalized" "$tag") || return 1
+			proof=$(jq -c --arg ref "$ref" --arg digest "$digest" '. + {($ref): $digest}' <<<"$proof") || return 1
+		done < <(sed -nE 's/^FROM[[:space:]]+(--[^[:space:]]+[[:space:]]+)*([^[:space:]@]+)@sha256:[a-f0-9]{64}.*/\2/p' <<<"$text")
+	done < <(jq -r --argjson policy "$policy" '. as $c | $policy.pinned_files[] | . as $f | select($c | has($f))' <<<"$contents")
+	printf '%s\n' "$proof"
+	return 0
+}
+
+# Checksum proof: the sha256 the new release's checksum asset lists for the signed file.
+release_checksum_proof() {
+	local policy="$1" contents="$2" upstream='' asset='' file='' versions='' old='' new='' version='' release='' asset_id='' sha=''
+	# Field shapes were validated when the policy was signed and are re-checked by the predicate.
+	upstream=$(jq -er '.upstream_repository | strings' <<<"$policy") || return 1
+	asset=$(jq -er '.release_checksum.asset | strings' <<<"$policy") || return 1
+	versions=$(release_manifest_versions "$contents" '^v?[0-9]+\.[0-9]+\.[0-9]+$') || return 1
+	IFS=$'\t' read -r old new <<<"$versions"
+	version="${new#v}"
+	file=$(jq -er --arg version "$version" '.release_checksum.file | strings | gsub("\\{version\\}"; $version)' <<<"$policy") || return 1
+	release=$(gh api "repos/${upstream}/releases/tags/v${version}") || return 1
+	asset_id=$(jq -er --arg name "$asset" '[.assets[] | select(.name == $name) | .id] | select(length == 1) | .[0]' <<<"$release") || return 1
+	[[ "$asset_id" =~ ^[1-9][0-9]*$ ]] || return 1
+	sha=$(gh api -H 'Accept: application/octet-stream' "repos/${upstream}/releases/assets/${asset_id}" | awk -v file="$file" '$2 == file || $2 == "*" file {print $1}' | sort -u) || return 1
+	[[ "$sha" =~ ^[a-f0-9]{64}$ ]] || return 1
+	jq -cn --arg repo "$upstream" --arg asset "$asset" --arg file "$file" --arg version "$version" --arg sha "$sha" \
+		'{repository:$repo,asset:$asset,file:$file,version:$version,sha256:$sha}' || return 1
+	return 0
+}
+
+# Pin proofs for the opt-in registry_images / release_checksum policy fields.
+release_pin_proof() {
+	local policy="$1" contents="$2" registry='null' checksum='null'
+	if jq -e '.registry_images != null' <<<"$policy" >/dev/null; then
+		registry=$(release_registry_proof "$policy" "$contents") || return 1
+	fi
+	if jq -e '.release_checksum != null' <<<"$policy" >/dev/null; then
+		checksum=$(release_checksum_proof "$policy" "$contents") || return 1
+	fi
+	jq -cn --argjson registry "$registry" --argjson checksum "$checksum" '{registry:$registry,checksum:$checksum}' || return 1
+	return 0
+}
+
+# Reuse the anonymous tag resolver, then collect registry objects and verified
+# provenance from signed sources in the sibling Python module.
+release_companion_proof() {
+	local policy="$1" contents="$2" release="$3" document='' request='' image='' tag='' digest=''
+	# GH#39648: base64 file contents can exceed argv limits; stream them instead.
+	# Exactly three JSON values keep the fail-closed shape --argjson enforced.
+	document=$(printf '%s\n' "$policy" "$contents" "$release" |
+		jq -cs 'if length == 3 then {policy:.[0],contents:.[1],release_proof:.[2]} else error("companion proof input") end') || return 1
+	request=$(python3 "${SCRIPT_DIR}/cloudron_companion_image.py" <<<"$document") || return 1
+	IFS=$'\t' read -r image tag <<<"$request"
+	digest=$(release_registry_digest "$image" "$tag") || return 1
+	python3 "${SCRIPT_DIR}/cloudron_companion_image.py" --digest "$digest" <<<"$document" || return 1
+	return 0
+}
+
+# Derive the checksum exclusively from the catalog at the immutable merge base.
+release_catalog_baseline_proof() {
+	local repo="$1" merge_base="$2" contents="$3" catalog='' version='' digest=''
+	local manifest_path='CloudronManifest.json'
+	version=$(jq -er --arg path "$manifest_path" '.[$path].base | @base64d | fromjson | .version | strings' <<<"$contents") || return 1
+	catalog=$(release_raw_contents "$repo" CloudronVersions.json "$merge_base") || return 1
+	# GH#39648: the catalog grows every release; decode it from stdin, not argv.
+	catalog=$(printf '%s\n' "$catalog" | jq -enR 'input | @base64d | fromjson') || return 1
+	jq -e --arg version "$version" '.versions[$version] | .publishState == "published" and (.manifest | type == "object")' <<<"$catalog" >/dev/null || return 1
+	#aidevops:trust-boundary — jq supplies the canonical manifest's terminating LF.
+	digest=$(jq -cS --arg version "$version" '.versions[$version].manifest' <<<"$catalog" | shasum -a 256) || return 1
+	digest="${digest%% *}"
+	jq -cn --arg version "$version" --arg sha256 "$digest" '{version:$version,sha256:$sha256}' || return 1
 	return 0
 }
 
@@ -318,7 +681,8 @@ release_policy_authorizes() {
 	local repo="$1" pr="$2" head="$3"
 	local active='' number='' policy='' snapshot='' view='' finding='' fingerprint='' compare='' merge_base=''
 	local files='' contents='{}' path='' base_content='' head_content='' document='' verdict='' rc=0
-	local finding_state='' main_sha=''
+	local finding_state='' main_sha='' mode='' finding_number='' upstream_proof='null' finding_version='' release_proof='null' pin_proof='null'
+	local companion_proof='null' catalog_baseline_proof='null'
 	active=$(release_policy_active "$repo") || return 1
 	IFS=$'\t' read -r number policy <<<"$active"
 	snapshot=$(release_pr "$repo" "$pr" 2>/dev/null) || return 1
@@ -328,13 +692,22 @@ release_policy_authorizes() {
 		'.closed_at == null and .merged == false and .head.sha == $head and .auto_merge == null
 		and ((.author_association // "") | test($trusted))
 		and any(.labels[]; .name == $hold) and all(.labels[]; .name != "needs-maintainer-review")' <<<"$snapshot" >/dev/null || return 1
-	release_checks "$repo" "$pr" >/dev/null || return 1
+	release_checks "$repo" "$pr" "$head" >/dev/null || return 1
 	view=$(gh pr view "$pr" --repo "$repo" --json closingIssuesReferences,headRefOid) || return 1
 	jq -e --arg head "$head" '.headRefOid == $head' <<<"$view" >/dev/null || return 1
 	finding=$(release_upstream_finding "$repo" "$(jq -c '{issues: [.closingIssuesReferences[].number]}' <<<"$view")") || return 1
-	IFS=$'\t' read -r _ fingerprint finding_state <<<"$finding"
+	IFS=$'\t' read -r finding_number fingerprint finding_state <<<"$finding"
 	# A finding the maintainer closed (rejected or superseded) never authorizes.
-	[[ "$fingerprint" == upstream-v* && "$finding_state" == open ]] || return 1
+	[[ "$finding_state" == open ]] || return 1
+	mode=$(jq -r '.upstream_mode // "semver"' <<<"$policy") || return 1
+	case "${mode}:${fingerprint}" in
+	semver:upstream-v*) finding_version="${fingerprint#upstream-v}" ;;
+	commits:upstream-commit-*) finding_version="${fingerprint#upstream-commit-}" ;;
+	*)
+		printf '%s PR #%s: standing policy #%s does not apply (policy mode %s vs finding %s)\n' "$repo" "$pr" "$number" "$mode" "$fingerprint" >&2
+		return 1
+		;;
+	esac
 	# Squash merge applies the merge-base diff; main moving does not change it.
 	# Resolve the branch to a SHA so a same-named tag cannot shift the base.
 	main_sha=$(gh api "repos/${repo}/git/ref/heads/main" --jq '.object.sha') || return 1
@@ -347,11 +720,31 @@ release_policy_authorizes() {
 		[[ -n "$path" ]] || continue
 		base_content=$(release_raw_contents "$repo" "$path" "$merge_base") || return 1
 		head_content=$(release_raw_contents "$repo" "$path" "$head") || return 1
-		contents=$(jq -c --arg path "$path" --arg base "$base_content" --arg head "$head_content" \
-			'. + {($path): {base: $base, head: $head}}' <<<"$contents") || return 1
-	done < <(jq -r --argjson policy "$policy" '.[].filename | select(. == "CloudronManifest.json" or (. as $name | (($policy.pinned_files // []) + ($policy.check_files // [])) | index($name) != null))' <<<"$files")
-	document=$(jq -cn --argjson policy "$policy" --arg finding "${fingerprint#upstream-v}" --argjson files "$files" --argjson contents "$contents" \
-		'{policy: $policy, finding_upstream: $finding, files: $files, contents: $contents}') || return 1
+		# GH#39648: one line each (base64 has no whitespace), read on stdin.
+		contents=$(printf '%s\n' "$contents" "$base_content" "$head_content" |
+			jq -cnR --arg path "$path" '(input | fromjson) as $c | input as $b | input as $h | $c + {($path): {base: $b, head: $h}}') || return 1
+	done < <(jq -r --argjson policy "$policy" '[.[].filename | select(. == "CloudronManifest.json" or . == $policy.catalog_baseline.file or (. as $name | (($policy.pinned_files // []) + ($policy.check_files // [])) | index($name) != null))]
+		+ (if $policy.companion_image != null then ["Dockerfile", $policy.companion_image.verify_file] else [] end) | unique[]' <<<"$files")
+	if [[ "$mode" == commits ]]; then
+		upstream_proof=$(release_commit_proof "$repo" "$policy" "$finding_version" "$contents" "$finding_number") || return 1
+	fi
+	if [[ "$mode" == semver ]] && jq -e 'has("release_identity") or has("companion_image")' <<<"$policy" >/dev/null; then
+		release_proof=$(release_identity_proof "$policy" "$contents") || return 1
+	fi
+	if [[ "$mode" == semver ]] && jq -e '.registry_images != null or .release_checksum != null' <<<"$policy" >/dev/null; then
+		pin_proof=$(release_pin_proof "$policy" "$contents") || return 1
+	fi
+	if [[ "$mode" == semver ]] && jq -e 'has("companion_image")' <<<"$policy" >/dev/null; then
+		companion_proof=$(release_companion_proof "$policy" "$contents" "$release_proof") || return 1
+	fi
+	if jq -e --argjson policy "$policy" 'any(.[]; .filename == $policy.catalog_baseline.file)' <<<"$files" >/dev/null; then
+		catalog_baseline_proof=$(release_catalog_baseline_proof "$repo" "$merge_base" "$contents") || return 1
+	fi
+	# GH#39648: stream the proof inputs; exactly eight JSON values fail closed.
+	document=$(printf '%s\n' "$policy" "$files" "$contents" "$upstream_proof" "$release_proof" "$pin_proof" "$companion_proof" "$catalog_baseline_proof" |
+		jq -cs --arg finding "$finding_version" 'if length == 8 then
+			{policy: .[0], finding_upstream: $finding, upstream_proof: .[3], release_proof: .[4], pin_proof: .[5], companion_proof: .[6], catalog_baseline_proof: .[7], files: .[1], contents: .[2]}
+			else error("policy document input") end') || return 1
 	verdict=$(printf '%s\n' "$document" | python3 "${SCRIPT_DIR}/cloudron_routine_bump.py" --repository "$repo") || rc=$?
 	if [[ "$rc" -ne 0 || "$verdict" != ROUTINE_BUMP ]]; then
 		printf '%s PR #%s: standing policy #%s does not apply (%s)\n' "$repo" "$pr" "$number" "${verdict:-predicate error}" >&2
@@ -424,35 +817,93 @@ release_ensure_policy_labels() {
 	return 0
 }
 
+# Create the standing policy issue awaiting finalization; prints its URL.
+release_policy_create() {
+	local repo="$1" mode="$2" upstream="$3" zero_minor="$4"
+	release_ensure_policy_labels "$repo" || return 1
+	release_policy_body "$repo" 'Policy finalization pending. Do not sign until the maintainer command appears.' "$mode" "$upstream" "$zero_minor" |
+		gh_create_issue --repo "$repo" --title "Standing release policy: ${repo##*/} routine upstream bumps" --body-file - \
+			--label "$RELEASE_POLICY_LABEL" --label persistent --label no-auto-dispatch || return 1
+	return 0
+}
+
+# Replace a signed or unverifiable standing policy (explicit --supersede only).
+# `persistent` is removed first so the reopen guard cannot undo the closure.
+release_policy_supersede() {
+	local repo="$1" old_issue="$2" old_url="$3" mode="$4" upstream="$5" zero_minor="$6" dry_run="$7"
+	local new_url='' new_issue='' command='' note='' fields="mode=${mode}"
+	[[ -z "$upstream" ]] || fields="${fields} upstream=${upstream}"
+	[[ "$zero_minor" != true ]] || fields="${fields} zero_minor=routine"
+	if [[ "$dry_run" == true ]]; then
+		printf 'Dry run: would remove persistent from and close policy %s as not planned, then create a replacement policy (%s) for signing.\n' "$old_url" "$fields"
+		return 0
+	fi
+	gh_issue_edit_safe "$old_issue" --repo "$repo" --remove-label persistent >/dev/null || return 1
+	printf -v note 'Superseded by a new standing release policy (%s). This policy no longer authorizes releases; sign the replacement to continue.' "$fields"
+	release_comment "$repo" "$old_issue" "$note" || return 1
+	gh issue close "$old_issue" --repo "$repo" --reason 'not planned' >/dev/null || return 1
+	new_url=$(release_policy_create "$repo" "$mode" "$upstream" "$zero_minor") || return 1
+	new_issue="${new_url##*/}"
+	[[ "$new_url" == https://* && "$new_issue" =~ ^[1-9][0-9]*$ ]] || release_error 'Created issue URL has no valid issue number.' || return 1
+	printf -v command '%s approve issue %s %s' "$(approval_cli_prefix)" "$new_issue" "$repo"
+	release_policy_body "$repo" "Maintainer command: \`${command}\`" "$mode" "$upstream" "$zero_minor" |
+		gh_issue_edit_safe "$new_issue" --repo "$repo" --body-file - >/dev/null || return 1
+	printf '%s\nAPPROVAL_COMMAND=%s\nSUPERSEDED=%s\n' "$new_url" "$command" "$old_url"
+	return 0
+}
+
 # Create (or finalize) the repository's standing policy issue. A signed or
-# unverifiable policy is never rewritten.
+# unverifiable policy is never rewritten unless supersede=true replaces it.
 release_policy_request() {
 	local repo="$1" existing='' rc=0 url='' issue='' command='' body='' verdict='' verify_rc=0 expected=''
+	local mode="${2:-semver}" upstream="${3:-}" existing_command='' existing_expected=''
+	local zero_minor="${4:-false}" supersede="${5:-false}" dry_run="${6:-false}"
 	local maintainer_prefix='Maintainer command:'
 	release_authority "$repo" || return 1
+	# Validate the requested signed schema before creating any issue.
+	release_policy_body "$repo" validation "$mode" "$upstream" "$zero_minor" >/dev/null || return 1
 	existing=$(release_policy_issue "$repo") || rc=$?
 	[[ "$rc" -eq 0 || "$rc" -eq 2 ]] || return 1
 	if [[ "$rc" -eq 0 ]]; then
 		url=$(jq -r '.html_url' <<<"$existing") || return 1
 		body=$(jq -r '.body // ""' <<<"$existing") || return 1
 	else
-		release_ensure_policy_labels "$repo" || return 1
-		url=$(release_policy_body "$repo" 'Policy finalization pending. Do not sign until the maintainer command appears.' |
-			gh_create_issue --repo "$repo" --title "Standing release policy: ${repo##*/} routine upstream bumps" --body-file - \
-				--label "$RELEASE_POLICY_LABEL" --label no-auto-dispatch) || return 1
+		if [[ "$dry_run" == true ]]; then
+			printf 'Dry run: no standing policy exists; would create one for signing.\n'
+			return 0
+		fi
+		url=$(release_policy_create "$repo" "$mode" "$upstream" "$zero_minor") || return 1
 	fi
 	issue="${url##*/}"
 	[[ "$url" == https://* && "$issue" =~ ^[1-9][0-9]*$ ]] || release_error 'Created issue URL has no valid issue number.' || return 1
-	printf -v command 'sudo aidevops approve issue %s %s' "$issue" "$repo"
-	expected=$(release_policy_body "$repo" "${maintainer_prefix} \`${command}\`") || return 1
+	printf -v command '%s approve issue %s %s' "$(approval_cli_prefix)" "$issue" "$repo"
+	expected=$(release_policy_body "$repo" "${maintainer_prefix} \`${command}\`" "$mode" "$upstream" "$zero_minor") || return 1
 	if [[ "$rc" -eq 0 ]]; then
-		# Only the exact canonical body is ready to sign.
-		if [[ "${body//$'\r'/}" == "$expected" ]]; then
+		# Only the exact canonical body is ready to sign. Its command prefix may
+		# come from another host's approval_cli_prefix (GH#39027).
+		existing_command=$(release_body_command "${body//$'\r'/}" "$issue" "$repo") || existing_command=""
+		if [[ -n "$existing_command" && "$existing_command" != "$command" ]]; then
+			existing_expected=$(release_policy_body "$repo" "${maintainer_prefix} \`${existing_command}\`" "$mode" "$upstream" "$zero_minor") || return 1
+		else
+			existing_expected="$expected"
+		fi
+		if [[ "${body//$'\r'/}" == "$existing_expected" ]]; then
 			printf '%s\nAPPROVAL_COMMAND=%s\n' "$url" "$command"
 			return 0
 		fi
 		verdict=$(release_verify "$repo" "$issue") || verify_rc=$?
-		[[ "$verify_rc" -ne 0 && "$verdict" == NO_APPROVAL ]] || release_error 'Existing policy body needs finalization; signed or unverifiable policies must not be rewritten.' || return 1
+		if [[ "$verify_rc" -ne 0 && "$verdict" == NO_APPROVAL ]]; then
+			:
+		elif [[ "$supersede" == true ]]; then
+			release_policy_supersede "$repo" "$issue" "$url" "$mode" "$upstream" "$zero_minor" "$dry_run" || return 1
+			return 0
+		else
+			release_error 'Existing policy body needs finalization; signed or unverifiable policies must not be rewritten. To replace it, re-run policy-request with --supersede (closes the old policy and creates a replacement to sign).' || return 1
+		fi
+	fi
+	if [[ "$dry_run" == true ]]; then
+		printf 'Dry run: unsigned policy %s would be finalized in place.\n' "$url"
+		return 0
 	fi
 	printf '%s\n' "$expected" |
 		gh_issue_edit_safe "$issue" --repo "$repo" --body-file - >/dev/null || return 1
@@ -521,11 +972,162 @@ Merged exact head ${head} under ${authority}. Publication verification resumes n
 	return 0
 }
 
+# Cache only wait states, never authority. An unavailable or ambiguous policy
+# list disables caching; the normal resolver remains responsible for the verdict.
+release_pending_fingerprint() {
+	local repo="$1" before="$2" head="$3" policy='' rc=0 updated=''
+	updated=$(jq -er '.updated_at | strings | select(length > 0)' <<<"$before") || return 1
+	policy=$(release_policy_issue "$repo") || rc=$?
+	if [[ "$rc" -eq 2 ]]; then
+		policy=none
+	elif [[ "$rc" -eq 0 ]]; then
+		policy=$(jq -er 'select((.number | numbers) and (.updated_at | strings | length > 0)) | [.number, .updated_at] | @json' <<<"$policy") || return 1
+	else
+		return 1
+	fi
+	jq -cn --arg updated "$updated" --arg head "$head" --arg policy "$policy" '{updated:$updated,head:$head,policy:$policy}' || return 1
+	return 0
+}
+
+release_pending_cache_hit() {
+	local repo="$1" issue="$2" pr="$3" head="$4" fingerprint="$5" seconds="$6"
+	local file="${HOME}/.aidevops/cache/cloudron-release-approval/${repo//\//--}-${issue}" now='' snapshot=''
+	[[ "$seconds" =~ ^[0-9]{1,8}$ && $((10#$seconds)) -gt 0 && -f "$file" ]] || return 1
+	now=$(date +%s) || return 1
+	jq -e --argjson fingerprint "$fingerprint" --argjson now "$now" --argjson seconds "$((10#$seconds))" \
+		'.fingerprint == $fingerprint and (.epoch | numbers) and .epoch <= $now and ($now - .epoch) < $seconds' "$file" >/dev/null 2>&1 || return 1
+	# A PR may merge or move without changing the request issue. Never suppress
+	# publication resume or moved-head handling on the strength of this cache.
+	snapshot=$(release_pr_raw "$repo" "$pr") || return 1
+	jq -e --arg head "$head" --arg state open '.state == $state and .merged == false and .head.sha == $head' <<<"$snapshot" >/dev/null || return 1
+	return 0
+}
+
+release_pending_cache_write() {
+	local repo="$1" issue="$2" fingerprint="$3" dir="${HOME}/.aidevops/cache/cloudron-release-approval"
+	local file="${dir}/${repo//\//--}-${issue}" temporary='' now=''
+	(umask 077; mkdir -p "$dir") || return 1
+	temporary=$(mktemp "${dir}/.pending.XXXXXXXX") || return 1
+	now=$(date +%s) || { rm -f "$temporary"; return 1; }
+	jq -cn --argjson fingerprint "$fingerprint" --argjson epoch "$now" '{fingerprint:$fingerprint,epoch:$epoch}' >"$temporary" &&
+		mv -f "$temporary" "$file" || { rm -f "$temporary"; return 1; }
+	return 0
+}
+
+# Merge an approved open release PR at its exact approved head.
+# Returns 0 when merged, 3 while waiting with the hold retained, 1 on failure.
+release_merge_approved_pr() {
+	local repo="$1" issue="$2" pr="$3" head="$4" authority="$5" checks='' verdict=''
+	checks=$(release_checks "$repo" "$pr" "$head") || return 1
+	: "$checks"
+	# GH#39648: the merge would fail on open review-bot threads (GH#27137).
+	# Keep the hold instead of toggling it every run, and queue a response.
+	# A remediation push moves the head, which the head-change path handles.
+	if ! release_review_threads_clear "$repo" "$pr"; then
+		printf '%s issue %s: approved; merge waits for resolved review-bot threads on PR #%s (hold retained)\n' "$repo" "$issue" "$pr"
+		release_dispatch_thread_remediation "$repo" "$pr"
+		return 3
+	fi
+	if [[ "$authority" == "$RELEASE_SIGNED_AUTHORITY" ]]; then
+		verdict=$(release_verify "$repo" "$issue") || return 1
+		[[ "$verdict" == VERIFIED ]] || return 1
+	else
+		# Re-prove the policy at the exact head immediately before merge.
+		release_policy_authorizes "$repo" "$pr" "$head" >/dev/null || return 1
+	fi
+	gh_pr_edit_safe "$pr" --repo "$repo" --remove-label hold-for-review >/dev/null || return 1
+	#aidevops:trust-boundary — retain the signed SHA through readiness gates.
+	if ! FULL_LOOP_EXPECTED_PR_HEAD_SHA="$head" "${SCRIPT_DIR}/full-loop-helper.sh" merge "$pr" "$repo" --squash; then
+		gh_pr_edit_safe "$pr" --repo "$repo" --add-label hold-for-review >/dev/null || return 1
+		return 1
+	fi
+	return 0
+}
+
+# Why the standing policy does not cover this head: the exact NOT_ROUTINE reason
+# from cloudron_routine_bump.py, else the first diagnostic line. Read-only.
+release_not_routine_reason() {
+	local repo="$1" pr="$2" head="$3" output='' reason=''
+	output=$(release_policy_authorizes "$repo" "$pr" "$head" 2>&1 >/dev/null) || true
+	# GH#39837: one -e per label command; BSD sed rejects ';' after a label.
+	reason=$(printf '%s\n' "$output" | sed -n -e 's/.*\(NOT_ROUTINE: [^)]*\).*/\1/' -e 't found' -e 'd' -e ':found' -e 'p' -e 'q')
+	if [[ -z "$reason" ]]; then
+		reason="${output%%$'\n'*}"
+		reason="${reason:0:300}"
+	fi
+	[[ -n "$reason" ]] || reason='NOT_ROUTINE: no active signed standing policy covers this head'
+	printf '%s\n' "$reason"
+	return 0
+}
+
+# Newer open upstream findings than the held PR's own finding, as "#N (fingerprint)".
+release_queued_findings() {
+	local repo="$1" pr="$2" view='' finding='' own_number='' own_fp='' own_state='' pages='' line='' number='' fp='' out=''
+	view=$(gh pr view "$pr" --repo "$repo" --json closingIssuesReferences) || return 0
+	finding=$(release_upstream_finding "$repo" "$(jq -c '{issues: [.closingIssuesReferences[].number]}' <<<"$view")") || return 0
+	IFS=$'\t' read -r own_number own_fp own_state <<<"$finding"
+	pages=$(gh api "repos/${repo}/issues?state=open&labels=type:maintenance&per_page=100" --paginate) || return 0
+	while IFS=$'\t' read -r number fp; do
+		[[ -n "$number" && "$number" != "$own_number" ]] || continue
+		release_finding_newer "$number" "$fp" "$own_number" "$own_fp" || continue
+		out="${out}#${number} (${fp#upstream-}) "
+	done < <(jq -rs --arg trusted "$RELEASE_TRUSTED_AUTHOR" 'add // [] | .[]
+		| select(.pull_request == null and ((.author_association // "") | test($trusted)))
+		| ((.body // "") | match("(?m)^<!-- aidevops:cloudron-package-monitor (upstream-(v[0-9]+\\.[0-9]+\\.[0-9]+|commit-[a-f0-9]{40})) -->$")? | .captures[0].string) as $fp
+		| select($fp != null) | [(.number | tostring), $fp] | @tsv' <<<"$pages")
+	printf '%s' "$out"
+	return 0
+}
+
+# One proactive notice per exact head when a non-routine request waits unsigned
+# past AIDEVOPS_CLOUDRON_APPROVAL_NOTICE_SECONDS (default 24 h; 0 disables).
+# Posted on the held PR, never the request issue, so the signed snapshot of the
+# request cannot go stale. Best effort: a failure never blocks the routine.
+release_notify_unsigned() {
+	local repo="$1" issue="$2" request="$3" pr="$4" head="$5"
+	local threshold="${AIDEVOPS_CLOUDRON_APPROVAL_NOTICE_SECONDS:-86400}" created='' now='' age='' verdict='' rc=0
+	local marker="<!-- aidevops:cloudron-release-unsigned-notice ${head} -->" comments='' reason='' queued='' advice='' cli=''
+	[[ "$threshold" =~ ^[0-9]{1,9}$ && $((10#$threshold)) -gt 0 ]] || return 0
+	created=$(jq -r '.created_at // empty' <<<"$request") || return 0
+	[[ -n "$created" ]] || return 0
+	# GH#39837: GNU date -d first, then BSD (macOS) date -j -f; GitHub
+	# timestamps are UTC ISO-8601 with a Z suffix.
+	created=$(date -u -d "$created" '+%s' 2>/dev/null ||
+		TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$created" '+%s' 2>/dev/null) || return 0
+	now=$(date +%s) || return 0
+	age=$((now - created))
+	[[ "$age" -ge $((10#$threshold)) ]] || return 0
+	verdict=$(release_verify "$repo" "$issue") || rc=$?
+	#aidevops:trust-boundary — only a plainly unsigned request is nudged; stale or unverifiable ones keep their own path.
+	[[ "$rc" -ne 0 && "$verdict" == NO_APPROVAL ]] || return 0
+	jq -e --arg head "$head" --arg open_state open '.state == $open_state and .merged == false and .head.sha == $head' \
+		<<<"$(release_pr_raw "$repo" "$pr" 2>/dev/null)" >/dev/null 2>&1 || return 0
+	comments=$(gh api "repos/${repo}/issues/${pr}/comments?per_page=100" --paginate 2>/dev/null) || return 0
+	if jq -se --arg marker "$marker" --arg trusted "$RELEASE_TRUSTED_AUTHOR" \
+		'add // [] | any(.[]; ((.author_association // "") | test($trusted)) and (.body | contains($marker)))' <<<"$comments" >/dev/null 2>&1; then
+		return 0
+	fi
+	reason=$(release_not_routine_reason "$repo" "$pr" "$head")
+	queued=$(release_queued_findings "$repo" "$pr")
+	cli=$(approval_cli_prefix) || cli='sudo aidevops'
+	if [[ -n "$queued" ]]; then
+		advice="Newer upstream findings are queued behind this request: ${queued}. A superseding PR at the newest upstream that keeps this change would be a better thing to sign."
+	else
+		advice='No newer upstream findings are queued; signing this request releases the held head.'
+	fi
+	# shellcheck disable=SC2016 # Markdown backticks, not command substitution.
+	printf '%s\nRelease request #%s has waited %s h unsigned and is not covered by the standing policy, so it is not a routine bump.\n\nWhy: %s\n\n%s\n\nTo approve: `%s approve issue %s %s`\n\nThis notice is posted once per PR head and does not alter the request issue or its signature.\n' \
+		"$marker" "$issue" "$((age / 3600))" "$reason" "$advice" "$cli" "$issue" "$repo" |
+		gh_pr_comment "$pr" --repo "$repo" --body-file - >/dev/null || return 0
+	printf '%s issue %s: unsigned-request notice posted on PR #%s\n' "$repo" "$issue" "$pr"
+	return 0
+}
+
 release_process_issue() {
 	local repo="$1" issue="$2" apply="$3"
-	local before="" after="" body="" pr="" head="" version="" snapshot="" checks="" release_url="" runs="" run_id="" rc=0
-	local metadata=""
-	local verdict="" run_status="" run_conclusion=""
+	local before="" after="" body="" pr="" head="" version="" snapshot="" release_url="" runs="" run_id="" rc=0
+	local metadata="" fingerprint="" recheck="${AIDEVOPS_CLOUDRON_APPROVAL_RECHECK_SECONDS:-21600}"
+	local run_status="" run_conclusion=""
 	before=$(gh api "repos/${repo}/issues/${issue}") || return 1
 	jq -e --arg label "$RELEASE_APPROVAL_LABEL" '.state == "open" and any(.labels[]; .name == $label)' <<<"$before" >/dev/null || return 1
 	body=$(jq -r '.body' <<<"$before") || return 1
@@ -533,9 +1135,22 @@ release_process_issue() {
 	pr=$(jq -r '.pr' <<<"$metadata")
 	head=$(jq -r '.head' <<<"$metadata")
 	version=$(jq -r '.version' <<<"$metadata")
+	if [[ "$apply" == true && "$recheck" =~ ^[0-9]{1,8}$ && $((10#$recheck)) -gt 0 ]]; then
+		fingerprint=$(release_pending_fingerprint "$repo" "$before" "$head") || fingerprint=''
+		if [[ -n "$fingerprint" ]] && release_pending_cache_hit "$repo" "$issue" "$pr" "$head" "$fingerprint" "$recheck"; then
+			printf '%s issue %s: unchanged pending approval; recheck deferred\n' "$repo" "$issue"
+			return 0
+		fi
+	fi
+	# A failed or changed evaluation must not revive an older wait record.
+	rm -f "${HOME}/.aidevops/cache/cloudron-release-approval/${repo//\//--}-${issue}" || true
 	local authority=''
 	release_resolve_authority "$repo" "$issue" "$before" "$pr" "$head" "$apply" || rc=$?
-	[[ "$rc" -ne 3 ]] || return 0
+	if [[ "$rc" -eq 3 ]]; then
+		[[ "$apply" != true ]] || release_notify_unsigned "$repo" "$issue" "$before" "$pr" "$head" || true
+		[[ -z "$fingerprint" ]] || release_pending_cache_write "$repo" "$issue" "$fingerprint" || true
+		return 0
+	fi
 	[[ "$rc" -eq 0 ]] || return 1
 	authority="$RELEASE_RESOLVED_AUTHORITY"
 	after=$(gh api "repos/${repo}/issues/${issue}") || return 1
@@ -550,7 +1165,7 @@ release_process_issue() {
 			comments=$(gh api "repos/${repo}/issues/${issue}/comments?per_page=100" --paginate) || return 1
 			if ! jq -se --arg marker "$marker" 'add | any(.[]; .body | contains($marker))' <<<"$comments" >/dev/null; then
 				release_comment "$repo" "$issue" "${marker}
-PR head changed after approval. No merge occurred. Update this issue's exact head and verification evidence, then run sudo aidevops approve issue ${issue} ${repo} again." || return 1
+PR head changed after approval. No merge occurred. Update this issue's exact head and verification evidence, then run $(approval_cli_prefix) approve issue ${issue} ${repo} again." || return 1
 			fi
 		fi
 		return 0
@@ -560,24 +1175,17 @@ PR head changed after approval. No merge occurred. Update this issue's exact hea
 	fi
 	[[ "$apply" == true ]] || {
 		printf 'Approved release %s v%s (dry run)\n' "$repo" "$version"
+		# GH#39648: report the thread wait an apply run would take (read-only).
+		if [[ "$(jq -r '.state' <<<"$snapshot")" == open ]] && ! release_review_threads_clear "$repo" "$pr"; then
+			printf '%s issue %s: merge would wait for resolved review-bot threads on PR #%s (dry run)\n' "$repo" "$issue" "$pr"
+		fi
 		return 0
 	}
 	if [[ "$(jq -r '.state' <<<"$snapshot")" == open ]]; then
-		checks=$(release_checks "$repo" "$pr") || return 1
-		: "$checks"
-		if [[ "$authority" == "$RELEASE_SIGNED_AUTHORITY" ]]; then
-			verdict=$(release_verify "$repo" "$issue") || return 1
-			[[ "$verdict" == VERIFIED ]] || return 1
-		else
-			# Re-prove the policy at the exact head immediately before merge.
-			release_policy_authorizes "$repo" "$pr" "$head" >/dev/null || return 1
-		fi
-		gh_pr_edit_safe "$pr" --repo "$repo" --remove-label hold-for-review >/dev/null || return 1
-		#aidevops:trust-boundary — retain the signed SHA through readiness gates.
-		if ! FULL_LOOP_EXPECTED_PR_HEAD_SHA="$head" "${SCRIPT_DIR}/full-loop-helper.sh" merge "$pr" "$repo" --squash; then
-			gh_pr_edit_safe "$pr" --repo "$repo" --add-label hold-for-review >/dev/null || return 1
-			return 1
-		fi
+		rc=0
+		release_merge_approved_pr "$repo" "$issue" "$pr" "$head" "$authority" || rc=$?
+		[[ "$rc" -ne 3 ]] || return 0
+		[[ "$rc" -eq 0 ]] || return 1
 		snapshot=$(release_pr "$repo" "$pr") || return 1
 		release_record_merge_authority "$repo" "$issue" "$head" "$authority"
 	fi
@@ -635,6 +1243,94 @@ release_authorize() {
 		jq -e --argjson original "$issue" --arg label "$RELEASE_APPROVAL_LABEL" '.state == "open" and .body == $original.body and any(.labels[]; .name == $label)' <<<"$current" >/dev/null || return 1
 		return 0
 	done < <(jq -c '.[]' <<<"$issues")
+	return 1
+}
+
+# GH#37955: does exact head $3 of PR $2 change the CloudronManifest.json
+# version against its base branch tip? Returns 0 for a release bump, 1 when it
+# is not one, and 2 when the evidence is unavailable (callers fail closed).
+release_is_version_bump() {
+	local repo="$1" pr="$2" head="$3" manifest_path='CloudronManifest.json'
+	local snapshot="" pages="" touched="" base_ref="" head_version="" base_version=""
+	snapshot=$(release_pr_raw "$repo" "$pr") || return 2
+	jq -e --arg head "$head" '.head.sha == $head' <<<"$snapshot" >/dev/null || return 2
+	base_ref=$(jq -er '.base.ref' <<<"$snapshot") || return 2
+	# Catalog publication runs on main only; a stacked base cannot publish, and
+	# its eventual PR into main is gated here in turn.
+	[[ "$base_ref" == main ]] || return 1
+	pages=$(gh api "repos/${repo}/pulls/${pr}/files?per_page=100" --paginate) || return 2
+	# Malformed pages make jq fail, which is unknown evidence, not "unchanged".
+	touched=$(jq -s --arg path "$manifest_path" 'add // [] | any(.[]; .filename == $path or .previous_filename == $path)' <<<"$pages") || return 2
+	[[ "$touched" == true ]] || return 1
+	head_version=$(release_contents "$repo" "$manifest_path" "$head" | jq -r '.version // ""') || return 2
+	base_version=$(release_contents "$repo" "$manifest_path" "$base_ref" | jq -r '.version // ""') || return 2
+	[[ -n "$head_version" && -n "$base_version" ]] || return 2
+	[[ "$head_version" != "$base_version" ]] || return 1
+	# Third field: whether native auto-merge is pending on this PR. Fourth: an
+	# independent review hold (hold-for-review without the release label).
+	printf '%s %s %s\n' "$base_version" "$head_version" "$(jq -r --arg label "$RELEASE_APPROVAL_LABEL" '
+		(if .auto_merge == null then "manual" else "auto" end) + " " +
+		(if any(.labels[]?; .name == "hold-for-review") and all(.labels[]?; .name != $label) then "independent" else "none" end)' <<<"$snapshot")"
+	return 0
+}
+
+# GH#37955: best-effort cancellation of a pending native auto-merge on a PR the
+# release gate denies; otherwise GitHub could merge (and publish) once checks
+# pass. $3 is "auto"/"manual" from a fresh snapshot; any other value re-reads,
+# and unreadable state still attempts cancellation. Never writes under DRY_RUN
+# or CLOUDRON_RELEASE_GUARD_READ_ONLY. Always returns 0.
+release_cancel_auto_merge() {
+	local repo="$1" pr="$2" mode="${3:-}" snapshot=""
+	[[ "${DRY_RUN:-0}" != 1 && "${CLOUDRON_RELEASE_GUARD_READ_ONLY:-0}" != 1 ]] || return 0
+	if [[ "$mode" != auto && "$mode" != manual ]]; then
+		mode=auto
+		if snapshot=$(release_pr_raw "$repo" "$pr" 2>/dev/null) &&
+			jq -e '.auto_merge == null' <<<"$snapshot" >/dev/null 2>&1; then
+			mode=manual
+		fi
+	fi
+	[[ "$mode" == auto ]] || return 0
+	gh pr merge "$pr" --repo "$repo" --disable-auto >/dev/null 2>&1 ||
+		printf 'WARN: unable to disable native auto-merge on held PR #%s in %s\n' "$pr" "$repo" >&2
+	return 0
+}
+
+# GH#37955: merge-time release gate for every transport (pulse and full-loop).
+# A manifest version change publishes a catalog release on merge, so it needs
+# exact-head release authority whether or not a release request was ever made.
+# An unauthorized bump is held for the r924 routine (process --apply), which
+# requests approval or applies the signed standing policy. Returns 0 to allow.
+release_merge_guard() {
+	local repo="$1" pr="$2" head="$3" versions="" rc=0 base_version="" head_version="" merge_mode="" review_hold=""
+	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$pr" =~ ^[1-9][0-9]*$ && "$head" =~ $RELEASE_SHA_PATTERN ]] ||
+		release_error 'merge-guard requires owner/repo, a PR number and a full head SHA.' || return 1
+	versions=$(release_is_version_bump "$repo" "$pr" "$head") || rc=$?
+	read -r base_version head_version merge_mode review_hold <<<"$versions" || true
+	[[ "$rc" -ne 1 ]] || return 0
+	#aidevops:trust-boundary — unknown evidence never allows a package merge,
+	# and must not leave a native auto-merge able to publish either.
+	if [[ "$rc" -ne 0 ]]; then
+		release_cancel_auto_merge "$repo" "$pr"
+		release_error "Unable to determine whether PR #${pr} changes the ${repo} release version; merge blocked."
+		return 1
+	fi
+	release_authorize "$repo" "$pr" "$head" && return 0
+	if [[ "$review_hold" == independent ]]; then
+		# #aidevops:trust-boundary — labelling would let release processing
+		# adopt and later clear another workflow's hold. The PR stays held; the
+		# guard re-labels it once that independent hold is resolved.
+		printf 'WARN: PR #%s in %s keeps its independent hold-for-review; release hold labels not added\n' "$pr" "$repo" >&2
+	elif [[ "${DRY_RUN:-0}" != 1 && "${CLOUDRON_RELEASE_GUARD_READ_ONLY:-0}" != 1 ]]; then
+		# Adding holds only narrows merge eligibility; it never grants authority.
+		# r924 requests approval for any held same-repository PR (see
+		# release_retry_interrupted) or applies the standing policy.
+		if ! release_ensure_labels "$repo" ||
+			! gh_pr_edit_safe "$pr" --repo "$repo" --add-label "$RELEASE_APPROVAL_LABEL" --add-label hold-for-review >/dev/null; then
+			printf 'WARN: unable to apply release hold labels to PR #%s in %s\n' "$pr" "$repo" >&2
+		fi
+	fi
+	release_cancel_auto_merge "$repo" "$pr" "$merge_mode"
+	release_error "PR #${pr} changes the ${repo} release version (${base_version} -> ${head_version}) without exact-head release authority; held for the release routine (signed approval or standing release policy)."
 	return 1
 }
 
@@ -770,7 +1466,15 @@ release_request_held() {
 		printf '%s PR #%s: would request release approval (dry run)\n' "$repo" "$pr"
 		return 0
 	fi
-	release_request "$repo" "$pr" || return 1
+	local rc=0
+	release_request "$repo" "$pr" || rc=$?
+	if [[ "$rc" -eq 3 ]]; then
+		# GH#39648: no approval exists yet, so a remediation push costs nothing.
+		printf '%s PR #%s: release approval request waits for resolved review-bot threads\n' "$repo" "$pr"
+		release_dispatch_thread_remediation "$repo" "$pr"
+		return 3
+	fi
+	[[ "$rc" -eq 0 ]] || return 1
 	return 0
 }
 
@@ -794,7 +1498,7 @@ release_supersede_held_pr() {
 		printf '%s PR #%s: would supersede (%s) (dry run)\n' "$repo" "$pr" "$reason"
 		return 0
 	fi
-	snapshot=$(gh api "repos/${repo}/pulls/${pr}") || return 1
+	snapshot=$(release_pr_raw "$repo" "$pr") || return 1
 	#aidevops:trust-boundary — re-read before closing: only an unchanged,
 	# same-repository, trusted worker PR that is still held may be superseded.
 	if ! jq -e --arg repo "$repo" --arg head "$head" --arg approval "$RELEASE_APPROVAL_LABEL" \
@@ -918,7 +1622,13 @@ release_process() {
 	if [[ -n "$repo_filter" ]]; then
 		repos="$repo_filter"
 	else
-		repos=$(jq -er '[.initialized_repos[] | select(.app_type == "cloudron-package" and .maintenance != false) | .slug] | unique | .[]' "$REPOS_FILE") || return 1
+		# GH#39145: no registered package is a no-op, not a failure; a missing or
+		# malformed registry still fails because jq errors on it.
+		repos=$(jq -r '[.initialized_repos[] | select(.app_type == "cloudron-package" and .maintenance != false) | .slug] | unique | .[]' "$REPOS_FILE") || return 1
+		if [[ -z "$repos" ]]; then
+			printf 'INFO: No registered cloudron-package repositories; nothing to process.\n' >&2
+			return 0
+		fi
 	fi
 	while IFS= read -r repo; do
 		release_authority "$repo" || {
@@ -952,13 +1662,39 @@ main() {
 		[[ $# -eq 4 ]] || return 1
 		release_authorize "$arg2" "$arg3" "$arg4" || return 1
 		;;
+	merge-guard)
+		[[ $# -eq 4 ]] || return 1
+		release_merge_guard "$arg2" "$arg3" "$arg4" || return 1
+		;;
+	cancel-auto-merge)
+		[[ $# -eq 3 && "$arg2" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$arg3" =~ ^[1-9][0-9]*$ ]] || return 1
+		release_cancel_auto_merge "$arg2" "$arg3"
+		;;
 	request)
 		[[ $# -eq 3 ]] || return 1
 		release_request "$arg2" "$arg3" || return $?
 		;;
 	policy-request)
-		[[ $# -eq 2 ]] || return 1
-		release_policy_request "$arg2" || return 1
+		[[ $# -ge 2 && "$arg2" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+		local policy_mode=semver policy_upstream='' zero_minor=false dry_run=false supersede=false
+		shift 2
+		while [[ $# -gt 0 ]]; do
+			local policy_option="$1" policy_value="${2:-}"
+			case "$policy_option" in
+			--supersede) [[ "$supersede" == false ]] || return 1; supersede=true; shift ;;
+			--zero-minor-routine) [[ "$zero_minor" == false ]] || return 1; zero_minor=true; shift ;;
+			--dry-run) [[ "$dry_run" == false ]] || return 1; dry_run=true; shift ;;
+			commits | commits-license-url | release-identity | pins)
+				[[ $# -ge 2 && "$policy_mode" == semver ]] || return 1
+				policy_mode="$policy_option"; policy_upstream="$policy_value"; shift 2 ;;
+			*) return 1 ;;
+			esac
+		done
+		if [[ "$dry_run" == true && "$supersede" == false ]]; then
+			release_policy_body "$arg2" 'Dry run only. Create or finalize the policy before signing.' "$policy_mode" "$policy_upstream" "$zero_minor" || return 1
+		else
+			release_policy_request "$arg2" "$policy_mode" "$policy_upstream" "$zero_minor" || return 1
+		fi
 		;;
 	process)
 		local apply=false repo_filter="" issue_filter=""
@@ -988,7 +1724,7 @@ main() {
 		release_process "$apply" "$repo_filter" "$issue_filter" || return 1
 		;;
 	help | --help | -h)
-		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | policy-request <repo> | process [--repo owner/repo] [--issue N] [--apply]\n'
+		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | policy-request <repo> [--zero-minor-routine] [--supersede] [--dry-run] [commits <upstream-owner/repo> | commits-license-url <upstream-owner/repo> | release-identity <upstream-owner/repo:COMMIT_ARG:images-asset> | pins <json: upstream_repository, registry_images, release_checksum, license_version_url, release_identity>] | merge-guard <repo> <pr> <head> | process [--repo owner/repo] [--issue N] [--apply]\n'
 		;;
 	*) return 1 ;;
 	esac

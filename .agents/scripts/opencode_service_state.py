@@ -59,6 +59,12 @@ def systemd_quote(value, executable=False):
     return '"' + (value.replace('$', '$$') if executable else value) + '"'
 
 
+def systemd_path(value):
+    """Path directives (WorkingDirectory=) take the raw value: quotes stay literal."""
+    require(not any(ord(c) < 32 for c in value), "Control character in service value")
+    return value.replace('%', '%%')
+
+
 @contextmanager
 def lifecycle_lock(service):
     import fcntl  # Unix only; unsupported platforms are rejected before this point.
@@ -171,7 +177,7 @@ class ServiceState:
         return (f"# {SCHEMA}\n[Unit]\nDescription=Aidevops OpenCode owner\n"
                 "[Service]\nType=simple\n"
                 f"ExecStart={systemd_quote(args[0], True)} {systemd_quote(args[1], True)} run\n{env}\n"
-                f"WorkingDirectory={systemd_quote(str(self.home))}\n"
+                f"WorkingDirectory={systemd_path(str(self.home))}\n"
                 "Restart=on-failure\nRestartSec=30\nTimeoutStopSec=30\nUMask=0077\n"
                 "[Install]\nWantedBy=default.target\n").encode()
 

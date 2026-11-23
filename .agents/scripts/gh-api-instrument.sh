@@ -82,6 +82,10 @@
 #   AIDEVOPS_GH_API_LEGACY_SCRATCH_MIN_AGE_SECONDS — minimum age before exact
 #                                   legacy .source/.tmp/.trim files are reaped
 #                                   (default 3600)
+#   AIDEVOPS_GH_TEMP_SWEEP_MIN_AGE_MINUTES — age before orphaned per-invocation
+#                                   shim scratch is reaped (default 1440)
+#   AIDEVOPS_GH_TEMP_SWEEP_INTERVAL_SECONDS — minimum gap between sweeps run
+#                                   from trim() (default 3600)
 #   AIDEVOPS_GH_API_INSTRUMENT_DISABLE=1 — make all calls no-ops
 #
 # Part of aidevops framework: https://aidevops.sh
@@ -160,17 +164,33 @@ _gh_now_seconds() {
 	return 0
 }
 
+# Assign epoch milliseconds to the named variable. Bash 5 EPOCHREALTIME avoids
+# a perl/python exec on every timed gh request (GH#39187); its decimal mark is
+# locale-dependent, so accept '.' or ',' with exactly six microsecond digits.
+# Older shells keep the original perl -> python3 -> whole-second chain.
+_gh_now_ms_into() {
+	local _gnm_var="$1"
+	local _gnm_now=""
+	local _gnm_epoch="${EPOCHREALTIME:-}"
+	if [[ -n "${BASH_VERSION:-}" && "$_gnm_epoch" =~ ^[1-9][0-9]*[.,][0-9]{6}$ ]]; then
+		_gnm_epoch="${_gnm_epoch//[.,]/}"
+		_gnm_now=$(((_gnm_epoch + 500) / 1000))
+	elif command -v perl >/dev/null 2>&1; then
+		_gnm_now=$(perl -MTime::HiRes=time -e 'printf "%.0f\n", time * 1000' 2>/dev/null || true)
+	elif command -v python3 >/dev/null 2>&1; then
+		_gnm_now=$(python3 -c 'import time; print(round(time.time() * 1000))' 2>/dev/null || true)
+	fi
+	if [[ ! "$_gnm_now" =~ ^[0-9]+$ ]]; then
+		_gnm_now=$(_gh_now_seconds) || return 1
+		_gnm_now=$((_gnm_now * 1000))
+	fi
+	printf -v "$_gnm_var" '%s' "$_gnm_now"
+	return 0
+}
+
 _gh_now_ms() {
 	local now=""
-	if command -v perl >/dev/null 2>&1; then
-		now=$(perl -MTime::HiRes=time -e 'printf "%.0f\n", time * 1000' 2>/dev/null || true)
-	elif command -v python3 >/dev/null 2>&1; then
-		now=$(python3 -c 'import time; print(round(time.time() * 1000))' 2>/dev/null || true)
-	fi
-	if [[ ! "$now" =~ ^[0-9]+$ ]]; then
-		now=$(_gh_now_seconds) || return 1
-		now=$((now * 1000))
-	fi
+	_gh_now_ms_into now || return 1
 	printf '%s\n' "$now"
 	return 0
 }
@@ -276,69 +296,123 @@ _gh_cleanup_legacy_scratch() {
 	return 0
 }
 
-_gh_safe_text() {
-	local value="$1"
-	local fallback="$2"
-	value="${value##*/}"
-	if [[ "$value" =~ ^[A-Za-z0-9_.:+-]+$ ]]; then
-		printf '%s' "$value"
+# The *_into helpers assign the named caller variable with printf -v instead of
+# printing for $(...) capture: every record sanitises ~20 fields, and a
+# command-substitution fork per field dominated shim cost (GH#39187). Helper
+# locals carry unique prefixes so dynamic scoping never shadows the target.
+_gh_safe_text_into() {
+	local _gst_var="$1"
+	local _gst_value="$2"
+	local _gst_fallback="$3"
+	_gst_value="${_gst_value##*/}"
+	if [[ "$_gst_value" =~ ^[A-Za-z0-9_.:+-]+$ ]]; then
+		printf -v "$_gst_var" '%s' "$_gst_value"
 	else
-		printf '%s' "$fallback"
+		printf -v "$_gst_var" '%s' "$_gst_fallback"
 	fi
 	return 0
 }
 
+_gh_safe_text() {
+	local raw="$1"
+	local fallback="$2"
+	local value=""
+	_gh_safe_text_into value "$raw" "$fallback"
+	printf '%s' "$value"
+	return 0
+}
+
+_gh_safe_number_into() {
+	local _gsn_var="$1"
+	local _gsn_value="$2"
+	[[ "$_gsn_value" =~ ^[0-9]+$ ]] || _gsn_value=""
+	printf -v "$_gsn_var" '%s' "$_gsn_value"
+	return 0
+}
+
 _gh_safe_number() {
-	local value="$1"
-	[[ "$value" =~ ^[0-9]+$ ]] && printf '%s' "$value"
+	local raw="$1"
+	local value=""
+	_gh_safe_number_into value "$raw"
+	printf '%s' "$value"
+	return 0
+}
+
+_gh_default_pool_into() {
+	local _gdp_var="$1"
+	local _gdp_path="${2:-}"
+	local _gdp_pool=""
+	case "$_gdp_path" in
+	graphql | search-graphql) _gdp_pool='graphql' ;;
+	rest) _gdp_pool='rest-core' ;;
+	search-rest) _gdp_pool='rest-search' ;;
+	*) _gdp_pool='other' ;;
+	esac
+	printf -v "$_gdp_var" '%s' "$_gdp_pool"
 	return 0
 }
 
 _gh_default_pool() {
 	local path="$1"
-	case "$path" in
-	graphql | search-graphql) printf 'graphql' ;;
-	rest) printf 'rest-core' ;;
-	search-rest) printf 'rest-search' ;;
-	*) printf 'other' ;;
+	local api_pool=""
+	_gh_default_pool_into api_pool "$path"
+	printf '%s' "$api_pool"
+	return 0
+}
+
+_gh_default_auth_into() {
+	local _gda_var="$1"
+	local _gda_pool="${2:-}"
+	local _gda_auth='gh-pat'
+	case "$_gda_pool" in
+	rest-core | rest-search)
+		# The GitHub App probe keeps its historical subshell isolation; it only
+		# runs when the app helper is loaded, which the gh shim does not do.
+		if command -v github_app_is_configured >/dev/null 2>&1 && (github_app_is_configured); then
+			_gda_auth='github-app'
+		fi
+		;;
 	esac
+	printf -v "$_gda_var" '%s' "$_gda_auth"
 	return 0
 }
 
 _gh_default_auth() {
 	local api_pool="$1"
-	case "$api_pool" in
-	rest-core | rest-search)
-		if command -v github_app_is_configured >/dev/null 2>&1 && github_app_is_configured; then
-			printf 'github-app'
-		else
-			printf 'gh-pat'
-		fi
-		;;
-	*) printf 'gh-pat' ;;
+	local auth_mode=""
+	_gh_default_auth_into auth_mode "$api_pool"
+	printf '%s' "$auth_mode"
+	return 0
+}
+
+_gh_resolve_caller_into() {
+	local _grc_var="$1"
+	local _grc_caller="${2:-}"
+	local _grc_i=1
+	local _grc_src=""
+	if [[ -z "$_grc_caller" ]]; then
+		while [[ $_grc_i -lt ${#BASH_SOURCE[@]} ]]; do
+			_grc_src="${BASH_SOURCE[$_grc_i]}"
+			if [[ -n "$_grc_src" && "${_grc_src##*/}" != "gh-api-instrument.sh" ]]; then
+				_grc_caller="${_grc_src##*/}"
+				break
+			fi
+			_grc_i=$((_grc_i + 1))
+		done
+		[[ -z "$_grc_caller" ]] && _grc_caller="${0##*/}"
+	fi
+	case "$_grc_caller" in
+	"" | -bash | bash) _grc_caller="unknown" ;;
 	esac
+	_gh_safe_text_into "$_grc_var" "$_grc_caller" unknown
 	return 0
 }
 
 _gh_resolve_caller() {
-	local caller="$1"
-	local i=1
-	local src=""
-	if [[ -z "$caller" ]]; then
-		while [[ $i -lt ${#BASH_SOURCE[@]} ]]; do
-			src="${BASH_SOURCE[$i]}"
-			if [[ -n "$src" && "${src##*/}" != "gh-api-instrument.sh" ]]; then
-				caller="${src##*/}"
-				break
-			fi
-			i=$((i + 1))
-		done
-		[[ -z "$caller" ]] && caller="${0##*/}"
-	fi
-	case "$caller" in
-	"" | -bash | bash) caller="unknown" ;;
-	esac
-	_gh_safe_text "$caller" unknown
+	local requested="${1:-}"
+	local caller=""
+	_gh_resolve_caller_into caller "$requested"
+	printf '%s' "$caller"
 	return 0
 }
 
@@ -432,13 +506,21 @@ _GH_API_REQUEST_ATTEMPT_COUNT=0
 _GH_API_REQUEST_HTTP_FAILURE=0
 _GH_API_REQUEST_ATTEMPT_STATE_OWNER=0
 
-_gh_request_attempt_state_temp_dir() {
-	local temp_dir="${AIDEVOPS_TEMP_DIR:-${_GH_API_HOME}/.aidevops/.agent-workspace/tmp}"
-	if [[ ! -e "$temp_dir" ]]; then
-		(umask 077 && mkdir -p "$temp_dir") 2>/dev/null || return 1
+_gh_request_attempt_state_temp_dir_into() {
+	local _gat_var="$1"
+	local _gat_dir="${AIDEVOPS_TEMP_DIR:-${_GH_API_HOME}/.aidevops/.agent-workspace/tmp}"
+	if [[ ! -e "$_gat_dir" ]]; then
+		(umask 077 && mkdir -p "$_gat_dir") 2>/dev/null || return 1
 	fi
-	[[ -d "$temp_dir" && ! -L "$temp_dir" && -O "$temp_dir" ]] || return 1
-	printf '%s\n' "${temp_dir%/}"
+	[[ -d "$_gat_dir" && ! -L "$_gat_dir" && -O "$_gat_dir" ]] || return 1
+	printf -v "$_gat_var" '%s' "${_gat_dir%/}"
+	return 0
+}
+
+_gh_request_attempt_state_temp_dir() {
+	local temp_dir=""
+	_gh_request_attempt_state_temp_dir_into temp_dir || return 1
+	printf '%s\n' "$temp_dir"
 	return 0
 }
 
@@ -446,7 +528,7 @@ _gh_request_attempt_state_file_valid() {
 	local state_file="$1"
 	local temp_dir=""
 	local basename=""
-	temp_dir=$(_gh_request_attempt_state_temp_dir) || return 1
+	_gh_request_attempt_state_temp_dir_into temp_dir || return 1
 	case "$state_file" in
 	"${temp_dir}"/gh-request-attempts.*) ;;
 	*) return 1 ;;
@@ -473,7 +555,7 @@ gh_request_attempt_state_begin() {
 	fi
 	unset AIDEVOPS_GH_REQUEST_ATTEMPT_STATE_FILE
 	unset AIDEVOPS_GH_REQUEST_ATTEMPT_STATE_LOGICAL_ID
-	temp_dir=$(_gh_request_attempt_state_temp_dir) || return 1
+	_gh_request_attempt_state_temp_dir_into temp_dir || return 1
 	state_file=$(mktemp "${temp_dir}/gh-request-attempts.XXXXXX" 2>/dev/null) || return 1
 	chmod 0600 "$state_file" 2>/dev/null || {
 		rm -f "$state_file" 2>/dev/null || true
@@ -612,31 +694,31 @@ _gh_append_v2() {
 	else
 		ts=$(_gh_now_seconds) || return 0
 	fi
-	caller=$(_gh_resolve_caller "$caller")
-	path=$(_gh_safe_text "$path" other)
-	auth_mode=$(_gh_safe_text "$auth_mode" unknown)
-	api_pool=$(_gh_safe_text "$api_pool" other)
-	route_decision=$(_gh_safe_text "$route_decision" unspecified)
-	event_kind=$(_gh_safe_text "$event_kind" logical)
-	logical_id=$(_gh_safe_text "$logical_id" unknown)
-	attempt_id=$(_gh_safe_text "$attempt_id" unknown)
-	outcome=$(_gh_safe_text "$outcome" unknown)
-	budget_remaining=$(_gh_safe_number "$budget_remaining")
-	page=$(_gh_safe_number "$page")
-	retry=$(_gh_safe_number "$retry")
-	http_status=$(_gh_safe_number "$http_status")
-	elapsed_ms=$(_gh_safe_number "$elapsed_ms")
-	quota_cost=$(_gh_safe_number "$quota_cost")
+	_gh_resolve_caller_into caller "$caller"
+	_gh_safe_text_into path "$path" other
+	_gh_safe_text_into auth_mode "$auth_mode" unknown
+	_gh_safe_text_into api_pool "$api_pool" other
+	_gh_safe_text_into route_decision "$route_decision" unspecified
+	_gh_safe_text_into event_kind "$event_kind" logical
+	_gh_safe_text_into logical_id "$logical_id" unknown
+	_gh_safe_text_into attempt_id "$attempt_id" unknown
+	_gh_safe_text_into outcome "$outcome" unknown
+	_gh_safe_number_into budget_remaining "$budget_remaining"
+	_gh_safe_number_into page "$page"
+	_gh_safe_number_into retry "$retry"
+	_gh_safe_number_into http_status "$http_status"
+	_gh_safe_number_into elapsed_ms "$elapsed_ms"
+	_gh_safe_number_into quota_cost "$quota_cost"
 	# The Pulse auth resolver labels its child gh process; other callers leave
 	# the reason empty ("unrouted" in reports).
-	auth_reason=$(_gh_safe_text "${AIDEVOPS_GH_AUTH_REASON:-}" "")
+	_gh_safe_text_into auth_reason "${AIDEVOPS_GH_AUTH_REASON:-}" ""
 	local auth_consumer=""
-	auth_consumer=$(_gh_safe_text "${AIDEVOPS_GITHUB_AUTH_CONSUMER:-}" "")
+	_gh_safe_text_into auth_consumer "${AIDEVOPS_GITHUB_AUTH_CONSUMER:-}" ""
 	# Only accept the digest format produced by _ghqa_auth_fingerprint, never
 	# arbitrary auth text (which might accidentally contain a credential).
 	[[ "$auth_fingerprint" =~ ^[a-f0-9]{64}$ ]] || auth_fingerprint=""
-	reset_epoch=$(_gh_safe_number "$reset_epoch")
-	quota_used=$(_gh_safe_number "$quota_used")
+	_gh_safe_number_into reset_epoch "$reset_epoch"
+	_gh_safe_number_into quota_used "$quota_used"
 	# These fields are strict enums, not generic text: reject URLs/argv even if a
 	# caller bypasses the debug filter. Existing v2 columns remain unchanged.
 	case "$request_method" in GET | HEAD | POST | PUT | PATCH | DELETE | OPTIONS) ;; *) request_method=unknown ;; esac
@@ -686,12 +768,12 @@ gh_record_call() {
 	local budget_remaining="${6:-${AIDEVOPS_GH_BUDGET_REMAINING:-${_GH_LAST_GRAPHQL_REMAINING:-}}}"
 	local event_kind="${7:-logical}"
 	local logical_id="${AIDEVOPS_GH_LOGICAL_ID:-}"
-	caller=$(_gh_resolve_caller "$caller")
+	_gh_resolve_caller_into caller "$caller"
 	if [[ -z "$api_pool" ]]; then
-		api_pool=$(_gh_default_pool "$path")
+		_gh_default_pool_into api_pool "$path"
 	fi
 	if [[ -z "$auth_mode" ]]; then
-		auth_mode=$(_gh_default_auth "$api_pool")
+		_gh_default_auth_into auth_mode "$api_pool"
 	fi
 	[[ -z "$route_decision" ]] && route_decision="${api_pool}-selected"
 	case "$route_decision" in
@@ -775,8 +857,11 @@ gh_record_attempt() {
 	[[ -n "$attempt_id" ]] || attempt_id=$(gh_new_attempt_id "$logical_id")
 	[[ -n "$page" ]] || page=1
 	[[ -n "$retry" ]] || retry=0
-	[[ -n "$api_pool" ]] || api_pool=$(_gh_default_pool "$path")
-	[[ -n "$auth_mode" ]] || auth_mode="${AIDEVOPS_GH_AUTH_MODE:-$(_gh_default_auth "$api_pool")}"
+	[[ -n "$api_pool" ]] || _gh_default_pool_into api_pool "$path"
+	if [[ -z "$auth_mode" ]]; then
+		auth_mode="${AIDEVOPS_GH_AUTH_MODE:-}"
+		[[ -n "$auth_mode" ]] || _gh_default_auth_into auth_mode "$api_pool"
+	fi
 	[[ -n "$route_decision" ]] || route_decision="${AIDEVOPS_GH_ROUTE_DECISION:-${api_pool}-selected}"
 	# Only the native boundary can attest a transport execution error. Legacy
 	# logical adapters may fail a local projection after a successful request.
@@ -806,8 +891,8 @@ gh_record_timeout() {
 	local budget_remaining="${AIDEVOPS_GH_BUDGET_REMAINING:-${_GH_LAST_GRAPHQL_REMAINING:-}}"
 	local logical_id="${AIDEVOPS_GH_LOGICAL_ID:-}"
 	[[ "$elapsed_ms" =~ ^[0-9]+$ ]] || elapsed_ms=0
-	[[ -n "$api_pool" ]] || api_pool=$(_gh_default_pool "$path")
-	[[ -n "$auth_mode" ]] || auth_mode=$(_gh_default_auth "$api_pool")
+	[[ -n "$api_pool" ]] || _gh_default_pool_into api_pool "$path"
+	[[ -n "$auth_mode" ]] || _gh_default_auth_into auth_mode "$api_pool"
 	[[ -n "$logical_id" ]] || logical_id=$(gh_new_logical_id)
 	_gh_append_v2 timeout "$caller" "$path" "$auth_mode" "$api_pool" "$route_decision" \
 		"$budget_remaining" "$logical_id" "" "" "" timeout "" "$elapsed_ms" ""
@@ -858,7 +943,7 @@ gh_run_transport_attempt() {
 			auth_fingerprint=$(_ghqa_auth_fingerprint "$executable" "$host" 2>/dev/null || true)
 		fi
 	fi
-	start_ms=$(_gh_now_ms) || start_ms=""
+	_gh_now_ms_into start_ms || start_ms=""
 	_GH_TRANSPORT_ERROR_HTTP_STATUS=""
 	local -a transport_command=("$@")
 	if declare -F _gh_transport_capture_errors >/dev/null 2>&1; then
@@ -873,15 +958,157 @@ gh_run_transport_attempt() {
 		rc=$?
 		outcome="$GH_API_ERROR_KEY"
 	fi
-	end_ms=$(_gh_now_ms) || end_ms=""
+	_gh_now_ms_into end_ms || end_ms=""
 	if [[ "$start_ms" =~ ^[0-9]+$ && "$end_ms" =~ ^[0-9]+$ && "$end_ms" -ge "$start_ms" ]]; then
 		elapsed_ms=$((end_ms - start_ms))
+	fi
+	# GH#38327: label normal-mode rows from argv; exact capture uses wire frames.
+	if [[ "${executable##*/}" == gh ]]; then
+		_gh_static_request_labels "${@:2}"
+	else
+		_gh_static_request_labels
 	fi
 	gh_record_attempt "$path" "$caller" "$logical_id" "" "$page" "$retry" "$outcome" \
 		"${AIDEVOPS_GH_HTTP_STATUS:-${_GH_TRANSPORT_ERROR_HTTP_STATUS:-}}" "$elapsed_ms" "$quota_cost" \
 		"${AIDEVOPS_GH_AUTH_MODE:-}" "${AIDEVOPS_GH_API_POOL:-}" "${AIDEVOPS_GH_ROUTE_DECISION:-}" \
-		"${AIDEVOPS_GH_BUDGET_REMAINING:-${_GH_LAST_GRAPHQL_REMAINING:-}}" "$auth_fingerprint"
+		"${AIDEVOPS_GH_BUDGET_REMAINING:-${_GH_LAST_GRAPHQL_REMAINING:-}}" "$auth_fingerprint" \
+		"" "" "" "$_GH_REQ_METHOD" "$_GH_REQ_CLASS" "$_GH_REQ_FAMILY"
 	return "$rc"
+}
+
+# --- _gh_static_request_argv api [api-args...] ----------------------------
+# Parse `gh api` argv into the raw method operand, the endpoint and whether
+# fields imply POST (_GH_REQ_ARGV_METHOD/_TARGET/_POST). Returns 1 for shapes
+# the native flag parser rejects (a value flag missing its operand) or that
+# this parser cannot prove, so callers keep the labels unknown.
+_gh_static_request_argv() {
+	_GH_REQ_ARGV_METHOD=""
+	_GH_REQ_ARGV_TARGET=""
+	_GH_REQ_ARGV_POST=0
+	local -a argv=("$@")
+	local arg="" method="" target="" implied_post=0 index=1 count="${#argv[@]}" flag="" operand=""
+	while [[ "$index" -lt "$count" ]]; do
+		arg="${argv[$index]}"
+		index=$((index + 1))
+		case "$arg" in
+		-X | --method)
+			# A value flag without its operand is rejected natively: stay unknown.
+			[[ "$index" -lt "$count" ]] || return 1
+			method="${argv[$index]}"
+			index=$((index + 1))
+			;;
+		--method=*) method="${arg#--method=}" ;;
+		-X?*) method="${arg#-X}" ;;
+		-f | -F | --field | --raw-field | --input)
+			[[ "$index" -lt "$count" ]] || return 1
+			implied_post=1
+			index=$((index + 1))
+			;;
+		--field=* | --raw-field=* | --input=* | -f?* | -F?*) implied_post=1 ;;
+		-H | --header | -q | --jq | -t | --template | --cache | --hostname | -p | --preview)
+			[[ "$index" -lt "$count" ]] || return 1
+			index=$((index + 1))
+			;;
+		-i?*)
+			# Shorthand cluster (e.g. -iX PATCH): boolean -i flags, then at most
+			# one value flag whose operand is the cluster rest or the next arg.
+			flag="${arg#-}"
+			while [[ "$flag" == i* ]]; do flag="${flag#i}"; done
+			[[ -n "$flag" ]] || continue
+			operand="${flag:1}"
+			flag="${flag:0:1}"
+			case "$flag" in
+			X | f | F | H | q | t | p) ;;
+			*) return 1 ;;
+			esac
+			if [[ -z "$operand" ]]; then
+				[[ "$index" -lt "$count" ]] || return 1
+				operand="${argv[$index]}"
+				index=$((index + 1))
+			fi
+			case "$flag" in
+			X) method="$operand" ;;
+			f | F) implied_post=1 ;;
+			esac
+			;;
+		--)
+			[[ -n "$target" ]] || target="${argv[$index]:-}"
+			break
+			;;
+		-*) ;;
+		*) [[ -n "$target" ]] || target="$arg" ;;
+		esac
+	done
+	_GH_REQ_ARGV_METHOD="$method"
+	_GH_REQ_ARGV_TARGET="$target"
+	_GH_REQ_ARGV_POST="$implied_post"
+	return 0
+}
+
+# --- _gh_static_request_labels [gh-args...] -------------------------------
+# Derive the allowlisted method/class/family of one native `gh api` request
+# from its argv, mirroring gh_quota_debug_request.py, without forking. Sets
+# _GH_REQ_METHOD/_GH_REQ_CLASS/_GH_REQ_FAMILY; only static labels are kept and
+# the writer re-validates them. Non-api commands and unparseable shapes (for
+# example full URLs) remain unknown rather than guessed.
+_gh_static_request_labels() {
+	_GH_REQ_METHOD=unknown
+	_GH_REQ_CLASS=unknown
+	_GH_REQ_FAMILY=unknown
+	local subcommand="${1:-}"
+	[[ "$subcommand" == api ]] || return 0
+	_gh_static_request_argv "$@" || return 0
+	local method="$_GH_REQ_ARGV_METHOD" target="$_GH_REQ_ARGV_TARGET" implied_post="$_GH_REQ_ARGV_POST"
+	[[ -n "$target" && "$target" != *://* ]] || return 0
+	case "$method" in
+	"")
+		method=GET
+		if [[ "$implied_post" -ne 0 ]]; then method=POST; fi
+		;;
+	[Gg][Ee][Tt]) method=GET ;;
+	[Hh][Ee][Aa][Dd]) method=HEAD ;;
+	[Pp][Oo][Ss][Tt]) method=POST ;;
+	[Pp][Uu][Tt]) method=PUT ;;
+	[Pp][Aa][Tt][Cc][Hh]) method=PATCH ;;
+	[Dd][Ee][Ll][Ee][Tt][Ee]) method=DELETE ;;
+	[Oo][Pp][Tt][Ii][Oo][Nn][Ss]) method=OPTIONS ;;
+	*) method=unknown ;;
+	esac
+	target="${target%%\?*}"
+	target="${target%%#*}"
+	while [[ "$target" == /* ]]; do target="${target#/}"; done
+	while [[ "$target" == */ ]]; do target="${target%/}"; done
+	local class="" family="" repo_classes="issues|pulls|actions|commits|git|contents|releases|check-runs|check-suites|statuses"
+	if [[ "$target" != repos && "$target" != repos/* ]]; then
+		case "${target%%/*}" in
+		rate_limit) class=rate-limit ;;
+		graphql | search | users | orgs | notifications | installation) class="${target%%/*}" ;;
+		user) class=users ;;
+		*) class=other ;;
+		esac
+	elif [[ "$target" =~ ^repos/[^/]+/[^/]+/([^/]+) ]]; then
+		case "${BASH_REMATCH[1]}" in
+		issues | pulls | actions | commits | git | contents | releases | statuses) class="repos-${BASH_REMATCH[1]}" ;;
+		check-runs | check-suites) class=repos-checks ;;
+		*) class=repos-other ;;
+		esac
+	else
+		class=repos-other
+	fi
+	family="$class"
+	if [[ "$target" == user ]]; then
+		family=user
+	elif [[ "$target" =~ ^repos/[^/]+/[^/]+/collaborators/[^/]+/permission$ ]]; then
+		family="repos/:o/:r/collaborators/:u/permission"
+	elif [[ "$target" =~ ^repos/[^/]+/[^/]+/(${repo_classes})($|(/[^/]+)(/(reviews|comments|commits|files|checks|runs)(/|$))?) ]]; then
+		family="repos/:o/:r/${BASH_REMATCH[1]}"
+		[[ -z "${BASH_REMATCH[3]}" ]] || family="${family}/:id"
+		[[ -z "${BASH_REMATCH[5]}" ]] || family="${family}/${BASH_REMATCH[5]}"
+	fi
+	_GH_REQ_METHOD="$method"
+	_GH_REQ_CLASS="$class"
+	_GH_REQ_FAMILY="$family"
+	return 0
 }
 
 # Generate a digest-bound sidecar for the production aggregate. Evidence build
@@ -979,7 +1206,11 @@ gh_aggregate_calls() {
 		rm -f "$tmp" "$snapshot"
 		return 1
 	fi
-	if ! awk -F'\t' -v now="$now" -v cutoff="$cutoff" -v window="$window" \
+	local foreign_hint=""
+	foreign_hint=$(python3 "${BASH_SOURCE[0]%/*}/gh_quota_foreign_device.py" \
+		"${AIDEVOPS_QUOTA_CLAIM_EVIDENCE_FILE:-}" "${AIDEVOPS_QUOTA_SELF_LOGIN:-}" 2>/dev/null) || foreign_hint=""
+	[[ "$foreign_hint" =~ ^(same_login_foreign_device|none|unknown)$ ]] || foreign_hint=unknown
+	if ! awk -F'\t' -v now="$now" -v cutoff="$cutoff" -v window="$window" -v foreign_hint="$foreign_hint" \
 		-f "$awk_script" "$snapshot" >"$tmp" 2>/dev/null; then
 		rm -f "$tmp" "$snapshot"
 		return 1
@@ -995,6 +1226,51 @@ gh_aggregate_calls() {
 	return 0
 }
 
+# --- gh_sweep_orphan_temps ------------------------------------------------
+# Producer-owned reaper for per-invocation shim scratch (t19021). The shim
+# removes these on exit; only SIGKILL or a crash leaves them behind. Scope:
+# exact mktemp names, top level of the agent temp root, owned by this user,
+# older than the age floor (well past any live gh invocation). One find per
+# kind, never a per-file stat loop: the leaked backlog reached ~93k entries
+# and every glob over the shared root paid for it (dispatch setup_worker_log).
+# Pass --force to skip the interval throttle. Sets _GH_TEMP_SWEEP_REMOVED.
+_GH_TEMP_SWEEP_REMOVED=0
+gh_sweep_orphan_temps() {
+	local force="${1:-}"
+	local temp_dir="" stamp="" now="" last="" uid="" files="" dirs=""
+	local min_age="${AIDEVOPS_GH_TEMP_SWEEP_MIN_AGE_MINUTES:-1440}"
+	local interval="${AIDEVOPS_GH_TEMP_SWEEP_INTERVAL_SECONDS:-3600}"
+	_GH_TEMP_SWEEP_REMOVED=0
+	[[ "$min_age" =~ ^[1-9][0-9]*$ ]] || min_age=1440
+	[[ "$interval" =~ ^[0-9]+$ ]] || interval=3600
+	temp_dir=$(_gh_request_attempt_state_temp_dir) || return 0
+	uid=$(id -u 2>/dev/null) || return 0
+	[[ "$uid" =~ ^[0-9]+$ ]] || return 0
+	now=$(_gh_now_seconds) || return 0
+	stamp="${GH_API_LOG}.temp-sweep"
+	[[ -d "${stamp%/*}" && ! -L "$stamp" ]] || return 0
+	if [[ "$force" != "--force" && -f "$stamp" ]]; then
+		read -r last <"$stamp" 2>/dev/null || last=""
+		if [[ "$last" =~ ^[0-9]+$ && "$now" -ge "$last" && $((now - last)) -lt "$interval" ]]; then
+			return 0
+		fi
+	fi
+	# Stamp first so concurrent cycle ends do not repeat the same scan.
+	printf '%s\n' "$now" >"$stamp" 2>/dev/null || return 0
+	files=$({ find "$temp_dir" -mindepth 1 -maxdepth 1 \
+		\( -name 'gh-request-attempts.??????' -o -name 'gh-transport-error.??????' \
+		-o -name 'gh-transport-meta.??????' \) \
+		-type f -uid "$uid" -mmin "+${min_age}" -print -delete 2>/dev/null || true; } | wc -l)
+	dirs=$({ find "$temp_dir" -mindepth 1 -maxdepth 1 -name 'gh-identity.??????' \
+		-type d -uid "$uid" -mmin "+${min_age}" -print -exec rm -rf -- {} + 2>/dev/null || true; } | wc -l)
+	files="${files//[[:space:]]/}"
+	dirs="${dirs//[[:space:]]/}"
+	[[ "$files" =~ ^[0-9]+$ ]] || files=0
+	[[ "$dirs" =~ ^[0-9]+$ ]] || dirs=0
+	_GH_TEMP_SWEEP_REMOVED=$((files + dirs))
+	return 0
+}
+
 # --- gh_trim_log ----------------------------------------------------------
 # Atomically retain only valid records within the configured age, line, and byte
 # bounds. Appenders share the same short-lived lock so replacement cannot lose
@@ -1005,6 +1281,7 @@ gh_trim_log() {
 	local tmp=""
 	local owner_pid="${BASHPID:-$$}"
 	_gh_cleanup_legacy_scratch || true
+	gh_sweep_orphan_temps || true
 	[[ -f "$GH_API_LOG" ]] || return 0
 	[[ "$owner_pid" =~ ^[1-9][0-9]*$ ]] || return 0
 	[[ "$GH_API_LOG_MAX_LINES" =~ ^[0-9]+$ && "$GH_API_LOG_MAX_LINES" -gt 0 ]] || GH_API_LOG_MAX_LINES="$_GH_API_DEFAULT_LOG_MAX_LINES"
@@ -1081,6 +1358,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	trim)
 		gh_trim_log
 		;;
+	sweep-temp)
+		gh_sweep_orphan_temps --force
+		printf 'removed=%s\n' "$_GH_TEMP_SWEEP_REMOVED"
+		;;
 	clear)
 		gh_clear_log
 		;;
@@ -1096,6 +1377,7 @@ Subcommands:
                           Aggregate a fixed-cutoff JSON window
                           (default ${GH_API_REPORT##*/}, 24h, current time)
   trim                     Atomically apply age, line, and byte retention bounds
+  sweep-temp               Reap orphaned shim scratch now (age floor still applies)
   clear                    Remove log + report
 
 Path values:

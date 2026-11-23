@@ -10,7 +10,8 @@ set -uo pipefail
 
 # Resolve native Git once from the system default PATH (portable to non-FHS
 # hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
-TEST_NATIVE_GIT=$(command -p -v git) || {
+# GH#39344: Bash 3.2 ignores -p with -v, so search the default PATH explicitly.
+TEST_NATIVE_GIT=$(PATH=$(command -p getconf PATH) command -v git) || {
 	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
 	exit 1
 }
@@ -30,8 +31,21 @@ git() {
 
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
+# GH#39344: macOS mktemp returns /var/... (a symlink to /private/var/...), and
+# lifecycle creation refuses non-canonical state parents; a host worker's
+# inherited lifecycle identity must not reroute fixture creation either.
+TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P) || exit 1
+unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
 export HOME="${TEST_ROOT}/home"
-mkdir -p "$HOME/.aidevops/logs"
+mkdir -p "$HOME/.aidevops/logs" "$HOME/.config/aidevops"
+# Registry-driven retirement reads this repository config and lifecycle state;
+# a clean HOME has neither, and an inherited host state dir must not leak in.
+printf '{"initialized_repos":[]}\n' >"$HOME/.config/aidevops/repos.json"
+export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_ROOT}/lifecycle-state"
+# A clean HOME also has no ownership registry; without one, the managed-worktree
+# status check reports "unavailable" and cleanup refuses every removal.
+bash -c 'source "$1/shared-worktree-registry.sh" && _init_registry_db' _ "$TEST_SCRIPTS_DIR" ||
+	{ printf '%s\n' 'Failed to initialise the fixture worktree registry' >&2; exit 1; }
 
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -77,7 +91,42 @@ setup_repo() {
 	printf 'init\n' >"$repo_path/README.md" || return 1
 	git -C "$repo_path" add README.md || return 1
 	git -C "$repo_path" commit -q -m "init" || return 1
+	register_fixture_repo "$repo_path" || return 1
 	return 0
+}
+
+# Registry retirement only acts inside registered repositories; the
+# registration lives in the isolated HOME, never in the host repos.json.
+register_fixture_repo() {
+	local repo_path="$1"
+	local config="${HOME}/.config/aidevops/repos.json"
+	jq --arg path "$repo_path" '.initialized_repos += [{"slug":"testowner/testrepo","path":$path}]' \
+		"$config" >"${config}.tmp" || return 1
+	chmod 600 "${config}.tmp" || return 1
+	mv "${config}.tmp" "$config" || return 1
+	return 0
+}
+
+# Registry-authorised retirement refuses trees the lifecycle registry did not
+# enrol, so cleanup fixtures are created through the registry creation path.
+# Args: $1=repo, $2=worktree path, $3=existing branch to check out.
+create_lifecycle_worktree() {
+	local repo_path="$1"
+	local wt_path="$2"
+	local branch="$3"
+	local registry="${TEST_SCRIPTS_DIR}/../worker-lifecycle/worker-registry.py"
+	local creator_pid="" rc=0
+	# Short-lived creator: retirement waits for the creating caller to exit.
+	# GH#39344: keep it alive until creation returns; a fixed sleep raced
+	# registry startup on loaded hosts (process-identity-unavailable).
+	sleep 300 &
+	creator_pid=$!
+	python3 "$registry" --state-dir "${AIDEVOPS_LIFECYCLE_STATE_DIR:?}" create-worktree \
+		--repo "$repo_path" --path "$wt_path" --ref "$branch" --pid "$creator_pid" \
+		--session-id fixture-creator --initialize >/dev/null || rc=$?
+	kill "$creator_pid" 2>/dev/null || true
+	wait "$creator_pid" 2>/dev/null || true
+	return "$rc"
 }
 
 source_clean_lib_with_stubs() {
@@ -850,7 +899,7 @@ test_closed_issue_unproven_branch_removes_worktree_preserves_branch() {
 	git -C "$repo_path" add closed-issue-unproven.txt || rc=1
 	git -C "$repo_path" commit -q -m "closed issue unproven branch" || rc=1
 	git -C "$repo_path" checkout -q main || rc=1
-	git -C "$repo_path" worktree add -q "$wt_path" "$branch" || rc=1
+	create_lifecycle_worktree "$repo_path" "$wt_path" "$branch" || rc=1
 
 	(
 		cd "$repo_path" || exit 1
@@ -890,7 +939,7 @@ test_fix_numeric_closed_issue_branch_removes_worktree_preserves_branch() {
 	git -C "$repo_path" add fix-numeric-closed-issue.txt || rc=1
 	git -C "$repo_path" commit -q -m "fix numeric closed issue branch" || rc=1
 	git -C "$repo_path" checkout -q main || rc=1
-	git -C "$repo_path" worktree add -q "$wt_path" "$branch" || rc=1
+	create_lifecycle_worktree "$repo_path" "$wt_path" "$branch" || rc=1
 
 	(
 		cd "$repo_path" || exit 1
@@ -930,7 +979,7 @@ test_closed_issue_dirty_unproven_branch_stashes_and_preserves_branch() {
 	git -C "$repo_path" add closed-issue-dirty-unproven.txt || rc=1
 	git -C "$repo_path" commit -q -m "closed issue dirty unproven branch" || rc=1
 	git -C "$repo_path" checkout -q main || rc=1
-	git -C "$repo_path" worktree add -q "$wt_path" "$branch" || rc=1
+	create_lifecycle_worktree "$repo_path" "$wt_path" "$branch" || rc=1
 	printf 'dirty archived state\n' >>"$wt_path/closed-issue-dirty-unproven.txt" || rc=1
 
 	(
@@ -981,6 +1030,16 @@ run_dirty_race_cleanup_pass() {
 		export RACE_REPO="$repo_path"
 		export RACE_WORKTREE="$wt_path"
 		source_clean_lib_with_stubs || exit 1
+		# These races target the library's archive/veto/restore logic around a
+		# final non-forced native removal. The registry executor that production
+		# now routes removal through (GH#38667) moves the tree first and has its
+		# own race coverage under worker-lifecycle/tests, so use the native
+		# removal step here to keep injecting races at the Git call.
+		_worktree_remove_with_native_git() {
+			local native_wt="$1"
+			"${AIDEVOPS_REAL_GIT_BIN:?}" worktree remove "$native_wt"
+			return $?
+		}
 		capture_worktree_process_cwds() {
 			printf '/unrelated-cwd\n'
 			return 0

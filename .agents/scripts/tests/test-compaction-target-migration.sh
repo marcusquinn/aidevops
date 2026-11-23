@@ -93,7 +93,7 @@ assert_eq "240000" "$(jq -r '.runtime.opencode.v2_compaction_target' "$settings"
 assert_eq "1" "$(jq -r '.keep' "$settings")" "unrelated settings are preserved"
 assert_eq "true" "$(jq -r '.runtime.opencode.gpt6_context_cap_other' "$settings")" "unrelated runtime keys are preserved"
 assert_eq "400000" "$(jq -r '.runtime.opencode.astra_compaction_target' "$HOME/.aidevops/config-backups/migrations/gh32807-settings.json")" "backup keeps the original settings"
-assert_eq "640" "$(stat -f '%Lp' "$settings" 2>/dev/null || stat -c '%a' "$settings")" "settings permissions are preserved"
+assert_eq "640" "$(stat -c '%a' "$settings" 2>/dev/null || stat -f '%Lp' "$settings")" "settings permissions are preserved"
 assert_eq "yes" "$(marker_exists "$HOME")" "migration records its marker"
 
 assert_eq "yes" "$(reset_marker_exists "$HOME")" "first run also records the GH#34416 marker"

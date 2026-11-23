@@ -18,7 +18,8 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from gh_transport_capacity import capacity_wait
+from gh_process_birth import process_birth
+from gh_transport_capacity import capacity_wait, refund_pacing
 from gh_transport_identity import credentials_share_proven_owner, quota_owner
 from gh_transport_observation import (
     QuotaResponse,
@@ -85,17 +86,6 @@ def credential_identity(executable: str, host: str) -> tuple[str, bool, dict[str
     return hashlib.sha256(f"{host}\0{token}".encode()).hexdigest(), authenticated, environment
 
 
-def process_birth(pid: int) -> str:
-    try:
-        value = subprocess.check_output(
-            ["ps", "-p", str(pid), "-o", "lstart="],
-            stderr=subprocess.DEVNULL, timeout=2,
-        ).strip()
-        return hashlib.sha256(value).hexdigest() if value else ""
-    except (OSError, subprocess.SubprocessError):
-        return ""
-
-
 class Budget:
     def __init__(self, directory: Path, scope: str, credential: str | None = None,
                  *, attributed: bool = False):
@@ -116,6 +106,9 @@ class Budget:
         self.credential = credential or scope
         self.attributed = False
         self.birth = process_birth(os.getpid())
+        # Per-process pacing interval charged at admission, keyed by reservation.
+        self.last_pacing_charge = None
+        self.pacing_charges: dict[str, tuple[float, float]] = {}
         try:
             self._ensure_schema()
             with self.transaction():
@@ -188,6 +181,8 @@ class Budget:
             self.db.execute("DELETE FROM revalidation WHERE scope=?", (self.scope,))
             self.db.execute("INSERT OR REPLACE INTO alias VALUES(?,?)", (self.scope, previous))
             self.scope = previous
+        # The binding_seen_stamp trigger refreshes this credential's recency in
+        # the same transaction, for this and older bundles alike (GH#38619).
         self.db.execute("INSERT OR REPLACE INTO binding VALUES(?,?)", (self.credential, self.scope))
         return events
 
@@ -256,9 +251,12 @@ class Budget:
             # A paced stale balance must not starve its own serialized refresh.
             # Omit only primary pacing evidence: capacity_wait still enforces
             # concurrency/secondary ceilings, and cooldown/exhaustion ran above.
+            self.last_pacing_charge = None
             reason, retry_at = capacity_wait(self, resource, None if refresh else row, total, now)
             if reason:
                 raise Deferred(reason, retryable=True, retry_at=retry_at)
+            if self.last_pacing_charge:
+                self.pacing_charges[reservation] = self.last_pacing_charge
             if refresh:
                 # A stale positive balance may be refreshed by one causally newer
                 # request. This is ordinary admitted work, never a reserve bypass.
@@ -272,9 +270,10 @@ class Budget:
             return reservation
 
     def finish(self, reservation: str, resource: str, headers: dict[str, str],
-               *, started: float, now: float | None = None) -> None:
+               *, started: float, now: float | None = None, free: bool = False) -> None:
         now = time.time() if now is None else now
         observed = _valid_observation(headers, resource, now)
+        charge = self.pacing_charges.pop(reservation, None)
         with self.transaction():
             if not observed:
                 # Uncertain execution may have spent a point. Keep its debt;
@@ -317,6 +316,8 @@ class Budget:
                         (self.scope, resource, credential, started),
                     )
             self.db.execute("DELETE FROM reservation WHERE id=?", (reservation,))
+            if free:
+                refund_pacing(self, resource, charge, observed[1], now)
         record_budget_transition(
             self,
             {"remaining": row[0], "reset": row[1]} if row else None,

@@ -102,11 +102,13 @@ test_live_author_metadata_fallback() {
 	PULSE_EXTERNAL_TRUST_FALLBACK_MAX=1
 	_PIR_EXTERNAL_TRUST_FALLBACKS_USED=0
 	_PIR_EXTERNAL_TRUST_FALLBACK_DIAGNOSTIC_SLUGS=""
+	_PIR_MISSING_AUTHOR_METADATA_BLOCKED=0
 	: >"$LOGFILE"
 	_action_reconcile_external_issue_gate owner/repo 28698 "status:available" "" "" || rc=$?
 	_action_reconcile_external_issue_gate owner/repo 28697 "status:available" "" "" || rc=$?
 	if [[ "$(grep -c '^api$' "$LIVE_FALLBACK_LOG")" -eq 1 ]] \
 		&& [[ "$(grep -c 'cache author metadata missing' "$LOGFILE")" -eq 1 ]] \
+		&& [[ "$_PIR_MISSING_AUTHOR_METADATA_BLOCKED" -eq 2 ]] \
 		&& grep -q 'response lacked author association' "$LOGFILE"; then
 		record "missing live metadata is bounded and aggregated fail-closed" 0
 	else

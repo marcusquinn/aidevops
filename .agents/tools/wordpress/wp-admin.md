@@ -145,6 +145,8 @@ Premium plugins stuck on old versions (GPLVault, inactive plugins, vendor channe
 2. Transfer, extract, import database
 3. `wp search-replace` + update `wp-config.php`
 
+Multisite moving to its own domain (path and `COOKIE_DOMAIN` pitfalls): `wp-multisite-domain-move.md`.
+
 ## Security Checklist
 
 Before bulk operations:

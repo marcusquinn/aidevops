@@ -25,6 +25,7 @@ Distribute Cloudron apps independently using a `CloudronVersions.json` version c
 - **Prerequisite**: Each version needs a registry-hosted image, normally built with `cloudron builder login` → `cloudron builder build`; on-server builds cannot be published
 - **Last upstream review**: `74e455bd03f5`; adopted registry builder and explicit version-image selection guidance
 - **Key file**: `CloudronVersions.json` — version catalog hosted at a public URL
+- **New package repos**: complete `cloudron-package-onboarding.md` (init, Pulse, upstream monitoring, labels, workflows, listing URLs)
 - **Listing**: [Cloudron Community Apps](https://ca.cloudron.io) accepts a public versions URL after the catalog contains a tested release; listing is optional
 - **Forum**: announce published community packages in [Community Packages (220)](https://forum.cloudron.io/category/220/community-packages); ask packaging questions in [App Packaging & Development (96)](https://forum.cloudron.io/category/96/app-packaging-development)
 
@@ -54,6 +55,14 @@ head and green checks. It removes only its release hold and uses the normal
 full-loop merge gates. A changed head requires an updated issue and new signed
 approval. API/verification failures never authorize a merge.
 
+**Merge-time release gate (GH#37955).** Pulse and full-loop merges run
+`cloudron_release_merge_guard` (`cloudron-release-merge-guard-lib.sh`) for
+registered maintained packages. A PR whose `CloudronManifest.json` `version`
+differs from its base branch tip is a release even without a request: it merges
+only with exact-head authority (signed approval or the standing policy).
+Otherwise the guard adds `release-approval-required` + `hold-for-review` so `r924`
+requests approval or applies the policy. Unknown evidence blocks the merge.
+
 **Standing release policy (GH#37697, optional).** To stop routine upstream
 bumps queuing behind per-release signatures, a maintainer may sign one policy
 per repository: run `cloudron-release-approval-helper.sh policy-request <repo>`,
@@ -76,8 +85,34 @@ re-proved immediately before merge, and the closing comment records
 `authority: standing policy #N`. Anything else, and any stale or unverifiable
 per-release signature, keeps the per-release path. Under an active policy, an
 unsigned request whose head moved is closed so a fresh exact-head request
-follows. Close the policy issue to revoke it; any edit or comment makes its
-signature stale.
+follows. Any edit or comment makes its signature stale.
+
+**0.x minor opt-in.** Run `cloudron-release-approval-helper.sh policy-request
+<repo> --zero-minor-routine --dry-run` to preview locally without GitHub writes;
+omit `--dry-run` to request the policy. This adds signed `"zero_minor":"routine"`
+and states that 0.x minor upstream releases are routine. Adding it requires a
+new policy signature; an existing signed policy is never silently rewritten.
+Absent the field, the same-minor restriction under 0.x is unchanged. With it,
+0.3.0 → 0.4.1 may qualify, but strictly increasing versions, the same-major
+boundary (including rejection of 0.x → 1.x), and all other rules remain binding.
+Unknown values fail closed. This semver-only flag also works with the
+`release-identity` and `pins` modes, not commit tracking. **Risk:** 0.x minors
+may contain breaking changes or destructive migrations. Use
+`needs-maintainer-review` as the per-PR brake before merge/publication.
+
+**Upgrading a signed policy.** Without `--supersede`, `policy-request` refuses
+to rewrite a signed policy. Re-run it with `--supersede` (add `--dry-run` to
+preview) to remove `persistent` from the old policy, comment, close it as not
+planned, and create the replacement. Sign the new issue with the printed
+`APPROVAL_COMMAND`; until then no standing policy applies.
+
+The policy issue is a long-lived non-task record (GH#37993): `policy-request`
+creates it with `persistent` + `no-auto-dispatch`, and issue creation adds no
+`status:*` label or assignee to `persistent`, dashboard, `release-approval-required`
+or `release-standing-policy` issues. Adding `persistent` to an already-signed
+policy keeps its signature valid; removing it does not. To revoke, remove
+`persistent` and close the issue. Closing alone also revokes: the persistent
+reopen guard reopens the issue with a comment, which stales the signature.
 
 For an interactive continuation authorized for one release, use
 `cloudron-release-approval-helper.sh process --repo <slug> --issue <N> --apply`.
@@ -119,7 +154,7 @@ Commit these before the first registry build:
 - A short publishing runbook that records the canonical catalog URL, registry/repository ownership, asset provenance, test install, rollback, and Community Apps listing steps without storing credentials.
 - A managed GitHub Actions release workflow that creates and verifies keyless provenance for the immutable image digest and exact generated `CloudronVersions.json`; use `templates/workflows/cloudron-catalog-publish-caller.yml` and review `reference/release-artifact-provenance.md` before the first publication.
 
-`packageUrl` is the Cloudron 10 manifest field for the package source repository and requires `minBoxVersion` 10.0.0. It does not control the ca.cloudron.io listing: verified on 2026-11-01, that site builds both the "By `packagerName`" link and the "Package" link from `packagerUrl` only, even for published entries that set `packageUrl` (aidevops#36428). Do not add `packageUrl` expecting it to change the Community Apps Package link. `packagerUrl` identifies the maintainer, and changing it to the repository URL also changes the "By" link.
+`packageUrl` is the Cloudron 10 manifest field for the package source repository and requires `minBoxVersion` 10.0.0. On the ca.cloudron.io listing, the "Package" link uses `packageUrl` when it is set and falls back to `packagerUrl`; the "By `packagerName`" link always uses `packagerUrl` (Cloudron added the fallback on 2026-11-11 after aidevops#36428; verified in the live listing bundle). Set `packagerUrl` to the maintainer's profile and, once the package requires Cloudron 10, `packageUrl` to the package repository. Do not point `packagerUrl` at the repository; that was a workaround from before Cloudron added the fallback. Packages that must stay on Cloudron 9.x omit `packageUrl`, so their Package link uses `packagerUrl`. The listing shows the newest published catalog entry, so metadata changes appear after the next published version.
 
 Adding `packageUrl` drops Cloudron 9.x for the whole catalog, not just the new version: Cloudron 9.x rejects `packageUrl` while parsing `CloudronVersions.json`, so one entry containing `packageUrl` stops 9.x servers resolving any version from that catalog, and `minBoxVersion` gating does not prevent it (aidevops-cloudron-app#66, cloudron-netbird-app#62). Packages that need Cloudron 9.x compatibility must omit `packageUrl` from every catalog entry. To adopt it, release a new package version with `minBoxVersion` 10.0.0, invert any package test that rejects `packageUrl`, update documented Cloudron requirements, and note the dropped 9.x support in the changelog. Never add `packageUrl` to an existing catalog entry. `author` and `contactEmail` are deprecated in the manifest reference but are still required by the current CLI version-catalog validator.
 
@@ -385,7 +420,12 @@ assets (`README.md`, `docs/`, `metrics/`, `.github/metrics/`,
 `.github/star-history/`, or root `star-history.svg`/`star-history-dark.svg`).
 Package inputs, catalog changes, rewritten ancestry, conflicts, or a second race
 fail closed. Catalog bytes remain unchanged, and the commit records the original
-validated SHA for both catalog and image attestation verification. Caller concurrency
+validated SHA for both catalog and image attestation verification. The publish
+commit is created through the Git Database API so GitHub signs it, then rebuilt
+locally and pushed atomically with the tag; if signing is unavailable, the
+workflow warns and pushes the unsigned commit. Check with `gh api
+repos/OWNER/REPO/commits/vX.Y.Z --jq .commit.verification` (`verified: true` for
+signed releases; tags published earlier stay unsigned). Caller concurrency
 serializes main runs and never cancels an in-flight publication. Existing
 catalogs without this workflow's attestations require an owner-reviewed
 provenance adoption before release reconciliation; it never fabricates evidence.

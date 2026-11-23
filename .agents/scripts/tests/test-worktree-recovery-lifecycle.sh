@@ -2,12 +2,15 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Regression tests for exact worktree recovery planning and explicit apply.
+# GH#39344: 73 fixture repositories; 1500s observed on a loaded macOS host.
+# aidevops:suite-timeout=1800
 
 set -euo pipefail
 
 # Resolve native Git once from the system default PATH (portable to non-FHS
 # hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
-TEST_NATIVE_GIT=$(command -p -v git) || {
+# GH#39344: Bash 3.2 ignores -p with -v, so search the default PATH explicitly.
+TEST_NATIVE_GIT=$(PATH=$(command -p getconf PATH) command -v git 2>/dev/null || command -v git) || {
 	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
 	exit 1
 }
@@ -53,6 +56,8 @@ setup() {
 	[[ -f "$WORKTREE_REGISTRY_DB" ]] || return 1
 	# Maintenance runs must never write session advisories outside the fixture.
 	export AIDEVOPS_ADVISORIES_DIR="${TEST_DIR}/advisories"
+	# Fixture-owned lifecycle registry: removal is authorised only for trees it enrolled.
+	export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_DIR}/lifecycle-state"
 	export AIDEVOPS_REAL_GIT_BIN="$GIT_BIN"
 	# Retention fixtures must not depend on the host's login daemons. Actual
 	# CWD guards and degraded visibility are covered by the removal audit suite.
@@ -80,7 +85,54 @@ create_unarchived_fixture() {
 	printf 'base\n' >"${repo_path}/README.md" || return 1
 	"$GIT_BIN" -C "$repo_path" add README.md || return 1
 	"$GIT_BIN" -C "$repo_path" commit -q -m init || return 1
-	"$GIT_BIN" -C "$repo_path" worktree add -q -b "$branch_name" "$worktree_path" || return 1
+	if [[ "${4:-}" == "enrolled" ]]; then
+		create_enrolled_worktree "$repo_path" "$worktree_path" "$branch_name" || return 1
+	else
+		"$GIT_BIN" -C "$repo_path" worktree add -q -b "$branch_name" "$worktree_path" || return 1
+	fi
+	return 0
+}
+
+# Create the worktree through the lifecycle registry, as production does, so the
+# registry authorises its later removal. The enrolment guard stays untouched.
+# Args: $1=repo, $2=worktree path, $3=new branch name, or --detach for a detached HEAD.
+create_enrolled_worktree() {
+	local repo_path="$1"
+	local worktree_path="$2"
+	local branch_name="$3"
+	local creator_pid=""
+	local -a git_args=(-b "$branch_name")
+
+	[[ "$branch_name" != "--detach" ]] || git_args=(--detach)
+	local registry="${SCRIPTS_DIR}/../worker-lifecycle/worker-registry.py"
+	local rc=0
+
+	# --initialize creates the state directory, which must be absent on first use.
+	# Short-lived creator: retirement waits for the creating caller to exit.
+	# GH#39344: keep it alive until creation returns; a fixed sleep raced
+	# registry startup on loaded hosts (process-identity-unavailable).
+	sleep 300 &
+	creator_pid=$!
+	python3 "$registry" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR" \
+		create-worktree --repo "$repo_path" --path "$worktree_path" --ref HEAD \
+		--pid "$creator_pid" --session-id fixture-creator --initialize \
+		-- "${git_args[@]}" >/dev/null || rc=$?
+	kill "$creator_pid" 2>/dev/null || true
+	wait "$creator_pid" 2>/dev/null || true
+	return "$rc"
+}
+
+# Run removal against a fixture HOME that registers only this repository.
+# Args: $1=repo, $2=worktree, $3=archive, $4=caller, $5=reason, $6=context.
+remove_enrolled_fixture() {
+	local repo_path="$1"
+	local fixture_home="${TEST_DIR}/lifecycle-home"
+
+	mkdir -p "${fixture_home}/.config/aidevops" || return 1
+	printf '{"initialized_repos":[{"slug":"testowner/testrepo","path":"%s"}]}\n' "$repo_path" \
+		>"${fixture_home}/.config/aidevops/repos.json" || return 1
+	HOME="$fixture_home" AIDEVOPS_WORKTREE_ARCHIVE_ROOT="${TEST_DIR}/lifecycle-archives" \
+		AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" remove_archived_worktree_path "${@:2}" >/dev/null || return 1
 	return 0
 }
 
@@ -90,10 +142,11 @@ create_archived_fixture() {
 	local recovery_root="$3"
 	local branch_name="$4"
 
-	create_unarchived_fixture "$repo_path" "$worktree_path" "$branch_name" || return 1
+	create_unarchived_fixture "$repo_path" "$worktree_path" "$branch_name" enrolled || return 1
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
 		create_legacy_worktree_recovery_fixture "$worktree_path" "test.sh" "recovery-plan" || return 1
-	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" remove_archived_worktree_path \
+	[[ -n "${WORKTREE_RECOVERABLE_ARCHIVE_PATH:-}" ]] || return 1
+	remove_enrolled_fixture "$repo_path" \
 		"$worktree_path" "$WORKTREE_RECOVERABLE_ARCHIVE_PATH" "test.sh" "recovery-plan" \
 		"recovery_path=archive-first" "false" "false" || return 1
 	printf '%s\n' "$WORKTREE_RECOVERABLE_ARCHIVE_PATH"

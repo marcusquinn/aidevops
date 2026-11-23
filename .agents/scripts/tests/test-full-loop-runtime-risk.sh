@@ -112,6 +112,12 @@ mkdir -p "${GLOB_REPO}/src"
 printf 'fixture\n' >"${GLOB_REPO}/src/a.sh"
 glob_context=$(cd "$GLOB_REPO" && _runtime_paths_keyword_context 'src/[ab].sh')
 assert_contains "runtime path context preserves glob metacharacters" "$glob_context" "src/[ab].sh"
+for low_path in test-infra/deploy.sh test_harness/auth.py src/a.test.d/auth.sh src/auth.spec.d/session.ts src/splinter.config.js; do
+	assert_rejected "directory/substring path is not Low: ${low_path}" _runtime_path_is_low "$low_path"
+done
+for low_path in tests/test-docs.sh foo.test.ts test_foo.py foo_test.go src/foo.test.ts pkg/foo_test.go commitlint.config.js; do
+	assert_accepted "test/lint file stays Low: ${low_path}" _runtime_path_is_low "$low_path"
+done
 assert_rejected "invalid diff base fails closed" \
 	_derive_runtime_risk "" "src/app.sh" "Adjust helper behavior" "missing-runtime-base"
 
@@ -263,6 +269,49 @@ assert_contains "todo data files mentioning payments derive Low" "$todo_data_ris
 todo_runtime_risk=$(_derive_runtime_risk "" "todo/x/specs/a.json,src/billing.ts" "Add planning data about payments")
 assert_contains "runtime file beside todo data still derives Critical" "$todo_runtime_risk" "Critical"
 
+# The prompt-hook candidate registry is display-only metadata (GH#37972 follow-up).
+registry_risk=$(_derive_runtime_risk "" ".agents/configs/prompt-hook-candidates.conf,.agents/reference/release-scope-sweep.md" "Add candidate: sessions share one account")
+assert_contains "prompt-hook candidate registry derives Low despite policy terms" "<$registry_risk>" "<Low>"
+other_conf_risk=$(_derive_runtime_risk "" ".agents/configs/self-hosting-files.conf" "Update session list")
+assert_contains "other agent configs still derive Critical" "$other_conf_risk" "Critical"
+registry_runtime_risk=$(_derive_runtime_risk "" ".agents/configs/prompt-hook-candidates.conf,src/auth.sh" "Registry and auth change")
+assert_contains "registry beside runtime code still derives Critical" "$registry_runtime_risk" "Critical"
+
+# GH#38640: catalog app-test definitions (blueprints/<app>/test.yml) are Low even
+# when fixture hunks mention authorization; look-alike test.yml paths are not.
+APP_TEST_REPO="${TEST_ROOT}/app-test-repo"
+app_test_paths="blueprints/app/test.yml blueprints/app/test.yaml config/settings/test.yml deploy/test.yaml blueprints/app/nested/test.yml vendor/blueprints/app/test.yml src/auth.sh"
+mkdir -p "$APP_TEST_REPO"
+"$TEST_NATIVE_GIT" -C "$APP_TEST_REPO" init -q
+"$TEST_NATIVE_GIT" -C "$APP_TEST_REPO" config user.name "Runtime Risk Test"
+"$TEST_NATIVE_GIT" -C "$APP_TEST_REPO" config user.email "runtime-risk@example.invalid"
+for app_test_path in $app_test_paths; do
+	mkdir -p "${APP_TEST_REPO}/${app_test_path%/*}"
+	printf 'name: fixture\n' >"${APP_TEST_REPO}/${app_test_path}"
+done
+"$TEST_NATIVE_GIT" -C "$APP_TEST_REPO" add -A
+"$TEST_NATIVE_GIT" -C "$APP_TEST_REPO" -c commit.gpgSign=false commit -qm "fixture: app-test base"
+app_test_base=$("$TEST_NATIVE_GIT" -C "$APP_TEST_REPO" rev-parse HEAD)
+for app_test_path in $app_test_paths; do
+	printf 'name: fixture\nheaders:\n  authorization: fixture-header\n' >"${APP_TEST_REPO}/${app_test_path}"
+done
+"$TEST_NATIVE_GIT" -C "$APP_TEST_REPO" add -A
+"$TEST_NATIVE_GIT" -C "$APP_TEST_REPO" -c commit.gpgSign=false commit -qm "fixture: authorization hunks"
+for app_test_path in blueprints/app/test.yml blueprints/app/test.yaml; do
+	app_test_risk=$(cd "$APP_TEST_REPO" && _derive_runtime_risk "" "$app_test_path" "Fix app test fixture" "$app_test_base")
+	assert_contains "app-test definition ${app_test_path} derives Low" "<$app_test_risk>" "<Low>"
+done
+app_test_body=$(cd "$APP_TEST_REPO" && _build_pr_body \
+	"38640" "Fix app test fixture" "app-test CI on the PR" "blueprints/app/test.yml" "" \
+	"Resolves" "" "self-assessed" "$app_test_base")
+assert_contains "app-test definition accepts self-assessed" "$app_test_body" "**Verification:** self-assessed"
+app_test_mixed_risk=$(cd "$APP_TEST_REPO" && _derive_runtime_risk "" "blueprints/app/test.yml, src/auth.sh" "Fix app test fixture" "$app_test_base")
+assert_contains "runtime file beside app-test definition still derives Critical" "<$app_test_mixed_risk>" "<Critical>"
+for app_test_path in config/settings/test.yml deploy/test.yaml blueprints/app/nested/test.yml vendor/blueprints/app/test.yml; do
+	app_test_risk=$(cd "$APP_TEST_REPO" && _derive_runtime_risk "" "$app_test_path" "Fix app test fixture" "$app_test_base")
+	assert_contains "look-alike ${app_test_path} keeps Critical" "<$app_test_risk>" "<Critical>"
+done
+
 # GH#35709: runtime-owned leftovers must match product staging exclusions.
 RUNTIME_STATE_REPO="${TEST_ROOT}/runtime-state-repo"
 mkdir -p "${RUNTIME_STATE_REPO}/todo/x" "${RUNTIME_STATE_REPO}/.agents/loop-state/nested"
@@ -289,6 +338,14 @@ runtime_state_validation=$(cd "$RUNTIME_STATE_REPO" &&
 	_validate_pending_runtime_metadata "" self-assessed "diff reviewed" "Add planning data in this session" HEAD &&
 	printf 'accepted')
 assert_contains "pending metadata accepts Low-only diff with runtime leftovers" "$runtime_state_validation" "accepted"
+pending_in_runtime_state_repo() {
+	(cd "$RUNTIME_STATE_REPO" && _validate_pending_runtime_metadata "$@")
+	return $?
+}
+assert_rejected "GH#39831 pre-staging validation refuses Low runtime-pending" \
+	pending_in_runtime_state_repo "" runtime-pending \
+	"the publication step needs the pushed input; local validation passes" \
+	"Add planning data in this session" HEAD
 runtime_state_staging=$(cd "$RUNTIME_STATE_REPO" && _stage_product_changes &&
 	git diff --cached --name-only | LC_ALL=C sort | tr '\n' ',')
 assert_contains "product staging matches pending risk paths" "<$runtime_state_staging>" \
@@ -525,6 +582,13 @@ session_origin_label() {
 _issue_has_parent_task_label() {
 	return 1
 }
+# GH#38518: the metadata path also calls these; keep the fixture offline.
+macos_checks_evidence() {
+	return 0
+}
+_gh_with_timeout() {
+	return 0
+}
 print_info() {
 	local message="$1"
 	printf '%s\n' "$message" >&2
@@ -537,6 +601,7 @@ prepare_fixture_metadata() {
 	local issue_number=34465 files_changed="" pr_body="" runtime_risk="" testing_level=""
 	local pr_title="Fixture" commit_message="fix: fixture" origin_label="" repo="example/fixture"
 	local allow_parent_close=0 planning_only=0 replacement_pr="" replacement_reason=""
+	local keep_issue_open=0 replacement_pr_head_sha="" summary_decisions=""
 	_commit_and_pr_prepare_metadata || return 1
 	printf '%s\n' "$pr_body"
 	return 0
@@ -565,6 +630,12 @@ printf 'export const value = 2;\n' >"${FINAL_REPO}/src/helper.js"
 final_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Adjust helper" "diff reviewed")
 assert_contains "metadata lists only branch files" "$final_body" $'## Files Changed\n\nsrc/helper.js\n'
 assert_contains "metadata risk ignores upstream sensitive changes" "$final_body" '**Risk level:** Medium'
+prepare_partial_closing_metadata() {
+	(cd "$FINAL_REPO" && prepare_fixture_metadata "For #34465: remaining items" "diff reviewed") || return 1
+	return 0
+}
+assert_rejected "GH#38823 final closing metadata rejects partial self-reference" \
+	prepare_partial_closing_metadata
 final_pending=$(cd "$FINAL_REPO" && _validate_pending_runtime_metadata Medium self-assessed \
 	"diff reviewed" "Adjust helper" origin/main && printf accepted)
 assert_contains "pending and final risk agree behind upstream" "$final_pending" accepted
@@ -579,6 +650,8 @@ bookkeeping_result=$(cd "$FINAL_REPO" &&
 assert_contains "TODO-only bookkeeping excludes upstream files and TODO edits" "$bookkeeping_result" accepted
 planning_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Record completion" "diff reviewed")
 assert_contains "planning classification excludes upstream files" "$planning_body" 'For #34465'
+partial_planning_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "For #34465: planning checkpoint" "diff reviewed")
+assert_contains "GH#38823 planning checkpoint allows partial self-reference" "$partial_planning_body" $'self-assessed — diff reviewed\n\nFor #34465'
 
 # GH#36002: nested markdown under todo/ stays planning; data files under todo/
 # are deliverables, alone or mixed with planning files.
@@ -639,6 +712,121 @@ assert_rejected "final metadata rejects local Critical change without runtime ev
 critical_final_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Adjust helper" \
 	"runtime-verified with sensitive branch fixture")
 assert_contains "local Critical change still derives Critical" "$critical_final_body" '**Risk level:** Critical'
+
+assert_rejected "GH#38823 worker summary For #<dispatched issue> is refused" \
+	_summary_declares_partial_self 42 "Partial work. For #42: remaining items" "ok"
+assert_rejected "GH#38823 Ref #<dispatched issue> in testing is refused" \
+	_summary_declares_partial_self 42 "done" "see ref #42"
+assert_accepted "GH#38823 reference to another issue is allowed" \
+	_summary_declares_partial_self 42 "Follow-up for #43" "ok"
+
+# GH#39558: runtime-pending is the legitimate route when a runner cannot
+# exercise a Critical/High change; the PR opens held and cannot merge.
+pending_reason="runner has no review copy with Stripe test mode; unit tests pass"
+pending_body=$(_build_pr_body "2" "Credential rotation" "$pending_reason" "src/auth.sh" "" \
+	"Resolves" "" "RUNTIME-PENDING")
+assert_contains "runtime-pending accepted for Critical with a reason" "$pending_body" "**Risk level:** Critical"
+assert_contains "body records runtime-pending and its reason" "$pending_body" \
+	"**Verification:** runtime-pending — ${pending_reason}"
+assert_rejected "runtime-pending without a reason is rejected" \
+	_build_pr_body "2" "Credential rotation" "" "src/auth.sh" "" "Resolves" "Critical" "runtime-pending"
+assert_rejected "runtime-pending with a placeholder reason is rejected" \
+	_build_pr_body "2" "Credential rotation" "none" "src/auth.sh" "" "Resolves" "Critical" "runtime-pending"
+assert_rejected "runtime-pending with only its own marker is rejected" \
+	_build_pr_body "2" "Credential rotation" "Runtime pending." "src/auth.sh" "" "Resolves" "Critical" "runtime-pending"
+assert_rejected "a summary carrying a Runtime Testing heading is rejected" \
+	_build_pr_body "2" $'Example:\n## Runtime Testing\n- **Risk level:** Low' "$pending_reason" \
+	"src/auth.sh" "" "Resolves" "Critical" "runtime-pending"
+assert_accepted "explicit runtime-pending passes pre-mutation validation" \
+	_validate_explicit_pr_metadata "" "runtime-pending"
+refusal_guidance=$(_build_pr_body "2" "Credential rotation" "self-assessed" "src/auth.sh" "" \
+	"Resolves" "Critical" "self-assessed" 2>&1 >/dev/null)
+assert_contains "Critical refusal names the runtime-pending route" "$refusal_guidance" \
+	"--testing-level runtime-pending"
+
+# GH#39831: below Critical/High the hold protects nothing, so runtime-pending
+# is refused with the push-and-continue route instead of parking the work.
+deferred_reason="the publication step needs the pushed input; local validation passes"
+assert_rejected "runtime-pending is refused at Low risk" \
+	_build_pr_body "2" "Docs wording" "$deferred_reason" "README.md" "" "Resolves" "Low" "runtime-pending"
+assert_rejected "runtime-pending is refused at Medium risk" \
+	_build_pr_body "2" "Widget label" "$deferred_reason" "src/widget.ts" "" "Resolves" "Medium" "runtime-pending"
+low_pending_guidance=$(_build_pr_body "2" "Docs wording" "$deferred_reason" "README.md" "" \
+	"Resolves" "Low" "runtime-pending" 2>&1 >/dev/null)
+assert_contains "Low refusal names the push-and-continue route" "$low_pending_guidance" "git push -u origin HEAD"
+assert_contains "Low refusal names the blocker route" "$low_pending_guidance" "terminal blocker"
+assert_accepted "runtime-pending stays accepted at High risk" \
+	_build_pr_body "2" "Polling loop" "$deferred_reason" "src/poller.sh" "" "Resolves" "High" "runtime-pending"
+
+assert_accepted "commit-and-pr detects a runtime-pending body for the hold" \
+	_pr_body_declares_runtime_pending "$pending_body"
+assert_rejected "runtime-verified body takes no runtime hold" \
+	_pr_body_declares_runtime_pending "$high_body"
+
+merge_refusal_for_body() {
+	local body="$1"
+	local metadata=""
+	metadata=$(printf '%s' "$body" | _runtime_testing_metadata_from_body) || return 1
+	_runtime_testing_merge_refusal "$metadata"
+	return $?
+}
+pending_refusal=$(merge_refusal_for_body "$pending_body")
+assert_contains "merge refusal explains pending verification" "$pending_refusal" \
+	"runtime verification is pending"
+assert_rejected "merge refuses a runtime-pending body" merge_refusal_for_body "$pending_body"
+assert_accepted "merge accepts High with runtime-verified evidence" merge_refusal_for_body "$high_body"
+downgraded_body="${high_body/\*\*Verification:\*\* runtime-verified/**Verification:** self-assessed}"
+assert_rejected "merge refuses a hand-edited High downgrade" merge_refusal_for_body "$downgraded_body"
+bare_marker_body="${high_body/runtime-verified with a polling fixture/runtime-verified}"
+assert_rejected "merge refuses High with a bare runtime marker" merge_refusal_for_body "$bare_marker_body"
+assert_accepted "merge accepts Low self-assessed" merge_refusal_for_body "$low_body"
+assert_accepted "merge accepts a body without a Runtime Testing section" \
+	merge_refusal_for_body $'## Summary\n\nHand-written body.\n\nResolves #12'
+assert_rejected "merge refuses unreadable runtime metadata" _runtime_testing_merge_refusal '{}'
+example_section_body=$'## Runtime Testing\n\n- **Risk level:** Low\n- **Verification:** self-assessed — example\n\n'"$pending_body"
+assert_rejected "merge refuses ambiguous multi-section metadata" merge_refusal_for_body "$example_section_body"
+assert_accepted "ambiguous metadata takes the runtime hold" \
+	_pr_body_declares_runtime_pending "$example_section_body"
+
+# Review findings on PR #39569: negated pending reasons, multiline evidence
+# with bold bullets, and malformed metadata lines.
+negated_pending_body=$(_build_pr_body "2" "Credential rotation" \
+	"not runtime-verified: this runner has no Stripe sandbox; unit tests pass" \
+	"src/auth.sh" "" "Resolves" "Critical" "runtime-pending")
+assert_contains "runtime-pending accepts a negated-claim reason" "$negated_pending_body" \
+	"**Verification:** runtime-pending — not runtime-verified"
+assert_rejected "runtime-pending with only a negated claim is rejected" \
+	_build_pr_body "2" "Credential rotation" "Not runtime-verified." "src/auth.sh" "" \
+	"Resolves" "Critical" "runtime-pending"
+assert_rejected "runtime-verified still rejects a negated claim" \
+	_build_pr_body "2" "Credential rotation" "not runtime-verified: unit tests pass" "src/auth.sh" "" \
+	"Resolves" "Critical" "runtime-verified"
+multiline_body=$(_build_pr_body "2" "Credential rotation" \
+	$'\n- **Check:** polling fixture passed' "src/auth.sh" "" "Resolves" "Critical" "runtime-verified")
+multiline_evidence=$(printf '%s' "$multiline_body" | _runtime_testing_metadata_from_body | jq -r '.evidence')
+assert_contains "multiline evidence with bold bullets is parsed whole" "$multiline_evidence" \
+	"- Check: polling fixture passed"
+assert_accepted "merge accepts Critical with multiline runtime-verified evidence" \
+	merge_refusal_for_body "$multiline_body"
+tabbed_risk_body="${high_body/\*\*Risk level:\*\* High/**Risk level:**	High}"
+assert_rejected "merge refuses a tab-separated High risk without verified evidence" \
+	merge_refusal_for_body "${tabbed_risk_body/\*\*Verification:\*\* runtime-verified/**Verification:** self-assessed}"
+unknown_risk_body="${low_body/\*\*Risk level:\*\* Low/**Risk level:**}"
+assert_rejected "merge refuses a present section with no recognized risk" \
+	merge_refusal_for_body "$unknown_risk_body"
+undelimited_body=$'## Runtime Testing\n\n- **Risk level:** Low\n- **Verification:** runtime-pending\n'
+assert_rejected "merge refuses a Verification line without its evidence delimiter" \
+	merge_refusal_for_body "$undelimited_body"
+
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_merge_check_runtime_evidence() {/,/^}/p' "${SCRIPT_DIR_TEST}/full-loop-helper-merge.sh")"
+_flm_gh_read() { return 1; }
+assert_rejected "merge helper refuses a runtime-pending PR body" \
+	_merge_check_runtime_evidence 7 owner/repo "$(jq -cn --arg body "$pending_body" '{body:$body}')"
+assert_accepted "merge helper accepts runtime-verified PR body" \
+	_merge_check_runtime_evidence 7 owner/repo "$(jq -cn --arg body "$high_body" '{body:$body}')"
+assert_rejected "merge helper fails closed when the body read fails" \
+	_merge_check_runtime_evidence 7 owner/repo ""
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1

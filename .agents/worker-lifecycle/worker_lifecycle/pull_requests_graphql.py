@@ -10,7 +10,12 @@ from __future__ import annotations
 import json
 import re
 import subprocess  # nosec B404 # fixed gh argv, validated slug
-from typing import TypeGuard
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # typing.TypeGuard is Python 3.10+; macOS /usr/bin/python3 is 3.9 (GH#38706).
+    # Postponed annotations keep it type-checker-only.
+    from typing import TypeGuard
 
 # Bounds: 100 pages of 100 open PRs, and fork chains this deep.
 _GRAPHQL_PAGE_LIMIT = 100

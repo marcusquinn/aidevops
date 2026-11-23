@@ -28,6 +28,22 @@ def expected_approval_transition:
   and ((.before.labels // []) | index($nmr) != null)
   and ((.after.labels // []) | index($nmr) == null);
 
+def expected_permission_approval_transition:
+  comparable_state
+  and .op == $issue_edit
+  and .caller_function == "_apply_permission_approval_state"
+  and framework_script("approval-helper-permissions.sh")
+  and (.flags.permission_approval_verified == "v1-current-state"
+       or .flags.permission_withdrawal_verified == "v1-current-state")
+  and .suspicious == [("protected_label_removed:" + $permission)]
+  and ((.delta.labels_removed // []) | index($permission) != null)
+  and (((.delta.labels_removed // []) - [$permission, "status:blocked"]) | length == 0)
+  and (((.delta.labels_added // []) - ["status:available", "auto-dispatch"]) | length == 0)
+  and (.delta.title_delta_pct == 0)
+  and (.delta.body_delta_pct == 0)
+  and ((.before.labels // []) | index($permission) != null)
+  and ((.after.labels // []) | index($permission) == null);
+
 def expected_permission_block_transition:
   comparable_state
   and .op == $issue_edit
@@ -99,6 +115,50 @@ def expected_full_loop_review_transition:
   and ((.after.labels // []) | index("status:in-progress") == null)
   and ((.after.labels // []) | index("status:in-review") != null);
 
+def core_status:
+  test("^status:(available|queued|claimed|in-progress|in-review|done|blocked)$");
+
+# New records only: never infer proof from a caller or backfill old log lines.
+def expected_owned_lifecycle_transition:
+  comparable_state
+  and .op == $issue_edit
+  and framework_script("gh-write-helper.sh")
+  and (.caller_function == "_issue_status" or .caller_function == "_issue_edit_signed")
+  and .flags.lifecycle_transition_verified == "v1-owned-current-state"
+  and .delta.title_delta_pct == 0 and .delta.body_delta_pct == 0
+  and ((.delta.labels_removed | length) == 1)
+  and ((.delta.labels_added | length) == 1)
+  and all(.delta.labels_removed[]; core_status)
+  and all(.delta.labels_added[]; core_status)
+  and ((.before.labels - .after.labels) == .delta.labels_removed)
+  and ((.after.labels - .before.labels) == .delta.labels_added)
+  and ([.before.labels[] | select(core_status)] | length) == 1
+  and ([.after.labels[] | select(core_status)] | length) == 1
+  and ((.suspicious | length) > 0)
+  and all(.suspicious[];
+    . == "protected_label_removed:status:claimed"
+    or . == "protected_label_removed:status:in-progress"
+    or . == "protected_label_removed:status:in-review");
+
+# GH#38360: the runtime blocked exit also adds the one needs-* companion that
+# names what unblocks it (headless-runtime-failure.sh
+# _hrff_blocked_companion_label). Accept status:blocked plus at most one label
+# from the canonical companion contract ($blocked_companions, built from
+# _blocked_companion_contract); any other or additional added label stays
+# reportable, and an unavailable contract ([]) restores the strict shape.
+def blocked_exit_labels_added:
+  (.delta.labels_added // []) as $added
+  | (.after.labels // []) as $after_labels
+  | ($added - ["status:blocked"]) as $companions
+  | ($added | index("status:blocked") != null)
+  and (($added | length) == (($companions | length) + 1))
+  and (($companions | length) <= 1)
+  and (($blocked_companions | type) == "array")
+  # Scalar labels only: jq index() treats an array argument as a subsequence.
+  and all($companions[]; type == "string" and (. as $label
+    | ($blocked_companions | index($label)) != null
+    and ($after_labels | index($label)) != null));
+
 def expected_worker_blocked_exit_transition:
   comparable_state
   and .op == $issue_edit
@@ -107,7 +167,7 @@ def expected_worker_blocked_exit_transition:
   and .flags.worker_blocked_exit_verified == "v1-release-persisted"
   and .suspicious == ["protected_label_removed:status:in-progress"]
   and (.delta.labels_removed // []) == ["status:in-progress"]
-  and (.delta.labels_added // []) == ["status:blocked"]
+  and blocked_exit_labels_added
   and .delta.title_delta_pct == 0
   and .delta.body_delta_pct == 0
   and ((.before.labels // []) | index("status:in-progress") != null)
@@ -173,9 +233,11 @@ def unavailable_capture_only:
 select(try ((.suspicious | length) > 0) catch true)
 | select((try (
   expected_approval_transition
+  or expected_permission_approval_transition
   or expected_permission_block_transition
   or expected_trusted_author_nmr_transition
   or expected_full_loop_review_transition
+  or expected_owned_lifecycle_transition
   or expected_worker_blocked_exit_transition
   or expected_feedback_redispatch_transition
   or expected_planning_publication_transition

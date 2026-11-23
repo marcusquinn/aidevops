@@ -49,6 +49,7 @@ def remote_facts(slug: str, owner: str) -> Collected:
     permissions = repo.get("permissions") or {}
     facts = {
         "private": repo.get("private"),
+        "full_name": repo.get("full_name"),
         "owner": (repo.get("owner") or {}).get("login"),
         "default_branch": repo.get("default_branch"),
         "archived": repo.get("archived"),
@@ -57,7 +58,8 @@ def remote_facts(slug: str, owner: str) -> Collected:
     }
     checks = {
         "remote-not-private": facts["private"] is not True,
-        "remote-owner-mismatch": str(facts["owner"] or "").lower() != owner.lower(),
+        "remote-transferred": bool(facts["full_name"]) and str(facts["full_name"]).lower() != slug.lower(),
+        "remote-owner-mismatch": not facts["full_name"] and str(facts["owner"] or "").lower() != owner.lower(),
         "remote-archived": bool(facts["archived"]),
         "no-push-permission": not facts["push"],
     }

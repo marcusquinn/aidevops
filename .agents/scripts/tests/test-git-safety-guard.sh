@@ -15,6 +15,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 HOOK="${SCRIPT_DIR}/../../hooks/git_safety_guard.py"
+POLICY_HELPER="${SCRIPT_DIR}/../canonical-write-policy-helper.py"
+PRE_EDIT_CHECK="${SCRIPT_DIR}/../pre-edit-check.sh"
 REAL_GIT=$(python3 -E -s -B -c 'import sys; sys.path.insert(0, sys.argv[1]); from native_git import real_git; print(real_git())' "${SCRIPT_DIR}/..")
 
 if [[ ! -f "$HOOK" ]]; then
@@ -582,6 +584,156 @@ test_controlled_worktree_creation() {
 }
 
 # =============================================================================
+# Test 13: GH#39573 opt-in canonical writes for gitignored runtime output
+# =============================================================================
+setup_runtime_hub() {
+	local hub="$1"
+	mkdir -p "${hub}/logs" "${hub}/logs-secret" "${hub}/src"
+	git -C "$hub" init -b main >/dev/null 2>&1 || return 1
+	git -C "$hub" config user.name "Aidevops Test"
+	git -C "$hub" config user.email "test@example.com"
+	git -C "$hub" config commit.gpgsign false
+	printf 'logs/\nlogs-secret/\n.aidevops.json\n' >"${hub}/.gitignore"
+	printf 'code\n' >"${hub}/src/x.py"
+	printf 'tracked\n' >"${hub}/logs/tracked.md"
+	git -C "$hub" add .gitignore src/x.py
+	git -C "$hub" add -f logs/tracked.md
+	git -C "$hub" commit -m "test: seed hub" >/dev/null 2>&1 || return 1
+	# Invalid entries ("./", "", "/", "..", globs) must never widen the list.
+	printf '{"canonical_write_allow":["logs/","./","","/","../","lo*/",".git/"]}\n' >"${hub}/.aidevops.json"
+	ln -s ../src "${hub}/logs/link"
+	ln "${hub}/src/x.py" "${hub}/logs/hardlink.md"
+	return 0
+}
+
+runtime_hub_expect() {
+	local hub="$1"
+	local expected="$2"
+	local relative="$3"
+	local label="$4"
+	local json="" output=""
+	json=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Write","tool_input":{"filePath":sys.argv[1]}}))' "${hub}/${relative}")
+	local hook_rc=0
+	output=$(run_hook "$hub" "$json") || hook_rc=$?
+	local matched=1 exemption=""
+	if [[ "$expected" == allow ]]; then
+		# Empty output from a failed hook is not an allow; require a clean
+		# exit and the shared policy's exemption as well.
+		exemption=$(python3 "$POLICY_HELPER" check-write --cwd "$hub" \
+			--path "${hub}/${relative}" --field canonical_runtime_allow) || exemption=""
+		[[ "$hook_rc" -ne 0 || -n "$output" || "$exemption" != "allowlisted-ignored-runtime-path" ]] || matched=0
+	elif hook_is_deny "$output" "read-only session mirrors"; then
+		matched=0
+	fi
+	if [[ "$matched" -eq 0 ]]; then
+		print_result "GH#39573 ${label}: ${relative} → ${expected}" 0
+	else
+		print_result "GH#39573 ${label}: ${relative} → ${expected}" 1 "output=${output}"
+	fi
+	return 0
+}
+
+test_canonical_runtime_allowlist() {
+	local hub="${TEST_ROOT}/runtime-hub"
+	if ! setup_runtime_hub "$hub"; then
+		print_result "GH#39573 runtime hub fixture" 1 "fixture setup failed"
+		return 0
+	fi
+	runtime_hub_expect "$hub" allow "logs/new.md" "allowlisted ignored path"
+	runtime_hub_expect "$hub" allow "logs/2026-11-21/run.facts" "allowlisted nested ignored path"
+	runtime_hub_expect "$hub" deny "logs/tracked.md" "tracked file under allowlisted prefix"
+	runtime_hub_expect "$hub" deny "src/x.py" "not allowlisted"
+	runtime_hub_expect "$hub" deny "logs-secret/x.md" "prefix boundary"
+	runtime_hub_expect "$hub" deny "logs/link/x.py" "symlink escape"
+	runtime_hub_expect "$hub" deny "logs/hardlink.md" "hard-linked tracked content"
+	runtime_hub_expect "$hub" deny "logs/.gitignore" "reserved ignore rules"
+	runtime_hub_expect "$hub" deny ".aidevops.json" "self-modifying allowlist"
+	runtime_hub_expect "$hub" deny "logs/.GIT/config" "case-folded Git metadata"
+	runtime_hub_expect "$hub" deny $'logs/.g\xe2\x80\x8cit/config' "HFS+ ignorable Git metadata alias"
+	runtime_hub_expect "$hub" deny "logs/.git./config" "trailing-dot Git metadata alias"
+	# Case alias of a tracked file: on case-insensitive storage it is the
+	# tracked file; elsewhere the case-insensitive index match still denies.
+	runtime_hub_expect "$hub" deny "logs/TRACKED.md" "case alias of a tracked file"
+	# A symlink above the checkout still counts as a traversed symlink.
+	ln -s "$hub" "${TEST_ROOT}/runtime-hub-alias"
+	runtime_hub_expect "${TEST_ROOT}/runtime-hub-alias" deny "logs/new.md" "symlinked alias above the checkout"
+
+	local pre_edit_rc=0
+	(cd "$hub" && bash "$PRE_EDIT_CHECK" --file logs/new.md </dev/null >/dev/null 2>&1) || pre_edit_rc=$?
+	print_result "GH#39573 pre-edit-check --file allowlisted runtime path exits 0" "$pre_edit_rc" "rc=${pre_edit_rc}"
+	pre_edit_rc=0
+	(cd "$hub" && bash "$PRE_EDIT_CHECK" --file src/x.py </dev/null >/dev/null 2>&1) || pre_edit_rc=$?
+	if [[ "$pre_edit_rc" -ne 0 ]]; then
+		print_result "GH#39573 pre-edit-check --file tracked canonical path stays blocked" 0
+	else
+		print_result "GH#39573 pre-edit-check --file tracked canonical path stays blocked" 1 "rc=0"
+	fi
+
+	local patch_json="" output=""
+	patch_json=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"apply_patch","tool_input":{"patchText":"*** Begin Patch\n*** Add File: "+sys.argv[1]+"\n+x\n*** End Patch\n"}}))' "${hub}/logs/patched.md")
+	local patch_rc=0
+	output=$(run_hook "$hub" "$patch_json") || patch_rc=$?
+	if [[ "$patch_rc" -eq 0 && -z "$output" ]]; then
+		print_result "GH#39573 apply_patch to allowlisted ignored path → allow" 0
+	else
+		print_result "GH#39573 apply_patch to allowlisted ignored path → allow" 1 "output=${output}"
+	fi
+
+	# A tracked config is shared content, not a user-authored local opt-in.
+	git -C "$hub" add -f .aidevops.json
+	git -C "$hub" commit -m "test: track config" >/dev/null 2>&1
+	runtime_hub_expect "$hub" deny "logs/new.md" "tracked config is ignored"
+	return 0
+}
+
+# GH#39582: run the hook from a linked worktree and expect a Git-metadata
+# deny, or a clean silent allow.
+git_metadata_expect() {
+	local cwd="$1"
+	local expected="$2"
+	local target="$3"
+	local label="$4"
+	local json="" output="" hook_rc=0 matched=1
+	json=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Write","tool_input":{"filePath":sys.argv[1]}}))' "$target")
+	output=$(run_hook "$cwd" "$json") || hook_rc=$?
+	if [[ "$expected" == allow ]]; then
+		[[ "$hook_rc" -ne 0 || -n "$output" ]] || matched=0
+	elif hook_is_deny "$output" "Git metadata"; then
+		matched=0
+	fi
+	print_result "GH#39582 ${label} → ${expected}" "$matched" "rc=${hook_rc} output=${output}"
+	return 0
+}
+
+test_git_metadata_writes_denied() {
+	local hub="${TEST_ROOT}/metadata-hub"
+	local linked="${TEST_ROOT}/metadata-linked"
+	# TEST_ROOT is itself a repository, so the non-Git target lives apart.
+	local plain=""
+	plain=$(mktemp -d) && plain=$(cd "$plain" && pwd -P) || plain=""
+	# CI runners have no global identity; give the seed commit its own.
+	if [[ -z "$plain" ]] || ! git init -q -b main "$hub" ||
+		! git -C "$hub" -c user.name="Aidevops Test" -c user.email="test@example.com" \
+			-c commit.gpgsign=false commit -q --allow-empty -m init ||
+		! git -C "$hub" worktree add -q "$linked" -b feature; then
+		print_result "GH#39582 metadata fixture" 1 "fixture setup failed"
+		return 0
+	fi
+	git_metadata_expect "$linked" deny "${hub}/.git/hooks/pre-commit" "canonical hook"
+	git_metadata_expect "$linked" deny "${hub}/.git/config" "canonical config"
+	git_metadata_expect "$linked" deny "${hub}/.git/worktrees/metadata-linked/HEAD" "linked worktree private git dir"
+	git_metadata_expect "$linked" deny "${linked}/.git" "linked worktree gitfile"
+	git_metadata_expect "$linked" deny "${linked}/sub/.git/config" "nested Git directory in a linked worktree"
+	if [[ -e "${hub}/.GIT" ]]; then
+		git_metadata_expect "$linked" deny "${hub}/.GIT/hooks/x" "case-folded Git directory"
+	fi
+	git_metadata_expect "$linked" allow "${linked}/src/x.py" "linked worktree source"
+	git_metadata_expect "$linked" allow "${plain}/x.md" "path outside any repository"
+	rm -rf "$plain"
+	return 0
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 main() {
@@ -600,6 +752,8 @@ main() {
 	test_canonical_guard_skip_env_var
 	test_worker_network_policy
 	test_controlled_worktree_creation
+	test_canonical_runtime_allowlist
+	test_git_metadata_writes_denied
 
 	teardown_test_repo
 

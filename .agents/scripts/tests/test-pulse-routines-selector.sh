@@ -329,7 +329,6 @@ TODOEOF
 	local repo_ids=""
 	repo_ids=$(_collect_routine_ids "$REPO_ROOT/TODO.md")
 	if [[ $'\n'"$repo_ids"$'\n' == *$'\nr-gh-audit-scan\n'* ]] &&
-		[[ $'\n'"$repo_ids"$'\n' == *$'\nr-pulse-check\n'* ]] &&
 		[[ $'\n'"$repo_ids"$'\n' != *$'\nr004\n'* ]]; then
 		pass "Case 7b (GH#28808): repository TODO ignores fenced r004 and keeps descriptive IDs"
 	else
@@ -618,6 +617,51 @@ LIFECYCLE
 		pass "GH#34867: $mode agent survives parent exit, isolates PGID, excludes duplicates and records $expected"
 	else
 		fail "GH#34867: $mode detached agent $expected" "see $root"
+	fi
+	return 0
+}
+
+_test_outcome_contract() {
+	local tmpdir="$1"
+	local root="${tmpdir}/outcome"
+	mkdir -p "$root"
+	if (
+		ROUTINE_STATE_FILE="$root/state.json"
+		LOGFILE="$root/pulse.log"
+		ROUTINE_LOG_HELPER="$root/missing-helper"
+		gh_create_issue() {
+			printf '%s\n' "$*" >>"$root/alerts"
+			return 0
+		}
+		printf 'work\nROUTINE_OUTCOME: delivered PR#12\n' >"$root/delivered.out"
+		printf 'work\nROUTINE_OUTCOME: noop nothing due\n' >"$root/noop.out"
+		printf 'work, no outcome line\n' >"$root/none.out"
+		[[ "$(_routine_parse_outcome "$root/delivered.out")" == "delivered|PR#12" ]] || exit 1
+		[[ "$(_routine_parse_outcome "$root/noop.out")" == "noop|nothing due" ]] || exit 1
+		[[ "$(_routine_parse_outcome "$root/none.out")" == "unknown|" ]] || exit 1
+		local i=0
+		for i in 1 2 3 4; do
+			_routine_finalize_terminal r-out "$_ROUTINE_STATUS_SUCCESS" "$(date +%s)" "" 0 noop "nothing due" 3 owner/repo
+		done
+		jq -e '."r-out".last_outcome == "noop" and ."r-out".consecutive_noops == 4 and ."r-out".noop_alerted == true' "$ROUTINE_STATE_FILE" >/dev/null || exit 1
+		# Exactly one alert at the threshold; later no-ops of the streak stay quiet.
+		[[ "$(wc -l <"$root/alerts" | tr -d '[:space:]')" == 1 ]] || exit 1
+		# Unknown keeps the streak; delivered resets it and re-arms the alert.
+		_routine_finalize_terminal r-out "$_ROUTINE_STATUS_SUCCESS" "$(date +%s)" "" 0 unknown "" 3 owner/repo
+		jq -e '."r-out".last_outcome == "unknown" and ."r-out".consecutive_noops == 4' "$ROUTINE_STATE_FILE" >/dev/null || exit 1
+		_routine_finalize_terminal r-out "$_ROUTINE_STATUS_SUCCESS" "$(date +%s)" "" 0 delivered "PR#12" 3 owner/repo
+		jq -e '."r-out".last_outcome == "delivered" and ."r-out".consecutive_noops == 0 and ."r-out".noop_alerted == null' "$ROUTINE_STATE_FILE" >/dev/null || exit 1
+		for i in 1 2 3; do
+			_routine_finalize_terminal r-out "$_ROUTINE_STATUS_SUCCESS" "$(date +%s)" "" 0 noop "again" 3 owner/repo
+		done
+		[[ "$(wc -l <"$root/alerts" | tr -d '[:space:]')" == 2 ]] || exit 1
+		# Failures never count as no-ops.
+		_routine_finalize_terminal r-fail "$_ROUTINE_STATUS_FAILURE" "$(date +%s)" "" 0 noop "x" 1 owner/repo
+		jq -e '."r-fail".consecutive_noops == null' "$ROUTINE_STATE_FILE" >/dev/null || exit 1
+	); then
+		pass "t19258: outcome parsing, noop streak, single alert per streak and delivered reset"
+	else
+		fail "t19258: routine outcome contract" "see $root"
 	fi
 	return 0
 }
@@ -991,6 +1035,7 @@ main() {
 		done
 	done
 	_test_stale_agent_recovery "$tmpdir"
+	_test_outcome_contract "$tmpdir"
 	_test_sigterm_agent_runner "$tmpdir"
 	_test_detached_systemd_scope "$tmpdir" ok
 	_test_detached_systemd_scope "$tmpdir" fail

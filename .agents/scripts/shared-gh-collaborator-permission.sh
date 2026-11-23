@@ -12,6 +12,7 @@ _AIDEVOPS_GH_PERMISSION_UNKNOWN_VALUE="unknown"
 _AIDEVOPS_GH_COLLAB_APP_PREFERRED_ROUTE="app-preferred"
 _AIDEVOPS_GH_COLLAB_GH_FALLBACK_ROUTE="gh-fallback"
 _AIDEVOPS_GH_COLLAB_API_FAILURE_REASON="api-failure"
+_AIDEVOPS_GH_COLLAB_UNEXPECTED_HTTP_REASON="unexpected-http"
 
 #######################################
 # Decide whether an issue actor has maintainer-equivalent repository authority.
@@ -123,6 +124,49 @@ _gh_actor_has_repo_write_authority() {
 }
 
 #######################################
+# Decide whether a comment that contains a key was written by an account with
+# repository write authority (GH#38021).
+#
+# Keyed audit comments are deduplicated by reading them back. Read through a
+# GitHub App installation, a private organization member's comment reports
+# CONTRIBUTOR, so an association-only test never finds the runner's own comment
+# and the comment is posted again. Each distinct author is resolved once through
+# _gh_actor_has_repo_write_authority.
+#
+# Args: $1=repo_slug owner/repo, $2=comments JSON (one array or concatenated
+#       pages), $3=key text
+# Returns: 0=an author with write authority posted the key, 1=no comment has the
+#          key or every author is confirmed without write authority,
+#          2=unreadable input, or a lookup failed and no author was confirmed.
+#######################################
+_gh_keyed_comment_has_write_author() {
+	local repo_slug="$1"
+	local comments_json="$2"
+	local key="$3"
+	local authors="" association="" login="" authority_rc=0 unknown=0
+
+	[[ -n "$repo_slug" && -n "$key" ]] || return 2
+	# Association first: it is never empty, so a deleted author (no login) cannot
+	# shift fields when read splits on the tab.
+	authors=$(printf '%s' "$comments_json" | jq -rs --arg key "$key" '
+		flatten | map(select(type == "object" and ((.body // "") | contains($key)))
+			| [(.author_association // "NONE"), (.user.login // "")])
+		| unique | .[] | @tsv' 2>/dev/null) || return 2
+	[[ -n "$authors" ]] || return 1
+	#aidevops:trust-boundary -- a comment suppresses a repeat only when its author
+	# is confirmed to hold write authority; an unconfirmed author never does.
+	# The list is read on fd 3 so a lookup that reads stdin cannot consume it.
+	while IFS=$'\t' read -r association login <&3; do
+		authority_rc=0
+		_gh_actor_has_repo_write_authority "$repo_slug" "$login" "$association" || authority_rc=$?
+		[[ "$authority_rc" -ne 0 ]] || return 0
+		[[ "$authority_rc" -eq 1 ]] || unknown=1
+	done 3<<<"$authors"
+	[[ "$unknown" -eq 0 ]] || return 2
+	return 1
+}
+
+#######################################
 # Verify that an actor is the current owner of a canonical user repository.
 #
 # A matching slug prefix is only a candidate signal: repositories can be
@@ -204,24 +248,124 @@ _gh_repository_owner_matches_actor() {
 _gh_collaborator_permission_request() {
 	local auth_route="$1"
 	local perm_url="$2"
+	local etag="${3:-}"
+	local -a cond_args=()
+
+	# Conditional request: GitHub answers 304 (free of primary quota) when the
+	# verdict is unchanged; the verdict is still confirmed by GitHub every run.
+	if [[ -n "$etag" ]]; then
+		cond_args=(-H "If-None-Match: ${etag}")
+	fi
 
 	if [[ "$auth_route" == "$_AIDEVOPS_GH_COLLAB_GH_FALLBACK_ROUTE" ]]; then
 		if declare -F _gh_with_timeout >/dev/null 2>&1; then
 			AIDEVOPS_GH_QUOTA_COST=1 \
 				AIDEVOPS_GH_ROUTE_DECISION="collaborator-permission-gh-fallback" \
-				_gh_with_timeout read gh api -i "$perm_url"
+				_gh_with_timeout read gh api -i ${cond_args[@]+"${cond_args[@]}"} "$perm_url"
 			return $?
 		fi
 		AIDEVOPS_GH_QUOTA_COST=1 \
 			AIDEVOPS_GH_ROUTE_DECISION="collaborator-permission-gh-fallback" \
-			gh api -i "$perm_url"
+			gh api -i ${cond_args[@]+"${cond_args[@]}"} "$perm_url"
 		return $?
 	fi
 
 	AIDEVOPS_GH_QUOTA_COST=1 \
 		AIDEVOPS_GH_ROUTE_DECISION="collaborator-permission-rest" \
-		_rest_api_call read gh api -i "$perm_url"
+		_rest_api_call read gh api -i ${cond_args[@]+"${cond_args[@]}"} "$perm_url"
 	return $?
+}
+
+#######################################
+# ETag store for conditional permission lookups. One private file per
+# repo|user|route holding: key, etag, permission (one per line).
+# Directory 700, files 600, symlinks never followed.
+#######################################
+_gh_collaborator_etag_dir() {
+	printf '%s' "${HOME}/.aidevops/cache/gh-collaborator-permission-etags"
+	return 0
+}
+
+# Args: $1=lowercase repo|user|route key. Output: store file path.
+_gh_collaborator_etag_file() {
+	local key="$1"
+	local digest=""
+	digest=$(printf '%s' "$key" | cksum | tr ' ' '-') || return 1
+	[[ -n "$digest" ]] || return 1
+	printf '%s/%s' "$(_gh_collaborator_etag_dir)" "$digest"
+	return 0
+}
+
+# Returns 0 when the store directory is usable (created 700, not a symlink).
+_gh_collaborator_etag_dir_ready() {
+	local dir=""
+	dir=$(_gh_collaborator_etag_dir)
+	[[ ! -L "$dir" ]] || return 1
+	if [[ ! -d "$dir" ]]; then
+		(umask 077 && mkdir -p "$dir") 2>/dev/null || return 1
+	fi
+	[[ -d "$dir" && ! -L "$dir" && -O "$dir" ]] || return 1
+	chmod 700 "$dir" 2>/dev/null || return 1
+	return 0
+}
+
+# Args: $1=key, $2=etag var, $3=permission var. Returns 0 only for a valid entry.
+_gh_collaborator_etag_load() {
+	local key="$1"
+	local etag_var="$2"
+	local perm_var="$3"
+	# Locals are prefixed: bash dynamic scope would shadow caller output names.
+	local _ld_file="" _ld_key="" _ld_etag="" _ld_perm=""
+
+	_ld_file=$(_gh_collaborator_etag_file "$key") || return 1
+	[[ -f "$_ld_file" && ! -L "$_ld_file" && -O "$_ld_file" ]] || return 1
+	{
+		IFS= read -r _ld_key &&
+			IFS= read -r _ld_etag &&
+			IFS= read -r _ld_perm
+	} <"$_ld_file" 2>/dev/null || return 1
+	[[ "$_ld_key" == "$key" ]] || return 1
+	[[ "$_ld_etag" =~ ^(W/)?\"[^\"[:space:]]+\"$ ]] || return 1
+	case "$_ld_perm" in
+	admin | maintain | write | triage | read | none) ;;
+	*) return 1 ;;
+	esac
+	printf -v "$etag_var" '%s' "$_ld_etag"
+	printf -v "$perm_var" '%s' "$_ld_perm"
+	return 0
+}
+
+# Args: $1=key, $2=etag, $3=permission. Best effort; never fails the lookup.
+_gh_collaborator_etag_store() {
+	local key="$1"
+	local etag="$2"
+	local perm="$3"
+	local file="" tmp=""
+
+	[[ "$etag" =~ ^(W/)?\"[^\"[:space:]]+\"$ ]] || return 0
+	case "$perm" in
+	admin | maintain | write | triage | read | none) ;;
+	*) return 0 ;;
+	esac
+	_gh_collaborator_etag_dir_ready || return 0
+	file=$(_gh_collaborator_etag_file "$key") || return 0
+	[[ ! -L "$file" ]] || return 0
+	tmp=$(umask 077 && mktemp "$(_gh_collaborator_etag_dir)/.tmp.XXXXXX" 2>/dev/null) || return 0
+	if printf '%s\n%s\n%s\n' "$key" "$etag" "$perm" >"$tmp" 2>/dev/null && chmod 600 "$tmp" 2>/dev/null && mv -f "$tmp" "$file" 2>/dev/null; then
+		return 0
+	fi
+	rm -f "$tmp" 2>/dev/null || true
+	return 0
+}
+
+# Args: $1=key. Drops a stale entry.
+_gh_collaborator_etag_forget() {
+	local key="$1"
+	local file=""
+
+	file=$(_gh_collaborator_etag_file "$key") || return 0
+	[[ -f "$file" || -L "$file" ]] && rm -f "$file" 2>/dev/null
+	return 0
 }
 
 # Emit the confirmed non-collaborator verdict (HTTP 404 maps to "none").
@@ -260,18 +404,221 @@ _gh_collaborator_permission_not_collaborator() {
 # Returns: 0=lookup succeeded (404 maps to none), 2=lookup/API/parse failure,
 #          75=transport admission deferred (no permission verdict).
 #######################################
+# Only use caller-provided scratch files inside the framework temp root. Resolve
+# parent directories physically so a symlinked directory cannot escape it.
+_gh_collaborator_scratch_file_safe() {
+	local file="$1"
+	local root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	local parent=""
+	[[ -n "$file" && -f "$file" && ! -L "$file" && -O "$file" ]] || return 1
+	root=$(cd "$root" && pwd -P) || return 1
+	parent=$(cd "$(dirname "$file")" && pwd -P) || return 1
+	case "$parent/" in
+	"$root/"*) return 0 ;;
+	esac
+	return 1
+}
+
 _gh_collaborator_permission_lookup() {
 	local repo_slug="$1"
 	local user="$2"
 	local out_var="${3:-}"
+	local _gcp_route="${4:-}"
+	local _gcp_retry="${5:-0}"
+	local _gcp_key="" _gcp_entry="" _gcp_cached="" _gcp_fresh="" _gcp_rc=0
+
+	# Only the top-level default-_gcp_route call is memoized (GH#38242).
+	if [[ -z "$repo_slug" || -z "$user" || -n "$_gcp_route" || "$_gcp_retry" != "0" ]]; then
+		_gh_collaborator_permission_lookup_uncached "$@"
+		return $?
+	fi
+
+	_gcp_key=$(printf '%s|%s' "$repo_slug" "$user" | tr '[:upper:]' '[:lower:]')
+	while IFS= read -r _gcp_entry; do
+		if [[ "${_gcp_entry%%=*}" == "$_gcp_key" ]]; then
+			_gcp_cached="${_gcp_entry#*=}"
+		fi
+	done <<<"$_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO"
+	local _gcp_file="${AIDEVOPS_GH_COLLAB_MEMO_FILE:-}"
+	if ! _gh_collaborator_scratch_file_safe "$_gcp_file"; then
+		_gcp_file=""
+	fi
+	if [[ -z "$_gcp_cached" && -n "$_gcp_file" ]]; then
+		while IFS= read -r _gcp_entry; do
+			if [[ "${_gcp_entry%%=*}" == "$_gcp_key" ]]; then
+				case "${_gcp_entry#*=}" in
+				admin | maintain | write | triage | read | none) _gcp_cached="${_gcp_entry#*=}" ;;
+				esac
+			fi
+		done <"$_gcp_file"
+	fi
+	if [[ -n "$_gcp_cached" ]]; then
+		if _gh_collaborator_scratch_file_safe "${AIDEVOPS_GH_COLLAB_STATS_FILE:-}"; then
+			printf 'hit\n' >>"$AIDEVOPS_GH_COLLAB_STATS_FILE" || true
+		fi
+		AIDEVOPS_GH_COLLAB_PERMISSION_HTTP="$_AIDEVOPS_GH_PERMISSION_UNKNOWN_VALUE"
+		AIDEVOPS_GH_COLLAB_PERMISSION_REASON="ok"
+		export AIDEVOPS_GH_COLLAB_PERMISSION_HTTP AIDEVOPS_GH_COLLAB_PERMISSION_REASON
+		if [[ -n "$out_var" ]]; then
+			printf -v "$out_var" '%s' "$_gcp_cached"
+		else
+			printf '%s\n' "$_gcp_cached"
+		fi
+		return 0
+	fi
+
+	if _gh_collaborator_scratch_file_safe "${AIDEVOPS_GH_COLLAB_STATS_FILE:-}"; then
+		printf 'miss %s\n' "$_gcp_key" >>"$AIDEVOPS_GH_COLLAB_STATS_FILE" || true
+	fi
+	_gh_collaborator_permission_lookup_uncached "$repo_slug" "$user" _gcp_fresh || _gcp_rc=$?
+	if [[ "$_gcp_rc" -eq 0 ]]; then
+		case "$_gcp_fresh" in
+		admin | maintain | write | triage | read | none)
+			_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO="${_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO}${_gcp_key}=${_gcp_fresh}"$'\n'
+			if [[ -n "$_gcp_file" ]]; then
+				printf '%s=%s\n' "$_gcp_key" "$_gcp_fresh" >>"$_gcp_file" || true
+			fi
+			;;
+		esac
+		if [[ -n "$out_var" ]]; then
+			printf -v "$out_var" '%s' "$_gcp_fresh"
+		else
+			printf '%s\n' "$_gcp_fresh"
+		fi
+	fi
+	return "$_gcp_rc"
+}
+
+# Per-process memo of successful lookups: newline-delimited "repo|login=perm",
+# lowercase keys. Optional per-run scratch sharing survives command substitution;
+# the routine deletes it on exit, so the next run observes revocation.
+# Failures, deferrals and fallback/retry routes are never memoized.
+_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
+
+# Split a `gh api -i` response into status, JSON body and ETag header.
+# Args: $1=response, $2=status var, $3=body var, $4=etag var
+# Returns: 0 always.
+_gh_collaborator_permission_parse_response() {
+	local _pr_response="$1"
+	local _pr_status_var="$2"
+	local _pr_body_var="$3"
+	local _pr_etag_var="$4"
+	local _pr_line="" _pr_status="" _pr_body="" _pr_etag="" _pr_in_body=0
+
+	while IFS= read -r _pr_line; do
+		_pr_line="${_pr_line%$'\r'}"
+		case "$_pr_line" in
+		HTTP/*)
+			_pr_status="${_pr_line#* }"
+			_pr_status="${_pr_status%% *}"
+			;;
+		[Ee][Tt]ag:*)
+			if [[ "$_pr_in_body" -eq 0 ]]; then
+				_pr_etag="${_pr_line#*:}"
+				_pr_etag="${_pr_etag#"${_pr_etag%%[![:space:]]*}"}"
+			fi
+			;;
+		"")
+			_pr_in_body=1
+			;;
+		\{* | \[*)
+			_pr_in_body=1
+			_pr_body="${_pr_body}${_pr_line}"$'\n'
+			;;
+		*)
+			if [[ "$_pr_in_body" -eq 1 ]]; then
+				_pr_body="${_pr_body}${_pr_line}"$'\n'
+			fi
+			;;
+		esac
+	done <<<"$_pr_response"
+	printf -v "$_pr_status_var" '%s' "$_pr_status"
+	printf -v "$_pr_body_var" '%s' "$_pr_body"
+	printf -v "$_pr_etag_var" '%s' "$_pr_etag"
+	return 0
+}
+
+# Resolve an HTTP 304: return the stored verdict, or fail closed without one.
+# Args: $1=route, $2=repo, $3=user, $4=out var, $5=stored permission,
+#       $6=etag key, $7=same-route retry used
+# Returns: 0=stored verdict emitted, else resolve_failure status.
+_gh_collaborator_permission_resolve_not_modified() {
+	# Prefixed locals: printf -v writes the caller's output name through bash
+	# dynamic scope, so a plain local (e.g. perm) would swallow the verdict.
+	local _nm_route="$1"
+	local _nm_repo="$2"
+	local _nm_login="$3"
+	local _nm_out_var="$4"
+	local _nm_perm="$5"
+	local _nm_key="$6"
+	local _nm_retry_used="$7"
+
+	AIDEVOPS_GH_COLLAB_PERMISSION_HTTP="304"
+	export AIDEVOPS_GH_COLLAB_PERMISSION_HTTP
+	case "$_nm_perm" in
+	admin | maintain | write | triage | read | none)
+		_gh_collaborator_permission_emit_ok "$_nm_route" "$_nm_out_var" "$_nm_perm"
+		return 0
+		;;
+	esac
+	_gh_collaborator_etag_forget "$_nm_key"
+	_gh_collaborator_permission_resolve_failure "$_nm_route" "$_nm_repo" "$_nm_login" "$_nm_out_var" "$_AIDEVOPS_GH_COLLAB_UNEXPECTED_HTTP_REASON" "$_nm_retry_used"
+	return $?
+}
+
+# Emit a confirmed permission verdict and its success reason.
+# Args: $1=route, $2=optional output variable, $3=permission
+_gh_collaborator_permission_emit_ok() {
+	local _eo_route="$1"
+	local _eo_out_var="${2:-}"
+	local _eo_perm="$3"
+
+	if [[ "$_eo_route" == "$_AIDEVOPS_GH_COLLAB_GH_FALLBACK_ROUTE" ]]; then
+		AIDEVOPS_GH_COLLAB_PERMISSION_REASON="gh-fallback-ok"
+	else
+		AIDEVOPS_GH_COLLAB_PERMISSION_REASON="ok"
+	fi
+	export AIDEVOPS_GH_COLLAB_PERMISSION_REASON
+	if [[ -n "$_eo_out_var" ]]; then
+		printf -v "$_eo_out_var" '%s' "$_eo_perm"
+	else
+		printf '%s\n' "$_eo_perm"
+	fi
+	return 0
+}
+
+# GH#38562: `gh api -i` on the REST route prints a 304's status line and
+# headers to stdout; a bare gh prints nothing and reports it on stderr. Either
+# shape is a 304 only for a sent ETag, a failed transport and an empty body.
+# Args: $1=transport rc, $2=sent ETag, $3=parsed body, $4=parsed HTTP status,
+#       $5=1 when stderr reported "gh: HTTP 304"
+# Returns: 0=not modified, 1=otherwise.
+_gh_collaborator_permission_is_not_modified() {
+	local _inm_rc="$1"
+	local _inm_etag="$2"
+	local _inm_body="$3"
+	local _inm_status="$4"
+	local _inm_stderr_304="$5"
+
+	[[ "$_inm_rc" -ne 0 && -n "$_inm_etag" && -z "${_inm_body//[[:space:]]/}" ]] || return 1
+	[[ "$_inm_status" == "304" ]] && return 0
+	[[ -z "$_inm_status" && "$_inm_stderr_304" -eq 1 ]] && return 0
+	return 1
+}
+
+_gh_collaborator_permission_lookup_uncached() {
+	local repo_slug="$1"
+	local user="$2"
+	local out_var="${3:-}"
 	local perm_url="/repos/${repo_slug}/collaborators/${user}/permission"
-	local api_response="" rc=0 http_status="" line="" body="" in_body=0
+	local api_response="" rc=0 http_status="" body=""
 	local auth_route="${4:-$_AIDEVOPS_GH_COLLAB_APP_PREFERRED_ROUTE}"
 	local same_route_retry_used="${5:-0}"
 	# Keep the internal value distinct from caller-selected output names. Bash
 	# uses dynamic scope, so a local named permission_value would shadow the
 	# common caller output variable and silently return an empty permission.
 	local resolved_permission=""
+	local etag_key="" stored_etag="" stored_perm="" err_file="" response_etag="" not_modified=0 stderr_not_modified=0
 
 	AIDEVOPS_GH_COLLAB_PERMISSION_HTTP="$_AIDEVOPS_GH_PERMISSION_UNKNOWN_VALUE"
 	AIDEVOPS_GH_COLLAB_PERMISSION_REASON="$_AIDEVOPS_GH_PERMISSION_UNKNOWN_VALUE"
@@ -283,36 +630,33 @@ _gh_collaborator_permission_lookup() {
 		return 2
 	fi
 
+	# Conditional lookup keyed by repo|user|route; a 304 is GitHub confirming the
+	# stored verdict now. No private stderr capture => go unconditional.
+	etag_key=$(printf '%s|%s|%s' "$repo_slug" "$user" "$auth_route" | tr '[:upper:]' '[:lower:]')
+	if _gh_collaborator_etag_dir_ready; then
+		_gh_collaborator_etag_load "$etag_key" stored_etag stored_perm || stored_etag=""
+		err_file=$(umask 077 && mktemp "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/gh-collab-err.XXXXXX" 2>/dev/null) || err_file=""
+	fi
+	[[ -n "$err_file" ]] || stored_etag=""
+	# GH#38798: callers needing a fresh verdict skip the conditional request.
+	[[ "${AIDEVOPS_GH_COLLAB_SKIP_ETAG:-0}" != "1" ]] || stored_etag=""
+
 	# stdout only: stderr diagnostics (e.g. "[gh-cooldown] ...") start with "["
 	# and would be parsed as body, turning a 200 into malformed-response.
-	api_response=$(_gh_collaborator_permission_request "$auth_route" "$perm_url" 2>/dev/null)
+	api_response=$(_gh_collaborator_permission_request "$auth_route" "$perm_url" "$stored_etag" 2>"${err_file:-/dev/null}")
 	rc=$?
-	while IFS= read -r line; do
-		line="${line%$'\r'}"
-		case "$line" in
-		HTTP/*)
-			http_status="${line#* }"
-			http_status="${http_status%% *}"
-			;;
-		"")
-			in_body=1
-			;;
-		\{* | \[*)
-			in_body=1
-			body="${body}${line}"$'\n'
-			;;
-		*)
-			if [[ "$in_body" -eq 1 ]]; then
-				body="${body}${line}"$'\n'
-			fi
-			;;
-		esac
-	done <<<"$api_response"
+	if [[ -n "$err_file" ]]; then
+		grep -qE '^gh: HTTP 304([[:space:]]|$)' "$err_file" 2>/dev/null && stderr_not_modified=1
+		rm -f "$err_file" 2>/dev/null || true
+	fi
+	_gh_collaborator_permission_parse_response "$api_response" http_status body response_etag
+	_gh_collaborator_permission_is_not_modified "$rc" "$stored_etag" "$body" "$http_status" "$stderr_not_modified" && not_modified=1
 
 	[[ -n "$http_status" ]] && AIDEVOPS_GH_COLLAB_PERMISSION_HTTP="$http_status"
 	export AIDEVOPS_GH_COLLAB_PERMISSION_HTTP
 
 	if [[ "$http_status" == "404" ]]; then
+		_gh_collaborator_etag_forget "$etag_key"
 		_gh_collaborator_permission_not_collaborator "$out_var"
 		return 0
 	fi
@@ -325,13 +669,20 @@ _gh_collaborator_permission_lookup() {
 		return 75
 	fi
 
+	# 304 reuses only a stored verdict; without one it fails closed.
+	#aidevops:trust-boundary -- 304 is never a grant by itself.
+	if [[ "$not_modified" -eq 1 ]]; then
+		_gh_collaborator_permission_resolve_not_modified "$auth_route" "$repo_slug" "$user" "$out_var" "$stored_perm" "$etag_key" "$same_route_retry_used"
+		return $?
+	fi
+
 	if [[ "$rc" -ne 0 ]]; then
 		_gh_collaborator_permission_resolve_failure "$auth_route" "$repo_slug" "$user" "$out_var" "$_AIDEVOPS_GH_COLLAB_API_FAILURE_REASON" "$same_route_retry_used"
 		return $?
 	fi
 
 	if [[ "$http_status" != "200" ]]; then
-		_gh_collaborator_permission_resolve_failure "$auth_route" "$repo_slug" "$user" "$out_var" "unexpected-http" "$same_route_retry_used"
+		_gh_collaborator_permission_resolve_failure "$auth_route" "$repo_slug" "$user" "$out_var" "$_AIDEVOPS_GH_COLLAB_UNEXPECTED_HTTP_REASON" "$same_route_retry_used"
 		return $?
 	fi
 
@@ -341,17 +692,12 @@ _gh_collaborator_permission_lookup() {
 	fi
 	case "$resolved_permission" in
 	admin | maintain | write | triage | read | none)
-		if [[ "$auth_route" == "$_AIDEVOPS_GH_COLLAB_GH_FALLBACK_ROUTE" ]]; then
-			AIDEVOPS_GH_COLLAB_PERMISSION_REASON="gh-fallback-ok"
+		if [[ -n "$response_etag" ]]; then
+			_gh_collaborator_etag_store "$etag_key" "$response_etag" "$resolved_permission"
 		else
-			AIDEVOPS_GH_COLLAB_PERMISSION_REASON="ok"
+			_gh_collaborator_etag_forget "$etag_key"
 		fi
-		export AIDEVOPS_GH_COLLAB_PERMISSION_REASON
-		if [[ -n "$out_var" ]]; then
-			printf -v "$out_var" '%s' "$resolved_permission"
-		else
-			printf '%s\n' "$resolved_permission"
-		fi
+		_gh_collaborator_permission_emit_ok "$auth_route" "$out_var" "$resolved_permission"
 		return 0
 		;;
 	*)
@@ -378,7 +724,7 @@ _gh_collaborator_permission_retry_with_gh() {
 		return 3
 	fi
 
-	_gh_collaborator_permission_lookup "$repo_slug" "$user" "$out_var" "$_AIDEVOPS_GH_COLLAB_GH_FALLBACK_ROUTE" || retry_rc=$?
+	_gh_collaborator_permission_lookup_uncached "$repo_slug" "$user" "$out_var" "$_AIDEVOPS_GH_COLLAB_GH_FALLBACK_ROUTE" || retry_rc=$?
 	if [[ "$retry_rc" -eq 0 ]]; then
 		return 0
 	fi
@@ -410,10 +756,10 @@ _gh_collaborator_permission_resolve_failure() {
 		_gh_collaborator_permission_retry_with_gh "$repo_slug" "$user" "$out_var" || retry_rc=$?
 		# 75 = admission deferred: propagate without a permission verdict.
 		[[ "$retry_rc" -eq 0 || "$retry_rc" -eq 2 || "$retry_rc" -eq 75 ]] && return "$retry_rc"
-		if [[ "$retry_rc" -eq 3 && ( "$failure_reason" == "$_AIDEVOPS_GH_COLLAB_API_FAILURE_REASON" || "$failure_reason" == "unexpected-http" ) ]]; then
+		if [[ "$retry_rc" -eq 3 && ( "$failure_reason" == "$_AIDEVOPS_GH_COLLAB_API_FAILURE_REASON" || "$failure_reason" == "$_AIDEVOPS_GH_COLLAB_UNEXPECTED_HTTP_REASON" ) ]]; then
 			#aidevops:trust-boundary -- retry uncertainty only, never a parsed verdict.
 			sleep 1
-			_gh_collaborator_permission_lookup "$repo_slug" "$user" "$out_var" "$auth_route" 1
+			_gh_collaborator_permission_lookup_uncached "$repo_slug" "$user" "$out_var" "$auth_route" 1
 			return $?
 		fi
 	fi

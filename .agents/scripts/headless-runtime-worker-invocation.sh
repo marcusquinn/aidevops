@@ -62,18 +62,19 @@ _maybe_rotate_isolated_auth() {
 	current_access=$(jq -r --arg p "$provider" '.[$p].access // empty' "$isolated_auth" 2>/dev/null || true)
 	[[ -n "$current_email" || -n "$current_access" ]] || return 0
 
-	# Look up the account in the shared pool. Try email first (most common —
-	# interactive auth with email was copied to isolated at worker startup).
-	# Fall back to access-token match when email is absent (isolated auth
-	# was already rotated at least once, dropping email per build_auth_entry).
+	# Look up the account in the shared pool. The access token names the exact
+	# seat, so match it first. One email can hold several seats (Team and
+	# Personal; GH#38959), so the email fallback (access token refreshed since
+	# the copy) applies only when it names exactly one seat.
 	local pool_match=""
-	if [[ -n "$current_email" ]]; then
-		pool_match=$(jq -c --arg p "$provider" --arg e "$current_email" \
-			'.[$p] | map(select(.email == $e)) | .[0] // empty' "$pool_file" 2>/dev/null || true)
-	fi
-	if [[ -z "$pool_match" && -n "$current_access" ]]; then
+	if [[ -n "$current_access" ]]; then
 		pool_match=$(jq -c --arg p "$provider" --arg a "$current_access" \
 			'.[$p] | map(select(.access == $a)) | .[0] // empty' "$pool_file" 2>/dev/null || true)
+	fi
+	if [[ -z "$pool_match" && -n "$current_email" ]]; then
+		pool_match=$(jq -c --arg p "$provider" --arg e "$current_email" \
+			'.[$p] | map(select(.email == $e)) | if length == 1 then .[0] else empty end' \
+			"$pool_file" 2>/dev/null || true)
 	fi
 	[[ -n "$pool_match" ]] || return 0
 

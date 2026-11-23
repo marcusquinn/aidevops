@@ -297,8 +297,9 @@ def main() -> int:
                     mutate_record(record, path, args.operation, args.extra, connection)
                     save(connection, record)
             connection.execute("COMMIT")
-        # Do not stop units by name after sampling: systemd has no atomic
-        # invocation-conditional StopUnit, so a replacement could be targeted.
+        # Do not stop units by name here: systemd has no atomic
+        # invocation-conditional StopUnit. Drained units are released only by
+        # worktree_lifetime_release.py after a durable unit_release receipt.
         if args.operation == "bind-exec":
             os.environ["AIDEVOPS_MANAGED_WORKTREE"] = "pulse-cgroup-v1"
             # Intentional dispatcher-command execution, only after committed admission.

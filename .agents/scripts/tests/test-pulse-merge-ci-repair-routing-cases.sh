@@ -33,6 +33,7 @@ print_result() {
 
 setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
+	export PULSE_T2449_BLOCK_STATE_DIR="${TEST_ROOT}/t2449-blocks"
 	mkdir -p "${TEST_ROOT}/bin"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
 	export LOGFILE="${TEST_ROOT}/pulse.log"
@@ -166,6 +167,8 @@ extract_merge_gate_functions() {
 		_pm_gate_origin_authority _pm_gate_review_bot _check_pr_merge_gates; do
 		extract_function "$fn_name" "$source_file"
 	done
+	# GH#38042: _check_pr_merge_gates fails closed without the provenance gate.
+	extract_function _pm_gate_unlabeled_worker_branch "${source_file%/*}/pulse-merge-partial-continuation.sh"
 	return 0
 }
 
@@ -174,7 +177,8 @@ extract_process_stage_functions() {
 	local fn_name=""
 	for fn_name in _pmp_stage_parse_and_validate _pmp_stage_handle_conflict \
 		_pmp_stage_review_and_gates _pmp_stage_required_checks _pmp_stage_pre_merge \
-		_pmp_stage_admin_merge _pmp_stage_ruleset_fallback _pmp_stage_finalize_merge; do
+		_pmp_route_preflight_ci_failures _pmp_active_checks_allow_native_defer \
+		_pmp_admin_final_gate_or_route _pmp_stage_admin_merge _pmp_stage_ruleset_fallback _pmp_stage_finalize_merge; do
 		extract_function "$fn_name" "$source_file"
 	done
 	return 0
@@ -228,6 +232,7 @@ define_process_helper() {
 	PULSE_MERGE_BOOL_TRUE="true"
 	PULSE_REVIEW_EVIDENCE_SCHEMA="aidevops.review-gate-evidence/v1"
 	PULSE_REVIEW_REMEDIATION_REPEAT_EXHAUSTED="repeat_exhausted"
+	PULSE_REVIEW_REMEDIATION_DEFERRED="deferred"
 	PULSE_UNKNOWN_STATE="UNKNOWN"
 	PULSE_MERGE_CLOSE_CONFLICTING=false
 	DRY_RUN=0
@@ -247,6 +252,10 @@ define_process_helper() {
 	DUPLICATE_CLOSE_CALLS=0
 	PREFLIGHT_RC=0
 	PREFLIGHT_EVIDENCE="[]"
+	PREFLIGHT_KIND=""
+	PMRC_BLOCKER_CHECKS_ACTIVE="checks_active"
+	REQUIRED_PASSING_RC=1
+	NATIVE_AUTO_RC=0
 	REFRESHED_MERGEABLE="UNKNOWN"
 	REFRESHED_REVIEW_DECISION="NONE"
 	REVIEW_REFRESH_CALLS=0
@@ -261,7 +270,8 @@ define_process_helper() {
 	_check_pr_merge_gates() { local pr_number="$1" repo_slug="$2" pr_author="$3" pr_review="$4" linked_issue="$5" review_mode="${8:-merge}"; [[ -n "$pr_number$repo_slug$pr_author$pr_review$linked_issue" ]]; GATE_CALLS=$((GATE_CALLS + 1)); GATE_REVIEW_ARG="$pr_review"; GATE_REVIEW_MODE="$review_mode"; return 0; }
 	_pr_required_checks_pass() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; if [[ "$PR_REQUIRED_CHECKS_RC" -eq 0 ]]; then return 0; fi; return 1; }
 	manual_release_hold_check() { return 0; }
-	_check_required_checks_passing() { local repo_slug="$1" pr_number="$2"; [[ -n "$repo_slug$pr_number" ]]; return 1; }
+	cloudron_release_merge_guard() { return 0; }
+	_check_required_checks_passing() { local repo_slug="$1" pr_number="$2"; [[ -n "$repo_slug$pr_number" ]]; return "$REQUIRED_PASSING_RC"; }
 	_is_trusted_dependabot_update_pr() { local pr_number="$1" repo_slug="$2" pr_author="$3"; [[ -n "$pr_number$repo_slug$pr_author" ]]; return 1; }
 	_trusted_dependabot_non_review_checks_green() { local pr_number="$1" repo_slug="$2" pr_obj="$3"; [[ -n "$pr_number$repo_slug$pr_obj" ]]; return 1; }
 	_attempt_pr_ci_rebase_retry() { local pr_number="$1" repo_slug="$2" rebase_policy="${5:-standard}"; [[ -n "$pr_number$repo_slug" ]]; REBASE_RETRY_CALLS=$((REBASE_RETRY_CALLS + 1)); REBASE_RETRY_POLICY="$rebase_policy"; return "$REBASE_RETRY_RC"; }
@@ -275,9 +285,9 @@ define_process_helper() {
 	_extract_merge_summary() { printf 'test summary'; return 0; }
 	_retarget_stacked_children() { return 0; }
 	_pulse_merge_admin_safety_check() { return 0; }
-	_set_native_auto_merge_or_skip() { return 0; }
+	_set_native_auto_merge_or_skip() { return "$NATIVE_AUTO_RC"; }
 	_pulse_merge_changes_requested_thread_remediation_first_enabled() { return 1; }
-	_pulse_merge_preflight_snapshot_gate() { _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="$PREFLIGHT_EVIDENCE"; return "$PREFLIGHT_RC"; }
+	_pulse_merge_preflight_snapshot_gate() { _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="$PREFLIGHT_EVIDENCE"; _PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PREFLIGHT_KIND"; return "$PREFLIGHT_RC"; }
 	_pulse_merge_final_trust_gate() { _PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=0; _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="$PREFLIGHT_EVIDENCE"; return "$PREFLIGHT_RC"; }
 	_pulse_is_trusted_issue_sync_pr() { return 1; }
 	_pmp_approve_issue_sync_action_required_runs() { return 0; }
@@ -338,7 +348,8 @@ define_feedback_helpers() {
 		_ci_repair_latest_archive
 		_ci_repair_prepare_attempt
 		_ci_repair_adopt_live_session
-		_ci_repair_claim_lease _ci_repair_record_worktree_failure _ci_repair_create_worktree
+		_ci_repair_claim_lease _ci_repair_record_worktree_failure _ci_repair_fetch_pr_head
+		_ci_repair_fetched_tip_is_head _ci_repair_create_worktree
 		_ci_repair_session_identity
 		_ci_repair_resolve_runner_login
 		_ci_repair_launch_worker
@@ -443,6 +454,7 @@ define_ci_dispatch_helpers() {
 		_ci_merge_check_sets
 		_ci_repair_required_checks_json
 		_ci_repair_checks_for_dispatch
+		_ci_repair_launch_labels_refuse
 		_dispatch_ci_fix_worker
 	)
 	local fn fn_src=""
@@ -819,6 +831,10 @@ test_preflight_terminal_blocker_routes_supplied_evidence() {
 	PR_REQUIRED_CHECKS_RC=0
 	PREFLIGHT_RC=1
 	PREFLIGHT_EVIDENCE="$expected_evidence"
+	REQUIRED_PASSING_RC=0
+	# GH#37795: with no pending required checks, native auto-merge declines (rc 1)
+	# so the admin stage runs the single final gate, which routes the evidence.
+	NATIVE_AUTO_RC=1
 	_process_single_ready_pr "owner/repo" "$PR_OBJECT" || rc=$?
 
 	if [[ "$rc" -ne 1 ]]; then
@@ -831,6 +847,44 @@ test_preflight_terminal_blocker_routes_supplied_evidence() {
 		print_result "head-bound preflight blocker reaches trusted CI repair route" 0
 	fi
 	teardown_test_env
+
+	local scenario="" expected_routes=0 expected_rc=1
+	for scenario in newly_failed mixed_active_failure pending_only head_changed; do
+		setup_test_env
+		define_process_helper || return 1
+		PR_REQUIRED_CHECKS_RC=0
+		PREFLIGHT_RC=1
+		PREFLIGHT_KIND="checks_failed"
+		PREFLIGHT_EVIDENCE="$expected_evidence"
+		expected_routes=1
+		expected_rc=1
+		case "$scenario" in
+		mixed_active_failure)
+			PR_REQUIRED_CHECKS_RC=1
+			DRIFT_PENDING_RC=0
+			;;
+		pending_only)
+			PREFLIGHT_KIND="$PMRC_BLOCKER_CHECKS_ACTIVE"
+			PREFLIGHT_EVIDENCE="[]"
+			expected_routes=0
+			expected_rc=4
+			;;
+		head_changed)
+			PREFLIGHT_KIND="head_changed"
+			PREFLIGHT_EVIDENCE="[]"
+			expected_routes=0
+			;;
+		esac
+		rc=0
+		_process_single_ready_pr "owner/repo" "$PR_OBJECT" || rc=$?
+		if [[ "$rc" -eq "$expected_rc" && "$ROUTE_CALLS" -eq "$expected_routes" && "$REBASE_RETRY_CALLS" -eq 0 ]] \
+			&& { [[ "$expected_routes" -eq 0 ]] || [[ "$ROUTE_EVIDENCE" == "$expected_evidence" ]]; }; then
+			print_result "native defer exact-head CI routing: ${scenario}" 0
+		else
+			print_result "native defer exact-head CI routing: ${scenario}" 1 "rc=${rc}, routes=${ROUTE_CALLS}, rebases=${REBASE_RETRY_CALLS}"
+		fi
+		teardown_test_env
+	done
 	return 0
 }
 
@@ -1095,6 +1149,227 @@ test_ci_repair_worktree_paths_are_repository_scoped() {
 	return 0
 }
 
+# GH#38031 fixture: a canonical checkout whose remote holds a PR head it has
+# not fetched, behind a git that refuses `fetch` in a main worktree exactly as
+# the canonical Git guard does. Linked worktrees and the object store are real.
+setup_guarded_head_fetch_fixture() {
+	local candidate="" real_git=""
+	while IFS= read -r candidate; do
+		[[ "$candidate" != "${TEST_ROOT}/bin/git" && -x "$candidate" ]] || continue
+		real_git="$candidate"
+		break
+	done < <(type -a -P git 2>/dev/null)
+	[[ -n "$real_git" ]] || return 1
+	GUARDED_FETCH_SAVED_HOME="$HOME"
+	export TEST_REAL_GIT="$real_git"
+	export HOME="${TEST_ROOT}/home"
+	export AIDEVOPS_CLEANUP_LOG="${TEST_ROOT}/cleanup.log"
+	export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/registry"
+	export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/owners.db"
+	# Generation enrollment is not under test and would otherwise address the
+	# invoking session's lifecycle state.
+	export AIDEVOPS_LIFECYCLE_DISABLED=1
+	mkdir -p "$HOME"
+	cat >"${TEST_ROOT}/bin/git" <<'EOF'
+#!/usr/bin/env bash
+target="$PWD"
+subcommand=""
+args=("$@")
+index=0
+while [[ "$index" -lt "${#args[@]}" ]]; do
+	case "${args[$index]}" in
+	-C)
+		target="${args[$((index + 1))]}"
+		index=$((index + 2))
+		;;
+	-c) index=$((index + 2)) ;;
+	-*) index=$((index + 1)) ;;
+	*)
+		subcommand="${args[$index]}"
+		break
+		;;
+	esac
+done
+if [[ "$subcommand" == "fetch" ]]; then
+	git_dir=$("$TEST_REAL_GIT" -C "$target" rev-parse --path-format=absolute --git-dir 2>/dev/null)
+	common_dir=$("$TEST_REAL_GIT" -C "$target" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+	if [[ -z "$git_dir" || "$git_dir" == "$common_dir" ]]; then
+		printf 'fetch-denied %s\n' "${target##*/}" >>"${GH_LOG}"
+		printf "BLOCKED by canonical Git guard: canonical worktree mutation via 'git fetch'\n" >&2
+		exit 42
+	fi
+	printf 'fetch-allowed %s\n' "${target##*/}" >>"${GH_LOG}"
+fi
+exec "$TEST_REAL_GIT" "$@"
+EOF
+	chmod +x "${TEST_ROOT}/bin/git"
+	cat >"${TEST_ROOT}/bin/worktree-helper.sh" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "add" ]] || exit 1
+branch="${2:-}"
+path="${3:-}"
+shift 3
+base=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--base)
+		base="${2:-}"
+		shift 2
+		;;
+	*) shift ;;
+	esac
+done
+git worktree add -q -b "$branch" "$path" "$base"
+EOF
+	chmod +x "${TEST_ROOT}/bin/worktree-helper.sh"
+
+	local seed="${TEST_ROOT}/seed" origin="${TEST_ROOT}/origin.git"
+	local -a identity=(-c user.name=Test -c user.email=test@example.invalid)
+	"$real_git" init -q --bare -b main "$origin" || return 1
+	"$real_git" init -q -b main "$seed" || return 1
+	"$real_git" -C "$seed" "${identity[@]}" commit -q --allow-empty -m seed || return 1
+	"$real_git" -C "$seed" push -q "$origin" main || return 1
+	"$real_git" clone -q "$origin" "${TEST_ROOT}/repo" || return 1
+	"$real_git" -C "$seed" checkout -q -b feature/repair || return 1
+	"$real_git" -C "$seed" "${identity[@]}" commit -q --allow-empty -m "pr head" || return 1
+	"$real_git" -C "$seed" push -q "$origin" feature/repair || return 1
+	GUARDED_FETCH_HEAD_SHA=$("$real_git" -C "$seed" rev-parse HEAD) || return 1
+	# shellcheck source=../scratch-worktree-helper.sh
+	source "${SCRIPT_DIR}/../scratch-worktree-helper.sh" || return 1
+	return 0
+}
+
+teardown_guarded_head_fetch_fixture() {
+	[[ -n "${GUARDED_FETCH_SAVED_HOME:-}" ]] && export HOME="$GUARDED_FETCH_SAVED_HOME"
+	unset TEST_REAL_GIT AIDEVOPS_CLEANUP_LOG WORKTREE_REGISTRY_DIR WORKTREE_REGISTRY_DB
+	unset AIDEVOPS_LIFECYCLE_DISABLED GUARDED_FETCH_SAVED_HOME GUARDED_FETCH_HEAD_SHA
+	teardown_test_env
+	return 0
+}
+
+# Count scratch fetch contexts still present under the repair worktree base.
+guarded_fetch_scratch_leftovers() {
+	find "$AIDEVOPS_CI_REPAIR_WORKTREE_BASE_DIR" -maxdepth 1 -name '.repo-ci-repair-fetch-*' 2>/dev/null |
+		wc -l | tr -d ' '
+	return 0
+}
+
+test_ci_repair_fetches_absent_head_through_scratch_context() {
+	setup_test_env
+	define_feedback_helpers || { print_result "defines feedback helpers for guarded head fetch" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+	setup_guarded_head_fetch_fixture || { print_result "builds guarded head fetch fixture" 1 "fixture setup failed"; teardown_guarded_head_fetch_fixture; return 0; }
+
+	local repo="${TEST_ROOT}/repo" diagnostic="${TEST_ROOT}/worktree-failure.state"
+	local missing_rc=0 created_path="" created_head="" fetches_before=0 fetches_after=0 reused_path=""
+	_ci_repair_create_worktree "$repo" "owner/repo" "42" "100" "$GUARDED_FETCH_HEAD_SHA" \
+		"feature/absent" "fingerprint" "1" "$diagnostic" >/dev/null || missing_rc=$?
+	if [[ "$missing_rc" -eq 0 || "$(cat "$diagnostic" 2>/dev/null)" != "head_fetch|pr_head_fetch_failed|verify_remote_branch_access_and_retry" ]]; then
+		print_result "missing remote branch fails closed as a head fetch failure" 1 "rc=${missing_rc}, diagnostic=$(cat "$diagnostic" 2>/dev/null)"
+	elif [[ "$(guarded_fetch_scratch_leftovers)" != "0" ]]; then
+		print_result "failed head fetch removes its scratch context" 1 "leftovers=$(guarded_fetch_scratch_leftovers)"
+	else
+		print_result "failed head fetch is diagnosed and leaves no scratch context" 0
+	fi
+
+	created_path=$(_ci_repair_create_worktree "$repo" "owner/repo" "42" "100" "$GUARDED_FETCH_HEAD_SHA" \
+		"feature/repair" "fingerprint" "1" "$diagnostic") || created_path=""
+	created_head=$(git -C "${created_path:-/nonexistent}" rev-parse HEAD 2>/dev/null) || created_head=""
+	if [[ -z "$created_path" || "$created_head" != "$GUARDED_FETCH_HEAD_SHA" ]]; then
+		print_result "absent PR head is fetched through a scratch context" 1 "path=${created_path}, head=${created_head}, diagnostic=$(cat "$diagnostic" 2>/dev/null), log=$(cat "$GH_LOG")"
+	elif grep -q '^fetch-denied ' "$GH_LOG" || ! grep -q '^fetch-allowed \.repo-ci-repair-fetch-' "$GH_LOG"; then
+		print_result "head fetch never targets the canonical checkout" 1 "Log: $(cat "$GH_LOG")"
+	elif [[ "$(guarded_fetch_scratch_leftovers)" != "0" ]]; then
+		print_result "successful head fetch removes its scratch context" 1 "leftovers=$(guarded_fetch_scratch_leftovers)"
+	else
+		print_result "absent PR head is fetched through an owned scratch context" 0
+	fi
+
+	fetches_before=$(grep -c '^fetch-' "$GH_LOG" || true)
+	reused_path=$(_ci_repair_create_worktree "$repo" "owner/repo" "42" "100" "$GUARDED_FETCH_HEAD_SHA" \
+		"feature/repair" "fingerprint" "2" "$diagnostic") || reused_path=""
+	fetches_after=$(grep -c '^fetch-' "$GH_LOG" || true)
+	if [[ -z "$reused_path" || "$fetches_before" != "$fetches_after" ]]; then
+		print_result "locally available PR head skips the fetch" 1 "path=${reused_path}, before=${fetches_before}, after=${fetches_after}"
+	else
+		print_result "locally available PR head creates no fetch context" 0
+	fi
+	teardown_guarded_head_fetch_fixture
+	return 0
+}
+
+test_ci_repair_fetches_absent_head_through_sibling_worktree() {
+	setup_test_env
+	define_feedback_helpers || { print_result "defines feedback helpers for sibling head fetch" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+	setup_guarded_head_fetch_fixture || { print_result "builds sibling head fetch fixture" 1 "fixture setup failed"; teardown_guarded_head_fetch_fixture; return 0; }
+
+	local repo="${TEST_ROOT}/repo" diagnostic="${TEST_ROOT}/worktree-failure.state"
+	local moved_rc=0 created_path="" created_head=""
+	"$TEST_REAL_GIT" -C "$repo" worktree add -q --detach "${TEST_ROOT}/sibling" HEAD || true
+	created_path=$(_ci_repair_create_worktree "$repo" "owner/repo" "42" "100" "$GUARDED_FETCH_HEAD_SHA" \
+		"feature/repair" "fingerprint" "1" "$diagnostic") || created_path=""
+	created_head=$(git -C "${created_path:-/nonexistent}" rev-parse HEAD 2>/dev/null) || created_head=""
+	if [[ -z "$created_path" || "$created_head" != "$GUARDED_FETCH_HEAD_SHA" ]]; then
+		print_result "absent PR head is fetched through a sibling worktree" 1 "path=${created_path}, head=${created_head}, diagnostic=$(cat "$diagnostic" 2>/dev/null), log=$(cat "$GH_LOG")"
+	elif grep -q -e '^fetch-denied ' -e '^fetch-allowed \.repo-ci-repair-fetch-' "$GH_LOG" || ! grep -q '^fetch-allowed sibling$' "$GH_LOG"; then
+		print_result "sibling worktree is borrowed instead of a scratch context" 1 "Log: $(cat "$GH_LOG")"
+	else
+		print_result "absent PR head is fetched through a borrowed sibling worktree" 0
+	fi
+
+	# The remote branch exists but its tip is not the expected head.
+	_ci_repair_create_worktree "$repo" "owner/repo" "42" "100" "1111111111111111111111111111111111111111" \
+		"feature/repair" "fingerprint" "2" "$diagnostic" >/dev/null || moved_rc=$?
+	if [[ "$moved_rc" -eq 0 || "$(cat "$diagnostic" 2>/dev/null)" != "head_validation|pr_head_commit_unavailable|refresh_pr_head_and_retry" ]]; then
+		print_result "moved PR head still fails closed after the fetch" 1 "rc=${moved_rc}, diagnostic=$(cat "$diagnostic" 2>/dev/null)"
+	elif grep -q '^fetch-denied ' "$GH_LOG"; then
+		print_result "moved PR head fetch never targets the canonical checkout" 1 "Log: $(cat "$GH_LOG")"
+	else
+		print_result "moved PR head still fails closed after the fetch" 0
+	fi
+	teardown_guarded_head_fetch_fixture
+	return 0
+}
+
+# The remote branch advanced to a descendant after the PR head was read: the
+# fetch delivers the expected commit as an ancestor, which must not be accepted.
+test_ci_repair_rejects_head_superseded_by_descendant() {
+	setup_test_env
+	define_feedback_helpers || { print_result "defines feedback helpers for superseded head fetch" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+	setup_guarded_head_fetch_fixture || { print_result "builds superseded head fetch fixture" 1 "fixture setup failed"; teardown_guarded_head_fetch_fixture; return 0; }
+
+	local repo="${TEST_ROOT}/repo" seed="${TEST_ROOT}/seed" diagnostic="${TEST_ROOT}/worktree-failure.state"
+	local superseded_rc=0 descendant_sha="" created_path="" created_head="" worktrees=""
+	"$TEST_REAL_GIT" -C "$seed" -c user.name=Test -c user.email=test@example.invalid \
+		commit -q --allow-empty -m "descendant" || true
+	"$TEST_REAL_GIT" -C "$seed" push -q "${TEST_ROOT}/origin.git" feature/repair || true
+	descendant_sha=$("$TEST_REAL_GIT" -C "$seed" rev-parse HEAD 2>/dev/null) || descendant_sha=""
+
+	_ci_repair_create_worktree "$repo" "owner/repo" "42" "100" "$GUARDED_FETCH_HEAD_SHA" \
+		"feature/repair" "fingerprint" "1" "$diagnostic" >/dev/null || superseded_rc=$?
+	worktrees=$("$TEST_REAL_GIT" -C "$repo" worktree list --porcelain 2>/dev/null) || worktrees=""
+	if [[ -z "$descendant_sha" || "$descendant_sha" == "$GUARDED_FETCH_HEAD_SHA" ]] ||
+		! "$TEST_REAL_GIT" -C "$repo" cat-file -e "${GUARDED_FETCH_HEAD_SHA}^{commit}" 2>/dev/null; then
+		print_result "superseded head fixture delivers the expected commit as an ancestor" 1 "descendant=${descendant_sha}, log=$(cat "$GH_LOG")"
+	elif [[ "$superseded_rc" -eq 0 || "$(cat "$diagnostic" 2>/dev/null)" != "head_validation|pr_head_moved|refresh_pr_head_and_retry" ]]; then
+		print_result "PR head superseded by a descendant fails closed" 1 "rc=${superseded_rc}, diagnostic=$(cat "$diagnostic" 2>/dev/null)"
+	elif [[ "$worktrees" == *ci-repair-pr100* ]]; then
+		print_result "superseded PR head creates no repair worktree" 1 "worktrees=${worktrees}"
+	else
+		print_result "PR head superseded by a descendant fails closed" 0
+	fi
+
+	created_path=$(_ci_repair_create_worktree "$repo" "owner/repo" "42" "100" "$descendant_sha" \
+		"feature/repair" "fingerprint" "2" "$diagnostic") || created_path=""
+	created_head=$(git -C "${created_path:-/nonexistent}" rev-parse HEAD 2>/dev/null) || created_head=""
+	if [[ -z "$created_path" || "$created_head" != "$descendant_sha" ]]; then
+		print_result "refreshed PR head is repairable after a superseded attempt" 1 "path=${created_path}, head=${created_head}, diagnostic=$(cat "$diagnostic" 2>/dev/null)"
+	else
+		print_result "refreshed PR head is repairable after a superseded attempt" 0
+	fi
+	teardown_guarded_head_fetch_fixture
+	return 0
+}
+
 test_ci_feedback_skips_pending_only_checks() {
 	setup_test_env
 	TEST_CHECK_SCENARIO="pending_only"
@@ -1353,6 +1628,30 @@ test_ci_feedback_defers_without_initial_head_snapshot() {
 		print_result "missing PR head snapshot records repair deferral" 1 "Log: $(cat "$LOGFILE")"
 	else
 		print_result "CI repair fails closed without an initial head snapshot" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_feedback_refuses_ownership_label_added_before_launch() {
+	setup_test_env
+	TEST_CHECK_SCENARIO="terminal_failure"
+	define_feedback_helpers || { print_result "defines feedback helpers for launch-time labels" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	local label="" prompt_file=""
+	for label in no-takeover needs-maintainer-review external-contributor; do
+		export TEST_DISPATCH_PR_LABELS="origin:worker,${label}"
+		_dispatch_ci_fix_worker "100" "owner/repo" "42"
+	done
+	unset TEST_DISPATCH_PR_LABELS
+	# The state dir stays absent when nothing launched; find then exits non-zero.
+	prompt_file=$(find "$AIDEVOPS_CI_REPAIR_STATE_DIR" -name prompt.md -type f -print -quit 2>/dev/null) || prompt_file=""
+	if [[ -n "$prompt_file" ]] || grep -qF 'run --role worker' "$GH_LOG"; then
+		print_result "launch-time ownership label stops CI repair" 1 "Dispatch log: $(cat "$GH_LOG")"
+	elif [[ "$(grep -cF 'gained an ownership label' "$LOGFILE")" != "3" ]]; then
+		print_result "launch-time ownership label records each refusal" 1 "Log: $(cat "$LOGFILE")"
+	else
+		print_result "CI repair re-reads ownership labels at the launch boundary" 0
 	fi
 	teardown_test_env
 	return 0
@@ -1627,6 +1926,12 @@ test_ci_repair_consumes_abandoned_append_only_claim() {
 	local action=""
 	mkdir -p "${lease_dir}/attempt-1.claim"
 	printf '{"pid":999999,"pid_start":"stale"}\n' >"${lease_dir}/attempt-1.claim/owner.json"
+	# GH#38194: the harness stub reports every mtime as `date +%s`, sampled after
+	# _ci_repair_lock_is_stale has read `now`. Across a second boundary the claim
+	# looks one second in the future, and zero grace then reports it "active".
+	# Pin this abandoned claim in the past; the next define_feedback_helpers call
+	# restores the harness stub.
+	_file_mtime_epoch() { local file_path="$1"; [[ -e "$file_path" ]] || return 1; printf '0\n'; return 0; }
 	action=$(_ci_repair_claim_lease "$lease_dir" "owner/repo" "100" "$TEST_PR_HEAD_SHA" \
 		"fingerprint" "2" "feature/repair" "ci-repair-test")
 

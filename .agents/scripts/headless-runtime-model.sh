@@ -86,9 +86,45 @@ _tier_has_allowlisted_candidates() {
 	return 1
 }
 
+# GH#38901: print OpenAI model IDs that ChatGPT OAuth (Codex) auth rejects, one
+# per line, only when OpenCode records OpenAI auth as OAuth. Mirrors
+# model-availability-probe-lib.sh _chatgpt_oauth_denylist_check so worker
+# same-tier fallback skips the models dispatch-time resolution already skips.
+# The first routing table that defines the list wins (custom, then framework).
+_headless_chatgpt_oauth_unsupported_ids() {
+	local auth_file="${OPENCODE_AUTH_FILE:-${HOME}/.local/share/opencode/auth.json}"
+	local table=""
+	[[ -f "$auth_file" ]] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+	jq -e '.openai.type == "oauth"' "$auth_file" >/dev/null 2>&1 || return 0
+	for table in "$(model_routing_table_path 2>/dev/null)" "$(model_routing_framework_table_path 2>/dev/null)"; do
+		[[ -n "$table" && -r "$table" ]] || continue
+		if jq -e '(.chatgpt_oauth_restrictions.openai_unsupported | type) == "array"' "$table" >/dev/null 2>&1; then
+			jq -r '.chatgpt_oauth_restrictions.openai_unsupported[] | strings' "$table" 2>/dev/null || true
+			return 0
+		fi
+	done
+	return 0
+}
+
+# Return success when model_id matches a denied ID exactly or as a dated
+# snapshot (<id>-YYYY-MM-DD).
+_headless_model_id_denied() {
+	local model_id="$1"
+	local denied_ids="$2"
+	local denied="" snapshot_pattern=""
+	while IFS= read -r denied; do
+		[[ -n "$denied" ]] || continue
+		[[ "$model_id" != "$denied" ]] || return 0
+		snapshot_pattern="^${denied//./\\.}-[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+		[[ ! "$model_id" =~ $snapshot_pattern ]] || return 0
+	done <<<"$denied_ids"
+	return 1
+}
+
 # Derive the headless model list from the routing table (GH#17769).
 # Flow: routing table standard tier -> optional provider allowlist -> providers with
-# usable auth at dispatch time. This eliminates AIDEVOPS_HEADLESS_MODELS as a
+# usable auth at dispatch time -> ChatGPT OAuth denylist (GH#38901). This eliminates AIDEVOPS_HEADLESS_MODELS as a
 # user-configurable env var while allowing temporary provider pinning via
 # AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST.
 get_configured_models() {
@@ -97,6 +133,7 @@ get_configured_models() {
 	tier_name=$(_normalize_headless_tier "$requested_tier")
 	local -a models=()
 	local provider model
+	local oauth_denied_ids="" oauth_denied_loaded=false
 
 	# Backward compatibility: if legacy env var is still set, log deprecation
 	# warning but respect it as an override for one release cycle.
@@ -127,6 +164,15 @@ get_configured_models() {
 			fi
 			if ! provider_oauth_pool_available "$provider"; then
 				continue
+			fi
+			if [[ "$provider" == "openai" ]]; then
+				if [[ "$oauth_denied_loaded" == false ]]; then
+					oauth_denied_ids=$(_headless_chatgpt_oauth_unsupported_ids)
+					oauth_denied_loaded=true
+				fi
+				if [[ -n "$oauth_denied_ids" ]] && _headless_model_id_denied "${model#*/}" "$oauth_denied_ids"; then
+					continue
+				fi
 			fi
 
 			models+=("$model")
@@ -204,30 +250,60 @@ clear_session_id() {
 	return 0
 }
 
+# GH#38982: a release that ends the delivery does not know which provider ran
+# the attempt, so drop the issue's persisted session for every provider.
+clear_session_id_all_providers() {
+	local session_key="$1"
+	local scoped_key=""
+	scoped_key=$(scoped_provider_session_key "$session_key")
+	db_query "DELETE FROM provider_sessions WHERE session_key IN ('$(sql_escape "$scoped_key")', '$(sql_escape "$session_key")');" >/dev/null
+	return 0
+}
+
+# Args: provider session_key session_id model [head_sha] [head_branch]
+# The optional head/branch record the worktree state the attempt ended at
+# (GH#38982), so a later dispatch can refuse to resume a delivered session.
 store_session_id() {
 	local provider="$1"
 	local session_key="$2"
 	local session_id="$3"
 	local model="$4"
+	local head_sha="${5:-}"
+	local head_branch="${6:-}"
 	local scoped_key=""
 	scoped_key=$(scoped_provider_session_key "$session_key")
 	if [[ "$scoped_key" != "$session_key" ]]; then
 		db_query "DELETE FROM provider_sessions WHERE provider = '$(sql_escape "$provider")' AND session_key = '$(sql_escape "$session_key")';" >/dev/null
 	fi
 	db_query "
-INSERT INTO provider_sessions (provider, session_key, session_id, model, updated_at)
+INSERT INTO provider_sessions (provider, session_key, session_id, model, updated_at, head_sha, head_branch)
 VALUES (
     '$(sql_escape "$provider")',
     '$(sql_escape "$scoped_key")',
     '$(sql_escape "$session_id")',
     '$(sql_escape "$model")',
-    strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+    strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    '$(sql_escape "$head_sha")',
+    '$(sql_escape "$head_branch")'
 )
 ON CONFLICT(provider, session_key) DO UPDATE SET
     session_id = excluded.session_id,
     model = excluded.model,
-    updated_at = excluded.updated_at;
+    updated_at = excluded.updated_at,
+    head_sha = excluded.head_sha,
+    head_branch = excluded.head_branch;
 " >/dev/null
+	return 0
+}
+
+# Print "<head_sha>\t<head_branch>" recorded with the persisted session, or
+# nothing. Git ref names cannot contain a tab, so the separator is unambiguous.
+get_session_head() {
+	local provider="$1"
+	local session_key="$2"
+	local scoped_key=""
+	scoped_key=$(scoped_provider_session_key "$session_key")
+	db_query "SELECT head_sha || char(9) || head_branch FROM provider_sessions WHERE provider = '$(sql_escape "$provider")' AND session_key = '$(sql_escape "$scoped_key")' AND head_sha != '';"
 	return 0
 }
 
@@ -572,6 +648,12 @@ _build_run_cmd() {
 	local persisted_session="$7"
 	shift 7
 	local opencode_profile="${AIDEVOPS_OPENCODE_PROFILE:-v1}"
+	if declare -F _headless_opencode_profile_is_v2 >/dev/null 2>&1; then
+		opencode_profile="v1"
+		if _headless_opencode_profile_is_v2; then
+			opencode_profile="v2"
+		fi
+	fi
 	local command_model="$selected_model"
 	if [[ "$opencode_profile" == "v2" && -n "$variant_override" ]]; then
 		command_model="${selected_model}#${variant_override}"
@@ -596,12 +678,11 @@ _build_run_cmd() {
 	if [[ -n "$variant_override" && "$opencode_profile" != "v2" ]]; then
 		printf '%s\0' --variant "$variant_override"
 	fi
-	# GH#17829: Attach persistent runs to an existing opencode server if one is
-	# detected. Ephemeral roles must retain their isolated runtime boundary.
-	# Without this, `opencode run` tries to start an embedded server that
-	# conflicts with the user's `opencode serve`, causing "Session not found".
+	# GH#17829: Preserve ambient-server compatibility only when auth isolation
+	# is disabled. Isolated runs must use their own database and provider auth;
+	# ephemeral roles and v2 always retain their standalone runtime boundary.
 	local _server_info=""
-	if [[ "$opencode_profile" != "v2" ]] && ! _headless_run_is_ephemeral "${role:-}" && _server_info=$(_detect_opencode_server); then
+	if [[ "$opencode_profile" != "v2" && "${AIDEVOPS_HEADLESS_AUTH_ISOLATION:-1}" != "1" ]] && ! _headless_run_is_ephemeral "${role:-}" && _server_info=$(_detect_opencode_server); then
 		local _server_url _server_pass
 		_server_url=$(echo "$_server_info" | head -1)
 		_server_pass=$(echo "$_server_info" | tail -1)
@@ -683,10 +764,21 @@ _build_claude_cmd() {
 # Quoted instructions such as "stop only at `FULL_LOOP_COMPLETE` or `BLOCKED`"
 # are prose mentions, not a terminal state.
 # shellcheck disable=SC2016 # literal backticks are Python regex syntax, not expansion
-_HEADLESS_BLOCKED_LINE_PATTERN='^[ \t]*(?:>[ \t]*)?(?:(?:\*\*|__)?(?:Outcome|Status|Result)(?:[ \t]*:(?:\*\*|__)?|(?:\*\*|__)[ \t]*:)[ \t]*)?(?:\*\*|__|`)?BLOCKED(?:\*\*|__|`)?(?=$|[ \t:.,;!\-])'
+_HEADLESS_BLOCKED_LINE_PATTERN='^[ \t]*(?:>[ \t]*)?(?:(?:\*\*|__)?(?:Outcome|Status|Result)(?:[ \t]*:(?:\*\*|__)?|(?:\*\*|__)[ \t]*:)[ \t]*)?(?:\*\*|__|`)?BLOCKED(?:\*\*|__|`)?(?=$|[ \t:.,;!\-])(?![ \t]*(?:[:-][ \t]*)?(?i:none|n/a|no|nothing)(?=$|[ \t]*$|[.,;!?]+(?:[ \t"]|$)|"))'
+# The trailing negative lookahead excludes negated statuses ("BLOCKED: none") at a
+# standalone boundary, so "no.json" and "none available" still count as blockers.
+
+# GH#38596: POST_PR_HANDOFF must also lead a model-text line, with the same
+# optional quote, label and emphasis markup as BLOCKED, plus the `State:` and
+# `FULL_LOOP:` labels workers emit. Only end of line or a `:`/`.`/`;`/dash
+# separator may follow, so mid-sentence mentions ("POST_PR_HANDOFF is not valid
+# here") and negations ("POST_PR_HANDOFF: not yet") stay rejected. The marker
+# only routes into the exact-head handoff gate, which verifies the PR itself.
+# shellcheck disable=SC2016 # literal backticks are Python regex syntax, not expansion
+_HEADLESS_POST_PR_HANDOFF_LINE_PATTERN='^[ \t]*(?:>[ \t]*)?(?:(?:\*\*|__)?(?:Outcome|Status|Result|State|FULL_LOOP)(?:[ \t]*:(?:\*\*|__)?|(?:\*\*|__)[ \t]*:)[ \t]*)?(?:\*\*|__|`)?POST_PR_HANDOFF(?:\*\*|__|`)?(?=[ \t]*(?:$|[:.;]|-[ \t]|—|–))(?![ \t]*(?:[:—–-][ \t]*)?(?i:not\b|(?:none|n/a|no)(?=[ \t]*$|[.,;!?])))'
 
 # output_has_completion_signal: check if a worker run produced a meaningful
-# completion signal (FULL_LOOP_COMPLETE, exact POST_PR_HANDOFF, anchored
+# completion signal (FULL_LOOP_COMPLETE, line-leading POST_PR_HANDOFF, anchored
 # BLOCKED, or PR creation).
 # Workers that produce tool calls but exit without these signals stopped
 # prematurely -- typically after investigation/setup but before implementation.
@@ -696,7 +788,7 @@ _HEADLESS_BLOCKED_LINE_PATTERN='^[ \t]*(?:>[ \t]*)?(?:(?:\*\*|__)?(?:Outcome|Sta
 output_has_completion_signal() {
 	local file_path="$1"
 	[[ -f "$file_path" ]] || return 1
-	python3 - "$file_path" "$_HEADLESS_BLOCKED_LINE_PATTERN" <<'PY'
+	python3 - "$file_path" "$_HEADLESS_BLOCKED_LINE_PATTERN" "$_HEADLESS_POST_PR_HANDOFF_LINE_PATTERN" <<'PY'
 import sys, json, re
 from pathlib import Path
 
@@ -711,8 +803,10 @@ from pathlib import Path
 
 raw = Path(sys.argv[1]).read_text(errors='ignore')
 # GH#33274: completion markers count bare or as <promise>MARKER</promise>,
-# not when quoted or backticked as a mention.
+# not when quoted or backticked as a mention. An empty handoff pattern would
+# match everything, so it falls back to the exact line (GH#38596).
 blocked_line = re.compile(sys.argv[2], re.MULTILINE)
+handoff_line = re.compile(sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else r"^[ \t]*POST_PR_HANDOFF[ \t]*$", re.MULTILINE)
 completion_marker = re.compile(r"(?<![`'\"\w])(?:FULL_LOOP_COMPLETE|TASK_COMPLETE)(?![`'\"\w])")
 
 # Extract model text from JSON stream (OpenCode format)
@@ -757,12 +851,9 @@ for line in raw.splitlines():
 
 model_text = "\n".join(model_text_parts)
 
-def has_post_pr_handoff(text):
-    return any(line.strip() == "POST_PR_HANDOFF" for line in text.splitlines())
-
 # If we extracted model text, use it exclusively
 if model_text.strip():
-    if has_post_pr_handoff(model_text) or blocked_line.search(model_text):
+    if handoff_line.search(model_text) or blocked_line.search(model_text):
         sys.exit(0)
     if completion_marker.search(model_text):
         sys.exit(0)
@@ -779,9 +870,9 @@ if model_text.strip():
     sys.exit(1)
 
 # Fallback for non-JSON output (claude CLI, plain text). Escaped newlines and
-# JSON text/result value starts count as line starts for anchored BLOCKED.
+# JSON text/result value starts count as line starts for anchored markers.
 raw_lines = re.sub(r'\\n|"(?:text|result)":\s*"', "\n", raw)
-if has_post_pr_handoff(raw) or blocked_line.search(raw_lines) or completion_marker.search(raw):
+if handoff_line.search(raw_lines) or blocked_line.search(raw_lines) or completion_marker.search(raw):
     sys.exit(0)
 if "gh pr create" in raw and ("pull/" in raw or "Created pull request" in raw.lower()):
     sys.exit(0)
@@ -795,17 +886,22 @@ PY
 	return $?
 }
 
+# Match a model-authored text line: exactly equal to $2, or, when $3 is set,
+# matching that multiline Python regex instead (GH#38596).
 _output_has_exact_model_text_line() {
 	local file_path="$1"
 	local marker="$2"
+	local line_pattern="${3:-}"
 	[[ -f "$file_path" ]] || return 1
-	python3 - "$file_path" "$marker" <<'PY'
+	python3 - "$file_path" "$marker" "$line_pattern" <<'PY'
 import json
+import re
 import sys
 from pathlib import Path
 
 raw = Path(sys.argv[1]).read_text(errors='ignore')
 marker = sys.argv[2]
+line_pattern = re.compile(sys.argv[3], re.MULTILINE) if sys.argv[3] else None
 model_text_parts = []
 json_stream_seen = False
 for line in raw.splitlines():
@@ -826,6 +922,8 @@ for line in raw.splitlines():
 
 model_text = '\n'.join(model_text_parts)
 candidate = model_text if json_stream_seen else raw
+if line_pattern is not None:
+    sys.exit(0 if line_pattern.search(candidate) else 1)
 sys.exit(0 if any(line.strip() == marker for line in candidate.splitlines()) else 1)
 PY
 	return $?
@@ -833,7 +931,7 @@ PY
 
 output_has_post_pr_handoff_signal() {
 	local file_path="$1"
-	_output_has_exact_model_text_line "$file_path" "POST_PR_HANDOFF"
+	_output_has_exact_model_text_line "$file_path" "POST_PR_HANDOFF" "$_HEADLESS_POST_PR_HANDOFF_LINE_PATTERN"
 	return $?
 }
 

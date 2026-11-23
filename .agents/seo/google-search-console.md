@@ -114,6 +114,27 @@ curl -s -X POST "https://searchconsole.googleapis.com/v1/urlInspection/index:ins
   -d '{"inspectionUrl": "https://example.com/page", "siteUrl": "https://example.com"}'
 ```
 
+## New Property Setup
+
+Create, verify and sitemap-submit a domain property without a browser. Needs two scopes beyond read-only: `https://www.googleapis.com/auth/siteverification` and `https://www.googleapis.com/auth/webmasters`. The Site Verification API must be enabled on the Cloud project.
+
+1. Request the TXT value: `POST https://www.googleapis.com/siteVerification/v1/token` with `{"site":{"type":"INET_DOMAIN","identifier":"example.com"},"verificationMethod":"DNS_TXT"}`.
+2. Add that TXT record at the DNS host (registrar, Cloudflare API, etc.).
+3. Verify: `POST .../siteVerification/v1/webResource?verificationMethod=DNS_TXT` with the same `site` body. The caller becomes owner.
+4. Add the property: `PUT https://searchconsole.googleapis.com/webmasters/v3/sites/sc-domain%3Aexample.com` (204).
+5. Submit the sitemap: `PUT .../sites/sc-domain%3Aexample.com/sitemaps/<url-encoded sitemap URL>` (204).
+
+Helper (steps 1, 3, 4, 5; step 2 stays yours):
+
+```bash
+gsc-property-setup-helper.sh txt example.com            # prints the TXT value
+gsc-property-setup-helper.sh complete example.com --sitemap https://example.com/sitemap.xml --owner you@example.com
+```
+
+Add `--dry-run` to print the planned calls without sending them. Tokens come from `gsc_adc_access_token <cred-file> <scopes>` in `gsc-auth-lib.sh`; read-only remains the default.
+
+Add a human owner afterwards by re-posting the `webResource` verification (or `PUT .../siteVerification/v1/webResource/<id>`) with `"owners": ["you@example.com", "<service-account-email>"]`. Check with `GET .../webmasters/v3/sites`: expect `permissionLevel: siteOwner`.
+
 ## Bulk Property Setup
 
 Adds service account to all GSC properties via Playwright. Requires `npm install playwright`, Chrome logged into Google, Owner access.

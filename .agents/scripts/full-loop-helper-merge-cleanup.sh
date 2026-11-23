@@ -571,6 +571,7 @@ _merge_record_deferred_cleanup_owner() {
 
 	local marker_dir="${worktree_path}/.agents"
 	local marker_path="${marker_dir}/.full-loop-cleanup-deferred"
+	_full_loop_exclude_runtime_path "$worktree_path" '/.agents/.full-loop-cleanup-deferred' || { _merge_cleanup_owner_fail "$_MERGE_REASON_MARKER_FAILED"; return 1; }
 	mkdir -p "$marker_dir" || { _merge_cleanup_owner_fail "$_MERGE_REASON_MARKER_FAILED"; return 1; }
 	# Keep the legacy marker during rollout so an older deployed cleanup
 	# supervisor still preserves the live owner. The external receipt above is

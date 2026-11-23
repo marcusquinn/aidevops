@@ -36,6 +36,11 @@ if [[ "$1" == "api" && "${2:-}" == "rate_limit" ]]; then
 	exit 0
 fi
 if [[ "$1" == "api" && "${2:-}" == "user" ]]; then printf '%s\n' "${STUB_GH_LOGIN:-worker-login}"; exit 0; fi
+if [[ "$1" == "issue" && "${2:-}" == "list" ]]; then
+	[[ "${STUB_UPSTREAM_LOOKUP_FAIL:-0}" == "1" ]] && exit 1
+	printf '%s\n' '[]'
+	exit 0
+fi
 if [[ "$1" == "api" && "${2:-}" =~ ^repos/owner/repo/pulls/[0-9]+/reviews\?per_page=100$ ]]; then
 	printf '%s\n' "${STUB_REVIEWS_RESPONSE:-[[]]}"
 	exit 0
@@ -55,6 +60,10 @@ if [[ "$1" == "pr" && "${2:-}" == "view" ]]; then
 	if [[ "$*" == *"comments"* ]]; then
 		printf '%s\n' "$STUB_REVIEWER_COMMENTS_RESPONSE"
 	elif [[ "$*" == *"--json isCrossRepository"* ]]; then exit 1
+	# GH#38291: opt-in fresh labels-only read (takeover classification).
+	elif [[ "$*" == *"--json labels "* && -n "${STUB_PR_LABELS+x}" ]]; then
+		[[ "$STUB_PR_LABELS" == "__FAIL__" ]] && exit 1
+		printf '%s\n' "$STUB_PR_LABELS"
 	else printf '%s\n' "${STUB_PR_VIEW:-Fix active PR	feature/review	${TEST_HEAD_OID_1}	worker-bot}"
 	fi
 	exit 0
@@ -181,14 +190,32 @@ if [[ "$*" == *"worktree list --porcelain"* && -f "${GIT_WORKTREE_REGISTRY}" ]];
 	done <"${GIT_WORKTREE_REGISTRY}"
 	exit 0
 fi
-if [[ "$*" == *" worktree add -q --detach "* ]]; then
-	bootstrap_path="${7:-}"
-	mkdir -p "$bootstrap_path"
+if [[ "$*" == *" worktree add "* && " $* " == *" --detach "* ]]; then
+	lock_reason=""
+	while [[ $# -gt 0 && "$1" != "--" ]]; do
+		if [[ "$1" == "--reason" ]]; then
+			lock_reason="${2:-}"
+			shift
+		fi
+		shift
+	done
+	[[ $# -ge 3 ]] || exit 1
+	bootstrap_path="$2"
+	mkdir -p "$bootstrap_path/.git-admin" "${GIT_CANONICAL_REPO_PATH}/.git"
+	[[ -z "$lock_reason" ]] || printf '%s\n' "$lock_reason" >"$bootstrap_path/.git-admin/locked"
 	printf '%s\t%s\t%s\n' "$bootstrap_path" '__DETACHED__' "$TEST_HEAD_OID_1" >>"${GIT_WORKTREE_REGISTRY}"
 	exit 0
 fi
-if [[ "$*" == *" worktree remove --force "* ]]; then
-	bootstrap_path="${6:-}"
+if [[ "$*" == *" worktree lock "* ]]; then
+	printf '%s\n' "${6:-}" >"${2}/.git-admin/locked"
+	exit 0
+fi
+if [[ "$*" == *" worktree unlock "* ]]; then
+	rm -f "${2}/.git-admin/locked"
+	exit 0
+fi
+if [[ "$*" == *" worktree remove "* ]]; then
+	bootstrap_path="${@: -1}"
 	rm -rf "$bootstrap_path"
 	while IFS=$'\t' read -r path branch oid; do
 		[[ "$path" == "$bootstrap_path" ]] || printf '%s\t%s\t%s\n' "$path" "$branch" "$oid"
@@ -213,6 +240,18 @@ GIT_STUB
 
 append_fake_git_reconciliation_stub() {
 	cat >>"${TEST_ROOT}/bin/git" <<'GIT_STUB'
+if [[ "${1:-}" == "-C" && "${3:-}" == "rev-parse" && "${4:-}" == "--absolute-git-dir" && -d "${2}/.git-admin" ]]; then
+	printf '%s\n' "${2}/.git-admin"
+	exit 0
+fi
+if [[ "${1:-}" == "-C" && "${3:-}" == "rev-parse" && "${4:-}" == "--path-format=absolute" && -d "${2}/.git-admin" ]]; then
+	case "${5:-}" in
+	--git-common-dir) printf '%s\n' "${GIT_CANONICAL_REPO_PATH}/.git" ;;
+	--git-dir) printf '%s\n' "${2}/.git-admin" ;;
+	*) exit 1 ;;
+	esac
+	exit 0
+fi
 if [[ "$*" == *"rev-parse refs/remotes/origin/"* ]]; then
 	if [[ -f "${GIT_FETCHED_HEAD_STATE}" ]]; then
 		cat "${GIT_FETCHED_HEAD_STATE}"
@@ -458,7 +497,14 @@ DIRTY_BACKUP_STUB
 
 setup_test_env() {
 	unset INVOCATION_ID # Fixture workers do not belong to the host's service.
-	unset STUB_PR_LIST STUB_PR_VIEW STUB_THREADS_MODE STUB_HANG_SECONDS STUB_GRAPHQL_COST_MODE STUB_PR_REPOSITORY_MODE STUB_REMOTE_HEAD STUB_GH_LOGIN
+	unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
+	# GH#39344: a host continuation worker exports its own repair context, which
+	# turned ordinary review-thread fixtures into continuation workers.
+	unset AIDEVOPS_PR_REPAIR_NUMBER AIDEVOPS_PR_REPAIR_HEAD_SHA AIDEVOPS_PR_REPAIR_HEAD_REF
+	unset AIDEVOPS_PR_REPAIR_LINKED_ISSUE AIDEVOPS_PR_REPAIR_ISSUE_ASSIGNEE WORKER_REPO_SLUG
+	# Native lifecycle enrollment requires real Git metadata, not this fake repo.
+	export AIDEVOPS_LIFECYCLE_DISABLED=1
+	unset STUB_PR_LIST STUB_PR_VIEW STUB_PR_LABELS STUB_THREADS_MODE STUB_HANG_SECONDS STUB_GRAPHQL_COST_MODE STUB_PR_REPOSITORY_MODE STUB_REMOTE_HEAD STUB_GH_LOGIN
 	unset STUB_GH_REST_FAIL STUB_GH_GRAPHQL_FAIL STUB_GH_GRAPHQL_LOGIN
 	unset STUB_PULL_HEAD_OID STUB_PULL_STATE STUB_PULL_DRAFT STUB_REVIEWS_RESPONSE STUB_REREVIEW_REQUEST_FAIL
 	unset STUB_GIT_INVALID_BRANCH STUB_GIT_FETCH_FAIL STUB_GIT_CANONICAL_FETCH_FAIL
@@ -467,6 +513,9 @@ setup_test_env() {
 	unset STUB_DIRTY_BACKUP_FAIL STUB_DIRTY_BACKUP_VERIFY_FAIL STUB_DIRTY_BACKUP_MATCH_FAIL STUB_DIRTY_BACKUP_CLEAN_FAIL
 	unset STUB_WORKTREE_REGISTER_OWNER STUB_WORKTREE_OWNER_PID STUB_WORKTREE_OWNER_SESSION
 	unset STUB_ACTIVE_RESPONSE_WORKER
+	# Fixtures must not inherit a hosting worker's continuation identity.
+	unset AIDEVOPS_PR_REPAIR_NUMBER AIDEVOPS_PR_REPAIR_LINKED_ISSUE AIDEVOPS_PR_REPAIR_ISSUE_ASSIGNEE
+	unset AIDEVOPS_PR_REPAIR_HEAD_SHA AIDEVOPS_PR_REPAIR_HEAD_REF
 	unset STUB_HEADLESS_MARK_COMPLETE
 	unset STUB_REVIEWER_COMMENTS_RESPONSE
 	unset PR_REVIEW_THREAD_RESPONSE_ESCALATE_AFTER PR_REVIEW_THREAD_RESPONSE_INFRASTRUCTURE_FAILURE_COOLDOWN
@@ -474,6 +523,8 @@ setup_test_env() {
 	unset PR_REVIEW_THREAD_RESPONSE_MAX_THREADS_PER_DISPATCH
 	TEST_ROOT="$(mktemp -d -t prrts.XXXXXX)"
 	export HOME="${TEST_ROOT}/home"
+	# Detached attempt logs (GH#37718) must not leak into the host workspace.
+	export AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp"
 	export LOGFILE="${TEST_ROOT}/scanner.log"
 	export AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR="${TEST_ROOT}/state"
 	export HEADLESS_LOG="${TEST_ROOT}/headless.log"
@@ -494,7 +545,13 @@ setup_test_env() {
 	export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/ownership-registry"
 	export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
 	export SHARED_CONSTANTS_PATH="${TEST_SCRIPT_DIR}/../shared-constants.sh"
-	mkdir -p "${HOME}" "${TEST_ROOT}/bin" "${TEST_ROOT}/repo" "${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}"
+	mkdir -p "${HOME}" "${AIDEVOPS_TEMP_DIR}" "${TEST_ROOT}/bin" "${TEST_ROOT}/repo" "${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}"
+	# Registered scratch creation reserves a row before registering its owner.
+	# Initialize the same isolated registry used by the owner fixtures first.
+	# shellcheck source=../shared-worktree-registry.sh
+	# shellcheck disable=SC1091
+	source "${TEST_SCRIPT_DIR}/../shared-worktree-registry.sh"
+	_init_registry_db
 	mkdir -p "${TEST_ROOT}/fetch-worktree"
 	printf '%s\t%s\t%s\n' "${TEST_ROOT}/fetch-worktree" 'support/fetch' "$TEST_HEAD_OID_1" >"$GIT_WORKTREE_REGISTRY"
 	write_fake_gh_stub

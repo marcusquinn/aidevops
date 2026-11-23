@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# aidevops:suite-timeout=800
 
 set -uo pipefail
 
@@ -381,6 +382,56 @@ if [[ "$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse HEAD)" == "$develop_local_tip" 
 	printf 'PASS current-branch fast-forward refuses concurrent recovery\n'
 else
 	printf 'FAIL concurrent recovery refusal changed canonical state\n'
+	exit 1
+fi
+
+# GH#38643: owner-aware lock. Dead/reused owners are taken over with an audit
+# record; live owners are respected.
+CRL_LIB="$(dirname "$HELPER")/canonical-recovery-lock.sh"
+crl_test_lock="${ROOT}/crl-test.lock"
+crl_audit_before=$(grep -c 'Canonical recovery lock takeover' "$HOME/.aidevops/logs/canonical-recovery-audit.jsonl" || true)
+crl_dead_pid=$(bash -c 'printf "%s" "$$"')
+mkdir "$crl_test_lock"
+printf 'pid=%s\nstart=Mon Jan  1 00:00:00 2001\nepoch=1\noperation=fast-forward-current\n' "$crl_dead_pid" >"${crl_test_lock}/owner"
+crl_run_acquire() {
+	# shellcheck source=../canonical-recovery-lock.sh
+	source "$CRL_LIB" || return 1
+	crl_acquire "$crl_test_lock" test-op
+	return $?
+}
+if (crl_run_acquire) 2>/dev/null &&
+	[[ "$(grep -c 'Canonical recovery lock takeover' "$HOME/.aidevops/logs/canonical-recovery-audit.jsonl" || true)" -eq $((crl_audit_before + 1)) ]] &&
+	crl_last_record="$(grep 'Canonical recovery lock takeover' "$HOME/.aidevops/logs/canonical-recovery-audit.jsonl" | tail -1)" &&
+	[[ "$crl_last_record" =~ dead_owner_pid.*${crl_dead_pid} ]]; then
+	printf 'PASS dead-owner recovery lock is taken over with one audit record naming the owner\n'
+else
+	printf 'FAIL dead-owner recovery lock was not taken over and audited\n'
+	exit 1
+fi
+rm -rf "$crl_test_lock"
+
+sleep 60 &
+crl_live_pid=$!
+crl_live_start=$(LC_ALL=C ps -o lstart= -p "$crl_live_pid" | tr -s '[:space:]' ' ')
+crl_live_start="${crl_live_start# }"
+crl_live_start="${crl_live_start% }"
+mkdir "$crl_test_lock"
+printf 'pid=%s\nstart=%s\nepoch=1\noperation=fast-forward-current\n' "$crl_live_pid" "$crl_live_start" >"${crl_test_lock}/owner"
+crl_live_refused=true
+(crl_run_acquire) 2>/dev/null && crl_live_refused=false
+crl_live_start_kept=false
+grep -q "pid=${crl_live_pid}" "${crl_test_lock}/owner" && crl_live_start_kept=true
+# A reused PID (same pid, different start time) is stale.
+printf 'pid=%s\nstart=Mon Jan  1 00:00:00 2001\nepoch=1\noperation=fast-forward-current\n' "$crl_live_pid" >"${crl_test_lock}/owner"
+crl_reuse_taken=false
+(crl_run_acquire) 2>/dev/null && crl_reuse_taken=true
+kill "$crl_live_pid" 2>/dev/null || true
+wait "$crl_live_pid" 2>/dev/null || true
+rm -rf "$crl_test_lock"
+if [[ "$crl_live_refused" == true && "$crl_live_start_kept" == true && "$crl_reuse_taken" == true ]]; then
+	printf 'PASS live-owner lock is respected and a reused PID is taken over\n'
+else
+	printf 'FAIL live-owner/reused-PID lock handling (refused=%s kept=%s reuse_taken=%s)\n' "$crl_live_refused" "$crl_live_start_kept" "$crl_reuse_taken"
 	exit 1
 fi
 

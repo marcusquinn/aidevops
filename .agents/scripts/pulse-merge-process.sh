@@ -106,7 +106,7 @@ _pmp_update_branch_conflict_cooldown_active() {
 	IFS=$'\t' read -r recorded_head_sha expires_at <"$state_file" || return 1
 	[[ "$recorded_head_sha" == "$expected_head_sha" ]] || return 1
 	[[ "$expires_at" =~ ^[0-9]+$ ]] || return 1
-	now=$(date +%s)
+	_pmp_now_epoch_into now
 	[[ "$now" =~ ^[0-9]+$ ]] || return 1
 	[[ "$now" -lt "$expires_at" ]] || return 1
 	return 0
@@ -132,7 +132,7 @@ _pmp_record_update_branch_conflict_cooldown() {
 
 	[[ -n "$expected_head_sha" ]] || return 1
 	[[ "$AIDEVOPS_UPDATE_BRANCH_CONFLICT_COOLDOWN_SECONDS" =~ ^[0-9]+$ ]] || return 1
-	now=$(date +%s)
+	_pmp_now_epoch_into now
 	[[ "$now" =~ ^[0-9]+$ ]] || return 1
 	expires_at=$((now + AIDEVOPS_UPDATE_BRANCH_CONFLICT_COOLDOWN_SECONDS))
 	state_file=$(_pmp_update_branch_conflict_cooldown_file "$pr_number" "$repo_slug") || return 1
@@ -159,30 +159,134 @@ _pmp_is_protected_release_pr() {
 	return 0
 }
 
+# Bind a protected release PR head to its remote release evidence without
+# requiring this runner to trust the release signer (GH#38012). Collaborator
+# runners usually lack the releaser's allowed-signers principal, so a local
+# `git verify-tag` failure cannot distinguish "untrusted here" from drift.
+# Instead bind the PR-pinned provenance marker, the remote staging envelope,
+# the raw tag bytes it carries, and the live head exactly.
+# Args: $1=repo_path $2=head_ref $3=live head OID $4=PR body
+# Returns: 0=bound, 1=proven mismatch or invalid evidence, 2=evidence unavailable
+_pmp_protected_release_head_binding() {
+	local repo_path="$1"
+	local head_ref="$2"
+	local head_oid="$3"
+	local pr_body="$4"
+	local tag_name="${head_ref#chore/release-}" marker_regex="" pinned_object="" pinned_commit=""
+	local remote_ref="" ls_rc=0 staged_oid="" tag_object="" tag_header="" tag_commit="" envelope_parents=""
+	tag_name="${tag_name%-provenance}"
+	marker_regex='<!-- aidevops:release-provenance tag=(v[0-9]+\.[0-9]+\.[0-9]+) tag-object=([0-9a-f]{40}) release-commit=([0-9a-f]{40}) merge-method=merge -->'
+	[[ "$head_oid" =~ ^[0-9a-f]{40}$ ]] || return 1
+	# aidevops:trust-boundary — the release lane pins the exact release commit
+	# in the PR body; any other live head is proven drift without git access.
+	[[ "$pr_body" =~ $marker_regex && "${BASH_REMATCH[1]}" == "$tag_name" ]] || return 1
+	pinned_object="${BASH_REMATCH[2]}"
+	pinned_commit="${BASH_REMATCH[3]}"
+	[[ "$pinned_commit" == "$head_oid" ]] || return 1
+	if [[ -z "$repo_path" ]] || ! git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
+		return 2
+	fi
+	# Read remote evidence, never a stale local ref. A missing staging ref is
+	# not "unavailable": the release lane stages it before queueing the merge.
+	remote_ref=$(GIT_TERMINAL_PROMPT=0 timeout_sec 30 git -C "$repo_path" ls-remote --exit-code origin \
+		"refs/aidevops/release-tags/${tag_name}" 2>/dev/null) || ls_rc=$?
+	[[ "$ls_rc" -ne 2 ]] || return 1
+	[[ "$ls_rc" -eq 0 ]] || return 2
+	staged_oid="${remote_ref%%[[:space:]]*}"
+	[[ "$staged_oid" =~ ^[0-9a-f]{40}$ ]] || return 1
+	GIT_TERMINAL_PROMPT=0 timeout_sec 30 git -C "$repo_path" fetch --quiet --no-tags --no-write-fetch-head \
+		origin "refs/aidevops/release-tags/${tag_name}" 2>/dev/null || return 2
+	tag_object=$(git -C "$repo_path" cat-file blob "${staged_oid}:tag" 2>/dev/null |
+		git -C "$repo_path" hash-object -t tag -w --stdin 2>/dev/null) || return 1
+	[[ "$tag_object" == "$pinned_object" ]] || return 1
+	tag_header=$(git -C "$repo_path" cat-file tag "$tag_object" 2>/dev/null |
+		awk '/^$/ {exit} /^tag / {print substr($0, 5)}') || return 1
+	[[ "$tag_header" == "$tag_name" ]] || return 1
+	tag_commit=$(git -C "$repo_path" rev-parse --verify "${tag_object}^{commit}" 2>/dev/null) || return 1
+	envelope_parents=$(git -C "$repo_path" show -s --format=%P "$staged_oid" 2>/dev/null) || return 1
+	[[ "$envelope_parents" == "$head_oid" && "$tag_commit" == "$head_oid" ]] || return 1
+	return 0
+}
+
 # Protected release PRs always belong to exact-merge reconciliation. Even an
 # exact signed head must never be armed for the generic native squash path.
+# The release lane's own `--merge --match-head-commit` request is retained
+# while the live head stays bound to the pinned release commit (GH#38012).
+# Decide whether an armed protected release auto-merge may stay queued.
+# Args: $1=PR REST JSON $2=repo_slug $3=head_ref $4=gated head OID
+# Prints the log reason. Returns: 0=retain the exact queue, 1=disarm.
+_pmp_protected_release_queue_decision() {
+	local pr_json="$1"
+	local repo_slug="$2"
+	local head_ref="$3"
+	local head_oid="$4"
+	local auto_method="" live_head="" head_repo="" base_repo="" author_association=""
+	local pr_body="" repo_path="" binding_rc=0 normalized_repo=""
+	auto_method=$(printf '%s' "$pr_json" | jq -r '.auto_merge.merge_method // ""' 2>/dev/null) || auto_method=""
+	live_head=$(printf '%s' "$pr_json" | jq -r '.head.sha // ""' 2>/dev/null) || live_head=""
+	head_repo=$(printf '%s' "$pr_json" | jq -r '(.head.repo.full_name // "") | ascii_downcase' 2>/dev/null) || head_repo=""
+	base_repo=$(printf '%s' "$pr_json" | jq -r '(.base.repo.full_name // "") | ascii_downcase' 2>/dev/null) || base_repo=""
+	normalized_repo=$(printf '%s' "$repo_slug" | jq -Rr 'ascii_downcase') || return 1
+	author_association=$(printf '%s' "$pr_json" | jq -r '.author_association // ""' 2>/dev/null) || author_association=""
+	pr_body=$(printf '%s' "$pr_json" | jq -r '.body // ""' 2>/dev/null) || pr_body=""
+	# aidevops:trust-boundary — only the release lane's ancestry-preserving
+	# exact merge on the gated, same-repository, collaborator-authored head may stay.
+	if [[ "$auto_method" != "merge" ]]; then
+		printf "protected release PR native auto-merge uses '%s', not the ancestry-preserving exact merge" "${auto_method:-unknown}"
+		return 1
+	fi
+	if [[ -z "$head_oid" || "$live_head" != "$head_oid" || "$head_repo" != "$normalized_repo" ||
+		"$base_repo" != "$normalized_repo" ]]; then
+		printf '%s' "protected release PR live head or repository no longer matches the gated head"
+		return 1
+	fi
+	if [[ ! "$author_association" =~ ^(OWNER|MEMBER|COLLABORATOR)$ ]]; then
+		printf '%s' "protected release PR author is not a trusted repository collaborator"
+		return 1
+	fi
+	repo_path=$(_pulse_merge_repo_path_for_slug "$repo_slug" 2>/dev/null) || repo_path=""
+	_pmp_protected_release_head_binding "$repo_path" "$head_ref" "$live_head" "$pr_body" || binding_rc=$?
+	case "$binding_rc" in
+	0)
+		printf 'retaining exact-merge native auto-merge; head %s is bound to the remote signed release evidence (GH#38012)' "${live_head:0:12}"
+		return 0
+		;;
+	2)
+		# The live head equals the release lane's pinned commit; only this
+		# runner's copy of the remote envelope is unavailable. The release
+		# lane and `aidevops release reconcile` own any further recovery.
+		printf 'retaining exact-merge native auto-merge; head %s matches pinned release provenance and remote staging evidence is unavailable on this runner (GH#38012)' "${live_head:0:12}"
+		return 0
+		;;
+	esac
+	printf '%s' "protected release PR head differs from its pinned signed release commit or remote staging evidence"
+	return 1
+}
+
 _pmp_hold_protected_release_pr() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local head_ref="$3"
 	local head_oid="$4"
-	local repo_path="" auto_merge="" hold_reason="protected release PR requires exact-merge reconciliation"
-	repo_path=$(_pulse_merge_repo_path_for_slug "$repo_slug" 2>/dev/null) || repo_path=""
-	if ! protected_release_head_matches_staged "$repo_path" "$head_ref" "$head_oid"; then
-		hold_reason="protected release PR head differs from staged signed commit or staging evidence is unavailable"
+	local pr_api_path="" pr_json="" disarm=1 stop_rc=0
+	local hold_reason="protected release PR requires exact-merge reconciliation"
+	printf -v pr_api_path 'repos/%s/pulls/%s' "$repo_slug" "$pr_number"
+	if [[ "${DRY_RUN:-0}" == "1" ]]; then
+		disarm=0
+	elif ! pr_json=$(gh api "$pr_api_path" 2>/dev/null) || [[ -z "$pr_json" ]]; then
+		# An unavailable read takes the fail-closed disarm path below.
+		hold_reason="protected release PR state is unreadable"
+	elif printf '%s' "$pr_json" | jq -e '.auto_merge == null' >/dev/null 2>&1; then
+		# Do not turn an already-safe release into a draft on every merge pass.
+		disarm=0
+	elif hold_reason=$(_pmp_protected_release_queue_decision "$pr_json" "$repo_slug" "$head_ref" "$head_oid"); then
+		disarm=0
 	fi
+	[[ -n "$hold_reason" ]] || hold_reason="protected release PR exact-merge evidence is unavailable"
 	echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: ${hold_reason}" >>"$LOGFILE"
-	[[ "${DRY_RUN:-0}" != "1" ]] || return 0
-	# Do not turn an already-safe release into a draft on every merge pass.
-	# An unavailable read still takes the fail-closed disarm path below.
-	if auto_merge=$(gh pr view "$pr_number" --repo "$repo_slug" --json autoMergeRequest \
-		--jq '.autoMergeRequest == null' 2>/dev/null) &&
-		[[ "$auto_merge" == true ]]; then
-		return 0
-	fi
+	[[ "$disarm" -eq 1 ]] || return 0
 	# aidevops:trust-boundary — revoke native auto-merge before deferring so a
 	# previously armed request cannot merge a drifted release between passes.
-	local stop_rc=0
 	_stop_external_native_auto_merge "$pr_number" "$repo_slug" "$hold_reason" || stop_rc=$?
 	[[ "$stop_rc" -eq 0 || "$stop_rc" -eq 2 ]] || return 1
 	return 0
@@ -291,7 +395,7 @@ _merge_ready_prs_for_repo() {
 	_pmp_apply_merge_api_deadline
 	local pr_json="" pr_merge_err="" _list_start="" pr_count="" pr_list_timeout="" pr_list_rc=0
 	local pr_list_complete=1 outcomes_complete=1
-	_list_start=$(_pmp_now_epoch)
+	_pmp_now_epoch_into _list_start
 	if ! pr_list_timeout=$(_pmp_merge_pr_list_timeout_seconds); then
 		_pmp_record_pr_list_timing "$_timing_prefix" "$_list_start" 0
 		if [[ -n "$_pr_count_var" ]]; then
@@ -322,7 +426,7 @@ _merge_ready_prs_for_repo() {
 	if [[ "$pr_count" -eq 0 ]] || _pmu_skip_unchanged_repo "$repo_slug" "$pr_json" "$pr_list_complete"; then
 		eval "${_merged_var}=0; ${_closed_var}=0; ${_failed_var}=0"
 		if [[ "$pr_count" -eq 0 && "$pr_list_complete" -eq 1 ]]; then
-			_pmp_clear_merge_enrichment_state; _pmp_mark_same_pass_repo_complete "$repo_slug" 2>/dev/null || true
+			_pmp_clear_merge_enrichment_state "$repo_slug"; _pmp_mark_same_pass_repo_complete "$repo_slug" 2>/dev/null || true
 		fi
 		return 0
 	fi
@@ -338,9 +442,9 @@ _merge_ready_prs_for_repo() {
 		return "$preparation_rc"
 	fi
 
-	local i=0
-	_pmp_prepare_merge_pr_cursor_resume "$repo_slug" "$pr_json" "$pr_count" "$PULSE_MERGE_PR_CURSOR_FILE" "$LOGFILE" i || i=0
-	local _evaluated_from_start=$((i == 0))
+	local i=0 _PMP_RESUME_LANE_START=0 _PMP_RESUME_LANE_END=0 _PMP_RESUME_MERGE_LANE_END=0 _PMP_MERGE_LANE_SLICE_EXEMPT=0 _PMP_RESUME_LANE_LAST_PR="" _PMP_RESUME_LANE_ITEM_PR=""
+	_pmp_resume_cursor_with_priority_lane "$repo_slug" i || i=0 # GH#38248
+	local _evaluated_from_start=$((i == 0 && _PMP_RESUME_LANE_END == 0))
 	while [[ "$i" -lt "$pr_count" ]]; do
 		local pr_obj="" _pr_start=""
 		_pr_start=$(_pmp_now_epoch) # GH#33307: time the whole per-PR unit
@@ -350,24 +454,24 @@ _merge_ready_prs_for_repo() {
 			i=$((i + 1))
 			continue
 		}
-		local _cursor_last_pr="" _cursor_next_pr="" _pr_head_sha=""
+		local _cursor_last_pr="" _cursor_next_pr="" _pr_head_sha="" _cursor_write_index=0 _cursor_write_last=""
 		_cursor_last_pr=$(printf '%s' "$pr_obj" | jq -r '.number // empty' 2>/dev/null) || _cursor_last_pr=""
 		_pr_head_sha=$(printf '%s' "$pr_obj" | jq -r '.headRefOid // empty' 2>/dev/null) || _pr_head_sha=""
 
 		local _pr_rc=0
-		_pmp_evaluate_pr_with_deadline "$repo_slug" "$pr_obj" "$_timing_prefix" || _pr_rc=$?
+		_pmp_evaluate_pr_with_memo "$repo_slug" "$pr_obj" "$_timing_prefix" || _pr_rc=$?
+		[[ -n "$_timing_prefix" ]] && _pmp_record_pr_processing_timing "$_timing_prefix" "$_pr_start" "$_cursor_last_pr" # GH#38259: rc 124 too
 		if [[ "$_pr_rc" -eq 124 ]]; then
 			_pmp_pause_merge_pr_cursor "$repo_slug" "$pr_json" "$i" budget "$_merged_var" "$_closed_var" "$_failed_var" "$merged" "$closed" "$failed" "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR"
 			return $?
 		fi
 		i=$((i + 1))
-		_cursor_next_pr=$(_pmp_pr_number_at_index "$pr_json" "$i") || _cursor_next_pr=""
-		[[ -n "$_timing_prefix" ]] && _pmp_record_pr_processing_timing "$_timing_prefix" "$_pr_start" "$_cursor_last_pr"
+		_pmp_lane_clamped_cursor "$repo_slug" "$i" _cursor_write_index _cursor_next_pr "$pr_obj" _cursor_write_last "$_cursor_last_pr" || { _cursor_write_index="$i"; _cursor_next_pr=""; _cursor_write_last="$_cursor_last_pr"; }
 		_pmp_record_processed_pr_result "$repo_slug" "$_cursor_last_pr" "$_pr_head_sha" "$_pr_rc" merged closed failed || outcomes_complete=0
-		_pmp_write_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug" "$i" "$_cursor_last_pr" "$_cursor_next_pr"
+		_pmp_write_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug" "$_cursor_write_index" "$_cursor_write_last" "$_cursor_next_pr"
 	done
-	_pmp_clear_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE"
-	_pmp_clear_merge_enrichment_state
+	_pmp_clear_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug"
+	_pmp_clear_merge_enrichment_state "$repo_slug"
 
 	_pmp_cleanup_merge_repo_caches
 	if [[ "$pr_list_complete" -eq 1 && "$outcomes_complete" -eq 1 ]]; then _pmp_mark_same_pass_repo_complete "$repo_slug" 2>/dev/null || true; fi
@@ -534,6 +638,63 @@ _pr_required_checks_pass() {
 }
 
 #######################################
+# Return 0 when every terminal failed required context is a policy gate
+# (maintainer-gate, Maintainer Review & Assignee Gate, review-bot-gate).
+# Unknown/empty state returns 1 (not policy-only) so existing behaviour holds.
+# Arguments: $1=repo_slug, $2=pr_number, $3=head_sha
+#######################################
+_pmp_ci_rebase_policy_gate_only_failure() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local head_sha="${3:-}"
+	local names="" name="" seen=0
+	names=$(_required_checks_terminal_failure_names "$repo_slug" "$pr_number" "$head_sha" 2>/dev/null) || return 1
+	while IFS= read -r name; do
+		[[ -n "$name" ]] || continue
+		case "$name" in
+		"maintainer-gate" | "Maintainer Review & Assignee Gate" | "review-bot-gate") seen=1 ;;
+		*) return 1 ;;
+		esac
+	done <<<"$names"
+	[[ "$seen" -eq 1 ]]
+	return $?
+}
+
+#######################################
+# Return 0 when the PR is external/fork (isCrossRepository or the
+# external-contributor label). Unknown state returns 1.
+# Arguments: $1=pr_number, $2=repo_slug
+#######################################
+_pmp_ci_rebase_pr_is_external() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local info=""
+	info=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json isCrossRepository,labels \
+		--jq '((.isCrossRepository // false) or ([.labels[]?.name] | index("external-contributor") != null)) | if . then 1 else 0 end' 2>/dev/null) || return 1
+	[[ "$info" == "1" ]]
+	return $?
+}
+
+#######################################
+# Return 0 (skip) when update-branch must not run: policy-gate-only failures
+# or external/fork PRs. Logs the reason. Arguments: $1=pr, $2=repo, $3=head.
+#######################################
+_pmp_ci_rebase_should_skip() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local head_sha="${3:-}"
+	if _pmp_ci_rebase_policy_gate_only_failure "$repo_slug" "$pr_number" "$head_sha"; then
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: skipping CI-drift update-branch because every terminal failed required context is a policy gate (maintainer-gate/review-bot-gate); a new base cannot fix a policy verdict" >>"$LOGFILE"
+		return 0
+	fi
+	if _pmp_ci_rebase_pr_is_external "$pr_number" "$repo_slug"; then
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: skipping CI-drift update-branch for external/fork PR because a head change would invalidate the head-bound maintainer approval" >>"$LOGFILE"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # Attempt to rebase a MERGEABLE PR with failing CI before routing to a
 # fix-worker. When a PR is behind its base branch, failing CI is often
 # caused by base-drift (e.g. a pre-existing test failure fixed in a
@@ -612,6 +773,8 @@ _attempt_pr_ci_rebase_retry() {
 		fi
 		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: required-check head-state unavailable before CI-drift update-branch; fail-open to existing update-branch behaviour (GH#26406)" >>"$LOGFILE"
 	fi
+	# Skip policy-gate-only failures and external PRs (GH#39381).
+	_pmp_ci_rebase_should_skip "$pr_number" "$repo_slug" "$_head_oid" && return 1
 	if [[ "$_rebase_policy" == "$_review_repair_policy" ]]; then
 		local _pending_check_rc=0
 		_check_required_checks_have_pending_or_in_progress "$repo_slug" "$pr_number" "$_head_oid" >/dev/null 2>&1 || _pending_check_rc=$?
@@ -640,7 +803,6 @@ _attempt_pr_ci_rebase_retry() {
 	local _ub_output _ub_exit
 	_ub_output=$(_pmp_update_branch_rest "$pr_number" "$repo_slug" "$_head_oid" 2>&1)
 	_ub_exit=$?
-
 	if [[ $_ub_exit -eq 0 ]]; then
 		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: CI-drift rebase succeeded via update-branch, deferring to next cycle (t2805)" >>"$LOGFILE"
 		return 0
@@ -801,6 +963,7 @@ _dispatch_pr_repair_by_kind() {
 		review) _dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || dispatch_rc=$? ;;
 		conflict) _dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" || dispatch_rc=$? ;;
 		ci) _dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$checks_json" || dispatch_rc=$? ;;
+		runtime-pending-legacy) _dispatch_runtime_pending_completion_worker "$pr_number" "$repo_slug" "$linked_issue" || dispatch_rc=$? ;;
 	esac
 	return "$dispatch_rc"
 }
@@ -876,70 +1039,77 @@ _route_pr_has_linked_issue() {
 
 # Recover a tracking issue only for an aged, trusted interactive PR. The issue
 # stays non-dispatchable until its closing link is persisted and the normal
-# handover/claim gates have passed. A deterministic title + marker recovers a
+# handover/claim gates have passed; draft handover then releases it
+# (_interactive_handover_release_tracking_issue, GH#39908). A deterministic title + marker recovers a
 # successful create followed by a failed PR edit without creating another issue.
 _recover_interactive_pr_work_issue() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local meta="" author="" title="Track interactive PR #${pr_number}" matches="" issue="" issue_meta=""
 	local marker="<!-- pulse-interactive-tracking:${pr_number} -->"
-	local body_file="" files="" created="" existing="" live_meta=""
-	[[ "${DRY_RUN:-0}" != "1" ]] || return 1
-	[[ "${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-enforce}" == "enforce" ]] || return 1
-	meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,author,labels,body,url,headRefOid) || return 1
-	printf '%s' "$meta" | jq -e '.state == "OPEN" and
-		([.labels[].name] | index("origin:interactive") != null and
-		any(. == "no-takeover" or . == "needs-maintainer-review" or
-		. == "external-contributor" or . == "hold-for-review") == false)' >/dev/null || return 1
+	local body_file="" files="" created="" existing="" live_meta="" refusal=""
+	[[ "${DRY_RUN:-0}" != "1" ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" dry-run; return 1; }
+	[[ "${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-enforce}" == "enforce" ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" mode-not-enforce; return 1; }
+	meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,author,labels,body,url,headRefOid) || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" pr-metadata-unavailable; return 1; }
+	refusal=$(printf '%s' "$meta" | jq -r 'if .state != "OPEN" then "pr-not-open"
+		elif ([.labels[].name] | index("origin:interactive")) == null then "origin-interactive-missing"
+		else [.labels[].name | select(. == "no-takeover" or . == "needs-maintainer-review" or
+		. == "external-contributor" or . == "hold-for-review")][0] // empty end') || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" pr-metadata-invalid; return 1; }
+	[[ -z "$refusal" ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" "$refusal"; return 1; }
 	#aidevops:trust-boundary — labels alone cannot authorize creation or takeover.
 	author=$(printf '%s' "$meta" | jq -r '.author.login // empty')
-	[[ -n "$author" ]] && _is_collaborator_author "$author" "$repo_slug" || return 1
-	_interactive_pr_is_stale "$pr_number" "$repo_slug" "" "" "" 1 || return 1
-	# Never replace a non-closing For/Ref work link with a new tracking issue.
-	existing=$(_extract_pr_work_issue "$pr_number" "$repo_slug") || return 1
+	[[ -n "$author" ]] && _is_collaborator_author "$author" "$repo_slug" || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" author-not-collaborator; return 1; }
+	_interactive_pr_is_stale "$pr_number" "$repo_slug" "" "" "" 1 || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" "${_INTERACTIVE_PR_STALE_REFUSAL:-age-or-claim-not-eligible}"; return 1; }
+	# For/Ref and legacy task-title numbers can name PRs or closed issues.
+	# Only an open issue is reusable; unreadable metadata must fail closed.
+	existing=$(_extract_pr_work_issue "$pr_number" "$repo_slug") || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" work-link-unavailable-or-ambiguous; return 1; }
 	if [[ -n "$existing" ]]; then
-		printf '%s' "$existing"
-		return 0
+		issue_meta=$(gh api "repos/${repo_slug}/issues/${existing}") || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" work-issue-metadata-unavailable; return 1; }
+		if printf '%s' "$issue_meta" | jq -e 'type == ({} | type) and .pull_request == null and .state == "open"' >/dev/null; then
+			issue="$existing"
+		fi
 	fi
-	matches=$(gh api -X GET search/issues -f q="repo:${repo_slug} is:issue in:title \"${title}\"") || return 1
-	printf '%s' "$matches" | jq -e 'select(.incomplete_results == false) | .items | arrays' >/dev/null || return 1
-	issue=$(printf '%s' "$matches" | jq -r --arg title "$title" '.items[] | select(.title == $title) | .number') || return 1
+	if [[ -z "$issue" ]]; then
+		matches=$(gh api -X GET search/issues -f q="repo:${repo_slug} is:issue in:title \"${title}\"") || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-search-failed; return 1; }
+		printf '%s' "$matches" | jq -e 'select(.incomplete_results == false) | .items | arrays' >/dev/null || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-search-incomplete; return 1; }
+		issue=$(printf '%s' "$matches" | jq -r --arg title "$title" '.items[] | select(.title == $title) | .number') || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-search-invalid; return 1; }
 	# Ambiguous search results must never choose somebody else's issue.
-	[[ "$issue" != *$'\n'* ]] || return 1
+	[[ "$issue" != *$'\n'* ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-search-ambiguous; return 1; }
 	if [[ -n "$issue" ]]; then
-		issue_meta=$(gh api "repos/${repo_slug}/issues/${issue}") || return 1
-		printf '%s' "$issue_meta" | jq -e --arg marker "$marker" '.state == "open" and (.body | contains($marker))' >/dev/null || return 1
+		issue_meta=$(gh api "repos/${repo_slug}/issues/${issue}") || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-metadata-unavailable; return 1; }
+		printf '%s' "$issue_meta" | jq -e --arg marker "$marker" '.pull_request == null and .state == "open" and (.body | contains($marker))' >/dev/null || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-issue-not-open-or-marker-mismatch; return 1; }
 		author=$(printf '%s' "$issue_meta" | jq -r '.user.login // empty')
-		_is_collaborator_author "$author" "$repo_slug" || return 1
+		_is_collaborator_author "$author" "$repo_slug" || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-author-not-collaborator; return 1; }
 	else
-		files=$(gh api --paginate "repos/${repo_slug}/pulls/${pr_number}/files" --jq '.[].filename') || return 1
-		[[ -n "$files" ]] || return 1
-		body_file=$(mktemp) || return 1
+		files=$(gh api --paginate "repos/${repo_slug}/pulls/${pr_number}/files" --jq '.[].filename') || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" pr-files-unavailable; return 1; }
+		[[ -n "$files" ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" pr-files-empty; return 1; }
+		body_file=$(mktemp) || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-tempfile-failed; return 1; }
 		{
 			printf '%s\n\n## Outcome\n\nComplete existing interactive PR %s through its existing CI, review and merge gates. Preserve its commits; repair only evidenced failures.\n\n### Files Scope\n' "$marker" "$(printf '%s' "$meta" | jq -r '.url')"
 			# shellcheck disable=SC2016 # Markdown code spans, not shell substitution
 			while IFS= read -r existing; do printf -- '- `%s`\n' "$existing"; done <<<"$files"
 			printf '\n### Verification\n\nUse the existing checks and verification documented on the source PR; inspect its exact-head CI and review feedback before repair. Do not bypass approval or security gates.\n'
-			printf '\n### Recovery state\n\nInitially blocked pending verified PR linkage. Pulse owns linkage recovery; after verification, existing feedback routing transitions this issue to available when repair is needed. No independent dispatch before that transition.\n'
+			printf '\n### Recovery state\n\nInitially blocked pending verified PR linkage. Pulse owns linkage recovery; once the closing link is verified and the stale draft is handed over (origin:worker-takeover), the pulse releases this issue to available + auto-dispatch for one exact-head continuation of the source PR (GH#39908). No independent dispatch before that transition.\n'
 		} >"$body_file"
 		local create_rc=0
 		created=$(gh_create_issue --repo "$repo_slug" --title "$title" --label origin:interactive --label status:blocked --body-file "$body_file") || create_rc=$?
 		rm -f "$body_file"
-		[[ "$create_rc" -eq 0 ]] || return 1
+		[[ "$create_rc" -eq 0 ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-create-failed; return 1; }
 		issue="${created##*/}"
 	fi
-	[[ "$issue" =~ ^[0-9]+$ ]] || return 1
+	fi
+	[[ "$issue" =~ ^[0-9]+$ ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" tracking-number-invalid; return 1; }
 	# Do not overwrite concurrent body edits, new commits or newly applied holds.
-	live_meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,author,labels,body,url,headRefOid) || return 1
-	[[ "$(printf '%s' "$meta" | jq -Sc .)" == "$(printf '%s' "$live_meta" | jq -Sc .)" ]] || return 1
-	body_file=$(mktemp) || return 1
+	live_meta=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,author,labels,body,url,headRefOid) || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" pr-recheck-unavailable; return 1; }
+	[[ "$(printf '%s' "$meta" | jq -Sc .)" == "$(printf '%s' "$live_meta" | jq -Sc .)" ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" pr-changed-during-recovery; return 1; }
+	body_file=$(mktemp) || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" linkage-tempfile-failed; return 1; }
 	printf '%s\n\nResolves #%s\n' "$(printf '%s' "$meta" | jq -r '.body // ""')" "$issue" >"$body_file"
 	local edit_rc=0
 	gh_pr_edit_safe "$pr_number" --repo "$repo_slug" --body-file "$body_file" >/dev/null || edit_rc=$?
 	rm -f "$body_file"
-	[[ "$edit_rc" -eq 0 ]] || return 1
-	existing=$(_extract_linked_issue "$pr_number" "$repo_slug") || return 1
-	[[ "$existing" == "$issue" ]] || return 1
+	[[ "$edit_rc" -eq 0 ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" linkage-edit-failed; return 1; }
+	existing=$(_extract_linked_issue "$pr_number" "$repo_slug") || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" linkage-read-failed; return 1; }
+	[[ "$existing" == "$issue" ]] || { _interactive_draft_handover_refused "$pr_number" "$repo_slug" linkage-not-confirmed; return 1; }
 	printf '%s' "$issue"
 	return 0
 }
@@ -1059,10 +1229,22 @@ _route_pr_guard_and_dispatch_with_retry() {
 	local routed_label="$6"
 	local pr_title="$7"
 	local checks_json="$8"
+	local repair_labels="${9:-}"
+	local repair_head="${10:-}"
 	local route_rc=0
 
 	# Classify closed issues before recovering old terminal markers or dispatching.
 	_feedback_route_guard_closed_issue "$pr_number" "$repo_slug" "$linked_issue" "$kind" || route_rc=$?
+	# GH#38169: a worker-origin conflict first gets one bounded on-branch repair
+	# attempt per head; the close-and-redispatch route below is the fallback.
+	if [[ "$route_rc" -eq 0 && "$kind" == "conflict" && "$has_routed_label" -eq 0 && -n "$repair_labels" ]] \
+		&& declare -F _route_pr_to_conflict_repair_worker >/dev/null 2>&1; then
+		local repair_rc=0
+		_route_pr_to_conflict_repair_worker "$pr_number" "$repo_slug" "$linked_issue" \
+			"$repair_labels" "$repair_head" || repair_rc=$?
+		[[ "$repair_rc" -ne "${PULSE_CONFLICT_REPAIR_ACTIVE_RC:-77}" ]] || return "$repair_rc"
+		[[ "$repair_rc" -ne "${PULSE_FEEDBACK_ROUTE_DEFERRED_RC:-75}" ]] || route_rc="$repair_rc"
+	fi
 	if [[ "$route_rc" -eq 0 ]]; then
 		_route_pr_feedback_terminal_guard "$has_routed_label" "$pr_number" "$repo_slug" \
 			"$linked_issue" "$kind" "$routed_label" || route_rc=$?
@@ -1097,7 +1279,11 @@ _route_pr_guard_and_dispatch_with_retry() {
 #   $9 = checks_json   (optional — head-bound terminal blocker evidence for CI repair)
 #
 # Returns: 0 if dispatched, 1 if not routable, 75 if finalization is deferred,
-#          or 76 if ambiguous state was preserved for maintainer review.
+#          76 if ambiguous state was preserved for maintainer review, or
+#          77 (conflict only) while an on-branch repair attempt owns the PR
+#          (GH#38169, pulse-merge-conflict-repair.sh). Only the worker-origin
+#          branch passes repair context; stale interactive handovers keep the
+#          close-and-redispatch route.
 #
 # Design: case-statement dispatch over kind — no dynamic function calls.
 # Per-kind return semantics are handled by the CALLER, not here.
@@ -1138,6 +1324,7 @@ _route_pr_to_fix_worker() {
 		review)   routed_label="review-routed-to-issue" ;;
 		conflict) routed_label="conflict-feedback-routed" ;;
 		ci)       routed_label="ci-feedback-routed" ;;
+		runtime-pending-legacy) routed_label="runtime-pending-legacy-routed" ;;
 		*)
 			echo "[pulse-wrapper] _route_pr_to_fix_worker: unknown kind '${kind}'" >>"$LOGFILE"
 			return 1
@@ -1176,7 +1363,8 @@ _route_pr_to_fix_worker() {
 			fi
 		fi
 		_route_pr_guard_and_dispatch_with_retry "$has_routed_label" "$pr_number" "$repo_slug" \
-			"$linked_issue" "$kind" "$routed_label" "$pr_title" "$checks_json"
+			"$linked_issue" "$kind" "$routed_label" "$pr_title" "$checks_json" \
+			"${label_list}${issue_labels:+${issue_labels},}" "$head_ref_oid"
 		return $?
 	fi
 
@@ -1206,17 +1394,21 @@ _route_pr_to_fix_worker() {
 
 #######################################
 # Retarget direct child PRs before deleting the merged parent branch.
+# Children move to the branch the parent merges into (its baseRefName), so a
+# stack on `dev` stays on `dev`; never a hard-coded `main` (GH#39167).
 #
 # Args:
 #   $1 - parent PR number
 #   $2 - repo slug
 #   $3 - parent head ref from per-cycle PR context (optional)
+#   $4 - parent base ref from per-cycle PR context (optional)
 # Returns: 0 always (errors are non-fatal)
 #######################################
 _retarget_stacked_children() {
 	local parent_pr_number="$1"
 	local repo_slug="$2"
 	local parent_head_ref="${3:-}"
+	local parent_base_ref="${4:-}"
 	if [[ -z "$parent_head_ref" ]]; then
 		parent_head_ref=$(gh_pr_view "$parent_pr_number" --repo "$repo_slug" --json headRefName -q '.headRefName' 2>/dev/null) || parent_head_ref=""
 	fi
@@ -1230,15 +1422,24 @@ _retarget_stacked_children() {
 		return 0
 	fi
 
-	local default_branch
-	default_branch=$(gh repo view "$repo_slug" --json defaultBranchRef -q '.defaultBranchRef.name' 2>/dev/null || true)
-	default_branch="${default_branch:-main}"
+	local target_base="$parent_base_ref" target_source="parent-base"
+	if [[ -z "$target_base" ]]; then
+		target_base=$(gh_pr_view "$parent_pr_number" --repo "$repo_slug" --json baseRefName -q '.baseRefName' 2>/dev/null) || target_base=""
+	fi
+	if [[ -z "$target_base" ]] && declare -F aidevops_pr_base_branch >/dev/null 2>&1; then
+		target_base=$(aidevops_pr_base_branch "$repo_slug" "") || target_base=""
+		target_source="repo-pr-base"
+	fi
+	if [[ -z "$target_base" ]]; then
+		echo "[pulse-merge] cannot resolve parent PR #${parent_pr_number} base in ${repo_slug}; stacked children of '${parent_head_ref}' not retargeted (GH#39167)" >>"$LOGFILE"
+		return 0
+	fi
 
 	local child
 	while IFS= read -r child; do
 		[[ -z "$child" ]] && continue
-		echo "[pulse-merge] retargeting stacked PR #${child} from '${parent_head_ref}' to '${default_branch}' before deleting parent PR #${parent_pr_number} branch (t2412)" >>"$LOGFILE"
-		gh pr edit "$child" --repo "$repo_slug" --base "$default_branch" 2>&1 | tee -a "$LOGFILE" || true
+		echo "[pulse-merge] retargeting stacked PR #${child} from '${parent_head_ref}' to '${target_base}' (${target_source}) before deleting parent PR #${parent_pr_number} branch (t2412)" >>"$LOGFILE"
+		gh pr edit "$child" --repo "$repo_slug" --base "$target_base" 2>&1 | tee -a "$LOGFILE" || true
 	done <<<"$children"
 	return 0
 }
@@ -1425,8 +1626,13 @@ _repo_allows_auto_merge() {
 # sits indefinitely. Observed 2026-04-30 on PRs that sat 8-9h despite
 # 100% required-check SUCCESS and `mergeable=MERGEABLE`.
 #
+# GH#39084: a request armed while BLOCKED may also never fire after the
+# blocker clears without a check/push event (e.g. a ruleset edit), leaving the
+# PR CLEAN and unmerged for days. A CLEAN PR with an aged request is the same
+# wedge: GitHub would have merged it within seconds if it were going to.
+#
 # Stuck means ALL of:
-#   * mergeStateStatus == BLOCKED
+#   * mergeStateStatus == BLOCKED or CLEAN
 #   * mergeable == MERGEABLE
 #   * reviewDecision is known-safe for this already-gated cycle
 #   * autoMergeRequest.enabledAt > $threshold seconds ago
@@ -1452,7 +1658,7 @@ _auto_merge_stuck_seconds() {
 
 	# Glob form (unquoted RHS inside [[ ]]) avoids adding new repeated string
 	# literals — the validator counts only quoted 4+-char literals.
-	[[ "$merge_state" == BLOCKED ]] || return 1
+	[[ "$merge_state" == BLOCKED || "$merge_state" == CLEAN ]] || return 1
 	[[ "$mergeable" == MERGEABLE ]] || return 1
 	[[ -n "$enabled_at" ]] || return 1
 
@@ -1682,7 +1888,9 @@ _handle_existing_native_auto_merge() {
 	local stuck_seconds=""
 	if stuck_seconds=$(_auto_merge_stuck_seconds "$pr_number" "$repo_slug" "$pr_state"); then
 		local threshold="${AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS:-300}"
-		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge stuck ${stuck_seconds}s (>${threshold}s) in BLOCKED+MERGEABLE with no failing/pending required checks — attempting synchronous recovery (t3192)" >>"$LOGFILE"
+		local stuck_state=""
+		stuck_state=$(printf '%s' "$pr_state" | jq -r '.mergeStateStatus // "unknown"' 2>/dev/null) || stuck_state="unknown"
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge stuck ${stuck_seconds}s (>${threshold}s) in ${stuck_state}+MERGEABLE with no failing/pending required checks — attempting synchronous recovery (t3192)" >>"$LOGFILE"
 		stop_rc=0
 		_stop_external_native_auto_merge "$pr_number" "$repo_slug" \
 			"stale wedge recovery requires a fresh synchronous merge (GH#26897)" || stop_rc=$?
@@ -1733,8 +1941,8 @@ _handle_existing_native_auto_merge() {
 # next pulse cycle to detect green.
 #
 # Decision tree:
-#   * PR already has auto_merge set + STUCK green → return 1 (caller --admin path,
-#                                                             t3192 stuck fallback)
+#   * PR already has auto_merge set + STUCK green (BLOCKED or CLEAN, aged
+#     request) → return 1 (caller --admin path, t3192/GH#39084 stuck fallback)
 #   * PR already has auto_merge set + stale pending → return 0 (non-terminal;
 #                                                               keep deferring)
 #   * PR already has auto_merge set + healthy → return 0 (no-op, GitHub

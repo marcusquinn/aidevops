@@ -352,6 +352,52 @@
       "shared_mailbox_support": "Partial. Supports aliases and identities. Team plans support shared folders but not true shared mailboxes.",
       "notes": "JMAP reference implementation — best provider for JMAP integration. Excellent CalDAV/CardDAV support. Masked email (aliases) feature for privacy."
     },
+    "purelymail": {
+      "name": "Purelymail",
+      "slug": "purelymail",
+      "type": "cloud",
+      "imap": {
+        "host": "imap.purelymail.com",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "smtp.purelymail.com",
+        "port": 465,
+        "security": "TLS",
+        "alt_port": 587,
+        "alt_security": "STARTTLS"
+      },
+      "pop3": {
+        "host": "pop3.purelymail.com",
+        "port": 995,
+        "security": "TLS"
+      },
+      "managesieve": {
+        "host": "mailserver.purelymail.com",
+        "port": 4190,
+        "security": "STARTTLS"
+      },
+      "api": {
+        "base_url": "https://purelymail.com/api/v0",
+        "auth_header": "Purelymail-Api-Token",
+        "spec": "https://news.purelymail.com/api/index.html",
+        "helper": "purelymail-helper.sh"
+      },
+      "protocols_supported": ["imap", "smtp", "pop3", "managesieve"],
+      "auth_methods": ["password", "app_password"],
+      "auth_notes": "Username is the full address. With 2FA on, IMAP/SMTP need an app password (createAppPassword API or portal). The API token is account-wide: treat it as an admin secret.",
+      "privacy_rating": {
+        "score": "B",
+        "e2ee_support": "via client (GPG/S-MIME). No built-in E2EE.",
+        "jurisdiction": "United States",
+        "open_source": false,
+        "data_mining": "none",
+        "notes": "Small subscription-funded provider: no ads, no data mining. US jurisdiction."
+      },
+      "shared_mailbox_support": "Routing rules (aliases, prefix and catch-all) to one or more mailboxes; no native shared mailbox.",
+      "notes": "Cheap multi-domain hosting priced by storage, not users. Custom domains need MX, SPF, ownership TXT, three DKIM CNAMEs and a DMARC CNAME (purelymail.com/docs/domainDocs). New users default to password reset ON: create them with enablePasswordReset=false. See services/email/purelymail.md."
+    },
     "mailbox_org": {
       "name": "mailbox.org",
       "slug": "mailbox-org",
@@ -635,6 +681,46 @@
       },
       "shared_mailbox_support": "None in basic plans.",
       "notes": "Bundled with Namecheap domain purchases. Powered by Titan email platform."
+    },
+    "hostinger": {
+      "name": "Hostinger Email",
+      "slug": "hostinger",
+      "type": "cloud",
+      "imap": {
+        "host": "imap.hostinger.com",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "smtp.hostinger.com",
+        "port": 465,
+        "security": "TLS"
+      },
+      "pop3": {
+        "host": "pop.hostinger.com",
+        "port": 995,
+        "security": "TLS"
+      },
+      "jmap": null,
+      "protocols_supported": ["imap", "smtp", "pop3"],
+      "auth_methods": ["password"],
+      "privacy_rating": {
+        "score": "C",
+        "e2ee_support": "via client (GPG/S-MIME)",
+        "jurisdiction": "Cyprus (Hostinger International Ltd), EU",
+        "open_source": false,
+        "data_mining": "platform marketing analysis; mailbox content scanning not stated",
+        "notes": "Privacy policy describes marketing analysis and ad-platform targeting for the Hostinger platform; it does not state mailbox content scanning."
+      },
+      "default_folders": {
+        "inbox": "INBOX",
+        "sent": "Sent",
+        "drafts": "Drafts",
+        "trash": "Trash",
+        "junk": "Spam"
+      },
+      "shared_mailbox_support": "None documented.",
+      "notes": "Works with domain and DNS at Cloudflare or elsewhere; add MX/SPF/DKIM CNAME records manually. Default folders are not documented by Hostinger; namecheap defaults used. Prepaid plans; check renewal pricing."
     },
     "mail_com": {
       "name": "mail.com",

@@ -50,7 +50,7 @@ WAH_METRICS_FILE="${WAH_METRICS_FILE:-${HOME}/.aidevops/logs/headless-runtime-me
 WAH_PULSE_STATS_FILE="${WAH_PULSE_STATS_FILE:-${HOME}/.aidevops/logs/pulse-stats.json}"
 WAH_PR_CACHE_FILE="${WAH_PR_CACHE_FILE:-${HOME}/.aidevops/cache/worker-activity-prs.json}"
 WAH_OAUTH_POOL_FILE="${WAH_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}"
-WAH_BLOCKER_LOG_FILE="${WAH_BLOCKER_LOG_FILE:-${HOME}/.aidevops/logs/worker-progress-blockers.jsonl}"
+WAH_BLOCKER_LOG_FILE="${WAH_BLOCKER_LOG_FILE:-${AIDEVOPS_WORKER_BLOCKER_LOG_FILE:-${HOME}/.aidevops/logs/worker-progress-blockers.jsonl}}"
 WAH_DISPATCH_LEDGER_FILE="${WAH_DISPATCH_LEDGER_FILE:-${HOME}/.aidevops/.agent-workspace/tmp/dispatch-ledger.jsonl}"
 WAH_BLOCKER_OWNER_PROCESS_PATTERN="${WAH_BLOCKER_OWNER_PROCESS_PATTERN:-$FRAMEWORK_PROCESS_PATTERN}"
 WAH_OBJECTIVE_EVIDENCE_FILE="${WAH_OBJECTIVE_EVIDENCE_FILE:-${HOME}/.aidevops/state/objective-evidence.jsonl}"
@@ -242,6 +242,47 @@ _wah_objective_outcomes_json() {
 	return 0
 }
 
+WAH_METRICS_STATE="ok"
+WAH_METRICS_SKIPPED=0
+WAH_METRICS_CLEAN_PATH=""
+
+#######################################
+# Copy only parseable JSON-object lines of the metrics log to a temp file so
+# one torn/interleaved append costs one record, not the whole report.
+# Must be called directly (not in a subshell): sets WAH_METRICS_STATE
+# (ok|missing|unreadable), WAH_METRICS_SKIPPED and WAH_METRICS_CLEAN_PATH,
+# and repoints WAH_METRICS_FILE at the cleaned copy.
+#######################################
+_wah_sanitize_metrics() {
+	local src="$WAH_METRICS_FILE" clean="" total=0 good=0
+	WAH_METRICS_STATE="ok"
+	WAH_METRICS_SKIPPED=0
+	if [[ ! -f "$src" ]]; then
+		WAH_METRICS_STATE="missing"
+		return 1
+	fi
+	if ! command -v jq >/dev/null 2>&1; then
+		WAH_METRICS_STATE="unreadable (jq unavailable)"
+		return 1
+	fi
+	clean=$(mktemp -t wah-metrics.XXXXXX) || {
+		WAH_METRICS_STATE="unreadable (no temp file)"
+		return 1
+	}
+	if ! jq -Rc 'fromjson? | select(type == "object")' <"$src" >"$clean" 2>/dev/null; then
+		rm -f "$clean"
+		WAH_METRICS_STATE="unreadable"
+		return 1
+	fi
+	total=$(grep -c . "$src" 2>/dev/null) || total=0
+	good=$(grep -c . "$clean" 2>/dev/null) || good=0
+	WAH_METRICS_SKIPPED=$((total - good))
+	[[ $WAH_METRICS_SKIPPED -ge 0 ]] || WAH_METRICS_SKIPPED=0
+	WAH_METRICS_CLEAN_PATH="$clean"
+	WAH_METRICS_FILE="$clean"
+	return 0
+}
+
 # Pass bounded evidence through a file, not --argjson: even valid retained
 # evidence can exceed Linux's per-argument limit and silently zero reports.
 _wah_jq_with_objective_outcomes() {
@@ -292,7 +333,8 @@ _wah_aggregate_metrics() {
 	#          watchdog_stall_continue and service_interruption_continue
 	#          heartbeats even when their exit_code
 	#          is nonzero)
-	# Fail-open to zeros if jq fails (stale/corrupt jsonl).
+	# Input is pre-sanitised by _wah_sanitize_metrics; the printer flags an
+	# unreadable log as unknown (?) rather than trusting these fallback zeros.
 	local result service_result watchdog_killed_result rate_limit_result
 	service_result="$WAH_SERVICE_INTERRUPTION_RESULT"
 	watchdog_killed_result="$WAH_RESULT_WATCHDOG_STALL_KILLED"
@@ -323,7 +365,7 @@ _wah_aggregate_metrics() {
 			)] | length)
 		} | "\(.total) \(.terminal) \(.succ) \(.wk) \(.wc) \(.sic) \(.rl) \(.of)"
 	'
-	result=$(_wah_jq_with_objective_outcomes -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg worker_role "$WAH_RUNTIME_ROLE" --arg outcome_failed "$WAH_DELIVERY_FAILED" --arg service_result "$service_result" --arg watchdog_killed_result "$watchdog_killed_result" --arg rate_limit_result "$rate_limit_result" --arg repo_slug "$repo_slug" "$jq_program" <"$metrics" 2>/dev/null) || result="0 0 0 0 0 0 0 0"
+	result=$(_wah_jq_with_objective_outcomes -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg worker_role "$WAH_RUNTIME_ROLE" --arg outcome_failed "$WAH_DELIVERY_FAILED" --arg service_result "$service_result" --arg watchdog_killed_result "$watchdog_killed_result" --arg rate_limit_result "$rate_limit_result" --arg repo_slug "$repo_slug" "$jq_program" <"$metrics") || result="0 0 0 0 0 0 0 0"
 
 	[[ -n "$result" ]] || result="0 0 0 0 0 0 0 0"
 	printf '%s\n' "$result"
@@ -350,7 +392,7 @@ _wah_metric_details_json() {
 	fi
 	now_epoch="${2:-$(date +%s)}"
 
-	_wah_jq_with_objective_outcomes -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg worker_role "$WAH_RUNTIME_ROLE" --arg outcome_failed "$WAH_DELIVERY_FAILED" --arg watchdog_killed_result "$WAH_RESULT_WATCHDOG_STALL_KILLED" --arg local_kill_result "$WAH_RESULT_LOCAL_KILL" --arg repo_slug "$repo_slug" "$WAH_METRIC_DETAILS_JQ" <"$metrics" 2>/dev/null ||
+	_wah_jq_with_objective_outcomes -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg worker_role "$WAH_RUNTIME_ROLE" --arg outcome_failed "$WAH_DELIVERY_FAILED" --arg watchdog_killed_result "$WAH_RESULT_WATCHDOG_STALL_KILLED" --arg local_kill_result "$WAH_RESULT_LOCAL_KILL" --arg repo_slug "$repo_slug" "$WAH_METRIC_DETAILS_JQ" <"$metrics" ||
 		printf '{"event_total":0,"unscoped_event_total":0,"excluded_event_total":0,"result_counts":{},"diagnostic_focus":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[],"failure_groups":[],"failure_families":[]}'
 	return 0
 }
@@ -726,7 +768,17 @@ _wah_emit_human() {
 	printf '%s\n' "$divider"
 	printf '\n'
 	printf 'headless-runtime-metrics.jsonl (canonical worker outcomes; scope: %s):\n' "$(if [[ -n "$repo_label" ]]; then printf 'repository'; else printf 'global'; fi)"
-	printf '  Raw attempt/events:          %d\n' "$total"
+	if [[ "$WAH_METRICS_STATE" != "ok" ]]; then
+		printf '  WARNING: metrics log %s: counts below are UNKNOWN, not zero.\n' "$WAH_METRICS_STATE"
+	fi
+	if [[ "${WAH_METRICS_SKIPPED:-0}" -gt 0 ]]; then
+		printf '  Malformed records skipped:   %s (log corruption; all other records counted)\n' "$WAH_METRICS_SKIPPED"
+	fi
+	if [[ "$WAH_METRICS_STATE" == "ok" ]]; then
+		printf '  Raw attempt/events:          %d\n' "$total"
+	else
+		printf '  Raw attempt/events:          ?\n'
+	fi
 	printf '  Future-dated ignored:        %s\n' "$(printf '%s' "$details_json" | jq -r '.future_dated_ignored // 0' 2>/dev/null || printf '0')"
 	printf '  Terminal session outcomes:   %d\n' "$terminal_total"
 	printf '  Runtime handoffs:            %d  (%s of terminal)\n' "$succ" "$handoff_rate_pct"
@@ -948,12 +1000,15 @@ cmd_summary() {
 		cutoff_iso=$(date -u -d "@${cutoff_epoch}" +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) ||
 		cutoff_iso="(unknown)"
 
+	# Tolerant read: skip malformed records, disclose them, never fake zeros.
+	_wah_sanitize_metrics || true
+
 	# Aggregate metrics (single jq+awk pass).
 	local agg total terminal_total succ wk wc sic rl of details_json blocker_json live_blocker_sessions_json
 	agg=$(_wah_aggregate_metrics "$cutoff_epoch" "$now_epoch" "$repo_label")
 	read -r total terminal_total succ wk wc sic rl of <<<"$agg"
 	details_json=$(_wah_metric_details_json "$cutoff_epoch" "$now_epoch" "$repo_label")
-	details_json=$(printf '%s' "$details_json" | jq --argjson future "$(_wah_future_dated_count "$now_epoch" "$repo_label")" '. + {future_dated_ignored:$future}')
+	details_json=$(printf '%s' "$details_json" | jq --argjson future "$(_wah_future_dated_count "$now_epoch" "$repo_label")" --argjson skipped "$WAH_METRICS_SKIPPED" --arg state "$WAH_METRICS_STATE" '. + {future_dated_ignored:$future, malformed_skipped:$skipped, metrics_state:$state}')
 	live_blocker_sessions_json=$(_wah_live_blocker_sessions_json "$repo_label")
 	blocker_json=$(_wah_blocker_details_json "$cutoff_epoch" "$now_epoch" "$repo_label" "$live_blocker_sessions_json")
 
@@ -984,6 +1039,7 @@ cmd_summary() {
 			"$cb" "$gqlow" "$db_skip" "$nwbreaker" \
 			"$delivery_json" "$repo_label" "$details_json" "$blocker_json" "$pb"
 	fi
+	[[ -n "$WAH_METRICS_CLEAN_PATH" ]] && rm -f "$WAH_METRICS_CLEAN_PATH"
 	return 0
 }
 

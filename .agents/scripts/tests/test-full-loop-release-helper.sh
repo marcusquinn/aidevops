@@ -22,6 +22,12 @@ export AIDEVOPS_REAL_GIT_BIN="$ROOT/bin/git"
 # This suite mocks Git and publication, not managed service completion. Native
 # owner-cgroup creation/removal is covered by test-worktree-owner-lifetime.py.
 export AIDEVOPS_WORKTREE_MANAGER=legacy-guards
+# GH#39344: the release executor now declares itself lifecycle owner and the
+# fence retires trees through the native registry, which needs real Git
+# metadata. Keep this fixture on legacy creation; the process fixture below
+# replaces only the registry executor with the stubbed native removal.
+unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
+export AIDEVOPS_LIFECYCLE_DISABLED=1
 export HOME="$ROOT/home"
 export AIDEVOPS_CLEANUP_LOG="$ROOT/cleanup.log"
 export WORKTREE_REGISTRY_DIR="$ROOT/registry"
@@ -238,6 +244,12 @@ if [[ "$0" == "$RELEASE_FIXTURE_SCRIPT_DIR/full-loop-release-helper.sh" ]]; then
 	capture_worktree_process_cwds() {
 		return 0
 	}
+	# The registry executor needs real Git metadata; after every fence probe
+	# passes, hand the final removal to the stubbed native Git (GH#39344).
+	_worktree_remove_with_native_git() {
+		"${AIDEVOPS_REAL_GIT_BIN:?}" worktree remove "$1" || return 1
+		return 0
+	}
 fi
 STUB
 export BASH_ENV="$ROOT/process-fixture.sh"
@@ -245,6 +257,10 @@ export BASH_ENV="$ROOT/process-fixture.sh"
 # shellcheck source=../audit-worktree-removal-helper.sh
 source "$SCRIPT_DIR/audit-worktree-removal-helper.sh"
 capture_worktree_process_cwds() {
+	return 0
+}
+_worktree_remove_with_native_git() {
+	"${AIDEVOPS_REAL_GIT_BIN:?}" worktree remove "$1" || return 1
 	return 0
 }
 

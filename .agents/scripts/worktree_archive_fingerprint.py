@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 from worktree_archive_git import git
-from worktree_archive_index import git_index_state
+from worktree_archive_index import git_index_state, index_dirs
 from worktree_archive_state import auto_merge, merge_digest
 from worktree_archive_untracked import untracked_contents
 
@@ -26,11 +26,19 @@ def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
     # git_index_state is also used independently of the archive capture policy.
     # The profile publication record is deliberately excluded: profile-readme
     # recovery retires completed publication worktrees through Git-only capture.
-    admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
+    # One spawn resolves admin, common, lock and shared-index paths; git_index_state reuses them
+    # within this snapshot pass (no result is cached across passes).
+    dirs = index_dirs(root)
+    admin = dirs[0]
     for name in ('aidevops/js-admission.json',):
         if os.path.lexists(admin / name):
             raise ValueError(f'git_admin:requires_preservation:{name}')
-    metadata = metadata if metadata is not None else git_index_state(root)
+    # Only metadata read in this pass may vouch for AUTO_MERGE; caller-supplied
+    # metadata never skips validation.
+    validated = None
+    if metadata is None:
+        metadata = git_index_state(root, dirs=dirs)
+        validated = metadata.get('auto_merge_validated')
     if 'merge' in metadata:
         state = metadata['merge']
         result = {'schema': 4, 'policy': 'git-only', 'head': state['head'],
@@ -53,7 +61,7 @@ def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
     result = {"schema": 2, "policy": "git-only", "head": head, "files": metadata["files"],
                "bytes": len(staged) + len(unstaged),
                "sha256": hashlib.sha256(json.dumps(values).encode("ascii")).hexdigest()}
-    oid = auto_merge(root)
+    oid = auto_merge(root, admin, validated)
     if oid is not None:
         result['auto_merge'] = oid
     # GH#36883: bind preserved runtime-local config so source-matches blocks

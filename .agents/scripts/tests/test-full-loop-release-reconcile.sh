@@ -28,7 +28,7 @@ source "${SCRIPT_DIR}/release-authorization-manifest-helper.sh"
 	sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 	_FULL_LOOP_RELEASE_RUN_JSON=""
 	_full_loop_release_resolve_tag_commit() { printf '%s\n' "$sha"; return 0; }
-	_full_loop_release_verify_channels() { return 1; }
+	_full_loop_release_verify_channels() { _full_loop_release_channel_pending github-release; return 1; }
 	_full_loop_release_find_workflow_run() {
 		local repo="$1" tag="$2" commit="$3"
 		[[ "$repo" == test/repo && "$tag" == v1.2.3 && "$commit" == "$sha" ]] || return 1
@@ -47,6 +47,8 @@ source "${SCRIPT_DIR}/release-authorization-manifest-helper.sh"
 	_full_loop_release_inspect_remote test/repo v1.2.3 >"${TEST_ROOT}/grace-output" || rc=$?
 	[[ "$rc" -eq 8 && ! -e "${TEST_ROOT}/grace-dispatch.log" ]] || exit 1
 	grep -qx 'WORKFLOW_STATUS=completed' "${TEST_ROOT}/grace-output" || exit 1
+	grep -qx 'CHANNEL_PENDING=github-release' "${TEST_ROOT}/grace-output" || exit 1
+	grep -Eqx 'RELEASE_WAIT=channel-propagation retry_after=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z' "${TEST_ROOT}/grace-output" || exit 1
 	printf 'PASS recent successful publish waits for channels without dispatch\n'
 	fixture_run=$(jq -cn --arg sha "$sha" --arg updated "$(jq -nr --argjson epoch "$(date -u +%s)" '$epoch - 1200 | todateiso8601')" \
 		'{event:"push",head_sha:$sha,status:"completed",conclusion:"success",updated_at:$updated}')

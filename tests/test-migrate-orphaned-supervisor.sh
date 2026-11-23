@@ -266,7 +266,9 @@ export -f find_opencode_config
 cleanup_osgrep() { return 0; }
 # shellcheck disable=SC2329
 cleanup_antigravity_plugin() { return 0; }
-export -f cleanup_osgrep cleanup_antigravity_plugin
+# shellcheck disable=SC2329
+cleanup_retired_global_npm_packages() { return 0; }
+export -f cleanup_osgrep cleanup_antigravity_plugin cleanup_retired_global_npm_packages
 
 # Explicitly verify the legacy helper is not available.
 unset -f should_overwrite_user_file 2>/dev/null || true

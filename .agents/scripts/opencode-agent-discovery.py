@@ -11,6 +11,7 @@ from agent_config import (
     apply_disabled_agents, display_to_filename,
 )
 from opencode_operator_agents import extend_opencode_operator_subagents
+from subagent_validation import PLUGIN_ACTIVATION_SUBAGENTS
 from mcp_config import (
     apply_mcp_loading_policy, remove_deprecated_mcps,
     register_standard_mcps, EAGER_MCPS, LAZY_MCPS,
@@ -51,7 +52,8 @@ config['autoupdate'] = False
 # =============================================================================
 
 primary_agents, sorted_agents, subagent_filtered_count = discover_primary_agents(agents_dir)
-operator_subagents = extend_opencode_operator_subagents(primary_agents)
+operator_subagents = (extend_opencode_operator_subagents(primary_agents)
+                      | PLUGIN_ACTIVATION_SUBAGENTS)
 
 # Validate subagent references
 missing_refs = validate_subagent_refs(primary_agents, agents_dir, display_to_filename,

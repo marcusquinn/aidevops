@@ -129,6 +129,26 @@ def git(root, *args, data=None, timeout=DEFAULT_TIMEOUT):
     ).stdout
 
 
+def git_dirs(root):
+    """Resolve (admin, common) directories in one spawn for one guard pass."""
+    # --absolute-git-dir is absolute before the --path-format switch.
+    admin, common = git(root, 'rev-parse', '--absolute-git-dir', '--path-format=absolute',
+                        '--git-common-dir').rstrip(b'\n').split(b'\n')
+    return Path(os.fsdecode(admin)), Path(os.fsdecode(common))
+
+
+def refuse_split_index(root, shared_index=None):
+    """Refuse split-index mode.
+
+    A caller may pass this guard pass's `rev-parse --shared-index-path` output;
+    otherwise it is read here.
+    """
+    if shared_index is None:
+        shared_index = git(root, "rev-parse", "--shared-index-path")
+    if shared_index.strip():
+        raise ValueError("git_admin:split_index:index")
+
+
 def auto_merge_oid(data):
     if not re.fullmatch(rb"(?:[0-9a-f]{40}|[0-9a-f]{64})\n?", data):
         raise ValueError("git_admin:invalid_AUTO_MERGE")
@@ -149,37 +169,59 @@ def capture_bundle(root, archive, roots, base):
     # tip. All writes go to scratch; the source object database is read-only.
     with tempfile.TemporaryDirectory(prefix=".admin-bundle-", dir=archive.parent) as temporary:
         scratch = Path(temporary)
-        object_format = git(root, 'rev-parse', '--show-object-format').strip().decode('ascii')
-        git(scratch, "init", "--bare", "--quiet", f'--object-format={object_format}')
-        objects = git(root, "rev-parse", "--path-format=absolute", "--git-path", "objects").rstrip(b"\n")
+        # One spawn resolves object format, objects path and HEAD (output order follows arguments).
+        object_format_raw, objects, head_raw = git(
+            root, 'rev-parse', '--show-object-format', '--path-format=absolute',
+            '--git-path', 'objects', 'HEAD').rstrip(b'\n').split(b'\n')
+        object_format = object_format_raw.decode('ascii')
+        head = head_raw.decode('ascii')
+        # HEAD now travels in the update-ref batch: accept only a full object ID.
+        if not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', head):
+            raise ValueError('git_admin:invalid_object_id')
+        # --initial-branch points the new HEAD at refs/heads/archive-head, so no
+        # separate symbolic-ref spawn; one transaction writes every scratch ref.
+        git(scratch, "init", "--bare", "--quiet", f'--object-format={object_format}',
+            '--initial-branch=archive-head')
         (scratch / "objects/info/alternates").write_bytes(objects + b"\n")
         updates = ''.join(f'update refs/archive/{number} {oid}\n'
                           for number, oid in enumerate(roots))
+        updates += f'update refs/heads/archive-head {head}\n'
         git(scratch, "update-ref", "--stdin", data=updates.encode('ascii'))
-        git(scratch, "update-ref", "refs/heads/archive-head", git(root, "rev-parse", "HEAD").strip().decode("ascii"))
-        git(scratch, "symbolic-ref", "HEAD", "refs/heads/archive-head")
         exclusions = (f'^{base}',) if base else ()
         git(scratch, "bundle", "create", str(archive / "commits.bundle"), "--all", *exclusions)
 
 
-def fetch_preservation(root, archive):
+def fetch_preservation(root, archive, *, verified_scratch=False):
     """Import preservation objects without changing shared-repository refs.
 
     Shared-repository callers must supply their owned linked worktree, never
     the canonical checkout. Independent repositories retain their legacy GC roots.
+
+    verified_scratch=True means root is the bare scratch repository the caller
+    created in this verification pass and has already run `bundle verify` on.
+    A bare repository is its own common dir, so both repeat spawns are skipped.
+
+    Returns the administrative directory it already resolved (None without a
+    bundle or for verified scratch) so a caller in the same invocation can skip
+    a repeat rev-parse.
     """
     bundle = archive / 'commits.bundle'
+    admin_path = None
     if bundle.is_file():
+        if verified_scratch:
+            git(root, 'fetch', '--quiet', '--no-write-fetch-head', str(bundle),
+                '+refs/archive/*:refs/archive/*')
+            return None
         git(root, 'bundle', 'verify', str(bundle))
-        admin = git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')
-        common = git(root, 'rev-parse', '--path-format=absolute', '--git-common-dir').rstrip(b'\n')
-        if Path(os.fsdecode(admin)).resolve() != Path(os.fsdecode(common)).resolve():
+        admin_path, common = git_dirs(root)
+        if admin_path.resolve() != common.resolve():
             git(root, 'bundle', 'unbundle', str(bundle))
         else:
             # Standalone restores must keep non-commit AUTO_MERGE/index objects
             # reachable across ordinary GC; these refs belong only to that repo.
             git(root, 'fetch', '--quiet', '--no-write-fetch-head', str(bundle),
                 '+refs/archive/*:refs/archive/*')
+    return admin_path
 
 
 def fetch_head_roots(encoded):

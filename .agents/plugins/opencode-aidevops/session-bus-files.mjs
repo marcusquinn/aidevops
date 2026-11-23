@@ -100,6 +100,8 @@ export const outboxDir = (root, app) => join(root, "outbox", app);
 // t18896: release watches are keyed by repository, unlike subs/ (keyed by the watched session).
 export const releaseWatchDir = (root, repoKey) => join(root, "release-watch", repoKey);
 export const releaseNoticeDir = (root, repoKey) => join(releaseWatchDir(root, repoKey), "notices");
+// t19157: issue watches are keyed by the watching session (one file per watched item).
+export const issueWatchDir = (root, sessionID) => join(root, "issue-watch", sessionID);
 export const bindingsDir = (root) => join(root, "bindings");
 
 // ---------------------------------------------------------------------------
@@ -163,7 +165,8 @@ function pruneReleaseWatches(root, now, cutoff) {
  * Remove messages past retention from every inbox, delivered/ and sent/
  * directory, old overlap markers, release watches and stale chat-wake
  * settings. Returns the number of messages and markers removed. Callers use
- * pruneBus from session-bus-store.mjs, which also prunes t18892 bindings.
+ * pruneBus from session-bus-store.mjs, which also prunes t18892 bindings and
+ * t19157 issue watches.
  */
 export function pruneBusFiles(root, now = Date.now()) {
   const cutoff = now - LIMITS.retentionMs;
@@ -181,6 +184,13 @@ export function pruneBusFiles(root, now = Date.now()) {
     const setting = readJson(file);
     const stale = !Number.isFinite(setting?.updated_ms) || setting.updated_ms < cutoff;
     if (!readJson(join(presenceDir(root), name)) && stale) rmSync(file, { force: true });
+  }
+  // t19047: a keepalive opt-in ends with its expiry (max 72 h) or its session.
+  for (const name of listDir(join(root, "keepalive")).filter((file) => file.endsWith(".json"))) {
+    const file = join(root, "keepalive", name);
+    const setting = readJson(file);
+    const expired = !Number.isFinite(setting?.expires_at) || setting.expires_at <= now;
+    if (expired && !readJson(join(presenceDir(root), name))) rmSync(file, { force: true });
   }
   pruneReleaseWatches(root, now, cutoff);
   return removed.count;

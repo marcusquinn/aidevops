@@ -115,6 +115,76 @@ test_mark_blocked_never_requests_rereview() {
 	return 0
 }
 
+test_mark_blocked_rejects_capacity_and_mark_progress_records() {
+	setup_test_env
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	local rc=0
+	$SCANNER mark-blocked owner/repo 1 infrastructure session_capacity_insufficient 2>/dev/null || rc=$?
+	if [[ "$rc" -ne 0 && ! -f "$state_file" ]]; then
+		print_result "mark-blocked refuses session_capacity reason" 0
+	else
+		print_result "mark-blocked refuses session_capacity reason" 1 "rc=${rc}"
+	fi
+	# Missing starting-head evidence must not create terminal progress state.
+	unset AIDEVOPS_PR_REPAIR_HEAD_SHA
+	rc=0
+	AIDEVOPS_PR_REPAIR_HEAD_SHA="" $SCANNER mark-progress owner/repo 1 no_start 2>/dev/null || rc=$?
+	if [[ "$rc" -eq 2 && ! -f "$state_file" ]]; then
+		print_result "mark-progress rejects unknown starting head without writing state" 0
+	else
+		print_result "mark-progress rejects unknown starting head without writing state" 1
+	fi
+	write_rereview_dispatch_state
+	local original_state=""
+	original_state="$(<"$state_file")"
+	rc=0
+	$SCANNER mark-progress owner/repo 1 unchanged 2>/dev/null || rc=$?
+	if [[ "$rc" -eq 2 && "$(<"$state_file")" == "$original_state" ]]; then
+		print_result "mark-progress rejects unchanged published head without writing state" 0
+	else
+		print_result "mark-progress rejects unchanged published head without writing state" 1
+	fi
+	rc=0
+	STUB_PULL_HEAD_OID=invalid $SCANNER mark-progress owner/repo 1 unknown_head 2>/dev/null || rc=$?
+	if [[ "$rc" -eq 2 && "$(<"$state_file")" == "$original_state" ]]; then
+		print_result "mark-progress fails closed on unverifiable published head" 0
+	else
+		print_result "mark-progress fails closed on unverifiable published head" 1
+	fi
+	export STUB_PULL_HEAD_OID="$TEST_HEAD_OID_2"
+	$SCANNER mark-progress owner/repo 1 partial_enrichment
+	if grep -Fxq 'analysis_complete=false' "$state_file" &&
+		grep -Fxq 'maintainer_attention=false' "$state_file" &&
+		grep -Fxq 'blocked_by=none' "$state_file"; then
+		print_result "mark-progress records progress without attention" 0
+	else
+		print_result "mark-progress records progress without attention" 1
+	fi
+	# Exercise inflight ordering independently of head/fingerprint cooldown rules.
+	rc=0
+	bash -c '
+		source "$1"
+		now=$(date +%s)
+		_prrts_write_state owner/repo 1 old_fingerprint 1 "$((now - 10))" 1 false "$TEST_HEAD_OID_1"
+		_prrts_write_analysis_state owner/repo 1 false none false progress:partial
+		_prrts_should_dispatch owner/repo 1 new_fingerprint "$now" "$TEST_HEAD_OID_1" || exit 1
+		export STUB_ACTIVE_RESPONSE_WORKER=pr-review-thread-response-owner-repo-1
+		rc=0
+		_prrts_should_dispatch owner/repo 1 new_fingerprint "$now" "$TEST_HEAD_OID_2" || rc=$?
+		[[ "$rc" -eq "$PRRTS_RC_DISPATCH_DEFERRED" ]] || exit 1
+		unset STUB_ACTIVE_RESPONSE_WORKER
+		# Simulate a later dispatch retaining an older progress record.
+		state_file=$(_prrts_state_file owner/repo 1)
+		printf "dispatched_at=%s\n" "$((now + 1))" >>"$state_file"
+		rc=0
+		_prrts_should_dispatch owner/repo 1 new_fingerprint "$((now + 2))" "$TEST_HEAD_OID_2" || rc=$?
+		[[ "$rc" -eq "$PRRTS_RC_DISPATCH_DEFERRED" ]] || exit 1
+	' _ "$SCANNER" || rc=$?
+	print_result "fresh progress bypasses inflight only after active-worker guard; stale progress defers" "$rc"
+	teardown_test_env
+	return 0
+}
+
 test_mark_blocked_publishes_continuation_finding() {
 	setup_test_env
 	local gh_log="${TEST_ROOT}/continuation-gh.log"
@@ -164,6 +234,187 @@ GH_STUB
 		print_result "continuation recovery republishes saved finding and clears pending payload" 1
 	fi
 	unset CONT_GH_LOG
+	teardown_test_env
+	return 0
+}
+
+# t19039: logs every gh call; issue list and issue edit are switchable.
+write_prerequisite_gh_stub() {
+	cat >"${TEST_ROOT}/bin/gh" <<'GH_STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${PREREQ_GH_LOG}"
+if [[ "$1" == "issue" && "${2:-}" == "list" ]]; then
+	[[ "${PREREQ_LOOKUP_FAIL:-0}" == "1" ]] && exit 1
+	printf '%s\n' "${PREREQ_ISSUE_LIST:-[]}"
+	exit 0
+fi
+if [[ "$1" == "issue" && "${2:-}" == "edit" && "${PREREQ_EDIT_FAIL:-0}" == "1" ]]; then
+	exit 1
+fi
+exit 0
+GH_STUB
+	chmod +x "${TEST_ROOT}/bin/gh"
+	export PREREQ_GH_LOG="${TEST_ROOT}/prereq-gh.log"
+	: >"$PREREQ_GH_LOG"
+	return 0
+}
+
+test_route_prerequisite_refuses_out_of_scope() {
+	setup_test_env
+	write_upstream_route_fixtures
+	write_prerequisite_gh_stub
+	local details="${TEST_ROOT}/up-details.txt" bad=0 rc=0 kind="" reason=""
+	# Ordinary review-thread workers carry no linked issue.
+	$SCANNER route-prerequisite owner/repo 1 code missing_guard "$details" >/dev/null 2>&1 || rc=$?
+	[[ "$rc" -eq 2 ]] || bad=1
+	while IFS=' ' read -r kind reason; do
+		rc=0
+		AIDEVOPS_PR_REPAIR_LINKED_ISSUE=42 $SCANNER route-prerequisite owner/repo 1 "$kind" "$reason" "$details" >/dev/null 2>&1 || rc=$?
+		[[ "$rc" -eq 2 ]] || bad=1
+	done <<'CASES'
+decision missing_guard
+maintainer missing_guard
+code Capacity_exhausted
+infrastructure starter_template_fix
+code ---
+CASES
+	if [[ "$bad" -eq 0 && ! -s "$UPSTREAM_ISSUE_LOG" ]] && ! grep -q '^issue edit' "$PREREQ_GH_LOG"; then
+		print_result "route-prerequisite refuses non-continuation, decision, capacity and upstream cases" 0
+	else
+		print_result "route-prerequisite refuses non-continuation, decision, capacity and upstream cases" 1 \
+			"bad=${bad}, created=$(<"$UPSTREAM_ISSUE_LOG"), gh=$(tr '\n' ';' <"$PREREQ_GH_LOG")"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_route_prerequisite_creates_holds_and_reuses() {
+	setup_test_env
+	write_upstream_route_fixtures
+	write_prerequisite_gh_stub
+	local details="${TEST_ROOT}/up-details.txt" first="" second="" rc=0
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.prerequisite"
+	local marker="aidevops:checkpoint-prerequisite:owner/repo#42:missing_builder_guard"
+	first="$(AIDEVOPS_PR_REPAIR_LINKED_ISSUE=42 $SCANNER route-prerequisite owner/repo 1 code "Missing builder guard" "$details" 2>/dev/null)" || first=""
+	if [[ "$first" == "https://github.com/owner/repo/issues/77" ]] &&
+		[[ "$(wc -l <"$UPSTREAM_ISSUE_LOG" | tr -d ' ')" == "1" ]] &&
+		grep -Fq -- '--repo owner/repo' "$UPSTREAM_ISSUE_LOG" &&
+		grep -Fq -- '--label auto-dispatch,tier:standard,bug' "$UPSTREAM_ISSUE_LOG" &&
+		grep -Fq -- "$marker" "${UPSTREAM_ISSUE_LOG}.body" &&
+		grep -Fq 'draft PR #1 (linked issue #42)' "${UPSTREAM_ISSUE_LOG}.body" &&
+		grep -Fq 'issue edit 42 --repo owner/repo --add-label blocked-by:#77' "$PREREQ_GH_LOG" &&
+		[[ -s "$state_file" ]]; then
+		print_result "route-prerequisite creates one issue and holds the linked issue blocked-by:#N" 0
+	else
+		print_result "route-prerequisite creates one issue and holds the linked issue blocked-by:#N" 1 \
+			"first=${first}, created=$(<"$UPSTREAM_ISSUE_LOG"), gh=$(tr '\n' ';' <"$PREREQ_GH_LOG")"
+	fi
+	# The finding names the routed prerequisite once, then the record is consumed.
+	AIDEVOPS_PR_REPAIR_LINKED_ISSUE=42 AIDEVOPS_PR_REPAIR_HEAD_SHA="$TEST_HEAD_OID_1" \
+		$SCANNER mark-blocked owner/repo 1 code missing_builder_guard "$details" >/dev/null 2>&1 || true
+	if grep -Fq 'Prerequisite #77 is queued for a worker' "$PREREQ_GH_LOG" &&
+		! grep -Fq 'Next action for the brief owner' "$PREREQ_GH_LOG" && [[ ! -f "$state_file" ]]; then
+		print_result "continuation finding names the prerequisite and consumes the record" 0
+	else
+		print_result "continuation finding names the prerequisite and consumes the record" 1 "gh=$(tr '\n' ';' <"$PREREQ_GH_LOG")"
+	fi
+	export PREREQ_ISSUE_LIST="[{\"number\":77,\"state\":\"OPEN\",\"body\":\"<!-- ${marker} -->\"}]"
+	second="$(AIDEVOPS_PR_REPAIR_LINKED_ISSUE=42 $SCANNER route-prerequisite owner/repo 1 code missing_builder_guard "$details" 2>/dev/null)" || second=""
+	if [[ "$second" == "$first" && "$(wc -l <"$UPSTREAM_ISSUE_LOG" | tr -d ' ')" == "1" ]]; then
+		print_result "route-prerequisite reuses an open prerequisite" 0
+	else
+		print_result "route-prerequisite reuses an open prerequisite" 1 "second=${second}"
+	fi
+	export PREREQ_ISSUE_LIST="[{\"number\":77,\"state\":\"CLOSED\",\"body\":\"<!-- ${marker} -->\"}]"
+	rc=0
+	AIDEVOPS_PR_REPAIR_LINKED_ISSUE=42 $SCANNER route-prerequisite owner/repo 1 code missing_builder_guard "$details" >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 3 && "$(wc -l <"$UPSTREAM_ISSUE_LOG" | tr -d ' ')" == "1" ]]; then
+		print_result "route-prerequisite refuses a closed prerequisite instead of looping" 0
+	else
+		print_result "route-prerequisite refuses a closed prerequisite instead of looping" 1 "rc=${rc}"
+	fi
+	unset PREREQ_ISSUE_LIST
+	# The reuse above rewrote the record; failure paths must not write one.
+	rm -f "$state_file"
+	export PREREQ_LOOKUP_FAIL=1
+	rc=0
+	AIDEVOPS_PR_REPAIR_LINKED_ISSUE=42 $SCANNER route-prerequisite owner/repo 1 code other_guard "$details" >/dev/null 2>&1 || rc=$?
+	unset PREREQ_LOOKUP_FAIL
+	export PREREQ_EDIT_FAIL=1
+	local edit_rc=0
+	AIDEVOPS_PR_REPAIR_LINKED_ISSUE=42 $SCANNER route-prerequisite owner/repo 1 code other_guard "$details" >/dev/null 2>&1 || edit_rc=$?
+	unset PREREQ_EDIT_FAIL
+	if [[ "$rc" -eq 1 && "$edit_rc" -eq 1 && "$(wc -l <"$UPSTREAM_ISSUE_LOG" | tr -d ' ')" == "2" && ! -f "$state_file" ]]; then
+		print_result "route-prerequisite fails closed on lookup failure and records no hold when labelling fails" 0
+	else
+		print_result "route-prerequisite fails closed on lookup failure and records no hold when labelling fails" 1 \
+			"lookup_rc=${rc}, edit_rc=${edit_rc}, created=$(wc -l <"$UPSTREAM_ISSUE_LOG")"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_mark_blocked_publishes_review_thread_finding() {
+	setup_test_env
+	local gh_log="${TEST_ROOT}/review-gh.log"
+	local posted_flag="${TEST_ROOT}/review-posted.flag"
+	cat >"${TEST_ROOT}/bin/gh" <<'GH_STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${REV_GH_LOG}"
+if [[ "$*" == *'--method POST'* ]]; then
+	[[ "${REV_POST_FAIL:-false}" == true ]] && exit 1
+	: >"${REV_POSTED_FLAG}"
+	exit 0
+fi
+if [[ "$*" == *'issues/1/comments'* && -f "${REV_POSTED_FLAG}" ]]; then
+	printf '42\n'
+fi
+exit 0
+GH_STUB
+	chmod +x "${TEST_ROOT}/bin/gh"
+	export REV_GH_LOG="$gh_log" REV_POSTED_FLAG="$posted_flag"
+	local details_file="${TEST_ROOT}/review-details.txt"
+	printf 'needs a maintainer choice' >"$details_file"
+	local pr_posts=0
+	$SCANNER mark-blocked owner/repo 1 decision needs_choice "$details_file"
+	pr_posts=$(grep -c 'issues/1/comments.*--method POST' "$gh_log" || true)
+	$SCANNER mark-blocked owner/repo 1 decision needs_choice "$details_file"
+	local repeat_posts=0
+	repeat_posts=$(grep -c 'issues/1/comments.*--method POST' "$gh_log" || true)
+	if [[ "$pr_posts" -eq 1 && "$repeat_posts" -eq 1 ]] &&
+		grep -Fq 'REVIEW_THREAD_BLOCKER_FINDING' "$gh_log"; then
+		print_result "mark-blocked decision posts one PR comment per head" 0
+	else
+		print_result "mark-blocked decision posts one PR comment per head" 1 "posts=${pr_posts}/${repeat_posts}"
+	fi
+	rm -f "$posted_flag" "$gh_log"
+	$SCANNER mark-blocked owner/repo 2 code needs_fix "$details_file"
+	$SCANNER mark-blocked owner/repo 2 infrastructure needs_infra "$details_file"
+	AIDEVOPS_PR_REPAIR_LINKED_ISSUE=77 AIDEVOPS_PR_REPAIR_HEAD_SHA="$TEST_HEAD_OID_1" \
+		$SCANNER mark-blocked owner/repo 3 maintainer needs_choice "$details_file"
+	if ! grep -Fq 'issues/2/comments' "$gh_log" && ! grep -Fq 'issues/3/comments' "$gh_log"; then
+		print_result "code/infrastructure and continuation blocks publish no PR comment" 0
+	else
+		print_result "code/infrastructure and continuation blocks publish no PR comment" 1
+	fi
+	rm -f "$posted_flag" "$gh_log"
+	export REV_POST_FAIL=true
+	$SCANNER mark-blocked owner/repo 4 maintainer retry_reason "$details_file"
+	local pending_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-4.review-blocker-pending.json"
+	if [[ -s "$pending_file" ]] &&
+		grep -Fxq 'analysis_complete=true' "${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-4.state"; then
+		print_result "failed review-thread blocker post keeps state and pending payload" 0
+	else
+		print_result "failed review-thread blocker post keeps state and pending payload" 1
+	fi
+	unset REV_POST_FAIL
+	bash -c 'source "$1"; _prrts_retry_review_thread_blocker owner/repo 4' _ "$SCANNER"
+	if [[ ! -f "$pending_file" ]] && grep -Fq 'retry_reason' "$gh_log"; then
+		print_result "review-thread blocker retry posts saved payload and clears pending" 0
+	else
+		print_result "review-thread blocker retry posts saved payload and clears pending" 1
+	fi
+	unset REV_GH_LOG REV_POSTED_FLAG
 	teardown_test_env
 	return 0
 }
@@ -306,6 +557,13 @@ test_dispatch_pr_preserves_malformed_young_lock_until_age_fallback() {
 }
 
 test_dispatch_pr_preserves_indeterminate_young_lock_until_age_fallback() {
+	# Linux reads /proc/<pid>/stat directly, so the ps stub cannot make the
+	# owner start token unobservable there; the path is only reachable via ps.
+	if [[ -r "/proc/$$/stat" ]]; then
+		print_skip "dispatch-pr preserves indeterminate young lock for age fallback" \
+			"/proc start token is observable; ps-only path unreachable"
+		return 0
+	fi
 	setup_test_env
 	local lock_dir="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.lock"
 	local dispatch_rc=0

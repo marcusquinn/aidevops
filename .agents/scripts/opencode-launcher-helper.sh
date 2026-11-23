@@ -346,6 +346,124 @@ resolve_tabby_login_shell() {
     return 0
 }
 
+# Maintenance restarts (opencode-session-restart-helper.sh) stop an idle TUI
+# that runs under this launcher and leave a hold file named after the launcher
+# PID. The launcher waits in the same Tabby tab until the helper releases the
+# hold, then reopens the same session in place, so the tab keeps its profile
+# name, colour and position. Shared with the restart helper; keep in sync.
+tabby_maintenance_hold_file() {
+    local state_dir="${OPENCODE_RESTART_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/work/opencode-session-restart}"
+
+    printf '%s/tabby-holds/%s' "${state_dir}" "$$"
+    return 0
+}
+
+# read_tabby_hold_field <file> <key> — print one key=value field.
+read_tabby_hold_field() {
+    local hold_file="$1"
+    local key="$2"
+    local line=""
+
+    [[ -f "${hold_file}" && ! -L "${hold_file}" && -O "${hold_file}" ]] || return 1
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+        if [[ "${line}" == "${key}="* ]]; then
+            printf '%s' "${line#"${key}="}"
+            return 0
+        fi
+    done <"${hold_file}"
+    return 1
+}
+
+# await_tabby_maintenance_release <hold-file> — print the session to reopen
+# once the restart helper releases the hold. Returns 1 when there is no hold,
+# the hold is invalid, the user interrupts, or the wait times out.
+await_tabby_maintenance_release() {
+    local hold_file="$1"
+    local timeout="${AIDEVOPS_TABBY_MAINTENANCE_WAIT_SECONDS:-21600}"
+    local waited=0
+    local session=""
+    local state=""
+    local interrupted=0
+
+    [[ "${timeout}" =~ ^[0-9]+$ ]] || timeout=21600
+    session=$(read_tabby_hold_field "${hold_file}" session_id) || return 1
+    if [[ ! "${session}" =~ ^ses_[A-Za-z0-9]{1,120}$ ]]; then
+        rm -f "${hold_file}"
+        return 1
+    fi
+    print_info "OpenCode maintenance paused session ${session}; it reopens in this tab when maintenance finishes (Ctrl-C for a shell)." >&2
+    trap 'interrupted=1' INT
+    while ((interrupted == 0 && waited < timeout)); do
+        state=$(read_tabby_hold_field "${hold_file}" state) || break
+        if [[ "${state}" == release ]]; then
+            trap - INT
+            rm -f "${hold_file}"
+            printf '%s' "${session}"
+            return 0
+        fi
+        sleep 2 || true
+        waited=$((waited + 2))
+    done
+    trap - INT
+    rm -f "${hold_file}"
+    print_info "Not reopening automatically. Resume with: aidevops opencode --tabby-shell -- --session ${session}" >&2
+    return 1
+}
+
+# Drop session-selection and prompt arguments before reopening a session.
+tabby_resume_args() {
+    local skip=0
+    local argument=""
+
+    TABBY_RESUME_ARGS=()
+    for argument in "$@"; do
+        if ((skip == 1)); then
+            skip=0
+            continue
+        fi
+        case "${argument}" in
+        --session | -s | --prompt | -p) skip=1 ;;
+        --session=* | --prompt=* | --continue | -c) ;;
+        *) TABBY_RESUME_ARGS+=("${argument}") ;;
+        esac
+    done
+    return 0
+}
+
+run_tabby_tui_with_maintenance_resume() {
+    local launch_dir="$1"
+    shift
+    local -a tui_args=("$@")
+    local hold_file=""
+    local session=""
+
+    hold_file=$(tabby_maintenance_hold_file)
+    while :; do
+        # A TERM aimed at the TUI's process group must not end this launcher,
+        # or Tabby closes the tab. A handler (unlike an ignore) resets on exec,
+        # so OpenCode itself still receives the default TERM behaviour.
+        trap ':' TERM
+        if ! opencode ${tui_args[@]+"${tui_args[@]}"}; then
+            : # Preserve the existing profile behavior: leave a shell open after any TUI exit.
+        fi
+        trap - TERM
+        session=$(await_tabby_maintenance_release "${hold_file}") || break
+        cd "${launch_dir}" || return 1
+        tabby_resume_args ${tui_args[@]+"${tui_args[@]}"}
+        tui_args=(--session "${session}" ${TABBY_RESUME_ARGS[@]+"${TABBY_RESUME_ARGS[@]}"})
+    done
+    return 0
+}
+
+# GH#38587: keep uv tools/Python in the user's real locations, not the
+# per-project data root that XDG_DATA_HOME is about to point at.
+export_user_tool_dirs_before_isolation() {
+    if command -v aidevops_export_user_tool_dirs >/dev/null 2>&1; then
+        aidevops_export_user_tool_dirs
+    fi
+    return 0
+}
+
 run_isolated_tui() {
     local launch_dir="$1"
     local data_dir="$2"
@@ -377,13 +495,12 @@ run_isolated_tui() {
     prewarm_opencode_data_dir "${data_dir}"
 
     cd "${launch_dir}" || return 1
+    export_user_tool_dirs_before_isolation
     export XDG_DATA_HOME="${data_dir}"
     export AIDEVOPS_OPENCODE_ISOLATED_DB=1
     if ((tabby_shell == 1)); then
         export AIDEVOPS_TABBY_SESSION_RECOVERY=1
-        if ! opencode "${opencode_args[@]}"; then
-            : # Preserve the existing profile behavior: leave a shell open after any TUI exit.
-        fi
+        run_tabby_tui_with_maintenance_resume "${launch_dir}" "${opencode_args[@]}"
         cd "${launch_dir}" || return 1
         if ! emit_tabby_current_directory "${launch_dir}"; then
             : # Shell startup will report the real project directory to Tabby.
@@ -1066,6 +1183,7 @@ execute_desktop_launch() {
     prewarm_opencode_data_dir "${data_dir}"
 
     cd "${launch_dir}" || return 1
+    export_user_tool_dirs_before_isolation
     export XDG_DATA_HOME="${data_dir}"
     export AIDEVOPS_OPENCODE_ISOLATED_DB=1
     exec "${desktop_binary}" "$@"
@@ -1240,6 +1358,7 @@ run_server_owner() {
 
     print_info "Starting foreground OpenCode owner on ${server_url}"
     print_info "Server shard: ${data_dir}"
+    export_user_tool_dirs_before_isolation
     export XDG_DATA_HOME="${data_dir}"
     export AIDEVOPS_OPENCODE_ISOLATED_DB=1
     export AIDEVOPS_OPENCODE_SERVER_OWNER=1
@@ -1433,6 +1552,50 @@ run_shared_tui() {
     return 1
 }
 
+# consume_tabby_launch_claim <invocation-dir> — print a recovery marker
+# directory when the restart helper's `tabby-open` queued this exact session
+# for the project directory a Tabby profile was just opened in. Tabby's CLI can
+# open a named profile but cannot pass it a directory or command, so the
+# helper writes a short-lived claim and the first matching launch takes it.
+consume_tabby_launch_claim() {
+    local invocation_dir="$1"
+    local recovery_root="${AIDEVOPS_WORK_DIR:-${HOME}/.aidevops/.agent-workspace/work}/opencode-tabby-recovery"
+    local claims_dir="${recovery_root}/launch-claims"
+    local max_age="${AIDEVOPS_TABBY_LAUNCH_CLAIM_MAX_AGE:-120}"
+    local here=""
+    local claim=""
+    local taken=""
+    local directory=""
+    local created=""
+    local session=""
+    local now=""
+
+    [[ -d "${claims_dir}" && ! -L "${claims_dir}" && -O "${claims_dir}" ]] || return 1
+    [[ ! -e "${invocation_dir}/recovery.json" ]] || return 1
+    [[ "${max_age}" =~ ^[0-9]+$ ]] || max_age=120
+    here=$(cd "${invocation_dir}" 2>/dev/null && pwd -P) || return 1
+    now=$(date +%s)
+    for claim in "${claims_dir}"/*.claim; do
+        [[ -f "${claim}" && ! -L "${claim}" && -O "${claim}" ]] || continue
+        directory=$(read_tabby_hold_field "${claim}" directory) || directory=""
+        created=$(read_tabby_hold_field "${claim}" created) || created=""
+        session=$(read_tabby_hold_field "${claim}" session_id) || session=""
+        if [[ ! "${created}" =~ ^[0-9]+$ ]] || ((now - created > max_age)); then
+            rm -f "${claim}"
+            continue
+        fi
+        [[ "${directory}" == "${here}" && "${session}" =~ ^ses_[A-Za-z0-9]{1,120}$ ]] || continue
+        # rename(2) is atomic: only one concurrently starting tab wins a claim.
+        taken="${claim}.taken.$$"
+        mv "${claim}" "${taken}" 2>/dev/null || continue
+        rm -f "${taken}"
+        [[ -f "${recovery_root}/${session}/recovery.json" ]] || continue
+        printf '%s' "${recovery_root}/${session}"
+        return 0
+    done
+    return 1
+}
+
 apply_tabby_recovery() {
     local invocation_dir="$1"
     local tabby_shell="$2"
@@ -1520,6 +1683,7 @@ cmd_tui_launch() {
     local dry_run=0
     local launch_dir="$PWD"
     local invocation_dir="$PWD"
+    local claimed_marker=""
     local session_id=""
     local data_dir=""
     local -a opencode_args=()
@@ -1580,6 +1744,9 @@ cmd_tui_launch() {
     fi
     # ${arr[@]+...}: bash 3.2 (macOS /bin/bash) treats an empty array as unbound.
     if ((use_shared_db == 0)); then
+        if ((tabby_shell == 1 && dry_run == 0)) && ! opencode_args_contain_session ${opencode_args[@]+"${opencode_args[@]}"}; then
+            claimed_marker=$(consume_tabby_launch_claim "${invocation_dir}") && invocation_dir="${claimed_marker}"
+        fi
         TABBY_RECOVERY_ARGS=(${opencode_args[@]+"${opencode_args[@]}"})
         if ! apply_tabby_recovery "${invocation_dir}" "${tabby_shell}" launch_dir data_dir ${opencode_args[@]+"${opencode_args[@]}"}; then
             keep_tabby_tab_open "${tabby_shell}" "${dry_run}" "${invocation_dir}"

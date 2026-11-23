@@ -190,6 +190,69 @@ def atomic_write_json(path: str, data: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Seat identity (GH#38959). Mirrors poolAccountKey()/poolAccountLabel()/
+# findAccountIndex()/selectSeat() in plugins/opencode-aidevops/oauth-pool-storage.mjs.
+# One email can hold several Anthropic seats (e.g. Team + Personal); the
+# organization UUID tells them apart. Entries without orgId keep the
+# email-only key, so single-seat pools behave exactly as before.
+# ---------------------------------------------------------------------------
+
+def pool_account_key(account: Any) -> str:
+    """Return the seat identity: ``email`` or ``email#orgId``."""
+    if not isinstance(account, dict):
+        return ""
+    email = account.get("email") or ""
+    org_id = account.get("orgId") or ""
+    return f"{email}#{org_id}" if org_id else email
+
+
+def pool_account_label(account: Any) -> str:
+    """Return ``email``, ``email [Org name]`` or ``email [org:1234abcd]``."""
+    if not isinstance(account, dict):
+        return "unknown"
+    email = account.get("email") or "unknown"
+    if account.get("orgName"):
+        return f"{email} [{account['orgName']}]"
+    if account.get("orgId"):
+        return f"{email} [org:{str(account['orgId'])[:8]}]"
+    return email
+
+
+def account_matches_org(account: dict, org: str) -> bool:
+    """True when ``org`` (orgId prefix or exact orgName, case-insensitive) picks
+    ``account``. An empty selector matches every account."""
+    needle = (org or "").strip().lower()
+    if not needle:
+        return True
+    return (str(account.get("orgId") or "").lower().startswith(needle)
+            or str(account.get("orgName") or "").lower() == needle)
+
+
+def select_seat(accounts: list, email: str, org: str = "") -> tuple[int, str, list[dict]]:
+    """Select one seat by email plus an optional org selector.
+
+    Returns ``(index, error, candidates)``; ``error`` is ``""``, ``"not_found"``
+    or ``"ambiguous"``. User-facing actions refuse on ``ambiguous`` so a shared
+    email never silently acts on the wrong seat.
+    """
+    candidates = [i for i, a in enumerate(accounts) if isinstance(a, dict) and a.get("email") == email]
+    matches = [i for i in candidates if account_matches_org(accounts[i], org)]
+    seats = [accounts[i] for i in candidates]
+    if len(matches) == 1:
+        return matches[0], "", seats
+    return -1, ("not_found" if not matches else "ambiguous"), seats
+
+
+def find_seat_index(accounts: list, key: str) -> int:
+    """Resolve a seat key; a bare email resolves only when it names one seat."""
+    exact = next((i for i, a in enumerate(accounts) if pool_account_key(a) == key), -1)
+    if exact >= 0 or not key:
+        return exact
+    seats = [i for i, a in enumerate(accounts) if isinstance(a, dict) and a.get("email") == key]
+    return seats[0] if len(seats) == 1 else -1
+
+
+# ---------------------------------------------------------------------------
 # Auth-entry builder (shared by rotate + refresh self-heal).
 # ---------------------------------------------------------------------------
 

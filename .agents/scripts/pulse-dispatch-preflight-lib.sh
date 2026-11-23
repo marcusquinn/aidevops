@@ -156,6 +156,7 @@ _preflight_launch_systemd_cleanup() {
 		AIDEVOPS_WORKTREE_PRESERVE_PATTERNS AIDEVOPS_MAX_WORKTREES
 		AIDEVOPS_WORKTREE_CLEANUP_THRESHOLD
 		AIDEVOPS_MIN_WORKTREE_FREE_KB AIDEVOPS_MIN_WORKTREE_FREE_PERCENT
+		AIDEVOPS_MIN_WORKTREE_FREE_PERCENT_CEILING_KB
 		AIDEVOPS_HEADLESS_METRICS_FILE AIDEVOPS_ORPHAN_TRASH_ROOT
 		AIDEVOPS_SKIP_INFRA_FAILURE_ESCALATION
 		AIDEVOPS_DIRTY_BACKUP_ROOT AIDEVOPS_DIRTY_BACKUP_RETENTION_DAYS
@@ -341,6 +342,14 @@ _preflight_cleanup_and_ledger() {
 	fi
 	if declare -F sweep_closed_auto_dispatch_issues >/dev/null 2>&1; then
 		run_stage_with_timeout "sweep_closed_auto_dispatch_issues" "$PRE_RUN_STAGE_TIMEOUT" sweep_closed_auto_dispatch_issues || true
+	fi
+	# GH#38141: idle GitHub request-coordination state otherwise grows without
+	# bound. The collector is stamp-limited to one completed sweep per day and
+	# self-budgets below this timeout, so it amortises without blocking dispatch.
+	if declare -F gh_request_state_gc >/dev/null 2>&1; then
+		local _gh_request_state_gc_timeout="${GH_REQUEST_STATE_GC_TIMEOUT:-60}"
+		[[ "$_gh_request_state_gc_timeout" =~ ^[0-9]+$ ]] || _gh_request_state_gc_timeout=60
+		run_stage_with_timeout "gh_request_state_gc" "$_gh_request_state_gc_timeout" gh_request_state_gc || true
 	fi
 	# Fast API-free recovery runs synchronously before the long async cleanup.
 	# This prevents a stale async lock from leaving the dispatch worktree cap
@@ -629,6 +638,31 @@ _preflight_refill_reserved_timeout() {
 	return 0
 }
 
+# GH#37986: log-only mirror of the reserve _preflight_refill_reserved_timeout
+# applies, so a deferral line says how far short the cycle fell. Keep the
+# reserve and margin rules identical to that gate. This never admits a stage.
+# Stdout: "remaining=<s>s, required=<s>s" ("?" for an unavailable value).
+_preflight_refill_reserved_deficit() {
+	local configured="${PULSE_POST_LABEL_REFILL_MIN_REMAINING_SECONDS:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
+	local refill_reserve="" margin=5 remaining="" required="?"
+	remaining=$(_pulse_cycle_remaining_seconds 0) || remaining=""
+	[[ "$remaining" =~ ^-?[0-9]+$ ]] || remaining=""
+	refill_reserve=$(_preflight_post_label_refill_required_seconds) || refill_reserve=""
+	if [[ "$refill_reserve" =~ ^[0-9]+$ ]]; then
+		if [[ "$configured" =~ ^[0-9]+$ && "$refill_reserve" -gt "$configured" ]]; then
+			if [[ -n "$remaining" && "$remaining" -ge "$refill_reserve" ]]; then
+				margin=60
+			else
+				refill_reserve="$configured"
+			fi
+		fi
+		# The gate needs at least one second beyond the reserve and its margin.
+		required=$((refill_reserve + margin + 1))
+	fi
+	printf 'remaining=%ss, required=%ss\n' "${remaining:-?}" "$required"
+	return 0
+}
+
 #######################################
 # Normalize NMR only after live author-authority, provenance, breaker, and
 # security classification in auto_approve_maintainer_issues. Running this after the first
@@ -655,8 +689,8 @@ _preflight_early_dispatch() {
 	# Internal, dynamically scoped only to this fill. Never export to workers
 	# or use it to bypass dispatch admission, trust, claim or ledger checks.
 	local _PULSE_FIRST_DISPATCH_WAVE=1
-	# A partial first-wave census must not populate the full-scan snapshot key.
-	local PULSE_DISPATCH_CANDIDATE_SNAPSHOT_ENABLED=0
+	# First waves use a separate durable partial key, retaining an interrupted
+	# ranked remainder without contaminating the full-census snapshot.
 	# GH#36122: label this path in apply_dispatch_max's breaker skip line.
 	local _PULSE_DISPATCH_BREAKER_CONTEXT="early"
 	if [[ -f "$STOP_FLAG" ]]; then
@@ -752,6 +786,42 @@ _preflight_post_label_refill() {
 # _run_preflight_stages() with independent timeouts. See the call site below.
 
 #######################################
+# GH#37939: cooperative budget for the single-pass reconcile child. It must
+# end before the stage watchdog, keeping the 20s allowance of the former
+# 380/360 pair: min(configured RECONCILE_TIME_BUDGET_SECS, stage - 20), floor
+# 1s. A configured 0 (unbounded) or longer budget is clamped; a shorter one
+# is kept. A non-numeric value uses the child's own 360s default.
+# Arguments: $1 - stage watchdog budget in seconds
+# Output: cooperative budget in seconds
+#######################################
+_preflight_reconcile_cooperative_budget() {
+	local stage_budget="$1"
+	local configured="${RECONCILE_TIME_BUDGET_SECS:-360}" cap=1
+	[[ "$configured" =~ ^[0-9]+$ ]] || configured=360
+	[[ "$stage_budget" =~ ^[0-9]+$ ]] && cap=$((stage_budget - 20))
+	[[ "$cap" -ge 1 ]] || cap=1
+	if [[ "$configured" -eq 0 || "$configured" -gt "$cap" ]]; then
+		configured="$cap"
+	fi
+	printf '%s\n' "$configured"
+	return 0
+}
+
+#######################################
+# Run reconcile_issues_single_pass under its stage watchdog with the clamped
+# cooperative budget. The function-local shadow reaches only this stage's
+# child (dynamic scope), never later stages or direct callers.
+# Arguments: $1 - stage watchdog budget in seconds
+#######################################
+_preflight_run_reconcile_single_pass() {
+	local stage_budget="$1" cooperative_budget
+	cooperative_budget=$(_preflight_reconcile_cooperative_budget "$stage_budget")
+	local RECONCILE_TIME_BUDGET_SECS="$cooperative_budget"
+	run_stage_with_timeout "reconcile_issues_single_pass" "$stage_budget" reconcile_issues_single_pass
+	return $?
+}
+
+#######################################
 # Ownership normalization + issue reconciliation stages.
 # Ensures active labels reflect ownership (prevents multi-worker overlap),
 # closes issues whose linked PRs already merged, and reconciles status:done
@@ -791,7 +861,7 @@ _preflight_ownership_reconcile() {
 	_log_substage_timing "substage:ownership_reconcile/prefetch_contribution_watch" "$_ss0" 0
 
 	# GH#36908: live intake has its own timeout, before the cache/cursor pass
-	# starts its internal 360-second budget. A stale snapshot cannot hide intake.
+	# starts its internal cooperative budget. A stale snapshot cannot hide intake.
 	local intake_budget=$((outer_budget - (SECONDS - ownership_start) - reserve))
 	if [[ "$intake_budget" -gt 0 ]]; then
 		[[ "$intake_budget" -le 60 ]] || intake_budget=60
@@ -803,8 +873,9 @@ _preflight_ownership_reconcile() {
 	# stale-done, open-with-merged-PR, parent-task, labelless backfill).
 	# Replaces the five sequential stage calls that each had their own per-repo
 	# fetch loop; now 5N → N iterations per cycle.
-	# Run the shorter, higher-value pass first. The 360s internal budget gets a
-	# watchdog allowance; normalization receives only the time actually left.
+	# Run the shorter, higher-value pass first. Its cooperative budget (at most
+	# 360s) is clamped 20s inside this stage budget so it yields at its cursor
+	# before the watchdog (GH#37939); normalization receives the time left.
 	# GH#35684: normalization is the only recovery for stranded dispatch claims,
 	# so when the budget allows both stages, keep a floor for it.
 	local normalize_floor="${AIDEVOPS_PULSE_NORMALIZE_FLOOR_S:-60}"
@@ -816,7 +887,7 @@ _preflight_ownership_reconcile() {
 			reconcile_budget=$((remaining - normalize_floor))
 		fi
 		[[ "$reconcile_budget" -le 380 ]] || reconcile_budget=380
-		run_stage_with_timeout "reconcile_issues_single_pass" "$reconcile_budget" reconcile_issues_single_pass || true
+		_preflight_run_reconcile_single_pass "$reconcile_budget" || true
 	fi
 
 	# Ensure active labels reflect ownership to prevent multi-worker overlap.
@@ -846,6 +917,102 @@ _preflight_prefetch_reserved_finalise_seconds() {
 	[[ "$finalise_seconds" =~ ^[0-9]+$ ]] || finalise_seconds=90
 	[[ "$pipeline_seconds" =~ ^[0-9]+$ ]] || pipeline_seconds=180
 	printf '%s\n' "$((finalise_seconds + pipeline_seconds))"
+	return 0
+}
+
+#######################################
+# GH#37854: starvation bound for the prefetch snapshot. Early dispatch runs
+# first and can consume nearly the whole cycle, leaving prefetch clamped to a
+# window it cannot finish (or deferred outright), so STATE_FILE froze for days.
+# When the snapshot is missing or older than the bound, the caller promotes
+# prefetch ahead of early dispatch so it receives the full stage budget.
+# AIDEVOPS_PULSE_PREFETCH_STARVATION_S=0 disables promotion (legacy order).
+# Returns: 0 when the snapshot is starved, 1 otherwise (or undeterminable).
+#######################################
+_preflight_prefetch_starved() {
+	local bound="${AIDEVOPS_PULSE_PREFETCH_STARVATION_S:-7200}"
+	[[ "$bound" =~ ^[0-9]+$ ]] || bound=7200
+	[[ "$bound" -gt 0 ]] || return 1
+	local state_file="${STATE_FILE:-}"
+	[[ -n "$state_file" ]] || return 1
+	[[ -s "$state_file" ]] || return 0
+	declare -F _file_mtime_epoch >/dev/null 2>&1 || return 1
+	local mtime=""
+	mtime=$(_file_mtime_epoch "$state_file" 2>/dev/null) || return 1
+	[[ "$mtime" =~ ^[0-9]+$ ]] || return 1
+	local now
+	now=$(date +%s)
+	[[ $((now - mtime)) -gt "$bound" ]] && return 0
+	return 1
+}
+
+#######################################
+# GH#37986: starvation bound for label maintenance. The stage runs after early
+# dispatch and only when the cycle still holds the post-label refill reserve,
+# so a busy runner deferred it on every cycle (66 hours measured). It is the
+# only path that removes needs-simplification and needs-consolidation holds:
+# held issues are filtered out before dispatch can re-measure them. When any
+# substage has not started within the bound, the caller runs one bounded slice
+# before early dispatch. The stage runs its stalest substage first, so every
+# slice that passes the REST gate moves the stalest attempt forward.
+#   AIDEVOPS_PULSE_LABEL_MAINTENANCE_STARVATION_S   bound in seconds (default
+#     7200; 0 disables promotion and keeps the legacy order).
+#   AIDEVOPS_PULSE_LABEL_MAINTENANCE_STARVED_SLICE_S   promoted slice timeout
+#     (default 180, minimum 60; read by the caller).
+# Reads the attempt epochs _preflight_label_maintenance_order reads, with the
+# same fallback to the completion epochs.
+# Arguments: $1 - bound multiplier (default 1). The caller passes 2 on a cycle
+#   that already promoted prefetch. A substage with no recorded attempt has no
+#   measurable age: at multiplier 1 it is starved, and above 1 the multiplied
+#   bound applies to the oldest recorded attempt. With no attempt recorded at
+#   all, a multiplier above 1 waits for a cycle that did not promote prefetch.
+# Stdout (when starved): seconds since the stalest substage last started, or
+#   "never" when a substage has no recorded attempt.
+# Returns: 0 when starved, 1 otherwise (or when the clock cannot be read).
+#######################################
+_preflight_label_maintenance_starved() {
+	local factor="${1:-1}"
+	local bound="${AIDEVOPS_PULSE_LABEL_MAINTENANCE_STARVATION_S:-7200}"
+	[[ "$bound" =~ ^[0-9]{1,9}$ ]] || bound=7200
+	[[ "$((10#$bound))" -gt 0 ]] || return 1
+	[[ "$factor" =~ ^[1-9]$ ]] || factor=1
+	bound=$((10#$bound * factor))
+	local state_file="${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}.attempts"
+	local key=""
+	local epoch=""
+	local extra=""
+	local now="" stalest=0 missing=0 consolidation=0 backfill=0 simplification=0
+	[[ -f "$state_file" ]] || state_file="${state_file%.attempts}"
+	if [[ -r "$state_file" && -f "$state_file" ]]; then
+		while read -r key epoch extra; do
+			[[ -z "$extra" && "$epoch" =~ ^[0-9]{1,12}$ ]] || continue
+			case "$key" in
+				consolidation) consolidation="$((10#$epoch))" ;;
+				backfill) backfill="$((10#$epoch))" ;;
+				simplification) simplification="$((10#$epoch))" ;;
+			esac
+		done <"$state_file"
+	fi
+	now=$(date +%s 2>/dev/null) || return 1
+	[[ "$now" =~ ^[0-9]+$ ]] || return 1
+	# stalest: the oldest recorded attempt; missing: a substage has none.
+	for epoch in "$consolidation" "$backfill" "$simplification"; do
+		if [[ "$epoch" -eq 0 ]]; then
+			missing=1
+		elif [[ "$stalest" -eq 0 || "$epoch" -lt "$stalest" ]]; then
+			stalest="$epoch"
+		fi
+	done
+	if [[ "$missing" -eq 1 && "$factor" -eq 1 ]]; then
+		printf 'never\n'
+		return 0
+	fi
+	[[ "$stalest" -gt 0 && $((now - stalest)) -gt "$bound" ]] || return 1
+	if [[ "$missing" -eq 1 ]]; then
+		printf 'never\n'
+	else
+		printf '%s\n' "$((now - stalest))"
+	fi
 	return 0
 }
 

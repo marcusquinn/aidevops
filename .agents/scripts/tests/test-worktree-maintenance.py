@@ -424,6 +424,9 @@ class MaintenancePreservationTests(unittest.TestCase):
         fixture_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(fixture_module)
         fixture = fixture_module.ArchiveLifecycle()
+        # The archive fixture builds its canonical repository template per class (GH#39602).
+        fixture_module.ArchiveLifecycle.setUpClass()
+        self.addCleanup(fixture_module.ArchiveLifecycle.doClassCleanups)
         self.addCleanup(fixture.doCleanups)
         fixture.setUp()
         fixture.env.update(AIDEVOPS_WORKTREE_TRASH_ROOT=str(fixture.archives),
@@ -432,7 +435,8 @@ class MaintenancePreservationTests(unittest.TestCase):
                            AIDEVOPS_WORKTREE_MAINTENANCE_CONFIRM="fixture-confirmation",
                            AIDEVOPS_WORKTREE_MANAGER="legacy-guards",
                            FIXTURE_AUTHORIZED="0" if authorized else "1",
-                           FIXTURE_PROOF_LOG=str(fixture.root / "proof.log"))
+                           FIXTURE_PROOF_LOG=str(fixture.root / "proof.log"),
+                           FIXTURE_REPO=str(fixture.repo))
         if os.environ.get("AIDEVOPS_TEST_GIT_BIN"):
             fixture.env["AIDEVOPS_REAL_GIT_BIN"] = os.environ["AIDEVOPS_TEST_GIT_BIN"]
         fixture.run_command("bash", "-c", 'source "$1" && _init_registry_db',
@@ -455,6 +459,13 @@ _worktree_has_process_cwd() { return 1; }
 worktree_maintenance_removal_proof() {
     printf 'checked\n' >> "$FIXTURE_PROOF_LOG"
     return "$FIXTURE_AUTHORIZED"
+}
+# Native removal now belongs to the lifecycle registry, which needs enrolled
+# registry state this fixture does not model (GH#39754). Substitute only that
+# executor; it keeps the real maintenance-proof gate that callers apply.
+_worktree_remove_with_native_git() {
+    worktree_managed_require_removal_proof "$1" || return 1
+    "$(_worktree_cleanup_real_git)" -C "$FIXTURE_REPO" worktree remove --force "$1"
 }
 archive_worktree_path_recoverably "$2" test-maintenance integration
 printf 'ARCHIVE=%s\n' "$WORKTREE_RECOVERABLE_ARCHIVE_PATH"

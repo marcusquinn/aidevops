@@ -106,6 +106,14 @@ if [[ "${1:-}" == "api" ]]; then
 		_labels_json=$(cat "${TEST_ROOT}/issue-labels-json.txt")
 		# Transform input (JSON array of label names) into {name: ...} array
 		_name_array=$(printf '%s' "$_labels_json" | jq -c '[.[]] | map({name: .})' 2>/dev/null || echo '[]')
+		# GH#38724: optional issue-assignees-json.txt (JSON array of logins).
+		# Absent file omits the key, i.e. unknown assignee data.
+		if [[ -f "${TEST_ROOT}/issue-assignees-json.txt" ]]; then
+			_assignees=$(jq -c 'map({login: .})' "${TEST_ROOT}/issue-assignees-json.txt" 2>/dev/null || echo '[]')
+			jq -n --arg state "$_state" --argjson labels "$_name_array" --argjson assignees "$_assignees" \
+				'{state: $state, labels: $labels, assignees: $assignees}' | _maybe_jq
+			exit 0
+		fi
 		jq -n --arg state "$_state" --argjson labels "$_name_array" \
 			'{state: $state, labels: $labels}' | _maybe_jq
 		exit 0

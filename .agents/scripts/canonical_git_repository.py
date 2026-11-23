@@ -18,7 +18,23 @@ from canonical_git_management import (
 )
 
 
+# Probe results for ONE classification only (this process, cleared per argv).
+# Never persisted: no files, env vars or cross-process sharing.
+_PROBE_MEMO: dict[tuple[str, str, tuple[str, ...]], str] = {}
+
+
+def reset_probe_memo() -> None:
+    _PROBE_MEMO.clear()
+
+
 def git_output(real_git_path: str, cwd: str, *args: str) -> str:
+    key = (real_git_path, cwd, args)
+    if key not in _PROBE_MEMO:
+        _PROBE_MEMO[key] = _git_output_uncached(real_git_path, cwd, *args)
+    return _PROBE_MEMO[key]
+
+
+def _git_output_uncached(real_git_path: str, cwd: str, *args: str) -> str:
     if not os.path.isdir(cwd):
         # Deleted/missing cwd: probe from "/" so absolute `git -C <path>` still
         # resolves; without -C, git finds no repository there (not canonical).
@@ -47,30 +63,41 @@ def _has_worktree_override(git_prefix: list[str]) -> bool:
     )
 
 
-def is_canonical(real_git_path: str, cwd: str, git_prefix: list[str]) -> bool:
-    git_dir = git_output(
+def _probe_repository_paths(
+    real_git_path: str, cwd: str, git_prefix: list[str]
+) -> tuple[str, str, str]:
+    """Return (git_dir, common_dir, toplevel); one spawn, individual fallback."""
+    combined = git_output(
         real_git_path,
         cwd,
         *git_prefix,
         "rev-parse",
         "--path-format=absolute",
         "--git-dir",
-    )
-    common_dir = git_output(
-        real_git_path,
-        cwd,
-        *git_prefix,
-        "rev-parse",
-        "--path-format=absolute",
         "--git-common-dir",
-    )
-    repo_root = git_output(
-        real_git_path,
-        cwd,
-        *git_prefix,
-        "rev-parse",
-        "--path-format=absolute",
         "--show-toplevel",
+    )
+    lines = combined.split("\n") if combined else []
+    if len(lines) == 3 and all(lines):
+        return lines[0], lines[1], lines[2]
+    # Bare repo, outside a work tree, or non-repository: keep per-flag results.
+    values = [
+        git_output(
+            real_git_path,
+            cwd,
+            *git_prefix,
+            "rev-parse",
+            "--path-format=absolute",
+            flag,
+        )
+        for flag in ("--git-dir", "--git-common-dir", "--show-toplevel")
+    ]
+    return values[0], values[1], values[2]
+
+
+def is_canonical(real_git_path: str, cwd: str, git_prefix: list[str]) -> bool:
+    git_dir, common_dir, repo_root = _probe_repository_paths(
+        real_git_path, cwd, git_prefix
     )
     canonical_common_dir = os.path.realpath(common_dir) if common_dir else ""
     canonical_git_dir = os.path.realpath(git_dir) if git_dir else ""

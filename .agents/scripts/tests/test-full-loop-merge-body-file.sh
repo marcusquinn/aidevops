@@ -168,6 +168,18 @@ setup_subject() {
 	_merge_guard_prospective_todo() {
 		return 0
 	}
+	# This suite isolates body transport. The closure invariant, parent-task
+	# keyword and GH#39558 runtime evidence guards read live PR metadata and
+	# are exercised by test-full-loop-merge.sh and
+	# test-full-loop-runtime-risk.sh.
+	_merge_check_closing_guards() {
+		return 0
+	}
+	# The t2449 worker-briefed trust verdict reads live issue metadata; its
+	# cases live in test-worker-briefed-trust-parity.sh.
+	_merge_worker_briefed_gate_pinned() {
+		return 0
+	}
 	_merge_pr_ready_for_interactive_admin_bypass() {
 		return 0
 	}

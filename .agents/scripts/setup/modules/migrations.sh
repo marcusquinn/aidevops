@@ -506,6 +506,7 @@ cleanup_deprecated_paths() {
 	cleaned=$((cleaned + $(cleanup_retired_remotion_flat_docs "$agents_dir")))
 	cleaned=$((cleaned + $(cleanup_retired_cloudflare_platform_skill_patterns "$agents_dir")))
 	cleanup_retired_beads "$agents_dir"
+	cleanup_retired_global_npm_packages
 
 	if [[ $cleaned -gt 0 ]]; then
 		print_info "Cleaned up $cleaned deprecated agent path(s)"
@@ -551,12 +552,102 @@ cleanup_retired_beads() {
 			print_info "Removed retired aidevops task helper: $path"
 		fi
 	done
-	for tool in bd bv beads-ui bdui; do
-		if command -v "$tool" >/dev/null 2>&1; then
-			print_info "Beads integration retired; optional manual uninstall: brew uninstall steveyegge/beads/bd (bd), brew uninstall bv, npm uninstall -g beads-ui bdui (check your original installer first)."
-			break
-		fi
+	for tool in beads-ui bdui; do
+		_retire_global_npm_package "$tool" || true
 	done
+	for tool in bd bv beads beads_viewer; do
+		_retire_brew_formula "$tool" || true
+	done
+	return 0
+}
+
+# Return the node_modules locations where a global npm/bun package may live.
+# One path per line; duplicates removed. AIDEVOPS_RETIRE_NPM_PREFIXES may add
+# extra npm prefixes (colon-separated) for testing or unusual installs.
+_retire_global_node_module_dirs() {
+	local npm_prefix="" extra="" dir="" seen=""
+	local -a candidates=()
+	if command -v npm >/dev/null 2>&1; then
+		npm_prefix=$(npm prefix -g 2>/dev/null) || npm_prefix=""
+		[[ -n "$npm_prefix" ]] && candidates+=("$npm_prefix/lib/node_modules")
+	fi
+	candidates+=("/usr/lib/node_modules" "/usr/local/lib/node_modules" "$HOME/.bun/install/global/node_modules")
+	if [[ -n "${AIDEVOPS_RETIRE_NPM_PREFIXES:-}" ]]; then
+		while IFS= read -r extra; do
+			[[ -n "$extra" ]] && candidates+=("$extra/lib/node_modules")
+		done < <(printf '%s\n' "$AIDEVOPS_RETIRE_NPM_PREFIXES" | tr ':' '\n')
+	fi
+	for dir in "${candidates[@]}"; do
+		case "$seen" in
+		*"|$dir|"*) continue ;;
+		esac
+		seen="$seen|$dir|"
+		printf '%s\n' "$dir"
+	done
+	return 0
+}
+
+# Remove a retired global npm package from every known install location.
+# User-owned copies are removed and reported; root-owned copies get one exact
+# sudo command printed (never run). Failures are logged, not discarded.
+# Idempotent: prints nothing when the package is absent everywhere.
+# Returns 0 when a copy was found (removed or reported), 1 when none exist.
+_retire_global_npm_package() {
+	local pkg="$1"
+	local dir="" prefix="" out="" found=1
+	while IFS= read -r dir; do
+		[[ -n "$dir" && -d "$dir/$pkg" ]] || continue
+		found=0
+		if [[ "$dir" == "$HOME/.bun/install/global/node_modules" ]]; then
+			if [[ -O "$dir/$pkg" && -w "$dir" ]] && command -v bun >/dev/null 2>&1; then
+				if out=$(bun remove -g "$pkg" 2>&1); then
+					print_info "Removed retired package $pkg from bun global ($dir)"
+				else
+					print_warning "Could not remove $pkg from bun global ($dir): ${out##*$'\n'}"
+				fi
+			else
+				print_warning "Retired package $pkg remains in $dir; run: bun remove -g $pkg"
+			fi
+			continue
+		fi
+		prefix="${dir%/lib/node_modules}"
+		if [[ -O "$dir/$pkg" && -w "$dir" ]] && command -v npm >/dev/null 2>&1; then
+			if out=$(npm uninstall -g --prefix "$prefix" "$pkg" 2>&1); then
+				print_info "Removed retired package $pkg from $dir"
+			else
+				print_warning "Could not remove $pkg from $dir: ${out##*$'\n'}"
+			fi
+		else
+			local sudo_cmd=""
+			printf -v sudo_cmd 'sudo npm uninstall -g --prefix %q %q' "$prefix" "$pkg"
+			print_warning "Retired package $pkg is not user-removable in $dir; run: $sudo_cmd"
+		fi
+	done < <(_retire_global_node_module_dirs)
+	return "$found"
+}
+
+# Uninstall a retired Homebrew formula if present. Homebrew refuses to run as
+# root, so failures are reported with the exact command for the user to run.
+_retire_brew_formula() {
+	local formula="$1"
+	local out=""
+	command -v brew >/dev/null 2>&1 || return 1
+	brew list --formula "$formula" >/dev/null 2>&1 || return 1
+	if out=$(brew uninstall "$formula" 2>&1); then
+		print_info "Removed retired Homebrew formula $formula"
+	else
+		print_warning "Could not remove Homebrew formula $formula (${out##*$'\n'}); run: brew uninstall $formula"
+	fi
+	return 0
+}
+
+# Retire npm globals for tools aidevops no longer manages (Augment CLI everywhere,
+# the macOS-only Automator MCP on non-macOS hosts).
+cleanup_retired_global_npm_packages() {
+	_retire_global_npm_package "@augmentcode/auggie" || true
+	if [[ "$(uname -s)" != "$MIGRATION_PLATFORM_DARWIN" ]]; then
+		_retire_global_npm_package "@steipete/macos-automator-mcp" || true
+	fi
 	return 0
 }
 
@@ -632,9 +723,7 @@ cleanup_osgrep() {
 	fi
 
 	# 1. Uninstall npm package (global)
-	if command -v osgrep &>/dev/null; then
-		print_info "Removing osgrep npm package..."
-		npm uninstall -g osgrep >/dev/null 2>&1 || true
+	if _retire_global_npm_package "osgrep"; then
 		cleaned=true
 	fi
 
@@ -1018,6 +1107,44 @@ cleanup_worktree_entries_in_repos_json() {
 
 	mkdir -p "$(dirname "$flag_file")"
 	date -u +"%Y-%m-%dT%H:%M:%SZ" >"$flag_file"
+	return 0
+}
+
+# GH#39025: mark existing init-routines registrations with purpose "routines"
+# so the onboarding audit stops asking for `aidevops init` in them. Matches only
+# repos without project config whose routines/core files carry the generated
+# header that init-routines-helper.sh writes (source: core-routines.sh).
+migrate_routines_repo_purpose_marker() {
+	local flag_file="${HOME}/.aidevops/logs/.migrated-routines-purpose-gh39025"
+	[[ -f "$flag_file" ]] && return 0
+
+	local repos_json="${HOME}/.config/aidevops/repos.json"
+	[[ -f "$repos_json" ]] || return 0
+	command -v jq &>/dev/null || return 0
+
+	local paths=() path
+	while IFS= read -r path; do
+		[[ -n "$path" && -d "$path/routines/core" && ! -e "$path/.aidevops.json" ]] || continue
+		grep -rqsF -- 'scripts/routines/core-routines.sh' "$path/routines/core" && paths+=("$path")
+	done < <(jq -r '.initialized_repos[]? | select((.purpose // "") == "") | .path // empty' "$repos_json" 2>/dev/null)
+
+	if [[ ${#paths[@]} -gt 0 ]]; then
+		local paths_json temp_file
+		paths_json=$(printf '%s\n' "${paths[@]}" | jq -R . | jq -s .) || return 0
+		temp_file=$(mktemp "${repos_json}.XXXXXX") || return 0
+		if jq --argjson routines "$paths_json" \
+			'.initialized_repos |= map(if (.path as $p | $routines | index($p)) then . + {purpose: "routines"} else . end)' \
+			"$repos_json" >"$temp_file" && jq empty "$temp_file" 2>/dev/null; then
+			mv "$temp_file" "$repos_json"
+			print_info "Marked ${#paths[@]} routines repository registration(s) with purpose \"routines\" (GH#39025)"
+		else
+			rm -f "$temp_file"
+			return 0
+		fi
+	fi
+
+	mkdir -p "$(dirname "$flag_file")"
+	date -u +%Y-%m-%dT%H:%M:%SZ >"$flag_file"
 	return 0
 }
 
@@ -2781,12 +2908,17 @@ cleanup_legacy_dashboard_launchagent() {
 			has_systemd=1
 		fi
 		local removed=0
-		local unit
+		local unit unit_kind
 		for unit in "$systemd_unit" "$legacy_systemd_unit"; do
 			[[ -z "$unit" ]] && continue
 			if [[ "$has_systemd" -eq 1 ]]; then
-				systemctl --user disable --now "${unit}.service" || true
-				systemctl --user disable --now "${unit}.timer" || true
+				# Only disable units systemd knows about; disabling absent units
+				# prints "Unit ... does not exist" on fresh hosts (GH#38389).
+				# Errors for units that do exist stay visible.
+				for unit_kind in service timer; do
+					systemctl --user cat "${unit}.${unit_kind}" >/dev/null 2>&1 || continue
+					systemctl --user disable --now "${unit}.${unit_kind}" || true
+				done
 			fi
 			if [[ -e "${user_systemd_dir}/${unit}.service" ]]; then
 				mv "${user_systemd_dir}/${unit}.service" "${user_systemd_dir}/${unit}.service.disabled-$(date -u +%Y%m%d%H%M%S)" || rm -f "${user_systemd_dir}/${unit}.service"

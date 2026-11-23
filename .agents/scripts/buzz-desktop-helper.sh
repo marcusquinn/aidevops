@@ -787,14 +787,15 @@ _buzz_acp_fail() {
 	return 0
 }
 
-# Starts one aidevops OpenCode ACP process for an agent of the Buzz 0.7+
-# aidevops plugin's agent type. Stdout is the ACP channel: every step before
-# the proxy writes to stderr or a private file. The app's harness kit admits
-# only the owner's own or attested messages and posts replies itself, so the
-# proxy runs in --no-publish mode and only binds sessions to the worktree.
-cmd_acp() {
-	local member=""
-	local project=""
+BUZZ_ACP_MEMBER=""
+BUZZ_ACP_PROJECT=""
+
+# Parses `acp` arguments into BUZZ_ACP_MEMBER and BUZZ_ACP_PROJECT. The plugin
+# passes a home-relative folder literally; it is expanded here. An empty
+# project means prepare-desktop uses the registered aidevops repository.
+_buzz_acp_parse_args() {
+	BUZZ_ACP_MEMBER=""
+	BUZZ_ACP_PROJECT=""
 	while [[ $# -gt 0 ]]; do
 		local option="$1"
 		local value="${2:-}"
@@ -802,30 +803,62 @@ cmd_acp() {
 		--member | --project)
 			[[ -n "$value" ]] || {
 				_buzz_acp_fail "$option requires a value"
-				return 64
+				return 1
 			}
-			if [[ "$option" == "--member" ]]; then member="$value"; else project="$value"; fi
+			if [[ "$option" == "--member" ]]; then BUZZ_ACP_MEMBER="$value"; else BUZZ_ACP_PROJECT="$value"; fi
 			shift 2
 			;;
 		*)
 			_buzz_acp_fail "unsupported argument"
-			return 64
+			return 1
 			;;
 		esac
 	done
-	[[ -n "$member" ]] || {
+	[[ -n "$BUZZ_ACP_MEMBER" ]] || {
 		_buzz_acp_fail "--member is required (the agent's aidevops name, such as aidevops-<computer>)"
-		return 64
+		return 1
 	}
-	# The plugin passes a home-relative folder literally; expand it here.
-	case "$project" in
-	\~/*) project="${HOME}/${project:2}" ;;
+	case "$BUZZ_ACP_PROJECT" in
+	\~/*) BUZZ_ACP_PROJECT="${HOME}/${BUZZ_ACP_PROJECT:2}" ;;
 	*) ;;
 	esac
-	[[ "$project" == /* ]] || {
+	if [[ -n "$BUZZ_ACP_PROJECT" && "$BUZZ_ACP_PROJECT" != /* ]]; then
 		_buzz_acp_fail "--project must be an absolute path to a repository registered in repos.json"
-		return 64
-	}
+		return 1
+	fi
+	return 0
+}
+
+# GH#38787: the plugin starts this runtime with whatever environment Buzz
+# Desktop inherited. An app first opened from an OpenCode shell (and kept by its
+# in-app updater) carries that session's lifecycle and OpenCode identity, whose
+# runtime PID is usually dead, so native worktree creation refuses with
+# process-identity-unavailable. Like worker_lifecycle/launch.py, an independent
+# launch drops inherited creator identity; children stamp their own. Lifecycle
+# configuration (AIDEVOPS_LIFECYCLE_STATE_DIR, _DISABLED, ...) is kept.
+_buzz_acp_clear_inherited_identity() {
+	unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID \
+		AIDEVOPS_LIFECYCLE_RUN_ID AIDEVOPS_LIFECYCLE_GENERATION_ID \
+		AIDEVOPS_LIFECYCLE_WORKTREE AIDEVOPS_MANAGED_WORKTREE_RUN_UNIT \
+		AIDEVOPS_OPENCODE_SESSION_ID AIDEVOPS_OPENCODE_ISOLATED_DB \
+		AIDEVOPS_OPENCODE_SERVER_OWNER AIDEVOPS_SOURCE_CONTEXT_SOCKET \
+		AIDEVOPS_SOURCE_CONTEXT_INSTANCE OPENCODE OPENCODE_SESSION_ID \
+		OPENCODE_PID OPENCODE_PID_START_IDENTITY OPENCODE_RUN_ID \
+		OPENCODE_PROCESS_ROLE OPENCODE_SERVER_PASSWORD
+	return 0
+}
+
+# Starts one aidevops OpenCode ACP process for an agent of the Buzz 0.7+
+# aidevops plugin's agent type. Stdout is the ACP channel: every step before
+# the proxy writes to stderr or a private file. The app's harness kit admits
+# only the owner's own or attested messages and posts replies itself, so the
+# proxy runs in --no-publish mode and only binds sessions to the worktree.
+cmd_acp() {
+	_buzz_acp_parse_args "$@" || return 64
+	_buzz_acp_clear_inherited_identity
+	local member="$BUZZ_ACP_MEMBER"
+	local -a project_args=()
+	[[ -z "$BUZZ_ACP_PROJECT" ]] || project_args=(--project-root "$BUZZ_ACP_PROJECT")
 
 	local agents_dir="${AIDEVOPS_BUZZ_AGENTS_DIR:-${HOME}/.aidevops/agents}"
 	local runtime_helper="${agents_dir}/scripts/team-interface-buzz-runtime.py"
@@ -858,7 +891,7 @@ cmd_acp() {
 		--agents-dir "$agents_dir" \
 		--output-dir "$runtime_dir" \
 		--member "$member" \
-		--project-root "$project" >&2 || return 78
+		${project_args[@]+"${project_args[@]}"} >&2 || return 78
 
 	local agent_id=""
 	local host_slug=""
@@ -895,7 +928,7 @@ cmd_acp() {
 show_help() {
 	cat <<'EOF'
 Usage: aidevops buzz <status|apply|rollback|reconcile> [--quiet]
-       aidevops buzz acp --member NAME --project ABSOLUTE_PATH
+       aidevops buzz acp --member NAME [--project ABSOLUTE_PATH]
 
 Manage a reversible, structurally validated Buzz Desktop OpenCode ACP compatibility fix.
 

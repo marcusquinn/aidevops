@@ -65,6 +65,35 @@ worker_lifecycle_state_dir() {
 	return 0
 }
 
+# Seconds allowed for the relinquish call and the single retirement retry
+# (issue #39561). This is a hang guard, not a lock-wait budget: it covers a
+# whole retirement (WIP preservation, process-idle scans, verification and
+# removal), which takes about 9-25s for a small clean tree on macOS, so a 10s
+# bound timed out every retry and leaked the tree (issue #39691). SQLite
+# lock waits are bounded separately by the registry connection timeout.
+# Non-numeric or zero values fall back to the default.
+_worker_lifecycle_retry_timeout() {
+	local default_seconds=120
+	local seconds="${WORKER_LIFECYCLE_RETRY_TIMEOUT:-$default_seconds}"
+	[[ "$seconds" =~ ^[1-9][0-9]*$ ]] || seconds="$default_seconds"
+	printf '%s\n' "$seconds"
+	return 0
+}
+
+# Run a command under the retry bound; without timeout/gtimeout, run unbounded.
+# Returns: the command status, or 124 when the bound expired.
+_worker_lifecycle_run_bounded() {
+	local seconds="" timeout_bin=""
+	seconds=$(_worker_lifecycle_retry_timeout)
+	timeout_bin=$(type -P timeout || type -P gtimeout) || timeout_bin=""
+	if [[ -n "$timeout_bin" ]]; then
+		"$timeout_bin" "$seconds" "$@"
+		return $?
+	fi
+	"$@"
+	return $?
+}
+
 # Targeted removal shares the collector's registry policy and preservation executor.
 worker_lifecycle_cleanup_worktree() {
 	local worktree="$1"
@@ -94,9 +123,16 @@ worker_lifecycle_cleanup_worktree() {
 		--path "$worktree" --repos-config "${HOME}/.config/aidevops/repos.json" \
 		--output-root "$archive_root") || rc=$?
 	if [[ "$rc" -eq 0 ]] && _worker_lifecycle_relinquish_caller "$result" "$python" "$entry" "$state_dir" "$worktree"; then
-		result=$("$python" -E -s -B "$entry" --state-dir "$state_dir" cleanup-worktree \
+		# Issue #39561: the one-shot retry is bounded so a locked lifecycle DB
+		# cannot stall read-only callers (e.g. release status) at exit.
+		result=$(_worker_lifecycle_run_bounded "$python" -E -s -B "$entry" --state-dir "$state_dir" cleanup-worktree \
 			--path "$worktree" --repos-config "${HOME}/.config/aidevops/repos.json" \
 			--output-root "$archive_root") || rc=$?
+		if [[ "$rc" -eq 124 ]]; then
+			printf '[worker-lifecycle] retirement-retry timed out after %ss; worktree preserved for later cleanup\n' \
+				"$(_worker_lifecycle_retry_timeout)" >&2
+			return 1
+		fi
 	fi
 	if [[ "$rc" -ne 0 ]]; then
 		_worker_lifecycle_report_refusal "$result" "$rc" "$worktree" "$state_dir" "$archive_root"
@@ -148,7 +184,7 @@ _worker_lifecycle_relinquish_status() {
 	local session="${AIDEVOPS_LIFECYCLE_SESSION_ID:-}"
 	local result="" status=""
 	[[ "$pid" =~ ^[1-9][0-9]*$ && -n "$session" && -n "$worktree" ]] || return 1
-	result=$("$python" -E -s -B "$entry" --state-dir "$state_dir" relinquish-session \
+	result=$(_worker_lifecycle_run_bounded "$python" -E -s -B "$entry" --state-dir "$state_dir" relinquish-session \
 		--path "$worktree" --pid "$pid" --session-id "$session" 2>/dev/null) || return 1
 	status=$(jq -r '.status // empty' 2>/dev/null <<<"$result") || return 1
 	case "$status" in
@@ -191,6 +227,26 @@ _worker_lifecycle_refusal_line() {
 	return 0
 }
 
+# Describe a live ownership-registry owner of WORKTREE (read-only).
+# Outputs: "pid=N liveness=alive session=KEY task=ID" (no paths or raw text).
+# Returns: 0 when a live owner is recorded, 1 otherwise or when unavailable.
+_worker_lifecycle_owner_summary() {
+	local worktree="${1:-}"
+	local snapshot="" pid="" session="" batch="" task="" created="" start=""
+	[[ -n "$worktree" ]] && declare -F check_worktree_owner_snapshot >/dev/null 2>&1 || return 1
+	snapshot=$(check_worktree_owner_snapshot "$worktree" 2>/dev/null) || return 1
+	IFS='|' read -r pid session batch task created start <<<"$snapshot"
+	[[ "$pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$pid" 2>/dev/null || return 1
+	if [[ -n "$start" ]]; then
+		local current_start=""
+		declare -F _wt_process_start_token_for_pid >/dev/null 2>&1 || return 1
+		current_start=$(_wt_process_start_token_for_pid "$pid" 2>/dev/null) || return 1
+		[[ "$current_start" == "$start" ]] || return 1
+	fi
+	printf 'pid=%s liveness=alive session=%s task=%s\n' "$pid" "${session:-none}" "${task:-none}"
+	return 0
+}
+
 # Surface only the registry's controlled diagnostic fields, never raw output.
 _worker_lifecycle_report_refusal() {
 	local result="$1"
@@ -198,16 +254,42 @@ _worker_lifecycle_report_refusal() {
 	local worktree="${3:-}"
 	local state_dir="${4:-}"
 	local archive_root="${5:-}"
-	local summary="" status="" detail=""
+	local summary="" status="" detail="" reason="" owner=""
+	reason=$(jq -r '.reason // empty' 2>/dev/null <<<"$result") || reason=""
+	detail=$(jq -r '.detail // empty' 2>/dev/null <<<"$result") || detail=""
+	# GH#37740: a bare exception class (for example CalledProcessError) names no
+	# condition. Keep the error primary; a live registry owner is only context.
+	if [[ -z "$detail" && "$reason" =~ ^[A-Z][A-Za-z0-9]*(Error|Exception|Conflict|Expired)$ ]]; then
+		owner=$(_worker_lifecycle_owner_summary "$worktree") || owner=""
+		# GH#38997: name the failing helper/Git subcommand, its exit code and stderr class.
+		local helper=""
+		helper=$(jq -r '[(if .helper then "helper=" + (.helper | gsub("[^A-Za-z0-9 _.:-]"; "") | gsub(" "; "_")) else empty end),
+			(if .helper_returncode != null then "helper_rc=" + (.helper_returncode | tostring) else empty end),
+			(if .helper_reason then "helper_reason=" + (.helper_reason | tostring) else empty end),
+			(if .helper_stderr_class then "helper_stderr_class=" + (.helper_stderr_class | tostring) else empty end)]
+			| join(" ")' 2>/dev/null <<<"$result") || helper=""
+		printf '[worker-lifecycle] retirement-refused status=unavailable detail=unexpected-error error=%s%s%s rc=%s\n' "$reason" "${helper:+ $helper}" "${owner:+ $owner}" "$rc" >&2
+		if [[ "${WORKER_LIFECYCLE_EXPLAIN_REFUSAL:-0}" == 1 ]]; then
+			if [[ -n "$helper" ]]; then
+				printf '[worker-lifecycle] next: inspect the helper fields above for the failure.\n' >&2
+			else
+				printf '[worker-lifecycle] next: unexpected registry failure with no named condition; inspect worktree-helper.sh registry list and worker-lifecycle/CLEANUP.md "Registry-driven cleanup pass".\n' >&2
+			fi
+		fi
+		return 0
+	fi
 	summary=$(jq -r '[("status=" + (.status // "unknown" | tostring)),
 		(if .reason then "reason=" + (.reason | tostring) else empty end),
 		(if .detail then "detail=" + (.detail | tostring) else empty end),
+		(if .process_observation then "process_observation=" + (.process_observation | tojson) else empty end),
+		(if .helper then "helper=" + (.helper | tostring | gsub("[^A-Za-z0-9 _.:-]"; "") | gsub(" "; "_")) else empty end),
+		(if .helper_returncode != null then "helper_rc=" + (.helper_returncode | tostring) else empty end),
+		(if .helper_stderr_class then "helper_stderr_class=" + (.helper_stderr_class | tostring) else empty end),
 		(if .filesystem_path then "path=" + (.filesystem_path | tostring) else empty end)]
 		| join(" ")' 2>/dev/null <<<"$result") || summary=""
 	printf '[worker-lifecycle] retirement-refused %s rc=%s\n' "${summary:-status=unparseable}" "$rc" >&2
 	[[ "${WORKER_LIFECYCLE_EXPLAIN_REFUSAL:-0}" == 1 ]] || return 0
 	status=$(jq -r '.status // empty' 2>/dev/null <<<"$result") || status=""
-	detail=$(jq -r '.detail // empty' 2>/dev/null <<<"$result") || detail=""
 	_worker_lifecycle_refusal_next_step "${detail:-$status}" "$worktree" "$state_dir" "$archive_root"
 	return 0
 }

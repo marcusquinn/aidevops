@@ -48,6 +48,25 @@ from worktree_archive_git import (
 )
 
 
+# Index by bool(imported): nothing is written unless the bundle was imported.
+PRESERVATION_REPORT = ('', 'aidevops-archive-preservation-imported\n')
+
+
+def report_preservation_import(imported):
+    """Tell the restore shell that preparation imported this archive's bundle.
+
+    The shell passes `--preserved` only to later steps of the same restore into
+    the same new target, so they skip a repeat `bundle verify` + import of
+    identical objects (GH#39560). Their own object-closure checks still run.
+    """
+    sys.stdout.write(PRESERVATION_REPORT[bool(imported)])
+
+
+def preserved_option(extra):
+    """Only the exact `--preserved` tail skips the repeat import; anything else keeps it."""
+    return extra == ['--preserved']
+
+
 def administration_digest(state):
     # Keep fingerprints small enough for the existing shell/argv interface even
     # when a repository's raw index or reflog is many megabytes.
@@ -124,35 +143,49 @@ def seed_base(root, manifest):
 
 
 def prepare_incremental_restore(archive, target):
+    """Return True only when the complete preservation bundle was imported."""
     manifest = json.loads((archive / 'manifest.json').read_text(encoding='utf-8'))
     target.mkdir(mode=0o755)
     object_format = 'sha256' if len(manifest['head_sha']) == 64 else 'sha1'
     git(target, 'init', '--quiet', f'--object-format={object_format}')
     if manifest.get('self_contained') is not True:
         seed_base(target, manifest)
+    imported = False
     if (manifest.get('capture_policy') == 'git-only'
             and manifest.get('source_fingerprint', {}).get('auto_merge') is None):
         if (archive / 'commits.bundle').is_file():
+            # HEAD only: later restore steps still import every preservation tip.
             git(target, 'fetch', '--quiet', '--no-write-fetch-head',
                 str(archive / 'commits.bundle'), 'HEAD:refs/archive/head')
     else:
-        fetch_preservation(target, archive)
+        imported = fetch_preservation(target, archive) is not None
     git(target, '-c', 'core.hooksPath=/dev/null', 'checkout', '--quiet', '--detach', manifest['head_sha'])
+    return imported
 
 
-def restore_administration(root, archive):
+def restore_administration(root, archive, preserved=False):
     state = load_administration(archive)
-    # Clone fetches branch tips only. Import all preservation tips explicitly.
-    fetch_preservation(root, archive)
-    admin = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
+    # Clone fetches branch tips only. Import all preservation tips explicitly,
+    # unless this restore's preparation already imported them into this target.
+    # Reuse the directory fetch_preservation just resolved; nothing between the two moves it.
+    admin = None if preserved else fetch_preservation(root, archive)
+    if admin is None:
+        admin = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
     head = bytes.fromhex(state["files"]["HEAD"])
+    updates = []
     if head.startswith(b"ref: "):
         branch = os.fsdecode(head[5:].strip())
         if not branch.startswith("refs/heads/"):
             raise ValueError("git_admin:unsupported_head")
-        git(root, "update-ref", branch, git(root, "rev-parse", "HEAD").strip().decode("ascii"))
-    for name, oid in state["refs"].items():
-        git(root, "update-ref", name, oid)
+        # update-ref resolves HEAD itself: no separate rev-parse spawn (GH#39560).
+        updates.append((branch, "HEAD"))
+    # load_administration admits only private-prefix refs, so none repeats the
+    # refs/heads/ branch. One NUL-delimited transaction writes them all (GH#39560).
+    updates.extend(state["refs"].items())
+    if updates:
+        git(root, "update-ref", "--stdin", "-z",
+            data=b"".join(b"update " + os.fsencode(name) + b"\0" + value.encode("ascii") + b"\0\0"
+                          for name, value in updates))
     for name in ADMIN_FILES - state['files'].keys():
         (admin / name).unlink(missing_ok=True)
     for name, value in state["files"].items():
@@ -165,11 +198,14 @@ def restore_administration(root, archive):
 
 
 def verify_administration(archive, scratch, manifest):
-    """Prove every admin/index object is available without the source database."""
+    """Prove every admin/index object is available without the source database.
+
+    Only verify_object_graph calls this, after it bundle-verified the bare scratch.
+    """
     state = load_administration(archive)
     if administration_digest(state) != manifest.get('source_fingerprint', {}).get('git_admin'):
         raise ValueError('git_admin:fingerprint_mismatch')
-    fetch_preservation(scratch, archive)
+    fetch_preservation(scratch, archive, verified_scratch=True)
     git(scratch, 'update-ref', 'HEAD', manifest['head_sha'])
     (scratch / 'index').write_bytes(bytes.fromhex(state['files']['index']))
     roots = administration_roots(scratch, state)
@@ -203,13 +239,17 @@ def snapshot(path, preserve_git_admin=False, include_ignored=False, git_only=Fal
 def main(argv):
     command = argv[0] if argv else ''
     handlers = {
-        'auto-merge-capture': ((4,), lambda: capture_auto_merge(Path(argv[1]), Path(argv[2]).resolve(), argv[3])),
+        'auto-merge-capture': ((4, 5), lambda: capture_auto_merge(Path(argv[1]), Path(argv[2]).resolve(), *argv[3:])),
         'merge-capture': ((3,), lambda: capture_merge(Path(argv[1]), Path(argv[2]).resolve())),
-        'merge-restore': ((3,), lambda: restore_merge(Path(argv[1]), Path(argv[2]).resolve())),
-        'auto-merge-restore': ((3,), lambda: restore_auto_merge(Path(argv[1]), Path(argv[2]).resolve())),
+        'merge-restore': ((3, 4), lambda: restore_merge(Path(argv[1]), Path(argv[2]).resolve(),
+                                                        preserved_option(argv[3:]))),
+        'auto-merge-restore': ((3, 4), lambda: restore_auto_merge(Path(argv[1]), Path(argv[2]).resolve(),
+                                                                  preserved_option(argv[3:]))),
         'admin-capture': ((4, 5), lambda: capture_administration(Path(argv[1]), Path(argv[2]).resolve(), argv[3] == '1', *argv[4:])),
-        'admin-prepare-restore': ((3,), lambda: prepare_incremental_restore(Path(argv[1]).resolve(), Path(argv[2]).resolve())),
-        'admin-restore': ((3,), lambda: restore_administration(Path(argv[1]), Path(argv[2]).resolve())),
+        'admin-prepare-restore': ((3,), lambda: report_preservation_import(
+            prepare_incremental_restore(Path(argv[1]).resolve(), Path(argv[2]).resolve()))),
+        'admin-restore': ((3, 4), lambda: restore_administration(Path(argv[1]), Path(argv[2]).resolve(),
+                                                                 preserved_option(argv[3:]))),
         'admin-verify': ((2,), lambda: load_administration(Path(argv[1]))),
     }
     lengths, handler = handlers.get(command, ((), None))

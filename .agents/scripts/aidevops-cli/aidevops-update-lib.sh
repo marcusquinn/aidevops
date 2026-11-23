@@ -138,6 +138,9 @@ _update_sync_projects() {
 		print_info "Project sync skipped (--skip-project-sync)"
 		return 0
 	fi
+	# GH#39023: restore configs saved by init in linked worktrees before the
+	# version sync below reads each canonical .aidevops.json.
+	_project_config_materialise_init_backups "$REPOS_FILE" "$AGENTS_DIR/scripts/project-config-restore-helper.sh" || true
 	local repos_needing_upgrade=()
 	while IFS= read -r repo_path; do
 		[[ -z "$repo_path" ]] && continue
@@ -595,7 +598,7 @@ _update_emit_workflow_drift_advisory() {
 	local adv_file="$advisories_dir/${adv_id}.advisory"
 
 	{
-		printf 'Workflow templates changed — downstream caller workflows may have drifted.\n'
+		printf '%s\n' "Workflow templates changed — downstream caller workflows may have drifted. Detect: \`aidevops check-workflows\`"
 		printf '\n'
 		printf 'Files changed in this update:\n'
 		printf '%s\n' "$relevant_files" | sed 's|^|  |'
@@ -709,11 +712,17 @@ _migrate_settings_supervisor_to_orchestration() {
 	return 0
 }
 
+# Args: $1 - optional `--clear-only`: remove a stale advisory when healthy,
+#             never warn or write (non-interactive and daemon runs, t19020).
 _update_check_daemon_health() {
+	local mode="${1:-}"
 	local helper="$HOME/.aidevops/agents/scripts/auto-update-helper.sh"
 	[[ -x "$helper" ]] || return 0
 	local advisory_dir="$HOME/.aidevops/advisories"
 	local advisory_file="$advisory_dir/daemon-disabled.advisory"
+	if [[ "$mode" == "--clear-only" && ! -f "$advisory_file" ]]; then
+		return 0
+	fi
 
 	local hc_rc=0
 	"$helper" health-check --quiet >/dev/null 2>&1 || hc_rc=$?
@@ -723,15 +732,19 @@ _update_check_daemon_health() {
 		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
 		return 0
 	fi
+	if [[ "$mode" == "--clear-only" ]]; then
+		return 0
+	fi
 
 	# Unhealthy — warn on stderr and write advisory.
 	mkdir -p "$advisory_dir" 2>/dev/null || return 0
 	local fix_cmd="aidevops auto-update enable"
 	[[ "$hc_rc" -eq 1 ]] && fix_cmd="aidevops auto-update check"
+	# Line 1 is the whole session-greeting entry, so it carries the fix.
 	cat >"$advisory_file" <<EOF
-auto-update daemon is not running normally on this runner. Without it, this
-runner falls behind the fleet and may dispatch workers that fail because of
-bugs already fixed upstream. See cross-runner-coordination.md §4.4.
+[WARN] auto-update daemon is not running normally on this runner. Fix: ${fix_cmd}
+Without it, this runner falls behind the fleet and may dispatch workers that
+fail because of bugs already fixed upstream. See cross-runner-coordination.md §4.4.
 
 Diagnose: aidevops auto-update health-check
 Fix:      ${fix_cmd}

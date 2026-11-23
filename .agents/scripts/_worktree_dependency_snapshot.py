@@ -4,11 +4,28 @@
 
 import hashlib
 import os
+import re
 from pathlib import Path
 import stat
 from contextlib import ExitStack, contextmanager
 
 from _worktree_dependency_identity import Rejected, contained_path, object_json, open_directory, regular_bytes, trusted
+
+
+STALE_STAGING = re.compile(r"^.+_tmp_\d+$")
+# Non-module entries that macOS and build tools create at the dependency root
+# (GH#39037). They are skipped, never copied, so a worker cannot resolve them; any
+# other unrecorded entry, or one of these names with another type, still rejects.
+SKIPPED_ROOT_FILES = {".metadata_never_index", ".DS_Store"}
+SKIPPED_ROOT_DIRECTORIES = {".vite", ".vite-temp", ".cache"}
+
+
+def skipped_root_entry(rel, mode):
+    if len(rel.parts) != 1:
+        return False
+    if stat.S_ISDIR(mode):
+        return bool(STALE_STAGING.match(rel.name)) or rel.name in SKIPPED_ROOT_DIRECTORIES
+    return stat.S_ISREG(mode) and rel.name in SKIPPED_ROOT_FILES
 
 
 def safe_entry_name(name):
@@ -68,6 +85,10 @@ class Snapshot:
                 self.visit(fd, relative / entry.name, output, entry.stat(follow_symlinks=False), depth)
 
     def visit(self, fd, rel, output, info, depth):
+        if skipped_root_entry(rel, info.st_mode):
+            # Interrupted pnpm staging directories and root markers/caches: neither counted,
+            # copied nor inventoried, so source and staged snapshots keep identical digests.
+            return
         self.count += 1
         if self.count > self.max_entries:
             raise Rejected("entry-budget-exceeded")
@@ -83,7 +104,10 @@ class Snapshot:
             raise Rejected("special-file")
 
     def resolved_inside(self, rel):
-        resolved = (self.root / rel).resolve(strict=True)
+        try:
+            resolved = (self.root / rel).resolve(strict=True)
+        except (FileNotFoundError, NotADirectoryError):
+            raise Rejected("dangling-dependency-link") from None
         if not resolved.is_relative_to(self.root):
             raise Rejected("escaping-package-root")
         return resolved
@@ -110,7 +134,15 @@ class Snapshot:
         target = os.readlink(rel.name, dir_fd=fd)
         if os.path.isabs(target):
             raise Rejected("escaping-dependency-link")
-        self.resolved_inside(rel)
+        try:
+            self.resolved_inside(rel)
+        except Rejected as error:
+            # A dangling .bin link is dangling in the source too; copy it as-is
+            # only when its lexical target stays inside the dependency root.
+            lexical = os.path.normpath(os.path.join(str(rel.parent), target))
+            if (str(error) != "dangling-dependency-link" or rel.parent.name != ".bin"
+                    or lexical == ".." or lexical.startswith("../")):
+                raise
         self.records[str(rel)] = b"link\0" + target.encode()
         if output is not None:
             os.symlink(target, rel.name, dir_fd=output)

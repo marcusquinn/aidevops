@@ -86,9 +86,11 @@ JSON
 # Override REPOS_JSON to point at our test fixture
 REPOS_JSON="$TEST_REPOS_JSON"
 
-# Source the module under test
+# Source the module under test. It resolves sibling libraries through
+# SCRIPT_DIR, so point that at the scripts directory, not tests/.
 # shellcheck source=../pulse-repo-meta.sh
 _PULSE_REPO_META_LOADED=""
+SCRIPT_DIR="$(cd "$PARENT_DIR" && pwd)"
 source "${PARENT_DIR}/pulse-repo-meta.sh"
 
 # Override the cached gh user for deterministic testing

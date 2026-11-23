@@ -184,6 +184,40 @@ describe("bounded interactive operations", () => {
     }
   });
 
+  test("repo-rooted session accepts owned worktrees of registered repos only (GH#38577)", async () => {
+    const fixture = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-repo-rooted-")));
+    const sessionRepo = join(fixture, "session-repo");
+    const other = join(fixture, "other-repo");
+    const otherLinked = join(fixture, "other-linked");
+    const reposFile = join(fixture, "repos.json");
+    const previousRepos = process.env.AIDEVOPS_REPOS_JSON;
+    let verified = 0;
+    const options = { subject: "Operation", verifyWorktreeOwnership: async () => { verified++; } };
+    try {
+      for (const repo of [sessionRepo, other]) {
+        execFileSync("git", ["init", "-q", repo]);
+        execFileSync("git", ["-C", repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "--allow-empty", "-m", "fixture"]);
+      }
+      execFileSync("git", ["-C", other, "worktree", "add", "-q", "--detach", otherLinked]);
+      writeFileSync(reposFile, JSON.stringify({ initialized_repos: [{ path: sessionRepo }] }));
+      process.env.AIDEVOPS_REPOS_JSON = reposFile;
+      await assert.rejects(resolveSessionOwnedWorktreeRoot(otherLinked, sessionRepo, owner, options), /unrelated Git repository/);
+      assert.equal(verified, 0, "unregistered repos must not reach ownership verification");
+      writeFileSync(reposFile, JSON.stringify({ initialized_repos: [{ path: sessionRepo }, { path: other }] }));
+      assert.deepEqual(await resolveSessionOwnedWorktreeRoot(otherLinked, sessionRepo, owner, options), { root: otherLinked, linked: true });
+      assert.equal(verified, 1, "registered repos must still verify session ownership");
+      await assert.rejects(resolveSessionOwnedWorktreeRoot(other, sessionRepo, owner, options), /linked Git worktree/);
+      await assert.rejects(resolveSessionOwnedWorktreeRoot(otherLinked, sessionRepo, owner, {
+        ...options, verifyWorktreeOwnership: async () => { throw new Error("Operation workdir is not owned by the current OpenCode session."); },
+      }), /not owned by the current OpenCode session/);
+    } finally {
+      if (previousRepos === undefined) delete process.env.AIDEVOPS_REPOS_JSON;
+      else process.env.AIDEVOPS_REPOS_JSON = previousRepos;
+      execFileSync("git", ["-C", other, "worktree", "remove", "--force", otherLinked]);
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   test("explicit audited adoption enables a previous session worktree without taking a live owner", async () => {
     const fixture = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-adopt-")));
     const repo = join(fixture, "repo");
@@ -388,17 +422,19 @@ describe("bounded interactive operations", () => {
       const pidFile = join(root, `escaped-${mode}.json`);
       const server = `const net=require('node:net'); process.on('SIGTERM',()=>{}); net.createServer().listen(0,'127.0.0.1',()=>require('node:fs').writeFileSync(${JSON.stringify(pidFile)},JSON.stringify({pid:process.pid})))`;
       const script = `const {spawn}=require('node:child_process'); const c=spawn(process.execPath,['-e',${JSON.stringify(server)}],{detached:true,stdio:'ignore'}); c.unref(); ${mode === "completion" ? `const t=setInterval(()=>{if(require('node:fs').existsSync(${JSON.stringify(pidFile)})){clearInterval(t);process.exit(0)}},10)` : "setInterval(()=>{},1000)"}`;
-      const started = await instance.start({ command: [process.execPath, "-e", script], budgetMs: mode === "expiry" ? 1000 : 5000 }, owner);
+      const started = await instance.start({ command: [process.execPath, "-e", script], budgetMs: mode === "expiry" ? 12000 : 15000 }, owner);
       let pid;
       try {
-        const deadline = Date.now() + 3000;
+        // Waits end as soon as the listener appears; the generous ceilings only
+        // matter on a saturated host (GH#39251).
+        const deadline = Date.now() + 3000 * 3;
         while (Date.now() < deadline) {
           try { pid = JSON.parse(readFileSync(pidFile, "utf8")).pid; break; } catch { /* wait for listener */ }
           await new Promise((resolve) => setTimeout(resolve, 20));
         }
         assert.ok(pid, "escaped server never listened");
         if (mode === "cancel") instance.cancel(started.operation_id, owner);
-        const result = await terminal(instance, started.operation_id, owner, 5000);
+        const result = await terminal(instance, started.operation_id, owner, 20000);
         assert.equal(result.state, { completion: "succeeded", cancel: "cancelled", expiry: "timed_out" }[mode]);
         // GH#34047: only completion-triggered cleanup is reported; exit 0 is not liveness.
         assert.equal(result.post_exit_descendants_terminated, mode === "completion", `${mode}: post-exit receipt field`);
@@ -523,6 +559,49 @@ describe("bounded interactive operations", () => {
     const timedRestoreResult = await terminal(instance, timedRestore.operation_id);
     assert.equal(timedRestoreResult.state, "restoration_failed");
     assert.equal(timedRestoreResult.restoration_state, "timed_out");
+  });
+
+  test("restoration_on unsuccessful skips abort-only cleanup after success (GH#38704)", async () => {
+    const instance = manager();
+    const skipped = await instance.start({
+      command: [process.execPath, "-e", "process.exit(0)"],
+      restorationCommand: [process.execPath, "-e", "process.exit(9)"],
+      restorationOn: "unsuccessful",
+      budgetMs: SUCCESS_BUDGET_MS,
+      restorationBudgetMs: SUCCESS_BUDGET_MS,
+    }, owner);
+    const skippedResult = await terminal(instance, skipped.operation_id);
+    assert.equal(skippedResult.state, "succeeded");
+    assert.equal(skippedResult.restoration_on, "unsuccessful");
+    assert.equal(skippedResult.restoration_state, "not_required");
+    assert.equal(skippedResult.restoration_exit, null);
+
+    const failed = await instance.start({
+      command: [process.execPath, "-e", "process.exit(3)"],
+      restorationCommand: [process.execPath, "-e", "process.exit(0)"],
+      restorationOn: "unsuccessful",
+      budgetMs: SUCCESS_BUDGET_MS,
+      restorationBudgetMs: SUCCESS_BUDGET_MS,
+    }, owner);
+    const failedResult = await terminal(instance, failed.operation_id);
+    assert.equal(failedResult.state, "failed");
+    assert.equal(failedResult.restoration_state, "succeeded");
+    assert.equal(failedResult.restoration_exit, 0);
+
+    const always = await instance.start({
+      command: [process.execPath, "-e", "process.exit(0)"],
+      restorationCommand: [process.execPath, "-e", "process.exit(0)"],
+      budgetMs: SUCCESS_BUDGET_MS,
+      restorationBudgetMs: SUCCESS_BUDGET_MS,
+    }, owner);
+    const alwaysResult = await terminal(instance, always.operation_id);
+    assert.equal(alwaysResult.restoration_on, "always");
+    assert.equal(alwaysResult.restoration_state, "succeeded");
+
+    await assert.rejects(instance.start({
+      command: [process.execPath, "-e", "process.exit(0)"],
+      restorationOn: "success",
+    }, owner), /restoration_on must be/);
   });
 
   test("wait-aware status wakes when restoration reaches its timeout", async () => {

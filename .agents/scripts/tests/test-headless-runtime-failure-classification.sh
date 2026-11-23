@@ -95,6 +95,31 @@ _HRW_PRIOR_ATTEMPT_ACTIVITY=1 _hrff_record_runner_health_failure issue-123 worke
 assert_eq "signing outcome attribution follows prior attempt activity" \
 	"worker_signing_unavailable|worker_signing_unavailable_after_activity" \
 	"$(cut -d' ' -f2 "$FIXTURE_HEALTH_LOG" | paste -sd'|' -)"
+# GH#38481: a not-launched attempt counts as a missing runtime binary only with
+# positive evidence: spawn attempted, runtime_command_missing, exit 127, no activity.
+record_not_launched() {
+	local reason="$1" launched="$2" runtime_type="$3" exit_status="$4" activity="$5" prior="$6"
+	_WORKER_RUNTIME_LAUNCH_STARTED="$launched" _run_runtime_error_type="$runtime_type" \
+		_run_exit_code="$exit_status" _run_activity_detected="$activity" \
+		_HRW_PRIOR_ATTEMPT_ACTIVITY="$prior" \
+		_hrff_record_runner_health_failure issue-123 "$reason"
+	return 0
+}
+: >"$FIXTURE_HEALTH_LOG"
+record_not_launched worker_not_launched 1 runtime_command_missing 127 0 0
+assert_eq "evidenced missing runtime records worker_runtime_missing" \
+	"worker_runtime_missing" "$(cut -d' ' -f2 "$FIXTURE_HEALTH_LOG" | paste -sd'|' -)"
+: >"$FIXTURE_HEALTH_LOG"
+record_not_launched worker_not_launched "" "" "" "" 0
+record_not_launched worker_runtime_not_invoked 0 "" "" "" 0
+record_not_launched worker_not_launched 1 runtime_permission_denied 127 0 0
+record_not_launched worker_not_launched 1 runtime_command_missing 1 0 0
+record_not_launched worker_not_launched 1 runtime_command_missing 127 1 0
+record_not_launched worker_not_launched 1 runtime_command_missing 127 0 1
+record_not_launched worker_not_launched 0 runtime_command_missing 127 0 0
+record_not_launched worker_failed 1 runtime_command_missing 127 0 0
+assert_eq "not-launched outcomes without complete runtime-missing evidence record nothing" \
+	"0" "$(wc -l <"$FIXTURE_HEALTH_LOG" | tr -d ' ')"
 
 check_classification \
 	"openai_rate_limit" \

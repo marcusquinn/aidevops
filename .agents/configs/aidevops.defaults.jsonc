@@ -133,6 +133,14 @@
     // Env override: AIDEVOPS_MAX_WORKERS_CAP
     "max_workers_cap": 0,
 
+    // RAM admission inputs (GH#39157). Per-worker estimate in MB (measured
+    // worker trees used 0.7-1.6 GB) and MB of reclaimable RAM kept free for
+    // the OS and user apps. Lower the reserve on small desktops whose
+    // reclaimable RAM rarely exceeds it.
+    // Env overrides (win over config): RAM_PER_WORKER_MB, RAM_RESERVE_MB
+    "ram_per_worker_mb": 1536,
+    "ram_reserve_mb": 6144,
+
     // DEPRECATED (GH#35537): CPU load never gates worker admission. These
     // fields are ignored; remove them from config.
     "max_load_per_core": 4.0,
@@ -247,6 +255,10 @@
 
     // Model tier used for verification checks (cheapest sufficient tier).
     "verification_tier": "simple",
+
+    // GitHub blocks pull_request_target by default from 2026-12-02.
+    // True allows Pulse to mutate public repository Actions event policies.
+    "actions_event_policy_auto_apply": false,
 
     // Maximum number of concurrent interactive AI sessions before warning.
     // Counts processes matching known AI coding assistants (opencode, claude, etc.).

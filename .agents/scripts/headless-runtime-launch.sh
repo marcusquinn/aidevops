@@ -67,6 +67,17 @@ _headless_run_is_ephemeral() {
 	return 1
 }
 
+# GH#39726: a scheduled routine run (session key routine-<id>, from
+# pulse-routines.sh and routine-helper.sh) is a new execution of its SOP every
+# time. Resuming the previous run's session carried stale conclusions forward
+# indefinitely ("search is blocked", "other runs did the work"), so each run
+# exited 0 without doing anything. Routine keys never resume or persist.
+_headless_session_key_is_fresh_per_run() {
+	local session_key="$1"
+	[[ "$session_key" == routine-* ]] && return 0
+	return 1
+}
+
 _create_headless_runtime_temp_file() {
 	local temp_root=""
 	local temp_status=0
@@ -218,7 +229,9 @@ _prepare_runtime_prompt_transport() {
 		# The attached path is framework-generated and bounded to this attempt;
 		# expose only its directory to the OpenCode config hook so workers can read
 		# the attachment without a generic external_directory approval.
-		_HEADLESS_RUN_PROMPT_ARG="Read and execute the complete seed prompt attached as seed-prompt.md. Treat the attached file as the user prompt for this headless run."
+		# The instruction also states the attachment is already supplied so a
+		# continuation never greps sensitive temp storage to rediscover it (GH#39729).
+		_HEADLESS_RUN_PROMPT_ARG="Read and execute the complete seed prompt attached as seed-prompt.md. Treat the attached file as the user prompt for this headless run. The attachment is already supplied in this message: never search, list or grep temp directories (for example ~/.aidevops-private/tmp) to locate it or any other prompt; everything needed is in the attachment, the issue/PR, or your worktree."
 		_HEADLESS_RUN_PROMPT_FILE="$prompt_path"
 		export AIDEVOPS_HEADLESS_PROMPT_DIR="$prompt_dir"
 		;;

@@ -12,6 +12,7 @@ import sys
 import tempfile
 from uuid import UUID, uuid5
 
+from .admission import wait_out_contention
 from .directory_handle import DirectoryHandle
 from .enrollment import GenerationEnrollment
 from .runtime import adapter_for, require_ready
@@ -118,7 +119,9 @@ def create_worktree(
                     or not all(handle.matches_path() for handle in
                                (repository, parent, directory))):
                 raise StoreConflict("creation-directory-changed")
-            owner = admit_session(store, path, pid, session_id)
+            # GH#38086: the tree now exists; a refusal here would strand it
+            # unenrolled. Admission replays idempotently; `worktree add` is not retried.
+            owner = wait_out_contention(lambda: admit_session(store, path, pid, session_id))
             generation = str(owner["generation_id"])
             if (adapter.capture(pid) != identity
                     or adapter.observe(identity).status != "alive"):
@@ -128,10 +131,17 @@ def create_worktree(
                                (repository, parent, directory))
                     or GenerationEnrollment(store).inspect(path) != generation):
                 raise StoreConflict("creator-or-generation-changed")
-            with store.connection(write=True) as connection:
-                store._event(
-                    connection, str(uuid5(UUID(generation), "created-worktree")),
-                    {"type": "created-worktree", "generation_id": generation,
-                     "creator_run_id": owner["run_id"], "path": str(path)},
-                )
+            wait_out_contention(lambda: _record_created(store, generation, owner, path))
     return dict(owner, status="created-and-admitted")
+
+
+def _record_created(
+    store: LifecycleRegistry, generation: str, owner: dict[str, object], path: Path,
+) -> None:
+    """Journal creation provenance; the deterministic event ID dedupes a replay."""
+    with store.connection(write=True) as connection:
+        store._event(
+            connection, str(uuid5(UUID(generation), "created-worktree")),
+            {"type": "created-worktree", "generation_id": generation,
+             "creator_run_id": owner["run_id"], "path": str(path)},
+        )

@@ -21,6 +21,7 @@ import {
 } from "./oauth-pool-token-endpoint.mjs";
 import {
   patchAccount, withPoolLock, withPoolLockAsync, loadPool, savePool,
+  findAccountIndex, poolAccountLabel,
 } from "./oauth-pool-storage.mjs";
 
 // ---------------------------------------------------------------------------
@@ -206,9 +207,9 @@ function markAuthFailure(provider, account, reason) {
     authRefreshFailures: failures,
     authRefreshLastFailureAt: now,
   };
-  patchAccount(provider, account.email, failureState);
+  patchAccount(provider, account, failureState);
   Object.assign(account, failureState);
-  logAuthFailure(provider, account.email, reason, failures, cooldownMs);
+  logAuthFailure(provider, poolAccountLabel(account), reason, failures, cooldownMs);
   return cooldownMs;
 }
 
@@ -252,8 +253,11 @@ function sameTokenState(account, expected) {
     current.expires === expected.expires;
 }
 
-function findStoredAccount(pool, provider, email) {
-  return (pool[provider] || []).find((candidate) => candidate.email === email) || null;
+/** Find the stored copy of `account` by seat key (email + orgId, GH#38959). */
+function findStoredAccount(pool, provider, account) {
+  const accounts = pool[provider] || [];
+  const idx = findAccountIndex(accounts, account);
+  return idx >= 0 ? accounts[idx] : null;
 }
 
 function syncCallerAccount(account, stored) {
@@ -265,7 +269,7 @@ async function refreshAndStoreToken(provider, account, force = false) {
   const requestedState = tokenState(account);
   return withPoolLockAsync(async () => {
     let pool = loadPool();
-    let stored = findStoredAccount(pool, provider, account.email);
+    let stored = findStoredAccount(pool, provider, account);
     if (!stored) return null;
 
     if ((force && !sameTokenState(stored, requestedState)) ||
@@ -280,7 +284,7 @@ async function refreshAndStoreToken(provider, account, force = false) {
     // held. Re-read and compare before publishing so a re-auth cannot be
     // overwritten by an older in-flight refresh response.
     pool = loadPool();
-    stored = findStoredAccount(pool, provider, account.email);
+    stored = findStoredAccount(pool, provider, account);
     if (!stored || !sameTokenState(stored, refreshState)) {
       return syncCallerAccount(account, stored);
     }
@@ -297,7 +301,7 @@ async function refreshAndStoreToken(provider, account, force = false) {
       });
       savePool(pool);
       syncCallerAccount(account, stored);
-      logAuthFailure(provider, stored.email, "token refresh failed", failures, cooldownMs);
+      logAuthFailure(provider, poolAccountLabel(stored), "token refresh failed", failures, cooldownMs);
       return null;
     }
 

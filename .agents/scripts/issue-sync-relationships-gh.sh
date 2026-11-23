@@ -266,8 +266,17 @@ _ensure_dependency_status_blocked() {
 		log_verbose "$issue_num: dependency_status_unchanged reason=${reason}_native_blockers_closed"
 		return 0
 	fi
+	# GH#38360: the dependency hold names what unblocks it. A repo that cannot
+	# take the companion still gets the hold; the label-invariant sweep heals it.
+	local companion="needs-dependency" blocked="status:blocked"
+	if declare -F ensure_blocked_companion_label >/dev/null 2>&1; then
+		ensure_blocked_companion_label "$repo" "$companion" || true
+	fi
+	local -a hold_args=(--remove-label "status:available" --add-label "$blocked")
 	if ! _relationship_run_timed status _gh_with_timeout write gh issue edit "$issue_num" --repo "$repo" \
-		--remove-label "status:available" --add-label "status:blocked" >/dev/null 2>&1; then
+		"${hold_args[@]}" --add-label "$companion" >/dev/null 2>&1 &&
+		! _relationship_run_timed status _gh_with_timeout write gh issue edit "$issue_num" --repo "$repo" \
+			"${hold_args[@]}" >/dev/null 2>&1; then
 		log_verbose "$issue_num: dependency_status_sync_failed reason=${reason}_status_write_failed"
 		return 1
 	fi
@@ -275,10 +284,13 @@ _ensure_dependency_status_blocked() {
 	# resulting sibling conflict immediately; active lifecycle state wins.
 	current_labels=$(_relationship_run_timed status _gh_with_timeout read gh issue view "$issue_num" --repo "$repo" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
+	local labels_csv=",${current_labels},"
 	if _dependency_sync_has_active_status "$current_labels" && \
-		[[ ",${current_labels}," == *",status:blocked,"* ]]; then
+		[[ "$labels_csv" == *",${blocked},"* ]]; then
+		local -a repair_args=(--remove-label "$blocked")
+		[[ "$labels_csv" == *",${companion},"* ]] && repair_args+=(--remove-label "$companion")
 		_relationship_run_timed status _gh_with_timeout write gh issue edit "$issue_num" --repo "$repo" \
-			--remove-label "status:blocked" >/dev/null 2>&1 || true
+			"${repair_args[@]}" >/dev/null 2>&1 || true
 	fi
 	_relationship_mark_status_synced "$issue_num"
 	log_verbose "$issue_num: dependency_status_blocked reason=${reason}"

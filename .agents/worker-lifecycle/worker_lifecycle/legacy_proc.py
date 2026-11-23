@@ -9,8 +9,12 @@ import os
 from pathlib import Path
 import platform
 
+from .legacy_proc_clock import is_root_sshd_session, require_older_than_tree, status_fields
+from .legacy_proc_denied import inspect_denied_references
 from .legacy_proc_macos import require_idle_macos
 from .process import ProcessIdentity
+from .protected_proc import OPT_IN, require_protected_references
+from .protected_proc import ProcessCensusUnavailable as ProcessCensusUnavailable
 
 
 NON_HOLDER_DAEMONS = frozenset({
@@ -18,6 +22,9 @@ NON_HOLDER_DAEMONS = frozenset({
     "sshd", "sshd-session", "ssh-agent", "gpg-agent", "(sd-pam)", "systemd", "dbus-daemon",
 })
 _observations: ContextVar[Counter | None] = ContextVar("legacy_proc_observations", default=None)
+# A task exiting mid-scan surfaces as ENOENT or, for open /proc entries, ESRCH.
+# Callers still re-check existence so a present task keeps failing closed.
+_VANISHED = (FileNotFoundError, ProcessLookupError)
 
 
 @contextmanager
@@ -61,7 +68,7 @@ def require_idle_proc(path, proc=Path("/proc")):
                 continue
             try:
                 threads = list((process / "task").iterdir())
-            except FileNotFoundError:
+            except _VANISHED:
                 if process.exists():
                     raise ValueError("proc-observation-unavailable") from None
                 continue
@@ -82,34 +89,35 @@ def live_owned_proc_task(task):
 
 
 def require_idle_reference(path, reference):
-    target = Path(os.readlink(reference).removesuffix(" (deleted)"))
-    if target == path or path in target.parents:
+    raw = os.readlink(reference)
+    targets = (Path(raw), Path(raw.removesuffix(" (deleted)")))
+    if any(target == path or path in target.parents for target in targets):
         raise ValueError("live-process-reference")
 
 
 def require_predating_daemon(path, task, proc):
     """Only exempt known non-holders proven older than this worktree's .git."""
     try:
-        status = (task / "status").read_text(encoding="utf-8")
-        fields = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
+        fields = status_fields(task / "status")
         if fields.get("Name", "").strip() not in NON_HOLDER_DAEMONS:
             raise ValueError("unknown-daemon")
-        # comm may contain spaces and parentheses; field 3 follows the last ')'.
-        stat = (task / "stat").read_text(encoding="utf-8")
-        ticks = int(stat.rsplit(")", 1)[1].split()[19])
-        boot = next(line.split()[1] for line in (proc / "stat").read_text(
-            encoding="utf-8").splitlines() if line.startswith("btime "))
-        boot_time = int(boot)
-        frequency = os.sysconf("SC_CLK_TCK")
-        if ticks < 0 or boot_time <= 0 or frequency <= 0:
-            raise ValueError("invalid-process-clock")
-        # btime is second-granularity and starttime is tick-granularity. Use an
-        # upper bound so rounding cannot exempt a task created after the tree.
-        latest_start = boot_time + 1 + (ticks + 1) / frequency
-        if latest_start >= (path / ".git").stat().st_ctime:
-            raise ValueError("daemon-not-older")
+        root_session = is_root_sshd_session(fields, task, proc)
+        try:
+            require_older_than_tree(path, task, proc)
+            predates_tree = True
+        except (OSError, ValueError, IndexError, StopIteration):
+            if not root_session:
+                raise
+            predates_tree = False
     except (OSError, ValueError, IndexError, StopIteration) as error:
         raise ValueError("proc-observation-unavailable") from error
+    # A root parent may pass a worktree log fd into the session. GH#39013 records
+    # the decision: a root sshd session proven older than .git is skipped even under
+    # the opt-in. Residual risk, accepted: age bounds start time, not later opens
+    # (unreadable cwd skips the fd scan), and .git ctime is the only portable
+    # creation proxy, so later .git changes can make it advance.
+    if root_session and not predates_tree and os.environ.get(OPT_IN) == "1":
+        require_protected_references(path, task, proc)
     counts = _observations.get()
     if counts is not None:
         counts["skipped_nondumpable"] += 1
@@ -120,18 +128,21 @@ def inspect_proc_task(path, task, proc=Path("/proc")):
         if not live_owned_proc_task(task):
             return
         inspect_proc_references(path, task, proc)
-    except FileNotFoundError:
+    except _VANISHED:
         if task.exists():
             raise ValueError("proc-observation-unavailable") from None
 
 
 def inspect_proc_references(path, task, proc):
+    stage = "cwd"
     try:
         require_idle_reference(path, task / "cwd")
+        stage = "fd"
         for fd in (task / "fd").iterdir():
             try:
                 require_idle_reference(path, fd)
-            except FileNotFoundError:
+            except _VANISHED:
                 continue  # An independently closed descriptor grants no authority.
     except PermissionError:
-        require_predating_daemon(path, task, proc)
+        inspect_denied_references(path, task, proc, stage,
+                                  (require_predating_daemon, require_protected_references))

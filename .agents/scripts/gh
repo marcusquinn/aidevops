@@ -98,13 +98,37 @@ if [[ "${AIDEVOPS_GH_SHIM_TIMING:-0}" == 1 ]]; then
 else
 	_shim_timing() { return 0; }
 fi
+# Every gh call starts here, so derive parents by parameter expansion rather
+# than dirname/basename execs (GH#39187). Script paths never end in '/'.
+_shim_source_parent() {
+	local source_path="$1"
+	if [[ "$source_path" != */* ]]; then
+		_SHIM_PARENT="."
+	else
+		_SHIM_PARENT="${source_path%/*}"
+		[[ -n "$_SHIM_PARENT" ]] || _SHIM_PARENT="/"
+	fi
+	return 0
+}
 while [[ -L "$_SHIM_SOURCE" ]]; do
-	_SHIM_LINK_DIR="$(cd "$(dirname "$_SHIM_SOURCE")" 2>/dev/null && pwd)" || exit 127
+	_shim_source_parent "$_SHIM_SOURCE"
+	_SHIM_LINK_DIR="$(cd "$_SHIM_PARENT" 2>/dev/null && pwd)" || exit 127
 	_SHIM_SOURCE=$(readlink "$_SHIM_SOURCE") || exit 127
 	[[ "$_SHIM_SOURCE" == /* ]] || _SHIM_SOURCE="${_SHIM_LINK_DIR}/${_SHIM_SOURCE}"
 done
-_SHIM_DIR="$(cd "$(dirname "$_SHIM_SOURCE")" 2>/dev/null && pwd)" || _SHIM_DIR=""
-_SHIM_SOURCE="${_SHIM_DIR}/$(basename "$_SHIM_SOURCE")"
+_shim_source_parent "$_SHIM_SOURCE"
+# An absolute parent without '.', '..' or '//' segments is already the logical
+# path `cd && pwd` would print, so only other shapes pay for the subshell.
+case "$_SHIM_PARENT" in
+/ | *//* | */./* | */../* | */. | */.. | [!/]*)
+	_SHIM_DIR="$(cd "$_SHIM_PARENT" 2>/dev/null && pwd)" || _SHIM_DIR=""
+	;;
+*)
+	_SHIM_DIR="$_SHIM_PARENT"
+	[[ -d "$_SHIM_DIR" ]] || _SHIM_DIR=""
+	;;
+esac
+_SHIM_SOURCE="${_SHIM_DIR}/${_SHIM_SOURCE##*/}"
 _shim_timing path_resolution
 
 # Select credentials before any quota probe, translation or native transport.
@@ -156,6 +180,11 @@ if [[ "${AIDEVOPS_GH_SHIM_DISABLE:-0}" == "1" ]]; then
 	}
 	exec "$_real_gh" "$@"
 fi
+
+# GH#38966: no native gh child below may see agent-detection variables, or gh
+# >= 2.105 corrupts captured output with agent-mode hints. Runtime-detecting
+# children re-export them via _shim_with_agent_env.
+_shim_hide_agent_env
 
 # -----------------------------------------------------------------------------
 # Source instrumentation helper for gh_record_call (GH#21857 — full visibility).
@@ -248,10 +277,22 @@ _shim_timing quota_source
 AIDEVOPS_GH_LOGICAL_ID="${AIDEVOPS_GH_LOGICAL_ID:-$(gh_new_logical_id)}"
 export AIDEVOPS_GH_LOGICAL_ID
 _GH_REQUEST_ATTEMPT_STATE_READY=0
+# Shim-owned scratch must not outlive the invocation (t19021). Bash runs EXIT
+# after TERM/INT/HUP too; only SIGKILL leaves files for gh_sweep_orphan_temps.
+_shim_exit_cleanup() {
+	if [[ "${_GH_REQUEST_ATTEMPT_STATE_READY:-0}" -eq 1 ]]; then
+		gh_request_attempt_state_cleanup
+		_GH_REQUEST_ATTEMPT_STATE_READY=0
+	fi
+	if declare -F _gh_transport_cleanup_live_temps >/dev/null 2>&1; then
+		_gh_transport_cleanup_live_temps
+	fi
+	return 0
+}
 if gh_request_attempt_state_begin "$AIDEVOPS_GH_LOGICAL_ID"; then
 	_GH_REQUEST_ATTEMPT_STATE_READY=1
-	trap 'gh_request_attempt_state_cleanup' EXIT
 fi
+trap '_shim_exit_cleanup' EXIT
 
 # _shim_classify_endpoint <sub1> [<sub2>]
 # Classify a gh invocation for instrumentation. Returns one of:
@@ -308,6 +349,9 @@ case "${1:-}:${2:-}" in
 			_shim_report_missing_native_gh 'real gh binary not found on PATH'
 			exit 127
 		}
+		# exec never runs the EXIT trap. Every `gh auth token|status` leaked one
+		# gh-request-attempts file here: ~430/hour, 78k in the tmp root (t19021).
+		_shim_exit_cleanup
 		exec "$_real_gh" "$@"
 		;;
 	issue:comment | issue:create | issue:edit | issue:close | issue:reopen | issue:lock | issue:pin | issue:delete | \
@@ -665,6 +709,40 @@ for _cand in \
 	fi
 done
 
+# _shim_privacy_target_candidates
+# Appends OWNER/REPO write targets for _modified_args to the caller's
+# _candidates array (GH#39801). An unresolvable target leaves it empty, which
+# keeps the shim's fail-open contract; native gh rejects such writes itself.
+_shim_privacy_target_candidates() {
+	local _api_target="" _rc=0 _default=""
+	if [[ "${_modified_args[0]:-}" == "api" ]]; then
+		_api_target="$(_shim_api_target_from_path 2>/dev/null || true)"
+		_api_target="${_api_target#https://github.com/}"
+		# gh api expands {owner}/{repo} and :owner/:repo from the base repo.
+		case "$_api_target" in
+		*'{owner}'* | *'{repo}'* | *':owner'* | *':repo'*) _api_target="" ;;
+		esac
+		[[ -n "$_api_target" ]] || _api_target=$(_gh_target_repo_default 2>/dev/null) || _api_target=""
+		! _gh_target_slug_valid "$_api_target" || _candidates+=("$_api_target")
+		return 0
+	fi
+	_gh_resolve_target_repo "${_modified_args[@]}" || _rc=$?
+	[[ "$_rc" -eq 0 || "$_rc" -eq 3 ]] || return 0
+	if [[ -z "$_GH_TARGET_REPO_REFERENCE" ]]; then
+		_candidates+=("$_GH_TARGET_REPO")
+		return 0
+	fi
+	_candidates+=("$_GH_TARGET_REPO_REFERENCE")
+	if [[ -n "$_GH_TARGET_REPO_EXPLICIT" ]]; then
+		_default="$_GH_TARGET_REPO_EXPLICIT"
+	else
+		_default=$(_gh_target_repo_default 2>/dev/null) || _default=""
+	fi
+	[[ -z "$_default" ]] || _gh_target_same_repo "$_default" "$_GH_TARGET_REPO_REFERENCE" ||
+		_candidates+=("$_default")
+	return 0
+}
+
 # _shim_privacy_scan
 # Returns 0 to allow exec, 1 to block (caller should print no extra
 # message — this function emits its own mentoring error to stderr).
@@ -683,46 +761,23 @@ _shim_privacy_scan() {
 	# shellcheck source=/dev/null
 	source "$_PRIVACY_HELPER" 2>/dev/null || return 0
 
-	# Determine target repo from --repo arg, gh api /repos/owner/repo path, or
-	# current git remote.
-	local target_url="" _idx=0
-	while [[ $_idx -lt ${#_modified_args[@]} ]]; do
-		case "${_modified_args[$_idx]}" in
-		--repo)
-			target_url="${_modified_args[_idx + 1]:-}"
-			_idx=$((_idx + 2))
-			continue
-			;;
-		--repo=*) target_url="${_modified_args[$_idx]#--repo=}" ;;
-		-R)
-			target_url="${_modified_args[_idx + 1]:-}"
-			_idx=$((_idx + 2))
-			continue
-			;;
-		-R*) target_url="${_modified_args[$_idx]#-R}" ;;
-		esac
-		_idx=$((_idx + 1))
-	done
-	if [[ -z "$target_url" && "${_modified_args[0]:-}" == "api" ]]; then
-		target_url="$(_shim_api_target_from_path 2>/dev/null || true)"
-	fi
-	if [[ -z "$target_url" ]]; then
-		target_url=$(git remote get-url origin 2>/dev/null) || return 0
-		[[ -z "$target_url" ]] && return 0
-	fi
-	# Normalize bare owner/repo to a URL form privacy_is_target_public accepts.
-	if [[ "$target_url" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
-		target_url="https://github.com/${target_url}"
-	fi
-
+	# GH#39801: derive the target with the shared resolver so the scanned repo is
+	# the one native gh writes to (-R/--repo, URL argument, gh api path, GH_REPO,
+	# gh repo set-default, then the ranked github.com remote; not just origin).
+	local target_url="" _idx=0 _candidate=""
+	local -a _candidates=()
+	_shim_privacy_target_candidates
 	# Public-target check — bind the already-resolved native binary so helper
 	# probes cannot re-enter this PATH shim while its recursion guard is active.
-	# This covers both the auth status probe and the subsequent repo API query.
-	PRIVACY_GH_BIN="$REAL_GH" privacy_is_target_public "$target_url"
-	local _pub_rc=$?
-	if [[ $_pub_rc -ne 0 ]]; then
-		return 0
-	fi
+	# A URL argument can be the target or plain text (close --comment), so scan
+	# when any candidate is public.
+	for _candidate in ${_candidates[@]+"${_candidates[@]}"}; do
+		if PRIVACY_GH_BIN="$REAL_GH" privacy_is_target_public "https://github.com/${_candidate}"; then
+			target_url="https://github.com/${_candidate}"
+			break
+		fi
+	done
+	[[ -n "$target_url" ]] || return 0
 
 	# Build content blob from --body / --body-file / --title args plus
 	# `-f body=...` / `-F body=@...` forms used by gh api. Secret-material
@@ -875,6 +930,17 @@ _shim_privacy_scan() {
 	_hits=$(privacy_scan_text "$_blob" "$_slugs_file")
 	local _scan_rc=$?
 	rm -f "$_slugs_file"
+
+	if [[ $_scan_rc -eq 1 ]]; then
+		local _target_slug=""
+		if [[ "$target_url" =~ github\.com[:/]([^/]+/[^/]+) ]]; then
+			_target_slug="${BASH_REMATCH[1]%.git}"
+		fi
+		if [[ "$_target_slug" =~ ^[^/]+/[^/]+$ ]] &&
+			_hits=$(privacy_filter_slug_hits_by_public_tree "$_hits" "$_target_slug"); then
+			_scan_rc=0
+		fi
+	fi
 
 	if [[ $_scan_rc -eq 1 ]]; then
 		printf '\n[aidevops][privacy-scan][BLOCK] Write to public %s contains private-repo references:\n\n' "$target_url" >&2
@@ -1070,7 +1136,7 @@ unset _GH_PR_IDENTITY_ORIGIN
 if [[ "${_modified_args[0]:-}:${_modified_args[1]:-}" != "pr:merge" &&
 	$_body_idx -ge 0 && -n "$_body_val" ]]; then
 	if ! grep -Fqx '<!-- aidevops:sig -->' <<<"$_body_val"; then
-		_sig_footer=$("$SIG_HELPER" footer --body "$_body_val" 2>/dev/null || echo "")
+		_sig_footer=$(_shim_sig_helper_footer --body "$_body_val" 2>/dev/null || echo "")
 		if [[ -n "$_sig_footer" ]]; then
 			_new_body="${_body_val}${_sig_footer}"
 			if [[ "$_sig_footer" == *'<!-- aidevops:origin:'* ]]; then
@@ -1093,7 +1159,7 @@ fi
 # failed. This mirrors --body signing while preserving every close-only flag.
 if [[ $_comment_idx -ge 0 && -n "$_comment_val" ]]; then
 	if ! grep -Fqx '<!-- aidevops:sig -->' <<<"$_comment_val"; then
-		_sig_footer=$("$SIG_HELPER" footer --body "$_comment_val" 2>/dev/null || echo "")
+		_sig_footer=$(_shim_sig_helper_footer --body "$_comment_val" 2>/dev/null || echo "")
 		if [[ -n "$_sig_footer" ]]; then
 			_new_comment="${_comment_val}${_sig_footer}"
 			if [[ $_comment_eq -eq 1 ]]; then
@@ -1114,7 +1180,7 @@ if [[ "${_modified_args[0]:-}:${_modified_args[1]:-}" != "pr:merge" &&
 	$_body_file_idx -ge 0 && -n "$_body_file_val" && -f "$_body_file_val" ]]; then
 	if ! grep -Fqx '<!-- aidevops:sig -->' "$_body_file_val" 2>/dev/null; then
 		_file_content=$(<"$_body_file_val") || _file_content=""
-		_sig_footer=$("$SIG_HELPER" footer --body "$_file_content" 2>/dev/null || echo "")
+		_sig_footer=$(_shim_sig_helper_footer --body "$_file_content" 2>/dev/null || echo "")
 		if [[ -n "$_sig_footer" ]]; then
 			# Build augmented body in a temp file we own — never mutate the source.
 			_tmp_body_file=$(mktemp -t aidevops-gh-shim-body.XXXXXX 2>/dev/null) || _tmp_body_file=""

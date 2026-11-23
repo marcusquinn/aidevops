@@ -10,11 +10,13 @@
 # This module is sourced by pulse-wrapper.sh. Depends on shared-constants.sh
 # and worker-lifecycle-common.sh being sourced first by the orchestrator.
 #
-# Focused submodules (GH#36027, GH#37242):
+# Focused submodules (GH#36027, GH#37242, GH#39323):
 #   pulse-dispatch-engine-launch.sh       — launch validation and failure reasons
+#   pulse-dispatch-engine-census.sh       — first-wave bounds, enumeration budgets, repo census
+#   pulse-dispatch-engine-ranking.sh      — candidate scoring, ranked build, round ordering
 #   pulse-dispatch-engine-housekeeping.sh — locks, resumable stages, async launch
 #   pulse-dispatch-engine-supervisor.sh   — supervisor state, recovery, launch pacing
-# Candidate ranking, dispatch orchestration, supervisor gate and preflight remain here;
+# Repository rows, dispatch orchestration, supervisor gate and preflight remain here;
 # existing callers continue to source only this entrypoint.
 #
 # Public functions in this module (in source order):
@@ -145,6 +147,7 @@ source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-current-state-guardr
 # shellcheck source=./pulse-dispatch-preflight-lib.sh
 # shellcheck disable=SC1091  # sub-library resolved from this module's path
 source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-preflight-lib.sh"
+source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-macos-verification.sh"
 # GH#36122: runner-local dispatch breakers gate every launch path. Source
 # unconditionally so a missing definition fails loudly instead of open.
 # shellcheck source=./pulse-wrapper-dispatch-gates.sh
@@ -174,150 +177,26 @@ fi
 # shellcheck disable=SC1091  # sub-library resolved from this module's path
 source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-engine-launch.sh"
 
-#######################################
-# Score one repository's dispatch candidates and append JSONL records to the
-# shared candidate file. Extracted so the cross-repository orchestrator stays
-# below the function-complexity threshold.
-# Arguments: candidates JSON, slug, path, priority, bonus/day, bonus cap,
-#            current epoch, destination JSONL file
-#######################################
-_append_ranked_repo_candidates() {
-	local repo_candidates_json="$1"
-	local repo_slug="$2"
-	local repo_path="$3"
-	local repo_priority="$4"
-	local age_bonus_per_day="$5"
-	local age_bonus_cap="$6"
-	local current_epoch="$7"
-	local tmp_candidates="$8"
-
-	printf '%s' "$repo_candidates_json" | jq -c --arg slug "$repo_slug" --arg path "$repo_path" --arg priority "$repo_priority" --arg debt_label "${QUALITY_DEBT_LABEL:-quality-debt}" --argjson age_bonus_per_day "$age_bonus_per_day" --argjson age_bonus_cap "$age_bonus_cap" --argjson current_epoch "$current_epoch" '
-		.[] |
-		(try ((.createdAt // "") | fromdateiso8601) catch $current_epoch) as $created_epoch |
-		((($current_epoch - $created_epoch) / 86400) | floor | if . < 0 then 0 else . end) as $age_days |
-		($age_days * $age_bonus_per_day) as $uncapped_age_bonus |
-		(if $uncapped_age_bonus > $age_bonus_cap then $age_bonus_cap else $uncapped_age_bonus end) as $age_bonus |
-		((.labels // []) | map(.name? // .)) as $labels |
-		(
-			(if $priority == "tooling" then 2000 elif $priority == "product" then 1000 else 0 end) +
-			# Mission m-20260504-1e325d feature 3.4: when capacity is
-			# constrained, rank worker-ready/low-complexity issues above
-			# broad raw backlog so pulse fills slots with solvable work first.
-			(if (($labels | index("tier:simple")) != null or ($labels | index("low-complexity")) != null) then 2500
-			 elif ($labels | index("tier:standard")) != null then 1200
-			 else 0 end) +
-			(if (($labels | index("worker-ready")) != null or ($labels | index("status:available")) != null) then 1000 else 0 end) +
-			(if (($labels | index("good first issue")) != null or ($labels | index("quick-win")) != null) then 800 else 0 end) +
-			(if ($labels | index("auto-dispatch")) != null then 300 else 0 end) -
-			(if ($labels | index("tier:thinking")) != null then 1200 else 0 end) -
-			(if (($labels | index("research")) != null or ($labels | index("needs-design")) != null) then 800 else 0 end) +
-			(if (($labels | index($debt_label)) != null and ($labels | index("security")) != null) then 500 else 0 end) +
-			(if ($labels | index("priority:critical")) != null then 10000
-			 elif ($labels | index("priority:high")) != null then 9000
-			 elif ($labels | index("priority:medium")) != null then 8000
-			 elif ($labels | index("bug")) != null then 7000
-			 elif ($labels | index("enhancement")) != null then 6000
-			 elif ($labels | index($debt_label)) != null then 5000
-			 elif (($labels | index("file-size-debt")) != null or ($labels | index("function-complexity-debt")) != null) then 4000
-			 elif ($labels | index("priority:low")) != null then 3500
-			 else 3000 end)
-		) as $base_score |
-		. + {
-			repo_slug: $slug,
-			repo_path: $path,
-			repo_priority: $priority,
-			# GH#32703: urgent labels lead strictly, matching the urgent phase
-			# of _dispatch_priority_loop, so tier/age bonuses cannot outrank them.
-			priority_rank: (if ($labels | index("priority:critical")) != null then 2
-				elif ($labels | index("priority:high")) != null then 1 else 0 end),
-			base_score: $base_score,
-			age_days: $age_days,
-			age_bonus: $age_bonus,
-			score: ($base_score + $age_bonus)
-		}
-	' >>"$tmp_candidates" 2>/dev/null || true
-	return 0
-}
-
-#######################################
-# Build ranked deterministic dispatch candidates across all pulse repos.
-# Arguments:
-#   $1 - max issues to fetch per repo (optional)
-#   $2 - dependency normalization mode (optional: normalize or skip)
-# Returns: JSON array sorted by score desc, createdAt asc, updatedAt asc
-#######################################
-_dispatch_first_wave_advance_cursor() {
-	local slug="$1" cursor_dir="${HOME}/.aidevops/cache" temporary=""
-	mkdir -p "$cursor_dir" 2>/dev/null || return 0
-	temporary=$(mktemp "${cursor_dir}/pulse-first-wave-cursor.XXXXXX") || return 0
-	printf '%s\n' "$slug" >"$temporary"
-	mv -f "$temporary" "${cursor_dir}/pulse-first-wave-cursor" 2>/dev/null || rm -f "$temporary"
-	return 0
-}
-
-# GH#34331: whole-second clock for first-wave bounds. Reuses the dispatch
-# millisecond clock when loaded so the enumeration budget shares its source.
-_dispatch_first_wave_now_s() {
-	local now_ms=""
-	if declare -F _dispatch_now_ms >/dev/null 2>&1; then
-		now_ms=$(_dispatch_now_ms 2>/dev/null) || now_ms=""
-	fi
-	if [[ "$now_ms" =~ ^[0-9]{1,16}$ ]]; then
-		printf '%s\n' "$((now_ms / 1000))"
-	else
-		date +%s
-	fi
-	return 0
-}
-
-# GH#34331: first-wave census bounds as "<candidate target> <deadline epoch>".
-# The target is the free-slot count supplied by _dispatch_enumerate_ranked_round
-# (default 1: the GH#33647 first-nonempty-repository behaviour). The budget
-# (PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S, default 180s) stays below the 300s
-# enumeration estimate floor that first-wave admission already reserves; 0
-# restores the GH#33647 first-nonempty-repository scope.
-_dispatch_first_wave_bounds() {
-	local target="${_PULSE_FIRST_WAVE_CANDIDATE_TARGET:-1}" budget="${PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S:-180}"
-	[[ "$target" =~ ^[1-9][0-9]{0,3}$ ]] || target=1
-	[[ "$budget" =~ ^[0-9]{1,5}$ ]] || budget=180
-	printf '%s %s\n' "$target" "$(($(_dispatch_first_wave_now_s) + 10#$budget))"
-	return 0
-}
-
-# GH#34331: return 0 when a first-wave census may stop polling repositories:
-# it holds fresh candidates for every free slot, or its enumeration budget elapsed.
-# Recent failed attempts alone must not hide unscanned fresh work (GH#36712).
-# Args: JSONL candidate file (one candidate per line), bounds from above
-_dispatch_first_wave_enumeration_done() {
-	local candidate_file="$1" bounds="$2" target=1 deadline=0 count=0
-	local stamps="" dir=""
-	read -r target deadline <<<"$bounds"
-	[[ "$target" =~ ^[0-9]+$ && "$deadline" =~ ^[0-9]+$ ]] || return 0
-	(($(_dispatch_first_wave_now_s) >= deadline)) && return 0
-	count=$(wc -l <"$candidate_file" 2>/dev/null) || count=0
-	count="${count//[[:space:]]/}"
-	[[ "$count" =~ ^[0-9]+$ ]] || count=0
-	if ((count >= target)) && declare -F _dispatch_attempt_recency_stamps >/dev/null 2>&1 &&
-		((${_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS:-0} > 0)); then
-		dir=$(_dispatch_attempt_recency_dir)
-		stamps=$(_dispatch_attempt_recency_stamps "$dir" "$(date +%s)")
-		if [[ -n "$stamps" ]]; then
-			count=$(jq -s --arg stamps "$stamps" '
-				($stamps | split("\n") | map(split("\t")[0])) as $attempted |
-				map(select(("\((.repo_slug // "") | sub("/"; "--"))--\(.number // "")") as $key |
-					$attempted | index($key) | not)) | length
-			' "$candidate_file" 2>/dev/null) || count=0
-		fi
-	fi
-	((count >= target)) && return 0
-	(($(_dispatch_first_wave_now_s) >= deadline)) && return 0
-	return 1
-}
+# shellcheck source=./pulse-dispatch-engine-census.sh
+# shellcheck disable=SC1091  # sub-library resolved from this module's path
+source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-engine-census.sh"
+# shellcheck source=./pulse-dispatch-engine-ranking.sh
+# shellcheck disable=SC1091  # sub-library resolved from this module's path
+source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-engine-ranking.sh"
 
 # Emit managed repository rows, optionally rotated after a first-wave cursor.
+# A first wave leads with repositories holding prefetch-visible new arrivals
+# (GH#38200), then those with unattempted snapshot backlog (GH#38022); the
+# eighth field names the lead ("arrival:<count>", "backlog" or empty).
 _dispatch_repository_rows() {
-	local cursor="$1"
-	jq -r --arg cursor "$cursor" '
+	local cursor="$1" backlog="" arrivals=""
+	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 ]]; then
+		backlog=$(_dispatch_first_wave_backlog_repos)
+		if declare -F _dispatch_first_wave_arrival_repos >/dev/null 2>&1; then
+			arrivals=$(_dispatch_first_wave_arrival_repos)
+		fi
+	fi
+	jq -r --arg cursor "$cursor" --arg backlog "$backlog" --arg arrivals "$arrivals" '
 		def pulse_hour_start:
 			if (.pulse_hours | type) == "array" then .pulse_hours[0]
 			else .pulse_hours.start
@@ -329,7 +208,20 @@ _dispatch_repository_rows() {
 		[.initialized_repos[] |
 		select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "" and .path != "")] as $repos |
 		($repos | map(.slug) | index($cursor)) as $index |
-		(if $index == null then $repos else $repos[$index + 1:] + $repos[:$index + 1] end)[] |
+		(if $index == null then $repos else $repos[$index + 1:] + $repos[:$index + 1] end) as $rotated |
+		($backlog | split("\n")) as $known |
+		($arrivals | split("\n") | map(select(length > 0) | split("\t") |
+			{key: .[0], value: ("arrival:" + (.[1] // "0"))}) | from_entries) as $arrived |
+		($rotated | map(.slug as $s | {repo: ., lead: ($arrived[$s] //
+			(if ($known | index($s)) != null then "backlog" else "" end))})) as $marked |
+		# Stable partitions preserve cursor fairness for repositories without
+		# known or newly arrived launchable work (GH#33647). Arrivals come
+		# first: a short remainder that triggered their re-census is merged
+		# back without rescanning its repositories (GH#38200).
+		(($marked | map(select(.lead | startswith("arrival:")))) +
+		 ($marked | map(select(.lead == "backlog"))) +
+		 ($marked | map(select(.lead == ""))))[] |
+		.lead as $lead | .repo |
 		[
 			.slug,
 			.path,
@@ -337,163 +229,10 @@ _dispatch_repository_rows() {
 			(if .pulse_hours then (pulse_hour_start | tostring) else "" end),
 			(if .pulse_hours then (pulse_hour_end | tostring) else "" end),
 			(.pulse_expires // ""),
-			(.pulse_interval // "")
+			(.pulse_interval // ""),
+			$lead
 		] | join("|")
 	' "$REPOS_JSON" 2>/dev/null || return 1
-	return 0
-}
-
-build_ranked_dispatch_candidates_json() {
-	local per_repo_limit="${1:-$PULSE_RUNNABLE_ISSUE_LIMIT}"
-	local dependency_normalization_mode="${2:-normalize}"
-	[[ "$per_repo_limit" =~ ^[0-9]+$ ]] || per_repo_limit="$PULSE_RUNNABLE_ISSUE_LIMIT"
-	local age_bonus_per_day="${PULSE_DISPATCH_AGE_BONUS_PER_DAY:-25}"
-	local age_bonus_cap="${PULSE_DISPATCH_AGE_BONUS_CAP:-900}"
-	local current_epoch
-	[[ "$age_bonus_per_day" =~ ^[0-9]+$ ]] || age_bonus_per_day=25
-	[[ "$age_bonus_cap" =~ ^[0-9]+$ ]] || age_bonus_cap=900
-	current_epoch=$(date +%s)
-	[[ "$current_epoch" =~ ^[0-9]+$ ]] || current_epoch=0
-
-	if [[ ! -f "$REPOS_JSON" ]]; then
-		printf '[]\n'
-		return 0
-	fi
-
-	local tmp_candidates completeness_file product_complete=true scan_failed=0
-	local cursor="" cursor_file="${HOME}/.aidevops/cache/pulse-first-wave-cursor" first_wave_bounds=""
-	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == "1" ]]; then
-		first_wave_bounds=$(_dispatch_first_wave_bounds)
-		if [[ -f "$cursor_file" && ! -L "$cursor_file" ]]; then
-			IFS= read -r cursor <"$cursor_file" || cursor=""
-		fi
-	fi
-	tmp_candidates=$(mktemp) || return 1
-	completeness_file=$(mktemp) || {
-		rm -f "$tmp_candidates"
-		return 1
-	}
-	: >"$tmp_candidates"
-
-	while IFS='|' read -r repo_slug repo_path repo_priority ph_start ph_end expires repo_interval; do
-		[[ -n "$repo_slug" && -n "$repo_path" ]] || continue
-		# GH#34331: stop a first wave once it can fill its free slots or its budget elapses.
-		if [[ -n "$first_wave_bounds" && -s "$tmp_candidates" ]] &&
-			_dispatch_first_wave_enumeration_done "$tmp_candidates" "$first_wave_bounds"; then
-			break
-		fi
-		if ! check_repo_pulse_schedule "$repo_slug" "$ph_start" "$ph_end" "$expires" "$REPOS_JSON"; then
-			continue
-		fi
-		# Per-repo interval throttle (GH#20660): skip if polled too recently
-		if ! check_repo_pulse_interval "$repo_slug" "$repo_interval"; then
-			[[ "$repo_priority" != product ]] || product_complete=false
-			continue
-		fi
-		# Record that we are polling this repo now (atomic write, non-fatal)
-		update_repo_pulse_timestamp "$repo_slug"
-		# GH#33647/GH#34331: rotate the first-wave cursor past every polled
-		# repository, even if its candidates later fail live dispatch gates,
-		# so one repository's backlog cannot monopolize every first wave.
-		[[ -z "$first_wave_bounds" ]] || _dispatch_first_wave_advance_cursor "$repo_slug"
-		local repo_candidates_json
-		printf '0\n' >"$completeness_file"
-		repo_candidates_json=$(pulse_campaign_shadow_candidates_json "$repo_slug" "$repo_path" "$per_repo_limit" "$dependency_normalization_mode" "$completeness_file") || {
-			repo_candidates_json='[]'
-			scan_failed=1
-			[[ "$repo_priority" != product ]] || product_complete=false
-		}
-		if [[ "$repo_priority" == product && "$(<"$completeness_file")" != 1 ]]; then
-			product_complete=false
-		fi
-		# GH#33743: drop unchanged runner_capability_unmet candidates before
-		# they count toward the first-wave candidate target.
-		if declare -F _dispatch_filter_capability_cooled_candidates >/dev/null 2>&1 &&
-			[[ -n "$repo_candidates_json" && "$repo_candidates_json" != "[]" ]]; then
-			repo_candidates_json=$(_dispatch_filter_capability_cooled_candidates "$repo_slug" "$repo_path" "$repo_candidates_json")
-		fi
-		if [[ -z "$repo_candidates_json" || "$repo_candidates_json" == "[]" ]]; then
-			continue
-		fi
-
-		_append_ranked_repo_candidates "$repo_candidates_json" "$repo_slug" "$repo_path" \
-			"$repo_priority" "$age_bonus_per_day" "$age_bonus_cap" "$current_epoch" "$tmp_candidates"
-		# GH#33647: the first wave needs launchable work, not a global census;
-		# the loop-top check (GH#34331) leaves later repositories for the normal
-		# refill. Never claim complete product discovery from a partial snapshot.
-		[[ -z "$first_wave_bounds" ]] || product_complete=false
-	done < <(_dispatch_repository_rows "$cursor")
-
-	if [[ ! -s "$tmp_candidates" ]]; then
-		rm -f "$tmp_candidates" "$completeness_file"
-		printf '[]\n'
-		[[ "$scan_failed" -eq 0 ]]
-		return $?
-	fi
-
-	jq -cs --argjson product_complete "$product_complete" 'map(. + {product_discovery_complete:$product_complete}) | sort_by([
-		-(.priority_rank // 0),
-		-.score,
-		(if (.createdAt // "") == "" then "9999-12-31T23:59:59Z" else .createdAt end),
-		(if (.updatedAt // "") == "" then "9999-12-31T23:59:59Z" else .updatedAt end),
-		(.repo_slug // ""),
-		(.number // 0)
-	])' "$tmp_candidates" 2>/dev/null || printf '[]\n'
-	rm -f "$tmp_candidates" "$completeness_file"
-	return 0
-}
-
-#######################################
-# Keep trusted review-feedback debt within its fairness share while ordinary
-# candidates remain. Excess debt stays at the tail so it can borrow capacity
-# only after ordinary candidates have been attempted by the existing gates.
-#
-# Arguments:
-#   $1 - ranked candidate JSON array
-#   $2 - available implementation slots
-# Returns: reordered JSON array
-#######################################
-_dispatch_order_idle_borrowing_candidates() {
-	local candidates_json="$1"
-	local available_slots="$2"
-	local debt_cap_pct="${QUALITY_DEBT_CAP_PCT:-30}"
-
-	[[ "$available_slots" =~ ^[0-9]+$ ]] || available_slots=0
-	[[ "$debt_cap_pct" =~ ^[0-9]+$ ]] || debt_cap_pct=30
-	if [[ "$debt_cap_pct" -gt 100 ]]; then
-		debt_cap_pct=100
-	fi
-
-	printf '%s' "$candidates_json" | jq -c --argjson cap "$((available_slots * debt_cap_pct / 100))" --arg debt_label "${QUALITY_DEBT_LABEL:-quality-debt}" '
-		def trusted_review_debt:
-			((.labels // []) | index($debt_label)) != null and
-			((.labels // []) | index("source:review-feedback")) != null;
-		[.[] | select(trusted_review_debt)] as $debt |
-		[.[] | select(trusted_review_debt | not)] as $ordinary |
-		($debt[0:$cap] + $ordinary + $debt[$cap:])
-	' 2>/dev/null || printf '%s\n' "$candidates_json"
-	return 0
-}
-
-#######################################
-# Order one dispatch round: attempt-recency rotation (GH#34363) when the
-# candidate library is loaded, then the trusted review-debt fairness share.
-# The debt cap takes precedence even for fresh rank-0 review-debt work; the
-# recency share does not exempt candidates from the established debt policy.
-# Both are order-only; every candidate still passes its live gates.
-#
-# Arguments:
-#   $1 - ranked candidate JSON array
-#   $2 - available implementation slots
-# Returns: reordered JSON array
-#######################################
-_dispatch_order_round_candidates() {
-	local candidates_json="$1"
-	local available_slots="$2"
-	if declare -F _dispatch_order_attempt_recency_candidates >/dev/null 2>&1; then
-		candidates_json=$(_dispatch_order_attempt_recency_candidates "$candidates_json")
-	fi
-	_dispatch_order_idle_borrowing_candidates "$candidates_json" "$available_slots"
 	return 0
 }
 
@@ -620,6 +359,12 @@ _dispatch_execute_candidate_loop() {
 	local active_count="$4"
 	local login="$5"
 	local loop_output="" outcomes_file="" product_reserved=0 product_complete=false
+	# t19122: only a parallel max-path round absorbs mid-round worker exits;
+	# floor, throttle and serial rounds keep their fixed launch count.
+	local _DISPATCH_ROUND_TOPUP_ALLOWED=0
+	if [[ "$_dispatch_path" == "max" ]] && ((_dispatch_max_parallel > 1)); then
+		_DISPATCH_ROUND_TOPUP_ALLOWED=1
+	fi
 	product_reserved=$(_dispatch_product_reservation_slots "$worker_limit" "$active_count" "$_effective_slots")
 	product_complete=$(jq -r 'all(.[]; .product_discovery_complete == true)' <<<"$ranked_candidates")
 	if ((product_reserved > 0)); then
@@ -665,9 +410,10 @@ _dispatch_execute_candidate_loop() {
 # Returns: dispatched worker count via stdout
 #######################################
 dispatch_max() {
+	local _PULSE_ELASTIC_DISPATCH=1 _DISPATCH_ROUND_TOPUP_STARTED_AT="" _DISPATCH_ROUND_TOPUP_CHECKED_AT=""
 	local dependency_normalization_mode="${1:-normalize}"
-	local capacity_line
-	capacity_line=$(_dispatch_compute_capacity) || {
+	local capacity_line=""
+	_dispatch_round_capacity_read capacity_line || { # t19122: stamps the read for in-round top-ups
 		echo 0
 		return 0
 	}
@@ -706,6 +452,7 @@ dispatch_max() {
 		echo 0
 		return 0
 	fi
+	export _DISPATCH_SELF_LOGIN="$self_login" # GH#37780: own vs foreign claim hints on empty pools
 
 	echo "[pulse-wrapper] Dispatch_max: available=${available_slots}, candidates=${candidate_count}" >>"$LOGFILE"
 
@@ -783,19 +530,19 @@ _dispatch_attribute_round_underfill() {
 source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-engine-supervisor.sh"
 
 _should_run_llm_supervisor() {
-	local now_epoch
+	local now_epoch last_llm_success_epoch="" last_llm_attempt_epoch=""
 	now_epoch=$(date +%s)
 
 	# 1. Daily sweep: only a successful daily sweep advances its cadence.
 	# last_llm_run_epoch remains as the legacy success timestamp for older installs;
 	# last_llm_attempt_epoch is separate so failed runs do not suppress retries for
 	# a full daily interval.
-	local last_llm_success_epoch="" last_llm_attempt_epoch=""
-	last_llm_success_epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_success_epoch")
-	if [[ "$last_llm_success_epoch" -eq 0 ]]; then
-		last_llm_success_epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_run_epoch")
-	fi
+	last_llm_success_epoch=$(_pulse_read_llm_success_epoch)
 	last_llm_attempt_epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_attempt_epoch")
+	if [[ "${_PULSE_SUPERVISOR_QUEUE_TRIGGERS_ONLY:-0}" == "1" ]]; then # GH#38162: incomplete prefetch
+		_pulse_queue_triggers_only_decision "$now_epoch" "$last_llm_success_epoch" "$last_llm_attempt_epoch" || return 1
+		return 0
+	fi
 
 	local last_daily_epoch="" last_success_mode=""
 	last_daily_epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_daily_sweep_success_epoch")
@@ -1047,9 +794,30 @@ _dispatch_min_worker_floor_refill() {
 	local refill_attempt=0
 	local max_refill_attempts="$min_worker_floor"
 	local active_workers="$capped_active_workers" active_workers_known=1 fill_dispatched dispatch_rc=0
+	# GH#39510: refill rounds are normal refills, even under the early first
+	# wave. Inherited first-wave scope ran each round as a fresh serial census
+	# pinned at its deadline (no cross-round reuse, GH#38876; no parallel
+	# scans, GH#38730; no last-good carry, GH#38727), launching ~1 per round.
+	# Budget planning still selects a bounded census when a full one does not
+	# fit, and every candidate keeps its live dispatch gates.
+	local _PULSE_FIRST_DISPATCH_WAVE=0
 	while ((refill_attempt < max_refill_attempts)); do
 		if [[ -f "$STOP_FLAG" ]]; then
 			echo "[pulse-wrapper] Minimum worker floor refill stopped: stop flag present" >>"$LOGFILE"
+			return 0
+		fi
+		local drain_bundle=""
+		if declare -F _pulse_drain_requested_bundle >/dev/null 2>&1 &&
+			drain_bundle=$(_pulse_drain_requested_bundle); then
+			echo "[pulse-wrapper] Minimum worker floor refill stopped: cooperative drain requested for activated bundle ${drain_bundle} (GH#37907)" >>"$LOGFILE"
+			return 0
+		fi
+		# GH#39682: a supervisor drain marks the owned LLM lock instead. It
+		# names this wrapper only while it holds that lock, so deterministic
+		# phase callers are unaffected; an admitted round still finishes.
+		if declare -F _pulse_llm_drain_requested >/dev/null 2>&1 &&
+			drain_bundle=$(_pulse_llm_drain_requested); then
+			echo "[pulse-wrapper] Minimum worker floor refill stopped: supervisor drain requested for activated bundle ${drain_bundle} (GH#39682)" >>"$LOGFILE"
 			return 0
 		fi
 		if ((active_workers_known <= 0)); then
@@ -1368,6 +1136,33 @@ run_underfill_worker_recycler() {
 }
 
 #######################################
+# Runnable-work count for the supervisor launch, active refill and early-exit
+# recycle gates (GH#38211). Those gates only decide whether to run the
+# recycler or dispatch_max, which keeps its own census and live gates. A fresh
+# candidate census answers the question; the all-repository
+# count_runnable_candidates enumeration (lock reconcile and dependency
+# normalization per pulse repo) delayed one supervisor launch ~20 min with the
+# pool at 0 workers. With no fresh census holding candidates, the broad count
+# still runs, so cold-cache and failing-PR behaviour are unchanged.
+# Arguments: $1 - caller label for the log line
+# Returns: count via stdout
+#######################################
+_pulse_gate_runnable_count() {
+	local caller="${1:-gate}" snapshot_result="" count="" source=""
+	if declare -F _dispatch_snapshot_runnable_count >/dev/null 2>&1 &&
+		snapshot_result=$(_dispatch_snapshot_runnable_count); then
+		read -r count source <<<"$snapshot_result"
+		if [[ "$count" =~ ^[0-9]+$ ]] && ((count > 0)); then
+			echo "[pulse-wrapper] Runnable gate (${caller}): census_snapshot count=${count} source=${source} (GH#38211)" >>"${LOGFILE:-/dev/null}"
+			printf '%s\n' "$count"
+			return 0
+		fi
+	fi
+	normalize_count_output "$(count_runnable_candidates)"
+	return 0
+}
+
+#######################################
 # Refill an underfilled worker pool while the pulse session is still alive.
 #
 # The pulse prompt asks the LLM to monitor every 60s, but the live session can
@@ -1419,7 +1214,7 @@ maybe_refill_underfilled_pool_during_active_pulse() {
 	local max_workers active_workers refill_target runnable_count queued_without_worker
 	max_workers=$(get_max_workers_target)
 	active_workers=$(count_active_workers)
-	runnable_count=$(normalize_count_output "$(count_runnable_candidates)")
+	runnable_count=$(_pulse_gate_runnable_count "active_refill")
 	queued_without_worker=$(normalize_count_output "$(count_queued_without_worker)")
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
@@ -1439,6 +1234,16 @@ maybe_refill_underfilled_pool_during_active_pulse() {
 
 	echo "[pulse-wrapper] Active pulse refill: underfilled ${active_workers}/${refill_target} (raw_max=${max_workers}) with runnable=${runnable_count}, queued_without_worker=${queued_without_worker}, idle=${idle_seconds}s, stall=${progress_stall_seconds}s" >>"$LOGFILE"
 	run_underfill_worker_recycler "$max_workers" "$active_workers" "$runnable_count" "$queued_without_worker"
+	# GH#38696: this runs inside the LLM supervisor phase, after the instance
+	# lock is released and the cycle budget is spent, so an in-process
+	# dispatch_max always stops before enumeration. Wake a detached refill-only
+	# run instead: it takes the lock with a fresh budget from the active bundle.
+	if declare -F pulse_event_refill_wake_underfilled >/dev/null 2>&1 &&
+		pulse_event_refill_wake_underfilled; then
+		echo "[pulse-wrapper] Active pulse refill: woke a fresh-budget refill-only run (source=active-pulse, GH#38696)" >>"$LOGFILE"
+		echo "$now_epoch"
+		return 0
+	fi
 	local active_refill_dispatched
 	active_refill_dispatched=$(dispatch_max) || active_refill_dispatched=0
 	[[ "$active_refill_dispatched" =~ ^[0-9]+$ ]] || active_refill_dispatched=0
@@ -1505,9 +1310,17 @@ _run_preflight_stages() {
 	# Mechanical release precedes dispatch and never depends on supervisor
 	# eligibility, daily cadence, failure cooldown or degraded prefetch.
 	_pulse_rearm_blocker_holds "$(date +%s)" || true
+	# t19015: a drained cycle cannot dispatch; skip the remaining stages.
+	_pulse_cycle_drain_exit "preflight_blocker_refresh" && return 0
 	# Overdue synchronous recovery needs admission before dispatch can spend
 	# the cycle budget. The bounded attempt retains the main-dispatch reserve.
 	_pulse_run_pre_dispatch_blocker_refresh "$_pflt_timeout"
+	# GH#37854: a stale/missing snapshot runs prefetch before early dispatch.
+	local _pflt_prefetch_rc=0
+	_run_promoted_prefetch_if_starved "$_pflt_timeout" || _pflt_prefetch_rc=$?
+	# GH#37986: starved label maintenance runs one bounded slice before early
+	# dispatch, so stale needs-* holds cannot outlive the starvation bound.
+	_run_promoted_label_maintenance_if_starved || true
 	# t3054: dispatch passes do NOT use run_stage_with_timeout. Unlike other
 	# preflight stages (single-step operations), each wraps apply_dispatch_max,
 	# which iterates N candidates that are each
@@ -1521,6 +1334,8 @@ _run_preflight_stages() {
 	_pulse_run_budget_priority_stage "preflight_early_dispatch" _preflight_early_dispatch || _pflt_ed_rc=$?
 	[[ "${_PULSE_BUDGET_STAGE_DEFERRED:-0}" == "1" ]] && _pflt_ed_outcome="skipped"
 	_log_substage_timing "preflight_early_dispatch" "$_pflt_ed_start" "$_pflt_ed_rc" "$_pflt_ed_outcome"
+	_pulse_cycle_drain_exit "preflight_cleanup_and_ledger" && return "$_pflt_prefetch_rc"
+	_preflight_start_macos_verification || true
 	run_stage_with_timeout "preflight_cleanup_and_ledger" "$_pflt_timeout" \
 		_preflight_cleanup_and_ledger || true
 	run_stage_with_timeout "preflight_capacity" "$_pflt_timeout" \
@@ -1530,17 +1345,20 @@ _run_preflight_stages() {
 	# normalize trusted-author NMR residue and refill once so every newly unblocked
 	# candidate remains dispatchable this cycle.
 	local _label_timeout=""
-	if _label_timeout=$(_preflight_refill_reserved_timeout "$_pflt_timeout"); then
+	if [[ "${_PULSE_LABEL_MAINTENANCE_PROMOTED:-0}" == "1" ]]; then
+		# GH#37986: a cycle runs the stage at most once.
+		echo "[pulse-wrapper] preflight_label_maintenance: promoted slice ran before early dispatch; normal slot skipped this cycle (GH#37986)" >>"$LOGFILE"
+	elif _label_timeout=$(_preflight_refill_reserved_timeout "$_pflt_timeout"); then
 		_pulse_run_budget_priority_stage_with_timeout "preflight_label_maintenance" "$_label_timeout" \
 			_preflight_label_maintenance "$_label_timeout" || true
 	else
-		echo "[pulse-wrapper] preflight_label_maintenance deferred: insufficient wall-clock budget for post-label refill" >>"$LOGFILE"
+		echo "[pulse-wrapper] preflight_label_maintenance deferred: insufficient wall-clock budget for post-label refill ($(_preflight_refill_reserved_deficit))" >>"$LOGFILE"
 	fi
 	local _nmr_timeout=""
 	if _nmr_timeout=$(_preflight_refill_reserved_timeout "$PRE_RUN_STAGE_TIMEOUT"); then
 		_pulse_run_budget_priority_stage "preflight_trusted_nmr_reconcile" _preflight_trusted_nmr_reconcile "$_nmr_timeout" || true
 	else
-		echo "[pulse-wrapper] preflight_trusted_nmr_reconcile deferred: insufficient wall-clock budget for post-label refill" >>"$LOGFILE"
+		echo "[pulse-wrapper] preflight_trusted_nmr_reconcile deferred: insufficient wall-clock budget for post-label refill ($(_preflight_refill_reserved_deficit))" >>"$LOGFILE"
 	fi
 	local _pflt_refill_start=$SECONDS
 	local _pflt_refill_rc=0
@@ -1555,7 +1373,72 @@ _run_preflight_stages() {
 	# AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING=0 to restore the legacy
 	# synchronous path for debugging.
 	_pulse_start_post_dispatch_housekeeping "$_pflt_timeout"
+	[[ "$_pflt_prefetch_rc" -eq 0 ]] || return 1
+	if [[ "${_PULSE_PREFETCH_RAN:-0}" != "1" ]]; then
+		_run_preflight_prefetch_stage "$_pflt_timeout" || return 1
+	fi
+	return 0
+}
+
+#######################################
+# GH#37854: starvation bound. Early dispatch can consume nearly the whole
+# cycle, leaving prefetch a clamped window it never finishes. A stale or
+# missing snapshot promotes the budget-gated prefetch ahead of early dispatch
+# so it receives the full stage budget. REST/GraphQL gates still apply. The
+# caller defers a hard-failure abort until after the dispatch waves, matching
+# the legacy end-of-preflight position.
+#
+# Arguments: $1 - preflight stage timeout (seconds)
+# Sets: _PULSE_PREFETCH_RAN (reset to 0, then 1 if prefetch executed)
+# Returns: 0 when not starved or prefetch continued; 1 on hard failure
+#######################################
+_run_promoted_prefetch_if_starved() {
+	local _pflt_timeout="$1"
+	_PULSE_PREFETCH_RAN=0
+	_preflight_prefetch_starved || return 0
+	echo "[pulse-wrapper] Prefetch starvation bound reached: STATE_FILE missing or older than ${AIDEVOPS_PULSE_PREFETCH_STARVATION_S:-7200}s — running prefetch before early dispatch (GH#37854)" >>"$LOGFILE"
+	if declare -F pulse_stats_increment >/dev/null 2>&1; then
+		pulse_stats_increment "pulse_prefetch_starvation_promoted" 2>/dev/null || true
+	fi
 	_run_preflight_prefetch_stage "$_pflt_timeout" || return 1
+	return 0
+}
+
+#######################################
+# GH#37986: starvation bound for label maintenance. Its normal slot follows
+# early dispatch and needs the post-label refill reserve, so a busy runner can
+# defer it on every cycle while stale needs-simplification and
+# needs-consolidation holds keep issues out of dispatch. When a substage has
+# not started within the bound, run one bounded slice before early dispatch.
+# The slice passes the same REST/GraphQL budget gates as the normal slot; a
+# budget deferral leaves the normal slot free to try. A cycle that already
+# promoted prefetch promotes this stage only at twice the bound, so the first
+# fill normally waits for one promotion at most. The stop flag suppresses
+# promotion.
+#
+# Sets: _PULSE_LABEL_MAINTENANCE_PROMOTED (reset to 0, then 1 when the slice
+#       passed the budget gate; the normal slot is skipped for that cycle)
+# Returns: 0 always
+#######################################
+_run_promoted_label_maintenance_if_starved() {
+	_PULSE_LABEL_MAINTENANCE_PROMOTED=0
+	declare -F _preflight_label_maintenance_starved >/dev/null 2>&1 || return 0
+	[[ -z "${STOP_FLAG:-}" || ! -f "$STOP_FLAG" ]] || return 0
+	local _lm_age="" _lm_factor=1
+	[[ "${_PULSE_PREFETCH_RAN:-0}" != "1" ]] || _lm_factor=2
+	_lm_age=$(_preflight_label_maintenance_starved "$_lm_factor") || return 0
+	local _lm_slice="${AIDEVOPS_PULSE_LABEL_MAINTENANCE_STARVED_SLICE_S:-180}"
+	[[ "$_lm_slice" =~ ^[0-9]{1,5}$ && "$((10#$_lm_slice))" -ge 60 ]] || _lm_slice=180
+	_lm_slice="$((10#$_lm_slice))"
+	local _lm_last="not recorded"
+	[[ ! "$_lm_age" =~ ^[0-9]+$ ]] || _lm_last="${_lm_age}s ago"
+	echo "[pulse-wrapper] Label maintenance starvation bound reached: stalest substage attempt ${_lm_last}, bound ${AIDEVOPS_PULSE_LABEL_MAINTENANCE_STARVATION_S:-7200}s x${_lm_factor} — promoting a ${_lm_slice}s slice ahead of early dispatch (GH#37986)" >>"$LOGFILE"
+	if declare -F pulse_stats_increment >/dev/null 2>&1; then
+		pulse_stats_increment "pulse_label_maintenance_starvation_promoted" 2>/dev/null || true
+	fi
+	_pulse_run_budget_priority_stage_with_timeout "preflight_label_maintenance" "$_lm_slice" \
+		_preflight_label_maintenance "$_lm_slice" || true
+	[[ "${_PULSE_BUDGET_STAGE_DEFERRED:-0}" == "1" ]] || _PULSE_LABEL_MAINTENANCE_PROMOTED=1
 	return 0
 }
 
@@ -1564,6 +1447,7 @@ _run_preflight_stages() {
 #
 # Arguments: $1 - preflight stage timeout (seconds)
 # Sets: _PULSE_PREFETCH_DEGRADED (1 when prefetch timed out/was deferred)
+#       _PULSE_PREFETCH_RAN (1 when prefetch passed the budget gate; GH#37854)
 # Returns: 0 to continue the cycle, 1 if prefetch failed (abort cycle)
 #######################################
 _run_preflight_prefetch_stage() {
@@ -1599,6 +1483,9 @@ _run_preflight_prefetch_stage() {
 	# LLM supervisor, whose prompt reads the incomplete STATE_FILE.
 	_PULSE_PREFETCH_DEGRADED=0
 	if [[ "$_budget_gate_skip" -eq 0 ]]; then
+		# GH#37854: one prefetch attempt per cycle; a budget-deferred
+		# promoted attempt stays eligible for the end-of-preflight retry.
+		_PULSE_PREFETCH_RAN=1
 		local _prefetch_rc=0
 		AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$(_preflight_prefetch_reserved_finalise_seconds)" \
 			run_stage_with_timeout "$_budget_prefetch_stage" "$_pflt_timeout" \
@@ -1634,7 +1521,7 @@ _compute_initial_underfill() {
 	fi
 
 	local runnable_count queued_without_worker
-	runnable_count=$(normalize_count_output "$(count_runnable_candidates)")
+	runnable_count=$(_pulse_gate_runnable_count "supervisor_launch")
 	queued_without_worker=$(normalize_count_output "$(count_queued_without_worker)")
 	run_underfill_worker_recycler "$max_workers" "$active_workers" "$runnable_count" "$queued_without_worker"
 
@@ -1664,7 +1551,43 @@ _early_exit_recycle_fill_allowed() {
 		echo "[pulse-wrapper] Early-exit recycle: stop flag appeared before deterministic fill" >>"$LOGFILE"
 		return 1
 	fi
+	_early_exit_recycle_drained && return 1
 	pulse_dispatch_breakers_allow "early_exit_recycle" || return 1
+	return 0
+}
+
+#######################################
+# GH#39682: the recycle loop runs after instance-lock release, so the
+# instance-lock drain marker never names this wrapper. Deploy reconciliation
+# marks the owned LLM lock instead (pulse-wrapper-cycle.sh
+# _pulse_llm_drain_requested); stop before the next fill or supervisor rerun.
+# A dispatch round already admitted finishes, like the t19064 drain grace.
+# Returns: 0 when a supervisor drain names this wrapper, 1 otherwise
+#######################################
+_early_exit_recycle_drained() {
+	local drain_bundle=""
+	declare -F _pulse_llm_drain_requested >/dev/null 2>&1 || return 1
+	drain_bundle=$(_pulse_llm_drain_requested) || return 1
+	echo "[pulse-wrapper] Early-exit recycle stopped: supervisor drain requested; activated bundle ${drain_bundle} dispatches next cycle (GH#39682)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# GH#6453: Wait for newly-dispatched workers to appear in the process list
+# before re-counting. Workers dispatched by the LLM pulse take up to
+# PULSE_LAUNCH_GRACE_SECONDS to start (sandbox-exec + opencode startup).
+# Counting immediately after the LLM exits produces a false-negative
+# (workers running but not yet visible) that triggers duplicate dispatch.
+# t1887: LLM dispatch count is unknown here — use full grace to preserve
+# the GH#6453 safety guarantee.
+#######################################
+_early_exit_recycle_launch_grace_wait() {
+	local grace_wait="$PULSE_LAUNCH_GRACE_SECONDS"
+	[[ "$grace_wait" =~ ^[0-9]+$ ]] || grace_wait=35
+	if [[ "$grace_wait" -gt 0 ]]; then
+		echo "[pulse-wrapper] Early-exit recycle: waiting ${grace_wait}s for dispatched workers to appear (GH#6453)" >>"$LOGFILE"
+		sleep "$grace_wait"
+	fi
 	return 0
 }
 
@@ -1697,25 +1620,13 @@ _run_early_exit_recycle_loop() {
 			echo "[pulse-wrapper] Stop flag set — skipping early-exit recycle" >>"$LOGFILE"
 			break
 		fi
-		# GH#6453: Wait for newly-dispatched workers to appear in the process list
-		# before re-counting. Workers dispatched by the LLM pulse take up to
-		# PULSE_LAUNCH_GRACE_SECONDS to start (sandbox-exec + opencode startup).
-		# Counting immediately after the LLM exits produces a false-negative
-		# (workers running but not yet visible) that triggers duplicate dispatch.
-		# t1887: LLM dispatch count is unknown here — use full grace to preserve
-		# the GH#6453 safety guarantee.
-		local grace_wait="$PULSE_LAUNCH_GRACE_SECONDS"
-		[[ "$grace_wait" =~ ^[0-9]+$ ]] || grace_wait=35
-		if [[ "$grace_wait" -gt 0 ]]; then
-			echo "[pulse-wrapper] Early-exit recycle: waiting ${grace_wait}s for dispatched workers to appear (GH#6453)" >>"$LOGFILE"
-			sleep "$grace_wait"
-		fi
+		_early_exit_recycle_launch_grace_wait
 
 		# Re-check worker state
 		local post_max post_active post_target post_runnable post_queued
 		post_max=$(get_max_workers_target)
 		post_active=$(count_active_workers)
-		post_runnable=$(normalize_count_output "$(count_runnable_candidates)")
+		post_runnable=$(_pulse_gate_runnable_count "early_exit_recycle")
 		post_queued=$(normalize_count_output "$(count_queued_without_worker)")
 		[[ "$post_max" =~ ^[0-9]+$ ]] || post_max=1
 		[[ "$post_active" =~ ^[0-9]+$ ]] || post_active=0
@@ -1735,7 +1646,7 @@ _run_early_exit_recycle_loop() {
 		[[ "$early_dispatched" =~ ^[0-9]+$ ]] || early_dispatched=0
 		_dispatch_min_worker_floor_refill "$post_max" "$((post_active + early_dispatched))"
 		post_active=$((post_active + early_dispatched))
-		post_runnable=$(normalize_count_output "$(count_runnable_candidates)")
+		post_runnable=$(_pulse_gate_runnable_count "early_exit_recycle_post_fill")
 		post_queued=$(normalize_count_output "$(count_queued_without_worker)")
 		[[ "$post_active" =~ ^[0-9]+$ ]] || post_active=0
 		post_target=$(_dispatch_floor_aware_worker_target "$post_max")
@@ -1746,6 +1657,8 @@ _run_early_exit_recycle_loop() {
 		if [[ "$post_runnable" -eq 0 && "$post_queued" -eq 0 ]]; then
 			break
 		fi
+
+		_early_exit_recycle_drained && break
 
 		local post_deficit_pct=$(((post_target - post_active) * 100 / post_target))
 		recycle_attempt=$((recycle_attempt + 1))
@@ -1767,6 +1680,9 @@ _run_early_exit_recycle_loop() {
 			recycle_underfilled_mode=1
 			recycle_underfill_pct=$(((post_max - post_active) * 100 / post_max))
 		fi
+
+		# A drain can land during the recycler or prefetch above.
+		_early_exit_recycle_drained && break
 
 		local recycle_start_epoch
 		recycle_start_epoch=$(date +%s)

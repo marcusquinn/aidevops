@@ -56,22 +56,64 @@ _read_lock_pid() {
 	return 0
 }
 
-# GH#35710: a supervisor can briefly borrow the publication lane. Its process
-# age is not its lock-holding age. Recognize the lease only with matching LLM
-# ownership; invalid markers fall back to process age, expired leases stay old.
+# Atomic refresh prevents contenders observing a truncated heartbeat and
+# falling back to the long-running owner's process age during dispatch.
+_pulse_instance_lock_heartbeat() {
+	local owner="" temporary=""
+	[[ -n "${LOCKDIR:-}" ]] || return 1
+	read -r owner 2>/dev/null <"${LOCKDIR}/pid" || return 1
+	[[ "$owner" == "$$" ]] && kill -0 "$owner" 2>/dev/null || return 1
+	temporary=$(mktemp "${LOCKDIR}/heartbeat.XXXXXX") || return 1
+	if date +%s >"$temporary" && read -r owner 2>/dev/null <"${LOCKDIR}/pid" && [[ "$owner" == "$$" ]] &&
+		mv -f "$temporary" "${LOCKDIR}/supervisor_heartbeat_epoch"; then
+		return 0
+	fi
+	rm -f "$temporary"
+	return 1
+}
+
+# Publication and dispatch lease age, bound to the current instance owner.
+# Invalid markers fall back to process age; expired leases stay old.
 _instance_lock_publication_age() {
 	local lock_pid="$1" lock_age="$2"
-	local publication_epoch="" llm_pid="" now_epoch=""
+	local publication_epoch="" owner_pid="" now_epoch=""
 	if read -r publication_epoch 2>/dev/null <"${LOCKDIR}/supervisor_heartbeat_epoch" \
 		&& [[ "$publication_epoch" =~ ^[1-9][0-9]*$ ]] \
-		&& read -r llm_pid 2>/dev/null <"${LOCKDIR}.llm/pid" \
-		&& [[ "$llm_pid" == "$lock_pid" ]]; then
+		&& read -r owner_pid 2>/dev/null <"${LOCKDIR}/pid" \
+		&& [[ "$owner_pid" == "$lock_pid" ]]; then
 		now_epoch=$(date +%s)
 		if [[ "$publication_epoch" -le "$now_epoch" ]]; then
 			lock_age=$((now_epoch - publication_epoch))
 		fi
 	fi
 	printf '%s\n' "$lock_age"
+	return 0
+}
+
+#######################################
+# Age of an LLM lock hold, from its pid file mtime (written at acquisition).
+#
+# Returns 1 (caller falls back) when the mtime is unreadable, future-dated,
+# or later than the owner's process start + 2s (PID reuse / rewritten file).
+#
+# Arguments:
+#   $1 — pid file path
+#   $2 — owner process age in seconds
+# Output: hold age in seconds on stdout (only on success)
+#######################################
+_llm_lock_hold_age() {
+	local pid_file="$1"
+	local proc_age="$2"
+	local mtime="" now_epoch=""
+	declare -F _file_mtime_epoch >/dev/null 2>&1 || return 1
+	[[ "$proc_age" =~ ^[0-9]+$ ]] || return 1
+	mtime=$(_file_mtime_epoch "$pid_file" 2>/dev/null) || return 1
+	[[ "$mtime" =~ ^[1-9][0-9]*$ ]] || return 1
+	now_epoch=$(date +%s)
+	[[ "$mtime" -le "$now_epoch" ]] || return 1
+	# Process must have started no later than the pid write (+2s slack).
+	[[ $((now_epoch - proc_age)) -le $((mtime + 2)) ]] || return 1
+	printf '%s\n' "$((now_epoch - mtime))"
 	return 0
 }
 
@@ -141,11 +183,9 @@ _handle_existing_lock() {
 			return 0
 		fi
 
-		# Check 2: Age-based force-reclaim — if a genuine pulse-wrapper
-		# has been holding the lock for longer than PULSE_LOCK_MAX_AGE_S
-		# (default 1800s = 30min), it is hung. A healthy pulse cycle
-		# completes in <5 min; 30+ min means the process is stuck.
-		# Kill the stuck owner and reclaim.
+		# GH#37874: elapsed cycle age is not a hang. Dispatch can fill many
+		# waves; reclaim only after its owner heartbeat stops for the ceiling.
+		# Legacy/malformed leases fall back to process age (GH#33007).
 		lock_age=$(_instance_lock_publication_age "$lock_pid" "$lock_age")
 		local max_age="${PULSE_LOCK_MAX_AGE_S:-1800}"
 		if [[ "$lock_age" -gt "$max_age" ]]; then
@@ -244,8 +284,16 @@ _handle_stale_llm_lock() {
 		return 1
 	fi
 
-	# Age-based force-reclaim: if a genuine pulse-wrapper has been holding
-	# the LLM lock for longer than PULSE_LOCK_MAX_AGE_S, it is hung.
+	# The supervisor releases the instance lock before its LLM phase (t2774),
+	# so wrapper process age includes the long deterministic phase. Judge the
+	# owner by how long it has held the LLM lock (pid file mtime) instead;
+	# fall back to the instance lease / process age when that is unusable.
+	local llm_lock_age=""
+	if llm_lock_age=$(_llm_lock_hold_age "${lockdir}/pid" "$lock_age"); then
+		lock_age="$llm_lock_age"
+	else
+		lock_age=$(_instance_lock_publication_age "$lock_pid" "$lock_age")
+	fi
 	local max_age="${PULSE_LOCK_MAX_AGE_S:-1800}"
 	if [[ "$lock_age" -gt "$max_age" ]]; then
 		echo "[pulse-wrapper] FORCE-RECLAIMED stale LLM lockdir (owner PID ${lock_pid}, age ${lock_age}s > ceiling ${max_age}s, owner_cmd='${owner_cmd%%' '*}') — killing hung owner (GH#20613)" >>"$WRAPPER_LOGFILE"
@@ -288,6 +336,7 @@ acquire_instance_lock() {
 	fi
 
 	# Write our PID into the lock directory for stale-lock detection
+	date +%s >"${LOCKDIR}/supervisor_heartbeat_epoch"
 	echo "$$" >"${LOCKDIR}/pid"
 
 	# GH#21433 (t3002): Post-acquisition ownership verification.
@@ -395,6 +444,10 @@ _pulse_exit_cleanup() {
 	done
 	_PULSE_EXIT_PR_LIST_CACHE_DIR=""
 	_PULSE_EXIT_PR_LIST_PROVIDER_CACHE_DIR=""
+	# GH#37914: the cycle-owned routines ticker ends with its cycle.
+	if declare -F _pulse_stop_routines_ticker >/dev/null 2>&1; then
+		_pulse_stop_routines_ticker || true
+	fi
 	_dispatch_cleanup_benign_blocks_cycle || true
 	_dispatch_cleanup_cycle_cache || true
 	_pulse_release_llm_lock || true

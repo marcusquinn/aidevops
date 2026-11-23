@@ -39,11 +39,60 @@ Interactive sessions have no `main`/`master` exception: every edit uses a linked
 
 All other paths and all interactive edits require a linked worktree. `pre-edit-check.sh` is authoritative for the mode and path decision; write-time hooks provide additional enforcement where available.
 
+## Gitignored Runtime Output Exception (GH#39573)
+
+Some canonical checkouts double as operations workspaces. Scheduled tasks there
+write gitignored runtime output, such as logs or report facts, that launchd jobs
+and later runs read from the canonical path. A linked worktree would hide that
+output from those readers. To allow direct file-tool writes to such paths, the
+user adds a prefix list to the canonical `.aidevops.json`:
+
+```json
+{ "canonical_write_allow": ["automation/logs/", "finance/ar/runs/"] }
+```
+
+`canonical-write-policy-helper.py check-write` allows a canonical target only when
+all of these conditions hold:
+
+- `.aidevops.json` is untracked, gitignored, a regular single-link file owned by
+  the user and at most 1 MiB. A tracked file is shared content, not a local
+  opt-in.
+- The target falls under a listed prefix. Each prefix must be a relative
+  directory ending in `/`. Entries that are empty, `./`, absolute, contain `..`,
+  start with `:` or contain glob characters are dropped. Matching compares whole
+  path components, so `logs/` never matches `logs-secret/`.
+- No component of the path as written is a symlink, including directories above
+  the checkout, so spell the path through the checkout's real location. The file
+  is either missing or a regular file with a single link.
+- No path component is `.git`, `.aidevops.json`, `.gitignore` or
+  `.gitattributes`. The comparison case-folds, removes format characters and
+  ignores trailing dots or spaces, so filesystem aliases of these names also
+  match.
+- Git reports the path as untracked and ignored. A tracked file stays read-only
+  even when an ignore rule matches it. The tracked check ignores case, so a case
+  alias of a tracked file is also read-only.
+
+Every other canonical write keeps the read-only deny. Agents never add or widen
+this list themselves. Only the user edits it, and `aidevops project-config set`
+does not accept the key. Allowlisted folders hold untrusted runtime data, so
+never execute files from them or use them as a Git working directory.
+
+`pre-edit-check.sh --file <target>` exits 0 for an allowlisted target, and so
+does `aidevops_pre_edit_check` with `targetPaths`. Bash redirection policy is
+unchanged, so write runtime output with file tools. The `canonical_runtime_allow`
+field of the decision reports why a write was or was not exempted.
+
 ## Git Hook Status Without External-Directory Access
 
 Linked worktrees share Git hooks with their canonical repository through
 `git rev-parse --git-common-dir`. Never inspect that external `.git/hooks`
 directory with generic Read, Glob, Edit, or Write tools.
+
+The write policy denies file-tool writes to Git metadata with
+`ACTION_REQUIRED=use_git_commands_for_git_metadata` (GH#39582). This covers any
+Git directory (including case aliases such as `.GIT/`), a linked worktree's
+`.git` gitfile and nested `.git` paths. Change it with Git commands or the
+aidevops hook installers.
 
 Use `aidevops_hook_status` to inspect known pre-commit and pre-push marker
 status for the current worktree. The tool is repository-bound for headless

@@ -68,6 +68,20 @@ yourself from printed output. The launcher already provides `PATH`.
 
 ### 2. Read pre-fetched state (DO NOT re-fetch)
 
+**Stale-state override:** if the launch prompt says no current snapshot exists,
+do not read or rely on the old snapshot. This overrides all pre-fetched-state
+instructions below, including snapshot-derived repository scope. Run
+`bash ~/.aidevops/agents/scripts/pulse-wrapper.sh --command list-scope` to obtain
+current schedule-filtered `slug|path` pairs from configuration (use the path for
+`repo-cap` and other permitted repository operations, not worker launches).
+Worker dispatch remains owned by the deterministic wrapper. Limit triage and
+`list-candidates SLUG 100` to those slugs; use the named helpers and targeted `gh`
+reads for current evidence. In stale mode only, discover live PRs with one bounded
+call per scoped slug (`gh pr list --repo SLUG --state open --limit 50 --json number,title,headRefName,statusCheckRollup,reviewDecision,mergeable`),
+overriding the `gh pr list` prohibition below. Skip snapshot-only checks without equivalent live
+evidence. If scope lookup fails or returns no slugs, log a diagnostic and exit
+cleanly rather than using persisted scope or broadening to all repositories.
+
 Data is in your prompt between `--- PRE-FETCHED STATE ---` markers or in the state file path provided. Use it directly — do NOT run `gh pr list` or `gh issue list` (root cause of the "only processes first repo" bug).
 
 **t2041 read contract — summary first, deep reads on demand.**
@@ -296,7 +310,7 @@ Also check bundle overrides: `bundle-helper.sh get agent_routing <repo-path>`.
 
 ### Per-repo worker cap
 
-Default `MAX_WORKERS_PER_REPO=5`. Run `~/.aidevops/agents/scripts/pulse-wrapper.sh --command repo-cap PATH` before dispatching — returns 0 (at cap, skip) or 1 (below cap, safe to dispatch).
+Default `MAX_WORKERS_PER_REPO=5`. Run `~/.aidevops/agents/scripts/pulse-wrapper.sh --command repo-cap "PATH"` to inspect capacity — returns 0 (at cap) or 1 (below cap). Worker launches remain owned by the deterministic wrapper.
 
 Read the stdout `PULSE_COMMAND_RESULT` line rather than shell status probes: OpenCode may hide nonzero exit statuses. `command=repo-cap rc=0 outcome=at-cap` means skip; `command=repo-cap rc=1 outcome=below-cap` means capacity is available. After dispatch, `command=dispatch rc=0 outcome=launched` confirms launch; `rc=1` or `rc=3` with `outcome=deferred` means no launch. Other statuses report `outcome=failed`; do not count them as launches or available capacity. Both commands preserve their exit statuses and print exactly one result line in addition to any delegate output. Usage errors return 2 on stderr with no result line.
 
@@ -306,7 +320,7 @@ When dispatching a subtask (task ID contains a dot, e.g., `t1408.3`), include a 
 
 ### Scope boundary
 
-Only dispatch workers for repos in the pre-fetched state (`pulse: true`). Workers can file issues on any repo, but code changes are restricted to `PULSE_SCOPE_REPOS`.
+Only dispatch workers for repos in the pre-fetched state (`pulse: true`), or in the current `list-scope` output when the stale-state override applies. Workers can file issues on any repo, but code changes are restricted to `PULSE_SCOPE_REPOS`.
 
 ## Quality-Debt and Simplification-Debt
 

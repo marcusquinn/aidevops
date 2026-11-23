@@ -42,6 +42,7 @@ fi
 #######################################
 # Configuration
 #######################################
+PULSE_ELASTIC_DISPATCH_ENABLED="${PULSE_ELASTIC_DISPATCH_ENABLED:-1}" # Fresh owner lease, not cycle age, bounds dispatch
 PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-3600}"                                       # 60 min hard ceiling — workers need 10-20 min to solve issues; 15 min was killing active workers (GH#19166)
 PULSE_IDLE_TIMEOUT="${PULSE_IDLE_TIMEOUT:-1800}"                                             # 30 min idle before kill — the per-worker activity watchdog (300s) is the real stall detector
 PULSE_IDLE_CPU_THRESHOLD="${PULSE_IDLE_CPU_THRESHOLD:-2}"                                    # CPU% below this = idle (0-100 scale) — lowered from 5 to reduce false positives on I/O-bound work
@@ -68,8 +69,12 @@ ORPHAN_WORKTREE_GRACE_SECS="${ORPHAN_WORKTREE_GRACE_SECS:-1800}"                
 # 1536 MB per worker: measured headless worker process trees (opencode plus
 # git/node/test children) used 0.7-1.6 GB on 2026-10-23; the former 512 MB
 # estimate admitted about 3x more workers than RAM could hold.
-RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-1536}"
-RAM_RESERVE_MB="${RAM_RESERVE_MB:-6144}"                                                     # 6 GB reserved for OS + user apps
+# Per-host tuning (GH#39157): env wins, then config.jsonc, then the default.
+# Validate here, before the automatic cap below uses them in arithmetic.
+RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-$(config_get "orchestration.ram_per_worker_mb" "1536")}"
+RAM_RESERVE_MB="${RAM_RESERVE_MB:-$(config_get "orchestration.ram_reserve_mb" "6144")}" # 6 GB reserved for OS + user apps
+RAM_PER_WORKER_MB=$(_validate_int RAM_PER_WORKER_MB "$RAM_PER_WORKER_MB" 1536 1)
+RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 6144)
 # Automatic cap from total RAM (not free RAM — that's volatile):
 # (total_ram_mb - reserve) / ram_per_worker, clamped to [2, 64]. Live free RAM
 # bounds each pass further in calculate_max_workers / the refill cap.
@@ -328,8 +333,6 @@ PULSE_EVENT_REFILL_WAKE_PASSES=$(_validate_int PULSE_EVENT_REFILL_WAKE_PASSES "$
 ORPHAN_MAX_AGE=$(_validate_int ORPHAN_MAX_AGE "$ORPHAN_MAX_AGE" 7200)
 ORPHAN_INACTIVITY_AGE=$(_validate_int ORPHAN_INACTIVITY_AGE "$ORPHAN_INACTIVITY_AGE" 259200 86400)
 ORPHAN_WORKTREE_GRACE_SECS=$(_validate_int ORPHAN_WORKTREE_GRACE_SECS "$ORPHAN_WORKTREE_GRACE_SECS" 1800 60)
-RAM_PER_WORKER_MB=$(_validate_int RAM_PER_WORKER_MB "$RAM_PER_WORKER_MB" 1536 1)
-RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 6144)
 MAX_WORKERS_CAP=$(_validate_int MAX_WORKERS_CAP "$MAX_WORKERS_CAP" "${_default_cap:-8}" 1)
 DAILY_PR_CAP=$(_validate_int DAILY_PR_CAP "$DAILY_PR_CAP" 5 1)
 PRODUCT_RESERVATION_PCT=$(_validate_int PRODUCT_RESERVATION_PCT "$PRODUCT_RESERVATION_PCT" 60 0)
@@ -423,7 +426,18 @@ PULSE_EVENT_REFILL_TRIGGER_FILE="${PULSE_EVENT_REFILL_TRIGGER_FILE:-${AIDEVOPS_P
 PULSE_EVENT_REFILL_HELPER="${PULSE_EVENT_REFILL_HELPER:-${SCRIPT_DIR}/pulse-event-refill.sh}"
 PULSE_EVENT_REFILL_WRAPPER="${PULSE_EVENT_REFILL_WRAPPER:-${SCRIPT_DIR}/pulse-wrapper.sh}"
 export AIDEVOPS_PULSE_EVENT_REFILL_ENABLED PULSE_EVENT_REFILL_TRIGGER_FILE
-OPENCODE_BIN="${OPENCODE_BIN:-$(command -v opencode 2>/dev/null || echo "opencode")}"
+# GH#39095: resolve the binary for the active OpenCode profile. Under
+# AIDEVOPS_OPENCODE_PROFILE=v2 workers must run the isolated `opencode2`
+# runtime; a hardcoded `command -v opencode` picked whichever `opencode` came
+# first on the launchd PATH (possibly a V1 install), and because launchd
+# exports OPENCODE_BIN the wrong binary reached every worker launch.
+_pulse_opencode_binary=""
+if declare -F aidevops_opencode_profile_value >/dev/null 2>&1; then
+	_pulse_opencode_binary=$(aidevops_opencode_profile_value binary 2>/dev/null) || _pulse_opencode_binary=""
+fi
+_pulse_opencode_binary="${_pulse_opencode_binary:-opencode}"
+OPENCODE_BIN="${OPENCODE_BIN:-$(command -v "$_pulse_opencode_binary" 2>/dev/null || echo "$_pulse_opencode_binary")}"
+unset _pulse_opencode_binary
 # PULSE_DIR: working directory for the supervisor pulse session.
 # Defaults to a neutral workspace path so pulse sessions are not associated
 # with any specific managed repo in the host app's session database.

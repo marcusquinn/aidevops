@@ -17,6 +17,8 @@
 # Event types (use the constants below to avoid repeated literal violations):
 #   _WTAR_REMOVED          "removed"        — worktree was actually removed
 #   _WTAR_SKIPPED          "skipped"        — removal was blocked
+#   _WTAR_DEGRADED         "degraded"       — CWD visibility degraded; the caller's
+#                                             recoverable fallback decides next
 #   _WTAR_FIXTURE_REMOVED  "fixture-removed" — removed during test teardown
 #
 # Reason values (non-exhaustive — free-form, kept short):
@@ -52,6 +54,7 @@ _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED=1
 # =============================================================================
 _WTAR_REMOVED="removed"
 _WTAR_SKIPPED="skipped"
+_WTAR_DEGRADED="degraded"
 _WTAR_FIXTURE_REMOVED="fixture-removed"
 _WTAR_MODE_SKIPPED="skipped"
 _WTAR_BOOL_TRUE="true"
@@ -275,7 +278,8 @@ _worktree_privileged_read_cwd() {
 	local pid="${proc_dir##*/}"
 	local timeout_seconds=5
 	[[ "$proc_root" == /proc && "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
-	worktree_process_inspector_allowed || return 1
+	# Within one capture pass the platform is resolved once, not per process.
+	worktree_process_inspector_allowed "${_WT_PASS_PLATFORM:-$(worktree_process_platform)}" || return 1
 	if declare -F timeout_sec >/dev/null 2>&1; then
 		timeout_sec "$timeout_seconds" sudo -n -- \
 			/usr/local/libexec/aidevops-worktree-cwd-inspect "$pid" 2>/dev/null
@@ -285,6 +289,108 @@ _worktree_privileged_read_cwd() {
 	command timeout "$timeout_seconds" sudo -n -- \
 		/usr/local/libexec/aidevops-worktree-cwd-inspect "$pid" 2>/dev/null
 	return $?
+}
+
+# Per-call PID limit of the inspector's `--cwds` mode (CWDS_MAX_PIDS) and the
+# status _worktree_privileged_read_cwds returns when a batch ran out of time.
+_WT_CWDS_MAX_PIDS=4096
+_WT_CWDS_TIMEOUT_RC=124
+
+# Batched form of _worktree_privileged_read_cwd (GH#38918): one sudo call for
+# up to _WT_CWDS_MAX_PIDS pending PIDs instead of one each. Prints one
+# `R<TAB>pid<TAB>cwd` or `F<TAB>pid` line per requested PID, in request order,
+# and returns 0 only for a complete, well-formed response. A timeout returns
+# _WT_CWDS_TIMEOUT_RC (GH#39335): the caller's six-second wait expired (124,
+# for example slow sudo or PAM) or the child's own five-second SIGALRM
+# deadline killed it (142). Per-PID calls would face the same delay, so the
+# caller degrades instead. Any other outcome (older installed inspector, sudo
+# refusal, invalid request, truncated or mismatched output) prints nothing and
+# returns 1 so the caller keeps the per-PID path.
+_worktree_privileged_read_cwds() {
+	local proc_root="$1"
+	shift
+	local inspector="/usr/local/libexec/aidevops-worktree-cwd-inspect"
+	local timeout_seconds=6
+	local output=""
+	local pid=""
+	local status=0
+
+	[[ "$proc_root" == /proc && "$#" -ge 1 && "$#" -le "$_WT_CWDS_MAX_PIDS" ]] || return 1
+	for pid in "$@"; do
+		[[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+	done
+	worktree_process_inspector_allowed "${_WT_PASS_PLATFORM:-$(worktree_process_platform)}" || return 1
+	[[ -x "$inspector" ]] || return 1
+	if declare -F timeout_sec >/dev/null 2>&1; then
+		output=$(timeout_sec "$timeout_seconds" sudo -n -- "$inspector" --cwds "$@" 2>/dev/null) || status=$?
+	elif command -v timeout >/dev/null 2>&1; then
+		output=$(command timeout "$timeout_seconds" sudo -n -- "$inspector" --cwds "$@" 2>/dev/null) || status=$?
+	else
+		return 1
+	fi
+	case "$status" in
+	0) ;;
+	124 | 142) return "$_WT_CWDS_TIMEOUT_RC" ;;
+	*) return 1 ;;
+	esac
+	_worktree_parse_privileged_cwds "$output" "$@"
+	return $?
+}
+
+# Validate a `--cwds` response against the requested PIDs: versioned header
+# with the exact count, one R/F line per PID in request order, then the exact
+# trailer and nothing after it. Prints the R/F lines only when all of that
+# holds; a truncated, reordered, extra or malformed response returns 1.
+_worktree_parse_privileged_cwds() {
+	local output="$1"
+	shift
+	local count="$#"
+	local line=""
+	local kind=""
+	local rest=""
+	local line_pid=""
+	local target=""
+	local index=0
+	local seen_header=0
+	local seen_end=0
+	local result=""
+	local -a pids=("$@")
+
+	[[ "$count" -ge 1 ]] || return 1
+	while IFS= read -r line; do
+		[[ "$seen_end" -eq 0 ]] || return 1
+		if [[ "$seen_header" -eq 0 ]]; then
+			[[ "$line" == "aidevops-cwd-inspect"$'\t'"cwds"$'\t'"1"$'\t'"$count" ]] || return 1
+			seen_header=1
+			continue
+		fi
+		if [[ "$line" == "end"$'\t'"$count" ]]; then
+			seen_end=1
+			continue
+		fi
+		[[ "$index" -lt "$count" ]] || return 1
+		kind="${line%%$'\t'*}"
+		rest="${line#*$'\t'}"
+		[[ "$rest" != "$line" ]] || return 1
+		case "$kind" in
+		R)
+			line_pid="${rest%%$'\t'*}"
+			target="${rest#*$'\t'}"
+			[[ "$target" != "$rest" && "$target" == /* && "$target" != *$'\t'* ]] || return 1
+			;;
+		F)
+			line_pid="$rest"
+			target=""
+			;;
+		*) return 1 ;;
+		esac
+		[[ "$line_pid" == "${pids[$index]}" ]] || return 1
+		result+="${line}"$'\n'
+		index=$((index + 1))
+	done <<<"$output"
+	[[ "$seen_end" -eq 1 && "$index" -eq "$count" ]] || return 1
+	printf '%s' "$result"
+	return 0
 }
 
 # Providers collect evidence only; ownership, Git and removal policy stay here.
@@ -770,7 +876,9 @@ _worktree_guard_degraded_cwd() {
 	fi
 	WORKTREE_REMOVAL_GUARD_VISIBILITY="$_WT_CWD_VISIBILITY_DEGRADED"
 	WORKTREE_REMOVAL_GUARD_REASON="$_WT_CWD_REASON_DEGRADED"
-	log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "$_WT_CWD_REASON_DEGRADED" "recoverable-required"
+	# Not a refusal yet (GH#39034): the caller may still take the recoverable
+	# fallback; only its final refusal logs worktree-skipped.
+	log_worktree_removal_event "$_WTAR_DEGRADED" "$caller" "$wt_path" "$_WT_CWD_REASON_DEGRADED" "recoverable-required"
 	return "$_WT_CWD_CAPTURE_DEGRADED_RC"
 }
 

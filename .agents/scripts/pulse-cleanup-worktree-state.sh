@@ -1248,11 +1248,15 @@ _record_orphan_crash_classification() {
 	if [[ "${AIDEVOPS_SKIP_INFRA_FAILURE_ESCALATION:-0}" != "1" ]] \
 		&& _consecutive_zero_session_failures "$orphan_issue_num" "$repo_slug_age" 2; then
 		echo "[pulse-wrapper] Orphan cleanup: dispatch-infrastructure-failure detected for #${orphan_issue_num} (${repo_slug_age}) — applying status:blocked" >>"$LOGFILE"
+		# GH#38360: a setup-side failure is runner infrastructure that AI
+		# recovery diagnoses first; the companion names that owner.
+		local _infra_companion="${BLOCKED_NEEDS_AI_RECOVERY:-needs-ai-recovery}"
 		if declare -F set_issue_status >/dev/null 2>&1; then
-			set_issue_status "$orphan_issue_num" "$repo_slug_age" "blocked" >/dev/null 2>&1 || true
+			set_issue_status "$orphan_issue_num" "$repo_slug_age" "blocked" \
+				--add-label "$_infra_companion" >/dev/null 2>&1 || true
 		else
-			gh issue edit "$orphan_issue_num" --repo "$repo_slug_age" \
-				--add-label "status:blocked" >/dev/null 2>&1 || true
+			gh issue edit "$orphan_issue_num" --repo "$repo_slug_age" --add-label "status:blocked" \
+				--add-label "$_infra_companion" >/dev/null 2>&1 || true
 		fi
 		# Post the worker-mentoring advisory comment carrying the marker.
 		local _advisory_body

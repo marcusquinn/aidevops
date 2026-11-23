@@ -140,28 +140,33 @@ _dam_fetch_alert_groups() {
     return 1
   fi
   rm -f "$error_file" 2>/dev/null || true
+  # One package upgrade remediates every alert for that package, so the package
+  # (not package+patched version) is the unit of work and of the issue title
+  # (GH#38328). Patched versions are listed, never ordered: version ordering is
+  # ecosystem-specific and lexical sorting is wrong ("1.10" < "1.9").
   printf '%s\n' "$alerts_json" | jq -r '
     [ .[][]?
       | select(.state == "open")
       | {
           package: (.dependency.package.name // "unknown"),
-          ecosystem: (.dependency.package.ecystem // .dependency.package.ecosystem // "unknown"),
+          ecosystem: (.dependency.package.ecosystem // "unknown"),
           manifest: (.dependency.manifest_path // "unknown"),
           severity: (.security_advisory.severity // "unknown"),
           patched: (.security_vulnerability.first_patched_version.identifier // "")
         }
     ]
-    | sort_by(.package, .ecosystem, .patched)
-    | group_by([.package, .ecosystem, .patched])[]?
+    | sort_by(.package, .ecosystem)
+    | group_by([.package, .ecosystem])[]?
     | {
         package: .[0].package,
         ecosystem: .[0].ecosystem,
-        patched: .[0].patched,
+        patched: ([.[].patched | select(. != "")] | unique | join(", ")),
         manifests: ([.[].manifest] | unique | join(", ")),
         severities: ([.[].severity] | unique | join(", ")),
-        count: length
+        count: length,
+        unpatched: ([.[] | select(.patched == "")] | length)
       }
-    | [.package, .ecosystem, (if .patched == "" then "none" else .patched end), .manifests, .severities, (.count|tostring)] | @tsv
+    | [.package, .ecosystem, (if .patched == "" then "none" else .patched end), .manifests, .severities, (.count|tostring), (.unpatched|tostring)] | @tsv
   ' 2>/dev/null
   return $?
 }
@@ -206,10 +211,11 @@ _dam_write_issue_body() {
   local manifests="$5"
   local severities="$6"
   local alert_count="$7"
+  local unpatched_count="${8:-0}"
 
   {
     printf '## Summary\n\n'
-    printf 'GitHub dependency alerts report %s open alert group(s) for %s%s%s in the %s%s%s ecosystem.\n\n' "$alert_count" '`' "$package_name" '`' '`' "$ecosystem" '`'
+    printf 'GitHub dependency alerts report %s open alert(s) for %s%s%s in the %s%s%s ecosystem.\n\n' "$alert_count" '`' "$package_name" '`' '`' "$ecosystem" '`'
     printf '## Scope\n\n'
     printf '%s\n' "- Package: \`${package_name}\`"
     printf '%s\n' "- Ecosystem: \`${ecosystem}\`"
@@ -220,9 +226,16 @@ _dam_write_issue_body() {
       printf '## How\n\n'
       printf 'Investigate whether the dependency can be removed, replaced, usage-constrained, or risk-accepted with a short code comment. Do not repeatedly file duplicate issues while GitHub reports no patched version.\n\n'
     else
-      printf '%s\n\n' "- Minimum patched version reported by GitHub: \`${patched_version}\`"
-      printf '## How\n\n'
-      printf 'Update all affected manifest/lock files so the package resolves to at least the patched version, then run the relevant package-manager audit plus the repo quality gate.\n\n'
+      if [[ "$patched_version" == *", "* ]]; then
+        printf '%s\n' "- Patched versions reported by GitHub across these alerts: \`${patched_version}\`"
+      else
+        printf '%s\n' "- Minimum patched version reported by GitHub: \`${patched_version}\`"
+      fi
+      if [[ "$unpatched_count" =~ ^[1-9][0-9]*$ ]]; then
+        printf '%s\n' "- Alerts with no patched version reported yet: ${unpatched_count}"
+      fi
+      printf '\n## How\n\n'
+      printf 'Update all affected manifest/lock files in one change so the package resolves to a version that satisfies every patched version listed above, then run the relevant package-manager audit plus the repo quality gate.\n\n'
     fi
     printf '## Verification\n\n'
     printf '%s\n' '- Run the package-manager resolver/audit for the ecosystem.'
@@ -243,6 +256,7 @@ _dam_create_issue_for_group() {
   local severities="$6"
   local alert_count="$7"
   local dry_run="${8:-0}"
+  local unpatched_count="${9:-0}"
   local title=""
   local body_file=""
   local -a labels=()
@@ -265,7 +279,7 @@ _dam_create_issue_for_group() {
 
   _dam_ensure_labels "$repo_slug" "${labels[@]}"
   body_file=$(mktemp "${TMPDIR:-/tmp}/dependabot-alert-issue.XXXXXX") || return 1
-  _dam_write_issue_body "$body_file" "$package_name" "$ecosystem" "$patched_version" "$manifests" "$severities" "$alert_count"
+  _dam_write_issue_body "$body_file" "$package_name" "$ecosystem" "$patched_version" "$manifests" "$severities" "$alert_count" "$unpatched_count"
 
   local -a create_args=(--repo "$repo_slug" --title "$title" --body-file "$body_file")
   local label=""
@@ -290,7 +304,7 @@ dependabot_alert_monitor_scan_repo() {
   local groups=""
   local created=0
   local skipped=0
-  local package_name ecosystem patched_version manifests severities alert_count group_key
+  local package_name ecosystem patched_version manifests severities alert_count unpatched_count group_key
 
   groups="$(_dam_fetch_alert_groups "$repo_slug")"
   local fetch_rc=$?
@@ -303,16 +317,18 @@ dependabot_alert_monitor_scan_repo() {
     return 0
   fi
 
-  while IFS=$'\t' read -r package_name ecosystem patched_version manifests severities alert_count; do
+  while IFS=$'\t' read -r package_name ecosystem patched_version manifests severities alert_count unpatched_count; do
     [[ -n "$package_name" ]] || continue
-    group_key="${package_name}|${ecosystem}|${patched_version}"
+    # The issue title identifies the package, so the seen-state key must too;
+    # a version-scoped key let one package file one issue per patched version.
+    group_key="${package_name}|${ecosystem}"
     if _dam_is_recently_seen "$repo_slug" "$group_key"; then
       if [[ "$patched_version" == "none" || -z "$patched_version" ]] || _dam_issue_exists "$repo_slug" "$(_dam_issue_title "$package_name" "$ecosystem" "$patched_version")"; then
         skipped=$((skipped + 1))
         continue
       fi
     fi
-    if _dam_create_issue_for_group "$repo_slug" "$package_name" "$ecosystem" "$patched_version" "$manifests" "$severities" "$alert_count" "$dry_run"; then
+    if _dam_create_issue_for_group "$repo_slug" "$package_name" "$ecosystem" "$patched_version" "$manifests" "$severities" "$alert_count" "$dry_run" "$unpatched_count"; then
       if [[ "$dry_run" != "1" ]]; then
         _dam_record_seen "$repo_slug" "$group_key"
       fi

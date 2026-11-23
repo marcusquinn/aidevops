@@ -12,8 +12,9 @@
 # Functions in this module (in source order):
 #   - _dlw_assign_and_label
 #   - _dlw_setup_worker_log
-#   - _dlw_resolve_tier_and_model
+#   (tier/model selection: pulse-dispatch-worker-model.sh)
 #   - _dlw_precreate_worktree
+#   (node_modules restore: pulse-dispatch-worker-deps.sh)
 #   - _dlw_renew_prelaunch_lease
 #   - _dlw_prewarm_opencode_db
 #   - _dlw_prepare_opencode_db
@@ -53,6 +54,12 @@ source "${_DLW_SCRIPT_DIR}/pulse-dispatch-worker-systemd.sh"
 # shellcheck source=./pulse-dispatch-worker-launch-bundle.sh
 # shellcheck disable=SC1091  # _DLW_SCRIPT_DIR is resolved at runtime.
 source "${_DLW_SCRIPT_DIR}/pulse-dispatch-worker-launch-bundle.sh"
+# shellcheck source=./pulse-dispatch-worker-model.sh
+# shellcheck disable=SC1091  # _DLW_SCRIPT_DIR is resolved at runtime.
+source "${_DLW_SCRIPT_DIR}/pulse-dispatch-worker-model.sh"
+# shellcheck source=./pulse-dispatch-worker-deps.sh
+# shellcheck disable=SC1091  # _DLW_SCRIPT_DIR is resolved at runtime.
+source "${_DLW_SCRIPT_DIR}/pulse-dispatch-worker-deps.sh"
 unset _DLW_SCRIPT_DIR
 : "${AIDEVOPS_UNKNOWN_VERSION:=unknown}"
 if [[ -z "${_DLW_ZERO_ATTEMPT_EVIDENCE_PATTERN+x}" ]]; then
@@ -275,197 +282,6 @@ _dlw_setup_worker_log() {
 }
 
 #######################################
-# Resolve the dispatch tier from labels and select a worker model.
-# Populates three module-level globals so the orchestrator can read them
-# without the complexity of multi-value stdout parsing (bash 3.2 has no
-# namerefs — pattern from GH#18705 decomposition memory lesson):
-#   _DLW_DISPATCH_TIER        — cascade tier name: simple|standard|thinking
-#   _DLW_DISPATCH_MODEL_TIER  — runtime tier: simple|standard|thinking|bundle tier
-#   _DLW_SELECTED_MODEL       — concrete model name, or empty for auto-select
-#
-# ORDERED HEALTHY MODEL SELECTION (owned by this helper, NOT the caller).
-# When model_override is EMPTY, calls headless-runtime-helper.sh select
-# --role worker, which resolves the worker model from the routing table /
-# local override (respecting backoff DB, auth availability, provider
-# allowlists, and configured candidate order). The resolved model name is shown in the
-# dispatch comment so the audit trail records exactly which provider/model
-# the worker used.
-#
-# IMPORTANT: Callers MUST NOT pass a model override for default dispatches.
-# Only pass model_override when a specific model is required. Passing an
-# arbitrary model here bypasses ordered candidate selection and pins that
-# model. History: GH#17503 moved model resolution here from the worker.
-#
-# Arguments: issue_meta_json, model_override, repo_path, issue_title, prompt
-#######################################
-_dlw_resolve_tier_and_model() {
-	local issue_meta_json="$1"
-	local model_override="$2"
-	local repo_path="${3:-}"
-	local issue_title="${4:-}"
-	local prompt="${5:-}"
-
-	_DLW_DISPATCH_TIER="$_DLW_STANDARD_TIER"
-	_DLW_DISPATCH_MODEL_TIER="$_DLW_STANDARD_TIER"
-	local issue_labels_csv
-	issue_labels_csv=$(printf '%s' "$issue_meta_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels_csv=""
-	_DLW_TRUSTED_ISSUE_PRIORITY=$(printf '%s' "$issue_meta_json" | jq -r '[.labels[]?.name | select(startswith("priority:"))][0] // "" | sub("^priority:"; "")' 2>/dev/null || true)
-	# shellcheck disable=SC2016 # Backticks are literal optional Markdown delimiters.
-	_DLW_TRUSTED_RELEASE_TYPE=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null | sed -nE 's/^\*\*Release scope:\*\*[[:space:]]*`?(patch|minor|major)`?[[:space:]]*$/\1/ip' | sed -n '1p')
-	# shellcheck disable=SC2016 # Backticks are literal optional Markdown delimiters.
-	_DLW_TRUSTED_DEPLOY_SCOPE=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null | sed -nE 's/^\*\*Deployment scope:\*\*[[:space:]]*`?(incremental|full)`?[[:space:]]*$/\1/ip' | sed -n '1p')
-	local explicit_tier_label=0
-	if _dlw_has_explicit_tier_label "$issue_labels_csv"; then
-		explicit_tier_label=1
-	fi
-
-	# Resolve tier from labels, preferring highest rank when multiple present (t1997)
-	local resolved_tier
-	resolved_tier=$(_resolve_worker_tier "$issue_labels_csv")
-	case "$resolved_tier" in
-	tier:thinking)
-		_DLW_DISPATCH_TIER="thinking"
-		_DLW_DISPATCH_MODEL_TIER="thinking"
-		;;
-	tier:standard)
-		_DLW_DISPATCH_TIER="$_DLW_STANDARD_TIER"
-		_DLW_DISPATCH_MODEL_TIER="$_DLW_STANDARD_TIER"
-		;;
-	tier:simple)
-		_DLW_DISPATCH_TIER="simple"
-		_DLW_DISPATCH_MODEL_TIER="simple"
-		;;
-	esac
-
-	# t1364.6: when issue labels do not force a tier, let project bundles
-	# right-size worker model selection for the task type. Explicit model
-	# overrides and tier:* labels still win.
-	if [[ -z "$model_override" && "$explicit_tier_label" -eq 0 && -n "$repo_path" ]]; then
-		local bundle_tier
-		bundle_tier=$(_dlw_bundle_model_tier "$repo_path" "$issue_title" "$prompt") || bundle_tier=""
-		if [[ -n "$bundle_tier" ]]; then
-			_DLW_DISPATCH_TIER="bundle"
-			_DLW_DISPATCH_MODEL_TIER="$bundle_tier"
-		fi
-	fi
-
-	_DLW_SELECTED_MODEL=""
-	if [[ -n "$model_override" ]]; then
-		_DLW_SELECTED_MODEL="$model_override"
-	else
-		_DLW_SELECTED_MODEL=$("$HEADLESS_RUNTIME_HELPER" select --role worker --tier "$_DLW_DISPATCH_MODEL_TIER" 2>/dev/null) || _DLW_SELECTED_MODEL=""
-	fi
-	return 0
-}
-
-_dlw_assign_model_ab() {
-	local repo_slug="$1" issue_number="$2" model_override="$3" issue_meta_json="${4:-}"
-	_DLW_AB_ROUTING_TABLE=""
-	_DLW_AB_EXPERIMENT=""
-	_DLW_AB_ARM=""
-	[[ -n "${AIDEVOPS_MODEL_AB_CONFIG:-}" ]] || return 0
-	# Candidate dispatch supplies a tier default as an override. Only a model
-	# differing from the current labels' default is an explicit A/B bypass.
-	if [[ -n "$model_override" ]]; then
-		local labels_csv="" tier_default=""
-		labels_csv=$(jq -r '[.labels[]?.name] | join(",")' <<<"$issue_meta_json")
-		if declare -F resolve_dispatch_model_for_labels >/dev/null; then
-			tier_default=$(resolve_dispatch_model_for_labels "$labels_csv")
-		fi
-		[[ -n "$tier_default" && "$model_override" == "$tier_default" ]] || return 0
-	fi
-	local ab_json="" ab_helper="${BASH_SOURCE[0]%/*}/model-ab-helper.mjs"
-	local -a ab_args=(assign "$repo_slug" "$issue_number")
-	local created_at="" labels_json=""
-	created_at=$(jq -r '.createdAt // .created_at // empty' <<<"$issue_meta_json") || created_at=""
-	labels_json=$(jq -c '[.labels[]?.name]' <<<"$issue_meta_json") || labels_json="[]"
-	[[ -z "$created_at" ]] || ab_args+=(--created-at "$created_at" --labels-json "$labels_json")
-	# The helper decides whether this tier may start an assignment: standard-only
-	# arms treat other tiers as continuation-only; provider-family arms route all.
-	local routed_tier=""
-	case "$_DLW_DISPATCH_MODEL_TIER" in
-	simple | standard | thinking)
-		routed_tier="$_DLW_DISPATCH_MODEL_TIER"
-		ab_args+=(--tier "$routed_tier")
-		;;
-	*) ab_args+=(--continuation-only) ;;
-	esac
-	ab_json=$(node "$ab_helper" "${ab_args[@]}") || return 1
-	[[ "$(jq -r '.active' <<<"$ab_json")" == "true" ]] || return 0
-	_DLW_AB_ROUTING_TABLE=$(jq -r '.routing_table' <<<"$ab_json") || return 1
-	_DLW_AB_EXPERIMENT=$(jq -r '.experiment' <<<"$ab_json") || return 1
-	_DLW_AB_ARM=$(jq -r '.arm' <<<"$ab_json") || return 1
-	local ab_scope=""
-	ab_scope=$(jq -r '.scope // empty' <<<"$ab_json") || ab_scope=""
-	[[ "$ab_scope" == "all-tiers" ]] || [[ "$routed_tier" == "$_DLW_STANDARD_TIER" ]] || return 0
-	[[ -n "$routed_tier" ]] || return 0
-	# Availability selection follows the arm-first table; a failed primary may
-	# use its existing same-tier fallback without changing the assigned arm.
-	_DLW_SELECTED_MODEL=$(AIDEVOPS_MODEL_ROUTING_TABLE="$_DLW_AB_ROUTING_TABLE" \
-		"$HEADLESS_RUNTIME_HELPER" select --role worker --tier "$routed_tier" 2>/dev/null) || _DLW_SELECTED_MODEL=""
-	return 0
-}
-
-_dlw_append_model_ab_env() {
-	[[ -n "${_DLW_AB_ROUTING_TABLE:-}" ]] || return 0
-	worker_cmd+=(
-		AIDEVOPS_MODEL_ROUTING_TABLE="$_DLW_AB_ROUTING_TABLE"
-		AIDEVOPS_MODEL_AB_EXPERIMENT="$_DLW_AB_EXPERIMENT"
-		AIDEVOPS_MODEL_AB_ARM="$_DLW_AB_ARM"
-	)
-	return 0
-}
-
-#######################################
-# Check whether labels include an explicit worker tier.
-# _resolve_worker_tier defaults unlabeled issues to tier:standard, so callers
-# need this helper to distinguish an authored tier label from the fallback.
-# Arguments:
-#   $1 - comma-separated label list
-# Returns: 0 when a tier:* label is present, 1 otherwise
-#######################################
-_dlw_has_explicit_tier_label() {
-	local labels_csv="$1"
-	local labels_lower
-	labels_lower=$(printf '%s' "$labels_csv" | tr '[:upper:]' '[:lower:]')
-	local labels_with_commas=",${labels_lower},"
-
-	case "$labels_with_commas" in
-	*,tier:thinking,* | *,tier:standard,* | *,tier:simple,*) return 0 ;;
-	*) return 1 ;;
-	esac
-}
-
-#######################################
-# Resolve the task-specific model tier from the project bundle, if configured.
-# Arguments:
-#   $1 - repo_path
-#   $2 - issue_title
-#   $3 - prompt
-# Stdout: tier name (empty if unavailable)
-#######################################
-_dlw_bundle_model_tier() {
-	local repo_path="$1"
-	local issue_title="${2:-}"
-	local prompt="${3:-}"
-	local bundle_helper="${_DLW_SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/bundle-helper.sh"
-
-	if [[ -z "$repo_path" || ! -x "$bundle_helper" ]]; then
-		return 0
-	fi
-
-	local workload_type="" tier=""
-	workload_type=$(_dlw_bundle_workload_type "$issue_title" "$prompt")
-	tier=$("$bundle_helper" get "model_defaults.${workload_type}" "$repo_path" 2>/dev/null) || tier=""
-	if [[ -n "$tier" ]]; then
-		printf '%s\n' "$tier"
-	else
-		"$bundle_helper" get model_defaults.implementation "$repo_path" 2>/dev/null || true
-	fi
-	return 0
-}
-
-#######################################
 # Pre-create a worker worktree so the worker can start coding immediately
 # instead of spending 5-8 tool calls on worktree setup. Populates module-level
 # worktree and optional continuation-transfer globals:
@@ -498,149 +314,25 @@ _dlw_bundle_model_tier() {
 #
 # Arguments: issue_number, repo_path
 #######################################
-###############################################################################
-# Restore gitignored dependencies (node_modules) in a worktree.
-#
-# Git worktrees only contain tracked files. Directories like node_modules/
-# are gitignored, so they never appear in worktrees — even when the
-# canonical repo has them installed. If a project tool (e.g. .opencode/
-# tool/session-rename.ts) imports from node_modules, the runtime crashes
-# on startup: "Cannot find module '@opencode-ai/plugin'".
-#
-# This caused 100% worker failure rate: 15 of 27 open issues stuck in
-# dispatch-fail loops, 9 falsely escalated to tier:thinking. Workers
-# exited 0 with zero model activity because the tool-loading error
-# prevented the session from starting.
-#
-# Fix: after creating or resetting a worktree, copy scoped node_modules from
-# the canonical repo for package directories that have package.json tracked
-# in git. Root node_modules can be multi-GB and block the pulse before worker
-# spawn, so headless dispatch skips it by default unless explicitly enabled
-# with WORKTREE_NODE_MODULES_RESTORE_ROOT_ENABLED=1.
-#
-# Arguments: worktree_path, repo_path
-###############################################################################
-_dlw_node_modules_restore_lock_dir() {
-	local workspace_dir="${AIDEVOPS_WORKSPACE_DIR:-${HOME}/.aidevops/.agent-workspace}"
-	printf '%s\n' "${workspace_dir}/tmp/worktree-node-modules-restore.lock.d"
-	return 0
-}
-
-_dlw_node_modules_restore_acquire_lock() {
-	local lock_dir="$1"
-	local timeout_s="${WORKTREE_NODE_MODULES_RESTORE_LOCK_TIMEOUT_S:-2}"
-	local elapsed=0
-	[[ "$timeout_s" =~ ^[0-9]+$ ]] || timeout_s=2
-	mkdir -p "${lock_dir%/*}" 2>/dev/null || return 1
-	while ! mkdir "$lock_dir" 2>/dev/null; do
-		if [[ -d "$lock_dir" ]]; then
-			local lock_mtime="" now_epoch="" age_s=""
-			lock_mtime=$(_file_mtime_epoch "$lock_dir")
-			now_epoch=$(date +%s)
-			age_s=$((now_epoch - lock_mtime))
-			if ((age_s > 60)); then
-				# Stale lock dirs contain a pid marker. rmdir fails on that
-				# non-empty directory; retrying immediately without changing
-				# state spins pulse-wrapper children before worker_spawn.
-				rm -rf "$lock_dir" 2>/dev/null || true
-				continue
-			fi
-		fi
-		if ((elapsed >= timeout_s * 10)); then
-			return 1
-		fi
-		sleep 0.1
-		elapsed=$((elapsed + 1))
-	done
-	printf '%s\n' "$$" >"${lock_dir}/pid" 2>/dev/null || true
-	return 0
-}
-
-_dlw_node_modules_restore_release_lock() {
-	local lock_dir="$1"
-	rm -f "${lock_dir}/pid" 2>/dev/null || true
-	rmdir "$lock_dir" 2>/dev/null || true
-	return 0
-}
-
-_dlw_remove_generated_root_node_tool_link() {
-	local worktree_path="$1"
-	local repo_path="$2"
-	local _src_bin="${repo_path}/node_modules/.bin"
-	local _dst_bin="${worktree_path}/node_modules/.bin"
-	local _link_target=""
-	[[ -L "$_dst_bin" ]] || return 0
-	_link_target=$(readlink "$_dst_bin" 2>/dev/null) || return 0
-	[[ "$_link_target" == "$_src_bin" ]] || return 0
-	rm -f "$_dst_bin" 2>/dev/null || return 0
-	echo "[dispatch_with_dedup] Removed generated cross-boundary node_modules/.bin link from ${worktree_path}" >>"$LOGFILE"
-	return 0
-}
-
-_dlw_restore_worktree_deps() {
-	local worktree_path="$1"
-	local repo_path="$2"
-
-	[[ -z "$worktree_path" || -z "$repo_path" ]] && return 0
-	[[ ! -d "$worktree_path" || ! -d "$repo_path" ]] && return 0
-	[[ "${WORKTREE_NODE_MODULES_RESTORE_ENABLED:-1}" == "1" ]] || return 0
-
-	local _lock_dir=""
-	_lock_dir=$(_dlw_node_modules_restore_lock_dir)
-	if ! _dlw_node_modules_restore_acquire_lock "$_lock_dir"; then
-		echo "[dispatch_with_dedup] Skipping node_modules restore for ${worktree_path}: another restore is active" >>"$LOGFILE"
+# t19076 (GH#38818): a cleanup pass killed inside `git worktree remove` leaves
+# the tree registered with tracked files deleted from disk. That looked like a
+# dirty resume below, so workers inherited a checkout missing lockfiles and
+# tooling. When unstaged deletions are the only tracked change, restore them
+# from HEAD: no content is lost and untracked files are never touched.
+_dlw_restore_missing_tracked_files() {
+	local existing_path="$1"
+	local tracked_status="" deleted=0 other=0
+	tracked_status=$(git -C "$existing_path" status --porcelain --untracked-files=no 2>/dev/null) || return 0
+	[[ -n "$tracked_status" ]] || return 0
+	deleted=$(grep -c '^ D ' <<<"$tracked_status" || true)
+	other=$(grep -vc '^ D ' <<<"$tracked_status" || true)
+	[[ "$deleted" =~ ^[0-9]+$ && "$other" =~ ^[0-9]+$ ]] || return 0
+	[[ "$deleted" -gt 0 && "$other" -eq 0 ]] || return 0
+	if git -C "$existing_path" checkout -- . 2>/dev/null; then
+		echo "[dispatch_with_dedup] Restored ${deleted} tracked files missing after an interrupted worktree removal: ${existing_path}" >>"$LOGFILE"
 		return 0
 	fi
-
-	# Find directories in the worktree that have a package.json but are
-	# missing node_modules. Only check top-level and one level deep —
-	# deeper nesting is unlikely and find is expensive.
-	local _pkg_dir=""
-	local _attempted=0
-	local _max_dirs="${WORKTREE_NODE_MODULES_RESTORE_MAX_DIRS:-2}"
-	local _restore_root="${WORKTREE_NODE_MODULES_RESTORE_ROOT_ENABLED:-auto}"
-	# Share the controller's bounded, identity-checked copy implementation.
-	if ! declare -F _provision_worktree_node_modules >/dev/null 2>&1; then
-		local SCRIPT_DIR=""
-		SCRIPT_DIR=$(dirname "${BASH_SOURCE[0]}")
-		# shellcheck source=worktree-helper-add.sh
-		if ! source "${SCRIPT_DIR}/worktree-helper-add.sh"; then
-			_dlw_node_modules_restore_release_lock "$_lock_dir"
-			return 0
-		fi
-	fi
-	[[ "$_max_dirs" =~ ^[0-9]+$ ]] || _max_dirs=2
-	while IFS= read -r _pkg_dir; do
-		if ((_attempted >= _max_dirs)); then
-			break
-		fi
-		local _dir=""
-		_dir=$(dirname "$_pkg_dir") || continue
-		local _rel_dir=""
-		_rel_dir="${_dir#"$worktree_path"}" || continue
-		# _rel_dir is now e.g. "/.opencode" or "" (for root package.json)
-		if [[ -z "$_rel_dir" && "$_restore_root" != "1" && "$_restore_root" != "auto" ]]; then
-			_dlw_remove_generated_root_node_tool_link "$worktree_path" "$repo_path"
-			echo "[dispatch_with_dedup] Skipping root node_modules restore for ${worktree_path} (set WORKTREE_NODE_MODULES_RESTORE_ROOT_ENABLED=1 to enable)" >>"$LOGFILE"
-			continue
-		fi
-		local _src_nm="${repo_path}${_rel_dir}/node_modules"
-		local _dst_nm="${worktree_path}${_rel_dir}/node_modules"
-		# The validator accepts only a package-local package-lock.json or
-		# pnpm-lock.yaml (not bun.lock, nor a workspace member whose lock is at
-		# the root); skip guaranteed rejections before they spend the budget.
-		if [[ -d "$_src_nm" && ! -d "$_dst_nm" ]] &&
-			[[ -f "${_dir}/package-lock.json" || -f "${_dir}/pnpm-lock.yaml" ]]; then
-			# Rejections also spend preparation time and must not exhaust the
-			# prelaunch lease by retrying every package in a large worktree.
-			_attempted=$((_attempted + 1))
-			if ! _provision_worktree_node_modules "$worktree_path" "$repo_path" "${_rel_dir#/}" >>"$LOGFILE" 2>&1; then
-				echo "[dispatch_with_dedup] Dependency provisioning unavailable; no external permission granted" >>"$LOGFILE"
-			fi
-		fi
-	done < <(find "$worktree_path" -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" 2>/dev/null)
-	_dlw_node_modules_restore_release_lock "$_lock_dir"
-
+	echo "[dispatch_with_dedup] Could not restore ${deleted} missing tracked files; preserving worktree as found: ${existing_path}" >>"$LOGFILE"
 	return 0
 }
 
@@ -653,8 +345,11 @@ _dlw_prepare_existing_worktree() {
 		return 0
 	fi
 
+	_dlw_restore_missing_tracked_files "$existing_path"
 	local existing_status=""
-	existing_status=$(git -C "$existing_path" status --porcelain 2>/dev/null || true)
+	# Report untracked files whatever status.showUntrackedFiles says: the reset
+	# path below runs `git clean`, and must never reach a tree holding them.
+	existing_status=$(git -C "$existing_path" status --porcelain --untracked-files=all 2>/dev/null || true)
 	if [[ -n "$existing_status" ]]; then
 		# A same-runner retry must resume staged, unstaged, and untracked edits.
 		# Resetting here destroyed the only useful copy before GH#27138.
@@ -814,6 +509,10 @@ _dlw_capture_live_owner_refusal() {
 _dlw_report_precreate_failure() {
 	local issue_number="$1"
 	local repo_slug="$2"
+	if [[ "${_DLW_PRECREATE_FAILURE_REASON:-}" == worktree_reuse_sealed_generation ]]; then
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worktree_reuse_sealed_generation" 2
+		return $?
+	fi
 	if [[ "${_DLW_PRECREATE_FAILURE_REASON:-}" == "$DLW_LIVE_OWNER_REFUSED_REASON" ]]; then
 		pulse_stats_increment "worktree_live_owner_refused_count" 2>/dev/null || true
 		echo "[dispatch_with_dedup] WORKTREE_LIVE_OWNER_REFUSED issue=#${issue_number} repo=${repo_slug} owner_pid=${_DLW_REFUSING_OWNER_PID} owner_start=${_DLW_REFUSING_OWNER_START} action=hold_until_owner_exits_or_changes worktree=${_DLW_WORKTREE_PATH}" >>"$LOGFILE"
@@ -914,7 +613,8 @@ _dlw_precreate_worktree() {
 	local _branch _wt_output="" _managed_create="" _pc_t0=""
 	_dlw_managed_creation_env || return 1
 	_managed_create="$_DLW_MANAGED_CREATE_MODE"
-	_branch="feature/auto-$(date +%Y%m%d-%H%M%S)-gh${issue_number}"
+	# UTC, matching DISPATCH_CLAIM ts= for provenance proofs (GH#38042).
+	_branch="feature/auto-$(date -u +%Y%m%d-%H%M%S)-gh${issue_number}"
 	# Enrollment is only permitted for this creation, never an existing branch.
 	if git -C "$repo_path" show-ref --verify --quiet "refs/heads/$_branch"; then
 		return 1
@@ -928,6 +628,7 @@ _dlw_precreate_worktree() {
 	local _helper_session="${_precreate_session}-$$-${RANDOM}"
 	_wt_output=$(cd "$repo_path" && export "${_DLW_MANAGED_CREATE_ENV[@]}" && \
 		AIDEVOPS_SESSION_ORIGIN=worker \
+		AIDEVOPS_WORKTREE_PULSE_CREATE=1 \
 		AIDEVOPS_SKIP_AUTO_CLAIM=1 \
 		OPENCODE_PID="$$" OPENCODE_SESSION_ID="$_helper_session" \
 		WORKTREE_NODE_MODULES_RESTORE_ENABLED=0 \
@@ -1020,8 +721,9 @@ _dlw_precreate_helper_reason() {
 	local output="$1"
 	local reason="" pattern=""
 	# GH#36142: an enrollment refusal names its own cause, so it outranks the
-	# generic "Worktree retained" disposition that follows it.
-	for pattern in 'managed-worktree:' 'Generation enrollment refused:' 'AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=|Error:'; do
+	# generic "Worktree retained" disposition that follows it. GH#38095: so does
+	# a cleanup-receipt refusal, which precedes RECONCILIATION_FAILED.
+	for pattern in 'managed-worktree:' 'Generation enrollment refused:' 'Cleanup-receipt reconciliation refused:' 'AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=|Error:'; do
 		reason=$(printf '%s\n' "$output" | grep -E "$pattern" | tail -n 1 | tr -d "'\r" | cut -c1-200) || reason=""
 		[[ -z "$reason" ]] || break
 	done
@@ -1207,6 +909,28 @@ _dlw_prepare_opencode_db() {
 	return 0
 }
 
+#######################################
+# Print the worker's settled PGID (GH#39194). `setsid cmd &` forks first and
+# calls setsid() only after exec, so an immediate read returns the pulse PGID.
+# Re-read up to 25 x 0.02s until PGID == PID; empty output = child exited.
+# Pattern: sandbox-exec-helper.sh _sandbox_await_child_pgid (GH#38858).
+# Arguments: $1 - worker PID
+# Stdout: last PGID read (empty if the process is gone)
+#######################################
+_dlw_await_worker_pgid() {
+	local aw_pid="$1"
+	local aw_attempt=0 aw_pgid=""
+
+	while ((aw_attempt < 25)); do
+		aw_pgid=$(ps -o pgid= -p "$aw_pid" 2>/dev/null | tr -d ' ')
+		[[ -n "$aw_pgid" && "$aw_pgid" != "$aw_pid" ]] || break
+		sleep 0.02
+		aw_attempt=$((aw_attempt + 1))
+	done
+	printf '%s' "$aw_pgid"
+	return 0
+}
+
 # Execute a worker command via the selected systemd or detached backend,
 # detaching it from the pulse's process group (t2757) and, on
 # systemd, from the pulse oneshot cgroup (GH#23073). Without this, workers
@@ -1221,7 +945,6 @@ _dlw_prepare_opencode_db() {
 #   $2 - issue_number (for log messages)
 #   $3... - the worker command to execute
 # Stdout: worker PID
-#######################################
 _dlw_exec_detached() {
 	local worker_log="$1"
 	local issue_number="$2"
@@ -1269,13 +992,18 @@ _dlw_exec_detached() {
 	if [[ -z "${worker_pid:-}" ]] && command -v setsid >/dev/null 2>&1; then
 		setsid nohup "${worker_command[@]}" </dev/null >>"$worker_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 		worker_pid="$!"
-		# Log the detached PGID for diagnostics (should differ from pulse PGID)
+		# Log the settled PGID (GH#39194): an immediate read races setsid().
 		local worker_pgid="" pulse_pgid=""
-		worker_pgid=$(ps -o pgid= -p "$worker_pid" 2>/dev/null | tr -d ' ')
-		[[ -n "$worker_pgid" ]] || worker_pgid="$_DLW_UNKNOWN_VALUE"
+		worker_pgid=$(_dlw_await_worker_pgid "$worker_pid")
 		pulse_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ')
 		[[ -n "$pulse_pgid" ]] || pulse_pgid="$_DLW_UNKNOWN_VALUE"
-		echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid PGID=$worker_pgid (setsid detached from pulse PGID=$pulse_pgid; FDs 3-9 closed for t2814)" >>"$LOGFILE"
+		if [[ -z "$worker_pgid" ]]; then
+			echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid exited before PGID could be read (pulse PGID=$pulse_pgid)" >>"$LOGFILE"
+		elif [[ "$worker_pgid" == "$worker_pid" ]]; then
+			echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid PGID=$worker_pgid (setsid detached from pulse PGID=$pulse_pgid; FDs 3-9 closed for t2814)" >>"$LOGFILE"
+		else
+			echo "[dispatch_worker_launch] WARN: Issue #${issue_number}: worker PID=$worker_pid still in PGID=$worker_pgid (pulse PGID=$pulse_pgid) after setsid; isolation unconfirmed (GH#21102)" >>"$LOGFILE"
+		fi
 	elif [[ -z "${worker_pid:-}" ]]; then
 		echo "[dispatch_worker_launch] ERROR: setsid missing — worker isolation broken; worker shares pulse PGID and will be killed on next pulse restart. Run: aidevops update (GH#21102)" >>"$LOGFILE"
 		nohup "${worker_command[@]}" </dev/null >>"$worker_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
@@ -1722,6 +1450,18 @@ _dlw_append_canary_preflight_env() {
 	return 0
 }
 
+_dlw_append_worker_policy_env() {
+	# systemd services do not inherit the launching client's environment.
+	# Preserve explicitly empty scope as well as populated scope values.
+	if [[ -n "${PULSE_SCOPE_REPOS+x}" ]]; then
+		worker_cmd+=(PULSE_SCOPE_REPOS="$PULSE_SCOPE_REPOS")
+	fi
+	_dlw_append_trusted_release_env
+	_dlw_append_worktree_transfer_env
+	_dlw_append_canary_preflight_env
+	return 0
+}
+
 #######################################
 # Launch a worker process detached from the pulse process group.
 # Stdout: worker PID
@@ -1784,9 +1524,7 @@ _dlw_nohup_launch() {
 	)
 	_dlw_append_model_ab_env
 	_dlw_append_node_tool_env "$worker_worktree_path"
-	_dlw_append_trusted_release_env
-	_dlw_append_worktree_transfer_env
-	_dlw_append_canary_preflight_env
+	_dlw_append_worker_policy_env
 	if _dlw_min_worker_floor_active; then
 		worker_cmd+=(
 			AIDEVOPS_MIN_WORKER_FLOOR_BYPASS_ACTIVE=1
@@ -1961,9 +1699,7 @@ _dispatch_launch_worker() {
 	fi
 	_ds_record "$issue_number" "$repo_slug" "$DLW_STAGE_CANARY_PREFLIGHT" "$_ds_t0"
 
-	if ! _dlw_claim_lock_after_canary "$issue_number" "$repo_slug" "$self_login"; then
-		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "claim_lock_failed" 2 || return $?
-	fi
+	_dlw_claim_slot_and_lock "$issue_number" "$repo_slug" "$self_login" || return $?
 	local worker_pid attempt_id="" attempt_started_at="" prelaunch_deadline=0
 	_ds_t0=$(_ds_now_ns)
 	_dlw_begin_prelaunch "$issue_number" "$repo_slug" "$session_key" "$worker_log" || return $?

@@ -409,10 +409,13 @@ cmd_add_related_docs() {
 		log_warn "PyYAML not installed. Installing..."
 		if [[ ! -d "${VENV_DIR}" ]]; then
 			mkdir -p "$(dirname "${VENV_DIR}")"
-			python3 -m venv "${VENV_DIR}"
+			if ! python3 -m venv "${VENV_DIR}"; then
+				log_error "Cannot create a Python venv. Install python3-venv or uv, then retry."
+				return 1
+			fi
 		fi
 		activate_venv
-		pip install --quiet PyYAML
+		"${VENV_DIR}/bin/python" -m pip install --quiet PyYAML
 	fi
 
 	local args=()

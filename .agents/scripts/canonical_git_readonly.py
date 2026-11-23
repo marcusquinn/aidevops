@@ -106,7 +106,44 @@ def _hash_object_is_read_only(args: list[str]) -> bool:
     return not expect_value
 
 
+_ARCHIVE_FLAGS = frozenset({"--worktree-attributes", "--verbose", "-v", "--list", "-l"})
+_ARCHIVE_VALUE_OPTIONS = frozenset({"--format", "--prefix"})
+_STASH_QUERY_FLAGS = frozenset(
+    {"-p", "--patch", "--stat", "--numstat", "--shortstat", "--name-only",
+     "--name-status", "--oneline", "--no-color", "-u", "--include-untracked",
+     "--only-untracked"}
+)
+
+
+def _archive_is_read_only(args: list[str]) -> bool:
+    """Fail-closed allowlist: stdout archives only; unknown options may write."""
+    skip_value = False
+    for arg in args:
+        if skip_value:
+            skip_value = False
+        elif arg == "--":
+            break
+        elif arg in _ARCHIVE_VALUE_OPTIONS:
+            skip_value = True
+        elif arg.startswith("-") and not (
+            arg in _ARCHIVE_FLAGS
+            or arg.partition("=")[0] in _ARCHIVE_VALUE_OPTIONS
+            or (len(arg) == 2 and arg[1].isdigit())
+        ):
+            return False
+    return not skip_value
+
+
+def _stash_is_read_only(args: list[str]) -> bool:
+    """Allow `git stash list|show` with allowlisted display flags only."""
+    return bool(args) and args[0] in {"list", "show"} and all(
+        not arg.startswith("-") or arg in _STASH_QUERY_FLAGS for arg in args[1:]
+    )
+
+
 CANONICAL_CHECKS: dict[str, Callable[[list[str]], bool]] = {
+    "archive": _archive_is_read_only,
+    "stash": _stash_is_read_only,
     "branch": _branch_is_read_only,
     "bundle": _bundle_is_read_only,
     "config": config_is_read_only,

@@ -378,6 +378,7 @@ _hrff_build_claim_released_line() {
 	local opencode_version="${AIDEVOPS_UNKNOWN_VERSION:-}"
 	local release_ts=""
 	local machine_readable_part=""
+	local checkpoint_variant=""
 
 	if declare -F aidevops_find_version >/dev/null 2>&1; then
 		aidevops_version=$(aidevops_find_version 2>/dev/null || printf '%s' "$AIDEVOPS_UNKNOWN_VERSION")
@@ -389,6 +390,23 @@ _hrff_build_claim_released_line() {
 
 	release_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	machine_readable_part="CLAIM_RELEASED reason=${reason} runner=${runner_name} ts=${release_ts} aidevops_version=${aidevops_version} opencode_version=${opencode_version}"
+	# GH#38215: publish the effective runtime tier, not the dispatcher's initial
+	# guess. The attempt loop updates it after model rotation/escalation. Only
+	# checkpoint workers carry this head binding; legacy releases stay unknown.
+	# Pinned models can leave the runtime's default tier unchanged: verify the
+	# actual model and reasoning variant against that tier before publishing it.
+	if [[ "${AIDEVOPS_DISPATCH_TIER:-}" =~ ^(simple|standard|thinking)$ &&
+		"${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}" =~ ^[a-f0-9]{40,64}$ &&
+		"${AIDEVOPS_ROUTING_MODEL:-}" =~ ^[A-Za-z0-9._:/-]+$ &&
+		"${AIDEVOPS_ROUTING_VARIANT:-}" =~ ^[A-Za-z0-9_-]*$ ]] &&
+		declare -F model_tier_candidate_index >/dev/null &&
+		model_tier_candidate_index "$AIDEVOPS_DISPATCH_TIER" "$AIDEVOPS_ROUTING_MODEL" >/dev/null 2>&1 &&
+		checkpoint_variant=$(model_tier_variant "$AIDEVOPS_DISPATCH_TIER" "$AIDEVOPS_ROUTING_MODEL" 2>/dev/null); then
+		if [[ "$checkpoint_variant" == "${AIDEVOPS_ROUTING_VARIANT:-}" ]]; then
+			machine_readable_part+=" checkpoint_tier=${AIDEVOPS_DISPATCH_TIER} checkpoint_head=${AIDEVOPS_PR_REPAIR_HEAD_SHA}"
+			machine_readable_part+=" checkpoint_model=${AIDEVOPS_ROUTING_MODEL} checkpoint_variant=${AIDEVOPS_ROUTING_VARIANT:-default}"
+		fi
+	fi
 	if [[ -n "$exit_code_arg" ]]; then
 		machine_readable_part+=" exit=${exit_code_arg}"
 	fi
@@ -522,6 +540,7 @@ PY
 
 _hrff_blocked_exit_holds() {
 	declare -F gh_issue_edit_safe >/dev/null 2>&1 || return 1
+	[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" != resource_contended ]] || return 1
 	[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" != runner_capability_unmet ||
 		-n "${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}" ]] || return 1
 	return 0
@@ -540,10 +559,17 @@ _hrff_prepare_terminal_blocker_release() {
 	_HRFF_TERMINAL_BLOCKER_CIRCUIT_BODY=""
 	# Empty until this release's observation, or an earlier one, is evidence.
 	_HRFF_TERMINAL_BLOCKER_EVIDENCE=""
-	[[ -n "$repo_path" && "$blocker_fingerprint" =~ ^[a-f0-9]{24}$ ]] || return 0
 	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
 		--jq '{title: (.title // ""), body: (.body // "")}' 2>/dev/null) || return 0
 	comments_json=$(terminal_blocker_fetch_trusted_comments "$issue_number" "$repo_slug") || return 0
+	local input_hold_rc=0
+	terminal_blocker_input_circuit_active "$comments_json" "$issue_json" "$repo_slug" "$issue_number" "$repo_path" || input_hold_rc=$?
+	if [[ "$input_hold_rc" -ne 1 ]]; then
+		_HRFF_TERMINAL_BLOCKER_MODE=open
+		_HRFF_TERMINAL_BLOCKER_EVIDENCE=circuit
+		return 0
+	fi
+	[[ -n "$repo_path" && "$blocker_fingerprint" =~ ^[a-f0-9]{24}$ ]] || return 0
 	task_revision=$(terminal_blocker_task_revision \
 		"$issue_json" "$repo_slug" "$issue_number" "$repo_path") || return 0
 	# GH#33025: the login that authors this runner's releases also recognises
@@ -633,6 +659,10 @@ _hrff_hold_terminal_blocker_circuit() {
 		return 0
 	fi
 	[[ -z "$runner_name" ]] || hold_args+=(--remove-assignee "$runner_name")
+	# GH#38360: name the companion so set_issue_status need not guess it.
+	local companion=""
+	companion=$(_hrff_blocked_companion_label)
+	[[ -z "$companion" ]] || hold_args+=(--add-label "$companion")
 	if declare -F set_issue_status >/dev/null 2>&1; then
 		set_issue_status "$issue_number" "$repo_slug" blocked \
 			${hold_args[@]+"${hold_args[@]}"} >/dev/null 2>&1 ||
@@ -751,6 +781,17 @@ _release_dispatch_claim() {
 	local session_key="$1" reason="${2:-worker_failed}" rc=0
 	local issue_number="" repo_slug="${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}"
 
+	# GH#38982: once a delivery is complete or merged, resuming its finished
+	# conversation exits with no progress. Clear it before projection so the
+	# next continuation starts fresh from the brief; interruptions keep resume.
+	case "$(_hrff_verified_release_reason "$reason")" in
+	worker_complete | worker_merged_partial | worker_merged_partial_no_progress)
+		if [[ "$session_key" == issue-* ]] && declare -F clear_session_id_all_providers >/dev/null 2>&1; then
+			clear_session_id_all_providers "$session_key" ||
+				print_warning "[lifecycle] session_clear_failed session=${session_key} reason=${reason}"
+		fi
+		;;
+	esac
 	_hrff_release_dispatch_claim_attempt "$@" || rc=$?
 	issue_number=$(_hrff_release_issue_number "$session_key")
 	if [[ "$rc" -eq 0 ]]; then
@@ -949,6 +990,81 @@ _hrff_emit_release_terminal_lease() {
 }
 
 #######################################
+# Project a released draft checkpoint as available for exact-head continuation.
+# Always non-fatal.
+#
+# Args: $1 = issue_number, $2 = repo_slug, $3 = runner_name
+#######################################
+_hrff_project_draft_checkpoint() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local runner_name="$3"
+	local spec_restore_rc=0 dispatch_restored=0
+
+	# GH#36019: the draft is preserved work awaiting exact-head continuation
+	# (pr-checkpoint-continuation-helper.sh dispatch-stalled). A closing-linked
+	# draft projected as status:blocked was rejected by that target fence and
+	# held silently; WORKER_DRAFT_CHECKPOINT dedup still blocks redispatch.
+	if declare -F clear_active_status_on_release >/dev/null 2>&1; then
+		clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" available \
+			|| print_warning "Failed to project draft checkpoint state on #${issue_number} (non-fatal)"
+	fi
+	# A draft may have merged between checkpoint classification and release.
+	# Reconcile only after projection/unassignment; the shared guard requires
+	# available state and proves that NO open PR still owns the issue.
+	# shellcheck source=pulse-merge-partial-continuation.sh
+	source "${BASH_SOURCE[0]%/*}/pulse-merge-partial-continuation.sh"
+	if _pmpc_restore_available_dispatch "$repo_slug" "$issue_number" 1; then
+		dispatch_restored=1
+	fi
+	# GH#38021: the escalation removed auto-dispatch, and a canonical
+	# consolidated spec is filtered out of dispatch without it. Put back
+	# only what this run removed; the draft still routes the exact head.
+	_pmpc_restore_checkpoint_spec_dispatch "$repo_slug" "$issue_number" || spec_restore_rc=$?
+	if [[ "$spec_restore_rc" -eq 0 ]]; then
+		dispatch_restored=1
+		print_info "Restored auto-dispatch on consolidated spec #${issue_number} removed by this run's draft checkpoint"
+	elif [[ "$spec_restore_rc" -eq 2 ]]; then
+		print_warning "[lifecycle] checkpoint_spec_dispatch_not_restored issue=${issue_number} — this run's draft checkpoint removed auto-dispatch; the issue was unreadable, held, owned or not available afterwards"
+	fi
+	# aidevops:trust-boundary — the lock decision follows the label state left
+	# by the restores above (GH#30180). A restore returns the issue to the
+	# dispatch queue, so this release must not reopen its conversation; the
+	# unlock helper re-reads the labels in every other case.
+	if [[ "$dispatch_restored" -eq 1 ]]; then
+		print_info "Retaining conversation lock for #${issue_number} in ${repo_slug}: this release restored auto-dispatch"
+	else
+		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
+	fi
+	print_info "Projected draft checkpoint #${issue_number} for exact-head continuation"
+	return 0
+}
+
+#######################################
+# Return a ready-handoff issue to the queue when its non-closing PR already
+# merged (GH#39857). The shared guard re-reads the issue, PR, comments and open
+# PRs, and writes only when every continuation condition holds. Runs in a
+# subshell so pulse globals stay isolated. Always non-fatal.
+#
+# Args: $1 = issue_number, $2 = repo_slug
+#######################################
+_hrff_revisit_merged_partial() (
+	local issue_number="$1"
+	local repo_slug="$2"
+	local LOGFILE="" line=""
+	LOGFILE=$(mktemp "${TMPDIR:-/tmp}/partial-revisit.XXXXXX") || return 0
+	trap 'rm -f "$LOGFILE"' EXIT
+	# shellcheck disable=SC1091
+	source "${BASH_SOURCE[0]%/*}/pulse-merge.sh" >/dev/null 2>&1 || return 0
+	declare -F _pmpc_revisit_in_review_issue >/dev/null 2>&1 || return 0
+	_pmpc_revisit_in_review_issue "$repo_slug" "$issue_number" || true
+	if [[ -s "$LOGFILE" ]]; then
+		while IFS= read -r line; do print_info "$line"; done <"$LOGFILE"
+	fi
+	return 0
+)
+
+#######################################
 # Project issue lifecycle state after a persisted CLAIM_RELEASED comment.
 # Reason-specific paths preserve state that authoritative handoffs already
 # projected; the default path clears active status so re-dispatch is not
@@ -984,22 +1100,7 @@ _hrff_project_post_release_state() {
 		return 0
 	fi
 	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
-		# GH#36019: the draft is preserved work awaiting exact-head continuation
-		# (pr-checkpoint-continuation-helper.sh dispatch-stalled). A closing-linked
-		# draft projected as status:blocked was rejected by that target fence and
-		# held silently; WORKER_DRAFT_CHECKPOINT dedup still blocks redispatch.
-		if declare -F clear_active_status_on_release >/dev/null 2>&1; then
-			clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" available \
-				|| print_warning "Failed to project draft checkpoint state on #${issue_number} (non-fatal)"
-		fi
-		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
-		# A draft may have merged between checkpoint classification and release.
-		# Reconcile only after projection/unassignment; the shared guard requires
-		# available state and proves that NO open PR still owns the issue.
-		# shellcheck source=pulse-merge-partial-continuation.sh
-		source "${BASH_SOURCE[0]%/*}/pulse-merge-partial-continuation.sh"
-		_pmpc_restore_available_dispatch "$repo_slug" "$issue_number" 1 || true
-		print_info "Projected draft checkpoint #${issue_number} for exact-head continuation"
+		_hrff_project_draft_checkpoint "$issue_number" "$repo_slug" "$runner_name"
 		return 0
 	fi
 	# GH#33545: same projection as a draft checkpoint (clear active status,
@@ -1023,6 +1124,10 @@ _hrff_project_post_release_state() {
 	if [[ "$reason" == "${_HRW_REASON_READY_MISSING_LINKAGE:-worker_ready_missing_linkage}" ||
 		"$reason" == "${_HRW_REASON_READY_MISSING_SUMMARY:-worker_ready_missing_summary}" ]]; then
 		_hrff_emit_release_terminal_lease "$issue_number" "$repo_slug" "$session_key"
+		# GH#39857: the `For #N` PR may have merged before this release, so the
+		# merge-time restore saw an active claim and skipped it. Revisit before
+		# deciding to unlock so restored auto-dispatch keeps its conversation lock.
+		_hrff_revisit_merged_partial "$issue_number" "$repo_slug"
 		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
 		print_info "Preserved in-review handoff on #${issue_number} (reason: ${reason})"
 		return 0
@@ -1045,7 +1150,7 @@ _hrff_project_post_release_state() {
 	if [[ "$reason" == blocked || "$reason" == push_policy_timeout || "$reason" == network_policy_timeout ]]; then
 		draft_projection="blocked"
 		if declare -F _terminal_blocker_reason >/dev/null 2>&1 &&
-			[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" == runner_capability_unmet ]]; then
+			[[ "$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}")" =~ ^(runner_capability_unmet|resource_contended)$ ]]; then
 			draft_projection="available"
 		fi
 	fi
@@ -1083,9 +1188,29 @@ _hrff_blocked_release_persisted() {
 	return 0
 }
 
+#######################################
+# GH#38360: print the needs-* companion that explains this blocked exit.
+# Missing runner secrets need credentials; otherwise the classified blocker
+# reason picks the owner (unknown or unclassified routes to AI recovery).
+# Prints nothing when the shared companion mapping is unavailable.
+#######################################
+_hrff_blocked_companion_label() {
+	declare -F blocked_needs_label_for_reason >/dev/null 2>&1 || return 0
+	if [[ -n "${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}" ]]; then
+		blocked_needs_label_for_reason missing_secret
+		return 0
+	fi
+	local reason=""
+	if declare -F _terminal_blocker_reason >/dev/null 2>&1; then
+		reason=$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}" 2>/dev/null) || reason=""
+	fi
+	blocked_needs_label_for_reason "${reason:-unknown}"
+	return 0
+}
+
 _hrff_project_blocked_exit() {
 	local issue_number="$1" repo_slug="$2" runner_name="$3"
-	local issue_json="" status="" issue_endpoint=""
+	local issue_json="" status="" issue_endpoint="" companion=""
 	local -a edit_args=()
 	printf -v issue_endpoint 'repos/%s/issues/%s' "$repo_slug" "$issue_number"
 	issue_json=$(gh api "$issue_endpoint" 2>/dev/null) || return 1
@@ -1101,6 +1226,13 @@ _hrff_project_blocked_exit() {
 		[[ -z "$status" ]] || edit_args+=(--remove-label "$status")
 	done < <(jq -r '.labels[]?.name | select(startswith("status:") and . != "status:blocked")' <<<"$issue_json")
 	[[ -z "$runner_name" ]] || edit_args+=(--remove-assignee "$runner_name")
+	# GH#38360: the hold names what unblocks it.
+	companion=$(_hrff_blocked_companion_label)
+	if [[ -n "$companion" ]]; then
+		declare -F ensure_blocked_companion_label >/dev/null 2>&1 &&
+			ensure_blocked_companion_label "$repo_slug" "$companion"
+		edit_args+=(--add-label "$companion")
+	fi
 	gh_issue_edit_safe "$issue_number" --repo "$repo_slug" --add-label status:blocked \
 		${edit_args[@]+"${edit_args[@]}"} || return 1
 	return 0
@@ -1169,411 +1301,15 @@ _hrff_resolve_release_runner_login() {
 	return 0
 }
 
-#######################################
-# Classify worker termination reason for CLAIM_RELEASED audit lines.
-# Called from _exit_trap_handler before posting the claim release.
-#
-# Args:
-#   $1 = wait_status  (bash exit status; >128 means signal N = wait_status - 128)
-#   $2 = start_epoch_ms (milliseconds epoch when worker was prepared; 0 = unknown)
-#   $3 = persisted_session_id (optional continued-session identity)
-#   $4 = exit_code_file (optional sentinel base path)
-#
-# Globals (optional, set by _invoke_opencode / _cmd_run_prepare):
-#   _WORKER_ISOLATED_DB_PATH  — path to isolated worker opencode.db (if active)
-#
-# Returns classification string via stdout:
-#   "clean"                   — exit status 0 (unexpected in EXIT trap context)
-#   "signal_killed:<signum>"  — received signal N (wait_status > 128)
-#   "crash_during_startup"    — non-zero exit, no OpenCode session found in DB
-#   "crash_during_execution"  — non-zero exit, session(s) present in worker DB
-#   "process_exit"            — fallback when classifier cannot determine reason
-#
-# Exit: always 0
-#######################################
-classify_worker_exit() {
-	local wait_status="$1"
-	local start_epoch_ms="${2:-0}"
-	local persisted_session_id="${3:-${_WORKER_PERSISTED_SESSION_ID:-}}"
-	local exit_code_file="${4:-}"
-	local kill_reason=""
-
-	# Kill-site sentinels are more authoritative than the recorded wait status.
-	# A watchdog can hard-kill a worker while the wrapper still persists status 0;
-	# preserve natural/unknown fallbacks so ordinary clean and signal exits retain
-	# the existing classifier behaviour.
-	if [[ -n "$exit_code_file" ]] && declare -F classify_worker_kill_reason >/dev/null 2>&1; then
-		kill_reason=$(classify_worker_kill_reason "$exit_code_file" "$wait_status") || kill_reason=""
-		case "$kill_reason" in
-		"" | natural | unknown) ;;
-		*)
-			printf '%s' "$kill_reason"
-			return 0
-			;;
-		esac
-	fi
-
-	# Signal detection: bash encodes signal N as exit status 128+N
-	if [[ "$wait_status" =~ ^[0-9]+$ ]] && (( wait_status > 128 )); then
-		printf '%s' "signal_killed:$((wait_status - 128))"
-		return 0
-	fi
-
-	# Clean exit (unusual in EXIT trap context — trap is normally cleared on success).
-	# t3050: a clean exit with zero opencode sessions means the wrapper returned 0
-	# cleanly but the worker never produced model output. This is a startup-phase
-	# failure (sandbox crash, OpenCode init failure, prompt parse error before
-	# tool use), not a successful run. The worker_noop_zero_output reason is
-	# already recognised by _maybe_reclassify_worker_failed_as_no_work in
-	# worker-lifecycle-common.sh and by escalate_issue_tier — emitting it
-	# directly here ensures the reason is authoritative from the trap rather
-	# than inferred later from orphan-worktree state.
-	if [[ "$wait_status" == "0" ]]; then
-		# GH#37527: finalization may already have discarded or failed to merge
-		# the isolated DB; the resolver prefers its pre-finalization snapshot.
-		local _cnt_zo=""
-		_cnt_zo=$(_hrff_resolved_attempt_activity_count "$start_epoch_ms" "$persisted_session_id") || _cnt_zo=""
-		if [[ "$_cnt_zo" =~ ^[0-9]+$ && "$_cnt_zo" -eq 0 ]]; then
-			printf '%s' "worker_noop_zero_output"
-			return 0
-		fi
-		printf '%s' "clean"
-		return 0
-	fi
-
-	_hrff_classify_nonzero_worker_exit "$start_epoch_ms" "$persisted_session_id"
-	return 0
-}
-
-# Classify an ordinary non-zero exit after sentinel, signal and clean handling.
-_hrff_classify_nonzero_worker_exit() {
-	local start_epoch_ms="$1"
-	local persisted_session_id="${2:-}"
-
-	# Finalization can discard the only DB containing execution evidence.
-	# A zero/missing snapshot is inconclusive: a fresh boot-only session still
-	# counts as execution for non-zero exits, so retain the session query below.
-	if [[ "$start_epoch_ms" =~ ^[0-9]+$ && "$start_epoch_ms" -gt 0 &&
-		"${_WORKER_ATTEMPT_ACTIVITY_START_MS:-}" == "$start_epoch_ms" &&
-		"${_WORKER_ATTEMPT_ACTIVITY_COUNT:-}" =~ ^[0-9]+$ &&
-		"${_WORKER_ATTEMPT_ACTIVITY_COUNT:-0}" -gt 0 ]]; then
-		printf '%s' "crash_during_execution"
-		return 0
-	fi
-
-	# Session creation check: count sessions created since worker started.
-	# Primary: isolated worker DB (still present when EXIT fires during _invoke_opencode).
-	# Fallback: shared DB (~/.local/share/opencode/opencode.db) after merge completes.
-	local session_count=0
-	local shared_db_path="${HOME}/.local/share/opencode/opencode.db"
-	local isolated_db="${_WORKER_ISOLATED_DB_PATH:-}"
-	local active_db=""
-
-	if [[ -n "$isolated_db" && -f "$isolated_db" ]]; then
-		active_db="$isolated_db"
-	elif [[ -f "$shared_db_path" ]]; then
-		active_db="$shared_db_path"
-	fi
-
-	if ! command -v sqlite3 >/dev/null 2>&1 || [[ -z "$active_db" ]]; then
-		# sqlite3 unavailable or no DB found — cannot classify by session
-		print_warning "[exit-classifier] sqlite3 unavailable or DB missing (isolated=${isolated_db:-none} shared=${shared_db_path}) — using ${_HRFF_FALLBACK_EXIT} fallback"
-		printf '%s' "$_HRFF_FALLBACK_EXIT"
-		return 0
-	fi
-
-	local raw_count=""
-	if [[ "$start_epoch_ms" =~ ^[0-9]+$ ]] && ((start_epoch_ms > 0)); then
-		if [[ -n "$persisted_session_id" ]]; then
-			raw_count=$(_hrff_attempt_activity_count "$active_db" "$start_epoch_ms" "$persisted_session_id") || raw_count=""
-		else
-			raw_count=$(sqlite3 "$active_db" "${_HRFF_SESSION_COUNT_QUERY_PREFIX}${start_epoch_ms}" 2>/dev/null) || raw_count=""
-		fi
-	else
-		# No start time: count all sessions (crude fallback — may over-count)
-		raw_count=$(sqlite3 "$active_db" "SELECT count(*) FROM session" 2>/dev/null) || raw_count=""
-	fi
-
-	if [[ ! "$raw_count" =~ ^[0-9]+$ ]]; then
-		# sqlite3 returned non-numeric output (e.g. error or corrupt DB)
-		print_warning "[exit-classifier] sqlite3 query failed for ${active_db} — using ${_HRFF_FALLBACK_EXIT} fallback"
-		printf '%s' "$_HRFF_FALLBACK_EXIT"
-		return 0
-	fi
-	session_count="$raw_count"
-
-	if (( session_count == 0 )); then
-		printf '%s' "crash_during_startup"
-	else
-		printf '%s' "crash_during_execution"
-	fi
-	return 0
-}
-
-#######################################
-# Classify worker kill_reason for the [lifecycle] worker_exited log line.
-#
-# t3063: surfaces the kill PATH on the same line as wait_status so Phase 2
-# log aggregation finds the reason class without a PID-join across scripts.
-# Complementary to classify_worker_exit (which classifies CRASH vs CLEAN);
-# this answers "if killed, which kill path fired the SIGTERM/SIGKILL?".
-#
-# Sentinel precedence (highest to lowest):
-#   1. ${exit_code_file}.kill_reason — explicit class written by kill site
-#      (PR #21784/t3056 sites: hard_kill_stall, no_output_stall,
-#      phase1_zero_output, wall_clock_stale, cold_start_timeout,
-#      progress_timeout, idle_timeout, stop_flag, stage_timeout_*,
-#      process_guard_*, wait_loop_timeout_*).
-#   2. ${exit_code_file}.watchdog_stall_killed → hard_kill_stall
-#      (worker exceeded HARD_KILL_SECONDS, t2956 / Issue #21231).
-#   3. ${exit_code_file}.watchdog_killed → no_output_stall
-#      (legacy passive watchdog kill — output file silent).
-#   4. ${exit_code_file}.rate_limit_fast → rate_limit_fast
-#      (30s fast-exit monitor caught 429/overload, GH#21578 / t3021).
-#   5. wait_status > 128 with no sentinel → unknown
-#      (signal-killed but kill path unidentified — acceptance target: 0%).
-#   6. otherwise → natural
-#      (clean exit or voluntary failure exit).
-#
-# The .kill_reason sentinel is the forward-compatible extension point: any
-# kill site that adds a new class only needs to write its class string to
-# ${exit_code_file}.kill_reason; this classifier picks it up without code
-# changes here.
-#
-# Args:
-#   $1 = exit_code_file path (sentinel files are checked at ${path}.<class>)
-#   $2 = wait_status integer ($? from `wait`)
-#
-# Returns 0 always; outputs kill_reason class string on stdout.
-#######################################
-classify_worker_kill_reason() {
-	local exit_code_file="${1:-}"
-	local wait_status="${2:-0}"
-
-	# Highest-precedence path: explicit class written by a kill site.
-	if [[ -n "$exit_code_file" && -f "${exit_code_file}.kill_reason" ]]; then
-		local _explicit
-		_explicit=$(<"${exit_code_file}.kill_reason")
-		# Strip CR/LF; bail to inference path if file is empty or whitespace-only.
-		_explicit="${_explicit//$'\r'/}"
-		_explicit="${_explicit//$'\n'/}"
-		# Trim leading/trailing spaces and tabs (bash 3.2 compatible).
-		_explicit="${_explicit#"${_explicit%%[![:space:]]*}"}"
-		_explicit="${_explicit%"${_explicit##*[![:space:]]}"}"
-		if [[ -n "$_explicit" ]]; then
-			printf '%s' "$_explicit"
-			return 0
-		fi
-	fi
-
-	# Inferred classification from existing watchdog sentinels.
-	# Precedence: stall_killed (hard kill) → watchdog_killed (passive stall)
-	# → rate_limit_fast. The watchdog writes both .watchdog_killed and
-	# .watchdog_stall_killed on a hard kill, so stall_killed must be checked first.
-	if [[ -n "$exit_code_file" ]]; then
-		if [[ -f "${exit_code_file}.watchdog_stall_killed" ]]; then
-			printf '%s' "hard_kill_stall"
-			return 0
-		fi
-		if [[ -f "${exit_code_file}.watchdog_killed" ]]; then
-			printf '%s' "no_output_stall"
-			return 0
-		fi
-		if [[ -f "${exit_code_file}.rate_limit_fast" ]]; then
-			printf '%s' "rate_limit_fast"
-			return 0
-		fi
-	fi
-
-	# No sentinel — signal-killed (wait_status > 128) is "unknown"
-	# (acceptance target: 0% of these); voluntary exits are "natural".
-	if [[ "$wait_status" =~ ^[0-9]+$ ]] && (( wait_status > 128 )); then
-		printf '%s' "unknown"
-		return 0
-	fi
-
-	printf '%s' "natural"
-	return 0
-}
-
-#######################################
-# Remove the runtime-only deferred-cleanup marker from the index.
-#
-# The merge lifecycle writes this marker after the final implementation commit.
-# A worker exit must not turn that process-local ownership sentinel into product
-# history, including when another path staged it before the EXIT trap ran.
-#
-# Args:
-#   $1 = worktree path
-#######################################
-_hrff_unstage_deferred_cleanup_marker() {
-	local work_dir="$1"
-
-	git -C "$work_dir" reset -q HEAD -- "$_HRFF_DEFERRED_CLEANUP_MARKER" >/dev/null 2>&1 || true
-	return 0
-}
-
-#######################################
-# Return dirty status excluding the runtime-only deferred-cleanup marker.
-#
-# Args:
-#   $1 = worktree path
-#######################################
-_hrff_actionable_dirty_status() {
-	local work_dir="$1"
-
-	git -C "$work_dir" status --porcelain --untracked-files=all -- . \
-		"$_HRFF_DEFERRED_CLEANUP_EXCLUDE_PATHSPEC" 2>/dev/null || true
-	return 0
-}
-
-#######################################
-# Stage worker-authored changes without the runtime-only cleanup marker.
-#
-# Args:
-#   $1 = worktree path
-#######################################
-_hrff_stage_actionable_worker_changes() {
-	local work_dir="$1"
-
-	git -C "$work_dir" add -A -- . \
-		"$_HRFF_DEFERRED_CLEANUP_EXCLUDE_PATHSPEC" >/dev/null 2>&1 || return 1
-	_hrff_unstage_new_embedded_repositories "$work_dir"
-	return 0
-}
-
-#######################################
-# Keep repositories cloned inside the worktree out of preservation commits.
-#
-# GH#36608: `git add -A` records an embedded clone as a gitlink, which carried
-# another repository's checkout into this repository's checkpoint PR. Only
-# gitlinks already present in HEAD (real submodules) stay staged; new ones are
-# unstaged and left on disk for the local archive and cleanup paths.
-#
-# Args:
-#   $1 = worktree path
-#######################################
-_hrff_unstage_new_embedded_repositories() {
-	local work_dir="$1"
-	local entry="" mode="" entry_path=""
-
-	while IFS= read -r -d '' entry; do
-		mode="${entry%% *}"
-		[[ "$mode" == "160000" ]] || continue
-		entry_path="${entry#*$'\t'}"
-		[[ -n "$entry_path" ]] || continue
-		if [[ -n "$(git -C "$work_dir" ls-tree HEAD -- "$entry_path" 2>/dev/null)" ]]; then
-			continue
-		fi
-		# -f: a freshly staged gitlink differs from both HEAD and the work tree.
-		git -C "$work_dir" rm -q --cached -f -- "$entry_path" >/dev/null 2>&1 || true
-		print_info "[lifecycle] worker_exit_nested_repo_excluded path=${entry_path}"
-	done < <(git -C "$work_dir" ls-files -s -z 2>/dev/null)
-	return 0
-}
-
-#######################################
-# Preserve and push any worker WIP before worker exits.
-# Best-effort, fail-open — never blocks claim release or shutdown.
-#
-# t2923: Prevents workers dying mid-implementation from abandoning
-# unreachable commits. Next dispatch can continue from the pushed branch
-# instead of rewriting the same code from scratch.
-#
-# GH#22965: Dirty worktrees with no local-only commits must also be
-# preserved. Create a normal WIP commit from tracked/untracked work and push it;
-# if commit/push cannot complete, archive a binary patch locally and mark the
-# failure as worker_dirty_work_preserved so zero-output retry holds do not
-# misclassify the issue as a malformed brief.
-#
-# Globals consumed:
-#   _WORKER_WORKTREE_PATH  — set by _cmd_run_prepare in headless-runtime-helper.sh
-#   WORKER_NO_EXIT_PUSH    — escape hatch: set to "1" to disable push
-#######################################
-_push_wip_commits_on_exit() {
-	# Escape hatch: WORKER_NO_EXIT_PUSH=1 disables the push (e.g. in tests)
-	[[ "${WORKER_NO_EXIT_PUSH:-0}" == "1" ]] && return 0
-	_WORKER_DIRTY_WORK_PRESERVED=0
-	_WORKER_BASE_UNRESOLVED=0
-
-	local work_dir="${_WORKER_WORKTREE_PATH:-}"
-	if [[ -z "$work_dir" || ! -d "$work_dir" ]]; then
-		return 0
-	fi
-
-	# Canonical checkouts are read-only mirrors, regardless of branch name.
-	_project_config_is_linked_worktree "$work_dir" || return 0
-
-	# Get the branch name — skip if detached HEAD or default branch
-	local branch_name=""
-	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null) || return 0
-	case "$branch_name" in
-	HEAD | main | master | "")
-		return 0
-		;;
-	esac
-
-	local default_ref=""
-	default_ref=$(git -C "$work_dir" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || true)
-	# Older clones may not have origin/HEAD. Only use an existing legacy base.
-	if [[ -z "$default_ref" ]]; then
-		if git -C "$work_dir" show-ref --verify --quiet refs/remotes/origin/main; then
-			default_ref="refs/remotes/origin/main"
-		elif git -C "$work_dir" show-ref --verify --quiet refs/remotes/origin/master; then
-			default_ref="refs/remotes/origin/master"
-		fi
-	fi
-	[[ -n "$default_ref" && "$branch_name" == "${default_ref#refs/remotes/origin/}" ]] && return 0
-
-	_hrff_unstage_deferred_cleanup_marker "$work_dir"
-	local dirty_status=""
-	dirty_status=$(_hrff_actionable_dirty_status "$work_dir")
-	if [[ -n "$dirty_status" ]]; then
-		print_info "[lifecycle] worker_exit_preserving_dirty_work branch=${branch_name}"
-		_hrff_stage_actionable_worker_changes "$work_dir" || true
-		if ! git -C "$work_dir" diff --cached --quiet --exit-code >/dev/null 2>&1; then
-			if git -C "$work_dir" commit -m "wip: preserve worker changes on abnormal exit" >/dev/null 2>&1; then
-				_WORKER_DIRTY_WORK_PRESERVED=1
-				print_info "[lifecycle] worker_exit_committed_dirty_work branch=${branch_name}"
-			else
-				_worker_archive_dirty_worktree_patch "$work_dir" "$branch_name"
-			fi
-		else
-			_worker_archive_dirty_worktree_patch "$work_dir" "$branch_name"
-		fi
-	fi
-
-	# Missing base metadata must not skip local preservation, but cannot allow push.
-	if [[ -z "$default_ref" ]]; then
-		_WORKER_BASE_UNRESOLVED=1
-		return 0
-	fi
-	# Count against the resolved default only; zero must not select another base.
-	local ahead_count=0
-	ahead_count=$(git -C "$work_dir" rev-list --count "${default_ref}..HEAD" 2>/dev/null || true)
-	[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
-	if [[ "$ahead_count" -eq 0 ]]; then
-		return 0
-	fi
-
-	# Push best-effort — never block exit on push failure
-	print_info "[lifecycle] worker_exit_pushing_wip branch=${branch_name} ahead=${ahead_count}"
-	if git -C "$work_dir" push -u origin "${branch_name}" 2>/dev/null; then
-		print_info "[lifecycle] worker_exit_pushed_wip branch=${branch_name} ahead=${ahead_count}"
-	else
-		print_warning "[lifecycle] worker_exit_push_failed branch=${branch_name} ahead=${ahead_count}"
-		_worker_archive_dirty_worktree_patch "$work_dir" "$branch_name"
-		# GH#34040: committed work has no diff to archive; bundle it instead.
-		local bundle_file=""
-		if bundle_file=$(_worker_write_recovery_bundle "$work_dir" "$branch_name"); then
-			_WORKER_DIRTY_WORK_PRESERVED=1
-			print_warning "[lifecycle] worker_dirty_work_preserved bundle=${bundle_file}"
-		else
-			print_warning "[lifecycle] work_lost branch=${branch_name} ahead=${ahead_count} — push and recovery bundle both failed"
-		fi
-	fi
-	return 0
-}
+_HRFF_CLASSIFY_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_HRFF_CLASSIFY_DIR" == "${BASH_SOURCE[0]}" ]] && _HRFF_CLASSIFY_DIR="."
+# shellcheck source=headless-runtime-failure-classify.sh
+if ! source "${_HRFF_CLASSIFY_DIR}/headless-runtime-failure-classify.sh"; then
+	printf 'ERROR: failed to load %s/headless-runtime-failure-classify.sh\n' "$_HRFF_CLASSIFY_DIR" >&2
+	unset _HRFF_CLASSIFY_DIR
+	return 1 2>/dev/null || exit 1
+fi
+unset _HRFF_CLASSIFY_DIR
 
 #######################################
 # Capture the caller-provided terminal-outcome destination before any runtime
@@ -1821,10 +1557,34 @@ _worker_secure_branch_commits() {
 }
 
 #######################################
+# GH#38481: positive evidence that the last runtime spawn failed because the
+# runtime binary is missing on this runner (stale shim, deleted nvm version,
+# package upgrade in flight). All must hold: the spawn was attempted, the
+# same-shell classification is runtime_command_missing, the attempt exited
+# 127, and neither this attempt nor an earlier one in the process had
+# activity. Bare worker_not_launched also covers benign admission cases (lock
+# contention, revision continuation), so it never counts without this proof.
+# Globals read: _WORKER_RUNTIME_LAUNCH_STARTED, _run_runtime_error_type,
+#   _run_exit_code, _run_activity_detected, _HRW_PRIOR_ATTEMPT_ACTIVITY
+# Returns: 0 when the evidence is complete, 1 otherwise
+#######################################
+_hrff_runtime_missing_evidenced() {
+	[[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" == "1" ]] || return 1
+	[[ "${_run_runtime_error_type:-}" == "runtime_command_missing" ]] || return 1
+	[[ "${_run_exit_code:-}" == "127" ]] || return 1
+	[[ "${_run_activity_detected:-}" == "0" ]] || return 1
+	[[ "${_HRW_PRIOR_ATTEMPT_ACTIVITY:-0}" != "1" ]] || return 1
+	return 0
+}
+
+#######################################
 # Record evidenced startup and deterministic launch failures in the local runner-health
 # breaker before releasing the shared issue claim. This path is fail-open:
 # missing or broken health tooling must never strand the issue claim.
-# Globals read: _HRW_PRIOR_ATTEMPT_ACTIVITY (set by the attempt loop)
+# Callers: the EXIT trap and _hrw_finish_not_launched (which disarms the trap
+# through _hrw_finish_cleanup, so one launch is recorded once).
+# Globals read: _HRW_PRIOR_ATTEMPT_ACTIVITY (set by the attempt loop), plus the
+#   per-attempt runtime evidence read by _hrff_runtime_missing_evidenced
 # Args: $1=session key, $2=terminal reason
 #######################################
 _hrff_record_runner_health_failure() {
@@ -1840,6 +1600,10 @@ _hrff_record_runner_health_failure() {
 		fi
 		;;
 	crash_during_startup | worker_noop_zero_output) reason="no_worker_process" ;;
+	"${_HRW_REASON_NOT_LAUNCHED:-worker_not_launched}" | "${_HRFF_PRELAUNCH_NOT_INVOKED:-worker_runtime_not_invoked}")
+		_hrff_runtime_missing_evidenced || return 0
+		reason="worker_runtime_missing"
+		;;
 	*) return 0 ;;
 	esac
 

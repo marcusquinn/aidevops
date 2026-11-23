@@ -145,9 +145,146 @@ nested:
   field: data
 '
 
+# A workflow whose workflow_run trigger names its own name (GH#39461).
+_SELF_LISTEN_WORKFLOW='name: Review Bot Gate
+on:
+  pull_request:
+    types: [opened]
+  workflow_run:
+    workflows: ["Review Bot Gate"]
+    types: [completed]
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "gate"
+'
+
+# Block-list form of the same self-listen defect.
+_SELF_LISTEN_BLOCK_WORKFLOW='name: Review Bot Gate
+on:
+  workflow_run:
+    workflows:
+      - Other
+      - Review Bot Gate
+    types: [completed]
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "gate"
+'
+
+# A listener for a different workflow name is valid.
+_OTHER_LISTEN_WORKFLOW='name: Review Bot Gate Fork Review
+on:
+  workflow_run:
+    workflows: ["Review Bot Gate"]
+    types: [completed]
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "gate"
+'
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+# Expect the helper to exit with the given status (0 or non-zero) on one staged file.
+_expect_staged_result() {
+	local name="$1"
+	local file="$2"
+	local content="$3"
+	local expect_fail="$4"
+	_init_repo "$name" || { _fail "$name" "repo init failed"; return 0; }
+
+	_stage_workflow "$file" "$content"
+
+	local output exit_val=0
+	output=$(bash "$HELPER" --staged 2>&1) || exit_val=$?
+
+	if [[ "$expect_fail" == "1" && $exit_val -ne 0 && "$output" == *"cannot listen to itself"* ]]; then
+		_pass "$name"
+	elif [[ "$expect_fail" == "0" && $exit_val -eq 0 ]]; then
+		_pass "$name"
+	else
+		_fail "$name" "expect_fail=$expect_fail got exit $exit_val. Output: $output"
+	fi
+
+	cd "$ORIG_DIR" || true
+	return 0
+}
+
+test_self_listen_workflow_fails() {
+	_expect_staged_result "test_self_listen_workflow_fails" ".github/workflows/gate.yml" "$_SELF_LISTEN_WORKFLOW" 1
+	return 0
+}
+
+test_self_listen_block_list_fails() {
+	_expect_staged_result "test_self_listen_block_list_fails" ".github/workflows/gate.yml" "$_SELF_LISTEN_BLOCK_WORKFLOW" 1
+	return 0
+}
+
+test_self_listen_template_fails() {
+	_expect_staged_result "test_self_listen_template_fails" ".agents/templates/workflows/gate-caller.yml" "$_SELF_LISTEN_WORKFLOW" 1
+	return 0
+}
+
+test_separate_listener_passes() {
+	_expect_staged_result "test_separate_listener_passes" ".github/workflows/fork.yml" "$_OTHER_LISTEN_WORKFLOW" 0
+	return 0
+}
+
+# Exercise YAML scalar/sequence forms through the existing staged CLI path.
+_expect_listen_form() {
+	local name="$1"
+	local workflow_name="$2"
+	local workflows="$3"
+	local expect_fail="$4"
+	# Avoid a trailing space (yamllint trailing-spaces) when the value starts on the next line.
+	local sep=" "
+	[[ "$workflows" == $'\n'* ]] && sep=""
+	local content="name: $workflow_name
+on:
+# A column-zero comment does not close on.
+  workflow_run:
+# Nor does it close workflow_run.
+    workflows:${sep}${workflows}
+    types: [completed]
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo gate
+"
+	_expect_staged_result "$name" ".github/workflows/gate.yml" "$content" "$expect_fail"
+	return 0
+}
+
+test_self_listen_yaml_forms() {
+	_expect_listen_form "hash_distinct" '"Build #1"' '["Build #2"] # trailing comment' 0
+	_expect_listen_form "hash_identical" '"Build #1"' '["Build #1"] # trailing comment' 1
+	_expect_listen_form "single_quote_hash" "'Build #1'" "['Build #1']" 1
+	_expect_listen_form "quoted_comma" '"Build, Test"' '["Other", "Build, Test"]' 1
+	_expect_listen_form "multiline_flow" '"Build, Test"' '[
+      "Other", # trailing comment
+# Comment inside the flow sequence.
+      "Build, Test"
+    ]' 1
+	_expect_listen_form "multiline_distinct" '"Build, Test"' '[
+      "Other",
+      "Build, Deploy"
+    ]' 0
+	_expect_listen_form "indentationless" 'Gate' '
+# A comment does not close workflows either.
+    - Other
+    - Gate' 1
+	_expect_listen_form "sequence_boundary" 'completed' '
+    - Other' 0
+	return 0
+}
 
 test_valid_workflow_passes() {
 	local name="test_valid_workflow_passes"
@@ -331,6 +468,11 @@ main() {
 	test_previously_valid_broken_in_commit_fails
 	test_pre_commit_hook_blocks_on_broken_yaml
 	test_pre_commit_hook_passes_valid_workflow
+	test_self_listen_workflow_fails
+	test_self_listen_block_list_fails
+	test_self_listen_template_fails
+	test_separate_listener_passes
+	test_self_listen_yaml_forms
 
 	echo ""
 

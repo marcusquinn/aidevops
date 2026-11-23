@@ -4,10 +4,12 @@ The marker identifies a protocol generation, not all writers or a deletion right
 Copied metadata and inode reuse outside this protocol are not excluded by it.
 """
 
+from __future__ import annotations
+
 import json
 import os
+from functools import lru_cache
 from pathlib import Path
-import shutil
 import stat
 import subprocess  # nosec B404 # read-only Git query using explicit argv, never a shell
 from uuid import UUID, uuid4, uuid5
@@ -23,12 +25,39 @@ MARKER_POLICY = FilePolicy("generation-marker-must-be-private-owned-file", max_s
                            private=True, single_link=False)
 
 
+def _is_shim(candidate: str) -> bool:
+    """A Git shim sits beside the canonical guard; broken links are never native."""
+    try:
+        return (Path(candidate).resolve(strict=True).parent / "canonical-git-command-guard.py").is_file()
+    except (OSError, RuntimeError):
+        return True
+
+
+@lru_cache(maxsize=4)
+def _native_git_for(override: str, search_path: str) -> str | None:
+    """Resolve native Git, skipping the aidevops shim (memoizes the executable only)."""
+    candidates = [override] if override else [
+        os.path.join(directory, "git") for directory in search_path.split(os.pathsep)
+        if os.path.isabs(directory)]
+    for candidate in candidates:
+        if (os.path.isabs(candidate) and os.path.isfile(candidate)
+                and os.access(candidate, os.X_OK) and not _is_shim(candidate)):
+            return os.path.realpath(candidate)
+    return None
+
+
+def native_git(env: dict[str, str]) -> str | None:
+    """Native Git for read-only probes; honours the real-Git override variables."""
+    override = env.get("AIDEVOPS_REAL_GIT_BIN", "") or env.get("AIDEVOPS_REAL_GIT", "")
+    return _native_git_for(override, env.get("PATH", ""))
+
+
 def _git_directory(path: Path) -> Path:
     if not stat.S_ISREG((path / ".git").lstat().st_mode):
         raise ValueError("linked-worktree-required")
     # An inherited Git environment must not redirect enrollment to another tree.
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-    git = shutil.which("git", path=env.get("PATH"))
+    git = native_git(env)
     if git is None:
         raise ValueError("git-executable-unavailable")
     # The operator controls PATH; this CLI does not accept an executable from a

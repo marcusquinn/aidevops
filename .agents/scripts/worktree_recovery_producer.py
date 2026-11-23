@@ -37,7 +37,10 @@ SCHEMA = "aidevops.worktree-recovery-producer/v1"
 
 def journal_for_archive(archive):
     require(len(archive.parents) >= 5 and archive.parents[3].name == ".producer-archives"
-            and re.fullmatch(r"[0-9a-f]{64}", archive.parents[2].name), "producer:archive-layout-changed")
+            and re.fullmatch(r"[0-9a-f]{64}", archive.parents[2].name),
+            "producer:archive-layout-changed (not a producer archive: expected "
+            "<root>/.producer-archives/<64-hex-transaction>/<repo>/<n>/<stamp>; archives made by "
+            "worktree-helper.sh remove are not producer archives, use worktree-archive-helper.sh verify)")
     return archive.parents[4] / ".producer-transactions" / archive.parents[2].name / "journal.json"
 
 

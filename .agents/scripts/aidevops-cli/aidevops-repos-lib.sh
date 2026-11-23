@@ -633,7 +633,6 @@ _register_repo_locked() {
 
 	local default_init_scope
 	default_init_scope=$(_infer_init_scope "$repo_path" "$is_local_only")
-
 	local has_interface
 	has_interface=$(_repo_config_has_interface_value "$repo_path")
 	local cloudron_app_type="cloudron-package" app_type_default="" cloudron_defaults='{}'
@@ -677,6 +676,20 @@ _register_repo_locked() {
 				  else . end
 			)]' \
 			"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE" || return 1
+	fi
+	_warn_cloudron_missing_upstream "$repo_path" "$app_type_default"
+	return 0
+}
+
+# Warn (print only) when a Cloudron package has no upstream monitoring slug.
+_warn_cloudron_missing_upstream() {
+	local repo_path="$1"
+	local app_type="$2"
+	[[ "$app_type" == "cloudron-package" ]] || return 0
+	local upstream=""
+	upstream=$(jq -r --arg path "$repo_path" '[.initialized_repos[] | select(.path == $path)][0].cloudron_package.upstream_slug // empty' "$REPOS_FILE" 2>/dev/null) || upstream=""
+	if [[ -z "$upstream" ]]; then
+		print_warning "Cloudron package registered without upstream monitoring; complete tools/deployment/cloudron-package-onboarding.md"
 	fi
 	return 0
 }
@@ -808,6 +821,87 @@ _set_repo_pulse_locked() {
 		rm -f "$temp_file"
 		return 1
 	fi
+	return 0
+}
+
+# Enable/disable both checkpoint recovery policies without replacing other keys.
+set_repo_checkpoint_policy() {
+	aidevops_with_registry_lock "$REPOS_FILE" _set_repo_checkpoint_policy_locked "$@"
+	return $?
+}
+
+_set_repo_checkpoint_policy_locked() {
+	local selector="$1" state="$2"
+	local desired="false" matches="" slug="" login="" permission=""
+	local temp_file=""
+	case "$state" in
+	on) desired="true" ;;
+	off) ;;
+	*) print_error "Checkpoint policy must be 'on' or 'off'"; return 2 ;;
+	esac
+	command -v jq &>/dev/null || { print_error "jq required for repo management"; return 1; }
+	init_repos_file || return 1
+	if [[ -d "$selector" ]]; then
+		selector=$(cd "$selector" 2>/dev/null && pwd -P) || return 1
+		selector=$(resolve_canonical_repo_path "$selector") || return 1
+	fi
+	matches=$(jq --arg selector "$selector" '[.initialized_repos[]?
+		| select(.slug == $selector or .path == $selector)] | length' "$REPOS_FILE") || return 1
+	if [[ "$matches" != "1" ]]; then
+		print_error "Checkpoint policy requires exactly one registered repo for '$selector'; found $matches"
+		return 1
+	fi
+	slug=$(jq -r --arg selector "$selector" '.initialized_repos[]
+		| select(.slug == $selector or .path == $selector) | .slug // empty' "$REPOS_FILE") || return 1
+	login=$(gh api user --jq '.login' 2>/dev/null) || login=""
+	if [[ -z "$login" ]]; then
+		print_error "Cannot identify current GitHub login; run gh auth login first"
+		return 1
+	fi
+	if [[ "$desired" == "true" ]]; then
+		if [[ -n "$slug" ]]; then
+			permission=$(gh api "repos/$slug" --jq '.permissions.push' 2>/dev/null) || permission=""
+		fi
+		if [[ "$permission" != "true" ]]; then
+			print_error "Cannot enable checkpoint policy for '$selector': current login requires verified push permission"
+			return 1
+		fi
+	fi
+	temp_file="$AIDEVOPS_REGISTRY_TEMP_FILE"
+	if ! jq --arg selector "$selector" --arg login "$login" --argjson desired "$desired" '
+		(.initialized_repos[] | select(.slug == $selector or .path == $selector)).checkpoint_policy |=
+			((. // {}) + {auto_resolve_decisions: $desired,
+			 auto_continue_unknown_pending_work: $desired, configured_by: $login})
+	' "$REPOS_FILE" >"$temp_file" || ! jq -e '.initialized_repos | type == "array"' "$temp_file" >/dev/null; then
+		print_error "Checkpoint policy update produced an invalid registry; not writing it"
+		return 1
+	fi
+	chmod 600 "$temp_file" && mv "$temp_file" "$REPOS_FILE" || return 1
+	return 0
+}
+
+# Bulk operations deliberately reuse the single-repo permission and locking path.
+set_owner_checkpoint_policy() {
+	local owner="$1" state="$2"
+	local selectors="" selector="" changed=0 skipped=0
+	[[ -n "$owner" && "$owner" != */* && "$owner" != -* ]] || {
+		print_error "Specify a GitHub owner, not a repository slug"
+		return 2
+	}
+	init_repos_file || return 1
+	selectors=$(jq -r --arg prefix "$owner/" '.initialized_repos[]?
+		| select(.pulse == true and ((.slug // "") | ascii_downcase | startswith($prefix | ascii_downcase)))
+		| .slug' "$REPOS_FILE") || return 1
+	while IFS= read -r selector; do
+		[[ -n "$selector" ]] || continue
+		if set_repo_checkpoint_policy "$selector" "$state"; then
+			changed=$((changed + 1))
+		else
+			skipped=$((skipped + 1))
+		fi
+	done <<<"$selectors"
+	print_info "Checkpoint policy $state for owner $owner: changed=$changed skipped=$skipped (Pulse-enabled repos only)"
+	[[ "$skipped" == "0" ]] || return 1
 	return 0
 }
 

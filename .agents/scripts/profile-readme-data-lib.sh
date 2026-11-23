@@ -295,6 +295,38 @@ _model_usage_undercuts_reference() {
 	return $?
 }
 
+# --- Project one OpenCode message table to small assistant usage rows ---
+# Usage: _opencode_assistant_rows_sql <table>
+# The projection must happen inside each source branch. A CTE over raw
+# `data` blobs that is referenced twice is materialized by SQLite, copying the
+# whole message history into a temp B-tree before aggregation: about 9 GB on a
+# 1.1M-message install, which turned an aggregation of under 30 s into a
+# multi-hour run of the hourly profile routine.
+_opencode_assistant_rows_sql() {
+	local table="$1"
+	cat <<EOF
+SELECT
+	session_id,
+	json_extract(data, '\$.modelID') AS model,
+	COALESCE(json_extract(data, '\$.tokens.input'), 0) AS input_tokens,
+	COALESCE(json_extract(data, '\$.tokens.output'), 0) AS output_tokens,
+	COALESCE(json_extract(data, '\$.tokens.cache.read'), 0) AS cache_read_tokens,
+	COALESCE(json_extract(data, '\$.tokens.cache.write'), 0) AS cache_write_tokens,
+	CASE
+		WHEN json_type(data, '\$.time.created') IN ('integer', 'real')
+		  AND json_type(data, '\$.time.completed') IN ('integer', 'real')
+		  AND json_extract(data, '\$.time.completed') >= json_extract(data, '\$.time.created')
+		THEN json_extract(data, '\$.time.completed') - json_extract(data, '\$.time.created')
+		ELSE NULL
+	END AS duration_ms
+FROM ${table}
+WHERE json_extract(data, '\$.role') = 'assistant'
+  AND json_extract(data, '\$.modelID') IS NOT NULL
+  AND json_extract(data, '\$.modelID') != ''
+EOF
+	return 0
+}
+
 # --- Gather model usage from OpenCode session DB (full history) ---
 # Returns JSON array with token, session, and generation-time totals, or empty
 # string if unavailable. Cost remains available for compatibility with older
@@ -309,37 +341,18 @@ _get_model_usage_from_opencode() {
 
 	local raw_json
 	local attach_clause=""
-	local union_clause=""
+	local assistant_rows_sql=""
+	assistant_rows_sql=$(_opencode_assistant_rows_sql message)
 	if [[ -f "$OPENCODE_ARCHIVE_DB_FILE" ]]; then
 		attach_clause="ATTACH DATABASE '${OPENCODE_ARCHIVE_DB_FILE}' AS archive;"
-		union_clause="UNION ALL
-			SELECT session_id, data FROM archive.message"
+		assistant_rows_sql="${assistant_rows_sql}
+UNION ALL
+$(_opencode_assistant_rows_sql archive.message)"
 	fi
 	raw_json=$(sqlite3 "$OPENCODE_DB_FILE" "
 		${attach_clause}
-		WITH all_messages AS (
-			SELECT session_id, data FROM message
-			${union_clause}
-		),
-		assistant_messages_raw AS (
-			SELECT
-				session_id,
-				json_extract(data, '\$.modelID') AS model,
-				COALESCE(json_extract(data, '\$.tokens.input'), 0) AS input_tokens,
-				COALESCE(json_extract(data, '\$.tokens.output'), 0) AS output_tokens,
-				COALESCE(json_extract(data, '\$.tokens.cache.read'), 0) AS cache_read_tokens,
-				COALESCE(json_extract(data, '\$.tokens.cache.write'), 0) AS cache_write_tokens,
-				CASE
-					WHEN json_type(data, '\$.time.created') IN ('integer', 'real')
-					  AND json_type(data, '\$.time.completed') IN ('integer', 'real')
-					  AND json_extract(data, '\$.time.completed') >= json_extract(data, '\$.time.created')
-					THEN json_extract(data, '\$.time.completed') - json_extract(data, '\$.time.created')
-					ELSE NULL
-				END AS duration_ms
-			FROM all_messages
-			WHERE json_extract(data, '\$.role') = 'assistant'
-			  AND json_extract(data, '\$.modelID') IS NOT NULL
-			  AND json_extract(data, '\$.modelID') != ''
+		WITH assistant_messages_raw AS (
+			${assistant_rows_sql}
 		),
 		assistant_messages AS (
 			SELECT

@@ -46,6 +46,14 @@ _pm_resolve_superseded_original_issue() {
 	return 0
 }
 
+_pm_pr_body_is_todo_projection() {
+	local body="$1"
+	case "$body" in
+	*"<!-- aidevops:planning-publication:v1 "* | *"<!-- aidevops:issue-sync-todo-pr -->"* | *"<!-- aidevops:pulse-todo-handoff id="*) return 0 ;;
+	esac
+	return 1
+}
+
 #######################################
 # Extract a non-closing parent/umbrella reference from a PR body.
 #
@@ -66,11 +74,7 @@ _pm_extract_partial_parent_reference() {
 	local pr_body="" parent_issue="" refs=""
 
 	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || pr_body=""
-	case "$pr_body" in
-	*"<!-- aidevops:planning-publication:v1 "* | *"<!-- aidevops:issue-sync-todo-pr -->"* | *"<!-- aidevops:pulse-todo-handoff id="*)
-		return 0
-		;;
-	esac
+	_pm_pr_body_is_todo_projection "$pr_body" && return 0
 	# Capture, then take the first line without an early-exit reader (GH#36235).
 	refs=$(grep -ioE -- '(^|[[:space:]])(for|ref)[[:space:]]+#[0-9]+' <<<"$pr_body") || refs=""
 	parent_issue="${refs%%$'\n'*}"
@@ -128,6 +132,40 @@ _pm_unmet_acceptance_criteria() {
 }
 
 #######################################
+# Detect a trusted worker completion declaration for a merged For/Ref PR.
+#
+# A worker can finish a phase completely yet open its PR with non-closing
+# `For #N`. A partial-parent closeout would then ask for child issues covering
+# non-existent remaining scope and feed consolidation (GH#38971). The
+# declaration is a trusted comment naming this PR with "Resolves this issue".
+# An explicit non-"none" `Unfinished rows:` ledger entry in the merge summary
+# or the comment vetoes the declaration.
+#
+# Args: $1=pr_number, $2=comments JSON array, $3=merge_summary
+# Returns: 0=completion declared, 1=otherwise
+#######################################
+_pm_worker_declared_completion() {
+	local pr_number="$1"
+	local comments_json="$2"
+	local merge_summary="${3:-}"
+	local hits=""
+	local unfinished_re='unfinished rows:[[:space:]]*[*_]*[[:space:]]*[^[:space:]n*_]'
+
+	if grep -iE -- "$unfinished_re" <<<"$merge_summary" >/dev/null 2>&1; then
+		return 1
+	fi
+	hits=$(printf '%s' "$comments_json" | jq --arg pr "#${pr_number}" --arg re "$unfinished_re" '
+		[ .[]? | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
+		  | (.body // "") as $b
+		  | select(($b | test("resolves this issue"; "i"))
+		    and ($b | contains($pr))
+		    and (($b | test($re; "i")) | not)) ] | length' 2>/dev/null) || hits=0
+	[[ "$hits" =~ ^[0-9]+$ ]] || hits=0
+	[[ "$hits" -gt 0 ]] && return 0
+	return 1
+}
+
+#######################################
 # Post partial parent/umbrella closeout when a For/Ref PR merges.
 #
 # Non-closing references intentionally do not flow through the normal linked
@@ -174,6 +212,19 @@ _pm_handle_partial_parent_closeout() {
 	[[ "$dedup_count" =~ ^[0-9]+$ ]] || dedup_count=0
 	if [[ "$dedup_count" -gt 0 ]]; then
 		echo "[pulse-wrapper] Deterministic merge: skipped duplicate partial parent closeout on #${parent_issue} for PR #${pr_number} (GH#23937)" >>"$LOGFILE"
+		return 0
+	fi
+
+	local comments_json=""
+	comments_json=$(gh api "${issue_api}/comments" 2>/dev/null) || comments_json="[]"
+	if _pm_worker_declared_completion "$pr_number" "$comments_json" "$merge_summary"; then
+		# Completion check instead of a partial closeout: no follow-up scope
+		# list, so no needless consolidation (GH#38971).
+		gh_issue_comment "$parent_issue" --repo "$repo_slug" --body "<!-- COMPLETION_CHECK:PR#${pr_number} -->
+## Completion Check
+
+PR #${pr_number} merged with a non-closing \`For\`/\`Ref\` reference, but the worker's completion comment declares this issue resolved. Verify the acceptance criteria against the merged PR and close this issue as completed; no follow-up child issues are expected." 2>/dev/null || true
+		echo "[pulse-wrapper] Deterministic merge: completion declared on #${parent_issue} for PR #${pr_number}; posted completion check instead of partial closeout (GH#38971)" >>"$LOGFILE"
 		return 0
 	fi
 

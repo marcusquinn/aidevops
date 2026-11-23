@@ -264,25 +264,31 @@ fi
 # Dry-run must inspect the same guard as execution rather than claiming a
 # mutation that execution would skip. The structural exception is activated
 # only by the explicit forced single-task command state.
+# Capture output before matching: under pipefail, `writer | grep -q` reports
+# the writer's SIGPIPE (141) when grep exits before the writer's last line,
+# which made the forced parent-task case fail intermittently (GH#38962).
 DRY_RUN=true
 ENRICH_EXPLICIT_FORCED_TARGET=false
 ENRICH_PREFETCH_FILE="${TEST_ROOT}/prefetch-parity.json"
 printf '%s\n' "[$active_claim_json]" >"$ENRICH_PREFETCH_FILE"
-if ! _enrich_process_task "t30021" "test/repo" "$TODO_FIXTURE" "$TEST_ROOT" \
-	'- [ ] t30021 Blocked fixture #bug ref:GH#123' 2>&1 | grep -q 'Would enrich'; then
+_dry_run_output=$(_enrich_process_task "t30021" "test/repo" "$TODO_FIXTURE" "$TEST_ROOT" \
+	'- [ ] t30021 Blocked fixture #bug ref:GH#123' 2>&1) || true
+if ! grep -q -- 'Would enrich' <<<"$_dry_run_output"; then
 	print_result "dry-run and execution both block a foreign active owner" 0
 else
 	print_result "dry-run and execution both block a foreign active owner" 1 "(dry-run bypassed guard)"
 fi
 ENRICH_EXPLICIT_FORCED_TARGET=true
 printf '%s\n' "[$parent_task_json]" >"$ENRICH_PREFETCH_FILE"
-if _enrich_process_task "t30021" "test/repo" "$TODO_FIXTURE" "$TEST_ROOT" \
-	'- [ ] t30021 Blocked fixture #bug ref:GH#123' 2>&1 | grep -q 'Would enrich'; then
+_dry_run_rc=0
+_dry_run_output=$(_enrich_process_task "t30021" "test/repo" "$TODO_FIXTURE" "$TEST_ROOT" \
+	'- [ ] t30021 Blocked fixture #bug ref:GH#123' 2>&1) || _dry_run_rc=$?
+if [[ "$_dry_run_rc" -eq 0 ]] && grep -q -- 'Would enrich' <<<"$_dry_run_output"; then
 	print_result "dry-run predicts forced parent-task enrichment" 0
 else
-	print_result "dry-run predicts forced parent-task enrichment" 1 "(dry-run did not match execution guard)"
+	print_result "dry-run predicts forced parent-task enrichment" 1 "(dry-run did not match execution guard, rc=${_dry_run_rc})"
 fi
-unset DRY_RUN ENRICH_EXPLICIT_FORCED_TARGET ENRICH_PREFETCH_FILE
+unset DRY_RUN ENRICH_EXPLICIT_FORCED_TARGET ENRICH_PREFETCH_FILE _dry_run_output _dry_run_rc
 
 # Part 3b — _ensure_issue_body_has_brief also has the guard
 if grep -q 'is-assigned-read-only' "${TEST_SCRIPTS_DIR}/pulse-dispatch-core.sh"; then

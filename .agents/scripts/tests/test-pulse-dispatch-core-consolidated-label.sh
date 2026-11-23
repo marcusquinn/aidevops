@@ -199,6 +199,12 @@ test_projection_and_prerank_filter_match_gate() {
 		: >"$LOGFILE"
 		: >"$GH_CALLS"
 		_dispatch_stats_increment() { return 0; }
+		# Stub the exclusion-age helper to record note reasons per issue.
+		NOTE_CALLS="${test_root}/note-calls.log"
+		: >"$NOTE_CALLS"
+		mkdir -p "${test_root}/lib"
+		printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s"\n' "$NOTE_CALLS" >"${test_root}/lib/dispatch-exclusion-age-helper.sh"
+		_PULSE_DISPATCH_LIB_DIR="${test_root}/lib"
 		gh() {
 			printf '%s\n' "$*" >>"$GH_CALLS"
 			case "$*" in
@@ -240,6 +246,10 @@ test_projection_and_prerank_filter_match_gate() {
 		grep -q 'issues/101/comments --method POST' "$GH_CALLS" || exit 11
 		# Attention never relabels (auto-dispatch is not re-added) or edits state.
 		grep -qE '^(issue|pr) (edit|close)|/labels|--method (PATCH|PUT|DELETE)' "$GH_CALLS" && exit 12
+		# Stranded (no auto-dispatch) ages as consolidated_stranded; auto-dispatch keeps consolidated.
+		[[ "$(grep -c 'note owner/repo 101 consolidated_stranded' "$NOTE_CALLS")" == 1 ]] || exit 16
+		grep -q 'note owner/repo 103 consolidated$' "$NOTE_CALLS" || exit 17
+		grep -q 'note owner/repo 101 consolidated$' "$NOTE_CALLS" && exit 18
 		# A fresh attention stamp suppresses repeat PR/comment lookups.
 		: >"$GH_CALLS"
 		second=$(_dispatch_filter_consolidated_candidates owner/repo "$projected")
@@ -253,6 +263,85 @@ test_projection_and_prerank_filter_match_gate() {
 	rm -rf "$test_root"
 	print_result "projection and pre-ranking filter match the dispatch gate" "$status" \
 		"Assertion ${status} failed: expected #101/#103 filtered, #102/#104/#105/#106 kept and one attention post"
+	return 0
+}
+
+# GH#38021: an existing attention comment suppresses a repeat when its author
+# holds write permission, whatever association the read reports. Read through
+# an App installation, a private organization member reports CONTRIBUTOR.
+test_attention_dedup_resolves_author_permission() {
+	local test_root="" status=0
+	test_root=$(mktemp -d) || {
+		print_result "attention duplicate check resolves author write permission" 1 "mktemp failed"
+		return 0
+	}
+	(
+		set +e
+		SCRIPT_DIR="${SCRIPT_DIR}/.."
+		# shellcheck source=../shared-gh-collaborator-permission.sh
+		source "${SCRIPT_DIR}/shared-gh-collaborator-permission.sh"
+		# shellcheck source=../pulse-dispatch-lib-candidates.sh
+		source "${SCRIPT_DIR}/pulse-dispatch-lib-candidates.sh"
+		HOME="${test_root}/home"
+		LOGFILE="${test_root}/pulse.log"
+		GH_CALLS="${test_root}/gh-calls.log"
+		LOOKUPS="${test_root}/lookups.log"
+		local fixture_head="0123456789abcdef0123456789abcdef01234567"
+		local fixture_key="aidevops:consolidated-checkpoint-attention pr=501 head=${fixture_head}"
+		local fixture_association="" fixture_permission="" fixture_comment_key=""
+		_dispatch_stats_increment() { return 0; }
+		_gh_collaborator_permission_lookup() {
+			local lookup_user="$2" lookup_out="${3:-}"
+			printf '%s\n' "$lookup_user" >>"$LOOKUPS"
+			[[ "$fixture_permission" != fail ]] || return 2
+			printf -v "$lookup_out" '%s' "$fixture_permission"
+			return 0
+		}
+		gh() {
+			printf '%s\n' "$*" >>"$GH_CALLS"
+			case "$*" in
+			"pr list"*)
+				printf '[{"number":501,"title":"draft","body":"For #101","isDraft":true,"headRefOid":"%s"}]\n' "$fixture_head"
+				;;
+			"api --paginate"*)
+				jq -cn --arg association "$fixture_association" --arg body "<!-- ${fixture_comment_key} -->" \
+					'[{author_association: $association, user: {login: "runner1"}, body: $body}]'
+				;;
+			"api repos/owner/repo/issues/101/comments --method POST"*) printf '{}\n' ;;
+			*) return 1 ;;
+			esac
+			return 0
+		}
+		# Args: $1=association, $2=permission (or fail), $3=key in the existing comment
+		run_case() {
+			fixture_association="$1"
+			fixture_permission="$2"
+			fixture_comment_key="${3:-$fixture_key}"
+			: >"$LOGFILE"
+			: >"$GH_CALLS"
+			: >"$LOOKUPS"
+			_dispatch_consolidated_checkpoint_attention owner/repo 101
+			grep -c -- '--method POST' "$GH_CALLS"
+			return 0
+		}
+		[[ "$(run_case CONTRIBUTOR write)" == 0 ]] || exit 1
+		grep -q 'CONSOLIDATED_CHECKPOINT_ATTENTION_EXISTS #101' "$LOGFILE" || exit 2
+		grep -qx 'runner1' "$LOOKUPS" || exit 3
+		[[ "$(run_case CONTRIBUTOR read)" == 1 ]] || exit 4
+		[[ "$(run_case CONTRIBUTOR fail)" == 0 ]] || exit 5
+		grep -q 'CONSOLIDATED_CHECKPOINT_ATTENTION_UNVERIFIED #101' "$LOGFILE" || exit 6
+		[[ "$(run_case MEMBER fail)" == 0 && ! -s "$LOOKUPS" ]] || exit 7
+		# A comment for an earlier head of the same draft does not count.
+		[[ "$(run_case CONTRIBUTOR write "${fixture_key%head=*}head=fedcba9876543210fedcba9876543210fedcba98")" == 1 ]] || exit 8
+		# Without the shared helper the association test still applies.
+		unset -f _gh_keyed_comment_has_write_author
+		[[ "$(run_case COLLABORATOR fail)" == 0 ]] || exit 9
+		[[ "$(run_case CONTRIBUTOR write)" == 1 ]] || exit 10
+		exit 0
+	) || status=$?
+	rm -rf "$test_root"
+	print_result "attention duplicate check resolves author write permission" "$status" \
+		"Assertion ${status} failed: expected a write-access author to suppress the repeat and an unconfirmed one not to"
 	return 0
 }
 
@@ -337,6 +426,7 @@ main() {
 	test_empty_or_invalid_meta_returns_nonzero
 	test_string_label_candidates_use_same_predicate
 	test_projection_and_prerank_filter_match_gate
+	test_attention_dedup_resolves_author_permission
 	test_consolidation_large_file_exemption
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

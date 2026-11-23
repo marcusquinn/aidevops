@@ -161,6 +161,24 @@ detect_project_languages() {
 	return 0
 }
 
+# Install a Python command-line tool in an isolated environment (uv tool, then pipx).
+# Never installs to user or system Python scope (PEP 668).
+# Args: $1 = PyPI package name
+_install_python_cli_tool() {
+	local pkg="$1"
+	if command -v uv &>/dev/null; then
+		# --force replaces executables left by earlier pip installs (migration)
+		uv tool install --upgrade --force "$pkg" &>/dev/null
+		return $?
+	fi
+	if command -v pipx &>/dev/null; then
+		pipx install "$pkg" &>/dev/null || pipx upgrade "$pkg" &>/dev/null
+		return $?
+	fi
+	print_warning "Neither uv nor pipx found. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
+	return 1
+}
+
 # Install Python linters (CodeFactor: pycodestyle, Pylint, Bandit, Ruff)
 install_python_linters() {
 	print_header "Installing Python Linters (CodeFactor-inspired)"
@@ -170,7 +188,7 @@ install_python_linters() {
 
 	# pycodestyle (PEP 8 style guide checker)
 	print_info "Installing pycodestyle..."
-	if pip install pycodestyle &>/dev/null; then
+	if _install_python_cli_tool pycodestyle; then
 		print_success "pycodestyle installed"
 		((++success))
 	else
@@ -180,7 +198,7 @@ install_python_linters() {
 
 	# Pylint (comprehensive Python linter)
 	print_info "Installing Pylint..."
-	if pip install pylint &>/dev/null; then
+	if _install_python_cli_tool pylint; then
 		print_success "Pylint installed"
 		((++success))
 	else
@@ -190,7 +208,7 @@ install_python_linters() {
 
 	# Bandit (security linter)
 	print_info "Installing Bandit..."
-	if pip install bandit &>/dev/null; then
+	if _install_python_cli_tool bandit; then
 		print_success "Bandit installed"
 		((++success))
 	else
@@ -200,7 +218,7 @@ install_python_linters() {
 
 	# Ruff (fast Python linter)
 	print_info "Installing Ruff..."
-	if pip install ruff &>/dev/null; then
+	if _install_python_cli_tool ruff; then
 		print_success "Ruff installed"
 		((++success))
 	else
@@ -324,7 +342,7 @@ install_yaml_linters() {
 
 	# yamllint (YAML linter)
 	print_info "Installing yamllint..."
-	if pip install yamllint &>/dev/null; then
+	if _install_python_cli_tool yamllint; then
 		print_success "yamllint installed"
 		((++success))
 	else

@@ -44,27 +44,64 @@ _pulse_llm_failure_cooldown_active() {
 }
 
 #######################################
-# GH#34000 follow-up: an incomplete prefetch defers the LLM supervisor because
-# its prompt points at STATE_FILE. A runner whose prefetch degrades on every
-# cycle would then never run the supervisor, starving the daily sweep and
-# terminal-blocker recovery indefinitely. Admit a degraded-prefetch supervisor
-# decision once the latest attempt/success is older than
-# PULSE_LLM_DEGRADED_ESCAPE_SECONDS (default 6h; 0 disables). The normal
-# _should_run_llm_supervisor gates and failure cooldown still apply, and the
-# prompt marks the state file incomplete.
-# Returns: 0 when a degraded-prefetch supervisor run is admitted, 1 otherwise
+# GH#38162: age in seconds of the latest LLM supervisor attempt or success
+# (whichever is later). A runner that has never recorded either reports the
+# full epoch age, so every starvation threshold treats it as starved.
+# Output: age in seconds on stdout
 #######################################
-_pulse_degraded_prefetch_supervisor_escape_due() {
-	local escape_seconds="${PULSE_LLM_DEGRADED_ESCAPE_SECONDS:-21600}"
+_pulse_supervisor_last_attempt_age() {
 	local now_epoch="" last_success="" last_attempt="" latest=0
-	[[ "$escape_seconds" =~ ^[0-9]+$ && "$escape_seconds" -gt 0 ]] || return 1
 	now_epoch=$(date +%s)
 	last_success=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_success_epoch")
 	last_attempt=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_attempt_epoch")
 	latest="$last_success"
 	[[ "$last_attempt" -gt "$latest" ]] && latest="$last_attempt"
-	[[ $((now_epoch - latest)) -ge "$escape_seconds" ]] || return 1
+	printf '%s\n' "$((now_epoch - latest))"
 	return 0
+}
+
+#######################################
+# GH#38162: shared starvation test for supervisor-phase escapes.
+# Args: $1=threshold seconds (0 or non-numeric disables the escape)
+# Returns: 0 when no supervisor attempt/success happened within the threshold
+#######################################
+_pulse_supervisor_starved_for() {
+	local threshold="$1"
+	local age=0
+	[[ "$threshold" =~ ^[0-9]+$ && "$threshold" -gt 0 ]] || return 1
+	age=$(_pulse_supervisor_last_attempt_age)
+	[[ "$age" =~ ^-?[0-9]+$ ]] || return 1
+	[[ "$age" -ge "$threshold" ]] || return 1
+	return 0
+}
+
+#######################################
+# GH#34000 follow-up: an incomplete prefetch defers the snapshot-driven LLM
+# supervisor triggers because its prompt points at STATE_FILE. A runner whose
+# prefetch degrades on every cycle would then never run the daily sweep or
+# stall supervisor. Admit a full degraded-prefetch supervisor decision once the
+# latest attempt/success is older than PULSE_LLM_DEGRADED_ESCAPE_SECONDS
+# (default 6h; 0 disables). The normal _should_run_llm_supervisor gates and
+# failure cooldown still apply, and the prompt marks the state file incomplete.
+# Queue-driven blocker recovery has its own escape (GH#38162).
+# Returns: 0 when a degraded-prefetch supervisor run is admitted, 1 otherwise
+#######################################
+_pulse_degraded_prefetch_supervisor_escape_due() {
+	_pulse_supervisor_starved_for "${PULSE_LLM_DEGRADED_ESCAPE_SECONDS:-21600}" || return 1
+	return 0
+}
+
+#######################################
+# Cached API-pressure state for blocker-recovery cadence: the GraphQL circuit
+# breaker or the secondary-rate-limit cooldown. Never probes the API itself.
+# Returns: 0 when either is active, 1 otherwise
+#######################################
+_pulse_blocker_api_pressure_active() {
+	[[ ! -f "${_CIRCUIT_BREAKER_STATE_FILE:-${HOME}/.aidevops/logs/pulse-graphql-circuit-breaker.state}" ]] || return 0
+	if declare -F _gh_secondary_cooldown_active >/dev/null 2>&1 && _gh_secondary_cooldown_active; then
+		return 0
+	fi
+	return 1
 }
 
 #######################################
@@ -79,10 +116,7 @@ _pulse_rearm_blocker_holds() {
 	local last_check=0 rc=0
 	[[ "$interval" =~ ^[0-9]+$ && "$interval" -gt 0 ]] || return 0
 	[[ -f "$helper" ]] || return 0
-	[[ ! -f "${_CIRCUIT_BREAKER_STATE_FILE:-${HOME}/.aidevops/logs/pulse-graphql-circuit-breaker.state}" ]] || return 0
-	if declare -F _gh_secondary_cooldown_active >/dev/null 2>&1 && _gh_secondary_cooldown_active; then
-		return 0
-	fi
+	! _pulse_blocker_api_pressure_active || return 0
 	last_check=$(_pulse_read_epoch_file "$stamp")
 	[[ $((now_epoch - last_check)) -ge "$interval" ]] || return 0
 	printf '%s\n' "$now_epoch" >"$stamp" 2>/dev/null || return 1
@@ -94,9 +128,45 @@ _pulse_rearm_blocker_holds() {
 }
 
 #######################################
+# GH#39008: a partial zero-count probe shows only that its bounded window had
+# nothing; the rest of the queue is unread. Record an absolute deadline for
+# the next probe after the shorter partial interval (default: the rearm
+# cadence), unless cached API pressure says to wait. The full-interval stamp
+# is untouched, and the deadline holds whatever interval is in force later.
+# A failed or truncated write reads as 0: no early probe, the safe default.
+# GH#39012: only the helper's queue-side markers (queue, identity or entry
+# stage incomplete) mean queue work is unread. A finished queue pass with only
+# discovery incomplete (seed, holds, unclassified; the seed rarely finishes in
+# one call) keeps the full interval, so a persistent discovery failure cannot
+# repeat the probe every partial interval. No readable stderr: no early probe.
+# Args: now_epoch interval due_file err_file
+#######################################
+_pulse_blocker_partial_reprobe() {
+	local now_epoch="$1"
+	local interval="$2"
+	local due_file="$3"
+	local err_file="$4"
+	local partial="${PULSE_LLM_RECOVERY_PARTIAL_PROBE_INTERVAL:-600}"
+	[[ "$partial" =~ ^[0-9]+$ ]] || return 0
+	# Decimal, so a leading zero (0600) is not read as octal.
+	partial=$((10#$partial))
+	[[ "$partial" -gt 0 && "$partial" -lt "$interval" ]] || return 0
+	grep -Eq 'blocker-recovery: incomplete stage=(queue|identity|entry)( |$)' "$err_file" 2>/dev/null || return 0
+	! _pulse_blocker_api_pressure_active || return 0
+	printf '%s\n' "$((now_epoch + partial))" >"$due_file" 2>/dev/null || return 0
+	echo "[pulse-wrapper] LLM supervisor: blocker recovery probe found 0 pending (partial scan); re-probe in ${partial}s (GH#39008)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # t18514/GH#32754: decide whether pending terminal-blocker recovery entries
 # warrant an LLM supervisor run. Checks at most once per interval so the
 # GitHub-verified count never runs on every pulse cycle.
+# GH#38779: after a failed or killed attempt (latest attempt newer than the
+# latest success) the interval drops to PULSE_LLM_FAILURE_RETRY_INTERVAL, and
+# the failure cooldown is checked before the stamp. Otherwise one model backoff
+# or restart-killed session deferred all recovery for the full 3h interval,
+# and a check inside the cooldown spent that window without running.
 # Args: now_epoch last_success_epoch last_attempt_epoch
 # Returns: 0 when a recovery run should start (trigger mode written), 1 otherwise
 #######################################
@@ -105,32 +175,90 @@ _pulse_blocker_recovery_due() {
 	local last_success_epoch="$2"
 	local last_attempt_epoch="$3"
 	local interval="${PULSE_LLM_RECOVERY_INTERVAL:-10800}"
+	local retry_interval="${PULSE_LLM_FAILURE_RETRY_INTERVAL:-1800}"
 	local stamp="${PULSE_DIR}/last_blocker_recovery_check_epoch"
+	local partial_due_file="${PULSE_DIR}/last_blocker_recovery_partial_due_epoch"
+	# GH#39012: the last probe's stage markers, kept for diagnosis.
+	local probe_err="${PULSE_DIR}/last_blocker_recovery_probe.err"
 	local helper="${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/terminal-blocker-recovery-helper.sh"
-	local last_check=0 pending=0 pending_rc=0 scan_note=""
+	local last_check=0 partial_due=0 pending=0 pending_rc=0 scan_note=""
 	[[ "$interval" =~ ^[0-9]+$ && "$interval" -gt 0 ]] || return 1
+	[[ "$retry_interval" =~ ^[0-9]+$ ]] || retry_interval=1800
+	if [[ "$last_attempt_epoch" -gt "$last_success_epoch" && "$retry_interval" -lt "$interval" ]]; then
+		interval="$retry_interval"
+	fi
 	[[ -f "$helper" ]] || return 1
 	[[ -f "$stamp" ]] && read -r last_check <"$stamp"
 	[[ "$last_check" =~ ^[0-9]+$ ]] || last_check=0
-	[[ $((now_epoch - last_check)) -ge "$interval" ]] || return 1
+	# GH#39008: a partial zero-count probe's deadline also makes it due. It is
+	# written as stamp + partial interval, so a deadline not after the stamp
+	# (truncated write, or one left by a failed removal) is ignored.
+	if [[ $((now_epoch - last_check)) -lt "$interval" ]]; then
+		partial_due=$(_pulse_read_epoch_file "$partial_due_file")
+		[[ "$partial_due" -gt "$last_check" && "$now_epoch" -ge "$partial_due" ]] || return 1
+		# GH#39012: pressure can start after the deadline was saved. Keep the
+		# deadline so the early probe runs once pressure clears.
+		! _pulse_blocker_api_pressure_active || return 1
+	fi
+	if _pulse_llm_failure_cooldown_active "$now_epoch" "$last_success_epoch" "$last_attempt_epoch"; then
+		return 1
+	fi
 	printf '%s\n' "$now_epoch" >"$stamp" 2>/dev/null || return 1
+	rm -f "$partial_due_file" 2>/dev/null || true
 	# GH#35945: exit 2 is an incomplete scan whose stdout is still the partial
 	# count (helper contract). The bounded seed spans every pulse repo and
 	# rarely finishes in one call, so discarding that count kept this trigger
 	# from ever firing. Any other failure means nothing is known to be pending.
-	pending=$(bash "$helper" pending --count 2>/dev/null) || pending_rc=$?
+	pending=$(bash "$helper" pending --count 2>"$probe_err") || pending_rc=$?
 	case "$pending_rc" in
 	0) ;;
 	2) scan_note=" (partial scan)" ;;
 	*) pending=0 ;;
 	esac
-	[[ "$pending" =~ ^[0-9]+$ && "$pending" -gt 0 ]] || return 1
-	if _pulse_llm_failure_cooldown_active "$now_epoch" "$last_success_epoch" "$last_attempt_epoch"; then
+	if [[ "$pending_rc" -eq 2 && "$pending" == 0 ]]; then
+		_pulse_blocker_partial_reprobe "$now_epoch" "$interval" "$partial_due_file" "$probe_err"
 		return 1
 	fi
+	[[ "$pending" =~ ^[0-9]+$ && "$pending" -gt 0 ]] || return 1
 	echo "[pulse-wrapper] LLM supervisor: ${pending} terminal-blocker recovery entr$([[ "$pending" -eq 1 ]] && printf 'y' || printf 'ies') pending${scan_note} (t18514)" >>"$LOGFILE"
 	_pulse_write_trigger_mode "blocker_recovery" || return 1
 	return 0
+}
+
+#######################################
+# Latest successful LLM supervisor epoch, falling back to the legacy
+# last_llm_run_epoch success timestamp written by older installs.
+# Output: epoch on stdout (0 when unknown)
+#######################################
+_pulse_read_llm_success_epoch() {
+	local epoch=0
+	epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_success_epoch")
+	if [[ "$epoch" -eq 0 ]]; then
+		epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_run_epoch")
+	fi
+	printf '%s\n' "$epoch"
+	return 0
+}
+
+#######################################
+# GH#38162: supervisor decision for an incomplete prefetch. The blocker-
+# recovery queue comes from the helper and live reads, not STATE_FILE, so it
+# must not wait for a complete snapshot; the snapshot-driven daily-sweep and
+# stall triggers are not admitted. Calls _pulse_blocker_recovery_due exactly
+# once: it writes its interval stamp before counting, so a second call in the
+# same decision would see a fresh stamp and drop the trigger.
+# Args: now_epoch last_success_epoch last_attempt_epoch
+# Returns: 0 when a queue-driven run should start (trigger mode written)
+#######################################
+_pulse_queue_triggers_only_decision() {
+	local now_epoch="$1"
+	local last_success_epoch="$2"
+	local last_attempt_epoch="$3"
+	if _pulse_blocker_recovery_due "$now_epoch" "$last_success_epoch" "$last_attempt_epoch"; then
+		return 0
+	fi
+	echo "[pulse-wrapper] Skipping LLM supervisor: prefetch state incomplete and no queue-driven trigger due (GH#38162, last_attempt_age_s=$(_pulse_supervisor_last_attempt_age))" >>"$LOGFILE"
+	return 1
 }
 
 _update_backlog_snapshot() {

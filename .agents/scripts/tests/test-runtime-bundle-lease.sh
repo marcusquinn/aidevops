@@ -10,6 +10,7 @@ LEASE_HELPER="${REPO_ROOT}/.agents/scripts/runtime-bundle-lease.sh"
 HEADLESS_HELPER="${REPO_ROOT}/.agents/scripts/headless-runtime-helper.sh"
 HEADLESS_FAILURE="${REPO_ROOT}/.agents/scripts/headless-runtime-failure.sh"
 HEADLESS_WORKER="${REPO_ROOT}/.agents/scripts/headless-runtime-worker.sh"
+HEADLESS_WORKER_FINISH="${REPO_ROOT}/.agents/scripts/headless-runtime-worker-finish.sh"
 PULSE_WRAPPER="${REPO_ROOT}/.agents/scripts/pulse-wrapper.sh"
 TEST_ROOT="$(mktemp -d -t runtime-bundle-lease.XXXXXX)"
 ORIGINAL_HOME="${HOME}"
@@ -86,8 +87,10 @@ else
 	fail "headless runtime owns a bundle lease for its process lifetime"
 fi
 
-if ! grep -q 'declare -F aidevops_runtime_bundle_lease_release' "$HEADLESS_FAILURE" && \
-	! grep -q 'declare -F aidevops_runtime_bundle_lease_release' "$HEADLESS_WORKER"; then
+if [[ -r "$HEADLESS_FAILURE" && -r "$HEADLESS_WORKER" && -r "$HEADLESS_WORKER_FINISH" ]] && \
+	! grep -q 'declare -F aidevops_runtime_bundle_lease_release' "$HEADLESS_FAILURE" && \
+	! grep -q 'declare -F aidevops_runtime_bundle_lease_release' "$HEADLESS_WORKER" && \
+	! grep -q 'declare -F aidevops_runtime_bundle_lease_release' "$HEADLESS_WORKER_FINISH"; then
 	pass "headless cleanup requires the runtime bundle release invariant"
 else
 	fail "headless cleanup requires the runtime bundle release invariant"

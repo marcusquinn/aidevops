@@ -223,6 +223,13 @@ gh_pr_checks_exact_json() {
 	esac
 }
 
+# GH#39227: exact-head snapshot for the non-required check gate; required
+# checks here are the only checks on the head.
+_pmrc_snapshot_checks_with_retry() {
+	printf '[{"name":"required","status":"completed","conclusion":"success"}]\n'
+	return 0
+}
+
 FULL_LOOP_PR_CHECK_STATUS=""
 _full_loop_verify_pr_readiness 42 owner/repo && fail "pending checks passed readiness"
 [[ "$FULL_LOOP_PR_CHECK_STATUS" == "pending" ]] || fail "pending checks were not classified as pending"

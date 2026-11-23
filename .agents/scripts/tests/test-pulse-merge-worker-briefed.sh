@@ -68,6 +68,7 @@ print_result() {
 
 setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
+	export PULSE_T2449_BLOCK_STATE_DIR="${TEST_ROOT}/t2449-blocks"
 	mkdir -p "${TEST_ROOT}/bin"
 	mkdir -p "${TEST_ROOT}/scripts"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
@@ -223,6 +224,7 @@ define_helpers_under_test() {
 		/^_pm_canary_shared_constants_patch_ok\(\) \{/,/^\}$/ { print }
 		/^_is_trusted_opencode_canary_issue_pr\(\) \{/,/^\}$/ { print }
 		/^_is_trusted_starter_sync_issue_pr\(\) \{/,/^\}$/ { print }
+		/^_pm_starter_sync_issue_scope_has\(\) \{/,/^\}$/ { print }
 	' "$extract_from")
 	if [[ -z "$src_worker_briefed" || -z "$src_issue_api" ]]; then
 		printf 'ERROR: could not extract helpers from %s / %s\n' "$MERGE_SCRIPT" "$extract_from" >&2
@@ -912,6 +914,39 @@ test_reference_to_pr_is_not_a_worker_brief() {
 	return 0
 }
 
+test_partial_comment_and_title_association() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	local body="" expected="" actual="" title="t501: partial" src=""
+	for body in 'For #501. text <!-- marker -->' $'text <!-- c -->\nFor #501' '<!-- For #501 -->' $'<!--\nFor #501\n-->'; do
+		expected="501"
+		[[ "$body" != '<!--'* ]] || expected=""
+		actual=$(_gh_pr_body_explicit_issues "$body")
+		if [[ "$actual" == "$expected" ]]; then
+			print_result "explicit comment spans: ${body//$'\n'/ }" 0
+		else
+			print_result "explicit comment spans: ${body//$'\n'/ }" 1 "got ${actual}"
+		fi
+	done
+	src=$(awk '/^_extract_pr_work_issue\(\) \{/,/^}$/ { print }' "$MERGE_SCRIPT")
+	eval "$src"
+	# shellcheck source=../pulse-merge-partial-continuation.sh
+	source "${MERGE_SCRIPT%/*}/pulse-merge-partial-continuation.sh"
+	_extract_linked_issue() { return 0; }
+	gh_pr_view() {
+		if [[ "$*" == *'--json title'* ]]; then printf '%s' "$title"; else printf '%s' "$body"; fi
+		return 0
+	}
+	body=$'## Remaining\nFor #501'
+	actual=$(_extract_pr_work_issue 1 owner/repo explicit "$body")
+	[[ "$actual" == 501 ]] && print_result "corroborated secondary association" 0 || print_result "corroborated secondary association" 1
+	title='t502: partial'
+	actual=$(_extract_pr_work_issue 1 owner/repo explicit "$body")
+	[[ -z "$actual" ]] && print_result "mismatched title fails closed" 0 || print_result "mismatched title fails closed" 1
+	teardown_test_env
+	return 0
+}
+
 test_partial_worker_association_reaches_authority_gate() {
 	setup_test_env
 	define_helpers_under_test || { teardown_test_env; return 0; }
@@ -1041,14 +1076,15 @@ test_parent_planning_checkpoint_gates() {
 #       $5=issue user type, $6=PR file, $7=core-files fixture mode (ok|missing)
 _run_starter_sync_case() {
 	local label="$1" expect="$2" title="$3" labels="$4" utype="$5" pfile="$6" mode="${7:-ok}"
+	local body="${8:-}" status="${9:-modified}"
 	setup_test_env
 	define_helpers_under_test || { teardown_test_env; return 0; }
-	jq -n --arg t "$title" --argjson l "$labels" --arg ty "$utype" \
-		'{author_association:"NONE",user:{login:"github-actions[bot]",type:$ty},title:$t,labels:$l}' >"${TEST_ROOT}/issue.json"
+	jq -n --arg t "$title" --argjson l "$labels" --arg ty "$utype" --arg body "$body" \
+		'{author_association:"NONE",user:{login:"github-actions[bot]",type:$ty},title:$t,labels:$l,body:$body}' >"${TEST_ROOT}/issue.json"
 	printf '[]' >"${TEST_ROOT}/comments.json"
 	printf '0123456789abcdef0123456789abcdef01234567\n' >"${TEST_ROOT}/base-sha.txt"
-	[[ "$mode" == "ok" ]] && printf 'scripts/sync.sh\nincludes/core.php\n' >"${TEST_ROOT}/core-files.txt"
-	jq -n --arg f "$pfile" '[{filename:$f,status:"modified"},{filename:"changelog.txt",status:"modified"}]' >"${TEST_ROOT}/pr-files.json"
+	[[ "$mode" == "ok" ]] && printf '# core files\n\nscripts/sync.sh\nincludes/core.php\n.github/\n' >"${TEST_ROOT}/core-files.txt"
+	jq -n --arg f "$pfile" --arg s "$status" '[{filename:$f,status:$s},{filename:"changelog.txt",status:"modified"}]' >"${TEST_ROOT}/pr-files.json"
 	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
 
 	local result=0
@@ -1068,11 +1104,49 @@ test_starter_sync_scoped_trust() {
 	local ok_labels='[{"name":"starter-sync"}]'
 	local ttl="Core files differ from the starter"
 	_run_starter_sync_case "starter-sync: in-scope diff passes" pass "$ttl" "$ok_labels" Bot "includes/core.php"
+	_run_starter_sync_case "starter-sync: directory prefix passes" pass "$ttl" "$ok_labels" Bot ".github/workflows/ci.yml"
+	_run_starter_sync_case "starter-sync: issue scope passes" pass "$ttl" "$ok_labels" Bot "scripts/new-core.sh" ok $'### Files Scope\n- `scripts/new-core.sh`\n## Next\n- `outside.sh`'
+	_run_starter_sync_case "starter-sync: later heading excluded" block "$ttl" "$ok_labels" Bot "outside.sh" ok $'### Files Scope\n- `scripts/new-core.sh`\n## Next\n- `outside.sh`'
+	_run_starter_sync_case "starter-sync: renamed file blocked" block "$ttl" "$ok_labels" Bot "includes/core.php" ok "" renamed
 	_run_starter_sync_case "starter-sync: wrong title blocked" block "Something else" "$ok_labels" Bot "includes/core.php"
 	_run_starter_sync_case "starter-sync: missing label blocked" block "$ttl" '[{"name":"bug"}]' Bot "includes/core.php"
 	_run_starter_sync_case "starter-sync: non-Bot author blocked" block "$ttl" "$ok_labels" User "includes/core.php"
 	_run_starter_sync_case "starter-sync: out-of-scope file blocked" block "$ttl" "$ok_labels" Bot "includes/own-feature.php"
 	_run_starter_sync_case "starter-sync: scope-list API failure fails closed" block "$ttl" "$ok_labels" Bot "includes/core.php" missing
+	# GH#39910: the generator qualifies conditional entries and uses wildcards.
+	local scope=$'### Files Scope\n- `phpstan-plugin.neon` (only if step 4 calls for it)\n- `includes/class-*-setup.php` (only if step 4 calls for it)\n- `notes.txt` and more\n## Acceptance'
+	_run_starter_sync_case "starter-sync: qualified scope entry passes" pass "$ttl" "$ok_labels" Bot "phpstan-plugin.neon" ok "$scope"
+	_run_starter_sync_case "starter-sync: one-segment wildcard entry passes" pass "$ttl" "$ok_labels" Bot "includes/class-foo-setup.php" ok "$scope"
+	_run_starter_sync_case "starter-sync: wildcard never crosses a directory" block "$ttl" "$ok_labels" Bot "includes/class-a/b-setup.php" ok "$scope"
+	_run_starter_sync_case "starter-sync: other trailing text admits nothing" block "$ttl" "$ok_labels" Bot "notes.txt" ok "$scope"
+	test_starter_sync_refusal_named
+	return 0
+}
+
+# GH#39910: a refused starter-sync PR's denial and bot-decision comment name
+# the out-of-scope file, and the comment is posted again for a new refusal.
+test_starter_sync_refusal_named() {
+	local label="starter-sync: refusal names the out-of-scope file (GH#39910)"
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	approval_cli_prefix() { printf 'sudo aidevops'; return 0; }
+	gh_issue_comment() { local f=""; while [[ $# -gt 0 ]]; do [[ "$1" == "--body-file" ]] && f="$2"; shift; done; cat "$f" >"${TEST_ROOT}/posted.txt"; return 0; }
+	_PM_WORKFLOW_BOT_LOGIN="github-actions[bot]"
+	jq -n '{author_association:"NONE",user:{login:"github-actions[bot]",type:"Bot"},title:"Core files differ from the starter",labels:[{name:"starter-sync"}],body:""}' >"${TEST_ROOT}/issue.json"
+	printf '[[{"user":{"login":"github-actions[bot]"},"body":"<!-- aidevops:worker-briefed-trust-decision:v1 -->\\nolder decision"}]]' >"${TEST_ROOT}/comments.json"
+	printf '0123456789abcdef0123456789abcdef01234567\n' >"${TEST_ROOT}/base-sha.txt"
+	printf 'includes/core.php\n' >"${TEST_ROOT}/core-files.txt"
+	jq -n '[{filename:"includes/own-feature.php",status:"modified"}]' >"${TEST_ROOT}/pr-files.json"
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+	local verdict="" result=0
+	verdict=$(worker_briefed_trust_verdict "103" "owner/repo" "origin:worker" "false" "45") || result=$?
+	if [[ "$result" -ne 0 && "$verdict" == *"refused: the PR changes includes/own-feature.php"* ]] &&
+		grep -q "refused for PR #103: the PR changes includes/own-feature.php" "${TEST_ROOT}/posted.txt" 2>/dev/null; then
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "exit=${result} verdict=${verdict} posted=$(tr '\n' '|' <"${TEST_ROOT}/posted.txt" 2>/dev/null)"
+	fi
+	teardown_test_env
 	return 0
 }
 
@@ -1087,7 +1161,8 @@ test_starter_sync_scoped_trust() {
 _define_starter_gate_chain() {
 	local src="" fn="" part=""
 	for fn in _check_pr_merge_gates _pm_gate_review_mode _pm_gate_author_trust \
-		_pm_gate_route_ineligible_author _pm_gate_repository_and_issue \
+		_pm_gate_route_ineligible_author _pm_gate_route_configured_dependency_bot \
+		_pm_log_once_per_head _pm_gate_repository_and_issue \
 		_pm_gate_origin_authority _pm_gate_review_bot _pulse_merge_final_trust_gate; do
 		part=$(awk -v f="$fn" '$0 ~ "^" f "\\(\\) \\{" , /^}$/ { print }' "$MERGE_SCRIPT")
 		if [[ -z "$part" ]]; then
@@ -1130,6 +1205,7 @@ _define_starter_gate_chain() {
 	_pulse_recover_external_review() { return 0; }
 	_pulse_merge_refresh_review_gate_evidence() { return 0; }
 	_pulse_merge_preflight_snapshot_gate() { return 0; }
+	_pulse_merge_prospective_todo_gate() { return 0; }
 	# Final-boundary stand-in for _pulse_merge_admin_safety_check: it reads the
 	# same live PR metadata the real one feeds to _pulse_merge_live_state_gate.
 	_pulse_merge_admin_safety_check() {
@@ -1183,7 +1259,7 @@ _run_starter_gate_chain_case() {
 	none) ;;
 	esac
 	jq -n --argjson l "$issue_labels" \
-		'{author_association:"NONE",user:{login:"github-actions[bot]",type:"Bot"},title:"Core files differ from the starter",labels:$l}' >"${TEST_ROOT}/issue.json"
+		'{author_association:"NONE",user:{login:"github-actions[bot]",type:"Bot"},title:"Core files differ from the starter",labels:$l,body:""}' >"${TEST_ROOT}/issue.json"
 	printf '0123456789abcdef0123456789abcdef01234567\n' >"${TEST_ROOT}/base-sha.txt"
 	printf 'scripts/sync.sh\nincludes/core.php\n' >"${TEST_ROOT}/core-files.txt"
 	printf '[{"filename":"includes/core.php","status":"modified"},{"filename":"changelog.txt","status":"modified"}]' >"${TEST_ROOT}/pr-files.json"
@@ -1253,6 +1329,7 @@ main() {
 	test_case_u_worker_gate_ignores_empty_precomputed_pr_author_login
 	test_case_v_spoofed_crypto_marker_blocked
 	test_reference_to_pr_is_not_a_worker_brief
+	test_partial_comment_and_title_association
 	test_partial_worker_association_reaches_authority_gate
 	test_non_closing_reference_gates
 	test_parent_planning_checkpoint_gates

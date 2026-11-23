@@ -97,7 +97,14 @@ if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
 				break
 			fi
 		done <"${GH_FIXTURE_FILE}"
-		jq -cn --argjson nodes "$fixture_payload" --argjson cost "$graphql_cost" '
+		# Like GitHub, derive closing references from body keywords unless the
+		# fixture supplies them; PRs are same-repository unless stated (GH#38124).
+		jq -cn --argjson nodes "$fixture_payload" --argjson cost "$graphql_cost" --arg repo "$local_repo" '
+			($repo | split("/")) as $slug |
+			def closing_refs($body):
+				[($body // "") | scan("(?i)(?:^|[^a-z0-9_])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[ \\t]+#([1-9][0-9]*)") |
+					.[0] | tonumber] | unique |
+				map({number: ., repository: {name: $slug[1], owner: {login: $slug[0]}}});
 			{
 				data: {
 					search: {
@@ -111,6 +118,9 @@ if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
 							mergeStateStatus: ($pr.mergeStateStatus // null),
 							mergeable: ($pr.mergeable // null),
 							changedFiles: ($pr.changedFiles // 0),
+							isCrossRepository: ($pr.isCrossRepository // false),
+							headRefName: ($pr.headRefName // ""),
+							closingIssuesReferences: {nodes: ($pr.closingIssuesReferences // closing_refs($pr.body))},
 							files: {
 								nodes: ($pr.files // []),
 								pageInfo: {hasNextPage: ($pr.filesHasNextPage // false)}
@@ -563,9 +573,15 @@ test_has_open_pr_distinguishes_body_mentions_from_references() {
 			title="Implement another issue"
 			expected=0
 			[[ "$body" == 'The results phase (#33653) stays open.' ]] && expected=1
+			# GH#38124: a worker draft blocks only when continuation can adopt it.
+			# Slug-qualified and GH#N body references are context the shared
+			# predicate rejects, so blocking on them would stall the issue.
+			if [[ "$is_draft" == true && "$body" != 'For #33653.' ]]; then
+				expected=1
+			fi
 			set_gh_fixtures "marcusquinn/aidevops|open|#33653|[{\"number\":33654,\"title\":\"${title}\",\"body\":\"${body}\",\"isDraft\":${is_draft},\"reviewDecision\":\"APPROVED\",\"mergeStateStatus\":\"CLEAN\",\"labels\":[{\"name\":\"origin:worker\"}]}]"
 			rc=0
-			output=$("$HELPER_SCRIPT" has-open-pr 33653 marcusquinn/aidevops 'body reference regression') || rc=$?
+			output=$("$HELPER_SCRIPT" has-open-pr 33653 marcusquinn/aidevops 'body reference regression' 2>&1) || rc=$?
 			if [[ "$rc" -eq "$expected" ]]; then
 				print_result "has-open-pr body reference (draft=${is_draft}): ${body}" 0
 			else
@@ -601,6 +617,78 @@ test_has_open_pr_marks_worker_draft_for_stale_routing() {
 	return 0
 }
 
+test_has_open_pr_inline_for_matches_continuation_predicate() {
+	local body='Partial data checkpoint; publication remain pending. For #18790'
+	set_gh_fixtures "marcusquinn/aidevops|open|#18790|[{\"number\":18917,\"title\":\"Worker checkpoint\",\"body\":\"${body}\",\"isDraft\":true,\"reviewDecision\":\"REVIEW_REQUIRED\",\"mergeStateStatus\":\"UNKNOWN\",\"labels\":[{\"name\":\"origin:worker\"}]}]"
+
+	local pr_json output=""
+	pr_json=$(jq -n --arg body "$body" '{body:$body,isDraft:true,isCrossRepository:false,closingIssuesReferences:[],labels:[{name:"origin:worker"}]}')
+	if output=$("$HELPER_SCRIPT" has-open-pr 18790 marcusquinn/aidevops 'inline checkpoint') &&
+		[[ "$output" == WORKER_DRAFT_CHECKPOINT:* ]] &&
+		bash -c 'source "$1" && _pr_checkpoint_nonclosing_draft_links_issue "$2" 18790' _ \
+			"${SCRIPT_DIR}/../pr-checkpoint-target-lib.sh" "$pr_json"; then
+		print_result "has-open-pr and continuation agree on inline 'For #N' draft" 0
+		return 0
+	fi
+	print_result "has-open-pr and continuation agree on inline 'For #N' draft" 1 "Unexpected output: ${output}"
+	return 0
+}
+
+# Args: $1=label, $2=issue, $3=checkpoint | unlinked:<reason>
+_assert_worker_draft_route() {
+	local label="$1" issue="$2" expected="$3"
+	local stdout="" stderr="" rc=0 matched=false
+	local stderr_file="${TEST_ROOT}/worker-draft-route.err"
+	stdout=$("$HELPER_SCRIPT" has-open-pr "$issue" marcusquinn/aidevops 'worker draft route' 2>"$stderr_file") || rc=$?
+	stderr=$(<"$stderr_file")
+	case "$expected" in
+	checkpoint)
+		[[ "$rc" -eq 0 && "$stdout" == WORKER_DRAFT_CHECKPOINT:* ]] && matched=true
+		;;
+	unlinked:*)
+		[[ "$rc" -eq 1 && -z "$stdout" &&
+			"$stderr" == *"WORKER_DRAFT_CHECKPOINT_UNLINKED: issue=#${issue} pr=#"*"reason=${expected#unlinked:};"* ]] && matched=true
+		;;
+	esac
+	if [[ "$matched" == true ]]; then
+		print_result "$label" 0
+		return 0
+	fi
+	print_result "$label" 1 "rc=${rc} stdout=${stdout} stderr=${stderr}"
+	return 0
+}
+
+# GH#38124: dedup blocks a worker draft only for the issue continuation adopts.
+test_has_open_pr_worker_draft_routes_follow_continuation() {
+	local fixture_prefix='{"number":18920,"title":"Worker checkpoint","isDraft":true,"labels":[{"name":"origin:worker"}],'
+	local related="${fixture_prefix}"'"body":"For #18791\n\n## Related\n\nRef #18792"}'
+	set_gh_fixtures "marcusquinn/aidevops|open|#18791|[${related}]"$'\n'"marcusquinn/aidevops|open|#18792|[${related}]"
+	_assert_worker_draft_route "related draft: For target keeps its checkpoint" 18791 checkpoint
+	_assert_worker_draft_route "related draft: Ref target dispatches normally" 18792 unlinked:related_reference
+
+	local body='For #18793 data phase.\nFor #18794 publication phase.' ambiguous=""
+	ambiguous="${fixture_prefix}\"headRefName\":\"feature/auto-20261113-000000-gh18794-r2\",\"body\":\"${body}\"}"
+	set_gh_fixtures "marcusquinn/aidevops|open|#18793|[${ambiguous}]"$'\n'"marcusquinn/aidevops|open|#18794|[${ambiguous}]"
+	_assert_worker_draft_route "ambiguous draft: dispatch identity keeps its checkpoint" 18794 checkpoint
+	_assert_worker_draft_route "ambiguous draft: other For target dispatches normally" 18793 unlinked:related_reference
+	local pr_json=""
+	pr_json=$(jq -c '{body,isDraft,labels,headRefName,isCrossRepository:false,closingIssuesReferences:[]}' <<<"$ambiguous")
+	if bash -c 'source "$1" && _pr_checkpoint_nonclosing_draft_links_issue "$2" 18794 &&
+		! _pr_checkpoint_nonclosing_draft_links_issue "$2" 18793' _ \
+		"${SCRIPT_DIR}/../pr-checkpoint-target-lib.sh" "$pr_json"; then
+		print_result "continuation adopts the ambiguous draft only for its dispatch identity" 0
+	else
+		print_result "continuation adopts the ambiguous draft only for its dispatch identity" 1 "pr=${pr_json}"
+	fi
+
+	# A numeric-boundary miss (gh187940) proves no identity: neither issue blocks.
+	ambiguous="${fixture_prefix}\"headRefName\":\"feature/auto-20261113-000000-gh187940\",\"body\":\"${body}\"}"
+	set_gh_fixtures "marcusquinn/aidevops|open|#18793|[${ambiguous}]"$'\n'"marcusquinn/aidevops|open|#18794|[${ambiguous}]"
+	_assert_worker_draft_route "unproven ambiguous draft does not block its first target" 18793 unlinked:ambiguous
+	_assert_worker_draft_route "unproven ambiguous draft does not block its second target" 18794 unlinked:ambiguous
+	return 0
+}
+
 test_has_open_pr_keeps_protected_draft_unroutable() {
 	set_gh_fixtures 'marcusquinn/aidevops|open|#18781|[{"number":18908,"title":"Interactive checkpoint for #18781","body":"Resolves #18781. Held for review.","isDraft":true,"reviewDecision":"REVIEW_REQUIRED","mergeStateStatus":"UNKNOWN","labels":[{"name":"origin:interactive"}]}]'
 
@@ -616,6 +704,35 @@ test_has_open_pr_keeps_protected_draft_unroutable() {
 
 	print_result "has-open-pr keeps protected draft out of stale routing" 1 \
 		"Expected protected draft checkpoint to block ordinary redispatch"
+	return 0
+}
+
+# t19293 (GH#39919): a linked worker draft held only by hold-for-review is
+# reported as self-held and still blocks; any other protection stays plain.
+test_has_open_pr_reports_self_held_worker_draft() {
+	local labels_case="" labels="" expected="" output="" rc=0 block=""
+	block="draft PR #18911 is a durable checkpoint for issue #18782; ordinary redispatch is blocked"
+	for labels_case in \
+		'[{"name":"origin:worker"},{"name":"hold-for-review"}]|held' \
+		'[{"name":"origin:worker"},{"name":"hold-for-review"},{"name":"no-auto-dispatch"}]|plain' \
+		'[{"name":"origin:interactive"},{"name":"hold-for-review"}]|plain' \
+		'[{"name":"hold-for-review"}]|plain'; do
+		labels="${labels_case%|*}"
+		expected="${labels_case##*|}"
+		set_gh_fixtures "marcusquinn/aidevops|open|#18782|[{\"number\":18911,\"title\":\"Worker checkpoint\",\"body\":\"For #18782\",\"isDraft\":true,\"reviewDecision\":\"REVIEW_REQUIRED\",\"mergeStateStatus\":\"UNKNOWN\",\"labels\":${labels}}]"
+		rc=0
+		output=$("$HELPER_SCRIPT" has-open-pr 18782 marcusquinn/aidevops 'self-held draft') || rc=$?
+		if [[ "$expected" == held ]]; then
+			[[ "$rc" -eq 0 && "$output" == "WORKER_DRAFT_SELF_HELD: ${block}" ]] && expected=ok
+		else
+			[[ "$rc" -eq 0 && "$output" == "$block" ]] && expected=ok
+		fi
+		if [[ "$expected" == ok ]]; then
+			print_result "has-open-pr self-held classification for labels ${labels}" 0
+		else
+			print_result "has-open-pr self-held classification for labels ${labels}" 1 "rc=${rc}: ${output}"
+		fi
+	done
 	return 0
 }
 
@@ -973,6 +1090,36 @@ test_has_open_pr_allows_when_no_healthy_sibling() {
 	return 0
 }
 
+# GH#39760: a ready orphan-recovery PR holds the worker's unmerged progress
+# while checks run (BLOCKED); a conflicted one, or a For #N PR without the
+# recovery marker, must not hold the issue.
+test_has_open_pr_blocks_pending_recovery_sibling() {
+	local marker='\n\n<!-- aidevops:orphan-recovery worker_branch_orphan session=issue-39760 -->'
+	local state body expected label rc output
+	for state in BLOCKED DIRTY UNMARKED; do
+		body="Orphan recovery PR.\n\nFor #39760${marker}"
+		expected=0
+		label="pending recovery PR blocks redispatch"
+		if [[ "$state" == DIRTY ]]; then
+			expected=1
+			label="conflicted recovery PR releases the issue"
+		elif [[ "$state" == UNMARKED ]]; then
+			body="Phase work.\n\nFor #39760"
+			expected=1
+			label="pending For #N PR without recovery marker does not block"
+		fi
+		set_gh_fixtures "marcusquinn/aidevops|open|#39760|[{\"number\":39761,\"title\":\"GH#39760: chore: auto-recover orphaned worker branch\",\"body\":\"${body}\",\"isDraft\":false,\"reviewDecision\":\"REVIEW_REQUIRED\",\"mergeStateStatus\":\"${state/UNMARKED/BLOCKED}\",\"labels\":[{\"name\":\"origin:worker-takeover\"}]}]"
+		rc=0
+		output=$("$HELPER_SCRIPT" has-open-pr 39760 marcusquinn/aidevops 'recovery sibling regression' 2>&1) || rc=$?
+		if [[ "$rc" -eq "$expected" ]] && { [[ "$expected" -ne 0 ]] || [[ "$output" == *"open recovery PR #39761 holds unmerged worker progress"* ]]; }; then
+			print_result "has-open-pr ${label}" 0
+		else
+			print_result "has-open-pr ${label}" 1 "Expected rc=${expected}, got rc=${rc}: ${output}"
+		fi
+	done
+	return 0
+}
+
 test_has_open_pr_ignores_embedded_bare_sibling_reference() {
 	# Check 0 must require a leading boundary for every issue-reference
 	# alternative, including bare GH#N/#N forms. Without that boundary, an
@@ -1204,6 +1351,22 @@ test_has_open_pr_ignores_dependency_bump_superseded_references() {
 	return 0
 }
 
+test_has_open_pr_ignores_app_login_dependency_bump_references() {
+	set_gh_fixtures 'marcusquinn/aidevops|merged|#26241|[{"number":26261,"title":"chore(ci): bump actions/download-artifact from 4.3.0 to 8.0.1","body":"Upstream changes include #26241.","author":{"login":"app/renovate"}},{"number":26262,"title":"chore(deps): bump the production-dependencies group with 4 updates","body":"Dependabot release notes mention #26241.","author":{"login":"app/dependabot"}}]'
+	export ISSUE_META_JSON='{"body":"_Supersedes #26241 — this issue is the consolidated spec._"}'
+
+	if "$HELPER_SCRIPT" has-open-pr 26274 marcusquinn/aidevops 'consolidated: split mixed gh_pr_view REST/GQL fields'; then
+		unset ISSUE_META_JSON
+		print_result "has-open-pr ignores app/ login dependency-bump references" 1 \
+			"Expected app/renovate and app/dependabot bump references to allow dispatch"
+		return 0
+	fi
+
+	unset ISSUE_META_JSON
+	print_result "has-open-pr ignores app/ login dependency-bump references" 0
+	return 0
+}
+
 test_has_open_pr_preserves_non_bot_bump_implementation() {
 	set_gh_fixtures 'marcusquinn/aidevops|merged|#26241|[{"number":26263,"title":"chore(deps): bump parser from 1.0.0 to 2.0.0","body":"Implements the parser migration for #26241.","author":{"login":"maintainer"}}]'
 	export ISSUE_META_JSON='{"body":"_Supersedes #26241 — this issue is the consolidated spec._"}'
@@ -1375,7 +1538,10 @@ main() {
 	test_has_open_pr_blocks_draft_body_closing_keyword
 	test_has_open_pr_distinguishes_body_mentions_from_references
 	test_has_open_pr_marks_worker_draft_for_stale_routing
+	test_has_open_pr_inline_for_matches_continuation_predicate
+	test_has_open_pr_worker_draft_routes_follow_continuation
 	test_has_open_pr_keeps_protected_draft_unroutable
+	test_has_open_pr_reports_self_held_worker_draft
 	test_has_open_pr_ignores_seed_draft_only_for_its_issue
 	test_has_open_pr_fails_closed_when_sibling_lookup_fails
 	test_has_open_pr_recovers_after_lookup_uncertainty
@@ -1395,6 +1561,7 @@ main() {
 	test_has_open_pr_blocks_refs_colon_healthy_sibling
 	test_has_open_pr_blocks_behind_healthy_sibling
 	test_has_open_pr_allows_when_no_healthy_sibling
+	test_has_open_pr_blocks_pending_recovery_sibling
 	test_has_open_pr_ignores_embedded_bare_sibling_reference
 	test_has_open_pr_ignores_adjacent_issue_number_sibling_reference
 	test_has_open_pr_blocks_superseded_consolidated_issue
@@ -1404,6 +1571,7 @@ main() {
 	test_has_open_pr_blocks_complete_multi_component_coverage
 	test_has_open_pr_ignores_planning_only_superseded_reference
 	test_has_open_pr_ignores_dependency_bump_superseded_references
+	test_has_open_pr_ignores_app_login_dependency_bump_references
 	test_has_open_pr_preserves_non_bot_bump_implementation
 	test_has_open_pr_preserves_bump_wording_in_implementation_body
 	test_has_open_pr_ignores_consolidation_task_historical_reference

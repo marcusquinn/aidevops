@@ -22,6 +22,49 @@ if [[ -z "${_SHIM_DIR:-}" ]]; then
 	unset _gh_native_transport_path
 fi
 
+# gh >= 2.105 enters agent mode when any of these variables is non-empty
+# (cli/cli internal/agents/detect.go at v2.105.0): it appends `gh event listen`
+# hints to stderr and prints full help on flag errors. aidevops parses gh output,
+# so native gh children must not inherit them (GH#38966). Of the value-only
+# signals, TERM_PROGRAM is hidden only when it is `kiro` (other terminals keep
+# it); a /.pi/agent PATH segment is out of scope because rewriting PATH would
+# change command resolution for every child, and Pi is not an aidevops runtime.
+_SHIM_AGENT_DETECTION_VARS=(AI_AGENT AGENT CODEX_SANDBOX CODEX_CI CODEX_THREAD_ID
+	GEMINI_CLI COPILOT_CLI OPENCODE ANTIGRAVITY_AGENT AUGMENT_AGENT REPL_ID
+	CLAUDE_CODE_IS_COWORK CLAUDECODE CLAUDE_CODE CURSOR_TRACE_ID CURSOR_AGENT
+	CURSOR_EXTENSION_HOST_ROLE GOOSE_PROVIDER)
+_SHIM_HIDDEN_AGENT_VARS=()
+
+# Drop the export attribute, not the value: in-process shim code still reads
+# them, but no child inherits them. Called once, before any native gh child, so
+# every current and future native call site is covered without per-site edits.
+_shim_hide_agent_env() {
+	local var_name=""
+	for var_name in "${_SHIM_AGENT_DETECTION_VARS[@]}"; do
+		[[ -n "${!var_name+x}" ]] || continue
+		export -n "${var_name?}"
+		_SHIM_HIDDEN_AGENT_VARS+=("$var_name")
+	done
+	if [[ "${TERM_PROGRAM:-}" == "kiro" ]]; then
+		export -n TERM_PROGRAM
+		_SHIM_HIDDEN_AGENT_VARS+=(TERM_PROGRAM)
+	fi
+	return 0
+}
+
+# Run a child that detects the runtime (gh-signature-helper.sh) with the hidden
+# variables re-exported for that child only.
+_shim_with_agent_env() {
+	(
+		local var_name=""
+		for var_name in ${_SHIM_HIDDEN_AGENT_VARS[@]+"${_SHIM_HIDDEN_AGENT_VARS[@]}"}; do
+			export "${var_name?}"
+		done
+		"$@"
+	)
+	return $?
+}
+
 _shim_is_aidevops_gh() {
 	local candidate_real="$1"
 	case "$candidate_real" in
@@ -32,9 +75,49 @@ _shim_is_aidevops_gh() {
 		*/aidevops/.agents/scripts/gh | \
 		*/.agents/scripts/gh | \
 		*/.agents/scripts/safe-bin/gh | \
+		*/agents/scripts/gh-shim/gh | \
 		*/agents/scripts/gh) return 0 ;;
 	esac
 	return 1
+}
+
+# POSIX dirname/basename via parameter expansion: _find_real_gh resolves every
+# PATH candidate on each shim call, and two execs per hop were measurable
+# overhead (GH#39187). Trailing slashes are ignored as dirname(1) does.
+_shim_path_strip_trailing_slashes_into() {
+	local _sps_var="$1"
+	local _sps_path="$2"
+	while [[ "$_sps_path" == */ && "$_sps_path" != / ]]; do
+		_sps_path="${_sps_path%/}"
+	done
+	printf -v "$_sps_var" '%s' "$_sps_path"
+	return 0
+}
+
+_shim_path_dirname_into() {
+	local _spd_var="$1"
+	local _spd_input="$2"
+	local _spd_path=""
+	_shim_path_strip_trailing_slashes_into _spd_path "$_spd_input"
+	if [[ "$_spd_path" != */* ]]; then
+		_spd_path="."
+	elif [[ "$_spd_path" != / ]]; then
+		_spd_path="${_spd_path%/*}"
+		_shim_path_strip_trailing_slashes_into _spd_path "$_spd_path"
+		[[ -n "$_spd_path" ]] || _spd_path="/"
+	fi
+	printf -v "$_spd_var" '%s' "$_spd_path"
+	return 0
+}
+
+_shim_path_basename_into() {
+	local _spb_var="$1"
+	local _spb_input="$2"
+	local _spb_path=""
+	_shim_path_strip_trailing_slashes_into _spb_path "$_spb_input"
+	[[ "$_spb_path" == / ]] || _spb_path="${_spb_path##*/}"
+	printf -v "$_spb_var" '%s' "$_spb_path"
+	return 0
 }
 
 _shim_canonical_path() {
@@ -42,13 +125,16 @@ _shim_canonical_path() {
 	local candidate_dir=""
 	local candidate_name=""
 	local link_dir=""
+	local parent_dir=""
 	while [[ -L "$candidate" ]]; do
-		link_dir=$(cd "$(dirname "$candidate")" 2>/dev/null && pwd -P) || return 1
+		_shim_path_dirname_into parent_dir "$candidate"
+		link_dir=$(cd "$parent_dir" 2>/dev/null && pwd -P) || return 1
 		candidate=$(readlink "$candidate") || return 1
 		[[ "$candidate" == /* ]] || candidate="${link_dir}/${candidate}"
 	done
-	candidate_dir=$(cd "$(dirname "$candidate")" 2>/dev/null && pwd -P) || return 1
-	candidate_name=$(basename "$candidate")
+	_shim_path_dirname_into parent_dir "$candidate"
+	candidate_dir=$(cd "$parent_dir" 2>/dev/null && pwd -P) || return 1
+	_shim_path_basename_into candidate_name "$candidate"
 	printf '%s/%s\n' "$candidate_dir" "$candidate_name"
 	return 0
 }
@@ -134,13 +220,24 @@ _shim_caller_label() {
 	return 0
 }
 
+# Assign a validated framework script label without a capture fork (GH#39187).
+# The target variable is untouched when the candidate is not a framework script.
+_shim_framework_caller_label_into() {
+	local _sfc_var="$1"
+	local _sfc_candidate="${2:-}"
+	_sfc_candidate="${_sfc_candidate##*/}"
+	[[ -n "${_SHIM_DIR:-}" ]] || return 1
+	[[ "$_sfc_candidate" =~ ^[A-Za-z0-9_.+-]+$ ]] || return 1
+	[[ -f "${_SHIM_DIR}/${_sfc_candidate}" ]] || return 1
+	printf -v "$_sfc_var" '%s' "$_sfc_candidate"
+	return 0
+}
+
 _shim_framework_caller_label() {
 	local candidate="${1:-}"
-	candidate="${candidate##*/}"
-	[[ -n "${_SHIM_DIR:-}" ]] || return 1
-	[[ "$candidate" =~ ^[A-Za-z0-9_.+-]+$ ]] || return 1
-	[[ -f "${_SHIM_DIR}/${candidate}" ]] || return 1
-	printf '%s' "$candidate"
+	local label=""
+	_shim_framework_caller_label_into label "$candidate" || return 1
+	printf '%s' "$label"
 	return 0
 }
 
@@ -151,7 +248,7 @@ _shim_command_framework_caller() {
 	local caller=""
 	local -a words=("$@")
 	[[ ${#words[@]} -gt 0 ]] || return 1
-	if caller=$(_shim_framework_caller_label "${words[0]}"); then
+	if _shim_framework_caller_label_into caller "${words[0]}"; then
 		printf '%s' "$caller"
 		return 0
 	fi
@@ -166,7 +263,7 @@ _shim_command_framework_caller() {
 		case "${word##*/}" in
 		env | bash | dash | ksh | sh | zsh) continue ;;
 		esac
-		if caller=$(_shim_framework_caller_label "$word"); then
+		if _shim_framework_caller_label_into caller "$word"; then
 			printf '%s' "$caller"
 			return 0
 		fi
@@ -226,12 +323,24 @@ _shim_parent_framework_caller() {
 	local line=""
 	local next_pid=""
 	local parent_command=""
+	local word=""
 	local -a parent_words=()
 	# Bounded walk: the direct parent plus at most two wrapper or auth-hop levels.
 	while [[ "$depth" -lt 3 ]]; do
 		[[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 1 ]] || return 1
-		line=$(ps -p "$pid" -o ppid=,command= 2>/dev/null) || return 1
-		read -r next_pid parent_command <<<"$line"
+		if [[ "$OSTYPE" == linux* ]]; then
+			IFS= read -r line <"/proc/$pid/stat" || return 1
+			# comm can contain spaces and parentheses; fields start after its last ')'.
+			line="${line##*) }"
+			read -r _ next_pid _ <<<"$line"
+			parent_command=""
+			while IFS= read -r -d '' word; do
+				parent_command+="${parent_command:+ }${word}"
+			done <"/proc/$pid/cmdline" || return 1
+		else
+			line=$(command ps -p "$pid" -o ppid=,command= 2>/dev/null) || return 1
+			read -r next_pid parent_command <<<"$line"
+		fi
 		[[ -n "$parent_command" ]] || return 1
 		read -r -a parent_words <<<"$parent_command"
 		[[ ${#parent_words[@]} -gt 0 ]] || return 1
@@ -264,7 +373,7 @@ _shim_transport_caller_label() {
 	local sub1="${1:-}"
 	local sub2="${2:-}"
 	local caller=""
-	if caller=$(_shim_framework_caller_label "${AIDEVOPS_GH_CALLER:-}"); then
+	if _shim_framework_caller_label_into caller "${AIDEVOPS_GH_CALLER:-}"; then
 		printf '%s' "$caller"
 		return 0
 	fi

@@ -10,6 +10,8 @@ TEST_ROOT="$(mktemp -d)"
 export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/registry"
 export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
 export AIDEVOPS_WORKTREE_BASE_DIR="$TEST_ROOT"
+# Fixtures create tiny worktrees; host free space must not decide the result (GH#38659).
+export AIDEVOPS_MIN_WORKTREE_FREE_KB=0 AIDEVOPS_MIN_WORKTREE_FREE_PERCENT=0
 TESTS_RUN=0
 TESTS_FAILED=0
 
@@ -299,7 +301,9 @@ test_failed_capture_leaves_no_archive() {
 }
 
 test_tracked_patch_capacity() {
-	local paths canonical worktree root reserve phase rc=0
+	local paths canonical worktree root reserve phase estimate stderr_text rc=0
+	# A Bash regex, not GNU-only sed label syntax (BSD sed rejects `;ta;b;:a`).
+	local estimate_pattern='estimate=([0-9]+);'
 	paths=$(setup_repo patch-capacity) || return 1
 	IFS=$'\t' read -r canonical worktree <<<"$paths"
 	root="$TEST_ROOT/patch-capacity-archives"
@@ -310,11 +314,17 @@ path = pathlib.Path(sys.argv[1])
 path.write_text(path.read_text() + "tracked change\n" * 10000)
 PY
 		if [[ "$phase" == staged ]]; then git -C "$worktree" add file.txt || return 1; fi
-		reserve=$(python3 -c 'import shutil, sys; print(max(0, shutil.disk_usage(sys.argv[1]).free - 4096))' "$TEST_ROOT") || return 1
-		if AIDEVOPS_WORKTREE_ARCHIVE_RESERVE_BYTES="$reserve" AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES=0 \
+		reserve=$(python3 -c 'import shutil, sys; print(max(0, shutil.disk_usage(sys.argv[1]).free + 2**40))' "$TEST_ROOT") || return 1
+		if env -u AIDEVOPS_MIN_WORKTREE_FREE_KB -u AIDEVOPS_MIN_WORKTREE_FREE_PERCENT \
+			AIDEVOPS_WORKTREE_ARCHIVE_RESERVE_BYTES="$reserve" AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES=0 \
 			bash "$HELPER" archive "$worktree" --repo owner/repo --issue 32 --reason failed-worker \
 			--base-branch main --output-root "$root" >/dev/null 2>"$TEST_ROOT/patch-capacity.stderr"; then rc=1; fi
 		grep -q 'producer:insufficient-capacity;' "$TEST_ROOT/patch-capacity.stderr" || rc=1
+		# Estimate must include the ~150 KB tracked patch (10000 lines x 15 bytes).
+		estimate=""
+		stderr_text=$(<"$TEST_ROOT/patch-capacity.stderr")
+		if [[ "$stderr_text" =~ $estimate_pattern ]]; then estimate="${BASH_REMATCH[1]}"; fi
+		[[ -n "$estimate" && "$estimate" -ge 150000 ]] || rc=1
 		[[ ! -e "$root" ]] || rc=1
 		git -C "$worktree" reset -q --hard HEAD || return 1
 	done
@@ -364,6 +374,36 @@ test_published_archive_has_no_bundle() {
 	return 0
 }
 
+# GH#38394: reclaim archives must survive the merge flow deleting the branch, so
+# --bundle-commits keeps the bundle for a published head and depends on the base.
+test_bundle_commits_survives_branch_deletion() {
+	local paths canonical worktree root archive target head_sha state rc=0
+	paths=$(setup_repo bundled) || return 1
+	IFS=$'\t' read -r canonical worktree <<<"$paths"
+	root="$TEST_ROOT/bundled-archives"
+	printf 'bundled\n' >>"$worktree/file.txt"
+	git -C "$worktree" commit -qam bundled || return 1
+	git -C "$worktree" push -q -u origin feature/archive || return 1
+	printf 'dirty\n' >"$worktree/note.txt"
+	head_sha=$(git -C "$worktree" rev-parse HEAD) || return 1
+	archive=$(AIDEVOPS_WORKTREE_RECOVERY_POLICY=git-only bash "$HELPER" archive "$worktree" \
+		--repo owner/repo --issue 43 --reason post-pr-cleanup --base-branch main \
+		--output-root "$root" --bundle-commits) || return 1
+	[[ -s "$archive/commits.bundle" ]] || rc=1
+	state=$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["remote_branch_state"], m["head_sha"])' "$archive/manifest.json") || rc=1
+	[[ "$state" == "bundled $head_sha" ]] || rc=1
+	git -C "$canonical" update-ref -d refs/remotes/origin/feature/archive || return 1
+	git -C "$canonical" push -q origin --delete feature/archive || return 1
+	AIDEVOPS_WORKTREE_RECOVERY_POLICY=git-only bash "$HELPER" verify-local "$archive" >/dev/null || rc=1
+	bash "$HELPER" source-matches "$archive" "$worktree" >/dev/null || rc=1
+	target="$TEST_ROOT/bundled-restored"
+	bash "$HELPER" restore "$archive" --target "$target" >/dev/null || rc=1
+	[[ "$(git -C "$target" rev-parse HEAD 2>/dev/null)" == "$head_sha" ]] || rc=1
+	grep -q '^bundled$' "$target/file.txt" 2>/dev/null || rc=1
+	result "--bundle-commits archives verify and restore after the branch is deleted" "$rc"
+	return 0
+}
+
 test_invalid_arguments() {
 	local paths canonical worktree rc=0
 	paths=$(setup_repo invalid) || return 1
@@ -387,6 +427,7 @@ test_prune_modes
 test_failed_capture_leaves_no_archive || result "failed-capture fixture setup" 1
 test_tracked_patch_capacity || result "tracked-patch capacity fixture setup" 1
 test_published_archive_has_no_bundle || result "published-archive fixture setup" 1
+test_bundle_commits_survives_branch_deletion || result "bundle-commits fixture setup" 1
 test_invalid_arguments
 
 printf '%s tests, %s failures\n' "$TESTS_RUN" "$TESTS_FAILED"

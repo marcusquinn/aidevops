@@ -122,6 +122,10 @@ _SOURCING_FOR_TEST=1
 # Extract _create_pr
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_create_pr() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_run_pr_create_cmd() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_explicit_pr_create_base() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_reconcile_recovered_pr_metadata() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
@@ -134,6 +138,9 @@ eval "$(sed -n '/^_merge_existing_pr_body() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-
 
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_inherit_pr_runtime_metadata() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+# The runtime section parser is shared with the merge-time recheck (GH#39558).
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_runtime_testing_metadata_from_body() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-risk.sh")"
 
 # Extract origin reconciliation helpers used by _create_pr
 # shellcheck disable=SC2312
@@ -145,9 +152,11 @@ eval "$(sed -n '/^_reconcile_pr_origin_label() {/,/^}/p' "${SCRIPTS_DIR}/full-lo
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_reconcile_existing_merge_summary() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
-# Extract _post_merge_summary
+# Extract _post_merge_summary and its bounded file-list formatter
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_post_merge_summary() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_format_files_changed_for_body() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
 # Extract default-branch and recovery helpers used by _rebase_and_push
 # shellcheck disable=SC2312
@@ -252,6 +261,13 @@ GH_CREATE_PR_STDERR_LOG=""
 # On failure, outputs an error message (like real gh does) and returns 1.
 gh_create_pr() {
 	printf 'gh_create_pr %s\n' "$*" >>"$STUB_LOG"
+	local prev="" arg=""
+	for arg in "$@"; do
+		if [[ "$prev" == "--body-file" && -r "$arg" ]]; then
+			printf 'gh_create_pr body_file=%s body=%s\n' "$arg" "$(<"$arg")" >>"$STUB_LOG"
+		fi
+		prev="$arg"
+	done
 	if [[ "$GH_CREATE_PR_FAIL" -eq 1 ]]; then
 		printf 'pull request update failed: GraphQL: Something went wrong\n' >&2
 		return 1
@@ -592,10 +608,21 @@ else
 		"got '${success_pr_number}'"
 fi
 
-if grep -q "gh_create_pr --repo owner/repo --title t2767: test --body body text --head feature/t2767-test" "$STUB_LOG" 2>/dev/null; then
+if grep -qE "gh_create_pr --repo owner/repo --title t2767: test --body-file [^ ]+ --head feature/t2767-test" "$STUB_LOG" 2>/dev/null; then
 	pass "normal success: _create_pr passes the exact head branch (GH#33381)"
 else
 	fail "normal success: _create_pr passes the exact head branch (GH#33381)" \
+		"stub log: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+
+# GH#38509: the body travels through a file, never one inline argv string,
+# and the temporary file is removed after creation.
+created_body_file=$(sed -n 's/^gh_create_pr body_file=\([^ ]*\) body=body text$/\1/p' "$STUB_LOG" 2>/dev/null)
+if [[ -n "$created_body_file" && ! -e "$created_body_file" ]] &&
+	! grep -q -- "--body body text" "$STUB_LOG" 2>/dev/null; then
+	pass "body file: _create_pr passes the exact body via --body-file and removes it (GH#38509)"
+else
+	fail "body file: _create_pr passes the exact body via --body-file and removes it (GH#38509)" \
 		"stub log: $(cat "$STUB_LOG" 2>/dev/null)"
 fi
 

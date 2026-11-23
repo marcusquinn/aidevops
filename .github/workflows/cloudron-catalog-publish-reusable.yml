@@ -304,6 +304,10 @@ jobs:
           # the job. CLOUDRON_RELEASE_PAT is needed only when rules on main block
           # a direct push by that token (required PRs or checks).
           PUSH_TOKEN: ${{ secrets.CLOUDRON_RELEASE_PAT || github.token }}
+          # Creating an unreferenced commit object needs no branch rule bypass.
+          # GitHub signs Git Database API commits made by the job token (a bot)
+          # when they carry no custom author, committer or signature.
+          SIGN_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.preflight.outputs.version }}
           SOURCE_SHA: ${{ needs.preflight.outputs.sha }}
         run: |
@@ -315,6 +319,66 @@ jobs:
           test "$(git diff --cached --name-only)" = CloudronVersions.json
           git -c user.name=github-actions[bot] -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
             commit -m "chore: publish Cloudron package $VERSION [skip ci]" -m "Cloudron-Source: $SOURCE_SHA"
+          # Replace the local catalog commit with a GitHub-signed twin (same tree,
+          # parent and message bytes), rebuilt locally and hash-checked so the
+          # atomic push below still carries it. Any failure keeps the unsigned commit.
+          sign_head() {
+            local scratch tree parent mode blob _ signed
+            sign_stage="signing token or runner context missing"
+            [[ -n "${SIGN_TOKEN:-}" && -n "${GITHUB_REPOSITORY:-}" && -n "${RUNNER_TEMP:-}" ]] || return 1
+            sign_stage="local commit shape"
+            scratch=$(mktemp -d "$RUNNER_TEMP/signed-commit.XXXXXX") || return 1
+            tree=$(git rev-parse 'HEAD^{tree}') && parent=$(git rev-parse HEAD^1) || return 1
+            test "$(git rev-list --parents -n 1 HEAD | wc -w)" -eq 2 || return 1
+            read -r mode blob _ < <(git ls-files -s -- CloudronVersions.json) && [[ "$mode" =~ ^100(644|755)$ ]] || return 1
+            git cat-file commit HEAD | sed '1,/^$/d' > "$scratch/message" || return 1
+            base64 -w0 CloudronVersions.json > "$scratch/blob.b64" || return 1
+            sign_stage="blob upload"
+            jq -n --rawfile content "$scratch/blob.b64" '{content: $content, encoding: "base64"}' \
+              | GH_TOKEN="$SIGN_TOKEN" gh api "repos/$GITHUB_REPOSITORY/git/blobs" --input - --jq .sha > "$scratch/blob" || return 1
+            test "$(cat "$scratch/blob")" = "$blob" || return 1
+            sign_stage="tree creation"
+            jq -n --arg base "$(git rev-parse "$parent^{tree}")" --arg mode "$mode" --arg sha "$blob" \
+              '{base_tree: $base, tree: [{path: "CloudronVersions.json", mode: $mode, type: "blob", sha: $sha}]}' \
+              | GH_TOKEN="$SIGN_TOKEN" gh api "repos/$GITHUB_REPOSITORY/git/trees" --input - --jq .sha > "$scratch/tree" || return 1
+            test "$(cat "$scratch/tree")" = "$tree" || return 1
+            sign_stage="commit creation"
+            jq -n --rawfile message "$scratch/message" --arg tree "$tree" --arg parent "$parent" \
+              '{message: $message, tree: $tree, parents: [$parent]}' \
+              | GH_TOKEN="$SIGN_TOKEN" gh api "repos/$GITHUB_REPOSITORY/git/commits" --input - > "$scratch/commit.json" || return 1
+            sign_stage="GitHub verification"
+            jq -e '.verification.verified == true and (.verification.signature | type == "string")
+              and (.verification.payload | type == "string")' "$scratch/commit.json" > /dev/null || return 1
+            sign_stage="local rebuild hash match"
+            # GitHub stores the signature as a gpgsig header after committer; emit
+            # only a rebuild whose Git object id equals the API commit sha.
+            signed=$(python3 -c 'import hashlib, json, sys
+          c = json.load(open(sys.argv[1]))
+          head, sep, body = c["verification"]["payload"].partition("\n\n")
+          assert sep and "\ngpgsig " not in "\n" + head
+          sig = c["verification"]["signature"]
+          for text in (sig, sig.rstrip("\n")):
+              raw = (head + "\ngpgsig " + text.replace("\n", "\n ") + "\n\n" + body).encode()
+              if hashlib.sha1(b"commit %d\0" % len(raw) + raw).hexdigest() == c["sha"]:
+                  sys.stdout.buffer.write(raw)
+                  break
+          else:
+              sys.exit(1)' "$scratch/commit.json" | git hash-object -t commit -w --stdin) || return 1
+            test "$signed" = "$(jq -r .sha "$scratch/commit.json")" || return 1
+            test "$(git rev-list --parents -n 1 "$signed")" = "$signed $parent" || return 1
+            test "$(git rev-parse "$signed^{tree}")" = "$tree" || return 1
+            git cat-file commit "$signed" | sed '1,/^$/d' | cmp -s - "$scratch/message" || return 1
+            git reset --soft "$signed" || return 1
+            echo "Publishing GitHub-signed catalog commit $signed"
+          }
+          sign_or_warn() {
+            sign_stage=""
+            if ! sign_head; then
+              echo "::warning::GitHub-signed publish commit unavailable (${sign_stage}); publishing the unsigned atomic commit"
+            fi
+            return 0
+          }
+          sign_or_warn
           git tag "v$VERSION"
           # aidevops:trust-boundary — only this push step receives a contents-write credential.
           auth=$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 -w0)
@@ -339,6 +403,9 @@ jobs:
             git merge-base --is-ancestor "$SOURCE_SHA" HEAD
             test "$(git diff-tree --no-commit-id --name-only -r HEAD)" = CloudronVersions.json
             test "$(git hash-object CloudronVersions.json)" = "$catalog_hash"
+            # Rebase drops the signature; sign the rebased commit on the new parent.
+            sign_or_warn
+            test "$(git diff-tree --no-commit-id --name-only -r HEAD)" = CloudronVersions.json
             # Only the unpushed local tag moves; remote tags are never replaced.
             git tag -f "v$VERSION"
             git push --atomic origin HEAD:refs/heads/main "refs/tags/v$VERSION"

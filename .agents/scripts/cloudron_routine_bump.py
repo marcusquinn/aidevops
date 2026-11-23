@@ -9,12 +9,25 @@ stdin/stdout, so its decision is reproducible from the recorded document.
 
 stdin JSON:
   policy            signed standing-policy object (schema 1)
-  finding_upstream  X.Y.Z from the PR's trusted upstream monitor finding
+  finding_upstream  X.Y.Z or full SHA from the trusted upstream monitor finding
+  upstream_proof    resolved base/head SHAs, repository, status and merge base
+                    from the caller's upstream commit/compare API reads
+  release_proof     semver policies with release_identity only: upstream repository,
+                    peeled old/new release commits, compare status and the new
+                     release's published image digests (images asset, optional)
+  pin_proof         registry_images: {"<image>:<tag>": digest} resolved from the
+                     registry; release_checksum: upstream repository, asset, file,
+                     version and the sha256 listed for that file
   files             GitHub compare entries for main...<exact head>
   contents          {path: {base: base64, head: base64}} for the manifest and
                     every changed pinned or check file (merge-base and exact head)
 
 Prints ROUTINE_BUMP and exits 0, or prints NOT_ROUTINE: <reason> and exits 1.
+
+Tag-monitored packages (including Buzz) must pin strict X.Y.Z, not a main-build
+suffix: a tag finding cannot prove which main build was packaged. Migrating an
+existing X.Y.Z-main.<sha> pin to a tag requires one per-release signature; later
+strict-tag bumps use the unchanged semver policy and its major/0.x boundaries.
 """
 
 import argparse
@@ -25,10 +38,17 @@ import json
 import re
 import sys
 
+from cloudron_release_identity import (
+    COMMIT_VERSION, FULL_COMMIT, UPSTREAM_REPO, NotRoutine,
+    pin_policy, validate_pins_request, catalog_baseline_file, check_catalog_baseline,
+    release_identity, require, substitute_versions,
+)
+from cloudron_companion_image import companion_proof, companion_verify_file, companion_pinned_changes_ok
+from cloudron_manifest_fields import check_manifest_fields, commit_license_mapping
+
 MANIFEST = "CloudronManifest.json"
 POLICY_KIND = "cloudron-standing-upstream-release"
 POLICY_FILE_CLASSES = ("changelog_files", "pinned_files", "check_files")
-VERSION_KEYS = ("version", "upstreamVersion")
 MAX_FILES = 20
 MAX_PATTERN = 500
 # Patterns are applied with fullmatch, so a trailing newline never qualifies.
@@ -40,15 +60,6 @@ REPO_PATH = re.compile(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*")
 CHECK_FILE_HIDDEN = re.compile("[\x00\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]")
 # An inserted line after one of these would join the previous command.
 CONTINUATION = ("\\", "&&", "||", "|")
-
-
-class NotRoutine(Exception):
-    """The change is outside the standing policy; a per-release signature is required."""
-
-
-def require(condition, reason):
-    if not condition:
-        raise NotRoutine(reason)
 
 
 def unique_object(pairs):
@@ -96,14 +107,45 @@ def file_text(contents, path, side):
         raise NotRoutine(path + ": undecodable " + side + " content") from error
 
 
-def substitute_versions(text, mapping):
-    """Replace each whole old version token with its new value in one pass.
-
-    Boundaries stop 0.20.3 matching inside 10.20.3 or 3.39.8 inside 3.39.87.
-    """
-    olds = sorted(mapping, key=len, reverse=True)
-    pattern = re.compile(r"(?<![0-9.])(?:" + "|".join(re.escape(old) for old in olds) + r")(?![0-9]|\.[0-9])")
-    return pattern.sub(lambda match: mapping[match.group(0)], text)
+def check_upstream(doc, policy, old_up, new_up):
+    mode = policy.get("upstream_mode", "semver")
+    require(mode in ("semver", "commits"), "unsupported upstream mode")
+    # aidevops:trust-boundary — only this explicit signed opt-in relaxes 0.x minors.
+    require("zero_minor" not in policy or policy["zero_minor"] == "routine",
+            "unsupported zero_minor policy value")
+    require("zero_minor" not in policy or mode == "semver",
+            "zero_minor requires semver upstream mode")
+    finding = doc.get("finding_upstream")
+    if mode == "commits":
+        upstream = policy.get("upstream_repository")
+        require(isinstance(upstream, str) and UPSTREAM_REPO.fullmatch(upstream) is not None,
+                "commit policy needs an upstream repository")
+        for value in (old_up, new_up):
+            require(isinstance(value, str) and COMMIT_VERSION.fullmatch(value) is not None,
+                    "commit upstreamVersion must be a SHA prefix of 7 to 40 characters")
+        require(isinstance(finding, str) and FULL_COMMIT.fullmatch(finding) is not None,
+                "commit finding must be a full SHA")
+        require(finding.startswith(new_up.lower()), "upstreamVersion must equal the monitor finding")
+        proof = doc.get("upstream_proof")
+        require(isinstance(proof, dict) and proof.get("repository") == upstream,
+                "upstream proof repository mismatch")
+        base = proof.get("base")
+        require(isinstance(base, str) and FULL_COMMIT.fullmatch(base) is not None
+                and base.startswith(old_up.lower()) and proof.get("head") == finding,
+                "upstream proof commit mismatch")
+        # aidevops:trust-boundary — commits have no major-version boundary;
+        # only strict ancestry, never timestamps or lexical SHA order, proves progress.
+        require(base != finding and proof.get("status") == "ahead"
+                and proof.get("merge_base") == base, "upstream commits must be strictly ahead")
+        return
+    new_tuple = version_tuple(new_up, UPSTREAM_VERSION, "head upstreamVersion")
+    old_tuple = version_tuple(old_up, UPSTREAM_VERSION, "base upstreamVersion")
+    require(new_tuple > old_tuple, "upstreamVersion must increase")
+    require(new_tuple[0] == old_tuple[0], "a major upstream bump needs a per-release signature")
+    require(old_tuple[0] > 0 or new_tuple[1] == old_tuple[1] or policy.get("zero_minor") == "routine",
+            "a 0.x minor upstream bump needs a per-release signature")
+    version_tuple(finding, PACKAGE_VERSION, "finding upstream version")
+    require(new_up.lstrip("v") == finding, "upstreamVersion must equal the monitor finding")
 
 
 def insertion_pattern(policy):
@@ -141,11 +183,6 @@ def check_file_changes(name, base_text, head_text, mapping, pattern):
                     name + ": inserted line does not match the signed insertion pattern")
 
 
-def canonical(value):
-    """Type-exact comparison: Python treats True == 1 and 1 == 1.0."""
-    return json.dumps(value, sort_keys=True, allow_nan=False)
-
-
 def check(doc, repository):
     require(isinstance(doc, dict), "input must be an object")
     policy = doc.get("policy")
@@ -154,6 +191,10 @@ def check(doc, repository):
     classes = {key: policy_paths(policy, key) for key in POLICY_FILE_CLASSES}
     changelogs, pinned, checks = (classes[key] for key in POLICY_FILE_CLASSES)
     require(not (changelogs & pinned or changelogs & checks or pinned & checks), "policy file classes overlap")
+    verify_file = companion_verify_file(policy, changelogs | pinned)
+    baseline_file = catalog_baseline_file(policy)
+    # Companion verification is byte-exact, never generic version substitution.
+    checks = checks - {verify_file}
     check_pattern = insertion_pattern(policy)
 
     files = doc.get("files")
@@ -166,7 +207,7 @@ def check(doc, repository):
         # introduce new build inputs; only in-place edits of named files qualify.
         require(entry.get("status") == "modified" and "previous_filename" not in entry,
                 name + ": only in-place modifications qualify")
-        require(name == MANIFEST or name in changelogs | pinned | checks, name + ": outside the standing policy")
+        require(name in (MANIFEST, verify_file, baseline_file) or name in changelogs | pinned | checks, name + ": outside the standing policy")
         names.append(name)
     require(len(set(names)) == len(names), "duplicate changed file entries")
     require(MANIFEST in names, "the manifest must change")
@@ -180,24 +221,28 @@ def check(doc, repository):
     old_tuple = version_tuple(old_version, PACKAGE_VERSION, "base package version")
     new_tuple = version_tuple(new_version, PACKAGE_VERSION, "head package version")
     require(new_tuple == (old_tuple[0], old_tuple[1], old_tuple[2] + 1), "package version must be a patch increment")
-    new_up_tuple = version_tuple(new_up, UPSTREAM_VERSION, "head upstreamVersion")
-    old_up_tuple = version_tuple(old_up, UPSTREAM_VERSION, "base upstreamVersion")
-    require(new_up_tuple > old_up_tuple, "upstreamVersion must increase")
-    require(new_up_tuple[0] == old_up_tuple[0], "a major upstream bump needs a per-release signature")
-    # Under 0.x a minor bump is breaking by semver convention.
-    require(old_up_tuple[0] > 0 or new_up_tuple[1] == old_up_tuple[1],
-            "a 0.x minor upstream bump needs a per-release signature")
-    finding = doc.get("finding_upstream")
-    version_tuple(finding, PACKAGE_VERSION, "finding upstream version")
-    require(new_up.lstrip("v") == finding, "upstreamVersion must equal the monitor finding")
+    if baseline_file in names:
+        check_catalog_baseline(doc, baseline_file, old_version, file_text)
+    check_upstream(doc, policy, old_up, new_up)
+    pins = pin_policy(doc, policy)
+    identity = release_identity(doc, policy)
+    companion = companion_proof(doc, policy, contents, file_text, new_up)
+    require(pins["checksum"] is None or pins["version"] == new_up.lstrip("v"),
+            "release_checksum: proof is not for the new upstream version")
     require(old_up != old_version, "package and upstream versions are ambiguous")
-    unchanged = {key: value for key, value in base_manifest.items() if key not in VERSION_KEYS}
-    require(canonical(unchanged) == canonical({key: value for key, value in head_manifest.items() if key not in VERSION_KEYS}),
-            "manifest changes beyond version and upstreamVersion")
+    check_manifest_fields(base_manifest, head_manifest, identity, pins, commit_license_mapping(doc, policy))
 
     # Shipped build inputs may change only the upstream version; an equal
     # package-version token there could be an unrelated dependency pin.
-    pinned_mapping = {old_up: new_up}
+    # Candidate mappings: the manifest version substitution, plus the proven
+    # full-SHA substitution. When their source keys coincide both stay valid.
+    pinned_mappings = [{old_up: new_up}]
+    if policy.get("upstream_mode", "semver") == "commits":
+        proof = doc["upstream_proof"]
+        pinned_mappings = [{**{old_up: new_up}, **{proof["base"]: proof["head"]}},
+                           {**{proof["base"]: proof["head"]}, **{old_up: new_up}}]
+    if identity:
+        pinned_mappings = [{**{old_up: new_up}, **identity["commits"]}, {**identity["commits"], **{old_up: new_up}}]
     mapping = {old_up: new_up, old_version: new_version}
     changelog_changed = False
     for entry in files:
@@ -211,7 +256,8 @@ def check(doc, repository):
             base_text, head_text = file_text(contents, name, "base"), file_text(contents, name, "head")
             # aidevops:trust-boundary — shipped build inputs may change only by
             # replacing the old upstream version with the new one.
-            require(head_text != base_text and substitute_versions(base_text, pinned_mapping) == head_text,
+            require(companion_pinned_changes_ok((name, base_text, head_text), companion, identity, pins,
+                                                 (pinned_mappings, [{old_up: new_up}])),
                     name + ": pinned file changes beyond version substitution")
         elif name in checks:
             check_file_changes(name, file_text(contents, name, "base"), file_text(contents, name, "head"),
@@ -223,9 +269,14 @@ def check(doc, repository):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repository", required=True)
+    parser.add_argument("--validate-pins", action="store_true",
+                        help="validate a pins-mode policy-request JSON object from stdin instead of a bump")
     args = parser.parse_args()
     try:
-        check(decode_json(sys.stdin.read()), args.repository)
+        if args.validate_pins:
+            validate_pins_request(decode_json(sys.stdin.read()))
+        else:
+            check(decode_json(sys.stdin.read()), args.repository)
     except NotRoutine as error:
         print("NOT_ROUTINE: " + str(error))
         return 1

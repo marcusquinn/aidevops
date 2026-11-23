@@ -86,6 +86,15 @@ GH_INFO_OUTPUT="${TMP}/info_output.log"
 GH_APP_TOKEN_CALLS="${TMP}/gh_app_token_calls.log"
 export AIDEVOPS_GH_API_LOG="${TMP}/gh-api-calls.log"
 
+# GH#39814: keep the operator's live GitHub admission state (governor pacing
+# budget, secondary/primary cooldown, read ramp) out of this suite, so results
+# never depend on real API pacing (observed as github-api-read-deferred).
+mkdir -m 700 "${TMP}/gh-transport-state" "${TMP}/gh-cooldown-home"
+export AIDEVOPS_GH_TRANSPORT_STATE_DIR="${TMP}/gh-transport-state"
+export AIDEVOPS_GH_SECONDARY_COOLDOWN_HOME="${TMP}/gh-cooldown-home"
+unset AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE \
+	AIDEVOPS_GH_READ_RAMP_STATE_FILE
+
 # Configurable stub behaviour per test via env vars:
 #   STUB_RATE_LIMIT_REMAINING  — what gh api rate_limit returns (default: 5000)
 #   STUB_PRIMARY_FAIL          — 1 to make gh issue create/comment/edit fail
@@ -2192,6 +2201,7 @@ fi
 : >"$GH_CALLS"
 : >"$GH_APP_TOKEN_CALLS"
 export STUB_COLLAB_PERMISSION=write
+_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
 collab_perm=""
 _gh_collaborator_permission_lookup "owner/repo" "testuser" collab_perm 2>/dev/null || true
 if [[ "$collab_perm" == "write" ]] &&
@@ -2207,6 +2217,7 @@ fi
 : >"$GH_APP_TOKEN_CALLS"
 export STUB_COLLAB_PERMISSION=admin
 export STUB_COLLAB_APP_FAIL=1
+_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
 collab_perm=""
 _gh_collaborator_permission_lookup "owner/repo" "testuser" collab_perm 2>/dev/null || true
 if [[ "$collab_perm" == "admin" && "${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-}" == "gh-fallback-ok" ]] &&
@@ -2222,6 +2233,7 @@ unset STUB_COLLAB_APP_FAIL
 : >"$GH_CALLS"
 : >"$GH_APP_TOKEN_CALLS"
 export STUB_COLLAB_STATUS=404
+_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
 collab_perm=""
 _gh_collaborator_permission_lookup "owner/repo" "outsider" collab_perm 2>/dev/null || true
 if [[ "$collab_perm" == "none" && "${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-}" == "404" ]] &&
@@ -2237,6 +2249,7 @@ unset STUB_COLLAB_STATUS
 : >"$GH_APP_TOKEN_CALLS"
 export STUB_COLLAB_APP_FAIL=1
 export STUB_COLLAB_FAIL=1
+_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
 if ! _gh_collaborator_permission_lookup "owner/repo" "testuser" >/dev/null 2>&1 &&
 	[[ "${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-}" == "app-and-gh-api-failure" ]] &&
 	[[ "$(grep -cE '^api -i /repos/owner/repo/collaborators/testuser/permission' "$GH_CALLS")" -eq 2 ]]; then
@@ -2252,6 +2265,7 @@ unset AIDEVOPS_GITHUB_APP_ENABLED AIDEVOPS_GITHUB_APP_ID AIDEVOPS_GITHUB_APP_INS
 
 : >"$GH_CALLS"
 : >"$GH_APP_TOKEN_CALLS"
+_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
 collab_perm=""
 _gh_collaborator_permission_lookup "owner/repo" "testuser" collab_perm 2>/dev/null || true
 if [[ "$collab_perm" == "write" ]] &&
@@ -2264,6 +2278,7 @@ else
 fi
 
 export STUB_COLLAB_PERMISSION=triage
+_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
 collab_perm=""
 _gh_collaborator_permission_lookup "owner/repo" "testuser" collab_perm 2>/dev/null || true
 if [[ "$collab_perm" == "triage" && "${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-}" == "ok" ]]; then
@@ -2275,6 +2290,7 @@ fi
 export STUB_COLLAB_PERMISSION=write
 
 export STUB_COLLAB_STATUS=404
+_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
 collab_perm=""
 _gh_collaborator_permission_lookup "owner/repo" "outsider" collab_perm 2>/dev/null || true
 if [[ "$collab_perm" == "none" && "${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-}" == "404" ]]; then
@@ -2286,6 +2302,7 @@ fi
 
 export STUB_COLLAB_STATUS=403
 export STUB_COLLAB_FAIL=1
+_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
 if ! _gh_collaborator_permission_lookup "owner/repo" "testuser" >/dev/null 2>&1 &&
 	[[ "${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-}" == "403" && "${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-}" == "api-failure" ]]; then
 	pass "collaborator permission lookup keeps API failure distinct from none"
@@ -2298,6 +2315,7 @@ unset STUB_COLLAB_STATUS STUB_COLLAB_FAIL STUB_COLLAB_PERMISSION
 STUB_COLLAB_RAW_RESPONSE_FILE="${TMP}/collab-spoof-response.txt"
 printf '%s\n' 'HTTP/2.0 200 OK' '' '  "bio":"crafted \"permission\": \"admin\""' '  "permission":"write"' >"$STUB_COLLAB_RAW_RESPONSE_FILE"
 export STUB_COLLAB_RAW_RESPONSE_FILE
+_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
 collab_perm=""
 _gh_collaborator_permission_lookup "owner/repo" "testuser" collab_perm 2>/dev/null || true
 if [[ "$collab_perm" == "write" ]]; then

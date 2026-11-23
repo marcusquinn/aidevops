@@ -8,6 +8,8 @@
 # status:claimed. Messages are pointers (comment IDs and the gh command that
 # reads them); the worker verifies on GitHub, which stays the record. The
 # relay never writes to GitHub.
+# t19157: the same run then relays issue watches the other way, to interactive
+# sessions (worker-bus-relay-watches.sh).
 #
 # Usage: worker-bus-relay-helper.sh relay | status | help
 #
@@ -15,9 +17,12 @@
 # also starts it detached at each cycle start and on each busy-lock tick
 # (t18911), outside the cycle budget; a single-runner lock collapses
 # overlapping starts. Every GitHub read still passes the REST-core deferrable
-# gate. GitHub cost: one issue-list call per repo with due workers per
-# interval, one baseline issue read per new worker, and one comments read
-# only when an issue's comment count rose.
+# gate. GitHub cost: one issue read per due worker per interval, and one
+# comments read only when an issue's comment count rose. The issue URL
+# (repos/{repo}/issues/{n}) is stable, so gh_conditional_cache revalidates it
+# with If-None-Match and an unchanged issue costs a free 304 (GH#38566). A
+# repo-wide `issues?since=<moving time>` listing never repeated its URL, so it
+# always paid 1 point (t19234).
 #
 # Env:
 #   AIDEVOPS_WORKER_BUS_RELAY=0       disable the relay
@@ -35,6 +40,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 export PATH="${SCRIPT_DIR}:${PATH}"
 # shellcheck source=./shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
+# t19157: issue-watch pass for interactive sessions (uses the helpers below).
+# shellcheck source=./worker-bus-relay-watches.sh
+source "${SCRIPT_DIR}/worker-bus-relay-watches.sh"
 
 RELAY_STATE_DIR="${WORKER_BUS_RELAY_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/state/worker-bus-relay}"
 RELAY_MIN_INTERVAL="${WORKER_BUS_RELAY_MIN_INTERVAL:-120}"
@@ -60,7 +68,8 @@ _relay_usage() {
 		"Usage: worker-bus-relay-helper.sh relay | status | help" \
 		"" \
 		"  relay   Check each live pulse worker's issue and send it one pointer message" \
-		"          for new maintainer comments, closure, hold-for-review or status:claimed." \
+		"          for new maintainer comments, closure, hold-for-review or status:claimed;" \
+		"          then send each interactive session one pointer for its changed issue watches." \
 		"  status  Show the relay state for live and recent workers." \
 		"" \
 		"Disable with AIDEVOPS_WORKER_BUS_RELAY=0. Docs: reference/session-bus.md."
@@ -298,45 +307,22 @@ _relay_message_text() {
 	return 0
 }
 
-# Fetch one issue when the repo listing cannot show it (first sight, or a full page).
-_relay_issue_from_listing() {
-	local list_file="$1"
-	local repo="$2"
-	local issue_number="$3"
-	local need_fetch="$4"
-	local output="$5"
-	if [[ "$need_fetch" != "1" ]]; then
-		jq -c --argjson n "$issue_number" '[.[]? | select(.number == $n)][0] // empty' "$list_file" >"$output" 2>/dev/null || return 1
-		[[ -s "$output" ]] && return 0
-		# Absent from a short page: unchanged since the listing's `since`.
-		[[ "$(jq 'length' "$list_file" 2>/dev/null)" -lt "$RELAY_PAGE" ]] && return 2
-	fi
-	_relay_get "repos/${repo}/issues/${issue_number}" "$output" "issue" || return 1
-	return 0
-}
-
 # Check one due worker against its issue; send at most one message.
 _relay_worker() {
 	local entry="$1"
-	local list_file="$2"
-	local work="$3"
-	local now="$4"
-	local state session_id repo issue_number started need_fetch issue_file rc=0
+	local work="$2"
+	local now="$3"
+	local state session_id repo issue_number started issue_file
 	state=$(jq -c '.state' <<<"$entry")
 	session_id=$(jq -r '.session_id' <<<"$state")
 	repo=$(jq -r '.repo' <<<"$state")
 	issue_number=$(jq -r '.issue' <<<"$state")
 	started=$(jq -r '.started' <<<"$state")
-	need_fetch=$(jq -r 'if .labels == null then "1" else "0" end' <<<"$state")
 	issue_file="${work}/issue-${session_id}.json"
 
-	_relay_issue_from_listing "$list_file" "$repo" "$issue_number" "$need_fetch" "$issue_file" || rc=$?
-	if [[ "$rc" -eq 2 ]]; then
-		_relay_write_state "$session_id" "$(jq -c --argjson now "$now" '.checked = $now' <<<"$state")" || true
-		return 0
-	fi
-	if [[ "$rc" -ne 0 ]]; then
-		_relay_log "issue ${repo}#${issue_number} deferred or failed (${RELAY_FAILURE:-listing-parse}); worker keeps its state"
+	# Stable per-issue URL: conditional-cache eligible, so unchanged is a free 304.
+	if ! _relay_get "repos/${repo}/issues/${issue_number}" "$issue_file" "issue"; then
+		_relay_log "issue ${repo}#${issue_number} deferred or failed (${RELAY_FAILURE:-read}); worker keeps its state"
 		return 0
 	fi
 
@@ -377,9 +363,9 @@ _relay_worker() {
 		local text_file="${work}/message-${session_id}.txt"
 		printf '%s\n' "$text" >"$text_file"
 		if ! _relay_bus send "$session_id" --sender "$RELAY_SENDER" --text-file "$text_file" >/dev/null 2>&1; then
-			# Keep the detection state, so the next run detects and retries.
+			# Keep the whole state: the next run re-reads the issue and
+			# detects the same change again.
 			_relay_log "send to ${session_id} (${repo}#${issue_number}) failed; will retry"
-			_relay_write_state "$session_id" "$(jq -c --argjson now "$now" '.checked = $now' <<<"$state")" || true
 			return 0
 		fi
 		_relay_log "sent ${repo}#${issue_number} to ${session_id}: comments=$(jq 'length' <<<"$comments") closed=${closed} labels=${added}"
@@ -388,28 +374,16 @@ _relay_worker() {
 	return 0
 }
 
-# One listing for every due worker of a repo, then each worker in turn.
+# Each due worker of a repo in turn, one stable-URL issue read apiece.
 _relay_repo() {
 	local repo="$1"
 	local due_file="$2"
 	local work="$3"
 	local now="$4"
-	local since since_iso slug list_file entry
-	since=$(jq -s --arg repo "$repo" '[.[] | select(.state.repo == $repo)
-		| (if .state.checked > 0 then .state.checked else .state.started end) - 60] | min' "$due_file")
-	[[ "$since" =~ ^-?[0-9]+$ ]] || return 0
-	[[ "$since" -gt 0 ]] || since=0
-	since_iso=$(jq -rn --argjson s "$since" '$s | todateiso8601')
-	slug=$(printf '%s' "$repo" | tr '/' '_')
-	list_file="${work}/list-${slug}.json"
-	_relay_get "repos/${repo}/issues?state=all&since=${since_iso}&per_page=${RELAY_PAGE}&sort=updated&direction=desc" \
-		"$list_file" "list" || {
-		_relay_log "listing ${repo} deferred or failed (${RELAY_FAILURE}); workers keep their state"
-		return 0
-	}
+	local entry
 	while IFS= read -r entry; do
 		[[ -n "$entry" ]] || continue
-		_relay_worker "$entry" "$list_file" "$work" "$now" || true
+		_relay_worker "$entry" "$work" "$now" || true
 	done < <(jq -c --arg repo "$repo" 'select(.state.repo == $repo)' "$due_file")
 	return 0
 }
@@ -422,6 +396,22 @@ _relay_load_budget_gate() {
 		# The library enables errexit; this helper handles failures itself.
 		set +e
 	fi
+	return 0
+}
+
+# t19047: mission keepalive. One local ask from cli:pulse per opted-in idle
+# session; the Node pass decides eligibility (threshold, expiry, permission,
+# wake budget) and makes no GitHub calls. Bounded by RELAY_CALL_TIMEOUT.
+_relay_keepalive() {
+	local output="$1"
+	local line
+	_relay_bus keepalive sweep >"$output" 2>/dev/null || {
+		_relay_log "keepalive sweep failed or timed out"
+		return 0
+	}
+	while IFS= read -r line; do
+		[[ "$line" == *" woke" ]] && _relay_log "keepalive: ${line}"
+	done <"$output"
 	return 0
 }
 
@@ -439,6 +429,7 @@ cmd_relay() {
 	local work now repo
 	work=$(mktemp -d) || return 0
 	now=$(date +%s)
+	_relay_keepalive "${work}/keepalive.txt" || true
 	if _relay_live_workers "${work}/workers.json"; then
 		_relay_prune_state "${work}/workers.json"
 		_relay_due_workers "${work}/workers.json" "$now" "${work}/due.jsonl"
@@ -447,6 +438,7 @@ cmd_relay() {
 			_relay_repo "$repo" "${work}/due.jsonl" "$work" "$now" || true
 		done < <(jq -rs '[.[].state.repo] | unique | .[]' "${work}/due.jsonl" 2>/dev/null)
 	fi
+	_relay_watches "$work" "$now" || true
 	rm -rf "$work"
 	return 0
 }
@@ -462,6 +454,18 @@ cmd_status() {
 		jq -r '"\(.session_id) \(.repo)#\(.issue) checked=\(.checked) comments_seen=\(.comments_seen) last_comment=\(.last_comment_id) closed_sent=\(.closed_sent) labels_sent=\(.labels_sent | join(","))"' "$file" 2>/dev/null || true
 	done
 	[[ "$found" -eq 1 ]] || printf 'No tracked workers.\n'
+	printf 'Issue watches (relay state):\n'
+	found=0
+	for file in "$RELAY_STATE_DIR"/watch/*/*.json; do
+		[[ -f "$file" ]] || continue
+		found=1
+		jq -r '(if .gone == true then "not-found" else (.baseline.state // "unseen") end) as $state
+			| ((.baseline.labels // []) | join(",")) as $labels | ((.baseline.assignees // []) | join(",")) as $assignees
+			| "\(.subscriber) \(.repo)#\(.number) checked=\(.checked) labels=\($labels) assignees=\($assignees) state=\($state) comments_seen=\(.comments_seen)"' "$file" 2>/dev/null || true
+	done
+	[[ "$found" -eq 1 ]] || printf 'No checked issue watches.\n'
+	printf 'Mission keepalive (dry run, nothing sent):\n'
+	_relay_bus keepalive status 2>/dev/null || printf 'unavailable\n'
 	return 0
 }
 

@@ -10,10 +10,11 @@
 #   oauth-pool-helper.sh add [anthropic|openai|cursor|google]           # Add account via OAuth/device flow
 #   oauth-pool-helper.sh check [anthropic|openai|cursor|google|all]     # Health check all accounts
 #   oauth-pool-helper.sh list [anthropic|openai|cursor|google|all]      # List accounts
-#   oauth-pool-helper.sh remove <provider> <email>                      # Remove an account
+#   oauth-pool-helper.sh remove <provider> <email> [--org O]            # Remove an account (O picks one seat)
 #   oauth-pool-helper.sh rotate [anthropic|openai|cursor|google]        # Switch active account
 #   oauth-pool-helper.sh status [anthropic|openai|cursor|google|all]    # Pool rotation statistics
-#   oauth-pool-helper.sh assign-pending <provider> [email]              # Assign pending token
+#   oauth-pool-helper.sh assign-pending <provider> [email] [--org O]    # Assign pending token
+#   oauth-pool-helper.sh remote-sync <sync|status|install|enable|disable> --host H --provider P --email E [--org O]
 #   oauth-pool-helper.sh help                                           # Show usage
 #
 # Security: Tokens are written to ~/.aidevops/oauth-pool.json (600 perms).
@@ -281,11 +282,19 @@ pool_upsert_account() {
 	local expires_ms="$5"
 	local now_iso="$6"
 	local account_id="${7:-}"
+	# Optional Anthropic seat identity (GH#38959): org of this grant, and the
+	# org resolved for the email's single legacy no-org seat.
+	local org_id="${8:-}"
+	local org_name="${9:-}"
+	local legacy_org_id="${10:-}"
+	local legacy_org_name="${11:-}"
 	PROVIDER="$provider" EMAIL="$email" \
 		ACCESS="$access_token" REFRESH="$refresh_token" \
 		EXPIRES="$expires_ms" NOW_ISO="$now_iso" ACCOUNT_ID="$account_id" \
+		ORG_ID="$org_id" ORG_NAME="$org_name" \
+		LEGACY_ORG_ID="$legacy_org_id" LEGACY_ORG_NAME="$legacy_org_name" \
 		python3 "$POOL_OPS" upsert
-	return 0
+	return $?
 }
 
 # Parse HTTP response (body + status) from curl -w '\n%{http_code}' output.
@@ -325,15 +334,14 @@ _oauth_exchange_code() {
 	return 0
 }
 
-# Extract access_token, refresh_token, expires_in from a JSON token response (stdin).
-# Prints three lines: access_token, refresh_token, expires_in.
-# Alignment note: Claude CLI's token response also contains 'scope' (space-delimited
-# string) and optionally 'account' (object with uuid, email_address) and
-# 'organization' (object with uuid). We ignore these — pool doesn't need them.
+# Extract token fields from a JSON token response (stdin).
+# Prints five lines: access_token, refresh_token, expires_in, orgId, orgName.
+# orgId/orgName come from Anthropic's 'organization' object ({uuid, name}) and
+# are empty for other providers. They make a Team and a Personal grant on one
+# email separate pool seats (GH#38959).
 # DIAGNOSTIC: if debugging, parse the full response to inspect granted scopes:
 #   d.get('scope', '').split()     — should include user:inference
 #   d.get('account', {})           — account uuid + email
-#   d.get('organization', {})      — org uuid (for team/enterprise)
 _extract_token_fields() {
 	python3 "$POOL_OPS" extract-token-fields 2>/dev/null
 	return 0
@@ -354,6 +362,10 @@ source "${SCRIPT_DIR}/oauth-pool-manage.sh"
 # shellcheck source=./oauth-pool-diagnose.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/oauth-pool-diagnose.sh"
+
+# shellcheck source=./oauth-pool-remote-sync.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/oauth-pool-remote-sync.sh"
 
 # ---------------------------------------------------------------------------
 # Main
@@ -376,6 +388,8 @@ main() {
 	rotate) cmd_rotate "$@" ;;
 	reset-cooldowns | reset_cooldowns | reset) cmd_reset_cooldowns "$@" ;;
 	remove) cmd_remove "$@" ;;
+	remote-sync | remote_sync) cmd_remote_sync "$@" ;;
+	entry) cmd_entry "$@" ;;
 	set-priority | set_priority) cmd_set_priority "$@" ;;
 	status) cmd_status "$@" ;;
 	help | -h | --help) cmd_help ;;

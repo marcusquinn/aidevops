@@ -150,6 +150,18 @@
           "minimum": 0,
           "description": "Hard ceiling for pulse worker pool size after RAM-based calculation. 0 = auto ((total RAM - reserve) / per-worker RAM, min 2, max 64). Worker admission is RAM-only: CPU load and core counts never limit it (GH#35537). Env: AIDEVOPS_MAX_WORKERS_CAP"
         },
+        "ram_per_worker_mb": {
+          "type": "integer",
+          "default": 1536,
+          "minimum": 1,
+          "description": "Estimated RAM per headless worker process tree in MB; divides reclaimable RAM into worker slots (GH#39157). Env (wins): RAM_PER_WORKER_MB"
+        },
+        "ram_reserve_mb": {
+          "type": "integer",
+          "default": 6144,
+          "minimum": 0,
+          "description": "Reclaimable RAM in MB kept free for the OS and user apps before worker slots are counted (GH#39157). Env (wins): RAM_RESERVE_MB"
+        },
         "max_load_per_core": {
           "type": "number",
           "default": 4.0,
@@ -329,6 +341,11 @@
           "default": "simple",
           "enum": ["simple", "standard", "thinking"],
           "description": "Model tier used for verification checks."
+        },
+        "actions_event_policy_auto_apply": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow Pulse to change public repository Actions event policies (GitHub blocks pull_request_target by default from 2026-12-02)."
         },
         "max_interactive_sessions": {
           "type": "integer",

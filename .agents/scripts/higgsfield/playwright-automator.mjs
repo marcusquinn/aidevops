@@ -13,7 +13,8 @@
 //   higgsfield-image.mjs         — image generation (Playwright)
 //   higgsfield-video.mjs         — video generation, download (Playwright)
 //   higgsfield-lipsync.mjs       — lipsync generation (Playwright)
-//   higgsfield-commands.mjs      — misc UI commands (credits, apps, studio tools)
+//   higgsfield-commands.mjs      — misc UI commands (credits, apps, assets)
+//   higgsfield-studio-commands.mjs — studio tools (cinema, edit, upscale, presets)
 //   higgsfield-asset-chain.mjs   — asset chain operations
 //   higgsfield-pipeline.mjs      — video production pipeline
 //   higgsfield-batch-video.mjs   — batch video/lipsync, download from history
@@ -27,24 +28,12 @@ import {
   downloadFromHistory,
 } from './higgsfield-batch-video.mjs';
 import {
-  aiInfluencer,
   checkCredits,
-  cinemaStudio,
-  createCharacter,
-  editImage,
-  editVideo,
-  featurePage,
   listAssets,
   manageAssets,
-  mixedMediaPreset,
-  motionControl,
-  motionPreset,
   screenshot,
   seedBracket,
-  storyboard,
-  upscale,
   useApp,
-  vibeMotion,
 } from './higgsfield-commands.mjs';
 import {
   checkCreditGuard,
@@ -59,6 +48,20 @@ import {
 import { batchImage, generateImage } from './higgsfield-image.mjs';
 import { generateLipsync } from './higgsfield-lipsync.mjs';
 import { pipeline } from './higgsfield-pipeline.mjs';
+import {
+  aiInfluencer,
+  cinemaStudio,
+  createCharacter,
+  editImage,
+  editVideo,
+  featurePage,
+  mixedMediaPreset,
+  motionControl,
+  motionPreset,
+  storyboard,
+  upscale,
+  vibeMotion,
+} from './higgsfield-studio-commands.mjs';
 import { authHealthCheck, runSelfTests, smokeTest } from './higgsfield-tests.mjs';
 import { generateVideo } from './higgsfield-video.mjs';
 

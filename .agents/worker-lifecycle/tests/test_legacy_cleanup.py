@@ -93,6 +93,83 @@ class LegacyProcContract(unittest.TestCase):
                             self.census(denied)
                     self.assertEqual(counts["skipped_nondumpable"], 0)
 
+    def write_parent(self, name, uid):
+        parent = self.proc / "77"
+        (parent / "task" / "77").mkdir(parents=True, exist_ok=True)
+        status = f"Name:\t{name}\nState:\tS\nUid:\t{uid} {uid} {uid} {uid}\n"
+        (parent / "status").write_text(status)
+        (parent / "task" / "77" / "status").write_text(status)
+        # Foreign-owned parents are skipped; own-UID ones are checked normally.
+        if not (parent / "task" / "77" / "cwd").is_symlink():
+            (parent / "task" / "77" / "cwd").symlink_to(self.root, target_is_directory=True)
+        (parent / "task" / "77" / "fd").mkdir(exist_ok=True)
+
+    def write_daemon(self, name):
+        self.write_task(name=name, ticks="200000")
+        (self.task / "status").write_text((self.task / "status").read_text() + "PPid:\t77\n")
+
+    def test_newer_sshd_session_under_root_sshd_is_not_a_holder(self):
+        # GH#38997: a login newer than the worktree must not block retirement.
+        self.write_parent("sshd", 0)
+        for name in ("sshd", "sshd-session"):
+            with self.subTest(name=name):
+                self.write_daemon(name)
+                with patch.dict(os.environ, {"AIDEVOPS_PROTECTED_PROC_INSPECTION": "0"}), \
+                        legacy_proc.collect_proc_observations() as counts:
+                    self.census()
+                self.assertEqual(counts["skipped_nondumpable"], 1)
+
+    def test_parent_change_rejects_newer_session(self):
+        self.write_parent("sshd", 0)
+        self.write_daemon("sshd-session")
+        read = Path.read_text
+        def changed(path, *args, **kwargs):
+            text = read(path, *args, **kwargs)
+            if path == self.proc / "77" / "status":
+                (self.task / "status").write_text(
+                    read(self.task / "status").replace("PPid:\t77", "PPid:\t1"))
+            return text
+        with patch.object(Path, "read_text", changed), \
+                patch.dict(os.environ, {"AIDEVOPS_PROTECTED_PROC_INSPECTION": "0"}):
+            with self.assertRaisesRegex(ValueError, "proc-observation-unavailable"):
+                self.census()
+
+    def test_predating_root_session_skips_protected_inspection(self):
+        self.write_parent("sshd", 0)
+        self.write_task(name="sshd-session", ticks="100")
+        (self.task / "status").write_text((self.task / "status").read_text() + "PPid:\t77\n")
+        with patch.dict(os.environ, {"AIDEVOPS_PROTECTED_PROC_INSPECTION": "1"}), \
+                patch.object(legacy_proc, "require_protected_references") as inspect, \
+                legacy_proc.collect_proc_observations() as counts:
+            self.census()
+        inspect.assert_not_called()
+        self.assertEqual(counts["skipped_nondumpable"], 1)
+
+    def test_root_session_protected_inspection_runs_once(self):
+        self.write_parent("sshd", 0)
+        self.write_daemon("sshd-session")
+        for result in (None, ValueError("live-process-reference"),
+                       legacy_proc.ProcessCensusUnavailable(123, 123, "references", "timeout")):
+            with self.subTest(result=result), \
+                    patch.dict(os.environ, {"AIDEVOPS_PROTECTED_PROC_INSPECTION": "1"}), \
+                    patch.object(legacy_proc, "require_protected_references", side_effect=result) as inspect:
+                if result is None:
+                    self.census()
+                else:
+                    with self.assertRaisesRegex(ValueError, str(result)):
+                        self.census()
+                self.assertEqual(inspect.call_count, 1)
+
+    def test_newer_daemon_with_unproven_parent_fails_closed(self):
+        unprivileged = 4242
+        for parent_name, parent_uid in (("bash", 0), ("sshd", unprivileged)):
+            with self.subTest(parent=parent_name, uid=parent_uid):
+                with patch.object(legacy_proc.os, "geteuid", return_value=unprivileged):
+                    self.write_parent(parent_name, parent_uid)
+                    self.write_daemon("sshd-session")
+                    with self.assertRaisesRegex(ValueError, "proc-observation-unavailable"):
+                        self.census()
+
     def test_missing_clock_and_worktree_evidence_fail_closed(self):
         for path in (self.task / "stat", self.proc / "stat", self.target / ".git"):
             with self.subTest(path=path):
@@ -625,6 +702,25 @@ class LegacyCleanupContract(unittest.TestCase):
         self.assertEqual(len(report["discovery_errors"]), 1)
         self.assertEqual(report["results"][0]["reason"], "process-alive")
 
+    def test_budget_includes_discovery(self):
+        """GH#38158: discovery that exhausts the budget starts no item."""
+        from types import SimpleNamespace
+        from worker_lifecycle import legacy_runner
+        clock = [1000.0]
+        native = legacy_runner.discover
+
+        def slow(*arguments):
+            clock[0] += 5
+            return native(*arguments)
+
+        with patch.object(legacy_runner, "time", SimpleNamespace(monotonic=lambda: clock[0])), \
+                patch.object(legacy_runner, "discover", side_effect=slow):
+            report = self.cleanup(budget=1)
+        self.assertEqual((report["examined"], report["paths"]), (0, 1), report)
+        self.assertTrue(report["incomplete"])
+        self.assertTrue(report["budget_exhausted"])
+        self.assertTrue((self.target / "work.txt").exists())
+
     def test_git_filesystem_and_registry_discovery_are_deduplicated(self):
         self.git("worktree", "move", str(self.target), str(self.scan_root / "registered"))
         moved = self.scan_root / "registered"
@@ -790,25 +886,28 @@ class LegacyCleanupContract(unittest.TestCase):
         self.assertEqual(result["retired"], 0, result)
         self.assertEqual((self.target / "new-work").read_text(), "keep")
 
-    def test_native_move_and_removal_hold_registration_writer_lock(self):
-        """Destructive native operations continue to exclude other registry writers."""
+    def test_native_move_holds_and_journaled_removal_releases_writer_lock(self):
+        """Move excludes registry writers; the journaled removal does not (GH#38158)."""
         self.stop_owner()
         git = legacy._git
-        guarded = []
+        observed = []
 
         def checked(*arguments):
-            """Probe writer exclusion immediately before native move and removal."""
+            """Probe writer availability immediately before native move and removal."""
             if len(arguments) > 3 and arguments[2] == "worktree" and arguments[3] in ("move", "remove"):
                 with closing(sqlite3.connect(self.store.path, timeout=0.01)) as other:
-                    with self.assertRaises(sqlite3.OperationalError):
+                    try:
                         other.execute("BEGIN IMMEDIATE")
-                guarded.append(arguments[3])
+                        other.rollback()
+                        observed.append((arguments[3], "available"))
+                    except sqlite3.OperationalError:
+                        observed.append((arguments[3], "held"))
             return git(*arguments)
 
         with patch.object(legacy, "_git", side_effect=checked):
             result = self.cleanup()
         self.assertEqual(result["retired"], 1, result)
-        self.assertEqual(guarded, ["move", "remove"])
+        self.assertEqual(observed, [("move", "held"), ("remove", "available")])
 
     def test_unknown_process_is_retained(self):
         adapter = adapter_for(self.store.installation_id())

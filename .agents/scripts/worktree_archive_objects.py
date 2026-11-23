@@ -37,8 +37,9 @@ def dependency_commit(manifest):
 
 def require_independent_base_receiver(root, common, run_git):
     """Refuse shared stores and alternates before any base-object import."""
-    admin = run_git(root, 'rev-parse', '--absolute-git-dir').strip()
-    receiver = run_git(root, 'rev-parse', '--path-format=absolute', '--git-common-dir').strip()
+    # One spawn resolves both; --absolute-git-dir is absolute before the --path-format switch.
+    admin, receiver = run_git(root, 'rev-parse', '--absolute-git-dir', '--path-format=absolute',
+                              '--git-common-dir').rstrip(b'\n').split(b'\n')
     receiver_path = Path(os.fsdecode(receiver)).resolve()
     if (Path(os.fsdecode(admin)).resolve() != receiver_path or receiver_path == common.resolve()
             or os.path.lexists(receiver_path / 'objects/info/alternates')):
@@ -61,12 +62,11 @@ def verify_imported_base(root, base, run_git):
 def index_roots(root):
     """Include staged and resolve-undo objects, excluding null object IDs."""
     roots = set()
-    for inventory in ('--stage', '--resolve-undo'):
-        for entry in git(root, "ls-files", inventory, "-z").split(b"\0"):
-            if entry:
-                oid = entry.split(b"\t", 1)[0].split()[1]
-                if set(oid) != {48}:
-                    roots.add(oid.decode("ascii"))
+    for entry in git(root, "ls-files", "--stage", "--resolve-undo", "-z").split(b"\0"):
+        if entry:
+            oid = entry.split(b"\t", 1)[0].split()[1]
+            if set(oid) != {48}:
+                roots.add(oid.decode("ascii"))
     return roots
 
 
@@ -95,7 +95,12 @@ def administration_roots(root, state, include_index=True):
 def bundle_roots(root, state):
     """Add index dependencies only when the required history does not cover them."""
     history = administration_roots(root, state, include_index=False)
-    extra = set(administration_roots(root, state)) - set(history)
+    # The administration roots have already been read and validated in this
+    # pass. Only the index adds roots; do not resolve HEAD a second time.
+    extra = index_roots(root) - set(history)
+    for oid in extra:
+        if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", oid):
+            raise ValueError("git_admin:invalid_object_id")
     if extra:
         reachable = git(root, 'rev-list', '--objects', '--no-object-names', '--stdin',
                         data=('\n'.join(history) + '\n').encode('ascii'))
@@ -113,18 +118,19 @@ def verify_object_graph(archive, scratch, manifest):
     if manifest.get('self_contained') is not True:
         seed_base(scratch, manifest)
     if bundle.is_file():
+        # The one bundle check for this bare scratch; the imports below rely on it.
         git(scratch, 'bundle', 'verify', str(bundle))
     if manifest.get('merge_policy') == 'structured-v1':
         from worktree_archive_state import load_merge, verify_merge_objects
         state = load_merge(archive, manifest)
-        fetch_preservation(scratch, archive)
+        fetch_preservation(scratch, archive, verified_scratch=True)
         verify_merge_objects(scratch, state)
     elif manifest.get('git_admin_policy') is not None:
         verify_administration(archive, scratch, manifest)
     elif manifest.get('capture_policy') == 'git-only':
         if bundle.is_file():
             if manifest.get('source_fingerprint', {}).get('auto_merge') is not None:
-                fetch_preservation(scratch, archive)
+                fetch_preservation(scratch, archive, verified_scratch=True)
             else:
                 git(scratch, 'fetch', '--quiet', '--no-write-fetch-head', str(bundle), 'HEAD:refs/archive/head')
         git(scratch, 'cat-file', '-e', manifest['head_sha'] + '^{commit}')

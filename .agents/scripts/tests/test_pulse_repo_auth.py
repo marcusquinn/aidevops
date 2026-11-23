@@ -364,11 +364,13 @@ class RepositoryAuthTests(unittest.TestCase):
             self.assertEqual(mint.call_count, 5)
 
     def test_exchange_caps_permissions_to_installation_grants(self):
-        requested = {name: "read" for name in backend.REQUIRED_PULSE_PERMISSIONS}
+        requested = {name: "read" for name in backend.DEFAULT_PULSE_READ_PERMISSIONS}
         granted = {"metadata": "read", "issues": "write", "pull_requests": "read"}
         identity = {"app_id": 123, "account": {"login": "owner"}, "permissions": granted}
         response = {"token": self.installation_credential, "expires_at": "2099-01-01T00:00:00Z"}
-        for grants in (granted, requested):
+        required = {name: "read" for name in backend.REQUIRED_PULSE_PERMISSIONS}
+        self.assertEqual(backend.missing_permissions(required), [])
+        for grants in (granted, required, requested):
             with patch.object(backend, "jwt", return_value="test-jwt"), \
                     patch.object(backend, "api", side_effect=[dict(identity, permissions=grants), response]) as api:
                 backend.exchange(self.profile, "456", "owner/repo", requested)
@@ -378,16 +380,21 @@ class RepositoryAuthTests(unittest.TestCase):
 
     def test_legacy_default_migrates_but_custom_scope_is_preserved(self):
         legacy = {"metadata": "read", "issues": "read", "pull_requests": "read"}
+        previous = {name: "read" for name in backend.REQUIRED_PULSE_PERMISSIONS}
         custom = {"metadata": "read", "issues": "read"}
         response = {"token": self.installation_credential, "expires_at_epoch": time.time() + 3600}
-        for configured in (legacy, custom):
-            profile = dict(self.profile, permissions=configured)
+        for configured in (None, legacy, previous, custom):
+            profile = dict(self.profile)
+            if configured is not None:
+                profile["permissions"] = configured
+            else:
+                profile.pop("permissions", None)
             with patch.object(backend, "exchange", return_value=response) as mint:
-                backend.cached_token(profile, "456", "owner/repo", self.root / "cache")
-            expected = ({name: "read" for name in backend.REQUIRED_PULSE_PERMISSIONS}
-                        if configured == legacy else custom)
+                backend.cached_token(profile, "456", "owner/repo", self.root / ("cache-" + str(configured)))
+            expected = (custom if configured == custom else
+                        {name: "read" for name in backend.DEFAULT_PULSE_READ_PERMISSIONS})
             self.assertEqual(mint.call_args.args[3], expected)
-            self.assertEqual(profile["permissions"], configured)
+            self.assertEqual(profile.get("permissions"), configured)
 
     def test_check_names_missing_installation_permissions_before_mint(self):
         registry = self.root / "repos.json"

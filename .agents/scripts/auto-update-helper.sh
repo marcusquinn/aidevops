@@ -90,6 +90,9 @@ readonly LAUNCHD_DIR="$HOME/Library/LaunchAgents"
 readonly LAUNCHD_PLIST="${LAUNCHD_DIR}/${LAUNCHD_LABEL}.plist"
 readonly SYSTEMD_SERVICE_DIR="$HOME/.config/systemd/user"
 readonly SYSTEMD_UNIT_NAME="aidevops-auto-update"
+# Floor for the oneshot unit's TimeoutStartSec (GH#37991): a version update
+# (setup.sh ~80-110s) plus freshness checks must fit even at short intervals.
+readonly SYSTEMD_MIN_TIMEOUT_SEC=600
 
 #######################################
 # Logging
@@ -1046,18 +1049,22 @@ _cmd_enable_launchd() {
 # Returns: 0 on success, falls back to cron on failure
 # Modelled on worker-watchdog.sh:_install_systemd() (GH#17691)
 #######################################
-_cmd_enable_systemd() {
+_render_auto_update_systemd_units() {
 	local script_path="$1"
 	local interval="$2"
-	local service_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service"
-	local timer_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.timer"
 	local interval_sec
 	interval_sec=$((interval * 60))
-
-	mkdir -p "${SYSTEMD_SERVICE_DIR}"
+	# TimeoutStartSec = one interval, floored at SYSTEMD_MIN_TIMEOUT_SEC: a version
+	# update (setup.sh ~80-110s) or the daily skill re-import routinely exceeded
+	# the former 120s and was killed. A oneshot unit never overlaps itself, so a
+	# timeout above the interval only delays the next tick.
+	local timeout_sec="$interval_sec"
+	if [[ "$timeout_sec" -lt "$SYSTEMD_MIN_TIMEOUT_SEC" ]]; then
+		timeout_sec="$SYSTEMD_MIN_TIMEOUT_SEC"
+	fi
 
 	# shellcheck disable=SC1078,SC1079  # multi-line printf with single quotes inside a double-quoted string; \"${script_path}\" expands to "path" in the service file, preserving space-safe quoting
-	printf '%s' "[Unit]
+	AUTO_UPDATE_SERVICE_CONTENT="[Unit]
 Description=aidevops auto-update
 After=network.target
 
@@ -1066,14 +1073,14 @@ Type=oneshot
 KillMode=control-group
 ExecStart=/usr/bin/env bash -lc '\"${script_path}\" check'
 $(aidevops_systemd_path_env)
-TimeoutStartSec=120
+TimeoutStartSec=${timeout_sec}
 Nice=10
 IOSchedulingClass=idle
 StandardOutput=append:${LOG_FILE}
 StandardError=append:${LOG_FILE}
-" >"$service_file"
+"
 
-	printf '%s' "[Unit]
+	AUTO_UPDATE_TIMER_CONTENT="[Unit]
 Description=aidevops auto-update Timer
 
 [Timer]
@@ -1083,9 +1090,62 @@ Persistent=true
 
 [Install]
 WantedBy=timers.target
-" >"$timer_file"
+"
+	return 0
+}
 
-	systemctl --user daemon-reload 2>/dev/null || true
+_refresh_auto_update_systemd_units() {
+	local script_path="$1" interval="$2"
+	local force_reload="${3:-0}"
+	local AUTO_UPDATE_SERVICE_CONTENT="" AUTO_UPDATE_TIMER_CONTENT=""
+	local pending_reload="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.reload-pending"
+	local unit content target temp changed=0
+	_render_auto_update_systemd_units "$script_path" "$interval"
+	mkdir -p "$SYSTEMD_SERVICE_DIR" || return 1
+	for unit in service timer; do
+		target="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.${unit}"
+		if [[ "$unit" == service ]]; then
+			content="$AUTO_UPDATE_SERVICE_CONTENT"
+		else
+			content="$AUTO_UPDATE_TIMER_CONTENT"
+		fi
+		if [[ -f "$target" ]] && printf '%s' "$content" | cmp -s - "$target"; then
+			continue
+		fi
+		# Persist before replacement so partial writes also trigger a later reload.
+		touch "$pending_reload" || return 1
+		temp=$(mktemp "${target}.tmp.XXXXXX") || return 1
+		if ! printf '%s' "$content" >"$temp" || ! chmod 644 "$temp" || ! mv -f "$temp" "$target"; then
+			rm -f "$temp"
+			return 1
+		fi
+		log_info "Updated systemd unit ${SYSTEMD_UNIT_NAME}.${unit}"
+		changed=1
+	done
+	if [[ "$changed" -eq 1 || "$force_reload" -eq 1 || -f "$pending_reload" ]]; then
+		touch "$pending_reload" || return 1
+		# Status 2 distinguishes manager failure from unit-file errors for fallback.
+		systemctl --user daemon-reload || return 2
+		rm -f "$pending_reload" || return 1
+	fi
+	return 0
+}
+
+_cmd_enable_systemd() {
+	local script_path="$1"
+	local interval="$2"
+	local service_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service"
+	local timer_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.timer"
+	local refresh_status=0
+	_refresh_auto_update_systemd_units "$script_path" "$interval" 1 || refresh_status=$?
+	if [[ "$refresh_status" -eq 2 ]]; then
+		print_error "Failed to reload systemd user manager — falling back to cron" >&2
+		_cmd_enable_cron "$script_path" "$interval"
+		return $?
+	elif [[ "$refresh_status" -ne 0 ]]; then
+		return 1
+	fi
+
 	if ! systemctl --user enable --now "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null; then
 		print_error "Failed to enable systemd timer — falling back to cron" >&2
 		_cmd_enable_cron "$script_path" "$interval"
@@ -1225,9 +1285,14 @@ cmd_enable() {
 	# release so the daemon self-heals — but the existing user state must
 	# survive (custom intervals, env vars). "Loaded but stalled" is also a
 	# no-op here; the caller follows up with `health-check` to surface it.
+	local loaded=0 backend
 	if [[ "$idempotent" -eq 1 ]] && _daemon_is_loaded; then
-		log_info "auto-update daemon already loaded (idempotent enable — no-op)"
-		return 0
+		backend="$(_resolve_status_backend "$(_get_scheduler_backend)")"
+		if [[ "$backend" != "systemd" ]]; then
+			log_info "auto-update daemon already loaded (idempotent enable — no-op)"
+			return 0
+		fi
+		loaded=1
 	fi
 
 	# Read from JSONC config (handles env var > user config > defaults priority)
@@ -1250,8 +1315,11 @@ cmd_enable() {
 		fi
 	fi
 
-	local backend
 	backend="$(_get_scheduler_backend)"
+	if [[ "$loaded" -eq 1 ]]; then
+		_refresh_auto_update_systemd_units "$script_path" "$interval"
+		return $?
+	fi
 
 	if [[ "$backend" == "launchd" ]]; then
 		_cmd_enable_launchd "$script_path" "$interval"
@@ -1400,8 +1468,11 @@ _cmd_status_scheduler() {
 		if ! command -v systemctl &>/dev/null; then
 			echo -e "  Scheduler: systemd (not available on this host)"
 		else
-			local enabled_state
-			enabled_state=$(systemctl --user is-enabled "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null || echo "unknown")
+			local enabled_state active_state
+			enabled_state=$(systemctl --user is-enabled "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null || true)
+			enabled_state=${enabled_state:-unknown}
+			active_state=$(systemctl --user is-active "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null || true)
+			active_state=${active_state:-unknown}
 			local timer_props next_elapse last_trigger
 			# Request all NextElapse variants: NextElapse (pre-255) and
 			# NextElapseUSecRealtime/NextElapseUSecMonotonic (systemd 255+)
@@ -1422,6 +1493,7 @@ _cmd_status_scheduler() {
 			else
 				echo -e "  Status:    ${YELLOW}${enabled_state}${NC}"
 			fi
+			echo "  Active:    $active_state"
 			echo "  Unit:      ${SYSTEMD_UNIT_NAME}.timer"
 			if [[ -n "$next_elapse" ]] && [[ "$next_elapse" != "0" ]]; then
 				echo "  Next fire: $next_elapse"
@@ -1515,6 +1587,34 @@ _cmd_status_state() {
 }
 
 #######################################
+# Resolve the scheduler backend for status output (GH#37751).
+# platform-detect.sh falls back to "cron" when `systemctl --user status`
+# exits non-zero (degraded user manager, minimal env), even though enable
+# installed a working systemd user timer. If the detected backend is cron
+# but the timer unit is installed, report systemd instead.
+# Args: $1 = detected backend
+# Returns: backend name on stdout
+#######################################
+_resolve_status_backend() {
+	local backend="$1"
+
+	if [[ "$backend" != "systemd" && "$backend" != "launchd" && ( -z "${AIDEVOPS_SCHEDULER:-}" || "${AIDEVOPS_SCHEDULER:-}" == "${AIDEVOPS_SCHEDULER_DETECTED:-}" ) ]] && command -v systemctl &>/dev/null; then
+		local timer_state
+		timer_state=$(systemctl --user is-enabled "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null || true)
+		case "$timer_state" in
+		enabled | enabled-runtime) backend="systemd" ;;
+		*)
+			if systemctl --user is-active --quiet "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null; then
+				backend="systemd"
+			fi
+			;;
+		esac
+	fi
+	echo "$backend"
+	return 0
+}
+
+#######################################
 # Show status (platform-aware)
 #######################################
 cmd_status() {
@@ -1524,7 +1624,7 @@ cmd_status() {
 	current=$(get_local_version)
 
 	local backend
-	backend="$(_get_scheduler_backend)"
+	backend="$(_resolve_status_backend "$(_get_scheduler_backend)")"
 
 	echo ""
 	echo -e "${BOLD:-}Auto-Update Status${NC}"
@@ -1570,7 +1670,7 @@ cmd_status() {
 #######################################
 _daemon_is_loaded() {
 	local backend
-	backend="$(_get_scheduler_backend)"
+	backend="$(_resolve_status_backend "$(_get_scheduler_backend)")"
 
 	if [[ "$backend" == "launchd" ]]; then
 		_launchd_is_loaded

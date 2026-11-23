@@ -16,7 +16,10 @@ import subprocess  # nosec B404 # exception types only; no process is started he
 from .filesystem import FilesystemValidationError
 
 CREATION_OPERATIONS = frozenset({"create-worktree", "admit-session", "enroll"})
-RETIREMENT_OPERATIONS = frozenset({"cleanup-worktree", "retire-enrolled-only"})
+RETIREMENT_OPERATIONS = frozenset({
+    "cleanup", "cleanup-worktree", "retire-enrolled-only", "reclaim-unowned",
+    "retire-foreign-worktree",
+})
 _REFUSAL_CODE = re.compile(r"[a-z0-9][a-z0-9-]{0,99}")
 _SQLITE_CODES = (
     ("database is locked", "database-locked"),
@@ -30,6 +33,11 @@ _SQLITE_CODES = (
     ("database or disk is full", "database-full"),
 )
 _GIT_CODES = (
+    # GH#37922: the EDQUOT/ENOSPC strerror text Git appends to write failures is
+    # the only proof of exhaustion. A bare "unable to write" stays generic, and
+    # these lead so path fragments such as "locked" cannot mask them.
+    ("disk quota exceeded", "disk-quota-exceeded"),
+    ("no space left on device", "disk-full"),
     ("is already used by worktree", "ref-already-checked-out"),
     ("is already checked out", "ref-already-checked-out"),
     ("a branch named", "branch-already-exists"),

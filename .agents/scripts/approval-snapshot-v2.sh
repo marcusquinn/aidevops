@@ -100,6 +100,96 @@ JQ
 	return 0
 }
 
+_approval_snapshot_v2_terminal_blocker_filters() {
+	cat <<'JQ'
+		# #aidevops:trust-boundary — exclude only complete writer-produced recovery envelopes; copied markers, altered guidance, and extra prose stay bound.
+		def terminal_blocker_envelope: test("^<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\\n" + "CLAIM_RELEASED reason=blocked runner=[A-Za-z0-9._:-]+ ts=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?: [a-z_]+=[A-Za-z0-9._:@/+:-]+)*\\n" + "<!-- aidevops:terminal-blocker-observation revision=[0-9a-f]{16,64} blocker=[0-9a-f]{16,64} -->\\n\\n" + "Terminal blocker: reason=(?:missing_files_scope owner=brief-author|files_scope_excluded owner=brief-author|target_code_blocker owner=target-maintainer|external_trigger_pending owner=dependency-owner|permission_required owner=permission-maintainer|source_access_blocked owner=access-owner|(?:push_policy_timeout|network_policy_timeout|runner_capability_unmet) owner=runner-recovery|input_required owner=(?:user|contributor|maintainer|admin)|unknown owner=worker-triage) task=[0-9]+ attempt=[0-9a-f]{16,64}\\.\\n" + "Projected state: status:(?:blocked|available)\\.\\n" + "Next action: (?:Add a canonical ### Files Scope \\(or legacy ## Files Scope\\) section listing the permitted paths in the issue body\\.|The AI brief owner must review the protected integration dossier, check concurrent ownership and correct the permitted paths before resuming the existing checkpoint\\. Preserve explicit hard boundaries and security guarantees; do not retry an unchanged brief\\.|Review the protected blocker dossier and correct the target code or task dependencies before retrying\\.|Resolve the evidenced permission prerequisite through the human-owned approval flow, then post the explicit retry directive\\. Retry is scheduling consent only: the original permission guard must independently verify the exact context\\. Do not regenerate requests or bypass the guard\\.|Wait for the specified external trigger\\. When it is verified, correct the brief or post an authorized retry directive; unrelated repository merges do not clear this hold\\.|Verify access to the denied source through its approved human-owned flow, or supply the required source evidence in the brief or a linked dependency\\. A brief or dependency change, or an explicit retry after verified access, re-arms dispatch; unrelated merges do not\\. Never bypass source verification or source-access guards\\.|Release for a capable runner\\. Recheck declared secret and local-data requirements before claiming; do not impose a global issue hold or publish secret values\\.|Retry policy evaluation and publication of the recorded local branch/HEAD on the same runner after host contention clears\\. Preserve all policy and publication guards\\.|Retry the same outbound HTTPS command on the same runner after host contention clears\\. The policy guard timed out; it was not a policy denial\\. Preserve all policy guards\\.|Supply the (?:specific input named in the protected dossier|requested input) in the issue brief; a brief or dependency change re-arms dispatch\\. The recovery supervisor first decides anything AI can resolve within delegated authority\\.|no sanitized question recorded; the originating runner\u0027s recovery supervisor must publish one\\. No maintainer action is possible until then\\.|Interpret the protected dossier and record a known blocker class or repair the brief\\. (?:No global dispatch hold is imposed|A brief or dependency change, or an OWNER/MEMBER retry directive, re-arms dispatch)\\.)\\n" + "Raw evidence remains in protected worker telemetry\\.\\n(?:(?:Input requested|Trigger awaited): [^\\x00-\\x1f\\x7f<>`@]{1,500}\\n)?(?:Unblock label: `needs-[a-z-]{1,40}`\\. [^\\x00-\\x1f\\x7f<>@]{1,600}\\n)?(?:CHECKPOINT_UNKNOWN_TRIAGE pending_work brief=[a-f0-9]{64} head=[a-f0-9]{40,64}\\n)?<!-- ops:end -->" + aidevops_worker_footer + "$");
+		# Correlate reason, action and optional trailer lines exactly as the writer
+		# (_terminal_blocker_recovery) emits them; the envelope regex alone
+		# treats those alternations as independent.
+		def terminal_blocker_public_line_safe:
+			(contains("-----BEGIN") | not)
+			and (test("\\b(password|token|secret|api[_ -]?key|authorization)\\s*[:=]"; "i") | not)
+			and (test("\\bbasic\\s+\\S"; "i") | not);
+		def canonical_terminal_blocker_release:
+			# Normalize only the exact new writer-produced reason/action pair to
+			# the existing runner-recovery envelope; keep all other bytes bound.
+			(if contains("Terminal blocker: reason=resource_contended owner=runner-recovery ")
+				and contains("\nNext action: Redispatch after the session holding the shared lock or lease ends; no person needs to act. Preserve every lock and publication guard.\n")
+			then sub("Terminal blocker: reason=resource_contended owner=runner-recovery "; "Terminal blocker: reason=runner_capability_unmet owner=runner-recovery ")
+				| sub("\nNext action: Redispatch after the session holding the shared lock or lease ends; no person needs to act\\. Preserve every lock and publication guard\\.\n";
+					"\nNext action: Release for a capable runner. Recheck declared secret and local-data requirements before claiming; do not impose a global issue hold or publish secret values.\n")
+			else . end | terminal_blocker_envelope) and (
+				(capture("Terminal blocker: reason=(?<r>[a-z_]+) ").r) as $r
+				| (capture("\\nNext action: (?<a>[^\\n]*)\\n").a) as $a
+				| (capture("\\nInput requested: (?<q>[^\\n]*)\\n") // {q: null}).q as $q
+				# GH#38353: only external_trigger_pending may name its awaited
+				# trigger; the writer publishes no URL or credential-shaped text.
+				| (capture("\\nTrigger awaited: (?<t>[^\\n]*)\\n") // {t: null}).t as $t
+				# GH#38360 companion line: label and guidance must match the
+				# writer's blocked_needs_label_for_reason/blocked_companion_guidance.
+				| (capture("\\nUnblock label: `(?<l>[a-z-]+)`\\. (?<g>[^\\n]*)\\n") // null) as $u
+				| ($r == "input_required") as $is_input
+				| contains("\nCHECKPOINT_UNKNOWN_TRIAGE ") as $triage
+				| ({
+					missing_files_scope: "Add a canonical ",
+					files_scope_excluded: "The AI brief owner must review",
+					target_code_blocker: "Review the protected blocker dossier",
+					external_trigger_pending: "Wait for the specified external trigger",
+					permission_required: "Resolve the evidenced permission",
+					source_access_blocked: "Verify access to the denied source",
+					resource_contended: "Redispatch after the session holding the shared lock or lease ends",
+					runner_capability_unmet: "Release for a capable runner",
+					push_policy_timeout: "Retry policy evaluation",
+					network_policy_timeout: "Retry the same outbound",
+					input_required: "Supply the ",
+					unknown: "Interpret the protected dossier"
+				}[$r]) as $prefix
+				| (($prefix != null and ($a | startswith($prefix)))
+					or ($is_input and ($a | startswith("no sanitized question recorded"))))
+				and (if $q == null then (($is_input | not) or ($a | startswith("no sanitized")))
+					else ($is_input and ($a | startswith($prefix)) and ($q | terminal_blocker_public_line_safe)) end)
+				and ($t == null or ($r == "external_trigger_pending"
+					and ($t | terminal_blocker_public_line_safe) and ($t | contains("://") | not)))
+				and ($u == null or (contains("\nProjected state: status:blocked.\n")
+					# A missing-secret release names needs-credentials for any class.
+					and ($u.l == "needs-" + ({input_required: "maintainer-input", permission_required: "maintainer-input",
+						source_access_blocked: "source-access", external_trigger_pending: "dependency"}[$r] // "ai-recovery")
+						or $u.l == "needs-credentials")
+					and (($r == "external_trigger_pending" and $u.l == "needs-dependency"
+						and $u.g == "Needed: the awaited trigger named above. Owner: the trigger-revisit pass (no human action) checks public evidence on a schedule and posts the retry directive when the trigger is met; an OWNER/MEMBER may post it sooner. Afterwards dispatch resumes automatically.")
+					or $u.g == {
+						"needs-ai-recovery": "Needed: AI recovery. Owner: the recovery supervisor (no human action). It solves or releases the hold, or names the one human input with a specific `needs-*` label and a comment. Afterwards dispatch resumes automatically.",
+						"needs-dependency": "Needed: the linked blocking issue must close. Owner: whoever solves that issue (usually a worker). Afterwards the dependency pass removes status:blocked and this label automatically.",
+						"needs-maintainer-input": "Needed: one owner decision or input that AI cannot supply (named in the brief or the latest blocker comment). Owner: maintainer. Route: answer in the issue brief, or post the retry directive; never paste secrets into issues. Afterwards the recovery pass removes status:blocked and this label and dispatch resumes.",
+						"needs-source-access": "Needed: a permitted capture, an alternative official source, or the host recovering. Owner: access owner. Route: provide the source through an approved channel or confirm the canonical site in the issue; never paste secrets into issues. Afterwards the recovery pass removes status:blocked and this label and dispatch resumes.",
+						"needs-credentials": "Needed: credentials or account access. Owner: maintainer. Route: provision on a runner with `aidevops secret set NAME` (never in issues or comments), then post the retry directive. Afterwards the recovery pass removes status:blocked and this label and dispatch resumes."
+					}[$u.l])))
+				and (($triage | not) or $r == "unknown")
+			);
+JQ
+	return 0
+}
+
+# Print the jq def for the canonical ever-NMR remediation notification.
+# Requires jq vars $number and $repo and the conversation_source def.
+_approval_snapshot_v2_ever_nmr_filters() {
+	cat <<'JQ'
+		# #aidevops:trust-boundary — the pasted prefix is the closed set from
+		# shared-approval-cli.sh (GH#39027): `sudo aidevops`, or sudo plus a
+		# `~/` or absolute launcher path of [A-Za-z0-9._+-] segments (never
+		# `.` or `..`) ending in /aidevops. Normalise only that token; the rest
+		# stays byte-exact.
+		def canonical_ever_nmr_remediation:
+			("<!-- ever-nmr-remediation -->\n> Label `needs-maintainer-review` was removed, but the `ever-NMR` history flag is still set. Pulse will continue to skip dispatch until cryptographic approval lands:\n>\n> ```\n> sudo aidevops approve issue " + $number + " " + $repo + "\n> ```\n>\n> This gate cannot be bypassed by label manipulation (security design — see `reference/auto-merge.md` NMR section).") as $body
+			| (conversation_source and $number != "" and $repo != "")
+			and (sub("\n> sudo (?:~/|/)(?:(?!\\.\\.?/)[A-Za-z0-9._+-]+/)*aidevops approve issue "; "\n> sudo aidevops approve issue ") as $normalized
+				| ($normalized | startswith($body))
+				and ($normalized[$body | length:] | test("^(?:\\n<!-- aidevops:origin:worker -->)?\\n<!-- aidevops:sig -->\\n---\\n\\[aidevops\\.sh\\]\\(https://aidevops\\.sh\\) v[0-9]+\\.[0-9]+\\.[0-9]+ automated scan\\.\\n?$")));
+JQ
+	return 0
+}
+
 _approval_snapshot_v2_comments_json() {
 	local pages_json="$1"
 	local excluded_comment_id="${2:-}"
@@ -117,11 +207,7 @@ _approval_snapshot_v2_comments_json() {
 	# later drift by copying the marker into an unsigned comment.
 	jq -cS --arg excluded "$excluded_comment_id" --arg source "$source_name" --arg cutoff "$issued_at_cutoff" --arg empty "$empty_string" --arg number "$target_number" --arg repo "$target_repo" --arg selection "$selection" --arg head "$pr_head" "$(_approval_snapshot_v2_comment_identity)"'
 		'"$(_approval_snapshot_v2_comment_filters)"'
-		def canonical_ever_nmr_remediation:
-			("<!-- ever-nmr-remediation -->\n> Label `needs-maintainer-review` was removed, but the `ever-NMR` history flag is still set. Pulse will continue to skip dispatch until cryptographic approval lands:\n>\n> ```\n> sudo aidevops approve issue " + $number + " " + $repo + "\n> ```\n>\n> This gate cannot be bypassed by label manipulation (security design — see `reference/auto-merge.md` NMR section).") as $body
-			| (conversation_source and $number != "" and $repo != "")
-			and startswith($body)
-			and (.[$body | length:] | test("^(?:\\n<!-- aidevops:origin:worker -->)?\\n<!-- aidevops:sig -->\\n---\\n\\[aidevops\\.sh\\]\\(https://aidevops\\.sh\\) v[0-9]+\\.[0-9]+\\.[0-9]+ automated scan\\.\\n?$"));
+		'"$(_approval_snapshot_v2_ever_nmr_filters)"'
 		# aidevops:trust-boundary — accept the renamed deterministic audit text
 		# while preserving already-published round-robin audit compatibility.
 		def canonical_dispatch_audit:
@@ -134,8 +220,7 @@ _approval_snapshot_v2_comments_json() {
 				"|CLAIM_RELEASED reason=[A-Za-z0-9._:-]+ runner=[A-Za-z0-9._:-]+ ts=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?: [a-z_]+=[A-Za-z0-9._:@/+:-]+)*" +
 				")\\n<!-- ops:end -->" + aidevops_worker_footer + "$"
 			);
-		# #aidevops:trust-boundary — exclude only complete writer-produced recovery envelopes; copied markers, altered guidance, and extra prose stay bound.
-		def canonical_terminal_blocker_release: test("^<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\\n" + "CLAIM_RELEASED reason=blocked runner=[A-Za-z0-9._:-]+ ts=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?: [a-z_]+=[A-Za-z0-9._:@/+:-]+)*\\n" + "<!-- aidevops:terminal-blocker-observation revision=[0-9a-f]{16,64} blocker=[0-9a-f]{16,64} -->\\n\\n" + "Terminal blocker: reason=(?:missing_files_scope owner=brief-author|files_scope_excluded owner=brief-author|target_code_blocker owner=target-maintainer|external_trigger_pending owner=dependency-owner|permission_required owner=permission-maintainer|input_required owner=(?:user|contributor|maintainer|admin)|unknown owner=worker-triage) task=[0-9]+ attempt=[0-9a-f]{16,64}\\.\\n" + "Projected state: status:(?:blocked|available)\\.\\n" + "Next action: (?:Add a canonical ### Files Scope \\(or legacy ## Files Scope\\) section listing the permitted paths in the issue body\\.|The AI brief owner must review the protected integration dossier, check concurrent ownership and correct the permitted paths before resuming the existing checkpoint\\. Preserve explicit hard boundaries and security guarantees; do not retry an unchanged brief\\.|Review the protected blocker dossier and correct the target code or task dependencies before retrying\\.|Resolve the evidenced permission prerequisite through the human-owned approval flow, then post the explicit retry directive\\. Retry is scheduling consent only: the original permission guard must independently verify the exact context\\. Do not regenerate requests or bypass the guard\\.|Wait for the specified external trigger\\. When it is verified, correct the brief or post an authorized retry directive; unrelated repository merges do not clear this hold\\.|Supply the specific input named in the protected dossier in the issue brief; a brief or dependency change re-arms dispatch\\. The recovery supervisor first decides anything AI can resolve within delegated authority\\.|Interpret the protected dossier and record a known blocker class or repair the brief\\. (?:No global dispatch hold is imposed|A brief or dependency change, or an OWNER/MEMBER retry directive, re-arms dispatch)\\.)\\n" + "Raw evidence remains in protected worker telemetry\\.\\n<!-- ops:end -->" + aidevops_worker_footer + "$");
+		'"$(_approval_snapshot_v2_terminal_blocker_filters)"'
 		def canonical_self_hosting_override:
 			test(
 				"^<!-- self-hosting-tier-override -->\\n<!-- provenance:start -->\\n## Self-Hosting Tier Override\\n\\nPre-dispatch self-hosting detector replaced lower workload-tier labels with `tier:thinking` on this issue\\.\\n\\n\\*\\*Matched pattern:\\*\\* `[A-Za-z0-9._-]+` in issue body\\n\\n\\*\\*Rationale:\\*\\* Issues modifying the dispatch path have a self-referential property — workers dispatched to fix them run through the code being fixed\\. Applying the terminal workload tier upfront avoids wasted lower-tier attempts while runtime routing retains control of the exact model and reasoning level\\.\\n\\n\\*\\*Bypass:\\*\\* `AIDEVOPS_SKIP_SELF_HOSTING_DETECTOR=1`\\n\\n_Automated by `pre-dispatch-validator-helper\\.sh` \\(t2819\\)\\. This comment is posted once via the `<!-- self-hosting-tier-override -->` marker; re-runs are no-ops\\._\\n<!-- provenance:end -->" + aidevops_worker_footer + "$"
@@ -539,23 +624,69 @@ approval_snapshot_v2_digest() {
 	return 0
 }
 
+# GH#38006: a linked source binds its body when the snapshot carries one
+# (content-bound external sources, or every source under older profiles).
+_approval_snapshot_v2_body_bound_source_filter() {
+	printf '%s' '(.source | type) == "object" and (.source | has("body"))'
+	return 0
+}
+
+# Prints {"<source node_id>": "<sha256 of the JSON body>"} for every body-bound
+# linked source. Bodies pass through here-strings, never argv.
+approval_snapshot_v2_linked_body_digests() {
+	local snapshot_json="$1"
+	local sources="" source="" node_id="" body_json="" digest="" result='{}'
+	sources=$(jq -c "[(.linked_references // [])[] | select($(_approval_snapshot_v2_body_bound_source_filter)) | .source
+		| {node_id: (.node_id // \"\"), body: (.body // \"\")}] | unique_by(.node_id) | .[]" <<<"$snapshot_json") || return 1
+	while IFS= read -r source; do
+		[[ -n "$source" ]] || continue
+		node_id=$(jq -r '.node_id' <<<"$source") || return 1
+		body_json=$(jq -cS '.body' <<<"$source") || return 1
+		digest=$(approval_snapshot_v2_digest "$body_json") || return 1
+		result=$(jq -cS --arg id "$node_id" --arg digest "$digest" '. + {($id): $digest}' <<<"$result") || return 1
+	done <<<"$sources"
+	printf '%s\n' "$result"
+	return 0
+}
+
+# Digest of the snapshot without the issue title/body and without every
+# body-bound linked-source body: everything a linked-source edit cannot touch.
+approval_snapshot_v2_linked_frame_digest() {
+	local snapshot_json="$1"
+	local frame_json=""
+	frame_json=$(jq -cS "del(.title, .body)
+		| if has(\"linked_references\") then .linked_references |= map(if $(_approval_snapshot_v2_body_bound_source_filter) then del(.source.body) else . end) else . end" <<<"$snapshot_json") || return 1
+	approval_snapshot_v2_digest "$frame_json"
+	return $?
+}
+
 # #aidevops:trust-boundary — GH#33097: per-component digests for issue
 # snapshots. `frame` covers every scope-bearing byte except the title and body
 # (comments, linked references, identity, lifecycle), so a verifier can prove
 # that only the title/body changed and then authenticate those edits separately.
-# Prints compact JSON {title, body, frame}. Snapshot bytes pass through
-# here-strings, not argv, so large issues stay within argument limits.
+# GH#38006: `linked_frame` additionally excludes body-bound linked-source
+# bodies and `linked_bodies` names each one's digest, so a verifier can tell
+# which linked source changed before reading its edit history. These are only
+# a pre-filter: continuity still requires the restored signed revisions to
+# reproduce the complete signed digest or frame.
+# Prints compact JSON {title, body, frame, linked_frame, linked_bodies}.
+# Snapshot bytes pass through here-strings, not argv, so large issues stay
+# within argument limits.
 approval_snapshot_v2_content_digests() {
 	local snapshot_json="$1"
 	local title_json="" body_json="" frame_json="" title_digest="" body_digest="" frame_digest=""
+	local linked_frame_digest="" linked_bodies=""
 	title_json=$(jq -cS '.title // ""' <<<"$snapshot_json") || return 1
 	body_json=$(jq -cS '.body // ""' <<<"$snapshot_json") || return 1
 	frame_json=$(jq -cS 'del(.title, .body)' <<<"$snapshot_json") || return 1
 	title_digest=$(approval_snapshot_v2_digest "$title_json") || return 1
 	body_digest=$(approval_snapshot_v2_digest "$body_json") || return 1
 	frame_digest=$(approval_snapshot_v2_digest "$frame_json") || return 1
+	linked_frame_digest=$(approval_snapshot_v2_linked_frame_digest "$snapshot_json") || return 1
+	linked_bodies=$(approval_snapshot_v2_linked_body_digests "$snapshot_json") || return 1
 	jq -cS -n --arg title "$title_digest" --arg body "$body_digest" --arg frame "$frame_digest" \
-		'{title: $title, body: $body, frame: $frame}'
+		--arg linked_frame "$linked_frame_digest" --argjson linked_bodies "$linked_bodies" \
+		'{title: $title, body: $body, frame: $frame, linked_frame: $linked_frame, linked_bodies: $linked_bodies}'
 	return $?
 }
 

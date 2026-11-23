@@ -303,24 +303,36 @@ PY
 # Arguments: $1=provider name. Output: normalized hostname.
 _provider_policy_domain() {
 	local provider="$1"
-	local routing_table="${SCRIPT_DIR}/../custom/configs/model-routing-table.json"
-	if [[ ! -r "$routing_table" ]]; then
-		routing_table="${SCRIPT_DIR}/../configs/model-routing-table.json"
-	fi
-	[[ -r "$routing_table" ]] || {
+	local custom_table="${SCRIPT_DIR}/../custom/configs/model-routing-table.json"
+	local framework_table="${SCRIPT_DIR}/../configs/model-routing-table.json"
+	[[ -r "$custom_table" || -r "$framework_table" ]] || {
 		log_error "Model routing table is unavailable for provider policy export"
 		return 1
 	}
 
-	python3 - "$routing_table" "$provider" <<'PY'
+	# Per-key inheritance: a custom table wins for a provider it defines;
+	# otherwise the framework table supplies the endpoint. Fails closed if neither does.
+	python3 - "$custom_table" "$framework_table" "$provider" <<'PY'
 import json
+import os
 import sys
 from urllib.parse import urlsplit
 
-routing_path, provider = sys.argv[1:]
-with open(routing_path, "r", encoding="utf-8") as handle:
-    config = json.load(handle)
-endpoint = config.get("providers", {}).get(provider, {}).get("endpoint", "")
+custom_path, framework_path, provider = sys.argv[1:]
+
+
+def endpoint_for(path):
+    if not os.access(path, os.R_OK):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            config = json.load(handle)
+        return config.get("providers", {}).get(provider, {}).get("endpoint", "") or ""
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+endpoint = endpoint_for(custom_path) or endpoint_for(framework_path)
 parsed = urlsplit(endpoint)
 if (
     parsed.scheme != "https"

@@ -14,6 +14,8 @@ from datetime import date, datetime, timedelta, timezone
 from itertools import combinations
 from typing import Any
 
+from credential_inventory_names import reserved_aliases
+
 EXPIRY_WARN_DAYS = 30
 STALE_DAYS = 30
 VERIFIABLE_PROVIDERS = {"cloudflare"}
@@ -143,6 +145,9 @@ def drift(data: dict[str, Any], stored: list[str] | None, now: datetime | None =
         findings += freshness_findings(name, record, now)
     findings += overlap_findings(credentials)
     findings += zone_account_findings(credentials)
+    findings += [{"check": "reserved-alias", "credential": name,
+                  "detail": f"{alias} shadows the {provider} default; aidevops secret default {provider} NAME"}
+                 for name, alias, provider in reserved_aliases(data)]
     providers = {record.get("provider") for record in credentials.values()}
     findings += [{"check": "default-undeclared", "detail": provider}
                  for provider in sorted(providers & CONVENTIONAL_PROVIDERS) if provider not in (data.get("defaults") or {})]

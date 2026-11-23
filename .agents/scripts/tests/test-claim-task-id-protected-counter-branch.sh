@@ -599,6 +599,26 @@ STUB
 	return 0
 }
 
+test_stale_dedicated_above_default() {
+	local tmpdir="$1" case_dir="${1}/stale-above-default"
+	local work_dir bin_dir output rc=0
+	mkdir -p "$case_dir" || return 1
+	work_dir=$(setup_develop_default_remote "$case_dir") || return 1
+	bin_dir=$(setup_open_policy_stub "$case_dir") || return 1
+	git -C "${case_dir}/seed" checkout task-id-counter-local >/dev/null 2>&1 || git -C "${case_dir}/seed" checkout -b task-id-counter-local origin/task-id-counter >/dev/null 2>&1 || return 1
+	printf '2200\n' >"${case_dir}/seed/.task-counter"
+	git -C "${case_dir}/seed" commit -am 'advance dedicated' >/dev/null 2>&1 || return 1
+	git -C "${case_dir}/seed" push origin task-id-counter-local:task-id-counter >/dev/null 2>&1 || return 1
+	printf '\n- [ ] t2500 out of band\n' >>"${work_dir}/TODO.md"
+	output=$(PATH="${bin_dir}:${PATH}" CAS_SSH_FALLBACK_ENABLED=0 "$CLAIM_SCRIPT" --title 'stale floor' --no-issue --repo-path "$work_dir" 2>&1) || rc=$?
+	if [[ $rc -ne 4 || "$output" != *'--sync-counter-branch'* ]]; then
+		fail "stale dedicated above default fails closed" "rc=$rc: $output"
+	else
+		pass "stale dedicated above default fails closed"
+	fi
+	return 0
+}
+
 test_develop_default_branch_sync_and_claim() {
 	local tmpdir="$1"
 	local name_detect="develop-default repo detects remote default branch instead of assuming main"
@@ -801,6 +821,53 @@ test_stale_pin_repair() {
 	return 0
 }
 
+# t19224: the isolated canonical context fetches commits and trees only
+# (--filter=blob:none). A counter that lives on the default branch must still
+# allocate through it (mktree --missing, lazy one-blob reads), the pushed commit
+# must change only .task-counter, and the shared repository must never become
+# shallow or a promisor.
+test_canonical_blobless_default_branch_counter() {
+	local tmpdir="$1"
+	local bin_dir_unused="${2:-}"
+	local name="canonical default-branch counter allocates through blob-less isolated context"
+	local case_dir="${tmpdir}/blobless-default"
+	local seed_dir="${case_dir}/seed"
+	local remote_dir="${case_dir}/remote.git"
+	local bin_dir="" output="" rc=0 changed="" counter="" temp_root=""
+
+	: "$bin_dir_unused"
+	mkdir -p "$case_dir" || { fail "$name" "fixture directory failed"; return 0; }
+	setup_develop_default_remote "$case_dir" >/dev/null || { fail "$name" "repo setup failed"; return 0; }
+	bin_dir=$(setup_open_policy_stub "$case_dir") || { fail "$name" "policy stub setup failed"; return 0; }
+	git -C "$remote_dir" config uploadpack.allowFilter true || { fail "$name" "allowFilter setup failed"; return 0; }
+	printf '%s\n' '{"counter_branch":"develop","default_branch":"develop"}' >"${seed_dir}/.aidevops.json"
+	temp_root="${case_dir}/contexts"
+	mkdir -p "$temp_root" || { fail "$name" "context root setup failed"; return 0; }
+
+	output=$(run_canonical_claim "$seed_dir" "$bin_dir" "$temp_root" --title "blob-less default counter" 2>&1) || rc=$?
+	if [[ $rc -ne 0 ]] || ! printf '%s\n' "$output" | grep -Fq 'Using isolated Git context for canonical counter discovery and CAS'; then
+		fail "$name" "claim failed through isolated context: rc=${rc}: $output"
+		return 0
+	fi
+	counter=$("$TEST_NATIVE_GIT" --git-dir="$remote_dir" show refs/heads/develop:.task-counter 2>/dev/null | tr -d '[:space:]')
+	if [[ "$counter" != "2001" ]]; then
+		fail "$name" "expected develop counter 2001, got ${counter:-<empty>}: $output"
+		return 0
+	fi
+	changed=$("$TEST_NATIVE_GIT" --git-dir="$remote_dir" diff --name-only refs/heads/develop~1 refs/heads/develop 2>/dev/null)
+	if [[ "$changed" != ".task-counter" ]]; then
+		fail "$name" "pushed commit changed more than .task-counter: ${changed:-<none>}"
+		return 0
+	fi
+	if [[ -f "${seed_dir}/.git/shallow" ]] || \
+		"$TEST_NATIVE_GIT" -C "$seed_dir" config --get-regexp '^remote\..*\.(promisor|partialclonefilter)$' >/dev/null 2>&1; then
+		fail "$name" "shared repository became shallow or a promisor"
+		return 0
+	fi
+	pass "$name"
+	return 0
+}
+
 main() {
 	local tmpdir=""
 	local work_dir=""
@@ -833,6 +900,8 @@ main() {
 	test_linked_worktree_preserves_history "$tmpdir" "$bin_dir"
 	test_canonical_implicit_counter_discovery "$tmpdir" "$bin_dir"
 	test_canonical_context_setup_failure "$tmpdir" "$bin_dir"
+	test_canonical_blobless_default_branch_counter "$tmpdir"
+	test_stale_dedicated_above_default "$tmpdir" || fail "stale dedicated above default" "fixture failed"
 	test_develop_default_branch_sync_and_claim "$tmpdir"
 	test_explicit_counter_freshness "$tmpdir" || fail "explicit counter freshness" "fixture failed"
 	test_stale_pin_repair "$tmpdir" || fail "stale pin repair" "fixture failed"
