@@ -119,9 +119,10 @@ jobs:
           # Bounded parallelism, per-suite timeout, reruns to drop flakes.
           # Actions runs bash -e: capture the intentional nonzero status explicitly.
           rc=0
-          # GH#40066: serial rerun of parallel-pass reds needs headroom over 60 min.
+          # GH#40066: share an 80-minute execution budget across all passes,
+          # leaving 10 minutes for the report/logs before the outer safety timeout.
           timeout --signal=TERM 5400 \
-            .agents/scripts/affected-tests-helper.sh all --jobs 4 --timeout 180 --retries 1 \
+            .agents/scripts/affected-tests-helper.sh all --jobs 4 --timeout 180 --retries 1 --run-budget 4800 \
             --log-dir "${out}/suite-logs" \
             > "$results" 2> "${out}/suite-stderr.log" || rc=$?
           echo "out=${out}" >> "$GITHUB_OUTPUT"

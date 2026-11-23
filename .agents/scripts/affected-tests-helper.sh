@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 def interrupted(signum, frame):
     raise KeyboardInterrupt("signal %s" % signum)
@@ -32,6 +33,8 @@ parser.add_argument("--base")
 parser.add_argument("--max", type=int, default=30)
 parser.add_argument("--jobs", type=int, default=4)
 parser.add_argument("--timeout", type=int, default=240)
+parser.add_argument("--run-budget", type=int, default=0,
+                    help="total execution seconds across passes; 0 disables; reserves reporting time")
 parser.add_argument("--max-hops", type=int, default=3,
                     help="sourcing hops to follow from a changed script; 0 disables")
 parser.add_argument("--ubiquity", type=float, default=0.1,
@@ -50,6 +53,9 @@ if args.max_hops < 0:
     parser.error("--max-hops must be zero or positive")
 if args.retries < 0:
     parser.error("--retries must be zero or positive")
+if args.run_budget < 0:
+    parser.error("--run-budget must be zero or positive")
+run_deadline = time.monotonic() + args.run_budget if args.run_budget else None
 
 def find_tracking_issue(title):
     """Return (number, url) of an open red-main issue, or None."""
@@ -282,6 +288,11 @@ def execute(item):
     with running_lock:
         if stop.is_set():
             return None
+        if run_deadline is not None:
+            remaining = run_deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            timeout = min(timeout, remaining)
         sink = open(scratch_path(suite), "wb") if capture else subprocess.DEVNULL
         try:
             proc = subprocess.Popen(["bash", suite], cwd=directory, stdout=sink,
@@ -357,11 +368,16 @@ rerun_jobs = 1 if args.command == "all" and len(pending) <= ALL_SERIAL_RERUN_MAX
 for _ in range(args.retries):
     if not pending:
         break
+    if run_deadline is not None and time.monotonic() >= run_deadline:
+        break
     rerun = run_all(root, pending, rerun_jobs)
     for suite in pending:
         attempts[suite].append(rerun[suite])
     pending = [s for s in pending if rerun[s] not in (0, 124)]
 
+if run_deadline is not None and time.monotonic() >= run_deadline:
+    print("Execution budget exhausted; unfinished suites remain non-passing; retries may be incomplete",
+          file=sys.stderr)
 print("suite\trc_head\trc_base\tclass")
 regression = False
 for suite in ordered:
