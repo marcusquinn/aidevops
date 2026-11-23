@@ -200,6 +200,7 @@ ROUTINE_LABELS=(
 	"routines|${LABEL_COLOR_STANDING}|Routine tracking anchor — not a task"
 	"core|1D76DB|Framework-managed routine"
 	"routine-tracking|${LABEL_COLOR_STANDING}|Execution tracking issue — not a task (pulse skips these)"
+	"routine-anchor-retiring|${LABEL_COLOR_STANDING}|Routine anchor retirement in progress — not a task"
 )
 
 # Every catalogued definition, used for drift repair of existing labels.

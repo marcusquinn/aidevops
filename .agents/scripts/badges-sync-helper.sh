@@ -727,12 +727,22 @@ _list_actionable_repos() {
 	return 0
 }
 
-# Best effort, including current repos whose legacy PR has just resolved.
+# Report retirement failures, including current repos whose legacy PR resolved.
 _retire_repo_anchor() {
-	local _slug="$1" _routine_helper=""
-	_routine_helper=$(_resolve_helper routine-log-helper.sh) || return 0
-	bash "$_routine_helper" retire-anchor badges-sync --repo "$_slug" >&2 ||
-		_warn "$_slug: anchor retirement deferred"
+	local _slug="$1" _routine_helper="" _output="" _rc=0
+	if ! _routine_helper=$(_resolve_helper routine-log-helper.sh); then
+		printf '%s\n' 'anchor retirement failed: resolve routine-log-helper.sh'
+		return 1
+	fi
+	_output=$(bash "$_routine_helper" retire-anchor badges-sync --repo "$_slug" 2>&1) || _rc=$?
+	if [[ "$_rc" -ne 0 ]]; then
+		local _reason=""
+		_reason=$(_sanitize_failure_reason "$_output")
+		printf 'anchor retirement failed: routine-log-helper.sh retire-anchor badges-sync (exit %s)%s\n' \
+			"$_rc" "${_reason:+: $_reason}"
+		return 1
+	fi
+	[[ -z "$_output" ]] || printf '%s\n' "$_output" >&2
 	return 0
 }
 
@@ -823,9 +833,17 @@ _process_rows() {
 			_COUNT_SKIPPED=$((_COUNT_SKIPPED + 1))
 			continue
 		fi
-		# Best effort and apply-only, even when generated outputs are current.
+		# Apply-only, even when generated outputs are current. Failed retirement
+		# must reach routine output and failure counters, not silently stay current.
 		if [[ "$_apply" -eq 1 ]]; then
-			_retire_repo_anchor "$_slug"
+			local _retire_result=""
+			if ! _retire_result=$(_retire_repo_anchor "$_slug"); then
+				_warn "$_slug: $_retire_result"
+				_print_result_row "$_json_out" "${_slug}	${_STATUS_FAILED}	${_retire_result}"
+				_any_failed=1
+				_COUNT_FAILED=$((_COUNT_FAILED + 1))
+				continue
+			fi
 		fi
 		if [[ "$_status" == "CURRENT" && "$_workflow_only_arg" -eq 0 ]]; then
 			_print_result_row "$_json_out" "${_slug}	${_STATUS_SKIPPED}	badge block and metrics current"

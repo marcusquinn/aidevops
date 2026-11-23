@@ -352,16 +352,22 @@ git -C "$ROOT/remote.git" -c gpg.ssh.allowedSignersFile="$ROOT/allowed-signers" 
 printf 'PASS retained worktree published with a commit signed by the dedicated headless key\n'
 unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
 
-# GH#39785: marker replaces anchor identity; retirement is best effort.
+# GH#39935: retirement failure is visible and fails the routine before publication.
 grep -qx '<!-- aidevops:routine-pr:badges-sync -->' "$PR_BODY"
 printf '[]\n' >"$PR_STATE"
-TEST_ORIGIN=worker FAIL_ANCHOR=1 bash "$SCRIPTS/badges-sync-helper.sh" --apply --workflow-only --json >"$ROOT/result"
+creates_before="$(grep -c '^create$' "$CALLS")"
+if TEST_ORIGIN=worker FAIL_ANCHOR=1 bash "$SCRIPTS/badges-sync-helper.sh" --apply --workflow-only --json >"$ROOT/result"; then exit 1; fi
+jq -e '.slug == "marcusquinn/test" and .outcome == "FAILED" and (.detail | contains("retire-anchor badges-sync (exit 1)"))' "$ROOT/result" >/dev/null
+[[ "$(grep -c '^create$' "$CALLS")" == "$creates_before" ]]
+printf 'PASS failed retirement names repository and command and prevents false routine success\n'
+# GH#39785: a healthy worker PR still uses the marker instead of anchor identity.
+TEST_ORIGIN=worker bash "$SCRIPTS/badges-sync-helper.sh" --apply --workflow-only --json >"$ROOT/result"
 [[ "$(jq -r .outcome "$ROOT/result")" == APPLIED ]]
 grep -qx '<!-- aidevops:routine-pr:badges-sync -->' "$PR_BODY"
 if grep -q '^Ref #' "$PR_BODY"; then exit 1; fi
 if grep -q 'anchor ensure-' "$CALLS"; then exit 1; fi
 [[ "$(snapshot)" == "$before" ]]
-printf 'PASS worker PR carries marker without Ref; failed retirement never creates an anchor\n'
+printf 'PASS worker PR carries marker without Ref and never creates an anchor\n'
 
 # No-drift runs must still retry retirement after the old PR resolves.
 cat >"$SCRIPTS/badges-check-helper.sh" <<'STUB'
@@ -375,8 +381,11 @@ bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result"
 [[ "$(jq -r .outcome "$ROOT/result")" == SKIPPED ]]
 [[ "$(grep -c '^anchor retire-anchor badges-sync$' "$CALLS")" == "$((retire_before + 1))" ]]
 [[ "$(grep -c '^create$' "$CALLS")" == "$creates_before" ]]
+if FAIL_ANCHOR=1 bash "$SCRIPTS/badges-sync-helper.sh" --apply --json >"$ROOT/result"; then exit 1; fi
+jq -e '.outcome == "FAILED" and (.detail | contains("anchor retirement failed"))' "$ROOT/result" >/dev/null
+[[ "$(grep -c '^create$' "$CALLS")" == "$creates_before" ]]
 bash "$SCRIPTS/badges-sync-helper.sh" --json >"$ROOT/result"
-[[ "$(grep -c '^anchor retire-anchor badges-sync$' "$CALLS")" == "$((retire_before + 1))" ]]
+[[ "$(grep -c '^anchor retire-anchor badges-sync$' "$CALLS")" == "$((retire_before + 2))" ]]
 [[ "$(snapshot)" == "$before" ]]
 printf 'PASS current repos retry retirement without publishing; dry runs never retire\n'
 
