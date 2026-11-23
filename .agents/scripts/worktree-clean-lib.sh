@@ -598,10 +598,18 @@ _clean_remote_git_bounded() {
 }
 
 # Refresh remote branch existence for remote-deleted detection.
-# Prints "true" when any remote could not be pruned (remote state unknown),
-# otherwise "false". Prints warnings for failed remotes. Returns 0 always.
+# Prints a report: line 1 is "true" when remote state is unknown for the whole
+# repository (native Git unavailable, or no remote could be pruned), otherwise
+# "false"; each further line names one remote whose prune failed. Prints
+# warnings for failed remotes. Returns 0 always.
 # Args: $1=default branch (optional; its remote-tracking ref is refreshed)
-# Usage: remote_state_unknown=$(_clean_fetch_remotes "$default_branch")
+# Usage: report=$(_clean_fetch_remotes "$default_branch"); _clean_apply_fetch_report "$report"
+#
+# GH#39990: one permanently failing mirror used to make the whole repository
+# "unknown", disabling remote-deleted cleanup there indefinitely. A failed
+# remote keeps its stale tracking refs (conservative: branches look present),
+# so only branches whose upstream is that remote lose the classification; see
+# _clean_branch_upstream_remote_refreshed.
 #
 # GH#39980: `git remote prune` reads only the remote's ref advertisement. The
 # former `git fetch --prune <remote>` downloaded the objects of every new head
@@ -616,6 +624,8 @@ _clean_fetch_remotes() {
 	local remote
 	local real_git=""
 	local refresh_rc=0
+	local failed_remotes=""
+	local refreshed_count=0
 	# GH#37342: the pulse PATH leads with the canonical Git shim, which refuses
 	# `fetch` in a canonical checkout, so every pass reported remote state as
 	# unknown. Refreshing remote-tracking refs is framework maintenance: use the
@@ -632,10 +642,11 @@ _clean_fetch_remotes() {
 		refresh_rc=0
 		_clean_remote_git_bounded "$real_git" remote prune "$remote" || refresh_rc=$?
 		if [[ "$refresh_rc" -ne 0 ]]; then
-			echo -e "${YELLOW}Warning: failed to refresh $remote (rc=${refresh_rc}); skipping remote-deleted cleanup checks${NC}" >&2
-			state_unknown=true
+			echo -e "${YELLOW}Warning: failed to refresh $remote (rc=${refresh_rc})${NC}" >&2
+			failed_remotes="${failed_remotes}${failed_remotes:+$'\n'}${remote}"
 			continue
 		fi
+		refreshed_count=$((refreshed_count + 1))
 		[[ -n "$default_branch" ]] || continue
 		git show-ref --verify --quiet "refs/remotes/${remote}/${default_branch}" 2>/dev/null || continue
 		refresh_rc=0
@@ -646,7 +657,55 @@ _clean_fetch_remotes() {
 			echo -e "${YELLOW}Warning: failed to refresh ${remote}/${default_branch} (rc=${refresh_rc}); containment proof uses the existing ref${NC}" >&2
 		fi
 	done
-	echo "$state_unknown"
+	if [[ -n "$failed_remotes" ]]; then
+		if [[ "$refreshed_count" -eq 0 ]]; then
+			state_unknown=true
+			echo -e "${YELLOW}Warning: no remote could be refreshed; skipping remote-deleted cleanup checks${NC}" >&2
+		else
+			echo -e "${YELLOW}Warning: remote-deleted cleanup skips branches whose upstream is: ${failed_remotes//$'\n'/, } (other remotes refreshed)${NC}" >&2
+		fi
+	fi
+	printf '%s\n' "$state_unknown"
+	[[ "$state_unknown" == "$_WT_CLEAN_BOOL_TRUE" || -z "$failed_remotes" ]] || printf '%s\n' "$failed_remotes"
+	return 0
+}
+
+# Apply a _clean_fetch_remotes report in the caller's shell. Sets
+# _WT_CLEAN_REMOTE_STATE_UNKNOWN ("true"/"false"; anything unparsable fails
+# closed to "true") and _WT_CLEAN_FAILED_REMOTES (newline-separated names).
+# Args: $1=report text
+_clean_apply_fetch_report() {
+	local report="${1:-}"
+	local state="${report%%$'\n'*}"
+	_WT_CLEAN_FAILED_REMOTES=""
+	case "$state" in
+	true | false) ;;
+	*) state=true ;;
+	esac
+	if [[ "$state" == "$_WT_CLEAN_BOOL_FALSE" && "$report" == *$'\n'* ]]; then
+		_WT_CLEAN_FAILED_REMOTES="${report#*$'\n'}"
+	fi
+	_WT_CLEAN_REMOTE_STATE_UNKNOWN="$state"
+	return 0
+}
+
+# GH#39990: remote-deleted proof requires that the branch's upstream remote
+# refreshed this pass. A branch without an upstream relies on tracking refs,
+# and a failed remote's refs are not pruned, so absence there still came from
+# a refreshed remote. A config read error fails closed.
+# Args: $1=branch name
+# Returns: 0 when remote-deleted evidence is trustworthy, 1 otherwise
+_clean_branch_upstream_remote_refreshed() {
+	local wt_branch="$1"
+	local upstream_remote=""
+	local config_rc=0
+	[[ -n "${_WT_CLEAN_FAILED_REMOTES:-}" ]] || return 0
+	upstream_remote=$(git config --get "branch.${wt_branch}.remote" 2>/dev/null) || config_rc=$?
+	if [[ "$config_rc" -eq 1 ]]; then
+		return 0
+	fi
+	[[ "$config_rc" -eq 0 && -n "$upstream_remote" ]] || return 1
+	_clean_branch_list_contains_exact "$upstream_remote" "$_WT_CLEAN_FAILED_REMOTES" && return 1
 	return 0
 }
 
@@ -1048,6 +1107,8 @@ _WT_CLEAN_PUSHED_BRANCHES="${_WT_CLEAN_PUSHED_BRANCHES:-}"
 _WT_CLEAN_REMOTE_BRANCHES="${_WT_CLEAN_REMOTE_BRANCHES:-}"
 _WT_CLEAN_REMOTE_BRANCH_CACHE_READY="${_WT_CLEAN_REMOTE_BRANCH_CACHE_READY:-false}"
 _WT_CLEAN_REMOTE_DEFAULT_REF="${_WT_CLEAN_REMOTE_DEFAULT_REF:-}"
+_WT_CLEAN_REMOTE_STATE_UNKNOWN="${_WT_CLEAN_REMOTE_STATE_UNKNOWN:-true}"
+_WT_CLEAN_FAILED_REMOTES="${_WT_CLEAN_FAILED_REMOTES:-}"
 _WT_CLEAN_EXACT_PR_PREFETCH_COMPLETE="${_WT_CLEAN_EXACT_PR_PREFETCH_COMPLETE:-false}"
 _WT_CLEAN_TYPE_SQUASH_MERGED_PR="squash-merged PR"
 _WT_CLEAN_TYPE_CLOSED_PR="closed PR"
@@ -1391,7 +1452,9 @@ _clean_select_merge_type() {
 		printf '%s\n' "$_WT_CLEAN_TYPE_CLOSED_PR"
 		return 0
 	fi
-	if [[ "$remote_unknown" == "false" ]] && _clean_branch_was_pushed_cached "$wt_branch" && ! _clean_branch_exists_on_remote_cached "$wt_branch"; then
+	if [[ "$remote_unknown" == "false" ]] && _clean_branch_was_pushed_cached "$wt_branch" &&
+		! _clean_branch_exists_on_remote_cached "$wt_branch" &&
+		_clean_branch_upstream_remote_refreshed "$wt_branch"; then
 		printf '%s\n' "remote deleted"
 		return 0
 	fi
@@ -2193,7 +2256,8 @@ cmd_clean() {
 	# Prune remote-tracking refs to detect deleted branches (GH#39980: ref-only)
 	# Prune all remotes, not just origin (GH#3797)
 	local remote_state_unknown
-	remote_state_unknown=$(_clean_fetch_remotes "$default_branch")
+	_clean_apply_fetch_report "$(_clean_fetch_remotes "$default_branch")"
+	remote_state_unknown="$_WT_CLEAN_REMOTE_STATE_UNKNOWN"
 	if ! _clean_refresh_remote_branch_cache; then
 		remote_state_unknown=true
 	fi
