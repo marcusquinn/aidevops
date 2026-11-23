@@ -58,6 +58,23 @@ jobs:
           git config --global user.name "aidevops-ci"
           git config --global user.email "ci@aidevops.invalid"
 
+      # GH#40011: checkout is not a framework deployment. Helpers resolve shipped
+      # defaults and companion scripts at ~/.aidevops/agents; without that tree the
+      # health run exercises a missing installation instead of the checked-out code.
+      # Stage only repository files: setup.sh would install services and tools.
+      - name: Stage checked-out framework
+        run: |
+          agents_dir="${HOME}/.aidevops/agents"
+          if [[ -e "$agents_dir" || -L "$agents_dir" ]]; then
+            echo '::error::Refusing to replace an existing framework deployment'
+            exit 1
+          fi
+          mkdir -p "${HOME}/.aidevops"
+          ln -s "${GITHUB_WORKSPACE}/.agents" "$agents_dir"
+          test -r "${agents_dir}/configs/aidevops.defaults.jsonc"
+          test -r "${agents_dir}/configs/aidevops-config.schema.json"
+          test -x "${agents_dir}/scripts/config-helper.sh"
+
       - name: Run every root suite
         id: suites
         env:
