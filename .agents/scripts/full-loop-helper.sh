@@ -293,6 +293,11 @@ _commit_and_pr_prepare_metadata() {
 	if [[ -n "$macos_evidence" ]]; then
 		summary_testing="${summary_testing}${summary_testing:+; }${macos_evidence}"
 	fi
+	# GH#40064: a local validator timeout deferred to a required CI check is
+	# disclosed with the evidence it replaced; that check still gates merge.
+	if [[ -n "${FULL_LOOP_VALIDATOR_DEFERRALS:-}" ]]; then
+		summary_testing="${summary_testing}${summary_testing:+; }local validators deferred to required CI after a host-load timeout: ${FULL_LOOP_VALIDATOR_DEFERRALS}"
+	fi
 	files_changed=$(git diff --name-only "$comparison_base" HEAD) || return 1
 	files_changed=$(printf '%s' "$files_changed" | tr '\n' ',' | sed 's/,/, /g')
 	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "" "$closing_keyword" "$runtime_risk" "$testing_level" "$comparison_base") || return 1
