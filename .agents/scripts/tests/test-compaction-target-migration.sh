@@ -78,7 +78,8 @@ reset_marker_exists() {
 	return 0
 }
 
-assert_eq "2" "$(grep -c 'migrate_compaction_target_240k' "$SETUP_SCRIPT")" "setup runs the migration in interactive and non-interactive paths"
+SETUP_EXECUTION_MODULE="${SCRIPT_DIR}/../setup/modules/setup-execution.sh"
+assert_eq "2" "$(grep -c 'migrate_compaction_target_240k' "$SETUP_EXECUTION_MODULE")" "setup runs the migration in interactive and non-interactive paths"
 
 # Raised opt-outs are reset once, unrelated settings and permissions preserved.
 HOME="$TEST_ROOT/raised"

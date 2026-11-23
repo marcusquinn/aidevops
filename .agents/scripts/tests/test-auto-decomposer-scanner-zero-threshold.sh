@@ -116,8 +116,8 @@ echo ""
 # --- 1. SCANNER_NUDGE_AGE_HOURS default is 0 ---
 
 assert_grep \
-	"1a: SCANNER_NUDGE_AGE_HOURS default is 0 (aged parent: immediate dispatch)" \
-	'SCANNER_NUDGE_AGE_HOURS.*:-0[^-9]' \
+	"1a: SCANNER_NUDGE_AGE_HOURS default derives from PARENT_TASK_NUDGE_SECONDS (4h, t2949)" \
+	'SCANNER_NUDGE_AGE_HOURS=.*:-\$\{_PTNUDGE_HOURS\}' \
 	"$SCANNER"
 
 assert_not_grep_fixed \
@@ -128,8 +128,8 @@ assert_not_grep_fixed \
 # --- 2. SCANNER_FRESH_PARENT_HOURS default is 0 ---
 
 assert_grep \
-	"2a: SCANNER_FRESH_PARENT_HOURS default is 0 (fresh parent: immediate dispatch)" \
-	'SCANNER_FRESH_PARENT_HOURS.*:-0[^-9]' \
+	"2a: SCANNER_FRESH_PARENT_HOURS default derives from PARENT_TASK_NUDGE_SECONDS (4h, t2949)" \
+	'SCANNER_FRESH_PARENT_HOURS=.*:-\$\{_PTNUDGE_HOURS\}' \
 	"$SCANNER"
 
 assert_not_grep_fixed \
@@ -140,8 +140,8 @@ assert_not_grep_fixed \
 # --- 3. AUTO_DECOMPOSER_INTERVAL default is 86400 (1 day) ---
 
 assert_grep \
-	"3a: AUTO_DECOMPOSER_INTERVAL default is 86400 (1 day)" \
-	'AUTO_DECOMPOSER_INTERVAL.*:-86400' \
+	"3a: AUTO_DECOMPOSER_INTERVAL default is 14400 (4h, t2949)" \
+	'AUTO_DECOMPOSER_INTERVAL.*:-14400' \
 	"$SCANNER"
 
 assert_not_grep_fixed \
@@ -213,27 +213,27 @@ help_rc=$?
 assert_rc "7a: help subcommand exits 0" "0" "$help_rc"
 
 TESTS_RUN=$((TESTS_RUN + 1))
-if [[ "$help_output" == *"SCANNER_NUDGE_AGE_HOURS"* && "$help_output" == *"default 0"* ]]; then
-	echo "${TEST_GREEN}PASS${TEST_NC}: 7b: help documents SCANNER_NUDGE_AGE_HOURS with default 0"
+if [[ "$help_output" == *"SCANNER_NUDGE_AGE_HOURS"* && "$help_output" == *"(default 4)"* ]]; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 7b: help documents SCANNER_NUDGE_AGE_HOURS with default 4"
 else
 	TESTS_FAILED=$((TESTS_FAILED + 1))
-	echo "${TEST_RED}FAIL${TEST_NC}: 7b: help missing SCANNER_NUDGE_AGE_HOURS default 0"
+	echo "${TEST_RED}FAIL${TEST_NC}: 7b: help missing SCANNER_NUDGE_AGE_HOURS default 4"
 fi
 
 TESTS_RUN=$((TESTS_RUN + 1))
-if [[ "$help_output" == *"SCANNER_FRESH_PARENT_HOURS"* && "$help_output" == *"default 0"* ]]; then
-	echo "${TEST_GREEN}PASS${TEST_NC}: 7c: help documents SCANNER_FRESH_PARENT_HOURS with default 0"
+if [[ "$help_output" == *"SCANNER_FRESH_PARENT_HOURS"* && "$help_output" == *"(default 4)"* ]]; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 7c: help documents SCANNER_FRESH_PARENT_HOURS with default 4"
 else
 	TESTS_FAILED=$((TESTS_FAILED + 1))
-	echo "${TEST_RED}FAIL${TEST_NC}: 7c: help missing SCANNER_FRESH_PARENT_HOURS default 0"
+	echo "${TEST_RED}FAIL${TEST_NC}: 7c: help missing SCANNER_FRESH_PARENT_HOURS default 4"
 fi
 
 TESTS_RUN=$((TESTS_RUN + 1))
-if [[ "$help_output" == *"86400"* ]]; then
-	echo "${TEST_GREEN}PASS${TEST_NC}: 7d: help documents AUTO_DECOMPOSER_INTERVAL 86400 (1 day)"
+if [[ "$help_output" == *"(default 14400)"* ]]; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 7d: help documents AUTO_DECOMPOSER_INTERVAL 14400 (4h)"
 else
 	TESTS_FAILED=$((TESTS_FAILED + 1))
-	echo "${TEST_RED}FAIL${TEST_NC}: 7d: help missing AUTO_DECOMPOSER_INTERVAL 86400"
+	echo "${TEST_RED}FAIL${TEST_NC}: 7d: help missing AUTO_DECOMPOSER_INTERVAL 14400"
 fi
 
 # --- 8. AGENTS.md updated to reflect new scanner behavior ---
@@ -244,13 +244,15 @@ if [[ -f "$AGENTS_MD" ]]; then
 		'24h advisory nudge, auto-decomposer' \
 		"$AGENTS_MD"
 
-	assert_grep_fixed \
-		"8b: AGENTS.md references 0h nudge-age threshold" \
+	# Threshold values live in the scanner and lifecycle reference (progressive
+	# disclosure); AGENTS.md must not carry the retired 0h / 1-day values.
+	assert_not_grep_fixed \
+		"8b: AGENTS.md carries no retired 0h nudge-age threshold" \
 		'0h nudge-age threshold' \
 		"$AGENTS_MD"
 
-	assert_grep_fixed \
-		"8c: AGENTS.md references 1-day re-file gate" \
+	assert_not_grep_fixed \
+		"8c: AGENTS.md carries no retired 1-day re-file gate" \
 		'1-day re-file gate' \
 		"$AGENTS_MD"
 else
@@ -271,8 +273,8 @@ if [[ -f "$LIFECYCLE_MD" ]]; then
 		"$LIFECYCLE_MD"
 
 	assert_grep_fixed \
-		"9c: lifecycle doc shows 'default 0h' for fresh parents" \
-		'default 0h' \
+		"9c: lifecycle doc shows 'default 4h' for fresh parents (t2949)" \
+		'default 4h, driven by `PARENT_TASK_NUDGE_SECONDS`' \
 		"$LIFECYCLE_MD"
 
 	assert_not_grep_fixed \
@@ -281,8 +283,8 @@ if [[ -f "$LIFECYCLE_MD" ]]; then
 		"$LIFECYCLE_MD"
 
 	assert_grep_fixed \
-		"9e: lifecycle doc shows '1 day / 86400s' for AUTO_DECOMPOSER_INTERVAL" \
-		'1 day / 86400s' \
+		"9e: lifecycle doc shows '4h / 14400s' for AUTO_DECOMPOSER_INTERVAL (t2949)" \
+		'default 4h / 14400s' \
 		"$LIFECYCLE_MD"
 else
 	echo "${TEST_BLUE}SKIP${TEST_NC}: 9: parent-task-lifecycle.md not found at ${LIFECYCLE_MD}"
