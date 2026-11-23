@@ -106,7 +106,8 @@ reset_case() {
 	# GH#39491: fixture merges predate the synthetic clock by years.
 	PULSE_PARTIAL_MERGED_OVERLAP_SECONDS=999999999
 	rm -f "${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo.merged-page" \
-		"${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo.merged-walk"
+		"${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo.merged-walk" \
+		"${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo.recheck"
 	unset PULSE_CLOSED_CHECKPOINT_PAGE_SIZE PULSE_CLOSED_CHECKPOINT_MAX_PAGES
 	rm -f "${PULSE_PARTIAL_RECONCILE_STATE_DIR}/"*.closed-scan 2>/dev/null
 	TEST_CLOSED_PR_JSON=$(closed_pr_json false 2026-10-11T00:00:00Z feature/auto-20261010-095500-gh501)
@@ -1155,15 +1156,17 @@ test_periodic_pass() {
 	_pm_reconcile_partial_continuations "$SLUG" 2000000060 || rc=$?
 	[[ "$rc" -eq 1 ]] && pass "unreadable timeline fails closed" || fail "unreadable timeline fails closed"
 	assert_no_write "unreadable timeline: no write"
+	# GH#39948: the in-review phase is one snapshot; available pages stay paged.
 	reset_case
 	PULSE_PARTIAL_RECONCILE_PAGE_SIZE=1
 	PULSE_PARTIAL_RECONCILE_MAX_PAGES=1
-	TEST_REVIEW_ISSUES='[{"number":501}]'
+	TEST_REVIEW_ISSUES='[]'
+	TEST_AVAILABLE_ISSUES='[{"number":503,"labels":[{"name":"auto-dispatch"}]}]'
 	rc=0
 	_pm_reconcile_partial_continuations "$SLUG" 2000000060 || rc=$?
 	[[ "$rc" -eq 3 ]] && pass "page budget: full page remains due" || fail "page budget: full page remains due"
-	_pm_reconcile_partial_continuations "$SLUG" 2000000060
-	if grep -Fq '&page=2' "$API_LOG"; then
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060 || true
+	if grep -Fq 'labels=status:available,origin:worker&sort=created&direction=asc&per_page=1&page=2' "$API_LOG"; then
 		pass "page budget: bounded pass resumes next page"
 	else
 		fail "page budget: bounded pass resumes next page"
@@ -1172,33 +1175,36 @@ test_periodic_pass() {
 	return 0
 }
 
-# GH#38677: one call traverses pages while the deadline allows.
+# GH#38677: one call traverses while the deadline allows. GH#39948: the
+# in-review set is one paginated snapshot, so restores cannot shift a page.
 test_multi_page_traversal() {
-	local rc=0
+	local rc=0 cursor="${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo"
 	reset_case
 	PULSE_PARTIAL_RECONCILE_PAGE_SIZE=1
-	TEST_REVIEW_ISSUES='[{"number":501}]'
-	TEST_REVIEW_PAGE2='[{"number":502}]'
+	TEST_REVIEW_ISSUES='[[{"number":501}],[{"number":502}]]'
 	rc=0
 	_pm_reconcile_partial_continuations "$SLUG" 2000000060 || rc=$?
 	if [[ "$rc" -eq 0 ]] && grep -Fq 'issues/501/timeline' "$API_LOG" && grep -Fq 'issues/502/timeline' "$API_LOG"; then
-		pass "deadline allows: one call processes two full pages and completes"
+		pass "deadline allows: one call processes both snapshot pages and completes"
 	else
-		fail "deadline allows: one call processes two full pages and completes (rc=${rc})"
+		fail "deadline allows: one call processes both snapshot pages and completes (rc=${rc})"
 	fi
-	# GH#38677: a deadline after page 1 stops there and the cursor names page 2.
+	if [[ "$(grep -c 'labels=status:in-review' "$API_LOG")" -eq 1 ]] && grep -q 'labels=status:in-review.*--paginate' "$API_LOG"; then
+		pass "in-review snapshot: one paginated read, never a shifting page"
+	else
+		fail "in-review snapshot: one paginated read, never a shifting page"
+	fi
+	# A deadline after the first issue persists every unstarted snapshot issue.
 	reset_case
-	PULSE_PARTIAL_RECONCILE_PAGE_SIZE=1
-	TEST_REVIEW_ISSUES='[{"number":501}]'
-	TEST_REVIEW_PAGE2='[{"number":502}]'
+	TEST_REVIEW_ISSUES='[[{"number":501}],[{"number":502}]]'
 	TEST_DEADLINE_AFTER_FIRST=1
 	rc=0
 	_pm_reconcile_partial_continuations "$SLUG" 2000000060 || rc=$?
-	if [[ "$rc" -eq 3 && "$(head -n 1 "${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo")" == "2" ]] \
+	if [[ "$rc" -eq 3 && "$(head -n 1 "$cursor")" == "a1" ]] && grep -qx '502' "$cursor" \
 		&& ! grep -Fq 'issues/502/timeline' "$API_LOG"; then
-		pass "deadline after page 1: returns 3 and cursor names page 2"
+		pass "deadline after the first issue: returns 3 and the cursor keeps the snapshot suffix"
 	else
-		fail "deadline after page 1: returns 3 and cursor names page 2 (rc=${rc})"
+		fail "deadline after the first issue: returns 3 and the cursor keeps the snapshot suffix (rc=${rc})"
 	fi
 	TEST_DEADLINE_AFTER_FIRST=0
 	reset_case
@@ -1246,6 +1252,62 @@ test_multi_page_traversal() {
 	_pm_reconcile_partial_continuations "$SLUG" 2000000060
 	assert_status_call "501 ${SLUG} available --remove-assignee runner1" \
 		"periodic parent tracker: releases runner without auto-dispatch"
+	return 0
+}
+
+# GH#39948: the snapshot drops rows the guard rejects from the listing alone
+# (a hold, another status, an open-PR reference) with no timeline read. An
+# unlabeled row, or every row when the open-PR listing fails, goes to the guard.
+test_review_snapshot_prefilter() {
+	reset_case
+	TEST_REVIEW_ISSUES='[{"number":501},{"number":502,"labels":[{"name":"status:in-review"},{"name":"hold-for-review"}]},{"number":503,"labels":["status:in-review","status:blocked"]},{"number":504}]'
+	TEST_OPEN_PRS='[{"number":910,"body":"For #504"}]'
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060 || true
+	if grep -Fq 'issues/501/timeline' "$API_LOG" && ! grep -Eq 'issues/50[234]/timeline' "$API_LOG"; then
+		pass "snapshot prefilter: hold, other-status and open-PR rows make no timeline read"
+	else
+		fail "snapshot prefilter: hold, other-status and open-PR rows make no timeline read"
+	fi
+	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" \
+		"snapshot prefilter: an unlabeled row still restores"
+	reset_case
+	TEST_REVIEW_ISSUES='[{"number":501}]'
+	TEST_OPEN_PRS_RC=1
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060 || true
+	if grep -Fq 'issues/501/timeline' "$API_LOG"; then
+		pass "snapshot prefilter: unreadable open-PR listing keeps the candidate"
+	else
+		fail "snapshot prefilter: unreadable open-PR listing keeps the candidate"
+	fi
+	assert_no_write "snapshot prefilter: the guard still fails closed on the unreadable listing"
+	return 0
+}
+
+# GH#39948: a lease still live at merge time, or an unconfirmed merge, arms a
+# local recheck (an earlier one wins); a snapshot consumes it once due.
+test_recheck_hint() {
+	local hint="${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo.recheck"
+	reset_case
+	TEST_COMMENTS_JSON=$(pages "$(comment 1 MEMBER runner1 'DISPATCH_LEASE phase=ready expires_at=2000001000')")
+	_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker"
+	[[ "$(cat "$hint" 2>/dev/null)" == 2000001901 ]] && pass "live lease arms a recheck after its grace" ||
+		fail "live lease arms a recheck after its grace" "hint=$(cat "$hint" 2>/dev/null)"
+	TEST_PR_JSON=$(pr_json false runner1)
+	_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker"
+	TEST_PR_JSON=$(pr_json true runner1)
+	_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker"
+	[[ "$(cat "$hint" 2>/dev/null)" == 2000000600 ]] && pass "unconfirmed merge arms an earlier recheck, which wins" ||
+		fail "unconfirmed merge arms an earlier recheck, which wins" "hint=$(cat "$hint" 2>/dev/null)"
+	assert_no_write "armed rechecks: no write"
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060 || true
+	[[ "$(cat "$hint" 2>/dev/null)" == 2000000600 ]] && pass "snapshot keeps a recheck that is not yet due" ||
+		fail "snapshot keeps a recheck that is not yet due" "hint=$(cat "$hint" 2>/dev/null)"
+	reset_case
+	printf '1999999999\n' >"$hint"
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060 || true
+	# The due hint is consumed; live #502 (lease to 2000001000) re-arms it.
+	[[ "$(cat "$hint" 2>/dev/null)" == 2000001901 ]] && pass "snapshot consumes a due recheck; a live lease re-arms it" ||
+		fail "snapshot consumes a due recheck; a live lease re-arms it" "hint=$(cat "$hint" 2>/dev/null)"
 	return 0
 }
 
@@ -1763,6 +1825,8 @@ main() {
 	test_expired_lease_recovery
 	test_periodic_pass
 	test_multi_page_traversal
+	test_review_snapshot_prefilter
+	test_recheck_hint
 	test_available_dispatch_recovery
 	test_closed_checkpoint_dispatch_recovery
 	test_closed_checkpoint_scan_pagination

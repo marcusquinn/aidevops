@@ -944,21 +944,24 @@ _pulse_check_runaway_log() {
 # GH#38680: PULSE_STALE_BLOCKED_READY_RESERVE_S (the ready-lane extension the
 # stage was granted, or after the lane its unused part) is held back, so the
 # extension never lengthens the claim fallback or the rotating sweep.
+# GH#39948: the same holds for PULSE_PARTIAL_CONTINUATION_RESERVE_S.
 _pulse_stale_blocked_sweep_deadline() {
 	local deadline="${PULSE_STAGE_DEADLINE_EPOCH:-}"
 	local timeout="${PULSE_STALE_BLOCKED_RECONCILE_TIMEOUT_SECONDS:-60}"
 	local margin="${PULSE_STALE_BLOCKED_RECONCILE_MARGIN_SECONDS:-15}"
 	local reserve="${PULSE_STALE_BLOCKED_READY_RESERVE_S:-0}"
+	local partial_reserve="${PULSE_PARTIAL_CONTINUATION_RESERVE_S:-0}"
 	local now_epoch=""
 	[[ "$timeout" =~ ^[1-9][0-9]*$ ]] || timeout=60
 	[[ "$margin" =~ ^[0-9]+$ ]] || margin=15
 	[[ "$reserve" =~ ^[0-9]{1,4}$ ]] || reserve=0
+	[[ "$partial_reserve" =~ ^[0-9]{1,4}$ ]] || partial_reserve=0
 	if ! [[ "$deadline" =~ ^[1-9][0-9]*$ ]]; then
 		now_epoch=$(date +%s 2>/dev/null) || return 1
 		deadline=$((now_epoch + timeout))
-		reserve=0
+		reserve=0 partial_reserve=0
 	fi
-	printf '%s\n' "$((deadline - margin - reserve))"
+	printf '%s\n' "$((deadline - margin - reserve - partial_reserve))"
 	return 0
 }
 
@@ -1001,6 +1004,23 @@ _pulse_stale_blocked_ready_extension() {
 	return 0
 }
 
+# Deadline of a per-cycle lane granted $2 reserve seconds from epoch $1, never
+# past the stage deadline less the sweep margin. Prints 0 when there is no
+# reserve or start, so the lane does no work.
+_pulse_stale_blocked_lane_deadline() {
+	local lane_start="$1" reserve="$2" lane_deadline=0
+	local stage="${PULSE_STAGE_DEADLINE_EPOCH:-}" margin="${PULSE_STALE_BLOCKED_RECONCILE_MARGIN_SECONDS:-15}"
+	[[ "$margin" =~ ^[0-9]+$ ]] || margin=15
+	if [[ "$reserve" =~ ^[1-9][0-9]{0,3}$ && "$lane_start" =~ ^[1-9][0-9]*$ ]]; then
+		lane_deadline=$((lane_start + reserve))
+		if [[ "$stage" =~ ^[1-9][0-9]*$ ]] && [[ $((stage - margin)) -lt "$lane_deadline" ]]; then
+			lane_deadline=$((stage - margin))
+		fi
+	fi
+	printf '%s\n' "$lane_deadline"
+	return 0
+}
+
 # GH#38680: the rotating sweep reached a large repo about once per rotation and
 # spent that share mostly on its listing, so its ready dependants (every native
 # blocker closed) waited hours (one large repo: ready=13 ready_visited=1). Before the
@@ -1009,42 +1029,143 @@ _pulse_stale_blocked_ready_extension() {
 # fair share each, unused time rolling forward. Every release still goes
 # through _der_try_unblock. Args: repos_json. Prints the unused reserve seconds.
 _pulse_stale_blocked_run_ready_lane() {
-	local repos_json="$1" reserve="${PULSE_STALE_BLOCKED_READY_RESERVE_S:-0}" lane_start="" lane_deadline=""
-	local repo="" now_epoch="" repo_deadline="" left=0 rc=0 done_count=0
-	local stage="${PULSE_STAGE_DEADLINE_EPOCH:-}" margin="${PULSE_STALE_BLOCKED_RECONCILE_MARGIN_SECONDS:-15}"
-	local ready_repos=()
+	local repos_json="$1"
+	_pulse_stale_blocked_lane_run "$repos_json" "${PULSE_STALE_BLOCKED_READY_RESERVE_S:-0}" \
+		_pulse_stale_blocked_ready_repos _pulse_stale_blocked_ready_lane_repo "stale-blocked ready lane" GH#38680
+	return 0
+}
+
+# One ready-only pass. Args: repo, deadline epoch. Returns the reconciler rc.
+_pulse_stale_blocked_ready_lane_repo() {
+	local repo="$1" deadline="$2"
+	DER_STALE_BLOCKED_READY_ONLY=1 DER_STALE_BLOCKED_DEADLINE_EPOCH="$deadline" \
+		DER_STALE_BLOCKED_STOP_EPOCH="$deadline" reconcile_stale_blocked_issues "$repo" >>"$LOGFILE" 2>&1 || return $?
+	return 0
+}
+
+# Per-cycle lane runner shared by the ready (GH#38680) and partial-continuation
+# (GH#39948) lanes: spend reserve $2 seconds on the repos "$3 repos_json"
+# prints, a fair share each, unused time rolling forward, running "$4 <repo>
+# <deadline>" per repo. A partial (DER_SWEEP_PARTIAL) rc is not a failure.
+# Args: repos_json, reserve, list function, repo function, log label, issue ref
+# Prints the unused reserve seconds.
+_pulse_stale_blocked_lane_run() {
+	local repos_json="$1" reserve="$2" list_fn="$3" repo_fn="$4" label="$5" ref="$6"
+	local lane_start=0 lane_deadline=0 now_epoch=0 repo="" share_deadline="" left=0 rc=0 done_count=0 complete=0
+	local lane_repos=()
 	[[ "$reserve" =~ ^[0-9]{1,4}$ ]] || reserve=0
-	[[ "$margin" =~ ^[0-9]+$ ]] || margin=15
 	lane_start=$(date +%s 2>/dev/null) || lane_start=0
 	[[ "$lane_start" =~ ^[0-9]+$ ]] || lane_start=0
-	if [[ "$reserve" -gt 0 && "$lane_start" -gt 0 ]]; then
-		lane_deadline=$((lane_start + reserve))
-		# Never past the stage deadline less the sweep margin.
-		if [[ "$stage" =~ ^[1-9][0-9]*$ ]] && [[ $((stage - margin)) -lt "$lane_deadline" ]]; then
-			lane_deadline=$((stage - margin))
-		fi
+	lane_deadline=$(_pulse_stale_blocked_lane_deadline "$lane_start" "$reserve")
+	if [[ "$lane_deadline" -gt 0 ]]; then
 		while IFS= read -r repo; do
-			[[ -n "$repo" ]] && ready_repos+=("$repo")
-		done < <(_pulse_stale_blocked_ready_repos "$repos_json")
-		left="${#ready_repos[@]}"
+			[[ -n "$repo" ]] && lane_repos+=("$repo")
+		done < <("$list_fn" "$repos_json")
+		left="${#lane_repos[@]}"
 	fi
-	for repo in "${ready_repos[@]+"${ready_repos[@]}"}"; do
+	for repo in "${lane_repos[@]+"${lane_repos[@]}"}"; do
 		now_epoch=$(date +%s 2>/dev/null) || break
 		[[ "$now_epoch" -lt "$lane_deadline" ]] || break
-		repo_deadline=$(_pulse_stale_blocked_repo_deadline "$now_epoch" "$lane_deadline" "$left" 1)
+		share_deadline=$(_pulse_stale_blocked_repo_deadline "$now_epoch" "$lane_deadline" "$left" 1)
 		left=$((left - 1))
 		rc=0
-		DER_STALE_BLOCKED_READY_ONLY=1 DER_STALE_BLOCKED_DEADLINE_EPOCH="$repo_deadline" \
-			DER_STALE_BLOCKED_STOP_EPOCH="$repo_deadline" reconcile_stale_blocked_issues "$repo" >>"$LOGFILE" 2>&1 || rc=$?
+		"$repo_fn" "$repo" "$share_deadline" || rc=$?
 		done_count=$((done_count + 1))
-		[[ "$rc" -eq 0 ]] || echo "[pulse-wrapper] stale-blocked ready lane: ${repo} rc=${rc} (GH#38680)" >>"$LOGFILE"
+		if [[ "$rc" -eq 0 ]]; then
+			complete=$((complete + 1))
+		elif [[ "$rc" -ne "${DER_SWEEP_PARTIAL:-3}" ]]; then
+			echo "[pulse-wrapper] ${label}: ${repo} rc=${rc} (${ref})" >>"$LOGFILE"
+		fi
 	done
-	[[ "${#ready_repos[@]}" -eq 0 ]] || echo "[pulse-wrapper] stale-blocked ready lane completed repos=${done_count}/${#ready_repos[@]} reserve=${reserve}s (GH#38680)" >>"$LOGFILE"
+	[[ "${#lane_repos[@]}" -eq 0 ]] || echo "[pulse-wrapper] ${label} completed repos=${done_count}/${#lane_repos[@]} complete=${complete} reserve=${reserve}s (${ref})" >>"$LOGFILE"
 	now_epoch=$(date +%s 2>/dev/null) || now_epoch="$lane_start"
 	reserve=$((reserve - (now_epoch - lane_start)))
 	[[ "$reserve" -ge 0 ]] || reserve=0
 	printf '%s\n' "$reserve"
 	return 0
+}
+
+# GH#39948: a merged partial stranded in review waited for the rotation's
+# partial-continuation pass, which shares the stale-blocked budget with every
+# pulse repo (one large repo: 35 issues stranded, about 15s of revisit every
+# one to three weeks). Local demand makes a repo due for the per-cycle lane: a
+# due recheck hint (armed when the merge-time guard met a live lease or an
+# unconfirmed merge), a mid-traversal cursor (a pending issue, or a token other
+# than "1") or an open merged-PR walk. Local reads only.
+# Args: state path (<dir>/<owner>__<repo>), now_epoch
+# Returns: 0 when the repo has demand, 1 otherwise
+_pulse_partial_continuation_repo_has_demand() {
+	local base="$1" now_epoch="$2" due="" line="" token="" loaded=0
+	if [[ -r "${base}.recheck" ]]; then
+		IFS= read -r due <"${base}.recheck" || true
+		[[ "$due" =~ ^[0-9]{1,12}$ && "$due" -le "$now_epoch" ]] && return 0
+	fi
+	if [[ -r "${base}.merged-walk" ]]; then
+		while IFS= read -r line; do
+			[[ "$line" != start=* ]] || return 0
+		done <"${base}.merged-walk"
+	fi
+	[[ -r "$base" ]] || return 1
+	while IFS= read -r line; do
+		if [[ "$loaded" -eq 0 ]]; then
+			token="$line" loaded=1
+		elif [[ "$line" =~ ^[0-9]+$ ]]; then
+			return 0
+		fi
+	done <"$base"
+	[[ "$loaded" -eq 1 && "$token" != "1" ]] && return 0
+	return 1
+}
+
+# Pulse repos with partial-continuation demand. Args: repos_json. One slug per line.
+_pulse_partial_continuation_demand() {
+	local repos_json="$1" now_epoch=0 repo=""
+	local dir="${PULSE_PARTIAL_RECONCILE_STATE_DIR:-${HOME}/.aidevops/cache/partial-continuation}"
+	declare -F _pm_reconcile_partial_continuations >/dev/null 2>&1 || return 0
+	now_epoch=$(date +%s 2>/dev/null) || return 0
+	while IFS= read -r repo; do
+		[[ -n "$repo" ]] || continue
+		if _pulse_partial_continuation_repo_has_demand "${dir}/${repo//\//__}" "$now_epoch"; then
+			printf '%s\n' "$repo"
+		fi
+	done < <(_pulse_stale_blocked_pulse_repos "$repos_json")
+	return 0
+}
+
+# Seconds the stale_blocked_reconcile stage is extended for the lane:
+# PULSE_PARTIAL_CONTINUATION_LANE_SECONDS (default 60, 0 disables the lane)
+# while any pulse repo has demand, else 0.
+_pulse_partial_continuation_extension() {
+	local lane_seconds="${PULSE_PARTIAL_CONTINUATION_LANE_SECONDS:-60}"
+	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	[[ "$lane_seconds" =~ ^[0-9]{1,4}$ ]] || lane_seconds=60
+	if [[ "$lane_seconds" -gt 0 && -n "$(_pulse_partial_continuation_demand "$repos_json")" ]]; then
+		printf '%s\n' "$lane_seconds"
+	else
+		printf '0\n'
+	fi
+	return 0
+}
+
+# Before the rotation, spend the granted reserve (PULSE_PARTIAL_CONTINUATION_RESERVE_S)
+# on repos with demand, a fair share each, unused time rolling forward. A
+# complete pass stamps partial-continuation-complete, so the rotation skips it.
+# Every write still goes through the merge-time guard.
+# Args: repos_json. Prints the unused reserve seconds.
+_pulse_partial_continuation_lane() {
+	local repos_json="$1"
+	_pulse_stale_blocked_lane_run "$repos_json" "${PULSE_PARTIAL_CONTINUATION_RESERVE_S:-0}" \
+		_pulse_partial_continuation_demand _pulse_partial_continuation_lane_repo "partial-continuation lane" GH#39948
+	return 0
+}
+
+# One partial-continuation pass; a complete one stamps its cadence.
+# Args: repo, deadline epoch. Returns the pass rc.
+_pulse_partial_continuation_lane_repo() {
+	local repo="$1" deadline="$2" rc=0
+	_pm_reconcile_partial_continuations "$repo" "$deadline" 2>>"$LOGFILE" || rc=$?
+	[[ "$rc" -ne 0 ]] || _pulse_stale_blocked_repo_mark_complete "$repo" partial-continuation-complete
+	return "$rc"
 }
 
 # t18663: per-repo completion stamp for one pass of the stale-blocked cadence.
@@ -1406,12 +1527,14 @@ _pulse_reconcile_stale_blocked_if_due() {
 	local repo_slug="" failures=0 partial=0 rc=0 index=0 repo_count=0 sweep_deadline="" repo_deadline="" start_offset=0 position=0
 	local partial_rc="${DER_SWEEP_PARTIAL:-3}" due_count=0 fresh=0 weight=0 weight_left=0
 	local next_repo_file="${HOME}/.aidevops/cache/pulse-stale-blocked-next-repo"
-	local repos=() due=() weights=() ready_unused=0
+	local repos=() due=() weights=() ready_unused=0 partial_unused=0
 	[[ "$interval" =~ ^[0-9]+$ ]] || interval=1800
 	[[ -f "$repos_json" ]] || return 0
 	_pulse_stale_blocked_claim_fallback "$repos_json" || return 0
 	# GH#38680: ready dependants first, every cycle, independent of the cadence.
 	ready_unused=$(_pulse_stale_blocked_run_ready_lane "$repos_json") || ready_unused=0
+	# GH#39948: then stranded merged partials, also every cycle.
+	partial_unused=$(_pulse_partial_continuation_lane "$repos_json") || partial_unused=0
 	if [[ -f "$sentinel" ]]; then
 		now_epoch=$(date +%s 2>/dev/null) || return 0
 		stamp_epoch=$(_file_mtime_epoch "$sentinel")
@@ -1423,7 +1546,8 @@ _pulse_reconcile_stale_blocked_if_due() {
 		[[ -n "$repo_slug" ]] && repos+=("$repo_slug")
 	done < <(_pulse_stale_blocked_pulse_repos "$repos_json")
 	repo_count="${#repos[@]}"
-	sweep_deadline=$(PULSE_STALE_BLOCKED_READY_RESERVE_S="$ready_unused" _pulse_stale_blocked_sweep_deadline) || return 0
+	sweep_deadline=$(PULSE_STALE_BLOCKED_READY_RESERVE_S="$ready_unused" \
+		PULSE_PARTIAL_CONTINUATION_RESERVE_S="$partial_unused" _pulse_stale_blocked_sweep_deadline) || return 0
 	# Each due repo gets a backlog-weighted share of the remaining budget; unused time
 	# rolls forward, and each repo's cursor resumes partial passes. Once the
 	# sweep deadline passes, remaining due repos are deferred as partial rather
