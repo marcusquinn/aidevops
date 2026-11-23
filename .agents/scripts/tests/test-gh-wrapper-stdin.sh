@@ -9,6 +9,15 @@ SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)" || exit 1
 TMP="$(mktemp -d -t gh-wrapper-stdin.XXXXXX)" || exit 1
 trap 'rm -rf "$TMP"' EXIT
 
+# Supply only synthetic publication state; never read the runner's inventory.
+export HOME="${TMP}/home"
+export PRIVACY_REPOS_CONFIG="${HOME}/.config/aidevops/repos.json"
+export PRIVACY_CACHE_FILE="${HOME}/.aidevops/cache/repo-privacy.json"
+export PRIVACY_ENTITY_CONFIG="${HOME}/missing-entities"
+mkdir -p "${PRIVACY_REPOS_CONFIG%/*}" "${PRIVACY_CACHE_FILE%/*}"
+printf '%s\n' '{"initialized_repos":[{"slug":"fixture/private-project","private":true}]}' >"$PRIVACY_REPOS_CONFIG"
+printf '{"test/repo":{"private":false,"checked_at":%s}}\n' "$(date +%s)" >"$PRIVACY_CACHE_FILE"
+
 TESTS_RUN=0
 TESTS_FAILED=0
 
@@ -304,11 +313,13 @@ printf '%s\n' '<!-- aidevops:sig -->' | PATH="${STUB_BIN}:$PATH" \
 	"${SCRIPTS_DIR}/gh-write-helper.sh" pr comment 456 --repo test/repo \
 	--body-file - >/dev/null 2>&1
 signature_only_comment_rc=$?
-if [[ $signature_only_comment_rc -eq 1 && ! -s "$GH_CALLS" ]]; then
+# Rejection auditing may read existing comments; it must never write one.
+if [[ $signature_only_comment_rc -eq 1 ]] &&
+	! grep -vFx 'api repos/test/repo/issues/456/comments?per_page=100 --paginate --slurp' "$GH_CALLS" | grep -q .; then
 	pass "standalone helper rejects a signature-only comment before a GitHub write"
 else
 	fail "standalone helper rejects a signature-only comment before a GitHub write" \
-		"rc=${signature_only_comment_rc}"
+		"rc=${signature_only_comment_rc}, calls=$(<"$GH_CALLS")"
 fi
 
 : >"$GH_CALLS"

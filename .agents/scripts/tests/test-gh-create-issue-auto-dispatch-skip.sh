@@ -75,6 +75,15 @@ fail() {
 TMP=$(mktemp -d -t t2406.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT
 
+# Keep public-write checks real, with fixture-local synthetic inventory only.
+export HOME="${TMP}/home"
+export PRIVACY_REPOS_CONFIG="${HOME}/.config/aidevops/repos.json"
+export PRIVACY_CACHE_FILE="${HOME}/.aidevops/cache/repo-privacy.json"
+export PRIVACY_ENTITY_CONFIG="${HOME}/missing-entities"
+mkdir -p "${PRIVACY_REPOS_CONFIG%/*}" "${PRIVACY_CACHE_FILE%/*}"
+printf '%s\n' '{"initialized_repos":[{"slug":"fixture/private-project","private":true}]}' >"$PRIVACY_REPOS_CONFIG"
+printf '{"owner/repo":{"private":false,"checked_at":%s}}\n' "$(date +%s)" >"$PRIVACY_CACHE_FILE"
+
 GH_CALLS="${TMP}/gh_calls.log"
 GH_INFO_OUTPUT="${TMP}/info_output.log"
 
