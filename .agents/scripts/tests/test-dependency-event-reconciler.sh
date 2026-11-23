@@ -401,6 +401,12 @@ assert_eq 0 "$(run_reconcile)" "unreadable label history keeps the terminal-bloc
 TB_ETP='[[{"author_association":"OWNER","created_at":"2026-11-10T10:00:00Z","body":"CLAIM_RELEASED reason=blocked runner=x\nTerminal blocker: reason=external_trigger_pending"}]]'
 EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" SEARCH_EXTRA_LABEL="needs-dependency" COMMENTS="$TB_ETP" EVENTS="$CONVERT_EVENTS"
 assert_eq 0 "$(run_reconcile)" "external_trigger_pending observation is not superseded by the companion needs-dependency label"
+# GH#40068: the circuit comment carries only the hashed fingerprint, so the hash
+# is the external_trigger_pending provenance that keeps the hold stable.
+ETP_FP=$(_terminal_blocker_hash "v2:external_trigger_pending")
+TB_ETP_CIRCUIT='[[{"author_association":"OWNER","created_at":"2026-11-10T10:00:00Z","body":"TERMINAL_BLOCKER_CIRCUIT active=true observations=2 task_revision=r1 blocker='"$ETP_FP"'"}]]'
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" SEARCH_EXTRA_LABEL="needs-dependency" COMMENTS="$TB_ETP_CIRCUIT" EVENTS="$CONVERT_EVENTS"
+assert_eq 0 "$(run_reconcile)" "external_trigger_pending circuit comment holds despite a later needs-dependency label event"
 
 # GH#39979: an authoritative retry supersedes post-conversion observations, but
 # neither grants trigger completion nor clears independent holds or labels.
