@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.275] - 2026-11-23
+
+### Changed
+
+- Maintenance: mark t19315 complete (pr:#40070 completed:2026-11-23) (#40072)
+- Maintenance: mark t19314 complete (pr:#40054 completed:2026-11-23) (#40057)
+
+### Fixed
+
+- part B - migrate-layout accepts registered outside-workspace and nested sources
+- retry scoped gopass read timeouts
+- check the repo Node pin in the preclaim runner-capability gate (t19318)
+- rerun parallel-pass reds serially in shell suite main health (#40073)
+- pass default branch arg in degraded terminal-PR-proof test (GH#40071)
+- part A - migrate-layout tolerates prunable worktrees; audited prune-missing-worktrees
+- zero-check PRs return terminal no-checks instead of hanging
+- honor pinned base for successive publications
+- defer a validator timeout to a matching required CI check (t19316)
+- honor bounded supervisor runtime budgets (#40055)
+- scale legacy-unit repository budget overrides
+
 ## [3.39.274] - 2026-11-23
 
 ### Changed
