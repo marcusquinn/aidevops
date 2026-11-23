@@ -129,15 +129,20 @@ failure = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 handler = failure[failure.index("_exit_trap_handler()") : failure.index("_recover_dirty_worker_pr()")]
 assert "worker.exited" not in handler
 assert "_hrff_finalize_exit_trap" in handler
+emitter = failure[failure.index("_hrff_emit_exit_trap_event()") : failure.index("_hrff_finalize_exit_trap()")]
 finalizer = failure[failure.index("_hrff_finalize_exit_trap()") : failure.index("_exit_trap_handler()")]
-assert finalizer.index("_push_wip_commits_on_exit") < finalizer.index("_emit_worker_runtime_event")
-assert finalizer.index("_escalate_worker_pr_checkpoint") < finalizer.index("_emit_worker_runtime_event")
+assert finalizer.index("_push_wip_commits_on_exit") < finalizer.index("_hrff_emit_exit_trap_event")
+assert finalizer.index("_escalate_worker_pr_checkpoint") < finalizer.index("_hrff_emit_exit_trap_event")
+# GH#40008: CLAIM_RELEASED precedes the event's terminal lease, and a failed
+# release leaves the episode open for its retry row.
+assert finalizer.index("_release_dispatch_claim") < finalizer.index("_hrff_emit_exit_trap_event")
+assert 'AIDEVOPS_DISPATCH_LEASE_TOKEN="" _hrff_emit_exit_trap_event' in finalizer
 assert 'reason="${_HRW_RECOVERY_CLASSIFICATION:-worker_draft_checkpoint_escalation_failed}"' in finalizer
-assert 'if [[ "$reason" == "worker_complete" ]]; then' in finalizer
-assert '_emit_worker_runtime_event "worker.completed" "recovered" "$reason"' in finalizer
-assert 'elif [[ "$reason" == "$checkpoint_reason" ]]; then' in finalizer
-assert '_emit_worker_runtime_event "worker.deferred" "checkpointed" "$reason"' in finalizer
-assert '_emit_worker_runtime_event "worker.failed" "failed" "$reason"' in finalizer
+assert 'if [[ "$reason" == "worker_complete" ]]; then' in emitter
+assert '_emit_worker_runtime_event "worker.completed" "recovered" "$reason"' in emitter
+assert 'elif [[ "$reason" == "$checkpoint_reason" ]]; then' in emitter
+assert '_emit_worker_runtime_event "worker.deferred" "checkpointed" "$reason"' in emitter
+assert '_emit_worker_runtime_event "worker.failed" "failed" "$reason"' in emitter
 
 worker = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 finish = worker[worker.index("_cmd_run_finish() {") :].split("\n}\n", 1)[0]

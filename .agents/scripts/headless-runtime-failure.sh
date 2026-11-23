@@ -1691,8 +1691,27 @@ _hrff_record_exit_metric() {
 }
 
 #######################################
-# Finalize an EXIT-trap classification: preserve work, emit terminal evidence,
-# release the claim/lock, and force a non-zero process exit when preparation
+# Emit the EXIT-trap worker runtime event for a classified reason. With a
+# lease token in scope the event also posts this attempt's terminal lease.
+# Args: $1=reason, $2=draft checkpoint reason
+#######################################
+_hrff_emit_exit_trap_event() {
+	local reason="$1"
+	local checkpoint_reason="$2"
+	declare -F _emit_worker_runtime_event >/dev/null 2>&1 || return 0
+	if [[ "$reason" == "worker_complete" ]]; then
+		_emit_worker_runtime_event "worker.completed" "recovered" "$reason"
+	elif [[ "$reason" == "$checkpoint_reason" ]]; then
+		_emit_worker_runtime_event "worker.deferred" "checkpointed" "$reason"
+	else
+		_emit_worker_runtime_event "worker.failed" "failed" "$reason"
+	fi
+	return 0
+}
+
+#######################################
+# Finalize an EXIT-trap classification: preserve work, release the claim, emit
+# terminal evidence, release the lock, and force a non-zero process exit when preparation
 # ended cleanly before runtime invocation.
 # Args: $1=session, $2=reason, $3=exit status, $4=session count, $5=force nonzero
 #######################################
@@ -1736,14 +1755,27 @@ _hrff_finalize_exit_trap() {
 	if ! _hrff_write_external_outcome "$session_key" "$reason" "$session_count"; then
 		print_warning "[exit-trap] failed to persist external outcome for session=${session_key}"
 	fi
-	if declare -F _emit_worker_runtime_event >/dev/null 2>&1; then
-		if [[ "$reason" == "worker_complete" ]]; then
-			_emit_worker_runtime_event "worker.completed" "recovered" "$reason"
-		elif [[ "$reason" == "$checkpoint_reason" ]]; then
-			_emit_worker_runtime_event "worker.deferred" "checkpointed" "$reason"
-		else
-			_emit_worker_runtime_event "worker.failed" "failed" "$reason"
-		fi
+	# GH#40008: release before the worker event. Since GH#36553 that event posts
+	# this attempt's DISPATCH_LEASE phase=terminal, and dispatch-release-claim.jq
+	# then reports the claim as `terminal`, so a later release is skipped and a
+	# prelaunch failure kept its assignment and status:in-progress until a stale
+	# sweep (which counts toward the t2008 escalation). The matching
+	# CLAIM_RELEASED also retires the dispatch for dedup (attempt_id "release"),
+	# so the event's terminal lease remains the fallback, as at
+	# _hrff_emit_release_terminal_lease and _hrw_finish_not_launched.
+	# The runner-health breaker is recorded first, as in _hrw_finish_not_launched,
+	# so this runner cannot re-dispatch the released issue into the same failure.
+	_hrff_record_runner_health_failure "$session_key" "$reason"
+	if [[ "$claim_release_handled" -eq 0 ]] && \
+		! _release_dispatch_claim "$session_key" "$reason" "$exit_status" "$session_count"; then
+		print_warning "[exit-trap] claim release persistence remains retryable for session=${session_key} reason=${reason}"
+		# The retry row replays this release later. A terminal lease posted now
+		# would close the episode, the replay would read `terminal` and drop the
+		# row unpublished (GH#36593 forbids a release after a closed episode),
+		# so emit the event without the lease token and leave the claim open.
+		AIDEVOPS_DISPATCH_LEASE_TOKEN="" _hrff_emit_exit_trap_event "$reason" "$checkpoint_reason"
+	else
+		_hrff_emit_exit_trap_event "$reason" "$checkpoint_reason"
 	fi
 	if declare -F _hrw_record_terminal_outcome >/dev/null 2>&1; then
 		local terminal_outcome="failed"
@@ -1754,11 +1786,6 @@ _hrff_finalize_exit_trap() {
 	fi
 	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
 		_cleanup_headless_runtime_temp_paths
-	fi
-	_hrff_record_runner_health_failure "$session_key" "$reason"
-	if [[ "$claim_release_handled" -eq 0 ]] && \
-		! _release_dispatch_claim "$session_key" "$reason" "$exit_status" "$session_count"; then
-		print_warning "[exit-trap] claim release persistence remains retryable for session=${session_key} reason=${reason}"
 	fi
 	_release_session_lock "$session_key"
 	_update_dispatch_ledger "$session_key" "fail"
