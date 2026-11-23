@@ -413,34 +413,15 @@ _sum_issue_token_spend_uncached() {
 # Aggregate fetched comments against verified checkpoint data, without API calls.
 # Args: slurped comments JSON, checkpoint JSON. Stdout: spent_tokens|attempt_count.
 # Returns 1 on parse failure or malformed output (caller fail-open).
+# Interactive footers are maintainer activity, not worker spend (GH#20047).
+# Approvals and merged checkpoints reset the window, preventing immediate re-trips.
+# Footer shapes include "spent 4m and 30,000 tokens" and "has used N tokens";
+# the running "N total tokens on this issue" aggregate is never matched.
+# GH#34342: resumed-session footers are cumulative. Overlapping implied session
+# starts with nondecreasing counters count only increments; pre-window footers
+# and merge-adjacent delivery reports supply baselines, never new window spend.
 _cost_spend_from_comments() {
 	local comments_json="$1" checkpoint_data="$2"
-	# Extract comment bodies, excluding interactive-session signature footers and
-	# comments predating the latest approval, cost reset marker or merged checkpoint.
-	# Interactive footers are maintainer triage/review activity that should
-	# NOT count toward the per-issue worker cost budget — including them
-	# produces false-positive circuit-breaker trips every time a maintainer
-	# comments on an active issue (t2425 / GH#20047). Comments without either
-	# marker (historical or non-standard footers) are kept: worker is the
-	# fail-open default, matching the function's existing fail-open posture.
-	#
-	# t3077: a signed maintainer approval is also a budget reset boundary. Without
-	# this, approving/removing NMR after a cost trip immediately re-trips on the
-	# same historical worker footers and no new dispatch can occur.
-	#
-	# Footer shapes: "spent 30,000 tokens", "spent 4m and 30,000 tokens",
-	# "spent 1h 30m and …", "spent 1d 3h and …", historical "has used N tokens".
-	# The cumulative "N total tokens on this issue." line is intentionally NOT
-	# matched — it is the running aggregate and would double-count.
-	#
-	# GH#34342: footer tokens and time are cumulative for the OpenCode session
-	# (gh-signature-helper-session.sh), and continuation dispatches can resume
-	# that session. A later footer then repeats every earlier footer's spend
-	# ("6m and 89,214" → "6h 5m and 217,569" → "13h 2m and 356,637"). Footers
-	# by the same author whose implied session start (created_at − duration,
-	# widened by the display resolution and posting slack) overlaps and whose
-	# tokens do not decrease are one session: count only the increment. A
-	# pre-window footer of that session is the baseline, never window spend.
 	local spend_data
 	spend_data=$(printf '%s' "$comments_json" | jq -r --arg sig "$_COST_SIGNATURE_MARKER" --argjson checkpoint "$checkpoint_data" '
 		def epoch: try ((.created_at // "") | fromdateiso8601) catch 0;
