@@ -107,7 +107,8 @@ make_temp() {
 effective_timeout() {
 	local file="$1"
 	local declared
-	declared="$(head -n 20 "$file" 2>/dev/null | sed -n 's/^#[[:space:]]*aidevops:suite-timeout=\([0-9][0-9]*\)[[:space:]]*$/\1/p' | head -n 1)"
+	declared="$(sed -n '1,20{s/^#[[:space:]]*aidevops:suite-timeout=\([0-9][0-9]*\)[[:space:]]*$/\1/p;}' "$file" 2>/dev/null)"
+	declared="${declared%%$'\n'*}"
 	if [[ -n "$declared" ]]; then
 		[[ "$declared" -gt "$TIMEOUT_CAP" ]] && declared="$TIMEOUT_CAP"
 		if [[ "$declared" -gt "$SUITE_TIMEOUT" ]]; then
