@@ -77,9 +77,10 @@ The value goes over SSH stdin, never argv. On the server, the helper backs up
 web root), writes a single-line define in a marked block, parse-checks the
 result without `exec()`, and replaces the file atomically with its mode kept. A
 fresh PHP process then confirms the constant's length. Output shows only
-presence, length and file modes. Core, database and key constants (`DB_*`,
-salts, `WP_SECRETS_KEY`) are refused. So are constants defined outside
-`wp-config.php` or in a multi-line form: edit those by hand. Backups hold the old
+presence, length and file modes. Core, database and key constants (paths, URLs,
+cookies, multisite, `DB_*`, salts, `WP_SECRETS_KEY`) are refused. So are
+constants defined outside `wp-config.php`, in a multi-line form, or on a line
+with other code: edit those by hand. Backups hold the old
 value, so prune them once the rotation is confirmed.
 
 WordPress core has no secrets store for plugin constants: the 7.2 Secrets API
