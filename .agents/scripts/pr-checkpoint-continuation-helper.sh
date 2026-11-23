@@ -342,6 +342,7 @@ _pcc_usage() {
 	printf '       %s dispatch-approved <repo_slug> <repo_path> <linked_issue> <authenticated_login>\n' "$name"
 	printf '       %s approval-template <repo_slug> <pr_number> <linked_issue> <release_comment_id> attempt:<id> [--acknowledge-unattributed=ID[,ID]] [--acknowledge-terminal-without-release=ID[,ID]] [--diagnostic-tooling-commit=SHA]\n' "$name"
 	printf '       %s blocked-attention <repo_slug> <linked_issue> <draft_pr_number>\n' "$name"
+	printf '       %s rearm-held <repo_slug> <linked_issue> <draft_pr_number>\n' "$name"
 	printf '       %s dispatch-stalled <repo_slug> <repo_path> <linked_issue> <draft_pr_number> <authenticated_login>\n' "$name"
 	return 0
 }
@@ -2173,6 +2174,10 @@ main() {
 		;;
 	blocked-attention)
 		_pcc_blocked_attention "${2:-}" "${3:-}" "${4:-}"
+		return $?
+		;;
+	rearm-held)
+		_pcc_rearm_held "${2:-}" "${3:-}" "${4:-}"
 		return $?
 		;;
 	dispatch-stalled)

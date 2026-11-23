@@ -52,7 +52,7 @@ _pcc_rearmed_checkpoint_route() {
 	local repo="$1" issue="$2" pr="$3" head="$4" runner="$5" release="$6" attempt="$7" comments="$8"
 	local registry="${AIDEVOPS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 	local receipt='' receipt_id='' poster='' reason='' retry_author='' issue_json='' author=''
-	local login='' pr_json='' brief='' approval=''
+	local login='' pr_json='' pr_view='' brief='' approval=''
 	if jq -e --arg repo "$repo" 'any(.initialized_repos[]?; .slug == $repo and
 		.checkpoint_policy.auto_continue_rearmed == false)' "$registry" >/dev/null 2>&1; then
 		return 1
@@ -83,7 +83,8 @@ _pcc_rearmed_checkpoint_route() {
 	# the retry author or brief author all need current write permission.
 	_pcc_logins_have_write "$repo" "$login" "$runner" "${actors[@]}" || return 1
 	pr_json=$(gh pr view "$pr" --repo "$repo" --json number,state,isDraft,isCrossRepository,labels,headRefName,headRefOid,author,body,closingIssuesReferences) || return 1
-	_pr_checkpoint_pr_metadata_is_eligible "$pr_json" "$repo" "$pr" "$issue" "$head" "" "$runner" || return 1
+	pr_view=$(_pcc_rearmed_pr_view "$repo" "$pr" "$runner" "$pr_json" "$issue_json" "$comments" "$receipt_id") || return 1
+	_pr_checkpoint_pr_metadata_is_eligible "$pr_view" "$repo" "$pr" "$issue" "$head" "" "$runner" || return 1
 	brief=$(python3 -c 'import hashlib,json,sys; print(hashlib.sha256(json.load(sys.stdin)["body"].encode()).hexdigest())' <<<"$issue_json") || return 1
 	approval=$(_pcc_approval_template "$repo" "$pr" "$issue" "$release" "$attempt") || return 1
 	jq -e --arg head "$head" --arg brief "$brief" '.head == $head and .brief_sha256 == $brief' \
@@ -99,6 +100,60 @@ _pcc_rearmed_checkpoint_route() {
 	printf 'REARMED_CHECKPOINT_APPROVED pr=%s head=%s release=%s reason=%s receipt=%s\n' \
 		"$pr" "$head" "$release" "$reason" "$receipt_id"
 	return 0
+}
+
+# t19293 (GH#39919): the PR view the re-arm route checks for eligibility. A
+# worker that needed input may have labelled its own draft hold-for-review,
+# against worker discipline; the trusted re-arm receipt answers that request.
+# Drop only a hold the runner applied before the receipt (the GH#36138 rule in
+# _pr_checkpoint_runner_hold_before); every other protection stays visible.
+# Dispatch then lifts the hold through _pr_checkpoint_self_hold_superseded.
+# Args: $1=repo, $2=PR, $3=runner, $4=PR JSON, $5=issue JSON, $6=comments,
+#       $7=re-arm receipt comment id
+# Output: PR JSON for the eligibility check; returns 1 when a hold is not the
+#         runner's own pre-receipt request
+_pcc_rearmed_pr_view() {
+	local repo="$1" pr="$2" runner="$3" pr_json="$4" issue_json="$5" comments="$6" receipt_id="$7"
+	local receipt_at=''
+	if ! jq -e --arg hold "$_PCTL_HOLD_LABEL" 'any(.labels[]?; (.name? // .) == $hold)' <<<"$pr_json" >/dev/null 2>&1; then
+		printf '%s\n' "$pr_json"
+		return 0
+	fi
+	receipt_at=$(jq -er --argjson id "$receipt_id" '
+		[flatten[] | objects | select(.id == $id) | .created_at | strings] | first // empty' <<<"$comments") || return 1
+	_pr_checkpoint_runner_hold_before "$repo" "$pr_json" "$issue_json" "$comments" "$pr" "$runner" "$receipt_at" || return 1
+	jq -c --arg hold "$_PCTL_HOLD_LABEL" '.labels |= map(select((.name? // .) != $hold))' <<<"$pr_json"
+	return $?
+}
+
+#######################################
+# t19293 (GH#39919): `rearm-held` entry for a draft dispatch dedup reports as
+# WORKER_DRAFT_SELF_HELD. Runs only the trusted re-arm route for the current
+# blocked release: no attention record, unknown-release triage or dispatch.
+# dispatch-approved then re-verifies the approval and the runner's own hold.
+# Args: $1=repo slug, $2=linked issue, $3=draft PR number
+# Returns: 0 when an approval was published or is already valid, 1 otherwise,
+#          2 invalid arguments
+#######################################
+_pcc_rearm_held() {
+	local repo="$1" issue="$2" pr="$3"
+	local pr_json='' head='' runner='' comments='' trusted_logins='' evidence=''
+	local release_id='' attempt='' successor=''
+	[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$issue" =~ ^[1-9][0-9]*$ &&
+		"$pr" =~ ^[1-9][0-9]*$ ]] || return 2
+	pr_json=$(gh pr view "$pr" --repo "$repo" --json state,isDraft,headRefOid,author) || return 1
+	head=$(jq -er 'select(.state == "OPEN" and .isDraft == true) | .headRefOid |
+		select(test("^[0-9a-fA-F]{40,64}$"))' <<<"$pr_json") || return 1
+	runner=$(jq -er '.author.login' <<<"$pr_json") || return 1
+	_pcc_login_is_safe "$runner" || return 1
+	comments=$(_pcc_issue_comments "$repo" "$issue") || return 1
+	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo") || return 1
+	evidence=$(_pcc_blocked_release_evidence "$comments" "$runner" \
+		"${_PCC_ATTENTION_MARKER} pr=${pr} head=${head}" "$trusted_logins") || return 1
+	IFS=$'\t' read -r release_id attempt _ successor <<<"$evidence"
+	[[ "$release_id" =~ ^[1-9][0-9]*$ && "$attempt" == attempt:* && "$successor" == "-" ]] || return 1
+	_pcc_rearmed_checkpoint_route "$repo" "$issue" "$pr" "$head" "$runner" "$release_id" "$attempt" "$comments"
+	return $?
 }
 
 _pcc_decision_issue_eligible() {
