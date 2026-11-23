@@ -1305,6 +1305,10 @@ test_dispatch_max_dispatches_up_to_capacity() {
 	local reservation_mode="${1:-tooling}"
 	local REPOS_JSON="${TEST_ROOT}/reservation-integration.json"
 	local PRODUCT_RESERVATION_PCT=50
+	# e611603b6b (GH#39976) salts equal-score ties by login/hostname, so
+	# 9103 may precede 9102. Keep this capacity/model fixture deterministic;
+	# test-pulse-dispatch-idle-debt-borrowing.sh covers salted ordering.
+	local AIDEVOPS_DISPATCH_RUNNER_SALTED_ORDER=0
 	local original_rest_gate=""
 	original_rest_gate=$(capture_function_definitions _dispatch_rest_core_progress_allows_next)
 	_dispatch_rest_core_progress_allows_next() { return 0; }
