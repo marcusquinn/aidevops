@@ -29,6 +29,18 @@ else
 	fail=1
 fi
 
+git reset -q && git checkout -q -- TODO.md
+printf -- '- [ ] t3 other ref:GH#30\n+ plus note\n' >>TODO.md
+git add -A
+_unstage_foreign_todo_lines >/dev/null
+if ! git diff --cached --quiet -- TODO.md; then
+	echo "PASS mixed non-task '+' line stays staged"
+else
+	echo "FAIL mixed"
+	fail=1
+fi
+git reset -q && git checkout -q -- TODO.md
+
 printf -- '- [x] t1 own ref:GH#10\n' >>TODO.md
 git add -A
 _unstage_foreign_todo_lines >/dev/null

@@ -393,7 +393,7 @@ _unstage_foreign_todo_lines() {
 	[[ "$own_task" =~ ^t[0-9]+$ ]] || return 0
 
 	local added="" line="" tid="" foreign=""
-	added=$(git diff --cached -U0 --no-color -- TODO.md 2>/dev/null | grep -E '^\+[^+]|^\+$' || true)
+	added=$(git diff --cached -U0 --no-color -- TODO.md 2>/dev/null | grep -vE '^\+\+\+ (b/TODO\.md|/dev/null)$' | grep -E '^\+' || true)
 	[[ -n "$added" ]] || return 0
 	while IFS= read -r line; do
 		if [[ "$line" =~ ^\+-\ \[[\ x]\]\ (t[0-9]+)([^0-9]|$) ]]; then
@@ -600,7 +600,7 @@ _rebase_for_push() {
 		fi
 		# GH#21900: detect shallow clone before rebase to avoid add/add conflict cascade.
 		_check_and_handle_shallow_clone || return 1
-		if ! git rebase "$base_ref" 2>/dev/null; then
+		if ! git rebase --autostash "$base_ref" 2>/dev/null; then
 			git rebase --abort 2>/dev/null || true
 			print_error "Rebase conflict/abort while rebasing onto ${base_ref}."
 			print_error "After inspecting the branch and confirming a PR without rebase is safe, retry:"
