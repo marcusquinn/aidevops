@@ -43,7 +43,8 @@ printf 'payload\n' >config/ab
 printf 'payload\n' >'config/a+b[1].json'
 printf 'payload\n' >node_modules/pkg/payload.json
 printf 'payload\n' >__pycache__/cache.pyc
-_full_loop_runtime_paths=()
+# Keep nounset array expansion safe on Bash 3.2 without excluding any fixture.
+_full_loop_runtime_paths=(".test-runtime")
 FULL_LOOP_ALLOW_IGNORED_REFERENCES=0
 TESTS_RUN=0
 
