@@ -2466,9 +2466,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19310 fix(worktrees): same-boot owner launch reuse always refused — drain() drops worktree generation identity #bug ref:GH#40009 pr:#40010 completed:2026-11-23
 
-- [ ] t19312 fix(headless): project lifecycle state when replaying an already-published claim release #auto-dispatch #bug #fix-the-fixer tier:standard ref:GH#40018
+- [x] t19312 fix(headless): project lifecycle state when replaying an already-published claim release #auto-dispatch #bug #fix-the-fixer tier:standard ref:GH#40018 pr:#40031 completed:2026-11-23
 
-- [ ] t19313 fix(stale-recovery): count never-launched attempts once per runner so one runner's launch failures stop escalating healthy issues #auto-dispatch #bug #fix-the-fixer #priority:high ref:GH#40027
+- [x] t19313 fix(stale-recovery): count never-launched attempts once per runner so one runner's launch failures stop escalating healthy issues #auto-dispatch #bug #fix-the-fixer #priority:high ref:GH#40027 pr:#40036 completed:2026-11-23
 
 ## In Progress
 
