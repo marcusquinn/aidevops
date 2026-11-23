@@ -415,10 +415,8 @@ _unstage_foreign_todo_lines() {
 	return 0
 }
 
-# Refuse references to payloads omitted by git add (GH#39939). The prospective
-# PR is the index against the PR merge base, including already-committed WIP.
-# FULL_LOOP_ALLOW_IGNORED_REFERENCES=1 explicitly permits intentional references;
-# it never stages ignored content, which may contain credentials.
+# Check the index against the PR merge base, including WIP (GH#39939).
+# FULL_LOOP_ALLOW_IGNORED_REFERENCES=1 skips checks, never stages ignored content.
 _check_ignored_source_references() (
 	if [[ "${FULL_LOOP_ALLOW_IGNORED_REFERENCES:-0}" == 1 ]]; then
 		print_warning "Skipping ignored-file reference check (FULL_LOOP_ALLOW_IGNORED_REFERENCES=1)."
@@ -455,10 +453,14 @@ _check_ignored_source_references() (
 		printf '%s\n' "$path"
 	done <"$scratch/ignored" >"$scratch/paths"
 	[[ -s "$scratch/paths" ]] || return 0
-	git ls-files >"$scratch/tracked" || return 1
-	# Full paths always count. Basenames must have an extension, must not name
-	# tracked files, and must not be annotation prefixes (e.g. phpcs:ignore).
-	awk 'FILENAME == ARGV[1] { n=split($0,a,"/"); tracked[a[n]]=1; next }
+	git ls-files -z >"$scratch/tracked-raw" || return 1
+	while IFS= read -r -d '' path; do
+		path="${path##*/}"
+		[[ "$path" == *$'\n'* || "$path" == *$'\t'* ]] && continue
+		printf '%s\n' "$path"
+	done <"$scratch/tracked-raw" >"$scratch/tracked"
+	# Full paths always count; only untracked extension basenames are candidates.
+	awk 'FILENAME == ARGV[1] { tracked[$0]=1; next }
 		{ print $0; n=split($0,a,"/"); b=a[n]
 		  if (length(b)>=3 && b ~ /\.[[:alnum:]_-]+$/ && !tracked[b]) print b }
 	' "$scratch/tracked" "$scratch/paths" >"$scratch/patterns" || return 1
@@ -469,9 +471,8 @@ _check_ignored_source_references() (
 		!h && /^\+\+\+ / { file=substr($0,7) }
 		h && /^\+/ { print substr($0,2); print file > sources }
 	' sources="$scratch/sources" "$scratch/diff" >"$scratch/added" || return 1
-	# One fixed-string pass over added lines; only actual hit lines need literal
-	# boundary validation. Keep it in awk, with no per-file forks or Bash regexes.
-	LC_ALL=C grep -n -F -f "$scratch/patterns" "$scratch/added" >"$scratch/hits" || match_status=$?
+	# One text-mode fixed-string pass, then literal boundary validation in awk.
+	LC_ALL=C grep -a -n -F -f "$scratch/patterns" "$scratch/added" >"$scratch/hits" || match_status=$?
 	[[ "$match_status" == 1 ]] && return 0
 	[[ "$match_status" == 0 ]] || return 1
 	awk '

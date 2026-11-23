@@ -98,6 +98,26 @@ check_line 0 'prefixsecrets.local.jsonsecrets.local.json'
 check_line 0 'secrets.local.json:annotation'
 check_line 1 '+++ config/secrets.local.json'
 
+# Tracked non-ASCII basenames must match literally despite Git path quoting.
+mkdir -p docs
+printf 'tracked\n' >docs/café.md
+printf 'ignored\n' >config/café.md
+git add docs/café.md
+check_line 0 'See café.md'
+check_line 1 'config/café.md'
+
+# A forced-text patch with NUL bytes must not hide other added references.
+printf 'binary.fixture diff\n' >.gitattributes
+printf 'binary\0payload\n' >binary.fixture
+git add .gitattributes binary.fixture
+check_line 1 'config/secrets.local.json'
+if ! grep -a -F "Ignored worktree file 'config/secrets.local.json'" "$TEST_ROOT/output"; then
+	printf 'FAIL: NUL-containing diff hid the ignored reference diagnostic\n' >&2
+	exit 1
+fi
+git rm -q --cached .gitattributes binary.fixture
+rm .gitattributes binary.fixture
+
 # The changed-file header itself must never count as an added reference.
 printf 'safe\n' >secrets.local.json
 git add secrets.local.json
