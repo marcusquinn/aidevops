@@ -32,7 +32,7 @@ jobs:
     # on its exact branch before merging and closing the health investigation.
     if: github.event_name == 'workflow_dispatch' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 110
     steps:
       - name: Checkout suite source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -119,13 +119,14 @@ jobs:
           # Bounded parallelism, per-suite timeout, reruns to drop flakes.
           # Actions runs bash -e: capture the intentional nonzero status explicitly.
           rc=0
-          timeout --signal=TERM 3600 \
+          # GH#40066: serial rerun of parallel-pass reds needs headroom over 60 min.
+          timeout --signal=TERM 5400 \
             .agents/scripts/affected-tests-helper.sh all --jobs 4 --timeout 180 --retries 1 \
             --log-dir "${out}/suite-logs" \
             > "$results" 2> "${out}/suite-stderr.log" || rc=$?
           echo "out=${out}" >> "$GITHUB_OUTPUT"
           if [[ "$rc" -eq 124 ]]; then
-            echo "::error::Suite run exceeded the 60 minute bound"
+            echo "::error::Suite run exceeded the 90 minute bound"
             exit 1
           fi
           header=$'suite\trc_head\trc_base\tclass'

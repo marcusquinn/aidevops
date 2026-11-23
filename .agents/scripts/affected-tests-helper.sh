@@ -348,7 +348,12 @@ attempts = {suite: [head[suite]] for suite in ordered}
 # Reruns after the first stop on a timeout, which bounds the cost.
 retry_codes = (0,) if args.command == "all" else (0, 124)
 pending = [s for s in ordered if head[s] not in retry_codes and base.get(s) in (None, 0)]
-rerun_jobs = 1 if args.command == "all" and len(pending) <= 20 else None
+# GH#40066: the first parallel pass of `all` shares /tmp fixtures and the checkout
+# between suites (fixed-path helpers, sourced files), so >100 suites went red at
+# once and the parallel rerun reproduced the same interference. Rerun serially up
+# to ALL_SERIAL_RERUN_MAX; a larger set is a real environment storm.
+ALL_SERIAL_RERUN_MAX = 200
+rerun_jobs = 1 if args.command == "all" and len(pending) <= ALL_SERIAL_RERUN_MAX else None
 for _ in range(args.retries):
     if not pending:
         break
