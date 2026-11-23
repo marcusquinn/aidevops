@@ -399,6 +399,39 @@ test_kill_runaways_desktop_runtime_skipped_rss_enforced() {
 	return 0
 }
 
+test_bounded_operation_supervisor_runtime_and_rss() {
+	reset_macos_mocks
+	local platform=""
+	local output=""
+	local script="${TEST_ROOT}/plugins/opencode-aidevops/bounded-operation-supervisor.mjs"
+	for platform in Linux Darwin; do
+		MOCK_PLATFORM="$platform"
+		MOCK_COMMAND="node $script"
+		assert_eq "$platform supervisor runtime is delegated" "MANAGED" "$(_classify_runtime_limit 4951 7300 7200)"
+		assert_eq "$platform supervisor owner label" "bounded-operation-supervisor" "$(_runtime_management_owner 4951)"
+		MOCK_COMMAND="/opt/homebrew/bin/node $script"
+		assert_eq "$platform absolute Node path is delegated" "MANAGED" "$(_classify_runtime_limit 4951 7300 7200)"
+		MOCK_PROCESS_LINE="4951 4950 ? 1024 02:01:40 $MOCK_COMMAND"
+		MOCK_PROCESS_AGE=7300
+		CHILD_RUNTIME_LIMIT=7200
+		CHILD_RSS_LIMIT_KB=8388608
+		: >"$MOCK_KILL_LOG"
+		assert_eq "$platform kill path skips old supervisor" "No runaway processes found" "$(cmd_kill_runaways)"
+		assert_eq "$platform supervisor receives no runtime signal" "" "$(<"$MOCK_KILL_LOG")"
+		output=$(cmd_scan)
+		assert_eq "$platform scan delegates supervisor runtime" "yes" "$(if [[ "$output" == *MANAGED* && "$output" == *bounded-operation-supervisor* ]]; then printf yes; fi)"
+		CHILD_RSS_LIMIT_KB=512
+		output=$(cmd_kill_runaways)
+		assert_eq "$platform supervisor remains RSS kill-eligible" "yes" "$(if [[ "$output" == *"Killing PID 4951"* && "$(<"$MOCK_KILL_LOG")" == *4951* ]]; then printf yes; fi)"
+	done
+	for MOCK_COMMAND in "node ${TEST_ROOT}/job.mjs" "bash $script" "node -e $script" "node ${TEST_ROOT}/job.mjs $script" "node $script --extra" "node ${script}.bak" "node ${TEST_ROOT}/bounded-operation-supervisor.mjs"; do
+		assert_eq "lookalike stays runtime-governed: $MOCK_COMMAND" "OVER" "$(_classify_runtime_limit 4951 7300 7200)"
+	done
+	MOCK_COMMAND=""
+	MOCK_PLATFORM="Linux"
+	return 0
+}
+
 test_command_basename_handles_spaced_paths() {
 	local spaced_dir="${TEST_ROOT}/Library/Application Support/ai.opencode.desktop/cli/2.0.24"
 	mkdir -p "$spaced_dir"
@@ -435,6 +468,7 @@ main() {
 	test_macos_desktop_cli_only_serve_is_delegated
 	test_desktop_argv_text_is_not_ownership_evidence
 	test_kill_runaways_desktop_runtime_skipped_rss_enforced
+	test_bounded_operation_supervisor_runtime_and_rss
 	test_command_basename_handles_spaced_paths
 
 	printf '\n%s/%s tests passed.\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

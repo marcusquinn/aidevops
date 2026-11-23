@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.274] - 2026-11-23
+
+### Changed
+
+- Maintenance: mark t19313 complete (pr:#40036 completed:2026-11-23) (#40043)
+- Tests: repair extracted-helper fixtures for GH#40037
+
+### Fixed
+
+- deterministic self-verifying PR-less completion receipts
+- refresh stale structural contracts in shell-health suites (GH#40038) (#40052)
+- hint correct worktree when finalize-receipt runs from another PR's worktree
+- count never-launched attempts once per runner
+- repair three red-on-main stats/health suites
+- prevent duplicate inflight exit replay (#40024)
+- project lifecycle state when replaying an already-published claim release
+- stage ESM dependencies and suite tools (#40035)
+
 ## [3.39.273] - 2026-11-23
 
 ### Changed
