@@ -124,7 +124,12 @@ _planning_publish_snapshot() {
 	local source_file=""
 	local origin_sha=""
 	local source_head=""
-	source_head=$(_planning_git -C "$repo_path" rev-parse HEAD) || return 1
+	# Publication leaves HEAD untouched. A caller that refreshed its planning
+	# snapshot must be able to pin the actual base of those bytes, including a
+	# previous publication from this same checkout. Never substitute the remote
+	# tip here: that would hide genuinely competing edits from the three-way merge.
+	source_head=$(_planning_git -C "$repo_path" rev-parse --verify \
+		"${AIDEVOPS_PLANNING_BASE_SHA:-HEAD}^{commit}") || return 1
 	: >"$snapshot_file" || return 1
 	while IFS= read -r path; do
 		[[ -n "$path" ]] || continue
@@ -994,7 +999,7 @@ planning_publish() {
 	local external_source="${6:-}"
 	local temp_dir="" snapshot_file="" resolved_file="" index_file="" parent_sha="" tree_sha="" candidate_sha=""
 	local publication_id="" handoff_id="" attempt=0 push_rc=0 latest_sha="" expected_sha="" target_sha="" previous_target_sha="" build_rc=0
-	local parent_resolution="" resolution_tail="" base_sha="${AIDEVOPS_PLANNING_BASE_SHA:-}" guard_rc=0 resolve_rc=0 noop_rc=1 source_head=""
+	local parent_resolution="" resolution_tail="" guard_rc=0 resolve_rc=0 noop_rc=1 source_head=""
 	[[ -n "$branch_name" ]] || branch_name=$(_planning_git -C "$repo_path" symbolic-ref --short HEAD 2>/dev/null) || return 1
 	_planning_publish_reset_result
 	source_head=$(_planning_git -C "$repo_path" rev-parse --verify "HEAD^{commit}" 2>/dev/null) || return 1

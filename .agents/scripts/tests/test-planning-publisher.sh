@@ -93,7 +93,7 @@ state_digest() {
 
 run_publish() {
 	local repo="$1"
-	local validator="${2:-/usr/bin/true}"
+	local validator="${2:-true}"
 	local branch="${3:-main}"
 	local message="${4:-plan: test publication}"
 	(
@@ -114,7 +114,7 @@ run_publish_with_parent() {
 		# shellcheck source=../planning-publisher.sh
 		source "$PUBLISHER"
 		AIDEVOPS_PLANNING_PARENT_BRANCH="$parent_branch" \
-			AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true \
+			AIDEVOPS_PLANNING_VALIDATOR=true \
 			planning_publish "$repo" "plan: parented publication" origin "$branch" TODO.md
 	)
 	return $?
@@ -129,7 +129,7 @@ run_publish_with_receipt() {
 		# shellcheck source=../planning-publisher.sh
 		source "$PUBLISHER"
 		AIDEVOPS_PLANNING_GIT_BIN="$TEST_NATIVE_GIT" \
-			AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true \
+			AIDEVOPS_PLANNING_VALIDATOR=true \
 			AIDEVOPS_PLANNING_RECEIPT_DIR="$receipt_dir" \
 			AIDEVOPS_PLANNING_WRITE_RECEIPT=true \
 			planning_publish "$repo" "plan: test receipt" origin "$branch" || exit $?
@@ -160,7 +160,7 @@ run_simplification_publish() {
 	local repo="$1"
 	local hook="${2:-}"
 	local source_file="${3:-}"
-	local validator="${4:-/usr/bin/true}"
+	local validator="${4:-true}"
 	(
 		LOGFILE="/dev/null"
 		# shellcheck source=../pulse-simplification-state.sh
@@ -356,7 +356,7 @@ test_simplification_state_scope_preserves_checkout() {
 		SCRIPT_DIR="$(dirname "$PUBLISHER")"
 		# shellcheck source=../planning-publisher.sh
 		source "$PUBLISHER"
-		AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true \
+		AIDEVOPS_PLANNING_VALIDATOR=true \
 			planning_publish "$repo" "reject state without scope" origin main \
 			".agents/configs/simplification-state.json"
 	) >/dev/null 2>&1 || rejected_rc=$?
@@ -461,10 +461,10 @@ test_external_simplification_source_rejections() {
 	(
 		# shellcheck source=../planning-publisher.sh
 		source "$PUBLISHER"
-		AIDEVOPS_PLANNING_PUBLISH_SCOPE=planning AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true \
+		AIDEVOPS_PLANNING_PUBLISH_SCOPE=planning AIDEVOPS_PLANNING_VALIDATOR=true \
 			planning_publish "$repo" "reject external planning source" origin main TODO.md "$valid"
 	) >/dev/null 2>&1 || scope_rc=$?
-	run_simplification_publish "$repo" "" "$valid" /usr/bin/false || validation_rc=$?
+	run_simplification_publish "$repo" "" "$valid" false || validation_rc=$?
 	after=$(state_digest "$repo")
 	if [[ "$symlink_rc" -ne 0 && "$directory_rc" -ne 0 && "$scope_rc" -ne 0 && "$validation_rc" -ne 0 && \
 		"$before" == "$after" && "$remote_before" == "$(git --git-dir="${root}/remote.git" rev-parse main)" ]]; then
@@ -488,7 +488,7 @@ test_simplification_state_defaults_to_main_without_origin_head() {
 	mkdir -p "${repo}/.agents/configs" || return 0
 	printf '%s\n' '{"files":{"fallback.sh":{"passes":1}}}' >"${repo}/.agents/configs/simplification-state.json"
 	git -C "$repo" symbolic-ref --delete refs/remotes/origin/HEAD 2>/dev/null || true
-	LOGFILE=/dev/null AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true \
+	LOGFILE=/dev/null AIDEVOPS_PLANNING_VALIDATOR=true \
 		bash -c 'set -eo pipefail; source "$1"; _simplification_state_push "$2"' \
 		_ "$STATE_SCRIPT" "$repo"
 	publish_rc=$?
@@ -564,7 +564,7 @@ test_validation_failure_pushes_nothing() {
 	repo="${root}/work"
 	printf '%s\n' '- [ ] t002 rejected ref:GH#2' >>"${repo}/TODO.md"
 	before=$(git --git-dir="${root}/remote.git" rev-parse main)
-	run_publish "$repo" /usr/bin/false || rc=$?
+	run_publish "$repo" false || rc=$?
 	if [[ $rc -ne 0 && "$before" == "$(git --git-dir="${root}/remote.git" rev-parse main)" ]]; then pass "$name"; else fail "$name" "rc=$rc"; fi
 	rm -rf "$root"
 	return 0
@@ -737,7 +737,7 @@ HOOK
 		SCRIPT_DIR="$(dirname "$PUBLISHER")"
 		# shellcheck source=../planning-publisher.sh
 		source "$PUBLISHER"
-		AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true AIDEVOPS_PLANNING_BEFORE_PUSH_HOOK="$hook" planning_publish "$repo" "plan: contention" origin main
+		AIDEVOPS_PLANNING_VALIDATOR=true AIDEVOPS_PLANNING_BEFORE_PUSH_HOOK="$hook" planning_publish "$repo" "plan: contention" origin main
 	) || rc=$?
 	if [[ $rc -eq 0 ]] && git --git-dir="${root}/remote.git" show main:README.md | grep -q upstream && git --git-dir="${root}/remote.git" show main:TODO.md | grep -q t003; then pass "$name"; else fail "$name" "replay rc=$rc"; fi
 	rm -rf "$root"
@@ -758,7 +758,7 @@ test_crash_replay_is_single_publication() {
 		SCRIPT_DIR="$(dirname "$PUBLISHER")"
 		# shellcheck source=../planning-publisher.sh
 		source "$PUBLISHER"
-		AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true AIDEVOPS_PLANNING_BEFORE_PUSH_HOOK=/usr/bin/false planning_publish "$repo" "plan: crash" origin main
+		AIDEVOPS_PLANNING_VALIDATOR=true AIDEVOPS_PLANNING_BEFORE_PUSH_HOOK=false planning_publish "$repo" "plan: crash" origin main
 	) || rc=$?
 	if [[ $rc -eq 0 ]]; then
 		fail "$name" "simulated crash succeeded"
@@ -810,10 +810,68 @@ HOOK
 		SCRIPT_DIR="$(dirname "$PUBLISHER")"
 		# shellcheck source=../planning-publisher.sh
 		source "$PUBLISHER"
-		AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true AIDEVOPS_PLANNING_BEFORE_PUSH_HOOK="$hook" planning_publish "$repo" "plan: conflict" origin main
+		AIDEVOPS_PLANNING_VALIDATOR=true AIDEVOPS_PLANNING_BEFORE_PUSH_HOOK="$hook" planning_publish "$repo" "plan: conflict" origin main
 	) || rc=$?
 	remote_todo=$(git --git-dir="${root}/remote.git" show main:TODO.md)
 	if [[ $rc -eq 2 && "$remote_todo" == *"t999"* && "$remote_todo" != *"t005"* ]]; then pass "$name"; else fail "$name" "rc=$rc"; fi
+	rm -rf "$root"
+	return 0
+}
+
+test_successive_publications_use_pinned_base() {
+	local name="successive publications use the pinned base without changing local state"
+	local root="" repo="" base_sha="" before="" after="" first_sha="" second_sha="" replay_sha="" rc=0
+	root=$(mktemp -d) || return 0
+	setup_repo "$root" || {
+		fail "$name" setup
+		return 0
+	}
+	repo="${root}/work"
+	base_sha=$(git -C "$repo" rev-parse HEAD)
+	printf '%s\n' '- [ ] t010 first ref:GH#10' >>"${repo}/TODO.md"
+	run_publish "$repo" || {
+		fail "$name" first-publication
+		return 0
+	}
+	first_sha=$(git --git-dir="${root}/remote.git" rev-parse main)
+	printf '%s\n' '- [ ] t011 second ref:GH#11' >>"${repo}/TODO.md"
+	printf 'staged local-only\n' >>"${repo}/README.md"
+	git -C "$repo" add README.md
+	before=$(state_digest "$repo")
+	(
+		SCRIPT_DIR="$(dirname "$PUBLISHER")"
+		# shellcheck source=../planning-publisher.sh
+		source "$PUBLISHER"
+		AIDEVOPS_PLANNING_BASE_SHA="$first_sha" AIDEVOPS_PLANNING_VALIDATOR=true \
+			planning_publish "$repo" "plan: second publication" origin main || exit $?
+		[[ "$PLANNING_PUBLISH_RESULT" == "published" ]] || exit 1
+		AIDEVOPS_PLANNING_BASE_SHA="$first_sha" AIDEVOPS_PLANNING_VALIDATOR=true \
+			planning_publish "$repo" "plan: replay second publication" origin main || exit $?
+		[[ "$PLANNING_PUBLISH_RESULT" == "noop" ]]
+	) || rc=$?
+	after=$(state_digest "$repo")
+	second_sha=$(git --git-dir="${root}/remote.git" rev-parse main)
+	if [[ "$rc" -eq 0 && "$before" == "$after" && "$first_sha" != "$second_sha" &&
+		"$(git -C "$repo" rev-parse HEAD)" == "$base_sha" &&
+		"$(git --git-dir="${root}/remote.git" rev-parse main:TODO.md)" == "$(git -C "$repo" hash-object TODO.md)" ]]; then
+		pass "$name"
+	else
+		fail "$name" "rc=$rc"
+	fi
+	rc=0
+	(
+		SCRIPT_DIR="$(dirname "$PUBLISHER")"
+		# shellcheck source=../planning-publisher.sh
+		source "$PUBLISHER"
+		AIDEVOPS_PLANNING_BASE_SHA=missing-planning-base AIDEVOPS_PLANNING_VALIDATOR=true \
+			planning_publish "$repo" "plan: invalid base" origin main
+	) || rc=$?
+	replay_sha=$(git --git-dir="${root}/remote.git" rev-parse main)
+	if [[ "$rc" -ne 0 && "$replay_sha" == "$second_sha" && "$(state_digest "$repo")" == "$before" ]]; then
+		pass 'invalid pinned base publishes nothing and preserves local state'
+	else
+		fail 'invalid pinned base publishes nothing and preserves local state' "rc=$rc"
+	fi
 	rm -rf "$root"
 	return 0
 }
@@ -840,7 +898,7 @@ test_stale_base_same_path_is_retryable() {
 		SCRIPT_DIR="$(dirname "$PUBLISHER")"
 		# shellcheck source=../planning-publisher.sh
 		source "$PUBLISHER"
-		AIDEVOPS_PLANNING_BASE_SHA="$base_sha" AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true \
+		AIDEVOPS_PLANNING_BASE_SHA="$base_sha" AIDEVOPS_PLANNING_VALIDATOR=true \
 			planning_publish "$repo" "plan: stale base" origin main
 	) || rc=$?
 	remote_todo=$(git --git-dir="${root}/remote.git" show main:TODO.md)
@@ -875,13 +933,13 @@ test_absent_remote_branch_uses_safe_parent() {
 	}
 	printf '%s\n' '- [ ] t007 first publication ref:GH#7' >>"${repo}/TODO.md"
 	before=$(state_digest "$repo")
-	run_publish "$repo" /usr/bin/true "$branch" || {
+	run_publish "$repo" true "$branch" || {
 		fail "$name" publish
 		return 0
 	}
 	after=$(state_digest "$repo")
 	remote_sha=$(git --git-dir="${root}/remote.git" rev-parse "$branch")
-	run_publish "$repo" /usr/bin/true "$branch" || {
+	run_publish "$repo" true "$branch" || {
 		fail "$name" replay
 		return 0
 	}
@@ -935,7 +993,7 @@ HOOK
 		SCRIPT_DIR="$(dirname "$PUBLISHER")"
 		# shellcheck source=../planning-publisher.sh
 		source "$PUBLISHER"
-		AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true AIDEVOPS_PLANNING_BEFORE_PUSH_HOOK="$hook" \
+		AIDEVOPS_PLANNING_VALIDATOR=true AIDEVOPS_PLANNING_BEFORE_PUSH_HOOK="$hook" \
 			planning_publish "$repo" "plan: creation contention" origin "$branch"
 	) || rc=$?
 	after=$(state_digest "$repo")
@@ -1262,14 +1320,14 @@ test_duplicate_task_regressions_are_refused() {
 	done
 	# A named child does not authorize reopening its parent ID.
 	rc=0
-	run_publish "$repo" /usr/bin/true main 'plan: complete t001.1' || rc=$?
+	run_publish "$repo" true main 'plan: complete t001.1' || rc=$?
 	after=$(git --git-dir="${root}/remote.git" rev-parse main)
 	if [[ "$rc" -ne 0 && "$before" == "$after" ]]; then
 		pass "$name: named child is not parent authorization"
 	else
 		fail "$name: named child is not parent authorization" "rc=$rc"
 	fi
-	if run_publish "$repo" /usr/bin/true main 'plan: reopen t001' &&
+	if run_publish "$repo" true main 'plan: reopen t001' &&
 		[[ "$(git --git-dir="${root}/remote.git" rev-parse main:TODO.md)" == "$(git -C "$repo" hash-object TODO.md)" ]]; then
 		pass 'allows an explicitly named task regression'
 	else
@@ -1296,6 +1354,7 @@ main() {
 	test_contention_replay_and_conflict
 	test_crash_replay_is_single_publication
 	test_same_path_contention_is_retryable
+	test_successive_publications_use_pinned_base
 	test_stale_base_same_path_is_retryable
 	test_absent_remote_branch_uses_safe_parent
 	test_absent_remote_branch_creation_contention
