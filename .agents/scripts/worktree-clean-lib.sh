@@ -692,19 +692,25 @@ _clean_apply_fetch_report() {
 # GH#39990: remote-deleted proof requires that the branch's upstream remote
 # refreshed this pass. A branch without an upstream relies on tracking refs,
 # and a failed remote's refs are not pruned, so absence there still came from
-# a refreshed remote. A config read error fails closed.
+# a refreshed remote. A local upstream (".") is not remote evidence: only the
+# ready branch cache separates its tracking-ref evidence from the config, so
+# the uncached path fails closed. A config read error fails closed.
 # Args: $1=branch name
 # Returns: 0 when remote-deleted evidence is trustworthy, 1 otherwise
 _clean_branch_upstream_remote_refreshed() {
 	local wt_branch="$1"
 	local upstream_remote=""
 	local config_rc=0
-	[[ -n "${_WT_CLEAN_FAILED_REMOTES:-}" ]] || return 0
 	upstream_remote=$(git config --get "branch.${wt_branch}.remote" 2>/dev/null) || config_rc=$?
 	if [[ "$config_rc" -eq 1 ]]; then
 		return 0
 	fi
 	[[ "$config_rc" -eq 0 && -n "$upstream_remote" ]] || return 1
+	if [[ "$upstream_remote" == "." ]]; then
+		[[ "${_WT_CLEAN_REMOTE_BRANCH_CACHE_READY:-}" == "$_WT_CLEAN_BOOL_TRUE" ]] || return 1
+		return 0
+	fi
+	[[ -n "${_WT_CLEAN_FAILED_REMOTES:-}" ]] || return 0
 	_clean_branch_list_contains_exact "$upstream_remote" "$_WT_CLEAN_FAILED_REMOTES" && return 1
 	return 0
 }
@@ -854,6 +860,9 @@ _clean_prepare_git_branch_caches() {
 	if [[ "$upstream_status" -eq 0 && "$remote_status" -eq 0 ]]; then
 		while IFS=$'\t' read -r branch remote_name; do
 			[[ -n "$branch" && -n "$remote_name" ]] || continue
+			# GH#39990: a local upstream (".") is not push evidence; a tracking
+			# ref with the branch name below still counts.
+			[[ "$remote_name" != "." ]] || continue
 			pushed_branches="${pushed_branches}${pushed_branches:+$'\n'}${branch}"
 		done <<<"$upstream_lines"
 		if [[ -n "$remote_branches" ]]; then
