@@ -11,6 +11,7 @@ LOCAL_FAST_FORWARD_CMD="fast-forward-local"
 VERIFY_BOOTSTRAP_CMD="verify-bootstrap-registration"
 REPAIR_UPSTREAM_CMD="repair-upstream"
 REPAIR_WORKTREES_CMD="repair-worktrees"
+PRUNE_MISSING_WORKTREES_CMD="prune-missing-worktrees"
 FOLLOW_TRANSFER_CMD="follow-transfer"
 CLEAR_STALE_REBASE_CMD="clear-stale-rebase"
 CLEAR_ABANDONED_REBASE_CMD="clear-abandoned-rebase"
@@ -60,6 +61,7 @@ usage() {
 		"  canonical-recovery-helper.sh ${SYNC_MIRROR_CMD} --repo PATH --reason ${AIDEVOPS_UPDATE_REASON} --confirm SYNCHRONIZE_CANONICAL_MIRROR" \
 		"  canonical-recovery-helper.sh ${REPAIR_UPSTREAM_CMD} --repo PATH --issue N --confirm REPAIR_CANONICAL_UPSTREAM" \
 		"  canonical-recovery-helper.sh ${REPAIR_WORKTREES_CMD} --repo PATH [--issue N] --confirm REPAIR_WORKTREE_POINTERS" \
+		"  canonical-recovery-helper.sh ${PRUNE_MISSING_WORKTREES_CMD} --repo PATH [--issue N] --confirm PRUNE_MISSING_WORKTREES" \
 		"  canonical-recovery-helper.sh ${FOLLOW_TRANSFER_CMD} --repo PATH --slug OWNER/REPO --confirm FOLLOW_REPOSITORY_TRANSFER" \
 		"  canonical-recovery-helper.sh ${VERIFY_BOOTSTRAP_CMD} --repo PATH --slug OWNER/REPO --confirm REGISTER_CANONICAL_REPOSITORY" \
 		"  canonical-recovery-helper.sh ${CGH_REPAIR_CMD} --repo PATH [--min-age-minutes N] [--tmp-min-age-days N] [--apply]" \
@@ -134,6 +136,55 @@ repair_worktree_pointers() {
 	done
 	printf 'REPAIRED_WORKTREE_POINTERS=%s\n' "$changed"
 	_emit_rebind_followups "${wt_paths[@]+"${wt_paths[@]}"}"
+	return 0
+}
+
+# GH#40058: remove registrations whose linked-worktree path no longer exists.
+# Reuses the audited selector and prune primitive, so it refuses repos where an
+# absent entry might be an unmounted volume and verifies each entry is gone.
+# Requires audit-worktree-removal-helper.sh to be sourced by the caller.
+prune_missing_worktree_registrations() {
+	local repo="$1"
+	local issue="$2"
+	local audit_file="${HOME}/.aidevops/logs/canonical-recovery-audit.jsonl"
+	local audit_tool="${SCRIPT_DIR}/audit-worktree-removal-helper.sh"
+	local log_tool="${SCRIPT_DIR}/audit-log-helper.sh"
+	local targets="" missing_path="" pruned=0
+
+	[[ -x "$log_tool" && -f "$audit_tool" ]] || {
+		printf 'BLOCKED: tamper-evident audit helper is unavailable\n' >&2
+		return 1
+	}
+	AUDIT_LOG_FILE="$audit_file" "$log_tool" verify --quiet || {
+		printf 'BLOCKED: audit chain verification failed\n' >&2
+		return 1
+	}
+	targets=$(missing_worktree_prune_targets "$repo" "$REAL_GIT") || {
+		printf 'BLOCKED: an absent registration has an unavailable parent outside system temp (possible unmounted volume); remount or restore it, then retry\n' >&2
+		return 1
+	}
+	if [[ -z "$targets" ]]; then
+		printf 'PRUNED_MISSING_WORKTREES=0\n'
+		return 0
+	fi
+	AUDIT_LOG_FILE="$audit_file" AUDIT_QUIET=true "$log_tool" log \
+		operation.verify "Canonical missing-worktree registration prune authorized" \
+		--detail "issue=${issue}" --detail "repo=${repo}" \
+		--detail "operation=${PRUNE_MISSING_WORKTREES_CMD}" \
+		--detail "worktrees=$(printf '%s\n' "$targets" | wc -l | tr -d ' ')" >/dev/null || {
+		printf 'BLOCKED: recovery audit record could not be written\n' >&2
+		return 1
+	}
+	while IFS= read -r missing_path; do
+		[[ -n "$missing_path" ]] || continue
+		prune_missing_worktree_metadata "$repo" "$missing_path" || {
+			printf 'BLOCKED: registration still present after prune: %s\n' "$missing_path" >&2
+			return 1
+		}
+		printf 'PRUNED: %s\n' "$missing_path"
+		pruned=$((pruned + 1))
+	done <<<"$targets"
+	printf 'PRUNED_MISSING_WORKTREES=%s\n' "$pruned"
 	return 0
 }
 
@@ -252,6 +303,13 @@ restore-default)
 		exit 2
 	}
 	;;
+"$PRUNE_MISSING_WORKTREES_CMD")
+	expected_confirmation="PRUNE_MISSING_WORKTREES"
+	[[ -z "$expected_branch" && -z "$maintenance_reason" ]] || {
+		usage
+		exit 2
+	}
+	;;
 "$FOLLOW_TRANSFER_CMD")
 	expected_confirmation="FOLLOW_REPOSITORY_TRANSFER"
 	[[ -z "$expected_branch" && "$bootstrap_slug" =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$ ]] || {
@@ -295,6 +353,8 @@ elif [[ "$cmd" == "$FOLLOW_TRANSFER_CMD" && -z "$issue_number" && -z "$maintenan
 	audit_reference="repository transfer"
 elif [[ "$cmd" == "$REPAIR_WORKTREES_CMD" && -z "$issue_number" ]]; then
 	audit_reference="worktree pointer repair"
+elif [[ "$cmd" == "$PRUNE_MISSING_WORKTREES_CMD" && -z "$issue_number" && -z "$maintenance_reason" ]]; then
+	audit_reference="missing worktree prune"
 elif [[ "$issue_number" =~ ^[0-9]+$ && -z "$maintenance_reason" ]]; then
 	audit_reference="issue ${issue_number}"
 elif [[ -z "$issue_number" && ("$cmd" == "$FAST_FORWARD_CMD" || "$cmd" == "$SYNC_MIRROR_CMD") &&
@@ -321,6 +381,12 @@ common_dir=$("$REAL_GIT" -C "$repo_path" rev-parse --path-format=absolute --git-
 }
 if [[ "$cmd" == "$REPAIR_WORKTREES_CMD" ]]; then
 	repair_worktree_pointers "$repo_path" "$common_dir" "${issue_number:-none}"
+	exit $?
+fi
+if [[ "$cmd" == "$PRUNE_MISSING_WORKTREES_CMD" ]]; then
+	# shellcheck source=audit-worktree-removal-helper.sh
+	source "${SCRIPT_DIR}/audit-worktree-removal-helper.sh" || exit 1
+	prune_missing_worktree_registrations "$repo_path" "${issue_number:-none}"
 	exit $?
 fi
 if [[ "$cmd" == "$LOCAL_FAST_FORWARD_CMD" ]]; then

@@ -197,13 +197,29 @@ def repository_fingerprint(repo: Path) -> dict[str, Any]:
     }
 
 
+def prunable_worktree_paths(records: list[dict[str, Any]]) -> list[str]:
+    """Return linked registrations Git marks prunable whose path is absent.
+
+    Such entries are dead metadata with no pointer to repair (GH#40058). Any
+    other missing or unexpected pointer stays fail-closed.
+    """
+    return [
+        str(record["worktree"])
+        for record in records
+        if record.get("worktree") not in (None, "", "<canonical>")
+        and "prunable" in record
+        and not os.path.lexists(record["worktree"])
+    ]
+
+
 def linked_pointer_records(repo: Path, records: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Record exact linked-worktree pointer content for guarded repair."""
     pointers: list[dict[str, str]] = []
     prefix = f"gitdir: {repo}/.git/"
+    prunable = set(prunable_worktree_paths(records))
     for record in records:
         worktree = record.get("worktree")
-        if not worktree or worktree == "<canonical>":
+        if not worktree or worktree == "<canonical>" or worktree in prunable:
             continue
         marker = Path(worktree) / ".git"
         if marker.is_symlink() or not marker.is_file():

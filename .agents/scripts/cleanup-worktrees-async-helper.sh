@@ -378,35 +378,16 @@ _prune_turbo_caches() {
 	return 0
 }
 
-# Print the first prunable entry whose directory is absent. Native
-# `git worktree prune` is repo-wide, so return 1 without output when any absent
-# entry's parent directory is also absent (for example an unmounted volume):
-# that repo is deferred rather than risking metadata for recoverable work.
+# Print the first prunable entry whose directory is absent, or return 1 when
+# the repo must be deferred. Selection and the unmounted-volume deferral (with
+# its system-temp-root exception, GH#40058) live in the audited library.
 _missing_worktree_prune_target() {
 	local repo_context="$1"
-	local field=""
-	local wt_path=""
-	local parent=""
-	local target=""
+	local targets=""
 
-	while IFS= read -r -d '' field; do
-		case "$field" in
-		worktree\ *)
-			wt_path="${field#worktree }"
-			;;
-		prunable | prunable\ *)
-			[[ -n "$wt_path" && ! -e "$wt_path" ]] || continue
-			parent="${wt_path%/*}"
-			[[ -d "${parent:-/}" ]] || return 1
-			[[ -n "$target" ]] || target="$wt_path"
-			;;
-		"")
-			wt_path=""
-			;;
-		esac
-	done < <(git -C "$repo_context" worktree list --porcelain -z 2>/dev/null || true)
-
-	[[ -z "$target" ]] || printf '%s\n' "$target"
+	declare -F missing_worktree_prune_targets >/dev/null 2>&1 || return 0
+	targets=$(missing_worktree_prune_targets "$repo_context") || return 1
+	[[ -z "$targets" ]] || printf '%s\n' "${targets%%$'\n'*}"
 	return 0
 }
 
