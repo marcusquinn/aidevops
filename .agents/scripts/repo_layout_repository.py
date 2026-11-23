@@ -51,71 +51,6 @@ def discover_repositories(workspace: Path, discovery_lib: Path) -> list[Path]:
     return sorted(Path(item.decode()) for item in output.split(b"\0") if item)
 
 
-def tracked_as_gitlink(source: Path) -> bool:
-    """Return whether an enclosing repository records source as a submodule."""
-    try:
-        parent_root = expand_path(git(source.parent, "rev-parse", "--show-toplevel").strip())
-    except MigrationError:
-        return False
-    relative = source.relative_to(parent_root.resolve()).as_posix()
-    records = git(parent_root, "ls-files", "--stage", "--", f":(literal){relative}")
-    return any(line.startswith("160000 ") for line in records.splitlines())
-
-
-def validate_registered_source(
-    source: Path, workspace: Path, registrations: list[dict[str, Any]]
-) -> None:
-    """Accept an undiscovered source only as an exact registered canonical root.
-
-    Discovery stays bounded to top-level workspace repositories. An explicit
-    source outside it (another directory, or nested in a repository) needs an
-    approved repos.json registration, its own .git directory, and no local-only
-    or submodule role, so selection cannot widen to arbitrary directories.
-    """
-    matches = [
-        item
-        for item in registrations
-        if isinstance(item.get("path"), str) and expand_path(item["path"]) == source
-    ]
-    if not matches:
-        raise MigrationError("Selected source is not a discovered or registered repository")
-    if any(item.get("local_only") is True for item in matches):
-        raise MigrationError("Selected source is a local-only registration")
-    if workspace.is_relative_to(source):
-        raise MigrationError("Selected source must not contain the workspace")
-    marker = source / ".git"
-    if marker.is_symlink() or not marker.is_dir():
-        raise MigrationError("Selected source is not a canonical repository root")
-    top_level = expand_path(git(source, "rev-parse", "--show-toplevel").strip())
-    if top_level.resolve() != source:
-        raise MigrationError("Selected source is not a canonical repository root")
-    if tracked_as_gitlink(source):
-        raise MigrationError("Selected source is a submodule of its parent repository")
-
-
-def nested_first_order(sources: list[Path]) -> list[Path]:
-    """Order each source before every selected source that contains it.
-
-    Apply moves repositories in plan order and rollback reverses it, so a
-    nested repository leaves before its parent and returns after it.
-    """
-    def containers(path: Path) -> int:
-        return sum(1 for other in sources if other != path and path.is_relative_to(other))
-
-    return sorted(sources, key=lambda path: -containers(path))
-
-
-def nested_relative_paths(parent: Path, sources: list[Path]) -> tuple[str, ...]:
-    """Return selected sources nested inside parent, relative to it."""
-    return tuple(
-        sorted(
-            child.relative_to(parent).as_posix()
-            for child in sources
-            if child != parent and child.is_relative_to(parent)
-        )
-    )
-
-
 def recommended_path(
     workspace: Path,
     identity: tuple[str, str, str],
@@ -204,24 +139,31 @@ def worktree_records(repo: Path, excluded: tuple[str, ...] = ()) -> list[dict[st
     records: list[dict[str, Any]] = []
     current: dict[str, Any] = {}
     for line in git(repo, "worktree", "list", "--porcelain").splitlines() + [""]:
-        if not line:
-            if current:
-                path = Path(current.get("worktree", ""))
-                if path.is_dir():
-                    omitted = () if records else excluded
-                    status_hash, status_count = status_records(path, omitted)
-                    current["status_sha256"] = status_hash
-                    current["status_entries"] = status_count
-                    current["working_tree_sha256"] = working_tree_digest(path, omitted)
-                # Git always lists the main worktree first. Normalize that
-                # location because its spelling changes during a move.
-                current["worktree"] = "<canonical>" if not records else str(path)
-                records.append(current)
-                current = {}
-            continue
-        key, _, value = line.partition(" ")
-        current[key] = value
+        if line:
+            key, _, value = line.partition(" ")
+            current[key] = value
+        elif current:
+            # Git always lists the main worktree first.
+            records.append(finish_worktree_record(current, not records, excluded))
+            current = {}
     return records
+
+
+def finish_worktree_record(
+    record: dict[str, Any], is_main: bool, excluded: tuple[str, ...]
+) -> dict[str, Any]:
+    """Add state digests to one porcelain record and normalize its path."""
+    path = Path(record.get("worktree", ""))
+    if path.is_dir():
+        omitted = excluded if is_main else ()
+        status_hash, status_count = status_records(path, omitted)
+        record["status_sha256"] = status_hash
+        record["status_entries"] = status_count
+        record["working_tree_sha256"] = working_tree_digest(path, omitted)
+    # Normalize the main worktree location because its spelling changes
+    # during a move.
+    record["worktree"] = "<canonical>" if is_main else str(path)
+    return record
 
 
 def repository_fingerprint(repo: Path, excluded: tuple[str, ...] = ()) -> dict[str, Any]:

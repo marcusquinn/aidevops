@@ -20,7 +20,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, NamedTuple
 
 from repo_layout_common import (
     MigrationError as MigrationError,
@@ -38,16 +38,18 @@ from repo_layout_repository import (
     REMOTE_RE as REMOTE_RE,
     discover_repositories as discover_repositories,
     linked_pointer_records as linked_pointer_records,
-    nested_first_order as nested_first_order,
-    nested_relative_paths as nested_relative_paths,
     parse_remote as parse_remote,
     prunable_worktree_paths as prunable_worktree_paths,
     recommended_path as recommended_path,
     repository_fingerprint as repository_fingerprint,
     status_records as status_records,
-    validate_registered_source as validate_registered_source,
     working_tree_digest as working_tree_digest,
     worktree_records as worktree_records,
+)
+from repo_layout_selection import (
+    nested_first_order as nested_first_order,
+    nested_relative_paths as nested_relative_paths,
+    validate_registered_source as validate_registered_source,
 )
 
 
@@ -304,14 +306,10 @@ def plan_command(args: argparse.Namespace) -> int:
         requested_sources,
         registrations if args.include_registered_paths else None,
     )
+    inputs = PlanInputs(workspace, repos_json, registrations, args)
     for source in discovered:
         repository, exclusion = plan_repository(
-            source,
-            workspace,
-            repos_json,
-            registrations,
-            args,
-            nested_relative_paths(source, discovered),
+            source, inputs, nested_relative_paths(source, discovered)
         )
         if repository:
             repositories.append(repository)
@@ -387,15 +385,22 @@ def load_registrations(repos_json: Path) -> list[dict[str, Any]]:
     return [item for item in entries if isinstance(item, dict)]
 
 
+class PlanInputs(NamedTuple):
+    """Plan-wide inputs shared by every per-repository planning call."""
+
+    workspace: Path
+    repos_json: Path
+    registrations: list[dict[str, Any]]
+    args: argparse.Namespace
+
+
 def plan_repository(
     source: Path,
-    workspace: Path,
-    repos_json: Path,
-    registrations: list[dict[str, Any]],
-    args: argparse.Namespace,
+    inputs: PlanInputs,
     nested: tuple[str, ...] = (),
 ) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
     """Plan one selected repository or return its exclusion reason."""
+    workspace, repos_json, registrations, args = inputs
     try:
         remote = git(source, "remote", "get-url", "origin").strip()
     except MigrationError:
@@ -1459,32 +1464,27 @@ def restore_linked_pointers(details: dict[str, Any]) -> None:
 def rollback_repository(item: dict[str, Any], details: dict[str, Any]) -> None:
     """Idempotently return an unchanged repository and pointers to its source."""
     source = Path(item["source"])
-    destination = Path(item["destination"])
     stage = Path(item["stage"])
     self_nested = bool(details.get("self_nested"))
-    excluded = nested_exclusions(item)
-    prepare_repository_rollback(source, destination, stage, self_nested, details, excluded)
+    prepare_repository_rollback(item, details)
     if self_nested and stage.exists():
         remove_created_directories(details, strict=True)
         if source.exists():
             raise MigrationError(f"Nested rollback source remains occupied: {source}")
         os.rename(stage, source)
     restore_linked_pointers(details)
-    if repository_fingerprint(source, excluded) != item["fingerprint"]:
+    if repository_fingerprint(source, nested_exclusions(item)) != item["fingerprint"]:
         raise MigrationError(f"Repository rollback verification failed: {source}")
     if not self_nested:
         remove_created_directories(details, strict=False)
 
 
-def prepare_repository_rollback(
-    source: Path,
-    destination: Path,
-    stage: Path,
-    self_nested: bool,
-    details: dict[str, Any],
-    excluded: tuple[str, ...] = (),
-) -> None:
+def prepare_repository_rollback(item: dict[str, Any], details: dict[str, Any]) -> None:
     """Restore or stage the repository according to its durable move state."""
+    source = Path(item["source"])
+    destination = Path(item["destination"])
+    stage = Path(item["stage"])
+    self_nested = bool(details.get("self_nested"))
     case_only_same = (
         source != destination
         and str(source).lower() == str(destination).lower()
@@ -1498,7 +1498,7 @@ def prepare_repository_rollback(
     elif destination.is_dir() and (
         not source.exists() or self_nested or case_only_same
     ):
-        if repository_fingerprint(destination, excluded) != details["post_fingerprint"]:
+        if repository_fingerprint(destination, nested_exclusions(item)) != details["post_fingerprint"]:
             raise MigrationError(f"Post-plan repository drift blocks rollback: {destination}")
         validate_rollback_pointers(details)
         if self_nested:
