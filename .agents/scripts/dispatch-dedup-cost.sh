@@ -586,6 +586,7 @@ _apply_cost_breaker_side_effects() {
 🛑 **Cost circuit breaker fired** (t2007)
 
 Cumulative spend **${_spent_k}K tokens** across **${attempts}** worker attempt(s) exceeds \`tier:${tier}\` budget of **${_budget_k}K tokens**.
+New full-usage footers include cache and reasoning; historical footers remain a lower bound. This is a token-volume fail-safe, not a USD cost limit.
 
 Further automated dispatch is suspended with \`status:blocked\` while a root-cause meta-issue is investigated.
 

@@ -53,7 +53,7 @@ _opencode_db_path() {
 # =============================================================================
 # Queries the runtime's session database for cumulative token usage.
 # Currently supports OpenCode (SQLite DB, path resolved via _opencode_db_path).
-# Returns total input+output tokens for the most recent session in the current
+# Returns full usage (including cache/reasoning) for the current session in the
 # working directory, or empty string if unavailable.
 
 # =============================================================================

@@ -559,7 +559,7 @@ Options (record-child):
 
 Auto-detected fields (OpenCode sessions):
   - CLI name and version
-  - Token count (input+output from session DB, plus child subagent tokens)
+  - Full token usage (input, output, cache and reasoning, plus child sessions)
   - Child subagent tokens (from ledger written by record-child)
   - Session time (duration since session start)
   - Issue total tokens (sum of all signature footers by the authenticated
