@@ -2480,6 +2480,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19318 fix(dispatch): check the repo Node pin in the preclaim runner-capability gate so unsatisfiable runners stop claim/release churn #bug #interactive #priority:high ref:GH#40077
 
+- [ ] t19319 test(pulse): dispatch_max capacity case skips tier:simple candidate 9102 on main (suite not in CI) #auto-dispatch #bug ref:GH#40086
+
+- [ ] t19320 fix(full-loop): completion-bookkeeping accepts GH#<issue>: proof PR titles #auto-dispatch #bug #priority:low ref:GH#40094
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
