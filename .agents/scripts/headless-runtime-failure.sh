@@ -1763,6 +1763,9 @@ _hrff_finalize_exit_trap() {
 	# CLAIM_RELEASED also retires the dispatch for dedup (attempt_id "release"),
 	# so the event's terminal lease remains the fallback, as at
 	# _hrff_emit_release_terminal_lease and _hrw_finish_not_launched.
+	# The runner-health breaker is recorded first, as in _hrw_finish_not_launched,
+	# so this runner cannot re-dispatch the released issue into the same failure.
+	_hrff_record_runner_health_failure "$session_key" "$reason"
 	if [[ "$claim_release_handled" -eq 0 ]] && \
 		! _release_dispatch_claim "$session_key" "$reason" "$exit_status" "$session_count"; then
 		print_warning "[exit-trap] claim release persistence remains retryable for session=${session_key} reason=${reason}"
@@ -1784,7 +1787,6 @@ _hrff_finalize_exit_trap() {
 	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
 		_cleanup_headless_runtime_temp_paths
 	fi
-	_hrff_record_runner_health_failure "$session_key" "$reason"
 	_release_session_lock "$session_key"
 	_update_dispatch_ledger "$session_key" "fail"
 	aidevops_runtime_bundle_lease_release || print_warning "Failed to release the worker runtime bundle lease"
