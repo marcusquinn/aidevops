@@ -2460,6 +2460,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19300 perf(pulse): a drained cycle that runs its starved maintenance tail keeps dispatching instead of idling 20-35 min #feat #priority:high ref:GH#39960 pr:#39964 completed:2026-11-23
 
+- [ ] t19307 fix(pulse-dispatch): name the real cause when worktree pre-creation fails #bug #interactive tier:standard ref:GH#40000 -> [todo/tasks/t19307-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
