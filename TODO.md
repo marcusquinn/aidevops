@@ -2470,7 +2470,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19313 fix(stale-recovery): count never-launched attempts once per runner so one runner's launch failures stop escalating healthy issues #auto-dispatch #bug #fix-the-fixer #priority:high ref:GH#40027 pr:#40036 completed:2026-11-23
 
-- [ ] t19314 fix(worker): deterministic self-verifying PR-less completion receipts so correct report/data-only closes stop counting as failures #auto-dispatch #bug #fix-the-fixer #priority:high tier:standard ref:GH#40048
+- [x] t19314 fix(worker): deterministic self-verifying PR-less completion receipts so correct report/data-only closes stop counting as failures #auto-dispatch #bug #fix-the-fixer #priority:high tier:standard ref:GH#40048 pr:#40054 completed:2026-11-23
 
 ## In Progress
 
