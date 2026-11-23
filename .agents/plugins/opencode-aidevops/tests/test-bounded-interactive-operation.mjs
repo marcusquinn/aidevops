@@ -628,7 +628,7 @@ describe("bounded interactive operations", () => {
       budgetMs: SUCCESS_BUDGET_MS,
       restorationBudgetMs: 30,
     }, owner);
-    const deadline = Date.now() + 5000;
+    const deadline = Date.now() + operationWaitMs(instance, started.operation_id);
     while (instance.status(started.operation_id, owner).state !== "restoring" && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
@@ -754,8 +754,8 @@ describe("bounded interactive operations", () => {
       command: [process.execPath, "-e", "setTimeout(() => process.exit(0), 100)"],
       budgetMs: SUCCESS_BUDGET_MS,
     }, secondOwner);
+    const deadline = Date.now() + operationWaitMs(instance, first.operation_id);
     instance.handleEvent({ event: { type: "session.deleted", properties: { info: { id: owner.sessionID } } } });
-    const deadline = Date.now() + 2000;
     while (instance.operations.has(first.operation_id) && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
