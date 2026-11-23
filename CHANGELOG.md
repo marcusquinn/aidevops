@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.268] - 2026-11-23
+
+### Changed
+
+- Tests: cover secret-helper get trailing whitespace trim (GH#39932)
+
+### Fixed
+
+- ship missing wp-config-secret.php payload for --config-secret (gitignored *secret*.php)
+- provision routine retirement label and report failures (GH#39935) (#39940)
+- a trusted re-arm receipt continues a worker draft held only by its own earlier hold (GH#39919)
+- pre-push check_secrets misreports secretlint config errors as secrets
+
 ## [3.39.267] - 2026-11-22
 
 ### Added
