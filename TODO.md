@@ -2456,9 +2456,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19296 wp-helper.sh --config-secret payload wp-config-secret.php missing from v3.39.267 (gitignored *secret*.php) #bug ref:GH#39937 pr:#39938 completed:2026-11-23
 
-- [ ] t19298 fix(headless): count an API-type auth.json credential as static auth for the OAuth pool gate #auto-dispatch #bug ref:GH#39947 -> [todo/tasks/t19298-brief.md]
+- [x] t19298 fix(headless): count an API-type auth.json credential as static auth for the OAuth pool gate #auto-dispatch #bug ref:GH#39947 -> [todo/tasks/t19298-brief.md] pr:#39949 completed:2026-11-23
 
-- [ ] t19300 perf(pulse): a drained cycle that runs its starved maintenance tail keeps dispatching instead of idling 20-35 min #feat #priority:high ref:GH#39960
+- [x] t19300 perf(pulse): a drained cycle that runs its starved maintenance tail keeps dispatching instead of idling 20-35 min #feat #priority:high ref:GH#39960 pr:#39964 completed:2026-11-23
 
 ## In Progress
 
