@@ -2474,7 +2474,11 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19315 fix(planning): second publication from an unchanged worktree always reports retryable_conflict #auto-dispatch #bug ref:GH#40062 pr:#40070 completed:2026-11-23
 
+- [x] t19316 fix(full-loop): defer a commit-and-pr validator timeout to a matching required CI check instead of blocking the PR #bug #interactive #priority:high ref:GH#40064 pr:#40067 completed:2026-11-23
+
 - [ ] t19317 test-worktree-metadata-prune: degraded terminal-PR-proof case false-passes on unbound $8 #auto-dispatch #bug ref:GH#40071
+
+- [ ] t19318 fix(dispatch): check the repo Node pin in the preclaim runner-capability gate so unsatisfiable runners stop claim/release churn #bug #interactive #priority:high ref:GH#40077
 
 ## In Progress
 
