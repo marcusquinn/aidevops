@@ -166,7 +166,7 @@ test_rebase_uses_remote_default_branch_and_counter_ref() {
 	if [[ "$rc" -eq 0 ]] \
 		&& [[ "$counter_value" == "7" ]] \
 		&& grep -qF 'git fetch origin develop --quiet' "$GIT_LOG" \
-		&& grep -qF 'git rebase origin/develop' "$GIT_LOG" \
+		&& grep -qF 'git rebase --autostash origin/develop' "$GIT_LOG" \
 		&& grep -qF 'git show origin/develop:.task-counter' "$GIT_LOG" \
 		&& ! grep -qF 'origin/main' "$GIT_LOG"; then
 		print_result "rebase and counter reset use origin/develop" 0

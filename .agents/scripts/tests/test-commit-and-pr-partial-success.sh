@@ -778,8 +778,8 @@ else
 fi
 
 if grep -q "git fetch origin develop --quiet" "$STUB_LOG" 2>/dev/null &&
-	grep -q "git rebase origin/develop" "$STUB_LOG" 2>/dev/null &&
-	! grep -q "git rebase origin/main" "$STUB_LOG" 2>/dev/null; then
+	grep -q "git rebase --autostash origin/develop" "$STUB_LOG" 2>/dev/null &&
+	! grep -q "git rebase --autostash origin/main" "$STUB_LOG" 2>/dev/null; then
 	pass "default branch: rebase path uses origin/develop rather than origin/main"
 else
 	fail "default branch: rebase path uses origin/develop rather than origin/main" \
