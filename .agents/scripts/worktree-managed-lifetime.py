@@ -141,7 +141,7 @@ def reserve(record: dict, unit: str) -> None:
     launch_contract.check_generation(record)
     require(record["state"] in ("created", "running"), "launch already reserved or worktree sealed")
     if record["launches"]:
-        drain(record["launches"][-1])
+        drain(record["launches"][-1], record["identity"])
     require(re.fullmatch(r"aidevops-worker-[A-Za-z0-9_-]+", unit) is not None, "invalid unit name")
     idle_policy.invalidate(record)
     record["launches"].append(launch_contract.attempt(record["launches"], unit, boot_id()))
@@ -162,9 +162,11 @@ def bind(record: dict) -> None:
     record["state"] = "running"
 
 
-def drain(launch: dict) -> None:
+def drain(launch: dict, worktree_identity: dict | None = None) -> None:
     if launch.get("kind") == owner_lifetime.KIND:
-        owner_lifetime.drain(launch)
+        # Same-boot owner launches need the worktree generation identity for
+        # their path census; without it the reuse check always refuses.
+        owner_lifetime.drain(launch, worktree_identity)
         return
     owner_lifetime.drain_unit(launch, boot_id, unit_snapshot)
 
@@ -192,7 +194,7 @@ def seal(record: dict) -> None:
         record["launches"][-1]["admission_cancelled"] = True
     else:
         require(record["state"] == "running" and bool(record["launches"]), "unresolved launch")
-        drain(record["launches"][-1])
+        drain(record["launches"][-1], record["identity"])
     require(all(item.get("quiescence") or item.get("admission_cancelled") for item in record["launches"]),
             "unresolved earlier launch")
     record.update(state="sealed", sealed_at=time.time())

@@ -24,7 +24,7 @@ def inspect_record(ops, record: dict, path: Path, operation: str, extra: list[st
         return
     ops.require(record["state"] in ("created", "running"), "worktree cannot be reused")
     if record["launches"]:
-        ops.drain(record["launches"][-1])
+        ops.drain(record["launches"][-1], record["identity"])
 
 
 def seal_observed(ops, connection, path: Path, operation: str, extra: list[str]) -> None:
