@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.273] - 2026-11-23
+
+### Changed
+
+- Maintenance: mark t19309 complete (pr:#40014 completed:2026-11-23) (#40022)
+
+### Fixed
+
+- require a declaration for closing keywords in PR body prose
+- report unavailable ShellCheck as skipped instead of All clear
+
 ## [3.39.272] - 2026-11-23
 
 ### Changed
