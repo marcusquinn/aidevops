@@ -30,7 +30,10 @@ INSERT INTO llm_requests (
   ('luna-old', 'openai', 'gpt-5.6-luna', 1000000, 100000, 100000, 100000, 100000, 1300000, 2.335),
   ('terra-old', 'openai', 'gpt-5.6-terra', 1000000, 100000, 100000, 100000, 100000, 1300000, 5.8375),
   ('terra-unverified', 'openai', 'gpt-5.6-terra', 1000000, 0, 0, 0, 0, 1000000, 1.25),
-  ('sol-zero', 'openai', 'gpt-5.6-sol', 1000000, 0, 0, 0, 0, 1000000, 0.0);
+  ('sol-zero', 'openai', 'gpt-5.6-sol', 1000000, 0, 0, 0, 0, 1000000, 0.0),
+  ('haiku-long-zero', 'anthropic', 'claude-haiku-5-5', 1000, 2000, 3000, 144000, 5000, 155000, 0.0),
+  ('haiku-short-zero', 'anthropic', 'claude-haiku-5-5', 1000, 2000, 3000, 44000, 5000, 55000, 0.0),
+  ('haiku-long-priced', 'anthropic', 'claude-haiku-5-5', 1000, 2000, 3000, 144000, 5000, 155000, 0.004665);
     `);
 
     backfillCosts(markerPath);
@@ -39,6 +42,9 @@ SELECT session_id || '|' || printf('%.8f', cost) || '|' || COALESCE(pricing_vers
 FROM llm_requests ORDER BY session_id;
     `);
     assert.equal(first, [
+      `haiku-long-priced|0.00466500|`,
+      `haiku-long-zero|0.02332500|${PRICING_VERSION}`,
+      `haiku-short-zero|0.00366500|${PRICING_VERSION}`,
       `luna-old|0.46700000|${PRICING_VERSION}`,
       `sol-zero|4.00000000|${PRICING_VERSION}`,
       `terra-old|4.67000000|${PRICING_VERSION}`,

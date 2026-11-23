@@ -27,10 +27,11 @@
 #                                       AI CLI runtime IDs (opencode, claude).
 #                                       Delegates to rt_detect_installed when
 #                                       runtime-registry.sh is loaded.
-#   - get_model_pricing <model>       — per-1M-token pricing string in the
+#   - get_model_pricing <model> [ctx] — per-1M-token pricing string in the
 #                                       form "input|output|cache_read|cache_write"
 #                                       loaded from configs/model-pricing.json
-#                                       (or hardcoded fallback).
+#                                       (or hardcoded fallback); optional prompt
+#                                       context tokens select context_tiers.
 #   - get_provider_from_model <model> — claude/gpt/gemini/deepseek/grok →
 #                                       anthropic/openai/google/deepseek/xai.
 #
@@ -608,9 +609,15 @@ _load_model_pricing_json() {
 	return 1
 }
 
+# Usage: get_model_pricing <model> [prompt_context_tokens]
+# The optional context (uncached input + cache read + cache write) selects a
+# context_tiers entry when it is strictly above the tier threshold (for
+# example Haiku 5.5 above 100K). Without it, base rates are returned.
 get_model_pricing() {
 	local model="$1"
+	local context_tokens="${2:-0}"
 	local fallback_default_pricing="3.0|15.0|0.30|3.75"
+	[[ "$context_tokens" =~ ^[0-9]+$ ]] || context_tokens=0
 
 	# Try JSON source first (single source of truth)
 	if [[ -z "$_MODEL_PRICING_JSON_LOADED" ]]; then
@@ -635,10 +642,13 @@ get_model_pricing() {
 		fi
 		# Search for a matching key in the JSON models object
 		local result
-		result=$(echo "$_MODEL_PRICING_JSON" | jq -r --arg ms "$ms" '
+		result=$(echo "$_MODEL_PRICING_JSON" | jq -r --arg ms "$ms" --argjson ctx "$context_tokens" '
 			.models | to_entries[] |
 			select(.key as $k | $ms | contains($k)) |
-			"\(.value.input)|\(.value.output)|\(.value.cache_read)|\(.value.cache_write)"
+			.value as $v |
+			([($v.context_tiers // [])[] | select(.above < $ctx)] | sort_by(.above) | last) as $tier |
+			($tier // $v) |
+			"\(.input)|\(.output)|\(.cache_read)|\(.cache_write)"
 		' 2>/dev/null | sed -n '1p')
 		if [[ -n "$result" ]]; then
 			echo "$result"
@@ -673,7 +683,13 @@ get_model_pricing() {
 	*fable-5*) echo "10.0|50.0|1.0|12.50" ;;
 	*opus-4* | *claude-opus*) echo "15.0|75.0|1.50|18.75" ;;
 	*sonnet-4* | *claude-sonnet*) echo "$fallback_default_pricing" ;;
-	*haiku-5-5*) echo "0.10|0.50|0.01|0.125" ;;
+	*haiku-5-5*)
+		if ((context_tokens > 100000)); then
+			echo "0.50|2.50|0.05|0.625"
+		else
+			echo "0.10|0.50|0.01|0.125"
+		fi
+		;;
 	*haiku-4* | *haiku-3* | *claude-haiku*) echo "0.80|4.0|0.08|1.0" ;;
 	*gpt-4.1-mini*) echo "0.40|1.60|0.10|0.40" ;;
 	*gpt-4.1*) echo "2.0|8.0|0.50|2.0" ;;

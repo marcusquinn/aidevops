@@ -5,7 +5,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { getPricing } from "../observability.mjs";
-import { getPricingProvenance, PRICING_VERSION } from "../observability-pricing.mjs";
+import {
+  calculateCost, getPricingProvenance, getPromptContextTokens, PRICING_VERSION,
+} from "../observability-pricing.mjs";
 
 test("GPT-6 Astra and GPT-5.6 pricing use published Standard short-context API rates", () => {
   assert.deepEqual(getPricing("openai/gpt-6-astra"), {
@@ -33,7 +35,27 @@ test("GPT-6 Astra and GPT-5.6 pricing use published Standard short-context API r
     input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125,
   });
   assert.equal(getPricing("opencode-go/deepseek-v4.1-flash").input, 0.15);
-  assert.equal(PRICING_VERSION, "2026-11-19.1");
+  assert.equal(PRICING_VERSION, "2026-11-23.1");
+});
+
+test("Haiku 5.5 uses the catalogue context tier above 100K prompt tokens", () => {
+  const tiered = { input: 0.50, output: 2.50, cacheRead: 0.05, cacheWrite: 0.625 };
+  assert.deepEqual(getPricing("anthropic/claude-haiku-5-5", 100001), tiered);
+  assert.deepEqual(getPricing("anthropic/claude-haiku-5-5", 100000), {
+    input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125,
+  });
+
+  // 150K-context worker message: mostly cache reads, as in long sessions.
+  const longTokens = { input: 1000, output: 2000, reasoning: 3000, cache: { read: 144000, write: 5000 } };
+  assert.equal(getPromptContextTokens(longTokens), 150000);
+  assert.equal(calculateCost(longTokens, "anthropic/claude-haiku-5-5"), 0.023325);
+
+  // Below the threshold the same shape keeps base rates.
+  const shortTokens = { input: 1000, output: 2000, reasoning: 3000, cache: { read: 44000, write: 5000 } };
+  assert.equal(calculateCost(shortTokens, "anthropic/claude-haiku-5-5"), 0.003665);
+
+  // Untiered models ignore context size.
+  assert.deepEqual(getPricing("anthropic/claude-sonnet-5-5", 150000), getPricing("anthropic/claude-sonnet-5-5"));
 });
 
 test("specific Anthropic IDs win over generic family keys", () => {
