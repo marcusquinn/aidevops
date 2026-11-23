@@ -59,13 +59,59 @@ _runner_capability_check_fresh_logged() {
 _runner_capability_project_node() {
 	local repo_path="$1"
 	local ttl="${AIDEVOPS_RUNNER_CAPABILITY_NODE_TTL_SECONDS:-300}"
-	local requirements="" line="" required="" active="" key="" dir="" file=""
-	local tmp="" now="" stamp="" verdict="" detail="" node_rc=0
+	local requirements=""
 	[[ -n "$repo_path" && -d "$repo_path" ]] || return 0
 	declare -F _project_node_bin >/dev/null || return 0
 	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=300
-	requirements=$(_project_node_requirement "$repo_path" 2>/dev/null) || requirements="unreadable"
-	[[ -n "$requirements" ]] || return 0
+	# GH#40104: worker prelaunch checks a fresh worktree cut from the remote
+	# default branch, so evaluate that ref's pin, not a possibly stale mirror.
+	local req_dir="$repo_path" snap="" rc=0
+	if snap=$(_runner_capability_node_snapshot "$repo_path"); then
+		req_dir="$snap"
+	fi
+	requirements=$(_project_node_requirement "$req_dir" 2>/dev/null) || requirements="unreadable"
+	if [[ -z "$requirements" ]]; then
+		[[ "$req_dir" == "$repo_path" ]] || rm -rf "$req_dir"
+		return 0
+	fi
+	_runner_capability_project_node_verdict "$repo_path" "$req_dir" "$requirements" "$ttl" || rc=$?
+	[[ "$req_dir" == "$repo_path" ]] || rm -rf "$req_dir"
+	return "$rc"
+}
+
+# GH#40104: copy the Node requirement files from origin's default branch into a
+# private temp dir so the shared parser and resolver run on what workers see.
+# Prints the dir; returns 1 (nothing printed) when the ref is unreadable.
+_runner_capability_node_snapshot() {
+	local repo_path="$1" ref="" file="" tmp="" content=""
+	git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1 || return 1
+	ref=$(git -C "$repo_path" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || ref=""
+	if [[ -z "$ref" ]]; then
+		for ref in origin/main origin/master; do
+			git -C "$repo_path" rev-parse --verify --quiet "${ref}^{commit}" >/dev/null 2>&1 && break
+			ref=""
+		done
+	fi
+	[[ -n "$ref" ]] || return 1
+	git -C "$repo_path" rev-parse --verify --quiet "${ref}^{commit}" >/dev/null 2>&1 || return 1
+	tmp=$(mktemp -d "${TMPDIR:-/tmp}/runner-node-ref.XXXXXX" 2>/dev/null) || return 1
+	for file in .nvmrc .node-version .tool-versions package.json; do
+		if content=$(git -C "$repo_path" show "${ref}:${file}" 2>/dev/null); then
+			printf '%s\n' "$content" >"$tmp/$file" || {
+				rm -rf "$tmp"
+				return 1
+			}
+		fi
+	done
+	printf '%s\n' "$tmp"
+	return 0
+}
+
+_runner_capability_project_node_verdict() {
+	local repo_path="$1" req_dir="$2" requirements="$3" ttl="$4"
+	local line="" required="" active="" key="" dir="" file=""
+	local tmp="" now="" stamp="" verdict="" detail="" node_rc=0
+	# Requirement text is part of the key, so a pin change never reuses a verdict.
 	key=$(printf '%s\n%s' "$repo_path" "$requirements" | cksum | tr ' ' '-') || key=""
 	dir="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/runner-capability-node"
 	# A lost mkdir race just skips the cache for this call.
@@ -91,7 +137,7 @@ _runner_capability_project_node() {
 		printf 'runner_health: %s Node requirement unreadable (.nvmrc, .node-version, .tool-versions or package.json engines); its candidates defer, rechecked every %ss\n' \
 			"${repo_path##*/}" "$ttl" >&2
 	else
-		_project_node_bin "$repo_path" "." >/dev/null 2>&1 || node_rc=$?
+		_project_node_bin "$req_dir" "." >/dev/null 2>&1 || node_rc=$?
 		if [[ "$node_rc" -eq 1 ]]; then
 			while IFS= read -r line; do
 				[[ "$line" == "hard "* ]] || continue
