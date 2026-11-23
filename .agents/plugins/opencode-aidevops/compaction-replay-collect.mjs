@@ -16,6 +16,13 @@ export function isMedia(mime) {
   return value.startsWith("image/") || value === "application/pdf";
 }
 
+/**
+ * PDFs are media to the host but are labelled, not replayed, by default (GH#39958).
+ * @param {{ mime?: string }} part
+ * @returns {boolean}
+ */
+export const isPdf = (part) => String(part?.mime || "").toLowerCase() === "application/pdf";
+
 function isCompletedSummary(msg) {
   const info = msg?.info;
   return Boolean(info?.role === "assistant" && info.summary === true && info.finish && !info.error);
@@ -47,6 +54,28 @@ export function findCompactionAnchor(messages) {
   };
 }
 
+function decodedFilePath(url) {
+  const raw = url.slice("file://".length);
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+/**
+ * Original path of an attachment: its file URL, or the stored source path
+ * when the host inlined it as a data URL (GH#39958).
+ * @param {object} part
+ * @returns {string}
+ */
+export function attachmentPath(part) {
+  const url = String(part?.url || "");
+  if (url.startsWith("file://")) return decodedFilePath(url);
+  const path = part?.source?.path;
+  return typeof path === "string" ? path : "";
+}
+
 /**
  * Describe a file part that is not replayed inline so the model can still find it.
  * @param {object} part
@@ -55,9 +84,8 @@ export function findCompactionAnchor(messages) {
  */
 export function attachmentLabel(part, reason) {
   const name = part.filename || "file";
-  const url = String(part.url || "");
-  const path = url.startsWith("file://") ? ` (${decodeURIComponent(url.slice("file://".length))})` : "";
-  return `[Attached ${part.mime || "unknown"}: ${name}${path}${reason ? ` — ${reason}` : ""}]`;
+  const path = attachmentPath(part);
+  return `[Attached ${part.mime || "unknown"}: ${name}${path ? ` (${path})` : ""}${reason ? ` — ${reason}` : ""}]`;
 }
 
 /**
