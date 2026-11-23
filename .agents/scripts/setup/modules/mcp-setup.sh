@@ -47,10 +47,8 @@ _install_mcp_packages_node() {
 	)
 
 	local installer="npm"
-	local install_function="_npm_global_install_via_npm"
 	if ! command -v npm &>/dev/null; then
 		installer="bun"
-		install_function="npm_global_install"
 	fi
 	print_info "Using $installer to install/update Node.js MCP packages..."
 
@@ -62,7 +60,7 @@ _install_mcp_packages_node() {
 		_mcp_package_supported_on_platform "$pkg" || continue
 		local short_name="${pkg##*/}" # Strip @scope/ prefix for display
 		local package_spec="${pkg}@latest"
-		if run_with_spinner "Installing $short_name" "$install_function" "$package_spec"; then
+		if run_with_spinner "Installing $short_name" npm_global_install "$package_spec"; then
 			((++updated))
 		else
 			((++failed))

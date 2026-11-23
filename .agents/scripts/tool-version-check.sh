@@ -433,14 +433,16 @@ _consolidate_bun_global_duplicate() {
 	fi
 	# Include every application handled by cleanup_deprecated_mcps, both OpenCode
 	# config forms, and explicitly relocated user configs. Never edit project configs.
-	if ! python3 - "$HOME/.bun/bin/$bin" "$prefix/bin/$bin" <<'PY'
+	if ! python3 - "$HOME/.bun/bin/$bin" "$prefix/bin/$bin" "$HOME/.bun/install/global/node_modules/$pkg/package.json" <<'PY'
 import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
+import tempfile
 
-old, new = sys.argv[1:]
+old, new, metadata = sys.argv[1:]
 home = Path.home()
 roots = [Path(os.environ.get('XDG_CONFIG_HOME', home / '.config')) / 'opencode',
          home / '.config/opencode', home / '.opencode',
@@ -454,7 +456,17 @@ paths.extend(home / p for p in ('.claude.json', '.cursor/mcp.json',
     '.codeium/windsurf/mcp_config.json', '.gemini/settings.json', '.kilo/mcp.json',
     '.kiro/settings/mcp.json', '.amp/settings.json', '.continue/config.json',
     '.codex/config.toml', '.aider.conf.yml'))
+paths.extend([Path(os.environ.get('XDG_CONFIG_HOME', home / '.config')) / 'Claude/Claude.json',
+              home / 'Library/Application Support/Claude/claude_desktop_config.json'])
 try:
+    package = json.loads(Path(metadata).read_text())
+    bins = package.get('bin', {})
+    if isinstance(bins, str):
+        bins = {package.get('name', '').rsplit('/', 1)[-1]: bins}
+    if not isinstance(bins, dict) or set(bins) != {Path(old).name}:
+        raise ValueError(f'unverified additional package binaries in {metadata}')
+    if Path(new).resolve().is_relative_to(home / '.bun'):
+        raise ValueError(f'npm binary still depends on Bun: {new}')
     for path in dict.fromkeys(paths):
         if not path.exists() and not path.is_symlink():
             continue
@@ -467,8 +479,19 @@ try:
             repaired = re.sub(r'([\"\x27])' + re.escape(before) + r'\1',
                               lambda m: m[1] + after + m[1], repaired)
         if repaired != text:
-            # Write through symlinks; keep the user's config permissions.
-            path.write_text(repaired)
+            # Atomic replacement, preserving permissions and symlink targets.
+            target = path.resolve(strict=True)
+            mode = stat.S_IMODE(target.stat().st_mode)
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(mode='w', dir=target.parent, delete=False) as out:
+                    temporary = out.name
+                    os.chmod(temporary, mode)
+                    out.write(repaired)
+                os.replace(temporary, target)
+            finally:
+                if temporary and os.path.exists(temporary):
+                    os.unlink(temporary)
         verified = path.read_text()
         if any(value in verified for value in (old, json.dumps(old)[1:-1], old.replace('/', '\\/'))):
             raise ValueError(f'remaining reference in {path}')
@@ -1159,7 +1182,7 @@ check_category() {
 	for tool_spec in "${tools[@]}"; do
 		IFS='|' read -r category name cmd ver_flag pkg update_cmd <<<"$tool_spec"
 		_tool_package_supported_on_platform "$pkg" || continue
-		if [[ "$category" == npm && "$AUTO_UPDATE" == true && "$JSON_OUTPUT" != true ]]; then
+		if [[ "$category" == npm && "$JSON_OUTPUT" != true && "${AUTO_UPDATE:-false}" == true ]]; then
 			_consolidate_bun_global_duplicate "$pkg" "$cmd"
 		fi
 		check_tool "$category" "$name" "$cmd" "$ver_flag" "$pkg" "$update_cmd"

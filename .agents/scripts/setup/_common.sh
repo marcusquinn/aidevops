@@ -711,7 +711,7 @@ _npm_global_prefix_needs_sudo() {
 
 # Install a package globally via npm or bun, with sudo when needed on Linux.
 # Usage: npm_global_install "package-name" OR npm_global_install "package@version"
-# OpenCode uses npm first when available so stale bun installs are not recreated.
+# OpenCode and managed Node MCPs use npm first, matching the updater's owner.
 # Other packages keep the historic bun-first policy, then fall back to npm.
 # On Linux, prepends sudo only when the npm prefix is not user-writable.
 # Returns: 0 on success, 1 on failure
@@ -729,7 +729,14 @@ _npm_global_install_via_npm() {
 npm_global_install() {
 	local pkg="$1"
 
-	if [[ "$pkg" == opencode-ai || "$pkg" == opencode-ai@* ]]; then
+	local npm_first=false
+	case "$pkg" in
+	opencode-ai | opencode-ai@* | chrome-devtools-mcp | chrome-devtools-mcp@* | \
+		mcp-server-gsc | mcp-server-gsc@* | \
+		@steipete/macos-automator-mcp | @steipete/macos-automator-mcp@* | \
+		@steipete/claude-code-mcp | @steipete/claude-code-mcp@*) npm_first=true ;;
+	esac
+	if [[ "$npm_first" == true ]]; then
 		if command -v npm >/dev/null 2>&1; then
 			_npm_global_install_via_npm "$pkg"
 			return $?
