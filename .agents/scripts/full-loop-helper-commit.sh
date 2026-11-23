@@ -393,7 +393,7 @@ _unstage_foreign_todo_lines() {
 	[[ "$own_task" =~ ^t[0-9]+$ ]] || return 0
 
 	local added="" line="" tid="" foreign=""
-	added=$(git diff --cached -U0 --no-color -- TODO.md 2>/dev/null | grep -vE '^\+\+\+ (b/TODO\.md|/dev/null)$' | grep -E '^\+' || true)
+	added=$(git diff --cached -U0 --no-color --no-prefix -- TODO.md 2>/dev/null | awk '/^@@/{h=1;next} h&&/^\+/' || true)
 	[[ -n "$added" ]] || return 0
 	while IFS= read -r line; do
 		if [[ "$line" =~ ^\+-\ \[[\ x]\]\ (t[0-9]+)([^0-9]|$) ]]; then
@@ -606,6 +606,12 @@ _rebase_for_push() {
 			print_error "After inspecting the branch and confirming a PR without rebase is safe, retry:"
 			print_error "  full-loop-helper.sh commit-and-pr ... --no-rebase"
 			print_error "Do not fall back to raw inline 'gh pr create --body ...'; keep the wrapper path."
+			return 1
+		fi
+		# Autostash restoration can conflict without failing the rebase.
+		if [[ -n "$(git diff --name-only --diff-filter=U 2>/dev/null)" ]]; then
+			print_error "Rebase succeeded but restoring autostashed changes left unmerged files."
+			print_error "Resolve the conflicts, then drop the retained entry with 'git stash drop' (see 'git stash list')."
 			return 1
 		fi
 	fi
