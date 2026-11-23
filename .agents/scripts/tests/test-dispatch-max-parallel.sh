@@ -1441,6 +1441,70 @@ test_serial_loop_drain_round_grace() {
 	return 0
 }
 
+# t19300 (GH#39960): one drained-cycle scenario, run in a subshell so the real
+# watchdog helpers do not leak into later tests. Prints space-separated tokens.
+# Args: scenario (starved|fresh|disabled|foreign)
+_run_drain_tail_dispatch_scenario() {
+	local scenario="$1" stages="${TEST_ROOT}/drain-tail-stages-$1"
+	local LOCKDIR="${TEST_ROOT}/drain-tail-lock-$1"
+	local child_rc=0 parent_rc=0 round_rc=0 exit_rc=0 verdict=""
+	# shellcheck source=../pulse-watchdog.sh
+	source "${SCRIPT_DIR}/pulse-watchdog.sh"
+	export AIDEVOPS_PULSE_STAGE_STATE_DIR="$stages"
+	rm -rf "$LOCKDIR" "$stages"
+	mkdir -p "$LOCKDIR" "$stages"
+	printf '%s\n' "$$" >"${LOCKDIR}/pid"
+	date +%s >"${LOCKDIR}/supervisor_heartbeat_epoch"
+	printf 'owner=%s\nbundle=bundle-next\n' "$$" >"${LOCKDIR}/drain_requested"
+	case "$scenario" in
+	fresh) date +%s >"${stages}/maintenance_tail.complete" ;;
+	disabled) export AIDEVOPS_PULSE_DRAIN_TAIL_DISPATCH=0 ;;
+	foreign)
+		date +%s >"${stages}/maintenance_tail.complete"
+		printf 'owner=1\nverdict=1\n' >"${LOCKDIR}/drain_tail_override"
+		;;
+	esac
+	unset _PULSE_DRAIN_TAIL_OVERRIDE
+	: >"$LOGFILE"
+	# First read in a command substitution, as dispatch entries do.
+	(_pulse_drain_suppresses_dispatch >/dev/null) || child_rc=$?
+	_pulse_drain_suppresses_dispatch >/dev/null || parent_rc=$?
+	AIDEVOPS_PULSE_DRAIN_ROUND_GRACE_S=0 _pulse_drain_stops_admitted_round || round_rc=$?
+	local _PULSE_MAIN_DISPATCH_RESERVE_S=900
+	_pulse_cycle_drain_exit "maintenance_stages" || exit_rc=$?
+	verdict=$(_pulse_drain_tail_verdict_read) || verdict="none"
+	printf 'child=%s parent=%s round=%s exit=%s reserve=%s verdict=%s logs=%s dispatch_note=%s\n' \
+		"$child_rc" "$parent_rc" "$round_rc" "$exit_rc" "$_PULSE_MAIN_DISPATCH_RESERVE_S" "$verdict" \
+		"$(grep -c 'maintenance tail starved' "$LOGFILE")" \
+		"$(grep -c 'stages with dispatch (t19300)' "$LOGFILE")"
+	rm -rf "$LOCKDIR" "$stages"
+	return 0
+}
+
+# t19300 (GH#39960): a drained cycle that runs its starved maintenance tail
+# keeps dispatching (predicate, admitted round, main-dispatch reserve). A fresh
+# tail, AIDEVOPS_PULSE_DRAIN_TAIL_DISPATCH=0 or a foreign verdict file keeps
+# the drain's suppression. The verdict is decided and logged once even when a
+# subshell decides first.
+test_drain_starved_tail_keeps_dispatch() {
+	local scenario="" expected="" got=""
+	for scenario in starved fresh disabled foreign; do
+		case "$scenario" in
+		starved) expected="child=1 parent=1 round=1 exit=1 reserve=900 verdict=1 logs=1 dispatch_note=1" ;;
+		fresh) expected="child=0 parent=0 round=0 exit=0 reserve=0 verdict=0 logs=0 dispatch_note=0" ;;
+		disabled) expected="child=0 parent=0 round=0 exit=1 reserve=0 verdict=1 logs=1 dispatch_note=0" ;;
+		foreign) expected="child=0 parent=0 round=0 exit=0 reserve=0 verdict=0 logs=0 dispatch_note=0" ;;
+		esac
+		got=$(_run_drain_tail_dispatch_scenario "$scenario")
+		if [[ "$got" == "$expected" ]]; then
+			print_result "drain tail dispatch (${scenario}): ${expected}" 0
+		else
+			print_result "drain tail dispatch (${scenario})" 1 "expected='${expected}' got='${got}'"
+		fi
+	done
+	return 0
+}
+
 # GH#38033: a serial round caused only by the REST-core reserve resumes the
 # bounded parallel loop once the reserve clears; throttle-file and persistent
 # reserve rounds stay serial. Arguments: scenario (recover|throttle|persistent)
@@ -2075,6 +2139,7 @@ test_serial_loop_budget_cap
 test_serial_loop_allows_unset_stop_flag
 test_serial_loop_cooperative_drain
 test_serial_loop_drain_round_grace
+test_drain_starved_tail_keeps_dispatch
 test_serial_loop_rest_reserve_recovery recover
 test_serial_loop_rest_reserve_recovery throttle
 test_serial_loop_rest_reserve_recovery persistent
