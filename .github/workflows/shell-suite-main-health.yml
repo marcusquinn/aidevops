@@ -27,15 +27,17 @@ concurrency:
 
 jobs:
   shell-suite-health:
-    name: Run all shell suites on main
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    name: Run all shell suites
+    # Scheduled runs remain on main; a trusted manual dispatch can verify a fix
+    # on its exact branch before merging and closing the health investigation.
+    if: github.event_name == 'workflow_dispatch' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
-      - name: Checkout main
+      - name: Checkout suite source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ github.ref }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -136,7 +138,7 @@ jobs:
           red="$(awk -F'\t' 'NR>1 && $4=="regression"' "$results" | wc -l | tr -d ' ')"
           timeouts="$(awk -F'\t' 'NR>1 && $4=="regression" && $2 ~ /124/' "$results" | wc -l | tr -d ' ')"
           {
-            echo '### Shell suite health on main'
+            echo "### Shell suite health on ${GITHUB_REF}"
             echo
             echo "Reproducible regressions: ${red} (of which with a timeout, exit 124: ${timeouts})"
             echo
