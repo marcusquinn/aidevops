@@ -502,7 +502,10 @@ PY
 	then
 		return 0
 	fi
-	if bun remove -g "$pkg" >&2; then
+	# Bind deletion to the inspected scope, overriding relocated Bun globals and
+	# bunfig settings. Removing a duplicate must not run package lifecycle scripts.
+	if BUN_INSTALL_GLOBAL_DIR="$HOME/.bun/install/global" BUN_INSTALL_BIN="$HOME/.bun/bin" \
+		bun remove -g --ignore-scripts "$pkg" >&2; then
 		printf '  Removed duplicate Bun package %s after repairing and verifying managed references.\n' "$pkg" >&2
 	else
 		printf '  ⚠ Bun removal failed for %s; managed references now use npm.\n' "$pkg" >&2
