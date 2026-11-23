@@ -377,7 +377,7 @@ printf 'Safe body\n' | PRIVACY_REPOS_CONFIG="${TMP}/absent-inventory.json" \
 missing_inventory_rc=$?
 if [[ $missing_inventory_rc -eq 1 ]] &&
 	grep -q 'Private entity inventory could not be loaded' "${TMP}/missing.err" &&
-	! grep -q '^issue create ' "$GH_CALLS"; then
+	! grep -Eq '^(issue create |api .*-X POST .*/issues)' "$GH_CALLS"; then
 	pass "missing fixture inventory refuses publication before transport"
 else
 	fail "missing fixture inventory refuses publication before transport" "rc=${missing_inventory_rc}"
@@ -390,7 +390,7 @@ printf 'fixture/private-project\n' | PATH="${STUB_BIN}:$PATH" \
 private_body_rc=$?
 if [[ $private_body_rc -eq 1 ]] &&
 	grep -q 'Public write contains private material' "${TMP}/private.err" &&
-	! grep -q '^issue create ' "$GH_CALLS"; then
+	! grep -Eq '^(issue create |api .*-X POST .*/issues)' "$GH_CALLS"; then
 	pass "synthetic private inventory still blocks matching content"
 else
 	fail "synthetic private inventory still blocks matching content" "rc=${private_body_rc}"
