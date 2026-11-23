@@ -246,8 +246,8 @@ test_priority_dashboard_precedes_optional_cross_repo_work() {
 		in_production { print }
 		in_production && /^}$/ { exit }
 	' "$dashboard_script")
-	priority_line=$(printf '%s\n' "$production_snippet" | grep -nE "^[[:space:]]*(if[[:space:]]+)?priority_slug=[\$]\(_refresh_priority_health_issue \"[\$]repo_entries\"\)" | head -1 | cut -d: -f1)
-	cache_line=$(printf '%s\n' "$production_snippet" | grep -nE '^[[:space:]]*_refresh_health_aggregate_caches ' | head -1 | cut -d: -f1) || cache_line=""
+	priority_line=$(printf '%s\n' "$production_snippet" | grep -nE "^[[:space:]]*(if[[:space:]]+)?priority_slug=[\$]\(_refresh_priority_health_issue \"[\$]repo_entries\"\)" | sed -n '1p' | cut -d: -f1)
+	cache_line=$(printf '%s\n' "$production_snippet" | grep -nE '^[[:space:]]*_refresh_health_aggregate_caches ' | sed -n '1p' | cut -d: -f1) || cache_line=""
 	if [[ -n "$priority_line" && -n "$cache_line" && "$priority_line" -lt "$cache_line" ]]; then
 		print_result "priority dashboard refresh precedes optional cross-repo work" 0
 		return 0
