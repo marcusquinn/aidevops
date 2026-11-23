@@ -820,13 +820,58 @@ cat >"$FIXTURE_PR_JSON" <<'JSON'
 JSON
 sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18014 "owner/repo" 2>/dev/null)
 assertion_rc=1
-if [[ "$sum_output" == "500000|2" ]]; then assertion_rc=0; fi
+if [[ "$sum_output" == "300000|1" ]]; then assertion_rc=0; fi
 print_result "verified PR mention in signed worker report resets spend" "$assertion_rc" "(got: '$sum_output')"
 printf 'not-valid-json' >"$FIXTURE_PR_JSON"
 sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18014 "owner/repo" 2>/dev/null)
 assertion_rc=1
 if [[ "$sum_output" == "1200000|3" ]]; then assertion_rc=0; fi
 print_result "unreadable PR mention is skipped without failing open" "$assertion_rc" "(got: '$sum_output')"
+
+# GH#39969: no timeline events or closeout markers, only a signed Markdown
+# PR URL posted 55 seconds after merge. Its cumulative footer is delivered work,
+# not a new 7M-token failure. The resumed session charges only subsequent usage.
+cat >"$FIXTURE_PR_JSON" <<'JSON'
+{"base":{"repo":{"full_name":"owner/repo"}},"body":"For #18014","merged_at":"2026-05-03T19:25:00Z"}
+JSON
+cat >"$FIXTURE_COMMENTS_JSON" <<'JSON'
+[
+  {"created_at":"2026-05-03T18:00:00Z","body":"spent 700000 tokens"},
+  {"created_at":"2026-05-03T19:25:55Z","author_association":"MEMBER","user":{"login":"runner"},"body":"Merged [checkpoint](https://github.com/owner/repo/pull/43).\n<!-- aidevops:sig -->\n<!-- aidevops:usage:full-v1 -->\nspent 1h and 7,262,638 tokens"},
+  {"created_at":"2026-05-03T19:30:55Z","author_association":"MEMBER","user":{"login":"runner"},"body":"<!-- aidevops:usage:full-v1 -->\nspent 1h 5m and 7,302,638 tokens"}
+]
+JSON
+URL_REPORT_FIXTURE=$(<"$FIXTURE_COMMENTS_JSON")
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18014 "owner/repo" 2>/dev/null)
+assertion_rc=1
+if [[ "$sum_output" == "40000|1" ]]; then assertion_rc=0; fi
+print_result "verified Markdown PR URL supplies merged-session baseline" "$assertion_rc" "(got: '$sum_output')"
+for report_filter in \
+	'.[1].author_association = "NONE"' \
+	'.[1].body |= sub("owner/repo/pull"; "other/repo/pull")' \
+	'.[1].body |= sub("https://github.com"; "https://example.com")' \
+	'.[1].body |= sub("<!-- aidevops:sig -->"; "unsigned")'; do
+	printf '%s' "$URL_REPORT_FIXTURE" | jq "$report_filter" >"$FIXTURE_COMMENTS_JSON"
+	sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18014 "owner/repo" 2>/dev/null)
+	assertion_rc=1
+	if [[ "$sum_output" == "8002638|3" ]]; then assertion_rc=0; fi
+	print_result "URL checkpoint rejects $report_filter" "$assertion_rc" "(got: '$sum_output')"
+done
+# A stale copy can nominate a verified checkpoint but cannot erase later usage.
+printf '%s' "$URL_REPORT_FIXTURE" | jq '.[1].created_at = "2026-05-03T19:28:00Z"' >"$FIXTURE_COMMENTS_JSON"
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18014 "owner/repo" 2>/dev/null)
+assertion_rc=1
+if [[ "$sum_output" == "7302638|2" ]]; then assertion_rc=0; fi
+print_result "delayed signed URL report remains chargeable" "$assertion_rc" "(got: '$sum_output')"
+printf '%s' "$URL_REPORT_FIXTURE" >"$FIXTURE_COMMENTS_JSON"
+for pr_filter in '.merged_at = null' '.body = "For #99999"' '.base.repo.full_name = "other/repo"'; do
+	printf '%s' '{"base":{"repo":{"full_name":"owner/repo"}},"body":"For #18014","merged_at":"2026-05-03T19:25:00Z"}' |
+		jq "$pr_filter" >"$FIXTURE_PR_JSON"
+	sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18014 "owner/repo" 2>/dev/null)
+	assertion_rc=1
+	if [[ "$sum_output" == "8002638|3" ]]; then assertion_rc=0; fi
+	print_result "URL checkpoint requires verified merge: $pr_filter" "$assertion_rc" "(got: '$sum_output')"
+done
 
 # =============================================================================
 # t18729 — repository budget override from a committed
