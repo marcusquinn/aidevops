@@ -200,7 +200,6 @@ _build_signature() {
 	local solved="$7"
 	local issue_total_tokens="${8:-}"
 	local session_type="${9:-}"
-
 	local aidevops_version
 	aidevops_version=$(aidevops_find_version)
 
@@ -210,10 +209,7 @@ _build_signature() {
 		display_model="${display_model##*/}"
 	fi
 
-	# Target: [aidevops.sh](...) v3.5.10 in [CLI](...) v1.3.3 with claude-opus-4-6 used N tokens for Xm, Zm since this issue was created.
 	local sig="[aidevops.sh](https://aidevops.sh) v${aidevops_version}"
-
-	# "plugin for [CLI] vX.Y.Z"
 	if [[ -n "$cli_name" ]]; then
 		local url
 		url=$(_cli_url "$cli_name")
@@ -227,7 +223,6 @@ _build_signature() {
 		fi
 	fi
 
-	# "with model"
 	if [[ -n "$display_model" ]]; then
 		sig="${sig} with ${display_model}"
 	fi
@@ -282,7 +277,6 @@ _build_signature() {
 		sig="${sig} ${formatted_total} total tokens on this issue."
 	fi
 	# Version the accounting unit without changing the historical footer grammar.
-	# The breaker must never subtract a legacy non-cached baseline from full usage.
 	if [[ -n "$has_tokens" ]]; then
 		sig="${sig} Usage includes cache and reasoning. <!-- aidevops:usage:full-v1 -->"
 	fi
