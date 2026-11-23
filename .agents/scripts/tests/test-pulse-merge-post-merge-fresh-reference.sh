@@ -22,11 +22,15 @@ READS="${TEST_ROOT}/reads"
 # File-backed read state survives command substitutions in the real functions.
 gh_pr_view() {
 	if [[ ! -e "$READS" ]]; then
-		: >"$READS"
+		printf '%s\n' 'Resolves #123' >"$READS"
 		printf '%s\n' 'Resolves #123'
 		return 0
 	fi
 	printf 'cache-bypass:%s\n' "${AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE:-0}" >>"$CALLS"
+	if [[ "${AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE:-0}" != 1 ]]; then
+		printf '%s\n' "$(<"$READS")"
+		return 0
+	fi
 	[[ "$FRESH_BODY" != READ_FAILURE ]] || return 1
 	printf '%s\n' "$FRESH_BODY"
 	return 0
@@ -92,3 +96,42 @@ run_case 'changed closing target uses fresh issue' 'Fixes #456' 456
 run_case 'empty body does not close stale issue' '' ''
 run_case 'failed body read does not close stale issue' READ_FAILURE ''
 run_case 'already-in-progress path refreshes closing target' 'For #123' '' 'Merge already in progress' 1
+
+# Exercise the real restoration control flow, not just its call from closeout.
+# Ownership/API boundaries are deterministic stubs; body reads and the stale
+# snapshot above remain shared by the finalizer and continuation implementation.
+# shellcheck source=../pulse-merge-partial-continuation.sh
+source "${TEST_DIR}/../pulse-merge-partial-continuation.sh"
+_extract_pr_work_issue() { printf '123'; return 0; }
+_pmpc_merged_pr_author() { printf 'runner'; return 0; }
+_pm_issue_api() { printf 'repos/example/repo/issues/123'; return 0; }
+_pmpc_gh_read() { printf '{}'; return 0; }
+_pmpc_issue_scope() { printf 'leaf'; return 0; }
+_pmpc_release_owner_from_comments() { printf 'runner'; return 0; }
+_pmpc_owned_assignees() { printf 'runner'; return 0; }
+_pmpc_other_open_pr_owns_issue() { return 1; }
+_pmpc_project_available() {
+	local target="$2"
+	printf 'available:%s\n' "$target" >>"$CALLS"
+	return 0
+}
+
+run_real_restore_case() {
+	local pr_number=99 repo_slug=example/repo pr_labels=origin:worker
+	local pr_base_ref_name=main merge_summary=summary merge_output=merged _merge_exit=0
+	local linked_issue=""
+	FRESH_BODY='For #123'
+	rm -f "$READS"
+	: >"$CALLS"
+	linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
+	[[ "$linked_issue" == 123 && "$(<"$READS")" == 'Resolves #123' ]]
+	_pmp_stage_finalize_merge
+	grep -Fxq 'available:123' "$CALLS"
+	if grep -Eq '^(close:|cache-bypass:0)' "$CALLS"; then
+		printf 'FAIL real restoration reused stale close authority\n'
+		return 1
+	fi
+	printf 'PASS real restoration bypasses primed stale body cache\n'
+	return 0
+}
+run_real_restore_case
