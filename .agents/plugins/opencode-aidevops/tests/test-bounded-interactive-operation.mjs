@@ -269,7 +269,7 @@ describe("bounded interactive operations", () => {
             "fixture", scriptsDir, `${linked}\tfeature/adopt\t0`],
           cwd: linked, budgetMs: 15000,
         }, owner);
-        assert.equal((await terminal(instance, handoff.operation_id, owner, 17000)).state, "succeeded");
+        assert.equal((await terminal(instance, handoff.operation_id)).state, "succeeded");
         const receipt = JSON.parse(readFileSync(join(process.env.AIDEVOPS_FULL_LOOP_CLEANUP_DIR, "example_repo-123.json"), "utf8"));
         assert.equal(receipt.owner.session, owner.sessionID);
         assert.equal(receipt.owner.pid, process.pid);
@@ -279,7 +279,7 @@ describe("bounded interactive operations", () => {
         assert.throws(() => invoke(), "cleanup deferral must not enable live-owner adoption");
         await assert.rejects(instance.start({ command: [process.execPath], cwd: linked }, { sessionID: "ses_other" }), /not owned/);
         const resumed = await instance.start({ command: [process.execPath, "-e", "process.exit(0)"], cwd: linked, budgetMs: 5000 }, owner);
-        assert.equal((await terminal(instance, resumed.operation_id, owner, 7000)).state, "succeeded");
+        assert.equal((await terminal(instance, resumed.operation_id)).state, "succeeded");
       } finally {
         for (const key of environmentKeys) {
           if (priorEnvironment[key] === undefined) delete process.env[key];
@@ -382,7 +382,7 @@ describe("bounded interactive operations", () => {
       const nestedCommand = ["bash", "-c", "set -m; sleep 30 & echo nested:$!; wait"];
       let recordedBefore = recorded.length;
       const timed = await instance.start({ command: nestedCommand, budgetMs: 400 }, owner);
-      const timedResult = await terminal(instance, timed.operation_id, owner, 5000);
+      const timedResult = await terminal(instance, timed.operation_id);
       assert.equal(timedResult.state, "timed_out");
       assert.equal(timedResult.containment, "owned_process_tree");
       assert.equal(timedResult.nested_process_groups, 1);
@@ -392,7 +392,7 @@ describe("bounded interactive operations", () => {
       const cancelled = await instance.start({ command: nestedCommand, budgetMs: 10_000 }, owner);
       await new Promise((resolve) => setTimeout(resolve, 400));
       instance.cancel(cancelled.operation_id, owner);
-      const cancelledResult = await terminal(instance, cancelled.operation_id, owner, 5000);
+      const cancelledResult = await terminal(instance, cancelled.operation_id);
       assert.equal(cancelledResult.state, "cancelled");
       assert.equal(alive(nestedPid(recordedBefore)), false, "nested process group survived cancellation");
 
@@ -406,7 +406,7 @@ describe("bounded interactive operations", () => {
       });
       if (timeoutBinary) {
         const gnu = await instance.start({ command: [timeoutBinary, "30", "sleep", "30"], budgetMs: 400 }, owner);
-        const gnuResult = await terminal(instance, gnu.operation_id, owner, 5000);
+        const gnuResult = await terminal(instance, gnu.operation_id);
         assert.equal(gnuResult.state, "timed_out");
         assert.equal(gnuResult.containment, "owned_process_tree");
       }
@@ -425,7 +425,7 @@ describe("bounded interactive operations", () => {
     ];
     for (const shape of shapes) {
       const started = await instance.start({ command: ["bash", "-c", shape], budgetMs: 20_000 }, owner);
-      const result = await terminal(instance, started.operation_id, owner, 5000);
+      const result = await terminal(instance, started.operation_id);
       assert.equal(result.state, "failed", shape);
       assert.ok(result.process_exit > 0, shape);
       assert.equal(result.evidence_state, "recorded", shape);
@@ -450,7 +450,7 @@ describe("bounded interactive operations", () => {
         }
         assert.ok(pid, "escaped server never listened");
         if (mode === "cancel") instance.cancel(started.operation_id, owner);
-        const result = await terminal(instance, started.operation_id, owner, 20000);
+        const result = await terminal(instance, started.operation_id);
         assert.equal(result.state, { completion: "succeeded", cancel: "cancelled", expiry: "timed_out" }[mode]);
         // GH#34047: only completion-triggered cleanup is reported; exit 0 is not liveness.
         assert.equal(result.post_exit_descendants_terminated, mode === "completion", `${mode}: post-exit receipt field`);
