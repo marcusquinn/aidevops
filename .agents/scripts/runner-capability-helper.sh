@@ -83,7 +83,7 @@ _runner_capability_project_node() {
 # private temp dir so the shared parser and resolver run on what workers see.
 # Prints the dir; returns 1 (nothing printed) when the ref is unreadable.
 _runner_capability_node_snapshot() {
-	local repo_path="$1" ref="" file="" tmp="" content=""
+	local repo_path="$1" ref="" commit="" file="" tmp="" content=""
 	git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1 || return 1
 	ref=$(git -C "$repo_path" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || ref=""
 	if [[ -z "$ref" ]]; then
@@ -93,10 +93,10 @@ _runner_capability_node_snapshot() {
 		done
 	fi
 	[[ -n "$ref" ]] || return 1
-	git -C "$repo_path" rev-parse --verify --quiet "${ref}^{commit}" >/dev/null 2>&1 || return 1
+	commit=$(git -C "$repo_path" rev-parse --verify --quiet "${ref}^{commit}" 2>/dev/null) || return 1
 	tmp=$(mktemp -d "${TMPDIR:-/tmp}/runner-node-ref.XXXXXX" 2>/dev/null) || return 1
 	for file in .nvmrc .node-version .tool-versions package.json; do
-		if content=$(git -C "$repo_path" show "${ref}:${file}" 2>/dev/null); then
+		if content=$(git -C "$repo_path" show "${commit}:${file}" 2>/dev/null); then
 			printf '%s\n' "$content" >"$tmp/$file" || {
 				rm -rf "$tmp"
 				return 1
