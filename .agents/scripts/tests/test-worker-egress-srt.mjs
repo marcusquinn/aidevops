@@ -120,6 +120,54 @@ function homebrewClosure(tools) {
   return [path.join(prefix, 'opt'), ...kegs.map(k => fs.realpathSync(path.join(prefix, 'opt', k)))];
 }
 
+function resolve(name) {
+  for (const dir of process.env.PATH.split(path.delimiter)) {
+    const candidate = path.join(dir, name);
+    try { fs.accessSync(candidate, fs.constants.X_OK); return fs.realpathSync(candidate); } catch { /* keep looking */ }
+  }
+  throw new Error('missing tool: ' + name);
+}
+
+function removeEmptyTemp(directory) {
+  try { fs.rmdirSync(directory); }
+  catch (error) { if (error.code !== 'ENOTEMPTY') throw error; }
+}
+
+function checkTemporaryIsolation(invoke, policyFile, python, output) {
+  // Unlisted synthetic HOST data at SRT's implicit write root must remain
+  // unreadable and unchanged; writes to a private tmpfs shadow are harmless.
+  const defaultTemp = '/tmp/claude';
+  let madeDefaultTemp = false;
+  try { fs.mkdirSync(defaultTemp, { mode: 0o700 }); madeDefaultTemp = true; }
+  catch (error) { if (error.code !== 'EEXIST') throw error; }
+  let hostRoot;
+  try {
+    hostRoot = fs.mkdtempSync(path.join(defaultTemp, 'aidevops-canary-'));
+    const hostFile = path.join(hostRoot, 'host-only');
+    fs.writeFileSync(hostFile, 'synthetic host marker', { mode: 0o600 });
+    const isolated = invoke(['run', '--policy', policyFile, '--', python, '-I', '-c', String.raw`
+import os, sys, tempfile
+try:
+    assert open(sys.argv[1]).read() != 'synthetic host marker', 'host temp data exposed'
+except OSError:
+    pass
+try:
+    with open(sys.argv[1], 'a') as f:
+        f.write('escape')
+except OSError:
+    pass
+assert os.environ['TMPDIR'] == sys.argv[2]
+with tempfile.TemporaryFile() as f:
+    f.write(b'private temporary output')
+`, hostFile, output]);
+    assert.equal(isolated.status, 0, isolated.stdout + isolated.stderr);
+    assert.equal(fs.readFileSync(hostFile, 'utf8'), 'synthetic host marker');
+  } finally {
+    if (hostRoot) fs.rmSync(hostRoot, { recursive: true, force: true });
+    if (madeDefaultTemp) removeEmptyTemp(defaultTemp);
+  }
+}
+
 test('real platform qualification (explicit opt-in, synthetic data, no provider contact)', {
   skip: process.env.AIDEVOPS_SRT_REAL_CHECK !== '1', timeout: 120000,
 }, async () => {
@@ -127,13 +175,6 @@ test('real platform qualification (explicit opt-in, synthetic data, no provider 
   const root = fs.mkdtempSync(path.join(temp, 'srt-test-'));
   const output = path.join(root, 'output');
   fs.mkdirSync(output, { mode: 0o700 });
-  const resolve = name => {
-    for (const dir of process.env.PATH.split(path.delimiter)) {
-      const candidate = path.join(dir, name);
-      try { fs.accessSync(candidate, fs.constants.X_OK); return fs.realpathSync(candidate); } catch { /* keep looking */ }
-    }
-    throw new Error('missing tool: ' + name);
-  };
   try {
     const tools = { shell: resolve('bash'), python: resolve('python3'), rg: resolve('rg'),
       coreutils: resolve('env'), procps: resolve('ps'), which: resolve('which') };
@@ -177,40 +218,7 @@ test('real platform qualification (explicit opt-in, synthetic data, no provider 
       tools.python, '-I', '-c', 'import sys; print(sys.argv[1])', 'a b;$(false)']);
     assert.equal(run.status, 0, run.stdout + run.stderr);
     assert.equal(run.stdout.trim(), 'a b;$(false)');
-    // Unlisted synthetic HOST data at SRT's implicit write root must remain
-    // unreadable and unchanged; writes to a private tmpfs shadow are harmless.
-    const defaultTemp = '/tmp/claude';
-    let madeDefaultTemp = false;
-    try { fs.mkdirSync(defaultTemp, { mode: 0o700 }); madeDefaultTemp = true; }
-    catch (error) { if (error.code !== 'EEXIST') throw error; }
-    let hostRoot;
-    try {
-      hostRoot = fs.mkdtempSync(path.join(defaultTemp, 'aidevops-canary-'));
-      const hostFile = path.join(hostRoot, 'host-only');
-      fs.writeFileSync(hostFile, 'synthetic host marker', { mode: 0o600 });
-      const isolated = invoke(['run', '--policy', policyFile, '--', tools.python, '-I', '-c', String.raw`
-import os, sys, tempfile
-try:
-    assert open(sys.argv[1]).read() != 'synthetic host marker', 'host temp data exposed'
-except OSError:
-    pass
-try:
-    with open(sys.argv[1], 'a') as f:
-        f.write('escape')
-except OSError:
-    pass
-assert os.environ['TMPDIR'] == sys.argv[2]
-with tempfile.TemporaryFile() as f:
-    f.write(b'private temporary output')
-`, hostFile, output]);
-      assert.equal(isolated.status, 0, isolated.stdout + isolated.stderr);
-      assert.equal(fs.readFileSync(hostFile, 'utf8'), 'synthetic host marker');
-    } finally {
-      if (hostRoot) fs.rmSync(hostRoot, { recursive: true, force: true });
-      if (madeDefaultTemp) {
-        try { fs.rmdirSync(defaultTemp); } catch (error) { if (error.code !== 'ENOTEMPTY') throw error; }
-      }
-    }
+    checkTemporaryIsolation(invoke, policyFile, tools.python, output);
     // The supervisor exports framework constants; the workload must not see them.
     const envRun = invoke(['run', '--policy', policyFile, '--', tools.python, '-I', '-c',
       'import os,json; print(json.dumps(sorted(os.environ)))']);
