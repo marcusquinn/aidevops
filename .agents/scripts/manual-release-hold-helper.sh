@@ -14,6 +14,10 @@
 # Advisory: expired holds are ignored and API failures fail open with a warning.
 # Forced updates are not mutually exclusive: concurrent renewals or replacements
 # of expired holds may overwrite each other. Only initial ref creation is atomic.
+#
+# Sourced as a library by full-loop-helper-merge.sh and pulse-merge.sh, so every
+# function is namespaced (_mrh_* or manual_release_hold_*). Generic names such as
+# cmd_status or main would replace the caller's own commands (GH#39959).
 
 _MRH_UPDATE="update"
 _MRH_FILE="manual-release.json"
@@ -169,7 +173,7 @@ _mrh_duplicate_prs() {
 	return 0
 }
 
-cmd_hold() {
+_mrh_cmd_hold() {
 	local repo="${1:-}"
 	shift || true
 	local pr="" version="" ttl="$_MRH_DEFAULT_TTL_MINUTES"
@@ -242,7 +246,7 @@ cmd_hold() {
 	return 0
 }
 
-cmd_unhold() {
+_mrh_cmd_unhold() {
 	local repo="${1:-}"
 	_mrh_valid_repo "$repo" || return 1
 	local rc=0
@@ -259,7 +263,7 @@ cmd_unhold() {
 	return 0
 }
 
-cmd_status() {
+_mrh_cmd_status() {
 	local repo="${1:-}"
 	_mrh_valid_repo "$repo" || return 1
 	local json="" rc=0
@@ -275,7 +279,7 @@ cmd_status() {
 	return 0
 }
 
-cmd_owner() {
+_mrh_cmd_owner() {
 	local repo="${1:-}"
 	local tag="${2:-}"
 	shift 2 || true
@@ -306,7 +310,7 @@ cmd_owner() {
 }
 
 # Best-effort bus notice to the recorded roll-out owner. Never fails the caller.
-cmd_owner_notify() {
+_mrh_cmd_owner_notify() {
 	local repo="${1:-}"
 	local tag="${2:-}"
 	shift 2 || true
@@ -335,7 +339,7 @@ cmd_owner_notify() {
 	return 0
 }
 
-cmd_duplicate_check() {
+_mrh_cmd_duplicate_check() {
 	local repo="${1:-}"
 	local version="${2:-}"
 	_mrh_valid_repo "$repo" && _mrh_valid_version "$version" || return 1
@@ -348,17 +352,17 @@ cmd_duplicate_check() {
 	return 0
 }
 
-main() {
+_mrh_main() {
 	local cmd="${1:-}"
 	shift || true
 	case "$cmd" in
-	hold) cmd_hold "$@" ;;
-	unhold | release) cmd_unhold "$@" ;;
-	status | hold-status) cmd_status "$@" ;;
+	hold) _mrh_cmd_hold "$@" ;;
+	unhold | release) _mrh_cmd_unhold "$@" ;;
+	status | hold-status) _mrh_cmd_status "$@" ;;
 	check) manual_release_hold_check "$@" ;;
-	owner) cmd_owner "$@" ;;
-	owner-notify) cmd_owner_notify "$@" ;;
-	duplicate-check) cmd_duplicate_check "$@" ;;
+	owner) _mrh_cmd_owner "$@" ;;
+	owner-notify) _mrh_cmd_owner_notify "$@" ;;
+	duplicate-check) _mrh_cmd_duplicate_check "$@" ;;
 	*)
 		printf 'Usage: manual-release-hold-helper.sh hold|unhold|status|check|owner|owner-notify|duplicate-check ...\n' >&2
 		return 1
@@ -369,5 +373,5 @@ main() {
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	set -euo pipefail
-	main "$@"
+	_mrh_main "$@"
 fi
