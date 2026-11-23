@@ -105,6 +105,25 @@ jobs:
           test -r "${agents_dir}/configs/aidevops-config.schema.json"
           test -x "${agents_dir}/scripts/config-helper.sh"
 
+      # GH#40029: Vault helpers trust only the managed crypto runtime that setup
+      # provisions at ~/.aidevops/.agent-workspace/python-env/vault, so the Vault
+      # suites exercised a missing installation. Provision it with the production
+      # function and the pinned vault-requirements.txt; no setup.sh, no services.
+      - name: Stage managed Vault crypto runtime
+        timeout-minutes: 5
+        run: |
+          env_dir="${HOME}/.aidevops/.agent-workspace/python-env/vault"
+          if [[ -e "$env_dir" || -L "$env_dir" ]]; then
+            echo '::error::Refusing to replace an existing Vault runtime'
+            exit 1
+          fi
+          # shellcheck source=/dev/null
+          source .agents/scripts/setup/_common.sh
+          # shellcheck source=/dev/null
+          source .agents/scripts/setup/modules/tool-install.sh
+          setup_vault_python_env
+          "${env_dir}/bin/python3" .agents/scripts/vault-runtime-check.py
+
       - name: Run every root suite
         id: suites
         env:
