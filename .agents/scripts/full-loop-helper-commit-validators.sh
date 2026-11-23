@@ -228,6 +228,94 @@ _validator_state_unchanged() {
 	return 1
 }
 
+# GH#40064: a validator TIMEOUT is an environment outcome, not a check result.
+# When the PR base branch already requires a status check for the same phase,
+# that merge gate decides instead of a saturated local host. Set per run by
+# _run_project_validators; read by commit-and-pr PR metadata.
+FULL_LOOP_VALIDATOR_DEFERRALS=""
+
+# Print the PR base branch's required status-check contexts, one per line.
+# One lookup per validator run, shared by scope subshells via snapshot_dir.
+# Rulesets and classic protection are unioned: a context from either source is
+# genuine merge-gate evidence. Returns 1 when neither source can be read.
+_validator_required_contexts() {
+	local snapshot_dir="$1"
+	local cache="${snapshot_dir}/required-contexts" failed="${snapshot_dir}/required-contexts.failed"
+	local slug="${repo:-}" base="" origin_url="" rules="" classic="" sources=0 line=""
+	if [[ -f "$cache" ]]; then
+		while IFS= read -r line; do printf '%s\n' "$line"; done <"$cache"
+		return 0
+	fi
+	[[ -f "$failed" ]] && return 1
+	if [[ "$slug" != */* ]]; then
+		origin_url=$(git remote get-url origin 2>/dev/null) || origin_url=""
+		slug=$(printf '%s\n' "$origin_url" | sed -E 's#\.git$##; s#^.*[:/]([^/:]+/[^/]+)$#\1#')
+	fi
+	base=$(_resolve_pr_base_branch origin 2>/dev/null) || base=""
+	if [[ "$slug" != */* || -z "$base" ]] || ! command -v gh >/dev/null 2>&1; then
+		: >"$failed"
+		return 1
+	fi
+	if rules=$(gh api "repos/${slug}/rules/branches/${base}" \
+		--jq '.[] | select(.type == "required_status_checks") | (.parameters.required_status_checks // [])[] | (.context // empty)' 2>/dev/null); then
+		sources=$((sources + 1))
+	fi
+	if classic=$(gh api "repos/${slug}/branches/${base}" \
+		--jq '(.protection.required_status_checks.contexts // [])[]' 2>/dev/null); then
+		sources=$((sources + 1))
+	fi
+	if [[ "$sources" -eq 0 ]]; then
+		: >"$failed"
+		return 1
+	fi
+	printf '%s\n%s\n' "$rules" "$classic" | awk 'NF && !seen[$0]++' >"$cache" || return 1
+	printf '%s\n' "$base" >"${snapshot_dir}/required-base"
+	while IFS= read -r line; do printf '%s\n' "$line"; done <"$cache"
+	return 0
+}
+
+# Print the first required context that names a validator phase. Contexts are
+# split into lowercase words; a deny-word marks checks for other languages or
+# test classes (Markdown Lint, E2E Tests, Commit Lint), which never match.
+_validator_phase_required_context() {
+	local phase="$1" contexts="$2" context="" words="" word="" matched=0 denied=0
+	while IFS= read -r context; do
+		[[ -n "$context" ]] || continue
+		words=$(printf '%s' "$context" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' ' ')
+		matched=0
+		denied=0
+		for word in $words; do
+			case "$word" in
+			markdown | md | shell | shellcheck | yaml | yml | docs | commit | commitlint | e2e | playwright | smoke) denied=1 ;;
+			esac
+			case "${phase}:${word}" in
+			format:format | format:formatting | format:prettier | format:fmt | \
+				lint:lint | lint:linting | lint:eslint | lint:biome | \
+				typecheck:typecheck | typecheck:types | typecheck:type | typecheck:tsc | typecheck:typescript | \
+				test:test | test:tests | test:unit | test:vitest | test:jest) matched=1 ;;
+			esac
+		done
+		if [[ "$matched" -eq 1 && "$denied" -eq 0 ]]; then
+			printf '%s\n' "$context"
+			return 0
+		fi
+	done <<<"$contexts"
+	return 1
+}
+
+# Defer one phase to its required CI check. Returns 1 (caller keeps blocking)
+# when no required context can be read or none names the phase.
+_validator_defer_to_required_ci() {
+	local phase="$1" command_label="$2" snapshot_dir="$3" why="$4"
+	local contexts="" context="" base=""
+	contexts=$(_validator_required_contexts "$snapshot_dir") || return 1
+	context=$(_validator_phase_required_context "$phase" "$contexts") || return 1
+	base=$(<"${snapshot_dir}/required-base") || base="the PR base"
+	print_warning "[validators] DEFERRED ${command_label}: ${why}; required CI check '${context}' on ${base} gates the merge"
+	printf '%s → %s\n' "$command_label" "$context" >>"${snapshot_dir}/deferred" || return 1
+	return 0
+}
+
 _run_scoped_node_checks() {
 	local pm="$1" scope="$2" t="$3" snapshot_dir="$4"
 	local package_json="package.json" scope_label="repository root"
@@ -259,11 +347,18 @@ _run_scoped_node_checks() {
 			return 1
 		fi
 	fi
-	local phase="" script_name="" check_count=0 command_rc=0 check_index=0
+	local phase="" script_name="" check_count=0 command_rc=0 check_index=0 deferring=0
 	for phase in format lint typecheck test; do
 		script_name=$(_validator_select_script "$package_json" "$phase") || continue
 		check_count=$((check_count + 1))
 		check_index=$((check_index + 1))
+		# After a timeout under this host's load, later phases that CI also
+		# requires would most likely time out too; leave them to that gate.
+		if [[ "$deferring" -eq 1 ]] &&
+			_validator_defer_to_required_ci "$phase" "$pm run $script_name ($scope_label)" "$snapshot_dir" \
+				"not run after an earlier timeout in this scope"; then
+			continue
+		fi
 		print_info "[validators] scope=${scope_label} reason=$([[ "$scope" == "." ]] && printf 'root-or-shared-change' || printf 'affected-workspace') command=$pm run $script_name"
 		_validator_snapshot "${snapshot_dir}/before-${check_index}" || return 1
 		command_rc=0
@@ -278,6 +373,11 @@ _run_scoped_node_checks() {
 		_validator_snapshot "${snapshot_dir}/after-${check_index}" || return 1
 		_validator_state_unchanged "${snapshot_dir}/before-${check_index}" "${snapshot_dir}/after-${check_index}" "$pm run $script_name ($scope_label)" || return 1
 		if [[ "$command_rc" -eq 124 ]]; then
+			if _validator_defer_to_required_ci "$phase" "$pm run $script_name ($scope_label)" "$snapshot_dir" \
+				"local TIMEOUT after ${t}s"; then
+				deferring=1
+				continue
+			fi
 			print_error "[validators] TIMEOUT after ${t}s: $pm run $script_name ($scope_label)"
 			_validator_timeout_remedy
 			return 1
@@ -362,6 +462,7 @@ _validator_timeout_remedy() {
 # Orchestrator. Args: $1=skip_hooks (0|1). Returns 0 on pass/skip, 1 on fail.
 _run_project_validators() {
 	local skip_hooks="${1:-0}"
+	FULL_LOOP_VALIDATOR_DEFERRALS=""
 	# _validators_should_run returns 0 when validators should run, 1 otherwise.
 	if ! _validators_should_run "$skip_hooks"; then
 		return 0
@@ -423,7 +524,17 @@ _run_project_validators() {
 			return 1
 		}
 	done <<<"$scopes"
+	local deferral=""
+	if [[ -s "${snapshot_dir}/deferred" ]]; then
+		while IFS= read -r deferral; do
+			FULL_LOOP_VALIDATOR_DEFERRALS="${FULL_LOOP_VALIDATOR_DEFERRALS}${FULL_LOOP_VALIDATOR_DEFERRALS:+; }${deferral}"
+		done <"${snapshot_dir}/deferred"
+	fi
 	rm -rf "$snapshot_dir"
+	if [[ -n "$FULL_LOOP_VALIDATOR_DEFERRALS" ]]; then
+		print_info "[validators] passed with deferrals to required CI (check-only scope: ${scopes//$'\n'/, }): ${FULL_LOOP_VALIDATOR_DEFERRALS}"
+		return 0
+	fi
 	print_info "[validators] passed (check-only scope: ${scopes//$'\n'/, })"
 	return 0
 }
