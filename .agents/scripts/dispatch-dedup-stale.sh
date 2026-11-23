@@ -128,6 +128,32 @@ _stale_recovery_fetch_comments_pages() {
 	return 0
 }
 
+_STALE_RECOVERY_RELEASE_MARKER='<!-- stale-recovery-release:verified -->'
+_STALE_RECOVERY_PROGRESS_MARKER='<!-- stale-recovery-progress:merged-pr -->'
+
+# Tick state after the latest trusted release marker. Numeric ticks count
+# each. GH#40027: launch-failure ticks count once per runner, because one
+# runner's failing launch path says nothing about the issue. A merged-PR
+# progress marker restarts the count at its own tick.
+# shellcheck disable=SC2016 # jq program text, not shell expansion.
+_STALE_RECOVERY_JQ_TICK_STATE='
+	def text: .body // "";
+	def launch_failure_runner:
+		first(text | capture("<!-- stale-recovery-tick:launch-failure runner=(?<r>[A-Za-z0-9][A-Za-z0-9-]*(\\[bot\\])?) -->") | .r) // "";
+	def numeric_tick: text | test("<!-- stale-recovery-tick:[1-9]");
+	def maintainer: any(.author_association | strings; test("^(OWNER|MEMBER)$"));
+	([.[] | .[]?] | sort_by(.created_at, .id))
+	| reduce .[] as $comment ({ticks: 0, runners: []};
+		($comment | text) as $body
+		| ($comment | launch_failure_runner) as $runner
+		| if ($body | contains($release_marker)) and ($comment | maintainer) then {ticks: 0, runners: []}
+		elif ($body | contains($progress_marker)) and ($comment | numeric_tick) then {ticks: 1, runners: []}
+		elif ($body | contains($progress_marker)) and $runner != "" then {ticks: 0, runners: [$runner]}
+		elif ($comment | numeric_tick) and (($body | contains("reset")) | not) then .ticks += 1
+		elif $runner != "" then .runners = ((.runners + [$runner]) | unique)
+		else . end)
+'
+
 #######################################
 # Count stale recovery ticks after the latest trusted release marker.
 # Args: $1 = slurped comments pages JSON
@@ -137,29 +163,76 @@ _stale_recovery_count_ticks_from_pages() {
 	local comments_pages="$1"
 	local prior_ticks
 	prior_ticks=$(printf '%s' "$comments_pages" | jq \
-		--arg release_marker '<!-- stale-recovery-release:verified -->' \
-		--arg progress_marker '<!-- stale-recovery-progress:merged-pr -->' \
-		'([.[] | .[]?] | sort_by(.created_at, .id))
-		| reduce .[] as $comment (0;
-			if (($comment.body // "")
-				| contains($release_marker))
-				and (($comment.author_association // "")
-				| IN(
-					"OWNER",
-					"MEMBER"
-				)) then 0
-			elif (($comment.body // "")
-				| contains($progress_marker))
-				and (($comment.body // "")
-				| test("<!-- stale-recovery-tick:[1-9]")) then 1
-			elif (($comment.body // "")
-				| test("<!-- stale-recovery-tick:[1-9]"))
-				and ((($comment.body // "")
-				| contains("reset")) | not) then . + 1
-			else . end)' \
+		--arg release_marker "$_STALE_RECOVERY_RELEASE_MARKER" \
+		--arg progress_marker "$_STALE_RECOVERY_PROGRESS_MARKER" \
+		"${_STALE_RECOVERY_JQ_TICK_STATE}"' | .ticks + (.runners | length)' \
 		2>/dev/null) || prior_ticks=0
 	[[ "$prior_ticks" =~ ^[0-9]+$ ]] || prior_ticks=0
 	printf '%s' "$prior_ticks"
+	return 0
+}
+
+#######################################
+# GH#40027: true when a launch-failure tick for this runner already counts
+# toward the current threshold window.
+# Args: $1 = slurped comments pages JSON, $2 = runner login
+#######################################
+_stale_recovery_launch_failure_counted_from_pages() {
+	local comments_pages="$1"
+	local runner="$2"
+	[[ -n "$runner" ]] || return 1
+	printf '%s' "$comments_pages" | jq -e \
+		--arg release_marker "$_STALE_RECOVERY_RELEASE_MARKER" \
+		--arg progress_marker "$_STALE_RECOVERY_PROGRESS_MARKER" --arg runner "$runner" \
+		"${_STALE_RECOVERY_JQ_TICK_STATE}"' | .runners | index($runner) != null' >/dev/null 2>&1 || return 1
+	return 0
+}
+
+#######################################
+# GH#40027: name the runner whose latest dispatch claim never launched.
+# Prints the login when the newest claim (dispatch or interactive) is a leased
+# DISPATCH_CLAIM authored by its own runner= login, that runner is one of the
+# stale assignees, and the same login posted no later DISPATCH_LEASE
+# phase=ready for that lease. A ready lease is what protects a running worker
+# from stale recovery, so its absence means the worker never started.
+# Prints nothing for interactive claims, legacy claims without a lease, or any
+# shape doubt, which keeps ordinary counting.
+# Args: $1 = slurped comments pages JSON, $2 = stale assignees (comma-separated)
+# Output: runner login or empty
+#######################################
+_stale_recovery_launch_failure_runner_from_pages() {
+	local comments_pages="$1"
+	local stale_assignees="$2"
+	local runner=""
+	# shellcheck disable=SC2016 # jq program text, not shell expansion.
+	runner=$(printf '%s' "$comments_pages" | jq -r --arg assignees "$stale_assignees" '
+		def field($name): first(capture("(^|[[:space:]])" + $name + "=(?<v>[^[:space:]]+)") | .v) // "";
+		def login: .user.login // .author // "";
+		def text: .body // "";
+		def lines: text | split("\n")[];
+		def claim_event: text | test("(^|\n)(DISPATCH_CLAIM nonce=|(> )?Interactive session claimed)");
+		def trusted_writer: any(.author_association | strings; test("^(OWNER|MEMBER|COLLABORATOR)$"));
+		([.[] | .[]?] | sort_by(.created_at, .id)) as $c
+		| ($assignees | split(",") | map(select(. != ""))) as $stale
+		| ([$c | to_entries[] | select(.value | claim_event)] | last) as $latest
+		| select($latest != null)
+		| [$latest.value | lines | select(startswith("DISPATCH_CLAIM nonce="))] as $claim_lines
+		| select(($claim_lines | length) == 1)
+		| $claim_lines[0] as $line
+		| ($line | field("runner")) as $runner
+		| ($line | field("lease_token")) as $token
+		| ($line | field("device")) as $device
+		| ($line | field("session")) as $session
+		| select($runner != "" and $token != "" and $device != "" and $session != "")
+		#aidevops:trust-boundary -- only trusted comments by the claim runner describe its launch.
+		| select(($latest.value | login) == $runner and ($latest.value | trusted_writer))
+		| select($stale | index($runner) != null)
+		| select(any($c[($latest.key + 1):][]; login == $runner and any(lines;
+			startswith("DISPATCH_LEASE phase=ready ") and field("lease_token") == $token and
+			field("device") == $device and field("session") == $session)) | not)
+		| $runner' 2>/dev/null) || runner=""
+	[[ "$runner" =~ ^[A-Za-z0-9][A-Za-z0-9-]*(\[bot\])?$ ]] || runner=""
+	printf '%s' "$runner"
 	return 0
 }
 
@@ -171,7 +244,7 @@ _stale_recovery_count_ticks_from_pages() {
 _stale_recovery_latest_tick_ts_from_pages() {
 	local comments_pages="$1"
 	printf '%s' "$comments_pages" | jq -r '
-		[.[] | .[]? | select(.body // "" | test("<!-- stale-recovery-tick:[1-9]"))]
+		[.[] | .[]? | select(.body // "" | test("<!-- stale-recovery-tick:([1-9]|launch-failure )"))]
 		| sort_by(.created_at, .id) | last
 		| if . == null then empty else
 			(.body // "" | capture("<!-- stale-recovery-checked-through:(?<ts>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z) -->")?.ts) // .created_at // empty
@@ -799,6 +872,8 @@ _This is the stale-recovery dependency re-check for GH#23932._
 #   $2 = repo slug
 #   $3 = stale assignees (comma-separated)
 #   $4 = reason
+#   $5-$9 = expected dispatch ts, tick, threshold, comments pages, checked-through
+#   $10 = launch-failure runner (optional, GH#40027): write a per-runner tick
 # Returns: 0 (always)
 #######################################
 _stale_recovery_apply() {
@@ -811,6 +886,13 @@ _stale_recovery_apply() {
 	local recovery_threshold="${7:-}"
 	local recovery_pages="${8:-}"
 	local checked_through="${9:-}"
+	local launch_failure_runner="${10:-}"
+	local tick_marker="<!-- stale-recovery-tick:${recovery_tick:-1} -->" launch_failure_note=""
+	if [[ "$launch_failure_runner" =~ ^[A-Za-z0-9][A-Za-z0-9-]*(\[bot\])?$ ]]; then
+		tick_marker="<!-- stale-recovery-tick:launch-failure runner=${launch_failure_runner} -->"
+		launch_failure_note="The claim by ${launch_failure_runner} never reached a ready worker launch. Repeated launch failures by one runner count once toward the threshold (GH#40027).
+"
+	fi
 
 	local saved_ifs="${IFS:-}"
 	local -a assignee_arr=()
@@ -848,7 +930,7 @@ _stale_recovery_apply() {
 	gh_issue_comment "$issue_number" --repo "$repo_slug" \
 		--body "$(aidevops_ops_marker stale-recovery-tick)"$'\n'"<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- WORKER_SUPERSEDED runners=${stale_assignees} ts=${_now_ts} -->
-<!-- stale-recovery-tick:${recovery_tick:-1} -->
+${tick_marker}
 <!-- stale-recovery-checked-through:${checked_through} -->
 ${_STALE_RECOVERY_MERGED_PR:+<!-- stale-recovery-progress:merged-pr -->
 Merged PR #${_STALE_RECOVERY_MERGED_PR} since the previous tick counts as progress; consecutive count restarted.
@@ -859,7 +941,7 @@ Reason: ${reason}
 Threshold: ${STALE_ASSIGNMENT_THRESHOLD_SECONDS}s
 Global recovery attempt: ${recovery_tick:-1}/${recovery_threshold:-unknown}
 Last pushed issue branch: ${_STALE_BRANCH_CHECKPOINT:-none found}
-
+${launch_failure_note}
 Resume from that remote branch when present; inspect and reuse its commits before starting new work.
 
 The assigned runner had no active worker process and produced no progress within the threshold. Unassigned and relabeled \`status:available\` for re-dispatch.
@@ -907,7 +989,7 @@ _recover_stale_assignment() {
 	# Counter is stored as structured comment markers for cross-runner correctness.
 	# Config: .agents/configs/dispatch-stale-recovery.conf
 	local _threshold _prior_ticks _open_pr _open_pr_number _open_pr_kind _comments_pages _latest_dispatch_ts _next_tick
-	local _last_tick_ts="" _checked_through=""
+	local _last_tick_ts="" _checked_through="" _launch_failure_runner=""
 	_checked_through=$(date -u +%Y-%m-%dT%H:%M:%SZ) || return 1
 	_threshold=$(_stale_recovery_load_threshold)
 	_comments_pages=$(_stale_recovery_fetch_comments_pages "$issue_number" "$repo_slug")
@@ -964,13 +1046,21 @@ _recover_stale_assignment() {
 		[[ -z "$_STALE_RECOVERY_MERGED_PR" ]] || _prior_ticks=0
 	fi
 	_next_tick=$((_prior_ticks + 1))
+	# GH#40027: a claim that never launched describes its runner, not the
+	# issue. That runner's repeated launch failures count once per window.
+	_launch_failure_runner=$(_stale_recovery_launch_failure_runner_from_pages "$_comments_pages" "$stale_assignees")
+	if [[ -n "$_launch_failure_runner" && -z "$_STALE_RECOVERY_MERGED_PR" ]] &&
+		_stale_recovery_launch_failure_counted_from_pages "$_comments_pages" "$_launch_failure_runner"; then
+		_next_tick="$_prior_ticks"
+	fi
 	if [[ "$_next_tick" -ge "$_threshold" ]]; then
 		_stale_recovery_escalate "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$_threshold" "$_next_tick" "$_latest_dispatch_ts" "${_last_tick_ts:-$_checked_through}" || return 1
 		return 0
 	fi
 	# ── End stale-recovery escalation check ──────────────────────────────
 
-	_stale_recovery_apply "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$_latest_dispatch_ts" "$_next_tick" "$_threshold" "$_comments_pages" "$_checked_through" || return 1
+	_stale_recovery_apply "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$_latest_dispatch_ts" \
+		"$_next_tick" "$_threshold" "$_comments_pages" "$_checked_through" "$_launch_failure_runner" || return 1
 	return 0
 }
 
