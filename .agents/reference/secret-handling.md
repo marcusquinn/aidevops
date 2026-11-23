@@ -196,6 +196,13 @@ back to `credentials.sh`. Deferrals state `store=gopass fallback=disabled`.
 A locked agent is the common cause, but an unreadable entry can also mean
 corruption or missing decryption keys. Headless decryption uses
 `AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS` (default 12, clamped 1–55 seconds).
+Scoped injection (`aidevops secret NAME... -- command`) retries a timed-out
+headless read once with twice that bound, still capped at 55 seconds per attempt
+(at most 110 seconds of read waits). If both attempts time out, it exits 5 without
+running the child and reports `secret NAME read timed out after Ns (load L);
+transient, retry later`, where N is the final attempt's bound. A non-zero gopass
+exit is not retried and retains the locked/missing diagnostic and exit 1.
+`secret check` keeps its single-attempt bound.
 The outer capability watchdog defaults to 15 seconds and also reports
 `check_timeout` when the whole command, including store listing, exceeds its limit.
 Pulse emits one `runner_health: gpg store locked or entry unreadable` line
