@@ -118,6 +118,27 @@ _hrrr_record() {
 	return 0
 }
 
+# GH#40018: true only when the row for this claim is intact and was recorded
+# under the current lease, so a row left by another dispatch of the same
+# session never stands in for this attempt's unfinished projection.
+# Args: $1 repo_slug, $2 issue_number, $3 session_key.
+_hrrr_row_binds_lease() {
+	local repo_slug="$1" issue_number="$2" session_key="$3" path="" expected="" binding=""
+	local token="${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}"
+	local device="${AIDEVOPS_DISPATCH_LEASE_DEVICE:-${AIDEVOPS_DEVICE_ID:-}}"
+	local lease_session="${AIDEVOPS_DISPATCH_LEASE_SESSION:-$session_key}"
+	[[ -n "$token" && -n "$device" ]] || return 1
+	path=$(_hrrr_path "$repo_slug" "$issue_number" "$session_key") || return 1
+	[[ -f "$path" && -f "${path}.binding" ]] || return 1
+	IFS= read -r expected <"${path}.binding" || return 1
+	binding=$(_hrrr_binding "$path") || return 1
+	[[ "$binding" == "$expected" ]] || return 1
+	jq -e --arg token "$token" --arg device "$device" --arg lease_session "$lease_session" \
+		'.lease_token == $token and .lease_device == $device and .lease_session == $lease_session' \
+		"$path" >/dev/null 2>&1 || return 1
+	return 0
+}
+
 # Args: $1 session_key, $2 issue_number, $3 repo_slug.
 _hrrr_clear() {
 	local session_key="$1" issue_number="$2" repo_slug="$3" path=""

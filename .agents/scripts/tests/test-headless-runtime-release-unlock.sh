@@ -266,7 +266,10 @@ for evidence_case in edited ambiguous unreadable invalid_timestamp duplicate_fie
 		;;
 	esac
 	result=0
-	GH_CLAIM_EVIDENCE="$evidence" GH_EDIT_RESPONSE="$evidence_edit_response" \
+	# Each case is an independent claim history: retry evidence left by an
+	# earlier held case would mark this lease's projection as unfinished.
+	AIDEVOPS_CLAIM_RELEASE_RETRY_DIR="${TMP_HOME}/retry-${evidence_case}" \
+		GH_CLAIM_EVIDENCE="$evidence" GH_EDIT_RESPONSE="$evidence_edit_response" \
 		_release_dispatch_claim "issue-12345" worker_complete || result=$?
 	if [[ "$result" -ne "$expected_result" ]] ||
 		grep -Eq 'API method=POST|^CLEAR |^UNLOCK ' "$CALL_LOG"; then

@@ -51,13 +51,27 @@ if [[ "${1:-}" == real-* ]]; then
 	_hrff_release_issue_number() { printf '42\n'; return 0; }
 	_hrff_release_repo_state_is_managed() { return 0; }
 	_hrff_resolve_release_runner_login() { printf 'runner\n'; return 0; }
-	_hrff_check_release_claim() { _HRFF_RELEASE_CLAIM_OWNED="${TEST_OWNED:-1}"; _HRFF_RELEASE_CLAIM_ID=123; return 0; }
+	_hrff_check_release_claim() {
+		_HRFF_RELEASE_CLAIM_OWNED="${TEST_OWNED:-1}" _HRFF_RELEASE_CLAIM_ID=123
+		# GH#40018: this runner's release is already persisted for the claim.
+		_HRFF_RELEASED_CLAIM_REASON="${TEST_RELEASED_REASON:-}" _HRFF_RELEASED_CLAIM_EVIDENCE=""
+		[[ -z "$_HRFF_RELEASED_CLAIM_REASON" ]] || _HRFF_RELEASE_CLAIM_OWNED=0
+		return 0
+	}
 	_hrff_blocked_release_persisted() { return 1; }
 	_hrff_enqueue_observation_recovery() { return 0; }
 	_unlock_issue_after_dispatch_release() { return 0; }
-	clear_active_status_on_release() { printf '%s\n' "$4" >>"${ROOT}/projection"; return 0; }
+	clear_active_status_on_release() {
+		[[ "${TEST_CLEAR_FAIL:-0}" != 1 ]] || return 1
+		printf '%s\n' "$4" >>"${ROOT}/projection"
+		return 0
+	}
 	gh_issue_edit_safe() { [[ " $* " != *" --add-label status:blocked "* ]] || printf 'blocked\n' >>"${ROOT}/projection"; return 0; }
-	gh() { printf '%s\n' '{"title":"test","body":"scope","state":"open","labels":[],"assignees":[]}'; return 0; }
+	gh() {
+		[[ "${TEST_GH_FAIL:-0}" != 1 ]] || return 1
+		printf '%s\n' '{"title":"test","body":"scope","state":"open","labels":[],"assignees":[]}'
+		return 0
+	}
 	terminal_blocker_fetch_trusted_comments() { printf '[]\n'; return 0; }
 	_terminal_blocker_dependency_signature() { printf '[]\n'; return 0; }
 	_hrff_post_claim_released_comment() {
@@ -85,6 +99,10 @@ if [[ "${1:-}" == real-* ]]; then
 		AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=$(_terminal_blocker_hash "v2:${TEST_REASON}")
 		export AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
 		_release_dispatch_claim issue-42 blocked 1 1 || true
+	elif [[ "$1" == real-record-failed ]]; then
+		_release_dispatch_claim issue-42 worker_failed 1 1 || true
+	elif [[ "$1" == real-attempt ]]; then
+		_hrff_release_dispatch_claim_attempt issue-42 worker_failed 1 1 || printf 'attempt_failed\n' >>"${ROOT}/projection"
 	elif [[ "$1" == real-spec-record ]]; then
 		# The checkpoint escalation loads the module and reads the issue first.
 		# shellcheck source=../pulse-merge-partial-continuation.sh
@@ -207,6 +225,70 @@ RETRY_TEST_ROOT="$ROOT" TEST_REASON=permission_required bash "$0" real-record
 age_rows
 RETRY_TEST_ROOT="$ROOT" ADMISSION=1 TEST_OWNED=0 bash "$0" real-drain >/dev/null
 check "changed owner no write" "$(wc -c <"${ROOT}/published" | tr -d ' ')" "0"
+
+# GH#40018: this runner already persisted the release, but the attempt that
+# recorded the row never projected it. Replay projects from the persisted
+# receipt without republishing, and keeps the row until projection succeeds.
+f=$(_hrrr_path o/r 42 issue-42)
+rm -f "$f" "${f}.binding"
+: >"${ROOT}/projection"
+: >"${ROOT}/published"
+RETRY_TEST_ROOT="$ROOT" bash "$0" real-record-failed
+check "persisted release row recorded" "$(rows)" "1"
+age_rows
+RETRY_TEST_ROOT="$ROOT" ADMISSION=1 TEST_RELEASED_REASON=worker_failed bash "$0" real-drain >/dev/null
+check "persisted release projected" "$(<"${ROOT}/projection")" "available"
+check "persisted release not republished" "$(wc -c <"${ROOT}/published" | tr -d ' ')" "0"
+check "persisted release row cleared" "$(rows)" "0"
+# Publication succeeds but clearing active status fails: the attempt keeps
+# retry evidence, and replays keep it until the projection succeeds.
+: >"${ROOT}/projection"
+RETRY_TEST_ROOT="$ROOT" ADMISSION=1 TEST_CLEAR_FAIL=1 bash "$0" real-record-failed
+check "failed clear after publication records row" "$(rows)" "1"
+check "failed clear after publication published once" "$(rg -c "reason=worker_failed" "${ROOT}/published")" "1"
+age_rows
+RETRY_TEST_ROOT="$ROOT" ADMISSION=1 TEST_RELEASED_REASON=worker_failed TEST_CLEAR_FAIL=1 bash "$0" real-drain >/dev/null
+check "failed clear on replay keeps row" "$(rows)" "1"
+age_rows
+RETRY_TEST_ROOT="$ROOT" ADMISSION=1 TEST_RELEASED_REASON=worker_failed bash "$0" real-drain >/dev/null
+check "retried clear projected" "$(<"${ROOT}/projection")" "available"
+check "retried clear not republished" "$(rg -c "reason=worker_failed" "${ROOT}/published")" "1"
+check "retried clear row cleared" "$(rows)" "0"
+: >"${ROOT}/projection"
+: >"${ROOT}/published"
+RETRY_TEST_ROOT="$ROOT" TEST_REASON=permission_required bash "$0" real-record
+age_rows
+RETRY_TEST_ROOT="$ROOT" ADMISSION=1 TEST_RELEASED_REASON=blocked TEST_GH_FAIL=1 bash "$0" real-drain >/dev/null
+check "failed persisted projection keeps row" "$(rows)" "1"
+age_rows
+RETRY_TEST_ROOT="$ROOT" ADMISSION=1 TEST_RELEASED_REASON=blocked bash "$0" real-drain >/dev/null
+check "retried persisted projection" "$(<"${ROOT}/projection")" "blocked"
+check "retried persisted projection row cleared" "$(rows)" "0"
+# Without retry evidence the persisted release was already projected.
+: >"${ROOT}/projection"
+RETRY_TEST_ROOT="$ROOT" TEST_RELEASED_REASON=worker_failed bash "$0" real-attempt
+check "released claim without evidence no projection" "$(wc -c <"${ROOT}/projection" | tr -d ' ')" "0"
+# A row recorded under another lease of this session, or a tampered row, is
+# not this attempt's unfinished projection.
+RETRY_TEST_ROOT="$ROOT" bash "$0" real-record-failed
+check "foreign lease row recorded" "$(rows)" "1"
+jq '.lease_token = "other-lease"' "$f" >"${f}.t" && mv "${f}.t" "$f" && _hrrr_binding "$f" >"${f}.binding"
+: >"${ROOT}/projection"
+RETRY_TEST_ROOT="$ROOT" TEST_RELEASED_REASON=worker_failed bash "$0" real-attempt
+check "foreign lease row no projection" "$(wc -c <"${ROOT}/projection" | tr -d ' ')" "0"
+rm -f "$f" "${f}.binding"
+RETRY_TEST_ROOT="$ROOT" bash "$0" real-record-failed
+jq '.reason = "worker_complete"' "$f" >"${f}.t" && mv "${f}.t" "$f"
+RETRY_TEST_ROOT="$ROOT" TEST_RELEASED_REASON=worker_failed bash "$0" real-attempt
+check "tampered row no projection" "$(wc -c <"${ROOT}/projection" | tr -d ' ')" "0"
+rm -f "$f" "${f}.binding"
+# The same lease's row finishes the live attempt's projection.
+RETRY_TEST_ROOT="$ROOT" bash "$0" real-record-failed
+RETRY_TEST_ROOT="$ROOT" TEST_RELEASED_REASON=worker_failed bash "$0" real-attempt
+check "same lease row projects live attempt" "$(<"${ROOT}/projection")" "available"
+rm -f "$f" "${f}.binding"
+: >"${ROOT}/projection"
+: >"${ROOT}/published"
 
 # GH#38021: a deferred draft-checkpoint release carries the recording run's
 # proof that it removed auto-dispatch from a consolidated spec. The replay runs
