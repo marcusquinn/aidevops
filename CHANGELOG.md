@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.272] - 2026-11-23
+
+### Changed
+
+- Maintenance: mark t19310 complete (pr:#40010 completed:2026-11-23) (#40012)
+- Maintenance: sync GitHub issue refs to TODO.md (#40013)
+- Maintenance: mark t19307 complete (pr:#40001 completed:2026-11-23) (#40003)
+
+### Fixed
+
+- release the dispatch claim before the exit-trap terminal lease
+- batch ignored source reference checks (#40020)
+- recover missing GitHub HTTPS credential helpers
+- stage checked-out framework for suite health
+- pass generation identity when draining same-boot owner launches
+- consolidate npm-owned MCP packages safely
+- recover assigned worker draft checkpoints
+
 ## [3.39.271] - 2026-11-23
 
 ### Fixed
