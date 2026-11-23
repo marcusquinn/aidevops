@@ -72,6 +72,11 @@ source "$TEST_ROOT/_update_canonical_has_untracked_only.sh"
 # shellcheck source=/dev/null
 source "$TEST_ROOT/_update_fetch_main.sh"
 
+extract_function _update_check_daemon_health "$TEST_ROOT/_update_check_daemon_health.sh" \
+	"$REPO_ROOT/.agents/scripts/aidevops-cli/aidevops-update-lib.sh"
+# shellcheck source=/dev/null
+source "$TEST_ROOT/_update_check_daemon_health.sh"
+
 source_access_reconciliation_body=$(declare -f _run_update_source_access_reconciliation)
 if [[ "$source_access_reconciliation_body" == *"AIDEVOPS_SOURCE_ACCESS_INTERACTIVE=true"* ]] &&
 	[[ "$source_access_reconciliation_body" == *"\"\$INSTALL_DIR/setup.sh\" --stage source-access"* ]] &&
@@ -763,7 +768,8 @@ run_activation_stamp_test() (
 	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$new_sha" ]] || return 1
 	# Exercise setup's actual convergence failure path, not just tree checks.
 	INSTALL_DIR="$REPO_ROOT"
-	extract_function _setup_ai_session_verify_deploy "$TEST_ROOT/setup-verify.sh" "$REPO_ROOT/setup.sh"
+	extract_function _setup_ai_session_verify_deploy "$TEST_ROOT/setup-verify.sh" \
+		"$REPO_ROOT/.agents/scripts/setup/modules/setup-execution.sh"
 	# shellcheck source=/dev/null
 	source "$TEST_ROOT/setup-verify.sh"
 	_runtime_bundle_activate "$HOME/.aidevops/agents" "$bundles/old" || return 1

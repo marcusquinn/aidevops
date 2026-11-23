@@ -114,7 +114,9 @@ test_prefetch_fingerprint_accepts_large_lists() {
 test_prefetch_cache_entry_accepts_large_lists() {
 	setup_env
 	# shellcheck source=../pulse-prefetch-repo.sh
-	source "$SCRIPTS_DIR/pulse-prefetch-repo.sh"
+	# Match the production bootstrap's companion-module lookup directory.
+	local SCRIPT_DIR="$SCRIPTS_DIR"
+	source "$SCRIPT_DIR/pulse-prefetch-repo.sh"
 	local entry pr_count issue_count
 	entry=$(_prefetch_build_cache_entry \
 		"2026-06-26T00:00:00Z" \
