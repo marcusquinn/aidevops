@@ -29,6 +29,9 @@ export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
 export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_ROOT}/lifecycle-state"
 export HOME="${TEST_ROOT}/home"
 mkdir -p "$HOME"
+# shellcheck source=lib/lifecycle-process-fixture.sh
+source "${SCRIPT_DIR}/tests/lib/lifecycle-process-fixture.sh"
+setup_lifecycle_process_fixture "$TEST_ROOT" "$SCRIPT_DIR" || exit 1
 
 LOGFILE="${TEST_ROOT}/pulse.log"
 export AIDEVOPS_CLEANUP_LOG="${TEST_ROOT}/cleanup_worktrees.log"

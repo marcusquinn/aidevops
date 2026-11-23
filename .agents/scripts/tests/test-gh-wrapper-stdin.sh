@@ -369,6 +369,33 @@ else
 	fail "standalone helper permits audited relationship and label edits" "rc=${label_rc}"
 fi
 
+# Missing fixture state must still refuse before either create transport.
+: >"$GH_CALLS"
+printf 'Safe body\n' | PRIVACY_REPOS_CONFIG="${TMP}/absent-inventory.json" \
+	PATH="${STUB_BIN}:$PATH" "${SCRIPTS_DIR}/gh-write-helper.sh" issue create \
+	--repo test/repo --title "Missing inventory" --body-file - >"${TMP}/missing.out" 2>"${TMP}/missing.err"
+missing_inventory_rc=$?
+if [[ $missing_inventory_rc -eq 1 ]] &&
+	grep -q 'Private entity inventory could not be loaded' "${TMP}/missing.err" &&
+	! grep -q '^issue create ' "$GH_CALLS"; then
+	pass "missing fixture inventory refuses publication before transport"
+else
+	fail "missing fixture inventory refuses publication before transport" "rc=${missing_inventory_rc}"
+fi
+
+: >"$GH_CALLS"
+printf 'fixture/private-project\n' | PATH="${STUB_BIN}:$PATH" \
+	"${SCRIPTS_DIR}/gh-write-helper.sh" issue create --repo test/repo \
+	--title "Private fixture content" --body-file - >"${TMP}/private.out" 2>"${TMP}/private.err"
+private_body_rc=$?
+if [[ $private_body_rc -eq 1 ]] &&
+	grep -q 'Public write contains private material' "${TMP}/private.err" &&
+	! grep -q '^issue create ' "$GH_CALLS"; then
+	pass "synthetic private inventory still blocks matching content"
+else
+	fail "synthetic private inventory still blocks matching content" "rc=${private_body_rc}"
+fi
+
 if [[ $TESTS_FAILED -eq 0 ]]; then
 	printf '%d/%d tests passed\n' "$TESTS_RUN" "$TESTS_RUN"
 	exit 0
