@@ -972,7 +972,8 @@ test_worker_signing_overrides() {
 	assert_worker_git "worker allows unrelated -c override" 0 '["git","-c","color.ui=never","status"]'
 
 	local output="" status=0
-	output="$(python3 "$HELPER" check-command --cwd "${TEST_ROOT}/linked" --argv-json '["git","commit","--no-gpg-sign","-m","x"]')" || status=$?
+	# Isolate interactive context: the suite may itself run in a worker/CI session.
+	output="$(env -u AIDEVOPS_WORKER_ID -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS -u CLAUDE_HEADLESS -u Claude_HEADLESS -u HEADLESS -u GITHUB_ACTIONS python3 "$HELPER" check-command --cwd "${TEST_ROOT}/linked" --argv-json '["git","commit","--no-gpg-sign","-m","x"]')" || status=$?
 	if [[ "$status" -eq 0 && "$output" != *"$denied"* ]]; then
 		pass "interactive sessions keep signing overrides available"
 	else
