@@ -83,6 +83,10 @@ git() {
 	add)
 		return 0
 		;;
+	ls-files)
+		# This synthetic repo has no ignored payloads; never inspect the caller's checkout.
+		return 0
+		;;
 	diff)
 		if [[ "$*" == "--cached --quiet" ]]; then
 			return 0
@@ -101,6 +105,10 @@ git() {
 		return 0
 		;;
 	rev-parse)
+		if [[ "$*" == "--show-toplevel" ]]; then
+			printf '%s\n' "$TEST_ROOT"
+			return 0
+		fi
 		printf 'false\n'
 		return 0
 		;;

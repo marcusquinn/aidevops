@@ -378,6 +378,69 @@ _stage_product_changes() {
 	return 0
 }
 
+# Refuse references to payloads omitted by git add (GH#39939). The prospective
+# PR is the index against the PR merge base, including already-committed WIP.
+# FULL_LOOP_ALLOW_IGNORED_REFERENCES=1 explicitly permits intentional references;
+# it never stages ignored content, which may contain credentials.
+_check_ignored_source_references() (
+	if [[ "${FULL_LOOP_ALLOW_IGNORED_REFERENCES:-0}" == 1 ]]; then
+		print_warning "Skipping ignored-file reference check (FULL_LOOP_ALLOW_IGNORED_REFERENCES=1)."
+		return 0
+	fi
+	local repo_root=""
+	repo_root=$(git rev-parse --show-toplevel) || return 1
+	cd "$repo_root" || return 1
+	local base_branch="" merge_base="" diff_text="" ignored_list="" diff_loaded=0
+	ignored_list=$(mktemp) || return 1
+	trap 'rm -f "$ignored_list"' EXIT
+	if ! git ls-files --others --ignored --exclude-standard -z >"$ignored_list"; then
+		print_error "Cannot inspect ignored worktree files."
+		return 1
+	fi
+	local path="" runtime_path="" skip="" basename="" line="" referencing_path="" failed=0
+	while IFS= read -r -d '' path; do
+		case "/${path}" in
+		*/__pycache__/* | */node_modules/* | */.full-loop-cleanup-deferred | */.full-loop-cleanup-deferred/*) continue ;;
+		esac
+		skip=0
+		for runtime_path in "${_full_loop_runtime_paths[@]}"; do
+			if [[ "$path" == "$runtime_path" || "$path" == "$runtime_path/"* ]]; then
+				skip=1
+				break
+			fi
+		done
+		[[ "$skip" == 1 || ! -f "$path" ]] && continue
+		# Avoid resolving history or building a diff for runtime-only worktrees.
+		if [[ "$diff_loaded" == 0 ]]; then
+			base_branch=$(_resolve_pr_base_branch origin) || return 1
+			merge_base=$(git merge-base "refs/remotes/origin/$base_branch" HEAD) || return 1
+			diff_text=$(git -c core.quotePath=false diff --cached --no-color --no-ext-diff --no-textconv --unified=0 "$merge_base" --) || return 1
+			diff_loaded=1
+		fi
+		basename="${path##*/}"
+		referencing_path=""
+		while IFS= read -r line; do
+			case "$line" in
+			'+++ b/'*) referencing_path="${line#+++ b/}" ;;
+			'+++ '*) referencing_path="${line#+++ }" ;;
+			+*)
+				if [[ "$line" == *"$basename"* ]]; then
+					print_error "Ignored worktree file '${path}' is referenced by '${referencing_path}'."
+					git check-ignore -v -- "$path" >&2 || return 1
+					failed=1
+					break
+				fi
+				;;
+			esac
+		done <<<"$diff_text"
+	done <"$ignored_list"
+	if [[ "$failed" == 1 ]]; then
+		print_error "Stage the intended source explicitly after checking it for secrets, or use FULL_LOOP_ALLOW_IGNORED_REFERENCES=1 for intentional untracked references."
+		return 1
+	fi
+	return 0
+)
+
 # Stage product changes and commit with the given message.
 # Skips commit if nothing staged but commits exist ahead of the remote default branch.
 # Returns 1 on failure.
@@ -386,6 +449,7 @@ _stage_and_commit() {
 
 	print_info "Staging and committing changes..."
 	_stage_product_changes || return 1
+	_check_ignored_source_references || return 1
 
 	if git diff --cached --quiet 2>/dev/null; then
 		local base_branch="" base_ref="" ahead=""
