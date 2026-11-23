@@ -1204,6 +1204,7 @@ _worktree_fetch_origin_branch() {
 	local rewrite_from=""
 	local race_retries=0
 	local retry_start=""
+	local fetch_refspec="+refs/heads/${target_branch}:refs/remotes/origin/${target_branch}"
 
 	remote_url=$(git -C "$fetch_cwd" remote get-url origin 2>/dev/null || true)
 	if fetch_stderr=$(_worktree_fetch_origin_branch_once "$fetch_cwd" "$target_branch" 2>&1); then
@@ -1240,7 +1241,23 @@ _worktree_fetch_origin_branch() {
 			-c "credential.helper=!gh auth git-credential" \
 			-c "url.https://github.com/.insteadOf=${rewrite_from}" \
 			fetch --quiet --no-tags origin \
-			"+refs/heads/${target_branch}:refs/remotes/origin/${target_branch}"
+			"$fetch_refspec"
+		return $?
+	fi
+
+	# gh auth setup-git can retain a garbage-collected Nix store path. Replace
+	# that helper only for this fetch; never change the configured credentials.
+	if [[ "$remote_url" == https://github.com/* ]] &&
+		{ [[ "$fetch_stderr" =~ auth\ git-credential\ get:\ line\ [0-9]+: ]] ||
+			[[ "$fetch_stderr" == *"credential helper"* && "$fetch_stderr" == *"not found"* ]]; } &&
+		command -v gh >/dev/null 2>&1 &&
+		gh auth status --hostname github.com >/dev/null 2>&1; then
+		printf 'Configured Git credential helper failed to run; retrying with transient gh helper. Repair the stale credential.helper configuration:\n%s\n' "$fetch_stderr" >&2
+		GIT_TERMINAL_PROMPT=0 git -C "$fetch_cwd" \
+			-c credential.helper= \
+			-c "credential.helper=!gh auth git-credential" \
+			fetch --quiet --no-tags origin \
+			"$fetch_refspec"
 		return $?
 	fi
 
