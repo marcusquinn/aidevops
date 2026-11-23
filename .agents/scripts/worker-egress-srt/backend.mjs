@@ -164,13 +164,13 @@ async function supervised(argv, envelope, scratch, timeout = 15) {
 
 // Pin the upstream rendering contract. Modify argv via a receiver, not by parsing
 // or reserializing the opaque SBPL profile; the host proxy stays outside Seatbelt.
-export function tightenMacCommand(wrapped, node = process.execPath) {
+export function tightenMacCommand(wrapped, node = process.execPath, grants = { read: [], write: [] }) {
   const marker = '/usr/bin/sandbox-exec -p ';
   insist(wrapped.split(marker).length === 2, 'unrecognized-seatbelt-command');
-  return wrapped.replace(marker, `${quote(node)} ${quote(fileURLToPath(import.meta.url))} seatbelt -p `);
+  return wrapped.replace(marker, `${quote(node)} ${quote(fileURLToPath(import.meta.url))} seatbelt ${quote(JSON.stringify(grants))} -p `);
 }
 
-export function tightenMacProfile(profile) {
+export function tightenMacProfile(profile, grants = { read: [], write: [] }) {
   insist(profile.startsWith('(version 1)\n(deny default'), 'unexpected-seatbelt-profile');
   // Remove the pinned release's explicit Mach-service allows rather than
   // assuming a broad deny overrides more specific allows. Refuse unknown forms.
@@ -178,13 +178,26 @@ export function tightenMacProfile(profile) {
   let strict = profile.replace(rule, '');
   insist(!/\(allow\s+mach-lookup\b/.test(strict) && !/\(import\b/.test(strict), 'unknown-mach-rule');
   strict = strict.replace(/\(allow (?:user-preference-read|ipc-posix-shm|ipc-posix-sem)\)/g, '');
-  const tempDenials = temporaryHostPaths(true).map(p =>
-    `(deny file-read* file-write* (subpath ${JSON.stringify(p)}))`).join('\n');
+  const tempDenials = temporaryHostPaths(true).flatMap(p => {
+    // Seatbelt sees both /tmp and /private/tmp spellings. Envelope grants are
+    // canonical, so translate exclusions for each spelling of the same root.
+    let canonical = p;
+    try { canonical = fs.realpathSync(p); }
+    catch (error) { insist(error.code === 'ENOENT', 'temporary-path-unavailable'); }
+    const filter = roots => {
+      const exclusions = roots.filter(root => inside(root, canonical)).map(root =>
+        `(require-not (subpath ${JSON.stringify(path.join(p, path.relative(canonical, root)))}))`);
+      const parent = `(subpath ${JSON.stringify(p)})`;
+      return exclusions.length ? `(require-all ${parent} ${exclusions.join(' ')})` : parent;
+    };
+    return [`(deny file-read* ${filter([...grants.read, ...grants.write])})`,
+      `(deny file-write* file-write-create file-write-unlink ${filter(grants.write)})`];
+  }).join('\n');
   return strict + '\n(deny mach-lookup)\n(deny mach-register)\n' + tempDenials + '\n';
 }
 
 // The pinned SRT always adds host /tmp/claude write binds. Apply private tmpfs
-// LAST, after every upstream mount, using argv rather than shell/profile parsing.
+// after every upstream mount, then restore only explicit grants beneath them.
 // Resolve aliases on the host too: a symlink must not expose its target through
 // a canonical bind emitted by SRT. Unknown bwrap profile forms fail closed.
 function temporaryHostPaths(includeSpellings = false) {
@@ -199,13 +212,18 @@ function temporaryHostPaths(includeSpellings = false) {
   return [...paths];
 }
 
-export function tightenLinuxArgs(argv) {
+export function tightenLinuxArgs(argv, grants = { read: [], write: [] }) {
   const boundary = argv.indexOf('--');
   insist(boundary >= 0 && !argv.slice(0, boundary).includes('--args'), 'unexpected-bwrap-profile');
   // An absent alias has no host grant to hide. Mounting it could require making
   // /private on the read-only root of an ordinary Linux filesystem. Use only
   // canonical destinations: modern bwrap refuses a symlink mount destination.
-  return [...argv.slice(0, boundary), ...temporaryHostPaths().flatMap(p => ['--tmpfs', p]), ...argv.slice(boundary)];
+  const roots = temporaryHostPaths();
+  const restored = [...grants.read.map(p => [p, '--ro-bind']), ...grants.write.map(p => [p, '--bind'])]
+    .filter(([p]) => roots.some(root => inside(p, root)))
+    .sort(([a], [b]) => a.length - b.length)
+    .flatMap(([p, flag]) => [flag, p, p]);
+  return [...argv.slice(0, boundary), ...roots.flatMap(p => ['--tmpfs', p]), ...restored, ...argv.slice(boundary)];
 }
 
 // Names the workload may see. The SRT-set names were verified against
@@ -233,6 +251,14 @@ function envCommand(tool) {
 }
 
 async function wrappedArgv(manager, argv, envelope) {
+  const config = manager.getConfig();
+  const grants = {
+    read: config.filesystem.allowRead.map(entry => entry.path),
+    write: config.filesystem.allowWrite.map(entry => entry.path),
+  };
+  // Include the current qualification input and bridge sockets, not merely the
+  // initial envelope. This receiver is host-owned and outside the write grant.
+  if (process.platform === 'linux') writeLinuxReceiver(config.bwrapPath, envelope, grants);
   // With a sealed filesystem there is no ambient /etc/hosts. Don't make clients
   // resolve SRT's "localhost" bridge name through an unavailable system resolver.
   const proxySetup = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']
@@ -245,7 +271,7 @@ async function wrappedArgv(manager, argv, envelope) {
   const command = proxySetup + 'set --; ' + collect
     + `exec ${envCommand(envelope.tools.coreutils)} -i "$@" ` + argv.map(quote).join(' ');
   let wrapped = await manager.wrapWithSandbox(command, envelope.tools.shell);
-  if (process.platform === 'darwin') wrapped = tightenMacCommand(wrapped);
+  if (process.platform === 'darwin') wrapped = tightenMacCommand(wrapped, process.execPath, grants);
   return [envelope.tools.shell, '-c', wrapped];
 }
 
@@ -476,17 +502,21 @@ function cleanEnvironment(envelope, scratch) {
 // Receivers invoked on the host, before the one and only sandbox apply call.
 function receive(argv) {
   if (argv[0] === 'bwrap') {
-    const child = spawnSync(executable(argv[1]), tightenLinuxArgs(argv.slice(2)), { stdio: 'inherit' });
+    const child = spawnSync(executable(argv[1]), tightenLinuxArgs(argv.slice(3), JSON.parse(argv[2])), { stdio: 'inherit' });
     return child.status ?? 126;
   }
-  insist(process.platform === 'darwin' && argv[1] === '-p' && argv.length >= 5, 'seatbelt-argv');
-  const child = spawnSync('/usr/bin/sandbox-exec', ['-p', tightenMacProfile(argv[2]), ...argv.slice(3)], { stdio: 'inherit' });
+  insist(process.platform === 'darwin' && argv[2] === '-p' && argv.length >= 6, 'seatbelt-argv');
+  const child = spawnSync('/usr/bin/sandbox-exec', ['-p', tightenMacProfile(argv[3], JSON.parse(argv[1])), ...argv.slice(4)], { stdio: 'inherit' });
   return child.status ?? 126;
+}
+
+function writeLinuxReceiver(receiver, envelope, grants) {
+  fs.writeFileSync(receiver, `#!${envelope.tools.shell}\nexec ${quote(process.execPath)} ${quote(fileURLToPath(import.meta.url))} bwrap ${quote(envelope.tools.bwrap)} ${quote(JSON.stringify(grants))} "$@"\n`, { mode: 0o700 });
 }
 
 function linuxSettings(host, envelope, scratch, sockets) {
   const receiver = path.join(scratch, 'bwrap');
-  fs.writeFileSync(receiver, `#!${envelope.tools.shell}\nexec ${quote(process.execPath)} ${quote(fileURLToPath(import.meta.url))} bwrap ${quote(envelope.tools.bwrap)} "$@"\n`, { mode: 0o700 });
+  writeLinuxReceiver(receiver, envelope, { read: [...envelope.read, ...sockets], write: envelope.write });
   return { ...settings(host, envelope, sockets), bwrapPath: receiver };
 }
 

@@ -48,14 +48,15 @@ test('SRT policy locks ports, private space, Unix sockets, nesting, and filesyst
 });
 
 test('macOS DNS guard must recognize exactly one pinned Seatbelt invocation', () => {
-  assert.match(tightenMacCommand("env /usr/bin/sandbox-exec -p 'PROFILE' /bin/sh -c true"), /seatbelt -p/);
+  assert.match(tightenMacCommand("env /usr/bin/sandbox-exec -p 'PROFILE' /bin/sh -c true"), /seatbelt .* -p/);
   assert.throws(() => tightenMacCommand('unexpected-upstream-rendering'));
   assert.throws(() => tightenMacCommand('/usr/bin/sandbox-exec -p x /usr/bin/sandbox-exec -p y'));
   const profile = tightenMacProfile('(version 1)\n(deny default)\n(allow mach-lookup\n (global-name "com.apple.system.opendirectoryd.libinfo"))\n(allow process-exec)');
   assert.doesNotMatch(profile, /allow mach-lookup/);
   assert.match(profile, /allow process-exec/);
   for (const p of ['/tmp/claude', '/private/tmp/claude']) {
-    assert.ok(profile.includes(`(deny file-read* file-write* (subpath "${p}"))`));
+    assert.ok(profile.includes(`(deny file-read* (subpath "${p}"))`));
+    assert.ok(profile.includes(`(deny file-write* file-write-create file-write-unlink (subpath "${p}"))`));
   }
   assert.throws(() => tightenMacProfile('(version 1)\n(deny default)\n(allow mach-lookup (unknown-filter "new"))'));
 });
@@ -88,6 +89,7 @@ test('Linux shadows canonical temporary aliases but never mounts an absent /priv
 
 test('direct and absolute-symlink entrypoints execute while imports stay inert', () => {
   const temp = process.env.AIDEVOPS_TEMP_DIR || path.join(os.homedir(), '.aidevops/.agent-workspace/tmp');
+  fs.mkdirSync(temp, { recursive: true });
   const root = fs.mkdtempSync(path.join(temp, 'srt-entry-'));
   try {
     const link = path.join(root, 'backend.mjs');
@@ -103,6 +105,26 @@ test('direct and absolute-symlink entrypoints execute while imports stay inert',
     assert.equal(imported.stdout, '');
     assert.equal(imported.stderr, '');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('explicit temporary grants survive shadows and operation-specific denials', t => {
+  t.mock.method(fs, 'realpathSync', p => p === '/tmp/claude' ? '/private/tmp/claude' : p);
+  const read = '/private/tmp/claude/input';
+  const output = '/private/tmp/claude/job-output';
+  const grants = { read: [read, '/unrelated'], write: [output] };
+  const args = tightenLinuxArgs(['--bind', '/private/tmp/claude', '/private/tmp/claude', '--', '/bin/true'], grants);
+  assert.deepEqual(args.slice(3), ['--tmpfs', '/private/tmp/claude',
+    '--ro-bind', read, read, '--bind', output, output, '--', '/bin/true']);
+  const original = '(version 1)\n(deny default)\n(allow file-write-create file-write-unlink (subpath "/tmp/claude"))';
+  const profile = tightenMacProfile(original, grants);
+  for (const root of ['/tmp/claude', '/private/tmp/claude']) {
+    assert.ok(profile.includes(`(deny file-read* (require-all (subpath "${root}") (require-not (subpath "${root}/input")) (require-not (subpath "${root}/job-output"))))`));
+    const deny = `(deny file-write* file-write-create file-write-unlink (require-all (subpath "${root}") (require-not (subpath "${root}/job-output"))))`;
+    assert.ok(profile.indexOf(deny) > profile.indexOf('(allow file-write-create'));
+  }
+  assert.ok(!profile.includes('/unrelated'));
+  const wrapped = tightenMacCommand("/usr/bin/sandbox-exec -p 'PROFILE' /bin/true", process.execPath, grants);
+  assert.ok(wrapped.includes(JSON.stringify(grants)));
 });
 
 // GH#38861: Homebrew binaries load dylibs through /opt/homebrew/opt/<keg>
@@ -133,7 +155,7 @@ function removeEmptyTemp(directory) {
   catch (error) { if (error.code !== 'ENOTEMPTY') throw error; }
 }
 
-function checkTemporaryIsolation(invoke, policyFile, python, output) {
+function checkTemporaryIsolation(invoke, policyFile, python, output, manifest) {
   // Unlisted synthetic HOST data at SRT's implicit write root must remain
   // unreadable and unchanged; writes to a private tmpfs shadow are harmless.
   const defaultTemp = '/tmp/claude';
@@ -141,11 +163,12 @@ function checkTemporaryIsolation(invoke, policyFile, python, output) {
   try { fs.mkdirSync(defaultTemp, { mode: 0o700 }); madeDefaultTemp = true; }
   catch (error) { if (error.code !== 'EEXIST') throw error; }
   let hostRoot;
+  const originalManifest = fs.readFileSync(manifest);
   try {
     hostRoot = fs.mkdtempSync(path.join(defaultTemp, 'aidevops-canary-'));
     const hostFile = path.join(hostRoot, 'host-only');
     fs.writeFileSync(hostFile, 'synthetic host marker', { mode: 0o600 });
-    const isolated = invoke(['run', '--policy', policyFile, '--', python, '-I', '-c', String.raw`
+    const probe = String.raw`
 import os, sys, tempfile
 try:
     assert open(sys.argv[1]).read() != 'synthetic host marker', 'host temp data exposed'
@@ -156,13 +179,43 @@ try:
         f.write('escape')
 except OSError:
     pass
+if sys.platform == 'darwin':
+    # Use the canonical spelling explicitly; the parent is an unlisted sibling
+    # of the approved output. Both specific operations must be denied.
+    host_file = os.path.join('/private/tmp/claude', os.path.relpath(sys.argv[1], '/tmp/claude'))
+    for operation in [lambda: open(host_file + '.created', 'x'), lambda: os.unlink(host_file)]:
+        try:
+            operation()
+        except PermissionError:
+            pass
+        else:
+            raise AssertionError('unlisted host create/unlink permitted')
 assert os.environ['TMPDIR'] == sys.argv[2]
 with tempfile.TemporaryFile() as f:
     f.write(b'private temporary output')
-`, hostFile, output]);
+if len(sys.argv) == 4:
+    assert open(sys.argv[3]).read() == 'approved temp input'
+    with open(os.path.join(sys.argv[2], 'approved-result'), 'x') as f:
+        f.write('approved temp output')
+`;
+    const isolated = invoke(['run', '--policy', policyFile, '--', python, '-I', '-c', probe, hostFile, output]);
     assert.equal(isolated.status, 0, isolated.stdout + isolated.stderr);
     assert.equal(fs.readFileSync(hostFile, 'utf8'), 'synthetic host marker');
+    const nestedOutput = path.join(hostRoot, 'job-output');
+    const approvedInput = path.join(hostRoot, 'input');
+    fs.mkdirSync(nestedOutput, { mode: 0o700 });
+    fs.writeFileSync(approvedInput, 'approved temp input', { mode: 0o600 });
+    const config = JSON.parse(originalManifest);
+    fs.writeFileSync(manifest, JSON.stringify({ ...config, cwd: nestedOutput,
+      write: [nestedOutput], read: [...config.read, approvedInput] }));
+    const granted = invoke(['run', '--policy', policyFile, '--', python, '-I', '-c', probe,
+      hostFile, fs.realpathSync(nestedOutput), fs.realpathSync(approvedInput)]);
+    assert.equal(granted.status, 0, granted.stdout + granted.stderr);
+    assert.equal(fs.readFileSync(path.join(nestedOutput, 'approved-result'), 'utf8'), 'approved temp output');
+    assert.equal(fs.readFileSync(hostFile, 'utf8'), 'synthetic host marker');
+    assert.equal(fs.existsSync(hostFile + '.created'), false);
   } finally {
+    fs.writeFileSync(manifest, originalManifest);
     if (hostRoot) fs.rmSync(hostRoot, { recursive: true, force: true });
     if (madeDefaultTemp) removeEmptyTemp(defaultTemp);
   }
@@ -218,7 +271,7 @@ test('real platform qualification (explicit opt-in, synthetic data, no provider 
       tools.python, '-I', '-c', 'import sys; print(sys.argv[1])', 'a b;$(false)']);
     assert.equal(run.status, 0, run.stdout + run.stderr);
     assert.equal(run.stdout.trim(), 'a b;$(false)');
-    checkTemporaryIsolation(invoke, policyFile, tools.python, output);
+    checkTemporaryIsolation(invoke, policyFile, tools.python, output, manifest);
     // The supervisor exports framework constants; the workload must not see them.
     const envRun = invoke(['run', '--policy', policyFile, '--', tools.python, '-I', '-c',
       'import os,json; print(json.dumps(sorted(os.environ)))']);
