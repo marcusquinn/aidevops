@@ -406,6 +406,27 @@ _command_basename() {
 }
 
 #######################################
+# Return whether Node is running the bounded-operation supervisor directly.
+# The manager launches Node with just this script; do not exempt arbitrary Node
+# jobs mentioning the filename in arguments. The supervisor owns its budget and
+# descendant cleanup, but its RSS remains subject to the guard's normal limit.
+# Arguments:
+#   $1 - PID
+#######################################
+_is_bounded_operation_supervisor() {
+	local pid="$1"
+	local command_line=""
+	local supervisor_pattern='^([^[:space:]]*/)?node[[:space:]]+/[^[:space:]]*/plugins/opencode-aidevops/bounded-operation-supervisor\.mjs$'
+
+	[[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+	command_line=$(_get_process_command "$pid")
+	if [[ "$command_line" =~ $supervisor_pattern ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # Describe the lifecycle owner that supersedes the generic runtime limit.
 # Arguments:
 #   $1 - PID
@@ -413,6 +434,10 @@ _command_basename() {
 #######################################
 _runtime_management_owner() {
 	local pid="$1"
+	if _is_bounded_operation_supervisor "$pid"; then
+		printf '%s' "bounded-operation-supervisor"
+		return 0
+	fi
 	if _is_managed_worker_process "$pid"; then
 		printf '%s' "worker-service"
 		return 0
