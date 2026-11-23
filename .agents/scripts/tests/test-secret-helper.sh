@@ -597,9 +597,8 @@ test_locked_injection_exits_bounded() {
 	setup
 	trap 'teardown' RETURN
 	export AIDEVOPS_TEST_LOCKED=true
-	# The 12s production default exceeds the outer 8s watchdog. Exercise the
-	# same bounded decrypt promptly using its supported timeout override.
-	local -x AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS=2
+	# Two attempts wait 1s + 2s, leaving headroom under the outer watchdog.
+	local -x AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS=1
 	export AIDEVOPS_TEST_SECRET="fixture-${TEST_DIR##*/}"
 	local result=""
 	# shellcheck disable=SC2016 # The child shell expands the marker path.
@@ -614,9 +613,11 @@ except subprocess.TimeoutExpired:
     print("timed-out")
 else:
     text = completed.stdout.decode(errors="replace")
-    print("ok" if completed.returncode != 0 and
-          "secret REDACTION_KEY unavailable" in text and
-          "unlock GPG" in text and
+    print("ok" if completed.returncode == 5 and
+          "secret REDACTION_KEY read timed out after 2s (load " in text and
+          "transient, retry later" in text and
+          "gopass/GPG locked or entry missing" not in text and
+          "unlock GPG" not in text and
           not os.path.exists(os.environ["AIDEVOPS_TEST_DIR"] + "/command-ran")
           else "failed")
 ')
@@ -624,6 +625,54 @@ else:
 		print_result "locked headless decrypt exits promptly without running command" 0
 	else
 		print_result "locked headless decrypt exits promptly without running command" 1 "$result"
+	fi
+	return 0
+}
+
+test_injection_retries_only_timeouts() {
+	setup
+	trap 'teardown' RETURN
+	cat >"$TEST_DIR/bin/gopass" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+ls) printf '%s\n' 'aidevops/RETRY_KEY' ;;
+show)
+    printf 'attempt\n' >>"$AIDEVOPS_TEST_DIR/attempts"
+    if [[ "$AIDEVOPS_TEST_READ_MODE" == fail ]]; then exit 7; fi
+    if [[ ! -e "$AIDEVOPS_TEST_DIR/first-attempt" ]]; then
+        touch "$AIDEVOPS_TEST_DIR/first-attempt"
+        printf 'discard-partial-value'
+        sleep 20
+    fi
+    # This succeeds only with the longer second-attempt bound.
+    sleep 1.3
+    printf 'retry-placeholder-value'
+    ;;
+*) exit 1 ;;
+esac
+EOF
+	chmod +x "$TEST_DIR/bin/gopass"
+	local output="" status=0
+	output=$(HOME="$TEST_DIR/home" AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS=1 AIDEVOPS_TEST_READ_MODE=retry \
+		bash "$HELPER" RETRY_KEY -- bash -c \
+		'[[ "$RETRY_KEY" == "retry-placeholder-value" ]] && printf child-ok' 2>&1) || status=$?
+	local attempts=""
+	attempts=$(<"$TEST_DIR/attempts")
+	if [[ "$status" -eq 0 && "$output" == child-ok && "$attempts" == $'attempt\nattempt' ]]; then
+		print_result "injection retries a timeout once with a longer bound and discards partial output" 0
+	else
+		print_result "injection retries a timeout once with a longer bound and discards partial output" 1 "rc=$status"
+	fi
+	rm -f "$TEST_DIR/attempts"
+	status=0
+	output=$(HOME="$TEST_DIR/home" AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS=1 AIDEVOPS_TEST_READ_MODE=fail \
+		bash "$HELPER" RETRY_KEY -- touch "$TEST_DIR/command-ran" 2>&1) || status=$?
+	attempts=$(<"$TEST_DIR/attempts")
+	if [[ "$status" -eq 1 && "$output" == *"gopass/GPG locked or entry missing"* &&
+		"$output" != *"timed out"* && "$attempts" == attempt && ! -e "$TEST_DIR/command-ran" ]]; then
+		print_result "non-zero gopass exit retains locked diagnostic without retrying or running child" 0
+	else
+		print_result "non-zero gopass exit retains locked diagnostic without retrying or running child" 1 "rc=$status"
 	fi
 	return 0
 }
@@ -1514,6 +1563,7 @@ main() {
 	test_empty_fallback_secret_fails_closed
 	test_fallback_trims_trailing_whitespace_keeps_inner
 	test_locked_injection_exits_bounded
+	test_injection_retries_only_timeouts
 	test_list_resolves_tenants_without_reading_values
 	test_empty_gopass_namespace_uses_plaintext
 	test_list_preserves_direct_credentials

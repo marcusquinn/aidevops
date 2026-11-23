@@ -265,6 +265,26 @@ decode_credential_value() {
 	return 0
 }
 
+# Read one requested entry, retaining timeout status separately from store errors.
+read_scoped_gopass_value() {
+	local name="$1"
+	local val="" read_status=0
+	val=$(get_injected_gopass_value "${GOPASS_PREFIX}/${name}" true) || read_status=$?
+	if [[ "$read_status" -eq 5 ]]; then
+		local timeout load
+		timeout=$(injected_gopass_timeout 2) || return 1
+		load=$(python3 -c 'import os; print(os.getloadavg()[0])' 2>/dev/null) || load=unknown
+		print_error "secret $name read timed out after ${timeout}s (load $load); transient, retry later" >&2
+		return 5
+	fi
+	if [[ "$read_status" -ne 0 || -z "$val" ]]; then
+		print_error "secret $name unavailable: gopass/GPG locked or entry missing; unlock GPG in a terminal and retry" >&2
+		return 1
+	fi
+	printf '%s' "$val"
+	return 0
+}
+
 # Build a NUL-delimited environment from gopass secrets.
 build_secret_env() {
 	local -a specific_names=("$@")
@@ -291,10 +311,7 @@ build_secret_env() {
 				# Names absent from gopass may still be in credentials.sh.
 				[[ "$found" == true ]] || continue
 				local val=""
-				if ! val=$(get_injected_gopass_value "${GOPASS_PREFIX}/${name}") || [[ -z "$val" ]]; then
-					print_error "secret $name unavailable: gopass/GPG locked or entry missing; unlock GPG in a terminal and retry" >&2
-					return 1
-				fi
+				val=$(read_scoped_gopass_value "$name") || return $?
 				emit_secret_env_record "$name" "$val"
 				emitted_names+=("$name")
 			done
