@@ -70,6 +70,7 @@ REPO_ROOT="$(cd "${SCRIPTS_DIR}/../.." && pwd)" || exit 1
 
 ROUTINE_FILE="${SCRIPTS_DIR}/pulse-merge-routine.sh"
 SETUP_FILE="${REPO_ROOT}/setup.sh"
+SETUP_EXECUTION_FILE="${REPO_ROOT}/.agents/scripts/setup/modules/setup-execution.sh"
 RUNTIME_HELPERS_FILE="${REPO_ROOT}/.agents/scripts/setup/_runtime_helpers.sh"
 
 if [[ -t 1 ]]; then
@@ -323,7 +324,7 @@ else
 			}
 		}
 		END { exit (found_call) ? 0 : 1 }
-	' "$SETUP_FILE"; then
+	' "$SETUP_EXECUTION_FILE"; then
 		pass "8: setup.sh call site uses new helper"
 	else
 		fail "8: setup.sh call site uses new helper" \
