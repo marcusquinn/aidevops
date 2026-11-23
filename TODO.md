@@ -2460,7 +2460,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19300 perf(pulse): a drained cycle that runs its starved maintenance tail keeps dispatching instead of idling 20-35 min #feat #priority:high ref:GH#39960 pr:#39964 completed:2026-11-23
 
-- [ ] t19307 fix(pulse-dispatch): name the real cause when worktree pre-creation fails #bug #interactive tier:standard ref:GH#40000 -> [todo/tasks/t19307-brief.md]
+- [x] t19307 fix(pulse-dispatch): name the real cause when worktree pre-creation fails #bug #interactive tier:standard ref:GH#40000 -> [todo/tasks/t19307-brief.md] pr:#40001 completed:2026-11-23
 
 ## In Progress
 
