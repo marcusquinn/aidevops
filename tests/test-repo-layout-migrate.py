@@ -966,6 +966,12 @@ class RepoLayoutMigrationTest(unittest.TestCase):
         # The nested repository stays untracked in its parent, which is the
         # shape the parent fingerprint must omit while the child moves first.
         (hub / "notes.txt").write_text("untracked parent file\n", encoding="utf-8")
+        # The issue's third shape: a registration whose temp parent was wiped.
+        wiped_parent = self.root / "hub-runtime-tmp"
+        gone = wiped_parent / "Hub-gone"
+        wiped_parent.mkdir()
+        self._git("worktree", "add", "-q", "-b", "feature/gone", str(gone), cwd=hub)
+        shutil.rmtree(wiped_parent)
         self._register({"path": str(hub)}, {"path": str(nested)})
         before_tree = self._tree_digest(projects)
         before_registration = self.repos_json.read_bytes()
@@ -977,6 +983,7 @@ class RepoLayoutMigrationTest(unittest.TestCase):
             [item["source"] for item in payload["repositories"]], [str(nested), str(hub)]
         )
         self.assertEqual(payload["repositories"][1]["nested_sources"], ["Nested"])
+        self.assertEqual(payload["repositories"][1]["prunable_worktrees"], [str(gone)])
         self.assertNotIn("nested_sources", payload["repositories"][0])
         self.assertEqual(before_tree, self._tree_digest(projects))
 
