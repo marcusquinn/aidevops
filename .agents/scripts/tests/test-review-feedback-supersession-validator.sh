@@ -38,6 +38,13 @@ setup_test_env() {
 	GH_LOG="${TEST_ROOT}/gh.log"
 	mkdir -p "${TEST_ROOT}/bin"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
+	# Hermetic privacy inventory (GH#40101): real guard, synthetic fixture state.
+	export PRIVACY_REPOS_CONFIG="${TEST_ROOT}/home/.config/aidevops/repos.json"
+	export PRIVACY_CACHE_FILE="${TEST_ROOT}/home/.aidevops/cache/repo-privacy.json"
+	export PRIVACY_ENTITY_CONFIG="${TEST_ROOT}/home/missing-entities"
+	mkdir -p "${PRIVACY_REPOS_CONFIG%/*}" "${PRIVACY_CACHE_FILE%/*}"
+	printf '%s\n' '{"initialized_repos":[{"slug":"fixture/private-project","private":true}]}' >"$PRIVACY_REPOS_CONFIG"
+	printf '{"owner/repo":{"private":false,"checked_at":%s}}\n' "$(date +%s)" >"$PRIVACY_CACHE_FILE"
 	export GH_LOG
 	export AIDEVOPS_SIG_CLI="test"
 	export AIDEVOPS_SIG_CLI_VERSION="1"
