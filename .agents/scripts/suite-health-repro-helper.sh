@@ -273,23 +273,23 @@ run_linux() {
 			printf '# step: %s\nset -eo pipefail\n' "$step"
 			extract_step "$wf" "$step"
 		} >"$stage/step-${n}.sh"
-		printf 'echo "== replaying step: %s"\nbash /home/runner/step-%s.sh || exit 1\n' "$step" "$n" >>"$stage/steps.sh"
+		printf 'echo "== replaying step: %s"\nbash /srv/runner/step-%s.sh || exit 1\n' "$step" "$n" >>"$stage/steps.sh"
 	done
 	IFS="$IFS_SAVE"
 	cat >"$stage/inner.sh" <<'INNER'
 #!/usr/bin/env bash
 # Runs as the unprivileged runner user inside the container.
 set -u
-export HOME=/home/runner RUNNER_TEMP=/home/runner/_temp GITHUB_WORKSPACE=/home/runner/work
-export GITHUB_ENV=/home/runner/_temp/github_env GITHUB_PATH=/home/runner/_temp/github_path GITHUB_REF=refs/heads/main
+export HOME=/srv/runner RUNNER_TEMP=/srv/runner/_temp GITHUB_WORKSPACE=/srv/runner/work
+export GITHUB_ENV=/srv/runner/_temp/github_env GITHUB_PATH=/srv/runner/_temp/github_path GITHUB_REF=refs/heads/main
 mkdir -p "$RUNNER_TEMP"; : >"$GITHUB_ENV"; : >"$GITHUB_PATH"
 cd "$GITHUB_WORKSPACE" || exit 1
 git init -q . && git add -A >/dev/null 2>&1 && git -c user.name=r -c user.email=r@r.invalid commit -q -m snapshot
-bash /home/runner/steps.sh >&2 || { echo "staging failed" >&2; exit 3; }
+bash /srv/runner/steps.sh >&2 || { echo "staging failed" >&2; exit 3; }
 while IFS='=' read -r k v; do [ -n "$k" ] && export "$k=$v"; done <"$GITHUB_ENV"
 while IFS= read -r p; do [ -n "$p" ] && PATH="$p:$PATH"; done <"$GITHUB_PATH"
 export PATH
-exec bash /home/runner/helper.sh _inner-host --repo "$GITHUB_WORKSPACE" --jobs "$SHR_JOBS" --timeout "$SHR_TIMEOUT" /home/runner/suites.txt
+exec bash /srv/runner/helper.sh _inner-host --repo "$GITHUB_WORKSPACE" --jobs "$SHR_JOBS" --timeout "$SHR_TIMEOUT" /srv/runner/suites.txt
 INNER
 	cat >"$stage/outer.sh" <<'OUTER'
 #!/usr/bin/env bash
@@ -297,14 +297,14 @@ set -eu
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq >/dev/null
 apt-get install -y -qq sudo git jq curl ca-certificates nodejs npm python3 python3-venv python3-pip >/dev/null
-useradd -m -d /home/runner -s /bin/bash runner
+useradd -m -d /srv/runner -s /bin/bash runner
 echo 'runner ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/runner
-chmod 750 /home/runner
-cp -a /stage/src /home/runner/work
-cp /stage/inner.sh /stage/steps.sh /stage/helper.sh /stage/suites.txt /stage/step-*.sh /home/runner/
-chown -R runner:runner /home/runner
+chmod 750 /srv/runner
+cp -a /stage/src /srv/runner/work
+cp /stage/inner.sh /stage/steps.sh /stage/helper.sh /stage/suites.txt /stage/step-*.sh /srv/runner/
+chown -R runner:runner /srv/runner
 chmod 777 /out
-exec runuser -u runner -- env SHR_JOBS="$SHR_JOBS" SHR_TIMEOUT="$SHR_TIMEOUT" bash /home/runner/inner.sh
+exec runuser -u runner -- env SHR_JOBS="$SHR_JOBS" SHR_TIMEOUT="$SHR_TIMEOUT" bash /srv/runner/inner.sh
 OUTER
 	progress "suite-health-repro linux staging container ${IMAGE}"
 	docker run --rm --init --pids-limit 4096 -e SHR_JOBS="$JOBS" -e SHR_TIMEOUT="$SUITE_TIMEOUT" \
