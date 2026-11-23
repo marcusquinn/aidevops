@@ -398,9 +398,10 @@ _check_ignored_source_references() (
 		return 1
 	fi
 	local path="" runtime_path="" skip="" basename="" line="" referencing_path="" failed=0
+	local reference_regex="" escaped_path="" escaped_basename=""
 	while IFS= read -r -d '' path; do
 		case "/${path}" in
-		*/__pycache__/* | */node_modules/* | */.full-loop-cleanup-deferred | */.full-loop-cleanup-deferred/*) continue ;;
+		*/__pycache__/* | */node_modules/* | */.husky/_/* | */.full-loop-cleanup-deferred | */.full-loop-cleanup-deferred/*) continue ;;
 		esac
 		skip=0
 		for runtime_path in "${_full_loop_runtime_paths[@]}"; do
@@ -418,13 +419,22 @@ _check_ignored_source_references() (
 			diff_loaded=1
 		fi
 		basename="${path##*/}"
+		# Treat filenames literally, including regex punctuation. Short basenames
+		# have too little signal by themselves, but their full paths still count.
+		escaped_path=$(printf '%s' "$path" | sed 's/[][\\.^$*+?(){}|]/\\&/g') || return 1
+		reference_regex="$escaped_path"
+		if [[ ${#basename} -ge 3 ]]; then
+			escaped_basename=$(printf '%s' "$basename" | sed 's/[][\\.^$*+?(){}|]/\\&/g') || return 1
+			reference_regex="$reference_regex|$escaped_basename"
+		fi
+		reference_regex="(^|[^[:alnum:]_.-])($reference_regex)($|[^[:alnum:]_.-])"
 		referencing_path=""
 		while IFS= read -r line; do
 			case "$line" in
 			'+++ b/'*) referencing_path="${line#+++ b/}" ;;
 			'+++ '*) referencing_path="${line#+++ }" ;;
 			+*)
-				if [[ "$line" == *"$basename"* ]]; then
+				if [[ "${line#+}" =~ $reference_regex ]]; then
 					print_error "Ignored worktree file '${path}' is referenced by '${referencing_path}'."
 					git check-ignore -v -- "$path" >&2 || return 1
 					failed=1
