@@ -9,6 +9,7 @@ import net from 'node:net';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
+import { isProviderHostname } from './provider-host.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const version = '0.0.83';
@@ -21,32 +22,6 @@ const implicitTempPaths = ['/tmp/claude', '/private/tmp/claude'];
 class BackendError extends Error {}
 function insist(condition, reason) { if (!condition) throw new BackendError(reason); }
 
-const hostLabel = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
-const decimalOnly = /^\d+(?:\.\d+)*$/;
-const reservedSuffix = /(?:^|\.)(?:localhost|local|internal|test|invalid)$/;
-
-// One ordered rule per rejection, not a boolean chain and not a ladder of early
-// returns: this decides the single hostname a worker may reach, so each clause
-// has to stay individually readable and auditable. `every` short-circuits in
-// order, so the type rule still runs before any string operation, and a hostname
-// is accepted only if it survives every rule.
-const providerHostRules = [
-  host => typeof host === 'string',
-  host => host.length > 0 && host.length <= 253,
-  host => host === host.toLowerCase(),
-  host => !net.isIP(host),
-  // Refuse bare-decimal address forms such as 2130706433.
-  host => !decimalOnly.test(host),
-  host => !reservedSuffix.test(host),
-  host => host.split('.').length >= 2,
-  host => host.split('.').every(label => hostLabel.test(label)),
-];
-
-function isProviderHostname(host) {
-  if (!providerHostRules.every(rule => rule(host))) return false;
-  try { return !net.isIP(new URL('https://' + host).hostname); }
-  catch { return false; }
-}
 
 export function providerHost(policy) {
   insist(policy?.schema === 'aidevops.worker-egress-policy.v1', 'policy-schema');
@@ -515,6 +490,22 @@ function linuxSettings(host, envelope, scratch, sockets) {
   return { ...settings(host, envelope, sockets), bwrapPath: receiver };
 }
 
+function adaptPlatform(manager, host, envelope, scratch) {
+  if (process.platform === 'linux') {
+    // Only SRT's two owned bridge sockets are visible to its pre-seccomp
+    // relays. Never expose the entire host scratch directory. The workload
+    // cannot open AF_UNIX sockets after apply-seccomp.
+    const sockets = [manager.getLinuxHttpSocketPath(), manager.getLinuxSocksSocketPath()];
+    insist(sockets.every(p => typeof p === 'string'), 'bridge-sockets-not-ready');
+    manager.updateConfig(linuxSettings(host, envelope, scratch, sockets));
+  }
+  if (process.platform === 'darwin') {
+    // GH#38861 reviewed arm64 only (synthetic, DNS and Mach evidence). Intel
+    // Macs stay refused until they have their own evidence; no bypass.
+    insist(process.arch === 'arm64', 'macos-x64-qualification-pending');
+  }
+}
+
 async function main(argv) {
   if (argv[0] === 'bwrap' || argv[0] === 'seatbelt') return receive(argv);
   const action = argv.shift();
@@ -547,19 +538,7 @@ async function main(argv) {
     insist(dependencies.errors.length === 0 && dependencies.warnings.length === 0, 'dependencies-not-ready');
     await manager.initialize(settings(host, envelope), undefined, false);
     insist(await manager.waitForNetworkInitialization(), 'proxy-not-ready');
-    if (process.platform === 'linux') {
-      // Only SRT's two owned bridge sockets are visible to its pre-seccomp
-      // relays. Never expose the entire host scratch directory. The workload
-      // cannot open AF_UNIX sockets after apply-seccomp.
-      const sockets = [manager.getLinuxHttpSocketPath(), manager.getLinuxSocksSocketPath()];
-      insist(sockets.every(p => typeof p === 'string'), 'bridge-sockets-not-ready');
-      manager.updateConfig(linuxSettings(host, envelope, scratch, sockets));
-    }
-    if (process.platform === 'darwin') {
-      // GH#38861 reviewed arm64 only (synthetic, DNS and Mach evidence). Intel
-      // Macs stay refused until they have their own evidence; no bypass.
-      insist(process.arch === 'arm64', 'macos-x64-qualification-pending');
-    }
+    adaptPlatform(manager, host, envelope, scratch);
     const checks = await qualify(manager, envelope, scratch);
     if (action === 'probe') {
       console.log(JSON.stringify({ schema: 'aidevops.worker-egress-backend.v1', ready: true,
