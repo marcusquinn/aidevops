@@ -186,13 +186,23 @@ _dlw_zero_output_comment_count() {
 # permission-verified trusted_authors list (peer runners on user-owned repos
 # are COLLABORATOR). The windowed count bounds the self-healing hold; t19171:
 # only evidence after the latest trusted output progress enters it.
+#
+# GH#39996: an aborted attempt (unmatched claim or orphan lease) shows that
+# the device which posted it failed before any worker started; it says nothing
+# about the issue. With self_device set, only this device's aborted attempts
+# enter the windowed hold, so one failing peer device cannot hold the issue on
+# every runner; each device still holds itself after the threshold. Explicit
+# zero-output evidence (a worker ran) stays fleet-wide, and the lifetime
+# columns keep counting every device.
 # Args: raw comments JSON, now epoch, orphan grace, zero-output regex,
 #       zero-attempt regex, trusted authors JSON array (default []),
-#       hold window seconds (default 43200; 0 counts all evidence)
+#       hold window seconds (default 43200; 0 counts all evidence),
+#       self device ID (default empty: count aborted attempts of every device)
 # Output: comments, ops, zero, chars, zero-attempt, recent-zero,
 #         recent-hold-notices, recent evidence epochs (ascending CSV, "-" when
 #         none), latest evidence boundary epoch (authoritative reset or trusted
-#         output progress; 0 when none) as a TSV row
+#         output progress; 0 when none), recent aborted attempts of other
+#         devices left out of recent-zero, as a TSV row
 #######################################
 _dlw_comment_bloat_metrics_from_json() {
 	local raw_comments="$1"
@@ -202,6 +212,7 @@ _dlw_comment_bloat_metrics_from_json() {
 	local zero_attempt_pattern="$5"
 	local trusted_authors="${6:-[]}"
 	local window_seconds="${7:-43200}"
+	local self_device="${8:-}"
 	[[ "$window_seconds" =~ ^[0-9]+$ ]] || window_seconds=43200
 	jq -e 'arrays | all(.[]; type == "string")' <<<"$trusted_authors" >/dev/null 2>&1 || trusted_authors='[]'
 
@@ -210,6 +221,7 @@ _dlw_comment_bloat_metrics_from_json() {
 		--argjson orphan_grace "$orphan_grace" \
 		--argjson trusted_authors "$trusted_authors" \
 		--argjson window_seconds "$window_seconds" \
+		--arg self_device "$self_device" \
 		--arg zero_output_pattern "$zero_output_pattern" \
 		--arg zero_attempt_pattern "$zero_attempt_pattern" '
 '"${_DLW_ZERO_OUTPUT_EVIDENCE_JQ_DEFS}${_DLW_DISPATCH_MARKER_JQ_DEFS}${_DLW_EVIDENCE_TRUST_JQ_DEFS}"'
@@ -245,7 +257,7 @@ _dlw_comment_bloat_metrics_from_json() {
 				| select(lease_session == $claim_session)
 				| select([(.created_at // ""), ((.id | tonumber?) // 0)] >= [($claim.created_at // ""), (($claim.id | tonumber?) // 0)])
 			] | length == 0)
-			| {token: $token, author: $claim_author, epoch: $claim_epoch, key: ($claim | comment_key)}
+			| {token: $token, author: $claim_author, device: $claim_device, epoch: $claim_epoch, key: ($claim | comment_key)}
 		]) as $unmatched_claims |
 		([$comments[]
 			| select(body_text | test("DISPATCH_CLAIM nonce="; "i"))
@@ -268,11 +280,14 @@ _dlw_comment_bloat_metrics_from_json() {
 				| select(body_text | test("DISPATCH_LEASE phase=(ready|terminal) |Dispatching worker"; "i"))
 				| select(lease_token == $token)
 			] | length == 0)
-			| {token: $token, author: $lease_author, epoch: $lease_epoch, key: ($lease | comment_key)}
+			| {token: $token, author: $lease_author, device: ($lease | lease_device), epoch: $lease_epoch, key: ($lease | comment_key)}
 		] | group_by([.author, .token]) | map(max_by(.epoch))) as $orphan_leases |
 		(($unmatched_claims | length) + ($orphan_leases | length)) as $attempt_failures |
-		($explicit_zero + $unmatched_claims + $orphan_leases
-			| map(select((.key | after_key($progress_key)) and .epoch >= $window_start) | .epoch) | sort) as $recent_epochs |
+		($unmatched_claims + $orphan_leases
+			| map(select((.key | after_key($progress_key)) and .epoch >= $window_start))) as $recent_attempts |
+		($recent_attempts | map(select($self_device == "" or .device == $self_device))) as $own_recent_attempts |
+		(($explicit_zero | map(select((.key | after_key($progress_key)) and .epoch >= $window_start)))
+			+ $own_recent_attempts | map(.epoch) | sort) as $recent_epochs |
 		[
 			($comments | length),
 			$ops,
@@ -282,7 +297,8 @@ _dlw_comment_bloat_metrics_from_json() {
 			($recent_epochs | length),
 			$recent_notices,
 			(if ($recent_epochs | length) == 0 then "-" else ($recent_epochs | map(tostring) | join(",")) end),
-			([$comments[] | select(reset_notice or (evidence_trusted and output_progress)) | comment_epoch] | max // 0)
+			([$comments[] | select(reset_notice or (evidence_trusted and output_progress)) | comment_epoch] | max // 0),
+			(($recent_attempts | length) - ($own_recent_attempts | length))
 		] | @tsv
 	' 2>/dev/null
 	return $?
@@ -329,7 +345,25 @@ _dlw_evidence_trusted_authors() {
 	return 0
 }
 
-_DLW_EMPTY_COMMENT_METRICS=$'0\t0\t0\t0\t0\t0\t0\t-\t0'
+_DLW_EMPTY_COMMENT_METRICS=$'0\t0\t0\t0\t0\t0\t0\t-\t0\t0'
+
+#######################################
+# GH#39996: this host's dispatch device ID, read-only. Same sources and
+# validation as _resolve_device_id (dispatch-claim-runtime.sh), which writes
+# the device= field of this host's claims and leases, but never creates an ID.
+# Prints nothing when none is configured, so evidence stays fleet-wide.
+#######################################
+_dlw_local_device_id() {
+	local id="${AIDEVOPS_DEVICE_ID:-}"
+	local id_file="${AIDEVOPS_DEVICE_ID_FILE:-${HOME}/.aidevops/state/device-id}"
+	[[ "$id" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$ ]] || id=""
+	if [[ -z "$id" && -r "$id_file" ]]; then
+		id=$(tr -d '[:space:]' <"$id_file" 2>/dev/null || true)
+		[[ "$id" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$ ]] || id=""
+	fi
+	printf '%s' "$id"
+	return 0
+}
 
 _dlw_comment_bloat_metrics() {
 	local issue_number="$1"
@@ -358,7 +392,8 @@ _dlw_comment_bloat_metrics() {
 	trusted_authors=$(_dlw_evidence_trusted_authors "$raw_comments" "$repo_slug" \
 		"DISPATCH_CLAIM nonce=|DISPATCH_LEASE phase=|dispatch-infrastructure-failure|${_DLW_PROGRESS_RELEASE_PATTERN}|${zero_output_pattern}")
 	metrics=$(_dlw_comment_bloat_metrics_from_json "$raw_comments" "$now_epoch" "$orphan_grace" \
-		"$zero_output_pattern" "$zero_attempt_pattern" "$trusted_authors" "$window_seconds") ||
+		"$zero_output_pattern" "$zero_attempt_pattern" "$trusted_authors" "$window_seconds" \
+		"$(_dlw_local_device_id)") ||
 		metrics="$_DLW_EMPTY_COMMENT_METRICS"
 	[[ -n "$metrics" ]] || metrics="$_DLW_EMPTY_COMMENT_METRICS"
 	printf '%s' "$metrics"
@@ -784,6 +819,8 @@ _dlw_prepare_prompt_for_launch() {
 # resumes on its own as evidence ages out (the former status:blocked fuse
 # needed a human requeue). Runners post at most one notice per window.
 # Clean-room mode changes prompt content, never this retry budget.
+# GH#39996: aborted attempts count only for the device that made them, so the
+# log names the other-device attempts left out of the hold.
 # Args: issue number, repo slug, optional precomputed comment metrics
 # Returns: 0 = hold (DISPATCH_BLOCK_REASON logged), 1 = dispatch may proceed
 #######################################
@@ -793,6 +830,7 @@ _dlw_hold_repeated_zero_output() {
 	local precomputed_comment_metrics="${3:-}"
 	local comment_metrics="" comments="" ops="" metrics_zero_count="" chars="" zero_attempt_count=""
 	local recent_zero="" recent_notices="" recent_epochs="" reset_epoch="" state_count="" hold_count=0
+	local other_device_attempts=""
 	local now_epoch="${DLW_COMMENT_METRICS_NOW_EPOCH:-}" min_state_epoch=0
 	local window_seconds="${ZERO_OUTPUT_HOLD_WINDOW_SECONDS:-43200}"
 	local hold_threshold="${ZERO_OUTPUT_BRIEF_REWRITE_HOLD_THRESHOLD:-4}"
@@ -803,13 +841,14 @@ _dlw_hold_repeated_zero_output() {
 	comment_metrics="$precomputed_comment_metrics"
 	[[ -n "$comment_metrics" ]] || comment_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
 	IFS=$'\t' read -r comments ops metrics_zero_count chars zero_attempt_count recent_zero recent_notices recent_epochs \
-		reset_epoch <<<"$comment_metrics"
+		reset_epoch other_device_attempts <<<"$comment_metrics"
 	[[ "$metrics_zero_count" =~ ^[0-9]+$ ]] || metrics_zero_count=0
 	# Legacy 4/5-column metrics carry no timestamps: treat their evidence as recent.
 	[[ "$recent_zero" =~ ^[0-9]+$ ]] || recent_zero="$metrics_zero_count"
 	[[ "$recent_notices" =~ ^[0-9]+$ ]] || recent_notices=0
 	[[ "$reset_epoch" =~ ^[0-9]+$ ]] || reset_epoch=0
-	[[ "${CLEAN_ROOM_COMMENT_EVIDENCE_ENABLED:-1}" == "1" ]] || recent_zero=0
+	[[ "$other_device_attempts" =~ ^[0-9]+$ ]] || other_device_attempts=0
+	[[ "${CLEAN_ROOM_COMMENT_EVIDENCE_ENABLED:-1}" == "1" ]] || { recent_zero=0; other_device_attempts=0; }
 	# The local fast-fail counter obeys the same window and maintainer reset as
 	# the comment evidence, so no runner keeps holding on stale local state.
 	[[ "$window_seconds" -eq 0 ]] || min_state_epoch=$((now_epoch - window_seconds))
@@ -818,7 +857,16 @@ _dlw_hold_repeated_zero_output() {
 	[[ "$state_count" =~ ^[0-9]+$ ]] || state_count=0
 	hold_count="$recent_zero"
 	[[ "$state_count" -le "$hold_count" ]] || hold_count="$state_count"
-	[[ "$hold_count" -ge "$hold_threshold" ]] || return 1
+	local device_scope_note=""
+	[[ "$other_device_attempts" -eq 0 ]] ||
+		device_scope_note="; ${other_device_attempts} aborted attempts by other devices not counted"
+	if [[ "$hold_count" -lt "$hold_threshold" ]]; then
+		# Log only when other devices' aborts alone would have held the issue.
+		if [[ $((recent_zero + other_device_attempts)) -ge "$hold_threshold" ]]; then
+			echo "[dispatch_with_dedup] Not holding #${issue_number} in ${repo_slug}: ${hold_count} own zero-output or zero-attempt failures within ${window_seconds}s (threshold ${hold_threshold})${device_scope_note}" >>"$LOGFILE"
+		fi
+		return 1
+	fi
 
 	local resume_at="when the evidence ages out"
 	local -a epochs=()
@@ -834,7 +882,7 @@ _dlw_hold_repeated_zero_output() {
 		fi
 	fi
 	echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=zero_attempt_backoff signal=windowed_evidence issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
-	echo "[dispatch_with_dedup] Holding #${issue_number} in ${repo_slug}: ${hold_count} zero-output or zero-attempt failures within ${window_seconds}s (threshold ${hold_threshold}); no claim posted, labels unchanged, resumes ${resume_at}" >>"$LOGFILE"
+	echo "[dispatch_with_dedup] Holding #${issue_number} in ${repo_slug}: ${hold_count} zero-output or zero-attempt failures within ${window_seconds}s (threshold ${hold_threshold}); no claim posted, labels unchanged, resumes ${resume_at}${device_scope_note}" >>"$LOGFILE"
 	if [[ "$recent_notices" -eq 0 ]]; then
 		_dlw_post_zero_attempt_backoff_notice "$issue_number" "$repo_slug" "$hold_count" "$window_seconds" "$resume_at"
 	fi
