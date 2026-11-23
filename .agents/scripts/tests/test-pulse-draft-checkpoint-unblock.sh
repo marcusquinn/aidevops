@@ -146,6 +146,7 @@ reset_case() {
 	TEST_REVIEW_ISSUES='[]'
 	TEST_LIVE_ISSUE='{}'
 	TEST_LIVE_PR='{}'
+	TEST_LATE_COMMENTS=''
 	TEST_PRS=$(pages "$(pr_json 900 true "origin:worker" $'Draft checkpoint.\n\nResolves #501')")
 	TEST_PRS_RC=0
 	TEST_COMMENTS=$(pages \
@@ -192,6 +193,10 @@ gh() {
 		;;
 	"repos/${SLUG}/issues/501/comments"*)
 		[[ "$TEST_COMMENTS_RC" -eq 0 ]] || return "$TEST_COMMENTS_RC"
+		if [[ -n "$TEST_LATE_COMMENTS" ]] && grep -q '/issues/501$' "$API_LOG"; then
+			printf '%s' "$TEST_LATE_COMMENTS"
+			return 0
+		fi
 		if [[ -n "$TEST_COMMENTS_AFTER_ATTEMPT" && -s "$COMMENT_ATTEMPTS" ]]; then
 			printf '%s' "$TEST_COMMENTS_AFTER_ATTEMPT"
 			return 0
@@ -713,6 +718,47 @@ test_review_checkpoint_recovery() {
 	TEST_TIMELINE=$(pages "$(label_event 2026-10-29T19:32:10Z human status:in-review)")
 	run_pass
 	assert_no_write 'a human review label is not a worker projection'
+	for change in '.author_association = "NONE"' '.user.login = "other"' \
+		'.updated_at = "2026-10-29T20:00:00Z"'; do
+		setup_review_case
+		TEST_COMMENTS=$(printf '%s' "$TEST_COMMENTS" | jq -c ".[0][1] |= ($change)")
+		run_pass
+		assert_no_write "terminal lease evidence must be trusted and unchanged: ${change}"
+	done
+	setup_review_case
+	TEST_LATE_COMMENTS=$(printf '%s' "$TEST_COMMENTS" | jq -c --argjson c \
+		"$(comment 6506415200 2026-10-29T19:50:00Z MEMBER runner1 'DISPATCH_CLAIM nonce=new-owner')" \
+		'.[0] += [$c]')
+	run_pass
+	assert_no_write 'a claim arriving during the live PR/issue reads prevents restoration'
+	setup_review_case
+	TEST_TIMELINE_ADVANCE=10000
+	run_pass
+	assert_no_write 'a deadline crossed while reading review evidence prevents restoration' 3
+	# Rotation is symmetric: a partial review pass yields to blocks next time.
+	: >"$API_LOG"
+	TEST_TIMELINE_ADVANCE=0
+	rm -f "$CLOCK_FILE"
+	run_pass
+	if [[ "$(sed -n '1p' "$API_LOG")" == *'labels=status%3Ablocked'* ]]; then
+		pass 'partial in-review pass rotates back to blocked next sweep'
+	else
+		fail 'partial in-review pass rotates back to blocked next sweep'
+	fi
+	setup_review_case
+	TEST_ISSUES=$(pages "$(issue_json 'status:blocked,auto-dispatch' runner1)")
+	TEST_LIVE_PR=$(printf '%s' "$TEST_LIVE_PR" | jq -c '.body = "Resolves #501"')
+	TEST_PRS=$(pages "$TEST_LIVE_PR")
+	TEST_TIMELINE=$(pages "$(label_event 2026-10-29T19:32:10Z runner1 status:blocked)")
+	TEST_TIMELINE_ADVANCE=10000
+	run_pass
+	assert_no_write 'blocked backlog can exhaust the first share without a write' 3
+	TEST_TIMELINE=$(pages "$(label_event 2026-10-29T19:32:10Z runner1 status:in-review)")
+	TEST_TIMELINE_ADVANCE=0
+	rm -f "$CLOCK_FILE"
+	run_pass
+	assert_restored "501 ${SLUG} available --add-label auto-dispatch --remove-assignee runner1" \
+		'review recovery runs before the blocked backlog on the next sweep'
 	return 0
 }
 

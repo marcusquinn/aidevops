@@ -26,6 +26,12 @@
 #   - assignees are only that runner;
 #   - no audit marker exists for that release and the per-PR cap is unmet.
 #
+# GH#40005 also recovers GH#33115's assigned status:in-review projection without
+# auto-dispatch. For/Ref links count for this state only. Require a terminal
+# lease after the release, the draft author as sole assignee, at least 30 minutes
+# since release (PULSE_DRAFT_REVIEW_STALE_SECONDS), and unchanged live evidence.
+# Recovery restores auto-dispatch, never readies the PR or launches a new branch.
+#
 # Sourced by pulse-merge.sh. Reuses pulse-merge-partial-continuation.sh
 # (trusted-comment jq definitions, bounded reads, owned assignees) and the
 # shared set_issue_status / gh_issue_comment wrappers.
@@ -201,6 +207,13 @@ Worker draft PR #${pr_number} (head \`${head_sha:-unknown}\`) is still open, but
 	return 0
 }
 
+_pdcu_read_comments() {
+	local repo_slug="$1" issue_num="$2"
+	_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/comments?per_page=100" \
+		--paginate --slurp 2>/dev/null || return 1
+	return 0
+}
+
 #######################################
 # Post the audit comment once; after a failed write, re-read for the marker
 # before one retry so a write that landed server-side is not duplicated.
@@ -212,8 +225,7 @@ _pdcu_post_audit_comment() {
 	local body="" comments_json="" verdict=""
 	body=$(_pdcu_comment_body "$pr_number" "$release_id" "$reason" "$head_sha")
 	gh_issue_comment "$issue_num" --repo "$repo_slug" --body "$body" >/dev/null 2>&1 && return 0
-	comments_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/comments?per_page=100" \
-		--paginate --slurp 2>/dev/null) || return 1
+	comments_json=$(_pdcu_read_comments "$repo_slug" "$issue_num") || return 1
 	verdict=$(printf '%s' "$comments_json" | jq -r \
 		--arg marker "kind=${_PDCU_MARKER_KIND} pr=${pr_number} release=${release_id} " "${_PMPC_COMMENTS_JQ_DEFS}"'
 		[comments[] | select(trusted) | (.body // "") | contains($marker)]
@@ -254,8 +266,7 @@ _pdcu_try_issue() {
 	local -a transition_args=() logins=()
 	[[ "$cap" =~ ^[1-9][0-9]*$ ]] || cap=3
 	issue_num=$(printf '%s' "$issue_json" | jq -r '.number') || return 1
-	if ! comments_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/comments?per_page=100" \
-		--paginate --slurp 2>/dev/null); then
+	if ! comments_json=$(_pdcu_read_comments "$repo_slug" "$issue_num"); then
 		_pdcu_log "$repo_slug" "$issue_num" "$pr_number" "kept blocked: comments unreadable"
 		return 1
 	fi
@@ -293,8 +304,11 @@ _pdcu_try_issue() {
 		return 1
 	fi
 	if [[ "$status" == in-review ]]; then
-		_pdcu_review_evidence "$repo_slug" "$issue_json" "$pr_number" "$head_sha" \
-			"$comments_json" "$runner" "$released_epoch" || return 1
+		if ! _pdcu_review_evidence "$repo_slug" "$issue_json" "$pr_number" "$head_sha" \
+			"$comments_json" "$runner" "$released_epoch"; then
+			_pdcu_log "$repo_slug" "$issue_num" "$pr_number" "kept in-review: stale terminal ownership or live checkpoint evidence not proven"
+			return 1
+		fi
 		transition_args+=(--add-label auto-dispatch)
 	fi
 	if [[ -n "$assignees" ]]; then
@@ -329,7 +343,7 @@ _pdcu_try_issue() {
 _pdcu_review_evidence() {
 	local repo_slug="$1" issue_json="$2" pr_number="$3" head_sha="$4"
 	local comments_json="$5" runner="$6" released_epoch="$7"
-	local issue_num="" age="${PULSE_DRAFT_REVIEW_STALE_SECONDS:-1800}" now="" pr="" live=""
+	local issue_num="" age="${PULSE_DRAFT_REVIEW_STALE_SECONDS:-1800}" now="" pr="" live="" fresh="" trusted=""
 	[[ "$age" =~ ^[1-9][0-9]*$ ]] || age=1800
 	now=$(date +%s) || return 1
 	[[ $((now - released_epoch)) -ge "$age" ]] || return 1
@@ -353,6 +367,14 @@ _pdcu_review_evidence() {
 		.state == "open" and ([.labels[].name] | sort) == ([$old.labels[].name] | sort)
 		and [.assignees[].login] == [$runner]
 	' >/dev/null 2>&1 || return 1
+	# Slow PR/issue reads must not hide a newer claim, edited lease or blocker.
+	# Compare normalized trusted history only; outsider comments are not authority.
+	fresh=$(_pdcu_read_comments "$repo_slug" "$issue_num") || return 1
+	trusted=$(printf '%s' "$comments_json" | jq -c "${_PMPC_COMMENTS_JQ_DEFS}"'
+		[comments[] | select(trusted)]') || return 1
+	fresh=$(printf '%s' "$fresh" | jq -c "${_PMPC_COMMENTS_JQ_DEFS}"'
+		[comments[] | select(trusted)]') || return 1
+	[[ "$fresh" == "$trusted" ]] || return 1
 	return 0
 }
 
