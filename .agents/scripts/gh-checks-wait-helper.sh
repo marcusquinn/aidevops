@@ -952,6 +952,27 @@ resolve_configured_contexts_once() {
 	return 0
 }
 
+# Clear evidence that is valid for one wait only.
+reset_wait_caches() {
+	_GCW_CANCEL_FIRST_EPOCH=""
+	_GCW_CANCEL_SET=""
+	_GCW_CODACY_VERDICT=""
+	_GCW_CONFIGURED_CACHED=0
+	_GCW_WORKFLOWS_STATE=""
+	return 0
+}
+
+# Resolve the once-per-wait evidence classify_state needs. Active workflows
+# are read only for an empty --all observation (GH#40059).
+resolve_classification_evidence() {
+	local pr_number="$1" repo="$2" required_only="$3" checks="$4"
+	resolve_configured_contexts_once "$pr_number" "$repo"
+	if [[ "$required_only" -eq 0 ]] && printf '%s' "$checks" | jq -e 'length == 0' >/dev/null 2>&1; then
+		resolve_active_workflows_once "$repo"
+	fi
+	return 0
+}
+
 wait_for_checks() {
 	local pr_number="$1" repo="$2" required_only="$3" timeout="$4"
 	local initial_interval="$5" max_interval="$6" heartbeat_interval="$7"
@@ -961,11 +982,7 @@ wait_for_checks() {
 	local interval="$initial_interval" previous="" initial_head="" qlty_credit_policy=""
 	local draft_since="" draft_snapshot="" draft_window="$heartbeat_interval" conflict_checked_at=""
 	[[ "$draft_window" -gt 0 && "$draft_window" -le 120 ]] || draft_window=120
-	_GCW_CANCEL_FIRST_EPOCH=""
-	_GCW_CANCEL_SET=""
-	_GCW_CODACY_VERDICT=""
-	_GCW_CONFIGURED_CACHED=0
-	_GCW_WORKFLOWS_STATE=""
+	reset_wait_caches
 	initial_head=$(verified_head_sha "$pr_number" "$repo" 'before required-check observation') || return 2
 	note_if_draft "$pr_number" "$repo"
 	_GCW_ACTIVE_DEFERRAL=""
@@ -1006,10 +1023,7 @@ wait_for_checks() {
 		apply_codacy_stale_policy "$current" "$pr_number" "$repo"
 		current="$_GCW_CODACY_CHECKS"
 		emit_codacy_stale_notes "$current" "$previous"
-		resolve_configured_contexts_once "$pr_number" "$repo"
-		if [[ "$required_only" -eq 0 ]] && printf '%s' "$current" | jq -e 'length == 0' >/dev/null 2>&1; then
-			resolve_active_workflows_once "$repo"
-		fi
+		resolve_classification_evidence "$pr_number" "$repo" "$required_only" "$current"
 		IFS=$'\t' read -r classification missing_contexts zero_job_detail <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed" "$initial_head" "$_GCW_CONFIGURED_RC" "$_GCW_CONFIGURED_CONTEXTS" "$_GCW_WORKFLOWS_STATE")"
 		apply_cancel_grace "$classification" "$current" "$now_epoch" "$raw"
 		classification="$_GCW_GRACED_CLASSIFICATION"
