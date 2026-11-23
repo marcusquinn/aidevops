@@ -398,6 +398,29 @@ def load_registrations(repos_json: Path) -> list[dict[str, Any]]:
     return [item for item in entries if isinstance(item, dict)]
 
 
+FRAMEWORK_CHECKOUT_REASON = "framework-install-checkout"
+
+
+def framework_checkouts() -> set[Path]:
+    """Return the resolved framework install checkouts that must never move.
+
+    GH#40061: the CLI, setup and update paths hardcode ``$HOME/Git/aidevops``,
+    so moving that checkout breaks ``aidevops status`` and ``aidevops update``.
+    ``AIDEVOPS_INSTALL_DIR`` adds the checkout the CLI actually runs from.
+    """
+    candidates = [Path.home() / "Git" / "aidevops"]
+    override = os.environ.get("AIDEVOPS_INSTALL_DIR", "")
+    if override:
+        candidates.append(expand_path(override))
+    protected: set[Path] = set()
+    for candidate in candidates:
+        try:
+            protected.add(candidate.resolve(strict=True))
+        except OSError:
+            continue
+    return protected
+
+
 class PlanInputs(NamedTuple):
     """Plan-wide inputs shared by every per-repository planning call."""
 
@@ -439,7 +462,9 @@ def plan_repository(
         item for item in registrations if expand_path(str(item.get("path", ""))) == source
     ]
     exclusion_reason = ""
-    if any(item.get("local_only") is True for item in matches):
+    if source.resolve() in framework_checkouts():
+        exclusion_reason = FRAMEWORK_CHECKOUT_REASON
+    elif any(item.get("local_only") is True for item in matches):
         exclusion_reason = "local-only-registration"
     elif matches and not args.include_registered_paths:
         exclusion_reason = "explicit-registration-not-approved"
@@ -1310,11 +1335,17 @@ def validate_apply_repositories(
 ) -> None:
     """Repair interrupted pointers and validate every planned repository."""
     workspace = Path(plan["workspace"])
+    protected = framework_checkouts()
     for index, item in enumerate(plan["repositories"]):
         key = f"repository:{index}"
         started = event_for_key(events, key)
         source = Path(item["source"])
         destination = Path(item["destination"])
+        # GH#40061: plans written before the planner exclusion fail closed.
+        if not started and source.resolve() in protected:
+            raise MigrationError(
+                f"Refusing to move the framework install checkout: {source}"
+            )
         interrupted = started and key not in completed and not source.exists()
         if interrupted and destination.exists():
             repair_linked_pointers(item, destination)
