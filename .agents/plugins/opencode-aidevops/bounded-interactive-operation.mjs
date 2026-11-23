@@ -35,9 +35,9 @@ import { resolveSessionOwnedWorktreeRoot } from "./gpt-image-worktree.mjs";
 import { liveSupervisorRoots, processStartIdentity } from "./process-start-identity.mjs";
 import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
 import { runtimeOwner } from "./runtime-owner.mjs";
+import { closeAfterExitGrace } from "./exit-close-grace.mjs";
 
 const MAX_OPERATIONS = 24;
-const EXIT_CLOSE_GRACE_MS = 2000;
 // GH#38704: "always" (default) restores after every terminal path, success
 // included; "unsuccessful" skips restoration after success so abort-only
 // cleanup cannot destroy a good result.
@@ -203,7 +203,8 @@ export class BoundedInteractiveOperationManager {
       operation.child = child;
       child.once("exit", (code, signal) => {
         operation.childExited = true;
-        this.closeAfterExitGrace(operation, child, code, signal);
+        const finalize = () => { if (!operation.spawnFailed) this.mainClosed(operation, code, signal); };
+        closeAfterExitGrace({ child, setTimer: this.setTimer, clearTimer: this.clearTimer, finalize });
       });
       child.once("spawn", () => {
         operation.supervisorIdentity = this.processIdentity(child.pid);
@@ -236,19 +237,6 @@ export class BoundedInteractiveOperationManager {
     operation.terminationCause ||= cause;
     const signalled = this.kill(operation.child, "SIGTERM", operation.terminationCause);
     return signalled;
-  }
-
-  // GH#39916: "close" waits for every holder of the supervisor's stdio pipes.
-  // An escaped descendant holding them would leave a failed command in
-  // running/timing_out with no output. After the supervisor itself has exited,
-  // finalize with its real status once a short grace for trailing output passes.
-  closeAfterExitGrace(operation, child, code, signal) {
-    const timer = this.setTimer(() => {
-      for (const stream of [child.stdout, child.stderr]) stream?.destroy?.();
-      if (!operation.spawnFailed) this.mainClosed(operation, code, signal);
-    }, EXIT_CLOSE_GRACE_MS);
-    timer?.unref?.();
-    child.once("close", () => this.clearTimer(timer));
   }
 
   async mainClosed(operation, code, signal) {
