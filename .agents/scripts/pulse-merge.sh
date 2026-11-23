@@ -1643,6 +1643,17 @@ _pmp_stage_finalize_merge() {
 		_pmp_record_deterministic_progress_now 1 0
 	fi
 	sleep 1
+	if [[ $_merge_exit -eq 0 || "$merge_output" == *"Merge already in progress"* ]]; then
+		# Body edits do not change the gated head SHA (GH#39963). Refresh close
+		# authority for both post-merge paths; never reuse the pre-gate target.
+		local gate_linked_issue="$linked_issue"
+		linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug") || linked_issue=""
+		if [[ "$linked_issue" != "$gate_linked_issue" ]]; then
+			echo "[pulse-wrapper] linked issue changed between gate and merge for PR #${pr_number}: old=${gate_linked_issue:-none} new=${linked_issue:-none}" >>"$LOGFILE"
+		fi
+		# A failed/ambiguous read is no close authority. Partial continuation
+		# and pulse-issue-reconcile-close.sh can reconcile later.
+	fi
 	if [[ $_merge_exit -eq 0 ]]; then
 		if [[ "$labels" == *"origin:interactive"* ]]; then
 			_is_owner_or_member_author "$pr_author" "$repo_slug" && role="owner-or-member" || true
