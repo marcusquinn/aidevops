@@ -103,6 +103,8 @@ check_case 'fenced negation and references ignored' $'~~~\nFor #123\nDo not clos
 check_case 'inline code ignored' "Example \`For #123 must not close #123\`. Resolves #123" "$LOCAL_REFS" 0
 check_case 'non-closing partial work allowed' 'For #123. The issue remains open.' '[]' 0
 check_case 'negation held even without native refs' 'Never resolve #123' '[]' 1
+check_case 'conditional closing prose held (GH#40026)' 'Cancelling it would make the sync close #123 as not planned.' "$LOCAL_REFS" 1
+check_case 'prose closure backed by a declaration allowed' $'Resolves #123\nThis PR fixes #123 by tightening the guard.' "$LOCAL_REFS" 0
 
 # Now exercise successful safe edits with real repair generation. No GitHub
 # command is allowed: the wrapper records only the generated body-file bytes.
