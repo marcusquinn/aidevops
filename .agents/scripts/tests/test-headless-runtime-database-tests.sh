@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # OpenCode worker database persistence and prompt transport tests.
 
-# This file is sourced by test-headless-runtime-helper.sh after the shared test
+# This file is sourced by test-headless-runtime-harness.sh after the shared test
 # harness and headless runtime helper have been initialized.
 [[ -n "${_TEST_HEADLESS_RUNTIME_DATABASE_TESTS_LOADED:-}" ]] && return 0
 _TEST_HEADLESS_RUNTIME_DATABASE_TESTS_LOADED=1

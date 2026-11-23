@@ -3,11 +3,16 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Worker output, finalization, and orphan-recovery tests.
 
-# This file is sourced by test-headless-runtime-helper.sh after the shared test
+# This file is sourced by test-headless-runtime-harness.sh after the shared test
 # harness and headless runtime helper have been initialized.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-	# Keep the documented entry point executable without duplicating the harness.
-	exec bash "$(dirname "$0")/test-headless-runtime-helper.sh" "$@"
+	# Keep the documented entry point executable without duplicating the harness:
+	# run the root suites that exercise this module (GH#39968 split).
+	_completion_status=0
+	for _completion_root in completion no-code; do
+		bash "$(dirname "$0")/test-headless-runtime-helper-${_completion_root}.sh" "$@" || _completion_status=1
+	done
+	exit "$_completion_status"
 fi
 [[ -n "${_TEST_HEADLESS_RUNTIME_COMPLETION_TESTS_LOADED:-}" ]] && return 0
 _TEST_HEADLESS_RUNTIME_COMPLETION_TESTS_LOADED=1
@@ -78,11 +83,17 @@ run_worker_no_output_classification_tests() {
 	test_worker_produced_output_no_commits_returns_noop
 	test_worker_produced_output_manual_issue_no_commits_returns_noop
 	test_pr_less_rejection_evidence
-	test_review_triage_completion_evidence
-	test_already_satisfied_completion_evidence
 	test_signal_less_exit_after_own_pr_handoff
 	test_merged_missing_summary_output_class
 	test_merged_missing_summary_failure_recovery
+	return 0
+}
+
+# GH#39968: the two no-code evidence matrices run in their own root suite so
+# each root stays under the affected-tests per-suite timeout.
+run_no_code_completion_evidence_tests() {
+	test_review_triage_completion_evidence
+	test_already_satisfied_completion_evidence
 	return 0
 }
 

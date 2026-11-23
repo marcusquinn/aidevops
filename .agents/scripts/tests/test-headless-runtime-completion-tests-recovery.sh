@@ -4,7 +4,7 @@
 # Run-id refresh, reconciled-outcome and orphan-recovery tests.
 #
 # Sourced by test-headless-runtime-completion-tests.sh (itself sourced by
-# test-headless-runtime-helper.sh) after the shared test harness is initialized.
+# test-headless-runtime-harness.sh) after the shared test harness is initialized.
 
 [[ -n "${_TEST_HEADLESS_RUNTIME_COMPLETION_TESTS_RECOVERY_LOADED:-}" ]] && return 0
 _TEST_HEADLESS_RUNTIME_COMPLETION_TESTS_RECOVERY_LOADED=1
