@@ -456,15 +456,15 @@ def plan_repository(
     destination = recommended_path(workspace, identity, repos_json, expand_path(args.discovery_lib))
     if destination == source:
         return None, None
-    if source.resolve() in framework_checkouts():
-        return None, {"path": str(source), "reason": FRAMEWORK_CHECKOUT_REASON}
     if not path_is_inside(workspace, destination):
         raise MigrationError("Recommended destination escaped the workspace")
     matches = [
         item for item in registrations if expand_path(str(item.get("path", ""))) == source
     ]
     exclusion_reason = ""
-    if any(item.get("local_only") is True for item in matches):
+    if source.resolve() in framework_checkouts():
+        exclusion_reason = FRAMEWORK_CHECKOUT_REASON
+    elif any(item.get("local_only") is True for item in matches):
         exclusion_reason = "local-only-registration"
     elif matches and not args.include_registered_paths:
         exclusion_reason = "explicit-registration-not-approved"
