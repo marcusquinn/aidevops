@@ -98,6 +98,10 @@ chmod +x "$OBJECTIVE_HELPER" || fail "failed to make objective helper executable
 
 PATH="${FAKE_BIN}:${PATH}"
 export GH_CALLS_FILE GH_COMMENTS_FIXTURE
+# GH#39996: aborted-attempt evidence is device-scoped when this host has a
+# device ID. Pin none so fleet-wide cases never read the host's own ID.
+export AIDEVOPS_DEVICE_ID=""
+export AIDEVOPS_DEVICE_ID_FILE="${TEST_TMP}/no-device-id"
 
 LOGFILE="${TEST_TMP}/pulse.log" \
 	CLEAN_ROOM_COMMENT_THRESHOLD=100 \
@@ -223,7 +227,7 @@ EOF
 orphan_metrics=$(DLW_COMMENT_METRICS_NOW_EPOCH=1577837200 \
 	DISPATCH_CLAIM_ORPHAN_GRACE=120 _dlw_comment_bloat_metrics "123" "owner/repo")
 IFS=$'\t' read -r _orphan_comments _orphan_ops orphan_zero _orphan_chars orphan_zero_attempt \
-	orphan_recent orphan_notices orphan_epochs orphan_reset <<<"$orphan_metrics"
+	orphan_recent orphan_notices orphan_epochs orphan_reset _orphan_other <<<"$orphan_metrics"
 if [[ "$orphan_zero" != "5" || "$orphan_zero_attempt" != "5" || "$orphan_recent" != "5" ||
 	"$orphan_notices" != "0" || "$orphan_reset" != "0" ]]; then
 	fail "orphan prelaunch leases were not counted once per trusted author+token: ${orphan_metrics}"
@@ -293,6 +297,63 @@ if [[ "$_dispatch_zero_output_metrics" != "$aged_metrics" ]]; then
 	fail "pre-claim gate did not expose its metrics snapshot: ${_dispatch_zero_output_metrics}"
 fi
 unset _dispatch_zero_output_metrics
+
+# GH#39996: an aborted attempt counts only for the device that made it. Four
+# aged orphan leases from a trusted peer device do not hold this device; the
+# same four hold the device that made them (env or device-id file) and every
+# device when no local ID exists. Explicit zero-output still holds fleet-wide.
+cat >"$GH_COMMENTS_FIXTURE" <<'EOF'
+[[
+  {"id":60,"body":"DISPATCH_LEASE phase=prelaunch lease_token=p-1 device=peer-device session=issue-123 expires_at=1577836920","created_at":"2020-01-01T00:00:00Z","author_association":"MEMBER","user":{"login":"runner-b"}},
+  {"id":61,"body":"DISPATCH_LEASE phase=prelaunch lease_token=p-2 device=peer-device session=issue-123 expires_at=1577836980","created_at":"2020-01-01T00:01:00Z","author_association":"MEMBER","user":{"login":"runner-b"}},
+  {"id":62,"body":"DISPATCH_LEASE phase=prelaunch lease_token=p-3 device=peer-device session=issue-123 expires_at=1577837040","created_at":"2020-01-01T00:02:00Z","author_association":"MEMBER","user":{"login":"runner-b"}},
+  {"id":63,"body":"DISPATCH_LEASE phase=prelaunch lease_token=p-4 device=peer-device session=issue-123 expires_at=1577837100","created_at":"2020-01-01T00:03:00Z","author_association":"MEMBER","user":{"login":"runner-b"}}
+]]
+EOF
+device_metrics() {
+	local device_id="$1"
+	local device_file="${2:-${TEST_TMP}/no-device-id}"
+	AIDEVOPS_DEVICE_ID="$device_id" AIDEVOPS_DEVICE_ID_FILE="$device_file" \
+		DLW_COMMENT_METRICS_NOW_EPOCH=1577837200 DISPATCH_CLAIM_ORPHAN_GRACE=120 \
+		_dlw_comment_bloat_metrics "123" "owner/repo"
+	return 0
+}
+device_holds() {
+	local metrics="$1"
+	LOGFILE="${TEST_TMP}/device.log" ZERO_OUTPUT_BRIEF_REWRITE_HOLD_THRESHOLD=4 FAST_FAIL_STATE_FILE="" \
+		_dlw_hold_repeated_zero_output "123" "owner/repo" "$metrics"
+	return $?
+}
+peer_metrics=$(device_metrics self-device)
+IFS=$'\t' read -r _peer_comments _peer_ops peer_zero _peer_chars peer_zero_attempt peer_recent \
+	_peer_notices _peer_epochs _peer_reset peer_other <<<"$peer_metrics"
+if [[ "$peer_zero" != "4" || "$peer_zero_attempt" != "4" || "$peer_recent" != "0" || "$peer_other" != "4" ]]; then
+	fail "peer-device aborted attempts were not left out of this device's windowed hold: ${peer_metrics}"
+fi
+: >"$NOTICE_LOG"
+: >"${TEST_TMP}/device.log"
+if device_holds "$peer_metrics"; then
+	fail "a peer device's aborted attempts held dispatch on this device"
+fi
+if [[ -s "$NOTICE_LOG" ]] || ! grep -Fq 'Not holding #123 in owner/repo: 0 own zero-output or zero-attempt failures within 43200s (threshold 4); 4 aborted attempts by other devices not counted' "${TEST_TMP}/device.log"; then
+	fail "device-scoped release was not logged without a notice: $(<"${TEST_TMP}/device.log")"
+fi
+printf 'peer-device\n' >"${TEST_TMP}/peer-device-id"
+for own_metrics in "$(device_metrics peer-device)" "$(device_metrics "" "${TEST_TMP}/peer-device-id")" "$(device_metrics "")"; do
+	IFS=$'\t' read -r _own_comments _own_ops _own_zero _own_chars _own_zero_attempt own_recent \
+		_own_notices _own_epochs _own_reset own_other <<<"$own_metrics"
+	if [[ "$own_recent" != "4" || "$own_other" != "0" ]] || ! device_holds "$own_metrics"; then
+		fail "own-device or unscoped aborted attempts did not hold: ${own_metrics}"
+	fi
+done
+jq '.[0] |= map(.body = "CLAIM_RELEASED reason=worker_noop_zero_output device=peer-device")' \
+	"$GH_COMMENTS_FIXTURE" >"${TEST_TMP}/zero-output.json" || fail "failed to build zero-output fixture"
+mv "${TEST_TMP}/zero-output.json" "$GH_COMMENTS_FIXTURE" || fail "failed to install zero-output fixture"
+peer_zero_output_metrics=$(device_metrics self-device)
+IFS=$'\t' read -r _pz_comments _pz_ops _pz_zero _pz_chars _pz_zero_attempt pz_recent _pz_rest <<<"$peer_zero_output_metrics"
+if [[ "$pz_recent" != "4" ]] || ! device_holds "$peer_zero_output_metrics"; then
+	fail "a peer's explicit zero-output evidence no longer held every device: ${peer_zero_output_metrics}"
+fi
 
 LOGFILE="${TEST_TMP}/pulse.log" \
 	ISSUE_BODY_SNAPSHOT_HELPER="/usr/bin/false" \
@@ -508,6 +569,7 @@ printf 'PASS: unmatched prelaunch claims trigger the bounded infrastructure hold
 printf 'PASS: orphan prelaunch leases count once per write-verified author and token\n'
 printf 'PASS: windowed backoff holds without relabelling and posts one notice per window\n'
 printf 'PASS: evidence older than the window self-heals and the pre-claim gate shares metrics\n'
+printf 'PASS: aborted attempts hold only the device that made them; zero-output stays fleet-wide\n'
 printf 'PASS: invalid clean-room snapshots cannot authorize implementation\n'
 printf 'PASS: clean-room briefs project only trusted approval/retry metadata\n'
 printf 'PASS: retry context is bounded, deterministic, and excludes prior prose\n'
