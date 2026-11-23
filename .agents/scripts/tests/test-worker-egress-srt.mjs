@@ -5,13 +5,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import dns from 'node:dns';
 import http from 'node:http';
 import net from 'node:net';
-import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { proxyReady, proxyHost, withProxy, exchange, headDone, statusOf, connectStatus, socksReply, deniedAddresses } from './worker-egress-srt-proxy-harness.mjs';
 import { spawn, spawnSync } from 'node:child_process';
-import { ENV_ADDED, ENV_ALLOWLIST, providerHost, settings, tightenMacCommand, tightenMacProfile } from '../worker-egress-srt/backend.mjs';
+import { ENV_ADDED, ENV_ALLOWLIST, providerHost, settings, tightenLinuxArgs, tightenMacCommand, tightenMacProfile } from '../worker-egress-srt/backend.mjs';
 
 const scripts = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const backend = path.join(scripts, 'worker-egress-srt/backend.mjs');
@@ -23,12 +22,13 @@ const policy = {
 
 test('only the exact provider policy is accepted; every relaxation fails closed', () => {
   assert.equal(providerHost(policy), 'api.openai.com');
+  assert.equal(providerHost({ ...policy, rules: [{ ...policy.rules[0], pattern: 'api.example.com' }] }), 'api.example.com');
   for (const key of ['default_action', 'raw_ip_action', 'private_network_action', 'loopback_action']) {
     assert.throws(() => providerHost({ ...policy, [key]: 'allow' }));
   }
-  for (const host of ['127.0.0.1', '2130706433', 'localhost', '*.openai.com', 'x.local',
+  for (const host of ['127.0.0.1', '2130706433', '0xc0.0.2.1', '0xc0000201', '0300.0.2.1', 'localhost', '*.openai.com', 'x.local',
     'api.openai.com:80', 'api.openai.com.', 'user@api.openai.com', 'api.openai.com;false']) {
-    assert.throws(() => providerHost({ ...policy, rules: [{ ...policy.rules[0], pattern: host }] }));
+    assert.throws(() => providerHost({ ...policy, rules: [{ ...policy.rules[0], pattern: host }] }), /provider-host/);
   }
   assert.throws(() => providerHost({ ...policy, rules: [...policy.rules, ...policy.rules] }));
 });
@@ -48,13 +48,83 @@ test('SRT policy locks ports, private space, Unix sockets, nesting, and filesyst
 });
 
 test('macOS DNS guard must recognize exactly one pinned Seatbelt invocation', () => {
-  assert.match(tightenMacCommand("env /usr/bin/sandbox-exec -p 'PROFILE' /bin/sh -c true"), /seatbelt -p/);
+  assert.match(tightenMacCommand("env /usr/bin/sandbox-exec -p 'PROFILE' /bin/sh -c true"), /seatbelt .* -p/);
   assert.throws(() => tightenMacCommand('unexpected-upstream-rendering'));
   assert.throws(() => tightenMacCommand('/usr/bin/sandbox-exec -p x /usr/bin/sandbox-exec -p y'));
   const profile = tightenMacProfile('(version 1)\n(deny default)\n(allow mach-lookup\n (global-name "com.apple.system.opendirectoryd.libinfo"))\n(allow process-exec)');
   assert.doesNotMatch(profile, /allow mach-lookup/);
   assert.match(profile, /allow process-exec/);
+  for (const p of ['/tmp/claude', '/private/tmp/claude']) {
+    assert.ok(profile.includes(`(deny file-read* (subpath "${p}"))`));
+    assert.ok(profile.includes(`(deny file-write* file-write-create file-write-unlink (subpath "${p}"))`));
+  }
   assert.throws(() => tightenMacProfile('(version 1)\n(deny default)\n(allow mach-lookup (unknown-filter "new"))'));
+});
+
+test('Linux temporary shadows follow all upstream mounts and preserve command argv', () => {
+  const before = ['--new-session', '--bind', '/tmp/claude', '/tmp/claude', '--dev', '/dev'];
+  const command = ['--', '/bin/bash', '-c', 'printf "%s" "a b;$(false)"'];
+  const tightened = tightenLinuxArgs([...before, ...command]);
+  assert.deepEqual(tightened.slice(0, before.length), before);
+  assert.deepEqual(tightened.slice(-command.length), command);
+  const shadows = tightened.slice(before.length, -command.length);
+  for (const p of ['/tmp/claude', '/private/tmp/claude']) {
+    if (fs.existsSync(p)) {
+      assert.ok(shadows.some((value, index) => value === '--tmpfs' && shadows[index + 1] === fs.realpathSync(p)));
+    } else assert.ok(!shadows.includes(p));
+  }
+  assert.throws(() => tightenLinuxArgs(['--args', '17', ...command]), /unexpected-bwrap-profile/);
+  assert.throws(() => tightenLinuxArgs(before), /unexpected-bwrap-profile/);
+});
+
+test('Linux shadows canonical temporary aliases but never mounts an absent /private', t => {
+  t.mock.method(fs, 'realpathSync', p => {
+    if (p === '/tmp/claude') return '/owned/alias-target';
+    throw Object.assign(new Error('synthetic absence'), { code: 'ENOENT' });
+  });
+  assert.deepEqual(tightenLinuxArgs(['--', '/bin/true']), [
+    '--tmpfs', '/owned/alias-target', '--', '/bin/true',
+  ]);
+});
+
+test('direct and absolute-symlink entrypoints execute while imports stay inert', () => {
+  const temp = process.env.AIDEVOPS_TEMP_DIR || path.join(os.homedir(), '.aidevops/.agent-workspace/tmp');
+  fs.mkdirSync(temp, { recursive: true });
+  const root = fs.mkdtempSync(path.join(temp, 'srt-entry-'));
+  try {
+    const link = path.join(root, 'backend.mjs');
+    fs.symlinkSync(backend, link);
+    for (const entry of [backend, link]) {
+      const result = spawnSync(process.execPath, [entry], { encoding: 'utf8' });
+      assert.equal(result.status, 126);
+      assert.equal(JSON.parse(result.stdout).ready, false);
+    }
+    const imported = spawnSync(process.execPath, ['--input-type=module', '-e',
+      `await import(${JSON.stringify(pathToFileURL(backend).href)})`], { encoding: 'utf8' });
+    assert.equal(imported.status, 0, imported.stderr);
+    assert.equal(imported.stdout, '');
+    assert.equal(imported.stderr, '');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('explicit temporary grants survive shadows and operation-specific denials', t => {
+  t.mock.method(fs, 'realpathSync', p => p === '/tmp/claude' ? '/private/tmp/claude' : p);
+  const read = '/private/tmp/claude/input';
+  const output = '/private/tmp/claude/job-output';
+  const grants = { read: [read, '/unrelated'], write: [output] };
+  const args = tightenLinuxArgs(['--bind', '/private/tmp/claude', '/private/tmp/claude', '--', '/bin/true'], grants);
+  assert.deepEqual(args.slice(3), ['--tmpfs', '/private/tmp/claude',
+    '--ro-bind', read, read, '--bind', output, output, '--', '/bin/true']);
+  const original = '(version 1)\n(deny default)\n(allow file-write-create file-write-unlink (subpath "/tmp/claude"))';
+  const profile = tightenMacProfile(original, grants);
+  for (const root of ['/tmp/claude', '/private/tmp/claude']) {
+    assert.ok(profile.includes(`(deny file-read* (require-all (subpath "${root}") (require-not (subpath "${root}/input")) (require-not (subpath "${root}/job-output"))))`));
+    const deny = `(deny file-write* file-write-create file-write-unlink (require-all (subpath "${root}") (require-not (subpath "${root}/job-output"))))`;
+    assert.ok(profile.indexOf(deny) > profile.indexOf('(allow file-write-create'));
+  }
+  assert.ok(!profile.includes('/unrelated'));
+  const wrapped = tightenMacCommand("/usr/bin/sandbox-exec -p 'PROFILE' /bin/true", process.execPath, grants);
+  assert.ok(wrapped.includes(JSON.stringify(grants)));
 });
 
 // GH#38861: Homebrew binaries load dylibs through /opt/homebrew/opt/<keg>
@@ -72,6 +142,85 @@ function homebrewClosure(tools) {
   return [path.join(prefix, 'opt'), ...kegs.map(k => fs.realpathSync(path.join(prefix, 'opt', k)))];
 }
 
+function resolve(name) {
+  for (const dir of process.env.PATH.split(path.delimiter)) {
+    const candidate = path.join(dir, name);
+    try { fs.accessSync(candidate, fs.constants.X_OK); return fs.realpathSync(candidate); } catch { /* keep looking */ }
+  }
+  throw new Error('missing tool: ' + name);
+}
+
+function removeEmptyTemp(directory) {
+  try { fs.rmdirSync(directory); }
+  catch (error) { if (error.code !== 'ENOTEMPTY') throw error; }
+}
+
+function checkTemporaryIsolation(invoke, policyFile, python, output, manifest) {
+  // Unlisted synthetic HOST data at SRT's implicit write root must remain
+  // unreadable and unchanged; writes to a private tmpfs shadow are harmless.
+  const defaultTemp = '/tmp/claude';
+  let madeDefaultTemp = false;
+  try { fs.mkdirSync(defaultTemp, { mode: 0o700 }); madeDefaultTemp = true; }
+  catch (error) { if (error.code !== 'EEXIST') throw error; }
+  let hostRoot;
+  const originalManifest = fs.readFileSync(manifest);
+  try {
+    hostRoot = fs.mkdtempSync(path.join(defaultTemp, 'aidevops-canary-'));
+    const hostFile = path.join(hostRoot, 'host-only');
+    fs.writeFileSync(hostFile, 'synthetic host marker', { mode: 0o600 });
+    const probe = String.raw`
+import os, sys, tempfile
+try:
+    assert open(sys.argv[1]).read() != 'synthetic host marker', 'host temp data exposed'
+except OSError:
+    pass
+try:
+    with open(sys.argv[1], 'a') as f:
+        f.write('escape')
+except OSError:
+    pass
+if sys.platform == 'darwin':
+    # Use the canonical spelling explicitly; the parent is an unlisted sibling
+    # of the approved output. Both specific operations must be denied.
+    host_file = os.path.join('/private/tmp/claude', os.path.relpath(sys.argv[1], '/tmp/claude'))
+    for operation in [lambda: open(host_file + '.created', 'x'), lambda: os.unlink(host_file)]:
+        try:
+            operation()
+        except PermissionError:
+            pass
+        else:
+            raise AssertionError('unlisted host create/unlink permitted')
+assert os.environ['TMPDIR'] == sys.argv[2]
+with tempfile.TemporaryFile() as f:
+    f.write(b'private temporary output')
+if len(sys.argv) == 4:
+    assert open(sys.argv[3]).read() == 'approved temp input'
+    with open(os.path.join(sys.argv[2], 'approved-result'), 'x') as f:
+        f.write('approved temp output')
+`;
+    const isolated = invoke(['run', '--policy', policyFile, '--', python, '-I', '-c', probe, hostFile, output]);
+    assert.equal(isolated.status, 0, isolated.stdout + isolated.stderr);
+    assert.equal(fs.readFileSync(hostFile, 'utf8'), 'synthetic host marker');
+    const nestedOutput = path.join(hostRoot, 'job-output');
+    const approvedInput = path.join(hostRoot, 'input');
+    fs.mkdirSync(nestedOutput, { mode: 0o700 });
+    fs.writeFileSync(approvedInput, 'approved temp input', { mode: 0o600 });
+    const config = JSON.parse(originalManifest);
+    fs.writeFileSync(manifest, JSON.stringify({ ...config, cwd: nestedOutput,
+      write: [nestedOutput], read: [...config.read, approvedInput] }));
+    const granted = invoke(['run', '--policy', policyFile, '--', python, '-I', '-c', probe,
+      hostFile, fs.realpathSync(nestedOutput), fs.realpathSync(approvedInput)]);
+    assert.equal(granted.status, 0, granted.stdout + granted.stderr);
+    assert.equal(fs.readFileSync(path.join(nestedOutput, 'approved-result'), 'utf8'), 'approved temp output');
+    assert.equal(fs.readFileSync(hostFile, 'utf8'), 'synthetic host marker');
+    assert.equal(fs.existsSync(hostFile + '.created'), false);
+  } finally {
+    fs.writeFileSync(manifest, originalManifest);
+    if (hostRoot) fs.rmSync(hostRoot, { recursive: true, force: true });
+    if (madeDefaultTemp) removeEmptyTemp(defaultTemp);
+  }
+}
+
 test('real platform qualification (explicit opt-in, synthetic data, no provider contact)', {
   skip: process.env.AIDEVOPS_SRT_REAL_CHECK !== '1', timeout: 120000,
 }, async () => {
@@ -79,13 +228,6 @@ test('real platform qualification (explicit opt-in, synthetic data, no provider 
   const root = fs.mkdtempSync(path.join(temp, 'srt-test-'));
   const output = path.join(root, 'output');
   fs.mkdirSync(output, { mode: 0o700 });
-  const resolve = name => {
-    for (const dir of process.env.PATH.split(path.delimiter)) {
-      const candidate = path.join(dir, name);
-      try { fs.accessSync(candidate, fs.constants.X_OK); return fs.realpathSync(candidate); } catch { /* keep looking */ }
-    }
-    throw new Error('missing tool: ' + name);
-  };
   try {
     const tools = { shell: resolve('bash'), python: resolve('python3'), rg: resolve('rg'),
       coreutils: resolve('env'), procps: resolve('ps'), which: resolve('which') };
@@ -129,6 +271,7 @@ test('real platform qualification (explicit opt-in, synthetic data, no provider 
       tools.python, '-I', '-c', 'import sys; print(sys.argv[1])', 'a b;$(false)']);
     assert.equal(run.status, 0, run.stdout + run.stderr);
     assert.equal(run.stdout.trim(), 'a b;$(false)');
+    checkTemporaryIsolation(invoke, policyFile, tools.python, output, manifest);
     // The supervisor exports framework constants; the workload must not see them.
     const envRun = invoke(['run', '--policy', policyFile, '--', tools.python, '-I', '-c',
       'import os,json; print(json.dumps(sorted(os.environ)))']);
@@ -164,116 +307,6 @@ test('real platform qualification (explicit opt-in, synthetic data, no provider 
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-// GH#39361: synthetic, offline qualification of the host-side proxy. The SRT
-// 0.0.83 manager exposes no resolver option, but its resolved-address guard
-// resolves through `node:dns` `lookup`, read when the guard is built. The test
-// swaps that function (then re-syncs the ESM binding) with a fixture mapping the
-// allowed test name to chosen addresses, so no real DNS or /etc/hosts is used.
-// Clients talk to the proxy ports directly from this process; no sandbox is
-// needed, so this runs wherever SRT initializes.
-const findTool = name => {
-  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
-    try { fs.accessSync(path.join(dir, name), fs.constants.X_OK); return fs.realpathSync(path.join(dir, name)); } catch { /* next */ }
-  }
-  return null;
-};
-const proxyTools = { bwrap: findTool('bwrap'), socat: findTool('socat'), rg: findTool('rg') };
-const srtInstalled = fs.existsSync(path.join(scripts,
-  'worker-egress-srt/node_modules/@anthropic-ai/sandbox-runtime/dist/index.js'));
-const proxyReady = srtInstalled && (process.platform === 'darwin' ? Boolean(proxyTools.rg)
-  : process.platform === 'linux' && Object.values(proxyTools).every(Boolean));
-const proxyHost = 'api.openai.com';
-let proxyToken = '';
-
-const parentProxyVars = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy'];
-
-async function withProxy(records, extraAllowed, body) {
-  const original = dns.lookup;
-  // Keep the session offline: an inherited parent proxy would be dialled instead
-  // of the fixture-controlled direct path.
-  const savedEnv = Object.fromEntries(parentProxyVars.map(name => [name, process.env[name]]));
-  for (const name of parentProxyVars) delete process.env[name];
-  dns.lookup = (host, options, callback) => {
-    const cb = typeof options === 'function' ? options : callback;
-    const addresses = records[host];
-    // IP literals need no resolver; every other name must have a synthetic record.
-    if (net.isIP(host)) return original(host, options, callback);
-    if (!addresses) return queueMicrotask(() => cb(Object.assign(new Error('no synthetic record for ' + host), { code: 'ENOTFOUND' })));
-    const list = addresses.map(address => ({ address, family: net.isIP(address) }));
-    return queueMicrotask(() => (options?.all ? cb(null, list) : cb(null, list[0].address, list[0].family)));
-  };
-  syncBuiltinESMExports();
-  const { SandboxManager: manager } = await import(pathToFileURL(path.join(scripts,
-    'worker-egress-srt/node_modules/@anthropic-ai/sandbox-runtime/dist/index.js')).href);
-  const config = settings(proxyHost, { read: [], write: [], tools: proxyTools });
-  config.network.allowedDomains.push(...extraAllowed);
-  try {
-    await manager.initialize(config, undefined, false);
-    assert.ok(await manager.waitForNetworkInitialization(), 'proxy must start');
-    proxyToken = manager.getProxyAuthToken();
-    return await body({ http: manager.getProxyPort(), socks: manager.getSocksProxyPort() });
-  } finally {
-    await manager.reset();
-    for (const [name, value] of Object.entries(savedEnv)) {
-      if (value === undefined) delete process.env[name]; else process.env[name] = value;
-    }
-    dns.lookup = original;
-    syncBuiltinESMExports();
-  }
-}
-
-function exchange(port, payload, until) {
-  return new Promise(resolve => {
-    const socket = net.connect(port, '127.0.0.1');
-    let data = Buffer.alloc(0);
-    const timer = setTimeout(() => { socket.destroy(); resolve(data); }, 3000);
-    const finish = () => { clearTimeout(timer); socket.destroy(); resolve(data); };
-    socket.on('data', chunk => { data = Buffer.concat([data, chunk]); if (until(data)) finish(); });
-    socket.on('error', finish); socket.on('close', finish);
-    socket.on('connect', () => {
-      // The proxy requires its per-session credential, as the sandboxed client's
-      // environment supplies it. Add it to the request line's headers.
-      const write = socket.write.bind(socket);
-      socket.write = chunk => (typeof chunk === 'string' && /^(GET|CONNECT) /.test(chunk)
-        ? write(chunk.replace('\r\n', `\r\nProxy-Authorization: Basic ${Buffer.from('srt:' + proxyToken).toString('base64')}\r\n`))
-        : write(chunk));
-      payload(socket);
-    });
-  });
-}
-
-const headDone = data => data.includes('\r\n\r\n');
-const statusOf = data => Number(data.toString().match(/^HTTP\/1\.[01] (\d+)/)?.[1] ?? 0);
-const connectStatus = async (port, authority) =>
-  statusOf(await exchange(port, s => s.write(`CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n\r\n`), headDone));
-
-// Authenticated SOCKS5 CONNECT by domain name. Returns the reply code (0 =
-// succeeded) or -1 when the proxy closed without a reply to the request.
-const socksReply = async (port, host, destination) => {
-  const user = Buffer.from('srt');
-  const pass = Buffer.from(proxyToken);
-  const data = await exchange(port, s => {
-    let stage = 0;
-    s.on('data', () => {
-      stage += 1;
-      if (stage === 1) s.write(Buffer.concat([Buffer.from([1, user.length]), user, Buffer.from([pass.length]), pass]));
-      else if (stage === 2) {
-        s.write(Buffer.concat([Buffer.from([5, 1, 0, 3, host.length]), Buffer.from(host),
-          Buffer.from([destination >> 8, destination & 255])]));
-      }
-    });
-    s.write(Buffer.from([5, 1, 2]));
-  }, d => d.length >= 2 + 2 + 4);
-  return data.length >= 8 ? data[5] : -1;
-};
-
-const deniedAddresses = {
-  'RFC 1918 10/8': '10.1.2.3', 'RFC 1918 172.16/12': '172.16.5.5', 'RFC 1918 192.168/16': '192.168.1.1',
-  'loopback 127/8': '127.0.0.1', 'loopback ::1': '::1', 'link-local 169.254/16': '169.254.169.254',
-  'link-local fe80::/10': 'fe80::1', 'IPv4-mapped loopback': '::ffff:127.0.0.1',
-  'IPv4-mapped RFC 1918': '::ffff:10.0.0.1', 'IPv4-mapped link-local': '::ffff:169.254.169.254',
-  'CGNAT 100.64/10': '100.64.0.1', 'ULA fc00::/7': 'fd12:3456::1', unspecified: '0.0.0.0',
-};
 
 test('policy denies loopback, link-local and unspecified explicitly, not only by SRT default', () => {
   const list = settings(proxyHost, { read: [], write: [], tools: {} }).network.deniedResolvedAddresses;
