@@ -27,15 +27,17 @@ concurrency:
 
 jobs:
   shell-suite-health:
-    name: Run all shell suites on main
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    name: Run all shell suites
+    # Scheduled runs remain on main; a trusted manual dispatch can verify a fix
+    # on its exact branch before merging and closing the health investigation.
+    if: github.event_name == 'workflow_dispatch' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
-      - name: Checkout main
+      - name: Checkout suite source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ github.ref }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -47,16 +49,44 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq ripgrep
           rg --version | head -n 1
-          # GH#39718: schema suites `require("ajv/dist/2020")`; the root manifest pins
-          # the version and has no lockfile, so install only that exact version into a
-          # runner-temp prefix (no lifecycle scripts) and expose it through NODE_PATH.
+          # GH#40029: install the manifest-pinned suite tools outside the checkout.
+          # NODE_PATH serves CommonJS only: the team-interface ES modules also need
+          # node_modules on their ancestor path. Refuse an existing destination.
           ajv_version="$(jq -r '.dependencies.ajv // .devDependencies.ajv' package.json)"
+          secretlint_version="$(jq -r '.devDependencies.secretlint' package.json)"
+          preset_version="$(jq -r '.devDependencies["@secretlint/secretlint-rule-preset-recommend"]' package.json)"
           deps_dir="${RUNNER_TEMP}/suite-deps"
+          if [[ -e node_modules || -L node_modules ]]; then
+            echo '::error::Refusing to replace existing node_modules'
+            exit 1
+          fi
           mkdir -p "$deps_dir"
-          npm install --prefix "$deps_dir" --ignore-scripts --no-audit --no-fund "ajv@${ajv_version}"
+          npm install --prefix "$deps_dir" --ignore-scripts --no-audit --no-fund \
+            "ajv@${ajv_version}" "secretlint@${secretlint_version}" \
+            "@secretlint/secretlint-rule-preset-recommend@${preset_version}"
+          ln -s "${deps_dir}/node_modules" node_modules
           echo "NODE_PATH=${deps_dir}/node_modules" >> "$GITHUB_ENV"
+          echo "${deps_dir}/node_modules/.bin" >> "$GITHUB_PATH"
+          node --input-type=module -e 'import Ajv from "ajv/dist/2020.js"; new Ajv();'
+          "${deps_dir}/node_modules/.bin/secretlint" --version
           git config --global user.name "aidevops-ci"
           git config --global user.email "ci@aidevops.invalid"
+
+      # Match the pinned AST scanner used by Framework Validation, rather than
+      # silently testing the legacy AWK fallback on a runner without shfmt.
+      - name: Install pinned shfmt
+        timeout-minutes: 5
+        env:
+          SHFMT_VERSION: v3.8.0
+          SHFMT_SHA256: 27b3c6f9d9592fc5b4856c341d1ff2c88856709b9e76469313642a1d7b558fe0
+        run: |
+          shfmt_tmp="${RUNNER_TEMP}/shfmt"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 \
+            --connect-timeout 15 --max-time 45 -o "$shfmt_tmp" \
+            "https://github.com/mvdan/sh/releases/download/${SHFMT_VERSION}/shfmt_${SHFMT_VERSION}_linux_amd64"
+          printf '%s  %s\n' "$SHFMT_SHA256" "$shfmt_tmp" | sha256sum --check --strict -
+          sudo install -m 0755 "$shfmt_tmp" /usr/local/bin/shfmt
+          shfmt --version
 
       # GH#40011: checkout is not a framework deployment. Helpers resolve shipped
       # defaults and companion scripts at ~/.aidevops/agents; without that tree the
@@ -108,7 +138,7 @@ jobs:
           red="$(awk -F'\t' 'NR>1 && $4=="regression"' "$results" | wc -l | tr -d ' ')"
           timeouts="$(awk -F'\t' 'NR>1 && $4=="regression" && $2 ~ /124/' "$results" | wc -l | tr -d ' ')"
           {
-            echo '### Shell suite health on main'
+            echo "### Shell suite health on ${GITHUB_REF}"
             echo
             echo "Reproducible regressions: ${red} (of which with a timeout, exit 124: ${timeouts})"
             echo
