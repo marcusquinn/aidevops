@@ -35,7 +35,7 @@ import { resolveSessionOwnedWorktreeRoot } from "./gpt-image-worktree.mjs";
 import { liveSupervisorRoots, processStartIdentity } from "./process-start-identity.mjs";
 import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
 import { runtimeOwner } from "./runtime-owner.mjs";
-import { closeAfterExitGrace } from "./exit-close-grace.mjs";
+import { watchSupervisorExit } from "./exit-close-grace.mjs";
 
 const MAX_OPERATIONS = 24;
 // GH#38704: "always" (default) restores after every terminal path, success
@@ -201,13 +201,7 @@ export class BoundedInteractiveOperationManager {
     await new Promise((resolve) => {
       const child = this.spawnOwned(operation, operation.command, "main");
       operation.child = child;
-      child.once("exit", (code, signal) => {
-        operation.childExited = true;
-        // Only a natural exit: cancel/timeout paths keep their own survivor cleanup.
-        if (operation.disposition !== "running" || operation.spawnFailed) return;
-        const finalize = () => this.mainClosed(operation, code, signal);
-        closeAfterExitGrace({ child, setTimer: this.setTimer, clearTimer: this.clearTimer, finalize });
-      });
+      watchSupervisorExit(operation, child, this);
       child.once("spawn", () => {
         operation.supervisorIdentity = this.processIdentity(child.pid);
         operation.state = "running";
@@ -242,8 +236,6 @@ export class BoundedInteractiveOperationManager {
   }
 
   async mainClosed(operation, code, signal) {
-    if (operation.mainClosedDone) return;
-    operation.mainClosedDone = true;
     if (operation.budgetTimer) this.clearTimer(operation.budgetTimer);
     if (operation.killTimer) this.clearTimer(operation.killTimer);
     operation.child = null;
