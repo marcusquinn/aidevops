@@ -498,19 +498,25 @@ function cleanEnvironment(envelope, scratch) {
     CLAUDE_CODE_TMPDIR: envelope.cwd, LANG: 'C.UTF-8' });
 }
 
-async function main(argv) {
+// Receivers invoked on the host, before the one and only sandbox apply call.
+function receive(argv) {
   if (argv[0] === 'bwrap') {
-    const tool = executable(argv[1]);
-    const child = spawnSync(tool, tightenLinuxArgs(argv.slice(2)), { stdio: 'inherit' });
+    const child = spawnSync(executable(argv[1]), tightenLinuxArgs(argv.slice(2)), { stdio: 'inherit' });
     return child.status ?? 126;
   }
-  // Receiver invoked on the host, before the one and only sandbox_apply call.
-  if (argv[0] === 'seatbelt') {
-    insist(process.platform === 'darwin' && argv[1] === '-p' && argv.length >= 5, 'seatbelt-argv');
-    const profile = tightenMacProfile(argv[2]);
-    const child = spawnSync('/usr/bin/sandbox-exec', ['-p', profile, ...argv.slice(3)], { stdio: 'inherit' });
-    return child.status ?? 126;
-  }
+  insist(process.platform === 'darwin' && argv[1] === '-p' && argv.length >= 5, 'seatbelt-argv');
+  const child = spawnSync('/usr/bin/sandbox-exec', ['-p', tightenMacProfile(argv[2]), ...argv.slice(3)], { stdio: 'inherit' });
+  return child.status ?? 126;
+}
+
+function linuxSettings(host, envelope, scratch, sockets) {
+  const receiver = path.join(scratch, 'bwrap');
+  fs.writeFileSync(receiver, `#!${envelope.tools.shell}\nexec ${quote(process.execPath)} ${quote(fileURLToPath(import.meta.url))} bwrap ${quote(envelope.tools.bwrap)} "$@"\n`, { mode: 0o700 });
+  return { ...settings(host, envelope, sockets), bwrapPath: receiver };
+}
+
+async function main(argv) {
+  if (argv[0] === 'bwrap' || argv[0] === 'seatbelt') return receive(argv);
   const action = argv.shift();
   insist(['probe', 'run'].includes(action), 'usage: probe|run --policy FILE [--worker-id ID] [-- COMMAND...]');
   insist(argv.shift() === '--policy', 'policy-argument-required');
@@ -547,11 +553,7 @@ async function main(argv) {
       // cannot open AF_UNIX sockets after apply-seccomp.
       const sockets = [manager.getLinuxHttpSocketPath(), manager.getLinuxSocksSocketPath()];
       insist(sockets.every(p => typeof p === 'string'), 'bridge-sockets-not-ready');
-      const receiver = path.join(scratch, 'bwrap');
-      fs.writeFileSync(receiver, `#!${envelope.tools.shell}\nexec ${quote(process.execPath)} ${quote(fileURLToPath(import.meta.url))} bwrap ${quote(envelope.tools.bwrap)} "$@"\n`, { mode: 0o700 });
-      const config = settings(host, envelope, sockets);
-      config.bwrapPath = receiver;
-      manager.updateConfig(config);
+      manager.updateConfig(linuxSettings(host, envelope, scratch, sockets));
     }
     if (process.platform === 'darwin') {
       // GH#38861 reviewed arm64 only (synthetic, DNS and Mach evidence). Intel
