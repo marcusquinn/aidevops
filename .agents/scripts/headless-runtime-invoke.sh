@@ -606,7 +606,32 @@ _capture_model_replay_runtime_evidence() {
 	return 0
 }
 
+# Capture worker usage before the isolated DB is merged/removed. Count each
+# session once (including children), bounded to this attempt, using footer SQL.
+_capture_worker_usage_tokens() {
+	local isolated_dir="$1"
+	local runtime_db="${isolated_dir}/opencode/opencode.db"
+	_WORKER_USAGE_TOKENS_TOTAL=0
+	[[ "${runtime_role:-}" == "${HEADLESS_ROLE_WORKER:-worker}" ]] || return 0
+	[[ -f "$runtime_db" && ! -L "$runtime_db" ]] || return 0
+	command -v sqlite3 >/dev/null 2>&1 || return 0
+	local total
+	total=$(
+		# shellcheck source=gh-signature-helper-session.sh
+		source "${SCRIPT_DIR}/gh-signature-helper-session.sh"
+		local since_ms session_id
+		since_ms=$(_worker_attempt_start_ms)
+		sqlite3 "$runtime_db" 'SELECT DISTINCT session_id FROM message;' |
+			while IFS= read -r session_id; do
+				_sum_session_tokens_for_session "$runtime_db" "$session_id" "$since_ms"
+			done | jq -s 'add // 0'
+	) 2>/dev/null || total=0
+	[[ "$total" =~ ^[0-9]+$ ]] && _WORKER_USAGE_TOKENS_TOTAL="$total"
+	return 0
+}
+
 _invoke_opencode_finalize_data() {
+	_capture_worker_usage_tokens "${isolated_data_dir:-}"
 	if [[ -n "$isolated_data_dir" && -d "$isolated_data_dir" ]]; then
 		if [[ "$runtime_role" == "$HEADLESS_ROLE_MODEL_REPLAY" ]] &&
 			! _capture_model_replay_runtime_evidence "$isolated_data_dir"; then

@@ -259,7 +259,7 @@ _hrw_record_terminal_outcome() {
 		--model "${AIDEVOPS_ROUTING_MODEL:-}" \
 		--variant "${AIDEVOPS_ROUTING_VARIANT:-}" \
 		--routing-attempts "${AIDEVOPS_ROUTING_ATTEMPT:-}" \
-		--tokens "${_MODEL_REPLAY_TOKENS_TOTAL:-0}" \
+		--tokens "${_WORKER_USAGE_TOKENS_TOTAL:-0}" \
 		--outcome "$outcome" \
 		--reason "$reason" 2>/dev/null || true
 	return 0
