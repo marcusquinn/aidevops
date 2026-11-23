@@ -143,6 +143,9 @@ reset_case() {
 	# Default: `--paginate --slurp` pages; cases that override use one page.
 	TEST_ISSUES=$(pages "$(issue_json "auto-dispatch,status:blocked,origin:worker,tier:standard" "runner1")")
 	TEST_ISSUES_RC=0
+	TEST_REVIEW_ISSUES='[]'
+	TEST_LIVE_ISSUE='{}'
+	TEST_LIVE_PR='{}'
 	TEST_PRS=$(pages "$(pr_json 900 true "origin:worker" $'Draft checkpoint.\n\nResolves #501')")
 	TEST_PRS_RC=0
 	TEST_COMMENTS=$(pages \
@@ -173,6 +176,15 @@ gh() {
 		[[ "$TEST_ISSUES_RC" -eq 0 ]] || return "$TEST_ISSUES_RC"
 		[[ "$TEST_ISSUES_ADVANCE" -eq 0 ]] || printf '%s\n' "$((TEST_NOW + TEST_ISSUES_ADVANCE))" >"$CLOCK_FILE"
 		printf '%s' "$TEST_ISSUES"
+		;;
+	"repos/${SLUG}/issues?state=open&labels=status%3Ain-review"*)
+		printf '%s' "$TEST_REVIEW_ISSUES"
+		;;
+	"repos/${SLUG}/issues/501")
+		printf '%s' "$TEST_LIVE_ISSUE"
+		;;
+	"repos/${SLUG}/pulls/900")
+		printf '%s' "$TEST_LIVE_PR"
 		;;
 	"repos/${SLUG}/pulls?state=open"*)
 		[[ "$TEST_PRS_RC" -eq 0 ]] || return "$TEST_PRS_RC"
@@ -513,10 +525,10 @@ test_deadline_and_listing_cost() {
 	TEST_ISSUES="[]"
 	run_pass
 	reads=$(wc -l <"$API_LOG" | tr -d ' ')
-	if [[ "$PASS_RC" -eq 0 && "$reads" == "1" ]]; then
-		pass "no blocked auto-dispatch issue costs one listing read"
+	if [[ "$PASS_RC" -eq 0 && "$reads" == "2" ]]; then
+		pass "no stranded issue costs two status listing reads"
 	else
-		fail "no blocked auto-dispatch issue costs one listing read" "rc=${PASS_RC} reads=${reads}"
+		fail "no stranded issue costs two status listing reads" "rc=${PASS_RC} reads=${reads}"
 	fi
 	if [[ ! -s "$LOGFILE" ]]; then
 		pass "a repo without candidates logs nothing"
@@ -631,6 +643,79 @@ test_release_pattern_tracks_continuation_helper() {
 	return 0
 }
 
+# GH#40005: exercise the actual scheduled pass, not a new dispatch route.
+setup_review_case() {
+	reset_case
+	TEST_ISSUES='[]'
+	TEST_LIVE_ISSUE=$(issue_json 'status:in-review,origin:worker' runner1)
+	TEST_REVIEW_ISSUES=$(pages "$TEST_LIVE_ISSUE")
+	TEST_LIVE_PR=$(pr_json 900 true origin:worker 'For #501' | jq -c '.user.login = "runner1"')
+	TEST_PRS=$(pages "$TEST_LIVE_PR")
+	TEST_COMMENTS=$(pages "$(release_comment worker_draft_checkpoint)" \
+		"$(comment 6506414999 2026-10-29T19:32:30Z COLLABORATOR runner1 'DISPATCH_LEASE phase=terminal expires_at=0')")
+	TEST_TIMELINE=$(pages "$(label_event 2026-10-29T19:32:10Z runner1 status:in-review)")
+	return 0
+}
+
+test_review_checkpoint_recovery() {
+	local change="" event="" marker=""
+	setup_review_case
+	run_pass
+	assert_restored "501 ${SLUG} available --add-label auto-dispatch --remove-assignee runner1" \
+		'assigned in-review checkpoint without auto-dispatch is restored for exact-head continuation'
+	# Retain the stale listing deliberately: the audit and live read still prevent
+	# a second transition, and no PR-ready/branch-create/dispatch command exists.
+	marker='<!-- aidevops:ops kind=draft-checkpoint-unblock pr=900 release=6506414392 -->'
+	TEST_COMMENTS=$(printf '%s' "$TEST_COMMENTS" | jq -c --argjson c \
+		"$(comment 6506415200 2026-10-29T19:50:00Z MEMBER pulse "$marker")" '.[0] += [$c]')
+	: >"$STATUS_LOG"
+	: >"$COMMENT_LOG"
+	run_pass
+	assert_no_write 'review checkpoint is recovered exactly once even with a stale listing'
+	for change in '.draft = false' '.user.login = "other"' '.head.sha = "new-head"' '.labels = []'; do
+		setup_review_case
+		TEST_LIVE_PR=$(printf '%s' "$TEST_LIVE_PR" | jq -c "$change")
+		run_pass
+		assert_no_write "changed draft is not recovered: ${change}"
+	done
+	for change in '.state = "closed"' '.assignees = []' '.assignees += [{login:"human"}]' \
+		'.labels += [{name:"hold-for-review"}]' '.labels += [{name:"auto-dispatch"}]'; do
+		setup_review_case
+		TEST_LIVE_ISSUE=$(printf '%s' "$TEST_LIVE_ISSUE" | jq -c "$change")
+		run_pass
+		assert_no_write "changed live issue is not recovered: ${change}"
+	done
+	for event in 'DISPATCH_CLAIM nonce=later' 'DISPATCH_LEASE phase=ready expires_at=9999999999'; do
+		setup_review_case
+		TEST_COMMENTS=$(pages "$(release_comment worker_draft_checkpoint)" \
+			"$(comment 6506414999 2026-10-29T19:32:30Z COLLABORATOR runner1 "$event")")
+		run_pass
+		assert_no_write "later owner blocks review recovery: ${event%% *}"
+	done
+	setup_review_case
+	TEST_COMMENTS=$(pages "$(release_comment worker_draft_checkpoint)")
+	run_pass
+	assert_no_write 'review recovery requires a terminal lease'
+	setup_review_case
+	TEST_NOW=1793302400
+	run_pass
+	assert_no_write 'a recent release is not recovered'
+	setup_review_case
+	TEST_COMMENTS=$(pages "$(release_comment blocked)" \
+		"$(comment 6506414999 2026-10-29T19:32:30Z COLLABORATOR runner1 'DISPATCH_LEASE phase=terminal expires_at=0')")
+	run_pass
+	assert_no_write 'a terminal-blocker release remains held'
+	setup_review_case
+	TEST_PRS=$(pages "$TEST_LIVE_PR" "$(pr_json 901 true origin:worker 'Ref #501')")
+	run_pass
+	assert_no_write 'multiple linked worker drafts are ambiguous'
+	setup_review_case
+	TEST_TIMELINE=$(pages "$(label_event 2026-10-29T19:32:10Z human status:in-review)")
+	run_pass
+	assert_no_write 'a human review label is not a worker projection'
+	return 0
+}
+
 # From PR #36031: exercise the real cadence functions. Runs last because it
 # sources pulse-wrapper-cycle.sh and replaces the pass with a recorder.
 test_cycle_stamp_behavior() {
@@ -716,6 +801,7 @@ main() {
 	test_status_and_comment_failures
 	test_cycle_wiring
 	test_release_pattern_tracks_continuation_helper
+	test_review_checkpoint_recovery
 	test_cycle_stamp_behavior
 	printf '\n%d tests, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]] || return 1

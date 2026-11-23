@@ -57,24 +57,23 @@ _PDCU_LIST_JQ_DEFS='
 '
 
 #######################################
-# List open auto-dispatch issues whose only status label is status:blocked and
-# that carry no protective label. Without auto-dispatch, status:available would
-# not route the draft to continuation, so those issues are left unchanged.
-# Args: $1=repo slug
+# List unprotected projected blocks, or GH#33115 in-review checkpoints.
+# Args: $1=repo slug, $2=status (blocked or in-review)
 # Stdout: one issue JSON object per line
 # Returns: 0 on a readable list (possibly empty), 1 otherwise
 #######################################
 _pdcu_blocked_issues() {
-	local repo_slug="$1"
+	local repo_slug="$1" status="${2:-blocked}"
 	local issues_json=""
-	issues_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues?state=open&labels=status%3Ablocked&per_page=100" \
+	issues_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues?state=open&labels=status%3A${status}&per_page=100" \
 		--paginate --slurp 2>/dev/null) || return 1
-	printf '%s' "$issues_json" | jq -c "${_PDCU_LIST_JQ_DEFS}"'
+	printf '%s' "$issues_json" | jq -c --arg status "$status" "${_PDCU_LIST_JQ_DEFS}"'
 		def names: [.labels[]? | if type == "string" then . else (.name // empty) end];
 		items("issues")[]
 		| select(.pull_request == null and ((.number | type) == "number"))
-		| select([names[] | select(startswith("status:"))] == ["status:blocked"])
-		| select(names | index("auto-dispatch"))
+		| select([names[] | select(startswith("status:"))] == ["status:" + $status])
+		| select(if $status == "blocked" then (names | index("auto-dispatch"))
+			else (names | index("auto-dispatch") | not) and (.assignees | length == 1) end)
 		| select(names | any(. == "hold-for-review" or . == "no-auto-dispatch"
 			or . == "needs-maintainer-review" or . == "needs-maintainer-permissions"
 			or . == "persistent" or . == "parent-task") | not)
@@ -165,15 +164,15 @@ _pdcu_release_evidence() {
 _pdcu_block_from_release() {
 	local timeline_json="$1"
 	local runner_login="$2"
-	local released_epoch="$3"
+	local released_epoch="$3" status="${4:-blocked}"
 	local before="${PULSE_DRAFT_UNBLOCK_WINDOW_BEFORE_SECONDS:-60}"
 	local after="${PULSE_DRAFT_UNBLOCK_WINDOW_AFTER_SECONDS:-600}"
 	[[ "$before" =~ ^[0-9]+$ ]] || before=60
 	[[ "$after" =~ ^[0-9]+$ ]] || after=600
-	printf '%s' "$timeline_json" | jq -e --arg runner "$runner_login" \
+	printf '%s' "$timeline_json" | jq -e --arg runner "$runner_login" --arg label "status:${status}" \
 		--argjson released "$released_epoch" --argjson before "$before" --argjson after "$after" \
 		"${_PDCU_LIST_JQ_DEFS}"'
-		[items("timeline")[] | select(.event == "labeled" and .label.name? == "status:blocked")]
+		[items("timeline")[] | select(.event == "labeled" and .label.name? == $label)]
 		| sort_by(.created_at) | last
 		| if . == null then false
 		else (.actor.login // "") == $runner
@@ -197,7 +196,7 @@ _pdcu_comment_body() {
 	local head_sha="$4"
 	printf '%s\n' "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- aidevops:ops kind=${_PDCU_MARKER_KIND} pr=${pr_number} release=${release_id} -->
-Worker draft PR #${pr_number} (head \`${head_sha:-unknown}\`) is still open, but the \`${reason}\` release projected \`status:blocked\` with no terminal blocker (pre-GH#36019 projection). Restored \`status:available\` so Pulse continues the exact draft head through the bounded checkpoint continuation, or records attention when that is exhausted. The draft is preserved and still blocks duplicate dispatch.
+Worker draft PR #${pr_number} (head \`${head_sha:-unknown}\`) is still open, but the \`${reason}\` release left a stranded checkpoint with no terminal blocker. Restored \`status:available\` so Pulse continues the exact draft head through the bounded checkpoint continuation, or records attention when that is exhausted. The draft is preserved and still blocks duplicate dispatch.
 <!-- ops:end -->"
 	return 0
 }
@@ -248,7 +247,7 @@ _pdcu_log() {
 #######################################
 _pdcu_try_issue() {
 	local repo_slug="$1" issue_json="$2" pr_number="$3" head_sha="$4" stop="${5:-0}"
-	local now_epoch=""
+	local now_epoch="" status="${6:-blocked}"
 	local issue_num="" comments_json="" evidence="" timeline_json="" assignees="" login=""
 	local release_id="" reason="" runner="" released_epoch="" pr_markers="" release_marked=""
 	local cap="${PULSE_DRAFT_UNBLOCK_MAX_PER_PR:-3}"
@@ -285,13 +284,18 @@ _pdcu_try_issue() {
 		_pdcu_log "$repo_slug" "$issue_num" "$pr_number" "kept blocked: timeline unreadable"
 		return 1
 	fi
-	if ! _pdcu_block_from_release "$timeline_json" "$runner" "$released_epoch"; then
+	if ! _pdcu_block_from_release "$timeline_json" "$runner" "$released_epoch" "$status"; then
 		_pdcu_log "$repo_slug" "$issue_num" "$pr_number" "kept blocked: status:blocked was not applied by the ${reason} release projection"
 		return 1
 	fi
 	if ! assignees=$(_pmpc_owned_assignees "$issue_json" "$runner" ""); then
 		_pdcu_log "$repo_slug" "$issue_num" "$pr_number" "kept blocked: assignee is not the releasing runner"
 		return 1
+	fi
+	if [[ "$status" == in-review ]]; then
+		_pdcu_review_evidence "$repo_slug" "$issue_json" "$pr_number" "$head_sha" \
+			"$comments_json" "$runner" "$released_epoch" || return 1
+		transition_args+=(--add-label auto-dispatch)
 	fi
 	if [[ -n "$assignees" ]]; then
 		IFS=',' read -r -a logins <<<"$assignees"
@@ -312,6 +316,43 @@ _pdcu_try_issue() {
 	_pdcu_post_audit_comment "$repo_slug" "$issue_num" "$pr_number" "$release_id" "$reason" "$head_sha" ||
 		_pdcu_log "$repo_slug" "$issue_num" "$pr_number" "restored but the audit comment did not land"
 	_pdcu_log "$repo_slug" "$issue_num" "$pr_number" "restored status:available after ${reason} release ${release_id} by ${runner}"
+	return 0
+}
+
+#######################################
+# GH#40005: an assigned checkpoint is not abandoned merely because it is old.
+# #aidevops:trust-boundary — require the newest trusted lease to be terminal,
+# unedited and owned by the releasing runner. Existing release evidence rejects
+# any later claim/live lease. Re-read the issue and PR before restoring eligibility.
+# Args: repo, issue JSON, PR, head, comments JSON, runner, release epoch
+#######################################
+_pdcu_review_evidence() {
+	local repo_slug="$1" issue_json="$2" pr_number="$3" head_sha="$4"
+	local comments_json="$5" runner="$6" released_epoch="$7"
+	local issue_num="" age="${PULSE_DRAFT_REVIEW_STALE_SECONDS:-1800}" now="" pr="" live=""
+	[[ "$age" =~ ^[1-9][0-9]*$ ]] || age=1800
+	now=$(date +%s) || return 1
+	[[ $((now - released_epoch)) -ge "$age" ]] || return 1
+	printf '%s' "$comments_json" | jq -e --arg runner "$runner" --argjson released "$released_epoch" \
+		"${_PMPC_COMMENTS_JQ_DEFS}"'
+		[comments[] | select(trusted) | select(.body | test("(^|\n)DISPATCH_LEASE phase="))]
+		| sort_by(.created_at, .id) | last
+		| . != null and .user.login == $runner and (.updated_at // .created_at) == .created_at
+			and (.created_at | fromdateiso8601) >= $released
+			and (.body | test("(^|\n)DISPATCH_LEASE phase=terminal "))
+	' >/dev/null 2>&1 || return 1
+	pr=$(_pmpc_gh_read api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || return 1
+	printf '%s' "$pr" | jq -e --arg runner "$runner" --arg head "$head_sha" --arg state open '
+		.state == $state and .draft == true and .user.login == $runner and .head.sha == $head
+		and any(.labels[]?; .name == "origin:worker")
+	' >/dev/null 2>&1 || return 1
+	issue_num=$(printf '%s' "$issue_json" | jq -r '.number') || return 1
+	live=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}" 2>/dev/null) || return 1
+	# Match all labels and assignees, including newly applied protective labels.
+	printf '%s' "$live" | jq -e --argjson old "$issue_json" --arg runner "$runner" '
+		.state == "open" and ([.labels[].name] | sort) == ([$old.labels[].name] | sort)
+		and [.assignees[].login] == [$runner]
+	' >/dev/null 2>&1 || return 1
 	return 0
 }
 
@@ -408,8 +449,8 @@ _pdcu_log_summary() {
 # Returns: 0 when every candidate was visited, 3 when the deadline stopped
 #          the pass, 1 when a listing was unreadable
 #######################################
-_pm_reconcile_draft_checkpoint_blocks() {
-	local repo_slug="$1" deadline="$2" stop="${3:-$2}"
+_pdcu_reconcile_status() {
+	local repo_slug="$1" deadline="$2" stop="${3:-$2}" status="${4:-blocked}"
 	local issues="" refs="" issue_json="" issue_num="" matches="" pr_number="" head_sha="" now_epoch=""
 	local visited=0 restored=0 cursor_file="" ordered="" try_rc=0
 	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$deadline" =~ ^[0-9]+$ ]] || return 1
@@ -419,7 +460,7 @@ _pm_reconcile_draft_checkpoint_blocks() {
 		_pdcu_log_summary "$repo_slug" 0 0 "deadline reached before the blocked-issue listing"
 		return 3
 	fi
-	if ! issues=$(_pdcu_blocked_issues "$repo_slug"); then
+	if ! issues=$(_pdcu_blocked_issues "$repo_slug" "$status"); then
 		echo "[pulse-wrapper] ${_PDCU_MARKER_KIND}: ${repo_slug} — pass failed: blocked-issue listing unreadable (GH#36028)" >>"${LOGFILE:-/dev/null}"
 		return 1
 	fi
@@ -429,12 +470,15 @@ _pm_reconcile_draft_checkpoint_blocks() {
 		_pdcu_log_summary "$repo_slug" 0 0 "deadline reached before the open PR listing"
 		return 3
 	fi
-	if ! refs=$(_pdcu_draft_closing_refs "$repo_slug"); then
+	local checkpoint=false
+	[[ "$status" != in-review ]] || checkpoint=true
+	if ! refs=$(_pdcu_draft_closing_refs "$repo_slug" "$checkpoint"); then
 		echo "[pulse-wrapper] ${_PDCU_MARKER_KIND}: ${repo_slug} — pass failed: open PR listing unreadable (GH#36028)" >>"${LOGFILE:-/dev/null}"
 		return 1
 	fi
 	[[ -n "$refs" ]] || return 0
 	cursor_file=$(_pdcu_cursor_file "$repo_slug")
+	[[ "$status" != in-review ]] || cursor_file="${cursor_file}-in-review"
 	ordered=$(_pdcu_rotated_issues "$issues" "$cursor_file") || ordered="$issues"
 	while IFS= read -r issue_json; do
 		[[ -n "$issue_json" ]] || continue
@@ -451,7 +495,7 @@ _pm_reconcile_draft_checkpoint_blocks() {
 		IFS=$'\t' read -r _ pr_number head_sha <<<"$matches"
 		visited=$((visited + 1))
 		try_rc=0
-		if _pdcu_try_issue "$repo_slug" "$issue_json" "$pr_number" "$head_sha" "$stop"; then
+		if _pdcu_try_issue "$repo_slug" "$issue_json" "$pr_number" "$head_sha" "$stop" "$status"; then
 			restored=$((restored + 1))
 		else
 			try_rc=$?
@@ -463,5 +507,33 @@ _pm_reconcile_draft_checkpoint_blocks() {
 		fi
 	done <<<"$ordered"
 	_pdcu_log_summary "$repo_slug" "$visited" "$restored" complete
+	return 0
+}
+
+# Both projections share the cadence, deadline, audit marker and per-PR cap.
+# Rotate the starting status after a partial pass so a backlog of blocks cannot
+# consume every bounded share before the in-review checkpoints are considered.
+_pm_reconcile_draft_checkpoint_blocks() {
+	local repo_slug="$1" deadline="$2" stop="${3:-$2}"
+	local cursor_file="" first=0 status="" rc=0
+	local -a statuses=(blocked in-review)
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
+	cursor_file="$(_pdcu_cursor_file "$repo_slug")-status"
+	if [[ -r "$cursor_file" ]]; then
+		IFS= read -r first <"$cursor_file" || first=0
+	fi
+	[[ "$first" == 1 ]] && statuses=(in-review blocked)
+	for status in "${statuses[@]}"; do
+		rc=0
+		_pdcu_reconcile_status "$repo_slug" "$deadline" "$stop" "$status" || rc=$?
+		if [[ "$rc" -ne 0 ]]; then
+			if [[ "$rc" -eq 3 ]]; then
+				first=0
+				[[ "$status" != blocked ]] || first=1
+				_pdcu_cursor_write "$cursor_file" "$first"
+			fi
+			return "$rc"
+		fi
+	done
 	return 0
 }
