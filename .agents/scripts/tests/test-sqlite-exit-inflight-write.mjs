@@ -15,12 +15,20 @@ import { flushTransportOnExit } from "../sqlite-child.mjs";
 
 const here = fileURLToPath(import.meta.url);
 
-if (["child", "small"].includes(process.argv[2])) {
+if (["child", "small", "ordered", "ordered-large"].includes(process.argv[2])) {
   const { setDbPath, sqliteExecSync, sqliteExec } = await import("../sqlite-process.mjs");
   setDbPath(process.argv[3]);
   sqliteExecSync("CREATE TABLE IF NOT EXISTS t(v TEXT);");
-  const size = process.argv[2] === "small" ? 1 : 1_000_000;
-  sqliteExec(`INSERT INTO t VALUES ('${"x".repeat(size)}');`);
+  if (process.argv[2].startsWith("ordered")) {
+    sqliteExec("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<200000) INSERT INTO t SELECT '1' FROM n WHERE x=200000;");
+    if (process.argv[2] === "ordered-large") {
+      sqliteExec(`UPDATE t SET v = '${"x".repeat(1_000_000)}';`);
+    }
+    sqliteExec("UPDATE t SET v = '2';");
+  } else {
+    const size = process.argv[2] === "small" ? 1 : 1_000_000;
+    sqliteExec(`INSERT INTO t VALUES ('${"x".repeat(size)}');`);
+  }
   process.exit(0);
 }
 
@@ -31,19 +39,20 @@ try {
   const rows = execFileSync("sqlite3", [db, "SELECT count(*) FROM t;"], { encoding: "utf8" }).trim();
   if (rows !== "1") throw new Error(`expected exactly 1 row, got ${rows}`);
   console.log("PASS: in-flight oversized write inserted exactly once");
-  for (const mode of ["small"]) {
+  for (const mode of ["small", "ordered", "ordered-large"]) {
     for (let attempt = 0; attempt < 10; attempt += 1) {
       execFileSync("sqlite3", [db, "DELETE FROM t;"]);
       execFileSync(process.execPath, [here, mode, db], { stdio: "inherit" });
       // The handed-off child finishes independently after the parent exits.
+      const expected = mode === "small" ? "1:x" : "1:2";
       let result;
       const deadline = Date.now() + 5000;
       do {
         result = execFileSync("sqlite3", ["-cmd", ".timeout 5000", db, "SELECT count(*) || ':' || max(v) FROM t;"], { encoding: "utf8" }).trim();
-        if (result === "1:x") break;
+        if (result === expected) break;
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
       } while (Date.now() < deadline);
-      assert.equal(result, "1:x");
+      assert.equal(result, expected);
     }
     console.log(`PASS: ${mode} immediate-exit writes (10 runs)`);
   }
