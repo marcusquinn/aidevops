@@ -34,6 +34,12 @@ TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export HOME="${TEST_ROOT}/home"
 mkdir -p "${HOME}/.aidevops/logs" "${HOME}/.aidevops/.agent-workspace/supervisor"
+export PRIVACY_REPOS_CONFIG="${HOME}/.config/aidevops/repos.json"
+export PRIVACY_CACHE_FILE="${HOME}/.aidevops/cache/repo-privacy.json"
+export PRIVACY_ENTITY_CONFIG="${HOME}/missing-entities"
+mkdir -p "${PRIVACY_REPOS_CONFIG%/*}" "${PRIVACY_CACHE_FILE%/*}"
+printf '%s\n' '{"initialized_repos":[{"slug":"fixture/private-project","private":true}]}' >"$PRIVACY_REPOS_CONFIG"
+printf '{"o/r":{"private":false,"checked_at":%s}}\n' "$(date +%s)" >"$PRIVACY_CACHE_FILE"
 
 export AIDEVOPS_SIG_CLI="OpenCode"
 export AIDEVOPS_SIG_CLI_VERSION="test"
@@ -91,9 +97,7 @@ fi
 # shellcheck source=/dev/null
 source "$SHARED_GH" >/dev/null 2>&1 || true
 
-# This unit test exercises signing/body-file behavior only. Privacy transport
-# behavior is covered by test-gh-wrapper-public-deidentification.sh.
-privacy_guard_public_write() { return 0; }
+# Publication guards use the synthetic inventory above, not a permissive stub.
 _ensure_origin_labels_for_args() { return 0; }
 _gh_should_fallback_to_rest() { return 1; }
 _rest_should_fallback() { return 1; }
@@ -170,7 +174,9 @@ assert_signed_relative_body_file_normalized() {
 	local body_name="already-signed-relative.md"
 	local body_file="${TEST_ROOT}/${rel_dir}/${body_name}"
 	mkdir -p "${TEST_ROOT}/${rel_dir}"
-	printf 'For #42\n\n## Summary\n\nBody\n\n<!-- aidevops:sig -->\n---\n[aidevops.sh](https://aidevops.sh) existing\n' >"$body_file"
+	# A fully signed worker body includes provenance; otherwise the wrapper must
+	# create a new signed copy rather than forwarding this exact absolute path.
+	printf 'For #42\n\n## Summary\n\nBody\n\n<!-- aidevops:origin:worker -->\n<!-- aidevops:sig -->\n---\n[aidevops.sh](https://aidevops.sh) existing\n' >"$body_file"
 	reset_capture
 	(
 		cd "$TEST_ROOT" || exit 1
