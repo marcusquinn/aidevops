@@ -46,6 +46,32 @@ function waitForInflight(proc) {
   }
 }
 
+// Settle the existing child before the synchronous flush can replay queued SQL.
+function settleChildOnExit(transport, proc, pending) {
+  if (transport.processing && transport.inflightSql && !transport.inflightFlushed) {
+    // Stream destruction after handoff is not a failed delivery: the child
+    // may already have committed before its sentinel was consumed.
+    // The write has not fully reached the child (e.g. larger than pipe
+    // capacity): exit would drop its unflushed suffix, including the
+    // terminator, so the statement cannot have executed. Kill the child and
+    // replay it once synchronously.
+    try { proc.kill("SIGKILL"); } catch { /* already dead */ }
+    pending.unshift(transport.inflightSql);
+  } else {
+    if (transport.processing && transport.inflightSql && pending.length > 0) {
+      try {
+        waitForInflight(proc);
+      } catch (error) {
+        // Do not let another writer overtake an unconfirmed query, and never
+        // replay SQL already delivered to the child. Report loss explicitly.
+        console.error(`[aidevops] SQLite exit ordering failed (${pending.length} writes dropped): ${error.message}`);
+        pending.length = 0;
+      }
+    }
+    try { proc.stdin.end(); } catch { /* already dead */ }
+  }
+}
+
 /**
  * Exit-time flush. The in-flight query was already written to the child's
  * stdin, so we end stdin WITHOUT SIGTERM: sqlite3 finishes it on EOF as an
@@ -57,30 +83,7 @@ export function flushTransportOnExit(transport) {
   const pending = transport.queue.splice(0).map((query) => query.sql);
   const proc = transport.proc;
   transport.proc = null;
-  if (proc) {
-    if (transport.processing && transport.inflightSql && !transport.inflightFlushed) {
-      // Stream destruction after handoff is not a failed delivery: the child
-      // may already have committed before its sentinel was consumed.
-      // The write has not fully reached the child (e.g. larger than pipe
-      // capacity): exit would drop its unflushed suffix, including the
-      // terminator, so the statement cannot have executed. Kill the child and
-      // replay it once synchronously.
-      try { proc.kill("SIGKILL"); } catch { /* already dead */ }
-      pending.unshift(transport.inflightSql);
-    } else {
-      if (transport.processing && transport.inflightSql && pending.length > 0) {
-        try {
-          waitForInflight(proc);
-        } catch (error) {
-          // Do not let another writer overtake an unconfirmed query, and never
-          // replay SQL already delivered to the child. Report loss explicitly.
-          console.error(`[aidevops] SQLite exit ordering failed (${pending.length} writes dropped): ${error.message}`);
-          pending.length = 0;
-        }
-      }
-      try { proc.stdin.end(); } catch { /* already dead */ }
-    }
-  }
+  if (proc) settleChildOnExit(transport, proc, pending);
   transport.inflightSql = null;
   transport.inflightFlushed = true;
   if (pending.length > 0) {
