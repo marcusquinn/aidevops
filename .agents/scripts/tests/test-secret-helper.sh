@@ -556,6 +556,26 @@ printf "%s|%s" "child-ok" "$PAD_ONE"' 2>&1) || exit_code=$?
 	return 0
 }
 
+test_fallback_trims_trailing_whitespace_keeps_inner() {
+	setup
+	trap 'teardown' RETURN
+	local creds="$TEST_DIR/home/.config/aidevops/credentials.sh"
+	mkdir -p "$TEST_DIR/home/.config/aidevops"
+	# Trailing spaces, tab and CR after the closing quote; the value has an
+	# inner trailing space and escaped quotes that must survive (GH#39932).
+	printf 'export WS_KEY="pre \\"q\\" tail "  \t\r\n' >"$creds"
+	chmod 600 "$creds"
+	local out="" rc=0
+	# Exercise the production `get` path; compare exactly, print only a marker.
+	out=$(HOME="$TEST_DIR/home" bash "$HELPER" get WS_KEY 2>/dev/null) || rc=$?
+	if [[ "$rc" -eq 0 && "$out" == 'pre "q" tail ' ]]; then
+		print_result "fallback read trims trailing whitespace and keeps inner space and quotes" 0
+	else
+		print_result "fallback read trims trailing whitespace and keeps inner space and quotes" 1 "rc=$rc (value mismatch)"
+	fi
+	return 0
+}
+
 test_empty_fallback_secret_fails_closed() {
 	setup
 	trap 'teardown' RETURN
@@ -1492,6 +1512,7 @@ main() {
 	test_specific_injection_excludes_unrequested_fallback_secrets
 	test_injection_preserves_trailing_equals
 	test_empty_fallback_secret_fails_closed
+	test_fallback_trims_trailing_whitespace_keeps_inner
 	test_locked_injection_exits_bounded
 	test_list_resolves_tenants_without_reading_values
 	test_empty_gopass_namespace_uses_plaintext
