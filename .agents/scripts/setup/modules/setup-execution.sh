@@ -195,6 +195,8 @@ _setup_run_ai_session_incremental() {
 		_reconcile_linux_scheduler_duplicates
 	fi
 	print_info "AI-session setup mode: applying changed deploy stages only"
+	# Idempotent runtime repair must also run when the deployed SHA is unchanged.
+	update_mcp_paths_in_opencode
 	if ! _setup_git_checkout_available "$INSTALL_DIR" || [[ ! -f "$stamp_file" ]]; then
 		print_warning "AI-session incremental setup needs a git checkout and deployed SHA stamp"
 		return 1
