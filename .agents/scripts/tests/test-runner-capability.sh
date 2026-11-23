@@ -430,6 +430,42 @@ runner_capability_check_fresh "$2" 42 owner/repo "$3"
     print('PASS unusable audit log rejects admission')
     passed += 1
 
+    # GH#40077: an unsatisfiable repo Node pin defers before any issue read or
+    # claim, caches the verdict, and reopens when the requirement is met.
+    node_repo = root / 'node-repo'
+    node_repo.mkdir()
+    fake_node = root / 'fake-node-bin'
+    fake_node.mkdir()
+    (fake_node / 'node').write_text('#!/usr/bin/env bash\nprintf "v98.0.0\\n"\n')
+    (fake_node / 'node').chmod(0o700)
+    gh_calls = root / 'node-gh-calls'
+    node_log = root / 'node-log'
+    node_env = dict(dispatch_env, GH_CALLS=str(gh_calls), PATH=str(fake_node) + ':' + env['PATH'],
+                    AIDEVOPS_NODE_BREW_PREFIXES=str(root / 'no-brew'), N_PREFIX=str(root / 'no-n'))
+    node_invocation = 'source "$1/runner-capability-helper.sh"; ' + '''
+gh() { printf 'gh\\n' >>"$GH_CALLS"; printf '%s' "$FRESH_META"; return 0; }
+runner_capability_check_fresh "$2" 42 owner/repo "$3"
+'''
+    def node_gate(pin):
+        (node_repo / '.nvmrc').write_text(pin + '\n')
+        return subprocess.run(['bash', '-c', node_invocation, 'fixture', str(scripts),
+                               str(node_repo), str(node_log)],
+                              env=node_env, capture_output=True, text=True)
+    for attempt in ('computed', 'cached'):
+        result = node_gate('99')
+        assert result.returncode == 1 and not result.stdout and not result.stderr, (attempt, result)
+        assert not gh_calls.exists(), (attempt, gh_calls.read_text())
+    node_text = node_log.read_text()
+    assert node_text.count('reason=node_unsatisfied active=v98.0.0 required="99"') == 2, node_text
+    assert node_text.count('signal=node_unsatisfied cooldown=none') == 2, node_text
+    assert node_text.count('runner_health: node v98.0.0 cannot satisfy node-repo') == 1, node_text
+    assert node_text.count('source=node_cache') == 1, node_text
+    result = node_gate('98')
+    assert result.returncode == 0 and not result.stdout and not result.stderr, result
+    assert gh_calls.read_text().splitlines() == ['gh'], gh_calls.read_text()
+    print('PASS unsatisfiable repo Node pin defers before any issue read, caches, and reopens when met')
+    passed += 1
+
     # Re-sourcing at the admission/final gates retains state only for this cycle.
     calls = root / 'calls'
     cycle_log = root / 'cycle-log'
