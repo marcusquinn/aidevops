@@ -860,6 +860,18 @@ _hrff_attempt_log_field() {
 	return 0
 }
 
+# GH#39936: a never-launched release names its cause class so GitHub shows why
+# (e.g. model_unavailable when every account is out of allowance). Only fixed
+# internal identifiers pass; anything else publishes the generic class.
+_hrff_not_launched_cause_field() {
+	local reason="$1"
+	local cause="${_WORKER_PRELAUNCH_FAILURE_REASON:-}"
+	[[ "$reason" == "${_HRW_REASON_NOT_LAUNCHED:-worker_not_launched}" ]] || return 0
+	[[ "$cause" =~ ^[a-z][a-z0-9_]{0,63}$ ]] || cause="worker_runtime_not_invoked"
+	printf ' cause=%s' "$cause"
+	return 0
+}
+
 _hrff_release_dispatch_claim_attempt() {
 	local session_key="$1"
 	local reason="${2:-worker_failed}"
@@ -929,6 +941,7 @@ _hrff_release_dispatch_claim_attempt() {
 	machine_readable_part+=" claim_id=${claim_id} nonce=${AIDEVOPS_DISPATCH_LEASE_TOKEN:-} lease_token=${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}"
 	machine_readable_part+=" device=${AIDEVOPS_DISPATCH_LEASE_DEVICE:-${AIDEVOPS_DEVICE_ID:-}} session=${AIDEVOPS_DISPATCH_LEASE_SESSION:-$session_key}"
 	machine_readable_part+="$(_hrff_attempt_log_field)"
+	machine_readable_part+="$(_hrff_not_launched_cause_field "$reason")"
 	local terminal_blocker_fragment=""
 	case "$reason" in
 	blocked | push_policy_timeout | network_policy_timeout)

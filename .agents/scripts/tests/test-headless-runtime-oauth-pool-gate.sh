@@ -159,6 +159,24 @@ write_pool "{\"openai\":[{\"email\":\"one@example.test\",\"status\":\"idle\",\"c
 actual="$(_choose_model_auto "worker" "standard")"
 assert_equals "openai/gpt-5.5" "$actual" "expired cooldown does not block an otherwise idle account" || true
 
+# GH#39936: only the plugin rewrites an expired "rate-limited" status, and only
+# inside a session; a headless-only runner must recover when limits reset.
+cooldown="$(past_ms)"
+write_pool "{\"openai\":[{\"email\":\"one@example.test\",\"status\":\"rate-limited\",\"cooldownUntil\":${cooldown}}]}"
+actual="$(_choose_model_auto "worker" "standard")"
+assert_equals "openai/gpt-5.5" "$actual" "rate-limited account with an expired cooldown recovers" || true
+
+write_pool '{"openai":[{"email":"one@example.test","status":"active"}]}'
+fingerprint_one="$(oauth_pool_account_set_fingerprint openai)"
+write_pool '{"openai":[{"email":"one@example.test","status":"rate-limited"},{"email":"two@example.test","status":"active"}]}'
+fingerprint_two="$(oauth_pool_account_set_fingerprint openai)"
+write_pool '{"openai":[{"email":"one@example.test","status":"rate-limited","cooldownUntil":1}]}'
+fingerprint_status="$(oauth_pool_account_set_fingerprint openai)"
+[[ -n "$fingerprint_one" && "$fingerprint_one" != "$fingerprint_two" ]] && rc=0 || rc=1
+assert_equals "0" "$rc" "adding a pool account changes the auth-signature pool fingerprint" || true
+[[ "$fingerprint_one" == "$fingerprint_status" ]] && rc=0 || rc=1
+assert_equals "0" "$rc" "account status changes do not churn the pool fingerprint" || true
+
 # GH#39475: opencode2_oauth_pool_auth_available shares the availability rule.
 # auth.json is absent (OPENCODE_AUTH_FILE points at a missing file).
 write_pool '{"anthropic":[{"status":"billing-error","cooldownUntil":0}]}'

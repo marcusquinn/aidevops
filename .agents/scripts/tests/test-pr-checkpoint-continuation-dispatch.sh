@@ -992,6 +992,17 @@ else
 	print_result "dispatch binds continuation to exact PR branch and head" 1 "output=${output:-missing} args=${DISPATCH_ARGS:-missing}"
 fi
 
+# GH#39936: an exhausted runner (every candidate backed off) writes no claim.
+DISPATCH_ARGS=""
+export STUB_MODEL_SELECT_RC=75
+if ! output=$(_pcc_dispatch "owner/repo" "${TEST_ROOT}/repo" "42" "123" "worker-bot") &&
+	[[ "$output" == *"PR_CHECKPOINT_CONTINUATION_DEFERRED"*"reason=model_unavailable rc=75"* && -z "$DISPATCH_ARGS" ]]; then
+	print_result "no selectable model defers the continuation before any claim" 0
+else
+	print_result "no selectable model defers the continuation before any claim" 1 "output=${output:-missing} args=${DISPATCH_ARGS:-none}"
+fi
+unset STUB_MODEL_SELECT_RC
+
 DISPATCH_RESULT="$PRRTS_RC_DISPATCH_DEFERRED"
 if output=$(_pcc_dispatch "owner/repo" "${TEST_ROOT}/repo" "42" "123" "worker-bot") &&
 	[[ "$output" == *PR_CHECKPOINT_CONTINUATION_DEDUPLICATED* ]]; then
