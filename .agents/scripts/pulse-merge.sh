@@ -1647,7 +1647,7 @@ _pmp_stage_finalize_merge() {
 		# Body edits do not change the gated head SHA (GH#39963). Refresh close
 		# authority for both post-merge paths; never reuse the pre-gate target.
 		local gate_linked_issue="$linked_issue"
-		linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug") || linked_issue=""
+		linked_issue=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 _extract_linked_issue "$pr_number" "$repo_slug") || linked_issue=""
 		if [[ "$linked_issue" != "$gate_linked_issue" ]]; then
 			echo "[pulse-wrapper] linked issue changed between gate and merge for PR #${pr_number}: old=${gate_linked_issue:-none} new=${linked_issue:-none}" >>"$LOGFILE"
 		fi

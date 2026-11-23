@@ -26,6 +26,7 @@ gh_pr_view() {
 		printf '%s\n' 'Resolves #123'
 		return 0
 	fi
+	printf 'cache-bypass:%s\n' "${AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE:-0}" >>"$CALLS"
 	[[ "$FRESH_BODY" != READ_FAILURE ]] || return 1
 	printf '%s\n' "$FRESH_BODY"
 	return 0
@@ -65,8 +66,9 @@ run_case() {
 	linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
 	[[ "$linked_issue" == 123 ]]
 	_pmp_stage_finalize_merge
+	expected_calls=$'cache-bypass:1\n'
 	if [[ -n "$expected_target" ]]; then
-		expected_calls="close:${expected_target}"$'\n'
+		expected_calls+="close:${expected_target}"$'\n'
 	fi
 	expected_calls+="restore:${expected_target}"
 	[[ "$(<"$CALLS")" == "$expected_calls" ]] || {
