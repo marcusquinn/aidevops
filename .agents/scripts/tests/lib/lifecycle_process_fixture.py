@@ -17,6 +17,17 @@ import tempfile
 from unittest.mock import patch
 
 
+def expect_refusal(observe, candidate, expected):
+    """Keep negative contracts active even under optimized Python bytecode."""
+    try:
+        observe(candidate)
+    except ValueError as error:
+        if str(error) != expected:
+            raise AssertionError(f"unexpected refusal: {error}") from error
+        return error
+    raise AssertionError(f"missing refusal: {expected}")
+
+
 def main():
     root = Path(os.environ["LIFECYCLE_FIXTURE_ROOT"]).resolve(strict=True)
     entry = Path(os.environ["LIFECYCLE_FIXTURE_ENTRY"]).resolve(strict=True)
@@ -50,36 +61,19 @@ def main():
             candidate = proc / "candidate"
             candidate.mkdir()
             census(candidate)
-            try:
-                census(root.parent)
-            except ValueError as error:
-                assert str(error) == "fixture-candidate-outside-root"
-            else:
-                raise AssertionError("out-of-root candidate accepted")
+            expect_refusal(census, root.parent, "fixture-candidate-outside-root")
             (proc / "self").rmdir()
-            try:
-                census(candidate)
-            except ValueError as error:
-                assert str(error) == "proc-observation-unavailable"
-            else:
-                raise AssertionError("missing census accepted")
+            expect_refusal(census, candidate, "proc-observation-unavailable")
             (proc / "self").mkdir()
             (task / "cwd").unlink()
             (task / "cwd").symlink_to(candidate, target_is_directory=True)
-            try:
-                census(candidate)
-            except ValueError as error:
-                assert str(error) == "live-process-reference"
-            else:
-                raise AssertionError("held candidate accepted")
+            expect_refusal(census, candidate, "live-process-reference")
             # Exercise the real opt-in boundary without inspecting any process.
             with patch.dict(os.environ, {protected_proc.OPT_IN: "0"}):
-                try:
-                    protected_proc.privileged_path_census(candidate)
-                except protected_proc.ProcessCensusUnavailable as error:
-                    assert error.observation["cause"] == "inspection-not-enabled"
-                else:
-                    raise AssertionError("protected census accepted without opt-in")
+                error = expect_refusal(protected_proc.privileged_path_census,
+                                       candidate, "proc-observation-unavailable")
+                if error.observation["cause"] != "inspection-not-enabled":
+                    raise AssertionError("protected census refused for the wrong reason")
             print("PASS fixture census refuses missing evidence, held trees, outside roots and protected inspection")
             return 0
 
