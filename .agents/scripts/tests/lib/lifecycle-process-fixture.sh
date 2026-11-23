@@ -30,3 +30,13 @@ SH
 	export PATH="$root/process-bin:$PATH"
 	return 0
 }
+
+verify_lifecycle_process_fixture() {
+	local root="$1"
+	[[ -s "$root/fixture-census.log" ]] || {
+		printf '%s\n' 'FAIL registry cleanup did not exercise the synthetic census' >&2
+		return 1
+	}
+	printf '%s\n' 'PASS registry cleanup exercised the fixture-scoped process census'
+	return 0
+}

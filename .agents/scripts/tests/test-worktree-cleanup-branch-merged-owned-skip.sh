@@ -1288,6 +1288,7 @@ test_closed_issue_late_edit_preserves_files
 test_force_merged_preserves_unreadable_index
 test_degraded_cleanup_audits_unreadable_index
 
+verify_lifecycle_process_fixture "$TEST_ROOT" || exit 1
 printf '\nResults: %d/%d passed, %d failed.\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -gt 0 ]]; then
 	exit 1

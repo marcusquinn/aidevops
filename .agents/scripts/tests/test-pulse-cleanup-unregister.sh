@@ -642,4 +642,5 @@ test_worker_closing_pr_fails_closed_on_truncated_or_unmetered_graphql
 test_permanent_removal_failure_has_no_git_fallback
 test_degraded_orphan_is_quarantined_with_bounded_retry
 
+verify_lifecycle_process_fixture "$TEST_ROOT" || exit 1
 exit 0

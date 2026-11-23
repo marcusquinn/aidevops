@@ -315,7 +315,7 @@ printf '%s\n' '<!-- aidevops:sig -->' | PATH="${STUB_BIN}:$PATH" \
 signature_only_comment_rc=$?
 # Rejection auditing may read existing comments; it must never write one.
 if [[ $signature_only_comment_rc -eq 1 ]] &&
-	! grep -vFx 'api repos/test/repo/issues/456/comments?per_page=100 --paginate --slurp' "$GH_CALLS" | grep -q .; then
+	! grep -vFx 'api repos/test/repo/issues/456/comments?per_page=100 --paginate --slurp' "$GH_CALLS" >/dev/null; then
 	pass "standalone helper rejects a signature-only comment before a GitHub write"
 else
 	fail "standalone helper rejects a signature-only comment before a GitHub write" \

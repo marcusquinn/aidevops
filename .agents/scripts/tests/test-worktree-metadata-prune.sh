@@ -608,3 +608,4 @@ if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fx "worktree 
 	exit 1
 fi
 printf 'PASS integrated degraded cleanup removes a clean terminal-PR candidate recoverably\n'
+verify_lifecycle_process_fixture "$TEST_ROOT" || exit 1

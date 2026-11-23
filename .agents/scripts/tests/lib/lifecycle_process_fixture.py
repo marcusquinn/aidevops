@@ -42,6 +42,9 @@ def main():
             if root not in candidate.parents:
                 raise ValueError("fixture-candidate-outside-root")
             legacy_proc.require_idle_proc(candidate, proc)
+            if sys.argv[1:] != ["--self-test"]:
+                with (root / "fixture-census.log").open("a", encoding="utf-8") as log:
+                    log.write("synthetic-census\n")
 
         if sys.argv[1:] == ["--self-test"]:
             candidate = proc / "candidate"
