@@ -387,6 +387,9 @@ _check_ignored_source_references() (
 		print_warning "Skipping ignored-file reference check (FULL_LOOP_ALLOW_IGNORED_REFERENCES=1)."
 		return 0
 	fi
+	local repo_root=""
+	repo_root=$(git rev-parse --show-toplevel) || return 1
+	cd "$repo_root" || return 1
 	local base_branch="" merge_base="" diff_text="" ignored_list="" diff_loaded=0
 	ignored_list=$(mktemp) || return 1
 	trap 'rm -f "$ignored_list"' EXIT
@@ -411,7 +414,7 @@ _check_ignored_source_references() (
 		if [[ "$diff_loaded" == 0 ]]; then
 			base_branch=$(_resolve_pr_base_branch origin) || return 1
 			merge_base=$(git merge-base "refs/remotes/origin/$base_branch" HEAD) || return 1
-			diff_text=$(git -c core.quotePath=false diff --cached --no-ext-diff --no-textconv --unified=0 "$merge_base" --) || return 1
+			diff_text=$(git -c core.quotePath=false diff --cached --no-color --no-ext-diff --no-textconv --unified=0 "$merge_base" --) || return 1
 			diff_loaded=1
 		fi
 		basename="${path##*/}"

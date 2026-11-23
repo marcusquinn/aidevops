@@ -105,6 +105,10 @@ git() {
 		return 0
 		;;
 	rev-parse)
+		if [[ "$*" == "--show-toplevel" ]]; then
+			printf '%s\n' "$TEST_ROOT"
+			return 0
+		fi
 		printf 'false\n'
 		return 0
 		;;
