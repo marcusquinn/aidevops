@@ -403,7 +403,7 @@ test_bounded_operation_supervisor_runtime_and_rss() {
 	reset_macos_mocks
 	local platform=""
 	local output=""
-	local script="/home/test/.config/opencode/plugins/opencode-aidevops/bounded-operation-supervisor.mjs"
+	local script="${TEST_ROOT}/plugins/opencode-aidevops/bounded-operation-supervisor.mjs"
 	for platform in Linux Darwin; do
 		MOCK_PLATFORM="$platform"
 		MOCK_COMMAND="node $script"
@@ -424,7 +424,7 @@ test_bounded_operation_supervisor_runtime_and_rss() {
 		output=$(cmd_kill_runaways)
 		assert_eq "$platform supervisor remains RSS kill-eligible" "yes" "$(if [[ "$output" == *"Killing PID 4951"* && "$(<"$MOCK_KILL_LOG")" == *4951* ]]; then printf yes; fi)"
 	done
-	for MOCK_COMMAND in "node /home/test/job.mjs" "bash $script" "node -e $script" "node /home/test/job.mjs $script" "node $script --extra" "node ${script}.bak" "node /home/test/bounded-operation-supervisor.mjs"; do
+	for MOCK_COMMAND in "node ${TEST_ROOT}/job.mjs" "bash $script" "node -e $script" "node ${TEST_ROOT}/job.mjs $script" "node $script --extra" "node ${script}.bak" "node ${TEST_ROOT}/bounded-operation-supervisor.mjs"; do
 		assert_eq "lookalike stays runtime-governed: $MOCK_COMMAND" "OVER" "$(_classify_runtime_limit 4951 7300 7200)"
 	done
 	MOCK_COMMAND=""
