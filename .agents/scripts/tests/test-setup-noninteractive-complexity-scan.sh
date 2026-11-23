@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit 1
 RUNTIME_HELPERS_SCRIPT="${REPO_ROOT}/.agents/scripts/setup/_runtime_helpers.sh"
-SETUP_FILE="${REPO_ROOT}/setup.sh"
+SETUP_FILE="${REPO_ROOT}/.agents/scripts/setup/modules/setup-execution.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
