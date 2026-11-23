@@ -860,7 +860,7 @@ classify_draft_stall() {
 		if [[ $((now_epoch - draft_since)) -ge "$draft_window" ]]; then
 			final_head=$(verified_head_sha "$pr_number" "$repo" 'before draft check result') || return 2
 			if [[ "$final_head" != "$initial_head" ]]; then
-				initial_head="$final_head" head_epoch="$now_epoch"
+				restart_head_observation "$final_head"
 				previous="" draft_since=""
 				return 3
 			fi
@@ -871,6 +871,17 @@ classify_draft_stall() {
 	else
 		draft_since=""
 	fi
+	return 0
+}
+
+# Starts observing a new PR head (uses the waiter's dynamically scoped state).
+# Workflow evidence is cleared so the new head's empty polls re-read it and
+# keep their settle window instead of reusing the previous head's "none".
+restart_head_observation() {
+	local new_head="$1"
+	initial_head="$new_head"
+	head_epoch="$now_epoch"
+	_GCW_WORKFLOWS_STATE=""
 	return 0
 }
 
@@ -905,7 +916,7 @@ classify_conflict_stall() {
 	[[ "$mergeable" == "CONFLICTING" ]] || return 0
 	final_head=$(verified_head_sha "$pr_number" "$repo" 'before conflict check result') || return 2
 	if [[ "$final_head" != "$initial_head" ]]; then
-		initial_head="$final_head" head_epoch="$now_epoch"
+		restart_head_observation "$final_head"
 		previous="" conflict_checked_at=""
 		return 3
 	fi
@@ -1048,7 +1059,7 @@ wait_for_checks() {
 			final_head=$(verified_head_sha "$pr_number" "$repo" 'after required checks completed') || return 2
 			if [[ -n "$initial_head" && -n "$final_head" && "$initial_head" != "$final_head" ]]; then
 				printf '+ PR head changed while waiting; restarting required-check observation\n'
-				initial_head="$final_head" head_epoch="$now_epoch"
+				restart_head_observation "$final_head"
 				_GCW_CODACY_VERDICT=""
 				previous=""
 				interval="$initial_interval"
