@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.276] - 2026-11-23
+
+### Changed
+
+- Tests: isolate capacity fixture from runner-salted ties
+
+### Fixed
+
+- give .agents/package.json a check script so validators own its JS files
+- stage managed Vault crypto runtime in shell suite main health
+- bound ACP turns and delegate proxy runtime to the plugin
+- migrate-layout never moves the framework install checkout
+- hold external_trigger_pending circuit comments against label churn
+
 ## [3.39.275] - 2026-11-23
 
 ### Changed
