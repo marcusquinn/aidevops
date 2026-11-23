@@ -583,25 +583,39 @@ should_skip_cleanup() {
 	return 1
 }
 
-# Fetch and prune all remotes. Sets remote_state_unknown=true in caller's scope on failure.
-# Prints warnings for failed remotes. Returns 0 always (failures are non-fatal).
-# Args: none. Modifies caller's remote_state_unknown variable via echo to a temp file.
-# Usage: remote_state_unknown=$(_clean_fetch_remotes)
+# Run one native Git remote-refresh command under the GH#18979 10-second cap,
+# so a hung remote cannot stall the pulse cleanup cycle. Output is discarded:
+# callers of _clean_fetch_remotes capture its stdout as their result.
+# Without timeout_sec (shared-constants.sh) nothing runs: fail closed.
+# Args: $1=native git path, $2..=git arguments
+# Returns: the git exit code; 124 on timeout; 1 when no bounded runner exists
+_clean_remote_git_bounded() {
+	local real_git="$1"
+	shift
+	declare -F timeout_sec >/dev/null 2>&1 || return 1
+	GIT_TERMINAL_PROMPT=0 timeout_sec 10 "$real_git" "$@" >/dev/null 2>&1
+	return $?
+}
+
+# Refresh remote branch existence for remote-deleted detection.
+# Prints "true" when any remote could not be pruned (remote state unknown),
+# otherwise "false". Prints warnings for failed remotes. Returns 0 always.
+# Args: $1=default branch (optional; its remote-tracking ref is refreshed)
+# Usage: remote_state_unknown=$(_clean_fetch_remotes "$default_branch")
+#
+# GH#39980: `git remote prune` reads only the remote's ref advertisement. The
+# former `git fetch --prune <remote>` downloaded the objects of every new head
+# (worker branches and the issue-archive orphan branch) under the 10s cap. On
+# a large repository it was killed mid-transfer on most passes, and each kill
+# left a multi-MB objects/pack/tmp_pack_* file that the next pass downloaded
+# again. Remote-deleted detection needs only ref existence; a targeted fetch of
+# the default branch keeps remote-tracking containment proof current.
 _clean_fetch_remotes() {
+	local default_branch="${1:-}"
 	local state_unknown=false
 	local remote
 	local real_git=""
-	# GH#18979: Apply a 10-second timeout per remote fetch. In pulse cleanup
-	# context, git fetch --prune can hang indefinitely on network I/O or
-	# slow remote negotiation with many branches, stalling the entire pulse
-	# cycle. 10s is generous for a prune-only fetch; if it exceeds that,
-	# the remote is unreachable and we should treat state as unknown.
-	local fetch_timeout_cmd=""
-	if command -v gtimeout &>/dev/null; then
-		fetch_timeout_cmd="gtimeout 10"
-	elif command -v timeout &>/dev/null; then
-		fetch_timeout_cmd="timeout 10"
-	fi
+	local refresh_rc=0
 	# GH#37342: the pulse PATH leads with the canonical Git shim, which refuses
 	# `fetch` in a canonical checkout, so every pass reported remote state as
 	# unknown. Refreshing remote-tracking refs is framework maintenance: use the
@@ -613,28 +627,23 @@ _clean_fetch_remotes() {
 		if [[ -z "$real_git" ]]; then
 			echo -e "${YELLOW}Warning: native Git unavailable; cannot refresh $remote; skipping remote-deleted cleanup checks${NC}" >&2
 			state_unknown=true
-		elif [[ -n "$fetch_timeout_cmd" ]]; then
-			if ! $fetch_timeout_cmd "$real_git" fetch --prune "$remote" 2>/dev/null; then
-				echo -e "${YELLOW}Warning: failed to refresh $remote; skipping remote-deleted cleanup checks${NC}" >&2
-				state_unknown=true
-			fi
-		else
-			# No timeout command available — run unguarded but with a background kill
-			"$real_git" fetch --prune "$remote" 2>/dev/null &
-			local _fetch_pid=$!
-			local _fetch_waited=0
-			while kill -0 "$_fetch_pid" 2>/dev/null && [[ "$_fetch_waited" -lt 10 ]]; do
-				sleep 1
-				_fetch_waited=$((_fetch_waited + 1))
-			done
-			if kill -0 "$_fetch_pid" 2>/dev/null; then
-				kill "$_fetch_pid" 2>/dev/null || true
-				wait "$_fetch_pid" 2>/dev/null || true
-				echo -e "${YELLOW}Warning: fetch timed out for $remote; skipping remote-deleted cleanup checks${NC}" >&2
-				state_unknown=true
-			else
-				wait "$_fetch_pid" 2>/dev/null || state_unknown=true
-			fi
+			continue
+		fi
+		refresh_rc=0
+		_clean_remote_git_bounded "$real_git" remote prune "$remote" || refresh_rc=$?
+		if [[ "$refresh_rc" -ne 0 ]]; then
+			echo -e "${YELLOW}Warning: failed to refresh $remote (rc=${refresh_rc}); skipping remote-deleted cleanup checks${NC}" >&2
+			state_unknown=true
+			continue
+		fi
+		[[ -n "$default_branch" ]] || continue
+		git show-ref --verify --quiet "refs/remotes/${remote}/${default_branch}" 2>/dev/null || continue
+		refresh_rc=0
+		_clean_remote_git_bounded "$real_git" fetch --quiet --no-tags --no-write-fetch-head "$remote" \
+			"+refs/heads/${default_branch}:refs/remotes/${remote}/${default_branch}" || refresh_rc=$?
+		if [[ "$refresh_rc" -ne 0 ]]; then
+			# Non-fatal: a stale default ref only withholds containment proof.
+			echo -e "${YELLOW}Warning: failed to refresh ${remote}/${default_branch} (rc=${refresh_rc}); containment proof uses the existing ref${NC}" >&2
 		fi
 	done
 	echo "$state_unknown"
@@ -2181,10 +2190,10 @@ cmd_clean() {
 	default_branch=$(get_default_branch)
 	_clean_prepare_git_branch_caches "$default_branch"
 
-	# Fetch to get current remote branch state (detects deleted branches)
+	# Prune remote-tracking refs to detect deleted branches (GH#39980: ref-only)
 	# Prune all remotes, not just origin (GH#3797)
 	local remote_state_unknown
-	remote_state_unknown=$(_clean_fetch_remotes)
+	remote_state_unknown=$(_clean_fetch_remotes "$default_branch")
 	if ! _clean_refresh_remote_branch_cache; then
 		remote_state_unknown=true
 	fi
