@@ -29,6 +29,7 @@ MOCK_KILL_LOG="${TEST_ROOT}/kill.log"
 MOCK_PLATFORM="Linux"
 MOCK_EXECUTABLE_PATH=""
 MOCK_COMMAND=""
+MOCK_COMMANDS=""
 MOCK_LAUNCHD_PID=""
 # Space-separated "pid:ppid" pairs for the lineage walk.
 MOCK_PARENTS=""
@@ -48,7 +49,17 @@ _get_process_executable_path() {
 
 _get_process_command() {
 	local pid="$1"
-	: "$pid"
+	local entry=""
+	# Newline-separated "pid|command" entries override MOCK_COMMAND per PID.
+	if [[ -n "$MOCK_COMMANDS" ]]; then
+		while IFS= read -r entry; do
+			if [[ "${entry%%|*}" == "$pid" ]]; then
+				printf '%s' "${entry#*|}"
+				return 0
+			fi
+		done <<<"$MOCK_COMMANDS"
+		return 0
+	fi
 	printf '%s' "$MOCK_COMMAND"
 	return 0
 }
@@ -432,6 +443,49 @@ test_bounded_operation_supervisor_runtime_and_rss() {
 	return 0
 }
 
+test_buzz_acp_runtime_delegated_rss_enforced() {
+	reset_macos_mocks
+	local agents="${HOME}/.aidevops/agents/scripts"
+	local worktree="${TEST_ROOT}/worktrees/repo-buzz"
+	local proxy="node ${agents}/team-interface-acp-cwd-proxy.mjs --cwd ${worktree} --no-publish -- ${agents}/opencode-launcher-helper.sh remote-interactive --overlay ${TEST_ROOT}/o.json --dir ${worktree} --session-id host-agent-plugin"
+	local acp="/opt/homebrew/bin/opencode acp --cwd ${worktree}"
+	local output=""
+	MOCK_COMMANDS="5001|${proxy}
+5002|${acp}
+5003|node /usr/lib/node_modules/opencode-ai/bin/opencode acp --cwd /w
+5004|/usr/lib/node_modules/opencode-ai/bin/.opencode acp --cwd /w
+5010|node ${TEST_ROOT}/job.mjs ${agents}/team-interface-acp-cwd-proxy.mjs --cwd /w --no-publish -- ${agents}/opencode-launcher-helper.sh remote-interactive
+5011|node ${agents}/team-interface-acp-cwd-proxy.mjs --cwd /w -- ${agents}/opencode-launcher-helper.sh remote-interactive
+5012|${acp}
+5013|/opt/homebrew/bin/opencode run --cwd /w
+5020|bash ${agents}/opencode-launcher-helper.sh remote-interactive
+5021|${acp}"
+	MOCK_PARENTS="5002:5001 5003:5001 5004:5003 5012:4999 5013:5001 5021:5020"
+	assert_eq "Buzz ACP proxy is delegated" "MANAGED" "$(_classify_runtime_limit 5001 7259 7200)"
+	assert_eq "Buzz ACP owner label" "buzz-acp-plugin" "$(_runtime_management_owner 5001)"
+	assert_eq "opencode acp child of the proxy is delegated" "MANAGED" "$(_classify_runtime_limit 5002 7259 7200)"
+	assert_eq "npm opencode acp wrapper is delegated" "MANAGED" "$(_classify_runtime_limit 5003 7259 7200)"
+	assert_eq "npm opencode acp binary under wrapper is delegated" "MANAGED" "$(_classify_runtime_limit 5004 7259 7200)"
+	assert_eq "Node mentioning the proxy in arguments stays eligible" "OVER" "$(_classify_runtime_limit 5010 7259 7200)"
+	assert_eq "proxy without --no-publish stays eligible" "OVER" "$(_classify_runtime_limit 5011 7259 7200)"
+	assert_eq "opencode acp without a proxy parent stays eligible" "OVER" "$(_classify_runtime_limit 5012 7259 7200)"
+	assert_eq "non-acp opencode under the proxy stays eligible" "OVER" "$(_classify_runtime_limit 5013 7259 7200)"
+	assert_eq "opencode acp under a non-proxy launcher stays eligible" "OVER" "$(_classify_runtime_limit 5021 7259 7200)"
+	MOCK_PROCESS_LINE="5001 4990 ?? 32768 02:00:59 ${proxy}"
+	MOCK_PROCESS_AGE=7259
+	CHILD_RUNTIME_LIMIT=7200
+	CHILD_RSS_LIMIT_KB=8388608
+	: >"$MOCK_KILL_LOG"
+	assert_eq "kill path skips old Buzz ACP proxy" "No runaway processes found" "$(cmd_kill_runaways)"
+	assert_eq "Buzz ACP proxy receives no runtime signal" "" "$(<"$MOCK_KILL_LOG")"
+	CHILD_RSS_LIMIT_KB=512
+	output=$(cmd_kill_runaways)
+	assert_eq "Buzz ACP proxy remains RSS kill-eligible" "yes" "$(if [[ "$output" == *"Killing PID 5001"* && "$(<"$MOCK_KILL_LOG")" == *5001* ]]; then printf yes; fi)"
+	MOCK_COMMANDS=""
+	MOCK_PLATFORM="Linux"
+	return 0
+}
+
 test_command_basename_handles_spaced_paths() {
 	local spaced_dir="${TEST_ROOT}/Library/Application Support/ai.opencode.desktop/cli/2.0.24"
 	mkdir -p "$spaced_dir"
@@ -469,6 +523,7 @@ main() {
 	test_desktop_argv_text_is_not_ownership_evidence
 	test_kill_runaways_desktop_runtime_skipped_rss_enforced
 	test_bounded_operation_supervisor_runtime_and_rss
+	test_buzz_acp_runtime_delegated_rss_enforced
 	test_command_basename_handles_spaced_paths
 
 	printf '\n%s/%s tests passed.\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

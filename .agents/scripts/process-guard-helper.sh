@@ -427,6 +427,58 @@ _is_bounded_operation_supervisor() {
 }
 
 #######################################
+# Return whether Node is running the Buzz plugin's deployed ACP cwd proxy
+# exactly as `aidevops buzz acp` launches it (GH#40087). The Buzz plugin bounds
+# each turn and stops the process after idle time, so it owns the runtime.
+# Arguments:
+#   $1 - PID
+#######################################
+_is_buzz_acp_proxy() {
+	local pid="$1"
+	local command_line=""
+	local proxy_pattern='^([^[:space:]]*/)?node[[:space:]]+/[^[:space:]]*/agents/scripts/team-interface-acp-cwd-proxy\.mjs[[:space:]]+--cwd[[:space:]]+/[^[:space:]]+[[:space:]]+--no-publish[[:space:]]+--[[:space:]]+/[^[:space:]]*/agents/scripts/opencode-launcher-helper\.sh[[:space:]]+remote-interactive([[:space:]]|$)'
+
+	[[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+	command_line=$(_get_process_command "$pid")
+	if [[ "$command_line" =~ $proxy_pattern ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Return whether a process is the Buzz plugin's ACP runtime: the exact proxy,
+# or an `opencode acp` process the proxy started (directly, or through one
+# `opencode acp` wrapper hop for npm installs). Other Node or OpenCode
+# processes stay governed; RSS limits still apply to these.
+# Arguments:
+#   $1 - PID
+#######################################
+_is_buzz_acp_runtime() {
+	local pid="$1"
+	local current_pid="$pid"
+	local parent_pid=""
+	local hops=0
+	local acp_pattern='^([^[:space:]]*/)?(node[[:space:]]+/[^[:space:]]*/)?\.?opencode[[:space:]]+acp[[:space:]]+--cwd[[:space:]]+/'
+
+	[[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+	if _is_buzz_acp_proxy "$pid"; then
+		return 0
+	fi
+	while [[ "$hops" -lt 2 ]]; do
+		[[ "$(_get_process_command "$current_pid")" =~ $acp_pattern ]] || return 1
+		parent_pid=$(_get_process_parent_pid "$current_pid")
+		[[ "$parent_pid" =~ ^[1-9][0-9]*$ && "$parent_pid" -gt 1 ]] || return 1
+		if _is_buzz_acp_proxy "$parent_pid"; then
+			return 0
+		fi
+		current_pid="$parent_pid"
+		hops=$((hops + 1))
+	done
+	return 1
+}
+
+#######################################
 # Describe the lifecycle owner that supersedes the generic runtime limit.
 # Arguments:
 #   $1 - PID
@@ -436,6 +488,10 @@ _runtime_management_owner() {
 	local pid="$1"
 	if _is_bounded_operation_supervisor "$pid"; then
 		printf '%s' "bounded-operation-supervisor"
+		return 0
+	fi
+	if _is_buzz_acp_runtime "$pid"; then
+		printf '%s' "buzz-acp-plugin"
 		return 0
 	fi
 	if _is_managed_worker_process "$pid"; then
