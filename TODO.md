@@ -2452,7 +2452,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19294 fix(checkpoints): a failed handover continuation launch must not consume the interactive-handover admission #bug ref:GH#39920 -> [todo/tasks/t19294-brief.md] pr:#39923 completed:2026-11-22
 
-- [ ] t19296 wp-helper.sh --config-secret payload wp-config-secret.php missing from v3.39.267 (gitignored *secret*.php) #bug ref:GH#39937
+- [x] t19296 wp-helper.sh --config-secret payload wp-config-secret.php missing from v3.39.267 (gitignored *secret*.php) #bug ref:GH#39937 pr:#39938 completed:2026-11-23
 
 ## In Progress
 
