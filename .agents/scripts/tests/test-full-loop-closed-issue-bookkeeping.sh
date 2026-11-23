@@ -459,6 +459,41 @@ test_completed_success() {
 	return 0
 }
 
+test_issue_prefixed_proof() {
+	reset_case
+	TEST_PROOF_TITLE="GH#42: Deliver substantive work"
+	local rc=0
+	invoke_bookkeeping >/dev/null || rc=$?
+	if [[ "$rc" -eq 0 && "$(call_count push)" -eq 1 && "$(call_count create-pr)" -eq 1 ]]; then
+		pass "bookkeeping accepts the exact issue-prefixed merged proof title"
+	else
+		fail "bookkeeping accepts the exact issue-prefixed merged proof title" "rc=${rc}"
+	fi
+	local title=""
+	for title in "GH#43: Wrong issue" "GH#420: Numeric prefix collision" "GH#42 Missing colon" "t42420: Wrong task" "t4242 Missing colon"; do
+		reset_case
+		TEST_PROOF_TITLE="$title"
+		rc=0
+		invoke_bookkeeping >/dev/null || rc=$?
+		if [[ "$rc" -ne 0 && "$(call_count push)" -eq 0 && "$(call_count create-pr)" -eq 0 ]]; then
+			pass "bookkeeping rejects proof title ${title}"
+		else
+			fail "bookkeeping rejects proof title ${title}" "rc=${rc}"
+		fi
+	done
+	reset_case
+	TEST_PROOF_TITLE="GH#42: Deliver substantive work"
+	TEST_PROOF_BODY="Resolves #420"
+	rc=0
+	invoke_bookkeeping >/dev/null || rc=$?
+	if [[ "$rc" -ne 0 && "$(call_count push)" -eq 0 && "$(call_count create-pr)" -eq 0 ]]; then
+		pass "issue-prefixed proof still requires an exact body issue reference"
+	else
+		fail "issue-prefixed proof still requires an exact body issue reference" "rc=${rc}"
+	fi
+	return 0
+}
+
 test_not_planned_success() {
 	reset_case
 	TEST_ISSUE_REASON="NOT_PLANNED"
@@ -713,6 +748,7 @@ test_keep_issue_open() {
 test_keep_issue_open
 test_indented_completion
 test_completed_success
+test_issue_prefixed_proof
 test_not_planned_success
 test_default_closed_refusal
 test_open_issue_refusal
