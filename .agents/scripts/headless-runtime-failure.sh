@@ -1691,8 +1691,8 @@ _hrff_record_exit_metric() {
 }
 
 #######################################
-# Finalize an EXIT-trap classification: preserve work, emit terminal evidence,
-# release the claim/lock, and force a non-zero process exit when preparation
+# Finalize an EXIT-trap classification: preserve work, release the claim, emit
+# terminal evidence, release the lock, and force a non-zero process exit when preparation
 # ended cleanly before runtime invocation.
 # Args: $1=session, $2=reason, $3=exit status, $4=session count, $5=force nonzero
 #######################################
@@ -1736,6 +1736,18 @@ _hrff_finalize_exit_trap() {
 	if ! _hrff_write_external_outcome "$session_key" "$reason" "$session_count"; then
 		print_warning "[exit-trap] failed to persist external outcome for session=${session_key}"
 	fi
+	# GH#40008: release before the worker event. Since GH#36553 that event posts
+	# this attempt's DISPATCH_LEASE phase=terminal, and dispatch-release-claim.jq
+	# then reports the claim as `terminal`, so a later release is skipped and a
+	# prelaunch failure kept its assignment and status:in-progress until a stale
+	# sweep (which counts toward the t2008 escalation). The matching
+	# CLAIM_RELEASED also retires the dispatch for dedup (attempt_id "release"),
+	# so the event's terminal lease remains the fallback, as at
+	# _hrff_emit_release_terminal_lease and _hrw_finish_not_launched.
+	if [[ "$claim_release_handled" -eq 0 ]] && \
+		! _release_dispatch_claim "$session_key" "$reason" "$exit_status" "$session_count"; then
+		print_warning "[exit-trap] claim release persistence remains retryable for session=${session_key} reason=${reason}"
+	fi
 	if declare -F _emit_worker_runtime_event >/dev/null 2>&1; then
 		if [[ "$reason" == "worker_complete" ]]; then
 			_emit_worker_runtime_event "worker.completed" "recovered" "$reason"
@@ -1756,10 +1768,6 @@ _hrff_finalize_exit_trap() {
 		_cleanup_headless_runtime_temp_paths
 	fi
 	_hrff_record_runner_health_failure "$session_key" "$reason"
-	if [[ "$claim_release_handled" -eq 0 ]] && \
-		! _release_dispatch_claim "$session_key" "$reason" "$exit_status" "$session_count"; then
-		print_warning "[exit-trap] claim release persistence remains retryable for session=${session_key} reason=${reason}"
-	fi
 	_release_session_lock "$session_key"
 	_update_dispatch_ledger "$session_key" "fail"
 	aidevops_runtime_bundle_lease_release || print_warning "Failed to release the worker runtime bundle lease"
