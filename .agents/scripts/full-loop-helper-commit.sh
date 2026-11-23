@@ -415,10 +415,8 @@ _unstage_foreign_todo_lines() {
 	return 0
 }
 
-# Refuse references to payloads omitted by git add (GH#39939). The prospective
-# PR is the index against the PR merge base, including already-committed WIP.
-# FULL_LOOP_ALLOW_IGNORED_REFERENCES=1 explicitly permits intentional references;
-# it never stages ignored content, which may contain credentials.
+# Check the index against the PR merge base, including WIP (GH#39939).
+# FULL_LOOP_ALLOW_IGNORED_REFERENCES=1 skips checks, never stages ignored content.
 _check_ignored_source_references() (
 	if [[ "${FULL_LOOP_ALLOW_IGNORED_REFERENCES:-0}" == 1 ]]; then
 		print_warning "Skipping ignored-file reference check (FULL_LOOP_ALLOW_IGNORED_REFERENCES=1)."
@@ -427,18 +425,17 @@ _check_ignored_source_references() (
 	local repo_root=""
 	repo_root=$(git rev-parse --show-toplevel) || return 1
 	cd "$repo_root" || return 1
-	local base_branch="" merge_base="" diff_text="" ignored_list="" diff_loaded=0
-	ignored_list=$(mktemp) || return 1
-	trap 'rm -f "$ignored_list"' EXIT
-	if ! git ls-files --others --ignored --exclude-standard -z >"$ignored_list"; then
+	local base_branch="" merge_base="" scratch=""
+	scratch=$(mktemp -d) || return 1
+	trap 'rm -rf "$scratch"' EXIT
+	if ! git ls-files --others --ignored --exclude-standard -z >"$scratch/ignored"; then
 		print_error "Cannot inspect ignored worktree files."
 		return 1
 	fi
-	local path="" runtime_path="" skip="" basename="" line="" referencing_path="" failed=0
-	local reference_regex="" escaped_path="" escaped_basename=""
+	local path="" runtime_path="" referencing_path="" skip="" failed=0 match_status=0
 	while IFS= read -r -d '' path; do
 		case "/${path}" in
-		*/__pycache__/* | */node_modules/* | */.husky/_/* | */.full-loop-cleanup-deferred | */.full-loop-cleanup-deferred/*) continue ;;
+		*/__pycache__/* | */node_modules/* | */vendor/* | */.cache/* | */.venv/* | */dist/* | */.husky/_/* | */.full-loop-cleanup-deferred | */.full-loop-cleanup-deferred/*) continue ;;
 		esac
 		skip=0
 		for runtime_path in "${_full_loop_runtime_paths[@]}"; do
@@ -448,39 +445,63 @@ _check_ignored_source_references() (
 			fi
 		done
 		[[ "$skip" == 1 || ! -f "$path" ]] && continue
-		# Avoid resolving history or building a diff for runtime-only worktrees.
-		if [[ "$diff_loaded" == 0 ]]; then
-			base_branch=$(_resolve_pr_base_branch origin) || return 1
-			merge_base=$(git merge-base "refs/remotes/origin/$base_branch" HEAD) || return 1
-			diff_text=$(git -c core.quotePath=false diff --cached --no-color --no-ext-diff --no-textconv --unified=0 "$merge_base" --) || return 1
-			diff_loaded=1
+		# Line-oriented matcher input cannot represent these names safely.
+		if [[ "$path" == *$'\n'* || "$path" == *$'\t'* ]]; then
+			print_error "Cannot inspect ignored filename containing a newline or tab."
+			return 1
 		fi
-		basename="${path##*/}"
-		# Treat filenames literally, including regex punctuation. Short basenames
-		# have too little signal by themselves, but their full paths still count.
-		escaped_path=$(printf '%s' "$path" | sed 's/[][\\.^$*+?(){}|]/\\&/g') || return 1
-		reference_regex="$escaped_path"
-		if [[ ${#basename} -ge 3 ]]; then
-			escaped_basename=$(printf '%s' "$basename" | sed 's/[][\\.^$*+?(){}|]/\\&/g') || return 1
-			reference_regex="$reference_regex|$escaped_basename"
-		fi
-		reference_regex="(^|[^[:alnum:]_.-])($reference_regex)($|[^[:alnum:]_.-])"
-		referencing_path=""
-		while IFS= read -r line; do
-			case "$line" in
-			'+++ b/'*) referencing_path="${line#+++ b/}" ;;
-			'+++ '*) referencing_path="${line#+++ }" ;;
-			+*)
-				if [[ "${line#+}" =~ $reference_regex ]]; then
-					print_error "Ignored worktree file '${path}' is referenced by '${referencing_path}'."
-					git check-ignore -v -- "$path" >&2 || return 1
-					failed=1
-					break
-				fi
-				;;
-			esac
-		done <<<"$diff_text"
-	done <"$ignored_list"
+		printf '%s\n' "$path"
+	done <"$scratch/ignored" >"$scratch/paths"
+	[[ -s "$scratch/paths" ]] || return 0
+	git ls-files -z >"$scratch/tracked-raw" || return 1
+	while IFS= read -r -d '' path; do
+		path="${path##*/}"
+		[[ "$path" == *$'\n'* || "$path" == *$'\t'* ]] && continue
+		printf '%s\n' "$path"
+	done <"$scratch/tracked-raw" >"$scratch/tracked"
+	# Full paths always count; only untracked extension basenames are candidates.
+	awk 'FILENAME == ARGV[1] { tracked[$0]=1; next }
+		{ print $0; n=split($0,a,"/"); b=a[n]
+		  if (length(b)>=3 && b ~ /\.[[:alnum:]_-]+$/ && !tracked[b]) print b }
+	' "$scratch/tracked" "$scratch/paths" >"$scratch/patterns" || return 1
+	base_branch=$(_resolve_pr_base_branch origin) || return 1
+	merge_base=$(git merge-base "refs/remotes/origin/$base_branch" HEAD) || return 1
+	git -c core.quotePath=false diff --cached --no-color --no-ext-diff --no-textconv --unified=0 "$merge_base" -- >"$scratch/diff" || return 1
+	awk '/^diff --git / { h=0 } /^@@/ { h=1; next }
+		!h && /^\+\+\+ / { file=substr($0,7) }
+		h && /^\+/ { print substr($0,2); print file > sources }
+	' sources="$scratch/sources" "$scratch/diff" >"$scratch/added" || return 1
+	# One text-mode fixed-string pass, then literal boundary validation in awk.
+	LC_ALL=C grep -a -n -F -f "$scratch/patterns" "$scratch/added" >"$scratch/hits" || match_status=$?
+	[[ "$match_status" == 1 ]] && return 0
+	[[ "$match_status" == 0 ]] || return 1
+	awk '
+		FILENAME == ARGV[1] { patterns[$0]=1; next }
+		FILENAME == ARGV[2] { source[FNR]=$0; next }
+		{ colon=index($0,":"); line=substr($0,1,colon-1); text=substr($0,colon+1)
+		  for (p in patterns) {
+		    rest=text; offset=0
+		    while ((pos=index(rest,p))>0) {
+		      start=offset+pos; before=(start==1 ? "" : substr(text,start-1,1)); after=substr(text,start+length(p),1)
+		      if (before !~ /[[:alnum:]_.-]/ && after !~ /[[:alnum:]_.-]/ && (index(p,"/") || after != ":")) {
+		        print p "\t" source[line]; break
+		      }
+		      offset+=pos; rest=substr(rest,pos+1)
+		    }
+		  }
+		}
+	' "$scratch/patterns" "$scratch/sources" "$scratch/hits" >"$scratch/matches" || return 1
+	# Map matching basenames back to every omitted path, reporting each once.
+	awk 'FILENAME == ARGV[1] { split($0,fields,"\t"); hit[fields[1]]=fields[2]; next }
+		{ n=split($0,a,"/"); b=a[n]
+		  if ($0 in hit) print $0 "\t" hit[$0]
+		  else if (b in hit) print $0 "\t" hit[b] }
+	' "$scratch/matches" "$scratch/paths" >"$scratch/failures" || return 1
+	while IFS=$'\t' read -r path referencing_path; do
+		print_error "Ignored worktree file '${path}' is referenced by '${referencing_path}'."
+		git check-ignore -v -- "$path" >&2 || return 1
+		failed=1
+	done <"$scratch/failures"
 	if [[ "$failed" == 1 ]]; then
 		print_error "Stage the intended source explicitly after checking it for secrets, or use FULL_LOOP_ALLOW_IGNORED_REFERENCES=1 for intentional untracked references."
 		return 1

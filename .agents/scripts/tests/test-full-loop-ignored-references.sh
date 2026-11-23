@@ -77,6 +77,77 @@ check_line 1 'other/secrets.local.json'
 check_line 1 'a+b[1].json'
 check_line 1 "See \`config/a+b[1].json\`."
 
+# GH#40019: dependency payloads and tracked basenames are not omitted sources.
+mkdir -p vendor/bin vendor/package .cache .venv dist nested/vendor/package
+printf 'vendor/\n.cache/\n.venv/\ndist/\n' >>.gitignore
+printf 'tool\n' >vendor/bin/phpcs
+printf 'readme\n' >vendor/package/README.md
+printf 'readme\n' >nested/vendor/package/README.md
+printf 'readme\n' >config/README.md
+printf 'tool\n' >config/phpcs
+printf 'tracked readme\n' >README.md
+git add README.md
+check_line 0 '// phpcs:ignore Example.Rule'
+check_line 0 'See README.md and [documentation](README.md).'
+check_line 0 'vendor/bin/phpcs vendor/package/README.md nested/vendor/package/README.md'
+check_line 1 'config/README.md'
+check_line 1 'config/phpcs'
+check_line 1 'config/secrets.local.json: local configuration'
+check_line 1 'prefixsecrets.local.json then secrets.local.json'
+check_line 0 'prefixsecrets.local.jsonsecrets.local.json'
+check_line 0 'secrets.local.json:annotation'
+check_line 1 '+++ config/secrets.local.json'
+
+# Tracked non-ASCII basenames must match literally despite Git path quoting.
+mkdir -p docs
+printf 'tracked\n' >docs/café.md
+printf 'ignored\n' >config/café.md
+git add docs/café.md
+check_line 0 'See café.md'
+check_line 1 'config/café.md'
+
+# A forced-text patch with NUL bytes must not hide other added references.
+printf 'binary.fixture diff\n' >.gitattributes
+printf 'binary\0payload\n' >binary.fixture
+git add .gitattributes binary.fixture
+check_line 1 'config/secrets.local.json'
+if ! grep -a -F "Ignored worktree file 'config/secrets.local.json'" "$TEST_ROOT/output"; then
+	printf 'FAIL: NUL-containing diff hid the ignored reference diagnostic\n' >&2
+	exit 1
+fi
+git rm -q --cached .gitattributes binary.fixture
+rm .gitattributes binary.fixture
+
+# The changed-file header itself must never count as an added reference.
+printf 'safe\n' >secrets.local.json
+git add secrets.local.json
+check_line 0 'Ordinary prose.'
+
+# Acceptance-scale real filesystem fixture: 80k node modules, 3k vendor
+# payloads, caches, and a >2 MB tracked bundle. Time only the production check.
+for ((i = 0; i < 80000; i++)); do
+	: >"node_modules/pkg/generated-$i.js"
+done
+for ((i = 0; i < 3000; i++)); do
+	: >"vendor/package/generated-$i.php"
+done
+for ((i = 0; i < 664; i++)); do
+	: >".cache/generated-$i.php"
+done
+: >.venv/payload.json
+: >dist/payload.json
+awk 'BEGIN { for (i=0; i<40000; i++) print "const bundled = 1234567890; // ordinary compiled output text" }' >bundle.js
+git add bundle.js
+started=$SECONDS
+check_line 0 'README.md // phpcs:ignore .cache/generated-1.php .venv/payload.json dist/payload.json'
+elapsed=$((SECONDS - started))
+if ((elapsed >= 5)); then
+	printf 'FAIL: acceptance-scale check took %ss (limit: <5s)\n' "$elapsed" >&2
+	exit 1
+fi
+printf 'PASS: 83,664 ignored dependency/cache files and >2 MB diff in %ss\n' "$elapsed"
+check_line 1 'config/secrets.local.json'
+
 # Already committed WIP is part of the prospective PR, not just staged edits.
 printf 'config/secrets.local.json\n' >committed.md
 git add committed.md
