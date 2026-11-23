@@ -102,6 +102,16 @@ active-path ambiguity, moves one repository at a time, and writes owner-private
 append-only receipts. Replaying apply resumes verified steps. Rollback requires
 the latest receipt hash and stops rather than overwriting post-plan changes.
 
+A linked-worktree registration that Git marks `prunable` and whose path is
+absent (for example a wiped runtime temp directory) is dead metadata: `plan`
+records it under `prunable_worktrees` instead of refusing, and apply fails as
+drift if that path reappears. Every other missing or unexpected pointer still
+fails closed. To remove such registrations, use the audited route instead of
+`git worktree prune` in the canonical checkout:
+`canonical-recovery-helper.sh prune-missing-worktrees --repo PATH --confirm PRUNE_MISSING_WORKTREES`.
+It refuses the whole repository when an absent entry's parent is also missing
+outside a system temp root, because that may be an unmounted volume.
+
 Non-GitHub, local-only, unsupported, and already-conforming repositories are not
 moved. Case-only and destination-inside-source moves use private same-filesystem
 staging; destination collisions always fail closed.

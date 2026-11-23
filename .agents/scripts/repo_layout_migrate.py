@@ -39,6 +39,7 @@ from repo_layout_repository import (
     discover_repositories as discover_repositories,
     linked_pointer_records as linked_pointer_records,
     parse_remote as parse_remote,
+    prunable_worktree_paths as prunable_worktree_paths,
     recommended_path as recommended_path,
     repository_fingerprint as repository_fingerprint,
     status_records as status_records,
@@ -386,6 +387,10 @@ def plan_repository(
         "remote": {"host": host, "owner": owner, "repository": repository},
         "fingerprint": repository_fingerprint(source),
         "linked_pointers": linked_pointer_records(source, worktrees),
+        # GH#40058: dead registrations stay recorded, not repaired; apply
+        # refuses if any path reappears. Prune them with
+        # canonical-recovery-helper.sh prune-missing-worktrees.
+        "prunable_worktrees": prunable_worktree_paths(worktrees),
         "registered": bool(matches),
         "registration_update_approved": bool(matches),
         "source_device": source.stat().st_dev,
@@ -662,6 +667,9 @@ def validate_repository_plan(
             location = stage
         else:
             raise MigrationError(f"Planned repository is missing: {source}")
+    for prunable in item.get("prunable_worktrees", []):
+        if os.path.lexists(prunable):
+            raise MigrationError(f"Repository drift detected: prunable worktree reappeared: {prunable}")
     if not (started and location == stage) and repository_fingerprint(location) != item["fingerprint"]:
         raise MigrationError(f"Repository drift detected: {source}")
     if source.exists() and destination.exists() and not same_existing_path(source, destination):
