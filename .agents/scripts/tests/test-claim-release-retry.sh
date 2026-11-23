@@ -61,7 +61,11 @@ if [[ "${1:-}" == real-* ]]; then
 	_hrff_blocked_release_persisted() { return 1; }
 	_hrff_enqueue_observation_recovery() { return 0; }
 	_unlock_issue_after_dispatch_release() { return 0; }
-	clear_active_status_on_release() { printf '%s\n' "$4" >>"${ROOT}/projection"; return 0; }
+	clear_active_status_on_release() {
+		[[ "${TEST_CLEAR_FAIL:-0}" != 1 ]] || return 1
+		printf '%s\n' "$4" >>"${ROOT}/projection"
+		return 0
+	}
 	gh_issue_edit_safe() { [[ " $* " != *" --add-label status:blocked "* ]] || printf 'blocked\n' >>"${ROOT}/projection"; return 0; }
 	gh() {
 		[[ "${TEST_GH_FAIL:-0}" != 1 ]] || return 1
@@ -236,7 +240,22 @@ RETRY_TEST_ROOT="$ROOT" ADMISSION=1 TEST_RELEASED_REASON=worker_failed bash "$0"
 check "persisted release projected" "$(<"${ROOT}/projection")" "available"
 check "persisted release not republished" "$(wc -c <"${ROOT}/published" | tr -d ' ')" "0"
 check "persisted release row cleared" "$(rows)" "0"
+# Publication succeeds but clearing active status fails: the attempt keeps
+# retry evidence, and replays keep it until the projection succeeds.
 : >"${ROOT}/projection"
+RETRY_TEST_ROOT="$ROOT" ADMISSION=1 TEST_CLEAR_FAIL=1 bash "$0" real-record-failed
+check "failed clear after publication records row" "$(rows)" "1"
+check "failed clear after publication published once" "$(rg -c "reason=worker_failed" "${ROOT}/published")" "1"
+age_rows
+RETRY_TEST_ROOT="$ROOT" ADMISSION=1 TEST_RELEASED_REASON=worker_failed TEST_CLEAR_FAIL=1 bash "$0" real-drain >/dev/null
+check "failed clear on replay keeps row" "$(rows)" "1"
+age_rows
+RETRY_TEST_ROOT="$ROOT" ADMISSION=1 TEST_RELEASED_REASON=worker_failed bash "$0" real-drain >/dev/null
+check "retried clear projected" "$(<"${ROOT}/projection")" "available"
+check "retried clear not republished" "$(rg -c "reason=worker_failed" "${ROOT}/published")" "1"
+check "retried clear row cleared" "$(rows)" "0"
+: >"${ROOT}/projection"
+: >"${ROOT}/published"
 RETRY_TEST_ROOT="$ROOT" TEST_REASON=permission_required bash "$0" real-record
 age_rows
 RETRY_TEST_ROOT="$ROOT" ADMISSION=1 TEST_RELEASED_REASON=blocked TEST_GH_FAIL=1 bash "$0" real-drain >/dev/null

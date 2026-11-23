@@ -1036,7 +1036,8 @@ _hrff_emit_release_terminal_lease() {
 
 #######################################
 # Project a released draft checkpoint as available for exact-head continuation.
-# Always non-fatal.
+# Returns non-zero when the projection fails, before the restores and lock
+# decision that depend on it, so retry evidence replays the whole projection.
 #
 # Args: $1 = issue_number, $2 = repo_slug, $3 = runner_name
 #######################################
@@ -1050,9 +1051,10 @@ _hrff_project_draft_checkpoint() {
 	# (pr-checkpoint-continuation-helper.sh dispatch-stalled). A closing-linked
 	# draft projected as status:blocked was rejected by that target fence and
 	# held silently; WORKER_DRAFT_CHECKPOINT dedup still blocks redispatch.
-	if declare -F clear_active_status_on_release >/dev/null 2>&1; then
-		clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" available \
-			|| print_warning "Failed to project draft checkpoint state on #${issue_number} (non-fatal)"
+	if declare -F clear_active_status_on_release >/dev/null 2>&1 &&
+		! clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" available; then
+		print_warning "Failed to project draft checkpoint state on #${issue_number}; retaining retry evidence"
+		return 1
 	fi
 	# A draft may have merged between checkpoint classification and release.
 	# Reconcile only after projection/unassignment; the shared guard requires
@@ -1113,7 +1115,9 @@ _hrff_revisit_merged_partial() (
 # Project issue lifecycle state after a persisted CLAIM_RELEASED comment.
 # Reason-specific paths preserve state that authoritative handoffs already
 # projected; the default path clears active status so re-dispatch is not
-# blocked. Always non-fatal.
+# blocked. GH#40018: returns non-zero when a status projection fails, before
+# unlocking, so the caller keeps retry evidence and a replay finishes it from
+# the persisted receipt; the released claim itself is never re-published.
 #
 # Args:
 #   $1 = issue_number
@@ -1146,14 +1150,15 @@ _hrff_project_post_release_state() {
 	fi
 	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
 		_hrff_project_draft_checkpoint "$issue_number" "$repo_slug" "$runner_name"
-		return 0
+		return $?
 	fi
 	# GH#33545: same projection as a draft checkpoint (clear active status,
 	# keep any blocker, unlock); only the operator-facing wording differs.
 	if [[ "$reason" == "${_HRW_REASON_MERGED_PARTIAL:-worker_merged_partial}" ]]; then
-		if declare -F clear_active_status_on_release >/dev/null 2>&1; then
-			clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" \
-				|| print_warning "Failed to project merged partial state on #${issue_number} (non-fatal)"
+		if declare -F clear_active_status_on_release >/dev/null 2>&1 &&
+			! clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name"; then
+			print_warning "Failed to project merged partial state on #${issue_number}; retaining retry evidence"
+			return 1
 		fi
 		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
 		print_info "Released merged partial #${issue_number} for continuation"
@@ -1184,7 +1189,8 @@ _hrff_project_post_release_state() {
 	# as "active" for the full 30-min TTL even though no worker holds the
 	# claim, blocking re-dispatch. Preserves terminal states (done, blocked)
 	# set by authoritative paths. Defensive skip if origin:interactive.
-	# Non-fatal: failure does not block the release comment path.
+	# The release comment is already persisted; a failed projection returns
+	# non-zero so retry evidence finishes it (GH#40018).
 	# GH#34758: a runner-capability release is runner-local. Its open draft
 	# stays available so a capable runner's exact-head continuation can run,
 	# matching the "Projected state: status:available" recovery text.
@@ -1199,9 +1205,10 @@ _hrff_project_post_release_state() {
 			draft_projection="available"
 		fi
 	fi
-	if declare -F clear_active_status_on_release >/dev/null 2>&1; then
-		clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" "$draft_projection" \
-			|| print_warning "Failed to clear active status on #${issue_number} (non-fatal)"
+	if declare -F clear_active_status_on_release >/dev/null 2>&1 &&
+		! clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" "$draft_projection"; then
+		print_warning "Failed to clear active status on #${issue_number}; retaining retry evidence"
+		return 1
 	fi
 	_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
 	return 0
