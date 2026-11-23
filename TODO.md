@@ -2462,7 +2462,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19307 fix(pulse-dispatch): name the real cause when worktree pre-creation fails #bug #interactive tier:standard ref:GH#40000 -> [todo/tasks/t19307-brief.md] pr:#40001 completed:2026-11-23
 
-- [ ] t19310 fix(worktrees): same-boot owner launch reuse always refused — drain() drops worktree generation identity #bug ref:GH#40009
+- [x] t19310 fix(worktrees): same-boot owner launch reuse always refused — drain() drops worktree generation identity #bug ref:GH#40009 pr:#40010 completed:2026-11-23
 
 ## In Progress
 
