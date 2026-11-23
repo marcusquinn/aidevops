@@ -203,7 +203,9 @@ export class BoundedInteractiveOperationManager {
       operation.child = child;
       child.once("exit", (code, signal) => {
         operation.childExited = true;
-        const finalize = () => { if (!operation.spawnFailed) this.mainClosed(operation, code, signal); };
+        // Only a natural exit: cancel/timeout paths keep their own survivor cleanup.
+        if (operation.disposition !== "running" || operation.spawnFailed) return;
+        const finalize = () => this.mainClosed(operation, code, signal);
         closeAfterExitGrace({ child, setTimer: this.setTimer, clearTimer: this.clearTimer, finalize });
       });
       child.once("spawn", () => {
