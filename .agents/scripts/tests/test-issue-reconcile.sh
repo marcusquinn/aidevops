@@ -581,7 +581,8 @@ if [[ "\$1" == "issue" && "\$2" == "list" ]]; then
     exit 0
 fi
 if [[ "\$1" == "api" ]]; then
-    printf '1\n2020-01-01T00:10:00Z\nother-machine\n'
+    # GH#39993: slurped comment pages, as gh api --paginate --slurp returns.
+    printf '%s\n' '[[{"created_at":"2020-01-01T00:10:00Z","body":"Dispatching worker (deterministic).\n- **Worker PID**: 1\n- **Runner**: other-machine"}]]'
     exit 0
 fi
 if [[ "\$1" == "issue" && "\$2" == "edit" ]]; then
@@ -619,7 +620,7 @@ if [[ "\$1" == "issue" && "\$2" == "list" ]]; then
     exit 0
 fi
 if [[ "\$1" == "api" ]]; then
-    printf '1\n2019-12-31T20:00:00Z\nother-machine\n'
+    printf '%s\n' '[[{"created_at":"2019-12-31T20:00:00Z","body":"Dispatching worker (deterministic).\n- **Worker PID**: 1\n- **Runner**: other-machine"}]]'
     exit 0
 fi
 if [[ "\$1" == "issue" && "\$2" == "edit" ]]; then
@@ -660,7 +661,7 @@ if [[ "\$1" == "issue" && "\$2" == "list" ]]; then
 fi
 if [[ "\$1" == "api" ]]; then
     # Legacy dispatch comment — PID present, Runner field absent.
-    printf '12345\n2020-01-01T00:10:00Z\n\n'
+    printf '%s\n' '[[{"created_at":"2020-01-01T00:10:00Z","body":"Dispatching worker (deterministic).\n- **Worker PID**: 12345"}]]'
     exit 0
 fi
 if [[ "\$1" == "issue" && "\$2" == "edit" ]]; then

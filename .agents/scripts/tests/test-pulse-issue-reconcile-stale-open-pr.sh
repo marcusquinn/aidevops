@@ -141,6 +141,38 @@ test_same_login_same_device_dead_pid_resets() {
 	return 0
 }
 
+# GH#39993: the latest dispatch on a long issue lives on a later comment page.
+# Reading only the first page found an old dispatch and reset a live worker.
+test_dispatch_info_reads_every_comment_page() {
+	_normalize_stale_issue_comments() {
+		printf '%s' '[[{"created_at":"2026-11-01T16:04:38Z","body":"Dispatching worker.\n<!-- aidevops:dispatch device=device-old -->\n- **Worker PID**: 111\n- **Runner**: runner-bot"},{"created_at":"2026-11-02T00:00:00Z","body":null}],[{"created_at":"2026-11-23T04:56:29Z","body":"Dispatching worker.\n<!-- aidevops:dispatch device=device-live -->\n- **Worker PID**: 222\n- **Runner**: runner-bot"}]]'
+		return 0
+	}
+	local expected actual=""
+	expected=$(printf '%s\n%s\n%s\n%s' 222 2026-11-23T04:56:29Z runner-bot device-live)
+	actual=$(_normalize_stale_get_dispatch_info owner/repo 53) || actual="rc=$?"
+	if [[ "$actual" == "$expected" ]]; then
+		print_result "dispatch info uses the newest dispatch across all comment pages" 0
+	else
+		print_result "dispatch info uses the newest dispatch across all comment pages" 1 "got: ${actual//$'\n'/|}"
+	fi
+	unset -f _normalize_stale_issue_comments
+	return 0
+}
+
+test_dispatch_info_fetch_failure_fails_closed() {
+	_normalize_stale_issue_comments() {
+		return 1
+	}
+	if _normalize_stale_get_dispatch_info owner/repo 54 >/dev/null; then
+		print_result "dispatch info fetch failure fails closed" 1 "unexpected success"
+	else
+		print_result "dispatch info fetch failure fails closed" 0
+	fi
+	unset -f _normalize_stale_issue_comments
+	return 0
+}
+
 # GH#36186: abandoned unprotected worker drafts. now=100000, max_runtime=10800.
 NOW_EPOCH=100000
 MAX_RUNTIME=10800
@@ -278,6 +310,9 @@ test_protected_draft_still_blocks() {
 	return 0
 }
 
+# Run first: later tests replace _normalize_stale_get_dispatch_info with stubs.
+test_dispatch_info_reads_every_comment_page
+test_dispatch_info_fetch_failure_fails_closed
 test_open_pr_skips_stale_reset
 test_open_pr_lookup_failure_is_fail_closed
 test_confirmed_absence_allows_stale_evaluation

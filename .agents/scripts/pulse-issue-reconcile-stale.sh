@@ -154,25 +154,25 @@ _normalize_stale_dispatch_is_local_device() {
 #   $1 slug       — owner/repo
 #   $2 stale_num  — numeric GitHub issue number
 # Returns: 0 on success (even if no dispatch comment found);
-#          1 on gh api failure (caller should fail-CLOSED — skip reset).
+#          1 on gh api or parse failure (caller should fail-CLOSED — skip reset).
 #######################################
 _normalize_stale_get_dispatch_info() {
 	local slug="$1"
 	local stale_num="$2"
 
-	# t2375: capture gh output + exit code separately so we can distinguish
-	# "no dispatch comment" (empty output, rc=0) from "gh api failure"
-	# (rc!=0). The reactive path in dispatch-dedup-stale.sh:401-405 fails
-	# CLOSED on the same signal; match that stance here.
-	local gh_output
-	local gh_rc=0
-	gh_output=$(gh api "repos/${slug}/issues/${stale_num}/comments" \
-		--jq '[.[] | select(.body | contains("Dispatching worker"))] | sort_by(.created_at) | last | if . then ((.body | capture("\\*\\*Worker PID\\*\\*: (?<pid>[0-9]+)") // {pid: ""} | .pid), (.created_at | sub("\\.[0-9]+Z$"; "Z")), (.body | capture("\\*\\*Runner\\*\\*: (?<runner>[A-Za-z0-9][A-Za-z0-9-]*)") // {runner: ""} | .runner), (.body | capture("aidevops:dispatch [^>]*device=(?<device>[A-Za-z0-9][A-Za-z0-9._-]*)") // {device: ""} | .device)) else empty end' \
-		2>/dev/null) || gh_rc=$?
+	# t2375: separate "no dispatch comment" (empty output, rc=0) from a
+	# fetch or parse failure (rc=1). The reactive path in
+	# dispatch-dedup-stale.sh fails CLOSED on the same signal.
+	# GH#39993: read every comment page. An unpaginated call returns only the
+	# oldest 30 comments, so on long issues an old dispatch looked expired and
+	# a live same-login worker on another device was reset.
+	local comment_pages=""
+	comment_pages=$(_normalize_stale_issue_comments "$slug" "$stale_num") || return 1
 
-	if [[ "$gh_rc" -ne 0 ]]; then
-		return 1
-	fi
+	local gh_output=""
+	gh_output=$(printf '%s' "$comment_pages" | jq -r \
+		'[.[] | .[]? | select((.body // "") | contains("Dispatching worker"))] | sort_by(.created_at) | last | if . then ((.body | capture("\\*\\*Worker PID\\*\\*: (?<pid>[0-9]+)") // {pid: ""} | .pid), (.created_at | sub("\\.[0-9]+Z$"; "Z")), (.body | capture("\\*\\*Runner\\*\\*: (?<runner>[A-Za-z0-9][A-Za-z0-9-]*)") // {runner: ""} | .runner), (.body | capture("aidevops:dispatch [^>]*device=(?<device>[A-Za-z0-9][A-Za-z0-9._-]*)") // {device: ""} | .device)) else empty end' \
+		2>/dev/null) || return 1
 
 	local dispatch_pid=""
 	local dispatch_created_at=""
@@ -217,7 +217,8 @@ _normalize_stale_find_open_pr() {
 }
 
 #######################################
-# GH#36186: trusted issue comments (all pages, slurped) for lease liveness.
+# GH#36186: issue comments (all pages, slurped) for lease liveness and, since
+# GH#39993, for the latest dispatch comment.
 # Thin wrapper so tests can substitute evidence without a gh stub.
 # Args: $1 slug, $2 issue number
 #######################################
