@@ -197,7 +197,9 @@ export function drainQueue(transport) {
     const stdin = transport.proc.stdin;
     stdin.write(`${sql}\nSELECT '${SQLITE_SENTINEL}';\n`, (error) => {
       if (transport.currentCallback === callback) {
-        transport.inflightFlushed = !error && !stdin.destroyed && !stdin.errored;
+        // A later child exit can destroy stdin after successful delivery. Only
+        // this write's result, not the stream's later state, owns the handoff.
+        transport.inflightFlushed = !error;
       }
     });
     // A small write can reach the pipe synchronously while its callback waits

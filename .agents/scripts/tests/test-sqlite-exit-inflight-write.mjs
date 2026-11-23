@@ -71,6 +71,23 @@ try {
   flushTransportOnExit(transport);
   assert.equal(execFileSync("sqlite3", [db, "SELECT v FROM t;"], { encoding: "utf8" }).trim(), "replayed");
   console.log("PASS: failed pipe write remains eligible for exit replay");
+  // Model a child that committed and exited before its stdout sentinel was
+  // consumed. Destruction of its stdin is not evidence that delivery failed.
+  execFileSync("sqlite3", [db, "DELETE FROM t; INSERT INTO t VALUES ('committed');"]);
+  const delivered = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+  const committed = {
+    dbPath: db,
+    proc: { stdin: delivered, kill() { throw new Error("must not kill a delivered query"); } },
+    queue: [{ sql: "INSERT INTO t VALUES ('committed');", callback() {} }],
+  };
+  drainQueue(committed);
+  assert.equal(committed.inflightFlushed, true);
+  delivered.destroy();
+  await new Promise((resolve) => process.nextTick(resolve));
+  assert.equal(committed.inflightFlushed, true, "late destruction must not undo successful delivery");
+  flushTransportOnExit(committed);
+  assert.equal(execFileSync("sqlite3", [db, "SELECT count(*) FROM t;"], { encoding: "utf8" }).trim(), "1");
+  console.log("PASS: destroyed stdin does not replay an already committed query");
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

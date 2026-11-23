@@ -58,8 +58,9 @@ export function flushTransportOnExit(transport) {
   const proc = transport.proc;
   transport.proc = null;
   if (proc) {
-    if (transport.processing && transport.inflightSql &&
-        (!transport.inflightFlushed || proc.stdin.destroyed || proc.stdin.errored)) {
+    if (transport.processing && transport.inflightSql && !transport.inflightFlushed) {
+      // Stream destruction after handoff is not a failed delivery: the child
+      // may already have committed before its sentinel was consumed.
       // The write has not fully reached the child (e.g. larger than pipe
       // capacity): exit would drop its unflushed suffix, including the
       // terminator, so the statement cannot have executed. Kill the child and
