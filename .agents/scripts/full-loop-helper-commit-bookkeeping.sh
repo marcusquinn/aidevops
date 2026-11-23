@@ -125,8 +125,8 @@ _verify_completion_bookkeeping_proof() {
 	fi
 	proof_title=$(printf '%s' "$proof_json" | jq -r '.title // ""') || return 1
 	proof_body=$(printf '%s' "$proof_json" | jq -r '.body // ""') || return 1
-	if [[ "$proof_title" != "${task_id}:"* ]]; then
-		print_error "Completion bookkeeping proof PR #${proof_pr} does not match task ${task_id}"
+	if [[ "$proof_title" != "${task_id}:"* && "$proof_title" != "GH#${issue_number}:"* ]]; then
+		print_error "Completion bookkeeping proof PR #${proof_pr} does not match task ${task_id} or issue #${issue_number}"
 		return 1
 	fi
 	if ! _completion_bookkeeping_body_has_reference "$proof_body" "$issue_number"; then
