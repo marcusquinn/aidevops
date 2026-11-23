@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.270] - 2026-11-23
+
+### Added
+
+- verify root suite split invocation coverage
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#39989)
+
+### Fixed
+
+- aborted pre-launch attempts hold only the device that made them
+- stale sweep reads every comment page for the latest dispatch
+- one failing secondary remote no longer disables remote-deleted cleanup
+- ref-only remote prune stops tmp_pack_* leaks from capped fetches
+- commit-and-pr skips other tasks' TODO.md lines (#39987)
+- honour trusted terminal-blocker retries
+- isolate implicit temp grants and validate invocation (#39911)
+
 ## [3.39.269] - 2026-11-23
 
 ### Changed
