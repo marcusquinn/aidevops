@@ -764,6 +764,27 @@ ${machine_readable_part}${terminal_blocker_fragment}
 	return 0
 }
 
+# GH#40018: the release claim check found no claim to publish. When this runner
+# already persisted the bound release and retry evidence says that attempt did
+# not finish (publication succeeded, then the re-read or projection failed),
+# project lifecycle state from the persisted receipt, not from this retry.
+# Without retry evidence a released claim was already projected: no writes.
+# Returns non-zero only when that projection fails, so the evidence is kept.
+_hrff_finish_persisted_release() {
+	local issue_number="$1" repo_slug="$2" runner_name="$3" session_key="$4"
+	local reason="${_HRFF_RELEASED_CLAIM_REASON:-}" row=""
+	[[ -n "$reason" && "${_HRFF_RELEASE_CLAIM_ID:-}" =~ ^[1-9][0-9]*$ ]] || return 0
+	declare -F _hrrr_path >/dev/null 2>&1 || return 0
+	row=$(_hrrr_path "$repo_slug" "$issue_number" "$session_key") || return 0
+	[[ -f "$row" ]] || return 0
+	[[ "$reason" != blocked || "${_HRFF_RELEASED_CLAIM_EVIDENCE:-}" != unrecorded ]] ||
+		reason="$_HRFF_REASON_BLOCKED_UNRECORDED"
+	print_info "Finishing lifecycle projection for persisted release on #${issue_number} (reason: ${reason})"
+	_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$reason" "$session_key" || return 1
+	[[ "$reason" != blocked ]] || _hrff_enqueue_observation_recovery "$issue_number" "$repo_slug"
+	return 0
+}
+
 #######################################
 # Release a dispatch claim by posting a CLAIM_RELEASED comment.
 # The dedup guard recognises this and allows immediate re-dispatch
@@ -919,7 +940,10 @@ _hrff_release_dispatch_claim_attempt() {
 	_hrff_release_repo_state_is_managed "$issue_number" "$repo_slug" || return "${_HRFF_RELEASE_AUTHORITY_SKIP_RC:-0}"
 	runner_name=$(_hrff_resolve_release_runner_login)
 	_hrff_check_release_claim "$issue_number" "$repo_slug" "$runner_name" "$session_key" || return 1
-	[[ "$_HRFF_RELEASE_CLAIM_OWNED" -eq 1 ]] || return 0
+	if [[ "$_HRFF_RELEASE_CLAIM_OWNED" -ne 1 ]]; then
+		_hrff_finish_persisted_release "$issue_number" "$repo_slug" "$runner_name" "$session_key"
+		return $?
+	fi
 	local claim_id="${_HRFF_RELEASE_CLAIM_ID:-}"
 	[[ "$claim_id" =~ ^[1-9][0-9]*$ ]] || return 1
 
