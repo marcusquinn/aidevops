@@ -446,8 +446,8 @@ _cost_spend_from_comments() {
 			# checkpoint (URL rather than PR #N). A report posted near its
 			# verified merge is a baseline just like a copied closeout receipt.
 			| (.body // "") as $body
-			| (contains({author_association: "OWNER"}) or contains({author_association: "MEMBER"})
-				or contains({author_association: "COLLABORATOR"})
+			| (.author_association == "OWNER" or .author_association == "MEMBER"
+				or .author_association == "COLLABORATOR"
 				or ((.user.login // "") as $who | ($checkpoint.trusted_logins // []) | index($who) != null)) as $trusted
 			| ([$body | (scan("\\bPR #([0-9]+)\\b") | .[0] | tonumber),
 				(scan("https://github\\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/([0-9]+)\\b")
