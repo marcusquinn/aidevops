@@ -23,11 +23,25 @@ const LEGACY_PRICING = {
   "gpt-5.6-luna": { input: 1.0, output: 6.0, cacheRead: 0.10, cacheWrite: 1.25 },
 };
 
-function costExpression(pricing) {
+// Prompt context size, matching getPromptContextTokens() in the live path.
+const CONTEXT_TOKENS_SQL = "(COALESCE(tokens_input, 0) + COALESCE(tokens_cache_read, 0) " +
+  "+ COALESCE(tokens_cache_write, 0))";
+
+function flatCostExpression(pricing) {
   return `ROUND((COALESCE(tokens_input, 0) * ${pricing.input} ` +
     `+ (COALESCE(tokens_output, 0) + COALESCE(tokens_reasoning, 0)) * ${pricing.output} ` +
     `+ COALESCE(tokens_cache_read, 0) * ${pricing.cacheRead} ` +
     `+ COALESCE(tokens_cache_write, 0) * ${pricing.cacheWrite}) / 1000000.0, 8)`;
+}
+
+/** Cost SQL for a pricing entry, selecting context tiers like resolveContextTier(). */
+function costExpression(pricing) {
+  const tiers = [...(pricing.contextTiers || [])].sort((a, b) => b.above - a.above);
+  if (tiers.length === 0) return flatCostExpression(pricing);
+  const branches = tiers.map((tier) =>
+    `WHEN ${CONTEXT_TOKENS_SQL} > ${Number(tier.above)} THEN ${flatCostExpression(tier)}`
+  ).join(" ");
+  return `(CASE ${branches} ELSE ${flatCostExpression(pricing)} END)`;
 }
 
 function publishedModelCondition(model) {
@@ -92,6 +106,8 @@ function markCostBackfillComplete(markerPath) {
 
 /**
  * Backfill zero-cost rows and known stale GPT-5.6 estimates.
+ * Zero-cost rows use context tiers (for example Haiku 5.5 above 100K);
+ * existing nonzero estimates are not repriced for tiers.
  * Uses SQL CASE expressions matching the JS pricing table to avoid
  * round-tripping each row through JS. Runs in a single UPDATE statement.
  * Idempotent — stale-price rewrites require an exact legacy formula match.

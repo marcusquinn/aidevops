@@ -46,8 +46,12 @@ get_project_from_path() {
 
 _calc_costs() {
 	local input_tokens="$1" output_tokens="$2" cache_read="$3" cache_write="$4" model="$5"
-	local pricing
-	pricing=$(get_model_pricing "$model")
+	local pricing context_tokens=0
+	# Prompt context selects context-tiered rates (for example Haiku 5.5 above 100K).
+	if [[ "$input_tokens" =~ ^[0-9]+$ && "$cache_read" =~ ^[0-9]+$ && "$cache_write" =~ ^[0-9]+$ ]]; then
+		context_tokens=$((input_tokens + cache_read + cache_write))
+	fi
+	pricing=$(get_model_pricing "$model" "$context_tokens")
 	local input_price output_price cr_price cw_price
 	IFS='|' read -r input_price output_price cr_price cw_price <<<"$pricing"
 	awk "BEGIN {
@@ -55,6 +59,7 @@ _calc_costs() {
 		cr=$cache_read/1e6*$cr_price; cw=$cache_write/1e6*$cw_price
 		printf \"%.8f|%.8f|%.8f|%.8f|%.8f\",ci,co,cr,cw,ci+co+cr+cw
 	}"
+	return 0
 }
 
 # Resolve prompt version from git history for a given file path.
