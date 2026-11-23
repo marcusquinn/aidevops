@@ -73,13 +73,31 @@ _contains_ansi() {
 TMP=$(mktemp -d -t "narration-hygiene.XXXXXX") || exit 1
 trap 'rm -rf "$TMP"' EXIT
 
+# Cleanup reconciles receipts from HOME even for a repo without remotes. Keep
+# the test away from real session state as well as global Git hooks/config.
+export HOME="${TMP}/home"
+export XDG_CONFIG_HOME="${TMP}/config"
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+export AIDEVOPS_FULL_LOOP_CLEANUP_DIR="${TMP}/receipts"
+mkdir -p "$HOME"
+
+# Keep fixture commands offline, including cleanup's receipt reconciliation and
+# the pre-push hook's advisory SonarCloud lookup. Never use the runner's gh auth.
+mkdir -p "${TMP}/bin"
+printf '#!/usr/bin/env bash\nexit 1\n' >"${TMP}/bin/gh"
+printf '#!/usr/bin/env bash\nexit 1\n' >"${TMP}/bin/curl"
+chmod +x "${TMP}/bin/gh" "${TMP}/bin/curl"
+
 # Create a minimal git repo in $1 with one empty commit.
 _setup_git_repo() {
 	local dir="$1"
 	git -C "$dir" init -q 2>/dev/null
 	git -C "$dir" config user.email "test@test.invalid" 2>/dev/null
 	git -C "$dir" config user.name "Test" 2>/dev/null
-	git -C "$dir" commit --allow-empty -m "init" -q 2>/dev/null
+	# Disable inherited/template hooks only here; tests invoke real hooks below.
+	git -c core.hooksPath=/dev/null -C "$dir" commit --allow-empty -m "init" -q 2>/dev/null
 	return 0
 }
 
@@ -93,7 +111,10 @@ test_worktree_clean_auto_stdout_empty() {
 	_setup_git_repo "$repo"
 
 	local captured_stdout
-	captured_stdout=$(cd "$repo" && bash "$WORKTREE_HELPER" clean --auto 2>/dev/null)
+	captured_stdout=$(cd "$repo" && PATH="${TMP}/bin:${PATH}" bash "$WORKTREE_HELPER" clean --auto 2>/dev/null) || {
+		fail "$name" "cleanup command failed"
+		return 0
+	}
 
 	if [[ -n "$captured_stdout" ]]; then
 		fail "$name" "expected empty stdout, got: $(printf '%q' "$captured_stdout")"
@@ -115,7 +136,10 @@ test_worktree_clean_auto_no_ansi_stdout() {
 	_setup_git_repo "$repo"
 
 	local captured_stdout
-	captured_stdout=$(cd "$repo" && bash "$WORKTREE_HELPER" clean --auto 2>/dev/null)
+	captured_stdout=$(cd "$repo" && PATH="${TMP}/bin:${PATH}" bash "$WORKTREE_HELPER" clean --auto 2>/dev/null) || {
+		fail "$name" "cleanup command failed"
+		return 0
+	}
 
 	if _contains_ansi "$captured_stdout"; then
 		fail "$name" "stdout contains ANSI: $(printf '%q' "$captured_stdout")"
@@ -138,7 +162,10 @@ test_worktree_clean_auto_arithmetic_safe() {
 	_setup_git_repo "$repo"
 
 	local captured_stdout
-	captured_stdout=$(cd "$repo" && bash "$WORKTREE_HELPER" clean --auto 2>/dev/null)
+	captured_stdout=$(cd "$repo" && PATH="${TMP}/bin:${PATH}" bash "$WORKTREE_HELPER" clean --auto 2>/dev/null) || {
+		fail "$name" "cleanup command failed"
+		return 0
+	}
 
 	# Simulate: sweep_count=$((0 + captured_stdout))
 	local arith_result=0
@@ -154,25 +181,26 @@ test_worktree_clean_auto_arithmetic_safe() {
 
 # ---------------------------------------------------------------------------
 # Test 4: pre-commit-hook.sh main_pre_push stdout has no ANSI codes
-# Sources the hook in a subshell and stubs out the check_* functions so the
-# test is fast and doesn't require git state. Verifies the banner that was
-# previously at line 895-896 goes to stderr, not stdout.
+# Runs the real entrypoint in an empty fixture repo, with advisory network
+# commands stubbed. Sourcing the hook would execute main before any stubs.
 # ---------------------------------------------------------------------------
 test_pre_push_banner_no_ansi_stdout() {
 	local name="pre-commit-hook.sh main_pre_push: banner written to stderr, not stdout"
 
-	# Run in a subshell to isolate the hook's set -euo pipefail
+	local repo="${TMP}/repo-t4"
+	mkdir -p "$repo"
+	_setup_git_repo "$repo"
+	local stderr_file="${TMP}/pre-push.stderr"
 	local captured_stdout
-	captured_stdout=$(
-		# shellcheck disable=SC1090
-		source "$PRE_COMMIT_HOOK" 2>/dev/null || exit 1
-		# Stub expensive checks to no-ops for speed
-		check_secrets() { return 0; }
-		check_quality_standards() { return 0; }
-		main_pre_push 2>/dev/null
-	)
+	captured_stdout=$(cd "$repo" && PATH="${TMP}/bin:${PATH}" HOOK_MODE=pre-push \
+		AIDEVOPS_SKIP_CODERABBIT_CLI_REVIEW=1 bash "$PRE_COMMIT_HOOK" 2>"$stderr_file") || {
+		fail "$name" "pre-push command failed"
+		return 0
+	}
 
-	if _contains_ansi "$captured_stdout"; then
+	if ! grep -q 'Pre-push Quality Validation' "$stderr_file"; then
+		fail "$name" "expected pre-push banner on stderr"
+	elif _contains_ansi "$captured_stdout"; then
 		fail "$name" "stdout contains ANSI: $(printf '%q' "$captured_stdout")"
 	else
 		pass "$name"
@@ -187,23 +215,20 @@ test_pre_push_banner_no_ansi_stdout() {
 test_pre_commit_banner_no_ansi_stdout() {
 	local name="pre-commit-hook.sh main_pre_commit: banner written to stderr, not stdout"
 
+	local repo="${TMP}/repo-t5"
+	mkdir -p "$repo"
+	_setup_git_repo "$repo"
+	local stderr_file="${TMP}/pre-commit.stderr"
 	local captured_stdout
-	captured_stdout=$(
-		# shellcheck disable=SC1090
-		source "$PRE_COMMIT_HOOK" 2>/dev/null || exit 1
-		# Stub all validators so the function exits early via the
-		# "no shell files modified" path.
-		validate_duplicate_task_ids() { return 0; }
-		validate_task_counter_monotonic() { return 0; }
-		validate_todo_completions() { return 0; }
-		validate_parent_subtask_blocking() { return 0; }
-		validate_repo_root_files() { return 0; }
-		# Return empty output → ${#modified_files[@]} == 0 → early return
-		get_modified_shell_files() { printf ''; return 0; }
-		main_pre_commit 2>/dev/null
-	)
+	captured_stdout=$(cd "$repo" && PATH="${TMP}/bin:${PATH}" HOOK_MODE=pre-commit \
+		bash "$PRE_COMMIT_HOOK" 2>"$stderr_file") || {
+		fail "$name" "pre-commit command failed"
+		return 0
+	}
 
-	if _contains_ansi "$captured_stdout"; then
+	if ! grep -q 'Pre-commit Quality Validation' "$stderr_file"; then
+		fail "$name" "expected pre-commit banner on stderr"
+	elif _contains_ansi "$captured_stdout"; then
 		fail "$name" "stdout contains ANSI: $(printf '%q' "$captured_stdout")"
 	else
 		pass "$name"

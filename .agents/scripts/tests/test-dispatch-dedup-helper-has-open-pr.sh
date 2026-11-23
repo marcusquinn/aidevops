@@ -707,6 +707,35 @@ test_has_open_pr_keeps_protected_draft_unroutable() {
 	return 0
 }
 
+# t19293 (GH#39919): a linked worker draft held only by hold-for-review is
+# reported as self-held and still blocks; any other protection stays plain.
+test_has_open_pr_reports_self_held_worker_draft() {
+	local labels_case="" labels="" expected="" output="" rc=0 block=""
+	block="draft PR #18911 is a durable checkpoint for issue #18782; ordinary redispatch is blocked"
+	for labels_case in \
+		'[{"name":"origin:worker"},{"name":"hold-for-review"}]|held' \
+		'[{"name":"origin:worker"},{"name":"hold-for-review"},{"name":"no-auto-dispatch"}]|plain' \
+		'[{"name":"origin:interactive"},{"name":"hold-for-review"}]|plain' \
+		'[{"name":"hold-for-review"}]|plain'; do
+		labels="${labels_case%|*}"
+		expected="${labels_case##*|}"
+		set_gh_fixtures "marcusquinn/aidevops|open|#18782|[{\"number\":18911,\"title\":\"Worker checkpoint\",\"body\":\"For #18782\",\"isDraft\":true,\"reviewDecision\":\"REVIEW_REQUIRED\",\"mergeStateStatus\":\"UNKNOWN\",\"labels\":${labels}}]"
+		rc=0
+		output=$("$HELPER_SCRIPT" has-open-pr 18782 marcusquinn/aidevops 'self-held draft') || rc=$?
+		if [[ "$expected" == held ]]; then
+			[[ "$rc" -eq 0 && "$output" == "WORKER_DRAFT_SELF_HELD: ${block}" ]] && expected=ok
+		else
+			[[ "$rc" -eq 0 && "$output" == "$block" ]] && expected=ok
+		fi
+		if [[ "$expected" == ok ]]; then
+			print_result "has-open-pr self-held classification for labels ${labels}" 0
+		else
+			print_result "has-open-pr self-held classification for labels ${labels}" 1 "rc=${rc}: ${output}"
+		fi
+	done
+	return 0
+}
+
 # GH#34233: a seed draft (label seed-pr + exact marker) is not a checkpoint.
 test_has_open_pr_ignores_seed_draft_only_for_its_issue() {
 	local seed_labels='[{"name":"origin:interactive"},{"name":"seed-pr"}]' output="" rc=0
@@ -1512,6 +1541,7 @@ main() {
 	test_has_open_pr_inline_for_matches_continuation_predicate
 	test_has_open_pr_worker_draft_routes_follow_continuation
 	test_has_open_pr_keeps_protected_draft_unroutable
+	test_has_open_pr_reports_self_held_worker_draft
 	test_has_open_pr_ignores_seed_draft_only_for_its_issue
 	test_has_open_pr_fails_closed_when_sibling_lookup_fails
 	test_has_open_pr_recovers_after_lookup_uncertainty

@@ -455,6 +455,12 @@ _dedup_layer4_pr_evidence() {
 				_dispatch_blocked_checkpoint_attention "$issue_number" "$repo_slug" "$dedup_helper_output"
 				return 2
 			fi
+			if [[ "$dedup_helper_output" == WORKER_DRAFT_SELF_HELD:* ]] &&
+				_dedup_layer4_step "$issue_number" "$repo_slug" rearmed_held_checkpoint \
+					_dispatch_rearmed_held_checkpoint "$issue_number" "$repo_slug" \
+					"$dedup_helper_output" "${self_login:-}"; then
+				return 0
+			fi
 			# GH#38142: name PR evidence as its own block, not an active claim, so
 			# the pulse can cache it while the issue and exact PR are unchanged.
 			printf 'pr_evidence_block: %s\n' "${dedup_helper_output%%$'\n'*}"
@@ -590,6 +596,31 @@ _dispatch_blocked_checkpoint_attention() {
 	"${SCRIPT_DIR}/pr-checkpoint-continuation-helper.sh" blocked-attention \
 		"$repo_slug" "$issue_number" "$pr_number" >>"$LOGFILE" 2>&1 || true
 	return 0
+}
+
+#######################################
+# t19293 (GH#39919): a worker that labelled its own blocked draft
+# hold-for-review stays held even after a trusted terminal-blocker re-arm
+# answers it, because dedup never offers that draft to the re-arm route. Ask the
+# helper's narrow rearm-held route to publish the revision-bound approval, then
+# retry the approved-revision dispatch in this cycle. Any refusal leaves the
+# draft a plain duplicate-dispatch block.
+# Arguments: issue_number, repo_slug, WORKER_DRAFT_SELF_HELD output, login
+# Exit: 0 when the approved revision was routed, non-zero otherwise
+#######################################
+_dispatch_rearmed_held_checkpoint() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local checkpoint_output="$3"
+	local self_login="$4"
+	local pr_number=""
+	[[ -n "$self_login" ]] || return 1
+	[[ "$checkpoint_output" =~ WORKER_DRAFT_SELF_HELD:[[:space:]]draft[[:space:]]PR[[:space:]]#([0-9]+) ]] || return 1
+	pr_number="${BASH_REMATCH[1]}"
+	"${SCRIPT_DIR}/pr-checkpoint-continuation-helper.sh" rearm-held \
+		"$repo_slug" "$issue_number" "$pr_number" >>"$LOGFILE" 2>&1 || return 1
+	_dispatch_revised_checkpoint "$issue_number" "$repo_slug" "$self_login"
+	return $?
 }
 
 #######################################
