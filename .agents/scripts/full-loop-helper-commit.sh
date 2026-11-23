@@ -378,6 +378,43 @@ _stage_product_changes() {
 	return 0
 }
 
+# Unstage TODO.md when its staged additions only name other tasks' IDs
+# (GH#39985): claim-task-id.sh appends follow-up task lines to the worktree
+# TODO.md, which must not ride along on an unrelated code PR. Fail-open: any
+# own-task line, unresolvable own task ID, or non-task added line keeps staging.
+# Uses caller-scoped $issue_number. The working-tree change is preserved.
+_unstage_foreign_todo_lines() {
+	local issue_number="${issue_number:-}"
+	[[ -n "$issue_number" ]] || return 0
+	git diff --cached --quiet -- TODO.md 2>/dev/null && return 0
+
+	local own_task=""
+	own_task=$(_derive_pr_title_prefix "$issue_number")
+	[[ "$own_task" =~ ^t[0-9]+$ ]] || return 0
+
+	local added="" line="" tid="" foreign=""
+	added=$(git diff --cached -U0 --no-color --no-prefix -- TODO.md 2>/dev/null | awk '/^@@/{h=1;next} h&&/^\+/' || true)
+	[[ -n "$added" ]] || return 0
+	while IFS= read -r line; do
+		if [[ "$line" =~ ^\+-\ \[[\ x]\]\ (t[0-9]+)([^0-9]|$) ]]; then
+			tid="${BASH_REMATCH[1]}"
+			[[ "$tid" == "$own_task" ]] && return 0
+			case " $foreign " in
+			*" $tid "*) ;;
+			*) foreign="${foreign:+$foreign }$tid" ;;
+			esac
+		else
+			return 0
+		fi
+	done <<<"$added"
+	[[ -n "$foreign" ]] || return 0
+
+	if git restore --staged -- TODO.md 2>/dev/null; then
+		print_warning "[commit-and-pr] Unstaged TODO.md: it only adds lines for other task(s) (${foreign}), not ${own_task}. Working-tree change kept."
+	fi
+	return 0
+}
+
 # Refuse references to payloads omitted by git add (GH#39939). The prospective
 # PR is the index against the PR merge base, including already-committed WIP.
 # FULL_LOOP_ALLOW_IGNORED_REFERENCES=1 explicitly permits intentional references;
@@ -459,6 +496,7 @@ _stage_and_commit() {
 
 	print_info "Staging and committing changes..."
 	_stage_product_changes || return 1
+	_unstage_foreign_todo_lines || return 1
 	_check_ignored_source_references || return 1
 
 	if git diff --cached --quiet 2>/dev/null; then
@@ -562,12 +600,18 @@ _rebase_for_push() {
 		fi
 		# GH#21900: detect shallow clone before rebase to avoid add/add conflict cascade.
 		_check_and_handle_shallow_clone || return 1
-		if ! git rebase "$base_ref" 2>/dev/null; then
+		if ! git rebase --autostash "$base_ref" 2>/dev/null; then
 			git rebase --abort 2>/dev/null || true
 			print_error "Rebase conflict/abort while rebasing onto ${base_ref}."
 			print_error "After inspecting the branch and confirming a PR without rebase is safe, retry:"
 			print_error "  full-loop-helper.sh commit-and-pr ... --no-rebase"
 			print_error "Do not fall back to raw inline 'gh pr create --body ...'; keep the wrapper path."
+			return 1
+		fi
+		# Autostash restoration can conflict without failing the rebase.
+		if [[ -n "$(git diff --name-only --diff-filter=U 2>/dev/null)" ]]; then
+			print_error "Rebase succeeded but restoring autostashed changes left unmerged files."
+			print_error "Resolve the conflicts, then drop the retained entry with 'git stash drop' (see 'git stash list')."
 			return 1
 		fi
 	fi
