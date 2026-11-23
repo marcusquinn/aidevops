@@ -155,14 +155,15 @@ _get_cost_budget_for_tier() {
 # Stdout: JSON array of logins with admin/maintain/write permission.
 # Returns 1 on lookup failure (caller fail-open: cannot classify the evidence).
 _COST_TRUSTED_ASSOCIATIONS='["OWNER","MEMBER","COLLABORATOR"]'
+_COST_SIGNATURE_MARKER='<!-- aidevops:sig -->'
 _cost_verified_nominator_logins() {
 	local repo_slug="$1" comments_json="$2"
 	local logins login permission lookup_rc
 	local verified='[]'
-	logins=$(printf '%s' "$comments_json" | jq -r --argjson assoc "$_COST_TRUSTED_ASSOCIATIONS" '
+	logins=$(printf '%s' "$comments_json" | jq -r --arg sig "$_COST_SIGNATURE_MARKER" --argjson assoc "$_COST_TRUSTED_ASSOCIATIONS" '
 		[.[][] | select((.author_association // "NONE") as $a | $assoc | index($a) | not)
 		 | select(.body // "" | test("<!-- PARTIAL_PARENT_CLOSEOUT:PR#[0-9]+ -->")
-			or (contains("<!-- aidevops:sig -->") and test("\\bPR #[0-9]+\\b")))
+			or (contains($sig) and test("\\bPR #[0-9]+\\b|https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+\\b")))
 		 | .user.login // empty] | unique | .[:5][]
 	' 2>/dev/null) || return 1
 	while IFS= read -r login; do
@@ -220,19 +221,21 @@ _cost_checkpoint_from_closeouts() {
 	# highest numbers, to bound REST calls); unlike closeouts, an unreadable or
 	# non-PR mention is skipped rather than failing the whole aggregation.
 	local candidates kind pr_number pr_json merge_epoch trusted_logins
-	local verified_closeouts='[]'
+	local verified_closeouts='[]' verified_reports='[]'
 	trusted_logins=$(_cost_verified_nominator_logins "$repo_slug" "$comments_json") || return 1
-	candidates=$(printf '%s' "$comments_json" | jq -r --argjson logins "$trusted_logins" \
-		--argjson assoc "$_COST_TRUSTED_ASSOCIATIONS" '
+	candidates=$(printf '%s' "$comments_json" | jq -r --arg repo "$repo_slug" --argjson logins "$trusted_logins" \
+		--arg sig "$_COST_SIGNATURE_MARKER" --argjson assoc "$_COST_TRUSTED_ASSOCIATIONS" '
 		[.[][] | select(((.author_association // "NONE") as $a | $assoc | index($a) != null)
 			or ((.user.login // "") as $who | $logins | index($who) != null))
 		 | .body // ""] as $trusted
 		| ([$trusted[] | scan("<!-- PARTIAL_PARENT_CLOSEOUT:PR#([0-9]+) -->") | .[0] | tonumber]
 			| unique) as $closeouts
 		| ($closeouts[] | "closeout \(.)"),
-		  ([$trusted[] | select(contains("<!-- aidevops:sig -->"))
+		  ([$trusted[] | select(contains($sig))
 			| select(test("<!-- PARTIAL_PARENT_CLOSEOUT:PR#[0-9]+ -->") | not)
-			| scan("\\bPR #([0-9]+)\\b") | .[0] | tonumber]
+			| (scan("\\bPR #([0-9]+)\\b") | .[0] | tonumber),
+			  (scan("https://github\\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/([0-9]+)\\b")
+				| select(.[0] == $repo) | .[1] | tonumber)]
 			| unique - $closeouts | reverse | .[:3][] | "report \(.)")
 	' 2>/dev/null) || return 1
 	while read -r kind pr_number; do
@@ -255,6 +258,10 @@ _cost_checkpoint_from_closeouts() {
 				verified_closeouts=$(printf '%s' "$verified_closeouts" | jq -c \
 					--argjson pr "$pr_number" --argjson epoch "$merge_epoch" \
 					'. + [{pr: $pr, epoch: $epoch}]') || return 1
+			else
+				verified_reports=$(printf '%s' "$verified_reports" | jq -c \
+					--argjson pr "$pr_number" --argjson epoch "$merge_epoch" \
+					'. + [{pr: $pr, epoch: $epoch}]') || return 1
 			fi
 			if [[ "$merge_epoch" -gt "$checkpoint_epoch" ]]; then
 				checkpoint_epoch="$merge_epoch"
@@ -262,8 +269,8 @@ _cost_checkpoint_from_closeouts() {
 		fi
 	done <<<"$candidates"
 	jq -cn --argjson epoch "$checkpoint_epoch" --argjson closeouts "$verified_closeouts" \
-		--argjson logins "$trusted_logins" \
-		'{epoch: $epoch, closeouts: $closeouts, trusted_logins: $logins}' || return 1
+		--argjson reports "$verified_reports" --arg repo "$repo_slug" --argjson logins "$trusted_logins" \
+		'{epoch: $epoch, closeouts: $closeouts, reports: $reports, repo: $repo, trusted_logins: $logins}' || return 1
 	return 0
 }
 
@@ -406,36 +413,17 @@ _sum_issue_token_spend_uncached() {
 # Aggregate fetched comments against verified checkpoint data, without API calls.
 # Args: slurped comments JSON, checkpoint JSON. Stdout: spent_tokens|attempt_count.
 # Returns 1 on parse failure or malformed output (caller fail-open).
+# Interactive footers are maintainer activity, not worker spend (GH#20047).
+# Approvals and merged checkpoints reset the window, preventing immediate re-trips.
+# Footer shapes include "spent 4m and 30,000 tokens" and "has used N tokens";
+# the running "N total tokens on this issue" aggregate is never matched.
+# GH#34342: resumed-session footers are cumulative. Overlapping implied session
+# starts with nondecreasing counters count only increments; pre-window footers
+# and merge-adjacent delivery reports supply baselines, never new window spend.
 _cost_spend_from_comments() {
 	local comments_json="$1" checkpoint_data="$2"
-	# Extract comment bodies, excluding interactive-session signature footers and
-	# comments predating the latest approval, cost reset marker or merged checkpoint.
-	# Interactive footers are maintainer triage/review activity that should
-	# NOT count toward the per-issue worker cost budget — including them
-	# produces false-positive circuit-breaker trips every time a maintainer
-	# comments on an active issue (t2425 / GH#20047). Comments without either
-	# marker (historical or non-standard footers) are kept: worker is the
-	# fail-open default, matching the function's existing fail-open posture.
-	#
-	# t3077: a signed maintainer approval is also a budget reset boundary. Without
-	# this, approving/removing NMR after a cost trip immediately re-trips on the
-	# same historical worker footers and no new dispatch can occur.
-	#
-	# Footer shapes: "spent 30,000 tokens", "spent 4m and 30,000 tokens",
-	# "spent 1h 30m and …", "spent 1d 3h and …", historical "has used N tokens".
-	# The cumulative "N total tokens on this issue." line is intentionally NOT
-	# matched — it is the running aggregate and would double-count.
-	#
-	# GH#34342: footer tokens and time are cumulative for the OpenCode session
-	# (gh-signature-helper-session.sh), and continuation dispatches can resume
-	# that session. A later footer then repeats every earlier footer's spend
-	# ("6m and 89,214" → "6h 5m and 217,569" → "13h 2m and 356,637"). Footers
-	# by the same author whose implied session start (created_at − duration,
-	# widened by the display resolution and posting slack) overlaps and whose
-	# tokens do not decrease are one session: count only the increment. A
-	# pre-window footer of that session is the baseline, never window spend.
 	local spend_data
-	spend_data=$(printf '%s' "$comments_json" | jq -r --argjson checkpoint "$checkpoint_data" '
+	spend_data=$(printf '%s' "$comments_json" | jq -r --arg sig "$_COST_SIGNATURE_MARKER" --argjson checkpoint "$checkpoint_data" '
 		def epoch: try ((.created_at // "") | fromdateiso8601) catch 0;
 		# Durations are truncated to their smallest displayed unit
 		# (_format_duration drops minutes once days are shown).
@@ -454,16 +442,24 @@ _cost_spend_from_comments() {
 		| [$all[]
 			| select((.body // "") | contains("with the user in an interactive session") | not)
 			| epoch as $t
-			| ((.body // "") | test("<!-- PARTIAL_PARENT_CLOSEOUT:PR#[0-9]+ -->")) as $receipt
+			# GH#39969: signed reports can be the only evidence of a merged
+			# checkpoint (URL rather than PR #N). A report posted near its
+			# verified merge is a baseline just like a copied closeout receipt.
+			| (.body // "") as $body
+			| (.author_association == "OWNER" or .author_association == "MEMBER"
+				or .author_association == "COLLABORATOR"
+				or ((.user.login // "") as $who | ($checkpoint.trusted_logins // []) | index($who) != null)) as $trusted
+			| ([$body | (scan("\\bPR #([0-9]+)\\b") | .[0] | tonumber),
+				(scan("https://github\\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/([0-9]+)\\b")
+				 | select(.[0] == $checkpoint.repo) | .[1] | tonumber)]) as $mentions
+			| ($trusted and ($body | contains($sig))
+				and any(($checkpoint.reports // [])[]; .pr as $pr
+					| ($mentions | index($pr)) != null and $t >= .epoch and $t <= .epoch + $slack)) as $report
+			| (($body | test("<!-- PARTIAL_PARENT_CLOSEOUT:PR#[0-9]+ -->")) or $report) as $receipt
 			# GH#34510: a trusted receipt posted within posting slack of its
 			# verified merge supplies a cumulative session baseline, never spend.
 			# Delayed copies cannot reliably identify the original session start.
-			| select($receipt == false or (
-				(.author_association == "OWNER" or .author_association == "MEMBER"
-					or .author_association == "COLLABORATOR"
-					# GH#34598: permission-verified author (ambiguous association).
-					or ((.user.login // "") as $who
-						| ($checkpoint.trusted_logins // []) | index($who) != null)) and
+			| select($report or $receipt == false or ($trusted and
 				([(.body // "" | scan("<!-- PARTIAL_PARENT_CLOSEOUT:PR#([0-9]+) -->")
 					| .[0] | tonumber)] as $prs
 				 | any($checkpoint.closeouts[]; .pr as $pr
