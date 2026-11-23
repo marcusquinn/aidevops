@@ -572,7 +572,7 @@ if (
 	WORKTREE_REMOVAL_GUARD_REASON="$_WT_CWD_REASON_DEGRADED"
 	_clean_branch_has_exact_merged_pr() { return 1; }
 	_clean_degraded_visibility_fallback_allowed "$OWNERSHIP_LINKED" "feature/recoverable-ownership" \
-		"merged" "" "" "" "visibility=degraded"
+		"merged" "" "" "" "visibility=degraded" "main"
 ); then
 	printf 'FAIL degraded cleanup accepted a candidate without terminal PR proof\n'
 	exit 1
