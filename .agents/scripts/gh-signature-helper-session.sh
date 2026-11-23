@@ -257,7 +257,10 @@ _find_session_id() {
 	return 0
 }
 
-# Sum non-cached input + output tokens for a session.
+# Sum full usage, including cached input and reasoning, for a session.
+# Prefer the runtime total when supplied: provider-inclusive input/output must
+# not have their cached/reasoning subsets added twice. Older normalized rows
+# lack total and expose disjoint input/output/reasoning/cache buckets instead.
 # Args:
 #   $1 - sqlite db path
 #   $2 - session ID
@@ -276,22 +279,17 @@ _sum_session_tokens_for_session() {
 	fi
 
 	sqlite3 "$db_path" "
-		SELECT COALESCE(SUM(
-			CASE
-				WHEN json_extract(data, '$.tokens.input') >
-				     COALESCE(json_extract(data, '$.tokens.cache.read'), 0)
-				THEN MAX(
-					json_extract(data, '$.tokens.input')
-					- COALESCE(json_extract(data, '$.tokens.cache.read'), 0)
-					- COALESCE(json_extract(data, '$.tokens.cache.write'), 0),
-					0)
-				ELSE json_extract(data, '$.tokens.input')
-			END
-			+ json_extract(data, '$.tokens.output')
-		), 0)
+		SELECT COALESCE(SUM(COALESCE(
+			NULLIF(json_extract(data, '$.tokens.total'), 0),
+			COALESCE(json_extract(data, '$.tokens.input'), 0)
+			+ COALESCE(json_extract(data, '$.tokens.output'), 0)
+			+ COALESCE(json_extract(data, '$.tokens.reasoning'), 0)
+			+ COALESCE(json_extract(data, '$.tokens.cache.read'), 0)
+			+ COALESCE(json_extract(data, '$.tokens.cache.write'), 0)
+		)), 0)
 		FROM message
 		WHERE session_id=${quoted_session}
-		  AND json_extract(data, '$.tokens.input') > 0
+		  AND json_type(data, '$.tokens') = 'object'
 		  ${since_filter}
 	" 2>/dev/null || echo ""
 	return 0

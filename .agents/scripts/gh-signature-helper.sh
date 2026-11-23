@@ -281,6 +281,11 @@ _build_signature() {
 		formatted_total=$(_format_number "$issue_total_tokens")
 		sig="${sig} ${formatted_total} total tokens on this issue."
 	fi
+	# Version the accounting unit without changing the historical footer grammar.
+	# The breaker must never subtract a legacy non-cached baseline from full usage.
+	if [[ -n "$has_tokens" ]]; then
+		sig="${sig} Usage includes cache and reasoning. <!-- aidevops:usage:full-v1 -->"
+	fi
 
 	# If signature is just the version (no CLI, model, tokens, or time),
 	# append "automated scan" so it reads naturally on non-LLM issues
