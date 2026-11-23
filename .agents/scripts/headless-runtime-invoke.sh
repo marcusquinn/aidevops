@@ -606,7 +606,43 @@ _capture_model_replay_runtime_evidence() {
 	return 0
 }
 
+# Capture worker usage before the isolated DB is merged/removed. Count each
+# session once (including children), bounded to this attempt, using footer SQL.
+_capture_worker_usage_tokens() {
+	local isolated_dir="$1"
+	local runtime_db="${isolated_dir}/opencode/opencode.db"
+	_WORKER_USAGE_TOKENS_TOTAL=0
+	[[ "${runtime_role:-}" == "${HEADLESS_ROLE_WORKER:-worker}" ]] || return 0
+	[[ -f "$runtime_db" && ! -L "$runtime_db" ]] || return 0
+	command -v sqlite3 >/dev/null 2>&1 || return 0
+	local total sessions since_ms session_id
+	# shellcheck source=gh-signature-helper-session.sh
+	source "${SCRIPT_DIR}/gh-signature-helper-session.sh"
+	since_ms=$(_worker_attempt_start_ms)
+	if [[ -z "$since_ms" ]]; then
+		print_warning "Worker usage capture skipped: attempt start boundary unavailable"
+		return 0
+	fi
+	if ! sessions=$(sqlite3 "$runtime_db" 'SELECT DISTINCT session_id FROM message;' 2>/dev/null); then
+		print_warning "Worker usage capture failed: sqlite3 query error (attempt_start_ms=${since_ms:-unknown})"
+		return 0
+	fi
+	total=$(
+		while IFS= read -r session_id; do
+			[[ -n "$session_id" ]] || continue
+			_sum_session_tokens_for_session "$runtime_db" "$session_id" "$since_ms"
+		done <<<"$sessions" | jq -s 'add // 0' 2>/dev/null
+	) || total=""
+	if [[ "$total" =~ ^[0-9]+$ ]]; then
+		_WORKER_USAGE_TOKENS_TOTAL="$total"
+	else
+		print_warning "Worker usage capture failed: non-numeric total (attempt_start_ms=${since_ms:-unknown})"
+	fi
+	return 0
+}
+
 _invoke_opencode_finalize_data() {
+	_capture_worker_usage_tokens "${isolated_data_dir:-}"
 	if [[ -n "$isolated_data_dir" && -d "$isolated_data_dir" ]]; then
 		if [[ "$runtime_role" == "$HEADLESS_ROLE_MODEL_REPLAY" ]] &&
 			! _capture_model_replay_runtime_evidence "$isolated_data_dir"; then

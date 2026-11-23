@@ -97,6 +97,8 @@ _PCC_ATTENTION_REARM_SECONDS=$((10#$_PCC_ATTENTION_REARM_SECONDS))
 # Doubling cap; pulse-dispatch-lib.sh _dispatch_draft_hint_boundary mirrors it.
 _PCC_ATTENTION_REARM_MAX_DOUBLINGS=6
 _PCC_CAPABILITY_RELEASE_LINE='Terminal blocker: reason=runner_capability_unmet '
+# GH#39908: pulse-merge-conflict.sh _interactive_pr_trigger_handover marker.
+_PCC_INTERACTIVE_HANDOVER_MARKER='<!-- pulse-interactive-handover -->'
 # GH#36186: attention detail when an approved revision can no longer continue.
 # shellcheck disable=SC2016 # Markdown backticks, not command substitution.
 _PCC_APPROVAL_VALIDATION_NOTE='A trusted `CHECKPOINT_CONTINUATION_APPROVED` decision exists, but the current target could not be validated. This does not prove that the approval was consumed: approval validation also requires live metadata and permission checks. Retry when those checks are available before requesting a new revision approval. The legacy continuation route stays disabled while the trusted approval is unconsumed and unexpired (24 hours after it was posted); the re-arm window does not bypass revision validation (see `reference/checkpoint-revision-recovery.md`).'
@@ -340,6 +342,7 @@ _pcc_usage() {
 	printf '       %s dispatch-approved <repo_slug> <repo_path> <linked_issue> <authenticated_login>\n' "$name"
 	printf '       %s approval-template <repo_slug> <pr_number> <linked_issue> <release_comment_id> attempt:<id> [--acknowledge-unattributed=ID[,ID]] [--acknowledge-terminal-without-release=ID[,ID]] [--diagnostic-tooling-commit=SHA]\n' "$name"
 	printf '       %s blocked-attention <repo_slug> <linked_issue> <draft_pr_number>\n' "$name"
+	printf '       %s rearm-held <repo_slug> <linked_issue> <draft_pr_number>\n' "$name"
 	printf '       %s dispatch-stalled <repo_slug> <repo_path> <linked_issue> <draft_pr_number> <authenticated_login>\n' "$name"
 	return 0
 }
@@ -481,11 +484,16 @@ PR title: ${safe_title}
   worktree-helper.sh, or session-rename tools.
 - Work only in the supplied linked worktree. Do not create another branch,
   worktree, issue, or PR; the one permitted issue path is \`route-prerequisite\`
-  in step 7. Do not merge the PR, rebase, or force-push. You may
-  integrate the PR base branch locally when the work or repository documentation
-  needs a current base. First refresh the remote-tracking ref with
-  \`git fetch origin refs/heads/<base>:refs/remotes/origin/<base>\`, then run
-  \`git merge --no-edit origin/<base>\`. The merge ships in the single final push.
+  in step 7. Do not merge the PR, rebase, or force-push.
+- Before step 1, integrate an advanced PR base (its \`baseRefName\`) locally, so
+  repository guidance and maintainer decisions recorded on the base after this
+  checkpoint forked apply (GH#39907). Refresh the remote-tracking ref with
+  \`git fetch origin refs/heads/<base>:refs/remotes/origin/<base>\`; when
+  \`git merge-base --is-ancestor origin/<base> HEAD\` fails, run
+  \`git merge --no-edit origin/<base>\`. Resolve conflicts in the PR's own
+  files; if one needs out-of-scope changes, run \`git merge --abort\`, continue
+  from the checkpoint head and say so in the PR body. The merge ships in the
+  single final push.
 
 PROMPT_EOF
 	return 0
@@ -802,6 +810,52 @@ _pcc_restore_transferred_ownership() {
 	return 1
 }
 
+#######################################
+# GH#39936: return 75/78 when the continuation worker could not select a model
+# on this runner (75 = every candidate backed off or its OAuth pool exhausted,
+# 78 = none configured), else 0. Mirrors _prrts_append_worker_model_args: an
+# escalation or operator model is selected explicitly, otherwise the worker's
+# default standard tier. Selection makes no model call. Any other helper
+# failure stays non-blocking; the worker's own selection remains authoritative.
+#######################################
+_pcc_model_selectable() {
+	local helper="${PCC_HEADLESS_RUNTIME_HELPER:-${SCRIPT_DIR}/headless-runtime-helper.sh}"
+	local model="${PR_REVIEW_THREAD_RESPONSE_MODEL:-}" rc=0
+	local -a args=(select --role worker)
+	[[ -x "$helper" ]] || return 0
+	if [[ -z "$model" && "${PCC_ESCALATION_TIER:-}" =~ ^(simple|standard|thinking)$ &&
+		-n "${PCC_ESCALATION_MODEL:-}" ]]; then
+		model="$PCC_ESCALATION_MODEL"
+	fi
+	if [[ -n "$model" ]]; then
+		args+=(--model "$model")
+	else
+		args+=(--tier standard)
+	fi
+	"$helper" "${args[@]}" >/dev/null 2>&1 || rc=$?
+	# `select` returns choose_model's own contract: 75 = backed off/exhausted,
+	# 1 = no configured candidate (e.g. the provider allowlist excludes the
+	# tier) or an invalid pin. The canary maps 1 to 78; mirror that here.
+	[[ "$rc" -ne 1 ]] || rc=78
+	if [[ "$rc" -eq 75 || "$rc" -eq 78 ]]; then
+		return "$rc"
+	fi
+	return 0
+}
+
+# GH#39936: like the issue path's canary gate (t3549/GH#38717), prove this
+# runner can select a model before any claim or ownership write. A runner
+# whose whole OAuth pool is exhausted otherwise claims, fails prelaunch and
+# releases worker_not_launched on every cycle until a fence stops it.
+_pcc_model_gate() {
+	local repo_slug="$1" pr_number="$2" linked_issue="$3" model_rc=0
+	_pcc_model_selectable || model_rc=$?
+	[[ "$model_rc" -ne 0 ]] || return 0
+	printf 'PR_CHECKPOINT_CONTINUATION_DEFERRED: PR #%s in %s reason=model_unavailable rc=%s issue=#%s; no claim written, retry next cycle\n' \
+		"$pr_number" "$repo_slug" "$model_rc" "$linked_issue"
+	return 1
+}
+
 _pcc_dispatch() {
 	local repo_slug="$1"
 	local repo_path="$2"
@@ -832,6 +886,7 @@ _pcc_dispatch() {
 	# Retry saved audit publication even if target/dispatch gates below keep the
 	# completed blocked continuation held. This does not start another worker.
 	_prrts_retry_continuation_blocker "$repo_slug" "$pr_number" "$linked_issue" || return 1
+	_pcc_model_gate "$repo_slug" "$pr_number" "$linked_issue" || return 1
 	# GH#36186: the checkpoint author is the live PR author, as in
 	# _pcc_dispatch_stalled. expected_assignee stays the claim being replaced:
 	# a draft continued by a different runner leaves them unequal.
@@ -1424,6 +1479,10 @@ _PCC_JQ_STALL_DEFS='
 # fleet re-arm (_pcc_fleet_rearm_allowed, GH#37514). The same-episode ready
 # attempt and optional earlier checkpoint release prefill the command only
 # after approval-template validates the complete successor history.
+# GH#39913: a failed continuation launch describes the runner, not the head.
+# Runners whose continuation never launched after the release count once
+# each, except the first, so only a second failing runner reaches attention;
+# repeated failures of one runner fence only it (_pcc_runner_launch_fenced).
 # Args: $1=comments JSON (paginated or flat), $2=head commit ISO date,
 #       $3=attention dedup key, $4=trusted logins JSON,
 #       $5=PR creation ISO date (optional; empty disables the per-PR count),
@@ -1518,11 +1577,10 @@ _pcc_stall_release_evidence() {
 				((.commit.committer.date // "") | (try epoch catch 0)) <= $end))] | length) as $progress
 		| ([$c[] | select(ownership($c) and (unlaunched_episode($c) | not))] | last) as $release
 		| select($release != null and ($release | unedited and stall_release))
-		# Each unlaunched episode after the release counts toward the per-head
-		# fuse, except the first: one bounded retry, then attention.
+		# Never-launched episodes count once per runner, minus one (GH#39913).
 		| ([$c[] | select(.id > $release.id and unlaunched_episode($c) and
-			any(body_lines; claim_event))] | length) as $failed_launches
-		| ([$failed_launches - 1, 0] | max) as $extra_stalls
+			any(body_lines; claim_event)) | login] | unique | length) as $failed_runners
+		| ([$failed_runners - 1, 0] | max) as $extra_stalls
 		| (checkpoint($c; $release) // {id: $release.id, attempt: ""}) as $pick
 		| [($release.id | tostring), ($release | release_reason), ((count_since($c; $head_epoch) + $extra_stalls) | tostring),
 			(any($c[]; head_attention) | tostring),
@@ -1873,6 +1931,110 @@ _pcc_dispatch_expired_recovery_draft() {
 }
 
 #######################################
+# Print the id of the trusted, unedited pulse handover comment that is current
+# first-admission evidence for a handed-over interactive draft (GH#39908):
+# the newest such PR comment is no older than the head commit (a human push
+# after handover is a reclaim, not evidence) and every trusted coordination
+# event on the issue since it belongs to a never-launched episode of this PR's
+# continuation session. A launched continuation, or any other coordination,
+# consumes the evidence; later attempts use the ordinary stall-release, fuse
+# and attention logic.
+# GH#39920: a launch that never started (`worker_not_launched`, or a claim
+# closed without a ready lease) says nothing about the head, and the stall
+# route treats it as transparent, so it must not strand the draft here either.
+# As in GH#39913, failures count per runner: this runner retries once, a
+# second failing runner ends the route ("exhausted").
+# Args: $1=PR comments JSON, $2=issue comments JSON, $3=head commit ISO date,
+#       $4=trusted logins JSON, $5=continuation session key, $6=this runner login
+# Output: handover comment id<TAB>admit|exhausted<TAB>never-launched episodes
+# Returns: 0 when the handover is current evidence, 1 otherwise
+#######################################
+_pcc_interactive_handover_evidence() {
+	local pr_comments="$1" issue_comments="$2" head_date="$3"
+	local trusted_logins="${4:-[]}" session="${5:-}" self="${6:-}"
+	# Comment snapshots travel on stdin; argv cannot carry long threads.
+	printf '%s\n%s\n' "$pr_comments" "$issue_comments" | jq -ser \
+		--arg head_date "$head_date" --argjson trusted_logins "$trusted_logins" \
+		--arg session "$session" --arg self "$self" \
+		--arg marker "$_PCC_INTERACTIVE_HANDOVER_MARKER" "${_PCC_JQ_RELEASE_DEFS}${_PCC_JQ_LAUNCH_DEFS}"'
+		(.[0] | flatten) as $pr_comments | (.[1] | flatten) as $issue_comments
+		| ($head_date | epoch) as $head_epoch
+		| ([$pr_comments[] | select(trusted_event and ((.body // "") | startswith($marker)))]
+			| sort_by(.id) | last) as $handover
+		| select($handover != null and ($handover | unedited))
+		| (($handover.created_at // "") | (try epoch catch null)) as $handover_epoch
+		| select($handover_epoch != null and $handover_epoch >= $head_epoch)
+		| ([$issue_comments[] | select(trusted_event and coordination)] | sort_by(.id)) as $c
+		| [$c[] | select(((.created_at // "") | (try epoch catch null)) as $t
+			| $t == null or $t >= $handover_epoch)] as $after
+		| select(all($after[]; unlaunched_episode($c)))
+		| [$after[] | select(any(body_lines; claim_event))] as $failed
+		| ([$failed[] | login] | unique | length) as $runners
+		| ([$failed[] | select(login == $self)] | length) as $own
+		| [($handover.id | tostring),
+			(if $runners < 2 and $own < 2 then "admit" else "exhausted" end),
+			($failed | length | tostring)] | join("\t")
+	'
+	return $?
+}
+
+#######################################
+# Continue a stale origin:interactive draft the pulse handed to the worker
+# pipeline (GH#39158). The handover applies origin:worker-takeover and links a
+# tracking issue, but a human draft has no worker claim, lease or release, so
+# neither the stall-release nor the expired-claim route could ever admit it
+# and the PR stayed parked (GH#39908). Requires both provenance labels and
+# current handover evidence; _pcc_dispatch re-verifies the exact draft,
+# protective labels, released issue state and claims before launch.
+# Args: repo, repo path, issue, PR, authenticated login, PR author, PR JSON,
+#       issue comments JSON, head commit ISO date, trusted logins JSON
+# Returns: 0 dispatched/deduplicated, 1 dispatch failed, 3 not applicable
+#######################################
+_pcc_dispatch_interactive_handover_draft() {
+	local repo="$1" path="$2" issue="$3" pr="$4" login="$5" runner="$6"
+	local pr_json="$7" comments="$8" head_date="$9"
+	local trusted_logins="${10:-[]}" pr_comments="" handover="" handover_id="" state="" failed=""
+	jq -e '[.labels[]? | (.name? // .) | strings] as $names |
+		($names | index("origin:interactive")) != null and ($names | index("origin:worker-takeover")) != null' \
+		<<<"$pr_json" >/dev/null 2>&1 || return 3
+	pr_comments=$(_pcc_issue_comments "$repo" "$pr") || return 3
+	handover=$(_pcc_interactive_handover_evidence "$pr_comments" "$comments" "$head_date" \
+		"$trusted_logins" "$(_pcc_session_key "$repo" "$pr")" "$login") || return 3
+	IFS=$'\t' read -r handover_id state failed <<<"$handover"
+	[[ "$handover_id" =~ ^[1-9][0-9]*$ && "$failed" =~ ^[0-9]+$ ]] || return 3
+	if [[ "$state" != "admit" ]]; then
+		printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #%s in %s — interactive handover continuation never launched %s time(s); relaunch retries exhausted for runner %s issue=#%s handover_comment=%s (GH#39920)\n' \
+			"$pr" "$repo" "$failed" "$login" "$issue" "$handover_id"
+		return 1
+	fi
+	printf 'STALE_PR_CONTINUATION: issue #%s in %s — PR #%s preserved for exact-head continuation assignee=%s release=none reason=interactive_handover handover_comment=%s failed_launches=%s\n' \
+		"$issue" "$repo" "$pr" "$runner" "$handover_id" "$failed"
+	PCC_ALLOW_RELEASED=true
+	_pcc_dispatch "$repo" "$path" "$pr" "$issue" "$runner" "$login" || return 1
+	return 0
+}
+
+#######################################
+# Admission routes for a draft with no current stall release: an expired
+# orphan-recovery claim (GH#34008), then a pulse interactive handover
+# (GH#39908). Same arguments as _pcc_dispatch_interactive_handover_draft.
+# Returns: 0 dispatched/deduplicated, 1 not applicable or failed
+#######################################
+_pcc_dispatch_without_stall_release() {
+	local repo="$1" path="$2" issue="$3" pr="$4" login="$5" runner="$6"
+	local pr_json="$7" comments="$8" head_date="$9" trusted_logins="${10:-[]}" route_rc=0
+	_pcc_dispatch_expired_recovery_draft "$repo" "$path" "$issue" "$pr" "$login" \
+		"$runner" "$pr_json" "$comments" "$head_date" "$trusted_logins" || route_rc=$?
+	[[ "$route_rc" -eq 3 ]] || return "$route_rc"
+	route_rc=0
+	_pcc_dispatch_interactive_handover_draft "$repo" "$path" "$issue" "$pr" "$login" \
+		"$runner" "$pr_json" "$comments" "$head_date" "$trusted_logins" || route_rc=$?
+	[[ "$route_rc" -eq 3 ]] || return "$route_rc"
+	printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #%s in %s has no current stall release issue=#%s\n' "$pr" "$repo" "$issue"
+	return 1
+}
+
+#######################################
 # Read a PR's commits through REST, which supplies parent counts that the
 # gh pr view commit projection omits. Callers treat failure as no metadata,
 # so no release is credited as progress.
@@ -1944,12 +2106,9 @@ _pcc_dispatch_stalled() {
 	evidence=$(_pcc_stall_release_evidence "$comments" "$head_date" "$key" "$trusted_logins" \
 		"$pr_created" "${_PCC_ATTENTION_MARKER} pr=${pr} head=${head}" \
 		"${_PCC_STALL_FUSE_MARKER} pr=${pr} -->" "$commits" "$(_pcc_session_key "$repo" "$pr")") || {
-		local expired_rc=0
-		_pcc_dispatch_expired_recovery_draft "$repo" "$path" "$issue" "$pr" "$login" \
-			"$runner" "$pr_json" "$comments" "$head_date" "$trusted_logins" || expired_rc=$?
-		[[ "$expired_rc" -eq 3 ]] || return "$expired_rc"
-		printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #%s in %s has no current stall release issue=#%s\n' "$pr" "$repo" "$issue"
-		return 1
+		_pcc_dispatch_without_stall_release "$repo" "$path" "$issue" "$pr" "$login" \
+			"$runner" "$pr_json" "$comments" "$head_date" "$trusted_logins"
+		return $?
 	}
 	IFS=$'\t' read -r release_id reason stalls posted pr_releases fuse_posted attention_epoch \
 		release_epoch attempt progress nonprogress approval_release <<<"$evidence"
@@ -1984,7 +2143,7 @@ _pcc_dispatch_stalled() {
 		_pcc_stalled_rearm_or_block "$repo" "$issue" "$pr" "$head" "$release_id" "$stalls" "$pr_releases" \
 			"${attention_epoch:-0}" "$release_epoch" "$comments" "$head_date" "$login" "$progress" "$nonprogress" || return 0
 	fi
-	_pcc_runner_capability_fenced "$repo" "$issue" "$pr" "$head" "$comments" "$head_date" "$login" && return 1
+	_pcc_runner_fenced "$repo" "$issue" "$pr" "$head" "$comments" "$head_date" "$release_id" "$login" "$trusted_logins" && return 1
 	printf 'STALE_PR_CONTINUATION: issue #%s in %s — PR #%s preserved for exact-head continuation assignee=%s release=%s reason=%s\n' \
 		"$issue" "$repo" "$pr" "$runner" "$release_id" "$reason"
 	PCC_ALLOW_RELEASED=true
@@ -2062,6 +2221,10 @@ main() {
 		;;
 	blocked-attention)
 		_pcc_blocked_attention "${2:-}" "${3:-}" "${4:-}"
+		return $?
+		;;
+	rearm-held)
+		_pcc_rearm_held "${2:-}" "${3:-}" "${4:-}"
 		return $?
 		;;
 	dispatch-stalled)

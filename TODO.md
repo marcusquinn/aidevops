@@ -2448,6 +2448,18 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19285 fix(terminal-blocker): classify live lock/lease contention as transient resource_contended, never a human hold #auto-dispatch #bug ref:GH#39887 -> [todo/tasks/t19285-brief.md] pr:#39895 completed:2026-11-22
 
+- [x] t19290 fix(pulse): hand over stale interactive drafts to a real continuation worker #bug #framework ref:GH#39908 -> [todo/tasks/t19290-brief.md] pr:#39914 completed:2026-11-22
+
+- [x] t19294 fix(checkpoints): a failed handover continuation launch must not consume the interactive-handover admission #bug ref:GH#39920 -> [todo/tasks/t19294-brief.md] pr:#39923 completed:2026-11-22
+
+- [x] t19295 fix(checkpoints): check model availability before a continuation claim and publish never-launched cause #auto-dispatch #bug ref:GH#39936 -> [todo/tasks/t19295-brief.md] pr:#39943 completed:2026-11-23
+
+- [x] t19296 wp-helper.sh --config-secret payload wp-config-secret.php missing from v3.39.267 (gitignored *secret*.php) #bug ref:GH#39937 pr:#39938 completed:2026-11-23
+
+- [ ] t19298 fix(headless): count an API-type auth.json credential as static auth for the OAuth pool gate #auto-dispatch #bug ref:GH#39947 -> [todo/tasks/t19298-brief.md]
+
+- [ ] t19300 perf(pulse): a drained cycle that runs its starved maintenance tail keeps dispatching instead of idling 20-35 min #feat #priority:high ref:GH#39960
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02

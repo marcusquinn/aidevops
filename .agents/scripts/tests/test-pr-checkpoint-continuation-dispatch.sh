@@ -410,6 +410,118 @@ else
 	print_result "t19115 re-armed checkpoint: trusted retry and trusted revision publish one approval; untrusted, stale, edited, held, moved and opted-out receipts reject" 1
 fi
 
+# t19293 (GH#39919): the trusted re-arm receipt (created 17:00) also answers
+# the runner's own earlier hold-for-review on its draft; every other hold,
+# a PR-only contract, an automation hold or unreadable history still rejects.
+test_rearmed_self_held_route() (
+	local root="${TEST_ROOT}/rearmed-self-held" head="1111111111111111111111111111111111111111"
+	local metadata="" body_hash="" status=0 pr_labels="" hold_actor="worker-bot" hold_at="2026-11-16T16:00:00Z"
+	local events_fail=false receipt=50
+	mkdir -p "$root"
+	local SCRIPT_DIR="$root" AIDEVOPS_REPOS_JSON="${root}/repos.json"
+	export STUB_APPROVAL_FILE="${root}/approval"
+	# shellcheck disable=SC2016 # Expand in the generated fixture, not its writer.
+	printf '%s\n' '#!/usr/bin/env bash' 'cat >>"$STUB_APPROVAL_FILE"' >"${root}/gh-write-helper.sh"
+	chmod +x "${root}/gh-write-helper.sh"
+	printf '{"initialized_repos":[]}\n' >"$AIDEVOPS_REPOS_JSON"
+	metadata=$(valid_issue_json '[{"name":"auto-dispatch"},{"name":"status:available"}]' |
+		jq '.assignees=[] | .user={login:"issue-author"} | .body="### Files Scope\n- helper.sh"')
+	body_hash=$(jq -r '.body' <<<"$metadata" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()[:-1]).hexdigest())')
+	pr_labels='[{"name":"origin:worker"},{"name":"hold-for-review"}]'
+	gh() {
+		local command="$*" ref=''
+		case "$command" in
+		'api repos/owner/repo/issues/123') printf '%s\n' "$metadata" ;;
+		pr\ view*) valid_pr_json "" "$pr_labels" ;;
+		'api repos/owner/repo/issues/42/events?per_page=100 --paginate --slurp')
+			[[ "$events_fail" == false ]] || return 1
+			jq -nc --arg actor "$hold_actor" --arg at "$hold_at" \
+				'[[{event:"labeled",label:{name:"hold-for-review"},actor:{login:$actor},created_at:$at}]]' ;;
+		'api user --jq .login') printf 'maintainer\n' ;;
+		api\ repos/owner/repo/collaborators/*) printf 'write\n' ;;
+		'api repos/owner/repo/git/refs --method POST'*)
+			ref="${command#*ref=}"; ref="${ref%% *}"; mkdir "${root}/${ref//\//_}" 2>/dev/null ;;
+		*) return 1 ;;
+		esac
+		return $?
+	}
+	_pcc_approval_template() {
+		printf 'CHECKPOINT_CONTINUATION_APPROVED {"head":"%s","brief_sha256":"%s","release_id":20}\n' "$head" "$body_hash"
+		return 0
+	}
+	_pr_checkpoint_revised_target() { return 1; }
+	approvals() { [[ -f "$STUB_APPROVAL_FILE" ]] && grep -c '^CHECKPOINT_CONTINUATION_APPROVED ' "$STUB_APPROVAL_FILE" || printf '0\n'; }
+	route() {
+		receipt=$((receipt + 1))
+		_pcc_rearmed_checkpoint_route owner/repo 123 42 "$head" worker-bot 20 attempt:old \
+			"$(rearm_fixture_comments trusted_retry "$receipt" fleet-runner | jq -c "${1:-.}")"
+	}
+
+	# The runner's own hold from before the receipt publishes one approval.
+	# Calls stay in this shell so each one gets a fresh receipt (and audit ref):
+	# a rejection below must come from the hold rule, not a used reservation.
+	route >"${root}/published" || status=1
+	[[ "$(<"${root}/published")" == "REARMED_CHECKPOINT_APPROVED pr=42 head=${head} release=20 reason=trusted_retry receipt=51" ]] || status=1
+	[[ "$(approvals)" -eq 1 ]] || status=1
+	# Every rejection below leaves the approval count unchanged.
+	hold_actor="maintainer"
+	if route >/dev/null; then status=1; fi
+	hold_actor="worker-bot" hold_at="2026-11-16T17:30:00Z"
+	if route >/dev/null; then status=1; fi
+	hold_at="2026-11-16T16:00:00Z" events_fail=true
+	if route >/dev/null; then status=1; fi
+	events_fail=false
+	if route '. + [{id:46,user:{login:"maintainer"},author_association:"OWNER",created_at:"2026-11-16T17:00:00Z",body:"feedback-route:automation-hold:ci:PR42:x"}]' >/dev/null; then status=1; fi
+	for pr_labels in '[{"name":"origin:worker"},{"name":"hold-for-review"},{"name":"release-approval-required"}]' \
+		'[{"name":"origin:worker"},{"name":"hold-for-review"},{"name":"no-auto-dispatch"}]' \
+		'[{"name":"hold-for-review"}]'; do
+		if route >/dev/null; then status=1; fi
+	done
+	pr_labels='[{"name":"origin:worker"},{"name":"hold-for-review"}]'
+	metadata=$(jq '.body += "\n<!-- aidevops:completion-contract:pr-only/v1 -->"' <<<"$metadata")
+	body_hash=$(jq -r '.body' <<<"$metadata" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()[:-1]).hexdigest())')
+	if route >/dev/null; then status=1; fi
+	[[ "$(approvals)" -eq 1 ]] || status=1
+	# Control: the same fixture without any hold label still publishes.
+	pr_labels='[{"name":"origin:worker"}]'
+	route >/dev/null || status=1
+	[[ "$(approvals)" -eq 2 ]] || status=1
+	return "$status"
+)
+if test_rearmed_self_held_route; then
+	print_result "t19293 re-armed checkpoint answers only the runner's own pre-receipt draft hold" 0
+else
+	print_result "t19293 re-armed checkpoint answers only the runner's own pre-receipt draft hold" 1
+fi
+
+# t19293: rearm-held runs only the re-arm route for the current blocked release.
+test_rearm_held_entry() (
+	# The stub reads stub_evidence: _pcc_rearm_held's own `local evidence`
+	# would shadow a same-named fixture through bash dynamic scoping.
+	local routed="" status=0 rc=0 stub_evidence=$'20\tattempt:old\tfalse\t-'
+	gh() { printf '{"state":"OPEN","isDraft":true,"headRefOid":"1111111111111111111111111111111111111111","author":{"login":"worker-bot"}}\n'; return 0; }
+	_pcc_issue_comments() { printf '[]\n'; return 0; }
+	_pr_checkpoint_trusted_logins() { printf '[]\n'; return 0; }
+	_pcc_blocked_release_evidence() { printf '%s\n' "$stub_evidence"; return 0; }
+	_pcc_rearmed_checkpoint_route() { routed="$*"; printf 'ROUTED %s\n' "$*"; return 0; }
+	_pcc_resolve_decision() { return 99; }
+	_pcc_unknown_pending_work() { return 99; }
+	[[ "$(_pcc_rearm_held owner/repo 123 42)" == "ROUTED owner/repo 123 42 1111111111111111111111111111111111111111 worker-bot 20 attempt:old []" ]] || status=1
+	stub_evidence=$'20\tattempt:old\tfalse\t31'
+	if _pcc_rearm_held owner/repo 123 42 >/dev/null; then status=1; fi
+	stub_evidence=$'20\t-\tfalse\t-'
+	if _pcc_rearm_held owner/repo 123 42 >/dev/null; then status=1; fi
+	[[ -z "$routed" ]] || status=1
+	_pcc_rearm_held 'bad repo' 123 42 >/dev/null || rc=$?
+	[[ "$rc" -eq 2 && -z "$routed" ]] || status=1
+	return "$status"
+)
+if test_rearm_held_entry; then
+	print_result "t19293 rearm-held routes only the current blocked release through the re-arm route" 0
+else
+	print_result "t19293 rearm-held routes only the current blocked release through the re-arm route" 1
+fi
+
 test_unknown_daily_digest() (
 	local root="${TEST_ROOT}/daily-digest" head="1111111111111111111111111111111111111111" first='' second=''
 	mkdir -p "$root"
@@ -879,6 +991,23 @@ if [[ "$output" == *PR_CHECKPOINT_CONTINUATION_DISPATCHED* ]] && \
 else
 	print_result "dispatch binds continuation to exact PR branch and head" 1 "output=${output:-missing} args=${DISPATCH_ARGS:-missing}"
 fi
+
+# GH#39936: an exhausted runner (75) or one with no configured candidate
+# (select rc 1, reported as 78) writes no claim. Run in this shell so a
+# guarded dispatch would be visible in DISPATCH_ARGS.
+for select_case in 75:75 1:78; do
+	DISPATCH_ARGS=""
+	export STUB_MODEL_SELECT_RC="${select_case%%:*}"
+	gate_rc=0
+	_pcc_dispatch "owner/repo" "${TEST_ROOT}/repo" "42" "123" "worker-bot" >"${TEST_ROOT}/model-gate.out" || gate_rc=$?
+	output=$(<"${TEST_ROOT}/model-gate.out")
+	if [[ "$gate_rc" -ne 0 && "$output" == *"PR_CHECKPOINT_CONTINUATION_DEFERRED"*"reason=model_unavailable rc=${select_case##*:}"* && -z "$DISPATCH_ARGS" ]]; then
+		print_result "no selectable model (select rc ${STUB_MODEL_SELECT_RC}) defers the continuation before any claim" 0
+	else
+		print_result "no selectable model (select rc ${STUB_MODEL_SELECT_RC}) defers the continuation before any claim" 1 "rc=${gate_rc} output=${output:-missing} args=${DISPATCH_ARGS:-none}"
+	fi
+done
+unset STUB_MODEL_SELECT_RC
 
 DISPATCH_RESULT="$PRRTS_RC_DISPATCH_DEFERRED"
 if output=$(_pcc_dispatch "owner/repo" "${TEST_ROOT}/repo" "42" "123" "worker-bot") &&

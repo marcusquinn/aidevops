@@ -313,6 +313,8 @@ For Fluent Boards cards (list, show, add, move, comment, tick checklist items, a
 
 For FluentSMTP Amazon SES connections (list, move to a new sending domain or region with keys in `wp-config.php`, proof send, checksummed undo), use `wp-helper.sh --fluentsmtp`: see `services/email/ses.md` "FluentSMTP".
 
+To write any other stored secret into a `wp-config.php` constant (value on stdin, backup, fresh-process check, undo), use `wp-helper.sh --config-secret`, not `wp config set`: see `wp-dev.md` "Secrets in wp-config.php".
+
 ## Security
 
 ```bash
@@ -388,7 +390,7 @@ wp option update rank_math_sitemap_last_modified $(date +%s)
 
 ## Disposable Docker-free fixture
 
-Runtime-verify `wp-helper.sh` WP-CLI payloads (`wp-fluentsmtp.php`, `wp-fluent-boards*.php`, `wp-change-plan*.php`) without Docker or MySQL. The Docker + MariaDB stack in `wp-plugin-release.md` (`plugin-check`) does not exercise `wp-helper.sh` transports. Keep every file under one fixture directory and delete it afterwards.
+Runtime-verify `wp-helper.sh` WP-CLI payloads (`wp-fluentsmtp.php`, `wp-config-secret.php`, `wp-fluent-boards*.php`, `wp-change-plan*.php`) without Docker or MySQL. The Docker + MariaDB stack in `wp-plugin-release.md` (`plugin-check`) does not exercise `wp-helper.sh` transports. Keep every file under one fixture directory and delete it afterwards.
 
 ```bash
 T="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}"
@@ -396,7 +398,7 @@ mkdir -p "$T"
 FX="$(mktemp -d "$T/wp-fixture.XXXXXX")" || { echo "fixture creation failed" >&2; exit 1; }   # unique per run; stop on failure
 export FX
 ORIG_DIR="$PWD"
-mkdir -p "$FX/site" "$FX/home" "$FX/bin" "$FX/tmp" "$FX/wpcache"
+mkdir -p "$FX/site" "$FX/home" "$FX/bin" "$FX/tmp" "$FX/wpcache" "$FX/export"
 export WP_CLI_CONFIG_PATH="$FX/wp-cli.yml"   # ignore ~/.wp-cli/config.yml (it could point at a real site)
 : > "$WP_CLI_CONFIG_PATH"
 export WP_CLI_CACHE_DIR="$FX/wpcache"   # keep the core download cache inside the fixture
@@ -440,10 +442,13 @@ SQLite-only plugin bug (Fluent Boards 2.3.0): on SQLite, WPFluent's `addUpdatedA
 
 ### 3. Isolate the site registry
 
-`wp-helper.sh` derives every config and payload-backup path from `HOME`. Run it with `HOME="$FX/home"` so the real registry is untouched. Register the fixture in `$FX/home/.config/aidevops/wordpress-sites.json` (format: `configs/wordpress-sites.json.txt`; confirm the directory via `WP_CONFIG_DIR` in `scripts/wp-helper.sh`), then:
+`wp-helper.sh` derives every config and payload-backup path from `HOME`. Run it with `HOME="$FX/home"` so the real registry is untouched. Run the helper from committed content, not the authoring worktree or the installed copy: a new payload that `.gitignore` skips (GH#39937) then fails here instead of after release. Register the fixture in `$FX/home/.config/aidevops/wordpress-sites.json` (format: `configs/wordpress-sites.json.txt`; confirm the directory via `WP_CONFIG_DIR` in `scripts/wp-helper.sh`), then:
 
 ```bash
-HOME="$FX/home" wp-helper.sh --fluentsmtp <fixture-site> list
+mkdir -p "$FX/export"
+git -C <worktree> archive HEAD .agents/scripts | tar -x -C "$FX/export"
+H="$FX/export/.agents/scripts/wp-helper.sh"   # every later step calls "$H", never bare wp-helper.sh
+HOME="$FX/home" "$H" --fluentsmtp <fixture-site> list
 ```
 
 ### 4. SSH transport without sshd

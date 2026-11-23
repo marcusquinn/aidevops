@@ -442,8 +442,11 @@ _pulse_stage_reserve_borrow_budget() {
 # the orphan reaper, graph refresh and TODO sync went 6-34h without a start.
 # The lock owner stamps each completed tail. A drained cycle whose last tail is
 # older than AIDEVOPS_PULSE_DRAIN_TAIL_STARVATION_S (default: the stage
-# starvation bound; 0 disables) runs its remaining stages once. Dispatch stays
-# suppressed: every dispatch entry still reads the drain marker.
+# starvation bound; 0 disables) runs its remaining stages once.
+# t19300 (GH#39960): such a cycle no longer exits early, so suppressing its
+# dispatch bought no activation latency and left 20-35 min without launches
+# (_pulse_drain_suppresses_dispatch, pulse-dispatch-lib.sh). Dispatch continues
+# under the override unless AIDEVOPS_PULSE_DRAIN_TAIL_DISPATCH=0.
 _pulse_drain_tail_note_complete() {
 	local dir=""
 	_pulse_stage_owner_heartbeat >/dev/null || return 0
@@ -453,17 +456,61 @@ _pulse_drain_tail_note_complete() {
 	return 0
 }
 
+# t19300: dispatch entries read the verdict from command-substitution
+# subshells, where _PULSE_DRAIN_TAIL_OVERRIDE does not reach the parent, so the
+# owner records it in its lock directory. Releasing the lock removes the file;
+# the owner line keeps a later lock holder from adopting it.
+_pulse_drain_tail_verdict_file() {
+	printf '%s\n' "${LOCKDIR}/drain_tail_override"
+	return 0
+}
+
+# Print the recorded verdict (0 or 1) for this lock owner.
+_pulse_drain_tail_verdict_read() {
+	local line="" owner="" verdict="" file=""
+	[[ -n "${LOCKDIR:-}" ]] || return 1
+	file=$(_pulse_drain_tail_verdict_file)
+	[[ -f "$file" ]] || return 1
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		case "$line" in
+		owner=*) owner="${line#owner=}" ;;
+		verdict=*) verdict="${line#verdict=}" ;;
+		esac
+	done 2>/dev/null <"$file"
+	[[ "$owner" == "$$" && "$verdict" =~ ^[01]$ ]] || return 1
+	printf '%s\n' "$verdict"
+	return 0
+}
+
+# Record the verdict; best effort, the in-process cache still applies.
+_pulse_drain_tail_verdict_write() {
+	local verdict="$1" file="" temporary=""
+	file=$(_pulse_drain_tail_verdict_file)
+	temporary=$(mktemp "${file}.XXXXXX" 2>/dev/null) || return 0
+	if printf 'owner=%s\nverdict=%s\n' "$$" "$verdict" >"$temporary" 2>/dev/null &&
+		mv -f "$temporary" "$file" 2>/dev/null; then
+		return 0
+	fi
+	rm -f "$temporary" 2>/dev/null || true
+	return 0
+}
+
 # Decide once per cycle whether a drained cycle must run its tail.
 # Args: $1 - activated bundle (log label)
 # Returns: 0 to run the remaining stages, 1 to keep the t19015 fast exit
 _pulse_drain_tail_starved() {
 	local bundle="$1"
 	local bound="${AIDEVOPS_PULSE_DRAIN_TAIL_STARVATION_S:-${AIDEVOPS_PULSE_STAGE_STARVATION_S:-3600}}"
-	local dir="" last="" now="" age="never"
+	local dir="" last="" now="" age="never" recorded="" dispatch_note="non-dispatch stages"
 	case "${_PULSE_DRAIN_TAIL_OVERRIDE:-}" in
 	1) return 0 ;;
 	0) return 1 ;;
 	esac
+	if recorded=$(_pulse_drain_tail_verdict_read); then
+		_PULSE_DRAIN_TAIL_OVERRIDE="$recorded"
+		[[ "$recorded" == "1" ]] && return 0
+		return 1
+	fi
 	_PULSE_DRAIN_TAIL_OVERRIDE=0
 	[[ "$bound" =~ ^[0-9]+$ && "$bound" -gt 0 ]] || return 1
 	_pulse_stage_owner_heartbeat >/dev/null || return 1
@@ -471,11 +518,16 @@ _pulse_drain_tail_starved() {
 	_pulse_stage_state_dir dir
 	read -r last 2>/dev/null <"${dir}/maintenance_tail.complete" || last=""
 	if [[ "$last" =~ ^[1-9][0-9]*$ ]] && ((last <= now)); then
-		((now - last >= bound)) || return 1
+		if ((now - last < bound)); then
+			_pulse_drain_tail_verdict_write 0
+			return 1
+		fi
 		age="$((now - last))s ago"
 	fi
 	_PULSE_DRAIN_TAIL_OVERRIDE=1
-	echo "[pulse-wrapper] Cooperative drain: maintenance tail starved (last completed ${age}, bound ${bound}s); running remaining non-dispatch stages before activated bundle ${bundle} starts (t19074, GH#38802)" >>"$LOGFILE"
+	_pulse_drain_tail_verdict_write 1
+	[[ "${AIDEVOPS_PULSE_DRAIN_TAIL_DISPATCH:-1}" == "0" ]] || dispatch_note="stages with dispatch (t19300)"
+	echo "[pulse-wrapper] Cooperative drain: maintenance tail starved (last completed ${age}, bound ${bound}s); running remaining ${dispatch_note} before activated bundle ${bundle} starts (t19074, GH#38802)" >>"$LOGFILE"
 	if declare -F pulse_stats_increment >/dev/null 2>&1; then
 		pulse_stats_increment "pulse_drain_tail_starvation_override" 2>/dev/null || true
 	fi

@@ -257,6 +257,7 @@ _invoke_opencode() {
 	local output_file="$1"
 	local exit_code_file="$2"
 	shift 2
+	_WORKER_USAGE_TOKENS_TOTAL=0
 	local -a cmd=("$@")
 	local private_workload=0
 	local runtime_role="${_invoke_role:-worker}"

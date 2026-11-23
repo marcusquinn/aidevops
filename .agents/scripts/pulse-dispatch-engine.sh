@@ -807,8 +807,9 @@ _dispatch_min_worker_floor_refill() {
 			return 0
 		fi
 		local drain_bundle=""
-		if declare -F _pulse_drain_requested_bundle >/dev/null 2>&1 &&
-			drain_bundle=$(_pulse_drain_requested_bundle); then
+		# t19300: a starved-tail drained cycle keeps its floor refill.
+		if declare -F _pulse_drain_suppresses_dispatch >/dev/null 2>&1 &&
+			drain_bundle=$(_pulse_drain_suppresses_dispatch); then
 			echo "[pulse-wrapper] Minimum worker floor refill stopped: cooperative drain requested for activated bundle ${drain_bundle} (GH#37907)" >>"$LOGFILE"
 			return 0
 		fi

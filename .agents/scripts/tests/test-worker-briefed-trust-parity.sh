@@ -580,6 +580,7 @@ bash -s -- "$SCRIPT_DIR" "$TEST_ROOT" <<'RETIRE_TEST'
 	RETIRE_CALLS="$TEST_ROOT/retirement-calls"
 	# Live issue state, independent of the listing snapshot.
 	RETIRE_LIVE="$TEST_ROOT/retirement-live-state"
+	RETIRE_LABEL="$TEST_ROOT/retirement-label"
 	printf 'OPEN\n' >"$RETIRE_LIVE"
 	: >"$RETIRE_CALLS"
 	gh() {
@@ -600,7 +601,14 @@ bash -s -- "$SCRIPT_DIR" "$TEST_ROOT" <<'RETIRE_TEST'
 				printf '%s\n' "$RETIRE_PRS"
 			fi
 			;;
-		api:repos/owner/repo/labels/routine-anchor-retiring) ;;
+		api:repos/owner/repo/labels/routine-anchor-retiring)
+			# A fresh repository returns 404 until the real ensure command creates it.
+			[[ -f "$RETIRE_LABEL" ]] || return 1
+			;;
+		label:create)
+			[[ "$*" == 'label create routine-anchor-retiring --repo owner/repo --color FFF59D --description Routine anchor retirement in progress — not a task --force' ]] || return 1
+			printf 'created\n' >"$RETIRE_LABEL"
+			;;
 		issue:view) cat "$RETIRE_LIVE" ;;
 		issue:reopen)
 			printf '%s\n' "$*" >>"$RETIRE_CALLS"
@@ -616,6 +624,9 @@ bash -s -- "$SCRIPT_DIR" "$TEST_ROOT" <<'RETIRE_TEST'
 		esac
 		return 0
 	}
+	# label-sync-helper.sh ensure runs in a child shell; only gh is stubbed.
+	export -f gh
+	export RETIRE_LABEL
 	gh_issue_comment() {
 		local body=""
 		body=$(cat)
@@ -639,6 +650,7 @@ bash -s -- "$SCRIPT_DIR" "$TEST_ROOT" <<'RETIRE_TEST'
 	[[ ! -s "$RETIRE_CALLS" ]]
 	RETIRE_PRS='[{"body":"Ref #777"}]'
 	cmd_retire_anchor badges-sync --repo owner/repo
+	[[ -s "$RETIRE_LABEL" ]]
 	# The marker is recorded before the first destructive step and cleared last.
 	[[ "$(sed -n '1p' "$RETIRE_CALLS")" == *'issue edit 77 --repo owner/repo --add-label routine-anchor-retiring'* ]]
 	grep -q 'issue edit 77 .*--remove-label persistent' "$RETIRE_CALLS"

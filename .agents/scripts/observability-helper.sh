@@ -5,6 +5,8 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=./observability-cache-health.sh
+source "${SCRIPT_DIR}/observability-cache-health.sh"
 set -euo pipefail
 
 readonly OBS_DIR="${HOME}/.aidevops/.agent-workspace/observability"
@@ -46,8 +48,9 @@ get_project_from_path() {
 
 _calc_costs() {
 	local input_tokens="$1" output_tokens="$2" cache_read="$3" cache_write="$4" model="$5"
-	local pricing
-	pricing=$(get_model_pricing "$model")
+	local pricing context_tokens=0 # prompt context selects tiers (Haiku 5.5 >100K)
+	[[ "${input_tokens}${cache_read}${cache_write}" =~ ^[0-9]+$ ]] && context_tokens=$((input_tokens + cache_read + cache_write))
+	pricing=$(get_model_pricing "$model" "$context_tokens")
 	local input_price output_price cr_price cw_price
 	IFS='|' read -r input_price output_price cr_price cw_price <<<"$pricing"
 	awk "BEGIN {
@@ -55,6 +58,7 @@ _calc_costs() {
 		cr=$cache_read/1e6*$cr_price; cw=$cache_write/1e6*$cw_price
 		printf \"%.8f|%.8f|%.8f|%.8f|%.8f\",ci,co,cr,cw,ci+co+cr+cw
 	}"
+	return 0
 }
 
 # Resolve prompt version from git history for a given file path.
@@ -528,108 +532,6 @@ cmd_rate_limits() {
 		_rl_output_table "$ew" "$wp" "$config_file" <<<"$rows_out"
 	fi
 	return 0
-}
-
-readonly DEFAULT_CACHE_THRESHOLD=90
-readonly DEFAULT_CACHE_WINDOW_HOURS=24
-
-cmd_cache_health() {
-	local json_flag=false threshold="$DEFAULT_CACHE_THRESHOLD" window_hours="$DEFAULT_CACHE_WINDOW_HOURS"
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--json)
-			json_flag=true
-			shift
-			;;
-		--threshold)
-			threshold="${2:-$DEFAULT_CACHE_THRESHOLD}"
-			shift 2
-			;;
-		--window)
-			window_hours="${2:-$DEFAULT_CACHE_WINDOW_HOURS}"
-			shift 2
-			;;
-		*) shift ;;
-		esac
-	done
-
-	local obs_db="${OBS_DIR}/llm-requests.db"
-	[[ -f "$obs_db" ]] || {
-		print_error "SQLite DB not found at $obs_db"
-		return 1
-	}
-	command -v sqlite3 &>/dev/null || {
-		print_error "sqlite3 required"
-		return 1
-	}
-
-	# Single query: per-model cache stats over the window, only for providers
-	# with Anthropic-style prompt caching (cache_read > 0 somewhere).
-	local result
-	result=$(sqlite3 -separator '|' "$obs_db" "
-		SELECT
-			model_id,
-			COUNT(*) AS requests,
-			SUM(tokens_cache_read) AS cache_read,
-			SUM(tokens_cache_write) AS cache_write,
-			SUM(tokens_input) AS uncached_input,
-			ROUND(
-				CAST(SUM(tokens_cache_read) AS REAL)
-				/ NULLIF(SUM(tokens_cache_read) + SUM(tokens_input), 0) * 100, 1
-			) AS cache_pct
-		FROM llm_requests
-		WHERE timestamp > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-${window_hours} hours')
-		GROUP BY model_id
-		HAVING SUM(tokens_cache_read) + SUM(tokens_cache_write) > 0
-		ORDER BY requests DESC;
-	" 2>/dev/null) || result=""
-
-	[[ -z "$result" ]] && {
-		if [[ "$json_flag" == "true" ]]; then
-			echo '{"status":"ok","models":[],"message":"No cacheable requests in window"}'
-		else
-			print_info "No cacheable requests in the last ${window_hours}h"
-		fi
-		return 0
-	}
-
-	local overall_status="ok" degraded_models=""
-
-	if [[ "$json_flag" == "true" ]]; then
-		local json_arr="[" first=true
-		while IFS='|' read -r model reqs cr cw ui pct; do
-			[[ -z "$model" ]] && continue
-			local status="ok"
-			if [[ -n "$pct" ]] && awk "BEGIN { exit !($pct < $threshold) }"; then
-				status="degraded"
-				overall_status="degraded"
-			fi
-			[[ "$first" == "true" ]] || json_arr="${json_arr},"
-			first=false
-			json_arr="${json_arr}{\"model\":\"${model}\",\"requests\":${reqs:-0},\"cache_read\":${cr:-0},\"cache_write\":${cw:-0},\"uncached_input\":${ui:-0},\"cache_pct\":${pct:-0},\"status\":\"${status}\"}"
-		done <<<"$result"
-		echo "{\"status\":\"${overall_status}\",\"threshold\":${threshold},\"window_hours\":${window_hours},\"models\":${json_arr}]}"
-	else
-		printf "\nPrompt Cache Health (%sh window, threshold %s%%)\n" "$window_hours" "$threshold"
-		printf "  %-30s %8s %12s %12s %7s %s\n" "Model" "Requests" "Cache Read" "Uncached" "Hit %" "Status"
-		while IFS='|' read -r model reqs cr cw ui pct; do
-			[[ -z "$model" ]] && continue
-			local status="${GREEN}ok${NC}"
-			# Check cache hit rate against threshold
-			[[ -z "$pct" ]] || ! awk "BEGIN { exit !($pct < $threshold) }" || {
-				status="${YELLOW}DEGRADED${NC}"
-				overall_status="degraded"
-				degraded_models="${degraded_models}${model} (${pct}%), "
-			}
-			printf "  %-30s %8s %12s %12s %6s%% %b\n" "$model" "$reqs" "$cr" "$ui" "$pct" "$status"
-		done <<<"$result"
-		echo ""
-		[[ "$overall_status" != "degraded" ]] && print_success "All models above ${threshold}% cache hit rate" ||
-			print_warning "Cache degradation: ${degraded_models%, }"
-	fi
-
-	[[ "$overall_status" == "ok" ]] && return 0
-	return 1
 }
 
 cmd_rule_violations() {

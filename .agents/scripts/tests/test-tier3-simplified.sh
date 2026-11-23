@@ -145,10 +145,15 @@ test_full_loop_helper() {
 	echo "=== Full-Loop-Helper ==="
 
 	local helper="${SCRIPTS_DIR}/full-loop-helper.sh"
+	# Loop state lives in a cwd-relative .agents/loop-state, so status/cancel run
+	# in an empty directory: `cancel` must never delete the caller's real loop.
+	local no_loop_dir="${TEST_DIR}/no-loop"
+	mkdir -p "$no_loop_dir"
 
-	# Test: status with no active loop
+	# Test: status with no active loop (GH#39959: a sourced library's cmd_status
+	# once shadowed this command and exited 1 silently).
 	local output
-	output=$("$helper" status 2>&1) || true
+	output=$(cd "$no_loop_dir" && "$helper" status 2>&1) || true
 	if echo "$output" | grep -q "No active full loop"; then
 		print_result "full-loop: status (no active loop)" 0
 	else
@@ -156,7 +161,7 @@ test_full_loop_helper() {
 	fi
 
 	# Test: cancel with no active loop
-	output=$("$helper" cancel 2>&1) || true
+	output=$(cd "$no_loop_dir" && "$helper" cancel 2>&1) || true
 	if echo "$output" | grep -qi "no active loop"; then
 		print_result "full-loop: cancel (no active loop)" 0
 	else

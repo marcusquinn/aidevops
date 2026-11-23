@@ -8,6 +8,7 @@ _PR_CHECKPOINT_TARGET_LIB_LOADED=1
 _PCTL_INTERACTIVE_LABEL="origin:interactive"
 _PCTL_AUTO_DISPATCH_LABEL="auto-dispatch"
 _PCTL_HOLD_LABEL="hold-for-review"
+_PCTL_TAKEOVER_LABEL="origin:worker-takeover"
 _PCTL_LABELED_EVENT="labeled"
 
 _PCTL_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
@@ -98,6 +99,12 @@ _pr_checkpoint_trusted_logins() {
 #aidevops:trust-boundary — GH#38124: identity reuses the same-repository,
 # worker-origin and no-protective-label gates above; a head ref on a
 # same-repository PR requires push access, so it adds no new writer.
+#aidevops:trust-boundary — GH#39908: origin:interactive protects a draft only
+# until the pulse hands it over. The stale-handover gates (collaborator author,
+# idle PR, no live claim; pulse-merge-conflict.sh _interactive_pr_is_stale)
+# apply origin:worker-takeover, and removing that label reclaims the PR, as
+# feedback routing already treats it (_feedback_route_labels_block_routing).
+# Every other protective label, including no-takeover, still rejects.
 # shellcheck disable=SC2016 # jq program text, not shell expansion.
 _PR_CHECKPOINT_FOR_LINK_JQ_DEFS='
 	def checkpoint_label_names: [.labels[]? | (.name? // .) | strings];
@@ -106,10 +113,13 @@ _PR_CHECKPOINT_FOR_LINK_JQ_DEFS='
 	def checkpoint_has_label($name): checkpoint_label_names | any(. == $name);
 	def for_issue_line($issue):
 		(.body // "") | test("(?m)^For #" + ($issue | tostring) + "([.]([ \\t]|$)|[ \\t]*$)");
+	def checkpoint_interactive_handed_over: checkpoint_has_label(takeover_origin_label);
 	def checkpoint_protected:
-		checkpoint_label_names | any(test(
-			"^(origin:interactive|hold-for-review|no-auto-dispatch|no-takeover|needs-maintainer-review|persistent)$"
-		));
+		checkpoint_interactive_handed_over as $handed_over |
+		checkpoint_label_names | any(
+			test("^(hold-for-review|no-auto-dispatch|no-takeover|needs-maintainer-review|persistent)$") or
+			(. == "origin:interactive" and ($handed_over | not))
+		);
 	def recovery_draft_links($issue):
 		(.closingIssuesReferences == []) and
 		(.isDraft == true) and (.isCrossRepository == false) and
@@ -188,35 +198,54 @@ _pr_checkpoint_pr_links_issue() {
 # the checkpoint. Unreadable label history fails closed.
 # Args: $1=repo slug, $2=PR JSON, $3=issue JSON, $4=comments JSON (paginated or
 #       flat), $5=validated approval JSON (pr, runner, approval_id)
-# Returns: 0 when the PR hold is superseded, 1 otherwise
+# Returns: 0 when the PR hold is superseded, 1 otherwise, 2 history unreadable
 _pr_checkpoint_self_hold_superseded() {
 	local repo_slug="$1" pr_json="$2" issue_json="$3" comments_json="$4" approval="$5"
-	local pr_number="" runner="" approval_id="" approved_at="" pr_events=""
+	local pr_number="" runner="" approval_id="" approved_at=""
+	pr_number=$(jq -er '.pr | numbers' <<<"$approval" 2>/dev/null) || return 1
+	runner=$(jq -er '.runner | strings' <<<"$approval" 2>/dev/null) || return 1
+	approval_id=$(jq -er '.approval_id | numbers' <<<"$approval" 2>/dev/null) || return 1
+	approved_at=$(jq -er --argjson id "$approval_id" '
+		[arrays | flatten[] | objects | select(.id == $id) | .created_at | strings] | first // empty
+	' <<<"$comments_json" 2>/dev/null) || return 1
+	_pr_checkpoint_runner_hold_before "$repo_slug" "$pr_json" "$issue_json" "$comments_json" \
+		"$pr_number" "$runner" "$approved_at"
+	return $?
+}
+
+#aidevops:trust-boundary — GH#36138 and t19293 (GH#39919): one rule for when a
+# hold-for-review on a worker draft is only that runner's own request for input
+# made before a trusted answer (an exact approval, or a terminal-blocker re-arm
+# receipt) at $7. Every labelled hold event must be by the runner and before
+# the cutoff. A PR-only contract, release approval gate or feedback-route
+# automation hold keeps protecting the draft.
+# Args: $1=repo slug, $2=PR JSON, $3=issue JSON, $4=comments JSON (paginated or
+#       flat), $5=PR number, $6=runner login, $7=cutoff ISO time
+# Returns: 0 when the hold is the runner's own and older, 1 otherwise,
+#          2 when the PR label history is unreadable (fail closed)
+_pr_checkpoint_runner_hold_before() {
+	local repo_slug="$1" pr_json="$2" issue_json="$3" comments_json="$4" pr_number="$5" runner="$6"
+	local cutoff="$7" pr_events=""
 	jq -e --arg hold "$_PCTL_HOLD_LABEL" '
 		[.labels[]? | (.name? // .) | strings] as $names |
 		($names | index($hold)) != null and ($names | index("release-approval-required")) == null
 	' <<<"$pr_json" >/dev/null 2>&1 || return 1
-	pr_number=$(jq -er '.pr | numbers' <<<"$approval" 2>/dev/null) || return 1
-	runner=$(jq -er '.runner | strings' <<<"$approval" 2>/dev/null) || return 1
-	approval_id=$(jq -er '.approval_id | numbers' <<<"$approval" 2>/dev/null) || return 1
-	[[ "$runner" =~ ^[A-Za-z0-9._-]+(\[bot\])?$ ]] || return 1
+	[[ "$pr_number" =~ ^[1-9][0-9]*$ && "$runner" =~ ^[A-Za-z0-9._-]+(\[bot\])?$ ]] || return 1
+	[[ "$cutoff" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]] || return 1
 	jq -e --arg runner "$runner" '(.author.login // "") == $runner' <<<"$pr_json" >/dev/null 2>&1 || return 1
 	jq -e '(.body // "") | contains("<!-- aidevops:completion-contract:pr-only/v1 -->") | not' \
 		<<<"$issue_json" >/dev/null 2>&1 || return 1
-	approved_at=$(jq -er --argjson id "$approval_id" --argjson pr "$pr_number" '
-		[arrays | flatten[] | objects] as $comments |
-		if any($comments[]; (.body // "") | test("feedback-route:automation-hold:[^:]*:PR" + ($pr | tostring) + ":"))
-		then empty
-		else [$comments[] | select(.id == $id) | .created_at | strings] | first // empty end
-	' <<<"$comments_json" 2>/dev/null) || return 1
-	[[ "$approved_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]] || return 1
+	jq -e --argjson pr "$pr_number" '
+		[arrays | flatten[] | objects] |
+		any(.[]; (.body // "") | test("feedback-route:automation-hold:[^:]*:PR" + ($pr | tostring) + ":")) | not
+	' <<<"$comments_json" >/dev/null 2>&1 || return 1
 	pr_events=$(gh api "repos/${repo_slug}/issues/${pr_number}/events?per_page=100" --paginate --slurp 2>/dev/null) || return 2
 	jq -e --arg hold "$_PCTL_HOLD_LABEL" --arg labeled "$_PCTL_LABELED_EVENT" \
-		--arg runner "$runner" --arg approved_at "$approved_at" '
+		--arg runner "$runner" --arg cutoff "$cutoff" '
 		arrays | [flatten[] | objects | select(.event == $labeled and (.label.name // "") == $hold)] as $holds |
 		($holds | length) > 0 and
 		all($holds[]; (.actor.login // "") == $runner and
-			((.created_at // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T")) and (.created_at < $approved_at))
+			((.created_at // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T")) and (.created_at < $cutoff))
 	' <<<"$pr_events" >/dev/null 2>&1 || return 1
 	return 0
 }
@@ -337,11 +366,13 @@ _pr_checkpoint_pr_metadata_is_eligible() {
 	printf '%s' "$pr_json" | jq -e --argjson pr "$pr_number" \
 		--arg expected_head_sha "$expected_head_sha" --arg expected_head_ref "$expected_head_ref" \
 		--arg expected_author "$expected_author" --arg interactive_label "$_PCTL_INTERACTIVE_LABEL" \
-		--arg hold_label "$_PCTL_HOLD_LABEL" '
+		--arg hold_label "$_PCTL_HOLD_LABEL" --arg takeover_label "$_PCTL_TAKEOVER_LABEL" '
 		def names: [.labels[]? | if type == "string" then . else (.name // empty) end];
-		def worker_owned: names | any(. == "origin:worker" or . == "origin:worker-takeover");
-		def protected: names | any(
-			. == $interactive_label or . == $hold_label or
+		def worker_owned: names | any(. == "origin:worker" or . == $takeover_label);
+		# GH#39908: the pulse handover label releases interactive provenance only.
+		def handed_over: names | any(. == $takeover_label);
+		def protected: handed_over as $handed_over | names | any(
+			(. == $interactive_label and ($handed_over | not)) or . == $hold_label or
 			. == "no-auto-dispatch" or . == "no-takeover" or
 			. == "needs-maintainer-review" or . == "persistent"
 		);

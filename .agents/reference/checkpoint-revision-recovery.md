@@ -29,6 +29,7 @@ A terminal-blocker re-arm answers the blocker that the checkpoint's release reco
 - **Authority:** the publisher, checkpoint runner and receipt poster need current write permission. So does the retry author or, for a revision, the issue author: only the author or a write collaborator can edit an issue body.
 - **Gates:** the issue must be open, unassigned, auto-dispatchable and without holds. The worker draft must be eligible, and the `approval-template` line must bind the current head and complete brief SHA. `dispatch-approved` keeps every continuation gate.
 - **Bounds:** a native ref `refs/aidevops/checkpoint-rearm/ISSUE/RECEIPT` makes publication at-most-once per receipt across runners. A failed publication after the reservation leaves the attention record. A continuation that blocks again creates a newer release, so only a newer re-arm can approve it again.
+- **Runner's own draft hold (t19293):** a worker that needed input sometimes labels its own draft `hold-for-review`. Dispatch dedup then reports `WORKER_DRAFT_SELF_HELD:` for a linked same-repository worker draft whose only protection is that hold. It stays a plain duplicate-dispatch block, and the pulse runs `pr-checkpoint-continuation-helper.sh rearm-held REPO ISSUE PR` for the current blocked release. The re-arm route treats the receipt as the answer to that hold under the GH#36138 rule: every `hold-for-review` label event must be by the draft's runner and older than the receipt. A hold by anyone else, a hold reapplied after the receipt, `release-approval-required`, a PR-only completion contract, a feedback-route automation hold or unreadable label history still blocks. After publishing, the pulse retries `dispatch-approved` in the same cycle, and that path lifts the superseded hold.
 
 ### Unknown-blocker triage (GH#36525)
 
@@ -95,7 +96,13 @@ terminal lease is ignored, GH#33839), Pulse routes the draft by release reason:
   `worker_noop_zero_output`, `worker_incomplete_exit`, `worker_not_launched`, `clean` and
   `worker_complete`. Zero-output, incomplete and never-launched exits with an unchanged head
   are runtime stalls, not worker decisions (GH#36597, GH#38358); a never-launched episode of
-  the PR's own session is transparent (GH#38103). Pulse launches one exact-head continuation per head. It finishes
+  the PR's own session is transparent (GH#38103). Such failures count once per runner, so only
+  a second failing runner pauses the head; a runner whose own launches failed twice since the
+  release skips it for the re-arm window and a healthy runner continues it (GH#39913).
+  Pulse launches one exact-head continuation per head. It first
+  merges an advanced PR base locally, so guidance and decisions recorded on the base after the
+  checkpoint forked apply (GH#39907). A conflict needing out-of-scope changes aborts that merge;
+  the continuation then works from the checkpoint head and says so in the PR body. It finishes
   the missing in-scope work and marks the draft ready, or records a concrete blocker with
   `mark-blocked`; already-landed work is `decision already_landed`. It never closes the
   draft. If it also releases at the same head, Pulse posts one

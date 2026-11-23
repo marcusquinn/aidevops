@@ -200,7 +200,6 @@ _build_signature() {
 	local solved="$7"
 	local issue_total_tokens="${8:-}"
 	local session_type="${9:-}"
-
 	local aidevops_version
 	aidevops_version=$(aidevops_find_version)
 
@@ -210,10 +209,7 @@ _build_signature() {
 		display_model="${display_model##*/}"
 	fi
 
-	# Target: [aidevops.sh](...) v3.5.10 in [CLI](...) v1.3.3 with claude-opus-4-6 used N tokens for Xm, Zm since this issue was created.
 	local sig="[aidevops.sh](https://aidevops.sh) v${aidevops_version}"
-
-	# "plugin for [CLI] vX.Y.Z"
 	if [[ -n "$cli_name" ]]; then
 		local url
 		url=$(_cli_url "$cli_name")
@@ -227,7 +223,6 @@ _build_signature() {
 		fi
 	fi
 
-	# "with model"
 	if [[ -n "$display_model" ]]; then
 		sig="${sig} with ${display_model}"
 	fi
@@ -280,6 +275,10 @@ _build_signature() {
 		local formatted_total
 		formatted_total=$(_format_number "$issue_total_tokens")
 		sig="${sig} ${formatted_total} total tokens on this issue."
+	fi
+	# Version the accounting unit without changing the historical footer grammar.
+	if [[ -n "$has_tokens" ]]; then
+		sig="${sig} Usage includes cache and reasoning. <!-- aidevops:usage:full-v1 -->"
 	fi
 
 	# If signature is just the version (no CLI, model, tokens, or time),
@@ -560,7 +559,7 @@ Options (record-child):
 
 Auto-detected fields (OpenCode sessions):
   - CLI name and version
-  - Token count (input+output from session DB, plus child subagent tokens)
+  - Full token usage (input, output, cache and reasoning, plus child sessions)
   - Child subagent tokens (from ledger written by record-child)
   - Session time (duration since session start)
   - Issue total tokens (sum of all signature footers by the authenticated

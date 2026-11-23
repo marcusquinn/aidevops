@@ -322,6 +322,12 @@ _choose_model_explicit() {
 		print_warning "$explicit_model is currently backed off"
 		return 75
 	fi
+	# GH#39936: a pin cannot run when every pool account for its provider is
+	# exhausted; report it as backed off rather than launch a doomed worker.
+	if [[ "$role" != "${HEADLESS_ROLE_MODEL_REPLAY:-model-replay}" ]] && ! provider_oauth_pool_available "$provider"; then
+		print_warning "$explicit_model provider ${provider} has no usable OAuth pool account"
+		return 75
+	fi
 	printf '%s' "$explicit_model"
 	return 0
 }

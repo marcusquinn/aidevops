@@ -901,13 +901,38 @@ _pulse_drain_requested_bundle() {
 }
 
 #######################################
+# t19300 (GH#39960): the dispatch side of a drain. A drained cycle whose
+# starved maintenance tail runs anyway (t19074, _pulse_drain_tail_starved in
+# pulse-watchdog.sh) does not exit early, so suppressing its dispatch bought
+# no activation latency: such cycles ran 20-35 min with no launch while
+# workers drained to 1-3 of 16 slots. Under that once-per-cycle verdict the
+# cycle dispatches like an undrained one; the census handoff, supervisor and
+# cycle-final drain handling still read _pulse_drain_requested_bundle.
+# AIDEVOPS_PULSE_DRAIN_TAIL_DISPATCH=0 restores the t19074 suppression.
+# Stdout: the activated bundle id when dispatch must stop
+# Returns: 0 when the drain suppresses dispatch, 1 otherwise
+#######################################
+_pulse_drain_suppresses_dispatch() {
+	local bundle=""
+	bundle=$(_pulse_drain_requested_bundle) || return 1
+	if [[ "${AIDEVOPS_PULSE_DRAIN_TAIL_DISPATCH:-1}" != "0" ]] &&
+		declare -F _pulse_drain_tail_starved >/dev/null 2>&1 &&
+		_pulse_drain_tail_starved "$bundle"; then
+		return 1
+	fi
+	printf '%s\n' "$bundle"
+	return 0
+}
+
+#######################################
 # t19064 (GH#38633): a dispatch round admitted before the drain request keeps
 # starting ranked candidates for a bounded grace. Stopping at the next
 # candidate boundary left 76% of ranked candidates unprocessed in drained
 # rounds, and every runtime activation writes the marker, so post-activation
 # launches waited a median 11 minutes. No new round, census or floor
 # re-enumeration starts under a drain (_dispatch_compute_capacity and floor
-# refill still read _pulse_drain_requested_bundle). The grace counts from the
+# refill read _pulse_drain_suppresses_dispatch; t19300 lets a starved-tail
+# cycle keep dispatching, so its admitted rounds also run on). The grace counts from the
 # earliest marker mtime this process has observed, so marker rewrites by
 # repeated activations never extend it. Launched candidates are in
 # the snapshot .consumed ledger handed to the activated bundle (GH#38048).
@@ -918,7 +943,7 @@ _pulse_drain_requested_bundle() {
 _pulse_drain_stops_admitted_round() {
 	local bundle="" grace="" now_epoch="" mtime="" age=0
 	_PULSE_DRAIN_ROUND_BUNDLE=""
-	bundle=$(_pulse_drain_requested_bundle) || return 1
+	bundle=$(_pulse_drain_suppresses_dispatch) || return 1
 	_PULSE_DRAIN_ROUND_BUNDLE="$bundle"
 	grace="${AIDEVOPS_PULSE_DRAIN_ROUND_GRACE_S:-600}"
 	[[ "$grace" =~ ^[0-9]+$ ]] || grace=600
@@ -959,15 +984,19 @@ _pulse_cycle_drain_exit() {
 	local bundle=""
 	[[ "${PULSE_DRAIN_FAST_EXIT:-1}" != "0" ]] || return 1
 	bundle=$(_pulse_drain_requested_bundle) || return 1
-	# Main dispatch cannot run again in this cycle; release its reserve.
-	_PULSE_MAIN_DISPATCH_RESERVE_S=0
 	# t19074: a starved maintenance tail runs once (pulse-watchdog.sh). The
 	# cycle-final event refill never reads the drain marker and would consume
 	# the retained trigger with no launch, so it always exits.
 	if [[ "$phase" != "cycle_final_refill" ]] && declare -F _pulse_drain_tail_starved >/dev/null 2>&1 &&
 		_pulse_drain_tail_starved "$bundle"; then
+		# t19300: main dispatch still runs under the override, so it keeps its
+		# reserve unless the override is non-dispatching.
+		_pulse_drain_suppresses_dispatch >/dev/null || return 1
+		_PULSE_MAIN_DISPATCH_RESERVE_S=0
 		return 1
 	fi
+	# Main dispatch cannot run again in this cycle; release its reserve.
+	_PULSE_MAIN_DISPATCH_RESERVE_S=0
 	# A skipped prefetch leaves STATE_FILE from an earlier cycle; a drain
 	# escape supervisor (GH#38162) must treat it as incomplete (GH#34000).
 	[[ "${_PULSE_PREFETCH_RAN:-0}" == "1" ]] || _PULSE_PREFETCH_DEGRADED=1
@@ -989,7 +1018,7 @@ _dispatch_compute_capacity() {
 		return 1
 	fi
 	local drain_bundle=""
-	if drain_bundle=$(_pulse_drain_requested_bundle); then
+	if drain_bundle=$(_pulse_drain_suppresses_dispatch); then
 		echo "[pulse-wrapper] Dispatch_max skipped: cooperative drain requested; activated bundle ${drain_bundle} starts next cycle (GH#37907)" >>"$LOGFILE"
 		return 1
 	fi
@@ -1606,6 +1635,8 @@ _dispatch_max_loop() {
 	fi
 	# t19122: this loop's budget after in-round top-ups (only ever raised).
 	local _DISPATCH_ROUND_TOPUP_BUDGET="$effective_slots" _DISPATCH_ROUND_TOPUP_GRANT=""
+	# t19301: the budget the ceremony ceiling was last sized for.
+	local parallel_budget="$effective_slots"
 	while IFS= read -r candidate_json; do
 		[[ -n "$candidate_json" ]] || continue
 		processed_count=$((processed_count + 1))
@@ -1632,6 +1663,11 @@ _dispatch_max_loop() {
 		_dispatch_max_await_slot _pids "$processed_count" "$outcomes_file" "$effective_slots" || break
 		# t19122: adopt a top-up granted while waiting for a slot.
 		effective_slots="$_DISPATCH_ROUND_TOPUP_BUDGET"
+		# t19301: a top-up past the sized budget raises the ceiling with it.
+		if ((effective_slots > parallel_budget)); then
+			max_parallel=$(_dispatch_max_topup_parallel "$max_parallel" "$effective_slots")
+			parallel_budget="$effective_slots"
+		fi
 
 		launches_so_far=$(_dispatch_max_count_outcomes "$outcomes_file")
 		in_flight_launches="${#_pids[@]}"
@@ -1713,6 +1749,24 @@ _dispatch_max_loop_topup() {
 		_dispatch_launch_slots_set_budget "$_DISPATCH_ROUND_TOPUP_GRANT" || return 1
 	fi
 	_DISPATCH_ROUND_TOPUP_BUDGET="$_DISPATCH_ROUND_TOPUP_GRANT"
+	return 0
+}
+
+# t19301: ceremony ceiling after a top-up raised the loop's slot budget. The
+# round-start constraints (_dispatch_max_compute_parallel: ceremony cap, eval
+# cap, throttle file, REST-core serial reserve) are re-read for the new budget,
+# so a round admitted with one free slot (ceiling 3) reaches the ceiling a
+# round admitted with that budget would get. Never lowers the ceiling.
+# Args: current ceiling, raised budget. Stdout: ceiling to use
+_dispatch_max_topup_parallel() {
+	local current="$1" budget="$2" raised=""
+	[[ "$current" =~ ^[1-9][0-9]*$ ]] || current=1
+	raised=$(_dispatch_max_compute_parallel "$budget")
+	if [[ "$raised" =~ ^[1-9][0-9]*$ ]] && ((raised > current)); then
+		echo "[pulse-wrapper] Dispatch_max: in-round top-up raising ceremony ceiling ${current} -> ${raised} (budget=${budget}) (t19301)" >>"$LOGFILE"
+		current="$raised"
+	fi
+	printf '%d\n' "$current"
 	return 0
 }
 

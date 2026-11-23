@@ -54,20 +54,44 @@ class RetirementProcesses(unittest.TestCase):
                     self.observe(output)
 
     def test_macos_partial_empty_or_failed_observation_fails_closed(self):
-        for output, code, stderr in (
-            (b"", 0, b""),
-            (b"p123\0\nf3\0n/outside\0\n", 0, b""),
-            (self.census(), 1, b""),
-            (self.census(), 0, b"warning"),
+        """GH#39953: each fail-closed branch names a fixed, path-free stage and cause."""
+        stat_warning = b"lsof: WARNING: can't stat() smbfs file system /Volumes/private share\n"
+        for output, code, stderr, stage, cause in (
+            (b"", 0, b"", "census", "self-missing"),
+            (b"p123\0\nf3\0n/outside\0\n", 0, b"", "census", "self-missing"),
+            (self.census() + b"p123\0\nf3\0n/outside\0\n", 0, b"", "cwd", "missing"),
+            (self.census(), 1, b"", "lsof-exit", "nonzero-exit"),
+            (self.census(), 0, b"warning", "lsof-stderr", "warning-other"),
+            (self.census(), 0, stat_warning, "lsof-stderr", "warning-stat"),
+            (b"n/outside\0\n", 0, b"", "parse", "orphan-name"),
+            (b"pabc\0\n", 0, b"", "parse", "bad-pid"),
         ):
-            with self.subTest(output=output, code=code, stderr=stderr):
-                with self.assertRaisesRegex(ValueError, "proc-observation-unavailable"):
+            with self.subTest(stage=stage, cause=cause, output=output):
+                with self.assertRaises(protected_proc.ProcessCensusUnavailable) as caught:
                     self.observe(output, code=code, stderr=stderr)
+                self.assertEqual(str(caught.exception), "proc-observation-unavailable")
+                observation = caught.exception.observation
+                self.assertEqual((observation["stage"], observation["cause"]), (stage, cause))
+                self.assertNotIn("private share", json.dumps(observation))
+                if stage == "cwd":
+                    self.assertEqual((observation["pid"], observation["missing"]), (123, 1))
+                if stage == "lsof-exit":
+                    self.assertEqual(observation["returncode"], 1)
+                details = error_details(caught.exception, "cleanup-worktree")
+                self.assertEqual((details["reason"], details["detail"]),
+                                 ("ValueError", "proc-observation-unavailable"))
+                self.assertEqual(details["process_observation"], observation)
 
     def test_macos_unavailable_binary_fails_closed(self):
-        with patch.object(legacy_proc_macos.subprocess, "run", side_effect=FileNotFoundError):
-            with self.assertRaisesRegex(ValueError, "proc-observation-unavailable"):
-                legacy_proc_macos.require_idle_macos(Path("/work/tree"))
+        for error, cause in ((FileNotFoundError, "oserror"),
+                             (subprocess.TimeoutExpired(["lsof"], 30), "timeout")):
+            with self.subTest(cause=cause):
+                with patch.object(legacy_proc_macos.subprocess, "run", side_effect=error):
+                    with self.assertRaises(protected_proc.ProcessCensusUnavailable) as caught:
+                        legacy_proc_macos.require_idle_macos(Path("/work/tree"))
+                self.assertEqual(str(caught.exception), "proc-observation-unavailable")
+                self.assertEqual(caught.exception.observation["stage"], "lsof-exec")
+                self.assertEqual(caught.exception.observation["cause"], cause)
 
     def test_native_dispatch(self):
         path = Path("/work/tree")

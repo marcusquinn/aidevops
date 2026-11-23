@@ -58,13 +58,42 @@ an old updater's plugin backups): move them to `~/backups/` with the same modes,
 or delete stale ones after the user confirms. Integrity alerts about PHP in
 uploads often point to them.
 
+## Secrets in wp-config.php
+
+To put a stored secret into a site's `wp-config.php` constant (an API token a
+plugin reads with `define()`, a private updater token), use `--config-secret`.
+Never pass the value to `wp config set` or as any other argument: WP-CLI echoes
+it, and `wp-helper.sh` prints the full command line.
+
+```bash
+aidevops secret CF_PURGE_TOKEN -- wp-helper.sh --config-secret <site> \
+  set CLOUDFLARE_API_TOKEN --value-env CF_PURGE_TOKEN [--dry-run]
+wp-helper.sh --config-secret <site> status CLOUDFLARE_API_TOKEN
+wp-helper.sh --config-secret <site> backups | undo --backup DIR
+```
+
+The value goes over SSH stdin, never argv. On the server, the helper backs up
+`wp-config.php` (0600, under `~/.aidevops-backups/config-secret/`, outside the
+web root), writes a single-line define in a marked block, parse-checks the
+result without `exec()`, and replaces the file atomically with its mode kept. A
+fresh PHP process then confirms the constant's length. Output shows only
+presence, length and file modes. Core, database and key constants (paths, URLs,
+cookies, multisite, `DB_*`, salts, `WP_SECRETS_KEY`) are refused. So are
+constants defined outside `wp-config.php`, in a multi-line form, or on a line
+with other code: edit those by hand. Backups hold the old
+value, so prune them once the rotation is confirmed.
+
+WordPress core has no secrets store for plugin constants: the 7.2 Secrets API
+was withdrawn before release, and the 7.0 Connectors API covers only registered
+AI connectors.
+
 ## Site-specific code
 
 Where a change to one site's behaviour goes, first match wins:
 
 1. **A setting** in the theme or plugin.
 2. **The theme or plugin repository**, when you control it: a PR, then a release.
-3. **SEO Pro Custom** ([`wpallstars/seoprocustom`](https://github.com/wpallstars/seoprocustom)) for code with no home in a repository you control: experiments, client-only changes, overrides of third-party themes and plugins. For non-confidential code, use the site's public fork. For confidential client code, do not use a public fork: choose **Use this template** to create a private repository instead. Follow the plugin README's private update-token setup: a fine-grained token limited to that repository with Contents read access, stored in each site's `wp-config.php`, never in Git. `WPALLSTARS_GITHUB_TOKEN` is the shared updater's default token for every repository it handles: if a site already uses it for another private plugin, do not replace it; use the repository-specific `wpallstars_github_token` filter for this copy. The shared updater does not run when Git Updater is active; either remove Git Updater or configure its own private-repository credentials. A template copy cannot sync fork history; bring upstream changes in without overwriting customisations.
+3. **SEO Pro Custom** ([`wpallstars/seoprocustom`](https://github.com/wpallstars/seoprocustom)) for code with no home in a repository you control: experiments, client-only changes, overrides of third-party themes and plugins. For non-confidential code, use the site's public fork. For confidential client code, do not use a public fork: choose **Use this template** to create a private repository instead. Follow the plugin README's private update-token setup: a fine-grained token limited to that repository with Contents read access, stored in each site's `wp-config.php` with `wp-helper.sh --config-secret` ([Secrets in wp-config.php](#secrets-in-wp-configphp)), never in Git. `WPALLSTARS_GITHUB_TOKEN` is the shared updater's default token for every repository it handles: if a site already uses it for another private plugin, do not replace it; use the repository-specific `wpallstars_github_token` filter for this copy. The shared updater does not run when Git Updater is active; either remove Git Updater or configure its own private-repository credentials. A template copy cannot sync fork history; bring upstream changes in without overwriting customisations.
 
    Add one file per change to `customizations/` in the site's repository, with its `Sites:`, `Requires:`, `Upstream:` and `Retire-When:` headers. `Sites:` defaults to `all`, so on a network set it to the blog IDs or hosts that need the change. First point `GitHub Plugin URI` (and `Update URI`, if set) in `seoprocustom.php` at the repository; otherwise the next update installs the blank build over it (README "Fork it and install it"). Then release the copy and install its release zip in place of the installed blank build: the blank build still checks the upstream repository and cannot offer the first private release. Later updates come from the copy. Follow the plugin's `AGENTS.md`: a documented filter or action first, then CSS, then code. The plugin reports each file as loaded, skipped, retired or failed (`wp seoprocustom list`). A file with a PHP error is skipped, and the site keeps working.
 

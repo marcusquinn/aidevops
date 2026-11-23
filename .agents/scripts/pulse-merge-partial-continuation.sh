@@ -27,6 +27,8 @@ _PULSE_MERGE_PARTIAL_CONTINUATION_LOADED=1
 # worker_ownership_lost is excluded: that release preserves a live owner.
 _PMPC_EVENT_PATTERN='(^|\n)(CLAIM_RELEASED reason=|DISPATCH_CLAIM |DISPATCH_LEASE phase=|Dispatching worker|(> )?Interactive session claimed)'
 _PMPC_MARKER_KIND="merged-partial-continuation"
+# Protective holds: the guard and the GH#39948 in-review snapshot share them.
+_PMPC_HOLD_LABELS_JSON='["hold-for-review","no-auto-dispatch","needs-maintainer-review","needs-maintainer-permissions","persistent"]'
 # Any GitHub closing reference: a closing keyword, optionally followed by a
 # colon, then #N, GH-N, owner/repo#N or an issue URL. _extract_linked_issue
 # recognises only `keyword #N` separated by whitespace.
@@ -218,14 +220,10 @@ _pmpc_issue_has_label() {
 _pmpc_issue_scope() {
 	local issue_json="$1"
 	local scope=""
-	scope=$(printf '%s' "$issue_json" | jq -r '
+	scope=$(printf '%s' "$issue_json" | jq -r --argjson holds "$_PMPC_HOLD_LABELS_JSON" '
 		def names: [.labels[]? | if type == "string" then . else (.name // empty) end];
 		def statuses: [names[] | select(startswith("status:"))];
-		def protected: names | any(
-			. == "hold-for-review" or . == "no-auto-dispatch" or
-			. == "needs-maintainer-review" or . == "needs-maintainer-permissions" or
-			. == "persistent"
-		);
+		def protected: names | any(. as $n | $holds | index($n));
 		if (.pull_request != null) or (((.state // "") | ascii_downcase) != "open") then "ineligible"
 		elif (statuses != ["status:in-review"]) or protected then "ineligible"
 		elif (names | index("parent-task")) != null then "parent"
@@ -247,7 +245,8 @@ _pmpc_issue_scope() {
 # Any later claim means another owner is live. A marker means work was done.
 # Args: $1=comments JSON (one page or `gh api --paginate --slurp` pages),
 #       $2=merged PR number
-# Stdout: runner login (runner= field of CLAIM_RELEASED, else comment author)
+# Stdout: runner login (runner= field of CLAIM_RELEASED, else comment author);
+#         for a live lease (return 1) "recheck=<epoch>" once it leaves its grace
 # Returns: 0 when a finished worker run is the newest owner, 1 otherwise
 #          (including any unreadable comment entry)
 #######################################
@@ -277,8 +276,9 @@ _pmpc_release_owner_from_comments() {
 				. as $event
 				| [(.body | split("\n")[] | select(test("^DISPATCH_LEASE phase="))
 					| capture("(^| )expires_at=(?<expiry>[0-9]+)([ \\r]|$)") | .expiry | tonumber)] as $expiries
-				| if ($expiries | length) == 1 and $expiries[0] < ($now - $grace)
-					then "released:" + $event.login else "live" end
+				| if ($expiries | length) != 1 then "live"
+					elif $expiries[0] < ($now - $grace) then "released:" + $event.login
+					else "lease:" + (($expiries[0] + $grace + 1) | tostring) end
 			else "live" end
 		end
 	' 2>/dev/null) || return 1
@@ -287,6 +287,7 @@ _pmpc_release_owner_from_comments() {
 		printf '%s' "${verdict#released:}"
 		return 0
 		;;
+	lease:[0-9]*) printf 'recheck=%s' "${verdict#lease:}" ;;
 	esac
 	return 1
 }
@@ -330,27 +331,35 @@ _pmpc_other_open_pr_owns_issue() {
 	local repo_slug="$1"
 	local issue_num="$2"
 	local merged_pr="$3"
-	local prs_json="" count=""
+	local refs=""
+	refs=$(_pmpc_open_pr_references "$repo_slug" "$merged_pr") || return 0
+	jq -e --argjson num "$issue_num" 'index($num) == null' <<<"$refs" >/dev/null 2>&1 && return 1
+	return 0
+}
+
+# GH#39948: every issue number the open PRs (except $2) reference in the form
+# above. The in-review snapshot drops those candidates with this same read.
+# Args: $1=repo slug, $2=PR number to ignore (may be empty)
+# Stdout: JSON array of issue numbers
+# Returns: 0 on success, 1 when the listing or any entry is unreadable
+_pmpc_open_pr_references() {
+	local repo_slug="$1" ignored_pr="${2:-}" prs_json=""
 	prs_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls?state=open&per_page=100" \
-		--paginate --slurp 2>/dev/null) || return 0
-	count=$(printf '%s' "$prs_json" | jq -r --arg num "$issue_num" --arg merged "$merged_pr" \
-		--arg slug "$repo_slug" '
+		--paginate --slurp 2>/dev/null) || return 1
+	printf '%s' "$prs_json" | jq -c --arg ignored "$ignored_pr" --arg slug "$repo_slug" '
 		($slug | gsub("[.]"; "\\.")) as $slug_re
 		| ("(^|[^a-z0-9_])(close[ds]?|fix(es|ed)?|resolve[ds]?|for|ref)[\\s:]+(("
-			+ $slug_re + ")?#|gh-|https?://github\\.com/" + $slug_re + "/issues/)"
-			+ $num + "([^0-9]|$)") as $reference
+			+ $slug_re + ")?#|gh-|https?://github\\.com/" + $slug_re + "/issues/)(?<num>[0-9]+)") as $reference
 		| if type != "array" then error("unexpected PR list shape")
 		elif (.[0]? | type) == "array" then [.[][]] else . end
 		| if any(.[]; (type != "object") or ((.number | type) != "number")
 			or (has("body") | not) or ((.body | type) as $t | $t != "string" and $t != "null"))
-		then error("unreadable PR entry")
-		else [.[] | select((.number | tostring) != $merged)
-			| select((.body // "") | test($reference; "i"))]
-			| length end
-	' 2>/dev/null) || return 0
-	[[ "$count" =~ ^[0-9]+$ ]] || return 0
-	[[ "$count" -gt 0 ]] && return 0
-	return 1
+		then error("unreadable PR entry") else . end
+		| [.[] | select((.number | tostring) != $ignored) | (.body // "")
+			| match($reference; "gi") | .captures[] | select(.name == "num") | .string | tonumber]
+		| unique
+	' 2>/dev/null || return 1
+	return 0
 }
 
 #######################################
@@ -598,6 +607,7 @@ _pm_restore_partial_continuation() {
 	[[ "$target" =~ ^[0-9]+$ ]] || return 0
 	[[ -z "$expected_target" || "$target" == "$expected_target" ]] || return 0
 	if ! pr_author=$(_pmpc_merged_pr_author "$repo_slug" "$pr_number"); then
+		_pmpc_mark_review_demand "$repo_slug" "${PULSE_PARTIAL_RECHECK_SECONDS:-600}" relative
 		echo "[pulse-wrapper] Deterministic merge: kept #${target} in review after partial PR #${pr_number} — merge not confirmed by a fresh PR read (GH#34312)" >>"$LOGFILE"
 		return 0
 	fi
@@ -607,6 +617,9 @@ _pm_restore_partial_continuation() {
 	scope=$(_pmpc_issue_scope "$issue_json") || return 0
 	comments_json=$(_pmpc_gh_read api "${issue_api}/comments?per_page=100" --paginate --slurp 2>/dev/null) || return 0
 	if ! runner_login=$(_pmpc_release_owner_from_comments "$comments_json" "$pr_number"); then
+		# GH#39948: a lease still live at merge time later expires without a
+		# release; recheck once it leaves its grace rather than at the rotation.
+		[[ "$runner_login" != recheck=* ]] || _pmpc_mark_review_demand "$repo_slug" "${runner_login#recheck=}"
 		echo "[pulse-wrapper] Deterministic merge: kept #${target} in review after partial PR #${pr_number} — newest owner is not a finished worker run or continuation already recorded (GH#34312)" >>"$LOGFILE"
 		return 0
 	fi
@@ -1120,18 +1133,88 @@ _pmpc_restore_checkpoint_spec_dispatch() {
 	return 0
 }
 
-# GH#38039: list one page of label-filtered revisit candidates.
+# GH#39948: local recheck hint (one epoch) for a repo's in-review partials. The
+# Pulse partial-continuation lane (pulse-wrapper-cycle.sh) treats a due hint as
+# demand. Args: $1=repo slug. Stdout: the hint path.
+_pmpc_recheck_file() {
+	local repo_slug="$1"
+	printf '%s/%s.recheck' "${PULSE_PARTIAL_RECONCILE_STATE_DIR:-${HOME}/.aidevops/cache/partial-continuation}" "${repo_slug//\//__}"
+	return 0
+}
+
+# Arm the hint at epoch $2 (now + $2 seconds when $3 is "relative"); an earlier
+# armed recheck wins. Best effort: a failed write leaves the revisit to the rotation.
+_pmpc_mark_review_demand() {
+	local repo_slug="$1" due="$2" mode="${3:-}" now_epoch=0 file="" armed=""
+	[[ "$repo_slug" == */* && "$due" =~ ^[0-9]{1,12}$ ]] || return 0
+	if [[ "$mode" == relative ]]; then
+		now_epoch=$(date +%s) || return 0
+		due=$((now_epoch + due))
+	fi
+	file=$(_pmpc_recheck_file "$repo_slug")
+	[[ ! -r "$file" ]] || IFS= read -r armed <"$file" || true
+	[[ "$armed" =~ ^[0-9]{1,12}$ && "$armed" -le "$due" ]] && return 0
+	mkdir -p "${file%/*}" 2>/dev/null && printf '%s\n' "$due" >"$file" 2>/dev/null || return 0
+	echo "[pulse-wrapper] partial-continuation recheck armed for ${repo_slug} at ${due} (GH#39948)" >>"$LOGFILE"
+	return 0
+}
+
+# A snapshot satisfies a due hint; a future one (a lease in its grace) stays.
+_pmpc_consume_review_demand() {
+	local repo_slug="$1" now_epoch="$2" file="" due=""
+	file=$(_pmpc_recheck_file "$repo_slug")
+	[[ -r "$file" ]] || return 0
+	IFS= read -r due <"$file" || true
+	[[ "$due" =~ ^[0-9]{1,12}$ && "$due" -gt "$now_epoch" ]] || rm -f "$file" 2>/dev/null || true
+	return 0
+}
+
+# GH#39948: list the whole in-review set in one paginated read, newest update
+# first. Paging the label-filtered listing skipped one unvisited issue per
+# restore, as each restore left the set and shifted later pages left. Drop the
+# candidates the guard rejects from the listing alone, with no timeline read:
+# one an open PR references, or whose labels carry a hold or another status.
+# Labels drop only on positive evidence, and an unreadable open-PR listing
+# keeps every candidate; the guard re-reads and decides.
+# Args: $1=repo slug
+# Stdout: the snapshot length on line 1, then one candidate per line
+# Returns: 0 on success, 1 on an unreadable listing
+_pmpc_review_snapshot() {
+	local repo_slug="$1" now_epoch=0 refs="[]" issues_json=""
+	now_epoch=$(date +%s) || return 1
+	issues_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues?state=open&labels=status:in-review&sort=updated&direction=desc&per_page=100" \
+		--paginate --slurp 2>/dev/null) || return 1
+	issues_json=$(printf '%s' "$issues_json" | jq -c '
+		if type != "array" then null elif (.[0]? | type) == "array" then [.[][]] else . end
+		| if type == "array" and all(.[]; (.number | type) == "number") then . else error("unreadable snapshot") end' 2>/dev/null) || return 1
+	_pmpc_consume_review_demand "$repo_slug" "$now_epoch"
+	[[ "$issues_json" == "[]" ]] || refs=$(_pmpc_open_pr_references "$repo_slug" "") || refs="[]"
+	printf '%s' "$issues_json" | jq -r --argjson refs "$refs" --argjson holds "$_PMPC_HOLD_LABELS_JSON" '
+		length, (.[] | select(.pull_request == null) | . as $issue
+		| [(.labels | if type == "array" then .[] else empty end) | (.name? // .) | strings] as $names
+		| select(($refs | index($issue.number)) == null)
+		| select(any($names[]; . as $n | ($holds | index($n)) != null
+			or (test("^status:") and . != "status:in-review")) | not)
+		| .number)' 2>/dev/null || return 1
+	return 0
+}
+
+# GH#38039: list label-filtered revisit candidates: the in-review snapshot, or
+# one page of available worker issues without auto-dispatch.
 # Args: $1=repo slug, $2=phase (review|available), $3=page, $4=page size
-# Stdout: the raw page length on line 1, then one candidate issue number per line
+# Stdout: the raw listing length on line 1, then one candidate issue number per line
 # Returns: 0 on success, 1 on an unreadable listing
 _pmpc_list_candidates() {
-	local repo_slug="$1" phase="$2" page="$3" cap="$4" labels="status:in-review" page_json="" numbers="" count=""
-	[[ "$phase" != available ]] || labels="status:available,origin:worker"
-	page_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues?state=open&labels=${labels}&sort=created&direction=asc&per_page=${cap}&page=${page}" 2>/dev/null) || return 1
-	numbers=$(printf '%s' "$page_json" | jq -r --arg phase "$phase" '
+	local repo_slug="$1" phase="$2" page="$3" cap="$4" page_json="" numbers="" count=""
+	if [[ "$phase" != available ]]; then
+		_pmpc_review_snapshot "$repo_slug"
+		return $?
+	fi
+	page_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues?state=open&labels=status:available,origin:worker&sort=created&direction=asc&per_page=${cap}&page=${page}" 2>/dev/null) || return 1
+	numbers=$(printf '%s' "$page_json" | jq -r '
 		if type != "array" or any(.[]; (.number | type) != "number") then error("unreadable issues")
 		else .[] | select(.pull_request == null)
-			| select($phase != "available" or ([(.labels // [])[] | (.name? // .)] | index("auto-dispatch") | not))
+			| select([(.labels // [])[] | (.name? // .)] | index("auto-dispatch") | not)
 			| .number end
 	' 2>/dev/null) || return 1
 	count=$(printf '%s' "$page_json" | jq 'length') || return 1
@@ -1257,6 +1340,8 @@ _pmpc_revisit_in_review_issue() {
 # Full pages continue within the deadline (GH#38677; optional page budget
 # PULSE_PARTIAL_RECONCILE_MAX_PAGES, 0 = unbounded); the final available page
 # resets the cursor and starts the normal cadence interval.
+# GH#39948: the in-review phase is one snapshot, so "1" starts it and an older
+# "N" in-review token restarts it.
 # Cursor: line 1 = next page ("N" in-review, "aN" available), optional
 # "phase=review|available" for the pending issues, then pending issue numbers.
 # Process one page of pending issues, persisting the cursor before each issue.
@@ -1336,7 +1421,8 @@ _pm_reconcile_partial_continuations() {
 			[[ "$count" =~ ^[0-9]+$ ]] || return 1
 			last_page=1
 			next_page="$page"
-			if [[ "$count" -ge "$cap" ]]; then
+			# GH#39948: the in-review snapshot is complete in one read.
+			if [[ "$phase" == available && "$count" -ge "$cap" ]]; then
 				next_page=$((page + 1))
 				last_page=0
 			fi

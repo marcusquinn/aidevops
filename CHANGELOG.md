@@ -10,6 +10,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.268] - 2026-11-23
+
+### Changed
+
+- Tests: cover secret-helper get trailing whitespace trim (GH#39932)
+
+### Fixed
+
+- ship missing wp-config-secret.php payload for --config-secret (gitignored *secret*.php)
+- provision routine retirement label and report failures (GH#39935) (#39940)
+- a trusted re-arm receipt continues a worker draft held only by its own earlier hold (GH#39919)
+- pre-push check_secrets misreports secretlint config errors as secrets
+
+## [3.39.267] - 2026-11-22
+
+### Added
+
+- wp-helper.sh --config-secret writes wp-config.php secret constants without argv exposure
+
+### Changed
+
+- Maintenance: mark t19294 complete (pr:#39923 completed:2026-11-22) (#39915)
+
+### Fixed
+
+- count never-launched continuations per runner and fence only the failing runner
+- classify secretlint scanner errors separately from findings (#39927)
+- repair Verification lines with no recognised level (#39925)
+- a failed handover continuation launch no longer strands the interactive draft (GH#39920)
+- hand over stale interactive drafts to a real continuation worker (GH#39908)
+- starter-sync trust reads qualified Files Scope entries and names its refusal
+- continuation workers integrate an advanced PR base before working
+- resolve For #N work issue for held-PR supersession proof
+
 ## [3.39.266] - 2026-11-22
 
 ### Added
