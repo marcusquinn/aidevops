@@ -101,6 +101,11 @@ text = path.read_text()
 if path.name == "setup.sh":
     modules = path.parent / ".agents/scripts/setup/modules"
     for name in ("setup-interface.sh", "setup-execution.sh", "setup-postflight.sh"):
+        needle = 'source "${SETUP_IMPL_MODULES_DIR}/' + name + '"'
+        if needle not in text:
+            print(f"setup.sh does not source {name}", file=sys.stderr)
+            sys.exit(1)
+    for name in ("setup-interface.sh", "setup-execution.sh", "setup-postflight.sh"):
         text += "\n" + (modules / name).read_text()
 print(text)
 PY
