@@ -7,6 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)" || exit 1
 SETUP_SCRIPT="$REPO_ROOT/setup.sh"
+SETUP_EXECUTION="$REPO_ROOT/.agents/scripts/setup/modules/setup-execution.sh"
 RELEASE_LIB="$REPO_ROOT/.agents/scripts/version-manager-release.sh"
 
 line_for() {
@@ -35,12 +36,12 @@ main() {
 	dispatch_line=$(line_for '^[[:space:]]*_setup_run_non_interactive$' "$SETUP_SCRIPT" | while IFS= read -r line_number; do
 		[[ "$line_number" -gt "$acquire_line" ]] && printf '%s\n' "$line_number" && break
 	done)
-	noninteractive_function_line=$(line_for '^_setup_run_non_interactive()' "$SETUP_SCRIPT")
+	noninteractive_function_line=$(line_for '^_setup_run_non_interactive()' "$SETUP_EXECUTION")
 	# shellcheck disable=SC2016 # Match literal source expressions.
-	deploy_line=$(line_for '_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents' "$SETUP_SCRIPT" | while IFS= read -r line_number; do
+	deploy_line=$(line_for '_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents' "$SETUP_EXECUTION" | while IFS= read -r line_number; do
 		[[ "$line_number" -gt "$noninteractive_function_line" ]] && printf '%s\n' "$line_number" && break
 	done)
-	converge_line=$(line_for '_time_step "install_aidevops_cli" install_aidevops_cli' "$SETUP_SCRIPT" | while IFS= read -r line_number; do
+	converge_line=$(line_for '_time_step "install_aidevops_cli" install_aidevops_cli' "$SETUP_EXECUTION" | while IFS= read -r line_number; do
 		[[ "$line_number" -gt "$deploy_line" ]] && printf '%s\n' "$line_number" && break
 	done)
 	exit_trap_line=$(line_for "trap '_setup_cleanup_noninteractive_children; _setup_release_noninteractive_setup_lock' EXIT" "$SETUP_SCRIPT")

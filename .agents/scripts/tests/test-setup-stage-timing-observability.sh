@@ -6,6 +6,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 SETUP_SH="${SCRIPT_DIR}/../../../setup.sh"
+SETUP_EXECUTION="${SCRIPT_DIR}/../setup/modules/setup-execution.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -77,7 +78,7 @@ test_time_step_logs_running_before_command() {
 
 test_noninteractive_cli_failure_continues_config_reconciliation() {
 	local snippet=""
-	snippet=$(perl -0ne 'print $1 if /(_setup_run_noninteractive_migrations\(\) \{.*?^\}\n\n_setup_run_non_interactive\(\) \{.*?^\})/ms' "$SETUP_SH")
+	snippet=$(perl -0ne 'print $1 if /(_setup_run_noninteractive_migrations\(\) \{.*?^\}\n\n_setup_run_non_interactive\(\) \{.*?^\})/ms' "$SETUP_EXECUTION")
 	if [[ -z "$snippet" ]]; then
 		print_result "non-interactive setup extraction succeeds" 1 "setup function block not found"
 		return 0

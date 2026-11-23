@@ -194,7 +194,7 @@ if ! grep -qF 'source "${SETUP_IMPL_MODULES_DIR}/source-access.sh"' "$REPO_ROOT/
 	printf 'FAIL: setup.sh does not source the broker provisioning module\n' >&2
 	exit 1
 fi
-setup_calls=$(grep -c 'setup_source_access_broker_nonfatal' "$REPO_ROOT/setup.sh" 2>/dev/null || true)
+setup_calls=$(grep -c 'setup_source_access_broker_nonfatal' "$REPO_ROOT/.agents/scripts/setup/modules/setup-execution.sh" 2>/dev/null || true)
 [[ "$setup_calls" =~ ^[0-9]+$ ]] || setup_calls=0
 if [[ "$setup_calls" -lt 2 ]]; then
 	printf 'FAIL: broker provisioning is not wired into both setup paths\n' >&2
@@ -205,7 +205,7 @@ if ! grep -qF '_run_update_source_access_reconciliation' "$REPO_ROOT/aidevops.sh
 	exit 1
 fi
 if ! grep -qF 'SETUP_EXPLICIT_NON_INTERACTIVE' "$REPO_ROOT/setup.sh" ||
-	grep -qF 'AIDEVOPS_SOURCE_ACCESS_INTERACTIVE=true _setup_run_non_interactive' "$REPO_ROOT/setup.sh"; then
+	grep -qF 'AIDEVOPS_SOURCE_ACCESS_INTERACTIVE=true _setup_run_non_interactive' "$REPO_ROOT/setup.sh" "$REPO_ROOT/.agents/scripts/setup/modules/setup-execution.sh"; then
 	printf 'FAIL: non-interactive setup can expose a hidden source-access prompt\n' >&2
 	exit 1
 fi
