@@ -398,7 +398,7 @@ get_npm_pkg_version() {
 	return 1
 }
 
-# Report (never delete) a Bun-global copy that duplicates an npm-managed package.
+# Read-only checks never recommend deleting a binary still used by a config.
 _warn_bun_global_duplicate() {
 	local pkg="$1"
 	local bun_dir="${HOME:-}/.bun/install/global/node_modules/${pkg}"
@@ -406,7 +406,84 @@ _warn_bun_global_duplicate() {
 	local npm_root
 	npm_root="$(npm root -g 2>/dev/null)" || return 0
 	[[ -f "${npm_root}/${pkg}/package.json" ]] || return 0
-	printf '  ⚠ %s is installed by both npm and Bun; reading the npm copy. Remove the Bun copy: bun remove -g %s\n' "$pkg" "$pkg" >&2
+	printf '  ⚠ %s has a Bun copy; update mode repairs managed references before consolidating (AIDEVOPS_KEEP_BUN_DUPLICATES=1 opts out).\n' "$pkg" >&2
+	return 0
+}
+
+# Only called for a matching npm row, never for arbitrary Bun globals. Keep
+# reporting/JSON read-only. All config repairs must succeed before removal.
+_consolidate_bun_global_duplicate() {
+	local pkg="$1"
+	local bin="$2"
+	local spec category name row_bin flag row_pkg rest managed=false
+	for spec in "${NPM_TOOLS[@]}"; do
+		IFS='|' read -r category name row_bin flag row_pkg rest <<<"$spec"
+		[[ "$row_pkg" == "$pkg" && "$row_bin" == "$bin" ]] && managed=true
+	done
+	[[ "$managed" == true && "${AIDEVOPS_KEEP_BUN_DUPLICATES:-0}" != 1 ]] || return 0
+	[[ -d "$HOME/.bun/install/global/node_modules/$pkg" ]] || return 0
+	local prefix="" root=""
+	prefix=$(npm prefix -g 2>/dev/null) || prefix=""
+	root=$(npm root -g 2>/dev/null) || root=""
+	if [[ "$prefix" != /* || -z "$root" || ! -f "$root/$pkg/package.json" || ! -x "$prefix/bin/$bin" ]] ||
+		[[ "$prefix/bin/$bin" -ef "$HOME/.bun/bin/$bin" ]] ||
+		! command -v bun &>/dev/null || ! command -v python3 &>/dev/null; then
+		printf '  ⚠ Keeping Bun %s: independent executable npm copy or repair tooling unavailable (%s/bin/%s).\n' "$pkg" "$prefix" "$bin" >&2
+		return 0
+	fi
+	# Include every application handled by cleanup_deprecated_mcps, both OpenCode
+	# config forms, and explicitly relocated user configs. Never edit project configs.
+	if ! python3 - "$HOME/.bun/bin/$bin" "$prefix/bin/$bin" <<'PY'
+import json
+import os
+from pathlib import Path
+import re
+import sys
+
+old, new = sys.argv[1:]
+home = Path.home()
+roots = [Path(os.environ.get('XDG_CONFIG_HOME', home / '.config')) / 'opencode',
+         home / '.config/opencode', home / '.opencode',
+         home / 'Library/Application Support/opencode']
+paths = [root / name for root in roots for name in ('opencode.json', 'opencode.jsonc')]
+opt = os.environ.get('AIDEVOPS_OPENCODE_USER_CONFIG')
+if opt:
+    p = Path(opt)
+    paths.extend([p / 'opencode.json', p / 'opencode.jsonc'] if p.is_dir() else [p])
+paths.extend(home / p for p in ('.claude.json', '.cursor/mcp.json',
+    '.codeium/windsurf/mcp_config.json', '.gemini/settings.json', '.kilo/mcp.json',
+    '.kiro/settings/mcp.json', '.amp/settings.json', '.continue/config.json',
+    '.codex/config.toml', '.aider.conf.yml'))
+try:
+    for path in dict.fromkeys(paths):
+        if not path.exists() and not path.is_symlink():
+            continue
+        text = path.read_text()
+        # Replace only complete quoted paths, preserving JSONC/TOML/YAML
+        # comments and formatting. Escaped JSON paths are supported as well.
+        repaired = text
+        for before, after in ((old, new), (json.dumps(old)[1:-1], json.dumps(new)[1:-1]),
+                              (old.replace('/', '\\/'), new.replace('/', '\\/'))):
+            repaired = re.sub(r'([\"\x27])' + re.escape(before) + r'\1',
+                              lambda m: m[1] + after + m[1], repaired)
+        if repaired != text:
+            # Write through symlinks; keep the user's config permissions.
+            path.write_text(repaired)
+        verified = path.read_text()
+        if any(value in verified for value in (old, json.dumps(old)[1:-1], old.replace('/', '\\/'))):
+            raise ValueError(f'remaining reference in {path}')
+except (OSError, UnicodeError, ValueError) as exc:
+    print(f'  Keeping Bun copy: config repair/verification failed: {exc}', file=sys.stderr)
+    sys.exit(1)
+PY
+	then
+		return 0
+	fi
+	if bun remove -g "$pkg" >&2; then
+		printf '  Removed duplicate Bun package %s after repairing and verifying managed references.\n' "$pkg" >&2
+	else
+		printf '  ⚠ Bun removal failed for %s; managed references now use npm.\n' "$pkg" >&2
+	fi
 	return 0
 }
 
@@ -1082,6 +1159,9 @@ check_category() {
 	for tool_spec in "${tools[@]}"; do
 		IFS='|' read -r category name cmd ver_flag pkg update_cmd <<<"$tool_spec"
 		_tool_package_supported_on_platform "$pkg" || continue
+		if [[ "$category" == npm && "$AUTO_UPDATE" == true && "$JSON_OUTPUT" != true ]]; then
+			_consolidate_bun_global_duplicate "$pkg" "$cmd"
+		fi
 		check_tool "$category" "$name" "$cmd" "$ver_flag" "$pkg" "$update_cmd"
 	done
 	return 0
