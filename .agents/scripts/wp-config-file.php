@@ -186,8 +186,18 @@ if ( ! class_exists( 'WPAD_Config_File' ) ) {
 		 */
 		private static function without_constants( $config, array $names, $marker ) {
 			$quoted = implode( '|', array_map( 'preg_quote', $names, array_fill( 0, count( $names ), '/' ) ) );
+			$define = '/^[ \t]*define\(\s*[\'"](' . $quoted . ')[\'"]\s*,.*\);[ \t]*\R/m';
 			$config = preg_replace( '/^[ \t]*' . preg_quote( $marker, '/' ) . '[ \t]*\R/m', '', $config );
-			$config = preg_replace( '/^[ \t]*define\(\s*[\'"](?:' . $quoted . ')[\'"]\s*,.*\);[ \t]*\R/m', '', $config );
+			// The define pattern takes the whole line, so a line with more
+			// statements (another define, an assignment) would lose them:
+			// require one `;` token per matched line. A `;` inside a string
+			// value is part of a string token, not a `;` token.
+			preg_match_all( $define, $config, $lines );
+			$ends = array_keys( token_get_all( '<?php ' . implode( '', $lines[0] ) ), ';', true );
+			if ( count( $ends ) !== count( $lines[0] ) ) {
+				throw new WPAD_Config_Error( 'wp-config.php has other code on a line that defines ' . implode( ' or ', array_unique( $lines[1] ) ) . '; put each statement on its own line', 1 );
+			}
+			$config = preg_replace( $define, '', $config );
 			foreach ( $names as $name ) {
 				if ( self::mentions( $config, $name ) ) {
 					throw new WPAD_Config_Error( 'wp-config.php mentions ' . $name . ' in a form this tool cannot replace; edit it by hand', 1 );

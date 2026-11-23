@@ -398,7 +398,7 @@ mkdir -p "$T"
 FX="$(mktemp -d "$T/wp-fixture.XXXXXX")" || { echo "fixture creation failed" >&2; exit 1; }   # unique per run; stop on failure
 export FX
 ORIG_DIR="$PWD"
-mkdir -p "$FX/site" "$FX/home" "$FX/bin" "$FX/tmp" "$FX/wpcache"
+mkdir -p "$FX/site" "$FX/home" "$FX/bin" "$FX/tmp" "$FX/wpcache" "$FX/export"
 export WP_CLI_CONFIG_PATH="$FX/wp-cli.yml"   # ignore ~/.wp-cli/config.yml (it could point at a real site)
 : > "$WP_CLI_CONFIG_PATH"
 export WP_CLI_CACHE_DIR="$FX/wpcache"   # keep the core download cache inside the fixture
@@ -442,10 +442,13 @@ SQLite-only plugin bug (Fluent Boards 2.3.0): on SQLite, WPFluent's `addUpdatedA
 
 ### 3. Isolate the site registry
 
-`wp-helper.sh` derives every config and payload-backup path from `HOME`. Run it with `HOME="$FX/home"` so the real registry is untouched. Register the fixture in `$FX/home/.config/aidevops/wordpress-sites.json` (format: `configs/wordpress-sites.json.txt`; confirm the directory via `WP_CONFIG_DIR` in `scripts/wp-helper.sh`), then:
+`wp-helper.sh` derives every config and payload-backup path from `HOME`. Run it with `HOME="$FX/home"` so the real registry is untouched. Run the helper from committed content, not the authoring worktree or the installed copy: a new payload that `.gitignore` skips (GH#39937) then fails here instead of after release. Register the fixture in `$FX/home/.config/aidevops/wordpress-sites.json` (format: `configs/wordpress-sites.json.txt`; confirm the directory via `WP_CONFIG_DIR` in `scripts/wp-helper.sh`), then:
 
 ```bash
-HOME="$FX/home" wp-helper.sh --fluentsmtp <fixture-site> list
+mkdir -p "$FX/export"
+git -C <worktree> archive HEAD .agents/scripts | tar -x -C "$FX/export"
+H="$FX/export/.agents/scripts/wp-helper.sh"   # every later step calls "$H", never bare wp-helper.sh
+HOME="$FX/home" "$H" --fluentsmtp <fixture-site> list
 ```
 
 ### 4. SSH transport without sshd
