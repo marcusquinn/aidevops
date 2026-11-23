@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { createBoundedInteractiveOperationTool } from "../bounded-operation-tool.mjs";
 import { createProcessTreeTracker } from "../bounded-operation-process-tree.mjs";
-import { root, owner, recorded, manager, launcher, SUCCESS_BUDGET_MS, terminal } from "./bounded-operation-fixtures.mjs";
+import { root, owner, recorded, manager, launcher, SUCCESS_BUDGET_MS, operationWaitMs, terminal } from "./bounded-operation-fixtures.mjs";
 
 // Registered inside the existing lifecycle suite, using its shared fixture and
 // unchanged node --test entrypoint rather than a new runner.
@@ -118,7 +118,7 @@ export function terminationCases() {
         supervisor_exit: () => process.kill(-operation.child.pid, "SIGKILL"),
       };
       actions[cause]();
-      const deadline = Date.now() + 15_000;
+      const deadline = Date.now() + operationWaitMs(instance, started.operation_id);
       while (!["failed", "cancelled"].includes(operation.state) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
       assert.ok(["failed", "cancelled"].includes(operation.state));
       assert.equal(instance.receipt(operation).termination_cause, cause);
@@ -241,7 +241,7 @@ function restorationTerminationCases() {
     const started = await instance.start({ command: [process.execPath, "-e", "process.exit(0)"],
       restorationCommand: [process.execPath, "-e", "process.on('SIGTERM',()=>setTimeout(()=>process.exit(0),100)); console.log('AIDEVOPS_PROGRESS: restoration-ready'); setInterval(()=>{},1000)"],
       budgetMs: SUCCESS_BUDGET_MS, restorationBudgetMs: SUCCESS_BUDGET_MS, killGraceMs: 1500 }, owner);
-    const deadline = Date.now() + 5000;
+    const deadline = Date.now() + operationWaitMs(instance, started.operation_id);
     while (!instance.status(started.operation_id, owner).progress_events && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
     assert.equal(instance.status(started.operation_id, owner).progress_events, 1);
     instance.dispose();
@@ -268,12 +268,12 @@ function sameGroupSurvivorCases() {
         });
       `], budgetMs: SUCCESS_BUDGET_MS, killGraceMs: 300_000 }, owner);
       if (cancel) {
-        const deadline = Date.now() + 5000;
+        const deadline = Date.now() + operationWaitMs(instance, started.operation_id);
         while (!instance.status(started.operation_id, owner).progress_events && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
         assert.equal(instance.status(started.operation_id, owner).progress_events, 1);
         instance.cancel(started.operation_id, owner);
       }
-      const result = await terminal(instance, started.operation_id, owner, 5000);
+      const result = await terminal(instance, started.operation_id);
       assert.equal(result.state, cancel ? "cancelled" : "succeeded");
       assert.equal(result.process_exit, 0);
       assert.equal(result.termination_cause, cancel ? "cancel" : "post_exit_cleanup");

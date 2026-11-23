@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { root, owner, recorded, manager, launcher, SUCCESS_BUDGET_MS, terminal } from "./bounded-operation-fixtures.mjs";
+import { root, owner, recorded, manager, launcher, SUCCESS_BUDGET_MS, operationWaitMs, terminal } from "./bounded-operation-fixtures.mjs";
 import { terminationCases } from "./bounded-operation-termination-cases.mjs";
 import { createOutputSandboxReader, createOutputSandboxRecorder } from "../bounded-operation-output.mjs";
 import {
@@ -443,7 +443,7 @@ describe("bounded interactive operations", () => {
       try {
         // Waits end as soon as the listener appears; the generous ceilings only
         // matter on a saturated host (GH#39251).
-        const deadline = Date.now() + 3000 * 3;
+        const deadline = Date.now() + operationWaitMs(instance, started.operation_id);
         while (Date.now() < deadline) {
           try { pid = JSON.parse(readFileSync(pidFile, "utf8")).pid; break; } catch { /* wait for listener */ }
           await new Promise((resolve) => setTimeout(resolve, 20));

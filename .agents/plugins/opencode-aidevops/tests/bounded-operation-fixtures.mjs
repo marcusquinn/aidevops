@@ -92,5 +92,5 @@ export async function terminal(instance, operationID, context = owner, timeoutMs
     if (!["starting", "running", "cancelling", "timing_out", "restoring", "finalizing"].includes(receipt.state)) return receipt;
     await new Promise((resolve) => setTimeout(resolve, 10));
   } while (Date.now() < deadline);
-  throw new Error(`operation ${operationID} did not reach a terminal state: ${receipt?.state}`);
+  throw new Error(`operation ${operationID} did not reach a terminal state: ${receipt?.state} after ${timeoutMs} ms (budget ${receipt?.budget_ms} ms, grace ${receipt?.kill_grace_ms} ms)`);
 }
