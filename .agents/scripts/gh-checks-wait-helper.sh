@@ -537,7 +537,9 @@ resolve_active_workflows_once() {
 		workflows_json=$(gh api -X GET "repos/${repo}/actions/workflows" -f per_page=100 2>/dev/null) || return 0
 	fi
 	active=$(printf '%s' "$workflows_json" | jq -er '
-		if ([.workflows | arrays] | length) == 0 or ([.total_count | numbers] | length) == 0 then error("malformed")
+		if ([.workflows | arrays] | length) == 0 or ([.total_count | numbers] | length) == 0
+			or .total_count != (.total_count | floor) or .total_count < (.workflows | length)
+			or ([.workflows[] | .state | strings] | length) != (.workflows | length) then error("malformed")
 		elif .total_count > (.workflows | length) then 1
 		else [.workflows[] | select(.state == "active")] | length end
 	' 2>/dev/null) || return 0
@@ -858,7 +860,7 @@ classify_draft_stall() {
 		if [[ $((now_epoch - draft_since)) -ge "$draft_window" ]]; then
 			final_head=$(verified_head_sha "$pr_number" "$repo" 'before draft check result') || return 2
 			if [[ "$final_head" != "$initial_head" ]]; then
-				initial_head="$final_head"
+				initial_head="$final_head" head_epoch="$now_epoch"
 				previous="" draft_since=""
 				return 3
 			fi
@@ -903,7 +905,7 @@ classify_conflict_stall() {
 	[[ "$mergeable" == "CONFLICTING" ]] || return 0
 	final_head=$(verified_head_sha "$pr_number" "$repo" 'before conflict check result') || return 2
 	if [[ "$final_head" != "$initial_head" ]]; then
-		initial_head="$final_head"
+		initial_head="$final_head" head_epoch="$now_epoch"
 		previous="" conflict_checked_at=""
 		return 3
 	fi
@@ -978,7 +980,8 @@ wait_for_checks() {
 	local initial_interval="$5" max_interval="$6" heartbeat_interval="$7"
 	local start_epoch="" poll_number=0 valid_state_seen=0
 	start_epoch=$(current_epoch)
-	local next_heartbeat=$((start_epoch + heartbeat_interval))
+	# head_epoch: settle baseline for the current head; start_epoch bounds --timeout.
+	local next_heartbeat=$((start_epoch + heartbeat_interval)) head_epoch="$start_epoch"
 	local interval="$initial_interval" previous="" initial_head="" qlty_credit_policy=""
 	local draft_since="" draft_snapshot="" draft_window="$heartbeat_interval" conflict_checked_at=""
 	[[ "$draft_window" -gt 0 && "$draft_window" -le 120 ]] || draft_window=120
@@ -1024,7 +1027,7 @@ wait_for_checks() {
 		current="$_GCW_CODACY_CHECKS"
 		emit_codacy_stale_notes "$current" "$previous"
 		resolve_classification_evidence "$pr_number" "$repo" "$required_only" "$current"
-		IFS=$'\t' read -r classification missing_contexts zero_job_detail <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed" "$initial_head" "$_GCW_CONFIGURED_RC" "$_GCW_CONFIGURED_CONTEXTS" "$_GCW_WORKFLOWS_STATE")"
+		IFS=$'\t' read -r classification missing_contexts zero_job_detail <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$((now_epoch - head_epoch))" "$initial_head" "$_GCW_CONFIGURED_RC" "$_GCW_CONFIGURED_CONTEXTS" "$_GCW_WORKFLOWS_STATE")"
 		apply_cancel_grace "$classification" "$current" "$now_epoch" "$raw"
 		classification="$_GCW_GRACED_CLASSIFICATION"
 		state_summary=$(state_counts "$current" "$missing_contexts")
@@ -1045,7 +1048,7 @@ wait_for_checks() {
 			final_head=$(verified_head_sha "$pr_number" "$repo" 'after required checks completed') || return 2
 			if [[ -n "$initial_head" && -n "$final_head" && "$initial_head" != "$final_head" ]]; then
 				printf '+ PR head changed while waiting; restarting required-check observation\n'
-				initial_head="$final_head"
+				initial_head="$final_head" head_epoch="$now_epoch"
 				_GCW_CODACY_VERDICT=""
 				previous=""
 				interval="$initial_interval"
