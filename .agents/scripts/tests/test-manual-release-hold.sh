@@ -79,7 +79,7 @@ rc=0
 manual_release_hold_check own/repo 5 2>/dev/null || rc=$?
 expect "no hold allows merge" 0 "$rc"
 
-AIDEVOPS_OPENCODE_SESSION_ID=ses_owner cmd_hold own/repo --pr 10 --version v1.2.3 >/dev/null
+AIDEVOPS_OPENCODE_SESSION_ID=ses_owner _mrh_cmd_hold own/repo --pr 10 --version v1.2.3 >/dev/null
 rc=0
 manual_release_hold_check own/repo 11 2>"$STORE/err" || rc=$?
 expect "other PR refused" 1 "$rc"
@@ -90,7 +90,7 @@ rc=0
 manual_release_hold_check own/repo 10 2>/dev/null || rc=$?
 expect "release PR exempt" 0 "$rc"
 rc=0
-cmd_hold own/repo --pr 12 >/dev/null 2>&1 || rc=$?
+_mrh_cmd_hold own/repo --pr 12 >/dev/null 2>&1 || rc=$?
 expect "second hold refused" 1 "$rc"
 
 FAKE_NOW=$((FAKE_NOW + 61 * 60))
@@ -99,20 +99,20 @@ manual_release_hold_check own/repo 11 2>/dev/null || rc=$?
 expect "expired hold ignored" 0 "$rc"
 
 FAKE_NOW=1000000
-cmd_hold own/repo --pr 10 --ttl-minutes 60 >/dev/null 2>"$STORE/err"
+_mrh_cmd_hold own/repo --pr 10 --ttl-minutes 60 >/dev/null 2>"$STORE/err"
 rc=0
 grep -q 'concurrent updates may overwrite' "$STORE/err" || rc=1
 expect "renewal warns about advisory updates" 0 "$rc"
-cmd_unhold own/repo >/dev/null
+_mrh_cmd_unhold own/repo >/dev/null
 rc=0
 manual_release_hold_check own/repo 11 2>/dev/null || rc=$?
 expect "released hold allows merge" 0 "$rc"
 
 for version in 1.2.3 v1.2.3 v1.2.3-rc.1 1.2.3+build.7 v1.2.3-rc.1+build.7; do
 	rc=0
-	cmd_hold own/repo --pr 10 --version "$version" >/dev/null 2>"$STORE/err" || rc=$?
+	_mrh_cmd_hold own/repo --pr 10 --version "$version" >/dev/null 2>"$STORE/err" || rc=$?
 	expect "accept version $version" 0 "$rc"
-	cmd_unhold own/repo >/dev/null
+	_mrh_cmd_unhold own/repo >/dev/null
 done
 rc=0
 _mrh_duplicate_prs own/repo v1.2.3 10 >"$STORE/out" 2>"$STORE/err" || rc=$?
@@ -125,7 +125,7 @@ _mrh_api() {
 }
 for version in 'v1.2.3 is:closed' '1.2.3+' '1.2.3-rc..1' 'latest'; do
 	rc=0
-	cmd_hold own/repo --pr 10 --version "$version" >/dev/null 2>"$STORE/err" || rc=$?
+	_mrh_cmd_hold own/repo --pr 10 --version "$version" >/dev/null 2>"$STORE/err" || rc=$?
 	expect "reject version $version" 1 "$rc"
 	rc=0
 	grep -q 'Invalid release version' "$STORE/err" || rc=1
