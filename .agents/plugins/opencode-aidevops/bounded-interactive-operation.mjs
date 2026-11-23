@@ -35,6 +35,7 @@ import { resolveSessionOwnedWorktreeRoot } from "./gpt-image-worktree.mjs";
 import { liveSupervisorRoots, processStartIdentity } from "./process-start-identity.mjs";
 import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
 import { runtimeOwner } from "./runtime-owner.mjs";
+import { watchSupervisorExit } from "./exit-close-grace.mjs";
 
 const MAX_OPERATIONS = 24;
 // GH#38704: "always" (default) restores after every terminal path, success
@@ -200,7 +201,7 @@ export class BoundedInteractiveOperationManager {
     await new Promise((resolve) => {
       const child = this.spawnOwned(operation, operation.command, "main");
       operation.child = child;
-      child.once("exit", () => { operation.childExited = true; });
+      watchSupervisorExit(operation, child, this);
       child.once("spawn", () => {
         operation.supervisorIdentity = this.processIdentity(child.pid);
         operation.state = "running";
