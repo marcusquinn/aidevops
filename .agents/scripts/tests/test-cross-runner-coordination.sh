@@ -36,18 +36,13 @@ PASS=0
 FAIL=0
 
 _source_claim_helper() {
-	# Pre-set DISPATCH_CLAIM_HELPER_DIR so that when the sourced tempfile
-	# tries to source dispatch-override-resolve.sh, it finds the real one
-	# at the original directory — not the tempfile's /tmp directory.
+	# The helper now guards main when sourced. Keep its real BASH_SOURCE path
+	# so mandatory checkpoint companions resolve alongside it as in production.
 	export DISPATCH_CLAIM_HELPER_DIR
 	DISPATCH_CLAIM_HELPER_DIR="$(dirname "$CLAIM_HELPER")"
 
-	local tmp
-	tmp=$(mktemp)
-	sed '/^main "$@"$/d' "$CLAIM_HELPER" >"$tmp"
 	# shellcheck disable=SC1090
-	source "$tmp"
-	rm -f "$tmp"
+	source "$CLAIM_HELPER"
 	return 0
 }
 

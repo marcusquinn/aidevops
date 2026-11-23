@@ -668,6 +668,9 @@ printf 'PASS audit reconciliation repairs a crash between removal and CLEANED pe
 
 SCRIPT_DIR="$SCRIPTS_DIR"
 export AIDEVOPS_FULL_LOOP_RECEIPT_DIR="${TEST_ROOT}/release-receipts"
+# Supply the parent CLI predicate without inheriting the runner's worker mode.
+# These fixtures exercise interactive lifecycle finalization and relinquishment.
+is_headless() { return 1; }
 # shellcheck source=../full-loop-helper-state.sh
 source "${SCRIPTS_DIR}/full-loop-helper-state.sh"
 expected_sources='28993@23667f1e351981e4e6ecfeb03dd4c7a52ecfd100,29006@da5fec68b034be737bbf1f8d7ccf05a8dbf64a10,29010@4745adde8faa4a92aa4e27763c52e2c1a02a5e76,29013@de9e0b1b76f8dbeb97ccb8d2c3d57020b41adbd0'
