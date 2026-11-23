@@ -333,6 +333,10 @@ _worker_lifecycle_refusal_next_step() {
 	outside-maintenance-scope)
 		printf '[worker-lifecycle] next: explicit retirement requires a registered, non-local_only repository with a valid canonical path and slug. Register the canonical checkout with aidevops repos add <path>, then set pulse: false, maintenance: false in ~/.config/aidevops/repos.json to keep automatic maintenance disabled; retry removal.\n' >&2
 		;;
+	proc-observation-unavailable)
+		# GH#39953: process_observation names the failing census stage.
+		printf '[worker-lifecycle] next: the native process census could not prove the tree idle, so it is retained. On macOS, process_observation stage lsof-exec, lsof-exit or lsof-stderr means /usr/sbin/lsof failed or warned (rerun /usr/sbin/lsof -nP -a -u UID -F0pfn with your numeric UID and read its stderr); stage cwd names a pid whose working directory lsof could not read (inspect it with ps -p PID). On Linux, use worktree-helper.sh recovery unreadable-processes. Retry after the cause clears; --force cannot override the census.\n' >&2
+		;;
 	*)
 		printf '[worker-lifecycle] next: see worker-lifecycle/CLEANUP.md "Registry-driven cleanup pass"; --force cannot override registry checks.\n' >&2
 		;;
