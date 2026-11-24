@@ -313,7 +313,11 @@ _setup_run_scoped_stage() {
 		_time_step "$SETUP_STAGE_GUI_DESKTOP" setup_gui_desktop_app
 		;;
 	"$SETUP_STAGE_AI_SESSION")
-		if ! _setup_run_ai_session_incremental "$os"; then
+		local incremental_rc=0
+		_setup_run_ai_session_incremental "$os" || incremental_rc=$?
+		# EX_CONFIG is a deterministic deploy refusal, not missing incremental support.
+		[[ "$incremental_rc" -ne 78 ]] || return 78
+		if [[ "$incremental_rc" -ne 0 ]]; then
 			print_warning "AI-session incremental setup unavailable or failed; falling back to full setup"
 			# Floor for verification: the deploy below reads HEAD at its own
 			# start, which may be later than this point but never earlier.
