@@ -2476,11 +2476,11 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19316 fix(full-loop): defer a commit-and-pr validator timeout to a matching required CI check instead of blocking the PR #bug #interactive #priority:high ref:GH#40064 pr:#40067 completed:2026-11-23
 
-- [ ] t19317 test-worktree-metadata-prune: degraded terminal-PR-proof case false-passes on unbound $8 #auto-dispatch #bug ref:GH#40071
+- [x] t19317 test-worktree-metadata-prune: degraded terminal-PR-proof case false-passes on unbound $8 #auto-dispatch #bug ref:GH#40071 pr:#40079 completed:2026-11-24
 
 - [x] t19318 fix(dispatch): check the repo Node pin in the preclaim runner-capability gate so unsatisfiable runners stop claim/release churn #bug #interactive #priority:high ref:GH#40077 pr:#40085 completed:2026-11-23
 
-- [ ] t19319 test(pulse): dispatch_max capacity case skips tier:simple candidate 9102 on main (suite not in CI) #auto-dispatch #bug ref:GH#40086
+- [x] t19319 test(pulse): dispatch_max capacity case skips tier:simple candidate 9102 on main (suite not in CI) #auto-dispatch #bug ref:GH#40086 pr:#40090 completed:2026-11-24
 
 - [x] t19320 fix(full-loop): completion-bookkeeping accepts GH#<issue>: proof PR titles #auto-dispatch #bug #priority:low ref:GH#40094 pr:#40102 completed:2026-11-23
 
@@ -2502,7 +2502,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19348 fix(bounded-operation): supervisor exits by natural drain to avoid Node 26 process.exit deadlock #bug #priority:high ref:GH#40205 pr:#40209 completed:2026-11-24
 
-- [ ] t19345 perf(process-snapshot): use TZ=UTC0 for macOS full-table ps lstart reads #bug #priority:medium ref:GH#40195
+- [x] t19345 perf(process-snapshot): use TZ=UTC0 for macOS full-table ps lstart reads #bug #priority:medium ref:GH#40195 pr:#40217 completed:2026-11-24
 
 ## In Progress
 
