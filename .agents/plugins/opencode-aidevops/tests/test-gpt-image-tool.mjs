@@ -422,4 +422,42 @@ describe("GPT image OpenCode tool", () => {
     );
     assert.equal(calls, 0);
   });
+
+  test("passes 2.6 complexity and transparent background and rejects unsupported combinations", async () => {
+    const root = await projectRoot();
+    let calls = 0;
+    let requestBody;
+    const tool = createTool({
+      projectRoot: root,
+      readSecret: (_secretName) => "unit-test-credential-value",
+      fetchImpl: async (_url, init) => {
+        calls += 1;
+        requestBody = JSON.parse(init.body);
+        return Response.json({ model: "gpt-image-2.6-sunburst", data: [{ b64_json: PNG_BASE64 }] });
+      },
+    });
+    const base = { prompt: "cutout", auth: "api", account: "work", model: "gpt-image-2.6-sunburst" };
+    await tool.execute({ ...base, out: "cutout.png", complexity: "high", background: "transparent" });
+    assert.equal(calls, 1);
+    assert.equal(requestBody.model, "gpt-image-2.6-sunburst");
+    assert.equal(requestBody.complexity, "high");
+    assert.equal(requestBody.background, "transparent");
+    await assert.rejects(
+      tool.execute({ ...base, out: "a.jpg", format: "jpeg", background: "transparent" }),
+      /requires format png or webp/,
+    );
+    await assert.rejects(
+      tool.execute({ ...base, out: "b.png", model: "gpt-image-2.5-flare", complexity: "high" }),
+      /require explicit auth=api with model/,
+    );
+    await assert.rejects(
+      tool.execute({ prompt: "x", out: "c.png", background: "transparent" }),
+      /require explicit auth=api with model/,
+    );
+    await assert.rejects(
+      tool.execute({ ...base, out: "d.png", complexity: "extreme" }),
+      /Unsupported image complexity/,
+    );
+    assert.equal(calls, 1);
+  });
 });

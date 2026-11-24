@@ -412,5 +412,39 @@ describe("GPT image provider requests", () => {
     assert.equal(captured.init.body.get("output_format"), "webp");
     assert.equal(captured.init.body.getAll("image[]").length, 1);
     assert.equal(new Headers(captured.init.headers).has("Content-Type"), false);
+    assert.equal(captured.init.body.has("complexity"), false);
+    assert.equal(captured.init.body.has("background"), false);
+  });
+
+  test("sends 2.6 complexity and background in JSON and multipart API requests", async () => {
+    const captured = [];
+    const fetchImpl = async (url, init) => {
+      captured.push({ url, init });
+      return Response.json({ data: [{ b64_json: IMAGE_RESULT }] });
+    };
+    const auth = { accessToken: "unit-test-token" };
+    const args = {
+      prompt: "cutout",
+      quality: "high",
+      size: "auto",
+      model: "gpt-image-2.6-sunburst",
+      complexity: "high",
+      background: "transparent",
+    };
+    await requestApiImage(auth, args, [], fetchImpl);
+    const json = JSON.parse(captured[0].init.body);
+    assert.equal(json.model, "gpt-image-2.6-sunburst");
+    assert.equal(json.complexity, "high");
+    assert.equal(json.background, "transparent");
+    await requestApiImage(
+      auth,
+      args,
+      [{ buffer: Buffer.from("image"), mime: "image/png", name: "source.png" }],
+      fetchImpl,
+    );
+    const form = captured[1].init.body;
+    assert.equal(form.get("model"), "gpt-image-2.6-sunburst");
+    assert.equal(form.get("complexity"), "high");
+    assert.equal(form.get("background"), "transparent");
   });
 });

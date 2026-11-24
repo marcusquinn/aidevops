@@ -27,7 +27,13 @@ export const API_IMAGE_MODELS = Object.freeze([
   "gpt-image-2",
   "gpt-image-2.5-flare",
   "gpt-image-2.5-sunburst",
+  "gpt-image-2.6-flare",
+  "gpt-image-2.6-sunburst",
 ]);
+// Planning complexity and background are only sent for the 2.6 family.
+export const API_IMAGE_EXTENDED_MODELS = Object.freeze(["gpt-image-2.6-flare", "gpt-image-2.6-sunburst"]);
+export const IMAGE_COMPLEXITIES = Object.freeze(["low", "medium", "high", "auto"]);
+export const IMAGE_BACKGROUNDS = Object.freeze(["transparent", "opaque", "auto"]);
 
 function imageToolArgs(args) {
   return {
@@ -193,6 +199,8 @@ function apiJsonBody(args) {
     quality: args.quality || "auto",
     size: args.size || "auto",
     output_format: args.format || "png",
+    ...(args.complexity ? { complexity: args.complexity } : {}),
+    ...(args.background ? { background: args.background } : {}),
   };
 }
 
@@ -203,6 +211,8 @@ function apiMultipartBody(args, images) {
   body.append("quality", args.quality || "auto");
   body.append("size", args.size || "auto");
   body.append("output_format", args.format || "png");
+  if (args.complexity) body.append("complexity", args.complexity);
+  if (args.background) body.append("background", args.background);
   for (const image of images) {
     body.append("image[]", new Blob([image.buffer], { type: image.mime }), image.name);
   }

@@ -9,8 +9,11 @@ import {
 } from "./gpt-image-auth.mjs";
 import { readReferenceImages, saveGeneratedImage, validateImageOutputPath } from "./gpt-image-io.mjs";
 import {
+  API_IMAGE_EXTENDED_MODELS,
   API_IMAGE_MODELS,
   DEFAULT_API_IMAGE_MODEL,
+  IMAGE_BACKGROUNDS,
+  IMAGE_COMPLEXITIES,
   requestApiImage,
   requestOAuthImage,
   requestOpenRouterImage,
@@ -21,6 +24,23 @@ import { assertLocalOnlyToolDestination } from "./local-only-policy.mjs";
 const IMAGE_QUALITIES = new Set(["low", "medium", "high", "auto"]);
 const IMAGE_FORMATS = new Set(["png", "jpeg", "webp"]);
 const API_IMAGE_MODEL_SET = new Set(API_IMAGE_MODELS);
+const EXTENDED_MODEL_SET = new Set(API_IMAGE_EXTENDED_MODELS);
+
+function validateExtendedArgs(args) {
+  if (args.complexity !== undefined && !IMAGE_COMPLEXITIES.includes(args.complexity)) {
+    throw new Error("Unsupported image complexity.");
+  }
+  if (args.background !== undefined && !IMAGE_BACKGROUNDS.includes(args.background)) {
+    throw new Error("Unsupported image background.");
+  }
+  if (args.complexity === undefined && args.background === undefined) return;
+  if (args.auth !== "api" || !EXTENDED_MODEL_SET.has(args.model)) {
+    throw new Error(`Image complexity and background require explicit auth=api with model ${API_IMAGE_EXTENDED_MODELS.join(" or ")}.`);
+  }
+  if (args.background === "transparent" && args.format === "jpeg") {
+    throw new Error("background=transparent requires format png or webp; jpeg has no alpha channel.");
+  }
+}
 
 function validateOutputArgs(args) {
   if (typeof args.prompt !== "string" || typeof args.out !== "string") {
@@ -59,6 +79,7 @@ function validateRawArgs(args) {
   validateOutputArgs(args);
   validateReferenceArgs(args);
   validateAuthArgs(args);
+  validateExtendedArgs(args);
 }
 
 function validatePrompt(value) {
@@ -177,6 +198,8 @@ export function createGptImageTool(tool, z, options = {}) {
       images: z.array(z.string()).optional().describe("Optional project-relative PNG, JPEG, or WebP reference image paths."),
       auth: z.enum(["oauth", "api", "openrouter"]).optional().describe("Billing route; defaults to ChatGPT OAuth. API and OpenRouter (OPENROUTER_API_KEY, no reference images) must be explicit."),
       account: z.string().optional().describe("OAuth pool email when auth=oauth, or named API-key alias when auth=api."),
+      complexity: z.enum(IMAGE_COMPLEXITIES).optional().describe("Planning complexity; API-only, requires a gpt-image-2.6 model."),
+      background: z.enum(IMAGE_BACKGROUNDS).optional().describe("Background mode; API-only, requires a gpt-image-2.6 model. transparent needs png or webp; verify actual alpha samples."),
       model: z.enum(API_IMAGE_MODELS).optional().describe("API-only image model; defaults to gpt-image-2 when auth=api."),
     },
     async execute(args, context) {
