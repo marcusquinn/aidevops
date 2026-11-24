@@ -77,6 +77,16 @@ fail() {
 TMP=$(mktemp -d -t t3039.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT
 
+# Hermetic HOME (GH#40101): the real privacy guard runs against a synthetic
+# private-entity inventory and visibility cache, never maintainer host state.
+export HOME="${TMP}/home"
+export PRIVACY_REPOS_CONFIG="${HOME}/.config/aidevops/repos.json"
+export PRIVACY_CACHE_FILE="${HOME}/.aidevops/cache/repo-privacy.json"
+export PRIVACY_ENTITY_CONFIG="${HOME}/missing-entities"
+mkdir -p "${HOME}/.aidevops/logs" "${PRIVACY_REPOS_CONFIG%/*}" "${PRIVACY_CACHE_FILE%/*}"
+printf '%s\n' '{"initialized_repos":[{"slug":"fixture/private-project","private":true}]}' >"$PRIVACY_REPOS_CONFIG"
+printf '{"owner/repo":{"private":false,"checked_at":%s}}\n' "$(date +%s)" >"$PRIVACY_CACHE_FILE"
+
 GH_CALLS="${TMP}/gh_calls.log"
 GH_INFO_OUTPUT="${TMP}/info_output.log"
 

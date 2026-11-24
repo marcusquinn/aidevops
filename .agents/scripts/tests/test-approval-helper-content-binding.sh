@@ -25,6 +25,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Hermetic privacy inventory (GH#40101): the real guard reads a synthetic
+# inventory and visibility cache under the fixture HOME, never host state.
+export PRIVACY_REPOS_CONFIG="${TEST_HOME}/.config/aidevops/repos.json"
+export PRIVACY_CACHE_FILE="${TEST_HOME}/.aidevops/cache/repo-privacy.json"
+export PRIVACY_ENTITY_CONFIG="${TEST_HOME}/missing-entities"
+mkdir -p "${PRIVACY_REPOS_CONFIG%/*}" "${PRIVACY_CACHE_FILE%/*}"
+printf '%s\n' '{"initialized_repos":[{"slug":"fixture/private-project","private":true}]}' >"$PRIVACY_REPOS_CONFIG"
+printf '{"owner/repo":{"private":false,"checked_at":%s}}\n' "$(date +%s)" >"$PRIVACY_CACHE_FILE"
+
 print_result() {
 	local description="$1"
 	local passed="$2"
