@@ -1136,6 +1136,56 @@ EOF
 	return 0
 }
 
+test_tier_unavailable_marker_defers_reachable_same_tier_candidates() {
+	# GH#40143: a canary 75 proof (plus a higher-tier select probe) defers later
+	# candidates before their gate ceremony, only while every reachable tier
+	# is proven unselectable and any pin is among the excluded candidates.
+	local name="tier unavailable: canary proof defers same-tier candidates before gates"
+	local fake_helper="${TEST_ROOT}/fake-tier-unavailable.sh" mode_file="${TEST_ROOT}/tier-mode"
+	local worker_log="${TEST_ROOT}/worker-tier-unavailable.log" failures=""
+	local state_dir="${HOME}/.aidevops/.agent-workspace/headless-runtime"
+	local std_meta='{"labels":[{"name":"tier:standard"}]}' simple_meta='{"labels":[{"name":"tier:simple"}]}'
+	if ! declare -F _resolve_worker_tier >/dev/null 2>&1; then
+		# shellcheck source=../pulse-dispatch-locks.sh
+		source "${SCRIPT_DIR}/pulse-dispatch-locks.sh"
+	fi
+	printf 'fail\n' >"$mode_file"
+	cat >"$fake_helper" <<EOF
+#!/usr/bin/env bash
+[[ "\$(<"${mode_file}")" == fail ]] || exit 0
+case "\$*" in
+canary*) printf '[WARNING] tier_selection_unavailable tier=standard reasons=a/std=oauth_pool_exhausted;b/std=selectable hint=none\n' >&2; exit 75 ;;
+"select --role worker --tier thinking") printf '[WARNING] tier_selection_unavailable tier=thinking reasons=a/think=oauth_pool_exhausted\n' >&2; exit 75 ;;
+esac
+exit 0
+EOF
+	chmod +x "$fake_helper"
+	HEADLESS_RUNTIME_HELPER="$fake_helper"
+	AIDEVOPS_HEADLESS_RUNTIME_DIR="$state_dir"
+	AIDEVOPS_MIN_WORKER_CONCURRENCY=0
+	TEST_ACTIVE_WORKERS=5
+	rm -rf "${state_dir}/tier-unavailable"
+
+	_dlw_canary_preflight 201 "o/r" "$worker_log" "standard" "" && failures+=" canary_passed"
+	[[ -f "${state_dir}/tier-unavailable/standard" ]] || failures+=" no_standard_marker"
+	[[ -f "${state_dir}/tier-unavailable/thinking" ]] || failures+=" no_thinking_probe_marker"
+	_dlw_tier_unavailable_defers_candidate 202 "o/r" "$std_meta" "" "" "" "" || failures+=" standard_not_deferred"
+	grep -q 'Deferring #202 in o/r — tier_unavailable_deferred tier=standard' "$LOGFILE" || failures+=" no_defer_log"
+	_dlw_tier_unavailable_defers_candidate 203 "o/r" "$simple_meta" "" "" "" "" && failures+=" simple_deferred_without_proof"
+	_dlw_tier_unavailable_defers_candidate 204 "o/r" "$std_meta" "" "" "" "a/std" || failures+=" excluded_pin_not_deferred"
+	_dlw_tier_unavailable_defers_candidate 205 "o/r" "$std_meta" "" "" "" "b/std" && failures+=" selectable_pin_deferred"
+	_dlw_tier_unavailable_defers_candidate 206 "o/r" "$std_meta" "" "" "" "z/pin" && failures+=" unknown_pin_deferred"
+	PULSE_TIER_UNAVAILABLE_TTL_SECONDS=0 _dlw_tier_unavailable_defers_candidate 207 "o/r" "$std_meta" "" "" "" "" &&
+		failures+=" expired_marker_deferred"
+	printf 'pass\n' >"$mode_file"
+	_dlw_canary_preflight 208 "o/r" "$worker_log" "standard" "" || failures+=" passing_canary_failed"
+	[[ ! -f "${state_dir}/tier-unavailable/standard" ]] || failures+=" marker_not_cleared"
+	_dlw_tier_unavailable_defers_candidate 209 "o/r" "$std_meta" "" "" "" "" && failures+=" deferred_after_clear"
+
+	print_result "$name" "$([[ -z "$failures" ]] && printf 0 || printf 1)" "$failures"
+	return 0
+}
+
 test_soft_canary_bypass_reason_propagates_to_worker_env() {
 	local -a worker_cmd=(env)
 	_DLW_CANARY_SOFT_BYPASS_REASON="inconclusive"
@@ -1297,6 +1347,7 @@ for test_name in \
 	test_local_error_canary_failure_stays_hard_under_minimum_floor \
 	test_soft_canary_failure_bypasses_under_minimum_floor_without_recent_evidence \
 	test_no_selectable_model_canary_stays_hard_under_minimum_floor \
+	test_tier_unavailable_marker_defers_reachable_same_tier_candidates \
 	test_soft_canary_bypass_reason_propagates_to_worker_env \
 	test_class_cap_value_arithmetic \
 	test_class_cap_limits_class_to_half_of_target \
