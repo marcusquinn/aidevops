@@ -2500,7 +2500,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19329 fix(headless): explain per-candidate exclusion reasons when worker tier selection is unavailable #bug #priority:high ref:GH#40140 -> [todo/tasks/t19329-brief.md] logged:2026-11-24 pr:#40141 completed:2026-11-24
 
-- [ ] t19348 fix(bounded-operation): supervisor exits by natural drain to avoid Node 26 process.exit deadlock #bug #priority:high ref:GH#40205
+- [x] t19348 fix(bounded-operation): supervisor exits by natural drain to avoid Node 26 process.exit deadlock #bug #priority:high ref:GH#40205 pr:#40209 completed:2026-11-24
 
 ## In Progress
 
