@@ -607,11 +607,16 @@ _routine_run_detached_agent() {
 	local noop_threshold="${5:-}"
 	local session_key="routine-${routine_id}"
 	local output_file="" alert_repo="" outcome="" outcome_reason="" parsed=""
+	local output_dir="${HOME}/.aidevops/logs/routines" output_log=""
+	local output_bytes=0 output_lines=0
 	local started_epoch=0
 	local lock_dir="${ROUTINE_STATE_FILE}.${routine_id}.runner"
 	local pid_file="$lock_dir/pid-${BASHPID:-$$}"
 	local exit_code=0
 	local status="$_ROUTINE_STATUS_SUCCESS"
+	# Validate again at the detached entrypoint before constructing output paths.
+	[[ "$routine_id" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+	output_log="${output_dir}/${routine_id}.log"
 	_routine_claim_runner_lock "$lock_dir" || return 0
 	[[ -n "$agent_name" ]] || agent_name="Build+"
 	started_epoch=$(date +%s)
@@ -637,18 +642,30 @@ _routine_run_detached_agent() {
 	_ROUTINE_RUNNER_CHILD_PID=$!
 	wait "$_ROUTINE_RUNNER_CHILD_PID" || exit_code=$?
 	_ROUTINE_RUNNER_CHILD_PID=""
-	if [[ -n "$output_file" ]]; then
-		cat "$output_file" >>"$LOGFILE" 2>/dev/null || true
-	fi
 	if [[ "$exit_code" -ne 0 ]]; then
 		status="$_ROUTINE_STATUS_FAILURE"
 		echo "[pulse-wrapper] routine ${routine_id}: agent exited with code ${exit_code}" >>"$LOGFILE"
+		[[ -z "$output_file" ]] || tail -n 20 "$output_file" >>"$LOGFILE" 2>/dev/null || true
 	else
 		parsed=$(_routine_parse_outcome "$output_file")
 		outcome="${parsed%%|*}"
 		outcome_reason="${parsed#*|}"
 		echo "[pulse-wrapper] routine ${routine_id}: agent completed successfully (outcome=${outcome})" >>"$LOGFILE"
 		alert_repo=$(_routine_repo_slug "$dispatch_dir")
+	fi
+	# Keep only the latest full stream, never copying it into the shared pulse log.
+	# Parse the outcome above before moving the private capture into place.
+	if [[ -n "$output_file" ]] && (
+		umask 077
+		mkdir -p -- "$output_dir" && chmod 700 -- "$output_dir" &&
+			chmod 600 -- "$output_file" && [[ ! -d "$output_log" ]] &&
+			mv -f -- "$output_file" "$output_log"
+	); then
+		output_bytes=$(wc -c <"$output_log" | tr -d '[:space:]')
+		output_lines=$(wc -l <"$output_log" | tr -d '[:space:]')
+		echo "[pulse-wrapper] routine ${routine_id}: output saved path=${output_log} bytes=${output_bytes} lines=${output_lines}" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] routine ${routine_id}: output_saved=false" >>"$LOGFILE"
 	fi
 	[[ -z "$output_file" ]] || rm -f -- "$output_file"
 	_ROUTINE_RUNNER_FINALIZED=true

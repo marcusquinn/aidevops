@@ -552,6 +552,7 @@ _test_detached_agent() {
 	mkdir -p "$root"
 	if (
 		export ROUTINE_TEST_ROOT="$root" ROUTINE_TEST_MODE="$mode" ROUTINE_TEST_STATUS="$expected"
+		export HOME="$root"
 		export HEADLESS_RUNTIME_HELPER="$root/headless.sh" ROUTINE_LOG_HELPER="$root/lifecycle.sh"
 		export LOGFILE="$root/pulse.log" ROUTINE_STATE_FILE="$root/state.json"
 		cat >"$HEADLESS_RUNTIME_HELPER" <<'AGENT'
@@ -639,6 +640,49 @@ _test_outcome_contract() {
 		[[ "$(_routine_parse_outcome "$root/delivered.out")" == "delivered|PR#12" ]] || exit 1
 		[[ "$(_routine_parse_outcome "$root/noop.out")" == "noop|nothing due" ]] || exit 1
 		[[ "$(_routine_parse_outcome "$root/none.out")" == "unknown|" ]] || exit 1
+		# Exercise the actual runner: retain the full stream privately, with only
+		# a bounded failure tail in pulse.log. HOME isolates output from host logs.
+		export HOME="$root" ROUTINE_TEST_OUTPUT="$root/delivered.out" ROUTINE_TEST_EXIT=0
+		HEADLESS_RUNTIME_HELPER="$root/headless.sh"
+		cat >"$HEADLESS_RUNTIME_HELPER" <<'OUTPUT_AGENT'
+#!/usr/bin/env bash
+cat "$ROUTINE_TEST_OUTPUT"
+exit "$ROUTINE_TEST_EXIT"
+OUTPUT_AGENT
+		chmod +x "$HEADLESS_RUNTIME_HELPER"
+		_routine_run_detached_agent r-capture Capture Build+ "$root" || exit 1
+		local saved="$HOME/.aidevops/logs/routines/r-capture.log"
+		cmp "$root/delivered.out" "$saved" || exit 1
+		# shellcheck source=../portable-stat.sh
+		source "${PULSE_ROUTINES%/*}/portable-stat.sh"
+		[[ "$(_file_perms "$saved")" == 600 ]] || exit 1
+		[[ "$(_file_perms "${saved%/*}")" == 700 ]] || exit 1
+		grep -F "output saved path=$saved" "$LOGFILE" >/dev/null || exit 1
+		! grep -E '^work$|^ROUTINE_OUTCOME:' "$LOGFILE" >/dev/null || exit 1
+		jq -e '."r-capture".last_outcome == "delivered"' "$ROUTINE_STATE_FILE" >/dev/null || exit 1
+		ROUTINE_TEST_OUTPUT="$root/noop.out"
+		_routine_run_detached_agent r-capture Capture Build+ "$root" || exit 1
+		cmp "$root/noop.out" "$saved" || exit 1
+		jq -e '."r-capture".last_outcome == "noop"' "$ROUTINE_STATE_FILE" >/dev/null || exit 1
+		local line=0
+		for ((line = 1; line <= 30; line++)); do
+			printf 'failure-output-%s\n' "$line"
+		done >"$root/failure.out"
+		ROUTINE_TEST_OUTPUT="$root/failure.out" ROUTINE_TEST_EXIT=7
+		_routine_run_detached_agent r-capture Capture Build+ "$root" || exit 1
+		cmp "$root/failure.out" "$saved" || exit 1
+		[[ "$(grep -c '^failure-output-' "$LOGFILE")" == 20 ]] || exit 1
+		! grep -Fx 'failure-output-10' "$LOGFILE" >/dev/null || exit 1
+		grep -Fx 'failure-output-30' "$LOGFILE" >/dev/null || exit 1
+		# A failed move must clean its capture without ever dumping the stream.
+		rm -f "$saved"
+		mkdir "$saved"
+		ROUTINE_TEST_OUTPUT="$root/delivered.out" ROUTINE_TEST_EXIT=0
+		_routine_run_detached_agent r-capture Capture Build+ "$root" || exit 1
+		grep -F 'output_saved=false' "$LOGFILE" >/dev/null || exit 1
+		! grep -E '^work$|^ROUTINE_OUTCOME:' "$LOGFILE" >/dev/null || exit 1
+		! compgen -G "${ROUTINE_STATE_FILE}.r-capture.output.*" >/dev/null || exit 1
+		! _routine_run_detached_agent '../invalid' Capture Build+ "$root" || exit 1
 		local i=0
 		for i in 1 2 3 4; do
 			_routine_finalize_terminal r-out "$_ROUTINE_STATUS_SUCCESS" "$(date +%s)" "" 0 noop "nothing due" 3 owner/repo
