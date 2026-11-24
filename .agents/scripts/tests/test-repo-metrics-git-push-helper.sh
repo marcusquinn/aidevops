@@ -56,11 +56,13 @@ fixture() {
 }
 
 protect() {
-	cat >"${REMOTE}/hooks/pre-receive" <<'EOF'
-#!/usr/bin/env bash
+	local rejection="${1:-GH006: Protected branch update failed}"
+	local rule="${2:-Changes must be made through a pull request; required checks expected.}"
+	printf '#!/usr/bin/env bash\nrejection=%q\nrule=%q\n' "$rejection" "$rule" >"${REMOTE}/hooks/pre-receive"
+	cat >>"${REMOTE}/hooks/pre-receive" <<'EOF'
 while read -r old new ref; do
   if [[ "$ref" == refs/heads/main ]]; then
-    printf 'remote: error: GH006: Protected branch update failed for refs/heads/main.\nChanges must be made through a pull request; required checks expected.\n' >&2
+    printf 'remote: error: %s for refs/heads/main.\n%s\n' "$rejection" "$rule" >&2
     exit 1
   fi
 done
@@ -145,6 +147,28 @@ git --git-dir="$REMOTE" update-ref refs/heads/main "$(git -C "$WORK" rev-parse H
 artifacts 3
 publish
 assert 'older legitimate snapshot refreshes on current default base' test "$(git --git-dir="$REMOTE" show 'aidevops/repository-metrics:custom data/repo-metrics.json')" = '{"value":3}'
+
+# Rulesets only route to PR mode when the rejection explicitly requires a PR.
+fixture ruleset-pr
+protect 'GH013: Repository rule violations'
+artifacts 1
+HEAD_BEFORE=$(git -C "$WORK" rev-parse HEAD)
+publish
+assert 'GH013 leaves default branch unchanged' test "$(git --git-dir="$REMOTE" rev-parse main)" = "$HEAD_BEFORE"
+assert 'GH013 creates the deterministic PR' test -f "$PR_STATE"
+assert 'GH013 publishes generated snapshot on PR branch' test "$(git --git-dir="$REMOTE" show 'aidevops/repository-metrics:custom data/repo-metrics.json')" = '{"value":1}'
+
+for RULE in 'Commits must have verified signatures.' 'File path is restricted.'; do
+	fixture "ruleset-other-${TEST_COUNT}"
+	protect 'GH013: Repository rule violations' "$RULE"
+	artifacts 1
+	if publish >"${TEST_TMP}/ruleset.log" 2>&1; then
+		printf 'FAIL unrelated GH013 rule must fail: %s\n' "$RULE" >&2
+		exit 1
+	fi
+	assert "GH013 without PR requirement never opens a PR: ${RULE}" test ! -f "$PR_STATE"
+	assert 'GH013 without PR requirement exhausts bounded retries' grep -q 'after 3 bounded attempts' "${TEST_TMP}/ruleset.log"
+done
 
 fixture foreign-branch
 git -C "$WORK" push -q origin HEAD:refs/heads/aidevops/repository-metrics
