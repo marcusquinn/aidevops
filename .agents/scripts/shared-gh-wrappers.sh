@@ -671,8 +671,11 @@ _gh_with_timeout() {
 	local err_file=""
 	local out_file=""
 	local rc=0
+	local temp_root="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}"
+	# Interrupted calls leave diagnostics in the age-cleaned managed workspace.
+	[[ -d "$temp_root" ]] || mkdir -p "$temp_root" 2>/dev/null || true
 	if [[ -n "$cmd" ]] && declare -f "$cmd" >/dev/null; then
-		err_file=$(mktemp -t aidevops-gh-secondary.XXXXXX) || {
+		err_file=$(mktemp "$temp_root/aidevops-gh-secondary.XXXXXX") || {
 			if [[ "$op_class" == "write" ]]; then
 				_gh_block_uncaptured_write
 				return 1
@@ -681,7 +684,7 @@ _gh_with_timeout() {
 			_gh_record_timeout_if_needed "$rc" "$timeout_start_ms" "$timeout_caller" "$timeout_path" "$op_class"
 			return "$rc"
 		}
-		out_file=$(mktemp -t aidevops-gh-response.XXXXXX) || {
+		out_file=$(mktemp "$temp_root/aidevops-gh-response.XXXXXX") || {
 			"$@" 2>"$err_file" || rc=$?
 			_gh_record_timeout_if_needed "$rc" "$timeout_start_ms" "$timeout_caller" "$timeout_path" "$op_class"
 			cat "$err_file" >&2 2>/dev/null || true
@@ -702,10 +705,10 @@ _gh_with_timeout() {
 		rm -f "$err_file" "$out_file"
 		return $rc
 	fi
-	err_file=$(mktemp -t aidevops-gh-secondary.XXXXXX) || err_file=""
+	err_file=$(mktemp "$temp_root/aidevops-gh-secondary.XXXXXX") || err_file=""
 	out_file=""
 	if [[ -n "$err_file" ]]; then
-		out_file=$(mktemp -t aidevops-gh-response.XXXXXX) || {
+		out_file=$(mktemp "$temp_root/aidevops-gh-response.XXXXXX") || {
 			rm -f "$err_file"
 			err_file=""
 		}

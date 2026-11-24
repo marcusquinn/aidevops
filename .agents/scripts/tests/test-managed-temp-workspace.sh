@@ -105,5 +105,41 @@ assert "recent FFF artifact is preserved" test -f "$recent_fff"
 
 assert "setup invokes legacy cleanup in both modes" test "$(grep -c 'cleanup_legacy_aidevops_temp_artifacts' "$SCRIPTS_DIR/../../setup.sh")" -ge 2
 
+# Exercise the legacy scan independently of native-artifact metadata checks.
+mkdir -p "$TEST_ROOT/empty-managed" "$legacy_root/unrelated"
+active_named="$legacy_root/aidevops-pulse-pr-list-provider-$$"
+newline_named="$legacy_root/"$'aidevops-gh-response.old\nentry'
+nested_named="$legacy_root/unrelated/aidevops-gh-response.old"
+symlink_named="$legacy_root/aidevops-worker-auth.link"
+mkdir "$active_named"
+touch "$newline_named" "$nested_named"
+touch -t 202001010000 "$active_named" "$newline_named" "$nested_named"
+ln -s "$old_generic" "$symlink_named"
+_is_process_alive_and_matches() {
+	local pid="$1"
+	[[ "$pid" == "$$" ]] && return 0
+	return 1
+}
+metadata_marker="$TEST_ROOT/metadata-called"
+stat() {
+	: >"$metadata_marker"
+	return 1
+}
+_file_mtime_epoch() {
+	: >"$metadata_marker"
+	return 1
+}
+for ((i = 0; i < 5000; i++)); do
+	: >"$legacy_root/aidevops-gh-response.fresh-$i"
+done
+AIDEVOPS_TEMP_DIR="$TEST_ROOT/empty-managed" AIDEVOPS_LEGACY_TEMP_ROOT="$legacy_root" AIDEVOPS_TEMP_MAX_AGE_SECONDS=60 cleanup_legacy_aidevops_temp_artifacts
+assert "active framework PID artifact is preserved" test -d "$active_named"
+assert "legacy symlink is preserved" test -L "$symlink_named"
+assert "symlink target is preserved" test -d "$old_generic"
+assert "stale filename with newline is removed" test ! -e "$newline_named"
+assert "nested matching artifact is not traversed" test -f "$nested_named"
+assert "young matching artifact is preserved in large fixture" test -f "$legacy_root/aidevops-gh-response.fresh-4999"
+assert "legacy scan does not invoke per-entry stat helpers" test ! -e "$metadata_marker"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 ((fail == 0))

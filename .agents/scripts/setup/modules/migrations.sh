@@ -95,42 +95,38 @@ cleanup_legacy_aidevops_temp_artifacts() {
 		return 0
 	fi
 
-	local now
-	now=$(date +%s)
 	local max_age="${AIDEVOPS_TEMP_MAX_AGE_SECONDS:-604800}"
 	[[ "$max_age" =~ ^[0-9]+$ ]] || max_age=604800
+	# Round up so minute granularity can delay cleanup, never delete early.
+	# The validated seconds are decimal, including overrides with leading zeroes.
+	local max_age_minutes=$(((10#$max_age + 59) / 60))
 	local uid
 	uid=$(id -u)
 	local cleaned=0
 	local candidate=""
-	for candidate in \
-		"$root"/aidevops-update-* \
-		"$root"/aidevops-headless-prompt.* \
-		"$root"/aidevops-worker-auth.* \
-		"$root"/aidevops-canary* \
-		"$root"/aidevops-plugin-verify.* \
-		"$root"/aidevops-pulse-pr-list-provider-* \
-		"$root"/aidevops-pulse-pr-list-cache-* \
-		"$root"/aidevops-pulse-runtime-* \
-		"$root"/aidevops-systemd-worker.* \
-		"$root"/aidevops-systemd-state.* \
-		"$root"/aidevops-inbox-prompt.* \
-		"$root"/aidevops-gh-body.* \
-		"$root"/aidevops-parent-body.* \
-		"$root"/aidevops-gh-response.* \
-		"$root"/aidevops-gh-secondary.*; do
-		[[ -e "$candidate" || -L "$candidate" ]] || continue
+	# Filter metadata in one process, not two stat forks per young entry.
+	while IFS= read -r -d '' candidate; do
 		[[ ! -L "$candidate" ]] || continue
-		local owner=""
-		owner=$(stat -f '%u' "$candidate" 2>/dev/null) || owner=$(stat -c '%u' "$candidate" 2>/dev/null) || continue
-		[[ "$owner" == "$uid" ]] || continue
-		local mtime=""
-		mtime=$(_file_mtime_epoch "$candidate") || continue
-		((now - mtime > max_age)) || continue
 		_legacy_temp_artifact_is_active "$candidate" && continue
 		rm -rf -- "$candidate" || continue
 		((++cleaned))
-	done
+	done < <(find "$root" -mindepth 1 -maxdepth 1 ! -type l -user "$uid" \
+		\( -name 'aidevops-update-*' \
+		-o -name 'aidevops-headless-prompt.*' \
+		-o -name 'aidevops-worker-auth.*' \
+		-o -name 'aidevops-canary*' \
+		-o -name 'aidevops-plugin-verify.*' \
+		-o -name 'aidevops-pulse-pr-list-provider-*' \
+		-o -name 'aidevops-pulse-pr-list-cache-*' \
+		-o -name 'aidevops-pulse-runtime-*' \
+		-o -name 'aidevops-systemd-worker.*' \
+		-o -name 'aidevops-systemd-state.*' \
+		-o -name 'aidevops-inbox-prompt.*' \
+		-o -name 'aidevops-gh-body.*' \
+		-o -name 'aidevops-parent-body.*' \
+		-o -name 'aidevops-gh-response.*' \
+		-o -name 'aidevops-gh-secondary.*' \) \
+		-mmin "+$max_age_minutes" -print0)
 
 	if ((cleaned > 0)); then
 		print_info "Cleaned $cleaned legacy aidevops temporary artifact(s) older than seven days"

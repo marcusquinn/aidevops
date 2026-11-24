@@ -1400,9 +1400,9 @@ _pulse_configure_gh_read_routing() {
 	fi
 
 	if [[ "${AIDEVOPS_PULSE_PR_LIST_CACHE:-1}" == "1" ]]; then
-		export AIDEVOPS_GH_PR_LIST_CACHE_DIR="${TMPDIR:-/tmp}/aidevops-pulse-pr-list-cache-${$}"
+		export AIDEVOPS_GH_PR_LIST_CACHE_DIR="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/aidevops-pulse-pr-list-cache-${$}"
 		export AIDEVOPS_GH_PR_LIST_CACHE_TTL="${AIDEVOPS_PULSE_PR_LIST_CACHE_TTL:-3600}"
-		export PULSE_PR_LIST_PROVIDER_CACHE_DIR="${TMPDIR:-/tmp}/aidevops-pulse-pr-list-provider-cache-${$}"
+		export PULSE_PR_LIST_PROVIDER_CACHE_DIR="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/aidevops-pulse-pr-list-provider-cache-${$}"
 		export PULSE_PR_LIST_PROVIDER_CACHE_TTL="${AIDEVOPS_PULSE_PR_LIST_CACHE_TTL:-3600}"
 		# GH#23728/t18678: _pulse_exit_cleanup removes only these dirs created by
 		# this process at EXIT. Never push them onto the shared RETURN-trap
