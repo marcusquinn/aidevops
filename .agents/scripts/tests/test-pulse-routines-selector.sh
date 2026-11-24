@@ -408,6 +408,9 @@ SELF_SCRIPT
 	cat >"${fake_scripts}/downstream.sh" <<'DOWNSTREAM_SCRIPT'
 #!/usr/bin/env bash
 : >"${ROUTINE_DOWNSTREAM_MARKER:?}"
+printf '%s\n' 'downstream stdout'
+printf '%s\n' 'downstream stderr' >&2
+printf '%s\n' '[downstream] deliberate diagnostic' >>"$LOGFILE"
 exit 0
 DOWNSTREAM_SCRIPT
 	cat >"$schedule_helper" <<'SCHEDULE_SCRIPT'
@@ -452,6 +455,11 @@ SCHEDULE_SCRIPT
 			_wait_for_detached_routine_success "$state_file" "r-downstream-monitor" &&
 			[[ ! -e "$self_marker" ]] &&
 			[[ -e "$downstream_marker" ]] &&
+			grep -Fxq 'downstream stdout' "$test_home/.aidevops/logs/routines/r-downstream-monitor.log" &&
+			grep -Fxq 'downstream stderr' "$test_home/.aidevops/logs/routines/r-downstream-monitor.log" &&
+			! grep -q '^downstream ' "$log_file" &&
+			grep -Fxq '[downstream] deliberate diagnostic' "$log_file" &&
+			grep -Fq "output saved path=$test_home/.aidevops/logs/routines/r-downstream-monitor.log" "$log_file" &&
 			jq -e '."r-downstream-monitor".last_status == "success" and (.r901 | not) and (.r908 | not)' "$state_file" >/dev/null &&
 			grep -q 'routine r908: skipping platform-owned routine' "$log_file" &&
 			grep -q 'routine r901: skipping self-recursive supervisor target scripts/pulse-wrapper.sh (GH#28544)' "$log_file"
@@ -622,6 +630,41 @@ LIFECYCLE
 	return 0
 }
 
+# Reuse the outcome fixture's executable and stream for script cooldown exits.
+_assert_script_output_contract() {
+	local root="$1"
+	local script_exit=0 expected_status="" expected_lines=0
+	local saved="$HOME/.aidevops/logs/routines/r-script-capture.log"
+	ROUTINE_TEST_OUTPUT="$root/failure.out"
+	for script_exit in 0 7 75; do
+		export ROUTINE_TEST_EXIT="$script_exit"
+		: >"$LOGFILE"
+		_routine_run_detached_script r-script-capture "$HEADLESS_RUNTIME_HELPER" "$root" "$(date +%s)" || return 1
+		cmp "$root/failure.out" "$saved" || return 1
+		[[ "$(_file_perms "$saved")" == 600 ]] || return 1
+		expected_status=success expected_lines=0
+		if [[ "$script_exit" != 0 ]]; then
+			expected_status=failure expected_lines=20
+			[[ "$script_exit" != 75 ]] || expected_status=deferred
+		fi
+		[[ "$(grep -c '^failure-output-' "$LOGFILE")" == "$expected_lines" ]] || return 1
+		! grep -Fx 'failure-output-10' "$LOGFILE" >/dev/null || return 1
+		jq -e --arg status "$expected_status" '."r-script-capture".last_status == $status' "$ROUTINE_STATE_FILE" >/dev/null || return 1
+		! compgen -G "${ROUTINE_STATE_FILE}.r-script-capture.output.*" >/dev/null || return 1
+	done
+	# Save failure must not expose even the bounded failure tail.
+	rm -f "$saved"
+	mkdir "$saved"
+	export ROUTINE_TEST_EXIT=7
+	: >"$LOGFILE"
+	_routine_run_detached_script r-script-capture "$HEADLESS_RUNTIME_HELPER" "$root" "$(date +%s)" || return 1
+	grep -Fq 'output_saved=false' "$LOGFILE" || return 1
+	! grep -q '^failure-output-' "$LOGFILE" || return 1
+	! compgen -G "${ROUTINE_STATE_FILE}.r-script-capture.output.*" >/dev/null || return 1
+	! _routine_run_detached_script '../invalid' "$HEADLESS_RUNTIME_HELPER" "$root" 0 || return 1
+	return 0
+}
+
 _test_outcome_contract() {
 	local tmpdir="$1"
 	local root="${tmpdir}/outcome"
@@ -683,6 +726,7 @@ OUTPUT_AGENT
 		! grep -E '^work$|^ROUTINE_OUTCOME:' "$LOGFILE" >/dev/null || exit 1
 		! compgen -G "${ROUTINE_STATE_FILE}.r-capture.output.*" >/dev/null || exit 1
 		! _routine_run_detached_agent '../invalid' Capture Build+ "$root" || exit 1
+		_assert_script_output_contract "$root" || exit 1
 		local i=0
 		for i in 1 2 3 4; do
 			_routine_finalize_terminal r-out "$_ROUTINE_STATUS_SUCCESS" "$(date +%s)" "" 0 noop "nothing due" 3 owner/repo
@@ -788,7 +832,21 @@ LIFECYCLE
 		wait "$runner_pid" 2>/dev/null || true
 		jq -e '."r-term".last_status == "failure"' "$ROUTINE_STATE_FILE" >/dev/null || exit 1
 		[[ ! -d "${ROUTINE_STATE_FILE}.r-term.runner" ]] || exit 1
-		[[ "$(<"$root/lifecycle")" == *"--status failure"*"--session-key routine-r-term"* ]]
+		! compgen -G "${ROUTINE_STATE_FILE}.r-term.output.*" >/dev/null || exit 1
+		[[ "$(<"$root/lifecycle")" == *"--status failure"*"--session-key routine-r-term"* ]] || exit 1
+		rm -f "$root/started"
+		bash -c 'source "$1"; _routine_run_detached_script r-script-term "$2/headless.sh" "$2" "$(date +%s)"' _ "$PULSE_ROUTINES" "$root" &
+		runner_pid=$! attempt=0
+		while [[ "$attempt" -lt 100 && ! -f "$root/started" ]]; do
+			sleep 0.1
+			attempt=$((attempt + 1))
+		done
+		[[ -f "$root/started" ]] || exit 1
+		kill -TERM "$runner_pid"
+		wait "$runner_pid" 2>/dev/null || true
+		jq -e '."r-script-term".last_status == "failure"' "$ROUTINE_STATE_FILE" >/dev/null || exit 1
+		[[ ! -d "${ROUTINE_STATE_FILE}.r-script-term.runner" ]] || exit 1
+		! compgen -G "${ROUTINE_STATE_FILE}.r-script-term.output.*" >/dev/null || exit 1
 	); then
 		pass "GH#34877: SIGTERM during agent wait records terminal failure and releases the lock"
 	else
