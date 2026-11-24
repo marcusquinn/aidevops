@@ -320,6 +320,13 @@ _pulse_setup_refill_only_mode() {
 	return 0
 }
 
+# Return 0 when this process holds only the dispatch lock (t19324 split mode),
+# not the instance lock that a full cycle owns.
+_pulse_event_refill_holds_dispatch_lock_only() {
+	[[ "${_LOCK_OWNED:-false}" != "true" && "${_DISPATCH_LOCK_OWNED:-false}" == "true" ]]
+	return $?
+}
+
 #######################################
 # GH#38908: a refill-only run's full census (often 100-200 candidates) goes
 # to the next dispatch process instead of being orphaned under its pid key.
@@ -331,7 +338,7 @@ _pulse_event_refill_hand_off_census() {
 	# on while still holding the dispatch lock; the slot is replaced
 	# atomically and adopted candidates still pass every live dispatch gate.
 	# A requested drain bundle keeps priority (handled by the cleanup below).
-	if [[ "${_LOCK_OWNED:-false}" != "true" && "${_DISPATCH_LOCK_OWNED:-false}" == "true" ]] &&
+	if _pulse_event_refill_holds_dispatch_lock_only &&
 		declare -F _dispatch_hand_off_candidate_snapshots >/dev/null 2>&1 &&
 		! _pulse_event_refill_drain_bundle_requested; then
 		_dispatch_hand_off_candidate_snapshots "${PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT:-1000}" "next-process" || true
@@ -563,6 +570,42 @@ _pulse_event_refill_budget_spent() {
 	return $?
 }
 
+#######################################
+# t19337 (GH#40162): under PULSE_DISPATCH_LOCK_SPLIT=1 a refill-only run keeps
+# the normal cycle clamp measured from process start (t19324). On a busy pool
+# pass 1 spends it, so pass 2 always skipped before enumeration: the trigger
+# stayed retained and no process dispatched until the next worker exit
+# (6-17 min gaps, 2026-11-24). Give each later pass of such a run a fresh
+# clamp. The dispatch-lock heartbeat, refreshed through every round, still
+# bounds a hung holder; PULSE_EVENT_REFILL_MAX_PASSES still bounds the
+# process. A cycle-owned drain (instance lock held) keeps its own clock. An
+# inactive bundle or active runtime transition stops, so stale code does not
+# keep dispatching; the active bundle's next wake takes the trigger.
+# Args: $1 - refill source label
+# Returns: 0 to run the next pass, 1 to stop with the trigger retained
+#######################################
+_pulse_event_refill_prepare_next_pass() {
+	local source_name="$1"
+	local now_epoch=""
+	[[ "${PULSE_REFILL_ONLY:-0}" == "1" ]] && _pulse_event_refill_holds_dispatch_lock_only || return 0
+	if ! _pulse_event_refill_wrapper_is_active "${_PULSE_EVENT_REFILL_SCRIPT_DIR}/pulse-wrapper.sh"; then
+		pulse_event_refill_log "action=pass_deferred reason=inactive_bundle trigger=retained source=${source_name}"
+		return 1
+	fi
+	if _pulse_event_refill_runtime_transition_active; then
+		pulse_event_refill_log "action=pass_deferred reason=runtime_transition trigger=retained source=${source_name}"
+		return 1
+	fi
+	now_epoch=$(date +%s 2>/dev/null) || return 0
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || return 0
+	PULSE_START_EPOCH="$now_epoch"
+	if declare -F pulse_dispatch_lock_heartbeat >/dev/null 2>&1; then
+		pulse_dispatch_lock_heartbeat || true
+	fi
+	pulse_event_refill_log "action=pass_clock_refreshed source=${source_name}"
+	return 0
+}
+
 _pulse_event_refill_cooldown_file() {
 	local trigger_file="${PULSE_EVENT_REFILL_TRIGGER_FILE:-${HOME}/.aidevops/cache/pulse-event-refill.trigger}"
 	printf '%s\n' "${trigger_file}.failed-cooldown"
@@ -679,6 +722,9 @@ pulse_event_refill_drain() {
 			pulse_event_refill_log "action=drain_budget_exhausted source=${source_name} pass=${pass} trigger=retained"
 			pulse_event_refill_counter "pulse_event_refill_budget_exhausted"
 			_PULSE_EVENT_REFILL_LAST_OUTCOME="budget_exhausted"
+			return 0
+		fi
+		if ((pass > 0)) && ! _pulse_event_refill_prepare_next_pass "$source_name"; then
 			return 0
 		fi
 		if ! _pulse_event_refill_dispatch_gate; then

@@ -395,6 +395,48 @@ test_refill_only_defers_during_runtime_transition() {
 	return 0
 }
 
+# t19337 (GH#40162): a split-lock refill-only pass 2 gets a fresh clock; a
+# cycle-owned drain keeps its clock; a runtime transition stops pass 2.
+test_split_refill_second_pass_gets_fresh_clock() {
+	reset_state
+	local PULSE_REFILL_ONLY=1 _LOCK_OWNED=false _DISPATCH_LOCK_OWNED=true PULSE_START_EPOCH=1
+	WRITE_TRIGGER_DURING_APPLY=1
+	pulse_event_refill_write_trigger 611 6611
+	pulse_event_refill_drain "worker-exit"
+	assert_eq "split refill-only runs the second pass" "2" "$APPLY_CALLS"
+	if [[ "$PULSE_START_EPOCH" -gt 1 ]] && grep -q 'action=pass_clock_refreshed source=worker-exit' "$LOGFILE"; then
+		pass "split refill-only second pass starts on a fresh clock"
+	else
+		fail "split refill-only second pass starts on a fresh clock" "start=${PULSE_START_EPOCH}"
+	fi
+
+	reset_state
+	_LOCK_OWNED=true PULSE_START_EPOCH=1
+	WRITE_TRIGGER_DURING_APPLY=1
+	pulse_event_refill_write_trigger 612 6612
+	pulse_event_refill_drain "cycle-final"
+	assert_eq "cycle-owned drain keeps its own clock" "1" "$PULSE_START_EPOCH"
+
+	reset_state
+	_LOCK_OWNED=false PULSE_START_EPOCH=1
+	WRITE_TRIGGER_DURING_APPLY=1
+	export AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR="${TEST_ROOT}/runtime-transition.lock.d"
+	mkdir -p "$AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR"
+	printf '%s\n' "$$" >"${AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR}/pid"
+	pulse_event_refill_write_trigger 613 6613
+	pulse_event_refill_drain "worker-exit"
+	assert_eq "runtime transition stops the second pass" "1" "$APPLY_CALLS"
+	assert_file_exists "deferred second pass retains the trigger" "$PULSE_EVENT_REFILL_TRIGGER_FILE"
+	if grep -q 'action=pass_deferred reason=runtime_transition' "$LOGFILE"; then
+		pass "deferred second pass is logged"
+	else
+		fail "deferred second pass is logged" "pass_deferred was not logged"
+	fi
+	rm -rf "$AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR"
+	unset AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR
+	return 0
+}
+
 test_stale_wake_lock_is_reclaimed() {
 	reset_state
 	local fake_wrapper="${TEST_ROOT}/fake-stale-wake-wrapper.sh"
@@ -435,6 +477,7 @@ main() {
 	test_signal_from_inactive_bundle_wakes_active_wrapper
 	test_signal_during_runtime_transition_retains_trigger
 	test_refill_only_defers_during_runtime_transition
+	test_split_refill_second_pass_gets_fresh_clock
 	test_stale_wake_lock_is_reclaimed
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
