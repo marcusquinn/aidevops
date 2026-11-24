@@ -1116,7 +1116,7 @@ normalize_active_issue_assignments() {
 		unassign_stale)
 			_normalize_stale_close_pending_checkpoint_leases
 			_normalize_deferred_claim_releases
-			_normalize_unassign_stale "$runner_user" "$repos_json" "$now_epoch" "$cross_runner_max_runtime"
+			_normalize_unassign_stale "$runner_user" "$repos_json" "$now_epoch" "$cross_runner_max_runtime" "$dedup_helper"
 			;;
 		unassign_available_stale)
 			_normalize_unassign_available_stale "$runner_user" "$repos_json" "$now_epoch" "$dedup_helper"
