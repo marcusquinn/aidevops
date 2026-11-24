@@ -31,7 +31,7 @@ def pulse_records(log_dir):
             timestamp = record_time(fields, line, success)
         except (ValueError, OverflowError, KeyError):
             continue
-        if timestamp is None and "max_parallel" in fields:
+        if timestamp is None and ("max_parallel" in fields or "active_workers" in fields):
             timestamp = context_timestamp
         if timestamp is None or not math.isfinite(timestamp):
             continue
@@ -45,6 +45,15 @@ def positive_cap(fields):
         return value if value > 0 else None
     except ValueError:
         return None
+
+
+def census_observation(fields, line):
+    """Pulse's ps count of live workers and its admission target for a round."""
+    active = fields.get("active_workers", "")
+    if "Dispatch_capacity:" not in line or not active.isdigit():
+        return None
+    target = "0" if fields.get("admission") == "closed" else fields.get("simultaneous_target_final", "")
+    return int(active), int(target) if target.isdigit() else None
 
 
 def refill_metrics(refills, available):
@@ -65,6 +74,7 @@ def pulse_metrics(log_dir, since, until):
     pulse_seen = False
     cap_observations = []
     exits = []
+    census = []
     for timestamp, fields, line, success in pulse_records(log_dir):
         in_window = since <= timestamp < until
         pulse_seen |= in_window
@@ -76,7 +86,11 @@ def pulse_metrics(log_dir, since, until):
         cap = positive_cap(fields)
         if timestamp < until and cap is not None:
             cap_observations.append((timestamp, cap))
-        # Exits after until allow pairing intervals across the right boundary.
-        if "[lifecycle] worker_exited" in line and since <= timestamp < until + 21600:
+        # Exits after until pair intervals across the right boundary; exits in
+        # the six-hour spawn look-back stop finished workers looking open.
+        if "[lifecycle] worker_exited" in line and since - 21600 <= timestamp < until + 21600:
             exits.append((timestamp, fields.get("issue", "")))
-    return exits, cap_observations, supervisor, pulse_seen, refill_metrics(refills, pulse_seen)
+        observation = census_observation(fields, line)
+        if observation is not None and since - 3600 <= timestamp < until:
+            census.append((timestamp, *observation))
+    return exits, cap_observations, census, supervisor, pulse_seen, refill_metrics(refills, pulse_seen)

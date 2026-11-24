@@ -46,6 +46,33 @@ def concurrency_metrics(ceremonies, timing_seen, cap_observations, since, until)
     }
 
 
+def census_metrics(observations, since, until, step=300, max_age=600):
+    """Carry each round's ps census of live workers forward, at most max_age."""
+    # Timestamp only: equal-time rounds keep log order and a None target never compares.
+    observations.sort(key=lambda observation: observation[0])
+    times = [timestamp for timestamp, _, _ in observations]
+    points = math.ceil((until - since) / step)
+    workers, targets = [], []
+    for index in range(points):
+        point = since + index * step
+        latest = bisect_right(times, point) - 1
+        if latest < 0 or point - times[latest] > max_age:
+            continue
+        _, active, target = observations[latest]
+        workers.append(active)
+        if target is not None:
+            targets.append(target)
+    return {
+        "sample_seconds": step, "max_age_seconds": max_age,
+        "observations": sum(since <= timestamp < until for timestamp in times),
+        "coverage_share": len(workers) / points if points else None,
+        "mean": statistics.mean(workers) if workers else None,
+        "max": max(workers) if workers else None,
+        "target_final_mean": statistics.mean(targets) if targets else None,
+        "target_final_min": min(targets) if targets else None,
+    }
+
+
 def supervisor_metrics(supervisor, pulse_seen, since, until, now):
     successes = sorted(value for value in supervisor if since <= value < until)
     gaps = [(right - left) / 3600 for left, right in zip(successes, successes[1:])]
