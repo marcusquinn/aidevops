@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { root, owner, recorded, manager, launcher, SUCCESS_BUDGET_MS, terminal } from "./bounded-operation-fixtures.mjs";
+import { root, owner, recorded, manager, launcher, SUCCESS_BUDGET_MS, operationWaitMs, terminal } from "./bounded-operation-fixtures.mjs";
 import { terminationCases } from "./bounded-operation-termination-cases.mjs";
 import { createOutputSandboxReader, createOutputSandboxRecorder } from "../bounded-operation-output.mjs";
 import {
@@ -269,7 +269,7 @@ describe("bounded interactive operations", () => {
             "fixture", scriptsDir, `${linked}\tfeature/adopt\t0`],
           cwd: linked, budgetMs: 15000,
         }, owner);
-        assert.equal((await terminal(instance, handoff.operation_id, owner, 17000)).state, "succeeded");
+        assert.equal((await terminal(instance, handoff.operation_id)).state, "succeeded");
         const receipt = JSON.parse(readFileSync(join(process.env.AIDEVOPS_FULL_LOOP_CLEANUP_DIR, "example_repo-123.json"), "utf8"));
         assert.equal(receipt.owner.session, owner.sessionID);
         assert.equal(receipt.owner.pid, process.pid);
@@ -279,7 +279,7 @@ describe("bounded interactive operations", () => {
         assert.throws(() => invoke(), "cleanup deferral must not enable live-owner adoption");
         await assert.rejects(instance.start({ command: [process.execPath], cwd: linked }, { sessionID: "ses_other" }), /not owned/);
         const resumed = await instance.start({ command: [process.execPath, "-e", "process.exit(0)"], cwd: linked, budgetMs: 5000 }, owner);
-        assert.equal((await terminal(instance, resumed.operation_id, owner, 7000)).state, "succeeded");
+        assert.equal((await terminal(instance, resumed.operation_id)).state, "succeeded");
       } finally {
         for (const key of environmentKeys) {
           if (priorEnvironment[key] === undefined) delete process.env[key];
@@ -373,8 +373,9 @@ describe("bounded interactive operations", () => {
       assert.ok(match, "nested child PID was not reported");
       return Number(match[1]);
     };
-    // An unrelated process group outside every operation must survive.
-    const unrelated = spawn("sleep", ["30"], { detached: true, stdio: "ignore" });
+    // An unrelated process group must survive until explicitly stopped in finally,
+    // even when containment checks take longer than 30 seconds under host load.
+    const unrelated = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
     unrelated.unref();
     try {
       const instance = manager();
@@ -382,7 +383,7 @@ describe("bounded interactive operations", () => {
       const nestedCommand = ["bash", "-c", "set -m; sleep 30 & echo nested:$!; wait"];
       let recordedBefore = recorded.length;
       const timed = await instance.start({ command: nestedCommand, budgetMs: 400 }, owner);
-      const timedResult = await terminal(instance, timed.operation_id, owner, 5000);
+      const timedResult = await terminal(instance, timed.operation_id);
       assert.equal(timedResult.state, "timed_out");
       assert.equal(timedResult.containment, "owned_process_tree");
       assert.equal(timedResult.nested_process_groups, 1);
@@ -392,7 +393,7 @@ describe("bounded interactive operations", () => {
       const cancelled = await instance.start({ command: nestedCommand, budgetMs: 10_000 }, owner);
       await new Promise((resolve) => setTimeout(resolve, 400));
       instance.cancel(cancelled.operation_id, owner);
-      const cancelledResult = await terminal(instance, cancelled.operation_id, owner, 5000);
+      const cancelledResult = await terminal(instance, cancelled.operation_id);
       assert.equal(cancelledResult.state, "cancelled");
       assert.equal(alive(nestedPid(recordedBefore)), false, "nested process group survived cancellation");
 
@@ -406,7 +407,7 @@ describe("bounded interactive operations", () => {
       });
       if (timeoutBinary) {
         const gnu = await instance.start({ command: [timeoutBinary, "30", "sleep", "30"], budgetMs: 400 }, owner);
-        const gnuResult = await terminal(instance, gnu.operation_id, owner, 5000);
+        const gnuResult = await terminal(instance, gnu.operation_id);
         assert.equal(gnuResult.state, "timed_out");
         assert.equal(gnuResult.containment, "owned_process_tree");
       }
@@ -425,7 +426,7 @@ describe("bounded interactive operations", () => {
     ];
     for (const shape of shapes) {
       const started = await instance.start({ command: ["bash", "-c", shape], budgetMs: 20_000 }, owner);
-      const result = await terminal(instance, started.operation_id, owner, 5000);
+      const result = await terminal(instance, started.operation_id);
       assert.equal(result.state, "failed", shape);
       assert.ok(result.process_exit > 0, shape);
       assert.equal(result.evidence_state, "recorded", shape);
@@ -443,14 +444,14 @@ describe("bounded interactive operations", () => {
       try {
         // Waits end as soon as the listener appears; the generous ceilings only
         // matter on a saturated host (GH#39251).
-        const deadline = Date.now() + 3000 * 3;
+        const deadline = Date.now() + operationWaitMs(instance, started.operation_id);
         while (Date.now() < deadline) {
           try { pid = JSON.parse(readFileSync(pidFile, "utf8")).pid; break; } catch { /* wait for listener */ }
           await new Promise((resolve) => setTimeout(resolve, 20));
         }
         assert.ok(pid, "escaped server never listened");
         if (mode === "cancel") instance.cancel(started.operation_id, owner);
-        const result = await terminal(instance, started.operation_id, owner, 20000);
+        const result = await terminal(instance, started.operation_id);
         assert.equal(result.state, { completion: "succeeded", cancel: "cancelled", expiry: "timed_out" }[mode]);
         // GH#34047: only completion-triggered cleanup is reported; exit 0 is not liveness.
         assert.equal(result.post_exit_descendants_terminated, mode === "completion", `${mode}: post-exit receipt field`);
@@ -628,7 +629,7 @@ describe("bounded interactive operations", () => {
       budgetMs: SUCCESS_BUDGET_MS,
       restorationBudgetMs: 30,
     }, owner);
-    const deadline = Date.now() + 5000;
+    const deadline = Date.now() + operationWaitMs(instance, started.operation_id);
     while (instance.status(started.operation_id, owner).state !== "restoring" && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
@@ -754,8 +755,8 @@ describe("bounded interactive operations", () => {
       command: [process.execPath, "-e", "setTimeout(() => process.exit(0), 100)"],
       budgetMs: SUCCESS_BUDGET_MS,
     }, secondOwner);
+    const deadline = Date.now() + operationWaitMs(instance, first.operation_id);
     instance.handleEvent({ event: { type: "session.deleted", properties: { info: { id: owner.sessionID } } } });
-    const deadline = Date.now() + 2000;
     while (instance.operations.has(first.operation_id) && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }

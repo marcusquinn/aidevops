@@ -71,9 +71,20 @@ export function launcher({ started = false } = {}) {
 }
 
 // Startup on loaded hosts is not a timeout/latency assertion.
-export const SUCCESS_BUDGET_MS = 10_000;
+export const SUCCESS_BUDGET_MS = 30_000;
 
-export async function terminal(instance, operationID, context = owner, timeoutMs = 15_000) {
+// Include both supervisor phases and their grace, plus scheduling/drain slack.
+// Long-budget tests deliberately use 24-hour budgets and 300-second grace;
+// cap the test-only wait, not the operation or any final-state assertion.
+export function operationWaitMs(instance, operationID) {
+  const operation = instance.operations.get(operationID);
+  const main = operation.budgetMs + operation.killGraceMs;
+  const restoration = operation.restorationCommand
+    ? operation.restorationBudgetMs + operation.killGraceMs : 0;
+  return Math.min(120_000, main + restoration + 15_000);
+}
+
+export async function terminal(instance, operationID, context = owner, timeoutMs = operationWaitMs(instance, operationID)) {
   const deadline = Date.now() + timeoutMs;
   let receipt;
   do {
@@ -81,5 +92,5 @@ export async function terminal(instance, operationID, context = owner, timeoutMs
     if (!["starting", "running", "cancelling", "timing_out", "restoring", "finalizing"].includes(receipt.state)) return receipt;
     await new Promise((resolve) => setTimeout(resolve, 10));
   } while (Date.now() < deadline);
-  throw new Error(`operation ${operationID} did not reach a terminal state: ${receipt?.state}`);
+  throw new Error(`operation ${operationID} did not reach a terminal state: ${receipt?.state} after ${timeoutMs} ms (budget ${receipt?.budget_ms} ms, grace ${receipt?.kill_grace_ms} ms)`);
 }
