@@ -251,14 +251,30 @@ pulse_event_refill_signal() {
 	fi
 	[[ "$max_wake_passes" =~ ^[0-9]+$ ]] || max_wake_passes=2
 	((max_wake_passes > 0)) || max_wake_passes=1
-	while [[ -f "$trigger_file" && "$wake_pass" -lt "$max_wake_passes" ]]; do
+	local max_continuations="${PULSE_EVENT_REFILL_WAKE_MAX_CONTINUATIONS:-24}"
+	[[ "$max_continuations" =~ ^[0-9]+$ ]] || max_continuations=24
+	local continuations=0
+	local before_identity=""
+	local next_wrapper=""
+	while [[ -f "$trigger_file" ]]; do
+		if [[ "$wake_pass" -ge "$max_wake_passes" ]]; then
+			# Continue only when an exit re-recorded the trigger during the last
+			# run; a stale retained trigger keeps the bounded stop.
+			[[ "$continuations" -lt "$max_continuations" ]] || break
+			[[ "$(cat "$trigger_file" 2>/dev/null || true)" != "$before_identity" ]] || break
+			next_wrapper=$(_pulse_event_refill_resolve_wake_wrapper "$wrapper") || break
+			wrapper="$next_wrapper"
+			continuations=$((continuations + 1))
+			pulse_event_refill_log "action=wake_continued pass=$((wake_pass + 1)) reason=fresh_trigger"
+		fi
+		before_identity=$(cat "$trigger_file" 2>/dev/null || true)
 		wake_pass=$((wake_pass + 1))
 		pulse_event_refill_log "action=wake_started issue=${issue_number} worker_pid=${worker_pid} pass=${wake_pass} source=${refill_source}"
 		AIDEVOPS_PULSE_EVENT_REFILL_ENABLED=1 \
 			PULSE_EVENT_REFILL_TRIGGER_FILE="$trigger_file" \
 			PULSE_EVENT_REFILL_WRAPPER="$wrapper" \
 			bash "$wrapper" --refill-only --refill-source="$refill_source" || true
-		if [[ -f "$trigger_file" && "$wake_pass" -lt "$max_wake_passes" ]]; then
+		if [[ -f "$trigger_file" ]]; then
 			sleep 1
 		fi
 	done

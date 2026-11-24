@@ -285,6 +285,84 @@ WRAPPER
 	return 0
 }
 
+# Fake wrapper: runs 1..N re-record a fresh trigger; later runs consume it.
+# PULSE_EVENT_TEST_FRESH_RUNS=0 leaves the original trigger untouched.
+write_fresh_trigger_wrapper() {
+	local fake_wrapper="$1"
+	cat >"$fake_wrapper" <<'WRAPPER'
+#!/usr/bin/env bash
+# Supports --refill-only for the mixed-version compatibility probe.
+printf '%s\n' "$*" >>"$PULSE_EVENT_TEST_WAKE_LOG"
+runs=$(wc -l <"$PULSE_EVENT_TEST_WAKE_LOG" | tr -d ' ')
+if [[ "$PULSE_EVENT_TEST_FRESH_RUNS" -eq 0 ]]; then
+	exit 0
+fi
+if [[ "$runs" -le "$PULSE_EVENT_TEST_FRESH_RUNS" ]]; then
+	printf 'issue=9 worker_pid=%s ts=%s\n' "$runs" "$runs" >"$PULSE_EVENT_REFILL_TRIGGER_FILE"
+else
+	rm -f "$PULSE_EVENT_REFILL_TRIGGER_FILE"
+fi
+WRAPPER
+	chmod +x "$fake_wrapper"
+	return 0
+}
+
+test_signal_wake_continues_on_fresh_trigger() {
+	reset_state
+	local fake_wrapper="${TEST_ROOT}/fresh-wrapper.sh"
+	export PULSE_EVENT_TEST_WAKE_LOG="${TEST_ROOT}/fresh-wake.log"
+	rm -f "$PULSE_EVENT_TEST_WAKE_LOG"
+	write_fresh_trigger_wrapper "$fake_wrapper"
+	export PULSE_EVENT_TEST_FRESH_RUNS=2
+	PULSE_EVENT_REFILL_WRAPPER="$fake_wrapper"
+	PULSE_EVENT_REFILL_WAKE_PASSES=1
+	pulse_event_refill_signal 601 6601
+	local wake_count=0
+	wake_count=$(wc -l <"$PULSE_EVENT_TEST_WAKE_LOG" | tr -d ' ')
+	assert_eq "fresh trigger keeps the waker running" "3" "$wake_count"
+	assert_file_absent "continued waker leaves no trigger" "$PULSE_EVENT_REFILL_TRIGGER_FILE"
+	if grep -q 'action=wake_continued pass=2 reason=fresh_trigger' "$LOGFILE"; then
+		pass "continuation is logged"
+	else
+		fail "continuation is logged" "wake_continued was not logged"
+	fi
+	return 0
+}
+
+test_signal_wake_stops_on_stale_trigger() {
+	reset_state
+	local fake_wrapper="${TEST_ROOT}/stale-wrapper.sh"
+	export PULSE_EVENT_TEST_WAKE_LOG="${TEST_ROOT}/unchanged-trigger-wake.log"
+	rm -f "$PULSE_EVENT_TEST_WAKE_LOG"
+	write_fresh_trigger_wrapper "$fake_wrapper"
+	export PULSE_EVENT_TEST_FRESH_RUNS=0
+	PULSE_EVENT_REFILL_WRAPPER="$fake_wrapper"
+	PULSE_EVENT_REFILL_WAKE_PASSES=1
+	pulse_event_refill_signal 602 6602
+	local wake_count=0
+	wake_count=$(wc -l <"$PULSE_EVENT_TEST_WAKE_LOG" | tr -d ' ')
+	assert_eq "stale trigger stops after max wake passes" "1" "$wake_count"
+	assert_file_exists "stale trigger is retained" "$PULSE_EVENT_REFILL_TRIGGER_FILE"
+	return 0
+}
+
+test_signal_wake_continuations_disabled() {
+	reset_state
+	local fake_wrapper="${TEST_ROOT}/nocont-wrapper.sh"
+	export PULSE_EVENT_TEST_WAKE_LOG="${TEST_ROOT}/nocont-wake.log"
+	rm -f "$PULSE_EVENT_TEST_WAKE_LOG"
+	write_fresh_trigger_wrapper "$fake_wrapper"
+	export PULSE_EVENT_TEST_FRESH_RUNS=2
+	PULSE_EVENT_REFILL_WRAPPER="$fake_wrapper"
+	PULSE_EVENT_REFILL_WAKE_PASSES=1
+	PULSE_EVENT_REFILL_WAKE_MAX_CONTINUATIONS=0 pulse_event_refill_signal 603 6603
+	local wake_count=0
+	wake_count=$(wc -l <"$PULSE_EVENT_TEST_WAKE_LOG" | tr -d ' ')
+	assert_eq "zero continuations restores bounded passes" "1" "$wake_count"
+	assert_file_exists "bounded stop retains the fresh trigger" "$PULSE_EVENT_REFILL_TRIGGER_FILE"
+	return 0
+}
+
 test_signal_from_inactive_bundle_retains_trigger() {
 	reset_state
 	local active_agents="${TEST_ROOT}/active-bundle/agents"
@@ -500,6 +578,9 @@ main() {
 	test_processing_recovery_and_busy_lock
 	test_wrapper_refill_only_cli_short_circuit
 	test_signal_wake_coalesces_parallel_exits
+	test_signal_wake_continues_on_fresh_trigger
+	test_signal_wake_stops_on_stale_trigger
+	test_signal_wake_continuations_disabled
 	test_signal_from_inactive_bundle_retains_trigger
 	test_signal_from_inactive_bundle_wakes_active_wrapper
 	test_signal_during_runtime_transition_retains_trigger
