@@ -373,8 +373,9 @@ describe("bounded interactive operations", () => {
       assert.ok(match, "nested child PID was not reported");
       return Number(match[1]);
     };
-    // An unrelated process group outside every operation must survive.
-    const unrelated = spawn("sleep", ["30"], { detached: true, stdio: "ignore" });
+    // An unrelated process group must survive until explicitly stopped in finally,
+    // even when containment checks take longer than 30 seconds under host load.
+    const unrelated = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
     unrelated.unref();
     try {
       const instance = manager();
