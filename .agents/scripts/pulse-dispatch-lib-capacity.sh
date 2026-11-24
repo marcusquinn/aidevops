@@ -230,9 +230,9 @@ _dispatch_install_candidate_handoff() {
 	return 2
 }
 
-# GH#38048: a first wave or bounded census adopts a drained cycle's full
-# census as its durable snapshot, so the activated bundle starts from known
-# work without a new scan. A skip round may take a normalized census, never
+# GH#38048: a first wave or bounded census (t19339: or a refill-only run)
+# adopts a handed-on full census as its snapshot, so the next dispatch
+# process starts from known work without a new scan. A skip round may take a normalized census, never
 # the reverse. A handoff past its reuse window, with another schema, on an
 # unsafe path or whose ledger cannot be transferred is removed unserved.
 # Adopted candidates still pass the registry/schedule recheck and every live
@@ -588,6 +588,23 @@ _dispatch_filter_partial_snapshot_candidates() {
 	return $?
 }
 
+# Unattempted candidates of a fresh snapshot. A first wave rechecks registry
+# paths and schedules; so does a refill-only run serving a census adopted from
+# another process (t19339), since that census crossed a cycle boundary.
+# Args: $1=snapshot file. Stdout: candidate JSON array.
+_dispatch_snapshot_unconsumed_candidates() {
+	local snapshot_file="$1" candidates_json="[]"
+	candidates_json=$(jq -c '.candidates' "$snapshot_file") || return 1
+	candidates_json=$(_dispatch_filter_consumed_ranked_candidates "$snapshot_file" "$candidates_json") || return 1
+	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 ]]; then
+		candidates_json=$(_dispatch_filter_partial_snapshot_candidates "$candidates_json") || return 1
+	elif [[ "${PULSE_REFILL_ONLY:-0}" == 1 ]] && jq -e '.handed_off_at | numbers' "$snapshot_file" >/dev/null 2>&1; then
+		candidates_json=$(_dispatch_filter_partial_snapshot_candidates "$candidates_json") || return 1
+	fi
+	printf '%s\n' "$candidates_json"
+	return 0
+}
+
 _dispatch_ranked_candidates_json() {
 	local per_repo_limit="${1:-${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}}"
 	local dependency_normalization_mode="${2:-normalize}"
@@ -611,17 +628,17 @@ _dispatch_ranked_candidates_json() {
 		return $?
 	}
 	# GH#38048: the activated bundle's first wave starts from a drained
-	# cycle's full census when one was handed over.
-	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 ]]; then
+	# cycle's full census when one was handed over. t19339: so does a
+	# refill-only run (pulse-wrapper.sh --refill-only), which otherwise
+	# rescanned every repository (~2 min) before its first candidate while
+	# the previous dispatch process's census waited for the next cycle.
+	# Later rounds of a cycle (neither flag) still never adopt.
+	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 || "${PULSE_REFILL_ONLY:-0}" == 1 ]]; then
 		_dispatch_adopt_candidate_handoff "$snapshot_file" "$per_repo_limit" "$dependency_normalization_mode" "$now_epoch" "$snapshot_ttl" || true
 	fi
 	if _dispatch_candidate_snapshot_is_fresh "$snapshot_file" "$now_epoch" "$reuse_ttl"; then
 		snapshot_fresh=1
-		candidates_json=$(jq -c '.candidates' "$snapshot_file") || return 1
-		candidates_json=$(_dispatch_filter_consumed_ranked_candidates "$snapshot_file" "$candidates_json") || return 1
-		if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 ]]; then
-			candidates_json=$(_dispatch_filter_partial_snapshot_candidates "$candidates_json") || return 1
-		fi
+		candidates_json=$(_dispatch_snapshot_unconsumed_candidates "$snapshot_file") || return 1
 		# GH#38200: a first-wave remainder that cannot fill the free slots is
 		# stale while launchable arrivals wait outside it; re-enumerate.
 		if [[ "$candidates_json" != '[]' && "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 ]] &&
