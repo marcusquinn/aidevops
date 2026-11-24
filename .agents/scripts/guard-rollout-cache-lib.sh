@@ -52,17 +52,69 @@ guard_rollout_record() {
 	return 0
 }
 
+# Batch file reads and hashing in one process per stage. Git itself resolves
+# hooksPath (including includes/worktrees); old Git or any uncertainty is a miss.
+# Without Python the original installers remain the sole execution path.
+guard_rollout_scan() {
+	local registry="$1" hook_name="$2" marker="$3" fingerprint="$4"
+	local registrations="${5:-$1}"
+	[[ -n "$fingerprint" ]] && command -v python3 >/dev/null 2>&1 || return 1
+	python3 - "$registry" "$hook_name" "$marker" "$fingerprint" "$registrations" <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+registry, name, marker, fingerprint, registrations = sys.argv[1:]
+try:
+    entries = json.loads(Path(registry).read_text())["initialized_repos"]
+    registered = {entry["path"] for entry in json.loads(Path(registrations).read_text())["initialized_repos"]
+                  if "code-quality" in entry.get("features", [])}
+except (OSError, ValueError, KeyError, TypeError):
+    sys.exit(1)
+for entry in entries:
+    try:
+        repo = entry["path"]
+        if not isinstance(repo, str) or "\n" in repo:
+            continue
+        # Match the existing rollout's leading-tilde expansion, not ~username.
+        if name != "pre-push" or marker != "# guard:repo-verify":
+            repo = os.environ["HOME"] + repo[1:] if repo.startswith("~") else repo
+        if not (Path(repo) / ".git").exists():
+            continue
+        if marker == "# guard:repo-verify":
+            config = json.loads((Path(repo) / ".aidevops.json").read_text())
+            if (repo not in registered or config.get("features", {}).get("code_quality") is not True
+                    or config.get("verify", {}).get("enabled") is False):
+                continue
+        result = subprocess.run(["git", "-C", repo, "rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+                                capture_output=True, text=True, timeout=5, check=True)
+        directory = result.stdout.rstrip("\n")
+        if not directory.startswith("/") or "\n" in directory:
+            continue
+        hook = Path(directory) / name
+        if hook.is_symlink() or not hook.is_file() or not os.access(hook, os.X_OK):
+            continue
+        receipt = Path(str(hook) + ".aidevops-current").read_text().rstrip("\n")
+        if not receipt.startswith(fingerprint + "\n"):
+            continue
+        data = hook.read_bytes()
+        digest = hashlib.sha256(data).hexdigest() + "  " + str(hook)
+        if marker.encode() in data.splitlines() and receipt == fingerprint + "\n" + digest:
+            print(repo)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
+        continue
+PY
+	return $?
+}
+
+# The caller owns a stage-local snapshot, never a persistent path-resolution cache.
 guard_rollout_current() {
-	local repo="$1" hook_name="$2" marker="$3" fingerprint="$4"
-	local hooks_dir="" hook="" expected="" digest=""
-	[[ -n "$fingerprint" ]] || return 1
-	hooks_dir=$(aidevops_git_hooks_dir "$repo") || return 1
-	hook="$hooks_dir/$hook_name"
-	[[ -f "$hook" && ! -L "$hook" && -x "$hook" && -f "${hook}.aidevops-current" ]] || return 1
-	expected=$(<"${hook}.aidevops-current")
-	[[ "$expected" == "$fingerprint"$'\n'* ]] || return 1
-	grep -qxF "$marker" "$hook" || return 1
-	digest=$(guard_rollout_hash "$hook") || return 1
-	[[ "$expected" == "$fingerprint"$'\n'"$digest" ]] || return 1
-	return 0
+	local repo="$1" current_repos="$2"
+	case $'\n'"$current_repos"$'\n' in
+	*$'\n'"$repo"$'\n'*) return 0 ;;
+	esac
+	return 1
 }

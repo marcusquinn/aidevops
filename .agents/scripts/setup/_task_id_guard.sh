@@ -70,8 +70,9 @@ setup_task_id_guard() {
 
 	# shellcheck source=../guard-rollout-cache-lib.sh
 	source "${installer_path%/*}/guard-rollout-cache-lib.sh"
-	local fingerprint=""
+	local fingerprint="" current_repos=""
 	fingerprint=$(guard_rollout_fingerprint "$installer_path") || true
+	current_repos=$(guard_rollout_scan "$repos_config" commit-msg '# aidevops-task-id-guard' "$fingerprint") || true
 	local ok=0 already=0 conflict=0 skip=0 err=0 current=0
 	local rawpath path result
 
@@ -82,7 +83,7 @@ setup_task_id_guard() {
 			skip=$((skip + 1))
 			continue
 		fi
-		if guard_rollout_current "$path" commit-msg '# aidevops-task-id-guard' "$fingerprint"; then
+		if guard_rollout_current "$path" "$current_repos"; then
 			current=$((current + 1))
 			ok=$((ok + 1))
 			continue

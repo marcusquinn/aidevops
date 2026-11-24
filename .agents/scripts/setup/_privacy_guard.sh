@@ -69,8 +69,9 @@ setup_privacy_guard() {
 
 	# shellcheck source=../guard-rollout-cache-lib.sh
 	source "${installer_path%/*}/guard-rollout-cache-lib.sh"
-	local fingerprint=""
+	local fingerprint="" current_repos=""
 	fingerprint=$(guard_rollout_fingerprint "$installer_path") || true
+	current_repos=$(guard_rollout_scan "$repos_config" pre-push '# guard:privacy' "$fingerprint") || true
 	local ok=0 conflict=0 skip=0 err=0 current=0
 	local rawpath path result
 
@@ -81,7 +82,7 @@ setup_privacy_guard() {
 			skip=$((skip + 1))
 			continue
 		fi
-		if guard_rollout_current "$path" pre-push '# guard:privacy' "$fingerprint"; then
+		if guard_rollout_current "$path" "$current_repos"; then
 			current=$((current + 1))
 			ok=$((ok + 1))
 			continue
