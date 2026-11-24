@@ -103,6 +103,9 @@ POLL_INTERVAL=10
 # flag overrides the env var. Set to 0 to disable hard-kill (stall continues
 # indefinitely up to the runtime's wall-clock cap — legacy behaviour).
 HARD_KILL_SECONDS="${WORKER_STALL_HARD_KILL_SECONDS:-1500}"
+# GH#40157: fresh isolated-DB progress earns one longer absolute cap, not
+# a sliding timeout. Zero opts out of the extension; the base cap still applies.
+HARD_KILL_ACTIVE_SECONDS="${WORKER_STALL_HARD_KILL_ACTIVE_SECONDS:-3000}"
 # t3056 / GH#21781: CPU threshold below which a stalled worker is considered
 # truly stuck (vs just not writing output). Process tree CPU >= this value
 # defers the stall kill — the worker is alive but doing non-output work
@@ -206,6 +209,10 @@ _parse_args() {
 	[[ "$POLL_INTERVAL" =~ ^[0-9]+$ ]] || POLL_INTERVAL=10
 	# t2956: HARD_KILL_SECONDS=0 disables the hard-kill branch (allowed).
 	[[ "$HARD_KILL_SECONDS" =~ ^[0-9]+$ ]] || HARD_KILL_SECONDS=1500
+	[[ "$HARD_KILL_ACTIVE_SECONDS" =~ ^[0-9]+$ ]] || HARD_KILL_ACTIVE_SECONDS=3000
+	if [[ "$HARD_KILL_ACTIVE_SECONDS" -lt "$HARD_KILL_SECONDS" || "$HARD_KILL_ACTIVE_SECONDS" -eq 0 ]]; then
+		HARD_KILL_ACTIVE_SECONDS="$HARD_KILL_SECONDS"
+	fi
 	[[ "$DB_ACTIVITY_WINDOW" =~ ^[0-9]+$ ]] || DB_ACTIVITY_WINDOW=120
 	[[ "$WORKER_PID" =~ ^[0-9]+$ ]] || {
 		echo "Error: --worker-pid must be numeric" >&2
@@ -760,6 +767,7 @@ _monitor_init_state() {
 	_MONITOR_LAST_DEFER_EPOCH=0
 	_MONITOR_LAST_DEFER_REASON=""
 	_MONITOR_CAP_LIVENESS=""
+	_MONITOR_CAP_EXTENDED=0
 	_MONITOR_START_EPOCH=$(date +%s)
 	_WATCHDOG_START_EPOCH="$_MONITOR_START_EPOCH"
 	return 0
@@ -863,7 +871,22 @@ _monitor_enforce_hard_kill() {
 		return 0
 	fi
 
-	# GH#34068: cap timing is unchanged. When a liveness deferral (CI wait,
+	# GH#40157: only DB-proven progress may use the longer absolute cap.
+	# Recheck freshness on every confirmed stall; losing activity revokes the
+	# extension immediately. Log once per attempt through the deferral writer.
+	if [[ "$elapsed_total" -lt "$HARD_KILL_ACTIVE_SECONDS" ]] && _watchdog_db_part_activity; then
+		if [[ "${_MONITOR_CAP_EXTENDED:-0}" -eq 0 ]]; then
+			local lifecycle_event=""
+			printf -v lifecycle_event '[lifecycle] worker_cap_extended pid=%s cap_liveness=tool_output_active elapsed=%ss active_cap=%ss ts=%s' \
+				"$WORKER_PID" "$elapsed_total" "$HARD_KILL_ACTIVE_SECONDS" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+			worker_attempt_observability_enrich lifecycle_event "$lifecycle_event"
+			_watchdog_record_event "$lifecycle_event"
+			_MONITOR_CAP_EXTENDED=1
+		fi
+		return 0
+	fi
+
+	# GH#34068: all other liveness classes keep the base cap. When a deferral (CI wait,
 	# network, CPU) happened within one stall window, the kill is a policy
 	# cap on active work rather than proven inactivity — classify it so.
 	# A deferral resets the stall counter, so the next confirmed stall lands
@@ -873,7 +896,7 @@ _monitor_enforce_hard_kill() {
 	local deferral_window=$((STALL_TIMEOUT + 2 * POLL_INTERVAL))
 	# GH#35287: the cap runs BEFORE the normal live-work probes. The first
 	# silent window may cross the cap with no previous deferral at all.
-	# Sample now for classification only; never defer or remove the cap kill.
+	# Sample now for classification only; never remove the absolute cap kill.
 	local tree_cpu stall_cpu_threshold="$STALL_CPU_THRESHOLD"
 	[[ "$stall_cpu_threshold" =~ ^[0-9]+$ ]] || stall_cpu_threshold=2
 	_MONITOR_CAP_LIVENESS="none_observed"
@@ -1004,9 +1027,9 @@ main() {
 
 	# GH#36700: per-attempt proof that the watchdog is running and which
 	# thresholds are in effect. Not sent to the shared lifecycle log.
-	_watchdog_record_attempt_event "$(printf '[lifecycle] watchdog_monitoring pid=%s worker=%s stall_timeout=%ss phase1=%ss poll=%ss hard_kill=%ss cpu_threshold=%s%% ts=%s' \
+	_watchdog_record_attempt_event "$(printf '[lifecycle] watchdog_monitoring pid=%s worker=%s stall_timeout=%ss phase1=%ss poll=%ss hard_kill=%ss active_cap=%ss cpu_threshold=%s%% ts=%s' \
 		"$$" "$WORKER_PID" "$STALL_TIMEOUT" "$PHASE1_TIMEOUT" "$POLL_INTERVAL" \
-		"$HARD_KILL_SECONDS" "$STALL_CPU_THRESHOLD" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
+		"$HARD_KILL_SECONDS" "$HARD_KILL_ACTIVE_SECONDS" "$STALL_CPU_THRESHOLD" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
 
 	_monitor
 	return 0
