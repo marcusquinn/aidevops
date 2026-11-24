@@ -613,10 +613,17 @@ fi
 	source "${SCRIPT_DIR}/headless-runtime-result.sh"
 	_headless_private_workload_enabled() { return 1; }
 	# Stub only the secret-check subprocess, never read the operator's store.
-	bash() {
-		local executable="${1:-}" operation="${2:-}" name="${3:-}"
+	timeout() {
+		local signal="${1:-}" duration="${2:-}" executable="${4:-}" operation="${5:-}" name="${6:-}"
 		if [[ "$executable" == */secret-helper.sh && "$operation" == check ]]; then
 			printf 'SECRET_CHECK %s\n' "$name" >>"$CALL_LOG"
+			if [[ "$name" == STALLED_CONFIG ]]; then
+				[[ "$signal" == --signal=KILL && "$duration" == 1 ]] || return 99
+				local stalled_status=0
+				command timeout "$signal" "$duration" bash -c 'sleep 30' || stalled_status=$?
+				printf 'STALLED_STATUS %s\n' "$stalled_status" >>"$CALL_LOG"
+				return "$stalled_status"
+			fi
 			printf 'fixture-sensitive-output\n'
 			printf 'fixture-decryption-error\n' >&2
 			case "$name" in
@@ -626,7 +633,7 @@ fi
 			*) return 1 ;;
 			esac
 		fi
-		command bash "$@"
+		command timeout "$@"
 		return $?
 	}
 	gh_issue_edit_safe() { printf 'EDIT %s\n' "$*" >>"$CALL_LOG"; return 0; }
@@ -704,7 +711,8 @@ fi
 	terminal_blocker_task_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaa\n'; return 0; }
 	terminal_blocker_release_mode() { printf 'first\n'; return 0; }
 	trap 'printf "FAIL secret re-verification assertion at line %s\n" "$LINENO"' ERR
-	for secret_case in READABLE_CONFIG UNREADABLE_CONFIG TIMEOUT_CONFIG RUNNER_CONFIG; do
+	AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS=1
+	for secret_case in READABLE_CONFIG UNREADABLE_CONFIG TIMEOUT_CONFIG STALLED_CONFIG RUNNER_CONFIG; do
 		: >"$CALL_LOG"
 		rm -f "${TMP_HOME}/comment-attempts"
 		GH_RELEASE_COMMENTS=$(jq -c '.[0]' <<<"$valid_claim_evidence")
@@ -725,6 +733,9 @@ fi
 		fi
 		if [[ "$secret_case" == READABLE_CONFIG ]]; then
 			grep -q 'missing_secret_declaration_refuted name=READABLE_CONFIG' "${TMP_HOME}/capture-errors"
+		fi
+		if [[ "$secret_case" == STALLED_CONFIG ]]; then
+			grep -q '^STALLED_STATUS 137$' "$CALL_LOG"
 		fi
 		if grep -qE 'fixture-sensitive-output|fixture-decryption-error' "$CALL_LOG" "${TMP_HOME}/capture-errors"; then
 			printf 'FAIL secret-check output escaped suppression\n'; exit 1

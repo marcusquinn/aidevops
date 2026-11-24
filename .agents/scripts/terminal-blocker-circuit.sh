@@ -335,17 +335,26 @@ _terminal_blocker_permission_ask_class() {
 }
 
 # Only confirmed absence warrants a fleet-wide credential hold. Run sequentially
-# on the producing runner; secret-helper owns the bounded non-interactive read.
+# on the producing runner; bound discovery as well as the non-interactive read.
 # Suppress both streams even if a backend unexpectedly emits a value or error.
 _tbc_reverify_missing_secrets() {
 	local names="$1"
 	local name="" check_status=0
 	local helper="${BASH_SOURCE[0]%/*}/secret-helper.sh"
+	local timer="" read_timeout="${AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS:-12}"
+	command -v timeout >/dev/null 2>&1 && timer="timeout"
+	if [[ -z "$timer" ]]; then
+		command -v gtimeout >/dev/null 2>&1 && timer="gtimeout"
+	fi
+	# Without supervision, absence cannot be safely established on this runner.
+	[[ -n "$timer" ]] || return 0
+	[[ "$read_timeout" =~ ^[1-9][0-9]?$ ]] || read_timeout=12
+	[[ "$read_timeout" -le 55 ]] || read_timeout=55
 	while IFS= read -r name; do
 		[[ -n "$name" ]] || continue
 		[[ "$name" =~ ^[A-Z][A-Z0-9_]{0,127}$ ]] || continue
 		check_status=0
-		bash "$helper" check "$name" </dev/null >/dev/null 2>&1 || check_status=$?
+		"$timer" --signal=KILL "$read_timeout" bash "$helper" check "$name" </dev/null >/dev/null 2>&1 || check_status=$?
 		case "$check_status" in
 		1) printf '%s\n' "$name" ;;
 		0) printf 'missing_secret_declaration_refuted name=%s\n' "$name" >&2 ;;
