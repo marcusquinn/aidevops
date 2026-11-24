@@ -549,7 +549,10 @@ run_cycle_entry_drain() {
 	local split_rc="$1"
 	local wake_rc="$2"
 	local wake_args="$3"
+	local refill_only="${4:-0}"
 	(
+		# The full cycle never reaches its entry drain in refill-only mode.
+		PULSE_REFILL_ONLY="$refill_only"
 		pulse_dispatch_lock_split_enabled() { return "$split_rc"; }
 		pulse_event_refill_wake_underfilled() {
 			printf '%s\n' "$*" >>"$wake_args"
@@ -594,6 +597,24 @@ test_cycle_entry_wakes_detached_refill_in_split_mode() {
 		fi
 		[[ "$split_rc" == "0" ]] || assert_file_absent "shared-lock cycle entry starts no wake" "$wake_args"
 	done
+
+	# The woken --refill-only run keeps the cycle-entry source and dispatches.
+	reset_state
+	rm -f "$wake_args"
+	pulse_event_refill_write_trigger 623 6623
+	(
+		_LOCK_OWNED=false
+		_DISPATCH_LOCK_OWNED=true
+		run_cycle_entry_drain 0 0 "$wake_args" 1
+	)
+	assert_file_exists "woken cycle-entry refill dispatches" "$apply_log"
+	assert_file_absent "woken cycle-entry refill starts no further wake" "$wake_args"
+	assert_file_absent "woken cycle-entry refill consumes the trigger" "$PULSE_EVENT_REFILL_TRIGGER_FILE"
+	if grep -q 'action=drain_started source=cycle-entry pass=1' "$LOGFILE"; then
+		pass "woken cycle-entry refill keeps its attribution"
+	else
+		fail "woken cycle-entry refill keeps its attribution" "drain_started source=cycle-entry was not logged"
+	fi
 	return 0
 }
 

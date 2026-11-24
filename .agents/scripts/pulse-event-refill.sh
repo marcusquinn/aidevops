@@ -752,7 +752,9 @@ pulse_event_refill_drain() {
 	((max_passes > 0)) || max_passes=1
 	pulse_event_refill_recover_processing
 	# Never dispatch in-process at cycle entry; see _pulse_event_refill_cycle_entry.
-	if [[ "$source_name" == "cycle-entry" ]]; then
+	# The detached --refill-only run woken from there keeps the cycle-entry
+	# attribution and must reach dispatch (t19350), so refill-only mode skips it.
+	if [[ "$source_name" == "cycle-entry" && "${PULSE_REFILL_ONLY:-0}" != "1" ]]; then
 		_pulse_event_refill_cycle_entry "$trigger_file"
 		return 0
 	fi
