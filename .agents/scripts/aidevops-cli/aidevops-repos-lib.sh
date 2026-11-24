@@ -563,7 +563,7 @@ _repo_registration_update_existing() {
 		--arg app_type_default "$app_type_default" --argjson cloudron_defaults "$cloudron_defaults" \
 		--arg cloudron_app_type "$cloudron_app_type" \
 		'(.initialized_repos[] | select(.path == $path)) |= (
-			. + {path: $path, version: $version, features: ($features | split(",")), updated: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}
+			. + {path: $path, version: $version, features: ($features | gsub("_"; "-") | split(",")), updated: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}
 			| if $slug != "" then .slug = $slug else . end
 			| if $local_only then .local_only = true else del(.local_only) end
 			| if .pulse == null then .pulse = (if $local_only then false else $pulse_default end) else . end
@@ -585,6 +585,8 @@ _repo_registration_update_existing() {
 
 # Register a repo in repos.json
 # Usage: register_repo <path> <version> <features> [verified-slug] [sync-only: true|false]
+# GH#40096: callers pass `.aidevops.json` keys (`code_quality`); both writers
+# store the hyphenated registry contract (`code-quality`).
 register_repo() {
 	aidevops_with_registry_lock "$REPOS_FILE" _register_repo_locked "$@"
 	return $?
@@ -604,9 +606,6 @@ _register_repo_locked() {
 	local repo_path="$1" version="$2" features="$3"
 	local verified_slug="${4:-}"
 	local sync_only="${5:-false}"
-	# GH#40096: callers pass `.aidevops.json` keys (`code_quality`); the
-	# registry contract is hyphenated (`code-quality`).
-	features="${features//_/-}"
 
 	init_repos_file || return 1
 
@@ -683,7 +682,7 @@ _register_repo_locked() {
 					path: $path,
 					maintainer: $maintainer,
 					version: $version,
-					features: ($features | split(",")),
+					features: ($features | gsub("_"; "-") | split(",")),
 					pulse: $pulse_default,
 					init_scope: $init_scope,
 					initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))
