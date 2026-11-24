@@ -15,6 +15,7 @@ from canonical_git_invocation import (
     repository_values,
     split_invocation,
 )
+from canonical_git_management import is_registered_common_dir
 from canonical_git_readonly import CANONICAL_CHECKS
 from canonical_git_repository import git_output as _git_output
 from canonical_git_repository import is_canonical as _is_canonical
@@ -287,6 +288,30 @@ def _classify_canonical_operation(
     return result
 
 
+def _classify_linked_operation(
+    real_git_path: str, cwd: str, prefix: list[str], command: tuple[str, list[str]],
+) -> tuple[bool, str]:
+    """Classify a non-canonical target; shared worktree metadata stays audited."""
+    subcommand, args = command
+    result = True, "linked worktree or non-repository target"
+    if subcommand == "worktree" and not (args and args[0] in {"list", "add"}):
+        common_dir = _git_output(
+            real_git_path, cwd, *prefix,
+            "rev-parse", "--path-format=absolute", "--git-common-dir",
+        )
+        if common_dir and is_registered_common_dir(common_dir):
+            if _is_linked_worktree_remove_for_canonical(
+                real_git_path, cwd, prefix, args
+            ):
+                result = True, "linked-worktree removal for canonical repository"
+            else:
+                result = False, (
+                    f"shared worktree metadata mutation via 'git {subcommand}' "
+                    "from a linked worktree"
+                )
+    return result
+
+
 def classify_git_argv(
     argv: list[str], cwd: str, real_git_path: str, check_unresolved: bool = False
 ) -> tuple[bool, str]:
@@ -312,7 +337,9 @@ def classify_git_argv(
         result = False, str(error)
     else:
         if not is_canonical:
-            result = True, "linked worktree or non-repository target"
+            result = _classify_linked_operation(
+                real_git_path, effective_cwd, prefix, (subcommand, args)
+            )
         else:
             result = _classify_canonical_operation(
                 real_git_path, effective_cwd, prefix, (subcommand, args), check_unresolved

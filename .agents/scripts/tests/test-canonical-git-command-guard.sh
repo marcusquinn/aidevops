@@ -500,6 +500,16 @@ if [[ "$REPAIR_OUTPUT" == *"canonical-recovery-helper.sh"*" repair-worktrees"* ]
 else
 	fail "worktree repair block message names the recovery helper (output=$REPAIR_OUTPUT)"
 fi
+# GH#40213: shared worktree metadata mutations stay blocked from linked worktrees.
+for wt_cmd in "git worktree repair" "git worktree prune" "git worktree move a b" "git worktree lock ."; do
+	if python3 "$GUARD" --cwd "$LINKED" --command "$wt_cmd" >/dev/null 2>&1; then
+		fail "blocks linked-worktree '$wt_cmd'"
+	else
+		pass "blocks linked-worktree '$wt_cmd'"
+	fi
+done
+assert_allowed "allows linked-worktree git worktree list" "$LINKED" "git worktree list"
+assert_allowed "allows linked-worktree git worktree add" "$LINKED" "git worktree add $TEST_ROOT/gh40213-new -b gh40213-branch"
 # GH#39722: direct canonical gc stays blocked and points to the audited helper.
 assert_blocked "blocks canonical git gc" "git gc --auto"
 assert_blocked "blocks canonical git maintenance run" "git maintenance run --task=gc"
