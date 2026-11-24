@@ -652,7 +652,7 @@ pulse_release_dispatch_lock_on_exit() {
 # Refresh the holder heartbeat during long rounds (atomic replace). Children
 # of the holder (command substitutions) inherit ownership and may refresh.
 pulse_dispatch_lock_heartbeat() {
-	local lockdir owner temporary
+	local lockdir="" owner="" temporary=""
 	[[ "$_DISPATCH_LOCK_OWNED" == true && -n "$_DISPATCH_LOCK_OWNER_PID" ]] || return 1
 	lockdir=$(pulse_dispatch_lockdir)
 	read -r owner 2>/dev/null <"${lockdir}/pid" || return 1
@@ -856,7 +856,7 @@ _handle_running_pulse_pid() {
 	# Underfill is now intelligence-managed by the pulse session itself.
 	# Do not recycle running pulse processes based only on elapsed time while
 	# underfilled — that creates churn loops and suppresses transcript analysis.
-	local max_workers active_workers deficit_pct
+	local max_workers="" active_workers="" deficit_pct=""
 	max_workers=$(get_max_workers_target)
 	active_workers=$(count_active_workers)
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
