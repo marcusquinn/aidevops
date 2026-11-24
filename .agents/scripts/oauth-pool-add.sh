@@ -153,8 +153,9 @@ _cmd_add_openai_device() {
 	fi
 
 	# OpenCode 2+ dropped the -p/-m flags used by OpenCode 1; use callback flow.
-	local oc_version oc_major
-	oc_version=$(opencode --version 2>/dev/null | grep -Eo '[0-9]+(\.[0-9]+)+' | head -n1)
+	local oc_version oc_major oc_version_output
+	oc_version_output=$(opencode --version 2>/dev/null || true)
+	oc_version=$(printf '%s\n' "$oc_version_output" | grep -Eo '[0-9]+(\.[0-9]+)+' | sed -n '1p' || true)
 	oc_major="${oc_version%%.*}"
 	if [[ "$oc_major" =~ ^[0-9]+$ ]] && [[ "$oc_major" -ge 2 ]]; then
 		print_warning "OpenCode ${oc_version} does not support the OpenCode 1 device-login flags (-p/-m); using callback URL flow instead"
