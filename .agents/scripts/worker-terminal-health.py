@@ -15,6 +15,11 @@ KNOWN_OUTCOMES = {'success', 'failed', 'deferred', 'escalated'}
 NOOP_RESULTS = {'worker_noop', 'no_work', 'noop'}
 RATE_LIMIT_RESULTS = {'rate_limit', 'rate_limit_fast'}
 PROVIDER_5XX = {'500', '502', '503', '504'}
+# t19351: task outcomes that fewer concurrent workers cannot prevent. The
+# capacity cap (--capacity-pressure) ignores them; guardrails and pacing do not.
+TASK_OUTCOME_RESULTS = {'blocked', 'permission_required'}
+COORDINATION_REASONS = {'worker_ownership_lost', 'worker_claim_ready_transition_failed', 'merged_pr_reap'}
+CAPACITY_PRESSURE_FLAG = '--capacity-pressure'
 
 
 def recent_json_rows(path, limit):
@@ -121,7 +126,29 @@ def terminal_counts(item, outcomes, result):
     return int(raw_success), int(raw_failure)
 
 
-def project_health(metrics_path, evidence_path, window_seconds, evidence_limit):
+def task_outcome_failure(item, result):
+    """Return whether a failure is a task or coordination outcome (t19351).
+
+    A clean exit means the host and provider worked even when reconciliation
+    later failed the objective; blockers, claim coordination and a merged-PR
+    reap are not relieved by fewer concurrent workers.
+    """
+    return (
+        item.get('exit_code') == 0
+        or result in TASK_OUTCOME_RESULTS
+        or str(item.get('failure_reason') or '') in COORDINATION_REASONS
+    )
+
+
+def counted_terminal(item, outcomes, result, pressure_only):
+    """Return terminal counts; pressure mode drops task-outcome failures."""
+    successes, failures = terminal_counts(item, outcomes, result)
+    if pressure_only and failures and task_outcome_failure(item, result):
+        return successes, 0
+    return successes, failures
+
+
+def project_health(metrics_path, evidence_path, window_seconds, evidence_limit, pressure_only=False):
     """Return terminal success/failure and raw provider-health counters."""
     now = time.time()
     since = now - window_seconds
@@ -139,7 +166,7 @@ def project_health(metrics_path, evidence_path, window_seconds, evidence_limit):
         totals[5] += progress
         if result.endswith('_continue') or result == 'brief_recovery':
             continue
-        successes, failures = terminal_counts(item, outcomes, result)
+        successes, failures = counted_terminal(item, outcomes, result, pressure_only)
         totals[0] += successes
         totals[1] += failures
         totals[2] += rate_limits
@@ -148,19 +175,26 @@ def project_health(metrics_path, evidence_path, window_seconds, evidence_limit):
     return tuple(totals)
 
 
-def main():
-    """Print stable space-delimited counters for shell consumers."""
-    if len(sys.argv) != 5:
-        print('0 0 0 0 0 0')
-        return 2
-    metrics_path, evidence_path = sys.argv[1], sys.argv[2]
+def parse_args(argv):
+    """Return (metrics, evidence, window, limit, pressure_only), or None."""
+    if len(argv) not in (5, 6) or (len(argv) == 6 and argv[5] != CAPACITY_PRESSURE_FLAG):
+        return None
     try:
-        window_seconds = int(sys.argv[3])
-        evidence_limit = int(sys.argv[4])
+        return argv[1], argv[2], int(argv[3]), int(argv[4]), len(argv) == 6
     except ValueError:
+        return None
+
+
+def main():
+    """Print stable space-delimited counters for shell consumers.
+
+    Usage: worker-terminal-health.py METRICS EVIDENCE WINDOW LIMIT [--capacity-pressure]
+    """
+    args = parse_args(sys.argv)
+    if args is None:
         print('0 0 0 0 0 0')
         return 2
-    print(*project_health(metrics_path, evidence_path, window_seconds, evidence_limit))
+    print(*project_health(*args))
     return 0
 
 
