@@ -66,7 +66,7 @@ hostinger-helper.sh cron delete --ssh <account-alias> --uid <uid> [--apply]
 hostinger-helper.sh cron output --ssh <account-alias> --uid <uid>
 ```
 
-The account name comes from `ssh <alias> whoami` and the token is injected from the secret store. `create` and `delete` preview unless `--apply` is given. Each change first writes a 0600 snapshot of the job list to `~/.aidevops/.agent-workspace/work/hostinger-cron/` and then prints the list again. `delete` removes only the given UID. After a failed or partial response the live list is printed; inspect it before any retry. Home paths are masked in output. See `hostinger-wordpress-cron.md`.
+The account name comes from `ssh <alias> whoami` and the token is injected from the secret store. `create` and `delete` preview unless `--apply` is given. Each change first writes a 0600 snapshot of the job list to `~/.aidevops/.agent-workspace/work/hostinger-cron/` and then prints the list again. `delete` removes only the given UID. After a failed or partial response the live list is printed; inspect it before any retry. Home paths are masked in output. hPanel wraps each job in `flock` plus `timeout -s 9 1800`, so each job's process group is killed after 30 minutes (a child in its own process group can survive as an orphan); keep runs well under that. See `hostinger-wordpress-cron.md`.
 
 ### Lifetime SSL behind Cloudflare
 

@@ -453,6 +453,8 @@ cron_command() {
         echo "create/delete preview unless --apply is given. Each change snapshots the"
         echo "job list (0600) to ~/.aidevops/.agent-workspace/work/hostinger-cron/ and"
         echo "prints the list afterwards. A failed change lists live jobs; never retry blindly."
+        echo "hPanel runs each job under 'timeout -s 9 1800' (30-minute hard kill, not shown"
+        echo "by list); keep each run well under 30 minutes."
         echo "Details: services/hosting/hostinger-wordpress-cron.md"
         return 0
         ;;
