@@ -653,6 +653,10 @@ OUTPUT_AGENT
 		_routine_run_detached_agent r-capture Capture Build+ "$root" || exit 1
 		local saved="$HOME/.aidevops/logs/routines/r-capture.log"
 		cmp "$root/delivered.out" "$saved" || exit 1
+		# shellcheck source=../portable-stat.sh
+		source "${PULSE_ROUTINES%/*}/portable-stat.sh"
+		[[ "$(_file_perms "$saved")" == 600 ]] || exit 1
+		[[ "$(_file_perms "${saved%/*}")" == 700 ]] || exit 1
 		grep -F "output saved path=$saved" "$LOGFILE" >/dev/null || exit 1
 		! grep -E '^work$|^ROUTINE_OUTCOME:' "$LOGFILE" >/dev/null || exit 1
 		jq -e '."r-capture".last_outcome == "delivered"' "$ROUTINE_STATE_FILE" >/dev/null || exit 1
