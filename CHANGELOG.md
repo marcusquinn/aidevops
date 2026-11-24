@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.277] - 2026-11-24
+
+### Added
+
+- read-only dispatch throughput report (#40113)
+- add suite-health-repro-helper to classify shell suite health rows (GH#40105) (#40110)
+
+### Changed
+
+- Maintenance: mark t19323 complete (pr:#40113 completed:2026-11-24) (#40115)
+- Maintenance: mark t19320 complete (pr:#40102 completed:2026-11-23) (#40089)
+
+### Fixed
+
+- normalise registry feature names so project-config restore works
+- external_trigger decisions re-poll at recheck_after or a bounded default
+- enrich preserves authored briefs on sentinel bodies (#40123)
+- size worker prelaunch lease to cover the canary bound
+- preclaim Node gate reads pin from remote default ref (GH#40104) (#40106)
+- accept issue-prefixed completion proof titles (#40102)
+
 ## [3.39.276] - 2026-11-23
 
 ### Changed
