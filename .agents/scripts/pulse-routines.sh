@@ -599,6 +599,34 @@ _routine_repo_slug() {
 	return 0
 }
 
+# Persist the latest private stream; only failed runs expose a bounded tail.
+_routine_save_output() {
+	local routine_id="$1"
+	local output_file="$2"
+	local exit_code="$3"
+	local output_dir="${HOME}/.aidevops/logs/routines" output_log=""
+	local output_bytes=0 output_lines=0
+	[[ "$routine_id" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+	output_log="${output_dir}/${routine_id}.log"
+	if [[ "$exit_code" -ne 0 && -n "$output_file" ]]; then
+		tail -n 20 "$output_file" >>"$LOGFILE" 2>/dev/null || true
+	fi
+	if [[ -n "$output_file" ]] && (
+		umask 077
+		mkdir -p -- "$output_dir" && chmod 700 -- "$output_dir" &&
+			chmod 600 -- "$output_file" && [[ ! -d "$output_log" ]] &&
+			mv -f -- "$output_file" "$output_log"
+	); then
+		output_bytes=$(wc -c <"$output_log" | tr -d '[:space:]')
+		output_lines=$(wc -l <"$output_log" | tr -d '[:space:]')
+		echo "[pulse-wrapper] routine ${routine_id}: output saved path=${output_log} bytes=${output_bytes} lines=${output_lines}" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] routine ${routine_id}: output_saved=false" >>"$LOGFILE"
+	fi
+	[[ -z "$output_file" ]] || rm -f -- "$output_file"
+	return 0
+}
+
 _routine_run_detached_agent() {
 	local routine_id="$1"
 	local description="$2"
@@ -607,8 +635,6 @@ _routine_run_detached_agent() {
 	local noop_threshold="${5:-}"
 	local session_key="routine-${routine_id}"
 	local output_file="" alert_repo="" outcome="" outcome_reason="" parsed=""
-	local output_dir="${HOME}/.aidevops/logs/routines" output_log=""
-	local output_bytes=0 output_lines=0
 	local started_epoch=0
 	local lock_dir="${ROUTINE_STATE_FILE}.${routine_id}.runner"
 	local pid_file="$lock_dir/pid-${BASHPID:-$$}"
@@ -616,7 +642,6 @@ _routine_run_detached_agent() {
 	local status="$_ROUTINE_STATUS_SUCCESS"
 	# Validate again at the detached entrypoint before constructing output paths.
 	[[ "$routine_id" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
-	output_log="${output_dir}/${routine_id}.log"
 	_routine_claim_runner_lock "$lock_dir" || return 0
 	[[ -n "$agent_name" ]] || agent_name="Build+"
 	started_epoch=$(date +%s)
@@ -645,7 +670,6 @@ _routine_run_detached_agent() {
 	if [[ "$exit_code" -ne 0 ]]; then
 		status="$_ROUTINE_STATUS_FAILURE"
 		echo "[pulse-wrapper] routine ${routine_id}: agent exited with code ${exit_code}" >>"$LOGFILE"
-		[[ -z "$output_file" ]] || tail -n 20 "$output_file" >>"$LOGFILE" 2>/dev/null || true
 	else
 		parsed=$(_routine_parse_outcome "$output_file")
 		outcome="${parsed%%|*}"
@@ -653,21 +677,8 @@ _routine_run_detached_agent() {
 		echo "[pulse-wrapper] routine ${routine_id}: agent completed successfully (outcome=${outcome})" >>"$LOGFILE"
 		alert_repo=$(_routine_repo_slug "$dispatch_dir")
 	fi
-	# Keep only the latest full stream, never copying it into the shared pulse log.
 	# Parse the outcome above before moving the private capture into place.
-	if [[ -n "$output_file" ]] && (
-		umask 077
-		mkdir -p -- "$output_dir" && chmod 700 -- "$output_dir" &&
-			chmod 600 -- "$output_file" && [[ ! -d "$output_log" ]] &&
-			mv -f -- "$output_file" "$output_log"
-	); then
-		output_bytes=$(wc -c <"$output_log" | tr -d '[:space:]')
-		output_lines=$(wc -l <"$output_log" | tr -d '[:space:]')
-		echo "[pulse-wrapper] routine ${routine_id}: output saved path=${output_log} bytes=${output_bytes} lines=${output_lines}" >>"$LOGFILE"
-	else
-		echo "[pulse-wrapper] routine ${routine_id}: output_saved=false" >>"$LOGFILE"
-	fi
-	[[ -z "$output_file" ]] || rm -f -- "$output_file"
+	_routine_save_output "$routine_id" "$output_file" "$exit_code"
 	_ROUTINE_RUNNER_FINALIZED=true
 	_routine_finalize_terminal "$routine_id" "$status" "$started_epoch" "$session_key" 0 "$outcome" "$outcome_reason" "$noop_threshold" "$alert_repo"
 	rm -f -- "$pid_file"
@@ -836,7 +847,9 @@ _routine_run_detached_script() {
 	local status="$_ROUTINE_STATUS_SUCCESS"
 	local exit_code=0
 	local deferred_until=0
+	local output_file=""
 	local pid_file="$lock_dir/pid-${BASHPID:-$$}"
+	[[ "$routine_id" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
 	_routine_claim_runner_lock "$lock_dir" || return 0
 	_routine_runner_arm_traps "$routine_id" "$started_epoch" "" "$pid_file" "$lock_dir"
 	_routine_update_state "$routine_id" "$_ROUTINE_STATUS_RUNNING"
@@ -844,10 +857,11 @@ _routine_run_detached_script() {
 	_routine_prepare_signing "$routine_id" "$repo_path"
 	_routine_declare_lifecycle_owner "$routine_id" "$started_epoch"
 	# Background + wait so a TERM/INT/HUP trap fires immediately.
+	output_file=$(mktemp "${ROUTINE_STATE_FILE}.${routine_id}.output.XXXXXX" 2>/dev/null) || output_file=""
 	if [[ "$#" -gt 0 ]]; then
-		(cd "$repo_path" && "$script_path" "$@") >>"$LOGFILE" 2>&1 &
+		(cd "$repo_path" && "$script_path" "$@") >"${output_file:-/dev/null}" 2>&1 &
 	else
-		(cd "$repo_path" && "$script_path") >>"$LOGFILE" 2>&1 &
+		(cd "$repo_path" && "$script_path") >"${output_file:-/dev/null}" 2>&1 &
 	fi
 	_ROUTINE_RUNNER_CHILD_PID=$!
 	wait "$_ROUTINE_RUNNER_CHILD_PID" || exit_code=$?
@@ -862,6 +876,7 @@ _routine_run_detached_script() {
 	else
 		echo "[pulse-wrapper] routine ${routine_id}: script completed successfully" >>"$LOGFILE"
 	fi
+	_routine_save_output "$routine_id" "$output_file" "$exit_code"
 	_ROUTINE_RUNNER_FINALIZED=true
 	_routine_finalize_terminal "$routine_id" "$status" "$started_epoch" "" "$deferred_until"
 	rm -f -- "$pid_file"

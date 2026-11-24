@@ -408,6 +408,9 @@ SELF_SCRIPT
 	cat >"${fake_scripts}/downstream.sh" <<'DOWNSTREAM_SCRIPT'
 #!/usr/bin/env bash
 : >"${ROUTINE_DOWNSTREAM_MARKER:?}"
+printf '%s\n' 'downstream stdout'
+printf '%s\n' 'downstream stderr' >&2
+printf '%s\n' '[downstream] deliberate diagnostic' >>"$LOGFILE"
 exit 0
 DOWNSTREAM_SCRIPT
 	cat >"$schedule_helper" <<'SCHEDULE_SCRIPT'
@@ -452,6 +455,11 @@ SCHEDULE_SCRIPT
 			_wait_for_detached_routine_success "$state_file" "r-downstream-monitor" &&
 			[[ ! -e "$self_marker" ]] &&
 			[[ -e "$downstream_marker" ]] &&
+			grep -Fxq 'downstream stdout' "$test_home/.aidevops/logs/routines/r-downstream-monitor.log" &&
+			grep -Fxq 'downstream stderr' "$test_home/.aidevops/logs/routines/r-downstream-monitor.log" &&
+			! grep -q '^downstream ' "$log_file" &&
+			grep -Fxq '[downstream] deliberate diagnostic' "$log_file" &&
+			grep -Fq "output saved path=$test_home/.aidevops/logs/routines/r-downstream-monitor.log" "$log_file" &&
 			jq -e '."r-downstream-monitor".last_status == "success" and (.r901 | not) and (.r908 | not)' "$state_file" >/dev/null &&
 			grep -q 'routine r908: skipping platform-owned routine' "$log_file" &&
 			grep -q 'routine r901: skipping self-recursive supervisor target scripts/pulse-wrapper.sh (GH#28544)' "$log_file"
