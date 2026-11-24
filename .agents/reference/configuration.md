@@ -105,7 +105,7 @@ Supervisor, dispatch, and autonomous operation settings.
 
 | Key | Type | Default | Env Override | Description |
 |-----|------|---------|-------------|-------------|
-| `orchestration.supervisor_pulse` | boolean | `true` | `AIDEVOPS_SUPERVISOR_PULSE` | Enable the autonomous supervisor pulse. Dispatches workers, merges PRs, evaluates results every 3 minutes (configurable via `supervisor.pulse_interval_seconds`). |
+| `orchestration.supervisor_pulse` | boolean | `true` | `AIDEVOPS_SUPERVISOR_PULSE` | Enable the autonomous supervisor pulse. Dispatches workers, merges PRs, evaluates results every 3 minutes (configurable via `orchestration.pulse_interval_seconds`; re-run `setup.sh --non-interactive` to apply a changed interval). |
 | `orchestration.repo_sync` | boolean | `true` | `AIDEVOPS_REPO_SYNC` | Daily read-only drift report on clean repos in `repos.json`; never fetches or pulls canonical checkouts. |
 | `orchestration.max_workers_cap` | integer | `0` (auto: `(total RAM − RAM_RESERVE_MB) / RAM_PER_WORKER_MB`, clamped to 2–64 before host sharing) | `AIDEVOPS_MAX_WORKERS_CAP` | Hard ceiling for pulse worker pool size after RAM-based calculation. Auto divides this ceiling among detected co-located runner users (minimum 1 per user); a positive explicit cap is a per-runner override and is not divided. |
 | `orchestration.ram_per_worker_mb` | integer | `1536` | `RAM_PER_WORKER_MB` | Estimated RAM per headless worker process tree; divides reclaimable RAM into worker slots. See [Worker resource policy](#worker-resource-policy). |
@@ -515,7 +515,7 @@ These keys exist only in `settings.json` (no `config.jsonc` equivalent):
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `supervisor.pulse_interval_seconds` | number | `180` | Seconds between pulse cycles. Range: 30-3600. Default raised from 120 in t2744 to reduce GraphQL pressure. |
+| `orchestration.pulse_interval_seconds` | number | `180` | Seconds between pulse cycles. Range: 30-3600. Default raised from 120 in t2744 to reduce GraphQL pressure. Scheduler unit is written at setup time: run `setup.sh --non-interactive` for a changed interval to take effect. `supervisor.pulse_interval_seconds` is DEPRECATED (legacy fallback, t2946). |
 | `supervisor.stale_threshold_seconds` | number | `1800` | Seconds before a worker is considered stale/stuck. |
 | `supervisor.circuit_breaker_max_failures` | number | `3` | Consecutive failures before circuit breaker pauses dispatch. |
 | `supervisor.strategic_review_hours` | number | `4` | Hours between thinking-tier strategic reviews of queue health. |
