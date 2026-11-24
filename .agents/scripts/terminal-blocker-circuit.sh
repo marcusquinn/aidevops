@@ -10,6 +10,9 @@ _TERMINAL_BLOCKER_CIRCUIT_LOADED=1
 # shellcheck source=terminal-blocker-github.sh
 source "${BASH_SOURCE[0]%/*}/terminal-blocker-github.sh"
 
+# shellcheck source=terminal-blocker-reopen.sh
+source "${BASH_SOURCE[0]%/*}/terminal-blocker-reopen.sh"
+
 _TBC_OBSERVATION_MARKER='aidevops:terminal-blocker-observation'
 _TBC_CIRCUIT_MARKER='aidevops:terminal-blocker-circuit'
 _TBC_RETRY_MARKER='terminal-blocker-circuit:retry'
@@ -273,7 +276,7 @@ def emit(value, ask_owner=''):
         found = re.findall(r'^TERMINAL_BLOCKER_' + name + r'=(.*)$', candidate, re.M)
         line = found[0] if eligible and len(found) == 1 else ''
         return line if 0 < len(line) <= 500 else ''
-    print(json.dumps({'reason': value, 'explicit_reason': bool(reasons), 'ask_owner': ask_owner,
+    print(json.dumps({'reason': value, 'explicit_reason': bool(reasons), 'declared_reasons': reasons, 'ask_owner': ask_owner,
                      'question': public_line('QUESTION', value.startswith('input_required:') or bool(ask_owner)),
                      'trigger': public_line('TRIGGER', value == 'external_trigger_pending'),
                      'missing_secrets': sorted(set(names)), 'rejected_secrets': sorted(set(rejected_names)),
@@ -376,6 +379,7 @@ terminal_blocker_capture_output() {
 	AIDEVOPS_TERMINAL_BLOCKER_REJECTED_SECRETS=""
 	AIDEVOPS_TERMINAL_BLOCKER_QUESTION=""
 	AIDEVOPS_TERMINAL_BLOCKER_TRIGGER=""
+	AIDEVOPS_TERMINAL_BLOCKER_RECHECK_AFTER=""
 	[[ -f "$output_file" ]] || return 1
 	captured=$(_terminal_blocker_capture_json "$output_file" "$live_blocked" "$blocked_line_pattern") || captured=""
 	[[ -n "$captured" ]] || return 1
@@ -387,6 +391,15 @@ terminal_blocker_capture_output() {
 	AIDEVOPS_TERMINAL_BLOCKER_QUESTION=$(jq -r '.question // ""' <<<"$captured") || return 1
 	AIDEVOPS_TERMINAL_BLOCKER_TRIGGER=$(jq -r '.trigger // ""' <<<"$captured") || return 1
 	[[ -n "$normalized" ]] || return 1
+	# Legacy source_exhausted reports have no supported reason marker. Preserve
+	# their explicit dated reopen instead of sending them through short backoff.
+	if [[ "$normalized" == external_trigger_pending ]] ||
+		{ [[ "$normalized" == unknown ]] && jq -e '.explicit_reason == false or .declared_reasons == ["source_exhausted"]' <<<"$captured" >/dev/null; }; then
+		AIDEVOPS_TERMINAL_BLOCKER_RECHECK_AFTER=$(_terminal_blocker_recheck_after "$captured") || return 1
+		if [[ -n "$AIDEVOPS_TERMINAL_BLOCKER_RECHECK_AFTER" ]]; then
+			normalized=external_trigger_pending
+		fi
+	fi
 	if [[ "$normalized" == "$_TBC_PERMISSION_REQUIRED" ]]; then
 		normalized=$(_terminal_blocker_permission_ask_class "$captured") || return 1
 		[[ "$normalized" == input_required:* ]] || AIDEVOPS_TERMINAL_BLOCKER_QUESTION=""
@@ -1076,6 +1089,8 @@ terminal_blocker_observation_hold_active() {
 	local repo_path="$5"
 	local fingerprint=""
 	local observation="" marker="" observed_revision="" reason="" retry="" current_revision=""
+	terminal_blocker_dated_hold_active "$comments_json" && return 0
+	terminal_blocker_session_cap_hold_active "$issue_json" "$repo_slug" "$issue_number" && return 0
 	observation=$(_terminal_blocker_latest_marker "$comments_json" "$_TBC_OBSERVATION_MARKER revision=") || observation=""
 	[[ -n "$observation" ]] || return 1
 	marker=$(printf '%s' "$observation" | jq -r --arg marker "$_TBC_OBSERVATION_MARKER" '
@@ -1226,6 +1241,9 @@ _terminal_blocker_recovery() {
 		"$reason" "$owner" "$issue" "$attempt" "$projected_state" "$action"
 	[[ -z "$question" ]] || printf 'Input requested: %s\n' "$question"
 	[[ -z "$trigger" ]] || printf 'Trigger awaited: %s\n' "$trigger"
+	if [[ "$reason" == external_trigger_pending && "${AIDEVOPS_TERMINAL_BLOCKER_RECHECK_AFTER:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+		printf 'Recheck after: %s\n' "$AIDEVOPS_TERMINAL_BLOCKER_RECHECK_AFTER"
+	fi
 	# GH#38360: a blocked projection names its needs-* companion and what
 	# unblocks it, so the label set explains the hold on its own.
 	if [[ "$projected_state" == "status:blocked" ]] && declare -F blocked_needs_label_for_reason >/dev/null 2>&1; then
@@ -1257,6 +1275,10 @@ terminal_blocker_circuit_comment() {
 		question=$(_terminal_blocker_public_line "${AIDEVOPS_TERMINAL_BLOCKER_QUESTION:-}") || question=""
 		[[ -z "$question" ]] ||
 			latest=$(_terminal_blocker_recovery "$blocker_fingerprint" circuit status:blocked) || latest=""
+	elif [[ "$reason" == external_trigger_pending && -n "${AIDEVOPS_TERMINAL_BLOCKER_RECHECK_AFTER:-}" ]]; then
+		# Concurrent attempts may publish a later deadline on a circuit rather
+		# than a first observation. Other runners must see that timestamp too.
+		latest=$(_terminal_blocker_recovery "$blocker_fingerprint" circuit status:blocked) || latest=""
 	fi
 	[[ -z "$latest" ]] || summary=$'The latest attempt\'s request follows.\n\n'"$latest"
 	printf '<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\n%s\n<!-- %s revision=%s blocker=%s -->\nTERMINAL_BLOCKER_CIRCUIT active=true observations=2 task_revision=%s blocker=%s\n\nAutomatic redispatch is held for the repeated known blocker. %s\n\nAn OWNER/MEMBER can retry without deleting history by posting %s as a standalone line. Relevant revisions re-arm code/brief blockers, but never permission blockers. Retry schedules verification only and grants no access.\n<!-- ops:end -->\n' \
@@ -1579,6 +1601,8 @@ terminal_blocker_circuit_active() {
 	local repo_path="$5"
 	local circuit="" retry="" current_revision="" fingerprint="" reason=""
 	local input_rc=0
+	terminal_blocker_dated_hold_active "$comments_json" && return 0
+	terminal_blocker_session_cap_hold_active "$issue_json" "$repo_slug" "$issue_number" && return 0
 	terminal_blocker_input_circuit_active "$comments_json" "$issue_json" "$repo_slug" "$issue_number" "$repo_path" || input_rc=$?
 	[[ "$input_rc" -eq 1 ]] || return 0
 	_terminal_blocker_report_ignored_evidence "$comments_json"
