@@ -154,7 +154,23 @@ parse_commit_sha_from_subject_url() {
 normalize_signature_line() {
 	local raw_line="$1"
 	local stripped
-	stripped=$(printf '%s' "$raw_line" | sed -E $'s/(\x1b|\\^\\[)\\[[0-9;]*[A-Za-z]//g; s/[[:space:]]+/ /g; s/^ //; s/ $//')
+	# GH#40178: hash the error payload, not gh presentation metadata. Different
+	# runners render the same failure with UNKNOWN STEP or a resolved step name,
+	# and every run has a new timestamp. Preserve tabs inside the actual payload.
+	stripped=$(printf '%s' "$raw_line" | awk '
+		{
+			payload = $0
+			n = split($0, fields, "\t")
+			if (n >= 3 && fields[3] ~ /^20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:.]+Z([[:space:]]|$)/) {
+				payload = fields[3]
+				for (i = 4; i <= n; i++) {
+					payload = payload "\t" fields[i]
+				}
+			}
+			sub(/^20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:.]+Z[[:space:]]+/, "", payload)
+			print payload
+		}
+	' | sed -E $'s/(\x1b|\\^\\[)\\[[0-9;]*[A-Za-z]//g; s/[[:space:]]+/ /g; s/^ //; s/ $//')
 	if [[ -z "$stripped" ]]; then
 		printf '%s' "no_error_signature_detected"
 		return 0

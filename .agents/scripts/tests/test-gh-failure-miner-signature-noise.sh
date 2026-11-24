@@ -121,23 +121,23 @@ gh() {
 }
 
 signature=$(extract_failure_signature "marcusquinn/aidevops" "28472942857" "84390104069")
-assert_equals "runner-echoed shell comment is skipped" "gate / review-bot-gate Gate result 2026-06-30T20:14:25.0000000Z ::error::No AI review bots have posted a real, settled review on this PR yet." "$signature"
+assert_equals "runner-echoed shell comment is skipped" "::error::No AI review bots have posted a real, settled review on this PR yet." "$signature"
 
 GH_LOG_SCENARIO="echoed_runner_guard"
 signature=$(extract_failure_signature "marcusquinn/aidevops" "29373303758" "1")
-assert_equals "runner-echoed guard source cannot mask the executed failure" "resolve-task Resolve task 2026-07-14T23:00:01Z ::error::Closing issue has no exact TODO mapping" "$signature"
+assert_equals "runner-echoed guard source cannot mask the executed failure" "::error::Closing issue has no exact TODO mapping" "$signature"
 
 GH_LOG_SCENARIO="unstructured_echoed_runner_guard"
 signature=$(extract_failure_signature "marcusquinn/aidevops" "29373303758" "1")
-assert_equals "GH#29522 timestamp-prefixed runner source cannot become infrastructure evidence" "sync / Sync Issue Hygiene on PR Merge UNKNOWN STEP 2026-08-04T20:48:27.8644706Z ERROR: closing issue #29494 has no exact ref:GH#29494 TODO mapping" "$signature"
+assert_equals "GH#29522 timestamp-prefixed runner source cannot become infrastructure evidence" "ERROR: closing issue #29494 has no exact ref:GH#29494 TODO mapping" "$signature"
 
 GH_LOG_SCENARIO="qlty_unstructured_source"
 signature=$(extract_failure_signature "marcusquinn/aidevops" "30898422945" "91958107008")
-assert_equals "GH#29468 qlty source comment cannot mask structured error" "Qlty Smell Regression Enforce gate 2026-08-04T10:01:52.5242388Z ##[error]Qlty smell regression detected (exit 1)." "$signature"
+assert_equals "GH#29468 qlty source comment cannot mask structured error" "##[error]Qlty smell regression detected (exit 1)." "$signature"
 
 GH_LOG_SCENARIO="three_column_suite_health"
 signature=$(extract_failure_signature "marcusquinn/aidevops" "45018291419" "")
-assert_equals "GH#39884 three-column annotation wins over checkout timeout branch" "Run all shell suites on main Run every root suite 2026-11-22T12:21:26.5245551Z ##[error]116 red suites on main (storm bound 10); see the suite-health artifact" "$signature"
+assert_equals "GH#39884 three-column annotation wins over checkout timeout branch" "##[error]116 red suites on main (storm bound 10); see the suite-health artifact" "$signature"
 GH_LOG_SCENARIO="echoed_runner_guard"
 
 event_file=$(mktemp)
@@ -147,7 +147,7 @@ run_logs_checked=$(process_failed_runs "$failed_runs_json" "marcusquinn/aidevops
 event_json=$(jq -s '.[0]' "$event_file")
 events_json=$(jq -s '.' "$event_file")
 assert_equals "executed guard fixture consumes one log fetch" "1" "$run_logs_checked"
-assert_equals "executed policy failure remains the event signature" "resolve-task Resolve task 2026-07-14T23:00:01Z ::error::Closing issue has no exact TODO mapping" "$(printf '%s\n' "$event_json" | jq -r '.signature')"
+assert_equals "executed policy failure remains the event signature" "::error::Closing issue has no exact TODO mapping" "$(printf '%s\n' "$event_json" | jq -r '.signature')"
 assert_equals "executed policy failure remains non-infrastructure" "false" "$(printf '%s\n' "$event_json" | jq -r '.is_infra')"
 assert_equals "non-infrastructure event has no infrastructure reason" "null" "$(printf '%s\n' "$event_json" | jq -r '.infra_reason')"
 below_threshold_output=$(create_systemic_issues "$events_json" "2" "3" "true" 2>&1)
@@ -161,6 +161,20 @@ duplicate_events='[
 ]'
 deduplicated_events=$(deduplicate_failed_events_json "$duplicate_events")
 assert_equals "GH#29468 repeated notification for one check run counts once" "1" "$(printf '%s\n' "$deduplicated_events" | jq 'length')"
+
+# GH#40178 and GH#40176 were filed for the same run with different step labels.
+health_payload='##[error]83 red suites on main (storm bound 10); see the suite-health artifact'
+health_signature=$(normalize_signature_line $'Run all shell suites\tUNKNOWN STEP\t2026-11-24T14:49:48.6080751Z '"$health_payload")
+assert_equals "GH#40178 unknown step normalizes to error payload" "$health_payload" "$health_signature"
+resolved_signature=$(normalize_signature_line $'Run all shell suites\tRun every root suite\t2026-11-24T14:49:48.6080728Z '"$health_payload")
+assert_equals "GH#40178 resolved step shares the unknown-step signature" "$health_signature" "$resolved_signature"
+raw_signature=$(normalize_signature_line $'2026-11-25T14:49:48.6080751Z '"$health_payload")
+four_column_signature=$(normalize_signature_line $'Renamed job\tRenamed step\t2026-11-26T14:49:48Z\t'"$health_payload")
+assert_equals "GH#40178 raw log shares the signature across runs" "$health_signature" "$raw_signature"
+assert_equals "GH#40178 four-column log shares the signature" "$health_signature" "$four_column_signature"
+assert_equals "GH#40178 equivalent rows yield one issue key" "$(compute_pattern_id "marcusquinn/aidevops|Shell Suite Main Health|$health_signature")" "$(compute_pattern_id "marcusquinn/aidevops|Shell Suite Main Health|$four_column_signature")"
+assert_equals "payload timestamps are not stripped" 'error at 2026-11-24T14:49:48Z in task' "$(normalize_signature_line 'error at 2026-11-24T14:49:48Z in task')"
+assert_equals "payload tabs retain trailing error details" '::error::failed reason details' "$(normalize_signature_line $'job\tstep\t2026-11-24T14:49:48Z\t::error::failed\treason\tdetails')"
 
 filtered=$(filter_signature_noise_lines $'job\tUNKNOWN STEP\ttime\t\033[36;1m# comment cannot merge\033[0m\njob\tStep\ttime\treal error')
 assert_equals "comment-only log lines are filtered" $'job\tStep\ttime\treal error' "$filtered"
