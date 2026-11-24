@@ -155,7 +155,9 @@ gopass_owns_secret() {
 # capability gate) agrees with runtime injection (GH#33608).
 # Used only by cmd_get, which preserves the historical first-line contract.
 # Returns 3 when gopass owns NAME but `gopass show` fails (gpg/agent/pinentry/
-# store), matching cmd_check. Only then is gopass stderr forwarded: it is
+# store), matching cmd_check. Also returns 3 when a plaintext credential file
+# exists but is unreadable and no readable file supplies NAME (not absence).
+# Only then is gopass stderr forwarded: it is
 # diagnostic text, never the value. Success-path stderr stays hidden (GH#35265).
 get_secret_value() {
 	local name="$1"
@@ -179,9 +181,13 @@ get_secret_value() {
 		return 0
 	fi
 	# Fallback to credential files (handles multi-tenant)
-	local cred_file
+	local cred_file unreadable=0
 	while IFS= read -r cred_file; do
 		[[ -z "$cred_file" ]] && continue
+		if [[ -e "$cred_file" && ! -r "$cred_file" ]]; then
+			unreadable=1
+			continue
+		fi
 		local value
 		# Strip 'export NAME=', strip surrounding double quotes, then unescape
 		# \" -> " and \\ -> \ (order matters: unescape \" before \\).
@@ -193,6 +199,9 @@ get_secret_value() {
 			return 0
 		fi
 	done < <(resolve_credential_files)
+	# An unreadable candidate file cannot prove absence: report a read failure
+	# (3) unless another readable tenant file already supplied the value above.
+	[[ "$unreadable" -eq 0 ]] || return 3
 	return 0
 }
 

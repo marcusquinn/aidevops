@@ -612,6 +612,9 @@ fi
 	# shellcheck source=../headless-runtime-result.sh
 	source "${SCRIPT_DIR}/headless-runtime-result.sh"
 	_headless_private_workload_enabled() { return 1; }
+	# Resolve the external timer before the stub shadows `timeout`.
+	external_timer=$(command -v timeout || command -v gtimeout || true)
+	[[ -n "$external_timer" ]] || { printf 'SKIP no external timeout available\n'; exit 0; }
 	# Stub only the secret-check subprocess, never read the operator's store.
 	external_timer=$(type -P timeout || type -P gtimeout)
 	timeout() {

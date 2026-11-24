@@ -259,6 +259,29 @@ test_list_rejects_unsafe_tenant_files() {
 	return 0
 }
 
+test_check_unreadable_plaintext_is_not_absence() {
+	setup
+	trap 'teardown' RETURN
+	local config_dir="$TEST_DIR/home/.config/aidevops"
+	mkdir -p "$config_dir"
+	printf '%s\n' 'export OTHER_KEY="placeholder-value"' >"$config_dir/credentials.sh"
+	chmod 000 "$config_dir/credentials.sh"
+	# Root can read mode-000 files; assert only when the denial is effective.
+	if [[ -r "$config_dir/credentials.sh" ]]; then
+		chmod 600 "$config_dir/credentials.sh"
+		return 0
+	fi
+	local rc=0
+	HOME="$TEST_DIR/home" bash "$HELPER" check UNREADABLE_KEY >/dev/null 2>&1 || rc=$?
+	chmod 600 "$config_dir/credentials.sh"
+	if [[ "$rc" -eq 3 ]]; then
+		print_result "check reports unreadable plaintext credentials as read failure, not absence" 0
+	else
+		print_result "check reports unreadable plaintext credentials as read failure, not absence" 1 "Expected exit 3, got $rc"
+	fi
+	return 0
+}
+
 test_inventory_is_names_only_deterministic_json() {
 	setup
 	trap 'teardown' RETURN
@@ -1557,6 +1580,7 @@ main() {
 	test_run_fails_closed_when_redactor_cannot_start
 	test_multiline_gopass_injection_preserves_embedded_newlines
 	test_get_distinguishes_unreadable_from_missing
+	test_check_unreadable_plaintext_is_not_absence
 	test_specific_injection_fails_closed
 	test_specific_injection_excludes_unrequested_fallback_secrets
 	test_injection_preserves_trailing_equals
