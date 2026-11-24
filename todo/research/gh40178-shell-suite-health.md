@@ -53,8 +53,11 @@ and the health workflow remains red until its separate repairs converge.
 
 - `bash -n` on the miner and signature-noise suite: passed.
 - `bash .agents/scripts/tests/test-gh-failure-miner-signature-noise.sh`:
-  51 assertions passed, including real incident payload equivalence across raw,
+  54 assertions passed, including real incident payload equivalence across raw,
   three-column and four-column rows, different timestamps, and step names.
+  Review identified an ambiguous raw row with tabs and a timestamp in field 3;
+  parsing the leading raw timestamp first preserves its complete error text.
+  Three additional assertions cover that case and equivalent issue keys.
 - `bash .agents/scripts/tests/test-gh-failure-miner-codefactor-guidance.sh`:
   33 assertions passed, including infrastructure and provider guidance contracts.
 - `bash .agents/scripts/affected-tests-helper.sh run --base origin/main --compare-base`:

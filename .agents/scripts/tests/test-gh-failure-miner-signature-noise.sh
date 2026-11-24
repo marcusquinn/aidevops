@@ -176,6 +176,13 @@ assert_equals "GH#40178 equivalent rows yield one issue key" "$(compute_pattern_
 assert_equals "payload timestamps are not stripped" 'error at 2026-11-24T14:49:48Z in task' "$(normalize_signature_line 'error at 2026-11-24T14:49:48Z in task')"
 assert_equals "payload tabs retain trailing error details" '::error::failed reason details' "$(normalize_signature_line $'job\tstep\t2026-11-24T14:49:48Z\t::error::failed\treason\tdetails')"
 
+tabbed_row=$'2026-11-25T14:49:48Z ##[error]comparison failed\tactual\t2026-11-24T14:49:48Z expected value'
+tabbed_raw_signature=$(normalize_signature_line "$tabbed_row")
+tabbed_wrapped_signature=$(normalize_signature_line $'job\tstep\t'"$tabbed_row")
+assert_equals "raw payload timestamp in field 3 cannot replace error text" '##[error]comparison failed actual 2026-11-24T14:49:48Z expected value' "$tabbed_raw_signature"
+assert_equals "tabbed raw and wrapped errors retain equivalent payloads" "$tabbed_raw_signature" "$tabbed_wrapped_signature"
+assert_equals "tabbed raw and wrapped errors share one key" "$(compute_pattern_id "$tabbed_raw_signature")" "$(compute_pattern_id "$tabbed_wrapped_signature")"
+
 filtered=$(filter_signature_noise_lines $'job\tUNKNOWN STEP\ttime\t\033[36;1m# comment cannot merge\033[0m\njob\tStep\ttime\treal error')
 assert_equals "comment-only log lines are filtered" $'job\tStep\ttime\treal error' "$filtered"
 

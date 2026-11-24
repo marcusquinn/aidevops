@@ -161,13 +161,16 @@ normalize_signature_line() {
 		{
 			payload = $0
 			n = split($0, fields, "\t")
-			if (n >= 3 && fields[3] ~ /^20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:.]+Z([[:space:]]|$)/) {
+			# A raw row can itself contain tabs and timestamps in its payload.
+			# Strip its leading timestamp first, without reinterpreting field 3.
+			raw = sub(/^20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:.]+Z[[:space:]]+/, "", payload)
+			if (!raw && n >= 3 && fields[3] ~ /^20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:.]+Z([[:space:]]|$)/) {
 				payload = fields[3]
 				for (i = 4; i <= n; i++) {
 					payload = payload "\t" fields[i]
 				}
+				sub(/^20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:.]+Z[[:space:]]+/, "", payload)
 			}
-			sub(/^20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:.]+Z[[:space:]]+/, "", payload)
 			print payload
 		}
 	' | sed -E $'s/(\x1b|\\^\\[)\\[[0-9;]*[A-Za-z]//g; s/[[:space:]]+/ /g; s/^ //; s/ $//')
