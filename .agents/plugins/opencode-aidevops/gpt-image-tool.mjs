@@ -9,7 +9,6 @@ import {
 } from "./gpt-image-auth.mjs";
 import { readReferenceImages, saveGeneratedImage, validateImageOutputPath } from "./gpt-image-io.mjs";
 import {
-  API_IMAGE_EXTENDED_MODELS,
   API_IMAGE_MODELS,
   DEFAULT_API_IMAGE_MODEL,
   IMAGE_BACKGROUNDS,
@@ -18,29 +17,13 @@ import {
   requestOAuthImage,
   requestOpenRouterImage,
 } from "./gpt-image-request.mjs";
+import { validateExtendedArgs } from "./gpt-image-extended.mjs";
 import { resolveGptImageProjectRoot } from "./gpt-image-worktree.mjs";
 import { assertLocalOnlyToolDestination } from "./local-only-policy.mjs";
 
 const IMAGE_QUALITIES = new Set(["low", "medium", "high", "auto"]);
 const IMAGE_FORMATS = new Set(["png", "jpeg", "webp"]);
 const API_IMAGE_MODEL_SET = new Set(API_IMAGE_MODELS);
-const EXTENDED_MODEL_SET = new Set(API_IMAGE_EXTENDED_MODELS);
-
-function validateExtendedArgs(args) {
-  if (args.complexity !== undefined && !IMAGE_COMPLEXITIES.includes(args.complexity)) {
-    throw new Error("Unsupported image complexity.");
-  }
-  if (args.background !== undefined && !IMAGE_BACKGROUNDS.includes(args.background)) {
-    throw new Error("Unsupported image background.");
-  }
-  if (args.complexity === undefined && args.background === undefined) return;
-  if (args.auth !== "api" || !EXTENDED_MODEL_SET.has(args.model)) {
-    throw new Error(`Image complexity and background require explicit auth=api with model ${API_IMAGE_EXTENDED_MODELS.join(" or ")}.`);
-  }
-  if (args.background === "transparent" && args.format === "jpeg") {
-    throw new Error("background=transparent requires format png or webp; jpeg has no alpha channel.");
-  }
-}
 
 function validateOutputArgs(args) {
   if (typeof args.prompt !== "string" || typeof args.out !== "string") {
