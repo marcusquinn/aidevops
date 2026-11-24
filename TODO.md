@@ -2486,6 +2486,12 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19321 fix(full-loop): commit-and-pr validators refuse .agents JS changes owned by scriptless .agents/package.json #auto-dispatch #bug ref:GH#40098 pr:#40103 completed:2026-11-23
 
+- [ ] t19322 perf(pulse): raise worker-slot occupancy by decoupling dispatch from the Pulse instance lock #feat #parent-task #priority:high ref:GH#40108
+
+- [ ] t19323 feat(pulse): read-only dispatch throughput report (slot occupancy, ceremony cost, refill outcomes, supervisor cadence) #auto-dispatch #feat #priority:high ref:GH#40109
+
+- [ ] t19324 perf(pulse): separate dispatch lock so worker-exit refills launch during maintenance stages (flagged) #auto-dispatch #feat #priority:high ref:GH#40112
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
