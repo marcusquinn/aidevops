@@ -69,7 +69,7 @@ assert_contains() {
 	local label="$1"
 	local text="$2"
 	local pattern="$3"
-	if echo "$text" | grep -q "$pattern"; then
+	if grep -q "$pattern" <<<"$text"; then
 		print_result "$label" 0
 	else
 		print_result "$label" 1 "Expected '$pattern' in output"
@@ -192,7 +192,7 @@ section_helper_script() {
 	local unknown_output
 	unknown_output="$(bash "$HELPER" nonexistent-command 2>&1)" || true
 
-	if echo "$unknown_output" | grep -qiE "unknown|error"; then
+	if grep -qiE "unknown|error" <<<"$unknown_output"; then
 		print_result "unknown command: returns error" 0
 	else
 		print_result "unknown command: returns error" 1 "Expected error for unknown command"
@@ -265,31 +265,39 @@ section_agents_md() {
 	echo -e "${TEST_CYAN}=== AGENTS.md Tests ===${TEST_RESET}"
 
 	local agents_file="${AGENTS_DIR}/AGENTS.md"
+	local domain_index="${AGENTS_DIR}/reference/domain-index.md"
 
 	if [[ ! -f "$agents_file" ]]; then
 		print_result "AGENTS.md exists" 1 "File not found"
 		return 0
 	fi
 
-	# Check simplex in domain index
-	if grep -q "simplex.md" "$agents_file"; then
-		print_result "AGENTS.md: references simplex.md" 0
+	# Detailed domain routing moved out of the always-loaded guide (GH#40184).
+	if grep -qF 'reference/domain-index.md' "$agents_file"; then
+		print_result "AGENTS.md: links the domain index" 0
 	else
-		print_result "AGENTS.md: references simplex.md" 1 "Expected 'simplex.md' in domain index"
+		print_result "AGENTS.md: links the domain index" 1 "Expected domain index pointer"
+	fi
+
+	# Check the referenced routing table, not an obsolete inline copy.
+	if grep -qF 'services/communications/simplex.md' "$domain_index"; then
+		print_result "domain index: references simplex.md" 0
+	else
+		print_result "domain index: references simplex.md" 1 "Expected SimpleX routing target"
 	fi
 
 	# Check opsec in domain index
-	if grep -q "opsec.md" "$agents_file"; then
-		print_result "AGENTS.md: references opsec.md" 0
+	if grep -qF 'tools/security/opsec.md' "$domain_index"; then
+		print_result "domain index: references opsec.md" 0
 	else
-		print_result "AGENTS.md: references opsec.md" 1 "Expected 'opsec.md' in domain index"
+		print_result "domain index: references opsec.md" 1 "Expected OPSEC routing target"
 	fi
 
 	# Check Communications row
-	if grep -q "Communications" "$agents_file"; then
-		print_result "AGENTS.md: has Communications domain" 0
+	if grep -qE '^\| Communications \|' "$domain_index"; then
+		print_result "domain index: has Communications domain" 0
 	else
-		print_result "AGENTS.md: has Communications domain" 1 "Expected 'Communications' in domain index"
+		print_result "domain index: has Communications domain" 1 "Expected Communications routing row"
 	fi
 
 	return 0
@@ -311,7 +319,9 @@ section_markdown_structure() {
 	fi
 
 	# Check YAML frontmatter
-	if head -1 "$simplex_md" | grep -q "^---"; then
+	local first_line=""
+	IFS= read -r first_line <"$simplex_md" || true
+	if [[ "$first_line" == "---" ]]; then
 		print_result "simplex.md: has YAML frontmatter" 0
 	else
 		print_result "simplex.md: has YAML frontmatter" 1 "Expected YAML frontmatter"
@@ -330,18 +340,18 @@ section_markdown_structure() {
 		print_result "simplex.md: has AI-CONTEXT-END" 1 "Expected AI-CONTEXT-END marker"
 	fi
 
-	# Check key sections exist
-	local sections=("Installation" "Bot API" "Business Addresses" "Protocol" "Limitations" "Cross-Device" "Self-Hosted" "Upstream Contributions" "Security")
+	# Check topics even when documented inline rather than under a legacy heading.
+	local sections=("Installation" "Bot API" "Business addresses" "Protocol" "Limitations" "Cross-Device" "Self-Hosted" "Contributing:" "Security")
 	for section in "${sections[@]}"; do
-		if grep -q "$section" "$simplex_md"; then
-			print_result "simplex.md: has '${section}' section" 0
+		if grep -qiF "$section" "$simplex_md"; then
+			print_result "simplex.md: documents '${section}'" 0
 		else
-			print_result "simplex.md: has '${section}' section" 1 "Expected '${section}' section"
+			print_result "simplex.md: documents '${section}'" 1 "Expected '${section}' topic"
 		fi
 	done
 
 	# Check slash command coexistence documentation
-	if grep -q "Slash Command" "$simplex_md"; then
+	if grep -qiF "Slash command coexistence" "$simplex_md"; then
 		print_result "simplex.md: documents slash command coexistence" 0
 	else
 		print_result "simplex.md: documents slash command coexistence" 1 "Expected slash command documentation"

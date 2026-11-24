@@ -135,11 +135,15 @@ test_bounded_wrapper_present() {
 
 test_setup_uses_bounded_wrapper() {
 	local setup_sh="${REPO_ROOT}/setup.sh"
-	if grep -q '_deploy_agents_to_runtimes_bounded' "$setup_sh"; then
-		print_result "setup.sh calls _deploy_agents_to_runtimes_bounded" 0
+	local execution_sh="${REPO_ROOT}/.agents/scripts/setup/modules/setup-execution.sh"
+	# Setup delegates non-interactive execution to a sourced module (GH#40184).
+	# Require both the source edge and the actual timed call, not a comment match.
+	if grep -qE '^source .*[/]setup-execution\.sh"$' "$setup_sh" &&
+		grep -qE '^[[:space:]]*_time_step "deploy_agents_to_runtimes" _deploy_agents_to_runtimes_bounded([[:space:]]|$)' "$execution_sh"; then
+		print_result "setup.sh sources the bounded runtime deployment call" 0
 	else
-		print_result "setup.sh calls _deploy_agents_to_runtimes_bounded" 1 \
-			"setup.sh still calls bare deploy_agents_to_runtimes — bounded wrapper not wired up"
+		print_result "setup.sh sources the bounded runtime deployment call" 1 \
+			"setup.sh must source setup-execution.sh and its timed deployment must use the bounded wrapper"
 	fi
 	return 0
 }
