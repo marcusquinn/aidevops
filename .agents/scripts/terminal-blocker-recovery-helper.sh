@@ -933,6 +933,20 @@ _tbr_release_circuit_hold() {
 	return $?
 }
 
+# The supervisor needs comments only when the issue changed after its active
+# decision. Mechanical releases remain the rearm pass's job.
+_tbr_skip_decided_unchanged() {
+	local key="$1" updated_at="$2" mode="$3" repo="$4" issue="$5"
+	[[ "$mode" != rearm && -f "${TBR_ROOT}/decisions/${key}.json" ]] || return 1
+	_tbr_decision_active "$key" || return 1
+	jq -e --arg updated "$updated_at" '
+		(.recorded_epoch | numbers | select(. > 0)) as $recorded
+		| ($updated | fromdateiso8601) <= $recorded
+	' "${TBR_ROOT}/decisions/${key}.json" >/dev/null 2>&1 || return 1
+	printf 'blocker-recovery: decided_unchanged repo=%s issue=%s\n' "$repo" "$issue" >&2
+	return 0
+}
+
 #######################################
 # Re-verify one entry against GitHub. Prints a JSON line when the circuit is
 # still active and unowned; retires the entry when resolved. Returns 0 when
@@ -974,9 +988,10 @@ _tbr_check_entry() {
 	local intake_rc=0
 	_tbr_check_intake_entry "$file" "$repo" "$issue" "$key" "$issue_json" "$reason" "$opened_at" "$intake" || intake_rc=$?
 	[[ "$intake_rc" -eq 3 ]] || return "$intake_rc"
+	updated_at=$(printf '%s' "$issue_json" | jq -r '.updated_at // ""')
+	_tbr_skip_decided_unchanged "$key" "$updated_at" "$mode" "$repo" "$issue" && return 1
 	# shellcheck source=terminal-blocker-circuit.sh
 	source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 1
-	updated_at=$(printf '%s' "$issue_json" | jq -r '.updated_at // ""')
 	_tbr_skip_unchanged_entry "$file" "$updated_at" "$reason" "$mode" && return 1
 	local comments="" brief="" repo_path=""
 	printf 'blocker-recovery: checking stage=entry_comments repo=%s issue=%s\n' "$repo" "$issue" >&2
