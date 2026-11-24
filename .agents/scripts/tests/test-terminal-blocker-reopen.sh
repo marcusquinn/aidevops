@@ -26,7 +26,10 @@ fragment=$(terminal_blocker_observation_fragment aaaaaaaaaaaaaaaaaaaaaaaa "$AIDE
 [[ "$fragment" == *'Recheck after: 2026-11-25T12:00:00Z'* ]]
 comments=$(jq -nc --arg body "$fragment" '[{id:1,author:"runner_a",author_association:"MEMBER",created_at:"2026-11-24T12:00:00Z",body:$body}]')
 terminal_blocker_dated_hold_active "$comments"
-terminal_blocker_task_revision() { printf 'bbbbbbbbbbbbbbbbbbbbbbbb\n'; return 0; }
+terminal_blocker_task_revision() {
+	printf 'bbbbbbbbbbbbbbbbbbbbbbbb\n'
+	return 0
+}
 terminal_blocker_observation_hold_active "$comments" '{"body":"changed brief"}' owner/repo 42 ''
 terminal_blocker_circuit_active "$comments" '{}' owner/repo 42 ''
 rc=0
@@ -49,16 +52,28 @@ terminal_blocker_capture_output "$ROOT/output"
 [[ -z "$AIDEVOPS_TERMINAL_BLOCKER_RECHECK_AFTER" ]]
 TERMINAL_BLOCKER_NOW_EPOCH=1795608000
 if terminal_blocker_dated_hold_active "$comments"; then exit 1; fi
+newer=$(jq -nc --arg body "<!-- aidevops:terminal-blocker-circuit revision=bbbbbbbbbbbbbbbbbbbbbbbb blocker=8880b4ae29849cb3e2493be9 -->" '{id:2,author_association:"MEMBER",created_at:"2026-11-24T13:00:00Z",body:$body}')
+variant=$(jq -c --argjson newer "$newer" '. + [$newer]' <<<"$comments")
+if _terminal_blocker_observed_recheck_after "$variant"; then exit 1; fi
+variant=$(jq -c '.[1].body += "\nRecheck after: 2026-11-26T12:00:00Z"' <<<"$variant")
+[[ "$(_terminal_blocker_observed_recheck_after "$variant")" == 2026-11-26T12:00:00Z ]]
 printf 'PASS date validation, class isolation, final-only evidence and expiry\n'
 
 TEST_TIMELINE='[{"event":"cross-referenced","source":{"issue":{"number":101,"repository_url":"https://api.github.com/repos/Owner/Repo","pull_request":{}}}},{"event":"cross-referenced","source":{"issue":{"number":102,"repository_url":"https://api.github.com/repos/owner/repo","pull_request":{}}}},{"event":"cross-referenced","source":{"issue":{"number":101,"repository_url":"https://api.github.com/repos/owner/repo","pull_request":{}}}}]'
 TEST_MERGED=true
+TEST_API_FAILURE=none TEST_PR_JSON=""
 gh() {
 	local command="$1" path="${2:-}"
 	[[ "$command" == api ]] || return 1
 	if [[ "$path" == --paginate ]]; then
+		[[ "$TEST_API_FAILURE" != timeline ]] || return 1
 		printf '%s\n' "$TEST_TIMELINE"
 	else
+		[[ "$TEST_API_FAILURE" != pr ]] || return 1
+		if [[ -n "$TEST_PR_JSON" ]]; then
+			printf '%s\n' "$TEST_PR_JSON"
+			return 0
+		fi
 		jq -nc --argjson merged "$TEST_MERGED" '{merged:$merged,merged_at:(if $merged then "2026-11-24T11:00:00Z" else null end),body:"Partial implementation. For #42"}'
 	fi
 	return 0
@@ -82,10 +97,22 @@ _tbr_skip_decided_unchanged() { return 1; }
 _tbr_skip_unchanged_entry() { return 1; }
 _tbr_decision_active() { return 1; }
 _tbr_repo_path() { return 0; }
-terminal_blocker_task_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaa\n'; return 0; }
-terminal_blocker_fetch_queue_issue() { printf '%s\n' "$fixture_issue"; return 0; }
-terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$TEST_COMMENTS"; return 0; }
-_tbr_print_entry() { printf '{"intake":"remote_observation"}\n'; return 0; }
+terminal_blocker_task_revision() {
+	printf 'aaaaaaaaaaaaaaaaaaaaaaaa\n'
+	return 0
+}
+terminal_blocker_fetch_queue_issue() {
+	printf '%s\n' "$fixture_issue"
+	return 0
+}
+terminal_blocker_fetch_trusted_comments() {
+	printf '%s\n' "$TEST_COMMENTS"
+	return 0
+}
+_tbr_print_entry() {
+	printf '{"intake":"remote_observation"}\n'
+	return 0
+}
 jq -nc '{repo:"owner/repo",issue:42,reason:"external_trigger_pending",intake:"remote_observation"}' >"$ROOT/entry.json"
 TERMINAL_BLOCKER_NOW_EPOCH=1795521600
 rc=0
@@ -98,4 +125,17 @@ fixture_issue=$(jq -c --arg body 'two-session cap; unfinished ledger' '.body=$bo
 TEST_TIMELINE=$(jq -nc '[101,102] | map({event:"cross-referenced",source:{issue:{number:.,repository_url:"https://api.github.com/repos/owner/repo",pull_request:{}}}})')
 _tbr_check_entry "$ROOT/entry.json" >"$ROOT/pending"
 jq -e '.scheduling.next_action == "session_cap_split" and (.scheduling.evidence | contains("merged_prs=101,102"))' "$ROOT/pending"
+for TEST_API_FAILURE in timeline pr; do
+	_tbr_check_entry "$ROOT/entry.json" >"$ROOT/pending"
+	jq -e '.scheduling.next_action == "verify_session_cap" and .scheduling.evidence == ""' "$ROOT/pending"
+done
+TEST_API_FAILURE=none
+for TEST_PR_JSON in '{}' null '{"merged":"false"}'; do
+	_tbr_check_entry "$ROOT/entry.json" >"$ROOT/pending"
+	jq -e '.scheduling.next_action == "verify_session_cap"' "$ROOT/pending"
+done
+TEST_PR_JSON=""
+TEST_TIMELINE='[{"event":"cross-referenced","source":{"issue":{"number":null,"pull_request":{}}}}]'
+_tbr_check_entry "$ROOT/entry.json" >"$ROOT/pending"
+jq -e '.scheduling.next_action == "verify_session_cap"' "$ROOT/pending"
 printf 'PASS future holds park remote intake; due dates and spent caps reach supervisor\n'

@@ -1015,7 +1015,8 @@ _tbr_check_entry() {
 		[[ "$mode" != rearm ]] || return 1
 		_tbr_decision_active "$key" "$comments" && return 1
 		_tbr_print_entry "$repo" "$issue" "$reason" "$opened_at" "$intake" "$issue_json" |
-			jq -c --arg evidence "$cap_hold" '. + {scheduling: {next_action: "session_cap_split", evidence: $evidence}}'
+			jq -c --arg evidence "$cap_hold" '. + {scheduling: {
+				next_action: (if $evidence == "" then "verify_session_cap" else "session_cap_split" end), evidence: $evidence}}'
 		return $?
 	fi
 	local hold_rc=0

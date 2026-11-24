@@ -28,8 +28,12 @@ if dates and max(dates) > now:
 
 # Read only authenticated marker comments, not arbitrary issue prose.
 _terminal_blocker_observed_recheck_after() {
-	local comments="$1" observation="" retry=""
+	local comments="$1" observation="" circuit="" retry=""
 	observation=$(_terminal_blocker_latest_marker "$comments" "$_TBC_OBSERVATION_MARKER revision=") || return 1
+	circuit=$(_terminal_blocker_latest_marker "$comments" "$_TBC_CIRCUIT_MARKER revision=") || return 1
+	observation=$(jq -nc --argjson observation "${observation:-null}" --argjson circuit "${circuit:-null}" \
+		"${_TBC_ORDER_JQ}"'[$observation, $circuit] | map(select(. != null))
+		| sort_by(.created_at, (comment_id // 9007199254740992), .body) | last // empty') || return 1
 	[[ -n "$observation" ]] || return 1
 	retry=$(_terminal_blocker_latest_retry_comment "$comments") || retry=""
 	_terminal_blocker_retry_after "$retry" "$observation" && return 1
@@ -65,14 +69,24 @@ if values: print(min(values))
 ' <<<"$issue_json") || return 1
 	[[ "$cap" =~ ^[1-9][0-9]*$ ]] || return 1
 	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$issue" =~ ^[0-9]+$ ]] || return 0
-	timeline=$(gh api --paginate "repos/${repo}/issues/${issue}/timeline?per_page=100" 2>/dev/null) || return 0
+	timeline=$(GH_HTTP_TIMEOUT=20 gh api --paginate "repos/${repo}/issues/${issue}/timeline?per_page=100" 2>/dev/null) || return 0
+	# Validate completeness independently from the negative (unspent) result.
+	# HTTP success with malformed JSON is not proof that no session was spent.
+	jq -es 'length > 0 and all(.[]; type == "array") and
+		all(.[][] | select(.event == "cross-referenced") | .source.issue | select(has("pull_request"));
+			(.number | type == "number" and . > 0 and floor == .) and
+			((.repository.full_name // .repository_url) | type == "string" and length > 0))' \
+		<<<"$timeline" >/dev/null 2>&1 || return 0
 	# Cross-repository references do not consume this issue's implementation budget.
 	numbers=$(jq -rs --arg repo "$repo" '[.[][] | select(.event == "cross-referenced") | .source.issue
 		| select(.pull_request and (((.repository.full_name // (.repository_url // "" | sub("^https://api.github.com/repos/"; ""))) | ascii_downcase) == ($repo | ascii_downcase)))
 		| .number] | unique[]' <<<"$timeline") || return 0
 	while IFS= read -r number; do
 		[[ "$number" =~ ^[0-9]+$ ]] || continue
-		pr=$(gh api "repos/${repo}/pulls/${number}" 2>/dev/null) || return 0
+		pr=$(GH_HTTP_TIMEOUT=20 gh api "repos/${repo}/pulls/${number}" 2>/dev/null) || return 0
+		jq -e 'type == "object" and (.merged | type == "boolean") and
+			(if .merged then (.merged_at | strings | length > 0) else .merged_at == null end) and
+			all(.title, .body; . == null or type == "string")' <<<"$pr" >/dev/null 2>&1 || return 0
 		# Partial/checkpoint PRs or explicit For/Ref issue references are evidence
 		# of a non-final session; incidental mentions must not spend the budget.
 		if jq -e --arg issue "$issue" '.merged_at != null and .merged == true and

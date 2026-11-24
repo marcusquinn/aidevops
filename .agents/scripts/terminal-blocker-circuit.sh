@@ -1275,6 +1275,10 @@ terminal_blocker_circuit_comment() {
 		question=$(_terminal_blocker_public_line "${AIDEVOPS_TERMINAL_BLOCKER_QUESTION:-}") || question=""
 		[[ -z "$question" ]] ||
 			latest=$(_terminal_blocker_recovery "$blocker_fingerprint" circuit status:blocked) || latest=""
+	elif [[ "$reason" == external_trigger_pending && -n "${AIDEVOPS_TERMINAL_BLOCKER_RECHECK_AFTER:-}" ]]; then
+		# Concurrent attempts may publish a later deadline on a circuit rather
+		# than a first observation. Other runners must see that timestamp too.
+		latest=$(_terminal_blocker_recovery "$blocker_fingerprint" circuit status:blocked) || latest=""
 	fi
 	[[ -z "$latest" ]] || summary=$'The latest attempt\'s request follows.\n\n'"$latest"
 	printf '<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\n%s\n<!-- %s revision=%s blocker=%s -->\nTERMINAL_BLOCKER_CIRCUIT active=true observations=2 task_revision=%s blocker=%s\n\nAutomatic redispatch is held for the repeated known blocker. %s\n\nAn OWNER/MEMBER can retry without deleting history by posting %s as a standalone line. Relevant revisions re-arm code/brief blockers, but never permission blockers. Retry schedules verification only and grants no access.\n<!-- ops:end -->\n' \
