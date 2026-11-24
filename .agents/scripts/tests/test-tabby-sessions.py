@@ -519,12 +519,33 @@ class AuthenticationTests(unittest.TestCase):
             pass
         self.assertEqual(list(Path(self.path).iterdir()), [])
 
+    def observe_contention(self, expected):
+        """Observe real rejected acquisitions without replacing lock semantics."""
+        contending = threading.Event()
+        attempts = threading.Barrier(expected, action=contending.set)
+        flock = authentication.fcntl.flock
+
+        def observed_flock(fd, operation):
+            try:
+                # LOCK_NB leaves unlock operations unchanged; only a competing
+                # acquisition can raise BlockingIOError.
+                return flock(fd, operation | authentication.fcntl.LOCK_NB)
+            except BlockingIOError:
+                # Signal only after the kernel rejects an actual competing
+                # acquisition, not merely after the worker starts running.
+                attempts.wait(timeout=5)
+            return flock(fd, operation)
+
+        patch = mock.patch.object(authentication.fcntl, "flock", side_effect=observed_flock)
+        patch.start()
+        self.addCleanup(patch.stop)
+        return contending
+
     def test_next_handshake_waits_only_until_authenticated_not_session_exit(self):
         entered = threading.Event()
-        started = threading.Event()
+        contending = self.observe_contention(1)
 
         def next_handshake():
-            started.set()
             with authentication.authentication_slot(self.path, host()):
                 entered.set()
 
@@ -532,8 +553,8 @@ class AuthenticationTests(unittest.TestCase):
             with authentication.authentication_slot(self.path, host()) as authenticated:
                 future = pool.submit(next_handshake)
                 try:
-                    self.assertTrue(started.wait(2))
-                    self.assertFalse(entered.wait(0.05))
+                    self.assertTrue(contending.wait(2), "next handshake never contended for the lock")
+                    self.assertFalse(entered.is_set())
                 finally:
                     authenticated()
                 self.assertTrue(entered.wait(2))
@@ -552,7 +573,8 @@ class AuthenticationTests(unittest.TestCase):
 
     def test_twenty_tabs_keep_one_handshake_pending_while_sessions_remain_live(self):
         start = threading.Barrier(20)
-        connected = threading.Event()
+        connected = threading.Barrier(20)
+        all_contending = self.observe_contention(19)
         mutex = threading.Lock()
         counts = dict(pending=0, peak=0, connected=0)
 
@@ -562,16 +584,17 @@ class AuthenticationTests(unittest.TestCase):
                 with mutex:
                     counts["pending"] += 1
                     counts["peak"] = max(counts["peak"], counts["pending"])
-                # Model a nonzero SSH handshake, exposing overlap if the lock
-                # is absent. Connected transports remain live below this point.
-                connected.wait(0.005)
+                # Hold the first handshake until every other tab has actually
+                # tried and failed to acquire its lock. No scheduler-speed or
+                # simulated handshake-duration assumption is needed.
+                self.assertTrue(all_contending.wait(5), "not all other tabs contended for the lock")
                 with mutex:
                     counts["pending"] -= 1
                     counts["connected"] += 1
-                    if counts["connected"] == 20:
-                        connected.set()
                 ready()
-                self.assertTrue(connected.wait(5))
+                # All connected contexts must remain alive until the last
+                # handshake has been acknowledged.
+                connected.wait(timeout=5)
 
         with ThreadPoolExecutor(max_workers=20) as pool:
             list(pool.map(connect, range(20)))
