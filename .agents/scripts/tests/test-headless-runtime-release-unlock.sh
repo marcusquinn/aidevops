@@ -718,13 +718,17 @@ fi
 			grep -q 'Projected state: status:blocked' "$CALL_LOG"
 		else
 			[[ -z "$AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS" ]]
-			! grep -qE 'needs-secret:|needs-credentials|--add-label status:blocked' "$CALL_LOG"
+			if grep -qE 'needs-secret:|needs-credentials|--add-label status:blocked' "$CALL_LOG"; then
+				printf 'FAIL runner-local check applied a global hold\n'; exit 1
+			fi
 			grep -q 'Projected state: status:available' "$CALL_LOG"
 		fi
 		if [[ "$secret_case" == READABLE_CONFIG ]]; then
 			grep -q 'missing_secret_declaration_refuted name=READABLE_CONFIG' "${TMP_HOME}/capture-errors"
 		fi
-		! grep -qE 'fixture-sensitive-output|fixture-decryption-error' "$CALL_LOG" "${TMP_HOME}/capture-errors"
+		if grep -qE 'fixture-sensitive-output|fixture-decryption-error' "$CALL_LOG" "${TMP_HOME}/capture-errors"; then
+			printf 'FAIL secret-check output escaped suppression\n'; exit 1
+		fi
 		printf 'PASS reverified secret-check outcome %s projects the correct release state\n' "$secret_case"
 	done
 	printf 'BLOCKED: fixture\nTERMINAL_BLOCKER_REASON=runner_capability_unmet\nTERMINAL_BLOCKER_MISSING_SECRETS=TIMEOUT_CONFIG,RUNNER_CONFIG,READABLE_CONFIG,UNREADABLE_CONFIG\n' >"$output_file"
