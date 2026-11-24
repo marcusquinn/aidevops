@@ -971,8 +971,14 @@ test_worker_signing_overrides() {
 	assert_worker_git "worker allows --no-gpg-sign text after separator" 0 '["git","log","--","--no-gpg-sign"]'
 	assert_worker_git "worker allows unrelated -c override" 0 '["git","-c","color.ui=never","status"]'
 
+	# GH#40176: this one analyzer-only invocation models an interactive session.
+	# Clear every command_policy_runtime worker marker in the child, not in the
+	# suite or worker: Actions/worker parents must still run the worker cases above.
 	local output="" status=0
-	output="$(python3 "$HELPER" check-command --cwd "${TEST_ROOT}/linked" --argv-json '["git","commit","--no-gpg-sign","-m","x"]')" || status=$?
+	output="$(env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS \
+		-u CLAUDE_HEADLESS -u Claude_HEADLESS -u HEADLESS -u GITHUB_ACTIONS \
+		-u AIDEVOPS_WORKER_ID python3 "$HELPER" check-command --cwd "${TEST_ROOT}/linked" \
+		--argv-json '["git","commit","--no-gpg-sign","-m","x"]')" || status=$?
 	if [[ "$status" -eq 0 && "$output" != *"$denied"* ]]; then
 		pass "interactive sessions keep signing overrides available"
 	else
