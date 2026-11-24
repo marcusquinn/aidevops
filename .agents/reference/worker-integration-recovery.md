@@ -182,8 +182,24 @@ circuits it authored are backfilled every 6h) and its pulse supervisor runs
 when entries are pending (`trigger=blocker_recovery`, at most every
 `PULSE_LLM_RECOVERY_INTERVAL`, default 3h). `pending` re-verifies each entry on
 GitHub and retires closed or re-armed ones. The supervisor pass (including
-`pending --count`) skips unchanged entries with active decisions after one issue
-read; the `rearm` pass owns mechanical releases. Independently, pulse preflight runs
+`pending --count`) skips unchanged entries with active decisions after an issue
+read; the `rearm` pass owns mechanical releases. The supervisor batches at most
+four issue snapshots from the current tier's rotation in one GraphQL request.
+Snapshots live only in a private scratch file for that pass; batch selection and
+reads share the tier deadline, and prefetch never advances either cursor. Any
+error, missing issue or truncated labels discards the entire batch and disables
+batching for that pass, falling back to individual REST-first reads. Comments
+still use the existing trusted, complete read, and `rearm` never uses snapshots.
+Policy-gated and supervisor-only intakes keep their original individual read
+order; only local circuits and remote observations enter a batch.
+Newer or invalid issue timestamps reject the unchanged-decision fast path before
+remote policy validation; an eligible skip still requires an active decision.
+GH#40131 measured this alternative on independent copies of a 79-entry store:
+8 baseline versus 9 candidate `entry_issue` observations in matching 45-second
+windows (+12.5%), with zero eligible skips and both passes incomplete (exit 2).
+This is not a demonstrated 3x gain: upstream latency, policy validation and
+comment/revision work still bound throughput, and small windows are noisy.
+Independently, pulse preflight runs
 the mechanical-only `rearm` pass every `PULSE_BLOCKER_REARM_INTERVAL` (default
 600s). A queued trusted retry or relevant issue revision releases its hold
 within that interval plus one pulse cycle, without an LLM run. This bounded,

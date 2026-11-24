@@ -938,11 +938,13 @@ _tbr_release_circuit_hold() {
 _tbr_skip_decided_unchanged() {
 	local key="$1" updated_at="$2" mode="$3" repo="$4" issue="$5"
 	[[ "$mode" != rearm && -f "${TBR_ROOT}/decisions/${key}.json" ]] || return 1
-	_tbr_decision_active "$key" || return 1
+	# A newer/invalid issue timestamp cannot take this fast path. Avoid remote
+	# policy validation until the cheap necessary condition is established.
 	jq -e --arg updated "$updated_at" '
 		(.recorded_epoch | numbers | select(. > 0)) as $recorded
 		| ($updated | fromdateiso8601) <= $recorded
 	' "${TBR_ROOT}/decisions/${key}.json" >/dev/null 2>&1 || return 1
+	_tbr_decision_active "$key" || return 1
 	printf 'blocker-recovery: decided_unchanged repo=%s issue=%s\n' "$repo" "$issue" >&2
 	return 0
 }
@@ -954,7 +956,7 @@ _tbr_skip_decided_unchanged() {
 #######################################
 _tbr_check_entry() {
 	local file="$1"
-	local mode="${2:-}" updated_at=""
+	local mode="${2:-}" batch_file="${3:-}" updated_at=""
 	local repo="" issue="" reason="" opened_at="" key="" intake=""
 	_tbr_entry_registered "$file" || return $?
 	repo=$(jq -r '.repo // ""' "$file" 2>/dev/null) || return 1
@@ -978,7 +980,7 @@ _tbr_check_entry() {
 	fi
 	local issue_json="" state=""
 	printf 'blocker-recovery: checking stage=entry_issue repo=%s issue=%s\n' "$repo" "$issue" >&2
-	issue_json=$(terminal_blocker_fetch_issue "$repo" "$issue") || return 2
+	issue_json=$(terminal_blocker_fetch_queue_issue "$repo" "$issue" "$batch_file") || return 2
 	state=$(printf '%s' "$issue_json" | jq -r '.state // ""')
 	[[ "$state" == open || "$state" == closed ]] || return 2
 	if [[ "$state" != "open" ]]; then
@@ -1110,6 +1112,7 @@ tbr_main() {
 		local stage_action="${1:-}"
 		shift || return 2
 		case "$stage_action" in
+		terminal_blocker_fetch_issue_batch) "$stage_action" "$@" ;;
 		_tbr_self_login | _tbr_check_entry | tbr_seed | tbr_discover | tbr_discover_unclassified | tbr_discover_holds) "$stage_action" "$@" ;;
 		*) return 2 ;;
 		esac
