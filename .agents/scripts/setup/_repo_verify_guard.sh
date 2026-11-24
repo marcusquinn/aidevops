@@ -33,6 +33,14 @@ setup_repo_verify_guard() {
 		return 1
 	fi
 	print_info "Migrating lint policy and refreshing repo-verify hooks..."
+	# A converged explicit configuration and registration need no migration.
+	# Keep the original path for absent/legacy/disabled/invalid configuration.
+	# shellcheck source=../guard-rollout-cache-lib.sh
+	source "${library_path%/*}/guard-rollout-cache-lib.sh"
+	local installer="${REPO_VERIFY_INSTALLER:-${library_path%/*}/install-pre-push-guards.sh}"
+	local fingerprint="" current_repos="" current=0
+	fingerprint=$(guard_rollout_fingerprint "$installer") || true
+	current_repos=$(guard_rollout_scan "$repos_file" pre-push '# guard:repo-verify' "$fingerprint" "${AIDEVOPS_REPOS_FILE:-$repos_file}") || true
 	local repo_root feature_state hook_output
 	local registration_status=0 migration_status=0 installed=0 registered=0 migrated=0 skipped=0 conflicts=0 errors=0
 	while IFS= read -r repo_root; do
@@ -40,6 +48,11 @@ setup_repo_verify_guard() {
 			skipped=$((skipped + 1))
 			continue
 		}
+		if guard_rollout_current "$repo_root" "$current_repos"; then
+			current=$((current + 1))
+			installed=$((installed + 1))
+			continue
+		fi
 		registration_status=0
 		repo_verify_migrate_registration "$repo_root" >/dev/null 2>&1 || registration_status=$?
 		[[ "$registration_status" -eq 0 ]] && registered=$((registered + 1))
@@ -66,7 +79,7 @@ setup_repo_verify_guard() {
 		esac
 	done <"$repo_list_file"
 	rm -f "$repo_list_file"
-	print_info "Repo verify guard: installed=$installed registered=$registered migrated=$migrated skipped=$skipped conflict=$conflicts err=$errors"
+	print_info "Repo verify guard: installed=$installed registered=$registered migrated=$migrated skipped=$skipped conflict=$conflicts err=$errors current=$current"
 	if [[ "$errors" -gt 0 ]]; then
 		print_warning "Repo verify rollout incomplete: $errors persistent-state or hook installation error(s)"
 		return 1

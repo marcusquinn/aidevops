@@ -68,7 +68,12 @@ setup_task_id_guard() {
 		return 0
 	fi
 
-	local ok=0 already=0 conflict=0 skip=0 err=0
+	# shellcheck source=../guard-rollout-cache-lib.sh
+	source "${installer_path%/*}/guard-rollout-cache-lib.sh"
+	local fingerprint="" current_repos=""
+	fingerprint=$(guard_rollout_fingerprint "$installer_path") || true
+	current_repos=$(guard_rollout_scan "$repos_config" commit-msg '# aidevops-task-id-guard' "$fingerprint") || true
+	local ok=0 already=0 conflict=0 skip=0 err=0 current=0
 	local rawpath path result
 
 	while IFS= read -r rawpath; do
@@ -76,6 +81,11 @@ setup_task_id_guard() {
 		path="${rawpath/#\~/$HOME}"
 		if [[ ! -e "$path/.git" ]]; then
 			skip=$((skip + 1))
+			continue
+		fi
+		if guard_rollout_current "$path" "$current_repos"; then
+			current=$((current + 1))
+			ok=$((ok + 1))
 			continue
 		fi
 		result=$(cd -- "$path" && bash "$installer_path" install 2>&1 </dev/null || true)
@@ -95,7 +105,7 @@ setup_task_id_guard() {
 		esac
 	done < <(jq -r '.initialized_repos[]? | select(.path != null) | .path' "$repos_config")
 
-	print_info "Task-ID guard: ok=$ok already=$already conflict=$conflict skip=$skip err=$err"
+	print_info "Task-ID guard: ok=$ok already=$already conflict=$conflict skip=$skip err=$err current=$current"
 	local total_covered=$((ok + already))
 	setup_track_configured "Task-ID guard (${total_covered} repos)"
 	return 0

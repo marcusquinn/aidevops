@@ -47,7 +47,12 @@ setup_canonical_guard() {
 		return 1
 	fi
 
-	local ok=0 already=0 conflict=0 skip=0 err=0
+	# shellcheck source=../guard-rollout-cache-lib.sh
+	source "${installer_path%/*}/guard-rollout-cache-lib.sh"
+	local fingerprint="" current_repos=""
+	fingerprint=$(guard_rollout_fingerprint "$installer_path") || true
+	current_repos=$(guard_rollout_scan "$repos_config" post-checkout '# aidevops-canonical-guard' "$fingerprint") || true
+	local ok=0 already=0 conflict=0 skip=0 err=0 current=0
 	local rawpath path result
 
 	while IFS= read -r rawpath; do
@@ -55,6 +60,11 @@ setup_canonical_guard() {
 		path="${rawpath/#\~/$HOME}"
 		if [[ ! -e "$path/.git" ]]; then
 			skip=$((skip + 1))
+			continue
+		fi
+		if guard_rollout_current "$path" "$current_repos"; then
+			current=$((current + 1))
+			ok=$((ok + 1))
 			continue
 		fi
 		if ! result=$(cd "$path" && bash "$installer_path" install 2>&1 </dev/null); then
@@ -76,7 +86,7 @@ setup_canonical_guard() {
 		fi
 	done < <(jq -r '.initialized_repos[]? | select(.path != null) | .path' "$repos_config")
 
-	print_info "Canonical guard: ok=$ok already=$already conflict=$conflict skip=$skip err=$err"
+	print_info "Canonical guard: ok=$ok already=$already conflict=$conflict skip=$skip err=$err current=$current"
 	local total_covered=$((ok + already))
 	if [[ "$err" -gt 0 ]]; then
 		print_error "Canonical guard installation incomplete; refusing successful setup"

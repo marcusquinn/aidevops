@@ -101,7 +101,7 @@ cmd_install() {
 		fi
 	fi
 
-	cat >"$hook_path" <<HOOKEOF
+	cat >"$hook_path" <<HOOKEOF || return 1
 #!/usr/bin/env bash
 $HOOK_MARKER
 # Managed by .agents/scripts/install-task-id-guard.sh — do not edit.
@@ -126,7 +126,11 @@ else
 	exit 0
 fi
 HOOKEOF
-	chmod +x "$hook_path"
+	bash -n "$hook_path" || return 1
+	chmod +x "$hook_path" || return 1
+	# shellcheck source=guard-rollout-cache-lib.sh
+	source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/guard-rollout-cache-lib.sh"
+	guard_rollout_record "$hook_path" "$GUARD_CACHE_LIB_DIR/install-task-id-guard.sh" || true
 	print_success "installed task-id-guard at $hook_path"
 	print_info "source hook: $source_hook"
 	print_info "bypass: TASK_ID_GUARD_DISABLE=1 git commit ...  (or git commit --no-verify)"

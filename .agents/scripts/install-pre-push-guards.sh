@@ -81,6 +81,8 @@ print_error() {
 
 # shellcheck source=git-hooks-path-lib.sh disable=SC1091
 source "$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/git-hooks-path-lib.sh"
+# shellcheck source=guard-rollout-cache-lib.sh
+source "$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/guard-rollout-cache-lib.sh"
 
 # Marker strings embedded in the managed hook file — used for detect/update.
 HOOK_MARKER_MANAGED="# aidevops-pre-push-guards"
@@ -438,7 +440,7 @@ _append_guard_block() {
 	# \$_git_root and \$_stdin_data etc. are escaped so they become literal
 	# $-vars in the generated hook script.
 	# shellcheck disable=SC2016
-	cat >>"$_hook_path" <<GUARD_BLOCK
+	cat >>"$_hook_path" <<GUARD_BLOCK || return 1
 # guard:${_guard_name}
 ${_extra_marker}
 _${_guard_var}_hook=""
@@ -474,7 +476,7 @@ _write_dispatcher() {
 	local _inc_dup_todo="${6:-0}"
 	local _inc_repo_verify="${7:-0}"
 
-	mkdir -p "$(dirname "$_hook_path")"
+	mkdir -p "$(dirname "$_hook_path")" || return 1
 
 	# Capture state from the existing hook BEFORE truncating it: a complete
 	# trailing Beads section (fail closed if ambiguous) and the guards owned by
@@ -492,7 +494,7 @@ _write_dispatcher() {
 	case " ${AIDEVOPS_PREPUSH_CHAIN_ADD:-} " in *" quality "*) _inc_quality=1 ;; esac
 
 	# Write the fixed header (single-quoted heredoc = no expansion)
-	cat >"$_hook_path" <<'HOOK_HEADER'
+	cat >"$_hook_path" <<'HOOK_HEADER' || return 1
 #!/usr/bin/env bash
 # aidevops-pre-push-guards
 # Managed by .agents/scripts/install-pre-push-guards.sh — do not edit.
@@ -513,24 +515,24 @@ _stdin_data=$(cat)
 HOOK_HEADER
 
 	# Append each enabled guard block via the shared helper.
-	[[ "$_inc_privacy" -eq 1 ]] && _append_guard_block "$_hook_path" \
-		"privacy" ".agents/hooks/privacy-guard-pre-push.sh" "$DEPLOYED_PRIVACY_HOOK"
-	[[ "$_inc_complexity" -eq 1 ]] && _append_guard_block "$_hook_path" \
-		"complexity" ".agents/hooks/complexity-regression-pre-push.sh" "$DEPLOYED_COMPLEXITY_HOOK"
-	[[ "$_inc_scope" -eq 1 ]] && _append_guard_block "$_hook_path" \
-		"scope" ".agents/hooks/scope-guard-pre-push.sh" "$DEPLOYED_SCOPE_HOOK"
-	[[ "$_inc_credential" -eq 1 ]] && _append_guard_block "$_hook_path" \
-		"credential" ".agents/hooks/credential-emission-pre-push.sh" "$DEPLOYED_CREDENTIAL_HOOK"
-	[[ "$_inc_dup_todo" -eq 1 ]] && _append_guard_block "$_hook_path" \
-		"dup-todo" ".agents/hooks/pre-push-dup-todo-guard.sh" "$DEPLOYED_DUP_TODO_HOOK"
-	[[ "$_inc_repo_verify" -eq 1 ]] && _append_guard_block "$_hook_path" \
-		"repo-verify" ".agents/hooks/repo-verify-pre-push.sh" "$DEPLOYED_REPO_VERIFY_HOOK"
-	[[ "$_inc_ghw" -eq 1 ]] && _append_guard_block "$_hook_path" \
+	[[ "$_inc_privacy" -ne 1 ]] || _append_guard_block "$_hook_path" \
+		"privacy" ".agents/hooks/privacy-guard-pre-push.sh" "$DEPLOYED_PRIVACY_HOOK" || return 1
+	[[ "$_inc_complexity" -ne 1 ]] || _append_guard_block "$_hook_path" \
+		"complexity" ".agents/hooks/complexity-regression-pre-push.sh" "$DEPLOYED_COMPLEXITY_HOOK" || return 1
+	[[ "$_inc_scope" -ne 1 ]] || _append_guard_block "$_hook_path" \
+		"scope" ".agents/hooks/scope-guard-pre-push.sh" "$DEPLOYED_SCOPE_HOOK" || return 1
+	[[ "$_inc_credential" -ne 1 ]] || _append_guard_block "$_hook_path" \
+		"credential" ".agents/hooks/credential-emission-pre-push.sh" "$DEPLOYED_CREDENTIAL_HOOK" || return 1
+	[[ "$_inc_dup_todo" -ne 1 ]] || _append_guard_block "$_hook_path" \
+		"dup-todo" ".agents/hooks/pre-push-dup-todo-guard.sh" "$DEPLOYED_DUP_TODO_HOOK" || return 1
+	[[ "$_inc_repo_verify" -ne 1 ]] || _append_guard_block "$_hook_path" \
+		"repo-verify" ".agents/hooks/repo-verify-pre-push.sh" "$DEPLOYED_REPO_VERIFY_HOOK" || return 1
+	[[ "$_inc_ghw" -ne 1 ]] || _append_guard_block "$_hook_path" \
 		"gh-wrapper" ".agents/hooks/gh-wrapper-guard-pre-push.sh" \
-		"$HOME/.aidevops/agents/hooks/gh-wrapper-guard-pre-push.sh" "" "$HOOK_MARKER_GH_WRAPPER"
-	[[ "$_inc_quality" -eq 1 ]] && _append_guard_block "$_hook_path" \
+		"$HOME/.aidevops/agents/hooks/gh-wrapper-guard-pre-push.sh" "" "$HOOK_MARKER_GH_WRAPPER" || return 1
+	[[ "$_inc_quality" -ne 1 ]] || _append_guard_block "$_hook_path" \
 		"quality" ".agents/scripts/pre-commit-hook.sh" \
-		"$HOME/.aidevops/agents/scripts/pre-commit-hook.sh" "HOOK_MODE=pre-push" "$HOOK_MARKER_QUALITY"
+		"$HOME/.aidevops/agents/scripts/pre-commit-hook.sh" "HOOK_MODE=pre-push" "$HOOK_MARKER_QUALITY" || return 1
 
 	# A preserved Beads section stays the TRAILING section (so a later refresh can
 	# find it again) and decides the final status: it runs after the guards, with
@@ -539,14 +541,16 @@ HOOK_HEADER
 	# shellcheck disable=SC2016
 	if [[ -n "$_beads_section" ]]; then
 		{
-			printf '[[ "$_exit_code" -eq 0 ]] || exit "$_exit_code"\n'
-			printf 'exec <<<"$_stdin_data"\n\n'
-			printf '%s\n' "$_beads_section"
-		} >>"$_hook_path"
+			printf '[[ "$_exit_code" -eq 0 ]] || exit "$_exit_code"\n' || return 1
+			printf 'exec <<<"$_stdin_data"\n\n' || return 1
+			printf '%s\n' "$_beads_section" || return 1
+		} >>"$_hook_path" || return 1
 	else
-		printf 'exit "$_exit_code"\n' >>"$_hook_path"
+		printf 'exit "$_exit_code"\n' >>"$_hook_path" || return 1
 	fi
-	chmod +x "$_hook_path"
+	bash -n "$_hook_path" || return 1
+	chmod +x "$_hook_path" || return 1
+	guard_rollout_record "$_hook_path" "$GUARD_CACHE_LIB_DIR/install-pre-push-guards.sh" || true
 	return 0
 }
 
