@@ -291,20 +291,25 @@ pulse_event_refill_signal() {
 # cooldown; the refill-only run takes the instance lock with a fresh budget.
 # Detached like the worker-exit observer, so the watchdog keeps supervising
 # and the run outlives the supervisor's process group or service cgroup.
+# Args: $1 - refill source (default active-pulse; t19350 adds cycle-entry)
 # Returns: 0 when a wake was started, 1 when event refill is unavailable
 #######################################
 pulse_event_refill_wake_underfilled() {
+	local refill_source="${1:-active-pulse}"
 	local helper="${PULSE_EVENT_REFILL_HELPER:-${_PULSE_EVENT_REFILL_SCRIPT_DIR}/pulse-event-refill.sh}"
 	local trigger_file="${PULSE_EVENT_REFILL_TRIGGER_FILE:-${AIDEVOPS_PULSE_EVENT_REFILL_TRIGGER_FILE:-${HOME}/.aidevops/cache/pulse-event-refill.trigger}}"
 	local wrapper="${PULSE_EVENT_REFILL_WRAPPER:-${AIDEVOPS_PULSE_EVENT_REFILL_WRAPPER:-${_PULSE_EVENT_REFILL_SCRIPT_DIR}/pulse-wrapper.sh}}"
 	local owner_pid="$$"
+	case "$refill_source" in
+	"" | *[!A-Za-z0-9:_-]*) refill_source="active-pulse" ;;
+	esac
 	pulse_event_refill_is_enabled || return 1
 	[[ -x "$helper" ]] || return 1
 	_pulse_event_refill_wrapper_supports_mode "$wrapper" || return 1
 	local -a wake_command=(env AIDEVOPS_PULSE_EVENT_REFILL_ENABLED=1
 		"PULSE_EVENT_REFILL_TRIGGER_FILE=${trigger_file}"
 		"PULSE_EVENT_REFILL_WRAPPER=${wrapper}"
-		"$helper" signal 0 "$owner_pid" active-pulse)
+		"$helper" signal 0 "$owner_pid" "$refill_source")
 	if declare -F _dlw_systemd_user_service_available >/dev/null 2>&1 &&
 		declare -F _dlw_exec_systemd_user_service >/dev/null 2>&1 &&
 		_dlw_systemd_user_service_available; then
@@ -708,6 +713,28 @@ _pulse_event_refill_run_routines_if_busy() {
 	return 0
 }
 
+#######################################
+# Cycle-entry drain. The normal cycle runs preflight and its own dispatch
+# rounds; an in-process apply_dispatch_max here can consume the entire cycle
+# before preflight (GH#32688), so dispatch never runs in-process at entry.
+# Shared-lock mode leaves the signal for cycle-final (or an independent
+# worker-exit refill). t19350: split-lock mode (t19324) wakes a detached
+# dispatch-lock-only refill on its own budget, which fills free slots while
+# this cycle holds the instance lock through preflight. The trigger stays for
+# that refill (or cycle-final when no wake starts).
+# Args: $1 - trigger file
+#######################################
+_pulse_event_refill_cycle_entry() {
+	local trigger_file="$1"
+	local dispatch_mode="deferred"
+	[[ -f "$trigger_file" ]] || return 0
+	if _pulse_event_refill_split_lock && pulse_event_refill_wake_underfilled "cycle-entry"; then
+		dispatch_mode="woken"
+	fi
+	pulse_event_refill_log "action=drain_completed source=cycle-entry pass=0 dispatch=${dispatch_mode} trigger=retained"
+	return 0
+}
+
 pulse_event_refill_drain() {
 	local source_name="${1:-cycle}"
 	local trigger_file="${PULSE_EVENT_REFILL_TRIGGER_FILE:-${HOME}/.aidevops/cache/pulse-event-refill.trigger}"
@@ -724,14 +751,9 @@ pulse_event_refill_drain() {
 	[[ "$max_passes" =~ ^[0-9]+$ ]] || max_passes=2
 	((max_passes > 0)) || max_passes=1
 	pulse_event_refill_recover_processing
-	# The normal cycle runs preflight and its own dispatch rounds. Running the
-	# full, potentially multi-candidate apply_dispatch_max here can consume the
-	# entire cycle before preflight. Leave the signal for cycle-final (or an
-	# independent worker-exit refill); never claim that dispatch ran at entry.
+	# Never dispatch in-process at cycle entry; see _pulse_event_refill_cycle_entry.
 	if [[ "$source_name" == "cycle-entry" ]]; then
-		if [[ -f "$trigger_file" ]]; then
-			pulse_event_refill_log "action=drain_completed source=cycle-entry pass=0 dispatch=deferred trigger=retained"
-		fi
+		_pulse_event_refill_cycle_entry "$trigger_file"
 		return 0
 	fi
 	if ! declare -F apply_dispatch_max >/dev/null 2>&1; then
