@@ -361,7 +361,7 @@ printf 'PASS durable partial snapshots preserve attempts across cycles, expire w
 	# keeps the handoff for the first wave.
 	_PULSE_CYCLE_ID="activated-cycle"
 	: >"$builds"
-	_dispatch_ranked_candidates_json 50 >/dev/null
+	PULSE_REFILL_ONLY=0 _dispatch_ranked_candidates_json 50 >/dev/null
 	_dispatch_invalidate_candidate_snapshot event_refill 50
 	[[ -s "$builds" && -f "$handoff" ]]
 
@@ -373,6 +373,40 @@ printf 'PASS durable partial snapshots preserve attempts across cycles, expire w
 	[[ ! -e "$handoff" && ! -e "${handoff}.consumed" && -f "$partial" && -f "${partial}.consumed" ]]
 	grep -qx 'dispatch_candidate_handoff_adopted' "$stats"
 	grep -qx 'dispatch_candidate_snapshot_hit' "$stats"
+	# t19339: a refill-only run's first enumeration (not a first wave) adopts
+	# a fresh handoff as its own snapshot; an expired one is discarded and
+	# the refill scans. A cycle's later rounds never adopt (checked above).
+	(
+		PULSE_REFILL_ONLY=1
+		_PULSE_FIRST_DISPATCH_WAVE=0
+		_PULSE_CYCLE_ID="refill-only-run"
+		refill_snapshot=$(_dispatch_candidate_snapshot_path 50)
+		_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
+		write_handoff "$handoff" "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" 0 4,5
+		jq '.handed_off_at = .captured_at' "$handoff" >"${handoff}.test" && command mv "${handoff}.test" "$handoff"
+		: >"$builds"
+		: >"$stats"
+		: >"$LOGFILE"
+		refilled=$(_dispatch_ranked_candidates_json 50)
+		[[ "$(numbers "$refilled")" == '4,5' && ! -s "$builds" && ! -e "$handoff" && -f "$refill_snapshot" ]]
+		grep -q 'census handoff adopted: source_mode=normalize mode=normalize' "$LOGFILE"
+		grep -qx 'dispatch_candidate_snapshot_hit' "$stats"
+		rm -f "$refill_snapshot" "${refill_snapshot}.consumed"
+		write_handoff "$handoff" "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" 301 4,5
+		: >"$builds"
+		scanned=$(_dispatch_ranked_candidates_json 50)
+		[[ "$(numbers "$scanned")" == '1,2,3' && -s "$builds" && ! -e "$handoff" ]]
+		grep -q 'census handoff discarded: reason=stale_or_invalid source_mode=normalize' "$LOGFILE"
+		rm -f "$refill_snapshot" "${refill_snapshot}.consumed"
+		# The adopted cross-process census gets the registry recheck: a
+		# candidate whose registered path moved is not served.
+		write_handoff "$handoff" "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" 0 4
+		jq '.handed_off_at = .captured_at | .candidates[0].repo_path = "/moved"' "$handoff" >"${handoff}.test" && command mv "${handoff}.test" "$handoff"
+		: >"$builds"
+		scanned=$(_dispatch_ranked_candidates_json 50)
+		[[ "$(numbers "$scanned")" == '1,2,3' && -s "$builds" ]]
+		rm -f "$refill_snapshot" "${refill_snapshot}.consumed"
+	)
 	# GH#38226: the reported 107-candidate census survives activation intact;
 	# its next first wave serves all candidates without another repository scan.
 	_dispatch_invalidate_candidate_snapshot large_handoff_fixture 50
