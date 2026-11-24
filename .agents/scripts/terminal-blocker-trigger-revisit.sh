@@ -142,14 +142,15 @@ _tbtr_authority() {
 # Same-repository issue/PR numbers a trigger line names (at most 3), one per line.
 _tbtr_trigger_refs() {
 	local trigger="$1"
-	# Bare #N and GH#N (any digit count); keyword forms (issue, PR, pull request,
+	# Bare #N and GH#N accept 1-7 digits; keyword forms (issue, PR, pull request,
 	# phase) need 3+ digits so ordinals such as "phase 2" are not read as refs.
+	# Capture whole numeric tokens before rejecting unsupported lengths.
 	# Strip whole qualified refs first, including repository names ending in -GH.
 	jq -r --arg t "$trigger" -n '($t | gsub("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+"; "")) as $text
-		| [($text | scan("(?:^|[^A-Za-z0-9/])#([0-9]{1,7})")),
-		($text | scan("(?:^|[^A-Za-z0-9/])gh#([0-9]{1,7})"; "i")),
-		($text | scan("(?:^|[^A-Za-z0-9/])(?:issue|pr|pull request|phase)\\s+#?([0-9]{3,7})"; "i"))
-		| .[0]] | unique | .[:3][]' 2>/dev/null || true
+		| [($text | scan("(?:^|[^A-Za-z0-9/])#([0-9]+)")),
+		($text | scan("(?i)(?:^|[^A-Za-z0-9/])gh#([0-9]+)")),
+		($text | scan("(?i)(?:^|[^A-Za-z0-9/])(?:issue|pr|pull request|phase)\\s+#?([0-9]{3,})"))
+		| .[0] | select(length <= 7)] | unique | .[:3][]' 2>/dev/null || true
 	return 0
 }
 

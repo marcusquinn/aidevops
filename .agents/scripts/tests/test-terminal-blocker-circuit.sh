@@ -742,39 +742,6 @@ _trigger_revisit_ref_wake_cases() {
 	return 0
 }
 
-# t19343: table-driven parser cases plus the empty-refs backfill gate.
-_trigger_revisit_refs_parser_cases() {
-	local row="" text="" want="" got=""
-	local -a rows=(
-		'Issue 31853 (people phase) closed|31853'
-		'GH#34444 (fix) merges to develop|34444'
-		'owner/service-GH#34444 merges|'
-		'owner/service-GH#34444 and GH#35555 merge|35555'
-		'fix for issue 31960 (worker PR 32080) into develop|31960 32080'
-		'Media phase 32312 reconciles|32312'
-		'PR #7 merged|7'
-		'#7 merged|7'
-		'Issue #7 closes|7'
-		'owner/repo#7 merged|'
-		'phase 2 completes|'
-		'ceremony on 25 November 2026|'
-	)
-	for row in "${rows[@]}"; do
-		text="${row%%|*}"
-		want="${row#*|}"
-		got=$(_tbtr_trigger_refs "$text" | tr '\n' ' ')
-		got="${got% }"
-		[[ "$got" == "$want" ]] || { printf 'refs parser: "%s" -> "%s" (want "%s")\n' "$text" "$got" "$want" >&2; return 1; }
-	done
-	# Waiting record with empty refs and no refs_parser is due once for a re-parse.
-	_tbtr_ref_wake_due owner/repo 42 '{"decision":"scheduled","trigger_refs":[]}' || return 1
-	! _tbtr_ref_wake_due owner/repo 42 '{"decision":"scheduled","trigger_refs":[],"refs_parser":2}' || return 1
-	# Legacy acknowledgements must not prevent re-parsing nonempty ref sets.
-	_tbtr_ref_wake_due owner/repo 42 '{"decision":"still_pending","trigger_refs":[30000],"refs_met":true}' || return 1
-	_trigger_revisit_refs_ack_cases || return 1
-	return 0
-}
-
 # Keep the circuit suite below its 2000-line limit, using its existing helper pattern.
 # shellcheck source=test-terminal-blocker-trigger-refs.sh
 source "${SCRIPT_DIR}/tests/test-terminal-blocker-trigger-refs.sh"
