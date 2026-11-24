@@ -2490,13 +2490,13 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19323 feat(pulse): read-only dispatch throughput report (slot occupancy, ceremony cost, refill outcomes, supervisor cadence) #auto-dispatch #feat #priority:high ref:GH#40109 pr:#40113 completed:2026-11-24
 
-- [ ] t19324 perf(pulse): separate dispatch lock so worker-exit refills launch during maintenance stages (flagged) #auto-dispatch #feat #priority:high ref:GH#40112
+- [x] t19324 perf(pulse): separate dispatch lock so worker-exit refills launch during maintenance stages (flagged) #auto-dispatch #feat #priority:high ref:GH#40112 pr:#40121 completed:2026-11-24
 
 - [x] t19325 fix(dispatch): size worker prelaunch lease to cover the canary bound #bug #priority:high ref:GH#40118 pr:#40119 completed:2026-11-24
 
-- [ ] t19326 fix(recovery): external_trigger decisions re-poll at recheck_after or a bounded default instead of parking forever #bug #priority:high ref:GH#40120 -> [todo/tasks/t19326-brief.md]
+- [x] t19326 fix(recovery): external_trigger decisions re-poll at recheck_after or a bounded default instead of parking forever #bug #priority:high ref:GH#40120 -> [todo/tasks/t19326-brief.md] pr:#40125 completed:2026-11-24
 
-- [ ] t19327 perf(recovery): supervisor pending pass skips unchanged decided entries after one issue read (3 of 131 entries observed per pass) #auto-dispatch #bug #priority:high ref:GH#40126 -> [todo/tasks/t19327-brief.md]
+- [x] t19327 perf(recovery): supervisor pending pass skips unchanged decided entries after one issue read (3 of 131 entries observed per pass) #auto-dispatch #bug #priority:high ref:GH#40126 -> [todo/tasks/t19327-brief.md] pr:#40128 completed:2026-11-24
 
 ## In Progress
 
