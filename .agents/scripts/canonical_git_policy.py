@@ -209,9 +209,6 @@ def classify_git_argv(
         return True, "read-only Git operation"
     try:
         is_canonical = _is_canonical(real_git_path, effective_cwd, prefix)
-    except RuntimeError as error:
-        result = False, str(error)
-    else:
         if not is_canonical:
             result = _classify_linked_operation(
                 real_git_path, effective_cwd, prefix, (subcommand, args)
@@ -220,4 +217,6 @@ def classify_git_argv(
             result = _classify_canonical_operation(
                 real_git_path, effective_cwd, prefix, (subcommand, args), check_unresolved
             )
+    except RuntimeError as error:
+        result = False, str(error)
     return result

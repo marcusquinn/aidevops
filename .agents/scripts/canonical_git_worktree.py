@@ -8,8 +8,23 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from canonical_git_invocation import GLOBAL_VALUE_OPTIONS
 from canonical_git_management import is_registered_common_dir
 from canonical_git_repository import git_output as _git_output
+
+
+def _worktree_cwd(cwd: str, prefix: list[str]) -> Path:
+    """Apply Git's successive -C options without interpreting other option values."""
+    directory = Path(cwd)
+    remaining = iter(prefix)
+    for option in remaining:
+        if option in GLOBAL_VALUE_OPTIONS:
+            value = next(remaining, "")
+            if option == "-C" and value:
+                directory = (directory / value).resolve()
+        elif option.startswith("-C") and option[2:]:
+            directory = (directory / option[2:]).resolve()
+    return directory
 
 
 def _worktree_remove_target(args: list[str]) -> str:
@@ -83,7 +98,7 @@ def is_linked_worktree_remove_for_canonical(
         )
         target_path = Path(target).expanduser()
         if not target_path.is_absolute():
-            target_path = Path(effective_cwd) / target_path
+            target_path = _worktree_cwd(effective_cwd, prefix) / target_path
         target_real = os.path.realpath(target_path)
         target_common_dir, target_git_dir, target_top = git_repo_identity(
             real_git_path, target_real, []

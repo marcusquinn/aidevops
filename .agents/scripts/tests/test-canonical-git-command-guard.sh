@@ -100,8 +100,9 @@ printf '{}\n' >"${SEPARATE_REPO}/.aidevops.json"
 assert_blocked() {
 	local name="$1"
 	local command="$2"
+	local cwd="${3:-$REPO}"
 	local output=""
-	output=$(python3 "$GUARD" --cwd "$REPO" --command "$command" 2>&1)
+	output=$(python3 "$GUARD" --cwd "$cwd" --command "$command" 2>&1)
 	local rc=$?
 	if [[ "$rc" -eq 42 && "$output" == *"BLOCKED by canonical Git guard"* ]]; then
 		pass "$name"
@@ -475,6 +476,10 @@ else
 fi
 assert_allowed "allows canonical linked worktree removal" "$REPO" "git worktree remove --force '$LINKED'"
 assert_allowed "allows canonical linked worktree removal with option terminator" "$REPO" "git worktree remove -f -- '$LINKED'"
+assert_allowed "resolves removal target after -C" "$TEST_ROOT" "git -C repo worktree remove ../linked"
+assert_allowed "resolves removal target after chained -C" "$TEST_ROOT" "git -C linked -C ../repo worktree remove ../linked"
+assert_allowed "preserves absolute removal target after -C" "$TEST_ROOT" "git -C repo worktree remove '$LINKED'"
+assert_allowed "preserves relative removal target without -C" "$REPO" "git worktree remove ../linked"
 assert_blocked "blocks canonical worktree removal of canonical root" "git worktree remove --force '$REPO'"
 assert_blocked "blocks canonical worktree removal with unsupported options" "git worktree remove --force --expire now '$LINKED'"
 assert_allowed "allows normal Git mutation in linked worktree" "$LINKED" "git switch -c feature/linked-child"
@@ -502,14 +507,32 @@ else
 fi
 # GH#40213: shared worktree metadata mutations stay blocked from linked worktrees.
 for wt_cmd in "git worktree repair" "git worktree prune" "git worktree move a b" "git worktree lock ."; do
-	if python3 "$GUARD" --cwd "$LINKED" --command "$wt_cmd" >/dev/null 2>&1; then
-		fail "blocks linked-worktree '$wt_cmd'"
-	else
-		pass "blocks linked-worktree '$wt_cmd'"
-	fi
+	assert_blocked "blocks linked-worktree '$wt_cmd'" "$wt_cmd" "$LINKED"
 done
 assert_allowed "allows linked-worktree git worktree list" "$LINKED" "git worktree list"
 assert_allowed "allows linked-worktree git worktree add" "$LINKED" "git worktree add $TEST_ROOT/gh40213-new -b gh40213-branch"
+if python3 - "$SCRIPT_DIR" <<'PY'; then
+import sys
+from unittest.mock import patch
+
+sys.path.insert(0, sys.argv[1])
+import canonical_git_policy as policy
+
+for canonical, dispatch in (
+    (False, '_classify_linked_operation'),
+    (True, '_classify_canonical_operation'),
+):
+    with patch.object(policy, '_is_canonical', return_value=canonical), patch.object(
+        policy, dispatch, side_effect=RuntimeError('Git probe timed out')
+    ):
+        assert policy.classify_git_argv(
+            ['worktree', 'remove', '../linked'], '.', 'git'
+        ) == (False, 'Git probe timed out')
+PY
+	pass "converts linked and canonical dispatch probe failures to policy denials"
+else
+	fail "converts linked and canonical dispatch probe failures to policy denials"
+fi
 # GH#39722: direct canonical gc stays blocked and points to the audited helper.
 assert_blocked "blocks canonical git gc" "git gc --auto"
 assert_blocked "blocks canonical git maintenance run" "git maintenance run --task=gc"
