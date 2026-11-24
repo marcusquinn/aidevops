@@ -722,10 +722,9 @@ test_serialized_older_version_refuses_global_activation() {
 	_runtime_bundle_activate "$target_dir" "$current_bundle"
 	active_before=$(_runtime_bundle_resolve_root "$target_dir")
 
-	local output=""
-	if output=$(_runtime_bundle_activate "$target_dir" "$stale_bundle" 2>&1); then
-		fail "serialized older candidate unexpectedly replaced the active bundle"
-	fi
+	local output="" rc=0
+	output=$(_runtime_bundle_activate "$target_dir" "$stale_bundle" 2>&1) || rc=$?
+	assert_eq "78" "$rc" "serialized older candidate returns deterministic refusal"
 	assert_output_contains "$output" "aidevops runtime-bundle rollback --help" \
 		"stale activation diagnostic names the public rollback help path"
 	active_after=$(_runtime_bundle_resolve_root "$target_dir")
@@ -755,9 +754,9 @@ test_source_access_broker_compatibility() {
 
 	for name in source-access-helper.py source_access_core.py; do
 		printf '# unreleased fixture\n' >"$candidate/scripts/$name"
-		if output=$(_runtime_bundle_check_source_access_broker "$candidate" "$broker" 2>&1); then
-			fail "mismatched $name was accepted"
-		fi
+		local rc=0
+		output=$(_runtime_bundle_check_source_access_broker "$candidate" "$broker" 2>&1) || rc=$?
+		assert_eq "78" "$rc" "mismatched $name returns deterministic refusal"
 		assert_output_contains "$output" "matching signed release" "mismatched $name explains the release requirement"
 		assert_output_contains "$output" "unreleased installer cannot repair" "mismatched $name avoids a setup retry loop"
 		cp "$broker/$name" "$candidate/scripts/$name"
@@ -825,24 +824,24 @@ test_source_access_failure_preserves_runtime_state() {
 	active_before=$(_runtime_bundle_resolve_root "$target_dir")
 	previous_before=$(readlink "$HOME/.aidevops/previous-runtime-bundle")
 	stamp_before=$(cat "$HOME/.aidevops/.deployed-sha")
-	if (
-		_runtime_bundle_check_source_access_broker() { return 1; }
-		stage_revision "$unused_target"
-	); then
-		fail "staging ignored the broker compatibility failure"
-	fi
+	local rc=0
+	(
+		_runtime_bundle_check_source_access_broker() { return 78; }
+		_runtime_bundle_stage "$FAKE_REPO" "$FAKE_REPO/.agents" "$unused_target" "$TEST_ROOT/plugins.json"
+	) || rc=$?
+	assert_eq "78" "$rc" "staging preserves the broker refusal code"
 	[[ ! -e "${unused_target%/*}/runtime-bundles" ]] || fail "rejected staging created runtime bundle state"
 	pass "broker preflight refuses staging before creating bundle state"
 
 	write_fake_revision "27.0.0" "broker-incompatible-candidate"
 	stage_revision "$target_dir"
 	candidate="$_AIDEVOPS_STAGED_BUNDLE_DIR"
-	if (
-		_runtime_bundle_check_source_access_broker() { return 1; }
+	rc=0
+	(
+		_runtime_bundle_check_source_access_broker() { return 78; }
 		_runtime_bundle_activate "$target_dir" "$candidate"
-	); then
-		fail "activation ignored the broker compatibility failure"
-	fi
+	) || rc=$?
+	assert_eq "78" "$rc" "activation preserves the broker refusal code"
 	assert_eq "$active_before" "$(_runtime_bundle_resolve_root "$target_dir")" "broker activation failure preserves the active runtime"
 	assert_eq "$previous_before" "$(readlink "$HOME/.aidevops/previous-runtime-bundle")" "broker activation failure preserves the rollback pointer"
 	assert_eq "$stamp_before" "$(cat "$HOME/.aidevops/.deployed-sha")" "broker activation failure preserves the deployment stamp"

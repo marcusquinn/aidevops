@@ -1237,11 +1237,11 @@ deploy_aidevops_agents() {
 	# expanding it when no plugin namespaces are configured.
 	if [[ ${#_deploy_agent_plugin_namespaces[@]} -gt 0 ]]; then
 		_runtime_bundle_stage "$repo_dir" "$source_dir" "$target_dir" "$plugins_file" \
-			"${_deploy_agent_plugin_namespaces[@]}" || return 1
+			"${_deploy_agent_plugin_namespaces[@]}" || return $?
 	else
-		_runtime_bundle_stage "$repo_dir" "$source_dir" "$target_dir" "$plugins_file" || return 1
+		_runtime_bundle_stage "$repo_dir" "$source_dir" "$target_dir" "$plugins_file" || return $?
 	fi
-	_runtime_bundle_activate "$target_dir" "$_AIDEVOPS_STAGED_BUNDLE_DIR" || return 1
+	_runtime_bundle_activate "$target_dir" "$_AIDEVOPS_STAGED_BUNDLE_DIR" || return $?
 	_verify_agents_deploy_or_restore "$source_dir" "$target_dir" || return 1
 	pin_aidevops_active_runtime_bundle_root || {
 		print_error "Unable to bind setup to the activated runtime bundle"

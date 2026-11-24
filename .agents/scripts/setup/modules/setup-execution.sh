@@ -269,7 +269,7 @@ _setup_run_scoped_stage() {
 	stage="$(_setup_canonical_stage "$SETUP_STAGE")" || return 1
 
 	if [[ "$stage" == "full" ]]; then
-		_setup_run_non_interactive
+		_setup_run_non_interactive || return $?
 		_setup_post_setup_steps "$os"
 		return 0
 	fi
@@ -283,7 +283,7 @@ _setup_run_scoped_stage() {
 		_time_step "setup_opencode_desktop_launcher" setup_opencode_desktop_launcher
 		;;
 	"$SETUP_STAGE_AGENTS")
-		_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents
+		_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents || return $?
 		_time_step "$SETUP_STAGE_OPENCODE_PLUGINS" setup_opencode_runtime_plugins
 		_time_step "$SETUP_STAGE_OPENCODE_SERVICE" setup_opencode_service
 		_time_step "$SETUP_STAGE_HOTFIX_CONFIG" _deploy_hotfix_config
@@ -313,7 +313,11 @@ _setup_run_scoped_stage() {
 		_time_step "$SETUP_STAGE_GUI_DESKTOP" setup_gui_desktop_app
 		;;
 	"$SETUP_STAGE_AI_SESSION")
-		if ! _setup_run_ai_session_incremental "$os"; then
+		local incremental_rc=0
+		_setup_run_ai_session_incremental "$os" || incremental_rc=$?
+		# EX_CONFIG is a deterministic deploy refusal, not missing incremental support.
+		[[ "$incremental_rc" -ne 78 ]] || return 78
+		if [[ "$incremental_rc" -ne 0 ]]; then
 			print_warning "AI-session incremental setup unavailable or failed; falling back to full setup"
 			# Floor for verification: the deploy below reads HEAD at its own
 			# start, which may be later than this point but never earlier.
@@ -411,7 +415,7 @@ _setup_run_non_interactive() {
 	_setup_run_noninteractive_migrations
 	_time_step "$SETUP_STAGE_OPENCODE" setup_opencode_runtimes
 	_time_step "validate_opencode_config" validate_opencode_config
-	_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents
+	_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents || return $?
 	_time_step "$SETUP_STAGE_OPENCODE_PLUGINS" setup_opencode_runtime_plugins
 	_time_step "$SETUP_STAGE_OPENCODE_SERVICE" setup_opencode_service
 	_time_step "reconcile_buzz_desktop_compatibility" reconcile_buzz_desktop_compatibility

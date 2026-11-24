@@ -456,7 +456,7 @@ _runtime_bundle_check_source_access_broker() {
 		return 0
 	fi
 	print_error "Refusing incompatible source-access runtime deployment: $name differs from the installed broker. The active runtime is unchanged. Use a matching signed release and reconcile the broker with 'aidevops setup --scope source-access' before retrying deployment; setup from an unreleased installer cannot repair this mismatch."
-	return 1
+	return 78 # EX_CONFIG: retrying full setup cannot repair this refusal
 }
 
 _runtime_bundle_validate() {
@@ -495,7 +495,7 @@ _runtime_bundle_stage() {
 	local git_sha="$_AIDEVOPS_BUNDLE_UNKNOWN"
 	local bundle_id=""
 
-	_runtime_bundle_check_source_access_broker "$source_dir" "" "$target_dir" || return 1
+	_runtime_bundle_check_source_access_broker "$source_dir" "" "$target_dir" || return $?
 	mkdir -p "$bundles_dir" || return 1
 	_AIDEVOPS_STAGED_SOURCE_SHA=$(_runtime_bundle_source_sha "$repo_dir")
 	[[ -r "$repo_dir/VERSION" ]] && IFS= read -r version <"$repo_dir/VERSION"
@@ -719,12 +719,12 @@ _runtime_bundle_activate_locked() {
 
 	# Recheck the actual staged bytes under the activation lock before any link,
 	# legacy-directory, previous-bundle or deployment-stamp mutation.
-	_runtime_bundle_check_source_access_broker "$agents_root" "" "$target_dir" || return 1
+	_runtime_bundle_check_source_access_broker "$agents_root" "" "$target_dir" || return $?
 	if previous_root=$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null); then
 		stale_reason=$(_runtime_bundle_stale_candidate_reason "$bundle_dir" "$previous_root")
 		if [[ -n "$stale_reason" ]]; then
 			print_error "Refusing stale runtime bundle activation: ${stale_reason}. Use 'aidevops runtime-bundle rollback --help' for the dedicated audited rollback operation instead of setup."
-			return 1
+			return 78
 		fi
 		_AIDEVOPS_PREVIOUS_BUNDLE_ROOT="$previous_root"
 	fi

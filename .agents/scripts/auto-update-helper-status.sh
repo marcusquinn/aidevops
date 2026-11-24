@@ -155,6 +155,11 @@ _cmd_status_state() {
 
 	echo ""
 	echo "  Last check:         $last_ts ($last_action: $last_status)"
+	if [[ "$last_status" == "deploy_refused" ]]; then
+		local last_reason
+		last_reason=$(jq -r '.last_reason // "See auto-update log for refusal details"' "$STATE_FILE" 2>/dev/null)
+		printf '  Deploy refusal:     %s\n' "$last_reason"
+	fi
 	if [[ "$last_update" != "never" ]]; then
 		echo "  Last update:        $last_update (v$last_update_ver)"
 	fi
