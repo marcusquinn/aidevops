@@ -938,11 +938,13 @@ _tbr_release_circuit_hold() {
 _tbr_skip_decided_unchanged() {
 	local key="$1" updated_at="$2" mode="$3" repo="$4" issue="$5"
 	[[ "$mode" != rearm && -f "${TBR_ROOT}/decisions/${key}.json" ]] || return 1
-	_tbr_decision_active "$key" || return 1
+	# A newer/invalid issue timestamp cannot take this fast path. Avoid remote
+	# policy validation until the cheap necessary condition is established.
 	jq -e --arg updated "$updated_at" '
 		(.recorded_epoch | numbers | select(. > 0)) as $recorded
 		| ($updated | fromdateiso8601) <= $recorded
 	' "${TBR_ROOT}/decisions/${key}.json" >/dev/null 2>&1 || return 1
+	_tbr_decision_active "$key" || return 1
 	printf 'blocker-recovery: decided_unchanged repo=%s issue=%s\n' "$repo" "$issue" >&2
 	return 0
 }

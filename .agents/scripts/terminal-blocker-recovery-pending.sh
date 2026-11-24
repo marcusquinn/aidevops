@@ -182,6 +182,10 @@ _tbr_pending_scan_tier() {
 			if [[ "$mode" != --rearm-only ]]; then
 				_tbr_pending_prefetch "$file"
 			fi
+			if [[ "$SECONDS" -ge "$deadline" ]]; then
+				_tbr_pending_tier_stop "$deadline" "$queue_deadline"
+				return $?
+			fi
 			if [[ "$hold" -eq 0 ]]; then
 				before="$saved"
 				_tbr_save_cursor "$tier_cursor_name" "${file##*/}" || return 2
@@ -224,6 +228,7 @@ _tbr_pending_prefetch() {
 	fi
 	for round in 1 2; do
 		for candidate in "${TBR_ROOT}"/queue/*.json; do
+			[[ "$SECONDS" -lt "$TBR_QUEUE_DEADLINE" ]] || return 0
 			[[ -f "$candidate" ]] || continue
 			name="${candidate##*/}"
 			if [[ "$round" -eq 1 ]]; then
@@ -245,7 +250,7 @@ _tbr_pending_prefetch() {
 		done
 		[[ "${#args[@]}" -lt 8 ]] || break
 	done
-	if [[ "${#args[@]}" -gt 0 ]]; then
+	if [[ "${#args[@]}" -gt 0 && "$SECONDS" -lt "$TBR_QUEUE_DEADLINE" ]]; then
 		if ! _tbr_run_stage issue_batch terminal_blocker_fetch_issue_batch "${args[@]}" >"$issue_batch_file"; then
 			: >"$issue_batch_file"
 			issue_batch_failed=1
