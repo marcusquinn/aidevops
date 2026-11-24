@@ -35,15 +35,15 @@
       "configAgentKey": "agents",
       "configPermissionKey": "permissions",
       "minimumVersion": "2.0.3",
-      "testedVersion": "2.3.0",
-      "headlessPin": "2.3.0",
+      "testedVersion": "2.4.1",
+      "headlessPin": "2.4.1",
       "pinReason": "Initial OpenCode V2 compatibility qualification",
       "pinPlatform": "Linux",
       "pinRuntimeMode": "headless",
       "introducedDate": "2026-09-15",
-      "lastCanaryDate": "2026-11-17",
-      "lastCanaryResult": "pass:2.3.0",
-      "reviewDeadline": "2026-11-24"
+      "lastCanaryDate": "2026-11-24",
+      "lastCanaryResult": "pass:2.4.1",
+      "reviewDeadline": "2026-12-01"
     }
   }
 }
