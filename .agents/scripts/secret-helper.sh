@@ -155,7 +155,9 @@ gopass_owns_secret() {
 # capability gate) agrees with runtime injection (GH#33608).
 # Used only by cmd_get, which preserves the historical first-line contract.
 # Returns 3 when gopass owns NAME but `gopass show` fails (gpg/agent/pinentry/
-# store), matching cmd_check. Only then is gopass stderr forwarded: it is
+# store), matching cmd_check. Also returns 3 when a plaintext credential file
+# exists but is unreadable and no readable file supplies NAME (not absence).
+# Only then is gopass stderr forwarded: it is
 # diagnostic text, never the value. Success-path stderr stays hidden (GH#35265).
 get_secret_value() {
 	local name="$1"
@@ -179,9 +181,13 @@ get_secret_value() {
 		return 0
 	fi
 	# Fallback to credential files (handles multi-tenant)
-	local cred_file
+	local cred_file unreadable=0
 	while IFS= read -r cred_file; do
 		[[ -z "$cred_file" ]] && continue
+		if [[ -e "$cred_file" && ! -r "$cred_file" ]]; then
+			unreadable=1
+			continue
+		fi
 		local value
 		# Strip 'export NAME=', strip surrounding double quotes, then unescape
 		# \" -> " and \\ -> \ (order matters: unescape \" before \\).
@@ -193,6 +199,9 @@ get_secret_value() {
 			return 0
 		fi
 	done < <(resolve_credential_files)
+	# An unreadable candidate file cannot prove absence: report a read failure
+	# (3) unless another readable tenant file already supplied the value above.
+	[[ "$unreadable" -eq 0 ]] || return 3
 	return 0
 }
 
@@ -870,16 +879,13 @@ cmd_get() {
 	# Normalize to uppercase
 	name=$(echo "$name" | tr '[:lower:]-' '[:upper:]_')
 
-	local value="" read_rc=0 read_name="$name"
-	value=$(get_secret_value "$name") || read_rc=$?
-	if [[ "$read_rc" -eq 0 && -z "$value" ]]; then
-		# Declared alias or explicit provider default (GH#34718)
-		local source_name=""
-		if source_name=$(resolve_injection_source "$name"); then
-			read_name="$source_name"
-			value=$(get_secret_value "$source_name") || read_rc=$?
-		fi
+	local value="" read_rc=0 read_name="$name" source_name=""
+	# Resolve before reading, like cmd_check: unrelated unreadable plaintext
+	# must not mask an alias. Stored direct names still take precedence.
+	if source_name=$(resolve_injection_source "$name"); then
+		read_name="$source_name"
 	fi
+	value=$(get_secret_value "$read_name") || read_rc=$?
 
 	# Present but unreadable is not "not found": fail closed like cmd_check (GH#35265).
 	if [[ "$read_rc" -eq 3 ]]; then

@@ -163,6 +163,8 @@ Blocked-exit labels (GH#34775, GH#34846): the runtime releases a known-class
 `BLOCKED` exit as `status:blocked`, and the release comment's `Projected
 state:` names that label. Runner-local classes (`runner_capability_unmet`
 without missing secret names, policy timeouts) stay `status:available`. A
+missing-secret declaration is re-verified on the producing runner: readable or
+transiently unreadable names do not hold the issue globally. A
 second identical result for the same revision opens the circuit. The
 revision-re-armed classes are `missing_files_scope`, `files_scope_excluded`,
 `input_required`, `external_trigger_pending` and `source_access_blocked`. For

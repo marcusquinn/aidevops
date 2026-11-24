@@ -259,6 +259,47 @@ test_list_rejects_unsafe_tenant_files() {
 	return 0
 }
 
+test_check_unreadable_plaintext_is_not_absence() {
+	setup
+	trap 'teardown' RETURN
+	local config_dir="$TEST_DIR/home/.config/aidevops"
+	mkdir -p "$config_dir"
+	printf '%s\n' 'export OTHER_KEY="placeholder-value"' >"$config_dir/credentials.sh"
+	chmod 000 "$config_dir/credentials.sh"
+	# Root can read mode-000 files; assert only when the denial is effective.
+	if [[ -r "$config_dir/credentials.sh" ]]; then
+		chmod 600 "$config_dir/credentials.sh"
+		return 0
+	fi
+	local rc=0
+	HOME="$TEST_DIR/home" bash "$HELPER" check UNREADABLE_KEY >/dev/null 2>&1 || rc=$?
+	local get_rc=0 alias_rc=0 check_rc=0 alias_value="" direct_value=""
+	HOME="$TEST_DIR/home" bash "$HELPER" get UNREADABLE_KEY >/dev/null 2>&1 || get_rc=$?
+	# The target lives in gopass; unrelated unreadable plaintext must not mask it.
+	printf '%s' 'alias-target-placeholder' | AIDEVOPS_TEST_STORED=true HOME="$TEST_DIR/home" \
+		bash "$HELPER" set ALIAS_TARGET >/dev/null
+	HOME="$TEST_DIR/home" bash "$HELPER" record ALIAS_TARGET --provider example >/dev/null
+	HOME="$TEST_DIR/home" bash "$HELPER" alias ALIAS_TARGET DECLARED_ALIAS >/dev/null
+	alias_value=$(AIDEVOPS_TEST_STORED=true HOME="$TEST_DIR/home" bash "$HELPER" get DECLARED_ALIAS 2>/dev/null) || alias_rc=$?
+	AIDEVOPS_TEST_STORED=true HOME="$TEST_DIR/home" bash "$HELPER" check DECLARED_ALIAS || check_rc=$?
+	chmod 600 "$config_dir/credentials.sh"
+	printf '%s\n' 'export DECLARED_ALIAS="direct-placeholder"' >"$config_dir/credentials.sh"
+	direct_value=$(AIDEVOPS_TEST_STORED=true HOME="$TEST_DIR/home" bash "$HELPER" get DECLARED_ALIAS)
+	if [[ "$get_rc" -eq 1 && "$alias_rc" -eq 0 && "$check_rc" -eq 0 &&
+		"$alias_value" == "alias-target-placeholder" && "$direct_value" == "direct-placeholder" ]]; then
+		print_result "get resolves aliases despite unreadable plaintext and preserves direct precedence" 0
+	else
+		print_result "get resolves aliases despite unreadable plaintext and preserves direct precedence" 1 \
+			"get=$get_rc alias=$alias_rc check=$check_rc (value assertions withheld)"
+	fi
+	if [[ "$rc" -eq 3 ]]; then
+		print_result "check reports unreadable plaintext credentials as read failure, not absence" 0
+	else
+		print_result "check reports unreadable plaintext credentials as read failure, not absence" 1 "Expected exit 3, got $rc"
+	fi
+	return 0
+}
+
 test_inventory_is_names_only_deterministic_json() {
 	setup
 	trap 'teardown' RETURN
@@ -1557,6 +1598,7 @@ main() {
 	test_run_fails_closed_when_redactor_cannot_start
 	test_multiline_gopass_injection_preserves_embedded_newlines
 	test_get_distinguishes_unreadable_from_missing
+	test_check_unreadable_plaintext_is_not_absence
 	test_specific_injection_fails_closed
 	test_specific_injection_excludes_unrequested_fallback_secrets
 	test_injection_preserves_trailing_equals
