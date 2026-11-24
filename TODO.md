@@ -2492,6 +2492,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19324 perf(pulse): separate dispatch lock so worker-exit refills launch during maintenance stages (flagged) #auto-dispatch #feat #priority:high ref:GH#40112
 
+- [x] t19325 fix(dispatch): size worker prelaunch lease to cover the canary bound #bug #priority:high ref:GH#40118 pr:#40119 completed:2026-11-24
+
+- [ ] t19326 fix(recovery): external_trigger decisions re-poll at recheck_after or a bounded default instead of parking forever #bug #priority:high ref:GH#40120 -> [todo/tasks/t19326-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02

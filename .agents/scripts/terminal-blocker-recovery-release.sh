@@ -127,6 +127,16 @@ _tbr_decision_active() {
 		[[ $((now - ts)) -lt "$TBR_DECISION_TTL" ]] || return 1
 		return 0
 	fi
+	# GH#40120: no GitHub event reports a site recovering or a date passing, so
+	# an external_trigger decision is re-assessed at its recheck_after, or after
+	# a bounded re-poll interval without one. human_decision stays event-only.
+	if [[ "$wake" == external_trigger ]]; then
+		local due="" interval="${TBR_EXTERNAL_TRIGGER_RECHECK:-259200}"
+		[[ "$interval" =~ ^[0-9]+$ ]] || interval=259200
+		due=$(jq -r '.recheck_after_epoch // empty' "$file" 2>/dev/null) || due=""
+		[[ "$due" =~ ^[0-9]+$ ]] || due=$((ts + interval))
+		[[ "$now" -lt "$due" ]] || return 1
+	fi
 	if [[ -n "$comments" ]] && _tbr_reply_after "$comments" "$ts"; then
 		return 1
 	fi
