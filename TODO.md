@@ -2500,6 +2500,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19329 fix(headless): explain per-candidate exclusion reasons when worker tier selection is unavailable #bug #priority:high ref:GH#40140 -> [todo/tasks/t19329-brief.md] logged:2026-11-24 pr:#40141 completed:2026-11-24
 
+- [ ] t19348 fix(bounded-operation): supervisor exits by natural drain to avoid Node 26 process.exit deadlock #bug #priority:high ref:GH#40205
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02

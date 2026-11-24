@@ -261,6 +261,23 @@ export async function runSupervisor() {
   });
 }
 
+// GH#40205 / nodejs/node#67596: on Node 26, process.exit() can deadlock joining a V8
+// background compile worker parked on a main-thread GC request. The supervisor
+// then sits at 0% CPU, ignores SIGTERM (its JS handler never runs) and holds the
+// operation or a synchronous caller open until an outer budget. A natural exit
+// disposes the isolate before the platform workers are joined, so release the
+// IPC listeners that keep the channel referenced and let the loop drain. The
+// unref'd fallback fires only if an unexpected handle keeps the process alive.
+const FORCED_EXIT_MS = 2000;
+
+export function exitWhenDrained(code) {
+  process.exitCode = code;
+  process.removeAllListeners("message");
+  process.removeAllListeners("disconnect");
+  if (process.connected) process.disconnect();
+  setTimeout(() => process.exit(code), FORCED_EXIT_MS).unref();
+}
+
 if (isDirectEntrypoint(import.meta.url)) {
-  process.exit(await runSupervisor());
+  exitWhenDrained(await runSupervisor());
 }
