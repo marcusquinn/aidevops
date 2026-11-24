@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
-from bisect import bisect_left
+from bisect import bisect_right
 from datetime import datetime, timezone
 import math
 import statistics
@@ -16,7 +16,7 @@ PAIRING_WINDOW_SECONDS = 21600
 
 
 def pair_workers(spawns, exits, since, until):
-    """Pair each exit with the latest earlier same-issue spawn.
+    """Pair each exit with the latest same-issue spawn at or before it.
 
     Exits before the window still consume their spawn, so open_intervals does
     not mistake an already-finished worker for a running one. Returns paired
@@ -28,7 +28,9 @@ def pair_workers(spawns, exits, since, until):
     longest = 0
     for timestamp, issue in sorted(exits):
         candidates = spawns.get(issue, [])
-        index = bisect_left(candidates, timestamp) - 1
+        # bisect_right: a same-second completion consumes its spawn, so it
+        # never becomes an open interval.
+        index = bisect_right(candidates, timestamp) - 1
         start = candidates[index] if index >= 0 else None
         if start is None or timestamp - start > PAIRING_WINDOW_SECONDS or (issue, start) in paired:
             continue

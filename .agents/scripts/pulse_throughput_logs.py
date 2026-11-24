@@ -52,7 +52,9 @@ def dispatch_metrics(log_dir, since, until):
         dispatch_seen |= in_window
         if row[5] != "complete":
             continue
-        if row[3] == "dedup.worker_spawn" and since - 21600 <= timestamp < until:
+        # Same look-ahead as runtime_exits, so a later retry's exit pairs with
+        # its own spawn; interval guards still drop spawns at or after until.
+        if row[3] == "dedup.worker_spawn" and since - 21600 <= timestamp < until + 21600:
             spawns[row[1].lstrip("#")].append(timestamp)
             spawn_count += int(in_window)
         if in_window and row[3] in CEREMONY_STAGES:
