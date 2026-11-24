@@ -406,17 +406,16 @@ _runtime_bundle_stale_candidate_reason() {
 	return 0
 }
 
-# This is a deployment compatibility check, not an approval or trust grant.
-# Preserve an installed broker's working read flow instead of activating newer
-# helpers that its byte-for-byte runtime check will reject. First installations
-# without a broker retain the existing fail-closed approval provisioning path.
-_runtime_bundle_check_source_access_broker() {
+# Compare a runtime root's source-access files with the installed broker.
+# Symlinked or partially installed brokers never match.
+# Args: runtime agents root, broker dir
+# Returns: 0 when every present file matches; 1 after printing the first
+#          mismatching file name.
+_runtime_bundle_source_access_matches_broker() {
 	local agents_root="$1"
-	local broker_dir="${2:-/etc/aidevops/source-access}"
+	local broker_dir="$2"
 	local name="" candidate="" installed=""
 
-	[[ -f "$agents_root/plugins/opencode-aidevops/source-access-approval.mjs" ]] || return 0
-	[[ -e "$broker_dir" || -L "$broker_dir" ]] || return 0
 	for name in source-access-helper.py source_access_core.py source_access_documents.py; do
 		candidate="$agents_root/scripts/$name"
 		installed="$broker_dir/$name"
@@ -426,11 +425,38 @@ _runtime_bundle_check_source_access_broker() {
 		fi
 		if [[ -L "$broker_dir" || ! -f "$candidate" || -L "$candidate" ||
 			! -f "$installed" || -L "$installed" ]] || ! cmp -s "$candidate" "$installed"; then
-			print_error "Refusing incompatible source-access runtime deployment: $name differs from the installed broker. The active runtime is unchanged. Use a matching signed release and reconcile the broker with 'aidevops setup --scope source-access' before retrying deployment; setup from an unreleased installer cannot repair this mismatch."
+			printf '%s' "$name"
 			return 1
 		fi
 	done
 	return 0
+}
+
+# This is a deployment compatibility check, not an approval or trust grant.
+# Preserve an installed broker's working read flow instead of activating newer
+# helpers that its byte-for-byte runtime check will reject. First installations
+# without a broker retain the existing fail-closed approval provisioning path.
+# GH#40147: when the active runtime already differs from the broker there is
+# no working flow to preserve (the approval plugin's sha256 check fails closed
+# either way), so deploy with a reconcile warning instead of freezing every
+# unrelated runtime fix until a privileged ceremony runs.
+# Args: candidate agents root, broker dir (empty = default), active target dir
+_runtime_bundle_check_source_access_broker() {
+	local agents_root="$1"
+	local broker_dir="${2:-/etc/aidevops/source-access}"
+	local active_root="${3:-}"
+	local name="" active_name=""
+
+	[[ -f "$agents_root/plugins/opencode-aidevops/source-access-approval.mjs" ]] || return 0
+	[[ -e "$broker_dir" || -L "$broker_dir" ]] || return 0
+	name=$(_runtime_bundle_source_access_matches_broker "$agents_root" "$broker_dir") && return 0
+	if [[ -n "$active_root" && -d "$active_root" ]] &&
+		! active_name=$(_runtime_bundle_source_access_matches_broker "$active_root" "$broker_dir"); then
+		print_warning "Deploying runtime although source-access $name differs from the installed broker: the active runtime already differs ($active_name), so source-access approvals stay fail-closed either way. From a matching signed release, run 'aidevops setup --scope source-access' in an attached terminal to reconcile the broker (GH#40147)."
+		return 0
+	fi
+	print_error "Refusing incompatible source-access runtime deployment: $name differs from the installed broker. The active runtime is unchanged. Use a matching signed release and reconcile the broker with 'aidevops setup --scope source-access' before retrying deployment; setup from an unreleased installer cannot repair this mismatch."
+	return 1
 }
 
 _runtime_bundle_validate() {
@@ -469,7 +495,7 @@ _runtime_bundle_stage() {
 	local git_sha="$_AIDEVOPS_BUNDLE_UNKNOWN"
 	local bundle_id=""
 
-	_runtime_bundle_check_source_access_broker "$source_dir" || return 1
+	_runtime_bundle_check_source_access_broker "$source_dir" "" "$target_dir" || return 1
 	mkdir -p "$bundles_dir" || return 1
 	_AIDEVOPS_STAGED_SOURCE_SHA=$(_runtime_bundle_source_sha "$repo_dir")
 	[[ -r "$repo_dir/VERSION" ]] && IFS= read -r version <"$repo_dir/VERSION"
@@ -693,7 +719,7 @@ _runtime_bundle_activate_locked() {
 
 	# Recheck the actual staged bytes under the activation lock before any link,
 	# legacy-directory, previous-bundle or deployment-stamp mutation.
-	_runtime_bundle_check_source_access_broker "$agents_root" || return 1
+	_runtime_bundle_check_source_access_broker "$agents_root" "" "$target_dir" || return 1
 	if previous_root=$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null); then
 		stale_reason=$(_runtime_bundle_stale_candidate_reason "$bundle_dir" "$previous_root")
 		if [[ -n "$stale_reason" ]]; then

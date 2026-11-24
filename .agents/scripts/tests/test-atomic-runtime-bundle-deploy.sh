@@ -788,6 +788,29 @@ test_source_access_broker_compatibility() {
 		fail "mismatched extracted broker module was accepted"
 	fi
 	pass "document-only broker changes also block deployment"
+
+	# GH#40147: only an active runtime that matches the broker has a working
+	# read flow to preserve; an already-drifted one must not freeze deployment.
+	local active="$root/active"
+	mkdir -p "$active/scripts"
+	for name in source-access-helper.py source_access_core.py source_access_documents.py; do
+		cp "$broker/$name" "$active/scripts/$name"
+	done
+	if _runtime_bundle_check_source_access_broker "$candidate" "$broker" "$active"; then
+		fail "mismatched candidate replaced a broker-matching active runtime"
+	fi
+	pass "an active runtime matching the broker is still preserved"
+	printf '# drifted active fixture\n' >"$active/scripts/source-access-helper.py"
+	output=$(
+		print_warning() {
+			local message="$1"
+			printf 'WARN: %s\n' "$message"
+			return 0
+		}
+		_runtime_bundle_check_source_access_broker "$candidate" "$broker" "$active" 2>&1
+	) || fail "an active runtime already differing from the broker froze deployment"
+	assert_output_contains "$output" "aidevops setup --scope source-access" \
+		"an already-drifted active runtime deploys with a reconcile warning"
 	return 0
 }
 
