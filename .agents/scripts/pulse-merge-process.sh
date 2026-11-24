@@ -1580,7 +1580,7 @@ _check_required_checks_passing() {
 #######################################
 _repo_allows_auto_merge() {
 	local repo_slug="$1"
-	local cache_dir="${TMPDIR:-/tmp}/aidevops-pulse-allow-auto-merge-$$"
+	local cache_dir="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/aidevops-pulse-allow-auto-merge-$$"
 	local cache_key
 	cache_key=$(printf '%s' "$repo_slug" | tr '/' '_')
 	local cache_file="${cache_dir}/${cache_key}"

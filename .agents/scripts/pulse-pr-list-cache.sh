@@ -88,7 +88,7 @@ _pulse_pr_list_cache_repo_key() {
 # stale open-PR snapshot after invalidation.
 #######################################
 _pulse_pr_list_cache_generation() {
-	local dir="${PULSE_PR_LIST_PROVIDER_CACHE_DIR:-${TMPDIR:-/tmp}/aidevops-pulse-pr-list-provider-${$}}"
+	local dir="${PULSE_PR_LIST_PROVIDER_CACHE_DIR:-${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/aidevops-pulse-pr-list-provider-${$}}"
 	local repo_key=""
 	local generation_file=""
 	repo_key="$(_pulse_pr_list_cache_repo_key "$@")" || return 1
@@ -107,7 +107,7 @@ _pulse_pr_list_cache_generation() {
 _pulse_pr_list_cache_path_for_generation() {
 	local generation="$1"
 	shift
-	local dir="${PULSE_PR_LIST_PROVIDER_CACHE_DIR:-${TMPDIR:-/tmp}/aidevops-pulse-pr-list-provider-${$}}"
+	local dir="${PULSE_PR_LIST_PROVIDER_CACHE_DIR:-${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/aidevops-pulse-pr-list-provider-${$}}"
 	local repo_key=""
 	local key=""
 	mkdir -p "$dir" 2>/dev/null || return 1
@@ -189,7 +189,7 @@ _pulse_pr_list_cache_put() {
 pulse_pr_list_cache_invalidate_repo() {
 	local repo_slug="$1"
 	[[ -n "$repo_slug" ]] || return 1
-	local dir="${PULSE_PR_LIST_PROVIDER_CACHE_DIR:-${TMPDIR:-/tmp}/aidevops-pulse-pr-list-provider-${$}}"
+	local dir="${PULSE_PR_LIST_PROVIDER_CACHE_DIR:-${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/aidevops-pulse-pr-list-provider-${$}}"
 	local repo_key=""
 	local path=""
 	local generation_file=""
