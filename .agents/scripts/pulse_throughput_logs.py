@@ -1,9 +1,10 @@
-"""Streaming readers for Pulse dispatch and ceremony TSV logs."""
+"""Streaming readers for Pulse dispatch, ceremony and worker-runtime logs."""
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 from collections import defaultdict
 from datetime import datetime, timezone
+import json
 import math
 
 CEREMONY_STAGES = (
@@ -59,6 +60,23 @@ def dispatch_metrics(log_dir, since, until):
     for timestamps in spawns.values():
         timestamps.sort()
     return spawns, spawn_count if dispatch_seen else None, costs
+
+
+def runtime_exits(log_dir, since, until):
+    """Worker completion records; pulse.log misses many worker_exited lines."""
+    exits = []
+    for line in lines(log_dir / "headless-runtime-metrics.jsonl"):
+        if '"role":"worker"' not in line:
+            continue
+        try:
+            record = json.loads(line)
+            timestamp = float(record["ts"])
+            issue = int(record["issue_number"])
+        except (ValueError, TypeError, KeyError, OverflowError):
+            continue
+        if math.isfinite(timestamp) and since - 21600 <= timestamp < until + 21600:
+            exits.append((timestamp, str(issue)))
+    return exits
 
 
 def ceremony_intervals(log_dir, since, until):
