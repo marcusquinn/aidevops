@@ -10,6 +10,80 @@ if [[ -n "${_TBC_REARM_TESTS_LOADED:-}" ]]; then
 fi
 _TBC_REARM_TESTS_LOADED=1
 
+# GH#40130: a live default-branch fix wakes the unchanged brief even when the
+# local tracking ref is stale; receipt/projection failures retain AI ownership.
+test_target_code_receipt_before_release() {
+	local status=0
+	if ! (
+		unset _TERMINAL_BLOCKER_CIRCUIT_LOADED
+		source "${SCRIPT_DIR}/terminal-blocker-circuit.sh"
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		local live_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa api_fail=0
+		local fixture='{"state":"open","title":"Fix helper","body":"unchanged brief","labels":[{"name":"status:blocked"},{"name":"needs-ai-recovery"}]}'
+		local fixture_comments='[]' revision='' fingerprint='' rc=0 receipts=0 projections=0
+		local fail_receipt=1 fail_projection=0 receipt_body='' newer_event=0
+		gh() {
+			[[ "$*" == 'api repos/owner/repo/commits?per_page=1 --jq .[0].sha' && "$api_fail" == 0 ]] || return 1
+			printf '%s\n' "$live_sha"
+			return 0
+		}
+		_terminal_blocker_dependency_signature() { printf '%s\n' '{"nodes":[],"truncated":false}'; return 0; }
+		_tbr_repo_path() { printf '%s\n' "$TEST_ROOT"; return 0; }
+		_tbr_dependency_unresolved() { return 1; }
+		terminal_blocker_fetch_issue() { printf '%s\n' "$fixture"; return 0; }
+		terminal_blocker_fetch_trusted_comments() {
+			if [[ "$newer_event" == 1 ]]; then
+				jq -c '. + [{id:30,body:"newer coordination event"}]' <<<"$fixture_comments"
+			else
+				printf '%s\n' "$fixture_comments"
+			fi
+			return 0
+		}
+		_tbr_post_rearm_receipt() {
+			local marker="$3" extra="$4"
+			[[ "$fail_receipt" == 0 ]] || return 2
+			receipts=$((receipts + 1))
+			receipt_body="${marker}"$'\n'"${extra}"
+			fixture_comments=$(jq -c --arg body "$receipt_body" '. + [{id:20,body:$body,author_association:"MEMBER",created_at:"2026-10-30T12:00:00Z"}]' <<<"$fixture_comments")
+			return 0
+		}
+		set_issue_status() {
+			# The receipt must already exist at the first label mutation.
+			[[ "$receipt_body" == *'reason=revision_changed'* ]] || return 1
+			projections=$((projections + 1))
+			[[ "$fail_projection" == 0 ]] || return 1
+			fixture=$(jq -c '.labels=[{name:"status:available"}]' <<<"$fixture")
+			return 0
+		}
+		revision=$(terminal_blocker_task_revision "$fixture" owner/repo 42 '' target_code_blocker) || exit 1
+		fingerprint=$(_terminal_blocker_hash v2:target_code_blocker)
+		fixture_comments=$(jq -nc --arg r "$revision" --arg f "$fingerprint" '[{id:10,body:("<!-- aidevops:terminal-blocker-observation revision="+$r+" blocker="+$f+" -->"),author_association:"MEMBER",created_at:"2026-10-30T11:00:00Z"}]')
+		# The brief and local checkout stay unchanged; only live default advances.
+		live_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$fixture_comments" || rc=$?
+		[[ "$rc" == 2 && "$projections" == 0 && "$receipts" == 0 ]] || exit 1
+		fail_receipt=0 fail_projection=1 rc=0
+		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$fixture_comments" || rc=$?
+		[[ "$rc" == 2 && "$projections" == 1 && "$receipts" == 1 ]] || exit 1
+		# A new event during replay must leave the newer hold untouched.
+		newer_event=1 rc=0
+		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$fixture_comments" || rc=$?
+		[[ "$rc" == 2 && "$projections" == 1 && "$receipts" == 1 ]] || exit 1
+		newer_event=0
+		# Replaying the receipt finishes a failed projection without republishing.
+		fail_projection=0
+		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$fixture_comments" || exit 1
+		[[ "$projections" == 2 && "$receipts" == 1 ]] || exit 1
+		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$fixture_comments" || exit 1
+		[[ "$projections" == 2 && "$receipts" == 1 ]] || exit 1
+		api_fail=1
+		terminal_blocker_task_revision "$fixture" owner/repo 42 "$TEST_ROOT" target_code_blocker && exit 1
+		exit 0
+	); then status=1; fi
+	print_result "live target-code fix publishes revision_changed before release and repairs interrupted projection" "$status"
+	return 0
+}
+
 # GH#36232: a permission_required hold with no published permission request
 # re-arms once per backoff window; a real request (label or undecided request
 # marker) keeps it held, and timeout classes stay retry-only.
@@ -23,6 +97,7 @@ test_unevidenced_permission_window_rearm() {
 		local issue='{"title":"Fix helper","body":"original","labels":[{"name":"status:blocked"}]}'
 		local revision="" fingerprint="" observation="" tb_comments="" variant="" receipt_log=""
 		local projected=0 receipts=0 rc=0 request=""
+		terminal_blocker_fetch_issue() { completed_rearm_issue; return 0; }
 		set_issue_status() {
 			projected=$((projected + 1))
 			return 0

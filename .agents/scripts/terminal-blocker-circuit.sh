@@ -512,7 +512,18 @@ _terminal_blocker_dependency_signature() {
 
 _terminal_blocker_target_revision() {
 	local repo_path="$1"
+	local repo_slug="${2:-}"
 	local revision="" remote_head=""
+	# Target-code holds must see fixes on the live default branch even while
+	# this runner's origin/HEAD is stale. No fallback after an unreadable fetch:
+	# changing observation sources must never manufacture a revision change.
+	if [[ -n "$repo_slug" ]]; then
+		[[ "$repo_slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+		revision=$(gh api "repos/${repo_slug}/commits?per_page=1" --jq '.[0].sha' 2>/dev/null) || return 1
+		[[ "$revision" =~ ^[a-f0-9]{40,64}$ ]] || return 1
+		printf '%s\n' "$revision"
+		return 0
+	fi
 	[[ -d "$repo_path" ]] || return 1
 	remote_head=$(git -C "$repo_path" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || remote_head=""
 	if [[ -n "$remote_head" ]]; then
@@ -577,7 +588,11 @@ terminal_blocker_task_revision() {
 		_terminal_blocker_hash "$canonical"
 		return $?
 	fi
-	target_revision=$(_terminal_blocker_target_revision "$repo_path") || return 1
+	if [[ "$reason" == target_code_blocker ]]; then
+		target_revision=$(_terminal_blocker_target_revision "$repo_path" "$repo_slug") || return 1
+	else
+		target_revision=$(_terminal_blocker_target_revision "$repo_path") || return 1
+	fi
 	canonical=$(jq -nc --argjson task "$task_json" --argjson dependencies "$dependency_signature" \
 		--arg target "$target_revision" '{task: $task, dependencies: $dependencies, target_revision: $target}') || return 1
 	_terminal_blocker_hash "$canonical"

@@ -110,7 +110,11 @@ test_lifecycle_refusal_backfill() {
 		tb_fixture_comments="$original"
 		terminal_blocker_fetch_issue() { printf '%s\n' "$fixture"; return 0; }
 		terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$tb_fixture_comments"; return 0; }
-		set_issue_status() { projected=$((projected + 1)); return 0; }
+		set_issue_status() {
+			projected=$((projected + 1))
+			fixture=$(jq -c '.labels=[{name:"status:available"}]' <<<"$fixture")
+			return 0
+		}
 		_tbr_post_rearm_receipt() {
 			local marker="$3"
 			receipts=$((receipts + 1))

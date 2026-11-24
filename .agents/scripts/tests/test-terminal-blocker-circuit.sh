@@ -138,6 +138,12 @@ _terminal_blocker_target_revision() {
 	return 0
 }
 
+# Completed label projections are live even when a caller replays stale labels.
+completed_rearm_issue() {
+	printf '%s\n' '{"state":"open","labels":[{"name":"status:available"}]}'
+	return 0
+}
+
 test_older_input_circuit_survives_other_reason() {
 	local issue='{"title":"Decision","body":"unchanged"}' revision="" fp="" other="" comments="" status=0
 	revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" input_required)
@@ -1474,6 +1480,7 @@ test_cross_runner_rearm_receipt() {
 		local tb_comments='[]' tb_issue='' tb_original='' tb_revision='' tb_fingerprint=''
 		local tb_projected=0 tb_receipts=0 tb_reason='' tb_rc=0 tb_fail_receipt=0
 		terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$tb_comments"; return 0; }
+		terminal_blocker_fetch_issue() { completed_rearm_issue; return 0; }
 		set_issue_status() { tb_projected=$((tb_projected + 1)); return 0; }
 		_tbr_post_rearm_receipt() {
 			local marker="$3"
@@ -1520,14 +1527,13 @@ test_cross_runner_rearm_receipt() {
 			tb_comments=$(printf '%s' "$tb_comments" | jq -c '. + [{id:33,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-23T20:33:00Z"}]')
 			_tbr_release_circuit_hold owner/repo 42 "$tb_original" "$tb_comments" || exit 1
 			[[ "$tb_projected" -eq 2 ]] || exit 1
-			# Receipt failure after projection remains repairable on an available
-			# snapshot, without a second projection, then suppresses stale readers.
+			# Receipt failure never projects availability; retry publishes first.
 			tb_fail_receipt=1
 			tb_rc=0
 			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || tb_rc=$?
-			[[ "$tb_rc" -eq 2 && "$tb_projected" -eq 3 ]] || exit 1
+			[[ "$tb_rc" -eq 2 && "$tb_projected" -eq 2 ]] || exit 1
 			tb_fail_receipt=0
-			_tbr_release_circuit_hold owner/repo 42 "$(printf '%s' "$tb_issue" | jq -c '.labels=[{name:"status:available"}]')" "$tb_comments" || exit 1
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
 			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
 			[[ "$tb_projected" -eq 3 ]] || exit 1
 			# A revision/API failure at the circuit write guard is indeterminate.
@@ -1580,6 +1586,7 @@ test_legacy_hold_requires_bound_retry() {
 		local issue='{"title":"Legacy hold","body":"updated brief","labels":[{"name":"status:blocked"}]}'
 		local comments='' base='' legacy_events='' label_events='' scenario='' rc=0 projected=0 receipts=0
 		local legacy_receipt=''
+		terminal_blocker_fetch_issue() { completed_rearm_issue; return 0; }
 		local TERMINAL_BLOCKER_NOW_EPOCH=1793361600 # 2026-10-30T12:00:00Z
 		local TERMINAL_BLOCKER_SELF_LOGIN=runner-a
 		base=$(jq -nc '[{id:10,body:"<!-- ops:start -->\nCLAIM_RELEASED reason=blocked runner=runner-a ts=2026-10-30T10:00:00Z\n<!-- ops:end -->",user:{login:"runner-a"},author_association:"MEMBER",created_at:"2026-10-30T10:00:00Z"},
@@ -1686,6 +1693,7 @@ test_unknown_hold_rearms_on_trusted_retry() {
 		local tb_comments='[]' tb_issue='' tb_revision='' tb_fingerprint='' tb_observation='' tb_raw='' tb_other=''
 		local tb_projected=0 tb_receipts=0 tb_rc=0 tb_enqueued=0
 		terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$tb_comments"; return 0; }
+		terminal_blocker_fetch_issue() { completed_rearm_issue; return 0; }
 		set_issue_status() { tb_projected=$((tb_projected + 1)); return 0; }
 		_tbr_post_rearm_receipt() {
 			local marker="$3"
@@ -1756,6 +1764,7 @@ test_retry_only_observation_recovery() {
 		local reason="" association="" scenario="" tb_comments="" observation="" raw=""
 		local issue='{"title":"Fix helper","body":"original","labels":[{"name":"status:blocked"}]}'
 		local revision="" fingerprint="" body="" retry_at="" projected=0 receipts=0 rc=0 enqueued=0
+		terminal_blocker_fetch_issue() { completed_rearm_issue; return 0; }
 		set_issue_status() {
 			projected=$((projected + 1))
 			return 0
@@ -1930,6 +1939,7 @@ main() {
 	test_circuit_hold_projects_blocked_and_releases
 	test_first_observation_scope_hold_releases_on_revision
 	test_cross_runner_rearm_receipt
+	test_target_code_receipt_before_release
 	test_legacy_hold_requires_bound_retry
 	test_unknown_hold_rearms_on_trusted_retry
 	test_retry_only_observation_recovery

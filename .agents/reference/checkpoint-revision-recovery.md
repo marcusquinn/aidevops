@@ -25,6 +25,8 @@ The default is off, preserving attention-only behaviour. No issue body, model ou
 
 A terminal-blocker re-arm answers the blocker that the checkpoint's release recorded. `blocked-attention` checks for one before it uses unknown triage and publishes the approval itself. This is on by default; set `"auto_continue_rearmed": false` under a repository's `checkpoint_policy` to keep attention-only behaviour.
 
+Recovery persists the re-arm receipt before removing the hold (retaining the queue on failed writes), and `target_code_blocker` revisions include the live default-branch commit so a blocking-file fix can wake the preserved draft without human approval.
+
 - **Evidence:** the newest unedited `terminal-blocker-rearmed` receipt posted after the blocked release must carry `reason=trusted_retry` or `reason=revision_changed`. Permission-window and lifecycle re-arms never qualify. A `trusted_retry` also needs an unedited OWNER/MEMBER `terminal-blocker-circuit:retry` directive between the release and the receipt.
 - **Authority:** the publisher, checkpoint runner and receipt poster need current write permission. So does the retry author or, for a revision, the issue author: only the author or a write collaborator can edit an issue body.
 - **Gates:** the issue must be open, unassigned, auto-dispatchable and without holds. The worker draft must be eligible, and the `approval-template` line must bind the current head and complete brief SHA. `dispatch-approved` keeps every continuation gate.
