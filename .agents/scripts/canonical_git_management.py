@@ -80,21 +80,14 @@ def _inside_registered_linked_worktree(root: Path) -> bool:
     return any(_registered_linked_worktree(parent) for parent in root.parents)
 
 
-def is_managed_root(repo_root: str) -> bool:
-    root = Path(repo_root).resolve()
-    git_dir = _gitdir_target(root)
-    if git_dir and linked_worktree_root(str(git_dir)) == root:
-        return False
-    if root in _registered_roots():
-        return True
-    if not (root / ".aidevops.json").is_file():
-        return False
+def _exempt_unregistered_marker_root(root: Path) -> bool:
+    """Whether an unregistered .aidevops.json marker root is not canonical."""
     #aidevops:trust-boundary: an unregistered marker repo nested inside a session-owned
     # linked worktree of a registered repo (e.g. a Composer source package) is a
     # dependency checkout, not a canonical one (GH#40211). Registered roots and
     # markers outside linked worktrees stay protected.
     if _inside_registered_linked_worktree(root):
-        return False
+        return True
     temp_dirs = (
         tempfile.gettempdir(),
         os.environ.get("TMPDIR", tempfile.gettempdir()),
@@ -104,8 +97,20 @@ def is_managed_root(repo_root: str) -> bool:
     for temp_dir in temp_dirs:
         resolved_temp = Path(temp_dir).expanduser().resolve()
         if root != resolved_temp and root.is_relative_to(resolved_temp):
-            return False
-    return True
+            return True
+    return False
+
+
+def is_managed_root(repo_root: str) -> bool:
+    root = Path(repo_root).resolve()
+    git_dir = _gitdir_target(root)
+    if git_dir and linked_worktree_root(str(git_dir)) == root:
+        return False
+    if root in _registered_roots():
+        return True
+    if not (root / ".aidevops.json").is_file():
+        return False
+    return not _exempt_unregistered_marker_root(root)
 
 
 def is_registered_common_dir(common_dir: str) -> bool:
