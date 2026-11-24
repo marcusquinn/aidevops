@@ -2488,7 +2488,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19322 perf(pulse): raise worker-slot occupancy by decoupling dispatch from the Pulse instance lock #feat #parent-task #priority:high ref:GH#40108
 
-- [ ] t19323 feat(pulse): read-only dispatch throughput report (slot occupancy, ceremony cost, refill outcomes, supervisor cadence) #auto-dispatch #feat #priority:high ref:GH#40109
+- [x] t19323 feat(pulse): read-only dispatch throughput report (slot occupancy, ceremony cost, refill outcomes, supervisor cadence) #auto-dispatch #feat #priority:high ref:GH#40109 pr:#40113 completed:2026-11-24
 
 - [ ] t19324 perf(pulse): separate dispatch lock so worker-exit refills launch during maintenance stages (flagged) #auto-dispatch #feat #priority:high ref:GH#40112
 
