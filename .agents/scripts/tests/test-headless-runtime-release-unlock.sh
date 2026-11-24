@@ -739,7 +739,9 @@ fi
 			grep -q 'missing_secret_declaration_refuted name=READABLE_CONFIG' "${TMP_HOME}/capture-errors"
 		fi
 		if [[ "$secret_case" == STALLED_CONFIG ]]; then
-			grep -q '^STALLED_STATUS 137$' "$CALL_LOG"
+			# GNU timeout reports SIGKILL as 137; Ubuntu 26.04's uutils
+			# timeout reports deadline expiry as 124 even with --signal=KILL.
+			grep -qE '^STALLED_STATUS (124|137)$' "$CALL_LOG"
 		fi
 		if grep -qE 'fixture-sensitive-output|fixture-decryption-error' "$CALL_LOG" "${TMP_HOME}/capture-errors"; then
 			printf 'FAIL secret-check output escaped suppression\n'; exit 1
