@@ -292,6 +292,21 @@ _update_wait_for_setup_handoff() {
 	[[ -r "$lock_dir/owner.pid" ]] && IFS= read -r owner_pid <"$lock_dir/owner.pid"
 	[[ -r "$lock_dir/started_at_epoch" ]] && IFS= read -r owner_started <"$lock_dir/started_at_epoch"
 	[[ -r "$lock_dir/command" ]] && IFS= read -r owner_command <"$lock_dir/command"
+	local owner_words=() owner_word="" owner_stage="" stage_pending=false full_setup=false
+	read -r -a owner_words <<<"$owner_command"
+	# Match setup's last-stage-wins parsing without evaluating lock contents.
+	for owner_word in "${owner_words[@]}"; do
+		if [[ "$stage_pending" == "true" ]]; then
+			owner_stage="$owner_word"
+			stage_pending=false
+			continue
+		fi
+		case "$owner_word" in
+		--stage) stage_pending=true; owner_stage=invalid ;;
+		--stage=*) owner_stage="${owner_word#--stage=}" ;;
+		--non-interactive) full_setup=true ;;
+		esac
+	done
 	# Reject malformed/older owners and non-deploying stages. Equal epochs are
 	# ambiguous at second precision, so retain the original failure in that case.
 	if [[ ! "$owner_pid" =~ ^[1-9][0-9]{0,9}$ ||
@@ -299,10 +314,8 @@ _update_wait_for_setup_handoff() {
 		! "$checkout_ready_epoch" =~ ^[1-9][0-9]{0,9}$ ]] ||
 		[[ "$owner_started" -le "$checkout_ready_epoch" ]] ||
 		[[ ! "$owner_command" =~ (^|[[:space:]/])setup\.sh[[:space:]] ]] ||
-		[[ ! "$owner_command" =~ [[:space:]]--non-interactive([[:space:]]|$) &&
-		! "$owner_command" =~ [[:space:]]--stage[[:space:]]+ai-session([[:space:]]|$) ]] ||
-		[[ "$owner_command" =~ [[:space:]]--stage([[:space:]]|=) &&
-		! "$owner_command" =~ [[:space:]]--stage[[:space:]]+ai-session([[:space:]]|$) ]]; then
+		[[ "$owner_stage" != "ai-session" && ( -n "$owner_stage" || "$full_setup" != "true" ) ]] ||
+		[[ "$stage_pending" == "true" ]]; then
 		print_error "Agent deployment failed: setup exited with code 75"
 		return 1
 	fi
