@@ -288,10 +288,12 @@ test("uses the plugin repository directory when mutation tools omit workdir", as
       "the plugin project directory must establish same-repository linked-worktree identity",
     );
 
+    // SIGKILL: a supervisor wedged in exit never runs its SIGTERM handler, so
+    // the default kill signal would leave this synchronous call blocked.
     const runOperation = (operationID) => execFileSync(process.execPath, [
       join(here, "..", "bounded-operation-supervisor.mjs"),
     ], {
-      cwd: linked, detached: true, encoding: "utf8", timeout: 10000,
+      cwd: linked, detached: true, encoding: "utf8", timeout: 10000, killSignal: "SIGKILL",
       input: JSON.stringify({ operationID, command: [process.execPath, "-e", "process.stdout.write('operation-executed')"] }),
     }).trim();
     assert.equal(runOperation("fixture-operation"), "operation-executed");
