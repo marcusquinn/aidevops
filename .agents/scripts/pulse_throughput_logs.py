@@ -62,21 +62,39 @@ def dispatch_metrics(log_dir, since, until):
     return spawns, spawn_count if dispatch_seen else None, costs
 
 
+def runtime_record(line):
+    """(worker key, timestamp, issue, result) from one worker metric, else None."""
+    if '"role":"worker"' not in line:
+        return None
+    try:
+        record = json.loads(line)
+        timestamp = float(record["ts"])
+        issue = str(int(record["issue_number"]))
+    except (ValueError, TypeError, KeyError, OverflowError):
+        return None
+    if not math.isfinite(timestamp):
+        return None
+    key = str(record.get("worker_id") or f"{issue}@{timestamp}")
+    return key, timestamp, issue, str(record.get("result") or "")
+
+
 def runtime_exits(log_dir, since, until):
-    """Worker completion records; pulse.log misses many worker_exited lines."""
-    exits = []
+    """One exit per dispatched worker; pulse.log misses many worker_exited lines.
+
+    Resumes and model retries write extra records under the same worker_id
+    without releasing the slot, so only the latest record counts. A latest
+    *_continue or rate_limit_fast record means the worker is still resuming,
+    so it stays an open interval.
+    """
+    latest = {}
     for line in lines(log_dir / "headless-runtime-metrics.jsonl"):
-        if '"role":"worker"' not in line:
+        parsed = runtime_record(line)
+        if parsed is None or not since - 21600 <= parsed[1] < until + 21600:
             continue
-        try:
-            record = json.loads(line)
-            timestamp = float(record["ts"])
-            issue = int(record["issue_number"])
-        except (ValueError, TypeError, KeyError, OverflowError):
-            continue
-        if math.isfinite(timestamp) and since - 21600 <= timestamp < until + 21600:
-            exits.append((timestamp, str(issue)))
-    return exits
+        if parsed[0] not in latest or parsed[1] >= latest[parsed[0]][1]:
+            latest[parsed[0]] = parsed
+    return [(timestamp, issue) for _, timestamp, issue, result in latest.values()
+            if not (result.endswith("_continue") or result == "rate_limit_fast")]
 
 
 def ceremony_intervals(log_dir, since, until):

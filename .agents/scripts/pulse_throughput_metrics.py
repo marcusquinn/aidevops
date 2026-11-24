@@ -48,7 +48,8 @@ def concurrency_metrics(ceremonies, timing_seen, cap_observations, since, until)
 
 def census_metrics(observations, since, until, step=300, max_age=600):
     """Carry each round's ps census of live workers forward, at most max_age."""
-    observations.sort()
+    # Timestamp only: equal-time rounds keep log order and a None target never compares.
+    observations.sort(key=lambda observation: observation[0])
     times = [timestamp for timestamp, _, _ in observations]
     points = math.ceil((until - since) / step)
     workers, targets = [], []
