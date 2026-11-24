@@ -44,7 +44,13 @@ setup() {
 	cp "$REPO_ROOT/.agents/scripts/agent-sources-helper.sh" "$agents_dir/scripts/"
 	cp "$REPO_ROOT/.agents/scripts/subagent-index-helper.sh" "$agents_dir/scripts/"
 	cp "$REPO_ROOT/.agents/scripts/portable-stat.sh" "$agents_dir/scripts/"
+	# shared-constants sources this sibling even in a disposable installation.
+	cp "$REPO_ROOT/.agents/scripts/runtime-env.sh" "$agents_dir/scripts/"
 	cp "$REPO_ROOT"/.agents/scripts/shared-*.sh "$agents_dir/scripts/"
+	# Match the dependency closure used by the manifest-index fixture.
+	cp "$REPO_ROOT/.agents/scripts/managed-label-provisioning-lib.sh" "$agents_dir/scripts/"
+	cp "$REPO_ROOT/.agents/scripts/privacy-guard-helper.sh" "$agents_dir/scripts/"
+	cp "$REPO_ROOT/.agents/scripts/gh-closing-reference-lib.sh" "$agents_dir/scripts/"
 	chmod +x "$agents_dir/scripts/agent-sources-helper.sh" "$agents_dir/scripts/subagent-index-helper.sh"
 
 	cat >"$agents_dir/configs/agent-sources.json" <<JSON
@@ -116,8 +122,8 @@ assert_path() {
 
 test_sync_preserves_core_layout() {
 	local output=""
-	output=$(HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/agent-sources-helper.sh" sync 2>&1)
-	local status=$?
+	local status=0
+	output=$(HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/agent-sources-helper.sh" sync 2>&1) || status=$?
 	if [[ "$status" -ne 0 ]]; then
 		print_result "sync core layout" 1 "$output"
 		return 0
@@ -149,8 +155,8 @@ test_sync_preserves_core_layout() {
 
 test_index_discovers_core_layout() {
 	local output=""
-	output=$(HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/subagent-index-helper.sh" generate 2>&1)
-	local status=$?
+	local status=0
+	output=$(HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/subagent-index-helper.sh" generate 2>&1) || status=$?
 	if [[ "$status" -ne 0 ]]; then
 		print_result "generate subagent index" 1 "$output"
 		return 0
