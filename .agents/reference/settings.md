@@ -30,8 +30,8 @@
 
 | Key | Type | Default | Env Var | Description |
 |-----|------|---------|---------|-------------|
-| `supervisor.pulse_enabled` | boolean | `true` | `AIDEVOPS_SUPERVISOR_PULSE` | Enable pulse scheduler — dispatches workers every `pulse_interval_seconds`. |
-| `supervisor.pulse_interval_seconds` | number | `180` | -- | Seconds between pulse cycles (30–3600). Default raised from 120 in t2744 to reduce GraphQL pressure. |
+| `supervisor.pulse_enabled` | boolean | `true` | `AIDEVOPS_SUPERVISOR_PULSE` | Enable pulse scheduler — dispatches workers every `orchestration.pulse_interval_seconds`. |
+| `orchestration.pulse_interval_seconds` | number | `180` | -- | Seconds between pulse cycles (30–3600). Default raised from 120 in t2744 to reduce GraphQL pressure. Run `setup.sh --non-interactive` to regenerate the scheduler unit after changing it. `supervisor.pulse_interval_seconds` is DEPRECATED (legacy fallback, t2946). |
 | `supervisor.stale_threshold_seconds` | number | `1800` | -- | Seconds before a worker is considered stuck. |
 | `supervisor.circuit_breaker_max_failures` | number | `3` | -- | Consecutive failures before dispatch pauses. |
 | `supervisor.strategic_review_hours` | number | `4` | -- | Hours between thinking-tier queue health reviews. |
