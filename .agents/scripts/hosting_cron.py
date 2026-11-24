@@ -32,6 +32,11 @@ USERNAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$")
 UID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 HOME_PATH_RE = re.compile(r"(?:/home|/Users)/[^/\s'\"]+")
 SNAPSHOT_DIR = Path.home() / ".aidevops" / ".agent-workspace" / "work" / "hostinger-cron"
+# hPanel wraps every job in `flock -w 1 ... timeout -s 9 1800` (GH#40212).
+RUNTIME_LIMIT_NOTICE = (
+    "Note: hPanel runs each job under 'timeout -s 9 1800' (30-minute hard kill, "
+    "not shown by list); keep each run well under 30 minutes."
+)
 
 
 class CronError(Exception):
@@ -148,6 +153,7 @@ def mutate(args: argparse.Namespace, username: str, token: str) -> int:
         print(f"Would create: POST {mask(path)}")
         print(f"  time:    {mask(args.time)}")
         print(f"  command: {mask(args.command)}")
+        print(RUNTIME_LIMIT_NOTICE)
     else:
         match = [job for job in jobs if str(job.get("uid")) == args.uid]
         if not match:

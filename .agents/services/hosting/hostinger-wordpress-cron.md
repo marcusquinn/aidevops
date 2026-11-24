@@ -57,6 +57,22 @@ change jobs. A missing SSH `crontab` is expected on Hostinger shared hosting and
 a blocker. The helper previews by default, needs `--apply` to mutate, and snapshots the
 job list privately before each change.
 
+hPanel runs every job inside a hidden wrapper with a hard 30-minute limit. On a
+Cloud plan (observed 24 Nov 2026) the process chain was
+`/bin/sh -c /usr/bin/flock -w 1 /tmp/cron_lock_<job-uid> timeout -s 9 1800 <command>`;
+`cron list` and the API show only `<command>`. Consequences:
+
+- After 1800 seconds the job's process group receives `SIGKILL`: no trap, cleanup
+  or final log line runs.
+- The `flock -w 1` lock skips a run while the previous run of the same job holds it.
+- A child that starts its own process group (for example GNU `timeout` without
+  `--foreground`) survives the kill as an orphan and can keep the inherited lock
+  until its own deadline. The script's later steps never run.
+
+Design long work as resumable rounds that finish well under 30 minutes (about 25),
+each with its own deadline, and never rely on steps after a long child command.
+Confirm the wrapper on other plans with `ps -o pid,ppid,etime,args` during a run.
+
 Before a mutation, privately snapshot exact job IDs, commands, and schedules. Use
 placeholders and securely injected credentials in any procedure. After a partial
 create or delete response, inspect live IDs before retrying; never blindly recreate
