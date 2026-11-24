@@ -513,7 +513,8 @@ gh api repos/<slug>/issues/<num>/comments --jq '.[] | select(.body | test("CLAIM
 
 **Quiet worker not killed (GH#36700)**: a stall is deliberately deferred while
 there is evidence of live work — CI-wait text, an established HTTPS/API socket
-in the worker process tree (`network_active`), or recent CPU (`cpu_active`).
+in the worker process tree (`network_active`), recent CPU (`cpu_active`), or fresh
+isolated OpenCode DB part updates (`tool_output_active`).
 Deferrals never write to the monitored output file. They are recorded as
 `[lifecycle] worker_stall_deferred ... elapsed=… hard_kill=…` in the shared
 lifecycle log (`WORKER_LIFECYCLE_LOG`, default
@@ -524,12 +525,20 @@ paths in `activity_watchdog_started` and prints `watchdog_summary` (deferral
 count and last event only) after the worker exits. The `.watchdog_events`
 sidecar is temporary: normal attempt cleanup deletes it, so for post-run
 diagnosis use the shared lifecycle log, which keeps `worker_stall_deferred` and
-`worker_killed` events. A deferred worker is killed only by the
+`worker_killed` events. A deferred worker is killed by the
 `WORKER_STALL_HARD_KILL_SECONDS` cap (default 1500s, `hard_kill_cap_active`;
-`0` disables it). The cap is checked only at a confirmed stall and each deferral
+`0` disables the entire hard-kill branch). GH#40157 grants fresh DB activity one
+longer absolute cap: `WORKER_STALL_HARD_KILL_ACTIVE_SECONDS` (default 3000s,
+clamped to at least the base cap; `0` uses the base cap). The first extension
+emits `worker_cap_extended ... cap_liveness=tool_output_active elapsed=… active_cap=…`
+to both logs. It never slides forward: stale DB activity restores the base cap,
+and CI-wait, CPU, network and no-activity signals retain their existing cap.
+Both `activity_watchdog_started` and `watchdog_monitoring` report `active_cap`.
+The cap is checked only at a confirmed stall and each deferral
 resets the stall timer, so the kill can land up to one more
 `WORKER_STALL_TIMEOUT` window (default 600s) plus poll overhead after the cap,
-up to about 2100s with defaults. An external per-attempt timeout (`timeout(1)`,
+up to about 2100s normally or 3600s for DB-active work with defaults.
+An external per-attempt timeout (`timeout(1)`,
 systemd `TimeoutStartSec`) shorter than cap + stall timeout + margin can end the
 worker first; raise the external timeout or lower the cap for that runner.
 

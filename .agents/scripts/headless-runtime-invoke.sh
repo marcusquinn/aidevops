@@ -422,6 +422,11 @@ _invoke_opencode_start_monitors() {
 	# recorded, so an external per-attempt timeout can be compared with it.
 	local hard_kill_seconds="${WORKER_STALL_HARD_KILL_SECONDS:-1500}"
 	[[ "$hard_kill_seconds" =~ ^[0-9]+$ ]] || hard_kill_seconds=1500
+	local active_cap_seconds="${WORKER_STALL_HARD_KILL_ACTIVE_SECONDS:-3000}"
+	[[ "$active_cap_seconds" =~ ^[0-9]+$ ]] || active_cap_seconds=3000
+	if [[ "$active_cap_seconds" -lt "$hard_kill_seconds" || "$active_cap_seconds" -eq 0 ]]; then
+		active_cap_seconds="$hard_kill_seconds"
+	fi
 	local lifecycle_log="${WORKER_LIFECYCLE_LOG:-${HOME}/.aidevops/logs/pulse-dispatch.log}"
 	if [[ -x "$watchdog_script" ]]; then
 		nohup "$watchdog_script" \
@@ -432,7 +437,7 @@ _invoke_opencode_start_monitors() {
 			--worker-db "${_WORKER_ISOLATED_DB_PATH:-}" \
 			</dev/null >/dev/null 2>&1 &
 		watchdog_pid=$!
-		print_info "[lifecycle] activity_watchdog_started pid=$watchdog_pid worker=$worker_pid stall_timeout=${stall_timeout}s phase1=${phase1_timeout}s hard_kill=${hard_kill_seconds}s events=${exit_code_file}.watchdog_events lifecycle_log=${lifecycle_log}"
+		print_info "[lifecycle] activity_watchdog_started pid=$watchdog_pid worker=$worker_pid stall_timeout=${stall_timeout}s phase1=${phase1_timeout}s hard_kill=${hard_kill_seconds}s active_cap=${active_cap_seconds}s events=${exit_code_file}.watchdog_events lifecycle_log=${lifecycle_log}"
 	else
 		print_warning "[lifecycle] standalone watchdog not found at $watchdog_script — falling back to inline"
 		_run_activity_watchdog "$output_file" "$worker_pid" "$exit_code_file" "$_invoke_session_key" &

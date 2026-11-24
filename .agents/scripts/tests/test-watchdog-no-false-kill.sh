@@ -829,7 +829,7 @@ assert_equals "27g. stall hard kill still maps to stall_hard_killed" \
 # deferral. Stub only process observations and killing, not cap decisions.
 cap_probe_results=$(
 	eval "$(sed -n '/^_monitor_enforce_hard_kill() {/,/^}/p' "${SCRIPT_DIR}/worker-activity-watchdog.sh")"
-	STALL_TIMEOUT=600 POLL_INTERVAL=10 HARD_KILL_SECONDS=1 STALL_CPU_THRESHOLD=2
+	STALL_TIMEOUT=600 POLL_INTERVAL=10 HARD_KILL_SECONDS=1 HARD_KILL_ACTIVE_SECONDS=1 STALL_CPU_THRESHOLD=2
 	_MONITOR_START_EPOCH=1 _MONITOR_LAST_DEFER_EPOCH=0
 	_MONITOR_STALL_SECONDS=600 _MONITOR_DEFERRED_STALL_SECONDS=0 WORKER_PID=1
 	_output_has_ci_wait() { if [[ "$signal" == ci_wait ]]; then return 0; fi; return 1; }
@@ -848,6 +848,56 @@ done
 assert_contains "28. first cap window with no liveness remains a stall kill" \
 	"inactive:hard_kill:stall_killed" "$cap_probe_results"
 
+# GH#40157: exact boundaries, one extension event, and revocation when DB
+# activity disappears. Simulated elapsed time avoids a 50-minute runtime test.
+active_cap_results=$(
+	eval "$(sed -n '/^_monitor_enforce_hard_kill() {/,/^}/p' "${SCRIPT_DIR}/worker-activity-watchdog.sh")"
+	STALL_TIMEOUT=600 POLL_INTERVAL=10 HARD_KILL_SECONDS=1500 HARD_KILL_ACTIVE_SECONDS=3000 STALL_CPU_THRESHOLD=2
+	_MONITOR_START_EPOCH=100 _MONITOR_LAST_DEFER_EPOCH=0 _MONITOR_CAP_EXTENDED=0
+	_MONITOR_STALL_SECONDS=600 _MONITOR_DEFERRED_STALL_SECONDS=0 WORKER_PID=1
+	date() { local arg="$1"; if [[ "$arg" == +%s ]]; then printf '%s' "$now"; else printf timestamp; fi; return 0; }
+	_watchdog_db_part_activity() { [[ "$db_live" == 1 ]] && return 0; return 1; }
+	_output_has_ci_wait() { return 1; }
+	_watchdog_tree_network_active() { return 1; }
+	_watchdog_tree_cpu() { printf 0; return 0; }
+	worker_attempt_observability_enrich() { return 0; }
+	_watchdog_record_event() { local event="$1"; printf '%s\n' "$event"; return 0; }
+	_kill_worker() { local reason="$1"; printf 'kill:%s\n' "${reason%%:*}"; return 0; }
+	db_live=1 now=1600
+	_monitor_enforce_hard_kill 100
+	now=3099
+	_monitor_enforce_hard_kill 100
+	printf 'extended=%s\n' "$_MONITOR_CAP_EXTENDED"
+	now=3100
+	_monitor_enforce_hard_kill 100 || true
+	db_live=0 now=1600
+	_monitor_enforce_hard_kill 100 || true
+	HARD_KILL_SECONDS=0 now=9999
+	_monitor_enforce_hard_kill 100
+)
+assert_equals "28a. DB progress emits exactly one extension event" "1" \
+	"$(printf '%s\n' "$active_cap_results" | grep -c worker_cap_extended)"
+assert_contains "28b. extension reports absolute active cap and DB liveness" \
+	"cap_liveness=tool_output_active elapsed=1500s active_cap=3000s" "$active_cap_results"
+assert_contains "28c. fresh DB still dies exactly at the active cap" \
+	"kill:hard_kill_cap_active" "$active_cap_results"
+assert_contains "28d. stale DB revokes extension at the base cap" \
+	"kill:hard_kill" "$active_cap_results"
+assert_equals "28e. disabled hard cap never kills, even beyond the active cap" "2" \
+	"$(printf '%s\n' "$active_cap_results" | grep -c '^kill:')"
+
+active_config_results=$(
+	eval "$(sed -n '/^_parse_args() {/,/^}/p' "${SCRIPT_DIR}/worker-activity-watchdog.sh")"
+	STALL_TIMEOUT=600 PHASE1_TIMEOUT=30 POLL_INTERVAL=10 DB_ACTIVITY_WINDOW=120
+	for config in 0 1000 3000 invalid; do
+		HARD_KILL_SECONDS=1500 HARD_KILL_ACTIVE_SECONDS="$config"
+		_parse_args --output-file unused --worker-pid 1 --exit-code-file unused
+		printf '%s:%s\n' "$config" "$HARD_KILL_ACTIVE_SECONDS"
+	done
+)
+assert_equals "28f. active cap zero, short and invalid values normalize safely" \
+	$'0:1500\n1000:1500\n3000:3000\ninvalid:3000' "$active_config_results"
+
 #######################################
 # Test 29: GH#39197 — a quiet worker whose isolated OpenCode DB shows a recent
 # part update (a running tool streaming output) is deferred, not killed; a DB
@@ -861,7 +911,7 @@ if command -v sqlite3 >/dev/null 2>&1; then
 	# shellcheck disable=SC2016 # Expanded by the inner bash on every write.
 	bash -c 'while :; do sqlite3 "$1" "INSERT OR REPLACE INTO part VALUES (1, $(date +%s)000);" 2>/dev/null; sleep 1; done' _ "$db_path" >/dev/null 2>&1 &
 	db_writer_pid=$!
-	for db_case in live stale; do
+	for db_case in live stale extended; do
 		db_output="${db_tmp_dir}/${db_case}.out"
 		db_exit="${db_tmp_dir}/${db_case}.exit"
 		db_log="${db_tmp_dir}/${db_case}.log"
@@ -873,7 +923,9 @@ if command -v sqlite3 >/dev/null 2>&1; then
 		fi
 		bash -c 'while :; do sleep 1; done' >/dev/null 2>&1 &
 		db_worker_pid=$!
-		WORKER_LIFECYCLE_LOG="$db_log" \
+		db_hard_cap=0
+		[[ "$db_case" != extended ]] || db_hard_cap=3
+		WORKER_LIFECYCLE_LOG="$db_log" WORKER_STALL_HARD_KILL_ACTIVE_SECONDS=12 \
 			"${SCRIPT_DIR}/worker-activity-watchdog.sh" \
 			--output-file "$db_output" \
 			--worker-pid "$db_worker_pid" \
@@ -881,10 +933,10 @@ if command -v sqlite3 >/dev/null 2>&1; then
 			--worker-db "$case_db" \
 			--stall-timeout 1 \
 			--poll-interval 1 \
-			--hard-kill-seconds 0 >/dev/null 2>&1 &
+			--hard-kill-seconds "$db_hard_cap" >/dev/null 2>&1 &
 		db_watchdog_pid=$!
 		sleep 8
-		if [[ "$db_case" == live ]]; then
+		if [[ "$db_case" == live || "$db_case" == extended ]]; then
 			if kill -0 "$db_worker_pid" 2>/dev/null && [[ ! -f "${db_exit}.watchdog_killed" ]] && grep -q 'reason=tool_output_active' "$db_log" 2>/dev/null; then
 				TESTS_RUN=$((TESTS_RUN + 1))
 				echo "${TEST_GREEN}PASS${TEST_NC}: 29a. quiet worker with live isolated-DB part updates is deferred as tool_output_active"
@@ -892,6 +944,15 @@ if command -v sqlite3 >/dev/null 2>&1; then
 				TESTS_RUN=$((TESTS_RUN + 1))
 				TESTS_FAILED=$((TESTS_FAILED + 1))
 				echo "${TEST_RED}FAIL${TEST_NC}: 29a. quiet worker with live isolated-DB part updates was killed or not deferred"
+			fi
+			if [[ "$db_case" == extended ]]; then
+				wait "$db_watchdog_pid" 2>/dev/null || true
+				assert_equals "29c. DB-active worker eventually hits hard backstop" \
+					"hard_kill_cap_active" "$(cat "${db_exit}.kill_reason" 2>/dev/null || true)"
+				assert_equals "29d. lifecycle gets one extension event" "1" \
+					"$(grep -c worker_cap_extended "$db_log" || true)"
+				assert_equals "29e. attempt sidecar gets one extension event" "1" \
+					"$(grep -c worker_cap_extended "${db_exit}.watchdog_events" || true)"
 			fi
 		elif [[ -f "${db_exit}.watchdog_killed" ]] && ! grep -q 'reason=tool_output_active' "$db_log" 2>/dev/null; then
 			TESTS_RUN=$((TESTS_RUN + 1))
