@@ -115,9 +115,10 @@ if [[ -n "$backup" ]]; then
 else
 	# Only names explicitly present in the registration can be restored as true.
 	# Missing feature names remain absent, not false; unknown labels fail closed.
+	# GH#40096: legacy registrations may hold underscore spellings (`git_workflow`).
 	features=$(jq -ec --arg slug "$selector" '
 		.initialized_repos[] | select(.slug == $slug) | (.features // []) |
-		if type != "array" or any(.[]; type != "string" or (IN("planning","git-workflow","code-quality","time-tracking","database","beads","sops","security","deployment-context","wordpress-context") | not)) then error("unknown feature")
+		if type != "array" or any(.[]; type != "string" or (gsub("_"; "-") | IN("planning","git-workflow","code-quality","time-tracking","database","beads","sops","security","deployment-context","wordpress-context") | not)) then error("unknown feature")
 		else reduce .[] as $f ({}; . + {($f | gsub("-"; "_")): true}) end
 	' "$registry") || { printf 'Unknown or malformed registry features; use a verified backup\n' >&2; exit 1; }
 	scope=$(jq -er --arg slug "$selector" '.initialized_repos[] | select(.slug == $slug) | .init_scope | select(. == "minimal" or . == "standard" or . == "public")' "$registry") || { printf 'Unknown init_scope; use a verified backup\n' >&2; exit 1; }
