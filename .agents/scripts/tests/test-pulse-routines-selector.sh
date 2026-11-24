@@ -630,6 +630,32 @@ LIFECYCLE
 	return 0
 }
 
+# Reuse the outcome fixture's executable and stream for script cooldown exits.
+_assert_script_output_contract() {
+	local root="$1"
+	local script_exit=0 expected_status="" expected_lines=0
+	local saved="$HOME/.aidevops/logs/routines/r-script-capture.log"
+	ROUTINE_TEST_OUTPUT="$root/failure.out"
+	for script_exit in 0 7 75; do
+		export ROUTINE_TEST_EXIT="$script_exit"
+		: >"$LOGFILE"
+		_routine_run_detached_script r-script-capture "$HEADLESS_RUNTIME_HELPER" "$root" "$(date +%s)" || return 1
+		cmp "$root/failure.out" "$saved" || return 1
+		[[ "$(_file_perms "$saved")" == 600 ]] || return 1
+		expected_status=success expected_lines=0
+		if [[ "$script_exit" != 0 ]]; then
+			expected_status=failure expected_lines=20
+			[[ "$script_exit" != 75 ]] || expected_status=deferred
+		fi
+		[[ "$(grep -c '^failure-output-' "$LOGFILE")" == "$expected_lines" ]] || return 1
+		! grep -Fx 'failure-output-10' "$LOGFILE" >/dev/null || return 1
+		jq -e --arg status "$expected_status" '."r-script-capture".last_status == $status' "$ROUTINE_STATE_FILE" >/dev/null || return 1
+		! compgen -G "${ROUTINE_STATE_FILE}.r-script-capture.output.*" >/dev/null || return 1
+	done
+	! _routine_run_detached_script '../invalid' "$HEADLESS_RUNTIME_HELPER" "$root" 0 || return 1
+	return 0
+}
+
 _test_outcome_contract() {
 	local tmpdir="$1"
 	local root="${tmpdir}/outcome"
@@ -691,27 +717,7 @@ OUTPUT_AGENT
 		! grep -E '^work$|^ROUTINE_OUTCOME:' "$LOGFILE" >/dev/null || exit 1
 		! compgen -G "${ROUTINE_STATE_FILE}.r-capture.output.*" >/dev/null || exit 1
 		! _routine_run_detached_agent '../invalid' Capture Build+ "$root" || exit 1
-		# The same capture contract applies to scripts, including cooldown exits.
-		local script_exit=0 expected_status="" expected_lines=0
-		ROUTINE_TEST_OUTPUT="$root/failure.out"
-		saved="$HOME/.aidevops/logs/routines/r-script-capture.log"
-		for script_exit in 0 7 75; do
-			export ROUTINE_TEST_EXIT="$script_exit"
-			: >"$LOGFILE"
-			_routine_run_detached_script r-script-capture "$HEADLESS_RUNTIME_HELPER" "$root" "$(date +%s)" || exit 1
-			cmp "$root/failure.out" "$saved" || exit 1
-			[[ "$(_file_perms "$saved")" == 600 ]] || exit 1
-			expected_status=success expected_lines=0
-			if [[ "$script_exit" != 0 ]]; then
-				expected_status=failure expected_lines=20
-				[[ "$script_exit" != 75 ]] || expected_status=deferred
-			fi
-			[[ "$(grep -c '^failure-output-' "$LOGFILE")" == "$expected_lines" ]] || exit 1
-			! grep -Fx 'failure-output-10' "$LOGFILE" >/dev/null || exit 1
-			jq -e --arg status "$expected_status" '."r-script-capture".last_status == $status' "$ROUTINE_STATE_FILE" >/dev/null || exit 1
-			! compgen -G "${ROUTINE_STATE_FILE}.r-script-capture.output.*" >/dev/null || exit 1
-		done
-		! _routine_run_detached_script '../invalid' "$HEADLESS_RUNTIME_HELPER" "$root" 0 || exit 1
+		_assert_script_output_contract "$root" || exit 1
 		local i=0
 		for i in 1 2 3 4; do
 			_routine_finalize_terminal r-out "$_ROUTINE_STATUS_SUCCESS" "$(date +%s)" "" 0 noop "nothing due" 3 owner/repo
