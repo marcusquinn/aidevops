@@ -138,6 +138,12 @@ _terminal_blocker_target_revision() {
 	return 0
 }
 
+# Completed label projections are live even when a caller replays stale labels.
+terminal_blocker_fetch_issue() {
+	printf '%s\n' '{"state":"open","labels":[{"name":"status:available"}]}'
+	return 0
+}
+
 test_older_input_circuit_survives_other_reason() {
 	local issue='{"title":"Decision","body":"unchanged"}' revision="" fp="" other="" comments="" status=0
 	revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" input_required)
@@ -1520,14 +1526,13 @@ test_cross_runner_rearm_receipt() {
 			tb_comments=$(printf '%s' "$tb_comments" | jq -c '. + [{id:33,body:"terminal-blocker-circuit:retry",author_association:"OWNER",created_at:"2026-10-23T20:33:00Z"}]')
 			_tbr_release_circuit_hold owner/repo 42 "$tb_original" "$tb_comments" || exit 1
 			[[ "$tb_projected" -eq 2 ]] || exit 1
-			# Receipt failure after projection remains repairable on an available
-			# snapshot, without a second projection, then suppresses stale readers.
+			# Receipt failure never projects availability; retry publishes first.
 			tb_fail_receipt=1
 			tb_rc=0
 			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || tb_rc=$?
-			[[ "$tb_rc" -eq 2 && "$tb_projected" -eq 3 ]] || exit 1
+			[[ "$tb_rc" -eq 2 && "$tb_projected" -eq 2 ]] || exit 1
 			tb_fail_receipt=0
-			_tbr_release_circuit_hold owner/repo 42 "$(printf '%s' "$tb_issue" | jq -c '.labels=[{name:"status:available"}]')" "$tb_comments" || exit 1
+			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
 			_tbr_release_circuit_hold owner/repo 42 "$tb_issue" "$tb_comments" || exit 1
 			[[ "$tb_projected" -eq 3 ]] || exit 1
 			# A revision/API failure at the circuit write guard is indeterminate.
@@ -1930,6 +1935,7 @@ main() {
 	test_circuit_hold_projects_blocked_and_releases
 	test_first_observation_scope_hold_releases_on_revision
 	test_cross_runner_rearm_receipt
+	test_target_code_receipt_before_release
 	test_legacy_hold_requires_bound_retry
 	test_unknown_hold_rearms_on_trusted_retry
 	test_retry_only_observation_recovery
