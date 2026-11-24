@@ -190,11 +190,13 @@ reads share the tier deadline, and prefetch never advances either cursor. Any
 error, missing issue or truncated labels discards the entire batch and disables
 batching for that pass, falling back to individual REST-first reads. Comments
 still use the existing trusted, complete read, and `rearm` never uses snapshots.
+Policy-gated and supervisor-only intakes keep their original individual read
+order; only local circuits and remote observations enter a batch.
 Newer or invalid issue timestamps reject the unchanged-decision fast path before
 remote policy validation; an eligible skip still requires an active decision.
 GH#40131 measured this alternative on independent copies of a 79-entry store:
-8 baseline versus 10 candidate `entry_issue` observations in matching 45-second
-windows (+25%), with zero eligible skips and both passes incomplete (exit 2).
+8 baseline versus 9 candidate `entry_issue` observations in matching 45-second
+windows (+12.5%), with zero eligible skips and both passes incomplete (exit 2).
 This is not a demonstrated 3x gain: upstream latency, policy validation and
 comment/revision work still bound throughput, and small windows are noisy.
 Independently, pulse preflight runs

@@ -222,6 +222,9 @@ _tbr_pending_prefetch() {
 	local current="$1" candidate="" name="" refs="" repo="" issue="" round=0 token=""
 	local -a args=()
 	[[ -n "$issue_batch_file" && "$issue_batch_failed" -eq 0 ]] || return 0
+	# Policy-gated and supervisor-only intakes retain their original read order.
+	local batch_intakes='(.intake // "local") | IN("local", "remote_observation")'
+	jq -e "$batch_intakes" "$current" >/dev/null 2>&1 || return 0
 	if jq -e --arg name "${current##*/}" '
 		keys | any(. + ".json" == ($name | ascii_downcase))' "$issue_batch_file" >/dev/null 2>&1; then
 		return 0
@@ -242,7 +245,7 @@ _tbr_pending_prefetch() {
 			*"$token"*) [[ "$tier" -eq 1 ]] || continue ;;
 			*) [[ "$tier" -eq 0 ]] || continue ;;
 			esac
-			refs=$(jq -r '[.repo, (.issue | tostring)] | @tsv' "$candidate" 2>/dev/null) || continue
+			refs=$(jq -r "select($batch_intakes) | "'[.repo, (.issue | tostring)] | @tsv' "$candidate" 2>/dev/null) || continue
 			IFS=$'\t' read -r repo issue <<<"$refs"
 			_tbr_valid_ref "$repo" "$issue" || continue
 			args+=("$repo" "$issue")
