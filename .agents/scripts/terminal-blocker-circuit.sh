@@ -276,7 +276,7 @@ def emit(value, ask_owner=''):
         found = re.findall(r'^TERMINAL_BLOCKER_' + name + r'=(.*)$', candidate, re.M)
         line = found[0] if eligible and len(found) == 1 else ''
         return line if 0 < len(line) <= 500 else ''
-    print(json.dumps({'reason': value, 'explicit_reason': bool(reasons), 'ask_owner': ask_owner,
+    print(json.dumps({'reason': value, 'explicit_reason': bool(reasons), 'declared_reasons': reasons, 'ask_owner': ask_owner,
                      'question': public_line('QUESTION', value.startswith('input_required:') or bool(ask_owner)),
                      'trigger': public_line('TRIGGER', value == 'external_trigger_pending'),
                      'missing_secrets': sorted(set(names)), 'rejected_secrets': sorted(set(rejected_names)),
@@ -393,7 +393,8 @@ terminal_blocker_capture_output() {
 	[[ -n "$normalized" ]] || return 1
 	# Legacy source_exhausted reports have no supported reason marker. Preserve
 	# their explicit dated reopen instead of sending them through short backoff.
-	if [[ "$normalized" == unknown || "$normalized" == external_trigger_pending ]]; then
+	if [[ "$normalized" == external_trigger_pending ]] ||
+		{ [[ "$normalized" == unknown ]] && jq -e '.explicit_reason == false or .declared_reasons == ["source_exhausted"]' <<<"$captured" >/dev/null; }; then
 		AIDEVOPS_TERMINAL_BLOCKER_RECHECK_AFTER=$(_terminal_blocker_recheck_after "$captured") || return 1
 		if [[ -n "$AIDEVOPS_TERMINAL_BLOCKER_RECHECK_AFTER" ]]; then
 			normalized=external_trigger_pending

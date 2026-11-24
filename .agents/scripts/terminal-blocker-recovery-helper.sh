@@ -1006,6 +1006,18 @@ _tbr_check_entry() {
 	# Labels let the permission-request predicate see needs-maintainer-permissions.
 	brief=$(printf '%s' "$issue_json" | jq -c '{title: (.title // ""), body: (.body // ""), labels: (.labels // [])}')
 	repo_path=$(_tbr_repo_path "$repo")
+	# Park future dated observations on every runner, including supervisor
+	# intake. On expiry expose the public deadline for reassessment, not an
+	# automatic worker launch that might bypass a second ledger hold.
+	terminal_blocker_dated_hold_active "$comments" >/dev/null && return 1
+	local cap_hold="" recheck_after=""
+	if cap_hold=$(terminal_blocker_session_cap_hold_active "$brief" "$repo" "$issue"); then
+		[[ "$mode" != rearm ]] || return 1
+		_tbr_decision_active "$key" "$comments" && return 1
+		_tbr_print_entry "$repo" "$issue" "$reason" "$opened_at" "$intake" "$issue_json" |
+			jq -c --arg evidence "$cap_hold" '. + {scheduling: {next_action: "session_cap_split", evidence: $evidence}}'
+		return $?
+	fi
 	local hold_rc=0
 	printf 'blocker-recovery: checking stage=entry_revision repo=%s issue=%s\n' "$repo" "$issue" >&2
 	if ! terminal_blocker_circuit_active "$comments" "$brief" "$repo" "$issue" "$repo_path" >/dev/null 2>&1; then
@@ -1056,7 +1068,9 @@ _tbr_check_entry() {
 		return 1
 	fi
 	_tbr_decision_active "$key" "$comments" && return 1
-	_tbr_print_entry "$repo" "$issue" "$reason" "$opened_at" "$intake" "$issue_json"
+	recheck_after=$(_terminal_blocker_observed_recheck_after "$comments") || recheck_after=""
+	_tbr_print_entry "$repo" "$issue" "$reason" "$opened_at" "$intake" "$issue_json" |
+		jq -c --arg at "$recheck_after" 'if $at == "" then . else . + {recheck_after: $at, next_action: "recheck_external_trigger"} end'
 	return $?
 }
 

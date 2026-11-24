@@ -26,15 +26,24 @@ if dates and max(dates) > now:
 	return $?
 }
 
-# Read only authenticated marker comments, not arbitrary issue prose. A newer
-# OWNER/MEMBER retry may override scheduling, but never grants source access.
-terminal_blocker_dated_hold_active() {
-	local comments="$1" observation="" retry="" due="" now="${TERMINAL_BLOCKER_NOW_EPOCH:-}"
+# Read only authenticated marker comments, not arbitrary issue prose.
+_terminal_blocker_observed_recheck_after() {
+	local comments="$1" observation="" retry=""
 	observation=$(_terminal_blocker_latest_marker "$comments" "$_TBC_OBSERVATION_MARKER revision=") || return 1
 	[[ -n "$observation" ]] || return 1
 	retry=$(_terminal_blocker_latest_retry_comment "$comments") || retry=""
 	_terminal_blocker_retry_after "$retry" "$observation" && return 1
-	due=$(jq -er '.body | capture("(?m)^Recheck after: (?<at>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)$").at | fromdateiso8601' <<<"$observation" 2>/dev/null) || return 1
+	jq -er '.body | capture("(?m)^Recheck after: (?<at>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)$").at | select((try fromdateiso8601 catch 0) > 0)' <<<"$observation" 2>/dev/null
+	return $?
+}
+
+# A newer OWNER/MEMBER retry may override scheduling, never source access.
+# Expiry wakes supervisor assessment, not an implementation worker: other
+# ledger holds (consent, scope, session budget) still need their own decisions.
+terminal_blocker_dated_hold_active() {
+	local comments="$1" due="" now="${TERMINAL_BLOCKER_NOW_EPOCH:-}"
+	due=$(_terminal_blocker_observed_recheck_after "$comments") || return 1
+	due=$(jq -nr --arg at "$due" '$at | fromdateiso8601') || return 1
 	[[ "$now" =~ ^[0-9]+$ ]] || now=$(date -u +%s)
 	[[ "$now" -lt "$due" ]] || return 1
 	printf 'TERMINAL_BLOCKER_DATED_HOLD recheck_after_epoch=%s\n' "$due"
@@ -45,7 +54,7 @@ terminal_blocker_dated_hold_active() {
 # Count distinct merged PRs explicitly cross-referencing this issue, never local
 # attempt counters. Unavailable/incomplete evidence keeps a declared cap held.
 terminal_blocker_session_cap_hold_active() {
-	local issue_json="$1" repo="$2" issue="$3" cap="" timeline="" numbers="" number="" pr="" count=0
+	local issue_json="$1" repo="$2" issue="$3" cap="" timeline="" numbers="" number="" pr="" count=0 merged=""
 	cap=$(python3 -c '
 import json, re, sys
 body = json.load(sys.stdin).get("body", "")
@@ -59,15 +68,20 @@ if values: print(min(values))
 	timeline=$(gh api --paginate "repos/${repo}/issues/${issue}/timeline?per_page=100" 2>/dev/null) || return 0
 	# Cross-repository references do not consume this issue's implementation budget.
 	numbers=$(jq -rs --arg repo "$repo" '[.[][] | select(.event == "cross-referenced") | .source.issue
-		| select(.pull_request and (.repository.full_name == $repo)) | .number] | unique[]' <<<"$timeline") || return 0
+		| select(.pull_request and (((.repository.full_name // (.repository_url // "" | sub("^https://api.github.com/repos/"; ""))) | ascii_downcase) == ($repo | ascii_downcase)))
+		| .number] | unique[]' <<<"$timeline") || return 0
 	while IFS= read -r number; do
 		[[ "$number" =~ ^[0-9]+$ ]] || continue
 		pr=$(gh api "repos/${repo}/pulls/${number}" 2>/dev/null) || return 0
-		if jq -e '.merged_at != null and .merged == true' <<<"$pr" >/dev/null; then
+		# Partial/checkpoint PRs or explicit For/Ref issue references are evidence
+		# of a non-final session; incidental mentions must not spend the budget.
+		if jq -e --arg issue "$issue" '.merged_at != null and .merged == true and
+			(((.title // "") + "\n" + (.body // "")) | test("(?i)\\b(partial|checkpoint)\\b|\\b(?:For|Ref) #" + $issue + "\\b"))' <<<"$pr" >/dev/null; then
 			count=$((count + 1))
+			merged="${merged}${merged:+,}${number}"
 		fi
 		if [[ "$count" -ge "$cap" ]]; then
-			printf 'TERMINAL_BLOCKER_SESSION_CAP_HOLD budget=%s merged_prs=%s next_action=session_cap_split\n' "$cap" "$count"
+			printf 'TERMINAL_BLOCKER_SESSION_CAP_HOLD budget=%s merged_prs=%s next_action=session_cap_split\n' "$cap" "$merged"
 			return 0
 		fi
 	done <<<"$numbers"
