@@ -139,7 +139,7 @@ _terminal_blocker_target_revision() {
 }
 
 # Completed label projections are live even when a caller replays stale labels.
-terminal_blocker_fetch_issue() {
+completed_rearm_issue() {
 	printf '%s\n' '{"state":"open","labels":[{"name":"status:available"}]}'
 	return 0
 }
@@ -1480,6 +1480,7 @@ test_cross_runner_rearm_receipt() {
 		local tb_comments='[]' tb_issue='' tb_original='' tb_revision='' tb_fingerprint=''
 		local tb_projected=0 tb_receipts=0 tb_reason='' tb_rc=0 tb_fail_receipt=0
 		terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$tb_comments"; return 0; }
+		terminal_blocker_fetch_issue() { completed_rearm_issue; return 0; }
 		set_issue_status() { tb_projected=$((tb_projected + 1)); return 0; }
 		_tbr_post_rearm_receipt() {
 			local marker="$3"
@@ -1585,6 +1586,7 @@ test_legacy_hold_requires_bound_retry() {
 		local issue='{"title":"Legacy hold","body":"updated brief","labels":[{"name":"status:blocked"}]}'
 		local comments='' base='' legacy_events='' label_events='' scenario='' rc=0 projected=0 receipts=0
 		local legacy_receipt=''
+		terminal_blocker_fetch_issue() { completed_rearm_issue; return 0; }
 		local TERMINAL_BLOCKER_NOW_EPOCH=1793361600 # 2026-10-30T12:00:00Z
 		local TERMINAL_BLOCKER_SELF_LOGIN=runner-a
 		base=$(jq -nc '[{id:10,body:"<!-- ops:start -->\nCLAIM_RELEASED reason=blocked runner=runner-a ts=2026-10-30T10:00:00Z\n<!-- ops:end -->",user:{login:"runner-a"},author_association:"MEMBER",created_at:"2026-10-30T10:00:00Z"},
@@ -1691,6 +1693,7 @@ test_unknown_hold_rearms_on_trusted_retry() {
 		local tb_comments='[]' tb_issue='' tb_revision='' tb_fingerprint='' tb_observation='' tb_raw='' tb_other=''
 		local tb_projected=0 tb_receipts=0 tb_rc=0 tb_enqueued=0
 		terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$tb_comments"; return 0; }
+		terminal_blocker_fetch_issue() { completed_rearm_issue; return 0; }
 		set_issue_status() { tb_projected=$((tb_projected + 1)); return 0; }
 		_tbr_post_rearm_receipt() {
 			local marker="$3"
@@ -1761,6 +1764,7 @@ test_retry_only_observation_recovery() {
 		local reason="" association="" scenario="" tb_comments="" observation="" raw=""
 		local issue='{"title":"Fix helper","body":"original","labels":[{"name":"status:blocked"}]}'
 		local revision="" fingerprint="" body="" retry_at="" projected=0 receipts=0 rc=0 enqueued=0
+		terminal_blocker_fetch_issue() { completed_rearm_issue; return 0; }
 		set_issue_status() {
 			projected=$((projected + 1))
 			return 0

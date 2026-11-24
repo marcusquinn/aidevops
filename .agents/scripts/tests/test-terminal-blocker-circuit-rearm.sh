@@ -97,6 +97,7 @@ test_unevidenced_permission_window_rearm() {
 		local issue='{"title":"Fix helper","body":"original","labels":[{"name":"status:blocked"}]}'
 		local revision="" fingerprint="" observation="" tb_comments="" variant="" receipt_log=""
 		local projected=0 receipts=0 rc=0 request=""
+		terminal_blocker_fetch_issue() { completed_rearm_issue; return 0; }
 		set_issue_status() {
 			projected=$((projected + 1))
 			return 0
