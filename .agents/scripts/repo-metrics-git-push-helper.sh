@@ -68,7 +68,7 @@ metrics_ensure_pr() {
 ## Repository metrics publication
 
 Publishes generated metrics through one deterministic PR because the default
-branch rejected direct publication with GH006. Only configured generated JSON,
+branch rejected direct publication with GH006 or GH013 requiring a PR. Only configured generated JSON,
 Markdown and SVG artifacts are included; subsequent refreshes replace the snapshot.
 
 Branch protection, administrator enforcement, review and required checks remain
@@ -205,9 +205,11 @@ metrics_publish_snapshot() {
 				printf '::notice::Published repository metrics directly\n'
 				return 0
 			fi
-			if ! grep -q 'GH006.*Protected branch update failed' "${state_dir}/push.log"; then
+			if ! grep -q 'GH006.*Protected branch update failed' "${state_dir}/push.log" &&
+				! { grep -q 'GH013.*Repository rule violations' "${state_dir}/push.log" &&
+					grep -qi 'must be made through a pull request' "${state_dir}/push.log"; }; then
 				# Retry a moving base or transient failure, but never disguise it as
-				# a branch-protection failure or open an unrelated fallback PR.
+				# protection requiring a PR. Other GH013 rules may also reject PRs.
 				continue
 			fi
 			pr_mode=true
