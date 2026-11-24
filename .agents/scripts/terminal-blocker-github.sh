@@ -22,7 +22,7 @@ terminal_blocker_fetch_issue_batch() {
 		select(length == $expected) |
 		select(all(.[]; . != null and (.i | type) == "object" and
 			(.i.labels.pageInfo.hasNextPage == false))) |
-		[.[] | {key:(.nameWithOwner | ascii_downcase | sub("/"; "--")) + "--" + (.i.number | tostring),
+		[.[] | {key:((.nameWithOwner | ascii_downcase | sub("/"; "--")) + "--" + (.i.number | tostring)),
 			value:(.i | {number,title,body,state:(.state | ascii_downcase),updated_at:.updatedAt,labels:.labels.nodes})}] |
 		from_entries' || return 1
 	return 0
