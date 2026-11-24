@@ -380,7 +380,11 @@ _dlw_canary_preflight() {
 		echo "[dispatch_with_dedup] #${issue_number} in ${repo_slug}: minimum worker floor active — canary still checks runtime/model health only" >>"$LOGFILE"
 	fi
 
-	local canary_rc=0
+	local canary_rc=0 canary_log_offset=0
+	if [[ -f "$worker_log" ]]; then
+		canary_log_offset=$(wc -c <"$worker_log" 2>/dev/null | tr -d '[:space:]') || canary_log_offset=0
+		[[ "$canary_log_offset" =~ ^[0-9]+$ ]] || canary_log_offset=0
+	fi
 	env "${_canary_env[@]}" "${_canary_cmd[@]}" >>"$worker_log" 2>&1 || canary_rc=$?
 	[[ "$canary_rc" -ne 0 ]] || return 0
 
@@ -392,8 +396,13 @@ _dlw_canary_preflight() {
 		# under the minimum worker floor.
 		local selection_state="every candidate backed off or unavailable"
 		[[ "$canary_rc" -eq 75 ]] || selection_state="no candidate configured"
+		# GH#40140: carry this canary's per-candidate exclusion reasons (only
+		# output appended by this run) so pulse.log names the cause.
+		local selection_reasons=""
+		selection_reasons=$(tail -c +"$((canary_log_offset + 1))" "$worker_log" 2>/dev/null |
+			grep -Eo 'tier_selection_unavailable tier=[^ ]+ reasons=[^ ]+( hint=[^ ]+)?' | tail -n 1) || selection_reasons=""
 		pulse_stats_increment "worker_canary_no_selectable_model_count" 2>/dev/null || true
-		echo "[dispatch_with_dedup] Skipping #${issue_number} in ${repo_slug} — no selectable model in tier ${dispatch_model_tier} (${selection_state}); will retry next cycle (GH#38717)" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] Skipping #${issue_number} in ${repo_slug} — no selectable model in tier ${dispatch_model_tier} (${selection_state}); will retry next cycle (GH#38717)${selection_reasons:+ [${selection_reasons}]}" >>"$LOGFILE"
 		return 1
 	fi
 

@@ -1204,6 +1204,7 @@ headless-runtime-helper.sh - Model-aware headless runtime (OpenCode default, Cla
 
 Usage:
   headless-runtime-helper.sh select [--role pulse|worker|triage] [--model provider/model]
+  headless-runtime-helper.sh tier-coverage [--tier simple|standard|thinking]...
   headless-runtime-helper.sh canary [--role pulse|worker|triage] [--model provider/model | --initial-model provider/model] [--tier simple|standard|thinking]
   headless-runtime-helper.sh run --role pulse|worker|triage|model-replay --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model | --initial-model provider/model] [--tier simple|standard|thinking] [--variant NAME] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--private-workload --private-profile-sha256 HASH] [--standalone-prompt] [--detach]
   headless-runtime-helper.sh backoff [status|set MODEL-OR-PROVIDER REASON [SECONDS]|clear MODEL-OR-PROVIDER]
@@ -1264,6 +1265,9 @@ Defaults:
   Fallback: anthropic/claude-sonnet-5-5 if routing resolution fails.
   AIDEVOPS_HEADLESS_MODELS is deprecated — respected as override for one release cycle.
   AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST can restrict selection to providers like: openai
+  tier-coverage prints "<tier>\t<model>\t<reason>" per routing-table candidate:
+  selectable, excluded_by_provider_allowlist, no_provider_auth,
+  chatgpt_oauth_unsupported (structural), oauth_pool_exhausted, backed_off (transient).
   AIDEVOPS_HEADLESS_VARIANT_STANDARD / AIDEVOPS_HEADLESS_VARIANT_THINKING can set tier defaults.
   GPT-5.5 standard-tier worker dispatch omits env-derived variants so OpenCode sends no explicit thinking override.
   AIDEVOPS_HEADLESS_VARIANT sets an OpenCode model variant (for example: high, xhigh).
@@ -1289,6 +1293,10 @@ main() {
 	case "$command" in
 	select)
 		cmd_select "$@"
+		return $?
+		;;
+	tier-coverage)
+		cmd_tier_coverage "$@"
 		return $?
 		;;
 	run)

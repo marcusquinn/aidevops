@@ -174,7 +174,56 @@ _status_headless_runtime_config() {
 	else
 		print_info "No headless provider allowlist configured"
 	fi
+	_status_headless_tier_coverage "$credentials_file"
 	echo ""
+	return 0
+}
+
+# GH#40140: warn when structural exclusions (provider allowlist, missing auth,
+# ChatGPT OAuth denylist) leave a worker tier with one provider or none, so a
+# single pool exhaustion halts that tier's dispatch. Evaluates the daemon view
+# by sourcing credentials.sh in a child process; prints no credential values.
+_status_headless_tier_coverage() {
+	local credentials_file="$1"
+	local helper="$AGENTS_DIR/scripts/headless-runtime-helper.sh"
+	local coverage=""
+	[[ -x "$helper" ]] || return 0
+	coverage=$(bash -c '[[ -f "$1" ]] && . "$1" >/dev/null 2>&1; exec "$2" tier-coverage --tier standard --tier thinking' \
+		_ "$credentials_file" "$helper" 2>/dev/null) || return 0
+	[[ -n "$coverage" ]] || return 0
+	local tier="" _cov_tier="" model="" reason="" provider="" providers="" excluded="" structural=""
+	for tier in standard thinking; do
+		providers=""
+		excluded=""
+		structural=""
+		while IFS=$'\t' read -r _cov_tier model reason; do
+			[[ "$_cov_tier" == "$tier" && -n "$model" ]] || continue
+			provider="${model%%/*}"
+			case "$reason" in
+			selectable | oauth_pool_exhausted | backed_off)
+				case ",${providers}," in
+				*",${provider},"*) ;;
+				*) providers+="${providers:+,}${provider}" ;;
+				esac
+				;;
+			excluded_by_provider_allowlist)
+				excluded+="${excluded:+, }${model}"
+				structural+="${structural:+, }${model}=${reason}"
+				;;
+			*) structural+="${structural:+, }${model}=${reason}" ;;
+			esac
+		done <<<"$coverage"
+		if [[ -z "$providers" ]]; then
+			print_warning "Worker ${tier} tier has no usable model candidate (${structural:-no candidates})"
+		elif [[ "$providers" != *,* && -n "$structural" ]]; then
+			print_warning "Worker ${tier} tier depends on one provider (${providers}); when its pool is exhausted, ${tier} dispatch stops"
+			if [[ -n "$excluded" ]]; then
+				print_info "AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST excludes configured fallback(s): ${excluded}"
+			else
+				print_info "Excluded candidates: ${structural}"
+			fi
+		fi
+	done
 	return 0
 }
 

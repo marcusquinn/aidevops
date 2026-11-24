@@ -5,7 +5,7 @@
 # headless-runtime-helper-cmds.sh — CLI subcommand handlers
 # =============================================================================
 # CLI command implementations extracted from headless-runtime-helper.sh:
-#   cmd_select, cmd_backoff, cmd_session, cmd_metrics
+#   cmd_select, cmd_tier_coverage, cmd_backoff, cmd_session, cmd_metrics
 #
 # Usage: source "${SCRIPT_DIR}/headless-runtime-helper-cmds.sh"
 #
@@ -64,6 +64,38 @@ cmd_select() {
 	local selected
 	selected=$(choose_model "$role" "$model_override" "$tier_override") || return $?
 	printf '%s\n' "$selected"
+	return 0
+}
+
+# GH#40140: read-only per-tier candidate coverage. Prints
+# "<tier>\t<model>\t<reason>" lines (reasons: tier_candidate_exclusion_reasons).
+cmd_tier_coverage() {
+	local -a tiers=()
+	while [[ $# -gt 0 ]]; do
+		case "${1:-}" in
+		--tier)
+			local tier_value="${2:-}"
+			[[ -n "$tier_value" ]] || {
+				print_error "--tier requires a value"
+				return 1
+			}
+			tiers+=("$tier_value")
+			shift 2
+			;;
+		*)
+			print_error "Unknown option for tier-coverage: ${1:-}"
+			return 1
+			;;
+		esac
+	done
+	[[ ${#tiers[@]} -gt 0 ]] || tiers=(simple standard thinking)
+	local tier="" line=""
+	for tier in "${tiers[@]}"; do
+		while IFS= read -r line; do
+			[[ -n "$line" ]] || continue
+			printf '%s\t%s\t%s\n' "$tier" "${line%=*}" "${line##*=}"
+		done < <(tier_candidate_exclusion_reasons "$tier")
+	done
 	return 0
 }
 
