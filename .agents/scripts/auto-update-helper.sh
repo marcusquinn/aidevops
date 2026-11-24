@@ -470,6 +470,7 @@ update_state() {
 	local action="$1"
 	local version="${2:-}"
 	local status="${3:-success}"
+	local reason="${4:-}"
 	local timestamp
 	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -482,11 +483,13 @@ update_state() {
 			jq --arg action "$action" \
 				--arg version "$version" \
 				--arg status "$status" \
+				--arg reason "$reason" \
 				--arg ts "$timestamp" \
 				'. + {
                    last_action: $action,
                    last_version: $version,
                    last_status: $status,
+                   last_reason: $reason,
                    last_timestamp: $ts
                } | if $action == "update" and $status == "success" then
                    . + {last_update: $ts, last_update_version: $version}
@@ -495,12 +498,14 @@ update_state() {
 			jq -n --arg action "$action" \
 				--arg version "$version" \
 				--arg status "$status" \
+				--arg reason "$reason" \
 				--arg ts "$timestamp" \
 				'{
                       enabled: true,
                       last_action: $action,
                       last_version: $version,
                       last_status: $status,
+                      last_reason: $reason,
                       last_timestamp: $ts,
                       last_skill_check: null,
                       skill_updates_applied: 0
@@ -570,13 +575,28 @@ _auto_update_rollback_runtime_bundle() {
 }
 
 _run_setup_ai_session_with_fallback() {
+	local version="${1:-}"
 	local setup_script="${INSTALL_DIR}/setup.sh"
-	if bash "$setup_script" --stage ai-session >>"$LOG_FILE" 2>&1; then
-		return 0
+	local setup_rc=0 log_start=0 reason=""
+	# Restrict reason extraction to this invocation, never an earlier refusal.
+	if [[ -f "$LOG_FILE" ]]; then
+		log_start=$(wc -l <"$LOG_FILE")
 	fi
-	log_warn "AI-session incremental setup failed or is unavailable; retrying full setup"
-	bash "$setup_script" --non-interactive >>"$LOG_FILE" 2>&1
-	return $?
+	bash "$setup_script" --stage ai-session >>"$LOG_FILE" 2>&1 || setup_rc=$?
+	if [[ "$setup_rc" -ne 0 && "$setup_rc" -ne 78 ]]; then
+		log_warn "AI-session incremental setup failed or is unavailable; retrying full setup"
+		setup_rc=0
+		bash "$setup_script" --non-interactive >>"$LOG_FILE" 2>&1 || setup_rc=$?
+	fi
+	if [[ "$setup_rc" -eq 78 ]]; then
+		reason=$(tail -n "+$((log_start + 1))" "$LOG_FILE" | tail -n 80 | grep -i 'Refusing ' | tail -n 1 || true)
+		# Setup uses coloured diagnostics; store plain text for status consumers.
+		reason=$(printf '%s' "$reason" | sed $'s/\033\\[[0-9;]*m//g')
+		reason="${reason:-Setup refused deployment (exit 78); see auto-update log for details}"
+		update_state "update" "$version" "deploy_refused" "$reason"
+		log_warn "Deployment refused; skipping full-setup retry: $reason"
+	fi
+	return "$setup_rc"
 }
 
 #######################################
@@ -646,7 +666,7 @@ _cmd_check_stale_agent_redeploy() {
 	deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
 	if [[ "$current" != "$deployed_version" ]]; then
 		log_warn "Deployed agents stale ($deployed_version), re-deploying..."
-		if _run_setup_ai_session_with_fallback; then
+		if _run_setup_ai_session_with_fallback "$current"; then
 			local redeployed_version
 			redeployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
 			if [[ "$current" == "$redeployed_version" ]]; then
@@ -721,7 +741,7 @@ _cmd_check_stale_agent_redeploy() {
 			fi
 			if [[ "$has_code_drift" -eq 1 ]]; then
 				log_warn "Script drift detected (${deployed_sha:0:7}→${head_sha:0:7} at v$current) — re-deploying agents..."
-				if _run_setup_ai_session_with_fallback; then
+				if _run_setup_ai_session_with_fallback "$current"; then
 					log_info "Agents re-deployed after script drift (${deployed_sha:0:7}→${head_sha:0:7})"
 				else
 					log_error "setup.sh failed during script-drift re-deploy (exit code: $?)"
@@ -830,7 +850,10 @@ _cmd_check_perform_update() {
 	# when changed setup logic cannot be applied safely.
 	log_info "Running setup.sh --stage ai-session..."
 	local _setup_exit=0
-	_run_setup_ai_session_with_fallback || _setup_exit=$?
+	_run_setup_ai_session_with_fallback "$remote" || _setup_exit=$?
+	# The helper already persisted the refusal and its reason. Do not overwrite
+	# it with setup_failed or run the missing-completion-sentinel diagnostics.
+	[[ "$_setup_exit" -ne 78 ]] || return 1
 
 	# GH#21060 / t2911: Log slowest 5 stages from this run so that
 	# "tail -50 ~/.aidevops/logs/auto-update.log | grep Slowest" is
@@ -1545,6 +1568,11 @@ _cmd_status_state() {
 
 	echo ""
 	echo "  Last check:         $last_ts ($last_action: $last_status)"
+	if [[ "$last_status" == "deploy_refused" ]]; then
+		local last_reason
+		last_reason=$(jq -r '.last_reason // "See auto-update log for refusal details"' "$STATE_FILE" 2>/dev/null)
+		printf '  Deploy refusal:     %s\n' "$last_reason"
+	fi
 	if [[ "$last_update" != "never" ]]; then
 		echo "  Last update:        $last_update (v$last_update_ver)"
 	fi

@@ -269,7 +269,7 @@ _setup_run_scoped_stage() {
 	stage="$(_setup_canonical_stage "$SETUP_STAGE")" || return 1
 
 	if [[ "$stage" == "full" ]]; then
-		_setup_run_non_interactive
+		_setup_run_non_interactive || return $?
 		_setup_post_setup_steps "$os"
 		return 0
 	fi
@@ -283,7 +283,7 @@ _setup_run_scoped_stage() {
 		_time_step "setup_opencode_desktop_launcher" setup_opencode_desktop_launcher
 		;;
 	"$SETUP_STAGE_AGENTS")
-		_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents
+		_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents || return $?
 		_time_step "$SETUP_STAGE_OPENCODE_PLUGINS" setup_opencode_runtime_plugins
 		_time_step "$SETUP_STAGE_OPENCODE_SERVICE" setup_opencode_service
 		_time_step "$SETUP_STAGE_HOTFIX_CONFIG" _deploy_hotfix_config
@@ -415,7 +415,7 @@ _setup_run_non_interactive() {
 	_setup_run_noninteractive_migrations
 	_time_step "$SETUP_STAGE_OPENCODE" setup_opencode_runtimes
 	_time_step "validate_opencode_config" validate_opencode_config
-	_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents
+	_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents || return $?
 	_time_step "$SETUP_STAGE_OPENCODE_PLUGINS" setup_opencode_runtime_plugins
 	_time_step "$SETUP_STAGE_OPENCODE_SERVICE" setup_opencode_service
 	_time_step "reconcile_buzz_desktop_compatibility" reconcile_buzz_desktop_compatibility

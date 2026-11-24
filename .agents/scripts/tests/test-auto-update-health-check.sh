@@ -151,6 +151,131 @@ EOF
 # ---------------------------------------------------------------------------
 # Structural checks against the real helper file — do not require runtime.
 # ---------------------------------------------------------------------------
+# GH#40150: exercise the updater with a real setup subprocess and isolated state.
+test_deploy_refusal_fallback() (
+	local implementation="$1"
+	local fixture
+	fixture=$(mktemp -d)
+	trap 'rm -rf "$fixture"' EXIT
+	local INSTALL_DIR="$fixture" LOG_FILE="$fixture/update.log" STATE_FILE="$fixture/state.json"
+	export SETUP_CALLS="$fixture/calls" INCREMENTAL_RC=78 FULL_RC=0
+	# shellcheck source=../auto-update-helper-check.sh
+	source "$CHECK_LIBRARY"
+	if [[ "$implementation" == orchestrator ]]; then
+		# Existing function-extraction pattern below avoids main and host setup.
+		eval "$(sed -n '/^update_state() {/,/^}/p; /^_run_setup_ai_session_with_fallback() {/,/^}/p; /^_cmd_check_perform_update() {/,/^}/p; /^_auto_update_runtime_bundle_root() {/,/^}/p' "$HELPER")"
+	fi
+	log_warn() { local message="$1"; printf '%s\n' "$message" >>"$LOG_FILE"; return 0; }
+	log_info() { local message="$1"; : "$message"; return 0; }
+	log_error() { local message="$1"; : "$message"; return 0; }
+	cat >"$fixture/setup.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$SETUP_CALLS"
+if [[ "$1" == --stage ]]; then
+	if [[ "$INCREMENTAL_RC" -eq 78 ]]; then
+		printf '\033[0;31mRefusing incompatible source-access runtime deployment: fixture mismatch\033[0m\n'
+	fi
+	exit "$INCREMENTAL_RC"
+fi
+exit "$FULL_RC"
+EOF
+	local rc=0
+	_run_setup_ai_session_with_fallback '1.2.3' || rc=$?
+	[[ "$rc" -eq 78 && "$(wc -l <"$SETUP_CALLS")" -eq 1 ]] || return 1
+	jq -e '.last_status == "deploy_refused" and .last_version == "1.2.3" and .last_reason == "Refusing incompatible source-access runtime deployment: fixture mismatch"' "$STATE_FILE" >/dev/null || return 1
+	# Repeated refusals exercise updating an existing state rather than creating it.
+	_run_setup_ai_session_with_fallback '1.2.4' || rc=$?
+	jq -e '.last_status == "deploy_refused" and .last_version == "1.2.4"' "$STATE_FILE" >/dev/null || return 1
+	# Verify the production update caller does not overwrite deploy_refused.
+	mkdir "$fixture/.git"
+	_cmd_check_git_update() { return 0; }
+	rc=0
+	_cmd_check_perform_update '1.2.3' '1.2.5' || rc=$?
+	[[ "$rc" -eq 1 ]] || return 1
+	jq -e '.last_status == "deploy_refused" and .last_version == "1.2.5"' "$STATE_FILE" >/dev/null || return 1
+	# No current refusal line must not reuse an old refusal from the shared log.
+	INCREMENTAL_RC=1 FULL_RC=78 rc=0
+	_run_setup_ai_session_with_fallback '1.2.6' || rc=$?
+	[[ "$rc" -eq 78 ]] || return 1
+	jq -e '.last_status == "deploy_refused" and (.last_reason | startswith("Setup refused deployment (exit 78)"))' "$STATE_FILE" >/dev/null || return 1
+	INCREMENTAL_RC=1 FULL_RC=0 rc=0
+	_run_setup_ai_session_with_fallback '1.2.7' || rc=$?
+	[[ "$rc" -eq 0 && "$(tail -n 1 "$SETUP_CALLS")" == --non-interactive ]] || return 1
+	INCREMENTAL_RC=0 rc=0
+	local before
+	before=$(wc -l <"$SETUP_CALLS")
+	_run_setup_ai_session_with_fallback '1.2.7' || rc=$?
+	[[ "$rc" -eq 0 && "$(wc -l <"$SETUP_CALLS")" -eq $((before + 1)) ]] || return 1
+	# Status must surface the reason, and successful state must clear it.
+	# shellcheck source=../auto-update-helper-status.sh
+	source "$AGENT_SCRIPT_DIR/auto-update-helper-status.sh"
+	if [[ "$implementation" == orchestrator ]]; then
+		eval "$(sed -n '/^_cmd_status_state() {/,/^}/p' "$HELPER")"
+	fi
+	get_user_idle_seconds() { printf '0'; return 0; }
+	get_feature_toggle() { printf '1'; return 0; }
+	local DEFAULT_TOOL_IDLE_HOURS=1 GREEN='' YELLOW='' NC=''
+	local output
+	output=$(_cmd_status_state)
+	[[ "$output" == *'Deploy refusal:'* && "$output" == *'Setup refused deployment (exit 78)'* ]] || return 1
+	update_state update '1.2.7' success
+	jq -e '.last_status == "success" and .last_reason == "" and .last_update_version == "1.2.7"' "$STATE_FILE" >/dev/null || return 1
+	return 0
+)
+
+for implementation in library orchestrator; do
+	if test_deploy_refusal_fallback "$implementation"; then
+		print_result "$implementation: refusal skips retry, persists reason, and transient failure still falls back" "PASS"
+	else
+		print_result "$implementation: refusal skips retry, persists reason, and transient failure still falls back" "FAIL"
+	fi
+done
+
+# The scoped stage runner has its own fallback, independently of auto-update.
+test_scoped_refusal_fallback() (
+	# shellcheck source=../setup/modules/setup-execution.sh
+	source "$AGENT_SCRIPT_DIR/setup/modules/setup-execution.sh"
+	local SETUP_STAGE=ai-session SETUP_STAGE_AI_SESSION=ai-session INSTALL_DIR="$AGENT_SCRIPT_DIR"
+	local SETUP_STAGE_OPENCODE=opencode SETUP_STAGE_AGENTS=agents SETUP_STAGE_RUNTIME_CONFIG=config
+	local SETUP_STAGE_SOURCE_ACCESS=source-access SETUP_STAGE_HOOKS=hooks SETUP_STAGE_TABBY=tabby
+	local SETUP_STAGE_PULSE=pulse SETUP_STAGE_GUI_DESKTOP=gui
+	local SETUP_STAGE_OPENCODE_PLUGINS=plugins
+	local fixture_incremental_rc=78 full_calls=0 rc=0
+	_setup_canonical_stage() { local stage="$1"; printf '%s' "$stage"; return 0; }
+	_setup_init_stage_timing_log() { return 0; }
+	print_info() { local message="$1"; : "$message"; return 0; }
+	print_warning() { local message="$1"; : "$message"; return 0; }
+	_setup_run_ai_session_incremental() { return "$fixture_incremental_rc"; }
+	_setup_run_non_interactive() { full_calls=$((full_calls + 1)); return 0; }
+	_setup_post_setup_steps() { return 0; }
+	_setup_ai_session_verify_deploy() { return 0; }
+	_setup_run_scoped_stage Linux || rc=$?
+	[[ "$rc" -eq 78 && "$full_calls" -eq 0 ]] || return 1
+	fixture_incremental_rc=1 rc=0
+	_setup_run_scoped_stage Linux || rc=$?
+	[[ "$rc" -eq 0 && "$full_calls" -eq 1 ]] || return 1
+	# When incremental support is unavailable, the internal full setup must
+	# also stop at the refusal, even in a caller that suppresses errexit.
+	eval "$(sed -n '/^_setup_run_non_interactive() {/,/^}/p' "$AGENT_SCRIPT_DIR/setup/modules/setup-execution.sh")"
+	_setup_run_noninteractive_migrations() { return 0; }
+	_time_step() {
+		local stage="$1"
+		[[ "$stage" != "$SETUP_STAGE_AGENTS" ]] || return 78
+		[[ "$stage" != "$SETUP_STAGE_OPENCODE_PLUGINS" ]] || full_calls=$((full_calls + 1))
+		return 0
+	}
+	rc=0
+	_setup_run_scoped_stage Linux || rc=$?
+	[[ "$rc" -eq 78 && "$full_calls" -eq 1 ]] || return 1
+	return 0
+)
+
+if test_scoped_refusal_fallback; then
+	print_result "scoped ai-session runner propagates refusal but retains transient fallback" "PASS"
+else
+	print_result "scoped ai-session runner propagates refusal but retains transient fallback" "FAIL"
+fi
+
 echo "Structural checks (HELPER=$HELPER):"
 
 if [[ ! -x "$HELPER" ]]; then
