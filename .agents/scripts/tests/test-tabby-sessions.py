@@ -526,13 +526,14 @@ class AuthenticationTests(unittest.TestCase):
         flock = authentication.fcntl.flock
 
         def observed_flock(fd, operation):
-            if operation == authentication.fcntl.LOCK_EX:
-                try:
-                    return flock(fd, operation | authentication.fcntl.LOCK_NB)
-                except BlockingIOError:
-                    # Signal only after the kernel rejects an actual competing
-                    # acquisition, not merely after the worker starts running.
-                    attempts.wait(timeout=5)
+            try:
+                # LOCK_NB leaves unlock operations unchanged; only a competing
+                # acquisition can raise BlockingIOError.
+                return flock(fd, operation | authentication.fcntl.LOCK_NB)
+            except BlockingIOError:
+                # Signal only after the kernel rejects an actual competing
+                # acquisition, not merely after the worker starts running.
+                attempts.wait(timeout=5)
             return flock(fd, operation)
 
         patch = mock.patch.object(authentication.fcntl, "flock", side_effect=observed_flock)
@@ -572,7 +573,7 @@ class AuthenticationTests(unittest.TestCase):
 
     def test_twenty_tabs_keep_one_handshake_pending_while_sessions_remain_live(self):
         start = threading.Barrier(20)
-        connected = threading.Event()
+        connected = threading.Barrier(20)
         all_contending = self.observe_contention(19)
         mutex = threading.Lock()
         counts = dict(pending=0, peak=0, connected=0)
@@ -590,10 +591,10 @@ class AuthenticationTests(unittest.TestCase):
                 with mutex:
                     counts["pending"] -= 1
                     counts["connected"] += 1
-                    if counts["connected"] == 20:
-                        connected.set()
                 ready()
-                self.assertTrue(connected.wait(5))
+                # All connected contexts must remain alive until the last
+                # handshake has been acknowledged.
+                connected.wait(timeout=5)
 
         with ThreadPoolExecutor(max_workers=20) as pool:
             list(pool.map(connect, range(20)))
