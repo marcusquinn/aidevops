@@ -192,12 +192,15 @@ _runner_capability_host_ipc_verdict() {
 	*) [[ "$(uname -s 2>/dev/null)" == Darwin ]] || return 0 ;;
 	esac
 	local rc=0
-	python3 - < <(_runner_capability_python_host_ipc) || rc=$?
+	python3 - < <(
+		_runner_capability_python_host_ipc_probes
+		_runner_capability_python_host_ipc_cache
+	) || rc=$?
 	[[ "$rc" -eq 0 ]] || return 1
 	return 0
 }
 
-_runner_capability_python_host_ipc() {
+_runner_capability_python_host_ipc_probes() {
 	cat <<'PY'
 import fcntl
 import json
@@ -286,6 +289,12 @@ def report(failed, ttl, cached):
               f'claiming, rechecked every {ttl}s', file=sys.stderr)
     raise SystemExit(1)
 
+PY
+	return 0
+}
+
+_runner_capability_python_host_ipc_cache() {
+	cat <<'PY'
 def cache_directory():
     base = Path(os.environ.get('AIDEVOPS_TEMP_DIR') or
                 str(Path.home() / '.aidevops/.agent-workspace/tmp'))
