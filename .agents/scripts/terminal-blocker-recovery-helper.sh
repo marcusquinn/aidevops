@@ -953,6 +953,33 @@ _tbr_skip_decided_unchanged() {
 	return 0
 }
 
+# Finish an entry known to remain held. Keep supervisor assessment separate
+# from mechanical re-arm, including the due dated-trigger projection.
+_tbr_finish_held_entry() {
+	local file="$1" mode="$2" repo="$3" issue="$4" issue_json="$5" comments="$6" brief="$7" updated_at="$8"
+	local reason="$9" key="${10}" opened_at="${11}" intake="${12}" recheck_after=""
+	# Infrastructure recovery is a positive wake condition even for an active
+	# unknown circuit. The release helper still enforces labels and dependencies.
+	if [[ "$reason" == unknown ]]; then
+		local lifecycle_rc=0
+		_tbr_release_circuit_hold "$repo" "$issue" "$issue_json" "$comments" || lifecycle_rc=$?
+		if [[ "$lifecycle_rc" -eq 0 ]]; then
+			rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
+			return 1
+		fi
+	fi
+	if [[ "$mode" == rearm ]]; then
+		# Only a complete, still-held observation may skip unchanged comments.
+		_tbr_stamp_rearm_check "$file" "$updated_at" "$comments" "$brief" || return 2
+		return 1
+	fi
+	_tbr_decision_active "$key" "$comments" && return 1
+	recheck_after=$(_terminal_blocker_observed_recheck_after "$comments") || recheck_after=""
+	_tbr_print_entry "$repo" "$issue" "$reason" "$opened_at" "$intake" "$issue_json" |
+		jq -c --arg at "$recheck_after" 'if $at == "" then . else . + {recheck_after: $at, next_action: "recheck_external_trigger"} end'
+	return $?
+}
+
 #######################################
 # Re-verify one entry against GitHub. Prints a JSON line when the circuit is
 # still active and unowned; retires the entry when resolved. Returns 0 when
@@ -1010,7 +1037,7 @@ _tbr_check_entry() {
 	# intake. On expiry expose the public deadline for reassessment, not an
 	# automatic worker launch that might bypass a second ledger hold.
 	terminal_blocker_dated_hold_active "$comments" >/dev/null && return 1
-	local cap_hold="" recheck_after=""
+	local cap_hold=""
 	if cap_hold=$(terminal_blocker_session_cap_hold_active "$brief" "$repo" "$issue"); then
 		[[ "$mode" != rearm ]] || return 1
 		_tbr_decision_active "$key" "$comments" && return 1
@@ -1052,26 +1079,8 @@ _tbr_check_entry() {
 	fi
 	# Indeterminate revision: keep the entry for the next pass, report nothing.
 	[[ "$hold_rc" -eq 0 ]] || return 2
-	# Infrastructure recovery is a positive wake condition even for an active
-	# unknown circuit. The release helper still enforces labels and dependencies.
-	if [[ "$reason" == unknown ]]; then
-		local lifecycle_rc=0
-		_tbr_release_circuit_hold "$repo" "$issue" "$issue_json" "$comments" || lifecycle_rc=$?
-		if [[ "$lifecycle_rc" -eq 0 ]]; then
-			rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
-			return 1
-		fi
-	fi
-	if [[ "$mode" == rearm ]]; then
-		# Only a complete, still-held observation may skip unchanged comments.
-		# Do not consult owner decisions or collect excerpts for the LLM.
-		_tbr_stamp_rearm_check "$file" "$updated_at" "$comments" "$brief" || return 2
-		return 1
-	fi
-	_tbr_decision_active "$key" "$comments" && return 1
-	recheck_after=$(_terminal_blocker_observed_recheck_after "$comments") || recheck_after=""
-	_tbr_print_entry "$repo" "$issue" "$reason" "$opened_at" "$intake" "$issue_json" |
-		jq -c --arg at "$recheck_after" 'if $at == "" then . else . + {recheck_after: $at, next_action: "recheck_external_trigger"} end'
+	_tbr_finish_held_entry "$file" "$mode" "$repo" "$issue" "$issue_json" "$comments" "$brief" "$updated_at" \
+		"$reason" "$key" "$opened_at" "$intake"
 	return $?
 }
 
