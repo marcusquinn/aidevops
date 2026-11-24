@@ -122,7 +122,10 @@ grep -q 'registered=1 .*current=98$' "$ROOT/registration.log"
 
 # A failed write must never certify a truncated executable as current.
 rm -f "${hook}.aidevops-current"
-if (ulimit -f 1; cd "$ROOT/repo-0" && bash "$INSTALL_DIR/.agents/scripts/install-pre-push-guards.sh" install --guard privacy >/dev/null 2>&1); then
+if (
+	ulimit -f 1
+	cd "$ROOT/repo-0" && bash "$INSTALL_DIR/.agents/scripts/install-pre-push-guards.sh" install --guard privacy >/dev/null 2>&1
+); then
 	printf 'FAIL: oversized hook write unexpectedly succeeded\n' >&2
 	exit 1
 fi

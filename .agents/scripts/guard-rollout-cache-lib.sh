@@ -60,6 +60,7 @@ guard_rollout_scan() {
 	local registrations="${5:-$1}"
 	[[ -n "$fingerprint" ]] && command -v python3 >/dev/null 2>&1 || return 1
 	python3 - "$registry" "$hook_name" "$marker" "$fingerprint" "$registrations" <<'PY'
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -72,40 +73,49 @@ try:
     entries = json.loads(Path(registry).read_text())["initialized_repos"]
     registered = {entry["path"] for entry in json.loads(Path(registrations).read_text())["initialized_repos"]
                   if "code-quality" in entry.get("features", [])}
-except (OSError, ValueError, KeyError, TypeError):
+except (OSError, ValueError, KeyError, TypeError, AttributeError):
     sys.exit(1)
-for entry in entries:
+
+def current(entry):
     try:
         repo = entry["path"]
         if not isinstance(repo, str) or "\n" in repo:
-            continue
+            return None
         # Match the existing rollout's leading-tilde expansion, not ~username.
         if name != "pre-push" or marker != "# guard:repo-verify":
             repo = os.environ["HOME"] + repo[1:] if repo.startswith("~") else repo
         if not (Path(repo) / ".git").exists():
-            continue
+            return None
         if marker == "# guard:repo-verify":
             config = json.loads((Path(repo) / ".aidevops.json").read_text())
             if (repo not in registered or config.get("features", {}).get("code_quality") is not True
                     or config.get("verify", {}).get("enabled") is False):
-                continue
+                return None
         result = subprocess.run(["git", "-C", repo, "rev-parse", "--path-format=absolute", "--git-path", "hooks"],
                                 capture_output=True, text=True, timeout=5, check=True)
         directory = result.stdout.rstrip("\n")
         if not directory.startswith("/") or "\n" in directory:
-            continue
+            return None
         hook = Path(directory) / name
         if hook.is_symlink() or not hook.is_file() or not os.access(hook, os.X_OK):
-            continue
+            return None
         receipt = Path(str(hook) + ".aidevops-current").read_text().rstrip("\n")
         if not receipt.startswith(fingerprint + "\n"):
-            continue
+            return None
         data = hook.read_bytes()
         digest = hashlib.sha256(data).hexdigest() + "  " + str(hook)
         if marker.encode() in data.splitlines() and receipt == fingerprint + "\n" + digest:
-            print(repo)
+            return repo
     except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
-        continue
+        return None
+    return None
+
+# Bound read-only Git resolution concurrency: installed Git may itself be a
+# policy wrapper, so serial startup can dominate otherwise cheap file checks.
+with ThreadPoolExecutor(max_workers=8) as pool:
+    for repo in pool.map(current, entries):
+        if repo is not None:
+            print(repo)
 PY
 	return $?
 }
