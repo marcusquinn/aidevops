@@ -978,14 +978,7 @@ _tbr_check_entry() {
 	fi
 	local issue_json="" state=""
 	printf 'blocker-recovery: checking stage=entry_issue repo=%s issue=%s\n' "$repo" "$issue" >&2
-	# Only the supervisor queue passes a same-window batch. All other callers,
-	# especially mechanical release/rearm reads, continue to fetch individually.
-	if [[ -n "$batch_file" ]]; then
-		issue_json=$(jq -ce --arg key "$key" '.[$key | ascii_downcase] | objects' "$batch_file" 2>/dev/null) || issue_json=""
-	fi
-	if [[ -z "$issue_json" ]]; then
-		issue_json=$(terminal_blocker_fetch_issue "$repo" "$issue") || return 2
-	fi
+	issue_json=$(terminal_blocker_fetch_queue_issue "$repo" "$issue" "$batch_file") || return 2
 	state=$(printf '%s' "$issue_json" | jq -r '.state // ""')
 	[[ "$state" == open || "$state" == closed ]] || return 2
 	if [[ "$state" != "open" ]]; then

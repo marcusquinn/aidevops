@@ -28,6 +28,21 @@ terminal_blocker_fetch_issue_batch() {
 	return 0
 }
 
+# Only the supervisor supplies a same-window snapshot; releases and rearm
+# continue to call the fresh-read helper without a batch.
+terminal_blocker_fetch_queue_issue() {
+	local repo="$1" issue="$2" batch_file="$3" response=""
+	if [[ -n "$batch_file" ]]; then
+		response=$(jq -ce --arg key "${repo//\//--}--${issue}" '.[$key | ascii_downcase] | objects' "$batch_file" 2>/dev/null) || response=""
+	fi
+	if [[ -n "$response" ]]; then
+		printf '%s\n' "$response"
+		return 0
+	fi
+	terminal_blocker_fetch_issue "$repo" "$issue" || return 1
+	return 0
+}
+
 terminal_blocker_fetch_issue() {
 	local repo="$1" issue="$2" response=""
 	if response=$(gh api "repos/${repo}/issues/${issue}" 2>/dev/null); then
