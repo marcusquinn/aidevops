@@ -20,8 +20,8 @@ test_target_code_receipt_before_release() {
 		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
 		local live_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa api_fail=0
 		local fixture='{"state":"open","title":"Fix helper","body":"unchanged brief","labels":[{"name":"status:blocked"},{"name":"needs-ai-recovery"}]}'
-		local comments='[]' revision='' fingerprint='' rc=0 receipts=0 projections=0
-		local fail_receipt=1 fail_projection=0 receipt_body=''
+		local fixture_comments='[]' revision='' fingerprint='' rc=0 receipts=0 projections=0
+		local fail_receipt=1 fail_projection=0 receipt_body='' newer_event=0
 		gh() {
 			[[ "$*" == 'api repos/owner/repo/commits?per_page=1 --jq .[0].sha' && "$api_fail" == 0 ]] || return 1
 			printf '%s\n' "$live_sha"
@@ -31,12 +31,20 @@ test_target_code_receipt_before_release() {
 		_tbr_repo_path() { printf '%s\n' "$TEST_ROOT"; return 0; }
 		_tbr_dependency_unresolved() { return 1; }
 		terminal_blocker_fetch_issue() { printf '%s\n' "$fixture"; return 0; }
+		terminal_blocker_fetch_trusted_comments() {
+			if [[ "$newer_event" == 1 ]]; then
+				jq -c '. + [{id:30,body:"newer coordination event"}]' <<<"$fixture_comments"
+			else
+				printf '%s\n' "$fixture_comments"
+			fi
+			return 0
+		}
 		_tbr_post_rearm_receipt() {
 			local marker="$3" extra="$4"
 			[[ "$fail_receipt" == 0 ]] || return 2
 			receipts=$((receipts + 1))
 			receipt_body="${marker}"$'\n'"${extra}"
-			comments=$(jq -c --arg body "$receipt_body" '. + [{id:20,body:$body,author_association:"MEMBER",created_at:"2026-10-30T12:00:00Z"}]' <<<"$comments")
+			fixture_comments=$(jq -c --arg body "$receipt_body" '. + [{id:20,body:$body,author_association:"MEMBER",created_at:"2026-10-30T12:00:00Z"}]' <<<"$fixture_comments")
 			return 0
 		}
 		set_issue_status() {
@@ -49,19 +57,24 @@ test_target_code_receipt_before_release() {
 		}
 		revision=$(terminal_blocker_task_revision "$fixture" owner/repo 42 '' target_code_blocker) || exit 1
 		fingerprint=$(_terminal_blocker_hash v2:target_code_blocker)
-		comments=$(jq -nc --arg r "$revision" --arg f "$fingerprint" '[{id:10,body:("<!-- aidevops:terminal-blocker-observation revision="+$r+" blocker="+$f+" -->"),author_association:"MEMBER",created_at:"2026-10-30T11:00:00Z"}]')
+		fixture_comments=$(jq -nc --arg r "$revision" --arg f "$fingerprint" '[{id:10,body:("<!-- aidevops:terminal-blocker-observation revision="+$r+" blocker="+$f+" -->"),author_association:"MEMBER",created_at:"2026-10-30T11:00:00Z"}]')
 		# The brief and local checkout stay unchanged; only live default advances.
 		live_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$comments" || rc=$?
+		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$fixture_comments" || rc=$?
 		[[ "$rc" == 2 && "$projections" == 0 && "$receipts" == 0 ]] || exit 1
 		fail_receipt=0 fail_projection=1 rc=0
-		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$comments" || rc=$?
+		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$fixture_comments" || rc=$?
 		[[ "$rc" == 2 && "$projections" == 1 && "$receipts" == 1 ]] || exit 1
+		# A new event during replay must leave the newer hold untouched.
+		newer_event=1 rc=0
+		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$fixture_comments" || rc=$?
+		[[ "$rc" == 2 && "$projections" == 1 && "$receipts" == 1 ]] || exit 1
+		newer_event=0
 		# Replaying the receipt finishes a failed projection without republishing.
 		fail_projection=0
-		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$comments" || exit 1
+		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$fixture_comments" || exit 1
 		[[ "$projections" == 2 && "$receipts" == 1 ]] || exit 1
-		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$comments" || exit 1
+		_tbr_release_circuit_hold owner/repo 42 "$fixture" "$fixture_comments" || exit 1
 		[[ "$projections" == 2 && "$receipts" == 1 ]] || exit 1
 		api_fail=1
 		terminal_blocker_task_revision "$fixture" owner/repo 42 "$TEST_ROOT" target_code_blocker && exit 1

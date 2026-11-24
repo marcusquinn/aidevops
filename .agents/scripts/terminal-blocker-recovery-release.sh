@@ -440,7 +440,8 @@ _tbr_rearm_reason_line() {
 _tbr_project_rearm() {
 	local repo="$1" issue="$2" issue_json="$3" comments="$4" receipt="$5"
 	local observed_rev="$6" current_rev="$7" extra="${8:-}"
-	local receipt_present=false
+	local receipt_present=false live_issue="" live_comments=""
+	local interrupted_jq="${_TBR_INTERRUPTED_RELEASE_JQ:-def interrupted_release: false;}"
 	# The caller must still decide the re-arm from authoritative evidence; a
 	# receipt suppresses publication, never grants release authority by itself.
 	if printf '%s' "$comments" | jq -e --arg marker "$receipt" 'any(.[]; (.body // "") | split("\n") | index($marker) != null)' >/dev/null; then
@@ -448,10 +449,20 @@ _tbr_project_rearm() {
 		receipt_present=true
 		# A receipt may have landed before a failed label projection. Re-read
 		# rather than acting on a stale blocked snapshot or retiring its queue.
-		issue_json=$(terminal_blocker_fetch_issue "$repo" "$issue") || return 2
-		printf '%s' "$issue_json" | jq -e '.state == "open" and (.labels | type == "array")' >/dev/null || return 2
-		printf '%s' "$issue_json" | jq -e --arg blocked status:blocked "${_TBR_OTHER_HOLDS_JQ}"'
+		live_issue=$(terminal_blocker_fetch_issue "$repo" "$issue") || return 2
+		printf '%s' "$live_issue" | jq -e '.state == "open" and (.labels | type == "array")' >/dev/null || return 2
+		printf '%s' "$live_issue" | jq -e --arg blocked status:blocked "${_TBR_OTHER_HOLDS_JQ}"'
 			[.labels[]?.name] | other_holds($blocked) | length == 0' >/dev/null || return 2
+		printf '%s' "$live_issue" | jq -e --arg blocked status:blocked "${interrupted_jq}"'
+			[.labels[]?.name] | (index($blocked) != null) or interrupted_release' >/dev/null || return 0
+		# Do not clear a newer owner's block with the old receipt. Changed brief
+		# or coordination evidence restarts the decision on the next queue pass.
+		printf '%s' "$live_issue" | jq -e --argjson old "$issue_json" '
+			((.assignees // []) | length == 0) and
+			({title,body} == ($old | {title,body}))' >/dev/null || return 2
+		live_comments=$(terminal_blocker_fetch_trusted_comments "$issue" "$repo" "${TERMINAL_BLOCKER_SELF_LOGIN:-}") || return 2
+		[[ "$(jq -Sc 'sort_by(.id)' <<<"$live_comments")" == "$(jq -Sc 'sort_by(.id)' <<<"$comments")" ]] || return 2
+		issue_json="$live_issue"
 	fi
 	if ! declare -F set_issue_status >/dev/null 2>&1; then
 		# shellcheck source=shared-constants.sh
@@ -469,7 +480,6 @@ _tbr_project_rearm() {
 		_tbr_post_rearm_receipt "$repo" "$issue" "$receipt" "$extra" || return 2
 	fi
 	# GH#39710: finish a projection cut off after removing status:blocked.
-	local interrupted_jq="${_TBR_INTERRUPTED_RELEASE_JQ:-def interrupted_release: false;}"
 	if printf '%s' "$issue_json" | jq -e --arg blocked status:blocked "${interrupted_jq}"'
 		[.labels[]?.name] | (index($blocked) != null) or interrupted_release' >/dev/null; then
 		# GH#38360: the re-arm is the trusted retry or revision that the
