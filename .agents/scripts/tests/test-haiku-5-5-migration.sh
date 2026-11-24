@@ -59,7 +59,8 @@ file_mode() {
 	return 0
 }
 
-assert_eq "2" "$(grep -c 'migrate_haiku_5_5_settings' "$SETUP_SCRIPT")" "setup runs the migration in interactive and non-interactive paths"
+SETUP_EXECUTION_MODULE="${SCRIPT_DIR}/../setup/modules/setup-execution.sh"
+assert_eq "2" "$(grep -c 'migrate_haiku_5_5_settings' "$SETUP_EXECUTION_MODULE")" "setup runs the migration in interactive and non-interactive paths"
 
 # --- Old pins across every owned file are moved; everything else is kept ---
 HOME="$TEST_ROOT/pinned"

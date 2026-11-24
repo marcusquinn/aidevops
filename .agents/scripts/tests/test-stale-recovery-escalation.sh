@@ -15,6 +15,7 @@
 #      is requested without NMR mutation.
 #   6. Ready PR with terminal failed checks: escalate after verified read-back.
 #   7. Above-threshold (3 prior ticks >= threshold=2) also escalates.
+#   8. GH#40027: claims that never reached a ready lease count once per runner.
 #
 # Tests use the `test-recover` subcommand added to dispatch-dedup-helper.sh
 # (t2008) to expose _recover_stale_assignment without sourcing complications.
@@ -68,10 +69,21 @@ _write_stub_gh_api() {
 #!/usr/bin/env bash
 # Stub gh for test-stale-recovery-escalation.sh
 printf '%s\n' "\$*" >> "${GH_CALLS_FILE}"
+# Record posted bodies too, so tests can assert the audit markers.
+_prev=""
+for _arg in "\$@"; do
+	[[ "\$_prev" != "--body-file" || ! -f "\$_arg" ]] || cat "\$_arg" >> "${GH_CALLS_FILE}"
+	_prev="\$_arg"
+done
 
 # gh api .../comments --jq '... | length'
 # Returns the pre-computed tick count directly (t2008 test shim)
 if [[ "\$1" == "api" && "\$2" == *"/comments" ]]; then
+	# GH#40027: an explicit comment history replaces the generated one.
+	if [[ -f "${TEST_ROOT}/comments_override.json" ]]; then
+		cat "${TEST_ROOT}/comments_override.json"
+		exit 0
+	fi
 	python3 - "${tick_count}" <<'PY'
 import json
 import sys
@@ -557,6 +569,78 @@ else
 	print_result "Terminal ready PR retains ownership when structural block is invisible" 1 "(rc=$rc got: '$output')"
 fi
 
+# =============================================================================
+# GH#40027 — never-launched claims count once per runner
+# =============================================================================
+
+# Args: $1 runner login, $2 ISO timestamp, $3 lease token. Prints one comment.
+lf_claim() {
+	local runner="$1" ts="$2" token="$3"
+	jq -nc --arg r "$runner" --arg ts "$ts" --arg t "$token" '{created_at:$ts, author_association:"MEMBER", user:{login:$r},
+		body:("<!-- ops:start -->\nDISPATCH_CLAIM nonce=n-" + $t + " runner=" + $r + " ts=" + $ts +
+			" max_age_s=1800 lease_token=" + $t + " device=dev-" + $r + " session=issue-99999 phase=prelaunch expires_at=1\n<!-- ops:end -->")}'
+	return 0
+}
+# Args: $1 runner login, $2 ISO timestamp, $3 lease token. Prints one comment.
+lf_ready() {
+	local runner="$1" ts="$2" token="$3"
+	jq -nc --arg r "$runner" --arg ts "$ts" --arg t "$token" '{created_at:$ts, author_association:"MEMBER", user:{login:$r},
+		body:("DISPATCH_LEASE phase=ready lease_token=" + $t + " device=dev-" + $r + " session=issue-99999 expires_at=1")}'
+	return 0
+}
+# Args: $1 ISO timestamp, $2 marker body. Prints one tick comment.
+lf_tick() {
+	jq -nc --arg ts "$1" --arg b "$2" '{created_at:$ts, author_association:"MEMBER", user:{login:"sweeper"}, body:$b}'
+	return 0
+}
+# Args: comment JSON objects. Prints one slurped page.
+lf_pages() {
+	printf '%s\n' "$@" | jq -sc '[.]'
+	return 0
+}
+run_recover_with_comments() {
+	local pages="$1"
+	printf '%s\n' "$pages" >"${TEST_ROOT}/comments_override.json"
+	run_recover 0 "" 1
+	rm -f "${TEST_ROOT}/comments_override.json"
+	return 0
+}
+
+LF_TICK_STALE='<!-- stale-recovery-tick:launch-failure runner=stale-runner -->'
+LF_TICK_OTHER='<!-- stale-recovery-tick:launch-failure runner=other-runner -->'
+
+run_recover_with_comments "$(lf_pages "$(lf_claim stale-runner 2026-01-01T00:00:01Z t1)")"
+if grep -q "STALE_RECOVERED" <<<"$output" && grep -qF "$LF_TICK_STALE" "$GH_CALLS_FILE"; then
+	print_result "Never-launched claim writes a per-runner launch-failure tick" 0
+else
+	print_result "Never-launched claim writes a per-runner launch-failure tick" 1 "(got: '$output')"
+fi
+
+run_recover_with_comments "$(lf_pages "$(lf_claim stale-runner 2026-01-01T00:00:01Z t1)" \
+	"$(lf_tick 2026-01-01T00:30:00Z "$LF_TICK_STALE")" "$(lf_claim stale-runner 2026-01-01T01:00:00Z t2)")"
+if grep -q "STALE_RECOVERED" <<<"$output" && ! grep -q -- "--add-label status:blocked" "$GH_CALLS_FILE" &&
+	! grep -q -- "--remove-label auto-dispatch" "$GH_CALLS_FILE"; then
+	print_result "Same runner's second launch failure does not escalate" 0
+else
+	print_result "Same runner's second launch failure does not escalate" 1 "(got: '$output')"
+fi
+
+run_recover_with_comments "$(lf_pages "$(lf_claim other-runner 2026-01-01T00:00:01Z t1)" \
+	"$(lf_tick 2026-01-01T00:30:00Z "$LF_TICK_OTHER")" "$(lf_claim stale-runner 2026-01-01T01:00:00Z t2)")"
+if grep -q "STALE_ESCALATED" <<<"$output"; then
+	print_result "Launch failures by two runners still escalate at threshold" 0
+else
+	print_result "Launch failures by two runners still escalate at threshold" 1 "(got: '$output')"
+fi
+
+run_recover_with_comments "$(lf_pages "$(lf_tick 2026-01-01T00:30:00Z '<!-- stale-recovery-tick:1 -->')" \
+	"$(lf_claim stale-runner 2026-01-01T01:00:00Z t2)" "$(lf_ready stale-runner 2026-01-01T01:01:00Z t2)")"
+if grep -q "STALE_ESCALATED" <<<"$output"; then
+	print_result "Claim that reached ready counts as today" 0
+else
+	print_result "Claim that reached ready counts as today" 1 "(got: '$output')"
+fi
+
 export PATH="$OLD_PATH"
 
 # Release accounting is independent of the status-label contract fixture above.
@@ -615,6 +699,64 @@ if result=$(_stale_recovery_final_evidence_recheck() { return 0; }; _stale_recov
 else
 	print_result "Final merged progress recheck prevents escalation" 1 "$result"
 fi
+
+# GH#40027: launch-failure tick accounting and the never-launched predicate.
+lf_check() {
+	local name="$1" got="$2" want="$3"
+	if [[ "$got" == "$want" ]]; then
+		print_result "$name" 0
+	else
+		print_result "$name" 1 "(got '$got' want '$want')"
+	fi
+	return 0
+}
+lf_check "Launch-failure ticks by one runner count once" \
+	"$(_stale_recovery_count_ticks_from_pages "$(lf_pages "$(lf_tick 2026-01-01T00:00:01Z "$LF_TICK_STALE")" \
+		"$(lf_tick 2026-01-01T00:00:02Z "$LF_TICK_STALE")")")" 1
+lf_check "Launch-failure ticks count per runner beside numeric ticks" \
+	"$(_stale_recovery_count_ticks_from_pages "$(lf_pages "$(lf_tick 2026-01-01T00:00:01Z '<!-- stale-recovery-tick:1 -->')" \
+		"$(lf_tick 2026-01-01T00:00:02Z "$LF_TICK_STALE")" "$(lf_tick 2026-01-01T00:00:03Z "$LF_TICK_OTHER")")")" 3
+lf_check "Maintainer release resets launch-failure runners" \
+	"$(_stale_recovery_count_ticks_from_pages "$(lf_pages "$(lf_tick 2026-01-01T00:00:01Z "$LF_TICK_STALE")" \
+		"$(lf_tick 2026-01-01T00:00:02Z '<!-- stale-recovery-release:verified -->')")")" 0
+lf_check "Progress marker on a launch-failure tick restarts at that runner" \
+	"$(_stale_recovery_count_ticks_from_pages "$(lf_pages "$(lf_tick 2026-01-01T00:00:01Z '<!-- stale-recovery-tick:1 -->')" \
+		"$(lf_tick 2026-01-01T00:00:02Z "${LF_TICK_OTHER}"$'\n<!-- stale-recovery-progress:merged-pr -->')")")" 1
+lf_pages_counted=$(lf_pages "$(lf_tick 2026-01-01T00:00:01Z "$LF_TICK_STALE")")
+if _stale_recovery_launch_failure_counted_from_pages "$lf_pages_counted" stale-runner &&
+	! _stale_recovery_launch_failure_counted_from_pages "$lf_pages_counted" other-runner; then
+	print_result "Counted launch-failure runner is reported per login" 0
+else
+	print_result "Counted launch-failure runner is reported per login" 1
+fi
+lf_check "Latest tick timestamp includes launch-failure ticks" \
+	"$(_stale_recovery_latest_tick_ts_from_pages "$(lf_pages "$(lf_tick 2026-01-01T00:00:01Z '<!-- stale-recovery-tick:1 -->')" \
+		"$(lf_tick 2026-01-01T00:00:09Z "$LF_TICK_STALE")")")" 2026-01-01T00:00:09Z
+lf_check "Never-launched claim names its runner" \
+	"$(_stale_recovery_launch_failure_runner_from_pages "$(lf_pages "$(lf_claim stale-runner 2026-01-01T00:00:01Z t1)")" stale-runner)" stale-runner
+lf_check "Ready lease means the claim launched" \
+	"$(_stale_recovery_launch_failure_runner_from_pages "$(lf_pages "$(lf_claim stale-runner 2026-01-01T00:00:01Z t1)" \
+		"$(lf_ready stale-runner 2026-01-01T00:00:05Z t1)")" stale-runner)" ""
+lf_check "Ready lease from another login is not launch evidence" \
+	"$(_stale_recovery_launch_failure_runner_from_pages "$(lf_pages "$(lf_claim stale-runner 2026-01-01T00:00:01Z t1)" \
+		"$(lf_ready other-runner 2026-01-01T00:00:05Z t1)")" stale-runner)" stale-runner
+lf_check "Ready lease for an earlier lease does not cover the latest claim" \
+	"$(_stale_recovery_launch_failure_runner_from_pages "$(lf_pages "$(lf_claim stale-runner 2026-01-01T00:00:01Z t1)" \
+		"$(lf_ready stale-runner 2026-01-01T00:00:05Z t1)" "$(lf_claim stale-runner 2026-01-01T01:00:00Z t2)")" stale-runner)" stale-runner
+lf_check "Newer interactive claim keeps ordinary counting" \
+	"$(_stale_recovery_launch_failure_runner_from_pages "$(lf_pages "$(lf_claim stale-runner 2026-01-01T00:00:01Z t1)" \
+		"$(lf_tick 2026-01-01T00:00:05Z '> Interactive session claimed by maintainer')")" stale-runner)" ""
+lf_check "Legacy claim without a lease keeps ordinary counting" \
+	"$(_stale_recovery_launch_failure_runner_from_pages "$(lf_pages "$(jq -nc '{created_at:"2026-01-01T00:00:01Z", author_association:"MEMBER",
+		user:{login:"stale-runner"}, body:"DISPATCH_CLAIM nonce=n1 runner=stale-runner ts=2026-01-01T00:00:01Z max_age_s=1800"}')")" stale-runner)" ""
+lf_check "Claim posted by another login keeps ordinary counting" \
+	"$(_stale_recovery_launch_failure_runner_from_pages "$(lf_claim stale-runner 2026-01-01T00:00:01Z t1 |
+		jq -c '[[.user.login = "forger"]]')" stale-runner)" ""
+lf_check "Untrusted claim author keeps ordinary counting" \
+	"$(_stale_recovery_launch_failure_runner_from_pages "$(lf_claim stale-runner 2026-01-01T00:00:01Z t1 |
+		jq -c '[[.author_association = "NONE"]]')" stale-runner)" ""
+lf_check "Claim runner outside the stale assignees keeps ordinary counting" \
+	"$(_stale_recovery_launch_failure_runner_from_pages "$(lf_pages "$(lf_claim other-runner 2026-01-01T00:00:01Z t1)")" stale-runner)" ""
 
 for initial_state in blocked available; do
 	release_result=$(GH_TEST_STATE="$initial_state" bash -c '

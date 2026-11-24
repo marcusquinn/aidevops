@@ -96,7 +96,7 @@ PY
 assert_eq "missing crypto emits stable redacted class" "VAULT_DEPENDENCY_MISSING" "$missing_code"
 
 if grep -q '^cryptography==50\.0\.0$' "${REPO_ROOT}/.agents/configs/vault-requirements.txt" &&
-	grep -q 'setup_vault_python_env' "${REPO_ROOT}/setup.sh"; then
+	grep -q 'setup_vault_python_env' "${REPO_ROOT}/.agents/scripts/setup/modules/setup-execution.sh"; then
 	pass "setup wires the exact-pinned Vault runtime"
 else
 	fail "setup wires the exact-pinned Vault runtime"

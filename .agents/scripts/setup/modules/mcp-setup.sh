@@ -47,7 +47,9 @@ _install_mcp_packages_node() {
 	)
 
 	local installer="npm"
-	command -v bun &>/dev/null && installer="bun"
+	if ! command -v npm &>/dev/null; then
+		installer="bun"
+	fi
 	print_info "Using $installer to install/update Node.js MCP packages..."
 
 	# Install reviewed pins where required; keep other MCPs current.
@@ -146,13 +148,21 @@ resolve_mcp_binary_path() {
 	bin_name="$1"
 	local resolved=""
 
-	# Check common locations in priority order
+	# Match the owner used by setup and the updater, even with Bun first on PATH.
+	local npm_prefix="" path
+	if command -v npm &>/dev/null; then
+		npm_prefix=$(npm prefix -g 2>/dev/null) || npm_prefix=""
+	fi
+	if [[ "$npm_prefix" == /* && -x "$npm_prefix/bin/$bin_name" ]]; then
+		printf '%s\n' "$npm_prefix/bin/$bin_name"
+		return 0
+	fi
 	local search_paths=(
-		"$HOME/.bun/bin/$bin_name"
 		"/opt/homebrew/bin/$bin_name"
 		"/usr/local/bin/$bin_name"
-		"$HOME/.local/bin/$bin_name"
 		"$HOME/.npm-global/bin/$bin_name"
+		"$HOME/.local/bin/$bin_name"
+		"$HOME/.bun/bin/$bin_name"
 	)
 
 	for path in "${search_paths[@]}"; do
@@ -188,7 +198,7 @@ _update_mcp_paths_resolve_local_cmds() {
 		# Skip if already a full path
 		if [[ "$current_cmd" == /* ]]; then
 			# Verify the path still exists; resolve stale paths
-			if [[ ! -x "$current_cmd" ]]; then
+			if [[ ! -x "$current_cmd" || "$current_cmd" == "$HOME/.bun/bin/"* ]]; then
 				local bin_name
 				bin_name=$(basename "$current_cmd")
 				local new_path

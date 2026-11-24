@@ -710,6 +710,98 @@ else
 	print_result "install failure is classified as environment failure" 1 "rc=${install_rc}"
 fi
 
+# GH#40064: a lint TIMEOUT defers to a required base-branch check that names
+# the same phase; later CI-required phases are left to CI, unrequired phases
+# still run locally, and unreadable or non-matching requirements still block.
+cat >"${FAKE_BIN}/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${GH_CALL_LOG:?}"
+[[ "${GH_FAKE_FAIL:-0}" == 1 ]] && exit 1
+case "$*" in
+*rules/branches/*) [[ -n "${GH_FAKE_RULES:-}" ]] && printf '%s\n' "$GH_FAKE_RULES" ;;
+*/branches/*) [[ -n "${GH_FAKE_CLASSIC:-}" ]] && printf '%s\n' "$GH_FAKE_CLASSIC" ;;
+esac
+exit 0
+EOF
+chmod +x "${FAKE_BIN}/gh"
+DEFER_REPO="${TEST_ROOT}/validator-ci-deferral"
+make_repo "$DEFER_REPO"
+(
+	cd "$DEFER_REPO" || exit 1
+	printf '%s\n' '{"scripts":{"lint":"eslint","typecheck":"tsc --noEmit","test":"vitest run"}}' >package.json
+	printf '%s\n' 'const answer: number = 42;' >index.ts
+	git add package.json index.ts
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'typescript change'
+) || exit 1
+GH_CALL_LOG="${TEST_ROOT}/gh-defer.log"
+export GH_CALL_LOG NPM_INSTALL_FAIL=0 NPM_FAKE_RC=0 GH_FAKE_FAIL=0 GH_FAKE_CLASSIC=''
+run_defer_case() {
+	local log_name="$1"
+	NPM_CALL_LOG="${TEST_ROOT}/npm-${log_name}.log"
+	export NPM_CALL_LOG
+	: >"$NPM_CALL_LOG"
+	(
+		cd "$DEFER_REPO" || exit 1
+		repo="owner/app"
+		timeout_sec() {
+			local _seconds="$1"
+			shift
+			[[ "$*" == *"run lint" ]] && return 124
+			"$@"
+			return $?
+		}
+		PATH="${FAKE_BIN}:$PATH" _run_project_validators 0 || exit $?
+		printf 'DEFERRALS=%s\n' "$FULL_LOOP_VALIDATOR_DEFERRALS"
+	) >"${TEST_ROOT}/${log_name}.out" 2>"${TEST_ROOT}/${log_name}.err"
+	return $?
+}
+GH_FAKE_RULES=$'Format\nLint\nTypecheck\nUnit Tests'
+export GH_FAKE_RULES
+run_defer_case defer-all
+defer_all_rc=$?
+# The timeout stub never invokes npm for lint; deferred phases never run npm.
+if [[ "$defer_all_rc" -eq 0 ]] && ! grep -q '|run ' "${TEST_ROOT}/npm-defer-all.log" &&
+	grep -q "DEFERRED npm run lint (repository root): local TIMEOUT after 300s; required CI check 'Lint' on main" "${TEST_ROOT}/defer-all.err" &&
+	grep -q "DEFERRALS=npm run lint (repository root) → Lint; npm run typecheck (repository root) → Typecheck; npm run test (repository root) → Unit Tests" "${TEST_ROOT}/defer-all.out" &&
+	grep -q 'repos/owner/app/rules/branches/main' "$GH_CALL_LOG"; then
+	print_result "lint timeout defers to matching required CI checks and records each deferral" 0
+else
+	print_result "lint timeout defers to matching required CI checks and records each deferral" 1 "rc=${defer_all_rc}"
+fi
+GH_FAKE_RULES='Lint'
+GH_FAKE_CLASSIC=''
+export GH_FAKE_RULES GH_FAKE_CLASSIC
+run_defer_case defer-partial
+defer_partial_rc=$?
+if [[ "$defer_partial_rc" -eq 0 ]] && grep -q '|run typecheck' "${TEST_ROOT}/npm-defer-partial.log" &&
+	grep -q '|run test' "${TEST_ROOT}/npm-defer-partial.log" &&
+	grep -q 'DEFERRALS=npm run lint (repository root) → Lint$' "${TEST_ROOT}/defer-partial.out"; then
+	print_result "phases CI does not require still run locally after a deferral" 0
+else
+	print_result "phases CI does not require still run locally after a deferral" 1 "rc=${defer_partial_rc}"
+fi
+GH_FAKE_RULES='Markdown Lint'
+export GH_FAKE_RULES
+run_defer_case defer-nomatch
+defer_nomatch_rc=$?
+if [[ "$defer_nomatch_rc" -ne 0 ]] && grep -q 'TIMEOUT after 300s: npm run lint' "${TEST_ROOT}/defer-nomatch.err" &&
+	! grep -q 'DEFERRED' "${TEST_ROOT}/defer-nomatch.err"; then
+	print_result "timeout without a matching required check still blocks" 0
+else
+	print_result "timeout without a matching required check still blocks" 1 "rc=${defer_nomatch_rc}"
+fi
+GH_FAKE_FAIL=1
+export GH_FAKE_FAIL
+run_defer_case defer-lookup-failed
+defer_failed_rc=$?
+if [[ "$defer_failed_rc" -ne 0 ]] && grep -q 'TIMEOUT after 300s: npm run lint' "${TEST_ROOT}/defer-lookup-failed.err" &&
+	! grep -q 'DEFERRED' "${TEST_ROOT}/defer-lookup-failed.err"; then
+	print_result "unreadable required checks fail closed to the blocking timeout" 0
+else
+	print_result "unreadable required checks fail closed to the blocking timeout" 1 "rc=${defer_failed_rc}"
+fi
+export GH_FAKE_FAIL=0
+
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1
 exit 0

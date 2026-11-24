@@ -133,6 +133,13 @@ MAINTENANCE_SUBCOMMANDS = ("gc", "maintenance", "reflog", "prune", "repack", "pa
 
 
 def _maintenance_guidance(reason: str, recovery_helper: str) -> str:
+    if "'git worktree'" in reason:
+        # GH#40058: dead registrations have an audited prune route.
+        return (
+            "For registrations whose worktree path no longer exists, run "
+            f"{recovery_helper} prune-missing-worktrees --repo PATH "
+            "--confirm PRUNE_MISSING_WORKTREES. "
+        )
     if not any(f"'git {name}'" in reason for name in MAINTENANCE_SUBCOMMANDS):
         return ""
     return (

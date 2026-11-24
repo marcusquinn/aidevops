@@ -32,6 +32,8 @@ combined_sources=(
 	"${SCRIPTS_DIR}/shared-gh-wrappers.sh"
 	"${SCRIPTS_DIR}/shared-gh-wrappers-create.sh"
 	"${SCRIPTS_DIR}/pulse-merge.sh"
+	# Linked/superseded issue close paths moved here from pulse-merge.sh.
+	"${SCRIPTS_DIR}/pulse-merge-issue-closeout.sh"
 )
 for expected_call in "${expected_calls[@]}"; do
 	if ! grep -Fq -- "$expected_call" "${combined_sources[@]}"; then

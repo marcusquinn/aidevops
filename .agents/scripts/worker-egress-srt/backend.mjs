@@ -9,6 +9,11 @@ import net from 'node:net';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
+import { isProviderHostname } from './provider-host.mjs';
+import { BackendError, insist } from './backend-error.mjs';
+import { tightenLinuxArgs, tightenMacProfile } from './profile.mjs';
+
+export { tightenLinuxArgs, tightenMacProfile };
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const version = '0.0.83';
@@ -17,33 +22,7 @@ const cancellation = new AbortController();
 const quote = value => "'" + String(value).replaceAll("'", "'\\''") + "'";
 const digest = value => crypto.createHash('sha256').update(value).digest('hex');
 const inside = (child, parent) => child === parent || child.startsWith(parent + path.sep);
-class BackendError extends Error {}
-function insist(condition, reason) { if (!condition) throw new BackendError(reason); }
 
-const hostLabel = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
-const decimalOnly = /^\d+(?:\.\d+)*$/;
-const reservedSuffix = /(?:^|\.)(?:localhost|local|internal|test|invalid)$/;
-
-// One ordered rule per rejection, not a boolean chain and not a ladder of early
-// returns: this decides the single hostname a worker may reach, so each clause
-// has to stay individually readable and auditable. `every` short-circuits in
-// order, so the type rule still runs before any string operation, and a hostname
-// is accepted only if it survives every rule.
-const providerHostRules = [
-  host => typeof host === 'string',
-  host => host.length > 0 && host.length <= 253,
-  host => host === host.toLowerCase(),
-  host => !net.isIP(host),
-  // Refuse bare-decimal address forms such as 2130706433.
-  host => !decimalOnly.test(host),
-  host => !reservedSuffix.test(host),
-  host => host.split('.').length >= 2,
-  host => host.split('.').every(label => hostLabel.test(label)),
-];
-
-function isProviderHostname(host) {
-  return providerHostRules.every(rule => rule(host));
-}
 
 export function providerHost(policy) {
   insist(policy?.schema === 'aidevops.worker-egress-policy.v1', 'policy-schema');
@@ -186,21 +165,10 @@ async function supervised(argv, envelope, scratch, timeout = 15) {
 
 // Pin the upstream rendering contract. Modify argv via a receiver, not by parsing
 // or reserializing the opaque SBPL profile; the host proxy stays outside Seatbelt.
-export function tightenMacCommand(wrapped, node = process.execPath) {
+export function tightenMacCommand(wrapped, node = process.execPath, grants = { read: [], write: [] }) {
   const marker = '/usr/bin/sandbox-exec -p ';
   insist(wrapped.split(marker).length === 2, 'unrecognized-seatbelt-command');
-  return wrapped.replace(marker, `${quote(node)} ${quote(fileURLToPath(import.meta.url))} seatbelt -p `);
-}
-
-export function tightenMacProfile(profile) {
-  insist(profile.startsWith('(version 1)\n(deny default'), 'unexpected-seatbelt-profile');
-  // Remove the pinned release's explicit Mach-service allows rather than
-  // assuming a broad deny overrides more specific allows. Refuse unknown forms.
-  const rule = /\(allow mach-lookup\s+(?:\(global-name(?:-prefix)? "(?:[^"\\]|\\.)*"\)\s*)+\)/g;
-  let strict = profile.replace(rule, '');
-  insist(!/\(allow\s+mach-lookup\b/.test(strict) && !/\(import\b/.test(strict), 'unknown-mach-rule');
-  strict = strict.replace(/\(allow (?:user-preference-read|ipc-posix-shm|ipc-posix-sem)\)/g, '');
-  return strict + '\n(deny mach-lookup)\n(deny mach-register)\n';
+  return wrapped.replace(marker, `${quote(node)} ${quote(fileURLToPath(import.meta.url))} seatbelt ${quote(JSON.stringify(grants))} -p `);
 }
 
 // Names the workload may see. The SRT-set names were verified against
@@ -228,6 +196,14 @@ function envCommand(tool) {
 }
 
 async function wrappedArgv(manager, argv, envelope) {
+  const config = manager.getConfig();
+  const grants = {
+    read: config.filesystem.allowRead.map(entry => entry.path),
+    write: config.filesystem.allowWrite.map(entry => entry.path),
+  };
+  // Include the current qualification input and bridge sockets, not merely the
+  // initial envelope. This receiver is host-owned and outside the write grant.
+  if (process.platform === 'linux') writeLinuxReceiver(config.bwrapPath, envelope, grants);
   // With a sealed filesystem there is no ambient /etc/hosts. Don't make clients
   // resolve SRT's "localhost" bridge name through an unavailable system resolver.
   const proxySetup = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']
@@ -240,7 +216,7 @@ async function wrappedArgv(manager, argv, envelope) {
   const command = proxySetup + 'set --; ' + collect
     + `exec ${envCommand(envelope.tools.coreutils)} -i "$@" ` + argv.map(quote).join(' ');
   let wrapped = await manager.wrapWithSandbox(command, envelope.tools.shell);
-  if (process.platform === 'darwin') wrapped = tightenMacCommand(wrapped);
+  if (process.platform === 'darwin') wrapped = tightenMacCommand(wrapped, process.execPath, grants);
   return [envelope.tools.shell, '-c', wrapped];
 }
 
@@ -464,17 +440,49 @@ function cleanEnvironment(envelope, scratch) {
   // credentials, NODE_OPTIONS, shell startup files or agent sockets into SRT.
   const search = [...new Set(Object.values(envelope.tools).map(t => path.dirname(t)))].join(path.delimiter);
   for (const key of Object.keys(process.env)) delete process.env[key];
-  Object.assign(process.env, { PATH: search, HOME: envelope.cwd, TMPDIR: scratch, LANG: 'C.UTF-8' });
+  Object.assign(process.env, { PATH: search, HOME: envelope.cwd, TMPDIR: scratch,
+    CLAUDE_CODE_TMPDIR: envelope.cwd, LANG: 'C.UTF-8' });
+}
+
+// Receivers invoked on the host, before the one and only sandbox apply call.
+function receive(argv) {
+  if (argv[0] === 'bwrap') {
+    const child = spawnSync(executable(argv[1]), tightenLinuxArgs(argv.slice(3), JSON.parse(argv[2])), { stdio: 'inherit' });
+    return child.status ?? 126;
+  }
+  insist(process.platform === 'darwin' && argv[2] === '-p' && argv.length >= 6, 'seatbelt-argv');
+  const child = spawnSync('/usr/bin/sandbox-exec', ['-p', tightenMacProfile(argv[3], JSON.parse(argv[1])), ...argv.slice(4)], { stdio: 'inherit' });
+  return child.status ?? 126;
+}
+
+function writeLinuxReceiver(receiver, envelope, grants) {
+  fs.writeFileSync(receiver, `#!${envelope.tools.shell}\nexec ${quote(process.execPath)} ${quote(fileURLToPath(import.meta.url))} bwrap ${quote(envelope.tools.bwrap)} ${quote(JSON.stringify(grants))} "$@"\n`, { mode: 0o700 });
+}
+
+function linuxSettings(host, envelope, scratch, sockets) {
+  const receiver = path.join(scratch, 'bwrap');
+  writeLinuxReceiver(receiver, envelope, { read: [...envelope.read, ...sockets], write: envelope.write });
+  return { ...settings(host, envelope, sockets), bwrapPath: receiver };
+}
+
+function adaptPlatform(manager, host, envelope, scratch) {
+  if (process.platform === 'linux') {
+    // Only SRT's two owned bridge sockets are visible to its pre-seccomp
+    // relays. Never expose the entire host scratch directory. The workload
+    // cannot open AF_UNIX sockets after apply-seccomp.
+    const sockets = [manager.getLinuxHttpSocketPath(), manager.getLinuxSocksSocketPath()];
+    insist(sockets.every(p => typeof p === 'string'), 'bridge-sockets-not-ready');
+    manager.updateConfig(linuxSettings(host, envelope, scratch, sockets));
+  }
+  if (process.platform === 'darwin') {
+    // GH#38861 reviewed arm64 only (synthetic, DNS and Mach evidence). Intel
+    // Macs stay refused until they have their own evidence; no bypass.
+    insist(process.arch === 'arm64', 'macos-x64-qualification-pending');
+  }
 }
 
 async function main(argv) {
-  // Receiver invoked on the host, before the one and only sandbox_apply call.
-  if (argv[0] === 'seatbelt') {
-    insist(process.platform === 'darwin' && argv[1] === '-p' && argv.length >= 5, 'seatbelt-argv');
-    const profile = tightenMacProfile(argv[2]);
-    const child = spawnSync('/usr/bin/sandbox-exec', ['-p', profile, ...argv.slice(3)], { stdio: 'inherit' });
-    return child.status ?? 126;
-  }
+  if (argv[0] === 'bwrap' || argv[0] === 'seatbelt') return receive(argv);
   const action = argv.shift();
   insist(['probe', 'run'].includes(action), 'usage: probe|run --policy FILE [--worker-id ID] [-- COMMAND...]');
   insist(argv.shift() === '--policy', 'policy-argument-required');
@@ -505,19 +513,7 @@ async function main(argv) {
     insist(dependencies.errors.length === 0 && dependencies.warnings.length === 0, 'dependencies-not-ready');
     await manager.initialize(settings(host, envelope), undefined, false);
     insist(await manager.waitForNetworkInitialization(), 'proxy-not-ready');
-    if (process.platform === 'linux') {
-      // Only SRT's two owned bridge sockets are visible to its pre-seccomp
-      // relays. Never expose the entire host scratch directory. The workload
-      // cannot open AF_UNIX sockets after apply-seccomp.
-      const sockets = [manager.getLinuxHttpSocketPath(), manager.getLinuxSocksSocketPath()];
-      insist(sockets.every(p => typeof p === 'string'), 'bridge-sockets-not-ready');
-      manager.updateConfig(settings(host, envelope, sockets));
-    }
-    if (process.platform === 'darwin') {
-      // GH#38861 reviewed arm64 only (synthetic, DNS and Mach evidence). Intel
-      // Macs stay refused until they have their own evidence; no bypass.
-      insist(process.arch === 'arm64', 'macos-x64-qualification-pending');
-    }
+    adaptPlatform(manager, host, envelope, scratch);
     const checks = await qualify(manager, envelope, scratch);
     if (action === 'probe') {
       console.log(JSON.stringify({ schema: 'aidevops.worker-egress-backend.v1', ready: true,
@@ -539,7 +535,12 @@ async function main(argv) {
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+function isEntrypoint() {
+  try { return Boolean(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url)); }
+  catch { return false; }
+}
+
+if (isEntrypoint()) {
   for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
     process.on(signal, () => cancellation.abort());
   }

@@ -296,10 +296,10 @@ notice=$(
 jq -e '([.plugin[] | select(endswith("/opencode-aidevops/index.mjs"))] | length == 1)' "$user_config" >/dev/null ||
 	{ printf 'V1 plugin pass did not register in the user config\n' >&2; exit 1; }
 
-grep -Eq '_time_step .* setup_opencode_runtimes$' "$REPO_ROOT/setup.sh"
-grep -Eq 'confirm_step .*setup_opencode_runtimes$' "$REPO_ROOT/setup.sh"
-grep -Eq '_time_step .* setup_opencode_runtime_plugins$' "$REPO_ROOT/setup.sh"
-grep -Eq 'confirm_step .*setup_opencode_runtime_plugins$' "$REPO_ROOT/setup.sh"
+grep -Eq '_time_step .* setup_opencode_runtimes$' "$REPO_ROOT/.agents/scripts/setup/modules/setup-execution.sh"
+grep -Eq 'confirm_step .*setup_opencode_runtimes$' "$REPO_ROOT/.agents/scripts/setup/modules/setup-execution.sh"
+grep -Eq '_time_step .* setup_opencode_runtime_plugins$' "$REPO_ROOT/.agents/scripts/setup/modules/setup-execution.sh"
+grep -Eq 'confirm_step .*setup_opencode_runtime_plugins$' "$REPO_ROOT/.agents/scripts/setup/modules/setup-execution.sh"
 
 # A redeploy must restart a running V2 background service (stale plugin
 # resolution drops provider OAuth hooks) but never the service hosting setup.

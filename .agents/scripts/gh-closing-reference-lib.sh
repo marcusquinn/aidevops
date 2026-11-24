@@ -284,6 +284,102 @@ _gh_pr_body_negated_closing_ref() {
 	return 0
 }
 
+# GH#40026: GitHub closes the target of a closing keyword anywhere in a PR body,
+# including conditional or explanatory prose ("would make the sync close #N",
+# "to avoid closing #N"). A wordlist of unsafe phrasings stays open-ended, so
+# require the safe form instead. A declaration is a closing keyword that starts
+# a line, list item or sentence, or continues a declaration list
+# ("Resolves #1, fixes #2"). Any other closing reference must name a target that
+# also has a declaration. Fenced blocks and inline code spans are ignored.
+# Args: $1=body text, $2=optional OWNER/REPO so qualified self-references match
+# Output: first undeclared target (#N or owner/repo#N). Exit: 0 found, 1 clean
+_gh_pr_body_undeclared_closing_ref() {
+	local body_text="$1" repo_slug="${2:-}"
+	local match=""
+	match=$(printf '%s\n' "$body_text" | awk -v repo="$repo_slug" '
+		function ref_key(ref,    parts, slug) {
+			if (ref ~ /^https?:\/\//) {
+				sub(/^https?:\/\/[^\/]+\//, "", ref)
+				split(ref, parts, "/")
+				ref = parts[1] "/" parts[2] "#" parts[4]
+			}
+			if (substr(ref, 1, 1) == "#") return ref
+			slug = substr(ref, 1, index(ref, "#") - 1)
+			if (slug == repo) return substr(ref, index(ref, "#"))
+			return ref
+		}
+		BEGIN {
+			repo = tolower(repo)
+			rf = "(https?://[^ \t]+/(issues|pull)/[0-9]+|[a-z0-9_.-]+/[a-z0-9_.-]+#[0-9]+|#[0-9]+)"
+			pair = "(close[sd]?|fix(e[sd])?|resolve[sd]?):?[ \t]+" rf
+			tail = rf "$"
+		}
+		{
+			line = $0
+			sub(/^ ? ? ?/, "", line)
+			marker = substr(line, 1, 1)
+			run = 0
+			if (marker == "`" || marker == "~") {
+				while (substr(line, run + 1, 1) == marker) run++
+			}
+			suffix = substr(line, run + 1)
+			if (run >= 3) {
+				if (!fenced && (marker != "`" || index(suffix, "`") == 0)) {
+					fenced = 1
+					fence_marker = marker
+					fence_length = run
+					next
+				}
+				if (fenced && marker == fence_marker && run >= fence_length && suffix ~ /^[ \t]*$/) {
+					fenced = 0
+					next
+				}
+			}
+			if (fenced) next
+			line = tolower($0)
+			gsub(/`[^`]*`/, "", line)
+			pos = 1
+			last_end = 0
+			last_decl = 0
+			while (pos <= length(line) && match(substr(line, pos), pair)) {
+				start = pos + RSTART - 1
+				len = RLENGTH
+				if (start > 1 && substr(line, start - 1, 1) ~ /[a-z0-9_]/) {
+					pos = start + 1
+					continue
+				}
+				phrase = substr(line, start, len)
+				match(phrase, tail)
+				key = ref_key(substr(phrase, RSTART))
+				prefix = substr(line, 1, start - 1)
+				between = ""
+				if (last_end > 0) between = substr(line, last_end + 1, start - last_end - 1)
+				if (prefix ~ /^[ \t]*(([-*+]|[0-9]+[.)])[ \t]+)?$/ || prefix ~ /[.!?;][ \t]+$/ ||
+					(last_decl && between ~ /^[ \t]*(,|&|and|,[ \t]*and)?[ \t]*$/)) {
+					declared[key] = 1
+					last_decl = 1
+				} else {
+					inline_count++
+					inline_key[inline_count] = key
+					last_decl = 0
+				}
+				last_end = start + len - 1
+				pos = start + len
+			}
+		}
+		END {
+			for (i = 1; i <= inline_count; i++) {
+				if (!(inline_key[i] in declared)) {
+					print inline_key[i]
+					exit
+				}
+			}
+		}')
+	[[ -n "$match" ]] || return 1
+	printf '%s\n' "$match"
+	return 0
+}
+
 _gh_validate_pr_closing_keywords() {
 	local arg="" pending="" body_text="" has_body=0 body_file="" has_body_file=0
 	for arg in "$@"; do
@@ -330,15 +426,21 @@ _gh_validate_pr_closing_keywords() {
 			[[ "${_GH_PR_IDENTITY_ORIGIN:-}" == "origin:worker" ]] || return 0
 		fi
 	fi
-	if ! _gh_pr_body_negated_closing_ref "$body_text" >/dev/null; then
-		_gh_validate_pr_worker_identity "$body_text" "$@"
-		return $?
+	if _gh_pr_body_negated_closing_ref "$body_text" >/dev/null; then
+		# Do not echo the author's body: it has not passed the privacy scan yet.
+		_GH_EDIT_REJECTION_REASON="negated closing keyword — GitHub still treats it as a closing reference"
+		printf '[SAFETY] gh pr body rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+		printf '[SAFETY] Use "Ref #N" or "For #N" and state "The referenced PR or issue remains open." Negation does not neutralize closing keywords.\n' >&2
+		return 1
 	fi
-	# Do not echo the author's body: it has not passed the privacy scan yet.
-	_GH_EDIT_REJECTION_REASON="negated closing keyword — GitHub still treats it as a closing reference"
-	printf '[SAFETY] gh pr body rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
-	printf '[SAFETY] Use "Ref #N" or "For #N" and state "The referenced PR or issue remains open." Negation does not neutralize closing keywords.\n' >&2
-	return 1
+	if _gh_pr_body_undeclared_closing_ref "$body_text" "$(_gh_extract_repo_from_args "$@")" >/dev/null; then
+		_GH_EDIT_REJECTION_REASON="closing keyword inside prose without a matching Resolves/Fixes/Closes declaration — GitHub still closes the referenced issue (GH#40026)"
+		printf '[SAFETY] gh pr body rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+		printf '[SAFETY] To close it, add a standalone "Resolves #N" line. To leave it open, reword the prose without close/fix/resolve before the reference, or use "Ref #N" / "For #N".\n' >&2
+		return 1
+	fi
+	_gh_validate_pr_worker_identity "$body_text" "$@"
+	return $?
 }
 
 # Preserve Pulse closing-target selection, including its PR-reference exception.

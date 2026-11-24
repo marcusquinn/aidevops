@@ -3,6 +3,11 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 # Runner-local preclaim requirements; no GitHub writes or secret output.
 
+# GH#40077: the same Node resolver worker prelaunch uses. If it cannot load,
+# the repo Node gate is skipped and prelaunch remains the backstop.
+# shellcheck source=./project-node-runtime.sh
+source "${BASH_SOURCE[0]%/*}/project-node-runtime.sh" 2>/dev/null || true
+
 # GH#33399: never fall back to prefetched requirements. Shared by the early
 # admission gate and the final gate immediately before the persistent claim.
 runner_capability_check_fresh() {
@@ -21,6 +26,12 @@ _runner_capability_check_fresh_logged() {
 	local repo_path="$1" issue_number="$2" repo_slug="$3"
 	local capability_meta_json=""
 	local reason=""
+	# GH#40077: repo-level gate first, so a repo this runner cannot run at all
+	# costs no per-issue API read.
+	if ! reason=$(_runner_capability_project_node "$repo_path" 2>&3); then
+		_runner_capability_log_deferral "$issue_number" "$repo_slug" "$reason" ""
+		return 1
+	fi
 	capability_meta_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
 		--jq '{number, state, body, labels}' 2>/dev/null) || capability_meta_json=""
 	if ! printf '%s' "$capability_meta_json" | jq -e --argjson number "$issue_number" \
@@ -34,6 +45,121 @@ _runner_capability_check_fresh_logged() {
 		return 1
 	fi
 	return 0
+}
+
+# GH#40077: worker prelaunch resolves the repo Node pin (.nvmrc, .node-version,
+# .tool-versions, engines.node) and fails with project_node_environment_failure
+# when no installed Node satisfies it, after this runner already claimed. One
+# runner without a newly pinned major churned 117 claims in 5 hours that way.
+# The verdict depends only on the requirement and this runner's installs, so it
+# is cached per requirement for a short TTL (a resolution costs ~1 s and both
+# gates run per candidate). The signal is never cooldown-eligible: installing
+# Node must reopen the repo within the TTL, not after the 6 h issue cooldown.
+# Prints the unmet reason and returns 1; returns 0 when usable or unknown.
+_runner_capability_project_node() {
+	local repo_path="$1"
+	local ttl="${AIDEVOPS_RUNNER_CAPABILITY_NODE_TTL_SECONDS:-300}"
+	local requirements=""
+	[[ -n "$repo_path" && -d "$repo_path" ]] || return 0
+	declare -F _project_node_bin >/dev/null || return 0
+	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=300
+	# GH#40104: worker prelaunch checks a fresh worktree cut from the remote
+	# default branch, so evaluate that ref's pin, not a possibly stale mirror.
+	local req_dir="$repo_path" snap="" rc=0
+	if snap=$(_runner_capability_node_snapshot "$repo_path"); then
+		req_dir="$snap"
+	fi
+	requirements=$(_project_node_requirement "$req_dir" 2>/dev/null) || requirements="unreadable"
+	if [[ -z "$requirements" ]]; then
+		[[ "$req_dir" == "$repo_path" ]] || rm -rf "$req_dir"
+		return 0
+	fi
+	_runner_capability_project_node_verdict "$repo_path" "$req_dir" "$requirements" "$ttl" || rc=$?
+	[[ "$req_dir" == "$repo_path" ]] || rm -rf "$req_dir"
+	return "$rc"
+}
+
+# GH#40104: copy the Node requirement files from origin's default branch into a
+# private temp dir so the shared parser and resolver run on what workers see.
+# Prints the dir; returns 1 (nothing printed) when the ref is unreadable.
+_runner_capability_node_snapshot() {
+	local repo_path="$1" ref="" commit="" file="" tmp="" content=""
+	git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1 || return 1
+	ref=$(git -C "$repo_path" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || ref=""
+	if [[ -z "$ref" ]]; then
+		for ref in origin/main origin/master; do
+			git -C "$repo_path" rev-parse --verify --quiet "${ref}^{commit}" >/dev/null 2>&1 && break
+			ref=""
+		done
+	fi
+	[[ -n "$ref" ]] || return 1
+	commit=$(git -C "$repo_path" rev-parse --verify --quiet "${ref}^{commit}" 2>/dev/null) || return 1
+	tmp=$(mktemp -d "${TMPDIR:-/tmp}/runner-node-ref.XXXXXX" 2>/dev/null) || return 1
+	for file in .nvmrc .node-version .tool-versions package.json; do
+		if content=$(git -C "$repo_path" show "${commit}:${file}" 2>/dev/null); then
+			printf '%s\n' "$content" >"$tmp/$file" || {
+				rm -rf "$tmp"
+				return 1
+			}
+		fi
+	done
+	printf '%s\n' "$tmp"
+	return 0
+}
+
+_runner_capability_project_node_verdict() {
+	local repo_path="$1" req_dir="$2" requirements="$3" ttl="$4"
+	local line="" required="" active="" key="" dir="" file=""
+	local tmp="" now="" stamp="" verdict="" detail="" node_rc=0
+	# Requirement text is part of the key, so a pin change never reuses a verdict.
+	key=$(printf '%s\n%s' "$repo_path" "$requirements" | cksum | tr ' ' '-') || key=""
+	dir="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/runner-capability-node"
+	# A lost mkdir race just skips the cache for this call.
+	if [[ "$key" =~ ^[0-9]+-[0-9]+$ ]] && mkdir -p "${dir%/*}" 2>/dev/null &&
+		{ [[ -d "$dir" ]] || mkdir -m 700 "$dir" 2>/dev/null; } && [[ ! -L "$dir" ]]; then
+		file="${dir}/${key}"
+	fi
+	now=$(date +%s)
+	if [[ -n "$file" && -f "$file" && ! -L "$file" ]] &&
+		IFS=$'\t' read -r stamp verdict detail <"$file" 2>/dev/null &&
+		[[ "$stamp" =~ ^[0-9]+$ ]] && ((now >= stamp && now - stamp < ttl)); then
+		[[ "$verdict" != ok ]] || return 0
+		if [[ "$verdict" == unmet && "$detail" == runner_capability_unmet\ * ]]; then
+			printf '%s source=node_cache\n' "$detail"
+			return 1
+		fi
+	fi
+	verdict="ok"
+	detail=""
+	if [[ "$requirements" == unreadable ]]; then
+		verdict="unmet"
+		detail="runner_capability_unmet reason=node_requirement_unreadable"
+		printf 'runner_health: %s Node requirement unreadable (.nvmrc, .node-version, .tool-versions or package.json engines); its candidates defer, rechecked every %ss\n' \
+			"${repo_path##*/}" "$ttl" >&2
+	else
+		_project_node_bin "$req_dir" "." >/dev/null 2>&1 || node_rc=$?
+		if [[ "$node_rc" -eq 1 ]]; then
+			while IFS= read -r line; do
+				[[ "$line" == "hard "* ]] || continue
+				required="${required}${required:+ and }${line#hard }"
+			done <<<"$requirements"
+			required=$(printf '%s' "$required" | tr -cd '0-9A-Za-z.<>=^~|* -' | cut -c1-120)
+			active=$(node --version 2>/dev/null | tr -cd '0-9A-Za-z.' | cut -c1-24)
+			[[ -n "$active" ]] || active="none"
+			verdict="unmet"
+			detail="runner_capability_unmet reason=node_unsatisfied active=${active} required=\"${required}\""
+			printf 'runner_health: node %s cannot satisfy %s Node requirement "%s"; install a matching Node (fnm, nvm, volta, mise, Homebrew node@<major>, nodejs.org or n). Its candidates defer without claiming, rechecked every %ss\n' \
+				"$active" "${repo_path##*/}" "$required" "$ttl" >&2
+		fi
+	fi
+	if [[ -n "$file" ]] && tmp=$(mktemp "${file}.XXXXXX" 2>/dev/null); then
+		if ! { printf '%s\t%s\t%s\n' "$now" "$verdict" "$detail" >"$tmp" && mv -f "$tmp" "$file"; } 2>/dev/null; then
+			rm -f "$tmp" 2>/dev/null || true
+		fi
+	fi
+	[[ "$verdict" == ok ]] && return 0
+	printf '%s\n' "$detail"
+	return 1
 }
 
 # GH#34427: AIDEVOPS_RUNNER_CAPABILITY_SECRET_TIMEOUT_SECONDS bounds each

@@ -44,8 +44,13 @@ else $claims[0] as $claim |
         # generation. Retain state rather than adjudicating a claim race here.
         if any($later[]; .kind == "DISPATCH_CLAIM") then {verdict:"superseded"}
         elif $projection_line == "" and any($later[]; .kind == "CLAIM_RELEASED") then
+             # GH#40018: name the persisted release so a replay whose earlier
+             # projection failed can finish it from the receipt, not the retry.
              if all($later[] | select(.kind == "CLAIM_RELEASED"); closes_claim($claim))
-             then {verdict:"released"} else {verdict:"ambiguous"} end
+             then ([$later[] | select(.kind == "CLAIM_RELEASED")] | last) as $release |
+                  {verdict:"released", claim_id:$claim.comment.id,
+                   release_reason:($release.f.reason // ""), release_evidence:($release.f.evidence // "")}
+             else {verdict:"ambiguous"} end
         elif $projection_line == "" and any($later[];
              .kind == "DISPATCH_LEASE" and lease_bound(.) and .f.phase == "terminal") then {verdict:"terminal"}
         elif any($later[]; .f == null or (.comment | unedited | not)) then {verdict:"ambiguous"}

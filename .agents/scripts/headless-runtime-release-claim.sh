@@ -42,6 +42,8 @@ _hrff_check_release_claim() {
 	local filter="${BASH_SOURCE[0]%/*}/dispatch-release-claim.jq"
 	_HRFF_RELEASE_CLAIM_OWNED=0
 	_HRFF_RELEASE_CLAIM_ID=""
+	_HRFF_RELEASED_CLAIM_REASON=""
+	_HRFF_RELEASED_CLAIM_EVIDENCE=""
 	if [[ -z "$token" || -z "$device" || -z "$session" ]]; then
 		print_info "Skipped coordination release for #${issue_number}: no bound dispatch claim context"
 		return 0
@@ -64,7 +66,20 @@ _hrff_check_release_claim() {
 		_HRFF_RELEASE_CLAIM_OWNED=1
 		return 0
 		;;
-	unowned | released | terminal | superseded)
+	released)
+		# GH#40018: expose this runner's persisted release (closes_claim proved
+		# runner, claim id, nonce and unedited body) so a caller holding retry
+		# evidence can finish its projection. Unexpected shapes expose nothing.
+		local released_fields=""
+		if released_fields=$(jq -er '[(.claim_id | tostring), .release_reason, .release_evidence]
+			| select(.[0] | test("^[1-9][0-9]*$")) | select(.[1] | test("^[a-z][a-z0-9_]{0,63}$"))
+			| select(.[2] | test("^[a-z_]{0,32}$")) | join(" ")' <<<"$result" 2>/dev/null); then
+			read -r _HRFF_RELEASE_CLAIM_ID _HRFF_RELEASED_CLAIM_REASON _HRFF_RELEASED_CLAIM_EVIDENCE <<<"$released_fields"
+		fi
+		print_info "Skipped coordination release for #${issue_number}: this runner already released the matching dispatch claim"
+		return 0
+		;;
+	unowned | terminal | superseded)
 		print_info "Skipped coordination release for #${issue_number}: no current unreleased matching dispatch claim"
 		return 0
 		;;

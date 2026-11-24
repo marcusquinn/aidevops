@@ -1476,6 +1476,24 @@ _full_loop_hint_finalize_outside_worktree() {
 	return 0
 }
 
+# Diagnostic only: when the current worktree is not the receipt's recorded
+# worktree, name the expected worktree and the exact command. Returns 0 when a
+# hint was printed, 1 otherwise. Never changes the fail-closed marker guard.
+_full_loop_hint_finalize_wrong_worktree() {
+	local repo="$1"
+	local pr_number="$2"
+	local receipt_path=""
+	local receipt_worktree=""
+	local current_worktree=""
+	current_worktree=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+	receipt_path=$(_full_loop_cleanup_receipt_path "$repo" "$pr_number" 2>/dev/null) || return 1
+	[[ -f "$receipt_path" ]] || return 1
+	receipt_worktree=$(jq -r '.worktree // empty' "$receipt_path" 2>/dev/null || true)
+	[[ -n "$receipt_worktree" && "$receipt_worktree" != "$current_worktree" ]] || return 1
+	print_error "Finalization blocked: current worktree '${current_worktree}' is not PR #${pr_number}'s recorded worktree. Run: cd '${receipt_worktree}' && full-loop-helper.sh finalize-receipt ${pr_number} ${repo}"
+	return 0
+}
+
 cmd_finalize_receipt() {
 	local pr_number="${1:-}"
 	local repo=""
@@ -1502,6 +1520,7 @@ cmd_finalize_receipt() {
 		return 1
 	fi
 	_full_loop_retire_finalized_cleanup_marker "$repo" "$pr_number" "$release_status" || {
+		_full_loop_hint_finalize_wrong_worktree "$repo" "$pr_number" && return 1
 		print_error "Finalization blocked: legacy cleanup marker does not match the exact finalized owner contract"
 		return 1
 	}

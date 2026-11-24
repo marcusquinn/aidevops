@@ -326,14 +326,33 @@ _pulse_setup_refill_only_mode() {
 # Runs while this process still holds the instance lock. Idempotent.
 #######################################
 _pulse_event_refill_hand_off_census() {
+	# t19324: a dispatch-lock-only run does not own the instance lock, which
+	# _dispatch_cleanup_cycle_cache requires for its GH#38908 handoff. Hand
+	# on while still holding the dispatch lock; the slot is replaced
+	# atomically and adopted candidates still pass every live dispatch gate.
+	# A requested drain bundle keeps priority (handled by the cleanup below).
+	if [[ "${_LOCK_OWNED:-false}" != "true" && "${_DISPATCH_LOCK_OWNED:-false}" == "true" ]] &&
+		declare -F _dispatch_hand_off_candidate_snapshots >/dev/null 2>&1 &&
+		! _pulse_event_refill_drain_bundle_requested; then
+		_dispatch_hand_off_candidate_snapshots "${PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT:-1000}" "next-process" || true
+	fi
 	if declare -F _dispatch_cleanup_cycle_cache >/dev/null 2>&1; then
 		_dispatch_cleanup_cycle_cache || true
 	fi
 	return 0
 }
 
+_pulse_event_refill_drain_bundle_requested() {
+	declare -F _pulse_drain_requested_bundle >/dev/null 2>&1 || return 1
+	_pulse_drain_requested_bundle >/dev/null 2>&1
+	return $?
+}
+
 _pulse_event_refill_cleanup() {
 	_pulse_event_refill_hand_off_census
+	if declare -F pulse_release_dispatch_lock_on_exit >/dev/null 2>&1; then
+		pulse_release_dispatch_lock_on_exit || true
+	fi
 	if declare -F release_instance_lock >/dev/null 2>&1; then
 		release_instance_lock || true
 	fi
@@ -343,6 +362,38 @@ _pulse_event_refill_cleanup() {
 	return 0
 }
 
+#######################################
+# t19324 (GH#40112): with PULSE_DISPATCH_LOCK_SPLIT=1 a refill-only run takes
+# only the dispatch lock (pulse-instance-lock.sh), so it can launch while the
+# cycle holds the instance lock through maintenance. Dispatch rounds still
+# never overlap. Flag off: the instance lock, exactly as before.
+#######################################
+_pulse_event_refill_split_lock() {
+	declare -F pulse_dispatch_lock_split_enabled >/dev/null 2>&1 || return 1
+	pulse_dispatch_lock_split_enabled
+	return $?
+}
+
+_pulse_event_refill_try_lock() {
+	if _pulse_event_refill_split_lock; then
+		acquire_dispatch_lock "event_refill_drain"
+		return $?
+	fi
+	acquire_instance_lock
+	return $?
+}
+
+_pulse_event_refill_release_lock() {
+	if _pulse_event_refill_split_lock; then
+		release_dispatch_lock
+		return 0
+	fi
+	release_instance_lock
+	return 0
+}
+
+# Waits for the refill's dispatch lock: the instance lock, or the dispatch
+# lock under PULSE_DISPATCH_LOCK_SPLIT=1 (t19324). Name kept for callers.
 _pulse_event_refill_wait_for_instance_lock() {
 	local wait_seconds="${PULSE_EVENT_REFILL_WAIT_SECONDS:-20}"
 	local poll_seconds="${PULSE_EVENT_REFILL_POLL_SECONDS:-1}"
@@ -355,7 +406,7 @@ _pulse_event_refill_wait_for_instance_lock() {
 	((poll_seconds > 0)) || poll_seconds=1
 	started_epoch=$(date +%s)
 	while [[ -f "$trigger_file" ]]; do
-		if acquire_instance_lock; then
+		if _pulse_event_refill_try_lock; then
 			return 0
 		fi
 		now_epoch=$(date +%s)
@@ -695,8 +746,10 @@ _pulse_run_refill_only() {
 	fi
 	# GH#35349: after a failed or budget-exhausted drain, leave the lock to the
 	# next full cycle, whose cycle-final drain consumes the retained trigger.
-	local cooldown_remaining=""
-	if cooldown_remaining=$(_pulse_event_refill_cooldown_remaining); then
+	# t19324: a dispatch-lock-only refill cannot starve the cycle; no cooldown.
+	local split_lock=0 cooldown_remaining=""
+	_pulse_event_refill_split_lock && split_lock=1
+	if [[ "$split_lock" -eq 0 ]] && cooldown_remaining=$(_pulse_event_refill_cooldown_remaining); then
 		pulse_event_refill_log "action=deferred reason=failed_drain_cooldown trigger=retained source=${source_name} remaining=${cooldown_remaining}s"
 		pulse_event_refill_counter "pulse_event_refill_deferred_cooldown"
 		return 0
@@ -706,19 +759,19 @@ _pulse_run_refill_only() {
 		return 0
 	fi
 	if ! _pulse_event_refill_wait_for_instance_lock; then
-		[[ -f "$trigger_file" ]] && pulse_event_refill_log "action=lock_busy trigger=retained source=${source_name}"
+		[[ -f "$trigger_file" ]] && pulse_event_refill_log "action=lock_busy trigger=retained source=${source_name} lock=$(_pulse_event_refill_lock_name "$split_lock")"
 		pulse_event_refill_counter "pulse_event_refill_lock_busy"
 		return 0
 	fi
 	trap '_pulse_event_refill_cleanup' EXIT
 	# GH#38627: a transition that began during the lock wait owns the restart.
 	if _pulse_event_refill_defer_for_transition "$source_name"; then
-		release_instance_lock
+		_pulse_event_refill_release_lock
 		return 0
 	fi
 	if ! check_session_gate; then
 		pulse_event_refill_log "action=blocked reason=session_gate trigger=retained source=${source_name}"
-		release_instance_lock
+		_pulse_event_refill_release_lock
 		return 0
 	fi
 	if [[ "${AIDEVOPS_PULSE_REST_FIRST_READS:-1}" == "1" ]]; then
@@ -730,16 +783,28 @@ _pulse_run_refill_only() {
 	if declare -F _dispatch_invalidate_candidate_snapshot >/dev/null 2>&1; then
 		_dispatch_invalidate_candidate_snapshot "event_refill" || true
 	fi
-	_pulse_event_refill_apply_budget
+	# t19324: the GH#35349 admission budget protects a cycle waiting on the
+	# instance lock; a dispatch-lock-only run keeps the normal cycle clamp.
+	[[ "$split_lock" -eq 1 ]] || _pulse_event_refill_apply_budget
 	_PULSE_EVENT_REFILL_LAST_OUTCOME=""
 	pulse_event_refill_drain "$source_name"
-	case "$_PULSE_EVENT_REFILL_LAST_OUTCOME" in
-	failed | budget_exhausted)
+	case "${split_lock}:${_PULSE_EVENT_REFILL_LAST_OUTCOME}" in
+	0:failed | 0:budget_exhausted)
 		_pulse_event_refill_record_cooldown "$_PULSE_EVENT_REFILL_LAST_OUTCOME"
 		;;
 	esac
 	_pulse_event_refill_hand_off_census
-	release_instance_lock
+	_pulse_event_refill_release_lock
+	return 0
+}
+
+_pulse_event_refill_lock_name() {
+	local split_lock="$1"
+	if [[ "$split_lock" == "1" ]]; then
+		printf 'dispatch\n'
+	else
+		printf 'instance\n'
+	fi
 	return 0
 }
 

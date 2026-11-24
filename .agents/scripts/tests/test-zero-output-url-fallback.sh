@@ -339,7 +339,7 @@ reset_json=$(jq -nc '[[
 reset_metrics=$(_dlw_comment_bloat_metrics_from_json "$reset_json" 1790640000 120 \
 	"$_DLW_ZERO_OUTPUT_EVIDENCE_PATTERN" "$_DLW_ZERO_ATTEMPT_EVIDENCE_PATTERN")
 IFS=$'\t' read -r _rs_comments _rs_ops reset_zero _rs_chars _rs_attempt _rs_recent _rs_notices _rs_epochs \
-	reset_epoch <<<"$reset_metrics"
+	reset_epoch _rs_other_device <<<"$reset_metrics"
 expected_reset_epoch=$(jq -nr '"2026-09-28T23:30:00Z" | fromdateiso8601')
 GH_RAW_COMMENTS="$reset_json"
 reset_comment_count=$(_dlw_zero_output_comment_count 123 owner/repo)
@@ -355,7 +355,7 @@ untrusted_reset_json=$(printf '%s' "$reset_json" | jq -c '.[0][2].author_associa
 untrusted_metrics=$(_dlw_comment_bloat_metrics_from_json "$untrusted_reset_json" 1790640000 120 \
 	"$_DLW_ZERO_OUTPUT_EVIDENCE_PATTERN" "$_DLW_ZERO_ATTEMPT_EVIDENCE_PATTERN")
 IFS=$'\t' read -r _ur_comments _ur_ops untrusted_zero _ur_chars _ur_attempt _ur_recent _ur_notices _ur_epochs \
-	untrusted_reset_epoch <<<"$untrusted_metrics"
+	untrusted_reset_epoch _ur_other_device <<<"$untrusted_metrics"
 if [[ "$untrusted_zero" == "3" && "$untrusted_reset_epoch" == "0" ]]; then
 	pass "non-authoritative reset marker is ignored"
 else

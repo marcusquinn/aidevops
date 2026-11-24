@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "license": "MIT",
+  "scripts": {
+    "lint:check": "node --check plugins/buzz-aidevops/plugin.js && node --check plugins/frontier-harness/index.mjs && node --check templates/prospecting-workbench/app.js"
+  },
   "dependencies": {
     "ajv": "8.20.0"
   }

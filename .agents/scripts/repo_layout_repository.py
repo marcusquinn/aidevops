@@ -77,13 +77,32 @@ def recommended_path(
     return expand_path(output.strip())
 
 
-def status_records(repo: Path) -> tuple[str, int]:
+def excluded_pathspec(excluded: tuple[str, ...]) -> list[str]:
+    """Omit nested repositories that migrate separately from a parent's state.
+
+    An empty exclusion keeps the exact historical Git invocation so digests in
+    existing plans remain comparable.
+    """
+    if not excluded:
+        return []
+    return ["--", ".", *(f":(exclude,literal){item}" for item in excluded)]
+
+
+def status_records(repo: Path, excluded: tuple[str, ...] = ()) -> tuple[str, int]:
     """Return a stable status digest and entry count."""
-    raw = git(repo, "status", "--porcelain=v1", "-z", "--untracked-files=all", binary=True)
+    raw = git(
+        repo,
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        *excluded_pathspec(excluded),
+        binary=True,
+    )
     return sha256_bytes(raw), len([item for item in raw.split(b"\0") if item])
 
 
-def working_tree_digest(repo: Path) -> str:
+def working_tree_digest(repo: Path, excluded: tuple[str, ...] = ()) -> str:
     """Hash tracked diffs and exact untracked file content."""
     digest = hashlib.sha256()
     digest.update(git(repo, "diff", "--no-ext-diff", "--binary", binary=True))
@@ -96,6 +115,7 @@ def working_tree_digest(repo: Path) -> str:
         "--others",
         "--exclude-standard",
         "-z",
+        *excluded_pathspec(excluded),
         binary=True,
     )
     for raw_path in sorted(item for item in untracked.split(b"\0") if item):
@@ -110,33 +130,49 @@ def working_tree_digest(repo: Path) -> str:
     return digest.hexdigest()
 
 
-def worktree_records(repo: Path) -> list[dict[str, Any]]:
-    """Return normalized worktree identities, preserving linked paths."""
+def worktree_records(repo: Path, excluded: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+    """Return normalized worktree identities, preserving linked paths.
+
+    ``excluded`` applies only to the main worktree, which is the checkout that
+    contains nested repositories selected for the same migration.
+    """
     records: list[dict[str, Any]] = []
     current: dict[str, Any] = {}
     for line in git(repo, "worktree", "list", "--porcelain").splitlines() + [""]:
-        if not line:
-            if current:
-                path = Path(current.get("worktree", ""))
-                if path.is_dir():
-                    status_hash, status_count = status_records(path)
-                    current["status_sha256"] = status_hash
-                    current["status_entries"] = status_count
-                    current["working_tree_sha256"] = working_tree_digest(path)
-                # Git always lists the main worktree first. Normalize that
-                # location because its spelling changes during a move.
-                current["worktree"] = "<canonical>" if not records else str(path)
-                records.append(current)
-                current = {}
-            continue
-        key, _, value = line.partition(" ")
-        current[key] = value
+        if line:
+            key, _, value = line.partition(" ")
+            current[key] = value
+        elif current:
+            # Git always lists the main worktree first.
+            records.append(finish_worktree_record(current, not records, excluded))
+            current = {}
     return records
 
 
-def repository_fingerprint(repo: Path) -> dict[str, Any]:
-    """Capture the exact local Git state that a move must preserve."""
-    status_hash, status_count = status_records(repo)
+def finish_worktree_record(
+    record: dict[str, Any], is_main: bool, excluded: tuple[str, ...]
+) -> dict[str, Any]:
+    """Add state digests to one porcelain record and normalize its path."""
+    path = Path(record.get("worktree", ""))
+    if path.is_dir():
+        omitted = excluded if is_main else ()
+        status_hash, status_count = status_records(path, omitted)
+        record["status_sha256"] = status_hash
+        record["status_entries"] = status_count
+        record["working_tree_sha256"] = working_tree_digest(path, omitted)
+    # Normalize the main worktree location because its spelling changes
+    # during a move.
+    record["worktree"] = "<canonical>" if is_main else str(path)
+    return record
+
+
+def repository_fingerprint(repo: Path, excluded: tuple[str, ...] = ()) -> dict[str, Any]:
+    """Capture the exact local Git state that a move must preserve.
+
+    ``excluded`` names repository-relative nested repositories that the same
+    plan moves first, so their departure is not reported as parent drift.
+    """
+    status_hash, status_count = status_records(repo, excluded)
     branches = git(
         repo,
         "for-each-ref",
@@ -188,22 +224,38 @@ def repository_fingerprint(repo: Path) -> dict[str, Any]:
         "branches": branches,
         "status_sha256": status_hash,
         "status_entries": status_count,
-        "working_tree_sha256": working_tree_digest(repo),
+        "working_tree_sha256": working_tree_digest(repo, excluded),
         "stashes": stashes,
         "stash_count": len(stashes),
         "gitmodules_sha256": modules_hash,
         "submodules_sha256": sha256_bytes(canonical_bytes(submodule_state)),
-        "worktrees": worktree_records(repo),
+        "worktrees": worktree_records(repo, excluded),
     }
+
+
+def prunable_worktree_paths(records: list[dict[str, Any]]) -> list[str]:
+    """Return linked registrations Git marks prunable whose path is absent.
+
+    Such entries are dead metadata with no pointer to repair (GH#40058). Any
+    other missing or unexpected pointer stays fail-closed.
+    """
+    return [
+        str(record["worktree"])
+        for record in records
+        if record.get("worktree") not in (None, "", "<canonical>")
+        and "prunable" in record
+        and not os.path.lexists(record["worktree"])
+    ]
 
 
 def linked_pointer_records(repo: Path, records: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Record exact linked-worktree pointer content for guarded repair."""
     pointers: list[dict[str, str]] = []
     prefix = f"gitdir: {repo}/.git/"
+    prunable = set(prunable_worktree_paths(records))
     for record in records:
         worktree = record.get("worktree")
-        if not worktree or worktree == "<canonical>":
+        if not worktree or worktree == "<canonical>" or worktree in prunable:
             continue
         marker = Path(worktree) / ".git"
         if marker.is_symlink() or not marker.is_file():

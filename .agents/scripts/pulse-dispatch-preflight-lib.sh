@@ -705,7 +705,7 @@ _preflight_early_dispatch() {
 		# children filtered from its fetched snapshot, but defer dependency graph
 		# normalization/refetch to housekeeping and normal sweeps. Pass the mode as an
 		# internal argument so it cannot leak into launched worker environments.
-		apply_dispatch_max "skip"
+		_preflight_run_dispatch_stage "early_dispatch" apply_dispatch_max "skip"
 	fi
 
 	# Routine comment responses: scan routine-tracking issues for unanswered
@@ -754,10 +754,29 @@ _preflight_post_label_refill_wall_clock_allows() {
 }
 
 #######################################
+# t19324: run a preflight dispatch stage under the dispatch lock when
+# PULSE_DISPATCH_LOCK_SPLIT=1 (pulse-instance-lock.sh); a busy lock skips it.
+# Without the lock module (standalone sourcing) the stage runs directly.
+# Arguments: $1 - stage label; $2... - command and arguments
+#######################################
+_preflight_run_dispatch_stage() {
+	local stage="$1"
+	shift
+	if declare -F pulse_run_with_dispatch_lock >/dev/null 2>&1; then
+		pulse_run_with_dispatch_lock "$stage" "$@"
+		return $?
+	fi
+	"$@"
+	return $?
+}
+
+#######################################
 # Refill after label maintenance without repeating routine-comment responses.
 # Invalidate the cycle-scoped candidate snapshot first so apply_dispatch_max
 # sees labels changed by maintenance while preserving the existing claim,
 # ledger, trust, and per-candidate timeout gates across multiple fill passes.
+# t19324: the invalidation removes shared first-wave and handoff censuses, so
+# it runs inside the dispatch lock together with the round.
 #######################################
 _preflight_post_label_refill() {
 	# GH#36122: label this path in apply_dispatch_max's breaker skip line.
@@ -766,17 +785,22 @@ _preflight_post_label_refill() {
 		echo "[pulse-wrapper] Stop flag present — skipping post-label dispatch_max" >>"$LOGFILE"
 	else
 		_preflight_post_label_refill_wall_clock_allows || return 0
-		if ! _dispatch_invalidate_candidate_snapshot "label_maintenance_complete"; then
-			echo "[pulse-wrapper] Post-label dispatch_max skipped: unable to invalidate candidate snapshot" >>"$LOGFILE"
-			return 0
-		fi
-		echo "[pulse-wrapper] Post-label dispatch_max: refilling after label maintenance" >>"$LOGFILE"
-		# GH#33944: refill already-eligible work before a full blocked-backlog
-		# normalization can consume the candidate admission budget. Existing
-		# housekeeping and normal sweeps retain dependency normalization; live
-		# per-candidate dependency/claim gates still apply to this fast refill.
-		apply_dispatch_max "skip"
+		_preflight_run_dispatch_stage "post_label_refill" _preflight_post_label_refill_round
 	fi
+	return 0
+}
+
+_preflight_post_label_refill_round() {
+	if ! _dispatch_invalidate_candidate_snapshot "label_maintenance_complete"; then
+		echo "[pulse-wrapper] Post-label dispatch_max skipped: unable to invalidate candidate snapshot" >>"$LOGFILE"
+		return 0
+	fi
+	echo "[pulse-wrapper] Post-label dispatch_max: refilling after label maintenance" >>"$LOGFILE"
+	# GH#33944: refill already-eligible work before a full blocked-backlog
+	# normalization can consume the candidate admission budget. Existing
+	# housekeeping and normal sweeps retain dependency normalization; live
+	# per-candidate dependency/claim gates still apply to this fast refill.
+	apply_dispatch_max "skip"
 	return 0
 }
 

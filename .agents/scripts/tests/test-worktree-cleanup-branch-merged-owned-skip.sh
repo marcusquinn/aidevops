@@ -42,6 +42,9 @@ mkdir -p "$HOME/.aidevops/logs" "$HOME/.config/aidevops"
 # a clean HOME has neither, and an inherited host state dir must not leak in.
 printf '{"initialized_repos":[]}\n' >"$HOME/.config/aidevops/repos.json"
 export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_ROOT}/lifecycle-state"
+# shellcheck source=lib/lifecycle-process-fixture.sh
+source "${TEST_SCRIPTS_DIR}/tests/lib/lifecycle-process-fixture.sh"
+setup_lifecycle_process_fixture "$TEST_ROOT" "$TEST_SCRIPTS_DIR" || exit 1
 # A clean HOME also has no ownership registry; without one, the managed-worktree
 # status check reports "unavailable" and cleanup refuses every removal.
 bash -c 'source "$1/shared-worktree-registry.sh" && _init_registry_db' _ "$TEST_SCRIPTS_DIR" ||
@@ -1285,6 +1288,7 @@ test_closed_issue_late_edit_preserves_files
 test_force_merged_preserves_unreadable_index
 test_degraded_cleanup_audits_unreadable_index
 
+verify_lifecycle_process_fixture "$TEST_ROOT" || exit 1
 printf '\nResults: %d/%d passed, %d failed.\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -gt 0 ]]; then
 	exit 1

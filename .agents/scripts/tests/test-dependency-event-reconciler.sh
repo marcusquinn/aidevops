@@ -401,6 +401,57 @@ assert_eq 0 "$(run_reconcile)" "unreadable label history keeps the terminal-bloc
 TB_ETP='[[{"author_association":"OWNER","created_at":"2026-11-10T10:00:00Z","body":"CLAIM_RELEASED reason=blocked runner=x\nTerminal blocker: reason=external_trigger_pending"}]]'
 EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" SEARCH_EXTRA_LABEL="needs-dependency" COMMENTS="$TB_ETP" EVENTS="$CONVERT_EVENTS"
 assert_eq 0 "$(run_reconcile)" "external_trigger_pending observation is not superseded by the companion needs-dependency label"
+# GH#40068: the circuit comment carries only the hashed fingerprint, so the hash
+# is the external_trigger_pending provenance that keeps the hold stable.
+ETP_FP=$(_terminal_blocker_hash "v2:external_trigger_pending")
+TB_ETP_CIRCUIT='[[{"author_association":"OWNER","created_at":"2026-11-10T10:00:00Z","body":"TERMINAL_BLOCKER_CIRCUIT active=true observations=2 task_revision=r1 blocker='"$ETP_FP"'"}]]'
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" SEARCH_EXTRA_LABEL="needs-dependency" COMMENTS="$TB_ETP_CIRCUIT" EVENTS="$CONVERT_EVENTS"
+assert_eq 0 "$(run_reconcile)" "external_trigger_pending circuit comment holds despite a later needs-dependency label event"
+
+# GH#39979: an authoritative retry supersedes post-conversion observations, but
+# neither grants trigger completion nor clears independent holds or labels.
+TB_RETRY='{"author_association":"OWNER","created_at":"2026-11-13T10:00:00Z","body":"terminal-blocker-circuit:retry"}'
+COMMENTS=$(jq -c --argjson retry "$TB_RETRY" '.[0] += [$retry]' <<<"$TB_NEW")
+EDIT_COUNT=0 BODY20="Blocked by #10"
+_der_try_unblock "owner/repo" 20 "$(candidate 20 OPEN 't20: direct' "$BODY20" $'status:blocked\nneeds-dependency')"
+assert_eq unblocked "$_DER_RESULT" "OWNER retry after post-conversion terminal blocker releases closed native dependency"
+assert_eq 1 "$EDIT_COUNT" "retry uses normal dependency label transition"
+REREAD_LABELS="status:blocked,needs-dependency"
+for retry_association in MEMBER COLLABORATOR CONTRIBUTOR; do
+	COMMENTS=$(jq -c --argjson retry "$TB_RETRY" --arg association "$retry_association" '.[0] += [$retry | .author_association = $association]' <<<"$TB_NEW")
+	EDIT_COUNT=0
+	if [[ "$retry_association" == MEMBER ]]; then
+		assert_eq 1 "$(run_reconcile)" "MEMBER retry releases a post-conversion terminal blocker"
+	else
+		assert_eq 0 "$(run_reconcile)" "$retry_association retry cannot authorize release"
+	fi
+done
+for retry_body in 'Use terminal-blocker-circuit:retry to retry' $'<!-- aidevops:terminal-blocker-circuit -->\nterminal-blocker-circuit:retry'; do
+	COMMENTS=$(jq -c --argjson retry "$TB_RETRY" --arg body "$retry_body" '.[0] += [$retry | .body = $body]' <<<"$TB_NEW")
+	assert_eq 0 "$(run_reconcile)" "quoted directive or circuit packet cannot authorize retry"
+done
+COMMENTS=$(jq -c --argjson retry "$TB_RETRY" '.[0] += [$retry | .created_at = "invalid"]' <<<"$TB_NEW")
+assert_eq 0 "$(run_reconcile)" "retry without valid timestamp cannot authorize release"
+COMMENTS=$(jq -c --argjson retry "$TB_RETRY" '.[0] += [$retry | .created_at = "2026-11-11T11:00:00Z"]' <<<"$TB_NEW")
+assert_eq 0 "$(run_reconcile)" "observation after latest retry still holds"
+COMMENTS=$(jq -c --argjson retry "$TB_RETRY" '.[0] += [$retry | .created_at = "2026-11-12T10:00:00Z"]' <<<"$TB_NEW")
+assert_eq 0 "$(run_reconcile)" "same-time observation is not older than retry"
+for independent_hold in 'ACTION REQUIRED: maintainer decision' 'On hold for maintainer' 'Worker result: **BLOCKED** and cannot proceed safely'; do
+	COMMENTS=$(jq -c --argjson retry "$TB_RETRY" --arg hold "$independent_hold" '.[0][0].body += "\n" + $hold | .[0] += [$retry]' <<<"$TB_NEW")
+	assert_eq 0 "$(run_reconcile)" "retry preserves independent hold: $independent_hold"
+done
+COMMENTS=$(jq -c --argjson retry "$TB_RETRY" '.[0] += [$retry | .body += "\nTerminal blocker: a new observation"]' <<<"$TB_NEW")
+assert_eq 0 "$(run_reconcile)" "retry comment preserves its own new terminal observation"
+COMMENTS=$(jq -c --argjson retry "$TB_RETRY" '.[0] += [$retry]' <<<"$TB_NEW")
+for hold_label in hold-for-review needs-maintainer-input; do
+	SEARCH_EXTRA_LABEL=$'needs-dependency\n'"$hold_label"
+	assert_eq 0 "$(run_reconcile)" "retry preserves $hold_label label"
+done
+SEARCH_EXTRA_LABEL="needs-dependency"
+COMMENTS=$(jq -c --argjson retry "$TB_RETRY" '.[0] += [$retry]' <<<"$TB_ETP")
+assert_eq 0 "$(run_reconcile)" "generic retry does not satisfy external_trigger_pending"
+COMMENTS=$(jq -c --argjson retry "$TB_RETRY" '.[0] += [$retry | .body += "\n<!-- aidevops:trigger-revisit decision=trigger_met -->"]' <<<"$TB_ETP")
+assert_eq 1 "$(run_reconcile)" "trusted trigger-met retry supersedes external trigger observation"
 SEARCH_EXTRA_LABEL="" COMMENTS='[[]]' EVENTS=""
 
 # t18662: a dependant still waiting on another open blocker must not stop the

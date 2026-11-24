@@ -29,6 +29,9 @@ export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
 export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_ROOT}/lifecycle-state"
 export HOME="${TEST_ROOT}/home"
 mkdir -p "$HOME"
+# shellcheck source=lib/lifecycle-process-fixture.sh
+source "${SCRIPT_DIR}/tests/lib/lifecycle-process-fixture.sh"
+setup_lifecycle_process_fixture "$TEST_ROOT" "$SCRIPT_DIR" || exit 1
 
 LOGFILE="${TEST_ROOT}/pulse.log"
 export AIDEVOPS_CLEANUP_LOG="${TEST_ROOT}/cleanup_worktrees.log"
@@ -639,4 +642,5 @@ test_worker_closing_pr_fails_closed_on_truncated_or_unmetered_graphql
 test_permanent_removal_failure_has_no_git_fallback
 test_degraded_orphan_is_quarantined_with_bounded_retry
 
+verify_lifecycle_process_fixture "$TEST_ROOT" || exit 1
 exit 0

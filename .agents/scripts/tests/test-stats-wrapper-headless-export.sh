@@ -239,10 +239,15 @@ MOCK_STATS_FUNCTIONS
 # update, before optional cross-repository summaries can consume the wrapper
 # timeout. Static ordering keeps this focused on the scheduler safety contract.
 test_priority_dashboard_precedes_optional_cross_repo_work() {
-	local dashboard_script priority_line cache_line
+	local dashboard_script production_snippet priority_line cache_line
 	dashboard_script="${SCRIPT_DIR}/../stats-health-dashboard.sh"
-	priority_line=$(grep -nE "^[[:space:]]*(if[[:space:]]+)?priority_slug=[\$]\(_refresh_priority_health_issue \"[\$]repo_entries\"\)" "$dashboard_script" | head -1 | cut -d: -f1)
-	cache_line=$(grep -nE '^[[:space:]]*_stats_run_bounded .* _refresh_person_stats_cache' "$dashboard_script" | head -1 | cut -d: -f1) || cache_line=""
+	production_snippet=$(awk '
+		/^_update_health_issues_with_session_cache\(\) \{/ { in_production=1 }
+		in_production { print }
+		in_production && /^}$/ { exit }
+	' "$dashboard_script")
+	priority_line=$(printf '%s\n' "$production_snippet" | grep -nE "^[[:space:]]*(if[[:space:]]+)?priority_slug=[\$]\(_refresh_priority_health_issue \"[\$]repo_entries\"\)" | sed -n '1p' | cut -d: -f1)
+	cache_line=$(printf '%s\n' "$production_snippet" | grep -nE '^[[:space:]]*_refresh_health_aggregate_caches ' | sed -n '1p' | cut -d: -f1) || cache_line=""
 	if [[ -n "$priority_line" && -n "$cache_line" && "$priority_line" -lt "$cache_line" ]]; then
 		print_result "priority dashboard refresh precedes optional cross-repo work" 0
 		return 0
@@ -255,7 +260,7 @@ test_priority_dashboard_precedes_optional_cross_repo_work() {
 test_priority_failure_continues_remaining_repos() {
 	local production_snippet
 	production_snippet=$(awk '
-		/^update_health_issues\(\) \{/ { in_production=1 }
+		/^_update_health_issues_with_session_cache\(\) \{/ { in_production=1 }
 		in_production { print }
 		in_production && /^}$/ { exit }
 	' "$HEALTH_DASHBOARD_SCRIPT")
@@ -280,7 +285,7 @@ test_slow_priority_dashboard_skips_optional_cross_repo_work() {
 	local dashboard_script production_snippet
 	dashboard_script="${SCRIPT_DIR}/../stats-health-dashboard.sh"
 	production_snippet=$(awk '
-		/^update_health_issues\(\) \{/ { in_production=1 }
+		/^_update_health_issues_with_session_cache\(\) \{/ { in_production=1 }
 		in_production { print }
 		in_production && /^}$/ { exit }
 	' "$dashboard_script")

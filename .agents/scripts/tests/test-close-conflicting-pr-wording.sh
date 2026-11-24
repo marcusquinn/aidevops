@@ -256,7 +256,21 @@ load_functions_under_test() {
 	cat >>"$tmp_fn" <<'STUB_EOF'
 _carry_forward_pr_diff() { return 0; }
 _extract_linked_issue() { return 0; }
+_extract_pr_work_issue() { return 0; }
 _close_superseded_duplicate_issue_if_verified() { return 0; }
+# Dispatch is outside the wording/overlap contract; never launch a real worker.
+_route_pr_to_fix_worker() { return 0; }
+# The production cache adapter returns a commit object, not filename lines.
+# Retain the fixture's missing/empty response failure behavior.
+gh_commit_by_sha_cached() {
+	local repo_slug="$1"
+	local commit_sha="$2"
+	local files
+	files=$(gh api "repos/${repo_slug}/commits/${commit_sha}") || return 1
+	[[ -n "$files" ]] || return 1
+	printf '%s\n' "$files" | jq -Rn '{files: [inputs | {filename: .}]}'
+	return $?
+}
 STUB_EOF
 
 	# shellcheck source=/dev/null

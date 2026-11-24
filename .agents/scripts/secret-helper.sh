@@ -155,7 +155,9 @@ gopass_owns_secret() {
 # capability gate) agrees with runtime injection (GH#33608).
 # Used only by cmd_get, which preserves the historical first-line contract.
 # Returns 3 when gopass owns NAME but `gopass show` fails (gpg/agent/pinentry/
-# store), matching cmd_check. Only then is gopass stderr forwarded: it is
+# store), matching cmd_check. Also returns 3 when a plaintext credential file
+# exists but is unreadable and no readable file supplies NAME (not absence).
+# Only then is gopass stderr forwarded: it is
 # diagnostic text, never the value. Success-path stderr stays hidden (GH#35265).
 get_secret_value() {
 	local name="$1"
@@ -179,9 +181,13 @@ get_secret_value() {
 		return 0
 	fi
 	# Fallback to credential files (handles multi-tenant)
-	local cred_file
+	local cred_file unreadable=0
 	while IFS= read -r cred_file; do
 		[[ -z "$cred_file" ]] && continue
+		if [[ -e "$cred_file" && ! -r "$cred_file" ]]; then
+			unreadable=1
+			continue
+		fi
 		local value
 		# Strip 'export NAME=', strip surrounding double quotes, then unescape
 		# \" -> " and \\ -> \ (order matters: unescape \" before \\).
@@ -193,6 +199,9 @@ get_secret_value() {
 			return 0
 		fi
 	done < <(resolve_credential_files)
+	# An unreadable candidate file cannot prove absence: report a read failure
+	# (3) unless another readable tenant file already supplied the value above.
+	[[ "$unreadable" -eq 0 ]] || return 3
 	return 0
 }
 
@@ -205,34 +214,52 @@ get_gopass_entry_value() {
 	return 0
 }
 
-# A headless pinentry can wait forever for a passphrase. Bound each requested
-# decrypt, including its GPG children, without putting the value in argv/logs.
-get_injected_gopass_value() {
-	local secret_path="$1"
-	if [[ -t 0 && -t 2 ]]; then
-		gopass show -n "$secret_path" 2>/dev/null || return 1
-	else
-		python3 -c '
-import os, signal, subprocess, sys
-
+# Normalize the read bound once for both supervision and timeout diagnostics.
+injected_gopass_timeout() {
+	local multiplier="${1:-1}"
+	python3 -c '
+import os, sys
 try:
     timeout = int(os.environ.get("AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS", "12"))
 except ValueError:
     timeout = 12
-timeout = min(55, max(1, timeout))
-process = subprocess.Popen(["gopass", "show", "-n", sys.argv[1]],
-                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                           start_new_session=True)
-try:
-    value, _ = process.communicate(timeout=timeout)
-except subprocess.TimeoutExpired:
-    os.killpg(process.pid, signal.SIGKILL)
-    process.communicate()
-    sys.exit(5)
-if process.returncode:
-    sys.exit(1)
-sys.stdout.buffer.write(value)
-' "$secret_path" || return $?
+print(min(55, min(55, max(1, timeout)) * int(sys.argv[1])))
+' "$multiplier" || return 1
+	return 0
+}
+
+# A headless pinentry can wait forever for a passphrase. Bound each requested
+# decrypt, including its GPG children, without putting the value in argv/logs.
+get_injected_gopass_value() {
+	local secret_path="$1"
+	local retry="${2:-false}"
+	if [[ -t 0 && -t 2 ]]; then
+		gopass show -n "$secret_path" 2>/dev/null || return 1
+	else
+		local timeout
+		timeout=$(injected_gopass_timeout) || return 1
+		python3 -c '
+import os, signal, subprocess, sys
+
+timeout = int(sys.argv[2])
+attempts = 2 if sys.argv[3] == "true" else 1
+for attempt in range(attempts):
+    process = subprocess.Popen(["gopass", "show", "-n", sys.argv[1]],
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                               start_new_session=True)
+    try:
+        value, _ = process.communicate(timeout=min(55, timeout * (attempt + 1)))
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.communicate()
+        if attempt + 1 == attempts:
+            sys.exit(5)
+        continue
+    if process.returncode:
+        sys.exit(1)
+    sys.stdout.buffer.write(value)
+    break
+' "$secret_path" "$timeout" "$retry" || return $?
 	fi
 	return 0
 }
@@ -852,16 +879,13 @@ cmd_get() {
 	# Normalize to uppercase
 	name=$(echo "$name" | tr '[:lower:]-' '[:upper:]_')
 
-	local value="" read_rc=0 read_name="$name"
-	value=$(get_secret_value "$name") || read_rc=$?
-	if [[ "$read_rc" -eq 0 && -z "$value" ]]; then
-		# Declared alias or explicit provider default (GH#34718)
-		local source_name=""
-		if source_name=$(resolve_injection_source "$name"); then
-			read_name="$source_name"
-			value=$(get_secret_value "$source_name") || read_rc=$?
-		fi
+	local value="" read_rc=0 read_name="$name" source_name=""
+	# Resolve before reading, like cmd_check: unrelated unreadable plaintext
+	# must not mask an alias. Stored direct names still take precedence.
+	if source_name=$(resolve_injection_source "$name"); then
+		read_name="$source_name"
 	fi
+	value=$(get_secret_value "$read_name") || read_rc=$?
 
 	# Present but unreadable is not "not found": fail closed like cmd_check (GH#35265).
 	if [[ "$read_rc" -eq 3 ]]; then
@@ -1416,9 +1440,7 @@ cmd_run_specific() {
 		fi
 	done
 
-	if ! build_secret_env ${source_names[@]+"${source_names[@]}"} >"$env_file"; then
-		return 1
-	fi
+	build_secret_env ${source_names[@]+"${source_names[@]}"} >"$env_file" || return $?
 	append_alias_records "$env_file" ${alias_pairs[@]+"${alias_pairs[@]}"}
 	register_redaction_digests "$env_file"
 

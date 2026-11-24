@@ -588,7 +588,7 @@ The worker triages each entry automatically, following "Alert Triage Contract" i
 1. Find the local log record by \`ts\` + \`repo\` + \`number\` and read \`flags\`, \`caller_*\` and \`delta\`.
 2. Check live GitHub state (issue events/timeline, protected label restored, \`approval-helper.sh verify-permissions\` / \`verify\`).
 3. Classify each entry as \`expected\` (with evidence), \`reverted\` or \`unexplained\`.
-4. All \`expected\`/\`reverted\`: post one verified evidence report with the self-bound report-only receipt described in \`reference/worker-discipline.md\` "Read-only reports", then close this alert as completed. A \`COLLABORATOR\` must be the same login as the issue author, closer and receipt author. Any \`unexplained\`: add \`needs-maintainer-input\` with one decision-ready comment and leave it open.
+4. All \`expected\`/\`reverted\`: write the verified evidence report to a file and finish with \`~/.aidevops/agents/scripts/pr-less-completion-helper.sh report-only --repo <owner/repo> --issue <this issue> --report-file <file>\`. It posts the report, binds the report-only receipt, closes this alert as completed and verifies it; never hand-write the receipt. A \`COLLABORATOR\` must run it as the same login as the issue author. Any \`unexplained\`: add \`needs-maintainer-input\` with one decision-ready comment and leave it open.
 5. A \`state_capture_unavailable:*\` signal means the audit read failed; it is not evidence that content was wiped.
 
 If the producing runner never claims the alert, the maintainer runner's pulse adds \`needs-maintainer-input\` after ${GH_ANOMALY_STALE_HOURS} hours.

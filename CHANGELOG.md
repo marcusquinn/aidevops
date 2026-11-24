@@ -10,6 +10,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.276] - 2026-11-23
+
+### Changed
+
+- Tests: isolate capacity fixture from runner-salted ties
+
+### Fixed
+
+- give .agents/package.json a check script so validators own its JS files
+- stage managed Vault crypto runtime in shell suite main health
+- bound ACP turns and delegate proxy runtime to the plugin
+- migrate-layout never moves the framework install checkout
+- hold external_trigger_pending circuit comments against label churn
+
+## [3.39.275] - 2026-11-23
+
+### Changed
+
+- Maintenance: mark t19315 complete (pr:#40070 completed:2026-11-23) (#40072)
+- Maintenance: mark t19314 complete (pr:#40054 completed:2026-11-23) (#40057)
+
+### Fixed
+
+- part B - migrate-layout accepts registered outside-workspace and nested sources
+- retry scoped gopass read timeouts
+- check the repo Node pin in the preclaim runner-capability gate (t19318)
+- rerun parallel-pass reds serially in shell suite main health (#40073)
+- pass default branch arg in degraded terminal-PR-proof test (GH#40071)
+- part A - migrate-layout tolerates prunable worktrees; audited prune-missing-worktrees
+- zero-check PRs return terminal no-checks instead of hanging
+- honor pinned base for successive publications
+- defer a validator timeout to a matching required CI check (t19316)
+- honor bounded supervisor runtime budgets (#40055)
+- scale legacy-unit repository budget overrides
+
+## [3.39.274] - 2026-11-23
+
+### Changed
+
+- Maintenance: mark t19313 complete (pr:#40036 completed:2026-11-23) (#40043)
+- Tests: repair extracted-helper fixtures for GH#40037
+
+### Fixed
+
+- deterministic self-verifying PR-less completion receipts
+- refresh stale structural contracts in shell-health suites (GH#40038) (#40052)
+- hint correct worktree when finalize-receipt runs from another PR's worktree
+- count never-launched attempts once per runner
+- repair three red-on-main stats/health suites
+- prevent duplicate inflight exit replay (#40024)
+- project lifecycle state when replaying an already-published claim release
+- stage ESM dependencies and suite tools (#40035)
+
+## [3.39.273] - 2026-11-23
+
+### Changed
+
+- Maintenance: mark t19309 complete (pr:#40014 completed:2026-11-23) (#40022)
+
+### Fixed
+
+- require a declaration for closing keywords in PR body prose
+- report unavailable ShellCheck as skipped instead of All clear
+
+## [3.39.272] - 2026-11-23
+
+### Changed
+
+- Maintenance: mark t19310 complete (pr:#40010 completed:2026-11-23) (#40012)
+- Maintenance: sync GitHub issue refs to TODO.md (#40013)
+- Maintenance: mark t19307 complete (pr:#40001 completed:2026-11-23) (#40003)
+
+### Fixed
+
+- release the dispatch claim before the exit-trap terminal lease
+- batch ignored source reference checks (#40020)
+- recover missing GitHub HTTPS credential helpers
+- stage checked-out framework for suite health
+- pass generation identity when draining same-boot owner launches
+- consolidate npm-owned MCP packages safely
+- recover assigned worker draft checkpoints
+
+## [3.39.271] - 2026-11-23
+
+### Fixed
+
+- name the real cause when worktree pre-creation fails
+
+## [3.39.270] - 2026-11-23
+
+### Added
+
+- verify root suite split invocation coverage
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#39989)
+
+### Fixed
+
+- aborted pre-launch attempts hold only the device that made them
+- stale sweep reads every comment page for the latest dispatch
+- one failing secondary remote no longer disables remote-deleted cleanup
+- ref-only remote prune stops tmp_pack_* leaks from capped fetches
+- commit-and-pr skips other tasks' TODO.md lines (#39987)
+- honour trusted terminal-blocker retries
+- isolate implicit temp grants and validate invocation (#39911)
+
 ## [3.39.269] - 2026-11-23
 
 ### Changed

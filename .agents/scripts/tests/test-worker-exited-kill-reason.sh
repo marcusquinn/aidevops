@@ -368,10 +368,11 @@ test_invoke_opencode_calls_classifier() {
 	return 0
 }
 
-# t3063 acceptance: classifier function exists in the failure library.
+# t3063 acceptance: classifier function exists in the failure library
+# (extracted to headless-runtime-failure-classify.sh by GH#37744).
 test_classifier_function_defined() {
-	local lib="${AGENTS_SCRIPTS}/headless-runtime-failure.sh"
-	assert_grep "classify_worker_kill_reason() defined in headless-runtime-failure.sh" \
+	local lib="${AGENTS_SCRIPTS}/headless-runtime-failure-classify.sh"
+	assert_grep "classify_worker_kill_reason() defined in headless-runtime-failure-classify.sh" \
 		'^classify_worker_kill_reason\(\)' \
 		"$lib"
 	return 0

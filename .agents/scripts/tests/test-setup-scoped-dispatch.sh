@@ -15,6 +15,7 @@ export TEST_NATIVE_GIT
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="${SCRIPT_DIR}/../../.."
 SETUP_SH="${REPO_ROOT}/setup.sh"
+SETUP_EXECUTION="${REPO_ROOT}/.agents/scripts/setup/modules/setup-execution.sh"
 AIDEVOPS_SH="${REPO_ROOT}/aidevops.sh"
 RUNTIME_BUNDLE_VERIFIER="${REPO_ROOT}/.agents/scripts/runtime-bundle-verifier.sh"
 POST_SETUP_MODULE="${REPO_ROOT}/.agents/scripts/setup/modules/post-setup.sh"
@@ -95,7 +96,18 @@ file_text() {
 import pathlib
 import sys
 
-print(pathlib.Path(sys.argv[1]).read_text())
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+if path.name == "setup.sh":
+    modules = path.parent / ".agents/scripts/setup/modules"
+    for name in ("setup-interface.sh", "setup-execution.sh", "setup-postflight.sh"):
+        needle = 'source "${SETUP_IMPL_MODULES_DIR}/' + name + '"'
+        if needle not in text:
+            print(f"setup.sh does not source {name}", file=sys.stderr)
+            sys.exit(1)
+    for name in ("setup-interface.sh", "setup-execution.sh", "setup-postflight.sh"):
+        text += "\n" + (modules / name).read_text()
+print(text)
 PY
 	return $?
 }
@@ -196,7 +208,7 @@ test_linked_worktree_checkout_contract() {
 		return 0
 	}
 	helper_text=$(
-		python3 - "$SETUP_SH" <<'PY'
+		python3 - "$SETUP_EXECUTION" <<'PY'
 import pathlib
 import re
 import sys

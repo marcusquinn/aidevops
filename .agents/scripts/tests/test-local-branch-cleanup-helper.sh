@@ -18,6 +18,12 @@ export WORKTREE_REGISTRY_DIR="$ROOT/registry"
 export WORKTREE_REGISTRY_DB="$WORKTREE_REGISTRY_DIR/owners.db"
 REPO="$ROOT/repo"
 BIN="$ROOT/bin"
+# Hermetic HOME (GH#40101): audit/config/Git state stays inside the fixture.
+export HOME="$ROOT/home"
+mkdir -p "$HOME/.aidevops/logs"
+ln -s "$(cd "${TEST_DIR}/../.." && pwd)" "$HOME/.aidevops/agents"
+export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
+export GIT_CONFIG_NOSYSTEM=1
 
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; return 1; }
 assert_has() {

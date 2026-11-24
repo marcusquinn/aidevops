@@ -795,6 +795,11 @@ _gh_pr_merge_closure_check() {
 		printf '%s\n' 'negated closing reference in PR body (GH#33539)'
 		return 1
 	fi
+	local undeclared=""
+	if undeclared=$(_gh_pr_body_undeclared_closing_ref "$body_text" "$repo_slug"); then
+		printf 'closing keyword in prose for %s has no Resolves/Fixes/Closes declaration (GH#40026)\n' "$undeclared"
+		return 1
+	fi
 	stripped=$(printf '%s\n' "$body_text" |
 		awk '/^[[:space:]]*(```|~~~)/ { fenced = !fenced; next } !fenced' |
 		sed -E "s/${backtick}[^${backtick}]*${backtick}//g")

@@ -219,6 +219,17 @@ malformed or oversized list with `invalid_requirements`. This is the first
 check, before tools, services and secret reads. Device ids are already public in
 claim comments and are not secrets.
 
+A repository Node pin (GH#40077) needs no declaration. Before the per-issue
+metadata read, the fresh gate resolves the repo's `.nvmrc`, `.node-version`,
+`.tool-versions` or `engines.node` with the same resolver worker prelaunch uses
+(`project-node-runtime.sh`). A runner with no satisfying installed Node defers
+every candidate of that repo with `node_unsatisfied active=<v> required="<pin>"`
+(`cooldown=none`) and logs one `runner_health:` line naming the Node to install;
+an unreadable pin defers with `node_requirement_unreadable`. The verdict is cached
+per requirement for `AIDEVOPS_RUNNER_CAPABILITY_NODE_TTL_SECONDS` (default 300),
+so installing Node reopens the repo within minutes. Before this gate, the gap
+surfaced only after claim, as `CLAIM_RELEASED reason=project_node_environment_failure`.
+
 Unmet candidates log `runner_capability_unmet` locally and return before claim,
 scope writes or worker launch. No issue label or comment is posted, so a capable
 peer can dispatch normally. A worker discovering the same problem after claiming

@@ -50,6 +50,14 @@ _DISPATCH_DEDUP_COST_LOADED=1
 #######################################
 _COST_REPO_BUDGET_MIN=100000
 _COST_REPO_BUDGET_MAX=20000000
+# GH#40030: GH#39951 switched footers to full usage (cache and reasoning
+# included) and raised the install default 25x (800K -> 20M). Repository files
+# written before then are in legacy non-cache units; read verbatim, a former
+# 2.5x-default override (2M) became a tenth of the new default and tripped on a
+# single ordinary attempt. Files without COST_BUDGET_UNIT=full-v1 are legacy and
+# are scaled by the same ratio before clamping.
+_COST_LEGACY_BUDGET_SCALE=25
+_COST_FULL_BUDGET_UNIT="full-v1"
 
 #######################################
 # Resolve a registered repository's checkout path from repos.json.
@@ -73,6 +81,9 @@ _cost_repo_path_for_slug() {
 # The repository file is data, never sourced: only exact
 # COST_BUDGET_(SIMPLE|STANDARD|THINKING|DEFAULT)=<digits> lines are accepted,
 # and values are clamped to [_COST_REPO_BUDGET_MIN, _COST_REPO_BUDGET_MAX].
+# Values are full-usage tokens only when the file declares
+# COST_BUDGET_UNIT=full-v1; otherwise they are legacy non-cache tokens and are
+# multiplied by _COST_LEGACY_BUDGET_SCALE before clamping (GH#40030).
 # Args: $1 = repo slug (owner/repo)
 #######################################
 _cost_repo_budget_overrides() {
@@ -83,11 +94,15 @@ _cost_repo_budget_overrides() {
 	repo_path="${repo_path/#\~/$HOME}"
 	conf="${repo_path}/.aidevops/dispatch-cost-budgets.conf"
 	[[ -f "$conf" ]] || return 0
+	local scale="$_COST_LEGACY_BUDGET_SCALE"
+	if grep -qxE "COST_BUDGET_UNIT=${_COST_FULL_BUDGET_UNIT}"$'\r?' "$conf" 2>/dev/null; then
+		scale=1
+	fi
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		line="${line%$'\r'}"
 		[[ "$line" =~ ^(COST_BUDGET_(SIMPLE|STANDARD|THINKING|DEFAULT))=([0-9]{1,9})$ ]] || continue
 		key="${BASH_REMATCH[1]}"
-		value=$((10#${BASH_REMATCH[3]}))
+		value=$((10#${BASH_REMATCH[3]} * scale))
 		if [[ "$value" -lt "$_COST_REPO_BUDGET_MIN" ]]; then
 			value="$_COST_REPO_BUDGET_MIN"
 		elif [[ "$value" -gt "$_COST_REPO_BUDGET_MAX" ]]; then

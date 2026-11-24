@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import shlex
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -487,6 +488,45 @@ class RepoLayoutMigrationTest(unittest.TestCase):
         self.assertTrue(self.source.is_dir())
         self.assertFalse(self.destination.exists())
 
+    def test_prunable_worktree_is_recorded_and_survives_apply_rollback(self) -> None:
+        # GH#40058: a registration whose path and parent were wiped (for
+        # example a runtime temp dir) is dead metadata, not a corrupt pointer.
+        wiped_parent = self.root / "runtime-tmp"
+        gone = wiped_parent / "session" / "Project-gone"
+        gone.parent.mkdir(parents=True)
+        self._git("worktree", "add", "-q", "-b", "feature/gone", str(gone))
+        shutil.rmtree(wiped_parent)
+        before_repository = self._repository_snapshot(self.source)
+
+        summary = self._plan()
+        repository = json.loads(self.plan.read_text(encoding="utf-8"))["repositories"][0]
+        self.assertEqual(repository["prunable_worktrees"], [str(gone)])
+        self.assertEqual(len(repository["linked_pointers"]), 1)
+
+        gone.mkdir(parents=True)
+        reappeared = self._run(
+            "apply", "--plan", str(self.plan), "--confirm", summary["plan_sha256"], check=False
+        )
+        self.assertEqual(reappeared.returncode, 2)
+        self.assertIn("prunable worktree reappeared", reappeared.stderr)
+        self.assertTrue(self.source.is_dir())
+        shutil.rmtree(wiped_parent)
+
+        applied = json.loads(
+            self._run("apply", "--plan", str(self.plan), "--confirm", summary["plan_sha256"]).stdout
+        )
+        self.assertEqual(applied["state"], "applied")
+        self.assertIn(f"worktree {gone}", self._git("worktree", "list", "--porcelain", cwd=self.destination))
+        status = self._receipt_status(applied["receipt_id"])
+        rolled_back = json.loads(
+            self._run(
+                "rollback", "--receipt", applied["receipt_id"], "--state-dir", str(self.state),
+                "--confirm", status["receipt_sha256"],
+            ).stdout
+        )
+        self.assertEqual(rolled_back["state"], "rolled-back")
+        self.assertEqual(before_repository, self._repository_snapshot(self.source))
+
     def test_refusal_for_malformed_config_and_database_schema_drift(self) -> None:
         original_tabby = self.tabby.read_text(encoding="utf-8")
         self.tabby.write_text("profiles: not-a-list\n", encoding="utf-8")
@@ -893,6 +933,147 @@ class RepoLayoutMigrationTest(unittest.TestCase):
                 self.assertTrue(source.is_dir())
                 if str(source).lower() != str(destination).lower():
                     self.assertFalse(destination.exists())
+
+    def _init_repository(self, path: Path, slug: str) -> None:
+        path.mkdir(parents=True)
+        self._git("init", "-q", "-b", "main", cwd=path)
+        self._git("config", "user.name", "Fixture User", cwd=path)
+        self._git("config", "user.email", "fixture@example.invalid", cwd=path)
+        (path / "tracked.txt").write_text(f"{slug}\n", encoding="utf-8")
+        self._git("add", "tracked.txt", cwd=path)
+        self._git("commit", "-q", "-m", "initial", cwd=path)
+        self._git("remote", "add", "origin", f"git@github.com:{slug}.git", cwd=path)
+
+    def _register(self, *entries: dict) -> None:
+        registration = json.loads(self.repos_json.read_text(encoding="utf-8"))
+        registration["initialized_repos"].extend(entries)
+        self.repos_json.write_text(json.dumps(registration), encoding="utf-8")
+
+    def _tree_digest(self, root: Path) -> str:
+        digest = hashlib.sha256()
+        for path in sorted(root.rglob("*")):
+            digest.update(str(path.relative_to(root)).encode())
+            if path.is_file() and not path.is_symlink():
+                digest.update(path.read_bytes())
+        return digest.hexdigest()
+
+    def test_registered_outside_and_nested_sources_round_trip(self) -> None:
+        projects = self.home / "Projects"
+        hub = projects / "Hub"
+        nested = hub / "Nested"
+        self._init_repository(hub, "Acme/Hub")
+        self._init_repository(nested, "Acme/Nested")
+        # The nested repository stays untracked in its parent, which is the
+        # shape the parent fingerprint must omit while the child moves first.
+        (hub / "notes.txt").write_text("untracked parent file\n", encoding="utf-8")
+        # The issue's third shape: a registration whose temp parent was wiped.
+        wiped_parent = self.root / "hub-runtime-tmp"
+        gone = wiped_parent / "Hub-gone"
+        wiped_parent.mkdir()
+        self._git("worktree", "add", "-q", "-b", "feature/gone", str(gone), cwd=hub)
+        shutil.rmtree(wiped_parent)
+        self._register({"path": str(hub)}, {"path": str(nested)})
+        before_tree = self._tree_digest(projects)
+        before_registration = self.repos_json.read_bytes()
+
+        summary = self._plan(sources=[str(hub), str(nested)])
+        payload = json.loads(self.plan.read_text(encoding="utf-8"))
+        self.assertEqual(summary["moves"], 2)
+        self.assertEqual(
+            [item["source"] for item in payload["repositories"]], [str(nested), str(hub)]
+        )
+        self.assertEqual(payload["repositories"][1]["nested_sources"], ["Nested"])
+        self.assertEqual(payload["repositories"][1]["prunable_worktrees"], [str(gone)])
+        self.assertNotIn("nested_sources", payload["repositories"][0])
+        self.assertEqual(before_tree, self._tree_digest(projects))
+
+        applied = json.loads(
+            self._run("apply", "--plan", str(self.plan), "--confirm", summary["plan_sha256"]).stdout
+        )
+        hub_destination = self.workspace / "acme/Hub"
+        nested_destination = self.workspace / "acme/Nested"
+        self.assertFalse(hub.exists())
+        self.assertEqual((nested_destination / "tracked.txt").read_text(encoding="utf-8"), "Acme/Nested\n")
+        self.assertEqual((hub_destination / "notes.txt").read_text(encoding="utf-8"), "untracked parent file\n")
+        self.assertFalse((hub_destination / "Nested").exists())
+        registered = {
+            item["path"] for item in json.loads(self.repos_json.read_text(encoding="utf-8"))["initialized_repos"]
+        }
+        self.assertTrue({str(hub_destination), str(nested_destination)} <= registered)
+
+        status = self._receipt_status(applied["receipt_id"])
+        self.assertEqual(status["state"], "applied")
+        self._run(
+            "rollback", "--receipt", applied["receipt_id"], "--state-dir", str(self.state),
+            "--confirm", status["receipt_sha256"],
+        )
+        self.assertEqual(before_tree, self._tree_digest(projects))
+        self.assertEqual(before_registration, self.repos_json.read_bytes())
+        self.assertFalse(hub_destination.exists())
+        self.assertFalse(nested_destination.exists())
+
+    def test_unapproved_or_unsafe_outside_sources_are_refused(self) -> None:
+        loose = self.home / "Loose"
+        local = self.home / "LocalOnly"
+        worktree_source = self.home / "LinkedCheckout"
+        self._init_repository(loose, "Acme/Loose")
+        self._init_repository(local, "Acme/LocalOnly")
+        self._git("worktree", "add", "-q", "-b", "linked", str(worktree_source), cwd=local)
+        self._register({"path": str(local), "local_only": True}, {"path": str(worktree_source)})
+        self._register({"path": str(self.home)})
+        cases = (
+            (loose, False, "not a discovered workspace repository"),
+            (loose, True, "not a discovered or registered repository"),
+            (local, True, "local-only registration"),
+            (worktree_source, True, "not a canonical repository root"),
+            (self.home, True, "must not contain the workspace"),
+        )
+        for source, approved, message in cases:
+            with self.subTest(source=source.name, approved=approved):
+                arguments = [
+                    "plan", "--workspace", str(self.workspace), "--output", str(self.plan),
+                    "--repos-json", str(self.repos_json), "--source", str(source),
+                ]
+                if approved:
+                    arguments.append("--include-registered-paths")
+                result = self._run(*arguments, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertFalse(self.plan.exists())
+
+    def test_framework_install_checkout_is_never_moved(self) -> None:
+        # GH#40061: a third-party owner path would move the hardcoded install.
+        framework = self.workspace / "aidevops"
+        self._init_repository(framework, "marcusquinn/aidevops")
+        self._register({"path": str(framework)})
+        head = self._git("rev-parse", "HEAD", cwd=framework)
+        summary = self._plan()
+        payload = json.loads(self.plan.read_text(encoding="utf-8"))
+        self.assertEqual(summary["moves"], 1)
+        self.assertNotIn(str(framework), [item["source"] for item in payload["repositories"]])
+        self.assertIn(
+            {"path": str(framework), "reason": "framework-install-checkout"},
+            payload["exclusions"],
+        )
+
+        # A plan written where the checkout was not protected fails closed at apply.
+        unguarded = {**self.environment, "HOME": str(self.root / "elsewhere")}
+        result = self._run(
+            "plan", "--workspace", str(self.workspace), "--output", str(self.plan),
+            "--repos-json", str(self.repos_json), "--state-dir", str(self.state),
+            "--include-registered-paths", "--source", str(framework),
+            environment=unguarded,
+        )
+        unguarded_summary = json.loads(result.stdout)
+        self.assertEqual(unguarded_summary["moves"], 1)
+        result = self._run(
+            "apply", "--plan", str(self.plan), "--confirm", unguarded_summary["plan_sha256"],
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("framework install checkout", result.stderr)
+        self.assertEqual(head, self._git("rev-parse", "HEAD", cwd=framework))
+        self.assertFalse((self.workspace / "marcusquinn").exists())
 
     def _database_paths(self, path: Path) -> set[str]:
         with sqlite3.connect(path) as connection:

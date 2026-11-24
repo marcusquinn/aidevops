@@ -266,7 +266,10 @@ for evidence_case in edited ambiguous unreadable invalid_timestamp duplicate_fie
 		;;
 	esac
 	result=0
-	GH_CLAIM_EVIDENCE="$evidence" GH_EDIT_RESPONSE="$evidence_edit_response" \
+	# Each case is an independent claim history: retry evidence left by an
+	# earlier held case would mark this lease's projection as unfinished.
+	AIDEVOPS_CLAIM_RELEASE_RETRY_DIR="${TMP_HOME}/retry-${evidence_case}" \
+		GH_CLAIM_EVIDENCE="$evidence" GH_EDIT_RESPONSE="$evidence_edit_response" \
 		_release_dispatch_claim "issue-12345" worker_complete || result=$?
 	if [[ "$result" -ne "$expected_result" ]] ||
 		grep -Eq 'API method=POST|^CLEAR |^UNLOCK ' "$CALL_LOG"; then
@@ -609,7 +612,36 @@ fi
 	# shellcheck source=../headless-runtime-result.sh
 	source "${SCRIPT_DIR}/headless-runtime-result.sh"
 	_headless_private_workload_enabled() { return 1; }
+	# Resolve the external timer before the stub shadows `timeout`.
+	external_timer=$(command -v timeout || command -v gtimeout || true)
+	[[ -n "$external_timer" ]] || { printf 'SKIP no external timeout available\n'; exit 0; }
+	# Stub only the secret-check subprocess, never read the operator's store.
+	external_timer=$(type -P timeout || type -P gtimeout)
+	timeout() {
+		local signal="${1:-}" duration="${2:-}" executable="${4:-}" operation="${5:-}" name="${6:-}"
+		if [[ "$executable" == */secret-helper.sh && "$operation" == check ]]; then
+			printf 'SECRET_CHECK %s\n' "$name" >>"$CALL_LOG"
+			if [[ "$name" == STALLED_CONFIG ]]; then
+				[[ "$signal" == --signal=KILL && "$duration" == 1 ]] || return 99
+				local stalled_status=0
+				"$external_timer" "$signal" "$duration" bash -c 'sleep 30' || stalled_status=$?
+				printf 'STALLED_STATUS %s\n' "$stalled_status" >>"$CALL_LOG"
+				return "$stalled_status"
+			fi
+			printf 'fixture-sensitive-output\n'
+			printf 'fixture-decryption-error\n' >&2
+			case "$name" in
+			READABLE_CONFIG) return 0 ;;
+			UNREADABLE_CONFIG) return 3 ;;
+			TIMEOUT_CONFIG) return 5 ;;
+			*) return 1 ;;
+			esac
+		fi
+		"$external_timer" "$@"
+		return $?
+	}
 	gh_issue_edit_safe() { printf 'EDIT %s\n' "$*" >>"$CALL_LOG"; return 0; }
+	production_prepare=$(declare -f _hrff_prepare_terminal_blocker_release)
 	_hrff_prepare_terminal_blocker_release() {
 		_HRFF_TERMINAL_BLOCKER_MODE=normal
 		_HRFF_TERMINAL_BLOCKER_FRAGMENT=$'\n<!-- aidevops:terminal-blocker-observation revision=aaaaaaaaaaaaaaaaaaaaaaaa blocker=bbbbbbbbbbbbbbbbbbbbbbbb -->\n'
@@ -674,6 +706,52 @@ fi
 	[[ "$(grep -c 'CLAIM_RELEASED reason=blocked' "$CALL_LOG")" == 1 ]]
 	grep -q -- '--remove-label status:in-progress' "$CALL_LOG"
 	printf 'PASS old open circuit persists current release before projecting blocked\n'
+	# Exercise capture through release for each documented secret-check result.
+	# Restore production release preparation; stub only its remote evidence inputs.
+	eval "$production_prepare"
+	AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH="$TMP_HOME"
+	terminal_blocker_fetch_trusted_comments() { printf '[]\n'; return 0; }
+	terminal_blocker_input_circuit_active() { return 1; }
+	terminal_blocker_task_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaa\n'; return 0; }
+	terminal_blocker_release_mode() { printf 'first\n'; return 0; }
+	trap 'printf "FAIL secret re-verification assertion at line %s\n" "$LINENO"' ERR
+	AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS=1
+	for secret_case in READABLE_CONFIG UNREADABLE_CONFIG TIMEOUT_CONFIG STALLED_CONFIG RUNNER_CONFIG; do
+		: >"$CALL_LOG"
+		rm -f "${TMP_HOME}/comment-attempts"
+		GH_RELEASE_COMMENTS=$(jq -c '.[0]' <<<"$valid_claim_evidence")
+		GH_LIVE_ISSUE='{"state":"open","body":"### Files Scope","assignees":[{"login":"assigned-bot"}],"labels":[{"name":"status:in-progress"}]}'
+		printf 'BLOCKED: fixture runner capability\nTERMINAL_BLOCKER_REASON=runner_capability_unmet\nTERMINAL_BLOCKER_MISSING_SECRETS=%s\n' "$secret_case" >"$output_file"
+		terminal_blocker_capture_output "$output_file" 2>"${TMP_HOME}/capture-errors"
+		_release_dispatch_claim issue-12345 blocked
+		if [[ "$secret_case" == RUNNER_CONFIG ]]; then
+			[[ "$AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS" == RUNNER_CONFIG ]]
+			grep -q -- '--add-label needs-secret:RUNNER_CONFIG' "$CALL_LOG"
+			grep -q 'Projected state: status:blocked' "$CALL_LOG"
+		else
+			[[ -z "$AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS" ]]
+			if grep -qE 'needs-secret:|needs-credentials|--add-label status:blocked' "$CALL_LOG"; then
+				printf 'FAIL runner-local check applied a global hold\n'; exit 1
+			fi
+			grep -q 'Projected state: status:available' "$CALL_LOG"
+		fi
+		if [[ "$secret_case" == READABLE_CONFIG ]]; then
+			grep -q 'missing_secret_declaration_refuted name=READABLE_CONFIG' "${TMP_HOME}/capture-errors"
+		fi
+		if [[ "$secret_case" == STALLED_CONFIG ]]; then
+			# GNU timeout reports SIGKILL as 137; Ubuntu 26.04's uutils
+			# timeout reports deadline expiry as 124 even with --signal=KILL.
+			grep -qE '^STALLED_STATUS (124|137)$' "$CALL_LOG"
+		fi
+		if grep -qE 'fixture-sensitive-output|fixture-decryption-error' "$CALL_LOG" "${TMP_HOME}/capture-errors"; then
+			printf 'FAIL secret-check output escaped suppression\n'; exit 1
+		fi
+		printf 'PASS reverified secret-check outcome %s projects the correct release state\n' "$secret_case"
+	done
+	printf 'BLOCKED: fixture\nTERMINAL_BLOCKER_REASON=runner_capability_unmet\nTERMINAL_BLOCKER_MISSING_SECRETS=TIMEOUT_CONFIG,RUNNER_CONFIG,READABLE_CONFIG,UNREADABLE_CONFIG\n' >"$output_file"
+	terminal_blocker_capture_output "$output_file" 2>"${TMP_HOME}/capture-errors"
+	[[ "$AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS" == RUNNER_CONFIG ]]
+	printf 'PASS mixed declaration retains only confirmed missing names\n'
 )
 
 # Exercise the actual finish path without contacting GitHub or the operator's logs.

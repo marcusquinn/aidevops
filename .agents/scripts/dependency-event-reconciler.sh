@@ -24,6 +24,8 @@ source "${_der_dir}/dependency-supersession-lib.sh"
 source "${_der_dir}/dependency-supersession-repoint-lib.sh"
 # shellcheck source=./upstream-release-gate-lib.sh
 source "${_der_dir}/upstream-release-gate-lib.sh"
+# shellcheck source=./terminal-blocker-circuit.sh
+source "${_der_dir}/terminal-blocker-circuit.sh"
 unset _der_dir
 
 _der_reconcile_terminal_worker_blockers() {
@@ -491,7 +493,8 @@ _der_upstream_gates_ready() {
 # GH#38866: a terminal-blocker observation older than the latest transition to
 # needs-dependency was superseded by that recovery decision; the dependency pass
 # owns release. Prints trusted comment bodies minus the terminal-blocker lines of
-# such superseded observations (other hold text is kept). t19195: an
+# such superseded observations (other hold text is kept). GH#39979: a newer
+# authoritative retry directive provides a second cutoff. t19195: an
 # external_trigger_pending observation is never superseded, because the worker
 # release applies the needs-dependency companion itself seconds later; its
 # release belongs to terminal-blocker-trigger-revisit.sh or a trusted retry.
@@ -501,23 +504,34 @@ _der_comments_after_dependency_conversion() {
 	local repo="$1"
 	local issue_number="$2"
 	local comments_json="$3"
-	local events="" cutoff=""
+	local events="" cutoff="" retry="" etp_fp=""
+	# The circuit comment carries only a hashed blocker fingerprint, never the
+	# reason text, so match that hash as external_trigger_pending provenance.
+	etp_fp=$(_terminal_blocker_hash "v2:external_trigger_pending" 2>/dev/null) || etp_fp=""
 	events=$(gh api --paginate --slurp "repos/${repo}/issues/${issue_number}/events?per_page=100" 2>/dev/null) || return 1
 	cutoff=$(printf '%s' "$events" | jq -r '[.[][] | select(.event == "labeled" and .label.name == "needs-dependency") | .created_at] | max // ""' 2>/dev/null) || return 1
 	[[ -n "$cutoff" ]] || return 1
+	# Reuse dispatch's OWNER/MEMBER, standalone-line, timestamp and circuit-packet
+	# checks rather than treating quoted prose or collaborators as retry authority.
+	retry=$(_terminal_blocker_latest_retry_comment "$(printf '%s' "$comments_json" | jq -c 'add')") || return 1
 	# aidevops:trust-boundary — only trusted comments are considered at all.
 	# Older comments lose only their terminal-blocker lines, so every other hold
 	# marker or operational hold in the same comment still counts.
 	# An external_trigger_pending observation is superseded once an OWNER/MEMBER
 	# trigger-revisit "decision=trigger_met" record (it carries the retry
 	# directive) postdates it; pending observations stay active until then.
-	printf '%s' "$comments_json" | jq -r --arg cutoff "$cutoff" --arg tb "$DER_TERMINAL_BLOCKER_RE_JQ" '
+	printf '%s' "$comments_json" | jq -r --arg cutoff "$cutoff" --arg tb "$DER_TERMINAL_BLOCKER_RE_JQ" \
+		--argjson retry "${retry:-null}" --arg marker "$_TBC_RETRY_MARKER" --arg etpfp "$etp_fp" '
+		([$cutoff, ($retry.created_at // "")] | max) as $cutoff
+		|
 		([.[][] | select((.author_association // "") | test("^(OWNER|MEMBER)$"))
 			| select((.body // "") | test("aidevops:trigger-revisit [^>]*decision=trigger_met"))
 			| .created_at // ""] | max // "") as $met
 		| .[][] | select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR"))
+		# The accepted directive is scheduling consent, not itself a new blocker.
+		| if . == $retry then .body |= (split("\n") | map(select(test("^" + $marker + "[ \\t]*\\r?$") | not)) | join("\n")) else . end
 		| (.body // "") as $body
-		| if (.created_at // "9999") >= $cutoff or (($body | test("external_trigger_pending"; "i")) and ($met == "" or (.created_at // "9999") > $met)) then $body
+		| if (.created_at // "9999") >= $cutoff or ((($body | test("external_trigger_pending"; "i")) or ($etpfp != "" and ($body | contains("blocker=" + $etpfp)))) and ($met == "" or (.created_at // "9999") > $met)) then $body
 		  else ($body | split("\n") | map(select(test($tb; "i") | not)) | join("\n")) end' 2>/dev/null
 	return $?
 }

@@ -719,8 +719,12 @@ _gh_pr_checks_exact_query() {
 
 #######################################
 # Validate one status-rollup page and return its pagination metadata.
+# GitHub returns `commit.statusCheckRollup: null` when the head commit has no
+# check runs or status contexts (GH#40059). That is a complete, valid empty
+# page ("absent"), not a partial response; every other shape stays fail-closed.
 # Args: $1=GraphQL response JSON
-# Stdout: hasNextPage and endCursor as TSV
+# Stdout: hasNextPage, rollup presence (present|absent), and endCursor as TSV
+#         (the possibly-empty cursor stays last so `read` cannot shift fields)
 # Returns: 0=valid page, 1=partial or malformed page
 #######################################
 _gh_pr_checks_exact_page_meta() {
@@ -739,17 +743,23 @@ _gh_pr_checks_exact_page_meta() {
 		| select(.data.node.__typename == "PullRequest")
 		| .data.node.statusCheckRollup.nodes as $commits
 		| select(($commits | type) == $array_type and ($commits | length) == 1)
-		| $commits[0].commit.statusCheckRollup.contexts as $contexts
-		| select(($contexts | type) == $object_type)
-		| select(($contexts.nodes | type) == $array_type)
-		| select(all($contexts.nodes[];
-			(.__typename == "StatusContext" and (.context | type) == $string_type and (.context | length) > 0 and (.state | type) == $string_type and (.isRequired | type) == $boolean_type)
-			or
-			(.__typename == "CheckRun" and (.name | type) == $string_type and (.name | length) > 0 and (.status | type) == $string_type and (.isRequired | type) == $boolean_type)
-		))
-		| select(($contexts.pageInfo.hasNextPage | type) == $boolean_type)
-		| select(($contexts.pageInfo.hasNextPage == false) or (($contexts.pageInfo.endCursor | type) == $string_type and ($contexts.pageInfo.endCursor | length) > 0))
-		| [$contexts.pageInfo.hasNextPage, ($contexts.pageInfo.endCursor // "")] | @tsv
+		| select(($commits[0].commit | type) == $object_type and ($commits[0].commit | has("statusCheckRollup")))
+		| $commits[0].commit.statusCheckRollup as $rollup
+		| if $rollup == null then
+			[false, "absent", ""] | @tsv
+		else
+			$rollup.contexts as $contexts
+			| select(($contexts | type) == $object_type)
+			| select(($contexts.nodes | type) == $array_type)
+			| select(all($contexts.nodes[];
+				(.__typename == "StatusContext" and (.context | type) == $string_type and (.context | length) > 0 and (.state | type) == $string_type and (.isRequired | type) == $boolean_type)
+				or
+				(.__typename == "CheckRun" and (.name | type) == $string_type and (.name | length) > 0 and (.status | type) == $string_type and (.isRequired | type) == $boolean_type)
+			))
+			| select(($contexts.pageInfo.hasNextPage | type) == $boolean_type)
+			| select(($contexts.pageInfo.hasNextPage == false) or (($contexts.pageInfo.endCursor | type) == $string_type and ($contexts.pageInfo.endCursor | length) > 0))
+			| [$contexts.pageInfo.hasNextPage, "present", ($contexts.pageInfo.endCursor // "")] | @tsv
+		end
 	' 2>/dev/null
 	return $?
 }
@@ -764,10 +774,11 @@ _gh_pr_checks_exact_collect_pages() {
 	local query="$2"
 	local pages_file="$3"
 	local max_pages="$4"
-	local page_number=0 cursor="" next_cursor="" has_next="" page_meta=""
+	local page_number=0 cursor="" next_cursor="" has_next="" page_meta="" rollup_state=""
 	local response="" nodes_json="" seen_cursors=$'\n' cursor_flag="" cursor_field=""
 	local diagnostics_file="" diagnostics=""
 	local false_text='false'
+	local absent_rollup='absent'
 
 	while true; do
 		page_number=$((page_number + 1))
@@ -804,8 +815,17 @@ _gh_pr_checks_exact_collect_pages() {
 			_gh_pr_checks_exact_error "status-rollup page ${page_number} response was partial or malformed"
 			return 2
 		fi
-		IFS=$'\t' read -r has_next next_cursor <<<"$page_meta"
-		nodes_json=$(printf '%s' "$response" | jq -c '.data.node.statusCheckRollup.nodes[0].commit.statusCheckRollup.contexts.nodes' 2>/dev/null) || nodes_json=""
+		IFS=$'\t' read -r has_next rollup_state next_cursor <<<"$page_meta"
+		if [[ "$rollup_state" == "$absent_rollup" ]]; then
+			# A rollup that vanishes after page 1 means the head changed mid-read.
+			if [[ "$page_number" -ne 1 ]]; then
+				_gh_pr_checks_exact_error "status-rollup page ${page_number} lost its rollup during pagination (partial)"
+				return 2
+			fi
+			nodes_json='[]'
+		else
+			nodes_json=$(printf '%s' "$response" | jq -c '.data.node.statusCheckRollup.nodes[0].commit.statusCheckRollup.contexts.nodes' 2>/dev/null) || nodes_json=""
+		fi
 		if [[ -z "$nodes_json" ]]; then
 			_gh_pr_checks_exact_error "status-rollup page ${page_number} contexts were unavailable"
 			return 2

@@ -33,7 +33,9 @@ RECOVERABLE_FALLBACK_HOME="${TEST_ROOT}/recoverable-fallback-home"
 RECOVERABLE_FALLBACK_BIN="${TEST_ROOT}/recoverable-fallback-bin"
 SHIM_BIN="${TEST_ROOT}/bin"
 TEST_BASH_DIR=$(dirname "$(command -p -v bash)")
-TEST_PATH="${SHIM_BIN}:${TEST_BASH_DIR}:/usr/bin:/bin:/usr/sbin:/sbin"
+# Retain the system default tools on non-FHS runners, not just /usr/bin.
+TEST_SYSTEM_PATH=$(command -p getconf PATH)
+TEST_PATH="${SHIM_BIN}:${TEST_BASH_DIR}:${TEST_SYSTEM_PATH}"
 QUERY_FAILING_GIT="${TEST_ROOT}/query-failing-git"
 MALFORMED_QUERY_GIT="${TEST_ROOT}/malformed-query-git"
 ALIAS_QUERY_GIT="${TEST_ROOT}/alias-query-git"
@@ -72,6 +74,10 @@ printf '{"initialized_repos":[{"slug":"testowner/testrepo","path":"%s"}]}\n' "$R
 export AIDEVOPS_REPOS_FILE
 # Registry-driven retirement reads the repository config under $HOME.
 export HOME="${TEST_ROOT}/home"
+# shellcheck source=lib/lifecycle-process-fixture.sh
+source "${SCRIPT_DIR}/tests/lib/lifecycle-process-fixture.sh"
+setup_lifecycle_process_fixture "$TEST_ROOT" "$SCRIPT_DIR" || exit 1
+TEST_PATH="${TEST_ROOT}/process-bin:${TEST_PATH}"
 printf 'seed\n' >"${REPO}/README.md"
 "$TEST_NATIVE_GIT" -C "$REPO" add README.md
 "$TEST_NATIVE_GIT" -C "$REPO" commit -q -m seed
@@ -401,7 +407,7 @@ fi
 printf 'PASS degraded cleanup emits completion only after archive retention and exact metadata absence\n'
 
 mkdir -p "$RECOVERABLE_FALLBACK_HOME" "$RECOVERABLE_FALLBACK_BIN"
-if ! HOME="$RECOVERABLE_FALLBACK_HOME" PATH="$RECOVERABLE_FALLBACK_BIN:/usr/bin:/bin" \
+if ! HOME="$RECOVERABLE_FALLBACK_HOME" PATH="$RECOVERABLE_FALLBACK_BIN:$TEST_SYSTEM_PATH" \
 	_clean_archive_worktree_recoverably "$RECOVERABLE_FALLBACK_SOURCE"; then
 	printf 'FAIL recoverable cleanup could not create its home trash archive: %s\n' \
 		"${_WT_CLEAN_RECOVERABLE_FAILURE_DETAIL:-unknown}"
@@ -566,7 +572,7 @@ if (
 	WORKTREE_REMOVAL_GUARD_REASON="$_WT_CWD_REASON_DEGRADED"
 	_clean_branch_has_exact_merged_pr() { return 1; }
 	_clean_degraded_visibility_fallback_allowed "$OWNERSHIP_LINKED" "feature/recoverable-ownership" \
-		"merged" "" "" "" "visibility=degraded"
+		"merged" "" "" "" "visibility=degraded" "main"
 ); then
 	printf 'FAIL degraded cleanup accepted a candidate without terminal PR proof\n'
 	exit 1
@@ -602,3 +608,4 @@ if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fx "worktree 
 	exit 1
 fi
 printf 'PASS integrated degraded cleanup removes a clean terminal-PR candidate recoverably\n'
+verify_lifecycle_process_fixture "$TEST_ROOT" || exit 1

@@ -1179,6 +1179,26 @@ _pulse_gate_runnable_count() {
 #
 # Returns: updated last refill epoch via stdout
 #######################################
+#######################################
+# t19324 (GH#40112): dispatch-lock bracket for rounds that run outside the
+# instance lock (active-pulse refill, early-exit recycle fill). Flag off or
+# without the lock module (standalone sourcing): always enter, nothing taken.
+# Arguments: $1 - stage label
+# Returns: 0 to run the round, 1 when another round holds the dispatch lock.
+#######################################
+_dispatch_round_enter() {
+	local stage="$1"
+	declare -F pulse_dispatch_stage_enter >/dev/null 2>&1 || return 0
+	pulse_dispatch_stage_enter "$stage"
+	return $?
+}
+
+_dispatch_round_leave() {
+	declare -F pulse_dispatch_stage_leave >/dev/null 2>&1 || return 0
+	pulse_dispatch_stage_leave
+	return 0
+}
+
 maybe_refill_underfilled_pool_during_active_pulse() {
 	local last_refill_epoch="${1:-0}"
 	local progress_stall_seconds="${2:-0}"
@@ -1245,10 +1265,17 @@ maybe_refill_underfilled_pool_during_active_pulse() {
 		echo "$now_epoch"
 		return 0
 	fi
+	# t19324: with PULSE_DISPATCH_LOCK_SPLIT=1 a busy dispatch lock means a
+	# refill is already dispatching; advance the clock and leave it to it.
+	if ! _dispatch_round_enter "active_pulse_refill"; then
+		echo "$now_epoch"
+		return 0
+	fi
 	local active_refill_dispatched
 	active_refill_dispatched=$(dispatch_max) || active_refill_dispatched=0
 	[[ "$active_refill_dispatched" =~ ^[0-9]+$ ]] || active_refill_dispatched=0
 	_dispatch_min_worker_floor_refill "$max_workers" "$((active_workers + active_refill_dispatched))"
+	_dispatch_round_leave
 
 	echo "$now_epoch"
 	return 0
@@ -1642,10 +1669,15 @@ _run_early_exit_recycle_loop() {
 		fi
 		_early_exit_recycle_fill_allowed || break
 
+		# t19324: this fill runs after instance-lock release; with
+		# PULSE_DISPATCH_LOCK_SPLIT=1 it is a dispatch round like any other.
+		# A busy lock means another round is already refilling: stop here.
+		_dispatch_round_enter "early_exit_recycle_fill" || break
 		local early_dispatched
 		early_dispatched=$(dispatch_max) || early_dispatched=0
 		[[ "$early_dispatched" =~ ^[0-9]+$ ]] || early_dispatched=0
 		_dispatch_min_worker_floor_refill "$post_max" "$((post_active + early_dispatched))"
+		_dispatch_round_leave
 		post_active=$((post_active + early_dispatched))
 		post_runnable=$(_pulse_gate_runnable_count "early_exit_recycle_post_fill")
 		post_queued=$(normalize_count_output "$(count_queued_without_worker)")

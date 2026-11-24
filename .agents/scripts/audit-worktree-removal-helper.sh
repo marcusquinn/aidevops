@@ -1167,6 +1167,53 @@ _worktree_metadata_contains_path() {
 	return 1
 }
 
+# True when an absolute path lies strictly inside a fixed system temporary
+# root. There an absent parent means the temp tree was wiped, not that a volume
+# is unmounted (GH#40058). $TMPDIR is deliberately not trusted as a root.
+worktree_path_under_temp_root() {
+	local wt_path="$1"
+	local root=""
+
+	[[ "$wt_path" == /* && "$wt_path" != *"/../"* ]] || return 1
+	for root in /tmp /private/tmp /var/tmp /private/var/tmp /var/folders /private/var/folders; do
+		[[ -d "$root" && "$wt_path" == "$root"/* ]] && return 0
+	done
+	return 1
+}
+
+# Print every prunable linked-worktree path that is absent, one per line.
+# Native `git worktree prune` is repo-wide, so return 1 without output when any
+# absent entry's parent directory is also absent outside a system temp root
+# (for example an unmounted volume): that repo must be deferred rather than
+# risk metadata for recoverable work.
+# Args: $1=repository context, $2=git binary (default: git)
+missing_worktree_prune_targets() {
+	local repo_context="$1"
+	local git_bin="${2:-git}"
+	local field="" wt_path="" parent=""
+	local -a targets=()
+
+	while IFS= read -r -d '' field; do
+		case "$field" in
+		worktree\ *)
+			wt_path="${field#worktree }"
+			;;
+		prunable | prunable\ *)
+			[[ -n "$wt_path" && ! -e "$wt_path" ]] || continue
+			parent="${wt_path%/*}"
+			[[ -d "${parent:-/}" ]] || worktree_path_under_temp_root "$wt_path" || return 1
+			targets+=("$wt_path")
+			;;
+		"")
+			wt_path=""
+			;;
+		esac
+	done < <("$git_bin" -C "$repo_context" worktree list --porcelain -z 2>/dev/null || true)
+
+	[[ "${#targets[@]}" -eq 0 ]] || printf '%s\n' "${targets[@]}"
+	return 0
+}
+
 # Prune a missing linked worktree through the narrowly scoped native-Git
 # primitive, then verify its exact metadata entry disappeared. The target must
 # already be absent so this cannot remove a live worktree directory.

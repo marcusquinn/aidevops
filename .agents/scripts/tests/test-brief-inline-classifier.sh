@@ -685,6 +685,34 @@ else
 	fail "D9 force tail" "written body: $d9_body"
 fi
 
+# Test D10 (GH#40122): sentinel body with authored Files Scope absent from the
+# composed body is preserved; FORCE_ENRICH still rewrites it
+rm -f "$D_REPO_ROOT/todo/tasks/t9025-brief.md"
+_reset_calls
+printf '%s\n' "$(_signed_body "## Outcome
+Authored.
+
+### Files Scope
+- \`a.sh\`
+
+## Acceptance
+- works" v1.0.0)" >"$TMP/current-body.txt"
+FORCE_ENRICH=false _enrich_update_issue "owner/repo" 9025 "t9025" "t9025: title" "$(_signed_body "## Outcome
+Composed." v1.0.0)" >/dev/null 2>&1 || true
+if [[ "$(_count_body_edits)" -eq 0 ]]; then
+	pass "D10 authored Files Scope on sentinel body → preserved"
+else
+	fail "D10 preserve authored brief" "found: $(cat "$GH_CALLS_LOG" 2>/dev/null)"
+fi
+_reset_calls
+FORCE_ENRICH=true _enrich_update_issue "owner/repo" 9025 "t9025" "t9025: title" "$(_signed_body "## Outcome
+Composed." v1.0.0)" >/dev/null 2>&1 || true
+if [[ "$(_count_body_edits)" -ge 1 ]]; then
+	pass "D10b FORCE_ENRICH overrides authored-brief preservation"
+else
+	fail "D10b force override" "expected --body call"
+fi
+
 # =============================================================================
 # Summary
 # =============================================================================

@@ -2330,6 +2330,10 @@ _dispatch_refresh_owner_lease() {
 	if declare -F _pulse_instance_lock_heartbeat >/dev/null 2>&1; then
 		_pulse_instance_lock_heartbeat || true
 	fi
+	# t19324: a dispatch-lock holder (refill, recycle fill) stays live too.
+	if declare -F pulse_dispatch_lock_heartbeat >/dev/null 2>&1; then
+		pulse_dispatch_lock_heartbeat || true
+	fi
 	return 0
 }
 

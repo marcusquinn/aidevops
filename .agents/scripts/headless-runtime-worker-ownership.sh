@@ -379,17 +379,40 @@ _hrw_claim_worker_worktree() {
 	return 0
 }
 
+# GH#40118: the renewal precedes model selection, the canary (bounded by
+# CANARY_TIMEOUT_SECONDS) and worktree/Node preparation, then the ready
+# transition rejects an expired lease. Cover that whole bounded window.
+_hrw_prelaunch_lease_ttl() {
+	local grace="${AIDEVOPS_DISPATCH_CLAIM_ORPHAN_GRACE:-120}"
+	local canary="${CANARY_TIMEOUT_SECONDS:-180}"
+	local allowance="${AIDEVOPS_WORKER_PRELAUNCH_ALLOWANCE_SECONDS:-120}"
+	[[ "$grace" =~ ^[0-9]+$ ]] || grace=120
+	[[ "$canary" =~ ^[0-9]+$ ]] || canary=180
+	[[ "$allowance" =~ ^[0-9]+$ ]] || allowance=120
+	local ttl=$((canary + allowance))
+	[[ "$ttl" -ge "$grace" ]] || ttl="$grace"
+	printf '%s\n' "$ttl"
+	return 0
+}
+
 _hrw_renew_dispatch_prelaunch_lease() {
 	local session_key="$1"
 
 	if [[ -z "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" || -z "${WORKER_ISSUE_NUMBER:-}" || -z "${WORKER_REPO_SLUG:-}" ]]; then
 		return 0
 	fi
+	local lease_ttl=""
+	lease_ttl=$(_hrw_prelaunch_lease_ttl)
 	# GH#34901: manual dispatch runs as manual-cli-* but its claim lease
 	# session is issue-N; the dispatcher names that lease session explicitly.
 	"${SCRIPT_DIR}/dispatch-claim-helper.sh" transition prelaunch "$WORKER_ISSUE_NUMBER" \
 		"$WORKER_REPO_SLUG" "$AIDEVOPS_DISPATCH_LEASE_TOKEN" "${AIDEVOPS_DISPATCH_LEASE_SESSION:-$session_key}" \
-		"${AIDEVOPS_DISPATCH_CLAIM_ORPHAN_GRACE:-120}" 2>/dev/null || return 1
+		"$lease_ttl" 2>/dev/null || return 1
+	# The local ledger lease gates `ready` too. Best-effort: an entry the
+	# dispatcher has not registered yet is created later by
+	# _register_dispatch_ledger immediately before the ready transition.
+	"${SCRIPT_DIR}/dispatch-ledger-helper.sh" renew --session-key "$session_key" \
+		--lease-token "$AIDEVOPS_DISPATCH_LEASE_TOKEN" --lease-ttl "$lease_ttl" 2>/dev/null || true
 	return 0
 }
 

@@ -99,8 +99,29 @@ _init_repos_file_locked() {
 				fi
 			done < <(jq -r '.initialized_repos[] | select(.slug == null or .slug == "") | .path' "$REPOS_FILE" 2>/dev/null)
 		fi
+		_repos_normalize_feature_names_locked || return 1
 	fi
 	return 0
+}
+
+# GH#40096: registry feature names are hyphenated (`git-workflow`). Older
+# registrations copied underscore `.aidevops.json` keys (`git_workflow`), which
+# project-config restore and repo-verify readers do not recognise. Rewrite only
+# when an underscore name exists; preserve order and drop resulting duplicates.
+_repos_normalize_feature_names_locked() {
+	jq -e '[.initialized_repos[]?.features? | arrays | .[] | strings | select(contains("_"))] | length > 0' \
+		"$REPOS_FILE" &>/dev/null || return 0
+	local temp_file="$AIDEVOPS_REGISTRY_TEMP_FILE"
+	if jq '.initialized_repos |= map(
+		if (.features | type) == "array" then
+			.features |= (map(if type == "string" then gsub("_"; "-") else . end)
+				| reduce .[] as $f ([]; if any(.[]; . == $f) then . else . + [$f] end))
+		else . end)' "$REPOS_FILE" >"$temp_file"; then
+		mv "$temp_file" "$REPOS_FILE" || return 1
+		return 0
+	fi
+	rm -f "$temp_file"
+	return 1
 }
 
 # Detect GitHub slug (owner/repo) from git remote origin
@@ -542,7 +563,7 @@ _repo_registration_update_existing() {
 		--arg app_type_default "$app_type_default" --argjson cloudron_defaults "$cloudron_defaults" \
 		--arg cloudron_app_type "$cloudron_app_type" \
 		'(.initialized_repos[] | select(.path == $path)) |= (
-			. + {path: $path, version: $version, features: ($features | split(",")), updated: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}
+			. + {path: $path, version: $version, features: ($features | gsub("_"; "-") | split(",")), updated: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}
 			| if $slug != "" then .slug = $slug else . end
 			| if $local_only then .local_only = true else del(.local_only) end
 			| if .pulse == null then .pulse = (if $local_only then false else $pulse_default end) else . end
@@ -564,6 +585,8 @@ _repo_registration_update_existing() {
 
 # Register a repo in repos.json
 # Usage: register_repo <path> <version> <features> [verified-slug] [sync-only: true|false]
+# GH#40096: callers pass `.aidevops.json` keys (`code_quality`); both writers
+# store the hyphenated registry contract (`code-quality`).
 register_repo() {
 	aidevops_with_registry_lock "$REPOS_FILE" _register_repo_locked "$@"
 	return $?
@@ -659,7 +682,7 @@ _register_repo_locked() {
 					path: $path,
 					maintainer: $maintainer,
 					version: $version,
-					features: ($features | split(",")),
+					features: ($features | gsub("_"; "-") | split(",")),
 					pulse: $pulse_default,
 					init_scope: $init_scope,
 					initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))

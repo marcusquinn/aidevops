@@ -764,6 +764,27 @@ ${machine_readable_part}${terminal_blocker_fragment}
 	return 0
 }
 
+# GH#40018: the release claim check found no claim to publish. When this runner
+# already persisted the bound release and retry evidence recorded under this
+# lease says that attempt did not finish (publication succeeded, then the
+# re-read or projection failed), project lifecycle state from the persisted
+# receipt, not from this retry. Without retry evidence for this lease a
+# released claim was already projected: no writes.
+# Returns non-zero only when that projection fails, so the evidence is kept.
+_hrff_finish_persisted_release() {
+	local issue_number="$1" repo_slug="$2" runner_name="$3" session_key="$4"
+	local reason="${_HRFF_RELEASED_CLAIM_REASON:-}"
+	[[ -n "$reason" && "${_HRFF_RELEASE_CLAIM_ID:-}" =~ ^[1-9][0-9]*$ ]] || return 0
+	declare -F _hrrr_row_binds_lease >/dev/null 2>&1 || return 0
+	_hrrr_row_binds_lease "$repo_slug" "$issue_number" "$session_key" || return 0
+	[[ "$reason" != blocked || "${_HRFF_RELEASED_CLAIM_EVIDENCE:-}" != unrecorded ]] ||
+		reason="$_HRFF_REASON_BLOCKED_UNRECORDED"
+	print_info "Finishing lifecycle projection for persisted release on #${issue_number} (reason: ${reason})"
+	_hrff_project_post_release_state "$issue_number" "$repo_slug" "$runner_name" "$reason" "$session_key" || return 1
+	[[ "$reason" != blocked ]] || _hrff_enqueue_observation_recovery "$issue_number" "$repo_slug"
+	return 0
+}
+
 #######################################
 # Release a dispatch claim by posting a CLAIM_RELEASED comment.
 # The dedup guard recognises this and allows immediate re-dispatch
@@ -919,7 +940,10 @@ _hrff_release_dispatch_claim_attempt() {
 	_hrff_release_repo_state_is_managed "$issue_number" "$repo_slug" || return "${_HRFF_RELEASE_AUTHORITY_SKIP_RC:-0}"
 	runner_name=$(_hrff_resolve_release_runner_login)
 	_hrff_check_release_claim "$issue_number" "$repo_slug" "$runner_name" "$session_key" || return 1
-	[[ "$_HRFF_RELEASE_CLAIM_OWNED" -eq 1 ]] || return 0
+	if [[ "$_HRFF_RELEASE_CLAIM_OWNED" -ne 1 ]]; then
+		_hrff_finish_persisted_release "$issue_number" "$repo_slug" "$runner_name" "$session_key"
+		return $?
+	fi
 	local claim_id="${_HRFF_RELEASE_CLAIM_ID:-}"
 	[[ "$claim_id" =~ ^[1-9][0-9]*$ ]] || return 1
 
@@ -1012,7 +1036,8 @@ _hrff_emit_release_terminal_lease() {
 
 #######################################
 # Project a released draft checkpoint as available for exact-head continuation.
-# Always non-fatal.
+# Returns non-zero when the projection fails, before the restores and lock
+# decision that depend on it, so retry evidence replays the whole projection.
 #
 # Args: $1 = issue_number, $2 = repo_slug, $3 = runner_name
 #######################################
@@ -1026,9 +1051,10 @@ _hrff_project_draft_checkpoint() {
 	# (pr-checkpoint-continuation-helper.sh dispatch-stalled). A closing-linked
 	# draft projected as status:blocked was rejected by that target fence and
 	# held silently; WORKER_DRAFT_CHECKPOINT dedup still blocks redispatch.
-	if declare -F clear_active_status_on_release >/dev/null 2>&1; then
-		clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" available \
-			|| print_warning "Failed to project draft checkpoint state on #${issue_number} (non-fatal)"
+	if declare -F clear_active_status_on_release >/dev/null 2>&1 &&
+		! clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" available; then
+		print_warning "Failed to project draft checkpoint state on #${issue_number}; retaining retry evidence"
+		return 1
 	fi
 	# A draft may have merged between checkpoint classification and release.
 	# Reconcile only after projection/unassignment; the shared guard requires
@@ -1089,7 +1115,9 @@ _hrff_revisit_merged_partial() (
 # Project issue lifecycle state after a persisted CLAIM_RELEASED comment.
 # Reason-specific paths preserve state that authoritative handoffs already
 # projected; the default path clears active status so re-dispatch is not
-# blocked. Always non-fatal.
+# blocked. GH#40018: returns non-zero when a status projection fails, before
+# unlocking, so the caller keeps retry evidence and a replay finishes it from
+# the persisted receipt; the released claim itself is never re-published.
 #
 # Args:
 #   $1 = issue_number
@@ -1122,14 +1150,15 @@ _hrff_project_post_release_state() {
 	fi
 	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
 		_hrff_project_draft_checkpoint "$issue_number" "$repo_slug" "$runner_name"
-		return 0
+		return $?
 	fi
 	# GH#33545: same projection as a draft checkpoint (clear active status,
 	# keep any blocker, unlock); only the operator-facing wording differs.
 	if [[ "$reason" == "${_HRW_REASON_MERGED_PARTIAL:-worker_merged_partial}" ]]; then
-		if declare -F clear_active_status_on_release >/dev/null 2>&1; then
-			clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" \
-				|| print_warning "Failed to project merged partial state on #${issue_number} (non-fatal)"
+		if declare -F clear_active_status_on_release >/dev/null 2>&1 &&
+			! clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name"; then
+			print_warning "Failed to project merged partial state on #${issue_number}; retaining retry evidence"
+			return 1
 		fi
 		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
 		print_info "Released merged partial #${issue_number} for continuation"
@@ -1160,7 +1189,8 @@ _hrff_project_post_release_state() {
 	# as "active" for the full 30-min TTL even though no worker holds the
 	# claim, blocking re-dispatch. Preserves terminal states (done, blocked)
 	# set by authoritative paths. Defensive skip if origin:interactive.
-	# Non-fatal: failure does not block the release comment path.
+	# The release comment is already persisted; a failed projection returns
+	# non-zero so retry evidence finishes it (GH#40018).
 	# GH#34758: a runner-capability release is runner-local. Its open draft
 	# stays available so a capable runner's exact-head continuation can run,
 	# matching the "Projected state: status:available" recovery text.
@@ -1175,9 +1205,10 @@ _hrff_project_post_release_state() {
 			draft_projection="available"
 		fi
 	fi
-	if declare -F clear_active_status_on_release >/dev/null 2>&1; then
-		clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" "$draft_projection" \
-			|| print_warning "Failed to clear active status on #${issue_number} (non-fatal)"
+	if declare -F clear_active_status_on_release >/dev/null 2>&1 &&
+		! clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" "$draft_projection"; then
+		print_warning "Failed to clear active status on #${issue_number}; retaining retry evidence"
+		return 1
 	fi
 	_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
 	return 0
@@ -1691,8 +1722,27 @@ _hrff_record_exit_metric() {
 }
 
 #######################################
-# Finalize an EXIT-trap classification: preserve work, emit terminal evidence,
-# release the claim/lock, and force a non-zero process exit when preparation
+# Emit the EXIT-trap worker runtime event for a classified reason. With a
+# lease token in scope the event also posts this attempt's terminal lease.
+# Args: $1=reason, $2=draft checkpoint reason
+#######################################
+_hrff_emit_exit_trap_event() {
+	local reason="$1"
+	local checkpoint_reason="$2"
+	declare -F _emit_worker_runtime_event >/dev/null 2>&1 || return 0
+	if [[ "$reason" == "worker_complete" ]]; then
+		_emit_worker_runtime_event "worker.completed" "recovered" "$reason"
+	elif [[ "$reason" == "$checkpoint_reason" ]]; then
+		_emit_worker_runtime_event "worker.deferred" "checkpointed" "$reason"
+	else
+		_emit_worker_runtime_event "worker.failed" "failed" "$reason"
+	fi
+	return 0
+}
+
+#######################################
+# Finalize an EXIT-trap classification: preserve work, release the claim, emit
+# terminal evidence, release the lock, and force a non-zero process exit when preparation
 # ended cleanly before runtime invocation.
 # Args: $1=session, $2=reason, $3=exit status, $4=session count, $5=force nonzero
 #######################################
@@ -1736,14 +1786,27 @@ _hrff_finalize_exit_trap() {
 	if ! _hrff_write_external_outcome "$session_key" "$reason" "$session_count"; then
 		print_warning "[exit-trap] failed to persist external outcome for session=${session_key}"
 	fi
-	if declare -F _emit_worker_runtime_event >/dev/null 2>&1; then
-		if [[ "$reason" == "worker_complete" ]]; then
-			_emit_worker_runtime_event "worker.completed" "recovered" "$reason"
-		elif [[ "$reason" == "$checkpoint_reason" ]]; then
-			_emit_worker_runtime_event "worker.deferred" "checkpointed" "$reason"
-		else
-			_emit_worker_runtime_event "worker.failed" "failed" "$reason"
-		fi
+	# GH#40008: release before the worker event. Since GH#36553 that event posts
+	# this attempt's DISPATCH_LEASE phase=terminal, and dispatch-release-claim.jq
+	# then reports the claim as `terminal`, so a later release is skipped and a
+	# prelaunch failure kept its assignment and status:in-progress until a stale
+	# sweep (which counts toward the t2008 escalation). The matching
+	# CLAIM_RELEASED also retires the dispatch for dedup (attempt_id "release"),
+	# so the event's terminal lease remains the fallback, as at
+	# _hrff_emit_release_terminal_lease and _hrw_finish_not_launched.
+	# The runner-health breaker is recorded first, as in _hrw_finish_not_launched,
+	# so this runner cannot re-dispatch the released issue into the same failure.
+	_hrff_record_runner_health_failure "$session_key" "$reason"
+	if [[ "$claim_release_handled" -eq 0 ]] && \
+		! _release_dispatch_claim "$session_key" "$reason" "$exit_status" "$session_count"; then
+		print_warning "[exit-trap] claim release persistence remains retryable for session=${session_key} reason=${reason}"
+		# The retry row replays this release later. A terminal lease posted now
+		# would close the episode, the replay would read `terminal` and drop the
+		# row unpublished (GH#36593 forbids a release after a closed episode),
+		# so emit the event without the lease token and leave the claim open.
+		AIDEVOPS_DISPATCH_LEASE_TOKEN="" _hrff_emit_exit_trap_event "$reason" "$checkpoint_reason"
+	else
+		_hrff_emit_exit_trap_event "$reason" "$checkpoint_reason"
 	fi
 	if declare -F _hrw_record_terminal_outcome >/dev/null 2>&1; then
 		local terminal_outcome="failed"
@@ -1754,11 +1817,6 @@ _hrff_finalize_exit_trap() {
 	fi
 	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
 		_cleanup_headless_runtime_temp_paths
-	fi
-	_hrff_record_runner_health_failure "$session_key" "$reason"
-	if [[ "$claim_release_handled" -eq 0 ]] && \
-		! _release_dispatch_claim "$session_key" "$reason" "$exit_status" "$session_count"; then
-		print_warning "[exit-trap] claim release persistence remains retryable for session=${session_key} reason=${reason}"
 	fi
 	_release_session_lock "$session_key"
 	_update_dispatch_ledger "$session_key" "fail"

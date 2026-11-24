@@ -13,7 +13,7 @@
 export const inject = ["react", "settingsCards", "host", "agents"];
 
 // Bump only when plugin files change; Buzz revisions are content hashes.
-const PLUGIN_VERSION = "1.3.0";
+const PLUGIN_VERSION = "1.3.1";
 const TYPE_ID = "aidevops";
 /** An empty project folder means the aidevops repository registered on this
  * computer: the launcher resolves it from `repos.json`. Agents for a project
@@ -32,6 +32,12 @@ const REQUEST_TIMEOUT_MS = 60_000;
 const STOP_TIMEOUT_MS = 5_000;
 /** An agent's OpenCode process stops after this long without a turn. */
 const IDLE_STOP_MS = 30 * 60_000;
+/** The longest turn, also declared to Buzz as the agent type's `timeoutMs`.
+ * The plugin enforces it itself (GH#40087): a stalled model request would
+ * otherwise hold the agent's queue until a system process guard kills it. */
+const TURN_TIMEOUT_MS = 30 * 60_000;
+/** How long OpenCode gets to end an overdue turn after `session/cancel`. */
+const CANCEL_GRACE_MS = 60_000;
 const STDERR_LIMIT = 4_000;
 const WRITTEN_LIMIT = 64_000;
 const REPLY_LIMIT = 16_000;
@@ -362,6 +368,44 @@ function interrupt(runtime, control) {
     runtime.acp?.notify("session/cancel", { sessionId: session.id });
 }
 
+/** Waits for a turn's `session/prompt` answer within TURN_TIMEOUT_MS
+ * (GH#40087). An overdue turn is cancelled; if OpenCode has not ended it
+ * CANCEL_GRACE_MS later, the agent's process is stopped so its queue moves on.
+ * Either way the turn fails with a reply that says what happened. */
+async function boundedTurn(runtime, acp, session, answer) {
+  const minutes = Math.round(TURN_TIMEOUT_MS / 60_000);
+  let overdue = false;
+  let cancelTimer;
+  let stopTimer;
+  const stopped = new Promise((_, reject) => {
+    cancelTimer = setTimeout(() => {
+      overdue = true;
+      acp.notify("session/cancel", { sessionId: session.id });
+      stopTimer = setTimeout(() => {
+        if (runtime.acp === acp) {
+          runtime.acp = undefined;
+          forgetSessions(runtime);
+        }
+        void acp.stop();
+        reject(
+          new Error(
+            `the model stopped responding: the turn passed ${minutes} minutes and did not end when cancelled, so aidevops was restarted`,
+          ),
+        );
+      }, CANCEL_GRACE_MS);
+    }, TURN_TIMEOUT_MS);
+  });
+  try {
+    const result = await Promise.race([answer, stopped]);
+    if (overdue && result?.stopReason === "cancelled")
+      throw new Error(`the turn passed ${minutes} minutes and was cancelled`);
+    return result;
+  } finally {
+    clearTimeout(cancelTimer);
+    clearTimeout(stopTimer);
+  }
+}
+
 /** Runs aidevops agents: one runtime per agent (membership key) with its
  * process, its one shared Buzz tools server and its sessions, one per
  * conversation. A job is one delivery: `{ delivery, conversation, config,
@@ -526,10 +570,15 @@ class Runner {
     let answer;
     try {
       delivery.acknowledged?.();
-      answer = await acp.request("session/prompt", {
-        sessionId: session.id,
-        prompt: [{ type: "text", text: lead ? `${lead}\n\n${prompt.text}` : prompt.text }],
-      });
+      answer = await boundedTurn(
+        runtime,
+        acp,
+        session,
+        acp.request("session/prompt", {
+          sessionId: session.id,
+          prompt: [{ type: "text", text: lead ? `${lead}\n\n${prompt.text}` : prompt.text }],
+        }),
+      );
     } catch (error) {
       // Nothing reached the model: keep plugins' notes for the next turn.
       if (!session.updates) prompt.restore();
@@ -904,7 +953,7 @@ export function apply(ctx) {
         component: (props) => h(SettingsTab, { ...props, React }),
       },
     ],
-    timeoutMs: 30 * 60_000,
+    timeoutMs: TURN_TIMEOUT_MS,
     run: (delivery) => runner.run(delivery),
     // Reads outside turns, as for an approved external connection's tools.
     readFile: async (agent, path, signal) => {

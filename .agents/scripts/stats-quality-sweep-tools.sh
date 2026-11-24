@@ -67,6 +67,7 @@ _sweep_shellcheck_get_files() {
 #   $3 - warning count
 #   $4 - note count
 #   $5 - top findings details (may be empty)
+#   $6 - files ShellCheck could not analyse (default 0)
 # Output: markdown section to stdout
 #######################################
 _sweep_shellcheck_format_section() {
@@ -75,6 +76,7 @@ _sweep_shellcheck_format_section() {
 	local sc_warnings="$3"
 	local sc_notes="$4"
 	local sc_details="$5"
+	local sc_failed="${6:-0}"
 
 	local shellcheck_section="### ShellCheck ($file_count files scanned)
 
@@ -82,12 +84,17 @@ _sweep_shellcheck_format_section() {
 - **Warnings**: ${sc_warnings}
 - **Notes**: ${sc_notes}
 "
+	if [[ "$sc_failed" -gt 0 ]]; then
+		shellcheck_section="${shellcheck_section}- **Not analysed**: ${sc_failed} of $((file_count + sc_failed)) files (ShellCheck failed; see the stats log)
+"
+	fi
 	if [[ -n "$sc_details" ]]; then
 		shellcheck_section="${shellcheck_section}
 **Top findings:**
 ${sc_details}"
 	fi
-	if [[ "$sc_errors" -eq 0 && "$sc_warnings" -eq 0 && "$sc_notes" -eq 0 ]]; then
+	# GH#40028: "All clear" requires every file to have been analysed.
+	if [[ "$sc_errors" -eq 0 && "$sc_warnings" -eq 0 && "$sc_notes" -eq 0 && "$sc_failed" -eq 0 ]]; then
 		shellcheck_section="${shellcheck_section}
 _All clear — no issues found._
 "
@@ -104,22 +111,35 @@ _All clear — no issues found._
 #   $1 - repo slug
 #   $2 - repo path
 # Output: shellcheck_section markdown to stdout
+# Returns: 0 analysed (or no shell files), 127 ShellCheck unavailable,
+#   1 no file could be analysed. The caller lists non-zero as a skipped tool.
 #######################################
 _sweep_shellcheck() {
 	local repo_slug="$1"
 	local repo_path="$2"
-
-	command -v shellcheck &>/dev/null || return 0
 
 	local sh_files
 	sh_files=$(_sweep_shellcheck_get_files "$repo_path")
 
 	[[ -z "$sh_files" ]] && return 0
 
+	# GH#40028: `command -v` also finds the aidevops wrapper or a PATH shim,
+	# which exit 1 with "cannot find real shellcheck binary". Execute the
+	# analyser instead, so an unusable install is reported as a skipped tool
+	# rather than an empty, "All clear" result.
+	if ! timeout_sec 10 shellcheck --version >/dev/null 2>&1; then
+		printf '%s [stats] ShellCheck: unavailable for %s (no working shellcheck binary)\n' \
+			"$(date '+%Y-%m-%d %H:%M:%S')" "$repo_slug" >>"$LOGFILE"
+		return 127
+	fi
+
 	local sc_errors=0
 	local sc_warnings=0
 	local sc_notes=0
 	local sc_details=""
+	local sc_analysed=0
+	local sc_failed=0
+	local gcc_location=':[0-9]+:[0-9]+: (error|warning|note):'
 
 	# timeout_sec (from shared-constants.sh) handles macOS + Linux portably,
 	# providing a background + kill fallback on bare macOS so we no longer
@@ -139,17 +159,30 @@ _sweep_shellcheck() {
 				"$(date '+%Y-%m-%d %H:%M:%S')" "${shfile}" >>"$LOGFILE"
 			continue
 		fi
-		local result
+		local result="" sc_rc=0
 		# t1398.2: hardened invocation — no -x, --norc, per-file timeout,
 		# ulimit -v in subshell to cap RSS per shellcheck process.
 		# t1402: stderr merged into stdout (2>&1) so diagnostic messages
 		# (parse errors, timeouts, permission failures) are captured in
-		# $result and appear in the sweep summary.
+		# $result. Parse errors are gcc-format findings.
 		result=$(
 			ulimit -v 1048576 2>/dev/null || true
-			timeout_sec 30 shellcheck --norc -f gcc "$shfile" 2>&1 || true
-		)
+			timeout_sec 30 shellcheck --norc -f gcc "$shfile" 2>&1
+		) || sc_rc=$?
+		# GH#40028: a file is analysed only when ShellCheck exits 0 with no
+		# output, or 1 with gcc-format findings. Anything else (timeout, rc>=2,
+		# wrapper errors, the wrapper's rate-limit JSON) is a tool failure: log
+		# it, count it, and never render it as a finding.
+		if ! { [[ "$sc_rc" -eq 0 && -z "$result" ]] ||
+			{ [[ "$sc_rc" -eq 1 ]] && grep -qE "$gcc_location" <<<"$result"; }; }; then
+			sc_failed=$((sc_failed + 1))
+			printf '%s [stats] ShellCheck: could not analyse %s (rc=%s): %s\n' \
+				"$(date '+%Y-%m-%d %H:%M:%S')" "${shfile}" "$sc_rc" "$(head -1 <<<"$result")" >>"$LOGFILE"
+			continue
+		fi
+		sc_analysed=$((sc_analysed + 1))
 		if [[ -n "$result" ]]; then
+			result=$(grep -E "$gcc_location" <<<"$result")
 			# t1992: shellcheck -f gcc emits three severities: error, warning,
 			# note. Pin the regex to the gcc location prefix `<file>:<line>:<col>:`
 			# so we don't accidentally match content inside a finding message.
@@ -174,9 +207,12 @@ _sweep_shellcheck() {
 		fi
 	done <<<"$sh_files"
 
-	local file_count
-	file_count=$(echo "$sh_files" | wc -l | tr -d ' ')
-	_sweep_shellcheck_format_section "$file_count" "$sc_errors" "$sc_warnings" "$sc_notes" "$sc_details"
+	if [[ "$sc_analysed" -eq 0 ]]; then
+		# Every tracked file was missing (no section) or failed (skipped tool).
+		[[ "$sc_failed" -eq 0 ]] && return 0
+		return 1
+	fi
+	_sweep_shellcheck_format_section "$sc_analysed" "$sc_errors" "$sc_warnings" "$sc_notes" "$sc_details" "$sc_failed"
 	return 0
 }
 

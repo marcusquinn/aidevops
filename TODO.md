@@ -2456,9 +2456,47 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19296 wp-helper.sh --config-secret payload wp-config-secret.php missing from v3.39.267 (gitignored *secret*.php) #bug ref:GH#39937 pr:#39938 completed:2026-11-23
 
-- [ ] t19298 fix(headless): count an API-type auth.json credential as static auth for the OAuth pool gate #auto-dispatch #bug ref:GH#39947 -> [todo/tasks/t19298-brief.md]
+- [x] t19298 fix(headless): count an API-type auth.json credential as static auth for the OAuth pool gate #auto-dispatch #bug ref:GH#39947 -> [todo/tasks/t19298-brief.md] pr:#39949 completed:2026-11-23
 
-- [ ] t19300 perf(pulse): a drained cycle that runs its starved maintenance tail keeps dispatching instead of idling 20-35 min #feat #priority:high ref:GH#39960
+- [x] t19300 perf(pulse): a drained cycle that runs its starved maintenance tail keeps dispatching instead of idling 20-35 min #feat #priority:high ref:GH#39960 pr:#39964 completed:2026-11-23
+
+- [x] t19307 fix(pulse-dispatch): name the real cause when worktree pre-creation fails #bug #interactive tier:standard ref:GH#40000 -> [todo/tasks/t19307-brief.md] pr:#40001 completed:2026-11-23
+
+- [x] t19309 fix(headless): release the dispatch claim before the exit-trap terminal lease so prelaunch failures stop pinning issues #bug #interactive tier:standard ref:GH#40008 -> [todo/tasks/t19309-brief.md] pr:#40014 completed:2026-11-23
+
+- [x] t19310 fix(worktrees): same-boot owner launch reuse always refused — drain() drops worktree generation identity #bug ref:GH#40009 pr:#40010 completed:2026-11-23
+
+- [x] t19312 fix(headless): project lifecycle state when replaying an already-published claim release #auto-dispatch #bug #fix-the-fixer tier:standard ref:GH#40018 pr:#40031 completed:2026-11-23
+
+- [x] t19313 fix(stale-recovery): count never-launched attempts once per runner so one runner's launch failures stop escalating healthy issues #auto-dispatch #bug #fix-the-fixer #priority:high ref:GH#40027 pr:#40036 completed:2026-11-23
+
+- [x] t19314 fix(worker): deterministic self-verifying PR-less completion receipts so correct report/data-only closes stop counting as failures #auto-dispatch #bug #fix-the-fixer #priority:high tier:standard ref:GH#40048 pr:#40054 completed:2026-11-23
+
+- [x] t19315 fix(planning): second publication from an unchanged worktree always reports retryable_conflict #auto-dispatch #bug ref:GH#40062 pr:#40070 completed:2026-11-23
+
+- [x] t19316 fix(full-loop): defer a commit-and-pr validator timeout to a matching required CI check instead of blocking the PR #bug #interactive #priority:high ref:GH#40064 pr:#40067 completed:2026-11-23
+
+- [ ] t19317 test-worktree-metadata-prune: degraded terminal-PR-proof case false-passes on unbound $8 #auto-dispatch #bug ref:GH#40071
+
+- [x] t19318 fix(dispatch): check the repo Node pin in the preclaim runner-capability gate so unsatisfiable runners stop claim/release churn #bug #interactive #priority:high ref:GH#40077 pr:#40085 completed:2026-11-23
+
+- [ ] t19319 test(pulse): dispatch_max capacity case skips tier:simple candidate 9102 on main (suite not in CI) #auto-dispatch #bug ref:GH#40086
+
+- [x] t19320 fix(full-loop): completion-bookkeeping accepts GH#<issue>: proof PR titles #auto-dispatch #bug #priority:low ref:GH#40094 pr:#40102 completed:2026-11-23
+
+- [x] t19321 fix(full-loop): commit-and-pr validators refuse .agents JS changes owned by scriptless .agents/package.json #auto-dispatch #bug ref:GH#40098 pr:#40103 completed:2026-11-23
+
+- [ ] t19322 perf(pulse): raise worker-slot occupancy by decoupling dispatch from the Pulse instance lock #feat #parent-task #priority:high ref:GH#40108
+
+- [x] t19323 feat(pulse): read-only dispatch throughput report (slot occupancy, ceremony cost, refill outcomes, supervisor cadence) #auto-dispatch #feat #priority:high ref:GH#40109 pr:#40113 completed:2026-11-24
+
+- [ ] t19324 perf(pulse): separate dispatch lock so worker-exit refills launch during maintenance stages (flagged) #auto-dispatch #feat #priority:high ref:GH#40112
+
+- [x] t19325 fix(dispatch): size worker prelaunch lease to cover the canary bound #bug #priority:high ref:GH#40118 pr:#40119 completed:2026-11-24
+
+- [ ] t19326 fix(recovery): external_trigger decisions re-poll at recheck_after or a bounded default instead of parking forever #bug #priority:high ref:GH#40120 -> [todo/tasks/t19326-brief.md]
+
+- [ ] t19327 perf(recovery): supervisor pending pass skips unchanged decided entries after one issue read (3 of 131 entries observed per pass) #auto-dispatch #bug #priority:high ref:GH#40126 -> [todo/tasks/t19327-brief.md]
 
 ## In Progress
 

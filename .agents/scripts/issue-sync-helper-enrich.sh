@@ -310,6 +310,22 @@ _enrich_carry_tail() {
 	return 0
 }
 
+# GH#40122: succeed when the current body carries an authored brief section
+# (Files Scope, Acceptance, Verification) that the composed body lacks, so a
+# sentinel-bearing body expanded into a full brief is not overwritten.
+_enrich_has_authored_sections() {
+	local current_body="$1" composed_body="$2"
+	local name="" re=""
+	for name in "Files Scope" "Acceptance" "Verification"; do
+		re="^#{2,3}[[:space:]]+${name}([[:space:]]|\$)"
+		if grep -qE "$re" <<<"$current_body" &&
+			! grep -qE "$re" <<<"$composed_body"; then
+			return 0
+		fi
+	done
+	return 1
+}
+
 # _enrich_update_issue: brief-first authoritative body policy (t2063).
 #
 # Body update decision tree (in priority order):
@@ -377,6 +393,10 @@ _enrich_update_issue() {
 	if [[ "$FORCE_ENRICH" != "true" && -z "$_sync_owned" ]]; then
 		# Case 4: no brief, no sentinel -> genuine external content, preserve
 		print_info "Preserving external body on #$num ($task_id) — no brief file, no sentinel (use --force to override)"
+		do_body_update=false
+	elif [[ "$FORCE_ENRICH" != "true" && "$_sync_owned" == "sentinel" ]] &&
+		_enrich_has_authored_sections "$(_enrich_body_head "$current_body")" "$body"; then
+		print_info "Preserving authored brief on #$num ($task_id) — Files Scope/Acceptance/Verification absent from composed body (use --force to override)"
 		do_body_update=false
 	elif [[ "$FORCE_ENRICH" != "true" && "$(_enrich_body_head "$current_body")" == "$(_enrich_body_head "$body")" ]]; then
 		print_info "Body unchanged on #$num ($task_id), skipping API call"

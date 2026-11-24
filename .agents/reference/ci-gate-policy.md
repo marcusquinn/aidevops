@@ -90,6 +90,16 @@ new test assets are separate decisions:
    when material new evidence appears, and report any remaining uncertainty.
    Passing tests alone do not prove the user-visible outcome.
 
+### Splitting shell test suites
+
+Before a root reaches the affected-tests per-suite timeout (240 seconds by
+default), split it and verify unchanged invocation coverage with
+`test-split-coverage-helper.sh check --original <ref>:<root-path> --roots <root1,root2,...> [--modules <module1,...>]`.
+The static check compares bare `test_`/`run_` calls in `main()`, recursively expands
+`run_` groups only in the listed modules at each revision, and fails for missing,
+extra or duplicate invocations; list every moved group module and inspect any
+argument-bearing or conditional calls separately.
+
 ### Running Python tests
 
 Run a hyphenated unittest file directly from the repository root:

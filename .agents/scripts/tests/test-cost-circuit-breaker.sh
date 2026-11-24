@@ -55,7 +55,7 @@ mkdir -p "${HOME}/.config/aidevops"
 # The framework default now measures full usage with a provisional 20M limit.
 LEGACY_BUDGET_REPO="${TEST_ROOT}/legacy-budget"
 mkdir -p "${LEGACY_BUDGET_REPO}/.aidevops"
-printf '%s\n' COST_BUDGET_SIMPLE=800000 COST_BUDGET_STANDARD=800000 COST_BUDGET_THINKING=800000 COST_BUDGET_DEFAULT=800000 \
+printf '%s\n' COST_BUDGET_UNIT=full-v1 COST_BUDGET_SIMPLE=800000 COST_BUDGET_STANDARD=800000 COST_BUDGET_THINKING=800000 COST_BUDGET_DEFAULT=800000 \
 	>"${LEGACY_BUDGET_REPO}/.aidevops/dispatch-cost-budgets.conf"
 jq -n --arg path "$LEGACY_BUDGET_REPO" '{initialized_repos:[{slug:"owner/repo",path:$path}]}' \
 	>"${HOME}/.config/aidevops/repos.json"
@@ -913,6 +913,28 @@ run_check_cost_budget 18104 "owner/budgeted" "simple"
 assertion_rc=1
 if [[ "$rc" -eq 0 && "$output" == *"budget=100K"* ]]; then assertion_rc=0; fi
 print_result "override below the minimum is clamped to 100K" "$assertion_rc" "(rc=$rc output='$output')"
+
+# GH#40030: a legacy-unit override (no COST_BUDGET_UNIT=full-v1) written
+# against the old 800K default must not trip on one ordinary full-usage
+# attempt. 2M legacy scales to 50M and clamps to the 20M maximum.
+write_fixture_comments "6515070"
+run_check_cost_budget 18105 "owner/budgeted" "standard"
+assertion_rc=1
+if [[ "$rc" -eq 1 && -z "$output" ]]; then assertion_rc=0; fi
+print_result "legacy 2M override allows a single 6.5M full-usage attempt" "$assertion_rc" "(rc=$rc output='$output')"
+write_fixture_comments "21000000"
+run_check_cost_budget 18106 "owner/budgeted" "standard"
+assertion_rc=1
+if [[ "$rc" -eq 0 && "$output" == *"budget=20000K"* ]]; then assertion_rc=0; fi
+print_result "scaled legacy override still clamps to the 20M maximum" "$assertion_rc" "(rc=$rc output='$output')"
+# A declared full-usage override is honoured verbatim (CRLF tolerated).
+printf 'COST_BUDGET_UNIT=full-v1\r\nCOST_BUDGET_STANDARD=2000000\r\n' \
+	>"${BUDGET_REPO}/.aidevops/dispatch-cost-budgets.conf"
+write_fixture_comments "6515070"
+run_check_cost_budget 18107 "owner/budgeted" "standard"
+assertion_rc=1
+if [[ "$rc" -eq 0 && "$output" == *"budget=2000K"* ]]; then assertion_rc=0; fi
+print_result "declared full-v1 override is applied without scaling" "$assertion_rc" "(rc=$rc output='$output')"
 jq -n --arg path "$LEGACY_BUDGET_REPO" '{initialized_repos:[{slug:"owner/repo",path:$path}]}' \
 	>"${HOME}/.config/aidevops/repos.json"
 

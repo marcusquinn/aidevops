@@ -226,6 +226,16 @@ export AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE="${TMP_DIR}/gh-secondary-cooldown.jso
 export AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE="${TMP_DIR}/gh-cooldown-events.jsonl"
 export AIDEVOPS_GH_READ_RAMP_STATE_FILE="${TMP_DIR}/gh-read-ramp-state.tsv"
 
+# Hermetic privacy inventory (GH#40101): the real guard reads synthetic
+# fixture state under a private HOME, never maintainer host state.
+export HOME="${TMP_DIR}/home"
+export PRIVACY_REPOS_CONFIG="${HOME}/.config/aidevops/repos.json"
+export PRIVACY_CACHE_FILE="${HOME}/.aidevops/cache/repo-privacy.json"
+export PRIVACY_ENTITY_CONFIG="${HOME}/missing-entities"
+mkdir -p "${HOME}/.aidevops/logs" "${PRIVACY_REPOS_CONFIG%/*}" "${PRIVACY_CACHE_FILE%/*}"
+printf '%s\n' '{"initialized_repos":[{"slug":"fixture/private-project","private":true}]}' >"$PRIVACY_REPOS_CONFIG"
+printf '{"marcusquinn/aidevops":{"private":false,"checked_at":%s}}\n' "$(date +%s)" >"$PRIVACY_CACHE_FILE"
+
 empty_output="${TMP_DIR}/empty.out"
 run_case "[]" "https://github.com/marcusquinn/aidevops/issues/9001" "${TMP_DIR}" "$empty_output"
 empty_text=$(<"$empty_output")

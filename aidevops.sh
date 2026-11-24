@@ -5,7 +5,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 3.39.269
+# Version: 3.39.276
 
 set -euo pipefail
 
@@ -1107,7 +1107,8 @@ cmd_repos() {
 			print_error "Repository layout migration helper is unavailable"
 			return 1
 		fi
-		"$migrate_helper" "$@"
+		# GH#40061: the engine never plans a move of the install checkout.
+		AIDEVOPS_INSTALL_DIR="$INSTALL_DIR" "$migrate_helper" "$@"
 		;;
 	maintenance | maintain)
 		shift

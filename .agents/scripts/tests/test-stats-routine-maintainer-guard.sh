@@ -59,6 +59,8 @@ export HOME="$tmp_dir"
 export REPOS_JSON="${tmp_dir}/repos.json"
 export LOGFILE="${tmp_dir}/logs/stats.log"
 export QUALITY_SWEEP_INTERVAL=0
+# Disable the weekday peak-hour deferral so the suite is time-of-day independent.
+export QUALITY_SWEEP_OFFPEAK=0
 export QUALITY_SWEEP_LAST_RUN="${tmp_dir}/logs/quality-sweep-last-run"
 export PERSON_STATS_LAST_RUN="${tmp_dir}/logs/person-stats-last-run"
 export PERSON_STATS_CACHE_DIR="${tmp_dir}/logs"

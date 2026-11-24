@@ -110,9 +110,11 @@ _tbr_policy_changed_since() {
 # Optional $2: comments already read for this entry. GH#38311: a maintainer
 # reply newer than a recorded human_decision ends its suppression, so the
 # supervisor re-assesses on its next pass instead of after the TTL. t19068:
-# so does a change to the repo's delegated recovery policy.
+# so does a change to the repo's delegated recovery policy. Optional $3
+# "standing" ignores a due external_trigger re-check (GH#40120): a due re-check
+# only returns the entry to the supervisor; it never ends the standing guard.
 _tbr_decision_active() {
-	local key="$1" comments="${2:-}"
+	local key="$1" comments="${2:-}" scope="${3:-}"
 	local file="${TBR_ROOT}/decisions/${key}.json"
 	[[ -f "$file" ]] || return 1
 	local ts="" now="" wake=""
@@ -127,6 +129,16 @@ _tbr_decision_active() {
 		[[ $((now - ts)) -lt "$TBR_DECISION_TTL" ]] || return 1
 		return 0
 	fi
+	# GH#40120: no GitHub event reports a site recovering or a date passing, so
+	# an external_trigger decision is re-assessed at its recheck_after, or after
+	# a bounded re-poll interval without one. human_decision stays event-only.
+	if [[ "$wake" == external_trigger && "$scope" != standing ]]; then
+		local due="" interval="${TBR_EXTERNAL_TRIGGER_RECHECK:-259200}"
+		[[ "$interval" =~ ^[0-9]+$ ]] || interval=259200
+		due=$(jq -r '.recheck_after_epoch // empty' "$file" 2>/dev/null) || due=""
+		[[ "$due" =~ ^[0-9]+$ ]] || due=$((ts + interval))
+		[[ "$now" -lt "$due" ]] || return 1
+	fi
 	if [[ -n "$comments" ]] && _tbr_reply_after "$comments" "$ts"; then
 		return 1
 	fi
@@ -139,14 +151,15 @@ _tbr_decision_active() {
 # GH#39232 #aidevops:trust-boundary: true while this runner's brief owner has a
 # recorded human_decision for the issue that no reply or policy change has
 # ended. It suspends only the time-window re-arm of a permission hold; a
-# trusted retry or a relevant revision still releases it. Args: repo issue comments
+# trusted retry or a relevant revision still releases it. A due
+# external_trigger re-check does not end it (GH#40120). Args: repo issue comments
 _tbr_human_decision_standing() {
 	local repo="$1" issue="$2" comments="$3"
 	local key=""
 	key=$(_tbr_key "$repo" "$issue")
 	# A missing or unreadable record prints nothing, so it is not standing.
 	[[ "$(jq -r '.wake // ""' "${TBR_ROOT}/decisions/${key}.json" 2>/dev/null)" =~ ^(human_decision|external_trigger)$ ]] || return 1
-	_tbr_decision_active "$key" "$comments" || return 1
+	_tbr_decision_active "$key" "$comments" standing || return 1
 	return 0
 }
 

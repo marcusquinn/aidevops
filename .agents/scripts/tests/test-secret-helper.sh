@@ -259,6 +259,47 @@ test_list_rejects_unsafe_tenant_files() {
 	return 0
 }
 
+test_check_unreadable_plaintext_is_not_absence() {
+	setup
+	trap 'teardown' RETURN
+	local config_dir="$TEST_DIR/home/.config/aidevops"
+	mkdir -p "$config_dir"
+	printf '%s\n' 'export OTHER_KEY="placeholder-value"' >"$config_dir/credentials.sh"
+	chmod 000 "$config_dir/credentials.sh"
+	# Root can read mode-000 files; assert only when the denial is effective.
+	if [[ -r "$config_dir/credentials.sh" ]]; then
+		chmod 600 "$config_dir/credentials.sh"
+		return 0
+	fi
+	local rc=0
+	HOME="$TEST_DIR/home" bash "$HELPER" check UNREADABLE_KEY >/dev/null 2>&1 || rc=$?
+	local get_rc=0 alias_rc=0 check_rc=0 alias_value="" direct_value=""
+	HOME="$TEST_DIR/home" bash "$HELPER" get UNREADABLE_KEY >/dev/null 2>&1 || get_rc=$?
+	# The target lives in gopass; unrelated unreadable plaintext must not mask it.
+	printf '%s' 'alias-target-placeholder' | AIDEVOPS_TEST_STORED=true HOME="$TEST_DIR/home" \
+		bash "$HELPER" set ALIAS_TARGET >/dev/null
+	HOME="$TEST_DIR/home" bash "$HELPER" record ALIAS_TARGET --provider example >/dev/null
+	HOME="$TEST_DIR/home" bash "$HELPER" alias ALIAS_TARGET DECLARED_ALIAS >/dev/null
+	alias_value=$(AIDEVOPS_TEST_STORED=true HOME="$TEST_DIR/home" bash "$HELPER" get DECLARED_ALIAS 2>/dev/null) || alias_rc=$?
+	AIDEVOPS_TEST_STORED=true HOME="$TEST_DIR/home" bash "$HELPER" check DECLARED_ALIAS || check_rc=$?
+	chmod 600 "$config_dir/credentials.sh"
+	printf '%s\n' 'export DECLARED_ALIAS="direct-placeholder"' >"$config_dir/credentials.sh"
+	direct_value=$(AIDEVOPS_TEST_STORED=true HOME="$TEST_DIR/home" bash "$HELPER" get DECLARED_ALIAS)
+	if [[ "$get_rc" -eq 1 && "$alias_rc" -eq 0 && "$check_rc" -eq 0 &&
+		"$alias_value" == "alias-target-placeholder" && "$direct_value" == "direct-placeholder" ]]; then
+		print_result "get resolves aliases despite unreadable plaintext and preserves direct precedence" 0
+	else
+		print_result "get resolves aliases despite unreadable plaintext and preserves direct precedence" 1 \
+			"get=$get_rc alias=$alias_rc check=$check_rc (value assertions withheld)"
+	fi
+	if [[ "$rc" -eq 3 ]]; then
+		print_result "check reports unreadable plaintext credentials as read failure, not absence" 0
+	else
+		print_result "check reports unreadable plaintext credentials as read failure, not absence" 1 "Expected exit 3, got $rc"
+	fi
+	return 0
+}
+
 test_inventory_is_names_only_deterministic_json() {
 	setup
 	trap 'teardown' RETURN
@@ -597,9 +638,8 @@ test_locked_injection_exits_bounded() {
 	setup
 	trap 'teardown' RETURN
 	export AIDEVOPS_TEST_LOCKED=true
-	# The 12s production default exceeds the outer 8s watchdog. Exercise the
-	# same bounded decrypt promptly using its supported timeout override.
-	local -x AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS=2
+	# Two attempts wait 1s + 2s, leaving headroom under the outer watchdog.
+	local -x AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS=1
 	export AIDEVOPS_TEST_SECRET="fixture-${TEST_DIR##*/}"
 	local result=""
 	# shellcheck disable=SC2016 # The child shell expands the marker path.
@@ -614,9 +654,11 @@ except subprocess.TimeoutExpired:
     print("timed-out")
 else:
     text = completed.stdout.decode(errors="replace")
-    print("ok" if completed.returncode != 0 and
-          "secret REDACTION_KEY unavailable" in text and
-          "unlock GPG" in text and
+    print("ok" if completed.returncode == 5 and
+          "secret REDACTION_KEY read timed out after 2s (load " in text and
+          "transient, retry later" in text and
+          "gopass/GPG locked or entry missing" not in text and
+          "unlock GPG" not in text and
           not os.path.exists(os.environ["AIDEVOPS_TEST_DIR"] + "/command-ran")
           else "failed")
 ')
@@ -624,6 +666,54 @@ else:
 		print_result "locked headless decrypt exits promptly without running command" 0
 	else
 		print_result "locked headless decrypt exits promptly without running command" 1 "$result"
+	fi
+	return 0
+}
+
+test_injection_retries_only_timeouts() {
+	setup
+	trap 'teardown' RETURN
+	cat >"$TEST_DIR/bin/gopass" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+ls) printf '%s\n' 'aidevops/RETRY_KEY' ;;
+show)
+    printf 'attempt\n' >>"$AIDEVOPS_TEST_DIR/attempts"
+    if [[ "$AIDEVOPS_TEST_READ_MODE" == fail ]]; then exit 7; fi
+    if [[ ! -e "$AIDEVOPS_TEST_DIR/first-attempt" ]]; then
+        touch "$AIDEVOPS_TEST_DIR/first-attempt"
+        printf 'discard-partial-value'
+        sleep 20
+    fi
+    # This succeeds only with the longer second-attempt bound.
+    sleep 1.3
+    printf 'retry-placeholder-value'
+    ;;
+*) exit 1 ;;
+esac
+EOF
+	chmod +x "$TEST_DIR/bin/gopass"
+	local output="" status=0
+	output=$(HOME="$TEST_DIR/home" AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS=1 AIDEVOPS_TEST_READ_MODE=retry \
+		bash "$HELPER" RETRY_KEY -- bash -c \
+		'[[ "$RETRY_KEY" == "retry-placeholder-value" ]] && printf child-ok' 2>&1) || status=$?
+	local attempts=""
+	attempts=$(<"$TEST_DIR/attempts")
+	if [[ "$status" -eq 0 && "$output" == child-ok && "$attempts" == $'attempt\nattempt' ]]; then
+		print_result "injection retries a timeout once with a longer bound and discards partial output" 0
+	else
+		print_result "injection retries a timeout once with a longer bound and discards partial output" 1 "rc=$status"
+	fi
+	rm -f "$TEST_DIR/attempts"
+	status=0
+	output=$(HOME="$TEST_DIR/home" AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS=1 AIDEVOPS_TEST_READ_MODE=fail \
+		bash "$HELPER" RETRY_KEY -- touch "$TEST_DIR/command-ran" 2>&1) || status=$?
+	attempts=$(<"$TEST_DIR/attempts")
+	if [[ "$status" -eq 1 && "$output" == *"gopass/GPG locked or entry missing"* &&
+		"$output" != *"timed out"* && "$attempts" == attempt && ! -e "$TEST_DIR/command-ran" ]]; then
+		print_result "non-zero gopass exit retains locked diagnostic without retrying or running child" 0
+	else
+		print_result "non-zero gopass exit retains locked diagnostic without retrying or running child" 1 "rc=$status"
 	fi
 	return 0
 }
@@ -1508,12 +1598,14 @@ main() {
 	test_run_fails_closed_when_redactor_cannot_start
 	test_multiline_gopass_injection_preserves_embedded_newlines
 	test_get_distinguishes_unreadable_from_missing
+	test_check_unreadable_plaintext_is_not_absence
 	test_specific_injection_fails_closed
 	test_specific_injection_excludes_unrequested_fallback_secrets
 	test_injection_preserves_trailing_equals
 	test_empty_fallback_secret_fails_closed
 	test_fallback_trims_trailing_whitespace_keeps_inner
 	test_locked_injection_exits_bounded
+	test_injection_retries_only_timeouts
 	test_list_resolves_tenants_without_reading_values
 	test_empty_gopass_namespace_uses_plaintext
 	test_list_preserves_direct_credentials

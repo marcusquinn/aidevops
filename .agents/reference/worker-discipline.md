@@ -55,6 +55,21 @@ consolidation exception below, labels, a closed issue, or prose alone cannot wai
 These contracts classify completion evidence; they grant no publication,
 credential, or approval authority.
 
+Finish both contracts with `pr-less-completion-helper.sh` (GH#40048), never a
+hand-written receipt. It refuses before writing unless the issue is open, carries
+the opt-in marker and the worktree is PR-less clean. It then posts through the
+signed wrapper, binds the exact receipt below to that comment, closes the issue
+as completed and verifies with the runtime's own predicate. On rejection it
+reopens the issue and prints `PR_LESS_COMPLETION=rejected ... reason=<constant>`,
+so the owner repairs while the task is still open; the runtime's ownership fence
+refuses continuations on closed issues. Generators should name the helper command
+in their issue body instead of describing the receipt.
+
+```bash
+~/.aidevops/agents/scripts/pr-less-completion-helper.sh report-only --repo owner/repo --issue 123 --report-file report.md
+~/.aidevops/agents/scripts/pr-less-completion-helper.sh data-only --repo owner/repo --issue 123 --evidence-url <verified-https-url|self> [--summary-file table.md]
+```
+
 ### Read-only reports
 
 Use `<!-- aidevops:completion-contract:report-only/v1 -->` for audits whose entire
@@ -93,7 +108,10 @@ OWNER/MEMBER posts a comment beginning with:
 ```
 
 Close the issue only after publication and verification. Do not use publication
-semantics for a read-only report.
+semantics for a read-only report. When an authorized publication API prints a
+per-record outcome table and no single user-facing page shows the result (for
+example a batch of database records), post that table as the summary and pass
+`--evidence-url self`, which binds the receipt to its own comment.
 
 Both paths require a clean non-default worktree, no local commits ahead of the
 live remote default, no divergent pushed branch, and no branch PR in any state.
