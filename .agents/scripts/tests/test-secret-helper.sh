@@ -273,7 +273,25 @@ test_check_unreadable_plaintext_is_not_absence() {
 	fi
 	local rc=0
 	HOME="$TEST_DIR/home" bash "$HELPER" check UNREADABLE_KEY >/dev/null 2>&1 || rc=$?
+	local get_rc=0 alias_rc=0 check_rc=0 alias_value="" direct_value=""
+	HOME="$TEST_DIR/home" bash "$HELPER" get UNREADABLE_KEY >/dev/null 2>&1 || get_rc=$?
+	# The target lives in gopass; unrelated unreadable plaintext must not mask it.
+	printf '%s' 'alias-target-placeholder' | AIDEVOPS_TEST_STORED=true HOME="$TEST_DIR/home" \
+		bash "$HELPER" set ALIAS_TARGET >/dev/null
+	HOME="$TEST_DIR/home" bash "$HELPER" record ALIAS_TARGET --provider example >/dev/null
+	HOME="$TEST_DIR/home" bash "$HELPER" alias ALIAS_TARGET DECLARED_ALIAS >/dev/null
+	alias_value=$(AIDEVOPS_TEST_STORED=true HOME="$TEST_DIR/home" bash "$HELPER" get DECLARED_ALIAS 2>/dev/null) || alias_rc=$?
+	AIDEVOPS_TEST_STORED=true HOME="$TEST_DIR/home" bash "$HELPER" check DECLARED_ALIAS || check_rc=$?
 	chmod 600 "$config_dir/credentials.sh"
+	printf '%s\n' 'export DECLARED_ALIAS="direct-placeholder"' >"$config_dir/credentials.sh"
+	direct_value=$(AIDEVOPS_TEST_STORED=true HOME="$TEST_DIR/home" bash "$HELPER" get DECLARED_ALIAS)
+	if [[ "$get_rc" -eq 1 && "$alias_rc" -eq 0 && "$check_rc" -eq 0 &&
+		"$alias_value" == "alias-target-placeholder" && "$direct_value" == "direct-placeholder" ]]; then
+		print_result "get resolves aliases despite unreadable plaintext and preserves direct precedence" 0
+	else
+		print_result "get resolves aliases despite unreadable plaintext and preserves direct precedence" 1 \
+			"get=$get_rc alias=$alias_rc check=$check_rc (value assertions withheld)"
+	fi
 	if [[ "$rc" -eq 3 ]]; then
 		print_result "check reports unreadable plaintext credentials as read failure, not absence" 0
 	else

@@ -879,16 +879,13 @@ cmd_get() {
 	# Normalize to uppercase
 	name=$(echo "$name" | tr '[:lower:]-' '[:upper:]_')
 
-	local value="" read_rc=0 read_name="$name"
-	value=$(get_secret_value "$name") || read_rc=$?
-	if [[ "$read_rc" -eq 0 && -z "$value" ]]; then
-		# Declared alias or explicit provider default (GH#34718)
-		local source_name=""
-		if source_name=$(resolve_injection_source "$name"); then
-			read_name="$source_name"
-			value=$(get_secret_value "$source_name") || read_rc=$?
-		fi
+	local value="" read_rc=0 read_name="$name" source_name=""
+	# Resolve before reading, like cmd_check: unrelated unreadable plaintext
+	# must not mask an alias. Stored direct names still take precedence.
+	if source_name=$(resolve_injection_source "$name"); then
+		read_name="$source_name"
 	fi
+	value=$(get_secret_value "$read_name") || read_rc=$?
 
 	# Present but unreadable is not "not found": fail closed like cmd_check (GH#35265).
 	if [[ "$read_rc" -eq 3 ]]; then
