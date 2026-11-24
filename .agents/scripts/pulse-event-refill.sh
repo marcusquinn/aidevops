@@ -578,9 +578,11 @@ _pulse_event_refill_budget_spent() {
 # (6-17 min gaps, 2026-11-24). Give each later pass of such a run a fresh
 # clamp. The dispatch-lock heartbeat, refreshed through every round, still
 # bounds a hung holder; PULSE_EVENT_REFILL_MAX_PASSES still bounds the
-# process. A cycle-owned drain (instance lock held) keeps its own clock. An
-# inactive bundle or active runtime transition stops, so stale code does not
-# keep dispatching; the active bundle's next wake takes the trigger.
+# process. A cycle-owned drain (instance lock held) keeps its own clock. A
+# reclaimed dispatch lock (live holder whose heartbeat aged past the ceiling),
+# an inactive bundle or an active runtime transition stops, so a displaced or
+# stale process does not keep dispatching; the next wake takes the trigger.
+# Without the ownership check the clock is left as it was.
 # Args: $1 - refill source label
 # Returns: 0 to run the next pass, 1 to stop with the trigger retained
 #######################################
@@ -588,6 +590,11 @@ _pulse_event_refill_prepare_next_pass() {
 	local source_name="$1"
 	local now_epoch=""
 	[[ "${PULSE_REFILL_ONLY:-0}" == "1" ]] && _pulse_event_refill_holds_dispatch_lock_only || return 0
+	declare -F pulse_dispatch_lock_still_owned >/dev/null 2>&1 || return 0
+	if ! pulse_dispatch_lock_still_owned; then
+		pulse_event_refill_log "action=pass_deferred reason=dispatch_lock_lost trigger=retained source=${source_name}"
+		return 1
+	fi
 	if ! _pulse_event_refill_wrapper_is_active "${_PULSE_EVENT_REFILL_SCRIPT_DIR}/pulse-wrapper.sh"; then
 		pulse_event_refill_log "action=pass_deferred reason=inactive_bundle trigger=retained source=${source_name}"
 		return 1

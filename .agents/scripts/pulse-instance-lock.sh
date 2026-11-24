@@ -649,14 +649,25 @@ pulse_release_dispatch_lock_on_exit() {
 	return 0
 }
 
-# Refresh the holder heartbeat during long rounds (atomic replace). Children
-# of the holder (command substitutions) inherit ownership and may refresh.
-pulse_dispatch_lock_heartbeat() {
-	local lockdir="" owner="" temporary=""
+# Return 0 while this process still owns the dispatch lock: the in-memory flag
+# is set and LOCKDIR.dispatch/pid still names the recorded owner. A contender
+# may reclaim a live holder whose heartbeat aged past PULSE_LOCK_MAX_AGE_S,
+# after which the re-entrant acquire_dispatch_lock must not be trusted (t19337).
+pulse_dispatch_lock_still_owned() {
+	local lockdir="" owner=""
 	[[ "$_DISPATCH_LOCK_OWNED" == true && -n "$_DISPATCH_LOCK_OWNER_PID" ]] || return 1
 	lockdir=$(pulse_dispatch_lockdir)
 	read -r owner 2>/dev/null <"${lockdir}/pid" || return 1
-	[[ "$owner" == "$_DISPATCH_LOCK_OWNER_PID" ]] || return 1
+	[[ "$owner" == "$_DISPATCH_LOCK_OWNER_PID" ]]
+	return $?
+}
+
+# Refresh the holder heartbeat during long rounds (atomic replace). Children
+# of the holder (command substitutions) inherit ownership and may refresh.
+pulse_dispatch_lock_heartbeat() {
+	local lockdir="" temporary=""
+	pulse_dispatch_lock_still_owned || return 1
+	lockdir=$(pulse_dispatch_lockdir)
 	temporary=$(mktemp "${lockdir}/heartbeat.XXXXXX" 2>/dev/null) || return 1
 	if date +%s >"$temporary" && mv -f "$temporary" "${lockdir}/heartbeat_epoch"; then
 		return 0
