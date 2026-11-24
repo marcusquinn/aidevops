@@ -191,6 +191,10 @@ HOOKEOF
 	bash -n "$staged_hook" || return 1
 	chmod 755 "$staged_hook" || return 1
 	mv -f "$staged_hook" "$hook_path" || return 1
+	# Cache failure only disables the optimization, never protection.
+	# shellcheck source=guard-rollout-cache-lib.sh
+	source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/guard-rollout-cache-lib.sh"
+	guard_rollout_record "$hook_path" "$GUARD_CACHE_LIB_DIR/install-canonical-guard.sh" || true
 	print_success "installed canonical-on-main-guard at $hook_path"
 	print_info "source hook: $source_hook"
 	return 0

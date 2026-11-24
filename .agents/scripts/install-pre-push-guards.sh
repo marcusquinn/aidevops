@@ -81,6 +81,8 @@ print_error() {
 
 # shellcheck source=git-hooks-path-lib.sh disable=SC1091
 source "$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/git-hooks-path-lib.sh"
+# shellcheck source=guard-rollout-cache-lib.sh
+source "$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/guard-rollout-cache-lib.sh"
 
 # Marker strings embedded in the managed hook file — used for detect/update.
 HOOK_MARKER_MANAGED="# aidevops-pre-push-guards"
@@ -547,6 +549,7 @@ HOOK_HEADER
 		printf 'exit "$_exit_code"\n' >>"$_hook_path"
 	fi
 	chmod +x "$_hook_path"
+	guard_rollout_record "$_hook_path" "$GUARD_CACHE_LIB_DIR/install-pre-push-guards.sh" || true
 	return 0
 }
 

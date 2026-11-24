@@ -71,7 +71,11 @@ setup_complexity_guard() {
 		return 0
 	fi
 
-	local ok=0 conflict=0 skip=0 err=0
+	# shellcheck source=../guard-rollout-cache-lib.sh
+	source "${installer_path%/*}/guard-rollout-cache-lib.sh"
+	local fingerprint=""
+	fingerprint=$(guard_rollout_fingerprint "$installer_path") || true
+	local ok=0 conflict=0 skip=0 err=0 current=0
 	local rawpath path result
 
 	while IFS= read -r rawpath; do
@@ -79,6 +83,11 @@ setup_complexity_guard() {
 		path="${rawpath/#\~/$HOME}"
 		if [[ ! -e "$path/.git" ]]; then
 			skip=$((skip + 1))
+			continue
+		fi
+		if guard_rollout_current "$path" pre-push '# guard:complexity' "$fingerprint"; then
+			current=$((current + 1))
+			ok=$((ok + 1))
 			continue
 		fi
 		result=$(cd -- "$path" && bash "$installer_path" install --guard complexity 2>&1 </dev/null || true)
@@ -95,7 +104,7 @@ setup_complexity_guard() {
 		esac
 	done < <(jq -r '.initialized_repos[]? | select(.path != null) | .path' "$repos_config")
 
-	print_info "Complexity guard: ok=$ok conflict=$conflict skip=$skip err=$err"
+	print_info "Complexity guard: ok=$ok conflict=$conflict skip=$skip err=$err current=$current"
 	setup_track_configured "Complexity guard (${ok} repos)"
 	return 0
 }
