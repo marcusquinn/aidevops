@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 
+from tabby_session_auth import authentication_slot
 from tabby_session_config import SessionError, endpoint, equivalent_aliases
 from tabby_session_launch import report
 from tabby_session_legacy import legacy_state, local_legacy
@@ -41,7 +42,8 @@ def attach_held(args, host, hosts, session, handle):
     if legacy:
         # Only legacy name-based attachments need a fresh inventory to resolve
         # renames/ambiguity. Managed attachments already hold a stable-ID lease.
-        sessions, _clients = inventory(host)
+        with authentication_slot(args.state_dir, host):
+            sessions, _clients = inventory(host)
         current = next((s for s in sessions if all(s[k] == session[k] for k in session)), None)
         if current is None:
             raise SessionError("Session disappeared/renamed outside prefix; no replacement attached")
@@ -53,11 +55,21 @@ def attach_held(args, host, hosts, session, handle):
     # authenticate directly. The final tmux command checks identity and prefix
     # atomically on the server, including after an authentication delay/restart.
     command = attach_command(host, session, marker)
+    with authentication_slot(args.state_dir, host) as release_authentication:
+        return supervise_ssh(command, marker, args, handle, release_authentication)
+
+
+def supervise_ssh(command, marker, args, handle, release_authentication):
+    def authenticated(pid):
+        handle.write({"phase": "attaching", "token": args.token, "remote_pid": pid})
+        # The remote marker proves authentication finished. Allow the next SSH
+        # handshake while this authenticated session remains alive.
+        release_authentication()
+
     # OpenSSH closes extra FDs. Orphan recovery uses the exact nonce, not PIDs.
     with subprocess.Popen(command, stdout=subprocess.PIPE) as child:  # nosec B603 - validated SSH argv, quoted remote script
         try:
-            relay_output(child.stdout, marker, lambda pid: handle.write(
-                {"phase": "attaching", "token": args.token, "remote_pid": pid}), sys.stdout.buffer)
+            relay_output(child.stdout, marker, authenticated, sys.stdout.buffer)
             return child.wait()
         except BaseException:
             # Only this owned local SSH transport, never the remote tmux process.

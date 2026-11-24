@@ -147,6 +147,18 @@ the tab still requires fresh inventory to resolve legacy names and ambiguity;
 that read-only probe uses the same retry policy. Initial inventory remains
 non-interactive, so prepare authentication before running restore.
 
+Managed tabs serialize their SSH handshakes for the same locally resolved
+hostname/port, including aliases and different usernames on that listener. The
+private local lock is released when the remote attachment marker proves SSH
+authentication finished, not when the tmux session ends. Other listeners can
+authenticate independently. This respects restrictive `PerSourceMaxStartups`
+limits without guessed delays, extra per-tab probes, or server configuration
+changes. Queued wrappers retain their live attachment leases, so repeated restore
+does not launch duplicates. Inventory/creation probes use the same slot; read-only
+list/doctor/dry runs use an existing lock without initializing local state.
+Programs outside this helper, different local accounts/state directories, and
+distinct DNS names resolving to the same listener do not share this lock.
+
 Probe stdout uses unique per-request response boundaries. SSH/login-shell output
 outside those boundaries is excluded privately; unexpected records inside the
 inventory remain errors. Missing/duplicate boundaries fail closed rather than
