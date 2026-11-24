@@ -318,8 +318,8 @@ _enrich_has_authored_sections() {
 	local name="" re=""
 	for name in "Files Scope" "Acceptance" "Verification"; do
 		re="^#{2,3}[[:space:]]+${name}([[:space:]]|\$)"
-		if printf '%s\n' "$current_body" | grep -qE "$re" &&
-			! printf '%s\n' "$composed_body" | grep -qE "$re"; then
+		if grep -qE "$re" <<<"$current_body" &&
+			! grep -qE "$re" <<<"$composed_body"; then
 			return 0
 		fi
 	done
