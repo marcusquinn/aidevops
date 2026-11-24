@@ -44,7 +44,9 @@ printf 'PRIVATE_ERROR\n' >&2
     cli.chmod(0o700)
     env = dict(os.environ, HOME=str(root), PATH=str(bin_dir) + ':' + os.environ['PATH'],
                AIDEVOPS_TEMP_DIR=str(root / 'workspace-temp'),
-               AIDEVOPS_RUNNER_CAPABILITY_SECRET_TIMEOUT_SECONDS='2')
+               AIDEVOPS_RUNNER_CAPABILITY_SECRET_TIMEOUT_SECONDS='2',
+               # GH#40180: host IPC probes stay hermetic; their own fixtures enable them.
+               AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC='0')
     config = repo / '.aidevops.json'
     passed = 0
 
@@ -672,6 +674,129 @@ exit 0
     assert result.returncode == 1 and target.read_text() == 'unchanged', result
     host_file.unlink()
     print('PASS host cache rejects unsafe permissions and symlink targets')
+    passed += 1
+
+    # GH#40180: host IPC health. Stub `id` and `gh` reproduce the observed
+    # failure shapes; the verdict is runner-wide, silent when healthy, defers
+    # before any issue read, and reopens at the next recheck.
+    ipc_bin = root / 'ipc-bin'
+    ipc_bin.mkdir()
+    (ipc_bin / 'id').write_text('#!/usr/bin/env bash\n'
+                                'if [[ "${STUB_ID:-name}" == numeric ]]; then printf "501\\n"; else printf "runner\\n"; fi\n')
+    (ipc_bin / 'gh').write_text('''#!/usr/bin/env bash
+case "${STUB_GH:-healthy}" in
+healthy) printf 'github.com\\n  Logged in\\n' ;;
+trustd) printf 'error validating token: tls: failed to verify certificate: x509: OSStatus -26276\\n'; exit 1 ;;
+loggedout) printf 'You are not logged into any GitHub hosts.\\n'; exit 1 ;;
+hang) exec sleep 30 ;;
+esac
+''')
+    (ipc_bin / 'chromium-probe').write_text('''#!/usr/bin/env bash
+case "${STUB_BROWSER:-ok}" in
+ok) exit 0 ;;
+bootstrap) printf 'bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer.1: Permission denied (1100)\\n'; exit 1 ;;
+missing) printf "Executable doesn't exist\\n"; exit 1 ;;
+esac
+''')
+    for stub_name in ('id', 'gh', 'chromium-probe'):
+        (ipc_bin / stub_name).chmod(0o700)
+    ipc_dir = root / 'ipc-temp'
+    ipc_env = dict(env, PATH=str(ipc_bin) + ':' + env['PATH'], AIDEVOPS_TEMP_DIR=str(ipc_dir),
+                   AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC='1',
+                   AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS='0',
+                   AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TIMEOUT_SECONDS='1')
+    config.unlink(missing_ok=True)
+
+    def ipc_check(extra=None):
+        return subprocess.run(['bash', '-c',
+            'source "$1/runner-capability-helper.sh"; runner_capability_check "$2" "$3" fresh',
+            'fixture', str(scripts), str(repo), json.dumps({'body': ''})],
+            env=dict(ipc_env, **(extra or {})), capture_output=True, text=True)
+
+    # Healthy is silent apart from the existing audit line: no runner_health, no verdict.
+    result = ipc_check()
+    assert result.returncode == 0 and not result.stdout and 'runner_health' not in result.stderr, result
+    for label, extra, failed in (
+        ('numeric uid from id -un', {'STUB_ID': 'numeric'}, 'getpwuid'),
+        ('trustd x509 OSStatus from gh', {'STUB_GH': 'trustd'}, 'trust_service'),
+        ('gh TLS handshake hang', {'STUB_GH': 'hang'}, 'tls_timeout'),
+        ('opt-in Chromium bootstrap denied',
+         {'AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE': '1', 'STUB_BROWSER': 'bootstrap',
+          'AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE_CMD': str(ipc_bin / 'chromium-probe')},
+         'browser_bootstrap'),
+    ):
+        started = time.monotonic()
+        result = ipc_check(extra)
+        assert result.returncode == 1, (label, result)
+        assert result.stdout == f'runner_capability_unmet reason=host_ipc_unhealthy check={failed}\n', (label, result)
+        assert result.stderr.count('runner_health: host IPC unhealthy (' + failed + ')') == 1, (label, result)
+        assert time.monotonic() - started < 10, label
+        print('PASS host IPC unhealthy:', label)
+        passed += 1
+    # Failures that are not IPC faults stay healthy: other gates own them.
+    browser_cmd = {'AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE_CMD': str(ipc_bin / 'chromium-probe')}
+    for label, extra in (
+        ('gh signed out', {'STUB_GH': 'loggedout'}),
+        ('browser probe off by default', dict(browser_cmd, STUB_BROWSER='bootstrap')),
+        ('browser not installed', dict(browser_cmd, STUB_BROWSER='missing',
+                                       AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE='1')),
+        ('browser healthy', dict(browser_cmd, AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE='1')),
+    ):
+        result = ipc_check(extra)
+        assert result.returncode == 0 and not result.stdout and 'runner_health' not in result.stderr, (label, result)
+        print('PASS host IPC healthy:', label)
+        passed += 1
+    # Auto mode is Darwin-only; the same fault is ignored elsewhere.
+    auto_env = dict(ipc_env, STUB_ID='numeric')
+    auto_env.pop('AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC')
+    result = subprocess.run(['bash', '-c', 'source "$1/runner-capability-helper.sh"; runner_capability_check "$2" "$3" fresh',
+                             'fixture', str(scripts), str(repo), '{"body":""}'],
+                            env=auto_env, capture_output=True, text=True)
+    assert (result.returncode == 1) == (sys.platform == 'darwin'), result
+    print('PASS host IPC auto mode applies on Darwin only')
+    passed += 1
+
+    # Cached verdict: one runner_health line per interval, then recovery.
+    cached = {'AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS': '300', 'STUB_ID': 'numeric'}
+    first = ipc_check(cached)
+    second = ipc_check(cached)
+    assert first.returncode == second.returncode == 1, (first, second)
+    assert first.stderr.count('runner_health: host IPC') == 1 and 'rechecked every 300s' in first.stderr, first
+    assert 'runner_health' not in second.stderr and second.stdout.endswith('check=getpwuid source=host_ipc_cache\n'), second
+    healed = ipc_check({'AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS': '300'})
+    assert healed.returncode == 1 and 'source=host_ipc_cache' in healed.stdout, healed  # still inside the interval
+    verdict_file = ipc_dir / 'runner-capability-host-ipc/verdict.json'
+    assert verdict_file.stat().st_mode & 0o777 == 0o600
+    state = json.loads(verdict_file.read_text())
+    state['at'] = 0
+    verdict_file.write_text(json.dumps(state))
+    healed = ipc_check({'AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS': '300'})
+    assert healed.returncode == 0 and not healed.stdout and 'runner_health' not in healed.stderr, healed
+    assert json.loads(verdict_file.read_text())['verdict'] == 'ok'
+    print('PASS host IPC verdict is cached per interval and reopens at the next recheck')
+    passed += 1
+
+    # The shared fresh gate defers before any issue read and never cools the issue down.
+    ipc_gh_calls = root / 'ipc-gh-calls'
+    ipc_log = root / 'ipc-log'
+    ipc_fresh = 'source "$1/runner-capability-helper.sh"; ' + '''
+gh() { printf 'gh\\n' >>"$GH_CALLS"; printf '%s' "$FRESH_META"; return 0; }
+runner_capability_check_fresh "$2" 42 owner/repo "$3"
+'''
+    gate_env = dict(ipc_env, STUB_ID='numeric', GH_CALLS=str(ipc_gh_calls),
+                    FRESH_META=json.dumps(fresh_issue))
+    result = subprocess.run(['bash', '-c', ipc_fresh, 'fixture', str(scripts), str(repo), str(ipc_log)],
+                            env=gate_env, capture_output=True, text=True)
+    assert result.returncode == 1 and not result.stdout and not result.stderr, result
+    assert not ipc_gh_calls.exists(), ipc_gh_calls.read_text()
+    ipc_text = ipc_log.read_text()
+    assert 'reason=host_ipc_unhealthy check=getpwuid' in ipc_text, ipc_text
+    assert 'signal=host_ipc_unhealthy cooldown=none' in ipc_text, ipc_text
+    assert ipc_text.count('runner_health: host IPC unhealthy (getpwuid)') == 1, ipc_text
+    result = subprocess.run(['bash', '-c', ipc_fresh, 'fixture', str(scripts), str(repo), str(ipc_log)],
+                            env=dict(gate_env, STUB_ID='name'), capture_output=True, text=True)
+    assert result.returncode == 0 and ipc_gh_calls.read_text().splitlines() == ['gh'], result
+    print('PASS unhealthy host defers the fresh gate before any issue read, cooldown=none, then recovers')
     passed += 1
 
     # The real status-only command suppresses values/errors and decrypts once.
