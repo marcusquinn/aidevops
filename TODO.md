@@ -2498,7 +2498,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19327 perf(recovery): supervisor pending pass skips unchanged decided entries after one issue read (3 of 131 entries observed per pass) #auto-dispatch #bug #priority:high ref:GH#40126 -> [todo/tasks/t19327-brief.md] pr:#40128 completed:2026-11-24
 
-- [ ] t19329 fix(headless): explain per-candidate exclusion reasons when worker tier selection is unavailable #bug #priority:high ref:GH#40140 -> [todo/tasks/t19329-brief.md] logged:2026-11-24
+- [x] t19329 fix(headless): explain per-candidate exclusion reasons when worker tier selection is unavailable #bug #priority:high ref:GH#40140 -> [todo/tasks/t19329-brief.md] logged:2026-11-24 pr:#40141 completed:2026-11-24
 
 ## In Progress
 
