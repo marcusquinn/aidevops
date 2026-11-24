@@ -1004,9 +1004,13 @@ _tbr_check_entry() {
 		[[ "$release_rc" -ne 3 ]] || return 1
 		if [[ "$release_rc" -eq 4 ]]; then
 			# GH#39232: decided permission hold. Keep the entry and its
-			# decision; the supervisor already owns it, so print nothing.
+			# decision; the supervisor already owns it, so print nothing,
+			# unless its external_trigger re-check is due (GH#40120).
 			_tbr_stamp_rearm_check "$file" "$updated_at" "$comments" "$brief" decided || return 2
-			return 1
+			[[ "$mode" != rearm ]] || return 1
+			_tbr_decision_active "$key" "$comments" && return 1
+			_tbr_print_entry "$repo" "$issue" "$reason" "$opened_at" "$intake" "$issue_json"
+			return $?
 		fi
 		[[ "$release_rc" -lt 2 ]] || return 2
 		rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
@@ -1056,7 +1060,9 @@ tbr_record() {
 		def recheck_ok: (has("recheck_after") | not) or (.wake == "external_trigger"
 			and (.recheck_after | type) == "string"
 			and (.recheck_after | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
-			and ((.recheck_after | try fromdateiso8601 catch 0) > $now));
+			# jq normalises calendar-invalid dates (02-30 -> 03-02); require a round trip.
+			and ((.recheck_after | try (fromdateiso8601 | todateiso8601) catch "") == .recheck_after)
+			and ((.recheck_after | fromdateiso8601) > $now));
 		select((del(.recheck_after) | keys) == ["evidence","next_action","wake"] and
 			(.wake | IN("brief_revision","environment_fix","owner_change","dependency_change","human_decision","external_trigger"))
 			and recheck_ok)

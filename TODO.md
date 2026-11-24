@@ -2496,6 +2496,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19326 fix(recovery): external_trigger decisions re-poll at recheck_after or a bounded default instead of parking forever #bug #priority:high ref:GH#40120 -> [todo/tasks/t19326-brief.md]
 
+- [ ] t19327 perf(recovery): supervisor pending pass skips unchanged decided entries after one issue read (3 of 131 entries observed per pass) #auto-dispatch #bug #priority:high ref:GH#40126 -> [todo/tasks/t19327-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
