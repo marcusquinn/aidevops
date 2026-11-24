@@ -234,14 +234,21 @@ Host IPC health (GH#40180) is a runner-wide check that runs before the Node gate
 A macOS host can lose `opendirectoryd`, `trustd` or the Mach bootstrap port while
 its daemons look alive; every worker then claims an issue and fails the same way.
 The probe fails on `id -un` printing a bare uid (`getpwuid`), `gh auth status
---hostname github.com` showing `OSStatus`/`x509:` (`trust_service`) or hanging
-(`tls_timeout`), and, only with `AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE=1`, a
+--hostname github.com` showing `OSStatus`/`x509:` (`trust_service`), hanging
+(`tls_timeout`) or returning an unrecognized nonzero status (`tls_unknown`), and,
+only with `AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE=1`, a
 headless Chromium launch hitting the bootstrap error (`browser_bootstrap`;
-override the launcher with `AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE_CMD`). Other
-failures (signed out, offline, no browser installed) are not IPC faults and stay
+override the launcher with `AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE_CMD`). An
+opted-in launcher exceeding its deadline defers with `browser_timeout`, even
+without a bootstrap diagnostic. The default launcher uses the verified Playwright
+runtime resolver (including `AIDEVOPS_PLAYWRIGHT_MODULE`); an unavailable module
+or launcher defers with `browser_unavailable`. Other failures (signed out, no
+browser binary installed) are not IPC faults and stay
 healthy. An unhealthy host defers every candidate with
-`reason=host_ipc_unhealthy check=<name>` (`cooldown=none`) before any issue read
-or claim, with one `runner_health: host IPC unhealthy` line per recheck. The
+`reason=host_ipc_unhealthy check=<name>` (`cooldown=none`) before the fresh
+capability gate's metadata reread or claim. Manual dispatch still reads issue
+metadata earlier during target validation. There is one
+`runner_health: host IPC unhealthy` line per recheck. The
 verdict is shared under a lock for `AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS`
 (default 120, 0 = off), so recovery reopens dispatch at the next recheck.
 `AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC=auto|1|0` (default `auto`: Darwin only).

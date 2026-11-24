@@ -46,7 +46,7 @@ _runner_capability_check_fresh_logged() {
 			'runner_capability_unmet source=fresh metadata_unreadable' metadata_unreadable
 		return 1
 	fi
-	if ! reason=$(runner_capability_check "$repo_path" "$capability_meta_json" fresh 2>&3); then
+	if ! reason=$(_runner_capability_check_requirements "$repo_path" "$capability_meta_json" fresh 2>&3); then
 		_runner_capability_log_deferral "$issue_number" "$repo_slug" "$reason" ""
 		return 1
 	fi
@@ -176,9 +176,10 @@ _runner_capability_project_node_verdict() {
 #   trust_service  `gh auth status` shows no OSStatus/x509 error (curl is not a
 #                  valid probe: it uses its own CA store and passed during the fault)
 #   tls_timeout    `gh auth status` did not finish in time
+#   tls_unknown    nonzero status without a recognized signed-out diagnostic
 #   browser_*      opt-in headless Chromium launch (AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE=1)
-# A probe that fails for another reason (not logged in, offline, no browser
-# installed) is not an IPC fault and stays healthy; other gates own those.
+# A signed-out CLI or missing browser binary stays healthy; other gates own those.
+# Unknown TLS errors and an opted-in but unavailable browser probe defer safely.
 # Default on for Darwin only (AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC=auto|1|0): a
 # container with an unnamed uid would otherwise fail the getpwuid probe forever.
 # The verdict is host-wide, cached for AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS
@@ -192,7 +193,8 @@ _runner_capability_host_ipc_verdict() {
 	*) [[ "$(uname -s 2>/dev/null)" == Darwin ]] || return 0 ;;
 	esac
 	local rc=0
-	python3 - < <(
+	python3 - "${BASH_SOURCE[0]%/*}/playwright-runtime.mjs" < <(
+		_runner_capability_python_host_ipc_process
 		_runner_capability_python_host_ipc_probes
 		_runner_capability_python_host_ipc_cache
 	) || rc=$?
@@ -200,7 +202,7 @@ _runner_capability_host_ipc_verdict() {
 	return 0
 }
 
-_runner_capability_python_host_ipc_probes() {
+_runner_capability_python_host_ipc_process() {
 	cat <<'PY'
 import fcntl
 import json
@@ -237,10 +239,22 @@ def bounded(argv, timeout):
             os.killpg(process.pid, signal.SIGKILL)
         except OSError:
             pass
-        process.communicate()
+        # Escaped descendants may hold stdout open after the group is killed.
+        # Do not wait for pipe EOF; only reap the direct child for a bounded time.
+        process.stdout.close()
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
         return 124, ''
     return process.returncode, (output or '')[:8192]
 
+PY
+	return 0
+}
+
+_runner_capability_python_host_ipc_probes() {
+	cat <<'PY'
 def probe_identity(timeout):
     status, output = bounded(['id', '-un'], timeout)
     name = output.strip()
@@ -256,23 +270,43 @@ def probe_tls(timeout):
         return 'tls_timeout'
     if re.search(r'OSStatus|x509:', output):
         return 'trust_service'
+    if status != 0 and not re.search(r'not logged into any GitHub hosts', output, re.I):
+        return 'tls_unknown'
     return ''
 
+def browser_enabled():
+    return os.environ.get('AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE', '') in ('1', 'true', 'yes', 'on')
+
 def probe_browser(timeout):
-    if os.environ.get('AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE', '') not in ('1', 'true', 'yes', 'on'):
+    if not browser_enabled():
         return ''
     command = os.environ.get('AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE_CMD', '')
-    argv = shlex.split(command) if command.strip() else [
-        'node', '-e',
-        "const {chromium}=require('playwright');"
-        "(async()=>{const b=await chromium.launch({headless:true});await b.close();})()"
-        ".catch(e=>{console.error(String(e&&e.message||e));process.exit(1);});"]
+    try:
+        argv = shlex.split(command) if command.strip() else default_browser_argv()
+    except ValueError:
+        return 'browser_unavailable'
     status, output = bounded(argv, timeout)
     if status == 124:
         return 'browser_timeout'
     if re.search(r'bootstrap_check_in|MachPortRendezvous|Permission denied \(1100\)', output):
         return 'browser_bootstrap'
+    if status in (78, 127):
+        return 'browser_unavailable'
     return ''
+
+def default_browser_argv():
+    # Reuse the verified runtime resolver (including AIDEVOPS_PLAYWRIGHT_MODULE)
+    # without npx or any package installation during admission.
+    return [
+        'node', '-e',
+        "const {pathToFileURL}=require('node:url');"
+        "(async()=>{try{"
+        "const r=await import(pathToFileURL(process.argv[1]).href);"
+        "const m=await r.resolvePlaywrightModule({allowNpx:false});"
+        "const {chromium}=await r.loadPlaywright(m);"
+        "(async()=>{const b=await chromium.launch({headless:true});await b.close();})()"
+        ".catch(e=>{console.error(String(e&&e.message||e));process.exit(1);});"
+        "}catch(e){process.exit(78);}})();", sys.argv[1]]
 
 def run_probes():
     probe_timeout = env_int('AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TIMEOUT_SECONDS', 5, 1, 30)
@@ -310,8 +344,14 @@ def cache_directory():
 
 def main():
     ttl = env_int('AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS', 120, 0, 1800)
-    # The probe set is part of the cache key: toggling the browser probe rechecks.
-    probes = 'browser' if os.environ.get('AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE') else 'base'
+    # Include effective enablement and launcher/resolution settings in the key.
+    probes = ['base']
+    if browser_enabled():
+        command = os.environ.get('AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE_CMD', '').strip()
+        probes = ['browser', command or default_browser_argv(),
+                  os.environ.get('AIDEVOPS_PLAYWRIGHT_MODULE', ''),
+                  os.environ.get('AIDEVOPS_PLAYWRIGHT_RUNTIME_DIR', ''), os.environ.get('PATH', ''),
+                  str(Path.home()), os.getcwd()]
     directory = cache_directory() if ttl else None
     if directory is None:
         failed = run_probes()
@@ -420,9 +460,16 @@ runner_capability_check() {
 	local repo_path="$1"
 	local issue_meta_json="$2"
 	local source="${3:-}"
-	local cycle="${_PULSE_CYCLE_ID:-}"
 	# GH#40180: runner-wide verdict first; it prints the unmet reason itself.
 	_runner_capability_host_ipc_verdict || return 1
+	_runner_capability_check_requirements "$repo_path" "$issue_meta_json" "$source" || return 1
+	return 0
+}
+
+# The fresh entry point has already checked host health before reading metadata.
+_runner_capability_check_requirements() {
+	local repo_path="$1" issue_meta_json="$2" source="${3:-}"
+	local cycle="${_PULSE_CYCLE_ID:-}"
 	# Assemble only trusted literal code; issue metadata stays in argv as data.
 	python3 - "$repo_path" "$issue_meta_json" "$source" "$cycle" "${BASH_SOURCE[0]%/*}/network-tier-helper.sh" < <(
 		_runner_capability_python_runtime

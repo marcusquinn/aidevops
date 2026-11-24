@@ -682,12 +682,14 @@ exit 0
     ipc_bin = root / 'ipc-bin'
     ipc_bin.mkdir()
     (ipc_bin / 'id').write_text('#!/usr/bin/env bash\n'
+                                '[[ -z "${ID_CALLS:-}" ]] || printf "id\\n" >>"$ID_CALLS"\n'
                                 'if [[ "${STUB_ID:-name}" == numeric ]]; then printf "501\\n"; else printf "runner\\n"; fi\n')
     (ipc_bin / 'gh').write_text('''#!/usr/bin/env bash
 case "${STUB_GH:-healthy}" in
 healthy) printf 'github.com\\n  Logged in\\n' ;;
 trustd) printf 'error validating token: tls: failed to verify certificate: x509: OSStatus -26276\\n'; exit 1 ;;
 loggedout) printf 'You are not logged into any GitHub hosts.\\n'; exit 1 ;;
+invalid) printf 'The token in default is invalid.\\n'; exit 1 ;;
 hang) exec sleep 30 ;;
 esac
 ''')
@@ -705,6 +707,8 @@ esac
                    AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC='1',
                    AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS='0',
                    AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TIMEOUT_SECONDS='1')
+    ipc_env.pop('AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE', None)
+    ipc_env.pop('AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE_CMD', None)
     config.unlink(missing_ok=True)
 
     def ipc_check(extra=None):
@@ -720,6 +724,12 @@ esac
         ('numeric uid from id -un', {'STUB_ID': 'numeric'}, 'getpwuid'),
         ('trustd x509 OSStatus from gh', {'STUB_GH': 'trustd'}, 'trust_service'),
         ('gh TLS handshake hang', {'STUB_GH': 'hang'}, 'tls_timeout'),
+        ('gh hides TLS diagnostic', {'STUB_GH': 'invalid'}, 'tls_unknown'),
+        ('missing Playwright module',
+         {'AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE': '1',
+          'AIDEVOPS_PLAYWRIGHT_MODULE': str(root / 'absent.mjs'),
+          'AIDEVOPS_PLAYWRIGHT_RUNTIME_DIR': str(root / 'absent-runtime')},
+         'browser_unavailable'),
         ('opt-in Chromium bootstrap denied',
          {'AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE': '1', 'STUB_BROWSER': 'bootstrap',
           'AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE_CMD': str(ipc_bin / 'chromium-probe')},
@@ -776,6 +786,57 @@ esac
     print('PASS host IPC verdict is cached per interval and reopens at the next recheck')
     passed += 1
 
+    # Explicit false values and launcher changes invalidate the browser verdict.
+    browser_cache = dict(browser_cmd, AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS='300',
+                         AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE='0', STUB_BROWSER='bootstrap')
+    assert ipc_check(browser_cache).returncode == 0
+    enabled_cache = dict(browser_cache, AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE='1')
+    assert 'check=browser_bootstrap' in ipc_check(enabled_cache).stdout
+    assert ipc_check(browser_cache).returncode == 0
+    assert 'check=browser_bootstrap' in ipc_check(enabled_cache).stdout
+    assert ipc_check(dict(enabled_cache,
+        AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE_CMD='true')).returncode == 0
+    print('PASS browser cache tracks enablement and effective launcher')
+    passed += 1
+
+    # The default launcher resolves the owned runtime outside its working dir.
+    runtime = root / 'owned-runtime'
+    module = runtime / 'node_modules/playwright'
+    module.mkdir(parents=True)
+    (module / 'package.json').write_text('{"main":"index.js"}')
+    marker = root / 'browser-launched'
+    (module / 'index.js').write_text(
+        'exports.chromium={launch:async()=>{require("node:fs").writeFileSync('
+        + json.dumps(str(marker)) + ',"launched");return {close:async()=>{}}}};')
+    result = ipc_check({'AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE': '1',
+                        'AIDEVOPS_PLAYWRIGHT_MODULE': '',
+                        'AIDEVOPS_PLAYWRIGHT_RUNTIME_DIR': str(runtime)})
+    assert result.returncode == 0 and marker.read_text() == 'launched', result
+    print('PASS default browser probe launches from owned Playwright runtime')
+    passed += 1
+
+    # Exercise the production timeout helper with a descendant outside its group.
+    process_source = subprocess.run(['bash', '-c',
+        'source "$1/runner-capability-helper.sh"; _runner_capability_python_host_ipc_process',
+        'fixture', str(scripts)], capture_output=True, text=True, check=True).stdout
+    probe_namespace = {}
+    exec(process_source, probe_namespace)
+    bounded = probe_namespace['bounded']
+    assert bounded([sys.executable, '-c', 'print("captured")'], 1) == (0, 'captured\n')
+    escaped_pid = root / 'escaped-pid'
+    child_code = ('import os,time; os.setsid(); '
+                  f'open({str(escaped_pid)!r},"w").write(str(os.getpid())); time.sleep(10)')
+    parent_code = 'import subprocess,time; subprocess.Popen(' + repr([sys.executable, '-c', child_code]) + '); time.sleep(10)'
+    started = time.monotonic()
+    try:
+        assert bounded([sys.executable, '-c', parent_code], 1) == (124, '')
+        assert time.monotonic() - started < 3
+    finally:
+        if escaped_pid.exists():
+            os.kill(int(escaped_pid.read_text()), 9)
+    print('PASS timeout cleanup ignores escaped descendants holding stdout')
+    passed += 1
+
     # The shared fresh gate defers before any issue read and never cools the issue down.
     ipc_gh_calls = root / 'ipc-gh-calls'
     ipc_log = root / 'ipc-log'
@@ -793,9 +854,12 @@ runner_capability_check_fresh "$2" 42 owner/repo "$3"
     assert 'reason=host_ipc_unhealthy check=getpwuid' in ipc_text, ipc_text
     assert 'signal=host_ipc_unhealthy cooldown=none' in ipc_text, ipc_text
     assert ipc_text.count('runner_health: host IPC unhealthy (getpwuid)') == 1, ipc_text
+    id_calls = root / 'id-calls'
     result = subprocess.run(['bash', '-c', ipc_fresh, 'fixture', str(scripts), str(repo), str(ipc_log)],
-                            env=dict(gate_env, STUB_ID='name'), capture_output=True, text=True)
+                            env=dict(gate_env, STUB_ID='name', ID_CALLS=str(id_calls)),
+                            capture_output=True, text=True)
     assert result.returncode == 0 and ipc_gh_calls.read_text().splitlines() == ['gh'], result
+    assert id_calls.read_text().splitlines() == ['id'], 'fresh gate probed host twice'
     print('PASS unhealthy host defers the fresh gate before any issue read, cooldown=none, then recovers')
     passed += 1
 
