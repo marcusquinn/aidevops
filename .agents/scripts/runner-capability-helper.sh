@@ -196,6 +196,7 @@ _runner_capability_host_ipc_verdict() {
 	python3 - "${BASH_SOURCE[0]%/*}/playwright-runtime.mjs" < <(
 		_runner_capability_python_host_ipc_process
 		_runner_capability_python_host_ipc_probes
+		_runner_capability_python_host_ipc_cache_io
 		_runner_capability_python_host_ipc_cache
 	) || rc=$?
 	[[ "$rc" -eq 0 ]] || return 1
@@ -204,6 +205,7 @@ _runner_capability_host_ipc_verdict() {
 
 _runner_capability_python_host_ipc_process() {
 	cat <<'PY'
+import contextlib
 import fcntl
 import json
 import os
@@ -327,7 +329,7 @@ PY
 	return 0
 }
 
-_runner_capability_python_host_ipc_cache() {
+_runner_capability_python_host_ipc_cache_io() {
 	cat <<'PY'
 def cache_directory():
     base = Path(os.environ.get('AIDEVOPS_TEMP_DIR') or
@@ -342,6 +344,32 @@ def cache_directory():
         return None
     return directory
 
+@contextlib.contextmanager
+def cache_handle(fd):
+    handle = os.fdopen(fd, 'r+')
+    try:
+        yield handle
+    finally:
+        # close() may retry a failed buffered flush. Never replace the verdict
+        # (including report's SystemExit) with that persistence error.
+        with contextlib.suppress(OSError):
+            handle.close()
+
+def cache_write(handle, state):
+    try:
+        handle.seek(0)
+        json.dump(state, handle)
+        handle.truncate()
+        handle.flush()
+    except OSError:
+        pass
+
+PY
+	return 0
+}
+
+_runner_capability_python_host_ipc_cache() {
+	cat <<'PY'
 def main():
     ttl = env_int('AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS', 120, 0, 1800)
     # Include effective enablement and launcher/resolution settings in the key.
@@ -365,16 +393,17 @@ def main():
         if failed:
             report(failed, ttl, False)
         return
-    with os.fdopen(fd, 'r+') as handle:
+    with cache_handle(fd) as handle:
         info = os.fstat(handle.fileno())
         if info.st_uid != os.getuid() or info.st_mode & 0o077:
             failed = run_probes()
             if failed:
                 report(failed, ttl, False)
             return
-        # Concurrent candidates wait for the one probe; a stuck holder only
-        # costs a bounded wait before a direct, uncached probe.
-        deadline = time.monotonic() + 45
+        # Cover the maximum sequential probe budget even when the holder has
+        # different timeout settings: 2*30s identity/TLS + 60s browser, one
+        # second of bounded cleanup per probe, plus 5s scheduling margin.
+        deadline = time.monotonic() + 2 * (30 + 1) + (60 + 1) + 5
         locked = False
         while not locked:
             try:
@@ -403,11 +432,8 @@ def main():
             if re.fullmatch(r'[a-z_]{1,32}', failed):
                 report(failed, ttl, True)
         failed = run_probes()
-        handle.seek(0)
-        json.dump({'at': time.time(), 'probes': probes,
-                   'verdict': 'unmet' if failed else 'ok', 'check': failed}, handle)
-        handle.truncate()
-        handle.flush()
+        cache_write(handle, {'at': time.time(), 'probes': probes,
+                             'verdict': 'unmet' if failed else 'ok', 'check': failed})
         if failed:
             report(failed, ttl, False)
 

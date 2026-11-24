@@ -837,6 +837,92 @@ esac
     print('PASS timeout cleanup ignores escaped descendants holding stdout')
     passed += 1
 
+    # Inject cache I/O faults into the production main, without a new test API.
+    import io
+    from types import SimpleNamespace
+    from unittest import mock
+    cache_source = subprocess.run(['bash', '-c',
+        'source "$1/runner-capability-helper.sh"; _runner_capability_python_host_ipc_probes; '
+        '_runner_capability_python_host_ipc_cache_io; _runner_capability_python_host_ipc_cache',
+        'fixture', str(scripts)], capture_output=True, text=True, check=True).stdout
+    namespace = {}
+    exec(process_source + cache_source.split('\ntry:\n    main()')[0], namespace)
+    cache_root = root / 'fault-cache'
+    cache_root.mkdir(mode=0o700)
+    cache_file = cache_root / 'verdict.json'
+    real_fdopen = os.fdopen
+
+    class FaultyHandle:
+        def __init__(self, fd, mode, fault):
+            self.handle = real_fdopen(fd, mode)
+            self.fault = fault
+
+        def __getattr__(self, name):
+            return getattr(self.handle, name)
+
+        def write(self, value):
+            if self.fault == 'write':
+                raise OSError('synthetic write failure')
+            return self.handle.write(value)
+
+        def flush(self):
+            if self.fault == 'flush':
+                raise OSError('synthetic flush failure')
+            return self.handle.flush()
+
+        def close(self):
+            self.handle.close()
+            if self.fault == 'close':
+                raise OSError('synthetic close failure')
+
+    for fault in ('write', 'flush', 'close'):
+        for failed in ('', 'getpwuid'):
+            cache_file.unlink(missing_ok=True)
+            output, errors = io.StringIO(), io.StringIO()
+            with mock.patch.dict(os.environ, dict(ipc_env,
+                    AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS='300'), clear=True), \
+                 mock.patch.dict(namespace, cache_directory=lambda: cache_root,
+                                 run_probes=lambda: failed), \
+                 mock.patch.object(os, 'fdopen', side_effect=lambda fd, mode: FaultyHandle(fd, mode, fault)), \
+                 namespace['contextlib'].redirect_stdout(output), \
+                 namespace['contextlib'].redirect_stderr(errors):
+                status = 0
+                try:
+                    namespace['main']()
+                except SystemExit as exc:
+                    status = exc.code
+            assert status == (1 if failed else 0), (fault, failed, status)
+            assert ('check=getpwuid' in output.getvalue()) == bool(failed)
+    print('PASS write, flush and close failures preserve healthy and unhealthy verdicts')
+    passed += 1
+
+    # A waiter outlasts the maximum configured sequential budget before fallback.
+    clock = [0.0]
+    def delayed_lock(handle, flags):
+        if clock[0] < 123:
+            raise BlockingIOError()
+    cache_file.write_text(json.dumps({'at': time.time(), 'probes': ['base'],
+                                     'verdict': 'unmet', 'check': 'getpwuid'}))
+    fake_time = SimpleNamespace(time=time.time, monotonic=lambda: clock[0],
+                               sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    output, errors = io.StringIO(), io.StringIO()
+    with mock.patch.dict(os.environ, dict(ipc_env,
+            AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS='300'), clear=True), \
+         mock.patch.dict(namespace, cache_directory=lambda: cache_root, time=fake_time,
+                         fcntl=SimpleNamespace(LOCK_EX=fcntl.LOCK_EX, LOCK_NB=fcntl.LOCK_NB,
+                                               flock=delayed_lock),
+                         run_probes=mock.Mock(side_effect=AssertionError('duplicate probe'))), \
+         namespace['contextlib'].redirect_stdout(output), \
+         namespace['contextlib'].redirect_stderr(errors):
+        try:
+            namespace['main']()
+        except SystemExit as exc:
+            assert exc.code == 1
+    assert clock[0] >= 123 and 'source=host_ipc_cache' in output.getvalue()
+    assert not errors.getvalue(), errors.getvalue()
+    print('PASS waiter reuses published verdict after maximum probe budget without probing or logging again')
+    passed += 1
+
     # The shared fresh gate defers before any issue read and never cools the issue down.
     ipc_gh_calls = root / 'ipc-gh-calls'
     ipc_log = root / 'ipc-log'
