@@ -652,6 +652,15 @@ _assert_script_output_contract() {
 		jq -e --arg status "$expected_status" '."r-script-capture".last_status == $status' "$ROUTINE_STATE_FILE" >/dev/null || return 1
 		! compgen -G "${ROUTINE_STATE_FILE}.r-script-capture.output.*" >/dev/null || return 1
 	done
+	# Save failure must not expose even the bounded failure tail.
+	rm -f "$saved"
+	mkdir "$saved"
+	export ROUTINE_TEST_EXIT=7
+	: >"$LOGFILE"
+	_routine_run_detached_script r-script-capture "$HEADLESS_RUNTIME_HELPER" "$root" "$(date +%s)" || return 1
+	grep -Fq 'output_saved=false' "$LOGFILE" || return 1
+	! grep -q '^failure-output-' "$LOGFILE" || return 1
+	! compgen -G "${ROUTINE_STATE_FILE}.r-script-capture.output.*" >/dev/null || return 1
 	! _routine_run_detached_script '../invalid' "$HEADLESS_RUNTIME_HELPER" "$root" 0 || return 1
 	return 0
 }
@@ -823,7 +832,21 @@ LIFECYCLE
 		wait "$runner_pid" 2>/dev/null || true
 		jq -e '."r-term".last_status == "failure"' "$ROUTINE_STATE_FILE" >/dev/null || exit 1
 		[[ ! -d "${ROUTINE_STATE_FILE}.r-term.runner" ]] || exit 1
-		[[ "$(<"$root/lifecycle")" == *"--status failure"*"--session-key routine-r-term"* ]]
+		! compgen -G "${ROUTINE_STATE_FILE}.r-term.output.*" >/dev/null || exit 1
+		[[ "$(<"$root/lifecycle")" == *"--status failure"*"--session-key routine-r-term"* ]] || exit 1
+		rm -f "$root/started"
+		bash -c 'source "$1"; _routine_run_detached_script r-script-term "$2/headless.sh" "$2" "$(date +%s)"' _ "$PULSE_ROUTINES" "$root" &
+		runner_pid=$! attempt=0
+		while [[ "$attempt" -lt 100 && ! -f "$root/started" ]]; do
+			sleep 0.1
+			attempt=$((attempt + 1))
+		done
+		[[ -f "$root/started" ]] || exit 1
+		kill -TERM "$runner_pid"
+		wait "$runner_pid" 2>/dev/null || true
+		jq -e '."r-script-term".last_status == "failure"' "$ROUTINE_STATE_FILE" >/dev/null || exit 1
+		[[ ! -d "${ROUTINE_STATE_FILE}.r-script-term.runner" ]] || exit 1
+		! compgen -G "${ROUTINE_STATE_FILE}.r-script-term.output.*" >/dev/null || exit 1
 	); then
 		pass "GH#34877: SIGTERM during agent wait records terminal failure and releases the lock"
 	else

@@ -608,9 +608,6 @@ _routine_save_output() {
 	local output_bytes=0 output_lines=0
 	[[ "$routine_id" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
 	output_log="${output_dir}/${routine_id}.log"
-	if [[ "$exit_code" -ne 0 && -n "$output_file" ]]; then
-		tail -n 20 "$output_file" >>"$LOGFILE" 2>/dev/null || true
-	fi
 	if [[ -n "$output_file" ]] && (
 		umask 077
 		mkdir -p -- "$output_dir" && chmod 700 -- "$output_dir" &&
@@ -619,6 +616,9 @@ _routine_save_output() {
 	); then
 		output_bytes=$(wc -c <"$output_log" | tr -d '[:space:]')
 		output_lines=$(wc -l <"$output_log" | tr -d '[:space:]')
+		if [[ "$exit_code" -ne 0 ]]; then
+			tail -n 20 "$output_log" >>"$LOGFILE" 2>/dev/null || true
+		fi
 		echo "[pulse-wrapper] routine ${routine_id}: output saved path=${output_log} bytes=${output_bytes} lines=${output_lines}" >>"$LOGFILE"
 	else
 		echo "[pulse-wrapper] routine ${routine_id}: output_saved=false" >>"$LOGFILE"
@@ -657,6 +657,7 @@ _routine_run_detached_agent() {
 	echo "[pulse-wrapper] routine ${routine_id}: dispatching agent '${agent_name}' for '${description}'" >>"$LOGFILE"
 	# Run in the background and wait so a TERM/INT/HUP trap fires immediately.
 	output_file=$(mktemp "${ROUTINE_STATE_FILE}.${routine_id}.output.XXXXXX" 2>/dev/null) || output_file=""
+	_ROUTINE_RUNNER_OUTPUT_FILE="$output_file"
 	"$HEADLESS_RUNTIME_HELPER" run \
 		--role worker \
 		--session-key "$session_key" \
@@ -679,6 +680,7 @@ _routine_run_detached_agent() {
 	fi
 	# Parse the outcome above before moving the private capture into place.
 	_routine_save_output "$routine_id" "$output_file" "$exit_code"
+	_ROUTINE_RUNNER_OUTPUT_FILE=""
 	_ROUTINE_RUNNER_FINALIZED=true
 	_routine_finalize_terminal "$routine_id" "$status" "$started_epoch" "$session_key" 0 "$outcome" "$outcome_reason" "$noop_threshold" "$alert_repo"
 	rm -f -- "$pid_file"
@@ -700,6 +702,7 @@ _ROUTINE_RUNNER_PID_FILE=""
 _ROUTINE_RUNNER_LOCK_DIR=""
 _ROUTINE_RUNNER_FINALIZED=false
 _ROUTINE_RUNNER_CHILD_PID=""
+_ROUTINE_RUNNER_OUTPUT_FILE=""
 
 _routine_runner_arm_traps() {
 	local routine_id="$1"
@@ -714,6 +717,7 @@ _routine_runner_arm_traps() {
 	_ROUTINE_RUNNER_LOCK_DIR="$lock_dir"
 	_ROUTINE_RUNNER_FINALIZED=false
 	_ROUTINE_RUNNER_CHILD_PID=""
+	_ROUTINE_RUNNER_OUTPUT_FILE=""
 	trap '_routine_runner_on_exit' EXIT
 	trap '_routine_runner_on_signal 143' TERM
 	trap '_routine_runner_on_signal 130' INT
@@ -730,6 +734,9 @@ _routine_runner_on_signal() {
 }
 
 _routine_runner_on_exit() {
+	# Interrupted streams are discarded, never copied into the shared hot log.
+	[[ -z "$_ROUTINE_RUNNER_OUTPUT_FILE" ]] || rm -f -- "$_ROUTINE_RUNNER_OUTPUT_FILE"
+	_ROUTINE_RUNNER_OUTPUT_FILE=""
 	if [[ "$_ROUTINE_RUNNER_FINALIZED" != true && -n "$_ROUTINE_RUNNER_ID" ]]; then
 		_ROUTINE_RUNNER_FINALIZED=true
 		_routine_finalize_terminal "$_ROUTINE_RUNNER_ID" "$_ROUTINE_STATUS_FAILURE" "$_ROUTINE_RUNNER_STARTED" "$_ROUTINE_RUNNER_SESSION"
@@ -858,6 +865,7 @@ _routine_run_detached_script() {
 	_routine_declare_lifecycle_owner "$routine_id" "$started_epoch"
 	# Background + wait so a TERM/INT/HUP trap fires immediately.
 	output_file=$(mktemp "${ROUTINE_STATE_FILE}.${routine_id}.output.XXXXXX" 2>/dev/null) || output_file=""
+	_ROUTINE_RUNNER_OUTPUT_FILE="$output_file"
 	if [[ "$#" -gt 0 ]]; then
 		(cd "$repo_path" && "$script_path" "$@") >"${output_file:-/dev/null}" 2>&1 &
 	else
@@ -877,6 +885,7 @@ _routine_run_detached_script() {
 		echo "[pulse-wrapper] routine ${routine_id}: script completed successfully" >>"$LOGFILE"
 	fi
 	_routine_save_output "$routine_id" "$output_file" "$exit_code"
+	_ROUTINE_RUNNER_OUTPUT_FILE=""
 	_ROUTINE_RUNNER_FINALIZED=true
 	_routine_finalize_terminal "$routine_id" "$status" "$started_epoch" "" "$deferred_until"
 	rm -f -- "$pid_file"
