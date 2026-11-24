@@ -45,9 +45,9 @@ def lines(path):
         return
 
 
-def summary(values):
+def summary(values, available=True):
     if not values:
-        return {"count": 0, "median": None, "p90": None}
+        return {"count": 0 if available else None, "median": None, "p90": None}
     ordered = sorted(values)
     return {"count": len(values), "median": statistics.median(ordered),
             "p90": ordered[max(0, math.ceil(len(ordered) * 0.9) - 1)]}
@@ -72,7 +72,7 @@ def current_worker_limit(log_dir):
         return None
 
 
-def report(log_dir, since, until, now):
+def dispatch_metrics(log_dir, since, until):
     spawns = defaultdict(list)
     spawn_count = 0
     dispatch_seen = False
@@ -97,16 +97,12 @@ def report(log_dir, since, until, now):
             costs[row[3]].append(milliseconds / 1000)
     for timestamps in spawns.values():
         timestamps.sort()
+    return spawns, spawn_count if dispatch_seen else None, costs
 
-    intervals = []
-    paired = set()
-    runtimes = []
-    refills = Counter()
-    triggers = 0
-    refill_seen = False
-    supervisor = set()
-    pulse_seen = False
-    cap_observations = []
+
+def pulse_records(log_dir):
+    """Stream timestamped events, retaining only one timestamp of context."""
+    context_timestamp = None
     for line in lines(log_dir / "pulse.log"):
         fields = dict(FIELD_RE.findall(line))
         success = "LLM supervisor completed successfully" in line
@@ -117,41 +113,76 @@ def report(log_dir, since, until, now):
                          iso_time(match.group()) if match else None)
         except (ValueError, OverflowError, KeyError):
             continue
+        # Dispatch engine round headers lack their own timestamp. Associate
+        # only cap observations with the preceding timestamped log record.
+        if timestamp is None and "max_parallel" in fields:
+            timestamp = context_timestamp
         if timestamp is None or not math.isfinite(timestamp):
             continue
+        context_timestamp = timestamp
+        yield timestamp, fields, line, success
+
+
+def positive_cap(fields):
+    try:
+        value = int(fields.get("max_parallel", ""))
+        return value if value > 0 else None
+    except ValueError:
+        return None
+
+
+def pulse_metrics(log_dir, since, until):
+    refills = Counter()
+    supervisor = set()
+    pulse_seen = False
+    cap_observations = []
+    exits = []
+    for timestamp, fields, line, success in pulse_records(log_dir):
         in_window = since <= timestamp < until
         pulse_seen |= in_window
         if success and timestamp < until:
             supervisor.add(timestamp)
         if in_window and "[pulse-event-refill]" in line:
-            refill_seen = True
             action = fields.get("action", "unknown")
-            triggers += int(action == "trigger_recorded")
             refills[(fields.get("source", "unknown"), action, fields.get("reason", ""))] += 1
-        if in_window and "max_parallel" in fields:
-            try:
-                cap = int(fields["max_parallel"])
-                if cap > 0:
-                    cap_observations.append((timestamp, cap))
-            except ValueError:
-                pass
+        cap = positive_cap(fields)
+        if timestamp < until and cap is not None:
+            cap_observations.append((timestamp, cap))
         # Keep exits after until for intervals crossing the right boundary.
-        if "[lifecycle] worker_exited" not in line or not since <= timestamp < until + 21600:
-            continue
-        candidates = spawns.get(fields.get("issue"), [])
+        if "[lifecycle] worker_exited" in line and since <= timestamp < until + 21600:
+            exits.append((timestamp, fields.get("issue")))
+    refill_report = {
+        "trigger_recorded": sum(count for (_, action, _), count in refills.items()
+                                if action == "trigger_recorded") if pulse_seen else None,
+        "outcomes_by_source": [
+            {"source": source, "action": action, "reason": reason or None, "count": count}
+            for (source, action, reason), count in sorted(refills.items())] if pulse_seen else None,
+    }
+    return exits, cap_observations, supervisor, pulse_seen, refill_report
+
+
+def pair_workers(spawns, exits, until):
+    intervals = []
+    paired = set()
+    runtimes = []
+    for timestamp, issue in sorted(exits):
+        candidates = spawns.get(issue, [])
         index = bisect_left(candidates, timestamp) - 1
         if index < 0:
             continue
         start = candidates[index]
-        key = (fields.get("issue"), start)
+        key = (issue, start)
         if timestamp - start > 21600 or key in paired:
             continue
         paired.add(key)
-        if in_window:
+        if timestamp < until:
             runtimes.append((timestamp - start) / 60)
         if start < until:
             intervals.append((start, timestamp))
+    return intervals, runtimes
 
+
+def ceremony_intervals(log_dir, since, until):
     ceremonies = []
     timing_seen = False
     for line in lines(log_dir / "pulse-stage-timings.log"):
@@ -168,45 +199,67 @@ def report(log_dir, since, until, now):
             continue
         if row[1].startswith("dispatch_candidate_") and end > since and end - seconds < until:
             ceremonies.append((end - seconds, end))
+    return ceremonies, timing_seen
 
-    occupancy = list(sample_intervals(intervals, since, until, 300)) if intervals else []
+
+def concurrency_metrics(ceremonies, timing_seen, cap_observations, since, until):
     concurrency = list(sample_intervals(ceremonies, since, until, 10)) if timing_seen or ceremonies else []
     running = [value for value in concurrency if value > 0]
     caps = {cap for _, cap in cap_observations}
-    # A changing or unrecorded cap cannot support a truthful at-cap fraction.
     cap = next(iter(caps)) if len(caps) == 1 else None
+    cap_observations.sort()
+    cap_times = [timestamp for timestamp, _ in cap_observations]
+    capped_samples = []
+    for index, value in enumerate(concurrency):
+        observation = bisect_right(cap_times, since + index * 10) - 1
+        if observation >= 0:
+            capped_samples.append(value >= cap_observations[observation][1])
+    return {
+        "sample_seconds": 10,
+        "idle_share": concurrency.count(0) / len(concurrency) if concurrency else None,
+        "mean_while_running": statistics.mean(running) if running else None,
+        "observed_cap": cap,
+        "observed_caps": sorted(caps) if caps else None,
+        "cap_sample_coverage_share": len(capped_samples) / len(concurrency) if concurrency else None,
+        "share_at_cap": statistics.mean(capped_samples) if capped_samples else None,
+    }
+
+
+def supervisor_metrics(supervisor, pulse_seen, since, until, now):
     successes = sorted(value for value in supervisor if since <= value < until)
     gaps = [(right - left) / 3600 for left, right in zip(successes, successes[1:])]
     return {
+        "count": len(successes) if pulse_seen or successes else None,
+        "gap_median_hours": statistics.median(gaps) if gaps else None,
+        "gap_max_hours": max(gaps) if gaps else None,
+        "hours_since_last_success": (now - max(supervisor)) / 3600 if supervisor else None,
+    }
+
+
+def report(log_dir, since, until, now):
+    spawns, spawn_count, costs = dispatch_metrics(log_dir, since, until)
+    exits, caps, supervisor, pulse_seen, refills = pulse_metrics(log_dir, since, until)
+    intervals, runtimes = pair_workers(spawns, exits, until)
+    ceremonies, timing_seen = ceremony_intervals(log_dir, since, until)
+    occupancy = list(sample_intervals(intervals, since, until, 300)) if intervals else []
+    return {
         "window": {"since": datetime.fromtimestamp(since, timezone.utc).isoformat(),
                    "until": datetime.fromtimestamp(until, timezone.utc).isoformat()},
-        "spawns": spawn_count if dispatch_seen else None,
-        "worker_runtime_minutes": summary(runtimes),
+        "spawns": spawn_count,
+        "worker_runtime_minutes": summary(runtimes, spawn_count is not None and pulse_seen),
         "slot_occupancy_paired_only": {
             "sample_seconds": 300, "mean": statistics.mean(occupancy) if occupancy else None,
             "max": max(occupancy) if occupancy else None,
             "configured_worker_limit_current": current_worker_limit(log_dir)},
-        "ceremony_seconds": {stage: summary(costs[stage]) for stage in CEREMONY_STAGES},
-        "ceremony_concurrency": {
-            "sample_seconds": 10,
-            "idle_share": concurrency.count(0) / len(concurrency) if concurrency else None,
-            "mean_while_running": statistics.mean(running) if running else None,
-            "observed_cap": cap,
-            "share_at_cap": sum(value >= cap for value in concurrency) / len(concurrency)
-            if cap and concurrency else None},
-        "refill": {"trigger_recorded": triggers if pulse_seen or refill_seen else None,
-                   "outcomes_by_source": [
-                       {"source": source, "action": action, "reason": reason or None, "count": count}
-                       for (source, action, reason), count in sorted(refills.items())]
-                   if pulse_seen or refill_seen else None},
-        "supervisor": {"count": len(successes) if pulse_seen or successes else None,
-                       "gap_median_hours": statistics.median(gaps) if gaps else None,
-                       "gap_max_hours": max(gaps) if gaps else None,
-                       "hours_since_last_success": (now - max(supervisor)) / 3600 if supervisor else None},
+        "ceremony_seconds": {stage: summary(costs[stage], spawn_count is not None) for stage in CEREMONY_STAGES},
+        "ceremony_concurrency": concurrency_metrics(ceremonies, timing_seen, caps, since, until),
+        "refill": refills,
+        "supervisor": supervisor_metrics(supervisor, pulse_seen, since, until, now),
         "notes": ["Current log files only; rotation can leave partial coverage.",
                   "Worker pairing is latest earlier same-issue spawn within six hours; duplicate exits are ignored.",
                   "Runtime uses exits in the window; occupancy includes paired intervals crossing window boundaries.",
-                  "p90 uses nearest rank; at-cap share uses all 10-second samples and a single observed window cap.",
+                  "p90 uses nearest rank; at-cap share uses samples with a preceding observed round cap (at or above cap).",
+                  "Untimestamped round caps use the preceding log timestamp; caps carry forward and may change during the window.",
                   "Missing refill sources are unknown; configured worker limit is current, not historical."],
     }
 
