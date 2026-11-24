@@ -923,10 +923,32 @@ _pulse_pipeline_dispatch_max() {
 			fi
 		elif _pulse_cycle_budget_admits_dispatch "Dispatch_max"; then
 			# A budget-deferred round is retryable, not a set -e cycle abort.
-			_pulse_run_budget_priority_stage "dispatch_max" apply_dispatch_max || true
+			# t19324: PULSE_DISPATCH_LOCK_SPLIT=1 runs it under the dispatch lock.
+			_pulse_run_budget_priority_stage "dispatch_max" \
+				_pulse_pipeline_dispatch_round "cycle_dispatch_max" apply_dispatch_max || true
 		fi
 	fi
 	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_pipeline_dispatch_round (t19324, GH#40112)
+#
+# Run one cycle dispatch round under the dispatch lock when
+# PULSE_DISPATCH_LOCK_SPLIT=1 (pulse-instance-lock.sh); a round already
+# dispatching on this runner makes it skip. Flag off, or without the lock
+# module (extracted-function harnesses): run the round directly.
+# Args: stage label, then the command and its arguments
+# ---------------------------------------------------------------------------
+_pulse_pipeline_dispatch_round() {
+	local stage="$1"
+	shift
+	if declare -F pulse_run_with_dispatch_lock >/dev/null 2>&1; then
+		pulse_run_with_dispatch_lock "$stage" "$@"
+		return $?
+	fi
+	"$@"
+	return $?
 }
 
 # ---------------------------------------------------------------------------
@@ -1042,6 +1064,8 @@ main() {
 		_pulse_run_routines_while_busy "lock-busy"
 		return 0
 	fi
+	# t19324: refill-only runs follow this cycle's dispatch-lock mode.
+	pulse_dispatch_lock_publish_mode || true
 	_dispatch_cleanup_stale_benign_blocks || true
 
 	# GH#22525 read routing, --canary short-circuit, session and dedup gates.
@@ -1731,7 +1755,8 @@ _pulse_drain_cycle_final_refill() {
 	_pulse_cycle_drain_exit "cycle_final_refill" && return 0
 	local _pulse_refill_trigger="${PULSE_EVENT_REFILL_TRIGGER_FILE:-${HOME}/.aidevops/cache/pulse-event-refill.trigger}"
 	if [[ ! -f "$_pulse_refill_trigger" ]] || _pulse_cycle_budget_admits_dispatch "Event refill drain (cycle-final)"; then
-		pulse_event_refill_drain "cycle-final" || true
+		# t19324: a refill holding the dispatch lock keeps the trigger.
+		_pulse_pipeline_dispatch_round "cycle_final_refill" pulse_event_refill_drain "cycle-final" || true
 	fi
 	return 0
 }
@@ -1948,6 +1973,8 @@ _pulse_reexec_if_source_changed() {
 			_pulse_efficiency_cycle_finish
 			# exec keeps this PID, so the ticker would outlive it (GH#37914).
 			_pulse_stop_routines_ticker || true
+			# exec keeps this PID; never carry a dispatch lock into it (t19324).
+			pulse_release_dispatch_lock_on_exit || true
 			release_instance_lock
 			aidevops_runtime_bundle_lease_release
 			exec "$_pw_self" "$@"
