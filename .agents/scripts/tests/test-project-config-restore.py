@@ -163,9 +163,11 @@ with tempfile.TemporaryDirectory(prefix="aidevops-config-restore-") as directory
     entry["features"] = ["git_workflow", "code_quality", "code-quality"]
     registry.write_text(json.dumps({"initialized_repos": [entry]}))
     legacy = run(env)
-    assert legacy.returncode == 0, legacy.stderr
-    assert '"git_workflow":true' in legacy.stdout and '"code_quality":true' in legacy.stdout, legacy.stdout
-    assert not target.exists()
+    expected = ('"git_workflow":true', '"code_quality":true')
+    if legacy.returncode != 0 or target.exists():
+        raise AssertionError(f"legacy preview failed: {legacy.stderr}")
+    if not all(name in legacy.stdout for name in expected):
+        raise AssertionError(f"legacy features not mapped: {legacy.stdout}")
     entry["features"] = ["git-workflow"]
 
     # A registration pointing at a linked worktree must never be interpreted as canonical.
