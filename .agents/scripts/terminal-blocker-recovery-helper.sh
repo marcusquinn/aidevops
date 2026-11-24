@@ -854,6 +854,10 @@ _tbr_release_circuit_hold() {
 	local observation="" circuit="" evidence="" parsed="" observed_rev="" fingerprint=""
 	local current_rev="" retry="" decision="" repo_path=""
 	local reason=""
+	# These are shared holds, not runner-local supervisor decisions. Never let
+	# unknown lifecycle recovery or a changed brief bypass their checkpoint.
+	terminal_blocker_dated_hold_active "$comments" && return 2
+	terminal_blocker_session_cap_hold_active "$issue_json" "$repo" "$issue" && return 2
 	observation=$(_terminal_blocker_latest_marker "$comments" "$_TBC_OBSERVATION_MARKER revision=") || return 2
 	circuit=$(_terminal_blocker_latest_marker "$comments" "$_TBC_CIRCUIT_MARKER revision=") || return 2
 	evidence=$(jq -nc --argjson observation "${observation:-null}" --argjson circuit "${circuit:-null}" \
