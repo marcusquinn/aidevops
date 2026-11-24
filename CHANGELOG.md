@@ -10,6 +10,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.278] - 2026-11-24
+
+### Added
+
+- defer dispatch without claiming on host IPC failure (#40192)
+
+### Changed
+
+- Maintenance: mark t19348 complete (pr:#40209 completed:2026-11-24) (#40210)
+- Maintenance: promote OpenCode v2 pin to 2.4.1 (#40203)
+- Maintenance: bump vite from 8.3.7 to 8.3.8
+- Maintenance: bump hono from 4.13.17 to 4.13.19
+- Maintenance: update SonarQube and OpenCode actions
+- Maintenance: bump elysia from 1.4.31 to 1.4.32
+- Performance: skip unchanged per-repo guard installers
+- Tests: make authentication contention deterministic (#40146)
+- Maintenance: mark t19329 complete (pr:#40141 completed:2026-11-24) (#40142)
+- Documentation: document orchestration.pulse_interval_seconds as canonical pulse key (GH#40138) (#40139)
+- Tests: tolerate host load in bounded-operation waits (#39984)
+- Maintenance: mark t19327 complete (pr:#40128 completed:2026-11-24) (#40124)
+
+### Fixed
+
+- allow marker-carrying dependency clones nested in registered linked worktrees
+- supervisor exits by natural drain to avoid Node 26 process.exit deadlock
+- align shell-health assertions with current framework
+- fingerprint error payloads without runner metadata
+- recognise GH#N, issue N, PR N, phase N refs
+- keep script output outside pulse.log
+- use callback flow for OpenAI pool add on OpenCode 2 (GH#40134) (#40161)
+- keep run output outside pulse.log
+- route PR-required GH013 rejections to fallback (#40160)
+- hand off lock timeouts to newer setup owners (#40156)
+- extend elapsed cap for DB-proven progress
+- skip deterministic deploy refusal retries
+- source-access broker guard no longer freezes deploys when the active runtime already differs from the broker
+- serialize SSH authentication during bulk restore
+- explain per-candidate exclusion reasons when worker tier selection is unavailable
+- preserve runtime when source-access broker files differ
+- parenthesize batched issue jq key
+- preserve AI ownership of blocked checkpoints
+- reverify missing secret declarations before global holds (#40117)
+
 ## [3.39.277] - 2026-11-24
 
 ### Added
