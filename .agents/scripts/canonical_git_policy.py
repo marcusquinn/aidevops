@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import os
 import re
-from pathlib import Path
 
 from canonical_git_clone import is_clone_outside_canonical
 from canonical_git_invocation import (
@@ -15,13 +14,17 @@ from canonical_git_invocation import (
     repository_values,
     split_invocation,
 )
-from canonical_git_management import is_registered_common_dir
 from canonical_git_readonly import CANONICAL_CHECKS
 from canonical_git_repository import git_output as _git_output
 from canonical_git_repository import is_canonical as _is_canonical
 from canonical_git_repository import real_git as real_git
 from canonical_git_repository import reset_probe_memo
 from canonical_git_snapshot import is_isolated_opencode_snapshot
+from canonical_git_worktree import (
+    classify_linked_operation as _classify_linked_operation,
+    git_repo_identity as _git_repo_identity,
+    is_linked_worktree_remove_for_canonical as _is_linked_worktree_remove_for_canonical,
+)
 
 BLOCK_EXIT = 42
 READ_ONLY = frozenset(
@@ -148,109 +151,6 @@ def _is_isolated_routines_publisher(
     )
 
 
-def _worktree_remove_target(args: list[str]) -> str:
-    """Return the single remove target when args are in the safe subset."""
-    target = ""
-    invalid = not args or args[0] != "remove"
-    option_terminator = False
-    for arg in ([] if invalid else args[1:]):
-        if option_terminator:
-            if target:
-                invalid = True
-            else:
-                target = arg
-        elif arg == "--":
-            option_terminator = True
-        elif arg in {"-f", "--force"}:
-            continue
-        elif arg.startswith("-"):
-            invalid = True
-        elif target:
-            invalid = True
-        else:
-            target = arg
-    return "" if invalid else target
-
-
-def _git_repo_identity(
-    real_git_path: str, cwd: str, prefix: list[str]
-) -> tuple[str, str, str]:
-    """Return common dir, git dir, and top-level for a Git target."""
-    common_dir = _git_output(
-        real_git_path,
-        cwd,
-        *prefix,
-        "rev-parse",
-        "--path-format=absolute",
-        "--git-common-dir",
-    )
-    git_dir = _git_output(
-        real_git_path,
-        cwd,
-        *prefix,
-        "rev-parse",
-        "--path-format=absolute",
-        "--git-dir",
-    )
-    top = _git_output(
-        real_git_path,
-        cwd,
-        *prefix,
-        "rev-parse",
-        "--path-format=absolute",
-        "--show-toplevel",
-    )
-    return common_dir, git_dir, top
-
-
-def _is_linked_worktree_remove_for_canonical(
-    real_git_path: str,
-    effective_cwd: str,
-    prefix: list[str],
-    args: list[str],
-) -> bool:
-    """Allow removing only linked worktrees that belong to this canonical repo."""
-    target = _worktree_remove_target(args)
-    allowed = False
-
-    if target:
-        canonical_common_dir, _canonical_git_dir, canonical_top = _git_repo_identity(
-            real_git_path, effective_cwd, prefix
-        )
-        target_path = Path(target).expanduser()
-        if not target_path.is_absolute():
-            target_path = Path(effective_cwd) / target_path
-        target_real = os.path.realpath(target_path)
-        target_common_dir, target_git_dir, target_top = _git_repo_identity(
-            real_git_path, target_real, []
-        )
-        required_paths = [
-            canonical_common_dir,
-            canonical_top,
-            target_common_dir,
-            target_git_dir,
-            target_top,
-        ]
-        same_common_dir = os.path.realpath(target_common_dir) == os.path.realpath(
-            canonical_common_dir
-        )
-        separate_git_dir = os.path.realpath(target_git_dir) != os.path.realpath(
-            target_common_dir
-        )
-        target_is_toplevel = os.path.realpath(target_top) == target_real
-        target_is_not_canonical = target_real != os.path.realpath(canonical_top)
-        allowed = all(
-            [
-                all(required_paths),
-                same_common_dir,
-                separate_git_dir,
-                target_is_toplevel,
-                target_is_not_canonical,
-            ]
-        )
-    return allowed
-
-
 def _classify_canonical_operation(
     real_git_path: str, cwd: str, prefix: list[str],
     command: tuple[str, list[str]], check_unresolved: bool,
@@ -285,30 +185,6 @@ def _classify_canonical_operation(
         result = allowed, reason
     elif _is_allowed_canonical(subcommand, args):
         result = True, "read-only canonical operation or linked-worktree creation"
-    return result
-
-
-def _classify_linked_operation(
-    real_git_path: str, cwd: str, prefix: list[str], command: tuple[str, list[str]],
-) -> tuple[bool, str]:
-    """Classify a non-canonical target; shared worktree metadata stays audited."""
-    subcommand, args = command
-    result = True, "linked worktree or non-repository target"
-    if subcommand == "worktree" and not (args and args[0] in {"list", "add"}):
-        common_dir = _git_output(
-            real_git_path, cwd, *prefix,
-            "rev-parse", "--path-format=absolute", "--git-common-dir",
-        )
-        if common_dir and is_registered_common_dir(common_dir):
-            if _is_linked_worktree_remove_for_canonical(
-                real_git_path, cwd, prefix, args
-            ):
-                result = True, "linked-worktree removal for canonical repository"
-            else:
-                result = False, (
-                    f"shared worktree metadata mutation via 'git {subcommand}' "
-                    "from a linked worktree"
-                )
     return result
 
 
