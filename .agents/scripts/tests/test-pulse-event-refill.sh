@@ -93,6 +93,7 @@ reset_state() {
 	GITHUB_AVAILABLE=1
 	GRAPHQL_AVAILABLE=1
 	NO_WORK_ACCEPTABLE=1
+	DISPATCH_LOCK_STILL_OWNED=1
 	return 0
 }
 
@@ -120,9 +121,16 @@ pulse_stats_increment() {
 	return 0
 }
 
+pulse_dispatch_lock_still_owned() {
+	if [[ "$DISPATCH_LOCK_STILL_OWNED" -eq 1 ]]; then
+		return 0
+	fi
+	return 1
+}
+
 apply_dispatch_max() {
 	APPLY_CALLS=$((APPLY_CALLS + 1))
-	printf 'call=%s slots=%s\n' "$APPLY_CALLS" "$APPLY_SLOT_TARGET" >>"${HOME}/.aidevops/logs/apply.log"
+	printf 'call=%s slots=%s epoch=%s\n' "$APPLY_CALLS" "$APPLY_SLOT_TARGET" "${PULSE_START_EPOCH:-unset}" >>"${HOME}/.aidevops/logs/apply.log"
 	if [[ "$WRITE_TRIGGER_DURING_APPLY" -eq 1 && "$APPLY_CALLS" -eq 1 ]]; then
 		pulse_event_refill_write_trigger 202 2202
 	fi
@@ -395,6 +403,67 @@ test_refill_only_defers_during_runtime_transition() {
 	return 0
 }
 
+# t19337 (GH#40162): a split-lock refill-only pass 2 gets a fresh clock; a
+# cycle-owned drain keeps its clock; a lost dispatch lock or a runtime
+# transition stops pass 2.
+test_split_refill_second_pass_gets_fresh_clock() {
+	reset_state
+	local PULSE_REFILL_ONLY=1 _LOCK_OWNED=false _DISPATCH_LOCK_OWNED=true PULSE_START_EPOCH=1
+	local apply_log="${HOME}/.aidevops/logs/apply.log" pass2_epoch=""
+	WRITE_TRIGGER_DURING_APPLY=1
+	pulse_event_refill_write_trigger 611 6611
+	pulse_event_refill_drain "worker-exit"
+	assert_eq "split refill-only runs the second pass" "2" "$APPLY_CALLS"
+	pass2_epoch=$(sed -n 's/^call=2 .* epoch=\([0-9]*\)$/\1/p' "$apply_log")
+	if grep -q '^call=1 .* epoch=1$' "$apply_log" && [[ "$pass2_epoch" =~ ^[0-9]+$ ]] && ((pass2_epoch > 1)) &&
+		grep -q 'action=pass_clock_refreshed source=worker-exit' "$LOGFILE"; then
+		pass "split refill-only pass 1 keeps its clock and pass 2 dispatches on a fresh one"
+	else
+		fail "split refill-only pass 1 keeps its clock and pass 2 dispatches on a fresh one" "apply_log=$(tr '\n' ';' <"$apply_log")"
+	fi
+
+	reset_state
+	PULSE_START_EPOCH=1
+	DISPATCH_LOCK_STILL_OWNED=0
+	WRITE_TRIGGER_DURING_APPLY=1
+	pulse_event_refill_write_trigger 614 6614
+	pulse_event_refill_drain "worker-exit"
+	assert_eq "reclaimed dispatch lock stops the second pass" "1" "$APPLY_CALLS"
+	assert_eq "reclaimed dispatch lock leaves the clock unchanged" "1" "$PULSE_START_EPOCH"
+	if grep -q 'action=pass_deferred reason=dispatch_lock_lost trigger=retained' "$LOGFILE" &&
+		[[ -f "$PULSE_EVENT_REFILL_TRIGGER_FILE" ]]; then
+		pass "reclaimed dispatch lock defers with the trigger retained"
+	else
+		fail "reclaimed dispatch lock defers with the trigger retained" "dispatch_lock_lost deferral not observed"
+	fi
+
+	reset_state
+	_LOCK_OWNED=true PULSE_START_EPOCH=1
+	WRITE_TRIGGER_DURING_APPLY=1
+	pulse_event_refill_write_trigger 612 6612
+	pulse_event_refill_drain "cycle-final"
+	assert_eq "cycle-owned drain keeps its own clock" "1" "$PULSE_START_EPOCH"
+
+	reset_state
+	_LOCK_OWNED=false PULSE_START_EPOCH=1
+	WRITE_TRIGGER_DURING_APPLY=1
+	export AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR="${TEST_ROOT}/runtime-transition.lock.d"
+	mkdir -p "$AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR"
+	printf '%s\n' "$$" >"${AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR}/pid"
+	pulse_event_refill_write_trigger 613 6613
+	pulse_event_refill_drain "worker-exit"
+	assert_eq "runtime transition stops the second pass" "1" "$APPLY_CALLS"
+	assert_file_exists "deferred second pass retains the trigger" "$PULSE_EVENT_REFILL_TRIGGER_FILE"
+	if grep -q 'action=pass_deferred reason=runtime_transition' "$LOGFILE"; then
+		pass "deferred second pass is logged"
+	else
+		fail "deferred second pass is logged" "pass_deferred was not logged"
+	fi
+	rm -rf "$AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR"
+	unset AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR
+	return 0
+}
+
 test_stale_wake_lock_is_reclaimed() {
 	reset_state
 	local fake_wrapper="${TEST_ROOT}/fake-stale-wake-wrapper.sh"
@@ -435,6 +504,7 @@ main() {
 	test_signal_from_inactive_bundle_wakes_active_wrapper
 	test_signal_during_runtime_transition_retains_trigger
 	test_refill_only_defers_during_runtime_transition
+	test_split_refill_second_pass_gets_fresh_clock
 	test_stale_wake_lock_is_reclaimed
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
