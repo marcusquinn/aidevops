@@ -519,27 +519,36 @@ class AuthenticationTests(unittest.TestCase):
             pass
         self.assertEqual(list(Path(self.path).iterdir()), [])
 
-    def test_next_handshake_waits_only_until_authenticated_not_session_exit(self):
-        entered = threading.Event()
+    def observe_contention(self, expected):
+        """Observe real rejected acquisitions without replacing lock semantics."""
         contending = threading.Event()
+        attempts = threading.Barrier(expected, action=contending.set)
         flock = authentication.fcntl.flock
 
-        def observe_contention(fd, operation):
+        def observed_flock(fd, operation):
             if operation == authentication.fcntl.LOCK_EX:
                 try:
                     return flock(fd, operation | authentication.fcntl.LOCK_NB)
                 except BlockingIOError:
                     # Signal only after the kernel rejects an actual competing
                     # acquisition, not merely after the worker starts running.
-                    contending.set()
+                    attempts.wait(timeout=5)
             return flock(fd, operation)
+
+        patch = mock.patch.object(authentication.fcntl, "flock", side_effect=observed_flock)
+        patch.start()
+        self.addCleanup(patch.stop)
+        return contending
+
+    def test_next_handshake_waits_only_until_authenticated_not_session_exit(self):
+        entered = threading.Event()
+        contending = self.observe_contention(1)
 
         def next_handshake():
             with authentication.authentication_slot(self.path, host()):
                 entered.set()
 
-        with mock.patch.object(authentication.fcntl, "flock", side_effect=observe_contention), \
-                ThreadPoolExecutor(max_workers=1) as pool:
+        with ThreadPoolExecutor(max_workers=1) as pool:
             with authentication.authentication_slot(self.path, host()) as authenticated:
                 future = pool.submit(next_handshake)
                 try:
@@ -564,23 +573,9 @@ class AuthenticationTests(unittest.TestCase):
     def test_twenty_tabs_keep_one_handshake_pending_while_sessions_remain_live(self):
         start = threading.Barrier(20)
         connected = threading.Event()
-        all_contending = threading.Event()
+        all_contending = self.observe_contention(19)
         mutex = threading.Lock()
         counts = dict(pending=0, peak=0, connected=0)
-        contenders = 0
-        flock = authentication.fcntl.flock
-
-        def observe_contention(fd, operation):
-            nonlocal contenders
-            if operation == authentication.fcntl.LOCK_EX:
-                try:
-                    return flock(fd, operation | authentication.fcntl.LOCK_NB)
-                except BlockingIOError:
-                    with mutex:
-                        contenders += 1
-                        if contenders == 19:
-                            all_contending.set()
-            return flock(fd, operation)
 
         def connect(_number):
             start.wait(timeout=5)
@@ -600,10 +595,8 @@ class AuthenticationTests(unittest.TestCase):
                 ready()
                 self.assertTrue(connected.wait(5))
 
-        with mock.patch.object(authentication.fcntl, "flock", side_effect=observe_contention), \
-                ThreadPoolExecutor(max_workers=20) as pool:
+        with ThreadPoolExecutor(max_workers=20) as pool:
             list(pool.map(connect, range(20)))
-        self.assertEqual(contenders, 19)
         self.assertEqual(counts, dict(pending=0, peak=1, connected=20))
 
 
