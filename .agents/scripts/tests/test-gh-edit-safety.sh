@@ -32,6 +32,16 @@ TESTS_FAILED=0
 TEST_ROOT="$(mktemp -d -t aidevops-gh-edit-safety-XXXXXX)" || exit 1
 export GH_AUDIT_LOG_FILE="${TEST_ROOT}/gh-audit.log"
 
+# Hermetic HOME (GH#40101): the real privacy guard runs against a synthetic
+# private-entity inventory and visibility cache, never maintainer host state.
+export HOME="${TEST_ROOT}/home"
+export PRIVACY_REPOS_CONFIG="${HOME}/.config/aidevops/repos.json"
+export PRIVACY_CACHE_FILE="${HOME}/.aidevops/cache/repo-privacy.json"
+export PRIVACY_ENTITY_CONFIG="${HOME}/missing-entities"
+mkdir -p "${HOME}/.aidevops/logs" "${PRIVACY_REPOS_CONFIG%/*}" "${PRIVACY_CACHE_FILE%/*}"
+printf '%s\n' '{"initialized_repos":[{"slug":"fixture/private-project","private":true}]}' >"$PRIVACY_REPOS_CONFIG"
+printf '{"test/repo":{"private":false,"checked_at":%s}}\n' "$(date +%s)" >"$PRIVACY_CACHE_FILE"
+
 cleanup() {
 	rm -rf "$TEST_ROOT" 2>/dev/null || true
 	return 0
