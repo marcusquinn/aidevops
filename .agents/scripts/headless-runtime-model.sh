@@ -188,6 +188,76 @@ get_configured_models() {
 	return 0
 }
 
+# GH#40140: classify every routing-table candidate of a tier with the filters
+# selection applies, in the same order, so an unselectable tier names why
+# instead of only "All configured models are currently backed off". Prints
+# "<model>=<reason>" lines. Structural reasons persist until configuration
+# changes: excluded_by_provider_allowlist, no_provider_auth,
+# chatgpt_oauth_unsupported. Transient reasons clear on their own:
+# oauth_pool_exhausted, backed_off. Otherwise: selectable. Read-only; the
+# deprecated AIDEVOPS_HEADLESS_MODELS override is not classified.
+tier_candidate_exclusion_reasons() {
+	local tier_name=""
+	tier_name=$(_normalize_headless_tier "${1:-standard}")
+	local allowlisted="" model="" provider="" reason="" in_allowlist=false
+	local oauth_denied_ids="" oauth_denied_loaded=false
+	allowlisted=$'\n'"$(_allowlisted_tier_candidates "$tier_name")"$'\n'
+	while IFS= read -r model; do
+		[[ -n "$model" ]] || continue
+		provider=$(extract_provider "$model" 2>/dev/null || printf '%s' "")
+		[[ -n "$provider" ]] || continue
+		reason="selectable"
+		# In-shell membership: no early-exit pipe reader under pipefail.
+		in_allowlist=false
+		[[ "$allowlisted" != *$'\n'"$model"$'\n'* ]] || in_allowlist=true
+		if [[ "$in_allowlist" == false ]]; then
+			reason="excluded_by_provider_allowlist"
+		elif ! provider_auth_available "$provider"; then
+			reason="no_provider_auth"
+		elif ! provider_oauth_pool_available "$provider"; then
+			reason="oauth_pool_exhausted"
+		else
+			# The ChatGPT OAuth denylist applies to the OpenAI provider only.
+			if [[ "$provider" == "openai" ]]; then
+				if [[ "$oauth_denied_loaded" == false ]]; then
+					oauth_denied_ids=$(_headless_chatgpt_oauth_unsupported_ids)
+					oauth_denied_loaded=true
+				fi
+				if [[ -n "$oauth_denied_ids" ]] &&
+					_headless_model_id_denied "${model#*/}" "$oauth_denied_ids"; then
+					reason="chatgpt_oauth_unsupported"
+				fi
+			fi
+			if [[ "$reason" == "selectable" ]] && model_backoff_active "$model"; then
+				reason="backed_off"
+			fi
+		fi
+		printf '%s=%s\n' "$model" "$reason"
+	done < <(model_tier_candidates "$tier_name" 2>/dev/null || true)
+	return 0
+}
+
+# GH#40140: one parseable log line for an unselectable tier:
+#   tier_selection_unavailable tier=<t> reasons=<model>=<reason>;...[ hint=...]
+# The hint names configured candidates the provider allowlist excludes, the
+# silent single-provider failure mode a stale allowlist creates.
+tier_selection_unavailable_line() {
+	local tier_name=""
+	tier_name=$(_normalize_headless_tier "${1:-standard}")
+	local line="" reasons="" excluded=""
+	while IFS= read -r line; do
+		[[ -n "$line" ]] || continue
+		reasons+="${reasons:+;}${line}"
+		if [[ "$line" == *=excluded_by_provider_allowlist ]]; then
+			excluded+="${excluded:+,}${line%=*}"
+		fi
+	done < <(tier_candidate_exclusion_reasons "$tier_name")
+	local out="tier_selection_unavailable tier=${tier_name} reasons=${reasons:-none}"
+	[[ -z "$excluded" ]] || out+=" hint=provider_allowlist_excludes:${excluded}"
+	printf '%s\n' "$out"
+	return 0
+}
+
 get_last_provider() {
 	local role="$1"
 	db_query "SELECT last_provider FROM provider_rotation WHERE role = '$(sql_escape "$role")';"
@@ -465,6 +535,8 @@ _choose_model_auto() {
 	fi
 	if [[ "$select_status" -eq 75 || -z "$current_model" ]]; then
 		print_warning "All configured models are currently backed off"
+		# GH#40140: name each candidate's exclusion; failure path only.
+		print_warning "$(tier_selection_unavailable_line "$tier_name")"
 		return 75
 	fi
 
