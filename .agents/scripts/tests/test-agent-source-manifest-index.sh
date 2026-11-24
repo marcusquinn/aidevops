@@ -180,9 +180,22 @@ test_sync_without_node_fails_open() {
 		fi
 	done
 
+	# GH#40176: model a host without Node, not just an initially narrow PATH.
+	# Production runtime normalization correctly appends system fallbacks; those
+	# contain Node on Actions. Retain the real library's functions but restore
+	# this fixture's tool inventory after initialization, only in its fake HOME.
+	local fixture_scripts="$TEST_HOME/.aidevops/agents/scripts"
+	cp "$fixture_scripts/runtime-env.sh" "$fixture_scripts/runtime-env-real.sh"
+	cat >"$fixture_scripts/runtime-env.sh" <<'SH'
+# shellcheck source=/dev/null
+source "${BASH_SOURCE[0]%/*}/runtime-env-real.sh"
+PATH="${AGENT_SOURCE_TEST_PATH:?}"
+export PATH
+SH
+
 	local output=""
 	local status=0
-	output=$(PATH="$path_without_node" AIDEVOPS_AGENTS_DIR="$TEST_HOME/.aidevops/agents" HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/agent-sources-helper.sh" sync 2>&1)
+	output=$(AGENT_SOURCE_TEST_PATH="$path_without_node" PATH="$path_without_node" AIDEVOPS_AGENTS_DIR="$TEST_HOME/.aidevops/agents" HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/agent-sources-helper.sh" sync 2>&1)
 	status=$?
 
 	local registry="$TEST_HOME/.aidevops/agents/agent-source-capabilities.toon"

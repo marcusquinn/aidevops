@@ -65,16 +65,33 @@ authority or allowlist is changed.
   (`rc_head=1`, `rc_base=1`) and merge-flag as `pass` (`rc_head=0`). This is
   evidence of no introduced affected-suite regression, not a full-suite pass.
 
+## Second repair unit: copied installation and no-node inventory
+
+The core-layout suite exited before printing assertions because its copied
+`shared-constants.sh` sources a missing `runtime-env.sh`. After supplying that
+file, it reported a missing `managed-label-provisioning-lib.sh`. Match the
+dependency closure already used by the manifest-index fixture, and capture
+helper failures explicitly so `set -e` cannot hide their diagnostics.
+
+The manifest suite's restricted PATH did not model a no-node host: runtime PATH
+normalization appends system fallbacks, which contain Node on Actions. Its
+disposable runtime wrapper now retains the real library functions, then restores
+the fixture's tool inventory after initialization. Production normalization is
+unchanged; no test flags or interfaces were added to production code.
+
+Existing-suite verification: core-layout passed 9/9; manifest-index passed 5/5,
+including its no-node fallback. Both use disposable installations, not a real
+agent-source configuration.
+
 ## Remaining incident work
 
 This is a partial repair. Keep GH#40176 open; do not use a closing keyword on
 the first repair PR. The original artifact remains the inventory for the other
-81 suites; they have not been established as fixed or unrelated by a new health
+79 suites; they have not been established as fixed or unrelated by a new health
 run. Examples showing that a single environment workaround is insufficient:
 
 | Suites (under `.agents/scripts/tests/`) | Artifact evidence | Next verification |
 | --- | --- | --- |
-| `test-agent-sources-core-layout.sh`, `test-agent-source-manifest-index.sh` | Empty first log; manifest suite fails its no-node fixture | Trace copied fixture dependencies and run with fake HOME |
 | `test-encryption-git-roundtrip.sh`, `test-dispatch-override.sh` | Missing companion script in fixture | Check current source modules before changing fixture copies |
 | `test-model-routing-reasoning-migration.sh`, `test-sonnet-5-5-migration.sh`, `test-deploy-runtimes-bounded.sh` | Assertions about setup call sites fail | Compare current setup module ownership against extracted-function assertions |
 | `test-maintainer-gate-approval-api-failure.sh`, `test-maintainer-gate-interactive-status-retry.sh`, `test-maintainer-gate-nmr-residue.sh` | Mocked gate jobs return nonzero | Inspect gate extraction and mocked metadata; retain fail-closed behavior |
@@ -92,8 +109,8 @@ is required before reporting the aggregate incident resolved.
 
 Draft PR: <https://github.com/marcusquinn/aidevops/pull/40177>. The fixture repair
 is committed and pushed; the draft is intentionally not delivery of the whole
-incident. The next bounded investigation is the two agent-source suites in the
-table: reproduce with a disposable HOME, inspect the copied helper dependency
-closure, and apply integration-scope recovery before adding any target paths to
-the canonical issue scope. Do not close GH#40176 or turn this first unit into a
+incident. The next bounded investigation is the encryption/dispatch fixture
+group in the table: inspect current sourced modules and missing companion
+copies. Apply integration-scope recovery before adding target paths to the
+canonical issue scope. Do not close GH#40176 or turn this first unit into a
 closing PR while the aggregate criteria remain open.
