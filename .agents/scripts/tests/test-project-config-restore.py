@@ -158,6 +158,14 @@ with tempfile.TemporaryDirectory(prefix="aidevops-config-restore-") as directory
     entry["features"] = ["unexpected-feature"]
     registry.write_text(json.dumps({"initialized_repos": [entry]}))
     assert run(env).returncode != 0 and not target.exists()
+
+    # GH#40096: legacy registrations stored underscore and mixed spellings.
+    entry["features"] = ["git_workflow", "code_quality", "code-quality"]
+    registry.write_text(json.dumps({"initialized_repos": [entry]}))
+    legacy = run(env)
+    assert legacy.returncode == 0, legacy.stderr
+    assert '"git_workflow":true' in legacy.stdout and '"code_quality":true' in legacy.stdout, legacy.stdout
+    assert not target.exists()
     entry["features"] = ["git-workflow"]
 
     # A registration pointing at a linked worktree must never be interpreted as canonical.

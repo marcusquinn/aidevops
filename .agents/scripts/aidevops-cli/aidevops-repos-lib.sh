@@ -99,8 +99,29 @@ _init_repos_file_locked() {
 				fi
 			done < <(jq -r '.initialized_repos[] | select(.slug == null or .slug == "") | .path' "$REPOS_FILE" 2>/dev/null)
 		fi
+		_repos_normalize_feature_names_locked || return 1
 	fi
 	return 0
+}
+
+# GH#40096: registry feature names are hyphenated (`git-workflow`). Older
+# registrations copied underscore `.aidevops.json` keys (`git_workflow`), which
+# project-config restore and repo-verify readers do not recognise. Rewrite only
+# when an underscore name exists; preserve order and drop resulting duplicates.
+_repos_normalize_feature_names_locked() {
+	jq -e '[.initialized_repos[]?.features? | arrays | .[] | strings | select(contains("_"))] | length > 0' \
+		"$REPOS_FILE" &>/dev/null || return 0
+	local temp_file="$AIDEVOPS_REGISTRY_TEMP_FILE"
+	if jq '.initialized_repos |= map(
+		if (.features | type) == "array" then
+			.features |= (map(if type == "string" then gsub("_"; "-") else . end)
+				| reduce .[] as $f ([]; if any(.[]; . == $f) then . else . + [$f] end))
+		else . end)' "$REPOS_FILE" >"$temp_file"; then
+		mv "$temp_file" "$REPOS_FILE" || return 1
+		return 0
+	fi
+	rm -f "$temp_file"
+	return 1
 }
 
 # Detect GitHub slug (owner/repo) from git remote origin
@@ -583,6 +604,9 @@ _register_repo_locked() {
 	local repo_path="$1" version="$2" features="$3"
 	local verified_slug="${4:-}"
 	local sync_only="${5:-false}"
+	# GH#40096: callers pass `.aidevops.json` keys (`code_quality`); the
+	# registry contract is hyphenated (`code-quality`).
+	features="${features//_/-}"
 
 	init_repos_file || return 1
 
