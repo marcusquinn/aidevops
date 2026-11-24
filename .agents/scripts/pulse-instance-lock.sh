@@ -27,6 +27,11 @@
 #   - _handle_existing_lock    (acquire helper: live vs stale owner check)
 #   - acquire_instance_lock
 #   - release_instance_lock
+#   - dispatch lock (t19324): pulse_dispatch_lock_split_enabled,
+#     pulse_dispatch_lock_publish_mode, acquire_dispatch_lock,
+#     release_dispatch_lock, pulse_release_dispatch_lock_on_exit,
+#     pulse_dispatch_lock_heartbeat, pulse_dispatch_stage_enter/leave,
+#     pulse_run_with_dispatch_lock
 #   - _pulse_exit_cleanup      (process-lifetime EXIT handler for main())
 #   - _handle_setup_sentinel
 #   - _handle_running_pulse_pid
@@ -416,6 +421,290 @@ release_instance_lock() {
 }
 
 #######################################
+# Dispatch lock (t19324, GH#40112; parent GH#40108)
+#
+# PULSE_DISPATCH_LOCK_SPLIT=1 gives dispatch rounds their own runner-local
+# mkdir lock beside LOCKDIR. Every dispatch round (cycle stages, cycle-final
+# drain, active-pulse and early-exit recycle fills, worker-exit refill) takes it, so one
+# round runs per runner at a time, while the worker-exit refill no longer
+# waits for the instance lock held through the cycle's maintenance stages.
+# Default 0: callers run exactly as before and this lock is never created.
+#
+# Same primitives as the instance lock: mkdir atomicity, PID file plus
+# post-acquire verification (GH#21433), stale-owner reclaim (dead owner, PID
+# reuse, heartbeat older than PULSE_LOCK_MAX_AGE_S) and owner-checked release
+# (GH#20260). No flock (GH#18668). The holder is never killed: a hung cycle
+# is reclaimed by the instance lock; a hung refill exits with its stage clamp.
+# Nested acquisition in one shell is counted, so only the outermost release
+# removes the lock. The PID file names the acquiring shell itself, not $$,
+# so a lock left by a killed subshell names a dead PID and is reclaimed.
+#######################################
+_DISPATCH_LOCK_OWNED="${_DISPATCH_LOCK_OWNED:-false}"
+_DISPATCH_LOCK_DEPTH="${_DISPATCH_LOCK_DEPTH:-0}"
+_DISPATCH_LOCK_OWNER_PID="${_DISPATCH_LOCK_OWNER_PID:-}"
+_DISPATCH_LOCK_HOLDER_PID=""
+_DISPATCH_LOCK_SELF_PID=""
+
+# Set _DISPATCH_LOCK_SELF_PID to the calling shell's own PID: $$ names the
+# top-level process even inside subshells, and Bash 3.2 has no BASHPID.
+# Call directly, never inside $(...), which would report that subshell.
+_pulse_dispatch_lock_resolve_self_pid() {
+	local self_pid="${BASHPID:-}"
+	if [[ ! "$self_pid" =~ ^[0-9]+$ ]]; then
+		# shellcheck disable=SC2016 # $PPID must expand in the child sh.
+		self_pid=$(exec sh -c 'echo "$PPID"' 2>/dev/null) || self_pid=""
+	fi
+	[[ "$self_pid" =~ ^[0-9]+$ ]] || self_pid="$$"
+	_DISPATCH_LOCK_SELF_PID="$self_pid"
+	return 0
+}
+
+pulse_dispatch_lockdir() {
+	printf '%s\n' "${PULSE_DISPATCH_LOCKDIR:-${LOCKDIR}.dispatch}"
+	return 0
+}
+
+# Mode published by the latest cycle (see pulse_dispatch_lock_publish_mode).
+_pulse_dispatch_lock_mode_file() {
+	printf '%s\n' "${PULSE_DISPATCH_LOCK_MODE_FILE:-${LOCKDIR}.dispatch-mode}"
+	return 0
+}
+
+#######################################
+# Return 0 when the dispatch lock split is enabled for this process.
+# A cycle reads PULSE_DISPATCH_LOCK_SPLIT. A refill-only run uses it when set,
+# otherwise the mode its latest cycle published: worker-exit observers run as
+# systemd user services on Linux and do not inherit the Pulse environment, and
+# a refill must never skip the instance lock while cycles do not take the
+# dispatch lock. Resolved once per process so a stage entered under one mode
+# is always left under the same mode.
+#######################################
+_PULSE_DISPATCH_LOCK_SPLIT_RESOLVED=""
+
+pulse_dispatch_lock_split_enabled() {
+	local mode="${PULSE_DISPATCH_LOCK_SPLIT:-}"
+	if [[ -z "$_PULSE_DISPATCH_LOCK_SPLIT_RESOLVED" ]]; then
+		if [[ -z "$mode" && "${PULSE_REFILL_ONLY:-0}" == "1" ]]; then
+			read -r mode 2>/dev/null <"$(_pulse_dispatch_lock_mode_file)" || mode=""
+		fi
+		_PULSE_DISPATCH_LOCK_SPLIT_RESOLVED=0
+		[[ "$mode" == "1" ]] && _PULSE_DISPATCH_LOCK_SPLIT_RESOLVED=1
+	fi
+	[[ "$_PULSE_DISPATCH_LOCK_SPLIT_RESOLVED" == "1" ]]
+	return $?
+}
+
+# Publish this cycle's mode for refill-only runs. Call only while holding the
+# instance lock, before the first dispatch stage. Atomic replace.
+pulse_dispatch_lock_publish_mode() {
+	local mode=0 mode_file temporary
+	[[ -n "${LOCKDIR:-}" ]] || return 0
+	[[ "${PULSE_DISPATCH_LOCK_SPLIT:-0}" == "1" ]] && mode=1
+	mode_file=$(_pulse_dispatch_lock_mode_file)
+	temporary="${mode_file}.tmp.$$"
+	if printf '%s\n' "$mode" >"$temporary" 2>/dev/null && mv -f "$temporary" "$mode_file" 2>/dev/null; then
+		return 0
+	fi
+	rm -f "$temporary" 2>/dev/null || true
+	return 0
+}
+
+_pulse_dispatch_lock_log() {
+	local message="$1"
+	printf '[pulse-wrapper] %s\n' "$message" >>"${LOGFILE:-${WRAPPER_LOGFILE:-/dev/null}}" 2>/dev/null || true
+	return 0
+}
+
+# Recreate the lock directory after a stale owner. Returns 1 on a lost race.
+_pulse_dispatch_lock_reclaim() {
+	local lockdir="$1"
+	local reason="$2"
+	_pulse_dispatch_lock_log "Dispatch lock reclaimed: ${reason} (t19324)"
+	rm -rf "$lockdir" 2>/dev/null || true
+	mkdir "$lockdir" 2>/dev/null && return 0
+	_pulse_dispatch_lock_log "Dispatch lock: lost mkdir race after reclaim (t19324)"
+	return 1
+}
+
+#######################################
+# mkdir failed: decide between a live holder (return 1, holder PID in
+# _DISPATCH_LOCK_HOLDER_PID) and a stale lock (reclaim, return 0 when won).
+#######################################
+_handle_existing_dispatch_lock() {
+	local lockdir="$1"
+	local grace=0 lock_pid owner_cmd heartbeat now_epoch
+	local max_age="${PULSE_LOCK_MAX_AGE_S:-1800}"
+	read -r lock_pid 2>/dev/null <"${lockdir}/pid" || lock_pid=""
+	# GH#21433: the owner may be between mkdir and its PID write.
+	while [[ -z "$lock_pid" && "$grace" -lt 20 ]]; do
+		sleep 0.1 2>/dev/null || sleep 1
+		read -r lock_pid 2>/dev/null <"${lockdir}/pid" || lock_pid=""
+		grace=$((grace + 1))
+	done
+	_DISPATCH_LOCK_HOLDER_PID="$lock_pid"
+	if [[ ! "$lock_pid" =~ ^[0-9]+$ ]] || ! kill -0 "$lock_pid" 2>/dev/null; then
+		_pulse_dispatch_lock_reclaim "$lockdir" "owner PID ${lock_pid:-unknown} is dead"
+		return $?
+	fi
+	if [[ "$lock_pid" == "$_DISPATCH_LOCK_SELF_PID" ]]; then
+		# Not owned by this shell: a pre-exec image of this PID left it.
+		_pulse_dispatch_lock_reclaim "$lockdir" "left by an earlier holder with this PID (${lock_pid})"
+		return $?
+	fi
+	owner_cmd=$(ps -p "$lock_pid" -o command= 2>/dev/null || echo "")
+	if [[ "$owner_cmd" != *pulse-wrapper* ]]; then
+		_pulse_dispatch_lock_reclaim "$lockdir" "PID ${lock_pid} reused by non-pulse process '${owner_cmd%%' '*}'"
+		return $?
+	fi
+	read -r heartbeat 2>/dev/null <"${lockdir}/heartbeat_epoch" || heartbeat=""
+	now_epoch=$(date +%s)
+	[[ "$max_age" =~ ^[1-9][0-9]*$ ]] || max_age=1800
+	if [[ "$heartbeat" =~ ^[1-9][0-9]*$ && "$heartbeat" -le "$now_epoch" ]] &&
+		((now_epoch - heartbeat > max_age)); then
+		_pulse_dispatch_lock_reclaim "$lockdir" "holder PID ${lock_pid} heartbeat $((now_epoch - heartbeat))s > ceiling ${max_age}s"
+		return $?
+	fi
+	return 1
+}
+
+#######################################
+# Acquire the dispatch lock without waiting. Re-entrant within one shell.
+# Logs the owner PID on every acquire.
+# Arguments: $1 - stage label for the log line
+# Returns: 0 acquired, 1 held by a live dispatch round (_DISPATCH_LOCK_HOLDER_PID)
+#######################################
+acquire_dispatch_lock() {
+	local stage="${1:-dispatch}"
+	local lockdir="" verify_pid=""
+	if [[ "$_DISPATCH_LOCK_OWNED" == true ]]; then
+		_DISPATCH_LOCK_DEPTH=$((_DISPATCH_LOCK_DEPTH + 1))
+		return 0
+	fi
+	lockdir=$(pulse_dispatch_lockdir)
+	_DISPATCH_LOCK_HOLDER_PID=""
+	_pulse_dispatch_lock_resolve_self_pid
+	if ! mkdir "$lockdir" 2>/dev/null; then
+		_handle_existing_dispatch_lock "$lockdir" || return 1
+	fi
+	date +%s >"${lockdir}/heartbeat_epoch" 2>/dev/null || true
+	printf '%s\n' "$stage" >"${lockdir}/stage" 2>/dev/null || true
+	echo "$_DISPATCH_LOCK_SELF_PID" >"${lockdir}/pid"
+	# GH#21433: verify that no contender replaced the directory meanwhile.
+	sleep 0.2 2>/dev/null || sleep 1
+	read -r verify_pid 2>/dev/null <"${lockdir}/pid" || verify_pid=""
+	if [[ "$verify_pid" != "$_DISPATCH_LOCK_SELF_PID" ]]; then
+		_DISPATCH_LOCK_HOLDER_PID="$verify_pid"
+		_pulse_dispatch_lock_log "Dispatch lock verification failed: pid file names '${verify_pid:-empty}', not ${_DISPATCH_LOCK_SELF_PID} (t19324)"
+		return 1
+	fi
+	_DISPATCH_LOCK_OWNED=true
+	_DISPATCH_LOCK_DEPTH=1
+	_DISPATCH_LOCK_OWNER_PID="$_DISPATCH_LOCK_SELF_PID"
+	_pulse_dispatch_lock_log "Dispatch lock acquired: owner_pid=${_DISPATCH_LOCK_OWNER_PID} stage=${stage} (t19324)"
+	return 0
+}
+
+#######################################
+# Release one level of the dispatch lock; the outermost release removes it
+# when LOCKDIR.dispatch/pid still names this process (GH#20260). Idempotent.
+#######################################
+release_dispatch_lock() {
+	local lockdir="" lock_pid=""
+	[[ "$_DISPATCH_LOCK_OWNED" == true ]] || return 0
+	if [[ "$_DISPATCH_LOCK_DEPTH" =~ ^[0-9]+$ && "$_DISPATCH_LOCK_DEPTH" -gt 1 ]]; then
+		_DISPATCH_LOCK_DEPTH=$((_DISPATCH_LOCK_DEPTH - 1))
+		return 0
+	fi
+	local owner_pid="$_DISPATCH_LOCK_OWNER_PID"
+	_DISPATCH_LOCK_OWNED=false
+	_DISPATCH_LOCK_DEPTH=0
+	_DISPATCH_LOCK_OWNER_PID=""
+	lockdir=$(pulse_dispatch_lockdir)
+	read -r lock_pid 2>/dev/null <"${lockdir}/pid" || lock_pid=""
+	if [[ -n "$lock_pid" && "$lock_pid" != "$owner_pid" ]]; then
+		_pulse_dispatch_lock_log "release_dispatch_lock: lock now held by PID ${lock_pid}, skipping removal (t19324)"
+		return 0
+	fi
+	rm -rf "$lockdir" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Process-exit release: drop every nesting level and remove the lock when it
+# names this process. A lock left by a killed subshell names a dead PID and
+# is reclaimed by the next contender. Safe when nothing was acquired.
+#######################################
+pulse_release_dispatch_lock_on_exit() {
+	local lockdir="" lock_pid=""
+	[[ -n "${LOCKDIR:-}" || -n "${PULSE_DISPATCH_LOCKDIR:-}" ]] || return 0
+	_DISPATCH_LOCK_OWNED=false
+	_DISPATCH_LOCK_DEPTH=0
+	_DISPATCH_LOCK_OWNER_PID=""
+	lockdir=$(pulse_dispatch_lockdir)
+	[[ -d "$lockdir" ]] || return 0
+	read -r lock_pid 2>/dev/null <"${lockdir}/pid" || lock_pid=""
+	_pulse_dispatch_lock_resolve_self_pid
+	[[ "$lock_pid" == "$_DISPATCH_LOCK_SELF_PID" ]] || return 0
+	rm -rf "$lockdir" 2>/dev/null || true
+	return 0
+}
+
+# Refresh the holder heartbeat during long rounds (atomic replace). Children
+# of the holder (command substitutions) inherit ownership and may refresh.
+pulse_dispatch_lock_heartbeat() {
+	local lockdir owner temporary
+	[[ "$_DISPATCH_LOCK_OWNED" == true && -n "$_DISPATCH_LOCK_OWNER_PID" ]] || return 1
+	lockdir=$(pulse_dispatch_lockdir)
+	read -r owner 2>/dev/null <"${lockdir}/pid" || return 1
+	[[ "$owner" == "$_DISPATCH_LOCK_OWNER_PID" ]] || return 1
+	temporary=$(mktemp "${lockdir}/heartbeat.XXXXXX" 2>/dev/null) || return 1
+	if date +%s >"$temporary" && mv -f "$temporary" "${lockdir}/heartbeat_epoch"; then
+		return 0
+	fi
+	rm -f "$temporary" 2>/dev/null || true
+	return 1
+}
+
+#######################################
+# Enter a dispatch stage. Flag off: always 0, nothing taken. Flag on: take
+# the dispatch lock or log the skip and return 1 (another round is already
+# dispatching on this runner). Pair every 0 with pulse_dispatch_stage_leave.
+# Arguments: $1 - stage label
+#######################################
+pulse_dispatch_stage_enter() {
+	local stage="${1:-dispatch}"
+	pulse_dispatch_lock_split_enabled || return 0
+	acquire_dispatch_lock "$stage" && return 0
+	_pulse_dispatch_lock_log "Dispatch stage ${stage} skipped: dispatch lock held by PID ${_DISPATCH_LOCK_HOLDER_PID:-unknown}, which is already dispatching (t19324)"
+	if declare -F pulse_stats_increment >/dev/null 2>&1; then
+		pulse_stats_increment "pulse_dispatch_lock_stage_skipped" 2>/dev/null || true
+	fi
+	return 1
+}
+
+pulse_dispatch_stage_leave() {
+	pulse_dispatch_lock_split_enabled || return 0
+	release_dispatch_lock
+	return 0
+}
+
+#######################################
+# Run one dispatch stage under the dispatch lock (flag on) or directly (flag
+# off). A busy lock skips the stage and returns 0.
+# Arguments: $1 - stage label; $2... - command and arguments
+# Returns: the command's status, or 0 when skipped
+#######################################
+pulse_run_with_dispatch_lock() {
+	local stage="$1"
+	shift
+	local rc=0
+	pulse_dispatch_stage_enter "$stage" || return 0
+	"$@" || rc=$?
+	pulse_dispatch_stage_leave
+	return "$rc"
+}
+
+#######################################
 # Process-lifetime EXIT handler for pulse-wrapper.sh main() (t18678, GH#34469)
 #
 # main() installs `trap '_pulse_exit_cleanup' EXIT` before acquiring the
@@ -454,6 +743,7 @@ _pulse_exit_cleanup() {
 	_pulse_cycle_state_finish_interrupted || true
 	_pulse_cycle_index_record_once || true
 	_pulse_efficiency_cycle_finish || true
+	pulse_release_dispatch_lock_on_exit || true
 	release_instance_lock || true
 	if declare -F _pulse_finish_post_dispatch_housekeeping >/dev/null 2>&1; then
 		_pulse_finish_post_dispatch_housekeeping || true
