@@ -2505,6 +2505,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t19345 perf(process-snapshot): use TZ=UTC0 for macOS full-table ps lstart reads #bug #priority:medium ref:GH#40195 pr:#40217 completed:2026-11-24
 
 - [ ] t19349 fix(pulse): throughput report counts still-running workers so windows ending now are not under-reported #bug #priority:high ref:GH#40220 -> [todo/tasks/t19349-brief.md] logged:2026-11-24
+- [ ] t19345 perf(process-snapshot): use TZ=UTC0 for macOS full-table ps lstart reads #bug #priority:medium ref:GH#40195
+- [ ] t19346 fix(pulse): break early in stats quarantine scan and prune the backlog #bug #interactive ref:GH#40197 -> [todo/tasks/t19346-brief.md] logged:2026-11-24 started:2026-11-24
 
 ## In Progress
 

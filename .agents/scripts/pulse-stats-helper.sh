@@ -113,20 +113,27 @@ _pulse_stats_report_recovery_failure() {
 
 _pulse_stats_recover_locked() {
 	local quarantine="" tmp_file="" old_umask=""
-	local existing count=0 duplicate=0 nullglob_was_set=0
+	local existing count=0 duplicate=0 nullglob_was_set=0 cap=5
 	local -a quarantines=()
 	# Preserve existing evidence; stop making copies once the cap is reached.
 	shopt -q nullglob && nullglob_was_set=1
 	shopt -s nullglob
 	quarantines=("${PULSE_STATS_FILE}".corrupt.*)
 	((nullglob_was_set)) || shopt -u nullglob
-	for existing in ${quarantines[@]+"${quarantines[@]}"}; do
-		count=$((count + 1))
-		if cmp -s "$PULSE_STATS_FILE" "$existing"; then
-			duplicate=1
-		fi
-	done
-	if [[ -s "$PULSE_STATS_FILE" ]] && ((count < 5 && duplicate == 0)); then
+	count=${#quarantines[@]}
+	# Compare only while another copy could still be written. At or above the cap
+	# the duplicate test cannot change the outcome, and comparing a pre-cap
+	# backlog would fork one cmp per quarantine file while holding the stats lock
+	# (GH#40197: one install had accumulated 16408 of them).
+	if [[ -s "$PULSE_STATS_FILE" ]] && ((count < cap)); then
+		for existing in ${quarantines[@]+"${quarantines[@]}"}; do
+			if cmp -s "$PULSE_STATS_FILE" "$existing"; then
+				duplicate=1
+				break
+			fi
+		done
+	fi
+	if [[ -s "$PULSE_STATS_FILE" ]] && ((count < cap && duplicate == 0)); then
 		old_umask=$(umask)
 		umask 077
 		quarantine=$(mktemp "${PULSE_STATS_FILE}.corrupt.$(date +%s 2>/dev/null || printf '0').XXXXXX") || {
@@ -162,6 +169,64 @@ _pulse_stats_recover_locked() {
 		_pulse_stats_report_recovery_failure "replace"
 		return 1
 	}
+	# Recover from a backlog that predates the cap: retain the newest cap copies
+	# and drop the rest, so the enumeration above stays bounded on later
+	# recoveries. Runs only after the stats file was rebuilt successfully, and
+	# only when no new copy was taken (count >= cap implies none was).
+	_pulse_stats_prune_quarantines "$count" "$cap" ${quarantines[@]+"${quarantines[@]}"}
+	return 0
+}
+
+# Delete the oldest quarantine copies beyond the retained cap.
+# Glob order is lexical and the names carry a fixed-width epoch field, so the
+# retained tail is the newest evidence. Never touches the live stats file.
+# Arguments: $1 observed count, $2 retained cap, $3.. quarantine paths.
+# Returns: 0 always; a failed unlink is left for the next recovery.
+_pulse_stats_prune_quarantines() {
+	local count="$1" cap="$2"
+	shift 2
+	local -a paths=("$@")
+	local excess=0 index=0
+	((count > cap)) || return 0
+	excess=$((count - cap))
+	((excess > ${#paths[@]})) && excess=${#paths[@]}
+	for ((index = 0; index < excess; index++)); do
+		[[ -n "${paths[index]:-}" ]] || continue
+		rm -f "${paths[index]}" 2>/dev/null || true
+	done
+	return 0
+}
+
+# Operator entry point for a quarantine backlog that predates the cap, so an
+# install with no further corruption does not keep the copies forever.
+# Arguments: $1 optional "--apply" (default reports without deleting).
+# Returns: 0 on success, 1 on an unknown argument.
+pulse_stats_prune_quarantine() {
+	local mode="${1:-}"
+	local cap=5 count=0 excess=0 nullglob_was_set=0
+	local -a quarantines=()
+	if [[ -n "$mode" && "$mode" != "--apply" ]]; then
+		echo "Usage: pulse-stats-helper.sh prune-quarantine [--apply]" >&2
+		return 1
+	fi
+	shopt -q nullglob && nullglob_was_set=1
+	shopt -s nullglob
+	quarantines=("${PULSE_STATS_FILE}".corrupt.*)
+	((nullglob_was_set)) || shopt -u nullglob
+	count=${#quarantines[@]}
+	((count > cap)) && excess=$((count - cap))
+	if ((excess == 0)); then
+		printf 'pulse-stats quarantine: %s copies, cap %s, nothing to prune\n' "$count" "$cap"
+		return 0
+	fi
+	if [[ "$mode" != "--apply" ]]; then
+		printf 'pulse-stats quarantine: %s copies, would delete %s oldest (retain newest %s); re-run with --apply\n' \
+			"$count" "$excess" "$cap"
+		return 0
+	fi
+	_pulse_stats_prune_quarantines "$count" "$cap" ${quarantines[@]+"${quarantines[@]}"}
+	printf 'pulse-stats quarantine: deleted %s of %s copies, retained newest %s\n' \
+		"$excess" "$count" "$cap"
 	return 0
 }
 
@@ -546,6 +611,10 @@ _main() {
 		pulse_stats_reset "$reset_counter"
 		return 0
 		;;
+	prune-quarantine)
+		pulse_stats_prune_quarantine "${1:-}"
+		return $?
+		;;
 	help | --help | -h)
 		echo "pulse-stats-helper.sh — Pulse operational counter (t2424)"
 		echo ""
@@ -555,6 +624,10 @@ _main() {
 		echo "  pulse-stats-helper.sh get-gauge <gauge>     Read current gauge value"
 		echo "  pulse-stats-helper.sh status                Human-readable summary"
 		echo "  pulse-stats-helper.sh reset <counter>       Clear a counter"
+		echo "  pulse-stats-helper.sh prune-quarantine [--apply]"
+		echo "                                              Report (default) or delete"
+		echo "                                              corrupt-stats copies beyond"
+		echo "                                              the newest 5"
 		echo ""
 		echo "Stats file: ${PULSE_STATS_FILE}"
 		return 0
