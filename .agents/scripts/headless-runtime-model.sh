@@ -199,15 +199,18 @@ get_configured_models() {
 tier_candidate_exclusion_reasons() {
 	local tier_name=""
 	tier_name=$(_normalize_headless_tier "${1:-standard}")
-	local allowlisted="" model="" provider="" reason=""
+	local allowlisted="" model="" provider="" reason="" in_allowlist=false
 	local oauth_denied_ids="" oauth_denied_loaded=false
-	allowlisted=$(_allowlisted_tier_candidates "$tier_name")
+	allowlisted=$'\n'"$(_allowlisted_tier_candidates "$tier_name")"$'\n'
 	while IFS= read -r model; do
 		[[ -n "$model" ]] || continue
 		provider=$(extract_provider "$model" 2>/dev/null || printf '%s' "")
 		[[ -n "$provider" ]] || continue
 		reason="selectable"
-		if ! printf '%s\n' "$allowlisted" | grep -Fxq -- "$model"; then
+		# In-shell membership: no early-exit pipe reader under pipefail.
+		in_allowlist=false
+		[[ "$allowlisted" != *$'\n'"$model"$'\n'* ]] || in_allowlist=true
+		if [[ "$in_allowlist" == false ]]; then
 			reason="excluded_by_provider_allowlist"
 		elif ! provider_auth_available "$provider"; then
 			reason="no_provider_auth"
