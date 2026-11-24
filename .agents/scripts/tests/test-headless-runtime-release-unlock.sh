@@ -613,6 +613,7 @@ fi
 	source "${SCRIPT_DIR}/headless-runtime-result.sh"
 	_headless_private_workload_enabled() { return 1; }
 	# Stub only the secret-check subprocess, never read the operator's store.
+	external_timer=$(type -P timeout || type -P gtimeout)
 	timeout() {
 		local signal="${1:-}" duration="${2:-}" executable="${4:-}" operation="${5:-}" name="${6:-}"
 		if [[ "$executable" == */secret-helper.sh && "$operation" == check ]]; then
@@ -620,7 +621,7 @@ fi
 			if [[ "$name" == STALLED_CONFIG ]]; then
 				[[ "$signal" == --signal=KILL && "$duration" == 1 ]] || return 99
 				local stalled_status=0
-				command timeout "$signal" "$duration" bash -c 'sleep 30' || stalled_status=$?
+				"$external_timer" "$signal" "$duration" bash -c 'sleep 30' || stalled_status=$?
 				printf 'STALLED_STATUS %s\n' "$stalled_status" >>"$CALL_LOG"
 				return "$stalled_status"
 			fi
@@ -633,7 +634,7 @@ fi
 			*) return 1 ;;
 			esac
 		fi
-		command timeout "$@"
+		"$external_timer" "$@"
 		return $?
 	}
 	gh_issue_edit_safe() { printf 'EDIT %s\n' "$*" >>"$CALL_LOG"; return 0; }
