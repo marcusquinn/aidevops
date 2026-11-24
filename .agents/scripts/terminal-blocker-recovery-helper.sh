@@ -86,6 +86,8 @@ source "${_TBR_SCRIPT_DIR}/terminal-blocker-github.sh"
 TBR_ROOT="${AIDEVOPS_BLOCKER_RECOVERY_DIR:-${HOME}/.aidevops/.agent-workspace/terminal-blocker-recovery}"
 TBR_SEED_INTERVAL="${BLOCKER_RECOVERY_SEED_INTERVAL:-21600}"
 TBR_DECISION_TTL="${BLOCKER_RECOVERY_DECISION_TTL:-86400}"
+# GH#40120: re-poll interval for external_trigger decisions without recheck_after.
+TBR_EXTERNAL_TRIGGER_RECHECK="${BLOCKER_RECOVERY_EXTERNAL_TRIGGER_RECHECK:-259200}"
 TBR_REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 TBR_EXCERPT_DIR="${AIDEVOPS_WORKER_FAILURE_EXCERPT_DIR:-${HOME}/.aidevops/logs/worker-failure-excerpts}"
 TBR_CIRCUIT_MARKER="TERMINAL_BLOCKER_CIRCUIT active=true"
@@ -1002,9 +1004,13 @@ _tbr_check_entry() {
 		[[ "$release_rc" -ne 3 ]] || return 1
 		if [[ "$release_rc" -eq 4 ]]; then
 			# GH#39232: decided permission hold. Keep the entry and its
-			# decision; the supervisor already owns it, so print nothing.
+			# decision; the supervisor already owns it, so print nothing,
+			# unless its external_trigger re-check is due (GH#40120).
 			_tbr_stamp_rearm_check "$file" "$updated_at" "$comments" "$brief" decided || return 2
-			return 1
+			[[ "$mode" != rearm ]] || return 1
+			_tbr_decision_active "$key" "$comments" && return 1
+			_tbr_print_entry "$repo" "$issue" "$reason" "$opened_at" "$intake" "$issue_json"
+			return $?
 		fi
 		[[ "$release_rc" -lt 2 ]] || return 2
 		rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
@@ -1036,9 +1042,13 @@ _tbr_check_entry() {
 
 #######################################
 # Record an owner decision. stdin: {"wake":..., "next_action":..., "evidence":...}
+# plus, for external_trigger only, an optional future "recheck_after"
+# (YYYY-MM-DDTHH:MM:SSZ).
 # wake ∈ brief_revision | environment_fix | owner_change | dependency_change | human_decision | external_trigger
-# external_trigger = decided hold waiting on a named external event; it stands
-# like human_decision (no TTL) and is shown as parked by /decisions.
+# external_trigger = decided hold waiting on a named external event; it is
+# shown as parked by /decisions. GH#40120: unlike human_decision it is
+# re-assessed at recheck_after, or after BLOCKER_RECOVERY_EXTERNAL_TRIGGER_RECHECK
+# without one, because only polling observes most external events.
 #######################################
 tbr_record() {
 	local repo="${1:-}"
@@ -1046,9 +1056,18 @@ tbr_record() {
 	_tbr_valid_ref "$repo" "$issue" || return 1
 	_tbr_init_dirs || return 1
 	local input="" actor="" key=""
-	input=$(jq -ec 'select((keys == ["evidence","next_action","wake"]) and
-		(.wake | IN("brief_revision","environment_fix","owner_change","dependency_change","human_decision","external_trigger")))') || {
-		printf 'record: stdin must be {"wake","next_action","evidence"} with a known wake value\n' >&2
+	input=$(jq -ec --argjson now "$(date +%s)" '
+		def recheck_ok: (has("recheck_after") | not) or (.wake == "external_trigger"
+			and (.recheck_after | type) == "string"
+			and (.recheck_after | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+			# jq normalises calendar-invalid dates (02-30 -> 03-02); require a round trip.
+			and ((.recheck_after | try (fromdateiso8601 | todateiso8601) catch "") == .recheck_after)
+			and ((.recheck_after | fromdateiso8601) > $now));
+		select((del(.recheck_after) | keys) == ["evidence","next_action","wake"] and
+			(.wake | IN("brief_revision","environment_fix","owner_change","dependency_change","human_decision","external_trigger"))
+			and recheck_ok)
+		| if .recheck_after then .recheck_after_epoch = (.recheck_after | fromdateiso8601) else . end') || {
+		printf 'record: stdin must be {"wake","next_action","evidence"} with a known wake value; optional recheck_after (future YYYY-MM-DDTHH:MM:SSZ) is for external_trigger only\n' >&2
 		return 1
 	}
 	#aidevops:trust-boundary — decision authorship comes from the authenticated

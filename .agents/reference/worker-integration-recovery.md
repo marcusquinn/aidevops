@@ -249,7 +249,13 @@ AI brief owner:
    `dependency_change`, `human_decision` or `external_trigger`). Use
    `human_decision` only while an owner decision is unanswered; use
    `external_trigger` for decided holds waiting on a named external event
-   (standing like `human_decision`, no TTL, listed as parked in `/decisions`).
+   (listed as parked in `/decisions`). An `external_trigger` record may add
+   `"recheck_after":"YYYY-MM-DDTHH:MM:SSZ"` (future, UTC) when the trigger is a
+   date or needs polling (a site returning 200, a ceremony passing); the hold
+   returns to this queue then, or after
+   `BLOCKER_RECOVERY_EXTERNAL_TRIGGER_RECHECK` (default 3 days) without one.
+   On re-check, release the hold if the trigger fired, otherwise re-record with
+   the next `recheck_after` (GH#40120).
    `integration-recovery-helper.sh
    decision` answers integration-recovery requests only and is not read here.
    A decision suppresses

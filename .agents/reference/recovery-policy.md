@@ -142,7 +142,9 @@ denials, trust or approval gates. Labels never authorize an action themselves.
    `human_decision` for holds whose owner decision is still unanswered,
    `external_trigger` for decided holds that wait on a named external event
    (for example an `outlier_hold` reopen condition; `next_action` states the
-   condition, and `/decisions` lists it as parked), `dependency_change` for splits, repoints and
+   condition, and `/decisions` lists it as parked; add a future
+   `"recheck_after":"YYYY-MM-DDTHH:MM:SSZ"` when the condition is a date or
+   needs polling, otherwise it is re-checked every 3 days, GH#40120), `dependency_change` for splits, repoints and
    scope acceptances, and `brief_revision` for brief repairs. Record each affected issue separately when
    the action differs; evidence links the public decision and policy revision.
    Record the corresponding integration-recovery decision too, when applicable.
