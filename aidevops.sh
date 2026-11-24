@@ -281,13 +281,73 @@ _update_verify_deployment_state() {
 	return $?
 }
 
+_update_wait_for_setup_handoff() {
+	local expected_sha="$1" checkout_ready_epoch="$2"
+	local lock_dir="${AIDEVOPS_SETUP_LOCK_DIR:-$HOME/.aidevops/locks/setup-noninteractive.lock.d}"
+	local timings_log="$HOME/.aidevops/logs/setup-stage-timings.log"
+	local owner_pid="" owner_started="" owner_command="" current_pid="" current_started=""
+	local wait_limit="${AIDEVOPS_UPDATE_HANDOFF_WAIT_S:-1800}"
+	local wait_started="$SECONDS" elapsed=0
+	# Read only metadata, never source setup.sh (which would execute setup).
+	[[ -r "$lock_dir/owner.pid" ]] && IFS= read -r owner_pid <"$lock_dir/owner.pid"
+	[[ -r "$lock_dir/started_at_epoch" ]] && IFS= read -r owner_started <"$lock_dir/started_at_epoch"
+	[[ -r "$lock_dir/command" ]] && IFS= read -r owner_command <"$lock_dir/command"
+	# Reject malformed/older owners and non-deploying stages. Equal epochs are
+	# ambiguous at second precision, so retain the original failure in that case.
+	if [[ ! "$owner_pid" =~ ^[1-9][0-9]{0,9}$ ||
+		! "$owner_started" =~ ^[1-9][0-9]{0,9}$ ||
+		! "$checkout_ready_epoch" =~ ^[1-9][0-9]{0,9}$ ]] ||
+		[[ "$owner_started" -le "$checkout_ready_epoch" ]] ||
+		[[ ! "$owner_command" =~ (^|[[:space:]/])setup\.sh[[:space:]] ]] ||
+		[[ ! "$owner_command" =~ [[:space:]]--non-interactive([[:space:]]|$) &&
+		! "$owner_command" =~ [[:space:]]--stage[[:space:]]+ai-session([[:space:]]|$) ]] ||
+		[[ "$owner_command" =~ [[:space:]]--stage([[:space:]]|=) &&
+		! "$owner_command" =~ [[:space:]]--stage[[:space:]]+ai-session([[:space:]]|$) ]]; then
+		print_error "Agent deployment failed: setup exited with code 75"
+		return 1
+	fi
+	# Fail closed if the lock changed while its metadata was being read.
+	[[ -r "$lock_dir/owner.pid" ]] && IFS= read -r current_pid <"$lock_dir/owner.pid"
+	[[ -r "$lock_dir/started_at_epoch" ]] && IFS= read -r current_started <"$lock_dir/started_at_epoch"
+	if [[ "$current_pid" != "$owner_pid" || "$current_started" != "$owner_started" ]]; then
+		print_error "Agent deployment failed: setup lock owner changed during handoff; diagnose: $timings_log"
+		return 1
+	fi
+	[[ "$wait_limit" =~ ^[0-9]{1,6}$ ]] || wait_limit=1800
+	wait_limit=$((10#$wait_limit))
+	print_info "Deployment handed off to in-flight setup pid $owner_pid (started $owner_started, checkout ready $checkout_ready_epoch); waiting up to ${wait_limit}s. Diagnose: $timings_log"
+	while kill -0 "$owner_pid" 2>/dev/null; do
+		elapsed=$((SECONDS - wait_started))
+		if [[ "$elapsed" -ge "$wait_limit" ]]; then
+			print_error "Deployment handoff timed out after ${elapsed}s waiting for setup pid $owner_pid; diagnose: $timings_log"
+			return 1
+		fi
+		if [[ "$elapsed" -gt 0 && $((elapsed % 60)) -eq 0 ]]; then
+			print_info "Still waiting for setup pid $owner_pid (${elapsed}s of ${wait_limit}s); diagnose: $timings_log"
+		fi
+		sleep 1
+	done
+	if ! _update_verify_deployment_state "$expected_sha"; then
+		print_error "Deployment handoff to setup pid $owner_pid ended without convergence to $expected_sha; diagnose: $timings_log"
+		return 1
+	fi
+	_update_adopt_deployed_version
+	return 0
+}
+
 _run_update_setup_transaction() {
 	local output_mode="$1"
 	local expected_sha="$2"
+	local checkout_ready_epoch="${3:-0}"
 	local setup_exit=0
 	local rollback_receipt=""
 	rollback_receipt=$(mktemp) || return 1
 	AIDEVOPS_UPDATE_ROLLBACK_RECEIPT="$rollback_receipt" _run_update_setup "$output_mode" || setup_exit=$?
+	if [[ "$setup_exit" -eq 75 ]]; then
+		rm -f "$rollback_receipt"
+		_update_wait_for_setup_handoff "$expected_sha" "$checkout_ready_epoch"
+		return $?
+	fi
 	if [[ "$setup_exit" -ne 0 ]]; then
 		rm -f "$rollback_receipt"
 		print_error "Agent deployment failed: setup exited with code $setup_exit"
@@ -478,6 +538,8 @@ _update_existing_install() {
 
 _update_already_current() {
 	local local_hash="$1" update_output_mode="$2"
+	local checkout_ready_epoch
+	checkout_ready_epoch=$(date +%s) || return 1
 	print_success "Framework already up to date!"
 	local repo_version deployed_version
 	repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
@@ -485,7 +547,7 @@ _update_already_current() {
 	if [[ "$repo_version" != "$deployed_version" ]]; then
 		print_warning "Deployed agents ($deployed_version) don't match repo ($repo_version)"
 		print_info "Re-running incremental setup to sync agents..."
-		_run_update_setup_transaction "$update_output_mode" "$local_hash"
+		_run_update_setup_transaction "$update_output_mode" "$local_hash" "$checkout_ready_epoch"
 		return $?
 	fi
 	local stamp_file="$HOME/.aidevops/.deployed-sha" deployed_sha=""
@@ -496,7 +558,7 @@ _update_already_current() {
 	if git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$local_hash" -- .agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ .agents/worker-lifecycle/ setup.sh .agents/scripts/setup/modules/ aidevops.sh 2>/dev/null | grep . >/dev/null; then
 		print_warning "Deployed scripts drifted (${deployed_sha:0:7}→${local_hash:0:7})"
 		print_info "Re-running incremental setup to deploy latest scripts..."
-		_run_update_setup_transaction "$update_output_mode" "$local_hash" || return 1
+		_run_update_setup_transaction "$update_output_mode" "$local_hash" "$checkout_ready_epoch" || return 1
 	fi
 	_update_check_workflow_drift "$deployed_sha" "$local_hash"
 	return 0
@@ -516,6 +578,8 @@ _update_apply_remote() {
 		print_error "Updated HEAD does not match the fetched origin/main commit; refusing to run setup."
 		return 1
 	fi
+	local checkout_ready_epoch
+	checkout_ready_epoch=$(date +%s) || return 1
 	if [[ "$old_hash" != "$new_hash" ]]; then
 		if _update_repo_verify_files_changed "$old_hash" "$new_hash"; then _AIDEVOPS_UPDATE_RECONCILE_REPO_VERIFY=true; fi
 		_update_render_changelog "$old_hash" "$new_hash" "$current_version"
@@ -525,7 +589,7 @@ _update_apply_remote() {
 	_update_verify_signature
 	echo ""
 	print_info "Running incremental setup to apply changes (falls back to full setup if needed)..."
-	_run_update_setup_transaction "$update_output_mode" "$new_hash" || return 1
+	_run_update_setup_transaction "$update_output_mode" "$new_hash" "$checkout_ready_epoch" || return 1
 	new_version=$(get_version)
 	print_success "Updated to version $new_version (agents deployed)"
 	return 0
