@@ -360,6 +360,137 @@ _dlw_claim_slot_and_lock() {
 	return 0
 }
 
+#######################################
+# GH#40143: tier-unavailable markers. A canary exit 75/78 proves that no model
+# in the tier is selectable on this runner; later same-tier candidates would
+# spend the whole pre-dispatch gate ceremony (~30-40 s of GitHub reads) only
+# to fail the same canary. Markers live beside the canary state, hold
+# "<epoch>\t<tier_selection_unavailable line>", and expire after
+# PULSE_TIER_UNAVAILABLE_TTL_SECONDS (default 120; 0 disables deferral).
+#######################################
+_dlw_tier_unavailable_dir() {
+	printf '%s/tier-unavailable' "$(_dlw_headless_state_dir)"
+	return 0
+}
+
+# Print the last GH#40140 tier_selection_unavailable line read from stdin.
+_dlw_tier_selection_reasons_line() {
+	grep -Eo 'tier_selection_unavailable tier=[^ ]+ reasons=[^ ]+( hint=[^ ]+)?' | tail -n 1
+	return 0
+}
+
+_dlw_tier_unavailable_record() {
+	local tier="$1" reason_line="${2:-}" dir="" tmp=""
+	case "$tier" in simple | standard | thinking) ;; *) return 0 ;; esac
+	dir=$(_dlw_tier_unavailable_dir)
+	mkdir -p "$dir" 2>/dev/null || return 0
+	tmp=$(mktemp "${dir}/.${tier}.XXXXXX" 2>/dev/null) || return 0
+	if printf '%s\t%s\n' "$(date +%s)" "$reason_line" >"$tmp" 2>/dev/null; then
+		mv -f "$tmp" "${dir}/${tier}" 2>/dev/null || rm -f "$tmp"
+	else
+		rm -f "$tmp"
+	fi
+	return 0
+}
+
+_dlw_tier_unavailable_clear() {
+	local tier="$1"
+	case "$tier" in simple | standard | thinking) ;; *) return 0 ;; esac
+	rm -f "$(_dlw_tier_unavailable_dir)/${tier}" 2>/dev/null || true
+	return 0
+}
+
+# Print "<age>\t<reasons>" for a fresh marker. Returns 1 when absent or expired.
+_dlw_tier_unavailable_fresh() {
+	local tier="$1" file="" line="" stamp="" now="" ttl="${PULSE_TIER_UNAVAILABLE_TTL_SECONDS:-120}"
+	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=120
+	file="$(_dlw_tier_unavailable_dir)/${tier}"
+	[[ -f "$file" ]] || return 1
+	IFS= read -r line <"$file" || [[ -n "$line" ]] || return 1
+	stamp="${line%%$'\t'*}"
+	[[ "$stamp" =~ ^[0-9]+$ ]] || return 1
+	now=$(date +%s)
+	if [[ "$now" -lt "$stamp" || "$((now - stamp))" -ge "$ttl" ]]; then
+		return 1
+	fi
+	printf '%s\t%s\n' "$((now - stamp))" "${line#*$'\t'}"
+	return 0
+}
+
+# Tier policy only raises a tier before launch (simple -> standard body-shape
+# guard, self-hosting -> thinking), so the canary may run any tier above the
+# one that failed. Probe those locally with select (no model call) so the
+# deferral below can prove every reachable tier is unselectable.
+_dlw_tier_unavailable_probe_higher() {
+	local failed_tier="$1" tier="" above=0 probe_rc=0 probe_err="" reason_line=""
+	for tier in simple standard thinking; do
+		if [[ "$above" -eq 0 ]]; then
+			[[ "$tier" == "$failed_tier" ]] && above=1
+			continue
+		fi
+		_dlw_tier_unavailable_fresh "$tier" >/dev/null && continue
+		probe_rc=0
+		probe_err=$("$HEADLESS_RUNTIME_HELPER" select --role worker --tier "$tier" 2>&1 >/dev/null) || probe_rc=$?
+		if [[ "$probe_rc" -eq 75 || "$probe_rc" -eq 78 ]]; then
+			reason_line=$(printf '%s\n' "$probe_err" | _dlw_tier_selection_reasons_line) || reason_line=""
+			_dlw_tier_unavailable_record "$tier" "$reason_line"
+		elif [[ "$probe_rc" -eq 0 ]]; then
+			_dlw_tier_unavailable_clear "$tier"
+		fi
+	done
+	return 0
+}
+
+#######################################
+# GH#40143: defer a candidate before the dedup/eligibility gate ceremony when
+# its tier and every tier policy could raise it to are unselectable here.
+# A model_override pins a concrete model, so it defers only when that model is
+# one of the excluded candidates named by the cached reasons line.
+# Args: issue number, repo slug, issue meta JSON, repo path, issue title,
+#       prompt, model override
+# Returns: 0 defer (logged + counted), 1 proceed
+#######################################
+_dlw_tier_unavailable_defers_candidate() {
+	local issue_number="$1" repo_slug="$2" issue_meta_json="$3" repo_path="$4"
+	local issue_title="$5" prompt="$6" model_override="$7"
+	# Healthy path is one stat: every reachable tier set includes thinking.
+	_dlw_tier_unavailable_fresh thinking >/dev/null || return 1
+
+	local labels_csv="" early_tier="" tier="" cached="" age="" reason_line="" reached=0
+	[[ -n "$issue_meta_json" ]] || issue_meta_json='{}'
+	labels_csv=$(jq -r '[.labels[]?.name] | join(",")' <<<"$issue_meta_json" 2>/dev/null) || labels_csv=""
+	_dlw_resolve_dispatch_tier "$labels_csv" "$model_override" "$repo_path" "$issue_title" "$prompt"
+	early_tier="$_DLW_DISPATCH_MODEL_TIER"
+	case "$early_tier" in simple | standard | thinking) ;; *) return 1 ;; esac
+	for tier in simple standard thinking; do
+		[[ "$tier" == "$early_tier" ]] && reached=1
+		[[ "$reached" -eq 1 ]] || continue
+		cached=$(_dlw_tier_unavailable_fresh "$tier") || return 1
+		if [[ "$tier" == "$early_tier" ]]; then
+			age="${cached%%$'\t'*}"
+			reason_line="${cached#*$'\t'}"
+		fi
+	done
+
+	if [[ -n "$model_override" ]]; then
+		local reasons_key=" reasons="
+		[[ "$reason_line" == *"$reasons_key"* ]] || return 1
+		local candidates="${reason_line#*"$reasons_key"}"
+		candidates="${candidates%% *}"
+		case ";${candidates};" in
+		*";${model_override}=selectable;"*) return 1 ;;
+		*";${model_override}="*) ;;
+		*) return 1 ;;
+		esac
+	fi
+
+	if declare -F _dispatch_stats_increment >/dev/null 2>&1; then
+		_dispatch_stats_increment "dispatch_candidate_deferred_tier_unavailable"
+	fi
+	echo "[dispatch_with_dedup] Deferring #${issue_number} in ${repo_slug} — tier_unavailable_deferred tier=${early_tier} (canary proved no selectable model ${age}s ago); no gate, claim or worktree, retry next cycle (GH#40143)${reason_line:+ [${reason_line}]}" >>"$LOGFILE"
+	return 0
+}
+
 _dlw_canary_preflight() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -386,6 +517,11 @@ _dlw_canary_preflight() {
 		[[ "$canary_log_offset" =~ ^[0-9]+$ ]] || canary_log_offset=0
 	fi
 	env "${_canary_env[@]}" "${_canary_cmd[@]}" >>"$worker_log" 2>&1 || canary_rc=$?
+	if [[ "$canary_rc" -ne 75 && "$canary_rc" -ne 78 ]]; then
+		# GH#40143: only 75/78 prove the tier unselectable. Clearing on any
+		# other outcome is the safe direction: candidates take the full path.
+		_dlw_tier_unavailable_clear "$dispatch_model_tier"
+	fi
 	[[ "$canary_rc" -ne 0 ]] || return 0
 
 	if [[ "$canary_rc" -eq 75 || "$canary_rc" -eq 78 ]]; then
@@ -400,7 +536,10 @@ _dlw_canary_preflight() {
 		# output appended by this run) so pulse.log names the cause.
 		local selection_reasons=""
 		selection_reasons=$(tail -c +"$((canary_log_offset + 1))" "$worker_log" 2>/dev/null |
-			grep -Eo 'tier_selection_unavailable tier=[^ ]+ reasons=[^ ]+( hint=[^ ]+)?' | tail -n 1) || selection_reasons=""
+			_dlw_tier_selection_reasons_line) || selection_reasons=""
+		# GH#40143: let later candidates in this tier defer before their gates.
+		_dlw_tier_unavailable_record "$dispatch_model_tier" "$selection_reasons"
+		_dlw_tier_unavailable_probe_higher "$dispatch_model_tier"
 		pulse_stats_increment "worker_canary_no_selectable_model_count" 2>/dev/null || true
 		echo "[dispatch_with_dedup] Skipping #${issue_number} in ${repo_slug} — no selectable model in tier ${dispatch_model_tier} (${selection_state}); will retry next cycle (GH#38717)${selection_reasons:+ [${selection_reasons}]}" >>"$LOGFILE"
 		return 1

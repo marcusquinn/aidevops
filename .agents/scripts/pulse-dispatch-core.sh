@@ -1172,6 +1172,15 @@ dispatch_with_dedup() {
 	local issue_meta_json="" metadata_rc=0
 	_dispatch_load_and_validate_metadata "$issue_number" "$repo_slug" || metadata_rc=$?
 	[[ "$metadata_rc" -eq 0 ]] || return "$metadata_rc"
+	# GH#40143: a fresh canary proof that this candidate's tiers have no
+	# selectable model defers it before the gate ceremony. The deferral rc
+	# keeps its ranking and records no fast-fail, backoff or claim.
+	if declare -F _dlw_tier_unavailable_defers_candidate >/dev/null 2>&1 &&
+		_dlw_tier_unavailable_defers_candidate "$issue_number" "$repo_slug" "$issue_meta_json" \
+			"$repo_path" "$issue_title" "$prompt" "$model_override"; then
+		_ds_record "$issue_number" "$repo_slug" "tier_unavailable_defer" "$_ds_ceremony_t0"
+		return "${_DISPATCH_CYCLE_BUDGET_DEFER_RC:-75}"
+	fi
 	# GH#33341: evaluate runner-local capabilities before any claim or scope write.
 	# shellcheck source=runner-capability-helper.sh
 	source "${SCRIPT_DIR}/runner-capability-helper.sh"

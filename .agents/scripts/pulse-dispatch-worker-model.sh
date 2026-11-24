@@ -41,8 +41,6 @@ _dlw_resolve_tier_and_model() {
 	local issue_title="${4:-}"
 	local prompt="${5:-}"
 
-	_DLW_DISPATCH_TIER="$_DLW_STANDARD_TIER"
-	_DLW_DISPATCH_MODEL_TIER="$_DLW_STANDARD_TIER"
 	local issue_labels_csv
 	issue_labels_csv=$(printf '%s' "$issue_meta_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels_csv=""
 	_DLW_TRUSTED_ISSUE_PRIORITY=$(printf '%s' "$issue_meta_json" | jq -r '[.labels[]?.name | select(startswith("priority:"))][0] // "" | sub("^priority:"; "")' 2>/dev/null || true)
@@ -50,6 +48,33 @@ _dlw_resolve_tier_and_model() {
 	_DLW_TRUSTED_RELEASE_TYPE=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null | sed -nE 's/^\*\*Release scope:\*\*[[:space:]]*`?(patch|minor|major)`?[[:space:]]*$/\1/ip' | sed -n '1p')
 	# shellcheck disable=SC2016 # Backticks are literal optional Markdown delimiters.
 	_DLW_TRUSTED_DEPLOY_SCOPE=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null | sed -nE 's/^\*\*Deployment scope:\*\*[[:space:]]*`?(incremental|full)`?[[:space:]]*$/\1/ip' | sed -n '1p')
+	_dlw_resolve_dispatch_tier "$issue_labels_csv" "$model_override" "$repo_path" "$issue_title" "$prompt"
+
+	_DLW_SELECTED_MODEL=""
+	if [[ -n "$model_override" ]]; then
+		_DLW_SELECTED_MODEL="$model_override"
+	else
+		_DLW_SELECTED_MODEL=$("$HEADLESS_RUNTIME_HELPER" select --role worker --tier "$_DLW_DISPATCH_MODEL_TIER" 2>/dev/null) || _DLW_SELECTED_MODEL=""
+	fi
+	return 0
+}
+
+#######################################
+# Resolve the dispatch tier only, with no model selection or network call.
+# Shared by _dlw_resolve_tier_and_model and the GH#40143 pre-gate deferral.
+# Sets _DLW_DISPATCH_TIER and _DLW_DISPATCH_MODEL_TIER (see above).
+# Arguments: labels_csv, model_override, repo_path, issue_title, prompt
+#######################################
+_dlw_resolve_dispatch_tier() {
+	local issue_labels_csv="$1"
+	local model_override="$2"
+	local repo_path="${3:-}"
+	local issue_title="${4:-}"
+	local prompt="${5:-}"
+	local standard_tier="${_DLW_STANDARD_TIER:-standard}"
+
+	_DLW_DISPATCH_TIER="$standard_tier"
+	_DLW_DISPATCH_MODEL_TIER="$standard_tier"
 	local explicit_tier_label=0
 	if _dlw_has_explicit_tier_label "$issue_labels_csv"; then
 		explicit_tier_label=1
@@ -64,8 +89,8 @@ _dlw_resolve_tier_and_model() {
 		_DLW_DISPATCH_MODEL_TIER="thinking"
 		;;
 	tier:standard)
-		_DLW_DISPATCH_TIER="$_DLW_STANDARD_TIER"
-		_DLW_DISPATCH_MODEL_TIER="$_DLW_STANDARD_TIER"
+		_DLW_DISPATCH_TIER="$standard_tier"
+		_DLW_DISPATCH_MODEL_TIER="$standard_tier"
 		;;
 	tier:simple)
 		_DLW_DISPATCH_TIER="simple"
@@ -83,13 +108,6 @@ _dlw_resolve_tier_and_model() {
 			_DLW_DISPATCH_TIER="bundle"
 			_DLW_DISPATCH_MODEL_TIER="$bundle_tier"
 		fi
-	fi
-
-	_DLW_SELECTED_MODEL=""
-	if [[ -n "$model_override" ]]; then
-		_DLW_SELECTED_MODEL="$model_override"
-	else
-		_DLW_SELECTED_MODEL=$("$HEADLESS_RUNTIME_HELPER" select --role worker --tier "$_DLW_DISPATCH_MODEL_TIER" 2>/dev/null) || _DLW_SELECTED_MODEL=""
 	fi
 	return 0
 }

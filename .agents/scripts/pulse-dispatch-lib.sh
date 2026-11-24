@@ -1601,6 +1601,8 @@ _dispatch_floor_resume_parallel() {
 #   defer|<issue>|rc=75|reason=cycle_budget_floor — stage not started (GH#34428)
 #   defer|<issue>|rc=75|reason=launch_slot_full — every launch slot was held
 #        at the candidate's claim point; no claim written (t19116)
+#   defer|<issue>|rc=75|reason=tier_unavailable — a fresh canary proved no
+#        selectable model in any tier the candidate can reach (GH#40143)
 #
 # t19116: with the launch-slot gate (default), in-flight ceremonies are
 # evaluations, not reservations. max_parallel may exceed effective_slots
@@ -2012,8 +2014,15 @@ _dispatch_record_candidate_outcome() {
 		# GH#34428: a deferral is neither a launch nor a failure, so it stays
 		# out of the round's throttle denominator and product-unknown counts.
 		# t19116: launch_slot_full names a claim-time slot deferral.
+		# GH#40143: tier_unavailable names a pre-gate no-selectable-model defer;
+		# the stage ran in a child process, so its own log line carries it.
+		local defer_reason="${_DISPATCH_DEFER_REASON:-}" recent_lines=""
+		if [[ -z "$defer_reason" ]] && declare -F _dispatch_candidate_recent_lines >/dev/null 2>&1; then
+			recent_lines=$(_dispatch_candidate_recent_lines "$issue_num" "$repo_slug") || recent_lines=""
+			[[ "$recent_lines" != *"tier_unavailable_deferred"* ]] || defer_reason="tier_unavailable"
+		fi
 		printf '%s|%s|rc=%d|reason=%s|repo=%s|priority=%s\n' \
-			"$_DISPATCH_OUTCOME_DEFERRED" "$issue_num" "$result_code" "${_DISPATCH_DEFER_REASON:-cycle_budget_floor}" \
+			"$_DISPATCH_OUTCOME_DEFERRED" "$issue_num" "$result_code" "${defer_reason:-cycle_budget_floor}" \
 			"$repo_slug" "$priority" >>"$outcomes_file" || return 1
 	else
 		printf 'fail|%s|rc=%d|reason=%s|repo=%s|priority=%s|eligibility=%s\n' \
