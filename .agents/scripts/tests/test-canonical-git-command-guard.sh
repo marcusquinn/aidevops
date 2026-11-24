@@ -502,10 +502,12 @@ else
 fi
 # GH#40213: shared worktree metadata mutations stay blocked from linked worktrees.
 for wt_cmd in "git worktree repair" "git worktree prune" "git worktree move a b" "git worktree lock ."; do
-	if python3 "$GUARD" --cwd "$LINKED" --command "$wt_cmd" >/dev/null 2>&1; then
-		fail "blocks linked-worktree '$wt_cmd'"
-	else
+	wt_output=$(python3 "$GUARD" --cwd "$LINKED" --command "$wt_cmd" 2>&1)
+	wt_rc=$?
+	if [[ "$wt_rc" -eq 42 && "$wt_output" == *"BLOCKED by canonical Git guard"* ]]; then
 		pass "blocks linked-worktree '$wt_cmd'"
+	else
+		fail "blocks linked-worktree '$wt_cmd' (rc=$wt_rc output=$wt_output)"
 	fi
 done
 assert_allowed "allows linked-worktree git worktree list" "$LINKED" "git worktree list"
