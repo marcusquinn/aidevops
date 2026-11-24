@@ -419,7 +419,7 @@ def write_host_readable(handle, state, name, success):
     handle.truncate()
     handle.flush()
 
-def remember_readable(handle, state, name):
+def remember_readable(handle, state, name, checked_at=None):
     # Names and timestamps only. Any unreadable record is expired by now, and
     # unreadable() rewrites state without this map, so a lock clears it.
     ttl = readable_ttl()
@@ -427,7 +427,7 @@ def remember_readable(handle, state, name):
         return
     now = time.time()
     readable = fresh_readable(state.get('readable'), ttl, now)
-    readable[name] = now
+    readable[name] = now if checked_at is None else checked_at
     state['readable'] = readable
     handle.seek(0)
     json.dump({'readable': readable}, handle)
@@ -456,15 +456,16 @@ def check_secrets(secrets, cycle):
             with capability_state('readable.json' if cycle else '', secret_timeout) as (host, readable):
                 if name in fresh_readable(readable, readable_ttl(), time.time()):
                     reused += 1
-                    remember_readable(handle, state, name)
+                    remember_readable(handle, state, name, readable[name])
                     continue
                 reason = run_check(['aidevops', 'secret', 'check', name], f'name={name}', timeout=secret_timeout, secret=True)
                 write_host_readable(host, readable, name, not reason)
             # A timed-out lock falls back to the ordinary check, never an
-            # unbounded wait. Retry metadata publication with the same bound.
-            if host is None and cycle:
+            # unbounded wait. Only retry failure invalidation: publishing an
+            # unlocked success could resurrect a newer failure from the holder.
+            if host is None and cycle and reason:
                 with capability_state('readable.json', secret_timeout) as (host, readable):
-                    write_host_readable(host, readable, name, not reason)
+                    write_host_readable(host, readable, name, False)
             if reason.startswith('secret_unreadable '):
                 unreadable(name, handle, state)
             if reason:

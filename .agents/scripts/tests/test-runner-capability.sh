@@ -591,6 +591,16 @@ exit 0
     print('PASS different cycles reuse host names and timestamps without value bytes')
     passed += 1
 
+    verified_at = time.time() - 59
+    host_file.write_text(json.dumps({'GOOD': verified_at, 'OTHER': verified_at}))
+    result = host_check('host-original-ttl', {'AIDEVOPS_RUNNER_CAPABILITY_READABLE_TTL_SECONDS': '60'})
+    assert result.returncode == 0, result
+    copied_cycle = host_file.parent / (hashlib.sha256(b'host-original-ttl').hexdigest() + '.json')
+    assert json.loads(copied_cycle.read_text())['readable'] == {
+        'GOOD': verified_at, 'OTHER': verified_at}
+    print('PASS host reuse preserves original verification timestamps in cycle state')
+    passed += 1
+
     host_file.write_text(json.dumps({'GOOD': 0, 'OTHER': 0, 'bad-name': time.time()}))
     calls.write_text('')
     assert host_check('host-expired').returncode == 0
@@ -626,6 +636,28 @@ exit 0
         assert result.returncode == 0 and time.monotonic() - started < 6, result
         assert calls.read_text().splitlines() == ['GOOD', 'OTHER']
     print('PASS host lock timeout falls back to bounded direct checks')
+    passed += 1
+
+    # The lock holder invalidates while the unlocked fallback is running.
+    # That fallback must not publish an older positive after the failure.
+    calls.write_text('')
+    with host_file.open('r+') as locked:
+        fcntl.flock(locked, fcntl.LOCK_EX)
+        process = host_check('host-fallback-race',
+                             {'AIDEVOPS_RUNNER_CAPABILITY_SECRET_TIMEOUT_SECONDS': '1',
+                              'CHECK_DELAY': '0.5'}, parallel=True)
+        deadline = time.monotonic() + 5
+        while not calls.read_text():
+            assert time.monotonic() < deadline, 'fallback check did not start'
+            time.sleep(0.02)
+        locked.seek(0)
+        locked.write('{}')
+        locked.truncate()
+        locked.flush()
+    stdout, stderr = process.communicate(timeout=5)
+    assert process.returncode == 0, (stdout, stderr)
+    assert 'GOOD' not in json.loads(host_file.read_text())
+    print('PASS unlocked fallback success cannot resurrect an invalidated host entry')
     passed += 1
 
     host_file.chmod(0o644)
