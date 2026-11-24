@@ -114,3 +114,32 @@ group in the table: inspect current sourced modules and missing companion
 copies. Apply integration-scope recovery before adding target paths to the
 canonical issue scope. Do not close GH#40176 or turn this first unit into a
 closing PR while the aggregate criteria remain open.
+
+### Bounded continuation verification
+
+The continuation found another inherited-environment dependency in core-layout:
+setting only HOME still let `AIDEVOPS_AGENTS_DIR` select the runner installation.
+With inherited Actions/worker identity, all nine assertions failed because the
+disposable installation was not populated. Bind `AIDEVOPS_AGENTS_DIR` to the
+fixture directory in both helper subprocesses, matching manifest-index. After
+the change, core-layout passes 9/9 with the same parent environment.
+
+Re-executed with `GITHUB_ACTIONS=true FULL_LOOP_HEADLESS=true
+AIDEVOPS_WORKER_ID=fixture-parent`: merge-flag passes 3/3, manifest-index passes
+5/5, and command-policy reports 224 assertions with the same three failures
+documented above. All worker signing restrictions and the interactive signing
+assertion pass. Bash syntax and diff whitespace checks pass. Local ShellCheck
+still cannot locate its real binary; the existing PR's
+`Code Quality Analysis / ShellCheck (ubuntu-latest)` job passed for checkpoint
+`4d00a3ad01` and covers the continuation when pushed. The existing gh-shim suite
+exits 2 after its first pass-through heading on this runner, so this continuation
+does not claim a new passing external-write guard run or weaken that guard.
+
+The in-scope fixture repair is complete, but the aggregate acceptance remains
+unmet: the other 79 artifact regressions are not individually accounted for.
+The continuation's ready transition requires a closing reference to GH#40176;
+that would misrepresent this partial repair as resolving the aggregate. Retain
+the draft and request a scope/closure decision instead. Options: authorize this
+repair as a non-closing ready PR (recommended), or explicitly extend the assigned
+scope to account for the remaining inventory before using a closing reference.
+No production guard changes are needed for either option.

@@ -123,7 +123,8 @@ assert_path() {
 test_sync_preserves_core_layout() {
 	local output=""
 	local status=0
-	output=$(HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/agent-sources-helper.sh" sync 2>&1) || status=$?
+	# Keep inherited worker installation overrides out of the disposable HOME.
+	output=$(AIDEVOPS_AGENTS_DIR="$TEST_HOME/.aidevops/agents" HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/agent-sources-helper.sh" sync 2>&1) || status=$?
 	if [[ "$status" -ne 0 ]]; then
 		print_result "sync core layout" 1 "$output"
 		return 0
@@ -156,7 +157,7 @@ test_sync_preserves_core_layout() {
 test_index_discovers_core_layout() {
 	local output=""
 	local status=0
-	output=$(HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/subagent-index-helper.sh" generate 2>&1) || status=$?
+	output=$(AIDEVOPS_AGENTS_DIR="$TEST_HOME/.aidevops/agents" HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/subagent-index-helper.sh" generate 2>&1) || status=$?
 	if [[ "$status" -ne 0 ]]; then
 		print_result "generate subagent index" 1 "$output"
 		return 0
