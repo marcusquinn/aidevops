@@ -36,11 +36,13 @@ reboot-killed spawns from 17:05–17:27.
   spawn look-back, so a worker that finished before the window still uses up
   its spawn. A new census series records each `Dispatch_capacity` round's
   `active_workers`, which is Pulse's own `ps` count, and `simultaneous_target_final`.
-- `pulse_throughput_report.py`: new `slot_occupancy` (paired plus open
-  intervals). Each open interval ends at the earliest of: the next same-issue
-  spawn, the longest paired runtime, the latest host boot (read from a clock
-  that keeps counting during sleep), or now. `slot_occupancy_paired_only` keeps
-  its keys. New `slot_occupancy_census`.
+- `pulse_throughput_workers.py` (new; pairing moved here from the report to
+  stay under the Qlty complexity ratchet): `slot_occupancy` counts paired plus
+  open intervals. Each open interval ends at the earliest of: the next
+  same-issue spawn, the longest paired runtime, the latest host boot (read from
+  a clock that keeps counting during sleep), or now.
+- `pulse_throughput_report.py`: `slot_occupancy_paired_only` keeps its keys.
+  Adds `slot_occupancy` and `slot_occupancy_census`.
 - `pulse_throughput_metrics.py`: `census_metrics` carries each census forward
   for at most 600 s and reports coverage plus the mean and minimum of the
   final target.
@@ -52,6 +54,7 @@ reboot-killed spawns from 17:05–17:27.
 - `.agents/scripts/pulse_throughput_events.py`
 - `.agents/scripts/pulse_throughput_logs.py`
 - `.agents/scripts/pulse_throughput_metrics.py`
+- `.agents/scripts/pulse_throughput_workers.py` (new)
 
 ## Acceptance
 

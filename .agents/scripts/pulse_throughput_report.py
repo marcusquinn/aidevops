@@ -13,23 +13,15 @@ subprocesses, network access or file writes. Use the shell wrapper
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import argparse
-from bisect import bisect_left
 from datetime import datetime, timedelta, timezone
 import json
-import math
 import os
 from pathlib import Path
-import statistics
-import sys
-import time
 
 from pulse_throughput_events import pulse_metrics
 from pulse_throughput_logs import CEREMONY_STAGES, ceremony_intervals, dispatch_metrics, iso_time, runtime_exits
-from pulse_throughput_metrics import (census_metrics, concurrency_metrics, sample_intervals, summary,
-                                      supervisor_metrics)
-
-# Shared with dispatch_metrics/pulse_metrics look-back and look-ahead bounds.
-PAIRING_WINDOW_SECONDS = 21600
+from pulse_throughput_metrics import census_metrics, concurrency_metrics, summary, supervisor_metrics
+from pulse_throughput_workers import occupancy_metrics
 
 
 def current_worker_limit(log_dir):
@@ -42,77 +34,11 @@ def current_worker_limit(log_dir):
         return None
 
 
-def pair_workers(spawns, exits, since, until):
-    """Pair each exit with the latest earlier same-issue spawn.
-
-    Exits before the window still consume their spawn, so open_intervals does
-    not mistake an already-finished worker for a running one.
-    """
-    intervals = []
-    paired = set()
-    runtimes = []
-    longest = 0
-    for timestamp, issue in sorted(exits):
-        candidates = spawns.get(issue, [])
-        index = bisect_left(candidates, timestamp) - 1
-        if index < 0:
-            continue
-        start = candidates[index]
-        key = (issue, start)
-        if timestamp - start > PAIRING_WINDOW_SECONDS or key in paired:
-            continue
-        paired.add(key)
-        longest = max(longest, timestamp - start)
-        if since <= timestamp < until:
-            runtimes.append((timestamp - start) / 60)
-        if start < until and timestamp > since:
-            intervals.append((start, timestamp))
-    return intervals, runtimes, paired, longest or PAIRING_WINDOW_SECONDS
-
-
-def host_boot_time(now):
-    """Latest boot from a clock that keeps counting during sleep, else None."""
-    clock = getattr(time, "CLOCK_BOOTTIME", None)
-    if clock is None and sys.platform == "darwin":
-        clock = time.CLOCK_MONOTONIC  # macOS: continues while asleep.
-    try:
-        return now - time.clock_gettime(clock) if clock is not None else None
-    except OSError:
-        return None
-
-
-def open_intervals(spawns, paired, since, until, now, bound, boot):
-    """Spawns without an exit record: still running, or lost without one.
-
-    Each ends at the next same-issue spawn, the longest paired runtime, a later
-    host boot, or now.
-    """
-    inferred = []
-    for issue, starts in spawns.items():
-        for index, start in enumerate(starts):
-            if start >= until or (issue, start) in paired:
-                continue
-            following = starts[index + 1] if index + 1 < len(starts) else math.inf
-            rebooted = boot if boot is not None and start < boot else math.inf
-            end = min(following, start + bound, rebooted, now)
-            if end > since and end > start:
-                inferred.append((start, end))
-    return inferred
-
-
-def occupancy_summary(intervals, since, until):
-    samples = list(sample_intervals(intervals, since, until, 300)) if intervals else []
-    return {"sample_seconds": 300, "mean": statistics.mean(samples) if samples else None,
-            "max": max(samples) if samples else None}
-
-
 def report(log_dir, since, until, now):
     spawns, spawn_count, costs = dispatch_metrics(log_dir, since, until)
     exits, caps, census, supervisor, pulse_seen, refills = pulse_metrics(log_dir, since, until)
     exits += runtime_exits(log_dir, since, until)
-    intervals, runtimes, paired, bound = pair_workers(spawns, exits, since, until)
-    boot = host_boot_time(now)
-    inferred = open_intervals(spawns, paired, since, until, now, bound, boot)
+    runtimes, occupancy, paired_only = occupancy_metrics(spawns, exits, (since, until), now)
     ceremonies, timing_seen = ceremony_intervals(log_dir, since, until)
     worker_limit = current_worker_limit(log_dir)
     return {
@@ -120,12 +46,8 @@ def report(log_dir, since, until, now):
                    "until": datetime.fromtimestamp(until, timezone.utc).isoformat()},
         "spawns": spawn_count,
         "worker_runtime_minutes": summary(runtimes, spawn_count is not None and pulse_seen),
-        "slot_occupancy": {**occupancy_summary(intervals + inferred, since, until),
-                           "open_intervals": len(inferred), "open_interval_bound_seconds": bound,
-                           "host_boot": datetime.fromtimestamp(round(boot), timezone.utc).isoformat() if boot else None,
-                           "configured_worker_limit_current": worker_limit},
-        "slot_occupancy_paired_only": {**occupancy_summary(intervals, since, until),
-                                       "configured_worker_limit_current": worker_limit},
+        "slot_occupancy": {**occupancy, "configured_worker_limit_current": worker_limit},
+        "slot_occupancy_paired_only": {**paired_only, "configured_worker_limit_current": worker_limit},
         "slot_occupancy_census": census_metrics(census, since, until),
         "ceremony_seconds": {stage: summary(costs[stage], spawn_count is not None) for stage in CEREMONY_STAGES},
         "ceremony_concurrency": concurrency_metrics(ceremonies, timing_seen, caps, since, until),
