@@ -238,11 +238,12 @@ readonly OPENCODE_PIN_LAST_CANARY_DATE="2026-11-17"
 readonly OPENCODE_PIN_LAST_CANARY_RESULT="pass:1.19.6"
 readonly OPENCODE_PIN_REVIEW_DEADLINE="2026-11-24"
 readonly OPENCODE_PLUGIN_TESTED_VERSION="1.19.6"
-# GH#38816: V2 promoted 2.3.0 from 2.2.7 after isolated Linux-headless
-# baseline and candidate probes passed with no provider-visible native-tool diff.
-# V2 exposes plugin tools through execute; both probes passed the plugin health check.
-readonly OPENCODE_V2_PINNED_VERSION="2.3.0"
-readonly OPENCODE_V2_PLUGIN_TESTED_VERSION="2.3.0"
+# GH#40199: V2 promoted 2.4.1 from 2.3.0 after isolated Linux-headless
+# baseline and candidate probes passed, including execute and plugin health checks.
+# Native diff: experimental_image_generate replaced by generate_image; generate_video added.
+# V2 exposes plugin tools through execute; plugin packages remain unchanged.
+readonly OPENCODE_V2_PINNED_VERSION="2.4.1"
+readonly OPENCODE_V2_PLUGIN_TESTED_VERSION="2.4.1"
 
 aidevops_opencode_profile_id() {
 	local requested="${AIDEVOPS_OPENCODE_PROFILE:-}"
@@ -274,9 +275,9 @@ aidevops_opencode_profile_value() {
 		v2:pinReason) printf 'Initial OpenCode V2 compatibility qualification\n' ;;
 		v2:pinPlatform) printf 'Linux\n' ;;
 		v2:pinRuntimeMode) printf 'headless\n' ;;
-		v2:lastCanaryDate) printf '2026-11-17\n' ;;
-		v2:lastCanaryResult) printf 'pass:2.3.0\n' ;;
-		v2:reviewDeadline) printf '2026-11-24\n' ;;
+		v2:lastCanaryDate) printf '2026-11-24\n' ;;
+		v2:lastCanaryResult) printf 'pass:2.4.1\n' ;;
+		v2:reviewDeadline) printf '2026-12-01\n' ;;
 		v1:package) printf 'opencode-ai\n' ;;
 		v1:binary) printf 'opencode\n' ;;
 		v1:pluginEntry) printf 'index.mjs\n' ;;
