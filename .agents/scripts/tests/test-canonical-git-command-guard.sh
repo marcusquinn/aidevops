@@ -295,6 +295,31 @@ else
 fi
 assert_blocked "blocks marker repository outside temp roots" \
 	"git -C '$NON_TEMP_MARKED_REPO' add managed.txt"
+# GH#40211: a marker-carrying dependency clone (Composer source package) nested in a
+# registered repo's linked worktree is not canonical; a forged parent .git is.
+DEPS_LINKED="${NON_TEMP_ROOT}/deps-linked"
+git -C "$REPO" worktree add -q -b feature/deps "$DEPS_LINKED"
+DEPS_PACKAGE="${DEPS_LINKED}/vendor/acme/pkg"
+mkdir -p "$DEPS_PACKAGE"
+git -C "$DEPS_PACKAGE" init -q -b main
+printf '{}\n' >"${DEPS_PACKAGE}/.aidevops.json"
+git -C "$DEPS_PACKAGE" remote add origin "https://example.invalid/acme/pkg.git"
+assert_allowed "allows remote set-url in a marker package nested in a registered linked worktree" "$DEPS_PACKAGE" \
+	"git remote set-url origin https://example.invalid/acme/pkg-mirror.git"
+assert_allowed "allows checkout in a marker package nested in a registered linked worktree" "$DEPS_LINKED" \
+	"git -C '$DEPS_PACKAGE' checkout -q -b composer"
+FORGED_PARENT="${NON_TEMP_ROOT}/forged-parent"
+FORGED_METADATA="${NON_TEMP_ROOT}/forged-metadata/worktrees/forged"
+mkdir -p "$FORGED_METADATA" "${FORGED_PARENT}/pkg"
+printf 'gitdir: %s\n' "$FORGED_METADATA" >"${FORGED_PARENT}/.git"
+printf '%s/.git\n' "$FORGED_PARENT" >"${FORGED_METADATA}/gitdir"
+printf '%s/.git\n' "$REPO" >"${FORGED_METADATA}/commondir"
+git -C "${FORGED_PARENT}/pkg" init -q -b main
+printf '{}\n' >"${FORGED_PARENT}/pkg/.aidevops.json"
+assert_blocked "blocks marker repository below a forged linked-worktree parent" \
+	"git -C '${FORGED_PARENT}/pkg' remote add origin https://example.invalid/x.git"
+git -C "$REPO" worktree remove --force "$DEPS_LINKED"
+git -C "$REPO" branch -q -D feature/deps
 assert_blocked "blocks git-dir-only mutation targeting a managed canonical repository" \
 	"git -C '$PASSWORD_REPO' --git-dir='$REPO/.git' update-ref refs/heads/blocked '$INITIAL_HEAD'"
 assert_blocked "blocks git-dir-only mutation targeting a registered separate Git directory" \

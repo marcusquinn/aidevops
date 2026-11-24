@@ -55,15 +55,39 @@ def _gitdir_target(root: Path) -> Path | None:
         return None
 
 
-def is_managed_root(repo_root: str) -> bool:
-    root = Path(repo_root).resolve()
-    git_dir = _gitdir_target(root)
-    if git_dir and linked_worktree_root(str(git_dir)) == root:
+def _registered_linked_worktree(path: Path) -> bool:
+    """Whether path is a linked worktree whose metadata a registered repo owns."""
+    git_dir = _gitdir_target(path)
+    if not git_dir or linked_worktree_root(str(git_dir)) != path:
         return False
-    if root in _registered_roots():
+    try:
+        marker = (git_dir / "commondir").read_text(encoding="utf-8").strip()
+        common = Path(marker).expanduser()
+        if not common.is_absolute():
+            common = git_dir / common
+        common = common.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    # The metadata must live in the registered repo's own worktrees directory,
+    # so a forged .git file or commondir pointer cannot borrow its identity.
+    return git_dir.parent == common / "worktrees" and is_registered_common_dir(
+        str(common)
+    )
+
+
+def _inside_registered_linked_worktree(root: Path) -> bool:
+    """Whether root is nested below a linked worktree of a registered repo."""
+    return any(_registered_linked_worktree(parent) for parent in root.parents)
+
+
+def _exempt_unregistered_marker_root(root: Path) -> bool:
+    """Whether an unregistered .aidevops.json marker root is not canonical."""
+    #aidevops:trust-boundary: an unregistered marker repo nested inside a session-owned
+    # linked worktree of a registered repo (e.g. a Composer source package) is a
+    # dependency checkout, not a canonical one (GH#40211). Registered roots and
+    # markers outside linked worktrees stay protected.
+    if _inside_registered_linked_worktree(root):
         return True
-    if not (root / ".aidevops.json").is_file():
-        return False
     temp_dirs = (
         tempfile.gettempdir(),
         os.environ.get("TMPDIR", tempfile.gettempdir()),
@@ -73,8 +97,20 @@ def is_managed_root(repo_root: str) -> bool:
     for temp_dir in temp_dirs:
         resolved_temp = Path(temp_dir).expanduser().resolve()
         if root != resolved_temp and root.is_relative_to(resolved_temp):
-            return False
-    return True
+            return True
+    return False
+
+
+def is_managed_root(repo_root: str) -> bool:
+    root = Path(repo_root).resolve()
+    git_dir = _gitdir_target(root)
+    if git_dir and linked_worktree_root(str(git_dir)) == root:
+        return False
+    if root in _registered_roots():
+        return True
+    if not (root / ".aidevops.json").is_file():
+        return False
+    return not _exempt_unregistered_marker_root(root)
 
 
 def is_registered_common_dir(common_dir: str) -> bool:
