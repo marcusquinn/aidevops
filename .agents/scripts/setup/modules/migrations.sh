@@ -98,7 +98,8 @@ cleanup_legacy_aidevops_temp_artifacts() {
 	local max_age="${AIDEVOPS_TEMP_MAX_AGE_SECONDS:-604800}"
 	[[ "$max_age" =~ ^[0-9]+$ ]] || max_age=604800
 	# Round up so minute granularity can delay cleanup, never delete early.
-	local max_age_minutes=$(((max_age + 59) / 60))
+	# The validated seconds are decimal, including overrides with leading zeroes.
+	local max_age_minutes=$(((10#$max_age + 59) / 60))
 	local uid
 	uid=$(id -u)
 	local cleaned=0
