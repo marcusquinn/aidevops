@@ -4,6 +4,30 @@
 # REST-first recovery reads; GraphQL has an independent rate-limit budget.
 # Callers retain their stage deadlines and treat every failed read as incomplete.
 
+# Read a small queue window in one round trip. No search index, comments or
+# persistent cache: any partial/error response rejects the entire window.
+terminal_blocker_fetch_issue_batch() {
+	local query="query {" response="" index=0
+	while [[ "$#" -ge 2 ]]; do
+		local repo="$1" issue="$2"
+		shift 2
+		[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$issue" =~ ^[1-9][0-9]*$ ]] || return 1
+		query+="r${index}:repository(owner:\"${repo%%/*}\",name:\"${repo#*/}\"){nameWithOwner i:issue(number:${issue}){number title body state updatedAt labels(first:100){nodes{name}pageInfo{hasNextPage}}}}"
+		index=$((index + 1))
+	done
+	[[ "$#" -eq 0 && "$index" -gt 0 && "$index" -le 4 ]] || return 1
+	response=$(gh api graphql -f query="${query}}" 2>/dev/null) || return 1
+	printf '%s' "$response" | jq -ce --argjson expected "$index" '
+		select((.errors // [] | length) == 0) | .data | objects |
+		select(length == $expected) |
+		select(all(.[]; . != null and (.i | type) == "object" and
+			(.i.labels.pageInfo.hasNextPage == false))) |
+		[.[] | {key:(.nameWithOwner | ascii_downcase | sub("/"; "--")) + "--" + (.i.number | tostring),
+			value:(.i | {number,title,body,state:(.state | ascii_downcase),updated_at:.updatedAt,labels:.labels.nodes})}] |
+		from_entries' || return 1
+	return 0
+}
+
 terminal_blocker_fetch_issue() {
 	local repo="$1" issue="$2" response=""
 	if response=$(gh api "repos/${repo}/issues/${issue}" 2>/dev/null); then

@@ -954,7 +954,7 @@ _tbr_skip_decided_unchanged() {
 #######################################
 _tbr_check_entry() {
 	local file="$1"
-	local mode="${2:-}" updated_at=""
+	local mode="${2:-}" batch_file="${3:-}" updated_at=""
 	local repo="" issue="" reason="" opened_at="" key="" intake=""
 	_tbr_entry_registered "$file" || return $?
 	repo=$(jq -r '.repo // ""' "$file" 2>/dev/null) || return 1
@@ -978,7 +978,14 @@ _tbr_check_entry() {
 	fi
 	local issue_json="" state=""
 	printf 'blocker-recovery: checking stage=entry_issue repo=%s issue=%s\n' "$repo" "$issue" >&2
-	issue_json=$(terminal_blocker_fetch_issue "$repo" "$issue") || return 2
+	# Only the supervisor queue passes a same-window batch. All other callers,
+	# especially mechanical release/rearm reads, continue to fetch individually.
+	if [[ -n "$batch_file" ]]; then
+		issue_json=$(jq -ce --arg key "$key" '.[$key | ascii_downcase] | objects' "$batch_file" 2>/dev/null) || issue_json=""
+	fi
+	if [[ -z "$issue_json" ]]; then
+		issue_json=$(terminal_blocker_fetch_issue "$repo" "$issue") || return 2
+	fi
 	state=$(printf '%s' "$issue_json" | jq -r '.state // ""')
 	[[ "$state" == open || "$state" == closed ]] || return 2
 	if [[ "$state" != "open" ]]; then
@@ -1110,6 +1117,7 @@ tbr_main() {
 		local stage_action="${1:-}"
 		shift || return 2
 		case "$stage_action" in
+		terminal_blocker_fetch_issue_batch) "$stage_action" "$@" ;;
 		_tbr_self_login | _tbr_check_entry | tbr_seed | tbr_discover | tbr_discover_unclassified | tbr_discover_holds) "$stage_action" "$@" ;;
 		*) return 2 ;;
 		esac

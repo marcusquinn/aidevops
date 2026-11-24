@@ -179,6 +179,9 @@ _tbr_pending_scan_tier() {
 				fi
 			fi
 			self_resolved=1
+			if [[ "$mode" != --rearm-only ]]; then
+				_tbr_pending_prefetch "$file"
+			fi
 			if [[ "$hold" -eq 0 ]]; then
 				before="$saved"
 				_tbr_save_cursor "$tier_cursor_name" "${file##*/}" || return 2
@@ -187,13 +190,13 @@ _tbr_pending_scan_tier() {
 			observed+="${file##*/};"
 			rc=0
 			if [[ "$mode" == "--count" ]]; then
-				_tbr_run_stage entry _tbr_check_entry "$file" >/dev/null || rc=$?
+				_tbr_run_stage entry _tbr_check_entry "$file" "" "$issue_batch_file" >/dev/null || rc=$?
 				if [[ "$rc" -eq 0 && "$hold" -eq 0 ]]; then
 					_tbr_restore_cursor "$tier_cursor_name" "$before" || return 2
 					hold=1
 				fi
 			else
-				_tbr_run_stage entry _tbr_check_entry "$file" "$entry_mode" || rc=$?
+				_tbr_run_stage entry _tbr_check_entry "$file" "$entry_mode" "$issue_batch_file" || rc=$?
 			fi
 			[[ "$rc" -ne 0 ]] || count=$((count + 1))
 			[[ "$rc" -lt 2 ]] || incomplete=1
@@ -205,6 +208,49 @@ _tbr_pending_scan_tier() {
 			fi
 		done
 	done
+	return 0
+}
+
+# Prefetch at most four upcoming entries in this tier's existing rotation. A
+# failed or truncated batch falls back to individual reads; it never advances
+# a cursor, observes an entry or supplies absence evidence. Dynamic scan scope.
+_tbr_pending_prefetch() {
+	local current="$1" candidate="" name="" refs="" repo="" issue="" round=0 token=""
+	local -a args=()
+	[[ -n "$issue_batch_file" && "$issue_batch_failed" -eq 0 ]] || return 0
+	if jq -e --arg name "${current##*/}" '
+		keys | any(. + ".json" == ($name | ascii_downcase))' "$issue_batch_file" >/dev/null 2>&1; then
+		return 0
+	fi
+	for round in 1 2; do
+		for candidate in "${TBR_ROOT}"/queue/*.json; do
+			[[ -f "$candidate" ]] || continue
+			name="${candidate##*/}"
+			if [[ "$round" -eq 1 ]]; then
+				[[ "$candidate" < "$current" ]] && continue
+			else
+				[[ "$candidate" < "$current" ]] || continue
+			fi
+			token=";${candidate##*/};"
+			case "$observed" in *"$token"*) continue ;; esac
+			case "$decided_set" in
+			*"$token"*) [[ "$tier" -eq 1 ]] || continue ;;
+			*) [[ "$tier" -eq 0 ]] || continue ;;
+			esac
+			refs=$(jq -r '[.repo, (.issue | tostring)] | @tsv' "$candidate" 2>/dev/null) || continue
+			IFS=$'\t' read -r repo issue <<<"$refs"
+			_tbr_valid_ref "$repo" "$issue" || continue
+			args+=("$repo" "$issue")
+			[[ "${#args[@]}" -lt 8 ]] || break
+		done
+		[[ "${#args[@]}" -lt 8 ]] || break
+	done
+	if [[ "${#args[@]}" -gt 0 ]]; then
+		if ! _tbr_run_stage issue_batch terminal_blocker_fetch_issue_batch "${args[@]}" >"$issue_batch_file"; then
+			: >"$issue_batch_file"
+			issue_batch_failed=1
+		fi
+	fi
 	return 0
 }
 
@@ -279,6 +325,15 @@ _tbr_pending_scan_changed() {
 # move the cursor past it. Runs inside tbr_pending's scope; returns 1 when a
 # cursor or marker could not be written.
 _tbr_pending_scan_queue() {
+	local issue_batch_file="" issue_batch_failed=0 result=0
+	# Per-pass scratch only; no persisted freshness assumption or live decisions.
+	issue_batch_file=$(mktemp "${TBR_ROOT}/.issue-batch.XXXXXX") || return 1
+	_tbr_pending_scan_queue_inner || result=$?
+	rm -f "$issue_batch_file" || return 1
+	return "$result"
+}
+
+_tbr_pending_scan_queue_inner() {
 	local tier=0 scan_rc=0 tier0_rc=0 count_before="$count" tier0_counted=0 decided_set=";" tier0_deadline="" parked=0
 	_tbr_pending_scan_changed || return 1
 	_tbr_pending_classify || return 1
