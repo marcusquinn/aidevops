@@ -302,10 +302,10 @@ PY
 _runner_capability_python_cycle() {
 	cat <<'PY'
 @contextlib.contextmanager
-def cycle_state(cycle):
+def capability_state(filename, timeout=None):
     # Pulse watchdogs isolate candidates in subshells. Share metadata, not values,
     # under an exclusive lock so concurrent candidates cannot decrypt twice.
-    if not cycle:
+    if not filename:
         yield None, {}
         return
     base = Path(os.environ.get('AIDEVOPS_TEMP_DIR') or
@@ -318,20 +318,37 @@ def cycle_state(cycle):
     # Expired cycle files contain only names/counts; retain a day for diagnostics.
     for old in directory.glob('*.json'):
         try:
-            if not old.is_symlink() and old.stat().st_mtime < time.time() - 86400:
+            if old.name != 'readable.json' and not old.is_symlink() and old.stat().st_mtime < time.time() - 86400:
                 old.unlink()
         except FileNotFoundError:
             pass
-    path = directory / (hashlib.sha256(cycle.encode()).hexdigest() + '.json')
+    path = directory / filename
     fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'r+') as handle:
         info = os.fstat(handle.fileno())
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
             unmet('cycle_state_unreadable')
-        fcntl.flock(handle, fcntl.LOCK_EX)
+        if timeout is None:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+        else:
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        yield None, {}
+                        return
+                    time.sleep(min(0.05, remaining))
         data = handle.read()
         state = json.loads(data) if data else {}
         yield handle, state
+
+def cycle_state(cycle):
+    filename = hashlib.sha256(cycle.encode()).hexdigest() + '.json' if cycle else ''
+    return capability_state(filename)
 
 def unreadable(name, handle, state, cached=False):
     count = state.get('deferred', 0) + 1
@@ -383,12 +400,26 @@ def fresh_readable(readable, ttl, now):
     if not isinstance(readable, dict) or not ttl:
         return {}
     return {name: at for name, at in readable.items()
-            if isinstance(at, (int, float)) and not isinstance(at, bool) and 0 <= now - at < ttl}
+            if re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', name) and
+            isinstance(at, (int, float)) and not isinstance(at, bool) and 0 <= now - at < ttl}
 
 def cached_readable(state, name):
     return name in fresh_readable(state.get('readable'), readable_ttl(), time.time())
 
-def remember_readable(handle, state, name):
+def write_host_readable(handle, state, name, success):
+    if handle is None:
+        return
+    readable = fresh_readable(state, readable_ttl(), time.time())
+    if success and readable_ttl():
+        readable[name] = time.time()
+    else:
+        readable.pop(name, None)
+    handle.seek(0)
+    json.dump(readable, handle)
+    handle.truncate()
+    handle.flush()
+
+def remember_readable(handle, state, name, checked_at=None):
     # Names and timestamps only. Any unreadable record is expired by now, and
     # unreadable() rewrites state without this map, so a lock clears it.
     ttl = readable_ttl()
@@ -396,7 +427,7 @@ def remember_readable(handle, state, name):
         return
     now = time.time()
     readable = fresh_readable(state.get('readable'), ttl, now)
-    readable[name] = now
+    readable[name] = now if checked_at is None else checked_at
     state['readable'] = readable
     handle.seek(0)
     json.dump({'readable': readable}, handle)
@@ -419,7 +450,22 @@ def check_secrets(secrets, cycle):
             if cached_readable(state, name):
                 reused += 1
                 continue
-            reason = run_check(['aidevops', 'secret', 'check', name], f'name={name}', timeout=secret_timeout, secret=True)
+            # Pulse cycles share positive metadata on this host, but never share
+            # locked-store verdicts. Keep the lock through the decrypt so a
+            # concurrent cycle reuses its result instead of loading gpg-agent.
+            with capability_state('readable.json' if cycle else '', secret_timeout) as (host, readable):
+                if name in fresh_readable(readable, readable_ttl(), time.time()):
+                    reused += 1
+                    remember_readable(handle, state, name, readable[name])
+                    continue
+                reason = run_check(['aidevops', 'secret', 'check', name], f'name={name}', timeout=secret_timeout, secret=True)
+                write_host_readable(host, readable, name, not reason)
+            # A timed-out lock falls back to the ordinary check, never an
+            # unbounded wait. Only retry failure invalidation: publishing an
+            # unlocked success could resurrect a newer failure from the holder.
+            if host is None and cycle and reason:
+                with capability_state('readable.json', secret_timeout) as (host, readable):
+                    write_host_readable(host, readable, name, False)
             if reason.startswith('secret_unreadable '):
                 unreadable(name, handle, state)
             if reason:

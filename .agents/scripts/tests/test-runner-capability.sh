@@ -6,12 +6,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 python3 - "$SCRIPT_DIR" <<'PY'
 import json
 import hashlib
+import fcntl
 import os
 import re
 import socket
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 scripts = Path(sys.argv[1])
@@ -30,6 +32,8 @@ if [[ "$1 $2" == 'secret get' ]]; then
 fi
 [[ "$1 $2" == 'secret check' ]] || exit 99
 [[ -z "${CHECK_CALLS:-}" ]] || printf '%s\\n' "$3" >>"$CHECK_CALLS"
+[[ -z "${CHECK_DELAY:-}" ]] || sleep "$CHECK_DELAY"
+[[ -z "${CHECK_STATUS:-}" ]] || exit "$CHECK_STATUS"
 [[ "$3" != SLOW ]] || exec sleep 10
 [[ "$3" != TIMEDOUT ]] || exit 5
 [[ "$3" != LOCKED ]] || exit 3
@@ -558,6 +562,117 @@ exit 0
     assert direct_cycle('GOOD').returncode == 0
     assert calls.read_text().splitlines() == ['TIMEDOUT', 'GOOD']
     print('PASS expired cache rechecks and timeout does not cache')
+
+    # GH#40166: independent Pulse processes share only positive name/timestamp
+    # metadata. The existing locked-store and timeout fixtures above stay intact.
+    host_env = dict(cycle_env, AIDEVOPS_TEMP_DIR=str(root / 'host-cache'))
+    host_file = root / 'host-cache/runner-capability/readable.json'
+    def host_check(cycle, extra=None, parallel=False):
+        argv = ['bash', '-c', 'source "$1/runner-capability-helper.sh"; '
+                '_PULSE_CYCLE_ID="$4"; runner_capability_check "$2" "$3" fresh',
+                'fixture', str(scripts), str(repo),
+                json.dumps({'body': 'requires-secrets: GOOD, OTHER'}), cycle]
+        options = dict(env=dict(host_env, **(extra or {})), stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE, text=True)
+        return subprocess.Popen(argv, **options) if parallel else subprocess.run(argv, **options)
+
+    calls.write_text('')
+    assert host_check('host-first').returncode == 0
+    result = host_check('host-second')
+    assert result.returncode == 0 and 'reused=2 checked=0' in result.stderr, result
+    assert calls.read_text().splitlines() == ['GOOD', 'OTHER'], calls.read_text()
+    metadata = json.loads(host_file.read_text())
+    assert set(metadata) == {'GOOD', 'OTHER'}, metadata
+    assert all(re.fullmatch(r'[A-Z][A-Z0-9_]*', name) and
+               isinstance(at, (int, float)) and not isinstance(at, bool)
+               for name, at in metadata.items()), metadata
+    assert 'PRIVATE_' not in host_file.read_text()
+    assert host_file.stat().st_mode & 0o777 == 0o600
+    print('PASS different cycles reuse host names and timestamps without value bytes')
+    passed += 1
+
+    verified_at = time.time() - 59
+    host_file.write_text(json.dumps({'GOOD': verified_at, 'OTHER': verified_at}))
+    result = host_check('host-original-ttl', {'AIDEVOPS_RUNNER_CAPABILITY_READABLE_TTL_SECONDS': '60'})
+    assert result.returncode == 0, result
+    copied_cycle = host_file.parent / (hashlib.sha256(b'host-original-ttl').hexdigest() + '.json')
+    assert json.loads(copied_cycle.read_text())['readable'] == {
+        'GOOD': verified_at, 'OTHER': verified_at}
+    print('PASS host reuse preserves original verification timestamps in cycle state')
+    passed += 1
+
+    host_file.write_text(json.dumps({'GOOD': 0, 'OTHER': 0, 'bad-name': time.time()}))
+    calls.write_text('')
+    assert host_check('host-expired').returncode == 0
+    assert calls.read_text().splitlines() == ['GOOD', 'OTHER']
+    assert set(json.loads(host_file.read_text())) == {'GOOD', 'OTHER'}
+    for index, (status, reason) in enumerate(((1, 'secret_missing'), (3, 'secret_unreadable'),
+                                             (5, 'check_timeout'), (2, 'check_failed'))):
+        host_file.write_text(json.dumps({'GOOD': 0, 'OTHER': time.time()}))
+        result = host_check(f'host-failure-{index}', {'CHECK_STATUS': str(status)})
+        assert result.returncode == 1 and f'reason={reason} name=GOOD' in result.stdout, result
+        assert 'GOOD' not in json.loads(host_file.read_text())
+    print('PASS expired host entries recheck and every failed check removes the name')
+    passed += 1
+
+    host_file.write_text('{}')
+    calls.write_text('')
+    processes = [host_check(f'host-parallel-{i}', {'CHECK_DELAY': '0.4'}, parallel=True)
+                 for i in range(4)]
+    for process in processes:
+        stdout, stderr = process.communicate(timeout=10)
+        assert process.returncode == 0 and not stdout and 'PRIVATE_' not in stderr, (stdout, stderr)
+    assert calls.read_text().splitlines() == ['GOOD', 'OTHER'], calls.read_text()
+    print('PASS concurrent independent cycles decrypt each name once under the host lock')
+    passed += 1
+
+    host_file.write_text('{}')
+    calls.write_text('')
+    with host_file.open('r+') as locked:
+        fcntl.flock(locked, fcntl.LOCK_EX)
+        started = time.monotonic()
+        result = host_check('host-lock-timeout',
+                            {'AIDEVOPS_RUNNER_CAPABILITY_SECRET_TIMEOUT_SECONDS': '1'})
+        assert result.returncode == 0 and time.monotonic() - started < 6, result
+        assert calls.read_text().splitlines() == ['GOOD', 'OTHER']
+    print('PASS host lock timeout falls back to bounded direct checks')
+    passed += 1
+
+    # The lock holder invalidates while the unlocked fallback is running.
+    # That fallback must not publish an older positive after the failure.
+    calls.write_text('')
+    with host_file.open('r+') as locked:
+        fcntl.flock(locked, fcntl.LOCK_EX)
+        process = host_check('host-fallback-race',
+                             {'AIDEVOPS_RUNNER_CAPABILITY_SECRET_TIMEOUT_SECONDS': '1',
+                              'CHECK_DELAY': '0.5'}, parallel=True)
+        deadline = time.monotonic() + 5
+        while not calls.read_text():
+            assert time.monotonic() < deadline, 'fallback check did not start'
+            time.sleep(0.02)
+        locked.seek(0)
+        locked.write('{}')
+        locked.truncate()
+        locked.flush()
+    stdout, stderr = process.communicate(timeout=5)
+    assert process.returncode == 0, (stdout, stderr)
+    assert 'GOOD' not in json.loads(host_file.read_text())
+    print('PASS unlocked fallback success cannot resurrect an invalidated host entry')
+    passed += 1
+
+    host_file.chmod(0o644)
+    result = host_check('host-unsafe-mode')
+    assert result.returncode == 1 and 'cycle_state_unreadable' in result.stdout, result
+    host_file.chmod(0o600)
+    host_file.unlink()
+    target = root / 'host-symlink-target'
+    target.write_text('unchanged')
+    host_file.symlink_to(target)
+    result = host_check('host-symlink')
+    assert result.returncode == 1 and target.read_text() == 'unchanged', result
+    host_file.unlink()
+    print('PASS host cache rejects unsafe permissions and symlink targets')
+    passed += 1
 
     # The real status-only command suppresses values/errors and decrypts once.
     source = (scripts / 'secret-helper.sh').read_text()
