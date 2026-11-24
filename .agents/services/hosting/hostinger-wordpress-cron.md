@@ -71,7 +71,8 @@ Cloud plan (observed 24 Nov 2026) the process chain was
 
 Design long work as resumable rounds that finish well under 30 minutes (about 25),
 each with its own deadline, and never rely on steps after a long child command.
-Confirm the wrapper on other plans with `ps -o pid,ppid,etime,args` during a run.
+Confirm the wrapper on other plans with `ps -e -o pid,ppid,etime,args` during a run
+(cron jobs have no terminal, so plain `ps` omits them); treat the output as private.
 
 Before a mutation, privately snapshot exact job IDs, commands, and schedules. Use
 placeholders and securely injected credentials in any procedure. After a partial
