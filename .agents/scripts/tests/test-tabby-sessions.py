@@ -521,19 +521,30 @@ class AuthenticationTests(unittest.TestCase):
 
     def test_next_handshake_waits_only_until_authenticated_not_session_exit(self):
         entered = threading.Event()
-        started = threading.Event()
+        contending = threading.Event()
+        flock = authentication.fcntl.flock
+
+        def observe_contention(fd, operation):
+            if operation == authentication.fcntl.LOCK_EX:
+                try:
+                    return flock(fd, operation | authentication.fcntl.LOCK_NB)
+                except BlockingIOError:
+                    # Signal only after the kernel rejects an actual competing
+                    # acquisition, not merely after the worker starts running.
+                    contending.set()
+            return flock(fd, operation)
 
         def next_handshake():
-            started.set()
             with authentication.authentication_slot(self.path, host()):
                 entered.set()
 
-        with ThreadPoolExecutor(max_workers=1) as pool:
+        with mock.patch.object(authentication.fcntl, "flock", side_effect=observe_contention), \
+                ThreadPoolExecutor(max_workers=1) as pool:
             with authentication.authentication_slot(self.path, host()) as authenticated:
                 future = pool.submit(next_handshake)
                 try:
-                    self.assertTrue(started.wait(2))
-                    self.assertFalse(entered.wait(0.05))
+                    self.assertTrue(contending.wait(2), "next handshake never contended for the lock")
+                    self.assertFalse(entered.is_set())
                 finally:
                     authenticated()
                 self.assertTrue(entered.wait(2))
@@ -553,8 +564,23 @@ class AuthenticationTests(unittest.TestCase):
     def test_twenty_tabs_keep_one_handshake_pending_while_sessions_remain_live(self):
         start = threading.Barrier(20)
         connected = threading.Event()
+        all_contending = threading.Event()
         mutex = threading.Lock()
         counts = dict(pending=0, peak=0, connected=0)
+        contenders = 0
+        flock = authentication.fcntl.flock
+
+        def observe_contention(fd, operation):
+            nonlocal contenders
+            if operation == authentication.fcntl.LOCK_EX:
+                try:
+                    return flock(fd, operation | authentication.fcntl.LOCK_NB)
+                except BlockingIOError:
+                    with mutex:
+                        contenders += 1
+                        if contenders == 19:
+                            all_contending.set()
+            return flock(fd, operation)
 
         def connect(_number):
             start.wait(timeout=5)
@@ -562,9 +588,10 @@ class AuthenticationTests(unittest.TestCase):
                 with mutex:
                     counts["pending"] += 1
                     counts["peak"] = max(counts["peak"], counts["pending"])
-                # Model a nonzero SSH handshake, exposing overlap if the lock
-                # is absent. Connected transports remain live below this point.
-                connected.wait(0.005)
+                # Hold the first handshake until every other tab has actually
+                # tried and failed to acquire its lock. No scheduler-speed or
+                # simulated handshake-duration assumption is needed.
+                self.assertTrue(all_contending.wait(5), "not all other tabs contended for the lock")
                 with mutex:
                     counts["pending"] -= 1
                     counts["connected"] += 1
@@ -573,8 +600,10 @@ class AuthenticationTests(unittest.TestCase):
                 ready()
                 self.assertTrue(connected.wait(5))
 
-        with ThreadPoolExecutor(max_workers=20) as pool:
+        with mock.patch.object(authentication.fcntl, "flock", side_effect=observe_contention), \
+                ThreadPoolExecutor(max_workers=20) as pool:
             list(pool.map(connect, range(20)))
+        self.assertEqual(contenders, 19)
         self.assertEqual(counts, dict(pending=0, peak=1, connected=20))
 
 
