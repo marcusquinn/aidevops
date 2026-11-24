@@ -142,7 +142,15 @@ _tbtr_authority() {
 # Same-repository issue/PR numbers a trigger line names (at most 3), one per line.
 _tbtr_trigger_refs() {
 	local trigger="$1"
-	jq -r --arg t "$trigger" -n '[$t | scan("(?:^|[^A-Za-z0-9/])#([0-9]{1,7})") | .[0]] | unique | .[:3][]' 2>/dev/null || true
+	# Bare #N and GH#N accept 1-7 digits; keyword forms (issue, PR, pull request,
+	# phase) need 3+ digits so ordinals such as "phase 2" are not read as refs.
+	# Capture whole numeric tokens before rejecting unsupported lengths.
+	# Strip whole qualified refs first, including repository names ending in -GH.
+	jq -r --arg t "$trigger" -n '($t | gsub("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+"; "")) as $text
+		| [($text | scan("(?:^|[^A-Za-z0-9/])#([0-9]+)")),
+		($text | scan("(?i)(?:^|[^A-Za-z0-9/])gh#([0-9]+)")),
+		($text | scan("(?i)(?:^|[^A-Za-z0-9/])(?:issue|pr|pull request|phase)\\s+#?([0-9]{3,})"))
+		| .[0] | select(length <= 7)] | unique | .[:3][]' 2>/dev/null || true
 	return 0
 }
 
@@ -173,9 +181,15 @@ _tbtr_ref_wake_due() {
 	local slug="$1" issue="$2" record="$3" refs=""
 	jq -e --arg sched "$_TBTR_SCHEDULED" --arg pend "$_TBTR_PENDING" "$_TBTR_WAITING_JQ" <<<"$record" >/dev/null 2>&1 || return 1
 	jq -e 'has("trigger_refs")' <<<"$record" >/dev/null 2>&1 || return 0
+	# Old parsers may have acknowledged only a subset: re-parse before trusting it.
+	jq -e '(.refs_parser // 1) < 2' <<<"$record" >/dev/null 2>&1 && return 0
 	jq -e '.refs_met != true' <<<"$record" >/dev/null 2>&1 || return 1
 	refs=$(jq -r '.trigger_refs[]? | tostring' <<<"$record" 2>/dev/null) || return 1
-	[[ -n "$refs" ]] || return 1
+	if [[ -z "$refs" ]]; then
+		# Empty refs from the pre-v2 parser: one full read re-parses the trigger.
+		jq -e '(.refs_parser // 1) < 2' <<<"$record" >/dev/null 2>&1 && return 0
+		return 1
+	fi
 	_tbtr_refs_resolved "$slug" "$refs" && return 0
 	_tbtr_record_write "$slug" "$issue" "$(jq -c --argjson c "$(date +%s)" '.checked_at = $c | del(.ref_wake)' <<<"$record")" || true
 	return 1
@@ -191,7 +205,8 @@ _tbtr_refs_state() {
 	if [[ -n "$refs" ]]; then
 		refs_json=$(jq -nc --arg r "$refs" '$r | split("\n") | map(select(test("^[0-9]+$")) | tonumber)' 2>/dev/null) || refs_json='[]'
 		! _tbtr_refs_resolved "$slug" "$refs" || met=true
-		[[ "$met" != true ]] || jq -e '.refs_met == true' <<<"$record" >/dev/null 2>&1 || wake=true
+		[[ "$met" != true ]] || jq -e --argjson r "$refs_json" \
+			'.refs_met == true and ((.trigger_refs // [] | sort) == ($r | sort))' <<<"$record" >/dev/null 2>&1 || wake=true
 	fi
 	printf '%s %s %s\n' "$refs_json" "$met" "$wake"
 	return 0
@@ -310,7 +325,8 @@ _tbtr_record_scheduled() {
 	[[ "$wake" == true ]] || wake=false
 	_tbtr_record_write "$slug" "$issue" "$(jq -c --arg k "$key" --arg u "$updated_at" --argjson n "$next_at" --argjson a "$attempts" \
 		--argjson c "$(date +%s)" --argjson r "$refs_json" --argjson w "$wake" --arg sched "$_TBTR_SCHEDULED" \
-		'. + {observation: $k, updated_at: $u, next_at: $n, attempts: $a, checked_at: $c, trigger_refs: $r}
+		'if ((.trigger_refs // [] | sort) != ($r | sort)) then .refs_met = false else . end
+		| . + {observation: $k, updated_at: $u, next_at: $n, attempts: $a, checked_at: $c, trigger_refs: $r, refs_parser: 2}
 		| .decision //= $sched | if $w then .ref_wake = true else del(.ref_wake) end' <<<"$record")" || true
 	return 0
 }
@@ -460,7 +476,7 @@ _tbtr_issue() {
 		--argjson a "$attempts" --arg d "$decision" --arg e "$quote" --argjson at "$now" \
 		--argjson r "$refs_json" --argjson m "$refs_met" \
 		'{observation: $k, updated_at: $u, next_at: $n, attempts: $a, decision: $d, evidence: $e, revisited_at: $at,
-		  trigger_refs: $r, refs_met: $m}')" || true
+		  trigger_refs: $r, refs_met: $m, refs_parser: 2}')" || true
 	printf 'TRIGGER_REVISIT repo=%s issue=%s decision=%s next_at=%s\n' "$slug" "$issue" "$decision" "$next_at"
 	return 0
 }

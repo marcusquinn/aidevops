@@ -738,8 +738,13 @@ _trigger_revisit_ref_wake_cases() {
 	unset -f gh
 	terminal_blocker_fetch_issue() { printf '%s\n' "$tb_issue_json"; return 0; }
 	decision_reply=""
+	_trigger_revisit_refs_parser_cases || return 1
 	return 0
 }
+
+# Keep the circuit suite below its 2000-line limit, using its existing helper pattern.
+# shellcheck source=test-terminal-blocker-trigger-refs.sh
+source "${SCRIPT_DIR}/tests/test-terminal-blocker-trigger-refs.sh"
 
 # GH#38353: a due hold gets one recorded outcome per interval; only
 # external_trigger_pending holds are read. GitHub and AI are stubbed.
