@@ -2478,13 +2478,13 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19317 test-worktree-metadata-prune: degraded terminal-PR-proof case false-passes on unbound $8 #auto-dispatch #bug ref:GH#40071
 
-- [ ] t19318 fix(dispatch): check the repo Node pin in the preclaim runner-capability gate so unsatisfiable runners stop claim/release churn #bug #interactive #priority:high ref:GH#40077
+- [x] t19318 fix(dispatch): check the repo Node pin in the preclaim runner-capability gate so unsatisfiable runners stop claim/release churn #bug #interactive #priority:high ref:GH#40077 pr:#40085 completed:2026-11-23
 
 - [ ] t19319 test(pulse): dispatch_max capacity case skips tier:simple candidate 9102 on main (suite not in CI) #auto-dispatch #bug ref:GH#40086
 
-- [ ] t19320 fix(full-loop): completion-bookkeeping accepts GH#<issue>: proof PR titles #auto-dispatch #bug #priority:low ref:GH#40094
+- [x] t19320 fix(full-loop): completion-bookkeeping accepts GH#<issue>: proof PR titles #auto-dispatch #bug #priority:low ref:GH#40094 pr:#40102 completed:2026-11-23
 
-- [ ] t19321 fix(full-loop): commit-and-pr validators refuse .agents JS changes owned by scriptless .agents/package.json #auto-dispatch #bug ref:GH#40098
+- [x] t19321 fix(full-loop): commit-and-pr validators refuse .agents JS changes owned by scriptless .agents/package.json #auto-dispatch #bug ref:GH#40098 pr:#40103 completed:2026-11-23
 
 ## In Progress
 
