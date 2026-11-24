@@ -35,11 +35,15 @@ function linuxSnapshot() {
   return { entries, psPid: 0 };
 }
 
+// TZ=UTC0 is a POSIX zone string: macOS libc otherwise reloads a zone file for
+// every lstart row, so a ~1,000-process read took ~0.6 s wall (~1 s under load,
+// at this 1 s timeout) instead of ~40 ms. Identities only compare within one
+// tracker, so the zone only has to be consistent.
 export function processSnapshot() {
   try {
     if (process.platform === "linux") return linuxSnapshot();
     const result = spawnSync("ps", ["-ax", "-o", "pid=,ppid=,pgid=,stat=,lstart="], {
-      detached: true, encoding: "utf8", env: { ...process.env, LC_ALL: "C" }, timeout: 1000,
+      detached: true, encoding: "utf8", env: { ...process.env, LC_ALL: "C", TZ: "UTC0" }, timeout: 1000,
     });
     return result.status === 0 ? { entries: parseProcessSnapshot(result.stdout), psPid: result.pid } : null;
   } catch { return null; }

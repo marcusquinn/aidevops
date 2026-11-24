@@ -460,6 +460,9 @@ _sandbox_snapshot_descendants_proc() {
 # single spaces so they stay byte-identical to _sandbox_get_proc_starttime's
 # `ps -o lstart= | tr -s ' '` + trim, which cleanup revalidates against.
 # Zombies and rows without a start time are skipped, as before.
+# Both lstart readers use the POSIX zone string TZ=UTC0: macOS libc reloads a
+# zone file (local or TZ=UTC) for every row, which made a ~1,000-row read cost
+# ~195 ms CPU and ~0.6 s wall versus ~22 ms CPU with TZ=UTC0.
 # Arguments: $1 - root PID, $2 - snapshot file
 _sandbox_snapshot_descendants_ps() {
 	local ps_root_pid="$1"
@@ -469,7 +472,7 @@ _sandbox_snapshot_descendants_ps() {
 	local ps_pgid=""
 	local ps_start=""
 
-	ps_rows="$(ps -axo pid=,ppid=,pgid=,stat=,lstart= 2>/dev/null | awk -v root="$ps_root_pid" '
+	ps_rows="$(TZ=UTC0 LC_ALL=C ps -axo pid=,ppid=,pgid=,stat=,lstart= 2>/dev/null | awk -v root="$ps_root_pid" '
 		{
 			# Columns: pid ppid pgid stat lstart(weekday month day time year).
 			nf = split($0, col)
@@ -924,11 +927,13 @@ _sandbox_get_proc_starttime() {
 		fi
 	else
 		# macOS / other: use ps -o lstart= for process start time string.
-		# Example output: "Wed Mar 25 14:30:00 2026"
+		# Example output: "Wed Mar 25 14:30:00 2026". Keep the zone and locale
+		# identical to _sandbox_snapshot_descendants_ps, which records tokens
+		# that cleanup revalidates here.
 		local gps_state=""
 		gps_state="$(ps -o stat= -p "$gps_pid" 2>/dev/null | tr -d '[:space:]')" || true
 		[[ -z "$gps_state" || "$gps_state" == *Z* ]] && return 0
-		gps_starttime="$(ps -o lstart= -p "$gps_pid" 2>/dev/null | tr -s ' ')" || true
+		gps_starttime="$(TZ=UTC0 LC_ALL=C ps -o lstart= -p "$gps_pid" 2>/dev/null | tr -s ' ')" || true
 		# Trim leading/trailing whitespace
 		gps_starttime="${gps_starttime#"${gps_starttime%%[![:space:]]*}"}"
 		gps_starttime="${gps_starttime%"${gps_starttime##*[![:space:]]}"}"
