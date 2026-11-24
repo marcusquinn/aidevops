@@ -35,6 +35,7 @@
 # Usage:
 #   dispatch-ledger-helper.sh register --session-key KEY [--issue NUM] [--repo SLUG] [--pid PID] [--worktree PATH]
 #     [--attempt-id ID --attempt-state-root DIR --attempt-state-file FILE --outcome-file FILE]
+#   dispatch-ledger-helper.sh renew --session-key KEY --lease-token TOKEN [--lease-ttl SECONDS]
 #   dispatch-ledger-helper.sh check --session-key KEY
 #   dispatch-ledger-helper.sh check-issue --issue NUM [--repo SLUG]
 #   dispatch-ledger-helper.sh check-issue NUM [SLUG]
@@ -533,6 +534,25 @@ cmd_ready() {
 	return $?
 }
 
+# GH#40118: extend an active prelaunch lease so it covers bounded worker
+# startup (canary). Never shortens it and never downgrades a ready lease.
+cmd_renew() {
+	local session_key="" lease_token="" lease_ttl="$PRELAUNCH_TTL"
+	while [[ $# -gt 0 ]]; do
+		local option="$1" option_value="${2:-}"
+		case "$option" in
+		--session-key) session_key="$option_value" ;;
+		--lease-token) lease_token="$option_value" ;;
+		--lease-ttl) lease_ttl="$option_value" ;;
+		*) echo "Error: Unknown option for renew: $option" >&2; return 1 ;;
+		esac
+		shift 2 || { echo "Error: $option requires an argument" >&2; return 1; }
+	done
+	[[ -n "$session_key" && -n "$lease_token" ]] || { echo "Error: renew requires --session-key and --lease-token" >&2; return 1; }
+	_lease_append_transition "$session_key" "$lease_token" "prelaunch" "$LEDGER_STATUS_ACTIVE" "$lease_ttl"
+	return $?
+}
+
 _lease_append_transition() {
 	local session_key="$1"
 	local lease_token="$2"
@@ -554,7 +574,7 @@ _lease_append_transition() {
 		_release_lock
 		return 1
 	fi
-	if [[ "$lease_phase" == "ready" && "$current_phase" != "prelaunch" ]]; then
+	if [[ ("$lease_phase" == "ready" || "$lease_phase" == "prelaunch") && "$current_phase" != "prelaunch" ]]; then
 		_release_lock
 		return 1
 	fi
@@ -565,6 +585,15 @@ _lease_append_transition() {
 	local now="" expires=""
 	now=$(_now_utc)
 	expires=$(_lease_expiry "$lease_ttl")
+	# A prelaunch renewal only ever extends the deadline.
+	if [[ "$lease_phase" == "prelaunch" ]]; then
+		local current_expires=""
+		current_expires=$(printf '%s' "$current" | jq -r '.lease_expires_at // 0') || current_expires=0
+		if [[ "$current_expires" =~ ^[0-9]+$ && "$expires" -le "$current_expires" ]]; then
+			_release_lock
+			return 0
+		fi
+	fi
 	printf '%s' "$current" | jq -c --arg phase "$lease_phase" --arg status "$status" --arg ts "$now" --arg reason "$terminal_reason" --argjson expires "$expires" \
 		'.lease_phase=$phase | .status=$status | .updated_at=$ts | .lease_expires_at=$expires | if $reason != "" then .terminal_reason=$reason else . end' >>"$LEDGER_FILE"
 	_release_lock
@@ -1784,6 +1813,9 @@ main() {
 		;;
 	ready)
 		cmd_ready "$@"
+		;;
+	renew)
+		cmd_renew "$@"
 		;;
 	check)
 		cmd_check "$@"
