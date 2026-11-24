@@ -291,9 +291,11 @@ _update_wait_for_setup_handoff() {
 	# Read only metadata, never source setup.sh (which would execute setup).
 	[[ -r "$lock_dir/owner.pid" ]] && IFS= read -r owner_pid <"$lock_dir/owner.pid"
 	[[ -r "$lock_dir/started_at_epoch" ]] && IFS= read -r owner_started <"$lock_dir/started_at_epoch"
-	[[ -r "$lock_dir/command" ]] && IFS= read -r owner_command <"$lock_dir/command"
+	[[ -r "$lock_dir/command" ]] && owner_command=$(<"$lock_dir/command")
+	# Setup joins arguments with its newline-first IFS when recording the command.
+	owner_command="${owner_command//$'\n'/ }"
 	local owner_words=() owner_word="" owner_stage="" stage_pending=false full_setup=false
-	read -r -a owner_words <<<"$owner_command"
+	IFS=$' \t\n' read -r -a owner_words <<<"$owner_command"
 	# Match setup's last-stage-wins parsing without evaluating lock contents.
 	for owner_word in "${owner_words[@]}"; do
 		if [[ "$stage_pending" == "true" ]]; then

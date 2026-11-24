@@ -54,7 +54,7 @@ extract_function() {
 	return 0
 }
 
-for function_name in _update_verify_deployment_state _run_update_setup_transaction _update_adopt_deployed_version _run_update_source_access_reconciliation _update_render_changelog _update_install_framework _update_existing_install _update_already_current _update_apply_remote _update_finish _update_start_pulse cmd_update; do
+for function_name in _update_verify_deployment_state _update_wait_for_setup_handoff _run_update_setup_transaction _update_adopt_deployed_version _run_update_source_access_reconciliation _update_render_changelog _update_install_framework _update_existing_install _update_already_current _update_apply_remote _update_finish _update_start_pulse cmd_update; do
 	extract_function "$function_name" "$TEST_ROOT/$function_name.sh"
 	# shellcheck source=/dev/null
 	source "$TEST_ROOT/$function_name.sh"
@@ -218,6 +218,33 @@ _run_update_setup() {
 	fi
 	return 0
 }
+
+check_setup_handoff_command() (
+	local owner_command="$1" expected_rc="$2"
+	local AIDEVOPS_SETUP_LOCK_DIR="$TEST_ROOT/handoff-lock" actual_rc=0
+	mkdir -p "$AIDEVOPS_SETUP_LOCK_DIR"
+	printf '12345\n' >"$AIDEVOPS_SETUP_LOCK_DIR/owner.pid"
+	printf '200\n' >"$AIDEVOPS_SETUP_LOCK_DIR/started_at_epoch"
+	printf '%s\n' "$owner_command" >"$AIDEVOPS_SETUP_LOCK_DIR/command"
+	# Model a finished owner without signaling any real process.
+	kill() { return 1; }
+	_update_wait_for_setup_handoff expected-sha 100 || actual_rc=$?
+	[[ "$actual_rc" -eq "$expected_rc" ]] || return 1
+	return 0
+)
+
+if check_setup_handoff_command $'setup.sh --stage\nai-session' 0 &&
+	check_setup_handoff_command 'setup.sh --stage ai-session' 0 &&
+	check_setup_handoff_command $'setup.sh --non-interactive\n--stage\nai-session' 0 &&
+	check_setup_handoff_command $'setup.sh --stage\nsource-access' 1 &&
+	check_setup_handoff_command $'setup.sh --stage\nai-session\n--stage\nsource-access' 1 &&
+	check_setup_handoff_command $'setup.sh --stage\nsource-access\n--stage\nai-session' 0 &&
+	check_setup_handoff_command $'setup.sh --stage\nai-session\n--stage' 1; then
+	pass "setup handoff reads multiline commands and preserves last-stage validation"
+else
+	fail "setup handoff reads multiline commands and preserves last-stage validation" \
+		"owner command parsing accepted an ineligible stage or rejected ai-session"
+fi
 
 SETUP_RC=23
 if failure_output=$(_run_update_setup_transaction compact expected-sha); then
