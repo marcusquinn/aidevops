@@ -69,7 +69,7 @@ assert_contains() {
 	local label="$1"
 	local text="$2"
 	local pattern="$3"
-	if echo "$text" | grep -q "$pattern"; then
+	if grep -q "$pattern" <<<"$text"; then
 		print_result "$label" 0
 	else
 		print_result "$label" 1 "Expected '$pattern' in output"
@@ -192,7 +192,7 @@ section_helper_script() {
 	local unknown_output
 	unknown_output="$(bash "$HELPER" nonexistent-command 2>&1)" || true
 
-	if echo "$unknown_output" | grep -qiE "unknown|error"; then
+	if grep -qiE "unknown|error" <<<"$unknown_output"; then
 		print_result "unknown command: returns error" 0
 	else
 		print_result "unknown command: returns error" 1 "Expected error for unknown command"
@@ -319,7 +319,9 @@ section_markdown_structure() {
 	fi
 
 	# Check YAML frontmatter
-	if head -1 "$simplex_md" | grep -q "^---"; then
+	local first_line=""
+	IFS= read -r first_line <"$simplex_md" || true
+	if [[ "$first_line" == "---" ]]; then
 		print_result "simplex.md: has YAML frontmatter" 0
 	else
 		print_result "simplex.md: has YAML frontmatter" 1 "Expected YAML frontmatter"

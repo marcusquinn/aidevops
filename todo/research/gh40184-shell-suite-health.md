@@ -27,6 +27,11 @@ Two independently reproduced stale assertions are repaired here:
    contribution and slash-command documentation as topics, including the current
    inline presentation, rather than requiring removed heading text.
 
+CodeFactor also identified three existing early-exit pipelines in the touched
+SimpleX suite. Match captured output through here-strings and read the first YAML
+line directly, preserving assertions without a producer-side SIGPIPE race under
+`pipefail`.
+
 No production files, security guards, workflow thresholds or suite exclusions
 change. This is a residual assertion repair, not a claim that all 83 suites pass.
 The health job must remain red for remaining reproducible regressions; #40029
@@ -43,7 +48,10 @@ and #40176 retain the remaining convergence work.
   the suite had 51 passes and eight failures. No lint skip or fake success is
   introduced. `.github/workflows/code-quality.yml` provides the CI
   `cross-platform-shellcheck` job.
-- Affected-suite comparison and PR checks are recorded during PR closeout.
+- `affected-tests-helper.sh run --base origin/main --compare-base`: both selected
+  suites pass (exit 0), zero suites omitted. This is the repository's isolated
+  suite runner; direct invocation above separately records the host lint-wrapper
+  limitation rather than hiding it.
 
 ## Acceptance boundary
 
