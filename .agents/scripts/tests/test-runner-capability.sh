@@ -44,7 +44,9 @@ printf 'PRIVATE_ERROR\n' >&2
     cli.chmod(0o700)
     env = dict(os.environ, HOME=str(root), PATH=str(bin_dir) + ':' + os.environ['PATH'],
                AIDEVOPS_TEMP_DIR=str(root / 'workspace-temp'),
-               AIDEVOPS_RUNNER_CAPABILITY_SECRET_TIMEOUT_SECONDS='2')
+               AIDEVOPS_RUNNER_CAPABILITY_SECRET_TIMEOUT_SECONDS='2',
+               # GH#40180: host IPC probes stay hermetic; their own fixtures enable them.
+               AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC='0')
     config = repo / '.aidevops.json'
     passed = 0
 
@@ -672,6 +674,279 @@ exit 0
     assert result.returncode == 1 and target.read_text() == 'unchanged', result
     host_file.unlink()
     print('PASS host cache rejects unsafe permissions and symlink targets')
+    passed += 1
+
+    # GH#40180: host IPC health. Stub `id` and `gh` reproduce the observed
+    # failure shapes; the verdict is runner-wide, silent when healthy, defers
+    # before any issue read, and reopens at the next recheck.
+    ipc_bin = root / 'ipc-bin'
+    ipc_bin.mkdir()
+    (ipc_bin / 'id').write_text('#!/usr/bin/env bash\n'
+                                '[[ -z "${ID_CALLS:-}" ]] || printf "id\\n" >>"$ID_CALLS"\n'
+                                'if [[ "${STUB_ID:-name}" == numeric ]]; then printf "501\\n"; else printf "runner\\n"; fi\n')
+    (ipc_bin / 'gh').write_text('''#!/usr/bin/env bash
+case "${STUB_GH:-healthy}" in
+healthy) printf 'github.com\\n  Logged in\\n' ;;
+trustd) printf 'error validating token: tls: failed to verify certificate: x509: OSStatus -26276\\n'; exit 1 ;;
+loggedout) printf 'You are not logged into any GitHub hosts.\\n'; exit 1 ;;
+invalid) printf 'The token in default is invalid.\\n'; exit 1 ;;
+hang) exec sleep 30 ;;
+esac
+''')
+    (ipc_bin / 'chromium-probe').write_text('''#!/usr/bin/env bash
+case "${STUB_BROWSER:-ok}" in
+ok) exit 0 ;;
+bootstrap) printf 'bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer.1: Permission denied (1100)\\n'; exit 1 ;;
+missing) printf "Executable doesn't exist\\n"; exit 1 ;;
+esac
+''')
+    for stub_name in ('id', 'gh', 'chromium-probe'):
+        (ipc_bin / stub_name).chmod(0o700)
+    ipc_dir = root / 'ipc-temp'
+    ipc_env = dict(env, PATH=str(ipc_bin) + ':' + env['PATH'], AIDEVOPS_TEMP_DIR=str(ipc_dir),
+                   AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC='1',
+                   AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS='0',
+                   AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TIMEOUT_SECONDS='1')
+    ipc_env.pop('AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE', None)
+    ipc_env.pop('AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE_CMD', None)
+    config.unlink(missing_ok=True)
+
+    def ipc_check(extra=None):
+        return subprocess.run(['bash', '-c',
+            'source "$1/runner-capability-helper.sh"; runner_capability_check "$2" "$3" fresh',
+            'fixture', str(scripts), str(repo), json.dumps({'body': ''})],
+            env=dict(ipc_env, **(extra or {})), capture_output=True, text=True)
+
+    # Healthy is silent apart from the existing audit line: no runner_health, no verdict.
+    result = ipc_check()
+    assert result.returncode == 0 and not result.stdout and 'runner_health' not in result.stderr, result
+    for label, extra, failed in (
+        ('numeric uid from id -un', {'STUB_ID': 'numeric'}, 'getpwuid'),
+        ('trustd x509 OSStatus from gh', {'STUB_GH': 'trustd'}, 'trust_service'),
+        ('gh TLS handshake hang', {'STUB_GH': 'hang'}, 'tls_timeout'),
+        ('gh hides TLS diagnostic', {'STUB_GH': 'invalid'}, 'tls_unknown'),
+        ('missing Playwright module',
+         {'AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE': '1',
+          'AIDEVOPS_PLAYWRIGHT_MODULE': str(root / 'absent.mjs'),
+          'AIDEVOPS_PLAYWRIGHT_RUNTIME_DIR': str(root / 'absent-runtime')},
+         'browser_unavailable'),
+        ('opt-in Chromium bootstrap denied',
+         {'AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE': '1', 'STUB_BROWSER': 'bootstrap',
+          'AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE_CMD': str(ipc_bin / 'chromium-probe')},
+         'browser_bootstrap'),
+    ):
+        started = time.monotonic()
+        result = ipc_check(extra)
+        assert result.returncode == 1, (label, result)
+        assert result.stdout == f'runner_capability_unmet reason=host_ipc_unhealthy check={failed}\n', (label, result)
+        assert result.stderr.count('runner_health: host IPC unhealthy (' + failed + ')') == 1, (label, result)
+        assert time.monotonic() - started < 10, label
+        print('PASS host IPC unhealthy:', label)
+        passed += 1
+    # Failures that are not IPC faults stay healthy: other gates own them.
+    browser_cmd = {'AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE_CMD': str(ipc_bin / 'chromium-probe')}
+    for label, extra in (
+        ('gh signed out', {'STUB_GH': 'loggedout'}),
+        ('browser probe off by default', dict(browser_cmd, STUB_BROWSER='bootstrap')),
+        ('browser not installed', dict(browser_cmd, STUB_BROWSER='missing',
+                                       AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE='1')),
+        ('browser healthy', dict(browser_cmd, AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE='1')),
+    ):
+        result = ipc_check(extra)
+        assert result.returncode == 0 and not result.stdout and 'runner_health' not in result.stderr, (label, result)
+        print('PASS host IPC healthy:', label)
+        passed += 1
+    # Auto mode is Darwin-only; the same fault is ignored elsewhere.
+    auto_env = dict(ipc_env, STUB_ID='numeric')
+    auto_env.pop('AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC')
+    result = subprocess.run(['bash', '-c', 'source "$1/runner-capability-helper.sh"; runner_capability_check "$2" "$3" fresh',
+                             'fixture', str(scripts), str(repo), '{"body":""}'],
+                            env=auto_env, capture_output=True, text=True)
+    assert (result.returncode == 1) == (sys.platform == 'darwin'), result
+    print('PASS host IPC auto mode applies on Darwin only')
+    passed += 1
+
+    # Cached verdict: one runner_health line per interval, then recovery.
+    cached = {'AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS': '300', 'STUB_ID': 'numeric'}
+    first = ipc_check(cached)
+    second = ipc_check(cached)
+    assert first.returncode == second.returncode == 1, (first, second)
+    assert first.stderr.count('runner_health: host IPC') == 1 and 'rechecked every 300s' in first.stderr, first
+    assert 'runner_health' not in second.stderr and second.stdout.endswith('check=getpwuid source=host_ipc_cache\n'), second
+    healed = ipc_check({'AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS': '300'})
+    assert healed.returncode == 1 and 'source=host_ipc_cache' in healed.stdout, healed  # still inside the interval
+    verdict_file = ipc_dir / 'runner-capability-host-ipc/verdict.json'
+    assert verdict_file.stat().st_mode & 0o777 == 0o600
+    state = json.loads(verdict_file.read_text())
+    state['at'] = 0
+    verdict_file.write_text(json.dumps(state))
+    healed = ipc_check({'AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS': '300'})
+    assert healed.returncode == 0 and not healed.stdout and 'runner_health' not in healed.stderr, healed
+    assert json.loads(verdict_file.read_text())['verdict'] == 'ok'
+    print('PASS host IPC verdict is cached per interval and reopens at the next recheck')
+    passed += 1
+
+    # Explicit false values and launcher changes invalidate the browser verdict.
+    browser_cache = dict(browser_cmd, AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS='300',
+                         AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE='0', STUB_BROWSER='bootstrap')
+    assert ipc_check(browser_cache).returncode == 0
+    enabled_cache = dict(browser_cache, AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE='1')
+    assert 'check=browser_bootstrap' in ipc_check(enabled_cache).stdout
+    assert ipc_check(browser_cache).returncode == 0
+    assert 'check=browser_bootstrap' in ipc_check(enabled_cache).stdout
+    assert ipc_check(dict(enabled_cache,
+        AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE_CMD='true')).returncode == 0
+    print('PASS browser cache tracks enablement and effective launcher')
+    passed += 1
+
+    # The default launcher resolves the owned runtime outside its working dir.
+    runtime = root / 'owned-runtime'
+    module = runtime / 'node_modules/playwright'
+    module.mkdir(parents=True)
+    (module / 'package.json').write_text('{"main":"index.js"}')
+    marker = root / 'browser-launched'
+    (module / 'index.js').write_text(
+        'exports.chromium={launch:async()=>{require("node:fs").writeFileSync('
+        + json.dumps(str(marker)) + ',"launched");return {close:async()=>{}}}};')
+    result = ipc_check({'AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE': '1',
+                        'AIDEVOPS_PLAYWRIGHT_MODULE': '',
+                        'AIDEVOPS_PLAYWRIGHT_RUNTIME_DIR': str(runtime)})
+    assert result.returncode == 0 and marker.read_text() == 'launched', result
+    print('PASS default browser probe launches from owned Playwright runtime')
+    passed += 1
+
+    # Exercise the production timeout helper with a descendant outside its group.
+    process_source = subprocess.run(['bash', '-c',
+        'source "$1/runner-capability-helper.sh"; _runner_capability_python_host_ipc_process',
+        'fixture', str(scripts)], capture_output=True, text=True, check=True).stdout
+    probe_namespace = {}
+    exec(process_source, probe_namespace)
+    bounded = probe_namespace['bounded']
+    assert bounded([sys.executable, '-c', 'print("captured")'], 1) == (0, 'captured\n')
+    escaped_pid = root / 'escaped-pid'
+    child_code = ('import os,time; os.setsid(); '
+                  f'open({str(escaped_pid)!r},"w").write(str(os.getpid())); time.sleep(10)')
+    parent_code = 'import subprocess,time; subprocess.Popen(' + repr([sys.executable, '-c', child_code]) + '); time.sleep(10)'
+    started = time.monotonic()
+    try:
+        assert bounded([sys.executable, '-c', parent_code], 1) == (124, '')
+        assert time.monotonic() - started < 3
+    finally:
+        if escaped_pid.exists():
+            os.kill(int(escaped_pid.read_text()), 9)
+    print('PASS timeout cleanup ignores escaped descendants holding stdout')
+    passed += 1
+
+    # Inject cache I/O faults into the production main, without a new test API.
+    import io
+    from types import SimpleNamespace
+    from unittest import mock
+    cache_source = subprocess.run(['bash', '-c',
+        'source "$1/runner-capability-helper.sh"; _runner_capability_python_host_ipc_probes; '
+        '_runner_capability_python_host_ipc_cache_io; _runner_capability_python_host_ipc_cache',
+        'fixture', str(scripts)], capture_output=True, text=True, check=True).stdout
+    namespace = {}
+    exec(process_source + cache_source.split('\ntry:\n    main()')[0], namespace)
+    cache_root = root / 'fault-cache'
+    cache_root.mkdir(mode=0o700)
+    cache_file = cache_root / 'verdict.json'
+    real_fdopen = os.fdopen
+
+    class FaultyHandle:
+        def __init__(self, fd, mode, fault):
+            self.handle = real_fdopen(fd, mode)
+            self.fault = fault
+
+        def __getattr__(self, name):
+            return getattr(self.handle, name)
+
+        def write(self, value):
+            if self.fault == 'write':
+                raise OSError('synthetic write failure')
+            return self.handle.write(value)
+
+        def flush(self):
+            if self.fault == 'flush':
+                raise OSError('synthetic flush failure')
+            return self.handle.flush()
+
+        def close(self):
+            self.handle.close()
+            if self.fault == 'close':
+                raise OSError('synthetic close failure')
+
+    for fault in ('write', 'flush', 'close'):
+        for failed in ('', 'getpwuid'):
+            cache_file.unlink(missing_ok=True)
+            output, errors = io.StringIO(), io.StringIO()
+            with mock.patch.dict(os.environ, dict(ipc_env,
+                    AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS='300'), clear=True), \
+                 mock.patch.dict(namespace, cache_directory=lambda: cache_root,
+                                 run_probes=lambda: failed), \
+                 mock.patch.object(os, 'fdopen', side_effect=lambda fd, mode: FaultyHandle(fd, mode, fault)), \
+                 namespace['contextlib'].redirect_stdout(output), \
+                 namespace['contextlib'].redirect_stderr(errors):
+                status = 0
+                try:
+                    namespace['main']()
+                except SystemExit as exc:
+                    status = exc.code
+            assert status == (1 if failed else 0), (fault, failed, status)
+            assert ('check=getpwuid' in output.getvalue()) == bool(failed)
+    print('PASS write, flush and close failures preserve healthy and unhealthy verdicts')
+    passed += 1
+
+    # A waiter outlasts the maximum configured sequential budget before fallback.
+    clock = [0.0]
+    def delayed_lock(handle, flags):
+        if clock[0] < 123:
+            raise BlockingIOError()
+    cache_file.write_text(json.dumps({'at': time.time(), 'probes': ['base'],
+                                     'verdict': 'unmet', 'check': 'getpwuid'}))
+    fake_time = SimpleNamespace(time=time.time, monotonic=lambda: clock[0],
+                               sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    output, errors = io.StringIO(), io.StringIO()
+    with mock.patch.dict(os.environ, dict(ipc_env,
+            AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS='300'), clear=True), \
+         mock.patch.dict(namespace, cache_directory=lambda: cache_root, time=fake_time,
+                         fcntl=SimpleNamespace(LOCK_EX=fcntl.LOCK_EX, LOCK_NB=fcntl.LOCK_NB,
+                                               flock=delayed_lock),
+                         run_probes=mock.Mock(side_effect=AssertionError('duplicate probe'))), \
+         namespace['contextlib'].redirect_stdout(output), \
+         namespace['contextlib'].redirect_stderr(errors):
+        try:
+            namespace['main']()
+        except SystemExit as exc:
+            assert exc.code == 1
+    assert clock[0] >= 123 and 'source=host_ipc_cache' in output.getvalue()
+    assert not errors.getvalue(), errors.getvalue()
+    print('PASS waiter reuses published verdict after maximum probe budget without probing or logging again')
+    passed += 1
+
+    # The shared fresh gate defers before any issue read and never cools the issue down.
+    ipc_gh_calls = root / 'ipc-gh-calls'
+    ipc_log = root / 'ipc-log'
+    ipc_fresh = 'source "$1/runner-capability-helper.sh"; ' + '''
+gh() { printf 'gh\\n' >>"$GH_CALLS"; printf '%s' "$FRESH_META"; return 0; }
+runner_capability_check_fresh "$2" 42 owner/repo "$3"
+'''
+    gate_env = dict(ipc_env, STUB_ID='numeric', GH_CALLS=str(ipc_gh_calls),
+                    FRESH_META=json.dumps(fresh_issue))
+    result = subprocess.run(['bash', '-c', ipc_fresh, 'fixture', str(scripts), str(repo), str(ipc_log)],
+                            env=gate_env, capture_output=True, text=True)
+    assert result.returncode == 1 and not result.stdout and not result.stderr, result
+    assert not ipc_gh_calls.exists(), ipc_gh_calls.read_text()
+    ipc_text = ipc_log.read_text()
+    assert 'reason=host_ipc_unhealthy check=getpwuid' in ipc_text, ipc_text
+    assert 'signal=host_ipc_unhealthy cooldown=none' in ipc_text, ipc_text
+    assert ipc_text.count('runner_health: host IPC unhealthy (getpwuid)') == 1, ipc_text
+    id_calls = root / 'id-calls'
+    result = subprocess.run(['bash', '-c', ipc_fresh, 'fixture', str(scripts), str(repo), str(ipc_log)],
+                            env=dict(gate_env, STUB_ID='name', ID_CALLS=str(id_calls)),
+                            capture_output=True, text=True)
+    assert result.returncode == 0 and ipc_gh_calls.read_text().splitlines() == ['gh'], result
+    assert id_calls.read_text().splitlines() == ['id'], 'fresh gate probed host twice'
+    print('PASS unhealthy host defers the fresh gate before any issue read, cooldown=none, then recovers')
     passed += 1
 
     # The real status-only command suppresses values/errors and decrypts once.

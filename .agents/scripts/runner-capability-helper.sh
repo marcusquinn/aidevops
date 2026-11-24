@@ -26,6 +26,12 @@ _runner_capability_check_fresh_logged() {
 	local repo_path="$1" issue_number="$2" repo_slug="$3"
 	local capability_meta_json=""
 	local reason=""
+	# GH#40180: a host whose IPC services are down cannot run any worker, so
+	# check it before any repo or per-issue read. Cached, so repeat calls are free.
+	if ! reason=$(_runner_capability_host_ipc_verdict 2>&3); then
+		_runner_capability_log_deferral "$issue_number" "$repo_slug" "$reason" ""
+		return 1
+	fi
 	# GH#40077: repo-level gate first, so a repo this runner cannot run at all
 	# costs no per-issue API read.
 	if ! reason=$(_runner_capability_project_node "$repo_path" 2>&3); then
@@ -40,7 +46,7 @@ _runner_capability_check_fresh_logged() {
 			'runner_capability_unmet source=fresh metadata_unreadable' metadata_unreadable
 		return 1
 	fi
-	if ! reason=$(runner_capability_check "$repo_path" "$capability_meta_json" fresh 2>&3); then
+	if ! reason=$(_runner_capability_check_requirements "$repo_path" "$capability_meta_json" fresh 2>&3); then
 		_runner_capability_log_deferral "$issue_number" "$repo_slug" "$reason" ""
 		return 1
 	fi
@@ -162,6 +168,285 @@ _runner_capability_project_node_verdict() {
 	return 1
 }
 
+# GH#40180: runner-wide host IPC health. A macOS host can lose opendirectoryd
+# (getpwuid), trustd (Go TLS via the system trust store) or the Mach bootstrap
+# port (Chromium) while its daemons look alive; every worker then claims an
+# issue and fails the same way. Probes (any failure = unhealthy):
+#   getpwuid       `id -un` prints a name, not a bare uid
+#   trust_service  `gh auth status` shows no OSStatus/x509 error (curl is not a
+#                  valid probe: it uses its own CA store and passed during the fault)
+#   tls_timeout    `gh auth status` did not finish in time
+#   tls_unknown    nonzero status without a recognized signed-out diagnostic
+#   browser_*      opt-in headless Chromium launch (AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE=1)
+# A signed-out CLI or missing browser binary stays healthy; other gates own those.
+# Unknown TLS errors and an opted-in but unavailable browser probe defer safely.
+# Default on for Darwin only (AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC=auto|1|0): a
+# container with an unnamed uid would otherwise fail the getpwuid probe forever.
+# The verdict is host-wide, cached for AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS
+# (default 120, 0 = no cache) under a lock, so concurrent candidates share one probe
+# and one `runner_health:` line per recheck interval. Never cooldown-eligible.
+# Prints the unmet reason and returns 1; returns 0 when healthy, off or unknown.
+_runner_capability_host_ipc_verdict() {
+	case "${AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC:-auto}" in
+	0 | off | false | no) return 0 ;;
+	1 | on | true | yes) ;;
+	*) [[ "$(uname -s 2>/dev/null)" == Darwin ]] || return 0 ;;
+	esac
+	local rc=0
+	python3 - "${BASH_SOURCE[0]%/*}/playwright-runtime.mjs" < <(
+		_runner_capability_python_host_ipc_process
+		_runner_capability_python_host_ipc_probes
+		_runner_capability_python_host_ipc_cache_io
+		_runner_capability_python_host_ipc_cache
+	) || rc=$?
+	[[ "$rc" -eq 0 ]] || return 1
+	return 0
+}
+
+_runner_capability_python_host_ipc_process() {
+	cat <<'PY'
+import contextlib
+import fcntl
+import json
+import os
+import re
+import shlex
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+def env_int(name, default, low, high):
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        value = default
+    return min(high, max(low, value))
+
+def bounded(argv, timeout):
+    # Returns (status, output); status 124 = timed out, 127 = not runnable.
+    env = dict(os.environ, GH_PROMPT_DISABLED='1', NO_COLOR='1')
+    try:
+        process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, start_new_session=True,
+                                   env=env, text=True, errors='replace')
+    except OSError:
+        return 127, ''
+    try:
+        output, _ = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        # Escaped descendants may hold stdout open after the group is killed.
+        # Do not wait for pipe EOF; only reap the direct child for a bounded time.
+        process.stdout.close()
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
+        return 124, ''
+    return process.returncode, (output or '')[:8192]
+
+PY
+	return 0
+}
+
+_runner_capability_python_host_ipc_probes() {
+	cat <<'PY'
+def probe_identity(timeout):
+    status, output = bounded(['id', '-un'], timeout)
+    name = output.strip()
+    if status != 0 or not name or re.fullmatch(r'[0-9]+', name):
+        return 'getpwuid'
+    return ''
+
+def probe_tls(timeout):
+    if not shutil.which('gh'):
+        return ''
+    status, output = bounded(['gh', 'auth', 'status', '--hostname', 'github.com'], timeout)
+    if status == 124:
+        return 'tls_timeout'
+    if re.search(r'OSStatus|x509:', output):
+        return 'trust_service'
+    if status != 0 and not re.search(r'not logged into any GitHub hosts', output, re.I):
+        return 'tls_unknown'
+    return ''
+
+def browser_enabled():
+    return os.environ.get('AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE', '') in ('1', 'true', 'yes', 'on')
+
+def probe_browser(timeout):
+    if not browser_enabled():
+        return ''
+    command = os.environ.get('AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE_CMD', '')
+    try:
+        argv = shlex.split(command) if command.strip() else default_browser_argv()
+    except ValueError:
+        return 'browser_unavailable'
+    status, output = bounded(argv, timeout)
+    if status == 124:
+        return 'browser_timeout'
+    if re.search(r'bootstrap_check_in|MachPortRendezvous|Permission denied \(1100\)', output):
+        return 'browser_bootstrap'
+    if status in (78, 127):
+        return 'browser_unavailable'
+    return ''
+
+def default_browser_argv():
+    # Reuse the verified runtime resolver (including AIDEVOPS_PLAYWRIGHT_MODULE)
+    # without npx or any package installation during admission.
+    return [
+        'node', '-e',
+        "const {pathToFileURL}=require('node:url');"
+        "(async()=>{try{"
+        "const r=await import(pathToFileURL(process.argv[1]).href);"
+        "const m=await r.resolvePlaywrightModule({allowNpx:false});"
+        "const {chromium}=await r.loadPlaywright(m);"
+        "(async()=>{const b=await chromium.launch({headless:true});await b.close();})()"
+        ".catch(e=>{console.error(String(e&&e.message||e));process.exit(1);});"
+        "}catch(e){process.exit(78);}})();", sys.argv[1]]
+
+def run_probes():
+    probe_timeout = env_int('AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TIMEOUT_SECONDS', 5, 1, 30)
+    browser_timeout = env_int('AIDEVOPS_RUNNER_CAPABILITY_BROWSER_TIMEOUT_SECONDS', 20, 1, 60)
+    return (probe_identity(probe_timeout) or probe_tls(probe_timeout) or
+            probe_browser(browser_timeout))
+
+def report(failed, ttl, cached):
+    print(f'runner_capability_unmet reason=host_ipc_unhealthy check={failed}' +
+          (' source=host_ipc_cache' if cached else ''))
+    if not cached:
+        print(f'runner_health: host IPC unhealthy ({failed}); no worker on this runner can '
+              f'launch a browser or reach GitHub with TLS. All its candidates defer without '
+              f'claiming, rechecked every {ttl}s', file=sys.stderr)
+    raise SystemExit(1)
+
+PY
+	return 0
+}
+
+_runner_capability_python_host_ipc_cache_io() {
+	cat <<'PY'
+def cache_directory():
+    base = Path(os.environ.get('AIDEVOPS_TEMP_DIR') or
+                str(Path.home() / '.aidevops/.agent-workspace/tmp'))
+    directory = base / 'runner-capability-host-ipc'
+    try:
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        info = directory.lstat()
+    except OSError:
+        return None
+    if directory.is_symlink() or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        return None
+    return directory
+
+@contextlib.contextmanager
+def cache_handle(fd):
+    handle = os.fdopen(fd, 'r+')
+    try:
+        yield handle
+    finally:
+        # close() may retry a failed buffered flush. Never replace the verdict
+        # (including report's SystemExit) with that persistence error.
+        with contextlib.suppress(OSError):
+            handle.close()
+
+def cache_write(handle, state):
+    try:
+        handle.seek(0)
+        json.dump(state, handle)
+        handle.truncate()
+        handle.flush()
+    except OSError:
+        pass
+
+PY
+	return 0
+}
+
+_runner_capability_python_host_ipc_cache() {
+	cat <<'PY'
+def main():
+    ttl = env_int('AIDEVOPS_RUNNER_CAPABILITY_HOST_IPC_TTL_SECONDS', 120, 0, 1800)
+    # Include effective enablement and launcher/resolution settings in the key.
+    probes = ['base']
+    if browser_enabled():
+        command = os.environ.get('AIDEVOPS_RUNNER_CAPABILITY_BROWSER_PROBE_CMD', '').strip()
+        probes = ['browser', command or default_browser_argv(),
+                  os.environ.get('AIDEVOPS_PLAYWRIGHT_MODULE', ''),
+                  os.environ.get('AIDEVOPS_PLAYWRIGHT_RUNTIME_DIR', ''), os.environ.get('PATH', ''),
+                  str(Path.home()), os.getcwd()]
+    directory = cache_directory() if ttl else None
+    if directory is None:
+        failed = run_probes()
+        if failed:
+            report(failed, ttl, False)
+        return
+    try:
+        fd = os.open(directory / 'verdict.json', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    except OSError:
+        failed = run_probes()
+        if failed:
+            report(failed, ttl, False)
+        return
+    with cache_handle(fd) as handle:
+        info = os.fstat(handle.fileno())
+        if info.st_uid != os.getuid() or info.st_mode & 0o077:
+            failed = run_probes()
+            if failed:
+                report(failed, ttl, False)
+            return
+        # Cover the maximum sequential probe budget even when the holder has
+        # different timeout settings: 2*30s identity/TLS + 60s browser, one
+        # second of bounded cleanup per probe, plus 5s scheduling margin.
+        deadline = time.monotonic() + 2 * (30 + 1) + (60 + 1) + 5
+        locked = False
+        while not locked:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.05)
+        if not locked:
+            failed = run_probes()
+            if failed:
+                report(failed, ttl, False)
+            return
+        try:
+            state = json.loads(handle.read() or '{}')
+        except ValueError:
+            state = {}
+        now = time.time()
+        at = state.get('at') if isinstance(state, dict) else None
+        if (isinstance(at, (int, float)) and not isinstance(at, bool) and 0 <= now - at < ttl and
+                state.get('probes') == probes and state.get('verdict') in ('ok', 'unmet')):
+            if state['verdict'] == 'ok':
+                return
+            failed = str(state.get('check', ''))
+            if re.fullmatch(r'[a-z_]{1,32}', failed):
+                report(failed, ttl, True)
+        failed = run_probes()
+        cache_write(handle, {'at': time.time(), 'probes': probes,
+                             'verdict': 'unmet' if failed else 'ok', 'check': failed})
+        if failed:
+            report(failed, ttl, False)
+
+try:
+    main()
+except Exception:
+    # An interpreter or filesystem fault in the probe itself is unknown, not
+    # unhealthy: never pause a runner on it.
+    raise SystemExit(0)
+PY
+	return 0
+}
+
 # GH#34427: AIDEVOPS_RUNNER_CAPABILITY_SECRET_TIMEOUT_SECONDS bounds each
 # `aidevops secret check` (default 15, clamped 1-60, invalid -> default).
 
@@ -201,6 +486,15 @@ runner_capability_check() {
 	local repo_path="$1"
 	local issue_meta_json="$2"
 	local source="${3:-}"
+	# GH#40180: runner-wide verdict first; it prints the unmet reason itself.
+	_runner_capability_host_ipc_verdict || return 1
+	_runner_capability_check_requirements "$repo_path" "$issue_meta_json" "$source" || return 1
+	return 0
+}
+
+# The fresh entry point has already checked host health before reading metadata.
+_runner_capability_check_requirements() {
+	local repo_path="$1" issue_meta_json="$2" source="${3:-}"
 	local cycle="${_PULSE_CYCLE_ID:-}"
 	# Assemble only trusted literal code; issue metadata stays in argv as data.
 	python3 - "$repo_path" "$issue_meta_json" "$source" "$cycle" "${BASH_SOURCE[0]%/*}/network-tier-helper.sh" < <(
