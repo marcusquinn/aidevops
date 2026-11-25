@@ -1001,7 +1001,8 @@ cmd_copy_to_remove() {
 		print_info "Re-run with --yes to stop copying $address to $target"
 		return 0
 	fi
-	if ! _pm_sieve "$address" "$secret" remove "$PM_SIEVE_SCRIPT"; then
+	# Pass the checked contents: the client deletes only that exact script.
+	if ! _pm_sieve "$address" "$secret" remove "$PM_SIEVE_SCRIPT" "$current"; then
 		print_error "Could not remove the Sieve script on $address"
 		return 1
 	fi

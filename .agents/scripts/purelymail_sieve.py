@@ -9,12 +9,13 @@ Run by purelymail-helper.sh inside secret injection:
   purelymail_sieve.py PASSWORD_VAR USER list
   purelymail_sieve.py PASSWORD_VAR USER get NAME
   purelymail_sieve.py PASSWORD_VAR USER install NAME SCRIPT
-  purelymail_sieve.py PASSWORD_VAR USER remove NAME
+  purelymail_sieve.py PASSWORD_VAR USER remove NAME SCRIPT
 
 The password is read from the environment variable named PASSWORD_VAR, never
 from argv. `install` runs CHECKSCRIPT, PUTSCRIPT and SETACTIVE, then reads the
-script back and fails unless it matches and is active. `remove` deactivates the
-script when active, then deletes it.
+script back and fails unless it matches and is active. `remove` renames the
+script aside, deletes it only if it still matches SCRIPT, and otherwise puts
+it back.
 
 Exit codes: 0 ok, 1 server/network error, 2 usage error, 4 no such script.
 Host and port default to Purelymail; PURELYMAIL_SIEVE_HOST and
@@ -32,7 +33,6 @@ HOST = os.environ.get("PURELYMAIL_SIEVE_HOST", "mailserver.purelymail.com")
 PORT = int(os.environ.get("PURELYMAIL_SIEVE_PORT", "4190"))
 TIMEOUT = 30
 PRE_TLS_WAIT = 1.0
-CAPABILITY_WAIT = 2.0
 # One response token: quoted string, trailing literal size, response code, atom.
 TOKEN_RE = re.compile(rb'"((?:\\.|[^"\\])*)"|\{(\d+)\+?\}$|(\([^)]*\))|(\S+)')
 
@@ -74,17 +74,25 @@ class Conn:
         # Purelymail quirk: after "OK" to STARTTLS it re-sends its capability
         # list in plaintext, before the TLS handshake. Drain and discard that
         # unauthenticated listing, or its bytes corrupt the handshake.
-        plaintext_caps = self._drain_pre_tls()
+        self._drain_pre_tls()
         self.sock = ssl.create_default_context().wrap_socket(self.sock, server_hostname=HOST)
-        # RFC 5804 section 2.2: the server re-sends capabilities over TLS.
-        # Purelymail sends none there, so ask when none arrive. Wait for
-        # application data, not socket readability: TLS 1.3 session tickets
-        # make the socket readable without any ManageSieve response.
-        if plaintext_caps or not self._data_within(CAPABILITY_WAIT):
-            self.sock.sendall(b"CAPABILITY\r\n")
-        status, _rest, _items = self.response()
-        if status != "OK":
-            raise SieveError("CAPABILITY after STARTTLS was " + status)
+        self._sync()
+
+    def _sync(self):
+        """Consume any capability listing sent over TLS, without timing.
+
+        RFC 5804 servers re-send capabilities after STARTTLS; Purelymail does
+        not. A NOOP reply has no data lines, while a capability listing does,
+        so reading up to the first data-less reply leaves no unread response
+        whichever way the server behaves (NO means NOOP is unsupported).
+        """
+        self.sock.sendall(b'NOOP "aidevops-sync"\r\n')
+        while True:
+            status, _rest, items = self.response()
+            if status == "BYE":
+                raise SieveError("server closed the session after STARTTLS")
+            if status == "NO" or not items:
+                return
 
     def _data_within(self, seconds):
         """Return True when data is buffered or arrives within SECONDS."""
@@ -102,11 +110,10 @@ class Conn:
     def _drain_pre_tls(self):
         """Discard a plaintext capability listing sent before TLS, if any."""
         if not self._data_within(PRE_TLS_WAIT):
-            return False
+            return
         self.response()
         if self.buf:
             raise SieveError("unexpected plaintext data before TLS handshake")
-        return True
 
     def _fill(self):
         chunk = self.sock.recv(65536)
@@ -215,21 +222,39 @@ def op_install(conn, name, content):
     return 0
 
 
-def op_remove(conn, name):
-    if (name, True) in listing(conn):
+def op_remove(conn, name, expected):
+    """Delete NAME only if it still holds EXPECTED.
+
+    Renaming first moves the script out of reach of webmail saves (which write
+    to NAME), so the contents checked are exactly the contents deleted.
+    """
+    parked = name + ".aidevops-remove"
+    conn.command(b"RENAMESCRIPT " + quote(name) + b" " + quote(parked))
+    stored = first_string(conn.command(b"GETSCRIPT " + quote(parked)))
+    if normalize(stored) != normalize(expected):
+        restore_parked(conn, parked, name)
+        raise SieveError("script changed since it was checked; left in place")
+    if (parked, True) in listing(conn):
         conn.command(b'SETACTIVE ""')
-    conn.command(b"DELETESCRIPT " + quote(name))
+    conn.command(b"DELETESCRIPT " + quote(parked))
     return 0
 
 
+def restore_parked(conn, parked, name):
+    try:
+        conn.command(b"RENAMESCRIPT " + quote(parked) + b" " + quote(name))
+    except SieveError:
+        raise SieveError("script changed since it was checked; kept as '%s'" % parked)
+
+
 # Operation name -> (handler, argument count).
-OPS = {"list": (op_list, 0), "get": (op_get, 1), "install": (op_install, 2), "remove": (op_remove, 1)}
+OPS = {"list": (op_list, 0), "get": (op_get, 1), "install": (op_install, 2), "remove": (op_remove, 2)}
 
 
 def main(argv):
     entry = OPS.get(argv[3]) if len(argv) >= 4 else None
     if entry is None or len(argv) - 4 != entry[1]:
-        sys.stderr.write("usage: purelymail_sieve.py PASSWORD_VAR USER list|get NAME|install NAME SCRIPT|remove NAME\n")
+        sys.stderr.write("usage: purelymail_sieve.py PASSWORD_VAR USER list|get NAME|install NAME SCRIPT|remove NAME SCRIPT\n")
         return 2
     password = os.environ.get(argv[1], "").rstrip("\r\n")
     if not password:
