@@ -463,39 +463,162 @@ _sandbox_snapshot_descendants_proc() {
 # Both lstart readers use the POSIX zone string TZ=UTC0: macOS libc reloads a
 # zone file (local or TZ=UTC) for every row, which made a ~1,000-row read cost
 # ~195 ms CPU and ~0.6 s wall versus ~22 ms CPU with TZ=UTC0.
-# Arguments: $1 - root PID, $2 - snapshot file
+# Read `ps -axo pid=,ppid=,pgid=,stat=,lstart=` rows (stdin, or the files
+# given) and print the root's live descendants as PID, PGID, start tab rows.
+# Lines whose first two columns are not numeric (such as the shared table's
+# timestamp header) are ignored. Rows are only indexed by parent; columns are
+# split and the start identity joined for descendants alone, so the cost per
+# host process stays small on a ~1,500-process runner (GH#40332).
+# Arguments: $1 - root PID, $2.. - optional input files
+_sandbox_descendant_rows() {
+	local rows_root_pid="$1"
+	shift
+	awk -v root="$rows_root_pid" -v pid_col=1 -v ppid_col=2 '
+		$pid_col ~ /^[0-9]+$/ && $ppid_col ~ /^[0-9]+$/ {
+			n++; pid[n] = $pid_col; row[n] = $0
+			kids[$ppid_col] = kids[$ppid_col] " " n
+		}
+		END {
+			seen[root] = 1
+			queue = kids[root]
+			while (queue != "") {
+				m = split(queue, idx, " ")
+				queue = ""
+				for (k = 1; k <= m; k++) {
+					i = idx[k]
+					if (pid[i] in seen) continue
+					seen[pid[i]] = 1
+					wanted[i] = 1
+					if (pid[i] in kids) queue = queue kids[pid[i]]
+				}
+			}
+			for (i = 1; i <= n; i++) {
+				if (!(i in wanted)) continue
+				# Columns: pid ppid pgid stat lstart(weekday month day time year).
+				nf = split(row[i], col)
+				if (col[4] ~ /Z/) continue
+				start = ""
+				for (j = 5; j <= nf; j++) start = (start == "" ? col[j] : start " " col[j])
+				if (start != "") printf "%s\t%s\t%s\n", col[1], col[3], start
+			}
+		}' "$@"
+	return $?
+}
+
+# Set _SANDBOX_PS_TABLE_AGE_US to the age in microseconds of a table file's
+# `#ts=` header, or -1 when it is unreadable, malformed or stamped in the future.
+# Arguments: $1 - table file, $2 - now in microseconds
+_sandbox_ps_table_age() {
+	local age_file="$1"
+	local age_now_us="$2"
+	local age_header=""
+	local age_stamp_us=""
+
+	_SANDBOX_PS_TABLE_AGE_US=-1
+	{ IFS= read -r age_header <"$age_file"; } 2>/dev/null || return 0
+	age_stamp_us="${age_header#\#ts=}"
+	[[ "$age_stamp_us" =~ ^[0-9]+$ ]] && ((age_stamp_us <= age_now_us)) || return 0
+	_SANDBOX_PS_TABLE_AGE_US=$((age_now_us - age_stamp_us))
+	return 0
+}
+
+# Exclusively create the staging file with its `#ts=` header (noclobber, no
+# fork). It is the refresh lock: the rename that publishes it releases it. A
+# staging file whose writer died is reclaimed once after two seconds.
+# Arguments: $1 - staging file, $2 - now in microseconds
+_sandbox_ps_table_claim() {
+	local claim_file="$1"
+	local claim_now_us="$2"
+	local claim_attempt=""
+	local claim_restore_noclobber=1
+
+	[[ "$-" == *C* ]] && claim_restore_noclobber=0
+	set -C
+	for claim_attempt in first retry; do
+		if { printf '#ts=%s\n' "$claim_now_us" >"$claim_file"; } 2>/dev/null; then
+			((claim_restore_noclobber == 0)) || set +C
+			return 0
+		fi
+		[[ "$claim_attempt" == "first" && -f "$claim_file" && -O "$claim_file" && ! -L "$claim_file" ]] || break
+		_sandbox_ps_table_age "$claim_file" "$claim_now_us"
+		((_SANDBOX_PS_TABLE_AGE_US < 0 || _SANDBOX_PS_TABLE_AGE_US >= 2000000)) || break
+		rm -f "$claim_file" 2>/dev/null || break
+	done
+	((claim_restore_noclobber == 0)) || set +C
+	return 1
+}
+
+# Host-wide process table shared by concurrent wait loops (GH#40332). A
+# full-table ps costs ~45 ms CPU per ~1,500 processes whatever the columns,
+# and every worker's loop read it every 0.5 s, so the watchers' cost grew with
+# workers x host processes (~1.3 cores for 16 workers on a saturated runner).
+# A table younger than the TTL (default 500 ms = one poll interval, so sampling
+# density is unchanged) is reused. Otherwise one loop claims the exclusive
+# staging file, appends a full-table read and renames it into place; loops that
+# find a refresh in progress reuse a table up to four TTLs old rather than
+# duplicating the read. The header records the time before ps ran, so the age
+# is never understated. Same-user writers could forge rows, but cleanup
+# revalidates every PID's PGID and start token live, and such a writer can
+# already signal those processes directly. Bash without EPOCHREALTIME, a TTL
+# of 0, or a path not owned by this user falls back to direct reads.
+# Prints the path of a table the caller should read, or nothing.
+_sandbox_shared_ps_table() {
+	local table_ttl_ms="${AIDEVOPS_SANDBOX_PS_TABLE_TTL_MS:-500}"
+	local table_dir="${AIDEVOPS_SANDBOX_PS_TABLE_DIR:-$SANDBOX_DIR}"
+	local table_file="${table_dir}/ps-table"
+	local table_next="${table_file}.next"
+	local table_now_us="${EPOCHREALTIME:-}"
+	local table_ttl_us=0
+	local table_age_us=-1
+
+	[[ "$table_ttl_ms" =~ ^[0-9]+$ ]] && ((table_ttl_ms > 0)) || return 0
+	table_ttl_us=$((table_ttl_ms * 1000))
+	table_now_us="${table_now_us//[!0-9]/}"
+	[[ -n "$table_now_us" ]] || return 0
+	[[ -d "$table_dir" && -O "$table_dir" && ! -L "$table_dir" ]] || return 0
+	if [[ -e "$table_file" || -L "$table_file" ]]; then
+		[[ -f "$table_file" && -O "$table_file" && ! -L "$table_file" ]] || return 0
+		_sandbox_ps_table_age "$table_file" "$table_now_us"
+		table_age_us="$_SANDBOX_PS_TABLE_AGE_US"
+		if ((table_age_us >= 0 && table_age_us < table_ttl_us)); then
+			printf '%s\n' "$table_file"
+			return 0
+		fi
+	fi
+	if ! _sandbox_ps_table_claim "$table_next" "$table_now_us"; then
+		if ((table_age_us >= 0 && table_age_us < table_ttl_us * 4)); then
+			printf '%s\n' "$table_file"
+		fi
+		return 0
+	fi
+	if TZ=UTC0 LC_ALL=C ps -axo pid=,ppid=,pgid=,stat=,lstart= >>"$table_next" 2>/dev/null &&
+		mv -f "$table_next" "$table_file" 2>/dev/null; then
+		printf '%s\n' "$table_file"
+		return 0
+	fi
+	rm -f "$table_next" 2>/dev/null || true
+	return 0
+}
+
+# Arguments: $1 - root PID, $2 - snapshot file, $3 - "fresh" bypasses the
+# shared table (cleanup's last look before signalling must not be stale)
 _sandbox_snapshot_descendants_ps() {
 	local ps_root_pid="$1"
 	local ps_file="$2"
+	local ps_mode="${3:-shared}"
 	local ps_rows=""
 	local ps_pid=""
 	local ps_pgid=""
 	local ps_start=""
+	local ps_table=""
 
-	ps_rows="$(TZ=UTC0 LC_ALL=C ps -axo pid=,ppid=,pgid=,stat=,lstart= 2>/dev/null | awk -v root="$ps_root_pid" '
-		{
-			# Columns: pid ppid pgid stat lstart(weekday month day time year).
-			nf = split($0, col)
-			if (col[1] !~ /^[0-9]+$/ || col[2] !~ /^[0-9]+$/) next
-			n++; pid[n] = col[1]; ppid[n] = col[2]; pgid[n] = col[3]; state[n] = col[4]
-			start = ""
-			for (i = 5; i <= nf; i++) start = (start == "" ? col[i] : start " " col[i])
-			started[n] = start
-		}
-		END {
-			wanted[root] = 1
-			changed = 1
-			while (changed) {
-				changed = 0
-				for (i = 1; i <= n; i++) {
-					if ((ppid[i] in wanted) && !(pid[i] in wanted)) { wanted[pid[i]] = 1; changed = 1 }
-				}
-			}
-			for (i = 1; i <= n; i++) {
-				if (pid[i] != root && (pid[i] in wanted) && state[i] !~ /Z/ && started[i] != "")
-					printf "%s\t%s\t%s\n", pid[i], pgid[i], started[i]
-			}
-		}')" || return 0
+	[[ "$ps_mode" == "fresh" ]] || ps_table="$(_sandbox_shared_ps_table)"
+	if [[ -n "$ps_table" ]]; then
+		ps_rows="$(_sandbox_descendant_rows "$ps_root_pid" "$ps_table" 2>/dev/null)" || return 0
+	else
+		ps_rows="$(TZ=UTC0 LC_ALL=C ps -axo pid=,ppid=,pgid=,stat=,lstart= 2>/dev/null |
+			_sandbox_descendant_rows "$ps_root_pid")" || return 0
+	fi
 	[[ -n "$ps_rows" ]] || return 0
 	while IFS=$'\t' read -r ps_pid ps_pgid ps_start; do
 		_sandbox_snapshot_record "$ps_file" "$ps_pid" "$ps_pgid" "$ps_start"
@@ -506,10 +629,12 @@ _sandbox_snapshot_descendants_ps() {
 # Record descendant identities while the original parent still owns them.
 # Entries are append-only because a detached descendant may be reparented before
 # the next sample. Cleanup revalidates every PID against its start token.
-# Arguments: $1 - root PID, $2 - snapshot file
+# Arguments: $1 - root PID, $2 - snapshot file, $3 - optional "fresh" (the
+# macOS fallback then skips the shared process table)
 _sandbox_snapshot_descendants() {
 	local snapshot_root_pid="${1:-}"
 	local snapshot_file="${2:-}"
+	local snapshot_mode="${3:-shared}"
 
 	[[ "$snapshot_root_pid" =~ ^[0-9]+$ && -n "$snapshot_file" ]] || return 0
 	if [[ "$_SANDBOX_SNAPSHOT_SEEN_FILE" != "$snapshot_file" ]]; then
@@ -520,7 +645,7 @@ _sandbox_snapshot_descendants() {
 		_sandbox_snapshot_descendants_proc "$snapshot_root_pid" "$snapshot_file"
 		return 0
 	fi
-	_sandbox_snapshot_descendants_ps "$snapshot_root_pid" "$snapshot_file"
+	_sandbox_snapshot_descendants_ps "$snapshot_root_pid" "$snapshot_file" "$snapshot_mode"
 	return 0
 }
 
@@ -586,9 +711,10 @@ _sandbox_pgkill_cleanup() {
 	# (macOS) there is no child PGID, so cleanup depends on snapshots that the
 	# poll loop only refreshes every 0.5s. A cancellation inside that window
 	# would kill the direct child first, orphan the tree to init/launchd, and
-	# leave descendants the snapshot never saw.
+	# leave descendants the snapshot never saw. Read the table fresh: a shared
+	# one may predate the newest descendants (GH#40332).
 	if [[ -n "$cleanup_snapshot_file" && -f "$cleanup_snapshot_file" ]]; then
-		_sandbox_snapshot_descendants "$cleanup_child_pid" "$cleanup_snapshot_file"
+		_sandbox_snapshot_descendants "$cleanup_child_pid" "$cleanup_snapshot_file" fresh
 	fi
 
 	local cleanup_self_pgid=""
