@@ -843,7 +843,7 @@ COPY OPTIONS
   --yes                Confirm copy-to-remove (otherwise preview removal)
   copy-to requires exclusive filter access: stop webmail/other Sieve writers.
   Conflict checks and installation are not an atomic server transaction.
-  --secret also works with list/show/delete-script; delete-script needs --deactivate for the active script.
+  --secret also works with list/show/delete-script; active deletion is refused, even with legacy --deactivate.
 ADD-PATTERN OPTIONS
   --type <type>         Pattern type: sender|domain|subject|list-id|header|transaction|mailing-list|notification
   --value <value>       Pattern value (email, domain, subject text, or header:value)
@@ -1029,8 +1029,8 @@ _remote_dispatch() {
 		;;
 	show-script) _sieve get "$script_name" || return $? ;;
 	delete-script)
-		# The client reads and compares unredacted data itself; an active
-		# script is only deactivated on explicit --deactivate.
+		# Both paths refuse active targets: an unconditional clear can disable
+		# a different script activated concurrently by another session.
 		if [[ -n "$deactivate" ]]; then
 			_sieve delete-active "$script_name" || return $?
 		else
