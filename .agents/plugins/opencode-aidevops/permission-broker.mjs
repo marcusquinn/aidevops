@@ -6,8 +6,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join } from "path";
 import { homedir } from "os";
 import { recordPermissionBlocker } from "./permission-broker-blocker-log.mjs";
-import { isManagedToolOutputRead } from "./permission-broker-tool-output.mjs";
-import { impossibleExternalRead as classifyImpossibleRead, isWorkerRuntimeRead, rejectImpossibleToolRead } from "./permission-broker-read-target.mjs";
+import { isUnauditedRuntimeRead } from "./permission-broker-runtime-read.mjs";
+import { impossibleExternalRead as classifyImpossibleRead, rejectImpossibleToolRead } from "./permission-broker-read-target.mjs";
 import { isReadOnlyRootRead, resolvedRiskTargets } from "./permission-broker-read-only-root.mjs";
 import { isDesignedPollDoomLoop, recordDesignedPollAllow } from "./permission-broker-designed-poll.mjs";
 
@@ -117,7 +117,7 @@ function recordPermissionToolCall(toolCalls, isHeadless, home, input, output) {
     intent: sanitizePermissionText(args?.agent__intent || "", { home, maxLength: MAX_INTENT_LENGTH }),
     target: args.filePath || args.path || "",
     // Retained only in this bounded in-memory map, never in persisted captures.
-    command: typeof args.command === "string" ? args.command : "",
+    command: String(args.command ?? ""),
   });
   while (toolCalls.size > 100) toolCalls.delete(toolCalls.keys().next().value);
 }
@@ -228,8 +228,7 @@ async function replyPermissionRequest(client, request, response) {
 // Returns the post-allow audit hook for an allowed request, otherwise null.
 function onceAllowance(context, request) {
   if (isDesignedPollDoomLoop(request)) return () => recordDesignedPollAllow(context, request, sanitizePermissionText);
-  if (isWorkerRuntimeRead(context, request, FORBIDDEN_PATTERN)) return () => {};
-  if (isManagedToolOutputRead(context.toolCalls, request, context.dataHome)) return () => {};
+  if (isUnauditedRuntimeRead(context, request, FORBIDDEN_PATTERN)) return () => {};
   if (isReadOnlyRootRead(context, request, FORBIDDEN_PATTERN)) return () => recordReadOnlyRootAllow(context, request);
   return null;
 }

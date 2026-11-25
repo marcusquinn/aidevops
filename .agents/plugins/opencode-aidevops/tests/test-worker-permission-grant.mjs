@@ -10,7 +10,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 
 import { registerApprovedWorkerPermissions } from "../config-hook.mjs";
-import { registerWorkerRuntimePermissions } from "../config-worker-permissions.mjs";
+import { registerWorkerRuntimePermissions } from "../config-worker-runtime-permissions.mjs";
 
 test("worker runtime plumbing is narrow, per-agent and independent of signed grants", (t) => {
   const home = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-runtime-config-")));

@@ -15,7 +15,8 @@ import { getCursorProxyPort, registerCursorProvider } from "./cursor-proxy.mjs";
 import { getGoogleProxyPort, registerGoogleProvider } from "./google-proxy.mjs";
 import { getClaudeProxyPort, registerClaudeProvider } from "./claude-proxy.mjs";
 import { checkOpenCodeVersionDriftAsync } from "./version-tracking.mjs";
-import { registerApprovedWorkerPermissions, registerWorkerRuntimePermissions } from "./config-worker-permissions.mjs";
+import { registerApprovedWorkerPermissions } from "./config-worker-permissions.mjs";
+import { registerWorkerRuntimePermissions } from "./config-worker-runtime-permissions.mjs";
 import { applyCompactionRouting } from "./compaction-routing.mjs";
 import { registerPendingAnthropicModels } from "./anthropic-catalog-bridge.mjs";
 import {
