@@ -148,6 +148,9 @@ git() {
 	local args="$*"
 	if [[ "$args" == *'ls-remote'* ]]; then
 		printf 'head refs/heads/fixture\n'
+	elif [[ "$args" == *'rev-parse --abbrev-ref HEAD'* ]]; then
+		# CI checks out a detached HEAD or main; the fixture needs a feature branch.
+		printf 'fixture\n'
 	else
 		command git "$@"
 	fi

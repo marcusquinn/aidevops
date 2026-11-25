@@ -375,6 +375,19 @@ _audit_reclaim_stale_lock() {
 		return 1
 	fi
 
+	# The staleness decision used an earlier read. A short-lived holder can release
+	# and exit, and a new writer can acquire the same path, between that read and
+	# the election above. Only the elected reclaimer sits inside the lock directory,
+	# so re-verify the owner record it judged stale still owns the lock.
+	local current_record=""
+	if [[ -f "${lock_dir}/owner" ]]; then
+		IFS= read -r current_record <"${lock_dir}/owner" || current_record=""
+	fi
+	if [[ "$current_record" != "$owner_record" ]]; then
+		rmdir "${lock_dir}/.reclaim" 2>/dev/null || true
+		return 1
+	fi
+
 	_audit_warn "Reclaiming stale audit log lock (${stale_reason})"
 	if ! _audit_remove_lock_dir "$lock_dir"; then
 		return 1
