@@ -309,14 +309,14 @@ ENDPOINT_VARS = ("SIEVE_HOST", "SIEVE_PORT", "PURELYMAIL_SIEVE_HOST", "PURELYMAI
 def config_error(argv, entry):
     """Return the first usage/config problem as a message, or None."""
     bad_usage = entry is None or len(argv) - 4 != entry[1]
-    argv = list(argv) + [""] * 4  # checks below are evaluated eagerly
+    padded = list(argv) + [""] * 4  # checks below are evaluated eagerly
     checks = (
         (bad_usage, USAGE),
         (not HOST.strip(), "sieve: SIEVE_HOST is required (or legacy PURELYMAIL_SIEVE_HOST)"),
-        (argv[1] in ENDPOINT_VARS, "sieve: endpoint variables cannot hold the password"),
+        (padded[1] in ENDPOINT_VARS, "sieve: endpoint variables cannot hold the password"),
         (not re.fullmatch(r"[0-9]{1,5}", PORT) or not 1 <= int(PORT) <= 65535,
          "sieve: invalid port (expected 1-65535)"),
-        (not os.environ.get(argv[1], "").rstrip("\r\n"), "sieve: password not available"),
+        (not os.environ.get(padded[1], "").rstrip("\r\n"), "sieve: password not available"),
     )
     return next((message for failed, message in checks if failed), None)
 
