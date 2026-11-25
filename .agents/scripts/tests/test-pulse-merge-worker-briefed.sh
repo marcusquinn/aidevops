@@ -88,6 +88,12 @@ setup_test_env() {
 	# Default collaborator permission fixture: read (not maintainer-equivalent)
 	printf 'read' >"${TEST_ROOT}/permission.txt"
 
+	write_gh_stub
+	write_approval_helper_stub
+	return 0
+}
+
+write_gh_stub() {
 	# Mock gh: logs every call and returns canned data from TEST_ROOT fixtures.
 	cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
 #!/usr/bin/env bash
@@ -165,7 +171,6 @@ fi
 exit 0
 GHEOF
 	chmod +x "${TEST_ROOT}/bin/gh"
-	write_approval_helper_stub
 	return 0
 }
 
