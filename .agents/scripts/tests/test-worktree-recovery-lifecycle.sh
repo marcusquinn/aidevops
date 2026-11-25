@@ -24,6 +24,39 @@ TEST_LEGACY_RECOVERY_ROOT=""
 TESTS_RUN=0
 TESTS_FAILED=0
 
+# The shell suite already supplies a controlled CWD census below. Give native
+# registry subprocesses the same empty fixture census, not the login host's
+# inaccessible /proc entries. Native process-reference rejection has dedicated
+# coverage in worker-lifecycle/tests/test_retirement_processes.py.
+TEST_PYTHON_BIN=$(command -v python3)
+export TEST_PYTHON_BIN
+python3() {
+	local script="${1:-}"
+	local -a options=()
+	while [[ "$script" == -B || "$script" == -E || "$script" == -s ]]; do
+		options+=("$script")
+		shift
+		script="${1:-}"
+	done
+	if [[ "$script" == */worker-registry.py && -n "${AIDEVOPS_FIXTURE_PROC:-}" ]]; then
+		"$TEST_PYTHON_BIN" "${options[@]}" -c '
+import os, runpy, sys
+from pathlib import Path
+script = sys.argv[1]
+sys.path.insert(0, str(Path(script).resolve().parent))
+from worker_lifecycle import legacy_proc
+inspect = legacy_proc.require_idle_proc
+legacy_proc.require_idle_proc = lambda path: inspect(path, Path(os.environ["AIDEVOPS_FIXTURE_PROC"]))
+sys.argv = sys.argv[1:]
+runpy.run_path(script, run_name="__main__")
+' "$@"
+	else
+		"$TEST_PYTHON_BIN" "${options[@]}" "$@"
+	fi
+	return $?
+}
+export -f python3
+
 print_result() {
 	local name="$1"
 	local status="$2"
@@ -59,6 +92,8 @@ setup() {
 	# Fixture-owned lifecycle registry: removal is authorised only for trees it enrolled.
 	export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_DIR}/lifecycle-state"
 	export AIDEVOPS_REAL_GIT_BIN="$GIT_BIN"
+	export AIDEVOPS_FIXTURE_PROC="${TEST_DIR}/proc"
+	mkdir -p "$AIDEVOPS_FIXTURE_PROC/self"
 	# Retention fixtures must not depend on the host's login daemons. Actual
 	# CWD guards and degraded visibility are covered by the removal audit suite.
 	capture_worktree_process_cwds() {

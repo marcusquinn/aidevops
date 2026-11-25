@@ -46,6 +46,9 @@ setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
 	export HOME="${TEST_ROOT}/home"
 	mkdir -p "${HOME}/.aidevops/logs"
+	# This simulated worker owns no dispatch lease from the invoking runner.
+	unset AIDEVOPS_DISPATCH_LEASE_DEVICE AIDEVOPS_DISPATCH_LEASE_TOKEN AIDEVOPS_DISPATCH_LEASE_SESSION
+	unset DISPATCH_REPO_SLUG WORKER_ISSUE_NUMBER WORKER_REPO_SLUG WORKER_TARGET_BRANCH
 	set +e
 	# shellcheck source=/dev/null
 	source "$HELPER_SCRIPT" >/dev/null 2>&1

@@ -1368,6 +1368,38 @@ TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P) || exit 1
 export HOME="${TEST_ROOT}/home"
 export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_ROOT}/lifecycle-state"
 mkdir -p "${HOME}/.aidevops/logs"
+# Match this suite's mocked shell CWD census in native registry subprocesses.
+# Host process visibility is tested independently by the native lifecycle suite.
+export TEST_PYTHON_BIN
+TEST_PYTHON_BIN=$(command -v python3)
+export AIDEVOPS_FIXTURE_PROC="${TEST_ROOT}/proc"
+mkdir -p "$AIDEVOPS_FIXTURE_PROC/self"
+python3() {
+	local script="${1:-}"
+	local -a options=()
+	while [[ "$script" == -B || "$script" == -E || "$script" == -s ]]; do
+		options+=("$script")
+		shift
+		script="${1:-}"
+	done
+	if [[ "$script" == */worker-registry.py ]]; then
+		"$TEST_PYTHON_BIN" "${options[@]}" -c '
+import os, runpy, sys
+from pathlib import Path
+script = sys.argv[1]
+sys.path.insert(0, str(Path(script).resolve().parent))
+from worker_lifecycle import legacy_proc
+inspect = legacy_proc.require_idle_proc
+legacy_proc.require_idle_proc = lambda path: inspect(path, Path(os.environ["AIDEVOPS_FIXTURE_PROC"]))
+sys.argv = sys.argv[1:]
+runpy.run_path(script, run_name="__main__")
+' "$@"
+	else
+		"$TEST_PYTHON_BIN" "${options[@]}" "$@"
+	fi
+	return $?
+}
+export -f python3
 # Production always has an ownership registry; without one the managed
 # lifetime fence fails closed before any archive is attempted. A subshell
 # keeps the registry library from replacing this file's stubs.

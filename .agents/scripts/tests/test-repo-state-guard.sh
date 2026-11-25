@@ -9,6 +9,21 @@ AGENTS_SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
+# Authority scenarios must not share the invoking worker's permission memo or
+# release outbox. Each check below represents a fresh permission observation.
+export HOME="${tmp_dir}/home"
+mkdir -p "$HOME"
+unset AIDEVOPS_GH_COLLAB_MEMO_FILE AIDEVOPS_GH_COLLAB_STATS_FILE
+export GH_RELEASE_FIXTURE="${tmp_dir}/release-fixture.sh"
+cat >"$GH_RELEASE_FIXTURE" <<'STUB'
+# Use the bound-claim fixture from test-claim-release-retry.sh: these cases
+# exercise repository authority and its retry boundary, not claim discovery.
+_hrff_check_release_claim() {
+  _HRFF_RELEASE_CLAIM_OWNED=1
+  _HRFF_RELEASE_CLAIM_ID=123
+  return 0
+}
+STUB
 
 call_log="${tmp_dir}/gh-calls.log"
 mode_file="${tmp_dir}/mode"
@@ -107,6 +122,7 @@ check() {
 	local condition="$1"
 	local name="$2"
 	local detail="${3:-}"
+	_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
 	if [[ "$condition" == "1" ]]; then
 		printf 'PASS %s\n' "$name"
 		pass_count=$((pass_count + 1))
@@ -218,6 +234,7 @@ release_output=$(bash -c '
   source "${0}/shared-constants.sh"
   source "${0}/worker-lifecycle-common.sh"
   source "${0}/headless-runtime-failure.sh"
+  source "$GH_RELEASE_FIXTURE"
   WORKER_ISSUE_NUMBER=866 DISPATCH_REPO_SLUG=afragen/git-updater _release_dispatch_claim issue-866 worker_complete 0 0
 ' "$AGENTS_SCRIPTS_DIR" 2>&1)
 release_rc=$?
@@ -294,6 +311,7 @@ recovered_output=$(AIDEVOPS_RELEASE_AUTHORITY_RETRY_DELAYS="0" bash -c '
   source "${0}/shared-constants.sh"
   source "${0}/worker-lifecycle-common.sh"
   source "${0}/headless-runtime-failure.sh"
+  source "$GH_RELEASE_FIXTURE"
   WORKER_ISSUE_NUMBER=866 DISPATCH_REPO_SLUG=tester/project _release_dispatch_claim issue-866 worker_complete 0 0
 ' "$AGENTS_SCRIPTS_DIR" 2>&1)
 recovered_rc=$?
