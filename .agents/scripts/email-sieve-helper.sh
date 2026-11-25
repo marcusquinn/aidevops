@@ -45,7 +45,7 @@ readonly DEFAULT_PATTERNS_FILE="${CONFIG_DIR}/email-sieve-patterns.json"
 readonly DEFAULT_OUTPUT_FILE="/tmp/aidevops-generated.sieve"
 readonly DEFAULT_SCRIPT_NAME="aidevops-triage"
 readonly DEFAULT_SIEVE_PORT=4190
-readonly MANAGESIEVE_PYTHON_HELPER="${SCRIPT_DIR}/email-sieve-managesieve.py"
+readonly MANAGESIEVE_PYTHON_HELPER="${SCRIPT_DIR}/managesieve_client.py"
 
 # Sieve RFC 5228 / RFC 5429 capabilities we use
 readonly SIEVE_REQUIRES_FILEINTO="fileinto"
@@ -594,401 +594,133 @@ PYEOF
 # ManageSieve deployment (RFC 5804)
 # ============================================================================
 
-# Write the Python module header, imports, and low-level protocol helpers.
-_write_managesieve_py_header() {
-	local helper_file="$1"
-	cat >"$helper_file" <<'PYEOF'
-#!/usr/bin/env python3
-"""
-ManageSieve client helper for email-sieve-helper.sh
-Implements RFC 5804 ManageSieve protocol over TLS.
-Usage: python3 <this_file> <command> <host> <port> <user> <password_env_var> [args...]
-Commands: list, get <script_name>, put <script_name> <sieve_file>, delete <script_name>
-Password is read from the environment variable named by password_env_var.
-"""
-import sys
-import os
-import ssl
-import socket
-import re
-
-def read_response(sock):
-    """Read a ManageSieve response, handling multi-line and literal strings."""
-    lines = []
-    while True:
-        line = b""
-        while not line.endswith(b"\r\n"):
-            chunk = sock.recv(1)
-            if not chunk:
-                break
-            line += chunk
-        line = line.rstrip(b"\r\n").decode("utf-8", errors="replace")
-        lines.append(line)
-        # Check for terminal response
-        if re.match(r'^(OK|NO|BYE)(\s|$)', line, re.IGNORECASE):
-            break
-        # Check for literal string continuation {N+}
-        m = re.match(r'^\{(\d+)\+?\}$', line)
-        if m:
-            size = int(m.group(1))
-            data = b""
-            while len(data) < size:
-                data += sock.recv(size - len(data))
-            lines.append(data.decode("utf-8", errors="replace"))
-    return lines
-
-def send_command(sock, cmd):
-    """Send a ManageSieve command."""
-    sock.sendall((cmd + "\r\n").encode("utf-8"))
-PYEOF
-	return 0
-}
-
-# Append the connect_managesieve function to the Python helper file.
-_write_managesieve_py_connect() {
-	local helper_file="$1"
-	cat >>"$helper_file" <<'PYEOF'
-
-def connect_managesieve(host, port, user, password):
-    """Connect and authenticate to ManageSieve server."""
-    context = ssl.create_default_context()
-    # Allow self-signed certs for local/Cloudron servers
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-
-    raw_sock = socket.create_connection((host, int(port)), timeout=30)
-
-    # Read greeting
-    greeting = b""
-    while True:
-        chunk = raw_sock.recv(4096)
-        greeting += chunk
-        if b"OK" in greeting or b"\r\n" in greeting:
-            break
-
-    greeting_str = greeting.decode("utf-8", errors="replace")
-
-    # Check if STARTTLS is available
-    if "STARTTLS" in greeting_str:
-        raw_sock.sendall(b"STARTTLS\r\n")
-        resp = b""
-        while b"\r\n" not in resp:
-            resp += raw_sock.recv(4096)
-        if b"OK" in resp:
-            sock = context.wrap_socket(raw_sock, server_hostname=host)
-        else:
-            sock = raw_sock
-    else:
-        # Try direct TLS
-        try:
-            sock = context.wrap_socket(raw_sock, server_hostname=host)
-            # Re-read greeting over TLS
-            greeting = b""
-            while True:
-                chunk = sock.recv(4096)
-                greeting += chunk
-                if b"OK" in greeting:
-                    break
-        except ssl.SSLError:
-            sock = raw_sock
-
-    # Authenticate with PLAIN SASL
-    import base64
-    auth_str = "\x00" + user + "\x00" + password
-    auth_b64 = base64.b64encode(auth_str.encode("utf-8")).decode("ascii")
-    send_command(sock, 'AUTHENTICATE "PLAIN" "' + auth_b64 + '"')
-    resp = read_response(sock)
-    resp_str = "\n".join(resp)
-    if not re.search(r'^OK', resp_str, re.MULTILINE | re.IGNORECASE):
-        raise RuntimeError("Authentication failed: " + resp_str)
-
-    return sock
-PYEOF
-	return 0
-}
-
-# Append the cmd_list/get/put/delete command functions to the Python helper file.
-_write_managesieve_py_commands() {
-	local helper_file="$1"
-	cat >>"$helper_file" <<'PYEOF'
-
-def cmd_list(sock):
-    send_command(sock, "LISTSCRIPTS")
-    resp = read_response(sock)
-    for line in resp:
-        if line and not re.match(r'^(OK|NO|BYE)', line, re.IGNORECASE):
-            print(line)
-    return 0
-
-def cmd_get(sock, script_name):
-    send_command(sock, 'GETSCRIPT "' + script_name + '"')
-    resp = read_response(sock)
-    for line in resp:
-        if not re.match(r'^(OK|NO|BYE)', line, re.IGNORECASE):
-            print(line)
-    return 0
-
-def cmd_put(sock, script_name, sieve_file):
-    with open(sieve_file, "r", encoding="utf-8") as f:
-        content = f.read()
-    size = len(content.encode("utf-8"))
-    send_command(sock, 'PUTSCRIPT "' + script_name + '" {' + str(size) + '+}')
-    sock.sendall(content.encode("utf-8"))
-    sock.sendall(b"\r\n")
-    resp = read_response(sock)
-    resp_str = "\n".join(resp)
-    if re.search(r'^OK', resp_str, re.MULTILINE | re.IGNORECASE):
-        print("OK: Script uploaded: " + script_name)
-        # Activate the script
-        send_command(sock, 'SETACTIVE "' + script_name + '"')
-        resp2 = read_response(sock)
-        resp2_str = "\n".join(resp2)
-        if re.search(r'^OK', resp2_str, re.MULTILINE | re.IGNORECASE):
-            print("OK: Script activated: " + script_name)
-        else:
-            print("WARNING: Upload succeeded but activation failed: " + resp2_str, file=sys.stderr)
-        return 0
-    else:
-        print("ERROR: " + resp_str, file=sys.stderr)
-        return 1
-
-def cmd_delete(sock, script_name):
-    send_command(sock, 'DELETESCRIPT "' + script_name + '"')
-    resp = read_response(sock)
-    resp_str = "\n".join(resp)
-    if re.search(r'^OK', resp_str, re.MULTILINE | re.IGNORECASE):
-        print("OK: Script deleted: " + script_name)
-        return 0
-    else:
-        print("ERROR: " + resp_str, file=sys.stderr)
-        return 1
-PYEOF
-	return 0
-}
-
-# Append the Python main() entry point and __main__ guard to the helper file.
-_write_managesieve_py_main() {
-	local helper_file="$1"
-	cat >>"$helper_file" <<'PYEOF'
-
-def main():
-    if len(sys.argv) < 6:
-        print("Usage: managesieve.py <cmd> <host> <port> <user> <pass_env> [args...]", file=sys.stderr)
-        sys.exit(1)
-
-    command = sys.argv[1]
-    host = sys.argv[2]
-    port = sys.argv[3]
-    user = sys.argv[4]
-    pass_env = sys.argv[5]
-    extra_args = sys.argv[6:]
-
-    password = os.environ.get(pass_env, "")
-    if not password:
-        print("ERROR: Password env var '" + pass_env + "' is not set or empty", file=sys.stderr)
-        sys.exit(1)
-
-    try:
-        sock = connect_managesieve(host, port, user, password)
-    except Exception as e:
-        print("ERROR: Connection failed: " + str(e), file=sys.stderr)
-        sys.exit(1)
-
-    try:
-        if command == "list":
-            rc = cmd_list(sock)
-        elif command == "get":
-            if not extra_args:
-                print("ERROR: get requires script name", file=sys.stderr)
-                rc = 1
-            else:
-                rc = cmd_get(sock, extra_args[0])
-        elif command == "put":
-            if len(extra_args) < 2:
-                print("ERROR: put requires script name and file", file=sys.stderr)
-                rc = 1
-            else:
-                rc = cmd_put(sock, extra_args[0], extra_args[1])
-        elif command == "delete":
-            if not extra_args:
-                print("ERROR: delete requires script name", file=sys.stderr)
-                rc = 1
-            else:
-                rc = cmd_delete(sock, extra_args[0])
-        else:
-            print("ERROR: Unknown command: " + command, file=sys.stderr)
-            rc = 1
-    finally:
-        try:
-            send_command(sock, "LOGOUT")
-        except Exception:
-            pass
-        sock.close()
-
-    sys.exit(rc)
-
-if __name__ == "__main__":
-    main()
-PYEOF
-	return 0
-}
-
-# Write the Python ManageSieve helper to a temp file
-write_managesieve_helper() {
-	local helper_file="$1"
-
-	_write_managesieve_py_header "$helper_file"
-	_write_managesieve_py_connect "$helper_file"
-	_write_managesieve_py_commands "$helper_file"
-	_write_managesieve_py_main "$helper_file"
-
-	chmod 0700 "$helper_file"
-	return 0
-}
-
-# Deploy a Sieve script to a ManageSieve server
-deploy_sieve() {
-	local server="$1"
-	local user="$2"
-	local port="${3:-$DEFAULT_SIEVE_PORT}"
-	local script_name="${4:-$DEFAULT_SCRIPT_NAME}"
-	local sieve_file="${5:-$DEFAULT_OUTPUT_FILE}"
-
-	if [[ ! -f "$sieve_file" ]]; then
-		print_error "Sieve file not found: $sieve_file"
-		print_info "Generate one first: $0 generate"
-		return 1
-	fi
-
+# Run only the shared client; passwords stay in its environment, never argv.
+_sieve() {
+	local operation="$1"
+	shift
 	check_deploy_dependencies || return 1
-
-	# Password must be in environment — never accept as argument
-	local pass_env_var="SIEVE_PASSWORD"
-	if [[ -z "${SIEVE_PASSWORD:-}" ]]; then
-		print_error "SIEVE_PASSWORD environment variable is not set"
-		print_info "Set it with: export SIEVE_PASSWORD=\$(gopass show -o mail/sieve)"
-		print_info "Or: aidevops secret set SIEVE_PASSWORD"
-		return 1
-	fi
-
-	print_info "Deploying Sieve script to $server:$port as $user"
-	print_info "Script name: $script_name"
-	print_info "Source file: $sieve_file"
-
-	# Write Python helper to temp file
-	local helper_tmp
-	# t2997: drop .py — XXXXXX must be at end for BSD mktemp.
-	helper_tmp="$(mktemp /tmp/aidevops-managesieve-XXXXXX)"
-	# Ensure cleanup on exit
-	trap 'rm -f "$helper_tmp"' EXIT
-
-	write_managesieve_helper "$helper_tmp"
-
-	if python3 "$helper_tmp" put "$server" "$port" "$user" "$pass_env_var" "$script_name" "$sieve_file"; then
-		print_success "Sieve script deployed and activated: $script_name"
-		rm -f "$helper_tmp"
-		trap - EXIT
-		return 0
+	if [[ "$secret" == "SIEVE_PASSWORD" && -n "${SIEVE_PASSWORD:-}" ]]; then
+		SIEVE_HOST="$server" SIEVE_PORT="$port" python3 "$MANAGESIEVE_PYTHON_HELPER" SIEVE_PASSWORD "$user" "$operation" "$@"
 	else
-		print_error "Deployment failed"
-		rm -f "$helper_tmp"
-		trap - EXIT
-		return 1
+		SIEVE_HOST="$server" SIEVE_PORT="$port" "${SCRIPT_DIR}/secret-helper.sh" "$secret" -- \
+			python3 "$MANAGESIEVE_PYTHON_HELPER" "$secret" "$user" "$operation" "$@"
 	fi
-}
-
-# List scripts on a ManageSieve server
-list_scripts() {
-	local server="$1"
-	local user="$2"
-	local port="${3:-$DEFAULT_SIEVE_PORT}"
-
-	check_deploy_dependencies || return 1
-
-	if [[ -z "${SIEVE_PASSWORD:-}" ]]; then
-		print_error "SIEVE_PASSWORD environment variable is not set"
-		return 1
-	fi
-
-	local helper_tmp
-	# t2997: drop .py — XXXXXX must be at end for BSD mktemp.
-	helper_tmp="$(mktemp /tmp/aidevops-managesieve-XXXXXX)"
-	trap 'rm -f "$helper_tmp"' EXIT
-
-	write_managesieve_helper "$helper_tmp"
-
-	print_info "Listing Sieve scripts on $server:$port"
-	python3 "$helper_tmp" list "$server" "$port" "$user" "SIEVE_PASSWORD"
-	local rc=$?
-
-	rm -f "$helper_tmp"
-	trap - EXIT
-	return $rc
-}
-
-# Show a specific script from a ManageSieve server
-show_script() {
-	local server="$1"
-	local user="$2"
-	local script_name="$3"
-	local port="${4:-$DEFAULT_SIEVE_PORT}"
-
-	check_deploy_dependencies || return 1
-
-	if [[ -z "${SIEVE_PASSWORD:-}" ]]; then
-		print_error "SIEVE_PASSWORD environment variable is not set"
-		return 1
-	fi
-
-	local helper_tmp
-	# t2997: drop .py — XXXXXX must be at end for BSD mktemp.
-	helper_tmp="$(mktemp /tmp/aidevops-managesieve-XXXXXX)"
-	trap 'rm -f "$helper_tmp"' EXIT
-
-	write_managesieve_helper "$helper_tmp"
-
-	print_info "Fetching script '$script_name' from $server:$port"
-	python3 "$helper_tmp" get "$server" "$port" "$user" "SIEVE_PASSWORD" "$script_name"
-	local rc=$?
-
-	rm -f "$helper_tmp"
-	trap - EXIT
-	return $rc
-}
-
-# Delete a script from a ManageSieve server
-delete_script() {
-	local server="$1"
-	local user="$2"
-	local script_name="$3"
-	local port="${4:-$DEFAULT_SIEVE_PORT}"
-
-	check_deploy_dependencies || return 1
-
-	if [[ -z "${SIEVE_PASSWORD:-}" ]]; then
-		print_error "SIEVE_PASSWORD environment variable is not set"
-		return 1
-	fi
-
-	local helper_tmp
-	# t2997: drop .py — XXXXXX must be at end for BSD mktemp.
-	helper_tmp="$(mktemp /tmp/aidevops-managesieve-XXXXXX)"
-	trap 'rm -f "$helper_tmp"' EXIT
-
-	write_managesieve_helper "$helper_tmp"
-
-	print_info "Deleting script '$script_name' from $server:$port"
-	python3 "$helper_tmp" delete "$server" "$port" "$user" "SIEVE_PASSWORD" "$script_name"
-	local rc=$?
-
-	rm -f "$helper_tmp"
-	trap - EXIT
-	return $rc
+	return $?
 }
 
 # ============================================================================
 # Status
 # ============================================================================
+
+_sieve_copy_script() {
+	local target="$1"
+	printf 'require ["copy"];\n# rule:[Copy to owner]\nif true\n{\n\tredirect :copy "%s";\n}\n' "$target"
+	return 0
+}
+
+_sieve_same() {
+	local left="$1"
+	local right="$2"
+	[[ "$(tr -d '\r' <<<"$left")" == "$(tr -d '\r' <<<"$right")" ]] && return 0
+	return 1
+}
+
+_sieve_copy_target() {
+	local script="$1"
+	local re='redirect :copy "([^"]+)";'
+	[[ "$script" =~ $re ]] || return 1
+	local target="${BASH_REMATCH[1]}"
+	_sieve_same "$script" "$(_sieve_copy_script "$target")" || return 1
+	printf '%s\n' "$target"
+	return 0
+}
+
+_sieve_list_or_fail() {
+	_sieve list && return 0
+	print_error "ManageSieve failed for $user (needs the mailbox password or an app password with SIEVE scope)"
+	return 1
+}
+
+_sieve_copy_to() {
+	# Restrict addresses to characters safe inside a quoted Sieve string.
+	if [[ ! "$target" =~ ^[A-Za-z0-9._%+-]+@[a-z0-9.-]+$ ]]; then
+		print_error "Invalid mail address: $target"
+		return 1
+	fi
+	local script scripts names current
+	script=$(_sieve_copy_script "$target")
+	if [[ "$option" == "--dry-run" ]]; then
+		print_info "Would set Sieve script '$script_name' on $user and make it active:"
+		printf '%s\n' "$script"
+		return 0
+	fi
+	scripts=$(_sieve_list_or_fail) || return 1
+	names=$(cut -f1 <<<"$scripts")
+	if [[ -n "$scripts" && "$names" != "$script_name" ]]; then
+		print_error "$user already has Sieve scripts: $(tr '\n' ' ' <<<"$names")"
+		print_info "Edit them in webmail (Settings > Filters) instead; see: sieve-list $user $secret"
+		return 1
+	fi
+	if [[ -n "$scripts" ]]; then
+		current=$(_sieve get "$script_name") || return 1
+		if ! _sieve_same "$current" "$script"; then
+			print_error "$user has a different '$script_name' script; edit it in webmail or run copy-to-remove first"
+			return 1
+		fi
+		if [[ "$scripts" == "${script_name}"$'\t'"active" ]]; then
+			print_info "No change: $user already keeps its mail and copies to $target"
+			return 0
+		fi
+	fi
+	if ! _sieve install "$script_name" "$script"; then
+		print_error "Could not set the Sieve script on $user"
+		return 1
+	fi
+	print_success "$user keeps its mail and sends a copy to $target (script read back and active)"
+	return 0
+}
+
+_sieve_copy_to_remove() {
+	local scripts name _state has_main=0 has_parked=0
+	local parked="${script_name}.aidevops-remove"
+	scripts=$(_sieve_list_or_fail) || return 1
+	while IFS=$'\t' read -r name _state; do
+		[[ "$name" == "$script_name" ]] && has_main=1
+		[[ "$name" == "$parked" ]] && has_parked=1
+	done <<<"$scripts"
+	if [[ "$has_main" -eq 0 && "$has_parked" -eq 0 ]]; then
+		print_info "No '$script_name' Sieve script on $user; nothing to remove"
+		return 0
+	fi
+	if [[ "$has_parked" -eq 1 ]]; then
+		print_info "Found '$parked' left by an interrupted copy-to-remove on $user"
+		_sieve_copy_remove_one "$parked" || return 1
+	fi
+	if [[ "$has_main" -eq 1 ]]; then
+		_sieve_copy_remove_one "$script_name" || return 1
+	fi
+	return 0
+}
+
+_sieve_copy_remove_one() {
+	local name="$1"
+	local current target
+	current=$(_sieve get "$name") || return 1
+	if ! target=$(_sieve_copy_target "$current"); then
+		print_error "The '$name' script on $user is not the helper's copy script; change it in webmail instead"
+		return 1
+	fi
+	if [[ "$confirm" != "--yes" ]]; then
+		print_info "Re-run with --yes to stop copying $user to $target"
+		return 0
+	fi
+	if ! _sieve remove "$name" "$current"; then
+		print_error "Could not remove the Sieve script '$name' on $user"
+		return 1
+	fi
+	print_success "Removed the copy to $target from $user"
+	return 0
+}
 
 show_status() {
 	print_info "Email Sieve Helper Status"
@@ -1180,91 +912,26 @@ _cmd_generate() {
 	return $?
 }
 
-# Parse and execute the 'deploy' sub-command.
-_cmd_deploy() {
-	local server="" user="" port="$DEFAULT_SIEVE_PORT"
-	local script_name="$DEFAULT_SCRIPT_NAME"
-	local sieve_file="$DEFAULT_OUTPUT_FILE"
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--server)
-			server="$2"
-			shift 2
-			;;
-		--user)
-			user="$2"
-			shift 2
-			;;
-		--port)
-			port="$2"
-			shift 2
-			;;
-		--script)
-			script_name="$2"
-			shift 2
-			;;
-		--file)
-			sieve_file="$2"
-			shift 2
-			;;
-		*)
-			print_error "Unknown option: $1"
-			return 1
-			;;
-		esac
-	done
-	if [[ -z "$server" ]]; then
-		print_error "--server is required"
-		return 1
-	fi
-	if [[ -z "$user" ]]; then
-		print_error "--user is required"
-		return 1
-	fi
-	check_dependencies || return 1
-	deploy_sieve "$server" "$user" "$port" "$script_name" "$sieve_file"
-	return $?
-}
-
-# Parse and execute the 'list-scripts' sub-command.
-_cmd_list_scripts() {
-	local server="" user="" port="$DEFAULT_SIEVE_PORT"
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--server)
-			server="$2"
-			shift 2
-			;;
-		--user)
-			user="$2"
-			shift 2
-			;;
-		--port)
-			port="$2"
-			shift 2
-			;;
-		*)
-			print_error "Unknown option: $1"
-			return 1
-			;;
-		esac
-	done
-	if [[ -z "$server" ]] || [[ -z "$user" ]]; then
-		print_error "--server and --user are required"
-		return 1
-	fi
-	list_scripts "$server" "$user" "$port"
-	return $?
-}
-
-# Parse and execute the 'show-script' or 'delete-script' sub-command.
-# $1: action — "show" or "delete"
-# Remaining args: the original CLI options.
-_cmd_show_or_delete_script() {
+# Connection settings are dynamically scoped to _sieve and copy helpers.
+_cmd_remote() {
 	local action="$1"
 	shift
 	local server="" user="" script_name="" port="$DEFAULT_SIEVE_PORT"
+	local secret="SIEVE_PASSWORD" target="" option="" confirm=""
+	local sieve_file="$DEFAULT_OUTPUT_FILE" current scripts
+	case "$action" in
+	deploy) script_name="$DEFAULT_SCRIPT_NAME" ;;
+	copy-to | copy-to-remove) script_name="roundcube" ;;
+	esac
 	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--server | --user | --script | --port | --secret | --target | --file)
+			if [[ $# -lt 2 || -z "$2" || "$2" == --* ]]; then
+				print_error "Missing value for $1"
+				return 1
+			fi
+			;;
+		esac
 		case "$1" in
 		--server)
 			server="$2"
@@ -1282,21 +949,63 @@ _cmd_show_or_delete_script() {
 			port="$2"
 			shift 2
 			;;
+		--secret) secret="$2"; shift 2 ;;
+		--target) target="$2"; shift 2 ;;
+		--file) sieve_file="$2"; shift 2 ;;
+		--dry-run) option="$1"; shift ;;
+		--yes) confirm="$1"; shift ;;
 		*)
 			print_error "Unknown option: $1"
 			return 1
 			;;
 		esac
 	done
-	if [[ -z "$server" ]] || [[ -z "$user" ]] || [[ -z "$script_name" ]]; then
-		print_error "--server, --user, and --script are required"
+	if [[ -z "$server" || -z "$user" ]]; then
+		print_error "--server and --user are required"
 		return 1
 	fi
-	if [[ "$action" == "show" ]]; then
-		show_script "$server" "$user" "$script_name" "$port"
-	else
-		delete_script "$server" "$user" "$script_name" "$port"
+	if [[ ! "$secret" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+		print_error "Invalid secret name (UPPER_SNAKE_CASE): $secret"
+		return 1
 	fi
+	if [[ ! "$port" =~ ^[0-9]+$ ]] || ((10#$port < 1 || 10#$port > 65535)); then
+		print_error "Invalid ManageSieve port: $port"
+		return 1
+	fi
+	if [[ "$action" != "list-scripts" && -z "$script_name" ]]; then
+		print_error "--script is required"
+		return 1
+	fi
+	if [[ -n "$option" && "$action" != "copy-to" ]] || [[ -n "$confirm" && "$action" != "copy-to-remove" ]]; then
+		print_error "--dry-run is only for copy-to; --yes is only for copy-to-remove"
+		return 1
+	fi
+	case "$action" in
+	deploy)
+		if [[ ! -f "$sieve_file" ]]; then
+			print_error "Sieve file not found: $sieve_file"
+			return 1
+		fi
+		current=$(<"$sieve_file")
+		_sieve install "$script_name" "$current" || return $?
+		print_success "Sieve script deployed and activated: $script_name"
+		;;
+	list-scripts)
+		scripts=$(_sieve list) || return $?
+		if [[ -z "$scripts" ]]; then
+			print_info "No Sieve scripts on $user"
+		else
+			printf '%s\n' "$scripts"
+		fi
+		;;
+	show-script) _sieve get "$script_name" || return $? ;;
+	delete-script)
+		current=$(_sieve get "$script_name") || return $?
+		_sieve remove "$script_name" "$current" || return $?
+		;;
+	copy-to) _sieve_copy_to || return $? ;;
+	copy-to-remove) _sieve_copy_to_remove || return $? ;;
+	esac
 	return $?
 }
 
@@ -1361,8 +1070,8 @@ main() {
 	generate)
 		_cmd_generate "$@"
 		;;
-	deploy)
-		_cmd_deploy "$@"
+	deploy | list-scripts | show-script | delete-script | copy-to | copy-to-remove)
+		_cmd_remote "$command" "$@"
 		;;
 	validate)
 		local sieve_file="$DEFAULT_OUTPUT_FILE"
@@ -1379,15 +1088,6 @@ main() {
 			esac
 		done
 		validate_sieve "$sieve_file"
-		;;
-	list-scripts)
-		_cmd_list_scripts "$@"
-		;;
-	show-script)
-		_cmd_show_or_delete_script "show" "$@"
-		;;
-	delete-script)
-		_cmd_show_or_delete_script "delete" "$@"
 		;;
 	add-pattern)
 		_cmd_add_pattern "$@"
