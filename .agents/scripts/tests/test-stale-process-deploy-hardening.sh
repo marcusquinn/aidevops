@@ -19,8 +19,8 @@ fail() {
 	return 1
 }
 
-if ! grep -A8 '_collect_deploy_agent_plugin_namespaces "$plugins_file"' "$DEPLOY_FILE" |
-	grep -q 'if \[\[ ${#_deploy_agent_plugin_namespaces\[@\]} -gt 0 \]\]'; then
+if ! grep -q 'if \[\[ ${#_deploy_agent_plugin_namespaces\[@\]} -gt 0 \]\]' \
+	< <(grep -A8 '_collect_deploy_agent_plugin_namespaces "$plugins_file"' "$DEPLOY_FILE"); then
 	fail "empty plugin namespace arrays are not guarded before expansion"
 fi
 
