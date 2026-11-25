@@ -645,6 +645,30 @@ else
 	print_result "nested package test script defines a focused validation scope" 1 "rc=${case9_rc}, calls=$(wc -l <"$NPM_CALL_LOG" 2>/dev/null || printf 0)"
 fi
 
+# GH#40431: ignored runtime-generated manifests must not shadow root checks.
+GENERATED_MANIFEST_REPO="${TEST_ROOT}/generated-manifest"
+make_workspace_repo "$GENERATED_MANIFEST_REPO"
+NPM_CALL_LOG="${TEST_ROOT}/npm-generated-manifest.log"
+export NPM_CALL_LOG NPM_FAKE_ACTION='' NPM_FAKE_RC=0
+(
+	cd "$GENERATED_MANIFEST_REPO" || exit 1
+	mkdir -p .opencode/lib
+	printf '%s\n' '{"scripts":{"typecheck":"tsc --noEmit"},"workspaces":["packages/*"]}' >package.json
+	printf '%s\n' '.opencode/package.json' >.gitignore
+	printf '%s\n' 'export const example = true;' >.opencode/lib/example.ts
+	git add package.json .gitignore .opencode/lib/example.ts
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'add root-owned runtime source'
+	printf '%s\n' '{"dependencies":{"example":"1.0.0"}}' >.opencode/package.json
+	PATH="${FAKE_BIN}:$PATH" _run_project_validators 0
+)
+generated_manifest_rc=$?
+if [[ "$generated_manifest_rc" -eq 0 && $(wc -l <"$NPM_CALL_LOG") -eq 1 ]] &&
+	grep -q '/generated-manifest|run typecheck' "$NPM_CALL_LOG"; then
+	print_result "ignored generated manifest does not shadow root checks" 0
+else
+	print_result "ignored generated manifest does not shadow root checks" 1 "rc=${generated_manifest_rc}"
+fi
+
 # Case 10: npm's generated failing test placeholder is not a scoped check.
 PLACEHOLDER_REPO="${TEST_ROOT}/npm-placeholder"
 make_repo "$PLACEHOLDER_REPO"
