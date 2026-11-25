@@ -178,7 +178,7 @@ test_drift_bootstrap_triggers_setup() {
 
 	if ! grep -q "FAKE_SETUP_INVOKED" "$TEST_SETUP_LOG"; then
 		print_result "drift: bootstrap (no stored hash) runs setup.sh" 1 \
-			"Expected setup.sh invocation; LOG_FILE: $(cat "$LOG_FILE" | tail -5)"
+			"Expected setup.sh invocation; LOG_FILE: $(tail -n 5 "$LOG_FILE")"
 		return 0
 	fi
 	print_result "drift: bootstrap (no stored hash) runs setup.sh" 0
