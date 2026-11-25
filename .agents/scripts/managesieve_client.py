@@ -193,7 +193,8 @@ def first_string(items):
 
 def op_list(conn):
     for name, active in listing(conn):
-        print("%s\t%s" % (name, "active" if active else "inactive"))
+        state = "active" if active else "inactive"
+        print(f"{name}\t{state}")
     return 0
 
 
@@ -253,9 +254,9 @@ def op_delete(conn, name):
     """Delete an inactive script; refuse an active one (exit 3, nothing changed)."""
     if (name, True) in listing(conn):
         sys.stderr.write(
-            "sieve: '%s' is active; automatic deactivation is unsafe with "
+            f"sieve: '{name}' is active; automatic deactivation is unsafe with "
             "concurrent writers; deactivate through server administration "
-            "under exclusive access before deleting\n" % name
+            "under exclusive access before deleting\n"
         )
         return 3
     conn.command(b"DELETESCRIPT " + quote(name))
@@ -291,7 +292,7 @@ def restore_parked(conn, parked, name):
     with contextlib.suppress(SieveError):
         conn.command(b"RENAMESCRIPT " + quote(parked) + b" " + quote(name))
         return "left in place"
-    return "kept as '%s' (a new '%s' exists)" % (parked, name)
+    return f"kept as '{parked}' (a new '{name}' exists)"
 
 
 # Operation name -> (handler, argument count).
@@ -333,7 +334,7 @@ def main(argv):
         conn = Conn(argv[2], password)
         return entry[0](conn, *argv[4:])
     except (SieveError, OSError, ValueError) as err:
-        sys.stderr.write("sieve: %s\n" % err)
+        sys.stderr.write(f"sieve: {err}\n")
         return 1
     finally:
         if conn is not None:
