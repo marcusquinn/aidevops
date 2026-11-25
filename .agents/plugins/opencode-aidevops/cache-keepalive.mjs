@@ -62,13 +62,18 @@ function nonEmptyArray(value) {
   return Array.isArray(value) && value.length > 0;
 }
 
+/** Every check a body must pass before a refresh can reuse its cache prefix. */
+const REFRESHABLE_CHECKS = [
+  (parsed) => nonEmptyArray(parsed.tools),
+  (parsed) => nonEmptyArray(parsed.messages),
+  (parsed) => parsed.stream === true,
+  (parsed) => parsed.thinking?.type !== "enabled",
+];
+
 /** Streamed, tool-bearing agent request without a fixed thinking budget. */
 function isRefreshableAgentRequest(parsed) {
-  return Boolean(parsed)
-    && nonEmptyArray(parsed.tools)
-    && nonEmptyArray(parsed.messages)
-    && parsed.stream === true
-    && parsed.thinking?.type !== "enabled";
+  if (!parsed) return false;
+  return REFRESHABLE_CHECKS.every((check) => check(parsed));
 }
 
 /**
@@ -126,78 +131,113 @@ async function sendRefresh(settings, sessionID, entry) {
  * }} options
  */
 export function createCacheKeepalive(options) {
-  const settings = resolveSettings(options);
-  /** @type {Map<string, { request: object, body: string, tools: Set<string>, refreshes: number, timer: any }>} */
-  const sessions = new Map();
+  return new CacheKeepalive(resolveSettings(options));
+}
 
-  function stop(sessionID) {
-    const entry = sessions.get(sessionID);
-    if (entry?.timer) settings.clearTimer?.(entry.timer);
-    sessions.delete(sessionID);
+function isSuccessStatus(status) {
+  return status >= 200 && status < 300;
+}
+
+function toolKey(callID) {
+  return String(callID ?? "tool");
+}
+
+/** Per-session keep-warm scheduler. Every public method fails open. */
+class CacheKeepalive {
+  constructor(settings) {
+    this.settings = settings;
+    /** @type {Map<string, { request: object, body: string, tools: Set<string>, refreshes: number, timer: any }>} */
+    this.sessions = new Map();
   }
 
-  function arm(sessionID, entry) {
-    entry.timer = settings.setTimer(() => {
+  stop(sessionID) {
+    const entry = this.sessions.get(sessionID);
+    if (entry?.timer) this.settings.clearTimer?.(entry.timer);
+    this.sessions.delete(sessionID);
+  }
+
+  arm(sessionID, entry) {
+    entry.timer = this.settings.setTimer(() => {
       entry.timer = null;
-      void refresh(sessionID, entry);
-    }, settings.intervalMs);
+      void this.refresh(sessionID, entry);
+    }, this.settings.intervalMs);
     entry.timer?.unref?.();
   }
 
-  function shouldRefresh(entry) {
-    return settings.enabled() && entry.tools.size > 0 && entry.refreshes < settings.maxRefreshes;
+  isCurrent(sessionID, entry) {
+    return this.sessions.get(sessionID) === entry;
   }
 
-  async function refresh(sessionID, entry) {
-    if (sessions.get(sessionID) !== entry) return;
-    if (!shouldRefresh(entry)) {
-      stop(sessionID);
+  shouldRefresh(entry) {
+    if (!this.settings.enabled()) return false;
+    return entry.tools.size > 0 && entry.refreshes < this.settings.maxRefreshes;
+  }
+
+  async refresh(sessionID, entry) {
+    if (!this.isCurrent(sessionID, entry)) return;
+    if (!this.shouldRefresh(entry)) {
+      this.stop(sessionID);
       return;
     }
     entry.refreshes += 1;
-    const ok = await sendRefresh(settings, sessionID, entry);
-    if (!ok) stop(sessionID);
-    else if (sessions.get(sessionID) === entry) arm(sessionID, entry);
+    const ok = await sendRefresh(this.settings, sessionID, entry);
+    if (!ok) {
+      this.stop(sessionID);
+      return;
+    }
+    if (this.isCurrent(sessionID, entry)) this.arm(sessionID, entry);
   }
 
-  function entryFor(sessionID) {
-    return sessionID ? sessions.get(sessionID) : null;
+  entryFor(sessionID) {
+    return sessionID ? this.sessions.get(sessionID) : null;
   }
 
-  return {
-    /**
-     * Record a completed agent request. Replaces any earlier gap state: a new
-     * LLM request means the previous step's tools have finished.
-     * @param {string|undefined} sessionID
-     * @param {object} request opaque send() context (url, init, headers)
-     * @param {string} rawBody host body before plugin transforms
-     * @param {number} status response status
-     */
-    recordRequest(sessionID, request, rawBody, status) {
-      try {
-        if (!sessionID) return;
-        stop(sessionID);
-        const ok = status >= 200 && status < 300 && settings.enabled();
-        const body = ok ? buildKeepaliveBody(rawBody) : null;
-        if (!body) return;
-        const entry = { request, body, tools: new Set(), refreshes: 0, timer: null };
-        sessions.set(sessionID, entry);
-        while (sessions.size > settings.maxSessions) stop(sessions.keys().next().value);
-        arm(sessionID, entry);
-      } catch {
-        // fail open
-      }
-    },
-    toolStarted(sessionID, callID) {
-      entryFor(sessionID)?.tools.add(String(callID ?? "tool"));
-    },
-    toolFinished(sessionID, callID) {
-      entryFor(sessionID)?.tools.delete(String(callID ?? "tool"));
-    },
-    /** Test/diagnostic view. */
-    state(sessionID) {
-      const entry = sessions.get(sessionID);
-      return entry ? { tools: entry.tools.size, refreshes: entry.refreshes, armed: Boolean(entry.timer) } : null;
-    },
-  };
+  evictOverflow() {
+    while (this.sessions.size > this.settings.maxSessions) {
+      this.stop(this.sessions.keys().next().value);
+    }
+  }
+
+  bodyFor(rawBody, status) {
+    if (!isSuccessStatus(status) || !this.settings.enabled()) return null;
+    return buildKeepaliveBody(rawBody);
+  }
+
+  /**
+   * Record a completed agent request. Replaces any earlier gap state: a new
+   * LLM request means the previous step's tools have finished.
+   * @param {string|undefined} sessionID
+   * @param {object} request opaque send() context (url, init, headers)
+   * @param {string} rawBody host body before plugin transforms
+   * @param {number} status response status
+   */
+  recordRequest(sessionID, request, rawBody, status) {
+    if (!sessionID) return;
+    try {
+      this.stop(sessionID);
+      const body = this.bodyFor(rawBody, status);
+      if (!body) return;
+      const entry = { request, body, tools: new Set(), refreshes: 0, timer: null };
+      this.sessions.set(sessionID, entry);
+      this.evictOverflow();
+      this.arm(sessionID, entry);
+    } catch {
+      // fail open
+    }
+  }
+
+  toolStarted(sessionID, callID) {
+    this.entryFor(sessionID)?.tools.add(toolKey(callID));
+  }
+
+  toolFinished(sessionID, callID) {
+    this.entryFor(sessionID)?.tools.delete(toolKey(callID));
+  }
+
+  /** Test/diagnostic view. */
+  state(sessionID) {
+    const entry = this.sessions.get(sessionID);
+    if (!entry) return null;
+    return { tools: entry.tools.size, refreshes: entry.refreshes, armed: Boolean(entry.timer) };
+  }
 }
