@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 # GH#40246: guard the reported SC2337 sites even on older ShellCheck versions.
+# pipe-early-exit-check:disable — this file contains anti-pattern samples as test fixtures
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
