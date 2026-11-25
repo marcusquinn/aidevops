@@ -797,6 +797,48 @@ _gh_ci_settle_derived_labels() {
 	return 0
 }
 
+# Capture diagnostics without mixing stderr into the durable URL on stdout.
+_gh_create_capture_native() {
+	local error_file="" rc=0
+	_GH_CREATE_OUTPUT=""
+	_GH_CREATE_ERROR=""
+	error_file=$(mktemp -t aidevops-create-error.XXXXXX) || return 1
+	if _GH_CREATE_OUTPUT=$("$@" 2>"$error_file"); then
+		rc=0
+	else
+		rc=$?
+	fi
+	_GH_CREATE_ERROR=$(cat "$error_file")
+	[[ -z "$_GH_CREATE_ERROR" ]] || printf '%s\n' "$_GH_CREATE_ERROR" >&2
+	rm -f "$error_file"
+	return "$rc"
+}
+
+# Reconcile ambiguous issue creation before retrying the prepared REST argv.
+_gh_create_issue_retry_transient() {
+	local repo="$1"
+	shift
+	local recovered_url="" title="" arg="" next_title=0
+	for arg in "$@"; do
+		if [[ "$next_title" -eq 1 ]]; then
+			title="$arg"
+			next_title=0
+			continue
+		fi
+		case "$arg" in
+		--title|-t) next_title=1 ;;
+		--title=*) title="${arg#--title=}" ;;
+		esac
+	done
+	recovered_url=$(_rest_recover_recent_issue "$repo" "$title") || return 1
+	if [[ -n "$recovered_url" ]]; then
+		printf '%s\n' "$recovered_url"
+		return 0
+	fi
+	_rest_issue_create "$@"
+	return $?
+}
+
 gh_create_issue() {
 	_gh_wrapper_enter_cleanup_scope
 	gh_record_call graphql gh_create_issue 2>/dev/null || true
@@ -864,9 +906,18 @@ gh_create_issue() {
 	_gh_ci_select_auto_assignee "$target_repo" "$@"
 	auto_assignee="$_GH_CI_AUTO_ASSIGNEE"
 
-	issue_output=$("${_issue_cmd[@]}") # aidevops-allow: raw-gh-wrapper
-	rc=$?
-	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
+	local create_error=""
+	if _gh_create_capture_native "${_issue_cmd[@]}"; then
+		rc=0
+	else
+		rc=$?
+	fi
+	issue_output="${_GH_CREATE_OUTPUT:-}"
+	create_error="${_GH_CREATE_ERROR:-}"
+	if [[ $rc -ne 0 ]] && _rest_create_failure_is_transient "$create_error"; then
+		issue_output=$(_gh_create_issue_retry_transient "$target_repo" "${_rest_args[@]}")
+		rc=$?
+	elif [[ $rc -ne 0 ]] && ! _rest_create_failure_is_fatal "$create_error" && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue create"
 		issue_output=$(_rest_issue_create "${_rest_args[@]}")
 		rc=$?
@@ -1210,18 +1261,35 @@ _gh_create_pr_extract_head() {
 
 #######################################
 # Recover a PR created before native gh failed a follow-up mutation.
-# Sets the durable identity globals.
-# Args: PR create argv
+# Sets the durable identity globals and retains an inferred head for REST retry.
+# Args: diagnostics, then PR create argv
 # Returns: 0=recovered, 1=no exact durable PR found
 #######################################
 _gh_create_pr_recover_after_mutation_failure() {
+	local diagnostics="$1"
+	shift
 	local repo=""
 	local head_ref=""
 	local recovered_url=""
+	_GH_CREATE_PR_RECOVERY_HEAD=""
 	repo=$(_gh_extract_repo_from_args "$@")
 	head_ref=$(_gh_create_pr_extract_head "$@")
-	[[ -n "$repo" && -n "$head_ref" ]] || return 1
-	recovered_url=$(_gh_recover_pr_if_exists "$head_ref" "$repo")
+	if _rest_create_failure_is_transient "$diagnostics"; then
+		if [[ -z "$head_ref" ]]; then
+			if ! head_ref=$(_rest_pr_push_head); then
+				_GH_CREATE_PR_RECOVERY_FAILED=1
+				return 1
+			fi
+			_GH_CREATE_PR_RECOVERY_HEAD="$head_ref"
+		fi
+		if ! recovered_url=$(_rest_recover_created_pr "$repo" "$head_ref"); then
+			_GH_CREATE_PR_RECOVERY_FAILED=1
+			return 1
+		fi
+	else
+		[[ -n "$repo" && -n "$head_ref" ]] || return 1
+		recovered_url=$(_gh_recover_pr_if_exists "$head_ref" "$repo")
+	fi
 	[[ -n "$recovered_url" ]] || return 1
 	_gh_create_pr_resolve_durable_identity "$recovered_url" "$@" || return 1
 	return 0
@@ -1406,18 +1474,22 @@ gh_create_pr() {
 		pr_cmd+=("${_origin_label_args[@]}")
 	fi
 
-	local pr_output rc
-	if pr_output=$("${pr_cmd[@]}"); then # aidevops-allow: raw-gh-wrapper
+	local pr_output rc create_error="" transient_failure=0 _GH_CREATE_PR_RECOVERY_FAILED=0
+	local _GH_CREATE_PR_RECOVERY_HEAD=""
+	if _gh_create_capture_native "${pr_cmd[@]}"; then
 		rc=0
 	else
 		rc=$?
 	fi
+	pr_output="${_GH_CREATE_OUTPUT:-}"
+	create_error="${_GH_CREATE_ERROR:-}"
+	_rest_create_failure_is_transient "$create_error" && transient_failure=1
 	if [[ $rc -ne 0 ]] && _gh_create_pr_resolve_durable_identity "$pr_output" "$@"; then
 		# Native gh can create the PR and fail during a follow-up mutation. The URL
 		# proves creation; never invoke another create transport for this result.
 		rc="$_GH_PR_CREATE_PARTIAL_RC"
-	elif [[ $rc -ne 0 ]]; then
-		if _gh_create_pr_recover_after_mutation_failure "$@"; then
+	elif [[ $rc -ne 0 ]] && ! _rest_create_failure_is_fatal "$create_error"; then
+		if _gh_create_pr_recover_after_mutation_failure "$create_error" "$@"; then
 			pr_output="$_GH_CREATE_PR_DURABLE_URL"
 			printf '[aidevops][gh-wrapper][PARTIAL] recovered durable PR #%s after a create-time mutation failure; not retrying creation\n' \
 				"$_GH_CREATE_PR_DURABLE_NUMBER" >&2
@@ -1428,13 +1500,13 @@ gh_create_pr() {
 			rc="$_GH_PR_CREATE_PARTIAL_RC"
 		fi
 	fi
-	if [[ $rc -ne 0 && "$rc" -ne "$_GH_PR_CREATE_PARTIAL_RC" ]] && _rest_should_fallback_write; then
-		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr create"
-		if [[ ${#_origin_label_args[@]} -gt 0 || ${#_draft_args[@]} -gt 0 ]]; then
-			pr_output=$(_rest_pr_create "$@" "${_draft_args[@]}" "${_origin_label_args[@]}")
-		else
-			pr_output=$(_rest_pr_create "$@")
-		fi
+	if [[ $rc -ne 0 && "$rc" -ne "$_GH_PR_CREATE_PARTIAL_RC" && "$_GH_CREATE_PR_RECOVERY_FAILED" -eq 0 ]] &&
+		! _rest_create_failure_is_fatal "$create_error" &&
+		{ [[ "$transient_failure" -eq 1 ]] || _rest_should_fallback_write; }; then
+		print_info "[INFO] gh-wrapper: GraphQL exhausted or transient failure, falling back to REST for pr create"
+		# Keep the exact inferred push destination used by the negative lookup.
+		[[ -z "$_GH_CREATE_PR_RECOVERY_HEAD" ]] || set -- "$@" --head "$_GH_CREATE_PR_RECOVERY_HEAD"
+		pr_output=$(_rest_pr_create "$@" ${_draft_args[@]+"${_draft_args[@]}"} ${_origin_label_args[@]+"${_origin_label_args[@]}"})
 		rc=$?
 	fi
 	if [[ "$is_help" -eq 0 && ( "$rc" -eq 0 || "$rc" -eq "$_GH_PR_CREATE_PARTIAL_RC" ) ]]; then

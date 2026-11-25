@@ -63,6 +63,9 @@ reset_case() {
 	TEST_TARGET="501"
 	TEST_CLOSING=""
 	TEST_CLOSING_RC=0
+	TEST_BODY_EDIT_RC=0
+	TEST_GRAPHQL_RC=0
+	TEST_GRAPHQL_JSON='{"data":{"repository":{"p900":{"number":900,"merged":true},"p901":{"number":901,"merged":false},"p902":{"number":902,"merged":false}}}}'
 	TEST_CLOSING_950=""
 	TEST_TARGET_960="777"
 	TEST_PR_BODY_960_RC=0
@@ -246,8 +249,24 @@ gh_pr_view() {
 	return 1
 }
 
+feedback_test_gh() {
+	local operation="${2:-}" filter_flag="${3:-}"
+	if [[ "$operation" == graphql ]]; then
+		[[ "$TEST_GRAPHQL_RC" -eq 0 ]] || return 1
+		printf '%s' "$TEST_GRAPHQL_JSON"
+	elif [[ "$filter_flag" == --jq ]]; then
+		printf '%s' "$TEST_ISSUE_JSON" | jq -c '.body // ""'
+	else
+		printf '%s' "$TEST_ISSUE_JSON"
+	fi
+	return 0
+}
+
 gh() {
 	printf '%s\n' "$*" >>"$API_LOG"
+	case "${1:-} ${2:-}" in
+	"api graphql"|"api repos/${SLUG}/issues/501") feedback_test_gh "$@"; return $? ;;
+	esac
 	if [[ "${2:-}" == "repos/${SLUG}/issues?state=open"* ]]; then
 		# GH#38039: only label-filtered candidates are listed.
 		if [[ "${2:-}" != *"labels="* ]]; then
@@ -333,10 +352,6 @@ gh() {
 		printf '%s' "$TEST_COMMENTS_JSON"
 		return 0
 	fi
-	if [[ "${1:-}" == "api" && "${2:-}" == "repos/${SLUG}/issues/501" ]]; then
-		printf '%s' "$TEST_ISSUE_JSON"
-		return 0
-	fi
 	return 1
 }
 
@@ -356,6 +371,14 @@ date() {
 
 set_issue_status() {
 	printf '%s\n' "$*" >>"$STATUS_LOG"
+	return 0
+}
+
+gh_issue_edit_safe() {
+	local issue_num="$1" repo_flag="$2" slug="$3" body_flag="$4" body="$5"
+	[[ "$issue_num" == 501 && "$repo_flag" == --repo && "$slug" == "$SLUG" && "$body_flag" == --body ]] || return 1
+	[[ "$TEST_BODY_EDIT_RC" -eq 0 ]] || return 1
+	printf '%s' "$body" >"${TEST_ROOT}/edited-body"
 	return 0
 }
 
@@ -1772,6 +1795,64 @@ Delivered: spec only.")")
 	return 0
 }
 
+test_merged_feedback_cleanup() {
+	reset_case
+	local stale='' kept='' original='' expected='' actual=''
+	stale=$'<!-- feedback-route:start:conflict:PR900:SHAabc -->\nold conflict\n<!-- feedback-route:complete:conflict:PR900:SHAabc -->'
+	kept=$'<!-- feedback-route:start:conflict:PR901:SHAdef:PR900:detail -->\nclosed unmerged\n<!-- feedback-route:complete:conflict:PR901:SHAdef:PR900:detail -->'
+	original=$'Remaining scope\r\n\n'"${stale}"$'\n'"${kept}"$'\n'"${stale}"$'\n\n'
+	expected=$'Remaining scope\r\n\n\n'"${kept}"$'\n\n\n'
+	TEST_ISSUE_JSON=$(issue_json "status:in-review,origin:worker" runner1 "$original")
+	_pm_restore_partial_continuation 900 "$SLUG" "" "$TEST_PR_LABELS"
+	IFS= read -r -d '' actual <"${TEST_ROOT}/edited-body" || true
+	if [[ "$actual" == "$expected" ]]; then
+		pass 'partial merge removes only its paired blocks and preserves all other bytes'
+	else
+		fail 'partial merge removes only its paired blocks and preserves all other bytes' "$actual"
+	fi
+	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" 'feedback cleanup keeps continuation transition'
+	[[ "$(posted_markers)" == 1 ]] && pass 'feedback cleanup retains audit comment' || fail 'feedback cleanup retains audit comment'
+	TEST_BODY_EDIT_RC=1
+	_pm_restore_partial_continuation 900 "$SLUG" "" "$TEST_PR_LABELS"
+	grep -q 'feedback cleanup failed' "$LOGFILE" && pass 'body edit failure is logged without failing continuation' || fail 'body edit failure is logged without failing continuation'
+	return 0
+}
+
+test_dispatch_feedback_guard() {
+	reset_case
+	# Load the real launch function, not a second copy of the implementation.
+	# shellcheck source=../pulse-dispatch-worker-launch.sh
+	source "${SCRIPT_DIR_TEST}/../pulse-dispatch-worker-launch.sh"
+	local stale='' kept='' open='' body='' result=''
+	stale=$'<!-- feedback-route:start:conflict:PR900:SHAabc -->\nSTALE_CONFLICT\n<!-- feedback-route:complete:conflict:PR900:SHAabc -->'
+	kept=$'<!-- feedback-route:start:conflict:PR901:SHAdef -->\nKEEP_CLOSED_UNMERGED\n<!-- feedback-route:complete:conflict:PR901:SHAdef -->'
+	open=$'<!-- feedback-route:start:ci:PR902:SHAghi -->\nKEEP_OPEN\n<!-- feedback-route:complete:ci:PR902:SHAghi -->'
+	body=$'Remaining scope\n'"${stale}"$'\n'"${kept}"$'\n'"${open}"
+	TEST_ISSUE_JSON=$(issue_json status:available '' "$body")
+	result=$(_dlw_filter_merged_feedback 501 "$SLUG" "$body")
+	if [[ "$result" != *STALE_CONFLICT* && "$result" == *"$kept"* && "$result" == *"$open"* && "$result" == *'Remaining scope'* ]]; then
+		pass 'dispatch strips merged routes from seed and snapshot but keeps closed-unmerged and open routes'
+	else
+		fail 'dispatch strips merged routes from seed and snapshot but keeps closed-unmerged and open routes' "$result"
+	fi
+	[[ "$(grep -c '^api graphql' "$API_LOG")" == 1 ]] && pass 'dispatch batches all PR states once' || fail 'dispatch batches all PR states once'
+	local malformed='' nested=''
+	malformed=$'<!-- feedback-route:start:unknown -->\nKEEP_UNKNOWN\n<!-- feedback-route:complete:unknown -->'
+	nested=$'<!-- feedback-route:start:conflict:PR900:SHAnested -->\n'"${kept}"$'\n<!-- feedback-route:complete:conflict:PR900:SHAnested -->'
+	body+=$'\n'"${malformed}"$'\n'"${nested}"
+	TEST_ISSUE_JSON=$(issue_json status:available '' "$body")
+	result=$(_dlw_filter_merged_feedback 501 "$SLUG" "$body")
+	[[ "$result" == *"$malformed"* && "$result" == *"$nested"* ]] && pass 'unknown and nested routes cannot swallow unrelated feedback' || fail 'unknown and nested routes cannot swallow unrelated feedback'
+	TEST_GRAPHQL_RC=1
+	result=$(_dlw_filter_merged_feedback 501 "$SLUG" "$body")
+	[[ "$result" == "$body" ]] && pass 'state lookup failure preserves feedback' || fail 'state lookup failure preserves feedback'
+	: >"$API_LOG"
+	TEST_ISSUE_JSON=$(issue_json status:available '' 'Remaining scope only')
+	result=$(_dlw_filter_merged_feedback 501 "$SLUG" 'original prompt')
+	[[ "$result" == 'original prompt' && "$(grep -c '^api graphql' "$API_LOG" || true)" == 0 ]] && pass 'no feedback skips PR state lookup' || fail 'no feedback skips PR state lookup'
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -1833,6 +1914,8 @@ main() {
 	test_checkpoint_spec_dispatch_restore
 	test_checkpoint_spec_receipt_outcomes
 	test_cross_runner_leaf_with_sibling_reference
+	test_merged_feedback_cleanup
+	test_dispatch_feedback_guard
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]] || return 1

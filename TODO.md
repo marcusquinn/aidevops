@@ -2532,6 +2532,11 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19374 perf(profile): bound profile README SQLite reads so the hourly routine cannot pin the llm-requests WAL #bug #performance #interactive tier:standard ref:GH#40353 assignee:marcusquinn logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19374-brief.md] pr:#40357 completed:2026-11-25
 
+- [x] t19379 fix(ci-wait): treat a cancelled check with a same-name pass on the PR head as superseded in gh-checks-wait-helper --all #auto-dispatch #bug tier:standard ref:GH#40369 logged:2026-11-25 -> [todo/tasks/t19379-brief.md] pr:#40374 completed:2026-11-25
+
+- [ ] t19386 fix(terminal-blocker): map a login input owner through verified repo permission so input_required holds instead of looping as unknown #bug #interactive tier:standard assignee:marcusquinn ref:GH#40384 logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19386-brief.md]
+- [x] t19381 fix(worktree-deps): fail fast on pnpm hoisted node-linker instead of walking every workspace member #bug #performance #interactive tier:standard assignee:marcusquinn ref:GH#40383 logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19381-brief.md] pr:#40387 completed:2026-11-25
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
@@ -2614,6 +2619,8 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
 -->
 
 ## Done
+- [x] t19377 fix(issue-sync): make refresh-body print why it refused instead of exiting 1 silently #auto-dispatch #bug tier:simple ref:GH#40364 logged:2026-11-25 -> [todo/tasks/t19377-brief.md] pr:#40367 testing:self-assessed completed:2026-11-25
+- [x] t19376 perf(headless): disable OpenCode fff file index for headless workers so worktree churn stops costing up to a core per worker #performance #interactive tier:standard assignee:marcusquinn ref:GH#40360 logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19376-brief.md] pr:#40361 testing:runtime-verified completed:2026-11-25
 - [x] t18900 docs: macOS account and login-keychain incident triage and recovery reference #documentation #interactive ref:GH#37266 assignee:marcusquinn logged:2026-11-08 started:2026-11-08 -> [todo/tasks/t18900-brief.md] pr:#37268 testing:self-assessed completed:2026-11-09
 - [x] t18222 Ship owner-reviewed Buzz interactive team runtime #agents #auto-dispatch #feat #framework #reliability #security ~8h tier:thinking ref:GH#29831 assignee:marcusquinn started:2026-08-08 logged:2026-08-09 -> [todo/tasks/t18222-brief.md] pr:#29834 testing:runtime-verified completed:2026-08-09
 - [x] t18208 Generate restricted OpenCode conversation launch overlays #mission:m-20260804-5d06b1 #enhancement #security #framework #agents #interactive #auto-dispatch ~5h tier:thinking parent:t18201 ref:GH#29686 logged:2026-08-06 -> [todo/tasks/t18208-brief.md] pr:#29673 testing:runtime-verified completed:2026-08-07

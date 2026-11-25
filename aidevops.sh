@@ -5,9 +5,16 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 3.39.281
+# Version: 3.39.282
 
 set -euo pipefail
+
+# GH#40368: a deleted inherited working directory makes every child Bash and
+# forked job print getcwd errors. Recover with builtins only, before any fork.
+if ! builtin pwd -P >/dev/null 2>&1; then
+	builtin cd -- "${HOME:-/}" 2>/dev/null || builtin cd -- /
+	printf '[aidevops] Working directory no longer exists; continuing from %s\n' "$PWD" >&2
+fi
 
 # Colors for output
 GREEN='\033[0;32m'

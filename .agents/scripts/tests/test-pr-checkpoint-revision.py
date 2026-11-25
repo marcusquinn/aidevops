@@ -26,6 +26,7 @@ from checkpoint_github_fixture import comment
 from checkpoint_admission_cases import AutomaticBindingCases, ProgressCases, RevisionEnvelopeCases
 from checkpoint_diagnostic_tooling_cases import DiagnosticToolingCases
 from checkpoint_launch_failure_cases import LaunchFailureCases
+from checkpoint_orphan_retry_cases import OrphanRetryCases
 from pr_checkpoint_events import fields, own_claim_matches
 import integration_recovery as recovery
 
@@ -617,9 +618,10 @@ class ReleasedSuccessorTests(unittest.TestCase):
                 revision.validate(data)
 
 
-class AutomaticAdmissionTests(AutomaticBindingCases, unittest.TestCase):
+class AutomaticAdmissionTests(AutomaticBindingCases, OrphanRetryCases, unittest.TestCase):
     admission = admission
     revision = revision
+    fixture = staticmethod(fixture)
     comment = staticmethod(comment)
     bash = BASH
     scripts = SCRIPTS

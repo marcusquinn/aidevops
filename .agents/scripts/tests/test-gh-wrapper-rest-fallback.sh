@@ -249,6 +249,19 @@ _stub_gh_api() {
 	local subcommand="${1:-}"
 	local path="${2:-}"
 	local remaining="${STUB_RATE_LIMIT_REMAINING:-5000}"
+	if [[ "$subcommand" == "repos/owner/repo/issues/9999" && -n "${STUB_PRIMARY_ERROR:-}" ]]; then
+		printf 'origin:interactive\n'
+		return 0
+	fi
+	if [[ "$subcommand $path" == "--method GET" ]]; then
+		[[ "${STUB_RECOVERY_FAIL:-0}" != "1" ]] || return 1
+		if [[ "${3:-}" == "repos/owner/repo/issues" ]]; then
+			printf '%s\n' "${STUB_RECOVERY_ISSUES:-[[]]}"
+		else
+			printf '%s\n' "${STUB_RECOVERY_PR:-}"
+		fi
+		return 0
+	fi
 	if [[ "$subcommand" == "rate_limit" ]]; then
 		printf '{"resources":{"graphql":{"remaining":'
 		if [[ "$remaining" =~ ^[0-9]+$ ]]; then
@@ -309,6 +322,10 @@ _stub_gh_api() {
 			printf 'REST stub forced failure\n' >&2
 			return 1
 		fi
+		if [[ "$*" == '-X POST /repos/owner/repo/pulls '* && -n "${STUB_PRIMARY_ERROR:-}" ]]; then
+			printf 'https://github.com/owner/repo/pull/9999\n'
+			return 0
+		fi
 		printf 'https://github.com/owner/repo/issues/9999\n'
 		return 0
 	fi
@@ -320,7 +337,7 @@ _stub_gh_issue() {
 		return 1
 	fi
 	if [[ "${STUB_PRIMARY_FAIL:-0}" == "1" ]]; then
-		printf 'primary stub forced failure (rate limit)\n' >&2
+		printf '%s\n' "${STUB_PRIMARY_ERROR:-primary stub forced failure (rate limit)}" >&2
 		return 1
 	fi
 	if [[ "$subcommand" == "create" ]]; then
@@ -338,7 +355,7 @@ _stub_gh_pr() {
 		return 1
 	fi
 	if [[ "${STUB_PRIMARY_FAIL:-0}" == "1" ]]; then
-		printf 'primary stub forced failure (rate limit)\n' >&2
+		printf '%s\n' "${STUB_PRIMARY_ERROR:-primary stub forced failure (rate limit)}" >&2
 		return 1
 	fi
 	if [[ "$subcommand" == "create" ]]; then
@@ -1166,6 +1183,198 @@ fi
 
 unset STUB_PRIMARY_FAIL
 export STUB_RATE_LIMIT_REMAINING=5000
+
+# GH#40380: exercise both public create wrappers at healthy GraphQL quota.
+# Stub only issue lifecycle preparation; retain native capture, classification,
+# duplicate lookup and the actual REST translators. No network is used.
+run_transient_create() (
+	local kind="$1"
+	shift
+	if [[ "$kind" == "issue" ]]; then
+		_gh_ci_prepare_todo_labels() { _GH_CI_FILTERED_ARGS=("$@"); _GH_CI_TODO_LABEL_ARGS=(); return 0; }
+		_gh_ci_prepare_parent_contract_and_signature() { _GH_CI_READY_ARGS=("$@"); return 0; }
+		_gh_ci_prepare_trusted_nmr_labels() { _GH_CI_TRUST_NORMALIZED_ARGS=("$@"); return 0; }
+		_gh_ci_prepare_status_label() { _GH_CI_STATUS_LABEL_ARGS=(); return 0; }
+		_gh_ci_validate_dispatch_scope() { return 0; }
+		_gh_ci_ensure_requested_reminder_label() { return 0; }
+		_gh_ci_settle_derived_labels() { return 0; }
+		_gh_ci_select_auto_assignee() { _GH_CI_AUTO_ASSIGNEE=""; return 0; }
+		_gh_finish_created_issue() { return 0; }
+		gh_create_issue --repo owner/repo --title 'Transient create' --body 'body' --label origin:interactive "$@"
+	else
+		gh_create_pr --repo owner/repo --title 'Transient create' --head 'feature/transient' --base main --body 'body' "$@"
+	fi
+	return $?
+)
+
+export STUB_PR_LIST_FIXTURE='[]'
+for create_kind in issue pr; do
+	export STUB_PRIMARY_FAIL=1
+	for create_error in \
+		'GraphQL: Something went wrong while executing your query' \
+		'HTTP 502: Bad Gateway' 'HTTP/2.0 503 Service Unavailable' \
+		'HTTP 504: Gateway Timeout' 'GraphQL: query timeout'; do
+		export STUB_PRIMARY_ERROR="$create_error"
+		: >"$GH_CALLS"
+		create_rc=0
+		create_output=$(run_transient_create "$create_kind" 2>"$TMP/transient.err") || create_rc=$?
+		create_count=$(grep -cE '^api -X POST /repos/owner/repo/(issues|pulls) ' "$GH_CALLS" || true)
+		if [[ "$create_rc" -eq 0 && "$create_count" -eq 1 && "$create_output" == https://github.com/owner/repo/*/9999 ]]; then
+			pass "$create_kind retries $create_error exactly once through REST"
+		else
+			fail "$create_kind retries $create_error exactly once through REST" "rc=$create_rc output=$create_output calls=$(cat "$GH_CALLS")"
+		fi
+	done
+	export STUB_PRIMARY_ERROR='GraphQL: Something went wrong while executing your query'
+	export STUB_RECOVERY_ISSUES
+	STUB_RECOVERY_ISSUES=$(jq -cn '[[{title:"Transient create",state:"open",created_at:(now|strftime("%Y-%m-%dT%H:%M:%SZ")),html_url:"https://github.com/owner/repo/issues/123"}]]')
+	export STUB_RECOVERY_PR='https://github.com/owner/repo/pull/123'
+	: >"$GH_CALLS"
+	create_rc=0
+	create_output=$(run_transient_create "$create_kind" 2>"$TMP/transient.err") || create_rc=$?
+	if [[ "$create_rc" -eq 0 && "$create_output" == https://github.com/owner/repo/*/123 ]] &&
+		! grep -qE '^api -X POST /repos/owner/repo/(issues|pulls) ' "$GH_CALLS"; then
+		pass "$create_kind adopts existing creation without a second mutation"
+	else
+		fail "$create_kind adopts existing creation without a second mutation" "rc=$create_rc output=$create_output calls=$(cat "$GH_CALLS")"
+	fi
+	unset STUB_RECOVERY_ISSUES STUB_RECOVERY_PR
+	export STUB_RECOVERY_FAIL=1
+	: >"$GH_CALLS"
+	if run_transient_create "$create_kind" >"$TMP/transient.out" 2>"$TMP/transient.err" ||
+		grep -qE '^api -X POST /repos/owner/repo/(issues|pulls) ' "$GH_CALLS"; then
+		fail "$create_kind refuses a second mutation when reconciliation fails"
+	else
+		pass "$create_kind refuses a second mutation when reconciliation fails"
+	fi
+	unset STUB_RECOVERY_FAIL
+	for create_error in 'HTTP 401: Bad credentials' 'HTTP 422: Validation Failed' 'HTTP 404: Not Found' 'HTTP 403: Forbidden'; do
+		export STUB_PRIMARY_ERROR="$create_error"
+		# Fatal responses must not become writes even at exhausted quota.
+		export STUB_RATE_LIMIT_REMAINING=0
+		: >"$GH_CALLS"
+		if run_transient_create "$create_kind" >"$TMP/transient.out" 2>"$TMP/transient.err" ||
+			grep -qE '^api -X POST /repos/owner/repo/(issues|pulls) ' "$GH_CALLS"; then
+			fail "$create_kind does not retry $create_error"
+		else
+			pass "$create_kind does not retry $create_error"
+		fi
+	done
+	export STUB_PRIMARY_ERROR='HTTP 403: Forbidden - API rate limit exceeded'
+	: >"$GH_CALLS"
+	create_rc=0
+	create_output=$(run_transient_create "$create_kind" 2>"$TMP/transient.err") || create_rc=$?
+	create_count=$(grep -cE '^api -X POST /repos/owner/repo/(issues|pulls) ' "$GH_CALLS" || true)
+	if [[ "$create_rc" -eq 0 && "$create_count" -eq 1 ]]; then
+		pass "$create_kind preserves quota fallback for rate-limited 403 Forbidden"
+	else
+		fail "$create_kind preserves quota fallback for rate-limited 403 Forbidden" "rc=$create_rc output=$create_output calls=$(cat "$GH_CALLS")"
+	fi
+	export STUB_RATE_LIMIT_REMAINING=5000
+done
+unset STUB_PRIMARY_FAIL STUB_PRIMARY_ERROR STUB_PR_LIST_FIXTURE
+
+# Recovery must keep option-shaped title values literal.
+if (
+	_rest_recover_recent_issue() { local repo="$1" title="$2"; [[ "$repo" == owner/repo && "$title" == '--title=Actual' ]] || return 1; printf 'recovered\n'; return 0; }
+	[[ "$(_gh_create_issue_retry_transient owner/repo --title '--title=Actual')" == recovered ]]
+); then
+	pass "issue recovery does not reparse a consumed title"
+else
+	fail "issue recovery does not reparse a consumed title"
+fi
+
+# Inspect the body while the translator's temporary file still exists.
+if (
+	gh() {
+		local request_args="$*" arg="" body_path=""
+		[[ "$request_args" == *'title=Example'* && "$request_args" == *'labels[]=bug'* && "$request_args" == *'assignees[]=worker'* && "$request_args" == *'milestone=1'* ]] || return 1
+		for arg in "$@"; do
+			case "$arg" in body=@*) body_path="${arg#body=@}" ;; esac
+		done
+		[[ -n "$body_path" && "$(cat "$body_path")" == 'Required issue content' ]] || return 1
+		printf 'created\n'
+		return 0
+	}
+	_rest_recover_recent_issue() { return 0; }
+	[[ "$(_gh_create_issue_retry_transient owner/repo -R owner/repo -t Example -b 'Required issue content' -l bug -a worker -m 1)" == created ]] || exit 1
+	printf 'Required issue content' >"$TMP/short-body"
+	[[ "$(_rest_issue_create -R owner/repo -t Example -F "$TMP/short-body" -l bug -a worker -m 1)" == created ]]
+); then
+	pass "REST issue retry preserves short title, body, body-file and metadata options"
+else
+	fail "REST issue retry preserves short title, body, body-file and metadata options"
+fi
+
+for push_owner in owner fork-owner; do
+	if (
+		git() {
+			case "$*" in
+			'symbolic-ref --quiet HEAD') printf 'refs/heads/topic\n' ;;
+			'for-each-ref --format=%(push:remotename) refs/heads/topic') printf 'fork\n' ;;
+			'for-each-ref --format=%(push:remoteref) refs/heads/topic') printf 'refs/heads/topic\n' ;;
+			'remote get-url --push fork') printf 'git@github.com:%s/repo.git\n' "$push_owner" ;;
+			*) return 1 ;;
+			esac
+			return 0
+		}
+		gh() { [[ "$*" == *"head=$push_owner:topic"* ]] || return 1; return 0; }
+		_rest_recover_created_pr owner/repo "$(_rest_pr_push_head)" || exit 1
+		_gh_create_pr_recover_after_mutation_failure 'GraphQL: query timeout' --repo owner/repo
+		[[ "${_GH_CREATE_PR_RECOVERY_FAILED:-0}" != 1 ]]
+	); then
+		pass "omitted PR head recovery queries push owner $push_owner"
+	else
+		fail "omitted PR head recovery queries push owner $push_owner"
+	fi
+done
+# Exercise the public wrapper through an empty recovery lookup and REST POST.
+# The remote branch deliberately differs from the local branch.
+if (
+	git() {
+		case "$*" in
+		'symbolic-ref --quiet HEAD') printf 'refs/heads/topic\n' ;;
+		'for-each-ref --format=%(push:remotename) refs/heads/topic') printf 'fork\n' ;;
+		'for-each-ref --format=%(push:remoteref) refs/heads/topic') printf 'refs/heads/remote-topic\n' ;;
+		'remote get-url --push fork') printf 'git@github.com:fork-owner/repo.git\n' ;;
+		*) command git "$@"; return $? ;;
+		esac
+		return 0
+	}
+	export STUB_PRIMARY_FAIL=1 STUB_PRIMARY_ERROR='GraphQL: query timeout'
+	unset STUB_RECOVERY_PR STUB_RECOVERY_FAIL
+	: >"$GH_CALLS"
+	create_output=$(gh_create_pr --repo owner/repo --title 'Transient create' --base main --body body) || exit 1
+	[[ "$create_output" == 'https://github.com/owner/repo/pull/9999' ]] || exit 1
+	[[ "$(grep -cE '^api -X POST /repos/owner/repo/pulls ' "$GH_CALLS")" -eq 1 ]] || exit 1
+	grep -qE '^api --method GET repos/owner/repo/pulls .*head=fork-owner:remote-topic ' "$GH_CALLS" || exit 1
+	grep -qE '^api -X POST /repos/owner/repo/pulls .*head=fork-owner:remote-topic ' "$GH_CALLS"
+); then
+	pass "omitted PR head REST retry retains the fork owner and remote branch"
+else
+	fail "omitted PR head REST retry retains the fork owner and remote branch"
+fi
+if (
+	git() { return 1; }
+	_gh_create_pr_recover_after_mutation_failure 'GraphQL: query timeout' --repo owner/repo
+	[[ "${_GH_CREATE_PR_RECOVERY_FAILED:-0}" == 1 ]]
+); then
+	pass "unknown PR push destination fails recovery closed"
+else
+	fail "unknown PR push destination fails recovery closed"
+fi
+
+if (
+	_GH_CREATE_OUTPUT='stale resource URL'
+	_GH_CREATE_ERROR='GraphQL: query timeout'
+	mktemp() { return 1; }
+	_gh_create_capture_native true && exit 1
+	[[ -z "$_GH_CREATE_OUTPUT" && -z "$_GH_CREATE_ERROR" ]]
+); then
+	pass "native capture initialization failure clears stale identity and diagnostics"
+else
+	fail "native capture initialization failure clears stale identity and diagnostics"
+fi
 
 # =============================================================================
 # Test 21: _rest_pr_create auto-detects --head from git HEAD when omitted

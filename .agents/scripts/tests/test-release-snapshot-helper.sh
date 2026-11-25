@@ -129,8 +129,48 @@ if release_snapshot_sources test/repo main "$BASE" "$FORGED" 2>/dev/null; then
 	printf 'FAIL: range containing a forged subject PR hint accepted\n' >&2
 	exit 1
 fi
-eval "$_gh_base"
 printf 'PASS: missing association resolves only through a verified subject PR hint\n'
+
+# Full-loop squash subjects carry only a GH#<issue> task prefix. The issue's
+# closing PR is a candidate verified exactly like a (#N) hint; a direct push
+# reusing the prefix and an unreadable reference both fail closed.
+ISSUE_HINTED=$(git commit-tree "$HINT_TREE" -p "$BASE" -m 'GH#40: fix: issue-hinted squash merge')
+ISSUE_FORGED=$(git commit-tree "$HINT_TREE" -p "$ISSUE_HINTED" -m 'GH#40: chore: direct push claiming the issue')
+gh() {
+	if [[ "$1" == pr ]]; then
+		[[ "$3" == 9 ]] || return 1
+		jq -cn --arg sha "$ISSUE_HINTED" '{state:"MERGED",mergedAt:"2026-11-25T00:00:00Z",baseRefName:"main",mergeCommit:{oid:$sha}}'
+		return $?
+	fi
+	if [[ "$1 $2" == "api graphql" ]]; then
+		[[ "${GRAPHQL_FAILURE:-false}" == false && "$*" == *"number=40"* ]] || return 1
+		# PR 77 belongs to another repository; its local read would fail, so
+		# accepting the record proves cross-repository closers are skipped.
+		jq -cn --argjson more "${CLOSERS_TRUNCATED:-false}" '{data:{repository:{issueOrPullRequest:{__typename:"Issue",
+			closedByPullRequestsReferences:{pageInfo:{hasNextPage:$more},
+				nodes:[{number:77,repository:{nameWithOwner:"other/repo"}},
+					{number:9,repository:{nameWithOwner:"Test/Repo"}}]}}}}}'
+		return $?
+	fi
+	printf '[[]]\n'
+	return 0
+}
+issue_hinted=$(release_snapshot_sources test/repo main "$BASE" "$ISSUE_HINTED")
+[[ "$issue_hinted" == "$(jq -cn --arg sha "$ISSUE_HINTED" '[{pr:9,merge:$sha}]')" ]]
+if CLOSERS_TRUNCATED=true release_snapshot_sources test/repo main "$BASE" "$ISSUE_HINTED" 2>/dev/null; then
+	printf 'FAIL: truncated closing-PR list accepted\n' >&2
+	exit 1
+fi
+if release_snapshot_sources test/repo main "$ISSUE_HINTED" "$ISSUE_FORGED" 2>/dev/null; then
+	printf 'FAIL: forged GH# task prefix on a direct push accepted\n' >&2
+	exit 1
+fi
+if GRAPHQL_FAILURE=true release_snapshot_sources test/repo main "$BASE" "$ISSUE_HINTED" 2>/dev/null; then
+	printf 'FAIL: unreadable GH# task reference accepted\n' >&2
+	exit 1
+fi
+eval "$_gh_base"
+printf 'PASS: missing association resolves through a verified same-repo GH# closing PR; truncated lists fail closed\n'
 
 # Transient reads retry (bounded); auth failures do not. Count gh calls via file.
 export RELEASE_SNAPSHOT_RETRY_UNIT=0

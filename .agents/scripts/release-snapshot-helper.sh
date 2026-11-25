@@ -145,10 +145,12 @@ _release_snapshot_hinted_record() {
 	local branch="$2"
 	local commit="$3"
 	local subject=""
+	local hints=""
 	local hint=""
 	local pr_json=""
 	local found=""
 	subject=$(git log -1 --format=%s "$commit") || return 1
+	hints=$(_release_snapshot_subject_hints "$repo" "$subject") || return 1
 	while IFS= read -r hint; do
 		[[ "$hint" =~ ^[1-9][0-9]{0,9}$ ]] || continue
 		[[ "$hint" != "$found" ]] || continue
@@ -160,10 +162,52 @@ _release_snapshot_hinted_record() {
 			and .mergeCommit.oid == $sha' <<<"$pr_json" >/dev/null || continue
 		[[ -z "$found" ]] || return 1
 		found="$hint"
-	done < <(printf '%s\n' "$subject" | grep -oE '\(#[0-9]+\)|Merge pull request #[0-9]+' | grep -oE '[0-9]+')
+	done <<<"$hints"
 	[[ -n "$found" ]] || return 1
 	jq -cn --argjson pr "$found" --arg merge "$commit" '{pr:$pr,merge:$merge}'
 	return $?
+}
+
+# Prints unique candidate PR numbers for a commit subject, one per line: the
+# GitHub-style `(#N)`/`Merge pull request #N` hints, plus the closing PRs of
+# each `GH#N` task reference when no direct hint exists (GH#40379). Full-loop squash subjects
+# carry only `GH#<issue>:`, so without this a dropped association was never
+# recoverable. Candidates remain hints; the caller verifies each PR's own
+# merge commit. GH#N may name an issue or a PR; a read failure fails closed.
+# Args: $1=repo $2=subject
+_release_snapshot_subject_hints() {
+	local repo="$1"
+	local subject="$2"
+	local candidates=""
+	local reference=""
+	local node_json=""
+	# shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub.
+	local query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issueOrPullRequest(number:$number){__typename ... on PullRequest{number} ... on Issue{closedByPullRequestsReferences(first:100,includeClosedPrs:true){pageInfo{hasNextPage} nodes{number repository{nameWithOwner}}}}}}}'
+	candidates=$(printf '%s\n' "$subject" | grep -oE '\(#[0-9]+\)|Merge pull request #[0-9]+' | grep -oE '[0-9]+' || true)
+	# A direct PR hint is sufficient; resolve GH# references only without one so
+	# an unrelated GraphQL failure cannot block an otherwise verifiable record.
+	if [[ -n "$candidates" ]]; then
+		printf '%s\n' "$candidates" | sort -u
+		return 0
+	fi
+	while IFS= read -r reference; do
+		[[ "$reference" =~ ^[1-9][0-9]{0,9}$ ]] || continue
+		node_json=$(_release_snapshot_gh_read "task reference GH#${reference} in ${repo}" \
+			'.data.repository.issueOrPullRequest.__typename | IN("Issue", "PullRequest")' -- \
+			api graphql -f query="$query" -f owner="${repo%%/*}" -f name="${repo#*/}" -F number="$reference") || return 1
+		# An incomplete closing-PR list could omit the merged PR; fail closed.
+		jq -e '.data.repository.issueOrPullRequest.closedByPullRequestsReferences.pageInfo.hasNextPage != true' \
+			<<<"$node_json" >/dev/null || return 1
+		# A PR from another repository cannot own a merge commit here; skip it
+		# rather than letting its unrelated number fail the local PR read.
+		candidates+=$'\n'$(jq -r --arg repo "$repo" '.data.repository.issueOrPullRequest
+			| if .__typename == "PullRequest" then .number
+			else (.closedByPullRequestsReferences.nodes // [])[]
+				| select(((.repository.nameWithOwner // "") | ascii_downcase) == ($repo | ascii_downcase))
+				| .number end' <<<"$node_json") || return 1
+	done < <(printf '%s\n' "$subject" | grep -oE 'GH#[0-9]+' | grep -oE '[0-9]+' | sort -u || true)
+	printf '%s\n' "$candidates" | grep -E '^[1-9][0-9]{0,9}$' | sort -u || true
+	return 0
 }
 
 release_snapshot_sources() {

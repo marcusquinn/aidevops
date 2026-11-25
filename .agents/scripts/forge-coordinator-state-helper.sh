@@ -426,7 +426,10 @@ cleanup_one_artifact() {
 	else
 		cleanup_failed=$((cleanup_failed + 1))
 		consecutive_failures=$((consecutive_failures + 1))
-		printf '::warning title=Coordinator cleanup delete failed::artifact=%s; continuing with the next candidate.\n' "$artifact_id" >&2
+		# Surface the first line of the API error (no tokens appear in gh api errors)
+		# so a transient failure is diagnosable from the run log (GH#40382).
+		delete_error="${delete_error%%$'\n'*}"
+		printf '::warning title=Coordinator cleanup delete failed::artifact=%s; error=%s; continuing with the next candidate.\n' "$artifact_id" "${delete_error:0:200}" >&2
 		((consecutive_failures < 5)) || cleanup_stop="consecutive_failures"
 	fi
 	return 0
@@ -564,8 +567,12 @@ cleanup_state() {
 		"$deleted_count" "$skipped_count" "$cleanup_failed" "$pages_failed" "${cleanup_stop:-complete}"
 
 	rm -f "$first_page_file" "$page_file"
-	# An isolated failure is a warning; an apply run that made no progress fails.
-	if [[ "$mode" == "$CLEANUP_MODE_APPLY" ]] && ((cleanup_failed + pages_failed > 0 && deleted_count == 0)); then
+	# Isolated failures are warnings: cleanup is housekeeping retried on every run
+	# (GH#40382: two transient delete failures failed the whole Issue Sync job).
+	# Fail only on systemic evidence: repeated consecutive failures, or nothing
+	# deleted with unreadable inventory pages.
+	if [[ "$mode" == "$CLEANUP_MODE_APPLY" ]] && ((deleted_count == 0)) &&
+		{ [[ "$cleanup_stop" == "consecutive_failures" ]] || ((pages_failed > 0)); }; then
 		return 1
 	fi
 	return 0

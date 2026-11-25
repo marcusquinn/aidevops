@@ -1391,7 +1391,7 @@ test_squash_subject_commit_pages() (
 			{sha: (tostring), commit: {message: ("fix: large history\n" + ("x" * 8192))}}]]')
 	[[ "${#pages}" -gt 2097152 ]] || return 1
 	actual=$(_merge_resolve_squash_subject 900 owner/repo) || actual_rc=$?
-	if [[ "$actual_rc" -eq 0 && "$actual" == 'GH#36874: fix: preserve large commit histories' ]]; then
+	if [[ "$actual_rc" -eq 0 && "$actual" == 'GH#36874: fix: preserve large commit histories (#900)' ]]; then
 		print_result "squash subject accepts >2 MB paginated metadata and infers type" 0
 	else
 		print_result "squash subject accepts >2 MB paginated metadata and infers type" 1

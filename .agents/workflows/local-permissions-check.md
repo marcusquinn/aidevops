@@ -25,14 +25,17 @@ host/editor inventory.
 
 ## Interpretation
 
-- macOS grants privacy permissions to the parent host app, not the child shell or
-  CLI process. If the session is launched through Tabby, grant Tabby.
+- For terminal-launched macOS sessions, privacy permissions are normally
+  attributed to the parent host app, not the child shell or CLI process. If the
+  session is launched through Tabby, grant Tabby; launchd jobs have separate
+  attribution and do not inherit the terminal's grants.
 - Full Disk Access (`kTCCServiceSystemPolicyAllFiles`) is the main permission for
   Trash cleanup, protected `Library` paths, repo metadata, and runtime data.
 - Files and Folders scoped access may still matter for Desktop, Documents,
   Downloads, Network volumes, or Removable volumes.
 - Accessibility and Automation/Apple Events are for UI automation, Finder,
   System Events, Terminal/iTerm/Tabby, Notes, Calendar, and Contacts control.
+- For launchd Full Disk Access/Automation checks, use the [one-shot probe and interpreter-path guidance](../reference/routines.md#macos-launchd-and-privacy-permissions), not a terminal or `env -i` dry run.
 - Screen Recording is required for screenshots and UI verification.
 - Microphone, Camera, Contacts, Calendar, and Reminders are optional and should
   be granted only for workflows that explicitly need them.

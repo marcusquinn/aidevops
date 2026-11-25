@@ -11,6 +11,7 @@ import subprocess  # nosec B404 -- fixed read-only Git plumbing, never a shell.
 from contextlib import contextmanager
 
 
+from _worktree_dependency_linker import reject_hoisted_linker
 from _worktree_dependency_manifest import (
     Rejected, pnpm_inventory, required_dependencies, workspace_members, workspace_patterns,
 )
@@ -143,6 +144,7 @@ def identity(repo, worktree, relative):
     name, lock = matching_lock(source, dest)
     modules = contained_path(source / "node_modules")
     if name == "pnpm-lock.yaml":
+        reject_hoisted_linker((repo, source), regular_bytes)
         installed = contained_path(modules / ".pnpm" / "lock.yaml")
         if regular_bytes(installed) != lock:
             raise Rejected("stale-installed-lock")
@@ -157,6 +159,7 @@ def workspace_identity(repo, worktree):
     config = regular_bytes(repo / "pnpm-workspace.yaml")
     if config != regular_bytes(worktree / "pnpm-workspace.yaml"):
         raise Rejected("stale-workspace-identity")
+    reject_hoisted_linker((repo,), regular_bytes, workspace_config=config)
     name, lock = matching_lock(repo, worktree)
     if name != "pnpm-lock.yaml" or regular_bytes(repo / "node_modules/.pnpm/lock.yaml") != lock:
         raise Rejected("stale-installed-lock")
