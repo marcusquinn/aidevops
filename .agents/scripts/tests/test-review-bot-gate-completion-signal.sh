@@ -310,7 +310,7 @@ test_event_check_rejects_stale_head_evidence() {
 
 test_self_caller_uses_pr_head_helper_ref() {
 	local caller="${SCRIPT_DIR}/../../../.github/workflows/review-bot-gate.yml"
-	if grep -Fq "aidevops_ref: \${{ github.event.pull_request.head.sha || 'main' }}" "$caller"; then
+	if grep -Fq "aidevops_ref: \${{ (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.sha) || 'main' }}" "$caller"; then
 		print_result "self-caller validates the PR-head helper revision" 0
 	else
 		print_result "self-caller validates the PR-head helper revision" 1 "caller=${caller}"
