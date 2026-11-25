@@ -800,9 +800,9 @@ _gh_ci_settle_derived_labels() {
 # Capture diagnostics without mixing stderr into the durable URL on stdout.
 _gh_create_capture_native() {
 	local error_file="" rc=0
-	error_file=$(mktemp -t aidevops-create-error.XXXXXX) || return 1
 	_GH_CREATE_OUTPUT=""
 	_GH_CREATE_ERROR=""
+	error_file=$(mktemp -t aidevops-create-error.XXXXXX) || return 1
 	if _GH_CREATE_OUTPUT=$("$@" 2>"$error_file"); then
 		rc=0
 	else

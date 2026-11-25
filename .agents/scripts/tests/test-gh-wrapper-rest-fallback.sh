@@ -1207,6 +1207,7 @@ run_transient_create() (
 	return $?
 )
 
+export STUB_PR_LIST_FIXTURE='[]'
 for create_kind in issue pr; do
 	export STUB_PRIMARY_FAIL=1
 	for create_error in \
@@ -1247,8 +1248,10 @@ for create_kind in issue pr; do
 		pass "$create_kind refuses a second mutation when reconciliation fails"
 	fi
 	unset STUB_RECOVERY_FAIL
-	for create_error in 'HTTP 401: Bad credentials' 'HTTP 422: Validation Failed' 'HTTP 404: Not Found'; do
+	for create_error in 'HTTP 401: Bad credentials' 'HTTP 422: Validation Failed' 'HTTP 404: Not Found' 'HTTP 403: Forbidden'; do
 		export STUB_PRIMARY_ERROR="$create_error"
+		# Fatal responses must not become writes even at exhausted quota.
+		export STUB_RATE_LIMIT_REMAINING=0
 		: >"$GH_CALLS"
 		if run_transient_create "$create_kind" >"$TMP/transient.out" 2>"$TMP/transient.err" ||
 			grep -qE '^api -X POST /repos/owner/repo/(issues|pulls) ' "$GH_CALLS"; then
@@ -1257,8 +1260,31 @@ for create_kind in issue pr; do
 			pass "$create_kind does not retry $create_error"
 		fi
 	done
+	export STUB_PRIMARY_ERROR='HTTP 403: Forbidden - API rate limit exceeded'
+	: >"$GH_CALLS"
+	create_rc=0
+	create_output=$(run_transient_create "$create_kind" 2>"$TMP/transient.err") || create_rc=$?
+	create_count=$(grep -cE '^api -X POST /repos/owner/repo/(issues|pulls) ' "$GH_CALLS" || true)
+	if [[ "$create_rc" -eq 0 && "$create_count" -eq 1 ]]; then
+		pass "$create_kind preserves quota fallback for rate-limited 403 Forbidden"
+	else
+		fail "$create_kind preserves quota fallback for rate-limited 403 Forbidden" "rc=$create_rc output=$create_output calls=$(cat "$GH_CALLS")"
+	fi
+	export STUB_RATE_LIMIT_REMAINING=5000
 done
-unset STUB_PRIMARY_FAIL STUB_PRIMARY_ERROR
+unset STUB_PRIMARY_FAIL STUB_PRIMARY_ERROR STUB_PR_LIST_FIXTURE
+
+if (
+	_GH_CREATE_OUTPUT='stale resource URL'
+	_GH_CREATE_ERROR='GraphQL: query timeout'
+	mktemp() { return 1; }
+	_gh_create_capture_native true && exit 1
+	[[ -z "$_GH_CREATE_OUTPUT" && -z "$_GH_CREATE_ERROR" ]]
+); then
+	pass "native capture initialization failure clears stale identity and diagnostics"
+else
+	fail "native capture initialization failure clears stale identity and diagnostics"
+fi
 
 # =============================================================================
 # Test 21: _rest_pr_create auto-detects --head from git HEAD when omitted

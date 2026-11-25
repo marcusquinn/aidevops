@@ -389,14 +389,14 @@ _rest_should_fallback_write() {
 # Rate-limit errors are deliberately left to the existing quota classifier.
 _rest_create_failure_is_fatal() {
 	local diagnostics="$1"
-	if printf '%s\n' "$diagnostics" | grep -Eiq 'authentication|bad credentials|validation failed|could not resolve|not authorized|forbidden'; then
+	if printf '%s\n' "$diagnostics" | grep -Eiq 'authentication|bad credentials|validation|could not resolve|not authorized|resource not accessible'; then
 		return 0
 	fi
 	# Preserve the established quota-exhaustion path, including HTTP 403/429.
 	if printf '%s\n' "$diagnostics" | grep -Eiq 'rate limit|rate_limit'; then
 		return 1
 	fi
-	if printf '%s\n' "$diagnostics" | grep -Eiq 'HTTP[^[:space:]]*[[:space:]]+4[0-9]{2}'; then
+	if printf '%s\n' "$diagnostics" | grep -Eiq 'HTTP[^[:space:]]*[[:space:]]+4[0-9]{2}|forbidden'; then
 		return 0
 	fi
 	return 1
