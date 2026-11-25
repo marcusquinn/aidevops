@@ -75,9 +75,11 @@ assert_json 'one permission lookup per distinct eligible author, including orpha
 	'length == 7 and (unique | length) == 7 and (index("LOOKUP newcomer") == null)'
 FETCHED=$(printf '%s\n' "$FETCH_WITH_LOOKUPS" | jq -Rs 'split("\n") | map(select(startswith("["))) | last | fromjson')
 assert_json 'fetch preserves old claims with private-member launch evidence' "$FETCHED" 'length == 3'
-FILTERED=$(_filter_claims_with_launch_evidence "$CLAIMS" "$COMMENTS" org/repo)
+# Orphan filtering needs a known expired lease; an unknown expiry is protected.
+EXPIRED=$(printf '%s' "$CLAIMS" | jq -c 'map(.lease_expires_at=1767225720)')
+FILTERED=$(_filter_claims_with_launch_evidence "$EXPIRED" "$COMMENTS" org/repo)
 assert_json 'standalone launch filter resolves permissions' "$FILTERED" 'length == 3'
-UNTRUSTED=$(_filter_claims_with_launch_evidence "$CLAIMS" "$COMMENTS" org/repo '[]')
+UNTRUSTED=$(_filter_claims_with_launch_evidence "$EXPIRED" "$COMMENTS" org/repo '[]')
 assert_json 'untrusted launch cannot preserve an orphan' "$UNTRUSTED" 'length == 0'
 
 EVENTS=$(printf '%s' "$COMMENTS" | jq -c '. + [

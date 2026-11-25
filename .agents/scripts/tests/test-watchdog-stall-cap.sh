@@ -46,6 +46,9 @@ setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
 	export HOME="${TEST_ROOT}/home"
 	mkdir -p "${HOME}/.aidevops/logs"
+	# This simulated worker owns no dispatch lease from the invoking runner.
+	unset AIDEVOPS_DISPATCH_LEASE_DEVICE AIDEVOPS_DISPATCH_LEASE_TOKEN AIDEVOPS_DISPATCH_LEASE_SESSION
+	unset DISPATCH_REPO_SLUG WORKER_ISSUE_NUMBER WORKER_REPO_SLUG WORKER_TARGET_BRANCH
 	set +e
 	# shellcheck source=/dev/null
 	source "$HELPER_SCRIPT" >/dev/null 2>&1
@@ -163,6 +166,9 @@ test_cmd_run_finishes_confirmed_terminal_worker_before_continuation() {
 
 	_execute_run_attempt() {
 		execute_calls=$((execute_calls + 1))
+		# The mocked attempt actually ran; do not enter the prelaunch-failure path.
+		_WORKER_RUNTIME_LAUNCH_STARTED=1
+		_run_metric_session_id="fixture-runtime-session"
 		_run_result_label="signal_killed_continue"
 		_run_failure_reason="signal_killed_continue"
 		_run_activity_detected="1"

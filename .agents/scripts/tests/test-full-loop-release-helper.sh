@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit
 ROOT=$(mktemp -d)
 trap 'rm -rf "$ROOT"' EXIT
 # Explicit platform tools keep the fixture isolated on non-FHS hosts such as NixOS.
-FIXTURE_PATH="$ROOT/bin:${AIDEVOPS_TEST_PATH:-/usr/bin:/bin}"
+FIXTURE_PATH="$ROOT/bin:${AIDEVOPS_TEST_PATH:-$PATH}"
 mkdir -p "$ROOT/bin" "$ROOT/repo/linked-branch" "$ROOT/repo/.agents/scripts" \
 	"$ROOT/repo/.git" "$ROOT/worktrees" "$ROOT/cleanup" "$ROOT/state"
 export AIDEVOPS_STATE_DIR="$ROOT/state"
@@ -26,7 +26,7 @@ export AIDEVOPS_WORKTREE_MANAGER=legacy-guards
 # fence retires trees through the native registry, which needs real Git
 # metadata. Keep this fixture on legacy creation; the process fixture below
 # replaces only the registry executor with the stubbed native removal.
-unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
+unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID AIDEVOPS_MANAGED_WORKTREE_RUN_UNIT
 export AIDEVOPS_LIFECYCLE_DISABLED=1
 export HOME="$ROOT/home"
 export AIDEVOPS_CLEANUP_LOG="$ROOT/cleanup.log"
@@ -58,8 +58,19 @@ wt_parent="${FAKE_CONTROL_PARENT:-${AIDEVOPS_WORKTREE_BASE_DIR:-/nonexistent}}"
 case "$*" in
 *rev-parse\ --absolute-git-dir*)
 	printf '%s/.git/worktrees/%s\n' "${FAKE_REPO_ROOT:?}" "${wt_ctx##*/}"
+	if [[ "$*" == *--git-common-dir* ]]; then
+		printf '%s/.git\n' "${FAKE_REPO_ROOT:?}"
+	fi
 	;;
-*rev-parse\ --show-toplevel* | *rev-parse*--git-common-dir* | *worktree\ list\ --porcelain*)
+*worktree\ list\ --porcelain*)
+	# Ownership observation lists from the repository as well as the worktree.
+	printf 'worktree %s\0HEAD %040d\0branch refs/heads/main\0\0' "${FAKE_REPO_ROOT:?}" 0
+	for listed in "$wt_parent"/aidevops-release-*; do
+		[[ -d "$listed" && -e "$listed/.git" ]] || continue
+		printf 'worktree %s\0HEAD %040d\0detached\0\0' "$listed" 0
+	done
+	;;
+*rev-parse\ --show-toplevel* | *rev-parse*--git-common-dir*)
 	# Answer the audited removal fence's probes like Git does for an
 	# unlocked, detached linked release worktree (one with a .git marker).
 	case "$wt_ctx" in
@@ -67,16 +78,15 @@ case "$*" in
 		case "$*" in
 		*--show-toplevel*) printf '%s\n' "$wt_ctx" ;;
 		*--git-common-dir*) printf '%s/.git\n' "${FAKE_REPO_ROOT:?}" ;;
-		*)
-			printf 'worktree %s\0HEAD %040d\0branch refs/heads/main\0\0' "${FAKE_REPO_ROOT:?}" 0
-			for listed in "$wt_parent"/aidevops-release-*; do
-				[[ -d "$listed" && -e "$listed/.git" ]] || continue
-				printf 'worktree %s\0HEAD %040d\0detached\0\0' "$listed" 0
-			done
-			;;
 		esac
 		;;
-	*) [[ "$*" == *--show-toplevel* ]] && printf '%s\n' "${FAKE_REPO_ROOT:?}" ;;
+	*)
+		if [[ "$*" == *--show-toplevel* ]]; then
+			printf '%s\n' "${FAKE_REPO_ROOT:?}"
+		else
+			printf '%s/.git\n' "${FAKE_REPO_ROOT:?}"
+		fi
+		;;
 	esac
 	;;
 *config\ --get\ gpg.format*) printf 'ssh\n' ;;

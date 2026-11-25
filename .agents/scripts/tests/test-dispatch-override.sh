@@ -23,14 +23,13 @@ HELPER="${SCRIPT_DIR}/../dispatch-claim-helper.sh"
 PASS=0
 FAIL=0
 
-# Source the helper's internal functions (strip main invocation)
+# Source in place so sibling library paths retain the production layout.
 _source_helper() {
-	local tmp
-	tmp=$(mktemp)
-	sed '/^main "$@"$/d' "$HELPER" >"$tmp"
-	# shellcheck disable=SC1090
-	source "$tmp"
-	rm -f "$tmp"
+	# shellcheck source=../dispatch-claim-helper.sh
+	source "$HELPER" help >/dev/null
+	# Isolate this resolver's file fallback from installed framework discovery.
+	# The shared version search has its own coverage.
+	aidevops_find_version() { printf 'unknown'; return 0; }
 	return 0
 }
 

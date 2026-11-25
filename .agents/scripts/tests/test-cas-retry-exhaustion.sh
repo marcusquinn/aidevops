@@ -407,6 +407,9 @@ main() {
 	# Override DRY_RUN and OFFLINE_MODE defaults from the sourced script
 	DRY_RUN="${DRY_RUN:-false}"
 	OFFLINE_MODE="${OFFLINE_MODE:-false}"
+	# These cases exercise the exhaustion policy without the separate counter
+	# reconciliation/retry path (which requires a real remote repository).
+	CAS_RECONCILE_RETRY_ON_FAILURE=0
 
 	test_success_on_first_attempt
 	test_success_after_20_failures

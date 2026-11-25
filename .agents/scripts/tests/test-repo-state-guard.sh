@@ -6,9 +6,25 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENTS_SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+export GH_FIXTURE_SCRIPTS="$AGENTS_SCRIPTS_DIR"
 
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
+# Authority scenarios must not share the invoking worker's permission memo or
+# release outbox. Each check below represents a fresh permission observation.
+export HOME="${tmp_dir}/home"
+mkdir -p "$HOME"
+unset AIDEVOPS_GH_COLLAB_MEMO_FILE AIDEVOPS_GH_COLLAB_STATS_FILE
+export GH_RELEASE_FIXTURE="${tmp_dir}/release-fixture.sh"
+cat >"$GH_RELEASE_FIXTURE" <<'STUB'
+# Use the bound-claim fixture from test-claim-release-retry.sh: these cases
+# exercise repository authority and its retry boundary, not claim discovery.
+_hrff_check_release_claim() {
+  _HRFF_RELEASE_CLAIM_OWNED=1
+  _HRFF_RELEASE_CLAIM_ID=123
+  return 0
+}
+STUB
 
 call_log="${tmp_dir}/gh-calls.log"
 mode_file="${tmp_dir}/mode"
@@ -39,6 +55,14 @@ fi
 # --jq as "<login>|<viewerPermission>"; GitHub reports READ for a public repo
 # the viewer cannot push to.
 if [[ "$1" == "api" && "$2" == "graphql" ]]; then
+  if [[ "$*" == *'label0: label('* ]]; then
+    # Keep label-contract verification real while mocking GitHub transport.
+    source "${GH_FIXTURE_SCRIPTS}/shared-gh-wrappers-status.sh"
+    _status_label_contract | jq -Rn '
+      [inputs | split("\t") | {name:.[0], color:.[1], description:.[2]}]
+      | {data:{repository:(to_entries | map({key:("label" + (.key|tostring)), value:.value}) | from_entries)}}'
+    exit 0
+  fi
   case "$mode" in
     all-down) exit 1 ;;
     recover-after-retry)
@@ -86,6 +110,23 @@ if [[ "$1" == "api" && "$2" == repos/*/issues/*/comments ]]; then
   printf '%s\n' '{"id":123}'
   exit 0
 fi
+if [[ "$1" == "pr" && "$2" == "list" ]]; then
+  printf '%s\n' '[]'
+  exit 0
+fi
+if [[ "$1" == "api" && ( "$2" == repos/*/issues/866 || "$2" == /repos/*/issues/866 ) ]]; then
+  snapshot='{"state":"open","labels":[{"name":"status:available"}],"body":"fixture","title":"fixture","assignees":[]}'
+  shift 2
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == --jq ]]; then
+      jq -r "$2" <<<"$snapshot"
+      exit $?
+    fi
+    shift
+  done
+  printf '%s\n' "$snapshot"
+  exit 0
+fi
 exit 0
 STUB
 chmod +x "${tmp_dir}/bin/gh"
@@ -107,6 +148,7 @@ check() {
 	local condition="$1"
 	local name="$2"
 	local detail="${3:-}"
+	_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
 	if [[ "$condition" == "1" ]]; then
 		printf 'PASS %s\n' "$name"
 		pass_count=$((pass_count + 1))
@@ -218,6 +260,7 @@ release_output=$(bash -c '
   source "${0}/shared-constants.sh"
   source "${0}/worker-lifecycle-common.sh"
   source "${0}/headless-runtime-failure.sh"
+  source "$GH_RELEASE_FIXTURE"
   WORKER_ISSUE_NUMBER=866 DISPATCH_REPO_SLUG=afragen/git-updater _release_dispatch_claim issue-866 worker_complete 0 0
 ' "$AGENTS_SCRIPTS_DIR" 2>&1)
 release_rc=$?
@@ -294,6 +337,7 @@ recovered_output=$(AIDEVOPS_RELEASE_AUTHORITY_RETRY_DELAYS="0" bash -c '
   source "${0}/shared-constants.sh"
   source "${0}/worker-lifecycle-common.sh"
   source "${0}/headless-runtime-failure.sh"
+  source "$GH_RELEASE_FIXTURE"
   WORKER_ISSUE_NUMBER=866 DISPATCH_REPO_SLUG=tester/project _release_dispatch_claim issue-866 worker_complete 0 0
 ' "$AGENTS_SCRIPTS_DIR" 2>&1)
 recovered_rc=$?
