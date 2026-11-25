@@ -55,8 +55,8 @@ cleanup() {
 	return 0
 }
 
-# Extract the three functions the driver needs (TOOL_PREFIX + stripMcpPrefix
-# + makeStreamPullHandler) from provider-auth-request.mjs and concatenate
+# Extract the functions the driver needs (stripMcpPrefix + makeStreamPullHandler)
+# from provider-auth-stream.mjs, import its tool-name mapping, and concatenate
 # with the driver fixture into a standalone .mjs that Node can run without
 # triggering the plugin's module-load side effects.
 build_standalone_driver() {
@@ -80,12 +80,12 @@ test_structural_pending_buffer() {
 	fn_src=$(awk '/^function makeStreamPullHandler/,/^}$/ { print }' "$PLUGIN_SRC")
 	[[ -z "$fn_src" ]] && print_result "structural: makeStreamPullHandler extracted" 1 "empty" && return 0
 
-	printf '%s\n' "$fn_src" | grep -q "let pending" ||
+	grep -q "let pending" <<<"$fn_src" ||
 		{
 			print_result "structural: pending buffer present" 1 "missing 'let pending'"
 			return 0
 		}
-	printf '%s\n' "$fn_src" | grep -qF 'lastIndexOf("\n")' ||
+	grep -qF 'lastIndexOf("\n")' <<<"$fn_src" ||
 		{
 			print_result "structural: lastIndexOf newline present" 1 "missing lastIndexOf"
 			return 0
