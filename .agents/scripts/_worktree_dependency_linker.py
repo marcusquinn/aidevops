@@ -12,7 +12,11 @@ import re
 
 from _worktree_dependency_manifest import Rejected
 
-HOISTED_WORKSPACE_SETTING = re.compile(rb"^nodeLinker:[ \t]*['\"]?hoisted['\"]?[ \t]*(?:#.*)?\r?$", re.MULTILINE)
+# A top-level key, optionally quoted (valid YAML), with optional space before ':'.
+HOISTED_WORKSPACE_SETTING = re.compile(
+    rb"^(?:nodeLinker|'nodeLinker'|\"nodeLinker\")[ \t]*:[ \t]*['\"]?hoisted['\"]?[ \t]*(?:#.*)?\r?$",
+    re.MULTILINE,
+)
 HOISTED_NPMRC_SETTING = re.compile(rb"^[ \t]*node-linker[ \t]*=[ \t]*['\"]?hoisted['\"]?[ \t]*\r?$", re.MULTILINE)
 
 
