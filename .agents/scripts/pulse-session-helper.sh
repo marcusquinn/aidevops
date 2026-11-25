@@ -31,6 +31,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/config-helper.sh" 2>/dev/null || true
 # shellcheck source=./worker-lifecycle-common.sh
 source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
+# Reuse the scheduler's settings reader, default and interval validation.
+# shellcheck source=./setup/modules/schedulers-pulse.sh
+source "${SCRIPT_DIR}/setup/modules/schedulers-pulse.sh"
 
 # Configuration
 readonly SESSION_FLAG="${HOME}/.aidevops/logs/pulse-session.flag"
@@ -40,6 +43,7 @@ readonly WRAPPER_LOGFILE="${HOME}/.aidevops/logs/pulse-wrapper.log"
 readonly WRAPPER_LAST_RUN_FILE="${HOME}/.aidevops/logs/pulse-wrapper-last-run.ts"
 readonly PIDFILE="${HOME}/.aidevops/logs/pulse.pid"
 readonly MAX_WORKERS_FILE="${HOME}/.aidevops/logs/pulse-max-workers"
+readonly PULSE_HEALTH_FILE="${HOME}/.aidevops/logs/pulse-health.json"
 readonly REPOS_JSON="${HOME}/.config/aidevops/repos.json"
 readonly STOP_GRACE_PERIOD="${PULSE_STOP_GRACE_SECONDS:-300}" # 5 min default
 
@@ -279,6 +283,37 @@ get_last_pulse_time() {
 }
 
 #######################################
+# Prefer the current health snapshot to the historical capacity cache.
+#######################################
+get_max_workers() {
+	local max_workers=""
+	if [[ -r "$PULSE_HEALTH_FILE" ]] && command -v jq >/dev/null 2>&1; then
+		max_workers=$(jq -er '.workers_max | select(type == "number" and . >= 0 and . == floor)' "$PULSE_HEALTH_FILE" 2>/dev/null) || max_workers=""
+	fi
+	if [[ -z "$max_workers" && -r "$MAX_WORKERS_FILE" ]]; then
+		max_workers=$(cat "$MAX_WORKERS_FILE" 2>/dev/null) || max_workers=""
+	fi
+	printf '%s\n' "${max_workers:-?}"
+	return 0
+}
+
+#######################################
+# Display whole minutes only when exact; otherwise preserve seconds.
+#######################################
+get_pulse_interval_description() {
+	local interval_seconds
+	interval_seconds=$(_read_pulse_interval_seconds)
+	if ((interval_seconds == 60)); then
+		printf '%s\n' '1 minute'
+	elif ((interval_seconds % 60 == 0)); then
+		printf '%s minutes\n' "$((interval_seconds / 60))"
+	else
+		printf '%s seconds\n' "$interval_seconds"
+	fi
+	return 0
+}
+
+#######################################
 # Start pulse session
 #######################################
 cmd_start() {
@@ -309,10 +344,8 @@ EOF
 
 	local repo_count
 	repo_count=$(get_pulse_repo_count)
-	local max_workers="?"
-	if [[ -f "$MAX_WORKERS_FILE" ]]; then
-		max_workers=$(cat "$MAX_WORKERS_FILE" || echo "?")
-	fi
+	local max_workers
+	max_workers=$(get_max_workers)
 
 	local scheduler_name
 	scheduler_name=$(get_scheduler_name)
@@ -321,7 +354,7 @@ EOF
 	echo ""
 	echo "  Repos in scope: ${repo_count}"
 	echo "  Max workers:    ${max_workers}"
-	echo "  Pulse interval: every 2 minutes (via ${scheduler_name})"
+	echo "  Pulse interval: every $(get_pulse_interval_description) (via ${scheduler_name})"
 	echo ""
 
 	# Warn if no scheduler entry is installed (GH#5085)
@@ -663,10 +696,8 @@ _status_print_workers_summary() {
 		echo "  Workers:     0"
 	fi
 
-	local max_workers="?"
-	if [[ -f "$MAX_WORKERS_FILE" ]]; then
-		max_workers=$(cat "$MAX_WORKERS_FILE" || echo "?")
-	fi
+	local max_workers
+	max_workers=$(get_max_workers)
 	echo "  Max workers: ${max_workers}"
 
 	local repo_count
@@ -783,7 +814,7 @@ ENVIRONMENT:
     AIDEVOPS_SUPERVISOR_PULSE  Override config consent (true/false)
 
 HOW IT WORKS:
-    The supervisor pulse runs every 2 minutes via launchd/cron. Whether it
+    The supervisor pulse runs at the configured interval via the scheduler. Whether it
     actually does work depends on a layered consent model (checked in order):
 
     1. Stop flag (~/.aidevops/logs/pulse-session.stop)
