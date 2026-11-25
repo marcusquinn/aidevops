@@ -616,6 +616,51 @@ _archive_candidate_filter() {
 
 # --- Archive command ----------------------------------------------------------
 
+# --- Per-DB consecutive-deferral streak (GH#40418) ----------------------------
+# A DB that defers (rc=2) on every pass never makes progress when one pass is
+# shorter than the work before its first commit. After K consecutive deferrals
+# the next pass gets a multiplied budget (catch-up); a non-deferral resets it.
+readonly DEFAULT_CATCHUP_AFTER=6
+readonly DEFAULT_CATCHUP_MULTIPLIER=5
+
+_archive_streak_file() {
+	local db="$1" dir key
+	dir="${OPENCODE_DB_ARCHIVE_STATE_DIR:-}"
+	if [[ -z "$dir" ]]; then
+		[[ -n "${HOME:-}" ]] || return 1
+		dir="${HOME}/.aidevops/logs"
+	fi
+	key=$(printf '%s' "$db" | cksum | awk '{print $1}')
+	printf '%s/opencode-db-archive.%s.streak\n' "$dir" "$key"
+	return 0
+}
+
+_archive_streak_read() {
+	local db="$1" file count=0
+	file=$(_archive_streak_file "$db") || {
+		printf '0\n'
+		return 0
+	}
+	[[ -f "$file" ]] && read -r count <"$file" 2>/dev/null || true
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	printf '%s\n' "$count"
+	return 0
+}
+
+# _archive_streak_update <db> <rc>
+_archive_streak_update() {
+	local db="$1" rc="$2" file count
+	file=$(_archive_streak_file "$db") || return 0
+	mkdir -p "${file%/*}" 2>/dev/null || return 0
+	if [[ "$rc" -eq 2 ]]; then
+		count=$(_archive_streak_read "$db")
+		printf '%s\n' "$((count + 1))" >"$file" 2>/dev/null || true
+	else
+		rm -f "$file" 2>/dev/null || true
+	fi
+	return 0
+}
+
 cmd_archive_all() {
 	local db rc=0 result=0 archive_pid=""
 	# Wait asynchronously so Bash handles signals immediately, and forward them
@@ -631,6 +676,7 @@ cmd_archive_all() {
 		wait "$archive_pid" || rc=$?
 		archive_pid=""
 		print_info "Archive inventory outcome: db=$db rc=$rc (0=complete, 2=protected/deferred, 3=unsupported)"
+		_archive_streak_update "$db" "$rc"
 		# Continue the fleet, but never record a partial fleet as fully successful.
 		if [[ "$rc" -ne 0 && ("$result" -eq 0 || "$result" -eq 2) ]]; then result="$rc"; fi
 	done < <(opencode_db_inventory "$ACTIVE_DB")
@@ -789,8 +835,24 @@ cmd_archive() {
 	_archive_parse_options "$@" || return 1
 	_archive_validate_options || return 1
 	if [[ "${OPENCODE_ARCHIVE_BUDGET_CHILD:-0}" != 1 ]]; then
+		local streak catchup_after="${OPENCODE_DB_ARCHIVE_CATCHUP_AFTER:-$DEFAULT_CATCHUP_AFTER}"
+		[[ "$catchup_after" =~ ^[0-9]+$ ]] && ((catchup_after > 0)) || catchup_after="$DEFAULT_CATCHUP_AFTER"
+		streak=$(_archive_streak_read "$ACTIVE_DB")
+		if ((!dry_run && max_duration > 0 && streak >= catchup_after)); then
+			max_duration=$((max_duration * DEFAULT_CATCHUP_MULTIPLIER))
+			if ((streak == catchup_after)); then
+				print_warning "Archive deferred ${streak} consecutive times for ${ACTIVE_DB}; running catch-up passes with a ${max_duration}s budget until one completes."
+			else
+				print_info "Archive catch-up pass (${streak} consecutive deferrals): ${max_duration}s budget"
+			fi
+			export OPENCODE_ARCHIVE_EFFECTIVE_MAX_DURATION="$max_duration"
+		fi
 		_archive_with_deadline "$max_duration" "${original_args[@]}"
 		return $?
+	fi
+	# GH#40418: catch-up budget chosen by the supervisor layer above.
+	if [[ "${OPENCODE_ARCHIVE_EFFECTIVE_MAX_DURATION:-}" =~ ^[0-9]+$ ]] && ((OPENCODE_ARCHIVE_EFFECTIVE_MAX_DURATION > max_duration)); then
+		max_duration="$OPENCODE_ARCHIVE_EFFECTIVE_MAX_DURATION"
 	fi
 	if ((worker_events_only)); then
 		_archive_worker_event_phase "$max_duration"
@@ -841,6 +903,7 @@ _archive_move_phase() {
 	now=$(date +%s)
 	_archive_prepare_candidates || return $?
 	_ARCHIVE_T_PREP=$(($(date +%s) - now))
+	print_info "Candidate prep took ${_ARCHIVE_T_PREP}s (${total_eligible} eligible)"
 	if ((total_eligible == 0)); then
 		print_success "No sessions match the archive retention target."
 		((dry_run)) && return 0
@@ -1236,10 +1299,14 @@ _archive_run_batches() {
 		local session_ids batch_start
 		# Start the timer before sizing so selection cost counts toward adaptation.
 		batch_start=$(date +%s)
+		# GH#40418: sizing a window over huge part/message tables can itself eat
+		# the whole budget. Mark before sizing so a killed pass halves the window.
+		_archive_adapt_mark sessions "$batch_limit" "$byte_limit"
 		session_ids=$(_archive_select_batch "$batch_limit" "$byte_limit" "$((start_time + max_duration))") || return $?
 		_ARCHIVE_T_SIZING=$((_ARCHIVE_T_SIZING + $(date +%s) - batch_start))
 
 		if [[ -z "$session_ids" ]]; then
+			_archive_adapt_clear sessions
 			break
 		fi
 
@@ -1444,7 +1511,7 @@ _archive_report_batch() {
 	# freed can be negative before vacuum; show 0 in that case
 	if ((freed < 0)); then freed=0; fi
 
-	print_info "Archived $archived_total/$total_eligible sessions [batch $batch_num] ($(format_bytes "$freed") freed)"
+	print_info "Archived $archived_total/$total_eligible sessions [batch $batch_num] ($(format_bytes "$freed") freed; committed $batch_count sessions in ${last_seconds}s)"
 	if [[ "$ARCHIVE_BATCH_DELAY_SECONDS" != "0" ]]; then
 		sleep "$ARCHIVE_BATCH_DELAY_SECONDS"
 	fi
