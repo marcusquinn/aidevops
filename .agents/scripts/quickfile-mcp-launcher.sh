@@ -42,8 +42,17 @@ main() {
 		required_node="$(<"$project_dir/.nvmrc")"
 		required_node="${required_node#v}"
 		nvm_node_bin="${NVM_DIR:-${HOME}/.nvm}/versions/node/v${required_node}/bin/node"
-		if [[ -z "${NODE_BIN:-}" && -x "$nvm_node_bin" ]]; then
-			node_bin="$nvm_node_bin"
+		if [[ -z "${NODE_BIN:-}" ]]; then
+			local required_major="${required_node%%.*}"
+			local candidate=""
+			for candidate in "$nvm_node_bin" \
+				"/opt/homebrew/opt/node@${required_major}/bin/node" \
+				"/usr/local/opt/node@${required_major}/bin/node"; do
+				if [[ -x "$candidate" ]]; then
+					node_bin="$candidate"
+					break
+				fi
+			done
 		fi
 	fi
 	command -v "$node_bin" >/dev/null 2>&1 || {
@@ -56,8 +65,13 @@ main() {
 			return 1
 		}
 		current_node="${current_node#v}"
-		if [[ "$current_node" != "$required_node" ]]; then
-			printf 'QuickFile MCP requires Node.js %s from .nvmrc; got %s. Set NODE_BIN to the matching executable.\n' "$required_node" "$current_node" >&2
+		# Accept the same major version at or above the .nvmrc patch level.
+		local required_major="${required_node%%.*}"
+		local current_major="${current_node%%.*}"
+		local lowest=""
+		lowest="$(printf '%s\n%s\n' "$required_node" "$current_node" | sort -t. -k1,1n -k2,2n -k3,3n | head -n1)"
+		if [[ "$current_major" != "$required_major" || "$lowest" != "$required_node" ]]; then
+			printf 'QuickFile MCP requires Node.js %s (major %s, same major or newer patch) from .nvmrc; got %s. Set NODE_BIN to a matching executable.\n' "$required_node" "$required_major" "$current_node" >&2
 			return 1
 		fi
 	fi
