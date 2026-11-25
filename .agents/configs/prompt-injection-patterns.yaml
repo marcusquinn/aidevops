@@ -669,7 +669,7 @@ context_manipulation:
 
   - severity: HIGH
     description: "Hidden content HTML tags"
-    pattern: '(?i)<hidden>|<invisible>|<secret>'
+    pattern: '(?i)<hidden>|<invisible>|<secret>[\s\S]{0,4000}?</secret>'
 
   # --- Lasso net-new: False context claims ---
   - severity: HIGH
