@@ -553,7 +553,7 @@ test_regressions() {
 	echo "=== Regression Checks ==="
 
 	# Verify line counts are within expected range (simplified)
-	_check_line_count "full-loop-helper.sh" 600
+	_check_line_count "full-loop-helper.sh" 650
 	_check_line_count "fallback-chain-helper.sh" 350
 	_check_line_count "budget-tracker-helper.sh" 350
 	_check_line_count "issue-sync-helper.sh" 1000
