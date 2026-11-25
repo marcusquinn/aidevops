@@ -60,7 +60,7 @@ runtime_artifact_files=(
 )
 assert "agent guidance directs readable artifacts to the managed workspace" grep -q "[Tt]emp artifacts.*AIDEVOPS_TEMP_DIR.*never host \`/tmp\`" "$SCRIPTS_DIR/../AGENTS.md"
 # Match a host-root path, not the suffix of ~/.aidevops/.agent-workspace/tmp/.
-assert "runtime-visible artifact defaults avoid host /tmp paths" test -z "$(grep -El '(^|[[:space:]\x60"=])/tmp/(browser-qa|aidevops-(pr-body|merge-summary|issue-body)|ui-verify|worker-)' "${runtime_artifact_files[@]}" || true)"
+assert "runtime-visible artifact defaults avoid host /tmp paths" test -z "$(grep -El '(^|[[:space:]`"=])/tmp/(browser-qa|aidevops-(pr-body|merge-summary|issue-body)|ui-verify|worker-)' "${runtime_artifact_files[@]}" || true)"
 
 print_info() { return 0; }
 print_warning() { return 0; }

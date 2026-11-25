@@ -106,7 +106,6 @@ _classify_for_workflow() {
 
 for _wf_tuple in "${_WORKFLOWS[@]}"; do
 	_workflow_file="${_wf_tuple%%:*}"
-	_reusable_file="${_wf_tuple#*:}"; _reusable_file="${_reusable_file%%:*}"
 	_template_file="${_wf_tuple##*:}"
 	_wf_name="${_workflow_file%.yml}"
 
@@ -137,7 +136,8 @@ for _wf_tuple in "${_WORKFLOWS[@]}"; do
 	_TD="$(mktemp -d)"
 	_setup_fake_home "$_TD"
 	mkdir -p "$_TD/repos/repo-b/.github/workflows"
-	sed -e "s|${_reusable_file}@main|${_reusable_file}@v3.9.0|g" \
+	# Pin every reusable job coherently, including issue-sync's maintenance job.
+	sed -e 's|\.yml@main|.yml@v3.9.0|g' \
 		-e 's|aidevops_ref: main|aidevops_ref: v3.9.0|g' \
 		"$_src_template" > "$_TD/repos/repo-b/.github/workflows/${_workflow_file}"
 	_write_repos_json "$_TD" \

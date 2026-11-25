@@ -11,6 +11,7 @@ export AIDEVOPS_SESSION_ORIGIN=interactive
 # An inherited runtime lifecycle identity routes worktree creation to the native
 # registry, which these Git fixtures do not provide (GH#39344).
 unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
+export OPENCODE_PID="$$" AIDEVOPS_WORKTREE_CREATE_OWNER_PID="$$"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="$SCRIPT_DIR/../sync-workflows-helper.sh"
@@ -212,7 +213,7 @@ policy_drift=$(HOME="$test_root" PATH="$test_root/bin:$PATH" \
 assert_contains "policy drift is actionable with a current caller" "$policy_drift" '"slug":"fake/admin"'
 assert_contains "policy-only drift includes CONTRIBUTING target" "$policy_drift" 'CONTRIBUTING.md'
 
-real_git="${AIDEVOPS_TEST_GIT_BIN:-$(command -v git)}"
+real_git="${AIDEVOPS_TEST_GIT_BIN:-$(command -p -v git)}"
 apply_repo="$test_root/repos/apply"
 apply_bare="$test_root/apply.git"
 mkdir -p "$apply_repo"
