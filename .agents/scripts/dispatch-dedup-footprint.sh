@@ -878,8 +878,9 @@ _footprint_coordinator_log() {
 #   2. An open PR that either closes this issue (standard closing
 #      keywords) or whose branch name encodes the issue number, matching
 #      the aidevops worktree-branch convention (".../auto-...-gh<N>").
-#   3. An interactive-claim stamp with an existing worktree_path directory.
-#      Unreadable or malformed stamps retain the reservation (fail closed).
+#   3. An interactive-claim stamp with an existing worktree_path directory
+#      and a live, command-matching same-host owner. Cross-host, unknown-owner,
+#      unreadable or malformed stamps retain the reservation (fail closed).
 #
 # Args: $1 = repo_slug, $2 = issue_number
 # Exit: 0 = evidence found (keep reserving); 1 = no evidence (skip, like
@@ -910,7 +911,24 @@ _footprint_claimed_coordinator_has_evidence() {
 			select(type == "object" and .slug == $slug and .issue == $issue) |
 			.worktree_path | select(type == "string" and length > 0)
 		' "$stamp_file" 2>/dev/null) || return 0
-		[[ -d "$stamp_worktree" ]] && return 0
+		local stamp_owner="" stamp_host="" stamp_pid="" owner_argv_hash="" local_host=""
+		stamp_owner=$(jq -er '
+			select((.hostname | type == "string" and length > 0) and
+				((.pid | type) == "number" or (.pid | type) == "string") and
+				(.pid | tostring | test("^[1-9][0-9]*$")) and
+				(.owner_argv_hash == null or (.owner_argv_hash | type) == "string")) |
+			[.hostname, (.pid | tostring), (.owner_argv_hash // "")] | @tsv
+		' "$stamp_file" 2>/dev/null) || return 0
+		IFS=$'\t' read -r stamp_host stamp_pid owner_argv_hash <<<"$stamp_owner"
+		local_host=$(hostname 2>/dev/null) || return 0
+		[[ -n "$local_host" && "$stamp_host" == "$local_host" ]] || return 0
+		# PID reuse must not keep a dead interactive owner reserving files.
+		# Missing liveness support is uncertainty, not proof of abandonment.
+		declare -F _is_process_alive_and_matches >/dev/null || return 0
+		if [[ -d "$stamp_worktree" ]] &&
+			_is_process_alive_and_matches "$stamp_pid" "${WORKER_PROCESS_PATTERN:-}" "$owner_argv_hash"; then
+			return 0
+		fi
 	fi
 
 	# Evidence 2 — an open PR linked to the issue (closing keyword in its
