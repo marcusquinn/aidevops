@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.280] - 2026-11-25
+
+### Added
+
+- keep-and-copy Sieve filters (sieve-list, copy-to, copy-to-remove)
+- clone pnpm workspace dependencies (GH#40257) (#40260)
+
+### Changed
+
+- Maintenance: mark t19357 complete (pr:#40260 completed:2026-11-25) (#40278)
+- Maintenance: sync GitHub issue refs to TODO.md (#40275)
+- Maintenance: mark t19356 complete (pr:#40256 completed:2026-11-25) (#40267)
+
+### Fixed
+
+- clean interrupted scans and reap stale clones (#40277)
+- count APFS purgeable capacity toward the worktree percentage floor (GH#40266)
+- distinguish Qlty rejections from tooling failures
+- bound quarantine scans and prune historical copies
+- use portable chmod option ordering (GH#40254) (#40261)
+
 ## [3.39.279] - 2026-11-25
 
 ### Added
