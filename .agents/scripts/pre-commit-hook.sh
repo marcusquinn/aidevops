@@ -749,6 +749,42 @@ validate_bash32_parse() {
 	return $violations
 }
 
+# GH#40407: run CI's diff-scoped early-exit pipe check (`writer | grep -q`,
+# `| grep -m1`, `| head -n N` under pipefail) before the push, so a PR does not
+# need another CI cycle to learn about it. Only lines added since the comparison
+# base are judged (working-tree content, a superset of the staged lines), so
+# legacy matches in touched files never block. A missing checker or a usage
+# error warns instead of blocking.
+validate_pipe_early_exit() {
+	local checker="${SCRIPT_DIR}/pipe-early-exit-check.sh"
+	local base="${AIDEVOPS_PRE_COMMIT_BASE:-HEAD}"
+	local output="" rc=0
+	[[ $# -gt 0 ]] || return 0
+	if [[ ! -r "$checker" ]]; then
+		print_warning "pipe-early-exit-check.sh not found beside the hook — skipping early-exit pipe validation"
+		return 0
+	fi
+	if ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
+		print_info "No ${base} commit to diff against — skipping early-exit pipe validation"
+		return 0
+	fi
+	print_info "Validating early-exit pipe readers on added lines (absolute)..."
+	output=$(bash "$checker" --scan-files --diff-base "$base" "$@" 2>&1) || rc=$?
+	case "$rc" in
+	0) return 0 ;;
+	1)
+		print_error "Early-exit pipe reader(s) under pipefail on added lines (CI pipe-early-exit-check fails the same way):"
+		printf '%s\n' "$output" >&2
+		return 1
+		;;
+	*)
+		print_warning "pipe-early-exit-check.sh exited ${rc}; early-exit pipe validation skipped:"
+		printf '%s\n' "$output" >&2
+		return 0
+		;;
+	esac
+}
+
 run_shellcheck() {
 	local violations=0
 
@@ -1575,6 +1611,9 @@ main_pre_commit() {
 	echo "" >&2
 
 	validate_bash32_parse "${modified_files[@]}" || ((total_violations += $?))
+	echo "" >&2
+
+	validate_pipe_early_exit "${modified_files[@]}" || ((total_violations += $?))
 	echo "" >&2
 
 	# Final decision
