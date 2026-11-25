@@ -705,6 +705,11 @@ test_copy_to() {
 	legacy=$(bash "${REPO_ROOT}/.agents/scripts/purelymail-helper.sh" copy-to \
 		user@example.com MAILBOX_PASSWORD owner@example.net --dry-run 2>&1)
 	assert_eq "Purelymail positional dry-run remains identical" "$output" "$legacy"
+	local legacy_body expected_body
+	legacy_body="${legacy#*$'\n'}"
+	expected_body=$'require ["copy"];\n# rule:[Copy to owner]\nif true\n{\n\tredirect :copy "owner@example.net";\n}'
+	assert_eq "Purelymail positional dry-run matches the merge-base script body" "$expected_body" "$legacy_body"
+	assert_contains "Purelymail dry-run keeps legacy banner" "Would set Sieve script 'roundcube' on user@example.com and make it active:" "$legacy"
 	assert_contains "copy uses Roundcube script name" "'roundcube'" "$output"
 	assert_contains "copy is editable in Roundcube" '# rule:[Copy to owner]' "$output"
 	assert_contains "copy keeps implicit local delivery" 'redirect :copy "owner@example.net";' "$output"
@@ -758,7 +763,9 @@ test_copy_safety() {
 	assert_contains "refusal explains existing scripts" "already has Sieve scripts" "$output"
 	assert_not_contains "other scripts are not changed" "UNEXPECTED MUTATION" "$output"
 
-	output=$(bash -c '
+	local remove_script
+	# shellcheck disable=SC2016 # expanded by the child bash, not here
+	remove_script='
 		source "$1" help >/dev/null
 		_sieve() {
 			local operation="$1"
@@ -775,11 +782,14 @@ test_copy_safety() {
 			esac
 			return 0
 		}
-		_cmd_remote copy-to-remove --server mail.example.com --user user@example.com
-		_cmd_remote copy-to-remove --server mail.example.com --user user@example.com --yes
-	' _ "$HELPER" 2>&1) && rc=0 || rc=$?
-	assert_exit_zero "parked removal recovers with checked contents" "$rc"
+		_cmd_remote copy-to-remove --server mail.example.com --user user@example.com $2
+	'
+	output=$(bash -c "$remove_script" _ "$HELPER" "" 2>&1) && rc=0 || rc=$?
+	assert_exit_zero "removal preview exits zero" "$rc"
 	assert_contains "removal without --yes is a preview" "Re-run with --yes" "$output"
+	assert_not_contains "preview makes no remove call" "CHECKED REMOVAL" "$output"
+	output=$(bash -c "$remove_script" _ "$HELPER" --yes 2>&1) && rc=0 || rc=$?
+	assert_exit_zero "parked removal recovers with checked contents" "$rc"
 	assert_contains "confirmed removal passes original contents" "CHECKED REMOVAL" "$output"
 	return 0
 }

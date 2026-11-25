@@ -243,6 +243,23 @@ def op_remove(conn, name, expected):
     return 0
 
 
+def op_delete(conn, name):
+    """Delete an inactive script; refuse an active one (exit 3, nothing changed)."""
+    if (name, True) in listing(conn):
+        sys.stderr.write("sieve: '%s' is the active script; re-run with --deactivate to turn filtering off and delete it\n" % name)
+        return 3
+    conn.command(b"DELETESCRIPT " + quote(name))
+    return 0
+
+
+def op_delete_active(conn, name):
+    """Explicitly deactivate (if active) and delete NAME."""
+    if (name, True) in listing(conn):
+        conn.command(b'SETACTIVE ""')
+    conn.command(b"DELETESCRIPT " + quote(name))
+    return 0
+
+
 def park(conn, name):
     """Return (parked, original); RENAMESCRIPT refuses an existing destination."""
     parked = name[:100] + PARK_SUFFIX
@@ -272,7 +289,8 @@ def restore_parked(conn, parked, name):
 # Operation name -> (handler, argument count).
 OPS = {"list": (op_list, 0), "get": (op_get, 1), "install": (op_install, 2),
        "install-file": (op_install_file, 2), "remove": (op_remove, 2),
-       "remove-parked": (op_remove_parked, 2)}
+       "remove-parked": (op_remove_parked, 2), "delete": (op_delete, 1),
+       "delete-active": (op_delete_active, 1)}
 
 
 def main(argv):

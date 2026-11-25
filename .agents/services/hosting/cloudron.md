@@ -65,7 +65,7 @@ API token: Dashboard > Settings > API Access > Generate.
 
 ## Mail filters (Sieve)
 
-ManageSieve is available at `my.<domain>:4190`. Authenticate with the full mailbox address and a Cloudron app password with the `mail` scope, stored with `aidevops secret set NAME`. Use `email-sieve-helper.sh copy-to --server my.example.com --user mailbox@example.com --secret NAME --target owner@example.net --dry-run` to preview a keep-and-copy filter; omit `--dry-run` to install and activate it. See [Sieve rules](../email/email-mailbox.md#sieve-rules) for deployment and safe removal.
+ManageSieve listens on port `4190` of the mail server host configured in Cloudron **Email → Settings** (default `my.<primary-domain>`). Authenticate with the full mailbox address and a Cloudron app password with the `mail` scope, stored with `aidevops secret set NAME`. Use `email-sieve-helper.sh copy-to --server my.example.com --user mailbox@example.com --secret NAME --target owner@example.net --dry-run` to preview a keep-and-copy filter; omit `--dry-run` to install and activate it. See [Sieve rules](../email/email-mailbox.md#sieve-rules) for deployment and safe removal.
 
 Cloudron mailboxes also have native `forwards` / `skipInbox` settings in the dashboard. Prefer those when no Sieve logic is needed.
 

@@ -154,10 +154,12 @@ aidevops secret set SIEVE_PASSWORD
 email-sieve-helper.sh deploy --server mail.example.com --user admin@example.com --file script.sieve
 email-sieve-helper.sh list-scripts --server mail.example.com --user admin@example.com
 
-# Keep local delivery and copy to another address (Roundcube-editable filter)
-email-sieve-helper.sh copy-to --server mail.example.com --user admin@example.com --target owner@example.net --dry-run
-email-sieve-helper.sh copy-to --server mail.example.com --user admin@example.com --target owner@example.net
-email-sieve-helper.sh copy-to-remove --server mail.example.com --user admin@example.com --yes
+# Separate workflow, on a mailbox with no other scripts: keep local delivery and
+# copy to another address (Roundcube-editable filter). copy-to refuses to install
+# when other scripts exist, so do not run it after `deploy` on the same mailbox.
+email-sieve-helper.sh copy-to --server mail.example.com --user copy@example.com --target owner@example.net --dry-run
+email-sieve-helper.sh copy-to --server mail.example.com --user copy@example.com --target owner@example.net
+email-sieve-helper.sh copy-to-remove --server mail.example.com --user copy@example.com --yes
 ```
 
 Use `--secret NAME` for a different stored mailbox/app password; values never go in argv. Endpoint variable names are reserved. An existing `SIEVE_PASSWORD` environment variable remains supported. `copy-to` defaults to script `roundcube` (`--script` overrides it), checks for other scripts or edited filters before installation, and verifies read-back and activation. **Exclusive access is required:** stop webmail filter editing and all other Sieve writers until the operation completes. ManageSieve offers no atomic compare-and-install transaction; concurrent edits after the check can be overwritten or have their activation replaced. Removal only deletes an unchanged helper copy filter and supports explicit recovery after an interrupted rename; parked names use the first 100 characters plus `.aidevops-remove`, with existing destinations protected by RENAMESCRIPT.

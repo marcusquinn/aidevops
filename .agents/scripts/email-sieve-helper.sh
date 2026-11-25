@@ -844,6 +844,8 @@ COPY OPTIONS
   copy-to requires exclusive filter access: stop webmail/other Sieve writers.
   Conflict checks and installation are not an atomic server transaction.
   --secret is also accepted by list-scripts, show-script and delete-script.
+  delete-script refuses the active script unless --deactivate is given
+  (which turns filtering off before deleting).
 ADD-PATTERN OPTIONS
   --type <type>         Pattern type: sender|domain|subject|list-id|header|transaction|mailing-list|notification
   --value <value>       Pattern value (email, domain, subject text, or header:value)
@@ -929,7 +931,7 @@ _cmd_remote() {
 	shift
 	local server="" user="" script_name="" port="$DEFAULT_SIEVE_PORT"
 	local secret="SIEVE_PASSWORD" target="" option="" confirm=""
-	local sieve_file="$DEFAULT_OUTPUT_FILE" current scripts
+	local sieve_file="$DEFAULT_OUTPUT_FILE" current scripts deactivate=""
 	case "$action" in
 	deploy) script_name="$DEFAULT_SCRIPT_NAME" ;;
 	copy-to | copy-to-remove) script_name="roundcube" ;;
@@ -965,6 +967,7 @@ _cmd_remote() {
 		--file) sieve_file="$2"; shift 2 ;;
 		--dry-run) option="$1"; shift ;;
 		--yes) confirm="$1"; shift ;;
+		--deactivate) deactivate="yes"; shift ;;
 		*)
 			print_error "Unknown option: $1"
 			return 1
@@ -997,6 +1000,10 @@ _cmd_remote() {
 		print_error "--dry-run is only for copy-to; --yes is only for copy-to-remove"
 		return 1
 	fi
+	if [[ -n "$deactivate" && "$action" != "delete-script" ]]; then
+		print_error "--deactivate is only for delete-script"
+		return 1
+	fi
 	case "$action" in
 	deploy)
 		if [[ ! -f "$sieve_file" ]]; then
@@ -1016,8 +1023,13 @@ _cmd_remote() {
 		;;
 	show-script) _sieve get "$script_name" || return $? ;;
 	delete-script)
-		current=$(_sieve get "$script_name") || return $?
-		_sieve remove "$script_name" "$current" || return $?
+		# The client reads and compares unredacted data itself; an active
+		# script is only deactivated on explicit --deactivate.
+		if [[ -n "$deactivate" ]]; then
+			_sieve delete-active "$script_name" || return $?
+		else
+			_sieve delete "$script_name" || return $?
+		fi
 		;;
 	copy-to) _sieve_copy_to || return $? ;;
 	copy-to-remove) _sieve_copy_to_remove || return $? ;;

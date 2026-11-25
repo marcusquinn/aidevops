@@ -864,7 +864,9 @@ _pm_sieve() {
 	local address="$2"
 	local secret="$3"
 	shift 3
-	bash "${SCRIPT_DIR}/email-sieve-helper.sh" "$command" \
+	# An explicit stored-secret name loads from the store; an exported value of
+	# the same name (possibly another mailbox's) must not shadow it.
+	env -u SIEVE_PASSWORD bash "${SCRIPT_DIR}/email-sieve-helper.sh" "$command" \
 		--server "${PURELYMAIL_SIEVE_HOST:-mailserver.purelymail.com}" \
 		--port "${PURELYMAIL_SIEVE_PORT:-4190}" --user "$address" --secret "$secret" "$@"
 	return $?
