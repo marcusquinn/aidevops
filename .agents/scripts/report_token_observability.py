@@ -17,7 +17,8 @@ from typing import Any
 def _connect(path: Path) -> sqlite3.Connection | None:
     if not path.exists():
         return None
-    conn = sqlite3.connect(path)
+    # Read-only: never checkpoint the WAL on close (GH#40415).
+    conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
     conn.row_factory = sqlite3.Row
     return conn
 

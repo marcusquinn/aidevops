@@ -13,23 +13,29 @@ Reads env vars:
 Prints: session ID to stdout, or empty string if not found.
 """
 
+import contextlib
 import os
 import sqlite3
+from pathlib import Path
 
 db = os.environ["DB_PATH"]
 title = os.environ["TITLE"]
-conn = sqlite3.connect(db)
-conn.execute("PRAGMA busy_timeout=5000")
-cur = conn.cursor()
-cur.execute(
-    "SELECT id FROM session WHERE title = ? ORDER BY time_created DESC LIMIT 1",
-    (title,),
-)
-row = cur.fetchone()
-if not row:
+# Read-only: a read-write last connection checkpoints the WAL on close under an
+# exclusive lock, which can block all other readers for minutes (GH#40415).
+with contextlib.closing(
+    sqlite3.connect(Path(db).resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+) as conn:
+    conn.execute("PRAGMA busy_timeout=5000")
+    cur = conn.cursor()
     cur.execute(
-        "SELECT id FROM session WHERE title LIKE ? ORDER BY time_created DESC LIMIT 1",
-        (f"%{title}%",),
+        "SELECT id FROM session WHERE title = ? ORDER BY time_created DESC LIMIT 1",
+        (title,),
     )
     row = cur.fetchone()
+    if not row:
+        cur.execute(
+            "SELECT id FROM session WHERE title LIKE ? ORDER BY time_created DESC LIMIT 1",
+            (f"%{title}%",),
+        )
+        row = cur.fetchone()
 print(row[0] if row else "")
