@@ -22,7 +22,7 @@ _platform_evidence_die() {
 
 _platform_fix_triggered() {
 	local metadata="$1"
-	printf '%s\n' "$metadata" | grep -qiE '(^|[^[:alnum:]_])(linux|ubuntu|systemd|cron|macos|darwin|bash[[:space:]]+3[.]2|portability|coreutils|mktemp|stat|readlink|getent)([^[:alnum:]_]|$)'
+	grep -qiE '(^|[^[:alnum:]_])(linux|ubuntu|systemd|cron|macos|darwin|bash[[:space:]]+3[.]2|portability|coreutils|mktemp|stat|readlink|getent)([^[:alnum:]_]|$)' <<<"$metadata"
 	return $?
 }
 
@@ -39,7 +39,7 @@ _platform_trigger_text() {
 			skip_section=1
 			continue
 		fi
-		if printf '%s\n' "$line" | grep -qE '^[[:space:]]*#{1,6}[[:space:]]+'; then
+		if grep -qE '^[[:space:]]*#{1,6}[[:space:]]+' <<<"$line"; then
 			skip_section=0
 		fi
 		[[ "$skip_section" -eq 1 ]] && continue
@@ -89,12 +89,18 @@ _platform_has_regression_evidence() {
 	local normalized=""
 
 	while IFS= read -r line || [[ -n "$line" ]]; do
-		if printf '%s\n' "$line" | grep -qiE '^[[:space:]]*#{1,6}[[:space:]]+Regression[[:space:]]+Evidence[[:space:]]*:?[[:space:]]*$'; then
+		if grep -qiE '^[[:space:]]*#{1,6}[[:space:]]+Regression[[:space:]]+Evidence[[:space:]]*:?[[:space:]]*$' <<<"$line"; then
 			in_section=1
 			continue
 		fi
-		if [[ "$in_section" -eq 1 ]] && printf '%s\n' "$line" | grep -qE '^[[:space:]]*#{1,6}[[:space:]]+'; then
+		if [[ "$in_section" -eq 1 ]] && grep -qE '^[[:space:]]*#{1,6}[[:space:]]+' <<<"$line"; then
 			break
+		fi
+		if [[ "$in_section" -eq 1 ]]; then
+			[[ "$line" == *'<!-- aidevops:sig -->'* ]] && break
+			if grep -qiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?|for|ref)[[:space:]]+#[0-9]+([^[:alnum:]_].*)?$' <<<"$line"; then
+				break
+			fi
 		fi
 		if [[ "$in_section" -eq 1 ]] && [[ -n "${line//[[:space:]]/}" ]]; then
 			case "$line" in
@@ -175,20 +181,47 @@ main() {
 		return 1
 	}
 
+	_platform_evaluate "$title" "$body_file" "$files_file"
+	return $?
+}
+
+_platform_evaluate() {
+	local title="$1"
+	local body_file="$2"
+	local files_file="$3"
+	local trigger_text=""
+	local changed_test=""
+	local rc=0
 	trigger_text=$(_platform_trigger_text "$title" "$body_file")
-	if ! _platform_fix_triggered "$trigger_text"; then
+	set +e
+	_platform_fix_triggered "$trigger_text"
+	rc=$?
+	set -e
+	if [[ "$rc" -ne 0 ]]; then
 		printf 'platform regression evidence: not required (no platform-fix terms)\n'
 		return 0
 	fi
-	if _platform_docs_only "$files_file"; then
+	set +e
+	_platform_docs_only "$files_file"
+	rc=$?
+	set -e
+	if [[ "$rc" -eq 0 ]]; then
 		printf 'platform regression evidence: not required (docs-only changes)\n'
 		return 0
 	fi
-	if changed_test=$(_platform_changed_test "$files_file"); then
+	set +e
+	changed_test=$(_platform_changed_test "$files_file")
+	rc=$?
+	set -e
+	if [[ "$rc" -eq 0 ]]; then
 		printf 'platform regression evidence: passed (changed %s)\n' "$changed_test"
 		return 0
 	fi
-	if _platform_has_regression_evidence "$body_file"; then
+	set +e
+	_platform_has_regression_evidence "$body_file"
+	rc=$?
+	set -e
+	if [[ "$rc" -eq 0 ]]; then
 		printf 'platform regression evidence: passed (PR rationale supplied)\n'
 		return 0
 	fi

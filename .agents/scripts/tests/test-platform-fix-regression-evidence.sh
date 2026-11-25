@@ -90,6 +90,42 @@ run_fail_case \
 	$'## Regression Evidence\nTBD' \
 	'.agents/scripts/compat-helper.sh'
 
+run_fail_case \
+	'placeholder before closing line' \
+	'Fix macOS sandbox' \
+	$'## Regression Evidence\nn/a\n\nResolves #40332' \
+	'.agents/scripts/sandbox-exec-helper.sh'
+
+run_fail_case \
+	'placeholder before punctuated closing line' \
+	'Fix macOS sandbox' \
+	$'## Regression Evidence\nn/a\n\nResolves #40332.' \
+	'.agents/scripts/sandbox-exec-helper.sh'
+
+run_fail_case \
+	'short rationale before reference line' \
+	'Fix macOS sandbox' \
+	$'## Regression Evidence\nmanual\n\nFor #40332\nLater text is not rationale.' \
+	'.agents/scripts/sandbox-exec-helper.sh'
+
+run_pass_case \
+	'full rationale before closing line' \
+	'Fix macOS sandbox' \
+	$'## Regression Evidence\nAutomated coverage is not possible because this branch requires a managed directory service.\n\nResolves #40332' \
+	'.agents/scripts/sandbox-exec-helper.sh'
+
+run_fail_case \
+	'placeholder before signature' \
+	'Fix macOS sandbox' \
+	$'## Regression Evidence\nn/a\n\n<!-- aidevops:sig -->\nLong signature text is not rationale.' \
+	'.agents/scripts/sandbox-exec-helper.sh'
+
+for keyword in CLOSE Closes closed FIX Fixes fixed RESOLVE Resolves resolved FOR Ref; do
+	run_fail_case "reference boundary $keyword" 'Fix macOS sandbox' \
+		$'## Regression Evidence\nn/a\n  '"${keyword}"$' #40332 trailing reference text\nLater text is not rationale.' \
+		'.agents/scripts/sandbox-exec-helper.sh'
+done
+
 run_pass_case \
 	'docs-only false positive' \
 	'Document Linux portability guidance' \
