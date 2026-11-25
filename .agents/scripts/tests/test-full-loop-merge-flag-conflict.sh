@@ -61,13 +61,6 @@ setup_test_env() {
 	export AIDEVOPS_REPOS_JSON="${TEST_ROOT}/repos.json"
 	printf '%s\n' '{"initialized_repos":[{"slug":"testorg/testrepo","role":"maintainer"}]}' >"$AIDEVOPS_REPOS_JSON"
 
-	# GH#40176: give the mocked target explicit fixture authority. Otherwise an
-	# Actions/headless parent consults the real host registry, treats testorg as
-	# observe-only, and blocks before the fake gh can exercise merge flags. Keep
-	# headless detection and the production external-write guard enabled.
-	export AIDEVOPS_REPOS_JSON="${TEST_ROOT}/repos.json"
-	printf '%s\n' '{"initialized_repos":[{"slug":"testorg/testrepo","role":"maintainer"}]}' >"$AIDEVOPS_REPOS_JSON"
-
 	# Stub gh — logs every invocation, returns success for `pr merge`,
 	# returns canned values for the few read-only calls cmd_merge makes.
 	cat >"${TEST_ROOT}/bin/gh" <<'EOF'
