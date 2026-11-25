@@ -258,6 +258,10 @@ EOF
 	chmod_log="${tmp_dir}/chmod.log"
 	cat >"${mock_path}/chmod" <<'EOF'
 #!/usr/bin/env bash
+if [[ "${2:-}" != *"/.aidevops-claim-post-error."* ]]; then
+	command -p chmod "$@"
+	exit $?
+fi
 printf '%s\t%s\n' "${1:-}" "${2:-}" >>"${MOCK_CHMOD_LOG:?}"
 if [[ -e "${2:-}" ]]; then
 	python3 -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' "${2:-}" >>"${MOCK_CHMOD_LOG:?}.pre" || true

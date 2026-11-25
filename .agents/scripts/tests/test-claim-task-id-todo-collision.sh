@@ -383,7 +383,8 @@ test_canonical_checkout_does_not_write_todo() {
 		return 0
 	fi
 	before=$(<"${canonical_dir}/TODO.md")
-	output=$(_ensure_todo_entry_written "t32561" "32561" "protect canonical TODO" "bug" "$canonical_dir")
+	# Canonical-checkout guidance is diagnostic output, never allocation stdout.
+	output=$(_ensure_todo_entry_written "t32561" "32561" "protect canonical TODO" "bug" "$canonical_dir" 2>&1)
 	if [[ "$before" == "$(<"${canonical_dir}/TODO.md")" && "$output" == *"- [ ] t32561 protect canonical TODO #bug ref:GH#32561"* && "$output" == *"linked worktree"* ]]; then
 		pass "$name"
 	else
