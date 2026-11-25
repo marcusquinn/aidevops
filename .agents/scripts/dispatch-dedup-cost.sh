@@ -438,7 +438,8 @@ _sum_issue_token_spend_uncached() {
 _cost_spend_from_comments() {
 	local comments_json="$1" checkpoint_data="$2"
 	local spend_data
-	spend_data=$(printf '%s' "$comments_json" | jq -r --arg sig "$_COST_SIGNATURE_MARKER" --argjson checkpoint "$checkpoint_data" '
+	spend_data=$(printf '%s' "$comments_json" | jq -r --arg sig "$_COST_SIGNATURE_MARKER" --argjson checkpoint "$checkpoint_data" \
+		--arg rearm "<!-- aidevops:terminal-blocker-rearmed key=" '
 		def epoch: try ((.created_at // "") | fromdateiso8601) catch 0;
 		# Durations are truncated to their smallest displayed unit
 		# (_format_duration drops minutes once days are shown).
@@ -456,6 +457,11 @@ _cost_spend_from_comments() {
 			) | epoch) + [$checkpoint.epoch] | max // 0) as $reset_epoch
 		| [$all[]
 			| select((.body // "") | contains("with the user in an interactive session") | not)
+			# GH#40366: terminal-blocker re-arm receipts are runtime bookkeeping
+			# posted from whichever session ran recovery. Their signature footer
+			# carries the whole posting session usage (observed: 18.3M tokens on
+			# #40029), which is not worker spend on this issue.
+			| select((.body // "") | test("(^|\\n)" + $rearm) | not)
 			| epoch as $t
 			# GH#39969: signed reports can be the only evidence of a merged
 			# checkpoint (URL rather than PR #N). A report posted near its
