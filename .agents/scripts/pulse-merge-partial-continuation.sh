@@ -649,7 +649,7 @@ _pmpc_remove_merged_feedback() {
 	issue_json=$(_pmpc_gh_read api "$issue_api" 2>/dev/null) || return 1
 	updated=$(printf '%s' "$issue_json" | jq -c --arg pr "$pr_number" '
 		.body // "" | gsub("(?<block><!-- feedback-route:start:(?<route>[^:<>\\r\\n]+:PR[0-9]+:[^<>\\r\\n]+) -->(?:(?!<!-- feedback-route:(?:start|complete):)[\\s\\S])*<!-- feedback-route:complete:\\k<route> -->)";
-			if (.route | contains(":PR" + $pr + ":")) then "" else .block end)
+			if (.route | split(":")[1]) == ("PR" + $pr) then "" else .block end)
 	') || return 1
 	[[ "$updated" != "$(printf '%s' "$issue_json" | jq -c '.body // ""')" ]] || return 0
 	# Sentinel preserves every trailing newline outside the removed markers.

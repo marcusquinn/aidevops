@@ -1799,7 +1799,7 @@ test_merged_feedback_cleanup() {
 	reset_case
 	local stale='' kept='' original='' expected='' actual=''
 	stale=$'<!-- feedback-route:start:conflict:PR900:SHAabc -->\nold conflict\n<!-- feedback-route:complete:conflict:PR900:SHAabc -->'
-	kept=$'<!-- feedback-route:start:conflict:PR901:SHAdef -->\nclosed unmerged\n<!-- feedback-route:complete:conflict:PR901:SHAdef -->'
+	kept=$'<!-- feedback-route:start:conflict:PR901:SHAdef:PR900:detail -->\nclosed unmerged\n<!-- feedback-route:complete:conflict:PR901:SHAdef:PR900:detail -->'
 	original=$'Remaining scope\r\n\n'"${stale}"$'\n'"${kept}"$'\n'"${stale}"$'\n\n'
 	expected=$'Remaining scope\r\n\n\n'"${kept}"$'\n\n\n'
 	TEST_ISSUE_JSON=$(issue_json "status:in-review,origin:worker" runner1 "$original")
