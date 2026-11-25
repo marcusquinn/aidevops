@@ -177,9 +177,9 @@ test_full_loop_helper() {
 		local git_dir git_common_dir
 		git_dir=$(git rev-parse --git-dir 2>/dev/null || echo "")
 		git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null || echo "")
-		if echo "$output" | grep -qi "dry run"; then
+		if grep -qi "dry run" <<<"$output"; then
 			print_result "full-loop: start --dry-run" 0
-		elif [[ "$git_dir" == "$git_common_dir" ]] && echo "$output" | grep -qi "safe linked worktree"; then
+		elif [[ "$git_dir" == "$git_common_dir" ]] && grep -qi "safe linked worktree" <<<"$output"; then
 			# Primary checkout (e.g. CI): helper correctly refuses to start
 			print_result "full-loop: start --dry-run" 0 "(primary checkout refused by linked-worktree guard)"
 		else
