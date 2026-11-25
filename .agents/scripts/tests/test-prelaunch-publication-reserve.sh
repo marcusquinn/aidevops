@@ -177,6 +177,89 @@ else
 fi
 unset AIDEVOPS_DISPATCH_PUBLICATION_RESERVE_SECONDS
 
+# --- t19367: adaptive prelaunch budget ------------------------------------
+# Write launches to the stages fixture. Args: count, then the five stage
+# durations in ms (precreate, gates, fence, assign, spawn). A sixth argument
+# "partial" omits worker_spawn (a launch that never reached spawn).
+write_launches() {
+	local count="$1" pre="$2" gates="$3" fence="$4" assign="$5" spawn="$6" mode="${7:-}" i=0
+	: >"$AIDEVOPS_DISPATCH_STAGES_LOG"
+	for ((i = 1; i <= count; i++)); do
+		printf 'ts\t#%s\to/r\tdedup.begin_prelaunch\t5\tcomplete\ta%s\tc1\t99\n' "$i" "$i" >>"$AIDEVOPS_DISPATCH_STAGES_LOG"
+		printf 'ts\t#%s\to/r\tdedup.precreate_worktree\t%s\tcomplete\ta%s\tc1\t99\n' "$i" "$pre" "$i" >>"$AIDEVOPS_DISPATCH_STAGES_LOG"
+		printf 'ts\t#%s\to/r\tdedup.final_spawn_gates\t%s\tcomplete\ta%s\tc1\t99\n' "$i" "$gates" "$i" >>"$AIDEVOPS_DISPATCH_STAGES_LOG"
+		printf 'ts\t#%s\to/r\tdedup.final_ownership_fence\t%s\tcomplete\ta%s\tc1\t99\n' "$i" "$fence" "$i" >>"$AIDEVOPS_DISPATCH_STAGES_LOG"
+		printf 'ts\t#%s\to/r\tdedup.assign_and_label\t%s\tcomplete\ta%s\tc1\t99\n' "$i" "$assign" "$i" >>"$AIDEVOPS_DISPATCH_STAGES_LOG"
+		[[ "$mode" == "partial" ]] ||
+			printf 'ts\t#%s\to/r\tdedup.worker_spawn\t%s\tcomplete\ta%s\tc1\t99\n' "$i" "$spawn" "$i" >>"$AIDEVOPS_DISPATCH_STAGES_LOG"
+	done
+	return 0
+}
+
+check_budget() {
+	local label="$1" expected="$2" actual=""
+	actual=$(_dlw_prelaunch_budget_seconds)
+	if [[ "$actual" == "$expected" ]]; then
+		pass "$label"
+	else
+		fail "$label" "expected=$expected actual=$actual"
+	fi
+	return 0
+}
+
+rm -f "$AIDEVOPS_DISPATCH_STAGES_LOG"
+check_budget "no stage log keeps the 300 s budget" 300
+
+# Ten launches of 360 s each: p90 360 s, x1.25 = 450 s.
+write_launches 10 200000 40000 50000 60000 10000
+check_budget "slow observed samples raise the budget to ceil(p90 x 1.25)" 450
+
+write_launches 10 200000 40000 50000 60000 10000 partial
+check_budget "launches that never reached spawn are ignored" 300
+
+write_launches 10 400000 100000 100000 100000 100000
+check_budget "budget is capped at the default 600 s" 600
+AIDEVOPS_DISPATCH_PRELAUNCH_BUDGET_MAX_SECONDS=500 check_budget "custom cap is honoured" 500
+AIDEVOPS_DISPATCH_PRELAUNCH_BUDGET_MAX_SECONDS=bad check_budget "invalid cap falls back to 600 s" 600
+AIDEVOPS_DISPATCH_PRELAUNCH_BUDGET_MAX_SECONDS=200 check_budget "a cap below the base never lowers it" 300
+
+write_launches 10 50000 10000 10000 10000 5000
+check_budget "fast samples never lower the budget below 300 s" 300
+
+write_launches 10 200000 40000 50000 60000 10000
+AIDEVOPS_DISPATCH_PRELAUNCH_BUDGET_SECONDS=200 check_budget "explicit env wins over samples" 200
+AIDEVOPS_DISPATCH_PRELAUNCH_BUDGET_SECONDS=bad check_budget "invalid explicit env keeps the old 300 s fallback" 300
+
+watchdog_budget=$(PULSE_STAGE_DEADLINE_EPOCH=$(($(date +%s) + 400)) _dlw_prelaunch_budget_seconds)
+if [[ "$watchdog_budget" =~ ^[0-9]+$ && "$watchdog_budget" -ge 380 && "$watchdog_budget" -le 385 ]]; then
+	pass "budget is clamped to the remaining per-candidate watchdog"
+else
+	fail "budget is clamped to the remaining per-candidate watchdog" "budget=$watchdog_budget"
+fi
+watchdog_budget=$(PULSE_STAGE_DEADLINE_EPOCH=$(($(date +%s) + 100)) _dlw_prelaunch_budget_seconds)
+if [[ "$watchdog_budget" == "300" ]]; then
+	pass "a nearly spent watchdog never drops the budget below the 300 s base"
+else
+	fail "a nearly spent watchdog never drops the budget below the 300 s base" "budget=$watchdog_budget"
+fi
+
+# Integration: a 301 s precreate exhausts the fixed budget (case 4) but fits
+# the adaptive 450 s budget and still publishes and spawns.
+run_launch 301 0
+if [[ "$RUN_RC" -eq 0 && "$RUN_CALLS" == "precreate lock ownership-guard assign live-guard spawn " ]]; then
+	pass "slow samples let a 301 s precreate reach spawn"
+else
+	fail "slow samples let a 301 s precreate reach spawn" "rc=$RUN_RC calls='$RUN_CALLS' reason='$RUN_REASON'"
+fi
+# The deadline never slides: 450 s budget, 440 s precreate leaves 10 s < reserve.
+run_launch 440 0
+if [[ "$RUN_RC" -eq 2 && "$RUN_REASON" == "prelaunch_reserve_insufficient" ]]; then
+	pass "the adaptive deadline is fixed and the publication reserve still applies"
+else
+	fail "the adaptive deadline is fixed and the publication reserve still applies" "rc=$RUN_RC calls='$RUN_CALLS' reason='$RUN_REASON'"
+fi
+rm -f "$AIDEVOPS_DISPATCH_STAGES_LOG"
+
 printf '\n%s\n' "--- Results: ${TESTS_RUN} tests, ${TESTS_FAILED} failed ---"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1
 exit 0
