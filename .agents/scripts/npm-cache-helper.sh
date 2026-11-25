@@ -30,6 +30,8 @@ Commands:
 Environment:
   AIDEVOPS_NPM_CACHE_DIR                  Override the measured cache path
   AIDEVOPS_NPM_CACHE_WARN_BYTES           Warning threshold (default: 10 GiB)
+  AIDEVOPS_NPM_CACHE_LOW_DISK_PERCENT     Escalate to critical when a warning
+                                          coincides with less free disk (default: 5)
   AIDEVOPS_NPM_CACHE_SIZE_TIMEOUT_TENTHS  Size timeout in tenths (default: 300)
 
 No cleanup is automatic. The clean command requires explicit apply and confirm
@@ -51,6 +53,34 @@ _npm_cache_warn_bytes() {
 		printf '%s' "$NPM_CACHE_WARN_BYTES"
 	else
 		printf '10737418240'
+	fi
+	return 0
+}
+
+_npm_cache_low_disk_pct() {
+	local pct="${AIDEVOPS_NPM_CACHE_LOW_DISK_PERCENT:-5}"
+	if _npm_cache_is_nonnegative_integer "$pct" && [[ "${#pct}" -le 3 ]] && [[ "$((10#$pct))" -le 100 ]]; then
+		# 10# forces decimal so a leading zero is never read as octal.
+		printf '%s' "$((10#$pct))"
+	else
+		printf '5'
+	fi
+	return 0
+}
+
+# Prints free space (whole percent) of the volume holding the path, or "null".
+# Walks up to the nearest existing parent so a missing cache still resolves.
+_npm_cache_free_percent() {
+	local target="$1" used=""
+	while [[ -n "$target" && "$target" != "/" && ! -e "$target" ]]; do
+		target="${target%/*}"
+	done
+	[[ -n "$target" ]] || target="/"
+	used=$(LC_ALL=C df -Pk "$target" 2>/dev/null | awk 'NR == 2 { gsub("%", "", $5); print $5 }') || used=""
+	if _npm_cache_is_nonnegative_integer "$used" && [[ "$used" -le 100 ]]; then
+		printf '%s' "$((100 - used))"
+	else
+		printf 'null'
 	fi
 	return 0
 }
@@ -157,22 +187,33 @@ _npm_cache_json() {
 		measured=$(_npm_cache_measure "$cache_path")
 		IFS='|' read -r total_bytes confidence error <<<"$measured"
 	fi
+	local free_pct="null" low_pct=""
+	low_pct=$(_npm_cache_low_disk_pct)
+	if [[ -n "$cache_path" ]]; then
+		free_pct=$(_npm_cache_free_percent "$cache_path")
+	fi
 	if [[ "$total_bytes" != "null" ]]; then
 		if [[ "$total_bytes" -ge "$warn_bytes" ]]; then
 			advisory="warning"
+			# Escalate when the volume is nearly full (GH#40282): a warning alone
+			# did not stop a 387 GB cache filling the system disk.
+			if [[ "$free_pct" != "null" && "$free_pct" -lt "$low_pct" ]]; then
+				advisory="critical"
+			fi
 		else
 			advisory="ok"
 		fi
 	fi
 
 	jq -cn \
+		--argjson free_percent "$free_pct" \
 		--arg path "$display_path" \
 		--arg advisory "$advisory" \
 		--arg confidence "$confidence" \
 		--arg error "$error" \
 		--argjson total_bytes "$total_bytes" \
 		--argjson warning_threshold_bytes "$warn_bytes" \
-		'{schema:"aidevops.npm-cache-status/v1",owner:"external",read_only:true,path:$path,total_bytes:$total_bytes,warning_threshold_bytes:$warning_threshold_bytes,advisory:$advisory,sizing_confidence:$confidence,error:(if $error == "" or $error == "missing" then null else $error end)}'
+		'{schema:"aidevops.npm-cache-status/v1",owner:"external",read_only:true,path:$path,total_bytes:$total_bytes,warning_threshold_bytes:$warning_threshold_bytes,disk_free_percent:$free_percent,advisory:$advisory,sizing_confidence:$confidence,error:(if $error == "" or $error == "missing" then null else $error end)}'
 	return 0
 }
 
@@ -210,6 +251,13 @@ _npm_cache_status() {
 		print_warning "npm cache exceeds the $(_npm_cache_format_bytes "$warn_bytes") advisory threshold"
 		printf 'Safe first step: npm-cache-helper.sh verify\n'
 		printf 'If it remains oversized, review: npm-cache-helper.sh clean\n'
+		;;
+	critical)
+		print_error "npm cache exceeds the $(_npm_cache_format_bytes "$warn_bytes") advisory threshold and the disk has only $(printf '%s' "$report" | jq -r '.disk_free_percent')% free"
+		printf 'Reclaim now: npm-cache-helper.sh verify, then npm-cache-helper.sh clean --apply --confirm clean-npm-cache\n'
+		if command -v tmutil >/dev/null 2>&1; then
+			printf 'macOS: if free space does not recover, local Time Machine snapshots may hold it (tmutil listlocalsnapshots /; compare with tmutil latestbackup)\n'
+		fi
 		;;
 	ok) print_success "npm cache is below the advisory threshold" ;;
 	*) print_warning "npm cache size is unavailable${error:+ ($error)}" ;;

@@ -22,6 +22,10 @@
 #                  in registered canonical repositories; audited; GH#39722)
 #   quarantine     pulse-stats-helper.sh prune-quarantine (newest 5 corrupt
 #                  stats copies retained; GH#40197)
+#   docker         docker-resource-helper.sh reap + prune-cache: only images
+#                  labelled sh.aidevops.owner=1 (closed issue or TTL) and
+#                  BuildKit cache unused for the window; never unlabelled
+#                  images or volumes (GH#40282)
 #
 # Usage:
 #   storage-cleanup-helper.sh [report]            Sizes and owning cleaners (read-only)
@@ -35,6 +39,8 @@
 #   STORAGE_CLEANUP_ARTEFACT_MAX_SECONDS  artefacts apply work budget (default 300)
 #   AIDEVOPS_WORKTREE_IDLE_DAYS      artefacts idle threshold in days (default 14)
 #   AIDEVOPS_WORKTREE_BASE_DIR       Linked-worktree base (default: worktree-paths.sh)
+#   STORAGE_CLEANUP_DOCKER_MAX_SECONDS  docker reap work budget (default 300)
+#   AIDEVOPS_DOCKER_BUILD_CACHE_HOURS   BuildKit cache unused window (default 168)
 #   STORAGE_CLEANUP_GITLOCKS_REPO_MAX_SECONDS  gitlocks budget per repository (default 120)
 #   AIDEVOPS_REPOS_JSON              Repository registry (default ~/.config/aidevops/repos.json)
 
@@ -46,7 +52,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=./worktree-paths.sh
 source "${SCRIPT_DIR}/worktree-paths.sh"
 
-readonly SC_STORES="tmp worktrees artefacts opencode observability trash gitlocks quarantine"
+readonly SC_STORES="tmp worktrees artefacts opencode observability trash gitlocks quarantine docker"
 readonly SC_SCHEDULE_NAME="storage-hygiene"
 readonly SC_APPLY="apply" SC_DRY_RUN="dry-run"
 SC_SIZE_TIMEOUT="${STORAGE_CLEANUP_SIZE_TIMEOUT:-30}"
@@ -57,6 +63,8 @@ SC_ARTEFACT_MAX_SECONDS="${STORAGE_CLEANUP_ARTEFACT_MAX_SECONDS:-300}"
 [[ "$SC_ARTEFACT_MAX_SECONDS" =~ ^[1-9][0-9]*$ ]] || SC_ARTEFACT_MAX_SECONDS=300
 SC_GITLOCKS_REPO_MAX_SECONDS="${STORAGE_CLEANUP_GITLOCKS_REPO_MAX_SECONDS:-120}"
 [[ "$SC_GITLOCKS_REPO_MAX_SECONDS" =~ ^[1-9][0-9]*$ ]] || SC_GITLOCKS_REPO_MAX_SECONDS=120
+SC_DOCKER_MAX_SECONDS="${STORAGE_CLEANUP_DOCKER_MAX_SECONDS:-300}"
+[[ "$SC_DOCKER_MAX_SECONDS" =~ ^[1-9][0-9]*$ ]] || SC_DOCKER_MAX_SECONDS=300
 # canonical-recovery-helper.sh exit status for a held recovery lock (skip).
 readonly SC_GITLOCKS_BUSY=75
 # Symlink lock: the link target is the holder PID, so the lock and its owner
@@ -94,6 +102,7 @@ _sc_store_paths() {
 	trash) ;;      # Only owned buckets inside ~/.Trash; sized by _sc_trash_kb.
 	gitlocks) ;;   # Lock files are tiny; the preview reports candidate counts.
 	quarantine) ;; # Preview reports corrupt-stats copy counts, not all logs.
+	docker) ;;     # Sized by `docker system df` (_sc_docker_summary), not du.
 	*) return 1 ;;
 	esac
 	return 0
@@ -110,6 +119,7 @@ _sc_store_cleaner() {
 	trash) printf '%s\n' "todo-sync-trash-retention.sh: TODO-sync buckets older than ${TODO_SYNC_TRASH_RETENTION_DAYS:-3}d or beyond newest ${TODO_SYNC_TRASH_MAX_COUNT:-5}" ;;
 	gitlocks) printf '%s\n' "canonical-recovery-helper.sh repair-stale-locks: unheld Git locks 60+ min old, pack temporaries 2+ days old; audited" ;;
 	quarantine) printf '%s\n' "pulse-stats-helper.sh prune-quarantine: retain newest 5 pulse-stats.json.corrupt.* evidence copies" ;;
+	docker) printf '%s\n' "docker-resource-helper.sh reap + prune-cache: labelled (sh.aidevops.owner=1) images whose issue is closed or past TTL, BuildKit cache unused ${AIDEVOPS_DOCKER_BUILD_CACHE_HOURS:-168}h+; unlabelled images and volumes are never removed" ;;
 	*) return 1 ;;
 	esac
 	return 0
@@ -154,6 +164,29 @@ _sc_trash_kb() {
 	total_kib="${total_kib%%[[:space:]]*}"
 	[[ "$total_kib" =~ ^[0-9]+$ ]] || return 1
 	printf '%s\n' "$total_kib"
+	return 0
+}
+
+# Prints a one-line `docker system df` summary (read-only, bounded). Prints
+# "not installed", "daemon unreachable" or "timed out" and returns 1 when
+# Docker cannot be sized, so the report shows a visible reason, not a hang.
+_sc_docker_summary() {
+	local out="" rc=0 us=$'\x1f'
+	command -v docker >/dev/null 2>&1 || { printf 'not installed\n'; return 1; }
+	out=$(timeout_sec "$SC_SIZE_TIMEOUT" docker system df \
+		--format "{{.Type}}${us}{{.TotalCount}}${us}{{.Size}}${us}{{.Reclaimable}}" 2>/dev/null) || rc=$?
+	if [[ "$rc" -eq 124 || "$rc" -ge 128 ]]; then
+		printf 'timed out after %ss\n' "$SC_SIZE_TIMEOUT"
+		return 1
+	fi
+	if [[ "$rc" -ne 0 || -z "$out" ]]; then
+		printf 'unavailable (daemon unreachable or docker system df failed)\n'
+		return 1
+	fi
+	printf '%s\n' "$out" | awk -F"$us" 'NF >= 4 {
+		sep = (n++ ? "; " : "")
+		printf "%s%s %s (reclaimable %s)", sep, tolower($1), $3, $4
+	} END { printf "\n" }'
 	return 0
 }
 
@@ -209,6 +242,9 @@ cmd_report() {
 		elif [[ "$store" == "gitlocks" || "$store" == "quarantine" ]]; then
 			# Counted by the bounded preview; the files themselves are tiny.
 			size="(count)"
+		elif [[ "$store" == "docker" ]]; then
+			# Docker reports its own totals; shown as a note below the row.
+			size="(df)"
 		elif [[ "$store" == "trash" ]]; then
 			if kb=$(_sc_trash_kb); then
 				size=$(_sc_human_kb "$kb")
@@ -225,6 +261,9 @@ cmd_report() {
 		note=""
 		[[ "$store" == "worktrees" ]] && note=" ($(_sc_worktree_count) worktrees)"
 		printf '%-14s %-9s %s%s\n' "$store" "$size" "$(_sc_store_cleaner "$store")" "$note"
+		if [[ "$store" == "docker" ]]; then
+			printf '%-14s %-9s %s\n' "" "" "docker system df: $(_sc_docker_summary || true)"
+		fi
 	done
 	if [[ "$timed_out" -eq 1 ]]; then
 		printf '\n? = sizing stopped after %ss; set STORAGE_CLEANUP_SIZE_TIMEOUT=300 for a full total.\n' "$SC_SIZE_TIMEOUT"
@@ -366,6 +405,10 @@ _sc_dry_run_store() {
 	trash) _sc_preview_trash || rc=$? ;;
 	gitlocks) _sc_gitlocks "$SC_DRY_RUN" || rc=$? ;;
 	quarantine) bash "${SCRIPT_DIR}/pulse-stats-helper.sh" prune-quarantine || rc=$? ;;
+	docker)
+		bash "${SCRIPT_DIR}/docker-resource-helper.sh" reap --images-only --dry-run --max-seconds "$SC_DOCKER_MAX_SECONDS" || rc=$?
+		bash "${SCRIPT_DIR}/docker-resource-helper.sh" prune-cache --dry-run || rc=$?
+		;;
 	*) return 1 ;;
 	esac
 	return "$rc"
@@ -415,6 +458,10 @@ _sc_apply_store() {
 	trash) bash "${SCRIPT_DIR}/todo-sync-trash-retention.sh" prune --apply || rc=$? ;;
 	gitlocks) _sc_gitlocks "$SC_APPLY" || rc=$? ;;
 	quarantine) bash "${SCRIPT_DIR}/pulse-stats-helper.sh" prune-quarantine --apply || rc=$? ;;
+	docker)
+		bash "${SCRIPT_DIR}/docker-resource-helper.sh" reap --images-only --apply --max-seconds "$SC_DOCKER_MAX_SECONDS" || rc=$?
+		bash "${SCRIPT_DIR}/docker-resource-helper.sh" prune-cache --apply || rc=$?
+		;;
 	*) return 1 ;;
 	esac
 	return "$rc"

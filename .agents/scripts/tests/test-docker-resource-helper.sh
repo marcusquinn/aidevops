@@ -204,6 +204,7 @@ rm)
 inspect) do_inspect "$@" ;;
 network) do_network "$@" ;;
 volume) do_volume "$@" ;;
+image) : ;; # No images in the stub: `image ls -q` lists nothing.
 system) join_us Images 3 1 1.2GB "600MB (50%)"; join_us "Local Volumes" 4 1 2GB "${DOCKER_STUB_RECLAIMABLE:-1.5GB} (75%)" ;;
 *) exit 1 ;;
 esac

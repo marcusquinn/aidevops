@@ -22,6 +22,41 @@ confirmed path invokes `npm cache clean --force` rather than deleting files
 directly. Neither shared inventory nor scheduled maintenance cleans external
 package-manager data automatically.
 
+The advisory escalates from `warning` to `critical` when the cache exceeds the
+threshold and the volume holding it has less than 5% free
+(`AIDEVOPS_NPM_CACHE_LOW_DISK_PERCENT`). `json` reports `disk_free_percent`.
+Escalation changes only the message; mutation stays on the confirmed path.
+
+## Docker Images and Build Cache
+
+`aidevops cleanup` reports a `docker` row with a bounded read-only
+`docker system df` summary (a timeout or unreachable daemon is shown, never
+hidden). `aidevops cleanup docker` previews and `--apply` runs
+`docker-resource-helper.sh`:
+
+- `reap --images-only` removes only images labelled `sh.aidevops.owner=1` whose issue or PR
+  is closed and worktree is gone, or whose `sh.aidevops.ttl-hours` has expired,
+  and which no container (even stopped) uses. Unlabelled images, volumes and
+  containers are never removed.
+- `prune-cache` runs `docker builder prune --force --filter until=<window>`
+  (default 168h, `AIDEVOPS_DOCKER_BUILD_CACHE_HOURS`). Build cache carries no
+  labels, so Docker's own age filter is the only gate; dry run only reports.
+
+Producers must label images they build with `docker-resource-helper.sh labels`
+output; an unlabelled worker image is invisible to retention. Read the lines
+into an array so labels containing spaces survive:
+
+```bash
+labels=()
+while IFS= read -r line; do labels+=("$line"); done < <(docker-resource-helper.sh labels --ref GH#N)
+docker build "${labels[@]}" -t "name:tag" .
+```
+
+Status: no framework script builds worker images yet (the only `docker build`
+calls are user deployments in `coolify-cli-helper.sh`), so retention applies
+once worker build paths adopt the labels; until then it covers only images that
+sessions label themselves.
+
 ## Runtime Bundle Retention Overrides
 
 The 30-day, 30-bundle, and 8 GiB runtime-bundle limits are project defaults, not

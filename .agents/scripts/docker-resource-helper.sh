@@ -11,8 +11,9 @@
 #   docker-resource-helper.sh compose-labels [same options] [--indent N]
 #   docker-resource-helper.sh inventory         # labelled resources as TSV
 #   docker-resource-helper.sh teardown --worktree PATH [--dry-run] [--force]
-#   docker-resource-helper.sh reap [--apply] [--max-seconds N] [--verbose]
+#   docker-resource-helper.sh reap [--apply] [--max-seconds N] [--verbose] [--images-only]
 #   docker-resource-helper.sh report [--max-seconds N]
+#   docker-resource-helper.sh prune-cache [--apply] [--hours N]  # BuildKit cache
 #
 # Safety rules (see tools/containers/disposable-resources.md):
 #   - Only resources labelled sh.aidevops.owner=1 are ever removed.
@@ -38,6 +39,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 readonly DRH_PREFIX="sh.aidevops"
 readonly DRH_TAG="[docker-resource]"
+readonly DRH_OWNER_FILTER="label=${DRH_PREFIX}.owner=1"
 readonly DRH_US=$'\x1f'
 # Never reap anything younger than this: another session may be starting it.
 readonly DRH_GRACE_SECONDS=1800
@@ -50,6 +52,8 @@ readonly DRH_STATE_UNKNOWN="unknown"
 
 DRH_DEFAULT_TTL="${AIDEVOPS_DOCKER_TTL_HOURS:-72}"
 [[ "$DRH_DEFAULT_TTL" =~ ^[0-9]+$ ]] || DRH_DEFAULT_TTL=72
+DRH_CACHE_HOURS="${AIDEVOPS_DOCKER_BUILD_CACHE_HOURS:-168}"
+[[ "$DRH_CACHE_HOURS" =~ ^[1-9][0-9]*$ ]] || DRH_CACHE_HOURS=168
 DRH_PROBE_TIMEOUT="${AIDEVOPS_DOCKER_TIMEOUT_SECONDS:-5}"
 [[ "$DRH_PROBE_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || DRH_PROBE_TIMEOUT=5
 DRH_CMD_TIMEOUT="${AIDEVOPS_DOCKER_CMD_TIMEOUT_SECONDS:-30}"
@@ -300,7 +304,7 @@ _drh_label_format() {
 # Append "kind US <docker line> [US state]" rows to $1.
 _drh_collect_kind() {
 	local kind="$1" out="$2"
-	local filter="label=${DRH_PREFIX}.owner=1"
+	local filter="$DRH_OWNER_FILTER"
 	local labels output line suffix
 	suffix=""
 	labels=$(_drh_label_format)
@@ -319,6 +323,10 @@ _drh_collect_kind() {
 			--format "{{.Name}}${DRH_US}{{.Name}}${labels}") || return 1
 		suffix="${DRH_US}-"
 		;;
+	image)
+		output=$(_drh_collect_images) || return 1
+		suffix="${DRH_US}-"
+		;;
 	*) return 1 ;;
 	esac
 	while IFS= read -r line; do
@@ -328,12 +336,28 @@ _drh_collect_kind() {
 	return 0
 }
 
+# Print "id US name US labels..." for images labelled sh.aidevops.owner=1.
+# `docker image ls --format` cannot read labels, so inspect the filtered ids.
+_drh_collect_images() {
+	local ids fmt key
+	ids=$(_drh_docker image ls -q --no-trunc --filter "$DRH_OWNER_FILTER") || return 1
+	[[ -n "$ids" ]] || return 0
+	ids=$(printf '%s\n' "$ids" | sort -u)
+	fmt="{{.Id}}${DRH_US}{{join .RepoTags \",\"}}"
+	for key in $DRH_LABEL_KEYS; do
+		fmt="${fmt}${DRH_US}{{index .Config.Labels \"${DRH_PREFIX}.${key}\"}}"
+	done
+	# shellcheck disable=SC2086 # ids are docker image IDs (no spaces)
+	_drh_docker image inspect --format "$fmt" $ids
+	return $?
+}
+
 # Write labelled resources to $1 (fields: kind id name owner repo ref
 # worktree created ttl state, separated by \x1f).
 _drh_collect() {
 	local out="$1" kind
 	: >"$out"
-	for kind in $DRH_KIND_CONTAINER network volume; do
+	for kind in $DRH_KIND_CONTAINER network volume image; do
 		_drh_collect_kind "$kind" "$out" || return 1
 	done
 	return 0
@@ -418,6 +442,12 @@ _drh_in_use_running() {
 		[[ -n "$running" ]] && return 0
 		return 1
 		;;
+	image)
+		# Any container (even stopped) created from the image keeps it.
+		running=$(_drh_docker ps -a -q --no-trunc --filter "ancestor=${id}") || return 0
+		[[ -n "$running" ]] && return 0
+		return 1
+		;;
 	esac
 	return 0
 }
@@ -476,8 +506,9 @@ _drh_decide() {
 # space-delimited id set). Prints the count; returns 1 on docker failure.
 _drh_blocking_attachments() {
 	local kind="$1" id="$2" exclude="$3"
-	local attached cid blockers=0
-	attached=$(_drh_docker ps -a -q --no-trunc --filter "${kind}=${id}") || return 1
+	local attached cid blockers=0 filter="$kind"
+	[[ "$kind" != "image" ]] || filter="ancestor"
+	attached=$(_drh_docker ps -a -q --no-trunc --filter "${filter}=${id}") || return 1
 	for cid in $attached; do
 		[[ "$exclude" == *" ${cid} "* ]] || blockers=$((blockers + 1))
 	done
@@ -493,6 +524,7 @@ _drh_remove() {
 	container) err=$(_drh_docker rm -f -v "$id" 2>&1 >/dev/null) && return 0 ;;
 	network) err=$(_drh_docker network rm "$id" 2>&1 >/dev/null) && return 0 ;;
 	volume) err=$(_drh_docker volume rm "$id" 2>&1 >/dev/null) && return 0 ;;
+	image) err=$(_drh_docker image rm -f --no-prune "$id" 2>&1 >/dev/null) && return 0 ;;
 	*) return 1 ;;
 	esac
 	lower=$(printf '%s' "$err" | tr '[:upper:]' '[:lower:]')
@@ -559,7 +591,7 @@ _drh_execute_row() {
 _drh_execute_plan() {
 	local mode="$1" plan="$2"
 	local order kind id name reason repo ref worktree
-	for order in $DRH_KIND_CONTAINER network volume; do
+	for order in $DRH_KIND_CONTAINER network volume image; do
 		while IFS="$DRH_US" read -r kind id name reason repo ref worktree; do
 			[[ "$kind" == "$order" ]] || continue
 			if ! _drh_budget_left; then
@@ -643,7 +675,7 @@ cmd_teardown() {
 # --- reap --------------------------------------------------------------------
 
 cmd_reap() {
-	local mode="$DRH_MODE_DRY_RUN" labelled=0
+	local mode="$DRH_MODE_DRY_RUN" labelled=0 only_kind=""
 	local records plan opt val kind id name owner repo ref worktree created ttl state
 	while [[ $# -gt 0 ]]; do
 		local opt="$1" val="${2:-}"
@@ -651,6 +683,7 @@ cmd_reap() {
 		--apply) mode="$DRH_MODE_APPLY" ;;
 		--dry-run) mode="$DRH_MODE_DRY_RUN" ;;
 		--verbose) DRH_VERBOSE=1 ;;
+		--images-only) only_kind="image" ;;
 		--max-seconds)
 			_drh_set_max_seconds "$val" || return 1
 			shift
@@ -675,6 +708,7 @@ cmd_reap() {
 	DRH_NOW=$(date +%s)
 	while IFS="$DRH_US" read -r kind id name owner repo ref worktree created ttl state; do
 		[[ "$owner" == "1" ]] || continue
+		[[ -z "$only_kind" || "$kind" == "$only_kind" ]] || continue
 		labelled=$((labelled + 1))
 		_drh_budget_left || break
 		_drh_decide "$kind" "$id" "$owner" "$repo" "$ref" "$worktree" "$created" "$ttl" "$state"
@@ -716,7 +750,7 @@ _drh_count_lines() {
 }
 
 _drh_report_ownership() {
-	local label="label=${DRH_PREFIX}.owner=1" n_all=0 n_owned=0
+	local label="$DRH_OWNER_FILTER" n_all=0 n_owned=0
 	local all owned
 	printf '\nOwnership (only labelled resources are ever removed by aidevops):\n'
 	all=$(_drh_docker ps -a -q --no-trunc) || return 1
@@ -734,6 +768,11 @@ _drh_report_ownership() {
 	n_all=$(_drh_count_lines "$all")
 	n_owned=$(_drh_count_lines "$owned")
 	printf '  volumes: labelled=%s unlabelled=%s\n' "$n_owned" "$((n_all - n_owned))"
+	all=$(_drh_docker image ls -q --no-trunc) || return 1
+	owned=$(_drh_docker image ls -q --no-trunc --filter "$label") || return 1
+	n_all=$(printf '%s\n' "$all" | awk 'NF && !s[$0]++ { n++ } END { print n + 0 }')
+	n_owned=$(printf '%s\n' "$owned" | awk 'NF && !s[$0]++ { n++ } END { print n + 0 }')
+	printf '  images: labelled=%s unlabelled=%s\n' "$n_owned" "$((n_all - n_owned))"
 	return 0
 }
 
@@ -837,8 +876,53 @@ cmd_report() {
 	return 0
 }
 
+# --- build cache -------------------------------------------------------------
+
+# BuildKit cache entries carry no labels, so ownership cannot be proven per
+# entry. The only mutation is Docker's own age filter (unused for the window),
+# which never touches images, containers or volumes. Dry run is read-only.
+cmd_prune_cache() {
+	local mode="$DRH_MODE_DRY_RUN" hours="$DRH_CACHE_HOURS" opt val out
+	while [[ $# -gt 0 ]]; do
+		local opt="$1" val="${2:-}"
+		case "$opt" in
+		--apply) mode="$DRH_MODE_APPLY" ;;
+		--dry-run) mode="$DRH_MODE_DRY_RUN" ;;
+		--hours)
+			if [[ ! "$val" =~ ^[1-9][0-9]*$ ]]; then
+				printf 'Invalid value for --hours: %s\n' "$val" >&2
+				return 1
+			fi
+			hours="$val"
+			shift
+			;;
+		*)
+			printf 'Unknown option: %s\n' "$opt" >&2
+			return 1
+			;;
+		esac
+		shift
+	done
+	_drh_docker_ready || return 0
+	if [[ "$mode" != "$DRH_MODE_APPLY" ]]; then
+		out=$(_drh_docker system df --format '{{.Type}}'"${DRH_US}"'{{.TotalCount}}'"${DRH_US}"'{{.Size}}'"${DRH_US}"'{{.Reclaimable}}') || {
+			_drh_log "prune-cache: docker system df failed; skipping"
+			return 0
+		}
+		printf '%s\n' "$out" | awk -F"$DRH_US" -v h="$hours" '$1 == "Build Cache" { printf "[docker-resource] would run: docker builder prune --force --filter until=%sh (entries=%s size=%s reclaimable=%s)\n", h, $2, $3, $4 }'
+		return 0
+	fi
+	if out=$(_drh_docker builder prune --force --filter "until=${hours}h" 2>&1); then
+		_drh_log "prune-cache window=${hours}h $(printf '%s' "$out" | tail -n 1)"
+	else
+		_drh_log "prune-cache failed: $(printf '%s' "$out" | tail -n 1)"
+		return 1
+	fi
+	return 0
+}
+
 usage() {
-	sed -n '8,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+	sed -n '8,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 	return 0
 }
 
@@ -852,6 +936,7 @@ main() {
 	teardown) cmd_teardown "$@" ;;
 	reap) cmd_reap "$@" ;;
 	report) cmd_report "$@" ;;
+	prune-cache) cmd_prune_cache "$@" ;;
 	help | --help | -h) usage ;;
 	*)
 		printf 'Unknown command: %s\n' "$command" >&2
