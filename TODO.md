@@ -2512,7 +2512,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19356 Headless workers: prompt-cache keep-warm during long tool calls + require repeated Sonnet failure before Opus escalation #feat ref:GH#40251 pr:#40256 completed:2026-11-25
 
-- [ ] t19357 feat(worktree): clone pnpm workspace node_modules (root + members) into fresh worktrees instead of full install #auto-dispatch #feat ref:GH#40257
+- [x] t19357 feat(worktree): clone pnpm workspace node_modules (root + members) into fresh worktrees instead of full install #auto-dispatch #feat ref:GH#40257 pr:#40260 completed:2026-11-25
 
 - [ ] t19358 Add prompt-cache keep-alive to the OpenCode v2 provider-auth adapter #auto-dispatch #feat ref:GH#40264
 
