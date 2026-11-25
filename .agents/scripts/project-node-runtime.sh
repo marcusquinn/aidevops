@@ -93,6 +93,37 @@ _project_node_private_bin() {
 	return 0
 }
 
+# Opt-in (AIDEVOPS_NODE_INSTALL=nvm): install the exact pinned Node with nvm when no
+# installed runtime satisfies the project. Only a single full X.Y.Z pin is
+# installed; ranges and partial pins fail closed. The nvm default alias is
+# restored so the host default Node never changes. Prints the new bin directory.
+_project_node_nvm_install() {
+	local preferred="$1" requirements="$2" nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+	local alias_file="$nvm_dir/alias/default" alias_before="" had_alias="" version="" bin="" rc=0
+	[[ "${AIDEVOPS_NODE_INSTALL:-}" == nvm ]] || return 1
+	[[ "$preferred" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+	[[ -f "$nvm_dir/nvm.sh" ]] || return 1
+	_project_node_satisfies "v$preferred" "$requirements" || return 1
+	if [[ -f "$alias_file" ]]; then
+		had_alias=1
+		alias_before=$(<"$alias_file")
+	fi
+	printf 'INFO: installing project-pinned node %s with nvm (AIDEVOPS_NODE_INSTALL=nvm)\n' "$preferred" >&2
+	NVM_DIR="$nvm_dir" bash -c '. "$NVM_DIR/nvm.sh" >/dev/null 2>&1 && nvm install --no-progress "$1" >&2' _ "$preferred" || rc=$?
+	if [[ -n "$had_alias" ]]; then
+		printf '%s\n' "$alias_before" >"$alias_file" || true
+	else
+		rm -f "$alias_file"
+	fi
+	[[ "$rc" -eq 0 ]] || return 1
+	bin="$nvm_dir/versions/node/v$preferred/bin"
+	[[ -x "$bin/node" ]] || return 1
+	version=$("$bin/node" --version 2>/dev/null) || return 1
+	_project_node_satisfies "$version" "$requirements"$'\n'"$preferred" || return 1
+	printf '%s\n' "$bin"
+	return 0
+}
+
 # Prints selected bin path. Caller exports PATH in its own process/subshell.
 _project_node_bin() {
 	local root="$1" scope="${2:-.}" requirements="" preferred="" found="" line="" candidate="" version="" bin="" current=""
@@ -169,6 +200,15 @@ _project_node_bin() {
 			return 0
 		done
 	done
+	# Distinct pins only: conflicting root/scope pins must never trigger an install.
+	local unique_pins=""
+	unique_pins=$(printf '%s\n' "$preferred" | sort -u)
+	if [[ "${AIDEVOPS_NODE_INSTALL:-}" == nvm && -n "$unique_pins" && "$unique_pins" != *$'\n'* ]]; then
+		bin=$(_project_node_nvm_install "$unique_pins" "$requirements") && {
+			printf '%s\n' "$bin"
+			return 0
+		}
+	fi
 	version=$(node --version 2>/dev/null || printf unknown)
 	printf 'ENVIRONMENT FAILURE: node %s does not satisfy engines "%s" (root/scope requirements; a numeric version-file pin requires its major). Install a matching Node or select it with fnm, nvm, volta, mise, Homebrew node or node@<major>, Nix, the nodejs.org installer, or n; then rerun.\n' "$version" "${requirements//$'\n'/ and }" >&2
 	return 1

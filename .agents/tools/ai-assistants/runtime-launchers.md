@@ -78,6 +78,11 @@ Windsurf's editor integration has no supported terminal agent adapter and return
 an explanatory error. Cursor, Continue and Kiro use their terminal executables,
 not the similarly named editor binaries. Missing CLIs produce an actionable error;
 launching never installs software or modifies personal runtime settings.
+The one opt-in exception is project Node selection: with `AIDEVOPS_NODE_INSTALL=nvm`
+and `$NVM_DIR/nvm.sh` present, a worker whose project pins an exact `X.Y.Z` Node
+(`.nvmrc`, `.node-version`, `.tool-versions`) that is not installed runs
+`nvm install <version>` (about 200 MB each) and leaves `nvm alias default` unchanged.
+Range-only or partial pins still fail closed. Unset by default.
 
 OpenCode keeps its existing `--dir`, `--shared-db`, `--session-id` and Tabby options.
 Its `conversation`, `remote-interactive`, `desktop`, `server` and `attach` modes
