@@ -1202,6 +1202,24 @@ else
 	_fail "event expiry repeat mismatch: $out"
 fi
 
+# Restoring into an active DB that lacks an inbox table the archive populated
+# would strand those rows once the archive session is deleted: refuse (rc=3).
+_reset_dbs
+_make_active_db_inbox_generation
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 --max-duration-seconds 30 2>&1) || true
+sqlite3 "$ACTIVE_DB" "DROP TABLE session_inbox;"
+archive_before=$(_inbox_graph_fingerprint "$ARCHIVE_DB" 2>/dev/null || true)
+set +e
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" restore --session ses-1183 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 3 && "$(_inbox_graph_fingerprint "$ARCHIVE_DB" 2>/dev/null || true)" == "$archive_before" && "$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM session;')" == 0 ]]; then
+	_pass "restore refuses to strand archive inbox rows the active DB cannot hold"
+else
+	_fail "stranded inbox restore mismatch: rc=${rc}, output=${out}"
+fi
+
 # A persisted old-shape archive must migrate before a new-shape copy, and
 # restore must preserve non-default values (not just silently apply defaults).
 _reset_dbs
