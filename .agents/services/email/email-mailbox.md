@@ -147,7 +147,24 @@ if envelope :localpart :is "to" "security" { addflag "$urgent"; fileinto "Assign
 fileinto "Unassigned";
 ```
 
-Upload/activate: `sieve-connect --server mail.example.com --user admin --upload script.sieve --activate script.sieve`. Fastmail: Settings > Filters > Edit custom Sieve. Proton Mail: Settings > Filters > Add Sieve filter. Dovecot: `~/.dovecot.sieve` or ManageSieve.
+Upload/activate with the shared STARTTLS ManageSieve client:
+
+```bash
+aidevops secret set SIEVE_PASSWORD
+email-sieve-helper.sh deploy --server mail.example.com --user admin@example.com --file script.sieve
+email-sieve-helper.sh list-scripts --server mail.example.com --user admin@example.com
+
+# Separate workflow, on a mailbox with no other scripts: keep local delivery and
+# copy to another address (Roundcube-editable filter). copy-to refuses to install
+# when other scripts exist, so do not run it after `deploy` on the same mailbox.
+email-sieve-helper.sh copy-to --server mail.example.com --user copy@example.com --target owner@example.net --dry-run
+email-sieve-helper.sh copy-to --server mail.example.com --user copy@example.com --target owner@example.net
+email-sieve-helper.sh copy-to-remove --server mail.example.com --user copy@example.com --yes
+```
+
+Use `--secret NAME` for a different stored mailbox/app password; values never go in argv. Endpoint variable names are reserved. An existing `SIEVE_PASSWORD` environment variable remains supported. `copy-to` defaults to script `roundcube` (`--script` overrides it), checks for other scripts or edited filters before installation, and verifies read-back and activation. **Exclusive access is required:** stop webmail filter editing and all other Sieve writers until the operation completes. ManageSieve offers no atomic compare-and-install transaction; concurrent edits after the check can be overwritten or have their activation replaced. Removal only deletes an unchanged helper copy filter and supports explicit recovery after an interrupted rename; parked names use the first 100 characters plus `.aidevops-remove`, with existing destinations protected by RENAMESCRIPT.
+
+`sieve-connect` is an optional alternative. Fastmail: Settings > Filters > Edit custom Sieve. Proton Mail: Settings > Filters > Add Sieve filter. Dovecot: `~/.dovecot.sieve` or ManageSieve.
 
 ## IMAP vs JMAP
 
@@ -172,7 +189,7 @@ email-mailbox-helper.sh push fastmail --timeout 300 --types mail,contacts,calend
 
 | Issue | Steps |
 |-------|-------|
-| **Messages not categorized** | Check Sieve active (`sieve-connect --list`), verify `require` extensions, test with `sieve-test`, check rule order (first `stop` wins) |
+| **Messages not categorized** | Check Sieve active (`email-sieve-helper.sh list-scripts --server HOST --user ADDR`), verify `require` extensions, test with `sieve-test`, check rule order (first `stop` wins) |
 | **Flags not persisting** | Check `PERMANENTFLAGS` in IMAP SELECT; if custom keywords absent, use `\Flagged` + local DB; JMAP keywords always persist |
 | **Shared mailbox access** | Verify ACL (`GETACL`), check namespace (`NAMESPACE`), ensure `lrswipcda` rights; JMAP: check `accountCapabilities` |
 | **Search returns nothing** | Verify full-text indexing, check scope, try `UID SEARCH` for IMAP; verify `accountId` and `inMailbox` for JMAP |
