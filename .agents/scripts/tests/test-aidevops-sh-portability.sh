@@ -100,7 +100,8 @@ test_getent_structural_guard() {
 test_runtime_fallback_no_getent() {
 	_info "Test 2: runtime resolves via \$HOME fallback when getent is absent"
 
-	local out
+	local out empty_bin
+	empty_bin="$(mktemp -d)"
 	# Strip getent off PATH, mock `id -u` to return 0, set SUDO_USER, and
 	# execute the exact guard+resolution block copied verbatim from aidevops.sh.
 	# We inline the block rather than sourcing aidevops.sh because sourcing
@@ -110,7 +111,7 @@ test_runtime_fallback_no_getent() {
 		id() { if [[ "${1:-}" == "-u" ]]; then echo 0; else command id "$@"; fi; }
 		export SUDO_USER="fakeuser"
 		export HOME="/tmp/aidevops-test-fake-home"
-		export PATH="/usr/bin:/bin"
+		export PATH="'"${empty_bin}"'"
 		if command -v getent &>/dev/null; then
 			echo "PRECONDITION_FAIL: getent still on PATH"
 			exit 2
@@ -122,9 +123,11 @@ test_runtime_fallback_no_getent() {
 		fi
 		printf "%s\n" "$_AIDEVOPS_REAL_HOME"
 	' 2>&1) || {
+		rm -rf "${empty_bin}"
 		_fail "Resolution block errored out: ${out}"
 		return 1
 	}
+	rm -rf "${empty_bin}"
 
 	if [[ "${out}" == "/tmp/aidevops-test-fake-home" ]]; then
 		_pass "Resolved to \$HOME fallback (${out})"
