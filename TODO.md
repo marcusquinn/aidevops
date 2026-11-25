@@ -2532,7 +2532,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19374 perf(profile): bound profile README SQLite reads so the hourly routine cannot pin the llm-requests WAL #bug #performance #interactive tier:standard ref:GH#40353 assignee:marcusquinn logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19374-brief.md] pr:#40357 completed:2026-11-25
 
-- [ ] t19379 fix(ci-wait): treat a cancelled check with a same-name pass on the PR head as superseded in gh-checks-wait-helper --all #auto-dispatch #bug tier:standard ref:GH#40369 logged:2026-11-25 -> [todo/tasks/t19379-brief.md]
+- [x] t19379 fix(ci-wait): treat a cancelled check with a same-name pass on the PR head as superseded in gh-checks-wait-helper --all #auto-dispatch #bug tier:standard ref:GH#40369 logged:2026-11-25 -> [todo/tasks/t19379-brief.md] pr:#40374 completed:2026-11-25
 
 ## In Progress
 
