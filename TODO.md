@@ -2532,6 +2532,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19374 perf(profile): bound profile README SQLite reads so the hourly routine cannot pin the llm-requests WAL #bug #performance #interactive tier:standard ref:GH#40353 assignee:marcusquinn logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19374-brief.md] pr:#40357 completed:2026-11-25
 
+- [ ] t19376 perf(headless): disable OpenCode fff file index for headless workers so worktree churn stops costing up to a core per worker #performance #interactive tier:standard assignee:marcusquinn ref:GH#40360 logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19376-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
