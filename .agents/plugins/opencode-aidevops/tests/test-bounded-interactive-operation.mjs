@@ -10,7 +10,9 @@ import { join } from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { root, owner, recorded, manager, launcher, SUCCESS_BUDGET_MS, operationWaitMs, terminal } from "./bounded-operation-fixtures.mjs";
+import {
+  root, owner, recorded, manager, launcher, SUCCESS_BUDGET_MS, operationWaitMs, terminal, alive, contained, progressed,
+} from "./bounded-operation-fixtures.mjs";
 import { terminationCases } from "./bounded-operation-termination-cases.mjs";
 import { createOutputSandboxReader, createOutputSandboxRecorder } from "../bounded-operation-output.mjs";
 import {
@@ -366,36 +368,8 @@ describe("bounded interactive operations", () => {
   terminationCases();
 
   test("helper-created process groups are contained on timeout and cancellation (GH#33514)", async () => {
-    const alive = (pid) => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    };
-    // GH#40309: SIGKILL delivery and reaping by the orphan's new parent are
-    // asynchronous, so on a loaded host the receipt can precede the kernel's
-    // removal; a zombie has already been contained. A real survivor stays
-    // alive for its 30-second sleep, far past this bound.
-    const contained = async (pid) => {
-      const deadline = Date.now() + 10_000;
-      while (alive(pid) && Date.now() < deadline) {
-        try {
-          if (execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim().startsWith("Z")) return true;
-        } catch { /* exited between the probes */ }
-        await new Promise((resolve) => setTimeout(resolve, 25));
-      }
-      return !alive(pid);
-    };
     // Progress marks the nested group as started; the deadline then fires from
     // the injected manager timer, so neither case races command startup.
-    const progressed = async (instance, operationID) => {
-      while (!instance.status(operationID, owner).progress_events) {
-        await instance.status(operationID, owner, { waitMs: 1000 });
-        assert.equal(instance.status(operationID, owner).state, "running");
-      }
-    };
     const nestedPid = (recordedBefore) => {
       const match = recorded.slice(recordedBefore).map((entry) => entry.content).join("\n").match(/nested:(\d+)/);
       assert.ok(match, "nested child PID was not reported");

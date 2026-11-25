@@ -107,6 +107,19 @@ export function createProcessTreeTracker(rootPid, snapshotProcesses = processSna
       .filter((entry) => entry.pgid === rootPid && isOwned(owned, entry))
       .map((entry) => entry.pid),
     ownGroupMembers: (snapshot) => snapshot.entries.filter((entry) => entry.pgid === rootPid && entry.pid !== snapshot.psPid).length,
+    // SIGKILLs every other member of the root's own group, sparing the root. A
+    // detached root leads its session, so its group holds only processes it
+    // launched: the authority of a group SIGKILL without killing the root.
+    // Returns false when no inventory was available.
+    killOwnGroupOthers: () => {
+      const snapshot = track();
+      if (!snapshot) return false;
+      const others = snapshot.entries.filter((entry) => entry.pgid === rootPid && entry.pid !== rootPid && entry.pid !== snapshot.psPid);
+      signalEach(others.map((entry) => entry.pid), "SIGKILL", snapshot.entries);
+      return true;
+    },
     containment: () => ({ nestedProcessGroups: nestedGroups.size, attributionComplete }),
+    // Start identity recorded for an owned PID by any earlier scan, or null.
+    identity: (pid) => (owned.has(pid) ? { pid, started: owned.get(pid).started } : null),
   };
 }
