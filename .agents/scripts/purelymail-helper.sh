@@ -792,19 +792,28 @@ cmd_auth_results() {
 		print_error "Usage: auth-results <addr> <secret-name> <subject-regex> [last-N]"
 		return 1
 	fi
-	local search uid uids headers subject_line tmp_dir header_file found=""
+	local search uid uids headers subject_line tmp_dir header_file found="" fetch_failed=0
 	if ! search=$(_pm_imap "$address" "$secret" "${PM_IMAP_URL}/INBOX" -X "UID SEARCH ALL"); then
 		print_error "IMAP search failed for $address"
 		return 1
 	fi
-	uids=$(grep -E '^\* SEARCH' <<<"$search" | tr ' ' '\n' | grep -E '^[0-9]+$' | tail -n "$last" | sort -rn || true)
+	# IMAP lines end in CRLF: strip CR first, or the last (newest) UID is
+	# read as "N\r" and silently dropped by the numeric filter.
+	uids=$(tr -d '\r' <<<"$search" | grep -E '^\* SEARCH' | tr ' ' '\n' | grep -E '^[0-9]+$' | tail -n "$last" | sort -rn || true)
+	if [[ -z "$uids" ]]; then
+		print_error "INBOX of $address has no messages (or the UID SEARCH reply could not be parsed)"
+		return 1
+	fi
 	tmp_dir="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}"
 	mkdir -p "$tmp_dir" || return 1
 	header_file=$(mktemp "${tmp_dir}/purelymail-headers.XXXXXX") || return 1
 	chmod 600 "$header_file"
 	local fields="SUBJECT%20FROM%20DATE%20MESSAGE-ID%20AUTHENTICATION-RESULTS%20DKIM-SIGNATURE"
 	for uid in $uids; do
-		headers=$(_pm_imap "$address" "$secret" "${PM_IMAP_URL}/INBOX;UID=${uid};SECTION=HEADER.FIELDS%20(${fields})") || continue
+		if ! headers=$(_pm_imap "$address" "$secret" "${PM_IMAP_URL}/INBOX;UID=${uid};SECTION=HEADER.FIELDS%20(${fields})"); then
+			fetch_failed=$((fetch_failed + 1))
+			continue
+		fi
 		headers=$(_pm_unfold_headers <<<"$headers")
 		subject_line=$(grep -i '^Subject:' <<<"$headers" || true)
 		if [[ -n "$subject_line" ]] && grep -Eq -- "$subject_regex" <<<"$subject_line"; then
@@ -815,6 +824,9 @@ cmd_auth_results() {
 	done
 	if [[ -z "$found" ]]; then
 		rm -f "$header_file"
+		if [[ "$fetch_failed" -gt 0 ]]; then
+			print_error "$fetch_failed of the last $last header fetches failed for $address"
+		fi
 		print_error "No message in the last $last matched: $subject_regex"
 		return 1
 	fi
