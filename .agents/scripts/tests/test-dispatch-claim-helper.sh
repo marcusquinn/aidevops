@@ -238,6 +238,24 @@ test_claim_rereads_until_own_claim_visible() {
 	return 0
 }
 
+write_fallback_chmod_stub() {
+	local mock_path="$1"
+	cat >"${mock_path}/chmod" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${2:-}" != *"/.aidevops-claim-post-error."* ]]; then
+	command -p chmod "$@"
+	exit $?
+fi
+printf '%s\t%s\n' "${1:-}" "${2:-}" >>"${MOCK_CHMOD_LOG:?}"
+if [[ -e "${2:-}" ]]; then
+	python3 -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' "${2:-}" >>"${MOCK_CHMOD_LOG:?}.pre" || true
+fi
+command -p chmod "$@"
+EOF
+	chmod +x "${mock_path}/chmod"
+	return 0
+}
+
 #######################################
 # Test: claim POST stderr fallback avoids predictable /tmp paths when mktemp fails.
 #######################################
@@ -256,19 +274,7 @@ exit 1
 EOF
 	chmod +x "${mock_path}/mktemp"
 	chmod_log="${tmp_dir}/chmod.log"
-	cat >"${mock_path}/chmod" <<'EOF'
-#!/usr/bin/env bash
-if [[ "${2:-}" != *"/.aidevops-claim-post-error."* ]]; then
-	command -p chmod "$@"
-	exit $?
-fi
-printf '%s\t%s\n' "${1:-}" "${2:-}" >>"${MOCK_CHMOD_LOG:?}"
-if [[ -e "${2:-}" ]]; then
-	python3 -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' "${2:-}" >>"${MOCK_CHMOD_LOG:?}.pre" || true
-fi
-command -p chmod "$@"
-EOF
-	chmod +x "${mock_path}/chmod"
+	write_fallback_chmod_stub "$mock_path"
 	set +e
 	output=$(PATH="${mock_path}:$PATH" \
 		HOME="${test_home}/" \
