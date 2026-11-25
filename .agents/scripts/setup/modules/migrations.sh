@@ -538,7 +538,7 @@ cleanup_deprecated_paths() {
 # project databases, or alter independently managed Git hook sections.
 cleanup_retired_beads() {
 	local agents_dir="$1"
-	local path="" tool=""
+	local path=""
 	for path in \
 		"$agents_dir/scripts/beads-sync-helper.sh" \
 		"$agents_dir/scripts/todo-ready.sh" \
@@ -548,12 +548,47 @@ cleanup_retired_beads() {
 			print_info "Removed retired aidevops task helper: $path"
 		fi
 	done
-	for tool in beads-ui bdui; do
-		_retire_global_npm_package "$tool" || true
-	done
-	for tool in bd bv beads beads_viewer; do
-		_retire_brew_formula "$tool" || true
-	done
+	_notice_retired_beads_binaries
+	return 0
+}
+
+# GH#40409: Beads CLIs (Homebrew bd/bv/beads/beads_viewer, npm beads-ui/bdui)
+# are also installed independently for projects that still use Beads, and no
+# aidevops install record can exist for them (the install ledger postdates the
+# Beads retirement). Print optional uninstall advice once; never uninstall.
+_notice_retired_beads_binaries() {
+	local marker_dir="${HOME:+$HOME/.aidevops/cache/migrations}"
+	local marker_file="${marker_dir:+$marker_dir/gh40409-beads-binary-notice}"
+	local tool="" dir="" cmd=""
+	local -a commands=()
+	[[ -n "$marker_file" ]] || return 0
+	[[ -f "$marker_file" ]] && return 0
+	if command -v brew >/dev/null 2>&1; then
+		for tool in bd bv beads beads_viewer; do
+			if brew list --formula "$tool" >/dev/null 2>&1; then
+				commands+=("brew uninstall $tool")
+			fi
+		done
+	fi
+	while IFS= read -r dir; do
+		for tool in beads-ui bdui; do
+			[[ -n "$dir" && -d "$dir/$tool" ]] || continue
+			if [[ "$dir" == "$HOME/.bun/install/global/node_modules" ]]; then
+				commands+=("bun remove -g $tool")
+			else
+				printf -v cmd 'npm uninstall -g --prefix %q %q' "${dir%/lib/node_modules}" "$tool"
+				commands+=("$cmd")
+			fi
+		done
+	done < <(_retire_global_node_module_dirs)
+	if [[ ${#commands[@]} -gt 0 ]]; then
+		print_info "aidevops no longer manages Beads. Keep these tools if your projects use Beads; otherwise optional manual uninstall:"
+		for cmd in "${commands[@]}"; do
+			print_info "  $cmd"
+		done
+	fi
+	mkdir -p "$marker_dir" 2>/dev/null || return 0
+	date -u +%Y-%m-%dT%H:%M:%SZ >"$marker_file" 2>/dev/null || true
 	return 0
 }
 
@@ -620,21 +655,6 @@ _retire_global_npm_package() {
 		fi
 	done < <(_retire_global_node_module_dirs)
 	return "$found"
-}
-
-# Uninstall a retired Homebrew formula if present. Homebrew refuses to run as
-# root, so failures are reported with the exact command for the user to run.
-_retire_brew_formula() {
-	local formula="$1"
-	local out=""
-	command -v brew >/dev/null 2>&1 || return 1
-	brew list --formula "$formula" >/dev/null 2>&1 || return 1
-	if out=$(brew uninstall "$formula" 2>&1); then
-		print_info "Removed retired Homebrew formula $formula"
-	else
-		print_warning "Could not remove Homebrew formula $formula (${out##*$'\n'}); run: brew uninstall $formula"
-	fi
-	return 0
 }
 
 # Retire npm globals for tools aidevops no longer manages (Augment CLI everywhere,
