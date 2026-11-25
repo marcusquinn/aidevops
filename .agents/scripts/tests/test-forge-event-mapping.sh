@@ -29,8 +29,8 @@ export GH_CALL_LOG="${TEST_ROOT}/api.log"
 [[ "$(grep -c '^issue view 7 --repo owner/repo --json id,number,state,updatedAt$' "$GH_CALL_LOG")" == "1" ]]
 [[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT repository_id FROM legacy_task_adoptions WHERE task_id='t42';")" == "R_7" ]]
 
-# Duplicate mapping is idempotent, while the adopted task identity cannot be
-# reused by another immutable repository identity.
+# Duplicate mapping is idempotent. Another repository may use the same local
+# task ID, but receives a distinct coordinator identity (GH#31382).
 (
 	cd "$TEST_ROOT"
 	env PATH="${TEST_ROOT}/bin:$(dirname "$(command -v node)"):/usr/bin:/bin" EVENT_NAME=issues EVENT_DISPLAY_NUMBER=7 \
@@ -48,14 +48,14 @@ if (
 	exit 1
 fi
 [[ "$(node "$COORDINATOR" resolve-issue --task-id t42 --repository-id R_7 | jq -r '.stateCursor')" == "2026-07-12T15:00:00.000Z" ]]
-if (
+(
 	cd "$TEST_ROOT"
 	env PATH="${TEST_ROOT}/bin:$(dirname "$(command -v node)"):/usr/bin:/bin" EVENT_NAME=issues EVENT_DISPLAY_NUMBER=7 \
 		EVENT_SUBJECT_ID=I_7 REPOSITORY_ID=R_other REPOSITORY_SLUG=owner/other bash "$MAPPING_HELPER"
-); then
-	printf 'FAIL adopted legacy task crossed repository identities\n' >&2
-	exit 1
-fi
+)
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT COUNT(DISTINCT task_id) FROM repository_task_aliases WHERE local_task_id='t42';")" == "2" ]]
+[[ "$(node "$COORDINATOR" resolve-issue --task-id t42 --repository-id R_7 | jq -r '.issueId')" == "I_7" ]]
+[[ "$(node "$COORDINATOR" resolve-issue --task-id t42 --repository-id R_other | jq -r '.repositorySlug')" == "owner/other" ]]
 
 if (
 	cd "$TEST_ROOT"

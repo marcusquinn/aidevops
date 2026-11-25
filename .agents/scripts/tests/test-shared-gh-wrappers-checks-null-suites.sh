@@ -12,13 +12,16 @@ CHECKS_LIB="${SCRIPTS_DIR}/shared-gh-wrappers-checks.sh"
 source "$CHECKS_LIB"
 
 CHECK_SUITES_FIXTURE='{}'
+# Each assertion changes the response for the same SHA. Exercise aggregation,
+# not the persistent exact-head cache (covered by its dedicated cache suite).
+export AIDEVOPS_GH_CHECK_STATUS_CACHE_DISABLE=1
 
 _gh_checks_api_read() {
 	local endpoint="$1"
 	shift
 	local jq_filter=""
 
-	if [[ "$endpoint" != "repos/owner/repo/commits/abc123/check-suites" ]]; then
+	if [[ "$endpoint" != "repos/owner/repo/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/check-suites" ]]; then
 		printf 'FAIL: unexpected endpoint: %s\n' "$endpoint" >&2
 		return 1
 	fi
@@ -53,7 +56,7 @@ assert_status() {
 
 	CHECK_SUITES_FIXTURE="$fixture"
 	local actual
-	actual="$(gh_pr_check_status_rest "owner/repo" "abc123")"
+	actual="$(gh_pr_check_status_rest "owner/repo" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")"
 
 	if [[ "$actual" != "$expected" ]]; then
 		printf 'FAIL: %s expected %s, got %s\n' "$name" "$expected" "$actual" >&2

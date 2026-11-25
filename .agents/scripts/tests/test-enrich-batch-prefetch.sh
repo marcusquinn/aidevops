@@ -442,7 +442,7 @@ if [[ "$1" == "search" ]]; then
 fi
 # gh api repos/{slug}/issues → simulate REST success
 if [[ "$1" == "api" && "$2" == *"/issues"* ]]; then
-	printf '[{"number":42,"title":"Test Issue","labels":[],"updated_at":"2026-04-22T17:00:00Z","assignees":[]}]\n'
+	printf '[{"number":42,"title":"Test Issue","body":"Fixture issue body","labels":[],"updated_at":"2026-04-22T17:00:00Z","assignees":[]}]\n'
 	exit 0
 fi
 # gh api repos/{slug}/pulls → simulate REST success

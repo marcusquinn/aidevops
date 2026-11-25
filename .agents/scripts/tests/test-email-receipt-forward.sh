@@ -105,7 +105,7 @@ test_detect_receipt_subject() {
 
 	local result=0
 	# Run detect command — exit 0 means transaction detected
-	if ! bash "$HELPER" detect "$email_file" 2>/dev/null | grep -q "TRANSACTION EMAIL DETECTED"; then
+	if ! bash "$HELPER" detect "$email_file" 2>&1 | grep -q "TRANSACTION EMAIL DETECTED"; then
 		result=1
 	fi
 	print_result "detect: receipt in subject" "$result"
@@ -117,7 +117,7 @@ test_detect_invoice_subject() {
 	create_test_email "$email_file" "Invoice #INV-2026-001 from Acme Ltd" "accounts@acme.com" "Total due: £500.00"
 
 	local result=0
-	if ! bash "$HELPER" detect "$email_file" 2>/dev/null | grep -q "TRANSACTION EMAIL DETECTED"; then
+	if ! bash "$HELPER" detect "$email_file" 2>&1 | grep -q "TRANSACTION EMAIL DETECTED"; then
 		result=1
 	fi
 	print_result "detect: invoice in subject" "$result"
@@ -129,7 +129,7 @@ test_detect_payment_confirmation_subject() {
 	create_test_email "$email_file" "Payment confirmation - Order #12345" "noreply@shop.com" "Your payment was processed."
 
 	local result=0
-	if ! bash "$HELPER" detect "$email_file" 2>/dev/null | grep -q "TRANSACTION EMAIL DETECTED"; then
+	if ! bash "$HELPER" detect "$email_file" 2>&1 | grep -q "TRANSACTION EMAIL DETECTED"; then
 		result=1
 	fi
 	print_result "detect: payment confirmation in subject" "$result"
@@ -141,7 +141,7 @@ test_detect_order_confirmation_subject() {
 	create_test_email "$email_file" "Order confirmation #ORD-9876" "orders@example.com" "Thank you for your order."
 
 	local result=0
-	if ! bash "$HELPER" detect "$email_file" 2>/dev/null | grep -q "TRANSACTION EMAIL DETECTED"; then
+	if ! bash "$HELPER" detect "$email_file" 2>&1 | grep -q "TRANSACTION EMAIL DETECTED"; then
 		result=1
 	fi
 	print_result "detect: order confirmation in subject" "$result"
@@ -153,7 +153,7 @@ test_detect_subscription_renewal_subject() {
 	create_test_email "$email_file" "Subscription renewal - GitHub Pro" "billing@github.com" "Your subscription has been renewed."
 
 	local result=0
-	if ! bash "$HELPER" detect "$email_file" 2>/dev/null | grep -q "TRANSACTION EMAIL DETECTED"; then
+	if ! bash "$HELPER" detect "$email_file" 2>&1 | grep -q "TRANSACTION EMAIL DETECTED"; then
 		result=1
 	fi
 	print_result "detect: subscription renewal in subject" "$result"
@@ -166,7 +166,7 @@ test_detect_non_transaction_email() {
 
 	local result=0
 	# Should NOT detect as transaction
-	if bash "$HELPER" detect "$email_file" 2>/dev/null | grep -q "TRANSACTION EMAIL DETECTED"; then
+	if bash "$HELPER" detect "$email_file" 2>&1 | grep -q "TRANSACTION EMAIL DETECTED"; then
 		result=1
 	fi
 	print_result "detect: newsletter is NOT a transaction email" "$result"
@@ -179,7 +179,7 @@ test_detect_body_invoice_number() {
 		"Please find attached. Invoice number: INV-001. Total amount due: £250.00. Payment method: credit card."
 
 	local result=0
-	if ! bash "$HELPER" detect "$email_file" 2>/dev/null | grep -q "TRANSACTION EMAIL DETECTED"; then
+	if ! bash "$HELPER" detect "$email_file" 2>&1 | grep -q "TRANSACTION EMAIL DETECTED"; then
 		result=1
 	fi
 	print_result "detect: invoice number in body" "$result"
@@ -192,7 +192,7 @@ test_detect_body_total_amount() {
 		"Dear customer, total amount: £150.00. Billing address: 123 Main St."
 
 	local result=0
-	if ! bash "$HELPER" detect "$email_file" 2>/dev/null | grep -q "TRANSACTION EMAIL DETECTED"; then
+	if ! bash "$HELPER" detect "$email_file" 2>&1 | grep -q "TRANSACTION EMAIL DETECTED"; then
 		result=1
 	fi
 	print_result "detect: total amount in body" "$result"
