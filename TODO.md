@@ -2520,7 +2520,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19370 fix(pre-commit): positional-parameter ratchet must ignore $N inside multi-line single-quoted programs (awk/sed/jq) #auto-dispatch #bug tier:standard ref:GH#40335 logged:2026-11-25 -> [todo/tasks/t19370-brief.md] pr:#40337 completed:2026-11-25
 
-- [ ] t19371 perf(full-loop): check platform regression evidence before the native macOS suites in commit-and-pr #feat #interactive tier:standard ref:GH#40340 assignee:marcusquinn logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19371-brief.md]
+- [x] t19371 perf(full-loop): check platform regression evidence before the native macOS suites in commit-and-pr #feat #interactive tier:standard ref:GH#40340 assignee:marcusquinn pr:#40344 logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19371-brief.md] completed:2026-11-25
 
 - [x] t19363 fix(worker-lifecycle): index compaction reservation lookups so journal maintenance stops refusing hook admission with database-locked #bug #priority:high #interactive ref:GH#40293 assignee:marcusquinn logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19363-brief.md] pr:#40299 completed:2026-11-25
 
