@@ -19,6 +19,41 @@ _dch_automatic_checkpoint_snapshot() {
 	return $?
 }
 
+#aidevops:trust-boundary — GH#40297: release only this runner's own expired,
+# never-launched automatic claims for this exact device and session, before the
+# admission snapshot freezes history. Otherwise the new episode's prelaunch
+# renewal publishes that release after our claim, and the strict own-episode
+# fence (pr_checkpoint_admission.own_events) refuses post-transfer verification
+# and compensation. Same per-candidate fence as cmd_sweep_pr_checkpoint_claim.
+_dch_release_own_automatic_orphans() {
+	local issue="$1" repo="$2" runner="$3" session="$4"
+	local device="" comments="" candidates="" id="" nonce="" release="" attempted=0
+	device=$(_resolve_device_id) || return 1
+	[[ -n "$device" ]] || return 1
+	comments=$(_fetch_claim_marker_comments "$issue" "$repo") || return 1
+	candidates=$(jq -r --arg runner "$runner" --arg device "$device" --arg session "$session" \
+		--arg phase "$LEASE_PHASE_PRELAUNCH" '
+		def fields: [scan("([a-z_]+)=([^ ]+)") | {key: .[0], value: .[1]}] | from_entries;
+		.[] | select(.author == $runner and ((.author_association // "") | test("^(OWNER|MEMBER|COLLABORATOR)$")))
+		| . as $c | (.body // "") | split("\n")[] | select(startswith("DISPATCH_CLAIM ")) | fields
+		| select(.runner == $runner and .device == $device and .session == $session and .phase == $phase
+			and .checkpoint_mode == "automatic" and (.checkpoint_approval // "") == "")
+		| [($c.id | tostring), .nonce] | @tsv
+	' <<<"$comments") || return 1
+	while IFS=$'\t' read -r id nonce; do
+		[[ "$id" =~ ^[1-9][0-9]*$ && "$nonce" =~ ^[A-Za-z0-9._-]+$ ]] || continue
+		_dch_orphan_release_valid "$comments" "$comments" "$id" "$nonce" "$runner" "$device" "$session" || continue
+		_dch_session_has_live_executor "$session" && continue
+		attempted=$((attempted + 1))
+		release=$(jq -nc --argjson id "$id" --arg nonce "$nonce" --arg runner "$runner" \
+			'[{id:$id,nonce:$nonce,claim_author:$runner}]') || return 1
+		AIDEVOPS_PR_CHECKPOINT_SESSION="$session" \
+			_post_orphan_claim_release "$issue" "$repo" "$runner" "$release" "$comments" || return 1
+		[[ "$attempted" -lt 10 ]] || break
+	done <<<"$candidates"
+	return 0
+}
+
 cmd_claim_automatic_pr_checkpoint() {
 	local issue="${1:-}" repo="${2:-}" pr="${3:-}" head="${4:-}" ref="${5:-}" runner="${6:-}" session="${7:-}"
 	local owner="${8:-}" author="${9:-}" released="${10:-false}"
@@ -33,6 +68,8 @@ cmd_claim_automatic_pr_checkpoint() {
 		return 1
 	fi
 	local -a target=("$issue" "$repo" "$pr" "$head" "$ref" "$runner" "$session" "$owner" "$author" "$released")
+	# A failed own-orphan release aborts before any claim is posted.
+	_dch_release_own_automatic_orphans "$issue" "$repo" "$runner" "$session" || return 1
 	before=$(_dch_automatic_checkpoint_snapshot "${target[@]}") || return 1
 	snapshot=$(jq -er '.snapshot' <<<"$before") || return 1
 	status=$(jq -er '.previous_status' <<<"$before") || return 1
