@@ -140,25 +140,25 @@ _openai_read_opencode_auth_fields() {
 	return 0
 }
 
+# Return the detected OpenCode major version; unknown versions retain device mode.
+_opencode_major_version() {
+	local version_output
+	command -v opencode &>/dev/null || return 1
+	version_output=$(opencode --version 2>/dev/null) || return 1
+	if [[ "$version_output" =~ ([0-9]+)\.[0-9]+ ]]; then
+		printf '%s' "${BASH_REMATCH[1]}"
+		return 0
+	fi
+	return 1
+}
+
 # Add OpenAI account via OpenCode's headless Codex device flow.
 # Falls back to callback mode in cmd_add() when this returns non-zero.
 _cmd_add_openai_device() {
-	local prefill_email="$1"
-	local email
-	email=$(_add_prompt_email "$prefill_email") || return 1
+	local email="$1"
 
 	if ! command -v opencode &>/dev/null; then
 		print_error "OpenCode CLI not found. Cannot run OpenAI device login flow."
-		return 1
-	fi
-
-	# OpenCode 2+ dropped the -p/-m flags used by OpenCode 1; use callback flow.
-	local oc_version oc_major oc_version_output
-	oc_version_output=$(opencode --version 2>/dev/null || true)
-	oc_version=$(printf '%s\n' "$oc_version_output" | grep -Eo '[0-9]+(\.[0-9]+)+' | sed -n '1p' || true)
-	oc_major="${oc_version%%.*}"
-	if [[ "$oc_major" =~ ^[0-9]+$ ]] && [[ "$oc_major" -ge 2 ]]; then
-		print_warning "OpenCode ${oc_version} does not support the OpenCode 1 device-login flags (-p/-m); using callback URL flow instead"
 		return 1
 	fi
 
@@ -426,15 +426,22 @@ cmd_add() {
 		return $?
 	fi
 
-	# OpenAI default path: headless device auth (Codex). Callback flow remains fallback.
+	local email
+	email=$(_add_prompt_email "$prefill_email") || return 1
+
+	# OpenCode 2+ lacks V1 device-login flags; select callback without a failure warning.
 	if [[ "$provider" == "openai" ]]; then
-		local openai_add_mode="${AIDEVOPS_OPENAI_ADD_MODE:-device}"
+		local openai_add_mode="${AIDEVOPS_OPENAI_ADD_MODE:-device}" oc_major
 		case "$openai_add_mode" in
 		device)
-			if _cmd_add_openai_device "$prefill_email"; then
+			oc_major=$(_opencode_major_version) || oc_major=""
+			if [[ -n "$oc_major" && "$oc_major" -ge 2 ]]; then
+				print_info "OpenCode ${oc_major} (version 2 or later) detected; using callback URL flow for OpenAI"
+			elif _cmd_add_openai_device "$email"; then
 				return 0
+			else
+				print_warning "OpenAI device login failed — falling back to callback URL flow"
 			fi
-			print_warning "OpenAI device login failed — falling back to callback URL flow"
 			;;
 		callback)
 			print_info "Using callback URL flow for OpenAI (AIDEVOPS_OPENAI_ADD_MODE=callback)"
@@ -445,9 +452,6 @@ cmd_add() {
 			;;
 		esac
 	fi
-
-	local email
-	email=$(_add_prompt_email "$prefill_email") || return 1
 
 	# Generate PKCE + separate state nonce (verifier must not double as state)
 	local verifier challenge state_nonce
