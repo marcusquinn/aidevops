@@ -5,6 +5,13 @@
 
 set -euo pipefail
 
+# Test fixtures set these explicitly where rejection is under test. Do not let
+# the parent worker's model/config provenance turn healthy launches into refusals.
+unset AIDEVOPS_TEAM_INTERFACE_OVERLAY AIDEVOPS_CONVERSATION_PROJECT_ROOT \
+    AIDEVOPS_CONVERSATION_RUNTIME_ROOT AIDEVOPS_SIG_MODEL BUZZ_ACP_MODEL \
+    OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_DIR \
+    OPENCODE_DISABLE_DEFAULT_PLUGINS OPENCODE_MODEL OPENCODE_PURE
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit
 HELPER="${REPO_ROOT}/.agents/scripts/opencode-launcher-helper.sh"
@@ -295,13 +302,13 @@ else
     _fail "TUI launcher native ownership output unexpected: ${output}"
 fi
 
-tabby_output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" \
+tabby_output=$(AIDEVOPS_TABBY_LOGIN_SHELL="${fake_login_shell}" PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" \
     "${HELPER}" --tabby-shell --dir "${launch_dir}" --session-id tabby-first-launch --dry-run 2>&1)
 if [[ "${tabby_output}" == *"AIDEVOPS_TABBY_SESSION_RECOVERY=1"* ]] \
     && [[ "${tabby_output}" == *"AIDEVOPS_TERMINAL_TITLE_OWNER=aidevops"* ]] \
     && [[ "${tabby_output}" == *"OPENCODE_DISABLE_TERMINAL_TITLE=1"* ]] \
     && [[ "${tabby_output}" == *" opencode"* ]] \
-    && [[ "${tabby_output}" == *"exec /bin/zsh -l"* ]] \
+    && [[ "${tabby_output}" == *"exec ${fake_login_shell} -l"* ]] \
     && [[ "${tabby_output}" != *"opencode ''"* ]] \
     && [[ "${tabby_output}" != *"--session ses_"* ]]; then
     _pass "Tabby first launch enables recovery and leaves a shell open"
@@ -331,12 +338,13 @@ else
 fi
 
 tabby_output=$(TERM_PROGRAM=Tabby TABBY_CONFIG_DIRECTORY="${tmp_root}/tabby" \
+    AIDEVOPS_TABBY_LOGIN_SHELL="${fake_login_shell}" \
     PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" \
     "${HELPER}" --dir "${launch_dir}" --session-id tabby-stale-token --dry-run 2>&1)
 if [[ "${tabby_output}" == *"AIDEVOPS_TABBY_SESSION_RECOVERY=1"* ]] \
     && [[ "${tabby_output}" == *"OPENCODE_DISABLE_TERMINAL_TITLE=1"* ]] \
     && [[ "${tabby_output}" == *" opencode"* ]] \
-    && [[ "${tabby_output}" == *"exec /bin/zsh -l"* ]] \
+    && [[ "${tabby_output}" == *"exec ${fake_login_shell} -l"* ]] \
     && [[ "${tabby_output}" != *"--session ses_"* ]]; then
     _pass "stale Tabby profile command implicitly enables exact-session recovery"
 else
@@ -390,12 +398,13 @@ os.chmod(marker_path, 0o600)
 PY
 tabby_output=$(cd "${tabby_marker_dir}" && \
     TERM_PROGRAM=Tabby TABBY_CONFIG_DIRECTORY="${tmp_root}/tabby" \
+    AIDEVOPS_TABBY_LOGIN_SHELL="${fake_login_shell}" \
     PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" \
     "${HELPER}" --dry-run 2>&1)
 if [[ "${tabby_output}" == *"cd ${launch_dir}"* ]] \
     && [[ "${tabby_output}" == *"XDG_DATA_HOME=${tabby_data_dir}"* ]] \
     && [[ "${tabby_output}" == *"opencode --session ${tabby_session_id}"* ]] \
-    && [[ "${tabby_output}" == *"exec /bin/zsh -l"* ]]; then
+    && [[ "${tabby_output}" == *"exec ${fake_login_shell} -l"* ]]; then
     _pass "stale Tabby profile recovery resumes the exact validated OpenCode session"
 else
     _fail "Tabby recovered command unexpected: ${tabby_output}"
@@ -553,7 +562,10 @@ rm -f "${fake_log}"
 persistent_config_before=$(<"${home_dir}/.config/opencode/opencode.json")
 output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${conversation_work_dir}" \
     FAKE_OPENCODE_LOG="${fake_log}" HOST_CONFIG_CANARY="must-not-cross-boundary" \
-    "${HELPER}" conversation --overlay "${conversation_overlay}" --dir "${launch_dir}" 2>&1)
+    "${HELPER}" conversation --overlay "${conversation_overlay}" --dir "${launch_dir}" 2>&1) || {
+    _fail "conversation fixture launch failed: ${output}"
+    exit 1
+}
 persistent_config_after=$(<"${home_dir}/.config/opencode/opencode.json")
 conversation_line_count=0
 conversation_debug_pwd=""

@@ -610,7 +610,7 @@ test_approval_freshness_policy() {
 		"reduces a mixed same-kind batch to unapproved targets" \
 		"sudo aidevops approve issue 30700 30701 owner/repo" \
 		"$approval_helper" forbid approval.partially-verified 20 \
-		"sudo aidevops approve issue 30701 owner/repo"
+		"approve issue 30701 owner/repo"
 
 	export APPROVAL_TEST_STATE_pr_400=VERIFIED
 	export APPROVAL_TEST_STATE_issue_30701=NO_APPROVAL
@@ -618,7 +618,7 @@ test_approval_freshness_policy() {
 		"reduces a mixed-kind batch without dropping target kinds" \
 		"sudo aidevops approve batch pr:400 issue:30701 owner/repo" \
 		"$approval_helper" forbid approval.partially-verified 20 \
-		"sudo aidevops approve batch issue:30701 owner/repo"
+		"approve batch issue:30701 owner/repo"
 
 	export APPROVAL_TEST_STATE_issue_30701=API_ERROR
 	assert_approval_decision \
@@ -1151,6 +1151,7 @@ _ssh_binding_fixture_setup() {
 	cat <<'PY'
 import json
 import os
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -1175,7 +1176,9 @@ subprocess.run([os.environ['TEST_NATIVE_GIT'], '-C', str(repo), 'remote', 'add',
 keys = home / '.aidevops/approval-keys'
 keys.mkdir(parents=True)
 key = root / 'fixture-ssh-signing-key'
-subprocess.run(['/usr/bin/ssh-keygen', '-t', 'ed25519', '-N', '', '-q', '-f', str(key)], check=True)
+ssh_keygen = shutil.which('ssh-keygen')
+assert ssh_keygen, 'ssh-keygen is required for real fixture signatures'
+subprocess.run([ssh_keygen, '-t', 'ed25519', '-N', '', '-q', '-f', str(key)], check=True)
 (keys / 'approval.pub').write_bytes(Path(str(key) + '.pub').read_bytes())
 argv = ['ssh', '-F', '/dev/null', '-o', 'HostName=ci.example.com', '-o', 'ProxyCommand=none',
         '-o', 'ProxyJump=none', '-o', 'ClearAllForwardings=yes', '-o', 'PermitLocalCommand=no',
@@ -1198,7 +1201,7 @@ def sign(command, **changes):
     grant.update(changes)
     path.write_text(json.dumps(grant))
     Path(str(path) + '.sig').unlink(missing_ok=True)
-    subprocess.run(['/usr/bin/ssh-keygen', '-Y', 'sign', '-f', str(key), '-n', NAMESPACE, str(path)],
+    subprocess.run([ssh_keygen, '-Y', 'sign', '-f', str(key), '-n', NAMESPACE, str(path)],
                    check=True, capture_output=True)
     return path
 
