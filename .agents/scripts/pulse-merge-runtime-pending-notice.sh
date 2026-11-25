@@ -102,8 +102,13 @@ _pmrp_attention_line() {
 # Pending and failed states come from one exact-head rollup read, so a sibling
 # re-run between two reads cannot pair an old failure with a stale "nothing
 # pending" and route repair while a required check is active (t19244 review).
-# The states match _check_required_checks_have_pending_or_in_progress and
-# _required_checks_terminal_failure_names in pulse-merge-required-checks.sh.
+# Precedence (GH#40403): a present required run that is still active or has
+# no conclusion is pending; otherwise any terminal failure is red, even when
+# other required contexts are absent, because jobs that depend on a failed
+# job are skipped and never report their required names; otherwise an absent
+# context is pending (not created yet); otherwise green. Like
+# _check_required_checks_has_terminal_failure in pulse-merge-required-checks.sh,
+# an absent context never masks a terminal failure.
 # Arguments: $1 repo slug, $2 PR number, $3 head SHA
 _pmrp_head_ci_ready() {
 	local repo_slug="$1"
@@ -121,12 +126,14 @@ _pmrp_head_ci_ready() {
 		. as $checks
 		| [$req | split("\n")[] | select(length > 0)
 			| . as $ctx | {ctx: $ctx, c: ($checks | map(select((.name // "") == $ctx)) | last)}] as $rows
-		| if any($rows[]; .c == null or ((.c.conclusion // "") | length) == 0
-			or ((.c.status // "" | ascii_downcase) | test("^(queued|pending|in_progress|waiting|requested)$")))
+		| ([$rows[] | select(.c != null and ((.c.conclusion // "" | ascii_downcase)
+			| test("^(failure|cancelled|timed_out)$"))) | .ctx] | unique | sort | join(", ")) as $failed
+		| if any($rows[]; .c != null and (((.c.conclusion // "") | length) == 0
+			or ((.c.status // "" | ascii_downcase) | test("^(queued|pending|in_progress|waiting|requested)$"))))
 		then "pending"
-		else ([$rows[] | select((.c.conclusion // "" | ascii_downcase) | test("^(failure|cancelled|timed_out)$")) | .ctx]
-			| unique | sort | join(", ")) as $failed
-			| if $failed == "" then "green" else "red:" + $failed end
+		elif $failed != "" then "red:" + $failed
+		elif any($rows[]; .c == null) then "pending"
+		else "green"
 		end end' 2>/dev/null) || return 1
 	case "$state" in
 	green) return 0 ;;

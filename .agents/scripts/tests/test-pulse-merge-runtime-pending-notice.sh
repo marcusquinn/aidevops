@@ -131,6 +131,13 @@ gh_pr_check_runs_rest() {
 	pending) fv="" ;;
 	red) fv="failure" ;;
 	mixed) fv="failure" lint='"in_progress","conclusion":null' ;;
+	downstream)
+		# GH#40403: Lint depends on the failed job, so it is skipped under
+		# another name and the required Lint context never reports.
+		# shellcheck disable=SC2016 # Literal unexpanded GitHub matrix name.
+		printf '%s\n' '[{"name":"Framework Validation","status":"completed","conclusion":"failure"},{"name":"Lint (${{ matrix.php }})","status":"completed","conclusion":"skipped"}]'
+		return 0
+		;;
 	esac
 	printf '[{"name":"Framework Validation","status":"completed","conclusion":%s},{"name":"Lint","status":%s}]\n' \
 		"$([[ -n "$fv" ]] && printf '"%s"' "$fv" || printf 'null')" "$lint"
@@ -195,6 +202,15 @@ printf '75\n' >"${STUB_DIR}/route_rc"
 _pmrp_route_held_pr 14 o/r 77 "$WORKER_LABELS"
 check "a deferred CI repair route logs ATTENTION with its rc" "1" "$(grep -cF -e 'ATTENTION: PR #14 in o/r is held as runtime-pending with failing required checks and CI repair could not proceed (route rc=75;' "$LOGFILE")"
 rm -f "${STUB_DIR}/route_rc"
+
+# GH#40403: an absent required context (a downstream job skipped because the
+# failed job blocks it) must not mask the terminal failure as pending.
+printf 'downstream\n' >"${STUB_DIR}/ci"
+before_routes=$(route_count)
+_pmrp_route_held_pr 20 o/r 77 "$WORKER_LABELS"
+check "a failure beside an absent required context logs the failing context" "1" "$(grep -cE -e 'notice for o/r#20@b{12} deferred: required checks failing \(Framework Validation\)' "$LOGFILE")"
+check "a failure beside an absent required context routes CI repair" "$((before_routes + 1))" "$(route_count)"
+check "a failure beside an absent required context sends nothing" "4" "$(sent_count)"
 
 # Legacy completion uses the same origin boundary but never notifies a verifier.
 printf 'green\n' >"${STUB_DIR}/ci"
