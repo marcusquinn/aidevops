@@ -1266,8 +1266,12 @@ Workers fail when they must explore the entire codebase to find what to change. 
 - **Investigation work:** \`## Evidence\`, \`## Files to inspect\`, \`## Approach\`, \`## Acceptance criteria\`, and \`## Verification\`, including concrete starting paths and executable checks. Exact modification paths may remain unknown until the investigation completes.
 
 _Automated by \`escalate_issue_tier()\` body quality gate (t1900) in worker-lifecycle-common.sh_"
-	gh_issue_comment "$issue_number" --repo "$repo_slug" \
-		--body "$diag_body" 2>/dev/null || true
+	# t19356: escalation re-evaluates every failure at or above the threshold;
+	# post the diagnostic once, at the threshold itself.
+	if [[ "$failure_count" -eq "$threshold" ]]; then
+		gh_issue_comment "$issue_number" --repo "$repo_slug" \
+			--body "$diag_body" 2>/dev/null || true
+	fi
 	return 1
 }
 
@@ -1562,8 +1566,9 @@ _Automated by \`escalate_issue_tier()\` no_work skip (t2387) in worker-lifecycle
 # Cascade escalation: tier:simple → tier:standard → tier:thinking.
 # Crash-type-aware thresholds determine when escalation fires:
 #   - "overwhelmed": model read files, attempted work, but couldn't complete
-#     → escalate immediately (threshold=1). Retrying at the same tier wastes
-#     tokens on the same complexity the model already failed on.
+#     → simple -> standard escalates immediately (threshold=1). Escalation
+#     into thinking still needs ESCALATION_THINKING_MIN_FAILURES (default 2,
+#     t19356): the most expensive tier is earned by repeated failure.
 #   - "no_work": infrastructure failure (FD exhaustion, plugin init crash,
 #     auth refresh race). **Short-circuits BEFORE tier cascade** (t2387) —
 #     a more expensive model cannot fix infrastructure. Keeps the issue
@@ -1589,6 +1594,11 @@ _Automated by \`escalate_issue_tier()\` no_work skip (t2387) in worker-lifecycle
 #######################################
 ESCALATION_FAILURE_THRESHOLD="${ESCALATION_FAILURE_THRESHOLD:-2}"
 ESCALATION_OVERWHELMED_THRESHOLD="${ESCALATION_OVERWHELMED_THRESHOLD:-1}"
+# t19356: escalation INTO tier:thinking (the most expensive model) needs at
+# least this many failures in the issue's fast-fail window, whatever the crash
+# type. One overwhelmed run (most often worker_post_pr_handoff_unverified) is
+# not evidence that the standard model cannot do the task; repeated failure is.
+ESCALATION_THINKING_MIN_FAILURES="${ESCALATION_THINKING_MIN_FAILURES:-2}"
 NO_WORK_NMR_THRESHOLD="${NO_WORK_NMR_THRESHOLD:-3}"
 # t2820: maximum log-file age (seconds) under which a `worker_failed` event
 # with no tool-call markers in the log tail will be reclassified as `no_work`.
@@ -1732,6 +1742,34 @@ _resolve_escalation_threshold() {
 	return 0
 }
 
+# t19356: failures required before moving to next_tier. Escalation into
+# thinking needs at least ESCALATION_THINKING_MIN_FAILURES (default 2).
+_resolve_tier_required_failures() {
+	local base_threshold="$1"
+	local next_tier="$2"
+	local required="$base_threshold"
+	if [[ "$next_tier" == "thinking" ]]; then
+		local thinking_min="$ESCALATION_THINKING_MIN_FAILURES"
+		[[ "$thinking_min" =~ ^[0-9]+$ && "$thinking_min" -ge 1 ]] || thinking_min=2
+		[[ "$thinking_min" -gt "$required" ]] && required="$thinking_min"
+	fi
+	printf '%s\n' "$required"
+	return 0
+}
+
+# t19356: a PR already exists for these reasons; the failure is in the
+# review/handoff lifecycle, which a more expensive model cannot fix. Matches
+# _fast_fail_reason_wants_enrichment, which skips the same family.
+_escalation_reason_is_pr_handoff() {
+	local reason="$1"
+	case "$reason" in
+	worker_post_pr_handoff_* | worker_closed_unmerged_pr | worker_ready_missing_*)
+		return 0
+		;;
+	esac
+	return 1
+}
+
 _resolve_next_escalation_tier() {
 	local current_labels="$1"
 	case ",$current_labels," in
@@ -1796,7 +1834,7 @@ _post_tier_escalation() {
 
 	case "$crash_type" in
 	overwhelmed)
-		crash_type_label="**Crash type:** \`overwhelmed\` — model read target files and attempted implementation but could not produce commits. Immediate escalation triggered (threshold=1)."
+		crash_type_label="**Crash type:** \`overwhelmed\` — model read target files and attempted implementation but could not produce commits. Escalation threshold: ${threshold}."
 		;;
 	partial)
 		crash_type_label="**Crash type:** \`partial\` — worker produced commits but could not complete the PR lifecycle."
@@ -1871,7 +1909,10 @@ escalate_issue_tier() {
 		return 0
 	fi
 
-	[[ "$failure_count" -eq "$threshold" ]] || return 0
+	# t19356: the fast-fail count is cumulative per issue, so an issue that
+	# moved simple -> standard must still reach the (higher) thinking
+	# threshold later. Compare with -ge; the tier labels keep it idempotent.
+	[[ "$failure_count" -ge "$threshold" ]] || return 0
 
 	local current_labels
 	current_labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
@@ -1883,6 +1924,18 @@ escalate_issue_tier() {
 	local next_label=""
 	local remove_label=""
 	IFS='|' read -r current_tier next_tier next_label remove_label <<<"$tier_route"
+	threshold=$(_resolve_tier_required_failures "$threshold" "$next_tier")
+	if [[ "$failure_count" -lt "$threshold" ]]; then
+		printf '[worker-lifecycle][t19356] #%s (%s) stays %s: %s/%s failures before %s escalation\n' \
+			"$issue_number" "$repo_slug" "${current_tier:-unlabelled}" \
+			"$failure_count" "$threshold" "$next_tier" >&2 || true
+		return 0
+	fi
+	if [[ "$next_tier" == "thinking" ]] && _escalation_reason_is_pr_handoff "$reason"; then
+		printf '[worker-lifecycle][t19356] #%s (%s) stays %s: %s is a PR handoff failure, not capability evidence\n' \
+			"$issue_number" "$repo_slug" "${current_tier:-unlabelled}" "$reason" >&2 || true
+		return 0
+	fi
 
 	# Body quality gate (t1900): check if the issue body has implementation
 	# context before escalating. If the body lacks file paths, the root cause

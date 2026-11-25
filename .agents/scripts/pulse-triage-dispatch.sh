@@ -125,6 +125,8 @@ The validator must pass before running the signed creation command below. It che
   --body-file "<file containing the merged body from step 2>"
 \`\`\`
 
+**Tier (t19356):** copy the parent's \`tier:*\` label only when a maintainer set it. If the parent's tier was raised by a \`Cascade Tier Escalation\` comment, use the tier from before that escalation. Escalation is evidence about the parent's failed run, not about the consolidated spec, so the successor must earn \`tier:thinking\` through its own repeated failures.
+
 **Note (GH#18670):** \`origin:worker\` is mandatory on this label list — consolidated issues are pulse-generated artifacts, not interactive maintainer work. Use the signed wrapper above rather than the raw GitHub CLI so the successor retains the managed signature and origin metadata.
 
 **Dispatch handoff:** \`auto-dispatch\` and \`${successor_status}\` are also mandatory. Keep exactly one \`status:*\` label on the successor: \`${successor_status}\` — ${status_rationale} The consolidated successor marker and this explicit handoff must both be present before \`_has_consolidated_label\` permits implementation dispatch; the fill-floor enumerator also needs the available status, and the pre-claim gate holds a \`status:blocked\` successor until its blocker is released.

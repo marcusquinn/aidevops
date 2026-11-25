@@ -12,6 +12,7 @@ const script = fileURLToPath(import.meta.url);
 const realModules = new Set([
   "provider-auth.mjs", "provider-auth-pool.mjs", "provider-auth-pool-recovery.mjs",
   "oauth-pool-ordering.mjs", // pure comparator, no I/O (t19125)
+  "cache-keepalive.mjs", // timer-only scheduler; sends nothing in probe runs (t19356)
 ]);
 
 // Substitute specifiers BEFORE filesystem resolution. Neither the pool store

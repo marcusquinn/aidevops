@@ -104,12 +104,14 @@ source "$AGENTS_SCRIPTS/worker-lifecycle-common.sh"
 run_escalate() {
 	local current_labels="$1"
 	local failure_count="${2:-2}"
+	local crash_type="${3:-partial}"
+	local reason="${4:-repeated_failure}"
 	local trace
 	trace=$(mktemp)
 	GH_EDIT_TRACE="$trace" CURRENT_LABELS="$current_labels" \
 		ISSUE_BODY=$'## How\nEDIT: .agents/scripts/pulse-model-routing.sh:29-61' \
 		escalate_issue_tier 99 "test/repo" "$failure_count" \
-		"repeated_failure" "partial" >/dev/null 2>&1 || true
+		"$reason" "$crash_type" >/dev/null 2>&1 || true
 	if [[ -s "$trace" ]]; then
 		while IFS= read -r line; do
 			printf '%s\n' "$line"
@@ -136,6 +138,22 @@ assert_contains "$trace" "--remove-label tier:simple" \
 
 trace=$(run_escalate "tier:standard" 1)
 assert_equals "" "$trace" "sub-threshold failures do not escalate"
+
+# t19356: one overwhelmed failure is enough for simple -> standard, never for
+# standard -> thinking; repeated failure (cumulative count) still escalates.
+trace=$(run_escalate "tier:simple" 1 overwhelmed)
+assert_contains "$trace" "--add-label tier:standard" \
+	"one overwhelmed failure escalates simple to standard"
+trace=$(run_escalate "tier:standard" 1 overwhelmed)
+assert_equals "" "$trace" "one overwhelmed failure keeps standard off thinking"
+trace=$(run_escalate "tier:standard" 2 overwhelmed)
+assert_contains "$trace" "--add-label tier:thinking" \
+	"repeated overwhelmed failures escalate standard to thinking"
+trace=$(run_escalate "tier:standard" 3)
+assert_contains "$trace" "--add-label tier:thinking" \
+	"cumulative count past the threshold still escalates after simple -> standard"
+trace=$(run_escalate "tier:standard" 3 overwhelmed worker_post_pr_handoff_unverified)
+assert_equals "" "$trace" "PR handoff failures never escalate into thinking"
 
 printf '\nTests passed: %s / %s\n' "$tests_passed" "$tests_run"
 [[ "$tests_passed" -eq "$tests_run" ]]

@@ -122,7 +122,7 @@ import {
   selectOpenAIRequestAccount,
 } from "./oauth-pool.mjs";
 import { DETECTED_OPENCODE_RUNTIME_VERSION } from "./oauth-pool-token-endpoint.mjs";
-import { createProviderAuthHook } from "./provider-auth.mjs";
+import { createProviderAuthHook, cacheKeepalive } from "./provider-auth.mjs";
 import { installOpenAIProviderFetchRotation } from "./openai-provider-auth.mjs";
 import { startCursorProxy, ensureCursorProxyServer } from "./cursor-proxy.mjs";
 import { startGoogleProxy, ensureGoogleProxyServer } from "./google-proxy.mjs";
@@ -804,9 +804,12 @@ export async function AidevopsPlugin({ directory, client }) {
       const result = await toolExecuteBefore(input, output);
       // t18905: after the gates, so only tools that will run are published.
       sessionBus.toolBefore(input);
+      // t19356: keep the prompt cache warm while this tool runs.
+      cacheKeepalive.toolStarted(input?.sessionID, input?.callID);
       return result;
     },
     "tool.execute.after": async (input, output) => {
+      cacheKeepalive.toolFinished(input?.sessionID, input?.callID);
       normalizeMcpArtifactPaths(input, output, mcpRuntime.workspaces);
       try {
         const replaced = instructionReminders.compactReadOutput(input, output);
