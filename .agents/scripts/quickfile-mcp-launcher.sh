@@ -68,9 +68,17 @@ main() {
 		# Accept the same major version at or above the .nvmrc patch level.
 		local required_major="${required_node%%.*}"
 		local current_major="${current_node%%.*}"
-		local lowest=""
-		lowest="$(printf '%s\n%s\n' "$required_node" "$current_node" | sort -t. -k1,1n -k2,2n -k3,3n | head -n1)"
-		if [[ "$current_major" != "$required_major" || "$lowest" != "$required_node" ]]; then
+		local req_minor="" req_patch="" cur_minor="" cur_patch="" older=0
+		IFS=. read -r _ req_minor req_patch <<<"$required_node"
+		IFS=. read -r _ cur_minor cur_patch <<<"$current_node"
+		req_minor="${req_minor:-0}"
+		req_patch="${req_patch:-0}"
+		cur_minor="${cur_minor:-0}"
+		cur_patch="${cur_patch:-0}"
+		if ((10#$cur_minor < 10#$req_minor || (10#$cur_minor == 10#$req_minor && 10#$cur_patch < 10#$req_patch))); then
+			older=1
+		fi
+		if [[ "$current_major" != "$required_major" || "$older" -eq 1 ]]; then
 			printf 'QuickFile MCP requires Node.js %s (major %s, same major or newer patch) from .nvmrc; got %s. Set NODE_BIN to a matching executable.\n' "$required_node" "$required_major" "$current_node" >&2
 			return 1
 		fi
