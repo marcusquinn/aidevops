@@ -12,7 +12,7 @@ HELPER="${SCRIPT_DIR}/../gh-signature-helper.sh"
 
 # Historical fixture messages must not be filtered by the invoking worker's
 # attempt window or selected using its explicit session identity.
-unset AIDEVOPS_ATTEMPT_STARTED_AT AIDEVOPS_SIG_SESSION_ID OPENCODE_SESSION_ID
+unset AIDEVOPS_ATTEMPT_STARTED_AT AIDEVOPS_SIG_SESSION_ID OPENCODE_SESSION_ID GITHUB_ACTIONS
 
 PASS=0
 FAIL=0

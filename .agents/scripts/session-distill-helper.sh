@@ -92,10 +92,35 @@ init_session_dir() {
 
 privacy_redact() {
 	local text="$1"
-	text=$(printf '%s' "$text" | sed -E 's|/Users/[^ ]*|[local-path]|g; s|/home/[^ ]*|[local-path]|g; s|/private/var/[^ ]*|[local-path]|g; s|/var/folders/[^ ]*|[local-path]|g; s|~/Git/[^ ]*|[local-path]|g')
+	local roots='Users|home|private/var|var/folders|var/tmp|tmp|run'
+	# Quoted local paths (may contain spaces) are redacted as one unit.
+	text=$(printf '%s' "$text" | sed -E "s#\"/($roots)/[^\"]*\"#\"[local-path]\"#g; s#'/($roots)/[^']*'#'[local-path]'#g")
+	# Local source prefix "git:/abs/path"; remote URLs never have "git:" directly before a local root.
+	text=$(printf '%s' "$text" | sed -E "s#(^|[^A-Za-z0-9._/:~-])git:/($roots)/[^ ]*#\\1git:[local-path]#g")
+	# Roots must start a token (not follow a URL host/path char) so remote URLs survive.
+	text=$(printf '%s' "$text" | sed -E 's#(^|[^A-Za-z0-9._/:~-])/(Users|home|private/var|var/folders|var/tmp|tmp|run)/[^ ]*#\1[local-path]#g; s#(^|[^A-Za-z0-9._/:-])~/Git/[^ ]*#\1[local-path]#g')
 	text=$(printf '%s' "$text" | sed -E 's/(^|[^A-Za-z0-9_-])(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/\1[redacted-credential]/g')
 	text=$(printf '%s' "$text" | sed -E 's/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/[email]/g')
 	printf '%s' "$text"
+	return 0
+}
+
+# Redact a single path value in full, including spaces in the path.
+privacy_redact_path() {
+	local value="$1"
+	local redacted=""
+	# Match roots after dropping the leading slash; any "~/" value is also local.
+	local normalized="$value"
+	# Normalise equivalent absolute prefixes (//home, /./home) before matching.
+	while [[ "$normalized" == /* || "$normalized" == ./* ]]; do
+		normalized="${normalized#/}"
+		normalized="${normalized#./}"
+	done
+	case "$normalized" in
+	Users/* | home/* | private/var/* | var/folders/* | var/tmp/* | tmp/* | run/* | \~/*) redacted="[local-path]" ;;
+	*) redacted="$value" ;;
+	esac
+	privacy_redact "$redacted"
 	return 0
 }
 
@@ -165,7 +190,7 @@ capture_git_provenance() {
 
 	init_session_dir
 	local safe_worktree=""
-	safe_worktree=$(privacy_redact "$worktree")
+	safe_worktree=$(privacy_redact_path "$worktree")
 	local existing='[]'
 	[[ -f "$PROVENANCE_FILE" ]] && existing=$(jq -c '.items // []' "$PROVENANCE_FILE" 2>/dev/null || printf '[]')
 	local key=""
@@ -439,7 +464,12 @@ propose_learnings() {
 		extract_learnings
 	fi
 	local source_boundary
-	source_boundary=$(privacy_redact "${AIDEVOPS_OBSERVATION_SOURCE:-git:$PWD}")
+	if [[ -n "${AIDEVOPS_OBSERVATION_SOURCE:-}" ]]; then
+		source_boundary=$(privacy_redact "$AIDEVOPS_OBSERVATION_SOURCE")
+	else
+		# Redact the whole default path (may contain spaces) before prefixing.
+		source_boundary="git:$(privacy_redact_path "$PWD")"
+	fi
 	local existing='[]'
 	[[ -f "$PROPOSALS_FILE" ]] && existing=$(jq -c '.items // []' "$PROPOSALS_FILE")
 	local proposed="$existing"
