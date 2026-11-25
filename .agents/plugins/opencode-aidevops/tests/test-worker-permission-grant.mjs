@@ -14,17 +14,17 @@ import { registerWorkerRuntimePermissions } from "../config-worker-permissions.m
 
 test("worker runtime plumbing is narrow, per-agent and independent of signed grants", () => {
   const config = { permission: "ask", agent: { build: { permission: "ask" } } };
-  assert.equal(registerWorkerRuntimePermissions(config, {}, "/home/worker"), 0);
+  assert.equal(registerWorkerRuntimePermissions(config, {}, "/fixture-home"), 0);
   const env = { WORKER_WORKTREE_PATH: "/work/project", WORKER_ISSUE_NUMBER: "123" };
-  assert.equal(registerWorkerRuntimePermissions(config, env, "/home/worker"), 14);
+  assert.equal(registerWorkerRuntimePermissions(config, env, "/fixture-home"), 14);
   for (const target of [config, config.agent.build]) {
     const rules = target.permission.external_directory;
     assert.equal(rules["*"], "ask");
     for (const path of ["/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr", "/dev/fd/*",
-      "/home/worker/.aidevops/.agent-workspace/tmp", "/home/worker/.aidevops/.agent-workspace/tmp/**"]) {
+      "/fixture-home/.aidevops/.agent-workspace/tmp", "/fixture-home/.aidevops/.agent-workspace/tmp/**"]) {
       assert.equal(rules[path], "allow");
     }
-    for (const path of ["/dev/*", "/proc/*", "~/*", "/home/worker/*", "/home/worker/.aidevops-private/tmp/**"]) {
+    for (const path of ["/dev/*", "/proc/*", "~/*", "/fixture-home/*", "/fixture-home/.aidevops-private/tmp/**"]) {
       assert.equal(rules[path], undefined);
     }
   }
