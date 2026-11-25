@@ -253,11 +253,10 @@ validate_return_statements() {
 	return $violations
 }
 
-_scan_positional_parameters() {
-	# Shared awk script — extracted so we can run it over both staged content
-	# (the on-disk file) and HEAD content (piped from git show).
+_positional_lexer_helpers() {
+	# Keep the awk helpers separate from the record scanner for maintainability.
 	# shellcheck disable=SC2016  # $1, $[1-9] etc. are awk regex literals, not shell expansions
-	local _awk_script='
+	printf "%s\n" '
 	BEGIN { sq = "\047"; dq = "\042" }
 	function report(line, nr) {
 		if (line ~ /^[[:space:]]*#/) return
@@ -294,7 +293,14 @@ _scan_positional_parameters() {
 		hd_quoted[hd_count] = quoted
 		hd_end[hd_count] = word
 		return j - 1
-	}
+	}'
+	return 0
+}
+
+_scan_positional_parameters() {
+	# Use the same lexer for on-disk content and HEAD content piped on stdin.
+	# shellcheck disable=SC2016  # awk literals, not shell expansions
+	local _awk_script='
 	{
 		raw[NR] = $0
 		# Heredoc bodies are not shell syntax. Unquoted bodies still expand $N;
@@ -378,7 +384,7 @@ _scan_positional_parameters() {
 			report(line, nr)
 		}
 	}'
-	awk "$_awk_script" "$@"
+	awk "$(_positional_lexer_helpers)$_awk_script" "$@"
 	return 0
 }
 

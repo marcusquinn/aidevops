@@ -147,6 +147,7 @@ source_hook_helpers() {
 		/^_count_repeated_literals\(\)/       { c=1 }
 		/^_show_repeated_literals\(\)/        { c=1 }
 		/^validate_return_statements\(\)/     { c=1 }
+		/^_positional_lexer_helpers\(\)/      { c=1 }
 		/^_scan_positional_parameters\(\)/    { c=1 }
 		/^validate_positional_parameters\(\)/ { c=1 }
 		/^validate_string_literals\(\)/       { c=1 }
@@ -534,6 +535,11 @@ echo "${value:-it's $4}"
 echo "that's $5"
 FIXTURE
 	test_positional_quote_case expansion_contexts 4 "$content"
+	return 0
+}
+
+test_positional_params_review_regressions() {
+	local content
 	read -r -d '' content <<'FIXTURE' || true
 cat <<'TEXT' \
   "$1"
@@ -646,6 +652,7 @@ main() {
 	test_positional_params_preexisting_pass
 	test_positional_params_new_usage_blocks
 	test_positional_params_quoting
+	test_positional_params_review_regressions
 	test_classification_labels_present
 	test_check_secrets_remains_absolute
 
