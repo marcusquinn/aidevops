@@ -2536,6 +2536,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19386 fix(terminal-blocker): map a login input owner through verified repo permission so input_required holds instead of looping as unknown #bug #interactive tier:standard assignee:marcusquinn ref:GH#40384 logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19386-brief.md]
 - [x] t19381 fix(worktree-deps): fail fast on pnpm hoisted node-linker instead of walking every workspace member #bug #performance #interactive tier:standard assignee:marcusquinn ref:GH#40383 logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19381-brief.md] pr:#40387 completed:2026-11-25
+- [ ] t19391 fix(pulse-merge): held runtime-pending CI gate lets absent downstream required contexts mask a terminal failure #bug #pulse #interactive tier:standard assignee:marcusquinn ref:GH#40403 logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19391-brief.md]
 
 ## In Progress
 
