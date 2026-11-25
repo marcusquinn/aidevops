@@ -103,6 +103,18 @@ _resolve_log_dir() {
 	return 0
 }
 
+# The service builder only embeds OPENCODE_BIN when a validated OpenCode
+# binary resolves. Runners without OpenCode installed (CI) would otherwise
+# omit the directive, so supply a stub binary and accept it deterministically.
+mkdir -p "$HOME/bin"
+printf '#!/usr/bin/env bash\necho "1.0.0"\n' >"$HOME/bin/opencode"
+chmod +x "$HOME/bin/opencode"
+export OPENCODE_BIN="$HOME/bin/opencode"
+
+_setup_validate_opencode_binary() {
+	return 0
+}
+
 setup_supervisor_pulse "Linux"
 
 SERVICE_FILE="$HOME/.config/systemd/user/aidevops-supervisor-pulse.service"

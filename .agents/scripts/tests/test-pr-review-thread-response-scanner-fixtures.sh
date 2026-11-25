@@ -695,7 +695,17 @@ write_worker_outcome() {
 
 process_start_for_pid() {
 	local pid="$1"
-	local process_start=""
+	local process_start="" stat_content=""
+	# Mirror shared-constants.sh _process_start_token: Linux uses /proc start
+	# ticks (field 22), so lock fixtures must record the same token or the
+	# scanner treats the live owner as a recycled PID and reclaims its lock.
+	if [[ -r "/proc/${pid}/stat" ]]; then
+		stat_content=$(<"/proc/${pid}/stat") || stat_content=""
+		stat_content="${stat_content##*) }"
+		process_start=$(printf '%s\n' "$stat_content" | awk '{print $20}') || process_start=""
+		printf '%s\n' "$process_start"
+		return 0
+	fi
 	if [[ -x /bin/ps ]]; then
 		process_start=$(LC_ALL=C /bin/ps -p "$pid" -o lstart= 2>/dev/null | tr -s ' ') || process_start=""
 	else

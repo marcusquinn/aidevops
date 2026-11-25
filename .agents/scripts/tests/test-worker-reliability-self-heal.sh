@@ -128,6 +128,17 @@ define_drift_helper() {
 	fi
 	# shellcheck disable=SC1090
 	eval "$helper_src"
+	# check_launchd_plist_drift is macOS-only (returns early unless
+	# `uname -s` is Darwin). Report Darwin so the drift logic is exercised
+	# on Linux CI runners too.
+	uname() {
+		if [[ "${1:-}" == "-s" ]]; then
+			printf 'Darwin\n'
+			return 0
+		fi
+		command uname "$@"
+		return $?
+	}
 	return 0
 }
 

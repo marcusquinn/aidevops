@@ -218,7 +218,10 @@ test_live_concurrent_owner() {
 	local fake_script="${TEST_ROOT}/pulse-wrapper.sh"
 	cat >"$fake_script" <<'FAKEOF'
 #!/usr/bin/env bash
-exec sleep 60
+sleep 60 &
+child=$!
+trap 'kill "$child" 2>/dev/null; exit 0' TERM
+wait "$child"
 FAKEOF
 	chmod +x "$fake_script"
 	"$fake_script" &

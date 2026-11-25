@@ -277,7 +277,10 @@ test_no_false_positive_from_sibling_wrapper_argv() {
 	local fake_script="${fake_script_dir}/pulse-wrapper.sh"
 	cat >"$fake_script" <<'EOF'
 #!/usr/bin/env bash
-exec sleep 30
+sleep 30 &
+child=$!
+trap 'kill "$child" 2>/dev/null; exit 0' TERM
+wait "$child"
 EOF
 	chmod +x "$fake_script"
 	"$fake_script" &
