@@ -249,13 +249,24 @@ gh_pr_view() {
 	return 1
 }
 
-gh() {
-	printf '%s\n' "$*" >>"$API_LOG"
-	if [[ "${1:-} ${2:-}" == 'api graphql' ]]; then
+feedback_test_gh() {
+	local operation="${2:-}" filter_flag="${3:-}"
+	if [[ "$operation" == graphql ]]; then
 		[[ "$TEST_GRAPHQL_RC" -eq 0 ]] || return 1
 		printf '%s' "$TEST_GRAPHQL_JSON"
-		return 0
+	elif [[ "$filter_flag" == --jq ]]; then
+		printf '%s' "$TEST_ISSUE_JSON" | jq -c '.body // ""'
+	else
+		printf '%s' "$TEST_ISSUE_JSON"
 	fi
+	return 0
+}
+
+gh() {
+	printf '%s\n' "$*" >>"$API_LOG"
+	case "${1:-} ${2:-}" in
+	"api graphql"|"api repos/${SLUG}/issues/501") feedback_test_gh "$@"; return $? ;;
+	esac
 	if [[ "${2:-}" == "repos/${SLUG}/issues?state=open"* ]]; then
 		# GH#38039: only label-filtered candidates are listed.
 		if [[ "${2:-}" != *"labels="* ]]; then
@@ -339,14 +350,6 @@ gh() {
 			return 0
 		fi
 		printf '%s' "$TEST_COMMENTS_JSON"
-		return 0
-	fi
-	if [[ "${1:-}" == "api" && "${2:-}" == "repos/${SLUG}/issues/501" ]]; then
-		if [[ "${3:-}" == --jq ]]; then
-			printf '%s' "$TEST_ISSUE_JSON" | jq -c '.body // ""'
-			return 0
-		fi
-		printf '%s' "$TEST_ISSUE_JSON"
 		return 0
 	fi
 	return 1
