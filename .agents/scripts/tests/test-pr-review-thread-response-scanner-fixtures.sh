@@ -703,7 +703,9 @@ process_start_for_pid() {
 	if [[ -r "/proc/${pid}/stat" ]]; then
 		stat_content=$(<"/proc/${pid}/stat") || stat_content=""
 		stat_content="${stat_content##*) }"
-		process_start=$(printf '%s\n' "$stat_content" | awk '{print $20}') || process_start=""
+		local -a stat_fields=()
+		read -r -a stat_fields <<<"$stat_content" || true
+		process_start="${stat_fields[19]:-}"
 		printf '%s\n' "$process_start"
 		return 0
 	fi
