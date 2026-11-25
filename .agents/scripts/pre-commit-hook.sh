@@ -1536,19 +1536,22 @@ check_workflow_files() {
 # pre-push:   slower network-dependent checks (secretlint, SonarCloud, CodeRabbit)
 # Single script, mode selected by HOOK_MODE env var or $(basename "$0").
 
+check_gate_blocked_worktree() {
+	local helper="${SCRIPT_DIR}/gate-blocked-marker-helper.sh"
+	local output=""
+	[[ -x "$helper" ]] || return 0
+	output=$("$helper" check . 2>&1) && return 0
+	printf '%s\n' "$output" >&2
+	print_error "Commit rejected: maintainer gate blocked this worktree"
+	return 1
+}
+
 main_pre_commit() {
 	echo -e "${BLUE}Pre-commit Quality Validation${NC}" >&2
 	echo -e "${BLUE}================================${NC}" >&2
 
 	# GH#40288: refuse commits in a worktree left by a blocked maintainer gate.
-	if [[ -x "${SCRIPT_DIR}/gate-blocked-marker-helper.sh" ]]; then
-		local gate_marker_output=""
-		gate_marker_output=$("${SCRIPT_DIR}/gate-blocked-marker-helper.sh" check . 2>&1) || {
-			printf '%s\n' "$gate_marker_output" >&2
-			print_error "Commit rejected: maintainer gate blocked this worktree"
-			exit 1
-		}
-	fi
+	check_gate_blocked_worktree || exit 1
 
 	# Always run TODO.md validation (even if no shell files changed)
 	validate_duplicate_task_ids || {
