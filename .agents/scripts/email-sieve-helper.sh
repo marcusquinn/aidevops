@@ -843,9 +843,7 @@ COPY OPTIONS
   --yes                Confirm copy-to-remove (otherwise preview removal)
   copy-to requires exclusive filter access: stop webmail/other Sieve writers.
   Conflict checks and installation are not an atomic server transaction.
-  --secret is also accepted by list-scripts, show-script and delete-script.
-  delete-script refuses the active script unless --deactivate is given
-  (which turns filtering off before deleting).
+  --secret also works with list/show/delete-script; delete-script needs --deactivate for the active script.
 ADD-PATTERN OPTIONS
   --type <type>         Pattern type: sender|domain|subject|list-id|header|transaction|mailing-list|notification
   --value <value>       Pattern value (email, domain, subject text, or header:value)
