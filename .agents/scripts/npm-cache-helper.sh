@@ -191,6 +191,7 @@ _npm_cache_format_bytes() {
 }
 
 _npm_cache_status() {
+	local mode="${1:-read-only}"
 	local report=""
 	local cache_path=""
 	local total_bytes=""
@@ -214,7 +215,12 @@ _npm_cache_status() {
 	ok) print_success "npm cache is below the advisory threshold" ;;
 	*) print_warning "npm cache size is unavailable${error:+ ($error)}" ;;
 	esac
-	printf 'No cleanup was performed. npm remains the cache owner.\n'
+	case "$mode" in
+	post-clean) printf 'npm cache clean completed through npm.\n' ;;
+	post-verify) printf 'npm cache verify completed.\n' ;;
+	pre-clean) ;;
+	*) printf 'No cleanup was performed. npm remains the cache owner.\n' ;;
+	esac
 	return 0
 }
 
@@ -235,7 +241,7 @@ _npm_cache_verify() {
 	}
 	printf 'Running npm-owned integrity verification and garbage collection...\n'
 	npm cache verify --cache "$cache_path"
-	_npm_cache_status
+	_npm_cache_status post-verify
 	return 0
 }
 
@@ -270,7 +276,7 @@ _npm_cache_clean() {
 		print_error "npm cache path is unavailable"
 		return 1
 	}
-	_npm_cache_status
+	_npm_cache_status pre-clean
 	if [[ "$apply" -ne 1 ]]; then
 		printf 'Dry run only. This would ask npm to clear its cache at %s.\n' "$(_npm_cache_display_path "$cache_path")"
 		printf 'After review, run: npm-cache-helper.sh clean --apply --confirm %s\n' "$NPM_CACHE_CONFIRM_TOKEN"
@@ -282,7 +288,7 @@ _npm_cache_clean() {
 	fi
 	printf 'Running npm cache clean --force for %s...\n' "$(_npm_cache_display_path "$cache_path")"
 	npm cache clean --force --cache "$cache_path"
-	_npm_cache_status
+	_npm_cache_status post-clean
 	return 0
 }
 
