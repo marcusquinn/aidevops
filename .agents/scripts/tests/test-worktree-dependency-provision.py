@@ -316,14 +316,19 @@ fi
         self.run_restore()
         self.assertFalse((self.wt / "node_modules").exists())
 
+    @staticmethod
+    def fallback_clone(_source, output, name):
+        """Platform-independent stand-in for an unsupported clone boundary."""
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        return os.open(name, flags, 0o600, dir_fd=output), False
+
     def test_workspace_unsupported_clone_keeps_byte_budget(self):
         from unittest.mock import patch
-        import errno
         self.make_workspace()
         modules, inventory = self.validate()
         stage = self.wt / "stage"
         stage.mkdir(mode=0o700)
-        with patch("_worktree_dependency_payload.fcntl.ioctl", side_effect=OSError(errno.ENOTSUP, "fixture")):
+        with patch("_worktree_dependency_payload.clone_descriptor", side_effect=self.fallback_clone):
             with self.assertRaisesRegex(provision.Rejected, "byte-budget-exceeded"):
                 provision.snapshot(modules, 10, 20000, stage, inventory)
 
@@ -357,14 +362,13 @@ fi
 
     def test_workspace_fallback_copies_multiple_chunks(self):
         from unittest.mock import patch
-        import errno
         self.make_workspace()
         payload = self.modules / "example/payload"
         payload.write_bytes(b"fixture" * 200000)
         modules, inventory = self.validate()
         stage = self.wt / "stage"
         stage.mkdir(mode=0o700)
-        with patch("_worktree_dependency_payload.fcntl.ioctl", side_effect=OSError(errno.ENOTSUP, "fixture")):
+        with patch("_worktree_dependency_payload.clone_descriptor", side_effect=self.fallback_clone):
             provision.snapshot(modules, 67108864, 20000, stage, inventory)
         copied = stage / ".pnpm/example@1.0.0/node_modules/example/payload"
         self.assertEqual(copied.read_bytes(), payload.read_bytes())

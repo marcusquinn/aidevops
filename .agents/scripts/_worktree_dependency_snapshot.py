@@ -4,6 +4,7 @@
 
 import hashlib
 import os
+import re
 from pathlib import Path
 import stat
 from contextlib import ExitStack
@@ -121,6 +122,32 @@ class Snapshot(PayloadCopies):
         if output is not None:
             os.symlink(target, rel.name, dir_fd=output)
 
+    def check_closure(self, package_dir, visited):
+        """Require each non-optional dependency of a pnpm-store package to be linked."""
+        if package_dir in visited or ".pnpm" not in package_dir.parts:
+            return
+        visited.add(package_dir)
+        manifest = object_json(regular_bytes(package_dir / "package.json"))
+        name = manifest.get("name")
+        if not isinstance(name, str):
+            raise Rejected("incomplete-package-inventory")
+        siblings = package_dir.parents[name.count("/")]
+        required = set(manifest.get("dependencies", {}))
+        required -= set(manifest.get("optionalDependencies", {}))
+        for dependency in sorted(required):
+            if not re.fullmatch(r"(?:@[a-zA-Z0-9_.-]+/)?[a-zA-Z0-9_.-]+", dependency):
+                raise Rejected("invalid-dependency-name")
+            link = siblings / dependency
+            if not os.path.lexists(link):
+                raise Rejected("incomplete-package-inventory")
+            try:
+                resolved = link.resolve(strict=True)
+            except (FileNotFoundError, NotADirectoryError):
+                raise Rejected("dangling-dependency-link") from None
+            if not resolved.is_relative_to(self.boundary):
+                raise Rejected("escaping-package-root")
+            self.check_closure(resolved, visited)
+
     def scan(self, copy_to):
         with ExitStack() as stack:
             fd = stack.enter_context(open_directory(self.root))
@@ -141,6 +168,7 @@ class Snapshot(PayloadCopies):
                 if not os.path.lexists(self.root / rel):
                     raise Rejected("incomplete-package-inventory")
                 self.check_package_root(rel, (self.root / rel).lstat().st_mode)
+                self.check_closure(self.resolved_inside(rel), set())
         digest = hashlib.sha256()
         for name, value in sorted(self.records.items()):
             digest.update(name.encode() + b"\0" + value)

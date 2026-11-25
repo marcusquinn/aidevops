@@ -105,12 +105,12 @@ def package_directories(repo, worktree, relative):
     return source, dest
 
 
-def matching_package(source, dest):
+def matching_package(source, dest, require_name=True):
     package = regular_bytes(source / "package.json")
     if package != regular_bytes(dest / "package.json"):
         raise Rejected("stale-package-identity")
     parsed = object_json(package)
-    if not parsed.get("name"):
+    if require_name and not parsed.get("name"):
         raise Rejected("missing-package-identity")
     return parsed
 
@@ -134,7 +134,7 @@ def identity(repo, worktree, relative):
         if relative not in members:
             raise Rejected("not-workspace-member")
         source, dest = package_directories(repo, worktree, relative)
-        manifest = matching_package(source, dest)
+        manifest = matching_package(source, dest, require_name=relative == Path("."))
         required = required_dependencies(manifest)
         return contained_path(source / "node_modules"), (
             "workspace", inventory, repo, source / "node_modules", required, worktree)
@@ -164,8 +164,10 @@ def workspace_identity(repo, worktree):
     members = workspace_members(worktree, workspace_patterns(config))
     for relative in members:
         source, dest = package_directories(repo, worktree, relative)
-        manifest = matching_package(source, dest)
-        inventory.add(f"{manifest.get('name')}@{manifest.get('version')}")
+        is_root = relative == Path(".")
+        manifest = matching_package(source, dest, require_name=not is_root)
+        if manifest.get("name"):
+            inventory.add(f"{manifest.get('name')}@{manifest.get('version')}")
     return sorted(members), inventory
 
 

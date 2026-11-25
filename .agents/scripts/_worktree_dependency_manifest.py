@@ -82,7 +82,7 @@ def workspace_members(worktree, patterns):
                 continue
             if (path / "package.json").is_file():
                 (excluded if pattern.startswith("!") else members).add(relative)
-    return members - excluded
+    return (members - excluded) | {Path(".")}
 
 
 def required_dependencies(manifest):
