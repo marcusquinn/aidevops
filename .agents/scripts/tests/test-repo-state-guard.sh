@@ -114,12 +114,17 @@ if [[ "$1" == "pr" && "$2" == "list" ]]; then
   printf '%s\n' '[]'
   exit 0
 fi
-if [[ "$1" == "api" && "$2" == repos/*/issues/866 ]]; then
-  if [[ "$*" == *--jq* ]]; then
-    printf '\n'
-  else
-    printf '%s\n' '{"state":"open","labels":[],"body":"fixture","assignees":[]}'
-  fi
+if [[ "$1" == "api" && ( "$2" == repos/*/issues/866 || "$2" == /repos/*/issues/866 ) ]]; then
+  snapshot='{"state":"open","labels":[{"name":"status:available"}],"body":"fixture","title":"fixture","assignees":[]}'
+  shift 2
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == --jq ]]; then
+      jq -r "$2" <<<"$snapshot"
+      exit $?
+    fi
+    shift
+  done
+  printf '%s\n' "$snapshot"
   exit 0
 fi
 exit 0

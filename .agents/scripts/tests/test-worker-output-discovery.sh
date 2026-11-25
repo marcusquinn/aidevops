@@ -27,8 +27,8 @@
 # -----------------
 #   1. Work done in a separate worktree (Mode B simulation):
 #      WORKER_ISSUE_NUMBER=99999, work_dir on main, feature worktree on
-#      bugfix/gh-99999-fix → branch_name should be "bugfix/gh-99999-fix",
-#      not redirect classification. Expected: noop in the supplied main tree.
+#      bugfix/gh-99999-fix must not redirect classification away from main.
+#      Expected: noop in the supplied main tree.
 #
 #   2. WORKER_ISSUE_NUMBER unset (non-issue worker / backward compat):
 #      work_dir on main with no feature worktree → falls back to work_dir.
