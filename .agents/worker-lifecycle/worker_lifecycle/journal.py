@@ -67,6 +67,49 @@ def automatic_compaction(store: LifecycleRegistry, connection: sqlite3.Connectio
             print("[worker-lifecycle] automatic-compaction-skipped", file=sys.stderr)
 
 
+# Retired-generation history. A shared retirement set avoids rescanning the
+# entire journal for every candidate; GROUP BY permits indexed lookups.
+# Reservation checks name generation_admissions directly so each one is a
+# primary-key/UNIQUE index lookup. A JSON copy of that table was rescanned
+# for every candidate row, holding the writer for about 10 s on a 90,000-event
+# journal and refusing hook admission with database-locked (GH#40293).
+_RETIRED_HISTORY_BODY = (
+    "retired AS ("
+    "SELECT json_extract(payload,'$.type') AS kind, "
+    "json_extract(payload,'$.generation_id') AS generation_id, "
+    "json_extract(payload,'$.archive') AS archive FROM events "
+    "WHERE json_extract(payload,'$.type') IN ('worktree-retired','legacy-worktree-retired') "
+    "AND julianday(recorded_at)<=julianday('now',?) GROUP BY kind,generation_id,archive) "
+    "SELECT e.* FROM events e WHERE julianday(e.recorded_at)<=julianday('now',?) "
+    "AND ((json_extract(e.payload,'$.type') IN "
+    "('close-admission','created-worktree','retirement-removing',"
+    "'worktree-recovery-authorized','reclaim-unowned-authorized') AND EXISTS ("
+    "SELECT 1 FROM generations g JOIN retired ON retired.generation_id=g.generation_id "
+    "WHERE g.generation_id=json_extract(e.payload,'$.generation_id') "
+    "AND retired.kind='worktree-retired' "
+    "AND NOT EXISTS (SELECT 1 FROM generation_admissions a WHERE a.generation_id=g.generation_id) "
+    "AND NOT EXISTS (SELECT 1 FROM bindings b JOIN runs r USING(run_id) "
+    "WHERE b.generation_id=g.generation_id AND r.state='bound'))) "
+    "OR (json_extract(e.payload,'$.type') IN ('legacy-worktree-archive','legacy-worktree-removal-planned') "
+    "AND EXISTS (SELECT 1 FROM retired WHERE retired.kind='legacy-worktree-retired' "
+    "AND retired.archive=json_extract(e.payload,'$.archive')) "
+    "AND NOT EXISTS (SELECT 1 FROM generation_admissions a "
+    "WHERE a.path=json_extract(e.payload,'$.source') OR a.generation_id IN "
+    "(SELECT value FROM json_each(e.payload,'$.generations'))) "
+    "AND NOT EXISTS (SELECT 1 FROM generations g JOIN bindings b USING(generation_id) "
+    "JOIN runs r USING(run_id) WHERE r.state='bound' AND (g.path=json_extract(e.payload,'$.source') "
+    "OR g.generation_id IN (SELECT value FROM json_each(e.payload,'$.generations')))))) "
+    "ORDER BY e.sequence LIMIT 1000"
+)
+# Fixed module literals only; no caller input reaches the SQL text.
+_RETIRED_HISTORY_QUERY = "WITH " + _RETIRED_HISTORY_BODY
+# Schema 1 has no admission table: an empty CTE of the same name means no reservations.
+_RETIRED_HISTORY_QUERY_SCHEMA_ONE = (
+    "WITH generation_admissions(generation_id, path) AS (SELECT NULL, NULL WHERE 0), "
+    + _RETIRED_HISTORY_BODY
+)
+
+
 def compact(store: LifecycleRegistry, connection: sqlite3.Connection, age: int, *, apply: bool) -> dict:
     """Archive bounded batches; a rollback may leave duplicate archive evidence.
 
@@ -85,40 +128,12 @@ def compact(store: LifecycleRegistry, connection: sqlite3.Connection, age: int, 
         "JOIN runs live ON live.run_id=peer.run_id WHERE own.run_id=r.run_id AND live.state='bound') "
         "ORDER BY e.sequence LIMIT 1000", (f"-{age} seconds",),
     ).fetchall()
-    # Schema 1 has no admission table. A shared retirement set avoids rescanning
-    # the entire journal for every candidate; GROUP BY permits indexed lookups.
-    reservations = ([list(row) for row in connection.execute(
-        "SELECT generation_id,path FROM generation_admissions")] if connection.execute(
+    # Schema 1 has no admission table; an empty stand-in keeps one query body.
+    schema_two = connection.execute(
         "SELECT 1 FROM sqlite_master WHERE name='generation_admissions'").fetchone()
-        else [])
     rows += connection.execute(
-        "WITH reservations AS (SELECT json_extract(value,'$[0]') AS generation_id, "
-        "json_extract(value,'$[1]') AS path FROM json_each(?)), retired AS ("
-        "SELECT json_extract(payload,'$.type') AS kind, "
-        "json_extract(payload,'$.generation_id') AS generation_id, "
-        "json_extract(payload,'$.archive') AS archive FROM events "
-        "WHERE json_extract(payload,'$.type') IN ('worktree-retired','legacy-worktree-retired') "
-        "AND julianday(recorded_at)<=julianday('now',?) GROUP BY kind,generation_id,archive) "
-        "SELECT e.* FROM events e WHERE julianday(e.recorded_at)<=julianday('now',?) "
-        "AND ((json_extract(e.payload,'$.type') IN "
-        "('close-admission','created-worktree','retirement-removing',"
-        "'worktree-recovery-authorized','reclaim-unowned-authorized') AND EXISTS ("
-        "SELECT 1 FROM generations g JOIN retired ON retired.generation_id=g.generation_id "
-        "WHERE g.generation_id=json_extract(e.payload,'$.generation_id') "
-        "AND retired.kind='worktree-retired' "
-        "AND NOT EXISTS (SELECT 1 FROM reservations a WHERE a.generation_id=g.generation_id) "
-        "AND NOT EXISTS (SELECT 1 FROM bindings b JOIN runs r USING(run_id) "
-        "WHERE b.generation_id=g.generation_id AND r.state='bound'))) "
-        "OR (json_extract(e.payload,'$.type') IN ('legacy-worktree-archive','legacy-worktree-removal-planned') "
-        "AND EXISTS (SELECT 1 FROM retired WHERE retired.kind='legacy-worktree-retired' "
-        "AND retired.archive=json_extract(e.payload,'$.archive')) "
-        "AND NOT EXISTS (SELECT 1 FROM reservations a "
-        "WHERE a.path=json_extract(e.payload,'$.source') OR a.generation_id IN "
-        "(SELECT value FROM json_each(e.payload,'$.generations'))) "
-        "AND NOT EXISTS (SELECT 1 FROM generations g JOIN bindings b USING(generation_id) "
-        "JOIN runs r USING(run_id) WHERE r.state='bound' AND (g.path=json_extract(e.payload,'$.source') "
-        "OR g.generation_id IN (SELECT value FROM json_each(e.payload,'$.generations')))))) "
-        "ORDER BY e.sequence LIMIT 1000", (encode(reservations), f"-{age} seconds", f"-{age} seconds"),
+        _RETIRED_HISTORY_QUERY if schema_two else _RETIRED_HISTORY_QUERY_SCHEMA_ONE,
+        (f"-{age} seconds", f"-{age} seconds"),
     ).fetchall()
     # Finished-worktree reclaim evidence (GH#38348) describes trees already gone
     # or refused; once past retention it is archived like any other history.
