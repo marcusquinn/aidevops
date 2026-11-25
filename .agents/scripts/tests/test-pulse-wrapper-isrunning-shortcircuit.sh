@@ -280,13 +280,22 @@ test_no_false_positive_from_sibling_wrapper_argv() {
 sleep 30 &
 child=$!
 trap 'kill "$child" 2>/dev/null; exit 0' TERM
+: >"$1"
 wait "$child"
 EOF
 	chmod +x "$fake_script"
-	"$fake_script" &
+	local ready_file="${fake_script_dir}/ready"
+	"$fake_script" "$ready_file" &
 	local sibling_pid=$!
 	# shellcheck disable=SC2064
 	trap "kill $sibling_pid 2>/dev/null || true; rm -rf '$fake_script_dir'" RETURN
+
+	# Wait (bounded) for the fixture to install its trap and signal readiness.
+	local waited=0
+	while [[ ! -e "$ready_file" && "$waited" -lt 50 ]]; do
+		sleep 0.1
+		waited=$((waited + 1))
+	done
 
 	# Sanity check: pgrep DOES see the sibling.
 	if ! pgrep -f "(^|/)pulse-wrapper\\.sh( |\$)" 2>/dev/null | grep -q "^${sibling_pid}\$"; then
