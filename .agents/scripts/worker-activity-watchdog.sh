@@ -106,6 +106,11 @@ HARD_KILL_SECONDS="${WORKER_STALL_HARD_KILL_SECONDS:-1500}"
 # GH#40157: fresh isolated-DB progress earns one longer absolute cap, not
 # a sliding timeout. Zero opts out of the extension; the base cap still applies.
 HARD_KILL_ACTIVE_SECONDS="${WORKER_STALL_HARD_KILL_ACTIVE_SECONDS:-3000}"
+# t19399 / GH#40441: at the elapsed cap, a tool started in this attempt may run
+# to its own declared OpenCode timeout, bounded to this many seconds plus a
+# fixed grace. Zero disables the wait; the sandbox timeout stays the backstop.
+INFLIGHT_TOOL_MAX_SECONDS="${WORKER_STALL_INFLIGHT_TOOL_MAX_SECONDS:-1800}"
+INFLIGHT_TOOL_GRACE_SECONDS=60
 # t3056 / GH#21781: CPU threshold below which a stalled worker is considered
 # truly stuck (vs just not writing output). Process tree CPU >= this value
 # defers the stall kill — the worker is alive but doing non-output work
@@ -213,6 +218,7 @@ _parse_args() {
 	if [[ "$HARD_KILL_ACTIVE_SECONDS" -lt "$HARD_KILL_SECONDS" || "$HARD_KILL_ACTIVE_SECONDS" -eq 0 ]]; then
 		HARD_KILL_ACTIVE_SECONDS="$HARD_KILL_SECONDS"
 	fi
+	[[ "${INFLIGHT_TOOL_MAX_SECONDS:-}" =~ ^[0-9]+$ ]] || INFLIGHT_TOOL_MAX_SECONDS=1800
 	[[ "$DB_ACTIVITY_WINDOW" =~ ^[0-9]+$ ]] || DB_ACTIVITY_WINDOW=120
 	[[ "$WORKER_PID" =~ ^[0-9]+$ ]] || {
 		echo "Error: --worker-pid must be numeric" >&2
@@ -484,6 +490,50 @@ _watchdog_db_part_activity() {
 	[[ "$age" -lt 0 ]] && age=0
 	[[ "$age" -le "$DB_ACTIVITY_WINDOW" ]] || return 1
 	_MONITOR_DB_ACTIVITY_AGE="$age"
+	return 0
+}
+
+#######################################
+# t19399 / GH#40441: find the latest bounded deadline of a tool still running
+# in the worker's isolated DB. OpenCode enforces each tool's declared
+# `state.input.timeout`, but a tool that prints nothing until it exits (lock
+# waits, CI waits, piped commands) leaves part.time_updated stale, so the
+# GH#40157 streamed-progress extension cannot see it. Only parts started in
+# this attempt with a numeric positive timeout count; parts left running by
+# an earlier attempt started before _MONITOR_START_EPOCH.
+# Fails open: no DB, no sqlite3, an old schema or a locked DB return 1.
+# Sets _MONITOR_INFLIGHT_PART, _MONITOR_INFLIGHT_START and
+# _MONITOR_INFLIGHT_DEADLINE (epoch seconds, timeout bounded plus grace) on 0.
+# Returns: 0 when such a deadline exists, 1 otherwise
+#######################################
+_watchdog_inflight_tool_deadline() {
+	_MONITOR_INFLIGHT_PART=""
+	_MONITOR_INFLIGHT_START=""
+	_MONITOR_INFLIGHT_DEADLINE=""
+	local max_seconds="${INFLIGHT_TOOL_MAX_SECONDS:-0}" grace="${INFLIGHT_TOOL_GRACE_SECONDS:-60}"
+	local started_after="${_MONITOR_START_EPOCH:-}"
+	[[ -n "$WORKER_DB" && -r "$WORKER_DB" ]] || return 1
+	[[ "$max_seconds" =~ ^[0-9]+$ && "$max_seconds" -gt 0 ]] || return 1
+	[[ "$grace" =~ ^[0-9]+$ && "$started_after" =~ ^[0-9]+$ ]] || return 1
+	command -v sqlite3 >/dev/null 2>&1 || return 1
+	local query="" row="" part_id="" start_s="" deadline=""
+	query="SELECT id, start_s, start_s + min(timeout_s, ${max_seconds}) + ${grace} AS deadline
+		FROM (SELECT id,
+			CAST(json_extract(data, '\$.state.time.start') AS INTEGER) / 1000 AS start_s,
+			CAST(json_extract(data, '\$.state.input.timeout') AS INTEGER) / 1000 AS timeout_s
+			FROM part
+			WHERE json_extract(data, '\$.type') = 'tool'
+				AND json_extract(data, '\$.state.status') = 'running'
+				AND json_type(data, '\$.state.time.start') IN ('integer', 'real')
+				AND json_type(data, '\$.state.input.timeout') IN ('integer', 'real'))
+		WHERE start_s >= ${started_after} AND timeout_s > 0
+		ORDER BY deadline DESC LIMIT 1;"
+	row=$(sqlite3 -readonly -separator '|' -cmd ".timeout 2000" "$WORKER_DB" "$query" 2>/dev/null) || return 1
+	IFS='|' read -r part_id start_s deadline <<<"$row"
+	[[ -n "$part_id" && "$start_s" =~ ^[0-9]+$ && "$deadline" =~ ^[0-9]+$ ]] || return 1
+	_MONITOR_INFLIGHT_PART="$part_id"
+	_MONITOR_INFLIGHT_START="$start_s"
+	_MONITOR_INFLIGHT_DEADLINE="$deadline"
 	return 0
 }
 
@@ -768,6 +818,7 @@ _monitor_init_state() {
 	_MONITOR_LAST_DEFER_REASON=""
 	_MONITOR_CAP_LIVENESS=""
 	_MONITOR_CAP_EXTENDED=0
+	_MONITOR_INFLIGHT_DEFERRED_PART=""
 	_MONITOR_START_EPOCH=$(date +%s)
 	_WATCHDOG_START_EPOCH="$_MONITOR_START_EPOCH"
 	return 0
@@ -853,6 +904,34 @@ _monitor_defer_stall() {
 }
 
 #######################################
+# t19399 / GH#40441: at the elapsed cap, wait while a tool started in this
+# attempt is inside its bounded declared timeout. Each tool deadline is fixed
+# when the tool starts, so a new wait needs a new model turn; the sandbox
+# timeout remains the absolute backstop. Logs once per tool part.
+#
+# Arguments:
+#   $1 - current epoch seconds
+#   $2 - total elapsed seconds
+# Returns:
+#   0 when the cap kill waits for the in-flight tool, 1 otherwise
+#######################################
+_monitor_cap_inflight_tool_wait() {
+	local now_epoch="$1" elapsed_total="$2"
+	_watchdog_inflight_tool_deadline || return 1
+	[[ "$now_epoch" -lt "$_MONITOR_INFLIGHT_DEADLINE" ]] || return 1
+	if [[ "$_MONITOR_INFLIGHT_PART" != "${_MONITOR_INFLIGHT_DEFERRED_PART:-}" ]]; then
+		local lifecycle_event=""
+		printf -v lifecycle_event '[lifecycle] worker_cap_deferred_inflight_tool pid=%s tool_age=%ss deadline_in=%ss elapsed=%ss hard_kill=%ss ts=%s' \
+			"$WORKER_PID" "$((now_epoch - _MONITOR_INFLIGHT_START))" "$((_MONITOR_INFLIGHT_DEADLINE - now_epoch))" \
+			"$elapsed_total" "$HARD_KILL_SECONDS" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+		worker_attempt_observability_enrich lifecycle_event "$lifecycle_event"
+		_watchdog_record_event "$lifecycle_event"
+		_MONITOR_INFLIGHT_DEFERRED_PART="$_MONITOR_INFLIGHT_PART"
+	fi
+	return 0
+}
+
+#######################################
 # Enforce the total elapsed hard-kill cap.
 #
 # Arguments:
@@ -883,6 +962,12 @@ _monitor_enforce_hard_kill() {
 			_watchdog_record_event "$lifecycle_event"
 			_MONITOR_CAP_EXTENDED=1
 		fi
+		return 0
+	fi
+
+	# t19399 / GH#40441: bounded tool work waits for its own deadline. The
+	# caller's confirmed-stall chain still demands live evidence afterwards.
+	if _monitor_cap_inflight_tool_wait "$now_epoch" "$elapsed_total"; then
 		return 0
 	fi
 
