@@ -92,7 +92,7 @@ init_session_dir() {
 
 privacy_redact() {
 	local text="$1"
-	text=$(printf '%s' "$text" | sed -E 's|/Users/[^ ]*|[local-path]|g; s|/home/[^ ]*|[local-path]|g; s|/private/var/[^ ]*|[local-path]|g; s|/var/folders/[^ ]*|[local-path]|g; s|/var/tmp/[^ ]*|[local-path]|g; s|/tmp/[^ ]*|[local-path]|g; s|~/Git/[^ ]*|[local-path]|g')
+	text=$(printf '%s' "$text" | sed -E 's|/Users/[^ ]*|[local-path]|g; s|/home/[^ ]*|[local-path]|g; s|/private/var/[^ ]*|[local-path]|g; s|/var/folders/[^ ]*|[local-path]|g; s|/var/tmp/[^ ]*|[local-path]|g; s|/tmp/[^ ]*|[local-path]|g; s|/run/[^ ]*|[local-path]|g; s|~/Git/[^ ]*|[local-path]|g')
 	text=$(printf '%s' "$text" | sed -E 's/(^|[^A-Za-z0-9_-])(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/\1[redacted-credential]/g')
 	text=$(printf '%s' "$text" | sed -E 's/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/[email]/g')
 	printf '%s' "$text"
@@ -102,7 +102,7 @@ privacy_redact() {
 # Redact a single path value in full, including spaces in the path.
 privacy_redact_path() {
 	local value="$1"
-	local roots='Users|home|private/var|var/folders|var/tmp|tmp'
+	local roots='Users|home|private/var|var/folders|var/tmp|tmp|run'
 	local redacted=""
 	redacted=$(printf '%s' "$value" | sed -E "s#^(/(${roots})|~)/.*#[local-path]#")
 	privacy_redact "$redacted"
