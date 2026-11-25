@@ -2514,7 +2514,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19357 feat(worktree): clone pnpm workspace node_modules (root + members) into fresh worktrees instead of full install #auto-dispatch #feat ref:GH#40257 pr:#40260 completed:2026-11-25
 
-- [ ] t19358 Add prompt-cache keep-alive to the OpenCode v2 provider-auth adapter #auto-dispatch #feat ref:GH#40264
+- [x] t19358 Add prompt-cache keep-alive to the OpenCode v2 provider-auth adapter #auto-dispatch #feat ref:GH#40264 pr:#40274 completed:2026-11-25
 
 - [x] t19367 perf(pulse): size the prelaunch budget from observed prelaunch stage times so loaded runners stop aborting claimed launches #auto-dispatch #feat #priority:high tier:standard ref:GH#40321 logged:2026-11-25 -> [todo/tasks/t19367-brief.md] pr:#40325 completed:2026-11-25
 
@@ -2536,7 +2536,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19386 fix(terminal-blocker): map a login input owner through verified repo permission so input_required holds instead of looping as unknown #bug #interactive tier:standard assignee:marcusquinn ref:GH#40384 logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19386-brief.md]
 - [x] t19381 fix(worktree-deps): fail fast on pnpm hoisted node-linker instead of walking every workspace member #bug #performance #interactive tier:standard assignee:marcusquinn ref:GH#40383 logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19381-brief.md] pr:#40387 completed:2026-11-25
-- [ ] t19391 fix(pulse-merge): held runtime-pending CI gate lets absent downstream required contexts mask a terminal failure #bug #pulse #interactive tier:standard assignee:marcusquinn ref:GH#40403 logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19391-brief.md]
+- [x] t19391 fix(pulse-merge): held runtime-pending CI gate lets absent downstream required contexts mask a terminal failure #bug #pulse #interactive tier:standard assignee:marcusquinn ref:GH#40403 logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19391-brief.md] pr:#40404 completed:2026-11-25
 
 ## In Progress
 
