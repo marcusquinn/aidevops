@@ -7,8 +7,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$SCRIPT_DIR/project-node-runtime.sh"
 root=$(mktemp -d)
 trap 'rm -rf "$root"' EXIT
-# Keep host runtimes (for example Homebrew node@24) out of the candidate set.
-export AIDEVOPS_NODE_BREW_PREFIXES="$root/missing" NVM_DIR="$root/missing" MISE_DATA_DIR="$root/missing" N_PREFIX="$root/missing"
+# Volta and n also enumerate fixed HOME-relative paths, so isolate HOME itself.
+export HOME="$root/home"
+# Keep host runtimes (for example Homebrew or Nix Node) out of the candidate set.
+export AIDEVOPS_NODE_BREW_PREFIXES="$root/missing" AIDEVOPS_NODE_NIX_PROFILES="$root/missing" NVM_DIR="$root/missing" MISE_DATA_DIR="$root/missing" N_PREFIX="$root/missing"
 mkdir -p "$root/project/packages/app" "$root/active" "$root/fnm/node-versions/v24.18.0/installation/bin"
 # A fake active runtime lets the test run regardless of the host Node version.
 printf '#!/bin/sh\nprintf "v26.0.0\\n"\n' >"$root/active/node"
@@ -80,6 +82,60 @@ if PATH="$root/active:$PATH" AIDEVOPS_NODE_BREW_PREFIXES="$root/sys26" AIDEVOPS_
 	printf 'FAIL shared prefix Node with another major accepted\n'; exit 1
 fi
 printf 'PASS shared prefix Node with another major fails closed\n'
+
+# GH#40354: Nix profile bins must expose only the selected Node toolchain.
+for profile in "$root/nix-home/.nix-profile" "$root/nix-state/nix/profiles/profile" "$root/nix/per-user/test/profile" "$root/nix-system/sw"; do
+	mkdir -p "$profile/bin"
+	cp "$root/sys/bin/node" "$profile/bin/node"
+	for tool in npm npx corepack git gh jq python3; do
+		cp "$root/sys/bin/npm" "$profile/bin/$tool"
+	done
+	actual=$(PATH="$root/active:$PATH" FNM_DIR="$root/missing" AIDEVOPS_NODE_NIX_PROFILES="$root/missing $profile" AIDEVOPS_TEMP_DIR="$root/tmp" _project_node_bin "$root/project" packages/app)
+	[[ -n "$actual" && "$actual" == "$root/tmp/"* && "$actual" != "$profile/bin" ]] || {
+		printf 'FAIL Nix shared bin returned: %s\n' "$actual"
+		exit 1
+	}
+	[[ "$("$actual/node" --version)" == v24.18.0 ]] || {
+		printf 'FAIL Nix Node version\n'
+		exit 1
+	}
+	for tool in node npm npx corepack; do
+		[[ -L "$actual/$tool" ]] || {
+			printf 'FAIL missing Nix toolchain link: %s\n' "$tool"
+			exit 1
+		}
+	done
+	for tool in git gh jq python3; do
+		[[ ! -e "$actual/$tool" && "$(PATH="$actual:$PATH" command -v "$tool")" == "$(command -v "$tool")" ]] || {
+			printf 'FAIL Nix reordered tool: %s\n' "$tool"
+			exit 1
+		}
+	done
+done
+printf 'PASS Nix profile layouts resolve without reordering unrelated tools\n'
+if PATH="$root/active:$PATH" FNM_DIR="$root/missing" AIDEVOPS_NODE_NIX_PROFILES="$root/sys26" \
+	_project_node_bin "$root/project" packages/app >"$root/output" 2>"$root/error"; then
+	printf 'FAIL Nix Node with another major accepted\n'
+	exit 1
+fi
+rg -q 'Install a matching Node.*Nix' "$root/error" || {
+	printf 'FAIL missing Nix installation diagnostic\n'
+	exit 1
+}
+printf 'PASS incompatible Nix Node fails closed with actionable diagnostic\n'
+
+# Default HOME/XDG profile paths preserve spaces without the test override.
+for profile in "$root/home with spaces/.nix-profile" "$root/state with spaces/nix/profiles/profile"; do
+	mkdir -p "$profile/bin"
+	cp "$root/sys/bin/node" "$profile/bin/node"
+	actual=$(PATH="$root/active:$PATH" HOME="$root/home with spaces" XDG_STATE_HOME="$root/state with spaces" FNM_DIR="$root/missing" AIDEVOPS_NODE_NIX_PROFILES="" AIDEVOPS_TEMP_DIR="$root/tmp" _project_node_bin "$root/project" packages/app)
+	[[ -n "$actual" && "$actual" == "$root/tmp/"* && "$(readlink "$actual/node")" == "$profile/bin/node" ]] || {
+		printf 'FAIL default Nix profile path with spaces: %s\n' "$actual"
+		exit 1
+	}
+	rm "$profile/bin/node"
+done
+printf 'PASS default HOME and XDG Nix profiles preserve path spaces\n'
 
 # Exercise the worker preparation path without a live dispatch claim.
 # shellcheck source=../headless-runtime-worker-prepare.sh
