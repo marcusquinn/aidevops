@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """
-purelymail_sieve.py - minimal ManageSieve (RFC 5804) client (GH#40230).
+managesieve_client.py - shared ManageSieve (RFC 5804) client (GH#40429).
 
-Run by purelymail-helper.sh inside secret injection:
+Run by email-sieve-helper.sh inside secret injection:
 
-  purelymail_sieve.py PASSWORD_VAR USER list
-  purelymail_sieve.py PASSWORD_VAR USER get NAME
-  purelymail_sieve.py PASSWORD_VAR USER install NAME SCRIPT
-  purelymail_sieve.py PASSWORD_VAR USER remove NAME SCRIPT
+  managesieve_client.py PASSWORD_VAR USER list
+  managesieve_client.py PASSWORD_VAR USER get NAME
+  managesieve_client.py PASSWORD_VAR USER install NAME SCRIPT
+  managesieve_client.py PASSWORD_VAR USER remove NAME SCRIPT
 
 The password is read from the environment variable named PASSWORD_VAR, never
 from argv. `install` runs CHECKSCRIPT, PUTSCRIPT and SETACTIVE, then reads the
@@ -18,8 +18,8 @@ script aside, deletes it only if it still matches SCRIPT, and otherwise puts
 it back.
 
 Exit codes: 0 ok, 1 server/network error, 2 usage error, 4 no such script.
-Host and port default to Purelymail; PURELYMAIL_SIEVE_HOST and
-PURELYMAIL_SIEVE_PORT override them (for a local test server).
+Host is required via SIEVE_HOST (legacy PURELYMAIL_SIEVE_HOST is accepted).
+SIEVE_PORT (legacy PURELYMAIL_SIEVE_PORT) defaults to 4190.
 """
 
 import base64
@@ -31,12 +31,12 @@ import socket
 import ssl
 import sys
 
-HOST = os.environ.get("PURELYMAIL_SIEVE_HOST", "mailserver.purelymail.com")
-PORT = int(os.environ.get("PURELYMAIL_SIEVE_PORT", "4190"))
+HOST = os.environ.get("SIEVE_HOST") or os.environ.get("PURELYMAIL_SIEVE_HOST", "")
+PORT = os.environ.get("SIEVE_PORT") or os.environ.get("PURELYMAIL_SIEVE_PORT", "4190")
 TIMEOUT = 30
 PRE_TLS_WAIT = 1.0
 # copy-to-remove parks a script under NAME + PARK_SUFFIX while checking it;
-# must match PM_SIEVE_PARKED in purelymail-helper.sh.
+# must match the parked name in email-sieve-helper.sh.
 PARK_SUFFIX = ".aidevops-remove"
 # One response token: quoted string, trailing literal size, response code, atom.
 TOKEN_RE = re.compile(rb'"((?:\\.|[^"\\])*)"|\{(\d+)\+?\}$|(\([^)]*\))|(\S+)')
@@ -63,7 +63,7 @@ class Conn:
     """One authenticated ManageSieve session over STARTTLS."""
 
     def __init__(self, user, password):
-        self.sock = socket.create_connection((HOST, PORT), timeout=TIMEOUT)
+        self.sock = socket.create_connection((HOST, int(PORT)), timeout=TIMEOUT)
         self.buf = b""
         status, _rest, items = self.response()
         if status != "OK":
@@ -259,7 +259,10 @@ OPS = {"list": (op_list, 0), "get": (op_get, 1), "install": (op_install, 2), "re
 def main(argv):
     entry = OPS.get(argv[3]) if len(argv) >= 4 else None
     if entry is None or len(argv) - 4 != entry[1]:
-        sys.stderr.write("usage: purelymail_sieve.py PASSWORD_VAR USER list|get NAME|install NAME SCRIPT|remove NAME SCRIPT\n")
+        sys.stderr.write("usage: managesieve_client.py PASSWORD_VAR USER list|get NAME|install NAME SCRIPT|remove NAME SCRIPT\n")
+        return 2
+    if not HOST.strip():
+        sys.stderr.write("sieve: SIEVE_HOST is required (or legacy PURELYMAIL_SIEVE_HOST)\n")
         return 2
     password = os.environ.get(argv[1], "").rstrip("\r\n")
     if not password:
