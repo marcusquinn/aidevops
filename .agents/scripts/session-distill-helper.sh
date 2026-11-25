@@ -99,6 +99,19 @@ privacy_redact() {
 	return 0
 }
 
+# Redact a single path value in full, including spaces in the path.
+privacy_redact_path() {
+	local value="$1"
+	case "$value" in
+	/Users/* | /home/* | /private/var/* | /var/folders/* | /var/tmp/* | /tmp/* | \~/Git/*)
+		printf '%s' "[local-path]"
+		return 0
+		;;
+	esac
+	privacy_redact "$value"
+	return 0
+}
+
 atomic_write_json() {
 	local target="$1"
 	local content="$2"
@@ -165,7 +178,7 @@ capture_git_provenance() {
 
 	init_session_dir
 	local safe_worktree=""
-	safe_worktree=$(privacy_redact "$worktree")
+	safe_worktree=$(privacy_redact_path "$worktree")
 	local existing='[]'
 	[[ -f "$PROVENANCE_FILE" ]] && existing=$(jq -c '.items // []' "$PROVENANCE_FILE" 2>/dev/null || printf '[]')
 	local key=""
