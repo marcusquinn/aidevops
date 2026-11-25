@@ -823,8 +823,13 @@ _complexity_scan_reap_trees() {
 # _complexity_scan_pull_latest — refresh origin/main into a temp scan tree (GH#17848, t2001, GH#34426)
 # Fail-closed: returns 1 (skip cycle) if the refresh fails to avoid stale-state warnings.
 # Outputs: scan tree path via stdout.
-_complexity_scan_pull_latest() {
+_complexity_scan_pull_latest() (
 	local aidevops_path="$1"
+	# Preparation owns the clone until its path has been handed to the caller.
+	local scan_tree="" handed_off=false
+	trap 'if [[ "$handed_off" == false && -n "$scan_tree" && "$scan_tree" != "$aidevops_path" ]]; then rm -rf -- "$scan_tree"; fi' EXIT
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
 
 	# GH#17848: Pull latest state before scanning to avoid false-positive
 	# proximity warnings from stale local checkouts. The proximity guard and
@@ -851,16 +856,19 @@ _complexity_scan_pull_latest() {
 		printf '%s\n' "$aidevops_path"
 		return 0
 	fi
-	local origin_url scan_tree tmp_base="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}"
+	local origin_url tmp_base="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}"
+	aidevops_path=$(cd "$aidevops_path" && pwd -P) || return 1
 	origin_url=$(git -C "$aidevops_path" remote get-url origin 2>/dev/null) || origin_url=""
-	mkdir -p "$tmp_base" 2>/dev/null || true
+	mkdir -p "$tmp_base" 2>/dev/null || return 1
+	tmp_base=$(cd "$tmp_base" && pwd -P) || return 1
 	_complexity_scan_reap_trees "$tmp_base" "$aidevops_path" "$origin_url"
 	scan_tree=$(mktemp -d "${tmp_base}/complexity-scan-tree.XXXXXX" 2>/dev/null) || scan_tree=""
 	if [[ -z "$origin_url" || -z "$scan_tree" ]]; then
 		echo "[pulse-wrapper] Complexity scan: cannot prepare scan tree for ${aidevops_path} — skipping this cycle to avoid stale-state warnings" >>"$LOGFILE"
-		[[ -n "$scan_tree" ]] && rm -rf "$scan_tree"
 		return 1
 	fi
+	# Advertise active ownership to concurrent reapers during clone/fetch too.
+	cd "$scan_tree" || return 1
 	if ! {
 		git clone --quiet --local --no-checkout "$aidevops_path" "$scan_tree" &&
 			git -C "$scan_tree" remote set-url origin "$origin_url" &&
@@ -870,9 +878,9 @@ _complexity_scan_pull_latest() {
 			git -C "$scan_tree" remote set-head origin main
 	} >>"$LOGFILE" 2>&1; then
 		echo "[pulse-wrapper] Complexity scan: origin/main export failed for ${aidevops_path} — skipping this cycle to avoid stale-state warnings" >>"$LOGFILE"
-		rm -rf "$scan_tree"
 		return 1
 	fi
-	printf '%s\n' "$scan_tree"
+	printf '%s\n' "$scan_tree" || return 1
+	handed_off=true
 	return 0
-}
+)

@@ -725,7 +725,17 @@ run_weekly_complexity_scan() (
 
 	# GH#34426: scan a private origin/main tree; never mutate the canonical checkout.
 	local scan_rc=0
-	scan_tree=$(_complexity_scan_pull_latest "$aidevops_path") || return 0
+	scan_tree=$(_complexity_scan_pull_latest "$aidevops_path") || scan_rc=$?
+	case "$scan_rc" in
+	130|143) return "$scan_rc" ;;
+	0) ;;
+	*) return 0 ;;
+	esac
+	# Keep the owning process visible to the stale-tree cwd exclusion, even for
+	# long scans. The surrounding subshell preserves the caller's working directory.
+	if [[ "$scan_tree" != "$aidevops_path" ]]; then
+		cd "$scan_tree" || return 1
+	fi
 	_run_weekly_complexity_scan_in "$scan_tree" "$repos_json" "$aidevops_slug" "$now_epoch" || scan_rc=$?
 	return "$scan_rc"
 )
