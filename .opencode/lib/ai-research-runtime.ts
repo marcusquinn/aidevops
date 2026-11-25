@@ -114,14 +114,7 @@ function runtimeFailure(result: CommandResult, tier: CanonicalResearchTier): Res
   let message = `OpenCode research failed for the ${tier} tier. Retry the query or inspect ` +
     "credential-free OpenCode runtime diagnostics."
 
-  if (/public_triage_oauth_unsupported/.test(diagnostic)) {
-    // Selection refused before launch: every candidate for this tier is an
-    // Anthropic OAuth model that pure public triage cannot authenticate.
-    code = "AUTH_FAILED"
-    message = `No natively authenticated model is available for the ${tier} tier: its candidates use ` +
-      "Anthropic OAuth, which pure public triage cannot load. Retry with another tier (for example simple) " +
-      "or authenticate a tier candidate with an API key via `opencode auth`."
-  } else if (/public triage provider authentication unavailable|triage-provider-auth-unsupported|model not found: anthropic\//.test(diagnostic)) {
+  if (/public triage provider authentication unavailable|triage-provider-auth-unsupported|model not found: anthropic\//.test(diagnostic)) {
     code = "AUTH_FAILED"
     message = `The isolated OpenCode runtime cannot authenticate the Anthropic OAuth provider for the ${tier} tier. ` +
       "Pure public triage does not load the provider-auth plugin; select a provider with native authentication."
