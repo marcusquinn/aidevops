@@ -9,7 +9,9 @@ Run by email-sieve-helper.sh inside secret injection:
   managesieve_client.py PASSWORD_VAR USER list
   managesieve_client.py PASSWORD_VAR USER get NAME
   managesieve_client.py PASSWORD_VAR USER install NAME SCRIPT
+  managesieve_client.py PASSWORD_VAR USER install-file NAME PATH
   managesieve_client.py PASSWORD_VAR USER remove NAME SCRIPT
+  managesieve_client.py PASSWORD_VAR USER remove-parked NAME SCRIPT
 
 The password is read from the environment variable named PASSWORD_VAR, never
 from argv. `install` runs CHECKSCRIPT, PUTSCRIPT and SETACTIVE, then reads the
@@ -35,7 +37,7 @@ HOST = os.environ.get("SIEVE_HOST") or os.environ.get("PURELYMAIL_SIEVE_HOST", "
 PORT = os.environ.get("SIEVE_PORT") or os.environ.get("PURELYMAIL_SIEVE_PORT", "4190")
 TIMEOUT = 30
 PRE_TLS_WAIT = 1.0
-# copy-to-remove parks a script under NAME + PARK_SUFFIX while checking it;
+# copy-to-remove parks under NAME[:100] + PARK_SUFFIX while checking it;
 # must match the parked name in email-sieve-helper.sh.
 PARK_SUFFIX = ".aidevops-remove"
 # One response token: quoted string, trailing literal size, response code, atom.
@@ -219,12 +221,17 @@ def op_install(conn, name, content):
     return 0
 
 
+def op_install_file(conn, name, path):
+    with open(path, encoding="utf-8", newline="") as stream:
+        return op_install(conn, name, stream.read())
+
+
 def op_remove(conn, name, expected):
     """Delete NAME only if it still holds EXPECTED.
 
     Renaming first moves the script out of reach of webmail saves (which write
-    to NAME), so the contents checked are exactly the contents deleted. A NAME
-    that is already parked (an interrupted earlier run) is finished in place.
+    to NAME), so the contents checked are exactly the contents deleted.
+    Interrupted removals use the explicit remove-parked operation instead.
     """
     parked, original = park(conn, name)
     stored = first_string(conn.command(b"GETSCRIPT " + quote(parked)))
@@ -237,11 +244,21 @@ def op_remove(conn, name, expected):
 
 
 def park(conn, name):
-    """Return (parked, original), renaming NAME aside unless already parked."""
-    if name.endswith(PARK_SUFFIX):
-        return name, name[: -len(PARK_SUFFIX)]
-    conn.command(b"RENAMESCRIPT " + quote(name) + b" " + quote(name + PARK_SUFFIX))
-    return name + PARK_SUFFIX, name
+    """Return (parked, original); RENAMESCRIPT refuses an existing destination."""
+    parked = name[:100] + PARK_SUFFIX
+    conn.command(b"RENAMESCRIPT " + quote(name) + b" " + quote(parked))
+    return parked, name
+
+
+def op_remove_parked(conn, name, expected):
+    """Finish explicitly selected recovery without inferring an original name."""
+    stored = first_string(conn.command(b"GETSCRIPT " + quote(name)))
+    if normalize(stored) != normalize(expected):
+        raise SieveError("parked script changed since it was checked; left in place")
+    if (name, True) in listing(conn):
+        conn.command(b'SETACTIVE ""')
+    conn.command(b"DELETESCRIPT " + quote(name))
+    return 0
 
 
 def restore_parked(conn, parked, name):
@@ -253,16 +270,24 @@ def restore_parked(conn, parked, name):
 
 
 # Operation name -> (handler, argument count).
-OPS = {"list": (op_list, 0), "get": (op_get, 1), "install": (op_install, 2), "remove": (op_remove, 2)}
+OPS = {"list": (op_list, 0), "get": (op_get, 1), "install": (op_install, 2),
+       "install-file": (op_install_file, 2), "remove": (op_remove, 2),
+       "remove-parked": (op_remove_parked, 2)}
 
 
 def main(argv):
     entry = OPS.get(argv[3]) if len(argv) >= 4 else None
     if entry is None or len(argv) - 4 != entry[1]:
-        sys.stderr.write("usage: managesieve_client.py PASSWORD_VAR USER list|get NAME|install NAME SCRIPT|remove NAME SCRIPT\n")
+        sys.stderr.write("usage: managesieve_client.py PASSWORD_VAR USER list|get NAME|install NAME SCRIPT|install-file NAME PATH|remove NAME SCRIPT|remove-parked NAME SCRIPT\n")
         return 2
     if not HOST.strip():
         sys.stderr.write("sieve: SIEVE_HOST is required (or legacy PURELYMAIL_SIEVE_HOST)\n")
+        return 2
+    if argv[1] in ("SIEVE_HOST", "SIEVE_PORT", "PURELYMAIL_SIEVE_HOST", "PURELYMAIL_SIEVE_PORT"):
+        sys.stderr.write("sieve: endpoint variables cannot hold the password\n")
+        return 2
+    if not re.fullmatch(r"[0-9]{1,5}", PORT) or not 1 <= int(PORT) <= 65535:
+        sys.stderr.write("sieve: invalid port (expected 1-65535)\n")
         return 2
     password = os.environ.get(argv[1], "").rstrip("\r\n")
     if not password:

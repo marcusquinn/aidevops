@@ -160,7 +160,7 @@ email-sieve-helper.sh copy-to --server mail.example.com --user admin@example.com
 email-sieve-helper.sh copy-to-remove --server mail.example.com --user admin@example.com --yes
 ```
 
-Use `--secret NAME` for a different stored mailbox/app password; values never go in argv. An existing `SIEVE_PASSWORD` environment variable remains supported. `copy-to` defaults to script `roundcube` (`--script` overrides it), refuses other scripts or edited filters, and verifies read-back and activation. Removal only deletes an unchanged helper copy filter and supports recovery after an interrupted rename.
+Use `--secret NAME` for a different stored mailbox/app password; values never go in argv. Endpoint variable names are reserved. An existing `SIEVE_PASSWORD` environment variable remains supported. `copy-to` defaults to script `roundcube` (`--script` overrides it), checks for other scripts or edited filters before installation, and verifies read-back and activation. **Exclusive access is required:** stop webmail filter editing and all other Sieve writers until the operation completes. ManageSieve offers no atomic compare-and-install transaction; concurrent edits after the check can be overwritten or have their activation replaced. Removal only deletes an unchanged helper copy filter and supports explicit recovery after an interrupted rename; parked names use the first 100 characters plus `.aidevops-remove`, with existing destinations protected by RENAMESCRIPT.
 
 `sieve-connect` is an optional alternative. Fastmail: Settings > Filters > Edit custom Sieve. Proton Mail: Settings > Filters > Add Sieve filter. Dovecot: `~/.dovecot.sieve` or ManageSieve.
 

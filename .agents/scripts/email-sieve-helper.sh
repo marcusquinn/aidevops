@@ -658,7 +658,7 @@ _sieve_copy_to() {
 	names=$(cut -f1 <<<"$scripts")
 	if [[ -n "$scripts" && "$names" != "$script_name" ]]; then
 		print_error "$user already has Sieve scripts: $(tr '\n' ' ' <<<"$names")"
-		print_info "Edit them in webmail (Settings > Filters) instead; see: sieve-list $user $secret"
+		printf 'Inspect with: email-sieve-helper.sh list-scripts --server %q --port %q --user %q --secret %q\n' "$server" "$port" "$user" "$secret"
 		return 1
 	fi
 	if [[ -n "$scripts" ]]; then
@@ -672,6 +672,7 @@ _sieve_copy_to() {
 			return 0
 		fi
 	fi
+	print_warning "Exclusive filter access required: stop webmail and other Sieve writers until copy-to completes; the conflict check is not atomic"
 	if ! _sieve install "$script_name" "$script"; then
 		print_error "Could not set the Sieve script on $user"
 		return 1
@@ -682,7 +683,7 @@ _sieve_copy_to() {
 
 _sieve_copy_to_remove() {
 	local scripts name _state has_main=0 has_parked=0
-	local parked="${script_name}.aidevops-remove"
+	local parked="${script_name:0:100}.aidevops-remove"
 	scripts=$(_sieve_list_or_fail) || return 1
 	while IFS=$'\t' read -r name _state; do
 		[[ "$name" == "$script_name" ]] && has_main=1
@@ -694,7 +695,7 @@ _sieve_copy_to_remove() {
 	fi
 	if [[ "$has_parked" -eq 1 ]]; then
 		print_info "Found '$parked' left by an interrupted copy-to-remove on $user"
-		_sieve_copy_remove_one "$parked" || return 1
+		_sieve_copy_remove_one "$parked" remove-parked || return 1
 	fi
 	if [[ "$has_main" -eq 1 ]]; then
 		_sieve_copy_remove_one "$script_name" || return 1
@@ -704,6 +705,7 @@ _sieve_copy_to_remove() {
 
 _sieve_copy_remove_one() {
 	local name="$1"
+	local operation="${2:-remove}"
 	local current target
 	current=$(_sieve get "$name") || return 1
 	if ! target=$(_sieve_copy_target "$current"); then
@@ -714,7 +716,7 @@ _sieve_copy_remove_one() {
 		print_info "Re-run with --yes to stop copying $user to $target"
 		return 0
 	fi
-	if ! _sieve remove "$name" "$current"; then
+	if ! _sieve "$operation" "$name" "$current"; then
 		print_error "Could not remove the Sieve script '$name' on $user"
 		return 1
 	fi
@@ -839,6 +841,8 @@ COPY OPTIONS
   --script <name>       Script name (default: roundcube, editable in webmail)
   --dry-run            Preview copy-to without connecting or reading secrets
   --yes                Confirm copy-to-remove (otherwise preview removal)
+  copy-to requires exclusive filter access: stop webmail/other Sieve writers.
+  Conflict checks and installation are not an atomic server transaction.
   --secret is also accepted by list-scripts, show-script and delete-script.
 ADD-PATTERN OPTIONS
   --type <type>         Pattern type: sender|domain|subject|list-id|header|transaction|mailing-list|notification
@@ -975,8 +979,14 @@ _cmd_remote() {
 		print_error "Invalid secret name (UPPER_SNAKE_CASE): $secret"
 		return 1
 	fi
-	if [[ ! "$port" =~ ^[0-9]+$ ]] || ((10#$port < 1 || 10#$port > 65535)); then
-		print_error "Invalid ManageSieve port: $port"
+	case "$secret" in
+	SIEVE_HOST | SIEVE_PORT | PURELYMAIL_SIEVE_HOST | PURELYMAIL_SIEVE_PORT)
+		print_error "Endpoint variable names cannot be used as password secret names"
+		return 1 ;;
+	esac
+	port="${port#"${port%%[!0]*}"}"
+	if [[ ! "$port" =~ ^[0-9]{1,5}$ ]] || ((10#$port < 1 || 10#$port > 65535)); then
+		print_error "Invalid ManageSieve port (expected 1-65535)"
 		return 1
 	fi
 	if [[ "$action" != "list-scripts" && -z "$script_name" ]]; then
@@ -993,8 +1003,7 @@ _cmd_remote() {
 			print_error "Sieve file not found: $sieve_file"
 			return 1
 		fi
-		current=$(<"$sieve_file")
-		_sieve install "$script_name" "$current" || return $?
+		_sieve install-file "$script_name" "$sieve_file" || return $?
 		print_success "Sieve script deployed and activated: $script_name"
 		;;
 	list-scripts)

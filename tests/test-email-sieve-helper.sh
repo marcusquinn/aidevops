@@ -717,6 +717,15 @@ test_copy_to() {
 	output=$(bash "$HELPER" copy-to --server mail.example.com --user user@example.com \
 		--target 2>&1) && rc=0 || rc=$?
 	assert_exit_nonzero "copy rejects missing option value" "$rc"
+	output=$(bash "$HELPER" copy-to --server mail.example.com --user user@example.com \
+		--target owner@example.net --port 18446744073709555806 --dry-run 2>&1) && rc=0 || rc=$?
+	assert_exit_nonzero "copy rejects overflowing port before arithmetic" "$rc"
+	output=$(bash "$HELPER" copy-to --server mail.example.com --user user@example.com \
+		--target owner@example.net --port 00004190 --dry-run 2>&1) && rc=0 || rc=$?
+	assert_exit_zero "copy accepts zero-padded port" "$rc"
+	output=$(bash "$HELPER" copy-to --server mail.example.com --user user@example.com \
+		--target owner@example.net --secret SIEVE_HOST --dry-run 2>&1) && rc=0 || rc=$?
+	assert_exit_nonzero "copy rejects endpoint credential namespace" "$rc"
 	return 0
 }
 
@@ -757,7 +766,7 @@ test_copy_safety() {
 			case "$operation" in
 			list) printf "roundcube.aidevops-remove\tactive\n" ;;
 			get) _sieve_copy_script owner@example.net ;;
-			remove)
+			remove-parked)
 				[[ "$1" == "roundcube.aidevops-remove" ]] || return 1
 				_sieve_same "$2" "$(_sieve_copy_script owner@example.net)" || return 1
 				printf "CHECKED REMOVAL\n"
