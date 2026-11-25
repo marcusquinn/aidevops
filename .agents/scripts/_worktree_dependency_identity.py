@@ -5,15 +5,15 @@
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import stat
 import subprocess  # nosec B404 -- fixed read-only Git plumbing, never a shell.
 from contextlib import contextmanager
 
 
-class Rejected(ValueError):
-    """A dependency snapshot cannot safely be provisioned."""
+from _worktree_dependency_manifest import (
+    Rejected, pnpm_inventory, required_dependencies, workspace_members, workspace_patterns,
+)
 
 
 @contextmanager
@@ -40,38 +40,6 @@ def object_json(data):
     if not isinstance(result, dict):
         raise Rejected("invalid-object-metadata")
     return result
-
-
-def pnpm_inventory(lock):
-    """Accept only pnpm's simple v9 packages map, not arbitrary YAML features."""
-    text = lock.decode("utf-8")
-    if not re.search(r"(?m)^lockfileVersion: ['\"]?9\.0['\"]?$", text):
-        raise Rejected("unsupported-pnpm-lock")
-    packages = {pnpm_package_key(line) for line in pnpm_package_lines(text)}
-    if not packages:
-        raise Rejected("missing-pnpm-inventory")
-    return packages
-
-
-def pnpm_package_lines(text):
-    section = False
-    for line in text.splitlines():
-        if line == "packages:":
-            section = True
-            continue
-        if not section:
-            continue
-        if line and not line.startswith(" "):
-            return
-        if line.startswith("  ") and not line.startswith("   "):
-            yield line
-
-
-def pnpm_package_key(line):
-    match = re.fullmatch(r"  ['\"]?(@?[a-zA-Z0-9_./-]+@[0-9][a-zA-Z0-9.+_-]*)['\"]?:", line)
-    if not match:
-        raise Rejected("unsupported-pnpm-package-key")
-    return match[1]
 
 
 def regular_bytes(path, limit=8 * 1024 * 1024):
@@ -167,11 +135,7 @@ def identity(repo, worktree, relative):
             raise Rejected("not-workspace-member")
         source, dest = package_directories(repo, worktree, relative)
         manifest = matching_package(source, dest)
-        required = set(manifest.get("dependencies", {})) | set(manifest.get("devDependencies", {}))
-        required -= set(manifest.get("optionalDependencies", {}))
-        if any(not re.fullmatch(r"(?:@[a-zA-Z0-9_.-]+/)?[a-zA-Z0-9_.-]+", key)
-               or key in {".", ".."} for key in required):
-            raise Rejected("invalid-dependency-name")
+        required = required_dependencies(manifest)
         return contained_path(source / "node_modules"), (
             "workspace", inventory, repo, source / "node_modules", required, worktree)
     source, dest = package_directories(repo, worktree, relative)
@@ -203,45 +167,6 @@ def workspace_identity(repo, worktree):
         manifest = matching_package(source, dest)
         inventory.add(f"{manifest.get('name')}@{manifest.get('version')}")
     return sorted(members), inventory
-
-
-def workspace_patterns(config):
-    """Parse only the supported YAML packages block, not unrelated settings."""
-    patterns = []
-    section = False
-    for line in config.decode("utf-8").splitlines():
-        if line == "packages:":
-            section = True
-            continue
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        if section and not line.startswith(" "):
-            section = False
-        if section:
-            match = re.fullmatch(r"\s+-\s+(['\"]?)(!?[a-zA-Z0-9_./*?@-]+)\1\s*(?:#.*)?", line)
-            if not match:
-                raise Rejected("unsupported-workspace-pattern")
-            pattern = match[2]
-            if pattern.lstrip("!").startswith("/") or ".." in Path(pattern).parts:
-                raise Rejected("invalid-workspace-pattern")
-            patterns.append(pattern)
-    if not patterns:
-        raise Rejected("unsupported-workspace-pattern")
-    return patterns
-
-
-def workspace_members(worktree, patterns):
-    """Expand inclusion and exclusion globs without admitting dependency trees."""
-    members = {Path(".")}
-    excluded = set()
-    for pattern in patterns:
-        for path in worktree.glob(pattern.lstrip("!")):
-            relative = path.relative_to(worktree)
-            if "node_modules" in relative.parts or ".git" in relative.parts:
-                continue
-            if (path / "package.json").is_file():
-                (excluded if pattern.startswith("!") else members).add(relative)
-    return members - excluded
 
 
 def npm_inventory(source, modules, lock, parsed):
