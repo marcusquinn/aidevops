@@ -566,6 +566,7 @@ assert_contains "final committed diff excludes upstream-sensitive hunks" "$final
 
 # Exercise the real metadata orchestration without GitHub writes or signatures.
 eval "$(sed -n '/^_diff_is_planning_only() {/,/^}/p' "${SCRIPT_DIR_TEST}/full-loop-helper.sh")"
+eval "$(sed -n '/^_commit_and_pr_platform_evidence_preflight() {/,/^}/p' "${SCRIPT_DIR_TEST}/full-loop-helper.sh")"
 eval "$(sed -n '/^_commit_and_pr_prepare_metadata() {/,/^}/p' "${SCRIPT_DIR_TEST}/full-loop-helper.sh")"
 _resolve_remote_default_branch() {
 	printf 'main\n'

@@ -2520,6 +2520,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19370 fix(pre-commit): positional-parameter ratchet must ignore $N inside multi-line single-quoted programs (awk/sed/jq) #auto-dispatch #bug tier:standard ref:GH#40335 logged:2026-11-25 -> [todo/tasks/t19370-brief.md]
 
+- [ ] t19371 perf(full-loop): check platform regression evidence before the native macOS suites in commit-and-pr #feat #interactive tier:standard ref:GH#40340 assignee:marcusquinn logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19371-brief.md]
+
 - [x] t19363 fix(worker-lifecycle): index compaction reservation lookups so journal maintenance stops refusing hook admission with database-locked #bug #priority:high #interactive ref:GH#40293 assignee:marcusquinn logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19363-brief.md] pr:#40299 completed:2026-11-25
 
 - [x] t19364 perf(pulse): split-lock refill-only dispatch-lock holder gets the elastic dispatch lease #feat #priority:high #interactive tier:standard ref:GH#40308 assignee:marcusquinn logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19364-brief.md] pr:#40312 completed:2026-11-25
