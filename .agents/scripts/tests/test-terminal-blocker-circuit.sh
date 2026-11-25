@@ -546,7 +546,28 @@ test_input_required_owner_class() {
 	terminal_blocker_capture_output "$output" || status=1
 	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == unknown ]] || status=1
 	_terminal_blocker_input_owner "$(_terminal_blocker_hash 'v2:target_code_blocker')" >/dev/null && status=1
-	unset AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
+	# t19386: a login owner maps to a role only through verified repository
+	# permission; lower or unreadable permission stays unknown without a question.
+	export DISPATCH_REPO_SLUG="owner/repo"
+	TEST_LOGIN_ROLE="admin"
+	gh() {
+		[[ "$*" == *'repos/owner/repo/collaborators/repo-owner/permission'* ]] || return 1
+		printf '{"permission":"admin","role_name":"%s"}\n' "$TEST_LOGIN_ROLE"
+		return 0
+	}
+	printf '%s\n' '{"type":"text","text":"BLOCKED: close out or split?\nTERMINAL_BLOCKER_REASON=input_required\nTERMINAL_BLOCKER_INPUT_OWNER=repo-owner\nTERMINAL_BLOCKER_QUESTION=Close the phase with the held rows?"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_input_owner "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == admin ]] || status=1
+	[[ "$AIDEVOPS_TERMINAL_BLOCKER_QUESTION" == 'Close the phase with the held rows?' ]] || status=1
+	TEST_LOGIN_ROLE="maintain"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_input_owner "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == maintainer ]] || status=1
+	TEST_LOGIN_ROLE="read"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == unknown ]] || status=1
+	[[ -z "$AIDEVOPS_TERMINAL_BLOCKER_QUESTION" ]] || status=1
+	unset -f gh
+	unset DISPATCH_REPO_SLUG TEST_LOGIN_ROLE AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
 	print_result "input_required names a user/contributor/maintainer/admin owner, needs two observations and re-arms on brief change" "$status"
 	return 0
 }

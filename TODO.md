@@ -2534,6 +2534,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19379 fix(ci-wait): treat a cancelled check with a same-name pass on the PR head as superseded in gh-checks-wait-helper --all #auto-dispatch #bug tier:standard ref:GH#40369 logged:2026-11-25 -> [todo/tasks/t19379-brief.md] pr:#40374 completed:2026-11-25
 
+- [ ] t19386 fix(terminal-blocker): map a login input owner through verified repo permission so input_required holds instead of looping as unknown #bug #interactive tier:standard assignee:marcusquinn ref:GH#40384 logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19386-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02

@@ -150,9 +150,12 @@ grant permissions or approvals.
 
 `input_required` (GH#33332) needs a standalone
 `TERMINAL_BLOCKER_INPUT_OWNER=user|contributor|maintainer|admin` line; without
-it the evidence stays `unknown`. Its revision tracks the brief and
-dependencies: supplying the input in the issue body re-arms dispatch. It adds
-no label or review gate beyond the blocked-exit hold below.
+it the evidence stays `unknown`. A GitHub login there is mapped through its
+verified permission on the dispatch repository (admin → `admin`, maintain or
+write → `maintainer`); any other login stays `unknown` (t19386). Its revision
+tracks the brief and dependencies: supplying the input in the issue body
+re-arms dispatch. It adds no label or review gate beyond the blocked-exit hold
+below.
 
 Maintainers answer owner decisions in one place: `/decisions`
 (`maintainer-decisions-helper.sh list`, read-only, all managed repos) shows each hold's
