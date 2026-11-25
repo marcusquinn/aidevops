@@ -91,8 +91,8 @@ _sc_store_paths() {
 			"${workspace}/work/repo-layout-migrations"
 		;;
 	observability) printf '%s\n' "${workspace}/observability" ;;
-	trash) ;; # Only owned buckets inside ~/.Trash; sized by _sc_trash_kb.
-	gitlocks) ;; # Lock files are tiny; the preview reports candidate counts.
+	trash) ;;      # Only owned buckets inside ~/.Trash; sized by _sc_trash_kb.
+	gitlocks) ;;   # Lock files are tiny; the preview reports candidate counts.
 	quarantine) ;; # Preview reports corrupt-stats copy counts, not all logs.
 	*) return 1 ;;
 	esac

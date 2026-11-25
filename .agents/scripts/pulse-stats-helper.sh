@@ -174,9 +174,10 @@ _pulse_stats_recover_locked() {
 # newly preserved copy cannot race the retention snapshot. Python's nanosecond
 # mtimes preserve same-second ordering; lexical names break exact timestamp ties.
 pulse_stats_prune_quarantine() {
-	local mode="${1:-}" lock_dir="" rc=0
+	local mode="${1:-}" lock_dir="" directory="" rc=0
 	[[ -z "$mode" || "$mode" == "--apply" ]] || return 1
-	if [[ ! -d "${PULSE_STATS_FILE%/*}" ]]; then
+	directory=$(dirname "$PULSE_STATS_FILE")
+	if [[ ! -d "$directory" ]]; then
 		printf 'pulse-stats quarantine: 0 copies, nothing to prune\n'
 		return 0
 	fi
