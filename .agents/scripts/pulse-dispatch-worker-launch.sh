@@ -1761,7 +1761,7 @@ _dlw_filter_merged_feedback() {
 	merged=$(printf '%s' "$states" | jq -c '[.data.repository[]? | select(.merged == true) | .number | tostring]') || return 1
 	[[ "$merged" != '[]' ]] || { printf '%s' "$prompt"; return 0; }
 	filtered=$(jq -ncr --arg prompt "$prompt" --argjson body "$body_json" --argjson merged "$merged" '
-		def clean: gsub("(?<block><!-- feedback-route:start:(?<route>[^<>\\r\\n]+) -->[\\s\\S]*?<!-- feedback-route:complete:\\k<route> -->)";
+		def clean: gsub("(?<block><!-- feedback-route:start:(?<route>[^:<>\\r\\n]+:PR[0-9]+:[^<>\\r\\n]+) -->(?:(?!<!-- feedback-route:(?:start|complete):)[\\s\\S])*<!-- feedback-route:complete:\\k<route> -->)";
 			if (.route | capture(":PR(?<pr>[0-9]+):").pr) as $pr | $merged | index($pr) != null then "" else .block end);
 		{prompt: ($prompt | clean), body: ($body | clean), merged: $merged}
 	') || return 1

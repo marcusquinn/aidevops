@@ -1836,6 +1836,13 @@ test_dispatch_feedback_guard() {
 		fail 'dispatch strips merged routes from seed and snapshot but keeps closed-unmerged and open routes' "$result"
 	fi
 	[[ "$(grep -c '^api graphql' "$API_LOG")" == 1 ]] && pass 'dispatch batches all PR states once' || fail 'dispatch batches all PR states once'
+	local malformed='' nested=''
+	malformed=$'<!-- feedback-route:start:unknown -->\nKEEP_UNKNOWN\n<!-- feedback-route:complete:unknown -->'
+	nested=$'<!-- feedback-route:start:conflict:PR900:SHAnested -->\n'"${kept}"$'\n<!-- feedback-route:complete:conflict:PR900:SHAnested -->'
+	body+=$'\n'"${malformed}"$'\n'"${nested}"
+	TEST_ISSUE_JSON=$(issue_json status:available '' "$body")
+	result=$(_dlw_filter_merged_feedback 501 "$SLUG" "$body")
+	[[ "$result" == *"$malformed"* && "$result" == *"$nested"* ]] && pass 'unknown and nested routes cannot swallow unrelated feedback' || fail 'unknown and nested routes cannot swallow unrelated feedback'
 	TEST_GRAPHQL_RC=1
 	result=$(_dlw_filter_merged_feedback 501 "$SLUG" "$body")
 	[[ "$result" == "$body" ]] && pass 'state lookup failure preserves feedback' || fail 'state lookup failure preserves feedback'
