@@ -34,7 +34,7 @@ source "${SCRIPTS_DIR}/full-loop-cleanup-receipt.sh"
 # shellcheck source=../shared-worktree-registry.sh
 source "${SCRIPTS_DIR}/shared-worktree-registry.sh"
 
-sleep 30 &
+sleep 600 &
 OWNER_PID=$!
 
 receipt_lock_dir="${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/.mutation.lock.d"

@@ -189,7 +189,7 @@ SCRIPT
 chmod +x "$nvm_node"
 output=""
 status=0
-output="$(HOME="$TEST_DIR" PATH="${fake_bin}:${PATH}" FAKE_NODE_VERSION=v26.4.0 NODE_BIN="" AIDEVOPS_BIN="${fake_bin}/aidevops" QUICKFILE_MCP_LAUNCHER_DRY_RUN=1 bash "$QUICKFILE_LAUNCHER" 2>&1)" || status=$?
+output="$(HOME="$TEST_DIR" NVM_DIR="${TEST_DIR}/.nvm" PATH="${fake_bin}:${PATH}" FAKE_NODE_VERSION=v26.4.0 NODE_BIN="" AIDEVOPS_BIN="${fake_bin}/aidevops" QUICKFILE_MCP_LAUNCHER_DRY_RUN=1 bash "$QUICKFILE_LAUNCHER" 2>&1)" || status=$?
 assert_case "QuickFile launcher finds a legacy install and its exact nvm runtime" \
 	"$([[ "$status" -eq 0 && "$output" == *"validated 1 account token"* ]] && printf true || printf false)"
 
