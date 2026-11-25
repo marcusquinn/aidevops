@@ -92,6 +92,11 @@ init_session_dir() {
 
 privacy_redact() {
 	local text="$1"
+	local roots='Users|home|private/var|var/folders|var/tmp|tmp|run'
+	# Quoted local paths (may contain spaces) are redacted as one unit.
+	text=$(printf '%s' "$text" | sed -E "s#\"/($roots)/[^\"]*\"#\"[local-path]\"#g; s#'/($roots)/[^']*'#'[local-path]'#g")
+	# Local source prefix "git:/abs/path"; remote URLs never have "git:" directly before a local root.
+	text=$(printf '%s' "$text" | sed -E "s#(^|[^A-Za-z0-9._/:~-])git:/($roots)/[^ ]*#\\1git:[local-path]#g")
 	# Roots must start a token (not follow a URL host/path char) so remote URLs survive.
 	text=$(printf '%s' "$text" | sed -E 's#(^|[^A-Za-z0-9._/:~-])/(Users|home|private/var|var/folders|var/tmp|tmp|run)/[^ ]*#\1[local-path]#g; s#(^|[^A-Za-z0-9._/:-])~/Git/[^ ]*#\1[local-path]#g')
 	text=$(printf '%s' "$text" | sed -E 's/(^|[^A-Za-z0-9_-])(sk-|GOCSPX-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/\1[redacted-credential]/g')
@@ -105,7 +110,13 @@ privacy_redact_path() {
 	local value="$1"
 	local redacted=""
 	# Match roots after dropping the leading slash; any "~/" value is also local.
-	case "${value#/}" in
+	local normalized="$value"
+	# Normalise equivalent absolute prefixes (//home, /./home) before matching.
+	while [[ "$normalized" == /* || "$normalized" == ./* ]]; do
+		normalized="${normalized#/}"
+		normalized="${normalized#./}"
+	done
+	case "$normalized" in
 	Users/* | home/* | private/var/* | var/folders/* | var/tmp/* | tmp/* | run/* | \~/*) redacted="[local-path]" ;;
 	*) redacted="$value" ;;
 	esac
