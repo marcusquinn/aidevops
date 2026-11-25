@@ -5,6 +5,7 @@
 // session-turn-diagnostics.mjs. Nothing here reads message or tool content.
 
 import { normalizeProviderError } from "./provider-error-diagnostics.mjs";
+import { isProviderOverloadError, overloadRetryEnabled } from "./provider-overload-policy.mjs";
 
 const KNOWN_ERROR_NAMES = new Set([
   "APIError",
@@ -28,13 +29,19 @@ const ERROR_OUTCOMES = new Map([
 const EXPLAINED_ELSEWHERE = new Set(["gateway_denied", "access_denied"]);
 const SILENT_OUTCOMES = new Set(["answered", "cancelled", "tool_only"]);
 
-/** Reduce an OpenCode error object to a content-free outcome class. */
-export function classifyError(error) {
-  if (!error || typeof error !== "object") return null;
+function baseErrorOutcome(error) {
   const name = String(error.name || "");
   const outcome = ERROR_OUTCOMES.get(name);
   if (outcome) return outcome(error);
   return { kind: "runtime_error", name: KNOWN_ERROR_NAMES.has(name) ? name : "unknown" };
+}
+
+/** Reduce an OpenCode error object to a content-free outcome class. */
+export function classifyError(error) {
+  if (!error || typeof error !== "object") return null;
+  const outcome = baseErrorOutcome(error);
+  // t19362: provider-overload-retry.mjs owns the toast for these.
+  return isProviderOverloadError(error) ? { ...outcome, overloaded: true } : outcome;
 }
 
 function endedOutcome(state) {
@@ -102,8 +109,10 @@ export function toastFor(outcome, state, idleMs) {
 }
 
 /** True when an outcome needs a toast that this turn has not shown yet. */
-export function shouldNotify(outcome, state) {
+export function shouldNotify(outcome, state, env = process.env) {
   if (SILENT_OUTCOMES.has(outcome)) return false;
   if (outcome === "provider_error" && EXPLAINED_ELSEWHERE.has(state.error?.classification)) return false;
+  // An overload that is retried automatically must not claim "Nothing was retried".
+  if (state.error?.overloaded && overloadRetryEnabled(env)) return false;
   return !state.notified.has(outcome);
 }
