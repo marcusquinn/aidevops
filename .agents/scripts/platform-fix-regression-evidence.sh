@@ -181,6 +181,16 @@ main() {
 		return 1
 	}
 
+	_platform_evaluate "$title" "$body_file" "$files_file"
+	return $?
+}
+
+_platform_evaluate() {
+	local title="$1"
+	local body_file="$2"
+	local files_file="$3"
+	local trigger_text=""
+	local changed_test=""
 	local rc=0
 	trigger_text=$(_platform_trigger_text "$title" "$body_file")
 	set +e
