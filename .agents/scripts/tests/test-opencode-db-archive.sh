@@ -260,6 +260,55 @@ SQL
 	return 0
 }
 
+# Session-inbox schema generation (OpenCode migrations 20260812181746_session_inbox
+# .. 20260910120000_clear_v1_session_permission): session_input and
+# session_context_epoch are dropped; session_inbox, session_pending,
+# instruction_* tables and event.created are added. Synthetic data only.
+_make_active_db_inbox_generation() {
+	_make_active_db_1_18_3
+	sqlite3 "$ACTIVE_DB" <<'SQL'
+DROP TABLE session_input;
+DROP TABLE session_context_epoch;
+ALTER TABLE event ADD COLUMN created integer;
+UPDATE event SET created = 777;
+CREATE TABLE session_inbox (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, payload text NOT NULL, delivery text NOT NULL, enqueued_seq integer NOT NULL, time_created integer NOT NULL, FOREIGN KEY (session_id) REFERENCES session(id) ON DELETE CASCADE);
+CREATE TABLE session_pending (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, data text NOT NULL, delivery text NOT NULL, admitted_seq integer NOT NULL, time_created integer NOT NULL, FOREIGN KEY (session_id) REFERENCES session(id) ON DELETE CASCADE);
+CREATE TABLE instruction_entry (session_id text NOT NULL, key text NOT NULL, value text NOT NULL, removed integer NOT NULL DEFAULT 0, time_created integer NOT NULL, time_updated integer NOT NULL, PRIMARY KEY(session_id, key), FOREIGN KEY (session_id) REFERENCES session(id) ON DELETE CASCADE);
+CREATE TABLE instruction_state (session_id text PRIMARY KEY, epoch_start integer NOT NULL, through_seq integer NOT NULL, initial_values text NOT NULL, current_values text NOT NULL, FOREIGN KEY (session_id) REFERENCES session(id) ON DELETE CASCADE);
+CREATE TABLE instruction_blob (hash text PRIMARY KEY, value text NOT NULL);
+CREATE TABLE kv (key text PRIMARY KEY, value text NOT NULL);
+CREATE TABLE worktree (id text PRIMARY KEY, directory text NOT NULL);
+CREATE TABLE session_v2 (id text PRIMARY KEY, project_id text NOT NULL, data text);
+INSERT INTO session_inbox VALUES ('inbox-1', 'ses-1183', 'prompt', '{"text":"queued"}', 'immediate', 31, 301);
+INSERT INTO session_pending VALUES ('pending-1', 'ses-1183', 'prompt', '{"text":"pending"}', 'deferred', 32, 302);
+INSERT INTO instruction_entry VALUES ('ses-1183', 'agents.md', 'instruction text', 0, 303, 304);
+INSERT INTO instruction_state VALUES ('ses-1183', 1, 2, '{"initial":1}', '{"current":2}');
+INSERT INTO instruction_blob VALUES ('hash-1', 'shared blob');
+INSERT INTO kv VALUES ('k', 'v');
+SQL
+	return 0
+}
+
+_inbox_graph_fingerprint() {
+	local db_path="$1"
+
+	sqlite3 "$db_path" <<'SQL' || return 1
+SELECT row_value FROM (
+  SELECT 'session|' || quote(id) || '|' || quote(title) || '|' || quote(time_updated) AS row_value FROM session
+  UNION ALL SELECT 'message|' || quote(id) || '|' || quote(data) FROM message
+  UNION ALL SELECT 'part|' || quote(id) || '|' || quote(data) FROM part
+  UNION ALL SELECT 'session_message|' || quote(id) || '|' || quote(data) FROM session_message
+  UNION ALL SELECT 'session_inbox|' || quote(id) || '|' || quote(session_id) || '|' || quote(type) || '|' || quote(payload) || '|' || quote(delivery) || '|' || quote(enqueued_seq) || '|' || quote(time_created) FROM session_inbox
+  UNION ALL SELECT 'session_pending|' || quote(id) || '|' || quote(session_id) || '|' || quote(type) || '|' || quote(data) || '|' || quote(delivery) || '|' || quote(admitted_seq) || '|' || quote(time_created) FROM session_pending
+  UNION ALL SELECT 'instruction_entry|' || quote(session_id) || '|' || quote(key) || '|' || quote(value) || '|' || quote(removed) || '|' || quote(time_created) || '|' || quote(time_updated) FROM instruction_entry
+  UNION ALL SELECT 'instruction_state|' || quote(session_id) || '|' || quote(epoch_start) || '|' || quote(through_seq) || '|' || quote(initial_values) || '|' || quote(current_values) FROM instruction_state
+  UNION ALL SELECT 'event_sequence|' || quote(aggregate_id) || '|' || quote(seq) FROM event_sequence
+  UNION ALL SELECT 'event|' || quote(id) || '|' || quote(aggregate_id) || '|' || quote(data) || '|' || quote(created) FROM event
+) ORDER BY row_value;
+SQL
+	return 0
+}
+
 _fixture_graph_fingerprint() {
 	local db_path="$1"
 
@@ -911,6 +960,131 @@ else
 	_fail "future-table fail-closed mismatch: rc=${rc}, payload=${future_table_payload}, output=${out}"
 fi
 
+# Session-inbox generation: validates, archives, restores and expires events.
+_reset_dbs
+_make_active_db_inbox_generation
+source_graph=$(_inbox_graph_fingerprint "$ACTIVE_DB")
+set +e
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --dry-run --retention-days 0 --max-duration-seconds 30 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 && "$out" == *"session_inbox: 1"* && "$out" == *"instruction_state: 1"* && ! -e "$ARCHIVE_DB" ]]; then
+	_pass "session-inbox generation dry run validates and reports its tables"
+else
+	_fail "session-inbox dry-run mismatch: rc=${rc}, output=${out}"
+fi
+
+set +e
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 --max-duration-seconds 30 2>&1)
+rc=$?
+set -e
+archive_graph=$(_inbox_graph_fingerprint "$ARCHIVE_DB" 2>/dev/null || true)
+active_inbox_rows=$(sqlite3 "$ACTIVE_DB" "SELECT (SELECT COUNT(*) FROM session) + (SELECT COUNT(*) FROM session_inbox) + (SELECT COUNT(*) FROM session_pending) + (SELECT COUNT(*) FROM instruction_entry) + (SELECT COUNT(*) FROM instruction_state) + (SELECT COUNT(*) FROM event) + (SELECT COUNT(*) FROM event_sequence);")
+if [[ "$rc" -eq 0 && "$archive_graph" == "$source_graph" && "$active_inbox_rows" == "0" && "$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM instruction_blob;')" == 1 && "$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM kv;')" == 1 ]]; then
+	_pass "session-inbox generation archives every session-scoped row and leaves shared tables"
+else
+	_fail "session-inbox archive mismatch: rc=${rc}, active_rows=${active_inbox_rows}, output=${out}"
+fi
+if [[ -z "$(sqlite3 "$ARCHIVE_DB" 'PRAGMA foreign_key_check;')" && "$(sqlite3 "$ARCHIVE_DB" 'PRAGMA integrity_check;')" == ok ]]; then
+	_pass "session-inbox archive keeps foreign keys and integrity intact"
+else
+	_fail "session-inbox archive integrity or foreign key violation"
+fi
+
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" restore --session ses-1183 2>&1) || true
+restored_graph=$(_inbox_graph_fingerprint "$ACTIVE_DB")
+if [[ "$restored_graph" == "$source_graph" && "$(sqlite3 "$ARCHIVE_DB" 'SELECT (SELECT COUNT(*) FROM session) + (SELECT COUNT(*) FROM session_inbox) + (SELECT COUNT(*) FROM instruction_entry) + (SELECT COUNT(*) FROM event);')" == 0 ]]; then
+	_pass "session-inbox generation restore round-trips every row including event.created"
+else
+	_fail "session-inbox restore mismatch: $out"
+fi
+
+# Events archived from a legacy DB have no created value. When the destination
+# requires one (NOT NULL), restore must keep them (never drop-then-delete).
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 --max-duration-seconds 30 2>&1) || true
+sqlite3 "$ARCHIVE_DB" "UPDATE event SET created = NULL;"
+sqlite3 "$ACTIVE_DB" "DROP TABLE event; CREATE TABLE event (id text PRIMARY KEY, aggregate_id text NOT NULL, seq integer NOT NULL, type text NOT NULL, data text NOT NULL, created integer NOT NULL, FOREIGN KEY (aggregate_id) REFERENCES event_sequence(aggregate_id) ON DELETE CASCADE);"
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" restore --session ses-1183 2>&1) || true
+if [[ "$(sqlite3 "$ACTIVE_DB" "SELECT created FROM event WHERE id='event-1183';")" == 200 && "$(sqlite3 "$ARCHIVE_DB" 'SELECT COUNT(*) FROM event;')" == 0 ]]; then
+	_pass "restore keeps legacy events when the destination requires event.created"
+else
+	_fail "NOT NULL event.created restore mismatch: $out"
+fi
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 --max-duration-seconds 30 2>&1) || true
+
+# Retention pruning deletes the new tables with their sessions.
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 --max-duration-seconds 30 2>&1) || true
+inbox_no_holder="${SANDBOX}/inbox-no-holder"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$inbox_no_holder"
+chmod +x "$inbox_no_holder"
+set +e
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	OPENCODE_DB_HOLDER_COMMAND="$inbox_no_holder" "$HELPER" prune --older-than-days 1 --apply 2>&1)
+rc=$?
+set -e
+prune_left=$(sqlite3 "$ARCHIVE_DB" "SELECT (SELECT COUNT(*) FROM session) + (SELECT COUNT(*) FROM session_inbox) + (SELECT COUNT(*) FROM session_pending) + (SELECT COUNT(*) FROM instruction_entry) + (SELECT COUNT(*) FROM instruction_state) + (SELECT COUNT(*) FROM event);")
+if [[ "$rc" -eq 0 && "$prune_left" == 0 ]]; then
+	_pass "retention prune deletes session-inbox generation rows with their sessions"
+else
+	_fail "session-inbox prune mismatch: rc=${rc}, remaining=${prune_left}, output=${out}"
+fi
+
+# A legacy archive (event without created, no inbox tables) migrates additively
+# and still accepts a session-inbox generation active DB.
+_reset_dbs
+_make_active_db_1_18_3
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 --max-duration-seconds 30 2>&1) || true
+sqlite3 "$ARCHIVE_DB" 'DELETE FROM event; DELETE FROM event_sequence; DELETE FROM session_context_epoch; DELETE FROM session_input; DELETE FROM session_message; DELETE FROM session_share; DELETE FROM todo; DELETE FROM part; DELETE FROM message; DELETE FROM session; DROP TABLE session_inbox; DROP TABLE session_pending; DROP TABLE instruction_entry; DROP TABLE instruction_state; ALTER TABLE event DROP COLUMN created;'
+rm -f "$ACTIVE_DB" "${ACTIVE_DB}-wal" "${ACTIVE_DB}-shm"
+_make_active_db_inbox_generation
+set +e
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 --max-duration-seconds 30 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 && "$(sqlite3 "$ARCHIVE_DB" "SELECT created FROM event WHERE id='event-1183';")" == 777 && "$(sqlite3 "$ARCHIVE_DB" 'SELECT COUNT(*) FROM session_inbox;')" == 1 && "$(sqlite3 "$ARCHIVE_DB" 'SELECT COUNT(*) FROM session;')" == 1 ]]; then
+	_pass "legacy-shaped archive migrates additively for a session-inbox generation DB"
+else
+	_fail "legacy archive to inbox generation mismatch: rc=${rc}, output=${out}"
+fi
+
+# An unknown extra session_id table on the session-inbox generation still
+# fails closed with rc=3 and leaves every row untouched.
+_reset_dbs
+_make_active_db_inbox_generation
+sqlite3 "$ACTIVE_DB" "CREATE TABLE future_session_data (session_id text NOT NULL, payload blob NOT NULL); INSERT INTO future_session_data VALUES ('ses-1183', X'00FF10');"
+set +e
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 3 && ! -e "$ARCHIVE_DB" && "$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM session_inbox;')" == 1 && "$out" == *"table=future_session_data"* && "$out" == *"reason=unknown-session-table"* ]]; then
+	_pass "session-inbox generation with an unknown session table fails closed with rc=3"
+else
+	_fail "session-inbox unknown-table mismatch: rc=${rc}, output=${out}"
+fi
+
+# A changed column set on a known inbox table also fails closed.
+_reset_dbs
+_make_active_db_inbox_generation
+sqlite3 "$ACTIVE_DB" "ALTER TABLE session_inbox ADD COLUMN future_column text;"
+set +e
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 3 && ! -e "$ARCHIVE_DB" && "$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM session;')" == 1 && "$out" == *"table=session_inbox"* && "$out" == *"reason=column-mismatch"* ]]; then
+	_pass "session-inbox table column drift fails closed with rc=3"
+else
+	_fail "session-inbox column-drift mismatch: rc=${rc}, output=${out}"
+fi
+
 # A signal between committed batches leaves both databases queryable and every
 # logical session present in exactly one database.
 _reset_dbs
@@ -1409,7 +1583,7 @@ fi
 
 # Existing archives expire events independently of the held session batch size,
 # and a subsequent held run must not rescan the whole archive for integrity.
-sqlite3 "$ARCHIVE_DB" "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<25) INSERT INTO event SELECT 'expiry-'||x, 'ses-1183', 100+x, 'fixture', '{}' FROM n;"
+sqlite3 "$ARCHIVE_DB" "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<25) INSERT INTO event (id, aggregate_id, seq, type, data) SELECT 'expiry-'||x, 'ses-1183', 100+x, 'fixture', '{}' FROM n;"
 mkdir -p "$SANDBOX/trace-sqlite"
 cat >"$SANDBOX/trace-sqlite/sqlite3" <<'SH'
 #!/usr/bin/env bash

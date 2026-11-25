@@ -30,11 +30,33 @@ SELECT COALESCE((SELECT group_concat(quoted, ',') FROM (
 	return 0
 }
 
+# _archive_restore_select_columns <table> <quoted-column-list>
+# Prints the SELECT list for a restore copy. Events archived from a legacy
+# active DB have no created value; when the session-inbox generation requires
+# one (NOT NULL), INSERT OR IGNORE would silently drop those rows before the
+# archive copy is deleted. Fall back to the owning session's time_updated.
+_archive_restore_select_columns() {
+	local table_name="$1"
+	local columns="$2"
+	local created_notnull=""
+	local created_fallback='COALESCE("created", (SELECT s.time_updated FROM archive.session s WHERE s.id = aggregate_id), 0)'
+
+	if [[ "$table_name" == "$EVENT_TABLE_NAME" && ",${columns}," == *',"created",'* ]]; then
+		created_notnull=$(sqlite3 "$ACTIVE_DB" "SELECT \"notnull\" FROM pragma_table_info('${table_name}') WHERE name='created';" 2>/dev/null) || return 1
+		if [[ "$created_notnull" == "1" ]]; then
+			printf '%s\n' "${columns/\"created\"/$created_fallback}"
+			return 0
+		fi
+	fi
+	printf '%s\n' "$columns"
+	return 0
+}
+
 # _archive_restore_tables
 # Session-owned tables present in both DBs, in dependency-safe copy order.
 _archive_restore_tables() {
 	local table_name
-	for table_name in message part todo session_share session_message session_input session_context_epoch; do
+	for table_name in message part todo session_share session_message session_input session_context_epoch $OPENCODE_ARCHIVE_INBOX_SESSION_TABLES; do
 		_sqlite_has_table "$ACTIVE_DB" "$table_name" || continue
 		_sqlite_has_table "$ARCHIVE_DB" "$table_name" || continue
 		printf '%s\n' "$table_name"
@@ -48,7 +70,7 @@ _archive_restore_tables() {
 _archive_restore_sql() {
 	local sid="$1"
 	local ids="SELECT id FROM archive.session WHERE id = ${sid} OR parent_id = ${sid}"
-	local copy_sql="" delete_sql="" table_name columns
+	local copy_sql="" delete_sql="" table_name columns select_columns
 	# Legacy active DBs cannot represent newer epoch values. Default values
 	# can be omitted, but never delete a non-default archive-only value.
 	local epoch_column epoch_default epoch_nondefault
@@ -78,7 +100,8 @@ EPOCH_DEFAULTS
 		_sqlite_has_table "$ACTIVE_DB" "$table_name" || continue
 		_sqlite_has_table "$ARCHIVE_DB" "$table_name" || continue
 		columns=$(_archive_restore_column_list "$table_name") || return 1
-		copy_sql="${copy_sql}INSERT OR IGNORE INTO main.${table_name} (${columns}) SELECT ${columns} FROM archive.${table_name} WHERE aggregate_id IN (${ids});"$'\n'
+		select_columns=$(_archive_restore_select_columns "$table_name" "$columns") || return 1
+		copy_sql="${copy_sql}INSERT OR IGNORE INTO main.${table_name} (${columns}) SELECT ${select_columns} FROM archive.${table_name} WHERE aggregate_id IN (${ids});"$'\n'
 		delete_sql="DELETE FROM archive.${table_name} WHERE aggregate_id IN (${ids});"$'\n'"${delete_sql}"
 	done
 	printf '%s%sDELETE FROM archive.session WHERE id IN (%s);\n' "$copy_sql" "$delete_sql" "$ids"

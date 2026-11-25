@@ -24,6 +24,7 @@ _archive_migrate_schema_columns() {
 	local project_columns=""
 	local session_columns=""
 	local epoch_columns=""
+	local event_columns=""
 	local table_name=""
 	local column_name=""
 	local column_definition=""
@@ -34,12 +35,14 @@ _archive_migrate_schema_columns() {
 	project_columns=$(opencode_db_table_columns "$archive_db" project) || return 1
 	session_columns=$(opencode_db_table_columns "$archive_db" "$SESSION_TABLE_NAME") || return 1
 	epoch_columns=$(opencode_db_table_columns "$archive_db" session_context_epoch) || return 1
+	event_columns=$(opencode_db_table_columns "$archive_db" "$EVENT_TABLE_NAME") || return 1
 	while IFS='|' read -r table_name column_name column_definition; do
 		[[ -n "$table_name" && -n "$column_name" && -n "$column_definition" ]] || continue
 		case "$table_name" in
 		project) table_columns="$project_columns" ;;
 		"$SESSION_TABLE_NAME") table_columns="$session_columns" ;;
 		session_context_epoch) table_columns="$epoch_columns" ;;
+		"$EVENT_TABLE_NAME") table_columns="$event_columns" ;;
 		*) return 1 ;;
 		esac
 		if ! _archive_column_list_has "$table_columns" "$column_name"; then
@@ -61,6 +64,7 @@ ${SESSION_TABLE_NAME}|metadata|${ARCHIVE_TEXT_COLUMN_DEFINITION}
 session_context_epoch|replacement_seq|integer
 session_context_epoch|revision|integer DEFAULT 0 NOT NULL
 session_context_epoch|agent|text DEFAULT 'build' NOT NULL
+${EVENT_TABLE_NAME}|created|integer
 MIGRATION_COLUMNS
 
 	[[ -n "$migration_sql" ]] || return 0
@@ -215,6 +219,58 @@ SCHEMA_SQL
 	return 0
 }
 
+# Session-inbox generation tables (OpenCode migrations 20260812181746_session_inbox
+# .. 20260910120000_clear_v1_session_permission). Column constraints beyond keys
+# are left permissive so every row the active DB accepts is also accepted here.
+_archive_inbox_schema_sql() {
+	cat <<'SCHEMA_SQL'
+CREATE TABLE IF NOT EXISTS `session_inbox` (
+	`id` text PRIMARY KEY,
+	`session_id` text NOT NULL,
+	`type` text,
+	`payload` text,
+	`delivery` text,
+	`enqueued_seq` integer,
+	`time_created` integer,
+	CONSTRAINT `fk_session_inbox_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS `session_inbox_session_idx` ON `session_inbox` (`session_id`);
+
+CREATE TABLE IF NOT EXISTS `session_pending` (
+	`id` text PRIMARY KEY,
+	`session_id` text NOT NULL,
+	`type` text,
+	`data` text,
+	`delivery` text,
+	`admitted_seq` integer,
+	`time_created` integer,
+	CONSTRAINT `fk_session_pending_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS `session_pending_session_idx` ON `session_pending` (`session_id`);
+
+CREATE TABLE IF NOT EXISTS `instruction_entry` (
+	`session_id` text NOT NULL,
+	`key` text NOT NULL,
+	`value` text,
+	`removed` integer,
+	`time_created` integer,
+	`time_updated` integer,
+	CONSTRAINT `instruction_entry_pk` PRIMARY KEY(`session_id`, `key`),
+	CONSTRAINT `fk_instruction_entry_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS `instruction_state` (
+	`session_id` text PRIMARY KEY,
+	`epoch_start` integer,
+	`through_seq` integer,
+	`initial_values` text,
+	`current_values` text,
+	CONSTRAINT `fk_instruction_state_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE
+);
+SCHEMA_SQL
+	return 0
+}
+
 _archive_event_schema_sql() {
 	cat <<'SCHEMA_SQL'
 CREATE TABLE IF NOT EXISTS `session_context_epoch` (
@@ -239,7 +295,8 @@ CREATE TABLE IF NOT EXISTS `event` (
 	`aggregate_id` text NOT NULL,
 	`seq` integer NOT NULL,
 	`type` text NOT NULL,
-	`data` text NOT NULL
+	`data` text NOT NULL,
+	`created` integer
 );
 CREATE UNIQUE INDEX IF NOT EXISTS `event_aggregate_seq_idx` ON `event` (`aggregate_id`,`seq`);
 CREATE INDEX IF NOT EXISTS `event_aggregate_type_seq_idx` ON `event` (`aggregate_id`,`type`,`seq`);
@@ -254,6 +311,7 @@ create_archive_schema() {
 	{
 		_archive_core_schema_sql
 		_archive_session_schema_sql
+		_archive_inbox_schema_sql
 		_archive_event_schema_sql
 	} | sqlite3 "$archive_db"
 
