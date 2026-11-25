@@ -1004,6 +1004,14 @@ _cmd_remote() {
 		print_error "--deactivate is only for delete-script"
 		return 1
 	fi
+	_remote_dispatch "$action"
+	return $?
+}
+
+# Run a validated remote action; reads _cmd_remote's locals (dynamic scope).
+_remote_dispatch() {
+	local action="$1"
+	local scripts
 	case "$action" in
 	deploy)
 		if [[ ! -f "$sieve_file" ]]; then
