@@ -806,9 +806,84 @@ _dlw_prewarm_opencode_db() {
 	return 0
 }
 
+#######################################
+# p90 (seconds, rounded up) of recent successful prelaunch durations from the
+# dispatch stage log. One launch = the sum of dedup.precreate_worktree,
+# dedup.final_spawn_gates, dedup.final_ownership_fence, dedup.assign_and_label
+# and dedup.worker_spawn sharing issue, cycle and dispatcher pid; a launch
+# counts only once all five completed (it reached spawn). This is the direct
+# sum, not worker_launch_total minus earlier stages, because the stages that
+# precede begin_prelaunch are not separately attributable in that total.
+# Reads only the log tail and keeps the newest 200 samples (the
+# _dispatch_ceremony_reserve_seconds pattern). Prints nothing when no sample.
+#######################################
+_dlw_prelaunch_observed_p90_seconds() {
+	local stages_log="${AIDEVOPS_DISPATCH_STAGES_LOG:-${HOME}/.aidevops/logs/dispatch-stages.tsv}" p90=""
+	# The last entry is the spawn stage that completes a launch sample.
+	local launch_stages="dedup.precreate_worktree dedup.final_spawn_gates dedup.final_ownership_fence dedup.assign_and_label dedup.worker_spawn"
+	[[ -f "$stages_log" && ! -L "$stages_log" ]] || return 0
+	p90=$(tail -n 40000 "$stages_log" 2>/dev/null | awk -F'\t' -v launch_stages="$launch_stages" '
+		BEGIN {stage_count = split(launch_stages, order, " "); for (i = 1; i <= stage_count; i++) wanted[order[i]] = 1}
+		{
+			count = split($0, f, "\t")
+			if (!(f[6] == "complete" || count == 5) || !(f[4] in wanted) || f[5] !~ /^[0-9]+$/) next
+			key = f[2] SUBSEP f[8] SUBSEP f[9]
+			val[key, f[4]] = f[5]
+			if (f[4] != order[stage_count]) next
+			total = 0; complete = 1
+			for (i = 1; i <= stage_count; i++) {
+				if (!((key, order[i]) in val)) complete = 0
+				else total += val[key, order[i]]
+				delete val[key, order[i]]
+			}
+			if (complete) samples[n++ % 200] = total
+		}
+		END { for (i in samples) print samples[i] }' | sort -n | awk '{a[NR] = $0} END {if (NR) {p = int((NR * 9 + 9) / 10); print int((a[p] + 999) / 1000)}}') || p90=""
+	[[ "$p90" =~ ^[1-9][0-9]{0,5}$ ]] && printf '%s\n' "$p90"
+	return 0
+}
+
+#######################################
+# Initial prelaunch budget (seconds). An explicit
+# AIDEVOPS_DISPATCH_PRELAUNCH_BUDGET_SECONDS keeps its exact historical
+# meaning (valid 1-999, otherwise 300). Without it, max(300, ceil(p90 * 1.25))
+# of observed prelaunch durations, capped by
+# AIDEVOPS_DISPATCH_PRELAUNCH_BUDGET_MAX_SECONDS (default 600; the cap bounds
+# growth only and never lowers the 300 s base) and by what remains of the
+# per-candidate watchdog (PULSE_STAGE_DEADLINE_EPOCH, less a 15 s margin so
+# the watchdog cannot kill a spawn in progress). No samples: 300.
+#######################################
+_dlw_prelaunch_budget_seconds() {
+	local base=300 explicit="${AIDEVOPS_DISPATCH_PRELAUNCH_BUDGET_SECONDS:-}"
+	local cap="${AIDEVOPS_DISPATCH_PRELAUNCH_BUDGET_MAX_SECONDS:-600}"
+	local p90="" budget="$base" watchdog_left=0 now=""
+	if [[ -n "$explicit" ]]; then
+		[[ "$explicit" =~ ^[1-9][0-9]{0,2}$ ]] || explicit=$base
+		printf '%s\n' "$explicit"
+		return 0
+	fi
+	[[ "$cap" =~ ^[1-9][0-9]{0,2}$ ]] || cap=600
+	p90=$(_dlw_prelaunch_observed_p90_seconds) || p90=""
+	if [[ "$p90" =~ ^[1-9][0-9]*$ ]]; then
+		budget=$(((p90 * 5 + 3) / 4))
+		((budget <= cap)) || budget=$cap
+		if [[ "${PULSE_STAGE_DEADLINE_EPOCH:-}" =~ ^[1-9][0-9]*$ ]]; then
+			now=$(date +%s 2>/dev/null) || now=""
+			if [[ "$now" =~ ^[1-9][0-9]*$ ]]; then
+				watchdog_left=$((PULSE_STAGE_DEADLINE_EPOCH - now - 15))
+				((budget <= watchdog_left)) || budget=$watchdog_left
+			fi
+		fi
+		((budget >= base)) || budget=$base
+	fi
+	printf '%s\n' "$budget"
+	return 0
+}
+
 _dlw_begin_prelaunch() {
 	local issue_number="$1" repo_slug="$2" session_key="$3" worker_log="$4"
-	local budget="${AIDEVOPS_DISPATCH_PRELAUNCH_BUDGET_SECONDS:-300}"
+	local budget=""
+	budget=$(_dlw_prelaunch_budget_seconds) || budget=300
 	[[ "$budget" =~ ^[1-9][0-9]{0,2}$ ]] || budget=300
 	# These locals belong to _dispatch_launch_worker and survive command
 	# substitutions used by warm-up/spawn. Never slide the preparation deadline.
