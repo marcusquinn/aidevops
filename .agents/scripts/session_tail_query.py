@@ -16,6 +16,7 @@ Reads env vars:
 Prints: "classification|summary" to stdout.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -210,20 +211,27 @@ def main():
     part_limit = int(os.environ["SESSION_TAIL_LIMIT"])
 
     try:
-        conn = sqlite3.connect(db_path)
-        conn.execute("PRAGMA busy_timeout=5000")
-        cursor = conn.cursor()
+        # Read-only: avoids checkpoint-on-close exclusive lock (GH#40415).
+        with contextlib.closing(
+            sqlite3.connect(
+                Path(db_path).resolve().as_uri() + "?mode=ro",
+                uri=True,
+                timeout=5,
+            )
+        ) as conn:
+            conn.execute("PRAGMA busy_timeout=5000")
+            cursor = conn.cursor()
 
-        session_row = find_session(cursor, session_title)
-        if not session_row:
-            print("none|No OpenCode session found")
-            return
+            session_row = find_session(cursor, session_title)
+            if not session_row:
+                print("none|No OpenCode session found")
+                return
 
-        session_id, resolved_title = session_row
-        recent_count = count_recent_messages(
-            cursor, session_id, timeout_seconds
-        )
-        part_rows = fetch_recent_parts(cursor, session_id, part_limit)
+            session_id, resolved_title = session_row
+            recent_count = count_recent_messages(
+                cursor, session_id, timeout_seconds
+            )
+            part_rows = fetch_recent_parts(cursor, session_id, part_limit)
     except sqlite3.Error as exc:
         print(
             f"none|Session evidence query failed: "

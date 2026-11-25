@@ -16,35 +16,41 @@ Reads env vars:
 Prints: integer message count to stdout.
 """
 
+import contextlib
 import os
 import sqlite3
+from pathlib import Path
 
 db = os.environ["DB_PATH"]
 mode = os.environ.get("MODE", "recent")
 match = os.environ.get("MATCH", "")
 window = int(os.environ.get("WINDOW", "180"))
 
-conn = sqlite3.connect(db)
-conn.execute("PRAGMA busy_timeout=5000")
-cur = conn.cursor()
+# Read-only: avoids checkpoint-on-close exclusive lock convoy (GH#40415).
+with contextlib.closing(
+    sqlite3.connect(Path(db).resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+) as conn:
+    conn.execute("PRAGMA busy_timeout=5000")
+    cur = conn.cursor()
 
-if mode == "session":
-    cur.execute(
-        "SELECT COUNT(*) FROM message m"
-        " WHERE m.session_id = ?"
-        " AND (CASE WHEN m.time_created > 20000000000"
-        "      THEN m.time_created / 1000 ELSE m.time_created END)"
-        " > strftime('%s', 'now') - ?",
-        (match, window),
-    )
-else:
-    cur.execute(
-        "SELECT COUNT(*) FROM message m JOIN session s ON m.session_id = s.id"
-        " WHERE s.title LIKE ?"
-        " AND (CASE WHEN m.time_created > 20000000000"
-        "      THEN m.time_created / 1000 ELSE m.time_created END)"
-        " >= strftime('%s', 'now') - ?",
-        (f"%{match}%", window),
-    )
+    if mode == "session":
+        cur.execute(
+            "SELECT COUNT(*) FROM message m"
+            " WHERE m.session_id = ?"
+            " AND (CASE WHEN m.time_created > 20000000000"
+            "      THEN m.time_created / 1000 ELSE m.time_created END)"
+            " > strftime('%s', 'now') - ?",
+            (match, window),
+        )
+    else:
+        cur.execute(
+            "SELECT COUNT(*) FROM message m JOIN session s ON m.session_id = s.id"
+            " WHERE s.title LIKE ?"
+            " AND (CASE WHEN m.time_created > 20000000000"
+            "      THEN m.time_created / 1000 ELSE m.time_created END)"
+            " >= strftime('%s', 'now') - ?",
+            (f"%{match}%", window),
+        )
 
-print(cur.fetchone()[0] or 0)
+    count = cur.fetchone()[0] or 0
+print(count)
