@@ -19,7 +19,8 @@ TESTS_FAILED=0
 
 # The extracted gates use the lifecycle module's boolean constants.
 eval "$(sed -n '/^_FULL_LOOP_BOOL_TRUE=/p; /^_FULL_LOOP_BOOL_FALSE=/p' "$STATE_HELPER")"
-helper_source=$(awk '/^_linked_issue_author_allows_start\(\) \{/,/^}/ { print }' "$STATE_HELPER")
+helper_source=$(awk '/^(_linked_issue_fetch_raw|_linked_issue_resolve_authority|_linked_issue_gate_marker|_linked_issue_author_allows_start)\(\) \{/,/^}/ { print }' "$STATE_HELPER")
+export AIDEVOPS_GATE_LOOKUP_RETRY_DELAY=0
 gate_source=$(awk '/^_check_linked_issue_gate\(\) \{/,/^}/ { print }' "$STATE_HELPER")
 [[ -n "$helper_source" ]] || {
 	printf 'FAIL unable to extract linked issue author gate\n' >&2
@@ -57,6 +58,11 @@ _gh_actor_has_repo_write_authority() {
 	local association="$3"
 	[[ -n "$repo" && -n "$association" ]] || return 2
 	: "$login"
+	if [[ -n "${AUTHORITY_FIRST_RC:-}" ]]; then
+		local first_rc="$AUTHORITY_FIRST_RC"
+		AUTHORITY_FIRST_RC=""
+		return "$first_rc"
+	fi
 	return "$AUTHORITY_RC"
 }
 
@@ -136,6 +142,27 @@ main() {
 
 	write_approval_helper NO_APPROVAL
 	check_gate "missing author metadata fails closed" 1 '{}'
+
+	# GH#40288: one transient api-failure is retried and then passes.
+	: >"$GH_CALLS"
+	AUTHORITY_RC=0
+	AUTHORITY_FIRST_RC=2
+	write_approval_helper NO_APPROVAL
+	check_gate "transient lookup failure retries then passes" 0 \
+		'{"author_association":"COLLABORATOR","user":{"login":"writer","type":"User"}}'
+
+	# Persistent lookup failure fails closed without the containment label.
+	: >"$GH_CALLS"
+	AUTHORITY_RC=2
+	AUTHORITY_FIRST_RC=""
+	check_gate "persistent lookup failure blocks" 1 \
+		'{"author_association":"COLLABORATOR","user":{"login":"writer","type":"User"}}'
+	if [[ ! -s "$GH_CALLS" ]]; then
+		printf 'PASS lookup failure does not add containment label\n'
+	else
+		printf 'FAIL lookup failure added containment label\n' >&2
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
 
 	check_lookup_failure "headless issue metadata lookup failure blocks" 1
 	check_lookup_failure "interactive issue metadata lookup failure blocks" 0
