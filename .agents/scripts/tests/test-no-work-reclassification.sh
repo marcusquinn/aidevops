@@ -37,6 +37,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 AGENT_SCRIPT_DIR="${SCRIPT_DIR}/.."
 SHARED_CLAIM_LIFECYCLE="${AGENT_SCRIPT_DIR}/shared-claim-lifecycle.sh"
 WORKER_LIFECYCLE="${AGENT_SCRIPT_DIR}/worker-lifecycle-common.sh"
+# GH#40351: escalation functions live in a module sourced by the library above.
+WORKER_LIFECYCLE_ESCALATION="${AGENT_SCRIPT_DIR}/worker-lifecycle-common-escalation.sh"
 PULSE_CLEANUP="${AGENT_SCRIPT_DIR}/pulse-cleanup.sh"
 
 readonly TEST_RED='\033[0;31m'
@@ -78,11 +80,11 @@ test_shared_helper_exists() {
 }
 
 test_reclassify_helper_exists() {
-	if grep -q '^_maybe_reclassify_worker_failed_as_no_work()' "$WORKER_LIFECYCLE"; then
+	if grep -q '^_maybe_reclassify_worker_failed_as_no_work()' "$WORKER_LIFECYCLE_ESCALATION"; then
 		print_result "worker: _maybe_reclassify_worker_failed_as_no_work() defined" 0
 	else
 		print_result "worker: _maybe_reclassify_worker_failed_as_no_work() defined" 1 \
-			"Expected function in $WORKER_LIFECYCLE"
+			"Expected function in $WORKER_LIFECYCLE_ESCALATION"
 	fi
 	return 0
 }
@@ -90,12 +92,12 @@ test_reclassify_helper_exists() {
 test_escalate_calls_reclassify() {
 	# Assert the reclassify call appears inside escalate_issue_tier — the
 	# only safe place where the empty-crash_type branch should fire.
-	if awk '/^escalate_issue_tier\(\)/,/^}$/' "$WORKER_LIFECYCLE" \
+	if awk '/^escalate_issue_tier\(\)/,/^}$/' "$WORKER_LIFECYCLE_ESCALATION" \
 		| grep -q '_maybe_reclassify_worker_failed_as_no_work'; then
 		print_result "wired: escalate_issue_tier() calls _maybe_reclassify_..." 0
 	else
 		print_result "wired: escalate_issue_tier() calls _maybe_reclassify_..." 1 \
-			"Reclassification call missing from escalate_issue_tier in $WORKER_LIFECYCLE"
+			"Reclassification call missing from escalate_issue_tier in $WORKER_LIFECYCLE_ESCALATION"
 	fi
 	return 0
 }
@@ -114,11 +116,11 @@ test_pulse_cleanup_uses_shared_reader() {
 }
 
 test_env_override_documented() {
-	if grep -q 'NO_WORK_RECLASS_ELAPSED_MAX' "$WORKER_LIFECYCLE"; then
+	if grep -q 'NO_WORK_RECLASS_ELAPSED_MAX' "$WORKER_LIFECYCLE_ESCALATION"; then
 		print_result "env: NO_WORK_RECLASS_ELAPSED_MAX referenced" 0
 	else
 		print_result "env: NO_WORK_RECLASS_ELAPSED_MAX referenced" 1 \
-			"Expected NO_WORK_RECLASS_ELAPSED_MAX env var in $WORKER_LIFECYCLE"
+			"Expected NO_WORK_RECLASS_ELAPSED_MAX env var in $WORKER_LIFECYCLE_ESCALATION"
 	fi
 	return 0
 }

@@ -289,7 +289,7 @@ done
 # Verify that each kill reason class is mapped for _kill_worker. GH#34067
 # moved the mapping into the shared _worker_kill_reason_class helper.
 kill_class_source="${watchdog_source}
-$(< "${SCRIPT_DIR}/worker-lifecycle-common.sh")"
+$(< "${SCRIPT_DIR}/worker-lifecycle-common-process.sh")"
 assert_contains \
 	"9a. kill_reason class: phase1_zero_output mapped" \
 	"phase1_zero_output" \
@@ -496,9 +496,10 @@ assert_contains \
 # and a runtime spawn proves grandchildren are visited. The interval-CPU
 # sampling (t3057) is preserved — t3059 only changes which PIDs are sampled.
 #######################################
-lifecycle_source=$(< "${SCRIPT_DIR}/worker-lifecycle-common.sh")
+# GH#40351: the helper now lives in the worker-lifecycle-common process module.
+lifecycle_source=$(< "${SCRIPT_DIR}/worker-lifecycle-common-process.sh")
 assert_contains \
-	"19. _get_descendant_pids defined in worker-lifecycle-common.sh (t3059)" \
+	"19. _get_descendant_pids defined in worker-lifecycle-common-process.sh (t3059)" \
 	"_get_descendant_pids()" \
 	"$lifecycle_source"
 
