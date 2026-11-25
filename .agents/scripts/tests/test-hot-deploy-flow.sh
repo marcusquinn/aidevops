@@ -88,7 +88,7 @@ test_hotfix_rejects_non_patch() {
 	local output exit_code=0
 	output=$(bash "$VM_SCRIPT" release major --hotfix --dry-run 2>&1) || exit_code=$?
 
-	if [[ $exit_code -ne 0 ]] && echo "$output" | grep -qi "only.*patch"; then
+	if [[ $exit_code -ne 0 ]] && grep -qi "only.*patch" <<<"$output"; then
 		pass "$test_name"
 	else
 		fail "$test_name" "Expected rejection for major --hotfix (exit=$exit_code)"
@@ -111,12 +111,12 @@ test_dry_run_shows_plan() {
 	local output exit_code=0
 	output=$(bash "$VM_SCRIPT" release patch --hotfix --dry-run 2>&1) || exit_code=$?
 
-	if echo "$output" | grep -qi "DRY RUN"; then
+	if grep -qi "DRY RUN" <<<"$output"; then
 		pass "$test_name"
 	else
 		# If it failed due to maintainer check, that's also valid — dry-run happens after
-		if echo "$output" | grep -qi "maintainer"; then
-			skip "$test_name" "maintainer check blocked dry-run (expected in non-maintainer env)"
+		if [[ "$exit_code" -ne 0 ]] && grep -qiE "maintainer|requires GitHub CLI authentication" <<<"$output"; then
+			skip "$test_name" "authentication/maintainer guard blocked dry-run before planning"
 		else
 			fail "$test_name" "Expected DRY RUN output (exit=$exit_code, output=$output)"
 		fi
@@ -138,8 +138,8 @@ test_normal_release_no_hotfix_tag() {
 	local output exit_code=0
 	output=$(bash "$VM_SCRIPT" release patch --dry-run 2>&1) || exit_code=$?
 
-	if echo "$output" | grep -qi "DRY RUN"; then
-		if echo "$output" | grep -qi "hotfix-v"; then
+	if grep -qi "DRY RUN" <<<"$output"; then
+		if grep -qi "hotfix-v" <<<"$output"; then
 			fail "$test_name" "Normal release dry-run should not mention hotfix tag"
 		else
 			pass "$test_name"
@@ -254,7 +254,7 @@ test_usage_includes_hotfix() {
 	local output
 	output=$(bash "$VM_SCRIPT" 2>&1) || true
 
-	if echo "$output" | grep -q '\-\-hotfix'; then
+	if grep -q '\-\-hotfix' <<<"$output"; then
 		pass "$test_name"
 	else
 		fail "$test_name" "--hotfix not in usage output"
@@ -339,7 +339,7 @@ test_publication_disables_rollback_before_local_gates() {
 	local rollback_disable_line=""
 	local post_gate_line=""
 	# shellcheck disable=SC2016 # Match the literal source expression.
-	publication_line=$(grep -n 'if ! _publish_github_release "$new_version"' "$VM_SCRIPT" | cut -d: -f1)
+	publication_line=$(grep -n '_publish_github_release "$new_version" || publication_rc=\$?' "$VM_SCRIPT" | cut -d: -f1)
 	rollback_disable_line=$(grep -n '_release_disable_failure_rollback' "$VM_SCRIPT" | while IFS=: read -r line_number _; do
 		if [[ "$line_number" -gt "$publication_line" ]]; then
 			printf '%s\n' "$line_number"
@@ -377,7 +377,7 @@ EOF
 	chmod +x "$test_root/bin/git"
 	local output=""
 	local exit_code=0
-	output=$(PATH="$test_root/bin:/usr/bin:/bin" HOTFIX_GIT_LOG="$test_root/git.log" bash -c '
+	output=$(PATH="$test_root/bin:$PATH" HOTFIX_GIT_LOG="$test_root/git.log" bash -c '
 set -u
 SCRIPT_DIR="$(dirname "$1")"
 REPO_ROOT="$2"
@@ -395,7 +395,7 @@ _create_hotfix_tag 9.8.7
 	fi
 
 	exit_code=0
-	output=$(PATH="$test_root/bin:/usr/bin:/bin" HOTFIX_GIT_LOG="$test_root/git.log" HOTFIX_PUSH_FAIL=1 bash -c '
+	output=$(PATH="$test_root/bin:$PATH" HOTFIX_GIT_LOG="$test_root/git.log" HOTFIX_PUSH_FAIL=1 bash -c '
 set -u
 SCRIPT_DIR="$(dirname "$1")"
 REPO_ROOT="$2"

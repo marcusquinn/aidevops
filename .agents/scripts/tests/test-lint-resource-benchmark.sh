@@ -5,6 +5,9 @@
 # test-lint-resource-benchmark.sh — bounded lint profiler regression coverage.
 
 set -euo pipefail
+# Synthetic benchmark children are not continuations of the invoking worker.
+# Leave production admission enabled; provide no inherited generation identity.
+unset AIDEVOPS_LIFECYCLE_GENERATION_ID AIDEVOPS_LIFECYCLE_RUN_ID AIDEVOPS_LIFECYCLE_WORKTREE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 HELPER_SCRIPT="${SCRIPT_DIR}/../lint-resource-benchmark.sh"
@@ -35,6 +38,15 @@ print_result() {
 setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
 	mkdir -p "${TEST_ROOT}/home"
+	# Exercise a script argv, as the command admission policy intentionally rejects
+	# background shell syntax embedded in bash -c strings.
+	cat >"${TEST_ROOT}/descendant.sh" <<'SH'
+#!/usr/bin/env bash
+sleep 30 &
+child=$!
+printf '%s\n' "$child" >"$1"
+wait "$child"
+SH
 	return 0
 }
 
@@ -81,7 +93,7 @@ test_timeout_cleans_descendants() {
 	local exit_code=0
 	set +e
 	run_helper run --profile timeout-cleanup --timeout 2 --interval 1 --out "$out_file" -- \
-		bash -c 'sleep 30 & child=$!; printf "%s\n" "$child" >"$1"; wait "$child"' _ "$child_pid_file" >/dev/null
+		bash "${TEST_ROOT}/descendant.sh" "$child_pid_file" >/dev/null
 	exit_code=$?
 	set -e
 	local child_pid=""
@@ -115,7 +127,7 @@ test_safety_stop_cleans_descendants() {
 		LINT_RESOURCE_TEST_SAFETY_FILE="$trigger_file" \
 		AIDEVOPS_LINT_BENCHMARK_LOCK_DIR="${TEST_ROOT}/lint-resource-benchmark.lock" \
 		"$HELPER_SCRIPT" run --profile safety-cleanup --timeout 10 --interval 1 --out "$out_file" -- \
-		bash -c 'sleep 30 & child=$!; printf "%s\n" "$child" >"$1"; wait "$child"' _ "$child_pid_file" >/dev/null
+		bash "${TEST_ROOT}/descendant.sh" "$child_pid_file" >/dev/null
 	exit_code=$?
 	set -e
 	wait "$trigger_pid" 2>/dev/null || true

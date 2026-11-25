@@ -8,7 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit 1
 MIGRATIONS_SH="${REPO_ROOT}/.agents/scripts/setup/modules/migrations.sh"
-SETUP_SH="${REPO_ROOT}/setup.sh"
+SETUP_SH="${REPO_ROOT}/.agents/scripts/setup/modules/setup-execution.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'

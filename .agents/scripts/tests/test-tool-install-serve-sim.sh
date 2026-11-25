@@ -27,6 +27,9 @@ assert_eq() {
 		return 0
 	fi
 	printf '  FAIL: %s -- expected %s, got %s\n' "$desc" "$expected" "$actual" >&2
+	if [[ -f "$SANDBOX/out.log" ]]; then
+		cat "$SANDBOX/out.log" >&2
+	fi
 	FAIL=$((FAIL + 1))
 	return 1
 }
@@ -55,6 +58,8 @@ write_shim() {
 }
 
 source_extracted() {
+	# The extracted functions share this constant with their owning module.
+	TOOL_INSTALL_ARCH_ARM64="arm64"
 	print_info() {
 		printf 'INFO: %s\n' "$*"
 		return 0
@@ -96,6 +101,7 @@ source_extracted() {
 }
 
 source_extracted_with_prompt_failure() {
+	TOOL_INSTALL_ARCH_ARM64="arm64"
 	print_info() {
 		printf 'INFO: %s\n' "$*"
 		return 0
@@ -135,6 +141,7 @@ run_setup_with_env() {
 	local prompt_mode="${4:-default}"
 	local bin_dir="$SANDBOX/bin-$arch-$node_version-$include_serve_sim"
 	mkdir -p "$bin_dir"
+	ln -sf "$(command -v bash)" "$bin_dir/bash"
 	: >"$SANDBOX/install.log"
 
 	write_shim "$bin_dir/uname" "case \"\${1:-}\" in -s) printf '%s\\n' Darwin ;; -m) printf '%s\\n' '$arch' ;; *) printf '%s\\n' Darwin ;; esac"
@@ -156,6 +163,7 @@ run_setup_with_env() {
 run_setup_with_prompt_failure() {
 	local bin_dir="$SANDBOX/bin-prompt-failure"
 	mkdir -p "$bin_dir"
+	ln -sf "$(command -v bash)" "$bin_dir/bash"
 	: >"$SANDBOX/install.log"
 
 	write_shim "$bin_dir/uname" "case \"\${1:-}\" in -s) printf '%s\\n' Darwin ;; -m) printf '%s\\n' arm64 ;; *) printf '%s\\n' Darwin ;; esac"

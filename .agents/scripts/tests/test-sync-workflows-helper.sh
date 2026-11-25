@@ -38,6 +38,13 @@ TEST_NATIVE_GIT=$(command -p -v git) || {
 	exit 1
 }
 export TEST_NATIVE_GIT
+# `env git` in scratch-worktree-helper bypasses exported shell functions. Keep
+# those calls on the same native fixture boundary, not the host Git wrapper.
+NATIVE_GIT_BIN=$(mktemp -d)
+trap 'rm -rf "$NATIVE_GIT_BIN"' EXIT
+ln -s "$TEST_NATIVE_GIT" "$NATIVE_GIT_BIN/git"
+export PATH="$NATIVE_GIT_BIN:$PATH"
+export OPENCODE_PID="$$" AIDEVOPS_WORKTREE_CREATE_OWNER_PID="$$"
 
 # Fixture repositories are disposable. Export a test-local native Git boundary
 # so child helper shells cannot inherit the runtime's canonical-repo guard while

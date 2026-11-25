@@ -57,14 +57,14 @@ PY
 EXPECTED_INTEGRITY="sha512-$(printf 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==')"
 EXPECTED_SHASUM="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 EXACT_NPM_JSON="${TEST_ROOT}/npm-exact.json"
-AUDIT_JSON="${TEST_ROOT}/npm-audit.json"
+AUDIT_FIXTURE_JSON="${TEST_ROOT}/npm-audit.json"
 FORMULA_BASE64="${TEST_ROOT}/formula.base64"
 DRIFT_BASE64="${TEST_ROOT}/drift.base64"
 base64 <"${FIXTURE_ROOT}/homebrew/aidevops.rb" | tr -d '\n' >"$FORMULA_BASE64"
 printf '%s\n' 'class Aidevops' '  url "https://example.invalid/drift.tar.gz"' 'end' |
 	base64 | tr -d '\n' >"$DRIFT_BASE64"
 
-python3 - "$EXACT_NPM_JSON" "$AUDIT_JSON" "$EXPECTED_INTEGRITY" <<'PY'
+python3 - "$EXACT_NPM_JSON" "$AUDIT_FIXTURE_JSON" "$EXPECTED_INTEGRITY" <<'PY'
 import base64
 import json
 import pathlib
@@ -173,7 +173,7 @@ if [[ "${1:-}" == "install" ]]; then
 	exit 0
 fi
 if [[ "${1:-}" == "--prefix" ]]; then
-	cat "$AUDIT_JSON"
+	cat "$AUDIT_FIXTURE_JSON"
 	exit 0
 fi
 printf 'unexpected npm arguments: %s\n' "$*" >&2
@@ -280,7 +280,7 @@ run_step() {
 	(
 		cd "$FIXTURE_ROOT" || exit 1
 		TEST_MODE="$mode" COMMAND_LOG="$COMMAND_LOG" COUNT_FILE="$COUNT_FILE" \
-			EXACT_NPM_JSON="$EXACT_NPM_JSON" AUDIT_JSON="$AUDIT_JSON" \
+			EXACT_NPM_JSON="$EXACT_NPM_JSON" AUDIT_FIXTURE_JSON="$AUDIT_FIXTURE_JSON" \
 			FORMULA_BASE64="$FORMULA_BASE64" DRIFT_BASE64="$DRIFT_BASE64" \
 			GITHUB_OUTPUT="$GITHUB_OUTPUT" RUNNER_TEMP="${TEST_ROOT}/runner" \
 			RELEASE_VERSION="1.2.3" EXPECTED_INTEGRITY="$EXPECTED_INTEGRITY" \

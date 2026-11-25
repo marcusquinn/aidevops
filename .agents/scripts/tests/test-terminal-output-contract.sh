@@ -19,7 +19,7 @@ if [[ "${1:-}" == "--version" ]]; then
 fi
 
 if [[ "${1:-}" == "ls" || "${1:-}" == "list" ]]; then
-	printf 'OUTPUT_TEST_SYNTHETIC\n'
+	printf 'aidevops/OUTPUT_TEST_SYNTHETIC\n'
 	exit 0
 fi
 
@@ -47,6 +47,7 @@ fixture = "  synthetic%value  "
 
 def environment(value: str, *, missing: bool = False) -> dict[str, str]:
     result = base_env.copy()
+    result["GOPASS_PREFIX"] = "aidevops"
     result["AIDEVOPS_TEST_VALUE"] = value
     result["AIDEVOPS_TEST_MISSING"] = "1" if missing else "0"
     return result
