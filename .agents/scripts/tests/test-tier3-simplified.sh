@@ -173,13 +173,14 @@ test_full_loop_helper() {
 	local git_root
 	git_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
 	if [[ -n "$git_root" ]]; then
-		output=$("$helper" start "test prompt" --dry-run 2>&1) || true
+		local dry_rc=0
+		output=$("$helper" start "test prompt" --dry-run 2>&1) || dry_rc=$?
 		local git_dir git_common_dir
 		git_dir=$(git rev-parse --git-dir 2>/dev/null || echo "")
 		git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null || echo "")
 		if grep -qi "dry run" <<<"$output"; then
 			print_result "full-loop: start --dry-run" 0
-		elif [[ "$git_dir" == "$git_common_dir" ]] && grep -qi "safe linked worktree" <<<"$output"; then
+		elif [[ "$git_dir" == "$git_common_dir" && $dry_rc -ne 0 ]] && grep -qi "safe linked worktree" <<<"$output"; then
 			# Primary checkout (e.g. CI): helper correctly refuses to start
 			print_result "full-loop: start --dry-run" 0 "(primary checkout refused by linked-worktree guard)"
 		else
