@@ -313,7 +313,7 @@ run_test_openai_add_routing() {
 	trap 'rm -rf "$test_home"' RETURN
 
 	printf '\n=== OpenAI add-mode routing ===\n'
-	if python3 - "$SCRIPT_PATH" "$test_home" <<'PY'
+	if python3 - "$SCRIPT_PATH" "$test_home" <<'PY'; then
 import json
 import os
 from pathlib import Path
@@ -363,7 +363,7 @@ exit 0
         args = ["bash", script, "add", "openai"]
         if prefilled:
             args.append("routing@example.com")
-        result = subprocess.run(args, env=env, input="\n" if prefilled else
+        result = subprocess.run(args, env=env, input='\n' if prefilled else
                                 "routing@example.com\n\n", text=True,
                                 capture_output=True, start_new_session=True, timeout=20)
         output = result.stdout + result.stderr
@@ -390,7 +390,6 @@ exit 0
             assert pool["openai"][0]["email"] == "routing@example.com", label
         print(f"  verified {label}")
 PY
-	then
 		pass "OpenAI add routing, single email resolution and accurate messages"
 	else
 		fail "OpenAI add routing regression"
