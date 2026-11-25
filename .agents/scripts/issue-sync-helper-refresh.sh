@@ -70,33 +70,33 @@ cmd_refresh_body() {
 		print_error "refresh-body requires a positive issue number, --repo and a non-empty regular --body-file"
 		return 1
 	}
-	_body_sync_scan_file "$body_file" desired || return 1
+	_body_sync_scan_file "$body_file" desired || { print_error "Refresh desired body scan failed"; return 1; }
 	#aidevops:trust-boundary — resolve current identity and maintain/admin permission per invocation.
 	_gh_current_user_allows_repo_write "$repo" || { print_error "Refresh requires maintainer authority"; return 1; }
 	self_login="${AIDEVOPS_GH_WRITE_PERMISSION_USER:-}"
 	case "${AIDEVOPS_GH_WRITE_PERMISSION_LEVEL:-}" in admin | maintain) ;; *) print_error "Refresh requires admin or maintain"; return 1 ;; esac
-	[[ -n "$self_login" ]] || return 1
-	initial=$(_body_sync_fetch_state "$repo" "$issue") || { _refresh_audit blocked "$repo" "$issue" "" ""; return 1; }
+	[[ -n "$self_login" ]] || { print_error "Refresh could not resolve the current login"; return 1; }
+	initial=$(_body_sync_fetch_state "$repo" "$issue") || { print_error "Refresh initial issue state fetch failed"; _refresh_audit blocked "$repo" "$issue" "" ""; return 1; }
 	if ! _refresh_policy "$initial" "$issue" "$self_login"; then
 		_refresh_audit blocked "$repo" "$issue" "" ""
 		return 1
 	fi
-	current=$(jq -r '.body' <<<"$initial") || return 1
-	source_file=$(_body_sync_temp_file refresh-current) || return 1
-	tail_file=$(_body_sync_temp_file refresh-tail) || { rm -f "$source_file"; return 1; }
-	output_file=$(_body_sync_temp_file refresh-output) || { rm -f "$source_file" "$tail_file"; return 1; }
+	current=$(jq -r '.body' <<<"$initial") || { print_error "Refresh current body extraction failed"; return 1; }
+	source_file=$(_body_sync_temp_file refresh-current) || { print_error "Refresh current body temp-file creation failed"; return 1; }
+	tail_file=$(_body_sync_temp_file refresh-tail) || { print_error "Refresh tail temp-file creation failed"; rm -f "$source_file"; return 1; }
+	output_file=$(_body_sync_temp_file refresh-output) || { print_error "Refresh output temp-file creation failed"; rm -f "$source_file" "$tail_file"; return 1; }
 	printf '%s\n' "$current" >"$source_file"
-	_body_sync_scan_file "$source_file" current || { _refresh_audit blocked "$repo" "$issue" "" ""; rm -f "$source_file" "$tail_file" "$output_file"; return 1; }
+	_body_sync_scan_file "$source_file" current || { print_error "Refresh current body scan failed"; _refresh_audit blocked "$repo" "$issue" "" ""; rm -f "$source_file" "$tail_file" "$output_file"; return 1; }
 	if rg -q '^<!-- aidevops:sig -->' "$body_file"; then
-		_refresh_tail "$source_file" "$tail_file" 0 || return 1
+		_refresh_tail "$source_file" "$tail_file" 0 || { print_error "Refresh tail extraction failed"; return 1; }
 	else
-		_refresh_tail "$source_file" "$tail_file" 1 || return 1
+		_refresh_tail "$source_file" "$tail_file" 1 || { print_error "Refresh tail extraction failed"; return 1; }
 	fi
 	{ printf '%s\n' "$(<"$body_file")"; if [[ -s "$tail_file" ]]; then printf '\n'; cat "$tail_file"; fi; } >"$output_file"
 	desired=$(<"$output_file")
-	before=$(_refresh_hash "$current") || return 1
-	after=$(_refresh_hash "$desired") || return 1
-	immediate=$(_body_sync_fetch_state "$repo" "$issue") || { _refresh_audit blocked "$repo" "$issue" "$before" "$after"; return 1; }
+	before=$(_refresh_hash "$current") || { print_error "Refresh current body hashing failed"; return 1; }
+	after=$(_refresh_hash "$desired") || { print_error "Refresh desired body hashing failed"; return 1; }
+	immediate=$(_body_sync_fetch_state "$repo" "$issue") || { print_error "Refresh pre-write issue state fetch failed"; _refresh_audit blocked "$repo" "$issue" "$before" "$after"; return 1; }
 	if ! _refresh_policy "$immediate" "$issue" "$self_login" || [[ "$(_body_sync_state_digest "$initial")" != "$(_body_sync_state_digest "$immediate")" ]]; then
 		_refresh_audit blocked "$repo" "$issue" "$before" "$after"
 		print_error "Refresh refused concurrent state change"
@@ -110,7 +110,7 @@ cmd_refresh_body() {
 		diff -u "$source_file" "$output_file" || true
 		rc=2
 	else
-		_refresh_audit authorized "$repo" "$issue" "$before" "$after" || return 1
+		_refresh_audit authorized "$repo" "$issue" "$before" "$after" || { print_error "Refresh authorization audit failed"; return 1; }
 		if gh_issue_edit_safe "$issue" --repo "$repo" --body-file "$output_file"; then
 			post=$(_body_sync_fetch_state "$repo" "$issue") || post=""
 			if _body_sync_validate_state "$post" "$issue" && \
@@ -127,9 +127,25 @@ cmd_refresh_body() {
 
 _refresh_policy() {
 	local state="$1" issue="$2" self="$3"
-	_body_sync_validate_state "$state" "$issue" && \
-		[[ "$(jq -r '.state' <<<"$state")" == OPEN ]] && \
-		! _body_sync_has_nonself_claim "$state" "$self" && \
-		! jq -e 'any(.labels[]; .name == "status:queued" or .name == "status:in-progress" or .name == "status:in-review")' <<<"$state" >/dev/null
-	return $?
+	local issue_state="" claimant="" label=""
+	if ! _body_sync_validate_state "$state" "$issue"; then
+		print_error "Refresh refused: issue state could not be validated"
+		return 1
+	fi
+	issue_state=$(jq -r '.state' <<<"$state")
+	if [[ "$issue_state" != OPEN ]]; then
+		print_error "Refresh refused: issue #$issue is $issue_state"
+		return 1
+	fi
+	if _body_sync_has_nonself_claim "$state" "$self"; then
+		claimant=$(jq -r --arg self "$self" '[.assignees[] | select(.login != $self) | .login][0]' <<<"$state")
+		print_error "Refresh refused: issue #$issue is claimed by $claimant"
+		return 1
+	fi
+	if jq -e 'any(.labels[]; .name == "status:queued" or .name == "status:in-progress" or .name == "status:in-review")' <<<"$state" >/dev/null; then
+		label=$(jq -r '[.labels[].name | select(. == "status:queued" or . == "status:in-progress" or . == "status:in-review")][0]' <<<"$state")
+		print_error "Refresh refused: issue #$issue has $label (a worker may be reading the body); retry after the label clears"
+		return 1
+	fi
+	return 0
 }
