@@ -2006,8 +2006,16 @@ test_observed_ceremony_reserve() {
 		[[ "$(_dispatch_round_budget_plan after)" == 'full 0 150 90 60 0 0' ]] || exit 1
 		_dispatch_cycle_budget_defers_candidate 1 o/r && exit 1
 		[[ "$DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR" == 600 ]] || exit 1
+		# A boundary passing during the reserve scan is seen: every clock read
+		# loses one second, so a stale first read would admit at 89s left.
+		local tick="${TEST_ROOT}/remaining-tick" value=""
+		_pulse_cycle_remaining_seconds() { read -r value <"$tick"; printf '%s\n' "$((value - 1))" >"$tick"; printf '%s\n' "$value"; return 0; }
+		printf '90\n' >"$tick"
+		_dispatch_cycle_budget_defers_candidate 1 o/r || exit 1
+		printf '150\n' >"$tick"
+		[[ "$(_dispatch_round_budget_plan after)" == 'skip 0 149 90 60 0 0' ]] || exit 1
 	) || rc=1
-	print_result "observed reserve: p90 excludes starts and leaves execution timeout unchanged" "$rc"
+	print_result "observed reserve: p90 excludes starts, execution timeout unchanged, clock re-read after lookup" "$rc"
 	return 0
 }
 
