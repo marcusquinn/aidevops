@@ -11,10 +11,13 @@ import { readReferenceImages, saveGeneratedImage, validateImageOutputPath } from
 import {
   API_IMAGE_MODELS,
   DEFAULT_API_IMAGE_MODEL,
+  IMAGE_BACKGROUNDS,
+  IMAGE_COMPLEXITIES,
   requestApiImage,
   requestOAuthImage,
   requestOpenRouterImage,
 } from "./gpt-image-request.mjs";
+import { validateExtendedArgs } from "./gpt-image-extended.mjs";
 import { resolveGptImageProjectRoot } from "./gpt-image-worktree.mjs";
 import { assertLocalOnlyToolDestination } from "./local-only-policy.mjs";
 
@@ -59,6 +62,7 @@ function validateRawArgs(args) {
   validateOutputArgs(args);
   validateReferenceArgs(args);
   validateAuthArgs(args);
+  validateExtendedArgs(args);
 }
 
 function validatePrompt(value) {
@@ -177,6 +181,8 @@ export function createGptImageTool(tool, z, options = {}) {
       images: z.array(z.string()).optional().describe("Optional project-relative PNG, JPEG, or WebP reference image paths."),
       auth: z.enum(["oauth", "api", "openrouter"]).optional().describe("Billing route; defaults to ChatGPT OAuth. API and OpenRouter (OPENROUTER_API_KEY, no reference images) must be explicit."),
       account: z.string().optional().describe("OAuth pool email when auth=oauth, or named API-key alias when auth=api."),
+      complexity: z.enum(IMAGE_COMPLEXITIES).optional().describe("Planning complexity; API-only, requires a gpt-image-2.6 model."),
+      background: z.enum(IMAGE_BACKGROUNDS).optional().describe("Background mode; API-only, requires a gpt-image-2.6 model. transparent needs png or webp; verify actual alpha samples."),
       model: z.enum(API_IMAGE_MODELS).optional().describe("API-only image model; defaults to gpt-image-2 when auth=api."),
     },
     async execute(args, context) {

@@ -24,7 +24,7 @@ tools:
 - **OpenCode tool**: `gpt_image_generate` (OpenCode 1: via `aidevops_on_demand` with `{"tool": "gpt_image_generate", "args": {...}}`)
 - **Default billing route**: ChatGPT subscription OAuth from the aidevops OpenAI account pool
 - **Platform billing route**: explicit `auth: "api"` plus a named account alias
-- **Image models**: OAuth is provider-managed; explicit API selection supports `gpt-image-2`, `gpt-image-2.5-flare`, and `gpt-image-2.5-sunburst`
+- **Image models**: OAuth is provider-managed; explicit API selection supports `gpt-image-2`, `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst`, `gpt-image-2.6-flare`, and `gpt-image-2.6-sunburst` (2.6 adds optional `complexity` and `background`)
 - **Reference images**: up to 8 project-relative PNG, JPEG, or WebP files
 - **Safety**: existing files are never overwritten; versioned paths use `-v2`, `-v3`, and so on
 
@@ -94,7 +94,20 @@ from a subscription to API credits. Never paste an API key into chat.
 | `images` | 0-8 project-relative paths | Reference-guided generation/editing; PNG, JPEG, or WebP, 20 MiB each |
 | `auth` | oauth, api | OAuth is the default; API billing must be explicit |
 | `account` | OAuth email or API alias | Exact selection only; no silent account substitution |
-| `model` | gpt-image-2, gpt-image-2.5-flare, gpt-image-2.5-sunburst | API-only; defaults to `gpt-image-2` for compatibility |
+| `model` | gpt-image-2, gpt-image-2.5-flare, gpt-image-2.5-sunburst, gpt-image-2.6-flare, gpt-image-2.6-sunburst | API-only; defaults to `gpt-image-2` for compatibility |
+| `complexity` | low, medium, high | API-only; requires a `gpt-image-2.6-*` model; omitted unless set |
+| `background` | transparent, opaque, auto | API-only; requires a `gpt-image-2.6-*` model; `transparent` needs `png` or `webp` (rejected for `jpeg`) |
+
+#### Requesting and verifying transparency
+
+Use `auth: "api"`, a `gpt-image-2.6-*` model, `format: "png"`, and
+`background: "transparent"` (add `complexity: "high"` for complex scenes). The
+OpenRouter route does not support reference images and the tool never changes
+model or route silently. An RGBA file or `.png` extension does not prove a clear
+background or an opaque subject: sample actual alpha values (corners should be 0,
+subject interior should be 255) and check edges for low-alpha spill before use.
+The provider may leave faint spill or a slightly translucent interior; the tool
+does not modify output art.
 
 OAuth uses OpenCode's Codex channel and is therefore runtime-specific and
 experimental. Its hosted response does not confirm the exact image model, so
