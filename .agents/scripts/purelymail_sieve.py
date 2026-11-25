@@ -23,6 +23,7 @@ PURELYMAIL_SIEVE_PORT override them (for a local test server).
 """
 
 import base64
+import contextlib
 import os
 import re
 import socket
@@ -172,10 +173,12 @@ class Conn:
         return items
 
     def close(self):
-        try:
+        """Best-effort LOGOUT (bounded wait, also after errors), then close."""
+        with contextlib.suppress(SieveError, OSError):
+            self.sock.settimeout(PRE_TLS_WAIT)
+            self.command(b"LOGOUT")
+        with contextlib.suppress(OSError):
             self.sock.close()
-        except OSError:
-            pass
 
 
 def normalize(text):
@@ -232,8 +235,7 @@ def op_remove(conn, name, expected):
     conn.command(b"RENAMESCRIPT " + quote(name) + b" " + quote(parked))
     stored = first_string(conn.command(b"GETSCRIPT " + quote(parked)))
     if normalize(stored) != normalize(expected):
-        restore_parked(conn, parked, name)
-        raise SieveError("script changed since it was checked; left in place")
+        raise SieveError("script changed since it was checked; " + restore_parked(conn, parked, name))
     if (parked, True) in listing(conn):
         conn.command(b'SETACTIVE ""')
     conn.command(b"DELETESCRIPT " + quote(parked))
@@ -241,10 +243,11 @@ def op_remove(conn, name, expected):
 
 
 def restore_parked(conn, parked, name):
-    try:
+    """Rename PARKED back to NAME; describe where the script was left."""
+    with contextlib.suppress(SieveError):
         conn.command(b"RENAMESCRIPT " + quote(parked) + b" " + quote(name))
-    except SieveError:
-        raise SieveError("script changed since it was checked; kept as '%s'" % parked)
+        return "left in place"
+    return "kept as '%s' (a new '%s' exists)" % (parked, name)
 
 
 # Operation name -> (handler, argument count).
@@ -263,12 +266,7 @@ def main(argv):
     conn = None
     try:
         conn = Conn(argv[2], password)
-        rc = entry[0](conn, *argv[4:])
-        try:
-            conn.command(b"LOGOUT")
-        except (SieveError, OSError):
-            pass
-        return rc
+        return entry[0](conn, *argv[4:])
     except (SieveError, OSError, ValueError) as err:
         sys.stderr.write("sieve: %s\n" % err)
         return 1
