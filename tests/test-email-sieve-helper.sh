@@ -762,7 +762,11 @@ test_copy_safety() {
 	assert_exit_nonzero "copy refuses a mailbox with other scripts" "$rc"
 	assert_contains "refusal explains existing scripts" "already has Sieve scripts" "$output"
 	assert_not_contains "other scripts are not changed" "UNEXPECTED MUTATION" "$output"
+	return 0
+}
 
+test_copy_remove_preview_and_confirm() {
+	local output rc
 	local remove_script
 	# shellcheck disable=SC2016 # expanded by the child bash, not here
 	remove_script='
@@ -969,6 +973,7 @@ main() {
 	test_copy_to
 	test_client_requires_host
 	test_copy_safety
+	test_copy_remove_preview_and_confirm
 	test_deploy_requires_server
 	test_deploy_requires_user
 	test_list_scripts_requires_server_user
