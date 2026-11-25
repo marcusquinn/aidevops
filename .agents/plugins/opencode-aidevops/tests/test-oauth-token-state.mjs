@@ -134,8 +134,11 @@ test("JavaScript waits for the live Python owner of the shared lock", () => {
 
     const poolPath = join(process.env.HOME, ".aidevops", "oauth-pool.json");
     mkdirSync(join(process.env.HOME, ".aidevops"), { recursive: true });
+    // GH#40309: the holder releases only when told, after the JavaScript waiter
+    // has had time to try. A fixed holder sleep raced module import on a loaded
+    // host; ordering, not elapsed time, proves the live owner was respected.
     const python = [
-      "import importlib.util,json,os,time",
+      "import importlib.util,json,os,sys",
       "spec=importlib.util.spec_from_file_location('oauth_common',os.environ['AIDEVOPS_TEST_COMMON_PATH'])",
       "module=importlib.util.module_from_spec(spec)",
       "spec.loader.exec_module(module)",
@@ -146,13 +149,14 @@ test("JavaScript waits for the live Python owner of the shared lock", () => {
       "owner['createdAt']=0",
       "json.dump(owner,open(owner_path,'w'))",
       "print('LOCKED',flush=True)",
-      "time.sleep(0.35)",
+      "sys.stdin.readline()",
       "module.release_lock(lock)",
       "lock.close()",
     ].join(";");
+    const { withPoolLockAsync } = await import("./oauth-pool-storage.mjs?cross=" + Math.random());
     const child = spawn("python3", ["-c", python], {
       env: { ...process.env, AIDEVOPS_TEST_POOL_PATH: poolPath },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     });
     await new Promise((resolve, reject) => {
       child.stdout.once("data", resolve);
@@ -160,10 +164,14 @@ test("JavaScript waits for the live Python owner of the shared lock", () => {
       child.once("exit", (code) => { if (code !== 0) reject(new Error("python lock holder exited " + code)); });
     });
 
-    const { withPoolLockAsync } = await import("./oauth-pool-storage.mjs?cross=" + Math.random());
-    const started = Date.now();
-    await withPoolLockAsync(async () => true);
-    assert.ok(Date.now() - started >= 250);
+    let releaseRequested = false;
+    const release = setTimeout(() => {
+      releaseRequested = true;
+      child.stdin.end("release\n");
+    }, 350);
+    const acquiredAfterRelease = await withPoolLockAsync(async () => releaseRequested);
+    clearTimeout(release);
+    assert.equal(acquiredAfterRelease, true, "JavaScript took the lock while the Python owner held it");
     assert.equal(existsSync(poolPath + ".lock.d"), false);
   `;
 

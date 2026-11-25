@@ -132,8 +132,11 @@ export function terminationCases() {
     const z = { enum: () => schemaNode, string: () => schemaNode, number: () => schemaNode, array: () => schemaNode };
     const tool = createBoundedInteractiveOperationTool((definition) => definition, z, instance);
     for (const [requested, expected] of [[undefined, 500], [90, 90_000], [999, 300_000], [-1, 10]]) {
+      // GH#40309: the manager budget also covers supervisor startup and
+      // lifecycle admission, which exceeded 10 s at load ~5/CPU; this case
+      // asserts grace and progress, not latency.
       const started = JSON.parse(await tool.execute({ action: "start", command: [process.execPath, "-e", "setTimeout(() => process.exit(0),80)"],
-        budget_seconds: 10, progress_interval_seconds: 0.01, kill_grace_seconds: requested }, owner));
+        budget_seconds: SUCCESS_BUDGET_MS / 1000, progress_interval_seconds: 0.01, kill_grace_seconds: requested }, owner));
       const result = await terminal(instance, started.operation_id);
       assert.equal(result.kill_grace_ms, expected);
       assert.equal(result.state, "succeeded");

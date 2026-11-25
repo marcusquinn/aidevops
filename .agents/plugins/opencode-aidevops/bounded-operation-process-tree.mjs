@@ -47,20 +47,26 @@ export function signalEach(pids, signal, entries = []) {
 
 function recoverMarked(snapshot, rootPid, owned, operationID) {
   const candidates = snapshot.entries.filter((entry) => entry.pid !== rootPid && entry.pid !== snapshot.psPid && !isOwned(owned, entry));
-  for (const entry of markedProcesses(candidates, operationID)) {
+  const marked = markedProcesses(candidates, operationID);
+  if (!marked) return false;
+  for (const entry of marked) {
     owned.set(entry.pid, { pgid: entry.pgid, started: entry.started });
   }
+  return true;
 }
 
+// Returns false when a requested marker inventory was unavailable.
 function recordSnapshot(snapshot, rootPid, owned, operationID, nestedGroups) {
+  let complete = true;
   recordOwnedDescendants(snapshot.entries, rootPid, owned, snapshot.psPid);
   if (operationID) {
-    recoverMarked(snapshot, rootPid, owned, operationID);
+    complete = recoverMarked(snapshot, rootPid, owned, operationID);
     recordOwnedDescendants(snapshot.entries, rootPid, owned, snapshot.psPid);
   }
   for (const entry of snapshot.entries) {
     if (entry.pgid !== rootPid && isOwned(owned, entry)) nestedGroups.add(entry.pgid);
   }
+  return complete;
 }
 
 // The marker scan reads every process environment (`ps axeww` on macOS,
@@ -96,7 +102,7 @@ export function createProcessTreeTracker(rootPid, snapshotProcesses = processSna
       attributionComplete = false;
       return null;
     }
-    recordSnapshot(snapshot, rootPid, owned, markerScanOperationID(request), nestedGroups);
+    if (!recordSnapshot(snapshot, rootPid, owned, markerScanOperationID(request), nestedGroups)) attributionComplete = false;
     return snapshot;
   };
   return {
@@ -107,6 +113,18 @@ export function createProcessTreeTracker(rootPid, snapshotProcesses = processSna
       .filter((entry) => entry.pgid === rootPid && isOwned(owned, entry))
       .map((entry) => entry.pid),
     ownGroupMembers: (snapshot) => snapshot.entries.filter((entry) => entry.pgid === rootPid && entry.pid !== snapshot.psPid).length,
+    // SIGKILLs every other member of the root's own group, sparing the root. A
+    // detached root leads its session, so its group holds only processes it
+    // launched: the authority of a group SIGKILL without killing the root.
+    // Without an inventory nothing is signalled; callers keep their backstop.
+    killOwnGroupOthers: () => {
+      const snapshot = track();
+      if (!snapshot) return;
+      const others = snapshot.entries.filter((entry) => entry.pgid === rootPid && entry.pid !== rootPid && entry.pid !== snapshot.psPid);
+      signalEach(others.map((entry) => entry.pid), "SIGKILL", snapshot.entries);
+    },
     containment: () => ({ nestedProcessGroups: nestedGroups.size, attributionComplete }),
+    // Start identity recorded for an owned PID by any earlier scan, or null.
+    identity: (pid) => (owned.has(pid) ? { pid, started: owned.get(pid).started } : null),
   };
 }

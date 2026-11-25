@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -82,6 +83,44 @@ export function operationWaitMs(instance, operationID) {
   const restoration = operation.restorationCommand
     ? operation.restorationBudgetMs + operation.killGraceMs : 0;
   return Math.min(120_000, main + restoration + 15_000);
+}
+
+export function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const zombie = (pid) => {
+  try {
+    return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim().startsWith("Z");
+  } catch {
+    return false; // exited between the probes
+  }
+};
+
+// GH#40309: SIGKILL delivery and reaping by an orphan's new parent are
+// asynchronous, so on a loaded host a receipt can precede the kernel's removal;
+// a zombie has already been contained. A real survivor of a long sleep stays
+// alive far past this bound.
+export async function contained(pid, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (alive(pid) && !zombie(pid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return !alive(pid) || zombie(pid);
+}
+
+// Waits on wait-aware status until the running command reports progress, so a
+// test can act after startup without racing it under load.
+export async function progressed(instance, operationID, context = owner) {
+  while (!instance.status(operationID, context).progress_events) {
+    await instance.status(operationID, context, { waitMs: 1000 });
+    assert.equal(instance.status(operationID, context).state, "running");
+  }
 }
 
 export async function terminal(instance, operationID, context = owner, timeoutMs = operationWaitMs(instance, operationID)) {

@@ -10,7 +10,9 @@ import { join } from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { root, owner, recorded, manager, launcher, SUCCESS_BUDGET_MS, operationWaitMs, terminal } from "./bounded-operation-fixtures.mjs";
+import {
+  root, owner, recorded, manager, launcher, SUCCESS_BUDGET_MS, operationWaitMs, terminal, alive, contained, progressed,
+} from "./bounded-operation-fixtures.mjs";
 import { terminationCases } from "./bounded-operation-termination-cases.mjs";
 import { createOutputSandboxReader, createOutputSandboxRecorder } from "../bounded-operation-output.mjs";
 import {
@@ -26,16 +28,22 @@ import { processStartIdentity } from "../process-start-identity.mjs";
 describe("bounded interactive operations", () => {
   test("start returns control and explicit progress reaches a private terminal receipt", async () => {
     const instance = manager();
-    const before = Date.now();
+    // GH#40309: the command cannot finish until this test opens its gate, so a
+    // "running" receipt proves start returned first without a wall-clock bound
+    // (spawn and identity reads take seconds on a loaded host).
+    const gate = join(root, "start-returns-control.gate");
     const started = await instance.start({
-      command: [process.execPath, "-e", "console.log('AIDEVOPS_PROGRESS: phase-one'); setTimeout(() => process.exit(0), 80)"],
+      command: [process.execPath, "-e", `console.log('AIDEVOPS_PROGRESS: phase-one');
+        const {existsSync} = require('node:fs');
+        setInterval(() => { if (existsSync(${JSON.stringify(gate)})) process.exit(0); }, 20);`],
       cwd: root,
       budgetMs: SUCCESS_BUDGET_MS,
       progressIntervalMs: 30,
     }, owner);
 
-    assert.equal(started.state, "running");
-    assert.ok(Date.now() - before < 500, "start waited for command completion");
+    assert.equal(started.state, "running", "start waited for command completion");
+    assert.equal(started.process_exit, null);
+    writeFileSync(gate, "");
     const result = await terminal(instance, started.operation_id);
     assert.equal(result.state, "succeeded");
     assert.equal(result.process_exit, 0);
@@ -267,7 +275,7 @@ describe("bounded interactive operations", () => {
         const handoff = await instance.start({
           command: ["bash", "-c", 'SCRIPT_DIR="$1"; source "$SCRIPT_DIR/shared-constants.sh"; source "$SCRIPT_DIR/full-loop-helper-state.sh"; source "$SCRIPT_DIR/full-loop-helper-merge.sh"; _merge_record_deferred_cleanup_owner 123 example/repo "$2"',
             "fixture", scriptsDir, `${linked}\tfeature/adopt\t0`],
-          cwd: linked, budgetMs: 15000,
+          cwd: linked, budgetMs: SUCCESS_BUDGET_MS,
         }, owner);
         assert.equal((await terminal(instance, handoff.operation_id)).state, "succeeded");
         const receipt = JSON.parse(readFileSync(join(process.env.AIDEVOPS_FULL_LOOP_CLEANUP_DIR, "example_repo-123.json"), "utf8"));
@@ -278,7 +286,8 @@ describe("bounded interactive operations", () => {
         assert.equal(execFileSync(helper, ["registry", "verify-owner", linked, owner.sessionID], { env, encoding: "utf8" }).trim(), "VERIFIED");
         assert.throws(() => invoke(), "cleanup deferral must not enable live-owner adoption");
         await assert.rejects(instance.start({ command: [process.execPath], cwd: linked }, { sessionID: "ses_other" }), /not owned/);
-        const resumed = await instance.start({ command: [process.execPath, "-e", "process.exit(0)"], cwd: linked, budgetMs: 5000 }, owner);
+        // GH#40309: startup budgets, not latency assertions (a bare exit timed out at 5 s under load).
+        const resumed = await instance.start({ command: [process.execPath, "-e", "process.exit(0)"], cwd: linked, budgetMs: SUCCESS_BUDGET_MS }, owner);
         assert.equal((await terminal(instance, resumed.operation_id)).state, "succeeded");
       } finally {
         for (const key of environmentKeys) {
@@ -360,14 +369,8 @@ describe("bounded interactive operations", () => {
   terminationCases();
 
   test("helper-created process groups are contained on timeout and cancellation (GH#33514)", async () => {
-    const alive = (pid) => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    };
+    // Progress marks the nested group as started; the deadline then fires from
+    // the injected manager timer, so neither case races command startup.
     const nestedPid = (recordedBefore) => {
       const match = recorded.slice(recordedBefore).map((entry) => entry.content).join("\n").match(/nested:(\d+)/);
       assert.ok(match, "nested child PID was not reported");
@@ -378,24 +381,32 @@ describe("bounded interactive operations", () => {
     const unrelated = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
     unrelated.unref();
     try {
-      const instance = manager();
+      // Only the operation budget timer is held back; status waits keep real timers.
+      let deadline;
+      const instance = manager({ setTimer: (callback, milliseconds) => {
+        if (milliseconds !== SUCCESS_BUDGET_MS) return setTimeout(callback, milliseconds);
+        deadline = callback;
+        return null;
+      } });
       // `set -m` mirrors timeout_sec's fallback; GNU timeout also calls setpgid.
-      const nestedCommand = ["bash", "-c", "set -m; sleep 30 & echo nested:$!; wait"];
+      const nestedCommand = ["bash", "-c", "set -m; sleep 30 & echo AIDEVOPS_PROGRESS: nested:$!; wait"];
       let recordedBefore = recorded.length;
-      const timed = await instance.start({ command: nestedCommand, budgetMs: 400 }, owner);
+      const timed = await instance.start({ command: nestedCommand, budgetMs: SUCCESS_BUDGET_MS }, owner);
+      await progressed(instance, timed.operation_id);
+      deadline();
       const timedResult = await terminal(instance, timed.operation_id);
       assert.equal(timedResult.state, "timed_out");
       assert.equal(timedResult.containment, "owned_process_tree");
       assert.equal(timedResult.nested_process_groups, 1);
-      assert.equal(alive(nestedPid(recordedBefore)), false, "nested process group survived the deadline");
+      assert.equal(await contained(nestedPid(recordedBefore)), true, "nested process group survived the deadline");
 
       recordedBefore = recorded.length;
-      const cancelled = await instance.start({ command: nestedCommand, budgetMs: 10_000 }, owner);
-      await new Promise((resolve) => setTimeout(resolve, 400));
+      const cancelled = await instance.start({ command: nestedCommand, budgetMs: SUCCESS_BUDGET_MS }, owner);
+      await progressed(instance, cancelled.operation_id);
       instance.cancel(cancelled.operation_id, owner);
       const cancelledResult = await terminal(instance, cancelled.operation_id);
       assert.equal(cancelledResult.state, "cancelled");
-      assert.equal(alive(nestedPid(recordedBefore)), false, "nested process group survived cancellation");
+      assert.equal(await contained(nestedPid(recordedBefore)), true, "nested process group survived cancellation");
 
       const timeoutBinary = ["timeout", "gtimeout"].find((name) => {
         try {
@@ -406,7 +417,11 @@ describe("bounded interactive operations", () => {
         }
       });
       if (timeoutBinary) {
-        const gnu = await instance.start({ command: [timeoutBinary, "30", "sleep", "30"], budgetMs: 400 }, owner);
+        // timeout calls setpgid before running sh, so progress proves the nested group.
+        const gnu = await instance.start({ command: [timeoutBinary, "30", "sh", "-c", "echo AIDEVOPS_PROGRESS: ready; exec sleep 30"],
+          budgetMs: SUCCESS_BUDGET_MS }, owner);
+        await progressed(instance, gnu.operation_id);
+        deadline();
         const gnuResult = await terminal(instance, gnu.operation_id);
         assert.equal(gnuResult.state, "timed_out");
         assert.equal(gnuResult.containment, "owned_process_tree");

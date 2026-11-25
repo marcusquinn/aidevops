@@ -65,7 +65,10 @@ async function processListing(args) {
     child.once("error", reject);
   });
   try {
-    return execFileSync("ps", ["-ax", "-o", "pid=,etime=,command="], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+    // GH#40309: list only the probe. The whole host table varies with whatever
+    // else runs (thousands of rows on a loaded host), which made these
+    // assertions depend on unrelated processes rather than the provider argv.
+    return execFileSync("ps", ["-p", String(child.pid), "-o", "pid=,etime=,command="], { encoding: "utf8" });
   } finally {
     child.kill("SIGKILL");
   }
