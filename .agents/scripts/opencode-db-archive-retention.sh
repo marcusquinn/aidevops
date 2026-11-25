@@ -150,7 +150,11 @@ _prune_delete_batch() {
 	local in_clause="$2"
 	local session_message_sql="" session_input_sql="" context_epoch_sql=""
 	local event_sequence_sql="" event_sql=""
+	local inbox_sql="" inbox_table=""
 
+	for inbox_table in $OPENCODE_ARCHIVE_INBOX_SESSION_TABLES; do
+		_sqlite_has_table "$db" "$inbox_table" && inbox_sql="${inbox_sql}DELETE FROM ${inbox_table} WHERE session_id IN ($in_clause);"$'\n'
+	done
 	_sqlite_has_table "$db" session_message && session_message_sql="DELETE FROM session_message WHERE session_id IN ($in_clause);"
 	_sqlite_has_table "$db" session_input && session_input_sql="DELETE FROM session_input WHERE session_id IN ($in_clause);"
 	_sqlite_has_table "$db" session_context_epoch && context_epoch_sql="DELETE FROM session_context_epoch WHERE session_id IN ($in_clause);"
@@ -167,6 +171,7 @@ DELETE FROM session_share WHERE session_id IN ($in_clause);
 ${session_message_sql}
 ${session_input_sql}
 ${context_epoch_sql}
+${inbox_sql}
 DELETE FROM message WHERE session_id IN ($in_clause);
 ${event_sql}
 ${event_sequence_sql}

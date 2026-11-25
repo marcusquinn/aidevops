@@ -951,6 +951,7 @@ cmd_archive() {
 	local candidate_filter total_eligible
 	local has_session_message_table=0 has_session_input_table=0
 	local has_session_context_epoch_table=0 has_event_sequence_table=0 has_event_table=0
+	local inbox_session_tables=""
 	_archive_parse_options "$@" || return 1
 	_archive_validate_options || return 1
 	if [[ "${OPENCODE_ARCHIVE_BUDGET_CHILD:-0}" != 1 ]]; then
@@ -1208,6 +1209,27 @@ _archive_detect_tables() {
 	if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
 		has_event_table=1
 	fi
+	# Session-inbox generation tables present in the active DB (space separated).
+	local inbox_table=""
+	inbox_session_tables=""
+	for inbox_table in $OPENCODE_ARCHIVE_INBOX_SESSION_TABLES; do
+		if _sqlite_has_table "$ACTIVE_DB" "$inbox_table"; then
+			inbox_session_tables="${inbox_session_tables}${inbox_session_tables:+ }${inbox_table}"
+		fi
+	done
+	return 0
+}
+
+# Payload-size SQL expression for one session-inbox generation table.
+_archive_inbox_table_bytes_expr() {
+	local table_name="$1"
+	case "$table_name" in
+	session_inbox) _archive_len_expr payload ;;
+	session_pending) _archive_len_expr data ;;
+	instruction_entry) _archive_len_expr value ;;
+	instruction_state) printf '%s + %s\n' "$(_archive_len_expr initial_values)" "$(_archive_len_expr current_values)" ;;
+	*) printf '0\n' ;;
+	esac
 	return 0
 }
 
@@ -1215,6 +1237,7 @@ _archive_report_dry_run() {
 	# Show what would be archived
 	local msg_count part_count todo_count share_count event_count event_bytes
 	local session_message_count=0 session_input_count=0 context_epoch_count=0 event_sequence_count=0
+	local inbox_table="" inbox_count=0 inbox_report=""
 	msg_count=$(_archive_active_query "SELECT COUNT(*) FROM message WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
 	part_count=$(_archive_active_query "SELECT COUNT(*) FROM part WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
 	todo_count=$(_archive_active_query "SELECT COUNT(*) FROM todo WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
@@ -1231,6 +1254,10 @@ _archive_report_dry_run() {
 	if ((has_event_sequence_table)); then
 		event_sequence_count=$(_archive_active_query "SELECT COUNT(*) FROM event_sequence WHERE aggregate_id IN (SELECT id FROM session WHERE $candidate_filter);")
 	fi
+	for inbox_table in $inbox_session_tables; do
+		inbox_count=$(_archive_active_query "SELECT COUNT(*) FROM ${inbox_table} WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+		inbox_report="${inbox_report}  ${inbox_table}: ${inbox_count}"$'\n'
+	done
 	event_count=$(_archive_active_query "$(_archive_event_count_sql "$candidate_filter" "$has_event_table")")
 	event_bytes=$(_archive_active_query "$(_archive_event_bytes_sql "$candidate_filter" "$has_event_table")")
 
@@ -1244,6 +1271,7 @@ _archive_report_dry_run() {
 	echo "  Session msgs:   $session_message_count"
 	echo "  Session inputs: $session_input_count"
 	echo "  Context epochs: $context_epoch_count"
+	[[ -z "$inbox_report" ]] || printf '%s' "$inbox_report"
 	echo "  Event sequences: $event_sequence_count"
 	echo "  Events:         $event_count ($(format_bytes "$event_bytes"))"
 	echo ""
@@ -1303,6 +1331,10 @@ _archive_select_batch() {
 	if ((has_session_context_epoch_table)); then
 		extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM($(_archive_len_expr baseline) + $(_archive_len_expr snapshot)) FROM session_context_epoch WHERE session_id=c.id),0)"
 	fi
+	local inbox_table=""
+	for inbox_table in $inbox_session_tables; do
+		extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM($(_archive_inbox_table_bytes_expr "$inbox_table")) FROM ${inbox_table} WHERE session_id=c.id),0)"
+	done
 	# Never begin sizing or a write after the remaining budget is used.
 	if (($(date +%s) >= deadline)); then return 2; fi
 	# Without octet_length() every sized row reads its overflow pages, so keep
@@ -1412,8 +1444,13 @@ _archive_write_batch() {
 	local context_epoch_copy_sql="" context_epoch_delete_sql=""
 	local event_sequence_copy_sql="" event_sequence_delete_sql=""
 	local event_copy_sql="" event_delete_sql=""
+	local inbox_copy_sql="" inbox_delete_sql="" inbox_table=""
 	local session_row_filter="session_id IN ($in_clause)"
 	local aggregate_row_filter="aggregate_id IN ($in_clause)"
+	for inbox_table in $inbox_session_tables; do
+		inbox_copy_sql="${inbox_copy_sql}$(_archive_copy_sql "$inbox_table" "$session_row_filter")"$'\n' || return 1
+		inbox_delete_sql="${inbox_delete_sql}DELETE FROM ${inbox_table} WHERE session_id IN ($in_clause);"$'\n'
+	done
 	if ((has_session_message_table)); then
 		session_message_copy_sql=$(_archive_copy_sql session_message "$session_row_filter") || return 1
 		session_message_delete_sql="DELETE FROM session_message WHERE session_id IN ($in_clause);"
@@ -1454,7 +1491,7 @@ _archive_write_batch() {
 		comparisons="${comparisons}${comparisons:+ AND }a.\"${column}\" IS s.\"${column}\""
 	done
 	verify_sql="INSERT INTO archive_copy_guard SELECT NOT EXISTS (SELECT 1 FROM (SELECT ${session_select_columns} FROM session WHERE id IN ($in_clause)) s WHERE NOT EXISTS (SELECT 1 FROM archive.session a WHERE a.id IS s.id AND $comparisons));"
-	for table_name in message part todo session_share session_message session_input session_context_epoch event_sequence event; do
+	for table_name in message part todo session_share session_message session_input session_context_epoch $inbox_session_tables event_sequence event; do
 		_sqlite_has_table "$ACTIVE_DB" "$table_name" || continue
 		row_filter="$session_row_filter"
 		case "$table_name" in event_sequence | event) row_filter="$aggregate_row_filter" ;; esac
@@ -1506,6 +1543,10 @@ ${session_message_copy_sql}
 ${session_input_copy_sql}
 ${context_epoch_copy_sql}
 
+-- Copy session-inbox generation rows (session_inbox, session_pending,
+-- instruction_entry, instruction_state) when present.
+${inbox_copy_sql}
+
 -- Copy event sequence parents before their event rows.
 ${event_sequence_copy_sql}
 
@@ -1527,6 +1568,7 @@ DELETE FROM session_share WHERE session_id IN ($in_clause);
 ${session_message_delete_sql}
 ${session_input_delete_sql}
 ${context_epoch_delete_sql}
+${inbox_delete_sql}
 DELETE FROM message WHERE session_id IN ($in_clause);
 ${event_delete_sql}
 ${event_sequence_delete_sql}
