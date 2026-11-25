@@ -45,7 +45,15 @@ LIFECYCLE_SCRIPT="${REPO_ROOT}/.agents/scripts/worker-lifecycle-common.sh"
 # define the escalation functions this test inspects as source text.
 LIFECYCLE_ESCALATION_SCRIPT="${REPO_ROOT}/.agents/scripts/worker-lifecycle-common-escalation.sh"
 LIFECYCLE_GATE_SCRIPT="${REPO_ROOT}/.agents/scripts/worker-lifecycle-common-escalation-gate.sh"
-LIFECYCLE_ALL_SCRIPTS=("$LIFECYCLE_SCRIPT" "${REPO_ROOT}"/.agents/scripts/worker-lifecycle-common-*.sh)
+LIFECYCLE_ALL_SCRIPTS=(
+	"$LIFECYCLE_SCRIPT"
+	"${REPO_ROOT}/.agents/scripts/worker-lifecycle-common-attempt.sh"
+	"${REPO_ROOT}/.agents/scripts/worker-lifecycle-common-process.sh"
+	"${REPO_ROOT}/.agents/scripts/worker-lifecycle-common-session.sh"
+	"${REPO_ROOT}/.agents/scripts/worker-lifecycle-common-metrics.sh"
+	"$LIFECYCLE_GATE_SCRIPT"
+	"$LIFECYCLE_ESCALATION_SCRIPT"
+)
 SCHEDULERS_SCRIPT="${REPO_ROOT}/.agents/scripts/setup/modules/schedulers.sh"
 
 readonly TEST_RED='\033[0;31m'
@@ -542,9 +550,16 @@ test_no_work_false_claim_comment_removed() {
 	# would apply NMR must no longer be present in worker-lifecycle-common.sh.
 	# Acceptance criterion 3 from GH#20639.
 
-	if grep -q 'cost-circuit-breaker-helper\.sh' "${LIFECYCLE_ALL_SCRIPTS[@]}"; then
+	local scan_status=0
+	# Do not use -q: it can mask read errors once another input matches.
+	grep 'cost-circuit-breaker-helper\.sh' "${LIFECYCLE_ALL_SCRIPTS[@]}" >/dev/null || scan_status=$?
+	if [[ "$scan_status" -eq 0 ]]; then
 		print_result "t2769: false claim comment removed (AC3)" 1 \
 			"'cost-circuit-breaker-helper.sh' still referenced in worker-lifecycle-common*.sh"
+		return 0
+	elif [[ "$scan_status" -ne 1 ]]; then
+		print_result "t2769: false claim comment removed (AC3)" 1 \
+			"required lifecycle file scan failed (grep status $scan_status)"
 		return 0
 	fi
 

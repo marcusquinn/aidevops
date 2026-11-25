@@ -840,7 +840,7 @@ _append_dispatch_path_notice() {
 		_patterns=(
 			"pulse-wrapper.sh" "pulse-dispatch-" "pulse-cleanup.sh"
 			"headless-runtime-helper.sh" "headless-runtime-lib.sh"
-			"worker-lifecycle-common.sh" "shared-dispatch-dedup.sh"
+			"worker-lifecycle-common.sh" "worker-lifecycle-common-" "shared-dispatch-dedup.sh"
 			"shared-claim-lifecycle.sh" "worker-activity-watchdog.sh"
 		)
 	fi

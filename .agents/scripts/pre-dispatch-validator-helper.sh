@@ -102,6 +102,7 @@ _load_self_hosting_patterns() {
 			"headless-runtime-helper.sh"
 			"headless-runtime-lib.sh"
 			"worker-lifecycle-common.sh"
+			"worker-lifecycle-common-"
 			"shared-dispatch-dedup.sh"
 			"shared-claim-lifecycle.sh"
 			"worker-activity-watchdog.sh"

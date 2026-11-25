@@ -53,13 +53,14 @@
 
 # Include guard
 [[ -n "${_WORKER_LIFECYCLE_COMMON_LOADED:-}" ]] && return 0
-_WORKER_LIFECYCLE_COMMON_LOADED=1
+# Set the guard only after all required sources succeed, so failed loads retry.
+# The observability and lifecycle modules have their own include guards.
 _WLC_STATUS_BLOCKED="blocked"
-_WLC_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_WLC_SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
 
-_worker_attempt_observability_dir="${BASH_SOURCE[0]%/*}"
+_worker_attempt_observability_dir="$_WLC_SCRIPT_DIR"
 # shellcheck source=worker-attempt-observability.sh
-source "${_worker_attempt_observability_dir}/worker-attempt-observability.sh"
+source "${_worker_attempt_observability_dir}/worker-attempt-observability.sh" || return 1
 unset _worker_attempt_observability_dir
 
 # Add correlation fields and durable checkpoints to lifecycle output without
@@ -85,32 +86,32 @@ print_info() {
 # Resolve this library's own directory instead of trusting a caller's SCRIPT_DIR.
 _worker_lifecycle_common_path="${BASH_SOURCE[0]%/*}"
 [[ "$_worker_lifecycle_common_path" == "${BASH_SOURCE[0]}" ]] && _worker_lifecycle_common_path="."
-_worker_lifecycle_common_dir="$(cd "$_worker_lifecycle_common_path" && pwd)" || return 1
+_worker_lifecycle_common_dir="$(CDPATH='' cd -- "$_worker_lifecycle_common_path" && pwd)" || return 1
 unset _worker_lifecycle_common_path
 
 # shellcheck source=./worker-lifecycle-common-attempt.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime from this file's directory
-source "${_worker_lifecycle_common_dir}/worker-lifecycle-common-attempt.sh"
+source "${_worker_lifecycle_common_dir}/worker-lifecycle-common-attempt.sh" || return 1
 
 # shellcheck source=./worker-lifecycle-common-process.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime from this file's directory
-source "${_worker_lifecycle_common_dir}/worker-lifecycle-common-process.sh"
+source "${_worker_lifecycle_common_dir}/worker-lifecycle-common-process.sh" || return 1
 
 # shellcheck source=./worker-lifecycle-common-session.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime from this file's directory
-source "${_worker_lifecycle_common_dir}/worker-lifecycle-common-session.sh"
+source "${_worker_lifecycle_common_dir}/worker-lifecycle-common-session.sh" || return 1
 
 # shellcheck source=./worker-lifecycle-common-metrics.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime from this file's directory
-source "${_worker_lifecycle_common_dir}/worker-lifecycle-common-metrics.sh"
+source "${_worker_lifecycle_common_dir}/worker-lifecycle-common-metrics.sh" || return 1
 
 # shellcheck source=./worker-lifecycle-common-escalation-gate.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime from this file's directory
-source "${_worker_lifecycle_common_dir}/worker-lifecycle-common-escalation-gate.sh"
+source "${_worker_lifecycle_common_dir}/worker-lifecycle-common-escalation-gate.sh" || return 1
 
 # shellcheck source=./worker-lifecycle-common-escalation.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime from this file's directory
-source "${_worker_lifecycle_common_dir}/worker-lifecycle-common-escalation.sh"
+source "${_worker_lifecycle_common_dir}/worker-lifecycle-common-escalation.sh" || return 1
 
 #######################################
 # List active worker processes (logical, deduplicated).
@@ -221,5 +222,6 @@ check_session_count() {
 
 # shellcheck source=./worker-lifecycle-verbose.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime from this file's directory
-source "${_worker_lifecycle_common_dir}/worker-lifecycle-verbose.sh"
+source "${_worker_lifecycle_common_dir}/worker-lifecycle-verbose.sh" || return 1
 unset _worker_lifecycle_common_dir
+_WORKER_LIFECYCLE_COMMON_LOADED=1
