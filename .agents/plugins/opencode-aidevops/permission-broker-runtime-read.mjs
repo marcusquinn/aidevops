@@ -22,9 +22,10 @@ function isManagedTempRead(context, target, forbidden) {
   const root = join(context.home, ".aidevops", ".agent-workspace", "tmp");
   // A link in the managed root itself must not redefine the authorized root.
   const realRoot = join(resolveReal(context.home), ".aidevops", ".agent-workspace", "tmp");
+  if (!isWithin(root, target) || resolveReal(root) !== realRoot) return false;
   const realTarget = resolveReal(target);
-  return isWithin(root, target) && resolveReal(root) === realRoot
-    && Boolean(realTarget) && !forbidden.test(realTarget) && isWithin(realRoot, realTarget);
+  if (!realTarget || forbidden.test(realTarget)) return false;
+  return isWithin(realRoot, realTarget);
 }
 
 function recordedTarget(call) {
@@ -37,7 +38,8 @@ export function isWorkerRuntimeRead(context, raw, forbidden) {
   const call = context.toolCalls.get(raw?.tool?.callID || raw?.callID || "");
   const target = recordedTarget(call);
   if (!hasBoundedReadTarget(raw, target, forbidden)) return false;
-  return RUNTIME_DEVICE.test(target) || (call.tool === "read" && isManagedTempRead(context, target, forbidden));
+  if (RUNTIME_DEVICE.test(target)) return true;
+  return call.tool === "read" && isManagedTempRead(context, target, forbidden);
 }
 
 // Reads allowed without a post-allow audit record.
