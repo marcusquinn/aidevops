@@ -1274,6 +1274,70 @@ for create_kind in issue pr; do
 done
 unset STUB_PRIMARY_FAIL STUB_PRIMARY_ERROR STUB_PR_LIST_FIXTURE
 
+# Recovery must keep option-shaped title values literal.
+if (
+	_rest_recover_recent_issue() { local repo="$1" title="$2"; [[ "$repo" == owner/repo && "$title" == '--title=Actual' ]] || return 1; printf 'recovered\n'; return 0; }
+	[[ "$(_gh_create_issue_retry_transient owner/repo --title '--title=Actual')" == recovered ]]
+); then
+	pass "issue recovery does not reparse a consumed title"
+else
+	fail "issue recovery does not reparse a consumed title"
+fi
+
+# Inspect the body while the translator's temporary file still exists.
+if (
+	gh() {
+		local request_args="$*" arg="" body_path=""
+		[[ "$request_args" == *'title=Example'* && "$request_args" == *'labels[]=bug'* && "$request_args" == *'assignees[]=worker'* && "$request_args" == *'milestone=1'* ]] || return 1
+		for arg in "$@"; do
+			case "$arg" in body=@*) body_path="${arg#body=@}" ;; esac
+		done
+		[[ -n "$body_path" && "$(cat "$body_path")" == 'Required issue content' ]] || return 1
+		printf 'created\n'
+		return 0
+	}
+	_rest_recover_recent_issue() { return 0; }
+	[[ "$(_gh_create_issue_retry_transient owner/repo -R owner/repo -t Example -b 'Required issue content' -l bug -a worker -m 1)" == created ]] || exit 1
+	printf 'Required issue content' >"$TMP/short-body"
+	[[ "$(_rest_issue_create -R owner/repo -t Example -F "$TMP/short-body" -l bug -a worker -m 1)" == created ]]
+); then
+	pass "REST issue retry preserves short title, body, body-file and metadata options"
+else
+	fail "REST issue retry preserves short title, body, body-file and metadata options"
+fi
+
+for push_owner in owner fork-owner; do
+	if (
+		git() {
+			case "$*" in
+			'symbolic-ref --quiet HEAD') printf 'refs/heads/topic\n' ;;
+			'for-each-ref --format=%(push:remotename) refs/heads/topic') printf 'fork\n' ;;
+			'for-each-ref --format=%(push:remoteref) refs/heads/topic') printf 'refs/heads/topic\n' ;;
+			'remote get-url --push fork') printf 'git@github.com:%s/repo.git\n' "$push_owner" ;;
+			*) return 1 ;;
+			esac
+			return 0
+		}
+		gh() { [[ "$*" == *"head=$push_owner:topic"* ]] || return 1; return 0; }
+		_rest_recover_created_pr owner/repo "$(_rest_pr_push_head)" || exit 1
+		_gh_create_pr_recover_after_mutation_failure 'GraphQL: query timeout' --repo owner/repo
+		[[ "${_GH_CREATE_PR_RECOVERY_FAILED:-0}" != 1 ]]
+	); then
+		pass "omitted PR head recovery queries push owner $push_owner"
+	else
+		fail "omitted PR head recovery queries push owner $push_owner"
+	fi
+done
+if (
+	git() { return 1; }
+	_gh_create_pr_recover_after_mutation_failure 'GraphQL: query timeout' --repo owner/repo
+	[[ "${_GH_CREATE_PR_RECOVERY_FAILED:-0}" == 1 ]]
+); then
+	pass "unknown PR push destination fails recovery closed"
+else
+	fail "unknown PR push destination fails recovery closed"
+fi
+
 if (
 	_GH_CREATE_OUTPUT='stale resource URL'
 	_GH_CREATE_ERROR='GraphQL: query timeout'

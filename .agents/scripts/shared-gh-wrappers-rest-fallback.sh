@@ -428,6 +428,21 @@ _rest_recover_recent_issue() {
 	return $?
 }
 
+# Resolve an omitted native --head from the branch's push destination. Unknown
+# destinations fail closed: guessing the base owner can adopt an unrelated PR.
+_rest_pr_push_head() {
+	local branch="" remote="" remote_ref="" remote_url=""
+	branch=$(git symbolic-ref --quiet HEAD) || return 1
+	remote=$(git for-each-ref --format='%(push:remotename)' "$branch") || return 1
+	remote_ref=$(git for-each-ref --format='%(push:remoteref)' "$branch") || return 1
+	[[ -n "$remote" && "$remote_ref" == refs/heads/* ]] || return 1
+	remote_url=$(git remote get-url --push "$remote") || return 1
+	remote_url="${remote_url%.git}"
+	[[ "$remote_url" =~ [:/]([^/:]+)/([^/]+)$ ]] || return 1
+	printf '%s:%s\n' "${BASH_REMATCH[1]}" "${remote_ref#refs/heads/}"
+	return 0
+}
+
 # Head lookup stays on REST when GraphQL itself is unavailable.
 _rest_recover_created_pr() {
 	local repo="$1" head_ref="$2"
@@ -557,17 +572,17 @@ _rest_issue_create() {
 		case "$_arg" in
 		--repo | -R) [[ $# -ge 2 ]] || return 2; repo="${2:-}"; shift 2 ;;
 		--repo=*) repo="${_arg#--repo=}"; shift ;;
-		--title) title="${2:-}"; shift 2 ;;
+		--title | -t) title="${2:-}"; shift 2 ;;
 		--title=*) title="${_arg#--title=}"; shift ;;
-		--body) body="${2:-}"; has_body=1; shift 2 ;;
+		--body | -b) body="${2:-}"; has_body=1; shift 2 ;;
 		--body=*) body="${_arg#--body=}"; has_body=1; shift ;;
-		--body-file) body_file="${2:-}"; has_body=1; shift 2 ;;
+		--body-file | -F) body_file="${2:-}"; has_body=1; shift 2 ;;
 		--body-file=*) body_file="${_arg#--body-file=}"; has_body=1; shift ;;
-		--label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_rest_split_csv "${2:-}"); shift 2 ;;
+		--label | -l) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_rest_split_csv "${2:-}"); shift 2 ;;
 		--label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_rest_split_csv "${_arg#--label=}"); shift ;;
-		--assignee) while IFS= read -r _tok; do [[ -n "$_tok" ]] && assignees+=("$_tok"); done < <(_rest_split_csv "${2:-}"); shift 2 ;;
+		--assignee | -a) while IFS= read -r _tok; do [[ -n "$_tok" ]] && assignees+=("$_tok"); done < <(_rest_split_csv "${2:-}"); shift 2 ;;
 		--assignee=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && assignees+=("$_tok"); done < <(_rest_split_csv "${_arg#--assignee=}"); shift ;;
-		--milestone) milestone="${2:-}"; shift 2 ;;
+		--milestone | -m) milestone="${2:-}"; shift 2 ;;
 		--milestone=*) milestone="${_arg#--milestone=}"; shift ;;
 		*) shift ;;
 		esac

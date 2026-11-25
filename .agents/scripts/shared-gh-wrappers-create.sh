@@ -823,6 +823,7 @@ _gh_create_issue_retry_transient() {
 		if [[ "$next_title" -eq 1 ]]; then
 			title="$arg"
 			next_title=0
+			continue
 		fi
 		case "$arg" in
 		--title|-t) next_title=1 ;;
@@ -1273,7 +1274,10 @@ _gh_create_pr_recover_after_mutation_failure() {
 	repo=$(_gh_extract_repo_from_args "$@")
 	head_ref=$(_gh_create_pr_extract_head "$@")
 	if _rest_create_failure_is_transient "$diagnostics"; then
-		[[ -n "$head_ref" ]] || head_ref=$(git branch --show-current)
+		if [[ -z "$head_ref" ]] && ! head_ref=$(_rest_pr_push_head); then
+			_GH_CREATE_PR_RECOVERY_FAILED=1
+			return 1
+		fi
 		if ! recovered_url=$(_rest_recover_created_pr "$repo" "$head_ref"); then
 			_GH_CREATE_PR_RECOVERY_FAILED=1
 			return 1
