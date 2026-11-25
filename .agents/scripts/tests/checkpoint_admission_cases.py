@@ -11,6 +11,7 @@ import copy
 import datetime as dt
 import json
 import subprocess  # nosec B404 — fixed offline fixture program only
+import sys
 
 from pr_checkpoint_events import EVENTS
 
@@ -130,9 +131,11 @@ _post_claim() { printf 123; return 0; }
 _now_utc() { printf 2026-11-05; return 0; }
 sleep() { return 0; }
 _fetch_claims() { printf '%s' '[{"nonce":"testnonce","lease_expires_at":123}]'; return 0; }
+_fetch_claim_marker_comments() { printf '[]'; return 0; }
 _resolve_claim_race_result() { return 0; }
 _resolve_device_id() { printf fixture; return 0; }
 DISPATCH_CLAIM_WINDOW=0
+LEASE_PHASE_PRELAUNCH=prelaunch
 cmd_claim_automatic_pr_checkpoint 123 owner/repo 42 1111111111111111111111111111111111111111 worker/123 runner checkpoint-42 runner runner "$@"
 '''
         for args in ([], ["false"], ["true"], ["false", "unexpected"]):
@@ -140,6 +143,107 @@ cmd_claim_automatic_pr_checkpoint 123 owner/repo 42 1111111111111111111111111111
                 result = subprocess.run([self.bash, "-c", command, "test", str(self.scripts), *args],  # nosec B603
                                         capture_output=True, text=True, timeout=10, check=False)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_own_automatic_orphan_released_before_claim(self):
+        # GH#40297: the old claim's release must precede the new claim.
+        claim = ("DISPATCH_CLAIM nonce={n} runner={r} session={s} device={d} phase=prelaunch "
+                 "expires_at=1 checkpoint_mode={m}")
+        markers = [
+            {"id": 2, "author": "runner", "author_association": "OWNER",
+             "body": claim.format(n="old", r="runner", s="checkpoint-42", d="fixture", m="automatic")},
+            {"id": 3, "author": "runner", "author_association": "OWNER",
+             "body": claim.format(n="othersession", r="runner", s="checkpoint-7", d="fixture", m="automatic")},
+            {"id": 4, "author": "runner", "author_association": "OWNER",
+             "body": claim.format(n="otherdevice", r="runner", s="checkpoint-42", d="foreign", m="automatic")},
+            {"id": 5, "author": "runner", "author_association": "OWNER",
+             "body": claim.format(n="revision", r="runner", s="checkpoint-42", d="fixture", m="revision")},
+            {"id": 6, "author": "other", "author_association": "OWNER",
+             "body": claim.format(n="foreign", r="other", s="checkpoint-42", d="fixture", m="automatic")},
+        ]
+        command = r'''
+set -euo pipefail
+source "$1/dispatch-claim-automatic-checkpoint.sh"
+MARKERS="$2" POST_STATUS="$3"
+_resolve_runner() { printf runner; return 0; }
+aidevops_can_manage_repo_issue_state() { return 0; }
+_dch_automatic_checkpoint_snapshot() { printf '%s' '{"snapshot":"same","previous_status":"in-review"}'; return 0; }
+_generate_nonce() { printf testnonce; return 0; }
+_post_claim() { echo "EVENT claim" >&2; printf 123; return 0; }
+_now_utc() { printf 2026-11-05; return 0; }
+sleep() { return 0; }
+_fetch_claims() { printf '%s' '[{"nonce":"testnonce","lease_expires_at":123}]'; return 0; }
+_fetch_claim_marker_comments() { printf '%s' "$MARKERS"; return 0; }
+_dch_orphan_release_valid() { return 0; }
+_dch_session_has_live_executor() { return 1; }
+_post_orphan_claim_release() {
+    echo "EVENT release $(jq -r '.[0].id' <<<"$4") session=${AIDEVOPS_PR_CHECKPOINT_SESSION:-}" >&2
+    return "$POST_STATUS"
+}
+_resolve_claim_race_result() { return 0; }
+_resolve_device_id() { printf fixture; return 0; }
+DISPATCH_CLAIM_WINDOW=0
+LEASE_PHASE_PRELAUNCH=prelaunch
+cmd_claim_automatic_pr_checkpoint 123 owner/repo 42 1111111111111111111111111111111111111111 worker/123 runner checkpoint-42 runner runner false
+'''
+        for status, expected in (("0", ["EVENT release 2 session=checkpoint-42", "EVENT claim"]),
+                                 ("1", ["EVENT release 2 session=checkpoint-42"])):
+            with self.subTest(post_status=status):
+                result = subprocess.run([self.bash, "-c", command, "test", str(self.scripts),  # nosec B603
+                                         json.dumps(markers), status],
+                                        capture_output=True, text=True, timeout=10, check=False)
+                events = [line for line in result.stderr.splitlines() if line.startswith("EVENT ")]
+                self.assertEqual(events, expected, result.stderr)
+                self.assertEqual(result.returncode, int(status), result.stdout + result.stderr)
+
+    def released_orphan_episode(self, release_after_claim):
+        """Old claim, its release, then this episode's claim and prelaunch renewal."""
+        data = self.claimed()
+        claim = data["comments"][0]
+        old_claim = self.comment(2, "DISPATCH_CLAIM nonce=old lease_token=old runner=worker "
+                                    "session=checkpoint-42 device=test-device phase=prelaunch expires_at=1 "
+                                    "checkpoint_mode=automatic checkpoint_owner=worker checkpoint_status=in-review "
+                                    "checkpoint_snapshot=old")
+        release = self.comment(5 if release_after_claim else 3,
+                               "CLAIM_RELEASED reason=claim_only_no_worker runner=worker claim_id=2 nonce=old")
+        renewal = self.comment(6, "DISPATCH_LEASE phase=prelaunch lease_token=automatic session=checkpoint-42 "
+                                  "device=test-device expires_at=1788616800")
+        for item in (old_claim, release, renewal):
+            item["_release_body_unedited"] = True
+        prior = [old_claim] if release_after_claim else [old_claim, release]
+        snapshot = self.admission.admission({**copy.deepcopy(data), "comments": prior, "lease": ""})["snapshot"]
+        claim["body"] = claim["body"].rsplit("checkpoint_snapshot=", 1)[0] + "checkpoint_snapshot=" + snapshot
+        data["comments"] = prior + [claim] + ([release] if release_after_claim else []) + [renewal]
+        return data
+
+    def test_released_orphan_before_claim_admits_whole_episode(self):
+        data = self.released_orphan_episode(release_after_claim=False)
+        self.assertEqual(self.admission.admission(data)["claim_id"], 4)
+        transferred = copy.deepcopy(data)
+        transferred["claiming"] = False
+        transferred["issue"]["labels"][1]["name"] = "status:in-progress"
+        self.assertEqual(self.admission.admission(transferred)["claim_id"], 4)
+        self.assertEqual(self.admission.admission({**transferred, "require_prelaunch": True})["claim_id"], 4)
+
+    def test_same_runner_release_after_claim_still_refused(self):
+        data = self.released_orphan_episode(release_after_claim=True)
+        for variant in ({}, {"claiming": False}, {"claiming": False, "require_prelaunch": True}):
+            changed = copy.deepcopy({**data, **variant})
+            if variant:
+                changed["issue"]["labels"][1]["name"] = "status:in-progress"
+            with self.subTest(variant=variant), self.assertRaises(ValueError) as refused:
+                self.admission.admission(changed)
+            self.assertEqual(refused.exception.reason, "later_non_lease_coordination")
+
+    def test_admission_rejection_reason_is_bounded_on_stderr(self):
+        data = self.released_orphan_episode(release_after_claim=True)
+        script = self.scripts / "pr_checkpoint_admission.py"
+        result = subprocess.run([sys.executable, str(script)], input=json.dumps(data),  # nosec B603
+                                capture_output=True, text=True, timeout=10, check=False)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr.strip(), "PR_CHECKPOINT_ADMISSION_REJECTED reason=later_non_lease_coordination")
+        for secret in ("automatic", "old", "checkpoint-42", "test-device"):
+            self.assertNotIn(secret, result.stderr.split("reason=", 1)[1])
 
     def test_snapshot_and_runtime_binding(self):
         data = self.claimed()
