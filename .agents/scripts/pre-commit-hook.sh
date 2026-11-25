@@ -262,26 +262,78 @@ validate_positional_parameters() {
 	# (the on-disk file) and HEAD content (piped from git show).
 	# shellcheck disable=SC2016  # $1, $[1-9] etc. are awk regex literals, not shell expansions
 	local _awk_script='
-	{
-		line = $0
-		# Strip single-quoted segments — shell does not expand $ inside single quotes,
-		# so awk field refs like awk '"'"'$1 >= 3'"'"' are not positional params.
-		# \047 is octal for single-quote (avoids shell quoting issues).
-		gsub(/\047[^\047]*\047/, "", line)
-		# Skip pure comment lines (after stripping quoted content)
-		if (line ~ /^[[:space:]]*#/) next
-		# Strip inline comments
+	function report(line, nr) {
+		if (line ~ /^[[:space:]]*#/) return
 		sub(/[[:space:]]+#.*/, "", line)
-		# Skip lines with local var assignments (proper usage pattern)
-		if (line ~ /local[[:space:]].*=.*\$[1-9]/) next
-		# Skip currency/pricing patterns: $N followed by digit, decimal, comma, slash
-		if (line ~ /\$[1-9][0-9.,\/]/) next
-		# Skip markdown table cells: $N followed by pipe
-		if (line ~ /\$[1-9][[:space:]]*\|/) next
-		# Skip pricing unit words
-		if (line ~ /\$[1-9][[:space:]]+(per|mo(nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)/) next
-		# After stripping, if $[1-9] is still present, flag as violation
-		if (line ~ /\$[1-9]/) print NR ": " $0
+		if (line ~ /local[[:space:]].*=.*\$[1-9]/) return
+		if (line ~ /\$[1-9][0-9.,\/]/) return
+		if (line ~ /\$[1-9][[:space:]]*\|/) return
+		if (line ~ /\$[1-9][[:space:]]+(per|mo(nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)/) return
+		if (line ~ /\$[1-9]/) print nr ": " raw[nr]
+	}
+	{
+		raw[NR] = $0
+		# Heredoc bodies are not shell syntax. Unquoted bodies still expand $N;
+		# quoted delimiters suppress expansion. Queue multiple redirections.
+		if (hd_read <= hd_count && hd_count) {
+			body = $0
+			if (hd_tabs[hd_read]) sub(/^\t+/, "", body)
+			if (body == hd_end[hd_read]) hd_read++
+			else if (!hd_quoted[hd_read]) clean[NR] = $0
+			next
+		}
+		if (!in_sq && !in_dq && $0 ~ /^[[:space:]]*#/) next
+		line = ""
+		for (i = 1; i <= length($0); i++) {
+			c = substr($0, i, 1)
+			if (in_sq) {
+				if (c == "\047") in_sq = 0
+				continue
+			}
+			if (c == "\\") {
+				line = line c substr($0, i + 1, 1)
+				i++
+				continue
+			}
+			if (c == "\042") in_dq = !in_dq
+			if (!in_dq && c == "#" && (i == 1 || substr($0, i - 1, 1) ~ /[[:space:];]/)) break
+			if (!in_dq && c == "\047") {
+				in_sq = 1
+				sq_start = NR
+				continue
+			}
+			# Recognize ordinary, quoted and tab-stripping heredoc delimiters.
+			# Do not mistake a here-string (<<<) for a heredoc.
+			if (!in_dq && substr($0, i, 2) == "<<" && substr($0, i, 3) != "<<<" && substr($0, i - 1, 1) != "<") {
+				rest = substr($0, i + 2)
+				if (match(rest, /^-?[[:space:]]*(\047[^\047]+\047|\042[^\042]+\042|\\?[[:alnum:]_]+)/)) {
+					token = substr(rest, 1, RLENGTH)
+					hd_count++
+					if (!hd_read) hd_read = 1
+					hd_tabs[hd_count] = (token ~ /^-/)
+					sub(/^-?[[:space:]]*/, "", token)
+					hd_quoted[hd_count] = (token ~ /[\047\042\\]/)
+					gsub(/[\047\042\\]/, "", token)
+					hd_end[hd_count] = token
+					i += 1 + RLENGTH
+					continue
+				}
+			}
+			line = line c
+		}
+		clean[NR] = line
+	}
+	END {
+		for (nr = 1; nr <= NR; nr++) {
+			line = clean[nr]
+			# Fail safe: an unclosed quote must not hide the remaining file.
+			# Restore the old line-local scan from the unmatched opening quote.
+			if (in_sq && nr >= sq_start) {
+				line = raw[nr]
+				gsub(/\047[^\047]*\047/, "", line)
+			}
+			report(line, nr)
+		}
 	}'
 
 	for file in "$@"; do

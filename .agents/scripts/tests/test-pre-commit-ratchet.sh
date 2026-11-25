@@ -381,7 +381,7 @@ test_return_statements_new_missing_blocks() {
 }
 
 # ---------------------------------------------------------------------------
-# Positional parameter validator — 2 cases
+# Positional parameter validator — baseline and shell quoting regressions
 # ---------------------------------------------------------------------------
 
 test_positional_params_preexisting_pass() {
@@ -419,6 +419,116 @@ test_positional_params_new_usage_blocks() {
 		print_result "positional_params: NEW usage BLOCKS (ratchet)" 1 \
 			"expected exit>0 + 'NEW' error, got exit=$ret output=[$stderr_out]"
 	fi
+	return 0
+}
+
+# Run the real validator against a debt-free base, then the same content as HEAD
+# to verify that the quote-aware count is shared by both sides of the ratchet.
+test_positional_quote_case() {
+	local name="$1"
+	local expected="$2"
+	local content="$3"
+	local output ret=0
+	init_repo "posparam_${name}"
+	commit_base "quoting.sh" $'#!/usr/bin/env bash\n'
+	stage_change "quoting.sh" "$content"
+	source_hook_helpers
+	output=$(validate_positional_parameters "quoting.sh" 2>&1) || ret=$?
+	if { [ "$expected" -eq 0 ] && [ "$ret" -eq 0 ] && [[ "$output" != *"positional parameter usage"* ]]; } ||
+		{ [ "$expected" -gt 0 ] && [ "$ret" -gt 0 ] && [[ "$output" == *"new: $expected, pre-existing: 0"* ]]; }; then
+		print_result "positional_params: $name (count=$expected)" 0
+	else
+		print_result "positional_params: $name (count=$expected)" 1 "exit=$ret output=[$output]"
+	fi
+	commit_base "quoting.sh" "$content"
+	stage_change "quoting.sh" "$content
+# unchanged quoting baseline
+"
+	ret=0
+	output=$(validate_positional_parameters "quoting.sh" 2>&1) || ret=$?
+	if [ "$ret" -eq 0 ] && { [ "$expected" -eq 0 ] || [[ "$output" == *"usage in quoting.sh: $expected (not blocking)"* ]]; }; then
+		print_result "positional_params: $name HEAD parity" 0
+	else
+		print_result "positional_params: $name HEAD parity" 1 "exit=$ret output=[$output]"
+	fi
+	return 0
+}
+
+test_positional_params_quoting() {
+	local content
+	content=$(cat <<'FIXTURE'
+awk '
+  $1 ~ /value/ { print $2 }
+  # an apostrophe is not shell comment syntax here
+' input
+FIXTURE
+)
+	test_positional_quote_case multiline_awk 0 "$content"
+	content=$(cat <<'FIXTURE'
+# don't let this comment swallow shell code
+echo $1
+echo ok # don't let inline comments swallow code either
+echo $2
+FIXTURE
+)
+	test_positional_quote_case comment_apostrophes 2 "$content"
+	content=$(cat <<'FIXTURE'
+echo "it's $1"
+echo $2
+echo \'
+echo $3
+FIXTURE
+)
+	test_positional_quote_case literal_apostrophes 3 "$content"
+	content=$(cat <<'FIXTURE'
+awk 'print "it'"'"'s", $1
+print $2'
+echo $3
+FIXTURE
+)
+	test_positional_quote_case close_literal_reopen 1 "$content"
+	content=$(cat <<'FIXTURE'
+cat <<TEXT
+don't open a shell quote here
+expanded $1
+TEXT
+echo $2
+cat <<'LITERAL'
+don't expand $3
+LITERAL
+echo $4
+cat <<-TABS
+	it's plain text
+	TABS
+echo $5
+FIXTURE
+)
+	test_positional_quote_case heredoc_apostrophes 4 "$content"
+	content=$(cat <<'FIXTURE'
+cat <<"FIRST" <<\SECOND
+it's $1
+FIRST
+it's $2
+SECOND
+echo $3
+FIXTURE
+)
+	test_positional_quote_case queued_quoted_heredocs 1 "$content"
+	content=$(cat <<'FIXTURE'
+echo 'unterminated
+echo $1
+echo $2
+FIXTURE
+)
+	test_positional_quote_case unterminated_fails_safe 2 "$content"
+	content=$(cat <<'FIXTURE'
+awk '
+{ print $1 }
+'
+echo $2
+FIXTURE
+)
+	test_positional_quote_case shell_after_multiline 1 "$content"
 	return 0
 }
 
@@ -494,6 +604,7 @@ main() {
 	test_return_statements_new_missing_blocks
 	test_positional_params_preexisting_pass
 	test_positional_params_new_usage_blocks
+	test_positional_params_quoting
 	test_classification_labels_present
 	test_check_secrets_remains_absolute
 
