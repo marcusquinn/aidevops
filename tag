@@ -1,0 +1,40 @@
+object 514e856da69850e963807d8278b1583e47f50ad1
+type commit
+tag v3.39.281
+tagger marcusquinn <6428977+marcusquinn@users.noreply.github.com> 1795599851 +0000
+
+Release v3.39.281 - AI DevOps Framework
+
+Aidevops-Version: 3.39.281
+Aidevops-Efficiency-Change: true
+Aidevops-Source-PR: 40328
+Aidevops-Source-Merge: 2475556ec27edf1e435a9fb574d7288bab390a29
+Aidevops-Snapshot-Base: 4da2c663727f829ef9c71d90c8350fd3341109b1
+Aidevops-Aggregated-Source: 40284@eb2ec85dd9575a97508abaf1d6595edc184943b2
+Aidevops-Aggregated-Source: 40289@0e099757e2d021da6baa1be9bf6d896d8c3db784
+Aidevops-Aggregated-Source: 40291@1b7a8a8fe3c08937c2033e32d107ee5ff7f5cc52
+Aidevops-Aggregated-Source: 40292@d903ca4d0ea07b2bf0334cf4898bdaa5aaa213a4
+Aidevops-Aggregated-Source: 40294@cb95bde35bd63e0fd1ce3f68e76008e855d20b4a
+Aidevops-Aggregated-Source: 40296@84626534c793228c54e57ad738c95ac17320f6c6
+Aidevops-Aggregated-Source: 40299@292994b91798b678e6228597234bbfea43c9826a
+Aidevops-Aggregated-Source: 40300@18aedbbffa3123227302659e5b03143fe148ede1
+Aidevops-Aggregated-Source: 40301@23d019a7e9b4c6a9b57d1e1145ff0be4e9b98e9d
+Aidevops-Aggregated-Source: 40306@fa462d4a0a98edc1ef22c0f50c9fcb8d0437bc45
+Aidevops-Aggregated-Source: 40307@4226c5b172b378e5221e775bac3986ef99d85988
+Aidevops-Aggregated-Source: 40311@f6d00c2460dbcb498d9a9711fc51aa2e1e26d7f5
+Aidevops-Aggregated-Source: 40312@a9a3fbf36023e32114bf592284d8cf6c049e25fe
+Aidevops-Aggregated-Source: 40314@73084c2b160ff2969b8ec16f6c3f3323cb4dbf57
+Aidevops-Aggregated-Source: 40316@aa839cb067752b6ddd8a42a4d8c7957aa7e8be81
+Aidevops-Aggregated-Source: 40318@b78971fcd6ca1922e731dec11cff2c4e49afe97b
+Aidevops-Aggregated-Source: 40320@83983e4449cf3043cdde0c432c7369c695bdd088
+Aidevops-Aggregated-Source: 40323@dcd63729e5e43e302f551356699d8fe073339136
+Aidevops-Aggregated-Source: 40325@21a0fb5bc2ad22e8104113beaf73a3a02524198e
+Aidevops-Aggregated-Source: 40326@08aba10798be9d6473cc5aa90085229d2a44cb6c
+Aidevops-Aggregated-Source: 40327@9324d7ba7f02897d8d68d1496277720b9545139a
+Aidevops-Aggregated-Source: 40328@2475556ec27edf1e435a9fb574d7288bab390a29
+-----BEGIN SSH SIGNATURE-----
+U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg5IliwL42sBxfqQz9UN/AwvOgBI
+tXO/S10O+PgxbPV78AAAADZ2l0AAAAAAAAAAZzaGE1MTIAAABTAAAAC3NzaC1lZDI1NTE5
+AAAAQCxwVrYKIuK5uTfscy1M3BE78bYGv5wayA/8aT8+KaMTuCmsFW0YB4bCWYOmS8Kr9/
+8xvkBCAbRiVvs6YAAFiAw=
+-----END SSH SIGNATURE-----
