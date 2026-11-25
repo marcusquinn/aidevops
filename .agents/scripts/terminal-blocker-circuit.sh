@@ -259,7 +259,7 @@ reasons = re.findall(r"^TERMINAL_BLOCKER_REASON=(.*)$", candidate, re.M)
 allowed = {'missing_files_scope', 'files_scope_excluded', 'target_code_blocker', 'external_trigger_pending', 'permission_required', 'source_access_blocked', 'push_policy_timeout', 'network_policy_timeout', 'runner_capability_unmet', 'resource_contended'}
 input_owners = {'user', 'contributor', 'maintainer', 'admin'}
 reason = reasons[0] if len(reasons) == 1 else 'unknown'
-def emit(value, ask_owner=''):
+def emit(value, ask_owner='', ask_login=''):
     # Only explicit name declarations from final assistant text, never values
     # or tool output. Bounded and validated before any public projection.
     declarations = re.findall(r'^TERMINAL_BLOCKER_MISSING_SECRETS=([A-Z0-9_, ]+)$', candidate, re.M)
@@ -277,13 +277,19 @@ def emit(value, ask_owner=''):
         line = found[0] if eligible and len(found) == 1 else ''
         return line if 0 < len(line) <= 500 else ''
     print(json.dumps({'reason': value, 'explicit_reason': bool(reasons), 'declared_reasons': reasons, 'ask_owner': ask_owner,
-                     'question': public_line('QUESTION', value.startswith('input_required:') or bool(ask_owner)),
+                     'ask_login': ask_login,
+                     'question': public_line('QUESTION', value.startswith('input_required:') or bool(ask_owner) or bool(ask_login)),
                      'trigger': public_line('TRIGGER', value == 'external_trigger_pending'),
                      'missing_secrets': sorted(set(names)), 'rejected_secrets': sorted(set(rejected_names)),
                       'detail': candidate[:16000], 'detail_truncated': len(candidate) > 16000}))
 
 owners = re.findall(r"^TERMINAL_BLOCKER_INPUT_OWNER=(.*)$", candidate, re.M)
 owner = owners[0] if len(owners) == 1 and owners[0] in input_owners else ''
+# t19386: a single owner that is a GitHub login rather than a role is only a
+# candidate; terminal_blocker_capture_output maps it through verified repository
+# permission, and everything else stays unclassified.
+login_match = re.fullmatch(r'@?([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))', owners[0].strip()) if len(owners) == 1 and not owner else None
+login = login_match.group(1) if login_match else ''
 
 if reason == 'verification_environment_missing_prerequisites':
     # GH#35037: exact legacy spelling, not a prose/substring classifier.
@@ -297,7 +303,10 @@ elif reason == 'affected_host_reproduction_unavailable':
 elif reason == 'input_required':
     # GH#33332: the hold must name exactly one accountable role; otherwise the
     # evidence stays unclassified and retryable.
-    emit('input_required:' + owner if owner else 'unknown')
+    if owner:
+        emit('input_required:' + owner)
+    else:
+        emit('unknown', ask_login=login)
 elif reason == 'permission_required' and owner:
     # GH#38951: candidate ask only. terminal_blocker_capture_output reclassifies
     # to input_required:<owner> only when the publication validator accepts it.
@@ -334,6 +343,31 @@ _terminal_blocker_permission_ask_class() {
 	else
 		printf '%s\n' "$_TBC_PERMISSION_REQUIRED"
 	fi
+	return 0
+}
+
+# t19386: a worker that names the accountable person by login
+# (TERMINAL_BLOCKER_INPUT_OWNER=<login>) instead of a role stayed unknown, so
+# unknown backoff redispatched the same question for days. Map that login to
+# the role its verified permission on the dispatch repository grants. Any
+# other permission, or an unreadable answer, keeps the unknown class.
+# #aidevops:trust-boundary — the role only selects who is asked; release
+# still requires the existing OWNER/MEMBER answer or retry evidence.
+# Prints the capture class: input_required:<admin|maintainer> or unknown.
+_terminal_blocker_login_owner_class() {
+	local captured="$1"
+	local login="" permission_json="" role=""
+	login=$(jq -r '.ask_login // ""' <<<"$captured") || return 1
+	if [[ "$login" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ &&
+		"${DISPATCH_REPO_SLUG:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+		permission_json=$(gh api "repos/${DISPATCH_REPO_SLUG}/collaborators/${login}/permission" 2>/dev/null) || permission_json=""
+		role=$(jq -r '(.role_name? // .permission? // "") | strings' <<<"$permission_json" 2>/dev/null) || role=""
+	fi
+	case "$role" in
+	admin) printf 'input_required:admin\n' ;;
+	maintain | write) printf 'input_required:maintainer\n' ;;
+	*) printf '%s\n' "$_TBC_UNKNOWN" ;;
+	esac
 	return 0
 }
 
@@ -402,6 +436,10 @@ terminal_blocker_capture_output() {
 	fi
 	if [[ "$normalized" == "$_TBC_PERMISSION_REQUIRED" ]]; then
 		normalized=$(_terminal_blocker_permission_ask_class "$captured") || return 1
+		[[ "$normalized" == input_required:* ]] || AIDEVOPS_TERMINAL_BLOCKER_QUESTION=""
+	fi
+	if [[ "$normalized" == "$_TBC_UNKNOWN" ]] && jq -e '(.ask_login // "") != ""' <<<"$captured" >/dev/null 2>&1; then
+		normalized=$(_terminal_blocker_login_owner_class "$captured") || return 1
 		[[ "$normalized" == input_required:* ]] || AIDEVOPS_TERMINAL_BLOCKER_QUESTION=""
 	fi
 	# Do not infer a missing heading from words such as "Files Scope excludes".
