@@ -644,11 +644,25 @@ filter_failed_check_runs() {
 	# GitHub records N identical cancelled check runs for the same commit — one per workflow
 	# trigger. Without deduplication they exhaust the log-fetch budget (max_run_logs) and cause
 	# subsequent genuine failures to emit "signature_not_fetched" clusters. (GH#18978)
+	#
+	# Superseded cancellations (GH#40329): a cancel-in-progress cancellation is not a failure
+	# when a later run of the same check name completed successfully. Drop cancelled entries
+	# whose group has no hard failure and a successful run completed after them. Cancelled-only
+	# groups with no newer run, and groups mixing cancelled with failure, are still reported.
 	printf '%s\n' "$checks_json" | jq '
-		[.check_runs[] | select(
+		"cancelled" as $cx | "success" as $ok
+		| def superseded_cancel($all):
+			. as $r
+			| .conclusion == $cx
+			and ([$all[] | select(.name == $r.name)] as $g
+				| ([$g[] | select(.conclusion | IN($ok,$cx,"skipped","neutral","") | not)] | length == 0)
+				and ([$g[] | select(.conclusion == $ok
+					and (.completed_at // "") > ($r.completed_at // ""))] | length > 0));
+		[(.check_runs // [])[] | .conclusion = (.conclusion // "" | ascii_downcase)] as $all
+		| [$all[] | select(superseded_cancel($all) | not) | select(
 			(
 				((.conclusion // "" | ascii_downcase) as $c |
-					["failure","cancelled","timed_out","startup_failure"] | index($c))
+					["failure",$cx,"timed_out","startup_failure"] | index($c))
 				or
 				((.conclusion // "" | ascii_downcase) == "action_required"
 					and (.app.slug // "" | ascii_downcase) == "github-actions")
@@ -663,7 +677,7 @@ filter_failed_check_runs() {
 		# N rapid-cancellation duplicates into one, preventing budget exhaustion.
 		| group_by(.name)
 		| map(
-			if all(.conclusion == "cancelled") and length > 1 then
+			if all(.conclusion == $cx) and length > 1 then
 				[sort_by(.completed_at // "") | last]
 			else
 				.
