@@ -2535,7 +2535,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t19379 fix(ci-wait): treat a cancelled check with a same-name pass on the PR head as superseded in gh-checks-wait-helper --all #auto-dispatch #bug tier:standard ref:GH#40369 logged:2026-11-25 -> [todo/tasks/t19379-brief.md] pr:#40374 completed:2026-11-25
 
 - [ ] t19386 fix(terminal-blocker): map a login input owner through verified repo permission so input_required holds instead of looping as unknown #bug #interactive tier:standard assignee:marcusquinn ref:GH#40384 logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19386-brief.md]
-- [ ] t19381 fix(worktree-deps): fail fast on pnpm hoisted node-linker instead of walking every workspace member #bug #performance #interactive tier:standard assignee:marcusquinn logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19381-brief.md]
+- [ ] t19381 fix(worktree-deps): fail fast on pnpm hoisted node-linker instead of walking every workspace member #bug #performance #interactive tier:standard assignee:marcusquinn ref:GH#40383 logged:2026-11-25 started:2026-11-25 -> [todo/tasks/t19381-brief.md]
 
 ## In Progress
 
