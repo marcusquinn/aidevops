@@ -42,3 +42,4 @@ CRM-first operations (segmentation, automations, broadcasts) → route to config
 - `services/email/email-testing.md` — Design and delivery testing workflow
 - `services/email/email-delivery-test.md` — Inbox placement and spam scoring
 - `services/email/email-health-check.md` — DNS and content precheck
+- `services/email/brevo.md` — Brevo campaigns via MCP, with send/delete guardrails
