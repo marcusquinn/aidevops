@@ -109,6 +109,12 @@ EPOCH_DEFAULTS
 		_sqlite_has_table "$ACTIVE_DB" "$table_name" || continue
 		_sqlite_has_table "$ARCHIVE_DB" "$table_name" || continue
 		columns=$(_archive_restore_column_list "$table_name") || return 1
+		# Legacy active event tables cannot store created; never delete an
+		# archive event whose non-null created value would not be copied.
+		if [[ "$table_name" == "$EVENT_TABLE_NAME" ]] && _sqlite_has_column "$ARCHIVE_DB" "$table_name" created && ! _sqlite_has_column "$ACTIVE_DB" "$table_name" created; then
+			epoch_nondefault=$(sqlite3 -readonly "$ARCHIVE_DB" "SELECT COUNT(*) FROM ${table_name} WHERE created IS NOT NULL AND aggregate_id IN (SELECT id FROM session WHERE id = ${sid} OR parent_id = ${sid});") || return 1
+			[[ "$epoch_nondefault" == 0 ]] || return 1
+		fi
 		select_columns=$(_archive_restore_select_columns "$table_name" "$columns") || return 1
 		copy_sql="${copy_sql}INSERT OR IGNORE INTO main.${table_name} (${columns}) SELECT ${select_columns} FROM archive.${table_name} WHERE aggregate_id IN (${ids});"$'\n'
 		delete_sql="DELETE FROM archive.${table_name} WHERE aggregate_id IN (${ids});"$'\n'"${delete_sql}"
