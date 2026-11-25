@@ -75,7 +75,7 @@ except ValueError:
 }
 
 # Callers prepend the selected bin to the whole worker PATH, so a Node found in
-# a shared multi-tool directory (/usr/local/bin, /opt/homebrew/bin) must not
+# a shared multi-tool directory (Homebrew, /usr/local/bin or Nix profiles) must not
 # reorder git, gh, python or jq (GH#39156). Print a private directory that
 # links only the Node toolchain from that directory instead.
 _project_node_private_bin() {
@@ -126,6 +126,13 @@ _project_node_bin() {
 		candidates+=("$brew_prefix"/opt/node@*/bin/node "$brew_prefix"/opt/node/bin/node "$brew_prefix"/bin/node)
 		shared_dirs="${shared_dirs}${brew_prefix}/bin "
 	done
+	# Nix user, XDG, per-user and system profiles are shared multi-tool prefixes.
+	# Override the profile list for hermetic tests, as with Homebrew prefixes.
+	local nix_profile=""
+	for nix_profile in ${AIDEVOPS_NODE_NIX_PROFILES:-$HOME/.nix-profile ${XDG_STATE_HOME:-$HOME/.local/state}/nix/profiles/profile /nix/var/nix/profiles/per-user/${USER:-}/profile /run/current-system/sw}; do
+		candidates+=("$nix_profile/bin/node")
+		shared_dirs="${shared_dirs}${nix_profile}/bin "
+	done
 	candidates+=("${N_PREFIX:-/usr/local}"/n/versions/node/*/bin/node "$HOME"/n/versions/node/*/bin/node)
 	[[ -n "$nullglob_before" ]] || shopt -u nullglob
 	# Pass 1 honours exact version-file pins; pass 2 accepts any hard-compatible runtime.
@@ -155,6 +162,6 @@ _project_node_bin() {
 		done
 	done
 	version=$(node --version 2>/dev/null || printf unknown)
-	printf 'ENVIRONMENT FAILURE: node %s does not satisfy engines "%s" (root/scope requirements; a numeric version-file pin requires its major). Install a matching Node or select it with fnm, nvm, volta, mise, Homebrew node or node@<major>, the nodejs.org installer, or n; then rerun.\n' "$version" "${requirements//$'\n'/ and }" >&2
+	printf 'ENVIRONMENT FAILURE: node %s does not satisfy engines "%s" (root/scope requirements; a numeric version-file pin requires its major). Install a matching Node or select it with fnm, nvm, volta, mise, Homebrew node or node@<major>, Nix, the nodejs.org installer, or n; then rerun.\n' "$version" "${requirements//$'\n'/ and }" >&2
 	return 1
 }
