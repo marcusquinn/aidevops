@@ -103,7 +103,7 @@ when their trigger applies; never remove them merely to meet a token target.
 - The Anthropic prompt cache expires 5 minutes after its last read. A tool
   call that runs longer would otherwise force a re-write of the whole context
   at 1.25x. Lock waits, dependency installs, merge waits and subagent tasks are
-  typical examples. In award workers this was 30% of all cache writes
+  typical examples. In one data-pipeline worker fleet this was 30% of all cache writes
   (GH#40251).
   - While a tool is still running, `cache-keepalive.mjs` re-sends the
     session's last agent request with `max_tokens: 1` every 4 minutes. This is

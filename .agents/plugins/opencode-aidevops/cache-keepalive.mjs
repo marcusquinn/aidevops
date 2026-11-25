@@ -7,7 +7,7 @@
  * Anthropic's default prompt cache lives 5 minutes from its last read. A tool
  * call that runs longer (lock waits, dependency installs, merge waits,
  * subagent tasks) lets the cache expire. The next request then re-writes the
- * whole context at 1.25x input price: about 30% of all award-worker cache
+ * whole context at 1.25x input price: about 30% of one data-pipeline worker fleet's cache
  * writes in the issue evidence. Re-sending the last request with
  * `max_tokens: 1` reads the same prefix at 0.1x and resets the TTL.
  *
