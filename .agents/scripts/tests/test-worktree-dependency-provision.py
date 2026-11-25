@@ -62,7 +62,7 @@ class ProvisionTests(unittest.TestCase):
     def validate(self):
         return provision.identity(self.repo, self.wt, Path("."))
 
-    def run_restore(self, owner="current", exact="true", root="auto", budget="67108864"):
+    def run_restore(self, owner="current", exact="true", root="auto", budget="67108864", interactive=False):
         # All ownership and controller inputs are fixtures; never use the live registry.
         script = r'''
 source "$1/worktree-helper-add.sh"
@@ -74,9 +74,16 @@ check_worktree_owner_snapshot() {
 worktree_has_exact_owner_contract() { [[ "$EXACT" == true ]]; }
 _dlw_node_modules_restore_acquire_lock() { return 0; }
 _dlw_node_modules_restore_release_lock() { return 0; }
-_dlw_restore_worktree_deps "$2" "$3"
+_restore_worktree_node_modules_acquire_lock() { return 0; }
+_restore_worktree_node_modules_release_lock() { return 0; }
+if [[ "$RESTORE_MODE" == interactive ]]; then
+    _restore_worktree_node_modules "$2" "$3" >>"$LOGFILE" 2>&1
+else
+    _dlw_restore_worktree_deps "$2" "$3"
+fi
 '''
         env = {**os.environ, "OWNER": owner, "EXACT": exact,
+               "RESTORE_MODE": "interactive" if interactive else "headless",
                "LOGFILE": str(self.root / "restore.log"), "AIDEVOPS_WORKSPACE_DIR": str(self.root),
                "WORKTREE_NODE_MODULES_RESTORE_ROOT_ENABLED": root,
                "WORKTREE_NODE_MODULES_RESTORE_ENABLED": "1",
@@ -334,6 +341,33 @@ _dlw_restore_worktree_deps "$2" "$3"
         modules, inventory = provision.identity(self.repo, self.wt, Path("packages/one"))
         with self.assertRaisesRegex(provision.Rejected, "incomplete-package-inventory"):
             provision.snapshot(modules, 67108864, 20000, inventory=inventory)
+
+    def test_workspace_interactive_hidden_members_and_exclusions(self):
+        self.make_workspace()
+        for parent in (self.repo, self.wt):
+            (parent / "packages/one").rename(parent / "packages/.one")
+            (parent / "pnpm-workspace.yaml").write_text("packages:\n  - packages/*\n  - '!packages/two'\n  - apps/*\n")
+        for path in (self.modules / "one", self.repo / "packages/.one/node_modules/one",
+                     self.repo / "packages/two/node_modules/one", self.repo / "apps/web/node_modules/one"):
+            path.unlink()
+        self.run_restore(interactive=True)
+        self.assertTrue((self.wt / "packages/.one/node_modules/example/package.json").is_file())
+        self.assertTrue((self.wt / "apps/web/node_modules/example/package.json").is_file())
+        self.assertFalse((self.wt / "packages/two/node_modules").exists())
+
+    def test_workspace_fallback_copies_multiple_chunks(self):
+        from unittest.mock import patch
+        import errno
+        self.make_workspace()
+        payload = self.modules / "example/payload"
+        payload.write_bytes(b"fixture" * 200000)
+        modules, inventory = self.validate()
+        stage = self.wt / "stage"
+        stage.mkdir(mode=0o700)
+        with patch("_worktree_dependency_snapshot.fcntl.ioctl", side_effect=OSError(errno.ENOTSUP, "fixture")):
+            provision.snapshot(modules, 67108864, 20000, stage, inventory)
+        copied = stage / ".pnpm/example@1.0.0/node_modules/example/payload"
+        self.assertEqual(copied.read_bytes(), payload.read_bytes())
 
     def test_workspace_clone_exceeds_copy_budget_without_shared_writes(self):
         from _worktree_dependency_snapshot import clone_descriptor, open_directory

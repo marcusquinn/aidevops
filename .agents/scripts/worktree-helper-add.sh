@@ -570,7 +570,12 @@ _restore_worktree_pnpm_workspace() {
 	local members="" relative="" provision_relative="" started=0 elapsed=0 outcome=""
 	[[ -f "${repo_root}/pnpm-workspace.yaml" && -f "${repo_root}/pnpm-lock.yaml" ]] || return 1
 	[[ "${WORKTREE_NODE_MODULES_RESTORE_ROOT_ENABLED:-auto}" != "0" ]] || return 1
-	members=$(python3 "$validator" "$repo_root" "$wt_path" . --workspace-list) || return 1
+	started=$SECONDS
+	if ! members=$(python3 "$validator" "$repo_root" "$wt_path" . --workspace-list); then
+		elapsed=$((SECONDS - started))
+		printf 'Dependency workspace restore package=. outcome=rejected elapsed_seconds=%s\n' "$elapsed"
+		return 1
+	fi
 	while IFS= read -r relative; do
 		[[ -n "$relative" && -d "${repo_root}/${relative}/node_modules" ]] || continue
 		[[ ! -e "${wt_path}/${relative}/node_modules" && ! -L "${wt_path}/${relative}/node_modules" ]] || continue
