@@ -100,7 +100,7 @@ test_no_pgrep_pipe_in_block() {
 	# We only care that the EXECUTABLE shell does not use the old pattern.
 	local block_code
 	block_code=$(extract_block | grep -vE '^[[:space:]]*#')
-	if printf '%s\n' "$block_code" | grep -qE 'pgrep[^|]*\|[[:space:]]*grep'; then
+	if grep -qE 'pgrep[^|]*\|[[:space:]]*grep' <<<"$block_code"; then
 		print_result "structural: short-circuit no longer uses pgrep|grep pipe" 1 "found pgrep-pipe in executable block"
 	else
 		print_result "structural: short-circuit no longer uses pgrep|grep pipe" 0
@@ -112,7 +112,7 @@ test_uses_pidfile() {
 	local block
 	block=$(extract_block)
 	# shellcheck disable=SC2016 # we want to grep the LITERAL string ${LOCKDIR}/pid in source code, not expand it
-	if printf '%s\n' "$block" | grep -q '${LOCKDIR}/pid'; then
+	if grep -q '${LOCKDIR}/pid' <<<"$block"; then
 		print_result "structural: short-circuit reads \${LOCKDIR}/pid" 0
 	else
 		print_result "structural: short-circuit reads \${LOCKDIR}/pid" 1 "block does not reference LOCKDIR/pid"
@@ -123,7 +123,7 @@ test_uses_pidfile() {
 test_uses_kill_zero() {
 	local block
 	block=$(extract_block)
-	if printf '%s\n' "$block" | grep -qE 'kill[[:space:]]+-0[[:space:]]'; then
+	if grep -qE 'kill[[:space:]]+-0[[:space:]]' <<<"$block"; then
 		print_result "structural: short-circuit uses kill -0 for liveness" 0
 	else
 		print_result "structural: short-circuit uses kill -0 for liveness" 1 "no kill -0 found in block"
@@ -286,7 +286,7 @@ EOF
 	trap "kill $sibling_pid 2>/dev/null || true; rm -rf '$fake_script_dir'" RETURN
 
 	# Sanity check: pgrep DOES see the sibling.
-	if ! pgrep -f "(^|/)pulse-wrapper\\.sh( |\$)" 2>/dev/null | grep -q "^${sibling_pid}\$"; then
+	if ! grep -q "^${sibling_pid}\$" < <(pgrep -f "(^|/)pulse-wrapper\\.sh( |\$)" 2>/dev/null); then
 		print_result "behaviour: regression scenario setup (pgrep visibility)" 1 "sibling not visible to pgrep — test invalid on this platform"
 		kill "$sibling_pid" 2>/dev/null || true
 		return 0
