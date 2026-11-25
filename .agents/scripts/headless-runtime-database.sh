@@ -344,6 +344,70 @@ _initialize_worker_db_from_shared_schema_once() {
 }
 
 #######################################
+# Schema template for fresh worker DBs (GH#40422). The shared DB (tens of GB)
+# can stay lock-held for longer than the retry budget, which cost launches
+# before the model started. A template written by one successful
+# initialisation holds a self-consistent schema, user_version and migration
+# ledger set and no session data, so OpenCode migrates it forward on start and
+# _merge_worker_db still refuses a graph that no longer matches the shared DB.
+#######################################
+_worker_db_schema_template_path() {
+	printf '%s\n' "${AIDEVOPS_WORKER_DB_TEMPLATE:-${HOME}/.aidevops/cache/opencode-worker-db-template.db}"
+	return 0
+}
+
+# Snapshot a freshly initialised, data-empty worker DB as the template.
+# Args: $1 = worker DB path. Best effort: callers ignore failure.
+# Ledger discovery tolerates a shared-DB lock, so a live init can succeed with
+# empty ledgers; validate the snapshot so it never replaces a usable template.
+_store_worker_db_schema_template() {
+	local worker_db="$1"
+	local template="" template_dir="." tmp="" tmp_sql=""
+	template=$(_worker_db_schema_template_path)
+	[[ "$template" == */* ]] && template_dir="${template%/*}"
+	mkdir -p "${template_dir:-/}" 2>/dev/null || return 1
+	tmp="${template}.tmp.$$"
+	tmp_sql=$(sql_escape "$tmp")
+	rm -f "$tmp" 2>/dev/null || true
+	if ! (umask 077 && sqlite3_with_timeout "$worker_db" "VACUUM INTO '${tmp_sql}';" >/dev/null 2>&1) ||
+		! _worker_db_schema_template_usable "$tmp" ||
+		! mv -f "$tmp" "$template" 2>/dev/null; then
+		rm -f "$tmp" 2>/dev/null || true
+		return 1
+	fi
+	return 0
+}
+
+# Return 0 when a DB passes quick_check and has a non-empty migration ledger.
+# Args: $1 = DB path.
+_worker_db_schema_template_usable() {
+	local db="$1"
+	local check="" ledger_table="" rows=""
+	check=$(sqlite3_with_timeout "$db" "PRAGMA quick_check;" 2>/dev/null) || return 1
+	[[ "$check" == "ok" ]] || return 1
+	for ledger_table in __drizzle_migrations data_migration migration; do
+		_opencode_db_has_table "$db" "$ledger_table" || continue
+		rows=$(sqlite3_with_timeout "$db" "${_HEADLESS_SQL_SELECT} COUNT(*) FROM main.\"${ledger_table}\";" 2>/dev/null) || continue
+		[[ "$rows" =~ ^[1-9][0-9]*$ ]] && return 0
+	done
+	return 1
+}
+
+# Replace the worker DB with a copy of the template. Args: $1 = worker DB path.
+_seed_worker_db_from_schema_template() {
+	local worker_db="$1"
+	local template=""
+	template=$(_worker_db_schema_template_path)
+	[[ -f "$template" ]] || return 1
+	rm -f "$worker_db" "${worker_db}-wal" "${worker_db}-shm" 2>/dev/null || return 1
+	if ! cp "$template" "$worker_db" 2>/dev/null || ! _worker_db_schema_template_usable "$worker_db"; then
+		rm -f "$worker_db" "${worker_db}-wal" "${worker_db}-shm" 2>/dev/null || true
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Initialise a data-empty worker DB from the current shared schema.
 # Args: $1 = worker DB path, $2 = shared DB path.
 # The shared DB can be unreadable for tens of seconds while other sessions and
@@ -351,6 +415,8 @@ _initialize_worker_db_from_shared_schema_once() {
 # or count as a worker terminal failure (GH#39417). Retries are bounded:
 # AIDEVOPS_WORKER_DB_INIT_ATTEMPTS (default 5) with a doubling delay starting at
 # AIDEVOPS_WORKER_DB_INIT_RETRY_DELAY seconds (default 2, about 30s total).
+# Lock episodes routinely outlast that budget, so a locked or busy attempt
+# seeds from the schema template at once when one is usable (GH#40422).
 #######################################
 _initialize_worker_db_from_shared_schema() {
 	local worker_db="$1"
@@ -369,9 +435,20 @@ _initialize_worker_db_from_shared_schema() {
 			if [[ "$attempt" -gt 1 ]]; then
 				print_info "[lifecycle] db_schema_init_recovered attempts=${attempt} pid=$$"
 			fi
+			_store_worker_db_schema_template "$worker_db" ||
+				print_warning "[lifecycle] db_schema_template_store_failed pid=$$"
 			return 0
 		fi
 		print_warning "[lifecycle] db_schema_init_retry attempt=${attempt}/${max_attempts} step=${_WORKER_DB_INIT_STEP:-unknown} detail=${_WORKER_DB_INIT_DETAIL:-none} pid=$$"
+		case "${_WORKER_DB_INIT_DETAIL:-}" in
+		*locked* | *busy* | *BUSY*)
+			if _seed_worker_db_from_schema_template "$worker_db"; then
+				print_info "[lifecycle] db_schema_init_from_template attempt=${attempt} step=${_WORKER_DB_INIT_STEP:-unknown} pid=$$"
+				rm -f "${worker_db}.init-err" 2>/dev/null || true
+				return 0
+			fi
+			;;
+		esac
 		if [[ "$attempt" -ge "$max_attempts" ]]; then
 			rm -f "${worker_db}.init-err" 2>/dev/null || true
 			return 1
