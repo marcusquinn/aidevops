@@ -1549,10 +1549,7 @@ check_gate_blocked_worktree() {
 main_pre_commit() {
 	echo -e "${BLUE}Pre-commit Quality Validation${NC}" >&2
 	echo -e "${BLUE}================================${NC}" >&2
-
-	# GH#40288: refuse commits in a worktree left by a blocked maintainer gate.
-	check_gate_blocked_worktree || exit 1
-
+	check_gate_blocked_worktree || exit 1 # GH#40288
 	# Always run TODO.md validation (even if no shell files changed)
 	validate_duplicate_task_ids || {
 		print_error "Commit rejected: duplicate task IDs"
