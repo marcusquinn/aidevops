@@ -118,6 +118,10 @@ class Snapshot:
                 if os.path.isabs(target):
                     raise Rejected("escaping-dependency-link")
                 candidate = self.logical_root / rel.parent / target
+                destination = self.inventory[5]
+                eventual = destination / self.logical_root.relative_to(self.boundary) / rel.parent / target
+                if not eventual.resolve().is_relative_to(destination):
+                    raise Rejected("escaping-worktree-link")
             elif self.workspace:
                 candidate = self.logical_root / rel
             resolved = candidate.resolve(strict=True)
@@ -125,6 +129,13 @@ class Snapshot:
             raise Rejected("dangling-dependency-link") from None
         if not resolved.is_relative_to(self.boundary):
             raise Rejected("escaping-package-root")
+        if self.workspace:
+            relative = resolved.relative_to(self.boundary)
+            for part in relative.parts:
+                safe_entry_name(part)
+            destination = self.inventory[5]
+            if not (destination / relative).resolve().is_relative_to(destination):
+                raise Rejected("escaping-worktree-link")
         return resolved
 
     def inventory_key(self, package_path, manifest):
@@ -256,9 +267,14 @@ class Snapshot:
             raise Rejected("missing-dependencies")
         if self.inventory and not self.workspace and self.seen_packages != self.inventory[1]:
             raise Rejected("incomplete-package-inventory")
-        if self.workspace and self.logical_root == self.boundary / "node_modules":
-            if not self.inventory[4].issubset(self.seen_packages):
-                raise Rejected("incomplete-package-inventory")
+        if self.workspace:
+            # Lock inventories also contain optional packages for other platforms.
+            # Require this importer's entry points instead of every lock package.
+            for dependency in self.inventory[4]:
+                rel = Path(dependency)
+                if not os.path.lexists(self.root / rel):
+                    raise Rejected("incomplete-package-inventory")
+                self.check_package_root(rel, (self.root / rel).lstat().st_mode)
         digest = hashlib.sha256()
         for name, value in sorted(self.records.items()):
             digest.update(name.encode() + b"\0" + value)
@@ -281,7 +297,7 @@ def clone_descriptor(source, output, name):
             clone.restype = ctypes.c_int
             if clone(source, output, os.fsencode(name), 0):
                 raise OSError(ctypes.get_errno(), "clone refused")
-            target = os.open(name, os.O_WRONLY | os.O_NOFOLLOW, dir_fd=output)
+            target = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=output)
         else:
             target = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                              0o600, dir_fd=output)

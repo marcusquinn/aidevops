@@ -162,12 +162,18 @@ def matching_lock(source, dest):
 def identity(repo, worktree, relative):
     repo, worktree = repository_identity(repo, worktree)
     if (repo / "pnpm-workspace.yaml").is_file() and (repo / "pnpm-lock.yaml").is_file():
-        members, (inventory, expected) = workspace_identity(repo, worktree)
+        members, inventory = workspace_identity(repo, worktree)
         if relative not in members:
             raise Rejected("not-workspace-member")
         source, dest = package_directories(repo, worktree, relative)
-        matching_package(source, dest)
-        return contained_path(source / "node_modules"), ("workspace", inventory, repo, source / "node_modules", expected)
+        manifest = matching_package(source, dest)
+        required = set(manifest.get("dependencies", {})) | set(manifest.get("devDependencies", {}))
+        required -= set(manifest.get("optionalDependencies", {}))
+        if any(not re.fullmatch(r"(?:@[a-zA-Z0-9_.-]+/)?[a-zA-Z0-9_.-]+", key)
+               or key in {".", ".."} for key in required):
+            raise Rejected("invalid-dependency-name")
+        return contained_path(source / "node_modules"), (
+            "workspace", inventory, repo, source / "node_modules", required, worktree)
     source, dest = package_directories(repo, worktree, relative)
     parsed = matching_package(source, dest)
     name, lock = matching_lock(source, dest)
@@ -190,8 +196,7 @@ def workspace_identity(repo, worktree):
     name, lock = matching_lock(repo, worktree)
     if name != "pnpm-lock.yaml" or regular_bytes(repo / "node_modules/.pnpm/lock.yaml") != lock:
         raise Rejected("stale-installed-lock")
-    expected = pnpm_inventory(lock)
-    inventory = set(expected)
+    inventory = pnpm_inventory(lock)
     patterns = []
     section = False
     for line in config.decode("utf-8").splitlines():
@@ -226,7 +231,7 @@ def workspace_identity(repo, worktree):
         source, dest = package_directories(repo, worktree, relative)
         manifest = matching_package(source, dest)
         inventory.add(f"{manifest.get('name')}@{manifest.get('version')}")
-    return sorted(members), (inventory, expected)
+    return sorted(members), inventory
 
 
 def npm_inventory(source, modules, lock, parsed):

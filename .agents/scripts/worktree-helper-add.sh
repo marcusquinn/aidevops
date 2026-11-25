@@ -567,7 +567,7 @@ _restore_worktree_pnpm_workspace() {
 	local repo_root="$2"
 	local owner_contract="${3:-}"
 	local validator="${BASH_SOURCE[0]%/*}/worktree-dependency-provision.py"
-	local members="" relative="" started=0 elapsed=0 outcome=""
+	local members="" relative="" provision_relative="" started=0 elapsed=0 outcome=""
 	[[ -f "${repo_root}/pnpm-workspace.yaml" && -f "${repo_root}/pnpm-lock.yaml" ]] || return 1
 	[[ "${WORKTREE_NODE_MODULES_RESTORE_ROOT_ENABLED:-auto}" != "0" ]] || return 1
 	members=$(python3 "$validator" "$repo_root" "$wt_path" . --workspace-list) || return 1
@@ -576,7 +576,9 @@ _restore_worktree_pnpm_workspace() {
 		[[ ! -e "${wt_path}/${relative}/node_modules" && ! -L "${wt_path}/${relative}/node_modules" ]] || continue
 		started=$SECONDS
 		outcome=rejected
-		if _restore_worktree_node_modules_one "$wt_path" "$repo_root" "${relative/#./}" "$owner_contract"; then
+		provision_relative="$relative"
+		[[ "$relative" != "." ]] || provision_relative=""
+		if _restore_worktree_node_modules_one "$wt_path" "$repo_root" "$provision_relative" "$owner_contract"; then
 			outcome=provisioned
 		fi
 		elapsed=$((SECONDS - started))

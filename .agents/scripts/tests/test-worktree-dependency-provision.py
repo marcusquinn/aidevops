@@ -276,7 +276,8 @@ _dlw_restore_worktree_deps "$2" "$3"
         for parent in (self.repo, self.wt):
             (parent / "pnpm-workspace.yaml").write_text("packages:\n  - 'packages/*'\n  - 'apps/*'\n")
             for relative in ("packages/one", "packages/two", "apps/web"):
-                self.write(parent / relative / "package.json", {"name": relative.split("/")[-1], "version": "1.0.0"})
+                self.write(parent / relative / "package.json", {
+                    "name": relative.split("/")[-1], "version": "1.0.0", "dependencies": {"example": "1.0.0"}})
         for relative in ("packages/one", "packages/two", "apps/web"):
             modules = self.repo / relative / "node_modules"
             modules.mkdir()
@@ -318,6 +319,53 @@ _dlw_restore_worktree_deps "$2" "$3"
         with patch("_worktree_dependency_snapshot.fcntl.ioctl", side_effect=OSError(errno.ENOTSUP, "fixture")):
             with self.assertRaisesRegex(provision.Rejected, "byte-budget-exceeded"):
                 provision.snapshot(modules, 10, 20000, stage, inventory)
+
+    def test_workspace_original_target_cannot_escape_through_worktree_alias(self):
+        self.make_workspace()
+        (self.repo / "alias").symlink_to("packages", target_is_directory=True)
+        (self.wt / "alias").symlink_to(self.root, target_is_directory=True)
+        (self.modules / "example/escape").symlink_to("../../../../../alias/one")
+        self.run_restore()
+        self.assertFalse((self.wt / "node_modules").exists())
+
+    def test_workspace_missing_member_dependency_is_rejected(self):
+        self.make_workspace()
+        (self.repo / "packages/one/node_modules/example").unlink()
+        modules, inventory = provision.identity(self.repo, self.wt, Path("packages/one"))
+        with self.assertRaisesRegex(provision.Rejected, "incomplete-package-inventory"):
+            provision.snapshot(modules, 67108864, 20000, inventory=inventory)
+
+    def test_workspace_clone_exceeds_copy_budget_without_shared_writes(self):
+        from _worktree_dependency_snapshot import clone_descriptor, open_directory
+        self.make_workspace()
+        stage = self.wt / "stage"
+        stage.mkdir(mode=0o700)
+        payload = self.modules / "example/payload"
+        payload.write_bytes(b"fixture" * 200000)
+        # Probe the real filesystem, not a mocked successful ioctl.
+        with payload.open("rb") as source, open_directory(stage) as output:
+            target, cloned = clone_descriptor(source.fileno(), output, "probe")
+            os.close(target)
+        (stage / "probe").unlink()
+        if not cloned:
+            self.skipTest("filesystem lacks CoW; bounded fallback is tested separately")
+        modules, inventory = self.validate()
+        provision.snapshot(modules, 10, 1, stage, inventory)
+        copied = stage / ".pnpm/example@1.0.0/node_modules/example/payload"
+        self.assertEqual(copied.read_bytes(), payload.read_bytes())
+        copied.write_text("isolated")
+        self.assertGreater(payload.stat().st_size, 1000000)
+
+    def test_workspace_member_command_runs_without_install(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is unavailable")
+        self.make_workspace()
+        self.run_restore()
+        result = subprocess.check_output(  # nosec B603 -- resolved Node, fixed offline fixture expression.
+            [node, "-p", "require('example/package.json').version"],
+            cwd=self.wt / "packages/one", text=True, timeout=10)
+        self.assertEqual(result.strip(), "1.0.0")
 
     def test_extra_unrecorded_package(self):
         self.write(self.modules / "extra" / "package.json", {"name": "extra", "version": "1.0.0"})
