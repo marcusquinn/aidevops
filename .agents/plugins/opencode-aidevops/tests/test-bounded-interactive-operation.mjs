@@ -275,7 +275,7 @@ describe("bounded interactive operations", () => {
         const handoff = await instance.start({
           command: ["bash", "-c", 'SCRIPT_DIR="$1"; source "$SCRIPT_DIR/shared-constants.sh"; source "$SCRIPT_DIR/full-loop-helper-state.sh"; source "$SCRIPT_DIR/full-loop-helper-merge.sh"; _merge_record_deferred_cleanup_owner 123 example/repo "$2"',
             "fixture", scriptsDir, `${linked}\tfeature/adopt\t0`],
-          cwd: linked, budgetMs: 15000,
+          cwd: linked, budgetMs: SUCCESS_BUDGET_MS,
         }, owner);
         assert.equal((await terminal(instance, handoff.operation_id)).state, "succeeded");
         const receipt = JSON.parse(readFileSync(join(process.env.AIDEVOPS_FULL_LOOP_CLEANUP_DIR, "example_repo-123.json"), "utf8"));
@@ -286,7 +286,8 @@ describe("bounded interactive operations", () => {
         assert.equal(execFileSync(helper, ["registry", "verify-owner", linked, owner.sessionID], { env, encoding: "utf8" }).trim(), "VERIFIED");
         assert.throws(() => invoke(), "cleanup deferral must not enable live-owner adoption");
         await assert.rejects(instance.start({ command: [process.execPath], cwd: linked }, { sessionID: "ses_other" }), /not owned/);
-        const resumed = await instance.start({ command: [process.execPath, "-e", "process.exit(0)"], cwd: linked, budgetMs: 5000 }, owner);
+        // GH#40309: startup budgets, not latency assertions (a bare exit timed out at 5 s under load).
+        const resumed = await instance.start({ command: [process.execPath, "-e", "process.exit(0)"], cwd: linked, budgetMs: SUCCESS_BUDGET_MS }, owner);
         assert.equal((await terminal(instance, resumed.operation_id)).state, "succeeded");
       } finally {
         for (const key of environmentKeys) {

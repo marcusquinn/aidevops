@@ -99,9 +99,11 @@ function createTerminator(tracker, killGraceMs, reportContainment, reportTermina
   const killGroup = () => signalOwnGroup("SIGKILL") || process.exit(1);
   // An exited command's status is already known: remove the survivors but
   // keep the supervisor to drain and report it, without discarding that
-  // status; the group SIGKILL stays as the backstop for anything that outlives SIGKILL.
+  // status; the group SIGKILL stays as the backstop for anything that outlives
+  // SIGKILL or an inventory that stays unavailable (the drain loop retries it).
   const containOwnGroup = () => {
-    if (!commandExited() || !tracker.killOwnGroupOthers()) return killGroup();
+    if (!commandExited()) return killGroup();
+    tracker.killOwnGroupOthers();
     later(killGroup, Math.max(killGraceMs, EXITED_COMMAND_BACKSTOP_MS));
   };
   const escalate = (postExit) => {
