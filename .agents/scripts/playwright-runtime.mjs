@@ -314,10 +314,17 @@ function staleBrowserInstalls(runtimeDir, chromiumPath) {
   }
   const stale = new Set();
   for (const family of BROWSER_CACHE_FAMILIES) {
-    const revision = browsers.find((browser) => browser.name === family.json)?.revision;
-    if (!revision) continue;
-    const olderBuilds = entries.some((entry) => entry.startsWith(`${family.dir}-`) && entry !== `${family.dir}-${revision}`);
-    if (olderBuilds && !existsSync(join(cacheRoot, `${family.dir}-${revision}`))) stale.add(family.install);
+    const browser = browsers.find((candidate) => candidate.name === family.json);
+    if (!browser?.revision) continue;
+    // Platform-specific builds (revisionOverrides) install as <dir>_<platform>_special-<rev>.
+    const expected = new Set([`${family.dir}-${browser.revision}`]);
+    for (const [platform, revision] of Object.entries(browser.revisionOverrides || {})) {
+      expected.add(`${family.dir}_${platform}_special-${revision}`);
+    }
+    const isFamilyBuild = (entry) => entry.startsWith(`${family.dir}-`) || (entry.startsWith(`${family.dir}_`) && entry.includes('_special-'));
+    const olderBuilds = entries.some((entry) => isFamilyBuild(entry) && !expected.has(entry));
+    const currentBuild = [...expected].some((name) => existsSync(join(cacheRoot, name)));
+    if (olderBuilds && !currentBuild) stale.add(family.install);
   }
   return [...stale];
 }
