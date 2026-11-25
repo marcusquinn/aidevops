@@ -34,11 +34,18 @@ def run(command, cwd, env, timeout):
             stderr.seek(0)
             return child.returncode, stdout.read(), stderr.read()
         finally:
+            # Ignore further interrupts while killing and reaping the child.
+            previous = {sig: signal.signal(sig, signal.SIG_IGN)
+                        for sig in (signal.SIGINT, signal.SIGTERM)}
             try:
-                os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            child.wait()
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                child.wait()
+            finally:
+                for sig, handler in previous.items():
+                    signal.signal(sig, handler)
 
 
 def main():
@@ -148,6 +155,7 @@ def main():
             env.pop(key, None)
         env.update(XDG_CONFIG_HOME=str(root / 'cfg'), XDG_DATA_HOME=str(root / 'data'),
                    XDG_CACHE_HOME=str(root / 'cache'), XDG_STATE_HOME=str(root / 'state'),
+                   AIDEVOPS_OAUTH_POOL_FILE=str(root / 'oauth-pool.json'),
                    OPENCODE_DB_ACTIVITY_DIR=str(root / 'activity'),
                    AIDEVOPS_SESSION_BUS_DIR=str(root / 'session-bus'),
                    AIDEVOPS_WORK_DIR=str(root / 'work'),
