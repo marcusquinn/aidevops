@@ -784,6 +784,42 @@ Released the creation-time \`hold-for-review\`: this generated simplification is
 	return 0
 }
 
+# Reap only old, idle local clones belonging to this repository (GH#40273).
+_complexity_scan_reap_trees() {
+	local tmp_base="$1" aidevops_path="$2" origin_url="$3"
+	local max_hours="${AIDEVOPS_COMPLEXITY_SCAN_TREE_MAX_AGE_HOURS:-24}"
+	local cwd_rows tree tree_path canonical_path mtime now row in_use reaped=0
+	[[ "$max_hours" =~ ^[0-9]{1,6}$ ]] || return 0
+	[[ -n "$origin_url" ]] || return 0
+	command -v lsof >/dev/null 2>&1 || return 0
+	# Failure to inspect processes is not evidence that the trees are idle.
+	cwd_rows=$(lsof -n -Fn -d cwd 2>/dev/null) || return 0
+	canonical_path=$(cd "$aidevops_path" && pwd -P) || return 0
+	now=$(date +%s)
+	for tree in "${tmp_base%/}"/complexity-scan-tree.??????; do
+		[[ -d "$tree" && ! -L "$tree" && -d "$tree/.git" && ! -L "$tree/.git" ]] || continue
+		tree_path=$(cd "$tree" && pwd -P) || continue
+		[[ "$tree_path" != "$canonical_path" ]] || continue
+		[[ "$(git -C "$tree" remote get-url origin 2>/dev/null)" == "$origin_url" ]] || continue
+		mtime=$(_file_mtime_epoch "$tree") || continue
+		[[ "$mtime" =~ ^[0-9]+$ && "$mtime" -gt 0 ]] || continue
+		((now - mtime > 10#$max_hours * 3600)) || continue
+		in_use=false
+		while IFS= read -r row; do
+			if [[ "$row" == "n$tree_path" || "$row" == "n$tree_path/"* ]]; then
+				in_use=true
+				break
+			fi
+		done <<<"$cwd_rows"
+		[[ "$in_use" == false ]] || continue
+		if rm -rf -- "$tree"; then
+			reaped=$((reaped + 1))
+		fi
+	done
+	echo "[pulse-wrapper] Complexity scan: reaped $reaped stale scan tree(s)" >>"$LOGFILE"
+	return 0
+}
+
 # _complexity_scan_pull_latest — refresh origin/main into a temp scan tree (GH#17848, t2001, GH#34426)
 # Fail-closed: returns 1 (skip cycle) if the refresh fails to avoid stale-state warnings.
 # Outputs: scan tree path via stdout.
@@ -818,6 +854,7 @@ _complexity_scan_pull_latest() {
 	local origin_url scan_tree tmp_base="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}"
 	origin_url=$(git -C "$aidevops_path" remote get-url origin 2>/dev/null) || origin_url=""
 	mkdir -p "$tmp_base" 2>/dev/null || true
+	_complexity_scan_reap_trees "$tmp_base" "$aidevops_path" "$origin_url"
 	scan_tree=$(mktemp -d "${tmp_base}/complexity-scan-tree.XXXXXX" 2>/dev/null) || scan_tree=""
 	if [[ -z "$origin_url" || -z "$scan_tree" ]]; then
 		echo "[pulse-wrapper] Complexity scan: cannot prepare scan tree for ${aidevops_path} — skipping this cycle to avoid stale-state warnings" >>"$LOGFILE"
