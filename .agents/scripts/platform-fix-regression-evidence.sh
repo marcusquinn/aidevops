@@ -22,7 +22,7 @@ _platform_evidence_die() {
 
 _platform_fix_triggered() {
 	local metadata="$1"
-	printf '%s\n' "$metadata" | grep -qiE '(^|[^[:alnum:]_])(linux|ubuntu|systemd|cron|macos|darwin|bash[[:space:]]+3[.]2|portability|coreutils|mktemp|stat|readlink|getent)([^[:alnum:]_]|$)'
+	grep -qiE '(^|[^[:alnum:]_])(linux|ubuntu|systemd|cron|macos|darwin|bash[[:space:]]+3[.]2|portability|coreutils|mktemp|stat|readlink|getent)([^[:alnum:]_]|$)' <<<"$metadata"
 	return $?
 }
 
@@ -39,7 +39,7 @@ _platform_trigger_text() {
 			skip_section=1
 			continue
 		fi
-		if printf '%s\n' "$line" | grep -qE '^[[:space:]]*#{1,6}[[:space:]]+'; then
+		if grep -qE '^[[:space:]]*#{1,6}[[:space:]]+' <<<"$line"; then
 			skip_section=0
 		fi
 		[[ "$skip_section" -eq 1 ]] && continue
@@ -89,11 +89,11 @@ _platform_has_regression_evidence() {
 	local normalized=""
 
 	while IFS= read -r line || [[ -n "$line" ]]; do
-		if printf '%s\n' "$line" | grep -qiE '^[[:space:]]*#{1,6}[[:space:]]+Regression[[:space:]]+Evidence[[:space:]]*:?[[:space:]]*$'; then
+		if grep -qiE '^[[:space:]]*#{1,6}[[:space:]]+Regression[[:space:]]+Evidence[[:space:]]*:?[[:space:]]*$' <<<"$line"; then
 			in_section=1
 			continue
 		fi
-		if [[ "$in_section" -eq 1 ]] && printf '%s\n' "$line" | grep -qE '^[[:space:]]*#{1,6}[[:space:]]+'; then
+		if [[ "$in_section" -eq 1 ]] && grep -qE '^[[:space:]]*#{1,6}[[:space:]]+' <<<"$line"; then
 			break
 		fi
 		if [[ "$in_section" -eq 1 ]]; then
