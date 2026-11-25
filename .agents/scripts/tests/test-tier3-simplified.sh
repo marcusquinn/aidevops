@@ -111,7 +111,7 @@ _check_help_keywords() {
 	local saved_ifs="$IFS"
 	IFS='|'
 	for keyword in $keywords; do
-		if ! grep -qi "$keyword" <<<"$output"; then
+		if ! echo "$output" | grep -qi "$keyword"; then
 			print_result "help: $script contains '$keyword'" 1 "Missing keyword '$keyword' in help output"
 			all_found=false
 		fi
@@ -154,7 +154,7 @@ test_full_loop_helper() {
 	# once shadowed this command and exited 1 silently).
 	local output
 	output=$(cd "$no_loop_dir" && "$helper" status 2>&1) || true
-	if grep -q "No active full loop" <<<"$output"; then
+	if echo "$output" | grep -q "No active full loop"; then
 		print_result "full-loop: status (no active loop)" 0
 	else
 		print_result "full-loop: status (no active loop)" 1 "Expected 'No active full loop'"
@@ -162,7 +162,7 @@ test_full_loop_helper() {
 
 	# Test: cancel with no active loop
 	output=$(cd "$no_loop_dir" && "$helper" cancel 2>&1) || true
-	if grep -qi "no active loop" <<<"$output"; then
+	if echo "$output" | grep -qi "no active loop"; then
 		print_result "full-loop: cancel (no active loop)" 0
 	else
 		print_result "full-loop: cancel (no active loop)" 1 "Expected 'No active loop' message"
@@ -174,8 +174,14 @@ test_full_loop_helper() {
 	git_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
 	if [[ -n "$git_root" ]]; then
 		output=$("$helper" start "test prompt" --dry-run 2>&1) || true
+		local git_dir git_common_dir
+		git_dir=$(git rev-parse --git-dir 2>/dev/null || echo "")
+		git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null || echo "")
 		if grep -qi "dry run" <<<"$output"; then
 			print_result "full-loop: start --dry-run" 0
+		elif [[ "$git_dir" == "$git_common_dir" ]] && grep -qi "safe linked worktree" <<<"$output"; then
+			# Primary checkout (e.g. CI): helper correctly refuses to start
+			print_result "full-loop: start --dry-run" 0 "(primary checkout refused by linked-worktree guard)"
 		else
 			print_result "full-loop: start --dry-run" 1 "Expected dry run output"
 		fi
@@ -186,7 +192,7 @@ test_full_loop_helper() {
 	# Test: start with no prompt — must fail AND produce an error message
 	local rc=0
 	output=$("$helper" start "" 2>&1) || rc=$?
-	if [[ $rc -ne 0 ]] && grep -qiE "no prompt|usage|required|missing|empty" <<<"$output"; then
+	if [[ $rc -ne 0 ]] && echo "$output" | grep -qiE "no prompt|usage|required|missing|empty"; then
 		print_result "full-loop: start (no prompt) fails" 0
 	else
 		print_result "full-loop: start (no prompt) fails" 1 "Expected non-zero exit AND error pattern. rc=$rc, output: $output"
@@ -194,7 +200,7 @@ test_full_loop_helper() {
 
 	# Test: unknown command
 	output=$("$helper" nonexistent 2>&1) || true
-	if grep -qi "unknown command" <<<"$output"; then
+	if echo "$output" | grep -qi "unknown command"; then
 		print_result "full-loop: unknown command" 0
 	else
 		print_result "full-loop: unknown command" 1 "Expected 'Unknown command'"
@@ -237,7 +243,7 @@ test_fallback_chain_helper() {
 	# Test: resolve with no tier
 	local output
 	output=$("$helper" resolve 2>&1) || true
-	if grep -qiE "usage|tier" <<<"$output"; then
+	if echo "$output" | grep -qiE "usage|tier"; then
 		print_result "fallback: resolve (no tier) shows usage" 0
 	else
 		print_result "fallback: resolve (no tier) shows usage" 1 "Expected usage message"
@@ -274,7 +280,7 @@ test_fallback_chain_helper() {
 
 	# Test: resolve with --json flag
 	output=$("$helper" resolve simple --quiet --json 2>&1) || true
-	if grep -q '"status":"resolved"' <<<"$output"; then
+	if echo "$output" | grep -q '"status":"resolved"'; then
 		print_result "fallback: resolve --json output" 0
 	else
 		print_result "fallback: resolve --json output" 1 "Got: $output"
@@ -284,7 +290,7 @@ test_fallback_chain_helper() {
 	unset OPENAI_API_KEY ANTHROPIC_API_KEY
 	local rc=0
 	output=$("$helper" resolve nonexistent --quiet 2>&1) || rc=$?
-	if [[ $rc -ne 0 ]] && grep -qiE "unknown|unsupported|invalid|error|fail|no.*tier|not found" <<<"$output"; then
+	if [[ $rc -ne 0 ]] && echo "$output" | grep -qiE "unknown|unsupported|invalid|error|fail|no.*tier|not found"; then
 		print_result "fallback: unknown tier fails" 0
 	else
 		print_result "fallback: unknown tier fails" 1 "Expected non-zero exit AND error pattern. rc=$rc, output: $output"
@@ -292,7 +298,7 @@ test_fallback_chain_helper() {
 
 	# Test: unknown command
 	output=$("$helper" nonexistent 2>&1) || true
-	if grep -qiE "unknown command" <<<"$output"; then
+	if echo "$output" | grep -qiE "unknown command"; then
 		print_result "fallback: unknown command" 0
 	else
 		print_result "fallback: unknown command" 1 "Expected 'Unknown command'"
@@ -344,7 +350,7 @@ test_budget_tracker_helper() {
 
 	# Test: status command
 	output=$("$helper" status 2>&1) || true
-	if grep -qiE 'cost|events|spend' <<<"$output"; then
+	if echo "$output" | grep -qiE 'cost|events|spend'; then
 		print_result "budget: status shows summary" 0
 	else
 		print_result "budget: status shows summary" 1 "Got: $output"
@@ -352,7 +358,7 @@ test_budget_tracker_helper() {
 
 	# Test: status --json
 	output=$("$helper" status --json 2>&1) || true
-	if grep -q '"total_cost_usd"' <<<"$output"; then
+	if echo "$output" | grep -q '"total_cost_usd"'; then
 		print_result "budget: status --json" 0
 	else
 		print_result "budget: status --json" 1 "Got: $output"
@@ -360,7 +366,7 @@ test_budget_tracker_helper() {
 
 	# Test: burn-rate
 	output=$("$helper" burn-rate 2>&1) || true
-	if grep -qiE 'burn rate|spend|hourly' <<<"$output"; then
+	if echo "$output" | grep -qiE 'burn rate|spend|hourly'; then
 		print_result "budget: burn-rate" 0
 	else
 		print_result "budget: burn-rate" 1 "Got: $output"
@@ -368,7 +374,7 @@ test_budget_tracker_helper() {
 
 	# Test: tail
 	output=$("$helper" tail 5 2>&1) || true
-	if grep -q "timestamp" <<<"$output"; then
+	if echo "$output" | grep -q "timestamp"; then
 		print_result "budget: tail shows header" 0
 	else
 		print_result "budget: tail shows header" 1 "Got: $output"
@@ -377,7 +383,7 @@ test_budget_tracker_helper() {
 	# Test: record with missing required args — must fail AND produce an error message
 	local rc_record=0
 	output=$("$helper" record 2>&1) || rc_record=$?
-	if [[ $rc_record -ne 0 ]] && grep -qiE "missing|required|usage|error|provider" <<<"$output"; then
+	if [[ $rc_record -ne 0 ]] && echo "$output" | grep -qiE "missing|required|usage|error|provider"; then
 		print_result "budget: record (missing args) fails" 0
 	else
 		print_result "budget: record (missing args) fails" 1 "Expected non-zero exit AND error pattern. rc=$rc_record, output: $output"
@@ -399,7 +405,7 @@ test_issue_sync_helper() {
 	# Test: help output
 	local output
 	output=$("$helper" help 2>&1) || true
-	if grep -q "push" <<<"$output" && grep -q "pull" <<<"$output"; then
+	if echo "$output" | grep -q "push" && echo "$output" | grep -q "pull"; then
 		print_result "issue-sync: help output" 0
 	else
 		print_result "issue-sync: help output" 1 "Missing expected commands in help"
@@ -407,7 +413,7 @@ test_issue_sync_helper() {
 
 	# Test: unknown command
 	output=$("$helper" nonexistent 2>&1) || true
-	if grep -qi "unknown command" <<<"$output"; then
+	if echo "$output" | grep -qi "unknown command"; then
 		print_result "issue-sync: unknown command" 0
 	else
 		print_result "issue-sync: unknown command" 1 "Expected 'Unknown command'"
@@ -416,7 +422,7 @@ test_issue_sync_helper() {
 	# Test: parse with no task ID — must fail AND produce an error message
 	local rc_parse=0
 	output=$("$helper" parse 2>&1) || rc_parse=$?
-	if [[ $rc_parse -ne 0 ]] && grep -qiE "missing|required|usage|error|task" <<<"$output"; then
+	if [[ $rc_parse -ne 0 ]] && echo "$output" | grep -qiE "missing|required|usage|error|task"; then
 		print_result "issue-sync: parse (no task) fails" 0
 	else
 		print_result "issue-sync: parse (no task) fails" 1 "Expected non-zero exit AND error pattern. rc=$rc_parse, output: $output"
@@ -439,7 +445,7 @@ test_issue_sync_helper() {
 	local push_output
 	push_output=$(cd "$tmp_dir" && GH_TOKEN=fake-token-for-test DRY_RUN=true "$helper" push t999 2>&1) || true
 	rm -rf "$tmp_dir"
-	if grep -qiE "already completed|skip.*t999|t999.*skip" <<<"$push_output"; then
+	if echo "$push_output" | grep -qiE "already completed|skip.*t999|t999.*skip"; then
 		print_result "issue-sync: push skips completed [x] task (GH#5212)" 0
 	else
 		print_result "issue-sync: push skips completed [x] task (GH#5212)" 1 "Expected skip message for completed task. output: $push_output"
@@ -499,7 +505,7 @@ test_observability_helper() {
 	# Test: record with missing model — must fail AND produce an error message
 	local rc_obs_record=0
 	output=$("$helper" record 2>&1) || rc_obs_record=$?
-	if [[ $rc_obs_record -ne 0 ]] && grep -qiE "missing|required|usage|error|model" <<<"$output"; then
+	if [[ $rc_obs_record -ne 0 ]] && echo "$output" | grep -qiE "missing|required|usage|error|model"; then
 		print_result "observability: record (no model) fails" 0
 	else
 		print_result "observability: record (no model) fails" 1 "Expected non-zero exit AND error pattern. rc=$rc_obs_record, output: $output"
@@ -514,7 +520,7 @@ test_observability_helper() {
 
 	# Removed commands are now rejected rather than silently succeeding.
 	output=$("$helper" nonexistent 2>&1) || true
-	if grep -qiE "unknown command|usage:" <<<"$output"; then
+	if echo "$output" | grep -qiE "unknown command|usage:"; then
 		print_result "observability: unknown command" 0
 	else
 		print_result "observability: unknown command" 1 "Expected 'Unknown command'"
