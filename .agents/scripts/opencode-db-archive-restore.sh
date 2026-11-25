@@ -86,6 +86,15 @@ revision|0
 agent|'build'
 EPOCH_DEFAULTS
 	fi
+	# Inbox tables absent from the active DB are skipped by the copy; refuse
+	# the restore rather than strand populated archive rows for this session.
+	local populated
+	for table_name in $OPENCODE_ARCHIVE_INBOX_SESSION_TABLES; do
+		_sqlite_has_table "$ARCHIVE_DB" "$table_name" || continue
+		_sqlite_has_table "$ACTIVE_DB" "$table_name" && continue
+		populated=$(sqlite3 -readonly "$ARCHIVE_DB" "SELECT COUNT(*) FROM ${table_name} WHERE session_id IN (SELECT id FROM session WHERE id = ${sid} OR parent_id = ${sid});") || return 1
+		[[ "$populated" == 0 ]] || return 1
+	done
 	columns=$(_archive_restore_column_list project) || return 1
 	copy_sql="INSERT OR IGNORE INTO main.project (${columns}) SELECT ${columns} FROM archive.project WHERE id IN (SELECT project_id FROM archive.session WHERE id = ${sid});"$'\n'
 	columns=$(_archive_restore_column_list "$SESSION_TABLE_NAME") || return 1
