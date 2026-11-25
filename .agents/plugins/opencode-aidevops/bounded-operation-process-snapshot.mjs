@@ -78,7 +78,8 @@ function darwinOperationPids(operationID) {
     });
     if (result.error?.code !== "ETIMEDOUT") break;
   }
-  if (result.status !== 0) return pids;
+  // Unavailable inventory is distinct from a successful scan with no matches.
+  if (result.status !== 0) return null;
   for (const line of result.stdout.split("\n")) {
     const [uid, pid, ...tokens] = line.trim().split(/\s+/);
     if (Number(uid) === process.getuid() && tokens.includes(`AIDEVOPS_OPERATION_ID=${operationID}`)) pids.add(Number(pid));
@@ -86,10 +87,12 @@ function darwinOperationPids(operationID) {
   return pids;
 }
 
+// Returns null when the marker inventory is unavailable (attribution unknown).
 export function markedProcesses(entries, operationID) {
   if (!operationID) return [];
   if (process.platform === "darwin") {
     const pids = darwinOperationPids(operationID);
+    if (!pids) return null;
     return entries.filter((entry) => pids.has(entry.pid));
   }
   return process.platform === "linux" ? entries.filter((entry) => hasLinuxMarker(entry.pid, operationID)) : [];
