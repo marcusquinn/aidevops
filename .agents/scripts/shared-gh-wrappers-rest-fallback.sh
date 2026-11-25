@@ -385,6 +385,59 @@ _rest_should_fallback_write() {
 	return $?
 }
 
+# Creation failures must not retry auth/validation errors through another API.
+# Rate-limit errors are deliberately left to the existing quota classifier.
+_rest_create_failure_is_fatal() {
+	local diagnostics="$1"
+	if printf '%s\n' "$diagnostics" | grep -Eiq 'authentication|bad credentials|validation failed|could not resolve|not authorized|forbidden'; then
+		return 0
+	fi
+	# Preserve the established quota-exhaustion path, including HTTP 403/429.
+	if printf '%s\n' "$diagnostics" | grep -Eiq 'rate limit|rate_limit'; then
+		return 1
+	fi
+	if printf '%s\n' "$diagnostics" | grep -Eiq 'HTTP[^[:space:]]*[[:space:]]+4[0-9]{2}'; then
+		return 0
+	fi
+	return 1
+}
+
+# These failures may follow a successful mutation. Callers must reconcile via
+# REST before issuing another create, even with healthy GraphQL quota.
+_rest_create_failure_is_transient() {
+	local diagnostics="$1"
+	_rest_create_failure_is_fatal "$diagnostics" && return 1
+	if printf '%s\n' "$diagnostics" | grep -Eiq 'GraphQL: Something went wrong while executing your query|HTTP[^[:space:]]*[[:space:]]+50[234]|GraphQL:.*(timeout|timed out)'; then
+		return 0
+	fi
+	return 1
+}
+
+# Return a recent exact-title issue URL, empty on a successful negative lookup.
+# A failed lookup is not proof of absence: refuse a potentially duplicate write.
+_rest_recover_recent_issue() {
+	local repo="$1" title="$2" since=""
+	[[ -n "$repo" && -n "$title" ]] || return 1
+	since=$(jq -nr 'now - 300 | strftime("%Y-%m-%dT%H:%M:%SZ")') || return 1
+	local issues=""
+	issues=$(gh api --method GET "repos/$repo/issues" -f state=open \
+		-f since="$since" -f sort=created -f direction=desc -f per_page=100 \
+		--paginate --slurp) || return 1
+	printf '%s\n' "$issues" | jq -er --arg title "$title" --arg since "$since" \
+		'flatten | map(select(.title == $title and .created_at >= $since and (has("pull_request") | not))) | .[0].html_url // ""'
+	return $?
+}
+
+# Head lookup stays on REST when GraphQL itself is unavailable.
+_rest_recover_created_pr() {
+	local repo="$1" head_ref="$2"
+	[[ -n "$repo" && -n "$head_ref" ]] || return 1
+	[[ "$head_ref" == *:* ]] || head_ref="${repo%%/*}:$head_ref"
+	gh api --method GET "repos/$repo/pulls" -f state=open -f head="$head_ref" \
+		-f per_page=100 --jq '.[0].html_url // empty'
+	return $?
+}
+
 #######################################
 # Return 0 when argv contains --search or --search=... .
 # Args: gh-style argv

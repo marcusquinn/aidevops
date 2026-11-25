@@ -797,6 +797,23 @@ _gh_ci_settle_derived_labels() {
 	return 0
 }
 
+# Capture diagnostics without mixing stderr into the durable URL on stdout.
+_gh_create_capture_native() {
+	local error_file="" rc=0
+	error_file=$(mktemp -t aidevops-create-error.XXXXXX) || return 1
+	_GH_CREATE_OUTPUT=""
+	_GH_CREATE_ERROR=""
+	if _GH_CREATE_OUTPUT=$("$@" 2>"$error_file"); then
+		rc=0
+	else
+		rc=$?
+	fi
+	_GH_CREATE_ERROR=$(cat "$error_file")
+	[[ -z "$_GH_CREATE_ERROR" ]] || printf '%s\n' "$_GH_CREATE_ERROR" >&2
+	rm -f "$error_file"
+	return "$rc"
+}
+
 gh_create_issue() {
 	_gh_wrapper_enter_cleanup_scope
 	gh_record_call graphql gh_create_issue 2>/dev/null || true
@@ -864,9 +881,35 @@ gh_create_issue() {
 	_gh_ci_select_auto_assignee "$target_repo" "$@"
 	auto_assignee="$_GH_CI_AUTO_ASSIGNEE"
 
-	issue_output=$("${_issue_cmd[@]}") # aidevops-allow: raw-gh-wrapper
-	rc=$?
-	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
+	local create_error="" recovered_url="" title="" arg="" next_title=0
+	if _gh_create_capture_native "${_issue_cmd[@]}"; then
+		rc=0
+	else
+		rc=$?
+	fi
+	issue_output="${_GH_CREATE_OUTPUT:-}"
+	create_error="${_GH_CREATE_ERROR:-}"
+	if [[ $rc -ne 0 ]] && _rest_create_failure_is_transient "$create_error"; then
+		for arg in "$@"; do
+			if [[ "$next_title" -eq 1 ]]; then
+				title="$arg"
+				next_title=0
+			fi
+			case "$arg" in
+			--title|-t) next_title=1 ;;
+			--title=*) title="${arg#--title=}" ;;
+			esac
+		done
+		if recovered_url=$(_rest_recover_recent_issue "$target_repo" "$title"); then
+			if [[ -n "$recovered_url" ]]; then
+				issue_output="$recovered_url"
+				rc=0
+			else
+				issue_output=$(_rest_issue_create "${_rest_args[@]}")
+				rc=$?
+			fi
+		fi
+	elif [[ $rc -ne 0 ]] && ! _rest_create_failure_is_fatal "$create_error" && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue create"
 		issue_output=$(_rest_issue_create "${_rest_args[@]}")
 		rc=$?
@@ -1406,18 +1449,35 @@ gh_create_pr() {
 		pr_cmd+=("${_origin_label_args[@]}")
 	fi
 
-	local pr_output rc
-	if pr_output=$("${pr_cmd[@]}"); then # aidevops-allow: raw-gh-wrapper
+	local pr_output rc create_error="" transient_failure=0 recovery_failed=0
+	if _gh_create_capture_native "${pr_cmd[@]}"; then
 		rc=0
 	else
 		rc=$?
 	fi
+	pr_output="${_GH_CREATE_OUTPUT:-}"
+	create_error="${_GH_CREATE_ERROR:-}"
+	_rest_create_failure_is_transient "$create_error" && transient_failure=1
 	if [[ $rc -ne 0 ]] && _gh_create_pr_resolve_durable_identity "$pr_output" "$@"; then
 		# Native gh can create the PR and fail during a follow-up mutation. The URL
 		# proves creation; never invoke another create transport for this result.
 		rc="$_GH_PR_CREATE_PARTIAL_RC"
-	elif [[ $rc -ne 0 ]]; then
-		if _gh_create_pr_recover_after_mutation_failure "$@"; then
+	elif [[ $rc -ne 0 ]] && ! _rest_create_failure_is_fatal "$create_error"; then
+		local recovered=1
+		if [[ "$transient_failure" -eq 1 ]]; then
+			local repo="" head_ref="" recovered_url=""
+			repo=$(_gh_extract_repo_from_args "$@")
+			head_ref=$(_gh_create_pr_extract_head "$@")
+			[[ -n "$head_ref" ]] || head_ref=$(git branch --show-current)
+			if recovered_url=$(_rest_recover_created_pr "$repo" "$head_ref"); then
+				_gh_create_pr_resolve_durable_identity "$recovered_url" "$@" && recovered=0
+			else
+				recovery_failed=1
+			fi
+		elif _gh_create_pr_recover_after_mutation_failure "$@"; then
+			recovered=0
+		fi
+		if [[ "$recovered" -eq 0 ]]; then
 			pr_output="$_GH_CREATE_PR_DURABLE_URL"
 			printf '[aidevops][gh-wrapper][PARTIAL] recovered durable PR #%s after a create-time mutation failure; not retrying creation\n' \
 				"$_GH_CREATE_PR_DURABLE_NUMBER" >&2
@@ -1428,8 +1488,14 @@ gh_create_pr() {
 			rc="$_GH_PR_CREATE_PARTIAL_RC"
 		fi
 	fi
-	if [[ $rc -ne 0 && "$rc" -ne "$_GH_PR_CREATE_PARTIAL_RC" ]] && _rest_should_fallback_write; then
-		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr create"
+	if [[ $rc -ne 0 && "$rc" -ne "$_GH_PR_CREATE_PARTIAL_RC" && "$recovery_failed" -eq 0 ]] &&
+		! _rest_create_failure_is_fatal "$create_error" &&
+		{ [[ "$transient_failure" -eq 1 ]] || _rest_should_fallback_write; }; then
+		if [[ "$transient_failure" -eq 1 ]]; then
+			print_info "[INFO] gh-wrapper: GraphQL transient failure, falling back to REST for pr create"
+		else
+			print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr create"
+		fi
 		if [[ ${#_origin_label_args[@]} -gt 0 || ${#_draft_args[@]} -gt 0 ]]; then
 			pr_output=$(_rest_pr_create "$@" "${_draft_args[@]}" "${_origin_label_args[@]}")
 		else
