@@ -1400,6 +1400,16 @@ runpy.run_path(script, run_name="__main__")
 	return $?
 }
 export -f python3
+# Native registry callers use type -P instead of exported shell functions.
+mkdir -p "${TEST_ROOT}/bin"
+{
+	printf '#!/usr/bin/env bash\n'
+	declare -f python3
+	printf 'python3 "$@"\n'
+} >"${TEST_ROOT}/bin/python3"
+chmod +x "${TEST_ROOT}/bin/python3"
+export PATH="${TEST_ROOT}/bin:${PATH}"
+export AIDEVOPS_REAL_GIT_BIN="$GIT_BIN"
 # Production always has an ownership registry; without one the managed
 # lifetime fence fails closed before any archive is attempted. A subshell
 # keeps the registry library from replacing this file's stubs.

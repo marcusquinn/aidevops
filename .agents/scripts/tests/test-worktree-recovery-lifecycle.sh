@@ -94,6 +94,16 @@ setup() {
 	export AIDEVOPS_REAL_GIT_BIN="$GIT_BIN"
 	export AIDEVOPS_FIXTURE_PROC="${TEST_DIR}/proc"
 	mkdir -p "$AIDEVOPS_FIXTURE_PROC/self"
+	# Native callers resolve Python with type -P, so export the census adapter
+	# as a fixture executable as well as a shell function.
+	mkdir -p "${TEST_DIR}/bin"
+	{
+		printf '#!/usr/bin/env bash\n'
+		declare -f python3
+		printf 'python3 "$@"\n'
+	} >"${TEST_DIR}/bin/python3"
+	chmod +x "${TEST_DIR}/bin/python3"
+	export PATH="${TEST_DIR}/bin:${PATH}"
 	# Retention fixtures must not depend on the host's login daemons. Actual
 	# CWD guards and degraded visibility are covered by the removal audit suite.
 	capture_worktree_process_cwds() {

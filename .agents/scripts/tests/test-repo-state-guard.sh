@@ -6,6 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENTS_SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+export GH_FIXTURE_SCRIPTS="$AGENTS_SCRIPTS_DIR"
 
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -54,6 +55,14 @@ fi
 # --jq as "<login>|<viewerPermission>"; GitHub reports READ for a public repo
 # the viewer cannot push to.
 if [[ "$1" == "api" && "$2" == "graphql" ]]; then
+  if [[ "$*" == *'label0: label('* ]]; then
+    # Keep label-contract verification real while mocking GitHub transport.
+    source "${GH_FIXTURE_SCRIPTS}/shared-gh-wrappers-status.sh"
+    _status_label_contract | jq -Rn '
+      [inputs | split("\t") | {name:.[0], color:.[1], description:.[2]}]
+      | {data:{repository:(to_entries | map({key:("label" + (.key|tostring)), value:.value}) | from_entries)}}'
+    exit 0
+  fi
   case "$mode" in
     all-down) exit 1 ;;
     recover-after-retry)
@@ -99,6 +108,18 @@ if [[ "$1" == "api" && "$2" == repos/*/issues/*/comments ]]; then
     exit 0
   fi
   printf '%s\n' '{"id":123}'
+  exit 0
+fi
+if [[ "$1" == "pr" && "$2" == "list" ]]; then
+  printf '%s\n' '[]'
+  exit 0
+fi
+if [[ "$1" == "api" && "$2" == repos/*/issues/866 ]]; then
+  if [[ "$*" == *--jq* ]]; then
+    printf '\n'
+  else
+    printf '%s\n' '{"state":"open","labels":[],"body":"fixture","assignees":[]}'
+  fi
   exit 0
 fi
 exit 0

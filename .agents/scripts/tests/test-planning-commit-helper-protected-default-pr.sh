@@ -17,6 +17,18 @@ TEST_NATIVE_GIT=$(command -p -v git) || {
 	exit 1
 }
 export TEST_NATIVE_GIT
+export AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT"
+# A planning fixture must own its publication lifetime, not the calling worker.
+unset AIDEVOPS_MANAGED_WORKTREE_RUN_UNIT AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
+unset AIDEVOPS_DISPATCH_LEASE_DEVICE AIDEVOPS_DISPATCH_LEASE_TOKEN AIDEVOPS_DISPATCH_LEASE_SESSION
+
+# Public mock PRs still pass the real privacy guard with a fixture inventory.
+FIXTURE_STATE=$(mktemp -d) || exit 1
+trap 'rm -rf "$FIXTURE_STATE"' EXIT
+export PRIVACY_REPOS_CONFIG="${FIXTURE_STATE}/repos.json"
+export AIDEVOPS_LIFECYCLE_STATE_DIR="${FIXTURE_STATE}/lifecycle-state"
+printf '{"initialized_repos":[]}\n' >"$PRIVACY_REPOS_CONFIG"
+chmod 600 "$PRIVACY_REPOS_CONFIG"
 
 # Isolate fixture repositories from the developer's global hooksPath and
 # signing policy; the test installs its own bare-remote protection hook.
@@ -429,7 +441,9 @@ test_padding_normalization_publishes_rename_without_manifest() {
 	}
 	: >"${tmpdir}/gh.log"
 	rc=0
-	output=$(run_forced_pr_fallback "$tmpdir" "$work_dir" "plan: normalize legacy task IDs") || rc=$?
+	# The stale-snapshot guard requires removed IDs to be named explicitly,
+	# including intentional padding-only renames of completed rows.
+	output=$(run_forced_pr_fallback "$tmpdir" "$work_dir" "plan: normalize legacy task IDs t038.21 t038.22") || rc=$?
 	head_branch=$(cat "${tmpdir}/head" 2>/dev/null || true)
 	tree=$(git --git-dir="${tmpdir}/remote.git" ls-tree -r --name-only "refs/heads/${head_branch}" -- todo/tasks 2>/dev/null || true)
 	body=$(cat "${tmpdir}/body" 2>/dev/null || true)
