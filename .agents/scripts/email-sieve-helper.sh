@@ -804,6 +804,8 @@ COMMANDS
   list-scripts    List scripts on ManageSieve server
   show-script     Show a specific script from ManageSieve server
   delete-script   Delete a script from ManageSieve server
+  copy-to         Keep local delivery and copy mail to a target address
+  copy-to-remove  Remove an unchanged helper keep-and-copy filter
   add-pattern     Add a triage pattern to the patterns file
   status          Show dependency and configuration status
   help            Show this help
@@ -819,7 +821,8 @@ DEPLOY OPTIONS
   --script <name>       Script name on server (default: aidevops-triage)
   --file <sieve-file>   Sieve file to deploy (default: /tmp/aidevops-generated.sieve)
 
-  Password: set SIEVE_PASSWORD environment variable before deploying.
+  --secret <NAME>       Stored password name (default: SIEVE_PASSWORD)
+  Password: use aidevops secret set NAME, or the SIEVE_PASSWORD environment variable.
   Never pass password as argument.
 
 VALIDATE OPTIONS
@@ -830,6 +833,14 @@ LIST/SHOW/DELETE OPTIONS
   --user <email>        Mailbox username/email (required)
   --port <port>         ManageSieve port (default: 4190)
   --script <name>       Script name (required for show/delete)
+
+COPY OPTIONS
+  --server <host> --user <email> [--port <port>] [--secret <NAME>]
+  --target <email>      Copy destination (required for copy-to)
+  --script <name>       Script name (default: roundcube, editable in webmail)
+  --dry-run            Preview copy-to without connecting or reading secrets
+  --yes                Confirm copy-to-remove (otherwise preview removal)
+  --secret is also accepted by list-scripts, show-script and delete-script.
 
 ADD-PATTERN OPTIONS
   --type <type>         Pattern type: sender|domain|subject|list-id|header|transaction|mailing-list|notification
@@ -871,7 +882,7 @@ EXAMPLES
 
 CLOUDRON NOTES
   Cloudron uses Dovecot with ManageSieve on port 4190.
-  Server: your Cloudron mail hostname (e.g. mail.yourdomain.com)
+  Server: my.<domain>:4190; authenticate with a mail-scoped Cloudron app password
   User: full email address
 
 FASTMAIL NOTES

@@ -875,16 +875,10 @@ cmd_sieve_list() {
 	local secret="${2:-}"
 	_pm_valid_address "$address" || return 1
 	_pm_valid_secret_name "$secret" || return 1
-	local scripts
-	scripts=$(_pm_sieve list-scripts "$address" "$secret") || {
+	_pm_sieve list-scripts "$address" "$secret" || {
 		print_error "ManageSieve failed for $address (needs the mailbox password or an app password with SIEVE scope)"
 		return 1
 	}
-	if [[ -z "$scripts" ]]; then
-		print_info "No Sieve scripts on $address"
-		return 0
-	fi
-	printf '%s\n' "$scripts"
 	return 0
 }
 
@@ -900,9 +894,11 @@ cmd_copy_to() {
 		print_error "Usage: copy-to <addr> <secret-name> <target> [--dry-run]"
 		return 1
 	fi
-	local options=()
-	[[ -n "$option" ]] && options+=("$option")
-	_pm_sieve copy-to "$address" "$secret" --target "$target" "${options[@]}"
+	if [[ -n "$option" ]]; then
+		_pm_sieve copy-to "$address" "$secret" --target "$target" "$option"
+	else
+		_pm_sieve copy-to "$address" "$secret" --target "$target"
+	fi
 	return $?
 }
 
@@ -912,9 +908,11 @@ cmd_copy_to_remove() {
 	local confirm="${3:-}"
 	_pm_valid_address "$address" || return 1
 	_pm_valid_secret_name "$secret" || return 1
-	local options=()
-	[[ "$confirm" == "--yes" ]] && options+=("$confirm")
-	_pm_sieve copy-to-remove "$address" "$secret" "${options[@]}"
+	if [[ "$confirm" == "--yes" ]]; then
+		_pm_sieve copy-to-remove "$address" "$secret" "$confirm"
+	else
+		_pm_sieve copy-to-remove "$address" "$secret"
+	fi
 	return $?
 }
 
